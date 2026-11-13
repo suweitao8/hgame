@@ -1,0 +1,28 @@
+{
+  "name": "@hgame/network-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build:protocol": "npm run build --workspace @hgame/network-protocol",
+    "build:simulation": "npm run build --workspace @hgame/network-simulation",
+    "build:client-lib": "npm run build --workspace @hgame/network-client",
+    "build:server": "npm run build --workspace @hgame/network-server",
+    "build:lab": "npm run build --workspace @hgame/network-lab",
+    "build": "npm run build:protocol && npm run build:simulation && npm run build:client-lib && npm run build:server && npm run build:lab",
+    "check": "npm run build:protocol && npm run build:simulation && npm run build:client-lib && npm run check --workspaces --if-present",
+    "test": "npm run test --workspace @hgame/network-protocol && npm run test --workspace @hgame/network-simulation && npm run test --workspace @hgame/network-server",
+    "test:e2e": "node apps/server/test/e2e.mjs",
+    "test:browser": "node apps/network-lab/test/cdp-smoke.mjs",
+    "dev:server": "npm run build:protocol && npm run build:simulation && npm run dev --workspace @hgame/network-server",
+    "dev:lab": "npm run build:protocol && npm run build:simulation && npm run build:client-lib && npm --workspace @hgame/network-lab run dev",
+    "start:server": "npm run start --workspace @hgame/network-server"
+  }
+}

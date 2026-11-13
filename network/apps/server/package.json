@@ -1,0 +1,33 @@
+{
+  "name": "@hgame/network-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/create-server.js",
+  "types": "./dist/create-server.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/create-server.d.ts",
+      "import": "./dist/create-server.js"
+    }
+  },
+  "scripts": {
+    "dev": "tsx watch --exclude \"../../packages/**/dist/**\" src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@colyseus/core": "0.18.28",
+    "@colyseus/schema": "5.0.48",
+    "@colyseus/ws-transport": "0.18.5",
+    "@hgame/network-protocol": "1.0.0",
+    "@hgame/network-simulation": "1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

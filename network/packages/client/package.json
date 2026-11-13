@@ -1,0 +1,25 @@
+{
+  "name": "@hgame/network-client",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@colyseus/sdk": "0.18.10",
+    "@hgame/network-protocol": "1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

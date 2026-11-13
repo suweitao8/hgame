@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "new-game",
+  "name": "新游戏",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "renderer": "canvas2d",
+  "runtime": "webasset-v1",
+  "standalone": false
+}

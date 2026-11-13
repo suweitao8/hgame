@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "notes": "Static scenes: world-position mapping, smooth high-resolution procedural PBR. No MC textures or UV reliance.",
+  "materials": {
+    "soil": {
+      "color": "#907a68",
+      "pattern": "soil",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "roughness": 0.94,
+      "normalStrength": 0.48,
+      "roughnessVariation": 0.34,
+      "aoIntensity": 0.25
+    },
+    "grass": {
+      "color": "#a2c084",
+      "pattern": "grass",
+      "tileSize": 1,
+      "projection": "planar",
+      "roughness": 0.93,
+      "normalStrength": 0.25,
+      "roughnessVariation": 0.2
+    },
+    "stone": {
+      "color": "#b2b7b8",
+      "pattern": "stone",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "blendSharpness": 7,
+      "roughness": 0.84,
+      "normalStrength": 0.7,
+      "roughnessVariation": 0.55,
+      "aoIntensity": 0.35
+    },
+    "bricks": {
+      "color": "#ceafa0",
+      "pattern": "stone",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "blendSharpness": 7,
+      "roughness": 0.82,
+      "normalStrength": 0.58,
+      "roughnessVariation": 0.55,
+      "aoIntensity": 0.34
+    },
+    "wood": {
+      "color": "#b88e62",
+      "pattern": "wood",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "roughness": 0.77,
+      "normalStrength": 0.44,
+      "roughnessVariation": 0.42,
+      "aoIntensity": 0.24
+    },
+    "dark-wood": {
+      "color": "#745a45",
+      "pattern": "wood",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "roughness": 0.8,
+      "normalStrength": 0.43,
+      "roughnessVariation": 0.4
+    },
+    "foliage": {
+      "color": "#65996e",
+      "pattern": "grass",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "roughness": 0.94,
+      "normalStrength": 0.32
+    },
+    "metal": {
+      "color": "#a0adb5",
+      "pattern": "metal",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "roughness": 0.43,
+      "metalness": 0.55,
+      "roughnessVariation": 0.3
+    },
+    "glass": {
+      "color": "#a4d8df",
+      "pattern": "smooth",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "roughness": 0.08,
+      "transparent": true,
+      "opacity": 0.56
+    },
+    "light": {
+      "color": "#ffe5a3",
+      "pattern": "smooth",
+      "tileSize": 1,
+      "projection": "triplanar",
+      "roughness": 0.35,
+      "emissive": "#ffcb78",
+      "emissiveIntensity": 1.9
+    }
+  }
+}

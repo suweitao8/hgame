@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "notes": "Stable logical scene IDs: change material or replacement GLB without modifying level.json / collision / gameplay.",
+  "slots": {
+    "ground.grass": { "shape": "box", "material": "soil", "topMaterial": "grass", "size": [1, 1, 1], "replacement": null },
+    "ground.dirt": { "shape": "box", "material": "soil", "size": [1, 1, 1], "replacement": null },
+    "ground.stone": { "shape": "box", "material": "stone", "size": [1, 1, 1], "replacement": null },
+    "building.bricks": { "shape": "box", "material": "bricks", "size": [1, 1, 1], "replacement": null },
+    "building.cobble": { "shape": "box", "material": "stone", "size": [1, 1, 1], "replacement": null },
+    "building.wood": { "shape": "box", "material": "wood", "size": [1, 1, 1], "replacement": null },
+    "building.stairs": { "shape": "stair", "material": "bricks", "size": [1, 1, 1], "replacement": null },
+    "building.slab": { "shape": "slab", "material": "stone", "size": [1, 1, 1], "replacement": null },
+    "building.wall": { "shape": "box", "material": "stone", "size": [1, 1, 1], "replacement": null },
+    "building.fence": { "shape": "fence", "material": "dark-wood", "accent": "wood", "size": [1, 1, 1], "replacement": null },
+    "building.door": { "shape": "door", "material": "wood", "accent": "metal", "size": [0.9, 1.8, 0.35], "replacement": null },
+    "building.window": { "shape": "window", "material": "glass", "accent": "dark-wood", "size": [1, 1, 0.3], "replacement": null },
+    "nature.log": { "shape": "column", "material": "dark-wood", "size": [0.9, 1, 0.9], "replacement": null },
+    "nature.leaves": { "shape": "foliage", "material": "foliage", "size": [1.7, 1.7, 1.7], "replacement": null },
+    "nature.flower": { "shape": "foliage", "material": "foliage", "size": [0.4, 0.45, 0.4], "replacement": null },
+    "light.lantern": { "shape": "lantern", "material": "metal", "accent": "light", "size": [0.42, 0.7, 0.42], "replacement": null },
+    "prop.bench": { "shape": "bench", "material": "wood", "accent": "dark-wood", "size": [1.65, 1, 0.72], "replacement": null }
+  }
+}

@@ -1,0 +1,22 @@
+# Node / build output
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+coverage/
+.cache/
+*.log
+
+# Local environment and editor files
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Private or locally curated assets must never enter the public engine repo.
+assets/material-library/
+assets/private/
+private/

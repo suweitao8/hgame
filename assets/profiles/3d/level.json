@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "grid": {
+    "cellSize": 1,
+    "origin": [0, 0, 0]
+  },
+  "groups": [
+    {
+      "slot": "ground.grass",
+      "fill": { "from": [-4, 0, -4], "to": [4, 0, 4] }
+    },
+    {
+      "slot": "building.bricks",
+      "fill": { "from": [-3, 1, -3], "to": [2, 2, -3] },
+      "exclude": [[0, 1, -3]]
+    },
+    {
+      "slot": "building.stairs",
+      "fill": { "from": [-3, 3, -3], "to": [2, 3, -3] }
+    },
+    {
+      "slot": "nature.log",
+      "cells": [[3, 1, -1], [3, 2, -1]]
+    },
+    {
+      "slot": "nature.leaves",
+      "cells": [[3, 3, -1], [3, 4, -1]]
+    },
+    {
+      "slot": "building.fence",
+      "fill": { "from": [-3, 1, 3], "to": [1, 1, 3] }
+    },
+    { "slot": "building.door", "cells": [[0, 1, -3]] },
+    { "slot": "prop.bench", "cells": [[2, 1, 2]] },
+    { "slot": "light.lantern", "cells": [[-2, 2, -2]] }
+  ],
+  "colliders": [
+    {
+      "id": "ground",
+      "center": [0, 0.5, 0],
+      "size": [9, 1, 9]
+    },
+    {
+      "id": "rear-wall-left",
+      "center": [-1.5, 2, -3],
+      "size": [3, 2, 1]
+    },
+    {
+      "id": "rear-wall-right",
+      "center": [1.5, 2.5, -3],
+      "size": [3, 3, 1]
+    }
+  ],
+  "playerSpawn": [0, 1.8, 0]
+}

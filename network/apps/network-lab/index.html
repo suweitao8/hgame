@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#151a18" />
+    <title>HGame 联机底座验收</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>HGame 联机底座</h1>
+          <p>本地双窗口验证 · 三种同步模式</p>
+        </div>
+        <div id="connection-status" class="status" data-state="offline">未连接</div>
+      </header>
+
+      <section class="connection-row">
+        <label for="endpoint">服务地址</label>
+        <input id="endpoint" value="http://127.0.0.1:2567" spellcheck="false" />
+        <button id="disconnect" class="button secondary" disabled>断开连接</button>
+      </section>
+
+      <nav class="mode-tabs" aria-label="同步模式">
+        <button class="mode-tab active" data-mode="state">A · 权威状态</button>
+        <button class="mode-tab" data-mode="predicted">B · 客户端预测</button>
+        <button class="mode-tab" data-mode="lockstep">C · 确认帧同步</button>
+      </nav>
+
+      <section class="workspace">
+        <div class="panel controls">
+          <div class="panel-heading">
+            <h2 id="mode-title">A · 权威状态同步</h2>
+            <button id="connect" class="button primary">连接房间</button>
+          </div>
+          <p id="mode-description">服务端维护状态，所有客户端接收相同的状态变更。</p>
+
+          <div id="state-controls" class="mode-controls">
+            <div class="metric"><span>服务端计数</span><strong id="counter">—</strong></div>
+            <div class="metric"><span>状态版本</span><strong id="revision">—</strong></div>
+            <div class="metric"><span>房间人数</span><strong id="state-players">—</strong></div>
+            <button id="increment" class="button primary" disabled>请求服务端 +1</button>
+          </div>
+
+          <div id="prediction-controls" class="mode-controls hidden">
+            <div class="metric"><span>服务器 Tick</span><strong id="server-tick">—</strong></div>
+            <div class="metric"><span>本地预测</span><strong id="prediction-status">等待连接</strong></div>
+            <p class="hint">使用 WASD 或方向键移动。另开一个浏览器标签页，可观察远端玩家同步。</p>
+          </div>
+
+          <div id="lockstep-controls" class="mode-controls hidden">
+            <div class="metric"><span>已确认帧</span><strong id="confirmed-tick">—</strong></div>
+            <div class="metric"><span>本地槽位</span><strong id="lockstep-slot">—</strong></div>
+            <div class="metric"><span>帧缓冲</span><strong id="frame-buffer">0</strong></div>
+            <p class="hint">每 50ms 发送一条带目标帧号的输入；服务器必须收齐当前所有玩家输入才会封帧。</p>
+          </div>
+        </div>
+
+        <div class="panel visual-panel">
+          <div class="panel-heading"><h2>实时状态</h2><span id="room-id" class="muted">未加入房间</span></div>
+          <canvas id="world" width="720" height="420" aria-label="联机状态预览"></canvas>
+          <div id="world-empty" class="empty-state">连接任意同步模式开始验收</div>
+        </div>
+      </section>
+
+      <section class="panel log-panel">
+        <div class="panel-heading"><h2>网络日志</h2><button id="clear-log" class="button secondary">清空</button></div>
+        <pre id="log" aria-live="polite"></pre>
+      </section>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

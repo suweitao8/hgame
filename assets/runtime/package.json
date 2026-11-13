@@ -1,0 +1,11 @@
+{
+  "name": "hgame",
+  "displayName": "HGame",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "physics": {
+    "2d": "@dimforge/rapier2d-deterministic@0.21.0",
+    "3d": "@dimforge/rapier3d-deterministic@0.21.0"
+  }
+}

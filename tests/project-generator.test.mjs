@@ -1,0 +1,91 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const skill = fileURLToPath(new URL('../', import.meta.url));
+const createGame = path.join(skill, 'scripts', 'create-game.mjs');
+const preview = path.join(skill, 'scripts', 'preview.mjs');
+
+test('HGame generator creates a standalone 2D game anywhere, with independent git and lean dependencies', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'html-game-global-'));
+  const game = path.join(tmp, 'anything', 'sample-game');
+  try {
+    const run = (...args) => spawnSync(process.execPath, [createGame, ...args], { encoding: 'utf8' });
+    const dry = run(game, '--name', '测试游戏', '--dry-run');
+    assert.equal(dry.status, 0, dry.stderr);
+    const dryJson = JSON.parse(dry.stdout);
+    assert.equal(dryJson.engine, 'HGame');
+    assert.equal(dryJson.engineVersion, '1.0.0');
+    await assert.rejects(readdir(game));
+
+    const result = run(game, '--name', '测试游戏');
+    assert.equal(result.status, 0, result.stderr);
+    const config = JSON.parse(await readFile(path.join(game, 'game.config.json'), 'utf8'));
+    assert.equal(config.id, 'sample-game');
+    assert.equal(config.name, '测试游戏');
+    assert.equal(config.standalone, true);
+    assert.match(await readFile(path.join(game, 'vendor', 'hgame', 'VERSION'), 'utf8'), /1\.0\.0/);
+    await assert.rejects(stat(path.join(game, 'vendor', 'hgame', 'vendor', 'rapier2d')));
+    await assert.rejects(stat(path.join(game, 'vendor', 'hgame', 'vendor', 'rapier3d')));
+    assert.match(await readFile(path.join(game, 'vendor', 'hgame', 'VERSION'), 'utf8'), /1\.0\.0/);
+    const git = spawnSync('git', ['status', '--short'], { cwd: game, encoding: 'utf8' });
+    assert.equal(git.status, 0, git.stderr);
+    const tests = spawnSync(process.execPath, ['--test', 'tests/config.test.mjs'], { cwd: game, encoding: 'utf8' });
+    assert.equal(tests.status, 0, tests.stderr);
+    const check = spawnSync(process.execPath, ['--check', 'src/main.js'], { cwd: game, encoding: 'utf8' });
+    assert.equal(check.status, 0, check.stderr);
+
+    await writeFile(path.join(game, 'do-not-touch.txt'), 'original');
+    const repeated = run(game, '--name', '不该覆盖');
+    assert.notEqual(repeated.status, 0);
+    assert.equal(await readFile(path.join(game, 'do-not-touch.txt'), 'utf8'), 'original');
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+async function freePort() {
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  await new Promise(resolve => server.close(resolve));
+  return port;
+}
+
+test('standalone preview serves game modules but hides git, AGENTS and traversal paths', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'html-game-preview-'));
+  const game = path.join(tmp, 'playable-game');
+  let child;
+  try {
+    const build = spawnSync(process.execPath, [createGame, game, '--no-git'], { encoding: 'utf8' });
+    assert.equal(build.status, 0, build.stderr);
+    await mkdir(path.join(game, '.git'));
+    await writeFile(path.join(game, '.git', 'secret'), 'private');
+    const port = await freePort();
+    child = spawn(process.execPath, [preview, game, '--port', String(port)], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    const root = 'http://127.0.0.1:' + port;
+    let started = false;
+    for (let i = 0; i < 80; i++) {
+      try { const r = await fetch(root + '/'); started = r.status === 200; if (started) break; } catch {}
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.equal(started, true, 'preview server did not start');
+    for (const route of ['/', '/src/main.js', '/vendor/hgame/index.js',
+      '/vendor/hgame/platform/engine.js', '/game.config.json']) {
+      const response = await fetch(root + route);
+      assert.equal(response.status, 200, route);
+    }
+    for (const route of ['/AGENTS.md', '/.git/secret', '/tests/config.test.mjs', '/package.json']) {
+      const response = await fetch(root + route);
+      assert.notEqual(response.status, 200, 'Private path leaked: ' + route);
+    }
+  } finally {
+    if (child && !child.killed) child.kill();
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

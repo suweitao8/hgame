@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://webasset.local/runtime/hgame/v1/game.config.schema.json",
+  "title": "WebAsset HTML Game Configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "entry",
+    "renderer",
+    "runtime"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$",
+      "description": "Stable game ID; must match the project folder name."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "version": {
+      "type": "string",
+      "maxLength": 40,
+      "default": "0.1.0"
+    },
+    "entry": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.?/)(?!.*\\\\).*\\.[hH][tT][mM][lL]?$"
+    },
+    "renderer": {
+      "enum": [
+        "threejs",
+        "canvas2d",
+        "dom",
+        "webgl-custom",
+        "custom"
+      ]
+    },
+    "runtime": {
+      "const": "webasset-v1"
+    },
+    "standalone": {
+      "type": "boolean",
+      "default": false
+    }
+  }
+}

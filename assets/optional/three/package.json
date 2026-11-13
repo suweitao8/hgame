@@ -1,0 +1,6 @@
+{
+  "name": "@hgame/three-runtime",
+  "version": "0.187.0",
+  "private": true,
+  "type": "module"
+}

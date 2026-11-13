@@ -1,0 +1,30 @@
+{
+  "name": "hgame",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "create-game": "node scripts/create-game.mjs",
+    "preview": "node scripts/preview.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:all": "npm test && npm run test:network",
+    "test:network": "npm --prefix network test",
+    "test:browser": "node tests/browser-profiles.mjs",
+    "test:browser:pbr": "node tests/browser-world-aligned.mjs",
+    "build:physics": "node scripts/build-physics.mjs",
+    "check:physics": "node scripts/build-physics.mjs --check",
+    "check:network": "npm --prefix network run check",
+    "build:network": "npm --prefix network run build",
+    "check:all": "npm run check && npm run test:network && npm run check:network && npm run build:network",
+    "check": "npm test && npm run check:physics",
+    "build": "npm run build:physics"
+  },
+  "devDependencies": {
+    "@dimforge/rapier2d-deterministic": "0.21.0",
+    "@dimforge/rapier3d-deterministic": "0.21.0",
+    "esbuild": "0.25.12"
+  }
+}

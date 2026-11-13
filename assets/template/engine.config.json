@@ -1,0 +1,8 @@
+{
+  "configVersion": 1,
+  "profile": "2d",
+  "renderer": "canvas2d",
+  "physics": "none",
+  "tickHz": 60,
+  "features": ["scene", "input"]
+}
