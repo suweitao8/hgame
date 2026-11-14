@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Generator & packager (ENGINE-GAPS 1/2):
+  - `create-game --bare` (2d/3d): emits only configs, a minimal empty-scene `src/main.js` and the vendored runtime — no demo `level.json`, `materials.json`, `model-slots.json`. Bare entries live in `assets/profiles/{2d,3d}-bare/`.
+  - `package-game`: Rapier WASM is bundled only when `src/` uses `scene.physics`/Rapier modules (static scan) or `game.config.json` sets `physics.bundleWasm: true`. Declared-but-unused physics omits the WASM and strips the physics feature from the release `engine.config.json`; uncertain scans keep the safe default (bundle) with a note. Result adds `wasmSkipped` and `notes`.
+
 - Deterministic sim helpers (sim/*.js, re-exported from `index.js` & `HGame`): `createSeededRng`, `hashState` / `createStateChecksum`, `runScripted`. Camera (`integrations/camera3d.js`): `createSpringArmRayProbe(castRay)` adapter for `collisionTest` and `cameraRelativeMove`; typed/documented the collision-test contract.
 
 - High-Density 100k+ 2D/3D Crowd Pipeline Optimizations:

@@ -42,6 +42,8 @@ flowchart LR
 - `--physics rapier2d | rapier3d | none`
 - `--tick-hz 60`（`ui` 固定为 `0`；2D/3D 支持 `1..240`）
 - `--quality auto | low | medium | high | ultra`（仅 `--profile 3d` 建项参数，3D 默认已包含自研 Three.js + 世界对齐 PBR）
+- `--bare`（仅 `--profile 2d|3d`）：只生成配置、空场景 `main.js` 与 vendored 运行时，不生成演示 `level.json` / `materials.json` / `model-slots.json`
+- 打包时 Rapier WASM 仅在 `src/` 实际使用 `scene.physics` / Rapier 模块时才随包（仅声明 `physics3d` 不会强制带入 ~3MB WASM）；可在 `game.config.json` 设置 `"physics": { "bundleWasm": true|false }` 强制覆盖，扫描不确定时默认带入并提示
 - `--no-git`：不自动执行 `git init`
 - `--dry-run`：只打印将生成的配方 JSON，不写磁盘
 

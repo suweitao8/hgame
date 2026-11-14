@@ -561,6 +561,41 @@ function findNearestEngineRoot(startDir) {
   return null;
 }
 
+const PHYSICS_USAGE_RE = /\.physics\b|physics\/rapier|rapier(?:2d|3d)\b|RapierPhysicsWorld|createRapier/;
+
+/**
+ * Decides whether the Rapier WASM backend must ship. Explicit
+ * game.config.json physics.bundleWasm wins; otherwise statically scan
+ * game sources for physics usage. Uncertain scans keep the safe default (bundle).
+ */
+async function decidePhysicsBundle(absGameDir, gameConfig, project) {
+  const flag = gameConfig?.physics?.bundleWasm;
+  if (typeof flag === 'boolean') {
+    return { bundle: flag, reason: 'game.config.json physics.bundleWasm=' + flag, note: null };
+  }
+  const texts = [];
+  const srcRoot = path.join(absGameDir, 'src');
+  if (await existsDir(srcRoot)) {
+    for (const f of await collectFilesRecursively(srcRoot)) {
+      const parts = f.rel.toLowerCase().split('/');
+      if (parts.some(p => p === 'tests' || p === '__tests__') || /\.(test|spec)\.[cm]?js$/i.test(f.rel)) continue;
+      if (/\.(m?js|html?)$/i.test(f.rel)) texts.push(await readFile(f.abs, 'utf8'));
+    }
+  }
+  const entry = path.join(absGameDir, (gameConfig.entry || 'index.html').replace(/^\/+/, ''));
+  if (await existsFile(entry)) texts.push(await readFile(entry, 'utf8'));
+  if (!(await existsFile(path.join(srcRoot, 'main.js')))) {
+    return { bundle: true, reason: 'scan uncertain', note: 'Note: could not scan game sources for physics usage; bundling Rapier WASM (set physics.bundleWasm in game.config.json to override).' };
+  }
+  if (texts.some(t => PHYSICS_USAGE_RE.test(t))) {
+    return { bundle: true, reason: 'physics usage detected', note: null };
+  }
+  return {
+    bundle: false, reason: 'no scene.physics / Rapier usage found in src',
+    note: 'Note: ' + project.physics + ' is declared but src never uses scene.physics; Rapier WASM omitted and the physics feature stripped from the packaged engine.config.json (set physics.bundleWasm=true in game.config.json to force it).',
+  };
+}
+
 /**
  * Packages a standalone HGame project into `build/<id>_<version>/` and `build/<id>_<version>.zip`
  * containing only the active runtime modules, deterministic WASM backend, and runtime assets.
@@ -600,7 +635,25 @@ export async function packageGameRelease({
   }
 
   const { defineProject } = await import(pathToFileURL(configJsPath).href);
-  const project = defineProject(engineConfig);
+  let project = defineProject(engineConfig);
+  const notes = [];
+
+  // Decide whether the Rapier WASM backend is bundled. Declaring a physics
+  // feature alone is not enough: the game must actually use scene.physics /
+  // Rapier modules, or set physics.bundleWasm in game.config.json.
+  let physicsDecision = null;
+  if (project.physics === 'rapier2d' || project.physics === 'rapier3d') {
+    physicsDecision = await decidePhysicsBundle(absGameDir, gameConfig, project);
+    if (physicsDecision.note) notes.push(physicsDecision.note);
+    if (!physicsDecision.bundle) {
+      const stripped = new Set(['physics2d', 'physics3d']);
+      project = defineProject({
+        ...engineConfig,
+        physics: 'none',
+        features: (engineConfig.features || project.features).filter(f => !stripped.has(f)),
+      });
+    }
+  }
 
   const effectiveId = id || gameConfig.id || path.basename(absGameDir);
   const effectiveVersion = version || gameConfig.version || '0.1.0';
@@ -797,7 +850,7 @@ export async function packageGameRelease({
     enqueueRel('assets/vendor/three/LICENSE', false);
   }
 
-  // Strictly verify and package deterministic Rapier WASM only when requested by physics config
+  // Strictly verify and package deterministic Rapier WASM only when the game uses physics
   let includedWasm = null;
   if (project.physics === 'rapier2d' || project.physics === 'rapier3d') {
     const dim = project.physics === 'rapier2d' ? '2d' : '3d';
@@ -890,6 +943,8 @@ export async function packageGameRelease({
     renderer: project.renderer,
     physics: project.physics,
     wasm: includedWasm,
+    wasmSkipped: physicsDecision && !physicsDecision.bundle ? physicsDecision.reason : null,
+    notes,
     minified: Boolean(esbuild),
     fileCount: includedFiles.size + generatedBuffers.size,
     outputBytes: totalBytes,
@@ -1062,6 +1117,7 @@ async function main() {
         flatZip: opts.flatZip,
         minify: opts.minify,
       });
+  for (const note of summary.notes || []) console.error(note);
   console.log(JSON.stringify(summary, null, 2));
 }
 

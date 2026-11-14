@@ -89,3 +89,43 @@ test('standalone preview serves game modules but hides git, AGENTS and traversal
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+for (const profile of ['2d', '3d']) {
+  test(`create-game --bare --profile ${profile} omits demo level/material/model-slot files and stays valid`, async () => {
+    const tmp = await mkdtemp(path.join(os.tmpdir(), 'html-game-bare-'));
+    const game = path.join(tmp, 'bare-' + profile);
+    try {
+      const result = spawnSync(process.execPath, [createGame, game, '--profile', profile, '--bare', '--no-git'], { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).bare, true);
+      for (const demo of ['level.json', 'materials.json', 'model-slots.json']) {
+        await assert.rejects(stat(path.join(game, 'src', demo)));
+      }
+      const main = await readFile(path.join(game, 'src', 'main.js'), 'utf8');
+      assert.doesNotMatch(main, /level\.json|materials\.json|model-slots\.json|modular-level|procedural-models/);
+      const tests = spawnSync(process.execPath, ['--test', 'tests/config.test.mjs'], { cwd: game, encoding: 'utf8' });
+      assert.equal(tests.status, 0, tests.stderr + tests.stdout);
+      const check = spawnSync(process.execPath, ['--check', 'src/main.js'], { cwd: game, encoding: 'utf8' });
+      assert.equal(check.status, 0, check.stderr);
+      const recipe = JSON.parse(await readFile(path.join(game, 'engine.config.json'), 'utf8'));
+      assert.equal(recipe.profile, profile);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+}
+
+test('non-bare 3D still scaffolds demo level files; --bare rejects the ui profile', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'html-game-bare-neg-'));
+  try {
+    const full = spawnSync(process.execPath, [createGame, path.join(tmp, 'full'), '--profile', '3d', '--no-git'], { encoding: 'utf8' });
+    assert.equal(full.status, 0, full.stderr);
+    for (const demo of ['level.json', 'materials.json', 'model-slots.json']) {
+      assert.ok((await stat(path.join(tmp, 'full', 'src', demo))).isFile());
+    }
+    const ui = spawnSync(process.execPath, [createGame, path.join(tmp, 'ui'), '--profile', 'ui', '--bare', '--no-git'], { encoding: 'utf8' });
+    assert.notEqual(ui.status, 0);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

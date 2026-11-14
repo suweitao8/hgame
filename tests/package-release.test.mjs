@@ -310,3 +310,53 @@ test('package-game --engine outputs complete SDK build with workspace skill, use
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('package-game omits Rapier WASM when physics3d is declared but src never uses scene.physics, and honors physics.bundleWasm', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-pkg-lazy-wasm-'));
+  const game = path.join(tmp, 'sim');
+  try {
+    const gen = spawnSync(process.execPath, [createGame, game, '--profile', '3d', '--bare', '--with', 'physics3d', '--no-git'], { encoding: 'utf8' });
+    assert.equal(gen.status, 0, gen.stderr);
+    const pack = (...extra) => spawnSync(process.execPath, [packageGame, game, '--version', '1.0.0', ...extra], { encoding: 'utf8' });
+
+    // Declared but unused -> no WASM, physics feature stripped from release config, note printed
+    let run = pack();
+    assert.equal(run.status, 0, run.stderr || run.stdout);
+    let summary = JSON.parse(run.stdout);
+    assert.equal(summary.wasm, null);
+    assert.ok(summary.wasmSkipped);
+    assert.match(run.stderr, /Rapier WASM omitted/);
+    const outDir = path.join(game, 'build', 'sim_1_0');
+    assert.equal(await exists(path.join(outDir, 'vendor', 'hgame', 'vendor', 'rapier3d')), false);
+    const releaseEngine = JSON.parse(await readFile(path.join(outDir, 'engine.config.json'), 'utf8'));
+    assert.equal(releaseEngine.physics, 'none');
+    assert.equal(releaseEngine.features.includes('physics3d'), false);
+
+    // Explicit override forces the bundle
+    const gameCfgPath = path.join(game, 'game.config.json');
+    const gameCfg = JSON.parse(await readFile(gameCfgPath, 'utf8'));
+    gameCfg.physics = { bundleWasm: true };
+    await writeFile(gameCfgPath, JSON.stringify(gameCfg, null, 2) + '\n');
+    run = pack();
+    assert.equal(run.status, 0, run.stderr || run.stdout);
+    summary = JSON.parse(run.stdout);
+    assert.equal(summary.wasm, 'vendor/hgame/vendor/rapier3d/rapier3d.wasm');
+    assert.equal(await exists(path.join(outDir, 'vendor', 'hgame', 'vendor', 'rapier3d', 'rapier3d.wasm')), true);
+
+    // Actual usage bundles by default (override removed)
+    delete gameCfg.physics;
+    await writeFile(gameCfgPath, JSON.stringify(gameCfg, null, 2) + '\n');
+    await writeFile(path.join(game, 'src', 'gameplay.js'), 'export const add = (scene, e) => scene.physics.add(e, { static: true });\n');
+    run = pack();
+    summary = JSON.parse(run.stdout);
+    assert.equal(summary.wasm, 'vendor/hgame/vendor/rapier3d/rapier3d.wasm');
+
+    // bundleWasm:false overrides detected usage
+    gameCfg.physics = { bundleWasm: false };
+    await writeFile(gameCfgPath, JSON.stringify(gameCfg, null, 2) + '\n');
+    summary = JSON.parse(pack().stdout);
+    assert.equal(summary.wasm, null);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

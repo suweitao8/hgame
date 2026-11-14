@@ -14,7 +14,7 @@ const optionalThree = path.join(root, 'assets', 'optional', 'three');
 
 function parse(argv) {
   const result = { destination: '', name: '', profile: '2d', renderer: null, with: [], physics: null,
-    tickHz: null, quality: null, git: true, dryRun: false };
+    tickHz: null, quality: null, git: true, dryRun: false, bare: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--name') {
@@ -33,6 +33,8 @@ function parse(argv) {
       result.quality = argv[++i];
     } else if (arg === '--no-git') {
       result.git = false;
+    } else if (arg === '--bare') {
+      result.bare = true;
     } else if (arg === '--dry-run') {
       result.dryRun = true;
     } else if (!arg.startsWith('-') && !result.destination) {
@@ -41,7 +43,8 @@ function parse(argv) {
       throw new Error('Unknown or incomplete argument: ' + arg);
     }
   }
-  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--no-git] [--dry-run]');
+  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--bare (2d|3d: no demo level/materials/model-slots)] [--no-git] [--dry-run]');
+  if (result.bare && !['2d', '3d'].includes(result.profile)) throw new Error('--bare supports --profile 2d or 3d');
   const target = path.resolve(result.destination);
   const slug = path.basename(target);
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(slug)) {
@@ -88,8 +91,8 @@ async function main() {
   if (options.dryRun) {
     console.log(JSON.stringify({ action: 'create-html-game', target: options.target, name: options.name,
       engine: 'HGame', engineVersion: '1.0.0', recipe: options.recipe,
-      default3dMaterials: options.recipe.profile === '3d' ? 'native-world-aligned-pbr' : null,
-      git: options.git }, null, 2));
+      default3dMaterials: options.recipe.profile === '3d' && !options.bare ? 'native-world-aligned-pbr' : null,
+      bare: options.bare, git: options.git }, null, 2));
     return;
   }
 
@@ -119,15 +122,13 @@ async function main() {
     }
 
     const profileFiles = path.join(profiles, options.recipe.profile);
-    await cp(path.join(profileFiles,
-      'main.js'),
-      path.join(stage, 'src', 'main.js'), { force: true });
+    const mainSource = options.bare ? path.join(profiles, options.recipe.profile + '-bare') : profileFiles;
+    await cp(path.join(mainSource, 'main.js'), path.join(stage, 'src', 'main.js'), { force: true });
     if (options.recipe.profile === 'ui') {
       await cp(path.join(profileFiles, 'index.html'), path.join(stage, 'index.html'), { force: true });
     }
     if (options.recipe.profile === '3d') {
       await cp(path.join(profileFiles, 'index.html'), path.join(stage, 'index.html'), { force: true });
-      await cp(path.join(profileFiles, 'level.json'), path.join(stage, 'src', 'level.json'), { force: false });
       const threeDest = path.join(stage, 'assets', 'vendor', 'three');
       await mkdir(threeDest, { recursive: true });
       for (const file of ['three.module.js', 'three.core.js', 'LICENSE']) {
@@ -138,7 +139,7 @@ async function main() {
         await mkdir(path.dirname(dest), { recursive: true });
         await cp(path.join(optionalThree, 'jsm', file), dest, { force: false });
       }
-      for (const file of ['materials.json', 'model-slots.json']) {
+      for (const file of options.bare ? [] : ['level.json', 'materials.json', 'model-slots.json']) {
         await cp(path.join(profileFiles, file), path.join(stage, 'src', file), { force: false });
       }
     }
@@ -165,7 +166,7 @@ async function main() {
     await rename(stage, options.target);
     console.log(JSON.stringify({
       success: true, project: options.target, gameId: options.slug,
-      engine: 'HGame', engineVersion: '1.0.0', profile: options.recipe.profile, features: options.recipe.features,
+      engine: 'HGame', engineVersion: '1.0.0', profile: options.recipe.profile, bare: options.bare, features: options.recipe.features,
       physics: options.recipe.physics, standalone: true, gitInitialized: options.git,
     }, null, 2));
   } catch (error) {

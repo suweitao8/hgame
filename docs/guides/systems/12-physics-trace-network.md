@@ -4,6 +4,7 @@
 
 - **确定性物理（`physics/rapier2d.js`、`physics/rapier3d.js`）**：
   - 固定版本 `@dimforge/rapier2d-deterministic@0.21.0` / `rapier3d-deterministic@0.21.0`，离线与联机永不切换物理后端。
+  - 打包（`scripts/package-game.mjs`）只在 `src/` 实际引用 `scene.physics` / Rapier 模块时携带 WASM；仅声明 `physics2d/3d` 而未使用时会剔除 WASM 并在发布版 `engine.config.json` 中移除物理特性。`game.config.json` 的 `"physics": { "bundleWasm": true|false }` 可显式覆盖，扫描不确定时默认带入并打印提示。
   - 提供 `scene.physics.add(entity, { type: 'dynamic' | 'fixed' | 'kinematicPosition' | 'kinematicVelocity', shape: 'cuboid' | 'ball' | 'capsule' })`、`createCharacterController(entity, { autostep, snapToGround, slide: true })`、`castRay`、`overlaps`、`takeSnapshot` / `restoreSnapshot`、`stateChecksum`。
 - **行为轨迹录制（`HGame.createTraceRecorder`）**：
   - 用于高保真玩法校验、AI 复刻对照的 JSONL 逻辑事件记录器，见 [TRACE-RECORDER.md](./TRACE-RECORDER.md)。
