@@ -1075,7 +1075,7 @@ export async function packageEngineRelease({
   fileCount += await copyTree('assets/optional/three');
   fileCount += await copyTree('scripts');
   fileCount += await copyTree('docs', rel => !rel.startsWith('docs/superpowers/'));
-  fileCount += await copyTree('.agents/skills/hgame');
+  fileCount += await copyTree('.agents/skills');
 
   for (const rootFile of ['LICENSE', 'README.md', 'AGENTS.md', 'CHANGELOG.md', 'package.json']) {
     const src = path.join(absRoot, rootFile);

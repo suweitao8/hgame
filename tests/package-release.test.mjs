@@ -285,6 +285,13 @@ test('package-game --engine outputs complete SDK build with workspace skill, use
 
     for (const requiredRel of [
       '.agents/skills/hgame/SKILL.md',
+      '.agents/skills/hgame-vfx-juice/SKILL.md',
+      '.agents/skills/hgame-balance-sim/SKILL.md',
+      '.agents/skills/hgame-balance-sim/scripts/sim-balance.mjs',
+      '.agents/skills/hgame-level-architect/SKILL.md',
+      '.agents/skills/hgame-level-architect/scripts/check-level.mjs',
+      '.agents/skills/hgame-narrative-branch/SKILL.md',
+      '.agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs',
       'docs/guides/USER-AND-AGENT-GUIDE.md',
       'AGENTS.md',
       'README.md',
@@ -305,6 +312,7 @@ test('package-game --engine outputs complete SDK build with workspace skill, use
 
     const zipEntries = readZipEntries(await readFile(sdkZip));
     assert.equal(zipEntries.has('hgame_1_0/.agents/skills/hgame/SKILL.md'), true);
+    assert.equal(zipEntries.has('hgame_1_0/.agents/skills/hgame-vfx-juice/SKILL.md'), true);
     assert.equal(zipEntries.has('hgame_1_0/docs/guides/USER-AND-AGENT-GUIDE.md'), true);
   } finally {
     await rm(tmp, { recursive: true, force: true });
