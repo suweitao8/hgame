@@ -1,6 +1,7 @@
 import { Component } from '../core/component.js';
 import { resolveQualityPreset } from './quality3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
+import { createLighting2DState, renderCanvas2DPostPass } from './post2d.js';
 
 const SCRATCH_WORLD = new Float64Array(16);
 const SCRATCH_RGBA = [1, 1, 1, 1];
@@ -887,6 +888,12 @@ function compareDrawItems(lhs, rhs) {
  * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
  * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
  * @property {() => Viewport2D} getViewport Copy of the current viewport.
+ * @property {(color?: string | number, intensity?: number) => void} setAmbientLight Configure global 2D ambient darkness/tint.
+ * @property {(light: { x: number, y: number, radius?: number, color?: string | number, intensity?: number }) => boolean} addLight2D Append a dynamic 2D point light.
+ * @property {(lights: Array<{ x: number, y: number, radius?: number, color?: string | number, intensity?: number }>) => number} setLights2D Replace active 2D point lights.
+ * @property {() => void} clearLights2D Remove all 2D point lights.
+ * @property {(cfg: { bloomIntensity?: number, bloomThreshold?: number, vignette?: number, hitPulse?: number, chromatic?: number, saturation?: number, contrast?: number }) => void} setPost2D Configure 2D bloom/vignette/grading effects.
+ * @property {() => { ambient: { r: number, g: number, b: number, intensity: number }, lightCount: number, post: object }} getLighting2DState Inspect current 2D lighting & post state.
  * @property {() => void} dispose Release buffers and caches.
  */
 
@@ -925,7 +932,8 @@ export function createCanvas2DAdapter({
   let qualityPreset = qualityTier ? resolveQualityPreset(qualityTier, '2d') : null;
   const tintCache = new WeakMap();
   const ownedTintCanvases = [];
-  const stats = { drawnSprites: 0, drawnCrowds: 0, culled: 0, sorted: false, backend: 'canvas2d' };
+  const lighting2D = createLighting2DState();
+  const stats = { drawnSprites: 0, drawnCrowds: 0, culled: 0, sorted: false, postPassActive: false, backend: 'canvas2d' };
 
   const allocBuffer = createBufferCanvas ?? ((w, h) => {
     if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(w, h);
@@ -1563,6 +1571,8 @@ export function createCanvas2DAdapter({
     stats.sorted = false;
 
     const alpha = app?.renderAlpha ?? 1;
+    const postActive = lighting2D.hasActivePass();
+    stats.postPassActive = postActive;
     if (activeViews && activeViews.length > 0) {
       for (let i = 0; i < activeViews.length; i++) {
         const v = activeViews[i];
@@ -1571,6 +1581,12 @@ export function createCanvas2DAdapter({
           v.x * width, v.y * height, v.width * width, v.height * height,
           allowShadows, true,
         );
+        if (postActive) {
+          renderCanvas2DPostPass(
+            ctx, width, height, v.camera, lighting2D,
+            v.x * width, v.y * height, v.width * width, v.height * height,
+          );
+        }
       }
       if (activeViews.length > 1 && viewDividerWidth > 0 && typeof ctx.strokeRect === 'function') {
         ctx.strokeStyle = viewDividerColor;
@@ -1582,6 +1598,9 @@ export function createCanvas2DAdapter({
       }
     } else {
       renderCameraView(scene, alpha, camera, 0, 0, width, height, allowShadows, false);
+      if (postActive) {
+        renderCanvas2DPostPass(ctx, width, height, camera, lighting2D, 0, 0, width, height);
+      }
     }
 
     ctx.restore();
@@ -1602,6 +1621,12 @@ export function createCanvas2DAdapter({
     get qualityPreset() { return qualityPreset; },
     get stats() { return { ...stats }; },
     getViewport: () => ({ ...viewport }),
+    setAmbientLight: lighting2D.setAmbientLight,
+    addLight2D: lighting2D.addLight,
+    setLights2D: lighting2D.setLights,
+    clearLights2D: lighting2D.clearLights,
+    setPost2D: lighting2D.setPost,
+    getLighting2DState: lighting2D.snapshot,
     dispose() {
       drawPool.length = 0;
       sortQueue.length = 0;

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 2D Modern Atmospheric Lighting & Post-Processing (`integrations/post2d.js`, `integrations/webgl2d.js`, `integrations/canvas2d.js`):
+  - Add zero-alloc `createLighting2DState` (ambient tint + up to 32 dynamic world-space point lights + `bloomIntensity`, `bloomThreshold`, `vignette`, `hitPulse`, `chromatic`, `saturation`, `contrast`) with automatic bypass when inactive.
+  - Add WebGL2 offscreen scene FBO + half-res separable Bloom + composite shader in `createWebGL2DPostPass`, plus Canvas2D `'lighter'` radial fallback in `renderCanvas2DPostPass`.
+
 - Zero-KB Procedural Adaptive BGM Sequencer (`platform/audio/bgm-synth.js`, `platform/audio.js`):
   - Add 6 built-in moods (`dungeon`, `cyber`, `boss`, `chill`, `adventure`, `victory`), deterministic step planner (`generateBgmStep`, `midiToHz`), intensity-scaled drums/arps (`setMood`, `setIntensity(0..1)`), WebAudio + headless fixed-step `update(dt)` support (`createProceduralBgm`, `audio.createBgm`).
 

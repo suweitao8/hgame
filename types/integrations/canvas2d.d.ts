@@ -108,6 +108,12 @@ export function parseColorRgba(color: unknown, out?: number[] | null): number[];
  * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
  * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
  * @property {() => Viewport2D} getViewport Copy of the current viewport.
+ * @property {(color?: string | number, intensity?: number) => void} setAmbientLight Configure global 2D ambient darkness/tint.
+ * @property {(light: { x: number, y: number, radius?: number, color?: string | number, intensity?: number }) => boolean} addLight2D Append a dynamic 2D point light.
+ * @property {(lights: Array<{ x: number, y: number, radius?: number, color?: string | number, intensity?: number }>) => number} setLights2D Replace active 2D point lights.
+ * @property {() => void} clearLights2D Remove all 2D point lights.
+ * @property {(cfg: { bloomIntensity?: number, bloomThreshold?: number, vignette?: number, hitPulse?: number, chromatic?: number, saturation?: number, contrast?: number }) => void} setPost2D Configure 2D bloom/vignette/grading effects.
+ * @property {() => { ambient: { r: number, g: number, b: number, intensity: number }, lightCount: number, post: object }} getLighting2DState Inspect current 2D lighting & post state.
  * @property {() => void} dispose Release buffers and caches.
  */
 /**
@@ -762,6 +768,59 @@ export type Renderer2DAdapter = {
      * Copy of the current viewport.
      */
     getViewport: () => Viewport2D;
+    /**
+     * Configure global 2D ambient darkness/tint.
+     */
+    setAmbientLight: (color?: string | number, intensity?: number) => void;
+    /**
+     * Append a dynamic 2D point light.
+     */
+    addLight2D: (light: {
+        x: number;
+        y: number;
+        radius?: number;
+        color?: string | number;
+        intensity?: number;
+    }) => boolean;
+    /**
+     * Replace active 2D point lights.
+     */
+    setLights2D: (lights: Array<{
+        x: number;
+        y: number;
+        radius?: number;
+        color?: string | number;
+        intensity?: number;
+    }>) => number;
+    /**
+     * Remove all 2D point lights.
+     */
+    clearLights2D: () => void;
+    /**
+     * Configure 2D bloom/vignette/grading effects.
+     */
+    setPost2D: (cfg: {
+        bloomIntensity?: number;
+        bloomThreshold?: number;
+        vignette?: number;
+        hitPulse?: number;
+        chromatic?: number;
+        saturation?: number;
+        contrast?: number;
+    }) => void;
+    /**
+     * Inspect current 2D lighting & post state.
+     */
+    getLighting2DState: () => {
+        ambient: {
+            r: number;
+            g: number;
+            b: number;
+            intensity: number;
+        };
+        lightCount: number;
+        post: object;
+    };
     /**
      * Release buffers and caches.
      */

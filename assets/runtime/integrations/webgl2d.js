@@ -7,6 +7,7 @@ import {
 } from './canvas2d.js';
 import { resolveQualityPreset } from './quality3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
+import { createLighting2DState, createWebGL2DPostPass } from './post2d.js';
 
 export { Camera2D, Sprite2D, SpriteCrowd2D };
 
@@ -451,8 +452,11 @@ export function createWebGL2DAdapter({
     sorted: false,
     drawCalls: 0,
     instances: 0,
+    postPassActive: false,
     backend: 'webgl2',
   };
+  const lighting2D = createLighting2DState();
+  const postPass = createWebGL2DPostPass(gl);
 
   const allocBuffer = createBufferCanvas ?? ((w, h) => {
     if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(w, h);
@@ -541,6 +545,7 @@ export function createWebGL2DAdapter({
     compactCapacity = 0;
     whiteTex = null;
     boundTexRecord = null;
+    postPass.destroy();
   }
 
   function resize() {
@@ -1439,6 +1444,7 @@ export function createWebGL2DAdapter({
     const { vh, dpr, scale, x, y } = viewport;
     const allowSmoothing = qualityPreset ? qualityPreset.imageSmoothing : imageSmoothing;
     const allowShadows = qualityPreset ? qualityPreset.groundShadows : true;
+    const usePost = lighting2D.hasActivePass() && postPass.beginScene(canvas.width, canvas.height);
 
     gl.disable(gl.SCISSOR_TEST);
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -1458,6 +1464,7 @@ export function createWebGL2DAdapter({
     stats.sorted = false;
     stats.drawCalls = 0;
     stats.instances = 0;
+    stats.postPassActive = Boolean(usePost);
 
     const smoothChanged = lastSmoothingFlag !== null && lastSmoothingFlag !== Boolean(allowSmoothing);
     lastSmoothingFlag = Boolean(allowSmoothing);
@@ -1489,6 +1496,10 @@ export function createWebGL2DAdapter({
 
     gl.disable(gl.SCISSOR_TEST);
     gl.bindVertexArray(null);
+    if (usePost) {
+      const activeCam = (activeViews && activeViews.length > 0) ? activeViews[0].camera : camera;
+      postPass.endAndComposite(canvas.width, canvas.height, lighting2D, activeCam, viewport, width, height);
+    }
   }
 
   const onContextLost = (event) => {
@@ -1523,6 +1534,12 @@ export function createWebGL2DAdapter({
     get qualityPreset() { return qualityPreset; },
     get stats() { return { ...stats }; },
     getViewport: () => ({ ...viewport }),
+    setAmbientLight: lighting2D.setAmbientLight,
+    addLight2D: lighting2D.addLight,
+    setLights2D: lighting2D.setLights,
+    clearLights2D: lighting2D.clearLights,
+    setPost2D: lighting2D.setPost,
+    getLighting2DState: lighting2D.snapshot,
     dispose() {
       if (disposed) return;
       disposed = true;
