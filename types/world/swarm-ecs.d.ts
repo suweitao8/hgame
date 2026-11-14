@@ -360,6 +360,8 @@ export class FlatCombatECS {
     maxHp: Int32Array;
     shield: Int32Array;
     freezeTimer: Float32Array;
+    flashTicks: Uint8Array;
+    statusCode: Uint8Array;
     clipId: Uint16Array;
     swarmToSlot: Int32Array;
     _freeStack: Int32Array;

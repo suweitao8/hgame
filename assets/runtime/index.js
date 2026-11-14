@@ -57,6 +57,30 @@ export {
   formatRedDotBadge,
   createRedDotSystem,
 } from './ui/red-dot.js';
+export {
+  VFX_EASING,
+  VFX_RENDER_ORDERS,
+  VFX_SHAPE,
+  TELEGRAPH_SHAPE,
+  CROWD_STATUS,
+  VFX_PRESETS,
+  createVisualPrng,
+  packRgb24,
+  unpackRgb24Into,
+  markAttributeRangeDirty,
+  submitRingBufferRanges,
+  createHitstopClock,
+  createCameraShake,
+  createStatelessParticlePool,
+  createTrailsSystem,
+  createTelegraphSystem,
+  extractGlyphIndices,
+  createFloatingTextPool,
+  packCrowdAnimStatus,
+  unpackCrowdAnimStatus,
+  createScreenFeedbackPass,
+  createVfxSystem,
+} from './vfx/index.js';
 
 import { defineProject, resolveFeatureGraph } from './core/config.js';
 import { Component } from './core/component.js';
@@ -96,6 +120,20 @@ import {
   formatRedDotBadge,
   createRedDotSystem,
 } from './ui/red-dot.js';
+import {
+  VFX_SHAPE,
+  TELEGRAPH_SHAPE,
+  CROWD_STATUS,
+  VFX_PRESETS,
+  createVisualPrng,
+  packRgb24,
+  createHitstopClock,
+  createCameraShake,
+  extractGlyphIndices,
+  packCrowdAnimStatus,
+  unpackCrowdAnimStatus,
+  createVfxSystem,
+} from './vfx/index.js';
 
 /** Public HGame facade. Physics providers stay lazy and load only when selected. */
 export const HGame = Object.freeze({
@@ -142,6 +180,18 @@ export const HGame = Object.freeze({
   createWorldPartition,
   createHLODProxyGroup3D,
   createFloatingOrigin,
+  VFX_SHAPE,
+  TELEGRAPH_SHAPE,
+  CROWD_STATUS,
+  VFX_PRESETS,
+  createVisualPrng,
+  packRgb24,
+  createHitstopClock,
+  createCameraShake,
+  extractGlyphIndices,
+  packCrowdAnimStatus,
+  unpackCrowdAnimStatus,
+  createVfxSystem,
   Component,
   Entity,
   Scene,

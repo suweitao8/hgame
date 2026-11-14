@@ -13,6 +13,7 @@ import {
   TileMap,
   findGridPath,
   createTagContainer,
+  createVfxSystem,
 } from '../assets/runtime/index.js';
 
 function bestOf(runs, fn) {
@@ -94,6 +95,22 @@ const cases = [
     sim.spawnWave({ count: 100000, minRadius: 3, maxRadius: 95, seed: 77 });
     sim.step(1 / 60, { heroX: 0, heroY: 0 });
     return bestOf(5, () => { sim.step(1 / 60, { heroX: 0, heroY: 0 }); });
+  } },
+  { name: 'VFX: burst 10,000 particles + 2,000 popups', budgetMs: 2.5, run() {
+    const vfx = createVfxSystem({ mode: 'headless', maxParticles: 65536, maxFloatingGlyphs: 16384 });
+    const burstCfg = { x: 0, y: 1, z: 0, count: 1000, speedMin: 2, speedMax: 8 };
+    const popCfg = { x: 0, y: 2, z: 0, value: 1280, isCrit: true };
+    return bestOf(5, () => {
+      for (let i = 0; i < 10; i++) vfx.burstParticles(burstCfg);
+      for (let i = 0; i < 2000; i++) vfx.popupNumber(popCfg);
+    });
+  } },
+  { name: 'VFX: 65,536 active particles idle update', budgetMs: 0.1, run() {
+    const vfx = createVfxSystem({ mode: 'headless', maxParticles: 65536 });
+    const burstCfg = { x: 0, y: 1, z: 0, count: 65536, speedMin: 2, speedMax: 8 };
+    vfx.burstParticles(burstCfg);
+    vfx.update(0.016);
+    return bestOf(10, () => { vfx.update(0.016); });
   } },
 ];
 

@@ -499,6 +499,7 @@ export class SpriteCrowd2D extends Component {
     this.tintG = new Float32Array(capacity).fill(1);
     this.tintB = new Float32Array(capacity).fill(1);
     this.hasTint = new Uint8Array(capacity);
+    this.statusCode = new Uint8Array(capacity);
 
     this._freeStack = new Int32Array(capacity);
     this._freeTop = capacity;
@@ -676,6 +677,30 @@ export class SpriteCrowd2D extends Component {
     if (this.flashRate[index] === 0) this._flashingCount++;
     this.flash[index] = 1;
     this.flashRate[index] = 1 / duration;
+    return true;
+  }
+
+  /**
+   * Sets a crowd status code (0=normal, 1..4=white flash, 5=frozen, 6=poison, 7=burn).
+   * @param {number} index
+   * @param {number} [code=0]
+   * @returns {boolean}
+   */
+  setStatus(index, code = 0) {
+    if (index < 0 || index >= this.capacity || !this.active[index]) return false;
+    const sc = Math.max(0, Math.min(15, code | 0));
+    this.statusCode[index] = sc;
+    if (sc >= 1 && sc <= 4) {
+      this.flash[index] = Math.min(0.92, sc * 0.23);
+    } else if (sc === 5) {
+      this.tintR[index] = 0.45; this.tintG[index] = 0.85; this.tintB[index] = 1.35; this.hasTint[index] = 1;
+    } else if (sc === 6) {
+      this.tintR[index] = 0.45; this.tintG[index] = 1.25; this.tintB[index] = 0.45; this.hasTint[index] = 1;
+    } else if (sc === 7) {
+      this.tintR[index] = 1.35; this.tintG[index] = 0.55; this.tintB[index] = 0.30; this.hasTint[index] = 1;
+    } else {
+      this.hasTint[index] = 0;
+    }
     return true;
   }
 

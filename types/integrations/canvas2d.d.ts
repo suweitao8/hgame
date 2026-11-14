@@ -383,6 +383,7 @@ export class SpriteCrowd2D extends Component {
     tintG: Float32Array;
     tintB: Float32Array;
     hasTint: Uint8Array;
+    statusCode: Uint8Array;
     _freeStack: Int32Array;
     _freeTop: number;
     _activeIndices: Int32Array;
@@ -447,6 +448,13 @@ export class SpriteCrowd2D extends Component {
      * @returns {boolean} false when the index is invalid or inactive.
      */
     hitFlash(index: number, duration?: number): boolean;
+    /**
+     * Sets a crowd status code (0=normal, 1..4=white flash, 5=frozen, 6=poison, 7=burn).
+     * @param {number} index
+     * @param {number} [code=0]
+     * @returns {boolean}
+     */
+    setStatus(index: number, code?: number): boolean;
     /**
      * Release an instance (swap-removes from the active list).
      * @param {number} index Instance index.

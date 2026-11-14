@@ -836,7 +836,9 @@ function patchBoneVatMaterial(material, {
       '}',
       'void hgameEvalBoneVat(vec4 packedInst, vec3 localPos, vec3 localNorm, out vec3 outPos, out vec3 outNorm) {',
       '  float rawW = packedInst.w;',
-      '  float framePos = max(0.0, abs(rawW) - 1.0);',
+      '  float absW = abs(rawW);',
+      '  float statusCode = floor(absW / 16384.0);',
+      '  float framePos = max(0.0, (absW - statusCode * 16384.0) - 1.0);',
       '  int f0 = min(int(floor(framePos)), max(0, uVatHeight - 1));',
       '  int f1 = min(f0 + 1, max(0, uVatHeight - 1));',
       '  float t = fract(framePos);',
@@ -885,7 +887,8 @@ function patchBoneVatMaterial(material, {
           '#include <begin_vertex>',
           '#if defined( STANDARD ) || defined( PHONG ) || defined( LAMBERT ) || defined( TOON )',
           'transformed = _hgameVatPos;',
-          'vCrowdFlash = _hgamePackedInst.w < 0.0 ? 1.0 : 0.0;',
+          'float _scMain = floor(abs(_hgamePackedInst.w) / 16384.0);',
+          'vCrowdFlash = (_hgamePackedInst.w < 0.0 && _scMain < 0.5) ? 4.0 : _scMain;',
           '#else',
           '{',
           '  vec4 _depthPackedInst = hgameReadCrowdPacked();',
@@ -893,7 +896,8 @@ function patchBoneVatMaterial(material, {
           '  vec3 _finalPos;',
           '  hgameEvalBoneVat(_depthPackedInst, position, vec3(0.0, 1.0, 0.0), _finalPos, _unusedN);',
           '  transformed = _finalPos;',
-          '  vCrowdFlash = _depthPackedInst.w < 0.0 ? 1.0 : 0.0;',
+          '  float _scDepth = floor(abs(_depthPackedInst.w) / 16384.0);',
+          '  vCrowdFlash = (_depthPackedInst.w < 0.0 && _scDepth < 0.5) ? 4.0 : _scDepth;',
           '}',
           '#endif',
         ].join('\n'),
@@ -904,7 +908,17 @@ function patchBoneVatMaterial(material, {
         '#include <color_fragment>',
         [
           '#include <color_fragment>',
-          'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), clamp(vCrowdFlash, 0.0, 1.0));',
+          'if (vCrowdFlash > 0.5) {',
+          '  if (vCrowdFlash < 4.5) {',
+          '    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), clamp(vCrowdFlash * 0.23, 0.0, 0.92));',
+          '  } else if (vCrowdFlash < 5.5) {',
+          '    diffuseColor.rgb *= vec3(0.45, 0.85, 1.35);',
+          '  } else if (vCrowdFlash < 6.5) {',
+          '    diffuseColor.rgb *= vec3(0.45, 1.25, 0.45);',
+          '  } else if (vCrowdFlash < 7.5) {',
+          '    diffuseColor.rgb *= vec3(1.35, 0.55, 0.30);',
+          '  }',
+          '}',
         ].join('\n'),
       );
     }
@@ -1654,7 +1668,8 @@ export function createBoneVatCrowd3D(THREE, {
             buf[off] = sPosX[id];
             buf[off + 1] = sPosZ[id];
             buf[off + 2] = sRot[id];
-            buf[off + 3] = sFlash[id] > 0 ? -(framePos + 1) : (framePos + 1);
+            const sc = swarm.statusCode ? swarm.statusCode[id] : 0;
+            buf[off + 3] = sc > 0 ? (sc * 16384.0 + (framePos + 1)) : (sFlash[id] > 0 ? -(framePos + 1) : (framePos + 1));
             dst++;
             id = cNext[id];
           }
@@ -1730,7 +1745,8 @@ export function createBoneVatCrowd3D(THREE, {
       const mappedName = clipNames?.[cid];
       const meta = (mappedName && clipByName.get(mappedName)) || clipList[cid % clipList.length] || clipList[0];
       const framePos = computeFramePos(meta, sTime[id]);
-      const packedW = sFlash[id] > 0 ? -(framePos + 1) : (framePos + 1);
+      const sc = swarm.statusCode ? swarm.statusCode[id] : 0;
+      const packedW = sc > 0 ? (sc * 16384.0 + (framePos + 1)) : (sFlash[id] > 0 ? -(framePos + 1) : (framePos + 1));
 
       const off = dstSlot * 4;
       const buf = packedBuffers[bucket];

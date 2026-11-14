@@ -650,6 +650,8 @@ export class FlatCombatECS {
     this.maxHp = new Int32Array(maxSlots);
     this.shield = new Int32Array(maxSlots);
     this.freezeTimer = new Float32Array(maxSlots);
+    this.flashTicks = new Uint8Array(maxSlots);
+    this.statusCode = new Uint8Array(maxSlots);
     this.clipId = new Uint16Array(maxSlots);
 
     this.swarmToSlot = new Int32Array(swarmCapacity).fill(-1);
@@ -754,6 +756,7 @@ export class FlatCombatECS {
         remainDmg -= absorbed;
       }
       this.hp[slot] -= remainDmg;
+      this.flashTicks[slot] = 6;
 
       const px = this._hitPushX[i];
       const py = this._hitPushY[i];
@@ -1351,6 +1354,7 @@ export function createSwarmSimulation({
   const animClip = new Uint16Array(capacity);
   const animTime = new Float32Array(capacity);
   const flash = new Float32Array(capacity);
+  const statusCode = new Uint8Array(capacity);
   const sepX = new Float32Array(capacity);
   const sepY = new Float32Array(capacity);
 
@@ -1811,6 +1815,7 @@ export function createSwarmSimulation({
       crowd2d.scaleX[cid] = sc;
       crowd2d.scaleY[cid] = sc;
       crowd2d.flash[cid] = flash[id];
+      if (crowd2d.statusCode) crowd2d.statusCode[cid] = statusCode[id];
       if (syncRotation) crowd2d.rotation[cid] = rot[id];
       if (flipByDirection) crowd2d.flipX[cid] = Math.sin(rot[id]) < 0 ? 1 : 0;
       if (fCount > 1) {
@@ -1836,6 +1841,7 @@ export function createSwarmSimulation({
     animClip,
     animTime,
     flash,
+    statusCode,
     sepX,
     sepY,
     cellDensity,
