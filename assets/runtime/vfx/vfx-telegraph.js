@@ -154,7 +154,11 @@ void main() {
     fillMask = step(d, 0.0) * (0.16 + 0.24 * chevron * vProgress);
   }
 
+#if defined(GL_OES_standard_derivatives) || __VERSION__ >= 300
   float aa = max(0.002, fwidth(d));
+#else
+  float aa = 0.006;
+#endif
   float inside = 1.0 - smoothstep(-aa, aa, d);
   if (inside <= 0.005) discard;
 
@@ -220,6 +224,7 @@ export function createTelegraphSystem({
       depthTest: true,
       depthWrite: false,
       side: THREE.DoubleSide,
+      extensions: { derivatives: true },
     });
 
     mesh = new THREE.Mesh(geo, mat);
