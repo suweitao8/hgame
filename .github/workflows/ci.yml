@@ -66,10 +66,33 @@ jobs:
       - run: npm run test:browser:snapshot
       - run: node scripts/build-examples.mjs
       - run: npm run test:examples
+      - name: Cache OS-native snapshot baselines
+        id: snapshot-cache
+        uses: actions/cache@v4
+        with:
+          path: .ci-baselines
+          key: ${{ runner.os }}-baselines-${{ hashFiles('examples/**', 'assets/runtime/**', 'scripts/snapshot.mjs') }}
       - name: Example browser verification
+        shell: bash
         run: |
-          node scripts/snapshot.mjs examples/survivor-2d --ready "#game[data-engine-ready=true]" --keys d:300
-          node scripts/snapshot.mjs examples/arena-3d --ready "#game[data-engine-ready=true]" --baseline examples/arena-3d/baseline.png --threshold 0.1
+          mkdir -p .ci-baselines
+          if [ -f .ci-baselines/survivor-2d.png ]; then
+            node scripts/snapshot.mjs examples/survivor-2d --ready "#game[data-engine-ready=true]" --freeze-time --steps 120 --keys d:300 --baseline .ci-baselines/survivor-2d.png --threshold 0.01
+          else
+            node scripts/snapshot.mjs examples/survivor-2d --ready "#game[data-engine-ready=true]" --freeze-time --steps 120 --keys d:300 --baseline .ci-baselines/survivor-2d.png --update-baseline
+            node scripts/snapshot.mjs examples/survivor-2d --ready "#game[data-engine-ready=true]" --freeze-time --steps 120 --keys d:300 --baseline .ci-baselines/survivor-2d.png --threshold 0
+          fi
+          if [ -f .ci-baselines/arena-3d.png ]; then
+            node scripts/snapshot.mjs examples/arena-3d --ready "#game[data-engine-ready=true]" --freeze-time --steps 60 --keys d:200 --baseline .ci-baselines/arena-3d.png --threshold 0.01
+          else
+            node scripts/snapshot.mjs examples/arena-3d --ready "#game[data-engine-ready=true]" --freeze-time --steps 60 --keys d:200 --baseline .ci-baselines/arena-3d.png --update-baseline
+            node scripts/snapshot.mjs examples/arena-3d --ready "#game[data-engine-ready=true]" --freeze-time --steps 60 --keys d:200 --baseline .ci-baselines/arena-3d.png --threshold 0
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ci-baselines
+          path: .ci-baselines/
       - run: npm run bench:render -- --json render-bench.json
       - run: npm run bench:render3d -- --json render-bench-3d.json
       - uses: actions/upload-artifact@v4

@@ -20,6 +20,8 @@ const camRig = createCameraRig3D({ THREE, camera: renderer.camera, mode: 'thirdP
 const props = createInstancedBatch3D(THREE, { geometry: boxGeo, material: rockMat, capacity: 2048 });
 ```
 
-## 易错点:SpringArm3D 与物理射线
-- `createSpringArm3D({ collisionTest })` 的 `collisionTest(pivot, desired, backVec, length, radius)` 必须返回 `{ distance }`。
-- 物理世界的 `castRay` 返回 `timeOfImpact` 且 `maxDistance` 为负会抛错;需自行适配:调用 `castRay(pivot, backVec, length)`,把 `timeOfImpact` 作为 `distance`(未命中返回 `{ distance: length }`)。
+## 易错点:SpringArm3D 与物理射线 / AABB 碰撞 / 阴影视锥拟合
+- `createSpringArm3D({ collisionTest })` 的 `collisionTest(pivot, desired, backVec, length, radius)` 可返回 `{ hit, distance }`、`{ distance }`、`{ toi }` 或数值。
+- 若接 Rapier 物理世界，可用内置零 GC 适配器 `createSpringArmRayProbe((o, d, max) => world.castRay(o, d, max))`（自动跳过非正 `maxDistance`）。
+- 若关卡只有静态方块障碍数组，无需物理世界即可直接用 `createBoxCollisionTest(boxes, { inflateByProbe })`（支持 `{ minX..maxZ }`、`{ x, y, z, hx, hy, hz }` 与落地柱 `{ x, z, hx, hz, h, y? }`）。
+- 方向光阴影边界拟合请直接调用 `renderer.fitShadowToPreset(sunLight, targetPos, options)`，自动按当前画质预设的 `shadowDistance` 与贴图分辨率进行 texel-snapped 拟合。

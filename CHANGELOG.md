@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Camera, Three shadow helper & CI verification (ENGINE-GAPS 5/6/7):
+  - `integrations/camera3d.js`: add zero-GC `createBoxCollisionTest(boxes, { inflateByProbe })` supporting `{ minX..maxZ }`, `{ x, y, z, hx, hy, hz }`, and floor-standing `{ x, z, hx, hz, h, y? }` AABB obstacles for `createSpringArm3D` / `createCameraRig3D`.
+  - `integrations/shadow3d.js` + `integrations/three.js`: extract `fitDirectionalShadowFrustum` into `shadow3d.js` (re-exported cleanly by `sky3d.js` without pulling sky shaders into minimal 3D builds) and expose `renderer.fitShadowToPreset(sun, target, options)` on the Three.js adapter using the active quality tier's `shadowDistance`.
+  - `.github/workflows/ci.yml`: generate, zero-threshold verify, and cache OS-native snapshot baselines in `.ci-baselines/` via `actions/cache@v4` for `survivor-2d` and `arena-3d` with `--freeze-time`.
+  - `ui/red-dot.js` & `platform/audio.js`: finish splitting graph/persistence (`ui/red-dot/graph.js`, `ui/red-dot/persistence.js`) and bus/voice playback (`platform/audio/buses.js`, `platform/audio/voice.js`) into focused sub-modules with identical public exports and behavior.
+
 - Generator & packager (ENGINE-GAPS 1/2):
   - `create-game --bare` (2d/3d): emits only configs, a minimal empty-scene `src/main.js` and the vendored runtime — no demo `level.json`, `materials.json`, `model-slots.json`. Bare entries live in `assets/profiles/{2d,3d}-bare/`.
   - `package-game`: Rapier WASM is bundled only when `src/` uses `scene.physics`/Rapier modules (static scan) or `game.config.json` sets `physics.bundleWasm: true`. Declared-but-unused physics omits the WASM and strips the physics feature from the release `engine.config.json`; uncertain scans keep the safe default (bundle) with a note. Result adds `wasmSkipped` and `notes`.

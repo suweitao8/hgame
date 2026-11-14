@@ -195,6 +195,35 @@ export function createSpringArmRayProbe(castRay: SpringArmCastRay): SpringArmCol
  */
 export function cameraRelativeMove(inputX: number, inputY: number, yaw: number, out?: CameraVec3): CameraVec3;
 /**
+ * @typedef {object} BoxObstacleLike Axis-aligned box obstacle.
+ * Supports `{ minX, minY, minZ, maxX, maxY, maxZ }`, `{ x, y, z, hx, hy, hz }`,
+ * or floor-standing `{ x, z, hx, hz, h, y? }` (default `y = 0`, spanning `[y, y + h]`).
+ * @property {number} [x]
+ * @property {number} [y]
+ * @property {number} [z]
+ * @property {number} [hx] Half-extent X.
+ * @property {number} [hy] Half-extent Y.
+ * @property {number} [hz] Half-extent Z.
+ * @property {number} [h] Full height for floor-standing boxes.
+ * @property {number} [minX]
+ * @property {number} [minY]
+ * @property {number} [minZ]
+ * @property {number} [maxX]
+ * @property {number} [maxY]
+ * @property {number} [maxZ]
+ * @typedef {object} BoxCollisionTestOptions
+ * @property {boolean} [inflateByProbe=false] Expand each box by `probeRadius` on X/Y/Z before intersecting. Default `false`.
+ */
+/**
+ * Create a zero-GC `collisionTest` callback for `createSpringArm3D` / `createCameraRig3D`
+ * that tests rays against an array of axis-aligned boxes.
+ * Reuses one result object per call (`hit: false` on miss, `{ hit: true, distance }` on hit).
+ * @param {readonly BoxObstacleLike[]} boxes
+ * @param {BoxCollisionTestOptions} [options]
+ * @returns {SpringArmCollisionTest}
+ */
+export function createBoxCollisionTest(boxes: readonly BoxObstacleLike[], { inflateByProbe }?: BoxCollisionTestOptions): SpringArmCollisionTest;
+/**
  * Plain or Three.js-like vector.
  */
 export type CameraVec3 = {
@@ -663,6 +692,44 @@ export type SpringArmProbeResult = {
      * Distance from the pivot to the obstruction (`maxDistance` on a miss).
      */
     distance: number;
+};
+/**
+ * Axis-aligned box obstacle.
+ * Supports `{ minX, minY, minZ, maxX, maxY, maxZ }`, `{ x, y, z, hx, hy, hz }`,
+ * or floor-standing `{ x, z, hx, hz, h, y? }` (default `y = 0`, spanning `[y, y + h]`).
+ */
+export type BoxObstacleLike = {
+    x?: number;
+    y?: number;
+    z?: number;
+    /**
+     * Half-extent X.
+     */
+    hx?: number;
+    /**
+     * Half-extent Y.
+     */
+    hy?: number;
+    /**
+     * Half-extent Z.
+     */
+    hz?: number;
+    /**
+     * Full height for floor-standing boxes.
+     */
+    h?: number;
+    minX?: number;
+    minY?: number;
+    minZ?: number;
+    maxX?: number;
+    maxY?: number;
+    maxZ?: number;
+};
+export type BoxCollisionTestOptions = {
+    /**
+     * Expand each box by `probeRadius` on X/Y/Z before intersecting. Default `false`.
+     */
+    inflateByProbe?: boolean;
 };
 import { damp } from '../time/tween.js';
 import { dampAngle } from '../time/tween.js';

@@ -400,3 +400,64 @@ test('Three adapter picking, context loss guard and shared material ownership', 
   adapter.dispose();
   assert.equal(listeners.size, 0);
 });
+
+test('Three adapter fitShadowToPreset fits directional shadow camera from quality preset shadowDistance', () => {
+  const { renderer } = createMockWebGL2Renderer({ rendererName: 'NVIDIA RTX 4070', maxSamples: 4 });
+  class MockWebGLRenderer {
+    constructor({ canvas }) {
+      this.domElement = canvas;
+      this.capabilities = renderer.capabilities;
+      this.shadowMap = renderer.shadowMap;
+      this.autoClear = true;
+      this.toneMapping = 0;
+    }
+    getContext() { return renderer.getContext(); }
+    setPixelRatio(r) { renderer.setPixelRatio(r); }
+    setSize(w, h) { renderer.setSize(w, h); }
+    setRenderTarget(rt) { renderer.setRenderTarget(rt); }
+    clear(c, d, s) { renderer.clear(c, d, s); }
+    clearDepth() { renderer.clearDepth(); }
+    render(s, c) { renderer.render(s, c); }
+    dispose() { renderer.dispose(); }
+  }
+  const MockTHREE = { ...THREE, WebGLRenderer: MockWebGLRenderer };
+  const canvas = {
+    clientWidth: 800,
+    clientHeight: 600,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    addEventListener() {},
+    removeEventListener() {},
+  };
+
+  const adapter = createThreeAdapter({
+    THREE: MockTHREE,
+    canvas,
+    width: 800,
+    height: 600,
+    pixelRatio: 1,
+    quality3d: { mode: 'low' },
+  });
+
+  // Null sun without activeSunLight returns null cleanly
+  assert.equal(adapter.fitShadowToPreset(null, { x: 0, y: 0, z: 0 }), null);
+
+  const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+  sun.position.set(12, 24, 16);
+  sun.shadow.mapSize.set(1024, 1024);
+  adapter.setSunLight(sun);
+
+  const lowDist = QUALITY3D_PRESETS.low.shadowDistance;
+  const frustumLow = adapter.fitShadowToPreset(undefined, { x: 10, y: 0, z: -5 });
+  assert.ok(frustumLow);
+  const lowSpan = frustumLow.right - frustumLow.left;
+  assert.ok(lowSpan >= lowDist && lowSpan < QUALITY3D_PRESETS.high.shadowDistance * 2);
+
+  adapter.setQuality('high');
+  const frustumHigh = adapter.fitShadowToPreset(sun, [10, 0, -5], { snapToTexels: true });
+  const highSpan = frustumHigh.right - frustumHigh.left;
+  assert.ok(highSpan > lowSpan, `Expected high tier span (${highSpan}) > low tier span (${lowSpan})`);
+  assert.equal(sun.shadow.camera.left, frustumHigh.left);
+  assert.equal(sun.shadow.camera.right, frustumHigh.right);
+
+  adapter.dispose();
+});

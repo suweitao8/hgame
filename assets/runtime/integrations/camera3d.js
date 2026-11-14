@@ -905,3 +905,99 @@ export function cameraRelativeMove(inputX, inputY, yaw, out = { x: 0, y: 0, z: 0
   out.z = -x * s - y * c;
   return out;
 }
+
+/**
+ * @typedef {object} BoxObstacleLike Axis-aligned box obstacle.
+ * Supports `{ minX, minY, minZ, maxX, maxY, maxZ }`, `{ x, y, z, hx, hy, hz }`,
+ * or floor-standing `{ x, z, hx, hz, h, y? }` (default `y = 0`, spanning `[y, y + h]`).
+ * @property {number} [x]
+ * @property {number} [y]
+ * @property {number} [z]
+ * @property {number} [hx] Half-extent X.
+ * @property {number} [hy] Half-extent Y.
+ * @property {number} [hz] Half-extent Z.
+ * @property {number} [h] Full height for floor-standing boxes.
+ * @property {number} [minX]
+ * @property {number} [minY]
+ * @property {number} [minZ]
+ * @property {number} [maxX]
+ * @property {number} [maxY]
+ * @property {number} [maxZ]
+ * @typedef {object} BoxCollisionTestOptions
+ * @property {boolean} [inflateByProbe=false] Expand each box by `probeRadius` on X/Y/Z before intersecting. Default `false`.
+ */
+
+/**
+ * Create a zero-GC `collisionTest` callback for `createSpringArm3D` / `createCameraRig3D`
+ * that tests rays against an array of axis-aligned boxes.
+ * Reuses one result object per call (`hit: false` on miss, `{ hit: true, distance }` on hit).
+ * @param {readonly BoxObstacleLike[]} boxes
+ * @param {BoxCollisionTestOptions} [options]
+ * @returns {SpringArmCollisionTest}
+ */
+export function createBoxCollisionTest(boxes, { inflateByProbe = false } = {}) {
+  if (!Array.isArray(boxes)) throw new TypeError('createBoxCollisionTest: boxes must be an array');
+  /** @type {SpringArmProbeResult} */
+  const result = { hit: false, distance: 0 };
+  return (pivot, _desired, backVec, length, radius = 0) => {
+    result.hit = false;
+    result.distance = length;
+    if (!(length > 0) || !Number.isFinite(length) || boxes.length === 0) return result;
+    const pad = inflateByProbe && Number.isFinite(radius) && radius > 0 ? radius : 0;
+    const ox = pivot.x, oy = pivot.y, oz = pivot.z;
+    const dx = backVec.x, dy = backVec.y, dz = backVec.z;
+    let best = Infinity;
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      if (!b) continue;
+      const minX = (b.minX !== undefined ? b.minX : (b.x ?? 0) - (b.hx ?? 0)) - pad;
+      const maxX = (b.maxX !== undefined ? b.maxX : (b.x ?? 0) + (b.hx ?? 0)) + pad;
+      const minZ = (b.minZ !== undefined ? b.minZ : (b.z ?? 0) - (b.hz ?? 0)) - pad;
+      const maxZ = (b.maxZ !== undefined ? b.maxZ : (b.z ?? 0) + (b.hz ?? 0)) + pad;
+      let minY, maxY;
+      if (b.minY !== undefined && b.maxY !== undefined) {
+        minY = b.minY - pad;
+        maxY = b.maxY + pad;
+      } else if (b.hy !== undefined) {
+        const cy = b.y ?? 0;
+        minY = cy - b.hy - pad;
+        maxY = cy + b.hy + pad;
+      } else {
+        const by = b.y ?? 0;
+        minY = by - pad;
+        maxY = by + (b.h ?? 0) + pad;
+      }
+      let t0 = 0, t1 = length;
+      if (Math.abs(dx) < 1e-9) { if (ox < minX || ox > maxX) continue; }
+      else {
+        let a = (minX - ox) / dx, c = (maxX - ox) / dx;
+        if (a > c) { const s = a; a = c; c = s; }
+        if (a > t0) t0 = a;
+        if (c < t1) t1 = c;
+        if (t0 > t1) continue;
+      }
+      if (Math.abs(dy) < 1e-9) { if (oy < minY || oy > maxY) continue; }
+      else {
+        let a = (minY - oy) / dy, c = (maxY - oy) / dy;
+        if (a > c) { const s = a; a = c; c = s; }
+        if (a > t0) t0 = a;
+        if (c < t1) t1 = c;
+        if (t0 > t1) continue;
+      }
+      if (Math.abs(dz) < 1e-9) { if (oz < minZ || oz > maxZ) continue; }
+      else {
+        let a = (minZ - oz) / dz, c = (maxZ - oz) / dz;
+        if (a > c) { const s = a; a = c; c = s; }
+        if (a > t0) t0 = a;
+        if (c < t1) t1 = c;
+        if (t0 > t1) continue;
+      }
+      if (t0 < best) best = t0;
+    }
+    if (best <= length) {
+      result.hit = true;
+      result.distance = best;
+    }
+    return result;
+  };
+}

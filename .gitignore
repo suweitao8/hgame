@@ -7,6 +7,7 @@ build/
 **/build/
 coverage/
 .cache/
+.ci-baselines/
 *.log
 
 # Local environment and editor files

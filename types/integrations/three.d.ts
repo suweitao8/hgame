@@ -133,6 +133,7 @@
  * @property {(scene: object, object: object) => void} removeView
  * @property {(cam: ThreeCamera | null) => void} setViewCamera
  * @property {(light: object | null) => void} setSunLight
+ * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
  * @property {(nextExposure: number) => void} setExposure
  * @property {ThreePostVolumesLike | null} postVolumes
@@ -492,6 +493,10 @@ export type ThreeAdapter = {
     removeView: (scene: object, object: object) => void;
     setViewCamera: (cam: ThreeCamera | null) => void;
     setSunLight: (light: object | null) => void;
+    fitShadowToPreset: (sun?: import("./sky3d.js").DirectionalLightLike | null, target?: import("./sky3d.js").SkyVec3Input, options?: import("./sky3d.js").ShadowFitOptions & {
+        shadowDistance?: number;
+        radius?: number;
+    }) => import("./sky3d.js").ShadowFrustum | null;
     setSky: (nextSky: ThreeSkyLike | null | undefined) => void;
     setExposure: (nextExposure: number) => void;
     postVolumes: ThreePostVolumesLike | null;

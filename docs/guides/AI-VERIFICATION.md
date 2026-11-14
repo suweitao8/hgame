@@ -16,7 +16,7 @@ How an agent proves a change works without a human looking at the screen.
 | Runtime health | `createDiagnostics().snapshot()` | `fps`, `frameTimeP95Ms`, `frameTimeMaxMs`, `longFrames`, `errorCount`, `lastError` |
 
 ## Rules of thumb
-- Snapshots are deterministic for identical inputs on the same machine (SwiftShader software GL); treat baselines as per-environment, not cross-OS.
+- Snapshots are deterministic for identical inputs on the same machine (SwiftShader software GL); treat baselines as per-environment, not cross-OS. In CI (`.github/workflows/ci.yml`), OS-native baselines are generated on cache miss, immediately verified for `--threshold 0` determinism, cached via `actions/cache@v4` under `${{ runner.os }}-baselines-...`, and checked against `--threshold 0.01` on subsequent runs.
 - A blank canvas (`nonBlankRatio < 0.001`) or any `consoleErrors` always fails the snapshot.
 - When the diff is non-zero, read `baseline.bbox` to locate what changed, then look at the PNG.
 - Config and constructor errors name the valid values and suggest the closest match; fix from the message instead of searching docs.

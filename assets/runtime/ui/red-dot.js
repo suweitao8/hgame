@@ -1,19 +1,23 @@
 import {
   RED_DOT_STYLES,
-  STYLE_PRIORITY,
   VALID_LEAF_STYLES,
   VALID_DISPLAY_MODES,
-  EMPTY_SET,
   assertValidStyle,
   readPersistedData,
   writePersistedData,
   parseRuleResult,
-  statesEqual,
   normalizeRedDotPath,
   splitRedDotAncestors,
   computeCommercialDayKey,
   formatRedDotBadge,
 } from './red-dot/helpers.js';
+import { buildEmptyState, createRedDotGraph } from './red-dot/graph.js';
+import {
+  exportRedDotState,
+  importRedDotState,
+  syncRedDotTime,
+  ackSingleRedDotNode,
+} from './red-dot/persistence.js';
 
 export {
   RED_DOT_STYLES,
@@ -164,310 +168,43 @@ export function createRedDotSystem({
     throw new RangeError('maxCount must be a positive integer');
   }
 
-  const nodes = new Map();
-  const dirtySet = new Set();
-  const ruleNodes = new Set();
-  const unreadNodes = new Set();
-  const dailyNodes = new Set();
-  const readyNodes = new Set();
-  const mutedNodes = new Set();
-  const dailyAckMap = new Map();
+  const initialClock = clock();
+  const ctx = {
+    nodes: new Map(),
+    dirtySet: new Set(),
+    ruleNodes: new Set(),
+    unreadNodes: new Set(),
+    dailyNodes: new Set(),
+    readyNodes: new Set(),
+    mutedNodes: new Set(),
+    dailyAckMap: new Map(),
+    clock,
+    resetHour,
+    tzOffsetMinutes,
+    maxCount,
+    newLabel,
+    dagLinkCount: 0,
+    persistDirty: false,
+    lastContext: undefined,
+    cachedClockMs: initialClock,
+    cachedDayKey: computeCommercialDayKey(initialClock, { resetHour, tzOffsetMinutes }),
+  };
 
   const pathListeners = new Map();
   const anyListeners = new Set();
-
-  let dagLinkCount = 0;
   let batchDepth = 0;
   let flushing = false;
   let disposed = false;
-  let persistDirty = false;
-  let lastContext = undefined;
-  let cachedClockMs = clock();
-  let cachedDayKey = computeCommercialDayKey(cachedClockMs, { resetHour, tzOffsetMinutes });
 
-  function buildEmptyState(path, unlocked = true, muted = false) {
-    return Object.freeze({
-      path,
-      active: false,
-      count: 0,
-      numberCount: 0,
-      style: 'none',
-      text: '',
-      unlocked,
-      muted,
-    });
-  }
-
-  function createNode(path, segment, depth, treeParent) {
-    const effectiveUnlocked = treeParent ? treeParent.effectiveUnlocked : true;
-    const initialState = buildEmptyState(path, effectiveUnlocked, false);
-    const node = {
-      path,
-      segment,
-      depth,
-      treeParent,
-      treeChildren: new Map(),
-      dagParents: new Set(),
-      dagChildren: new Set(),
-      unlocked: true,
-      effectiveUnlocked,
-      muted: false,
-      displayMode: 'auto',
-      maxCount: null,
-      newLabel: null,
-      valueSource: null,
-      ruleSource: null,
-      unreadStyle: null,
-      dailySource: null,
-      readySource: null,
-      ownCount: 0,
-      ownNumberCount: 0,
-      ownStyle: 'none',
-      contributors: null,
-      state: initialState,
-      lastEmittedState: initialState,
-      dirty: false,
-    };
-    nodes.set(path, node);
-    return node;
-  }
-
-  function ensureNode(rawPath) {
-    const normalized = normalizeRedDotPath(rawPath);
-    const existing = nodes.get(normalized);
-    if (existing) return existing;
-
-    const segments = normalized.split('/');
-    let parent = null;
-    let prefix = '';
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
-      prefix = i === 0 ? seg : `${prefix}/${seg}`;
-      let node = nodes.get(prefix);
-      if (!node) {
-        node = createNode(prefix, seg, i, parent);
-        if (parent) {
-          parent.treeChildren.set(seg, node);
-        }
-      }
-      parent = node;
-    }
-    return parent;
-  }
-
-  function markDirtyUp(startNode) {
-    if (!startNode || startNode.dirty) return;
-    const stack = [startNode];
-    while (stack.length > 0) {
-      const curr = stack.pop();
-      if (!curr || curr.dirty) continue;
-      curr.dirty = true;
-      dirtySet.add(curr);
-      if (curr.treeParent && !curr.treeParent.dirty) {
-        stack.push(curr.treeParent);
-      }
-      for (const dp of curr.dagParents) {
-        if (!dp.dirty) stack.push(dp);
-      }
-    }
-  }
-
-  function markAllDirty() {
-    for (const node of nodes.values()) {
-      node.dirty = true;
-      dirtySet.add(node);
-    }
-  }
-
-  function isReachable(fromNode, targetNode) {
-    if (fromNode === targetNode) return true;
-    const visited = new Set([fromNode]);
-    const stack = [fromNode];
-    while (stack.length > 0) {
-      const curr = stack.pop();
-      for (const child of curr.treeChildren.values()) {
-        if (child === targetNode) return true;
-        if (!visited.has(child)) {
-          visited.add(child);
-          stack.push(child);
-        }
-      }
-      for (const child of curr.dagChildren) {
-        if (child === targetNode) return true;
-        if (!visited.has(child)) {
-          visited.add(child);
-          stack.push(child);
-        }
-      }
-    }
-    return false;
-  }
-
-  function computeOwnContribution(node) {
-    let count = 0;
-    let numberCount = 0;
-    let bestStyle = 'none';
-    let bestPriority = 0;
-
-    const addSource = (srcCount, srcStyle) => {
-      if (srcCount <= 0) return;
-      count += srcCount;
-      if (srcStyle === 'number') numberCount += srcCount;
-      const p = STYLE_PRIORITY[srcStyle] ?? 0;
-      if (p > bestPriority) {
-        bestPriority = p;
-        bestStyle = srcStyle;
-      }
-    };
-
-    if (node.valueSource && node.valueSource.count > 0) {
-      addSource(node.valueSource.count, node.valueSource.style);
-    }
-    if (node.ruleSource && node.ruleSource.count > 0) {
-      addSource(node.ruleSource.count, node.ruleSource.activeStyle);
-    }
-    if (node.unreadStyle) {
-      addSource(1, node.unreadStyle);
-    }
-    if (
-      node.dailySource &&
-      node.dailySource.enabled &&
-      (!node.dailySource.condition || Boolean(node.dailySource.condition(lastContext))) &&
-      dailyAckMap.get(node.path) !== cachedDayKey
-    ) {
-      addSource(1, node.dailySource.style);
-    }
-    if (
-      node.readySource &&
-      node.readySource.readyAtMs !== null &&
-      cachedClockMs >= node.readySource.readyAtMs
-    ) {
-      addSource(1, node.readySource.style);
-    }
-
-    node.ownCount = count;
-    node.ownNumberCount = numberCount;
-    node.ownStyle = bestStyle;
-  }
-
-  function recomputeNode(node, changedNodes) {
-    computeOwnContribution(node);
-
-    if (!node.effectiveUnlocked || node.muted) {
-      node.contributors = null;
-      const next = buildEmptyState(node.path, node.effectiveUnlocked, node.muted);
-      node.state = next;
-      if (!statesEqual(next, node.lastEmittedState)) {
-        node.lastEmittedState = next;
-        changedNodes.push(node);
-      }
-      return;
-    }
-
-    let count = 0;
-    let numberCount = 0;
-    let resolvedBestStyle = node.ownStyle;
-    let resolvedBestPriority = STYLE_PRIORITY[resolvedBestStyle] ?? 0;
-
-    const considerChildStyle = (childStyle) => {
-      const p = STYLE_PRIORITY[childStyle] ?? 0;
-      if (p > resolvedBestPriority) {
-        resolvedBestPriority = p;
-        resolvedBestStyle = childStyle;
-      }
-    };
-
-    if (dagLinkCount === 0) {
-      node.contributors = null;
-      count = node.ownCount;
-      numberCount = node.ownNumberCount;
-      for (const child of node.treeChildren.values()) {
-        if (!child.state.active) continue;
-        count += child.state.count;
-        numberCount += child.state.numberCount;
-        considerChildStyle(child.state.style);
-      }
-    } else {
-      const contrib = new Set();
-      if (node.ownCount > 0) {
-        contrib.add(node);
-      }
-      for (const child of node.treeChildren.values()) {
-        if (!child.effectiveUnlocked || child.muted) continue;
-        if (child.contributors) {
-          for (const leaf of child.contributors) contrib.add(leaf);
-        }
-        if (child.state.active) {
-          considerChildStyle(child.state.style);
-        }
-      }
-      for (const child of node.dagChildren) {
-        if (!child.effectiveUnlocked || child.muted) continue;
-        if (child.contributors) {
-          for (const leaf of child.contributors) contrib.add(leaf);
-        }
-        if (child.state.active) {
-          considerChildStyle(child.state.style);
-        }
-      }
-      node.contributors = contrib.size > 0 ? contrib : null;
-      for (const leaf of contrib) {
-        count += leaf.ownCount;
-        numberCount += leaf.ownNumberCount;
-      }
-    }
-
-    const active = count > 0;
-    let finalStyle = 'none';
-    if (active) {
-      finalStyle = node.displayMode === 'auto' ? resolvedBestStyle : node.displayMode;
-    }
-
-    let text = '';
-    if (active && finalStyle !== 'none') {
-      let badgeValue = count;
-      if (node.displayMode === 'auto' && finalStyle === 'number') {
-        badgeValue = numberCount > 0 ? numberCount : count;
-      }
-      text = formatRedDotBadge(badgeValue, {
-        style: finalStyle,
-        maxCount: node.maxCount ?? maxCount,
-        newLabel: node.newLabel ?? newLabel,
-      });
-    }
-
-    const next = Object.freeze({
-      path: node.path,
-      active,
-      count,
-      numberCount,
-      style: finalStyle,
-      text,
-      unlocked: node.effectiveUnlocked,
-      muted: node.muted,
-    });
-    node.state = next;
-    if (!statesEqual(next, node.lastEmittedState)) {
-      node.lastEmittedState = next;
-      changedNodes.push(node);
-    }
-  }
-
-  function ensureClean(node, changedNodes, visiting = new Set()) {
-    if (!node.dirty) return;
-    if (visiting.has(node)) return;
-    visiting.add(node);
-    for (const child of node.treeChildren.values()) {
-      if (child.dirty) ensureClean(child, changedNodes, visiting);
-    }
-    for (const child of node.dagChildren) {
-      if (child.dirty) ensureClean(child, changedNodes, visiting);
-    }
-    visiting.delete(node);
-    recomputeNode(node, changedNodes);
-    node.dirty = false;
-    dirtySet.delete(node);
-  }
+  const {
+    ensureNode,
+    markDirtyUp,
+    markAllDirty,
+    isReachable,
+    ensureClean,
+    updateSubtreeUnlock,
+    explainPath,
+  } = createRedDotGraph(ctx);
 
   function emitNodeChange(node) {
     const state = node.state;
@@ -484,77 +221,28 @@ export function createRedDotSystem({
     }
   }
 
-  function exportState() {
-    const unread = Object.create(null);
-    for (const node of unreadNodes) {
-      if (node.unreadStyle) unread[node.path] = node.unreadStyle;
-    }
-    const dailyAck = Object.create(null);
-    for (const [p, dayKey] of dailyAckMap) {
-      dailyAck[p] = dayKey;
-    }
-    const muted = [];
-    for (const node of mutedNodes) {
-      if (node.muted) muted.push(node.path);
-    }
-    return { version: 1, unread, dailyAck, muted };
-  }
-
-  function syncTimeInternal(markAffected = true) {
-    const nowMs = clock();
-    const nextDayKey = computeCommercialDayKey(nowMs, { resetHour, tzOffsetMinutes });
-    let changed = false;
-
-    if (nextDayKey !== cachedDayKey) {
-      cachedDayKey = nextDayKey;
-      if (markAffected) {
-        for (const node of dailyNodes) {
-          markDirtyUp(node);
-        }
-        changed = dailyNodes.size > 0;
-      }
-    }
-
-    const prevClockMs = cachedClockMs;
-    cachedClockMs = nowMs;
-    if (markAffected) {
-      for (const node of readyNodes) {
-        if (!node.readySource || node.readySource.readyAtMs === null) continue;
-        const wasReady = prevClockMs >= node.readySource.readyAtMs;
-        const isReady = nowMs >= node.readySource.readyAtMs;
-        if (wasReady !== isReady) {
-          markDirtyUp(node);
-          changed = true;
-        }
-      }
-    }
-    return changed;
-  }
-
   function flush() {
     if (disposed || batchDepth > 0 || flushing) return false;
     flushing = true;
     try {
       let emittedAny = false;
       let passes = 0;
-      while (dirtySet.size > 0 && passes < 16) {
+      while (ctx.dirtySet.size > 0 && passes < 16) {
         passes++;
         const changedNodes = [];
-        for (const node of [...dirtySet]) {
-          ensureClean(node, changedNodes);
-        }
-        if (persistDirty) {
-          writePersistedData(storage, storageKey, exportState());
-          persistDirty = false;
+        for (const node of [...ctx.dirtySet]) ensureClean(node, changedNodes);
+        if (ctx.persistDirty) {
+          writePersistedData(storage, storageKey, exportRedDotState(ctx));
+          ctx.persistDirty = false;
         }
         for (const node of changedNodes) {
           emittedAny = true;
           emitNodeChange(node);
         }
       }
-      if (persistDirty) {
-        writePersistedData(storage, storageKey, exportState());
-        persistDirty = false;
+      if (ctx.persistDirty) {
+        writePersistedData(storage, storageKey, exportRedDotState(ctx));
+        ctx.persistDirty = false;
       }
       return emittedAny;
     } finally {
@@ -570,118 +258,51 @@ export function createRedDotSystem({
       return fn(api);
     } finally {
       batchDepth--;
-      if (batchDepth === 0) {
-        flush();
-      }
+      if (batchDepth === 0) flush();
     }
   }
 
-  function importState(data) {
-    if (!data || typeof data !== 'object') return;
-    batch(() => {
-      for (const node of [...unreadNodes]) {
-        node.unreadStyle = null;
-        markDirtyUp(node);
-      }
-      unreadNodes.clear();
+  const exportState = () => exportRedDotState(ctx);
+  const importState = (data) => importRedDotState(ctx, data, { batch, ensureNode, markDirtyUp });
+  const syncTime = (markAffected = true) => syncRedDotTime(ctx, markAffected, markDirtyUp);
 
-      for (const node of [...mutedNodes]) {
-        node.muted = false;
-        markDirtyUp(node);
-      }
-      mutedNodes.clear();
-
-      dailyAckMap.clear();
-      for (const node of dailyNodes) {
-        markDirtyUp(node);
-      }
-
-      if (data.unread && typeof data.unread === 'object') {
-        for (const [rawPath, style] of Object.entries(data.unread)) {
-          if (typeof style !== 'string' || !VALID_LEAF_STYLES.has(style)) continue;
-          const node = ensureNode(rawPath);
-          node.unreadStyle = style;
-          unreadNodes.add(node);
-          markDirtyUp(node);
-        }
-      }
-
-      if (data.dailyAck && typeof data.dailyAck === 'object') {
-        for (const [rawPath, dayKey] of Object.entries(data.dailyAck)) {
-          if (typeof dayKey !== 'string' || !dayKey) continue;
-          const normalized = normalizeRedDotPath(rawPath);
-          dailyAckMap.set(normalized, dayKey);
-          const existing = nodes.get(normalized);
-          if (existing) markDirtyUp(existing);
-        }
-      }
-
-      if (Array.isArray(data.muted)) {
-        for (const rawPath of data.muted) {
-          if (typeof rawPath !== 'string') continue;
-          const node = ensureNode(rawPath);
-          node.muted = true;
-          mutedNodes.add(node);
-          markDirtyUp(node);
-        }
-      }
-
-      persistDirty = false;
-    });
+  function ensureFreshRead() {
+    if (batchDepth === 0 && !flushing && (syncTime(true) || ctx.dirtySet.size > 0)) {
+      flush();
+    }
   }
 
   function link(parentPath, childPath) {
     const parent = ensureNode(parentPath);
     const child = ensureNode(childPath);
-    if (parent === child) {
-      throw new Error(`RedDot cycle detected: cannot link "${parent.path}" to itself`);
-    }
-    if (child.treeParent === parent || parent.dagChildren.has(child)) {
-      return false;
-    }
+    if (parent === child) throw new Error(`RedDot cycle detected: cannot link "${parent.path}" to itself`);
+    if (child.treeParent === parent || parent.dagChildren.has(child)) return false;
     if (isReachable(child, parent)) {
       throw new Error(`RedDot cycle detected: "${child.path}" already reaches "${parent.path}"`);
     }
-    const wasTreeOnly = dagLinkCount === 0;
+    const wasTreeOnly = ctx.dagLinkCount === 0;
     parent.dagChildren.add(child);
     child.dagParents.add(parent);
-    dagLinkCount++;
-    if (wasTreeOnly) {
-      markAllDirty();
-    } else {
-      markDirtyUp(parent);
-    }
+    ctx.dagLinkCount++;
+    if (wasTreeOnly) markAllDirty();
+    else markDirtyUp(parent);
     flush();
     return true;
   }
 
   function unlink(parentPath, childPath) {
-    const parent = nodes.get(normalizeRedDotPath(parentPath));
-    const child = nodes.get(normalizeRedDotPath(childPath));
-    if (!parent || !child || !parent.dagChildren.has(child)) {
-      return false;
-    }
+    const parent = ctx.nodes.get(normalizeRedDotPath(parentPath));
+    const child = ctx.nodes.get(normalizeRedDotPath(childPath));
+    if (!parent || !child || !parent.dagChildren.has(child)) return false;
     parent.dagChildren.delete(child);
     child.dagParents.delete(parent);
-    dagLinkCount = Math.max(0, dagLinkCount - 1);
-    if (dagLinkCount === 0) {
-      for (const n of nodes.values()) n.contributors = null;
+    ctx.dagLinkCount = Math.max(0, ctx.dagLinkCount - 1);
+    if (ctx.dagLinkCount === 0) {
+      for (const n of ctx.nodes.values()) n.contributors = null;
     }
     markDirtyUp(parent);
     flush();
     return true;
-  }
-
-  function updateSubtreeUnlock(rootNode) {
-    const stack = [rootNode];
-    while (stack.length > 0) {
-      const curr = stack.pop();
-      curr.effectiveUnlocked = curr.unlocked && (curr.treeParent ? curr.treeParent.effectiveUnlocked : true);
-      markDirtyUp(curr);
-      for (const child of curr.treeChildren.values()) {
-        stack.push(child);
-      }
-    }
   }
 
   function setUnlocked(path, unlocked) {
@@ -697,11 +318,11 @@ export function createRedDotSystem({
 
   function isUnlocked(path) {
     const normalized = normalizeRedDotPath(path);
-    const existing = nodes.get(normalized);
+    const existing = ctx.nodes.get(normalized);
     if (existing) return existing.effectiveUnlocked;
     const ancestors = splitRedDotAncestors(normalized);
     for (let i = 0; i < ancestors.length - 1; i++) {
-      const n = nodes.get(ancestors[i]);
+      const n = ctx.nodes.get(ancestors[i]);
       if (n && !n.effectiveUnlocked) return false;
     }
     return true;
@@ -712,16 +333,16 @@ export function createRedDotSystem({
     const next = Boolean(muted);
     if (node.muted === next) return next;
     node.muted = next;
-    if (next) mutedNodes.add(node);
-    else mutedNodes.delete(node);
-    persistDirty = true;
+    if (next) ctx.mutedNodes.add(node);
+    else ctx.mutedNodes.delete(node);
+    ctx.persistDirty = true;
     markDirtyUp(node);
     flush();
     return next;
   }
 
   function isMuted(path) {
-    const existing = nodes.get(normalizeRedDotPath(path));
+    const existing = ctx.nodes.get(normalizeRedDotPath(path));
     return existing ? existing.muted : false;
   }
 
@@ -749,12 +370,8 @@ export function createRedDotSystem({
         node.newLabel = config.newLabel === null ? null : String(config.newLabel);
         markDirtyUp(node);
       }
-      if (config.unlocked !== undefined) {
-        setUnlocked(node.path, config.unlocked);
-      }
-      if (config.muted !== undefined) {
-        setMuted(node.path, config.muted);
-      }
+      if (config.unlocked !== undefined) setUnlocked(node.path, config.unlocked);
+      if (config.muted !== undefined) setMuted(node.path, config.muted);
     });
     return node.path;
   }
@@ -762,17 +379,13 @@ export function createRedDotSystem({
   function setValue(path, count, { style = 'number' } = {}) {
     assertValidStyle(style, VALID_LEAF_STYLES);
     const node = ensureNode(path);
-    const normalizedCount = Number.isFinite(Number(count))
-      ? Math.max(0, Math.floor(Number(count)))
-      : 0;
+    const normalizedCount = Number.isFinite(Number(count)) ? Math.max(0, Math.floor(Number(count))) : 0;
     const prev = node.valueSource;
     if (normalizedCount <= 0) {
       if (!prev) return 0;
       node.valueSource = null;
     } else {
-      if (prev && prev.count === normalizedCount && prev.style === style) {
-        return normalizedCount;
-      }
+      if (prev && prev.count === normalizedCount && prev.style === style) return normalizedCount;
       node.valueSource = { count: normalizedCount, style };
     }
     markDirtyUp(node);
@@ -788,11 +401,8 @@ export function createRedDotSystem({
 
   function applyRuleNode(node, context) {
     if (!node.ruleSource) return false;
-    const { evaluator, style } = node.ruleSource;
-    const parsed = parseRuleResult(evaluator(context), style);
-    if (node.ruleSource.count === parsed.count && node.ruleSource.activeStyle === parsed.style) {
-      return false;
-    }
+    const parsed = parseRuleResult(node.ruleSource.evaluator(context), node.ruleSource.style);
+    if (node.ruleSource.count === parsed.count && node.ruleSource.activeStyle === parsed.style) return false;
     node.ruleSource.count = parsed.count;
     node.ruleSource.activeStyle = parsed.style;
     markDirtyUp(node);
@@ -800,28 +410,18 @@ export function createRedDotSystem({
   }
 
   function registerRule(path, evaluator, { style } = {}) {
-    if (typeof evaluator !== 'function') {
-      throw new TypeError('registerRule requires an evaluator function');
-    }
-    if (style !== undefined) {
-      assertValidStyle(style, VALID_LEAF_STYLES);
-    }
+    if (typeof evaluator !== 'function') throw new TypeError('registerRule requires an evaluator function');
+    if (style !== undefined) assertValidStyle(style, VALID_LEAF_STYLES);
     const node = ensureNode(path);
-    const entry = {
-      evaluator,
-      style: style ?? null,
-      count: 0,
-      activeStyle: 'none',
-    };
+    const entry = { evaluator, style: style ?? null, count: 0, activeStyle: 'none' };
     node.ruleSource = entry;
-    ruleNodes.add(node);
-    applyRuleNode(node, lastContext);
+    ctx.ruleNodes.add(node);
+    applyRuleNode(node, ctx.lastContext);
     flush();
-
     return () => {
       if (disposed || node.ruleSource !== entry) return;
       node.ruleSource = null;
-      ruleNodes.delete(node);
+      ctx.ruleNodes.delete(node);
       markDirtyUp(node);
       flush();
     };
@@ -829,39 +429,17 @@ export function createRedDotSystem({
 
   function evaluate(prefixOrPaths, context) {
     let prefixes = null;
-    let ctx = context;
-    if (typeof prefixOrPaths === 'string') {
-      prefixes = [normalizeRedDotPath(prefixOrPaths)];
-    } else if (Array.isArray(prefixOrPaths)) {
-      prefixes = prefixOrPaths.map(normalizeRedDotPath);
-    } else if (prefixOrPaths !== undefined) {
-      ctx = prefixOrPaths;
-    }
-    if (ctx !== undefined) {
-      lastContext = ctx;
-    }
+    let evalCtx = context;
+    if (typeof prefixOrPaths === 'string') prefixes = [normalizeRedDotPath(prefixOrPaths)];
+    else if (Array.isArray(prefixOrPaths)) prefixes = prefixOrPaths.map(normalizeRedDotPath);
+    else if (prefixOrPaths !== undefined) evalCtx = prefixOrPaths;
+    if (evalCtx !== undefined) ctx.lastContext = evalCtx;
 
     batch(() => {
-      syncTimeInternal(true);
-      const matchesPrefix = (nodePath) => {
-        if (!prefixes) return true;
-        for (let i = 0; i < prefixes.length; i++) {
-          const p = prefixes[i];
-          if (nodePath === p || nodePath.startsWith(`${p}/`)) return true;
-        }
-        return false;
-      };
-
-      for (const node of ruleNodes) {
-        if (matchesPrefix(node.path)) {
-          applyRuleNode(node, lastContext);
-        }
-      }
-      for (const node of dailyNodes) {
-        if (node.dailySource?.condition && matchesPrefix(node.path)) {
-          markDirtyUp(node);
-        }
-      }
+      syncTime(true);
+      const matchesPrefix = (nodePath) => !prefixes || prefixes.some(p => nodePath === p || nodePath.startsWith(`${p}/`));
+      for (const node of ctx.ruleNodes) if (matchesPrefix(node.path)) applyRuleNode(node, ctx.lastContext);
+      for (const node of ctx.dailyNodes) if (node.dailySource?.condition && matchesPrefix(node.path)) markDirtyUp(node);
     });
   }
 
@@ -870,8 +448,8 @@ export function createRedDotSystem({
     const node = ensureNode(path);
     if (node.unreadStyle === style) return;
     node.unreadStyle = style;
-    unreadNodes.add(node);
-    persistDirty = true;
+    ctx.unreadNodes.add(node);
+    ctx.persistDirty = true;
     markDirtyUp(node);
     flush();
   }
@@ -880,17 +458,14 @@ export function createRedDotSystem({
     assertValidStyle(style, VALID_LEAF_STYLES);
     const base = normalizeRedDotPath(parentPath);
     ensureNode(base);
-    if (!itemIds || typeof itemIds[Symbol.iterator] !== 'function') {
-      throw new TypeError('itemIds must be iterable');
-    }
+    if (!itemIds || typeof itemIds[Symbol.iterator] !== 'function') throw new TypeError('itemIds must be iterable');
     batch(() => {
       for (const id of itemIds) {
-        const rel = normalizeRedDotPath(String(id));
-        const node = ensureNode(`${base}/${rel}`);
+        const node = ensureNode(`${base}/${normalizeRedDotPath(String(id))}`);
         if (node.unreadStyle !== style) {
           node.unreadStyle = style;
-          unreadNodes.add(node);
-          persistDirty = true;
+          ctx.unreadNodes.add(node);
+          ctx.persistDirty = true;
           markDirtyUp(node);
         }
       }
@@ -898,18 +473,18 @@ export function createRedDotSystem({
   }
 
   function clearUnread(path) {
-    const node = nodes.get(normalizeRedDotPath(path));
+    const node = ctx.nodes.get(normalizeRedDotPath(path));
     if (!node || node.unreadStyle === null) return false;
     node.unreadStyle = null;
-    unreadNodes.delete(node);
-    persistDirty = true;
+    ctx.unreadNodes.delete(node);
+    ctx.persistDirty = true;
     markDirtyUp(node);
     flush();
     return true;
   }
 
   function isUnread(path) {
-    const node = nodes.get(normalizeRedDotPath(path));
+    const node = ctx.nodes.get(normalizeRedDotPath(path));
     return Boolean(node && node.unreadStyle !== null);
   }
 
@@ -919,19 +494,17 @@ export function createRedDotSystem({
       throw new TypeError('validItemIds must be iterable');
     }
     const validSet = new Set();
-    for (const id of validItemIds) {
-      validSet.add(normalizeRedDotPath(String(id)));
-    }
+    for (const id of validItemIds) validSet.add(normalizeRedDotPath(String(id)));
     let removed = 0;
     const scopePrefix = `${prefix}/`;
     batch(() => {
-      for (const node of [...unreadNodes]) {
+      for (const node of [...ctx.unreadNodes]) {
         if (!node.path.startsWith(scopePrefix)) continue;
         const rel = node.path.slice(scopePrefix.length);
         if (!validSet.has(rel) && !validSet.has(node.path)) {
           node.unreadStyle = null;
-          unreadNodes.delete(node);
-          persistDirty = true;
+          ctx.unreadNodes.delete(node);
+          ctx.persistDirty = true;
           markDirtyUp(node);
           removed++;
         }
@@ -945,123 +518,84 @@ export function createRedDotSystem({
     if (condition !== null && typeof condition !== 'function') {
       throw new TypeError('daily condition must be a function or null');
     }
-    syncTimeInternal(false);
+    syncTime(false);
     const node = ensureNode(path);
-    const entry = {
-      style,
-      enabled: Boolean(enabled),
-      condition,
-    };
+    const entry = { style, enabled: Boolean(enabled), condition };
     node.dailySource = entry;
-    dailyNodes.add(node);
+    ctx.dailyNodes.add(node);
     markDirtyUp(node);
     flush();
-
     return () => {
       if (disposed || node.dailySource !== entry) return;
       node.dailySource = null;
-      dailyNodes.delete(node);
+      ctx.dailyNodes.delete(node);
       markDirtyUp(node);
       flush();
     };
   }
 
   function acknowledgeDaily(path) {
-    syncTimeInternal(false);
+    syncTime(false);
     const normalized = normalizeRedDotPath(path);
-    if (dailyAckMap.get(normalized) === cachedDayKey) {
-      return false;
-    }
-    dailyAckMap.set(normalized, cachedDayKey);
-    persistDirty = true;
-    const node = nodes.get(normalized);
+    if (ctx.dailyAckMap.get(normalized) === ctx.cachedDayKey) return false;
+    ctx.dailyAckMap.set(normalized, ctx.cachedDayKey);
+    ctx.persistDirty = true;
+    const node = ctx.nodes.get(normalized);
     if (node) markDirtyUp(node);
     flush();
     return true;
   }
 
   function isDailyAcknowledged(path) {
-    syncTimeInternal(false);
-    return dailyAckMap.get(normalizeRedDotPath(path)) === cachedDayKey;
+    syncTime(false);
+    return ctx.dailyAckMap.get(normalizeRedDotPath(path)) === ctx.cachedDayKey;
   }
 
   function setReadyAt(path, readyAtMs, { style = 'dot' } = {}) {
     assertValidStyle(style, VALID_LEAF_STYLES);
-    syncTimeInternal(false);
+    syncTime(false);
     const node = ensureNode(path);
-    if (readyAtMs === null || readyAtMs === undefined) {
-      return clearReadyAt(node.path);
-    }
+    if (readyAtMs === null || readyAtMs === undefined) return clearReadyAt(node.path);
     if (typeof readyAtMs !== 'number' || !Number.isFinite(readyAtMs)) {
       throw new RangeError('readyAtMs must be a finite timestamp or null');
     }
     node.readySource = { readyAtMs, style };
-    readyNodes.add(node);
+    ctx.readyNodes.add(node);
     markDirtyUp(node);
     flush();
-    return cachedClockMs >= readyAtMs;
+    return ctx.cachedClockMs >= readyAtMs;
   }
 
   function clearReadyAt(path) {
-    const node = nodes.get(normalizeRedDotPath(path));
+    const node = ctx.nodes.get(normalizeRedDotPath(path));
     if (!node || !node.readySource) return false;
     node.readySource = null;
-    readyNodes.delete(node);
+    ctx.readyNodes.delete(node);
     markDirtyUp(node);
     flush();
     return true;
   }
 
-  function ackSingleNode(node) {
-    let acked = false;
-    if (node.unreadStyle !== null) {
-      node.unreadStyle = null;
-      unreadNodes.delete(node);
-      acked = true;
-    }
-    if (
-      node.dailySource &&
-      node.dailySource.enabled &&
-      (!node.dailySource.condition || Boolean(node.dailySource.condition(lastContext))) &&
-      dailyAckMap.get(node.path) !== cachedDayKey
-    ) {
-      dailyAckMap.set(node.path, cachedDayKey);
-      acked = true;
-    }
-    if (acked) {
-      persistDirty = true;
-      markDirtyUp(node);
-    }
-    return acked;
-  }
-
   function acknowledge(path, { recursive = false } = {}) {
-    syncTimeInternal(true);
-    const node = nodes.get(normalizeRedDotPath(path));
+    syncTime(true);
+    const node = ctx.nodes.get(normalizeRedDotPath(path));
     if (!node) return 0;
-
     let count = 0;
     batch(() => {
       if (!recursive) {
-        if (ackSingleNode(node)) count = 1;
+        if (ackSingleRedDotNode(ctx, node, markDirtyUp)) count = 1;
         return;
       }
       const visited = new Set([node]);
       const stack = [node];
       while (stack.length > 0) {
         const curr = stack.pop();
-        if (ackSingleNode(curr)) count++;
+        if (ackSingleRedDotNode(ctx, curr, markDirtyUp)) count++;
         for (const child of curr.treeChildren.values()) {
-          if (!visited.has(child)) {
-            visited.add(child);
-            stack.push(child);
-          }
+          if (!visited.has(child)) { visited.add(child); stack.push(child); }
         }
         for (const child of curr.dagChildren) {
-          if (!visited.has(child)) {
-            visited.add(child);
-            stack.push(child);
-          }
+          if (!visited.has(child)) { visited.add(child); stack.push(child); }
         }
       }
     });
@@ -1069,123 +603,30 @@ export function createRedDotSystem({
   }
 
   function refreshTime(context) {
-    if (context !== undefined) {
-      lastContext = context;
-    }
+    if (context !== undefined) ctx.lastContext = context;
     batch(() => {
-      syncTimeInternal(true);
+      syncTime(true);
       if (context !== undefined) {
-        for (const node of dailyNodes) {
-          if (node.dailySource?.condition) markDirtyUp(node);
-        }
+        for (const node of ctx.dailyNodes) if (node.dailySource?.condition) markDirtyUp(node);
       }
     });
-  }
-
-  function ensureFreshRead() {
-    if (batchDepth === 0 && !flushing) {
-      if (syncTimeInternal(true) || dirtySet.size > 0) {
-        flush();
-      }
-    }
   }
 
   function getState(path) {
     const normalized = normalizeRedDotPath(path);
     ensureFreshRead();
-    const node = nodes.get(normalized);
-    if (node) return node.state;
-    const unlocked = isUnlocked(normalized);
-    return buildEmptyState(normalized, unlocked, false);
-  }
-
-  function isActive(path) {
-    return getState(path).active;
-  }
-
-  function getCount(path) {
-    return getState(path).count;
+    const node = ctx.nodes.get(normalized);
+    return node ? node.state : buildEmptyState(normalized, isUnlocked(normalized), false);
   }
 
   function explain(path) {
     const normalized = normalizeRedDotPath(path);
     ensureFreshRead();
-    const ancestors = splitRedDotAncestors(normalized);
-    let blockedByUnlock = null;
-    for (const anc of ancestors) {
-      const ancNode = nodes.get(anc);
-      if (ancNode && !ancNode.unlocked) {
-        blockedByUnlock = anc;
-        break;
-      }
-    }
-
-    const node = nodes.get(normalized);
-    const state = node ? node.state : buildEmptyState(normalized, blockedByUnlock === null, false);
-    const activeSources = [];
-
-    if (node && node.effectiveUnlocked && !node.muted) {
-      const visited = new Set([node]);
-      const stack = [node];
-      while (stack.length > 0) {
-        const curr = stack.pop();
-        if (!curr.effectiveUnlocked || curr.muted) continue;
-        if (curr.ownCount > 0) {
-          const reasons = [];
-          if (curr.valueSource && curr.valueSource.count > 0) reasons.push('value');
-          if (curr.ruleSource && curr.ruleSource.count > 0) reasons.push('rule');
-          if (curr.unreadStyle) reasons.push('unread');
-          if (
-            curr.dailySource &&
-            curr.dailySource.enabled &&
-            (!curr.dailySource.condition || Boolean(curr.dailySource.condition(lastContext))) &&
-            dailyAckMap.get(curr.path) !== cachedDayKey
-          ) {
-            reasons.push('daily');
-          }
-          if (
-            curr.readySource &&
-            curr.readySource.readyAtMs !== null &&
-            cachedClockMs >= curr.readySource.readyAtMs
-          ) {
-            reasons.push('ready');
-          }
-          activeSources.push({
-            path: curr.path,
-            count: curr.ownCount,
-            style: curr.ownStyle,
-            reasons,
-          });
-        }
-        for (const child of curr.treeChildren.values()) {
-          if (!visited.has(child)) {
-            visited.add(child);
-            stack.push(child);
-          }
-        }
-        for (const child of curr.dagChildren) {
-          if (!visited.has(child)) {
-            visited.add(child);
-            stack.push(child);
-          }
-        }
-      }
-      activeSources.sort((a, b) => a.path.localeCompare(b.path));
-    }
-
-    return {
-      path: normalized,
-      state,
-      blockedByUnlock,
-      muted: Boolean(node?.muted),
-      activeSources,
-    };
+    return explainPath(normalized);
   }
 
   function subscribe(path, listener, { immediate = true } = {}) {
-    if (typeof listener !== 'function') {
-      throw new TypeError('subscribe listener must be a function');
-    }
+    if (typeof listener !== 'function') throw new TypeError('subscribe listener must be a function');
     const node = ensureNode(path);
     ensureFreshRead();
     let listeners = pathListeners.get(node.path);
@@ -1202,25 +643,19 @@ export function createRedDotSystem({
       const currentSet = pathListeners.get(node.path);
       if (!currentSet) return;
       currentSet.delete(listener);
-      if (currentSet.size === 0) {
-        pathListeners.delete(node.path);
-      }
+      if (currentSet.size === 0) pathListeners.delete(node.path);
     };
   }
 
   function subscribeAny(listener) {
-    if (typeof listener !== 'function') {
-      throw new TypeError('subscribeAny listener must be a function');
-    }
+    if (typeof listener !== 'function') throw new TypeError('subscribeAny listener must be a function');
     anyListeners.add(listener);
-    return () => {
-      anyListeners.delete(listener);
-    };
+    return () => { anyListeners.delete(listener); };
   }
 
   function reset({ clearPersistence = false } = {}) {
     batch(() => {
-      for (const node of nodes.values()) {
+      for (const node of ctx.nodes.values()) {
         node.unlocked = true;
         node.effectiveUnlocked = true;
         node.muted = false;
@@ -1238,82 +673,53 @@ export function createRedDotSystem({
         node.contributors = null;
         markDirtyUp(node);
       }
-      ruleNodes.clear();
-      unreadNodes.clear();
-      dailyNodes.clear();
-      readyNodes.clear();
-      mutedNodes.clear();
-      dailyAckMap.clear();
-      persistDirty = clearPersistence;
+      ctx.ruleNodes.clear();
+      ctx.unreadNodes.clear();
+      ctx.dailyNodes.clear();
+      ctx.readyNodes.clear();
+      ctx.mutedNodes.clear();
+      ctx.dailyAckMap.clear();
+      ctx.persistDirty = clearPersistence;
     });
   }
 
   function dispose() {
     if (disposed) return;
     disposed = true;
-    if (persistDirty) {
+    if (ctx.persistDirty) {
       writePersistedData(storage, storageKey, exportState());
-      persistDirty = false;
+      ctx.persistDirty = false;
     }
     pathListeners.clear();
     anyListeners.clear();
-    dirtySet.clear();
-    ruleNodes.clear();
-    unreadNodes.clear();
-    dailyNodes.clear();
-    readyNodes.clear();
-    mutedNodes.clear();
-    dailyAckMap.clear();
-    nodes.clear();
+    ctx.dirtySet.clear();
+    ctx.ruleNodes.clear();
+    ctx.unreadNodes.clear();
+    ctx.dailyNodes.clear();
+    ctx.readyNodes.clear();
+    ctx.mutedNodes.clear();
+    ctx.dailyAckMap.clear();
+    ctx.nodes.clear();
   }
 
   /** @type {RedDotSystem} */
   const api = Object.freeze({
     get dayKey() {
-      syncTimeInternal(false);
-      return cachedDayKey;
+      syncTime(false);
+      return ctx.cachedDayKey;
     },
-    configure,
-    link,
-    unlink,
-    setUnlocked,
-    isUnlocked,
-    setMuted,
-    isMuted,
-    setValue,
-    setFlag,
-    registerRule,
-    evaluate,
-    markUnread,
-    markUnreadBatch,
-    clearUnread,
-    isUnread,
-    syncUnreadScope,
-    registerDaily,
-    acknowledgeDaily,
-    isDailyAcknowledged,
-    setReadyAt,
-    clearReadyAt,
-    acknowledge,
-    refreshTime,
-    batch,
-    flush,
-    getState,
-    isActive,
-    getCount,
-    explain,
-    subscribe,
-    subscribeAny,
-    exportState,
-    importState,
-    reset,
-    dispose,
+    configure, link, unlink, setUnlocked, isUnlocked, setMuted, isMuted,
+    setValue, setFlag, registerRule, evaluate,
+    markUnread, markUnreadBatch, clearUnread, isUnread, syncUnreadScope,
+    registerDaily, acknowledgeDaily, isDailyAcknowledged,
+    setReadyAt, clearReadyAt, acknowledge, refreshTime,
+    batch, flush, getState,
+    isActive: (path) => getState(path).active,
+    getCount: (path) => getState(path).count,
+    explain, subscribe, subscribeAny, exportState, importState, reset, dispose,
   });
 
   const saved = readPersistedData(storage, storageKey);
-  if (saved) {
-    importState(saved);
-  }
-
+  if (saved) importState(saved);
   return api;
 }

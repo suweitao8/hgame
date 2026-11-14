@@ -2,6 +2,7 @@ import { Component } from '../core/component.js';
 import { createAdaptiveQualityController, resolveQualityPreset } from './quality3d.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
+import { fitDirectionalShadowFrustum } from './shadow3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 
 const SCRATCH_WORLD_MAT = new Float64Array(16);
@@ -194,6 +195,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {(scene: object, object: object) => void} removeView
  * @property {(cam: ThreeCamera | null) => void} setViewCamera
  * @property {(light: object | null) => void} setSunLight
+ * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
  * @property {(nextExposure: number) => void} setExposure
  * @property {ThreePostVolumesLike | null} postVolumes
@@ -689,6 +691,20 @@ export function createThreeAdapter({
     setSunLight(light) {
       activeSunLight = light;
       if (qualityController?.state?.preset) applyQualityToRenderer(qualityController.state.preset);
+    },
+    fitShadowToPreset(sun = activeSunLight, target = { x: 0, y: 0, z: 0 }, options = {}) {
+      const light = sun ?? activeSunLight;
+      if (!light) return null;
+      const presetDist = qualityController?.state?.preset?.shadowDistance;
+      const shadowDistance = Number.isFinite(options?.shadowDistance)
+        ? Math.max(1, options.shadowDistance)
+        : (Number.isFinite(presetDist) && presetDist > 0 ? presetDist : 35);
+      const radius = Number.isFinite(options?.radius) ? Math.max(0.5, options.radius) : shadowDistance * 0.5;
+      const center = Array.isArray(target)
+        ? [Number(target[0]) || 0, Number(target[1]) || 0, Number(target[2]) || 0]
+        : [Number(target?.x) || 0, Number(target?.y) || 0, Number(target?.z) || 0];
+      const sunDirection = options?.sunDirection ?? (activeSky?.sunDirection ?? null);
+      return fitDirectionalShadowFrustum(THREE, light, { center, radius }, { ...options, sunDirection });
     },
     setSky(nextSky) {
       activeSky = nextSky ?? null;

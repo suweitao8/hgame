@@ -6,16 +6,6 @@
  */
 export function createProceduralSky3D(THREE: SkyThree, options?: Sky3DOptions): Sky3D;
 /**
- * Fits a DirectionalLight's orthographic shadow frustum tightly around scene
- * or receiver bounds and optionally snaps to shadow-map texels to avoid shimmer.
- * @param {Pick<SkyThree, 'Vector3'>} THREE
- * @param {DirectionalLightLike} light
- * @param {ShadowFitBounds} bounds
- * @param {ShadowFitOptions} [options]
- * @returns {ShadowFrustum} The applied orthographic bounds.
- */
-export function fitDirectionalShadowFrustum(THREE: Pick<SkyThree, "Vector3">, light: DirectionalLightLike, bounds: ShadowFitBounds, { sunDirection, distance, padding, snapToTexels, bias, normalBias, }?: ShadowFitOptions): ShadowFrustum;
-/**
  * Fixed pool of transient PointLights kept mounted at zero intensity to avoid
  * runtime Three.js shader recompilations when explosions or muzzle flashes fire.
  * @param {LightPoolThree} THREE
@@ -27,12 +17,7 @@ export function createLightPool3D(THREE: LightPoolThree, parent: {
     add(object: object): unknown;
     remove?(object: object): unknown;
 }, { size, defaultDecay }?: LightPoolOptions): LightPool3D;
-/**
- * Clean-room procedural atmospheric sky dome, PMREM environment IBL baker,
- * tight directional shadow frustum fitter, and pooled transient point lights.
- *
- * The Three.js namespace is injected by callers so non-3D projects load nothing.
- */
+export { fitDirectionalShadowFrustum };
 /** @typedef {[number, number, number]} SkyVec3Tuple Direction/point [x, y, z]. */
 /** @typedef {SkyVec3Tuple|{ x: number, y: number, z: number }} SkyVec3Input */
 /** @typedef {string|number|{ readonly isColor: boolean }} SkyColorInput CSS color string, 0xRRGGBB number, or a THREE.Color. */
@@ -509,3 +494,4 @@ export type LightPool3D = {
     clear: () => void;
     dispose: () => boolean;
 };
+import { fitDirectionalShadowFrustum } from './shadow3d.js';
