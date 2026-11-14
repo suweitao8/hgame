@@ -33,6 +33,8 @@
     "build:api-index": "node scripts/build-api-index.mjs",
     "check:api-index": "node scripts/build-api-index.mjs --check",
     "snapshot": "node scripts/snapshot.mjs",
+    "build:examples": "node scripts/build-examples.mjs",
+    "test:examples": "node --test tests/examples.test.mjs examples/survivor-2d/tests/*.test.mjs examples/arena-3d/tests/*.test.mjs",
     "bench:render": "node benchmarks/render-bench.mjs",
     "bench:render3d": "node benchmarks/render-bench-3d.mjs",
     "test:browser:snapshot": "node tests/browser-snapshot.mjs"

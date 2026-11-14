@@ -64,6 +64,12 @@ jobs:
       - run: npm run test:browser
       - run: npm run test:browser:pbr
       - run: npm run test:browser:snapshot
+      - run: node scripts/build-examples.mjs
+      - run: npm run test:examples
+      - name: Example browser verification
+        run: |
+          node scripts/snapshot.mjs examples/survivor-2d --ready "#game[data-engine-ready=true]" --keys d:300
+          node scripts/snapshot.mjs examples/arena-3d --ready "#game[data-engine-ready=true]" --baseline examples/arena-3d/baseline.png --threshold 0.1
       - run: npm run bench:render -- --json render-bench.json
       - run: npm run bench:render3d -- --json render-bench-3d.json
       - uses: actions/upload-artifact@v4

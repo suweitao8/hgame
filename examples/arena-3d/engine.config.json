@@ -1,0 +1,15 @@
+{
+  "configVersion": 1,
+  "profile": "3d",
+  "renderer": "threejs",
+  "physics": "rapier3d",
+  "tickHz": 60,
+  "features": [
+    "scene",
+    "input",
+    "physics3d",
+    "audio",
+    "save",
+    "adaptiveQuality3d"
+  ]
+}
