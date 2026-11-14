@@ -160,6 +160,41 @@ export function createSpringArm3D({ THREE, armLength, minArmLength, probeRadius,
  */
 export function createCameraRig3D({ THREE, camera, mode, baseFov, fovHalfLife, traumaDecay, traumaExponent, shakeFrequency, maxShakeAngles, maxShakeOffset, recoilHalfLife, thirdPerson, firstPerson, topDown, collisionTest, }?: CameraRig3DOptions): CameraRig3D;
 /**
+ * @typedef {object} SpringArmRayHit Minimal physics ray hit consumed by `createSpringArmRayProbe`.
+ * @property {number} timeOfImpact Distance along the (unit) ray direction.
+ */
+/**
+ * @typedef {(origin: CameraVec3, direction: CameraVec3, maxDistance: number) => SpringArmRayHit | null | undefined} SpringArmCastRay
+ * Physics ray cast, e.g. `(o, d, max) => world.castRay(o, d, max)` from the Rapier world.
+ */
+/**
+ * @typedef {object} SpringArmProbeResult Reused result object (do not retain across calls).
+ * @property {boolean} hit
+ * @property {number} distance Distance from the pivot to the obstruction (`maxDistance` on a miss).
+ */
+/**
+ * Adapt a physics `castRay` to the `collisionTest(pivot, desired, backVec, length, radius)` signature
+ * of `createSpringArm3D` / `createCameraRig3D`. The ray is cast from `pivot` along `backVec`
+ * for `length`; `timeOfImpact` becomes `distance` and the arm subtracts `radius` itself.
+ * A non-positive/non-finite `length` skips the cast (physics `castRay` throws on negative
+ * `maxDistance`); a miss reports `hit: false`. Zero-GC: the result object is reused.
+ * @param {SpringArmCastRay} castRay
+ * @returns {SpringArmCollisionTest}
+ */
+export function createSpringArmRayProbe(castRay: SpringArmCastRay): SpringArmCollisionTest;
+/**
+ * Convert 2D move input to a world-space XZ direction relative to the camera yaw
+ * (camera looks along -Z at yaw 0; `inputY > 0` = forward, `inputX > 0` = right; Y-up).
+ * Input magnitude is clamped to 1 so diagonals are not faster. Writes `out` (zero-GC) or
+ * allocates a new vector when omitted.
+ * @param {number} inputX Strafe axis, `-1..1`.
+ * @param {number} inputY Forward axis, `-1..1`.
+ * @param {number} yaw Camera yaw in radians (`arm.yaw`).
+ * @param {CameraVec3} [out]
+ * @returns {CameraVec3}
+ */
+export function cameraRelativeMove(inputX: number, inputY: number, yaw: number, out?: CameraVec3): CameraVec3;
+/**
  * Plain or Three.js-like vector.
  */
 export type CameraVec3 = {
@@ -605,6 +640,29 @@ export type CameraRig3D = {
      * Advance; `dt` seconds.
      */
     update: (dt?: number, targetPosition?: CameraVec3) => CameraRigResult;
+};
+/**
+ * Minimal physics ray hit consumed by `createSpringArmRayProbe`.
+ */
+export type SpringArmRayHit = {
+    /**
+     * Distance along the (unit) ray direction.
+     */
+    timeOfImpact: number;
+};
+/**
+ * Physics ray cast, e.g. `(o, d, max) => world.castRay(o, d, max)` from the Rapier world.
+ */
+export type SpringArmCastRay = (origin: CameraVec3, direction: CameraVec3, maxDistance: number) => SpringArmRayHit | null | undefined;
+/**
+ * Reused result object (do not retain across calls).
+ */
+export type SpringArmProbeResult = {
+    hit: boolean;
+    /**
+     * Distance from the pivot to the obstruction (`maxDistance` on a miss).
+     */
+    distance: number;
 };
 import { damp } from '../time/tween.js';
 import { dampAngle } from '../time/tween.js';

@@ -27,3 +27,11 @@ app.setTimeScale(0.5);  // 全局 0.5x 子弹时间
 
 ## 易错点
 - UI profile (`tickHz: 0`) 没有循环:仅 `app.start()` 渲染一次;之后状态变化必须由调用方显式 `app.step()` 或自行渲染,引擎不会自动重绘。
+
+## 确定性模拟辅助 (sim/)
+- `createSeededRng(seed)`(mulberry32: `next/int/range/pick/shuffle/fork/getState/setState`)、`hashState(value)` / `createStateChecksum()`(FNV-1a;数字、TypedArray、按键排序的普通对象)、`runScripted({ step, script, ticks, checksum })` 用于确定性回放与 lockstep 失步测试。
+```js
+const rng = createSeededRng(1234);
+const r = runScripted({ script: inputs, step: (t, i) => sim.step(i, rng), checksum: () => sim.state });
+assert.equal(r.checksum, GOLDEN);
+```

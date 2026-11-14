@@ -49,6 +49,8 @@ export {
 export { createGpuSwarmWebGL2 } from './world/gpu-swarm-webgl2.js';
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
 export { createTraceRecorder } from './integrations/trace.js';
+export { createSeededRng, createStateChecksum, hashState, runScripted } from './sim/index.js';
+export { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 export {
   RED_DOT_STYLES,
   normalizeRedDotPath,
@@ -90,6 +92,8 @@ import { PrefabRegistry } from './core/prefab.js';
 import { createTagContainer, createTagRegistry, GLOBAL_TAG_REGISTRY, matchGameplayTags } from './core/tags.js';
 import { createGameApplication } from './core/application.js';
 import { createTraceRecorder } from './integrations/trace.js';
+import { createSeededRng, createStateChecksum, hashState, runScripted } from './sim/index.js';
+import { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 import { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
 import {
   SWARM_UNIT_FLAGS,
@@ -144,6 +148,12 @@ export const HGame = Object.freeze({
   resolveFeatureGraph,
   createApplication: createGameApplication,
   createTraceRecorder,
+  createSeededRng,
+  createStateChecksum,
+  hashState,
+  runScripted,
+  createSpringArmRayProbe,
+  cameraRelativeMove,
   defineInputContext,
   createInputActionRouter,
   ARCADE_SLOTS,

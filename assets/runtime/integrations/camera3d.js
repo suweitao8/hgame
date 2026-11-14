@@ -840,3 +840,68 @@ export function createCameraRig3D({
 }
 
 export { damp, dampAngle };
+
+/**
+ * @typedef {object} SpringArmRayHit Minimal physics ray hit consumed by `createSpringArmRayProbe`.
+ * @property {number} timeOfImpact Distance along the (unit) ray direction.
+ */
+
+/**
+ * @typedef {(origin: CameraVec3, direction: CameraVec3, maxDistance: number) => SpringArmRayHit | null | undefined} SpringArmCastRay
+ * Physics ray cast, e.g. `(o, d, max) => world.castRay(o, d, max)` from the Rapier world.
+ */
+
+/**
+ * @typedef {object} SpringArmProbeResult Reused result object (do not retain across calls).
+ * @property {boolean} hit
+ * @property {number} distance Distance from the pivot to the obstruction (`maxDistance` on a miss).
+ */
+
+/**
+ * Adapt a physics `castRay` to the `collisionTest(pivot, desired, backVec, length, radius)` signature
+ * of `createSpringArm3D` / `createCameraRig3D`. The ray is cast from `pivot` along `backVec`
+ * for `length`; `timeOfImpact` becomes `distance` and the arm subtracts `radius` itself.
+ * A non-positive/non-finite `length` skips the cast (physics `castRay` throws on negative
+ * `maxDistance`); a miss reports `hit: false`. Zero-GC: the result object is reused.
+ * @param {SpringArmCastRay} castRay
+ * @returns {SpringArmCollisionTest}
+ */
+export function createSpringArmRayProbe(castRay) {
+  if (typeof castRay !== 'function') throw new TypeError('createSpringArmRayProbe: castRay must be a function');
+  /** @type {SpringArmProbeResult} */
+  const result = { hit: false, distance: 0 };
+  return (pivot, _desired, backVec, length) => {
+    result.hit = false;
+    result.distance = length;
+    if (!(length > 0) || !Number.isFinite(length)) return result;
+    const hit = castRay(pivot, backVec, length);
+    const toi = hit ? hit.timeOfImpact : NaN;
+    if (Number.isFinite(toi) && toi >= 0) {
+      result.hit = true;
+      result.distance = Math.min(length, toi);
+    }
+    return result;
+  };
+}
+
+/**
+ * Convert 2D move input to a world-space XZ direction relative to the camera yaw
+ * (camera looks along -Z at yaw 0; `inputY > 0` = forward, `inputX > 0` = right; Y-up).
+ * Input magnitude is clamped to 1 so diagonals are not faster. Writes `out` (zero-GC) or
+ * allocates a new vector when omitted.
+ * @param {number} inputX Strafe axis, `-1..1`.
+ * @param {number} inputY Forward axis, `-1..1`.
+ * @param {number} yaw Camera yaw in radians (`arm.yaw`).
+ * @param {CameraVec3} [out]
+ * @returns {CameraVec3}
+ */
+export function cameraRelativeMove(inputX, inputY, yaw, out = { x: 0, y: 0, z: 0 }) {
+  let x = inputX, y = inputY;
+  const m2 = x * x + y * y;
+  if (m2 > 1) { const inv = 1 / Math.sqrt(m2); x *= inv; y *= inv; }
+  const s = Math.sin(yaw), c = Math.cos(yaw);
+  out.x = x * c - y * s;
+  out.y = 0;
+  out.z = -x * s - y * c;
+  return out;
+}

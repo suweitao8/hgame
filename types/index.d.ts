@@ -19,6 +19,12 @@ export const HGame: Readonly<{
     resolveFeatureGraph: typeof resolveFeatureGraph;
     createApplication: typeof createGameApplication;
     createTraceRecorder: typeof createTraceRecorder;
+    createSeededRng: typeof createSeededRng;
+    createStateChecksum: typeof createStateChecksum;
+    hashState: typeof hashState;
+    runScripted: typeof runScripted;
+    createSpringArmRayProbe: typeof createSpringArmRayProbe;
+    cameraRelativeMove: typeof cameraRelativeMove;
     defineInputContext: typeof defineInputContext;
     createInputActionRouter: typeof createInputActionRouter;
     ARCADE_SLOTS: Readonly<{
@@ -195,6 +201,10 @@ export const HGame: Readonly<{
     SceneManager: typeof SceneManager;
     PrefabRegistry: typeof PrefabRegistry;
 }>;
+import { createSeededRng } from './sim/index.js';
+import { createStateChecksum } from './sim/index.js';
+import { hashState } from './sim/index.js';
+import { runScripted } from './sim/index.js';
 import { defineInputContext } from './platform/engine.js';
 import { createInputActionRouter } from './platform/engine.js';
 import { createArcadeControls } from './platform/engine.js';
@@ -219,5 +229,7 @@ export { TileMap, findGridPath } from "./world/tilemap.js";
 export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";
 export { SWARM_UNIT_FLAGS, ECS_SLOT_FLAGS, FlatSpatialHash2D, createFlatSpatialHash2D, FlowField2D, createFlowField2D, FlatCombatECS, createSwarmSimulation } from "./world/swarm-ecs.js";
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from "./world/open-world.js";
+export { createSeededRng, createStateChecksum, hashState, runScripted } from "./sim/index.js";
+export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
 export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem } from "./ui/red-dot.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem } from "./vfx/index.js";

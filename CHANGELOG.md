@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Deterministic sim helpers (sim/*.js, re-exported from `index.js` & `HGame`): `createSeededRng`, `hashState` / `createStateChecksum`, `runScripted`. Camera (`integrations/camera3d.js`): `createSpringArmRayProbe(castRay)` adapter for `collisionTest` and `cameraRelativeMove`; typed/documented the collision-test contract.
+
 - High-Density 100k+ 2D/3D Crowd Pipeline Optimizations:
   - `SwarmSimulation` (`world/swarm-ecs.js`): add 3-tier distance-decimated neighbor separation (`< 25m` 60Hz + bilinear flow, `25m–65m` 4-frame staggered separation with `sepX`/`sepY` caching, `> 65m` cell density damping), module-level `buildSwarmStepGrid` / `stepSwarmSequential` kernels, coarse `32x32` spatial chunks (`ensureChunks`, chunk-accelerated `applyCircleDamage`), and zero-copy default `syncToSpriteCrowd2D`. Raise capacity limits to `262,144` across `SwarmSimulation`, `SpriteCrowd2D`, `WebGL2D`, and `BoneVatCrowd3D`.
   - 3D Coarse Chunk Frustum/LOD Fast-Path (`integrations/culling3d.js`, `integrations/model3d/bone-vat.js`): add 3-state `classifySphere` (`0` outside, `1` intersecting, `2` strictly inside) on `FrustumCuller3D` / `SceneCuller3D`; upgrade `BoneVatCrowd3D.syncFromSwarm` with coarse chunk culling, branch-free strictly-inside single-LOD loops, and flat clip lookup arrays.
