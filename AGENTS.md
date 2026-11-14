@@ -54,6 +54,8 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 
 ## Agent Workflow & Documentation Entry Points
 
+> **Zero-Blind-Scan API Rule**: 查询引擎能力、参数签名与返回值**必须优先运行 `npm run api -- <keyword>`**（或 `npm run api -- --module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。完成改动后优先使用 `npm run snapshot -- <game-dir>` 进行无头画面与状态自检。
+
 - Workspace Agent skill / step-by-step runbook: `.agents/skills/hgame/SKILL.md`.
 - Complete human & AI usage handbook (选型表、模块速查、代码示例与 Prompt 模板): `docs/guides/USER-AND-AGENT-GUIDE.md`.
 - Standard 5-step game workflow:
