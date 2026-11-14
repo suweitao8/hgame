@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add an optional renderer-neutral JSONL trace recorder for comparing original-game and HTML gameplay events; it owns no scheduler or storage and records only caller-supplied events.
+
 ## 1.0.0 - 2026-11-14
 
 - Establish the standalone HGame source repository.

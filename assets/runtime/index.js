@@ -13,6 +13,7 @@ export { TweenManager } from './time/tween.js';
 export { AnimationPlayer } from './animation/player.js';
 export { SpriteSheet } from './animation/spritesheet.js';
 export { TileMap, findGridPath } from './world/tilemap.js';
+export { createTraceRecorder } from './integrations/trace.js';
 
 import { defineProject, resolveFeatureGraph } from './core/config.js';
 import { Component } from './core/component.js';
@@ -20,6 +21,7 @@ import { Entity } from './core/entity.js';
 import { Scene, SceneManager } from './core/scene.js';
 import { PrefabRegistry } from './core/prefab.js';
 import { createGameApplication } from './core/application.js';
+import { createTraceRecorder } from './integrations/trace.js';
 
 /** Public HGame facade. Physics providers stay lazy and load only when selected. */
 export const HGame = Object.freeze({
@@ -29,6 +31,7 @@ export const HGame = Object.freeze({
   defineProject,
   resolveFeatureGraph,
   createApplication: createGameApplication,
+  createTraceRecorder,
   Component,
   Entity,
   Scene,

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   HGAME_VERSION, HGame, defineProject, resolveFeatureGraph, createGameApplication,
-  Component, Entity, Scene, PrefabRegistry,
+  Component, Entity, Scene, PrefabRegistry, createTraceRecorder,
 } from '../assets/runtime/index.js';
 import { createThreeAdapter, createThreeMeshComponent } from '../assets/runtime/integrations/three.js';
 
@@ -27,6 +27,37 @@ test('repository package, runtime entry and VERSION file stay on the same releas
   const runtimeVersion = (await readFile(path.join(root, 'assets', 'runtime', 'VERSION'), 'utf8')).trim();
   assert.equal(rootPackage.version, HGAME_VERSION);
   assert.equal(runtimeVersion, HGAME_VERSION);
+});
+
+test('HGame exposes a renderer-neutral JSONL trace recorder without owning a scheduler', () => {
+  const lines = [];
+  const recorder = createTraceRecorder({ gameId: 'demo', scenarioId: 'movement', build: 'test', tickHz: 60,
+    maxEvents: 3, emit: line => lines.push(line) });
+  assert.equal(HGame.createTraceRecorder, createTraceRecorder);
+  assert.equal(recorder.sequence, 0);
+  assert.deepEqual(JSON.parse(lines[0]), {
+    _type: 'trace', schemaVersion: 1, gameId: 'demo', scenarioId: 'movement', build: 'test', tickHz: 60,
+  });
+  assert.equal(recorder.record({ tick: 1, actorId: 'p1', type: 'move', position: { x: 1, y: 0 } }), 1);
+  assert.equal(recorder.record({ tick: 1, actorId: 'p1', type: 'hit', health: 80 }), 2);
+  assert.equal(recorder.record({ tick: 2, actorId: 7, type: 'move', position: { x: 2, y: 0 } }), 3);
+  assert.equal(JSON.parse(lines[1]).sequence, 1);
+  assert.equal(JSON.parse(lines[2])._type, 'event');
+  assert.equal(recorder.lastTick, 2);
+  assert.throws(() => recorder.record({ tick: 0, actorId: 'p1', type: 'move' }), /non-decreasing/);
+  assert.throws(() => recorder.record({ tick: 3, actorId: 'p1', type: 'move' }), /limit/);
+});
+
+test('trace recorder validates metadata, events and JSON serialization before emitting', () => {
+  const lines = [];
+  assert.throws(() => createTraceRecorder({ gameId: 'demo', scenarioId: '', emit() {} }), /scenarioId/);
+  assert.throws(() => createTraceRecorder({ gameId: 'demo', scenarioId: 's', tickHz: -1, emit() {} }), /tickHz/);
+  const recorder = createTraceRecorder({ gameId: 'demo', scenarioId: 's', emit: line => lines.push(line) });
+  assert.throws(() => recorder.record({ tick: -1, actorId: 'p1', type: 'move' }), /tick/);
+  assert.throws(() => recorder.record({ tick: 1, actorId: '', type: 'move' }), /actorId/);
+  assert.throws(() => recorder.record({ tick: 1, actorId: 'p1', type: 'move', value: 1n }), /serialize|BigInt/i);
+  assert.equal(lines.length, 1);
+  assert.equal(recorder.sequence, 0);
 });
 
 test('new HGame starter profiles use the HGame facade and drive collidable actors through Rapier velocities', async () => {

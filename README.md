@@ -71,6 +71,10 @@ npm run check:all
 node tests/browser-profiles.mjs --playwright "C:\path\to\playwright-core" --chrome "C:\path\to\chrome.exe"
 ```
 
+## 游戏行为轨迹
+
+Runtime 提供可选的 renderer-neutral JSONL recorder：`createTraceRecorder()`。它只记录调用方传入的逻辑事件，不创建 RAF、Timer 或文件/网络服务。可用于原版与 HTML 复刻的同场景行为对比，详见 [`docs/guides/TRACE-RECORDER.md`](docs/guides/TRACE-RECORDER.md)。
+
 ## 多人联网（可选）
 
 联网基础设施位于 `network/`，独立于 Runtime npm 依赖：
