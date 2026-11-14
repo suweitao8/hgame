@@ -1,6 +1,7 @@
 {
   "name": "hgame",
   "version": "1.0.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -14,10 +15,14 @@
     "test:network": "npm --prefix network test",
     "test:browser": "node tests/browser-profiles.mjs",
     "test:browser:pbr": "node tests/browser-world-aligned.mjs",
+    "process:assets": "node scripts/process-assets.mjs",
+    "process:audio": "node scripts/process-audio.mjs",
     "build:physics": "node scripts/build-physics.mjs",
     "check:physics": "node scripts/build-physics.mjs --check",
     "check:network": "npm --prefix network run check",
     "build:network": "npm --prefix network run build",
+    "package:game": "node scripts/package-game.mjs",
+    "release": "npm run build:physics && npm run check:all && node scripts/package-game.mjs --engine",
     "check:all": "npm run check && npm run test:network && npm run check:network && npm run build:network",
     "check": "npm test && npm run check:physics",
     "build": "npm run build:physics"

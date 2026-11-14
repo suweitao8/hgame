@@ -6,11 +6,11 @@
 |---|---|---|
 | Cards, dialogue, turn-based, management panels | DOM / CSS / SVG, command-driven | `ui` profile; no idle 60 Hz loop |
 | Small 2D action, tower defense, top-down maps | Canvas 2D | `2d` profile; optional TileMap and sprite animation |
-| Large sprite counts or advanced 2D effects | PixiJS or another dedicated renderer | Use HGame platform services; keep a single RAF |
-| 3D scenes, first/third person, model animation | Three.js or another dedicated renderer | `3d` profile or explicit renderer adapter |
+| Large sprite counts or advanced 2D effects | `2d` profile with `webgl2d` renderer + `SpriteCrowd2D` (or PixiJS) | Hardware-instanced WebGL2 batching with automatic Canvas2D fallback and a single RAF |
+| 3D scenes, first/third person, model animation | Three.js + HGame `post3d` / `lighting3d` / `culling3d` / `model3d` | `3d` profile or explicit renderer adapter |
 | Advanced joints, CCD, or complex character controllers | Dedicated physics system | Enable the matching deterministic Rapier backend when suitable |
 
-HGame is intentionally smaller than a complete game framework. Keep a dedicated library when the game needs features beyond the runtime's actual scope.
+HGame is intentionally modular for AI-first game development: compose UI/meta systems with `ui/red-dot.js` + `integrations/red-dot-dom.js`, touch controls with `integrations/touch-controls.js` + `createArcadeControls`, and deliver minimal uploadable builds via `scripts/package-game.mjs` (`build/<id>_<version>/` + `.zip`). Keep a dedicated third-party library when the game needs capabilities beyond the runtime's actual scope.
 
 ## Separate authority from presentation
 

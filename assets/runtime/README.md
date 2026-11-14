@@ -1,6 +1,23 @@
 # HGame Runtime 1.0.0
 
-This directory is the canonical, renderer-neutral runtime source. `core/` owns Scene/Entity/Component/Prefab and the single application scheduler; `platform/` provides browser services and an optional Host bridge; `integrations/`, `animation/`, `world/`, `time/`, `physics/`, and `lockstep/` are imported only when a project needs them.
+This directory is the canonical, renderer-neutral runtime source. `core/` owns Scene/Entity/Component/Prefab and the single application scheduler; `platform/` provides browser services, spatial/cue audio, and an optional Host bridge; `integrations/`, `animation/`, `world/`, `time/`, `physics/`, and `lockstep/` are imported only when a project needs them.
+
+## Module map
+
+| Import path | Purpose |
+|---|---|
+| `./index.js` | Top-level entry (`HGame` facade, core, platform, tweens, animation, world/spatial, lockstep helpers) |
+| `./core/*` | `defineProject`, `createGameApplication` (`renderAlpha`, `setTimeScale`, `hitStop`), `Scene` (`scene.tweens`, `findByTag`, `queryTags`), `Entity`, `Component`, `PrefabRegistry`, `tags.js` (`createTagContainer`, `matchGameplayTags`) |
+| `./platform/*` | `createGameEngine`, `createAudioManager` (3D HRTF / 2D panning, multi-variant cues, acoustic occlusion, mix snapshots, limiter, MP3 trim), `input` (`createInputManager` multi-pointer + `wasPointerPressed`, `defineInputContext`, `createInputActionRouter` virtual inputs, `PLAYER_KEYMAPS`, `createArcadeControls`, `computeSplitScreenViews`), `assets`, `save`, `lifecycle`, `diagnostics`, `game-bridge` |
+| `./time/tween.js` | `EASING` curves, `TweenManager`, `damp`, `dampAngle`, `stepSpring1D`, `SpringDamper1D/2D/3D`, sequence/yoyo/delay, 2D procedural motion presets (`idle`, `run`, `attackLunge`, `dieKnockback`) |
+| `./animation/spritesheet.js`, `./animation/player.js` | `SpriteSheet` (`SpriteSheet.fromGrid`, `inset`), frame `AnimationPlayer` |
+| `./world/tilemap.js`, `./world/spatial2d.js`, `./world/open-world.js` | `TileMap` viewport culling, octile `findGridPath`, `ObjectPool`, `SpatialHash2D` (`resolveSoftSeparation`), `createWorldPartition`, `createHLODProxyGroup3D`, `createFloatingOrigin` |
+| `./integrations/canvas2d.js`, `./integrations/webgl2d.js` | `Camera2D`, `Sprite2D`, high-density SoA `SpriteCrowd2D`, `createCanvas2DAdapter` (`setViews` split-screen), GPU-instanced `createWebGL2DAdapter` (`setViews` split-screen + automatic Canvas2D fallback) |
+| `./integrations/three.js`, `./integrations/camera3d.js`, `./integrations/culling3d.js`, `./integrations/sky3d.js`, `./integrations/post3d.js`, `./integrations/lighting3d.js` | Three.js adapter (`setSky`/`setExposure`/`setPostVolumes`/`setViews` split-screen), `createSpringArm3D` / `createCameraRig3D` (trauma/recoil/FOV), frustum/convex-cone/hardware occlusion culling & `createInstancedBatch3D`, sky presets/shadows/light pool (`setLinearOutput`), WebGL2 MSAA HDR/SSAO/SSGI+SSR/Contact Shadows/Eye Adaptation/`ueFilmic`/`createPostProcessVolumeStack`, `createMegaLights3D` (`computeStochasticLightSample`) & `createIrradianceProbeVolume3D` |
+| `./integrations/model3d.js`, `./integrations/world-aligned-material.js`, `./integrations/modular-level.js` | Rigged GLB loader (`inspectModel3D`, `prepareAnimationClips`, bone sockets, overlays, `AnimNotify`, `createAnimationBudgetAllocator`), VAT GPU crowd (`createInstancedCrowd3D`), world-aligned PBR + Specular AA (`shiftOffset` for floating origin), modular levels |
+| `./integrations/quality3d.js`, `./integrations/touch-controls.js`, `./integrations/red-dot-dom.js`, `./integrations/fps-input3d.js`, `./integrations/dom.js`, `./integrations/trace.js` | Unified `low`/`medium`/`high`/`ultra` 2D & 3D presets (`QUALITY2D_PRESETS`, `QUALITY3D_PRESETS`, `createAdaptiveQualityController`), opt-in touch virtual joystick & skill buttons (`createTouchControls`, `applyRadialDeadzone`), declarative `[data-red-dot]` DOM badge binder (`bindRedDotDOM`), FPS controls, DOM UI adapter, renderer-neutral JSONL trace recorder |
+| `./ui/red-dot.js` | Commercial Trie + DAG hierarchical Red Dot System (`createRedDotSystem`, `computeCommercialDayKey`, `formatRedDotBadge`, 4 leaf modes: condition rule/count, persistent `NEW` unread, daily reset, cooldown timer; unlock gating, mute & `explain()`) |
+| `./physics/*`, `./lockstep/confirmed-frames.js` | Deterministic Rapier2D/3D wrappers (`createCharacterController`), confirmed-frame lockstep buffer |
 
 ## Deterministic physics standard
 

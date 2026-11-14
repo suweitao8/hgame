@@ -28,10 +28,10 @@ The engine exposes `meta`, `lifecycle`, `input`, `assets`, `save`, `audio`, `dia
 | Service | Main API | Notes |
 |---|---|---|
 | Lifecycle | `state`, `focused`, `visible`, `on()`, `resize()` | Does not automatically pause or resume the game loop |
-| Input | `isDown()`, `wasPressed()`, `wasReleased()`, `pointer`, `on()`, `endFrame()`, `reset()` | Keyboard `code` values and Pointer events; no built-in virtual joystick UI |
+| Input | `isDown()`, `wasPressed()`, `wasReleased()`, `pointer`, `pointers`, `pointerCount`, `getPointer()`, `isPointerDown()`, `wasPointerPressed()`, `wasPointerReleased()`, `preventKeys()`, `on()`, `endFrame()`, `reset()` + `createInputActionRouter` / `createArcadeControls` / `computeSplitScreenViews` | Multi-pointer touch-first primitives, virtual axis/action injection, P1/P2 arcade bindings, and opt-in `integrations/touch-controls.js` overlay |
 | Assets | `resolve()`, `json()`, `text()`, `arrayBuffer()`, `blob()`, `image()` | Resolves paths relative to the configured asset base |
 | Save | `get()`, `set()`, `remove()`, `keys()`, `clear()` | Namespaced by game ID and schema version |
-| Audio | `unlock()`, `decode()`, `play()`, `setVolume()`, `setMuted()`, `dispose()` | AudioContext is created lazily after a user gesture |
+| Audio | `unlock()`, `decode()`, `play()`, `registerCue()`, `playCue()`, `inspectCue()`, `setListener()`, `updateListenerFromCamera()`, `setOcclusionProbe()`, `updateOcclusion()`, `registerSnapshot()`, `applySnapshot()`, `clearSnapshot()`, `setBusVolume()`, `duckBus()`, `setVolume()`, `setMuted()`, `activeCount`, `dispose()` | Lazy AudioContext; master `DynamicsCompressorNode` limiter across `sfx`/`spatial`/`music`/`ambience` buses; 3D HRTF & 2D stereo panning with `handle.setPosition()` and low-pass acoustic occlusion; PCM silence trimming for gapless MP3 loops & zero-latency one-shots; 2-4 variant anti-repeat cues with loudness/duration alignment |
 | Diagnostics | `recordFrame()`, `reportError()`, `snapshot()`, `dispose()` | Call `recordFrame()` from the game's existing RAF |
 
 ## Optional Host protocol

@@ -6,10 +6,10 @@ The optional `network/` workspace provides shared browser/client/server multipla
 
 | Package | Responsibility |
 |---|---|
-| `packages/protocol` | Versioned binary wire format, validation, deterministic integer helpers, confirmed-frame queue |
-| `packages/simulation` | Small shared movement step used only for prediction conformance tests |
-| `packages/client` | Colyseus client lifecycle, reconnect-token storage, room listeners, lockstep channel |
-| `apps/server` | Colyseus server factory and local conformance rooms |
+| `packages/protocol` | Versioned binary wire format (lockstep frames & quantized `encodeTransformSnapshot`/`encodeTransformDelta`), validation, deterministic integer helpers, confirmed-frame queue |
+| `packages/simulation` | Shared movement step (`applyLinearMotionInput`), server-side `LagCompensationHistory` (bounded snapshot ring buffer, `sampleAt`, `verifyHit2D`), `InterestGrid2D` spatial AOI with enter/exit hysteresis, and Priority × Starvation `ReplicationPriorityScheduler` |
+| `packages/client` | Colyseus client lifecycle, reconnect-token storage, `SnapshotInterpolationBuffer`, `AdaptiveInputLeadController`, and `HGameLockstepChannel` reconnect sync (`requestSync`, `onSyncStatus`, `autoSyncOnReconnect`) |
+| `apps/server` | Colyseus server factory, local conformance rooms, per-session `TokenBucketRateLimiter` flood protection, and optional lockstep anti-stall/history replay |
 | `apps/network-lab` | Browser harness for state sync, prediction, and confirmed frames |
 
 ## Synchronization modes
@@ -26,9 +26,9 @@ The lab's counter and linear-motion logic are conformance fixtures, not reusable
 
 An input packet contains a magic value, protocol version, flags, payload length, server-issued match tag, client sequence, target frame, and opaque game payload. The client does not choose its player slot; the server derives the slot from the authenticated room session.
 
-The server accepts one input per active slot per target frame and seals only the next contiguous frame after every active slot has submitted. A no-op must be explicit. Missing input stalls the frame; the server does not silently synthesize no-op input or skip a gap.
+The server accepts one input per active slot per target frame and seals only the next contiguous frame after every active slot has submitted. By default (`frameDeadlineTicks: 0`), a no-op must be explicit and missing input stalls the frame without silently synthesizing input or skipping gaps. Rooms can optionally enable anti-stall recovery by configuring `frameDeadlineTicks > 0`, which synthesizes explicit `NO_OP` inputs for missing active slots after waiting that many fixed ticks, and retain a bounded `frameHistory` (configurable via `maxHistoryFrames`) so reconnecting peers can request missed frames via `'lockstep:sync'` / `'lockstep:sync-status'` (reporting `'history_evicted'` if requested ticks aged out).
 
-Client-reported hashes are diagnostic peer comparisons, not authoritative server state. Replay history, canonical snapshots, rollback, and trusted game simulation are not implemented by this relay.
+Client-reported hashes are diagnostic peer comparisons, not authoritative server state. Canonical world snapshots, rollback, and trusted game simulation remain the responsibility of game-specific rooms or server logic (`LagCompensationHistory` provides a bounded snapshot/ray helper only).
 
 ## Production boundaries
 

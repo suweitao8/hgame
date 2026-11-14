@@ -31,7 +31,8 @@ export function defineProject(options = {}) {
   const defaults = BASE[profile];
   if (!defaults) throw new Error('Unknown game profile: ' + profile);
   const renderer = options.renderer ?? defaults.renderer;
-  if (renderer !== defaults.renderer) {
+  const allowedRenderers = { '2d': ['canvas2d', 'webgl2d'], '3d': ['threejs'], ui: ['dom'] }[profile];
+  if (!allowedRenderers.includes(renderer)) {
     throw new Error('Renderer ' + renderer + ' is incompatible with ' + profile + ' profile');
   }
   const physics = options.physics ?? defaults.physics;

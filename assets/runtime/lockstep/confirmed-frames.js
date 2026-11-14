@@ -15,6 +15,8 @@ export function createConfirmedFrameScheduler({
   startBufferFrames = 2,
   maxBufferFrames = 32,
   maxStepsPerUpdate = 4,
+  maxExtraStepsPerUpdate = 1,
+  adaptiveCatchup = false,
 } = {}) {
   if (!Number.isInteger(netHz) || netHz < 1 || netHz > 240 ||
       !Number.isInteger(logicHz) || logicHz < netHz || logicHz > 240 ||
@@ -32,10 +34,12 @@ export function createConfirmedFrameScheduler({
   }
   if (!Number.isSafeInteger(instantButtonMask) || instantButtonMask < 0 ||
       instantButtonMask > 0x7fffffff) throw new RangeError('Invalid instantButtonMask');
+  if (typeof adaptiveCatchup !== 'boolean') throw new TypeError('adaptiveCatchup must be a boolean');
   for (const [name, value, min, max] of [
     ['startBufferFrames', startBufferFrames, 1, 16],
     ['maxBufferFrames', maxBufferFrames, startBufferFrames, 512],
     ['maxStepsPerUpdate', maxStepsPerUpdate, 1, 32],
+    ['maxExtraStepsPerUpdate', maxExtraStepsPerUpdate, 0, 16],
   ]) {
     if (!Number.isInteger(value) || value < min || value > max) throw new RangeError('Invalid ' + name);
   }
@@ -101,7 +105,13 @@ export function createConfirmedFrameScheduler({
     }
     accumulatorMs += elapsedMs;
     let completed = 0;
-    let recoveryBudget = pending.size >= startBufferFrames + 2 ? 1 : 0;
+    const excessFrames = pending.size - (startBufferFrames + 1);
+    let recoveryBudget = 0;
+    if (excessFrames > 0) {
+      recoveryBudget = adaptiveCatchup
+        ? Math.min(maxExtraStepsPerUpdate, excessFrames * stepsPerFrame)
+        : Math.min(maxExtraStepsPerUpdate, 1);
+    }
     while ((accumulatorMs + 1e-9 >= tickMs || recoveryBudget > 0) &&
       completed < maxStepsPerUpdate) {
       if (isEnded()) { accumulatorMs = 0; break; }

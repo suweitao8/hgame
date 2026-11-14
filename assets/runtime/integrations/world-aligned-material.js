@@ -59,8 +59,64 @@ const optionsFor = input => {
     normalStrength: finiteRange(options.normalStrength ?? 0, 'normalStrength', 0, 1),
     roughnessVariation: finiteRange(options.roughnessVariation ?? 0, 'roughnessVariation', 0, 1),
     aoIntensity: finiteRange(options.aoIntensity ?? 0, 'aoIntensity', 0, 1),
+    specularAA: options.specularAA === true,
+    anisotropy: finiteRange(options.anisotropy ?? 4, 'anisotropy', 1, 16),
   };
 };
+
+/**
+ * Adds screen-space normal-derivative roughness filtering to any PBR material
+ * to suppress subpixel specular shimmering without disabling sharp highlights up close.
+ */
+export function applyGeometricSpecularAA(material, { strength = 1.0, maxRoughnessBoost = 0.35 } = {}) {
+  if (!material || typeof material !== 'object') {
+    throw new TypeError('applyGeometricSpecularAA requires a Three.js material');
+  }
+  const aaStrength = finiteRange(strength, 'strength', 0, 4);
+  const maxBoost = finiteRange(maxRoughnessBoost, 'maxRoughnessBoost', 0, 1);
+  if (material.userData?.specularAA) return material;
+
+  const prevCompile = material.onBeforeCompile;
+  const prevCacheKey = typeof material.customProgramCacheKey === 'function'
+    ? material.customProgramCacheKey.bind(material)
+    : () => '';
+
+  material.customProgramCacheKey = () => {
+    const base = prevCacheKey();
+    return base ? base + ':specaa' : 'specaa';
+  };
+  material.onBeforeCompile = (shader, renderer) => {
+    if (typeof prevCompile === 'function') prevCompile.call(material, shader, renderer);
+    shader.uniforms.uSpecAAStrength = { value: aaStrength };
+    shader.uniforms.uSpecAAMaxBoost = { value: maxBoost };
+
+    const snippet = `
+      vec3 specDndu = dFdx(normal);
+      vec3 specDndv = dFdy(normal);
+      float specVar = uSpecAAStrength * (dot(specDndu, specDndu) + dot(specDndv, specDndv));
+      float specKernel = min(2.0 * specVar, uSpecAAMaxBoost * uSpecAAMaxBoost);
+    `;
+    if (shader.fragmentShader.includes('#include <lights_physical_fragment>')) {
+      shader.fragmentShader = `
+        uniform float uSpecAAStrength;
+        uniform float uSpecAAMaxBoost;
+      ` + shader.fragmentShader.replace('#include <lights_physical_fragment>', '#include <lights_physical_fragment>' + snippet + `
+        material.roughness = clamp(sqrt(material.roughness * material.roughness + specKernel), 0.04, 1.0);
+      `);
+    } else if (shader.fragmentShader.includes('#include <normal_fragment_maps>')) {
+      shader.fragmentShader = `
+        uniform float uSpecAAStrength;
+        uniform float uSpecAAMaxBoost;
+      ` + shader.fragmentShader.replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>' + snippet + `
+        roughnessFactor = clamp(sqrt(roughnessFactor * roughnessFactor + specKernel), 0.04, 1.0);
+      `);
+    }
+  };
+  material.userData ??= {};
+  material.userData.specularAA = Object.freeze({ strength: aaStrength, maxRoughnessBoost: maxBoost });
+  material.needsUpdate = true;
+  return material;
+}
 
 /** Y-up; exact same world coordinates on adjacent meshes produce same UV. */
 export function worldProjectUV(position, axis, options = {}) {
@@ -343,10 +399,14 @@ function makeMaterial(THREE, input, sharedTexture, sharedDetailTexture) {
       `);
     }
   };
+  if (!sharedTexture) tex.anisotropy = o.anisotropy;
+  if (detail && !sharedDetailTexture) detail.anisotropy = o.anisotropy;
+  if (o.specularAA) applyGeometricSpecularAA(mat, input?.specularAAOptions);
   // Palette-owned textures must be disposed by palette.dispose(), not by a
   // single shared material. Standalone callers own the generated textures.
   mat.userData.ownsTexture = !sharedTexture;
   mat.userData.ownsDetailTexture = Boolean(detail && !sharedDetailTexture);
+  mat.userData.worldAlignedOffsetUniform = uniform.uWorldAlignedOffset;
   return mat;
 }
 
@@ -354,21 +414,34 @@ export function createWorldAlignedMaterial(THREE, options = {}) {
   return makeMaterial(THREE, options);
 }
 
-export function createWorldMaterialPalette(THREE, definitions) {
+export function createWorldMaterialPalette(THREE, definitions, paletteOptions = {}) {
   if (!definitions || typeof definitions !== 'object' || Array.isArray(definitions)) {
     throw new TypeError('Material palette needs a dictionary');
   }
+  const defaultAnisotropy = finiteRange(paletteOptions?.anisotropy ?? 4, 'anisotropy', 1, 16);
+  const defaultSpecularAA = paletteOptions?.specularAA === true;
   const textures = new Map();
   const detailTextures = new Map();
   const materials = new Map();
   for (const [name, config] of Object.entries(definitions)) {
     if (!/^[a-z][a-z0-9-]{0,47}$/.test(name)) throw new Error('Invalid material name');
-    const o = optionsFor(config);
-    if (!textures.has(o.pattern)) textures.set(o.pattern,
-      createSmoothProceduralTexture(THREE, o.pattern));
+    const mergedConfig = {
+      anisotropy: defaultAnisotropy,
+      specularAA: defaultSpecularAA,
+      ...(config && typeof config === 'object' ? config : {}),
+    };
+    const o = optionsFor(mergedConfig);
+    if (!textures.has(o.pattern)) {
+      const tex = createSmoothProceduralTexture(THREE, o.pattern);
+      tex.anisotropy = o.anisotropy;
+      textures.set(o.pattern, tex);
+    }
     const needsDetail = o.normalStrength > 0 || o.roughnessVariation > 0 || o.aoIntensity > 0;
-    if (needsDetail && !detailTextures.has(o.pattern)) detailTextures.set(o.pattern,
-      createSmoothProceduralDetailTexture(THREE, o.pattern));
+    if (needsDetail && !detailTextures.has(o.pattern)) {
+      const detail = createSmoothProceduralDetailTexture(THREE, o.pattern);
+      detail.anisotropy = o.anisotropy;
+      detailTextures.set(o.pattern, detail);
+    }
     materials.set(name, makeMaterial(THREE, o, textures.get(o.pattern),
       detailTextures.get(o.pattern)));
   }
@@ -378,6 +451,29 @@ export function createWorldMaterialPalette(THREE, definitions) {
       if (disposed) throw new Error('World material palette disposed');
       if (!materials.has(name)) throw new Error('Unknown world material: ' + name);
       return materials.get(name);
+    },
+    setAnisotropy(value) {
+      if (disposed) return;
+      const next = finiteRange(value, 'anisotropy', 1, 16);
+      for (const tex of textures.values()) {
+        tex.anisotropy = next;
+        tex.needsUpdate = true;
+      }
+      for (const tex of detailTextures.values()) {
+        tex.anisotropy = next;
+        tex.needsUpdate = true;
+      }
+    },
+    shiftOffset(dx = 0, dy = 0, dz = 0) {
+      if (disposed) return;
+      for (const mat of materials.values()) {
+        const u = mat.userData?.worldAlignedOffsetUniform?.value;
+        if (u) {
+          u.x += dx;
+          u.y += dy;
+          u.z += dz;
+        }
+      }
     },
     dispose() {
       if (disposed) return;

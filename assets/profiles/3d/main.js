@@ -30,7 +30,6 @@ const [
 const project = HGame.defineProject(engineConfig);
 const qualityEnabled = project.features.includes('adaptiveQuality3d');
 const viewCanvas = document.querySelector('#game');
-let qualitySun = null;
 const qualitySettings = qualityEnabled ? {
   mode: gameConfig.quality3d?.mode ?? 'auto',
   // Passive device hints only: never create a throwaway WebGL context just
@@ -38,32 +37,21 @@ const qualitySettings = qualityEnabled ? {
   device: {
     mobile: typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches,
   },
-  onChange(state, reason) {
+  onChange(state) {
     viewCanvas.dataset.qualityTier = state.tier;
-    // Resolution changes only resize the framebuffer. A tier change can
-    // additionally adjust the single key-light's shadow allocation.
-    if (reason !== 'tier' || !qualitySun) return;
-    const wanted = state.preset.shadowMapSize;
-    if (qualitySun.shadow.mapSize.x !== wanted) {
-      qualitySun.shadow.mapSize.set(wanted, wanted);
-      qualitySun.shadow.map?.dispose?.();
-      qualitySun.shadow.map = null;
-      qualitySun.shadow.needsUpdate = true;
-    }
   },
 } : null;
 const renderer = createThreeAdapter({
-  THREE, canvas: viewCanvas,
+  THREE,
+  canvas: viewCanvas,
   quality3d: qualitySettings,
+  shadows: true,
+  toneMapping: 'ueFilmic',
+  exposure: 1.15,
 });
 if (renderer.qualityController) {
   viewCanvas.dataset.qualityTier = renderer.qualityController.state.tier;
 }
-renderer.renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.renderer.toneMappingExposure = 1.2;
-renderer.renderer.shadowMap.enabled = true;
-renderer.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.camera.position.set(9, 8.5, 12);
 renderer.camera.lookAt(0, 1, 0);
 
@@ -77,7 +65,6 @@ world.background = new THREE.Color(0x8eafc2);
 world.fog = new THREE.Fog(0x8eafc2, 17, 50);
 world.add(new THREE.HemisphereLight(0xffffff, 0x61707b, 2.0));
 const sun = new THREE.DirectionalLight(0xfff3dd, 2.6);
-qualitySun = sun;
 sun.position.set(7, 13, 9);
 sun.castShadow = true;
 sun.shadow.mapSize.set(1024, 1024);
@@ -88,15 +75,13 @@ sun.shadow.camera.bottom = -13;
 sun.shadow.camera.near = 0.5;
 sun.shadow.camera.far = 45;
 sun.shadow.bias = -0.0002;
-if (renderer.qualityController) {
-  const size = renderer.qualityController.state.preset.shadowMapSize;
-  sun.shadow.mapSize.set(size, size);
-}
+renderer.setSunLight(sun);
 world.add(sun);
 
 // World-position mapping means adjacent tiles use one continuous projected
 // texture coordinate frame regardless of individual cube UVs/mesh positions.
 const materialPalette = createWorldMaterialPalette(THREE, materialConfig.materials);
+renderer.registerMaterialPalette(materialPalette);
 const models = createProceduralModelSlots({
   THREE, slots: slotConfig.slots, materialPalette, GLTFLoader,
   projectBaseUrl: location.href,

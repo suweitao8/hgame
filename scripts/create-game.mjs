@@ -13,7 +13,7 @@ const profiles = path.join(root, 'assets', 'profiles');
 const optionalThree = path.join(root, 'assets', 'optional', 'three');
 
 function parse(argv) {
-  const result = { destination: '', name: '', profile: '2d', with: [], physics: null,
+  const result = { destination: '', name: '', profile: '2d', renderer: null, with: [], physics: null,
     tickHz: null, quality: null, git: true, dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -21,6 +21,8 @@ function parse(argv) {
       result.name = argv[++i] || '';
     } else if (arg === '--profile') {
       result.profile = argv[++i];
+    } else if (arg === '--renderer') {
+      result.renderer = argv[++i];
     } else if (arg === '--with') {
       result.with.push(...(argv[++i] || '').split(',').filter(Boolean));
     } else if (arg === '--physics') {
@@ -39,7 +41,7 @@ function parse(argv) {
       throw new Error('Unknown or incomplete argument: ' + arg);
     }
   }
-  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--profile 2d|3d|ui] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--no-git] [--dry-run]');
+  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--no-git] [--dry-run]');
   const target = path.resolve(result.destination);
   const slug = path.basename(target);
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(slug)) {
@@ -65,7 +67,8 @@ function parse(argv) {
   if (physics === 'rapier2d') features.push('physics2d');
   if (physics === 'rapier3d') features.push('physics3d');
   const recipe = defineProject({
-    profile: result.profile, ...(physics ? { physics } : {}),
+    profile: result.profile, ...(result.renderer ? { renderer: result.renderer } : {}),
+    ...(physics ? { physics } : {}),
     ...(result.tickHz === null ? {} : { tickHz: result.tickHz }), features,
   });
   return { ...result, target, slug, name: result.name || slug, recipe };
@@ -104,6 +107,8 @@ async function main() {
     await cp(template, stage, { recursive: true, force: false, errorOnExist: true });
     const vendor = path.join(stage, 'vendor', 'hgame');
     await cp(runtime, vendor, { recursive: true });
+    await mkdir(path.join(stage, 'scripts'), { recursive: true });
+    await cp(path.join(root, 'scripts', 'package-game.mjs'), path.join(stage, 'scripts', 'package-game.mjs'));
     for (const dimension of ['2d', '3d']) {
       if (options.recipe.physics !== `rapier${dimension}`) {
         await rm(path.join(vendor, 'vendor', `rapier${dimension}`), { recursive: true, force: true });

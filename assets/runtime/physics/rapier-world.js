@@ -22,13 +22,86 @@ function vector(value, dimension, defaults = {}) {
     : { x: finite(source.x, 'x', 0), y: finite(source.y, 'y', 0), z: finite(source.z, 'z', 0) };
 }
 
+function eulerToQuaternionXYZ(rx, ry, rz) {
+  const c1 = Math.cos(rx * 0.5), s1 = Math.sin(rx * 0.5);
+  const c2 = Math.cos(ry * 0.5), s2 = Math.sin(ry * 0.5);
+  const c3 = Math.cos(rz * 0.5), s3 = Math.sin(rz * 0.5);
+  return {
+    x: s1 * c2 * c3 + c1 * s2 * s3,
+    y: c1 * s2 * c3 - s1 * c2 * s3,
+    z: c1 * c2 * s3 + s1 * s2 * c3,
+    w: c1 * c2 * c3 - s1 * s2 * s3,
+  };
+}
+
+function quaternionToEulerXYZ(q) {
+  const { x, y, z, w } = q;
+  const x2 = x + x, y2 = y + y, z2 = z + z;
+  const xx = x * x2, xy = x * y2, xz = x * z2;
+  const yy = y * y2, yz = y * z2, zz = z * z2;
+  const wx = w * x2, wy = w * y2, wz = w * z2;
+  const m11 = 1 - (yy + zz), m12 = xy - wz, m13 = xz + wy;
+  const m22 = 1 - (xx + zz), m23 = yz - wx;
+  const m32 = yz + wx, m33 = 1 - (xx + yy);
+  const ry = Math.asin(Math.max(-1, Math.min(1, m13)));
+  let rx, rz;
+  if (Math.abs(m13) < 0.9999999) {
+    rx = Math.atan2(-m23, m33);
+    rz = Math.atan2(-m12, m11);
+  } else {
+    rx = Math.atan2(m32, m22);
+    rz = 0;
+  }
+  return { x: rx, y: ry, z: rz };
+}
+
+function normalizeRotationInput(rotation, dimension) {
+  if (dimension === 2) {
+    if (typeof rotation === 'number') return finite(rotation, 'rotation', 0);
+    if (rotation && typeof rotation === 'object' && 'z' in rotation) return finite(rotation.z, 'rotationZ', 0);
+    throw new TypeError('2D rotation must be a finite angle in radians or { z }');
+  }
+  if (!rotation || typeof rotation !== 'object') {
+    throw new TypeError('3D rotation must be a quaternion { x, y, z, w } or Euler { x, y, z }');
+  }
+  if ('w' in rotation) {
+    const qx = finite(rotation.x, 'qx', 0), qy = finite(rotation.y, 'qy', 0);
+    const qz = finite(rotation.z, 'qz', 0), qw = finite(rotation.w, 'qw', 1);
+    const len = Math.hypot(qx, qy, qz, qw);
+    if (len <= 1e-12) return { x: 0, y: 0, z: 0, w: 1 };
+    return { x: qx / len, y: qy / len, z: qz / len, w: qw / len };
+  }
+  return eulerToQuaternionXYZ(
+    finite(rotation.x, 'rotationX', 0),
+    finite(rotation.y, 'rotationY', 0),
+    finite(rotation.z, 'rotationZ', 0),
+  );
+}
+
+function syncEntityFromBody(record, dimension) {
+  const position = record.rigidBody.translation();
+  record.entity.x = position.x;
+  record.entity.y = position.y;
+  if (dimension === 3) record.entity.z = position.z;
+  if (record.syncRotation === false) return;
+  const rotation = record.rigidBody.rotation();
+  if (dimension === 2) {
+    record.entity.rotationZ = rotation;
+  } else {
+    const euler = quaternionToEulerXYZ(rotation);
+    record.entity.rotationX = euler.x;
+    record.entity.rotationY = euler.y;
+    record.entity.rotationZ = euler.z;
+  }
+}
+
 function setDescriptorTranslation(descriptor, position, dimension) {
   if (dimension === 2) descriptor.setTranslation(position.x, position.y);
   else descriptor.setTranslation(position.x, position.y, position.z);
   return descriptor;
 }
 
-function createRigidBodyDescriptor(RAPIER, type, position, dimension, canSleep) {
+function createRigidBodyDescriptor(RAPIER, type, position, rotation, dimension, options) {
   const factories = {
     fixed: () => RAPIER.RigidBodyDesc.fixed(),
     dynamic: () => RAPIER.RigidBodyDesc.dynamic(),
@@ -37,7 +110,19 @@ function createRigidBodyDescriptor(RAPIER, type, position, dimension, canSleep) 
   };
   const factory = factories[type];
   if (!factory) throw new Error(`Unsupported Rapier rigid-body type: ${type}`);
-  return setDescriptorTranslation(factory().setCanSleep(Boolean(canSleep)), position, dimension);
+  const desc = setDescriptorTranslation(factory().setCanSleep(Boolean(options.canSleep ?? false)), position, dimension);
+  desc.setRotation(rotation);
+  if (options.lockRotations) desc.lockRotations();
+  if (dimension === 3 && Array.isArray(options.enabledRotations)) {
+    desc.enabledRotations(
+      Boolean(options.enabledRotations[0]),
+      Boolean(options.enabledRotations[1]),
+      Boolean(options.enabledRotations[2]),
+    );
+  }
+  if (options.linearDamping !== undefined) desc.setLinearDamping(Math.max(0, finite(options.linearDamping, 'linearDamping', 0)));
+  if (options.angularDamping !== undefined) desc.setAngularDamping(Math.max(0, finite(options.angularDamping, 'angularDamping', 0)));
+  return desc;
 }
 
 function createColliderDescriptor(RAPIER, dimension, entity, options) {
@@ -106,10 +191,38 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       this.bodies = [];
       this._byEntity = new Map();
       this._byColliderHandle = new Map();
+      this._characterControllers = new Set();
       this._nextId = 1;
       this._tick = 0;
       this._checksums = [];
       this._disposed = false;
+    }
+
+    _attachBodyMethods(record) {
+      const { rigidBody } = record;
+      record.setVelocity = velocity => rigidBody.setLinvel(vector(velocity, dimension), true);
+      record.getVelocity = () => rigidBody.linvel();
+      record.setAngularVelocity = omega => {
+        if (dimension === 2) {
+          const w = record.lockRotations ? 0 : finite(omega, 'angularVelocity', 0);
+          rigidBody.setAngvel(w, true);
+          return;
+        }
+        const v = vector(omega, 3);
+        const masked = record.lockRotations
+          ? { x: 0, y: 0, z: 0 }
+          : (record.enabledRotations
+            ? {
+                x: record.enabledRotations[0] ? v.x : 0,
+                y: record.enabledRotations[1] ? v.y : 0,
+                z: record.enabledRotations[2] ? v.z : 0,
+              }
+            : v);
+        rigidBody.setAngvel(masked, true);
+      };
+      record.getAngularVelocity = () => rigidBody.angvel();
+      record.applyImpulse = (impulse, wakeUp = true) => rigidBody.applyImpulse(vector(impulse, dimension), wakeUp);
+      return record;
     }
 
     get tick() { return this._tick; }
@@ -134,18 +247,25 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
 
       const type = options.type ?? (options.static ? 'fixed' : 'dynamic');
       const position = vector(entity.worldPosition(), dimension);
-      const descriptor = createRigidBodyDescriptor(RAPIER, type, position, dimension, options.canSleep ?? false);
+      const rotation = dimension === 2
+        ? finite(options.rotation, 'rotation', entity.rotationZ || 0)
+        : (options.quaternion
+          ? normalizeRotationInput(options.quaternion, 3)
+          : eulerToQuaternionXYZ(entity.rotationX || 0, entity.rotationY || 0, entity.rotationZ || 0));
+      const descriptor = createRigidBodyDescriptor(RAPIER, type, position, rotation, dimension, options);
       const rigidBody = this.world.createRigidBody(descriptor);
       if (options.gravityScale !== undefined) rigidBody.setGravityScale(finite(options.gravityScale, 'gravityScale', 1), true);
       if (options.ccd) rigidBody.enableCcd(true);
       const collider = this.world.createCollider(createColliderDescriptor(RAPIER, dimension, entity, options), rigidBody);
-      const record = {
+      const record = this._attachBodyMethods({
         id: this._nextId++, entity, type, rigidBody, collider,
         bodyHandle: rigidBody.handle, colliderHandle: collider.handle,
-        setVelocity: velocity => rigidBody.setLinvel(vector(velocity, dimension), true),
-        getVelocity: () => rigidBody.linvel(),
-        applyImpulse: (impulse, wakeUp = true) => rigidBody.applyImpulse(vector(impulse, dimension), wakeUp),
-      };
+        syncRotation: options.syncRotation !== false,
+        lockRotations: Boolean(options.lockRotations),
+        enabledRotations: dimension === 3 && Array.isArray(options.enabledRotations)
+          ? options.enabledRotations.map(Boolean)
+          : null,
+      });
       this.bodies.push(record);
       this._byEntity.set(entity, record);
       this._byColliderHandle.set(collider.handle, record);
@@ -161,6 +281,9 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       this._assertAlive();
       const record = this.get(target);
       if (!record) return false;
+      for (const ctrl of [...this._characterControllers]) {
+        if (ctrl.body === record) ctrl.dispose();
+      }
       this.world.removeRigidBody(record.rigidBody);
       this._byEntity.delete(record.entity);
       this._byColliderHandle.delete(record.colliderHandle);
@@ -173,11 +296,36 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       const record = this.get(target);
       if (!record) throw new Error('Unknown Rapier body');
       const next = vector(position, dimension);
-      if (record.type === 'kinematicPosition') record.rigidBody.setNextKinematicTranslation(next);
-      else record.rigidBody.setTranslation(next, true);
+      if (record.type === 'kinematicPosition') {
+        record.rigidBody.setNextKinematicTranslation(next);
+      } else {
+        record.rigidBody.setTranslation(next, true);
+      }
       record.entity.x = next.x;
       record.entity.y = next.y;
       if (dimension === 3) record.entity.z = next.z;
+      if (record.type !== 'kinematicPosition') record.entity.snapTransform?.();
+    }
+
+    setRotation(target, rotation) {
+      this._assertAlive();
+      const record = this.get(target);
+      if (!record) throw new Error('Unknown Rapier body');
+      const next = normalizeRotationInput(rotation, dimension);
+      if (record.type === 'kinematicPosition') {
+        record.rigidBody.setNextKinematicRotation(next);
+      } else {
+        record.rigidBody.setRotation(next, true);
+      }
+      if (dimension === 2) {
+        record.entity.rotationZ = next;
+      } else {
+        const euler = quaternionToEulerXYZ(next);
+        record.entity.rotationX = euler.x;
+        record.entity.rotationY = euler.y;
+        record.entity.rotationZ = euler.z;
+      }
+      if (record.type !== 'kinematicPosition') record.entity.snapTransform?.();
     }
 
     setVelocity(target, velocity) {
@@ -189,6 +337,130 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
     getVelocity(target) {
       const record = this.get(target);
       return record?.getVelocity() ?? null;
+    }
+
+    setAngularVelocity(target, omega) {
+      const record = this.get(target);
+      if (!record) throw new Error('Unknown Rapier body');
+      record.setAngularVelocity(omega);
+    }
+
+    getAngularVelocity(target) {
+      const record = this.get(target);
+      return record?.getAngularVelocity() ?? null;
+    }
+
+    createCharacterController(target, options = {}) {
+      this._assertAlive();
+      let record = this.get(target);
+      if (!record) throw new Error('Unknown Rapier body for character controller');
+      const offset = Math.max(0.0001, finite(options.offset, 'offset', 0.01));
+
+      const configure = world => {
+        const ctrl = world.createCharacterController(offset);
+        if (options.up) ctrl.setUp(vector(options.up, dimension));
+        ctrl.setSlideEnabled(options.slide !== false);
+        if (options.maxSlopeClimbAngle !== undefined) {
+          ctrl.setMaxSlopeClimbAngle(finite(options.maxSlopeClimbAngle, 'maxSlopeClimbAngle', Math.PI / 4));
+        }
+        if (options.minSlopeSlideAngle !== undefined) {
+          ctrl.setMinSlopeSlideAngle(finite(options.minSlopeSlideAngle, 'minSlopeSlideAngle', Math.PI / 4));
+        }
+        if (options.autostep) {
+          ctrl.enableAutostep(
+            finite(options.autostep.maxHeight, 'autostep.maxHeight', 0.3),
+            finite(options.autostep.minWidth, 'autostep.minWidth', 0.2),
+            Boolean(options.autostep.includeDynamic),
+          );
+        }
+        if (options.snapToGround !== undefined && options.snapToGround !== null && options.snapToGround !== false) {
+          ctrl.enableSnapToGround(finite(options.snapToGround, 'snapToGround', 0.2));
+        }
+        if (options.applyImpulsesToDynamicBodies !== undefined) {
+          ctrl.setApplyImpulsesToDynamicBodies(Boolean(options.applyImpulsesToDynamicBodies));
+        }
+        if (options.characterMass !== undefined) {
+          ctrl.setCharacterMass(finite(options.characterMass, 'characterMass', 1));
+        }
+        return ctrl;
+      };
+
+      let native = configure(this.world);
+      let removed = false;
+      let grounded = false;
+      const worldRef = this;
+
+      const handle = {
+        get entity() { return record.entity; },
+        get body() { return record; },
+        get controller() { return native; },
+        get grounded() { return grounded; },
+        move(desiredTranslation, { filterFlags, filterGroups, filterPredicate, immediate = false } = {}) {
+          worldRef._assertAlive();
+          if (removed) throw new Error('CharacterController has been disposed');
+          if (!worldRef.bodies.includes(record) || record.entity.destroyed) {
+            throw new Error('CharacterController target body was removed');
+          }
+          native.computeColliderMovement(
+            record.collider,
+            vector(desiredTranslation, dimension),
+            filterFlags,
+            filterGroups,
+            filterPredicate,
+          );
+          const m = native.computedMovement();
+          const movement = dimension === 2 ? { x: m.x, y: m.y } : { x: m.x, y: m.y, z: m.z };
+          grounded = native.computedGrounded();
+          const numCollisions = native.numComputedCollisions();
+          const collisions = [];
+          for (let i = 0; i < numCollisions; i++) {
+            const c = native.computedCollision(i);
+            if (!c) continue;
+            collisions.push({
+              collider: c.collider ?? null,
+              body: c.collider ? (worldRef._byColliderHandle.get(c.collider.handle) ?? null) : null,
+              normal: c.normal1 ? (dimension === 2 ? { x: c.normal1.x, y: c.normal1.y } : { x: c.normal1.x, y: c.normal1.y, z: c.normal1.z }) : null,
+              toi: c.toi ?? 0,
+            });
+          }
+          const cur = record.rigidBody.translation();
+          const nextPos = dimension === 2
+            ? { x: cur.x + movement.x, y: cur.y + movement.y }
+            : { x: cur.x + movement.x, y: cur.y + movement.y, z: cur.z + movement.z };
+          if (!immediate && record.type === 'kinematicPosition') {
+            record.rigidBody.setNextKinematicTranslation(nextPos);
+          } else {
+            record.rigidBody.setTranslation(nextPos, true);
+            worldRef.world.propagateModifiedBodyPositionsToColliders?.();
+          }
+          record.entity.x = nextPos.x;
+          record.entity.y = nextPos.y;
+          if (dimension === 3) record.entity.z = nextPos.z;
+          return { movement, grounded, collisions };
+        },
+        _detachNative(oldWorld) {
+          if (!removed && native) {
+            oldWorld.removeCharacterController(native);
+            native = null;
+          }
+        },
+        _rebind(newWorld, newRecord) {
+          if (removed) return;
+          record = newRecord;
+          native = configure(newWorld);
+        },
+        dispose() {
+          if (removed) return false;
+          removed = true;
+          if (native && !worldRef._disposed) worldRef.world.removeCharacterController(native);
+          native = null;
+          worldRef._characterControllers.delete(handle);
+          return true;
+        },
+      };
+
+      this._characterControllers.add(handle);
+      return handle;
     }
 
     overlaps(targetA, targetB) {
@@ -232,14 +504,15 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       for (const record of this.bodies) {
         if (record.type !== 'kinematicPosition' || record.entity.destroyed) continue;
         record.rigidBody.setNextKinematicTranslation(vector(record.entity.worldPosition(), dimension));
+        const rot = dimension === 2
+          ? (record.entity.rotationZ || 0)
+          : eulerToQuaternionXYZ(record.entity.rotationX || 0, record.entity.rotationY || 0, record.entity.rotationZ || 0);
+        record.rigidBody.setNextKinematicRotation(rot);
       }
       this.world.step(this.eventQueue);
       for (const record of this.bodies) {
         if (record.type === 'fixed' || record.entity.destroyed) continue;
-        const position = record.rigidBody.translation();
-        record.entity.x = position.x;
-        record.entity.y = position.y;
-        if (dimension === 3) record.entity.z = position.z;
+        syncEntityFromBody(record, dimension);
       }
       this.eventQueue.drainCollisionEvents((handleA, handleB, started) => {
         const a = this._byColliderHandle.get(handleA);
@@ -266,6 +539,9 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
         records: this.bodies.map(record => ({
           entity: record.entity, type: record.type, id: record.id,
           bodyHandle: record.bodyHandle, colliderHandle: record.colliderHandle,
+          syncRotation: record.syncRotation,
+          lockRotations: Boolean(record.lockRotations),
+          enabledRotations: record.enabledRotations ? [...record.enabledRotations] : null,
         })),
         nextId: this._nextId,
       };
@@ -285,28 +561,35 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
           restored.free();
           throw new Error(`Rapier snapshot body ${saved.id} could not be rebound`);
         }
-        return { ...saved, rigidBody, collider,
-          setVelocity: velocity => rigidBody.setLinvel(vector(velocity, dimension), true),
-          getVelocity: () => rigidBody.linvel(),
-          applyImpulse: (impulse, wakeUp = true) => rigidBody.applyImpulse(vector(impulse, dimension), wakeUp),
-        };
+        return this._attachBodyMethods({
+          ...saved, syncRotation: saved.syncRotation !== false, rigidBody, collider,
+        });
       });
+      const oldByEntity = new Map(records.map(record => [record.entity, record]));
+      for (const ctrl of [...this._characterControllers]) {
+        if (!oldByEntity.has(ctrl.entity)) {
+          ctrl.dispose();
+        } else {
+          ctrl._detachNative(this.world);
+        }
+      }
       this.eventQueue.free();
       this.world.free();
       this.world = restored;
       this.world.timestep = this.fixedDt;
       this.eventQueue = new RAPIER.EventQueue(true);
       this.bodies = records;
-      this._byEntity = new Map(records.map(record => [record.entity, record]));
+      this._byEntity = oldByEntity;
       this._byColliderHandle = new Map(records.map(record => [record.colliderHandle, record]));
       this._nextId = snapshot.nextId;
       this._tick = snapshot.tick;
       this._checksums.length = 0;
       for (const record of records) {
-        const position = record.rigidBody.translation();
-        record.entity.x = position.x;
-        record.entity.y = position.y;
-        if (dimension === 3) record.entity.z = position.z;
+        syncEntityFromBody(record, dimension);
+        record.entity.snapTransform?.();
+      }
+      for (const ctrl of this._characterControllers) {
+        ctrl._rebind(this.world, this._byEntity.get(ctrl.entity));
       }
       return this;
     }
@@ -322,6 +605,8 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
 
     dispose() {
       if (this._disposed) return false;
+      for (const ctrl of [...this._characterControllers]) ctrl._detachNative(this.world);
+      this._characterControllers.clear();
       this._disposed = true;
       this.eventQueue.free();
       this.world.free();

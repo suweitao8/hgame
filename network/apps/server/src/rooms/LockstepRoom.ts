@@ -2,11 +2,20 @@ import { Room, type Client } from '@colyseus/core';
 import { schema, t } from '@colyseus/schema';
 import {
   LOCKSTEP_MAX_PLAYERS,
+  LockstepInputFlags,
   decodeLockstepInput,
   encodeConfirmedFrame,
   type ConfirmedPlayerInput,
 } from '@hgame/network-protocol';
-import { allocateSlot, createMatchTag, handleRoomDrop, validateMaxClients, validateReconnectSeconds } from './shared.js';
+import {
+  TokenBucketRateLimiter,
+  allocateSlot,
+  createMatchTag,
+  handleRoomDrop,
+  validateMaxClients,
+  validateRateLimit,
+  validateReconnectSeconds,
+} from './shared.js';
 
 const LockstepPlayer = schema({
   slot: t.uint8().default(0),
@@ -21,18 +30,25 @@ export const LockstepRoomState = schema({
   players: t.map(LockstepPlayer),
 });
 
+const MAX_SYNC_BATCH_FRAMES = 240;
+
 /**
- * Strict confirmed-input relay. It never invents missing inputs or advances
- * a frame until every active slot has supplied that exact target frame.
+ * Confirmed-input relay with optional anti-stall deadline synthesis and
+ * bounded frame history replay for reconnect recovery.
  */
 export class LockstepRoom extends Room {
   state = new LockstepRoomState();
   private reconnectSeconds = 0;
   private maxFutureFrames = 32;
   private maxFramesPerTick = 4;
+  private frameDeadlineTicks = 0;
+  private waitingTicksOnCurrentFrame = 0;
+  private maxHistoryFrames = 600;
+  private inputLimiter = new TokenBucketRateLimiter(64, 120);
   private readonly pending = new Map<number, Map<number, ConfirmedPlayerInput>>();
   private readonly lastSequence = new Map<string, number>();
   private readonly hashReports = new Map<number, Map<number, number>>();
+  private readonly frameHistory = new Map<number, Uint8Array>();
 
   onCreate(options: Record<string, unknown> = {}): void {
     this.maxClients = validateMaxClients(options.maxClients, LOCKSTEP_MAX_PLAYERS);
@@ -40,11 +56,19 @@ export class LockstepRoom extends Room {
     this.reconnectSeconds = validateReconnectSeconds(options.reconnectSeconds, 0);
     this.maxFutureFrames = Number(options.maxFutureFrames ?? 32);
     this.maxFramesPerTick = Number(options.maxFramesPerTick ?? 4);
+    this.frameDeadlineTicks = Number(options.frameDeadlineTicks ?? 0);
+    this.maxHistoryFrames = Number(options.maxHistoryFrames ?? 600);
     if (!Number.isInteger(this.maxFutureFrames) || this.maxFutureFrames < 2 || this.maxFutureFrames > 512) {
       throw new RangeError('maxFutureFrames must be an integer from 2 to 512');
     }
     if (!Number.isInteger(this.maxFramesPerTick) || this.maxFramesPerTick < 1 || this.maxFramesPerTick > 32) {
       throw new RangeError('maxFramesPerTick must be an integer from 1 to 32');
+    }
+    if (!Number.isInteger(this.frameDeadlineTicks) || this.frameDeadlineTicks < 0 || this.frameDeadlineTicks > 600) {
+      throw new RangeError('frameDeadlineTicks must be an integer from 0 to 600');
+    }
+    if (!Number.isInteger(this.maxHistoryFrames) || this.maxHistoryFrames < 16 || this.maxHistoryFrames > 3600) {
+      throw new RangeError('maxHistoryFrames must be an integer from 16 to 3600');
     }
 
     this.state.gameId = typeof options.gameId === 'string' ? options.gameId : 'network-lab';
@@ -53,8 +77,18 @@ export class LockstepRoom extends Room {
     const netHz = Number(options.netHz ?? 20);
     if (!Number.isInteger(netHz) || netHz < 1 || netHz > 60) throw new RangeError('netHz must be an integer from 1 to 60');
 
+    const maxInputsPerSecond = validateRateLimit(
+      options.maxInputsPerSecond,
+      Math.max(60, netHz * 4),
+      10,
+      600,
+      'maxInputsPerSecond',
+    );
+    this.inputLimiter = new TokenBucketRateLimiter(Math.max(32, maxInputsPerSecond), maxInputsPerSecond);
+
     this.onMessageBytes('lockstep:input', (client, bytes: unknown) => this.receiveInput(client, bytes));
     this.onMessage('lockstep:hash', (client, payload: unknown) => this.receiveHash(client, payload));
+    this.onMessage('lockstep:sync', (client, payload: unknown) => this.handleSyncRequest(client, payload));
     this.setFixedTimestep(() => this.sealAvailableFrames(), netHz);
   }
 
@@ -82,6 +116,7 @@ export class LockstepRoom extends Room {
   onLeave(client: Client): void {
     const player = this.state.players.get(client.sessionId);
     if (player) this.removeSlot(client.sessionId, player.slot);
+    this.inputLimiter.remove(client.sessionId);
   }
 
   private receiveInput(client: Client, raw: unknown): void {
@@ -91,6 +126,10 @@ export class LockstepRoom extends Room {
     }
     const player = this.state.players.get(client.sessionId);
     if (!player || !player.connected) return;
+    if (!this.inputLimiter.consume(client.sessionId)) {
+      client.send('lockstep:rejected', { reason: 'rate limit exceeded' });
+      return;
+    }
 
     let packet;
     try {
@@ -139,13 +178,47 @@ export class LockstepRoom extends Room {
       const activePlayers = Array.from(this.state.players.values())
         .filter((player) => this.reconnectSeconds > 0 || player.connected)
         .sort((a, b) => a.slot - b.slot);
-      if (activePlayers.length === 0) return;
+      if (activePlayers.length === 0) {
+        this.waitingTicksOnCurrentFrame = 0;
+        return;
+      }
 
-      const frameInputs = this.pending.get(nextTick);
-      if (!frameInputs || activePlayers.some((player) => !frameInputs.has(player.slot))) return;
+      let frameInputs = this.pending.get(nextTick);
+      const missingPlayers = activePlayers.filter((player) => !frameInputs?.has(player.slot));
+      if (missingPlayers.length > 0) {
+        if (count === 0) {
+          this.waitingTicksOnCurrentFrame++;
+          if (this.frameDeadlineTicks > 0 && this.waitingTicksOnCurrentFrame >= this.frameDeadlineTicks) {
+            if (!frameInputs) {
+              frameInputs = new Map();
+              this.pending.set(nextTick, frameInputs);
+            }
+            for (const missing of missingPlayers) {
+              frameInputs.set(missing.slot, {
+                slot: missing.slot,
+                sequence: 0,
+                flags: LockstepInputFlags.NO_OP,
+                payload: new Uint8Array(0),
+              });
+            }
+          } else {
+            return;
+          }
+        } else {
+          return;
+        }
+      }
 
-      const inputs = activePlayers.map((player) => frameInputs.get(player.slot)!);
+      this.waitingTicksOnCurrentFrame = 0;
+      const inputs = activePlayers.map((player) => frameInputs!.get(player.slot)!);
       const bytes = encodeConfirmedFrame({ matchTag: this.state.matchTag, netTick: nextTick, inputs });
+      this.frameHistory.set(nextTick, bytes);
+      while (this.frameHistory.size > this.maxHistoryFrames) {
+        const oldest = this.frameHistory.keys().next().value;
+        if (oldest === undefined) break;
+        this.frameHistory.delete(oldest);
+      }
+
       for (const client of this.clients) client.sendBytes('lockstep:frame', bytes);
       this.pending.delete(nextTick);
       this.state.netTick = nextTick;
@@ -154,6 +227,54 @@ export class LockstepRoom extends Room {
         if (tick <= this.state.netTick) this.pending.delete(tick);
       }
     }
+  }
+
+  private handleSyncRequest(client: Client, payload: unknown): void {
+    if (!this.state.players.has(client.sessionId)) return;
+    const fromNetTick = typeof payload === 'object' && payload !== null && 'fromNetTick' in payload
+      ? Number((payload as { fromNetTick: unknown }).fromNetTick)
+      : 1;
+    if (!Number.isInteger(fromNetTick) || fromNetTick < 1 || fromNetTick > 0xffff_ffff) {
+      client.send('lockstep:sync-status', { ok: false, reason: 'invalid fromNetTick' });
+      return;
+    }
+    if (fromNetTick > this.state.netTick) {
+      client.send('lockstep:sync-status', {
+        ok: true,
+        fromNetTick,
+        toNetTick: this.state.netTick,
+        sentFrames: 0,
+        hasMore: false,
+      });
+      return;
+    }
+    if (!this.frameHistory.has(fromNetTick)) {
+      const oldestAvailableTick = this.frameHistory.keys().next().value ?? null;
+      client.send('lockstep:sync-status', {
+        ok: false,
+        reason: 'history_evicted',
+        oldestAvailableTick,
+        currentNetTick: this.state.netTick,
+      });
+      return;
+    }
+
+    let sentFrames = 0;
+    let lastSent = fromNetTick - 1;
+    for (let tick = fromNetTick; tick <= this.state.netTick && sentFrames < MAX_SYNC_BATCH_FRAMES; tick++) {
+      const bytes = this.frameHistory.get(tick);
+      if (!bytes) break;
+      client.sendBytes('lockstep:frame', bytes);
+      lastSent = tick;
+      sentFrames++;
+    }
+    client.send('lockstep:sync-status', {
+      ok: true,
+      fromNetTick,
+      toNetTick: lastSent,
+      sentFrames,
+      hasMore: lastSent < this.state.netTick,
+    });
   }
 
   private receiveHash(client: Client, payload: unknown): void {
@@ -188,6 +309,7 @@ export class LockstepRoom extends Room {
   private removeSlot(sessionId: string, slot: number): void {
     this.state.players.delete(sessionId);
     this.lastSequence.delete(sessionId);
+    this.inputLimiter.remove(sessionId);
     for (const [tick, inputs] of this.pending) {
       inputs.delete(slot);
       if (inputs.size === 0) this.pending.delete(tick);

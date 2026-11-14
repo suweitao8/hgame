@@ -150,19 +150,22 @@ async function connectPredicted(): Promise<void> {
   predictionInput = conn.input();
   if (!predictionInput) throw new Error('服务端没有声明 defineInput，无法启动预测');
   prediction = conn.prediction({ mode: 'lerp', delay: 100 });
-  conn.onStateChange((state: any) => {
-    $('server-tick').textContent = String(state.serverTick);
-    attachPrediction();
+  const syncPredictedPlayers = () => {
     const players: PlayerView[] = [];
-    for (const [sessionId, player] of state.players) {
+    for (const [, player] of predictedRoom.state.players) {
       players.push({
         slot: player.slot,
-        x: sessionId === predictedRoom.sessionId ? prediction.value(player, 'x') : prediction.value(player, 'x'),
-        y: sessionId === predictedRoom.sessionId ? prediction.value(player, 'y') : prediction.value(player, 'y'),
+        x: prediction.value(player, 'x'),
+        y: prediction.value(player, 'y'),
         connected: player.connected,
       });
     }
     currentPlayers = players;
+  };
+  conn.onStateChange((state: any) => {
+    $('server-tick').textContent = String(state.serverTick);
+    attachPrediction();
+    syncPredictedPlayers();
   });
 
   const frame = (now: number) => {
@@ -175,6 +178,7 @@ async function connectPredicted(): Promise<void> {
         predictionInput.data.moveY = axisY;
         predictionInput.send();
       }
+      syncPredictedPlayers();
     }
     drawPlayers(currentPlayers);
     renderFrame = requestAnimationFrame(frame);

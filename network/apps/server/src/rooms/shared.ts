@@ -47,3 +47,61 @@ export function validateMaxClients(value: unknown, fallback = 16): number {
   }
   return count;
 }
+
+export function validateRateLimit(value: unknown, fallback: number, min = 1, max = 600, name = 'rateLimit'): number {
+  const rate = value === undefined ? fallback : Number(value);
+  if (!Number.isInteger(rate) || rate < min || rate > max) {
+    throw new RangeError(`${name} must be an integer from ${min} to ${max}`);
+  }
+  return rate;
+}
+
+interface TokenBucketState {
+  tokens: number;
+  lastMs: number;
+}
+
+/**
+ * Per-key token bucket rate limiter to guard authoritative rooms against message floods.
+ */
+export class TokenBucketRateLimiter {
+  private readonly buckets = new Map<string, TokenBucketState>();
+
+  constructor(
+    readonly capacity: number,
+    readonly refillPerSecond: number,
+  ) {
+    if (!Number.isFinite(capacity) || capacity < 1) {
+      throw new RangeError('capacity must be >= 1');
+    }
+    if (!Number.isFinite(refillPerSecond) || refillPerSecond <= 0) {
+      throw new RangeError('refillPerSecond must be > 0');
+    }
+  }
+
+  consume(key: string, cost = 1, nowMs = Date.now()): boolean {
+    if (!Number.isFinite(cost) || cost <= 0) {
+      throw new RangeError('cost must be > 0');
+    }
+    let bucket = this.buckets.get(key);
+    if (!bucket) {
+      bucket = { tokens: this.capacity, lastMs: nowMs };
+      this.buckets.set(key, bucket);
+    } else if (nowMs > bucket.lastMs) {
+      const elapsedSeconds = (nowMs - bucket.lastMs) / 1000;
+      bucket.tokens = Math.min(this.capacity, bucket.tokens + elapsedSeconds * this.refillPerSecond);
+      bucket.lastMs = nowMs;
+    }
+    if (bucket.tokens + 1e-9 < cost) return false;
+    bucket.tokens = Math.max(0, bucket.tokens - cost);
+    return true;
+  }
+
+  remove(key: string): void {
+    this.buckets.delete(key);
+  }
+
+  clear(): void {
+    this.buckets.clear();
+  }
+}

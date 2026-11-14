@@ -16,7 +16,7 @@ const mime = {
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.mp4': 'video/mp4',
   '.woff2': 'font/woff2',
 };
-const forbidden = new Set(['.git', '.svn', 'node_modules', 'tests', 'tools', 'analysis', 'private', '.env']);
+const forbidden = new Set(['.git', '.svn', 'node_modules', 'tests', 'tools', 'scripts', 'build', 'analysis', 'private', '.env']);
 
 function args(argv) {
   let folder = '';

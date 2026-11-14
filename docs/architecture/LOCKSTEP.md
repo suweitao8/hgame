@@ -63,7 +63,7 @@ scheduler.advanceElapsedMs(displayDeltaMs);
 - Player IDs must be unique and ordered; accepted inputs are copied before buffering.
 - Startup waits for a contiguous confirmation buffer.
 - Missing frames stall authority; the scheduler does not invent no-op input or skip gaps.
-- Catch-up and buffer sizes are bounded. Invalid future frames fail closed.
+- Catch-up and buffer sizes are bounded. Invalid future frames fail closed. Opt-in adaptive catch-up pacing (`adaptiveCatchup` and `maxExtraStepsPerUpdate`) may drain queued frames faster when latency spikes, defaulting to strict pacing when `adaptiveCatchup: false`.
 - Instant button bits can be consumed on the first logic substep only.
 - Each completed logic tick invokes `onTick`; a terminal World stops further catch-up.
 

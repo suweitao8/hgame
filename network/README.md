@@ -8,10 +8,10 @@ HGame Network is the shared HTML5 multiplayer client/server foundation. It is in
 network/
 ├── packages/
 │   ├── protocol/       # versioned binary protocol + deterministic integer helpers
-│   ├── simulation/     # tiny shared motion step used by the conformance lab only
-│   └── client/         # Colyseus client lifecycle, reconnect token and lockstep channel
+│   ├── simulation/     # shared motion step fixture & server LagCompensationHistory
+│   └── client/         # Colyseus client, reconnect, SnapshotInterpolationBuffer, AdaptiveInputLeadController & HGameLockstepChannel
 └── apps/
-    ├── server/         # Colyseus 0.18 server and three local conformance rooms
+    ├── server/         # Colyseus 0.18 server, TokenBucketRateLimiter & conformance rooms
     └── network-lab/    # browser test page; not a shipped game
 ```
 
@@ -79,9 +79,9 @@ Client input packet (`HGIN`, little-endian):
 
 The client does not send its player slot. The server derives slot identity from the authenticated room session. It rejects stale/duplicate sequences, wrong match tags, duplicate slot submissions and target frames outside the configured future window.
 
-Confirmed frame (`HGFR`) has a 16-byte header followed by sorted per-slot entries. Each entry contains slot, flags, payload length, accepted input sequence and payload. A frame is broadcast only after every active slot has submitted that exact frame. An explicit no-op is a valid input; a missing input stalls the frame. The server never silently converts packet loss into a no-op.
+Confirmed frame (`HGFR`) has a 16-byte header followed by sorted per-slot entries. Each entry contains slot, flags, payload length, accepted input sequence and payload. By default (`frameDeadlineTicks: 0`), a frame is sealed strictly once every active slot has submitted that tick; rooms can opt into `frameDeadlineTicks > 0` to emit bounded `NO_OP` entries when a deadline expires. Both `StateSyncRoom` and `LockstepRoom` enforce per-session `TokenBucketRateLimiter` input flood protection.
 
-Client-reported hashes are compared peer-to-peer and are marked non-authoritative; they do not establish a trusted server state. Replay history and snapshot restore are not implemented in this first version. A game that needs reconnect recovery must provide its own trusted canonical snapshot and replay contract. Lockstep reconnection is disabled by default; state and prediction lab rooms use a configurable 45-second seat reservation.
+`LockstepRoom` buffers bounded confirmed-frame history (`maxHistoryFrames`) so `HGameLockstepChannel` can request catch-up replay via `'lockstep:sync'` on reconnect (configurable `reconnectionSeconds`), while state recovery for full mid-match drop-in still relies on a game-defined canonical snapshot contract. Client-reported hashes are compared peer-to-peer and remain non-authoritative.
 
 ## Production boundaries
 

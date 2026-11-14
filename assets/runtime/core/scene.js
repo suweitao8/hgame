@@ -1,11 +1,94 @@
+import { Component } from './component.js';
 import { Entity } from './entity.js';
+import { TweenManager } from '../time/tween.js';
+
+const SCRATCH_WALK = [];
+const SCRATCH_COMPS = [];
+let walkDepth = 0;
+let compDepth = 0;
+const PROTO_HOOKS = Component.prototype;
 
 function walk(roots, action) {
-  for (const entity of [...roots]) {
-    if (!entity.destroyed) {
-      action(entity);
-      if (!entity.destroyed) walk(entity.children, action);
+  const len = roots.length;
+  if (len === 0) return;
+  const depth = walkDepth++;
+  const buf = SCRATCH_WALK[depth] ?? (SCRATCH_WALK[depth] = []);
+  let i = 0;
+  try {
+    for (let k = 0; k < len; k++) buf[k] = roots[k];
+    for (; i < len; i++) {
+      const entity = buf[i];
+      buf[i] = null;
+      if (!entity.destroyed) {
+        action(entity);
+        if (!entity.destroyed && entity.children.length > 0) {
+          walk(entity.children, action);
+        }
+      }
     }
+  } finally {
+    while (i < len) buf[i++] = null;
+    walkDepth--;
+  }
+}
+
+function captureTransformsOnRoots(roots) {
+  for (let i = 0, n = roots.length; i < n; i++) {
+    const entity = roots[i];
+    if (!entity.destroyed && entity.active) {
+      entity._capturePreviousTransform();
+      if (entity.children.length > 0) captureTransformsOnRoots(entity.children);
+    }
+  }
+}
+
+function runPhaseOnRoots(roots, phase, dt, app, scene) {
+  const len = roots.length;
+  if (len === 0 || !scene.active) return;
+  const depth = walkDepth++;
+  const buf = SCRATCH_WALK[depth] ?? (SCRATCH_WALK[depth] = []);
+  let i = 0;
+  try {
+    for (let k = 0; k < len; k++) buf[k] = roots[k];
+    for (; i < len; i++) {
+      const entity = buf[i];
+      buf[i] = null;
+      if (entity.destroyed || !entity.activeInHierarchy || !scene.active) continue;
+      const comps = entity.components;
+      const clen = comps.length;
+      if (clen > 0) {
+        const cdepth = compDepth++;
+        const cbuf = SCRATCH_COMPS[cdepth] ?? (SCRATCH_COMPS[cdepth] = []);
+        let ci = 0;
+        try {
+          for (let k = 0; k < clen; k++) cbuf[k] = comps[k];
+          for (; ci < clen; ci++) {
+            const component = cbuf[ci];
+            cbuf[ci] = null;
+            if (component._destroyed || !component._running) continue;
+            if (!component._started) {
+              component._started = true;
+              component.start();
+            }
+            if (component._running && scene.active) {
+              const hook = component[phase];
+              if (typeof hook === 'function' && hook !== PROTO_HOOKS[phase]) {
+                hook.call(component, dt, app);
+              }
+            }
+          }
+        } finally {
+          while (ci < clen) cbuf[ci++] = null;
+          compDepth--;
+        }
+      }
+      if (!entity.destroyed && entity.children.length > 0 && scene.active) {
+        runPhaseOnRoots(entity.children, phase, dt, app, scene);
+      }
+    }
+  } finally {
+    while (i < len) buf[i++] = null;
+    walkDepth--;
   }
 }
 
@@ -18,6 +101,10 @@ export class Scene {
     this.active = false;
     this.app = null;
     this.physics = null;
+    this._tweens = null;
+  }
+  get tweens() {
+    return (this._tweens ??= new TweenManager());
   }
   add(entity) {
     if (!(entity instanceof Entity) || entity.destroyed) throw new TypeError('Scene needs an Entity');
@@ -31,6 +118,22 @@ export class Scene {
     let found = null;
     walk(this.objects, entity => { if (!found && entity.name === name) found = entity; });
     return found;
+  }
+  findByTag(tag, { exact = false, activeOnly = false } = {}) {
+    const matches = [];
+    walk(this.objects, entity => {
+      if (activeOnly && !entity.activeInHierarchy) return;
+      if (entity.hasTag(tag, { exact })) matches.push(entity);
+    });
+    return matches;
+  }
+  queryTags(query, { activeOnly = false } = {}) {
+    const matches = [];
+    walk(this.objects, entity => {
+      if (activeOnly && !entity.activeInHierarchy) return;
+      if (entity.matchesTags(query)) matches.push(entity);
+    });
+    return matches;
   }
   enter(_app, _data) {}
   exit(_app) {}
@@ -47,23 +150,25 @@ export class Scene {
       if (!entity.destroyed) entity._syncComponents();
     }
   }
+  _capturePreviousTransforms() {
+    if (!this.active) return;
+    captureTransformsOnRoots(this.objects);
+  }
   _run(phase, dt, app) {
     if (!this.active) return;
-    this[phase]?.(dt, app);
-    walk(this.objects, entity => {
-      if (!this.active || !entity.activeInHierarchy) return;
-      for (const component of [...entity.components]) {
-        if (component._destroyed || !component._running) continue;
-        if (!component._started) {
-          component._started = true;
-          component.start();
-        }
-        if (component._running && this.active) component[phase]?.(dt, app);
+    if (this._tweens) {
+      const fixedDriven = (app?.project?.tickHz ?? 0) > 0;
+      if ((phase === 'fixedUpdate' && fixedDriven) || (phase === 'update' && !fixedDriven)) {
+        this._tweens.update(dt);
       }
-    });
+    }
+    this[phase]?.(dt, app);
+    runPhaseOnRoots(this.objects, phase, dt, app, this);
   }
   dispose() {
     this._setActive(false);
+    this._tweens?.dispose?.();
+    this._tweens = null;
     for (const object of [...this.objects]) object.destroy();
     this.physics?.dispose?.();
     this.physics = null;

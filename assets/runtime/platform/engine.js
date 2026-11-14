@@ -11,8 +11,16 @@ export const PLATFORM_VERSION = '1.0.0';
 export { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION };
 export { createAssetLoader } from './assets.js';
 export { createSaveStore } from './storage.js';
-export { createInputManager } from './input.js';
-export { createAudioManager } from './audio.js';
+export {
+  createInputManager,
+  defineInputContext,
+  createInputActionRouter,
+  ARCADE_SLOTS,
+  PLAYER_KEYMAPS,
+  createArcadeControls,
+  computeSplitScreenViews,
+} from './input.js';
+export { createAudioManager, analyzeAudioBuffer, normalizeVariantSet } from './audio.js';
 export { createDiagnostics } from './diagnostics.js';
 export { createGameBridge } from './game-bridge.js';
 export { createGameHostBridge } from './host-bridge.js';

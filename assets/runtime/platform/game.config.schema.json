@@ -41,6 +41,7 @@
       "enum": [
         "threejs",
         "canvas2d",
+        "webgl2d",
         "dom",
         "webgl-custom",
         "custom"
@@ -52,6 +53,12 @@
     "standalone": {
       "type": "boolean",
       "default": false
+    },
+    "quality2d": {
+      "type": "object"
+    },
+    "quality3d": {
+      "type": "object"
     }
   }
 }

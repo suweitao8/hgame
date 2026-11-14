@@ -38,6 +38,8 @@ export function createGameApplication({
   const services = Object.create(null);
   let frameId = null, previousTime = null, accumulator = 0, running = false,
     paused = false, disposed = false, installed = false, installing = null;
+  let baseTimeScale = 1, hitStopRemaining = 0, hitStopTimeScale = 0;
+  let lastUnscaledDelta = 0, lastScaledDelta = 0;
   const stepSize = project.tickHz > 0 ? 1 / project.tickHz : null;
   const requiresInstall = project.features.some(name =>
     ['physics2d', 'physics3d', 'animation2d', 'tilemap2d', 'pathfinding2d', 'model3d',
@@ -48,8 +50,18 @@ export function createGameApplication({
     get running() { return running; },
     get paused() { return paused; },
     get stats() { return { ...stats }; },
+    get baseTimeScale() { return baseTimeScale; },
+    get hitStopRemaining() { return hitStopRemaining; },
+    get timeScale() { return hitStopRemaining > 0 ? hitStopTimeScale : baseTimeScale; },
+    get unscaledDeltaSeconds() { return lastUnscaledDelta; },
+    get deltaSeconds() { return lastScaledDelta; },
+    get renderAlpha() {
+      if (stepSize === null) return 1;
+      return Math.max(0, Math.min(1, accumulator / stepSize));
+    },
     get input() { return runtime.input ?? null; },
     scenes: null,
+    setTimeScale, hitStop, clearHitStop,
     installFeatures, step, start, stop, pause, resume, dispatch, dispose,
   };
   app.scenes = new SceneManager(app, scene => {
@@ -146,6 +158,42 @@ export function createGameApplication({
     stats.frames++;
   }
 
+  function setTimeScale(scale) {
+    if (!Number.isFinite(scale) || scale < 0) {
+      throw new RangeError('timeScale must be a finite number >= 0');
+    }
+    baseTimeScale = scale;
+    return app;
+  }
+  function hitStop(durationSeconds, { scale = 0, stackMode = 'max' } = {}) {
+    if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
+      throw new RangeError('hitStop durationSeconds must be a finite number >= 0');
+    }
+    if (!Number.isFinite(scale) || scale < 0) {
+      throw new RangeError('hitStop scale must be a finite number >= 0');
+    }
+    if (durationSeconds === 0) return app;
+    if (stackMode === 'replace') {
+      hitStopRemaining = durationSeconds;
+      hitStopTimeScale = scale;
+    } else if (stackMode === 'add') {
+      hitStopTimeScale = hitStopRemaining > 0 ? Math.min(hitStopTimeScale, scale) : scale;
+      hitStopRemaining += durationSeconds;
+    } else {
+      if (hitStopRemaining <= 0 || durationSeconds >= hitStopRemaining) {
+        hitStopRemaining = durationSeconds;
+        hitStopTimeScale = scale;
+      } else if (scale < hitStopTimeScale) {
+        hitStopTimeScale = scale;
+      }
+    }
+    return app;
+  }
+  function clearHitStop() {
+    hitStopRemaining = 0;
+    hitStopTimeScale = 0;
+    return app;
+  }
   function step(deltaSeconds) {
     if (disposed) throw new Error('Application disposed');
     if (requiresInstall && !installed) throw new Error('Call await app.installFeatures() before stepping this project');
@@ -153,15 +201,36 @@ export function createGameApplication({
     const scene = app.scenes.current;
     if (!scene) throw new Error('Choose a Scene first');
     if (paused) return stats;
+    lastUnscaledDelta = deltaSeconds;
+    const rawStep = Math.min(deltaSeconds, maxDelta);
+    let scaledDelta;
+    if (hitStopRemaining > 0) {
+      const freezeDt = Math.min(rawStep, hitStopRemaining);
+      const postFreezeDt = rawStep - freezeDt;
+      hitStopRemaining = Math.max(0, hitStopRemaining - deltaSeconds);
+      if (hitStopRemaining === 0) {
+        const freezeScale = hitStopTimeScale;
+        hitStopTimeScale = 0;
+        scaledDelta = freezeDt * freezeScale + postFreezeDt * baseTimeScale;
+      } else {
+        scaledDelta = freezeDt * hitStopTimeScale + postFreezeDt * baseTimeScale;
+      }
+    } else {
+      scaledDelta = rawStep * baseTimeScale;
+    }
+    const maxScaledStep = maxDelta * Math.max(1, baseTimeScale);
+    if (scaledDelta > maxScaledStep) scaledDelta = maxScaledStep;
+    lastScaledDelta = scaledDelta;
     if (stepSize !== null) {
-      accumulator += Math.min(deltaSeconds, maxDelta);
+      accumulator += scaledDelta;
       let steps = 0;
       while (accumulator + 1e-10 >= stepSize && steps < maxSubSteps) {
         const active = app.scenes.current;
+        active?._capturePreviousTransforms?.();
         active?._run('fixedUpdate', stepSize, app);
         active?.physics?.step?.(stepSize);
         runtime.input?.endFrame?.();
-        accumulator -= stepSize;
+        accumulator = Math.max(0, accumulator - stepSize);
         stats.ticks++;
         steps++;
       }
@@ -172,8 +241,8 @@ export function createGameApplication({
       }
     }
     const current = app.scenes.current;
-    current._run('update', deltaSeconds, app);
-    current._run('lateUpdate', deltaSeconds, app);
+    current._run('update', scaledDelta, app);
+    current._run('lateUpdate', scaledDelta, app);
     render();
     return { ...stats };
   }
@@ -214,6 +283,10 @@ export function createGameApplication({
     frameId = null;
     previousTime = null;
     accumulator = 0;
+    hitStopRemaining = 0;
+    hitStopTimeScale = 0;
+    lastUnscaledDelta = 0;
+    lastScaledDelta = 0;
     runtime.input?.reset?.();
     return true;
   }

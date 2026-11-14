@@ -7,28 +7,69 @@
  * No Three.js, DOM, GPU probe, scheduler, localStorage or network dependency.
  * Game rules and fixed ticks MUST NOT depend on render quality.
  */
+export const QUALITY_TIERS = Object.freeze(['low', 'medium', 'high']);
+
 export const QUALITY3D_PRESETS = Object.freeze({
   low: Object.freeze({
-    maxPixels: 1_000_000, shadowMapSize: 1024, msaaSamples: 0,
-    ssao: false, bloom: false, volumetricSteps: 0, anisotropy: 2,
+    maxPixels: 1_000_000, maxPixelRatio: 1.25, shadowMapSize: 1024, shadowsEnabled: false,
+    shadowDistance: 18, msaaSamples: 0, ssao: false, ssgi: false, ssr: false, contactShadows: false,
+    bloom: false, volumetricSteps: 0, anisotropy: 2, fxaa: false, sharpen: 0, drawDistance: 90,
+    occlusionCulling: true, animationLodScale: 0.65, particleScale: 0.4, maxDynamicLights: 2,
+    megaLightsSamples: 1, maxClusteredLights: 32,
   }),
   medium: Object.freeze({
-    maxPixels: 1_500_000, shadowMapSize: 1536, msaaSamples: 0,
-    ssao: true, bloom: false, volumetricSteps: 8, anisotropy: 4,
+    maxPixels: 1_500_000, maxPixelRatio: 1.5, shadowMapSize: 1536, shadowsEnabled: true,
+    shadowDistance: 35, msaaSamples: 0, ssao: true, ssgi: false, ssr: false, contactShadows: true,
+    bloom: false, volumetricSteps: 8, anisotropy: 4, fxaa: true, sharpen: 0.1, drawDistance: 150,
+    occlusionCulling: true, animationLodScale: 1.0, particleScale: 0.75, maxDynamicLights: 4,
+    megaLightsSamples: 2, maxClusteredLights: 96,
   }),
   high: Object.freeze({
-    maxPixels: 2_300_000, shadowMapSize: 2048, msaaSamples: 2,
-    ssao: true, bloom: true, volumetricSteps: 16, anisotropy: 8,
+    maxPixels: 2_300_000, maxPixelRatio: 2.0, shadowMapSize: 2048, shadowsEnabled: true,
+    shadowDistance: 60, msaaSamples: 2, ssao: true, ssgi: true, ssr: true, contactShadows: true,
+    bloom: true, volumetricSteps: 16, anisotropy: 8, fxaa: true, sharpen: 0.14, drawDistance: 240,
+    occlusionCulling: true, animationLodScale: 1.35, particleScale: 1.0, maxDynamicLights: 8,
+    megaLightsSamples: 3, maxClusteredLights: 256,
   }),
   ultra: Object.freeze({
-    maxPixels: 3_700_000, shadowMapSize: 4096, msaaSamples: 4,
-    ssao: true, bloom: true, volumetricSteps: 28, anisotropy: 16,
+    maxPixels: 3_700_000, maxPixelRatio: 2.0, shadowMapSize: 4096, shadowsEnabled: true,
+    shadowDistance: 90, msaaSamples: 4, ssao: true, ssgi: true, ssr: true, contactShadows: true,
+    bloom: true, volumetricSteps: 28, anisotropy: 16, fxaa: true, sharpen: 0.16, drawDistance: 350,
+    occlusionCulling: true, animationLodScale: 1.75, particleScale: 1.25, maxDynamicLights: 12,
+    megaLightsSamples: 4, maxClusteredLights: 512,
+  }),
+});
+
+export const QUALITY2D_PRESETS = Object.freeze({
+  low: Object.freeze({
+    maxPixelRatio: 1.0, groundShadows: false, imageSmoothing: false,
+    particleScale: 0.4, hitFlashQuality: 'fast',
+  }),
+  medium: Object.freeze({
+    maxPixelRatio: 1.5, groundShadows: true, imageSmoothing: true,
+    particleScale: 0.75, hitFlashQuality: 'full',
+  }),
+  high: Object.freeze({
+    maxPixelRatio: 2.0, groundShadows: true, imageSmoothing: true,
+    particleScale: 1.0, hitFlashQuality: 'full',
+  }),
+  ultra: Object.freeze({
+    maxPixelRatio: 3.0, groundShadows: true, imageSmoothing: true,
+    particleScale: 1.25, hitFlashQuality: 'full',
   }),
 });
 
 const TIERS = Object.freeze(Object.keys(QUALITY3D_PRESETS));
 const VALID_MODES = Object.freeze(['auto', ...TIERS]);
 const inRange = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
+
+export function resolveQualityPreset(tier = 'high', dimension = '3d') {
+  const table = dimension === '2d' ? QUALITY2D_PRESETS : QUALITY3D_PRESETS;
+  if (!Object.hasOwn(table, tier)) {
+    throw new RangeError('Unsupported quality tier: ' + tier);
+  }
+  return table[tier];
+}
 
 /** Pure, conservative hint selection. Do not allocate a new probing WebGL context. */
 export function chooseInitial3dQuality({
@@ -119,9 +160,11 @@ export function createAdaptiveQualityController({
     if (!Number.isFinite(dpr) || dpr <= 0) throw new RangeError('Invalid device pixel ratio');
     const width = Math.max(1, Math.floor(cssWidth));
     const height = Math.max(1, Math.floor(cssHeight));
-    const budget = QUALITY3D_PRESETS[tier].maxPixels;
+    const preset = QUALITY3D_PRESETS[tier];
+    const budget = preset.maxPixels;
     const budgetScale = Math.sqrt(budget / (width * height));
-    const idealScale = inRange(dpr, minPixelRatio, maxPixelRatio) * dynamicScale;
+    const effectiveMaxPr = Math.min(maxPixelRatio, preset.maxPixelRatio ?? maxPixelRatio);
+    const idealScale = inRange(dpr, minPixelRatio, effectiveMaxPr) * dynamicScale;
     // Never render more physical pixels than the selected tier's pixel budget.
     // Extreme viewports may need less than minPixelRatio to respect hard cap.
     const pixelRatio = Math.min(idealScale, budgetScale);

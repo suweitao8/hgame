@@ -1,6 +1,14 @@
 import { Room, type Client } from '@colyseus/core';
 import { schema, t } from '@colyseus/schema';
-import { allocateSlot, createMatchTag, handleRoomDrop, validateMaxClients, validateReconnectSeconds } from './shared.js';
+import {
+  TokenBucketRateLimiter,
+  allocateSlot,
+  createMatchTag,
+  handleRoomDrop,
+  validateMaxClients,
+  validateRateLimit,
+  validateReconnectSeconds,
+} from './shared.js';
 
 const StateSyncPlayer = schema({
   slot: t.uint8().default(0),
@@ -23,10 +31,15 @@ export const StateSyncRoomState = schema({
 export class StateSyncRoom extends Room {
   state = new StateSyncRoomState();
   private reconnectSeconds = 45;
+  private commandLimiter = new TokenBucketRateLimiter(20, 30);
 
   onCreate(options: Record<string, unknown> = {}): void {
     this.maxClients = validateMaxClients(options.maxClients);
     this.reconnectSeconds = validateReconnectSeconds(options.reconnectSeconds);
+    const maxCommandsPerSecond = validateRateLimit(options.maxCommandsPerSecond, 30, 1, 600, 'maxCommandsPerSecond');
+    const commandBurst = validateRateLimit(options.commandBurst, 20, 1, 200, 'commandBurst');
+    this.commandLimiter = new TokenBucketRateLimiter(commandBurst, maxCommandsPerSecond);
+
     this.state.gameId = typeof options.gameId === 'string' ? options.gameId : 'network-lab';
     this.state.matchTag = createMatchTag();
     this.state.phase = 'waiting';
@@ -34,6 +47,10 @@ export class StateSyncRoom extends Room {
 
     this.onMessage('state:increment', (client, payload: unknown) => {
       if (!this.state.players.has(client.sessionId)) return;
+      if (!this.commandLimiter.consume(client.sessionId)) {
+        client.send('state:rejected', { reason: 'rate limit exceeded' });
+        return;
+      }
       const amount = typeof payload === 'object' && payload !== null && 'amount' in payload
         ? Number((payload as { amount: unknown }).amount)
         : 1;
@@ -65,5 +82,6 @@ export class StateSyncRoom extends Room {
 
   onLeave(client: Client): void {
     this.state.players.delete(client.sessionId);
+    this.commandLimiter.remove(client.sessionId);
   }
 }
