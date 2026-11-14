@@ -279,6 +279,8 @@ export const HGame: Readonly<{
     createSwarmSimulation: typeof createSwarmSimulation;
     createGpuSwarmWebGL2: typeof createGpuSwarmWebGL2;
     createNavMesh3D: typeof createNavMesh3D;
+    fbmNoise2D: typeof fbmNoise2D;
+    createHeightfieldTerrain3D: typeof createHeightfieldTerrain3D;
     createWorldPartition: typeof createWorldPartition;
     createHLODProxyGroup3D: typeof createHLODProxyGroup3D;
     createFloatingOrigin: typeof createFloatingOrigin;
@@ -460,6 +462,7 @@ export { EASING, TweenManager, LN2_CRIT, damp, dampAngle, stepSpring1D, SpringDa
 export { TileMap, findGridPath } from "./world/tilemap.js";
 export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";
 export { SWARM_UNIT_FLAGS, ECS_SLOT_FLAGS, FlatSpatialHash2D, createFlatSpatialHash2D, FlowField2D, createFlowField2D, FlatCombatECS, createSwarmSimulation } from "./world/swarm-ecs.js";
+export { fbmNoise2D, createHeightfieldTerrain3D } from "./world/terrain3d.js";
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from "./world/open-world.js";
 export { createStateMachine, BT_STATUS, sequence, selector, parallel, inverter, repeater, cooldown, condition, action, wait, createBehaviorTree } from "./ai/index.js";
 export { createSeededRng, createStateChecksum, hashState, runScripted } from "./sim/index.js";

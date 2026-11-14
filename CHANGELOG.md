@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 3D Procedural Heightfield Terrain & Expanded Props (`world/terrain3d.js`, `integrations/procedural-models.js`, `physics/rapier-world.js`):
+  - Add `createHeightfieldTerrain3D` & `fbmNoise2D` with exact bilinear height/normal/slope/biome queries, Three.js vertex-colored mesh builder, deterministic prop scatter (`scatterPositions`), and direct Rapier3D heightfield physics (`attachPhysics`, exposing `world.RAPIER`).
+  - Expand `createProceduralModelSlots` with 7 new shapes (`arch`, `crate`, `barrel`, `crystal`, `rock`, `pine`, `turret`).
+
 - 2D Modern Atmospheric Lighting & Post-Processing (`integrations/post2d.js`, `integrations/webgl2d.js`, `integrations/canvas2d.js`):
   - Add zero-alloc `createLighting2DState` (ambient tint + up to 32 dynamic world-space point lights + `bloomIntensity`, `bloomThreshold`, `vignette`, `hitPulse`, `chromatic`, `saturation`, `contrast`) with automatic bypass when inactive.
   - Add WebGL2 offscreen scene FBO + half-res separable Bloom + composite shader in `createWebGL2DPostPass`, plus Canvas2D `'lighter'` radial fallback in `renderCanvas2DPostPass`.

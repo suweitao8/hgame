@@ -23,7 +23,7 @@
  * @property {new () => object} Object3D
  * @property {new () => object} Matrix4
  */
-/** @typedef {'box'|'slab'|'stair'|'column'|'foliage'|'fence'|'door'|'window'|'bench'|'lantern'} ProceduralShape */
+/** @typedef {'box'|'slab'|'stair'|'column'|'foliage'|'fence'|'door'|'window'|'bench'|'lantern'|'arch'|'crate'|'barrel'|'crystal'|'rock'|'pine'|'turret'} ProceduralShape */
 /**
  * @typedef {object} ProceduralSlotDefinition
  * @property {ProceduralShape} shape
@@ -70,7 +70,7 @@
 
 const ID = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/;
 const SHAPES = new Set(['box', 'slab', 'stair', 'column', 'foliage', 'fence', 'door',
-  'window', 'bench', 'lantern']);
+  'window', 'bench', 'lantern', 'arch', 'crate', 'barrel', 'crystal', 'rock', 'pine', 'turret']);
 const GLB = /^assets\/models\/[a-z0-9_-]+(?:\/[a-z0-9_-]+)*\.glb$/i;
 const validateSize = (size = [1, 1, 1]) => {
   if (!Array.isArray(size) || size.length !== 3 ||
@@ -215,6 +215,64 @@ export function createProceduralModelSlots({
         box(root, m, w * 0.72, h * 0.12, d * 0.72, 0, h * 0.16, 0);
         box(root, m, w * 0.72, h * 0.12, d * 0.72, 0, h * 0.83, 0);
         break;
+      case 'arch': {
+        const pillarW = w * 0.2;
+        const pillarH = h * 0.76;
+        box(root, m, pillarW, pillarH, d, -w * 0.4, pillarH * 0.5, 0);
+        box(root, m, pillarW, pillarH, d, w * 0.4, pillarH * 0.5, 0);
+        box(root, m, w, h * 0.24, d * 1.04, 0, h * 0.88, 0, spec.topMaterial);
+        box(root, a, w * 0.22, h * 0.3, d * 1.1, 0, h * 0.85, 0);
+        break;
+      }
+      case 'crate':
+        box(root, m, w * 0.92, h * 0.92, d * 0.92, 0, h * 0.5, 0, spec.topMaterial);
+        box(root, a, w, h * 0.12, d, 0, h * 0.12, 0);
+        box(root, a, w, h * 0.12, d, 0, h * 0.88, 0);
+        box(root, a, w * 0.14, h * 0.76, d * 0.98, 0, h * 0.5, 0);
+        break;
+      case 'barrel': {
+        const r = Math.min(w, d) * 0.45;
+        root.add(makeMesh(new THREE.CylinderGeometry(r * 0.92, r, h, 12), m, 0, h * 0.5, 0));
+        root.add(makeMesh(new THREE.CylinderGeometry(r * 1.03, r * 1.03, h * 0.1, 12), a, 0, h * 0.24, 0));
+        root.add(makeMesh(new THREE.CylinderGeometry(r * 1.03, r * 1.03, h * 0.1, 12), a, 0, h * 0.76, 0));
+        break;
+      }
+      case 'crystal': {
+        const r = Math.min(w, d) * 0.36;
+        root.add(makeMesh(new THREE.ConeGeometry(r, h, 6), m, 0, h * 0.5, 0));
+        const shard1 = makeMesh(new THREE.ConeGeometry(r * 0.55, h * 0.62, 5), a, -r * 0.65, h * 0.28, r * 0.35);
+        shard1.rotation.z = 0.38;
+        root.add(shard1);
+        const shard2 = makeMesh(new THREE.ConeGeometry(r * 0.48, h * 0.54, 5), a, r * 0.6, h * 0.24, -r * 0.3);
+        shard2.rotation.z = -0.34;
+        root.add(shard2);
+        break;
+      }
+      case 'rock': {
+        const baseR = Math.min(w, h, d) * 0.52;
+        const boulder = makeMesh(new THREE.DodecahedronGeometry(baseR, 0), m, 0, h * 0.42, 0);
+        boulder.scale.set(w / (baseR * 2), (h * 0.84) / (baseR * 2), d / (baseR * 2));
+        root.add(boulder);
+        break;
+      }
+      case 'pine': {
+        const trunkR = Math.min(w, d) * 0.12;
+        root.add(makeMesh(new THREE.CylinderGeometry(trunkR * 0.75, trunkR, h * 0.32, 8), a, 0, h * 0.16, 0));
+        const crownR = Math.min(w, d) * 0.5;
+        root.add(makeMesh(new THREE.ConeGeometry(crownR, h * 0.36, 7), m, 0, h * 0.44, 0));
+        root.add(makeMesh(new THREE.ConeGeometry(crownR * 0.78, h * 0.32, 7), m, 0, h * 0.65, 0));
+        root.add(makeMesh(new THREE.ConeGeometry(crownR * 0.52, h * 0.28, 7), m, 0, h * 0.86, 0));
+        break;
+      }
+      case 'turret': {
+        const baseR = Math.min(w, d) * 0.44;
+        root.add(makeMesh(new THREE.CylinderGeometry(baseR * 0.8, baseR, h * 0.42, 10), m, 0, h * 0.21, 0));
+        box(root, a, w * 0.56, h * 0.34, d * 0.62, 0, h * 0.62, -d * 0.04);
+        const barrel = makeMesh(new THREE.CylinderGeometry(w * 0.08, w * 0.09, d * 0.64, 8), a, 0, h * 0.62, d * 0.38);
+        barrel.rotation.x = Math.PI * 0.5;
+        root.add(barrel);
+        break;
+      }
     }
     root.updateMatrixWorld(true);
     return root;

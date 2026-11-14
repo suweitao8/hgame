@@ -31,7 +31,7 @@ export type ProceduralModelThree = {
     Object3D: new () => object;
     Matrix4: new () => object;
 };
-export type ProceduralShape = "box" | "slab" | "stair" | "column" | "foliage" | "fence" | "door" | "window" | "bench" | "lantern";
+export type ProceduralShape = "box" | "slab" | "stair" | "column" | "foliage" | "fence" | "door" | "window" | "bench" | "lantern" | "arch" | "crate" | "barrel" | "crystal" | "rock" | "pine" | "turret";
 export type ProceduralSlotDefinition = {
     shape: ProceduralShape;
     /**

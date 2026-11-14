@@ -51,6 +51,7 @@ export {
 } from './world/swarm-ecs.js';
 export { createGpuSwarmWebGL2 } from './world/gpu-swarm-webgl2.js';
 export { createNavMesh3D } from './world/navmesh3d.js';
+export { fbmNoise2D, createHeightfieldTerrain3D } from './world/terrain3d.js';
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
 export {
   createStateMachine,
@@ -128,6 +129,7 @@ import {
 } from './world/swarm-ecs.js';
 import { createGpuSwarmWebGL2 } from './world/gpu-swarm-webgl2.js';
 import { createNavMesh3D } from './world/navmesh3d.js';
+import { fbmNoise2D, createHeightfieldTerrain3D } from './world/terrain3d.js';
 import { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
 import {
   createStateMachine,
@@ -244,6 +246,8 @@ export const HGame = Object.freeze({
   createSwarmSimulation,
   createGpuSwarmWebGL2,
   createNavMesh3D,
+  fbmNoise2D,
+  createHeightfieldTerrain3D,
   createWorldPartition,
   createHLODProxyGroup3D,
   createFloatingOrigin,

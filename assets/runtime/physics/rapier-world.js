@@ -443,6 +443,7 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       this.fixedDt = 1 / tickHz;
       this.backend = `@dimforge/rapier${dimension}d-deterministic`;
       this.engineVersion = RAPIER.version();
+      this.RAPIER = RAPIER;
       this.gravity = vector(gravity, dimension, dimension === 2
         ? { x: 0, y: 0 }
         : { x: 0, y: -9.81, z: 0 });
