@@ -7,8 +7,20 @@ import { analyzeAudioBuffer } from './audio/analysis.js';
 import { normalizeVariantSet } from './audio/variants.js';
 import { createAudioBusController } from './audio/buses.js';
 import { playAudioBuffer } from './audio/voice.js';
+import {
+  SYNTH_PRESETS,
+  synthesizeSfxPcm,
+  playSynthPresetOnContext,
+  createSynthSfx,
+} from './audio/synth.js';
 
-export { analyzeAudioBuffer, normalizeVariantSet };
+export {
+  analyzeAudioBuffer,
+  normalizeVariantSet,
+  SYNTH_PRESETS,
+  synthesizeSfxPcm,
+  createSynthSfx,
+};
 
 /**
  * @typedef {import('./audio/helpers.js').AudioListenerState} AudioListenerState
@@ -519,6 +531,19 @@ export function createAudioManager({
     return handle;
   }
 
+  function playSynth(presetOrConfig, options = {}) {
+    if (ctx.muted || typeof AudioContextClass !== 'function') {
+      return playSynthPresetOnContext(null, null, presetOrConfig, options);
+    }
+    if (!ctx.context) {
+      buses.unlock().catch(() => {});
+    }
+    const c = ctx.context;
+    const busName = options.bus || 'sfx';
+    const dest = ctx.getBusNode ? ctx.getBusNode(busName) : ctx.master;
+    return playSynthPresetOnContext(c, dest, presetOrConfig, options);
+  }
+
   function dispose() {
     for (const source of [...ctx.activeSources]) source.stop();
     ctx.activeSources.clear();
@@ -544,6 +569,7 @@ export function createAudioManager({
     unlock: buses.unlock,
     decode,
     play,
+    playSynth,
     registerCue,
     playCue,
     inspectCue,

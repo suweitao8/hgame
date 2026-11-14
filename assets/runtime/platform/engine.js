@@ -21,7 +21,14 @@ export {
   createArcadeControls,
   computeSplitScreenViews,
 } from './input.js';
-export { createAudioManager, analyzeAudioBuffer, normalizeVariantSet } from './audio.js';
+export {
+  createAudioManager,
+  analyzeAudioBuffer,
+  normalizeVariantSet,
+  SYNTH_PRESETS,
+  synthesizeSfxPcm,
+  createSynthSfx,
+} from './audio.js';
 export { createDiagnostics } from './diagnostics.js';
 export { createGameBridge } from './game-bridge.js';
 export { createGameHostBridge } from './host-bridge.js';

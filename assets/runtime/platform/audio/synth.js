@@ -1,0 +1,419 @@
+// Zero-KB procedural WebAudio SFX synthesizer with 10 built-in game-feel presets.
+
+const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+
+/**
+ * Built-in procedural sound presets.
+ */
+export const SYNTH_PRESETS = Object.freeze({
+  hit: Object.freeze({
+    wave: 'triangle',
+    freqStart: 190,
+    freqEnd: 46,
+    duration: 0.095,
+    gain: 0.65,
+    noiseMix: 0.45,
+    filterType: 'bandpass',
+    filterStartHz: 1100,
+    filterEndHz: 320,
+    attack: 0.002,
+  }),
+  slash: Object.freeze({
+    wave: 'sine',
+    freqStart: 420,
+    freqEnd: 150,
+    duration: 0.13,
+    gain: 0.45,
+    noiseMix: 0.85,
+    filterType: 'bandpass',
+    filterStartHz: 2400,
+    filterEndHz: 480,
+    attack: 0.004,
+  }),
+  shoot: Object.freeze({
+    wave: 'square',
+    freqStart: 560,
+    freqEnd: 120,
+    duration: 0.11,
+    gain: 0.42,
+    noiseMix: 0.35,
+    filterType: 'lowpass',
+    filterStartHz: 3200,
+    filterEndHz: 600,
+    attack: 0.002,
+  }),
+  explosion: Object.freeze({
+    wave: 'sawtooth',
+    freqStart: 115,
+    freqEnd: 24,
+    duration: 0.42,
+    gain: 0.75,
+    noiseMix: 0.8,
+    filterType: 'lowpass',
+    filterStartHz: 1200,
+    filterEndHz: 120,
+    attack: 0.004,
+  }),
+  pickup: Object.freeze({
+    wave: 'triangle',
+    freqStart: 660,
+    freqEnd: 990,
+    steps: [660, 990],
+    duration: 0.14,
+    gain: 0.45,
+    noiseMix: 0,
+    filterType: 'lowpass',
+    filterStartHz: 6000,
+    filterEndHz: 6000,
+    attack: 0.003,
+  }),
+  powerup: Object.freeze({
+    wave: 'triangle',
+    freqStart: 440,
+    freqEnd: 880,
+    steps: [440, 554.37, 659.25, 880],
+    duration: 0.32,
+    gain: 0.5,
+    noiseMix: 0.05,
+    filterType: 'lowpass',
+    filterStartHz: 7000,
+    filterEndHz: 7000,
+    attack: 0.005,
+  }),
+  click: Object.freeze({
+    wave: 'sine',
+    freqStart: 1150,
+    freqEnd: 620,
+    duration: 0.032,
+    gain: 0.35,
+    noiseMix: 0.15,
+    filterType: 'highpass',
+    filterStartHz: 500,
+    filterEndHz: 500,
+    attack: 0.001,
+  }),
+  hurt: Object.freeze({
+    wave: 'sawtooth',
+    freqStart: 250,
+    freqEnd: 70,
+    duration: 0.18,
+    gain: 0.55,
+    noiseMix: 0.4,
+    filterType: 'lowpass',
+    filterStartHz: 1800,
+    filterEndHz: 260,
+    attack: 0.002,
+  }),
+  laser: Object.freeze({
+    wave: 'sawtooth',
+    freqStart: 940,
+    freqEnd: 170,
+    duration: 0.16,
+    gain: 0.4,
+    noiseMix: 0.1,
+    filterType: 'bandpass',
+    filterStartHz: 2600,
+    filterEndHz: 520,
+    attack: 0.002,
+  }),
+  jump: Object.freeze({
+    wave: 'sine',
+    freqStart: 210,
+    freqEnd: 540,
+    duration: 0.14,
+    gain: 0.45,
+    noiseMix: 0,
+    filterType: 'lowpass',
+    filterStartHz: 4000,
+    filterEndHz: 4000,
+    attack: 0.004,
+  }),
+});
+
+export function resolveSynthPreset(presetOrConfig) {
+  if (typeof presetOrConfig === 'string') {
+    return SYNTH_PRESETS[presetOrConfig] || SYNTH_PRESETS.hit;
+  }
+  if (presetOrConfig && typeof presetOrConfig === 'object') {
+    const base = presetOrConfig.preset ? (SYNTH_PRESETS[presetOrConfig.preset] || SYNTH_PRESETS.hit) : SYNTH_PRESETS.hit;
+    return { ...base, ...presetOrConfig };
+  }
+  return SYNTH_PRESETS.hit;
+}
+
+function sampleWave(wave, phase) {
+  const p = phase - Math.floor(phase);
+  switch (wave) {
+    case 'square':
+      return p < 0.5 ? 1 : -1;
+    case 'sawtooth':
+      return p * 2 - 1;
+    case 'triangle':
+      return 1 - 4 * Math.abs(p - 0.5);
+    default:
+      return Math.sin(p * Math.PI * 2);
+  }
+}
+
+/**
+ * Pure CPU PCM synthesis for deterministic testing or offline AudioBuffer creation.
+ * @param {string|object} presetOrConfig
+ * @param {{ sampleRate?: number, pitchFactor?: number, volume?: number, seed?: number }} [options]
+ * @returns {Float32Array}
+ */
+export function synthesizeSfxPcm(presetOrConfig, {
+  sampleRate = 44100,
+  pitchFactor = 1,
+  volume = 1,
+  seed = 0x13579bdf,
+} = {}) {
+  const cfg = resolveSynthPreset(presetOrConfig);
+  const sr = Math.max(8000, sampleRate | 0);
+  const dur = Math.max(0.01, cfg.duration || 0.1);
+  const len = Math.max(1, Math.round(sr * dur));
+  const out = new Float32Array(len);
+
+  const pitch = clamp(pitchFactor, 0.25, 4);
+  const gain = clamp((cfg.gain ?? 0.5) * volume, 0, 2);
+  const noiseMix = clamp(cfg.noiseMix ?? 0, 0, 1);
+  const oscMix = 1 - noiseMix * 0.6;
+  const attackSamples = Math.max(1, Math.round(sr * (cfg.attack ?? 0.002)));
+  const steps = Array.isArray(cfg.steps) && cfg.steps.length > 0 ? cfg.steps : null;
+
+  let rng = (seed >>> 0) || 1;
+  let phase = 0;
+
+  for (let i = 0; i < len; i++) {
+    const tNorm = i / len;
+    const envAttack = i < attackSamples ? i / attackSamples : 1;
+    const envDecay = Math.pow(1 - tNorm, 1.8);
+    const env = envAttack * envDecay;
+
+    let freq;
+    if (steps) {
+      const idx = Math.min(steps.length - 1, Math.floor(tNorm * steps.length));
+      freq = steps[idx] * pitch;
+    } else {
+      const f0 = (cfg.freqStart || 440) * pitch;
+      const f1 = (cfg.freqEnd || f0) * pitch;
+      freq = f0 * Math.pow(Math.max(1, f1) / Math.max(1, f0), tNorm);
+    }
+
+    phase += freq / sr;
+    const osc = sampleWave(cfg.wave, phase);
+
+    rng ^= rng << 13;
+    rng ^= rng >>> 17;
+    rng ^= rng << 5;
+    const noise = ((rng >>> 0) / 2147483648) - 1;
+
+    out[i] = clamp((osc * oscMix + noise * noiseMix) * env * gain, -1, 1);
+  }
+  return out;
+}
+
+/**
+ * Plays a procedural SFX preset on an active WebAudio context and destination node.
+ * @param {AudioContext|null} audioCtx
+ * @param {AudioNode|null} destination
+ * @param {string|object} presetOrConfig
+ * @param {object} [options]
+ */
+export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, options = {}) {
+  const cfg = resolveSynthPreset(presetOrConfig);
+  const name = typeof presetOrConfig === 'string' ? presetOrConfig : (presetOrConfig?.preset || 'custom');
+  const rng = typeof options.random === 'function' ? options.random : Math.random;
+  const pitchJitter = clamp(options.pitchJitter ?? 0.08, 0, 0.9);
+  const gainJitter = clamp(options.gainJitter ?? 0.05, 0, 0.9);
+  const pitchBase = clamp(options.playbackRate ?? options.pitch ?? 1, 0.25, 4);
+  const pitchFactor = pitchBase * (1 + (rng() * 2 - 1) * pitchJitter);
+  const gainFactor = clamp((options.volume ?? 1) * (1 - rng() * gainJitter), 0, 2);
+  const dur = Math.max(0.015, (options.duration ?? cfg.duration) || 0.1);
+
+  if (!audioCtx || !destination || typeof audioCtx.createOscillator !== 'function') {
+    return {
+      preset: name,
+      pitchFactor,
+      duration: dur,
+      played: false,
+      stop() {},
+    };
+  }
+
+  const now = audioCtx.currentTime || 0;
+  const endTime = now + dur;
+  const peakGain = clamp((cfg.gain ?? 0.5) * gainFactor, 0.001, 1.5);
+
+  const envGain = audioCtx.createGain();
+  envGain.gain.setValueAtTime(0.0001, now);
+  envGain.gain.linearRampToValueAtTime(peakGain, now + Math.max(0.001, cfg.attack ?? 0.002));
+  envGain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+
+  let outNode = envGain;
+  if (typeof audioCtx.createBiquadFilter === 'function' && cfg.filterType) {
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = cfg.filterType;
+    const f0 = clamp((cfg.filterStartHz ?? 2000) * pitchFactor, 40, 20000);
+    const f1 = clamp((cfg.filterEndHz ?? f0) * pitchFactor, 40, 20000);
+    filter.frequency.setValueAtTime(f0, now);
+    if (Math.abs(f1 - f0) > 1) {
+      filter.frequency.exponentialRampToValueAtTime(f1, endTime);
+    }
+    envGain.connect(filter);
+    outNode = filter;
+  }
+  outNode.connect(destination);
+
+  const osc = audioCtx.createOscillator();
+  osc.type = cfg.wave || 'sine';
+  const steps = Array.isArray(cfg.steps) && cfg.steps.length > 0 ? cfg.steps : null;
+  if (steps) {
+    const stepDur = dur / steps.length;
+    for (let i = 0; i < steps.length; i++) {
+      osc.frequency.setValueAtTime(clamp(steps[i] * pitchFactor, 20, 20000), now + i * stepDur);
+    }
+  } else {
+    const f0 = clamp((cfg.freqStart || 440) * pitchFactor, 20, 20000);
+    const f1 = clamp((cfg.freqEnd || f0) * pitchFactor, 20, 20000);
+    osc.frequency.setValueAtTime(f0, now);
+    if (Math.abs(f1 - f0) > 1) {
+      osc.frequency.exponentialRampToValueAtTime(f1, endTime);
+    }
+  }
+
+  const oscGain = audioCtx.createGain();
+  const noiseMix = clamp(cfg.noiseMix ?? 0, 0, 1);
+  oscGain.gain.setValueAtTime(1 - noiseMix * 0.6, now);
+  osc.connect(oscGain);
+  oscGain.connect(envGain);
+  osc.start(now);
+  osc.stop(endTime + 0.01);
+
+  let noiseSrc = null;
+  if (noiseMix > 0.01 && typeof audioCtx.createBuffer === 'function' && typeof audioCtx.createBufferSource === 'function') {
+    if (!audioCtx.__hgameSynthNoiseBuf) {
+      const sr = audioCtx.sampleRate || 44100;
+      const buf = audioCtx.createBuffer(1, sr, sr);
+      const ch = buf.getChannelData(0);
+      let s = 0x2468ace1;
+      for (let i = 0; i < ch.length; i++) {
+        s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+        ch[i] = ((s >>> 0) / 2147483648) - 1;
+      }
+      audioCtx.__hgameSynthNoiseBuf = buf;
+    }
+    noiseSrc = audioCtx.createBufferSource();
+    noiseSrc.buffer = audioCtx.__hgameSynthNoiseBuf;
+    const nGain = audioCtx.createGain();
+    nGain.gain.setValueAtTime(noiseMix, now);
+    noiseSrc.connect(nGain);
+    nGain.connect(envGain);
+    noiseSrc.start(now);
+    noiseSrc.stop(endTime + 0.01);
+  }
+
+  return {
+    preset: name,
+    pitchFactor,
+    duration: dur,
+    played: true,
+    stop() {
+      try { osc.stop(); } catch {}
+      try { noiseSrc?.stop?.(); } catch {}
+    },
+  };
+}
+
+/**
+ * Standalone zero-asset procedural WebAudio SFX synthesizer with headless fallback.
+ * @param {{ AudioContextClass?: typeof AudioContext, context?: AudioContext, destination?: AudioNode, volume?: number, pitchJitter?: number, gainJitter?: number, random?: () => number }} [options]
+ */
+export function createSynthSfx({
+  AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext,
+  context = null,
+  destination = null,
+  volume = 0.8,
+  pitchJitter = 0.08,
+  gainJitter = 0.05,
+  random = Math.random,
+} = {}) {
+  let ctx = context;
+  let master = destination;
+  let currentVolume = clamp(volume, 0, 1);
+  let muted = false;
+  let disposed = false;
+
+  function ensureContext() {
+    if (disposed) return null;
+    if (!ctx && typeof AudioContextClass === 'function') {
+      ctx = new AudioContextClass();
+    }
+    if (ctx && !master && typeof ctx.createGain === 'function') {
+      master = ctx.createGain();
+      master.gain.value = muted ? 0 : currentVolume;
+      master.connect(ctx.destination);
+    }
+    return ctx;
+  }
+
+  function unlock() {
+    const c = ensureContext();
+    if (!c) return Promise.resolve(false);
+    if (c.state === 'suspended' && typeof c.resume === 'function') {
+      return c.resume().then(() => true).catch(() => false);
+    }
+    return Promise.resolve(true);
+  }
+
+  function play(presetOrConfig, overrides = {}) {
+    if (disposed || muted) {
+      return {
+        preset: typeof presetOrConfig === 'string' ? presetOrConfig : 'custom',
+        pitchFactor: 1,
+        duration: 0,
+        played: false,
+        stop() {},
+      };
+    }
+    const c = ensureContext();
+    return playSynthPresetOnContext(c, master, presetOrConfig, {
+      pitchJitter,
+      gainJitter,
+      random,
+      ...overrides,
+    });
+  }
+
+  function setVolume(v) {
+    currentVolume = clamp(v, 0, 1);
+    if (master && !muted) master.gain.value = currentVolume;
+  }
+
+  function setMuted(nextMuted) {
+    muted = Boolean(nextMuted);
+    if (master) master.gain.value = muted ? 0 : currentVolume;
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    if (!context && ctx && typeof ctx.close === 'function') {
+      ctx.close();
+    }
+    ctx = null;
+    master = null;
+  }
+
+  return Object.freeze({
+    get available() { return Boolean(context || typeof AudioContextClass === 'function'); },
+    get volume() { return currentVolume; },
+    get muted() { return muted; },
+    presets: SYNTH_PRESETS,
+    unlock,
+    play,
+    renderPcm: synthesizeSfxPcm,
+    setVolume,
+    setMuted,
+    dispose,
+  });
+}

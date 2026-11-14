@@ -19,7 +19,9 @@ export { createGameApplication } from './core/application.js';
 export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION,
   createAssetLoader, createSaveStore, createInputManager, defineInputContext, createInputActionRouter,
   ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews,
-  createAudioManager, analyzeAudioBuffer, normalizeVariantSet, createDiagnostics,
+  createAudioManager, analyzeAudioBuffer, normalizeVariantSet,
+  SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx,
+  createDiagnostics,
   createGameBridge, createGameHostBridge } from './platform/engine.js';
 export {
   EASING,
@@ -114,6 +116,9 @@ import {
   PLAYER_KEYMAPS,
   createArcadeControls,
   computeSplitScreenViews,
+  SYNTH_PRESETS,
+  synthesizeSfxPcm,
+  createSynthSfx,
 } from './platform/engine.js';
 import { damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from './time/tween.js';
 import {
@@ -160,6 +165,9 @@ export const HGame = Object.freeze({
   PLAYER_KEYMAPS,
   createArcadeControls,
   computeSplitScreenViews,
+  SYNTH_PRESETS,
+  synthesizeSfxPcm,
+  createSynthSfx,
   RED_DOT_STYLES,
   normalizeRedDotPath,
   splitRedDotAncestors,

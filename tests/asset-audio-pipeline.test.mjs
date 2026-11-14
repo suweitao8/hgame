@@ -14,6 +14,9 @@ import {
   createAudioManager,
   analyzeAudioBuffer,
   normalizeVariantSet,
+  SYNTH_PRESETS,
+  synthesizeSfxPcm,
+  createSynthSfx,
 } from '../assets/runtime/index.js';
 import { Sprite2D, createCanvas2DAdapter } from '../assets/runtime/integrations/canvas2d.js';
 import {
@@ -470,4 +473,63 @@ test('process-audio.mjs selects consistent 2-4 variants and processes MP3s clean
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test('procedural audio synth provides 10 presets, pitchJitter, PCM generation, and headless/AudioManager integration', async () => {
+  const requiredPresets = ['hit', 'slash', 'shoot', 'explosion', 'pickup', 'powerup', 'click', 'hurt', 'laser', 'jump'];
+  for (const name of requiredPresets) {
+    assert.ok(SYNTH_PRESETS[name], `missing preset ${name}`);
+    const pcm = synthesizeSfxPcm(name, { sampleRate: 22050 });
+    assert.ok(pcm instanceof Float32Array && pcm.length > 100);
+    let peak = 0;
+    for (let i = 0; i < pcm.length; i++) peak = Math.max(peak, Math.abs(pcm[i]));
+    assert.ok(peak > 0.05 && peak <= 1.0, `unexpected PCM peak ${peak} for ${name}`);
+  }
+
+  // Headless safe fallback
+  const headlessSynth = createSynthSfx({ AudioContextClass: undefined, random: () => 0.75 });
+  assert.equal(headlessSynth.available, false);
+  const resHeadless = headlessSynth.play('hit', { pitchJitter: 0.1 });
+  assert.equal(resHeadless.played, false);
+  assert.ok(Math.abs(resHeadless.pitchFactor - 1.05) < 1e-6);
+
+  // Mock WebAudio context verification
+  let oscCount = 0;
+  let bufSrcCount = 0;
+  class SynthMockCtx {
+    constructor() {
+      this.currentTime = 0;
+      this.sampleRate = 44100;
+      this.state = 'running';
+      this.destination = { connect() {} };
+      this.listener = {};
+    }
+    createGain() {
+      return { gain: { value: 1, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {} }, connect() {} };
+    }
+    createBiquadFilter() {
+      return { type: 'lowpass', frequency: { value: 1000, setValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {} }, Q: { value: 1 }, connect() {} };
+    }
+    createOscillator() {
+      oscCount++;
+      return { type: 'sine', frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, start() {}, stop() {} };
+    }
+    createBuffer(ch, len, sr) {
+      return { numberOfChannels: ch, length: len, sampleRate: sr, getChannelData: () => new Float32Array(len) };
+    }
+    createBufferSource() {
+      bufSrcCount++;
+      return { buffer: null, connect() {}, start() {}, stop() {} };
+    }
+    resume() { return Promise.resolve(); }
+    close() { return Promise.resolve(); }
+  }
+
+  const audio = createAudioManager({ AudioContextClass: SynthMockCtx });
+  const played = audio.playSynth('explosion', { pitchJitter: 0.12, random: () => 0.25 });
+  assert.equal(played.played, true);
+  assert.equal(played.preset, 'explosion');
+  assert.ok(oscCount >= 1 && bufSrcCount >= 1);
+  played.stop();
+  await audio.dispose();
 });

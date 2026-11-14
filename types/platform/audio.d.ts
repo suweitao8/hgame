@@ -616,4 +616,7 @@ export type AudioManager = {
 };
 import { analyzeAudioBuffer } from './audio/analysis.js';
 import { normalizeVariantSet } from './audio/variants.js';
-export { analyzeAudioBuffer, normalizeVariantSet };
+import { SYNTH_PRESETS } from './audio/synth.js';
+import { synthesizeSfxPcm } from './audio/synth.js';
+import { createSynthSfx } from './audio/synth.js';
+export { analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx };
