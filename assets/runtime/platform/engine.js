@@ -28,6 +28,10 @@ export {
   SYNTH_PRESETS,
   synthesizeSfxPcm,
   createSynthSfx,
+  BGM_MOODS,
+  midiToHz,
+  generateBgmStep,
+  createProceduralBgm,
 } from './audio.js';
 export { createDiagnostics } from './diagnostics.js';
 export { createGameBridge } from './game-bridge.js';

@@ -123,4 +123,4 @@ import { GAME_ENGINE_PROTOCOL } from './protocol.js';
 import { GAME_ENGINE_PROTOCOL_VERSION } from './protocol.js';
 export { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION };
 export { createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews } from "./input.js";
-export { createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx } from "./audio.js";
+export { createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm } from "./audio.js";

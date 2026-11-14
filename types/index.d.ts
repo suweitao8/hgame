@@ -165,6 +165,71 @@ export const HGame: Readonly<{
     }>;
     synthesizeSfxPcm: typeof synthesizeSfxPcm;
     createSynthSfx: typeof createSynthSfx;
+    BGM_MOODS: Readonly<{
+        dungeon: Readonly<{
+            bpm: 108;
+            rootMidi: 45;
+            scale: readonly number[];
+            chords: readonly number[];
+            bassWave: "triangle";
+            leadWave: "sine";
+            leadCutoffHz: 1400;
+            arpSteps: readonly number[];
+        }>;
+        cyber: Readonly<{
+            bpm: 128;
+            rootMidi: 40;
+            scale: readonly number[];
+            chords: readonly number[];
+            bassWave: "sawtooth";
+            leadWave: "square";
+            leadCutoffHz: 2400;
+            arpSteps: readonly number[];
+        }>;
+        boss: Readonly<{
+            bpm: 152;
+            rootMidi: 38;
+            scale: readonly number[];
+            chords: readonly number[];
+            bassWave: "sawtooth";
+            leadWave: "sawtooth";
+            leadCutoffHz: 3000;
+            arpSteps: readonly number[];
+        }>;
+        chill: Readonly<{
+            bpm: 88;
+            rootMidi: 48;
+            scale: readonly number[];
+            chords: readonly number[];
+            bassWave: "sine";
+            leadWave: "triangle";
+            leadCutoffHz: 1100;
+            arpSteps: readonly number[];
+        }>;
+        adventure: Readonly<{
+            bpm: 120;
+            rootMidi: 43;
+            scale: readonly number[];
+            chords: readonly number[];
+            bassWave: "triangle";
+            leadWave: "triangle";
+            leadCutoffHz: 1900;
+            arpSteps: readonly number[];
+        }>;
+        victory: Readonly<{
+            bpm: 132;
+            rootMidi: 48;
+            scale: readonly number[];
+            chords: readonly number[];
+            bassWave: "triangle";
+            leadWave: "square";
+            leadCutoffHz: 2600;
+            arpSteps: readonly number[];
+        }>;
+    }>;
+    midiToHz: typeof midiToHz;
+    generateBgmStep: typeof generateBgmStep;
+    createProceduralBgm: typeof createProceduralBgm;
     RED_DOT_STYLES: Readonly<{
         NONE: "none";
         QUIET: "quiet";
@@ -358,6 +423,9 @@ import { createArcadeControls } from './platform/engine.js';
 import { computeSplitScreenViews } from './platform/engine.js';
 import { synthesizeSfxPcm } from './platform/engine.js';
 import { createSynthSfx } from './platform/engine.js';
+import { midiToHz } from './platform/engine.js';
+import { generateBgmStep } from './platform/engine.js';
+import { createProceduralBgm } from './platform/engine.js';
 import { normalizeRedDotPath } from './ui/index.js';
 import { splitRedDotAncestors } from './ui/index.js';
 import { computeCommercialDayKey } from './ui/index.js';
@@ -387,7 +455,7 @@ import { unpackCrowdAnimStatus } from './vfx/index.js';
 export { defineProject, resolveFeatureGraph, PROJECT_PROFILES, OPTIONAL_FEATURES, DETERMINISTIC_PHYSICS_BACKENDS } from "./core/config.js";
 export { Scene, SceneManager } from "./core/scene.js";
 export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTagAncestors, createTagRegistry, GLOBAL_TAG_REGISTRY, createTagContainer, matchGameplayTags } from "./core/tags.js";
-export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, createAssetLoader, createSaveStore, createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews, createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, createDiagnostics, createGameBridge, createGameHostBridge } from "./platform/engine.js";
+export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, createAssetLoader, createSaveStore, createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews, createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm, createDiagnostics, createGameBridge, createGameHostBridge } from "./platform/engine.js";
 export { EASING, TweenManager, LN2_CRIT, damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
 export { TileMap, findGridPath } from "./world/tilemap.js";
 export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";

@@ -13,6 +13,12 @@ import {
   playSynthPresetOnContext,
   createSynthSfx,
 } from './audio/synth.js';
+import {
+  BGM_MOODS,
+  midiToHz,
+  generateBgmStep,
+  createProceduralBgm,
+} from './audio/bgm-synth.js';
 
 export {
   analyzeAudioBuffer,
@@ -20,6 +26,10 @@ export {
   SYNTH_PRESETS,
   synthesizeSfxPcm,
   createSynthSfx,
+  BGM_MOODS,
+  midiToHz,
+  generateBgmStep,
+  createProceduralBgm,
 };
 
 /**
@@ -544,7 +554,23 @@ export function createAudioManager({
     return playSynthPresetOnContext(c, dest, presetOrConfig, options);
   }
 
+  const bgmInstances = new Set();
+
+  function createBgm(bgmOpts = {}) {
+    const dest = ctx.getBusNode ? ctx.getBusNode('music') : ctx.master;
+    const bgm = createProceduralBgm({
+      AudioContextClass,
+      context: ctx.context,
+      destination: dest,
+      ...bgmOpts,
+    });
+    bgmInstances.add(bgm);
+    return bgm;
+  }
+
   function dispose() {
+    for (const bgm of bgmInstances) bgm.dispose();
+    bgmInstances.clear();
     for (const source of [...ctx.activeSources]) source.stop();
     ctx.activeSources.clear();
     for (const cue of cues.values()) cue.activeHandles.clear();
@@ -570,6 +596,7 @@ export function createAudioManager({
     decode,
     play,
     playSynth,
+    createBgm,
     registerCue,
     playCue,
     inspectCue,

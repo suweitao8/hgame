@@ -21,6 +21,7 @@ export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_P
   ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews,
   createAudioManager, analyzeAudioBuffer, normalizeVariantSet,
   SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx,
+  BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm,
   createDiagnostics,
   createGameBridge, createGameHostBridge } from './platform/engine.js';
 export {
@@ -152,6 +153,10 @@ import {
   SYNTH_PRESETS,
   synthesizeSfxPcm,
   createSynthSfx,
+  BGM_MOODS,
+  midiToHz,
+  generateBgmStep,
+  createProceduralBgm,
 } from './platform/engine.js';
 import { damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from './time/tween.js';
 import {
@@ -204,6 +209,10 @@ export const HGame = Object.freeze({
   SYNTH_PRESETS,
   synthesizeSfxPcm,
   createSynthSfx,
+  BGM_MOODS,
+  midiToHz,
+  generateBgmStep,
+  createProceduralBgm,
   RED_DOT_STYLES,
   normalizeRedDotPath,
   splitRedDotAncestors,

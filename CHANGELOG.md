@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Zero-KB Procedural Adaptive BGM Sequencer (`platform/audio/bgm-synth.js`, `platform/audio.js`):
+  - Add 6 built-in moods (`dungeon`, `cyber`, `boss`, `chill`, `adventure`, `victory`), deterministic step planner (`generateBgmStep`, `midiToHz`), intensity-scaled drums/arps (`setMood`, `setIntensity(0..1)`), WebAudio + headless fixed-step `update(dt)` support (`createProceduralBgm`, `audio.createBgm`).
+
 - AI Decision Kernel & 3D NavMesh (`ai/fsm.js`, `ai/bt.js`, `ai/index.js`, `world/navmesh3d.js`):
   - Add zero-GC Hierarchical Finite State Machine (`createStateMachine` with LCA parent/child enter-exit, guarded/event transitions).
   - Add shared-definition Behavior Tree runner (`createBehaviorTree`, `BT_STATUS`, `sequence`, `selector`, `parallel`, `inverter`, `repeater`, `cooldown`, `condition`, `action`, `wait`) with priority preemption and per-instance typed memory.
