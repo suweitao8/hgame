@@ -112,6 +112,7 @@ async function main() {
     await cp(runtime, vendor, { recursive: true });
     await mkdir(path.join(stage, 'scripts'), { recursive: true });
     await cp(path.join(root, 'scripts', 'package-game.mjs'), path.join(stage, 'scripts', 'package-game.mjs'));
+    await cp(path.join(root, 'scripts', 'assets.mjs'), path.join(stage, 'scripts', 'assets.mjs'));
     for (const dimension of ['2d', '3d']) {
       if (options.recipe.physics !== `rapier${dimension}`) {
         await rm(path.join(vendor, 'vendor', `rapier${dimension}`), { recursive: true, force: true });
@@ -157,6 +158,13 @@ async function main() {
     const pkg = JSON.parse(await readFile(packageFile, 'utf8'));
     pkg.name = options.slug.toLowerCase();
     await writeFile(packageFile, JSON.stringify(pkg, null, 2) + '\n');
+    await writeFile(path.join(stage, 'assets.manifest.json'), JSON.stringify({
+      schemaVersion: 1,
+      gameId: options.slug,
+      storeLayout: 'cas-sha256-v1',
+      remoteBaseUrl: null,
+      assets: {},
+    }, null, 2) + '\n');
     if (options.git) {
       const command = spawnSync('git', ['init', '-q'], { cwd: stage, encoding: 'utf8' });
       if (command.error || command.status !== 0) {

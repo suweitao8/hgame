@@ -4,3 +4,18 @@ assets/vendor/
 scripts/
 build/
 node_modules/
+
+# Large art, audio, and authoring assets (managed outside Git via assets.manifest.json)
+assets/raw/
+assets/art_src/
+assets/**/*.png
+assets/**/*.jpg
+assets/**/*.jpeg
+assets/**/*.webp
+assets/**/*.glb
+assets/**/*.gltf
+assets/**/*.vat.bin
+assets/**/*.mp3
+assets/**/*.ogg
+assets/**/*.wav
+!assets/vendor/**

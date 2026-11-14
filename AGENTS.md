@@ -9,6 +9,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - New project generator: `scripts/create-game.mjs`.
 - Lean release & WASM packager: `scripts/package-game.mjs` (`build/<id>_<version>/` + `.zip`).
 - Offline media curation: `scripts/process-assets.mjs` and `scripts/process-audio.mjs`.
+- Unified off-Git asset management: `scripts/assets.mjs` (`npm run assets -- push|pull|status|verify`), storing content-addressed binaries in `HGAME_ASSET_STORE` (or `~/.hgame/asset-store`) and tracking `assets.manifest.json` in Git while `.gitignore` excludes heavy art/audio binaries.
 - Starter projects: `assets/template/` and `assets/profiles/`.
 - Optional multiplayer workspace: `network/`; it owns its package manifest and lockfile.
 - Global HGame Skill installations and game projects are downstream consumers. Do not silently edit them while changing this repository.

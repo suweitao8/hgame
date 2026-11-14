@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Unified off-Git art & audio asset management:
+  - Expand `.gitignore` across the engine root, generated game template (`assets/template/.gitignore`), and examples (`examples/*/.gitignore`) to exclude large binary media (`png`, `jpg`, `webp`, `glb`, `gltf`, `vat.bin`, `mp3`, `ogg`, `wav`, fonts, video) and raw DCC sources (`.psd`, `.blend`, `.fbx`, `assets/raw/`), keeping Git repositories focused on code, configs, and lightweight `assets.manifest.json`.
+  - Add `scripts/assets.mjs` (`npm run assets -- push|pull|status|verify|rm|prune-store`) for SHA-256 content-addressed storage (`HGAME_ASSET_STORE` / `~/.hgame/asset-store`, plus optional HTTP `--remote`) with `assets.manifest.json` scaffolded into every project by `scripts/create-game.mjs`.
+  - Update `scripts/package-game.mjs` to skip `assets.manifest.json` in release bundles and automatically resolve any missing-locally manifest assets from the unified store (`resolvedFromStore`), failing clearly if neither disk nor store holds declared assets.
+
 - Camera, Three shadow helper & CI verification (ENGINE-GAPS 5/6/7):
   - `integrations/camera3d.js`: add zero-GC `createBoxCollisionTest(boxes, { inflateByProbe })` supporting `{ minX..maxZ }`, `{ x, y, z, hx, hy, hz }`, and floor-standing `{ x, z, hx, hz, h, y? }` AABB obstacles for `createSpringArm3D` / `createCameraRig3D`.
   - `integrations/shadow3d.js` + `integrations/three.js`: extract `fitDirectionalShadowFrustum` into `shadow3d.js` (re-exported cleanly by `sky3d.js` without pulling sky shaders into minimal 3D builds) and expose `renderer.fitShadowToPreset(sun, target, options)` on the Three.js adapter using the active quality tier's `shadowDistance`.

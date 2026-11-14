@@ -10,7 +10,24 @@
 - `assets/vendor/three/`：仅 3D 工程拷贝的 Three.js 运行时文件。
 - `engine.config.json`：HGame Profile（`2d` / `3d` / `ui`）、渲染器、确定性物理后端与特性列表。
 - `game.config.json`：游戏 `id`、名称、`version`、入口 HTML 与宿主协议元数据。
-- `scripts/package-game.mjs`：按需依赖追踪与 WASM 精简打包脚本。
+- `assets.manifest.json`：美术/音频资产清单（路径、SHA-256 与体积元数据，提交到 Git；二进制文件本身由 `.gitignore` 忽略，通过统一资产库同步）。
+- `scripts/assets.mjs` & `scripts/package-game.mjs`：统一资产同步与精简依赖追踪打包脚本。
+
+## 统一美术资产管理（Git 只维护代码与清单）
+
+本工程 `.gitignore` 默认忽略 `assets/` 下的重型图片、模型、`.vat.bin`、音视频及 `PSD/Blend/FBX` 等工程源文件。团队与 AI 通过统一内容寻址仓库（默认 `~/.hgame/asset-store`，可通过环境变量 `HGAME_ASSET_STORE` 或 `--store <目录>` 指定共享盘，亦支持 `--remote <URL>`）同步美术资产：
+
+```powershell
+# 1. 新增/修改本地 assets/ 资产后，推送到统一资产库并更新 assets.manifest.json（提交 JSON 进 Git）：
+npm run assets -- push
+
+# 2. 新环境拉取代码后，按 assets.manifest.json 还原本地美术资产：
+npm run assets -- pull
+
+# 3. 检查本地资产与清单/仓库差异：
+npm run assets -- status
+npm run assets -- verify
+```
 
 游戏权威状态（伤害、冷却、货币、胜负、存档结构）必须独立于 DOM / Three.js 表现层。UI 通过指令驱动逻辑，渲染器只负责读取快照呈现。
 

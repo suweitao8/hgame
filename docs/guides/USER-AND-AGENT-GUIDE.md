@@ -78,6 +78,7 @@ flowchart LR
 | **新建游戏项目** | HGame 根目录 | `node scripts/create-game.mjs "<目标路径>" --profile <2d\|3d\|ui> [--renderer webgl2d] [--with ...] [--quality auto] --name "中文名"` | 创建独立游戏工程，自动复制最小化 Runtime 与 Three/Rapier（按需） |
 | **切图去背脚本** | HGame 根目录 | `npm run process:assets -- --input sheet.png --grid 3 --bg green --mode actor --out-dir assets/actors` | `--grid 1\|2\|3`、`--bg transparent\|green\|white`、`--mode actor\|icon\|background`、`--names a,b,c`、`--bake-shadow` |
 | **音效变种处理** | HGame 根目录 | `npm run process:audio -- --cue rifle --inputs a.mp3,b.mp3,c.mp3,d.mp3 --out-dir assets/audio/sfx` | 需本机 `ffmpeg`；加 `--bgm` 按双声道 BGM 规范导出 |
+| **美术资产统一同步** | 游戏或引擎根目录 | `npm run assets -- push\|pull\|status\|verify [游戏目录]` | `.gitignore` 忽略重型美术二进制；Git 仅跟踪 `assets.manifest.json`，资产按 SHA-256 存入 `HGAME_ASSET_STORE`（或 `~/.hgame/asset-store`） |
 | **本机预览游戏** | HGame 根目录 | `node scripts/preview.mjs "<游戏路径或 build 子目录>" --port 4176` | 回环只读静态 HTTP 服务，拦截 `.git`/`AGENTS.md`/`tests`/`scripts`/`build` |
 | **独立游戏精简打包** | **独立游戏根目录** | `npm run release -- --version 1.1`（或 `npm run build`） | 产出 `build/<id>_1_1/` 与 `build/<id>_1_1.zip`，只含真实依赖模块与启用维度的 WASM |
 | **从引擎仓打包外部游戏** | HGame 根目录 | `npm run package:game -- "<游戏路径>" --version 1.1` | 即使游戏后期修改 `engine.config.json` 新开启物理，也能自动从引擎仓补齐对应 WASM 并校验 |

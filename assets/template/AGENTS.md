@@ -3,7 +3,8 @@
 1. `engine.config.json` is the authoritative runtime recipe. Load only the selected profile and declared optional features.
 2. The self-contained runtime copy is in `vendor/hgame/`. Do not edit that copy as a substitute for changing the HGame source repository and regenerating/updating the project deliberately.
 3. Keep game rules, AI, authoritative state, content, renderer code, and save schemas inside this game project.
-4. The Application owns the only RAF and fixed-step scheduler. Do not create a second RAF or step physics from a renderer callback.
+4. Keep Git focused on code, configs, tests, and `assets.manifest.json`. Heavy art/audio binaries under `assets/` and raw authoring files (`.psd`, `.blend`, `.fbx`, `assets/raw/`) are excluded by `.gitignore`; sync them through the unified content-addressed store via `npm run assets -- push|pull|status|verify` (configure `HGAME_ASSET_STORE` or `--store <dir>`). `npm run release` automatically resolves missing manifest assets from the unified store when present.
+5. The Application owns the only RAF and fixed-step scheduler. Do not create a second RAF or step physics from a renderer callback.
 5. When physics is enabled, use deterministic Rapier 0.21.0 for the selected dimension. Offline and online modes do not select different physics backends.
 6. UI projects are command-driven. Do not add an idle 60 Hz loop to cards, dialogue, or turn-based interfaces.
 7. Respect this project's visual and interaction requirements. Do not add unrequested buttons, menus, overlays, or permanent instructional copy.

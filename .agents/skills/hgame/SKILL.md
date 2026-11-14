@@ -62,6 +62,14 @@ node scripts/create-game.mjs "<game-dir>" --profile ui --with audio,save --name 
    ```powershell
    npm run process:audio -- --cue rifle_shot --inputs t1.mp3,t2.mp3,t3.mp3,t4.mp3 --out-dir "<game-dir>/assets/audio/sfx"
    ```
+3. **Unified Off-Git Art & Audio Sync** (`scripts/assets.mjs`):
+   - Both HGame and generated game `.gitignore` files exclude large art/audio binaries and raw authoring sources (`assets/**/*.png`, `.glb`, `.mp3`, `.vat.bin`, `.psd`, `.blend`, `.fbx`).
+   - Git tracks only code, configs, and `<game-dir>/assets.manifest.json`. Store/restore actual binaries via the unified CAS store (`HGAME_ASSET_STORE` or `~/.hgame/asset-store`, optional `--remote <url>`):
+   ```powershell
+   npm run assets -- push "<game-dir>"
+   npm run assets -- pull "<game-dir>"
+   npm run assets -- verify "<game-dir>"
+   ```
 
 ---
 

@@ -8,6 +8,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "assets": "node scripts/assets.mjs",
     "build": "node scripts/package-game.mjs",
     "release": "node scripts/package-game.mjs",
     "check": "node --check src/main.js",

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
@@ -52,6 +53,7 @@ const SKIP_BASENAMES = new Set([
   '.ds_store',
   'thumbs.db',
   '.gitkeep',
+  'assets.manifest.json',
 ]);
 
 const REGEX_PREV_KEYWORDS = new Set([
@@ -607,6 +609,7 @@ export async function packageGameRelease({
   tag,
   outDir,
   engineRoot,
+  assetStore,
   flatZip = false,
   minify = true,
 } = {}) {
@@ -893,6 +896,53 @@ export async function packageGameRelease({
     }
   }
 
+  // Fallback for manifest-tracked art/audio assets stored outside Git in unified asset store
+  let resolvedFromStore = 0;
+  const assetManifestPath = path.join(absGameDir, 'assets.manifest.json');
+  if (await existsFile(assetManifestPath)) {
+    const manifest = JSON.parse(await readFile(assetManifestPath, 'utf8'));
+    const entries = manifest && typeof manifest.assets === 'object' ? manifest.assets : null;
+    if (entries) {
+      const storeDir = assetStore
+        ? path.resolve(assetStore)
+        : (process.env.HGAME_ASSET_STORE?.trim()
+            ? path.resolve(process.env.HGAME_ASSET_STORE.trim())
+            : path.join(os.homedir(), '.hgame', 'asset-store'));
+      const missingManifestAssets = [];
+      for (const relPosix of Object.keys(entries).sort()) {
+        const parts = relPosix.split('/');
+        const lowerParts = parts.map(p => p.toLowerCase());
+        if (lowerParts[0] === 'vendor' && lowerParts[1] === 'three') continue;
+        if (lowerParts.some(p => AUTHORING_ASSET_DIRS.has(p))) continue;
+        const base = lowerParts[lowerParts.length - 1];
+        const ext = path.posix.extname(base);
+        if (SKIP_BASENAMES.has(base) || AUTHORING_EXTS.has(ext)) continue;
+
+        const targetRel = `assets/${relPosix}`;
+        if (includedFiles.has(targetRel)) continue;
+
+        const sha = typeof entries[relPosix]?.sha256 === 'string' ? entries[relPosix].sha256.toLowerCase() : '';
+        const blobAbs = /^[a-f0-9]{64}$/.test(sha) ? path.join(storeDir, 'objects', sha.slice(0, 2), sha) : null;
+        if (blobAbs && (await existsFile(blobAbs))) {
+          includedFiles.set(targetRel, blobAbs);
+          resolvedFromStore++;
+        } else {
+          missingManifestAssets.push(relPosix);
+        }
+      }
+      if (missingManifestAssets.length > 0) {
+        throw new Error(
+          `Missing art assets declared in assets.manifest.json (${missingManifestAssets.slice(0, 5).join(', ')}` +
+          `${missingManifestAssets.length > 5 ? `, +${missingManifestAssets.length - 5} more` : ''}). ` +
+          'Run `npm run assets -- pull` or set HGAME_ASSET_STORE before packaging.',
+        );
+      }
+      if (resolvedFromStore > 0) {
+        notes.push(`Resolved ${resolvedFromStore} manifest asset(s) directly from unified store (${storeDir}).`);
+      }
+    }
+  }
+
   // Write packaged directory with optional esbuild minification
   const esbuild = await loadOptionalEsbuild(minify);
   let totalBytes = 0;
@@ -946,6 +996,7 @@ export async function packageGameRelease({
     wasmSkipped: physicsDecision && !physicsDecision.bundle ? physicsDecision.reason : null,
     notes,
     minified: Boolean(esbuild),
+    resolvedFromStore,
     fileCount: includedFiles.size + generatedBuffers.size,
     outputBytes: totalBytes,
     outputDir: targetDir,
@@ -1057,6 +1108,7 @@ function parseCliArgs(argv) {
     tag: undefined,
     outDir: undefined,
     engineRoot: undefined,
+    assetStore: undefined,
     flatZip: false,
     minify: true,
     engine: false,
@@ -1074,6 +1126,8 @@ function parseCliArgs(argv) {
       opts.outDir = argv[++i];
     } else if (arg === '--engine-root') {
       opts.engineRoot = argv[++i];
+    } else if (arg === '--asset-store') {
+      opts.assetStore = argv[++i];
     } else if (arg === '--flat-zip') {
       opts.flatZip = true;
     } else if (arg === '--no-minify') {
@@ -1114,6 +1168,7 @@ async function main() {
         tag: opts.tag,
         outDir: opts.outDir,
         engineRoot: opts.engineRoot,
+        assetStore: opts.assetStore,
         flatZip: opts.flatZip,
         minify: opts.minify,
       });
