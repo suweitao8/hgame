@@ -45,3 +45,24 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Keep generated game projects self-contained; do not add CDN runtime dependencies.
 - Do not automatically migrate or rewrite existing games.
 - Never use destructive Git commands such as `reset --hard` or `clean -fd`.
+
+## Agent Workflow & Documentation Entry Points
+
+- Workspace Agent skill / step-by-step runbook: `.agents/skills/hgame/SKILL.md`.
+- Complete human & AI usage handbook (选型表、模块速查、代码示例与 Prompt 模板): `docs/guides/USER-AND-AGENT-GUIDE.md`.
+- Standard 5-step game workflow:
+  1. Generate a standalone project with `scripts/create-game.mjs` (`--profile 2d|3d|ui`, optional `--renderer webgl2d`, `--quality auto`, `--with audio,save,physics2d|physics3d`).
+  2. Curate AI art sheets cleanly (`scripts/process-assets.mjs`, `--grid 1|2|3`, shadow-free actor PNGs) and filter 4-variant audio cues (`scripts/process-audio.mjs`).
+  3. Build gameplay in the generated project's `src/` using `vendor/hgame/` subsystems instead of bespoke loops or boilerplate.
+  4. Serve over loopback HTTP (`scripts/preview.mjs`) and run checks (`npm test` / `npm run check:all`).
+  5. Package the uploadable deliverable (`scripts/package-game.mjs` -> `build/<id>_<version>/` + `.zip`).
+
+## Built-in Runtime Subsystems (Reuse Instead of Reinventing)
+
+- **Core, Interpolation & Tags**: `index.js`, `core/application.js` (`renderAlpha`, `hitStop`, `setTimeScale`), `core/entity.js` + `core/tags.js` (`addTag`, `matchesTags`, `scene.queryTags`), `time/tween.js` (`scene.tweens`, `SpringDamper1D/2D/3D`, `damp`).
+- **2D Rendering & 10k+ Crowds**: `integrations/canvas2d.js` (`Camera2D`, `Sprite2D` with `groundShadow` + `hitFlash`, `SpriteCrowd2D`), `integrations/webgl2d.js` (GPU-instanced 2D with Canvas2D fallback), `animation/spritesheet.js` (`fromGrid`), `animation/player.js`, `world/tilemap.js` (`findGridPath`), `world/spatial2d.js` (`SpatialHash2D`, `ObjectPool`).
+- **3D Rendering, MegaLights & Open World**: `integrations/three.js` (`toneMapping: 'ueFilmic'`, `setSky`, `setExposure`, `setPostVolumes`), `integrations/sky3d.js`, `integrations/lighting3d.js` (`createMegaLights3D`, `createIrradianceProbeVolume3D`), `integrations/post3d.js` (SSGI/SSR, contact shadows, `createPostProcessVolumeStack`), `integrations/culling3d.js` (`createInstancedBatch3D`, `createSceneCuller3D`), `integrations/camera3d.js` (`createCameraRig3D`, `createSpringArm3D`), `integrations/model3d.js` (`createModel3DProvider`, `createInstancedCrowd3D` VAT), `integrations/world-aligned-material.js`, `world/open-world.js` (`createWorldPartition`, `createHLODProxyGroup3D`, `createFloatingOrigin`).
+- **Unified Quality (`low` / `medium` / `high`)**: `integrations/quality3d.js` and `renderer.setQuality('low' | 'medium' | 'high' | 'ultra')`.
+- **Cross-Platform Touch, Arcade & Split-Screen Input**: touch-first `app.input.pointers`; opt-in `HGame.createArcadeControls` + `integrations/touch-controls.js` (`mode: 'touch-only'`; P1 `WASD` + `J K L U I O` with optional `Q E`, P2 `Arrow` keys + `1..6` with optional `0 .`); split-screen via `HGame.computeSplitScreenViews` + `renderer.setViews(...)`.
+- **Commercial Red Dot System**: `ui/red-dot.js` (`HGame.createRedDotSystem` Trie + DAG) + `integrations/red-dot-dom.js` (`bindRedDotDOM`, `data-red-dot`, `data-red-dot-ack`).
+- **Spatial & Variant Audio**: `platform/audio.js` (4 buses + limiter, `registerCue`/`playCue` 2–4 variants, 3D `HRTF` + `updateListenerFromCamera`, 2D `position2D`, `setOcclusionProbe`, `registerSnapshot`/`applySnapshot`).

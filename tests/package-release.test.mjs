@@ -264,3 +264,49 @@ test('standalone 3D project release traces Three.js transitive modules while pru
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('package-game --engine outputs complete SDK build with workspace skill, user guide, verified WASM, and excludes planning docs', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-pkg-sdk-'));
+  try {
+    const pack = spawnSync(
+      process.execPath,
+      [packageGame, '--engine', '--out-dir', tmp],
+      { cwd: root, encoding: 'utf8' },
+    );
+    assert.equal(pack.status, 0, pack.stderr || pack.stdout);
+    const summary = JSON.parse(pack.stdout);
+    assert.equal(summary.mode, 'engine');
+    assert.equal(summary.releaseTag, 'hgame_1_0');
+
+    const sdkDir = path.join(tmp, 'hgame_1_0');
+    const sdkZip = path.join(tmp, 'hgame_1_0.zip');
+    assert.equal(await exists(sdkDir), true);
+    assert.equal(await exists(sdkZip), true);
+
+    for (const requiredRel of [
+      '.agents/skills/hgame/SKILL.md',
+      'docs/guides/USER-AND-AGENT-GUIDE.md',
+      'AGENTS.md',
+      'README.md',
+      'LICENSE',
+      'assets/runtime/VERSION',
+      'assets/runtime/vendor/rapier2d/rapier2d.wasm',
+      'assets/runtime/vendor/rapier3d/rapier3d.wasm',
+      'assets/template/AGENTS.md',
+    ]) {
+      assert.equal(await exists(path.join(sdkDir, requiredRel)), true, `Expected ${requiredRel} in SDK release`);
+    }
+
+    assert.equal(
+      await exists(path.join(sdkDir, 'docs', 'superpowers')),
+      false,
+      'Expected docs/superpowers/ to be excluded from SDK release',
+    );
+
+    const zipEntries = readZipEntries(await readFile(sdkZip));
+    assert.equal(zipEntries.has('hgame_1_0/.agents/skills/hgame/SKILL.md'), true);
+    assert.equal(zipEntries.has('hgame_1_0/docs/guides/USER-AND-AGENT-GUIDE.md'), true);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

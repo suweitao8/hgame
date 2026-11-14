@@ -4,6 +4,14 @@ HGame 是一个面向纯 AI 协同与模块化开发的独立 HTML5 游戏运行
 
 当前运行时版本：**1.0.0**。
 
+## 快速上手与 AI Agent 指南（先看这里）
+
+如果你（或拿到本项目的同事 / AI 助手）看着众多模块有点无从下手，只需要打开下面三份入口：
+
+- **人类速查 & AI Prompt 手册**：[`docs/guides/USER-AND-AGENT-GUIDE.md`](docs/guides/USER-AND-AGENT-GUIDE.md) —— 含「两个目录 + 5 步标准工作流」、**5 套直接复制就能用的中文 AI Prompt 模板**、建项选型表、12 大系统按场景代码速查，以及全命令速查表。
+- **内置 AI 工作区技能**：[`.agents/skills/hgame/SKILL.md`](.agents/skills/hgame/SKILL.md) —— Antigravity / Codex / Claude Code 等 AI 工具打开本仓库即自动发现的完整执行手册。
+- **仓库与生成工程规则**：[`AGENTS.md`](AGENTS.md)（本引擎仓库）与 [`assets/template/AGENTS.md`](assets/template/AGENTS.md)（每个新生成游戏自带的规则与模块速查表，脱离引擎仓交给别人也能直接开发与打包）。
+
 ## 目录
 
 ```text
@@ -148,6 +156,7 @@ npm run build
 
 ## 文档索引
 
+- 全景使用与 AI Agent 速查手册：[`docs/guides/USER-AND-AGENT-GUIDE.md`](docs/guides/USER-AND-AGENT-GUIDE.md)
 - 架构总览：[`docs/architecture/ENGINE-OVERVIEW.md`](docs/architecture/ENGINE-OVERVIEW.md)
 - 平台服务 API：[`docs/architecture/PLATFORM-API.md`](docs/architecture/PLATFORM-API.md)
 - 确定性物理：[`docs/architecture/DETERMINISTIC-PHYSICS.md`](docs/architecture/DETERMINISTIC-PHYSICS.md)
