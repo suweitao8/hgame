@@ -9,6 +9,211 @@
  * The Three.js namespace is injected into GPU helpers; non-3D games import nothing.
  */
 
+/**
+ * @typedef {object} CullCameraLike Structural subset of THREE.Camera read by the cullers.
+ * @property {(force?: boolean) => void} [updateMatrixWorld]
+ * @property {{elements: ArrayLike<number>, copy?: (m: object) => unknown, invert?: () => unknown}} [matrixWorldInverse]
+ * @property {{elements: ArrayLike<number>}} [matrixWorld] Column-major world matrix (translation at 12..14).
+ * @property {{elements: ArrayLike<number>}} [projectionMatrix] Column-major projection matrix.
+ * @property {{x?: number, y?: number, z?: number}} [position] Fallback eye position.
+ */
+
+/**
+ * @typedef {object} CullFrustumOptions
+ * @property {number} [maxDistance=Infinity] Draw-distance cutoff in world units (non-positive/non-finite disables).
+ */
+
+/**
+ * @typedef {object} FrustumCuller3D
+ * @property {number} maxDistance Getter; active draw-distance cutoff (Infinity = disabled).
+ * @property {boolean} hasPlanes Getter; true once planes were extracted from a camera/matrix.
+ * @property {{x: number, y: number, z: number}} cameraPosition Getter; last camera world position (copy).
+ * @property {(value: number) => void} setMaxDistance Sets the draw-distance cutoff in world units.
+ * @property {(m: ArrayLike<number>) => boolean} setFromProjectionMatrix Extracts planes from a column-major view-projection matrix (>= 16 numbers).
+ * @property {(camera: CullCameraLike | null | undefined) => boolean} updateFromCamera Updates planes and eye from a camera; false if unavailable.
+ * @property {(x: number, y: number, z: number, radius?: number) => boolean} intersectsSphere True if the sphere may be visible.
+ * @property {(x: number, y: number, z: number, radius?: number) => number} classifySphere 0 = outside, 1 = intersecting, 2 = strictly inside.
+ * @property {(minX: number, minY: number, minZ: number, maxX: number, maxY: number, maxZ: number) => boolean} intersectsAABB True if the AABB may be visible.
+ */
+
+/**
+ * @typedef {object} OcclusionCullerOptions
+ * @property {number} [maxOccluders=64] Maximum registered occluders.
+ * @property {number} [maxTestedOccluders=24] Nearest occluders tested per frame.
+ */
+
+/**
+ * @typedef {object} OccluderAABBInput
+ * @property {string | number | null} [id=null] Stable id (re-adding replaces); auto-generated when null.
+ * @property {[number, number, number]} min Minimum corner in world units.
+ * @property {[number, number, number]} max Maximum corner in world units.
+ */
+
+/**
+ * @typedef {object} OccluderCollider Collider description accepted by `setOccludersFromColliders`.
+ * @property {string | number | null} [id]
+ * @property {boolean} [sensor] Sensors are skipped.
+ * @property {ArrayLike<number>} [size] Full box size [x, y, z] in world units.
+ * @property {ArrayLike<number>} [center] Box center [x, y, z] in world units.
+ */
+
+/**
+ * @typedef {object} OccluderFilterOptions
+ * @property {number} [minWidth=1.5] Minimum horizontal extent in world units.
+ * @property {number} [minHeight=1.5] Minimum height in world units.
+ */
+
+/**
+ * @typedef {object} OcclusionCuller3D
+ * @property {number} occluderCount Getter; registered occluders.
+ * @property {number} activeCount Getter; occluders active this frame.
+ * @property {(occluder: OccluderAABBInput) => string | number} addOccluderAABB Adds or replaces an occluder; returns its id. Throws past `maxOccluders`.
+ * @property {(id: string | number) => boolean} removeOccluder True if removed.
+ * @property {() => void} clearOccluders Removes all occluders.
+ * @property {(colliders: OccluderCollider[], options?: OccluderFilterOptions) => number} setOccludersFromColliders Replaces occluders from large non-sensor boxes; returns the new count.
+ * @property {(camera: CullCameraLike | null | undefined, frustumCuller?: Pick<FrustumCuller3D, 'intersectsAABB'> | null) => number} beginFrame Selects nearest in-frustum occluders; returns active count.
+ * @property {(x: number, y: number, z: number, radius?: number) => boolean} isSphereOccluded True if the sphere is strictly hidden.
+ */
+
+/**
+ * @typedef {object} HardwareOcclusionPoolOptions
+ * @property {number} [maxQueries=256] Maximum simultaneous query records.
+ * @property {number} [graceFrames=2] Consecutive hidden frames required before reporting occluded.
+ */
+
+/**
+ * @typedef {object} HardwareOcclusionPool
+ * @property {boolean} supported Getter; true when WebGL2 conservative queries exist.
+ * @property {number} size Getter; query record count.
+ * @property {(key: unknown) => boolean} poll Polls a finished query and returns occluded state.
+ * @property {(key: unknown) => boolean} beginQuery Starts a query (false if busy/unsupported).
+ * @property {(key: unknown) => boolean} endQuery Ends the active query for `key`.
+ * @property {(key: unknown) => boolean} isOccluded True after more than `graceFrames` hidden frames.
+ * @property {(key: unknown) => boolean} remove Deletes the record; true if existed.
+ * @property {() => boolean} dispose Releases queries; false if already disposed.
+ */
+
+/**
+ * @typedef {object} SceneCullerOptions
+ * @property {number} [maxDistance=Infinity] Draw-distance cutoff in world units.
+ * @property {boolean} [occlusion=true] Enable software occlusion.
+ * @property {number} [maxOccluders=64] Maximum occluders.
+ * @property {{[key: string]: unknown} | null} [gl=null] WebGL2 context enabling hardware occlusion queries.
+ */
+
+/**
+ * @typedef {object} CullStats
+ * @property {number} tested Spheres tested this frame.
+ * @property {number} frustumCulled Rejected by frustum/distance.
+ * @property {number} occluded Rejected by occlusion.
+ * @property {number} visible Accepted.
+ */
+
+/**
+ * @typedef {object} SceneCuller3D
+ * @property {FrustumCuller3D} frustum
+ * @property {OcclusionCuller3D} occluder
+ * @property {HardwareOcclusionPool | null} hardwarePool
+ * @property {boolean} occlusionEnabled Getter.
+ * @property {(value: boolean) => void} setOcclusionEnabled
+ * @property {(value: number) => void} setMaxDistance
+ * @property {OcclusionCuller3D['addOccluderAABB']} addOccluderAABB
+ * @property {OcclusionCuller3D['removeOccluder']} removeOccluder
+ * @property {OcclusionCuller3D['clearOccluders']} clearOccluders
+ * @property {OcclusionCuller3D['setOccludersFromColliders']} setOccludersFromColliders
+ * @property {(camera: CullCameraLike | null | undefined) => void} beginFrame Resets stats and updates frustum/occluders.
+ * @property {(x: number, y: number, z: number, radius?: number, hardwareKey?: unknown) => boolean} testSphere True if visible.
+ * @property {(x: number, y: number, z: number, radius?: number) => number} classifySphere 0 = outside, 1 = intersecting, 2 = strictly inside.
+ * @property {CullStats} stats Getter; copy of per-frame stats.
+ * @property {() => void} dispose
+ */
+
+/**
+ * Minimal structural THREE.InstancedMesh used by the batch.
+ * @typedef {object} InstancedMeshLike
+ * @property {boolean} frustumCulled
+ * @property {boolean} castShadow
+ * @property {boolean} receiveShadow
+ * @property {number} count Rendered instance count.
+ * @property {{array: Float32Array, needsUpdate: boolean}} instanceMatrix
+ * @property {{array: Float32Array, needsUpdate: boolean} | null} [instanceColor]
+ * @property {{remove?: (o: object) => unknown} | null} [parent]
+ * @property {() => void} [dispose]
+ */
+
+/**
+ * Minimal THREE namespace subset used by the instanced batch.
+ * @typedef {object} InstancedBatchTHREE
+ * @property {new (geometry: object, material: object | object[], count: number) => InstancedMeshLike} InstancedMesh
+ * @property {new (array: Float32Array, itemSize: number) => {array: Float32Array, needsUpdate: boolean}} [InstancedBufferAttribute]
+ */
+
+/**
+ * @typedef {object} InstancedBatchOptions
+ * @property {object} geometry THREE.BufferGeometry (required).
+ * @property {object | object[]} material THREE material(s) (required).
+ * @property {number} [capacity=1024] Integer slot count in 1..100000.
+ * @property {boolean} [castShadow=false]
+ * @property {boolean} [receiveShadow=false]
+ * @property {boolean} [perInstanceColor=false] Allocates an instance color buffer.
+ * @property {number} [cullRadius=1] Default bounding-sphere radius in world units.
+ */
+
+/**
+ * @typedef {[number, number, number] | {r: number, g: number, b: number}} InstanceColor Linear RGB 0..1.
+ */
+
+/**
+ * @typedef {object} InstanceAllocOptions
+ * @property {number} [x=0]
+ * @property {number} [y=0]
+ * @property {number} [z=0]
+ * @property {number} [rotationX=0] Radians.
+ * @property {number} [rotationY=0] Radians.
+ * @property {number} [rotationZ=0] Radians.
+ * @property {number} [scale=1] Uniform scale (default for the axes below).
+ * @property {number} [scaleX]
+ * @property {number} [scaleY]
+ * @property {number} [scaleZ]
+ * @property {number} [radius] Culling radius in world units (default batch `cullRadius`).
+ * @property {InstanceColor | null} [color=null]
+ * @property {boolean} [visible=true]
+ */
+
+/**
+ * @typedef {object} InstancedBatchCuller
+ * @property {(x: number, y: number, z: number, radius?: number) => boolean} testSphere
+ */
+
+/**
+ * @typedef {object} InstancedBatchFlushOptions
+ * @property {InstancedBatchCuller | null} [culler=null] E.g. a {@link SceneCuller3D}.
+ * @property {((outIndex: number, slot: number) => void) | null} [onVisible=null] Called per visible instance with compacted index and slot id.
+ */
+
+/**
+ * @typedef {object} InstancedBatchFlushResult
+ * @property {number} totalActive Allocated instances.
+ * @property {number} visible Instances written this flush.
+ * @property {number} culled Instances rejected by culling.
+ */
+
+/**
+ * @typedef {object} InstancedBatch3D
+ * @property {InstancedMeshLike} mesh Underlying InstancedMesh.
+ * @property {number} capacity Slot count.
+ * @property {number} count Getter; allocated instances.
+ * @property {(options?: InstanceAllocOptions) => number} alloc Allocates a slot; returns its index or -1 when full.
+ * @property {(idx: number, x: number, y: number, z: number, rotY?: number, scale?: number) => boolean} setTransform Position, Y rotation (rad), uniform scale.
+ * @property {(idx: number, rotX: number, rotY: number, rotZ: number) => boolean} setRotation Euler radians.
+ * @property {(idx: number, r: number, g: number, b: number) => boolean} setColor
+ * @property {(idx: number, value: boolean) => boolean} setVisible
+ * @property {(idx: number) => boolean} free Releases a slot.
+ * @property {() => void} clear Frees all slots.
+ * @property {(options?: InstancedBatchFlushOptions) => InstancedBatchFlushResult} flush Compacts visible instances into the GPU buffers.
+ * @property {() => void} dispose
+ */
+
 const SCRATCH_PROJ_VIEW = new Float64Array(16);
 
 function multiply4x4Into(out, a, b) {
@@ -75,7 +280,11 @@ function writeMat4ToFloat32(out, offset, x, y, z, rx, ry, rz, sx, sy, sz) {
   out[offset + 15] = 1;
 }
 
-/** 6-plane Gribb-Hartmann frustum culler with optional max draw distance cutoff. */
+/**
+ * 6-plane Gribb-Hartmann frustum culler with optional max draw distance cutoff.
+ * @param {CullFrustumOptions} [options]
+ * @returns {FrustumCuller3D}
+ */
 export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
   const planes = new Float64Array(24);
   let camX = 0, camY = 0, camZ = 0;
@@ -157,6 +366,34 @@ export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
     return true;
   }
 
+  /**
+   * Three-state sphere test: `0 = outside`, `1 = intersecting`, `2 = strictly inside`.
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {number} [radius=0]
+   * @returns {number}
+   */
+  function classifySphere(x, y, z, radius = 0) {
+    const r = radius > 0 ? radius : 0;
+    let strictlyInside = true;
+    if (distLimit < Infinity) {
+      const dx = x - camX, dy = y - camY, dz = z - camZ;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      const outer = distLimit + r;
+      if (distSq > outer * outer) return 0;
+      const inner = distLimit - r;
+      if (inner <= 0 || distSq > inner * inner) strictlyInside = false;
+    }
+    if (!hasPlanes) return strictlyInside ? 2 : 1;
+    for (let i = 0; i < 24; i += 4) {
+      const d = planes[i] * x + planes[i + 1] * y + planes[i + 2] * z + planes[i + 3];
+      if (d < -r) return 0;
+      if (d < r) strictlyInside = false;
+    }
+    return strictlyInside ? 2 : 1;
+  }
+
   function setMaxDistance(value) {
     distLimit = Number.isFinite(value) && value > 0 ? value : Infinity;
   }
@@ -169,6 +406,7 @@ export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
     setFromProjectionMatrix,
     updateFromCamera,
     intersectsSphere,
+    classifySphere,
     intersectsAABB,
   };
 }
@@ -219,6 +457,8 @@ function rayHitsAABBSegment(ox, oy, oz, dx, dy, dz, maxT, minX, minY, minZ, maxX
 /**
  * Software convex-cone AABB occlusion culler: rejects spheres strictly hidden behind
  * solid walls/buildings before rendering or stepping skeletal mixers.
+ * @param {OcclusionCullerOptions} [options]
+ * @returns {OcclusionCuller3D}
  */
 export function createOcclusionCuller3D({ maxOccluders = 64, maxTestedOccluders = 24 } = {}) {
   const occluders = [];
@@ -397,6 +637,9 @@ export function createOcclusionCuller3D({ maxOccluders = 64, maxTestedOccluders 
 /**
  * Optional non-blocking WebGL2 hardware conservative occlusion query pool
  * using ANY_SAMPLES_PASSED_CONSERVATIVE and multi-frame temporal grace.
+ * @param {{[key: string]: unknown} | null | undefined} gl WebGL2 context (unsupported contexts yield `supported: false`).
+ * @param {HardwareOcclusionPoolOptions} [options]
+ * @returns {HardwareOcclusionPool}
  */
 export function createHardwareOcclusionPool(gl, { maxQueries = 256, graceFrames = 2 } = {}) {
   const supported = Boolean(
@@ -488,7 +731,11 @@ export function createHardwareOcclusionPool(gl, { maxQueries = 256, graceFrames 
   };
 }
 
-/** Unified per-frame 3D Frustum + Occlusion culler service attached to Three adapter. */
+/**
+ * Unified per-frame 3D Frustum + Occlusion culler service attached to Three adapter.
+ * @param {SceneCullerOptions} [options]
+ * @returns {SceneCuller3D}
+ */
 export function createSceneCuller3D({
   maxDistance = Infinity,
   occlusion = true,
@@ -528,6 +775,29 @@ export function createSceneCuller3D({
     return true;
   }
 
+  /**
+   * Three-state coarse sphere test (`0 = outside`, `1 = intersecting`, `2 = strictly inside`).
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   * @param {number} [radius=0]
+   * @returns {number}
+   */
+  function classifySphere(x, y, z, radius = 0) {
+    stats.tested++;
+    const state = frustum.classifySphere(x, y, z, radius);
+    if (state === 0) {
+      stats.frustumCulled++;
+      return 0;
+    }
+    if (occlusionEnabled && occluder.activeCount > 0 && occluder.isSphereOccluded(x, y, z, radius)) {
+      stats.occluded++;
+      return 0;
+    }
+    stats.visible++;
+    return (occlusionEnabled && occluder.activeCount > 0 && state === 2) ? 1 : state;
+  }
+
   function dispose() {
     occluder.clearOccluders();
     hardwarePool?.dispose?.();
@@ -546,6 +816,7 @@ export function createSceneCuller3D({
     setOccludersFromColliders: occluder.setOccludersFromColliders,
     beginFrame,
     testSphere,
+    classifySphere,
     get stats() { return { ...stats }; },
     dispose,
   };
@@ -554,6 +825,9 @@ export function createSceneCuller3D({
 /**
  * Dynamic GPU InstancedMesh pool (Unity-style Graphics.DrawMeshInstanced equivalent)
  * with O(1) slot alloc/free and per-frame frustum + occlusion compaction.
+ * @param {InstancedBatchTHREE} THREE
+ * @param {InstancedBatchOptions} options `geometry` and `material` are required.
+ * @returns {InstancedBatch3D}
  */
 export function createInstancedBatch3D(THREE, {
   geometry,

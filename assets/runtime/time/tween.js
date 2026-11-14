@@ -1,3 +1,135 @@
+/** @typedef {(t: number) => number} EaseFunction Maps normalized time 0..1 to eased progress. */
+
+/** @typedef {'linear' | 'easeInQuad' | 'easeOutQuad' | 'easeInOutQuad' | 'easeInCubic' | 'easeOutCubic' | 'easeInOutCubic' | 'easeInSine' | 'easeOutSine' | 'easeInOutSine' | 'easeInExpo' | 'easeOutExpo' | 'easeInBack' | 'easeOutBack' | 'easeInOutBack' | 'easeOutElastic' | 'easeOutBounce'} EaseName */
+
+/** @typedef {EaseName | EaseFunction} Ease Built-in easing name or custom function. */
+
+/**
+ * Numeric properties of `T` that may be tweened.
+ * @template T
+ * @typedef {{ [K in keyof T]?: T[K] extends number ? number : never }} TweenValues
+ */
+
+/**
+ * @template {object} T
+ * @typedef {object} TweenOptions
+ * @property {number} [duration=0.3] Seconds per cycle (>= 0; 0 applies immediately).
+ * @property {number} [delay=0] Seconds before starting (>= 0).
+ * @property {Ease} [ease='linear']
+ * @property {number} [repeat=0] Extra cycles (integer >= 0, `Infinity` or `-1` loops forever).
+ * @property {boolean} [yoyo=false] Reverse every other cycle.
+ * @property {string | null} [tag=null] Group name for {@link TweenManager#killTweensOf} / `overwrite`.
+ * @property {boolean} [overwrite=false] Cancel existing tweens on the same target sharing a key or tag.
+ * @property {((target: T, t: number) => void) | null} [onUpdate=null] Called after each step with eased-input progress 0..1.
+ * @property {(() => void) | null} [onComplete=null]
+ */
+
+/**
+ * @template {object} T
+ * @typedef {object} TweenHandle Active tween record; call `cancel()` to stop it.
+ * @property {T} target
+ * @property {string[]} keys Tweened property names.
+ * @property {number} count Number of tweened properties.
+ * @property {Float64Array} from Start values.
+ * @property {Float64Array} to End values.
+ * @property {number} duration Seconds per cycle.
+ * @property {number} delayRemaining Seconds.
+ * @property {boolean} started
+ * @property {EaseFunction} ease
+ * @property {number} maxCycles Total cycles (Infinity when looping).
+ * @property {boolean} yoyo
+ * @property {string | null} tag
+ * @property {number} elapsed Seconds since the delay ended.
+ * @property {((target: T, t: number) => void) | null} onUpdate
+ * @property {(() => void) | null} onComplete
+ * @property {() => boolean} cancel Remove the tween; false if it was already gone.
+ */
+
+/**
+ * @template {object} T
+ * @typedef {object} SequenceStep
+ * @property {TweenValues<T>} [values={}] Target values for this step.
+ * @property {number} [duration=0.2] Seconds.
+ * @property {number} [delay=0] Seconds.
+ * @property {number} [wait=0] Extra pause in seconds (a value-less step with `wait` and no `duration` is a pure wait).
+ * @property {Ease} [ease='linear']
+ * @property {number} [repeat=0]
+ * @property {boolean} [yoyo=false]
+ * @property {((target: T) => void) | null} [onStart=null]
+ * @property {((target: T) => void) | null} [onComplete=null]
+ */
+
+/**
+ * @template {object} T
+ * @typedef {object} SequenceOptions
+ * @property {string | null} [tag=null]
+ * @property {(() => void) | null} [onComplete=null]
+ */
+
+/**
+ * @template {object} T
+ * @typedef {object} SequenceHandle
+ * @property {T} target
+ * @property {string | null} tag
+ * @property {boolean} finished True once every step completed.
+ * @property {() => void} cancel
+ */
+
+/** @typedef {{ cancel: () => void }} LoopHandle Cancelable handle of a looping effect. */
+
+/**
+ * @typedef {object} VisualTweenTarget Decoupled Sprite2D visual fields (missing fields are initialised).
+ * @property {number} [offsetX] Pixels.
+ * @property {number} [offsetY] Pixels.
+ * @property {number} [scaleX]
+ * @property {number} [scaleY]
+ * @property {number} [rotation] Radians.
+ * @property {number} [opacity] 0..1.
+ */
+
+/**
+ * @typedef {object} IdleOptions
+ * @property {number} [scaleAmt=0.06] Breathing scale amplitude (ratio).
+ * @property {number} [duration=0.55] Half-cycle seconds.
+ */
+
+/**
+ * @typedef {object} RunOptions
+ * @property {number} [bobHeight=5] Vertical bob, pixels.
+ * @property {number} [tiltRad=0.12] Waddle tilt, radians.
+ * @property {number} [squashAmt=0.08] Squash/stretch amplitude (ratio).
+ * @property {number} [duration=0.18] Bob half-cycle, seconds.
+ */
+
+/**
+ * @typedef {object} AttackLungeOptions
+ * @property {number} [distance=18] Strike distance, pixels.
+ * @property {number} [windup=0.05] Seconds.
+ * @property {number} [strike=0.08] Seconds.
+ * @property {number} [recover=0.14] Seconds.
+ * @property {number} [stretch=0.18] Squash/stretch amplitude (ratio).
+ * @property {((target: VisualTweenTarget) => void) | null} [onApex=null] Called at the end of the strike step.
+ * @property {(() => void) | null} [onComplete=null]
+ */
+
+/**
+ * @typedef {object} DieKnockbackOptions
+ * @property {number} [distance=24] Knockback distance, pixels.
+ * @property {number} [duration=0.32] Seconds.
+ * @property {number} [spinRad=0.35] Added rotation, radians.
+ * @property {number} [endScale=0.72] Final scale (ratio).
+ * @property {(() => void) | null} [onComplete=null]
+ */
+
+/**
+ * @typedef {object} TimerEntry
+ * @property {number} delay Seconds.
+ * @property {number} remaining Seconds.
+ * @property {() => void} callback
+ * @property {boolean} repeat
+ */
+
+/** Built-in easing curves. @type {Readonly<Record<EaseName, EaseFunction>>} */
 export const EASING = Object.freeze({
   linear: t => t,
   easeInQuad: t => t * t,
@@ -49,6 +181,7 @@ export const EASING = Object.freeze({
   },
 });
 
+/** @param {Ease} ease @returns {EaseFunction} */
 function resolveEase(ease) {
   if (typeof ease === 'function') return ease;
   const fn = EASING[ease];
@@ -56,18 +189,21 @@ function resolveEase(ease) {
   return fn;
 }
 
+/** @param {number} repeat @returns {number} */
 function normalizeRepeat(repeat) {
   if (repeat === Infinity || repeat === -1) return Infinity;
   if (!Number.isInteger(repeat) || repeat < 0) throw new RangeError('Tween repeat must be >= 0 or Infinity');
   return repeat;
 }
 
+/** @param {number} dx @param {number} dy @param {number} fallbackX @param {number} fallbackY @returns {[number, number]} */
 function normalizeDir(dx, dy, fallbackX, fallbackY) {
   const len = Math.hypot(dx, dy);
   if (len > 1e-6) return [dx / len, dy / len];
   return [fallbackX, fallbackY];
 }
 
+/** @param {VisualTweenTarget} target @param {boolean} [includeOpacity] @returns {void} */
 function ensureVisualFields(target, includeOpacity = false) {
   if (!target || typeof target !== 'object') throw new TypeError('Tween target must be an object');
   if (!Number.isFinite(target.offsetX)) target.offsetX = 0;
@@ -81,14 +217,28 @@ function ensureVisualFields(target, includeOpacity = false) {
 /** Scene-local tweens, sequences and logical timers; updated by the application scheduler. */
 export class TweenManager {
   constructor() {
+    /** @type {Set<TweenHandle<object>>} */
     this.tweens = new Set();
+    /** @type {Map<number, TimerEntry>} */
     this.timers = new Map();
+    /** Last issued timer id. @type {number} */
     this.id = 0;
+    /** @type {Set<SequenceHandle<object>>} */
     this._sequences = new Set();
+    /** @type {TweenHandle<object>[]} */
     this._tweenStep = [];
+    /** @type {[number, TimerEntry][]} */
     this._timerStep = [];
   }
 
+  /**
+   * Tween numeric properties of `target` to `values`.
+   * @template {object} T
+   * @param {T} target
+   * @param {TweenValues<T>} values End values (finite numbers).
+   * @param {TweenOptions<T>} [options]
+   * @returns {TweenHandle<T>}
+   */
   add(target, values, {
     duration = 0.3,
     delay = 0,
@@ -161,6 +311,12 @@ export class TweenManager {
     return tween;
   }
 
+  /**
+   * Cancel tweens and sequences on `target`.
+   * @param {object} target
+   * @param {string | null} [tag=null] Only those with this tag.
+   * @returns {number} Number removed.
+   */
   killTweensOf(target, tag = null) {
     let removed = 0;
     for (const seq of [...this._sequences]) {
@@ -178,6 +334,14 @@ export class TweenManager {
     return removed;
   }
 
+  /**
+   * Run tween steps one after another.
+   * @template {object} T
+   * @param {T} target
+   * @param {readonly SequenceStep<T>[]} steps
+   * @param {SequenceOptions<T>} [options]
+   * @returns {SequenceHandle<T>}
+   */
   sequence(target, steps, { tag = null, onComplete = null } = {}) {
     if (!target || typeof target !== 'object') throw new TypeError('Sequence target must be an object');
     if (!Array.isArray(steps)) throw new TypeError('Sequence steps must be an array');
@@ -251,7 +415,12 @@ export class TweenManager {
     return handle;
   }
 
-  /** Continuous breathing idle loop on decoupled Sprite2D visual properties. */
+  /**
+   * Continuous breathing idle loop on decoupled Sprite2D visual properties.
+   * @param {VisualTweenTarget} target
+   * @param {IdleOptions} [options]
+   * @returns {TweenHandle<VisualTweenTarget>}
+   */
   idle(target, { scaleAmt = 0.06, duration = 0.55 } = {}) {
     ensureVisualFields(target);
     this.killTweensOf(target, 'motion');
@@ -267,7 +436,12 @@ export class TweenManager {
     );
   }
 
-  /** Continuous procedural run bob + squash + waddle tilt loop. */
+  /**
+   * Continuous procedural run bob + squash + waddle tilt loop.
+   * @param {VisualTweenTarget} target
+   * @param {RunOptions} [options]
+   * @returns {LoopHandle}
+   */
   run(target, { bobHeight = 5, tiltRad = 0.12, squashAmt = 0.08, duration = 0.18 } = {}) {
     ensureVisualFields(target);
     this.killTweensOf(target, 'motion');
@@ -294,7 +468,14 @@ export class TweenManager {
     };
   }
 
-  /** Three-stage windup -> strike -> recover lunge toward (dirX, dirY). */
+  /**
+   * Three-stage windup -> strike -> recover lunge toward (dirX, dirY).
+   * @param {VisualTweenTarget} target
+   * @param {number} [dirX=1] Direction x (normalized internally).
+   * @param {number} [dirY=0] Direction y.
+   * @param {AttackLungeOptions} [options]
+   * @returns {SequenceHandle<VisualTweenTarget>}
+   */
   attackLunge(target, dirX = 1, dirY = 0, {
     distance = 18,
     windup = 0.05,
@@ -341,7 +522,14 @@ export class TweenManager {
     ], { tag: 'motion', onComplete });
   }
 
-  /** Knockback slide, tilt, shrink, and fade-out for defeated entities. */
+  /**
+   * Knockback slide, tilt, shrink, and fade-out for defeated entities.
+   * @param {VisualTweenTarget} target
+   * @param {number} [dirX=-1] Direction x (normalized internally).
+   * @param {number} [dirY=0] Direction y.
+   * @param {DieKnockbackOptions} [options]
+   * @returns {TweenHandle<VisualTweenTarget>}
+   */
   dieKnockback(target, dirX = -1, dirY = 0, {
     distance = 24,
     duration = 0.32,
@@ -366,9 +554,12 @@ export class TweenManager {
     );
   }
 
+  /** Run `callback` once after `seconds` of tween time. @param {number} seconds (> 0) @param {() => void} callback @returns {number} Timer id for {@link TweenManager#cancel}. */
   after(seconds, callback) { return this._timer(seconds, callback, false); }
+  /** Run `callback` every `seconds` of tween time. @param {number} seconds (> 0) @param {() => void} callback @returns {number} Timer id for {@link TweenManager#cancel}. */
   every(seconds, callback) { return this._timer(seconds, callback, true); }
 
+  /** @param {number} seconds @param {() => void} callback @param {boolean} repeat @returns {number} */
   _timer(seconds, callback, repeat) {
     if (!Number.isFinite(seconds) || seconds <= 0) throw new RangeError('Timer delay must be > 0');
     if (typeof callback !== 'function') throw new TypeError('Timer callback must be a function');
@@ -377,8 +568,10 @@ export class TweenManager {
     return id;
   }
 
+  /** Cancel a timer. @param {number} id @returns {boolean} False if unknown. */
   cancel(id) { return this.timers.delete(id); }
 
+  /** Advance tweens and timers. @param {number} dt Seconds (>= 0). @returns {void} */
   update(dt) {
     if (!Number.isFinite(dt) || dt < 0) throw new RangeError('Tween delta must be >= 0');
 
@@ -467,6 +660,7 @@ export class TweenManager {
     timerList.length = 0;
   }
 
+  /** Cancel everything. @returns {void} */
   dispose() {
     for (const seq of [...this._sequences]) seq.cancel();
     this._sequences.clear();
@@ -476,6 +670,51 @@ export class TweenManager {
     this._timerStep.length = 0;
   }
 }
+
+/**
+ * @typedef {object} SpringHalfLifeOptions
+ * @property {number} [halfLife] Seconds for the remaining error to halve.
+ * @property {number} [angularFrequency] Overrides `halfLife` (rad/s).
+ * @property {number} [maxSpeed] Velocity cap (units/second).
+ */
+
+/** @typedef {{ value: number, velocity: number }} SpringState1D Mutable 1D spring state. */
+
+/**
+ * @typedef {object} SpringDamper1DOptions
+ * @property {number} [value=0]
+ * @property {number} [velocity=0] Units/second.
+ * @property {number} [target=value]
+ * @property {number} [halfLife=0.12] Seconds.
+ * @property {number} [maxSpeed=Infinity] Units/second.
+ */
+
+/**
+ * @typedef {object} SpringDamper2DOptions
+ * @property {number} [x=0]
+ * @property {number} [y=0]
+ * @property {number} [vx=0] Units/second.
+ * @property {number} [vy=0] Units/second.
+ * @property {number} [targetX=x]
+ * @property {number} [targetY=y]
+ * @property {number} [halfLife=0.12] Seconds.
+ * @property {number} [maxSpeed=Infinity] Speed cap, units/second.
+ */
+
+/**
+ * @typedef {object} SpringDamper3DOptions
+ * @property {number} [x=0]
+ * @property {number} [y=0]
+ * @property {number} [z=0]
+ * @property {number} [vx=0] Units/second.
+ * @property {number} [vy=0] Units/second.
+ * @property {number} [vz=0] Units/second.
+ * @property {number} [targetX=x]
+ * @property {number} [targetY=y]
+ * @property {number} [targetZ=z]
+ * @property {number} [halfLife=0.12] Seconds.
+ * @property {number} [maxSpeed=Infinity] Speed cap, units/second.
+ */
 
 const SPRING_TAU = Math.PI * 2;
 /**
@@ -519,6 +758,7 @@ export function dampAngle(current, target, halfLife, dt) {
   return current + delta * (1 - Math.exp((-Math.LN2 * dt) / halfLife));
 }
 
+/** @param {number} value @param {number} velocity @param {number} target @param {number | SpringHalfLifeOptions} halfLifeOrOptions @param {number} dt @param {number} maxSpeed @param {number[]} out @returns {number[]} */
 function evalCritSpringScalar(value, velocity, target, halfLifeOrOptions, dt, maxSpeed, out) {
   if (!Number.isFinite(dt) || dt <= 0) {
     out[0] = value;
@@ -566,12 +806,12 @@ function evalCritSpringScalar(value, velocity, target, halfLifeOrOptions, dt, ma
  * Advances a 1D critically damped spring `{ value, velocity }` in place using
  * the exact closed-form analytical solution (frame-rate independent).
  *
- * @param {{ value: number, velocity: number }} state
+ * @param {SpringState1D} state
  * @param {number} target
- * @param {number | { halfLife?: number, angularFrequency?: number, maxSpeed?: number }} halfLifeOrOptions
- * @param {number} dt
- * @param {number} [maxSpeed=Infinity]
- * @returns {{ value: number, velocity: number }}
+ * @param {number | SpringHalfLifeOptions} halfLifeOrOptions Half-life in seconds, or options.
+ * @param {number} dt Seconds.
+ * @param {number} [maxSpeed=Infinity] Units/second.
+ * @returns {SpringState1D} `state`
  */
 export function stepSpring1D(state, target, halfLifeOrOptions, dt, maxSpeed = Infinity) {
   if (!state || typeof state !== 'object') {
@@ -595,6 +835,7 @@ export function stepSpring1D(state, target, halfLifeOrOptions, dt, maxSpeed = In
  * Stateful 1D analytical critically damped spring.
  */
 export class SpringDamper1D {
+  /** @param {SpringDamper1DOptions} [options] */
   constructor({ value = 0, velocity = 0, target = value, halfLife = 0.12, maxSpeed = Infinity } = {}) {
     this.value = value;
     this.velocity = velocity;
@@ -603,11 +844,13 @@ export class SpringDamper1D {
     this.maxSpeed = maxSpeed;
   }
 
+  /** @param {number} target @returns {this} */
   setTarget(target) {
     this.target = target;
     return this;
   }
 
+  /** Jump to `value` and stop (units / units-per-second). @param {number} [value] @param {number} [velocity=0] @returns {this} */
   snap(value = this.target, velocity = 0) {
     this.value = value;
     this.velocity = velocity;
@@ -615,6 +858,7 @@ export class SpringDamper1D {
     return this;
   }
 
+  /** Advance by `dt` seconds. @param {number} dt @param {number} [target] @returns {number} The new value. */
   step(dt, target = this.target) {
     this.target = target;
     evalCritSpringScalar(this.value, this.velocity, target, this.halfLife, dt, this.maxSpeed, SPRING_SCRATCH);
@@ -623,6 +867,7 @@ export class SpringDamper1D {
     return this.value;
   }
 
+  /** @param {number} [epsilon=1e-4] Position tolerance. @param {number} [velocityEpsilon=1e-3] Velocity tolerance. @returns {boolean} */
   isSettled(epsilon = 1e-4, velocityEpsilon = 1e-3) {
     return Math.abs(this.target - this.value) <= epsilon && Math.abs(this.velocity) <= velocityEpsilon;
   }
@@ -632,6 +877,7 @@ export class SpringDamper1D {
  * Stateful 2D analytical critically damped spring (zero per-step allocations).
  */
 export class SpringDamper2D {
+  /** @param {SpringDamper2DOptions} [options] */
   constructor({
     x = 0, y = 0,
     vx = 0, vy = 0,
@@ -646,12 +892,14 @@ export class SpringDamper2D {
     this.maxSpeed = maxSpeed;
   }
 
+  /** @param {number} x @param {number} y @returns {this} */
   setTarget(x, y) {
     this.targetX = x;
     this.targetY = y;
     return this;
   }
 
+  /** Jump to (x, y) with the given velocity (units/second). @param {number} [x] @param {number} [y] @param {number} [vx=0] @param {number} [vy=0] @returns {this} */
   snap(x = this.targetX, y = this.targetY, vx = 0, vy = 0) {
     this.x = x; this.y = y;
     this.vx = vx; this.vy = vy;
@@ -659,6 +907,7 @@ export class SpringDamper2D {
     return this;
   }
 
+  /** Advance by `dt` seconds. @param {number} dt @param {number} [targetX] @param {number} [targetY] @returns {this} */
   step(dt, targetX = this.targetX, targetY = this.targetY) {
     this.targetX = targetX;
     this.targetY = targetY;
@@ -683,6 +932,7 @@ export class SpringDamper2D {
     return this;
   }
 
+  /** @param {number} [epsilon=1e-4] Position tolerance. @param {number} [velocityEpsilon=1e-3] Velocity tolerance. @returns {boolean} */
   isSettled(epsilon = 1e-4, velocityEpsilon = 1e-3) {
     const dx = this.targetX - this.x;
     const dy = this.targetY - this.y;
@@ -697,6 +947,7 @@ export class SpringDamper2D {
  * Stateful 3D analytical critically damped spring (zero per-step allocations).
  */
 export class SpringDamper3D {
+  /** @param {SpringDamper3DOptions} [options] */
   constructor({
     x = 0, y = 0, z = 0,
     vx = 0, vy = 0, vz = 0,
@@ -711,6 +962,7 @@ export class SpringDamper3D {
     this.maxSpeed = maxSpeed;
   }
 
+  /** @param {number} x @param {number} y @param {number} z @returns {this} */
   setTarget(x, y, z) {
     this.targetX = x;
     this.targetY = y;
@@ -718,6 +970,7 @@ export class SpringDamper3D {
     return this;
   }
 
+  /** Jump to (x, y, z) with the given velocity (units/second). @param {number} [x] @param {number} [y] @param {number} [z] @param {number} [vx=0] @param {number} [vy=0] @param {number} [vz=0] @returns {this} */
   snap(x = this.targetX, y = this.targetY, z = this.targetZ, vx = 0, vy = 0, vz = 0) {
     this.x = x; this.y = y; this.z = z;
     this.vx = vx; this.vy = vy; this.vz = vz;
@@ -725,6 +978,7 @@ export class SpringDamper3D {
     return this;
   }
 
+  /** Advance by `dt` seconds. @param {number} dt @param {number} [targetX] @param {number} [targetY] @param {number} [targetZ] @returns {this} */
   step(dt, targetX = this.targetX, targetY = this.targetY, targetZ = this.targetZ) {
     this.targetX = targetX;
     this.targetY = targetY;
@@ -755,6 +1009,7 @@ export class SpringDamper3D {
     return this;
   }
 
+  /** @param {number} [epsilon=1e-4] Position tolerance. @param {number} [velocityEpsilon=1e-3] Velocity tolerance. @returns {boolean} */
   isSettled(epsilon = 1e-4, velocityEpsilon = 1e-3) {
     const dx = this.targetX - this.x;
     const dy = this.targetY - this.y;

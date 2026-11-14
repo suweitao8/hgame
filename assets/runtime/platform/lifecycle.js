@@ -1,5 +1,6 @@
 import { createEmitter } from './events.js';
 
+/** @param {Window | undefined} windowRef @returns {ViewportSize} */
 function sizeOf(windowRef) {
   return {
     width: Math.max(0, Number(windowRef?.innerWidth) || 0),
@@ -8,8 +9,54 @@ function sizeOf(windowRef) {
   };
 }
 
+/**
+ * @typedef {'created' | 'ready' | 'disposed'} LifecycleState
+ */
+
+/**
+ * @typedef {object} ViewportSize
+ * @property {number} width Pixels (CSS), >= 0.
+ * @property {number} height Pixels (CSS), >= 0.
+ * @property {number} pixelRatio Device pixel ratio, clamped to 1..3.
+ */
+
+/**
+ * @typedef {object} LifecycleEvents
+ * @property {boolean} focus
+ * @property {{ state: LifecycleState }} ready
+ * @property {ViewportSize} resize
+ * @property {boolean} visibility
+ * @property {undefined} dispose
+ */
+
+/**
+ * @typedef {object} LifecycleOptions
+ * @property {Window} [windowRef]
+ * @property {Document} [documentRef]
+ */
+
+/**
+ * @typedef {object} Lifecycle
+ * @property {LifecycleState} state
+ * @property {boolean} focused
+ * @property {boolean} visible
+ * @property {import('./events.js').Emitter<LifecycleEvents>['on']} on Subscribe to `focus`, `ready`, `resize`, `visibility`, `dispose`.
+ * @property {() => boolean} ready Mark ready; false if not in `created` state.
+ * @property {(focused: boolean) => boolean} setFocused
+ * @property {(visible: boolean) => boolean} setVisible
+ * @property {(size?: Partial<ViewportSize>) => boolean} resize Emit `resize` (default: current window size).
+ * @property {() => boolean} dispose
+ */
+
+/**
+ * Create the lifecycle service (focus / visibility / resize / ready).
+ * @param {LifecycleOptions} [options]
+ * @returns {Lifecycle}
+ */
 export function createLifecycle({ windowRef, documentRef } = {}) {
+  /** @type {import('./events.js').Emitter<LifecycleEvents>} */
   const events = createEmitter();
+  /** @type {LifecycleState} */
   let state = 'created';
   let focused = true;
   let visible = documentRef?.visibilityState !== 'hidden';
@@ -28,6 +75,7 @@ export function createLifecycle({ windowRef, documentRef } = {}) {
   windowRef?.addEventListener?.('resize', onResize);
   documentRef?.addEventListener?.('visibilitychange', onVisibility);
 
+  /** @param {boolean} value @returns {boolean} */
   function setFocused(value) {
     if (disposed || focused === Boolean(value)) return false;
     focused = Boolean(value);
@@ -42,6 +90,7 @@ export function createLifecycle({ windowRef, documentRef } = {}) {
     return true;
   }
 
+  /** @param {Partial<ViewportSize>} [value] @returns {boolean} */
   function resize(value = sizeOf(windowRef)) {
     if (disposed) return false;
     const next = {
@@ -53,6 +102,7 @@ export function createLifecycle({ windowRef, documentRef } = {}) {
     return true;
   }
 
+  /** @param {boolean} value @returns {boolean} */
   function setVisible(value) {
     if (disposed || visible === Boolean(value)) return false;
     visible = Boolean(value);

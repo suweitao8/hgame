@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- High-Density 100k+ 2D/3D Crowd Pipeline Optimizations:
+  - `SwarmSimulation` (`world/swarm-ecs.js`): add 3-tier distance-decimated neighbor separation (`< 25m` 60Hz + bilinear flow, `25m–65m` 4-frame staggered separation with `sepX`/`sepY` caching, `> 65m` cell density damping), module-level `buildSwarmStepGrid` / `stepSwarmSequential` kernels, coarse `32x32` spatial chunks (`ensureChunks`, chunk-accelerated `applyCircleDamage`), and zero-copy default `syncToSpriteCrowd2D`. Raise capacity limits to `262,144` across `SwarmSimulation`, `SpriteCrowd2D`, `WebGL2D`, and `BoneVatCrowd3D`.
+  - 3D Coarse Chunk Frustum/LOD Fast-Path (`integrations/culling3d.js`, `integrations/model3d/bone-vat.js`): add 3-state `classifySphere` (`0` outside, `1` intersecting, `2` strictly inside) on `FrustumCuller3D` / `SceneCuller3D`; upgrade `BoneVatCrowd3D.syncFromSwarm` with coarse chunk culling, branch-free strictly-inside single-LOD loops, and flat clip lookup arrays.
+  - 2D Zero-Relay `16-Byte` Instancing (`integrations/canvas2d.js`, `integrations/webgl2d.js`): add `SpriteCrowd2D.bindSwarm` / `bindGpuSwarm` / `unbindSwarm` plus a compact `16-Byte` (`vec4 aPacked2D`) GLSL3 instanced shader path and coarse chunk culling in `WebGL2D` (and Canvas2D fallback).
+  - Pure-GPU Ping-Pong FBO Swarm (`world/gpu-swarm-webgl2.js`, re-exported as `createGpuSwarmWebGL2` from `index.js` & `HGame`): `RGBA32F` double-buffered GPU swarm stepping from `FlowField2D` `.rg8` textures, wired into `BoneVatCrowd3D.syncFromGpuSwarm` and `WebGL2D` via vertex-shader `texelFetch` (`0` bytes uploaded per frame), with automatic CPU fallback when WebGL2 is absent.
+- Swarm & 3D Bone-VAT Crowd (`world/swarm-ecs.js`, `integrations/model3d/bone-vat.js`, `scripts/bake-bone-vat.mjs`):
+  - Add renderer-neutral zero-GC swarm runtime in `assets/runtime/world/swarm-ecs.js` (re-exported via `index.js` & `HGame`): 1D intrusive linked-list `FlatSpatialHash2D` (`createFlatSpatialHash2D`), ring-buffer SPFA/Dijkstra `FlowField2D` (`createFlowField2D`, `setWallsFromTileMap`, `rg8`), fixed-slot SoA `FlatCombatECS` with 10m/12m hysteresis promote/demote and back-pressure-safe patch cleanup, and integrated `createSwarmSimulation` (`syncToSpriteCrowd2D`).
+  - Add IEEE-754 Half-Float Bone-VAT (`bakeBoneVatData` with `bindMatrix` folding & antipodal quaternion hemisphere continuity, `"HVAT"` binary `encodeBoneVatBinary`/`decodeBoneVatBinary`, `buildSimplifiedLodGeometry` voxel-clustering + 1-bone collapse) and 16-byte packed 3-LOD GPU crowd `createBoneVatCrowd3D` (`LOD0` 4-bone / `LOD1` 1-bone / `LOD2` 8-direction azimuth billboard, `syncFromSwarm`) in `assets/runtime/integrations/model3d.js`.
+  - Add offline Bone-VAT baker CLI `scripts/bake-bone-vat.mjs` (`npm run bake:vat`) and `.bin` MIME support in `scripts/preview.mjs`.
+- Tooling: `npm run bench:render3d` (`benchmarks/render-bench-3d.mjs`) 3D stress benchmark (instanced batch + MegaLights + post3d + sky + camera rig) with frame stats, draw calls/triangles and non-blank check; wired into the CI browser job.
+
+- Tooling: generated TypeScript declarations in `types/` (`build:types` / `check:types`, enforced in CI); performance budgets (`npm run bench`); e2e profile test (generate -> test -> package for 2d/3d/ui); CI browser smoke and benchmark jobs; `docs/guides/API-STABILITY.md`.
+- Agent tooling: `npm run snapshot` (headless render PNG + JSON stats + baseline diff), `docs/api/API-INDEX.json` (machine-readable API with option-bag keys and returned members, `build:api-index` / `check:api-index`), `docs/guides/AI-VERIFICATION.md`, browser render benchmark (`bench:render`), and the USER-AND-AGENT guide split into `docs/guides/systems/*`.
+- Diagnostics: `createDiagnostics().snapshot()` now also reports `frameTimeP95Ms`, `frameTimeMaxMs` and `longFrames`. Config validation errors list valid values and suggest the closest match.
+- Physics: add `physics.addTileMap(scene, map, options)` (2D) generating merged fixed colliders from a TileMap with y-up conversion.
+- Types: JSDoc typedefs for option bags and returned objects across core/platform/time/animation/2D/3D/physics/world/ui; generated `types/` now has no `any` in public signatures. Added `tests/genre-conformance.test.mjs` (platformer, horde, card/UI, 3D action, puzzle, lockstep) and `tests/browser-snapshot.mjs`; `bench:render` now includes the default 3D scene.
+- Internal refactor (no API change): `post3d`, `model3d`, `input`, `audio` and `red-dot` split into sub-modules; original paths re-export the same public names.
+
 ## 1.0.0 - 2026-11-14
 
 - Core & Deterministic Physics:

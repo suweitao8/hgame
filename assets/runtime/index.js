@@ -36,6 +36,17 @@ export { AnimationPlayer } from './animation/player.js';
 export { SpriteSheet } from './animation/spritesheet.js';
 export { TileMap, findGridPath } from './world/tilemap.js';
 export { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
+export {
+  SWARM_UNIT_FLAGS,
+  ECS_SLOT_FLAGS,
+  FlatSpatialHash2D,
+  createFlatSpatialHash2D,
+  FlowField2D,
+  createFlowField2D,
+  FlatCombatECS,
+  createSwarmSimulation,
+} from './world/swarm-ecs.js';
+export { createGpuSwarmWebGL2 } from './world/gpu-swarm-webgl2.js';
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
 export { createTraceRecorder } from './integrations/trace.js';
 export {
@@ -56,6 +67,17 @@ import { createTagContainer, createTagRegistry, GLOBAL_TAG_REGISTRY, matchGamepl
 import { createGameApplication } from './core/application.js';
 import { createTraceRecorder } from './integrations/trace.js';
 import { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
+import {
+  SWARM_UNIT_FLAGS,
+  ECS_SLOT_FLAGS,
+  FlatSpatialHash2D,
+  createFlatSpatialHash2D,
+  FlowField2D,
+  createFlowField2D,
+  FlatCombatECS,
+  createSwarmSimulation,
+} from './world/swarm-ecs.js';
+import { createGpuSwarmWebGL2 } from './world/gpu-swarm-webgl2.js';
 import { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
 import {
   defineInputContext,
@@ -108,6 +130,15 @@ export const HGame = Object.freeze({
   SpringDamper3D,
   ObjectPool,
   SpatialHash2D,
+  SWARM_UNIT_FLAGS,
+  ECS_SLOT_FLAGS,
+  FlatSpatialHash2D,
+  createFlatSpatialHash2D,
+  FlowField2D,
+  createFlowField2D,
+  FlatCombatECS,
+  createSwarmSimulation,
+  createGpuSwarmWebGL2,
   createWorldPartition,
   createHLODProxyGroup3D,
   createFloatingOrigin,

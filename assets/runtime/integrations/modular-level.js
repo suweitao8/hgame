@@ -10,6 +10,76 @@
  *        [{slot, fill:{from:[x,y,z],to:[x,y,z]}, exclude:[...]}]
  * Each group optionally turns=0|1|2|3 (quarter-turns), scale>0.
  */
+/**
+ * @typedef {[number, number, number]} Vec3Tuple Finite `[x, y, z]`.
+ * @typedef {object} ModularGridSpec
+ * @property {number} [cellSize] Cell edge length in world units, (0, 100]. Default `1`.
+ * @property {Vec3Tuple} [origin] World position of cell [0,0,0]. Default `[0,0,0]`.
+ * @typedef {object} ModularLevelGroup
+ * @property {string} slot Logical scene model slot id, e.g. `kit.wall`.
+ * @property {{from: Vec3Tuple, to: Vec3Tuple}} [fill] Inclusive integer cell box (xor with `cells`).
+ * @property {Vec3Tuple[]} [cells] Explicit integer cells (xor with `fill`).
+ * @property {Vec3Tuple[]} [exclude] Cells to skip from the group.
+ * @property {0|1|2|3} [turns] Quarter-turns about Y. Default `0`.
+ * @property {number} [scale] Uniform scale multiplier, (0, 100]. Default `1`.
+ * @typedef {object} ModularColliderSpec Explicit physics metadata, independent of art.
+ * @property {string} id Unique id, `/^[a-z][a-z0-9_-]{0,63}$/`.
+ * @property {Vec3Tuple} center World-space centre.
+ * @property {Vec3Tuple} size Full extents in world units (> 0).
+ * @property {boolean} [sensor] Trigger-only collider. Default `false`.
+ * @property {number} [layer] uint32 collision layer. Default `1`.
+ * @property {number} [mask] uint32 collision mask. Default `0xffffffff`.
+ * @typedef {object} ModularLevelData Version-1 level JSON.
+ * @property {1} version
+ * @property {ModularGridSpec} [grid]
+ * @property {ModularLevelGroup[]} groups 1..2048 groups.
+ * @property {ModularColliderSpec[]} [colliders]
+ * @property {Vec3Tuple} [playerSpawn] Default `[0, 1.8, 0]`.
+ * @typedef {object} ModularPlacement
+ * @property {number} x
+ * @property {number} y
+ * @property {number} z
+ * @property {number} rotationY Radians.
+ * @property {number} scale Final uniform scale (group scale * cellSize).
+ * @typedef {object} ModularBatch
+ * @property {string} slot
+ * @property {readonly ModularPlacement[]} placements
+ * @typedef {object} ModularLevelStats
+ * @property {number} tiles Visible tile count.
+ * @property {number} slots Distinct slot count.
+ * @property {number} colliders Collider count.
+ * @typedef {object} CompiledModularLevel Immutable render recipe.
+ * @property {1} version
+ * @property {Readonly<{cellSize: number, origin: readonly number[]}>} grid
+ * @property {readonly ModularBatch[]} batches
+ * @property {readonly Readonly<{id: string, center: readonly number[], size: readonly number[], sensor: boolean, layer: number, mask: number}>[]} colliders
+ * @property {readonly number[]} playerSpawn
+ * @property {Readonly<ModularLevelStats>} stats
+ * @typedef {object} ModularObject3DLike Minimal Three.js Object3D structure.
+ * @property {(...objects: object[]) => unknown} add
+ * @property {(...objects: object[]) => unknown} [remove]
+ * @typedef {object} ModularGroupLike
+ * @property {string} name
+ * @property {unknown} [parent]
+ * @typedef {object} ModularThreeLike Used Three.js constructors.
+ * @property {new () => ModularGroupLike & ModularObject3DLike} Group
+ * @typedef {object} ModularModelSlotsLike Scene model slot provider.
+ * @property {(slot: string) => unknown} get Throws/returns for unknown slots.
+ * @property {(slot: string) => Promise<object> | object} instantiate
+ * @property {(slot: string, placements: readonly ModularPlacement[]) => Promise<object> | object} instantiateBatch
+ * @typedef {object} ModularLevelRendererOptions
+ * @property {ModularThreeLike} THREE Three.js namespace subset.
+ * @property {ModularModelSlotsLike} models Slot provider.
+ * @property {ModularObject3DLike} parent Object3D that receives the level group.
+ * @typedef {ModularLevelStats & {committed: boolean}} ModularLevelCommit
+ * @typedef {object} ModularLevelRenderer
+ * @property {(level: ModularLevelData) => Promise<ModularLevelCommit>} setLevel Stage and atomically swap in a level.
+ * @property {() => Promise<ModularLevelCommit>} rebuild Re-run the last committed level.
+ * @property {() => void} clear Remove the mounted level.
+ * @property {() => void} dispose Clear and disable the renderer.
+ * @property {ModularLevelStats} stats Copy of last committed stats.
+ * @property {object | null} root Mounted Group or null.
+ */
 const SLOT = /^[a-z][a-z0-9-]*(?:.[a-z][a-z0-9-]*)+$/;
 const COLLIDER_ID = /^[a-z][a-z0-9_-]{0,63}$/;
 const MAX_TILES = 20000;
@@ -47,11 +117,23 @@ function validatedGrid(value) {
     origin: vec3(value.origin ?? [0, 0, 0], 'grid.origin'),
   };
 }
+/**
+ * Cell to world position.
+ * @param {Vec3Tuple} cell Integer cell.
+ * @param {ModularGridSpec} [grid] Default cellSize 1, origin 0.
+ * @returns {number[]} World [x,y,z].
+ */
 export function gridToWorld(cell, grid = { cellSize: 1, origin: [0, 0, 0] }) {
   const coord = vec3(cell, 'cell', true);
   const g = validatedGrid(grid);
   return coord.map((n, i) => g.origin[i] + n * g.cellSize);
 }
+/**
+ * World position to nearest cell.
+ * @param {Vec3Tuple} world World [x,y,z].
+ * @param {ModularGridSpec} [grid] Default cellSize 1, origin 0.
+ * @returns {number[]} Integer cell [x,y,z].
+ */
 export function worldToGrid(world, grid = { cellSize: 1, origin: [0, 0, 0] }) {
   const coord = vec3(world, 'world');
   const g = validatedGrid(grid);
@@ -61,6 +143,9 @@ export function worldToGrid(world, grid = { cellSize: 1, origin: [0, 0, 0] }) {
 /**
  * Expand compact JSON into a deterministic, immutable render recipe.
  * Order is group input order, then fill: y outer, z middle, x inner.
+ *
+ * @param {ModularLevelData} level Version-1 level JSON.
+ * @returns {CompiledModularLevel}
  */
 export function compileModularLevel(level) {
   own(level, ['version', 'grid', 'groups', 'colliders', 'playerSpawn'], 'level');
@@ -188,6 +273,9 @@ export function compileModularLevel(level) {
  * Atomic visual-only level renderer. Asynchronously staged new levels replace
  * the old group only after all GLB requests finish. No extra RAF or physics
  * bodies are created; the caller owns render scheduling and collision state.
+ *
+ * @param {ModularLevelRendererOptions} options
+ * @returns {ModularLevelRenderer}
  */
 export function createModularLevelRenderer({ THREE, models, parent } = {}) {
   if (!THREE?.Group || !parent?.add || !parent?.remove ||

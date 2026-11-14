@@ -1,10 +1,12 @@
 import { createEmitter } from './events.js';
 import { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, GAME_MESSAGE_TYPES } from './protocol.js';
 
+/** @param {string | undefined} hostname @returns {boolean} */
 function loopbackHost(hostname) {
   return ['127.0.0.1', 'localhost', '[::1]'].includes(hostname);
 }
 
+/** @param {Document | undefined} documentRef @param {Window | undefined} windowRef @param {string | undefined} explicitOrigin @returns {Set<string>} */
 function allowedParentOrigins(documentRef, windowRef, explicitOrigin) {
   if (explicitOrigin) return new Set([new URL(explicitOrigin).origin]);
   try {
@@ -26,21 +28,62 @@ function allowedParentOrigins(documentRef, windowRef, explicitOrigin) {
   return new Set();
 }
 
+/**
+ * @typedef {object} GameBridgeOptions
+ * @property {string} gameId Stable game slug echoed in every message.
+ * @property {Window} [windowRef] Game window (default `globalThis.window`).
+ * @property {Document} [documentRef] Used to infer the embedding origin from `referrer`.
+ * @property {string} [parentOrigin] Explicit trusted parent origin (otherwise a loopback allowlist is used).
+ */
+
+/**
+ * @typedef {object} GameBridgeEvents
+ * @property {{ sessionId: string, capabilities: Record<string, unknown> }} connect Host handshake accepted.
+ * @property {unknown} incompatible Rejected `host:hello` message.
+ * @property {boolean} focus
+ * @property {Partial<import('./lifecycle.js').ViewportSize>} resize
+ * @property {boolean} visibility
+ */
+
+/** @typedef {'game:hello' | 'game:ready' | 'game:error' | 'game:metrics' | 'game:state'} GameMessageType */
+
+/**
+ * @typedef {object} GameBridge Game-side postMessage bridge to the embedding WebAsset host.
+ * @property {boolean} connected True after an accepted `host:hello`.
+ * @property {string | null} sessionId
+ * @property {string | null} parentOrigin Trusted parent origin once established.
+ * @property {string[]} allowedParentOrigins
+ * @property {string} lastMessageStatus Debug status of the last inbound message (e.g. `'accepted:host:focus'`).
+ * @property {import('./events.js').Emitter<GameBridgeEvents>['on']} on
+ * @property {() => boolean} ready Request `game:ready`; true if it was sent now.
+ * @property {(type: GameMessageType, payload?: unknown) => boolean} send Post to the parent; false when not connected.
+ * @property {() => boolean} dispose
+ */
+
+/**
+ * Create the game-side host bridge.
+ * @param {GameBridgeOptions} [options]
+ * @returns {GameBridge}
+ */
 export function createGameBridge({
   gameId,
   windowRef = globalThis.window,
   documentRef = globalThis.document,
   parentOrigin,
 } = {}) {
+  /** @type {import('./events.js').Emitter<GameBridgeEvents>} */
   const events = createEmitter();
   const allowedOrigins = allowedParentOrigins(documentRef, windowRef, parentOrigin);
+  /** @type {string | null} */
   let trustedParentOrigin = null;
+  /** @type {string | null} */
   let sessionId = null;
   let connected = false;
   let readyRequested = false;
   let disposed = false;
   let lastMessageStatus = 'waiting';
 
+  /** @param {GameMessageType} type @param {unknown} [payload] @returns {boolean} */
   function send(type, payload = {}) {
     if (!connected || disposed || !trustedParentOrigin || !windowRef?.parent?.postMessage || !GAME_MESSAGE_TYPES.includes(type)) return false;
     windowRef.parent.postMessage({
@@ -71,6 +114,7 @@ export function createGameBridge({
     }
   }
 
+  /** @param {MessageEvent} event @returns {void} */
   function onMessage(event) {
     if (disposed) return;
     if (event.source !== windowRef?.parent) {

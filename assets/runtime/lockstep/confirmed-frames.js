@@ -1,8 +1,70 @@
 /**
+ * @typedef {{ pid: number, buttons: number } & Record<string, number | boolean>} ConfirmedInput
+ *   One player's canonical input: flat safe-integer / boolean fields, `buttons` is a 31-bit mask.
+ */
+
+/**
+ * @typedef {object} ConfirmedFrame Inputs of every player for one network tick.
+ * @property {number} netTick Positive integer network tick (starts at 1).
+ * @property {readonly ConfirmedInput[]} inputs One entry per player, in `playerIds` order.
+ */
+
+/**
+ * @typedef {object} LockstepStepInfo
+ * @property {number} logicTick Logic tick being simulated (1-based).
+ * @property {number} netTick Network tick this logic tick belongs to.
+ * @property {number} substep 0..stepsPerFrame-1 within the network tick.
+ * @property {number} stepsPerFrame `logicHz / netHz`.
+ */
+
+/**
+ * @typedef {object} LockstepTickInfo
+ * @property {number} logicTick Logic ticks completed.
+ * @property {number} netTick
+ * @property {number} substep
+ */
+
+/**
+ * @typedef {object} ConfirmedFrameSchedulerOptions
+ * @property {number} [netHz=10] Network ticks per second (integer 1..240).
+ * @property {number} [logicHz=20] Logic ticks per second; integer multiple of `netHz` (<= 240).
+ * @property {readonly number[]} playerIds Sorted unique non-negative integer player ids (required).
+ * @property {(inputs: ConfirmedInput[], info: LockstepStepInfo) => void} simulate Advance the simulation one logic tick (required).
+ * @property {(info: LockstepTickInfo) => void} [onTick] Called right after each committed logic tick (hash here).
+ * @property {() => boolean} [isEnded] Return true to stop scheduling.
+ * @property {number} [instantButtonMask=0] Buttons cleared on non-first substeps (31-bit mask).
+ * @property {number} [startBufferFrames=2] Network frames buffered before starting (1..16).
+ * @property {number} [maxBufferFrames=32] Max pending network frames (>= startBufferFrames, <= 512).
+ * @property {number} [maxStepsPerUpdate=4] Logic ticks per `advanceElapsedMs` call (1..32).
+ * @property {number} [maxExtraStepsPerUpdate=1] Extra catch-up ticks per call (0..16).
+ * @property {boolean} [adaptiveCatchup=false] Scale catch-up with buffered excess.
+ */
+
+/**
+ * @typedef {object} ConfirmedFrameScheduler
+ * @property {(frame: ConfirmedFrame) => boolean} enqueue Queue a confirmed frame; false when ignored; invalid input makes the scheduler fatal.
+ * @property {(elapsedMs: number) => number} advanceElapsedMs Advance by display time in milliseconds; returns logic ticks completed.
+ * @property {boolean} started
+ * @property {boolean} stalled Waiting for a network frame.
+ * @property {boolean} fatal Failed closed after invalid input or a throwing callback.
+ * @property {number} logicTick Logic ticks completed.
+ * @property {number} expectedNetTick Next network tick awaited.
+ * @property {number} bufferedFrames Pending network frames.
+ * @property {number} stallEvents
+ * @property {number} catchupSteps
+ * @property {number} maxBufferedFramesSeen
+ * @property {number} renderAlpha Interpolation factor 0..1 (0 while stalled / not started).
+ * @property {() => void} dispose
+ */
+
+/**
  * Confirmed-input scheduler only. NOT a network client, deterministic physics,
  * rollback engine, anti-cheat layer or proof of cross-platform determinism.
  *
  * The caller owns protocol validation, pure integer simulation and state hash.
+ *
+ * @param {ConfirmedFrameSchedulerOptions} options
+ * @returns {ConfirmedFrameScheduler}
  */
 export function createConfirmedFrameScheduler({
   netHz = 10,
@@ -46,6 +108,7 @@ export function createConfirmedFrameScheduler({
 
   const stepsPerFrame = logicHz / netHz;
   const tickMs = 1000 / logicHz;
+  /** @type {Map<number, ConfirmedInput[]>} */
   const pending = new Map();
   let logicTick = 0;
   let started = false;
@@ -63,6 +126,7 @@ export function createConfirmedFrameScheduler({
     return true;
   };
   function failClosed() { fatal = true; accumulatorMs = 0; return false; }
+  /** @param {unknown} inputs @returns {boolean} */
   function validateInputs(inputs) {
     if (!Array.isArray(inputs) || inputs.length !== playerIds.length) return false;
     return inputs.every((input, i) => {
@@ -76,6 +140,7 @@ export function createConfirmedFrameScheduler({
         (typeof value === 'number' && Number.isSafeInteger(value)));
     });
   }
+  /** @param {ConfirmedFrame} frame @returns {boolean} */
   function enqueue(frame) {
     if (fatal || isEnded()) return false;
     if (!frame || !Number.isSafeInteger(frame.netTick) || frame.netTick <= 0) {
@@ -91,6 +156,7 @@ export function createConfirmedFrameScheduler({
     maxBufferedFramesSeen = Math.max(maxBufferedFramesSeen, pending.size);
     return true;
   }
+  /** @param {number} elapsedMs @returns {number} */
   function advanceElapsedMs(elapsedMs) {
     if (fatal || isEnded()) return 0;
     if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {

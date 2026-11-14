@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "survivor-2d",
+  "name": "Horde Survivor (HGame reference)",
+  "version": "0.1.0",
+  "entry": "index.html",
+  "renderer": "webgl2d",
+  "runtime": "webasset-v1",
+  "standalone": true
+}

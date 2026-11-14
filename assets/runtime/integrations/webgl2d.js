@@ -10,12 +10,123 @@ import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 
 export { Camera2D, Sprite2D, SpriteCrowd2D };
 
+/** @typedef {import('./canvas2d.js').Canvas2DAdapter} Canvas2DAdapter */
+/** @typedef {import('./canvas2d.js').Canvas2DAdapterOptions} Canvas2DAdapterOptions */
+/** @typedef {import('./canvas2d.js').Renderer2DAdapter} Renderer2DAdapter */
+/** @typedef {import('./canvas2d.js').Renderer2DStats} Renderer2DStats */
+
 const SCRATCH_WORLD = new Float64Array(16);
 const SCRATCH_RGBA = [1, 1, 1, 1];
 const SCRATCH_FLASH = [1, 1, 1, 1];
 const FLOATS_PER_INSTANCE = 20;
 const BYTES_PER_INSTANCE = FLOATS_PER_INSTANCE * 4;
-const MAX_CAPACITY_CAP = 131072;
+const MAX_CAPACITY_CAP = 262144;
+
+const COMPACT_VERTEX_SHADER_GLSL3 = `#version 300 es
+precision highp float;
+
+layout(location = 0) in vec2 aQuad;
+layout(location = 1) in vec4 aPacked2D;
+
+uniform vec4 uViewX;
+uniform vec4 uViewY;
+uniform vec4 uEntityMat;
+uniform vec4 uEntityTrans;
+uniform vec4 uSpriteBox;
+uniform vec4 uSpriteUvOrigin;
+uniform vec4 uSpriteUvRect;
+uniform vec4 uShadowBox;
+uniform vec4 uGpuMeta;
+uniform highp sampler2D uGpuSwarmTex;
+
+out vec2 vQuad;
+out vec2 vUv;
+flat out float vMode;
+out float vFlash;
+
+void main() {
+  vec4 inst = aPacked2D;
+  if (uGpuMeta.x > 0.5) {
+    int tw = max(1, int(uGpuMeta.y + 0.5));
+    int row = gl_InstanceID / tw;
+    int col = gl_InstanceID - row * tw;
+    inst = texelFetch(uGpuSwarmTex, ivec2(col, row), 0);
+  }
+  vec2 pLocal;
+  if (uShadowBox.x > 0.5) {
+    pLocal = vec2(uShadowBox.z + aQuad.x * uShadowBox.x, uShadowBox.w + aQuad.y * uShadowBox.y);
+    vMode = 1.0;
+    vFlash = 0.0;
+  } else {
+    float rot = uGpuMeta.z > 0.5 ? inst.z : 0.0;
+    float flipX = (uGpuMeta.z < 0.5 && uGpuMeta.w > 0.5 && sin(inst.z) < 0.0) ? -1.0 : 1.0;
+    vec2 boxP = vec2((aQuad.x - uSpriteBox.z) * uSpriteBox.x * flipX, (aQuad.y - uSpriteBox.w) * uSpriteBox.y);
+    float cr = cos(rot);
+    float sr = sin(rot);
+    pLocal = vec2(cr * boxP.x - sr * boxP.y, sr * boxP.x + cr * boxP.y);
+    vMode = uEntityTrans.w;
+    vFlash = inst.w < 0.0 ? 1.0 : 0.0;
+  }
+  vec2 lp = inst.xy * uEntityTrans.z + pLocal;
+  vec2 worldPos = vec2(
+    uEntityMat.x * lp.x + uEntityMat.z * lp.y + uEntityTrans.x,
+    uEntityMat.y * lp.x + uEntityMat.w * lp.y + uEntityTrans.y
+  );
+  gl_Position = vec4(
+    uViewX.x * worldPos.x + uViewX.y * worldPos.y + uViewX.z,
+    uViewY.x * worldPos.x + uViewY.y * worldPos.y + uViewY.z,
+    0.0,
+    1.0
+  );
+  float frameIdx = floor(max(0.0, abs(inst.w) - 1.0));
+  float fx = uSpriteUvOrigin.z > 1.5 ? mod(frameIdx, uSpriteUvOrigin.z) : 0.0;
+  float fy = uSpriteUvOrigin.z > 1.5 ? floor(frameIdx / uSpriteUvOrigin.z) : 0.0;
+  vUv = uSpriteUvOrigin.xy + vec2(fx * uSpriteUvRect.z, fy * uSpriteUvRect.w) + aQuad * uSpriteUvRect.xy;
+  vQuad = aQuad;
+}
+`;
+
+const COMPACT_FRAGMENT_SHADER_GLSL3 = `#version 300 es
+precision mediump float;
+
+uniform sampler2D uTex;
+uniform vec4 uColor;
+uniform vec4 uFlashColor;
+uniform vec4 uShadowColor;
+
+in vec2 vQuad;
+in vec2 vUv;
+flat in float vMode;
+in float vFlash;
+
+out vec4 fragColor;
+
+void main() {
+  if (vMode > 0.5 && vMode < 1.5) {
+    vec2 d = vQuad * 2.0 - 1.0;
+    float d2 = dot(d, d);
+    if (d2 >= 1.0) discard;
+    fragColor = vec4(uShadowColor.rgb, pow(1.0 - d2, 1.5) * uShadowColor.a);
+    return;
+  }
+  if (vMode > 1.5 && vMode < 2.5) {
+    vec3 rgb = mix(uColor.rgb, uFlashColor.rgb, vFlash);
+    fragColor = vec4(rgb, uColor.a);
+    return;
+  }
+  if (vMode > 2.5) {
+    vec2 d = vQuad * 2.0 - 1.0;
+    if (dot(d, d) > 1.0) discard;
+    vec3 rgb = mix(uColor.rgb, uFlashColor.rgb, vFlash);
+    fragColor = vec4(rgb, uColor.a);
+    return;
+  }
+  vec4 tex = texture(uTex, vUv);
+  if (tex.a <= 0.001) discard;
+  vec3 rgb = mix(tex.rgb, uFlashColor.rgb, vFlash);
+  fragColor = vec4(rgb, tex.a * uColor.a);
+}
+`;
 
 const VERTEX_SHADER_GLSL3 = `#version 300 es
 precision highp float;
@@ -197,9 +308,40 @@ function boundsOverlap(sprite, entity, mat, viewBounds) {
 }
 
 /**
+ * Options of createWebGL2DAdapter: every Canvas2DAdapterOptions field plus the WebGL-specific ones below.
+ * @typedef {Canvas2DAdapterOptions & WebGL2DAdapterExtraOptions} WebGL2DAdapterOptions
+ */
+
+/**
+ * @typedef {object} WebGL2DAdapterExtraOptions
+ * @property {number} [maxBatchInstances=16384] Instances per draw batch (integer 64..262144).
+ * @property {boolean} [allowFallback=true] Fall back to the Canvas2D adapter when WebGL2 is unavailable; when false an Error is thrown instead.
+ */
+
+/**
+ * Per-frame statistics of the WebGL2 backend.
+ * @typedef {Renderer2DStats & { drawCalls: number, instances: number }} WebGL2DStats
+ */
+
+/**
+ * WebGL2 adapter (the shared renderer API plus GL specifics).
+ * @typedef {Renderer2DAdapter & WebGL2DAdapterMembers} WebGL2DAdapter
+ */
+
+/**
+ * @typedef {object} WebGL2DAdapterMembers
+ * @property {WebGL2RenderingContext} gl The WebGL2 context.
+ * @property {true} isWebGL2 Always true for this adapter (getter); the fallback adapter has no such member.
+ * @property {boolean} contextLost True while the GL context is lost (getter).
+ * @property {WebGL2DStats} stats Copy of last-frame statistics including drawCalls/instances (getter).
+ */
+
+/**
  * Hardware-instanced WebGL2 2D renderer capable of 5,000-10,000+ sprites/sec
  * with shader-driven tint, silhouette hit-flash, and analytical ground shadows.
  * Falls back transparently to Canvas2D when WebGL2 is unavailable.
+ * @param {WebGL2DAdapterOptions} options
+ * @returns {WebGL2DAdapter | Canvas2DAdapter} A WebGL2 adapter, or the Canvas2D fallback (check stats.backend or 'gl' in adapter).
  */
 export function createWebGL2DAdapter({
   canvas,
@@ -217,7 +359,7 @@ export function createWebGL2DAdapter({
 } = {}) {
   if (!canvas?.getContext) throw new TypeError('WebGL2D adapter needs a canvas');
   if (!Number.isInteger(maxBatchInstances) || maxBatchInstances < 64 || maxBatchInstances > MAX_CAPACITY_CAP) {
-    throw new RangeError('maxBatchInstances must be an integer in 64..131072');
+    throw new RangeError('maxBatchInstances must be an integer in 64..262144');
   }
 
   const gl = canvas.getContext('webgl2', {
@@ -266,6 +408,28 @@ export function createWebGL2DAdapter({
   let uViewXLoc = null;
   let uViewYLoc = null;
   let uTexLoc = null;
+
+  let compactProgram = null;
+  let compactVao = null;
+  let compactVbo = null;
+  let compactData = null;
+  let compactCapacity = 0;
+  let uCompactViewXLoc = null;
+  let uCompactViewYLoc = null;
+  let uCompactEntityMatLoc = null;
+  let uCompactEntityTransLoc = null;
+  let uCompactSpriteBoxLoc = null;
+  let uCompactUvOriginLoc = null;
+  let uCompactUvRectLoc = null;
+  let uCompactShadowBoxLoc = null;
+  let uCompactShadowColorLoc = null;
+  let uCompactColorLoc = null;
+  let uCompactFlashColorLoc = null;
+  let uCompactGpuMetaLoc = null;
+  let uCompactTexLoc = null;
+  let uCompactGpuTexLoc = null;
+  let curViewX0 = 0, curViewX1 = 0, curViewX2 = 0, curViewX3 = 0;
+  let curViewY0 = 0, curViewY1 = 0, curViewY2 = 0, curViewY3 = 0;
 
   const textureCache = new WeakMap();
   const ownedTextures = [];
@@ -363,10 +527,18 @@ export function createWebGL2DAdapter({
     if (instanceVbo) gl.deleteBuffer?.(instanceVbo);
     if (vao) gl.deleteVertexArray?.(vao);
     if (program) gl.deleteProgram?.(program);
+    if (compactVbo) gl.deleteBuffer?.(compactVbo);
+    if (compactVao) gl.deleteVertexArray?.(compactVao);
+    if (compactProgram) gl.deleteProgram?.(compactProgram);
     program = null;
     vao = null;
     quadVbo = null;
     instanceVbo = null;
+    compactProgram = null;
+    compactVao = null;
+    compactVbo = null;
+    compactData = null;
+    compactCapacity = 0;
     whiteTex = null;
     boundTexRecord = null;
   }
@@ -897,8 +1069,258 @@ export function createWebGL2DAdapter({
     stats.drawnSprites++;
   }
 
+  function ensureCompactResources(neededCount) {
+    if (!compactProgram) {
+      compactProgram = compileProgram(gl, COMPACT_VERTEX_SHADER_GLSL3, COMPACT_FRAGMENT_SHADER_GLSL3);
+      uCompactViewXLoc = gl.getUniformLocation(compactProgram, 'uViewX');
+      uCompactViewYLoc = gl.getUniformLocation(compactProgram, 'uViewY');
+      uCompactEntityMatLoc = gl.getUniformLocation(compactProgram, 'uEntityMat');
+      uCompactEntityTransLoc = gl.getUniformLocation(compactProgram, 'uEntityTrans');
+      uCompactSpriteBoxLoc = gl.getUniformLocation(compactProgram, 'uSpriteBox');
+      uCompactUvOriginLoc = gl.getUniformLocation(compactProgram, 'uSpriteUvOrigin');
+      uCompactUvRectLoc = gl.getUniformLocation(compactProgram, 'uSpriteUvRect');
+      uCompactShadowBoxLoc = gl.getUniformLocation(compactProgram, 'uShadowBox');
+      uCompactShadowColorLoc = gl.getUniformLocation(compactProgram, 'uShadowColor');
+      uCompactColorLoc = gl.getUniformLocation(compactProgram, 'uColor');
+      uCompactFlashColorLoc = gl.getUniformLocation(compactProgram, 'uFlashColor');
+      uCompactGpuMetaLoc = gl.getUniformLocation(compactProgram, 'uGpuMeta');
+      uCompactTexLoc = gl.getUniformLocation(compactProgram, 'uTex');
+      uCompactGpuTexLoc = gl.getUniformLocation(compactProgram, 'uGpuSwarmTex');
+
+      compactVao = gl.createVertexArray();
+      gl.bindVertexArray(compactVao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+      compactCapacity = Math.max(capacity, neededCount, 1024);
+      compactData = new Float32Array(compactCapacity * 4);
+      compactVbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, compactVbo);
+      gl.bufferData(gl.ARRAY_BUFFER, compactData.byteLength, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(1);
+      gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 16, 0);
+      gl.vertexAttribDivisor(1, 1);
+      gl.bindVertexArray(vao);
+    } else if (neededCount > compactCapacity) {
+      compactCapacity = Math.min(MAX_CAPACITY_CAP, Math.max(neededCount, compactCapacity * 2));
+      compactData = new Float32Array(compactCapacity * 4);
+      gl.bindBuffer(gl.ARRAY_BUFFER, compactVbo);
+      gl.bufferData(gl.ARRAY_BUFFER, compactData.byteLength, gl.DYNAMIC_DRAW);
+    }
+  }
+
+  function submitCompactCrowdBatch(crowd, item, viewBounds, allowShadows, smooth) {
+    const gpuSwarm = crowd._boundGpuSwarm;
+    const swarm = crowd._boundSwarm;
+    const opts = (gpuSwarm ? crowd._boundGpuSwarmOpts : crowd._boundSwarmOpts) || {};
+    const ws = opts.worldScale || 1;
+    const syncRot = opts.syncRotation ? 1 : 0;
+    const flipByDir = opts.flipByDirection !== false ? 1 : 0;
+    const fCount = opts.frameCount || 1;
+    const fps = opts.animFps || 8;
+    const maxCap = crowd.capacity;
+
+    const useGpuTex = Boolean(gpuSwarm && gpuSwarm.glTexture);
+    let drawCountCompact = 0;
+    if (gpuSwarm) {
+      drawCountCompact = Math.min(maxCap, gpuSwarm.count || 0);
+      ensureCompactResources(useGpuTex ? 1 : drawCountCompact);
+    } else if (swarm) {
+      const w = crowd.width, h = crowd.height;
+      const halfPad = Math.max(Math.abs(w), Math.abs(h)) * 2;
+      const totalActive = Math.min(maxCap, swarm.count || 0);
+      ensureCompactResources(totalActive);
+
+      const sPosX = swarm.posX;
+      const sPosY = swarm.posY;
+      const sRot = swarm.rot;
+      const sTime = swarm.animTime;
+      const sClip = swarm.animClip;
+      const sFlash = swarm.flash;
+      const simpleMatrix = cull && item.a === 1 && item.d === 1 && item.b === 0 && item.c === 0;
+      const invWs = 1 / ws;
+      const padL = halfPad * invWs;
+      const lMinX = (viewBounds.minX - item.e) * invWs - padL;
+      const lMaxX = (viewBounds.maxX - item.e) * invWs + padL;
+      const lMinY = (viewBounds.minY - item.f) * invWs - padL;
+      const lMaxY = (viewBounds.maxY - item.f) * invWs + padL;
+      const inMinX = (viewBounds.minX - item.e) * invWs + padL;
+      const inMaxX = (viewBounds.maxX - item.e) * invWs - padL;
+      const inMinY = (viewBounds.minY - item.f) * invWs + padL;
+      const inMaxY = (viewBounds.maxY - item.f) * invWs - padL;
+
+      if (typeof swarm.ensureChunks === 'function' && swarm.chunkHead) {
+        swarm.ensureChunks();
+        const cCount = swarm.chunkCount;
+        const cHead = swarm.chunkHead;
+        const cNext = swarm.chunkNext;
+        const cMinX = swarm.chunkMinX;
+        const cMaxX = swarm.chunkMaxX;
+        const cMinY = swarm.chunkMinY;
+        const cMaxY = swarm.chunkMaxY;
+
+        for (let ck = 0, cn = cHead.length; ck < cn; ck++) {
+          if (cCount[ck] === 0) continue;
+          const ckMinX = cMinX[ck], ckMaxX = cMaxX[ck], ckMinY = cMinY[ck], ckMaxY = cMaxY[ck];
+          if (simpleMatrix && (ckMaxX < lMinX || ckMinX > lMaxX || ckMaxY < lMinY || ckMinY > lMaxY)) {
+            stats.culled += cCount[ck];
+            continue;
+          }
+          const strictIn = !simpleMatrix || (ckMinX >= inMinX && ckMaxX <= inMaxX && ckMinY >= inMinY && ckMaxY <= inMaxY);
+          let id = cHead[ck];
+          if (strictIn) {
+            while (id !== -1 && drawCountCompact < compactCapacity) {
+              const fIdx = fCount > 1 ? ((sTime[id] * fps | 0) % fCount) : sClip[id];
+              const off = drawCountCompact * 4;
+              compactData[off] = sPosX[id];
+              compactData[off + 1] = sPosY[id];
+              compactData[off + 2] = sRot[id];
+              compactData[off + 3] = sFlash[id] > 0 ? -(fIdx + 1) : (fIdx + 1);
+              drawCountCompact++;
+              id = cNext[id];
+            }
+          } else {
+            while (id !== -1 && drawCountCompact < compactCapacity) {
+              const px = sPosX[id], py = sPosY[id];
+              if (px < lMinX || px > lMaxX || py < lMinY || py > lMaxY) {
+                stats.culled++;
+                id = cNext[id];
+                continue;
+              }
+              const fIdx = fCount > 1 ? ((sTime[id] * fps | 0) % fCount) : sClip[id];
+              const off = drawCountCompact * 4;
+              compactData[off] = px;
+              compactData[off + 1] = py;
+              compactData[off + 2] = sRot[id];
+              compactData[off + 3] = sFlash[id] > 0 ? -(fIdx + 1) : (fIdx + 1);
+              drawCountCompact++;
+              id = cNext[id];
+            }
+          }
+        }
+      } else {
+        const ids = swarm.activeIds;
+        for (let i = 0; i < totalActive && drawCountCompact < compactCapacity; i++) {
+          const id = ids[i];
+          const px = sPosX[id], py = sPosY[id];
+          if (simpleMatrix && (px < lMinX || px > lMaxX || py < lMinY || py > lMaxY)) {
+            stats.culled++;
+            continue;
+          }
+          const fIdx = fCount > 1 ? ((sTime[id] * fps | 0) % fCount) : sClip[id];
+          const off = drawCountCompact * 4;
+          compactData[off] = px;
+          compactData[off + 1] = py;
+          compactData[off + 2] = sRot[id];
+          compactData[off + 3] = sFlash[id] > 0 ? -(fIdx + 1) : (fIdx + 1);
+          drawCountCompact++;
+        }
+      }
+    }
+
+    if (drawCountCompact <= 0) {
+      stats.drawnCrowds++;
+      return;
+    }
+
+    flushBatch();
+
+    const w = crowd.width, h = crowd.height;
+    const ax = crowd.anchorX ?? 0.5, ay = crowd.anchorY ?? 0.5;
+    const img = crowd.image ?? crowd.sheet?.image ?? null;
+    const imgRec = img ? getTextureRecord(img, smooth) : null;
+    const mode = imgRec ? 0 : (crowd.shape === 'circle' ? 3 : 2);
+    parseColorRgba(crowd.color, SCRATCH_RGBA);
+    parseColorRgba(crowd.flashColor || '#ffffff', SCRATCH_FLASH);
+
+    let oU = 0, oV = 0, colsUv = 1, cW = 1, cH = 1, sX = 0, sY = 0;
+    if (imgRec) {
+      if (crowd.sourceRect) {
+        const sr = crowd.sourceRect;
+        oU = sr.x / imgRec.w;
+        oV = sr.y / imgRec.h;
+        cW = sr.width / imgRec.w;
+        cH = sr.height / imgRec.h;
+      } else if (crowd.sheet) {
+        const sh = crowd.sheet;
+        colsUv = Math.max(1, sh.columns | 0);
+        oU = (sh.margin + sh.inset) / imgRec.w;
+        oV = (sh.margin + sh.inset) / imgRec.h;
+        cW = (sh.frameWidth - 2 * sh.inset) / imgRec.w;
+        cH = (sh.frameHeight - 2 * sh.inset) / imgRec.h;
+        sX = (sh.frameWidth + sh.spacing) / imgRec.w;
+        sY = (sh.frameHeight + sh.spacing) / imgRec.h;
+      }
+    }
+
+    gl.useProgram(compactProgram);
+    gl.bindVertexArray(compactVao);
+    if (!useGpuTex) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, compactVbo);
+      const srcBuf = gpuSwarm ? gpuSwarm.data : compactData;
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, srcBuf.subarray(0, drawCountCompact * 4));
+    }
+
+    gl.uniform4f(uCompactViewXLoc, curViewX0, curViewX1, curViewX2, curViewX3);
+    gl.uniform4f(uCompactViewYLoc, curViewY0, curViewY1, curViewY2, curViewY3);
+    gl.uniform4f(uCompactEntityMatLoc, item.a, item.b, item.c, item.d);
+    gl.uniform4f(uCompactEntityTransLoc, item.e, item.f, ws, mode);
+    gl.uniform4f(uCompactSpriteBoxLoc, w, h, ax, ay);
+    gl.uniform4f(uCompactUvOriginLoc, oU, oV, colsUv, 0);
+    gl.uniform4f(uCompactUvRectLoc, cW, cH, sX, sY);
+    gl.uniform4f(
+      uCompactGpuMetaLoc,
+      useGpuTex ? 1 : 0,
+      useGpuTex ? Math.max(1, gpuSwarm.texWidth | 0) : 1,
+      syncRot,
+      flipByDir,
+    );
+    gl.uniform4f(uCompactColorLoc, imgRec ? 1 : SCRATCH_RGBA[0], imgRec ? 1 : SCRATCH_RGBA[1], imgRec ? 1 : SCRATCH_RGBA[2], SCRATCH_RGBA[3]);
+    gl.uniform4f(uCompactFlashColorLoc, SCRATCH_FLASH[0], SCRATCH_FLASH[1], SCRATCH_FLASH[2], 1);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, imgRec ? imgRec.glTex : whiteTex);
+    gl.uniform1i(uCompactTexLoc, 0);
+
+    gl.activeTexture(gl.TEXTURE0 + 1);
+    gl.bindTexture(gl.TEXTURE_2D, useGpuTex ? gpuSwarm.glTexture : whiteTex);
+    gl.uniform1i(uCompactGpuTexLoc, 1);
+
+    if (allowShadows && crowd.groundShadow) {
+      const cfg = typeof crowd.groundShadow === 'object' ? crowd.groundShadow : {};
+      const sw = Math.max(2, Math.abs(w) * (cfg.widthRatio ?? 0.72));
+      const sh = Math.max(1, Math.abs(h) * (cfg.heightRatio ?? 0.18));
+      const gx0 = (cfg.offsetX || 0) - sw * 0.5;
+      const gy0 = h * (1 - ay) - h * (cfg.tuckRatio ?? 0.032) + (cfg.offsetY || 0) - sh * 0.5;
+      const shCol = parseColorRgba(cfg.color || '#000000');
+      gl.uniform4f(uCompactShadowColorLoc, shCol[0], shCol[1], shCol[2], cfg.alpha ?? 0.45);
+      gl.uniform4f(uCompactShadowBoxLoc, sw, sh, gx0, gy0);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, drawCountCompact);
+      stats.drawCalls++;
+      stats.instances += drawCountCompact;
+    }
+
+    gl.uniform4f(uCompactShadowBoxLoc, 0, 0, 0, 0);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, drawCountCompact);
+    stats.drawCalls++;
+    stats.instances += drawCountCompact;
+    stats.drawnSprites += drawCountCompact;
+    stats.drawnCrowds++;
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.useProgram(program);
+    gl.bindVertexArray(vao);
+    gl.uniform1i(uTexLoc, 0);
+    boundTexRecord = null;
+  }
+
   function submitCrowdBatch(item, viewBounds, allowShadows, smooth) {
     const crowd = item.sprite;
+    if (crowd._boundSwarm || crowd._boundGpuSwarm) {
+      submitCompactCrowdBatch(crowd, item, viewBounds, allowShadows, smooth);
+      return;
+    }
     const w = crowd.width, h = crowd.height;
     const ax = crowd.anchorX ?? 0.5, ay = crowd.anchorY ?? 0.5;
     const img = crowd.image ?? crowd.sheet?.image ?? null;
@@ -942,8 +1364,16 @@ export function createWebGL2DAdapter({
     const camY = cam.y + (cam.offsetY || 0);
     const ix = (2 * zoom) / subW;
     const iy = (-2 * zoom) / subH;
-    gl.uniform4f(uViewXLoc, ix * cos, ix * sin, -ix * (camX * cos + camY * sin), 0);
-    gl.uniform4f(uViewYLoc, -iy * sin, iy * cos, -iy * (-camX * sin + camY * cos), 0);
+    curViewX0 = ix * cos;
+    curViewX1 = ix * sin;
+    curViewX2 = -ix * (camX * cos + camY * sin);
+    curViewX3 = 0;
+    curViewY0 = -iy * sin;
+    curViewY1 = iy * cos;
+    curViewY2 = -iy * (-camX * sin + camY * cos);
+    curViewY3 = 0;
+    gl.uniform4f(uViewXLoc, curViewX0, curViewX1, curViewX2, curViewX3);
+    gl.uniform4f(uViewYLoc, curViewY0, curViewY1, curViewY2, curViewY3);
 
     drawCount = 0;
     needsSort = false;

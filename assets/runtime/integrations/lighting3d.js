@@ -9,6 +9,63 @@
  * Never imports 'three' directly; callers pass { THREE } by dependency injection.
  */
 
+/**
+ * @typedef {[number, number, number]} LightingRGB Linear RGB triple.
+ * @typedef {object} LightingColorLike Three.js-like Color.
+ * @property {boolean} [isColor]
+ * @property {number} [r]
+ * @property {number} [g]
+ * @property {number} [b]
+ * @typedef {number | string | readonly number[] | LightingColorLike} LightColorInput
+ * Hex number (`0xrrggbb`), CSS string (Three.js only), `[r,g,b]` array, or Color.
+ * @typedef {readonly number[] | {x?: number, y?: number, z?: number}} LightingVec3Input `[x,y,z]` or `{x,y,z}`.
+ * @typedef {object} LightingVec2Like
+ * @property {number} x
+ * @property {number} y
+ * @property {(x: number, y: number) => unknown} set
+ * @typedef {object} LightingVec3Like
+ * @property {number} x
+ * @property {number} y
+ * @property {number} z
+ * @property {(x: number, y: number, z: number) => unknown} [set]
+ * @typedef {object} LightingVec4Like
+ * @property {number} x
+ * @property {number} y
+ * @property {number} z
+ * @property {number} w
+ * @property {(x: number, y: number, z: number, w: number) => unknown} set
+ * @typedef {object} LightingTextureLike Three.js DataTexture subset (or headless stand-in).
+ * @property {boolean} needsUpdate
+ * @property {() => void} [dispose]
+ * @property {{data: Float32Array, width: number, height: number}} [image]
+ * @typedef {object} LightingThreeLike Subset of the Three.js namespace used by lighting3d (all optional; headless plain objects are used when absent).
+ * @property {new (value?: LightColorInput) => LightingColorLike & {getRGB?: (target: {r: number, g: number, b: number}) => unknown, clone: () => LightingColorLike}} [Color]
+ * @property {new (data: Float32Array, width: number, height: number, format?: number, type?: number) => LightingTextureLike & Record<string, unknown>} [DataTexture]
+ * @property {new (x?: number, y?: number) => LightingVec2Like} [Vector2]
+ * @property {new (x?: number, y?: number, z?: number) => LightingVec3Like & {set: (x: number, y: number, z: number) => unknown}} [Vector3]
+ * @property {new (x?: number, y?: number, z?: number, w?: number) => LightingVec4Like} [Vector4]
+ * @property {number} [RGBAFormat]
+ * @property {number} [FloatType]
+ * @property {number} [NearestFilter]
+ * @property {number} [ClampToEdgeWrapping]
+ * @typedef {object} LightingShaderLike Three.js `onBeforeCompile` shader parameter.
+ * @property {string} fragmentShader
+ * @property {string} [vertexShader]
+ * @property {Record<string, {value: unknown}>} uniforms
+ * @typedef {object} LightingMaterialLike Three.js material subset patched by `applyToMaterial`.
+ * @property {Record<string, unknown>} [userData]
+ * @property {(shader: LightingShaderLike, renderer?: object) => void} [onBeforeCompile]
+ * @property {() => string} [customProgramCacheKey]
+ * @property {boolean} [needsUpdate]
+ * @typedef {object} LightingCameraLike Three.js perspective camera subset read by `update`.
+ * @property {number} [near]
+ * @property {number} [far]
+ * @property {number} [aspect]
+ * @property {number} [fov] Vertical FOV, degrees.
+ * @property {(force?: boolean) => void} [updateMatrixWorld]
+ * @property {{elements: ArrayLike<number>, copy: (m: object) => {invert?: () => unknown}}} [matrixWorldInverse]
+ * @property {object} [matrixWorld]
+ */
 const CLUSTER_TILES_X = 16;
 const CLUSTER_TILES_Y = 8;
 const CLUSTER_SLICES_Z = 16;
@@ -85,11 +142,35 @@ function makeFloatDataTexture(THREE, data, width, height) {
 }
 
 /**
+ * Light candidate for CPU stochastic sampling.
+ * @typedef {object} StochasticLightCandidate
+ * @property {number} [x] World X. Default `0`.
+ * @property {number} [y] World Y. Default `0`.
+ * @property {number} [z] World Z. Default `0`.
+ * @property {number} [range] Influence radius, world units (min 0.1). Default `10`.
+ * @property {number} [luminance] Radiant weight (min 0.01); falls back to `intensity`.
+ * @property {number} [intensity] Fallback weight. Default `1`.
+ */
+/**
+ * Result of {@link computeStochasticLightSample}.
+ * @typedef {object} StochasticLightSample
+ * @property {number} index Chosen candidate index.
+ * @property {StochasticLightCandidate} candidate Chosen candidate.
+ * @property {number} pdf Selection probability.
+ * @property {number} weight Importance weight of the chosen light.
+ * @property {number} totalWeight Sum of all weights.
+ * @property {number} unbiasedScale `1 / pdf` (0 when pdf is 0).
+ */
+/**
  * Computes CPU-side normalized importance weights and draws one stochastic
  * sample index from candidates using `random01` in `[0, 1)`. Useful for
  * offline validation and Monte Carlo unbiasedness verification.
- */
-export function computeStochasticLightSample(candidates, surfacePos, surfaceNormal, random01 = 0.5) {
+ * @param {readonly StochasticLightCandidate[]} candidates
+ * @param {LightingVec3Input} [surfacePos] Surface position, world units.
+ * @param {LightingVec3Input} [surfaceNormal] Surface normal (default up).
+ * @param {number} [random01] Uniform random in [0, 1). Default `0.5`.
+ * @returns {StochasticLightSample | null} `null` when no light contributes.
+ */export function computeStochasticLightSample(candidates, surfacePos, surfaceNormal, random01 = 0.5) {
   if (!Array.isArray(candidates) || candidates.length === 0) return null;
   const px = surfacePos?.[0] ?? surfacePos?.x ?? 0;
   const py = surfacePos?.[1] ?? surfacePos?.y ?? 0;
@@ -147,11 +228,98 @@ export function computeStochasticLightSample(candidates, surfacePos, surfaceNorm
 }
 
 /**
+ * @typedef {object} MegaLights3DOptions
+ * @property {number} [maxLights] Integer capacity 1..1024. Default `256`.
+ * @property {number} [samplesPerPixel] Stochastic samples 0..8. Default `3`.
+ * @property {number} [activeBudget] Max lights binned per frame (1..maxLights). Default `maxLights`.
+ * @typedef {object} MegaLightDescriptor
+ * @property {number | string} [id] Explicit id; auto-incremented integer when omitted.
+ * @property {'point'|'spot'} [type] Default `'point'`.
+ * @property {number} [x] World X. Default `0`.
+ * @property {number} [y] World Y. Default `0`.
+ * @property {number} [z] World Z. Default `0`.
+ * @property {LightColorInput} [color] Default `0xffffff`.
+ * @property {number} [intensity] Radiant intensity (>= 0). Default `4`.
+ * @property {number} [range] Influence radius, world units (min 0.25). Default `12`.
+ * @property {number} [radius] Soft source radius, world units 0.02..4. Default `0.15`.
+ * @property {LightingVec3Input} [direction] Spot direction (normalised). Default `[0,-1,0]`.
+ * @property {number} [innerAngle] Spot inner cone half-angle, radians. Default `0.65 * outerAngle`.
+ * @property {number} [outerAngle] Spot outer cone half-angle, radians (0.02..0.49π). Default `π/4`.
+ * @property {boolean} [enabled] Default `true`.
+ * @property {boolean} [transient] Fade out and auto-remove after `duration`. Default `false`.
+ * @property {number} [duration] Transient lifetime, seconds. Default `0`.
+ * @typedef {object} MegaLightPatch Mutable light fields for `updateLight`.
+ * @property {number} [x]
+ * @property {number} [y]
+ * @property {number} [z]
+ * @property {LightColorInput} [color]
+ * @property {number} [intensity]
+ * @property {number} [range]
+ * @property {number} [radius]
+ * @property {LightingVec3Input} [direction]
+ * @property {boolean} [enabled]
+ * @property {'point'|'spot'} [type]
+ * @typedef {object} MegaLightFlashOptions
+ * @property {number} [x] Default `0`.
+ * @property {number} [y] Default `0`.
+ * @property {number} [z] Default `0`.
+ * @property {LightColorInput} [color] Default `0xffb36b`.
+ * @property {number} [intensity] Default `6`.
+ * @property {number} [range] World units. Default `10`.
+ * @property {number} [radius] World units. Default `0.2`.
+ * @property {number} [duration] Seconds. Default `0.14`.
+ * @typedef {object} MegaLightsQualityPreset
+ * @property {number} [megaLightsSamples] Integer samples per pixel 0..8.
+ * @property {number} [maxClusteredLights] Integer active-light budget.
+ * @typedef {object} MegaLightsViewport
+ * @property {number} width Pixels.
+ * @property {number} height Pixels.
+ * @typedef {object} MegaLightsClusterInfo
+ * @property {number} clusterIndex Flat cluster index.
+ * @property {number} cx Tile X.
+ * @property {number} cy Tile Y.
+ * @property {number} cz Depth slice.
+ * @property {number} count Lights in the cluster.
+ * @property {number[]} indices Light slot indices in the cluster.
+ * @typedef {object} MegaLightsUniforms Shared shader uniforms.
+ * @property {{value: LightingTextureLike}} uMegaLightData
+ * @property {{value: LightingTextureLike}} uMegaClusterTex
+ * @property {{value: number}} uMegaDataHeight
+ * @property {{value: LightingVec2Like}} uMegaResolution
+ * @property {{value: LightingVec4Like}} uMegaZParams
+ * @property {{value: number}} uMegaActiveCount
+ * @property {{value: number}} uMegaSamplesPerPixel
+ * @property {{value: number}} uMegaTime
+ * @typedef {object} MegaLights3D
+ * @property {number} count Registered light count (read-only).
+ * @property {number} activeCount Lights binned last update (read-only).
+ * @property {number} maxLights Capacity (read-only).
+ * @property {number} samplesPerPixel Current sample budget (read-only).
+ * @property {number} activeBudget Current active-light budget (read-only).
+ * @property {number[]} clusterDims `[tilesX, tilesY, slicesZ]` (read-only).
+ * @property {LightingTextureLike} lightDataTexture (read-only)
+ * @property {LightingTextureLike} clusterTexture (read-only)
+ * @property {MegaLightsUniforms} uniforms (read-only)
+ * @property {(desc?: MegaLightDescriptor) => number | string} addLight Returns the light id.
+ * @property {(id: number | string, patch?: MegaLightPatch) => boolean} updateLight False when unknown id.
+ * @property {(id: number | string) => boolean} removeLight
+ * @property {(options?: MegaLightFlashOptions) => number | string} flash Transient point light; returns id.
+ * @property {() => void} clear
+ * @property {(preset: MegaLightsQualityPreset) => void} setQualityPreset
+ * @property {(width: number, height: number) => void} setViewportSize Pixels.
+ * @property {(camera?: LightingCameraLike | null, dt?: number, viewport?: MegaLightsViewport | null) => number} update Bin lights; `dt` seconds; returns active count.
+ * @property {(vx: number, vy: number, vz: number, ndcX?: number, ndcY?: number) => MegaLightsClusterInfo} evaluateClusterAtViewPos Debug cluster lookup (view-space position, NDC -1..1).
+ * @property {<M extends LightingMaterialLike>(material: M) => M} applyToMaterial Patch a material shader (idempotent).
+ * @property {() => boolean} dispose False when already disposed.
+ */
+/**
  * Creates a GPU DataTexture-backed Clustered + Stochastic Many-Light manager
  * ("MegaLights"-grade for WebGL2): supports hundreds of dynamic point/spot lights
  * with zero scene-graph Three.js PointLight bloat and zero shader recompilations.
- */
-export function createMegaLights3D(THREE, options = {}) {
+ * @param {LightingThreeLike | null | undefined} THREE Injected Three.js namespace subset (or null for headless).
+ * @param {MegaLights3DOptions} [options]
+ * @returns {MegaLights3D}
+ */export function createMegaLights3D(THREE, options = {}) {
   const {
     maxLights = 256,
     samplesPerPixel = 3,
@@ -714,11 +882,63 @@ export function createMegaLights3D(THREE, options = {}) {
 }
 
 /**
+ * @typedef {object} IrradianceProbeVolume3DOptions
+ * @property {readonly number[]} [min] Volume minimum corner `[x,y,z]`, world units. Default `[-32,0,-32]`.
+ * @property {readonly number[]} [max] Volume maximum corner. Default `[32,16,32]`.
+ * @property {readonly number[]} [resolution] Probe counts `[nx,ny,nz]` (each >= 2). Default `[8,4,8]`.
+ * @property {number} [intensity] Global intensity multiplier (>= 0). Default `1`.
+ * @typedef {object} HemisphereInjection
+ * @property {LightColorInput} [skyColor] Default `0x8bb7f0`.
+ * @property {LightColorInput} [groundColor] Default `0x3a332a`.
+ * @property {number} [intensity] Default `1`.
+ * @typedef {object} DirectionalBounceInjection
+ * @property {LightingVec3Input} [direction] Light travel/sun direction. Default `[0.46,0.72,0.52]`.
+ * @property {LightColorInput} [color] Default `0xfff1d6`.
+ * @property {number} [intensity] Default `1`.
+ * @property {number} [groundAlbedo] Ground reflectance 0..1. Default `0.35`.
+ * @typedef {object} PointLightBounceInjection
+ * @property {number} [x] World X. Default `0`.
+ * @property {number} [y] World Y. Default `0`.
+ * @property {number} [z] World Z. Default `0`.
+ * @property {LightColorInput} [color] Default `0xffffff`.
+ * @property {number} [intensity] Default `1`.
+ * @property {number} [range] World units (min 0.5). Default `12`.
+ * @property {number} [bounceRatio] Default `0.35`.
+ * @typedef {object} ProbeBakeSky Sky-like object (e.g. from sky3d).
+ * @property {Record<string, {value?: LightColorInput | number}>} [uniforms]
+ * @property {LightingVec3Input} [sunDirection]
+ * @typedef {object} ProbeBakeOptions
+ * @property {ProbeBakeSky | null} [sky] Default `null`.
+ * @property {readonly PointLightBounceInjection[]} [lights] Point lights to inject. Default `[]`.
+ * @property {number} [ambientIntensity] Default `0.55`.
+ * @property {number} [bounceIntensity] Ground albedo of sun bounce. Default `0.4`.
+ * @typedef {object} ProbeVolumeMaterialOptions
+ * @property {number | null} [intensity] Optional new global intensity. Default `null`.
+ * @typedef {object} IrradianceProbeVolume3D
+ * @property {{min: number[], max: number[]}} bounds Volume corners (copy; read-only).
+ * @property {number[]} resolution Probe counts `[nx,ny,nz]` (copy; read-only).
+ * @property {number} probeCount Total probes (read-only).
+ * @property {LightingTextureLike} texture SH data texture (read-only).
+ * @property {number} intensity Global intensity (read-only).
+ * @property {() => void} clear Zero all probes.
+ * @property {(options?: HemisphereInjection) => void} injectHemisphere
+ * @property {(options?: DirectionalBounceInjection) => void} injectDirectionalBounce
+ * @property {(options?: PointLightBounceInjection) => void} injectPointLightBounce
+ * @property {(options?: ProbeBakeOptions) => void} bakeFromScene Clears then re-bakes.
+ * @property {(x: number, y: number, z: number, normalX?: number, normalY?: number, normalZ?: number, out?: number[]) => number[]} sampleIrradiance Trilinear linear-RGB irradiance at a world position (default normal up).
+ * @property {(dx?: number, dy?: number, dz?: number) => void} shiftOrigin Floating-origin shift, world units.
+ * @property {(value: number) => void} setIntensity Ignored unless finite and >= 0.
+ * @property {<M extends LightingMaterialLike>(material: M, options?: ProbeVolumeMaterialOptions) => M} applyToMaterial
+ * @property {() => boolean} dispose
+ */
+/**
  * Creates a world-space Spherical Harmonics (SH L1) Irradiance Probe Volume
  * storing multi-bounce diffuse indirect illumination on a 3D lattice with
  * CPU trilinear sampling, Floating-Origin shifting, and composable PBR injection.
- */
-export function createIrradianceProbeVolume3D(THREE, options = {}) {
+ * @param {LightingThreeLike | null | undefined} THREE Injected Three.js namespace subset (or null for headless).
+ * @param {IrradianceProbeVolume3DOptions} [options]
+ * @returns {IrradianceProbeVolume3D}
+ */export function createIrradianceProbeVolume3D(THREE, options = {}) {
   const min = options.min ? [...options.min] : [-32, 0, -32];
   const max = options.max ? [...options.max] : [32, 16, 32];
   const resolution = options.resolution ? options.resolution.map(n => Math.max(2, Math.floor(n))) : [8, 4, 8];

@@ -28,6 +28,8 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm test
       - run: npm run check:physics
+      - run: npm run check:types
+      - run: npm run check:api-index
 
   network:
     name: Network workspace
@@ -44,3 +46,52 @@ jobs:
       - run: npm --prefix network test
       - run: npm --prefix network run check
       - run: npm --prefix network run build
+
+  browser:
+    name: Browser smoke (Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - run: node scripts/create-game.mjs ${{ runner.temp }}/snap-game --profile 2d --no-git
+      - run: npm run snapshot -- ${{ runner.temp }}/snap-game --keys d:200
+      - run: npm run test:browser
+      - run: npm run test:browser:pbr
+      - run: npm run test:browser:snapshot
+      - run: npm run bench:render -- --json render-bench.json
+      - run: npm run bench:render3d -- --json render-bench-3d.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: render-bench
+          path: |
+            render-bench.json
+            render-bench-3d.json
+
+  bench:
+    name: Performance budgets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run bench -- --json bench-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results
+          path: bench-results.json
+
+
+
+

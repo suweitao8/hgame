@@ -1,3 +1,4 @@
+/** @returns {Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'>} */
 function createMemoryStorage() {
   const values = new Map();
   return {
@@ -9,6 +10,30 @@ function createMemoryStorage() {
   };
 }
 
+/**
+ * @typedef {object} SaveStoreOptions
+ * @property {string} gameId Stable slug (`/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/`).
+ * @property {number} [schemaVersion=1] Positive integer; part of the key namespace.
+ * @property {Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'> | null} [storage]
+ *   Backend (default: `localStorage`, falling back to in-memory when unavailable).
+ * @property {string} [prefix='webasset.game'] Namespace prefix.
+ */
+
+/**
+ * @typedef {object} SaveStore JSON key/value save store scoped to one game and schema version.
+ * @property {string} namespace Full key prefix used in the backend.
+ * @property {<T = unknown>(key: string, fallback?: T) => T} get Read a value; returns `fallback` when missing or unparsable.
+ * @property {<T>(key: string, value: T) => T} set Persist a JSON-serializable value; returns it.
+ * @property {(key: string) => void} remove
+ * @property {() => string[]} keys Keys saved in this namespace.
+ * @property {() => void} clear Remove every key in this namespace.
+ */
+
+/**
+ * Create a namespaced save store.
+ * @param {SaveStoreOptions} [options]
+ * @returns {SaveStore}
+ */
 export function createSaveStore({
   gameId,
   schemaVersion = 1,
@@ -19,6 +44,7 @@ export function createSaveStore({
     throw new TypeError('gameId must be a stable slug');
   }
   if (!Number.isInteger(schemaVersion) || schemaVersion < 1) throw new TypeError('schemaVersion must be a positive integer');
+  /** @type {any} */
   let backend = storage;
   if (backend === undefined) {
     try { backend = globalThis.localStorage; } catch { backend = null; }
@@ -33,12 +59,15 @@ export function createSaveStore({
   }
   const namespace = [prefix, gameId, 'v' + schemaVersion].join('.') + '.';
 
+  /** @param {string} key @returns {string} */
   function keyFor(key) {
     if (typeof key !== 'string' || !key.trim() || key.includes('\0')) throw new TypeError('save key must be a non-empty string');
     return namespace + encodeURIComponent(key);
   }
 
+  /** @returns {string[]} */
   function keys() {
+    /** @type {string[]} */
     const result = [];
     for (let index = 0; index < backend.length; index++) {
       const fullKey = backend.key(index);

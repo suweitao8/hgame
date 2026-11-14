@@ -1,208 +1,151 @@
-export const RED_DOT_STYLES = Object.freeze({
-  NONE: 'none',
-  QUIET: 'quiet',
-  DOT: 'dot',
-  NEW: 'new',
-  NUMBER: 'number',
-});
+import {
+  RED_DOT_STYLES,
+  STYLE_PRIORITY,
+  VALID_LEAF_STYLES,
+  VALID_DISPLAY_MODES,
+  EMPTY_SET,
+  assertValidStyle,
+  readPersistedData,
+  writePersistedData,
+  parseRuleResult,
+  statesEqual,
+  normalizeRedDotPath,
+  splitRedDotAncestors,
+  computeCommercialDayKey,
+  formatRedDotBadge,
+} from './red-dot/helpers.js';
 
-const STYLE_PRIORITY = Object.freeze({
-  none: 0,
-  quiet: 1,
-  dot: 2,
-  new: 3,
-  number: 4,
-});
+export {
+  RED_DOT_STYLES,
+  normalizeRedDotPath,
+  splitRedDotAncestors,
+  computeCommercialDayKey,
+  formatRedDotBadge,
+};
 
-const VALID_LEAF_STYLES = new Set(['quiet', 'dot', 'new', 'number']);
-const VALID_DISPLAY_MODES = new Set(['auto', 'none', 'quiet', 'dot', 'new', 'number']);
-const EMPTY_SET = new Set();
-
-function assertValidStyle(style, allowed, label = 'style') {
-  if (!allowed.has(style)) {
-    throw new RangeError(`Invalid RedDot ${label}: "${style}"`);
-  }
-  return style;
-}
-
-/**
- * Validates and normalizes a red-dot path (accepting `/` or `.` separators)
- * into a canonical `/`-delimited string (e.g. `"Main.Bag.Equip"` -> `"Main/Bag/Equip"`).
- *
- * @param {string} path
- * @returns {string}
- */
-export function normalizeRedDotPath(path) {
-  if (typeof path !== 'string' || path.length === 0) {
-    throw new TypeError('RedDot path must be a non-empty string');
-  }
-  if (/[\s\0]/.test(path)) {
-    throw new RangeError(`RedDot path cannot contain whitespace or null characters: "${path}"`);
-  }
-  const first = path[0];
-  const last = path[path.length - 1];
-  if (first === '/' || first === '.' || last === '/' || last === '.') {
-    throw new RangeError(`RedDot path cannot start or end with a separator: "${path}"`);
-  }
-  if (/[/.]{2}/.test(path)) {
-    throw new RangeError(`RedDot path cannot contain consecutive separators: "${path}"`);
-  }
-  return path.split(/[/.]/).join('/');
-}
+/** @typedef {import('./red-dot/helpers.js').RedDotStyle} RedDotStyle */
+/** @typedef {import('./red-dot/helpers.js').RedDotLeafStyle} RedDotLeafStyle */
+/** @typedef {import('./red-dot/helpers.js').RedDotDisplayMode} RedDotDisplayMode */
+/** @typedef {import('./red-dot/helpers.js').RedDotState} RedDotState */
+/** @typedef {import('./red-dot/helpers.js').RedDotStorage} RedDotStorage */
+/** @typedef {import('./red-dot/helpers.js').RedDotPersistedData} RedDotPersistedData */
+/** @typedef {import('./red-dot/helpers.js').RedDotRuleResult} RedDotRuleResult */
+/** @typedef {import('./red-dot/helpers.js').RedDotBadgeFormatOptions} RedDotBadgeFormatOptions */
+/** @typedef {import('./red-dot/helpers.js').RedDotDayKeyOptions} RedDotDayKeyOptions */
 
 /**
- * Expands a red-dot path into ordered root-to-leaf ancestor paths.
- *
- * @param {string} path
- * @returns {string[]}
+ * @typedef {object} RedDotSystemOptions
+ * @property {RedDotStorage | null} [storage=null] Persistence backend (HGame save store or Web Storage-like). State is loaded at creation.
+ * @property {string} [storageKey='redDotState'] Key used with storage.
+ * @property {() => number} [clock] Millisecond clock (default Date.now); inject for deterministic tests.
+ * @property {number} [resetHour=0] Local hour (integer 0..23) at which daily nodes reset.
+ * @property {number} [tzOffsetMinutes] Fixed UTC offset in minutes for the day key; omitted = host local time.
+ * @property {number} [maxCount=99] Default cap for number badges (positive integer).
+ * @property {string} [newLabel='NEW'] Default text for 'new' badges.
  */
-export function splitRedDotAncestors(path) {
-  const normalized = normalizeRedDotPath(path);
-  const parts = normalized.split('/');
-  const ancestors = new Array(parts.length);
-  let prefix = '';
-  for (let i = 0; i < parts.length; i++) {
-    prefix = i === 0 ? parts[0] : `${prefix}/${parts[i]}`;
-    ancestors[i] = prefix;
-  }
-  return ancestors;
-}
 
 /**
- * Computes the commercial day key (`YYYY-MM-DD`) supporting daily reset hours
- * (e.g. `resetHour: 5` for 05:00 AM reset) and deterministic timezone offsets
- * (e.g. `tzOffsetMinutes: 480` for UTC+8).
- *
- * @param {number} [timestampMs]
- * @param {{ resetHour?: number, tzOffsetMinutes?: number }} [options]
- * @returns {string}
+ * Per-node configuration for RedDotSystem#configure. Omitted fields stay unchanged.
+ * @typedef {object} RedDotNodeConfig
+ * @property {RedDotDisplayMode} [displayMode] Force a style or 'auto' to derive it from children.
+ * @property {number | null} [maxCount] Node-specific number cap (positive integer) or null to use the system default.
+ * @property {string | null} [newLabel] Node-specific 'new' text or null to use the system default.
+ * @property {boolean} [unlocked] Gate the node (and its subtree) behind a feature unlock.
+ * @property {boolean} [muted] Suppress the node's badge (anti-harassment).
  */
-export function computeCommercialDayKey(
-  timestampMs = Date.now(),
-  { resetHour = 0, tzOffsetMinutes } = {},
-) {
-  if (typeof timestampMs !== 'number' || !Number.isFinite(timestampMs)) {
-    throw new RangeError('timestampMs must be a finite number');
-  }
-  if (!Number.isInteger(resetHour) || resetHour < 0 || resetHour > 23) {
-    throw new RangeError('resetHour must be an integer between 0 and 23');
-  }
-  const shifted = timestampMs - resetHour * 3_600_000;
-  if (tzOffsetMinutes !== undefined) {
-    if (typeof tzOffsetMinutes !== 'number' || !Number.isFinite(tzOffsetMinutes)) {
-      throw new RangeError('tzOffsetMinutes must be a finite number');
-    }
-    const d = new Date(shifted + tzOffsetMinutes * 60_000);
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(d.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  }
-  const d = new Date(shifted);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
 
 /**
- * Formats a red-dot count and style into a display badge string (`"99+"`, `"NEW"`, or `""`).
- *
- * @param {number} count
- * @param {{ style?: string, maxCount?: number, newLabel?: string }} [options]
- * @returns {string}
+ * What a rule evaluator may return: a boolean (dot), a number (count) or an object.
+ * @typedef {boolean | number | { count?: number | boolean, style?: RedDotLeafStyle }} RedDotRuleReturn
  */
-export function formatRedDotBadge(count, { style = 'number', maxCount = 99, newLabel = 'NEW' } = {}) {
-  if (typeof count !== 'number' || !Number.isFinite(count) || count <= 0 || style === 'none') {
-    return '';
-  }
-  if (style === 'number') {
-    const cappedMax = Number.isInteger(maxCount) && maxCount > 0 ? maxCount : 99;
-    const n = Math.floor(count);
-    if (n <= 0) return '';
-    return n > cappedMax ? `${cappedMax}+` : String(n);
-  }
-  if (style === 'new') {
-    return String(newLabel);
-  }
-  return '';
-}
 
-function readPersistedData(storage, storageKey) {
-  if (!storage) return null;
-  try {
-    if (typeof storage.get === 'function') {
-      return storage.get(storageKey, null);
-    }
-    if (typeof storage.getItem === 'function') {
-      const raw = storage.getItem(storageKey);
-      return raw ? JSON.parse(raw) : null;
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
+/**
+ * Rule evaluator invoked by evaluate() with the user context.
+ * @template [C=unknown]
+ * @callback RedDotRuleEvaluator
+ * @param {C} context Value last passed to evaluate()/refreshTime().
+ * @returns {RedDotRuleReturn}
+ */
 
-function writePersistedData(storage, storageKey, payload) {
-  if (!storage) return;
-  try {
-    if (typeof storage.set === 'function') {
-      storage.set(storageKey, payload);
-      return;
-    }
-    if (typeof storage.setItem === 'function') {
-      storage.setItem(storageKey, JSON.stringify(payload));
-    }
-  } catch {
-    // Storage quota or private-mode failures should not crash gameplay.
-  }
-}
+/**
+ * @typedef {object} RedDotDailyOptions
+ * @property {RedDotLeafStyle} [style='dot'] Badge style while unacknowledged.
+ * @property {boolean} [enabled=true] Disable to suspend the daily source.
+ * @property {((context: unknown) => boolean) | null} [condition=null] Extra gate evaluated against the last context.
+ */
 
-function parseRuleResult(raw, explicitStyle) {
-  if (typeof raw === 'boolean') {
-    return {
-      count: raw ? 1 : 0,
-      style: explicitStyle ?? 'dot',
-    };
-  }
-  if (typeof raw === 'number') {
-    const count = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
-    return {
-      count,
-      style: explicitStyle ?? 'number',
-    };
-  }
-  if (raw && typeof raw === 'object') {
-    const count = typeof raw.count === 'boolean'
-      ? (raw.count ? 1 : 0)
-      : (typeof raw.count === 'number' && Number.isFinite(raw.count)
-          ? Math.max(0, Math.floor(raw.count))
-          : 0);
-    const candidateStyle = raw.style ?? explicitStyle ?? (typeof raw.count === 'boolean' ? 'dot' : 'number');
-    const style = VALID_LEAF_STYLES.has(candidateStyle) ? candidateStyle : 'dot';
-    return { count, style };
-  }
-  return { count: 0, style: 'none' };
-}
+/**
+ * One contributing source reported by RedDotSystem#explain.
+ * @typedef {object} RedDotActiveSource
+ * @property {string} path Node path that owns the source.
+ * @property {number} count Own contribution count.
+ * @property {RedDotStyle} style Own style.
+ * @property {Array<'value' | 'rule' | 'unread' | 'daily' | 'ready'>} reasons Source kinds currently active.
+ */
 
-function statesEqual(a, b) {
-  if (!a || !b) return false;
-  return (
-    a.active === b.active &&
-    a.count === b.count &&
-    a.numberCount === b.numberCount &&
-    a.style === b.style &&
-    a.text === b.text &&
-    a.unlocked === b.unlocked &&
-    a.muted === b.muted
-  );
-}
+/**
+ * Diagnostic report from RedDotSystem#explain.
+ * @typedef {object} RedDotExplanation
+ * @property {string} path Normalized node path.
+ * @property {RedDotState} state Current resolved state.
+ * @property {string | null} blockedByUnlock Highest locked ancestor path (or the node itself), else null.
+ * @property {boolean} muted Whether the node is muted.
+ * @property {RedDotActiveSource[]} activeSources Active contributing nodes sorted by path.
+ */
+
+/**
+ * @callback RedDotListener
+ * @param {RedDotState} state
+ * @returns {void}
+ */
+
+/**
+ * Hierarchical red-dot system API. Paths accept '/' or '.' separators.
+ * @typedef {object} RedDotSystem
+ * @property {string} dayKey Current commercial day key YYYY-MM-DD (getter).
+ * @property {(path: string, config?: RedDotNodeConfig) => string} configure Configure a node; returns its normalized path.
+ * @property {(parentPath: string, childPath: string) => boolean} link Add a DAG edge (diamond-deduplicated); false if already linked, throws on cycles.
+ * @property {(parentPath: string, childPath: string) => boolean} unlink Remove a DAG edge; false if absent.
+ * @property {(path: string, unlocked: boolean) => boolean} setUnlocked Lock/unlock a subtree; returns the effective unlock state.
+ * @property {(path: string) => boolean} isUnlocked Effective unlock state (true for unknown unlocked paths).
+ * @property {(path: string, muted: boolean) => boolean} setMuted Mute/unmute a node; returns the new state.
+ * @property {(path: string) => boolean} isMuted Whether the node is muted.
+ * @property {(path: string, count: number, options?: { style?: RedDotLeafStyle }) => number} setValue Set a numeric leaf (default style 'number'); returns the normalized count.
+ * @property {(path: string, active: boolean, options?: { style?: RedDotLeafStyle }) => boolean} setFlag Set a boolean leaf (default style 'dot').
+ * @property {(path: string, evaluator: RedDotRuleEvaluator, options?: { style?: RedDotLeafStyle }) => () => void} registerRule Register a rule evaluator; returns an unregister function.
+ * @property {(prefixOrPaths?: string | string[] | unknown, context?: unknown) => void} evaluate Re-run rules (optionally limited to path prefixes) with a context.
+ * @property {(path: string, options?: { style?: RedDotLeafStyle }) => void} markUnread Persistently mark a node unread (default style 'new').
+ * @property {(parentPath: string, itemIds: Iterable<string | number>, options?: { style?: RedDotLeafStyle }) => void} markUnreadBatch Mark many children of a parent unread in one batch.
+ * @property {(path: string) => boolean} clearUnread Clear an unread mark; false if none.
+ * @property {(path: string) => boolean} isUnread Whether the node has an unread mark.
+ * @property {(parentPath: string, validItemIds: Iterable<string | number>) => number} syncUnreadScope Drop unread marks under a parent whose ids are not listed; returns removed count.
+ * @property {(path: string, options?: RedDotDailyOptions) => () => void} registerDaily Register a once-per-day source; returns an unregister function.
+ * @property {(path: string) => boolean} acknowledgeDaily Acknowledge today's daily source; false if already acknowledged.
+ * @property {(path: string) => boolean} isDailyAcknowledged Whether today's daily source was acknowledged.
+ * @property {(path: string, readyAtMs: number | null | undefined, options?: { style?: RedDotLeafStyle }) => boolean} setReadyAt Show a badge once the clock reaches readyAtMs (ms timestamp); null clears. Returns whether it is ready now.
+ * @property {(path: string) => boolean} clearReadyAt Remove a ready timer; false if none.
+ * @property {(path: string, options?: { recursive?: boolean }) => number} acknowledge Clear unread/daily sources on a node (and its subtree when recursive); returns acknowledged node count.
+ * @property {(context?: unknown) => void} refreshTime Re-sync the clock/day key and optionally update the context.
+ * @property {<R>(fn: (system: RedDotSystem) => R) => R | undefined} batch Run fn with listener emission deferred until it returns.
+ * @property {() => boolean} flush Recompute dirty nodes and notify listeners; true if any state changed.
+ * @property {(path: string) => RedDotState} getState Current state of a node (default empty state for unknown paths).
+ * @property {(path: string) => boolean} isActive Whether the node currently shows a badge.
+ * @property {(path: string) => number} getCount Aggregated count of the node.
+ * @property {(path: string) => RedDotExplanation} explain Diagnostic breakdown of why a node is (in)active.
+ * @property {(path: string, listener: RedDotListener, options?: { immediate?: boolean }) => () => void} subscribe Listen to one node (immediate defaults to true); returns an unsubscribe function.
+ * @property {(listener: RedDotListener) => () => void} subscribeAny Listen to every node change; returns an unsubscribe function.
+ * @property {() => RedDotPersistedData} exportState Serialize unread/daily/muted state.
+ * @property {(data: RedDotPersistedData) => void} importState Replace persisted state with data.
+ * @property {(options?: { clearPersistence?: boolean }) => void} reset Reset all nodes to defaults.
+ * @property {() => void} dispose Flush pending persistence, drop listeners and nodes.
+ */
 
 /**
  * Creates a hierarchical Trie + DAG Red Dot System with dirty batching,
  * 4 commercial leaf trigger modes, diamond deduplication, unlock gating,
  * anti-harassment muting, and optional persistence.
+ * @param {RedDotSystemOptions} [options]
+ * @returns {RedDotSystem}
  */
 export function createRedDotSystem({
   storage = null,
@@ -1324,6 +1267,7 @@ export function createRedDotSystem({
     nodes.clear();
   }
 
+  /** @type {RedDotSystem} */
   const api = Object.freeze({
     get dayKey() {
       syncTimeInternal(false);

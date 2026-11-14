@@ -1,10 +1,43 @@
 import { Component } from './component.js';
 import { Entity } from './entity.js';
 
+/**
+ * @typedef {Partial<Record<'x' | 'y' | 'z' | 'width' | 'height' | 'depth' | 'anchorX' | 'anchorY' | 'rotationX' | 'rotationY' | 'rotationZ' | 'scaleX' | 'scaleY' | 'scaleZ', number>>} PrefabTransform
+ *   Finite-number Entity transform fields (world units / radians).
+ */
+
+/**
+ * @typedef {object} PrefabComponentDescriptor
+ * @property {string} type Name registered with {@link PrefabRegistry#registerComponent}.
+ * @property {Record<string, unknown>} [properties] Cloned (structuredClone) and passed to the factory.
+ */
+
+/**
+ * @typedef {object} PrefabDescriptor Data-only prefab node.
+ * @property {string} [name]
+ * @property {boolean} [active=true]
+ * @property {PrefabTransform} [transform]
+ * @property {PrefabComponentDescriptor[]} [components]
+ * @property {PrefabDescriptor[]} [children] Nesting limited to 32 levels.
+ */
+
+/**
+ * @typedef {object} PrefabOverrides Per-instance overrides.
+ * @property {number} [x]
+ * @property {number} [y]
+ * @property {number} [z]
+ * @property {string} [name]
+ * @property {boolean} [active]
+ */
+
+/** @typedef {(properties: Record<string, unknown>) => import('./component.js').Component} PrefabComponentFactory */
+
+/** @param {unknown} value @returns {boolean} */
 function plain(value) {
   return value && typeof value === 'object' && !Array.isArray(value) &&
     Object.getPrototypeOf(value) === Object.prototype;
 }
+/** @param {PrefabDescriptor} node @param {number} [depth] @returns {void} */
 function validate(node, depth = 0) {
   if (depth > 32 || !plain(node)) throw new TypeError('Invalid prefab: expected a plain object with limited nesting');
   for (const key of Object.keys(node)) {
@@ -34,14 +67,27 @@ function validate(node, depth = 0) {
 /** Data-only Prefabs: no eval, class names or executable code in JSON. */
 export class PrefabRegistry {
   constructor() {
+    /** @type {Map<string, PrefabComponentFactory>} */
     this.components = new Map();
+    /** @type {Map<string, PrefabDescriptor>} */
     this.prefabs = new Map();
   }
+  /**
+   * @param {string} type Unique component type name.
+   * @param {PrefabComponentFactory} factory
+   * @returns {this}
+   */
   registerComponent(type, factory) {
     if (!type || typeof factory !== 'function' || this.components.has(type)) throw new TypeError('Unique component factory required');
     this.components.set(type, factory);
     return this;
   }
+  /**
+   * Validate and store a clone of a descriptor.
+   * @param {string} name Unique prefab name.
+   * @param {PrefabDescriptor} descriptor
+   * @returns {this}
+   */
   register(name, descriptor) {
     if (typeof name !== 'string' || !name || this.prefabs.has(name)) throw new Error('Unique prefab name required');
     validate(descriptor);
@@ -49,6 +95,12 @@ export class PrefabRegistry {
     this.prefabs.set(name, clone);
     return this;
   }
+  /**
+   * Build a fresh Entity tree from a registered prefab.
+   * @param {string} name
+   * @param {PrefabOverrides} [overrides]
+   * @returns {import('./entity.js').Entity}
+   */
   instantiate(name, overrides = {}) {
     const descriptor = this.prefabs.get(name);
     if (!descriptor) throw new Error('Unknown prefab: ' + name);
@@ -56,6 +108,7 @@ export class PrefabRegistry {
     for (const key of Object.keys(overrides)) {
       if (!['x', 'y', 'z', 'name', 'active'].includes(key)) throw new Error('Invalid prefab override: ' + key);
     }
+    /** @param {PrefabDescriptor} node @returns {import('./entity.js').Entity} */
     const build = node => {
       const entity = new Entity({ name: node.name ?? '', active: node.active ?? true,
         ...node.transform });

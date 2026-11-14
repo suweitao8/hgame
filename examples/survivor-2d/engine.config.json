@@ -1,0 +1,12 @@
+{
+  "configVersion": 1,
+  "profile": "2d",
+  "renderer": "webgl2d",
+  "tickHz": 60,
+  "features": [
+    "scene",
+    "input",
+    "save",
+    "diagnostics"
+  ]
+}

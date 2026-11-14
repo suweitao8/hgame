@@ -16,6 +16,88 @@
  * For moving/skinned objects world-space patterns swim. Use only for static
  * scenery; a local/object-space variant is a separate future option.
  */
+/**
+ * @typedef {object} WorldTextureLike Minimal structural Three.js texture.
+ * @property {string} name
+ * @property {number} anisotropy
+ * @property {boolean} needsUpdate
+ * @property {() => void} dispose
+ */
+/**
+ * @typedef {object} WorldShaderLike Minimal structural Three.js shader program parameters.
+ * @property {Record<string, { value: unknown }>} uniforms
+ * @property {string} vertexShader
+ * @property {string} fragmentShader
+ */
+/**
+ * @typedef {object} WorldMaterialLike Minimal structural Three.js material.
+ * @property {Record<string, unknown>} userData
+ * @property {boolean} needsUpdate
+ * @property {() => string} customProgramCacheKey
+ * @property {(shader: WorldShaderLike, renderer?: object) => void} onBeforeCompile
+ * @property {() => void} dispose
+ */
+/**
+ * @typedef {object} WorldAlignedThree The subset of the THREE namespace used by this module.
+ * @property {new (data: Uint8Array, width: number, height: number, format: number) => WorldTextureLike} DataTexture
+ * @property {new (parameters?: object) => WorldMaterialLike} MeshStandardMaterial
+ * @property {new (x?: number, y?: number, z?: number) => { x: number, y: number, z: number }} Vector3
+ * @property {number} RGBAFormat
+ * @property {number} RepeatWrapping
+ * @property {number} LinearFilter
+ * @property {number} LinearMipmapLinearFilter
+ * @property {string} NoColorSpace
+ */
+/** @typedef {'stone'|'wood'|'concrete'|'soil'|'grass'|'plaster'|'metal'|'smooth'} WorldPattern */
+/** @typedef {'planar'|'triplanar'} WorldProjection */
+/** @typedef {[number, number, number]} Vec3Tuple World-space [x, y, z], Y-up. */
+/**
+ * @typedef {object} SpecularAAOptions
+ * @property {number} [strength=1] Variance multiplier, 0..4.
+ * @property {number} [maxRoughnessBoost=0.35] Max roughness added, 0..1.
+ */
+/**
+ * @typedef {object} WorldAlignedMaterialOptions
+ * @property {WorldProjection} [projection='triplanar']
+ * @property {WorldPattern} [pattern='stone']
+ * @property {string} [color='#c3c7c8'] `#RRGGBB` tint.
+ * @property {number} [tileSize=1] World units per texture repeat, 0.01..10000.
+ * @property {number} [blendSharpness=6] Triplanar blend exponent, 0.1..32.
+ * @property {number} [roughness=0.83] 0..1.
+ * @property {number} [metalness=0] 0..1.
+ * @property {number} [opacity=1] 0..1.
+ * @property {boolean} [transparent=false]
+ * @property {Vec3Tuple} [offset=[0,0,0]] World-space UV offset in world units.
+ * @property {boolean} [flatShading=false]
+ * @property {string} [emissive='#000000']
+ * @property {number} [emissiveIntensity=0] 0..6.
+ * @property {number} [normalStrength=0] Procedural detail normal strength, 0..1.
+ * @property {number} [roughnessVariation=0] 0..1.
+ * @property {number} [aoIntensity=0] 0..1.
+ * @property {boolean} [specularAA=false] Apply {@link applyGeometricSpecularAA}.
+ * @property {SpecularAAOptions} [specularAAOptions]
+ * @property {number} [anisotropy=4] Texture anisotropy, 1..16.
+ */
+/**
+ * @typedef {object} WorldMaterialPaletteOptions
+ * @property {number} [anisotropy=4] Default anisotropy, 1..16.
+ * @property {boolean} [specularAA=false] Default specular AA flag.
+ */
+/**
+ * @typedef {object} WorldMaterialPaletteStats
+ * @property {number} materials
+ * @property {number} uniqueTextures
+ * @property {number} uniqueDetailTextures
+ */
+/**
+ * @typedef {object} WorldMaterialPalette
+ * @property {(name: string) => WorldMaterialLike} get Throws on unknown name or after dispose.
+ * @property {(value: number) => void} setAnisotropy 1..16.
+ * @property {(dx?: number, dy?: number, dz?: number) => void} shiftOffset Floating-origin shift in world units.
+ * @property {() => void} dispose
+ * @property {WorldMaterialPaletteStats} stats Getter.
+ */
+
 const PATTERNS = new Set(['stone', 'wood', 'concrete', 'soil', 'grass', 'plaster', 'metal', 'smooth']);
 const PROJECTIONS = new Set(['planar', 'triplanar']);
 const isColor = v => typeof v === 'string' && /^#[a-f0-9]{6}$/i.test(v);
@@ -68,6 +150,12 @@ const optionsFor = input => {
  * Adds screen-space normal-derivative roughness filtering to any PBR material
  * to suppress subpixel specular shimmering without disabling sharp highlights up close.
  */
+/**
+ * @template {WorldMaterialLike} M
+ * @param {M} material
+ * @param {SpecularAAOptions} [options]
+ * @returns {M} The same material.
+ */
 export function applyGeometricSpecularAA(material, { strength = 1.0, maxRoughnessBoost = 0.35 } = {}) {
   if (!material || typeof material !== 'object') {
     throw new TypeError('applyGeometricSpecularAA requires a Three.js material');
@@ -118,7 +206,13 @@ export function applyGeometricSpecularAA(material, { strength = 1.0, maxRoughnes
   return material;
 }
 
-/** Y-up; exact same world coordinates on adjacent meshes produce same UV. */
+/**
+ * Y-up; exact same world coordinates on adjacent meshes produce same UV.
+ * @param {Vec3Tuple} position World position [x, y, z].
+ * @param {'x'|'y'|'z'} axis Projection axis.
+ * @param {{ tileSize?: number, offset?: Vec3Tuple }} [options] tileSize default 1; offset default [0,0,0].
+ * @returns {[number, number]} UV in tile units.
+ */
 export function worldProjectUV(position, axis, options = {}) {
   const p = position3(position);
   if (!['x', 'y', 'z'].includes(axis)) throw new Error('Unknown projection axis');
@@ -129,6 +223,11 @@ export function worldProjectUV(position, axis, options = {}) {
     axis === 'y' ? [q[0], q[2]] : [q[0], q[1]];
 }
 
+/**
+ * @param {Vec3Tuple} normal Non-zero surface normal.
+ * @param {number} [sharpness=6] Blend exponent, 0.1..32.
+ * @returns {Vec3Tuple} Weights for the x, y, z projections; sums to 1.
+ */
 export function triplanarWeights(normal, sharpness = 6) {
   const n = position3(normal);
   finiteRange(sharpness, 'sharpness', 0.1, 32);
@@ -179,7 +278,13 @@ function texturePixel(pattern, u, v) {
   return Math.max(0.32, Math.min(1, 0.84 + grain));
 }
 
-/** In-memory high-res repeatable maps; linear/mipmap filtering (not MC pixels). */
+/**
+ * In-memory high-res repeatable maps; linear/mipmap filtering (not MC pixels).
+ * @param {WorldAlignedThree} THREE
+ * @param {WorldPattern} [pattern='stone']
+ * @param {number} [resolution=256] Edge in texels, 128..1024.
+ * @returns {WorldTextureLike}
+ */
 export function createSmoothProceduralTexture(THREE, pattern = 'stone', resolution = 256) {
   if (!THREE?.DataTexture || !PATTERNS.has(pattern) ||
       !Number.isInteger(resolution) || resolution < 128 || resolution > 1024) {
@@ -211,6 +316,10 @@ export function createSmoothProceduralTexture(THREE, pattern = 'stone', resoluti
  * non-color data: world-space perturbation slopes, roughness, and AO.
  * Channel packing avoids separate GPU texture requests for each PBR detail.
  * This is lightweight authored procedural relief, not copied UE textures.
+ * @param {WorldAlignedThree} THREE
+ * @param {WorldPattern} [pattern='stone']
+ * @param {number} [resolution=256] Edge in texels, 128..1024.
+ * @returns {WorldTextureLike}
  */
 export function createSmoothProceduralDetailTexture(THREE, pattern = 'stone', resolution = 256) {
   if (!THREE?.DataTexture || !PATTERNS.has(pattern) ||
@@ -410,10 +519,21 @@ function makeMaterial(THREE, input, sharedTexture, sharedDetailTexture) {
   return mat;
 }
 
+/**
+ * @param {WorldAlignedThree} THREE
+ * @param {WorldAlignedMaterialOptions} [options]
+ * @returns {WorldMaterialLike}
+ */
 export function createWorldAlignedMaterial(THREE, options = {}) {
   return makeMaterial(THREE, options);
 }
 
+/**
+ * @param {WorldAlignedThree} THREE
+ * @param {Record<string, WorldAlignedMaterialOptions>} definitions Keyed by material name ([a-z][a-z0-9-]{0,47}).
+ * @param {WorldMaterialPaletteOptions} [paletteOptions]
+ * @returns {WorldMaterialPalette}
+ */
 export function createWorldMaterialPalette(THREE, definitions, paletteOptions = {}) {
   if (!definitions || typeof definitions !== 'object' || Array.isArray(definitions)) {
     throw new TypeError('Material palette needs a dictionary');

@@ -1,266 +1,225 @@
-const DEFAULT_BUS_VOLUMES = Object.freeze({
-  sfx: 1,
-  spatial: 1,
-  music: 0.75,
-  ambience: 0.7,
-});
+import {
+  DEFAULT_BUS_VOLUMES,
+  clamp,
+  normalizeVec3,
+  parsePosition3D,
+  parsePosition2D,
+  applyAudioParamOrMethod,
+  applyListenerOrientation,
+  setGainTarget,
+} from './audio/helpers.js';
+import { analyzeAudioBuffer } from './audio/analysis.js';
+import { normalizeVariantSet } from './audio/variants.js';
 
-function clamp(value, min, max) {
-  return value < min ? min : (value > max ? max : value);
-}
-
-function median(values) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) * 0.5;
-}
-
-function normalizeVec3(x, y, z, fx, fy, fz) {
-  const len = Math.hypot(x, y, z);
-  if (!(len > 1e-8)) return [fx, fy, fz];
-  return [x / len, y / len, z / len];
-}
-
-function parsePosition3D(pos) {
-  if (!pos) return null;
-  if (Array.isArray(pos)) {
-    return {
-      x: Number(pos[0]) || 0,
-      y: Number(pos[1]) || 0,
-      z: Number(pos[2]) || 0,
-    };
-  }
-  return {
-    x: Number(pos.x) || 0,
-    y: Number(pos.y) || 0,
-    z: Number(pos.z) || 0,
-  };
-}
-
-function parsePosition2D(pos) {
-  if (!pos) return null;
-  if (Array.isArray(pos)) {
-    return {
-      x: Number(pos[0]) || 0,
-      y: Number(pos[1]) || 0,
-    };
-  }
-  return {
-    x: Number(pos.x) || 0,
-    y: Number(pos.y) || 0,
-  };
-}
-
-function applyAudioParamOrMethod(node, x, y, z) {
-  if (!node) return;
-  if (node.positionX && typeof node.positionX === 'object' && 'value' in node.positionX) {
-    node.positionX.value = x;
-    node.positionY.value = y;
-    node.positionZ.value = z;
-  } else if (typeof node.setPosition === 'function') {
-    node.setPosition(x, y, z);
-  }
-}
-
-function applyListenerOrientation(listener, state) {
-  if (!listener) return;
-  applyAudioParamOrMethod(listener, state.x, state.y, state.z);
-  if (listener.forwardX && typeof listener.forwardX === 'object' && 'value' in listener.forwardX) {
-    listener.forwardX.value = state.forwardX;
-    listener.forwardY.value = state.forwardY;
-    listener.forwardZ.value = state.forwardZ;
-    listener.upX.value = state.upX;
-    listener.upY.value = state.upY;
-    listener.upZ.value = state.upZ;
-  } else if (typeof listener.setOrientation === 'function') {
-    listener.setOrientation(
-      state.forwardX, state.forwardY, state.forwardZ,
-      state.upX, state.upY, state.upZ,
-    );
-  }
-}
-
-function setGainTarget(gainParam, value, currentTime, timeConstant = 0.01) {
-  if (!gainParam) return;
-  if (typeof gainParam.setTargetAtTime === 'function') {
-    gainParam.setTargetAtTime(value, currentTime, timeConstant);
-  } else {
-    gainParam.value = value;
-  }
-}
+export { analyzeAudioBuffer, normalizeVariantSet };
 
 /**
- * Inspects decoded PCM AudioBuffer data to strip encoder padding / trailing silence
- * and compute active duration, RMS loudness, and peak amplitude.
+ * @typedef {import('./audio/helpers.js').AudioListenerState} AudioListenerState
+ * @typedef {import('./audio/helpers.js').AudioPosition3D} AudioPosition3D
+ * @typedef {import('./audio/helpers.js').AudioPosition2D} AudioPosition2D
  */
-export function analyzeAudioBuffer(buffer, {
-  silenceThreshold = 0.0035,
-  minActiveDuration = 0.01,
-} = {}) {
-  if (!buffer || typeof buffer.getChannelData !== 'function' || !(buffer.sampleRate > 0) || !(buffer.length > 0)) {
-    const rawDuration = Number(buffer?.duration) || 0;
-    return {
-      analyzable: false,
-      duration: rawDuration,
-      trimStart: 0,
-      trimEnd: rawDuration,
-      activeDuration: rawDuration,
-      rms: 0,
-      peak: 0,
-    };
-  }
-
-  const length = buffer.length;
-  const sampleRate = buffer.sampleRate;
-  const duration = length / sampleRate;
-  const channels = Math.max(1, Number(buffer.numberOfChannels) || 1);
-  const channelData = new Array(channels);
-  for (let c = 0; c < channels; c++) {
-    channelData[c] = buffer.getChannelData(c);
-  }
-
-  let firstNonSilent = -1;
-  let lastNonSilent = -1;
-  for (let i = 0; i < length; i++) {
-    for (let c = 0; c < channels; c++) {
-      if (Math.abs(channelData[c][i]) >= silenceThreshold) {
-        firstNonSilent = i;
-        break;
-      }
-    }
-    if (firstNonSilent !== -1) break;
-  }
-
-  if (firstNonSilent === -1) {
-    return {
-      analyzable: true,
-      duration,
-      trimStart: 0,
-      trimEnd: duration,
-      activeDuration: Math.max(minActiveDuration, duration),
-      rms: 0,
-      peak: 0,
-    };
-  }
-
-  for (let i = length - 1; i >= firstNonSilent; i--) {
-    for (let c = 0; c < channels; c++) {
-      if (Math.abs(channelData[c][i]) >= silenceThreshold) {
-        lastNonSilent = i;
-        break;
-      }
-    }
-    if (lastNonSilent !== -1) break;
-  }
-
-  const preGuard = Math.round(sampleRate * 0.0015);
-  const postGuard = Math.round(sampleRate * 0.003);
-  const startIdx = Math.max(0, firstNonSilent - preGuard);
-  const endIdx = Math.min(length - 1, Math.max(firstNonSilent, lastNonSilent + postGuard));
-
-  let sumSq = 0;
-  let peak = 0;
-  for (let i = startIdx; i <= endIdx; i++) {
-    for (let c = 0; c < channels; c++) {
-      const sample = channelData[c][i];
-      const abs = Math.abs(sample);
-      if (abs > peak) peak = abs;
-      sumSq += sample * sample;
-    }
-  }
-  const sampleCount = (endIdx - startIdx + 1) * channels;
-  const rms = sampleCount > 0 ? Math.sqrt(sumSq / sampleCount) : 0;
-  const trimStart = startIdx / sampleRate;
-  const trimEnd = (endIdx + 1) / sampleRate;
-  const activeDuration = Math.max(minActiveDuration, trimEnd - trimStart);
-
-  return {
-    analyzable: true,
-    duration,
-    trimStart,
-    trimEnd,
-    activeDuration,
-    rms,
-    peak,
-  };
-}
 
 /**
- * Normalizes a pool of 1-4 SFX variant buffers so loudness stays balanced
- * and overly long outlier tails are flagged and optionally trimmed to stay tight.
+ * @typedef {object} AudioManagerOptions
+ * @property {(new () => AudioContext) | undefined} [AudioContextClass] Default `AudioContext` / `webkitAudioContext`.
+ * @property {number} [volume=1] Master volume, 0..1.
+ * @property {number} [maxPolyphony=24] Max simultaneous voices (positive integer).
+ * @property {boolean} [compressor=true] Insert a master dynamics limiter.
+ * @property {() => number} [now] Clock for cooldowns, milliseconds (default `performance.now`).
  */
-export function normalizeVariantSet(buffers, {
-  silenceThreshold = 0.0035,
-  normalizeRms = true,
-  maxDurationSpreadRatio = 0.28,
-  alignDuration = true,
-  gainClamp = [0.55, 1.65],
-} = {}) {
-  if (!Array.isArray(buffers) || buffers.length === 0) {
-    throw new TypeError('normalizeVariantSet requires a non-empty array of audio buffers');
-  }
 
-  const minGain = Array.isArray(gainClamp) ? Number(gainClamp[0]) || 0.55 : 0.55;
-  const maxGain = Array.isArray(gainClamp) ? Number(gainClamp[1]) || 1.65 : 1.65;
-  const analyses = buffers.map(buffer => analyzeAudioBuffer(buffer, { silenceThreshold }));
-  const activeDurations = [];
-  const activeRms = [];
+/**
+ * @typedef {object} SpatialMetrics
+ * @property {'3d' | '2d' | 'pan' | 'none'} kind
+ * @property {{ x: number, y: number, z: number }} [pos3] Present for `'3d'`.
+ * @property {{ x: number, y: number }} [pos2] Present for `'2d'`.
+ * @property {number} pan -1 (left) .. 1 (right).
+ * @property {number} distanceGain 0..1 attenuation.
+ */
 
-  for (const info of analyses) {
-    if (info.analyzable) {
-      activeDurations.push(info.activeDuration);
-      if (info.rms > 1e-5) activeRms.push(info.rms);
-    }
-  }
+/**
+ * @typedef {number | { occlusion?: number, lowPassHz?: number, gainScale?: number }} OcclusionResult
+ *   Occlusion 0 (open) .. 1 (blocked), or a detailed override (Hz / gain scale 0..1).
+ */
 
-  const medianDuration = median(activeDurations);
-  const medianRms = median(activeRms);
-  const maxAllowedDuration = medianDuration > 0 ? medianDuration * (1 + maxDurationSpreadRatio) : 0;
+/**
+ * @callback OcclusionProbe
+ * @param {{ x: number, y: number, z?: number }} sourcePosition
+ * @param {AudioListenerState} listener
+ * @param {{ bus: string, spatial: SpatialMetrics }} info
+ * @returns {OcclusionResult | void}
+ */
 
-  let durationSpreadRatio = 0;
-  const variants = buffers.map((buffer, index) => {
-    const info = analyses[index];
-    const gainScale = (normalizeRms && info.analyzable && medianRms > 1e-5 && info.rms > 1e-5)
-      ? clamp(medianRms / info.rms, minGain, maxGain)
-      : 1;
-    const deviationRatio = medianDuration > 0
-      ? Math.abs(info.activeDuration - medianDuration) / Math.max(0.02, medianDuration)
-      : 0;
-    if (deviationRatio > durationSpreadRatio) durationSpreadRatio = deviationRatio;
-    const consistent = deviationRatio <= maxDurationSpreadRatio;
-    const clampedTail = alignDuration && info.analyzable && maxAllowedDuration > 0 && info.activeDuration > maxAllowedDuration;
-    const playDuration = clampedTail
-      ? maxAllowedDuration
-      : (info.analyzable ? info.activeDuration : 0);
-    const tailFadeSec = clampedTail ? Math.min(0.04, playDuration * 0.2) : 0;
+/**
+ * @typedef {object} AudioPlayOptions
+ * @property {number} [volume=1] Voice gain, 0..2.
+ * @property {boolean} [loop=false]
+ * @property {number} [playbackRate=1] 0.05..4.
+ * @property {number} [pitchJitter=0] Random playback-rate variation (ratio, 0..1).
+ * @property {number} [gainJitter=0] Random gain reduction (ratio, 0..1).
+ * @property {number} [cooldownMs=0] Minimum interval between plays of the same `key` / buffer, milliseconds.
+ * @property {string | null} [key=null] Cooldown key.
+ * @property {string | null} [bus=null] Bus name (default `'spatial'` when positioned, else `'sfx'`).
+ * @property {number | null} [pan=null] Stereo pan, -1..1 (when no position).
+ * @property {AudioPosition3D | null} [position=null] 3D source position, world units (HRTF panner).
+ * @property {AudioPosition2D | null} [position2D=null] 2D source position (stereo pan by `panRange`).
+ * @property {boolean} [hrtf=true] Use HRTF panning for 3D sources.
+ * @property {DistanceModelType} [distanceModel='inverse']
+ * @property {number} [refDistance=3] World units.
+ * @property {number} [maxDistance=400] World units.
+ * @property {number} [rolloffFactor=0.8]
+ * @property {number} [panRange=480] Horizontal distance (pixels / world units) that maps to full pan for 2D sources.
+ * @property {boolean} [trimSilence=true] Skip encoder padding / trailing silence.
+ * @property {number | null} [offset=null] Start offset, seconds.
+ * @property {number | null} [duration=null] Play duration, seconds.
+ * @property {number} [tailFadeSec=0] Fade-out length at the trimmed tail, seconds.
+ * @property {number | null} [occlusion=null] Fixed occlusion 0..1 (default: evaluated via the occlusion probe).
+ * @property {number} [occludedLowPassHz=550] Low-pass cutoff when fully occluded, Hz.
+ * @property {number} [occludedGainScale=0.45] Gain scale when fully occluded, 0..1.
+ * @property {number} [openLowPassHz=22000] Low-pass cutoff when unoccluded, Hz.
+ * @property {((voice: AudioVoice) => void) | null} [onEnded=null]
+ * @property {() => number} [random=Math.random] RNG returning 0..1 (for deterministic jitter).
+ */
 
-    return {
-      index,
-      buffer,
-      ...info,
-      gainScale,
-      deviationRatio,
-      consistent,
-      playDuration,
-      tailFadeSec,
-    };
-  });
+/**
+ * @typedef {object} AudioVoice Handle to a playing sound.
+ * @property {boolean} loop
+ * @property {number} playbackRate Current rate.
+ * @property {string} bus Bus the voice is routed to.
+ * @property {number} variant Cue variant index (-1 when not played via a cue).
+ * @property {number} pan Current pan, -1..1.
+ * @property {number} distanceGain 0..1.
+ * @property {number} occlusion 0..1.
+ * @property {number} lowPassHz Current occlusion low-pass, Hz.
+ * @property {(position: AudioPosition3D | AudioPosition2D) => AudioVoice} setPosition Move the source.
+ * @property {(value: number, options?: { smoothSeconds?: number, lowPassHz?: number | null, gainScale?: number | null }) => AudioVoice} setOcclusion
+ *   Set fixed occlusion 0..1 (disables the probe for this voice); smoothing in seconds.
+ * @property {(options?: { smoothSeconds?: number }) => number} refreshOcclusion Re-run the probe; returns occlusion 0..1.
+ * @property {(volume: number) => AudioVoice} setVolume Voice gain 0..2.
+ * @property {(rate: number) => AudioVoice} setPlaybackRate 0.05..4.
+ * @property {(options?: { fadeOutMs?: number }) => void} stop Stop, optionally fading out (milliseconds).
+ */
 
-  return {
-    variants,
-    medianDuration,
-    medianRms,
-    durationSpreadRatio,
-    allConsistent: variants.every(v => v.consistent),
-  };
-}
+/**
+ * @typedef {object} AudioCueConfig
+ * @property {readonly AudioBuffer[]} variants 1-4 decoded buffers.
+ * @property {string | null} [bus=null]
+ * @property {number} [volume=1]
+ * @property {number} [pitchJitter=0.02]
+ * @property {number} [gainJitter=0.04]
+ * @property {number} [cooldownMs=0] Milliseconds.
+ * @property {number} [maxConcurrent=4] Max simultaneous voices of this cue.
+ * @property {boolean} [hrtf=true]
+ * @property {number} [refDistance=3]
+ * @property {number} [maxDistance=400]
+ * @property {number} [rolloffFactor=0.8]
+ * @property {number} [panRange=480]
+ * @property {boolean} [trimSilence=true]
+ * @property {number} [silenceThreshold=0.0035]
+ * @property {boolean} [normalizeRms=true]
+ * @property {number} [maxDurationSpreadRatio=0.28]
+ * @property {boolean} [alignDuration=true]
+ */
+
+/**
+ * @typedef {Omit<AudioPlayOptions, 'loop' | 'offset' | 'duration' | 'tailFadeSec' | 'onEnded'> & {
+ *   loop?: boolean,
+ *   variant?: number,
+ * }} AudioCueOverrides Per-call overrides for {@link AudioManager#playCue}; `variant` forces a variant index.
+ */
+
+/**
+ * @typedef {object} AudioCueVariantInfo
+ * @property {number} index
+ * @property {number} duration Seconds.
+ * @property {number} activeDuration Seconds.
+ * @property {number} playDuration Seconds.
+ * @property {number} gainScale
+ * @property {number} deviationRatio
+ * @property {boolean} consistent
+ */
+
+/**
+ * @typedef {object} AudioCueInspection
+ * @property {string} name
+ * @property {string | null} bus
+ * @property {number} variantCount
+ * @property {number} medianDuration Seconds.
+ * @property {number} medianRms
+ * @property {number} durationSpreadRatio
+ * @property {boolean} allConsistent
+ * @property {readonly Readonly<AudioCueVariantInfo>[]} variants
+ */
+
+/**
+ * @typedef {object} AudioBusMix
+ * @property {number} [volume] Absolute bus gain, 0..1.5.
+ * @property {number} [gainScale] Multiplier applied to the user bus volume.
+ * @property {number} [lowPassHz] Low-pass cutoff, Hz (60..22000).
+ * @property {number} [filterHz] Alias of `lowPassHz`.
+ */
+
+/**
+ * @typedef {object} AudioSnapshotConfig Mix snapshot (e.g. paused / underwater).
+ * @property {string} [name]
+ * @property {Record<string, AudioBusMix>} [buses]
+ * @property {number | null} [defaultLowPassHz] Cutoff for buses without an override, Hz.
+ * @property {number} [transitionSeconds=0.2] Cross-fade time, seconds.
+ */
+
+/**
+ * @typedef {object} AudioSnapshot
+ * @property {string} name
+ * @property {Record<string, AudioBusMix>} buses
+ * @property {number | null} defaultLowPassHz
+ * @property {number} transitionSeconds
+ */
+
+/**
+ * @typedef {Partial<AudioListenerState>} AudioListenerUpdate
+ */
+
+/**
+ * @typedef {{ matrixWorld?: { elements: ArrayLike<number> }, x?: number, y?: number, z?: number, offsetX?: number, offsetY?: number }} AudioListenerCamera
+ *   A Three.js-style camera (`matrixWorld`) or a 2D camera (`x`, `y`, optional offsets in pixels).
+ */
+
+/**
+ * @typedef {object} AudioManager Web Audio facade: buses, cues, spatialization, snapshots.
+ * @property {number} volume Master volume 0..1.
+ * @property {boolean} muted
+ * @property {number} activeCount Playing voices.
+ * @property {boolean} available True when an AudioContext class exists.
+ * @property {AudioListenerState} listener Snapshot copy.
+ * @property {string | null} activeSnapshot Name of the active mix snapshot.
+ * @property {() => Promise<AudioContext>} unlock Create / resume the context (call from a user gesture).
+ * @property {(data: ArrayBuffer) => Promise<AudioBuffer>} decode
+ * @property {(buffer: AudioBuffer, options?: AudioPlayOptions) => Promise<AudioVoice | null>} play Resolves null when muted, throttled or no slot is free.
+ * @property {(name: string, variantsOrConfig: readonly AudioBuffer[] | AudioCueConfig, extraOptions?: Omit<AudioCueConfig, 'variants'>) => AudioCueInspection} registerCue
+ * @property {(name: string, overrides?: AudioCueOverrides) => Promise<AudioVoice | null>} playCue
+ * @property {(name: string) => AudioCueInspection | null} inspectCue
+ * @property {(name: string) => boolean} hasCue
+ * @property {(value: number) => number} setVolume Returns the clamped value.
+ * @property {(muted: boolean) => boolean} setMuted
+ * @property {(bus: string, value: number) => number} setBusVolume Gain 0..1.5; returns the clamped value.
+ * @property {(bus: string) => number} getBusVolume
+ * @property {(bus: string, factor?: number, durationMs?: number) => boolean} duckBus Temporarily scale a bus (factor 0..1, default 0.55; milliseconds, default 250).
+ * @property {(name: string, config?: AudioSnapshotConfig) => AudioSnapshot} registerSnapshot
+ * @property {(nameOrConfig: string | AudioSnapshotConfig, options?: { transitionSeconds?: number | null }) => string} applySnapshot Returns the snapshot name.
+ * @property {(options?: { transitionSeconds?: number }) => boolean} clearSnapshot
+ * @property {(probe: OcclusionProbe | null | undefined) => void} setOcclusionProbe
+ * @property {() => void} updateOcclusion Refresh occlusion of all active voices.
+ * @property {(next?: AudioListenerUpdate) => AudioListenerState} setListener
+ * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
+ * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
+ */
 
 /**
  * Web Audio manager supporting buses, master dynamics limiter, 3D HRTF / 2D left-right
  * spatialization, MP3 encoder-padding trimming, polyphony control, and multi-variant cues.
+ *
+ * @param {AudioManagerOptions} [options]
+ * @returns {AudioManager}
  */
 export function createAudioManager({
   AudioContextClass = globalThis.AudioContext || globalThis.webkitAudioContext,

@@ -11,6 +11,83 @@
  * include or copy Unreal shaders. Only use on static scenery: world-space
  * texture swimming is expected on animated characters/moving props.
  */
+/** @typedef {import('./world-aligned-material.js').WorldTextureLike} PbrTextureLike */
+/** @typedef {import('./world-aligned-material.js').WorldMaterialLike} PbrMaterialLike */
+/** @typedef {import('./world-aligned-material.js').WorldProjection} PbrProjection */
+/**
+ * @typedef {object} PbrThree The subset of the THREE namespace used for world-aligned PBR materials.
+ * @property {new (parameters?: object) => PbrMaterialLike} MeshStandardMaterial
+ * @property {new (x?: number, y?: number, z?: number) => { x: number, y: number, z: number }} Vector3
+ * @property {number} FrontSide
+ */
+/**
+ * @typedef {object} PbrProjectionOptions
+ * @property {PbrProjection} [projection='triplanar']
+ * @property {number} [tileSize=1] World units per texture repeat, 0.01..1000.
+ * @property {number} [blendSharpness=6] Triplanar blend exponent, 0.1..32.
+ * @property {number} [aoIntensity=1] Ambient-occlusion strength, 0..1.
+ * @property {number} [normalStrength=1] Normal-map strength, 0..2.
+ */
+/**
+ * @typedef {PbrProjectionOptions & { color: PbrTextureLike, normal: PbrTextureLike, orm: PbrTextureLike }} WorldAlignedPbrOptions
+ * color = sRGB base colour; normal = OpenGL tangent-space map; orm = linear (R AO, G roughness, B metallic).
+ */
+/**
+ * @typedef {object} PbrCatalogEntry
+ * @property {string} id Matches `[a-z][a-z0-9-]{0,100}`.
+ * @property {string} color Relative `textures/<sha256>.png|webp` path.
+ * @property {string} normal Relative texture path.
+ * @property {string} orm Relative texture path.
+ * @property {string} [name]
+ * @property {string} [category]
+ * @property {number} [tileSize] Default tile size in world units.
+ * @property {PbrProjection} [projection]
+ */
+/**
+ * @typedef {object} PbrCatalog
+ * @property {1} version
+ * @property {PbrCatalogEntry[]} materials At most 2000 entries.
+ */
+/**
+ * @typedef {object} PbrLibraryThree THREE namespace for {@link loadCuratedPbrLibrary}; extends {@link PbrThree}.
+ * @property {new () => { loadAsync(url: string): Promise<PbrTextureLike> }} TextureLoader
+ * @property {new (parameters?: object) => PbrMaterialLike} MeshStandardMaterial
+ * @property {new (x?: number, y?: number, z?: number) => { x: number, y: number, z: number }} Vector3
+ * @property {number} FrontSide
+ * @property {number} RepeatWrapping
+ * @property {number} LinearFilter
+ * @property {number} LinearMipmapLinearFilter
+ * @property {string} SRGBColorSpace
+ * @property {string} NoColorSpace
+ */
+/**
+ * @typedef {object} PbrLibraryOptions
+ * @property {PbrLibraryThree} THREE
+ * @property {string} catalogUrl HTTP(S) URL of the catalog JSON (relative allowed).
+ * @property {((url: string) => Promise<PbrCatalog>)|null} [fetchJson=null] Custom catalog fetcher; defaults to fetch().
+ * @property {{ loadAsync(url: string): Promise<PbrTextureLike> }|null} [textureLoader=null] Defaults to `new THREE.TextureLoader()`.
+ */
+/**
+ * @typedef {object} PbrLibraryListItem
+ * @property {string} id
+ * @property {string|undefined} name
+ * @property {string|undefined} category
+ * @property {number|undefined} tileSize
+ */
+/**
+ * @typedef {object} PbrLibraryStats
+ * @property {number} materials Cached material variants.
+ * @property {number} textures Cached textures.
+ * @property {number} entries Catalog entries.
+ */
+/**
+ * @typedef {object} PbrLibrary
+ * @property {() => PbrLibraryListItem[]} list
+ * @property {(id: string, options?: PbrProjectionOptions) => Promise<PbrMaterialLike>} get Cached per (id, options).
+ * @property {() => Promise<void>} dispose
+ * @property {PbrLibraryStats} stats (getter)
+ */
+
 const MATERIAL_ID = /^[a-z][a-z0-9-]{0,100}$/;
 const IMAGE_PATH = /^textures[/][a-f0-9]{64}[.](?:png|webp)$/;
 const PROJECTIONS = new Set(['planar', 'triplanar']);
@@ -33,6 +110,11 @@ function config(params) {
   return { projection, tileSize, blendSharpness, aoIntensity, normalStrength };
 }
 
+/**
+ * @param {PbrThree} THREE
+ * @param {WorldAlignedPbrOptions} options
+ * @returns {PbrMaterialLike}
+ */
 export function createWorldAlignedPbrMaterial(THREE, { color, normal, orm, ...options } = {}) {
   if (!THREE?.MeshStandardMaterial || !THREE?.Vector3 ||
       !color?.isTexture || !normal?.isTexture || !orm?.isTexture) {
@@ -145,7 +227,11 @@ export function createWorldAlignedPbrMaterial(THREE, { color, normal, orm, ...op
   return mat;
 }
 
-/** Content-addressed catalogs can share a texture pool across material entries. */
+/**
+ * Content-addressed catalogs can share a texture pool across material entries.
+ * @param {PbrLibraryOptions} options
+ * @returns {Promise<PbrLibrary>}
+ */
 export async function loadCuratedPbrLibrary({
   THREE, catalogUrl, fetchJson = null, textureLoader = null,
 } = {}) {

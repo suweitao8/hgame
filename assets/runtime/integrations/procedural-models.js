@@ -5,6 +5,69 @@
  *
  * The logical slot IDs remain stable even when replaced by authored GLBs.
  */
+/**
+ * @typedef {object} ProceduralObject3D Minimal structural Three.js Object3D.
+ * @property {string} name
+ * @property {(recursive?: boolean) => ProceduralObject3D} clone
+ * @property {(force?: boolean) => void} updateMatrixWorld
+ * @property {(callback: (object: object) => void) => void} traverse
+ */
+/**
+ * @typedef {object} ProceduralModelThree The subset of the THREE namespace used for procedural shapes.
+ * @property {new () => ProceduralObject3D} Group
+ * @property {new (width: number, height: number, depth: number) => { dispose(): void }} BoxGeometry
+ * @property {new (radiusTop: number, radiusBottom: number, height: number, radialSegments: number) => { dispose(): void }} CylinderGeometry
+ * @property {new (radius: number, detail: number) => { dispose(): void }} IcosahedronGeometry
+ * @property {new (geometry: object, material: object|object[]) => ProceduralObject3D} Mesh
+ * @property {new (geometry: object, material: object|object[], count: number) => ProceduralObject3D} InstancedMesh
+ * @property {new () => object} Object3D
+ * @property {new () => object} Matrix4
+ */
+/** @typedef {'box'|'slab'|'stair'|'column'|'foliage'|'fence'|'door'|'window'|'bench'|'lantern'} ProceduralShape */
+/**
+ * @typedef {object} ProceduralSlotDefinition
+ * @property {ProceduralShape} shape
+ * @property {string} material Material-palette name.
+ * @property {string} [accent] Accent palette name; defaults to `material`.
+ * @property {string} [topMaterial] Palette name for the top face of 'box'.
+ * @property {[number, number, number]} [size=[1,1,1]] Width, height, depth in world units (each 0..100].
+ * @property {string|null} [replacement=null] Relative `assets/models/<name>.glb` replacement.
+ */
+/**
+ * @typedef {object} ProceduralSlotSpec
+ * @property {ProceduralShape} shape
+ * @property {string} material
+ * @property {string} accent
+ * @property {string|null} topMaterial
+ * @property {[number, number, number]} size
+ * @property {string|null} replacement
+ */
+/**
+ * @typedef {object} ProceduralModelOptions
+ * @property {ProceduralModelThree} THREE
+ * @property {Record<string, ProceduralSlotDefinition>} slots Keys match `group.name` (lowercase dotted ids).
+ * @property {{ get(name: string): object }} materialPalette e.g. from createWorldMaterialPalette.
+ * @property {(new () => { loadAsync(url: string): Promise<{ scene: ProceduralObject3D, animations?: unknown[] }> })} [GLTFLoader] Only needed if a replacement is configured.
+ * @property {string} [projectBaseUrl='http://localhost/'] Base for resolving replacement URLs.
+ */
+/**
+ * @typedef {object} ProceduralPlacement
+ * @property {number} [x=0] World units.
+ * @property {number} [y=0]
+ * @property {number} [z=0]
+ * @property {number} [rotationY=0] Radians.
+ * @property {number} [scale=1] Uniform scale, > 0.
+ */
+/**
+ * @typedef {object} ProceduralModelSlots
+ * @property {(id: string) => ProceduralSlotSpec} get Copy of a slot definition.
+ * @property {(id: string) => Promise<ProceduralObject3D>} prototype Shared, cached prototype.
+ * @property {(id: string) => Promise<ProceduralObject3D>} instantiate Deep clone of the prototype.
+ * @property {(id: string, placements: Array<ProceduralPlacement|{ isMatrix4: true }>) => Promise<ProceduralObject3D>} instantiateBatch 1..20000 placements; InstancedMesh or fallback Group.
+ * @property {(id: string, url: string|null) => void} setReplacement
+ * @property {() => Promise<void>} dispose
+ */
+
 const ID = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/;
 const SHAPES = new Set(['box', 'slab', 'stair', 'column', 'foliage', 'fence', 'door',
   'window', 'bench', 'lantern']);
@@ -30,6 +93,10 @@ const replacementPath = url => {
   return url;
 };
 
+/**
+ * @param {ProceduralModelOptions} options
+ * @returns {ProceduralModelSlots}
+ */
 export function createProceduralModelSlots({
   THREE, slots, materialPalette, GLTFLoader, projectBaseUrl,
 } = {}) {

@@ -17,6 +17,7 @@
     "test:browser:pbr": "node tests/browser-world-aligned.mjs",
     "process:assets": "node scripts/process-assets.mjs",
     "process:audio": "node scripts/process-audio.mjs",
+    "bake:vat": "node scripts/bake-bone-vat.mjs",
     "build:physics": "node scripts/build-physics.mjs",
     "check:physics": "node scripts/build-physics.mjs --check",
     "check:network": "npm --prefix network run check",
@@ -24,12 +25,24 @@
     "package:game": "node scripts/package-game.mjs",
     "release": "npm run build:physics && npm run check:all && node scripts/package-game.mjs --engine",
     "check:all": "npm run check && npm run test:network && npm run check:network && npm run build:network",
-    "check": "npm test && npm run check:physics",
-    "build": "npm run build:physics"
+    "check": "npm test && npm run check:physics && npm run check:types && npm run check:api-index",
+    "build": "npm run build:physics && npm run build:types && npm run build:api-index",
+    "build:types": "node scripts/build-types.mjs",
+    "check:types": "node scripts/build-types.mjs --check",
+    "bench": "node benchmarks/run.mjs",
+    "build:api-index": "node scripts/build-api-index.mjs",
+    "check:api-index": "node scripts/build-api-index.mjs --check",
+    "snapshot": "node scripts/snapshot.mjs",
+    "bench:render": "node benchmarks/render-bench.mjs",
+    "bench:render3d": "node benchmarks/render-bench-3d.mjs",
+    "test:browser:snapshot": "node tests/browser-snapshot.mjs"
   },
   "devDependencies": {
     "@dimforge/rapier2d-deterministic": "0.21.0",
     "@dimforge/rapier3d-deterministic": "0.21.0",
-    "esbuild": "0.25.12"
-  }
+    "esbuild": "0.25.12",
+    "playwright-core": "^1.49.1",
+    "typescript": "^5.6.3"
+  },
+  "types": "types/index.d.ts"
 }

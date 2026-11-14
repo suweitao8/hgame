@@ -7,6 +7,7 @@ import { createDiagnostics } from './diagnostics.js';
 import { createGameBridge } from './game-bridge.js';
 import { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION } from './protocol.js';
 
+/** Platform service version string. */
 export const PLATFORM_VERSION = '1.0.0';
 export { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION };
 export { createAssetLoader } from './assets.js';
@@ -25,6 +26,50 @@ export { createDiagnostics } from './diagnostics.js';
 export { createGameBridge } from './game-bridge.js';
 export { createGameHostBridge } from './host-bridge.js';
 
+/**
+ * @typedef {object} GameEngineOptions
+ * @property {string} gameId Stable slug (`/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/`); required.
+ * @property {string} [gameVersion='0.0.0']
+ * @property {string} [renderer='custom'] Renderer label reported in `meta`.
+ * @property {string} [assetBaseUrl='./assets/'] Asset root for the AssetLoader.
+ * @property {Window} [windowRef] Default `globalThis.window`.
+ * @property {Document} [documentRef] Default `globalThis.document`.
+ * @property {import('./storage.js').SaveStoreOptions['storage']} [storage] Save backend (default `localStorage`).
+ * @property {string} [parentOrigin] Trusted embedding origin for the host bridge.
+ * @property {string[]} [preventDefaultKeys=[]] `KeyboardEvent.code` values whose default action is prevented.
+ * @property {(report: import('./diagnostics.js').ErrorReport) => void} [onError] Called for every error report.
+ */
+
+/**
+ * @typedef {object} GameEngineMeta
+ * @property {string} gameId
+ * @property {string} gameVersion
+ * @property {string} renderer
+ * @property {string} engineVersion
+ * @property {number} protocolVersion
+ */
+
+/**
+ * @typedef {object} GameEngine Frozen bundle of the platform services.
+ * @property {Readonly<GameEngineMeta>} meta
+ * @property {import('./lifecycle.js').Lifecycle} lifecycle
+ * @property {import('./input/manager.js').InputManager} input
+ * @property {import('./assets.js').AssetLoader} assets
+ * @property {import('./storage.js').SaveStore} save
+ * @property {import('./audio.js').AudioManager} audio
+ * @property {import('./diagnostics.js').Diagnostics} diagnostics
+ * @property {import('./game-bridge.js').GameBridge} host
+ * @property {() => boolean} ready Signal readiness to lifecycle and host; false if disposed.
+ * @property {(state: unknown) => boolean} reportState Send `game:state` to the host.
+ * @property {(extra?: Record<string, unknown>) => boolean} reportMetrics Send diagnostics (+ `extra`) as `game:metrics`.
+ * @property {() => boolean} dispose
+ */
+
+/**
+ * Create the platform service bundle (lifecycle, input, assets, save, audio, diagnostics, host bridge).
+ * @param {GameEngineOptions} options
+ * @returns {Readonly<GameEngine>}
+ */
 export function createGameEngine({
   gameId,
   gameVersion = '0.0.0',
@@ -82,11 +127,13 @@ export function createGameEngine({
     return true;
   }
 
+  /** @param {unknown} state @returns {boolean} */
   function reportState(state) {
     if (disposed) return false;
     return host.send('game:state', state);
   }
 
+  /** @param {Record<string, unknown>} [extra] @returns {boolean} */
   function reportMetrics(extra = {}) {
     if (disposed) return false;
     return host.send('game:metrics', { ...diagnostics.snapshot(), ...extra });

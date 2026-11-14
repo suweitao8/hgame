@@ -1,4 +1,261 @@
 import { createEmitter } from '../platform/events.js';
+import { Entity } from '../core/entity.js';
+
+/**
+ * Rapier WASM module namespace (`@dimforge/rapier2d-deterministic` or `rapier3d-deterministic`), pinned to 0.21.0.
+ * Members used: `version()`, `World`, `EventQueue`, `Ray`, `RigidBodyDesc`, `ColliderDesc`, `ActiveEvents`.
+ * @typedef {{ [member: string]: unknown }} RapierModule
+ */
+
+/**
+ * Native Rapier object (RigidBody, Collider, KinematicCharacterController, World). Opaque to HGame callers.
+ * @typedef {{ [member: string]: unknown }} RapierNativeObject
+ */
+
+/**
+ * 2D vector (world units).
+ * @typedef {{x: number, y: number}} RapierVec2
+ */
+
+/**
+ * 3D vector (world units).
+ * @typedef {{x: number, y: number, z: number}} RapierVec3
+ */
+
+/**
+ * Vector input: 2D worlds read `x`/`y`, 3D worlds read `x`/`y`/`z`. Missing components default to 0.
+ * @typedef {{x?: number, y?: number, z?: number}} RapierVectorInput
+ */
+
+/**
+ * Quaternion (unit length after normalization).
+ * @typedef {{x: number, y: number, z: number, w: number}} RapierQuaternion
+ */
+
+/**
+ * Rotation input. 2D: angle in radians or `{z}`. 3D: quaternion `{x,y,z,w}` or Euler `{x,y,z}` in radians (XYZ order).
+ * @typedef {number | {x?: number, y?: number, z?: number, w?: number}} RapierRotationInput
+ */
+
+/**
+ * Minimal structural HGame Entity contract required by the physics world.
+ * @typedef {object} RapierEntityLike
+ * @property {number} x World X (written back after each step).
+ * @property {number} y World Y.
+ * @property {number} [z] World Z (3D only).
+ * @property {number} [rotationX] Euler X in radians.
+ * @property {number} [rotationY] Euler Y in radians.
+ * @property {number} [rotationZ] Euler Z in radians (2D angle).
+ * @property {number} [width] Default collider width in world units.
+ * @property {number} [height] Default collider height in world units.
+ * @property {number} [depth] Default collider depth in world units.
+ * @property {boolean} [destroyed] True once the entity is destroyed.
+ * @property {object | null} [parent] Parent entity; bodies must be on root entities.
+ * @property {() => RapierVec3} worldPosition World position.
+ * @property {() => void} [snapTransform] Resets render interpolation.
+ */
+
+/**
+ * Options for {@link RapierPhysicsWorld} construction.
+ * @typedef {object} RapierPhysicsWorldOptions
+ * @property {number} [tickHz=60] Fixed simulation rate (integer 1..240) in hertz.
+ * @property {RapierVectorInput} [gravity] Gravity in world units per second squared. Defaults: 2D `{x:0,y:0}`, 3D `{x:0,y:-9.81,z:0}`.
+ */
+
+/**
+ * Options for {@link RapierPhysicsWorld.add}.
+ * @typedef {object} RapierBodyOptions
+ * @property {'fixed'|'dynamic'|'kinematicPosition'|'kinematicVelocity'} [type] Body type (default `'fixed'` if `static`, else `'dynamic'`).
+ * @property {boolean} [static=false] Shortcut for `type: 'fixed'`.
+ * @property {number} [rotation] Initial 2D angle in radians (default entity `rotationZ`).
+ * @property {{x: number, y: number, z: number, w: number}} [quaternion] Initial 3D rotation (default from entity Euler).
+ * @property {boolean} [canSleep=false] Allow the body to sleep.
+ * @property {boolean} [lockRotations=false] Lock all rotations.
+ * @property {boolean[]} [enabledRotations] 3D only: `[x, y, z]` rotation axes enabled.
+ * @property {number} [linearDamping] Linear damping (>= 0).
+ * @property {number} [angularDamping] Angular damping (>= 0).
+ * @property {number} [gravityScale=1] Gravity multiplier.
+ * @property {boolean} [ccd=false] Enable continuous collision detection.
+ * @property {boolean} [syncRotation=true] Write body rotation back to the entity.
+ * @property {'ball'|'capsule'|'cuboid'} [shape='cuboid'] Collider shape.
+ * @property {number} [width] Collider width in world units (default entity width or 1).
+ * @property {number} [height] Collider height in world units (default entity height or 1).
+ * @property {number} [depth] Collider depth in world units, 3D (default entity depth or 1).
+ * @property {number} [radius] Ball/capsule radius in world units.
+ * @property {number} [halfHeight] Capsule half height of the cylindrical part in world units.
+ * @property {RapierVectorInput} [offset] Collider offset from the body in world units.
+ * @property {number} [offsetX] Collider offset X (when `offset` is absent).
+ * @property {number} [offsetY] Collider offset Y.
+ * @property {number} [offsetZ] Collider offset Z.
+ * @property {boolean} [sensor=false] Sensor (trigger) collider.
+ * @property {number} [friction=0.5] Friction coefficient (>= 0).
+ * @property {number} [restitution=0] Restitution 0..1.
+ * @property {number} [density] Collider density (>= 0).
+ * @property {number} [collisionGroups] Packed Rapier collision groups (32-bit).
+ * @property {number} [layer=1] Membership bitmask (16-bit), used when `collisionGroups` is absent.
+ * @property {number} [mask=0xffff] Filter bitmask (16-bit), used when `collisionGroups` is absent.
+ */
+
+/**
+ * Registry record for one physics body, returned by `add`/`get`.
+ * @typedef {object} RapierBodyRecord
+ * @property {number} id Stable body id.
+ * @property {RapierEntityLike} entity Owning entity.
+ * @property {string} type Body type.
+ * @property {RapierNativeObject} rigidBody Native Rapier rigid body.
+ * @property {RapierNativeObject} collider Native Rapier collider.
+ * @property {number} bodyHandle Native rigid-body handle.
+ * @property {number} colliderHandle Native collider handle.
+ * @property {boolean} syncRotation Whether rotation is written back to the entity.
+ * @property {boolean} lockRotations All rotations locked.
+ * @property {boolean[] | null} enabledRotations 3D enabled rotation axes, or null.
+ * @property {(velocity: RapierVectorInput) => void} setVelocity Sets linear velocity (units per second).
+ * @property {() => RapierVec3 | RapierVec2} getVelocity Reads linear velocity.
+ * @property {(omega: number | RapierVectorInput) => void} setAngularVelocity Sets angular velocity (radians per second; number in 2D, vector in 3D).
+ * @property {() => number | RapierVec3} getAngularVelocity Reads angular velocity.
+ * @property {(impulse: RapierVectorInput, wakeUp?: boolean) => void} applyImpulse Applies a linear impulse.
+ */
+
+/**
+ * Options for {@link RapierPhysicsWorld.createCharacterController}.
+ * @typedef {object} RapierCharacterControllerOptions
+ * @property {number} [offset=0.01] Skin offset in world units (>= 0.0001).
+ * @property {RapierVectorInput} [up] Up vector.
+ * @property {boolean} [slide=true] Slide along obstacles.
+ * @property {number} [maxSlopeClimbAngle] Maximum climbable slope in radians.
+ * @property {number} [minSlopeSlideAngle] Minimum slope angle (radians) at which the character slides.
+ * @property {{maxHeight?: number, minWidth?: number, includeDynamic?: boolean} | null} [autostep] Autostep config (heights/widths in world units).
+ * @property {number | false | null} [snapToGround] Snap distance in world units, or falsy to disable.
+ * @property {boolean} [applyImpulsesToDynamicBodies] Push dynamic bodies.
+ * @property {number} [characterMass] Character mass used for impulses.
+ */
+
+/**
+ * Options for {@link RapierCharacterController.move}.
+ * @typedef {object} RapierCharacterMoveOptions
+ * @property {number} [filterFlags] Rapier QueryFilterFlags bitmask.
+ * @property {number} [filterGroups] Packed collision groups filter.
+ * @property {(collider: RapierNativeObject) => boolean} [filterPredicate] Collider filter.
+ * @property {boolean} [immediate=false] Apply the move immediately instead of as the next kinematic translation.
+ */
+
+/**
+ * One collision encountered while moving a character.
+ * @typedef {object} RapierCharacterCollision
+ * @property {RapierNativeObject | null} collider Native collider hit.
+ * @property {RapierBodyRecord | null} body Matching body record.
+ * @property {RapierVec2 | RapierVec3 | null} normal Contact normal.
+ * @property {number} toi Time of impact.
+ */
+
+/**
+ * Result of {@link RapierCharacterController.move}.
+ * @typedef {object} RapierCharacterMoveResult
+ * @property {RapierVec2 | RapierVec3} movement Corrected translation in world units.
+ * @property {boolean} grounded True when standing on ground.
+ * @property {RapierCharacterCollision[]} collisions Collisions encountered.
+ */
+
+/**
+ * Handle returned by `createCharacterController`.
+ * @typedef {object} RapierCharacterController
+ * @property {RapierEntityLike} entity Controlled entity (getter).
+ * @property {RapierBodyRecord} body Controlled body record (getter).
+ * @property {RapierNativeObject | null} controller Native controller (getter).
+ * @property {boolean} grounded Grounded state after the last move (getter).
+ * @property {(desiredTranslation: RapierVectorInput, options?: RapierCharacterMoveOptions) => RapierCharacterMoveResult} move Moves the character, colliding with the world.
+ * @property {(oldWorld: RapierNativeObject) => void} _detachNative Internal: detaches the native controller.
+ * @property {(newWorld: RapierNativeObject, newRecord: RapierBodyRecord) => void} _rebind Internal: rebinds after snapshot restore.
+ * @property {() => boolean} dispose Disposes the controller; false when already disposed.
+ */
+
+/**
+ * Raycast options.
+ * @typedef {object} RapierRayOptions
+ * @property {boolean} [solid=true] Treat shapes as solid (hit at origin when inside).
+ * @property {(collider: RapierNativeObject) => boolean} [filterPredicate] Collider filter.
+ */
+
+/**
+ * Raycast hit.
+ * @typedef {object} RapierRayHit
+ * @property {number} timeOfImpact Distance along the normalized direction in world units.
+ * @property {RapierVec2 | RapierVec3} point Hit point.
+ * @property {RapierVec2 | RapierVec3} normal Surface normal.
+ * @property {RapierNativeObject} collider Native collider hit.
+ * @property {RapierBodyRecord | null} body Matching body record.
+ */
+
+/**
+ * Collision event emitted as `'enter'` / `'exit'`.
+ * @typedef {object} RapierCollisionEvent
+ * @property {RapierBodyRecord} a First body.
+ * @property {RapierBodyRecord} b Second body.
+ * @property {boolean} sensor True when either collider is a sensor.
+ * @property {number} tick Tick the event belongs to.
+ */
+
+/**
+ * Serializable per-body snapshot record.
+ * @typedef {object} RapierSnapshotRecord
+ * @property {RapierEntityLike} entity Entity.
+ * @property {string} type Body type.
+ * @property {number} id Body id.
+ * @property {number} bodyHandle Native body handle.
+ * @property {number} colliderHandle Native collider handle.
+ * @property {boolean} syncRotation Rotation write-back flag.
+ * @property {boolean} lockRotations Rotations locked.
+ * @property {boolean[] | null} enabledRotations Enabled rotation axes (3D).
+ */
+
+/**
+ * World snapshot produced by `takeSnapshot`.
+ * @typedef {object} RapierSnapshot
+ * @property {string} version Rapier engine version.
+ * @property {number} tick Simulation tick.
+ * @property {Uint8Array} bytes Native world snapshot bytes.
+ * @property {RapierSnapshotRecord[]} records Body registry.
+ * @property {number} nextId Next body id.
+ */
+
+/**
+ * Deterministic fixed-step Rapier world adapter.
+ * @typedef {object} RapierPhysicsWorld
+ * @property {2 | 3} dimension World dimension.
+ * @property {number} tickHz Fixed rate in hertz.
+ * @property {number} fixedDt Fixed step in seconds.
+ * @property {string} backend Backend package name.
+ * @property {string} engineVersion Rapier version.
+ * @property {RapierVec2 | RapierVec3} gravity Current gravity.
+ * @property {RapierNativeObject} world Native Rapier world.
+ * @property {RapierBodyRecord[]} bodies Live body records.
+ * @property {number} tick Current tick (getter).
+ * @property {{tick: number, checksum: string}[]} checksums Recent state checksums, one per 30 ticks (getter).
+ * @property {(type: 'enter' | 'exit', listener: (event: RapierCollisionEvent) => void) => (() => void)} on Subscribes to collision events; returns an unsubscribe function.
+ * @property {(gravity: RapierVectorInput) => RapierVec2 | RapierVec3} setGravity Sets gravity.
+ * @property {(entity: RapierEntityLike, options?: RapierBodyOptions) => RapierBodyRecord} add Adds a body + collider for a root entity.
+ * @property {(target: RapierEntityLike | RapierBodyRecord) => RapierBodyRecord | null} get Looks up a body record.
+ * @property {(target: RapierEntityLike | RapierBodyRecord) => boolean} remove Removes a body; false when unknown.
+ * @property {(target: RapierEntityLike | RapierBodyRecord, position: RapierVectorInput) => void} setPosition Teleports (or schedules for kinematic) a body.
+ * @property {(target: RapierEntityLike | RapierBodyRecord, rotation: RapierRotationInput) => void} setRotation Sets body rotation.
+ * @property {(target: RapierEntityLike | RapierBodyRecord, velocity: RapierVectorInput) => void} setVelocity Sets linear velocity.
+ * @property {(target: RapierEntityLike | RapierBodyRecord) => RapierVec2 | RapierVec3 | null} getVelocity Reads linear velocity.
+ * @property {(target: RapierEntityLike | RapierBodyRecord, omega: number | RapierVectorInput) => void} setAngularVelocity Sets angular velocity.
+ * @property {(target: RapierEntityLike | RapierBodyRecord) => number | RapierVec3 | null} getAngularVelocity Reads angular velocity.
+ * @property {(target: RapierEntityLike | RapierBodyRecord, options?: RapierCharacterControllerOptions) => RapierCharacterController} createCharacterController Creates a kinematic character controller.
+ * @property {(a: RapierEntityLike | RapierBodyRecord, b: RapierEntityLike | RapierBodyRecord) => boolean} overlaps True when the two bodies intersect or touch.
+ * @property {(origin: RapierVectorInput, direction: RapierVectorInput, maxDistance?: number, options?: RapierRayOptions) => RapierRayHit | null} castRay Casts a ray (maxDistance in world units, default 1000).
+ * @property {(dt?: number) => number} step Advances exactly one fixed step (dt seconds must equal `fixedDt`); returns the new tick.
+ * @property {() => RapierSnapshot} takeSnapshot Captures a restorable snapshot.
+ * @property {(snapshot: RapierSnapshot) => RapierPhysicsWorld} restoreSnapshot Restores a snapshot; returns the world.
+ * @property {() => string} stateChecksum FNV-1a checksum (hex) of the world state.
+ * @property {() => boolean} dispose Frees native resources; false when already disposed.
+ */
+
+/**
+ * Constructor of a {@link RapierPhysicsWorld}.
+ * @typedef {new (options?: RapierPhysicsWorldOptions) => RapierPhysicsWorld} RapierPhysicsWorldConstructor
+ */
 
 const ENGINE_VERSION = '0.21.0';
 const CHECKSUM_INTERVAL = 30;
@@ -164,7 +421,12 @@ function createColliderDescriptor(RAPIER, dimension, entity, options) {
   return descriptor;
 }
 
-/** Build a small, renderer-neutral adapter around one pinned Rapier WASM World. */
+/**
+ * Build a small, renderer-neutral adapter around one pinned Rapier WASM World.
+ * @param {RapierModule} RAPIER Pinned Rapier 0.21.0 module namespace.
+ * @param {2 | 3} dimension World dimension.
+ * @returns {RapierPhysicsWorldConstructor} World class bound to `RAPIER`.
+ */
 export function createRapierPhysicsWorldClass(RAPIER, dimension) {
   if (![2, 3].includes(dimension)) throw new RangeError('Rapier dimension must be 2 or 3');
   if (RAPIER.version() !== ENGINE_VERSION) {
@@ -272,6 +534,50 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       return record;
     }
 
+    /**
+     * Build fixed colliders for the solid tiles of a TileMap (2D worlds only). Adjacent solid tiles are
+     * greedily merged into the fewest rectangles, so a 100x20 floor becomes one collider instead of 2000.
+     * TileMap rows grow downward; by default (`yUp: true`) world y is negated so physics stays y-up:
+     * tile (x, y) occupies world x in [originX + x*tw, +tw] and y in [originY - (y+1)*th, originY - y*th].
+     * @param {import('../core/scene.js').Scene} scene Scene that will own the generated tile entities.
+     * @param {import('../world/tilemap.js').TileMap} map
+     * @param {{ originX?: number, originY?: number, yUp?: boolean, merge?: boolean, friction?: number, restitution?: number, name?: string }} [options]
+     * @returns {Array<object>} Created physics body records (call `remove(record)` to drop one).
+     */
+    addTileMap(scene, map, options = {}) {
+      this._assertAlive();
+      if (dimension !== 2) throw new Error('addTileMap is only available on 2D physics worlds');
+      if (!scene || typeof scene.add !== 'function') throw new TypeError('addTileMap requires the owning Scene as the first argument');
+      if (!map || typeof map.isSolid !== 'function') throw new TypeError('addTileMap requires a TileMap');
+      const { originX = 0, originY = 0, yUp = true, merge = true } = options;
+      const w = map.width, h = map.height, tw = map.tileWidth, th = map.tileHeight;
+      const used = new Uint8Array(w * h);
+      const solid = (x, y) => x >= 0 && y >= 0 && x < w && y < h && map.solid.has(map.get(x, y));
+      const records = [];
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (used[y * w + x] || !solid(x, y)) continue;
+          let rw = 1, rh = 1;
+          if (merge) {
+            while (solid(x + rw, y) && !used[y * w + x + rw]) rw++;
+            grow: while (true) {
+              for (let i = 0; i < rw; i++) if (!solid(x + i, y + rh) || used[(y + rh) * w + x + i]) break grow;
+              rh++;
+            }
+          }
+          for (let j = 0; j < rh; j++) for (let i = 0; i < rw; i++) used[(y + j) * w + x + i] = 1;
+          const cx = originX + (x + rw / 2) * tw;
+          const cyDown = (y + rh / 2) * th;
+          const entity = scene.add(new Entity({ name: options.name ?? 'tile-collider', x: cx, y: yUp ? originY - cyDown : originY + cyDown,
+            width: rw * tw, height: rh * th }));
+          const bodyOptions = { type: 'fixed' };
+          if (options.friction !== undefined) bodyOptions.friction = options.friction;
+          if (options.restitution !== undefined) bodyOptions.restitution = options.restitution;
+          records.push(this.add(entity, bodyOptions));
+        }
+      }
+      return records;
+    }
     get(target) {
       if (target?.entity && target?.rigidBody) return this.bodies.includes(target) ? target : null;
       return this._byEntity.get(target) ?? null;

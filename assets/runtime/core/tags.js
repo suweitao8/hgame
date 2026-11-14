@@ -1,3 +1,78 @@
+/**
+ * @typedef {Record<string, unknown>} GameplayTagMeta Free-form metadata attached to a registered tag.
+ */
+
+/**
+ * @typedef {object} TagRegistryEntry
+ * @property {string} tag
+ * @property {string | null} parent
+ * @property {readonly string[]} ancestors Root-to-self chain.
+ * @property {GameplayTagMeta | null} meta
+ */
+
+/**
+ * @typedef {object} TagRegistry Taxonomy cache of hierarchical tags.
+ * @property {(tag: string, meta?: GameplayTagMeta | null) => TagRegistryEntry} register
+ * @property {(tags: Iterable<string | { tag: string, meta?: GameplayTagMeta | null }> | null | undefined) => TagRegistryEntry[]} registerMany
+ * @property {(tag: string) => readonly string[]} ensureAncestors
+ * @property {(tag: string) => boolean} has
+ * @property {(tag: string) => string | null} getParent
+ * @property {(tag: string) => string[]} getAncestors
+ * @property {(prefix: string) => string[]} getDescendants Registered tags equal to or below `prefix`.
+ * @property {(candidate: string, parentOrExact: string) => boolean} matches
+ * @property {() => string[]} list
+ * @property {() => void} clear
+ */
+
+/** @typedef {string | Iterable<string>} TagInput One tag or an iterable of tags. */
+
+/**
+ * @typedef {object} TagContainerChangeEvent
+ * @property {'add' | 'remove' | 'clear'} type
+ * @property {string} [tag]
+ * @property {number} [count] Stack delta.
+ * @property {number} [total] Explicit stack count after the change.
+ * @property {TagContainer} container
+ */
+
+/**
+ * @typedef {object} TagContainerOptions
+ * @property {TagRegistry | null} [registry] Defaults to {@link GLOBAL_TAG_REGISTRY}.
+ * @property {((event: TagContainerChangeEvent) => void) | null} [onChange]
+ */
+
+/**
+ * @typedef {object} TagQueryObject
+ * @property {TagInput} [all] Every tag must be present.
+ * @property {TagInput} [any] At least one tag must be present.
+ * @property {TagInput} [none] No tag may be present.
+ * @property {boolean} [exact=false] Match explicit tags only (no hierarchy).
+ */
+
+/** @typedef {string | Iterable<string> | TagQueryObject | ((container: TagContainer) => boolean) | null | undefined} TagQuery */
+
+/**
+ * @typedef {{
+ *   readonly size: number,
+ *   readonly isEmpty: boolean,
+ *   add: (tagOrTags: TagInput, count?: number) => TagContainer,
+ *   remove: (tagOrTags: TagInput, count?: number | boolean | { all?: boolean }) => boolean,
+ *   removeTree: (prefix: string) => number,
+ *   set: (tag: string, active: boolean, count?: number) => boolean,
+ *   has: (tag: string) => boolean,
+ *   hasExact: (tag: string) => boolean,
+ *   stackCount: (tag: string, options?: { exact?: boolean }) => number,
+ *   hasAny: (tags: TagInput | null | undefined, options?: { exact?: boolean }) => boolean,
+ *   hasAll: (tags: TagInput | null | undefined, options?: { exact?: boolean }) => boolean,
+ *   hasNone: (tags: TagInput | null | undefined, options?: { exact?: boolean }) => boolean,
+ *   matches: (query: TagQuery) => boolean,
+ *   list: (options?: { inclusive?: boolean }) => string[],
+ *   entries: () => [string, number][],
+ *   clear: () => boolean,
+ *   clone: (options?: { onChange?: TagContainerOptions['onChange'] }) => TagContainer,
+ *   toJSON: () => Record<string, number>,
+ * } & Iterable<string>} TagContainer Reference-counted hierarchical tag set.
+ */
 const TAG_SEGMENT_RE = /^[A-Za-z0-9_-]+$/;
 
 /**
@@ -82,9 +157,11 @@ export function splitTagAncestors(tag) {
 
 /**
  * Registry that caches tag taxonomy metadata and parent-child hierarchies.
+ *
+ * @returns {TagRegistry}
  */
 export function createTagRegistry() {
-  /** @type {Map<string, { tag: string, parent: string | null, ancestors: readonly string[], meta: Record<string, any> | null }>} */
+  /** @type {Map<string, TagRegistryEntry>} */
   const entries = new Map();
 
   function register(tag, meta = null) {
@@ -187,6 +264,7 @@ export function createTagRegistry() {
   };
 }
 
+/** Shared default registry. @type {TagRegistry} */
 export const GLOBAL_TAG_REGISTRY = createTagRegistry();
 
 function isEmptyIterable(value) {
@@ -216,8 +294,10 @@ function iterateTagInput(input, fn) {
  * like `container.has('State.Movement')` succeed in constant time whenever
  * `'State.Movement.Dashing'` is present.
  *
- * @param {Iterable<string>|string|null} [initialTags]
- * @param {{ registry?: ReturnType<createTagRegistry>, onChange?: ((event: any) => void) | null }} [options]
+ * @param {Iterable<string> | string | Record<string, number> | null} [initialTags]
+ *   Tags to add (one, an iterable, or a `{ tag: stackCount }` map).
+ * @param {TagContainerOptions} [options]
+ * @returns {TagContainer}
  */
 export function createTagContainer(initialTags = null, { registry = GLOBAL_TAG_REGISTRY, onChange = null } = {}) {
   /** @type {Map<string, number>} */
@@ -487,8 +567,8 @@ export function createTagContainer(initialTags = null, { registry = GLOBAL_TAG_R
  * Matches a tag container (or null/array) against a tag string, array,
  * `{ all, any, none, exact }` query object, or predicate without allocating.
  *
- * @param {ReturnType<createTagContainer>|Iterable<string>|null|undefined} containerOrTags
- * @param {any} query
+ * @param {TagContainer | Iterable<string> | null | undefined} containerOrTags
+ * @param {TagQuery} query
  * @returns {boolean}
  */
 export function matchGameplayTags(containerOrTags, query) {

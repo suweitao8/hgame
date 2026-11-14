@@ -7,8 +7,98 @@
  * No Three.js, DOM, GPU probe, scheduler, localStorage or network dependency.
  * Game rules and fixed ticks MUST NOT depend on render quality.
  */
+/** @typedef {'low'|'medium'|'high'} QualityTier */
+/** @typedef {QualityTier|'ultra'} QualityPresetTier Tier names accepted by preset tables. */
+/** @typedef {'auto'|QualityTier} QualityMode */
+
+/**
+ * @typedef {object} Quality3DPreset
+ * @property {number} maxPixels Hard physical-pixel budget.
+ * @property {number} maxPixelRatio Max device pixel ratio.
+ * @property {number} shadowMapSize Shadow map edge in texels.
+ * @property {boolean} shadowsEnabled
+ * @property {number} shadowDistance World units.
+ * @property {number} msaaSamples
+ * @property {boolean} ssao
+ * @property {boolean} ssgi
+ * @property {boolean} ssr
+ * @property {boolean} contactShadows
+ * @property {boolean} bloom
+ * @property {number} volumetricSteps
+ * @property {number} anisotropy
+ * @property {boolean} fxaa
+ * @property {number} sharpen
+ * @property {number} drawDistance World units.
+ * @property {boolean} occlusionCulling
+ * @property {number} animationLodScale
+ * @property {number} particleScale
+ * @property {number} maxDynamicLights
+ * @property {number} megaLightsSamples
+ * @property {number} maxClusteredLights
+ */
+/**
+ * @typedef {object} Quality2DPreset
+ * @property {number} maxPixelRatio
+ * @property {boolean} groundShadows
+ * @property {boolean} imageSmoothing
+ * @property {number} particleScale
+ * @property {'fast'|'full'} hitFlashQuality
+ */
+/**
+ * @typedef {object} QualityDeviceHints
+ * @property {boolean} [mobile=false]
+ * @property {string} [rendererName=''] GPU renderer string.
+ * @property {number|null} [memoryGB=null] Device memory in GB.
+ */
+/**
+ * @typedef {object} QualitySnapshot
+ * @property {QualityMode} mode
+ * @property {QualityTier} tier
+ * @property {Quality3DPreset} preset
+ * @property {number} dynamicScale Resolution scale 0..1.
+ * @property {number} lastMeanMs Last mean frame time in ms.
+ * @property {number} transitionCount
+ * @property {number} droppedLongFrames
+ */
+/**
+ * @typedef {object} ViewportPlan
+ * @property {number} cssWidth
+ * @property {number} cssHeight
+ * @property {number} pixelRatio
+ * @property {number} bufferWidth
+ * @property {number} bufferHeight
+ * @property {QualityTier} tier
+ * @property {number} dynamicScale
+ * @property {number} maxPixels
+ */
+/**
+ * @typedef {object} AdaptiveQualityOptions
+ * @property {QualityMode} [mode='auto']
+ * @property {QualityDeviceHints} [device={}]
+ * @property {number} [minScale=0.6] Min dynamic resolution scale.
+ * @property {number} [maxScale=1] Max dynamic resolution scale.
+ * @property {number} [minPixelRatio=0.1]
+ * @property {number} [maxPixelRatio=2]
+ * @property {number} [settleMs=3500] Initial settle time in ms.
+ * @property {number} [settleAfterChangeMs=1000]
+ * @property {number} [sampleFrames=45] Frames per sample window (2..300).
+ * @property {number} [degradeFrameMs=22] Mean frame ms above which quality drops.
+ * @property {number} [recoverFrameMs=17] Mean frame ms below which quality recovers.
+ * @property {((state: QualitySnapshot, reason: string) => void)|null} [onChange=null]
+ */
+/**
+ * @typedef {object} AdaptiveQualityController
+ * @property {QualitySnapshot} state Current snapshot (getter).
+ * @property {(next: QualityMode) => boolean} setMode
+ * @property {(ms: number) => boolean} sampleFrame
+ * @property {(cssWidth: number, cssHeight: number, dpr?: number) => ViewportPlan} planViewport
+ * @property {() => void} resetMeasurements
+ */
+
+/** @type {readonly QualityTier[]} */
 export const QUALITY_TIERS = Object.freeze(['low', 'medium', 'high']);
 
+/** @type {Readonly<Record<QualityPresetTier, Readonly<Quality3DPreset>>>} */
 export const QUALITY3D_PRESETS = Object.freeze({
   low: Object.freeze({
     maxPixels: 1_000_000, maxPixelRatio: 1.25, shadowMapSize: 1024, shadowsEnabled: false,
@@ -40,6 +130,7 @@ export const QUALITY3D_PRESETS = Object.freeze({
   }),
 });
 
+/** @type {Readonly<Record<QualityPresetTier, Readonly<Quality2DPreset>>>} */
 export const QUALITY2D_PRESETS = Object.freeze({
   low: Object.freeze({
     maxPixelRatio: 1.0, groundShadows: false, imageSmoothing: false,
@@ -61,8 +152,14 @@ export const QUALITY2D_PRESETS = Object.freeze({
 
 const TIERS = Object.freeze(Object.keys(QUALITY3D_PRESETS));
 const VALID_MODES = Object.freeze(['auto', ...TIERS]);
+/** @type {(x: number, lo: number, hi: number) => number} */
 const inRange = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
+/**
+ * @param {QualityPresetTier} [tier='high']
+ * @param {'2d'|'3d'} [dimension='3d']
+ * @returns {Readonly<Quality3DPreset>|Readonly<Quality2DPreset>}
+ */
 export function resolveQualityPreset(tier = 'high', dimension = '3d') {
   const table = dimension === '2d' ? QUALITY2D_PRESETS : QUALITY3D_PRESETS;
   if (!Object.hasOwn(table, tier)) {
@@ -71,7 +168,11 @@ export function resolveQualityPreset(tier = 'high', dimension = '3d') {
   return table[tier];
 }
 
-/** Pure, conservative hint selection. Do not allocate a new probing WebGL context. */
+/**
+ * Pure, conservative hint selection. Does not allocate a probing WebGL context.
+ * @param {QualityDeviceHints} [hints]
+ * @returns {QualityTier}
+ */
 export function chooseInitial3dQuality({
   mobile = false, rendererName = '', memoryGB = null,
 } = {}) {
@@ -84,6 +185,10 @@ export function chooseInitial3dQuality({
   return 'medium';
 }
 
+/**
+ * @param {AdaptiveQualityOptions} [options]
+ * @returns {Readonly<AdaptiveQualityController>}
+ */
 export function createAdaptiveQualityController({
   mode = 'auto',
   device = {},

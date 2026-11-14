@@ -5,7 +5,60 @@ import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 const SCRATCH_WORLD = new Float64Array(16);
 const SCRATCH_RGBA = [1, 1, 1, 1];
 
-/** Parses CSS hex (`#rgb`, `#rrggbb`, `#rrggbbaa`) or `rgb()/rgba()` into 0..1 floats. */
+/** @typedef {import('../core/entity.js').Entity} Entity */
+/** @typedef {import('../core/scene.js').Scene} Scene */
+/** @typedef {import('../animation/spritesheet.js').SpriteSheet} SpriteSheet */
+/** @typedef {import('./quality3d.js').QualityPresetTier} QualityPresetTier */
+/** @typedef {import('./quality3d.js').Quality2DPreset} Quality2DPreset */
+
+/**
+ * Axis-aligned world-space rectangle.
+ * @typedef {object} ViewBounds2D
+ * @property {number} minX Left edge (world units).
+ * @property {number} minY Top edge (world units).
+ * @property {number} maxX Right edge (world units).
+ * @property {number} maxY Bottom edge (world units).
+ */
+
+/**
+ * Optional camera clamp. Any omitted or non-finite edge is unbounded.
+ * @typedef {object} Camera2DBounds
+ * @property {number} [minX] Minimum camera X (world units).
+ * @property {number} [minY] Minimum camera Y (world units).
+ * @property {number} [maxX] Maximum camera X (world units).
+ * @property {number} [maxY] Maximum camera Y (world units).
+ */
+
+/**
+ * @typedef {object} Camera2DOptions
+ * @property {number} [x=0] Camera centre X in world units (finite).
+ * @property {number} [y=0] Camera centre Y in world units (finite).
+ * @property {number} [zoom=1] Scale factor, > 0 (2 = twice as large on screen).
+ * @property {number} [rotation=0] Camera rotation in radians.
+ * @property {Camera2DBounds | null} [bounds=null] Clamp region for the camera centre (world units).
+ */
+
+/**
+ * Anything Camera2D#follow can track: a point, or an object exposing worldPosition() such as an Entity.
+ * @typedef {{ x: number, y: number } | { worldPosition(): { x: number, y: number } }} Camera2DFollowTarget
+ */
+
+/**
+ * @typedef {object} Camera2DFollowOptions
+ * @property {number} [lerp=1] Follow factor per call in [0, 1] (1 = snap, smaller = smoother).
+ * @property {number} [offsetX=0] Target offset X (world units).
+ * @property {number} [offsetY=0] Target offset Y (world units).
+ * @property {number} [deadzoneX=0] Half-width of the no-move zone around the camera (world units).
+ * @property {number} [deadzoneY=0] Half-height of the no-move zone around the camera (world units).
+ */
+
+/**
+ * Parses CSS hex (#rgb, #rgba, #rrggbb, #rrggbbaa) or rgb()/rgba() into 0..1 floats.
+ * Unparseable input yields opaque white [1, 1, 1, 1].
+ * @param {unknown} color CSS colour string.
+ * @param {number[] | null} [out=null] Array to write [r, g, b, a] into; a new array when null.
+ * @returns {number[]} The [r, g, b, a] array (0..1).
+ */
 export function parseColorRgba(color, out = null) {
   const dst = out ?? [1, 1, 1, 1];
   dst[0] = 1; dst[1] = 1; dst[2] = 1; dst[3] = 1;
@@ -53,13 +106,20 @@ function finiteNumber(value, name, fallback) {
 
 /** 2D camera supporting smooth follow, deadzones, bounds clamping, zoom, rotation and shake. */
 export class Camera2D {
+  /** @param {Camera2DOptions} [options] */
   constructor({ x = 0, y = 0, zoom = 1, rotation = 0, bounds = null } = {}) {
+    /** Centre X (world units). @type {number} */
     this.x = finiteNumber(x, 'x', 0);
+    /** Centre Y (world units). @type {number} */
     this.y = finiteNumber(y, 'y', 0);
+    /** @type {number} */
     this._zoom = 1;
     this.zoom = finiteNumber(zoom, 'zoom', 1);
+    /** Rotation in radians. @type {number} */
     this.rotation = finiteNumber(rotation, 'rotation', 0);
+    /** Clamp region for the centre, or null. @type {Camera2DBounds | null} */
     this.bounds = bounds ?? null;
+    /** @type {number} */
     this._shakeIntensity = 0;
     this._shakeDuration = 0;
     this._shakeTime = 0;
@@ -69,13 +129,17 @@ export class Camera2D {
     this._clampToBounds();
   }
 
+  /** Zoom factor (> 0). @returns {number} */
   get zoom() { return this._zoom; }
+  /** @param {number} value Zoom factor (> 0). */
   set zoom(value) {
     if (!Number.isFinite(value) || value <= 0) throw new RangeError('Camera2D zoom must be > 0');
     this._zoom = value;
   }
 
+  /** Current shake offset X (world units). @returns {number} */
   get offsetX() { return this._offsetX; }
+  /** Current shake offset Y (world units). @returns {number} */
   get offsetY() { return this._offsetY; }
 
   _clampToBounds() {
@@ -87,6 +151,12 @@ export class Camera2D {
     if (Number.isFinite(b.maxY) && this.y > b.maxY) this.y = b.maxY;
   }
 
+  /**
+   * Move toward a target point or entity.
+   * @param {Camera2DFollowTarget | null | undefined} target
+   * @param {Camera2DFollowOptions} [options]
+   * @returns {this}
+   */
   follow(target, { lerp = 1, offsetX = 0, offsetY = 0, deadzoneX = 0, deadzoneY = 0 } = {}) {
     if (!target) return this;
     const pos = typeof target.worldPosition === 'function' ? target.worldPosition() : target;
@@ -103,6 +173,12 @@ export class Camera2D {
     return this;
   }
 
+  /**
+   * Start a decaying screen shake.
+   * @param {number} intensity Peak offset in world units (>= 0).
+   * @param {number} [duration=0.25] Duration in seconds (>= 0).
+   * @returns {this}
+   */
   shake(intensity, duration = 0.25) {
     if (!Number.isFinite(intensity) || intensity < 0) throw new RangeError('shake intensity must be >= 0');
     if (!Number.isFinite(duration) || duration < 0) throw new RangeError('shake duration must be >= 0');
@@ -120,6 +196,11 @@ export class Camera2D {
     return this;
   }
 
+  /**
+   * Advance shake and re-clamp to bounds.
+   * @param {number} dt Delta time in seconds (>= 0).
+   * @returns {this}
+   */
   update(dt) {
     if (!Number.isFinite(dt) || dt < 0) throw new RangeError('Camera2D.update dt must be >= 0');
     if (this._shakeTime > 0 && this._shakeDuration > 0) {
@@ -138,6 +219,12 @@ export class Camera2D {
     return this;
   }
 
+  /**
+   * World-space rectangle visible through a viewport (accounts for zoom, rotation and shake).
+   * @param {number} viewportWidth Viewport width in logical pixels.
+   * @param {number} viewportHeight Viewport height in logical pixels.
+   * @returns {ViewBounds2D}
+   */
   getViewBounds(viewportWidth, viewportHeight) {
     const hw = (viewportWidth * 0.5) / this._zoom;
     const hh = (viewportHeight * 0.5) / this._zoom;
@@ -151,7 +238,80 @@ export class Camera2D {
   }
 }
 
+/**
+ * Ground-shadow tuning for Sprite2D / SpriteCrowd2D. Ratios are relative to the sprite size.
+ * @typedef {object} GroundShadowOptions
+ * @property {number} [widthRatio=0.72] Shadow width / sprite width.
+ * @property {number} [heightRatio=0.18] Shadow height / sprite height.
+ * @property {number} [alpha=0.45] Maximum opacity in [0, 1].
+ * @property {number} [tuckRatio=0.032] Upward shift of the shadow centre / sprite height.
+ * @property {boolean} [jumpScale=true] Shrink and fade the shadow while the sprite is lifted (negative offsetY).
+ * @property {string} [color='#000000'] Shadow CSS colour.
+ * @property {number} [offsetX=0] Extra shadow X offset (local units).
+ * @property {number} [offsetY=0] Extra shadow Y offset (local units).
+ */
+
+/**
+ * Source rectangle inside an image, in pixels.
+ * @typedef {object} SpriteSourceRect
+ * @property {number} x Left (px).
+ * @property {number} y Top (px).
+ * @property {number} width Width (px).
+ * @property {number} height Height (px).
+ */
+
+/**
+ * Animation source exposing the current sheet frame (e.g. an AnimationPlayer).
+ * @typedef {object} SpriteFrameSource
+ * @property {number} frame Current frame index into the sprite sheet.
+ */
+
+/**
+ * Custom draw hook. The context is already transformed (entity matrix, offset, rotation, scale).
+ * @callback Sprite2DCustomDraw
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Entity} entity Owning entity.
+ * @param {Sprite2D} sprite The sprite being drawn.
+ * @returns {void}
+ */
+
+/**
+ * @typedef {object} Sprite2DOptions
+ * @property {'rect' | 'circle' | 'text'} [shape='rect'] Procedural shape used when no image/sheet/customDraw is set (circle uses width as diameter).
+ * @property {number} [width=32] Width in local units (world pixels).
+ * @property {number} [height=32] Height in local units (world pixels).
+ * @property {string} [color='#80e2c2'] Fill colour for procedural shapes and text.
+ * @property {string} [text=''] Text for shape 'text'.
+ * @property {string} [font='20px sans-serif'] CSS font for shape 'text'.
+ * @property {number} [z=0] Draw order within a layer (higher draws on top).
+ * @property {number} [layer=0] Draw layer (higher layers draw on top of lower ones).
+ * @property {boolean} [ySort=false] Sort by world Y within a layer/z (for top-down depth).
+ * @property {boolean} [visible=true] Hide without removing the component.
+ * @property {number} [opacity=1] Alpha in [0, 1].
+ * @property {boolean} [flipX=false] Mirror horizontally.
+ * @property {boolean} [flipY=false] Mirror vertically.
+ * @property {CanvasImageSource | null} [image=null] Image to draw (takes priority over sheet.image).
+ * @property {SpriteSheet | null} [sheet=null] Sprite sheet providing frame rectangles (and the image when image is null).
+ * @property {number} [frame=0] Sheet frame index (ignored while an animation is set).
+ * @property {SpriteSourceRect | null} [sourceRect=null] Explicit source rectangle in pixels (overrides sheet frames).
+ * @property {SpriteFrameSource | null} [animation=null] Animation whose .frame selects the sheet frame.
+ * @property {Sprite2DCustomDraw | null} [customDraw=null] Replaces the built-in drawing.
+ * @property {number | null} [anchorX=null] Horizontal anchor 0..1; null falls back to entity.anchorX, then 0.5.
+ * @property {number | null} [anchorY=null] Vertical anchor 0..1; null falls back to entity.anchorY, then 0.5.
+ * @property {number} [offsetX=0] Visual X offset in local units (does not move the entity; ground shadow stays put).
+ * @property {number} [offsetY=0] Visual Y offset in local units (negative = lifted, e.g. jump bounce).
+ * @property {number} [scaleX=1] Visual X scale.
+ * @property {number} [scaleY=1] Visual Y scale.
+ * @property {number} [rotation=0] Visual rotation in radians.
+ * @property {string | null} [tint=null] CSS colour overlay (images get a 55% silhouette overlay; shapes use it as fill).
+ * @property {number} [flash=0] Hit-flash intensity in [0, 1]; normally driven by Sprite2D#hitFlash.
+ * @property {string} [flashColor='#ffffff'] Hit-flash colour.
+ * @property {boolean | GroundShadowOptions} [groundShadow=false] Draw an elliptical ground shadow (true = defaults).
+ */
+
+/** Renderable 2D visual component drawn by the Canvas2D / WebGL2D adapters. */
 export class Sprite2D extends Component {
+  /** @param {Sprite2DOptions} [options] */
   constructor({
     shape = 'rect', width = 32, height = 32, color = '#80e2c2',
     text = '', font = '20px sans-serif', z = 0,
@@ -193,9 +353,17 @@ export class Sprite2D extends Component {
     this._flashRemaining = 0;
   }
 
+  /** Alias of rotation (radians). @returns {number} */
   get visualRotation() { return this.rotation; }
+  /** @param {number} value Rotation in radians. */
   set visualRotation(value) { this.rotation = value; }
 
+  /**
+   * Flash the sprite with a colour that fades out over duration.
+   * @param {number} [duration=0.08] Seconds (>= 0); 0 clears the flash.
+   * @param {string} [color='#ffffff'] CSS flash colour.
+   * @returns {this}
+   */
   hitFlash(duration = 0.08, color = '#ffffff') {
     if (!Number.isFinite(duration) || duration < 0) {
       throw new RangeError('hitFlash duration must be >= 0');
@@ -207,6 +375,11 @@ export class Sprite2D extends Component {
     return this;
   }
 
+  /**
+   * Advance the hit-flash fade.
+   * @param {number} dt Delta time in seconds.
+   * @returns {void}
+   */
   update(dt) {
     if (this._flashRemaining > 0) {
       this._flashRemaining = Math.max(0, this._flashRemaining - dt);
@@ -216,10 +389,58 @@ export class Sprite2D extends Component {
 }
 
 /**
+ * @typedef {object} SpriteCrowdBindSwarmOptions
+ * @property {boolean} [syncRotation=false] Rotate each instance toward its swarm heading.
+ * @property {boolean} [flipByDirection=true] Flip horizontally when heading left (`sin(rot) < 0`).
+ * @property {number} [frameCount=1] Cyclic animation frame count (`> 1` advances by `animTime * animFps`).
+ * @property {number} [animFps=8] Animation frames per second when `frameCount > 1`.
+ * @property {number} [worldScale=1] Multiplier from swarm simulation coordinates to crowd local coordinates.
+ */
+
+/**
+ * @typedef {object} SpriteCrowd2DOptions
+ * @property {number} [capacity=4096] Maximum simultaneous instances (integer 1..262144).
+ * @property {'rect' | 'circle'} [shape='rect'] Procedural shape when no image/sheet is set.
+ * @property {number} [width=32] Instance width in local units.
+ * @property {number} [height=32] Instance height in local units.
+ * @property {string} [color='#80e2c2'] Fill colour for procedural shapes.
+ * @property {CanvasImageSource | null} [image=null] Shared image (takes priority over sheet.image).
+ * @property {SpriteSheet | null} [sheet=null] Shared sprite sheet; each instance picks a frame.
+ * @property {SpriteSourceRect | null} [sourceRect=null] Explicit source rectangle in pixels shared by all instances.
+ * @property {number} [anchorX=0.5] Horizontal anchor 0..1.
+ * @property {number} [anchorY=0.5] Vertical anchor 0..1.
+ * @property {number} [layer=0] Draw layer.
+ * @property {number} [z=0] Draw order within a layer.
+ * @property {boolean} [ySort=false] Sort every instance individually by world Y (slower; enables per-agent depth).
+ * @property {boolean} [visible=true] Hide the whole crowd.
+ * @property {boolean | GroundShadowOptions} [groundShadow=false] Ground shadow for every instance.
+ * @property {string} [flashColor='#ffffff'] Hit-flash colour.
+ */
+
+/**
+ * Per-instance initial values for SpriteCrowd2D#spawn.
+ * @typedef {object} SpriteCrowdSpawnOptions
+ * @property {number} [x=0] Local X (relative to the owning entity, world units).
+ * @property {number} [y=0] Local Y (relative to the owning entity, world units).
+ * @property {number} [offsetX=0] Visual X offset.
+ * @property {number} [offsetY=0] Visual Y offset (negative = lifted).
+ * @property {number} [rotation=0] Rotation in radians.
+ * @property {number} [scaleX=1] X scale.
+ * @property {number} [scaleY=1] Y scale.
+ * @property {number} [opacity=1] Alpha in [0, 1].
+ * @property {number} [frame=0] Sheet frame index (0..65535).
+ * @property {boolean} [flipX=false] Mirror horizontally.
+ * @property {string | null} [tint=null] CSS colour tint (rgb used as fill for procedural shapes).
+ */
+
+/**
  * High-density Struct-of-Arrays (SoA) 2D sprite batch component for survivor hordes,
  * projectiles, and pickups (10,000+ instances without per-entity JS allocation overhead).
+ * Instances are addressed by the integer index returned from spawn(); the per-instance
+ * typed arrays (x, y, rotation, ...) may be written directly for maximum throughput.
  */
 export class SpriteCrowd2D extends Component {
+  /** @param {SpriteCrowd2DOptions} [options] */
   constructor({
     capacity = 4096,
     shape = 'rect',
@@ -239,8 +460,8 @@ export class SpriteCrowd2D extends Component {
     flashColor = '#ffffff',
   } = {}) {
     super();
-    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 100000) {
-      throw new RangeError('SpriteCrowd2D capacity must be an integer in 1..100000');
+    if (!Number.isInteger(capacity) || capacity < 1 || capacity > 262144) {
+      throw new RangeError('SpriteCrowd2D capacity must be an integer in 1..262144');
     }
     this.capacity = capacity;
     this.shape = shape;
@@ -259,7 +480,9 @@ export class SpriteCrowd2D extends Component {
     this.groundShadow = groundShadow;
     this.flashColor = flashColor;
 
+    /** 1 when the slot is in use. @type {Uint8Array} */
     this.active = new Uint8Array(capacity);
+    /** Local X per instance. @type {Float32Array} */
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
     this.offsetX = new Float32Array(capacity);
@@ -284,10 +507,92 @@ export class SpriteCrowd2D extends Component {
     this._indexInActive = new Int32Array(capacity).fill(-1);
     this._activeCount = 0;
     this._flashingCount = 0;
+    this._boundSwarm = null;
+    this._boundSwarmOpts = null;
+    this._boundGpuSwarm = null;
+    this._boundGpuSwarmOpts = null;
   }
 
-  get count() { return this._activeCount; }
+  /** Number of live instances. @returns {number} */
+  get count() {
+    if (this._boundGpuSwarm) return Math.min(this.capacity, this._boundGpuSwarm.count || 0);
+    if (this._boundSwarm) return Math.min(this.capacity, this._boundSwarm.count || 0);
+    return this._activeCount;
+  }
 
+  /**
+   * Bind a CPU `SwarmSimulation` directly to this crowd for zero-copy chunk rendering.
+   * @param {import('../world/swarm-ecs.js').SwarmSimulation} swarm
+   * @param {SpriteCrowdBindSwarmOptions} [options]
+   * @returns {this}
+   */
+  bindSwarm(swarm, {
+    syncRotation = false,
+    flipByDirection = true,
+    frameCount = 1,
+    animFps = 8,
+    worldScale = 1,
+  } = {}) {
+    if (!swarm || !swarm.posX || !swarm.posY) {
+      throw new TypeError('SpriteCrowd2D.bindSwarm requires a SwarmSimulation');
+    }
+    this.clear();
+    this._boundGpuSwarm = null;
+    this._boundGpuSwarmOpts = null;
+    this._boundSwarm = swarm;
+    this._boundSwarmOpts = {
+      syncRotation: Boolean(syncRotation),
+      flipByDirection: Boolean(flipByDirection),
+      frameCount: Math.max(1, frameCount | 0),
+      animFps: Number(animFps) > 0 ? Number(animFps) : 8,
+      worldScale: Number(worldScale) > 0 ? Number(worldScale) : 1,
+    };
+    return this;
+  }
+
+  /**
+   * Bind a WebGL2 `GpuSwarmWebGL2` state texture directly for zero-CPU-upload `texelFetch` rendering.
+   * @param {import('../world/gpu-swarm-webgl2.js').GpuSwarmWebGL2} gpuSwarm
+   * @param {SpriteCrowdBindSwarmOptions} [options]
+   * @returns {this}
+   */
+  bindGpuSwarm(gpuSwarm, {
+    syncRotation = false,
+    flipByDirection = true,
+    frameCount = 1,
+    animFps = 8,
+    worldScale = 1,
+  } = {}) {
+    if (!gpuSwarm || !Number.isFinite(gpuSwarm.texWidth)) {
+      throw new TypeError('SpriteCrowd2D.bindGpuSwarm requires a GpuSwarmWebGL2 instance');
+    }
+    this.clear();
+    this._boundSwarm = null;
+    this._boundSwarmOpts = null;
+    this._boundGpuSwarm = gpuSwarm;
+    this._boundGpuSwarmOpts = {
+      syncRotation: Boolean(syncRotation),
+      flipByDirection: Boolean(flipByDirection),
+      frameCount: Math.max(1, frameCount | 0),
+      animFps: Number(animFps) > 0 ? Number(animFps) : 8,
+      worldScale: Number(worldScale) > 0 ? Number(worldScale) : 1,
+    };
+    return this;
+  }
+
+  /** Detach any zero-copy swarm binding. @returns {void} */
+  unbindSwarm() {
+    this._boundSwarm = null;
+    this._boundSwarmOpts = null;
+    this._boundGpuSwarm = null;
+    this._boundGpuSwarmOpts = null;
+  }
+
+  /**
+   * Allocate an instance.
+   * @param {SpriteCrowdSpawnOptions} [options]
+   * @returns {number} Instance index, or -1 when the crowd is full.
+   */
   spawn({
     x = 0,
     y = 0,
@@ -334,6 +639,16 @@ export class SpriteCrowd2D extends Component {
     return idx;
   }
 
+  /**
+   * Update an instance transform.
+   * @param {number} index Instance index from spawn().
+   * @param {number} x Local X.
+   * @param {number} y Local Y.
+   * @param {number} [rotation=0] Radians.
+   * @param {number} [scaleX=1]
+   * @param {number} [scaleY=1]
+   * @returns {boolean} false when the index is invalid or inactive.
+   */
   setTransform(index, x, y, rotation = 0, scaleX = 1, scaleY = 1) {
     if (index < 0 || index >= this.capacity || !this.active[index]) return false;
     this.x[index] = x;
@@ -344,6 +659,12 @@ export class SpriteCrowd2D extends Component {
     return true;
   }
 
+  /**
+   * Flash one instance with flashColor, fading over duration.
+   * @param {number} index Instance index.
+   * @param {number} [duration=0.08] Seconds; <= 0 clears the flash.
+   * @returns {boolean} false when the index is invalid or inactive.
+   */
   hitFlash(index, duration = 0.08) {
     if (index < 0 || index >= this.capacity || !this.active[index]) return false;
     if (!Number.isFinite(duration) || duration <= 0) {
@@ -358,6 +679,11 @@ export class SpriteCrowd2D extends Component {
     return true;
   }
 
+  /**
+   * Release an instance (swap-removes from the active list).
+   * @param {number} index Instance index.
+   * @returns {boolean} false when the index is invalid or inactive.
+   */
   kill(index) {
     if (index < 0 || index >= this.capacity || !this.active[index]) return false;
     this.active[index] = 0;
@@ -378,6 +704,7 @@ export class SpriteCrowd2D extends Component {
     return true;
   }
 
+  /** Release every instance. @returns {void} */
   clear() {
     for (let i = 0; i < this._activeCount; i++) {
       const idx = this._activeIndices[i];
@@ -391,6 +718,11 @@ export class SpriteCrowd2D extends Component {
     this._flashingCount = 0;
   }
 
+  /**
+   * Advance instance hit-flash fades.
+   * @param {number} dt Delta time in seconds.
+   * @returns {void}
+   */
   update(dt) {
     if (this._flashingCount <= 0 || !(dt > 0)) return;
     for (let i = 0; i < this._activeCount; i++) {
@@ -463,7 +795,85 @@ function compareDrawItems(lhs, rhs) {
   );
 }
 
-/** Optional Canvas renderer; not imported by a 3D or UI-only game. */
+/** @typedef {HTMLCanvasElement | OffscreenCanvas} BufferCanvas2D */
+
+/**
+ * Split-screen view descriptor. x/y/width/height are fractions (0..1) of the logical canvas.
+ * @typedef {object} Canvas2DView
+ * @property {number} x Left edge fraction.
+ * @property {number} y Top edge fraction.
+ * @property {number} width Width fraction.
+ * @property {number} height Height fraction.
+ * @property {Camera2D} camera Camera rendering into this view.
+ */
+
+/**
+ * @typedef {object} SplitViewOptions
+ * @property {string} [dividerColor='rgba(255,255,255,0.22)'] CSS colour of the divider lines.
+ * @property {number} [dividerWidth=2] Divider width in logical pixels (>= 0).
+ */
+
+/**
+ * @typedef {object} Canvas2DAdapterOptions
+ * @property {HTMLCanvasElement} canvas Target canvas (required).
+ * @property {number} [width=960] Logical design width in world pixels.
+ * @property {number} [height=540] Logical design height in world pixels.
+ * @property {string} [background='#101820'] Clear colour.
+ * @property {number} [pixelRatio=globalThis.devicePixelRatio || 1] Device pixel ratio, clamped by the quality preset (max 3).
+ * @property {boolean} [imageSmoothing=true] Smooth scaled images (overridden by the quality preset).
+ * @property {boolean} [interpolate=false] Always render interpolated transforms (entities with interpolate=true always do).
+ * @property {boolean} [cull=true] Skip sprites outside the camera view.
+ * @property {QualityPresetTier | null} [quality=null] Quality tier ('low' | 'medium' | 'high' | 'ultra'); null disables presets.
+ * @property {((width: number, height: number) => BufferCanvas2D | null) | null} [createBufferCanvas=null] Factory for offscreen buffers (tint/shadow caches).
+ */
+
+/**
+ * @typedef {object} Renderer2DStats
+ * @property {number} drawnSprites Sprites (and crowd instances) drawn last frame.
+ * @property {number} drawnCrowds Crowd batches drawn last frame.
+ * @property {number} culled Items skipped by culling last frame.
+ * @property {boolean} sorted Whether a sort pass ran last frame.
+ * @property {string} backend 'canvas2d' or 'webgl2'.
+ */
+
+/**
+ * Letterboxed viewport mapping logical coordinates to the canvas.
+ * @typedef {object} Viewport2D
+ * @property {number} vw Canvas CSS width (px).
+ * @property {number} vh Canvas CSS height (px).
+ * @property {number} dpr Effective device pixel ratio.
+ * @property {number} scale Uniform logical-to-CSS scale.
+ * @property {number} x Letterbox X offset (CSS px).
+ * @property {number} y Letterbox Y offset (CSS px).
+ */
+
+/**
+ * Renderer-neutral 2D adapter shared by Canvas2D and WebGL2D backends.
+ * @typedef {object} Renderer2DAdapter
+ * @property {Camera2D} camera Default camera (used when no split views are set).
+ * @property {(scene: Scene, app?: { renderAlpha?: number } | null) => void} render Draw the scene; app.renderAlpha drives interpolation.
+ * @property {() => void} resize Re-measure the canvas and update the viewport.
+ * @property {(views: Canvas2DView[] | null, options?: SplitViewOptions) => Canvas2DView[] | null} setViews Set split-screen views (null/empty restores single camera); returns copies.
+ * @property {() => Canvas2DView[] | null} getViews Copies of the active views, or null.
+ * @property {(clientX: number, clientY: number, viewIndex?: number | null) => { x: number, y: number }} screenToWorld Convert client coordinates to world coordinates.
+ * @property {(worldX: number, worldY: number, viewIndex?: number) => { x: number, y: number }} worldToScreen Convert world coordinates to client coordinates.
+ * @property {(tier: QualityPresetTier | null | undefined) => Quality2DPreset | null} setQuality Switch quality tier (null clears); returns the active preset.
+ * @property {() => QualityPresetTier | null} getQuality Active quality tier.
+ * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
+ * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
+ * @property {() => Viewport2D} getViewport Copy of the current viewport.
+ * @property {() => void} dispose Release buffers and caches.
+ */
+
+/**
+ * @typedef {Renderer2DAdapter & { ctx: CanvasRenderingContext2D }} Canvas2DAdapter
+ */
+
+/**
+ * Optional Canvas renderer; not imported by a 3D or UI-only game.
+ * @param {Canvas2DAdapterOptions} options
+ * @returns {Canvas2DAdapter}
+ */
 export function createCanvas2DAdapter({
   canvas, width = 960, height = 540, background = '#101820',
   pixelRatio = globalThis.devicePixelRatio || 1,
@@ -948,6 +1358,92 @@ export function createCanvas2DAdapter({
       ctx.translate(item.e, item.f);
     }
     const baseAlpha = ctx.globalAlpha;
+    if (crowd._boundSwarm) {
+      const swarm = crowd._boundSwarm;
+      const opts = crowd._boundSwarmOpts || {};
+      const ws = opts.worldScale || 1;
+      const syncRot = Boolean(opts.syncRotation);
+      const flipByDir = opts.flipByDirection !== false;
+      const fCount = opts.frameCount || 1;
+      const fps = opts.animFps || 8;
+      const simpleMatrix = cull && item.a === 1 && item.d === 1 && item.b === 0 && item.c === 0;
+      const invWs = 1 / ws;
+      const padLocal = halfPad * invWs;
+      const lMinX = (viewBounds.minX - item.e) * invWs - padLocal;
+      const lMaxX = (viewBounds.maxX - item.e) * invWs + padLocal;
+      const lMinY = (viewBounds.minY - item.f) * invWs - padLocal;
+      const lMaxY = (viewBounds.maxY - item.f) * invWs + padLocal;
+
+      const sPosX = swarm.posX;
+      const sPosY = swarm.posY;
+      const sRot = swarm.rot;
+      const sTime = swarm.animTime;
+      const sClip = swarm.animClip;
+      const sFlash = swarm.flash;
+      const img = crowd.image ?? crowd.sheet?.image ?? null;
+
+      if (typeof swarm.ensureChunks === 'function' && swarm.chunkHead) {
+        swarm.ensureChunks();
+        const cCount = swarm.chunkCount;
+        const cHead = swarm.chunkHead;
+        const cNext = swarm.chunkNext;
+        const cMinX = swarm.chunkMinX;
+        const cMaxX = swarm.chunkMaxX;
+        const cMinY = swarm.chunkMinY;
+        const cMaxY = swarm.chunkMaxY;
+        for (let ck = 0, cn = cHead.length; ck < cn; ck++) {
+          if (cCount[ck] === 0) continue;
+          if (simpleMatrix && (cMaxX[ck] < lMinX || cMinX[ck] > lMaxX || cMaxY[ck] < lMinY || cMinY[ck] > lMaxY)) {
+            stats.culled += cCount[ck];
+            continue;
+          }
+          let id = cHead[ck];
+          while (id !== -1) {
+            const lx = sPosX[id] * ws;
+            const ly = sPosY[id] * ws;
+            if (simpleMatrix) {
+              const wx = item.e + lx, wy = item.f + ly;
+              if (wx + halfPad < viewBounds.minX || wx - halfPad > viewBounds.maxX ||
+                  wy + halfPad < viewBounds.minY || wy - halfPad > viewBounds.maxY) {
+                stats.culled++;
+                id = cNext[id];
+                continue;
+              }
+            }
+            ctx.save();
+            ctx.translate(lx, ly);
+            if (allowShadows && crowd.groundShadow) {
+              drawGroundShadow2D(w, h, ax, ay, 0, 0, baseAlpha, crowd.groundShadow);
+            }
+            const r = sRot[id];
+            if (syncRot && r) ctx.rotate(r);
+            if (flipByDir && Math.sin(r) < 0) ctx.scale(-1, 1);
+            if (img) {
+              const fIdx = fCount > 1 ? (Math.floor(sTime[id] * fps) % fCount) : sClip[id];
+              const rect = crowd.sourceRect ?? (crowd.sheet ? crowd.sheet.frame(fIdx) : null);
+              if (rect) ctx.drawImage(img, rect.x, rect.y, rect.width, rect.height, dx, dy, w, h);
+              else ctx.drawImage(img, dx, dy, w, h);
+              if (sFlash[id] > 0) drawTintedImageOverlay(img, rect, crowd.flashColor || '#ffffff', Math.min(1, sFlash[id]), dx, dy, w, h, baseAlpha);
+            } else if (crowd.shape === 'circle') {
+              ctx.fillStyle = sFlash[id] > 0 ? (crowd.flashColor || '#ffffff') : crowd.color;
+              ctx.beginPath();
+              ctx.arc(0, 0, w / 2, 0, Math.PI * 2);
+              ctx.fill();
+            } else {
+              ctx.fillStyle = sFlash[id] > 0 ? (crowd.flashColor || '#ffffff') : crowd.color;
+              ctx.fillRect(dx, dy, w, h);
+            }
+            ctx.restore();
+            stats.drawnSprites++;
+            id = cNext[id];
+          }
+        }
+      }
+      ctx.restore();
+      stats.drawnCrowds++;
+      return;
+    }
+
     for (let i = 0; i < crowd._activeCount; i++) {
       const idx = crowd._activeIndices[i];
       const lx = crowd.x[idx], ly = crowd.y[idx];

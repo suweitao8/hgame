@@ -5,6 +5,162 @@
  * The Three.js namespace is injected by callers so non-3D projects load nothing.
  */
 
+/** @typedef {[number, number, number]} SkyVec3Tuple Direction/point [x, y, z]. */
+/** @typedef {SkyVec3Tuple|{ x: number, y: number, z: number }} SkyVec3Input */
+/** @typedef {string|number|{ readonly isColor: boolean }} SkyColorInput CSS color string, 0xRRGGBB number, or a THREE.Color. */
+/** @typedef {'day'|'goldenHour'|'overcast'|'dusk'|'night'} Sky3DPresetName */
+/**
+ * @typedef {object} Sky3DPreset
+ * @property {string} zenithColor
+ * @property {string} horizonColor
+ * @property {string} groundColor
+ * @property {string} sunColor
+ * @property {readonly number[]} sunDirection Normalised on use.
+ * @property {number} sunIntensity
+ * @property {number} cloudCoverage 0..1.
+ * @property {number} cloudDensity 0..1.
+ * @property {number} cloudSpeed Cloud drift in shader units per second.
+ * @property {number} mieG Mie asymmetry, -1..1.
+ * @property {number} mieStrength
+ * @property {number} exposure
+ */
+/**
+ * @typedef {object} Sky3DOptions
+ * @property {Sky3DPresetName} [preset='day'] Base preset; explicit fields override it.
+ * @property {SkyColorInput} [zenithColor]
+ * @property {SkyColorInput} [horizonColor]
+ * @property {SkyColorInput} [groundColor]
+ * @property {SkyColorInput} [sunColor]
+ * @property {SkyVec3Input} [sunDirection] Direction towards the sun; normalised.
+ * @property {number} [sunIntensity=1]
+ * @property {number} [cloudCoverage=0.42]
+ * @property {number} [cloudDensity=0.55]
+ * @property {number} [cloudSpeed=0.014]
+ * @property {number} [mieG=0.78]
+ * @property {number} [mieStrength=0.28]
+ * @property {number} [exposure=1]
+ * @property {number} [time=0] Initial shader time in seconds.
+ * @property {number} [radius=450] Dome radius in world units (>10).
+ * @property {boolean} [linearOutput=false] Output linear colour and disable tone mapping.
+ */
+/** @typedef {Partial<Sky3DPreset>&Partial<Sky3DOptions>} Sky3DPatch Runtime-updatable subset of {@link Sky3DOptions}. */
+/**
+ * @typedef {object} SkyMeshLike
+ * @property {string} name
+ * @property {boolean} frustumCulled
+ * @property {number} renderOrder
+ * @property {{ x: number, y: number, z: number, set(x: number, y: number, z: number): unknown }} position
+ * @property {{ remove(object: object): unknown }|null} parent
+ */
+/**
+ * @typedef {object} SkyMaterialLike
+ * @property {string} name
+ * @property {boolean} toneMapped
+ * @property {() => void} dispose
+ */
+/**
+ * @typedef {object} SkyThree The subset of the THREE namespace used by the sky dome.
+ * @property {new (radius: number, widthSegments: number, heightSegments: number) => { dispose(): void }} SphereGeometry
+ * @property {new (parameters: object) => SkyMaterialLike} ShaderMaterial
+ * @property {new (geometry: object, material: object) => SkyMeshLike} Mesh
+ * @property {new (x?: number, y?: number, z?: number) => { x: number, y: number, z: number, set(x: number, y: number, z: number): unknown }} Vector3
+ * @property {number} [BackSide]
+ * @property {new (value?: unknown) => object} [Color]
+ * @property {new (renderer: object) => { fromScene(scene: object, sigma: number, near: number, far: number): { texture: object, dispose(): void }, dispose(): void }} [PMREMGenerator]
+ * @property {new () => { add(object: object): unknown }} [Scene]
+ */
+/**
+ * @typedef {object} Sky3DBakeOptions
+ * @property {{ environment: unknown }|null} [targetScene=null] Receives `environment` when given.
+ * @property {number} [near=0.5]
+ * @property {number} [far=1000]
+ */
+/**
+ * @typedef {object} Sky3D
+ * @property {SkyMeshLike} mesh Sky dome; add it to the scene.
+ * @property {SkyMaterialLike} material
+ * @property {Record<string, { value: unknown }>} uniforms Shader uniforms.
+ * @property {SkyVec3Tuple} sunDirection Normalised sun direction (getter).
+ * @property {object|null} environmentTexture Last baked PMREM texture (getter).
+ * @property {boolean} linearOutput (getter).
+ * @property {(patch?: Sky3DPatch) => void} setOptions
+ * @property {(enabled: boolean) => void} setLinearOutput
+ * @property {(name: Sky3DPresetName, overrides?: Sky3DPatch) => void} setPreset Throws on unknown preset.
+ * @property {(dt?: number, cameraPosition?: { x?: number, y?: number, z?: number }|null) => void} update dt in seconds; follows the camera when given.
+ * @property {(renderer: { getContext?(): object|null }, options?: Sky3DBakeOptions) => (object|null)} bakeEnvironment
+ * @property {() => boolean} dispose
+ */
+/**
+ * @typedef {object} DirectionalLightLike
+ * @property {{ x: number, y: number, z: number, set?(x: number, y: number, z: number): unknown }} [position]
+ * @property {{ position: { x: number, y: number, z: number, set?(x: number, y: number, z: number): unknown }, updateMatrixWorld?(force?: boolean): void }} [target]
+ * @property {{ camera: { left: number, right: number, top: number, bottom: number, near: number, far: number, updateProjectionMatrix?(): void }, mapSize?: { x: number, y: number }, bias: number, normalBias?: number }} shadow
+ */
+/**
+ * @typedef {object} ShadowFitBounds Either {min,max} or {center,radius}.
+ * @property {SkyVec3Tuple} [min]
+ * @property {SkyVec3Tuple} [max]
+ * @property {SkyVec3Tuple} [center]
+ * @property {number} [radius]
+ */
+/**
+ * @typedef {object} ShadowFitOptions
+ * @property {SkyVec3Input|null} [sunDirection=null] Defaults to light.position - light.target.position.
+ * @property {number} [distance=40] Light distance from bounds centre, world units.
+ * @property {number} [padding=2] World units added on each side.
+ * @property {boolean} [snapToTexels=true] Snap to shadow-map texels to avoid shimmer.
+ * @property {number|null} [bias=-0.0003]
+ * @property {number|null} [normalBias=0.02]
+ */
+/**
+ * @typedef {object} ShadowFrustum
+ * @property {number} left
+ * @property {number} right
+ * @property {number} bottom
+ * @property {number} top
+ * @property {number} near
+ * @property {number} far
+ */
+/**
+ * @typedef {object} PooledLightLike
+ * @property {{ set?(x: number, y: number, z: number): unknown }} [position]
+ * @property {{ set?(color: unknown): unknown }} [color]
+ * @property {number} distance
+ * @property {number} intensity
+ * @property {boolean} castShadow
+ * @property {boolean} visible
+ * @property {() => void} [dispose]
+ */
+/**
+ * @typedef {object} LightPoolThree
+ * @property {new (color: number, intensity: number, distance: number, decay: number) => PooledLightLike} PointLight
+ */
+/**
+ * @typedef {object} LightPoolOptions
+ * @property {number} [size=6] Pool size, integer 1..32.
+ * @property {number} [defaultDecay=2] PointLight decay.
+ */
+/**
+ * @typedef {object} LightFlashOptions
+ * @property {number} [x=0] World units.
+ * @property {number} [y=0]
+ * @property {number} [z=0]
+ * @property {SkyColorInput} [color=0xffb35c]
+ * @property {number} [intensity=5] Must be > 0.
+ * @property {number} [distance=8] World units.
+ * @property {number} [duration=0.08] Seconds; must be > 0.
+ */
+/**
+ * @typedef {object} LightPool3D
+ * @property {number} size (getter)
+ * @property {number} activeCount Lights currently flashing (getter).
+ * @property {(options?: LightFlashOptions) => (PooledLightLike|null)} flash Steals the most-faded slot when full; null if disposed/invalid.
+ * @property {(dt: number) => number} update dt in seconds; returns active count.
+ * @property {() => void} clear
+ * @property {() => boolean} dispose
+ */
+
+/** @type {Readonly<Record<Sky3DPresetName, Readonly<Sky3DPreset>>>} */
 export const SKY3D_PRESETS = Object.freeze({
   day: Object.freeze({
     zenithColor: '#2c68b8',
@@ -202,7 +358,12 @@ function normalizeVec3(input, fallback) {
   return len > 1e-8 ? [x / len, y / len, z / len] : [...fallback];
 }
 
-/** Creates an atmospheric procedural sky dome + matching PMREM environment baker. */
+/**
+ * Creates an atmospheric procedural sky dome + matching PMREM environment baker.
+ * @param {SkyThree} THREE
+ * @param {Sky3DOptions} [options]
+ * @returns {Sky3D}
+ */
 export function createProceduralSky3D(THREE, options = {}) {
   if (!THREE?.SphereGeometry || !THREE?.ShaderMaterial || !THREE?.Mesh || !THREE?.Vector3) {
     throw new TypeError('createProceduralSky3D requires SphereGeometry, ShaderMaterial, Mesh and Vector3');
@@ -356,6 +517,11 @@ export function createProceduralSky3D(THREE, options = {}) {
 /**
  * Fits a DirectionalLight's orthographic shadow frustum tightly around scene
  * or receiver bounds and optionally snaps to shadow-map texels to avoid shimmer.
+ * @param {Pick<SkyThree, 'Vector3'>} THREE
+ * @param {DirectionalLightLike} light
+ * @param {ShadowFitBounds} bounds
+ * @param {ShadowFitOptions} [options]
+ * @returns {ShadowFrustum} The applied orthographic bounds.
  */
 export function fitDirectionalShadowFrustum(THREE, light, bounds, {
   sunDirection = null,
@@ -472,6 +638,10 @@ export function fitDirectionalShadowFrustum(THREE, light, bounds, {
 /**
  * Fixed pool of transient PointLights kept mounted at zero intensity to avoid
  * runtime Three.js shader recompilations when explosions or muzzle flashes fire.
+ * @param {LightPoolThree} THREE
+ * @param {{ add(object: object): unknown, remove?(object: object): unknown }} parent Scene or Group.
+ * @param {LightPoolOptions} [options]
+ * @returns {LightPool3D}
  */
 export function createLightPool3D(THREE, parent, { size = 6, defaultDecay = 2 } = {}) {
   if (!THREE?.PointLight || !parent?.add) {
