@@ -10,7 +10,7 @@ Always use the engine-native `createVfxSystem` (`vendor/hgame/vfx/index.js` or `
 ## 1. Initialization
 
 ```js
-import { createVfxSystem, CROWD_STATUS } from '../vendor/hgame/index.js';
+import { createVfxSystem, VFX_SHAPE, CROWD_STATUS } from '../vendor/hgame/index.js';
 
 const vfx = createVfxSystem({
   mode: '3d', // '3d' | 'webgl2d' | 'canvas2d' | 'headless'

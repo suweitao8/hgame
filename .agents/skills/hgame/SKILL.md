@@ -32,6 +32,11 @@ Check which folder the current workspace is in before running commands:
 - **Generated Standalone Game Project**: contains `engine.config.json`, `game.config.json`, `src/main.js`, and `vendor/hgame/VERSION`.
   - Keep all game logic, AI, levels, and save schemas in `src/` and `assets/`.
   - Treat `vendor/hgame/` as a vendored runtime copy (do not treat ad-hoc edits there as an engine source change).
+  - Run `npm test`, `npm run check` (`node --check src/main.js`), and `npm run release -- --version <ver>` directly inside the game folder.
+  - Because `docs/api/API-INDEX.json`, `types/`, and `.agents/skills/` live in the **HGame engine root (`<hgame-repo>`)**, call them via `<hgame-repo>` when working inside a standalone game directory so commands never fail:
+    - API quick lookup: `node "<hgame-repo>/scripts/query-api.mjs" <keyword>` (or `npm --prefix "<hgame-repo>" run api -- <keyword>`)
+    - Balance / Level / Narrative checks: `node "<hgame-repo>/.agents/skills/<skill>/scripts/<script>.mjs" ...`
+    - Headless snapshot & preview: `node "<hgame-repo>/scripts/snapshot.mjs" .` and `node "<hgame-repo>/scripts/preview.mjs" . --port 4176`
 
 ---
 
@@ -64,10 +69,11 @@ node scripts/create-game.mjs "<game-dir>" --profile ui --with audio,save --name 
 ## Step 2: Curate Art & Audio Sheets (Engine Repo)
 
 1. **AI Art Sheet Slicing & Cutout** (`scripts/process-assets.mjs`):
-   - Supports `1x1` (`--grid 1`), `2x2` (`--grid 2`), `3x3` (`--grid 3`) PNG sheets and `--bg transparent | green | white`.
-   - Default `--mode actor` removes background/green spill, strips faint sole fringes, and exports **shadow-free** PNGs so runtime `Sprite2D.groundShadow` / `SpriteCrowd2D` draws dynamic shadows cleanly.
+   - Supports `1x1` (`--grid 1`), `2x2` (`--grid 2`), `3x3` (`--grid 3`) PNG sheets and `--bg white | green | transparent`.
+   - **Recommended default**: generate a **1K pure white background (`#FFFFFF`) `3x3` grid** (`--grid 3 --bg white`) to eliminate green-screen color spill on character edges and soles.
+   - Default `--mode actor` removes background/spill, strips faint sole fringes, and exports **shadow-free** PNGs so runtime `Sprite2D.groundShadow` / `SpriteCrowd2D` draws dynamic shadows cleanly.
    ```powershell
-   npm run process:assets -- --input sheet.png --grid 3 --bg green --mode actor --out-dir "<game-dir>/assets/actors"
+   npm run process:assets -- --input sheet.png --grid 3 --bg white --mode actor --out-dir "<game-dir>/assets/actors"
    ```
 2. **Audio Variant Selection & Normalization** (`scripts/process-audio.mjs`, requires `ffmpeg`):
    - Feed 4 generated MP3 takes per SFX cue; automatically selects the 2–4 most duration/RMS-consistent variants, trims MP3 silence, normalizes loudness, and exports mono 24 kHz MP3 (`96k`) or stereo 44.1 kHz BGM (`128k` with `--bgm`).
@@ -103,7 +109,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 | **Touch / Arcade / Split-Screen** | `platform/input.js`, `integrations/touch-controls.js` | Touch-first `app.input.pointers`; optional HUD `HGame.createArcadeControls` + `createTouchControls` (`mode: 'touch-only'`); P1 `WASD` + `JKL UIO` (reserve `Q E`); P2 `Arrows` + `123456` (reserve `0 .`); `HGame.computeSplitScreenViews` + `renderer.setViews` |
 | **Commercial Red Dot Tree** | `ui/red-dot.js`, `integrations/red-dot-dom.js` | `HGame.createRedDotSystem` (Trie + DAG `link`, `registerRule`, `markUnread`, `registerDaily`, `setReadyAt`, `setUnlocked`, `setMuted`, `explain`) + `bindRedDotDOM` (`data-red-dot`, `data-red-dot-ack`) |
 | **0-KB Synth & Spatial Audio** | `platform/audio.js`, `platform/audio/synth.js` | Zero-asset `audio.playSynth('hit' \| 'slash' \| 'shoot' \| 'explosion' \| 'pickup' \| 'powerup' \| 'click' \| 'hurt' \| 'laser' \| 'jump', { pitchJitter })` + `createSynthSfx`; 4 buses + limiter, `registerCue`/`playCue`, 3D `HRTF`, 2D `position2D`, `setOcclusionProbe` |
-| **Deterministic Sim & Physics** | `sim/*`, `physics/rapier2d.js`, `physics/rapier3d.js`, `integrations/trace.js` | `sim/rng.js` (`createRng`), `sim/checksum.js`, `sim/script.js`; pinned Rapier `0.21.0`, `scene.physics.add`, `createCharacterController`, `takeSnapshot`/`restoreSnapshot`, `HGame.createTraceRecorder` |
+| **Deterministic Sim & Physics** | `sim/*`, `physics/rapier2d.js`, `physics/rapier3d.js`, `integrations/trace.js` | `sim/rng.js` (`createSeededRng`), `sim/checksum.js` (`createStateChecksum`, `hashState`), `sim/script.js` (`runScripted`); pinned Rapier `0.21.0`, `scene.physics.add`, `createCharacterController`, `takeSnapshot`/`restoreSnapshot`, `HGame.createTraceRecorder` |
 | **Multiplayer Foundation** | `lockstep/confirmed-frames.js`, `network/` | `createConfirmedFrameScheduler`, `StateSyncRoom` / `PredictedRoom` / `LockstepRoom` (isolated workspace under `network/`) |
 
 ### Mandatory Architecture Rules

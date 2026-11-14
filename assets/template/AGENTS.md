@@ -28,7 +28,7 @@
 | 3D Adapter, Sky, Lights, Post & Culling | `../vendor/hgame/integrations/three.js`, `sky3d.js`, `lighting3d.js`, `post3d.js`, `culling3d.js`, `camera3d.js` | `createThreeAdapter`, `createProceduralSky3D`, `createMegaLights3D`, `createIrradianceProbeVolume3D`, `createPostProcessVolumeStack`, `createInstancedBatch3D`, `createCameraRig3D` |
 | 3D Rigged GLB, VAT Crowd & World PBR | `../vendor/hgame/integrations/model3d.js`, `world-aligned-material.js` | `createModel3DProvider`, `createInstancedCrowd3D`, `createBoneVatCrowd3D`, `createWorldMaterialPalette`, `applyGeometricSpecularAA` |
 | Zero-GC VFX & Game-Feel | `../vendor/hgame/vfx/index.js` | `createVfxSystem`, `emitHitImpact`, `burstParticles`, `slashArc`, `lightningBolt`, `spawnTelegraph`, `popupNumber`, `screenPulse`, `CROWD_STATUS` |
-| Deterministic Sim Helpers | `../vendor/hgame/sim/rng.js`, `checksum.js`, `script.js` | `createRng`, `createStateChecksum`, `runScriptedInputs` |
+| Deterministic Sim Helpers | `../vendor/hgame/sim/rng.js`, `checksum.js`, `script.js` | `createSeededRng`, `createStateChecksum`, `hashState`, `runScripted` |
 | Touch HUD & Red Dot DOM Binder | `../vendor/hgame/integrations/touch-controls.js`, `red-dot-dom.js` | `createTouchControls`, `bindRedDotDOM` (`[data-red-dot]`, `[data-red-dot-ack]`) |
 | Quality Presets (`low`/`medium`/`high`) | `../vendor/hgame/integrations/quality3d.js` | `renderer.setQuality('low' \| 'medium' \| 'high' \| 'ultra')`, `QUALITY2D_PRESETS`, `QUALITY3D_PRESETS` |
 | 0-KB Synth & Spatial Audio | `app.services.audio` (or `../vendor/hgame/platform/audio/synth.js`) | `playSynth`, `createSynthSfx`, `SYNTH_PRESETS`, `decode`, `registerCue`, `playCue`, `updateListenerFromCamera`, `setOcclusionProbe` |
@@ -39,6 +39,13 @@
 # Run project tests & syntax checks
 npm test
 npm run check
+
+# Query engine API or run snapshot/skill validators via the HGame engine root (<hgame-repo>):
+node "<hgame-repo>/scripts/query-api.mjs" <keyword>
+node "<hgame-repo>/scripts/snapshot.mjs" .
+node "<hgame-repo>/.agents/skills/hgame-balance-sim/scripts/sim-balance.mjs" --config <balance.json>
+node "<hgame-repo>/.agents/skills/hgame-level-architect/scripts/check-level.mjs" --level <level.json>
+node "<hgame-repo>/.agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs" --story <story.json>
 
 # Preview over loopback HTTP (never open index.html via file://)
 # Using HGame's preview.mjs or any static HTTP server from project root:

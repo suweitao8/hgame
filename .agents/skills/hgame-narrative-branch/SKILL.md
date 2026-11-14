@@ -37,5 +37,7 @@ node .agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs --demo
 ## 3. Dialogue Style Rules
 
 - **Short & punchy**: keep each node line `<= 60` characters (configurable with `--max-chars`).
+- **2–3 meaningful choices (no fake branches)**: every branching decision node must offer **2–3 choices with distinct consequences or risk-reward tradeoffs**—forbid fake single-choice illusions or cosmetic duplicates leading to identical outcomes.
+- **Sharp, witty & high-contrast**: write brisk, memorable lines with character contrast or dry humor (`简练有梗、带反差感`); reject preachy exposition, filler lectures, or melodramatic lyricism (`拒绝冗长说教与矫情抒情`).
 - **Zero dead-ends**: non-ending nodes must declare at least one `choices` edge or `next` target.
 - **100% reachable endings**: every node marked `"ending": true` must be reachable from `start`.
