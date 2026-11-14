@@ -5,6 +5,7 @@
 //
 //   node scripts/snapshot.mjs <game-dir> [--out snap.png] [--wait 800] [--keys d:360,space:100]
 //        [--selector "#game"] [--viewport 960x540] [--baseline base.png] [--update-baseline]
+//        [--eval "<js expr>"] [--freeze-time] [--steps N] [--state-hook __hgameState]
 //        [--threshold 0.01] [--query horde=3000] [--chrome <path>] [--ready "#game[data-engine-ready=true]"]
 //
 // Exit code 1 when: page errors, blank canvas, or baseline diff above threshold.
@@ -20,7 +21,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const argv = process.argv.slice(2);
 const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
 const flag = name => argv.includes(name);
-const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !['--update-baseline'].includes(argv[i - 1])));
+const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !['--update-baseline', '--freeze-time'].includes(argv[i - 1])));
 if (!gameDir) { console.error('Usage: node scripts/snapshot.mjs <game-dir> [options] (see file header)'); process.exit(2); }
 
 const outPng = path.resolve(opt('--out', path.join(gameDir, 'build', 'snapshot.png')));
@@ -31,6 +32,11 @@ const [vw, vh] = opt('--viewport', '960x540').split('x').map(Number);
 const baseline = opt('--baseline', '');
 const query = opt('--query', '');
 const threshold = Number(opt('--threshold', 0.01));
+const evalExpr = opt('--eval', '');
+const freeze = flag('--freeze-time') || argv.includes('--steps');
+const stepsArg = opt('--steps', '');
+const stateHook = opt('--state-hook', '__hgameState');
+const FRAME_MS = 1000 / 60;
 const keys = opt('--keys', '').split(',').filter(Boolean).map(s => { const [k, ms] = s.split(':'); return { key: k === 'space' ? ' ' : k, ms: Number(ms || 150) }; });
 
 function findChrome() {
@@ -92,6 +98,28 @@ const analyze = async ({ shot, base }) => {
   return { stats, diff };
 };
 
+// Deterministic clock, installed before page scripts. rAF callbacks only run when stepped; time only
+// advances by 1/60 s per stepped frame. Math.random is seeded. Games opt in by simply using
+// performance.now/Date.now/requestAnimationFrame/Math.random (setTimeout is not virtualised).
+const freezeClock = (frameMs) => {
+  let now = 0; let q = []; let id = 0;
+  const base = 1700000000000;
+  performance.now = () => now;
+  Date.now = () => base + Math.round(now);
+  const RealDate = Date;
+  window.Date = new Proxy(RealDate, { construct(t, a) { return a.length ? new t(...a) : new t(base + Math.round(now)); } });
+  window.requestAnimationFrame = cb => { q.push([++id, cb]); return id; };
+  window.cancelAnimationFrame = i => { q = q.filter(e => e[0] !== i); };
+  let seed = 0x9e3779b9;
+  Math.random = () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  window.__hgameStep = (n = 1) => {
+    for (let i = 0; i < n; i++) {
+      now += frameMs; const run = q; q = [];
+      for (const [, cb] of run) { try { cb(now); } catch (e) { setTimeout(() => { throw e; }); } }
+    }
+    return now;
+  };
+};
 const exe = findChrome();
 const { chromium } = createRequire(import.meta.url)('playwright-core');
 const port = await freePort();
@@ -113,10 +141,33 @@ try {
   page.on('pageerror', e => consoleErrors.push(e.message));
   page.on('console', m => { if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) consoleErrors.push(m.text()); });
   page.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) httpErrors.push(`HTTP ${r.status()} ${r.url()}`); });
+  if (freeze) await page.addInitScript(freezeClock, FRAME_MS);
+  const step = n => page.evaluate(k => window.__hgameStep(k), n);
   await page.goto(url, { waitUntil: 'load' });
-  if (ready) await page.locator(ready).waitFor({ timeout: 20000 });
-  await page.waitForTimeout(waitMs);
-  for (const { key, ms } of keys) { await page.keyboard.down(key); await page.waitForTimeout(ms); await page.keyboard.up(key); }
+  if (ready) {
+    // Under a frozen clock, wait un-stepped first so the number of pre-ready frames is deterministic;
+    // only pump frames if the page needs them to become ready.
+    const ok = await page.locator(ready).waitFor({ timeout: freeze ? 4000 : 20000 }).then(() => true, () => false);
+    if (!ok) {
+      if (!freeze) throw new Error('ready selector timeout');
+      const t0 = Date.now();
+      for (;;) { await step(1); if (await page.locator(ready).count()) break; if (Date.now() - t0 > 20000) throw new Error('ready selector timeout'); await page.waitForTimeout(5); }
+    }
+  }
+  if (freeze) {
+    await page.waitForTimeout(50);
+    await step(stepsArg !== '' ? Number(stepsArg) : Math.round(waitMs / FRAME_MS));
+    for (const { key, ms } of keys) { await page.keyboard.down(key); await step(Math.max(1, Math.round(ms / FRAME_MS))); await page.keyboard.up(key); await step(1); }
+  } else {
+    await page.waitForTimeout(waitMs);
+    for (const { key, ms } of keys) { await page.keyboard.down(key); await page.waitForTimeout(ms); await page.keyboard.up(key); }
+  }
+  if (evalExpr) {
+    try { report.eval = await page.evaluate(async src => JSON.parse(JSON.stringify(await (0, eval)(src) ?? null)), evalExpr); }
+    catch (e) { report.problems.push('eval failed: ' + String(e.message || e).split('\n')[0]); }
+  }
+  const st = await page.evaluate(async n => typeof window[n] === 'function' ? { v: JSON.parse(JSON.stringify(await window[n]() ?? null)) } : null, stateHook).catch(e => ({ err: String(e.message || e) }));
+  if (st?.err) report.problems.push('state hook failed: ' + st.err); else if (st) report.state = st.v;
   const target = page.locator(selector);
   const png = await target.screenshot();
   mkdirSync(path.dirname(outPng), { recursive: true });
@@ -125,7 +176,7 @@ try {
     ? 'data:image/png;base64,' + readFileSync(baseline).toString('base64') : null;
   const { stats, diff } = await page.evaluate(analyze, { shot: 'data:image/png;base64,' + png.toString('base64'), base: baseB64 });
   const diagnostics = await page.evaluate(() => ({ canvasAttrs: Object.fromEntries([...document.querySelectorAll('canvas')].flatMap(c => [...c.attributes].filter(a => a.name.startsWith('data-')).map(a => [a.name, a.value]))) }));
-  Object.assign(report, { png: outPng, sha256: createHash('sha256').update(png).digest('hex').slice(0, 16), stats, diagnostics, consoleErrors, httpErrors });
+  Object.assign(report, { frozenTime: freeze || undefined, png: outPng, sha256: createHash('sha256').update(png).digest('hex').slice(0, 16), stats, diagnostics, consoleErrors, httpErrors });
   if (consoleErrors.length || httpErrors.length) report.problems.push('page errors');
   if (stats.nonBlankRatio < 0.001) report.problems.push('canvas is blank');
   if (baseline && flag('--update-baseline')) { mkdirSync(path.dirname(path.resolve(baseline)), { recursive: true }); copyFileSync(outPng, baseline); report.baselineUpdated = baseline; }
