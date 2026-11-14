@@ -25,4 +25,5 @@ const scene = app.scenes.add(new Scene('main'));
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';
+window.__hgameState = () => ({ scene: app.scenes.active?.name ?? null });
 window.addEventListener('pagehide', () => app.dispose(), { once: true });

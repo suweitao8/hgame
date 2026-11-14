@@ -5,7 +5,7 @@ This guide documents HGame's editor-free, AI-first asset workflows for 2D grid s
 ## 1. 2D Art Grid Batching & Dynamic Ground Shadows
 
 ### Generation Tiers
-Generate square (`1:1`) images with transparent alpha (or chroma-key `#00FF00` green background when alpha is unavailable) and **zero ground shadow** in the prompt so shadows are not baked into tilt/bounce animations:
+Generate square (`1:1`) images with a **pure white `#FFFFFF` background (`--bg white`, recommended default to eliminate green spill on character soles/edges)**, or transparent alpha / `#00FF00` green chroma-key, and **zero ground shadow** in the prompt so shadows are not baked into tilt/bounce animations:
 
 | Grid Tier | Script Option | Max Export Size | Typical Assets |
 |---|---|---|---|
@@ -16,7 +16,7 @@ Generate square (`1:1`) images with transparent alpha (or chroma-key `#00FF00` g
 ### Automated Batch Processing (`scripts/process-assets.mjs`)
 
 ```bash
-npm run process:assets -- --input raw-sheet.png --grid 3 --bg green --mode actor --out-dir assets/actors --names hero,slime,bat
+npm run process:assets -- --input raw-sheet.png --grid 3 --bg white --mode actor --out-dir assets/actors --names hero,slime,bat
 ```
 
 What the pipeline performs (zero native dependencies, pure Node `node:zlib` PNG codec):
@@ -79,3 +79,14 @@ await audio.playCue('hit_sfx', {
 ```
 
 Master output passes through a built-in `DynamicsCompressorNode` (`threshold: -10 dB`, `ratio: 6:1`) across `sfx`, `spatial`, `music`, and `ambience` buses, preventing clipping even during dense multi-enemy combat.
+
+## 3. Zero-Asset Procedural Audio (`playSynth` & `createBgm`)
+
+When a game ships without external `.mp3` audio packs, use HGame's built-in WebAudio synthesizers directly on `app.services.audio`:
+
+```js
+audio.playSynth('hit', { volume: 0.75, pitchJitter: 0.08 }); // 10 presets: hit|slash|shoot|explosion|pickup|powerup|click|hurt|laser|jump
+const bgm = audio.createBgm({ mood: 'dungeon', intensity: 0.4 }); // 6 moods: dungeon|cyber|boss|chill|adventure|victory
+bgm.start();
+bgm.setIntensity(0.9);
+```

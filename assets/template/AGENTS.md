@@ -42,7 +42,9 @@
 npm test
 npm run check
 
-# Query engine API or run snapshot/skill validators via the HGame engine root (<hgame-repo>):
+# Query engine capability map, runnable recipe, or API via the HGame engine root (<hgame-repo>):
+node "<hgame-repo>/scripts/query-api.mjs" --map
+node "<hgame-repo>/scripts/query-api.mjs" --recipe 2d
 node "<hgame-repo>/scripts/query-api.mjs" <keyword>
 node "<hgame-repo>/scripts/snapshot.mjs" .
 node "<hgame-repo>/scripts/playtest.mjs" . --duration 2000 --actions "d:300,w:300,j:150"

@@ -13,7 +13,7 @@ Use this skill as the primary execution manual whenever a user asks to create, e
 
 > **AI-Native Zero-GUI-Editor & Zero-Blind-Scan Rules**:
 > 1. **纯 AI 研发 · 拒绝手工可视化编辑器**：HGame 是完全面向 AI 编写的 HTML5 引擎，严禁在项目或工具链中制作人工可视化场景/关卡/材质编辑器；一律采用声明式 JSON + 引擎运行时 API + Headless 自动化核验闭环。
-> 2. **零盲扫 API 速查**：查询任何引擎 API、参数签名或返回值时，**必须优先运行 `npm run api -- <keyword>`**（或 `npm run api -- --module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。
+> 2. **零盲扫 API 速查**：查询任何引擎 API、场景接线或参数签名时，**必须优先运行 `npm run api -- --map` / `npm run api -- --recipe <2d|horde|3d|ui|network>` / `npm run api -- <keyword>`**（或 `--module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。
 
 ## Sub-Skill Routing Table (子技能路由表)
 
@@ -176,8 +176,6 @@ node scripts/package-game.mjs --version 1.1 --flat-zip
 
 ## Detailed Reference Guides
 
-- Complete Chinese User & Agent Handbook: [USER-AND-AGENT-GUIDE.md](../../../docs/guides/USER-AND-AGENT-GUIDE.md)
-- Engine Architecture & Platform API: [ENGINE-OVERVIEW.md](../../../docs/architecture/ENGINE-OVERVIEW.md), [PLATFORM-API.md](../../../docs/architecture/PLATFORM-API.md)
-- Deterministic Physics & Multiplayer: [DETERMINISTIC-PHYSICS.md](../../../docs/architecture/DETERMINISTIC-PHYSICS.md), [NETWORK.md](../../../docs/architecture/NETWORK.md), [LOCKSTEP.md](../../../docs/architecture/LOCKSTEP.md)
-- 3D Pipeline & World-Aligned PBR: [PIPELINE-3D.md](../../../docs/rendering/PIPELINE-3D.md), [WORLD-ALIGNED-PBR.md](../../../docs/rendering/WORLD-ALIGNED-PBR.md)
-- Art Slicing, Audio Cues & QA: [ASSET-AND-AUDIO-PIPELINE.md](../../../docs/guides/ASSET-AND-AUDIO-PIPELINE.md), [GAME-ARCHITECTURE-AND-QA.md](../../../docs/guides/GAME-ARCHITECTURE-AND-QA.md)
+- **AI 能力雷达图与系统速查卡 (`01..16`)**：[USER-AND-AGENT-GUIDE.md](../../../docs/guides/USER-AND-AGENT-GUIDE.md)
+- **底层机制与架构边界**：[ENGINE-OVERVIEW.md](../../../docs/architecture/ENGINE-OVERVIEW.md), [PLATFORM-API.md](../../../docs/architecture/PLATFORM-API.md), [DETERMINISTIC-PHYSICS.md](../../../docs/architecture/DETERMINISTIC-PHYSICS.md)
+- **3D / PBR / 资产 / QA / 联机**：[PIPELINE-3D.md](../../../docs/rendering/PIPELINE-3D.md), [WORLD-ALIGNED-PBR.md](../../../docs/rendering/WORLD-ALIGNED-PBR.md), [ASSET-AND-AUDIO-PIPELINE.md](../../../docs/guides/ASSET-AND-AUDIO-PIPELINE.md), [AI-VERIFICATION.md](../../../docs/guides/AI-VERIFICATION.md), [NETWORK.md](../../../docs/architecture/NETWORK.md), [LOCKSTEP.md](../../../docs/architecture/LOCKSTEP.md)

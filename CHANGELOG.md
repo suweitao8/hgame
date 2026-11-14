@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- AI-Native Documentation & Query Tooling (`scripts/query-api.mjs`, `docs/`, `AGENTS.md`, `.agents/skills/hgame/SKILL.md`):
+  - Upgrade `npm run api` with `--map` (intent-to-module capability router) and `--recipe <2d|horde|3d|ui|network>` (runnable boilerplate + `__hgameState` verification hook), plus `--json` output.
+  - Rewrite `README.md` and `docs/guides/USER-AND-AGENT-GUIDE.md` into pure AI-Native execution specs, align `--bg white` default in `docs/guides/ASSET-AND-AUDIO-PIPELINE.md`, remove stale `docs/guides/ENGINE-GAPS.md`, add compact system cards `13..16`, and expose `__hgameState` + `data-engine-ready` in bare 2D/3D starters.
+
 - Versioned Save Store & Automated AI Playtest Runner (`platform/storage.js`, `scripts/playtest.mjs`):
   - Add `createVersionedStore` wrapping `SaveStore` with sequential `v -> v + 1` schema migrations, FNV-1a envelope tamper detection, and automatic `.bak` backup slot recovery.
   - Add `npm run playtest -- <game-dir>` (`scripts/playtest.mjs`) to boot loopback preview + headless Chromium, drive scripted keyboard/pointer inputs, collect rAF FPS/stutter telemetry, and verify non-blank & reactive gameplay with zero JS/HTTP errors.
