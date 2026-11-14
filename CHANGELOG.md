@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Commercial UI Kit, i18n & AI-Native Zero-GUI Contract (`ui/panel-stack.js`, `ui/virtual-list.js`, `ui/i18n.js`, `ui/index.js`):
+  - Add stack-based UI modal/overlay router (`createPanelStack` with Escape/cancel back-stack, exclusive/pinned modes, transition alphas, and optional `bindDom`).
+  - Add zero-alloc virtualized list/grid window (`createVirtualList` with fixed-grid and variable-height prefix-sum scrolling + DOM row pooling).
+  - Add localization helper (`createI18n` with nested keys, `{param}` interpolation, `_zero`/`_one`/`_other` plurals, and fallback locales).
+  - Codify the AI-Native Zero-GUI-Editor contract in `AGENTS.md`, `assets/template/AGENTS.md`, and `.agents/skills/hgame/SKILL.md`.
+
 - Unified off-Git art & audio asset management:
   - Expand `.gitignore` across the engine root, generated game template (`assets/template/.gitignore`), and examples (`examples/*/.gitignore`) to exclude large binary media (`png`, `jpg`, `webp`, `glb`, `gltf`, `vat.bin`, `mp3`, `ogg`, `wav`, fonts, video) and raw DCC sources (`.psd`, `.blend`, `.fbx`, `assets/raw/`), keeping Git repositories focused on code, configs, and lightweight `assets.manifest.json`.
   - Add `scripts/assets.mjs` (`npm run assets -- push|pull|status|verify|rm|prune-store`) for SHA-256 content-addressed storage (`HGAME_ASSET_STORE` / `~/.hgame/asset-store`, plus optional HTTP `--remote`) with `assets.manifest.json` scaffolded into every project by `scripts/create-game.mjs`.

@@ -60,7 +60,10 @@ export {
   computeCommercialDayKey,
   formatRedDotBadge,
   createRedDotSystem,
-} from './ui/red-dot.js';
+  createPanelStack,
+  createVirtualList,
+  createI18n,
+} from './ui/index.js';
 export {
   VFX_EASING,
   VFX_RENDER_ORDERS,
@@ -128,7 +131,10 @@ import {
   computeCommercialDayKey,
   formatRedDotBadge,
   createRedDotSystem,
-} from './ui/red-dot.js';
+  createPanelStack,
+  createVirtualList,
+  createI18n,
+} from './ui/index.js';
 import {
   VFX_SHAPE,
   TELEGRAPH_SHAPE,
@@ -174,6 +180,9 @@ export const HGame = Object.freeze({
   computeCommercialDayKey,
   formatRedDotBadge,
   createRedDotSystem,
+  createPanelStack,
+  createVirtualList,
+  createI18n,
   createTagRegistry,
   createTagContainer,
   matchGameplayTags,

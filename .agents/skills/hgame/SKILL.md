@@ -11,7 +11,9 @@ description: >-
 
 Use this skill as the primary execution manual whenever a user asks to create, extend, optimize, debug, or package a game with **HGame 1.0.0**.
 
-> **Zero-Blind-Scan API Rule**: 查询任何引擎 API、参数签名或返回值时，**必须优先运行 `npm run api -- <keyword>`**（或 `npm run api -- --module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。
+> **AI-Native Zero-GUI-Editor & Zero-Blind-Scan Rules**:
+> 1. **纯 AI 研发 · 拒绝手工可视化编辑器**：HGame 是完全面向 AI 编写的 HTML5 引擎，严禁在项目或工具链中制作人工可视化场景/关卡/材质编辑器；一律采用声明式 JSON + 引擎运行时 API + Headless 自动化核验闭环。
+> 2. **零盲扫 API 速查**：查询任何引擎 API、参数签名或返回值时，**必须优先运行 `npm run api -- <keyword>`**（或 `npm run api -- --module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。
 
 ## Sub-Skill Routing Table (子技能路由表)
 
