@@ -360,3 +360,28 @@ test('package-game omits Rapier WASM when physics3d is declared but src never us
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('package-game retains vfx/ and sim/ runtime subpaths when referenced from game src', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-pkg-vfx-sim-'));
+  const game = path.join(tmp, 'subpaths');
+  try {
+    const gen = spawnSync(process.execPath, [createGame, game, '--bare', '--no-git'], { encoding: 'utf8' });
+    assert.equal(gen.status, 0, gen.stderr);
+
+    const srcMain = path.join(game, 'src', 'main.js');
+    const prev = await readFile(srcMain, 'utf8');
+    await writeFile(
+      srcMain,
+      `import { createVfxSystem } from '../vendor/hgame/vfx/index.js';\nimport { createRng } from '../vendor/hgame/sim/rng.js';\n${prev}\nvoid createVfxSystem; void createRng;\n`,
+    );
+
+    const pack = spawnSync(process.execPath, [packageGame, game, '--version', '1.0.0'], { encoding: 'utf8' });
+    assert.equal(pack.status, 0, pack.stderr || pack.stdout);
+    const outDir = path.join(game, 'build', 'subpaths_1_0');
+    assert.equal(await exists(path.join(outDir, 'vendor', 'hgame', 'vfx', 'index.js')), true);
+    assert.equal(await exists(path.join(outDir, 'vendor', 'hgame', 'vfx', 'vfx-core.js')), true);
+    assert.equal(await exists(path.join(outDir, 'vendor', 'hgame', 'sim', 'rng.js')), true);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
