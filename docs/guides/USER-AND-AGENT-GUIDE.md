@@ -16,46 +16,14 @@ flowchart LR
   S1["1. 生成项目 (scripts/create-game.mjs)"] --> S2["2. 处理美术与音效 (process-assets / process-audio)"]
   S2 --> S3["3. 用内置模块写玩法 (vendor/hgame)"]
   S3 --> S4["4. 预览与测试 (preview.mjs + npm test)"]
-  S4 --> S5["5. 精简打包 (package-game.mjs -> build/目录 + .zip)"]
+  S4 --> S5["5. 阶段性 git commit，再精简打包 (package-game.mjs -> build/目录 + .zip)"]
 ```
 
----
-
-## 二、别人拿到 HGame 怎么交给 AI Agent 用？
-
-### 3 种交接方式
-
-- **方式 A：直接把 HGame 引擎仓交给 AI（或把用户拉到本仓库提问）**
-  - 本仓库已内置规则 [AGENTS.md](../../AGENTS.md) 与工作区技能 [`.agents/skills/hgame/SKILL.md`](../../.agents/skills/hgame/SKILL.md)。
-  - 兼容的 AI Coding Agent（如 Antigravity、Codex、Claude Code、Cursor 等）打开仓库后会自动识别规范，知道如何建工程、复用哪些模块、如何导出可上传发布包。
-- **方式 B：只把生成的独立游戏工程交给别人 / AI**
-  - 即使对方手里没有 HGame 主仓库，生成的每个独立游戏根目录也自带完整的 `AGENTS.md`、`README.md`、`vendor/hgame/README.md` 和 `scripts/package-game.mjs`。
-  - 别人拿到独立游戏目录后，直接让 AI 继续开发玩法、执行 `npm test` 和 `npm run release -- --version 1.1` 即可。
-- **方式 C：安装为全局 AI Skill（可选）**
-  - 若希望在电脑上任何目录建新游戏都能唤起，可将本仓库 `.agents/skills/hgame/` 复制到所用 Agent 的全局技能目录中。
-
-### 5 套直接复制就能用的中文 Prompt 模板
-
-> 如果你一时记不住所有命令和参数，直接把下面对应的提示词发给 AI：
-
-1. **新建 2D 类幸存者 / 弹幕游戏（万怪同屏 + 触屏摇杆）**
-   > 请使用当前 HGame 引擎在 `D:\Games\survivor-demo` 生成一个 2D WebGL2 实例化游戏（`--profile 2d --renderer webgl2d --with audio,save --name "幸存者 Demo"`），按 `AGENTS.md` 和 `docs/guides/USER-AND-AGENT-GUIDE.md` 使用 `SpriteCrowd2D` + `SpatialHash2D` 承接大量怪物，并使用 `createArcadeControls` + `createTouchControls` 做好手机触屏摇杆与 PC `WASD + JKL UIO` 适配。
-
-2. **新建 3D 动作 / 开放世界游戏**
-   > 请用 HGame 在 `D:\Games\action-3d` 创建一个 3D 游戏（`--profile 3d --quality auto --with physics3d,model3d,audio,save --name "荒野试炼"`），集成 `sky3d` 天空、`lighting3d` MegaLights / 探针、`post3d` UE Filmic 与体积栈、`camera3d` 弹簧臂，并暴露低/中/高三档画质切换。
-
-3. **新建 UI / 卡牌 / 剧情养成游戏（商业化红点）**
-   > 请用 HGame 在 `D:\Games\card-rpg` 创建一个 UI 型游戏（`--profile ui --with audio,save --name "星域卡牌"`），不要创建空转 60Hz RAF，使用 `HGame.createRedDotSystem` + `bindRedDotDOM` 建立多级页面与交叉入口红点，确保子页面全部处理完才熄灭父页面红点。
-
-4. **批量处理 AI 美术与音效变种**
-   > 请按 HGame 管线处理我刚生成的素材：用 `scripts/process-assets.mjs` 把这批九宫格绿色背景角色图切成**无地面阴影** PNG；用 `scripts/process-audio.mjs` 从 4 个枪声变种里筛选时长和响度最一致的 2~4 个统一导出 MP3，并在游戏内用 `audio.registerCue` / `playCue` 接入 3D HRTF 左右耳空间音效。
-
-5. **上线前自检并生成精简安装包（含 WASM）**
-   > 请运行测试与代码检查，然后用 `package-game.mjs` 为当前游戏生成版本号为 `1.1` 的精简发布目录和压缩包（`build/<id>_1_1/` 与 `build/<id>_1_1.zip`），确认排除 `.git/`、`tests/`、`scripts/` 和原始美术工程文件，并用 `preview.mjs` 启动打包产物确认能正常访问。
+> **Git 提交纪律**：无论是开发引擎还是独立游戏，每完成一个阶段性成果并通过测试校验后就立即 `git commit`，不要在 `main` 分支长期堆积未提交改动（多阶段工作先建短生命周期特性分支如 `feat/*`、`perf/*`，逐阶段提交后再合并回 `main`）。
 
 ---
 
-## 三、项目创建选型决策表（`scripts/create-game.mjs`）
+## 二、项目创建选型决策表（`scripts/create-game.mjs`）
 
 在 HGame 引擎根目录先执行 `npm ci`，再按游戏类型选择一条命令生成项目：
 
@@ -64,10 +32,10 @@ flowchart LR
 | 你想做什么游戏？ | Profile | 推荐渲染器 | 是否带物理 / 画质 | 可直接复制的建项命令（从 HGame 根目录运行） |
 |---|---|---|---|---|
 | **常规 2D 动作 / 平台 / 肉鸽** | `2d` | `canvas2d`（默认） | 可选 `--with physics2d` | `node scripts/create-game.mjs "D:\Games\my-2d-game" --profile 2d --with audio,save --name "我的2D游戏"` |
-| **2D 类幸存者 / 弹幕（5,000–10,000+ 同屏）** | `2d` | `webgl2d`（无 WebGL2 自动回退 Canvas2D） | 一般纯数值碰撞即可 | `node scripts/create-game.mjs "D:\Games\my-horde" --profile 2d --renderer webgl2d --with audio,save --name "幸存者 Demo"` |
-| **3D 动作 / 第一人称 / 大世界** | `3d` | `threejs`（默认） | 建议 `--quality auto`，物理用 `--with physics3d` | `node scripts/create-game.mjs "D:\Games\my-3d-game" --profile 3d --quality auto --with physics3d,model3d,audio,save --name "我的3D游戏"` |
+| **2D 类幸存者 / 万怪潮（5,000–150,000+ 同屏）** | `2d` | `webgl2d`（无 WebGL2 自动回退 Canvas2D） | `createSwarmSimulation` / `createGpuSwarmWebGL2` + `SpriteCrowd2D.bindSwarm`（零 GC） | `node scripts/create-game.mjs "D:\Games\my-horde" --profile 2d --renderer webgl2d --with audio,save --name "幸存者 Demo"` |
+| **3D 动作 / 第一人称 / 万人怪潮** | `3d` | `threejs`（默认） | `--quality auto`，大量骨骼怪加 `createBoneVatCrowd3D` | `node scripts/create-game.mjs "D:\Games\my-3d-game" --profile 3d --quality auto --with physics3d,model3d,audio,save --name "我的3D游戏"` |
 | **卡牌 / 文字冒险 / 商业化养成 UI** | `ui` | `dom`（默认，零空转 RAF） | 不需要物理 | `node scripts/create-game.mjs "D:\Games\my-ui-game" --profile ui --with audio,save --name "星域卡牌"` |
-| **联机游戏前端** | `2d` 或 `3d` | 任意 | 离线/在线使用同一确定性 Rapier 版本 | 先按上表生成单机游戏，再对接 `network/` 房态协议（见第 4.12 节） |
+| **联机游戏前端** | `2d` 或 `3d` | 任意 | 离线/在线使用同一确定性 Rapier 版本 | 先按上表生成单机游戏，再对接 `network/` 房态协议（见 [systems/12-physics-trace-network.md](systems/12-physics-trace-network.md)） |
 
 常用建项附加参数：
 - `--with save,audio,assets,diagnostics,physics2d,animation2d,tilemap2d,pathfinding2d,physics3d,model3d`
@@ -79,282 +47,28 @@ flowchart LR
 
 ---
 
-## 四、“我想做 X 功能，用哪个模块？”——12 大内置系统速查
+## 三、子系统速查(按需读取,避免一次性载入全部)
 
-> **路径写法说明**：
-> - 在游戏工程的 `src/main.js` 中，运行时路径以 **`../vendor/hgame/`** 开头（如 `import { SpriteSheet } from '../vendor/hgame/animation/spritesheet.js'`）。
-> - 如果在游戏工程根目录直接运行的脚本/入口，对应 **`./vendor/hgame/`**。
-> - 如果通过引擎本机工作区联调（`hosted` 方式），会自动映射 `/runtime/hgame/...`。
+先查 `docs/api/API-INDEX.json`(机器可读签名),需要用法和坑点时再读下面对应文件。
 
-### 4.1 核心生命周期、渲染插值与 GameplayTags
-
-- **文件**：`vendor/hgame/index.js`、`vendor/hgame/core/*`
-- **何时用**：所有游戏都通过 `HGame.createApplication` 托管唯一 `requestAnimationFrame` 与固定步长物理循环；需要在高刷新率屏幕上消除物理步长锯齿时读取 `app.renderAlpha` / `entity.interpolatedWorldPosition(app.renderAlpha)`；需要打击顿帧或子弹时间时调用 `app.hitStop(...)` / `app.setTimeScale(...)`；需要分层状态标签（如 `State.Movement.Dashing`）时用 Entity GameplayTags。
-
-```js
-import { HGame, Component, Entity, Scene } from '../vendor/hgame/index.js';
-
-const project = HGame.defineProject(engineConfig);
-const app = HGame.createApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
-await app.installFeatures();
-
-const scene = app.scenes.add(new Scene('main'));
-const hero = scene.add(new Entity({ name: 'hero', x: 0, y: 0, width: 48, height: 64 }));
-hero.addTag('Faction.Player');
-hero.addTag('State.Buff.Haste');
-
-// 查询所有带 State 标签的激活实体
-const buffed = scene.queryTags({ all: ['Faction.Player'], any: ['State'] }, { activeOnly: true });
-
-// 命中顿帧与慢动作
-app.hitStop(0.06);      // 顿帧 60ms（期间 hitStopTimeScale 默认为 0）
-app.setTimeScale(0.5);  // 全局 0.5x 子弹时间
-```
-
-### 4.2 补间动画 Tween 与弹簧阻尼手感
-
-- **文件**：`vendor/hgame/time/tween.js`（同时由 `index.js` 导出 `EASING`、`TweenManager`、`damp`、`dampAngle`、`stepSpring1D`、`SpringDamper1D`、`SpringDamper2D`、`SpringDamper3D`）
-- **何时用**：UI 弹窗弹入、受击缩放、2D 纸片人呼吸/奔跑/攻击突刺/击飞倒地，以及无抽搐的帧率无关平滑插值。
-
-```js
-const sprite = hero.getComponent(Sprite2D);
-scene.tweens.idle(sprite); // 连续呼吸待机，只改 sprite.offsetX/offsetY/scaleX/scaleY/rotation，不影响物理坐标
-scene.tweens.run(sprite, { bobHeight: 5, tiltRad: 0.12 });
-scene.tweens.attackLunge(sprite, { dirX: 1, dirY: 0, distance: 18 });
-
-// 弹簧阻尼平滑追踪数值
-const hpBarSpring = new HGame.SpringDamper1D({ halfLife: 0.12 });
-const visualHp = hpBarSpring.step(targetHp, dt);
-```
-
-### 4.3 2D 精灵、算法地面阴影、图集切帧与 A* 寻路
-
-- **文件**：`vendor/hgame/integrations/canvas2d.js`、`vendor/hgame/animation/spritesheet.js`、`vendor/hgame/animation/player.js`、`vendor/hgame/world/tilemap.js`
-- **何时用**：常规 2D 游戏。`Sprite2D` 原生支持 `groundShadow: true`（即使玩家角色跳起、摇晃或做 `offsetY` 补间，地面阴影始终贴合实体逻辑底座，不浮空）、`hitFlash(0.08)`（全剪影闪白）、`Camera2D` 平滑跟随/死区/边界/震屏与视野剔除；`SpriteSheet.fromGrid` 自动适配 `2x2`/`3x3` 切图；`findGridPath` 提供带防穿墙角保护的 A* 寻路。
-
-```js
-import { createCanvas2DAdapter, Camera2D, Sprite2D } from '../vendor/hgame/integrations/canvas2d.js';
-import { SpriteSheet } from '../vendor/hgame/animation/spritesheet.js';
-import { AnimationPlayer } from '../vendor/hgame/animation/player.js';
-import { TileMap, findGridPath } from '../vendor/hgame/world/tilemap.js';
-
-const sheet = SpriteSheet.fromGrid(actorImg, { columns: 3, rows: 3, inset: 1 });
-const anim = new AnimationPlayer({ clips: { walk: { frames: [0, 1, 2], fps: 8, loop: true } }, initial: 'walk' });
-hero.addComponent(new Sprite2D({ sheet, animation: anim, width: 64, height: 64, groundShadow: true, ySort: true }));
-sprite.hitFlash(0.08, '#ffffff');
-```
-
-### 4.4 2D 万怪同屏（5,000–10,000+ 对象：WebGL2D + SpriteCrowd2D + SpatialHash2D）
-
-- **文件**：`vendor/hgame/integrations/webgl2d.js`、`vendor/hgame/world/spatial2d.js`
-- **何时用**：类幸存者、弹幕、海量小兵与掉落物。不要为 5,000 个小怪建 5,000 个 `Entity`！改用 SoA 结构的 `SpriteCrowd2D`（`O(1)` Swap-Back 回收），配合 `renderer: 'webgl2d'`（硬件实例化，贴地阴影与精灵批量一次 DrawCall 提交，浏览器不支持 WebGL2 时自动透明回退到 Canvas2D）以及 `SpatialHash2D` 做近邻查询与软挤压分离。
-
-```js
-import { createWebGL2DAdapter, SpriteCrowd2D } from '../vendor/hgame/integrations/webgl2d.js';
-import { ObjectPool, SpatialHash2D } from '../vendor/hgame/world/spatial2d.js';
-
-// 建项时 --renderer webgl2d，引擎会优先用 WebGL2，不支持则自动回退 Canvas2D
-const renderer = createWebGL2DAdapter({ canvas, width: 960, height: 540, quality: 'high' });
-
-const swarmHost = scene.add(new Entity({ name: 'enemies' }));
-const crowd = swarmHost.addComponent(new SpriteCrowd2D({
-  capacity: 10000, sheet, width: 32, height: 32, groundShadow: true, ySort: true,
-}));
-const slot = crowd.spawn({ x: 120, y: 80, frame: 0 });
-crowd.setTransform(slot, nextX, nextY, 0, 1, 1);
-crowd.hitFlash(slot, 0.08);
-crowd.kill(slot);
-
-const spatial = new SpatialHash2D({ cellSize: 64 });
-spatial.resolveSoftSeparation(agents, { defaultRadius: 14, strength: 0.45, iterations: 1 });
-```
-
-### 4.5 3D 渲染、UE 电影级色调、程序化天空与 MegaLights 多光源
-
-- **文件**：`vendor/hgame/integrations/three.js`、`vendor/hgame/integrations/sky3d.js`、`vendor/hgame/integrations/lighting3d.js`
-- **何时用**：3D 场景默认采用统一单一曝光管线（`three.js` + `sky3d` + `post3d` 不重复色调映射）。需要电影级 S 曲线时设 `toneMapping: 'ueFilmic'`；需要动态昼夜天空与 PMREM 环境反射用 `createProceduralSky3D` + `renderer.setSky(sky)`；需要同屏 1–1024 盏动态点光/聚光/瞬态火光而不卡顿重编译着色器时用 `createMegaLights3D`；需要间接光照体素采样用 `createIrradianceProbeVolume3D`。
-
-```js
-import { createProceduralSky3D, SKY3D_PRESETS } from '../vendor/hgame/integrations/sky3d.js';
-import { createMegaLights3D } from '../vendor/hgame/integrations/lighting3d.js';
-
-const sky = createProceduralSky3D(THREE, { ...SKY3D_PRESETS.day });
-world.add(sky.mesh);
-renderer.setSky(sky);
-sky.bakeEnvironment(renderer.renderer, { targetScene: world });
-
-const mega = createMegaLights3D(THREE, { maxLights: 256, samplesPerPixel: 3 });
-mega.flash({ x: 2, y: 1.5, z: 0, color: 0xff9944, intensity: 8, range: 12, duration: 0.15 });
-```
-
-### 4.6 3D 后处理体积栈、遮挡剔除、GPU 实例化与 3D 弹簧臂相机
-
-- **文件**：`vendor/hgame/integrations/post3d.js`、`vendor/hgame/integrations/culling3d.js`、`vendor/hgame/integrations/camera3d.js`
-- **何时用**：需要按区域渐变曝光/白平衡/Bloom/SSGI/SSR 用 `createPostProcessVolumeStack` + `renderer.setPostVolumes(stack)`；需要 Unity 风格视锥剔除、凸锥软件 AABB 遮挡或 WebGL2 硬件异步遮挡与千级静态/动态同模型合批用 `createInstancedBatch3D` / `culler3d`；第三人称/第一人称/俯视角丝滑防穿墙相机用 `createCameraRig3D` 或 `createSpringArm3D`。
-
-```js
-import { createPostProcessVolumeStack } from '../vendor/hgame/integrations/post3d.js';
-import { createInstancedBatch3D } from '../vendor/hgame/integrations/culling3d.js';
-import { createCameraRig3D } from '../vendor/hgame/integrations/camera3d.js';
-
-const volumes = createPostProcessVolumeStack([
-  { id: 'global', unbound: true, priority: 0, settings: { exposure: 1.1, whiteTemp: 6500, ssgiIntensity: 0.5 } },
-  { id: 'cave', shape: 'box', center: [30, 2, 0], extents: [12, 6, 12], blendRadius: 4, priority: 10, settings: { exposure: 0.75, bloomIntensity: 0.35 } },
-]);
-renderer.setPostVolumes(volumes);
-
-const camRig = createCameraRig3D({ THREE, camera: renderer.camera, mode: 'thirdPerson' });
-const props = createInstancedBatch3D(THREE, { geometry: boxGeo, material: rockMat, capacity: 2048 });
-```
-
-### 4.7 3D 骨骼角色（GLB）、VAT 千人同屏、世界对齐 PBR 与开放世界
-
-- **文件**：`vendor/hgame/integrations/model3d.js`、`vendor/hgame/integrations/world-aligned-material.js`、`vendor/hgame/world/open-world.js`
-- **何时用**：带骨骼的 3D 角色加载与动作混合/去根位移/武器挂点/帧事件通知用 `createModel3DProvider` + `createAnimationBudgetAllocator`；同模型千人骨骼群体用烘焙顶点动画纹理的 `createInstancedCrowd3D`；避免不同尺寸方块 UV 拉伸用 `createWorldAlignedMaterial` / `createWorldMaterialPalette`；超大地图区块流式加载、远景 HLOD 合批与防浮点抖动用 `createWorldPartition`、`createHLODProxyGroup3D`、`createFloatingOrigin`。
-
-```js
-import { createModel3DProvider, createInstancedCrowd3D } from '../vendor/hgame/integrations/model3d.js';
-import { createWorldPartition, createFloatingOrigin } from '../vendor/hgame/world/open-world.js';
-
-const origin = createFloatingOrigin({ threshold: 4096, snapGrid: 64 });
-origin.registerScene(scene);
-origin.registerWorldPalette(materialPalette);
-
-const partition = createWorldPartition({
-  cellSize: 128, loadRadius: 256, unloadRadius: 320, hlodRadius: 640,
-  loadCell: async (cell) => { /* 加载区域实体 */ },
-  unloadCell: (cell) => { /* 卸载区域实体 */ },
-});
-```
-
-### 4.8 低 / 中 / 高三档画质统一调节（2D & 3D）
-
-- **文件**：`vendor/hgame/integrations/quality3d.js`、各渲染器 `setQuality(...)`
-- **何时用**：设置界面或性能自适应需要提供 **低 / 中 / 高** 三档画质（`low` / `medium` / `high`，3D 额外兼容 `ultra` 与 `auto` 自动升降档）时直接调用。`Canvas2D` / `WebGL2D` 会同步切换像素比、`groundShadows`、抗锯齿平滑与闪白精度；`ThreeAdapter` 会同步切换分辨率预算、阴影贴图、后处理 Pass、各向异性过滤、动画 LOD 与 MegaLights 采样预算。
-
-```js
-// 2D（Canvas2DAdapter / WebGL2DAdapter）或 3D（ThreeAdapter）统一调用：
-renderer.setQuality('low');    // 低画质（关闭 2D 地面阴影/低像素比，3D 关闭实时阴影与重后处理）
-renderer.setQuality('medium'); // 中画质
-renderer.setQuality('high');   // 高画质
-```
-
-### 4.9 手机触屏优先 + 虚拟摇杆/技能键 + PC 双人分屏标准（必读）
-
-- **文件**：`vendor/hgame/platform/input.js`、`vendor/hgame/integrations/touch-controls.js`
-- **设计原则**：默认以**触屏直接操作为主**（使用 `app.input.pointers`、`isPointerDown`、`wasPointerPressed`），平时不在桌面端硬塞满屏虚拟按钮。只有当玩法确实需要摇杆或技能键时，统一接入 `HGame.createArcadeControls` + `createTouchControls`：
-
-| 玩家 | 移动（摇杆 ↔ 键盘） | 6 个主技能键（尽量在这 6 键内完成玩法） | 额外备用键（默认不启用，仅操作过多时开启） |
-|---|---|---|---|
-| **P1（玩家 1）** | 左手虚拟摇杆 ↔ `W A S D` | `J` `K` `L` `U` `I` `O` | `Q` `E`（传 `extras` 或 `enableExtras: true` 开启） |
-| **P2（分屏 `players: 2`）** | `↑` `↓` `←` `→` 方向键 | `1` `2` `3` `4` `5` `6`（同时兼容主键盘与小键盘） | `0` `.`（同时兼容主键盘与小键盘） |
-
-```js
-import { HGame } from '../vendor/hgame/index.js';
-import { createTouchControls } from '../vendor/hgame/integrations/touch-controls.js';
-
-const controls = HGame.createArcadeControls({
-  input: app.input,
-  players: 2, // 单人填 1，本地双人分屏填 2
-  actions: [
-    { name: 'attack', label: '攻击', slot: 'j' },
-    { name: 'dash', label: '闪避', slot: 'k' },
-    { name: 'skill1', label: '技能1', slot: 'l' },
-  ],
-  // 尽量在 j/k/l/u/i/o 内完成；只有按钮真的不够用时才传 extras 或 enableExtras: true：
-  // extras: [{ name: 'bag', label: '背包', slot: 'q' }],
-});
-
-// 默认 mode: 'touch-only' 仅在触屏设备或触摸后自动显现虚拟摇杆与技能按钮
-const touchHud = createTouchControls({ controls, container: document.body, mode: 'touch-only' });
-
-// 分屏渲染视图划分（2D / WebGL2D / 3D 通用）：
-const views = HGame.computeSplitScreenViews(2, { direction: 'auto', width: 960, height: 540, cameras: [cam1, cam2] });
-renderer.setViews(views);
-
-// fixedUpdate(dt) 中每帧同步：
-controls.update(dt);
-const { x, y } = controls.p1.move;
-if (controls.p1.consumeBuffered('attack')) { /* P1 攻击（含输入缓冲） */ }
-if (controls.p2?.wasPressed('dash')) { /* P2 闪避 */ }
-```
-
-### 4.10 中国商业化分层红点系统（Trie 树 + DAG 跨入口去重 + DOM 绑定）
-
-- **文件**：`vendor/hgame/ui/red-dot.js`、`vendor/hgame/integrations/red-dot-dom.js`
-- **何时用**：大厅页签、养成模块、背包、邮件、活动、每日特惠等存在**多层父子红点联动**时使用。父节点自动汇总所有子节点状态——**只要还有一个子页面没点完/没领完，父页面红点就不会误灭**；支持菱形拓扑 `link(entryPath, targetPath)` 防止多个入口指向同一叶子时重复累计数字；支持功能解锁拦截（`setUnlocked`）、防骚扰静音（`setMuted`）和诊断原因查询（`explain(path)`）。
-
-**内建 4 类叶子触发源**：
-1. **条件/数量计数（`setValue` / `registerRule`）**：未领取奖励不熄灭，自动展示数字与 `99+` 上限。
-2. **新获得未读 `NEW`（`markUnread` / `clearUnread` / `syncUnreadScope`）**：点击即消并自动持久化，支持清理已过期物品 ID。
-3. **每日重置提醒（`registerDaily` / `acknowledgeDaily`）**：内建凌晨 5 点刷新、时区偏移 `tzOffsetMinutes` 与 `computeCommercialDayKey`。
-4. **冷却就绪时间戳（`setReadyAt` / `clearReadyAt`）**：到点自动点亮（免费抽卡、体力恢复等）。
-
-```js
-import { HGame } from '../vendor/hgame/index.js';
-import { bindRedDotDOM } from '../vendor/hgame/integrations/red-dot-dom.js';
-
-const redDot = HGame.createRedDotSystem({
-  storage: localStorage,
-  resetHour: 5,
-  tzOffsetMinutes: 480, // UTC+8，跨天凌晨 5 点自动刷新
-});
-
-redDot.registerRule('Lobby/Mail/Claim', ctx => ({ count: ctx.unclaimedMails, style: 'number' }));
-redDot.registerDaily('Lobby/Shop/DailyFree', { style: 'dot' });
-redDot.markUnread('Lobby/Bag/NewSword', 'new');
-// 如主城快捷按钮也指向每日免费：自动去重
-redDot.link('Lobby/QuickBar/Free', 'Lobby/Shop/DailyFree');
-redDot.evaluate({ unclaimedMails: 3 });
-
-// HTML 元素只需写 data-red-dot 路径与可选 data-red-dot-ack="true"：
-// <button data-red-dot="Lobby/Shop/DailyFree" data-red-dot-ack="true">每日免费</button>
-const domBinder = bindRedDotDOM({ system: redDot, root: document.body });
-```
-
-### 4.11 美术切图去背管线 + 3D HRTF 空间音效与多变种防连重 Cue
-
-- **美术管线（[ASSET-AND-AUDIO-PIPELINE.md](./ASSET-AND-AUDIO-PIPELINE.md)）**：
-  - 支持 AI 生成的 **单图（`--grid 1`）、四宫格（`--grid 2`）、九宫格（`--grid 3`）** PNG。
-  - **默认不烘焙地面阴影**（会自动清理角色脚底微弱阴影边），由运行时 `Sprite2D.groundShadow = true` 或 `SpriteCrowd2D` 算法实时绘制贴地阴影，避免视觉缩放/浮空穿帮。
-- **音频格式评估（MP3 vs OGG）**：
-  - 网站下载多为 MP3。iOS Safari 对原生 OGG 支持受限，因此 HGame 统一使用 **高质量单声道 SFX MP3（`24 kHz` `96k`）/ 立体声 BGM MP3（`44.1 kHz` `128k`）**，并在解码/预处理时由 `scripts/process-audio.mjs` + `analyzeAudioBuffer` 自动裁掉 MP3 编码首尾几十毫秒静音帧，兼顾 100% 跨平台兼容与无缝循环。
-- **4 变种挑选与空间音效 API**：
-  - `process-audio.mjs` 从每次生成的 4 个变种里自动踢掉空白/异常时长，保留最一致的 2~4 个，统一响度并对齐尾音上限。
-  - 运行时 `app.services.audio`（启用 `'audio'` 特性后由 `app.installFeatures()` 挂载，或使用 `app.platform.audio`）提供：
-    - 四条独立总线：`sfx` / `spatial` / `music` / `ambience` + 主总线动态防爆音限幅压缩器。
-    - **`registerCue` / `playCue`**：2–4 变种防连续重复（跳步轮转）+ 微幅音高/音量抖动 + 并发上限。
-    - **3D HRTF 左右耳空间声像**：传 `position: { x, y, z }` 并每帧调用 `audio.updateListenerFromCamera(camera)`；2D 游戏传 `position2D: { x, y }` 或通过返回 `handle.setPosition(...)` 实时追踪移动声源。
-    - **声学遮挡与混音快照**：`setOcclusionProbe` 墙后低通发闷、`registerSnapshot` / `applySnapshot`（菜单/水下/濒死状态平滑切混音）。
-
-```js
-const audio = app.services.audio; // 或 app.platform.audio
-const buffers = await Promise.all([
-  audio.decode(await fetch('./assets/audio/sfx/shot_01.mp3').then(r => r.arrayBuffer())),
-  audio.decode(await fetch('./assets/audio/sfx/shot_02.mp3').then(r => r.arrayBuffer())),
-  audio.decode(await fetch('./assets/audio/sfx/shot_03.mp3').then(r => r.arrayBuffer())),
-]);
-audio.registerCue('rifle_shot', { variants: buffers, bus: 'spatial', hrtf: true, maxConcurrent: 4 });
-
-// 3D 中每帧同步听者（相机）位置与朝向，产生真实左右耳方位感：
-audio.updateListenerFromCamera(renderer.camera);
-const shot = await audio.playCue('rifle_shot', { position: { x: -6, y: 1.5, z: 2 } });
-shot?.setPosition({ x: -5, y: 1.5, z: 2 }); // 声音随物体移动
-```
-
-### 4.12 确定性物理、行为轨迹录制与多人联网
-
-- **确定性物理（`physics/rapier2d.js`、`physics/rapier3d.js`）**：
-  - 固定版本 `@dimforge/rapier2d-deterministic@0.21.0` / `rapier3d-deterministic@0.21.0`，离线与联机永不切换物理后端。
-  - 提供 `scene.physics.add(entity, { type: 'dynamic' | 'fixed' | 'kinematicPosition' | 'kinematicVelocity', shape: 'cuboid' | 'ball' | 'capsule' })`、`createCharacterController(entity, { autostep, snapToGround, slide: true })`、`castRay`、`overlaps`、`takeSnapshot` / `restoreSnapshot`、`stateChecksum`。
-- **行为轨迹录制（`HGame.createTraceRecorder`）**：
-  - 用于高保真玩法校验、AI 复刻对照的 JSONL 逻辑事件记录器，见 [TRACE-RECORDER.md](./TRACE-RECORDER.md)。
-- **多人联网（`network/` + `lockstep/`）**：
-  - 独立 workspace（先执行 `npm ci --prefix network`），包含 `StateSyncRoom`（状态同步 + `InterestGrid2D` 兴趣网格 + `ReplicationPriorityScheduler` 防饥饿调度 + 二进制快照）、`PredictedRoom`（服务端回溯 `LagCompensationHistory` + 客户端自适应预测提前量 `AdaptiveInputLeadController`）和 `LockstepRoom`（限帧防卡死 `NO_OP` 补帧 + 断线补帧回放），配合客户端 `lockstep/confirmed-frames.js`。详见 [NETWORK.md](../architecture/NETWORK.md) 与 [LOCKSTEP.md](../architecture/LOCKSTEP.md)。
+| 主题 | 文件 |
+|---|---|
+| 4.1 核心生命周期、渲染插值与 GameplayTags | [systems/01-core-lifecycle-tags.md](systems/01-core-lifecycle-tags.md) |
+| 4.2 补间动画 Tween 与弹簧阻尼手感 | [systems/02-tween-spring.md](systems/02-tween-spring.md) |
+| 4.3 2D 精灵、算法地面阴影、图集切帧与 A* 寻路 | [systems/03-sprite-2d-pathfinding.md](systems/03-sprite-2d-pathfinding.md) |
+| 4.4 2D 万怪同屏（5,000–10,000+ 对象：WebGL2D + SpriteCrowd2D + SpatialHash2D） | [systems/04-horde-2d.md](systems/04-horde-2d.md) |
+| 4.5 3D 渲染、UE 电影级色调、程序化天空与 MegaLights 多光源 | [systems/05-render-3d-megalights.md](systems/05-render-3d-megalights.md) |
+| 4.6 3D 后处理体积栈、遮挡剔除、GPU 实例化与 3D 弹簧臂相机 | [systems/06-post-culling-camera-3d.md](systems/06-post-culling-camera-3d.md) |
+| 4.7 3D 骨骼角色（GLB）、VAT 千人同屏、世界对齐 PBR 与开放世界 | [systems/07-model-vat-open-world.md](systems/07-model-vat-open-world.md) |
+| 4.8 低 / 中 / 高三档画质统一调节（2D & 3D） | [systems/08-quality-tiers.md](systems/08-quality-tiers.md) |
+| 4.9 手机触屏优先 + 虚拟摇杆/技能键 + PC 双人分屏标准（必读） | [systems/09-touch-arcade-splitscreen.md](systems/09-touch-arcade-splitscreen.md) |
+| 4.10 中国商业化分层红点系统（Trie 树 + DAG 跨入口去重 + DOM 绑定） | [systems/10-red-dot.md](systems/10-red-dot.md) |
+| 4.11 美术切图去背管线 + 3D HRTF 空间音效与多变种防连重 Cue | [systems/11-art-audio-pipeline.md](systems/11-art-audio-pipeline.md) |
+| 4.12 确定性物理、行为轨迹录制与多人联网 | [systems/12-physics-trace-network.md](systems/12-physics-trace-network.md) |
 
 ---
 
-## 五、全命令速查总表
+## 四、全命令速查总表
 
 | 场景 | 在哪里运行 | 完整命令 | 说明 |
 |---|---|---|---|
@@ -373,7 +87,7 @@ shot?.setPosition({ x: -5, y: 1.5, z: 2 }); // 声音随物体移动
 
 ---
 
-## 六、10 条防踩坑黄金铁律
+## 五、11 条防踩坑黄金铁律
 
 1. **只保留一个主循环**：一切固定物理步与画面刷新由 `app.start()` 托管，严禁在组件里另开 `requestAnimationFrame`。
 2. **不要把游戏规则写进 `vendor/hgame/`**：在独立游戏中，`vendor/hgame/` 只是精简运行时副本；游戏玩法、数值、AI、存档结构必须放在 `src/`。
@@ -385,10 +99,11 @@ shot?.setPosition({ x: -5, y: 1.5, z: 2 }); // 声音随物体移动
 8. **移动端操作先想直觉触控，再加摇杆技能键**：能点按/拖拽直接玩的优先用 `app.input.pointers`；需摇杆和技能按钮时严格遵循 P1 `WASD + JKL UIO`（默认 `touch-only` 不遮挡桌面）、P2 `方向键 + 123456`。
 9. **多层 UI 徽章不要用散装布尔值**：所有多页/跨入口红点用 `createRedDotSystem` + `bindRedDotDOM`，靠 Trie 冒泡与 DAG 去重确保“子页未清、父点不灭”。
 10. **测试汇报必须老实**：只跑了 Node 单元测试（`npm test`）不能写“浏览器真机已验收”；跑过 `tests/browser-profiles.mjs` 才可写浏览器已验证。
+11. **阶段性成果立即提交，严禁在 `main` 分支堆积改动**：每完成并通过校验（`npm run check` / `npm test`）一个阶段性节点就立即 `git commit`；多阶段功能或性能改造先切短生命周期特性分支（如 `feat/*`、`perf/*`、`fix/*`）按阶段小步提交，全部通过校验后再合并回 `main`，保持 `main` 随时干净可发布。
 
 ---
 
-## 七、延伸专题文档
+## 六、延伸专题文档
 
 - 架构总览与边界：[ENGINE-OVERVIEW.md](../architecture/ENGINE-OVERVIEW.md)
 - 平台服务、音频与输入 API：[PLATFORM-API.md](../architecture/PLATFORM-API.md)

@@ -74,9 +74,9 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 | **Core Loop & Tags** | `index.js`, `core/*` | `HGame.defineProject`, `createApplication`, `Scene`, `Entity` (`addTag`, `matchesTags`, `scene.queryTags`), `app.renderAlpha`, `app.hitStop`, `app.setTimeScale` |
 | **Motion & Feel** | `time/tween.js` | `scene.tweens` (`idle`, `run`, `attackLunge`, `dieKnockback`), `EASING`, `damp`, `dampAngle`, `SpringDamper1D/2D/3D` |
 | **2D Sprites & Pathfinding** | `integrations/canvas2d.js`, `animation/*`, `world/tilemap.js` | `createCanvas2DAdapter`, `Camera2D`, `Sprite2D` (`groundShadow: true`, `hitFlash`), `SpriteSheet.fromGrid`, `AnimationPlayer`, `TileMap`, `findGridPath` |
-| **2D 5k–10k+ Swarms** | `integrations/webgl2d.js`, `world/spatial2d.js` | `createWebGL2DAdapter` (auto Canvas2D fallback), `SpriteCrowd2D` (SoA O(1) pool), `SpatialHash2D` (`resolveSoftSeparation`), `ObjectPool` |
+| **2D 5k–150k+ Swarms** | `integrations/webgl2d.js`, `world/spatial2d.js`, `world/swarm-ecs.js`, `world/gpu-swarm-webgl2.js` | `<1.5k` use `Entity`; `1.5k–15k` use `SpriteCrowd2D` + `SpatialHash2D`; `15k–150k+` use `createSwarmSimulation` (`FlowField2D`, `FlatSpatialHash2D`, `FlatCombatECS` 10m/12m, 3-tier separation) + `SpriteCrowd2D.bindSwarm` / `syncToSpriteCrowd2D` (`createWebGL2DAdapter`), or `createGpuSwarmWebGL2` (`bindGpuSwarm`) for pure-GPU FBO simulation |
 | **3D Sky, MegaLights & Post** | `integrations/three.js`, `sky3d.js`, `lighting3d.js`, `post3d.js` | `createThreeAdapter` (`toneMapping: 'ueFilmic'`, `setSky`, `setExposure`, `setPostVolumes`), `createProceduralSky3D`, `createMegaLights3D`, `createIrradianceProbeVolume3D`, `createPostProcessVolumeStack` |
-| **3D Culling, Camera & Crowd** | `integrations/culling3d.js`, `camera3d.js`, `model3d.js`, `world-aligned-material.js` | `createInstancedBatch3D`, `createSceneCuller3D`, `createCameraRig3D` / `createSpringArm3D`, `createModel3DProvider`, `createInstancedCrowd3D` (VAT), `createWorldMaterialPalette` |
+| **3D Culling, Camera & Crowd** | `integrations/culling3d.js`, `camera3d.js`, `model3d.js`, `world-aligned-material.js` | `createInstancedBatch3D`, `createSceneCuller3D`, `createCameraRig3D` / `createSpringArm3D`, `createModel3DProvider` (`<200` full rig), `createInstancedCrowd3D` (Vertex-VAT), `createBoneVatCrowd3D` (HalfFloat Bone-VAT + 16B packed 3-LOD + `syncFromSwarm` / `syncFromGpuSwarm`, offline `npm run bake:vat` -> `.vat.bin`), `createWorldMaterialPalette` |
 | **Open World** | `world/open-world.js` | `createWorldPartition` (hysteresis streaming), `createHLODProxyGroup3D`, `createFloatingOrigin` (`Float64` precision + palette/physics sync) |
 | **Unified Low/Med/High Quality** | `integrations/quality3d.js` | `renderer.setQuality('low' \| 'medium' \| 'high' \| 'ultra')`, `QUALITY2D_PRESETS`, `QUALITY3D_PRESETS`, `createAdaptiveQualityController` |
 | **Touch / Arcade / Split-Screen** | `platform/input.js`, `integrations/touch-controls.js` | Touch-first `app.input.pointers`; optional HUD `HGame.createArcadeControls` + `createTouchControls` (`mode: 'touch-only'`); P1 `WASD` + `JKL UIO` (reserve `Q E`); P2 `Arrows` + `123456` (reserve `0 .`); `HGame.computeSplitScreenViews` + `renderer.setViews` |
@@ -92,6 +92,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 3. **3D Collision Separation**: Never derive collisions or authoritative gameplay state from visual PBR meshes (`model-slots.json` / `materials.json`); keep colliders explicit in `level.json`.
 4. **Controls Standard**: Keep PC actions inside P1's `WASD + JKL UIO` (and P2's `Arrows + 123456` for 2P split-screen) unless genuinely exhausted, enabling `Q E` / `0 .` only via `extras` or `enableExtras: true`.
 5. **Red Dot Standard**: Keep parent UI badges lit automatically via `createRedDotSystem` until every active child leaf has been handled; never hand-code flat boolean flags or manual DOM removals.
+6. **Incremental Milestone Commits & Clean `main`**: Never pile up uncommitted changes on `main` across multiple stages. After each verified milestone (`npm run check` / `npm test`), commit immediately with a clear message; for multi-step features or optimizations, work on a short-lived topic branch (`feat/<topic>`, `perf/<topic>`, `fix/<topic>`), commit each milestone, and merge back to `main` once verified. Push to remotes only when asked.
 
 ---
 
@@ -113,6 +114,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
   npm run check:all
   ```
 - Optional Chromium verification requires explicit `playwright-core` + Chrome paths (`node tests/browser-profiles.mjs --playwright <path> --chrome <exe>`). Report exact checks executed; never claim browser coverage when only Node checks ran.
+- After verification passes for a milestone (new system, optimization pass, bug fix, or docs update), commit the verified milestone immediately rather than leaving dirty diffs stacked on `main`.
 
 ---
 

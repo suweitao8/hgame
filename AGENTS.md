@@ -36,6 +36,8 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Package a game release (`build/<id>_<version>/` + `.zip`): `npm run package:game -- <game-dir> --version <ver>`.
 - Full engine SDK release build (`build/hgame_1_0/` + `.zip`): `npm run release`.
 - Browser profile smoke tests are optional and require `playwright-core` plus a Chromium executable.
+- Machine-readable API index: `docs/api/API-INDEX.json` (regenerate with `npm run build:api-index`); generated declarations: `types/` (`npm run build:types`). `npm run check` fails when either is stale.
+- Headless render verification for agents: `npm run snapshot -- <game-dir>` (PNG + JSON stats + baseline diff), see `docs/guides/AI-VERIFICATION.md`. Perf budgets: `npm run bench`, `npm run bench:render`, `npm run bench:render3d`.
 - Run verification before committing. Do not claim browser/device coverage when only Node tests ran.
 
 ## Change discipline
@@ -45,6 +47,9 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Keep generated game projects self-contained; do not add CDN runtime dependencies.
 - Do not automatically migrate or rewrite existing games.
 - Never use destructive Git commands such as `reset --hard` or `clean -fd`.
+- **Commit every verified milestone immediately**: Whenever a distinct milestone (new subsystem, internal refactor, optimization pass, bug fix, or docs/tooling update) passes verification (`npm run check`, or `npm run check:all` when touching `network/`), create a focused `git commit` right away. Never accumulate uncommitted changes across multiple stages or requests.
+- **Do not pile up changes on `main`**: Keep `main`'s working tree clean. For multi-stage features, refactors, or performance experiments, create a short-lived topic branch (`feat/<topic>`, `perf/<topic>`, `fix/<topic>`), commit incrementally at each verified milestone on that branch, and merge back into `main` only after `npm run check` passes.
+- **Push only on request**: Commit locally at each milestone; run `git push` only when the user explicitly asks to push/publish to a remote.
 
 ## Agent Workflow & Documentation Entry Points
 
@@ -60,8 +65,8 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 ## Built-in Runtime Subsystems (Reuse Instead of Reinventing)
 
 - **Core, Interpolation & Tags**: `index.js`, `core/application.js` (`renderAlpha`, `hitStop`, `setTimeScale`), `core/entity.js` + `core/tags.js` (`addTag`, `matchesTags`, `scene.queryTags`), `time/tween.js` (`scene.tweens`, `SpringDamper1D/2D/3D`, `damp`).
-- **2D Rendering & 10k+ Crowds**: `integrations/canvas2d.js` (`Camera2D`, `Sprite2D` with `groundShadow` + `hitFlash`, `SpriteCrowd2D`), `integrations/webgl2d.js` (GPU-instanced 2D with Canvas2D fallback), `animation/spritesheet.js` (`fromGrid`), `animation/player.js`, `world/tilemap.js` (`findGridPath`), `world/spatial2d.js` (`SpatialHash2D`, `ObjectPool`).
-- **3D Rendering, MegaLights & Open World**: `integrations/three.js` (`toneMapping: 'ueFilmic'`, `setSky`, `setExposure`, `setPostVolumes`), `integrations/sky3d.js`, `integrations/lighting3d.js` (`createMegaLights3D`, `createIrradianceProbeVolume3D`), `integrations/post3d.js` (SSGI/SSR, contact shadows, `createPostProcessVolumeStack`), `integrations/culling3d.js` (`createInstancedBatch3D`, `createSceneCuller3D`), `integrations/camera3d.js` (`createCameraRig3D`, `createSpringArm3D`), `integrations/model3d.js` (`createModel3DProvider`, `createInstancedCrowd3D` VAT), `integrations/world-aligned-material.js`, `world/open-world.js` (`createWorldPartition`, `createHLODProxyGroup3D`, `createFloatingOrigin`).
+- **2D Rendering & 10k+–150k+ Swarms**: `integrations/canvas2d.js` (`Camera2D`, `Sprite2D` with `groundShadow` + `hitFlash`, `SpriteCrowd2D` with `bindSwarm`/`bindGpuSwarm`), `integrations/webgl2d.js` (GPU-instanced 2D with 16B compact swarm shader + Canvas2D fallback), `animation/spritesheet.js` (`fromGrid`), `animation/player.js`, `world/tilemap.js` (`findGridPath`), `world/spatial2d.js` (`SpatialHash2D`, `ObjectPool`), `world/swarm-ecs.js` (`FlatSpatialHash2D`, `FlowField2D`, `FlatCombatECS`, `createSwarmSimulation` with 10m/12m ECS hysteresis & 3-tier separation), `world/gpu-swarm-webgl2.js` (`createGpuSwarmWebGL2` RGBA32F ping-pong FBO pure-GPU swarm).
+- **3D Rendering, MegaLights & Open World**: `integrations/three.js` (`toneMapping: 'ueFilmic'`, `setSky`, `setExposure`, `setPostVolumes`), `integrations/sky3d.js`, `integrations/lighting3d.js` (`createMegaLights3D`, `createIrradianceProbeVolume3D`), `integrations/post3d.js` (SSGI/SSR, contact shadows, `createPostProcessVolumeStack`), `integrations/culling3d.js` (`createInstancedBatch3D`, `createSceneCuller3D` with 3-state `classifySphere`), `integrations/camera3d.js` (`createCameraRig3D`, `createSpringArm3D`), `integrations/model3d.js` (`createModel3DProvider`, `createInstancedCrowd3D` Vertex-VAT, `createBoneVatCrowd3D` HalfFloat Bone-VAT + 16B packed 3-LOD + `"HVAT"` `.vat.bin`, `syncFromSwarm` / `syncFromGpuSwarm`, `scripts/bake-bone-vat.mjs` / `npm run bake:vat`), `integrations/world-aligned-material.js`, `world/open-world.js` (`createWorldPartition`, `createHLODProxyGroup3D`, `createFloatingOrigin`).
 - **Unified Quality (`low` / `medium` / `high`)**: `integrations/quality3d.js` and `renderer.setQuality('low' | 'medium' | 'high' | 'ultra')`.
 - **Cross-Platform Touch, Arcade & Split-Screen Input**: touch-first `app.input.pointers`; opt-in `HGame.createArcadeControls` + `integrations/touch-controls.js` (`mode: 'touch-only'`; P1 `WASD` + `J K L U I O` with optional `Q E`, P2 `Arrow` keys + `1..6` with optional `0 .`); split-screen via `HGame.computeSplitScreenViews` + `renderer.setViews(...)`.
 - **Commercial Red Dot System**: `ui/red-dot.js` (`HGame.createRedDotSystem` Trie + DAG) + `integrations/red-dot-dom.js` (`bindRedDotDOM`, `data-red-dot`, `data-red-dot-ack`).
