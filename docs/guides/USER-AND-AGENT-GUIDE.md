@@ -19,7 +19,7 @@ flowchart LR
   S4 --> S5["5. 阶段性 git commit，再精简打包 (package-game.mjs -> build/目录 + .zip)"]
 ```
 
-> **Git 提交纪律**：无论是开发引擎还是独立游戏，每完成一个阶段性成果并通过测试校验后就立即 `git commit`，不要在 `main` 分支长期堆积未提交改动（多阶段工作先建短生命周期特性分支如 `feat/*`、`perf/*`，逐阶段提交后再合并回 `main`）。
+> **Git 提交与推送纪律**：无论是开发引擎还是独立游戏，每完成一个阶段性成果并通过测试校验后就立即 `git commit` 并推送远程仓库（如已配置 `origin` 则执行 `git push`），不要在 `main` 分支长期堆积未提交改动（多阶段工作先建短生命周期特性分支如 `feat/*`、`perf/*`，逐阶段提交推送后再合并回 `main`）。
 
 ---
 
@@ -99,7 +99,7 @@ flowchart LR
 8. **移动端操作先想直觉触控，再加摇杆技能键**：能点按/拖拽直接玩的优先用 `app.input.pointers`；需摇杆和技能按钮时严格遵循 P1 `WASD + JKL UIO`（默认 `touch-only` 不遮挡桌面）、P2 `方向键 + 123456`。
 9. **多层 UI 徽章不要用散装布尔值**：所有多页/跨入口红点用 `createRedDotSystem` + `bindRedDotDOM`，靠 Trie 冒泡与 DAG 去重确保“子页未清、父点不灭”。
 10. **测试汇报必须老实**：只跑了 Node 单元测试（`npm test`）不能写“浏览器真机已验收”；跑过 `tests/browser-profiles.mjs` 才可写浏览器已验证。
-11. **阶段性成果立即提交，严禁在 `main` 分支堆积改动**：每完成并通过校验（`npm run check` / `npm test`）一个阶段性节点就立即 `git commit`；多阶段功能或性能改造先切短生命周期特性分支（如 `feat/*`、`perf/*`、`fix/*`）按阶段小步提交，全部通过校验后再合并回 `main`，保持 `main` 随时干净可发布。
+11. **阶段性成果立即提交并推送远程，严禁在 `main` 分支堆积改动**：每完成并通过校验（`npm run check` / `npm test`）一个阶段性节点就立即 `git commit` 并推送远程仓库（`git push`）；多阶段功能或性能改造先切短生命周期特性分支（如 `feat/*`、`perf/*`、`fix/*`）按阶段小步提交推送，全部通过校验后再合并回 `main`，保持 `main` 与远程分支随时干净且同步。
 
 ---
 

@@ -92,7 +92,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 3. **3D Collision Separation**: Never derive collisions or authoritative gameplay state from visual PBR meshes (`model-slots.json` / `materials.json`); keep colliders explicit in `level.json`.
 4. **Controls Standard**: Keep PC actions inside P1's `WASD + JKL UIO` (and P2's `Arrows + 123456` for 2P split-screen) unless genuinely exhausted, enabling `Q E` / `0 .` only via `extras` or `enableExtras: true`.
 5. **Red Dot Standard**: Keep parent UI badges lit automatically via `createRedDotSystem` until every active child leaf has been handled; never hand-code flat boolean flags or manual DOM removals.
-6. **Incremental Milestone Commits & Clean `main`**: Never pile up uncommitted changes on `main` across multiple stages. After each verified milestone (`npm run check` / `npm test`), commit immediately with a clear message; for multi-step features or optimizations, work on a short-lived topic branch (`feat/<topic>`, `perf/<topic>`, `fix/<topic>`), commit each milestone, and merge back to `main` once verified. Push to remotes only when asked.
+6. **Incremental Milestone Commits & Clean `main`**: Never pile up uncommitted changes on `main` across multiple stages. After each verified milestone (`npm run check` / `npm test`), commit immediately with a clear message and push to the configured remote (`git push`) right away; for multi-step features or optimizations, work on a short-lived topic branch (`feat/<topic>`, `perf/<topic>`, `fix/<topic>`), commit each milestone, and merge back to `main` once verified (pushing after each commit).
 
 ---
 
@@ -114,7 +114,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
   npm run check:all
   ```
 - Optional Chromium verification requires explicit `playwright-core` + Chrome paths (`node tests/browser-profiles.mjs --playwright <path> --chrome <exe>`). Report exact checks executed; never claim browser coverage when only Node checks ran.
-- After verification passes for a milestone (new system, optimization pass, bug fix, or docs update), commit the verified milestone immediately rather than leaving dirty diffs stacked on `main`.
+- After verification passes for a milestone (new system, optimization pass, bug fix, or docs update), commit the verified milestone immediately and push to the configured remote (`git push`) rather than leaving dirty diffs stacked on `main`.
 
 ---
 

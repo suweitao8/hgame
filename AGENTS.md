@@ -49,7 +49,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Never use destructive Git commands such as `reset --hard` or `clean -fd`.
 - **Commit every verified milestone immediately**: Whenever a distinct milestone (new subsystem, internal refactor, optimization pass, bug fix, or docs/tooling update) passes verification (`npm run check`, or `npm run check:all` when touching `network/`), create a focused `git commit` right away. Never accumulate uncommitted changes across multiple stages or requests.
 - **Do not pile up changes on `main`**: Keep `main`'s working tree clean. For multi-stage features, refactors, or performance experiments, create a short-lived topic branch (`feat/<topic>`, `perf/<topic>`, `fix/<topic>`), commit incrementally at each verified milestone on that branch, and merge back into `main` only after `npm run check` passes.
-- **Push only on request**: Commit locally at each milestone; run `git push` only when the user explicitly asks to push/publish to a remote.
+- **Push to remote after every commit**: Whenever a remote is configured (e.g., `origin`), run `git push` immediately after each verified `git commit` (on the active topic branch or `main` after merging) so the remote stays synchronized at every milestone.
 
 ## Agent Workflow & Documentation Entry Points
 
