@@ -49,7 +49,22 @@ export {
   createSwarmSimulation,
 } from './world/swarm-ecs.js';
 export { createGpuSwarmWebGL2 } from './world/gpu-swarm-webgl2.js';
+export { createNavMesh3D } from './world/navmesh3d.js';
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
+export {
+  createStateMachine,
+  BT_STATUS,
+  sequence,
+  selector,
+  parallel,
+  inverter,
+  repeater,
+  cooldown,
+  condition,
+  action,
+  wait,
+  createBehaviorTree,
+} from './ai/index.js';
 export { createTraceRecorder } from './integrations/trace.js';
 export { createSeededRng, createStateChecksum, hashState, runScripted } from './sim/index.js';
 export { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
@@ -111,7 +126,22 @@ import {
   createSwarmSimulation,
 } from './world/swarm-ecs.js';
 import { createGpuSwarmWebGL2 } from './world/gpu-swarm-webgl2.js';
+import { createNavMesh3D } from './world/navmesh3d.js';
 import { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
+import {
+  createStateMachine,
+  BT_STATUS,
+  sequence,
+  selector,
+  parallel,
+  inverter,
+  repeater,
+  cooldown,
+  condition,
+  action,
+  wait,
+  createBehaviorTree,
+} from './ai/index.js';
 import {
   defineInputContext,
   createInputActionRouter,
@@ -204,9 +234,22 @@ export const HGame = Object.freeze({
   FlatCombatECS,
   createSwarmSimulation,
   createGpuSwarmWebGL2,
+  createNavMesh3D,
   createWorldPartition,
   createHLODProxyGroup3D,
   createFloatingOrigin,
+  createStateMachine,
+  BT_STATUS,
+  sequence,
+  selector,
+  parallel,
+  inverter,
+  repeater,
+  cooldown,
+  condition,
+  action,
+  wait,
+  createBehaviorTree,
   VFX_SHAPE,
   TELEGRAPH_SHAPE,
   CROWD_STATUS,

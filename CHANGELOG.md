@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- AI Decision Kernel & 3D NavMesh (`ai/fsm.js`, `ai/bt.js`, `ai/index.js`, `world/navmesh3d.js`):
+  - Add zero-GC Hierarchical Finite State Machine (`createStateMachine` with LCA parent/child enter-exit, guarded/event transitions).
+  - Add shared-definition Behavior Tree runner (`createBehaviorTree`, `BT_STATUS`, `sequence`, `selector`, `parallel`, `inverter`, `repeater`, `cooldown`, `condition`, `action`, `wait`) with priority preemption and per-instance typed memory.
+  - Add height-aware 3D NavMesh + A* + LOS string-pulling smoother (`createNavMesh3D`), and allowlist `ai/` in `scripts/package-game.mjs`.
+
 - Commercial UI Kit, i18n & AI-Native Zero-GUI Contract (`ui/panel-stack.js`, `ui/virtual-list.js`, `ui/i18n.js`, `ui/index.js`):
   - Add stack-based UI modal/overlay router (`createPanelStack` with Escape/cancel back-stack, exclusive/pinned modes, transition alphas, and optional `bindDom`).
   - Add zero-alloc virtualized list/grid window (`createVirtualList` with fixed-grid and variable-height prefix-sum scrolling + DOM row pooling).
