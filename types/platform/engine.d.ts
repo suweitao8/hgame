@@ -43,7 +43,6 @@ export function createGameEngine({ gameId, gameVersion, renderer, assetBaseUrl, 
 /** Platform service version string. */
 export const PLATFORM_VERSION: "1.0.0";
 export { createAssetLoader } from "./assets.js";
-export { createSaveStore } from "./storage.js";
 export { createDiagnostics } from "./diagnostics.js";
 export { createGameBridge } from "./game-bridge.js";
 export { createGameHostBridge } from "./host-bridge.js";
@@ -122,5 +121,6 @@ export type GameEngine = {
 import { GAME_ENGINE_PROTOCOL } from './protocol.js';
 import { GAME_ENGINE_PROTOCOL_VERSION } from './protocol.js';
 export { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION };
+export { createSaveStore, createVersionedStore } from "./storage.js";
 export { createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews } from "./input.js";
 export { createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm } from "./audio.js";

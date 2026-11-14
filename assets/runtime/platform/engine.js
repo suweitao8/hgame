@@ -11,7 +11,7 @@ import { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION } from './protocol.j
 export const PLATFORM_VERSION = '1.0.0';
 export { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION };
 export { createAssetLoader } from './assets.js';
-export { createSaveStore } from './storage.js';
+export { createSaveStore, createVersionedStore } from './storage.js';
 export {
   createInputManager,
   defineInputContext,

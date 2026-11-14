@@ -1,3 +1,5 @@
+import { hashState } from '../sim/checksum.js';
+
 /** @returns {Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'>} */
 function createMemoryStorage() {
   const values = new Map();
@@ -95,6 +97,187 @@ export function createSaveStore({
     keys,
     clear() {
       for (const key of keys()) backend.removeItem(keyFor(key));
+    },
+  });
+}
+
+function computeEnvelopeSum(version, salt, data) {
+  return (hashState({ v: version, salt: String(salt ?? ''), data }) >>> 0).toString(16).padStart(8, '0');
+}
+
+function isVersionEnvelope(entry) {
+  return Boolean(entry && typeof entry === 'object' && entry.__hgSave === 1 && Number.isInteger(entry.v) && entry.v >= 1);
+}
+
+/**
+ * Wrap a SaveStore (or `{ gameId, storage }`) with explicit schema versioning,
+ * sequential forward migrations (`v -> v + 1`), FNV-1a checksum tamper detection,
+ * and automatic last-known-good backup recovery.
+ * @param {object} [options]
+ * @param {SaveStore} [options.store] Existing SaveStore (overrides `gameId`/`storage`/`prefix`).
+ * @param {string} [options.gameId='default-game'] Game slug used if `store` is omitted.
+ * @param {Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'> | null} [options.storage]
+ * @param {string} [options.prefix='webasset.game'] Namespace prefix when `store` is omitted.
+ * @param {number} [options.schemaVersion=1] Target schema version (`>= 1`).
+ * @param {Record<number | string, (data: any) => any>} [options.migrations={}] Map of `fromVersion -> migrator(oldData)`.
+ * @param {boolean} [options.checksum=true] Enable FNV-1a tamper detection on envelopes.
+ * @param {string} [options.salt=''] Optional application salt mixed into envelope checksums.
+ * @param {string} [options.backupKeySuffix='.bak'] Backup key suffix; empty string disables backup slot.
+ * @param {boolean} [options.autoPersistMigrated=true] Re-save migrated data immediately on `load()`.
+ */
+export function createVersionedStore({
+  store,
+  gameId = 'default-game',
+  storage,
+  prefix = 'webasset.game',
+  schemaVersion = 1,
+  migrations = {},
+  checksum = true,
+  salt = '',
+  backupKeySuffix = '.bak',
+  autoPersistMigrated = true,
+} = {}) {
+  if (!Number.isInteger(schemaVersion) || schemaVersion < 1) {
+    throw new TypeError('schemaVersion must be a positive integer');
+  }
+  const backing = store ?? createSaveStore({ gameId, schemaVersion: 1, storage, prefix });
+  const bakSuffix = typeof backupKeySuffix === 'string' ? backupKeySuffix : '.bak';
+
+  function parseCandidate(raw) {
+    if (raw === undefined || raw === null) return { status: 'missing' };
+    if (isVersionEnvelope(raw)) {
+      if (checksum && raw.sum !== undefined) {
+        const expected = computeEnvelopeSum(raw.v, salt, raw.data);
+        if (raw.sum !== expected) return { status: 'corrupt', reason: 'checksum-mismatch' };
+      }
+      return { status: 'ok', version: raw.v, data: raw.data, legacy: false };
+    }
+    return { status: 'ok', version: 1, data: raw, legacy: true };
+  }
+
+  function makeEnvelope(value) {
+    return {
+      __hgSave: 1,
+      v: schemaVersion,
+      sum: checksum ? computeEnvelopeSum(schemaVersion, salt, value) : undefined,
+      ts: Date.now(),
+      data: value,
+    };
+  }
+
+  function save(key, value) {
+    if (bakSuffix) {
+      const prev = backing.get(key, null);
+      if (parseCandidate(prev).status === 'ok') {
+        try { backing.set(key + bakSuffix, prev); } catch { /* Best-effort backup. */ }
+      }
+    }
+    const env = makeEnvelope(value);
+    backing.set(key, env);
+    return value;
+  }
+
+  function migrateData(startVersion, initialData) {
+    let data = initialData;
+    let v = startVersion;
+    while (v < schemaVersion) {
+      const fn = migrations[v] ?? migrations[String(v)];
+      if (typeof fn !== 'function') {
+        return { ok: false, reason: `missing-migration-v${v}`, version: v, data };
+      }
+      data = fn(data);
+      v += 1;
+    }
+    return { ok: true, version: v, data };
+  }
+
+  function load(key, fallback) {
+    const primaryRaw = backing.get(key, null);
+    let parsed = parseCandidate(primaryRaw);
+    let recovered = false;
+
+    if (parsed.status !== 'ok' && bakSuffix) {
+      const bakRaw = backing.get(key + bakSuffix, null);
+      const bakParsed = parseCandidate(bakRaw);
+      if (bakParsed.status === 'ok') {
+        parsed = bakParsed;
+        recovered = true;
+      }
+    }
+
+    if (parsed.status !== 'ok') {
+      return {
+        ok: false,
+        reason: parsed.reason ?? 'missing',
+        value: fallback,
+        version: null,
+        fromVersion: null,
+        migrated: false,
+        recovered: false,
+      };
+    }
+
+    if (parsed.version > schemaVersion) {
+      return {
+        ok: false,
+        reason: 'future-version',
+        value: fallback,
+        version: parsed.version,
+        fromVersion: parsed.version,
+        migrated: false,
+        recovered,
+      };
+    }
+
+    let data = parsed.data;
+    const migrated = parsed.version < schemaVersion || parsed.legacy;
+    if (parsed.version < schemaVersion) {
+      const res = migrateData(parsed.version, data);
+      if (!res.ok) {
+        return {
+          ok: false,
+          reason: res.reason,
+          value: fallback,
+          version: res.version,
+          fromVersion: parsed.version,
+          migrated: false,
+          recovered,
+        };
+      }
+      data = res.data;
+    }
+
+    if ((migrated || recovered) && autoPersistMigrated) {
+      backing.set(key, makeEnvelope(data));
+    }
+
+    return {
+      ok: true,
+      value: data,
+      version: schemaVersion,
+      fromVersion: parsed.version,
+      migrated,
+      recovered,
+    };
+  }
+
+  return Object.freeze({
+    schemaVersion,
+    store: backing,
+    save,
+    set: save,
+    load,
+    get(key, fallback) {
+      const res = load(key, fallback);
+      return res.ok ? res.value : fallback;
+    },
+    verify(key) {
+      const parsed = parseCandidate(backing.get(key, null));
+      return parsed.status === 'ok' && parsed.version <= schemaVersion;
+    },
+    remove(key) {
+      backing.remove(key);
+      if (bakSuffix) backing.remove(key + bakSuffix);
     },
   });
 }

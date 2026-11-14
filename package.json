@@ -34,6 +34,7 @@
     "build:api-index": "node scripts/build-api-index.mjs",
     "check:api-index": "node scripts/build-api-index.mjs --check",
     "snapshot": "node scripts/snapshot.mjs",
+    "playtest": "node scripts/playtest.mjs",
     "api": "node scripts/query-api.mjs",
     "build:examples": "node scripts/build-examples.mjs",
     "test:examples": "node --test tests/examples.test.mjs examples/survivor-2d/tests/*.test.mjs examples/arena-3d/tests/*.test.mjs",

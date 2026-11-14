@@ -17,7 +17,7 @@ export {
 } from './core/tags.js';
 export { createGameApplication } from './core/application.js';
 export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION,
-  createAssetLoader, createSaveStore, createInputManager, defineInputContext, createInputActionRouter,
+  createAssetLoader, createSaveStore, createVersionedStore, createInputManager, defineInputContext, createInputActionRouter,
   ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews,
   createAudioManager, analyzeAudioBuffer, normalizeVariantSet,
   SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx,
@@ -146,6 +146,7 @@ import {
   createBehaviorTree,
 } from './ai/index.js';
 import {
+  createVersionedStore,
   defineInputContext,
   createInputActionRouter,
   ARCADE_SLOTS,
@@ -195,6 +196,7 @@ export const HGame = Object.freeze({
   defineProject,
   resolveFeatureGraph,
   createApplication: createGameApplication,
+  createVersionedStore,
   createTraceRecorder,
   createSeededRng,
   createStateChecksum,

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Versioned Save Store & Automated AI Playtest Runner (`platform/storage.js`, `scripts/playtest.mjs`):
+  - Add `createVersionedStore` wrapping `SaveStore` with sequential `v -> v + 1` schema migrations, FNV-1a envelope tamper detection, and automatic `.bak` backup slot recovery.
+  - Add `npm run playtest -- <game-dir>` (`scripts/playtest.mjs`) to boot loopback preview + headless Chromium, drive scripted keyboard/pointer inputs, collect rAF FPS/stutter telemetry, and verify non-blank & reactive gameplay with zero JS/HTTP errors.
+
 - 3D Procedural Heightfield Terrain & Expanded Props (`world/terrain3d.js`, `integrations/procedural-models.js`, `physics/rapier-world.js`):
   - Add `createHeightfieldTerrain3D` & `fbmNoise2D` with exact bilinear height/normal/slope/biome queries, Three.js vertex-colored mesh builder, deterministic prop scatter (`scatterPositions`), and direct Rapier3D heightfield physics (`attachPhysics`, exposing `world.RAPIER`).
   - Expand `createProceduralModelSlots` with 7 new shapes (`arch`, `crate`, `barrel`, `crystal`, `rock`, `pine`, `turret`).

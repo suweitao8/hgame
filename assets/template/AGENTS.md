@@ -23,15 +23,17 @@
 |---|---|---|
 | Core, Scene, Tags, Tween, Red Dot, Arcade Input | `../vendor/hgame/index.js` | `HGame.defineProject`, `createApplication`, `Scene`, `Entity`, `HGame.createSwarmSimulation`, `HGame.createGpuSwarmWebGL2`, `HGame.createArcadeControls`, `HGame.computeSplitScreenViews`, `HGame.createRedDotSystem`, `HGame.createFloatingOrigin`, `HGame.createWorldPartition` |
 | 2D Canvas & Crowd (`10,000+`) | `../vendor/hgame/integrations/canvas2d.js` | `createCanvas2DAdapter`, `Camera2D`, `Sprite2D` (`groundShadow`, `hitFlash`), `SpriteCrowd2D` (`bindSwarm`, `bindGpuSwarm`) |
-| 2D WebGL2 GPU Instanced (auto Canvas2D fallback) | `../vendor/hgame/integrations/webgl2d.js` | `createWebGL2DAdapter`, `Camera2D`, `Sprite2D`, `SpriteCrowd2D` |
+| 2D WebGL2 GPU Instanced (auto Canvas2D fallback) | `../vendor/hgame/integrations/webgl2d.js`, `post2d.js` | `createWebGL2DAdapter`, `setAmbientLight`, `addLight2D`, `setLights2D`, `setPost2D` (Bloom/vignette/hitPulse), `Sprite2D`, `SpriteCrowd2D` |
 | 2D SpriteSheet, Animation & Pathfinding | `../vendor/hgame/animation/spritesheet.js`, `player.js`, `../vendor/hgame/world/tilemap.js`, `spatial2d.js` | `SpriteSheet.fromGrid`, `AnimationPlayer`, `TileMap`, `findGridPath`, `SpatialHash2D`, `ObjectPool` |
-| 3D Adapter, Sky, Lights, Post & Culling | `../vendor/hgame/integrations/three.js`, `sky3d.js`, `lighting3d.js`, `post3d.js`, `culling3d.js`, `camera3d.js` | `createThreeAdapter`, `createProceduralSky3D`, `createMegaLights3D`, `createIrradianceProbeVolume3D`, `createPostProcessVolumeStack`, `createInstancedBatch3D`, `createCameraRig3D` |
-| 3D Rigged GLB, VAT Crowd & World PBR | `../vendor/hgame/integrations/model3d.js`, `world-aligned-material.js` | `createModel3DProvider`, `createInstancedCrowd3D`, `createBoneVatCrowd3D`, `createWorldMaterialPalette`, `applyGeometricSpecularAA` |
+| 3D Adapter, Terrain, NavMesh & Lighting | `../vendor/hgame/integrations/three.js`, `sky3d.js`, `lighting3d.js`, `post3d.js`, `culling3d.js`, `camera3d.js`, `../vendor/hgame/world/terrain3d.js`, `navmesh3d.js` | `createThreeAdapter`, `createHeightfieldTerrain3D`, `createNavMesh3D`, `createProceduralSky3D`, `createMegaLights3D`, `createPostProcessVolumeStack`, `createCameraRig3D` |
+| 3D Rigged GLB, VAT Crowd & World PBR | `../vendor/hgame/integrations/model3d.js`, `procedural-models.js`, `world-aligned-material.js` | `createModel3DProvider`, `createProceduralModelSlots` (17 shapes), `createInstancedCrowd3D`, `createBoneVatCrowd3D`, `createWorldMaterialPalette` |
+| AI Decision Kernel (HFSM + Behavior Tree) | `../vendor/hgame/ai/index.js` | `createStateMachine`, `createBehaviorTree`, `BT_STATUS`, `sequence`, `selector`, `parallel`, `cooldown`, `condition`, `action` |
+| Commercial UI Kit & Red Dot | `../vendor/hgame/ui/index.js`, `../vendor/hgame/integrations/red-dot-dom.js` | `createPanelStack`, `createVirtualList`, `createI18n`, `createRedDotSystem`, `bindRedDotDOM` |
 | Zero-GC VFX & Game-Feel | `../vendor/hgame/vfx/index.js` | `createVfxSystem`, `emitHitImpact`, `burstParticles`, `slashArc`, `lightningBolt`, `spawnTelegraph`, `popupNumber`, `screenPulse`, `CROWD_STATUS` |
-| Deterministic Sim Helpers | `../vendor/hgame/sim/rng.js`, `checksum.js`, `script.js` | `createSeededRng`, `createStateChecksum`, `hashState`, `runScripted` |
+| Deterministic Sim & Versioned Save | `../vendor/hgame/sim/*`, `../vendor/hgame/platform/storage.js` | `createSeededRng`, `createStateChecksum`, `hashState`, `createSaveStore`, `createVersionedStore` (migrations + tamper guard) |
 | Touch HUD & Red Dot DOM Binder | `../vendor/hgame/integrations/touch-controls.js`, `red-dot-dom.js` | `createTouchControls`, `bindRedDotDOM` (`[data-red-dot]`, `[data-red-dot-ack]`) |
 | Quality Presets (`low`/`medium`/`high`) | `../vendor/hgame/integrations/quality3d.js` | `renderer.setQuality('low' \| 'medium' \| 'high' \| 'ultra')`, `QUALITY2D_PRESETS`, `QUALITY3D_PRESETS` |
-| 0-KB Synth & Spatial Audio | `app.services.audio` (or `../vendor/hgame/platform/audio/synth.js`) | `playSynth`, `createSynthSfx`, `SYNTH_PRESETS`, `decode`, `registerCue`, `playCue`, `updateListenerFromCamera`, `setOcclusionProbe` |
+| 0-KB Synth SFX, Adaptive BGM & Spatial Audio | `app.services.audio` (`platform/audio/synth.js`, `bgm-synth.js`) | `playSynth`, `createBgm` / `createProceduralBgm`, `BGM_MOODS`, `registerCue`, `playCue`, `updateListenerFromCamera`, `setOcclusionProbe` |
 
 ## Commands Inside This Project
 
@@ -43,6 +45,7 @@ npm run check
 # Query engine API or run snapshot/skill validators via the HGame engine root (<hgame-repo>):
 node "<hgame-repo>/scripts/query-api.mjs" <keyword>
 node "<hgame-repo>/scripts/snapshot.mjs" .
+node "<hgame-repo>/scripts/playtest.mjs" . --duration 2000 --actions "d:300,w:300,j:150"
 node "<hgame-repo>/.agents/skills/hgame-balance-sim/scripts/sim-balance.mjs" --config <balance.json>
 node "<hgame-repo>/.agents/skills/hgame-level-architect/scripts/check-level.mjs" --level <level.json>
 node "<hgame-repo>/.agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs" --story <story.json>
