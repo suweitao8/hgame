@@ -11,6 +11,17 @@ description: >-
 
 Use this skill as the primary execution manual whenever a user asks to create, extend, optimize, debug, or package a game with **HGame 1.0.0**.
 
+> **Zero-Blind-Scan API Rule**: 查询任何引擎 API、参数签名或返回值时，**必须优先运行 `npm run api -- <keyword>`**（或 `npm run api -- --module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。
+
+## Sub-Skill Routing Table (子技能路由表)
+
+| Trigger Scenario | Companion Skill | Verification Script / Action |
+|---|---|---|
+| 刀光、粒子、受击顿帧/闪白、技能预警圈、伤害跳字、屏幕脉冲 | `hgame-vfx-juice` | 统一使用 `createVfxSystem` (`vfx/index.js`) 与 `CROWD_STATUS`，禁止手写零散粒子/DOM飘字 |
+| 修改武器伤害、攻速、角色属性、抽卡/掉落概率表 | `hgame-balance-sim` | `node .agents/skills/hgame-balance-sim/scripts/sim-balance.mjs --config <balance.json>`（强制千局统计胜率与 TTK） |
+| 编写或修改 2D/3D 关卡地图、地牢或障碍物布局 (`level.json`) | `hgame-level-architect` | `node .agents/skills/hgame-level-architect/scripts/check-level.mjs --level <level.json>`（BFS 断言出生点到关键点 100% 可达） |
+| 编写或修改分支剧情、Roguelike 事件卡 (`story.json`) | `hgame-narrative-branch` | `node .agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs --story <story.json>`（拦截死节点/不可达结局/长段废话） |
+
 ## 0. Determine Workspace Context First
 
 Check which folder the current workspace is in before running commands:
@@ -44,6 +55,7 @@ node scripts/create-game.mjs "<game-dir>" --profile ui --with audio,save --name 
 
 - Folder basename must be an ASCII slug (`[A-Za-z0-9][A-Za-z0-9_-]{0,79}`); pass localized titles via `--name`.
 - Optional `--with` flags: `scene`, `input`, `assets`, `audio`, `save`, `diagnostics`, `physics2d`, `animation2d`, `tilemap2d`, `pathfinding2d`, `physics3d`, `model3d`, `adaptiveQuality3d`.
+- Clean minimal scaffold: pass `--bare` to skip starter demo entities and generate a blank `src/main.js` wiring.
 - Explicit physics flags: `--physics rapier2d | rapier3d | none`; `--tick-hz <1..240>` (for `2d`/`3d`).
 - Inspect output before writing via `--dry-run`.
 
@@ -82,15 +94,16 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 | **Core Loop & Tags** | `index.js`, `core/*` | `HGame.defineProject`, `createApplication`, `Scene`, `Entity` (`addTag`, `matchesTags`, `scene.queryTags`), `app.renderAlpha`, `app.hitStop`, `app.setTimeScale` |
 | **Motion & Feel** | `time/tween.js` | `scene.tweens` (`idle`, `run`, `attackLunge`, `dieKnockback`), `EASING`, `damp`, `dampAngle`, `SpringDamper1D/2D/3D` |
 | **2D Sprites & Pathfinding** | `integrations/canvas2d.js`, `animation/*`, `world/tilemap.js` | `createCanvas2DAdapter`, `Camera2D`, `Sprite2D` (`groundShadow: true`, `hitFlash`), `SpriteSheet.fromGrid`, `AnimationPlayer`, `TileMap`, `findGridPath` |
-| **2D 5k–150k+ Swarms** | `integrations/webgl2d.js`, `world/spatial2d.js`, `world/swarm-ecs.js`, `world/gpu-swarm-webgl2.js` | `<1.5k` use `Entity`; `1.5k–15k` use `SpriteCrowd2D` + `SpatialHash2D`; `15k–150k+` use `createSwarmSimulation` (`FlowField2D`, `FlatSpatialHash2D`, `FlatCombatECS` 10m/12m, 3-tier separation) + `SpriteCrowd2D.bindSwarm` / `syncToSpriteCrowd2D` (`createWebGL2DAdapter`), or `createGpuSwarmWebGL2` (`bindGpuSwarm`) for pure-GPU FBO simulation |
+| **2D 5k–150k+ Swarms** | `integrations/webgl2d.js`, `world/spatial2d.js`, `world/swarm-ecs.js`, `world/gpu-swarm-webgl2.js` | `<1.5k` use `Entity`; `1.5k–15k` use `SpriteCrowd2D` + `SpatialHash2D`; `15k–50k` use `createSwarmSimulation` (`FlowField2D`, `FlatSpatialHash2D`, `FlatCombatECS`) + `SpriteCrowd2D.bindSwarm`; `50k–150k+` use `createGpuSwarmWebGL2` (`bindGpuSwarm`) for pure-GPU FBO simulation |
 | **3D Sky, MegaLights & Post** | `integrations/three.js`, `sky3d.js`, `lighting3d.js`, `post3d.js` | `createThreeAdapter` (`toneMapping: 'ueFilmic'`, `setSky`, `setExposure`, `setPostVolumes`), `createProceduralSky3D`, `createMegaLights3D`, `createIrradianceProbeVolume3D`, `createPostProcessVolumeStack` |
-| **3D Culling, Camera & Crowd** | `integrations/culling3d.js`, `camera3d.js`, `model3d.js`, `world-aligned-material.js` | `createInstancedBatch3D`, `createSceneCuller3D`, `createCameraRig3D` / `createSpringArm3D`, `createModel3DProvider` (`<200` full rig), `createInstancedCrowd3D` (Vertex-VAT), `createBoneVatCrowd3D` (HalfFloat Bone-VAT + 16B packed 3-LOD + `syncFromSwarm` / `syncFromGpuSwarm`, offline `npm run bake:vat` -> `.vat.bin`), `createWorldMaterialPalette` |
+| **3D Culling, Camera & Crowd** | `integrations/culling3d.js`, `camera3d.js`, `model3d.js`, `world-aligned-material.js` | `createInstancedBatch3D`, `createSceneCuller3D`, `createCameraRig3D` / `createSpringArm3D`, `createModel3DProvider` (`<200` full rig), `createInstancedCrowd3D` (Vertex-VAT), `createBoneVatCrowd3D` (`15k–50k` CPU `syncFromSwarm`, `50k–150k+` GPU `syncFromGpuSwarm`, offline `npm run bake:vat` -> `.vat.bin`), `createWorldMaterialPalette` |
+| **Zero-GC VFX & Game-Feel** | `vfx/index.js` (also `index.js`) | `createVfxSystem` (`3d`/`webgl2d`/`canvas2d`/`headless`), `emitHitImpact`, `burstParticles`, `slashArc`, `lightningBolt`, `spawnTelegraph`, `setShrinkZone`, `popupNumber`, `screenPulse`, `CROWD_STATUS` / `packCrowdAnimStatus` |
 | **Open World** | `world/open-world.js` | `createWorldPartition` (hysteresis streaming), `createHLODProxyGroup3D`, `createFloatingOrigin` (`Float64` precision + palette/physics sync) |
 | **Unified Low/Med/High Quality** | `integrations/quality3d.js` | `renderer.setQuality('low' \| 'medium' \| 'high' \| 'ultra')`, `QUALITY2D_PRESETS`, `QUALITY3D_PRESETS`, `createAdaptiveQualityController` |
 | **Touch / Arcade / Split-Screen** | `platform/input.js`, `integrations/touch-controls.js` | Touch-first `app.input.pointers`; optional HUD `HGame.createArcadeControls` + `createTouchControls` (`mode: 'touch-only'`); P1 `WASD` + `JKL UIO` (reserve `Q E`); P2 `Arrows` + `123456` (reserve `0 .`); `HGame.computeSplitScreenViews` + `renderer.setViews` |
 | **Commercial Red Dot Tree** | `ui/red-dot.js`, `integrations/red-dot-dom.js` | `HGame.createRedDotSystem` (Trie + DAG `link`, `registerRule`, `markUnread`, `registerDaily`, `setReadyAt`, `setUnlocked`, `setMuted`, `explain`) + `bindRedDotDOM` (`data-red-dot`, `data-red-dot-ack`) |
-| **Spatial & Variant Audio** | `platform/audio.js` (`app.services.audio`) | 4 buses + limiter, `registerCue`/`playCue` (2–4 variants), 3D `HRTF` (`position` + `updateListenerFromCamera`), 2D `position2D`, `handle.setPosition`, `setOcclusionProbe`, `registerSnapshot`/`applySnapshot` |
-| **Deterministic Physics & Replay** | `physics/rapier2d.js`, `physics/rapier3d.js`, `integrations/trace.js` | Pinned Rapier `0.21.0`, `scene.physics.add`, `createCharacterController`, `takeSnapshot`/`restoreSnapshot`, `stateChecksum`, `HGame.createTraceRecorder` |
+| **0-KB Synth & Spatial Audio** | `platform/audio.js`, `platform/audio/synth.js` | Zero-asset `audio.playSynth('hit' \| 'slash' \| 'shoot' \| 'explosion' \| 'pickup' \| 'powerup' \| 'click' \| 'hurt' \| 'laser' \| 'jump', { pitchJitter })` + `createSynthSfx`; 4 buses + limiter, `registerCue`/`playCue`, 3D `HRTF`, 2D `position2D`, `setOcclusionProbe` |
+| **Deterministic Sim & Physics** | `sim/*`, `physics/rapier2d.js`, `physics/rapier3d.js`, `integrations/trace.js` | `sim/rng.js` (`createRng`), `sim/checksum.js`, `sim/script.js`; pinned Rapier `0.21.0`, `scene.physics.add`, `createCharacterController`, `takeSnapshot`/`restoreSnapshot`, `HGame.createTraceRecorder` |
 | **Multiplayer Foundation** | `lockstep/confirmed-frames.js`, `network/` | `createConfirmedFrameScheduler`, `StateSyncRoom` / `PredictedRoom` / `LockstepRoom` (isolated workspace under `network/`) |
 
 ### Mandatory Architecture Rules
@@ -109,6 +122,10 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 - Serve via loopback HTTP (ES modules fail on `file://`):
   ```powershell
   node scripts/preview.mjs "<game-dir>" --port 4176
+  ```
+- Headless render & state snapshot check (outputs PNG + JSON stats + baseline diff):
+  ```powershell
+  npm run snapshot -- "<game-dir>"
   ```
 - In a standalone game project:
   ```powershell
