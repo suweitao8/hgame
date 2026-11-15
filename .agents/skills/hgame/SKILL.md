@@ -87,7 +87,17 @@ node scripts/create-game.mjs "<game-dir>" --profile ui --with audio,save --name 
    ```powershell
    npm run process:audio -- --cue rifle_shot --inputs t1.mp3,t2.mp3,t3.mp3,t4.mp3 --out-dir "<game-dir>/assets/audio/sfx"
    ```
-3. **Unified Off-Git Art & Audio Sync** (`scripts/assets.mjs`):
+3. **Local 3D AI Modeling, Blender Pose Normalization & UltraTex PBR (`scripts/process-model3d.mjs`)**:
+   - Machine paths (`model3d.rootDir`, `comfyUiUrl`, `comfyUiDir`, `blenderPath`) live in gitignored `.hgame.local.json` (template: `.hgame.local.example.json`) or `HGAME_MODEL3D_*` env vars.
+   - Always normalize mesh orientation (`--rx/--ry/--rz --origin ground`) and visually inspect rendered views before feeding a GLB to UltraTex (`alignment=front` requires mesh front = `-Y_blender` / `+Z_gltf` and upright `+Z_blender`), and keep game-ready face budgets (`--faces 8000-10000`).
+   ```powershell
+   npm run process:model3d -- doctor
+   npm run process:model3d -- generate --input ref.png --faces 10000 --out raw.glb
+   npm run process:model3d -- inspect raw.glb --out-dir qa_6view
+   npm run process:model3d -- normalize raw.glb --rx -90 --origin ground --out norm.glb --qa-dir qa_norm
+   npm run process:model3d -- texture --mesh norm.glb --ref ref.png --out textured.glb --pbr-dir pbr --qa-dir qa_utx
+   ```
+4. **Unified Off-Git Art & Audio Sync** (`scripts/assets.mjs`):
    - Both HGame and generated game `.gitignore` files exclude large art/audio binaries and raw authoring sources (`assets/**/*.png`, `.glb`, `.mp3`, `.vat.bin`, `.psd`, `.blend`, `.fbx`).
    - Git tracks only code, configs, and `<game-dir>/assets.manifest.json`. Store/restore actual binaries via the unified CAS store (`HGAME_ASSET_STORE` or `~/.hgame/asset-store`, optional `--remote <url>`):
    ```powershell

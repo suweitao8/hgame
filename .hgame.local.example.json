@@ -1,5 +1,13 @@
 {
   "reToolchainPath": "<path-to>/toolchain.json",
   "reWorkspaceDir": "<path-to>/RE-Workspace",
-  "gamesRootDir": "<path-to>/HTML"
+  "gamesRootDir": "<path-to>/HTML",
+  "model3d": {
+    "rootDir": "<path-to>/model3d",
+    "comfyUiUrl": "http://127.0.0.1:8188",
+    "comfyUiDir": "<path-to>/model3d/ComfyUI-Easy-Install/ComfyUI",
+    "blenderPath": "<path-to>/Blender/blender.exe",
+    "trellis2Workflow": "user/default/workflows/PixelArtistry/MeshWithTexturing_Pixal3D_GGUF.json",
+    "ultratexWorkflow": "user/default/workflows/PixelArtistry/PixelArtistry_UltraTex_03_LowVRAM_GGUF.json"
+  }
 }

@@ -90,3 +90,26 @@ const bgm = audio.createBgm({ mood: 'dungeon', intensity: 0.4 }); // 6 moods: du
 bgm.start();
 bgm.setIntensity(0.9);
 ```
+
+## 4. Local 3D AI Modeling, Pose Normalization & UltraTex PBR (`scripts/process-model3d.mjs`)
+
+HGame connects to a local ComfyUI (`Trellis2-GGUF` + `UltraTex LowVRAM GGUF`) and headless Blender pipeline configured via gitignored `.hgame.local.json` (see `.hgame.local.example.json`) or `HGAME_MODEL3D_DIR` / `HGAME_MODEL3D_COMFY_URL` / `HGAME_MODEL3D_COMFY_DIR` / `HGAME_MODEL3D_BLENDER` env vars.
+
+1. **Preflight check**:
+   ```bash
+   npm run process:model3d -- doctor
+   ```
+2. **Image-to-3D GLB (Trellis2-GGUF)** — defaults `--faces 10000` for real-time WebGL budgets:
+   ```bash
+   npm run process:model3d -- generate --input ref.png --faces 10000 --out raw.glb
+   ```
+3. **Orientation Inspection & Blender Pose Normalization** — required before UltraTex `alignment=front` and before game import (`-Y_blender` / `+Z_gltf` forward, `+Z_blender` / `+Y_gltf` up, `min_z = 0` ground origin, ASCII paths only):
+   ```bash
+   npm run process:model3d -- inspect raw.glb --out-dir qa_6view
+   npm run process:model3d -- normalize raw.glb --rx -90 --origin ground --out norm.glb --qa-dir qa_norm
+   ```
+4. **PBR Re-Texturing (UltraTex LowVRAM GGUF) + Multi-View QA Render**:
+   ```bash
+   npm run process:model3d -- texture --mesh norm.glb --ref ref.png --out final.glb --pbr-dir pbr --qa-dir qa_utx
+   ```
+

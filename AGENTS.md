@@ -8,7 +8,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Runtime version: `assets/runtime/VERSION`; keep it consistent with `HGAME_VERSION` in `assets/runtime/index.js` and the root package version.
 - New project generator: `scripts/create-game.mjs`.
 - Lean release & WASM packager: `scripts/package-game.mjs` (`build/<id>_<version>/` + `.zip`), plus Bilibili Toy standard packager & preflight (`--target toy` / `scripts/toy-preflight.mjs`, see `.agents/skills/hgame-bilibili-toy/SKILL.md` and `docs/guides/BILIBILI-TOY-STANDARD.md`).
-- Offline media curation: `scripts/process-assets.mjs` and `scripts/process-audio.mjs`.
+- Offline media curation: `scripts/process-assets.mjs`, `scripts/process-audio.mjs`, and local 3D AI modeling/normalization (`scripts/process-model3d.mjs` + `scripts/blender-model3d.py`, configured via gitignored `.hgame.local.json`).
 - Unified off-Git asset management: `scripts/assets.mjs` (`npm run assets -- push|pull|status|verify`), storing content-addressed binaries in `HGAME_ASSET_STORE` (or `~/.hgame/asset-store`) and tracking `assets.manifest.json` in Git while `.gitignore` excludes heavy art/audio binaries.
 - Starter projects: `assets/template/` and `assets/profiles/`.
 - Optional multiplayer workspace: `network/`; it owns its package manifest and lockfile.
@@ -68,7 +68,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - AI execution manual & compact system cards (`01..16`): `docs/guides/USER-AND-AGENT-GUIDE.md`.
 - Standard 5-step game workflow:
   1. Generate a standalone project inside the WebAsset-managed HTML games root (`WEBASSET_HTML_GAMES_ROOT/<slug>`) with `scripts/create-game.mjs` (`--profile 2d|3d|ui`, optional `--renderer webgl2d`, `--quality auto`, `--with audio,save,physics2d|physics3d`) so `game.config.json` auto-registers it in WebAsset.
-  2. Curate AI art sheets cleanly (`scripts/process-assets.mjs`, `--grid 1|2|3`, shadow-free actor PNGs) and filter 4-variant audio cues (`scripts/process-audio.mjs`).
+  2. Curate AI art sheets cleanly (`scripts/process-assets.mjs`, `--grid 1|2|3`, shadow-free actor PNGs), filter 4-variant audio cues (`scripts/process-audio.mjs`), and generate/normalize/re-texture local 3D GLBs (`npm run process:model3d -- doctor|generate|normalize|texture|qa`).
   3. Build gameplay in the generated project's `src/` using `vendor/hgame/` subsystems instead of bespoke loops or boilerplate.
   4. Preview and run browser QA through **WebAsset** (`http://127.0.0.1:4174/#games` -> `http://127.0.0.1:4175/local-games/<slug>/index.html`, never spawning a standalone per-game HTTP server), alongside CLI checks (`npm test`, `npm run check:all`, `npm run snapshot`, `npm run playtest`).
   5. Package the uploadable deliverable (`scripts/package-game.mjs` -> `build/<id>_<version>/` + `.zip`).

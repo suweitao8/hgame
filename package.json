@@ -17,6 +17,7 @@
     "test:browser:pbr": "node tests/browser-world-aligned.mjs",
     "process:assets": "node scripts/process-assets.mjs",
     "process:audio": "node scripts/process-audio.mjs",
+    "process:model3d": "node scripts/process-model3d.mjs",
     "assets": "node scripts/assets.mjs",
     "bake:vat": "node scripts/bake-bone-vat.mjs",
     "build:physics": "node scripts/build-physics.mjs",

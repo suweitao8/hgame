@@ -42,6 +42,8 @@ npm run api -- --module post2d   # Every export in one module
   `npm run process:assets -- --input sheet.png --grid 3 --bg white --mode actor --out-dir "<dir>/assets/actors"`
 - **Audio Normalization** (when using real `.mp3`; otherwise skip and use `playSynth` + `createBgm` 0-KB synth):
   `npm run process:audio -- --cue hit --inputs t1.mp3,t2.mp3,t3.mp3,t4.mp3 --out-dir "<dir>/assets/audio/sfx"`
+- **Local 3D AI Modeling & Normalization** (ComfyUI Trellis2/UltraTex + headless Blender; paths in `.hgame.local.json`):
+  `npm run process:model3d -- doctor | generate | inspect | normalize | texture | qa`
 - **CAS Binary Store** (binaries stay out of Git via `assets.manifest.json`):
   `npm run assets -- push|pull|status|verify "<dir>"`
 
