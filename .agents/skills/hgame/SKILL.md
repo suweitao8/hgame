@@ -124,7 +124,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 4. **Controls Standard**: Keep PC actions inside P1's `WASD + JKL UIO` (and P2's `Arrows + 123456` for 2P split-screen) unless genuinely exhausted, enabling `Q E` / `0 .` only via `extras` or `enableExtras: true`.
 5. **Red Dot Standard**: Keep parent UI badges lit automatically via `createRedDotSystem` until every active child leaf has been handled; never hand-code flat boolean flags or manual DOM removals.
 6. **Minimalist Zero-Prose UI Rule**: Never render instructional copy, `<p>` prose blocks, subtitles, "Powered by" footers, toast bars, or nested `<button>` elements inside upgrade/shop cards. Keep combat HUD to `<= 1` icon-only pause button (`<= 10%` viewport area), pause/gameover overlays to `<= 2` buttons (`<= 4` hanzi), whole-card click with `<= 18` chars symbolic stat tags (`+25% 攻速`), hide debug/bench toggles behind `` ` `` or `?debug=1`, and convey state via `createVfxSystem` + `audio.playSynth`. Verify with `check-ui.mjs` + `npm run snapshot`.
-7. **Direct `main` Development & Incremental Milestone Commits**: Work directly on the `main` branch in the active workspace—do not create topic branches or isolated workspaces/worktrees, as only one conversation develops a project at a time. Never pile up uncommitted changes across multiple stages; after each verified milestone (`npm run check` / `npm test`), commit immediately on `main` with a clear message and push to the configured remote (`git push`) right away.
+7. **Direct `main` Only, Single-Conversation Lock & Mandatory Stage Commits**: Develop **exclusively on `main` in the active workspace**—isolated workspaces/worktrees (`git worktree`, subagent/swarm `Workspace: 'branch'` / `'share'`) and non-`main` branches (`git checkout -b` / `git switch -c`) are strictly **forbidden**. Only **one conversation at a time** may develop on the repository. Every development conversation **must** verify (`npm run check` / `npm test`) and create a stage `git commit` on `main` (and `git push` if remote exists) before finishing, leaving zero piled-up uncommitted changes.
 
 ---
 
@@ -151,7 +151,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
   npm run check:all
   ```
 - Optional Chromium verification requires explicit `playwright-core` + Chrome paths (`node tests/browser-profiles.mjs --playwright <path> --chrome <exe>`). Report exact checks executed; never claim browser coverage when only Node checks ran.
-- After verification passes for a milestone (new system, optimization pass, bug fix, or docs update), commit the verified milestone immediately and push to the configured remote (`git push`) rather than leaving dirty diffs stacked on `main`.
+- **Mandatory End-of-Conversation Stage Commit**: Never leave dirty diffs stacked across stages or conversations; after verification passes, commit the stage immediately on `main` (never on branches or isolated workspaces/worktrees) and push to the configured remote (`git push`).
 
 ---
 

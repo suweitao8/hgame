@@ -49,8 +49,9 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Keep generated game projects self-contained; do not add CDN runtime dependencies.
 - Do not automatically migrate or rewrite existing games.
 - Never use destructive Git commands such as `reset --hard` or `clean -fd`.
-- **Commit every verified milestone immediately**: Whenever a distinct milestone (new subsystem, internal refactor, optimization pass, bug fix, or docs/tooling update) passes verification (`npm run check`, or `npm run check:all` when touching `network/`), create a focused `git commit` right away. Never accumulate uncommitted changes across multiple stages or requests.
-- **Develop directly on `main`**: Work directly on the `main` branch in the active workspace—do not create topic branches or isolated workspaces/worktrees, as only one conversation develops a project at a time. Keep `main`'s working tree clean by committing each verified milestone incrementally.
+- **Develop directly on `main` (Zero Isolated Workspaces / Zero Branches)**: Develop **exclusively on `main` in the active workspace**. Creating topic/feature branches (`git checkout -b`, `git switch -c`, `git branch`) or isolated workspaces/worktrees (`git worktree`, subagent/swarm `Workspace: 'branch'` or `'share'`) is strictly **forbidden**; subagents must always use `Workspace: 'inherit'`.
+- **Single-Conversation Lock**: Only **one conversation at a time** may develop on a repository or game project. Do not run parallel/concurrent coding conversations against the same workspace.
+- **Mandatory End-of-Conversation Stage Commit**: Every conversation that performs development or modification work **must** run verification (`npm run check`, or `npm run check:all` when touching `network/`) and create a focused stage `git commit` on `main` before completing—never leave uncommitted changes piled up across stages or conversations.
 - **Push to remote after every commit**: Whenever a remote is configured (e.g., `origin`), run `git push` immediately after each verified `git commit` on `main` so the remote stays synchronized at every milestone.
 
 ## Agent Workflow & Documentation Entry Points

@@ -72,7 +72,7 @@ npm run api -- --module post2d   # Every export in one module
 
 ## 6. Mandatory Constraints & Verification Pipeline
 
-1. **Direct `main` Incremental Commits**: Develop directly on `main` (no topic branches/worktrees). Commit and `git push` immediately after each verified milestone.
+1. **Direct `main` Only, Single-Conversation & Mandatory Stage Commits**: Develop **exclusively on `main` in the active workspace** (isolated workspaces/worktrees and non-`main` branches are strictly forbidden; only one conversation develops at a time). Every development conversation must verify, `git commit` its stage changes on `main` (never piling up diffs), and `git push` before finishing.
 2. **Single RAF Loop**: `app.start()` owns the only RAF + fixed step. UI profile (`tickHz: 0`) must use `app.dispatch(...)`, never a 60 Hz idle loop.
 3. **3D Collision Separation**: Never derive collisions or gameplay truth from PBR visual meshes; keep explicit colliders / Rapier heightfield.
 4. **Never Zip Raw Project**: Always release with `npm run release -- --version <ver>` / `npm run package:game -- <dir> --version <ver>`.
