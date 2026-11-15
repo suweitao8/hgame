@@ -23,6 +23,7 @@ Use this skill as the primary execution manual whenever a user asks to create, e
 | 修改武器伤害、攻速、角色属性、抽卡/掉落概率表 | `hgame-balance-sim` | `node .agents/skills/hgame-balance-sim/scripts/sim-balance.mjs --config <balance.json>`（强制千局统计胜率与 TTK） |
 | 编写或修改 2D/3D 关卡地图、地牢或障碍物布局 (`level.json`) | `hgame-level-architect` | `node .agents/skills/hgame-level-architect/scripts/check-level.mjs --level <level.json>`（BFS 断言出生点到关键点 100% 可达） |
 | 编写或修改分支剧情、Roguelike 事件卡 (`story.json`) | `hgame-narrative-branch` | `node .agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs --story <story.json>`（拦截死节点/不可达结局/长段废话） |
+| 新建游戏、编写/修改 HUD、主菜单、商店、升级弹窗或结算界面 | `hgame-ui-ux` | `node .agents/skills/hgame-ui-ux/scripts/check-ui.mjs --dir <game-dir>` + `npm run snapshot -- <game-dir>`（强制零说明文本、卡片即按钮、符号化词条与留白红线） |
 
 ## 0. Determine Workspace Context First
 
@@ -122,7 +123,8 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 3. **3D Collision Separation**: Never derive collisions or authoritative gameplay state from visual PBR meshes (`model-slots.json` / `materials.json`); keep colliders explicit in `level.json`.
 4. **Controls Standard**: Keep PC actions inside P1's `WASD + JKL UIO` (and P2's `Arrows + 123456` for 2P split-screen) unless genuinely exhausted, enabling `Q E` / `0 .` only via `extras` or `enableExtras: true`.
 5. **Red Dot Standard**: Keep parent UI badges lit automatically via `createRedDotSystem` until every active child leaf has been handled; never hand-code flat boolean flags or manual DOM removals.
-6. **Direct `main` Development & Incremental Milestone Commits**: Work directly on the `main` branch in the active workspace—do not create topic branches or isolated workspaces/worktrees, as only one conversation develops a project at a time. Never pile up uncommitted changes across multiple stages; after each verified milestone (`npm run check` / `npm test`), commit immediately on `main` with a clear message and push to the configured remote (`git push`) right away.
+6. **Minimalist Zero-Prose UI Rule**: Never render instructional copy, `<p>` prose blocks, subtitles, "Powered by" footers, toast bars, or nested `<button>` elements inside upgrade/shop cards. Keep combat HUD to `<= 1` icon-only pause button (`<= 10%` viewport area), pause/gameover overlays to `<= 2` buttons (`<= 4` hanzi), whole-card click with `<= 18` chars symbolic stat tags (`+25% 攻速`), hide debug/bench toggles behind `` ` `` or `?debug=1`, and convey state via `createVfxSystem` + `audio.playSynth`. Verify with `check-ui.mjs` + `npm run snapshot`.
+7. **Direct `main` Development & Incremental Milestone Commits**: Work directly on the `main` branch in the active workspace—do not create topic branches or isolated workspaces/worktrees, as only one conversation develops a project at a time. Never pile up uncommitted changes across multiple stages; after each verified milestone (`npm run check` / `npm test`), commit immediately on `main` with a clear message and push to the configured remote (`git push`) right away.
 
 ---
 

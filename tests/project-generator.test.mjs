@@ -129,3 +129,36 @@ test('non-bare 3D still scaffolds demo level files; --bare rejects the ui profil
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('hgame-ui-ux check-ui passes generated 2d/3d/ui starters and blocks web-prose violations with line numbers', async () => {
+  const checkUi = path.join(skill, '.agents', 'skills', 'hgame-ui-ux', 'scripts', 'check-ui.mjs');
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-check-ui-'));
+  try {
+    for (const profile of ['2d', '3d', 'ui']) {
+      const game = path.join(tmp, 'clean-' + profile);
+      const gen = spawnSync(process.execPath, [createGame, game, '--profile', profile, '--no-git'], { encoding: 'utf8' });
+      assert.equal(gen.status, 0, gen.stderr);
+      const lint = spawnSync(process.execPath, [checkUi, '--dir', game], { encoding: 'utf8' });
+      assert.equal(lint.status, 0, lint.stderr + lint.stdout);
+      assert.equal(JSON.parse(lint.stdout).pass, true);
+    }
+
+    const badGame = path.join(tmp, 'clean-2d');
+    await writeFile(path.join(badGame, 'index.html'), [
+      '<!doctype html><html><body>',
+      '<canvas id="game"></canvas>',
+      '<p>操作说明：按 WASD 移动角色。</p>',
+      '<div class="card"><span>狂暴</span><button>选择</button></div>',
+      '</body></html>',
+    ].join('\n'));
+    const badLint = spawnSync(process.execPath, [checkUi, '--dir', badGame], { encoding: 'utf8' });
+    assert.notEqual(badLint.status, 0);
+    const report = JSON.parse(badLint.stdout);
+    assert.equal(report.pass, false);
+    assert.ok(report.violations.some(v => v.rule === 'forbidden-prose-keyword' && v.line === 3));
+    assert.ok(report.violations.some(v => v.rule === 'prose-paragraph-tag' && v.line === 3));
+    assert.ok(report.violations.some(v => v.rule === 'card-nested-button' && v.line === 4));
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

@@ -292,6 +292,8 @@ test('package-game --engine outputs complete SDK build with workspace skill, use
       '.agents/skills/hgame-level-architect/scripts/check-level.mjs',
       '.agents/skills/hgame-narrative-branch/SKILL.md',
       '.agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs',
+      '.agents/skills/hgame-ui-ux/SKILL.md',
+      '.agents/skills/hgame-ui-ux/scripts/check-ui.mjs',
       'docs/guides/USER-AND-AGENT-GUIDE.md',
       'AGENTS.md',
       'README.md',

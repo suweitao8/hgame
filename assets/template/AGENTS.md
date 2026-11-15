@@ -7,7 +7,7 @@
 5. The Application owns the only RAF and fixed-step scheduler. Do not create a second RAF or step physics from a renderer callback.
 5. When physics is enabled, use deterministic Rapier 0.21.0 for the selected dimension. Offline and online modes do not select different physics backends.
 6. UI projects are command-driven. Do not add an idle 60 Hz loop to cards, dialogue, or turn-based interfaces.
-7. Respect this project's visual and interaction requirements. Do not add unrequested buttons, menus, overlays, or permanent instructional copy.
+7. **Minimalist Zero-Prose UI Rule**: Never add instructional copy ("操作说明 / 玩法介绍 / How to play / Powered by"), `<p>` prose blocks, subtitles, toast text bars, or nested `<button>` elements inside cards. Keep combat HUD to `<= 1` icon-only pause button (`<= 10%` viewport), pause/gameover layers to `<= 2` buttons (`<= 4` hanzi), upgrade/shop cards whole-clickable (`<= 18` chars, symbolic `+25% 攻速`), and debug/bench toggles hidden behind `` ` `` or `?debug=1`; convey feedback via `createVfxSystem` + `audio.playSynth`. Verify with `check-ui.mjs` + `snapshot.mjs`.
 8. Keep this game in its own Git repository. Do not initialize Git in a parent workspace or modify sibling game projects.
 9. A 3D display model or material change must not silently change collision, navigation, AI, or authoritative simulation data.
 10. Record the exact tests and browser/device coverage performed; do not claim unsupported platform or lockstep guarantees.
@@ -51,6 +51,7 @@ node "<hgame-repo>/scripts/playtest.mjs" . --duration 2000 --actions "d:300,w:30
 node "<hgame-repo>/.agents/skills/hgame-balance-sim/scripts/sim-balance.mjs" --config <balance.json>
 node "<hgame-repo>/.agents/skills/hgame-level-architect/scripts/check-level.mjs" --level <level.json>
 node "<hgame-repo>/.agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs" --story <story.json>
+node "<hgame-repo>/.agents/skills/hgame-ui-ux/scripts/check-ui.mjs" --dir .
 
 # Preview over loopback HTTP (never open index.html via file://)
 # Using HGame's preview.mjs or any static HTTP server from project root:

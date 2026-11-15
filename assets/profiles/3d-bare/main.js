@@ -36,5 +36,3 @@ app.start();
 viewCanvas.dataset.engineReady = 'true';
 window.__hgameState = () => ({ scene: app.scenes.active?.name ?? null });
 window.addEventListener('pagehide', () => app.dispose(), { once: true });
-viewCanvas.dataset.engineReady = 'true';
-window.addEventListener('pagehide', () => app.dispose(), { once: true });

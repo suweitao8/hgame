@@ -22,6 +22,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 4. `physics/` uses the pinned deterministic Rapier 0.21.0 packages. Offline/online mode never changes the selected physics backend.
 5. `lockstep/` is an optional confirmed-frame scheduler, not a complete transport, authoritative simulation, rollback, or matchmaking implementation.
 6. `network/` owns transport, room/session lifecycle, and synchronization primitives only. It must not absorb game-specific rules, AI, balance, or save data.
+7. **Minimalist Zero-Prose UI Rule**: Never add instructional copy ("操作说明 / 玩法介绍 / How to play / Powered by"), `<p>` prose blocks, subtitles, toast text bars, or nested `<button>` elements inside cards. Keep combat HUD `<= 1` icon-only pause button (`<= 10%` viewport), pause/gameover overlays `<= 2` buttons (`<= 4` hanzi), upgrade/shop cards whole-clickable (`<= 18` chars, symbolic `+25% 攻速`), and debug/bench toggles hidden behind `` ` `` or `?debug=1`. Verify via `node .agents/skills/hgame-ui-ux/scripts/check-ui.mjs --dir <game-dir>` and `npm run snapshot -- <game-dir>`.
 
 ## Public repository safety
 
