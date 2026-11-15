@@ -8,7 +8,9 @@ import { resolveReConfig } from '../.agents/skills/hgame-reverse-engineering/scr
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
 const extractScript = path.join(repoRoot, '.agents', 'skills', 'hgame-reverse-engineering', 'scripts', 'extract-fast.mjs');
+const probeScript = path.join(repoRoot, '.agents', 'skills', 'hgame-reverse-engineering', 'scripts', 'probe-spec-draft.mjs');
 const exportSpecScript = path.join(repoRoot, '.agents', 'skills', 'hgame-reverse-engineering', 'scripts', 'export-clean-spec.mjs');
+const cleanScript = path.join(repoRoot, '.agents', 'skills', 'hgame-reverse-engineering', 'scripts', 'clean-research.mjs');
 const validateSpecScript = path.join(repoRoot, '.agents', 'skills', 'hgame-spec-forge', 'scripts', 'validate-spec.mjs');
 
 function runStep(script, args, label) {
@@ -23,19 +25,41 @@ function runStep(script, args, label) {
 }
 
 function parseForgeArgs(argv) {
-  const opts = { source: null, slug: null, out: null, ipTerms: null, dryRun: false, json: false, help: false };
+  const opts = { source: null, slug: null, out: null, assetsFrom: null, ipTerms: null, noProbe: false, dryRun: false, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
     if (token === '--source' || token === '-s') opts.source = argv[++i];
     else if (token === '--slug') opts.slug = argv[++i];
     else if (token === '--out' || token === '-o') opts.out = argv[++i];
+    else if (token === '--assets-from') opts.assetsFrom = argv[++i];
     else if (token === '--ip-terms') opts.ipTerms = argv[++i];
+    else if (token === '--no-probe') opts.noProbe = true;
     else if (token === '--dry-run') opts.dryRun = true;
     else if (token === '--json') opts.json = true;
     else if (token === '--help' || token === '-h') opts.help = true;
     else throw new Error(`Unknown or incomplete forge argument: ${token}`);
   }
   return opts;
+}
+
+function buildProbeArgsForSpec(argv) {
+  const forwarded = [];
+  const filteredSpecArgs = [];
+  let wantsProbe = false;
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === '--probe') {
+      wantsProbe = true;
+      continue;
+    }
+    filteredSpecArgs.push(token);
+    if (token === '--slug' && argv[i + 1]) {
+      forwarded.push('--slug', argv[i + 1]);
+    } else if (!token.startsWith('-') && forwarded.length === 0) {
+      forwarded.push(token);
+    }
+  }
+  return { wantsProbe, probeArgs: forwarded, specArgs: filteredSpecArgs };
 }
 
 function resolveEvalArgs(argv) {
@@ -71,7 +95,7 @@ function main() {
   const argv = process.argv.slice(2);
   let mode = 'forge';
   let rest = argv;
-  if (['extract', 'spec', 'eval', 'forge'].includes(argv[0])) {
+  if (['extract', 'probe', 'spec', 'eval', 'forge', 'clean'].includes(argv[0])) {
     mode = argv[0];
     rest = argv.slice(1);
   }
@@ -81,8 +105,22 @@ function main() {
     return;
   }
 
+  if (mode === 'probe') {
+    runStep(probeScript, rest, 're:probe');
+    return;
+  }
+
+  if (mode === 'clean') {
+    runStep(cleanScript, rest, 're:clean');
+    return;
+  }
+
   if (mode === 'spec') {
-    runStep(exportSpecScript, rest, 're:spec');
+    const { wantsProbe, probeArgs, specArgs } = buildProbeArgsForSpec(rest);
+    if (wantsProbe && probeArgs.length > 0) {
+      runStep(probeScript, probeArgs, 're:probe');
+    }
+    runStep(exportSpecScript, specArgs, 're:spec');
     return;
   }
 
@@ -98,9 +136,11 @@ function main() {
     console.log(
       'Usage:\n' +
       '  npm run re:extract -- "<original-game-dir>" --slug <slug>\n' +
-      '  npm run re:spec -- --slug <slug> [--ip-terms "TermA,TermB"]\n' +
+      '  npm run re:probe -- --slug <slug> [--force] [--json]\n' +
+      '  npm run re:spec -- --slug <slug> [--probe] [--ip-terms "TermA,TermB"]\n' +
       '  npm run re:eval -- (<clean-spec.json> | --slug <slug> | --demo) [--json]\n' +
-      '  npm run re:forge -- --slug <slug> [--out "<new-game-dir>"] [--source "<original-game-dir>"] [--ip-terms "TermA,TermB"] [--dry-run]',
+      '  npm run re:forge -- --slug <slug> [--out "<new-game-dir>"] [--assets-from "<curated-dir>"] [--source "<original-game-dir>"] [--ip-terms "TermA,TermB"] [--no-probe] [--dry-run]\n' +
+      '  npm run re:clean -- [--audit] [--max-mb 500] [--archive-raw <slug>]',
     );
     if (!opts.help) process.exitCode = 1;
     return;
@@ -113,12 +153,17 @@ function main() {
     if (opts.dryRun) extractArgs.push('--dry-run');
     runStep(extractScript, extractArgs, 'extract-fast');
 
+    if (!opts.noProbe) {
+      runStep(probeScript, ['--slug', opts.slug], 'probe-spec-draft');
+    }
+
     const specArgs = ['--slug', opts.slug, '--out', specPath];
     if (opts.ipTerms) specArgs.push('--ip-terms', opts.ipTerms);
     runStep(exportSpecScript, specArgs, 'export-clean-spec');
   }
 
   const forgeArgs = [specPath, '--scaffold', resolvedOut];
+  if (opts.assetsFrom) forgeArgs.push('--assets-from', opts.assetsFrom);
   if (opts.dryRun) forgeArgs.push('--allow-draft');
   if (opts.json) forgeArgs.push('--json');
   runStep(validateSpecScript, forgeArgs, 'validate-spec --scaffold');

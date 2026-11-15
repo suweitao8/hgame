@@ -4,6 +4,8 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveReConfig } from './local-config.mjs';
+import { extractVpkSubset, parseVpkDir } from '../tools/source-kit/vpk.mjs';
+import { normalizeKvWeaponScripts } from '../tools/source-kit/keyvalues.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const skillRoot = path.resolve(scriptDir, '..');
@@ -37,6 +39,7 @@ function parseArgs(argv) {
     json: false,
     timeoutSec: null,
     maxFiles: 50000,
+    maxExtractMb: 500,
     workspaceDir: localConfig.reWorkspaceDir,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -50,6 +53,7 @@ function parseArgs(argv) {
     else if (token === '--json') opts.json = true;
     else if (token === '--timeout-sec') opts.timeoutSec = Number(argv[++i]);
     else if (token === '--max-files') opts.maxFiles = Number(argv[++i]);
+    else if (token === '--max-extract-mb') opts.maxExtractMb = Math.max(1, Number(argv[++i]) || 500);
     else if (token === '--help' || token === '-h') opts.help = true;
     else if (!token.startsWith('-') && !opts.source) opts.source = token;
     else throw new Error(`Unknown or incomplete argument: ${token}`);
@@ -236,8 +240,19 @@ function selectChannel(profile, inventory, opts, toolchain) {
       reason: 'Unreal 半明文通道：仅抽 DataTables/CurveTables，不啃 C++ 主程序',
       steps,
       advisoryTools: [
+        ...(tools.repak?.path ? [{
+          tool: 'repak',
+          path: tools.repak.path,
+          note: `使用过滤参数按需解包 DataTable/配置（预算 <= ${opts.maxExtractMb} MB），例如: repak get <pak> "Game/Content/Data/**/*.uasset" <outDir>`,
+        }] : []),
         ...(utocs.length > 0 && tools.fmodel?.path ? [{ tool: 'FModel', path: tools.fmodel.path, note: '存在 IoStore (.utoc/.ucas)，用 FModel 按需导出 DataTable JSON' }] : []),
-        ...(tools.uassetgui?.path ? [{ tool: 'UAssetGUI', path: tools.uassetgui.path, note: '将提取出的 .uasset/.uexp DataTable 转为 JSON' }] : []),
+        ...(tools.uassetgui?.path ? [{
+          tool: 'UAssetGUI',
+          path: tools.uassetgui.path,
+          note: tools.repak?.path
+            ? '先用 repak 提取核心 DataTable .uasset/.uexp，再执行 UAssetGUI <file.uasset> tojson <out.json> 转为结构化数值'
+            : '将提取出的 .uasset/.uexp DataTable 转为 JSON',
+        }] : []),
       ],
     };
   }
@@ -399,18 +414,34 @@ function selectChannel(profile, inventory, opts, toolchain) {
 
   if (engineId === 'source' || engineId === 'source2') {
     const cfgFiles = files.filter((f) => /\.(?:cfg|txt|vdf|res)$/i.test(f.path));
-    return {
-      channel: 'green',
-      timeoutSec,
-      reason: 'Source 明文脚本/配置绿灯通道：提取 .cfg/.txt 与建议 cvarlist',
-      steps: cfgFiles.length > 0 ? [{
+    const vpkDirs = files.filter((f) => /_dir\.vpk$/i.test(f.path));
+    const steps = [];
+    if (cfgFiles.length > 0) {
+      steps.push({
         id: 'copy-source-cfg',
         tool: 'built-in-copy',
         command: 'internal:copy-files',
         files: cfgFiles.slice(0, 2000).map((f) => f.path),
         outSubdir: 'source-cfg',
         purpose: '复制明文配置与脚本',
-      }] : [],
+      });
+    }
+    if (vpkDirs.length > 0) {
+      steps.push({
+        id: 'extract-source-vpk',
+        tool: 'source-kit/vpk+kv',
+        command: 'internal:source-vpk',
+        files: vpkDirs.slice(0, 16).map((f) => f.path),
+        maxBytes: Math.round((opts.maxExtractMb || 500) * 1024 * 1024),
+        outSubdir: 'vpk',
+        purpose: '只读索引 *_dir.vpk 并仅解包 scripts/ 数值脚本与 weapon_*.txt 归一化为 weapons.kv.json',
+      });
+    }
+    return {
+      channel: 'green',
+      timeoutSec,
+      reason: 'Source 明文脚本/配置绿灯通道：提取 .cfg/.txt、*_dir.vpk 数值脚本并自动解析 KeyValues 武器参数',
+      steps,
     };
   }
 
@@ -454,6 +485,68 @@ async function executeStep(step, sourceRoot, rawDir, researchRoot, timeoutMs) {
       copied++;
     }
     return { id: step.id, tool: step.tool, status: 'ok', copiedFiles: copied, outDir: destRoot };
+  }
+
+  if (step.command === 'internal:source-vpk') {
+    const vpkOutRoot = path.join(rawDir, step.outSubdir || 'vpk');
+    const extractedDataDir = path.join(rawDir, 'extracted-data');
+    await mkdir(vpkOutRoot, { recursive: true });
+    await mkdir(extractedDataDir, { recursive: true });
+
+    let indexedVpks = 0;
+    let totalEntries = 0;
+    let extractedFiles = 0;
+    let extractedBytes = 0;
+    const maxBytes = step.maxBytes || 500 * 1024 * 1024;
+    const weaponScripts = {};
+
+    for (const relPath of step.files || []) {
+      if (extractedBytes >= maxBytes) break;
+      const absVpk = path.join(sourceRoot, relPath);
+      const vpkInfo = await parseVpkDir(absVpk);
+      indexedVpks++;
+      totalEntries += vpkInfo.entries.length;
+
+      const safeTag = relPath.replace(/[^A-Za-z0-9._-]+/g, '_');
+      await writeFile(
+        path.join(vpkOutRoot, `${safeTag}-index.json`),
+        JSON.stringify({ vpk: relPath, version: vpkInfo.version, entryCount: vpkInfo.entries.length, entries: vpkInfo.entries.slice(0, 5000) }, null, 2) + '\n',
+        'utf8',
+      );
+
+      const subsetOut = path.join(vpkOutRoot, safeTag);
+      const res = await extractVpkSubset(absVpk, vpkInfo.entries, subsetOut, {
+        pathPrefixes: ['scripts/', 'cfg/', 'resource/'],
+        exts: ['txt', 'cfg', 'vdf', 'res'],
+        maxBytes: Math.max(0, maxBytes - extractedBytes),
+      });
+      extractedFiles += res.extracted;
+      extractedBytes += res.totalBytes;
+
+      const scriptsDir = path.join(subsetOut, 'scripts');
+      try {
+        const parsedWeapons = await normalizeKvWeaponScripts(scriptsDir);
+        Object.assign(weaponScripts, parsedWeapons);
+      } catch {
+        // Ignore if this VPK doesn't carry a scripts/ directory
+      }
+    }
+
+    const weaponCount = Object.keys(weaponScripts).length;
+    if (weaponCount > 0) {
+      await writeFile(path.join(extractedDataDir, 'weapons.kv.json'), JSON.stringify(weaponScripts, null, 2) + '\n', 'utf8');
+    }
+    return {
+      id: step.id,
+      tool: step.tool,
+      status: 'ok',
+      indexedVpks,
+      totalEntries,
+      extractedFiles,
+      extractedBytes,
+      weaponScriptsParsed: weaponCount,
+      outDir: vpkOutRoot,
+    };
   }
 
   const resolvedArgs = step.args.map((arg) => {
@@ -598,6 +691,7 @@ async function main() {
     confidence: profile?.engine?.confidence || 'unknown',
     channel: selection.channel,
     timeoutSec: selection.timeoutSec,
+    maxExtractMb: opts.maxExtractMb,
     reason: selection.reason,
     protections: selection.protections || [],
     steps: selection.steps,

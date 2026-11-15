@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Clean-room gameplay specification firewall, 1-1-2-1 MVP slice & SI unit/ratio auditor, and HGame project scaffolder.
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,6 +14,8 @@ const BINARY_NAME_RE = /\b[A-Za-z0-9_.-]+\.(?:dll|exe|pck|pak|utoc|ucas|uasset|u
 
 export const REQUIRED_UNIT_SYSTEM = 'SI_METERS_SECONDS_RADIANS';
 export const GRADUATION_SCORE_MIN = 90;
+const SAFE_RUNTIME_ASSET_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.svg', '.wav', '.mp3', '.ogg', '.glb', '.gltf', '.bin', '.json']);
+const IGNORED_ASSET_DIRS = new Set(['.git', 'node_modules', '__pycache__']);
 
 const FALLBACK_MODULE_MAP = {
   'renderer-shader': 'integrations/three.js or integrations/webgl2d.js',
@@ -108,13 +110,14 @@ export function attachHGameDoctor(adapter) {
 `;
 
 function parseArgs(argv) {
-  const opts = { specPath: null, demo: false, evalMode: false, scaffold: null, allowDraft: false, json: false, help: false };
+  const opts = { specPath: null, demo: false, evalMode: false, scaffold: null, assetsFrom: null, allowDraft: false, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const token = argv[i];
     if (token === '--demo') opts.demo = true;
     else if (token === '--eval') opts.evalMode = true;
     else if (token === '--spec') opts.specPath = argv[++i];
     else if (token === '--scaffold') opts.scaffold = argv[++i];
+    else if (token === '--assets-from') opts.assetsFrom = argv[++i];
     else if (token === '--allow-draft') opts.allowDraft = true;
     else if (token === '--json') opts.json = true;
     else if (token === '--help' || token === '-h') opts.help = true;
@@ -621,10 +624,42 @@ async function wireDoctorHelper(dest) {
   }
 }
 
+/** Copies only browser-safe runtime media/JSON from assetsFromDir into destAssetsDir. */
+async function syncCuratedAssets(assetsFromDir, destAssetsDir) {
+  const sourceRoot = path.resolve(assetsFromDir);
+  const summary = { sourceRoot, destDir: destAssetsDir, copied: 0, skipped: 0 };
+
+  async function walk(dir, relBase) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (IGNORED_ASSET_DIRS.has(entry.name)) continue;
+      const srcPath = path.join(dir, entry.name);
+      const relPath = relBase ? path.join(relBase, entry.name) : entry.name;
+      if (entry.isDirectory()) {
+        await walk(srcPath, relPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!SAFE_RUNTIME_ASSET_EXTS.has(ext)) {
+        summary.skipped++;
+        continue;
+      }
+      const dstPath = path.join(destAssetsDir, relPath);
+      await mkdir(path.dirname(dstPath), { recursive: true });
+      await cp(srcPath, dstPath, { force: true });
+      summary.copied++;
+    }
+  }
+
+  await walk(sourceRoot, '');
+  return summary;
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
-    console.log('Usage: node validate-spec.mjs <clean-spec.json> [--eval] [--scaffold <project-dir>] [--json] | --demo');
+    console.log('Usage: node validate-spec.mjs <clean-spec.json> [--eval] [--scaffold <project-dir>] [--assets-from <dir>] [--json] | --demo');
     return;
   }
 
@@ -654,6 +689,7 @@ async function main() {
     return;
   }
 
+  let importedAssets = null;
   if (opts.scaffold && !opts.demo) {
     const dest = path.resolve(opts.scaffold);
     scaffoldProject(spec, dest);
@@ -661,6 +697,9 @@ async function main() {
     await mkdir(simDir, { recursive: true });
     await writeFile(path.join(simDir, 'spec.json'), JSON.stringify(spec, null, 2) + '\n', 'utf8');
     await wireDoctorHelper(dest);
+    if (opts.assetsFrom) {
+      importedAssets = await syncCuratedAssets(opts.assetsFrom, path.join(dest, 'assets'));
+    }
   }
 
   const out = {
@@ -677,6 +716,7 @@ async function main() {
     verdict: evalRes.verdict,
     mappedFallbacks: evalRes.mappedFallbacks,
     scaffoldedTo: opts.scaffold && !opts.demo ? path.resolve(opts.scaffold) : null,
+    importedAssets,
   };
   if (opts.json) {
     console.log(JSON.stringify(out, null, 2));
@@ -684,6 +724,9 @@ async function main() {
     console.log(formatReadinessReport(spec.slug, evalRes));
     if (out.scaffoldedTo) {
       console.log(`\nScaffolded to: ${out.scaffoldedTo} (with src/sim/spec.json & src/sim/doctor.js)`);
+      if (importedAssets) {
+        console.log(`Imported assets: ${importedAssets.copied} safe files copied (${importedAssets.skipped} non-runtime files skipped) -> ${importedAssets.destDir}`);
+      }
     }
   }
 }

@@ -444,3 +444,63 @@ test('re:forge defaults output directory to gamesRootDir/<slug> from HGAME_GAMES
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('re:probe -> re:spec -> re:eval graduates from raw data, and re:forge --assets-from copies only safe runtime files', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'hgame-probe-assets-'));
+  try {
+    const wsDir = path.join(dir, 're-ws');
+    const rawExtracted = path.join(wsDir, 'projects', 'auto-probe', 'raw', 'extracted-data');
+    mkdirSync(path.join(wsDir, 'projects', 'auto-probe', 'raw', 'scanner'), { recursive: true });
+    mkdirSync(rawExtracted, { recursive: true });
+    writeFileSync(
+      path.join(wsDir, 'projects', 'auto-probe', 'raw', 'scanner', 'engine-profile.json'),
+      JSON.stringify({ engine: { id: 'godot', recommendedHGameProfile: '2d' } }),
+    );
+    writeFileSync(
+      path.join(rawExtracted, 'weapons.kv.json'),
+      JSON.stringify({ rifle: { Damage: 25, CycleTime: 0.12, clip_size: 30 } }),
+    );
+
+    const specRes = spawnSync(
+      process.execPath,
+      [pipelineScript, 'spec', '--slug', 'auto-probe', '--probe'],
+      { encoding: 'utf8', env: { ...process.env, HGAME_RE_WORKSPACE: wsDir } },
+    );
+    assert.equal(specRes.status, 0, specRes.stderr || specRes.stdout);
+
+    const evalRes = spawnSync(
+      process.execPath,
+      [pipelineScript, 'eval', '--slug', 'auto-probe', '--json'],
+      { encoding: 'utf8', env: { ...process.env, HGAME_RE_WORKSPACE: wsDir } },
+    );
+    assert.equal(evalRes.status, 0, evalRes.stderr || evalRes.stdout);
+    const evalJson = JSON.parse(evalRes.stdout);
+    assert.equal(evalJson.graduated, true);
+    assert.ok(evalJson.score >= 90);
+
+    // Stage curated assets dir mixed with unsafe source/binary files
+    const assetsSrc = path.join(dir, 'curated');
+    mkdirSync(path.join(assetsSrc, 'sprites'), { recursive: true });
+    writeFileSync(path.join(assetsSrc, 'sprites', 'hero.png'), Buffer.from([137, 80, 78, 71]));
+    writeFileSync(path.join(assetsSrc, 'sfx.wav'), 'RIFF');
+    writeFileSync(path.join(assetsSrc, 'leak.cs'), 'class Secret {}');
+    writeFileSync(path.join(assetsSrc, 'native.dll'), 'MZ');
+
+    const outGameDir = path.join(dir, 'forged-game');
+    const forgeRes = spawnSync(
+      process.execPath,
+      [pipelineScript, 'forge', '--slug', 'auto-probe', '--out', outGameDir, '--assets-from', assetsSrc, '--json'],
+      { encoding: 'utf8', env: { ...process.env, HGAME_RE_WORKSPACE: wsDir } },
+    );
+    assert.equal(forgeRes.status, 0, forgeRes.stderr || forgeRes.stdout);
+    const forgeJson = JSON.parse(forgeRes.stdout);
+    assert.equal(forgeJson.importedAssets.copied, 2);
+    assert.equal(forgeJson.importedAssets.skipped, 2);
+    assert.equal(existsSync(path.join(outGameDir, 'assets', 'sprites', 'hero.png')), true);
+    assert.equal(existsSync(path.join(outGameDir, 'assets', 'sfx.wav')), true);
+    assert.equal(existsSync(path.join(outGameDir, 'assets', 'leak.cs')), false);
+    assert.equal(existsSync(path.join(outGameDir, 'assets', 'native.dll')), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -39,9 +39,9 @@ The Gate 1 validator refuses entry to scaffolding (`exit 1`) if any of the follo
 
 1. **Validate & Scaffold (`--scaffold <out-dir>`)**:
    ```bash
-   node .agents/skills/hgame-spec-forge/scripts/validate-spec.mjs <clean-spec.json> --scaffold <out-dir>
+   node .agents/skills/hgame-spec-forge/scripts/validate-spec.mjs <clean-spec.json> --scaffold <out-dir> [--assets-from <curated-assets-dir>]
    ```
-   Invokes `scripts/create-game.mjs --bare` with `engineRecipe`, writes `src/sim/spec.json`, and creates `src/sim/doctor.js` (`attachHGameDoctor`) so the project exposes `window.__HGAME_DOCTOR__`.
+   Invokes `scripts/create-game.mjs --bare` with `engineRecipe`, writes `src/sim/spec.json`, creates `src/sim/doctor.js` (`attachHGameDoctor`) so the project exposes `window.__HGAME_DOCTOR__`, and optionally syncs only safe runtime media/JSON (`.png/.webp/.wav/.ogg/.glb/.json`) via `--assets-from` while blocking scripts/binaries.
 2. **Native Subsystem Takeover (`hgameFallbackModules`)**:
    - **Crowds & Pathing**: `createSwarmSimulation`, `createBoneVatCrowd3D`, `createNavMesh3D`, `TileMap.findGridPath`
    - **VFX & Juice**: `createVfxSystem` (`vfx/index.js`) + `CROWD_STATUS` (zero-GC)

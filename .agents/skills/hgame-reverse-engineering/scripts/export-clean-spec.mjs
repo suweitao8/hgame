@@ -239,6 +239,11 @@ async function main() {
   };
 
   const cleanSpec = sanitizeValue(rawSpec, ipMatchers, report);
+  cleanSpec.slug = String(cleanSpec.slug || slug)
+    .replace(/\[ENTITY\]/gi, 'target')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'clean-mvp';
   cleanSpec.sanitizationReport = report;
 
   await mkdir(path.dirname(outPath), { recursive: true });

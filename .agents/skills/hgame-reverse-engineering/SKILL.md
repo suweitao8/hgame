@@ -31,22 +31,26 @@ description: LeanRea's lightweight, game-only reverse engineering workflow for H
 ## 标准一键工作流（`HGame` 根目录下执行）
 
 ```powershell
-# 1. 快拆 + 导出脱敏规格 -> 第一道门（逆向完备度 >= 90 且 4 项比值全绿才准毕业建工程）
-npm run re:extract -- "<original-game-dir>" --slug <slug> --json
-npm run re:spec -- --slug <slug> --ip-terms "TermA,TermB"
+# 1. 快拆 + 自动探针初稿 + 导出脱敏规格 -> 第一道门（逆向完备度 >= 90 且 4 项比值全绿才准毕业建工程）
+npm run re:extract -- "<original-game-dir>" --slug <slug> [--max-extract-mb 500] --json
+npm run re:probe -- --slug <slug>          # 自动扫 raw/ 数值并按 SI 单位归一化写入 spec-draft.json
+npm run re:spec -- --slug <slug> --probe --ip-terms "TermA,TermB"
 npm run re:eval -- --slug <slug>
 
-# 2. 门禁放行后装配 1-1-2-1 最小切片工程（或全流程一键校验装配）：
-npm run re:forge -- --slug <slug> --out "<new-game-dir>"
-# （也可传 --source "<original-game-dir>" 一键串联，前提是规格已达毕业线）
+# 2. 门禁放行后装配 1-1-2-1 最小切片工程（可附 --assets-from 白名单导入安全 PNG/WAV/GLB）：
+npm run re:forge -- --slug <slug> [--out "<new-game-dir>"] [--assets-from "<curated-dir>"]
+# （也可传 --source "<original-game-dir>" 一键串联 extract -> probe -> spec -> scaffold）
 node .agents/skills/hgame-spec-forge/scripts/validate-spec.mjs "<reWorkspaceDir>/specs-out/<slug>.clean-spec.json" --scaffold "<new-game-dir>"
 
 # 3. 编写 1-1-2-1 切片与 window.__HGAME_DOCTOR__ 后 -> 第二道门（30 秒实机四项体检）：
 npm run re:doctor -- "<new-game-dir>"
+
+# 4. 磁盘体积巡检与无损归档 raw/ 解包产物（防 D 盘膨胀）：
+npm run re:clean -- --audit --max-mb 500
 ```
 
-- **绿灯直出（限时 10–15m）**：Godot (`gdre_tools`)、Unity Mono (`ilspycmd` 定向类)、RPG Maker (`data/*.json` / `RPGMakerDecrypter`)、Ren'Py (`unrpa` + `unrpyc` 在 `raw/` 副本运行)、GameMaker (`UndertaleModCli`)、Java (`vineflower`)、Electron/Web (`@electron/asar`)、Source (`.cfg`/`.txt`)。
-- **黄灯半明文（限时 10m）**：Unity IL2CPP 调 `Il2CppDumper` 提取 `dump.cs` + `script.json`；Unreal 调 `repak`/`UAssetGUI`/`FModel` 仅抽 DataTables/CurveTables。**默认禁止自动拉起 Ghidra 全量反编译**；仅当显式传入 `--deep-ghidra --symbol <target>` 狙击个别核心公式时才调 `export-ghidra-function-index.ps1`。
+- **绿灯直出（限时 10–15m）**：Godot (`gdre_tools`)、Unity Mono (`ilspycmd` 定向类)、RPG Maker (`data/*.json` / `RPGMakerDecrypter`)、Ren'Py (`unrpa` + `unrpyc` 在 `raw/` 副本运行)、GameMaker (`UndertaleModCli`)、Java (`vineflower`)、Electron/Web (`@electron/asar`)、Source (`.cfg`/`.txt` + `source-kit/vpk.mjs` 只读按需抽 `scripts/` 与 `keyvalues.mjs` 自动归一化 `weapons.kv.json`)。
+- **黄灯半明文（限时 10m）**：Unity IL2CPP 调 `Il2CppDumper` 提取 `dump.cs` + `script.json`；Unreal 调 `repak`/`UAssetGUI`/`FModel` 仅抽 DataTables/CurveTables（受 `--max-extract-mb` 预算约束）。**默认禁止自动拉起 Ghidra 全量反编译**；仅当显式传入 `--deep-ghidra --symbol <target>` 狙击个别核心公式时才调 `export-ghidra-function-index.ps1`。
 - **红灯熔断（0 秒止损）**：检测到强反作弊/重壳保护特征、加密失败或超时立即熔断，切换黑盒观测（录屏帧数测算前后摇 + 公开数据表 + `hgame-fallback`）。
 
 ## 按需加载模块路由
