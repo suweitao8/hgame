@@ -61,6 +61,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 > 2. **零盲扫 API 速查**：查询引擎能力、最小接线配方、参数签名与返回值**必须优先运行 `npm run api -- --map` / `npm run api -- --recipe <2d|horde|3d|ui|network>` / `npm run api -- <keyword>`**（或 `--module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。完成改动后优先使用 `npm run snapshot -- <game-dir>` 与 `npm run playtest -- <game-dir>` 进行无头画面与交互自检。
 
 - Workspace Agent skill / step-by-step runbook: `.agents/skills/hgame/SKILL.md`.
+- Clean-room spec bridge (`*.clean-spec.json` firewall & scaffolder): `.agents/skills/hgame-spec-forge/SKILL.md`.
 - AI execution manual & compact system cards (`01..16`): `docs/guides/USER-AND-AGENT-GUIDE.md`.
 - Standard 5-step game workflow:
   1. Generate a standalone project with `scripts/create-game.mjs` (`--profile 2d|3d|ui`, optional `--renderer webgl2d`, `--quality auto`, `--with audio,save,physics2d|physics3d`).

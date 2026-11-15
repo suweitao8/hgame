@@ -24,6 +24,7 @@ Use this skill as the primary execution manual whenever a user asks to create, e
 | 编写或修改 2D/3D 关卡地图、地牢或障碍物布局 (`level.json`) | `hgame-level-architect` | `node .agents/skills/hgame-level-architect/scripts/check-level.mjs --level <level.json>`（BFS 断言出生点到关键点 100% 可达） |
 | 编写或修改分支剧情、Roguelike 事件卡 (`story.json`) | `hgame-narrative-branch` | `node .agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs --story <story.json>`（拦截死节点/不可达结局/长段废话） |
 | 新建游戏、编写/修改 HUD、主菜单、商店、升级弹窗或结算界面 | `hgame-ui-ux` | `node .agents/skills/hgame-ui-ux/scripts/check-ui.mjs --dir <game-dir>` + `npm run snapshot -- <game-dir>`（强制零说明文本、卡片即按钮、符号化词条与留白红线） |
+| 从外部净室玩法规格书（`*.clean-spec.json`）装配 HGame 工程 | `hgame-spec-forge` | `node .agents/skills/hgame-spec-forge/scripts/validate-spec.mjs <clean-spec.json> [--scaffold <game-dir>]`（合规防火墙 + `--bare` 脚手架 + 原生模块接管） |
 
 ## 0. Determine Workspace Context First
 
