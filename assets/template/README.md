@@ -36,9 +36,14 @@ npm run assets -- verify
 - **移动端 + PC 触屏优先**：如需虚拟摇杆或技能按钮，复用 `HGame.createArcadeControls` + `vendor/hgame/integrations/touch-controls.js`（P1 `WASD + JKL UIO [+QE]`，双人分屏自动映射 P2 `方向键 + 123456 [+0.]` + `HGame.computeSplitScreenViews` + `renderer.setViews`）。
 - **商业化分层红点**：多级菜单红点、新获得 `NEW`、每日提醒与可领取计数统一使用 `HGame.createRedDotSystem` + `vendor/hgame/integrations/red-dot-dom.js`。
 
-## 本地预览与自检
+## 统一预览（WebAsset）与自检
 
-不要直接用 `file://` 打开 ES 模块。可使用 HGame 仓库的 `scripts/preview.mjs` 或任意本地静态 HTTP 服务启动预览：
+禁止直接用 `file://` 打开 ES 模块，也**不要在游戏项目里各自启动独立 HTTP 网站**（如 `npm start`、`python -m http.server` 或额外占用调试端口）。本工程通过 `game.config.json` 由 **WebAsset** 统一发现与托管预览：
+
+- 统一大厅入口：`http://127.0.0.1:4174/#games`
+- 游戏独立运行地址：`http://127.0.0.1:4175/local-games/<目录名>/index.html`
+
+日常修改代码后直接刷新 WebAsset 预览即可；提交前运行基础自检：
 
 ```powershell
 npm test

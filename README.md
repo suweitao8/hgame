@@ -25,7 +25,7 @@ scripts/
   snapshot.mjs      # Headless Playwright render + state hook PNG/JSON verification
   playtest.mjs      # Automated keyboard/pointer playtest + FPS + pixel-delta check
   package-game.mjs  # ESM graph-pruned release packager (build/<id>_<ver>/ + .zip)
-  preview.mjs       # Loopback static HTTP server
+  preview.mjs       # Ephemeral loopback harness for headless QA/CI & packaged builds (live dev preview uses WebAsset :4174/:4175)
 network/            # Optional multiplayer workspace (@hgame/*)
 tests/              # Node runtime, physics, types, API-index, and example checks
 docs/               # Compact AI specs, architecture invariants & API-INDEX.json

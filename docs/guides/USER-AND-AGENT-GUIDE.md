@@ -76,7 +76,8 @@ npm run api -- --module post2d   # Every export in one module
 2. **Single RAF Loop**: `app.start()` owns the only RAF + fixed step. UI profile (`tickHz: 0`) must use `app.dispatch(...)`, never a 60 Hz idle loop.
 3. **3D Collision Separation**: Never derive collisions or gameplay truth from PBR visual meshes; keep explicit colliders / Rapier heightfield.
 4. **Never Zip Raw Project**: Always release with `npm run release -- --version <ver>` / `npm run package:game -- <dir> --version <ver>`.
-5. **Verification Commands**:
+5. **Unified WebAsset Game Management & Preview (No Standalone Websites)**: Register and preview all web games via **WebAsset** (`http://127.0.0.1:4174/#games` -> `http://127.0.0.1:4175/local-games/<slug>/<entry>` via `game.config.json`). **Never** launch per-game dev servers (`npm start`, `npm run serve`, `python -m http.server`, or manual `preview.mjs` websites) during development, playtesting, or browser QA; point browser QA directly at WebAsset. (`scripts/preview.mjs` is strictly an ephemeral internal harness for headless `snapshot`/`playtest`/CI.)
+6. **Verification Commands**:
    - Logic + types + API index + physics: `npm run check` (or `npm run check:all` when touching `network/`)
    - Headless render PNG & state hook (`window.__hgameState`): `npm run snapshot -- <game-dir>`
    - Live input + FPS + pixel-change assertion: `npm run playtest -- <game-dir>`

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Unified WebAsset Game Management & Preview Standard (`AGENTS.md`, `assets/template/AGENTS.md`, `assets/template/README.md`, `.agents/skills/hgame/SKILL.md`, `docs/guides/USER-AND-AGENT-GUIDE.md`, `docs/architecture/ENGINE-OVERVIEW.md`, `README.md`):
+  - Codify unified **WebAsset** management and preview (`http://127.0.0.1:4174/#games` lobby; `http://127.0.0.1:4175/local-games/<slug>/<entry>` runtime via `game.config.json`) across HGame engine rules, global/repo skills, and generated project templates, forbidding per-game dev servers (`npm start`, `npm run serve`, `python -m http.server`, manual `preview.mjs` preview ports) during development, playtesting, and browser QA while reserving `scripts/preview.mjs` strictly for ephemeral headless/CI/packaged harnesses.
+
 - Bilibili Toy Platform SDK Integration, Packaging Standard & Skill (`integrations/bilibili-toy.js`, `scripts/package-game.mjs`, `scripts/toy-preflight.mjs`, `.agents/skills/hgame-bilibili-toy/`, `docs/guides/BILIBILI-TOY-STANDARD.md`):
   - Add `assets/runtime/integrations/bilibili-toy.js` (`createToyBridge`, `createToyCloudSaveAdapter`, `loadBilibiliToySdk`, `isBilibiliToyEnvironment`, `isToyRateLimitError`) wrapping `window.toy` with `307044` jittered exponential-backoff retries, key/score/byte validation, checkpoint-batched cloud/shared saves, App/Web fallbacks, and local preview storage fallbacks.
   - Add `--target toy` (plus `--toy-sdk`/`--no-toy-sdk`, `--slug`, `--poster`, `--icon`) to `scripts/package-game.mjs` and `npm run package:toy` / `npm run toy:check` via `scripts/toy-preflight.mjs`, enforcing flat ZIP root, `contenthash` entry JS/CSS renaming, `toy-sdk.js` head injection, <=1MB `index.html` gate, `<10000px` image limits, relative URL checks, rate-limit heuristics, and Toy capability advisories (`AUDIO_VIDEO_UPLOAD`, `EXTERNAL_SERVICE_ACCESS`, `USER_CONTENT_INPUT`, `CHARGE_UNLOCK`, `LARGE_PACKAGE_UPLOAD`).

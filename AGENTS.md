@@ -51,6 +51,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Never use destructive Git commands such as `reset --hard` or `clean -fd`.
 - **Develop directly on `main` (Zero Isolated Workspaces / Zero Branches)**: Develop **exclusively on `main` in the active workspace**. Creating topic/feature branches (`git checkout -b`, `git switch -c`, `git branch`) or isolated workspaces/worktrees (`git worktree`, subagent/swarm `Workspace: 'branch'` or `'share'`) is strictly **forbidden**; subagents must always use `Workspace: 'inherit'`.
 - **Single-Conversation Lock**: Only **one conversation at a time** may develop on a repository or game project. Do not run parallel/concurrent coding conversations against the same workspace.
+- **Unified WebAsset Game Management & Preview (No Per-Game Websites)**: All HTML5/HGame web games must be registered, managed, and previewed centrally through **WebAsset** (`http://127.0.0.1:4174/#games` lobby; isolated game runtime at `http://127.0.0.1:4175/local-games/<game-slug>/<entry>`, auto-discovered from `game.config.json` inside `WEBASSET_HTML_GAMES_ROOT`). **Never** launch per-game dev servers or websites (`npm start`, `npm run serve`, `python -m http.server`, Vite, or manual `scripts/preview.mjs` preview ports) during development, playtesting, or interactive browser QA—just ensure WebAsset is running and open/refresh the WebAsset entry; never copy game code into WebAsset or add extra buttons/toolbars to WebAsset. (`scripts/preview.mjs` is reserved strictly as an ephemeral internal loopback fixture for headless automated tooling such as `snapshot.mjs`, `playtest.mjs`, benchmarks, or packaged `build/` inspection.)
 - **Mandatory End-of-Conversation Stage Commit**: Every conversation that performs development or modification work **must** run verification (`npm run check`, or `npm run check:all` when touching `network/`) and create a focused stage `git commit` on `main` before completing—never leave uncommitted changes piled up across stages or conversations.
 - **Push to remote after every commit**: Whenever a remote is configured (e.g., `origin`), run `git push` immediately after each verified `git commit` on `main` so the remote stays synchronized at every milestone.
 
@@ -66,10 +67,10 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - **先做减法再做加法（1-1-2-1 最小切片毕业制 + 双门禁铁律）**：任何基于逆向的新游戏第一阶段只准交付 `1-1-2-1` 最小垂直切片（1 套角色与相机、1~2 把核心武器、2~3 种代表敌人、1 套 60 秒基础波次、最多 5 个核心升级）；在同时跑通 `npm run re:eval`（SI 单位归一化 + 4 项无量纲比值 + >=90 分）与 `npm run re:doctor`（30 秒实机四项生命体征全绿）之前，严禁扩充武器库、堆砌外围系统或盲目开启十万同屏二创。
 - AI execution manual & compact system cards (`01..16`): `docs/guides/USER-AND-AGENT-GUIDE.md`.
 - Standard 5-step game workflow:
-  1. Generate a standalone project with `scripts/create-game.mjs` (`--profile 2d|3d|ui`, optional `--renderer webgl2d`, `--quality auto`, `--with audio,save,physics2d|physics3d`).
+  1. Generate a standalone project inside the WebAsset-managed HTML games root (`WEBASSET_HTML_GAMES_ROOT/<slug>`) with `scripts/create-game.mjs` (`--profile 2d|3d|ui`, optional `--renderer webgl2d`, `--quality auto`, `--with audio,save,physics2d|physics3d`) so `game.config.json` auto-registers it in WebAsset.
   2. Curate AI art sheets cleanly (`scripts/process-assets.mjs`, `--grid 1|2|3`, shadow-free actor PNGs) and filter 4-variant audio cues (`scripts/process-audio.mjs`).
   3. Build gameplay in the generated project's `src/` using `vendor/hgame/` subsystems instead of bespoke loops or boilerplate.
-  4. Serve over loopback HTTP (`scripts/preview.mjs`) and run checks (`npm test` / `npm run check:all`).
+  4. Preview and run browser QA through **WebAsset** (`http://127.0.0.1:4174/#games` -> `http://127.0.0.1:4175/local-games/<slug>/index.html`, never spawning a standalone per-game HTTP server), alongside CLI checks (`npm test`, `npm run check:all`, `npm run snapshot`, `npm run playtest`).
   5. Package the uploadable deliverable (`scripts/package-game.mjs` -> `build/<id>_<version>/` + `.zip`).
 
 ## Built-in Runtime Subsystems (Reuse Instead of Reinventing)

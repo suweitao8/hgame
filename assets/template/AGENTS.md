@@ -16,6 +16,7 @@
 13. Hierarchical Commercial Red Dot Standard: whenever a game has multi-page/tab navigation badges, unread `NEW` items, daily resets, cooldown reminders, or claimable reward counters, use `HGame.createRedDotSystem` (`vendor/hgame/ui/red-dot.js`) plus `bindRedDotDOM` (`vendor/hgame/integrations/red-dot-dom.js`). Organize UI badges by path (`Page/SubPage/Item`) and `link(...)` cross-entry DAG nodes so parent tabs aggregate child states automatically and remain lit until every active sub-page/sub-item is handled; never track red dots with flat boolean maps or ad-hoc manual DOM `.remove()` mutations.
 14. Lean Release Packaging Standard: always produce uploadable game deliverables with `npm run release` (`node scripts/package-game.mjs --version <ver>`). It reads `engine.config.json`, `game.config.json`, HTML entries, and the real ES module dependency graph to copy ONLY the active runtime modules, verified Rapier 2D/3D WASM (if enabled), and runtime assets into `build/<id>_<version>/` plus `build/<id>_<version>.zip` (for example `build/lol_1_1/` and `build/lol_1_1.zip`). Never zip the raw project root containing `.git/`, `tests/`, `scripts/`, `AGENTS.md`, unused Three/Rapier bundles, or source art files.
 15. Direct `main` Development, Single-Conversation Lock & Mandatory Stage Commits: develop **exclusively on `main` in the active workspace**—creating branches (`git checkout -b` / `git switch -c`) or isolated workspaces/worktrees (`git worktree`, `Workspace: 'branch'`/`'share'`) is strictly **forbidden**. Only **one conversation at a time** may develop on this project. Every development conversation **must** run verification (`npm test` / `npm run check`) and make a stage `git commit` on `main` (plus `git push` when remote is configured) before completing, never piling up uncommitted changes. Treat this game as AI-native code + declarative JSON (never build manual GUI editors), and verify visuals/state from the HGame engine root via `npm run snapshot -- <game-dir>`.
+16. **Unified WebAsset Game Management & Preview (No Standalone Websites)**: Manage and preview this HTML5 game through **WebAsset** (`http://127.0.0.1:4174/#games` lobby; runtime URL `http://127.0.0.1:4175/local-games/<game-dir>/<entry>` via `game.config.json`). During normal development, playtesting, or browser QA, **never** start a separate HTTP server (`npm start`, `npm run serve`, `python -m http.server`, Vite, or manual `scripts/preview.mjs` preview ports); refresh WebAsset instead, and point browser QA scripts directly at `http://127.0.0.1:4175/local-games/<game-dir>/index.html`. Never copy this game into WebAsset or add extra UI controls to WebAsset. (`scripts/preview.mjs` is strictly an ephemeral internal fixture for headless `snapshot.mjs` / `playtest.mjs` / automated CI checks.)
 
 ## Quick Module Map (from `src/main.js`)
 
@@ -53,9 +54,9 @@ node "<hgame-repo>/.agents/skills/hgame-level-architect/scripts/check-level.mjs"
 node "<hgame-repo>/.agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs" --story <story.json>
 node "<hgame-repo>/.agents/skills/hgame-ui-ux/scripts/check-ui.mjs" --dir .
 
-# Preview over loopback HTTP (never open index.html via file://)
-# Using HGame's preview.mjs or any static HTTP server from project root:
-node "<hgame-repo>/scripts/preview.mjs" . --port 4176
+# Unified preview & playtest via WebAsset (never open via file:// or start a separate per-game server)
+# Lobby:   http://127.0.0.1:4174/#games
+# Runtime: http://127.0.0.1:4175/local-games/<game-dir>/index.html
 
 # Build lean, uploadable deliverable in build/<id>_<version>/ + .zip
 npm run release -- --version 1.1

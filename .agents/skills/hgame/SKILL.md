@@ -33,7 +33,7 @@ Use this skill as the primary execution manual whenever a user asks to create, e
 Check which folder the current workspace is in before running commands:
 
 - **HGame Engine Source Repository**: contains `assets/runtime/VERSION` (`1.0.0`) and `scripts/create-game.mjs`.
-  - Use this repo to generate new games, curate art/audio sheets, preview any game folder, build optional `network/` servers, or package external games (`npm run package:game -- <game-dir> --version <ver>`).
+  - Use this repo to generate new games, curate art/audio sheets, run headless verification (`snapshot.mjs` / `playtest.mjs`), build optional `network/` servers, or package external games (`npm run package:game -- <game-dir> --version <ver>`).
   - Never add game-specific rules or private assets here; edit `assets/runtime/` only when changing the engine itself (and follow [AGENTS.md](../../../AGENTS.md)).
 - **Generated Standalone Game Project**: contains `engine.config.json`, `game.config.json`, `src/main.js`, and `vendor/hgame/VERSION`.
   - Keep all game logic, AI, levels, and save schemas in `src/` and `assets/`.
@@ -42,7 +42,8 @@ Check which folder the current workspace is in before running commands:
   - Because `docs/api/API-INDEX.json`, `types/`, and `.agents/skills/` live in the **HGame engine root (`<hgame-repo>`)**, call them via `<hgame-repo>` when working inside a standalone game directory so commands never fail:
     - API quick lookup: `node "<hgame-repo>/scripts/query-api.mjs" <keyword>` (or `npm --prefix "<hgame-repo>" run api -- <keyword>`)
     - Balance / Level / Narrative checks: `node "<hgame-repo>/.agents/skills/<skill>/scripts/<script>.mjs" ...`
-    - Headless snapshot, AI playtest & preview: `node "<hgame-repo>/scripts/snapshot.mjs" .`, `node "<hgame-repo>/scripts/playtest.mjs" .`, and `node "<hgame-repo>/scripts/preview.mjs" . --port 4176`
+    - Headless snapshot & AI playtest: `node "<hgame-repo>/scripts/snapshot.mjs" .` and `node "<hgame-repo>/scripts/playtest.mjs" .`
+    - Live playtest & browser QA: open via **WebAsset** (`http://127.0.0.1:4174/#games` -> `http://127.0.0.1:4175/local-games/<game-slug>/index.html`); **never** start a separate per-game website or port.
 
 ---
 
@@ -129,15 +130,15 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 6. **Minimalist Zero-Prose UI Rule**: Never render instructional copy, `<p>` prose blocks, subtitles, "Powered by" footers, toast bars, or nested `<button>` elements inside upgrade/shop cards. Keep combat HUD to `<= 1` icon-only pause button (`<= 10%` viewport area), pause/gameover overlays to `<= 2` buttons (`<= 4` hanzi), whole-card click with `<= 18` chars symbolic stat tags (`+25% 攻速`), hide debug/bench toggles behind `` ` `` or `?debug=1`, and convey state via `createVfxSystem` + `audio.playSynth`. Verify with `check-ui.mjs` + `npm run snapshot`.
 7. **RE 1-1-2-1 MVP Slice & Dual-Gate Discipline (先做减法再做加法)**: Any reverse-engineered game MUST deliver ONLY the `1-1-2-1` minimal vertical slice first (1 char+camera, 1~2 weapons, 2~3 enemies, 1 × 60s wave, `<= 5` upgrades). Until both `npm run re:eval` (SI units + 4 ratios + score >= 90) AND `npm run re:doctor` (30s 4-vital-sign live playability check) pass green, expanding the weapon arsenal, stacking peripheral systems, or enabling 100k-horde enhancements is strictly forbidden.
 8. **Direct `main` Only, Single-Conversation Lock & Mandatory Stage Commits**: Develop **exclusively on `main` in the active workspace**—isolated workspaces/worktrees (`git worktree`, subagent/swarm `Workspace: 'branch'` / `'share'`) and non-`main` branches (`git checkout -b` / `git switch -c`) are strictly **forbidden**. Only **one conversation at a time** may develop on the repository. Every development conversation **must** verify (`npm run check` / `npm test`) and create a stage `git commit` on `main` (and `git push` if remote exists) before finishing, leaving zero piled-up uncommitted changes.
+9. **Unified WebAsset Game Management & Preview (No Standalone Websites)**: Manage, list, and preview all HTML5 games centrally through **WebAsset** (`http://127.0.0.1:4174/#games` lobby; game runtime at `http://127.0.0.1:4175/local-games/<game-slug>/<entry>`, auto-discovered via `game.config.json` in `WEBASSET_HTML_GAMES_ROOT`). **Never** launch standalone per-game HTTP servers (`npm start`, `npm run serve`, `python -m http.server`, or manual `scripts/preview.mjs` preview ports) for development, playtesting, or browser QA; point browser QA directly at WebAsset's preview URL, and never copy game files into WebAsset or add extra buttons/toolbars there. (`scripts/preview.mjs` is internal-only for ephemeral headless tools `snapshot.mjs` / `playtest.mjs` / `tests/` or inspecting packaged `build/` outputs offline.)
 
 ---
 
 ## Step 4: Preview & Verify
 
-- Serve via loopback HTTP (ES modules fail on `file://`):
-  ```powershell
-  node scripts/preview.mjs "<game-dir>" --port 4176
-  ```
+- **Unified WebAsset Preview (Default for Dev, Playtesting & Browser QA)**:
+  - Ensure WebAsset is running (`http://127.0.0.1:4174/#games`), then select the game (discovered via `game.config.json`) or open its isolated runtime URL directly (`http://127.0.0.1:4175/local-games/<game-slug>/index.html`).
+  - Do **not** run `npm start`, `npm run serve`, `python -m http.server`, or manual `scripts/preview.mjs` servers to host a game project on another port. (Only `npm run snapshot` / `npm run playtest` spawn an ephemeral internal loopback fixture automatically while running headless checks.)
 - Headless render snapshot & automated AI playtest checks:
   ```powershell
   npm run snapshot -- "<game-dir>"
