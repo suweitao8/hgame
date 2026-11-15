@@ -13,6 +13,7 @@ import { copyFile, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { decodePng, encodePng, splitRgbaGrid } from './process-assets.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
@@ -556,7 +557,36 @@ function sanitizeSlug(name) {
   return cleaned || 'asset';
 }
 
-async function stageInputFile(srcPath, destDir, prefixSlug) {
+/** Extracts front (left) or side (right) panel from a 2:1 horizontal turnaround PNG when requested or auto-detected. */
+export function extractSheetPanelPng(pngBuffer, panelMode = 'auto') {
+  const mode = String(panelMode || 'auto').toLowerCase();
+  if (!['auto', 'left', 'front', 'right', 'side', 'full', 'none'].includes(mode)) {
+    throw new RangeError(`Invalid panel mode "${panelMode}"; expected auto|left|front|right|side|full`);
+  }
+  const decoded = decodePng(pngBuffer);
+  const { width, height } = decoded;
+  if (mode === 'full' || mode === 'none') {
+    return { buffer: pngBuffer, extracted: false, mode, sourceSize: [width, height], outputSize: [width, height] };
+  }
+  const isTwoPanelSheet = width >= height * 1.75;
+  if (mode === 'auto' && !isTwoPanelSheet) {
+    return { buffer: pngBuffer, extracted: false, mode, sourceSize: [width, height], outputSize: [width, height] };
+  }
+  const cells = splitRgbaGrid(decoded, { columns: 2, rows: 1 });
+  const pickIndex = (mode === 'right' || mode === 'side') ? 1 : 0;
+  const cell = cells[pickIndex];
+  const outBuf = encodePng({ width: cell.width, height: cell.height, data: cell.data });
+  return {
+    buffer: outBuf,
+    extracted: true,
+    mode,
+    selectedPanel: pickIndex === 0 ? 'left' : 'right',
+    sourceSize: [width, height],
+    outputSize: [cell.width, cell.height],
+  };
+}
+
+async function stageInputFile(srcPath, destDir, prefixSlug, { panelMode = null } = {}) {
   const absSrc = path.resolve(srcPath);
   const st = await stat(absSrc);
   if (!st.isFile()) throw new Error(`Input file not found: ${absSrc}`);
@@ -565,8 +595,24 @@ async function stageInputFile(srcPath, destDir, prefixSlug) {
   const destPath = path.join(destDir, safeBase);
   assertAsciiPath(destPath, 'Staged ComfyUI input path');
   await mkdir(destDir, { recursive: true });
+  let panelInfo = null;
+  if (panelMode && ext === '.png') {
+    const rawBuf = await readFile(absSrc);
+    const res = extractSheetPanelPng(rawBuf, panelMode);
+    panelInfo = {
+      extracted: res.extracted,
+      mode: res.mode,
+      selectedPanel: res.selectedPanel ?? null,
+      sourceSize: res.sourceSize,
+      outputSize: res.outputSize,
+    };
+    if (res.extracted) {
+      await writeFile(destPath, res.buffer);
+      return { absSrc, destPath, filename: safeBase, panelInfo };
+    }
+  }
   await copyFile(absSrc, destPath);
-  return { absSrc, destPath, filename: safeBase };
+  return { absSrc, destPath, filename: safeBase, panelInfo };
 }
 
 export function parseProcessModel3dArgs(argv) {
@@ -608,8 +654,8 @@ function printUsage() {
     '  inspect <mesh.glb> [--out-dir <dir>]           Inspect bounds/UVs/tris and optionally render 4/6 views',
     '  normalize <mesh.glb> --out <out.glb> [opts]    Rotate (--rx/--ry/--rz), apply transforms, ground/scale/decimate',
     '  qa <mesh.glb> --out-dir <dir>                  Render multi-view QA images and print mesh/texture diagnostics',
-    '  generate --input <img.png> --out <out.glb>     Run Trellis2-GGUF image-to-3D (default --faces 10000)',
-    '  texture --mesh <glb> --ref <png> --out <glb>   Run UltraTex LowVRAM GGUF PBR texturing on a normalized mesh',
+    '  generate --input <img.png> --out <out.glb>     Run Trellis2-GGUF image-to-3D (--faces 10000, --panel auto|left|right|full)',
+    '  texture --mesh <glb> --ref <png> --out <glb>   Run UltraTex LowVRAM GGUF PBR texturing (--ref-panel auto|left|right|full)',
   ].join('\n'));
 }
 
@@ -708,7 +754,9 @@ async function cmdGenerate(config, flags) {
 
   const absOut = assertAsciiPath(path.resolve(outFile), 'Output GLB');
   const slug = sanitizeSlug(flags.name || path.basename(absOut, path.extname(absOut)));
-  const staged = await stageInputFile(inputFile, path.join(config.comfyUiDir, 'input'), `hgame_t2_${slug}_${Date.now()}`);
+  const staged = await stageInputFile(inputFile, path.join(config.comfyUiDir, 'input'), `hgame_t2_${slug}_${Date.now()}`, {
+    panelMode: typeof flags.panel === 'string' ? flags.panel : 'auto',
+  });
 
   const wfJson = JSON.parse(await readFile(config.trellis2Workflow, 'utf8'));
   const prefix = `hgame_t2_${slug}_${Date.now()}`;
@@ -734,8 +782,14 @@ async function cmdGenerate(config, flags) {
   await copyComfyOutputFile(config, outItems[0], rawOutPath);
 
   let normalizeSummary = null;
+  let qaSummary = null;
   if (flags.normalize) {
     normalizeSummary = runBlenderHelper(config, buildBlenderNormalizeArgs(rawOutPath, absOut, flags));
+  } else if (flags['qa-dir'] || flags.qaDir) {
+    qaSummary = runBlenderHelper(config, buildBlenderInspectArgs(absOut, {
+      ...flags,
+      'out-dir': flags['qa-dir'] || flags.qaDir,
+    }, '4', '12'));
   }
 
   console.log(JSON.stringify({
@@ -743,9 +797,11 @@ async function cmdGenerate(config, flags) {
     promptId,
     warnings,
     stagedInput: staged.destPath,
+    panelInfo: staged.panelInfo,
     rawOutput: rawOutPath,
     output: absOut,
     normalized: normalizeSummary,
+    qa: qaSummary,
   }, null, 2));
 }
 
@@ -765,7 +821,9 @@ async function cmdTexture(config, flags) {
   const slug = sanitizeSlug(flags.prefix || path.basename(absOut, path.extname(absOut)));
 
   const stagedMesh = await stageInputFile(meshFile, path.join(config.comfyUiDir, 'input', '3d'), `hgame_utx_${slug}_${stamp}`);
-  const stagedRef = await stageInputFile(refFile, path.join(config.comfyUiDir, 'input'), `hgame_utx_${slug}_${stamp}`);
+  const stagedRef = await stageInputFile(refFile, path.join(config.comfyUiDir, 'input'), `hgame_utx_${slug}_${stamp}`, {
+    panelMode: typeof (flags['ref-panel'] || flags.panel) === 'string' ? (flags['ref-panel'] || flags.panel) : 'auto',
+  });
 
   const wfJson = JSON.parse(await readFile(config.ultratexWorkflow, 'utf8'));
   const outPrefix = `ultratex/${slug}_${stamp}`;
@@ -821,6 +879,7 @@ async function cmdTexture(config, flags) {
     warnings,
     stagedMesh: stagedMesh.destPath,
     stagedRef: stagedRef.destPath,
+    refPanelInfo: stagedRef.panelInfo,
     output: absOut,
     pbrOutputs,
     qa: qaSummary,

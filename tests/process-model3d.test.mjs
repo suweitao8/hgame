@@ -10,10 +10,12 @@ import {
   buildTrellis2Prompt,
   buildUltratexPrompt,
   convertComfyUiWorkflowToApi,
+  extractSheetPanelPng,
   parseProcessModel3dArgs,
   resolveModel3dConfig,
   TRELLIS2_WIDGET_ORDER,
 } from '../scripts/process-model3d.mjs';
+import { decodePng, encodePng } from '../scripts/process-assets.mjs';
 
 test('resolveModel3dConfig resolves .hgame.local.json and env var overrides', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-model3d-cfg-'));
@@ -267,6 +269,39 @@ test('buildUltratexPrompt converts UI workflow and maps PBR SaveImage slots clea
   assert.equal(prompt['22'].inputs.filename_prefix, 'ultratex/duck_v2/roughness');
   assert.equal(prompt['23'].inputs.filename_prefix, 'ultratex/duck_v2/metallic');
   assert.equal(prompt['11'].inputs.prefix, 'ultratex_duck_v2_views');
+});
+
+test('extractSheetPanelPng splits 2:1 front+side sheets in auto/left/right mode and leaves square images intact', () => {
+  const w = 16;
+  const h = 8;
+  const data = Buffer.alloc(w * h * 4, 255);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      const isLeft = x < w / 2;
+      data[idx] = isLeft ? 200 : 20;
+      data[idx + 1] = isLeft ? 30 : 210;
+      data[idx + 2] = 40;
+      data[idx + 3] = 255;
+    }
+  }
+  const sheetPng = encodePng({ width: w, height: h, data });
+
+  const autoRes = extractSheetPanelPng(sheetPng, 'auto');
+  assert.equal(autoRes.extracted, true);
+  assert.equal(autoRes.selectedPanel, 'left');
+  assert.deepEqual(autoRes.outputSize, [8, 8]);
+  assert.equal(decodePng(autoRes.buffer).data[0], 200);
+
+  const sideRes = extractSheetPanelPng(sheetPng, 'right');
+  assert.equal(sideRes.extracted, true);
+  assert.equal(sideRes.selectedPanel, 'right');
+  assert.equal(decodePng(sideRes.buffer).data[0], 20);
+
+  const squarePng = encodePng({ width: 8, height: 8, data: Buffer.alloc(8 * 8 * 4, 128) });
+  const sqAuto = extractSheetPanelPng(squarePng, 'auto');
+  assert.equal(sqAuto.extracted, false);
+  assert.deepEqual(sqAuto.outputSize, [8, 8]);
 });
 
 test('scripts/process-model3d.mjs --help exits cleanly', () => {
