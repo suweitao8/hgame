@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "title": "",
+  "status": "draft",
+  "approval": "pending",
+  "target": { "project": "", "profile": "", "slice": "", "fullScope": "" },
+  "documents": {
+    "spec": "production-spec.md", "evidence": "evidence.md",
+    "assets": "assets.csv", "acceptance": "acceptance.md", "prompt": "BUILD_GAME_PROMPT.md"
+  },
+  "domains": [
+    { "id": "gameplay", "status": "missing", "ref": "", "reason": "" },
+    { "id": "levels", "status": "missing", "ref": "", "reason": "" },
+    { "id": "balance", "status": "missing", "ref": "", "reason": "" },
+    { "id": "ui", "status": "missing", "ref": "", "reason": "" },
+    { "id": "audio", "status": "missing", "ref": "", "reason": "" },
+    { "id": "vfx", "status": "missing", "ref": "", "reason": "" },
+    { "id": "asset-slots", "status": "missing", "ref": "", "reason": "" },
+    { "id": "narrative", "status": "missing", "ref": "", "reason": "" },
+    { "id": "engineering", "status": "missing", "ref": "", "reason": "" }
+  ],
+  "dataFiles": [],
+  "blockers": ["Fill target decisions, source evidence, domain contracts and replacement-asset slot mappings."],
+  "coldRead": { "status": "pending", "report": "" }
+}

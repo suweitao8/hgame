@@ -91,3 +91,8 @@ examples/*/assets/**/*.mp3
 examples/*/assets/**/*.ogg
 examples/*/assets/**/*.wav
 !examples/*/assets/vendor/**
+
+# Local reverse-engineering machine paths and sandbox workspace
+.hgame.local.json
+.re-workspace/
+

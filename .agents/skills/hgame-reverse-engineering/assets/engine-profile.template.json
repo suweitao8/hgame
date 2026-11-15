@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "game": {
+    "id": "",
+    "name": "",
+    "version": "",
+    "build": "",
+    "platform": "",
+    "language": ""
+  },
+  "source": [
+    {
+      "path": "",
+      "kind": "executable|archive|package|save|resource-container|other",
+      "sha256": "",
+      "size_bytes": 0,
+      "read_only": true
+    }
+  ],
+  "engine": {
+    "name": "unknown",
+    "version": "unknown",
+    "confidence": "unknown",
+    "evidence": []
+  },
+  "engine_components": [
+    {
+      "role": "gameplay-engine|scripting-runtime|hot-update-runtime|video-runtime|native-plugin|other",
+      "name": "unknown",
+      "version": "unknown",
+      "confidence": "unknown",
+      "evidence": []
+    }
+  ],
+  "runtimes": [
+    {
+      "name": "unknown",
+      "version": "unknown",
+      "backend": "unknown",
+      "role": "gameplay|scripting|native-plugin|ui|other",
+      "evidence": []
+    }
+  ],
+  "containers": [],
+  "data_driven_systems": [],
+  "toolchain": [
+    {
+      "role": "fingerprint|index|decompile|bytecode|native|assets|runtime-validation",
+      "name": "",
+      "version": "",
+      "source": "",
+      "command": "",
+      "input_sha256": "",
+      "output_ref": "",
+      "notes": ""
+    }
+  ],
+  "offline_scope": {
+    "required": [],
+    "adapter": [],
+    "excluded_online": [],
+    "unknown": []
+  },
+  "notes": []
+}

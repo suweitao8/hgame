@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "requirements": {
+    "scanner": true,
+    "coverage": true,
+    "functionIndex": false,
+    "dataInventory": false,
+    "traceComparison": false
+  }
+}

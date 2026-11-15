@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "game_id": "",
+  "source_fingerprint": "",
+  "engine_profile_ref": "production/engine-profile.json",
+  "module": {
+    "id": "",
+    "name": "",
+    "scope": "offline-required|offline-adapter|excluded-online|unknown",
+    "reverse_status": "unseen|indexed|extracted|understood|unknown|blocked",
+    "implementation_status": "not-started|in-progress|implemented|not-applicable",
+    "verification_status": "deferred|not-run|passed|failed"
+  },
+  "toolchain": [
+    {
+      "name": "",
+      "version": "",
+      "command": "",
+      "input_sha256": ""
+    }
+  ],
+  "evidence": [
+    {
+      "id": "",
+      "kind": "static|observed|inferred|unknown",
+      "claim": "",
+      "source_ref": "",
+      "conditions": [],
+      "confidence": "high|medium|low",
+      "reason": "",
+      "reproduction": ""
+    }
+  ],
+  "target_contract": {
+    "entry_points": [],
+    "state_fields": [],
+    "transitions": [],
+    "events": [],
+    "data_schema": [],
+    "save_fields": []
+  },
+  "unknowns": [
+    {
+      "question": "",
+      "impact": "",
+      "next_step": ""
+    }
+  ]
+}

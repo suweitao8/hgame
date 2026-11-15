@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "keyFields": [
+    { "expected": "tick", "actual": "tick" },
+    { "expected": "actorId", "actual": "actorId" },
+    { "expected": "type", "actual": "type", "actualAliases": { "projectile-hit": "hit" } }
+  ],
+  "compareFields": [
+    { "expected": "position.x", "actual": "position.x", "tolerance": 0.01 },
+    { "expected": "position.y", "actual": "position.y", "tolerance": 0.01 },
+    { "expected": "health", "actual": "hp", "tolerance": 0 }
+  ]
+}

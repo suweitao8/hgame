@@ -1,0 +1,3 @@
+{"_type":"trace","schemaVersion":1,"gameId":"replace-me","scenarioId":"movement-basic","build":"original-build","tickHz":60}
+{"_type":"event","tick":1,"actorId":"player-1","type":"move","position":{"x":0.1,"y":0},"health":100,"state":"alive"}
+{"_type":"event","tick":2,"actorId":"player-1","type":"move","position":{"x":0.2,"y":0},"health":100,"state":"alive"}

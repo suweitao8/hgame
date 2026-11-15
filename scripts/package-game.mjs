@@ -28,6 +28,8 @@ const AUTHORING_ASSET_DIRS = new Set([
   'art_src',
   'source',
   '.git',
+  '.agents',
+  '.re-workspace',
   'node_modules',
   '.cache',
 ]);
@@ -692,6 +694,15 @@ export async function packageGameRelease({
   }
 
   function isForbiddenRuntimeRel(relPosix) {
+    if (
+      relPosix.startsWith('.agents/') ||
+      relPosix.startsWith('.re-workspace/') ||
+      relPosix.startsWith('.hgame.local') ||
+      relPosix === 'scripts/re-pipeline.mjs' ||
+      relPosix === 'scripts/sync-skills.mjs'
+    ) {
+      return true;
+    }
     if (relPosix.startsWith('vendor/hgame/vendor/rapier2d/')) {
       return project.physics !== 'rapier2d';
     }
@@ -804,7 +815,7 @@ export async function packageGameRelease({
     for (const f of srcFiles) {
       const lower = f.rel.toLowerCase();
       const parts = lower.split('/');
-      if (parts.some(p => p === 'tests' || p === '__tests__')) continue;
+      if (parts.some(p => p === 'tests' || p === '__tests__' || p === '.agents' || p === '.re-workspace' || p.startsWith('.hgame.local'))) continue;
       if (/\.(test|spec)\.[cm]?js$/i.test(lower)) continue;
       if (AUTHORING_EXTS.has(path.posix.extname(lower)) || SKIP_BASENAMES.has(path.posix.basename(lower))) {
         continue;
@@ -1058,7 +1069,7 @@ export async function packageEngineRelease({
       const relPosix = `${toPosixRel(srcRel)}/${toPosixRel(item.rel)}`;
       const lower = relPosix.toLowerCase();
       const parts = lower.split('/');
-      if (parts.some(p => p === '.git' || p === 'node_modules' || p === 'dist' || p === 'build')) continue;
+      if (parts.some(p => p === '.git' || p === 'node_modules' || p === 'dist' || p === 'build' || p === '.re-workspace' || p.startsWith('.hgame.local'))) continue;
       if (SKIP_BASENAMES.has(parts[parts.length - 1])) continue;
       if (filterFn && !filterFn(relPosix)) continue;
       const dst = path.join(targetDir, ...relPosix.split('/'));

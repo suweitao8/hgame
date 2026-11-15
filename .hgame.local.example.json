@@ -1,0 +1,4 @@
+{
+  "reToolchainPath": "<path-to>/toolchain.json",
+  "reWorkspaceDir": "<path-to>/RE-Workspace"
+}
