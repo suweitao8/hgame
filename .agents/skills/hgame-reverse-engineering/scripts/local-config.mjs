@@ -36,13 +36,16 @@ export function resolveReConfig(startDir = process.cwd()) {
 
   const envToolchain = process.env.HGAME_RE_TOOLCHAIN?.trim();
   const envWorkspace = process.env.HGAME_RE_WORKSPACE?.trim();
+  const envGamesRoot = process.env.HGAME_GAMES_ROOT?.trim();
 
   const rawToolchain = envToolchain || (typeof fileConfig.reToolchainPath === 'string' ? fileConfig.reToolchainPath.trim() : '');
   const rawWorkspace = envWorkspace || (typeof fileConfig.reWorkspaceDir === 'string' ? fileConfig.reWorkspaceDir.trim() : '');
+  const rawGamesRoot = envGamesRoot || (typeof fileConfig.gamesRootDir === 'string' ? fileConfig.gamesRootDir.trim() : '');
 
   return {
     configPath,
     reToolchainPath: rawToolchain ? path.resolve(rawToolchain) : null,
     reWorkspaceDir: rawWorkspace ? path.resolve(rawWorkspace) : path.join(repoRoot, '.re-workspace'),
+    gamesRootDir: rawGamesRoot ? path.resolve(rawGamesRoot) : null,
   };
 }

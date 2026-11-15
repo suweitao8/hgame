@@ -403,3 +403,44 @@ test('package-game excludes RE local files in game mode while keeping RE skills/
   assert.match(pkgGameSrc, /doctor-playability\.mjs/);
   assert.match(pkgGameSrc, /copyTree\('\.agents\/skills'\)/);
 });
+
+test('re:forge defaults output directory to gamesRootDir/<slug> from HGAME_GAMES_ROOT or .hgame.local.json', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'hgame-games-root-'));
+  try {
+    const wsDir = path.join(dir, 're-ws');
+    const gamesDir = path.join(dir, 'html-games');
+    const specsOut = path.join(wsDir, 'specs-out');
+    mkdirSync(specsOut, { recursive: true });
+    mkdirSync(gamesDir, { recursive: true });
+
+    const slug = 'games-root-default-test';
+    const specPath = path.join(specsOut, `${slug}.clean-spec.json`);
+    writeFileSync(specPath, JSON.stringify(makeCompliantMvpSpec({ slug }), null, 2), 'utf8');
+
+    const res = spawnSync(
+      process.execPath,
+      [pipelineScript, 'forge', '--slug', slug, '--json'],
+      {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HGAME_RE_WORKSPACE: wsDir,
+          HGAME_GAMES_ROOT: gamesDir,
+        },
+      },
+    );
+    assert.equal(res.status, 0, res.stderr || res.stdout);
+    const out = JSON.parse(res.stdout);
+    const expectedOutDir = path.join(gamesDir, slug);
+    assert.equal(out.ok, true);
+    assert.equal(path.resolve(out.scaffoldedTo), path.resolve(expectedOutDir));
+    assert.equal(existsSync(path.join(expectedOutDir, 'index.html')), true);
+    assert.equal(existsSync(path.join(expectedOutDir, 'game.config.json')), true);
+
+    const exampleCfg = JSON.parse(readFileSync(path.join(repoRoot, '.hgame.local.example.json'), 'utf8'));
+    assert.equal(typeof exampleCfg.gamesRootDir, 'string');
+    assert.ok(exampleCfg.gamesRootDir.length > 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

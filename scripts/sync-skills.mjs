@@ -93,6 +93,7 @@ async function main() {
     path.join(home, '.agents', 'skills'),
     path.join(home, '.codex', 'skills'),
     path.join(home, '.trae', 'skills'),
+    path.join(home, '.gemini', 'config', 'skills'),
   ];
 
   let created = 0;

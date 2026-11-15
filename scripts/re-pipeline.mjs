@@ -91,20 +91,21 @@ function main() {
     return;
   }
 
+  const cfg = resolveReConfig(repoRoot);
   const opts = parseForgeArgs(rest);
-  if (opts.help || !opts.slug || !opts.out) {
+  const resolvedOut = opts.out || (opts.slug && cfg.gamesRootDir ? path.join(cfg.gamesRootDir, opts.slug) : null);
+  if (opts.help || !opts.slug || !resolvedOut) {
     console.log(
       'Usage:\n' +
       '  npm run re:extract -- "<original-game-dir>" --slug <slug>\n' +
       '  npm run re:spec -- --slug <slug> [--ip-terms "TermA,TermB"]\n' +
       '  npm run re:eval -- (<clean-spec.json> | --slug <slug> | --demo) [--json]\n' +
-      '  npm run re:forge -- --slug <slug> --out "<new-game-dir>" [--source "<original-game-dir>"] [--ip-terms "TermA,TermB"] [--dry-run]',
+      '  npm run re:forge -- --slug <slug> [--out "<new-game-dir>"] [--source "<original-game-dir>"] [--ip-terms "TermA,TermB"] [--dry-run]',
     );
     if (!opts.help) process.exitCode = 1;
     return;
   }
 
-  const cfg = resolveReConfig(repoRoot);
   const specPath = path.join(cfg.reWorkspaceDir, 'specs-out', `${opts.slug}.clean-spec.json`);
 
   if (opts.source) {
@@ -117,7 +118,7 @@ function main() {
     runStep(exportSpecScript, specArgs, 'export-clean-spec');
   }
 
-  const forgeArgs = [specPath, '--scaffold', opts.out];
+  const forgeArgs = [specPath, '--scaffold', resolvedOut];
   if (opts.dryRun) forgeArgs.push('--allow-draft');
   if (opts.json) forgeArgs.push('--json');
   runStep(validateSpecScript, forgeArgs, 'validate-spec --scaffold');
