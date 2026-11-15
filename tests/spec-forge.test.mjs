@@ -5,17 +5,66 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  evaluateMoveAndBounds,
+  evaluateAimAndKill,
+  evaluateThreatAndDefense,
+  evaluateVisualFraming,
+} from '../scripts/doctor-playability.mjs';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testDir, '..');
 const validatorScript = path.join(repoRoot, '.agents', 'skills', 'hgame-spec-forge', 'scripts', 'validate-spec.mjs');
 const pipelineScript = path.join(repoRoot, 'scripts', 're-pipeline.mjs');
+const doctorScript = path.join(repoRoot, 'scripts', 'doctor-playability.mjs');
 
-test('hgame-spec-forge validator accepts clean demo spec', () => {
+function makeCompliantMvpSpec(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    specKind: 'hgame-clean-spec',
+    slug: 'arena-survivor-test',
+    recommendedProfile: '2d',
+    unitSystem: 'SI_METERS_SECONDS_RADIANS',
+    unitConversions: {
+      distance: { sourceUnit: 'px', toMetersScale: 0.02, reference: '1.6m hero = 80px' },
+      time: { sourceUnit: 'frames@60Hz', tickHz: 60, toSecondsScale: 1 / 60 },
+      angle: { sourceUnit: 'degrees', toRadiansScale: 0.01745329 },
+    },
+    engineRecipe: { profile: '2d', renderer: 'webgl2d', physics: 'none', tickHz: 60 },
+    mechanics: {
+      coreLoop: { status: 'seen', arenaSpanM: 60, waveDurationSec: 60 },
+      threeC: {
+        status: 'seen',
+        playerSpeed: 5.0,
+        playerRadius: 0.4,
+        playerHp: 100,
+        camera: { status: 'hgame-fallback', mode: 'topdown-follow', orthoHeightM: 14, lerp: 0.25 },
+      },
+      waveDirector: { status: 'inferred', waveDurationSec: 60, baseSpawnIntervalSec: 1.5 },
+    },
+    tables: {
+      weapons: [{ id: 'slash', status: 'seen', damage: 25, cooldownSec: 0.5, rangeM: 3.0 }],
+      enemies: [
+        { id: 'grunt', role: 'grunt', status: 'seen', hp: 50, speed: 3.0, hitDamage: 10, radius: 0.4 },
+        { id: 'brute', role: 'elite', status: 'inferred', hp: 120, speed: 2.2, hitDamage: 20, radius: 0.6 },
+      ],
+      upgrades: [
+        { id: 'atk_spd', tag: '+25% 攻速' },
+        { id: 'dmg', tag: '+20% 伤害' },
+      ],
+    },
+    hgameFallbackModules: ['renderer-shader', 'vfx-particles', 'synth-audio'],
+    ...overrides,
+  };
+}
+
+test('hgame-spec-forge validator accepts clean demo spec with 100/100 graduation score', () => {
   const res = spawnSync(process.execPath, [validatorScript, '--demo', '--json'], { encoding: 'utf8' });
   assert.equal(res.status, 0, res.stderr);
   const out = JSON.parse(res.stdout);
   assert.equal(out.ok, true);
+  assert.equal(out.graduated, true);
+  assert.equal(out.score, 100);
   assert.equal(out.slug, 'demo-clean-arena');
   assert.ok(out.mappedFallbacks.length >= 4);
 });
@@ -48,20 +97,96 @@ test('hgame-spec-forge validator rejects local paths, binary names, and >3-line 
   }
 });
 
-test('hgame-spec-forge scaffolds an HGame project from a clean spec', () => {
+test('re:eval precisely intercepts unconverted 300m/s abnormal speed and blocks scaffolding', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'hgame-spec-speed-'));
+  try {
+    const badSpec = makeCompliantMvpSpec({ slug: 'unconverted-speed-test' });
+    badSpec.mechanics.threeC.playerSpeed = 300; // Unconverted 300 px/s pasted directly as 300 m/s!
+    const specPath = path.join(dir, 'bad-speed.clean-spec.json');
+    writeFileSync(specPath, JSON.stringify(badSpec, null, 2), 'utf8');
+
+    const res = spawnSync(process.execPath, [pipelineScript, 'eval', specPath, '--json'], { encoding: 'utf8' });
+    assert.notEqual(res.status, 0, '300 m/s unconverted speed must fail re:eval');
+    const out = JSON.parse(res.stderr);
+    assert.equal(out.ok, false);
+    assert.equal(out.graduated, false);
+    assert.equal(out.ratios.relativeSpeedRatio.pass, false);
+    assert.equal(out.ratios.relativeSpeedRatio.value, 375);
+    assert.ok(out.ratios.relativeSpeedRatio.suspectedFields.includes('mechanics.threeC.playerSpeed'));
+    assert.equal(out.ratios.arenaTraversalSec.pass, false);
+    assert.ok(out.violations.some((v) => /playerSpeed/.test(v)));
+
+    // Also confirm --scaffold refuses to generate from it
+    const targetDir = path.join(dir, 'blocked-game');
+    const scaffoldRes = spawnSync(process.execPath, [validatorScript, specPath, '--scaffold', targetDir, '--json'], {
+      encoding: 'utf8',
+    });
+    assert.notEqual(scaffoldRes.status, 0);
+    assert.equal(existsSync(targetDir), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('re:eval rejects unknown/null fields and warns on MVP 1-1-2-1 scope overflow, while passing 100/100 normalized specs', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'hgame-spec-scope-'));
+  try {
+    // 1. Valid normalized spec -> 100/100 graduation
+    const goodSpec = makeCompliantMvpSpec({ slug: 'mvp-ready-test' });
+    const goodPath = path.join(dir, 'good.clean-spec.json');
+    writeFileSync(goodPath, JSON.stringify(goodSpec, null, 2), 'utf8');
+    const goodRes = spawnSync(process.execPath, [pipelineScript, 'eval', goodPath, '--json'], { encoding: 'utf8' });
+    assert.equal(goodRes.status, 0, goodRes.stderr);
+    const goodOut = JSON.parse(goodRes.stdout);
+    assert.equal(goodOut.ok, true);
+    assert.equal(goodOut.graduated, true);
+    assert.equal(goodOut.score, 100);
+    assert.match(goodOut.verdict, /逆向提取已达毕业线/);
+
+    // 2. Unknown field in 3C -> rejected
+    const unknownSpec = makeCompliantMvpSpec({ slug: 'unknown-3c-test' });
+    unknownSpec.mechanics.threeC.dashCooldown = 'unknown';
+    const unknownPath = path.join(dir, 'unknown.clean-spec.json');
+    writeFileSync(unknownPath, JSON.stringify(unknownSpec, null, 2), 'utf8');
+    const unknownRes = spawnSync(process.execPath, [pipelineScript, 'eval', unknownPath, '--json'], { encoding: 'utf8' });
+    assert.notEqual(unknownRes.status, 0);
+    const unknownOut = JSON.parse(unknownRes.stderr);
+    assert.ok(unknownOut.violations.some((v) => /dashCooldown/.test(v) && /unknown/i.test(v)));
+
+    // 3. MVP 1-1-2-1 scope overflow (>2 weapons, >3 enemies, >5 upgrades) -> blocked with warnings
+    const bloatedSpec = makeCompliantMvpSpec({ slug: 'bloated-mvp-test' });
+    bloatedSpec.tables.weapons.push(
+      { id: 'w2', status: 'seen', damage: 20, cooldownSec: 0.4 },
+      { id: 'w3', status: 'seen', damage: 30, cooldownSec: 0.6 },
+    );
+    bloatedSpec.tables.enemies.push(
+      { id: 'e3', status: 'seen', hp: 60, speed: 3.5, hitDamage: 12 },
+      { id: 'e4', status: 'seen', hp: 80, speed: 2.5, hitDamage: 15 },
+    );
+    bloatedSpec.tables.upgrades.push(
+      { id: 'u3', tag: '+10% 范围' },
+      { id: 'u4', tag: '+15% 护甲' },
+      { id: 'u5', tag: '+1 穿透' },
+      { id: 'u6', tag: '+20% 磁力' },
+    );
+    const bloatedPath = path.join(dir, 'bloated.clean-spec.json');
+    writeFileSync(bloatedPath, JSON.stringify(bloatedSpec, null, 2), 'utf8');
+    const bloatedRes = spawnSync(process.execPath, [pipelineScript, 'eval', bloatedPath, '--json'], { encoding: 'utf8' });
+    assert.notEqual(bloatedRes.status, 0);
+    const bloatedOut = JSON.parse(bloatedRes.stderr);
+    assert.equal(bloatedOut.mvpSlice.ok, false);
+    assert.ok(bloatedOut.mvpSlice.warnings.length >= 3);
+    assert.ok(bloatedOut.score < 90);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('hgame-spec-forge scaffolds an HGame project with spec.json and doctor.js from a graduated clean spec', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'hgame-spec-scaffold-'));
   const targetDir = path.join(dir, 'scaffolded-game');
   try {
-    const cleanSpec = {
-      schemaVersion: 1,
-      specKind: 'hgame-clean-spec',
-      slug: 'arena-survivor-test',
-      recommendedProfile: '2d',
-      engineRecipe: { profile: '2d', renderer: 'webgl2d', physics: 'none', tickHz: 60 },
-      mechanics: { coreLoop: { status: 'seen', waveDurationSec: 45 } },
-      tables: { enemies: [{ id: 'grunt', hp: 30, speed: 120 }] },
-      hgameFallbackModules: ['renderer-shader', 'vfx-particles', 'synth-audio'],
-    };
+    const cleanSpec = makeCompliantMvpSpec();
     const specPath = path.join(dir, 'arena-survivor-test.clean-spec.json');
     writeFileSync(specPath, JSON.stringify(cleanSpec, null, 2), 'utf8');
 
@@ -71,9 +196,16 @@ test('hgame-spec-forge scaffolds an HGame project from a clean spec', () => {
     assert.equal(res.status, 0, res.stderr);
     const out = JSON.parse(res.stdout);
     assert.equal(out.ok, true);
+    assert.equal(out.graduated, true);
+    assert.equal(out.score, 100);
     assert.equal(out.scaffoldedTo, path.resolve(targetDir));
     assert.ok(existsSync(path.join(targetDir, 'package.json')));
     assert.ok(existsSync(path.join(targetDir, 'src', 'sim', 'spec.json')));
+    assert.ok(existsSync(path.join(targetDir, 'src', 'sim', 'doctor.js')));
+    const mainJs = readFileSync(path.join(targetDir, 'src', 'main.js'), 'utf8');
+    assert.match(mainJs, /\.\/sim\/doctor\.js/);
+    const syntax = spawnSync(process.execPath, ['--check', path.join(targetDir, 'src', 'main.js')], { encoding: 'utf8' });
+    assert.equal(syntax.status, 0, syntax.stderr);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -106,13 +238,132 @@ test('re-pipeline forge orchestrates extract -> spec -> scaffold using HGAME_RE_
   }
 });
 
+test('doctor-playability evaluators detect 0-damage pass-through, NaN, instakill, and pass healthy --sim fixture', () => {
+  // Unit evaluator checks
+  assert.equal(
+    evaluateMoveAndBounds({
+      profile: '2d',
+      arenaSpan: 60,
+      spawnPos: { x: 0, y: 0 },
+      player: { x: 15, y: 0, theoreticalSpeed: 5 },
+      camera: { x: 15, y: 0, distanceToPlayer: 0, zoom: 1 },
+    }).pass,
+    true,
+  );
+  assert.equal(
+    evaluateMoveAndBounds({
+      profile: '2d',
+      arenaSpan: 60,
+      spawnPos: { x: 0, y: 0 },
+      player: { x: 0, y: 0, theoreticalSpeed: 5 },
+    }).pass,
+    false,
+  );
+  assert.equal(
+    evaluateAimAndKill({ initialHp: 40, minHp: 40, damaged: false, killed: false, maxWindowSec: 5 }).pass,
+    false,
+  );
+  assert.equal(
+    evaluateThreatAndDefense({
+      initialHp: 100,
+      hpAt05s: 0,
+      minHpDuringChase: 0,
+      tookDamage: true,
+      preDefenseDist: 1,
+      postDefenseMaxDist: 4,
+      defenseExpandedGap: true,
+    }).pass,
+    false,
+  );
+  assert.equal(
+    evaluateVisualFraming(
+      { consoleErrors: [], httpErrors: [], stats: { nonBlankRatio: 0.4, meanLuma: 48, uniqueColors: 20 } },
+      { profile: '3d', groundY: 0, camera: { x: 0, y: 6, z: 8, distanceToPlayer: 10 } },
+    ).pass,
+    true,
+  );
+
+  // End-to-end --sim mode check on temp fixture game
+  const dir = mkdtempSync(path.join(tmpdir(), 'hgame-doctor-sim-'));
+  try {
+    mkdirSync(path.join(dir, 'src', 'sim'), { recursive: true });
+    writeFileSync(path.join(dir, 'index.html'), '<!doctype html><canvas id="game"></canvas>');
+    writeFileSync(path.join(dir, 'engine.config.json'), JSON.stringify({ profile: '2d' }));
+    writeFileSync(
+      path.join(dir, 'src', 'sim', 'doctor.js'),
+      `export function createDoctorSim() {
+        const state = { px: 0, py: 0, hp: 100, maxHp: 100, enemies: [] };
+        let nextId = 1;
+        return {
+          step(dt, input = {}) {
+            state.px += (input.moveX || 0) * 5 * dt;
+            state.py += (input.moveY || 0) * 5 * dt;
+            for (const e of state.enemies) {
+              if (!e.alive) continue;
+              const dx = state.px - e.x, dy = state.py - e.y;
+              const d = Math.hypot(dx, dy);
+              if (d > 0.6) { e.x += (dx / d) * 3 * dt; e.y += (dy / d) * 3 * dt; }
+              else { e.cd = (e.cd || 0) - dt; if (e.cd <= 0) { state.hp = Math.max(0, state.hp - 10); e.cd = 0.6; } }
+            }
+          },
+          inspect() {
+            return { profile: '2d', arenaSpan: 60, spawnPos: { x: 0, y: 0 }, player: { x: state.px, y: state.py, hp: state.hp, maxHp: state.maxHp, theoreticalSpeed: 5 }, camera: { x: state.px, y: state.py, distanceToPlayer: 0, zoom: 1 } };
+          },
+          setupAimTest() {
+            state.enemies = [{ id: nextId++, x: state.px + 2, y: state.py, hp: 40, maxHp: 40, alive: true }];
+            return { enemyId: state.enemies[0].id, initialHp: 40, expectedTtkSec: 0.8, maxWindowSec: 5 };
+          },
+          aimAndFire(id) {
+            const e = state.enemies.find(x => x.id === id);
+            if (e && e.alive) { e.hp -= 1; if (e.hp <= 0) e.alive = false; }
+          },
+          getEnemyState(id) {
+            const e = state.enemies.find(x => x.id === id);
+            return e ? { exists: true, alive: e.alive, hp: e.hp, maxHp: e.maxHp } : { exists: false, alive: false, hp: 0, maxHp: 0 };
+          },
+          setupThreatTest() {
+            state.hp = 100;
+            state.enemies = [
+              { id: nextId++, x: state.px + 1.5, y: state.py, hp: 40, maxHp: 40, alive: true, cd: 0.55 },
+              { id: nextId++, x: state.px - 1.5, y: state.py, hp: 40, maxHp: 40, alive: true, cd: 0.55 },
+              { id: nextId++, x: state.px, y: state.py + 1.5, hp: 40, maxHp: 40, alive: true, cd: 0.55 },
+            ];
+            return { initialHp: 100, enemyIds: state.enemies.map(e => e.id), initialMinDist: 1.5 };
+          },
+          triggerDefense() {
+            for (const e of state.enemies) {
+              const dx = e.x - state.px, dy = e.y - state.py;
+              const d = Math.hypot(dx, dy) || 1;
+              e.x += (dx / d) * 4;
+              e.y += (dy / d) * 4;
+            }
+          },
+          getThreatState(ids) {
+            const list = state.enemies.filter(e => ids.includes(e.id));
+            const minEnemyDist = Math.min(...list.map(e => Math.hypot(e.x - state.px, e.y - state.py)));
+            return { playerHp: state.hp, playerMaxHp: state.maxHp, minEnemyDist, aliveEnemies: list.filter(e => e.alive).length };
+          },
+        };
+      }`,
+      'utf8',
+    );
+    const res = spawnSync(process.execPath, [doctorScript, dir, '--sim', '--json'], { encoding: 'utf8' });
+    assert.equal(res.status, 0, res.stderr || res.stdout);
+    const out = JSON.parse(res.stdout);
+    assert.equal(out.ok, true);
+    assert.equal(out.tests.length, 4);
+    assert.ok(out.tests.every((t) => t.pass));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('HGame repository files contain zero hardcoded machine-specific RE paths', () => {
   const trackedExts = new Set(['.md', '.mjs', '.js', '.json', '.ps1']);
   const ls = spawnSync('git', ['-C', repoRoot, 'ls-files'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
   assert.equal(ls.status, 0, ls.stderr);
 
   const candidates = new Set(ls.stdout.split(/\r?\n/).filter(Boolean));
-  // Also scan newly created skill/script files even before staging/committing
   const unmerged = spawnSync('git', ['-C', repoRoot, 'ls-files', '--others', '--exclude-standard', '.agents', 'scripts', 'tests', '.hgame.local.example.json'], {
     encoding: 'utf8',
     maxBuffer: 8 * 1024 * 1024,
@@ -149,5 +400,6 @@ test('package-game excludes RE local files in game mode while keeping RE skills/
   const pkgGameSrc = readFileSync(path.join(repoRoot, 'scripts', 'package-game.mjs'), 'utf8');
   assert.match(pkgGameSrc, /\.hgame\.local/);
   assert.match(pkgGameSrc, /re-pipeline\.mjs/);
+  assert.match(pkgGameSrc, /doctor-playability\.mjs/);
   assert.match(pkgGameSrc, /copyTree\('\.agents\/skills'\)/);
 });

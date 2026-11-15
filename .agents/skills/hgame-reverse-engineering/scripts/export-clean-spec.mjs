@@ -207,6 +207,11 @@ async function main() {
     slug,
     generatedAt: new Date().toISOString(),
     recommendedProfile: recipe.profile,
+    unitSystem: specDraft.unitSystem || 'unknown',
+    unitConversions: specDraft.unitConversions || {
+      distance: { status: 'unknown' },
+      time: { status: 'unknown' },
+    },
     engineRecipe: {
       profile: recipe.profile,
       renderer: recipe.renderer || (recipe.profile === '3d' ? 'threejs' : recipe.profile === 'ui' ? 'dom' : 'canvas2d'),

@@ -15,7 +15,10 @@ function runStep(script, args, label) {
   const res = spawnSync(process.execPath, [script, ...args], { stdio: 'inherit' });
   if (res.error) throw res.error;
   if (res.status !== 0) {
-    throw new Error(`${label} exited with code ${res.status}`);
+    const err = new Error(`${label} exited with code ${res.status}`);
+    err.exitCode = res.status;
+    err.quiet = args.includes('--json');
+    throw err;
   }
 }
 
@@ -35,11 +38,40 @@ function parseForgeArgs(argv) {
   return opts;
 }
 
+function resolveEvalArgs(argv) {
+  let hasSpec = false;
+  let hasDemo = false;
+  let slug = null;
+  const forwarded = ['--eval'];
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i];
+    if (token === '--slug') {
+      slug = argv[++i];
+    } else if (token === '--demo') {
+      hasDemo = true;
+      forwarded.push(token);
+    } else if (token === '--spec') {
+      hasSpec = true;
+      forwarded.push(token, argv[++i]);
+    } else if (!token.startsWith('-')) {
+      hasSpec = true;
+      forwarded.push(token);
+    } else {
+      forwarded.push(token);
+    }
+  }
+  if (!hasSpec && !hasDemo && slug) {
+    const cfg = resolveReConfig(repoRoot);
+    forwarded.push(path.join(cfg.reWorkspaceDir, 'specs-out', `${slug}.clean-spec.json`));
+  }
+  return forwarded;
+}
+
 function main() {
   const argv = process.argv.slice(2);
   let mode = 'forge';
   let rest = argv;
-  if (argv[0] === 'extract' || argv[0] === 'spec' || argv[0] === 'forge') {
+  if (['extract', 'spec', 'eval', 'forge'].includes(argv[0])) {
     mode = argv[0];
     rest = argv.slice(1);
   }
@@ -54,12 +86,18 @@ function main() {
     return;
   }
 
+  if (mode === 'eval') {
+    runStep(validateSpecScript, resolveEvalArgs(rest), 're:eval');
+    return;
+  }
+
   const opts = parseForgeArgs(rest);
   if (opts.help || !opts.slug || !opts.out) {
     console.log(
       'Usage:\n' +
       '  npm run re:extract -- "<original-game-dir>" --slug <slug>\n' +
       '  npm run re:spec -- --slug <slug> [--ip-terms "TermA,TermB"]\n' +
+      '  npm run re:eval -- (<clean-spec.json> | --slug <slug> | --demo) [--json]\n' +
       '  npm run re:forge -- --slug <slug> --out "<new-game-dir>" [--source "<original-game-dir>"] [--ip-terms "TermA,TermB"] [--dry-run]',
     );
     if (!opts.help) process.exitCode = 1;
@@ -80,6 +118,7 @@ function main() {
   }
 
   const forgeArgs = [specPath, '--scaffold', opts.out];
+  if (opts.dryRun) forgeArgs.push('--allow-draft');
   if (opts.json) forgeArgs.push('--json');
   runStep(validateSpecScript, forgeArgs, 'validate-spec --scaffold');
 }
@@ -87,6 +126,8 @@ function main() {
 try {
   main();
 } catch (err) {
-  console.error('re-pipeline failed: ' + err.message);
-  process.exitCode = 1;
+  if (!err.quiet) {
+    console.error('re-pipeline failed: ' + err.message);
+  }
+  process.exitCode = err.exitCode || 1;
 }

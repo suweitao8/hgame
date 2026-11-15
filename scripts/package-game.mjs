@@ -699,6 +699,7 @@ export async function packageGameRelease({
       relPosix.startsWith('.re-workspace/') ||
       relPosix.startsWith('.hgame.local') ||
       relPosix === 'scripts/re-pipeline.mjs' ||
+      relPosix === 'scripts/doctor-playability.mjs' ||
       relPosix === 'scripts/sync-skills.mjs'
     ) {
       return true;

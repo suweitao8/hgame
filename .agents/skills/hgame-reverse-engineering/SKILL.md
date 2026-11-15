@@ -9,6 +9,12 @@ description: LeanRea's lightweight, game-only reverse engineering workflow for H
 
 **进入代码生成前必须配合 [`../hgame/SKILL.md`](../hgame/SKILL.md) 与 [`../hgame-spec-forge/SKILL.md`](../hgame-spec-forge/SKILL.md)**。私有工具路径与沙盒目录通过 `.hgame.local.json`（`reToolchainPath` / `reWorkspaceDir`）或环境变量（`HGAME_RE_TOOLCHAIN` / `HGAME_RE_WORKSPACE`）读取，研究产物强制落在原游戏安装目录之外，再经 `export-clean-spec.mjs` 脱敏导出为 `*.clean-spec.json` 交接 HGame。
 
+## 研发铁律：先做减法再做加法（1-1-2-1 最小切片毕业制 + 双门禁）
+
+1. **初版 `clean-spec.json` 只准收敛 `1-1-2-1` 最小可玩切片（MVP Slice）**：仅限 1 套角色与相机参数、1~2 把核心武器、2~3 种代表敌人、1 套 ~60 秒基础波次、最多 5 个核心升级项；禁止第一版就搬运全量武器/怪物/外围系统。
+2. **SI 物理单位归一化 + 零 `unknown`**：必须声明 `unitSystem: "SI_METERS_SECONDS_RADIANS"` 与 `unitConversions`（写明原版单位换算系数，如 Source Hammer `* 0.01905`、2D 像素按角色身高转米、帧数 `* tickHz` 转秒）；核心 3C 与黄金三角未逆向出的底层参数必须显式标为 `status: "hgame-fallback"` 并填入引擎推荐标准值，禁止保留 `"unknown"` / `null` / `NaN`。
+3. **双门禁通关前严禁扩充内容**：在同时跑通第一道门 **`npm run re:eval`（评分 >= 90 且 4 个无量纲手感比值全绿）** 和第二道门 **`npm run re:doctor`（30 秒实机四项生命体征全绿）** 之前，**严禁**扩充武器库、**严禁**堆砌外围系统、**严禁**盲目开启十万同屏二创。
+
 ## 省 Token 与快速取证铁律
 
 1. **原版只读 + 单次批量探测**：将多个独立探针合并为一次 Shell 调用（`;` + 分段标记），输出加 `head` / 行数上限；搜索解包目录用 `rg -uu`（避免漏掉隐藏/忽略目录）。
@@ -25,16 +31,18 @@ description: LeanRea's lightweight, game-only reverse engineering workflow for H
 ## 标准一键工作流（`HGame` 根目录下执行）
 
 ```powershell
-# 一键全流程（快拆 -> 脱敏规格 -> 合规防火墙 -> create-game 脚手架）
-npm run re:forge -- --source "<original-game-dir>" --slug <slug> --out "<new-game-dir>" [--ip-terms "TermA,TermB"]
-
-# 或基于已有 clean-spec.json 直接建工程：
-npm run re:forge -- --slug <slug> --out "<new-game-dir>"
-
-# 分步执行（高级调试）：
+# 1. 快拆 + 导出脱敏规格 -> 第一道门（逆向完备度 >= 90 且 4 项比值全绿才准毕业建工程）
 npm run re:extract -- "<original-game-dir>" --slug <slug> --json
 npm run re:spec -- --slug <slug> --ip-terms "TermA,TermB"
+npm run re:eval -- --slug <slug>
+
+# 2. 门禁放行后装配 1-1-2-1 最小切片工程（或全流程一键校验装配）：
+npm run re:forge -- --slug <slug> --out "<new-game-dir>"
+# （也可传 --source "<original-game-dir>" 一键串联，前提是规格已达毕业线）
 node .agents/skills/hgame-spec-forge/scripts/validate-spec.mjs "<reWorkspaceDir>/specs-out/<slug>.clean-spec.json" --scaffold "<new-game-dir>"
+
+# 3. 编写 1-1-2-1 切片与 window.__HGAME_DOCTOR__ 后 -> 第二道门（30 秒实机四项体检）：
+npm run re:doctor -- "<new-game-dir>"
 ```
 
 - **绿灯直出（限时 10–15m）**：Godot (`gdre_tools`)、Unity Mono (`ilspycmd` 定向类)、RPG Maker (`data/*.json` / `RPGMakerDecrypter`)、Ren'Py (`unrpa` + `unrpyc` 在 `raw/` 副本运行)、GameMaker (`UndertaleModCli`)、Java (`vineflower`)、Electron/Web (`@electron/asar`)、Source (`.cfg`/`.txt`)。

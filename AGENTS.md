@@ -61,8 +61,9 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 > 2. **零盲扫 API 速查**：查询引擎能力、最小接线配方、参数签名与返回值**必须优先运行 `npm run api -- --map` / `npm run api -- --recipe <2d|horde|3d|ui|network>` / `npm run api -- <keyword>`**（或 `--module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。完成改动后优先使用 `npm run snapshot -- <game-dir>` 与 `npm run playtest -- <game-dir>` 进行无头画面与交互自检。
 
 - Workspace Agent skill / step-by-step runbook: `.agents/skills/hgame/SKILL.md`.
-- Clean-room reverse engineering entrypoint (read-only unencrypted data): `.agents/skills/hgame-reverse-engineering/SKILL.md` (`npm run re:extract`, `npm run re:spec`, `npm run re:forge`, `npm run test:re`, `npm run sync:skills`; configure machine paths via gitignored `.hgame.local.json` from `.hgame.local.example.json`).
+- Clean-room reverse engineering entrypoint (read-only unencrypted data): `.agents/skills/hgame-reverse-engineering/SKILL.md` (`npm run re:extract`, `npm run re:spec`, `npm run re:eval`, `npm run re:forge`, `npm run re:doctor`, `npm run test:re`, `npm run sync:skills`; configure machine paths via gitignored `.hgame.local.json` from `.hgame.local.example.json`).
 - Clean-room spec bridge (`*.clean-spec.json` firewall & scaffolder): `.agents/skills/hgame-spec-forge/SKILL.md`.
+- **先做减法再做加法（1-1-2-1 最小切片毕业制 + 双门禁铁律）**：任何基于逆向的新游戏第一阶段只准交付 `1-1-2-1` 最小垂直切片（1 套角色与相机、1~2 把核心武器、2~3 种代表敌人、1 套 60 秒基础波次、最多 5 个核心升级）；在同时跑通 `npm run re:eval`（SI 单位归一化 + 4 项无量纲比值 + >=90 分）与 `npm run re:doctor`（30 秒实机四项生命体征全绿）之前，严禁扩充武器库、堆砌外围系统或盲目开启十万同屏二创。
 - AI execution manual & compact system cards (`01..16`): `docs/guides/USER-AND-AGENT-GUIDE.md`.
 - Standard 5-step game workflow:
   1. Generate a standalone project with `scripts/create-game.mjs` (`--profile 2d|3d|ui`, optional `--renderer webgl2d`, `--quality auto`, `--with audio,save,physics2d|physics3d`).
