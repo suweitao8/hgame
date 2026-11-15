@@ -24,6 +24,8 @@
     "check:network": "npm --prefix network run check",
     "build:network": "npm --prefix network run build",
     "package:game": "node scripts/package-game.mjs",
+    "package:toy": "node scripts/package-game.mjs --target toy",
+    "toy:check": "node scripts/toy-preflight.mjs",
     "release": "npm run build:physics && npm run check:all && node scripts/package-game.mjs --engine",
     "check:all": "npm run check && npm run test:network && npm run check:network && npm run build:network",
     "check": "npm test && npm run check:physics && npm run check:types && npm run check:api-index",

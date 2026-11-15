@@ -11,6 +11,8 @@
     "assets": "node scripts/assets.mjs",
     "build": "node scripts/package-game.mjs",
     "release": "node scripts/package-game.mjs",
+    "package:toy": "node scripts/package-game.mjs --target toy",
+    "toy:check": "node scripts/toy-preflight.mjs .",
     "check": "node --check src/main.js",
     "test": "node --test tests/*.test.mjs"
   }

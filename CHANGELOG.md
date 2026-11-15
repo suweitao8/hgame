@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Bilibili Toy Platform SDK Integration, Packaging Standard & Skill (`integrations/bilibili-toy.js`, `scripts/package-game.mjs`, `scripts/toy-preflight.mjs`, `.agents/skills/hgame-bilibili-toy/`, `docs/guides/BILIBILI-TOY-STANDARD.md`):
+  - Add `assets/runtime/integrations/bilibili-toy.js` (`createToyBridge`, `createToyCloudSaveAdapter`, `loadBilibiliToySdk`, `isBilibiliToyEnvironment`, `isToyRateLimitError`) wrapping `window.toy` with `307044` jittered exponential-backoff retries, key/score/byte validation, checkpoint-batched cloud/shared saves, App/Web fallbacks, and local preview storage fallbacks.
+  - Add `--target toy` (plus `--toy-sdk`/`--no-toy-sdk`, `--slug`, `--poster`, `--icon`) to `scripts/package-game.mjs` and `npm run package:toy` / `npm run toy:check` via `scripts/toy-preflight.mjs`, enforcing flat ZIP root, `contenthash` entry JS/CSS renaming, `toy-sdk.js` head injection, <=1MB `index.html` gate, `<10000px` image limits, relative URL checks, rate-limit heuristics, and Toy capability advisories (`AUDIO_VIDEO_UPLOAD`, `EXTERNAL_SERVICE_ACCESS`, `USER_CONTENT_INPUT`, `CHARGE_UNLOCK`, `LARGE_PACKAGE_UPLOAD`).
+  - Encapsulate the official Toy SDK (`types/toy.d.ts`), packaging standard, and `toy` CLI two-stage release workflow into `.agents/skills/hgame-bilibili-toy/` and wire `scripts/create-game.mjs` + `assets/template/package.json` with `package:toy` and `toy:check`.
+
 - AI-Native Documentation & Query Tooling (`scripts/query-api.mjs`, `docs/`, `AGENTS.md`, `.agents/skills/hgame/SKILL.md`):
   - Upgrade `npm run api` with `--map` (intent-to-module capability router) and `--recipe <2d|horde|3d|ui|network>` (runnable boilerplate + `__hgameState` verification hook), plus `--json` output.
   - Rewrite `README.md` and `docs/guides/USER-AND-AGENT-GUIDE.md` into pure AI-Native execution specs, align `--bg white` default in `docs/guides/ASSET-AND-AUDIO-PIPELINE.md`, remove stale `docs/guides/ENGINE-GAPS.md`, add compact system cards `13..16`, and expose `__hgameState` + `data-engine-ready` in bare 2D/3D starters.

@@ -7,7 +7,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Canonical runtime: `assets/runtime/`.
 - Runtime version: `assets/runtime/VERSION`; keep it consistent with `HGAME_VERSION` in `assets/runtime/index.js` and the root package version.
 - New project generator: `scripts/create-game.mjs`.
-- Lean release & WASM packager: `scripts/package-game.mjs` (`build/<id>_<version>/` + `.zip`).
+- Lean release & WASM packager: `scripts/package-game.mjs` (`build/<id>_<version>/` + `.zip`), plus Bilibili Toy standard packager & preflight (`--target toy` / `scripts/toy-preflight.mjs`, see `.agents/skills/hgame-bilibili-toy/SKILL.md` and `docs/guides/BILIBILI-TOY-STANDARD.md`).
 - Offline media curation: `scripts/process-assets.mjs` and `scripts/process-audio.mjs`.
 - Unified off-Git asset management: `scripts/assets.mjs` (`npm run assets -- push|pull|status|verify`), storing content-addressed binaries in `HGAME_ASSET_STORE` (or `~/.hgame/asset-store`) and tracking `assets.manifest.json` in Git while `.gitignore` excludes heavy art/audio binaries.
 - Starter projects: `assets/template/` and `assets/profiles/`.
@@ -35,7 +35,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Runtime tests: `npm test`.
 - Vendored physics parity: `npm run check:physics`.
 - Network tests/check/build: run the corresponding npm command from `network/` or use the root forwarding scripts (`npm run check:all`).
-- Package a game release (`build/<id>_<version>/` + `.zip`): `npm run package:game -- <game-dir> --version <ver>`.
+- Package a game release (`build/<id>_<version>/` + `.zip`): `npm run package:game -- <game-dir> --version <ver>`, or for Bilibili Toy platform: `npm run package:toy -- <game-dir> --version <ver> --slug <slug>` and `npm run toy:check -- <dir-or-zip>`.
 - Full engine SDK release build (`build/hgame_1_0/` + `.zip`): `npm run release`.
 - Browser profile smoke tests are optional and require `playwright-core` plus a Chromium executable.
 - Machine-readable API index: `docs/api/API-INDEX.json` (regenerate with `npm run build:api-index`); generated declarations: `types/` (`npm run build:types`). `npm run check` fails when either is stale.

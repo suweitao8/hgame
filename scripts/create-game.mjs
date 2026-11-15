@@ -112,6 +112,7 @@ async function main() {
     await cp(runtime, vendor, { recursive: true });
     await mkdir(path.join(stage, 'scripts'), { recursive: true });
     await cp(path.join(root, 'scripts', 'package-game.mjs'), path.join(stage, 'scripts', 'package-game.mjs'));
+    await cp(path.join(root, 'scripts', 'toy-preflight.mjs'), path.join(stage, 'scripts', 'toy-preflight.mjs'));
     await cp(path.join(root, 'scripts', 'assets.mjs'), path.join(stage, 'scripts', 'assets.mjs'));
     for (const dimension of ['2d', '3d']) {
       if (options.recipe.physics !== `rapier${dimension}`) {

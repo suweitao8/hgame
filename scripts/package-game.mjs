@@ -1,10 +1,12 @@
 #!/usr/bin/env node
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
+import { runToyPreflight } from './toy-preflight.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -59,6 +61,7 @@ const SKIP_BASENAMES = new Set([
   'thumbs.db',
   '.gitkeep',
   'assets.manifest.json',
+  'toy.yaml',
 ]);
 
 const REGEX_PREV_KEYWORDS = new Set([
@@ -606,6 +609,10 @@ async function decidePhysicsBundle(absGameDir, gameConfig, project) {
 /**
  * Packages a standalone HGame project into `build/<id>_<version>/` and `build/<id>_<version>.zip`
  * containing only the active runtime modules, deterministic WASM backend, and runtime assets.
+ *
+ * When `target === 'toy'`, builds a Bilibili Toy compliant package: flat ZIP root,
+ * content-hashed entry JS/CSS for cross-version cache reuse, optional `toy-sdk.js` head injection,
+ * and automatic `runToyPreflight` validation.
  */
 export async function packageGameRelease({
   projectDir = process.cwd(),
@@ -615,9 +622,18 @@ export async function packageGameRelease({
   outDir,
   engineRoot,
   assetStore,
-  flatZip = false,
+  flatZip,
   minify = true,
+  target = 'standard',
+  toySdk,
+  slug,
+  poster,
+  icon,
 } = {}) {
+  if (target !== 'standard' && target !== 'toy') {
+    throw new RangeError(`Unsupported package target "${target}". Use "standard" or "toy".`);
+  }
+  const effectiveFlatZip = flatZip ?? (target === 'toy');
   const absGameDir = path.resolve(projectDir);
   const gameConfigPath = path.join(absGameDir, 'game.config.json');
   const engineConfigPath = path.join(absGameDir, 'engine.config.json');
@@ -958,13 +974,12 @@ export async function packageGameRelease({
     }
   }
 
-  // Write packaged directory with optional esbuild minification
+  // Transform assets in-memory first so Toy target can apply contenthash & SDK injection cleanly.
   const esbuild = await loadOptionalEsbuild(minify);
-  let totalBytes = 0;
+  const stagedOutputs = new Map();
+  let usesToySdkSource = false;
 
   for (const [relPosix, absSrc] of includedFiles) {
-    const dst = path.join(targetDir, ...relPosix.split('/'));
-    await mkdir(path.dirname(dst), { recursive: true });
     let data = await readFile(absSrc);
     const ext = path.posix.extname(relPosix).toLowerCase();
     if (
@@ -984,23 +999,124 @@ export async function packageGameRelease({
       });
       data = Buffer.from(transformed.code, 'utf8');
     }
+    if (relPosix.startsWith('src/') && (ext === '.js' || ext === '.mjs')) {
+      const srcStr = data.toString('utf8');
+      if (/bilibili-toy\.js|\bwindow\.toy\b|\bglobalThis\.toy\b/.test(srcStr)) {
+        usesToySdkSource = true;
+      }
+    }
+    stagedOutputs.set(relPosix, data);
+  }
+
+  for (const [relPosix, buf] of generatedBuffers) {
+    stagedOutputs.set(relPosix, buf);
+  }
+
+  let toySdkInjected = false;
+  if (target === 'toy') {
+    const entryBuf = stagedOutputs.get(entryRel);
+    let entryHtml = entryBuf ? entryBuf.toString('utf8') : htmlText;
+    const shouldInjectSdk = toySdk === false
+      ? false
+      : Boolean(toySdk === true || gameConfig?.toy?.sdk === true || usesToySdkSource);
+
+    if (shouldInjectSdk && !/toy-sdk\.js/i.test(entryHtml)) {
+      const sdkTag = '  <script src="//s1.hdslb.com/bfs/seed/toy/app/sdk/toy-sdk.js"></script>\n';
+      if (/<\/head>/i.test(entryHtml)) {
+        entryHtml = entryHtml.replace(/<\/head>/i, sdkTag + '</head>');
+        toySdkInjected = true;
+      } else if (/<script\b/i.test(entryHtml)) {
+        entryHtml = entryHtml.replace(/<script\b/i, sdkTag + '<script');
+        toySdkInjected = true;
+      }
+    }
+
+    // Apply contenthash to entry CSS & entry module script referenced by entry HTML
+    // so Bilibili Toy CDN reuses unchanged assets across versions without breaking relative imports.
+    const entryDir = path.posix.dirname(entryRel);
+    const renameEntryAsset = rawRef => {
+      if (!rawRef || isExternalSpecifier(rawRef)) return null;
+      const clean = rawRef.split(/[?#]/)[0];
+      if (clean.startsWith('/')) return null;
+      const resolved = toPosixRel(path.posix.normalize(entryDir === '.' ? clean : `${entryDir}/${clean}`));
+      if (!stagedOutputs.has(resolved)) return null;
+      if (!/\.(?:js|mjs|css)$/i.test(resolved) || /\.min\.(?:js|mjs|css)$/i.test(resolved)) return null;
+      if (/[-._][A-Za-z0-9_-]*[0-9_-][A-Za-z0-9_-]*\.(?:js|mjs|css)$/i.test(path.posix.basename(resolved))) {
+        return null;
+      }
+      const data = stagedOutputs.get(resolved);
+      const hash8 = crypto.createHash('sha256').update(data).digest('hex').slice(0, 8);
+      const ext = path.posix.extname(resolved);
+      const hashedRel = `${resolved.slice(0, -ext.length)}-${hash8}${ext}`;
+      if (hashedRel !== resolved) {
+        stagedOutputs.delete(resolved);
+        stagedOutputs.set(hashedRel, data);
+      }
+      const prefix = rawRef.startsWith('./') ? './' : '';
+      const suffix = rawRef.slice(clean.length);
+      return `${prefix}${hashedRel}${suffix}`;
+    };
+
+    entryHtml = entryHtml.replace(
+      /(<link\b[^>]*\bhref\s*=\s*)(["'])([^"']+\.css(?:[?#][^"']*)?)\2([^>]*>)/gi,
+      (full, pre, q, href, post) => {
+        if (!/\brel\s*=\s*["']stylesheet["']/i.test(pre + post)) return full;
+        const nextHref = renameEntryAsset(href);
+        return nextHref ? `${pre}${q}${nextHref}${q}${post}` : full;
+      },
+    );
+    entryHtml = entryHtml.replace(
+      /(<script\b[^>]*\btype\s*=\s*["']module["'][^>]*\bsrc\s*=\s*)(["'])([^"']+\.m?js(?:[?#][^"']*)?)\2([^>]*>)/gi,
+      (full, pre, q, src, post) => {
+        const nextSrc = renameEntryAsset(src);
+        return nextSrc ? `${pre}${q}${nextSrc}${q}${post}` : full;
+      },
+    );
+
+    stagedOutputs.set(entryRel, Buffer.from(entryHtml, 'utf8'));
+  }
+
+  let totalBytes = 0;
+  for (const [relPosix, data] of stagedOutputs) {
+    const dst = path.join(targetDir, ...relPosix.split('/'));
+    await mkdir(path.dirname(dst), { recursive: true });
     await writeFile(dst, data);
     totalBytes += data.length;
   }
 
-  for (const [relPosix, buf] of generatedBuffers) {
-    const dst = path.join(targetDir, ...relPosix.split('/'));
-    await mkdir(path.dirname(dst), { recursive: true });
-    await writeFile(dst, buf);
-    totalBytes += buf.length;
-  }
-
   const zipStats = await writeZipArchive(targetDir, zipPath, {
-    rootPrefix: flatZip ? '' : releaseTag,
+    rootPrefix: effectiveFlatZip ? '' : releaseTag,
   });
+
+  let toyPreflight = null;
+  if (target === 'toy') {
+    toyPreflight = await runToyPreflight({
+      targetPath: targetDir,
+      slug: slug || gameConfig?.toy?.slug || effectiveId,
+      poster,
+      icon,
+      requireRootIndex: true,
+    });
+    for (const f of toyPreflight.findings) {
+      if (f.severity === 'WARN') {
+        notes.push(`[toy WARN] ${f.file}: ${f.message}`);
+      }
+    }
+    if (toyPreflight.requiredCapabilities.length > 0) {
+      notes.push(`[toy capabilities] Required/detected: ${toyPreflight.requiredCapabilities.join(', ')}`);
+    }
+    if (!toyPreflight.ok) {
+      const errLines = toyPreflight.findings
+        .filter(f => f.severity === 'ERROR')
+        .map(f => `${f.file}: ${f.message}`)
+        .join('; ');
+      throw new Error(`Bilibili Toy preflight failed: ${errLines}`);
+    }
+  }
 
   return {
     mode: 'game',
+    target,
     releaseTag,
     gameId: effectiveId,
     version: String(effectiveVersion),
@@ -1009,10 +1125,12 @@ export async function packageGameRelease({
     physics: project.physics,
     wasm: includedWasm,
     wasmSkipped: physicsDecision && !physicsDecision.bundle ? physicsDecision.reason : null,
+    toySdkInjected,
+    toyPreflight,
     notes,
     minified: Boolean(esbuild),
     resolvedFromStore,
-    fileCount: includedFiles.size + generatedBuffers.size,
+    fileCount: stagedOutputs.size,
     outputBytes: totalBytes,
     outputDir: targetDir,
     zipPath,
@@ -1124,8 +1242,13 @@ function parseCliArgs(argv) {
     outDir: undefined,
     engineRoot: undefined,
     assetStore: undefined,
-    flatZip: false,
+    flatZip: undefined,
     minify: true,
+    target: 'standard',
+    toySdk: undefined,
+    slug: undefined,
+    poster: undefined,
+    icon: undefined,
     engine: false,
     help: false,
   };
@@ -1145,6 +1268,20 @@ function parseCliArgs(argv) {
       opts.assetStore = argv[++i];
     } else if (arg === '--flat-zip') {
       opts.flatZip = true;
+    } else if (arg === '--no-flat-zip') {
+      opts.flatZip = false;
+    } else if (arg === '--target') {
+      opts.target = argv[++i];
+    } else if (arg === '--toy-sdk') {
+      opts.toySdk = true;
+    } else if (arg === '--no-toy-sdk') {
+      opts.toySdk = false;
+    } else if (arg === '--slug') {
+      opts.slug = argv[++i];
+    } else if (arg === '--poster') {
+      opts.poster = argv[++i];
+    } else if (arg === '--icon') {
+      opts.icon = argv[++i];
     } else if (arg === '--no-minify') {
       opts.minify = false;
     } else if (arg === '--engine') {
@@ -1164,7 +1301,7 @@ async function main() {
   const opts = parseCliArgs(process.argv.slice(2));
   if (opts.help) {
     console.log(
-      'Usage: node scripts/package-game.mjs [project-dir] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--no-minify] [--engine]',
+      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--no-minify] [--engine]',
     );
     return;
   }
@@ -1174,7 +1311,7 @@ async function main() {
         version: opts.version,
         tag: opts.tag,
         outDir: opts.outDir,
-        flatZip: opts.flatZip,
+        flatZip: Boolean(opts.flatZip),
       })
     : await packageGameRelease({
         projectDir: opts.targetDir || process.cwd(),
@@ -1186,6 +1323,11 @@ async function main() {
         assetStore: opts.assetStore,
         flatZip: opts.flatZip,
         minify: opts.minify,
+        target: opts.target,
+        toySdk: opts.toySdk,
+        slug: opts.slug,
+        poster: opts.poster,
+        icon: opts.icon,
       });
   for (const note of summary.notes || []) console.error(note);
   console.log(JSON.stringify(summary, null, 2));

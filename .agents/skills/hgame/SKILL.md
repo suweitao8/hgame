@@ -26,6 +26,7 @@ Use this skill as the primary execution manual whenever a user asks to create, e
 | 新建游戏、编写/修改 HUD、主菜单、商店、升级弹窗或结算界面 | `hgame-ui-ux` | `node .agents/skills/hgame-ui-ux/scripts/check-ui.mjs --dir <game-dir>` + `npm run snapshot -- <game-dir>`（强制零说明文本、卡片即按钮、符号化词条与留白红线） |
 | 对外部分析目标游戏做只读逆向取证并提炼数值/状态机/3C | `hgame-reverse-engineering` | `npm run re:extract -- "<game-dir>" --slug <slug>` + `npm run re:spec -- --slug <slug>` + `npm run re:eval -- --slug <slug>`（先达 1-1-2-1 毕业线再建工程） |
 | 从外部净室玩法规格书（`*.clean-spec.json`）或全流程一键装配 HGame 工程 | `hgame-spec-forge` | `npm run re:forge -- --slug <slug> --out "<new-game-dir>"` + `npm run re:doctor -- "<new-game-dir>"`（双门禁全绿前严禁扩充武器库/外围系统/十万同屏二创） |
+| 接入 B 站 Toy 平台 SDK（云存储/共享存档/排行榜/安全检测/充电解锁/容器/媒体）或发布到 B 站 Toy 平台 | `hgame-bilibili-toy` | `npm run package:toy -- "<game-dir>" --version <ver> --slug <slug>` + `npm run toy:check -- "<zip-or-dir>"` + `toy` CLI 两段式预览确认提交 |
 
 ## 0. Determine Workspace Context First
 
@@ -171,6 +172,10 @@ npm run package:game -- "<game-dir>" --version 1.1
 
 # Omit the outer folder wrapper in the ZIP if a hosting portal expects index.html at ZIP root:
 node scripts/package-game.mjs --version 1.1 --flat-zip
+
+# Bilibili Toy platform deliverable (flat ZIP + contenthash + toy-sdk.js injection + preflight gate):
+npm run package:toy -- "<game-dir>" --version 1.1 --slug <slug> --poster cover.png --icon icon.png
+npm run toy:check -- "<game-dir>/build/<id>_1_1.zip" --slug <slug>
 ```
 
 - Automatically traces `index.html`, `src/`, CSS, ESM imports, `Three.js` transitive modules (preserving `MIT` license), and `engine.config.json` physics.
