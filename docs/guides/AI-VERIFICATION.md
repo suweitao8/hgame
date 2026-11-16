@@ -9,6 +9,7 @@ How an agent proves a change works without a human looking at the screen.
 | Types / index not stale | `npm run check` (runs `check:types` and `check:api-index`; fix with `npm run build:types` / `npm run build:api-index`) | exit code |
 | **See the render** | `npm run snapshot -- <game-dir> [--keys d:300] [--wait 800] [--ready "#game[data-engine-ready=true]"]` | PNG + JSON: `nonBlankRatio`, `meanLuma`, `uniqueColors`, `lumaHistogram8`, `sha256`, `consoleErrors`, `httpErrors`, `problems` |
 | Render regression | `npm run snapshot -- <game-dir> --baseline baseline.png` (create/refresh with `--update-baseline`) | JSON `baseline.diffRatio` + `bbox` of changed pixels; exit 1 above `--threshold` (default 0.01) |
+| Accepted-reference regression | `npm run check:visual` | Renders the accepted Git revision in `tests/visual-reference.json` and the working tree in the same browser environment. PNG pairs and JSON reports remain in `build/visual-regression/`. |
 | Game state / deterministic render | `npm run snapshot -- <game-dir> --freeze-time --steps 120 [--eval "<js expr>"] [--state-hook __hgameState]` | Same JSON plus `eval` (JSON-serialisable result of the expression, evaluated after ready/steps/keys), `state` (result of `window.__hgameState()` when defined) and `frozenTime: true`; see *Deterministic snapshots* below |
 | CPU perf budgets | `npm run bench` | PASS/FAIL per case |
 | Render perf (browser) | `npm run bench:render` | mean/p95 frame ms for 10k `SpriteCrowd2D` on `webgl2d` (gated) and `canvas2d` (info only) |
@@ -16,7 +17,9 @@ How an agent proves a change works without a human looking at the screen.
 | Runtime health | `createDiagnostics().snapshot()` | `fps`, `frameTimeP95Ms`, `frameTimeMaxMs`, `longFrames`, `errorCount`, `lastError` |
 
 ## Rules of thumb
-- Snapshots are deterministic for identical inputs on the same machine (SwiftShader software GL); treat baselines as per-environment, not cross-OS. In CI (`.github/workflows/ci.yml`), OS-native baselines are generated on cache miss, immediately verified for `--threshold 0` determinism, cached via `actions/cache@v4` under `${{ runner.os }}-baselines-...`, and checked against `--threshold 0.01` on subsequent runs.
+- Snapshots use the same inputs and SwiftShader environment for each reference/candidate pair. `check:visual` renders its fixed accepted commit from a temporary Git archive and requires that commit to be available locally. CI fetches full history. Source changes and cache misses preserve the accepted reference.
+- Review intentional visual changes with `npm run check:visual -- --reference <commit>` and inspect the PNG pairs. Accept a new reference by changing the full commit hash in `tests/visual-reference.json` in a reviewed commit.
+- `--update-baseline` replaces a baseline atomically only after capture checks succeed. Failed page, HTTP, state, eval, blank-image or output checks preserve the previous baseline. An output path equal to the baseline requires an explicit update.
 - A blank canvas (`nonBlankRatio < 0.001`) or any `consoleErrors` always fails the snapshot.
 - When the diff is non-zero, read `baseline.bbox` to locate what changed, then look at the PNG.
 - Config and constructor errors name the valid values and suggest the closest match; fix from the message instead of searching docs.

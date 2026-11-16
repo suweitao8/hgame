@@ -1,6 +1,6 @@
 # HGame reliability and production readiness design
 
-Status is proposed for user approval on 2026-11-17.
+Approved by the user on 2026-11-17 with the instruction to execute directly.
 
 ## Intent
 

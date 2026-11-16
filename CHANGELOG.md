@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Make snapshot baseline updates failure-safe with atomic replacement after capture validation, including shared output/baseline paths. Keep failed candidate images as separate diagnostics.
+- Capture frozen-clock snapshots without waiting for live element-stability frames and disable CSS animations during capture.
+- Add `npm run check:visual` with a version-controlled accepted Git revision, same-environment reference/candidate rendering, and retained PNG/JSON diagnostics. CI now uses this check and browser baseline-safety tests in place of cache-dependent baseline acceptance.
+
 - Unified WebAsset Game Management & Preview Standard (`AGENTS.md`, `assets/template/AGENTS.md`, `assets/template/README.md`, `.agents/skills/hgame/SKILL.md`, `docs/guides/USER-AND-AGENT-GUIDE.md`, `docs/architecture/ENGINE-OVERVIEW.md`, `README.md`):
   - Codify unified **WebAsset** management and preview (`http://127.0.0.1:4174/#games` lobby; `http://127.0.0.1:4175/local-games/<slug>/<entry>` runtime via `game.config.json`) across HGame engine rules, global/repo skills, and generated project templates, forbidding per-game dev servers (`npm start`, `npm run serve`, `python -m http.server`, manual `preview.mjs` preview ports) during development, playtesting, and browser QA while reserving `scripts/preview.mjs` strictly for ephemeral headless/CI/packaged harnesses.
 

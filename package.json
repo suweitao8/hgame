@@ -52,7 +52,9 @@
     "test:examples": "node --test tests/examples.test.mjs examples/survivor-2d/tests/*.test.mjs examples/arena-3d/tests/*.test.mjs",
     "bench:render": "node benchmarks/render-bench.mjs",
     "bench:render3d": "node benchmarks/render-bench-3d.mjs",
-    "test:browser:snapshot": "node tests/browser-snapshot.mjs"
+    "test:browser:snapshot": "node tests/browser-snapshot.mjs",
+    "test:browser:safety": "node --test --test-concurrency=1 tests/browser-snapshot-safety.mjs tests/browser-visual-regression.mjs",
+    "check:visual": "node scripts/check-visual-regression.mjs"
   },
   "devDependencies": {
     "@dimforge/rapier2d-deterministic": "0.21.0",

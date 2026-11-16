@@ -12,10 +12,11 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { writeSnapshotOutput } from './lib/snapshot-output.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const argv = process.argv.slice(2);
@@ -169,9 +170,17 @@ try {
   const st = await page.evaluate(async n => typeof window[n] === 'function' ? { v: JSON.parse(JSON.stringify(await window[n]() ?? null)) } : null, stateHook).catch(e => ({ err: String(e.message || e) }));
   if (st?.err) report.problems.push('state hook failed: ' + st.err); else if (st) report.state = st.v;
   const target = page.locator(selector);
-  const png = await target.screenshot();
-  mkdirSync(path.dirname(outPng), { recursive: true });
-  writeFileSync(outPng, png);
+  let png;
+  if (freeze) {
+    // Freeze CSS motion before measuring the clip, then avoid locator stability waits.
+    await page.addStyleTag({ content: '*, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }' });
+    await target.evaluate(element => element.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'nearest' }));
+    const bounds = await target.boundingBox();
+    if (!bounds) throw new Error('Snapshot target is not visible.');
+    png = await page.screenshot({ clip: bounds, animations: 'disabled' });
+  } else {
+    png = await target.screenshot();
+  }
   const baseB64 = baseline && existsSync(baseline) && !flag('--update-baseline')
     ? 'data:image/png;base64,' + readFileSync(baseline).toString('base64') : null;
   const { stats, diff } = await page.evaluate(analyze, { shot: 'data:image/png;base64,' + png.toString('base64'), base: baseB64 });
@@ -179,9 +188,10 @@ try {
   Object.assign(report, { frozenTime: freeze || undefined, png: outPng, sha256: createHash('sha256').update(png).digest('hex').slice(0, 16), stats, diagnostics, consoleErrors, httpErrors });
   if (consoleErrors.length || httpErrors.length) report.problems.push('page errors');
   if (stats.nonBlankRatio < 0.001) report.problems.push('canvas is blank');
-  if (baseline && flag('--update-baseline')) { mkdirSync(path.dirname(path.resolve(baseline)), { recursive: true }); copyFileSync(outPng, baseline); report.baselineUpdated = baseline; }
-  else if (baseline && !baseB64) report.problems.push(`baseline missing: ${baseline} (run with --update-baseline)`);
+  if (baseline && !flag('--update-baseline') && !baseB64) report.problems.push(`baseline missing: ${baseline} (run with --update-baseline)`);
   if (diff) { report.baseline = { ...diff, threshold }; if (diff.diffRatio > threshold) report.problems.push(`render differs from baseline by ${(diff.diffRatio * 100).toFixed(2)}%`); }
+  Object.assign(report, writeSnapshotOutput({ png, outputPath: outPng, baselinePath: baseline,
+    updateBaseline: flag('--update-baseline'), valid: report.problems.length === 0 }));
 } catch (e) {
   report.problems.push(String(e.message || e));
 } finally {

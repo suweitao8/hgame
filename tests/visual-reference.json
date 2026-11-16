@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "revision": "865f9467505671a42a4735117bdb544a2bb226c2",
+  "viewport": "960x540",
+  "scenarios": [
+    { "id": "survivor-2d", "steps": 120, "keys": "d:300", "query": "seed=1", "threshold": 0.01 },
+    { "id": "arena-3d", "steps": 60, "keys": "d:200", "query": "seed=1", "threshold": 0.01 }
+  ]
+}
