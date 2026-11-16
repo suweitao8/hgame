@@ -13,6 +13,7 @@ The five improvement areas from the preceding evaluation establish the initial d
 - The current branch is `main`. Existing user changes are present in two skill files and local untracked directories.
 - The preceding evaluation passed `check:all`, including 209 main tests and 32 network tests, ten CPU benchmarks, six browser configurations, and world-aligned PBR browser checks. Implementation will obtain fresh evidence after changes.
 - Snapshot CI keys its baseline cache on current runtime and example contents and generates a fresh baseline on cache misses. Candidate output can consequently become its own reference.
+- A read-only diagnostic using the existing snapshot CLI and a temporary copy of the reference PNG reproduced a failed `--eval` returning exit code 1 while `--update-baseline` still replaced the baseline. Baseline updates currently occur before all reported failures are checked.
 - Generated declarations contain weak public signatures, including FSM methods and versioned save methods. Declaration freshness checks currently compare generated files.
 - CPU benchmarks select the fastest sample. Browser stress thresholds are intentionally generous for software rendering.
 - Playtest telemetry discards frame intervals of 2000 ms or more and retains only 600 recent intervals. Whole-run stalls can disappear from its report.
@@ -50,6 +51,8 @@ The agent proposes approach B. The user has delegated implementation choices thr
 ## Stage 1. Trustworthy visual regression
 
 Make a candidate compare against an explicit accepted reference that survives source changes. The reference revision or baseline update must be visible in version control. Missing or incompatible references produce actionable failures. Candidate rendering cannot automatically approve a new baseline.
+
+An explicit baseline update commits only a successful capture. Page, HTTP, state-hook, evaluation, blank-image, and output failures preserve the previous accepted baseline byte-for-byte. Write validated replacement data atomically and report the update only after it succeeds.
 
 Prefer rendering the accepted reference revision and candidate in the same pinned browser environment using temporary test fixtures. This avoids treating screenshots from different operating systems as interchangeable. Preserve deterministic inputs, viewport, render settings, and scene checkpoints. Keep both images and useful diff diagnostics as CI artifacts on failures.
 
@@ -91,7 +94,7 @@ Update the focused architecture, verification and stability guides to match deli
 
 ## Acceptance
 
-1. A deliberate candidate visual regression fails against an accepted reference in a reproducible browser test.
+1. A deliberate candidate visual regression fails against an accepted reference in a reproducible browser test. Failed captures and failed baseline updates preserve the accepted baseline byte-for-byte.
 2. Strict consumer examples verify the hardened public contracts and catch accidental loss of type safety.
 3. Public API stability remains consistent through re-exports and machine-readable queries.
 4. Performance reports expose sample distributions and environments. Multi-second stalls remain visible and actionable.
