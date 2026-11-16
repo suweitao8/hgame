@@ -79,7 +79,7 @@
  * @param {WorldPartitionOptions} [options]
  * @returns {WorldPartition}
  */
-export function createWorldPartition(options?: WorldPartitionOptions): WorldPartition;
+export function createWorldPartition(options?: WorldPartitionOptions | undefined): WorldPartition;
 /**
  * Opaque Three.js namespace (or subset) injected by the caller; this module never imports 'three'.
  * @typedef {Record<string, unknown>} ThreeNamespace
@@ -127,7 +127,7 @@ export function createWorldPartition(options?: WorldPartitionOptions): WorldPart
  * @param {HLODProxyGroupOptions} [options]
  * @returns {HLODProxyGroup3D}
  */
-export function createHLODProxyGroup3D(THREE: ThreeNamespace, { parent, proxies, castShadow, receiveShadow, defaultColor, }?: HLODProxyGroupOptions): HLODProxyGroup3D;
+export function createHLODProxyGroup3D(THREE: ThreeNamespace, { parent, proxies, castShadow, receiveShadow, defaultColor, }?: HLODProxyGroupOptions | undefined): HLODProxyGroup3D;
 /**
  * @typedef {object} FloatingOriginShiftPayload
  * @property {number} dx Shift applied on X (world units).
@@ -186,7 +186,7 @@ export function createHLODProxyGroup3D(THREE: ThreeNamespace, { parent, proxies,
  * @param {FloatingOriginOptions} [options]
  * @returns {FloatingOrigin}
  */
-export function createFloatingOrigin({ threshold, snapGrid, verticalShift, syncPhysics, onShift, }?: FloatingOriginOptions): FloatingOrigin;
+export function createFloatingOrigin({ threshold, snapGrid, verticalShift, syncPhysics, onShift, }?: FloatingOriginOptions | undefined): FloatingOrigin;
 /**
  * Three-component position: [x, y, z] or { x, y, z } (missing components default to 0).
  */
@@ -241,71 +241,71 @@ export type WorldPartitionOptions = {
     /**
      * Cell edge length in world units (> 0).
      */
-    cellSize?: number;
+    cellSize?: number | undefined;
     /**
      * '2d' partitions X/Y; '3d' partitions X/Z (or X/Y/Z with verticalCells).
      */
-    dimension?: "2d" | "3d";
+    dimension?: "3d" | "2d" | undefined;
     /**
      * Also partition the Y axis in 3d mode.
      */
-    verticalCells?: boolean;
+    verticalCells?: boolean | undefined;
     /**
      * Distance (world units) to the cell AABB within which cells are loaded (>= 0).
      */
-    loadRadius?: number;
+    loadRadius?: number | undefined;
     /**
      * Hysteresis radius before loaded cells unload (>= loadRadius). Default max(loadRadius * 1.25, loadRadius + 32).
      */
-    unloadRadius?: number;
+    unloadRadius?: number | undefined;
     /**
      * Distance within which HLOD proxies are built (needs createHLOD).
      */
-    hlodRadius?: number;
+    hlodRadius?: number | undefined;
     /**
      * Hysteresis radius for dropping HLOD proxies. Default max(hlodRadius * 1.15, unloadRadius).
      */
-    hlodUnloadRadius?: number;
+    hlodUnloadRadius?: number | undefined;
     /**
      * Seconds of viewer velocity added to the load-priority focus point.
      */
-    lookaheadSeconds?: number;
+    lookaheadSeconds?: number | undefined;
     /**
      * Clamp for the lookahead offset (world units). Default cellSize * 1.5.
      */
-    maxLookaheadDistance?: number;
+    maxLookaheadDistance?: number | undefined;
     /**
      * Maximum cell loads started per step().
      */
-    maxLoadsPerStep?: number;
+    maxLoadsPerStep?: number | undefined;
     /**
      * Maximum unloads (and HLOD drops) per step().
      */
-    maxUnloadsPerStep?: number;
+    maxUnloadsPerStep?: number | undefined;
     /**
      * Maximum HLOD proxy builds per step().
      */
-    maxHlodBuildsPerStep?: number;
+    maxHlodBuildsPerStep?: number | undefined;
     /**
      * Return false to ignore a cell entirely.
      */
-    cellFilter?: ((desc: WorldCellDescriptor) => boolean) | null;
+    cellFilter?: ((desc: WorldCellDescriptor) => boolean) | null | undefined;
     /**
      * Load a cell; may return data or a Promise of data. Without it cells become loaded immediately.
      */
-    loadCell?: ((desc: WorldCellDescriptor) => unknown) | null;
+    loadCell?: ((desc: WorldCellDescriptor) => unknown) | null | undefined;
     /**
      * Release the data returned by loadCell.
      */
-    unloadCell?: ((desc: WorldCellDescriptor, data: unknown) => void) | null;
+    unloadCell?: ((desc: WorldCellDescriptor, data: unknown) => void) | null | undefined;
     /**
      * Build a distant proxy for a cell; returned value is passed to destroyHLOD.
      */
-    createHLOD?: ((desc: WorldCellDescriptor) => unknown) | null;
+    createHLOD?: ((desc: WorldCellDescriptor) => unknown) | null | undefined;
     /**
      * Dispose a proxy built by createHLOD.
      */
-    destroyHLOD?: ((desc: WorldCellDescriptor, hlodData: unknown) => void) | null;
+    destroyHLOD?: ((desc: WorldCellDescriptor, hlodData: unknown) => void) | null | undefined;
 };
 export type WorldPartitionStepSummary = {
     /**
@@ -455,43 +455,43 @@ export type HLODProxyDescriptor = {
     /**
      * Position X (world units).
      */
-    x?: number;
+    x?: number | undefined;
     /**
      * Position Y (world units).
      */
-    y?: number;
+    y?: number | undefined;
     /**
      * Position Z (world units).
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Rotation X (radians).
      */
-    rx?: number;
+    rx?: number | undefined;
     /**
      * Rotation Y (radians).
      */
-    ry?: number;
+    ry?: number | undefined;
     /**
      * Rotation Z (radians).
      */
-    rz?: number;
+    rz?: number | undefined;
     /**
      * Scale X.
      */
-    sx?: number;
+    sx?: number | undefined;
     /**
      * Scale Y.
      */
-    sy?: number;
+    sy?: number | undefined;
     /**
      * Scale Z.
      */
-    sz?: number;
+    sz?: number | undefined;
     /**
      * Per-instance colour accepted by THREE.Color#set.
      */
-    color?: number | string;
+    color?: string | number | undefined;
 };
 /**
  * Minimal Object3D-like parent (e.g. THREE.Scene or THREE.Group).
@@ -503,23 +503,23 @@ export type HLODProxyGroupOptions = {
     /**
      * Parent the proxy group is added to.
      */
-    parent?: HLODParentLike | null;
+    parent?: HLODParentLike | null | undefined;
     /**
      * Proxy instances to batch.
      */
-    proxies?: HLODProxyDescriptor[];
+    proxies?: HLODProxyDescriptor[] | undefined;
     /**
      * Instanced meshes cast shadows.
      */
-    castShadow?: boolean;
+    castShadow?: boolean | undefined;
     /**
      * Instanced meshes receive shadows.
      */
-    receiveShadow?: boolean;
+    receiveShadow?: boolean | undefined;
     /**
      * Colour (0xRRGGBB) of the fallback material.
      */
-    defaultColor?: number;
+    defaultColor?: number | undefined;
 };
 export type HLODProxyGroup3D = {
     /**
@@ -565,23 +565,23 @@ export type FloatingOriginOptions = {
     /**
      * Local distance (world units, > 0) from origin that triggers a rebase.
      */
-    threshold?: number;
+    threshold?: number | undefined;
     /**
      * Shifts are rounded to multiples of this (>= 0; 0 disables snapping).
      */
-    snapGrid?: number;
+    snapGrid?: number | undefined;
     /**
      * Include the Y axis in distance checks and shifts.
      */
-    verticalShift?: boolean;
+    verticalShift?: boolean | undefined;
     /**
      * Call scene.physics.setPosition for shifted entities.
      */
-    syncPhysics?: boolean;
+    syncPhysics?: boolean | undefined;
     /**
      * Called after each shift.
      */
-    onShift?: ((payload: FloatingOriginShiftPayload) => void) | null;
+    onShift?: ((payload: FloatingOriginShiftPayload) => void) | null | undefined;
 };
 /**
  * Result of FloatingOrigin#update.
@@ -612,7 +612,7 @@ export type FloatingOriginSceneLike = {
         y: number;
         z: number;
         destroyed?: boolean;
-    }>;
+    }> | undefined;
     physics?: {
         setPosition?: (entity: object, pos: {
             x: number;
@@ -620,7 +620,7 @@ export type FloatingOriginSceneLike = {
             z: number;
         }) => void;
         get?: (entity: object) => unknown;
-    };
+    } | undefined;
 };
 export type FloatingOrigin = {
     /**

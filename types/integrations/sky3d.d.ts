@@ -4,7 +4,7 @@
  * @param {Sky3DOptions} [options]
  * @returns {Sky3D}
  */
-export function createProceduralSky3D(THREE: SkyThree, options?: Sky3DOptions): Sky3D;
+export function createProceduralSky3D(THREE: SkyThree, options?: Sky3DOptions | undefined): Sky3D;
 /**
  * Fixed pool of transient PointLights kept mounted at zero intensity to avoid
  * runtime Three.js shader recompilations when explosions or muzzle flashes fire.
@@ -16,7 +16,7 @@ export function createProceduralSky3D(THREE: SkyThree, options?: Sky3DOptions): 
 export function createLightPool3D(THREE: LightPoolThree, parent: {
     add(object: object): unknown;
     remove?(object: object): unknown;
-}, { size, defaultDecay }?: LightPoolOptions): LightPool3D;
+}, { size, defaultDecay }?: LightPoolOptions | undefined): LightPool3D;
 export { fitDirectionalShadowFrustum };
 /** @typedef {[number, number, number]} SkyVec3Tuple Direction/point [x, y, z]. */
 /** @typedef {SkyVec3Tuple|{ x: number, y: number, z: number }} SkyVec3Input */
@@ -223,34 +223,34 @@ export type Sky3DOptions = {
     /**
      * Base preset; explicit fields override it.
      */
-    preset?: Sky3DPresetName;
-    zenithColor?: SkyColorInput;
-    horizonColor?: SkyColorInput;
-    groundColor?: SkyColorInput;
-    sunColor?: SkyColorInput;
+    preset?: Sky3DPresetName | undefined;
+    zenithColor?: SkyColorInput | undefined;
+    horizonColor?: SkyColorInput | undefined;
+    groundColor?: SkyColorInput | undefined;
+    sunColor?: SkyColorInput | undefined;
     /**
      * Direction towards the sun; normalised.
      */
-    sunDirection?: SkyVec3Input;
-    sunIntensity?: number;
-    cloudCoverage?: number;
-    cloudDensity?: number;
-    cloudSpeed?: number;
-    mieG?: number;
-    mieStrength?: number;
-    exposure?: number;
+    sunDirection?: SkyVec3Input | undefined;
+    sunIntensity?: number | undefined;
+    cloudCoverage?: number | undefined;
+    cloudDensity?: number | undefined;
+    cloudSpeed?: number | undefined;
+    mieG?: number | undefined;
+    mieStrength?: number | undefined;
+    exposure?: number | undefined;
     /**
      * Initial shader time in seconds.
      */
-    time?: number;
+    time?: number | undefined;
     /**
      * Dome radius in world units (>10).
      */
-    radius?: number;
+    radius?: number | undefined;
     /**
      * Output linear colour and disable tone mapping.
      */
-    linearOutput?: boolean;
+    linearOutput?: boolean | undefined;
 };
 /**
  * Runtime-updatable subset of {@link Sky3DOptions}.
@@ -290,18 +290,18 @@ export type SkyThree = {
         z: number;
         set(x: number, y: number, z: number): unknown;
     };
-    BackSide?: number;
-    Color?: new (value?: unknown) => object;
-    PMREMGenerator?: new (renderer: object) => {
+    BackSide?: number | undefined;
+    Color?: (new (value?: unknown) => object) | undefined;
+    PMREMGenerator?: (new (renderer: object) => {
         fromScene(scene: object, sigma: number, near: number, far: number): {
             texture: object;
             dispose(): void;
         };
         dispose(): void;
-    };
-    Scene?: new () => {
+    }) | undefined;
+    Scene?: (new () => {
         add(object: object): unknown;
-    };
+    }) | undefined;
 };
 export type Sky3DBakeOptions = {
     /**
@@ -309,9 +309,9 @@ export type Sky3DBakeOptions = {
      */
     targetScene?: {
         environment: unknown;
-    } | null;
-    near?: number;
-    far?: number;
+    } | null | undefined;
+    near?: number | undefined;
+    far?: number | undefined;
 };
 export type Sky3D = {
     /**
@@ -362,7 +362,7 @@ export type DirectionalLightLike = {
         y: number;
         z: number;
         set?(x: number, y: number, z: number): unknown;
-    };
+    } | undefined;
     target?: {
         position: {
             x: number;
@@ -371,7 +371,7 @@ export type DirectionalLightLike = {
             set?(x: number, y: number, z: number): unknown;
         };
         updateMatrixWorld?(force?: boolean): void;
-    };
+    } | undefined;
     shadow: {
         camera: {
             left: number;
@@ -394,30 +394,30 @@ export type DirectionalLightLike = {
  * Either {min,max} or {center,radius}.
  */
 export type ShadowFitBounds = {
-    min?: SkyVec3Tuple;
-    max?: SkyVec3Tuple;
-    center?: SkyVec3Tuple;
-    radius?: number;
+    min?: SkyVec3Tuple | undefined;
+    max?: SkyVec3Tuple | undefined;
+    center?: SkyVec3Tuple | undefined;
+    radius?: number | undefined;
 };
 export type ShadowFitOptions = {
     /**
      * Defaults to light.position - light.target.position.
      */
-    sunDirection?: SkyVec3Input | null;
+    sunDirection?: SkyVec3Input | null | undefined;
     /**
      * Light distance from bounds centre, world units.
      */
-    distance?: number;
+    distance?: number | undefined;
     /**
      * World units added on each side.
      */
-    padding?: number;
+    padding?: number | undefined;
     /**
      * Snap to shadow-map texels to avoid shimmer.
      */
-    snapToTexels?: boolean;
-    bias?: number | null;
-    normalBias?: number | null;
+    snapToTexels?: boolean | undefined;
+    bias?: number | null | undefined;
+    normalBias?: number | null | undefined;
 };
 export type ShadowFrustum = {
     left: number;
@@ -430,15 +430,15 @@ export type ShadowFrustum = {
 export type PooledLightLike = {
     position?: {
         set?(x: number, y: number, z: number): unknown;
-    };
+    } | undefined;
     color?: {
         set?(color: unknown): unknown;
-    };
+    } | undefined;
     distance: number;
     intensity: number;
     castShadow: boolean;
     visible: boolean;
-    dispose?: () => void;
+    dispose?: (() => void) | undefined;
 };
 export type LightPoolThree = {
     PointLight: new (color: number, intensity: number, distance: number, decay: number) => PooledLightLike;
@@ -447,32 +447,32 @@ export type LightPoolOptions = {
     /**
      * Pool size, integer 1..32.
      */
-    size?: number;
+    size?: number | undefined;
     /**
      * PointLight decay.
      */
-    defaultDecay?: number;
+    defaultDecay?: number | undefined;
 };
 export type LightFlashOptions = {
     /**
      * World units.
      */
-    x?: number;
-    y?: number;
-    z?: number;
-    color?: SkyColorInput;
+    x?: number | undefined;
+    y?: number | undefined;
+    z?: number | undefined;
+    color?: SkyColorInput | undefined;
     /**
      * Must be > 0.
      */
-    intensity?: number;
+    intensity?: number | undefined;
     /**
      * World units.
      */
-    distance?: number;
+    distance?: number | undefined;
     /**
      * Seconds; must be > 0.
      */
-    duration?: number;
+    duration?: number | undefined;
 };
 export type LightPool3D = {
     /**

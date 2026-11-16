@@ -3,17 +3,17 @@
  * with automatic fallback for Canvas2D and headless Node environments.
  */
 export function createStatelessParticlePool({ mode, THREE, scene, gl, maxParticles, is2D, prng, }?: {
-    mode?: string;
+    mode?: string | undefined;
     THREE?: any;
     scene?: any;
-    gl?: any;
-    maxParticles?: number;
-    is2D?: boolean;
+    gl?: WebGL2RenderingContext | null | undefined;
+    maxParticles?: number | undefined;
+    is2D?: boolean | undefined;
     prng?: {
         nextFloat(): number;
         range(min: any, max: any): any;
         reset(newSeed?: number): void;
-    };
+    } | undefined;
 }): {
     capacity: number;
     emit: (opts: any) => void;
@@ -33,8 +33,8 @@ export function createStatelessParticlePool({ mode, THREE, scene, gl, maxParticl
         additiveTotal: number;
         normalWrapCount: number;
         additiveWrapCount: number;
-        normalLastRanges: any[];
-        additiveLastRanges: any[];
+        normalLastRanges: never[];
+        additiveLastRanges: never[];
     };
 };
 export const VFX_SHAPE: Readonly<{

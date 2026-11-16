@@ -16,10 +16,10 @@ export class Component {
     set enabled(value: boolean);
     /** Enabled flag; a disabled component receives no update hooks. @type {boolean} */
     get enabled(): boolean;
-    /** Unity-style alias of {@link Component#entity}. @type {import('./entity.js').Entity | null} */
-    get gameObject(): import("./entity.js").Entity;
-    /** Scene of the owning entity. @type {import('./scene.js').Scene | null} */
-    get scene(): import("./scene.js").Scene;
+    /** Unity-style alias of {@link Component#entity}. @returns {import('./entity.js').Entity | null} */
+    get gameObject(): import("./entity.js").Entity | null;
+    /** Scene of the owning entity. @returns {import('./scene.js').Scene | null} */
+    get scene(): import("./scene.js").Scene | null;
     /** Called once when first activated. @returns {void} */
     awake(): void;
     /** Called each time the component becomes active. @returns {void} */

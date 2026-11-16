@@ -3,14 +3,14 @@
  * @param {CullFrustumOptions} [options]
  * @returns {FrustumCuller3D}
  */
-export function createFrustumCuller3D({ maxDistance }?: CullFrustumOptions): FrustumCuller3D;
+export function createFrustumCuller3D({ maxDistance }?: CullFrustumOptions | undefined): FrustumCuller3D;
 /**
  * Software convex-cone AABB occlusion culler: rejects spheres strictly hidden behind
  * solid walls/buildings before rendering or stepping skeletal mixers.
  * @param {OcclusionCullerOptions} [options]
  * @returns {OcclusionCuller3D}
  */
-export function createOcclusionCuller3D({ maxOccluders, maxTestedOccluders }?: OcclusionCullerOptions): OcclusionCuller3D;
+export function createOcclusionCuller3D({ maxOccluders, maxTestedOccluders }?: OcclusionCullerOptions | undefined): OcclusionCuller3D;
 /**
  * Optional non-blocking WebGL2 hardware conservative occlusion query pool
  * using ANY_SAMPLES_PASSED_CONSERVATIVE and multi-frame temporal grace.
@@ -20,13 +20,13 @@ export function createOcclusionCuller3D({ maxOccluders, maxTestedOccluders }?: O
  */
 export function createHardwareOcclusionPool(gl: {
     [key: string]: unknown;
-} | null | undefined, { maxQueries, graceFrames }?: HardwareOcclusionPoolOptions): HardwareOcclusionPool;
+} | null | undefined, { maxQueries, graceFrames }?: HardwareOcclusionPoolOptions | undefined): HardwareOcclusionPool;
 /**
  * Unified per-frame 3D Frustum + Occlusion culler service attached to Three adapter.
  * @param {SceneCullerOptions} [options]
  * @returns {SceneCuller3D}
  */
-export function createSceneCuller3D({ maxDistance, occlusion, maxOccluders, gl, }?: SceneCullerOptions): SceneCuller3D;
+export function createSceneCuller3D({ maxDistance, occlusion, maxOccluders, gl, }?: SceneCullerOptions | undefined): SceneCuller3D;
 /**
  * Dynamic GPU InstancedMesh pool (Unity-style Graphics.DrawMeshInstanced equivalent)
  * with O(1) slot alloc/free and per-frame frustum + occlusion compaction.
@@ -39,24 +39,24 @@ export function createInstancedBatch3D(THREE: InstancedBatchTHREE, { geometry, m
  * Structural subset of THREE.Camera read by the cullers.
  */
 export type CullCameraLike = {
-    updateMatrixWorld?: (force?: boolean) => void;
+    updateMatrixWorld?: ((force?: boolean) => void) | undefined;
     matrixWorldInverse?: {
         elements: ArrayLike<number>;
         copy?: (m: object) => unknown;
         invert?: () => unknown;
-    };
+    } | undefined;
     /**
      * Column-major world matrix (translation at 12..14).
      */
     matrixWorld?: {
         elements: ArrayLike<number>;
-    };
+    } | undefined;
     /**
      * Column-major projection matrix.
      */
     projectionMatrix?: {
         elements: ArrayLike<number>;
-    };
+    } | undefined;
     /**
      * Fallback eye position.
      */
@@ -64,13 +64,13 @@ export type CullCameraLike = {
         x?: number;
         y?: number;
         z?: number;
-    };
+    } | undefined;
 };
 export type CullFrustumOptions = {
     /**
      * Draw-distance cutoff in world units (non-positive/non-finite disables).
      */
-    maxDistance?: number;
+    maxDistance?: number | undefined;
 };
 export type FrustumCuller3D = {
     /**
@@ -118,17 +118,17 @@ export type OcclusionCullerOptions = {
     /**
      * Maximum registered occluders.
      */
-    maxOccluders?: number;
+    maxOccluders?: number | undefined;
     /**
      * Nearest occluders tested per frame.
      */
-    maxTestedOccluders?: number;
+    maxTestedOccluders?: number | undefined;
 };
 export type OccluderAABBInput = {
     /**
      * Stable id (re-adding replaces); auto-generated when null.
      */
-    id?: string | number | null;
+    id?: string | number | null | undefined;
     /**
      * Minimum corner in world units.
      */
@@ -142,29 +142,29 @@ export type OccluderAABBInput = {
  * Collider description accepted by `setOccludersFromColliders`.
  */
 export type OccluderCollider = {
-    id?: string | number | null;
+    id?: string | number | null | undefined;
     /**
      * Sensors are skipped.
      */
-    sensor?: boolean;
+    sensor?: boolean | undefined;
     /**
      * Full box size [x, y, z] in world units.
      */
-    size?: ArrayLike<number>;
+    size?: ArrayLike<number> | undefined;
     /**
      * Box center [x, y, z] in world units.
      */
-    center?: ArrayLike<number>;
+    center?: ArrayLike<number> | undefined;
 };
 export type OccluderFilterOptions = {
     /**
      * Minimum horizontal extent in world units.
      */
-    minWidth?: number;
+    minWidth?: number | undefined;
     /**
      * Minimum height in world units.
      */
-    minHeight?: number;
+    minHeight?: number | undefined;
 };
 export type OcclusionCuller3D = {
     /**
@@ -204,11 +204,11 @@ export type HardwareOcclusionPoolOptions = {
     /**
      * Maximum simultaneous query records.
      */
-    maxQueries?: number;
+    maxQueries?: number | undefined;
     /**
      * Consecutive hidden frames required before reporting occluded.
      */
-    graceFrames?: number;
+    graceFrames?: number | undefined;
 };
 export type HardwareOcclusionPool = {
     /**
@@ -248,21 +248,21 @@ export type SceneCullerOptions = {
     /**
      * Draw-distance cutoff in world units.
      */
-    maxDistance?: number;
+    maxDistance?: number | undefined;
     /**
      * Enable software occlusion.
      */
-    occlusion?: boolean;
+    occlusion?: boolean | undefined;
     /**
      * Maximum occluders.
      */
-    maxOccluders?: number;
+    maxOccluders?: number | undefined;
     /**
      * WebGL2 context enabling hardware occlusion queries.
      */
     gl?: {
         [key: string]: unknown;
-    } | null;
+    } | null | undefined;
 };
 export type CullStats = {
     /**
@@ -332,21 +332,21 @@ export type InstancedMeshLike = {
     instanceColor?: {
         array: Float32Array;
         needsUpdate: boolean;
-    } | null;
+    } | null | undefined;
     parent?: {
         remove?: (o: object) => unknown;
-    } | null;
-    dispose?: () => void;
+    } | null | undefined;
+    dispose?: (() => void) | undefined;
 };
 /**
  * Minimal THREE namespace subset used by the instanced batch.
  */
 export type InstancedBatchTHREE = {
     InstancedMesh: new (geometry: object, material: object | object[], count: number) => InstancedMeshLike;
-    InstancedBufferAttribute?: new (array: Float32Array, itemSize: number) => {
+    InstancedBufferAttribute?: (new (array: Float32Array, itemSize: number) => {
         array: Float32Array;
         needsUpdate: boolean;
-    };
+    }) | undefined;
 };
 export type InstancedBatchOptions = {
     /**
@@ -360,17 +360,17 @@ export type InstancedBatchOptions = {
     /**
      * Integer slot count in 1..100000.
      */
-    capacity?: number;
-    castShadow?: boolean;
-    receiveShadow?: boolean;
+    capacity?: number | undefined;
+    castShadow?: boolean | undefined;
+    receiveShadow?: boolean | undefined;
     /**
      * Allocates an instance color buffer.
      */
-    perInstanceColor?: boolean;
+    perInstanceColor?: boolean | undefined;
     /**
      * Default bounding-sphere radius in world units.
      */
-    cullRadius?: number;
+    cullRadius?: number | undefined;
 };
 /**
  * Linear RGB 0..1.
@@ -381,34 +381,34 @@ export type InstanceColor = [number, number, number] | {
     b: number;
 };
 export type InstanceAllocOptions = {
-    x?: number;
-    y?: number;
-    z?: number;
+    x?: number | undefined;
+    y?: number | undefined;
+    z?: number | undefined;
     /**
      * Radians.
      */
-    rotationX?: number;
+    rotationX?: number | undefined;
     /**
      * Radians.
      */
-    rotationY?: number;
+    rotationY?: number | undefined;
     /**
      * Radians.
      */
-    rotationZ?: number;
+    rotationZ?: number | undefined;
     /**
      * Uniform scale (default for the axes below).
      */
-    scale?: number;
-    scaleX?: number;
-    scaleY?: number;
-    scaleZ?: number;
+    scale?: number | undefined;
+    scaleX?: number | undefined;
+    scaleY?: number | undefined;
+    scaleZ?: number | undefined;
     /**
      * Culling radius in world units (default batch `cullRadius`).
      */
-    radius?: number;
-    color?: InstanceColor | null;
-    visible?: boolean;
+    radius?: number | undefined;
+    color?: InstanceColor | null | undefined;
+    visible?: boolean | undefined;
 };
 export type InstancedBatchCuller = {
     testSphere: (x: number, y: number, z: number, radius?: number) => boolean;
@@ -417,11 +417,11 @@ export type InstancedBatchFlushOptions = {
     /**
      * E.g. a {@link SceneCuller3D}.
      */
-    culler?: InstancedBatchCuller | null;
+    culler?: InstancedBatchCuller | null | undefined;
     /**
      * Called per visible instance with compacted index and slot id.
      */
-    onVisible?: ((outIndex: number, slot: number) => void) | null;
+    onVisible?: ((outIndex: number, slot: number) => void) | null | undefined;
 };
 export type InstancedBatchFlushResult = {
     /**

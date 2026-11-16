@@ -18,7 +18,7 @@ export function float16ToFloat32(bits: number): number;
  * @param {BakeBoneVatOptions} [options]
  * @returns {BoneVatBakedData}
  */
-export function bakeBoneVatData(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, sampleFps, }?: BakeBoneVatOptions): BoneVatBakedData;
+export function bakeBoneVatData(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, sampleFps, }?: BakeBoneVatOptions | undefined): BoneVatBakedData;
 /**
  * Serializes a {@link BoneVatBakedData} struct into a compact `.vat.bin` ArrayBuffer (`"HVAT"` header + JSON metadata + Uint16 half-float texels).
  * @param {BoneVatBakedData} baked
@@ -39,7 +39,7 @@ export function decodeBoneVatBinary(input: ArrayBuffer | Uint8Array): BoneVatBak
  * @param {SimplifyLodOptions} [options]
  * @returns {object} Simplified geometry (or dominant-bone clone when triangle count is already tiny).
  */
-export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3DThree, geometry: object, { gridResolution }?: SimplifyLodOptions): object;
+export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3DThree, geometry: object, { gridResolution }?: SimplifyLodOptions | undefined): object;
 /**
  * @typedef {object} BoneVatCrowd3DOptions
  * @property {import('./helpers.js').Model3DAsset | null} [asset=null] Loaded asset (`scene` + `animations`).
@@ -127,7 +127,7 @@ export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3D
  * @param {BoneVatCrowd3DOptions} [options]
  * @returns {BoneVatCrowd3D}
  */
-export function createBoneVatCrowd3D(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, vatData, lod0Geometry, lod1Geometry, material, impostorTexture, impostorCols, impostorRows, capacity, sampleFps, lod1Distance, lod2Distance, maxDistance, cullRadius, baseY, scale, castShadow, receiveShadow, }?: BoneVatCrowd3DOptions): BoneVatCrowd3D;
+export function createBoneVatCrowd3D(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, vatData, lod0Geometry, lod1Geometry, material, impostorTexture, impostorCols, impostorRows, capacity, sampleFps, lod1Distance, lod2Distance, maxDistance, cullRadius, baseY, scale, castShadow, receiveShadow, }?: BoneVatCrowd3DOptions | undefined): BoneVatCrowd3D;
 export type BoneVatClipMeta = {
     name: string;
     startFrame: number;
@@ -176,43 +176,43 @@ export type BakeBoneVatOptions = {
     /**
      * Loaded GLTF asset (`scene` + `animations`).
      */
-    asset?: import("./helpers.js").Model3DAsset | null;
+    asset?: import("./helpers.js").Model3DAsset | null | undefined;
     /**
      * Alternative root Object3D.
      */
-    root?: import("./helpers.js").Model3DObject | null;
+    root?: import("./helpers.js").Model3DObject | null | undefined;
     /**
      * Clips overriding `asset.animations`.
      */
-    animations?: import("./helpers.js").Model3DClip[] | null;
+    animations?: import("./helpers.js").Model3DClip[] | null | undefined;
     /**
      * Bake sample rate in FPS (clamped `4..60`).
      */
-    sampleFps?: number;
+    sampleFps?: number | undefined;
 };
 export type SimplifyLodOptions = {
     /**
      * Voxel clustering resolution per axis for LOD1 reduction (integer >= 2).
      */
-    gridResolution?: number;
+    gridResolution?: number | undefined;
 };
 export type BoneVatCrowd3DOptions = {
     /**
      * Loaded asset (`scene` + `animations`).
      */
-    asset?: import("./helpers.js").Model3DAsset | null;
+    asset?: import("./helpers.js").Model3DAsset | null | undefined;
     /**
      * Alternative Object3D root.
      */
-    root?: import("./helpers.js").Model3DObject | null;
+    root?: import("./helpers.js").Model3DObject | null | undefined;
     /**
      * Clips overriding `asset.animations`.
      */
-    animations?: import("./helpers.js").Model3DClip[] | null;
+    animations?: import("./helpers.js").Model3DClip[] | null | undefined;
     /**
      * Pre-baked Half-Float Bone-VAT (e.g. from `decodeBoneVatBinary`).
      */
-    vatData?: BoneVatBakedData | null;
+    vatData?: BoneVatBakedData | null | undefined;
     /**
      * Custom LOD0 BufferGeometry override.
      */
@@ -232,63 +232,63 @@ export type BoneVatCrowd3DOptions = {
     /**
      * Columns (azimuth sectors) in impostor atlas.
      */
-    impostorCols?: number;
+    impostorCols?: number | undefined;
     /**
      * Rows (animation frames) in impostor atlas.
      */
-    impostorRows?: number;
+    impostorRows?: number | undefined;
     /**
      * Maximum instances (integer `1..262144`).
      */
-    capacity?: number;
+    capacity?: number | undefined;
     /**
      * Bake sample FPS when `vatData` is not supplied.
      */
-    sampleFps?: number;
+    sampleFps?: number | undefined;
     /**
      * World distance threshold switching LOD0 -> LOD1.
      */
-    lod1Distance?: number;
+    lod1Distance?: number | undefined;
     /**
      * World distance threshold switching LOD1 -> LOD2 impostor.
      */
-    lod2Distance?: number;
+    lod2Distance?: number | undefined;
     /**
      * Far draw cutoff (`<= 0` disables).
      */
-    maxDistance?: number;
+    maxDistance?: number | undefined;
     /**
      * Frustum culling radius in world units.
      */
-    cullRadius?: number;
+    cullRadius?: number | undefined;
     /**
      * Global ground Y offset in world units.
      */
-    baseY?: number;
+    baseY?: number | undefined;
     /**
      * Global uniform crowd scale.
      */
-    scale?: number;
+    scale?: number | undefined;
     /**
      * Whether LOD0/LOD1 meshes cast shadows.
      */
-    castShadow?: boolean;
+    castShadow?: boolean | undefined;
     /**
      * Whether LOD meshes receive shadows.
      */
-    receiveShadow?: boolean;
+    receiveShadow?: boolean | undefined;
 };
 export type BoneVatSpawnOptions = {
-    x?: number;
+    x?: number | undefined;
     /**
      * Ignored per-instance (uses shared `baseY`); retained for API symmetry.
      */
-    y?: number;
-    z?: number;
-    rotationY?: number;
-    clip?: string | null;
-    time?: number;
-    speed?: number;
+    y?: number | undefined;
+    z?: number | undefined;
+    rotationY?: number | undefined;
+    clip?: string | null | undefined;
+    time?: number | undefined;
+    speed?: number | undefined;
 };
 export type BoneVatUpdateOptions = {
     /**
@@ -308,7 +308,7 @@ export type BoneVatUpdateOptions = {
                 z: number;
             };
         };
-    } | null;
+    } | null | undefined;
 };
 export type BoneVatSyncSwarmOptions = {
     camera?: object | null;
@@ -322,21 +322,21 @@ export type BoneVatSyncSwarmOptions = {
                 z: number;
             };
         };
-    } | null;
+    } | null | undefined;
     /**
      * Optional mapping from numeric `swarm.animClip[id]` to clip names.
      */
-    clipNames?: string[] | null;
+    clipNames?: string[] | null | undefined;
 };
 export type BoneVatSyncGpuSwarmOptions = {
     /**
      * Number of leading GPU instances rendered as full 4-bone LOD0.
      */
-    lod0Count?: number;
+    lod0Count?: number | undefined;
     /**
      * Number of subsequent GPU instances rendered as 1-bone LOD1.
      */
-    lod1Count?: number;
+    lod1Count?: number | undefined;
 };
 export type BoneVatCrowdStats = {
     activeCount: number;

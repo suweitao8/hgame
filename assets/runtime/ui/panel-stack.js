@@ -95,6 +95,7 @@ export function createPanelStack(options = {}) {
     def?.onExit?.(entry);
   }
 
+  /** @param {string} id @param {unknown} [payload=null] @param {PanelDefinition | null} [overrideDef=null] */
   function push(id, payload = null, overrideDef = null) {
     if (!id || typeof id !== 'string') throw new TypeError('Panel id must be a non-empty string.');
     const base = defs.get(id) ?? normalizeDef();
@@ -159,6 +160,7 @@ export function createPanelStack(options = {}) {
     return removed;
   }
 
+  /** @param {string} id @param {unknown} [payload=null] @param {PanelDefinition | null} [overrideDef=null] */
   function replace(id, payload = null, overrideDef = null) {
     if (stack.length > 0 && !stack[stack.length - 1].pinned) {
       const removed = stack.pop();
@@ -167,6 +169,7 @@ export function createPanelStack(options = {}) {
     return push(id, payload, overrideDef);
   }
 
+  /** @param {string} id @param {unknown} [payload=null] @param {PanelDefinition | null} [overrideDef=null] */
   function toggle(id, payload = null, overrideDef = null) {
     const topEntry = stack[stack.length - 1];
     if (topEntry && topEntry.id === id) {

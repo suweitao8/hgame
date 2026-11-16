@@ -35,7 +35,7 @@ export class SpriteSheet {
      * @param {SpriteSheetGridOptions} [options]
      * @returns {SpriteSheet}
      */
-    static fromGrid(image: SpriteSheetImage, { columns, rows, margin, spacing, inset }?: SpriteSheetGridOptions): SpriteSheet;
+    static fromGrid(image: SpriteSheetImage, { columns, rows, margin, spacing, inset }?: SpriteSheetGridOptions | undefined): SpriteSheet;
     /** @param {SpriteSheetOptions} options */
     constructor({ image, frameWidth, frameHeight, margin, spacing, inset }?: SpriteSheetOptions);
     /** @type {SpriteSheetImage} */
@@ -84,37 +84,37 @@ export type SpriteSheetOptions = {
     /**
      * Outer margin, pixels.
      */
-    margin?: number;
+    margin?: number | undefined;
     /**
      * Gap between cells, pixels.
      */
-    spacing?: number;
+    spacing?: number | undefined;
     /**
      * Per-cell inset against bleeding, pixels (< half a cell).
      */
-    inset?: number;
+    inset?: number | undefined;
 };
 export type SpriteSheetGridOptions = {
     /**
      * Integer >= 1.
      */
-    columns?: number;
+    columns?: number | undefined;
     /**
      * Integer >= 1.
      */
-    rows?: number;
+    rows?: number | undefined;
     /**
      * Pixels.
      */
-    margin?: number;
+    margin?: number | undefined;
     /**
      * Pixels.
      */
-    spacing?: number;
+    spacing?: number | undefined;
     /**
      * Pixels.
      */
-    inset?: number;
+    inset?: number | undefined;
 };
 /**
  * Source rectangle in pixels.

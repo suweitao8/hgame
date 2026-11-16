@@ -52,11 +52,11 @@ export type TraceRecorderOptions = {
     /**
      * Non-empty build label.
      */
-    build?: string;
+    build?: string | undefined;
     /**
      * Simulation rate in Hz (>= 0; 0 = unspecified).
      */
-    tickHz?: number;
+    tickHz?: number | undefined;
     /**
      * Receives each JSONL line (header first, then one per event).
      */
@@ -64,7 +64,7 @@ export type TraceRecorderOptions = {
     /**
      * Maximum recordable events (integer 1..10,000,000).
      */
-    maxEvents?: number;
+    maxEvents?: number | undefined;
 };
 /**
  * First line emitted by a recorder.

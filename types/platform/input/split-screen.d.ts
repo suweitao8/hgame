@@ -57,7 +57,7 @@
  * @param {SplitScreenOptions} [options]
  * @returns {SplitScreenView[]}
  */
-export function computeSplitScreenViews(playerCount?: number, { direction, width, height, cameras, }?: SplitScreenOptions): SplitScreenView[];
+export function computeSplitScreenViews(playerCount?: number | undefined, { direction, width, height, cameras, }?: SplitScreenOptions | undefined): SplitScreenView[];
 /**
  * Validates normalized `[0..1]` multi-viewport descriptors for `setViews(...)`.
  *
@@ -65,7 +65,7 @@ export function computeSplitScreenViews(playerCount?: number, { direction, width
  * @param {SplitViewOptions} [options]
  * @returns {NormalizedSplitViews}
  */
-export function normalizeSplitViews(views: readonly SplitViewInput[] | null | undefined, { dividerColor, dividerWidth, }?: SplitViewOptions): NormalizedSplitViews;
+export function normalizeSplitViews(views: readonly SplitViewInput[] | null | undefined, { dividerColor, dividerWidth, }?: SplitViewOptions | undefined): NormalizedSplitViews;
 /**
  * Find the view containing a normalized point.
  * @template {{ x: number, y: number, width: number, height: number }} V
@@ -80,24 +80,24 @@ export function pickSplitView<V extends {
     y: number;
     width: number;
     height: number;
-}>(views: readonly V[] | null | undefined, nx: number, ny: number, viewIndex?: number | null): V | null;
+}>(views: readonly V[] | null | undefined, nx: number, ny: number, viewIndex?: number | null | undefined): V | null;
 export type SplitScreenOptions = {
     /**
      * Two-player layout (`auto` picks by aspect ratio).
      */
-    direction?: "auto" | "vertical" | "horizontal";
+    direction?: "auto" | "vertical" | "horizontal" | undefined;
     /**
      * Surface width in pixels (used for `aspect`).
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Surface height in pixels (used for `aspect`).
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Camera object per view index.
      */
-    cameras?: readonly unknown[];
+    cameras?: readonly unknown[] | undefined;
 };
 /**
  * Normalized `[0..1]` top-left viewport.
@@ -140,8 +140,8 @@ export type NormalizedSplitView<TCamera = unknown> = {
     height: number;
 };
 export type SplitViewInput = {
-    index?: number;
-    playerId?: string | null;
+    index?: number | undefined;
+    playerId?: string | null | undefined;
     /**
      * Required camera object.
      */
@@ -149,20 +149,20 @@ export type SplitViewInput = {
     /**
      * Normalized 0..1.
      */
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
+    x?: number | undefined;
+    y?: number | undefined;
+    width?: number | undefined;
+    height?: number | undefined;
 };
 export type SplitViewOptions = {
     /**
      * CSS color.
      */
-    dividerColor?: string;
+    dividerColor?: string | undefined;
     /**
      * Pixels (>= 0).
      */
-    dividerWidth?: number;
+    dividerWidth?: number | undefined;
 };
 export type NormalizedSplitViews = {
     /**

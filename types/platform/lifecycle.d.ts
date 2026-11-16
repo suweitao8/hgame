@@ -37,7 +37,7 @@
  * @param {LifecycleOptions} [options]
  * @returns {Lifecycle}
  */
-export function createLifecycle({ windowRef, documentRef }?: LifecycleOptions): Lifecycle;
+export function createLifecycle({ windowRef, documentRef }?: LifecycleOptions | undefined): Lifecycle;
 export type LifecycleState = "created" | "ready" | "disposed";
 export type ViewportSize = {
     /**
@@ -63,8 +63,8 @@ export type LifecycleEvents = {
     dispose: undefined;
 };
 export type LifecycleOptions = {
-    windowRef?: Window;
-    documentRef?: Document;
+    windowRef?: Window | undefined;
+    documentRef?: Document | undefined;
 };
 export type Lifecycle = {
     state: LifecycleState;

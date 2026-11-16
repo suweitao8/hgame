@@ -2,19 +2,19 @@
  * Creates procedural slash arc, lightning bolt, and instanced ribbon trail pools.
  */
 export function createTrailsSystem({ mode, THREE, scene, is2D, maxSlashes, maxBolts, maxTrails, trailNodes, prng, }?: {
-    mode?: string;
+    mode?: string | undefined;
     THREE?: any;
     scene?: any;
-    is2D?: boolean;
-    maxSlashes?: number;
-    maxBolts?: number;
-    maxTrails?: number;
-    trailNodes?: number;
+    is2D?: boolean | undefined;
+    maxSlashes?: number | undefined;
+    maxBolts?: number | undefined;
+    maxTrails?: number | undefined;
+    trailNodes?: number | undefined;
     prng?: {
         nextFloat(): number;
         range(min: any, max: any): any;
         reset(newSeed?: number): void;
-    };
+    } | undefined;
 }): {
     slashArc: (opts?: {}) => void;
     lightningBolt: (opts?: {}) => void;

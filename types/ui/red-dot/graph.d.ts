@@ -5,7 +5,7 @@
  * @param {boolean} [muted=false]
  * @returns {import('./helpers.js').RedDotState}
  */
-export function buildEmptyState(path: string, unlocked?: boolean, muted?: boolean): import("./helpers.js").RedDotState;
+export function buildEmptyState(path: string, unlocked?: boolean | undefined, muted?: boolean | undefined): import("./helpers.js").RedDotState;
 /**
  * Graph and dirty-propagation engine for RedDotSystem.
  * @param {object} ctx Shared mutable system state.
@@ -21,7 +21,7 @@ export function createRedDotGraph(ctx: object): {
     explainPath: (normalized: any) => {
         path: any;
         state: any;
-        blockedByUnlock: string;
+        blockedByUnlock: string | null;
         muted: boolean;
         activeSources: {
             path: any;

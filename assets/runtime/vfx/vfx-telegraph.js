@@ -172,8 +172,8 @@ void main() {
 
 export function createTelegraphSystem({
   mode = 'headless',
-  THREE = null,
-  scene = null,
+  THREE = /** @type {object | null} */ (null),
+  scene = /** @type {object | null} */ (null),
   is2D = mode === 'webgl2d' || mode === 'canvas2d',
   maxTelegraphs = 512,
 } = {}) {

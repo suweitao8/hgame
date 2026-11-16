@@ -92,7 +92,7 @@
  * @param {SpringArm3DOptions} [options]
  * @returns {SpringArm3D}
  */
-export function createSpringArm3D({ THREE, armLength, minArmLength, probeRadius, targetOffset, socketOffset, yaw, pitch, roll, minPitch, maxPitch, lagHalfLife, lagMode, maxLagDistance, collisionTest, inHalfLife, outHalfLife, }?: SpringArm3DOptions): SpringArm3D;
+export function createSpringArm3D({ THREE, armLength, minArmLength, probeRadius, targetOffset, socketOffset, yaw, pitch, roll, minPitch, maxPitch, lagHalfLife, lagMode, maxLagDistance, collisionTest, inHalfLife, outHalfLife, }?: SpringArm3DOptions | undefined): SpringArm3D;
 /**
  * @typedef {'thirdPerson'|'firstPerson'|'topDown'} CameraRigMode
  * @typedef {Omit<SpringArm3DOptions, 'THREE' | 'collisionTest'>} CameraRigPreset Spring-arm overrides for a mode.
@@ -158,7 +158,7 @@ export function createSpringArm3D({ THREE, armLength, minArmLength, probeRadius,
  * @param {CameraRig3DOptions} [options]
  * @returns {CameraRig3D}
  */
-export function createCameraRig3D({ THREE, camera, mode, baseFov, fovHalfLife, traumaDecay, traumaExponent, shakeFrequency, maxShakeAngles, maxShakeOffset, recoilHalfLife, thirdPerson, firstPerson, topDown, collisionTest, }?: CameraRig3DOptions): CameraRig3D;
+export function createCameraRig3D({ THREE, camera, mode, baseFov, fovHalfLife, traumaDecay, traumaExponent, shakeFrequency, maxShakeAngles, maxShakeOffset, recoilHalfLife, thirdPerson, firstPerson, topDown, collisionTest, }?: CameraRig3DOptions | undefined): CameraRig3D;
 /**
  * @typedef {object} SpringArmRayHit Minimal physics ray hit consumed by `createSpringArmRayProbe`.
  * @property {number} timeOfImpact Distance along the (unit) ray direction.
@@ -193,7 +193,7 @@ export function createSpringArmRayProbe(castRay: SpringArmCastRay): SpringArmCol
  * @param {CameraVec3} [out]
  * @returns {CameraVec3}
  */
-export function cameraRelativeMove(inputX: number, inputY: number, yaw: number, out?: CameraVec3): CameraVec3;
+export function cameraRelativeMove(inputX: number, inputY: number, yaw: number, out?: CameraVec3 | undefined): CameraVec3;
 /**
  * @typedef {object} BoxObstacleLike Axis-aligned box obstacle.
  * Supports `{ minX, minY, minZ, maxX, maxY, maxZ }`, `{ x, y, z, hx, hy, hz }`,
@@ -222,7 +222,7 @@ export function cameraRelativeMove(inputX: number, inputY: number, yaw: number, 
  * @param {BoxCollisionTestOptions} [options]
  * @returns {SpringArmCollisionTest}
  */
-export function createBoxCollisionTest(boxes: readonly BoxObstacleLike[], { inflateByProbe }?: BoxCollisionTestOptions): SpringArmCollisionTest;
+export function createBoxCollisionTest(boxes: readonly BoxObstacleLike[], { inflateByProbe }?: BoxCollisionTestOptions | undefined): SpringArmCollisionTest;
 /**
  * Plain or Three.js-like vector.
  */
@@ -256,19 +256,19 @@ export type CameraTargetLike = {
         y: number;
         z: number;
         set?: (x: number, y: number, z: number) => unknown;
-    };
+    } | undefined;
     quaternion?: {
         x: number;
         y: number;
         z: number;
         w: number;
         set?: (x: number, y: number, z: number, w: number) => unknown;
-    };
+    } | undefined;
     /**
      * Vertical FOV in degrees.
      */
-    fov?: number;
-    updateProjectionMatrix?: () => void;
+    fov?: number | undefined;
+    updateProjectionMatrix?: (() => void) | undefined;
 };
 /**
  * Collision result: distance from the pivot (number), an object with `distance`/`toi`/`fraction`, or no hit (`null`/`false`).
@@ -287,24 +287,24 @@ export type SpringArmAngles = {
     /**
      * Radians.
      */
-    yaw?: number;
+    yaw?: number | undefined;
     /**
      * Radians, clamped to min/max pitch.
      */
-    pitch?: number;
+    pitch?: number | undefined;
     /**
      * Radians.
      */
-    roll?: number;
+    roll?: number | undefined;
 };
 /**
  * Per-update transient overrides.
  */
 export type SpringArmOverrides = {
-    yaw?: number;
-    pitch?: number;
-    roll?: number;
-    armLength?: number;
+    yaw?: number | undefined;
+    pitch?: number | undefined;
+    roll?: number | undefined;
+    armLength?: number | undefined;
 };
 /**
  * Runtime-adjustable arm settings.
@@ -313,101 +313,101 @@ export type SpringArmConfig = {
     /**
      * Minimum collided length. World units.
      */
-    minArmLength?: number;
+    minArmLength?: number | undefined;
     /**
      * World units.
      */
-    probeRadius?: number;
+    probeRadius?: number | undefined;
     /**
      * Radians.
      */
-    minPitch?: number;
+    minPitch?: number | undefined;
     /**
      * Radians.
      */
-    maxPitch?: number;
+    maxPitch?: number | undefined;
     /**
      * Seconds.
      */
-    lagHalfLife?: number;
+    lagHalfLife?: number | undefined;
     /**
      * Seconds (collision shorten).
      */
-    inHalfLife?: number;
+    inHalfLife?: number | undefined;
     /**
      * Seconds (collision recover).
      */
-    outHalfLife?: number;
+    outHalfLife?: number | undefined;
 };
 export type SpringArm3DOptions = {
     /**
      * Optional Three.js subset; results use Vector3/Quaternion. Default `null` (plain objects).
      */
-    THREE?: CameraThreeLike | null;
+    THREE?: CameraThreeLike | null | undefined;
     /**
      * Nominal boom length, world units. Default `4.5`.
      */
-    armLength?: number;
+    armLength?: number | undefined;
     /**
      * Minimum length when colliding. Default `0.4`.
      */
-    minArmLength?: number;
+    minArmLength?: number | undefined;
     /**
      * Collision probe radius. Default `0.22`.
      */
-    probeRadius?: number;
+    probeRadius?: number | undefined;
     /**
      * Pivot offset from target. Default `{x:0,y:1.5,z:0}`.
      */
-    targetOffset?: CameraVec3;
+    targetOffset?: CameraVec3 | undefined;
     /**
      * Camera offset in boom-local space. Default zero.
      */
-    socketOffset?: CameraVec3;
+    socketOffset?: CameraVec3 | undefined;
     /**
      * Radians. Default `0`.
      */
-    yaw?: number;
+    yaw?: number | undefined;
     /**
      * Radians. Default `-0.25`.
      */
-    pitch?: number;
+    pitch?: number | undefined;
     /**
      * Radians. Default `0`.
      */
-    roll?: number;
+    roll?: number | undefined;
     /**
      * Radians. Default `-0.495π`.
      */
-    minPitch?: number;
+    minPitch?: number | undefined;
     /**
      * Radians. Default `0.495π`.
      */
-    maxPitch?: number;
+    maxPitch?: number | undefined;
     /**
      * Target-follow half-life, seconds. Default `0.08`.
      */
-    lagHalfLife?: number;
+    lagHalfLife?: number | undefined;
     /**
      * Lag model. Default `'spring'`.
      */
-    lagMode?: "spring" | "exp";
+    lagMode?: "spring" | "exp" | undefined;
     /**
      * Max pivot lag distance, world units. Default `Infinity`.
      */
-    maxLagDistance?: number;
+    maxLagDistance?: number | undefined;
     /**
      * Default `null`.
      */
-    collisionTest?: SpringArmCollisionTest | null;
+    collisionTest?: SpringArmCollisionTest | null | undefined;
     /**
      * Shorten half-life, seconds. Default `0.015`.
      */
-    inHalfLife?: number;
+    inHalfLife?: number | undefined;
     /**
      * Recover half-life, seconds. Default `0.18`.
      */
-    outHalfLife?: number;
+    outHalfLife?: number | undefined;
 };
 /**
  * Live (reused, non-copied) solve result.
@@ -483,127 +483,127 @@ export type CameraShakeAngles = {
     /**
      * Default `0.045`.
      */
-    pitch?: number;
+    pitch?: number | undefined;
     /**
      * Default `0.045`.
      */
-    yaw?: number;
+    yaw?: number | undefined;
     /**
      * Default `0.08`.
      */
-    roll?: number;
+    roll?: number | undefined;
 };
 export type CameraRig3DOptions = {
     /**
      * Optional Three.js subset. Default `null`.
      */
-    THREE?: CameraThreeLike | null;
+    THREE?: CameraThreeLike | null | undefined;
     /**
      * Camera updated by `update`. Default `null`.
      */
-    camera?: CameraTargetLike | null;
+    camera?: CameraTargetLike | null | undefined;
     /**
      * Initial mode. Default `'thirdPerson'`.
      */
-    mode?: CameraRigMode;
+    mode?: CameraRigMode | undefined;
     /**
      * Degrees. Default `70`.
      */
-    baseFov?: number;
+    baseFov?: number | undefined;
     /**
      * FOV blend half-life, seconds. Default `0.1`.
      */
-    fovHalfLife?: number;
+    fovHalfLife?: number | undefined;
     /**
      * Trauma decay per second. Default `1.6`.
      */
-    traumaDecay?: number;
+    traumaDecay?: number | undefined;
     /**
      * Shake intensity = trauma^exponent. Default `2`.
      */
-    traumaExponent?: number;
+    traumaExponent?: number | undefined;
     /**
      * Shake rate, rad/s clock multiplier. Default `26`.
      */
-    shakeFrequency?: number;
+    shakeFrequency?: number | undefined;
     /**
      * Radians. Default `{pitch:0.045,yaw:0.045,roll:0.08}`.
      */
-    maxShakeAngles?: CameraShakeAngles;
+    maxShakeAngles?: CameraShakeAngles | undefined;
     /**
      * Max shake translation, world units. Default `{x:0.14,y:0.14,z:0.08}`.
      */
-    maxShakeOffset?: CameraVec3;
+    maxShakeOffset?: CameraVec3 | undefined;
     /**
      * Recoil recovery half-life, seconds. Default `0.08`.
      */
-    recoilHalfLife?: number;
+    recoilHalfLife?: number | undefined;
     /**
      * Preset overrides. Default `{}`.
      */
-    thirdPerson?: CameraRigPreset;
+    thirdPerson?: Omit<SpringArm3DOptions, "THREE" | "collisionTest"> | undefined;
     /**
      * Preset overrides. Default `{}`.
      */
-    firstPerson?: CameraRigPreset;
+    firstPerson?: Omit<SpringArm3DOptions, "THREE" | "collisionTest"> | undefined;
     /**
      * Preset overrides. Default `{}`.
      */
-    topDown?: CameraRigPreset;
+    topDown?: Omit<SpringArm3DOptions, "THREE" | "collisionTest"> | undefined;
     /**
      * Default `null`.
      */
-    collisionTest?: SpringArmCollisionTest | null;
+    collisionTest?: SpringArmCollisionTest | null | undefined;
 };
 export type CameraRecoil = {
     /**
      * Radians kick. Default `0`.
      */
-    pitch?: number;
+    pitch?: number | undefined;
     /**
      * Radians kick. Default `0`.
      */
-    yaw?: number;
+    yaw?: number | undefined;
     /**
      * Radians kick. Default `0`.
      */
-    roll?: number;
+    roll?: number | undefined;
     /**
      * Boom pushback, world units. Default `0`.
      */
-    pushback?: number;
+    pushback?: number | undefined;
 };
 export type CameraFovModifier = {
     /**
      * Absolute target FOV (5..175 deg). Default `null`.
      */
-    fov?: number | null;
+    fov?: number | null | undefined;
     /**
      * Offset from base FOV in degrees when `fov` is null. Default `0`.
      */
-    deltaFov?: number;
+    deltaFov?: number | undefined;
     /**
      * Higher wins; ties go to latest. Default `0`.
      */
-    priority?: number;
+    priority?: number | undefined;
     /**
      * Half-life when active, seconds. Default `0.1`.
      */
-    blendIn?: number;
+    blendIn?: number | undefined;
     /**
      * Half-life after clear, seconds. Default `0.16`.
      */
-    blendOut?: number;
+    blendOut?: number | undefined;
 };
 export type CameraLookMultipliers = {
     /**
      * Default `1`.
      */
-    pitchMultiplier?: number;
+    pitchMultiplier?: number | undefined;
     /**
      * Default `1`.
      */
-    yawMultiplier?: number;
+    yawMultiplier?: number | undefined;
 };
 export type CameraRigResult = SpringArmResult & {
     mode: CameraRigMode;
@@ -699,37 +699,37 @@ export type SpringArmProbeResult = {
  * or floor-standing `{ x, z, hx, hz, h, y? }` (default `y = 0`, spanning `[y, y + h]`).
  */
 export type BoxObstacleLike = {
-    x?: number;
-    y?: number;
-    z?: number;
+    x?: number | undefined;
+    y?: number | undefined;
+    z?: number | undefined;
     /**
      * Half-extent X.
      */
-    hx?: number;
+    hx?: number | undefined;
     /**
      * Half-extent Y.
      */
-    hy?: number;
+    hy?: number | undefined;
     /**
      * Half-extent Z.
      */
-    hz?: number;
+    hz?: number | undefined;
     /**
      * Full height for floor-standing boxes.
      */
-    h?: number;
-    minX?: number;
-    minY?: number;
-    minZ?: number;
-    maxX?: number;
-    maxY?: number;
-    maxZ?: number;
+    h?: number | undefined;
+    minX?: number | undefined;
+    minY?: number | undefined;
+    minZ?: number | undefined;
+    maxX?: number | undefined;
+    maxY?: number | undefined;
+    maxZ?: number | undefined;
 };
 export type BoxCollisionTestOptions = {
     /**
      * Expand each box by `probeRadius` on X/Y/Z before intersecting. Default `false`.
      */
-    inflateByProbe?: boolean;
+    inflateByProbe?: boolean | undefined;
 };
 import { damp } from '../time/tween.js';
 import { dampAngle } from '../time/tween.js';

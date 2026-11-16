@@ -7,7 +7,7 @@
  * @param {ArcadeControlsOptions} [options]
  * @returns {ArcadeControls}
  */
-export function createArcadeControls({ input, readCode, players, actions, extras, enableExtras, bufferWindow, yAxis, preventBrowserScroll, }?: ArcadeControlsOptions): ArcadeControls;
+export function createArcadeControls({ input, readCode, players, actions, extras, enableExtras, bufferWindow, yAxis, preventBrowserScroll, }?: ArcadeControlsOptions | undefined): ArcadeControls;
 /**
  * @typedef {'j' | 'k' | 'l' | 'u' | 'i' | 'o' | 'q' | 'e'} ArcadeSlot Button slots (P2 maps them to 1-6, 0 and `.`).
  */
@@ -111,15 +111,15 @@ export type ArcadeActionEntry = {
     /**
      * Display label (default: `name`).
      */
-    label?: string;
+    label?: string | undefined;
     /**
      * Explicit slot (auto-assigned when omitted).
      */
-    slot?: ArcadeSlot;
+    slot?: ArcadeSlot | undefined;
     /**
      * Input buffer, seconds (default: controls `bufferWindow`).
      */
-    bufferWindow?: number;
+    bufferWindow?: number | undefined;
 };
 export type ArcadeActionSpec = string | ArcadeActionEntry;
 export type ArcadeKeymap = {
@@ -141,39 +141,39 @@ export type ArcadeKeymap = {
     labels: Readonly<Record<string, string>>;
 };
 export type ArcadeControlsOptions = {
-    input?: import("./manager.js").InputManager | null;
+    input?: import("./manager.js").InputManager | null | undefined;
     /**
      * Extra key reader (e.g. touch buttons).
      */
-    readCode?: ((code: string) => boolean) | null;
+    readCode?: ((code: string) => boolean) | null | undefined;
     /**
      * Local player count.
      */
-    players?: 1 | 2;
+    players?: 1 | 2 | undefined;
     /**
      * Up to 6 primary actions (default: slots `j k l u i o`).
      */
-    actions?: readonly ArcadeActionSpec[];
+    actions?: readonly ArcadeActionSpec[] | undefined;
     /**
      * Up to 2 extra actions (slots `q`, `e`).
      */
-    extras?: readonly ArcadeActionSpec[];
+    extras?: readonly ArcadeActionSpec[] | undefined;
     /**
      * Allow more than 6 actions / extra slots.
      */
-    enableExtras?: boolean;
+    enableExtras?: boolean | undefined;
     /**
      * Default input buffer, seconds.
      */
-    bufferWindow?: number;
+    bufferWindow?: number | undefined;
     /**
      * Positive-y direction of `move` (`'down'` = screen coordinates).
      */
-    yAxis?: "down" | "up";
+    yAxis?: "down" | "up" | undefined;
     /**
      * Prevent arrow-key page scroll for 2-player mode.
      */
-    preventBrowserScroll?: boolean;
+    preventBrowserScroll?: boolean | undefined;
 };
 export type ArcadeBinding = {
     name: string;

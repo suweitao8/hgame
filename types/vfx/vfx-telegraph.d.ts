@@ -1,19 +1,19 @@
 export function createTelegraphSystem({ mode, THREE, scene, is2D, maxTelegraphs, }?: {
-    mode?: string;
+    mode?: string | undefined;
     THREE?: any;
     scene?: any;
-    is2D?: boolean;
-    maxTelegraphs?: number;
+    is2D?: boolean | undefined;
+    maxTelegraphs?: number | undefined;
 }): {
     spawnTelegraph: (opts?: {}) => number;
     updateTelegraph: (slot: any, opts?: {}) => void;
     setShrinkZone: ({ centerX, centerY, centerZ, safeRadius, mapRadius, active, }?: {
-        centerX?: number;
-        centerY?: number;
-        centerZ?: number;
-        safeRadius?: number;
-        mapRadius?: number;
-        active?: boolean;
+        centerX?: number | undefined;
+        centerY?: number | undefined;
+        centerZ?: number | undefined;
+        safeRadius?: number | undefined;
+        mapRadius?: number | undefined;
+        active?: boolean | undefined;
     }) => void;
     update: (visualDt: any) => void;
     renderCanvas2D: (ctx: any, camera: any, viewWidth: any, viewHeight: any) => void;

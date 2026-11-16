@@ -7,14 +7,14 @@
  * @param {Int32Array} [outBuffer=scratchDigits]
  * @returns {number} Glyph count written into outBuffer
  */
-export function extractGlyphIndices(intValue: number, isCrit?: boolean, isHeal?: boolean, isMiss?: boolean, outBuffer?: Int32Array): number;
-export function bakeGlyphAtlasCanvas(): HTMLCanvasElement;
+export function extractGlyphIndices(intValue: number, isCrit?: boolean | undefined, isHeal?: boolean | undefined, isMiss?: boolean | undefined, outBuffer?: Int32Array | undefined): number;
+export function bakeGlyphAtlasCanvas(): HTMLCanvasElement | null;
 export function createFloatingTextPool({ mode, THREE, scene, is2D, maxFloatingGlyphs, }?: {
-    mode?: string;
+    mode?: string | undefined;
     THREE?: any;
     scene?: any;
-    is2D?: boolean;
-    maxFloatingGlyphs?: number;
+    is2D?: boolean | undefined;
+    maxFloatingGlyphs?: number | undefined;
 }): {
     popupNumber: (opts?: {}) => number;
     update: (visualDt: any) => void;

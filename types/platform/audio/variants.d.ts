@@ -33,28 +33,28 @@
  * @param {VariantSetOptions} [options]
  * @returns {NormalizedVariantSet}
  */
-export function normalizeVariantSet(buffers: readonly AudioBuffer[], { silenceThreshold, normalizeRms, maxDurationSpreadRatio, alignDuration, gainClamp, }?: VariantSetOptions): NormalizedVariantSet;
+export function normalizeVariantSet(buffers: readonly AudioBuffer[], { silenceThreshold, normalizeRms, maxDurationSpreadRatio, alignDuration, gainClamp, }?: VariantSetOptions | undefined): NormalizedVariantSet;
 export type VariantSetOptions = {
     /**
      * Silence amplitude (0..1).
      */
-    silenceThreshold?: number;
+    silenceThreshold?: number | undefined;
     /**
      * Balance loudness across variants.
      */
-    normalizeRms?: boolean;
+    normalizeRms?: boolean | undefined;
     /**
      * Allowed active-duration deviation from the median (ratio).
      */
-    maxDurationSpreadRatio?: number;
+    maxDurationSpreadRatio?: number | undefined;
     /**
      * Clamp over-long tails to the allowed duration.
      */
-    alignDuration?: boolean;
+    alignDuration?: boolean | undefined;
     /**
      * Min / max loudness gain scale.
      */
-    gainClamp?: readonly [number, number];
+    gainClamp?: readonly [number, number] | undefined;
 };
 /**
  * One analysed variant (`playDuration` / `tailFadeSec` in seconds).

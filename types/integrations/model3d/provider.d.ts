@@ -16,19 +16,19 @@ export type Model3DProviderOptions = {
     /**
      * GLTFLoader constructor used when `loader` is not given.
      */
-    GLTFLoader?: (new () => import("./helpers.js").Model3DLoader) | null;
+    GLTFLoader?: (new () => import("./helpers.js").Model3DLoader) | null | undefined;
     /**
      * Loader instance.
      */
-    loader?: import("./helpers.js").Model3DLoader | null;
+    loader?: import("./helpers.js").Model3DLoader | null | undefined;
     /**
      * Custom hierarchy cloner (e.g. SkeletonUtils.clone).
      */
-    cloneSkeleton?: ((source: import("./helpers.js").Model3DObject) => import("./helpers.js").Model3DObject) | null;
+    cloneSkeleton?: ((source: import("./helpers.js").Model3DObject) => import("./helpers.js").Model3DObject) | null | undefined;
     /**
      * Base URL that relative asset paths resolve against.
      */
-    projectBaseUrl?: string | URL | null;
+    projectBaseUrl?: string | URL | null | undefined;
 };
 /**
  * A loaded or registered model asset.
@@ -72,11 +72,11 @@ export type Model3DRegisterAssetOptions = {
     /**
      * Animation clips.
      */
-    animations?: import("./helpers.js").Model3DClip[];
+    animations?: import("./helpers.js").Model3DClip[] | undefined;
     /**
      * Dispose resources on provider `dispose()`.
      */
-    owned?: boolean;
+    owned?: boolean | undefined;
 };
 /**
  * A cloned model instance.
@@ -98,23 +98,23 @@ export type Model3DNotifyOptions = {
     /**
      * Stable id (auto-generated when null; same id replaces).
      */
-    id?: string | null;
+    id?: string | null | undefined;
     /**
      * Display name.
      */
-    name?: string;
+    name?: string | undefined;
     /**
      * Trigger time in seconds (takes precedence over `normalizedTime`).
      */
-    time?: number;
+    time?: number | undefined;
     /**
      * Trigger position 0..1 of the clip duration.
      */
-    normalizedTime?: number;
+    normalizedTime?: number | undefined;
     /**
      * Per-notify callback.
      */
-    callback?: ((event: Model3DNotifyEvent) => void) | null;
+    callback?: ((event: Model3DNotifyEvent) => void) | null | undefined;
     /**
      * User payload forwarded to the event.
      */
@@ -122,7 +122,7 @@ export type Model3DNotifyOptions = {
     /**
      * Clip name (array form of `notifies` only).
      */
-    clipName?: string;
+    clipName?: string | undefined;
 };
 /**
  * Event passed to notify callbacks.
@@ -172,107 +172,107 @@ export type Model3DComponentOptions = {
     /**
      * Loaded asset (requires `scene`).
      */
-    asset?: import("./helpers.js").Model3DAsset | null;
+    asset?: import("./helpers.js").Model3DAsset | null | undefined;
     /**
      * Pre-built root (alternative to `asset`; not cloned).
      */
-    root?: import("./helpers.js").Model3DObject | null;
+    root?: import("./helpers.js").Model3DObject | null | undefined;
     /**
      * Clips overriding `asset.animations`.
      */
-    animations?: import("./helpers.js").Model3DClip[] | null;
+    animations?: import("./helpers.js").Model3DClip[] | null | undefined;
     /**
      * Clip to play on awake.
      */
-    clip?: string | null;
+    clip?: string | null | undefined;
     /**
      * Default loop flag.
      */
-    loop?: boolean;
+    loop?: boolean | undefined;
     /**
      * Default playback speed multiplier.
      */
-    timeScale?: number;
+    timeScale?: number | undefined;
     /**
      * Default cross-fade duration in seconds.
      */
-    crossFadeSeconds?: number;
+    crossFadeSeconds?: number | undefined;
     /**
      * Meshes cast shadows.
      */
-    castShadow?: boolean;
+    castShadow?: boolean | undefined;
     /**
      * Meshes receive shadows.
      */
-    receiveShadow?: boolean;
+    receiveShadow?: boolean | undefined;
     /**
      * Vertical offset in world units.
      */
-    offsetY?: number;
+    offsetY?: number | undefined;
     /**
      * Uniform scale.
      */
-    scale?: number;
+    scale?: number | undefined;
     /**
      * Auto-scale so the model is this tall (world units).
      */
-    targetHeight?: number | null;
+    targetHeight?: number | null | undefined;
     /**
      * Shift so the bounds minimum sits at y=0.
      */
-    alignGround?: boolean;
+    alignGround?: boolean | undefined;
     /**
      * Model yaw in radians.
      */
-    rotationY?: number;
+    rotationY?: number | undefined;
     /**
      * Strip namespace prefixes from bone/track names.
      */
-    stripNamespace?: boolean;
+    stripNamespace?: boolean | undefined;
     /**
      * Lock root-bone position tracks.
      */
-    stripRootMotion?: boolean | "xz" | "xyz";
+    stripRootMotion?: boolean | "xz" | "xyz" | undefined;
     /**
      * Root bone names (defaults to root, pelvis, hips, armature).
      */
-    rootBoneNames?: string[];
+    rootBoneNames?: string[] | undefined;
     /**
      * Bone/track rename map.
      */
-    renameMap?: Record<string, string> | null;
+    renameMap?: Record<string, string> | null | undefined;
     /**
      * Use render-alpha interpolated transforms.
      */
-    interpolate?: boolean;
+    interpolate?: boolean | undefined;
     /**
      * Distance-based animation tick throttling.
      */
-    enableLod?: boolean;
+    enableLod?: boolean | undefined;
     /**
      * Three world-unit distances for 1/2, 1/4, 1/8 tick rates.
      */
-    lodDistances?: number[];
+    lodDistances?: number[] | undefined;
     /**
      * Frustum-cull the model each update.
      */
-    cull?: boolean;
+    cull?: boolean | undefined;
     /**
      * Cull sphere radius in world units (auto when null).
      */
-    cullRadius?: number | null;
+    cullRadius?: number | null | undefined;
     /**
      * Max world distance for casting shadows (renderer preset when null).
      */
-    shadowDistance?: number | null;
+    shadowDistance?: number | null | undefined;
     /**
      * Initial notifies (array with `clipName`, or map of clip name to list).
      */
-    notifies?: Model3DNotifyOptions[] | Record<string, Model3DNotifyOptions[]> | null;
+    notifies?: Model3DNotifyOptions[] | Record<string, Model3DNotifyOptions[]> | null | undefined;
     /**
      * Fires for every notify.
      */
-    onNotify?: ((event: Model3DNotifyEvent) => void) | null;
+    onNotify?: ((event: Model3DNotifyEvent) => void) | null | undefined;
 };
 /**
  * Options for {@link Model3DComponent.play}.
@@ -281,19 +281,19 @@ export type Model3DPlayOptions = {
     /**
      * Loop flag (defaults to the component default).
      */
-    loop?: boolean;
+    loop?: boolean | undefined;
     /**
      * Cross-fade seconds (defaults to the component default).
      */
-    crossFadeSeconds?: number;
+    crossFadeSeconds?: number | undefined;
     /**
      * Speed multiplier (defaults to the component default).
      */
-    timeScale?: number;
+    timeScale?: number | undefined;
     /**
      * Called when a non-looping clip finishes.
      */
-    onComplete?: ((clipName: string) => void) | null;
+    onComplete?: ((clipName: string) => void) | null | undefined;
 };
 /**
  * Options for {@link Model3DComponent.playOverlay}.
@@ -302,27 +302,27 @@ export type Model3DOverlayOptions = {
     /**
      * Effective blend weight 0..1.
      */
-    weight?: number;
+    weight?: number | undefined;
     /**
      * Loop the overlay.
      */
-    loop?: boolean;
+    loop?: boolean | undefined;
     /**
      * Fade-in seconds.
      */
-    fadeIn?: number;
+    fadeIn?: number | undefined;
     /**
      * Fade-out seconds.
      */
-    fadeOut?: number;
+    fadeOut?: number | undefined;
     /**
      * Speed multiplier (defaults to the component default).
      */
-    timeScale?: number;
+    timeScale?: number | undefined;
     /**
      * Called when a non-looping overlay finishes.
      */
-    onComplete?: ((clipName: string) => void) | null;
+    onComplete?: ((clipName: string) => void) | null | undefined;
 };
 /**
  * Options for {@link Model3DComponent.attachToBone}.
@@ -335,7 +335,7 @@ export type Model3DAttachOptions = {
         x?: number;
         y?: number;
         z?: number;
-    } | null;
+    } | null | undefined;
     /**
      * Local Euler rotation in radians.
      */
@@ -343,7 +343,7 @@ export type Model3DAttachOptions = {
         x?: number;
         y?: number;
         z?: number;
-    } | null;
+    } | null | undefined;
     /**
      * Uniform or per-axis scale.
      */
@@ -351,7 +351,7 @@ export type Model3DAttachOptions = {
         x?: number;
         y?: number;
         z?: number;
-    } | null;
+    } | null | undefined;
 };
 /**
  * Handle returned by {@link Model3DComponent.attachToBone}.

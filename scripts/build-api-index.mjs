@@ -52,7 +52,10 @@ function describe(sym, decl) {
   const target = sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym;
   const d = target.valueDeclaration || target.declarations?.[0] || decl;
   const type = checker.getTypeOfSymbolAtLocation(target, d);
-  const entry = { name: sym.name, summary: summaryOf(target) };
+  const declaredIn = rel(d.getSourceFile().fileName);
+  // Nested implementation files inherit the public parent integration's contract.
+  const publicOrigin = isInternal(declaredIn) ? declaredIn.split('/').slice(0, 2).join('/') + '.js' : declaredIn;
+  const entry = { name: sym.name, tier: tierOf(publicOrigin), declaredIn, summary: summaryOf(target) };
   if (target.flags & ts.SymbolFlags.Class) {
     entry.kind = 'class';
     const ctor = type.getConstructSignatures()[0];

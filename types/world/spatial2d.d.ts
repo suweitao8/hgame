@@ -18,7 +18,7 @@
  */
 export class ObjectPool<T, A extends unknown[] = unknown[]> {
     /** @param {ObjectPoolOptions<T, A>} [options] */
-    constructor({ create, reset, initialSize, maxSize }?: ObjectPoolOptions<T, A>);
+    constructor({ create, reset, initialSize, maxSize }?: ObjectPoolOptions<T, A> | undefined);
     /** @type {() => T} */
     _create: () => T;
     /** @type {((item: T, ...args: A) => void) | null} */
@@ -84,7 +84,7 @@ export class ObjectPool<T, A extends unknown[] = unknown[]> {
  */
 export class SpatialHash2D<T = unknown> {
     /** @param {SpatialHash2DOptions} [options] */
-    constructor({ cellSize }?: SpatialHash2DOptions);
+    constructor({ cellSize }?: SpatialHash2DOptions | undefined);
     /** Cell edge length in world units. @type {number} */
     cellSize: number;
     /** @type {number} */
@@ -113,7 +113,7 @@ export class SpatialHash2D<T = unknown> {
      * @param {number} [radius=0] Radius in world units (>= 0).
      * @returns {SpatialHash2DEntry<T>}
      */
-    insert(item: T, x: number, y: number, radius?: number): SpatialHash2DEntry<T>;
+    insert(item: T, x: number, y: number, radius?: number | undefined): SpatialHash2DEntry<T>;
     /**
      * Collect items whose circles overlap the query circle.
      * @param {number} x Query centre X.
@@ -122,7 +122,7 @@ export class SpatialHash2D<T = unknown> {
      * @param {T[]} [out] Array reused for results (cleared first).
      * @returns {T[]} The out array.
      */
-    queryRadius(x: number, y: number, radius: number, out?: T[]): T[];
+    queryRadius(x: number, y: number, radius: number, out?: T[] | undefined): T[];
     /**
      * Collect items whose circles overlap the axis-aligned box.
      * @param {number} minX Left bound (world units).
@@ -132,14 +132,14 @@ export class SpatialHash2D<T = unknown> {
      * @param {T[]} [out] Array reused for results (cleared first).
      * @returns {T[]} The out array.
      */
-    queryAABB(minX: number, minY: number, maxX: number, maxY: number, out?: T[]): T[];
+    queryAABB(minX: number, minY: number, maxX: number, maxY: number, out?: T[] | undefined): T[];
     /**
      * Push overlapping agents apart (mutates x/y). Rebuilds the hash each iteration, indexing agents by array position.
      * @param {SeparationAgent[]} agents
      * @param {SoftSeparationOptions} [options]
      * @returns {void}
      */
-    resolveSoftSeparation(agents: SeparationAgent[], { defaultRadius, strength, iterations }?: SoftSeparationOptions): void;
+    resolveSoftSeparation(agents: SeparationAgent[], { defaultRadius, strength, iterations }?: SoftSeparationOptions | undefined): void;
 }
 export type ObjectPoolOptions<T, A extends unknown[] = unknown[]> = {
     /**
@@ -149,21 +149,21 @@ export type ObjectPoolOptions<T, A extends unknown[] = unknown[]> = {
     /**
      * Re-initialises an item on acquire(...args).
      */
-    reset?: ((item: T, ...args: A) => void) | null;
+    reset?: ((item: T, ...args: A) => void) | null | undefined;
     /**
      * Items pre-created at construction (integer >= 0, clamped to maxSize).
      */
-    initialSize?: number;
+    initialSize?: number | undefined;
     /**
      * Maximum number of idle items retained (integer >= 1); extra released items are dropped.
      */
-    maxSize?: number;
+    maxSize?: number | undefined;
 };
 export type SpatialHash2DOptions = {
     /**
      * Grid cell edge length in world units (> 0).
      */
-    cellSize?: number;
+    cellSize?: number | undefined;
 };
 /**
  * Entry stored in a {@link SpatialHash2D}. Entries are pooled; treat as read-only.
@@ -205,23 +205,23 @@ export type SeparationAgent = {
     /**
      * Collision radius; falls back to defaultRadius.
      */
-    radius?: number;
+    radius?: number | undefined;
     /**
      * Skip the agent when true.
      */
-    destroyed?: boolean;
+    destroyed?: boolean | undefined;
 };
 export type SoftSeparationOptions = {
     /**
      * Radius for agents without a finite radius (>= 0, world units).
      */
-    defaultRadius?: number;
+    defaultRadius?: number | undefined;
     /**
      * Push factor per iteration in [0, 1].
      */
-    strength?: number;
+    strength?: number | undefined;
     /**
      * Relaxation passes (integer 1..8).
      */
-    iterations?: number;
+    iterations?: number | undefined;
 };

@@ -34,7 +34,7 @@ export function applyListenerOrientation(listener: AudioListener | null | undefi
  */
 export function setGainTarget(gainParam: AudioParam | {
     value: number;
-} | null | undefined, value: number, currentTime: number, timeConstant?: number): void;
+} | null | undefined, value: number, currentTime: number, timeConstant?: number | undefined): void;
 /**
  * @typedef {object} AudioListenerState Listener pose in world units.
  * @property {number} x

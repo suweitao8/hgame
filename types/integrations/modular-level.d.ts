@@ -4,14 +4,14 @@
  * @param {ModularGridSpec} [grid] Default cellSize 1, origin 0.
  * @returns {number[]} World [x,y,z].
  */
-export function gridToWorld(cell: Vec3Tuple, grid?: ModularGridSpec): number[];
+export function gridToWorld(cell: Vec3Tuple, grid?: ModularGridSpec | undefined): number[];
 /**
  * World position to nearest cell.
  * @param {Vec3Tuple} world World [x,y,z].
  * @param {ModularGridSpec} [grid] Default cellSize 1, origin 0.
  * @returns {number[]} Integer cell [x,y,z].
  */
-export function worldToGrid(world: Vec3Tuple, grid?: ModularGridSpec): number[];
+export function worldToGrid(world: Vec3Tuple, grid?: ModularGridSpec | undefined): number[];
 /**
  * Expand compact JSON into a deterministic, immutable render recipe.
  * Order is group input order, then fill: y outer, z middle, x inner.
@@ -37,11 +37,11 @@ export type ModularGridSpec = {
     /**
      * Cell edge length in world units, (0, 100]. Default `1`.
      */
-    cellSize?: number;
+    cellSize?: number | undefined;
     /**
      * World position of cell [0,0,0]. Default `[0,0,0]`.
      */
-    origin?: Vec3Tuple;
+    origin?: Vec3Tuple | undefined;
 };
 export type ModularLevelGroup = {
     /**
@@ -54,23 +54,23 @@ export type ModularLevelGroup = {
     fill?: {
         from: Vec3Tuple;
         to: Vec3Tuple;
-    };
+    } | undefined;
     /**
      * Explicit integer cells (xor with `fill`).
      */
-    cells?: Vec3Tuple[];
+    cells?: Vec3Tuple[] | undefined;
     /**
      * Cells to skip from the group.
      */
-    exclude?: Vec3Tuple[];
+    exclude?: Vec3Tuple[] | undefined;
     /**
      * Quarter-turns about Y. Default `0`.
      */
-    turns?: 0 | 1 | 2 | 3;
+    turns?: 0 | 1 | 2 | 3 | undefined;
     /**
      * Uniform scale multiplier, (0, 100]. Default `1`.
      */
-    scale?: number;
+    scale?: number | undefined;
 };
 /**
  * Explicit physics metadata, independent of art.
@@ -91,31 +91,31 @@ export type ModularColliderSpec = {
     /**
      * Trigger-only collider. Default `false`.
      */
-    sensor?: boolean;
+    sensor?: boolean | undefined;
     /**
      * uint32 collision layer. Default `1`.
      */
-    layer?: number;
+    layer?: number | undefined;
     /**
      * uint32 collision mask. Default `0xffffffff`.
      */
-    mask?: number;
+    mask?: number | undefined;
 };
 /**
  * Version-1 level JSON.
  */
 export type ModularLevelData = {
     version: 1;
-    grid?: ModularGridSpec;
+    grid?: ModularGridSpec | undefined;
     /**
      * 1..2048 groups.
      */
     groups: ModularLevelGroup[];
-    colliders?: ModularColliderSpec[];
+    colliders?: ModularColliderSpec[] | undefined;
     /**
      * Default `[0, 1.8, 0]`.
      */
-    playerSpawn?: Vec3Tuple;
+    playerSpawn?: Vec3Tuple | undefined;
 };
 export type ModularPlacement = {
     x: number;
@@ -174,7 +174,7 @@ export type CompiledModularLevel = {
  */
 export type ModularObject3DLike = {
     add: (...objects: object[]) => unknown;
-    remove?: (...objects: object[]) => unknown;
+    remove?: ((...objects: object[]) => unknown) | undefined;
 };
 export type ModularGroupLike = {
     name: string;

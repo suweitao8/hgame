@@ -22,18 +22,18 @@
  * Supports both fixed-height grids and variable-height single-column lists.
  * @param {VirtualListOptions} [options={}]
  */
-export function createVirtualList(options?: VirtualListOptions): Readonly<{
+export function createVirtualList(options?: VirtualListOptions | undefined): Readonly<{
     setCount: (count: any) => void;
     setItems: (items: any) => void;
     setViewportSize: (heightPx: any) => void;
     scrollTo: (offsetPx: any) => number;
     scrollBy: (deltaPx: any) => number;
-    scrollToIndex: (index: number, align?: "nearest" | "start" | "center" | "end") => number;
-    getVisibleRange: (out?: VirtualVisibleRange) => VirtualVisibleRange;
+    scrollToIndex: (index: number, align?: "start" | "center" | "end" | "nearest" | undefined) => number;
+    getVisibleRange: (out?: VirtualVisibleRange | undefined) => VirtualVisibleRange;
     getTotalCount: () => number;
     getTotalHeight: () => number;
     getScrollTop: () => number;
-    getViewportHeight: () => number;
+    getViewportHeight: () => number | undefined;
     attachDom: (domOpts: {
         viewportEl: HTMLElement;
         contentEl: HTMLElement;
@@ -48,27 +48,27 @@ export type VirtualListOptions = {
     /**
      * Default row height (or cell height when columns > 1) in pixels.
      */
-    itemHeight?: number;
+    itemHeight?: number | undefined;
     /**
      * Number of grid columns per row (>= 1).
      */
-    columns?: number;
+    columns?: number | undefined;
     /**
      * Visible viewport height in pixels.
      */
-    viewportHeight?: number;
+    viewportHeight?: number | undefined;
     /**
      * Extra rows rendered above and below the viewport.
      */
-    overscan?: number;
+    overscan?: number | undefined;
     /**
      * Optional variable-height callback (valid when columns === 1).
      */
-    getItemHeight?: (index: number) => number;
+    getItemHeight?: ((index: number) => number) | undefined;
     /**
      * Vertical gap in pixels between rows.
      */
-    gap?: number;
+    gap?: number | undefined;
 };
 export type VirtualVisibleRange = {
     /**

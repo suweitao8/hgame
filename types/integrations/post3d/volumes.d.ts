@@ -11,7 +11,7 @@ export function volumeSignedDistance(vol: Pick<PostVolume, "center" | "shape" | 
  * @param {PostVolumeInput[]} [initialVolumes=[]]
  * @returns {PostProcessVolumeStack}
  */
-export function createPostProcessVolumeStack(initialVolumes?: PostVolumeInput[]): PostProcessVolumeStack;
+export function createPostProcessVolumeStack(initialVolumes?: PostVolumeInput[] | undefined): PostProcessVolumeStack;
 /**
  * Post-process parameter set (all optional when used as a volume override).
  * @typedef {object} PostSettings
@@ -151,139 +151,139 @@ export type PostSettings = {
     /**
      * Tone mapping mode (default `'ueFilmic'`).
      */
-    toneMapping?: string;
+    toneMapping?: string | undefined;
     /**
      * FXAA toggle (volumes switch at blend weight >= 0.5).
      */
-    fxaa?: boolean;
+    fxaa?: boolean | undefined;
     /**
      * Exposure multiplier (default 1).
      */
-    exposure?: number;
+    exposure?: number | undefined;
     /**
      * Default 0.28.
      */
-    bloomStrength?: number;
+    bloomStrength?: number | undefined;
     /**
      * Default 0.85.
      */
-    bloomThreshold?: number;
+    bloomThreshold?: number | undefined;
     /**
      * Default 0.5.
      */
-    bloomSoftKnee?: number;
+    bloomSoftKnee?: number | undefined;
     /**
      * World units, default 0.5.
      */
-    ssaoRadius?: number;
+    ssaoRadius?: number | undefined;
     /**
      * World units, default 0.025.
      */
-    ssaoBias?: number;
+    ssaoBias?: number | undefined;
     /**
      * Default 0.42.
      */
-    ssaoIntensity?: number;
+    ssaoIntensity?: number | undefined;
     /**
      * Default 0.18.
      */
-    volumetricIntensity?: number;
+    volumetricIntensity?: number | undefined;
     /**
      * Default 0.55.
      */
-    giIntensity?: number;
+    giIntensity?: number | undefined;
     /**
      * Default 0.35.
      */
-    ssrIntensity?: number;
+    ssrIntensity?: number | undefined;
     /**
      * Default 0.65.
      */
-    contactShadows?: number;
+    contactShadows?: number | undefined;
     /**
      * World units, default 0.32.
      */
-    contactShadowLength?: number;
+    contactShadowLength?: number | undefined;
     /**
      * Kelvin, default 6500.
      */
-    whiteTemp?: number;
+    whiteTemp?: number | undefined;
     /**
      * -1..1, default 0.
      */
-    whiteTint?: number;
+    whiteTint?: number | undefined;
     /**
      * Default 1.
      */
-    contrast?: number;
+    contrast?: number | undefined;
     /**
      * Default 1.05.
      */
-    saturation?: number;
+    saturation?: number | undefined;
     /**
      * Default 0.18.
      */
-    vignette?: number;
+    vignette?: number | undefined;
     /**
      * Default 0.
      */
-    chromaticAberration?: number;
+    chromaticAberration?: number | undefined;
     /**
      * Default 0.
      */
-    filmGrain?: number;
+    filmGrain?: number | undefined;
     /**
      * Default 0.88.
      */
-    filmSlope?: number;
+    filmSlope?: number | undefined;
     /**
      * Default 0.55.
      */
-    filmToe?: number;
+    filmToe?: number | undefined;
     /**
      * Default 0.26.
      */
-    filmShoulder?: number;
+    filmShoulder?: number | undefined;
     /**
      * Default 0.
      */
-    filmBlackClip?: number;
+    filmBlackClip?: number | undefined;
     /**
      * Default 0.04.
      */
-    filmWhiteClip?: number;
+    filmWhiteClip?: number | undefined;
     /**
      * Default [0,0,0].
      */
-    colorLift?: import("./color.js").RGBTuple;
+    colorLift?: import("./color.js").RGBTuple | undefined;
     /**
      * Default [1,1,1].
      */
-    colorGamma?: import("./color.js").RGBTuple;
+    colorGamma?: import("./color.js").RGBTuple | undefined;
     /**
      * Default [1,1,1].
      */
-    colorGain?: import("./color.js").RGBTuple;
+    colorGain?: import("./color.js").RGBTuple | undefined;
     /**
      * Damage overlay 0..1.
      */
-    damage?: number;
+    damage?: number | undefined;
     /**
      * Low-health overlay 0..1.
      */
-    lowHealth?: number;
+    lowHealth?: number | undefined;
     /**
      * Focus effect 0..1.
      */
-    focus?: number;
+    focus?: number | undefined;
     /**
      * Flash overlay 0..1.
      */
-    flash?: number;
+    flash?: number | undefined;
     /**
      * Fade-to-black 0..1.
      */
-    fade?: number;
+    fade?: number | undefined;
 };
 /**
  * Position accepted by volume queries.
@@ -304,41 +304,41 @@ export type PostVolumeInput = {
     /**
      * Higher priority blends later (wins).
      */
-    priority?: number;
+    priority?: number | undefined;
     /**
      * Global volume (applies everywhere).
      */
-    unbound?: boolean;
-    shape?: "box" | "sphere";
+    unbound?: boolean | undefined;
+    shape?: "box" | "sphere" | undefined;
     /**
      * World-space center, default [0,0,0].
      */
-    center?: PostVolumePosition;
+    center?: PostVolumePosition | undefined;
     /**
      * Box half-extents in world units, default [10,10,10].
      */
-    extents?: [number, number, number];
+    extents?: [number, number, number] | undefined;
     /**
      * Sphere radius in world units.
      */
-    radius?: number;
+    radius?: number | undefined;
     /**
      * Box rotation around Y in radians.
      */
-    yaw?: number;
+    yaw?: number | undefined;
     /**
      * Feather distance outside the volume in world units.
      */
-    blendRadius?: number;
+    blendRadius?: number | undefined;
     /**
      * Max influence 0..1.
      */
-    blendWeight?: number;
-    enabled?: boolean;
+    blendWeight?: number | undefined;
+    enabled?: boolean | undefined;
     /**
      * Overridden post settings.
      */
-    settings?: PostSettings;
+    settings?: PostSettings | undefined;
 };
 /**
  * Normalized volume as stored in the stack.

@@ -109,8 +109,8 @@ void main() {
 
 export function createScreenFeedbackPass({
   mode = 'headless',
-  THREE = null,
-  scene = null,
+  THREE = /** @type {object | null} */ (null),
+  scene = /** @type {object | null} */ (null),
 } = {}) {
   let simTime = 0;
   let lowHpIntensity = 0;

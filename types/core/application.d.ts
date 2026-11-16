@@ -88,7 +88,7 @@
  * @param {GameApplicationOptions} [options]
  * @returns {GameApplication}
  */
-export function createGameApplication({ project: recipe, platform, renderer, gameId, gameVersion, requestFrame, cancelFrame, maxSubSteps, maxDelta, }?: GameApplicationOptions): GameApplication;
+export function createGameApplication({ project: recipe, platform, renderer, gameId, gameVersion, requestFrame, cancelFrame, maxSubSteps, maxDelta, }?: GameApplicationOptions | undefined): GameApplication;
 /**
  * Renderer adapter injected into the application.
  */
@@ -100,15 +100,15 @@ export type GameRenderer = {
     /**
      * Called on window resize.
      */
-    resize?: () => void;
+    resize?: (() => void) | undefined;
     /**
      * Called when the application is disposed.
      */
-    dispose?: () => void;
+    dispose?: (() => void) | undefined;
     /**
      * Required by the `adaptiveQuality3d` feature (milliseconds).
      */
-    recordFrameInterval?: (frameIntervalMs: number) => void;
+    recordFrameInterval?: ((frameIntervalMs: number) => void) | undefined;
     /**
      * Required by the `adaptiveQuality3d` feature.
      */
@@ -118,11 +118,11 @@ export type GameApplicationOptions = {
     /**
      * Project recipe (see {@link defineProject}).
      */
-    project?: import("./config.js").ProjectOptions;
+    project?: import("./config.js").ProjectOptions | undefined;
     /**
      * Existing platform services; a new engine is created and owned when omitted.
      */
-    platform?: import("../platform/engine.js").GameEngine;
+    platform?: import("../platform/engine.js").GameEngine | undefined;
     /**
      * Explicit renderer adapter (required).
      */
@@ -130,24 +130,24 @@ export type GameApplicationOptions = {
     /**
      * Slug for the owned platform engine.
      */
-    gameId?: string;
-    gameVersion?: string;
+    gameId?: string | undefined;
+    gameVersion?: string | undefined;
     /**
      * Default `requestAnimationFrame`.
      */
-    requestFrame?: (callback: (timeMs: number) => void) => number | undefined;
+    requestFrame?: ((callback: (timeMs: number) => void) => number | undefined) | undefined;
     /**
      * Default `cancelAnimationFrame`.
      */
-    cancelFrame?: (id: number) => void;
+    cancelFrame?: ((id: number) => void) | undefined;
     /**
      * Max fixed ticks per frame, integer 1..240.
      */
-    maxSubSteps?: number;
+    maxSubSteps?: number | undefined;
     /**
      * Largest frame delta in seconds that is simulated (> 0).
      */
-    maxDelta?: number;
+    maxDelta?: number | undefined;
 };
 export type GameApplicationStats = {
     /**
@@ -167,11 +167,11 @@ export type HitStopOptions = {
     /**
      * Time scale during the freeze (>= 0).
      */
-    scale?: number;
+    scale?: number | undefined;
     /**
      * How overlapping hit-stops combine.
      */
-    stackMode?: "max" | "add" | "replace";
+    stackMode?: "replace" | "max" | "add" | undefined;
 };
 export type PhysicsWorldFactory = {
     createWorld: (options?: Record<string, unknown>) => import("./scene.js").ScenePhysicsWorld;
@@ -180,23 +180,23 @@ export type PhysicsWorldFactory = {
  * Installed optional services (keys exist only for loaded features).
  */
 export type ApplicationServices = {
-    scene?: import("./scene.js").SceneManager;
-    input?: import("../platform/input/manager.js").InputManager;
-    assets?: import("../platform/assets.js").AssetLoader;
-    audio?: import("../platform/audio.js").AudioManager;
-    save?: import("../platform/storage.js").SaveStore;
-    diagnostics?: import("../platform/diagnostics.js").Diagnostics;
-    physics2d?: PhysicsWorldFactory;
-    physics3d?: PhysicsWorldFactory;
+    scene?: SceneManager | undefined;
+    input?: import("../platform/input/manager.js").InputManager | undefined;
+    assets?: import("../platform/assets.js").AssetLoader | undefined;
+    audio?: import("../platform/audio.js").AudioManager | undefined;
+    save?: import("../platform/storage.js").SaveStore | undefined;
+    diagnostics?: import("../platform/diagnostics.js").Diagnostics | undefined;
+    physics2d?: PhysicsWorldFactory | undefined;
+    physics3d?: PhysicsWorldFactory | undefined;
     animation2d?: {
         AnimationPlayer: typeof import("../animation/player.js").AnimationPlayer;
         SpriteSheet: typeof import("../animation/spritesheet.js").SpriteSheet;
-    };
+    } | undefined;
     tilemap2d?: {
         TileMap: typeof import("../world/tilemap.js").TileMap;
         findGridPath: typeof import("../world/tilemap.js").findGridPath;
-    };
-    pathfinding2d?: typeof import("../world/tilemap.js").findGridPath;
+    } | undefined;
+    pathfinding2d?: typeof import("../index.js").findGridPath | undefined;
     /**
      * Provider passed to `installFeatures`.
      */
@@ -273,3 +273,4 @@ export type GameApplication = {
     dispatch: (command: import("./scene.js").GameCommand) => void;
     dispose: () => boolean;
 };
+import { SceneManager } from './scene.js';

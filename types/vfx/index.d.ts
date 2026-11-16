@@ -1,12 +1,21 @@
 /**
  * Unified 2D/3D/Headless zero-GC VFX & game-feel facade.
+ * @param {object} [options]
+ * @param {'headless' | 'canvas2d' | 'webgl2d' | '3d' | null} [options.mode=null]
+ * @param {object | null} [options.sceneOrAdapter=null] Renderer adapter, scene or 2D context.
+ * @param {object | null} [options.THREE] Three.js namespace for 3D rendering.
+ * @param {number} [options.maxParticles]
+ * @param {number} [options.maxFloatingGlyphs]
+ * @param {number} [options.seed=0x9e3779b9]
  */
 export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, maxFloatingGlyphs, seed, }?: {
-    mode?: any;
-    sceneOrAdapter?: any;
-    THREE?: any;
-    seed?: number;
-}): {
+    mode?: "3d" | "canvas2d" | "webgl2d" | "headless" | null | undefined;
+    sceneOrAdapter?: object | null;
+    THREE?: object | null;
+    maxParticles?: number | undefined;
+    maxFloatingGlyphs?: number | undefined;
+    seed?: number | undefined;
+} | undefined): {
     mode: any;
     prng: {
         nextFloat(): number;
@@ -54,8 +63,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             additiveTotal: number;
             normalWrapCount: number;
             additiveWrapCount: number;
-            normalLastRanges: any[];
-            additiveLastRanges: any[];
+            normalLastRanges: never[];
+            additiveLastRanges: never[];
         };
     };
     trails: {
@@ -79,12 +88,12 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         spawnTelegraph: (opts?: {}) => number;
         updateTelegraph: (slot: any, opts?: {}) => void;
         setShrinkZone: ({ centerX, centerY, centerZ, safeRadius, mapRadius, active, }?: {
-            centerX?: number;
-            centerY?: number;
-            centerZ?: number;
-            safeRadius?: number;
-            mapRadius?: number;
-            active?: boolean;
+            centerX?: number | undefined;
+            centerY?: number | undefined;
+            centerZ?: number | undefined;
+            safeRadius?: number | undefined;
+            mapRadius?: number | undefined;
+            active?: boolean | undefined;
         }) => void;
         update: (visualDt: any) => void;
         renderCanvas2D: (ctx: any, camera: any, viewWidth: any, viewHeight: any) => void;
@@ -109,11 +118,11 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     };
     screenFeedback: {
         screenPulse: ({ ndcX, ndcY, strength, duration, color, }?: {
-            ndcX?: number;
-            ndcY?: number;
-            strength?: number;
-            duration?: number;
-            color?: number;
+            ndcX?: number | undefined;
+            ndcY?: number | undefined;
+            strength?: number | undefined;
+            duration?: number | undefined;
+            color?: number | undefined;
         }) => void;
         setLowHpIntensity: (intensity: any) => void;
         setSpeedLines: (intensity: any) => void;
@@ -123,18 +132,20 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         dispose: () => void;
     };
     emitHitImpact: ({ x, y, z, damage, isCrit, isHeal, isMiss, dirX, dirY, dirZ, element, hitstopSec, shakeIntensity, }?: {
-        x?: number;
-        y?: number;
-        z?: number;
-        damage?: number;
-        isCrit?: boolean;
-        isHeal?: boolean;
-        isMiss?: boolean;
-        dirX?: number;
-        dirY?: number;
-        dirZ?: number;
-        element?: string;
-    }) => void;
+        x?: number | undefined;
+        y?: number | undefined;
+        z?: number | undefined;
+        damage?: number | undefined;
+        isCrit?: boolean | undefined;
+        isHeal?: boolean | undefined;
+        isMiss?: boolean | undefined;
+        dirX?: number | undefined;
+        dirY?: number | undefined;
+        dirZ?: number | undefined;
+        element?: string | undefined;
+        hitstopSec?: number | undefined;
+        shakeIntensity?: number | undefined;
+    } | undefined) => void;
     burstParticles: (presetOrConfig: any) => void;
     slashArc: (opts?: {}) => void;
     lightningBolt: (opts?: {}) => void;
@@ -144,20 +155,20 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     spawnTelegraph: (opts?: {}) => number;
     updateTelegraph: (slot: any, opts?: {}) => void;
     setShrinkZone: ({ centerX, centerY, centerZ, safeRadius, mapRadius, active, }?: {
-        centerX?: number;
-        centerY?: number;
-        centerZ?: number;
-        safeRadius?: number;
-        mapRadius?: number;
-        active?: boolean;
+        centerX?: number | undefined;
+        centerY?: number | undefined;
+        centerZ?: number | undefined;
+        safeRadius?: number | undefined;
+        mapRadius?: number | undefined;
+        active?: boolean | undefined;
     }) => void;
     popupNumber: (opts?: {}) => number;
     screenPulse: ({ ndcX, ndcY, strength, duration, color, }?: {
-        ndcX?: number;
-        ndcY?: number;
-        strength?: number;
-        duration?: number;
-        color?: number;
+        ndcX?: number | undefined;
+        ndcY?: number | undefined;
+        strength?: number | undefined;
+        duration?: number | undefined;
+        color?: number | undefined;
     }) => void;
     setLowHpIntensity: (intensity: any) => void;
     setSpeedLines: (intensity: any) => void;
@@ -183,8 +194,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             additiveTotal: number;
             normalWrapCount: number;
             additiveWrapCount: number;
-            normalLastRanges: any[];
-            additiveLastRanges: any[];
+            normalLastRanges: never[];
+            additiveLastRanges: never[];
         };
         trails: {
             slashCap: number;

@@ -88,29 +88,29 @@
  * @param {FirstPersonInput3dOptions} [options]
  * @returns {FirstPersonInput3d}
  */
-export function createFirstPersonInput3d({ canvas, windowRef, documentRef, navigatorRef, keyInput, sensitivity, invertY, touchEnabled, gamepadEnabled, pointerLockEnabled, touchRadius, stickDeadzone, gamepadLookRate, }?: FirstPersonInput3dOptions): FirstPersonInput3d;
+export function createFirstPersonInput3d({ canvas, windowRef, documentRef, navigatorRef, keyInput, sensitivity, invertY, touchEnabled, gamepadEnabled, pointerLockEnabled, touchRadius, stickDeadzone, gamepadLookRate, }?: FirstPersonInput3dOptions | undefined): FirstPersonInput3d;
 /**
  * Minimal structural event-target (window / document / canvas).
  */
 export type FpsEventTargetLike = {
-    addEventListener?: (type: string, listener: (event: object) => void, options?: boolean | object) => void;
-    removeEventListener?: (type: string, listener: (event: object) => void, options?: boolean | object) => void;
+    addEventListener?: ((type: string, listener: (event: object) => void, options?: boolean | object) => void) | undefined;
+    removeEventListener?: ((type: string, listener: (event: object) => void, options?: boolean | object) => void) | undefined;
 };
 /**
  * Interactive canvas surface used for pointer capture, touch zones and pointer lock.
  */
 export type FpsCanvasLike = {
     addEventListener: (type: string, listener: (event: object) => void, options?: boolean | object) => void;
-    removeEventListener?: (type: string, listener: (event: object) => void, options?: boolean | object) => void;
+    removeEventListener?: ((type: string, listener: (event: object) => void, options?: boolean | object) => void) | undefined;
     getBoundingClientRect: () => {
         left: number;
         top: number;
         width: number;
         height: number;
     };
-    setPointerCapture?: (pointerId: number) => void;
-    releasePointerCapture?: (pointerId: number) => void;
-    requestPointerLock?: () => (void | Promise<void>);
+    setPointerCapture?: ((pointerId: number) => void) | undefined;
+    releasePointerCapture?: ((pointerId: number) => void) | undefined;
+    requestPointerLock?: (() => (void | Promise<void>)) | undefined;
 };
 /**
  * Document-like object (pointer lock + visibility).
@@ -124,7 +124,7 @@ export type FpsDocumentLike = FpsEventTargetLike & {
  * Navigator-like object exposing the Gamepad API.
  */
 export type FpsNavigatorLike = {
-    getGamepads?: () => ArrayLike<object | null> | null;
+    getGamepads?: (() => ArrayLike<object | null> | null) | undefined;
 };
 /**
  * Optional existing keyboard input to read instead of owning key listeners.
@@ -133,7 +133,7 @@ export type FpsKeyInputLike = {
     /**
      * KeyboardEvent.code lookup.
      */
-    isDown?: (code: string) => boolean;
+    isDown?: ((code: string) => boolean) | undefined;
 };
 export type FpsAction = "fire" | "ads" | "sprint" | "crouch" | "jump" | "reload" | "melee" | "interact" | "pause";
 /**
@@ -147,51 +147,51 @@ export type FirstPersonInput3dOptions = {
     /**
      * Window for keyboard/blur events. Default `globalThis.window`.
      */
-    windowRef?: FpsEventTargetLike;
+    windowRef?: FpsEventTargetLike | undefined;
     /**
      * Document for pointer lock. Default `globalThis.document`.
      */
-    documentRef?: FpsDocumentLike;
+    documentRef?: FpsDocumentLike | undefined;
     /**
      * Navigator for gamepads. Default `globalThis.navigator`.
      */
-    navigatorRef?: FpsNavigatorLike;
+    navigatorRef?: FpsNavigatorLike | undefined;
     /**
      * Existing key input to consume. Default `null`.
      */
-    keyInput?: FpsKeyInputLike | null;
+    keyInput?: FpsKeyInputLike | null | undefined;
     /**
      * Look sensitivity multiplier, (0, 10]. Default `1`.
      */
-    sensitivity?: number;
+    sensitivity?: number | undefined;
     /**
      * Invert vertical look. Default `false`.
      */
-    invertY?: boolean;
+    invertY?: boolean | undefined;
     /**
      * Enable touch zones. Default `true`.
      */
-    touchEnabled?: boolean;
+    touchEnabled?: boolean | undefined;
     /**
      * Enable standard gamepad. Default `true`.
      */
-    gamepadEnabled?: boolean;
+    gamepadEnabled?: boolean | undefined;
     /**
      * Allow pointer lock. Default `true`.
      */
-    pointerLockEnabled?: boolean;
+    pointerLockEnabled?: boolean | undefined;
     /**
      * Virtual stick radius in CSS pixels, 16..300. Default `90`.
      */
-    touchRadius?: number;
+    touchRadius?: number | undefined;
     /**
      * Gamepad stick deadzone, [0, 1). Default `0.18`.
      */
-    stickDeadzone?: number;
+    stickDeadzone?: number | undefined;
     /**
      * Gamepad look speed in radians per second at full deflection. Default `2.6`.
      */
-    gamepadLookRate?: number;
+    gamepadLookRate?: number | undefined;
 };
 /**
  * Per-simulation-step input sample.

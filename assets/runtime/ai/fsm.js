@@ -1,33 +1,51 @@
 /**
+ * @template [TContext=unknown]
  * @typedef {object} StateTransition
  * @property {string} to Target state identifier.
- * @property {(ctx: unknown, stateTime: number) => boolean} [when] Guard evaluated during update(dt).
+ * @property {(ctx: TContext, stateTime: number) => boolean} [when] Guard evaluated during update(dt).
  * @property {string} [event] Event name handled by send(event, payload).
- * @property {(ctx: unknown, payload: unknown) => boolean} [guard] Optional guard for event transitions.
+ * @property {(ctx: TContext, payload: unknown) => boolean} [guard] Optional guard for event transitions.
  */
 
 /**
+ * @template [TContext=unknown]
  * @typedef {object} StateConfig
  * @property {string | null} [parent=null] Optional parent state id for hierarchical FSM behavior.
  * @property {string | null} [initial=null] Default child state id when transitioning directly into a parent state.
- * @property {(ctx: unknown, prevState: string | null, payload: unknown) => void} [onEnter]
- * @property {(ctx: unknown, dt: number, stateTime: number) => void} [onUpdate]
- * @property {(ctx: unknown, nextState: string | null) => void} [onExit]
- * @property {StateTransition[]} [transitions]
+ * @property {(ctx: TContext, prevState: string | null, payload: unknown) => void} [onEnter]
+ * @property {(ctx: TContext, dt: number, stateTime: number) => void} [onUpdate]
+ * @property {(ctx: TContext, nextState: string | null) => void} [onExit]
+ * @property {StateTransition<TContext>[]} [transitions]
  */
 
 /**
+ * @template [TContext=unknown]
  * @typedef {object} StateMachineOptions
  * @property {string} initial Initial state identifier.
- * @property {Record<string, StateConfig>} states State definitions keyed by id.
- * @property {unknown} [context={}] Context object passed to lifecycle and guard callbacks.
+ * @property {Record<string, StateConfig<TContext>>} states State definitions keyed by id.
+ * @property {TContext} [context] Context object passed to lifecycle and guard callbacks.
  * @property {(from: string | null, to: string, payload: unknown) => void} [onTransition]
+ */
+
+/**
+ * @template [TContext=unknown]
+ * @typedef {object} StateMachine
+ * @property {(dt: number) => string} update
+ * @property {(eventName: string, payload?: unknown) => boolean} send
+ * @property {(targetId: string, payload?: unknown) => string} transitionTo
+ * @property {(nextInitial?: string) => string} reset
+ * @property {(stateId: string) => boolean} isIn
+ * @property {() => string} getState
+ * @property {() => number} getStateTime
+ * @property {() => TContext} getContext
  */
 
 /**
  * Declarative Hierarchical Finite State Machine (HFSM) with LCA enter/exit semantics,
  * event-driven and condition-guarded transitions, and zero per-tick allocations.
- * @param {StateMachineOptions} options
+ * @template [TContext=unknown]
+ * @param {StateMachineOptions<TContext>} options
+ * @returns {Readonly<StateMachine<TContext>>}
  */
 export function createStateMachine(options) {
   if (!options || typeof options !== 'object' || !options.states) {

@@ -5,7 +5,7 @@
  * @param {number} [statusCode=0]
  * @returns {number}
  */
-export function packCrowdAnimStatus(frameRow: number, statusCode?: number): number;
+export function packCrowdAnimStatus(frameRow: number, statusCode?: number | undefined): number;
 /**
  * Decodes packed crowd W component back into { frameRow, statusCode }.
  * @param {number} packedW
@@ -14,21 +14,21 @@ export function packCrowdAnimStatus(frameRow: number, statusCode?: number): numb
 export function unpackCrowdAnimStatus(packedW: number, out?: {
     frameRow: number;
     statusCode: number;
-}): {
+} | undefined): {
     frameRow: number;
     statusCode: number;
 };
 export function createScreenFeedbackPass({ mode, THREE, scene, }?: {
-    mode?: string;
+    mode?: string | undefined;
     THREE?: any;
     scene?: any;
 }): {
     screenPulse: ({ ndcX, ndcY, strength, duration, color, }?: {
-        ndcX?: number;
-        ndcY?: number;
-        strength?: number;
-        duration?: number;
-        color?: number;
+        ndcX?: number | undefined;
+        ndcY?: number | undefined;
+        strength?: number | undefined;
+        duration?: number | undefined;
+        color?: number | undefined;
     }) => void;
     setLowHpIntensity: (intensity: any) => void;
     setSpeedLines: (intensity: any) => void;

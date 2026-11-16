@@ -112,7 +112,7 @@
  * @param {RedDotSystemOptions} [options]
  * @returns {RedDotSystem}
  */
-export function createRedDotSystem({ storage, storageKey, clock, resetHour, tzOffsetMinutes, maxCount, newLabel, }?: RedDotSystemOptions): RedDotSystem;
+export function createRedDotSystem({ storage, storageKey, clock, resetHour, tzOffsetMinutes, maxCount, newLabel, }?: RedDotSystemOptions | undefined): RedDotSystem;
 export type RedDotStyle = import("./red-dot/helpers.js").RedDotStyle;
 export type RedDotLeafStyle = import("./red-dot/helpers.js").RedDotLeafStyle;
 export type RedDotDisplayMode = import("./red-dot/helpers.js").RedDotDisplayMode;
@@ -126,31 +126,31 @@ export type RedDotSystemOptions = {
     /**
      * Persistence backend (HGame save store or Web Storage-like). State is loaded at creation.
      */
-    storage?: RedDotStorage | null;
+    storage?: import("./red-dot/helpers.js").RedDotStorage | null | undefined;
     /**
      * Key used with storage.
      */
-    storageKey?: string;
+    storageKey?: string | undefined;
     /**
      * Millisecond clock (default Date.now); inject for deterministic tests.
      */
-    clock?: () => number;
+    clock?: (() => number) | undefined;
     /**
      * Local hour (integer 0..23) at which daily nodes reset.
      */
-    resetHour?: number;
+    resetHour?: number | undefined;
     /**
      * Fixed UTC offset in minutes for the day key; omitted = host local time.
      */
-    tzOffsetMinutes?: number;
+    tzOffsetMinutes?: number | undefined;
     /**
      * Default cap for number badges (positive integer).
      */
-    maxCount?: number;
+    maxCount?: number | undefined;
     /**
      * Default text for 'new' badges.
      */
-    newLabel?: string;
+    newLabel?: string | undefined;
 };
 /**
  * Per-node configuration for RedDotSystem#configure. Omitted fields stay unchanged.
@@ -159,23 +159,23 @@ export type RedDotNodeConfig = {
     /**
      * Force a style or 'auto' to derive it from children.
      */
-    displayMode?: RedDotDisplayMode;
+    displayMode?: import("./red-dot/helpers.js").RedDotDisplayMode | undefined;
     /**
      * Node-specific number cap (positive integer) or null to use the system default.
      */
-    maxCount?: number | null;
+    maxCount?: number | null | undefined;
     /**
      * Node-specific 'new' text or null to use the system default.
      */
-    newLabel?: string | null;
+    newLabel?: string | null | undefined;
     /**
      * Gate the node (and its subtree) behind a feature unlock.
      */
-    unlocked?: boolean;
+    unlocked?: boolean | undefined;
     /**
      * Suppress the node's badge (anti-harassment).
      */
-    muted?: boolean;
+    muted?: boolean | undefined;
 };
 /**
  * What a rule evaluator may return: a boolean (dot), a number (count) or an object.
@@ -192,15 +192,15 @@ export type RedDotDailyOptions = {
     /**
      * Badge style while unacknowledged.
      */
-    style?: RedDotLeafStyle;
+    style?: import("./red-dot/helpers.js").RedDotLeafStyle | undefined;
     /**
      * Disable to suspend the daily source.
      */
-    enabled?: boolean;
+    enabled?: boolean | undefined;
     /**
      * Extra gate evaluated against the last context.
      */
-    condition?: ((context: unknown) => boolean) | null;
+    condition?: ((context: unknown) => boolean) | null | undefined;
 };
 /**
  * One contributing source reported by RedDotSystem#explain.

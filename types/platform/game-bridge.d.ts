@@ -31,7 +31,7 @@
  * @param {GameBridgeOptions} [options]
  * @returns {GameBridge}
  */
-export function createGameBridge({ gameId, windowRef, documentRef, parentOrigin, }?: GameBridgeOptions): GameBridge;
+export function createGameBridge({ gameId, windowRef, documentRef, parentOrigin, }?: GameBridgeOptions | undefined): GameBridge;
 export type GameBridgeOptions = {
     /**
      * Stable game slug echoed in every message.
@@ -40,15 +40,15 @@ export type GameBridgeOptions = {
     /**
      * Game window (default `globalThis.window`).
      */
-    windowRef?: Window;
+    windowRef?: Window | undefined;
     /**
      * Used to infer the embedding origin from `referrer`.
      */
-    documentRef?: Document;
+    documentRef?: Document | undefined;
     /**
      * Explicit trusted parent origin (otherwise a loopback allowlist is used).
      */
-    parentOrigin?: string;
+    parentOrigin?: string | undefined;
 };
 export type GameBridgeEvents = {
     /**

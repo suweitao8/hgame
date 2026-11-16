@@ -3,13 +3,13 @@
  * @param {FlatSpatialHashOptions} [options]
  * @returns {FlatSpatialHash2D}
  */
-export function createFlatSpatialHash2D(options?: FlatSpatialHashOptions): FlatSpatialHash2D;
+export function createFlatSpatialHash2D(options?: FlatSpatialHashOptions | undefined): FlatSpatialHash2D;
 /**
  * Convenience factory for {@link FlowField2D}.
  * @param {FlowFieldOptions} [options]
  * @returns {FlowField2D}
  */
-export function createFlowField2D(options?: FlowFieldOptions): FlowField2D;
+export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowField2D;
 /**
  * @typedef {object} SwarmSimulationOptions
  * @property {number} [capacity=32768] Maximum swarm units (`1..262144`).
@@ -135,7 +135,7 @@ export function createFlowField2D(options?: FlowFieldOptions): FlowField2D;
  * @param {SwarmSimulationOptions} [options]
  * @returns {SwarmSimulation}
  */
-export function createSwarmSimulation({ capacity, promoteRadius, demoteRadius, separationRadius, separationStrength, nearSeparationRadius, midSeparationRadius, maxNeighbors, flowInterval, ecsSlots, maxPatchesPerStep, gridCols, gridRows, cellSize, originX, originY, useFlowField, flashDuration, }?: SwarmSimulationOptions): SwarmSimulation;
+export function createSwarmSimulation({ capacity, promoteRadius, demoteRadius, separationRadius, separationStrength, nearSeparationRadius, midSeparationRadius, maxNeighbors, flowInterval, ecsSlots, maxPatchesPerStep, gridCols, gridRows, cellSize, originX, originY, useFlowField, flashDuration, }?: SwarmSimulationOptions | undefined): SwarmSimulation;
 /** Bit flags stored in `swarm.unitFlags[id]`. */
 export const SWARM_UNIT_FLAGS: Readonly<{
     NONE: 0;
@@ -166,7 +166,7 @@ export const ECS_SLOT_FLAGS: Readonly<{
  */
 export class FlatSpatialHash2D {
     /** @param {FlatSpatialHashOptions} [options] */
-    constructor({ cols, rows, cellSize, originX, originY, capacity, }?: FlatSpatialHashOptions);
+    constructor({ cols, rows, cellSize, originX, originY, capacity, }?: FlatSpatialHashOptions | undefined);
     cols: number;
     rows: number;
     cellSize: number;
@@ -202,7 +202,7 @@ export class FlatSpatialHash2D {
      * @param {number} [activeMask=1] Bitmask required to include an entity.
      * @returns {number} Count of inserted units.
      */
-    rebuildFromArrays(unitFlags: ArrayLike<number>, posX: ArrayLike<number>, posY: ArrayLike<number>, maxIndex?: number, activeMask?: number): number;
+    rebuildFromArrays(unitFlags: ArrayLike<number>, posX: ArrayLike<number>, posY: ArrayLike<number>, maxIndex?: number | undefined, activeMask?: number | undefined): number;
     /**
      * Queries IDs inside cells overlapping the circle `(x, y, radius)` into `outIds`.
      * When `posX` and `posY` are supplied, performs exact Euclidean radius filtering.
@@ -216,7 +216,7 @@ export class FlatSpatialHash2D {
      * @param {number} [selfId=-1] Optional entity ID to exclude safely without breaking list traversal.
      * @returns {number} Number of matching IDs written to `outIds`.
      */
-    queryRadiusIds(x: number, y: number, radius: number, outIds: Int32Array | number[], maxResults?: number, posX?: ArrayLike<number> | null, posY?: ArrayLike<number> | null, selfId?: number): number;
+    queryRadiusIds(x: number, y: number, radius: number, outIds: Int32Array | number[], maxResults?: number | undefined, posX?: ArrayLike<number> | null | undefined, posY?: ArrayLike<number> | null | undefined, selfId?: number | undefined): number;
 }
 /**
  * @typedef {object} FlowFieldOptions
@@ -242,7 +242,7 @@ export class FlatSpatialHash2D {
  */
 export class FlowField2D {
     /** @param {FlowFieldOptions} [options] */
-    constructor({ cols, rows, cellSize, originX, originY, }?: FlowFieldOptions);
+    constructor({ cols, rows, cellSize, originX, originY, }?: FlowFieldOptions | undefined);
     cols: number;
     rows: number;
     cellSize: number;
@@ -276,7 +276,7 @@ export class FlowField2D {
      * @param {number} [costValue=255]
      * @returns {void}
      */
-    setObstacleRect(minX: number, minY: number, maxX: number, maxY: number, costValue?: number): void;
+    setObstacleRect(minX: number, minY: number, maxX: number, maxY: number, costValue?: number | undefined): void;
     /**
      * Populates solid walls (`cost = 255`) from an HGame `TileMap`.
      * @param {{ width: number, height: number, tileWidth: number, tileHeight: number, worldToTile: (x: number, y: number) => { x: number, y: number }, isSolid: (tx: number, ty: number) => boolean }} tileMap
@@ -293,7 +293,7 @@ export class FlowField2D {
             y: number;
         };
         isSolid: (tx: number, ty: number) => boolean;
-    }, { worldOriginX, worldOriginY }?: FlowFieldTileMapOptions): void;
+    }, { worldOriginX, worldOriginY }?: FlowFieldTileMapOptions | undefined): void;
     /**
      * Recomputes distance integration and direction vectors toward one or more goals.
      * @param {FlowFieldGoal | readonly FlowFieldGoal[]} goals
@@ -310,7 +310,7 @@ export class FlowField2D {
     sample(x: number, y: number, out?: {
         x: number;
         y: number;
-    }): {
+    } | undefined): {
         x: number;
         y: number;
     };
@@ -345,7 +345,7 @@ export class FlowField2D {
  */
 export class FlatCombatECS {
     /** @param {FlatCombatECSOptions} [options] */
-    constructor({ maxSlots, maxHitEvents, swarmCapacity, }?: FlatCombatECSOptions);
+    constructor({ maxSlots, maxHitEvents, swarmCapacity, }?: FlatCombatECSOptions | undefined);
     maxSlots: number;
     maxHitEvents: number;
     swarmCapacity: number;
@@ -394,7 +394,7 @@ export class FlatCombatECS {
      * @param {number} [shield=0]
      * @returns {number} Allocated or existing slot index, or `-1` when full / out of range.
      */
-    promoteSwarmUnit(swarmId: number, x: number, y: number, rot?: number, hp?: number, clipId?: number, shield?: number): number;
+    promoteSwarmUnit(swarmId: number, x: number, y: number, rot?: number | undefined, hp?: number | undefined, clipId?: number | undefined, shield?: number | undefined): number;
     /**
      * Enqueues an isolated one-way combat hit event to be resolved cleanly in {@link FlatCombatECS#damageResolutionSystem}.
      * @param {number} slot
@@ -404,7 +404,7 @@ export class FlatCombatECS {
      * @param {number} [freezeDuration=0]
      * @returns {boolean}
      */
-    enqueueHit(slot: number, damage: number, pushX?: number, pushY?: number, freezeDuration?: number): boolean;
+    enqueueHit(slot: number, damage: number, pushX?: number | undefined, pushY?: number | undefined, freezeDuration?: number | undefined): boolean;
     /** Resolves all queued hit events (shield absorption, HP, knockback, freeze, dead flag). @returns {number} */
     damageResolutionSystem(): number;
     /**
@@ -424,7 +424,7 @@ export class FlatCombatECS {
      * @param {((swarmId: number, x: number, y: number) => void) | null} [onUnitKilled=null]
      * @returns {FlatCombatCleanupStats}
      */
-    flushPatchesAndCleanup(heroX: number, heroY: number, demoteRadius?: number, maxPatches?: number, onPatch?: ((patch: FlatCombatPatch) => void) | null, onUnitKilled?: ((swarmId: number, x: number, y: number) => void) | null): FlatCombatCleanupStats;
+    flushPatchesAndCleanup(heroX: number, heroY: number, demoteRadius?: number | undefined, maxPatches?: number | undefined, onPatch?: ((patch: FlatCombatPatch) => void) | null | undefined, onUnitKilled?: ((swarmId: number, x: number, y: number) => void) | null | undefined): FlatCombatCleanupStats;
     /** Clears all ECS slots and pending hit events. @returns {void} */
     clear(): void;
 }
@@ -432,149 +432,149 @@ export type SwarmSimulationOptions = {
     /**
      * Maximum swarm units (`1..262144`).
      */
-    capacity?: number;
+    capacity?: number | undefined;
     /**
      * Radius around hero auto-claiming fine ECS slots.
      */
-    promoteRadius?: number;
+    promoteRadius?: number | undefined;
     /**
      * Hysteresis radius releasing idle ECS slots back to autonomous swarm.
      */
-    demoteRadius?: number;
+    demoteRadius?: number | undefined;
     /**
      * Neighbor soft-push separation radius.
      */
-    separationRadius?: number;
+    separationRadius?: number | undefined;
     /**
      * Neighbor push strength (units/s).
      */
-    separationStrength?: number;
+    separationStrength?: number | undefined;
     /**
      * Distance within focus executing full 60Hz neighbor separation.
      */
-    nearSeparationRadius?: number;
+    nearSeparationRadius?: number | undefined;
     /**
      * Outer distance running 4-frame staggered separation (cached `sepX`/`sepY`); beyond uses flow + cell density damping.
      */
-    midSeparationRadius?: number;
+    midSeparationRadius?: number | undefined;
     /**
      * Hard cap on neighbor checks per unit per step.
      */
-    maxNeighbors?: number;
+    maxNeighbors?: number | undefined;
     /**
      * Flow Field recompute interval in seconds (`<= 0` recomputes every step).
      */
-    flowInterval?: number;
+    flowInterval?: number | undefined;
     /**
      * Fixed ECS slot budget inside proximity ring.
      */
-    ecsSlots?: number;
+    ecsSlots?: number | undefined;
     /**
      * Max ECS patches flushed per step.
      */
-    maxPatchesPerStep?: number;
+    maxPatchesPerStep?: number | undefined;
     /**
      * Spatial hash & Flow Field column count.
      */
-    gridCols?: number;
+    gridCols?: number | undefined;
     /**
      * Spatial hash & Flow Field row count.
      */
-    gridRows?: number;
+    gridRows?: number | undefined;
     /**
      * Cell size in world units.
      */
-    cellSize?: number;
+    cellSize?: number | undefined;
     /**
      * World X minimum corner.
      */
-    originX?: number;
+    originX?: number | undefined;
     /**
      * World Y/Z minimum corner.
      */
-    originY?: number;
+    originY?: number | undefined;
     /**
      * When false, units steer directly toward `(heroX, heroY)`.
      */
-    useFlowField?: boolean;
+    useFlowField?: boolean | undefined;
     /**
      * Hit-flash decay duration in seconds.
      */
-    flashDuration?: number;
+    flashDuration?: number | undefined;
 };
 export type SwarmSpawnOptions = {
-    x?: number;
-    y?: number;
-    rot?: number;
-    speed?: number;
-    scale?: number;
-    hp?: number;
-    clipId?: number;
-    animTime?: number;
+    x?: number | undefined;
+    y?: number | undefined;
+    rot?: number | undefined;
+    speed?: number | undefined;
+    scale?: number | undefined;
+    hp?: number | undefined;
+    clipId?: number | undefined;
+    animTime?: number | undefined;
 };
 export type SwarmWaveSpawnOptions = {
     /**
      * Number of units to spawn.
      */
-    count?: number;
+    count?: number | undefined;
     /**
      * Ring center X.
      */
-    centerX?: number;
+    centerX?: number | undefined;
     /**
      * Ring center Y/Z.
      */
-    centerY?: number;
+    centerY?: number | undefined;
     /**
      * Inner ring radius.
      */
-    minRadius?: number;
+    minRadius?: number | undefined;
     /**
      * Outer ring radius.
      */
-    maxRadius?: number;
+    maxRadius?: number | undefined;
     /**
      * Movement speed (world units/sec).
      */
-    speed?: number;
+    speed?: number | undefined;
     /**
      * Initial hit points.
      */
-    hp?: number;
+    hp?: number | undefined;
     /**
      * Clip index.
      */
-    clipId?: number;
+    clipId?: number | undefined;
     /**
      * Instance scale.
      */
-    scale?: number;
+    scale?: number | undefined;
     /**
      * Deterministic LCG seed (optional).
      */
-    seed?: number | null;
+    seed?: number | null | undefined;
 };
 export type SwarmCircleDamageOptions = {
-    x?: number;
-    y?: number;
-    radius?: number;
-    damage?: number;
-    knockback?: number;
-    freezeDuration?: number;
-    flashDuration?: number;
+    x?: number | undefined;
+    y?: number | undefined;
+    radius?: number | undefined;
+    damage?: number | undefined;
+    knockback?: number | undefined;
+    freezeDuration?: number | undefined;
+    flashDuration?: number | undefined;
 };
 export type SwarmStepOptions = {
-    heroX?: number;
-    heroY?: number;
+    heroX?: number | undefined;
+    heroY?: number | undefined;
     /**
      * Optional focal X for 3-tier LOD separation (defaults to `heroX`).
      */
-    focusX?: number;
+    focusX?: number | undefined;
     /**
      * Optional focal Y/Z for 3-tier LOD separation (defaults to `heroY`).
      */
-    focusY?: number;
-    onUnitKilled?: ((swarmId: number, x: number, y: number) => void) | null;
+    focusY?: number | undefined;
+    onUnitKilled?: ((swarmId: number, x: number, y: number) => void) | null | undefined;
 };
 export type SwarmStepStats = {
     /**
@@ -602,23 +602,23 @@ export type SwarmSyncCrowd2DOptions = {
     /**
      * Write `rot` into `crowd.rotation`.
      */
-    syncRotation?: boolean;
+    syncRotation?: boolean | undefined;
     /**
      * Flip `crowd.flipX` based on `sin(rot) < 0`.
      */
-    flipByDirection?: boolean;
+    flipByDirection?: boolean | undefined;
     /**
      * SpriteSheet frame count per clip (`> 1` animates `crowd.frame`).
      */
-    frameCount?: number;
+    frameCount?: number | undefined;
     /**
      * Sprite animation frames per second.
      */
-    animFps?: number;
+    animFps?: number | undefined;
     /**
      * Force copying per-unit SoA arrays into `crowd2d` (by default `bindSwarm` connects zero-copy).
      */
-    copyArrays?: boolean;
+    copyArrays?: boolean | undefined;
 };
 export type SwarmSimulation = {
     capacity: number;
@@ -701,49 +701,49 @@ export type FlatSpatialHashOptions = {
     /**
      * Grid column count (integer >= 1).
      */
-    cols?: number;
+    cols?: number | undefined;
     /**
      * Grid row count (integer >= 1).
      */
-    rows?: number;
+    rows?: number | undefined;
     /**
      * Cell edge length in world units (> 0).
      */
-    cellSize?: number;
+    cellSize?: number | undefined;
     /**
      * World X of cell (0, 0) minimum corner.
      */
-    originX?: number;
+    originX?: number | undefined;
     /**
      * World Y (or Z in 3D) of cell (0, 0) minimum corner.
      */
-    originY?: number;
+    originY?: number | undefined;
     /**
      * Maximum entity ID supported (`0..capacity - 1`).
      */
-    capacity?: number;
+    capacity?: number | undefined;
 };
 export type FlowFieldOptions = {
     /**
      * Field grid columns (integer >= 2).
      */
-    cols?: number;
+    cols?: number | undefined;
     /**
      * Field grid rows (integer >= 2).
      */
-    rows?: number;
+    rows?: number | undefined;
     /**
      * Cell edge length in world units (> 0).
      */
-    cellSize?: number;
+    cellSize?: number | undefined;
     /**
      * World X of grid minimum corner.
      */
-    originX?: number;
+    originX?: number | undefined;
     /**
      * World Y/Z of grid minimum corner.
      */
-    originY?: number;
+    originY?: number | undefined;
 };
 export type FlowFieldGoal = {
     /**
@@ -759,25 +759,25 @@ export type FlowFieldTileMapOptions = {
     /**
      * World X of the TileMap origin (0, 0).
      */
-    worldOriginX?: number;
+    worldOriginX?: number | undefined;
     /**
      * World Y/Z of the TileMap origin (0, 0).
      */
-    worldOriginY?: number;
+    worldOriginY?: number | undefined;
 };
 export type FlatCombatECSOptions = {
     /**
      * Preallocated ECS slots (integer >= 1).
      */
-    maxSlots?: number;
+    maxSlots?: number | undefined;
     /**
      * Preallocated hit-event capacity (integer >= 1).
      */
-    maxHitEvents?: number;
+    maxHitEvents?: number | undefined;
     /**
      * Maximum external swarm unit ID (`0..swarmCapacity - 1`).
      */
-    swarmCapacity?: number;
+    swarmCapacity?: number | undefined;
 };
 export type FlatCombatPatch = {
     swarmId: number;

@@ -26,23 +26,23 @@ export type PbrThree = {
     FrontSide: number;
 };
 export type PbrProjectionOptions = {
-    projection?: PbrProjection;
+    projection?: import("./world-aligned-material.js").WorldProjection | undefined;
     /**
      * World units per texture repeat, 0.01..1000.
      */
-    tileSize?: number;
+    tileSize?: number | undefined;
     /**
      * Triplanar blend exponent, 0.1..32.
      */
-    blendSharpness?: number;
+    blendSharpness?: number | undefined;
     /**
      * Ambient-occlusion strength, 0..1.
      */
-    aoIntensity?: number;
+    aoIntensity?: number | undefined;
     /**
      * Normal-map strength, 0..2.
      */
-    normalStrength?: number;
+    normalStrength?: number | undefined;
 };
 /**
  * color = sRGB base colour; normal = OpenGL tangent-space map; orm = linear (R AO, G roughness, B metallic).
@@ -69,13 +69,13 @@ export type PbrCatalogEntry = {
      * Relative texture path.
      */
     orm: string;
-    name?: string;
-    category?: string;
+    name?: string | undefined;
+    category?: string | undefined;
     /**
      * Default tile size in world units.
      */
-    tileSize?: number;
-    projection?: PbrProjection;
+    tileSize?: number | undefined;
+    projection?: import("./world-aligned-material.js").WorldProjection | undefined;
 };
 export type PbrCatalog = {
     version: 1;
@@ -113,13 +113,13 @@ export type PbrLibraryOptions = {
     /**
      * Custom catalog fetcher; defaults to fetch().
      */
-    fetchJson?: ((url: string) => Promise<PbrCatalog>) | null;
+    fetchJson?: ((url: string) => Promise<PbrCatalog>) | null | undefined;
     /**
      * Defaults to `new THREE.TextureLoader()`.
      */
     textureLoader?: {
         loadAsync(url: string): Promise<PbrTextureLike>;
-    } | null;
+    } | null | undefined;
 };
 export type PbrLibraryListItem = {
     id: string;

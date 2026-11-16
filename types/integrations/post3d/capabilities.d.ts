@@ -56,7 +56,7 @@ export function inspectWebGLCapabilities(renderer: WebGLRendererLike | null | un
  * @param {QualityDeviceHints} [deviceHints={}]
  * @returns {Readonly<RefinedQuality>}
  */
-export function refineQualityWithContext(qualityController: QualityControllerLike | null | undefined, renderer: WebGLRendererLike | null | undefined, deviceHints?: QualityDeviceHints): Readonly<RefinedQuality>;
+export function refineQualityWithContext(qualityController: QualityControllerLike | null | undefined, renderer: WebGLRendererLike | null | undefined, deviceHints?: QualityDeviceHints | undefined): Readonly<RefinedQuality>;
 /**
  * Minimal THREE namespace used here.
  */
@@ -99,13 +99,13 @@ export type WebGLRendererLike = {
     /**
      * WebGL context accessor.
      */
-    getContext?: () => ({
+    getContext?: (() => ({
         [key: string]: unknown;
-    } | null | undefined);
+    } | null | undefined)) | undefined;
     capabilities?: {
         isWebGL2?: boolean;
         getMaxAnisotropy?: () => number;
-    };
+    } | undefined;
 };
 export type QualityControllerLike = {
     /**
@@ -116,21 +116,21 @@ export type QualityControllerLike = {
             msaaSamples?: number;
             anisotropy?: number;
         };
-    };
+    } | undefined;
 };
 export type QualityDeviceHints = {
     /**
      * GPU renderer string override.
      */
-    rendererName?: string;
+    rendererName?: string | undefined;
     /**
      * Device memory in GB (<= 2 forces 'low').
      */
-    memoryGB?: number | null;
+    memoryGB?: number | null | undefined;
     /**
      * True on mobile devices (forces 'low').
      */
-    mobile?: boolean;
+    mobile?: boolean | undefined;
 };
 export type RefinedQuality = {
     /**

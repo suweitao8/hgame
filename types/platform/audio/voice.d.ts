@@ -48,16 +48,16 @@ export function playAudioBuffer(ctx: object, buffer: AudioBuffer, { volume: soun
     readonly lowPassHz: any;
     setPosition(nextPos: any): any;
     setOcclusion(nextValue: any, { smoothSeconds, lowPassHz, gainScale }?: {
-        smoothSeconds?: number;
-        lowPassHz?: any;
-        gainScale?: any;
+        smoothSeconds?: number | undefined;
+        lowPassHz?: null | undefined;
+        gainScale?: null | undefined;
     }): any;
     refreshOcclusion({ smoothSeconds }?: {
-        smoothSeconds?: number;
+        smoothSeconds?: number | undefined;
     }): number;
     setVolume(nextVol: any): any;
     setPlaybackRate(nextRate: any): any;
     stop({ fadeOutMs }?: {
-        fadeOutMs?: number;
+        fadeOutMs?: number | undefined;
     }): void;
-}>;
+} | null>;

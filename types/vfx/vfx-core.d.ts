@@ -2,7 +2,7 @@
  * Isolated visual PRNG (xorshift32). Never touches gameplay/lockstep RNG state.
  * @param {number} [seed=0x9e3779b9]
  */
-export function createVisualPrng(seed?: number): {
+export function createVisualPrng(seed?: number | undefined): {
     nextFloat(): number;
     range(min: any, max: any): any;
     reset(newSeed?: number): void;
@@ -15,7 +15,7 @@ export function createVisualPrng(seed?: number): {
  * @param {number} [b]
  * @returns {number}
  */
-export function packRgb24(hexOrR: number, g?: number, b?: number): number;
+export function packRgb24(hexOrR: number, g?: number | undefined, b?: number | undefined): number;
 /**
  * Unpacks a 24-bit integer float into normalized [0..1] RGB components inside a pre-allocated array.
  * @param {number} packed
@@ -39,10 +39,10 @@ export function markAttributeRangeDirty(attr: object, floatOffset: number, float
  * @param {Array<{offset:number,count:number}>} [outRanges]
  * @returns {number} Number of ranges submitted (0, 1, or 2)
  */
-export function submitRingBufferRanges(attr: object, startIndex: number, count: number, capacity: number, strideFloats: number, outRanges?: Array<{
+export function submitRingBufferRanges(attr: object, startIndex: number, count: number, capacity: number, strideFloats: number, outRanges?: {
     offset: number;
     count: number;
-}>): number;
+}[] | undefined): number;
 /**
  * Visual-only hitstop clock. Scales visualDt for VFX/animations without blocking fixed-step lockstep logic.
  */

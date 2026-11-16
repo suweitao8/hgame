@@ -111,11 +111,11 @@ export type ConfirmedFrameSchedulerOptions = {
     /**
      * Network ticks per second (integer 1..240).
      */
-    netHz?: number;
+    netHz?: number | undefined;
     /**
      * Logic ticks per second; integer multiple of `netHz` (<= 240).
      */
-    logicHz?: number;
+    logicHz?: number | undefined;
     /**
      * Sorted unique non-negative integer player ids (required).
      */
@@ -127,35 +127,35 @@ export type ConfirmedFrameSchedulerOptions = {
     /**
      * Called right after each committed logic tick (hash here).
      */
-    onTick?: (info: LockstepTickInfo) => void;
+    onTick?: ((info: LockstepTickInfo) => void) | undefined;
     /**
      * Return true to stop scheduling.
      */
-    isEnded?: () => boolean;
+    isEnded?: (() => boolean) | undefined;
     /**
      * Buttons cleared on non-first substeps (31-bit mask).
      */
-    instantButtonMask?: number;
+    instantButtonMask?: number | undefined;
     /**
      * Network frames buffered before starting (1..16).
      */
-    startBufferFrames?: number;
+    startBufferFrames?: number | undefined;
     /**
      * Max pending network frames (>= startBufferFrames, <= 512).
      */
-    maxBufferFrames?: number;
+    maxBufferFrames?: number | undefined;
     /**
      * Logic ticks per `advanceElapsedMs` call (1..32).
      */
-    maxStepsPerUpdate?: number;
+    maxStepsPerUpdate?: number | undefined;
     /**
      * Extra catch-up ticks per call (0..16).
      */
-    maxExtraStepsPerUpdate?: number;
+    maxExtraStepsPerUpdate?: number | undefined;
     /**
      * Scale catch-up with buffered excess.
      */
-    adaptiveCatchup?: boolean;
+    adaptiveCatchup?: boolean | undefined;
 };
 export type ConfirmedFrameScheduler = {
     /**

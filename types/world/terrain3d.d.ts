@@ -12,13 +12,13 @@
  * @returns {number}
  */
 export function fbmNoise2D(x: number, z: number, options?: {
-    seed?: number;
-    octaves?: number;
-    frequency?: number;
-    lacunarity?: number;
-    gain?: number;
-    ridgeWeight?: number;
-}): number;
+    seed?: number | undefined;
+    octaves?: number | undefined;
+    frequency?: number | undefined;
+    lacunarity?: number | undefined;
+    gain?: number | undefined;
+    ridgeWeight?: number | undefined;
+} | undefined): number;
 /**
  * @typedef {object} Terrain3DOptions
  * @property {number} [width=120] Terrain extent along X in world units.
@@ -45,14 +45,14 @@ export function fbmNoise2D(x: number, z: number, options?: {
  * Create a deterministic 3D heightfield terrain with exact mesh/physics height parity.
  * @param {Terrain3DOptions} [options]
  */
-export function createHeightfieldTerrain3D(options?: Terrain3DOptions): Readonly<{
+export function createHeightfieldTerrain3D(options?: Terrain3DOptions | undefined): Readonly<{
     width: number;
     depth: number;
     segmentsX: number;
     segmentsZ: number;
-    centerX: number;
-    centerZ: number;
-    seaLevel: number;
+    centerX: number | undefined;
+    centerZ: number | undefined;
+    seaLevel: number | undefined;
     seed: number;
     minHeight: number;
     maxHeight: number;
@@ -111,75 +111,75 @@ export type Terrain3DOptions = {
     /**
      * Terrain extent along X in world units.
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Terrain extent along Z in world units.
      */
-    depth?: number;
+    depth?: number | undefined;
     /**
      * Grid columns along X.
      */
-    segmentsX?: number;
+    segmentsX?: number | undefined;
     /**
      * Grid rows along Z.
      */
-    segmentsZ?: number;
+    segmentsZ?: number | undefined;
     /**
      * Lower height bound.
      */
-    minHeight?: number;
+    minHeight?: number | undefined;
     /**
      * Upper height bound.
      */
-    maxHeight?: number;
+    maxHeight?: number | undefined;
     /**
      * Sea/sand transition height.
      */
-    seaLevel?: number;
+    seaLevel?: number | undefined;
     /**
      * World X center.
      */
-    centerX?: number;
+    centerX?: number | undefined;
     /**
      * World Z center.
      */
-    centerZ?: number;
+    centerZ?: number | undefined;
     /**
      * Deterministic noise seed.
      */
-    seed?: number;
+    seed?: number | undefined;
     /**
      * FBM octaves.
      */
-    octaves?: number;
+    octaves?: number | undefined;
     /**
      * Base noise frequency.
      */
-    frequency?: number;
+    frequency?: number | undefined;
     /**
      * FBM frequency multiplier.
      */
-    lacunarity?: number;
+    lacunarity?: number | undefined;
     /**
      * FBM amplitude multiplier.
      */
-    gain?: number;
+    gain?: number | undefined;
     /**
      * Ridged blend weight (0..1).
      */
-    ridgeWeight?: number;
+    ridgeWeight?: number | undefined;
     /**
      * Optional radial edge shaping.
      */
-    edgeFalloff?: "none" | "island" | "bowl";
+    edgeFalloff?: "none" | "island" | "bowl" | undefined;
     /**
      * Radial shaping intensity when edgeFalloff != 'none'.
      */
-    edgeStrength?: number;
+    edgeStrength?: number | undefined;
     /**
      * Optional custom height modifier.
      */
-    heightFn?: (x: number, z: number, baseHeight: number) => number;
+    heightFn?: ((x: number, z: number, baseHeight: number) => number) | undefined;
     /**
      * Biome hex/RGB colors (`sand`, `grass`, `rock`, `peak`).
      */

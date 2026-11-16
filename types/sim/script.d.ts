@@ -30,23 +30,23 @@ export type RunScriptedOptions<I = unknown> = {
     /**
      * Per-tick input: array indexed by tick or a function. Missing entries yield `null`.
      */
-    script?: ArrayLike<I> | ((tick: number) => I | null | undefined);
+    script?: ArrayLike<I> | ((tick: number) => I | null | undefined) | undefined;
     /**
      * Tick count; defaults to `script.length` for arrays.
      */
-    ticks?: number;
+    ticks?: number | undefined;
     /**
      * Returns the state to fold into the checksum after each tick (default: no hashing).
      */
-    checksum?: (tick: number) => unknown;
+    checksum?: ((tick: number) => unknown) | undefined;
     /**
      * Fold the state every N ticks (default 1; the final tick is always folded).
      */
-    every?: number;
+    every?: number | undefined;
     /**
      * When > 0, record the running digest every N ticks in `samples`.
      */
-    recordEvery?: number;
+    recordEvery?: number | undefined;
 };
 export type RunScriptedResult = {
     /**

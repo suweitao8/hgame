@@ -53,15 +53,15 @@ export type GameHostBridgeOptions = {
     /**
      * Host window (default `globalThis.window`).
      */
-    windowRef?: Window;
+    windowRef?: Window | undefined;
     /**
      * Host document (default `globalThis.document`).
      */
-    documentRef?: Document;
+    documentRef?: Document | undefined;
     /**
      * Called for every accepted game message.
      */
-    onMessage?: (message: Readonly<GameHostMessage>) => void;
+    onMessage?: ((message: Readonly<GameHostMessage>) => void) | undefined;
 };
 export type GameHostSession = {
     gameId: string;

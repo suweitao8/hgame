@@ -47,7 +47,7 @@ export function normalizeShadowVec3(input: any, fallback: any): any[];
  */
 export function fitDirectionalShadowFrustum(THREE: {
     Vector3: new (x?: number, y?: number, z?: number) => any;
-}, light: DirectionalLightLike, bounds: ShadowFitBounds, { sunDirection, distance, padding, snapToTexels, bias, normalBias, }?: ShadowFitOptions): ShadowFrustum;
+}, light: DirectionalLightLike, bounds: ShadowFitBounds, { sunDirection, distance, padding, snapToTexels, bias, normalBias, }?: ShadowFitOptions | undefined): ShadowFrustum;
 /**
  * Direction/point [x, y, z].
  */
@@ -63,7 +63,7 @@ export type DirectionalLightLike = {
         y: number;
         z: number;
         set?(x: number, y: number, z: number): unknown;
-    };
+    } | undefined;
     target?: {
         position: {
             x: number;
@@ -72,7 +72,7 @@ export type DirectionalLightLike = {
             set?(x: number, y: number, z: number): unknown;
         };
         updateMatrixWorld?(force?: boolean): void;
-    };
+    } | undefined;
     shadow: {
         camera: {
             left: number;
@@ -95,30 +95,30 @@ export type DirectionalLightLike = {
  * Either {min,max} or {center,radius}.
  */
 export type ShadowFitBounds = {
-    min?: ShadowVec3Tuple;
-    max?: ShadowVec3Tuple;
-    center?: ShadowVec3Tuple;
-    radius?: number;
+    min?: ShadowVec3Tuple | undefined;
+    max?: ShadowVec3Tuple | undefined;
+    center?: ShadowVec3Tuple | undefined;
+    radius?: number | undefined;
 };
 export type ShadowFitOptions = {
     /**
      * Defaults to light.position - light.target.position.
      */
-    sunDirection?: ShadowVec3Input | null;
+    sunDirection?: ShadowVec3Input | null | undefined;
     /**
      * Light distance from bounds centre, world units.
      */
-    distance?: number;
+    distance?: number | undefined;
     /**
      * World units added on each side.
      */
-    padding?: number;
+    padding?: number | undefined;
     /**
      * Snap to shadow-map texels to avoid shimmer.
      */
-    snapToTexels?: boolean;
-    bias?: number | null;
-    normalBias?: number | null;
+    snapToTexels?: boolean | undefined;
+    bias?: number | null | undefined;
+    normalBias?: number | null | undefined;
 };
 export type ShadowFrustum = {
     left: number;

@@ -3,18 +3,18 @@
  * @param {'2d'|'3d'} [dimension='3d']
  * @returns {Readonly<Quality3DPreset>|Readonly<Quality2DPreset>}
  */
-export function resolveQualityPreset(tier?: QualityPresetTier, dimension?: "2d" | "3d"): Readonly<Quality3DPreset> | Readonly<Quality2DPreset>;
+export function resolveQualityPreset(tier?: QualityPresetTier | undefined, dimension?: "3d" | "2d" | undefined): Readonly<Quality3DPreset> | Readonly<Quality2DPreset>;
 /**
  * Pure, conservative hint selection. Does not allocate a probing WebGL context.
  * @param {QualityDeviceHints} [hints]
  * @returns {QualityTier}
  */
-export function chooseInitial3dQuality({ mobile, rendererName, memoryGB, }?: QualityDeviceHints): QualityTier;
+export function chooseInitial3dQuality({ mobile, rendererName, memoryGB, }?: QualityDeviceHints | undefined): QualityTier;
 /**
  * @param {AdaptiveQualityOptions} [options]
  * @returns {Readonly<AdaptiveQualityController>}
  */
-export function createAdaptiveQualityController({ mode, device, minScale, maxScale, minPixelRatio, maxPixelRatio, settleMs, settleAfterChangeMs, sampleFrames, degradeFrameMs, recoverFrameMs, onChange, }?: AdaptiveQualityOptions): Readonly<AdaptiveQualityController>;
+export function createAdaptiveQualityController({ mode, device, minScale, maxScale, minPixelRatio, maxPixelRatio, settleMs, settleAfterChangeMs, sampleFrames, degradeFrameMs, recoverFrameMs, onChange, }?: AdaptiveQualityOptions | undefined): Readonly<AdaptiveQualityController>;
 /**
  * Optional 3D render-quality controller.
  *
@@ -169,15 +169,15 @@ export type Quality2DPreset = {
     hitFlashQuality: "fast" | "full";
 };
 export type QualityDeviceHints = {
-    mobile?: boolean;
+    mobile?: boolean | undefined;
     /**
      * GPU renderer string.
      */
-    rendererName?: string;
+    rendererName?: string | undefined;
     /**
      * Device memory in GB.
      */
-    memoryGB?: number | null;
+    memoryGB?: number | null | undefined;
 };
 export type QualitySnapshot = {
     mode: QualityMode;
@@ -205,36 +205,36 @@ export type ViewportPlan = {
     maxPixels: number;
 };
 export type AdaptiveQualityOptions = {
-    mode?: QualityMode;
-    device?: QualityDeviceHints;
+    mode?: QualityMode | undefined;
+    device?: QualityDeviceHints | undefined;
     /**
      * Min dynamic resolution scale.
      */
-    minScale?: number;
+    minScale?: number | undefined;
     /**
      * Max dynamic resolution scale.
      */
-    maxScale?: number;
-    minPixelRatio?: number;
-    maxPixelRatio?: number;
+    maxScale?: number | undefined;
+    minPixelRatio?: number | undefined;
+    maxPixelRatio?: number | undefined;
     /**
      * Initial settle time in ms.
      */
-    settleMs?: number;
-    settleAfterChangeMs?: number;
+    settleMs?: number | undefined;
+    settleAfterChangeMs?: number | undefined;
     /**
      * Frames per sample window (2..300).
      */
-    sampleFrames?: number;
+    sampleFrames?: number | undefined;
     /**
      * Mean frame ms above which quality drops.
      */
-    degradeFrameMs?: number;
+    degradeFrameMs?: number | undefined;
     /**
      * Mean frame ms below which quality recovers.
      */
-    recoverFrameMs?: number;
-    onChange?: ((state: QualitySnapshot, reason: string) => void) | null;
+    recoverFrameMs?: number | undefined;
+    onChange?: ((state: QualitySnapshot, reason: string) => void) | null | undefined;
 };
 export type AdaptiveQualityController = {
     /**

@@ -24,7 +24,7 @@ export function ciePlanckianLinearRgb(tempK: number): RGBTuple;
  * @param {RGBTuple} [out=[1,1,1]] Receives the multipliers (mutated and returned).
  * @returns {RGBTuple} `out`.
  */
-export function computeWhiteBalanceRGB(whiteTemp?: number, whiteTint?: number, out?: RGBTuple): RGBTuple;
+export function computeWhiteBalanceRGB(whiteTemp?: number | undefined, whiteTint?: number | undefined, out?: RGBTuple | undefined): RGBTuple;
 /**
  * Clean-room monotonic parametric filmic tone curve for a single linear HDR channel.
  * @typedef {object} FilmicCurveParams
@@ -40,7 +40,7 @@ export function computeWhiteBalanceRGB(whiteTemp?: number, whiteTint?: number, o
  * @param {FilmicCurveParams} [params]
  * @returns {number} Mapped value in 0..1.
  */
-export function evaluateFilmicCurveChannel(x: number, { slope, toe, shoulder, blackClip, whiteClip, }?: FilmicCurveParams): number;
+export function evaluateFilmicCurveChannel(x: number, { slope, toe, shoulder, blackClip, whiteClip, }?: FilmicCurveParams | undefined): number;
 /**
  * Evaluates the parametric filmic curve with subtle highlight crosstalk desaturation.
  * @param {ArrayLike<number>} rgb Linear HDR RGB input.
@@ -48,7 +48,7 @@ export function evaluateFilmicCurveChannel(x: number, { slope, toe, shoulder, bl
  * @param {RGBTuple} [out=[0,0,0]] Receives the result (mutated and returned).
  * @returns {RGBTuple} `out`.
  */
-export function evaluateFilmicCurveRGB(rgb: ArrayLike<number>, params?: FilmicCurveParams, out?: RGBTuple): RGBTuple;
+export function evaluateFilmicCurveRGB(rgb: ArrayLike<number>, params?: FilmicCurveParams | undefined, out?: RGBTuple | undefined): RGBTuple;
 /**
  * Eye-adaptation tuning.
  * @typedef {object} EyeAdaptationParams
@@ -67,7 +67,7 @@ export function evaluateFilmicCurveRGB(rgb: ArrayLike<number>, params?: FilmicCu
  * @param {number} [dt=1/60] Time step in seconds.
  * @returns {number} New exposure multiplier.
  */
-export function stepEyeAdaptation(currentExposure: number, avgLuminance: number, { keyValue, minExposure, maxExposure, adaptSpeedUp, adaptSpeedDown, exposureCompensation, }?: EyeAdaptationParams, dt?: number): number;
+export function stepEyeAdaptation(currentExposure: number, avgLuminance: number, { keyValue, minExposure, maxExposure, adaptSpeedUp, adaptSpeedDown, exposureCompensation, }?: EyeAdaptationParams | undefined, dt?: number | undefined): number;
 export const D65_PLANCKIAN_REF: RGBTuple;
 /**
  * Linear RGB triple.
@@ -80,23 +80,23 @@ export type FilmicCurveParams = {
     /**
      * Mid-tone contrast slope.
      */
-    slope?: number;
+    slope?: number | undefined;
     /**
      * Toe strength 0..1.
      */
-    toe?: number;
+    toe?: number | undefined;
     /**
      * Shoulder strength 0..1.
      */
-    shoulder?: number;
+    shoulder?: number | undefined;
     /**
      * Black clip 0..0.5.
      */
-    blackClip?: number;
+    blackClip?: number | undefined;
     /**
      * White clip 0..0.5.
      */
-    whiteClip?: number;
+    whiteClip?: number | undefined;
 };
 /**
  * Eye-adaptation tuning.
@@ -105,25 +105,25 @@ export type EyeAdaptationParams = {
     /**
      * Target middle-grey key.
      */
-    keyValue?: number;
+    keyValue?: number | undefined;
     /**
      * Minimum exposure multiplier.
      */
-    minExposure?: number;
+    minExposure?: number | undefined;
     /**
      * Maximum exposure multiplier.
      */
-    maxExposure?: number;
+    maxExposure?: number | undefined;
     /**
      * Adaptation rate (1/s) when target exposure decreases (scene brightens).
      */
-    adaptSpeedUp?: number;
+    adaptSpeedUp?: number | undefined;
     /**
      * Adaptation rate (1/s) when target exposure increases (scene darkens).
      */
-    adaptSpeedDown?: number;
+    adaptSpeedDown?: number | undefined;
     /**
      * Exposure compensation multiplier.
      */
-    exposureCompensation?: number;
+    exposureCompensation?: number | undefined;
 };

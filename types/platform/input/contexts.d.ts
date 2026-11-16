@@ -6,7 +6,7 @@
  * @param {InputContextOptions} [options]
  * @returns {Readonly<InputContext>}
  */
-export function defineInputContext(name: string, { priority, consumesKeys, blocksLowerContexts, bufferWindow, actions, axes1D, axes2D, }?: InputContextOptions): Readonly<InputContext>;
+export function defineInputContext(name: string, { priority, consumesKeys, blocksLowerContexts, bufferWindow, actions, axes1D, axes2D, }?: InputContextOptions | undefined): Readonly<InputContext>;
 /**
  * @typedef {object} ActionBindingConfig
  * @property {string | Iterable<string>} [keys] Keys (`KeyboardEvent.code` or `Mouse*` names) that trigger the action.
@@ -85,23 +85,23 @@ export type ActionBindingConfig = {
     /**
      * Keys (`KeyboardEvent.code` or `Mouse*` names) that trigger the action.
      */
-    keys?: string | Iterable<string>;
+    keys?: string | Iterable<string> | undefined;
     /**
      * Keys that must all be held for the binding to apply.
      */
-    chord?: string | Iterable<string>;
+    chord?: string | Iterable<string> | undefined;
     /**
      * Input buffer duration in seconds (default: context `bufferWindow`).
      */
-    bufferWindow?: number;
+    bufferWindow?: number | undefined;
     /**
      * Hide triggering keys from lower-priority contexts (default: context `consumesKeys`).
      */
-    consumeKeys?: boolean;
+    consumeKeys?: boolean | undefined;
     /**
      * Consume the keys even while not triggered.
      */
-    consumeAlways?: boolean;
+    consumeAlways?: boolean | undefined;
 };
 /**
  * Key, key list, or full binding config.
@@ -111,67 +111,67 @@ export type Axis1DBindingConfig = {
     /**
      * Keys giving +1.
      */
-    positive?: string | Iterable<string>;
+    positive?: string | Iterable<string> | undefined;
     /**
      * Keys giving -1.
      */
-    negative?: string | Iterable<string>;
-    consumeKeys?: boolean;
-    consumeAlways?: boolean;
+    negative?: string | Iterable<string> | undefined;
+    consumeKeys?: boolean | undefined;
+    consumeAlways?: boolean | undefined;
 };
 export type Axis2DBindingConfig = {
     /**
      * Keys giving +y.
      */
-    up?: string | Iterable<string>;
+    up?: string | Iterable<string> | undefined;
     /**
      * Keys giving -y.
      */
-    down?: string | Iterable<string>;
+    down?: string | Iterable<string> | undefined;
     /**
      * Keys giving -x.
      */
-    left?: string | Iterable<string>;
+    left?: string | Iterable<string> | undefined;
     /**
      * Keys giving +x.
      */
-    right?: string | Iterable<string>;
+    right?: string | Iterable<string> | undefined;
     /**
      * Normalize diagonals to unit length.
      */
-    normalize?: boolean;
-    consumeKeys?: boolean;
-    consumeAlways?: boolean;
+    normalize?: boolean | undefined;
+    consumeKeys?: boolean | undefined;
+    consumeAlways?: boolean | undefined;
 };
 export type InputContextOptions = {
     /**
      * Higher priority contexts are evaluated first (finite).
      */
-    priority?: number;
+    priority?: number | undefined;
     /**
      * Default key consumption for bindings.
      */
-    consumesKeys?: boolean;
+    consumesKeys?: boolean | undefined;
     /**
      * Modal: stop evaluating lower-priority contexts.
      */
-    blocksLowerContexts?: boolean;
+    blocksLowerContexts?: boolean | undefined;
     /**
      * Default input-buffer duration, seconds (>= 0).
      */
-    bufferWindow?: number;
+    bufferWindow?: number | undefined;
     /**
      * Action name -> binding.
      */
-    actions?: Record<string, InputActionSpec>;
+    actions?: Record<string, InputActionSpec> | undefined;
     /**
      * Axis name -> binding.
      */
-    axes1D?: Record<string, Axis1DBindingConfig>;
+    axes1D?: Record<string, Axis1DBindingConfig> | undefined;
     /**
      * Axis name -> binding.
      */
-    axes2D?: Record<string, Axis2DBindingConfig>;
+    axes2D?: Record<string, Axis2DBindingConfig> | undefined;
 };
 export type ResolvedActionBinding = {
     keys: string[];

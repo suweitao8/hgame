@@ -19,11 +19,11 @@ export class Scene {
     /** Depth-first search by name. @param {string} name @returns {Entity | null} */
     find(name: string): Entity | null;
     /** @param {string} tag @param {SceneTagFindOptions} [options] @returns {Entity[]} */
-    findByTag(tag: string, { exact, activeOnly }?: SceneTagFindOptions): Entity[];
+    findByTag(tag: string, { exact, activeOnly }?: SceneTagFindOptions | undefined): Entity[];
     /** @param {import('./tags.js').TagQuery} query @param {{ activeOnly?: boolean }} [options] @returns {Entity[]} */
     queryTags(query: import("./tags.js").TagQuery, { activeOnly }?: {
         activeOnly?: boolean;
-    }): Entity[];
+    } | undefined): Entity[];
     /** Called when the scene becomes current. @param {import('./application.js').GameApplication} _app @param {unknown} [_data] Value passed to `scenes.start`. @returns {void} */
     enter(_app: import("./application.js").GameApplication, _data?: unknown): void;
     /** Called when the scene stops being current. @param {import('./application.js').GameApplication} _app @returns {void} */
@@ -51,9 +51,9 @@ export class SceneManager {
      * @param {import('./application.js').GameApplication} app
      * @param {(scene: Scene) => void} [onScene] Called for every added scene.
      */
-    constructor(app: import("./application.js").GameApplication, onScene?: (scene: Scene) => void);
+    constructor(app: import("./application.js").GameApplication, onScene?: ((scene: Scene) => void) | undefined);
     app: import("./application.js").GameApplication;
-    onScene: (scene: Scene) => void;
+    onScene: ((scene: Scene) => void) | undefined;
     /** @type {Map<string, Scene>} */
     registry: Map<string, Scene>;
     /** @type {Scene | null} */
@@ -76,9 +76,9 @@ export type GameCommand = {
  * Per-scene physics world contract (provided by the physics modules).
  */
 export type ScenePhysicsWorld = {
-    step?: (dtSeconds: number) => void;
-    remove?: (entity: import("./entity.js").Entity) => void;
-    dispose?: () => void;
+    step?: ((dtSeconds: number) => void) | undefined;
+    remove?: ((entity: import("./entity.js").Entity) => void) | undefined;
+    dispose?: (() => void) | undefined;
 };
 export type SceneTagFindOptions = {
     exact?: boolean;

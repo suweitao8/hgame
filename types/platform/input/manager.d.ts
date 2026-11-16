@@ -61,20 +61,20 @@
  * @param {InputManagerOptions} [options]
  * @returns {InputManager}
  */
-export function createInputManager({ target, focused, preventDefaultKeys, }?: InputManagerOptions): InputManager;
+export function createInputManager({ target, focused, preventDefaultKeys, }?: InputManagerOptions | undefined): InputManager;
 export type InputManagerOptions = {
     /**
      * Event source (default `globalThis.window`).
      */
-    target?: EventTarget | null;
+    target?: EventTarget | null | undefined;
     /**
      * Initial focus state; unfocused managers ignore input.
      */
-    focused?: boolean;
+    focused?: boolean | undefined;
     /**
      * `KeyboardEvent.code` values whose default action is prevented.
      */
-    preventDefaultKeys?: Iterable<string>;
+    preventDefaultKeys?: Iterable<string> | undefined;
 };
 /**
  * Primary pointer snapshot (client coordinates in pixels).

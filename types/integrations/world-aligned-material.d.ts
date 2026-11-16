@@ -8,7 +8,7 @@
  * @param {SpecularAAOptions} [options]
  * @returns {M} The same material.
  */
-export function applyGeometricSpecularAA<M extends WorldMaterialLike>(material: M, { strength, maxRoughnessBoost }?: SpecularAAOptions): M;
+export function applyGeometricSpecularAA<M extends WorldMaterialLike>(material: M, { strength, maxRoughnessBoost }?: SpecularAAOptions | undefined): M;
 /**
  * Y-up; exact same world coordinates on adjacent meshes produce same UV.
  * @param {Vec3Tuple} position World position [x, y, z].
@@ -19,13 +19,13 @@ export function applyGeometricSpecularAA<M extends WorldMaterialLike>(material: 
 export function worldProjectUV(position: Vec3Tuple, axis: "x" | "y" | "z", options?: {
     tileSize?: number;
     offset?: Vec3Tuple;
-}): [number, number];
+} | undefined): [number, number];
 /**
  * @param {Vec3Tuple} normal Non-zero surface normal.
  * @param {number} [sharpness=6] Blend exponent, 0.1..32.
  * @returns {Vec3Tuple} Weights for the x, y, z projections; sums to 1.
  */
-export function triplanarWeights(normal: Vec3Tuple, sharpness?: number): Vec3Tuple;
+export function triplanarWeights(normal: Vec3Tuple, sharpness?: number | undefined): Vec3Tuple;
 /**
  * In-memory high-res repeatable maps; linear/mipmap filtering (not MC pixels).
  * @param {WorldAlignedThree} THREE
@@ -33,7 +33,7 @@ export function triplanarWeights(normal: Vec3Tuple, sharpness?: number): Vec3Tup
  * @param {number} [resolution=256] Edge in texels, 128..1024.
  * @returns {WorldTextureLike}
  */
-export function createSmoothProceduralTexture(THREE: WorldAlignedThree, pattern?: WorldPattern, resolution?: number): WorldTextureLike;
+export function createSmoothProceduralTexture(THREE: WorldAlignedThree, pattern?: WorldPattern | undefined, resolution?: number | undefined): WorldTextureLike;
 /**
  * Reuse the exact same periodic material noise used by albedo to build
  * non-color data: world-space perturbation slopes, roughness, and AO.
@@ -44,20 +44,20 @@ export function createSmoothProceduralTexture(THREE: WorldAlignedThree, pattern?
  * @param {number} [resolution=256] Edge in texels, 128..1024.
  * @returns {WorldTextureLike}
  */
-export function createSmoothProceduralDetailTexture(THREE: WorldAlignedThree, pattern?: WorldPattern, resolution?: number): WorldTextureLike;
+export function createSmoothProceduralDetailTexture(THREE: WorldAlignedThree, pattern?: WorldPattern | undefined, resolution?: number | undefined): WorldTextureLike;
 /**
  * @param {WorldAlignedThree} THREE
  * @param {WorldAlignedMaterialOptions} [options]
  * @returns {WorldMaterialLike}
  */
-export function createWorldAlignedMaterial(THREE: WorldAlignedThree, options?: WorldAlignedMaterialOptions): WorldMaterialLike;
+export function createWorldAlignedMaterial(THREE: WorldAlignedThree, options?: WorldAlignedMaterialOptions | undefined): WorldMaterialLike;
 /**
  * @param {WorldAlignedThree} THREE
  * @param {Record<string, WorldAlignedMaterialOptions>} definitions Keyed by material name ([a-z][a-z0-9-]{0,47}).
  * @param {WorldMaterialPaletteOptions} [paletteOptions]
  * @returns {WorldMaterialPalette}
  */
-export function createWorldMaterialPalette(THREE: WorldAlignedThree, definitions: Record<string, WorldAlignedMaterialOptions>, paletteOptions?: WorldMaterialPaletteOptions): WorldMaterialPalette;
+export function createWorldMaterialPalette(THREE: WorldAlignedThree, definitions: Record<string, WorldAlignedMaterialOptions>, paletteOptions?: WorldMaterialPaletteOptions | undefined): WorldMaterialPalette;
 /**
  * Minimal structural Three.js texture.
  */
@@ -114,81 +114,81 @@ export type SpecularAAOptions = {
     /**
      * Variance multiplier, 0..4.
      */
-    strength?: number;
+    strength?: number | undefined;
     /**
      * Max roughness added, 0..1.
      */
-    maxRoughnessBoost?: number;
+    maxRoughnessBoost?: number | undefined;
 };
 export type WorldAlignedMaterialOptions = {
-    projection?: WorldProjection;
-    pattern?: WorldPattern;
+    projection?: WorldProjection | undefined;
+    pattern?: WorldPattern | undefined;
     /**
      * `#RRGGBB` tint.
      */
-    color?: string;
+    color?: string | undefined;
     /**
      * World units per texture repeat, 0.01..10000.
      */
-    tileSize?: number;
+    tileSize?: number | undefined;
     /**
      * Triplanar blend exponent, 0.1..32.
      */
-    blendSharpness?: number;
+    blendSharpness?: number | undefined;
     /**
      * 0..1.
      */
-    roughness?: number;
+    roughness?: number | undefined;
     /**
      * 0..1.
      */
-    metalness?: number;
+    metalness?: number | undefined;
     /**
      * 0..1.
      */
-    opacity?: number;
-    transparent?: boolean;
+    opacity?: number | undefined;
+    transparent?: boolean | undefined;
     /**
      * World-space UV offset in world units.
      */
-    offset?: Vec3Tuple;
-    flatShading?: boolean;
-    emissive?: string;
+    offset?: Vec3Tuple | undefined;
+    flatShading?: boolean | undefined;
+    emissive?: string | undefined;
     /**
      * 0..6.
      */
-    emissiveIntensity?: number;
+    emissiveIntensity?: number | undefined;
     /**
      * Procedural detail normal strength, 0..1.
      */
-    normalStrength?: number;
+    normalStrength?: number | undefined;
     /**
      * 0..1.
      */
-    roughnessVariation?: number;
+    roughnessVariation?: number | undefined;
     /**
      * 0..1.
      */
-    aoIntensity?: number;
+    aoIntensity?: number | undefined;
     /**
      * Apply {@link applyGeometricSpecularAA}.
      */
-    specularAA?: boolean;
-    specularAAOptions?: SpecularAAOptions;
+    specularAA?: boolean | undefined;
+    specularAAOptions?: SpecularAAOptions | undefined;
     /**
      * Texture anisotropy, 1..16.
      */
-    anisotropy?: number;
+    anisotropy?: number | undefined;
 };
 export type WorldMaterialPaletteOptions = {
     /**
      * Default anisotropy, 1..16.
      */
-    anisotropy?: number;
+    anisotropy?: number | undefined;
     /**
      * Default specular AA flag.
      */
-    specularAA?: boolean;
+    specularAA?: boolean | undefined;
 };
 export type WorldMaterialPaletteStats = {
     materials: number;

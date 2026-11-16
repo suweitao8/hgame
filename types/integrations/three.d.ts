@@ -178,7 +178,7 @@ export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, c
  * @param {ThreeMeshComponentOptions} [options]
  * @returns {Component & { mesh: ThreeMesh, updateTransform(): void }} Component instance owning a `mesh`.
  */
-export function createThreeMeshComponent(THREE: ThreeNamespace, { type, color, size, radius, height, geometry, material, castShadow, receiveShadow, interpolate, cull, cullRadius, }?: ThreeMeshComponentOptions): Component & {
+export function createThreeMeshComponent(THREE: ThreeNamespace, { type, color, size, radius, height, geometry, material, castShadow, receiveShadow, interpolate, cull, cullRadius, }?: ThreeMeshComponentOptions | undefined): Component & {
     mesh: ThreeMesh;
     updateTransform(): void;
 };
@@ -293,23 +293,23 @@ export type ThreeQuality3DOptions = {
     /**
      * Called after the adapter applied a quality change.
      */
-    onChange?: (state: {
+    onChange?: ((state: {
         preset: object;
         tier?: string;
         [key: string]: unknown;
-    }, reason?: string) => void;
+    }, reason?: string) => void) | undefined;
     /**
      * Device hints (e.g. `rendererName`).
      */
-    device?: Record<string, unknown>;
+    device?: Record<string, unknown> | undefined;
     /**
      * Fill `device.rendererName` from the WebGL context.
      */
-    calibrateGpu?: boolean;
+    calibrateGpu?: boolean | undefined;
     /**
      * Quality mode: 'auto' | 'low' | 'medium' | 'high' | 'ultra'.
      */
-    mode?: string;
+    mode?: string | undefined;
 };
 /**
  * Optional sky object bound to the adapter.
@@ -347,55 +347,56 @@ export type ThreeAdapterOptions = {
     /**
      * Initial width in CSS px.
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Initial height in CSS px.
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Requested device pixel ratio.
      */
-    pixelRatio?: number;
+    pixelRatio?: number | undefined;
     /**
      * Vertical field of view, degrees.
      */
-    cameraFov?: number;
+    cameraFov?: number | undefined;
     /**
      * Camera near plane, world units.
      */
-    near?: number;
+    near?: number | undefined;
     /**
      * Camera far plane / cull distance, world units.
      */
-    far?: number;
+    far?: number | undefined;
     /**
      * Scene background colour (0xRRGGBB).
      */
-    background?: number;
+    background?: number | undefined;
     /**
      * Adaptive quality options.
      */
-    quality3d?: ThreeQuality3DOptions | null;
+    quality3d?: ThreeQuality3DOptions | null | undefined;
     /**
      * Enable post pipeline (true or its options).
      */
-    post3d?: boolean | Record<string, unknown> | null;
+    post3d?: boolean | Record<string, unknown> | null | undefined;
     /**
      * Force shadows on/off; null follows the quality preset.
      */
-    shadows?: boolean | null;
+    shadows?: boolean | null | undefined;
     /**
      * 'aces' | 'ueFilmic' | 'filmic' | 'agx' | 'neutral' | 'none'.
      */
-    toneMapping?: string | null;
+    toneMapping?: string | null | undefined;
     /**
      * Base tone-mapping exposure.
      */
-    exposure?: number;
+    exposure?: number | undefined;
     /**
      * Shadow-casting sun light.
      */
     sunLight?: {
+        [key: string]: unknown;
         shadow?: {
             mapSize?: {
                 x: number;
@@ -403,20 +404,19 @@ export type ThreeAdapterOptions = {
             };
             [key: string]: unknown;
         };
-        [key: string]: unknown;
-    } | null;
+    } | null | undefined;
     /**
      * Camera for the view-model overlay layer.
      */
-    viewCamera?: ThreeCamera | null;
+    viewCamera?: ThreeCamera | null | undefined;
     /**
      * Sky controller.
      */
-    sky?: ThreeSkyLike | null;
+    sky?: ThreeSkyLike | null | undefined;
     /**
      * Post volume stack.
      */
-    postVolumes?: ThreePostVolumesLike | null;
+    postVolumes?: ThreePostVolumesLike | null | undefined;
 };
 export type ThreeSplitView = {
     /**
@@ -518,45 +518,45 @@ export type ThreeMeshComponentOptions = {
     /**
      * Primitive shape.
      */
-    type?: "box" | "sphere" | "capsule" | "cylinder" | "plane";
+    type?: "capsule" | "box" | "sphere" | "cylinder" | "plane" | undefined;
     /**
      * Default material colour (0xRRGGBB).
      */
-    color?: number;
+    color?: number | undefined;
     /**
      * Edge length, world units.
      */
-    size?: number;
+    size?: number | undefined;
     /**
      * Radius, world units.
      */
-    radius?: number;
+    radius?: number | undefined;
     /**
      * Height, world units.
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Custom shared geometry (not disposed).
      */
-    geometry?: ThreeDisposable | null;
+    geometry?: ThreeDisposable | null | undefined;
     /**
      * Custom shared material (not disposed).
      */
-    material?: ThreeDisposable | null;
-    castShadow?: boolean;
-    receiveShadow?: boolean;
+    material?: ThreeDisposable | null | undefined;
+    castShadow?: boolean | undefined;
+    receiveShadow?: boolean | undefined;
     /**
      * Use render-alpha interpolated transforms.
      */
-    interpolate?: boolean;
+    interpolate?: boolean | undefined;
     /**
      * Enable frustum culling via the adapter.
      */
-    cull?: boolean;
+    cull?: boolean | undefined;
     /**
      * Culling sphere radius (0 = derived), world units.
      */
-    cullRadius?: number;
+    cullRadius?: number | undefined;
 };
 import { Component } from '../core/component.js';
 import { createAdaptiveQualityController } from './quality3d.js';

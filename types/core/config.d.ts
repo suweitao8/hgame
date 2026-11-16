@@ -4,7 +4,7 @@
  * @param {ProjectOptions} [options]
  * @returns {Readonly<ProjectConfig>}
  */
-export function defineProject(options?: ProjectOptions): Readonly<ProjectConfig>;
+export function defineProject(options?: ProjectOptions | undefined): Readonly<ProjectConfig>;
 /** Topological ordering of only the explicitly requested features + dependencies. */
 /**
  * @param {readonly string[]} requested Feature names.
@@ -29,24 +29,24 @@ export type ProjectOptions = {
     /**
      * Only version 1 exists.
      */
-    configVersion?: 1;
-    profile?: ProjectProfile;
+    configVersion?: 1 | undefined;
+    profile?: ProjectProfile | undefined;
     /**
      * Default depends on profile (`canvas2d` / `threejs` / `dom`).
      */
-    renderer?: ProjectRenderer;
+    renderer?: ProjectRenderer | undefined;
     /**
      * Deterministic backend; must match the physics feature.
      */
-    physics?: PhysicsBackend;
+    physics?: PhysicsBackend | undefined;
     /**
      * Fixed ticks per second, integer 1..240 (`0` only for the `ui` profile, default 60 / 0).
      */
-    tickHz?: number;
+    tickHz?: number | undefined;
     /**
      * Optional modules to load (default `['scene','input']`, `['scene']` for ui).
      */
-    features?: readonly FeatureName[];
+    features?: readonly FeatureName[] | undefined;
 };
 /**
  * Normalized, frozen project configuration.

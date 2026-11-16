@@ -7,9 +7,9 @@
 export function createNavMesh3D(options: NavMesh3DOptions): Readonly<{
     cols: number;
     rows: number;
-    cellSize: number;
-    agentRadius: number;
-    stepHeight: number;
+    cellSize: number | undefined;
+    agentRadius: number | undefined;
+    stepHeight: number | undefined;
     rebuild: () => void;
     addObstacle: (aabb: any) => void;
     clearObstacles: () => void;
@@ -25,7 +25,7 @@ export function createNavMesh3D(options: NavMesh3DOptions): Readonly<{
     }, pathOpts?: {
         smooth?: boolean;
         maxSnapCells?: number;
-    }) => Vec3Point[] | null;
+    } | undefined) => Vec3Point[] | null;
     sampleSurfaceHeight: (x: any, z: any) => number;
 }>;
 export type NavObstacleAABB = {
@@ -33,8 +33,8 @@ export type NavObstacleAABB = {
     maxX: number;
     minZ: number;
     maxZ: number;
-    minY?: number;
-    maxY?: number;
+    minY?: number | undefined;
+    maxY?: number | undefined;
 };
 export type NavSurfaceBox = {
     minX: number;
@@ -59,31 +59,31 @@ export type NavMesh3DOptions = {
     /**
      * Grid quantization cell size in world units.
      */
-    cellSize?: number;
+    cellSize?: number | undefined;
     /**
      * Horizontal obstacle inflation radius.
      */
-    agentRadius?: number;
+    agentRadius?: number | undefined;
     /**
      * Maximum traversable vertical elevation delta between neighboring cells.
      */
-    stepHeight?: number;
+    stepHeight?: number | undefined;
     /**
      * Default floor elevation when no surface overrides a cell.
      */
-    groundY?: number;
+    groundY?: number | undefined;
     /**
      * Optional continuous height provider (e.g. terrain).
      */
-    sampleHeight?: (x: number, z: number) => number;
+    sampleHeight?: ((x: number, z: number) => number) | undefined;
     /**
      * Static blocking AABB obstacles.
      */
-    obstacles?: NavObstacleAABB[];
+    obstacles?: NavObstacleAABB[] | undefined;
     /**
      * Elevated walkable platforms/bridges.
      */
-    surfaces?: NavSurfaceBox[];
+    surfaces?: NavSurfaceBox[] | undefined;
 };
 export type Vec3Point = {
     x: number;

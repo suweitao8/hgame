@@ -51,7 +51,7 @@
  * @param {InputActionRouterOptions} [options]
  * @returns {InputActionRouter}
  */
-export function createInputActionRouter({ input, readCode }?: InputActionRouterOptions): InputActionRouter;
+export function createInputActionRouter({ input, readCode }?: InputActionRouterOptions | undefined): InputActionRouter;
 export type Vec2Like = {
     x: number;
     y: number;
@@ -60,18 +60,18 @@ export type InputActionRouterOptions = {
     /**
      * Source of key / pointer state.
      */
-    input?: import("./manager.js").InputManager | null;
+    input?: import("./manager.js").InputManager | null | undefined;
     /**
      * Extra key reader (e.g. virtual buttons); OR-ed with `input`.
      */
-    readCode?: ((code: string) => boolean) | null;
+    readCode?: ((code: string) => boolean) | null | undefined;
 };
 export type PushContextOptions = {
-    enabled?: boolean;
+    enabled?: boolean | undefined;
     /**
      * Override the context priority.
      */
-    priority?: number;
+    priority?: number | undefined;
 };
 export type InputContextEntry = {
     context: import("./contexts.js").InputContext;

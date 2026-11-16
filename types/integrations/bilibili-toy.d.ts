@@ -18,7 +18,7 @@ export function isToyRateLimitError(error: unknown): boolean;
 export function loadBilibiliToySdk({ timeoutMs, forceInject }?: {
     timeoutMs?: number;
     forceInject?: boolean;
-}): Promise<any | null>;
+} | undefined): Promise<any | null>;
 /**
  * @typedef {object} ToyBridgeOptions
  * @property {any} [sdk] Optional explicit `window.toy` instance (for testing).
@@ -35,20 +35,20 @@ export function loadBilibiliToySdk({ timeoutMs, forceInject }?: {
  * with local preview fallbacks so games run identically in HGame preview and on Bilibili Toy.
  * @param {ToyBridgeOptions} [options]
  */
-export function createToyBridge({ sdk, fallbackStorage, gameId, autoRetryRateLimit, maxRetries, baseDelayMs, random, }?: ToyBridgeOptions): Readonly<{
+export function createToyBridge({ sdk, fallbackStorage, gameId, autoRetryRateLimit, maxRetries, baseDelayMs, random, }?: ToyBridgeOptions | undefined): Readonly<{
     readonly sdk: any;
     readonly isAvailable: boolean;
     /** @param {string} ability @returns {Promise<boolean>} */
     isSupport(ability: string): Promise<boolean>;
     withRateLimitBackoff: <T>(fn: () => Promise<T>) => Promise<T>;
     /** @param {string[]} [keys] @returns {Promise<Record<string, string>>} */
-    getCloudStorage(keys?: string[]): Promise<Record<string, string>>;
+    getCloudStorage(keys?: string[] | undefined): Promise<Record<string, string>>;
     /** @param {Record<string, string>} items @returns {Promise<void>} */
     setCloudStorage(items: Record<string, string>): Promise<void>;
     /** @param {string[]} keys @returns {Promise<void>} */
     removeCloudStorage(keys: string[]): Promise<void>;
     /** @param {string} storageId @param {string[]} [keys] @returns {Promise<Record<string, string>>} */
-    getSharedStorage(storageId: string, keys?: string[]): Promise<Record<string, string>>;
+    getSharedStorage(storageId: string, keys?: string[] | undefined): Promise<Record<string, string>>;
     /** @param {string} storageId @param {Record<string, string>} items @returns {Promise<void>} */
     setSharedStorage(storageId: string, items: Record<string, string>): Promise<void>;
     /** @param {string} storageId @param {string[]} keys @returns {Promise<void>} */
@@ -72,7 +72,7 @@ export function createToyBridge({ sdk, fallbackStorage, gameId, autoRetryRateLim
         board?: number;
         period?: "all" | "month" | "week" | "day";
         limit?: number;
-    }): Promise<Array<{
+    } | undefined): Promise<Array<{
         rank: number;
         score: number;
         nickname: string;
@@ -85,7 +85,7 @@ export function createToyBridge({ sdk, fallbackStorage, gameId, autoRetryRateLim
     getMyRank(req?: {
         board?: number;
         period?: "all" | "month" | "week" | "day";
-    }): Promise<{
+    } | undefined): Promise<{
         ranked: boolean;
         rank: number;
         score: number;
@@ -135,18 +135,18 @@ export function createToyBridge({ sdk, fallbackStorage, gameId, autoRetryRateLim
      */
     getChargeUnlock(req?: {
         minPrice?: number;
-    }): Promise<any>;
+    } | undefined): Promise<any>;
     /** @param {{ minPrice?: number }} [req] */
     openChargePanel(req?: {
         minPrice?: number;
-    }): Promise<any>;
+    } | undefined): Promise<any>;
     /** @param {(result: any) => void} listener @returns {() => void} */
     onChargeUnlockChange(listener: (result: any) => void): () => void;
     /** @param {{ path?: string, size?: number }} [req] */
     getQrCode(req?: {
         path?: string;
         size?: number;
-    }): Promise<any>;
+    } | undefined): Promise<any>;
     /** @param {{ path: string }} req */
     share(req: {
         path: string;
@@ -180,7 +180,7 @@ export function createToyBridge({ sdk, fallbackStorage, gameId, autoRetryRateLim
     /** @param {{ facingMode?: 'user' | 'environment' }} [options] */
     requestCamera(options?: {
         facingMode?: "user" | "environment";
-    }): Promise<any>;
+    } | undefined): Promise<any>;
     requestMicrophone(): Promise<any>;
     /** @param {MediaStream} stream */
     stopMedia(stream: MediaStream): Promise<any>;
@@ -199,7 +199,7 @@ export function createToyCloudSaveAdapter({ bridge, storageId, bindPageHide }: {
     readonly loaded: boolean;
     readonly dirtyCount: number;
     load: (keys: any) => Promise<Record<string, string>>;
-    get: <T>(key: string, fallback?: T) => T;
+    get: <T>(key: string, fallback?: T | undefined) => T;
     set: (key: string, value: unknown) => void;
     remove: (key: string) => void;
     getAll: () => Record<string, string>;
@@ -222,16 +222,16 @@ export type ToyBridgeOptions = {
     /**
      * Optional fallback storage used outside Bilibili Toy (`localStorage` by default).
      */
-    fallbackStorage?: Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length"> | null;
+    fallbackStorage?: Pick<Storage, "length" | "key" | "getItem" | "setItem" | "removeItem"> | null | undefined;
     /**
      * Namespace prefix for local fallback storage.
      */
-    gameId?: string;
+    gameId?: string | undefined;
     /**
      * Retry `307044` rejections with exponential backoff.
      */
-    autoRetryRateLimit?: boolean;
-    maxRetries?: number;
-    baseDelayMs?: number;
-    random?: () => number;
+    autoRetryRateLimit?: boolean | undefined;
+    maxRetries?: number | undefined;
+    baseDelayMs?: number | undefined;
+    random?: (() => number) | undefined;
 };

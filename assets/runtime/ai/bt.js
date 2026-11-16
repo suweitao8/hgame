@@ -6,22 +6,48 @@ export const BT_STATUS = Object.freeze({
 });
 
 /** @typedef {'success' | 'failure' | 'running'} BTStatus */
-/** @typedef {{ kind: string, [key: string]: unknown }} BTNode */
+/**
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @typedef {Readonly<
+ *   { kind: 'sequence' | 'selector', children: readonly BTNode<TBlackboard, TContext>[] } |
+ *   { kind: 'parallel', policy: 'all' | 'any', children: readonly BTNode<TBlackboard, TContext>[] } |
+ *   { kind: 'inverter', child: BTNode<TBlackboard, TContext> } |
+ *   { kind: 'repeater', count: number, child: BTNode<TBlackboard, TContext> } |
+ *   { kind: 'cooldown', seconds: number, child: BTNode<TBlackboard, TContext> } |
+ *   { kind: 'wait', seconds: number } |
+ *   { kind: 'condition', predicate: (blackboard: TBlackboard, context: TContext) => boolean } |
+ *   { kind: 'action', fn: (blackboard: TBlackboard, context: TContext, dt: number) => BTStatus | boolean | void }
+ * >} BTNode
+ */
 
-/** Runs children left-to-right until one returns FAILURE or RUNNING (resumes from running child). */
+/** Runs children left-to-right until one returns FAILURE or RUNNING (resumes from running child).
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {...BTNode<TBlackboard, TContext>} children
+ * @returns {Readonly<{ kind: 'sequence', children: BTNode<TBlackboard, TContext>[] }>}
+ */
 export function sequence(...children) {
   return Object.freeze({ kind: 'sequence', children });
 }
 
-/** Runs children left-to-right until one returns SUCCESS or RUNNING (resumes from running child). */
+/** Runs children left-to-right until one returns SUCCESS or RUNNING (resumes from running child).
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {...BTNode<TBlackboard, TContext>} children
+ * @returns {Readonly<{ kind: 'selector', children: BTNode<TBlackboard, TContext>[] }>}
+ */
 export function selector(...children) {
   return Object.freeze({ kind: 'selector', children });
 }
 
 /**
  * Runs all children concurrently.
- * @param {'all' | 'any'} [policy='all'] `'all'` succeeds when every child succeeds; `'any'` succeeds when any child succeeds.
- * @param {...BTNode} children
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {'all' | 'any' | BTNode<TBlackboard, TContext>} [policy='all'] Omitted policy defaults to 'all'.
+ * @param {...BTNode<TBlackboard, TContext>} children
+ * @returns {Readonly<{ kind: 'parallel', policy: 'all' | 'any', children: BTNode<TBlackboard, TContext>[] }>}
  */
 export function parallel(policy = 'all', ...children) {
   const actualChildren = typeof policy === 'string' ? children : [policy, ...children];
@@ -29,49 +55,84 @@ export function parallel(policy = 'all', ...children) {
   return Object.freeze({ kind: 'parallel', policy: actualPolicy, children: actualChildren });
 }
 
-/** Inverts SUCCESS <-> FAILURE while forwarding RUNNING. */
+/** Inverts SUCCESS <-> FAILURE while forwarding RUNNING.
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {BTNode<TBlackboard, TContext>} child
+ * @returns {Readonly<{ kind: 'inverter', child: BTNode<TBlackboard, TContext> }>}
+ */
 export function inverter(child) {
   return Object.freeze({ kind: 'inverter', child });
 }
 
-/** Repeats `child` up to `count` times (`count < 0` repeats until child returns FAILURE). */
+/** Repeats `child` up to `count` times (`count < 0` repeats until child returns FAILURE).
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {number} count
+ * @param {BTNode<TBlackboard, TContext>} child
+ * @returns {Readonly<{ kind: 'repeater', count: number, child: BTNode<TBlackboard, TContext> }>}
+ */
 export function repeater(count, child) {
   return Object.freeze({ kind: 'repeater', count, child });
 }
 
-/** Enforces a minimum cooldown (seconds) after `child` finishes with SUCCESS or FAILURE. */
+/** Enforces a minimum cooldown (seconds) after `child` finishes with SUCCESS or FAILURE.
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {number} seconds
+ * @param {BTNode<TBlackboard, TContext>} child
+ * @returns {Readonly<{ kind: 'cooldown', seconds: number, child: BTNode<TBlackboard, TContext> }>}
+ */
 export function cooldown(seconds, child) {
   return Object.freeze({ kind: 'cooldown', seconds, child });
 }
 
-/** Evaluates a boolean predicate against `(blackboard, context)`. */
+/** Evaluates a boolean predicate against `(blackboard, context)`.
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {(blackboard: TBlackboard, context: TContext) => boolean} predicate
+ * @returns {Readonly<{ kind: 'condition', predicate: (blackboard: TBlackboard, context: TContext) => boolean }>}
+ */
 export function condition(predicate) {
   if (typeof predicate !== 'function') throw new TypeError('condition(predicate) expects a function.');
   return Object.freeze({ kind: 'condition', predicate });
 }
 
-/** Executes an action callback `(blackboard, context, dt) => BTStatus | boolean | void`. */
+/** Executes an action callback `(blackboard, context, dt) => BTStatus | boolean | void`.
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {(blackboard: TBlackboard, context: TContext, dt: number) => BTStatus | boolean | void} fn
+ * @returns {Readonly<{ kind: 'action', fn: (blackboard: TBlackboard, context: TContext, dt: number) => BTStatus | boolean | void }>}
+ */
 export function action(fn) {
   if (typeof fn !== 'function') throw new TypeError('action(fn) expects a function.');
   return Object.freeze({ kind: 'action', fn });
 }
 
-/** Waits for `seconds` while returning RUNNING, then returns SUCCESS. */
+/** Waits for `seconds` while returning RUNNING, then returns SUCCESS.
+ * @param {number} seconds
+ * @returns {Readonly<{ kind: 'wait', seconds: number }>}
+ */
 export function wait(seconds) {
   return Object.freeze({ kind: 'wait', seconds: Math.max(0, Number(seconds) || 0) });
 }
 
 /**
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
  * @typedef {object} BehaviorTreeOptions
- * @property {Record<string, unknown>} [blackboard={}] Per-agent mutable blackboard state.
- * @property {unknown} [context={}] Shared entity/scene context passed to leaf nodes.
+ * @property {TBlackboard} [blackboard] Per-agent mutable blackboard state.
+ * @property {TContext} [context] Shared entity/scene context passed to leaf nodes.
  */
 
 /**
  * Creates an isolated runtime runner over an immutable behavior tree definition.
  * Multiple AI agents can share the same tree nodes with independent running state & cooldowns.
- * @param {BTNode} root
- * @param {BehaviorTreeOptions} [options={}]
+ * @template [TBlackboard=Record<string, unknown>]
+ * @template [TContext=unknown]
+ * @param {BTNode<TBlackboard, TContext>} root
+ * @param {BehaviorTreeOptions<TBlackboard, TContext>} [options={}]
+ * @returns {Readonly<{ tick: (dt?: number) => BTStatus, reset: () => void, blackboard: TBlackboard, getElapsed: () => number }>}
  */
 export function createBehaviorTree(root, options = {}) {
   if (!root || typeof root !== 'object') throw new TypeError('createBehaviorTree requires a root node.');

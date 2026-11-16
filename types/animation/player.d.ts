@@ -48,7 +48,7 @@ export class AnimationPlayer {
      * @param {AnimationPlayOptions} [options]
      * @returns {this}
      */
-    play(name: string, { restart }?: AnimationPlayOptions): this;
+    play(name: string, { restart }?: AnimationPlayOptions | undefined): this;
     /** @returns {void} */
     pause(): void;
     /** @returns {void} */
@@ -70,8 +70,8 @@ export type AnimationDefinition = {
     /**
      * Frames per second (> 0).
      */
-    fps?: number;
-    loop?: boolean;
+    fps?: number | undefined;
+    loop?: boolean | undefined;
 };
 /**
  * Stored clip.
@@ -94,5 +94,5 @@ export type AnimationPlayOptions = {
     /**
      * Restart even if the clip is already playing.
      */
-    restart?: boolean;
+    restart?: boolean | undefined;
 };

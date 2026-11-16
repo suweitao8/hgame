@@ -36,27 +36,30 @@ export type RedDotDOMOptions = {
     /**
      * Document used to create badge elements and inject the stylesheet.
      */
-    documentRef?: Document;
+    documentRef?: Document | undefined;
     /**
      * Attribute holding the node path.
      */
-    attribute?: string;
+    attribute?: string | undefined;
     /**
      * Attribute overriding the style ('none' | 'quiet' | 'dot' | 'new' | 'number').
      */
-    modeAttribute?: string;
+    modeAttribute?: string | undefined;
     /**
      * Click-to-acknowledge attribute; "false" disables, "recursive"/"tree" acknowledges the subtree.
      */
-    ackAttribute?: string;
+    ackAttribute?: string | undefined;
     /**
      * Watch the DOM with a MutationObserver and re-bind automatically.
      */
-    observe?: boolean;
+    observe?: boolean | undefined;
     /**
      * Injectable observer constructor.
      */
-    MutationObserverClass?: typeof MutationObserver;
+    MutationObserverClass?: {
+        new (callback: MutationCallback): MutationObserver;
+        prototype: MutationObserver;
+    } | undefined;
 };
 export type RedDotDOMBinding = {
     /**

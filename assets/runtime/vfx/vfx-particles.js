@@ -321,9 +321,9 @@ function compileWebGL2Program(gl, vsSrc, fsSrc) {
  */
 export function createStatelessParticlePool({
   mode = 'headless',
-  THREE = null,
-  scene = null,
-  gl = null,
+  THREE = /** @type {object | null} */ (null),
+  scene = /** @type {object | null} */ (null),
+  gl = /** @type {WebGL2RenderingContext | null} */ (null),
   maxParticles = mode === 'canvas2d' ? 1024 : 65536,
   is2D = mode === 'webgl2d' || mode === 'canvas2d',
   prng = createVisualPrng(0x9e3779b9),

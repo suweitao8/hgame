@@ -32,19 +32,19 @@
  * Works headlessly in Node tests and optionally binds to a DOM root container.
  * @param {PanelStackOptions} [options={}]
  */
-export function createPanelStack(options?: PanelStackOptions): Readonly<{
+export function createPanelStack(options?: PanelStackOptions | undefined): Readonly<{
     register: (id: any, def?: {}) => void;
-    push: (id: any, payload?: any, overrideDef?: any) => PanelEntry;
-    pop: (opts?: {}) => PanelEntry;
-    popById: (id: any) => PanelEntry;
-    replace: (id: any, payload?: any, overrideDef?: any) => PanelEntry;
-    toggle: (id: any, payload?: any, overrideDef?: any) => boolean;
+    push: (id: string, payload?: unknown, overrideDef?: PanelDefinition | null | undefined) => PanelEntry;
+    pop: (opts?: {}) => PanelEntry | null | undefined;
+    popById: (id: any) => PanelEntry | null;
+    replace: (id: string, payload?: unknown, overrideDef?: PanelDefinition | null | undefined) => PanelEntry;
+    toggle: (id: string, payload?: unknown, overrideDef?: PanelDefinition | null | undefined) => boolean;
     clear: (force?: boolean) => boolean;
     handleCancel: () => boolean;
     update: (dt: any) => void;
     isOpen: (id: any) => boolean;
-    top: () => PanelEntry;
-    getEntry: (id: any) => PanelEntry;
+    top: () => PanelEntry | null;
+    getEntry: (id: any) => PanelEntry | null;
     getStack: () => PanelEntry[];
     getExiting: () => PanelEntry[];
     hasModal: () => boolean;
@@ -52,36 +52,36 @@ export function createPanelStack(options?: PanelStackOptions): Readonly<{
     bindDom: (rootEl: HTMLElement, bindOpts?: {
         targetWindow?: Window | EventTarget;
         escapeKey?: string;
-    }) => () => void;
+    } | undefined) => () => void;
     dispose: () => void;
 }>;
 export type PanelDefinition = {
     /**
      * Blocks pointer/back events from reaching panels underneath.
      */
-    modal?: boolean;
+    modal?: boolean | undefined;
     /**
      * Whether handleCancel() / Escape pops this panel.
      */
-    closeOnCancel?: boolean;
+    closeOnCancel?: boolean | undefined;
     /**
      * Whether clicking the modal backdrop pops this panel.
      */
-    closeOnBackdrop?: boolean;
+    closeOnBackdrop?: boolean | undefined;
     /**
      * Pops all existing non-pinned panels before pushing this one.
      */
-    exclusive?: boolean;
+    exclusive?: boolean | undefined;
     /**
      * Survives clear() unless force=true.
      */
-    pinned?: boolean;
+    pinned?: boolean | undefined;
     /**
      * Enter/exit transition duration in milliseconds.
      */
-    transitionMs?: number;
-    onEnter?: (entry: PanelEntry) => void;
-    onExit?: (entry: PanelEntry) => void;
+    transitionMs?: number | undefined;
+    onEnter?: ((entry: PanelEntry) => void) | undefined;
+    onExit?: ((entry: PanelEntry) => void) | undefined;
 };
 export type PanelEntry = {
     id: string;
@@ -102,9 +102,9 @@ export type PanelStackOptions = {
     /**
      * Initial panel definitions keyed by id.
      */
-    panels?: Record<string, PanelDefinition>;
-    onChange?: (state: {
+    panels?: Record<string, PanelDefinition> | undefined;
+    onChange?: ((state: {
         stack: readonly PanelEntry[];
         modalOpen: boolean;
-    }) => void;
+    }) => void) | undefined;
 };

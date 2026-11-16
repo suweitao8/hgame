@@ -189,7 +189,7 @@
  * @param {AudioManagerOptions} [options]
  * @returns {AudioManager}
  */
-export function createAudioManager({ AudioContextClass, volume, maxPolyphony, compressor, now, }?: AudioManagerOptions): AudioManager;
+export function createAudioManager({ AudioContextClass, volume, maxPolyphony, compressor, now, }?: AudioManagerOptions | undefined): AudioManager;
 export type AudioListenerState = import("./audio/helpers.js").AudioListenerState;
 export type AudioPosition3D = import("./audio/helpers.js").AudioPosition3D;
 export type AudioPosition2D = import("./audio/helpers.js").AudioPosition2D;
@@ -201,19 +201,19 @@ export type AudioManagerOptions = {
     /**
      * Master volume, 0..1.
      */
-    volume?: number;
+    volume?: number | undefined;
     /**
      * Max simultaneous voices (positive integer).
      */
-    maxPolyphony?: number;
+    maxPolyphony?: number | undefined;
     /**
      * Insert a master dynamics limiter.
      */
-    compressor?: boolean;
+    compressor?: boolean | undefined;
     /**
      * Clock for cooldowns, milliseconds (default `performance.now`).
      */
-    now?: () => number;
+    now?: (() => number) | undefined;
 };
 export type SpatialMetrics = {
     kind: "3d" | "2d" | "pan" | "none";
@@ -224,14 +224,14 @@ export type SpatialMetrics = {
         x: number;
         y: number;
         z: number;
-    };
+    } | undefined;
     /**
      * Present for `'2d'`.
      */
     pos2?: {
         x: number;
         y: number;
-    };
+    } | undefined;
     /**
      * -1 (left) .. 1 (right).
      */
@@ -261,99 +261,99 @@ export type AudioPlayOptions = {
     /**
      * Voice gain, 0..2.
      */
-    volume?: number;
-    loop?: boolean;
+    volume?: number | undefined;
+    loop?: boolean | undefined;
     /**
      * 0.05..4.
      */
-    playbackRate?: number;
+    playbackRate?: number | undefined;
     /**
      * Random playback-rate variation (ratio, 0..1).
      */
-    pitchJitter?: number;
+    pitchJitter?: number | undefined;
     /**
      * Random gain reduction (ratio, 0..1).
      */
-    gainJitter?: number;
+    gainJitter?: number | undefined;
     /**
      * Minimum interval between plays of the same `key` / buffer, milliseconds.
      */
-    cooldownMs?: number;
+    cooldownMs?: number | undefined;
     /**
      * Cooldown key.
      */
-    key?: string | null;
+    key?: string | null | undefined;
     /**
      * Bus name (default `'spatial'` when positioned, else `'sfx'`).
      */
-    bus?: string | null;
+    bus?: string | null | undefined;
     /**
      * Stereo pan, -1..1 (when no position).
      */
-    pan?: number | null;
+    pan?: number | null | undefined;
     /**
      * 3D source position, world units (HRTF panner).
      */
-    position?: AudioPosition3D | null;
+    position?: import("./audio/helpers.js").AudioPosition3D | null | undefined;
     /**
      * 2D source position (stereo pan by `panRange`).
      */
-    position2D?: AudioPosition2D | null;
+    position2D?: import("./audio/helpers.js").AudioPosition2D | null | undefined;
     /**
      * Use HRTF panning for 3D sources.
      */
-    hrtf?: boolean;
-    distanceModel?: DistanceModelType;
+    hrtf?: boolean | undefined;
+    distanceModel?: DistanceModelType | undefined;
     /**
      * World units.
      */
-    refDistance?: number;
+    refDistance?: number | undefined;
     /**
      * World units.
      */
-    maxDistance?: number;
-    rolloffFactor?: number;
+    maxDistance?: number | undefined;
+    rolloffFactor?: number | undefined;
     /**
      * Horizontal distance (pixels / world units) that maps to full pan for 2D sources.
      */
-    panRange?: number;
+    panRange?: number | undefined;
     /**
      * Skip encoder padding / trailing silence.
      */
-    trimSilence?: boolean;
+    trimSilence?: boolean | undefined;
     /**
      * Start offset, seconds.
      */
-    offset?: number | null;
+    offset?: number | null | undefined;
     /**
      * Play duration, seconds.
      */
-    duration?: number | null;
+    duration?: number | null | undefined;
     /**
      * Fade-out length at the trimmed tail, seconds.
      */
-    tailFadeSec?: number;
+    tailFadeSec?: number | undefined;
     /**
      * Fixed occlusion 0..1 (default: evaluated via the occlusion probe).
      */
-    occlusion?: number | null;
+    occlusion?: number | null | undefined;
     /**
      * Low-pass cutoff when fully occluded, Hz.
      */
-    occludedLowPassHz?: number;
+    occludedLowPassHz?: number | undefined;
     /**
      * Gain scale when fully occluded, 0..1.
      */
-    occludedGainScale?: number;
+    occludedGainScale?: number | undefined;
     /**
      * Low-pass cutoff when unoccluded, Hz.
      */
-    openLowPassHz?: number;
-    onEnded?: ((voice: AudioVoice) => void) | null;
+    openLowPassHz?: number | undefined;
+    onEnded?: ((voice: AudioVoice) => void) | null | undefined;
     /**
      * RNG returning 0..1 (for deterministic jitter).
      */
-    random?: () => number;
+    random?: (() => number) | undefined;
 };
 /**
  * Handle to a playing sound.
@@ -426,28 +426,28 @@ export type AudioCueConfig = {
      * 1-4 decoded buffers.
      */
     variants: readonly AudioBuffer[];
-    bus?: string | null;
-    volume?: number;
-    pitchJitter?: number;
-    gainJitter?: number;
+    bus?: string | null | undefined;
+    volume?: number | undefined;
+    pitchJitter?: number | undefined;
+    gainJitter?: number | undefined;
     /**
      * Milliseconds.
      */
-    cooldownMs?: number;
+    cooldownMs?: number | undefined;
     /**
      * Max simultaneous voices of this cue.
      */
-    maxConcurrent?: number;
-    hrtf?: boolean;
-    refDistance?: number;
-    maxDistance?: number;
-    rolloffFactor?: number;
-    panRange?: number;
-    trimSilence?: boolean;
-    silenceThreshold?: number;
-    normalizeRms?: boolean;
-    maxDurationSpreadRatio?: number;
-    alignDuration?: boolean;
+    maxConcurrent?: number | undefined;
+    hrtf?: boolean | undefined;
+    refDistance?: number | undefined;
+    maxDistance?: number | undefined;
+    rolloffFactor?: number | undefined;
+    panRange?: number | undefined;
+    trimSilence?: boolean | undefined;
+    silenceThreshold?: number | undefined;
+    normalizeRms?: boolean | undefined;
+    maxDurationSpreadRatio?: number | undefined;
+    alignDuration?: boolean | undefined;
 };
 /**
  * Per-call overrides for {@link AudioManager#playCue}; `variant` forces a variant index.
@@ -491,34 +491,34 @@ export type AudioBusMix = {
     /**
      * Absolute bus gain, 0..1.5.
      */
-    volume?: number;
+    volume?: number | undefined;
     /**
      * Multiplier applied to the user bus volume.
      */
-    gainScale?: number;
+    gainScale?: number | undefined;
     /**
      * Low-pass cutoff, Hz (60..22000).
      */
-    lowPassHz?: number;
+    lowPassHz?: number | undefined;
     /**
      * Alias of `lowPassHz`.
      */
-    filterHz?: number;
+    filterHz?: number | undefined;
 };
 /**
  * Mix snapshot (e.g. paused / underwater).
  */
 export type AudioSnapshotConfig = {
-    name?: string;
-    buses?: Record<string, AudioBusMix>;
+    name?: string | undefined;
+    buses?: Record<string, AudioBusMix> | undefined;
     /**
      * Cutoff for buses without an override, Hz.
      */
-    defaultLowPassHz?: number | null;
+    defaultLowPassHz?: number | null | undefined;
     /**
      * Cross-fade time, seconds.
      */
-    transitionSeconds?: number;
+    transitionSeconds?: number | undefined;
 };
 export type AudioSnapshot = {
     name: string;

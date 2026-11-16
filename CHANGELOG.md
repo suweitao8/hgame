@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Strengthen FSM, behavior-tree and versioned-save declarations with context/schema generics, typed methods and discriminated load results. Generate declarations with strict nullability and verify public consumers, including detached component getters. These type-level corrections expose invalid calls and unsafe historical-data assumptions in TypeScript consumers.
+- Preserve imported type-query bindings in generated facades, validate declarations without skipping library checks, and correct inferred VFX options and panel payload types. Correct the 3D API recipe's VFX scene argument.
+- Preserve each API export's implementation stability and declaration origin through root facades and aliases, and expose these fields in API query results.
+
 - Make snapshot baseline updates failure-safe with atomic replacement after capture validation, including shared output/baseline paths. Keep failed candidate images as separate diagnostics.
 - Capture frozen-clock snapshots without waiting for live element-stability frames and disable CSS animations during capture.
 - Add `npm run check:visual` with a version-controlled accepted Git revision, same-environment reference/candidate rendering, and retained PNG/JSON diagnostics. CI now uses this check and browser baseline-safety tests in place of cache-dependent baseline acceptance.

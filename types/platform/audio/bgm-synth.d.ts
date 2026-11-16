@@ -7,7 +7,7 @@ export function midiToHz(midi: any): number;
  * @param {number} [intensity=0.5]
  * @param {number} [bpmOverride]
  */
-export function generateBgmStep(mood?: string, stepIndex?: number, intensity?: number, bpmOverride?: number): {
+export function generateBgmStep(mood?: string | undefined, stepIndex?: number | undefined, intensity?: number | undefined, bpmOverride?: number | undefined): {
     step: number;
     bar: number;
     sub: number;
@@ -17,7 +17,7 @@ export function generateBgmStep(mood?: string, stepIndex?: number, intensity?: n
     stepDuration: number;
     bassHz: number;
     leadHz: number;
-    drum: "kick" | "snare" | "hat";
+    drum: "kick" | "snare" | "hat" | null;
     bassWave: any;
     leadWave: any;
     leadCutoffHz: any;
@@ -39,9 +39,9 @@ export function generateBgmStep(mood?: string, stepIndex?: number, intensity?: n
  * Works cleanly in both browser WebAudio and headless Node tests.
  * @param {ProceduralBgmOptions} [options={}]
  */
-export function createProceduralBgm(options?: ProceduralBgmOptions): Readonly<{
+export function createProceduralBgm(options?: ProceduralBgmOptions | undefined): Readonly<{
     start: (startOpts?: {}) => {
-        mood: string;
+        mood: string | undefined;
         intensity: any;
         bpm: any;
         volume: any;
@@ -54,7 +54,7 @@ export function createProceduralBgm(options?: ProceduralBgmOptions): Readonly<{
     stop: () => void;
     pause: () => void;
     resume: () => {
-        mood: string;
+        mood: string | undefined;
         intensity: any;
         bpm: any;
         volume: any;
@@ -63,14 +63,14 @@ export function createProceduralBgm(options?: ProceduralBgmOptions): Readonly<{
         paused: boolean;
         stepIndex: number;
         available: boolean;
-    };
+    } | undefined;
     update: (dt: number) => any[];
     setMood: (nextMood: any) => void;
     setIntensity: (nextIntensity: any) => void;
     setVolume: (v: any) => void;
     setMuted: (nextMuted: any) => void;
     getState: () => {
-        mood: string;
+        mood: string | undefined;
         intensity: any;
         bpm: any;
         volume: any;
@@ -147,11 +147,11 @@ export const BGM_MOODS: Readonly<{
 }>;
 export type ProceduralBgmOptions = {
     AudioContextClass?: (new () => AudioContext) | undefined;
-    context?: AudioContext | null;
-    destination?: AudioNode | null;
-    mood?: keyof typeof BGM_MOODS | string;
-    intensity?: number;
-    bpm?: number;
-    volume?: number;
-    autoSchedule?: boolean;
+    context?: AudioContext | null | undefined;
+    destination?: AudioNode | null | undefined;
+    mood?: string | undefined;
+    intensity?: number | undefined;
+    bpm?: number | undefined;
+    volume?: number | undefined;
+    autoSchedule?: boolean | undefined;
 };

@@ -51,23 +51,23 @@ export type GameEngineOptions = {
      * Stable slug (`/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/`); required.
      */
     gameId: string;
-    gameVersion?: string;
+    gameVersion?: string | undefined;
     /**
      * Renderer label reported in `meta`.
      */
-    renderer?: string;
+    renderer?: string | undefined;
     /**
      * Asset root for the AssetLoader.
      */
-    assetBaseUrl?: string;
+    assetBaseUrl?: string | undefined;
     /**
      * Default `globalThis.window`.
      */
-    windowRef?: Window;
+    windowRef?: Window | undefined;
     /**
      * Default `globalThis.document`.
      */
-    documentRef?: Document;
+    documentRef?: Document | undefined;
     /**
      * Save backend (default `localStorage`).
      */
@@ -75,15 +75,15 @@ export type GameEngineOptions = {
     /**
      * Trusted embedding origin for the host bridge.
      */
-    parentOrigin?: string;
+    parentOrigin?: string | undefined;
     /**
      * `KeyboardEvent.code` values whose default action is prevented.
      */
-    preventDefaultKeys?: string[];
+    preventDefaultKeys?: string[] | undefined;
     /**
      * Called for every error report.
      */
-    onError?: (report: import("./diagnostics.js").ErrorReport) => void;
+    onError?: ((report: import("./diagnostics.js").ErrorReport) => void) | undefined;
 };
 export type GameEngineMeta = {
     gameId: string;

@@ -38,11 +38,11 @@ export type WebGL2DAdapterExtraOptions = {
     /**
      * Instances per draw batch (integer 64..262144).
      */
-    maxBatchInstances?: number;
+    maxBatchInstances?: number | undefined;
     /**
      * Fall back to the Canvas2D adapter when WebGL2 is unavailable; when false an Error is thrown instead.
      */
-    allowFallback?: boolean;
+    allowFallback?: boolean | undefined;
 };
 /**
  * Per-frame statistics of the WebGL2 backend.

@@ -307,8 +307,8 @@ function createBoltStripGeometry(THREE, segments = 16) {
  */
 export function createTrailsSystem({
   mode = 'headless',
-  THREE = null,
-  scene = null,
+  THREE = /** @type {object | null} */ (null),
+  scene = /** @type {object | null} */ (null),
   is2D = mode === 'webgl2d' || mode === 'canvas2d',
   maxSlashes = mode === 'canvas2d' ? 128 : 512,
   maxBolts = mode === 'canvas2d' ? 64 : 256,

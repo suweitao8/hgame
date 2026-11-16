@@ -74,35 +74,35 @@ export type RapierEntityLike = {
     /**
      * World Z (3D only).
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Euler X in radians.
      */
-    rotationX?: number;
+    rotationX?: number | undefined;
     /**
      * Euler Y in radians.
      */
-    rotationY?: number;
+    rotationY?: number | undefined;
     /**
      * Euler Z in radians (2D angle).
      */
-    rotationZ?: number;
+    rotationZ?: number | undefined;
     /**
      * Default collider width in world units.
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Default collider height in world units.
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Default collider depth in world units.
      */
-    depth?: number;
+    depth?: number | undefined;
     /**
      * True once the entity is destroyed.
      */
-    destroyed?: boolean;
+    destroyed?: boolean | undefined;
     /**
      * Parent entity; bodies must be on root entities.
      */
@@ -114,7 +114,7 @@ export type RapierEntityLike = {
     /**
      * Resets render interpolation.
      */
-    snapTransform?: () => void;
+    snapTransform?: (() => void) | undefined;
 };
 /**
  * Options for {@link RapierPhysicsWorld} construction.
@@ -123,11 +123,11 @@ export type RapierPhysicsWorldOptions = {
     /**
      * Fixed simulation rate (integer 1..240) in hertz.
      */
-    tickHz?: number;
+    tickHz?: number | undefined;
     /**
      * Gravity in world units per second squared. Defaults: 2D `{x:0,y:0}`, 3D `{x:0,y:-9.81,z:0}`.
      */
-    gravity?: RapierVectorInput;
+    gravity?: RapierVectorInput | undefined;
 };
 /**
  * Options for {@link RapierPhysicsWorld.add}.
@@ -136,15 +136,15 @@ export type RapierBodyOptions = {
     /**
      * Body type (default `'fixed'` if `static`, else `'dynamic'`).
      */
-    type?: "fixed" | "dynamic" | "kinematicPosition" | "kinematicVelocity";
+    type?: "fixed" | "dynamic" | "kinematicPosition" | "kinematicVelocity" | undefined;
     /**
      * Shortcut for `type: 'fixed'`.
      */
-    static?: boolean;
+    static?: boolean | undefined;
     /**
      * Initial 2D angle in radians (default entity `rotationZ`).
      */
-    rotation?: number;
+    rotation?: number | undefined;
     /**
      * Initial 3D rotation (default from entity Euler).
      */
@@ -153,107 +153,107 @@ export type RapierBodyOptions = {
         y: number;
         z: number;
         w: number;
-    };
+    } | undefined;
     /**
      * Allow the body to sleep.
      */
-    canSleep?: boolean;
+    canSleep?: boolean | undefined;
     /**
      * Lock all rotations.
      */
-    lockRotations?: boolean;
+    lockRotations?: boolean | undefined;
     /**
      * 3D only: `[x, y, z]` rotation axes enabled.
      */
-    enabledRotations?: boolean[];
+    enabledRotations?: boolean[] | undefined;
     /**
      * Linear damping (>= 0).
      */
-    linearDamping?: number;
+    linearDamping?: number | undefined;
     /**
      * Angular damping (>= 0).
      */
-    angularDamping?: number;
+    angularDamping?: number | undefined;
     /**
      * Gravity multiplier.
      */
-    gravityScale?: number;
+    gravityScale?: number | undefined;
     /**
      * Enable continuous collision detection.
      */
-    ccd?: boolean;
+    ccd?: boolean | undefined;
     /**
      * Write body rotation back to the entity.
      */
-    syncRotation?: boolean;
+    syncRotation?: boolean | undefined;
     /**
      * Collider shape.
      */
-    shape?: "ball" | "capsule" | "cuboid";
+    shape?: "ball" | "capsule" | "cuboid" | undefined;
     /**
      * Collider width in world units (default entity width or 1).
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Collider height in world units (default entity height or 1).
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Collider depth in world units, 3D (default entity depth or 1).
      */
-    depth?: number;
+    depth?: number | undefined;
     /**
      * Ball/capsule radius in world units.
      */
-    radius?: number;
+    radius?: number | undefined;
     /**
      * Capsule half height of the cylindrical part in world units.
      */
-    halfHeight?: number;
+    halfHeight?: number | undefined;
     /**
      * Collider offset from the body in world units.
      */
-    offset?: RapierVectorInput;
+    offset?: RapierVectorInput | undefined;
     /**
      * Collider offset X (when `offset` is absent).
      */
-    offsetX?: number;
+    offsetX?: number | undefined;
     /**
      * Collider offset Y.
      */
-    offsetY?: number;
+    offsetY?: number | undefined;
     /**
      * Collider offset Z.
      */
-    offsetZ?: number;
+    offsetZ?: number | undefined;
     /**
      * Sensor (trigger) collider.
      */
-    sensor?: boolean;
+    sensor?: boolean | undefined;
     /**
      * Friction coefficient (>= 0).
      */
-    friction?: number;
+    friction?: number | undefined;
     /**
      * Restitution 0..1.
      */
-    restitution?: number;
+    restitution?: number | undefined;
     /**
      * Collider density (>= 0).
      */
-    density?: number;
+    density?: number | undefined;
     /**
      * Packed Rapier collision groups (32-bit).
      */
-    collisionGroups?: number;
+    collisionGroups?: number | undefined;
     /**
      * Membership bitmask (16-bit), used when `collisionGroups` is absent.
      */
-    layer?: number;
+    layer?: number | undefined;
     /**
      * Filter bitmask (16-bit), used when `collisionGroups` is absent.
      */
-    mask?: number;
+    mask?: number | undefined;
 };
 /**
  * Registry record for one physics body, returned by `add`/`get`.
@@ -327,23 +327,23 @@ export type RapierCharacterControllerOptions = {
     /**
      * Skin offset in world units (>= 0.0001).
      */
-    offset?: number;
+    offset?: number | undefined;
     /**
      * Up vector.
      */
-    up?: RapierVectorInput;
+    up?: RapierVectorInput | undefined;
     /**
      * Slide along obstacles.
      */
-    slide?: boolean;
+    slide?: boolean | undefined;
     /**
      * Maximum climbable slope in radians.
      */
-    maxSlopeClimbAngle?: number;
+    maxSlopeClimbAngle?: number | undefined;
     /**
      * Minimum slope angle (radians) at which the character slides.
      */
-    minSlopeSlideAngle?: number;
+    minSlopeSlideAngle?: number | undefined;
     /**
      * Autostep config (heights/widths in world units).
      */
@@ -351,19 +351,19 @@ export type RapierCharacterControllerOptions = {
         maxHeight?: number;
         minWidth?: number;
         includeDynamic?: boolean;
-    } | null;
+    } | null | undefined;
     /**
      * Snap distance in world units, or falsy to disable.
      */
-    snapToGround?: number | false | null;
+    snapToGround?: number | false | null | undefined;
     /**
      * Push dynamic bodies.
      */
-    applyImpulsesToDynamicBodies?: boolean;
+    applyImpulsesToDynamicBodies?: boolean | undefined;
     /**
      * Character mass used for impulses.
      */
-    characterMass?: number;
+    characterMass?: number | undefined;
 };
 /**
  * Options for {@link RapierCharacterController.move}.
@@ -372,19 +372,19 @@ export type RapierCharacterMoveOptions = {
     /**
      * Rapier QueryFilterFlags bitmask.
      */
-    filterFlags?: number;
+    filterFlags?: number | undefined;
     /**
      * Packed collision groups filter.
      */
-    filterGroups?: number;
+    filterGroups?: number | undefined;
     /**
      * Collider filter.
      */
-    filterPredicate?: (collider: RapierNativeObject) => boolean;
+    filterPredicate?: ((collider: RapierNativeObject) => boolean) | undefined;
     /**
      * Apply the move immediately instead of as the next kinematic translation.
      */
-    immediate?: boolean;
+    immediate?: boolean | undefined;
 };
 /**
  * One collision encountered while moving a character.
@@ -468,11 +468,11 @@ export type RapierRayOptions = {
     /**
      * Treat shapes as solid (hit at origin when inside).
      */
-    solid?: boolean;
+    solid?: boolean | undefined;
     /**
      * Collider filter.
      */
-    filterPredicate?: (collider: RapierNativeObject) => boolean;
+    filterPredicate?: ((collider: RapierNativeObject) => boolean) | undefined;
 };
 /**
  * Raycast hit.

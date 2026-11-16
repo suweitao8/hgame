@@ -5,7 +5,7 @@
  * @param {InstancedCrowd3DOptions} [options] Crowd options.
  * @returns {InstancedCrowd3D} Crowd API.
  */
-export function createInstancedCrowd3D(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, capacity, sampleFps, castShadow, receiveShadow, perInstanceColor, cullRadius, scale, }?: InstancedCrowd3DOptions): InstancedCrowd3D;
+export function createInstancedCrowd3D(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, capacity, sampleFps, castShadow, receiveShadow, perInstanceColor, cullRadius, scale, }?: InstancedCrowd3DOptions | undefined): InstancedCrowd3D;
 /**
  * Minimal structural view of a Three.js object/geometry/material/texture used by the crowd.
  */
@@ -19,43 +19,43 @@ export type InstancedCrowd3DOptions = {
     /**
      * Loaded asset (`scene` + `animations`).
      */
-    asset?: import("./helpers.js").Model3DAsset | null;
+    asset?: import("./helpers.js").Model3DAsset | null | undefined;
     /**
      * Root object (alternative to `asset`).
      */
-    root?: import("./helpers.js").Model3DObject | null;
+    root?: import("./helpers.js").Model3DObject | null | undefined;
     /**
      * Clips to bake (defaults to `asset.animations`).
      */
-    animations?: import("./helpers.js").Model3DClip[] | null;
+    animations?: import("./helpers.js").Model3DClip[] | null | undefined;
     /**
      * Maximum instances (integer 1..100000).
      */
-    capacity?: number;
+    capacity?: number | undefined;
     /**
      * VAT bake sample rate in frames per second (clamped 4..60).
      */
-    sampleFps?: number;
+    sampleFps?: number | undefined;
     /**
      * Instanced mesh casts shadows.
      */
-    castShadow?: boolean;
+    castShadow?: boolean | undefined;
     /**
      * Instanced mesh receives shadows.
      */
-    receiveShadow?: boolean;
+    receiveShadow?: boolean | undefined;
     /**
      * Enable per-instance color.
      */
-    perInstanceColor?: boolean;
+    perInstanceColor?: boolean | undefined;
     /**
      * Per-instance bounding radius in world units (before scale).
      */
-    cullRadius?: number;
+    cullRadius?: number | undefined;
     /**
      * Default per-instance uniform scale.
      */
-    scale?: number;
+    scale?: number | undefined;
 };
 /**
  * Options for {@link InstancedCrowd3D.spawn}.
@@ -64,43 +64,43 @@ export type CrowdSpawnOptions = {
     /**
      * World X.
      */
-    x?: number;
+    x?: number | undefined;
     /**
      * World Y.
      */
-    y?: number;
+    y?: number | undefined;
     /**
      * World Z.
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Yaw in radians.
      */
-    rotationY?: number;
+    rotationY?: number | undefined;
     /**
      * Uniform scale (defaults to the crowd `scale`).
      */
-    scale?: number;
+    scale?: number | undefined;
     /**
      * Clip name (defaults to the first baked clip).
      */
-    clip?: string | null;
+    clip?: string | null | undefined;
     /**
      * Start time in seconds.
      */
-    time?: number;
+    time?: number | undefined;
     /**
      * Playback speed multiplier.
      */
-    speed?: number;
+    speed?: number | undefined;
     /**
      * Per-instance color (when `perInstanceColor`).
      */
-    color?: {
+    color?: string | number | {
         r: number;
         g: number;
         b: number;
-    } | number | string | null;
+    } | null | undefined;
 };
 /**
  * Options for {@link InstancedCrowd3D.play}.
@@ -109,15 +109,15 @@ export type CrowdPlayOptions = {
     /**
      * Playback speed multiplier.
      */
-    speed?: number;
+    speed?: number | undefined;
     /**
      * Start at `phase` of the clip instead of 0.
      */
-    randomizePhase?: boolean;
+    randomizePhase?: boolean | undefined;
     /**
      * Normalized start phase 0..1 (used with `randomizePhase`).
      */
-    phase?: number;
+    phase?: number | undefined;
 };
 /**
  * Options for {@link InstancedCrowd3D.update}.
@@ -128,7 +128,7 @@ export type CrowdUpdateOptions = {
      */
     culler?: {
         [member: string]: unknown;
-    } | null;
+    } | null | undefined;
 };
 /**
  * Statistics returned by {@link InstancedCrowd3D.update}.

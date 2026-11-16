@@ -48,12 +48,12 @@ Files include `assets/runtime/ai/fsm.js`, `ai/bt.js`, `platform/storage.js`, rel
 
 Interfaces retain JavaScript calling conventions. State-machine and behavior-tree callbacks carry inferred context. Versioned stores expose concrete discriminated load results and typed stored values. Index export records add their declaring module and effective stability so facade aliases retain the implementation's tier.
 
-- [ ] Add strict TypeScript consumer fixtures using root and public subpath imports. Assert valid inference and expected compile errors for incorrect arguments, callbacks and result usage. Add explicit accidental-`any` assertions for the hardened methods.
-- [ ] Run consumers to establish the failures. Add source JSDoc signatures and generics, then regenerate declarations.
-- [ ] Cover ordinary lifecycle calls and invalid argument types in consumer fixtures, preserving existing runtime tests.
-- [ ] Add failing API index tests for stable core APIs, experimental world/lighting exports through the facade, and internal module exclusion.
-- [ ] Resolve each export's declaration origin and explicit tier, update query display and documentation, and regenerate the index.
-- [ ] Run `npm run check`, strict consumer checks and query tests. Review, commit and push.
+- [x] Add strict TypeScript consumer fixtures using root and public subpath imports. Assert valid inference and expected compile errors for incorrect arguments, callbacks and result usage. Add explicit accidental-`any` assertions for the hardened methods.
+- [x] Run consumers to establish the failures. Add source JSDoc signatures and generics, then regenerate declarations.
+- [x] Cover ordinary lifecycle calls and invalid argument types in consumer fixtures, preserving existing runtime tests.
+- [x] Add failing API index tests for stable core APIs, experimental world/lighting exports through the facade, and internal module exclusion.
+- [x] Resolve each export's declaration origin and explicit tier, update query display and documentation, and regenerate the index.
+- [x] Run `npm run check`, strict consumer checks and query tests. Review, commit and push.
 
 ## Task 3. Whole-run telemetry and representative performance
 

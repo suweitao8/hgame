@@ -30,7 +30,7 @@ export function dampAngle(current: number, target: number, halfLife: number, dt:
  * @param {number} [maxSpeed=Infinity] Units/second.
  * @returns {SpringState1D} `state`
  */
-export function stepSpring1D(state: SpringState1D, target: number, halfLifeOrOptions: number | SpringHalfLifeOptions, dt: number, maxSpeed?: number): SpringState1D;
+export function stepSpring1D(state: SpringState1D, target: number, halfLifeOrOptions: number | SpringHalfLifeOptions, dt: number, maxSpeed?: number | undefined): SpringState1D;
 /** @typedef {(t: number) => number} EaseFunction Maps normalized time 0..1 to eased progress. */
 /** @typedef {'linear' | 'easeInQuad' | 'easeOutQuad' | 'easeInOutQuad' | 'easeInCubic' | 'easeOutCubic' | 'easeInOutCubic' | 'easeInSine' | 'easeOutSine' | 'easeInOutSine' | 'easeInExpo' | 'easeOutExpo' | 'easeInBack' | 'easeOutBack' | 'easeInOutBack' | 'easeOutElastic' | 'easeOutBounce'} EaseName */
 /** @typedef {EaseName | EaseFunction} Ease Built-in easing name or custom function. */
@@ -170,14 +170,14 @@ export class TweenManager {
      * @param {TweenOptions<T>} [options]
      * @returns {TweenHandle<T>}
      */
-    add<T extends unknown>(target: T, values: TweenValues<T>, { duration, delay, ease, repeat, yoyo, tag, overwrite, onUpdate, onComplete, }?: TweenOptions<T>): TweenHandle<T>;
+    add<T extends unknown>(target: T, values: TweenValues<T>, { duration, delay, ease, repeat, yoyo, tag, overwrite, onUpdate, onComplete, }?: TweenOptions<T> | undefined): TweenHandle<T>;
     /**
      * Cancel tweens and sequences on `target`.
      * @param {object} target
      * @param {string | null} [tag=null] Only those with this tag.
      * @returns {number} Number removed.
      */
-    killTweensOf(target: object, tag?: string | null): number;
+    killTweensOf(target: object, tag?: string | null | undefined): number;
     /**
      * Run tween steps one after another.
      * @template {object} T
@@ -186,21 +186,21 @@ export class TweenManager {
      * @param {SequenceOptions<T>} [options]
      * @returns {SequenceHandle<T>}
      */
-    sequence<T extends unknown>(target: T, steps: readonly SequenceStep<T>[], { tag, onComplete }?: SequenceOptions<T>): SequenceHandle<T>;
+    sequence<T extends unknown>(target: T, steps: readonly SequenceStep<T>[], { tag, onComplete }?: SequenceOptions<T> | undefined): SequenceHandle<T>;
     /**
      * Continuous breathing idle loop on decoupled Sprite2D visual properties.
      * @param {VisualTweenTarget} target
      * @param {IdleOptions} [options]
      * @returns {TweenHandle<VisualTweenTarget>}
      */
-    idle(target: VisualTweenTarget, { scaleAmt, duration }?: IdleOptions): TweenHandle<VisualTweenTarget>;
+    idle(target: VisualTweenTarget, { scaleAmt, duration }?: IdleOptions | undefined): TweenHandle<VisualTweenTarget>;
     /**
      * Continuous procedural run bob + squash + waddle tilt loop.
      * @param {VisualTweenTarget} target
      * @param {RunOptions} [options]
      * @returns {LoopHandle}
      */
-    run(target: VisualTweenTarget, { bobHeight, tiltRad, squashAmt, duration }?: RunOptions): LoopHandle;
+    run(target: VisualTweenTarget, { bobHeight, tiltRad, squashAmt, duration }?: RunOptions | undefined): LoopHandle;
     /**
      * Three-stage windup -> strike -> recover lunge toward (dirX, dirY).
      * @param {VisualTweenTarget} target
@@ -209,7 +209,7 @@ export class TweenManager {
      * @param {AttackLungeOptions} [options]
      * @returns {SequenceHandle<VisualTweenTarget>}
      */
-    attackLunge(target: VisualTweenTarget, dirX?: number, dirY?: number, { distance, windup, strike, recover, stretch, onApex, onComplete, }?: AttackLungeOptions): SequenceHandle<VisualTweenTarget>;
+    attackLunge(target: VisualTweenTarget, dirX?: number | undefined, dirY?: number | undefined, { distance, windup, strike, recover, stretch, onApex, onComplete, }?: AttackLungeOptions | undefined): SequenceHandle<VisualTweenTarget>;
     /**
      * Knockback slide, tilt, shrink, and fade-out for defeated entities.
      * @param {VisualTweenTarget} target
@@ -218,7 +218,7 @@ export class TweenManager {
      * @param {DieKnockbackOptions} [options]
      * @returns {TweenHandle<VisualTweenTarget>}
      */
-    dieKnockback(target: VisualTweenTarget, dirX?: number, dirY?: number, { distance, duration, spinRad, endScale, onComplete, }?: DieKnockbackOptions): TweenHandle<VisualTweenTarget>;
+    dieKnockback(target: VisualTweenTarget, dirX?: number | undefined, dirY?: number | undefined, { distance, duration, spinRad, endScale, onComplete, }?: DieKnockbackOptions | undefined): TweenHandle<VisualTweenTarget>;
     /** Run `callback` once after `seconds` of tween time. @param {number} seconds (> 0) @param {() => void} callback @returns {number} Timer id for {@link TweenManager#cancel}. */
     after(seconds: number, callback: () => void): number;
     /** Run `callback` every `seconds` of tween time. @param {number} seconds (> 0) @param {() => void} callback @returns {number} Timer id for {@link TweenManager#cancel}. */
@@ -242,7 +242,7 @@ export const LN2_CRIT: 1.6783469900166605;
  */
 export class SpringDamper1D {
     /** @param {SpringDamper1DOptions} [options] */
-    constructor({ value, velocity, target, halfLife, maxSpeed }?: SpringDamper1DOptions);
+    constructor({ value, velocity, target, halfLife, maxSpeed }?: SpringDamper1DOptions | undefined);
     value: number;
     velocity: number;
     target: number;
@@ -251,18 +251,18 @@ export class SpringDamper1D {
     /** @param {number} target @returns {this} */
     setTarget(target: number): this;
     /** Jump to `value` and stop (units / units-per-second). @param {number} [value] @param {number} [velocity=0] @returns {this} */
-    snap(value?: number, velocity?: number): this;
+    snap(value?: number | undefined, velocity?: number | undefined): this;
     /** Advance by `dt` seconds. @param {number} dt @param {number} [target] @returns {number} The new value. */
-    step(dt: number, target?: number): number;
+    step(dt: number, target?: number | undefined): number;
     /** @param {number} [epsilon=1e-4] Position tolerance. @param {number} [velocityEpsilon=1e-3] Velocity tolerance. @returns {boolean} */
-    isSettled(epsilon?: number, velocityEpsilon?: number): boolean;
+    isSettled(epsilon?: number | undefined, velocityEpsilon?: number | undefined): boolean;
 }
 /**
  * Stateful 2D analytical critically damped spring (zero per-step allocations).
  */
 export class SpringDamper2D {
     /** @param {SpringDamper2DOptions} [options] */
-    constructor({ x, y, vx, vy, targetX, targetY, halfLife, maxSpeed, }?: SpringDamper2DOptions);
+    constructor({ x, y, vx, vy, targetX, targetY, halfLife, maxSpeed, }?: SpringDamper2DOptions | undefined);
     x: number;
     y: number;
     vx: number;
@@ -274,18 +274,18 @@ export class SpringDamper2D {
     /** @param {number} x @param {number} y @returns {this} */
     setTarget(x: number, y: number): this;
     /** Jump to (x, y) with the given velocity (units/second). @param {number} [x] @param {number} [y] @param {number} [vx=0] @param {number} [vy=0] @returns {this} */
-    snap(x?: number, y?: number, vx?: number, vy?: number): this;
+    snap(x?: number | undefined, y?: number | undefined, vx?: number | undefined, vy?: number | undefined): this;
     /** Advance by `dt` seconds. @param {number} dt @param {number} [targetX] @param {number} [targetY] @returns {this} */
-    step(dt: number, targetX?: number, targetY?: number): this;
+    step(dt: number, targetX?: number | undefined, targetY?: number | undefined): this;
     /** @param {number} [epsilon=1e-4] Position tolerance. @param {number} [velocityEpsilon=1e-3] Velocity tolerance. @returns {boolean} */
-    isSettled(epsilon?: number, velocityEpsilon?: number): boolean;
+    isSettled(epsilon?: number | undefined, velocityEpsilon?: number | undefined): boolean;
 }
 /**
  * Stateful 3D analytical critically damped spring (zero per-step allocations).
  */
 export class SpringDamper3D {
     /** @param {SpringDamper3DOptions} [options] */
-    constructor({ x, y, z, vx, vy, vz, targetX, targetY, targetZ, halfLife, maxSpeed, }?: SpringDamper3DOptions);
+    constructor({ x, y, z, vx, vy, vz, targetX, targetY, targetZ, halfLife, maxSpeed, }?: SpringDamper3DOptions | undefined);
     x: number;
     y: number;
     z: number;
@@ -300,11 +300,11 @@ export class SpringDamper3D {
     /** @param {number} x @param {number} y @param {number} z @returns {this} */
     setTarget(x: number, y: number, z: number): this;
     /** Jump to (x, y, z) with the given velocity (units/second). @param {number} [x] @param {number} [y] @param {number} [z] @param {number} [vx=0] @param {number} [vy=0] @param {number} [vz=0] @returns {this} */
-    snap(x?: number, y?: number, z?: number, vx?: number, vy?: number, vz?: number): this;
+    snap(x?: number | undefined, y?: number | undefined, z?: number | undefined, vx?: number | undefined, vy?: number | undefined, vz?: number | undefined): this;
     /** Advance by `dt` seconds. @param {number} dt @param {number} [targetX] @param {number} [targetY] @param {number} [targetZ] @returns {this} */
-    step(dt: number, targetX?: number, targetY?: number, targetZ?: number): this;
+    step(dt: number, targetX?: number | undefined, targetY?: number | undefined, targetZ?: number | undefined): this;
     /** @param {number} [epsilon=1e-4] Position tolerance. @param {number} [velocityEpsilon=1e-3] Velocity tolerance. @returns {boolean} */
-    isSettled(epsilon?: number, velocityEpsilon?: number): boolean;
+    isSettled(epsilon?: number | undefined, velocityEpsilon?: number | undefined): boolean;
 }
 /**
  * Maps normalized time 0..1 to eased progress.
@@ -323,33 +323,33 @@ export type TweenOptions<T extends unknown> = {
     /**
      * Seconds per cycle (>= 0; 0 applies immediately).
      */
-    duration?: number;
+    duration?: number | undefined;
     /**
      * Seconds before starting (>= 0).
      */
-    delay?: number;
-    ease?: Ease;
+    delay?: number | undefined;
+    ease?: Ease | undefined;
     /**
      * Extra cycles (integer >= 0, `Infinity` or `-1` loops forever).
      */
-    repeat?: number;
+    repeat?: number | undefined;
     /**
      * Reverse every other cycle.
      */
-    yoyo?: boolean;
+    yoyo?: boolean | undefined;
     /**
      * Group name for {@link TweenManager#killTweensOf} / `overwrite`.
      */
-    tag?: string | null;
+    tag?: string | null | undefined;
     /**
      * Cancel existing tweens on the same target sharing a key or tag.
      */
-    overwrite?: boolean;
+    overwrite?: boolean | undefined;
     /**
      * Called after each step with eased-input progress 0..1.
      */
-    onUpdate?: ((target: T, t: number) => void) | null;
-    onComplete?: (() => void) | null;
+    onUpdate?: ((target: T, t: number) => void) | null | undefined;
+    onComplete?: (() => void) | null | undefined;
 };
 /**
  * Active tween record; call `cancel()` to stop it.
@@ -403,28 +403,28 @@ export type SequenceStep<T extends unknown> = {
     /**
      * Target values for this step.
      */
-    values?: TweenValues<T>;
+    values?: TweenValues<T> | undefined;
     /**
      * Seconds.
      */
-    duration?: number;
+    duration?: number | undefined;
     /**
      * Seconds.
      */
-    delay?: number;
+    delay?: number | undefined;
     /**
      * Extra pause in seconds (a value-less step with `wait` and no `duration` is a pure wait).
      */
-    wait?: number;
-    ease?: Ease;
-    repeat?: number;
-    yoyo?: boolean;
-    onStart?: ((target: T) => void) | null;
-    onComplete?: ((target: T) => void) | null;
+    wait?: number | undefined;
+    ease?: Ease | undefined;
+    repeat?: number | undefined;
+    yoyo?: boolean | undefined;
+    onStart?: ((target: T) => void) | null | undefined;
+    onComplete?: ((target: T) => void) | null | undefined;
 };
 export type SequenceOptions<T extends unknown> = {
-    tag?: string | null;
-    onComplete?: (() => void) | null;
+    tag?: string | null | undefined;
+    onComplete?: (() => void) | null | undefined;
 };
 export type SequenceHandle<T extends unknown> = {
     target: T;
@@ -448,95 +448,95 @@ export type VisualTweenTarget = {
     /**
      * Pixels.
      */
-    offsetX?: number;
+    offsetX?: number | undefined;
     /**
      * Pixels.
      */
-    offsetY?: number;
-    scaleX?: number;
-    scaleY?: number;
+    offsetY?: number | undefined;
+    scaleX?: number | undefined;
+    scaleY?: number | undefined;
     /**
      * Radians.
      */
-    rotation?: number;
+    rotation?: number | undefined;
     /**
      * 0..1.
      */
-    opacity?: number;
+    opacity?: number | undefined;
 };
 export type IdleOptions = {
     /**
      * Breathing scale amplitude (ratio).
      */
-    scaleAmt?: number;
+    scaleAmt?: number | undefined;
     /**
      * Half-cycle seconds.
      */
-    duration?: number;
+    duration?: number | undefined;
 };
 export type RunOptions = {
     /**
      * Vertical bob, pixels.
      */
-    bobHeight?: number;
+    bobHeight?: number | undefined;
     /**
      * Waddle tilt, radians.
      */
-    tiltRad?: number;
+    tiltRad?: number | undefined;
     /**
      * Squash/stretch amplitude (ratio).
      */
-    squashAmt?: number;
+    squashAmt?: number | undefined;
     /**
      * Bob half-cycle, seconds.
      */
-    duration?: number;
+    duration?: number | undefined;
 };
 export type AttackLungeOptions = {
     /**
      * Strike distance, pixels.
      */
-    distance?: number;
+    distance?: number | undefined;
     /**
      * Seconds.
      */
-    windup?: number;
+    windup?: number | undefined;
     /**
      * Seconds.
      */
-    strike?: number;
+    strike?: number | undefined;
     /**
      * Seconds.
      */
-    recover?: number;
+    recover?: number | undefined;
     /**
      * Squash/stretch amplitude (ratio).
      */
-    stretch?: number;
+    stretch?: number | undefined;
     /**
      * Called at the end of the strike step.
      */
-    onApex?: ((target: VisualTweenTarget) => void) | null;
-    onComplete?: (() => void) | null;
+    onApex?: ((target: VisualTweenTarget) => void) | null | undefined;
+    onComplete?: (() => void) | null | undefined;
 };
 export type DieKnockbackOptions = {
     /**
      * Knockback distance, pixels.
      */
-    distance?: number;
+    distance?: number | undefined;
     /**
      * Seconds.
      */
-    duration?: number;
+    duration?: number | undefined;
     /**
      * Added rotation, radians.
      */
-    spinRad?: number;
+    spinRad?: number | undefined;
     /**
      * Final scale (ratio).
      */
-    endScale?: number;
-    onComplete?: (() => void) | null;
+    endScale?: number | undefined;
+    onComplete?: (() => void) | null | undefined;
 };
 export type TimerEntry = {
     /**
@@ -554,15 +554,15 @@ export type SpringHalfLifeOptions = {
     /**
      * Seconds for the remaining error to halve.
      */
-    halfLife?: number;
+    halfLife?: number | undefined;
     /**
      * Overrides `halfLife` (rad/s).
      */
-    angularFrequency?: number;
+    angularFrequency?: number | undefined;
     /**
      * Velocity cap (units/second).
      */
-    maxSpeed?: number;
+    maxSpeed?: number | undefined;
 };
 /**
  * Mutable 1D spring state.
@@ -572,68 +572,68 @@ export type SpringState1D = {
     velocity: number;
 };
 export type SpringDamper1DOptions = {
-    value?: number;
+    value?: number | undefined;
     /**
      * Units/second.
      */
-    velocity?: number;
-    target?: number;
+    velocity?: number | undefined;
+    target?: number | undefined;
     /**
      * Seconds.
      */
-    halfLife?: number;
+    halfLife?: number | undefined;
     /**
      * Units/second.
      */
-    maxSpeed?: number;
+    maxSpeed?: number | undefined;
 };
 export type SpringDamper2DOptions = {
-    x?: number;
-    y?: number;
+    x?: number | undefined;
+    y?: number | undefined;
     /**
      * Units/second.
      */
-    vx?: number;
+    vx?: number | undefined;
     /**
      * Units/second.
      */
-    vy?: number;
-    targetX?: number;
-    targetY?: number;
+    vy?: number | undefined;
+    targetX?: number | undefined;
+    targetY?: number | undefined;
     /**
      * Seconds.
      */
-    halfLife?: number;
+    halfLife?: number | undefined;
     /**
      * Speed cap, units/second.
      */
-    maxSpeed?: number;
+    maxSpeed?: number | undefined;
 };
 export type SpringDamper3DOptions = {
-    x?: number;
-    y?: number;
-    z?: number;
+    x?: number | undefined;
+    y?: number | undefined;
+    z?: number | undefined;
     /**
      * Units/second.
      */
-    vx?: number;
+    vx?: number | undefined;
     /**
      * Units/second.
      */
-    vy?: number;
+    vy?: number | undefined;
     /**
      * Units/second.
      */
-    vz?: number;
-    targetX?: number;
-    targetY?: number;
-    targetZ?: number;
+    vz?: number | undefined;
+    targetX?: number | undefined;
+    targetY?: number | undefined;
+    targetZ?: number | undefined;
     /**
      * Seconds.
      */
-    halfLife?: number;
+    halfLife?: number | undefined;
     /**
      * Speed cap, units/second.
      */
-    maxSpeed?: number;
+    maxSpeed?: number | undefined;
 };

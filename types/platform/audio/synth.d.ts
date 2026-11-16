@@ -10,7 +10,7 @@ export function synthesizeSfxPcm(presetOrConfig: string | object, { sampleRate, 
     pitchFactor?: number;
     volume?: number;
     seed?: number;
-}): Float32Array;
+} | undefined): Float32Array;
 /**
  * Plays a procedural SFX preset on an active WebAudio context and destination node.
  * @param {AudioContext|null} audioCtx
@@ -37,7 +37,7 @@ export function createSynthSfx({ AudioContextClass, context, destination, volume
     pitchJitter?: number;
     gainJitter?: number;
     random?: () => number;
-}): Readonly<{
+} | undefined): Readonly<{
     readonly available: boolean;
     readonly volume: any;
     readonly muted: boolean;

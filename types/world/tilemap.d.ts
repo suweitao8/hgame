@@ -13,7 +13,7 @@
  * @param {FindGridPathOptions} [options]
  * @returns {TileCoord[]} Cells from start to goal inclusive, or [] when blocked/unreachable.
  */
-export function findGridPath<T = number>(map: TileMap<T>, start: TileCoord, goal: TileCoord, { maxNodes, allowDiagonal, preventCornerCutting, }?: FindGridPathOptions): TileCoord[];
+export function findGridPath<T = number>(map: TileMap<T>, start: TileCoord, goal: TileCoord, { maxNodes, allowDiagonal, preventCornerCutting, }?: FindGridPathOptions | undefined): TileCoord[];
 /**
  * @template [T=number]
  * @typedef {object} TileMapOptions
@@ -59,7 +59,7 @@ export function findGridPath<T = number>(map: TileMap<T>, start: TileCoord, goal
  */
 export class TileMap<T = number> {
     /** @param {TileMapOptions<T>} [options] */
-    constructor({ tiles, tileWidth, tileHeight, solid }?: TileMapOptions<T>);
+    constructor({ tiles, tileWidth, tileHeight, solid }?: TileMapOptions<T> | undefined);
     /** Row-major tile values (tiles[y][x]). @type {T[][]} */
     tiles: T[][];
     /** Columns. @type {number} */
@@ -124,21 +124,21 @@ export class TileMap<T = number> {
      * @param {TileMapDrawOptions<T>} [options]
      * @returns {void}
      */
-    draw(ctx: CanvasRenderingContext2D, { palette, originX, originY, sheet, image, tileFrames, viewBounds }?: TileMapDrawOptions<T>): void;
+    draw(ctx: CanvasRenderingContext2D, { palette, originX, originY, sheet, image, tileFrames, viewBounds }?: TileMapDrawOptions<T> | undefined): void;
 }
 export type FindGridPathOptions = {
     /**
      * Maximum expanded nodes before giving up (returns []).
      */
-    maxNodes?: number;
+    maxNodes?: number | undefined;
     /**
      * Allow 8-way movement (octile heuristic).
      */
-    allowDiagonal?: boolean;
+    allowDiagonal?: boolean | undefined;
     /**
      * Disallow diagonal steps past solid orthogonal neighbours.
      */
-    preventCornerCutting?: boolean;
+    preventCornerCutting?: boolean | undefined;
 };
 export type HeapNode = {
     /**
@@ -164,15 +164,15 @@ export type TileMapOptions<T = number> = {
     /**
      * Tile width in world units (> 0).
      */
-    tileWidth?: number;
+    tileWidth?: number | undefined;
     /**
      * Tile height in world units (> 0).
      */
-    tileHeight?: number;
+    tileHeight?: number | undefined;
     /**
      * Tile values that block movement.
      */
-    solid?: Iterable<T>;
+    solid?: Iterable<T> | undefined;
 };
 /**
  * Minimal frame-lookup contract used by TileMap#draw (e.g. a SpriteSheet).
@@ -181,7 +181,7 @@ export type TileSheetLike = {
     /**
      * Source image for the sheet.
      */
-    image?: CanvasImageSource | null;
+    image?: CanvasImageSource | null | undefined;
     /**
      * Returns the source rectangle (pixels) of a frame index.
      */
@@ -205,31 +205,31 @@ export type TileMapDrawOptions<T = number> = {
     /**
      * Fill style per tile value (flat-colour fallback).
      */
-    palette?: Record<string, string>;
+    palette?: Record<string, string> | undefined;
     /**
      * World X of the map's top-left corner.
      */
-    originX?: number;
+    originX?: number | undefined;
     /**
      * World Y of the map's top-left corner.
      */
-    originY?: number;
+    originY?: number | undefined;
     /**
      * Sprite sheet providing tile frames.
      */
-    sheet?: TileSheetLike | null;
+    sheet?: TileSheetLike | null | undefined;
     /**
      * Override image; defaults to sheet.image.
      */
-    image?: CanvasImageSource | null;
+    image?: CanvasImageSource | null | undefined;
     /**
      * Tile value to frame index; when omitted, non-negative integer tile values are used as frame indices.
      */
-    tileFrames?: Record<string, number | null | undefined> | null;
+    tileFrames?: Record<string, number | null | undefined> | null | undefined;
     /**
      * Cull to this world-space rectangle.
      */
-    viewBounds?: TileViewBounds | null;
+    viewBounds?: TileViewBounds | null | undefined;
 };
 /**
  * A grid cell coordinate.

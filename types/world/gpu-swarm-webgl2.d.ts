@@ -3,7 +3,7 @@
  * @param {GpuSwarmOptions} [options]
  * @returns {GpuSwarmWebGL2}
  */
-export function createGpuSwarmWebGL2({ capacity, THREE, renderer, gl, speed, curlStrength, animFps, frameCount, originX, originY, worldWidth, worldHeight, }?: GpuSwarmOptions): GpuSwarmWebGL2;
+export function createGpuSwarmWebGL2({ capacity, THREE, renderer, gl, speed, curlStrength, animFps, frameCount, originX, originY, worldWidth, worldHeight, }?: GpuSwarmOptions | undefined): GpuSwarmWebGL2;
 /**
  * Minimal structural Three.js interface accepted by `createGpuSwarmWebGL2`.
  */
@@ -50,72 +50,72 @@ export type GpuSwarmRendererLike = {
     getRenderTarget: () => unknown;
     setRenderTarget: (target: unknown) => void;
     render: (scene: unknown, camera: unknown) => void;
-    autoClear?: boolean;
+    autoClear?: boolean | undefined;
     capabilities?: {
         isWebGL2?: boolean;
-    };
-    getContext?: () => WebGL2RenderingContext;
+    } | undefined;
+    getContext?: (() => WebGL2RenderingContext) | undefined;
 };
 export type GpuSwarmOptions = {
     /**
      * Max unit capacity (`1..262144`).
      */
-    capacity?: number;
+    capacity?: number | undefined;
     /**
      * Optional Three.js module for Three.js WebGLRenderTarget mode.
      */
-    THREE?: GpuSwarmThreeLike | null;
+    THREE?: GpuSwarmThreeLike | null | undefined;
     /**
      * Optional Three.js WebGLRenderer.
      */
-    renderer?: GpuSwarmRendererLike | null;
+    renderer?: GpuSwarmRendererLike | null | undefined;
     /**
      * Optional raw WebGL2 context for 2D / custom pipelines.
      */
-    gl?: WebGL2RenderingContext | null;
+    gl?: WebGL2RenderingContext | null | undefined;
     /**
      * Default movement speed in world units/sec.
      */
-    speed?: number;
+    speed?: number | undefined;
     /**
      * Procedural spatial swirl separating overlapping streams.
      */
-    curlStrength?: number;
+    curlStrength?: number | undefined;
     /**
      * Animation frame advance rate.
      */
-    animFps?: number;
+    animFps?: number | undefined;
     /**
      * Cyclic VAT/sprite frame wrap count.
      */
-    frameCount?: number;
+    frameCount?: number | undefined;
     /**
      * Default FlowField origin X.
      */
-    originX?: number;
+    originX?: number | undefined;
     /**
      * Default FlowField origin Y/Z.
      */
-    originY?: number;
+    originY?: number | undefined;
     /**
      * Default FlowField span X.
      */
-    worldWidth?: number;
+    worldWidth?: number | undefined;
     /**
      * Default FlowField span Y/Z.
      */
-    worldHeight?: number;
+    worldHeight?: number | undefined;
 };
 export type GpuSwarmSpawnOptions = {
-    x?: number;
-    y?: number;
-    rot?: number;
-    frameOffset?: number;
+    x?: number | undefined;
+    y?: number | undefined;
+    rot?: number | undefined;
+    frameOffset?: number | undefined;
 };
 export type GpuSwarmStepOptions = {
-    heroX?: number;
-    heroY?: number;
-    speed?: number;
+    heroX?: number | undefined;
+    heroY?: number | undefined;
+    speed?: number | undefined;
 };
 export type GpuSwarmStepResult = {
     count: number;

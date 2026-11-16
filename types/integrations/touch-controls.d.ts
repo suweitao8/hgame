@@ -15,7 +15,7 @@
  * @param {number} [deadzone=0.12] Fraction of the radius ignored, clamped to [0, 0.95].
  * @returns {RadialDeadzoneResult}
  */
-export function applyRadialDeadzone(dx: number, dy: number, radius: number, deadzone?: number): RadialDeadzoneResult;
+export function applyRadialDeadzone(dx: number, dy: number, radius: number, deadzone?: number | undefined): RadialDeadzoneResult;
 /** @typedef {'touch-only' | 'always' | 'hidden'} TouchControlsMode */
 /** @typedef {'arc' | 'grid'} TouchButtonLayout */
 /**
@@ -133,11 +133,11 @@ export type TouchControlsPlayer = {
     /**
      * Player id used for the data-player attribute.
      */
-    id?: string;
+    id?: string | undefined;
     /**
      * Virtual stick Y convention.
      */
-    yAxis?: "up" | "down";
+    yAxis?: "down" | "up" | undefined;
     /**
      * Action bindings rendered as buttons.
      */
@@ -165,47 +165,47 @@ export type TouchControlsOptions = {
     /**
      * Element the overlay is appended to.
      */
-    container?: HTMLElement | null;
+    container?: HTMLElement | null | undefined;
     /**
      * Document used to create elements.
      */
-    documentRef?: Document | null;
+    documentRef?: Document | null | undefined;
     /**
      * Window used for events, sizing and coarse-pointer detection.
      */
-    windowRef?: Window | null;
+    windowRef?: Window | null | undefined;
     /**
      * Navigator used for maxTouchPoints detection.
      */
-    navigatorRef?: Navigator | null;
+    navigatorRef?: Navigator | null | undefined;
     /**
      * Visibility: 'touch-only' shows after touch detection, 'always', or 'hidden'.
      */
-    mode?: TouchControlsMode;
+    mode?: TouchControlsMode | undefined;
     /**
      * Joystick style, or false to disable it.
      */
-    joystick?: "floating" | "fixed" | false;
+    joystick?: false | "fixed" | "floating" | undefined;
     /**
      * Joystick radius in CSS pixels (16..240).
      */
-    joystickRadius?: number;
+    joystickRadius?: number | undefined;
     /**
      * Radial deadzone fraction in [0, 0.95).
      */
-    deadzone?: number;
+    deadzone?: number | undefined;
     /**
      * Button cluster layout.
      */
-    buttonLayout?: TouchButtonLayout;
+    buttonLayout?: TouchButtonLayout | undefined;
     /**
      * Show keyboard hints; 'auto' hides them on coarse-pointer devices.
      */
-    showKeyHints?: boolean | "auto";
+    showKeyHints?: boolean | "auto" | undefined;
     /**
      * Pane split direction for multiple players.
      */
-    splitDirection?: "auto" | "horizontal" | "vertical";
+    splitDirection?: "auto" | "vertical" | "horizontal" | undefined;
 };
 export type TouchControls = {
     /**

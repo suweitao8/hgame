@@ -3,7 +3,7 @@
  * @param {number | string} [seed] Integer (or string) seed; default `1`.
  * @returns {SeededRng}
  */
-export function createSeededRng(seed?: number | string): SeededRng;
+export function createSeededRng(seed?: string | number | undefined): SeededRng;
 export type SeededRng = {
     /**
      * Float in `[0, 1)`.

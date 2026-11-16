@@ -249,7 +249,7 @@ export type PostPipelineTHREE = {
     Matrix4: ThreeCtor;
     Vector2: ThreeCtor;
     Vector3: ThreeCtor;
-    Color?: ThreeCtor;
+    Color?: ThreeCtor | undefined;
     /**
      * Shader language version constant.
      */
@@ -258,7 +258,7 @@ export type PostPipelineTHREE = {
     NearestFilter: number;
     UnsignedByteType: number;
     UnsignedIntType: number;
-    HalfFloatType?: number;
+    HalfFloatType?: number | undefined;
 };
 /**
  * Structural subset of THREE.WebGLRenderer used by the pipeline.
@@ -267,22 +267,22 @@ export type PostPipelineRenderer = {
     /**
      * Restored after each render.
      */
-    autoClear?: boolean;
+    autoClear?: boolean | undefined;
     /**
      * Restored after each render.
      */
-    toneMapping?: number;
+    toneMapping?: number | undefined;
     capabilities?: {
         isWebGL2?: boolean;
         getMaxAnisotropy?(): number;
-    };
+    } | undefined;
     setRenderTarget: (target: object | null) => void;
     render: (scene: object, camera: object) => void;
-    clear?: (color?: boolean, depth?: boolean, stencil?: boolean) => void;
-    clearDepth?: () => void;
-    getContext?: () => ({
+    clear?: ((color?: boolean, depth?: boolean, stencil?: boolean) => void) | undefined;
+    clearDepth?: (() => void) | undefined;
+    getContext?: (() => ({
         [key: string]: unknown;
-    } | null | undefined);
+    } | null | undefined)) | undefined;
 };
 /**
  * Unknown values resolve to ACES (index 0).
@@ -295,123 +295,123 @@ export type PostPipelineSettings = {
     /**
      * Default `'aces'` at creation.
      */
-    toneMapping?: PostToneMappingMode;
+    toneMapping?: PostToneMappingMode | undefined;
     /**
      * Exposure multiplier.
      */
-    exposure?: number;
-    bloomStrength?: number;
-    bloomThreshold?: number;
-    bloomSoftKnee?: number;
+    exposure?: number | undefined;
+    bloomStrength?: number | undefined;
+    bloomThreshold?: number | undefined;
+    bloomSoftKnee?: number | undefined;
     /**
      * World units.
      */
-    ssaoRadius?: number;
+    ssaoRadius?: number | undefined;
     /**
      * World units.
      */
-    ssaoBias?: number;
-    ssaoIntensity?: number;
-    volumetricIntensity?: number;
-    giIntensity?: number;
+    ssaoBias?: number | undefined;
+    ssaoIntensity?: number | undefined;
+    volumetricIntensity?: number | undefined;
+    giIntensity?: number | undefined;
     /**
      * World units.
      */
-    giRadius?: number;
-    ssrIntensity?: number;
+    giRadius?: number | undefined;
+    ssrIntensity?: number | undefined;
     /**
      * World units.
      */
-    ssrMaxDist?: number;
+    ssrMaxDist?: number | undefined;
     /**
      * World units.
      */
-    ssrThickness?: number;
+    ssrThickness?: number | undefined;
     /**
      * 0..1; default follows the quality preset (0.65 or 0).
      */
-    contactShadows?: number;
+    contactShadows?: number | undefined;
     /**
      * World units.
      */
-    contactShadowLength?: number;
+    contactShadowLength?: number | undefined;
     /**
      * World units.
      */
-    contactShadowThickness?: number;
+    contactShadowThickness?: number | undefined;
     /**
      * GPU eye adaptation (rebuilds targets when toggled).
      */
-    autoExposure?: boolean;
-    minExposure?: number;
-    maxExposure?: number;
+    autoExposure?: boolean | undefined;
+    minExposure?: number | undefined;
+    maxExposure?: number | undefined;
     /**
      * Adaptation rate (1/s) when exposure decreases.
      */
-    adaptSpeedUp?: number;
+    adaptSpeedUp?: number | undefined;
     /**
      * Adaptation rate (1/s) when exposure increases.
      */
-    adaptSpeedDown?: number;
-    keyValue?: number;
-    exposureCompensation?: number;
+    adaptSpeedDown?: number | undefined;
+    keyValue?: number | undefined;
+    exposureCompensation?: number | undefined;
     /**
      * Kelvin.
      */
-    whiteTemp?: number;
+    whiteTemp?: number | undefined;
     /**
      * -1..1.
      */
-    whiteTint?: number;
-    contrast?: number;
-    colorLift?: RGBTuple;
-    colorGamma?: RGBTuple;
-    colorGain?: RGBTuple;
-    chromaticAberration?: number;
-    filmGrain?: number;
-    filmSlope?: number;
-    filmToe?: number;
-    filmShoulder?: number;
-    filmBlackClip?: number;
-    filmWhiteClip?: number;
+    whiteTint?: number | undefined;
+    contrast?: number | undefined;
+    colorLift?: import("./color.js").RGBTuple | undefined;
+    colorGamma?: import("./color.js").RGBTuple | undefined;
+    colorGain?: import("./color.js").RGBTuple | undefined;
+    chromaticAberration?: number | undefined;
+    filmGrain?: number | undefined;
+    filmSlope?: number | undefined;
+    filmToe?: number | undefined;
+    filmShoulder?: number | undefined;
+    filmBlackClip?: number | undefined;
+    filmWhiteClip?: number | undefined;
     /**
      * Unsharp strength; default follows the preset (0.14).
      */
-    sharpness?: number;
-    vignette?: number;
-    saturation?: number;
+    sharpness?: number | undefined;
+    vignette?: number | undefined;
+    saturation?: number | undefined;
     /**
      * Default follows the preset (true).
      */
-    fxaa?: boolean;
+    fxaa?: boolean | undefined;
     /**
      * Damage overlay 0..1.
      */
-    damage?: number;
+    damage?: number | undefined;
     /**
      * Low-health overlay 0..1.
      */
-    lowHealth?: number;
+    lowHealth?: number | undefined;
     /**
      * Focus effect 0..1.
      */
-    focus?: number;
+    focus?: number | undefined;
     /**
      * Flash overlay 0..1.
      */
-    flash?: number;
+    flash?: number | undefined;
     /**
      * Fade-to-black 0..1.
      */
-    fade?: number;
+    fade?: number | undefined;
     /**
      * Passed to `Color.set` (setState only).
      */
-    sunColor?: number | string | {
+    sunColor?: string | number | {
         r: number;
         g: number;
         b: number;
-    };
+    } | undefined;
 };
 /**
  * Creation-only options of {@link createPostPipeline3D}.
@@ -428,15 +428,15 @@ export type PostPipelineCreateBase = {
     /**
      * Buffer width in px.
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Buffer height in px.
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Quality preset (default: medium preset).
      */
-    preset?: Partial<Quality3DPreset> | null;
+    preset?: Partial<import("../quality3d.js").Quality3DPreset> | null | undefined;
 };
 export type PostPipeline3DOptions = PostPipelineSettings & PostPipelineCreateBase;
 /**
@@ -551,16 +551,16 @@ export type PostPipelineCamera = {
     /**
      * Default 0.1.
      */
-    near?: number;
+    near?: number | undefined;
     /**
      * Default 1000.
      */
-    far?: number;
+    far?: number | undefined;
     projectionMatrix: object;
     projectionMatrixInverse: object;
     matrixWorld: object;
     matrixWorldInverse: object;
-    updateMatrixWorld?: (force?: boolean) => void;
+    updateMatrixWorld?: ((force?: boolean) => void) | undefined;
 };
 /**
  * Directional (sun) light members read by `render`.
@@ -577,7 +577,7 @@ export type PostPipelineSunLight = {
             y: number;
             z: number;
         };
-    };
+    } | undefined;
     /**
      * THREE.Color copied into the sun color.
      */
@@ -587,7 +587,7 @@ export type PostPipelineSunLight = {
             texture?: object;
         } | null);
         matrix?: object;
-    };
+    } | undefined;
 };
 /**
  * Per-frame render options.
@@ -604,11 +604,11 @@ export type PostPipelineRenderOptions = {
     /**
      * Sun used for volumetrics/contact shadows.
      */
-    sunLight?: PostPipelineSunLight | null;
+    sunLight?: PostPipelineSunLight | null | undefined;
     /**
      * Frame delta in seconds.
      */
-    dt?: number;
+    dt?: number | undefined;
 };
 export type PostPipeline3D = {
     /**

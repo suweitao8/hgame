@@ -180,6 +180,13 @@ function detectMode(modeOpt, sceneOrAdapter, THREE) {
 
 /**
  * Unified 2D/3D/Headless zero-GC VFX & game-feel facade.
+ * @param {object} [options]
+ * @param {'headless' | 'canvas2d' | 'webgl2d' | '3d' | null} [options.mode=null]
+ * @param {object | null} [options.sceneOrAdapter=null] Renderer adapter, scene or 2D context.
+ * @param {object | null} [options.THREE] Three.js namespace for 3D rendering.
+ * @param {number} [options.maxParticles]
+ * @param {number} [options.maxFloatingGlyphs]
+ * @param {number} [options.seed=0x9e3779b9]
  */
 export function createVfxSystem({
   mode = null,
@@ -285,6 +292,22 @@ export function createVfxSystem({
     }
   }
 
+  /**
+   * @param {object} [options]
+   * @param {number} [options.x=0]
+   * @param {number} [options.y=0]
+   * @param {number} [options.z=0]
+   * @param {number} [options.damage=0]
+   * @param {boolean} [options.isCrit=false]
+   * @param {boolean} [options.isHeal=false]
+   * @param {boolean} [options.isMiss=false]
+   * @param {number} [options.dirX=0]
+   * @param {number} [options.dirY=0]
+   * @param {number} [options.dirZ=0]
+   * @param {string} [options.element='physical']
+   * @param {number} [options.hitstopSec]
+   * @param {number} [options.shakeIntensity]
+   */
   function emitHitImpact({
     x = 0,
     y = 0,

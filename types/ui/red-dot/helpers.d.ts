@@ -5,7 +5,7 @@
  * @param {string} [label='style'] Name used in the error message.
  * @returns {string} The validated style.
  */
-export function assertValidStyle(style: string, allowed: Set<string>, label?: string): string;
+export function assertValidStyle(style: string, allowed: Set<string>, label?: string | undefined): string;
 /**
  * Validates and normalizes a red-dot path (accepting `/` or `.` separators)
  * into a canonical `/`-delimited string (e.g. `"Main.Bag.Equip"` -> `"Main/Bag/Equip"`).
@@ -35,7 +35,7 @@ export function splitRedDotAncestors(path: string): string[];
  * @param {RedDotDayKeyOptions} [options]
  * @returns {string}
  */
-export function computeCommercialDayKey(timestampMs?: number, { resetHour, tzOffsetMinutes }?: RedDotDayKeyOptions): string;
+export function computeCommercialDayKey(timestampMs?: number | undefined, { resetHour, tzOffsetMinutes }?: RedDotDayKeyOptions | undefined): string;
 /**
  * @typedef {object} RedDotBadgeFormatOptions
  * @property {RedDotStyle} [style='number'] Badge style; 'none' and 'dot'/'quiet' yield "".
@@ -49,7 +49,7 @@ export function computeCommercialDayKey(timestampMs?: number, { resetHour, tzOff
  * @param {RedDotBadgeFormatOptions} [options]
  * @returns {string}
  */
-export function formatRedDotBadge(count: number, { style, maxCount, newLabel }?: RedDotBadgeFormatOptions): string;
+export function formatRedDotBadge(count: number, { style, maxCount, newLabel }?: RedDotBadgeFormatOptions | undefined): string;
 /**
  * Best-effort read of persisted data; returns null on any failure.
  * @param {RedDotStorage | null | undefined} storage
@@ -142,25 +142,25 @@ export type RedDotDayKeyOptions = {
     /**
      * Local hour (integer 0..23) at which the day rolls over.
      */
-    resetHour?: number;
+    resetHour?: number | undefined;
     /**
      * Fixed UTC offset in minutes (e.g. 480 for UTC+8); omitted = host local time.
      */
-    tzOffsetMinutes?: number;
+    tzOffsetMinutes?: number | undefined;
 };
 export type RedDotBadgeFormatOptions = {
     /**
      * Badge style; 'none' and 'dot'/'quiet' yield "".
      */
-    style?: RedDotStyle;
+    style?: RedDotStyle | undefined;
     /**
      * Cap for number badges (positive integer); larger counts render as "<max>+".
      */
-    maxCount?: number;
+    maxCount?: number | undefined;
     /**
      * Text used for 'new' badges.
      */
-    newLabel?: string;
+    newLabel?: string | undefined;
 };
 /**
  * Visual style of a badge: 'none' hides it, 'quiet' is a small amber dot, 'dot' a red dot, 'new' a label, 'number' a count.
@@ -218,19 +218,19 @@ export type RedDotStorage = {
     /**
      * Read a JSON-compatible value.
      */
-    get?: (key: string, fallback: unknown) => unknown;
+    get?: ((key: string, fallback: unknown) => unknown) | undefined;
     /**
      * Write a JSON-compatible value.
      */
-    set?: (key: string, value: unknown) => unknown;
+    set?: ((key: string, value: unknown) => unknown) | undefined;
     /**
      * Read a raw JSON string.
      */
-    getItem?: (key: string) => string | null;
+    getItem?: ((key: string) => string | null) | undefined;
     /**
      * Write a raw JSON string.
      */
-    setItem?: (key: string, value: string) => unknown;
+    setItem?: ((key: string, value: string) => unknown) | undefined;
 };
 /**
  * Serialized system state (version 1) produced by exportState and consumed by importState.

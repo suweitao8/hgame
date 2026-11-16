@@ -28,24 +28,24 @@
  * @param {AssetLoaderOptions} [options]
  * @returns {AssetLoader}
  */
-export function createAssetLoader({ baseUrl, baseURI, fetchImpl, allowCrossOrigin, }?: AssetLoaderOptions): AssetLoader;
+export function createAssetLoader({ baseUrl, baseURI, fetchImpl, allowCrossOrigin, }?: AssetLoaderOptions | undefined): AssetLoader;
 export type AssetLoaderOptions = {
     /**
      * Asset root, resolved against `baseURI`.
      */
-    baseUrl?: string;
+    baseUrl?: string | undefined;
     /**
      * Document base URL (default: `document.baseURI` / `location.href` / loopback).
      */
-    baseURI?: string;
+    baseURI?: string | undefined;
     /**
      * Fetch implementation (default: bound `globalThis.fetch`).
      */
-    fetchImpl?: typeof fetch;
+    fetchImpl?: typeof fetch | undefined;
     /**
      * Allow absolute / cross-origin asset URLs.
      */
-    allowCrossOrigin?: boolean;
+    allowCrossOrigin?: boolean | undefined;
 };
 /**
  * Extra `fetch` init forwarded to every asset request (default credentials: `'same-origin'`).

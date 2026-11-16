@@ -46,7 +46,7 @@ export function createTagRegistry(): TagRegistry;
  * @param {TagContainerOptions} [options]
  * @returns {TagContainer}
  */
-export function createTagContainer(initialTags?: Iterable<string> | string | Record<string, number> | null, { registry, onChange }?: TagContainerOptions): TagContainer;
+export function createTagContainer(initialTags?: string | Iterable<string> | Record<string, number> | null | undefined, { registry, onChange }?: TagContainerOptions | undefined): TagContainer;
 /**
  * Matches a tag container (or null/array) against a tag string, array,
  * `{ all, any, none, exact }` query object, or predicate without allocating.
@@ -98,41 +98,41 @@ export type TagRegistry = {
 export type TagInput = string | Iterable<string>;
 export type TagContainerChangeEvent = {
     type: "add" | "remove" | "clear";
-    tag?: string;
+    tag?: string | undefined;
     /**
      * Stack delta.
      */
-    count?: number;
+    count?: number | undefined;
     /**
      * Explicit stack count after the change.
      */
-    total?: number;
+    total?: number | undefined;
     container: TagContainer;
 };
 export type TagContainerOptions = {
     /**
      * Defaults to {@link GLOBAL_TAG_REGISTRY}.
      */
-    registry?: TagRegistry | null;
-    onChange?: ((event: TagContainerChangeEvent) => void) | null;
+    registry?: TagRegistry | null | undefined;
+    onChange?: ((event: TagContainerChangeEvent) => void) | null | undefined;
 };
 export type TagQueryObject = {
     /**
      * Every tag must be present.
      */
-    all?: TagInput;
+    all?: TagInput | undefined;
     /**
      * At least one tag must be present.
      */
-    any?: TagInput;
+    any?: TagInput | undefined;
     /**
      * No tag may be present.
      */
-    none?: TagInput;
+    none?: TagInput | undefined;
     /**
      * Match explicit tags only (no hierarchy).
      */
-    exact?: boolean;
+    exact?: boolean | undefined;
 };
 export type TagQuery = string | Iterable<string> | TagQueryObject | ((container: TagContainer) => boolean) | null | undefined;
 /**

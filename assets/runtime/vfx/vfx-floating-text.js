@@ -184,8 +184,8 @@ void main() {
 
 export function createFloatingTextPool({
   mode = 'headless',
-  THREE = null,
-  scene = null,
+  THREE = /** @type {object | null} */ (null),
+  scene = /** @type {object | null} */ (null),
   is2D = mode === 'webgl2d' || mode === 'canvas2d',
   maxFloatingGlyphs = mode === 'canvas2d' ? 2048 : 16384,
 } = {}) {

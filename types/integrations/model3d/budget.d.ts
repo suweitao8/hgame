@@ -71,7 +71,7 @@
  * @param {AnimationBudgetAllocatorOptions} [options] Allocator options.
  * @returns {AnimationBudgetAllocator} Frozen allocator API.
  */
-export function createAnimationBudgetAllocator({ maxFullRateCount, maxHalfRateCount, maxQuarterRateCount, offscreenTickInterval, maxUpdateBudgetPerFrame, maxAccumulatedDt, priorityWeight, starvationWeight, distancePenalty, }?: AnimationBudgetAllocatorOptions): AnimationBudgetAllocator;
+export function createAnimationBudgetAllocator({ maxFullRateCount, maxHalfRateCount, maxQuarterRateCount, offscreenTickInterval, maxUpdateBudgetPerFrame, maxAccumulatedDt, priorityWeight, starvationWeight, distancePenalty, }?: AnimationBudgetAllocatorOptions | undefined): AnimationBudgetAllocator;
 /**
  * Vector-like position (world units).
  */
@@ -92,39 +92,39 @@ export type AnimationBudgetAllocatorOptions = {
     /**
      * Visible targets ticked every frame.
      */
-    maxFullRateCount?: number;
+    maxFullRateCount?: number | undefined;
     /**
      * Next visible targets ticked every 2nd frame.
      */
-    maxHalfRateCount?: number;
+    maxHalfRateCount?: number | undefined;
     /**
      * Next visible targets ticked every 4th frame (the rest every 8th).
      */
-    maxQuarterRateCount?: number;
+    maxQuarterRateCount?: number | undefined;
     /**
      * Seconds of accumulated time before an offscreen target ticks.
      */
-    offscreenTickInterval?: number;
+    offscreenTickInterval?: number | undefined;
     /**
      * Maximum number of target steps per `update` call.
      */
-    maxUpdateBudgetPerFrame?: number;
+    maxUpdateBudgetPerFrame?: number | undefined;
     /**
      * Cap (seconds) on per-target accumulated delta time.
      */
-    maxAccumulatedDt?: number;
+    maxAccumulatedDt?: number | undefined;
     /**
      * Score weight of `priority`.
      */
-    priorityWeight?: number;
+    priorityWeight?: number | undefined;
     /**
      * Score weight of accumulated delta time (seconds).
      */
-    starvationWeight?: number;
+    starvationWeight?: number | undefined;
     /**
      * Score penalty per world unit of camera distance.
      */
-    distancePenalty?: number;
+    distancePenalty?: number | undefined;
 };
 /**
  * Options for {@link AnimationBudgetAllocator.register}.
@@ -133,19 +133,19 @@ export type AnimationBudgetRegisterOptions = {
     /**
      * Higher priority gets more frequent ticks.
      */
-    priority?: number;
+    priority?: number | undefined;
     /**
      * Custom world position reader.
      */
-    getPosition?: ((target: AnimationBudgetTarget) => AnimationBudgetPosition | null) | null;
+    getPosition?: ((target: AnimationBudgetTarget) => AnimationBudgetPosition | null) | null | undefined;
     /**
      * Custom visibility reader.
      */
-    getVisible?: ((target: AnimationBudgetTarget) => boolean) | null;
+    getVisible?: ((target: AnimationBudgetTarget) => boolean) | null | undefined;
     /**
      * Custom step callback receiving accumulated dt.
      */
-    onStep?: ((dt: number, target: AnimationBudgetTarget) => void) | null;
+    onStep?: ((dt: number, target: AnimationBudgetTarget) => void) | null | undefined;
 };
 /**
  * Registered allocator entry (live, mutable record).

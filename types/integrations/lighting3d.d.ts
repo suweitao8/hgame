@@ -27,7 +27,7 @@
  * @param {LightingVec3Input} [surfaceNormal] Surface normal (default up).
  * @param {number} [random01] Uniform random in [0, 1). Default `0.5`.
  * @returns {StochasticLightSample | null} `null` when no light contributes.
- */ export function computeStochasticLightSample(candidates: readonly StochasticLightCandidate[], surfacePos?: LightingVec3Input, surfaceNormal?: LightingVec3Input, random01?: number): StochasticLightSample | null;
+ */ export function computeStochasticLightSample(candidates: readonly StochasticLightCandidate[], surfacePos?: LightingVec3Input | undefined, surfaceNormal?: LightingVec3Input | undefined, random01?: number | undefined): StochasticLightSample | null;
 /**
  * @typedef {object} MegaLights3DOptions
  * @property {number} [maxLights] Integer capacity 1..1024. Default `256`.
@@ -120,7 +120,7 @@
  * @param {LightingThreeLike | null | undefined} THREE Injected Three.js namespace subset (or null for headless).
  * @param {MegaLights3DOptions} [options]
  * @returns {MegaLights3D}
- */ export function createMegaLights3D(THREE: LightingThreeLike | null | undefined, options?: MegaLights3DOptions): MegaLights3D;
+ */ export function createMegaLights3D(THREE: LightingThreeLike | null | undefined, options?: MegaLights3DOptions | undefined): MegaLights3D;
 /**
  * @typedef {object} IrradianceProbeVolume3DOptions
  * @property {readonly number[]} [min] Volume minimum corner `[x,y,z]`, world units. Default `[-32,0,-32]`.
@@ -178,7 +178,7 @@
  * @param {LightingThreeLike | null | undefined} THREE Injected Three.js namespace subset (or null for headless).
  * @param {IrradianceProbeVolume3DOptions} [options]
  * @returns {IrradianceProbeVolume3D}
- */ export function createIrradianceProbeVolume3D(THREE: LightingThreeLike | null | undefined, options?: IrradianceProbeVolume3DOptions): IrradianceProbeVolume3D;
+ */ export function createIrradianceProbeVolume3D(THREE: LightingThreeLike | null | undefined, options?: IrradianceProbeVolume3DOptions | undefined): IrradianceProbeVolume3D;
 /**
  * Light candidate for CPU stochastic sampling.
  */
@@ -186,27 +186,27 @@ export type StochasticLightCandidate = {
     /**
      * World X. Default `0`.
      */
-    x?: number;
+    x?: number | undefined;
     /**
      * World Y. Default `0`.
      */
-    y?: number;
+    y?: number | undefined;
     /**
      * World Z. Default `0`.
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Influence radius, world units (min 0.1). Default `10`.
      */
-    range?: number;
+    range?: number | undefined;
     /**
      * Radiant weight (min 0.01); falls back to `intensity`.
      */
-    luminance?: number;
+    luminance?: number | undefined;
     /**
      * Fallback weight. Default `1`.
      */
-    intensity?: number;
+    intensity?: number | undefined;
 };
 /**
  * Result of {@link computeStochasticLightSample}.
@@ -241,136 +241,136 @@ export type MegaLights3DOptions = {
     /**
      * Integer capacity 1..1024. Default `256`.
      */
-    maxLights?: number;
+    maxLights?: number | undefined;
     /**
      * Stochastic samples 0..8. Default `3`.
      */
-    samplesPerPixel?: number;
+    samplesPerPixel?: number | undefined;
     /**
      * Max lights binned per frame (1..maxLights). Default `maxLights`.
      */
-    activeBudget?: number;
+    activeBudget?: number | undefined;
 };
 export type MegaLightDescriptor = {
     /**
      * Explicit id; auto-incremented integer when omitted.
      */
-    id?: number | string;
+    id?: string | number | undefined;
     /**
      * Default `'point'`.
      */
-    type?: "point" | "spot";
+    type?: "point" | "spot" | undefined;
     /**
      * World X. Default `0`.
      */
-    x?: number;
+    x?: number | undefined;
     /**
      * World Y. Default `0`.
      */
-    y?: number;
+    y?: number | undefined;
     /**
      * World Z. Default `0`.
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Default `0xffffff`.
      */
-    color?: LightColorInput;
+    color?: LightColorInput | undefined;
     /**
      * Radiant intensity (>= 0). Default `4`.
      */
-    intensity?: number;
+    intensity?: number | undefined;
     /**
      * Influence radius, world units (min 0.25). Default `12`.
      */
-    range?: number;
+    range?: number | undefined;
     /**
      * Soft source radius, world units 0.02..4. Default `0.15`.
      */
-    radius?: number;
+    radius?: number | undefined;
     /**
      * Spot direction (normalised). Default `[0,-1,0]`.
      */
-    direction?: LightingVec3Input;
+    direction?: LightingVec3Input | undefined;
     /**
      * Spot inner cone half-angle, radians. Default `0.65 * outerAngle`.
      */
-    innerAngle?: number;
+    innerAngle?: number | undefined;
     /**
      * Spot outer cone half-angle, radians (0.02..0.49π). Default `π/4`.
      */
-    outerAngle?: number;
+    outerAngle?: number | undefined;
     /**
      * Default `true`.
      */
-    enabled?: boolean;
+    enabled?: boolean | undefined;
     /**
      * Fade out and auto-remove after `duration`. Default `false`.
      */
-    transient?: boolean;
+    transient?: boolean | undefined;
     /**
      * Transient lifetime, seconds. Default `0`.
      */
-    duration?: number;
+    duration?: number | undefined;
 };
 /**
  * Mutable light fields for `updateLight`.
  */
 export type MegaLightPatch = {
-    x?: number;
-    y?: number;
-    z?: number;
-    color?: LightColorInput;
-    intensity?: number;
-    range?: number;
-    radius?: number;
-    direction?: LightingVec3Input;
-    enabled?: boolean;
-    type?: "point" | "spot";
+    x?: number | undefined;
+    y?: number | undefined;
+    z?: number | undefined;
+    color?: LightColorInput | undefined;
+    intensity?: number | undefined;
+    range?: number | undefined;
+    radius?: number | undefined;
+    direction?: LightingVec3Input | undefined;
+    enabled?: boolean | undefined;
+    type?: "point" | "spot" | undefined;
 };
 export type MegaLightFlashOptions = {
     /**
      * Default `0`.
      */
-    x?: number;
+    x?: number | undefined;
     /**
      * Default `0`.
      */
-    y?: number;
+    y?: number | undefined;
     /**
      * Default `0`.
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Default `0xffb36b`.
      */
-    color?: LightColorInput;
+    color?: LightColorInput | undefined;
     /**
      * Default `6`.
      */
-    intensity?: number;
+    intensity?: number | undefined;
     /**
      * World units. Default `10`.
      */
-    range?: number;
+    range?: number | undefined;
     /**
      * World units. Default `0.2`.
      */
-    radius?: number;
+    radius?: number | undefined;
     /**
      * Seconds. Default `0.14`.
      */
-    duration?: number;
+    duration?: number | undefined;
 };
 export type MegaLightsQualityPreset = {
     /**
      * Integer samples per pixel 0..8.
      */
-    megaLightsSamples?: number;
+    megaLightsSamples?: number | undefined;
     /**
      * Integer active-light budget.
      */
-    maxClusteredLights?: number;
+    maxClusteredLights?: number | undefined;
 };
 export type MegaLightsViewport = {
     /**
@@ -514,81 +514,81 @@ export type IrradianceProbeVolume3DOptions = {
     /**
      * Volume minimum corner `[x,y,z]`, world units. Default `[-32,0,-32]`.
      */
-    min?: readonly number[];
+    min?: readonly number[] | undefined;
     /**
      * Volume maximum corner. Default `[32,16,32]`.
      */
-    max?: readonly number[];
+    max?: readonly number[] | undefined;
     /**
      * Probe counts `[nx,ny,nz]` (each >= 2). Default `[8,4,8]`.
      */
-    resolution?: readonly number[];
+    resolution?: readonly number[] | undefined;
     /**
      * Global intensity multiplier (>= 0). Default `1`.
      */
-    intensity?: number;
+    intensity?: number | undefined;
 };
 export type HemisphereInjection = {
     /**
      * Default `0x8bb7f0`.
      */
-    skyColor?: LightColorInput;
+    skyColor?: LightColorInput | undefined;
     /**
      * Default `0x3a332a`.
      */
-    groundColor?: LightColorInput;
+    groundColor?: LightColorInput | undefined;
     /**
      * Default `1`.
      */
-    intensity?: number;
+    intensity?: number | undefined;
 };
 export type DirectionalBounceInjection = {
     /**
      * Light travel/sun direction. Default `[0.46,0.72,0.52]`.
      */
-    direction?: LightingVec3Input;
+    direction?: LightingVec3Input | undefined;
     /**
      * Default `0xfff1d6`.
      */
-    color?: LightColorInput;
+    color?: LightColorInput | undefined;
     /**
      * Default `1`.
      */
-    intensity?: number;
+    intensity?: number | undefined;
     /**
      * Ground reflectance 0..1. Default `0.35`.
      */
-    groundAlbedo?: number;
+    groundAlbedo?: number | undefined;
 };
 export type PointLightBounceInjection = {
     /**
      * World X. Default `0`.
      */
-    x?: number;
+    x?: number | undefined;
     /**
      * World Y. Default `0`.
      */
-    y?: number;
+    y?: number | undefined;
     /**
      * World Z. Default `0`.
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Default `0xffffff`.
      */
-    color?: LightColorInput;
+    color?: LightColorInput | undefined;
     /**
      * Default `1`.
      */
-    intensity?: number;
+    intensity?: number | undefined;
     /**
      * World units (min 0.5). Default `12`.
      */
-    range?: number;
+    range?: number | undefined;
     /**
      * Default `0.35`.
      */
-    bounceRatio?: number;
+    bounceRatio?: number | undefined;
 };
 /**
  * Sky-like object (e.g. from sky3d).
@@ -596,32 +596,32 @@ export type PointLightBounceInjection = {
 export type ProbeBakeSky = {
     uniforms?: Record<string, {
         value?: LightColorInput | number;
-    }>;
-    sunDirection?: LightingVec3Input;
+    }> | undefined;
+    sunDirection?: LightingVec3Input | undefined;
 };
 export type ProbeBakeOptions = {
     /**
      * Default `null`.
      */
-    sky?: ProbeBakeSky | null;
+    sky?: ProbeBakeSky | null | undefined;
     /**
      * Point lights to inject. Default `[]`.
      */
-    lights?: readonly PointLightBounceInjection[];
+    lights?: readonly PointLightBounceInjection[] | undefined;
     /**
      * Default `0.55`.
      */
-    ambientIntensity?: number;
+    ambientIntensity?: number | undefined;
     /**
      * Ground albedo of sun bounce. Default `0.4`.
      */
-    bounceIntensity?: number;
+    bounceIntensity?: number | undefined;
 };
 export type ProbeVolumeMaterialOptions = {
     /**
      * Optional new global intensity. Default `null`.
      */
-    intensity?: number | null;
+    intensity?: number | null | undefined;
 };
 export type IrradianceProbeVolume3D = {
     /**
@@ -681,10 +681,10 @@ export type LightingRGB = [number, number, number];
  * Three.js-like Color.
  */
 export type LightingColorLike = {
-    isColor?: boolean;
-    r?: number;
-    g?: number;
-    b?: number;
+    isColor?: boolean | undefined;
+    r?: number | undefined;
+    g?: number | undefined;
+    b?: number | undefined;
 };
 /**
  * Hex number (`0xrrggbb`), CSS string (Three.js only), `[r,g,b]` array, or Color.
@@ -707,7 +707,7 @@ export type LightingVec3Like = {
     x: number;
     y: number;
     z: number;
-    set?: (x: number, y: number, z: number) => unknown;
+    set?: ((x: number, y: number, z: number) => unknown) | undefined;
 };
 export type LightingVec4Like = {
     x: number;
@@ -721,42 +721,42 @@ export type LightingVec4Like = {
  */
 export type LightingTextureLike = {
     needsUpdate: boolean;
-    dispose?: () => void;
+    dispose?: (() => void) | undefined;
     image?: {
         data: Float32Array;
         width: number;
         height: number;
-    };
+    } | undefined;
 };
 /**
  * Subset of the Three.js namespace used by lighting3d (all optional; headless plain objects are used when absent).
  */
 export type LightingThreeLike = {
-    Color?: new (value?: LightColorInput) => LightingColorLike & {
+    Color?: (new (value?: LightColorInput) => LightingColorLike & {
         getRGB?: (target: {
             r: number;
             g: number;
             b: number;
         }) => unknown;
         clone: () => LightingColorLike;
-    };
-    DataTexture?: new (data: Float32Array, width: number, height: number, format?: number, type?: number) => LightingTextureLike & Record<string, unknown>;
-    Vector2?: new (x?: number, y?: number) => LightingVec2Like;
-    Vector3?: new (x?: number, y?: number, z?: number) => LightingVec3Like & {
+    }) | undefined;
+    DataTexture?: (new (data: Float32Array, width: number, height: number, format?: number, type?: number) => LightingTextureLike & Record<string, unknown>) | undefined;
+    Vector2?: (new (x?: number, y?: number) => LightingVec2Like) | undefined;
+    Vector3?: (new (x?: number, y?: number, z?: number) => LightingVec3Like & {
         set: (x: number, y: number, z: number) => unknown;
-    };
-    Vector4?: new (x?: number, y?: number, z?: number, w?: number) => LightingVec4Like;
-    RGBAFormat?: number;
-    FloatType?: number;
-    NearestFilter?: number;
-    ClampToEdgeWrapping?: number;
+    }) | undefined;
+    Vector4?: (new (x?: number, y?: number, z?: number, w?: number) => LightingVec4Like) | undefined;
+    RGBAFormat?: number | undefined;
+    FloatType?: number | undefined;
+    NearestFilter?: number | undefined;
+    ClampToEdgeWrapping?: number | undefined;
 };
 /**
  * Three.js `onBeforeCompile` shader parameter.
  */
 export type LightingShaderLike = {
     fragmentShader: string;
-    vertexShader?: string;
+    vertexShader?: string | undefined;
     uniforms: Record<string, {
         value: unknown;
     }>;
@@ -765,28 +765,28 @@ export type LightingShaderLike = {
  * Three.js material subset patched by `applyToMaterial`.
  */
 export type LightingMaterialLike = {
-    userData?: Record<string, unknown>;
-    onBeforeCompile?: (shader: LightingShaderLike, renderer?: object) => void;
-    customProgramCacheKey?: () => string;
-    needsUpdate?: boolean;
+    userData?: Record<string, unknown> | undefined;
+    onBeforeCompile?: ((shader: LightingShaderLike, renderer?: object) => void) | undefined;
+    customProgramCacheKey?: (() => string) | undefined;
+    needsUpdate?: boolean | undefined;
 };
 /**
  * Three.js perspective camera subset read by `update`.
  */
 export type LightingCameraLike = {
-    near?: number;
-    far?: number;
-    aspect?: number;
+    near?: number | undefined;
+    far?: number | undefined;
+    aspect?: number | undefined;
     /**
      * Vertical FOV, degrees.
      */
-    fov?: number;
-    updateMatrixWorld?: (force?: boolean) => void;
+    fov?: number | undefined;
+    updateMatrixWorld?: ((force?: boolean) => void) | undefined;
     matrixWorldInverse?: {
         elements: ArrayLike<number>;
         copy: (m: object) => {
             invert?: () => unknown;
         };
-    };
+    } | undefined;
     matrixWorld?: object;
 };

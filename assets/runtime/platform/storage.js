@@ -105,6 +105,26 @@ function computeEnvelopeSum(version, salt, data) {
   return (hashState({ v: version, salt: String(salt ?? ''), data }) >>> 0).toString(16).padStart(8, '0');
 }
 
+/**
+ * @template T
+ * @template [TFallback=undefined]
+ * @typedef {{ ok: true, value: T, version: number, fromVersion: number, migrated: boolean, recovered: boolean } |
+ * { ok: false, reason: string, value: TFallback, version: number | null, fromVersion: number | null, migrated: false, recovered: boolean }} VersionedLoadResult
+ */
+
+/**
+ * @template [T=unknown]
+ * @typedef {object} VersionedStore
+ * @property {number} schemaVersion
+ * @property {SaveStore} store
+ * @property {<TValue extends T>(key: string, value: TValue) => TValue} save
+ * @property {<TValue extends T>(key: string, value: TValue) => TValue} set
+ * @property {<TFallback=undefined>(key: string, fallback?: TFallback) => VersionedLoadResult<T, TFallback>} load
+ * @property {<TFallback=undefined>(key: string, fallback?: TFallback) => T | TFallback} get
+ * @property {(key: string) => boolean} verify
+ * @property {(key: string) => void} remove
+ */
+
 function isVersionEnvelope(entry) {
   return Boolean(entry && typeof entry === 'object' && entry.__hgSave === 1 && Number.isInteger(entry.v) && entry.v >= 1);
 }
@@ -113,17 +133,19 @@ function isVersionEnvelope(entry) {
  * Wrap a SaveStore (or `{ gameId, storage }`) with explicit schema versioning,
  * sequential forward migrations (`v -> v + 1`), FNV-1a checksum tamper detection,
  * and automatic last-known-good backup recovery.
+ * @template [T=unknown]
  * @param {object} [options]
  * @param {SaveStore} [options.store] Existing SaveStore (overrides `gameId`/`storage`/`prefix`).
  * @param {string} [options.gameId='default-game'] Game slug used if `store` is omitted.
  * @param {Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'> | null} [options.storage]
  * @param {string} [options.prefix='webasset.game'] Namespace prefix when `store` is omitted.
  * @param {number} [options.schemaVersion=1] Target schema version (`>= 1`).
- * @param {Record<number | string, (data: any) => any>} [options.migrations={}] Map of `fromVersion -> migrator(oldData)`.
+ * @param {Record<number | string, (data: unknown) => unknown>} [options.migrations={}] Map of `fromVersion -> migrator(oldData)`.
  * @param {boolean} [options.checksum=true] Enable FNV-1a tamper detection on envelopes.
  * @param {string} [options.salt=''] Optional application salt mixed into envelope checksums.
  * @param {string} [options.backupKeySuffix='.bak'] Backup key suffix; empty string disables backup slot.
  * @param {boolean} [options.autoPersistMigrated=true] Re-save migrated data immediately on `load()`.
+ * @returns {Readonly<VersionedStore<T>>}
  */
 export function createVersionedStore({
   store,

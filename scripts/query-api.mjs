@@ -105,7 +105,7 @@ world.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.8));
 const terrain = createHeightfieldTerrain3D({ width: 120, depth: 120, segmentsX: 48, segmentsZ: 48, edgeFalloff: 'island' });
 world.add(terrain.createMesh(THREE).mesh);
 terrain.attachPhysics(scene.physics);
-const vfx = createVfxSystem({ mode: '3d', THREE, scene: world });
+const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: world });
 app.scenes.start('world');
 app.start();
 canvas.dataset.engineReady = 'true';
@@ -181,6 +181,7 @@ function formatExport(exp, dtsText) {
   const sig = exp.signature ? `${exp.name}${exp.signature}` : exp.name;
   const dtsSig = extractDtsSignature(dtsText, exp.name);
   const lines = [`  [${exp.kind}] ${sig}`];
+  if (exp.tier) lines.push(`    stability: ${exp.tier} (declared in ${exp.declaredIn})`);
   if (dtsSig && dtsSig.length <= 200 && dtsSig !== sig) {
     lines.push(`    dts: ${dtsSig}`);
   }

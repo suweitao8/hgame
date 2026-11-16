@@ -17,10 +17,10 @@ export function createAudioBusController(ctx: object): {
         transitionSeconds: number;
     };
     applySnapshot: (nameOrConfig: any, { transitionSeconds }?: {
-        transitionSeconds?: any;
+        transitionSeconds?: null | undefined;
     }) => any;
     clearSnapshot: ({ transitionSeconds }?: {
-        transitionSeconds?: number;
+        transitionSeconds?: number | undefined;
     }) => boolean;
     duckBus: (busName: any, factor?: number, durationMs?: number) => boolean;
     dispose: () => void;

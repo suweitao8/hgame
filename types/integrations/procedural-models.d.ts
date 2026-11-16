@@ -41,19 +41,19 @@ export type ProceduralSlotDefinition = {
     /**
      * Accent palette name; defaults to `material`.
      */
-    accent?: string;
+    accent?: string | undefined;
     /**
      * Palette name for the top face of 'box'.
      */
-    topMaterial?: string;
+    topMaterial?: string | undefined;
     /**
      * Width, height, depth in world units (each 0..100].
      */
-    size?: [number, number, number];
+    size?: [number, number, number] | undefined;
     /**
      * Relative `assets/models/<name>.glb` replacement.
      */
-    replacement?: string | null;
+    replacement?: string | null | undefined;
 };
 export type ProceduralSlotSpec = {
     shape: ProceduralShape;
@@ -83,27 +83,27 @@ export type ProceduralModelOptions = {
             scene: ProceduralObject3D;
             animations?: unknown[];
         }>;
-    });
+    }) | undefined;
     /**
      * Base for resolving replacement URLs.
      */
-    projectBaseUrl?: string;
+    projectBaseUrl?: string | undefined;
 };
 export type ProceduralPlacement = {
     /**
      * World units.
      */
-    x?: number;
-    y?: number;
-    z?: number;
+    x?: number | undefined;
+    y?: number | undefined;
+    z?: number | undefined;
     /**
      * Radians.
      */
-    rotationY?: number;
+    rotationY?: number | undefined;
     /**
      * Uniform scale, > 0.
      */
-    scale?: number;
+    scale?: number | undefined;
 };
 export type ProceduralModelSlots = {
     /**

@@ -37,7 +37,7 @@
  * @param {DiagnosticsOptions} [options]
  * @returns {Diagnostics}
  */
-export function createDiagnostics({ gameId, windowRef, onReport, sampleFrames, }?: DiagnosticsOptions): Diagnostics;
+export function createDiagnostics({ gameId, windowRef, onReport, sampleFrames, }?: DiagnosticsOptions | undefined): Diagnostics;
 export type ErrorReport = {
     gameId: string;
     message: string;
@@ -55,19 +55,19 @@ export type ErrorReport = {
     timestamp: number;
 };
 export type DiagnosticsOptions = {
-    gameId?: string;
+    gameId?: string | undefined;
     /**
      * Window that receives `error`/`unhandledrejection` listeners.
      */
-    windowRef?: Window;
+    windowRef?: Window | undefined;
     /**
      * Called for every reported error.
      */
-    onReport?: (report: ErrorReport) => void;
+    onReport?: ((report: ErrorReport) => void) | undefined;
     /**
      * Rolling frame window used for FPS statistics (min 2).
      */
-    sampleFrames?: number;
+    sampleFrames?: number | undefined;
 };
 export type DiagnosticsSnapshot = {
     gameId: string;

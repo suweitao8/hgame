@@ -21,9 +21,9 @@ export class Component {
     this._enabled = Boolean(value);
     this.entity?._syncComponents();
   }
-  /** Unity-style alias of {@link Component#entity}. @type {import('./entity.js').Entity | null} */
+  /** Unity-style alias of {@link Component#entity}. @returns {import('./entity.js').Entity | null} */
   get gameObject() { return this.entity; }
-  /** Scene of the owning entity. @type {import('./scene.js').Scene | null} */
+  /** Scene of the owning entity. @returns {import('./scene.js').Scene | null} */
   get scene() { return this.entity?.scene ?? null; }
   /** Called once when first activated. @returns {void} */
   awake() {}

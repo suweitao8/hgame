@@ -33,7 +33,7 @@ export function isRootPositionTrack(trackName: string, rootBoneSet: Set<string>)
  * @param {string|URL|null} [projectBaseUrl=null] Base URL used for `resolved`.
  * @returns {{key: string, resolved: string}} Normalized key and resolved URL/path.
  */
-export function resolveRelativeAssetPath(rawUrl: string, projectBaseUrl?: string | URL | null): {
+export function resolveRelativeAssetPath(rawUrl: string, projectBaseUrl?: string | URL | null | undefined): {
     key: string;
     resolved: string;
 };
@@ -44,7 +44,7 @@ export function resolveRelativeAssetPath(rawUrl: string, projectBaseUrl?: string
  * @param {Map<Model3DObject, Model3DObject>} [map] Map to fill.
  * @returns {Map<Model3DObject, Model3DObject>} The filled map.
  */
-export function buildLockstepNodeMap(source: Model3DObject, target: Model3DObject, map?: Map<Model3DObject, Model3DObject>): Map<Model3DObject, Model3DObject>;
+export function buildLockstepNodeMap(source: Model3DObject, target: Model3DObject, map?: Map<Model3DObject, Model3DObject> | undefined): Map<Model3DObject, Model3DObject>;
 /**
  * Dependency-injected deep clone of a Three.js Object3D hierarchy that rebinds
  * SkinnedMesh instances to cloned Skeleton bone nodes so animations remain isolated.
@@ -68,7 +68,7 @@ export function computeRootBounds(THREE: Model3DThree, root: Model3DObject): Mod
  * @param {Model3DClip[]|null} [explicitAnimations=null] Clips overriding the asset's animations.
  * @returns {Model3DInspection} Inspection summary.
  */
-export function inspectModel3D(THREE: Model3DThree, assetOrRoot: Model3DAsset | Model3DObject, explicitAnimations?: Model3DClip[] | null): Model3DInspection;
+export function inspectModel3D(THREE: Model3DThree, assetOrRoot: Model3DAsset | Model3DObject, explicitAnimations?: Model3DClip[] | null | undefined): Model3DInspection;
 /**
  * Clones and normalizes external skeletal AnimationClips (e.g. Unreal GLB exports),
  * stripping namespace prefixes, renaming bones, and optionally locking root motion.
@@ -77,7 +77,7 @@ export function inspectModel3D(THREE: Model3DThree, assetOrRoot: Model3DAsset | 
  * @param {PrepareAnimationClipsOptions} [options] Preparation options.
  * @returns {Model3DClip[]} New clips; sources are not mutated.
  */
-export function prepareAnimationClips(THREE: Model3DThree, clips: Model3DClip[], { stripNamespace, stripRootMotion, rootBoneNames, renameMap, }?: PrepareAnimationClipsOptions): Model3DClip[];
+export function prepareAnimationClips(THREE: Model3DThree, clips: Model3DClip[], { stripNamespace, stripRootMotion, rootBoneNames, renameMap, }?: PrepareAnimationClipsOptions | undefined): Model3DClip[];
 /**
  * Disposes geometries, materials, and material textures under a root.
  * @param {Model3DObject|null|undefined} root Root object.
@@ -186,43 +186,43 @@ export type Model3DObject = {
     /**
      * Node name.
      */
-    name?: string;
+    name?: string | undefined;
     /**
      * Three.js type string (e.g. `'Bone'`).
      */
-    type?: string;
+    type?: string | undefined;
     /**
      * Child nodes.
      */
-    children?: Model3DObject[];
+    children?: Model3DObject[] | undefined;
     /**
      * Depth-first visitor.
      */
-    traverse?: (callback: (node: Model3DObject) => void) => void;
+    traverse?: ((callback: (node: Model3DObject) => void) => void) | undefined;
     /**
      * Deep/shallow clone.
      */
-    clone?: (recursive?: boolean) => Model3DObject;
+    clone?: ((recursive?: boolean) => Model3DObject) | undefined;
     /**
      * Refresh world matrices.
      */
-    updateMatrixWorld?: (force?: boolean) => void;
+    updateMatrixWorld?: ((force?: boolean) => void) | undefined;
     /**
      * True for meshes.
      */
-    isMesh?: boolean;
+    isMesh?: boolean | undefined;
     /**
      * True for skinned meshes.
      */
-    isSkinnedMesh?: boolean;
+    isSkinnedMesh?: boolean | undefined;
     /**
      * True for bones.
      */
-    isBone?: boolean;
+    isBone?: boolean | undefined;
     /**
      * Visibility flag.
      */
-    visible?: boolean;
+    visible?: boolean | undefined;
     /**
      * Local position.
      */
@@ -230,7 +230,7 @@ export type Model3DObject = {
         x: number;
         y: number;
         z: number;
-    };
+    } | undefined;
 };
 /**
  * Minimal structural view of a loaded asset (e.g. a GLTF result).
@@ -239,11 +239,11 @@ export type Model3DAsset = {
     /**
      * Root scene graph.
      */
-    scene?: Model3DObject;
+    scene?: Model3DObject | undefined;
     /**
      * Animation clips.
      */
-    animations?: Model3DClip[];
+    animations?: Model3DClip[] | undefined;
 };
 /**
  * Minimal structural view of a Three.js keyframe track.
@@ -256,11 +256,11 @@ export type Model3DTrack = {
     /**
      * Keyframe values.
      */
-    values?: ArrayLike<number>;
+    values?: ArrayLike<number> | undefined;
     /**
      * Clone the track.
      */
-    clone?: () => Model3DTrack;
+    clone?: (() => Model3DTrack) | undefined;
 };
 /**
  * Minimal structural view of a Three.js AnimationClip.
@@ -269,19 +269,19 @@ export type Model3DClip = {
     /**
      * Clip name.
      */
-    name?: string;
+    name?: string | undefined;
     /**
      * Clip duration in seconds.
      */
-    duration?: number;
+    duration?: number | undefined;
     /**
      * Keyframe tracks.
      */
-    tracks?: Model3DTrack[];
+    tracks?: Model3DTrack[] | undefined;
     /**
      * Three.js blend mode constant.
      */
-    blendMode?: number;
+    blendMode?: number | undefined;
 };
 /**
  * Three.js namespace subset used by model3d (constructors such as `Box3`, `Vector3`, `Skeleton`,
@@ -381,19 +381,19 @@ export type PrepareAnimationClipsOptions = {
     /**
      * Strip `ns|` / `ns:` prefixes from track node names.
      */
-    stripNamespace?: boolean;
+    stripNamespace?: boolean | undefined;
     /**
      * Lock root position tracks (`true`/`'xz'` lock X/Z, `'xyz'` also locks Y).
      */
-    stripRootMotion?: boolean | "xz" | "xyz";
+    stripRootMotion?: boolean | "xz" | "xyz" | undefined;
     /**
      * Root bone names (case-insensitive). Defaults to root, pelvis, hips, armature.
      */
-    rootBoneNames?: string[];
+    rootBoneNames?: string[] | undefined;
     /**
      * Node name remapping applied to track names.
      */
-    renameMap?: Record<string, string> | null;
+    renameMap?: Record<string, string> | null | undefined;
 };
 /**
  * Minimal GLTF-loader contract: either `loadAsync(url)` or callback-style `load(...)`.
@@ -402,9 +402,9 @@ export type Model3DLoader = {
     /**
      * Promise loader.
      */
-    loadAsync?: (url: string) => Promise<unknown>;
+    loadAsync?: ((url: string) => Promise<unknown>) | undefined;
     /**
      * Callback loader.
      */
-    load?: (url: string, onLoad: (result: unknown) => void, onProgress?: ((event: unknown) => void) | undefined, onError?: (error: unknown) => void) => void;
+    load?: ((url: string, onLoad: (result: unknown) => void, onProgress?: ((event: unknown) => void) | undefined, onError?: (error: unknown) => void) => void) | undefined;
 };

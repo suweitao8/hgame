@@ -25,7 +25,7 @@
  * @param {AnalyzeAudioBufferOptions} [options]
  * @returns {AudioBufferAnalysis}
  */
-export function analyzeAudioBuffer(buffer: AudioBufferLike | null | undefined, { silenceThreshold, minActiveDuration, }?: AnalyzeAudioBufferOptions): AudioBufferAnalysis;
+export function analyzeAudioBuffer(buffer: AudioBufferLike | null | undefined, { silenceThreshold, minActiveDuration, }?: AnalyzeAudioBufferOptions | undefined): AudioBufferAnalysis;
 /**
  * Decoded PCM buffer.
  */
@@ -34,11 +34,11 @@ export type AnalyzeAudioBufferOptions = {
     /**
      * Absolute sample amplitude treated as silence (0..1).
      */
-    silenceThreshold?: number;
+    silenceThreshold?: number | undefined;
     /**
      * Minimum reported active duration, seconds.
      */
-    minActiveDuration?: number;
+    minActiveDuration?: number | undefined;
 };
 export type AudioBufferAnalysis = {
     /**

@@ -46,7 +46,7 @@
  * @param {number[] | null} [out=null] Array to write [r, g, b, a] into; a new array when null.
  * @returns {number[]} The [r, g, b, a] array (0..1).
  */
-export function parseColorRgba(color: unknown, out?: number[] | null): number[];
+export function parseColorRgba(color: unknown, out?: number[] | null | undefined): number[];
 /** @typedef {HTMLCanvasElement | OffscreenCanvas} BufferCanvas2D */
 /**
  * Split-screen view descriptor. x/y/width/height are fractions (0..1) of the logical canvas.
@@ -128,7 +128,7 @@ export function createCanvas2DAdapter({ canvas, width, height, background, pixel
 /** 2D camera supporting smooth follow, deadzones, bounds clamping, zoom, rotation and shake. */
 export class Camera2D {
     /** @param {Camera2DOptions} [options] */
-    constructor({ x, y, zoom, rotation, bounds }?: Camera2DOptions);
+    constructor({ x, y, zoom, rotation, bounds }?: Camera2DOptions | undefined);
     /** Centre X (world units). @type {number} */
     x: number;
     /** Centre Y (world units). @type {number} */
@@ -161,14 +161,14 @@ export class Camera2D {
      * @param {Camera2DFollowOptions} [options]
      * @returns {this}
      */
-    follow(target: Camera2DFollowTarget | null | undefined, { lerp, offsetX, offsetY, deadzoneX, deadzoneY }?: Camera2DFollowOptions): this;
+    follow(target: Camera2DFollowTarget | null | undefined, { lerp, offsetX, offsetY, deadzoneX, deadzoneY }?: Camera2DFollowOptions | undefined): this;
     /**
      * Start a decaying screen shake.
      * @param {number} intensity Peak offset in world units (>= 0).
      * @param {number} [duration=0.25] Duration in seconds (>= 0).
      * @returns {this}
      */
-    shake(intensity: number, duration?: number): this;
+    shake(intensity: number, duration?: number | undefined): this;
     /**
      * Advance shake and re-clamp to bounds.
      * @param {number} dt Delta time in seconds (>= 0).
@@ -252,7 +252,7 @@ export class Camera2D {
 /** Renderable 2D visual component drawn by the Canvas2D / WebGL2D adapters. */
 export class Sprite2D extends Component {
     /** @param {Sprite2DOptions} [options] */
-    constructor({ shape, width, height, color, text, font, z, layer, ySort, visible, opacity, flipX, flipY, image, sheet, frame, sourceRect, animation, customDraw, anchorX, anchorY, offsetX, offsetY, scaleX, scaleY, rotation, tint, flash, flashColor, groundShadow, }?: Sprite2DOptions);
+    constructor({ shape, width, height, color, text, font, z, layer, ySort, visible, opacity, flipX, flipY, image, sheet, frame, sourceRect, animation, customDraw, anchorX, anchorY, offsetX, offsetY, scaleX, scaleY, rotation, tint, flash, flashColor, groundShadow, }?: Sprite2DOptions | undefined);
     shape: "text" | "rect" | "circle";
     width: number;
     height: number;
@@ -266,20 +266,20 @@ export class Sprite2D extends Component {
     opacity: number;
     flipX: boolean;
     flipY: boolean;
-    image: CanvasImageSource;
-    sheet: import("../index.js").SpriteSheet;
+    image: CanvasImageSource | null;
+    sheet: import("../index.js").SpriteSheet | null;
     frame: number;
-    sourceRect: SpriteSourceRect;
-    animation: SpriteFrameSource;
-    customDraw: Sprite2DCustomDraw;
-    anchorX: number;
-    anchorY: number;
+    sourceRect: SpriteSourceRect | null;
+    animation: SpriteFrameSource | null;
+    customDraw: Sprite2DCustomDraw | null;
+    anchorX: number | null;
+    anchorY: number | null;
     offsetX: number;
     offsetY: number;
     scaleX: number;
     scaleY: number;
     rotation: number;
-    tint: string;
+    tint: string | null;
     flash: number;
     flashColor: string;
     groundShadow: boolean | GroundShadowOptions;
@@ -295,7 +295,7 @@ export class Sprite2D extends Component {
      * @param {string} [color='#ffffff'] CSS flash colour.
      * @returns {this}
      */
-    hitFlash(duration?: number, color?: string): this;
+    hitFlash(duration?: number | undefined, color?: string | undefined): this;
     /**
      * Advance the hit-flash fade.
      * @param {number} dt Delta time in seconds.
@@ -353,15 +353,15 @@ export class Sprite2D extends Component {
  */
 export class SpriteCrowd2D extends Component {
     /** @param {SpriteCrowd2DOptions} [options] */
-    constructor({ capacity, shape, width, height, color, image, sheet, sourceRect, anchorX, anchorY, layer, z, ySort, visible, groundShadow, flashColor, }?: SpriteCrowd2DOptions);
+    constructor({ capacity, shape, width, height, color, image, sheet, sourceRect, anchorX, anchorY, layer, z, ySort, visible, groundShadow, flashColor, }?: SpriteCrowd2DOptions | undefined);
     capacity: number;
     shape: "rect" | "circle";
     width: number;
     height: number;
     color: string;
-    image: CanvasImageSource;
-    sheet: import("../index.js").SpriteSheet;
-    sourceRect: SpriteSourceRect;
+    image: CanvasImageSource | null;
+    sheet: import("../index.js").SpriteSheet | null;
+    sourceRect: SpriteSourceRect | null;
     anchorX: number;
     anchorY: number;
     layer: number;
@@ -396,22 +396,22 @@ export class SpriteCrowd2D extends Component {
     _indexInActive: Int32Array;
     _activeCount: number;
     _flashingCount: number;
-    _boundSwarm: import("../world/swarm-ecs.js").SwarmSimulation;
+    _boundSwarm: import("../world/swarm-ecs.js").SwarmSimulation | null;
     _boundSwarmOpts: {
         syncRotation: boolean;
         flipByDirection: boolean;
         frameCount: number;
         animFps: number;
         worldScale: number;
-    };
-    _boundGpuSwarm: import("../world/gpu-swarm-webgl2.js").GpuSwarmWebGL2;
+    } | null;
+    _boundGpuSwarm: import("../world/gpu-swarm-webgl2.js").GpuSwarmWebGL2 | null;
     _boundGpuSwarmOpts: {
         syncRotation: boolean;
         flipByDirection: boolean;
         frameCount: number;
         animFps: number;
         worldScale: number;
-    };
+    } | null;
     /** Number of live instances. @returns {number} */
     get count(): number;
     /**
@@ -420,14 +420,14 @@ export class SpriteCrowd2D extends Component {
      * @param {SpriteCrowdBindSwarmOptions} [options]
      * @returns {this}
      */
-    bindSwarm(swarm: import("../world/swarm-ecs.js").SwarmSimulation, { syncRotation, flipByDirection, frameCount, animFps, worldScale, }?: SpriteCrowdBindSwarmOptions): this;
+    bindSwarm(swarm: import("../world/swarm-ecs.js").SwarmSimulation, { syncRotation, flipByDirection, frameCount, animFps, worldScale, }?: SpriteCrowdBindSwarmOptions | undefined): this;
     /**
      * Bind a WebGL2 `GpuSwarmWebGL2` state texture directly for zero-CPU-upload `texelFetch` rendering.
      * @param {import('../world/gpu-swarm-webgl2.js').GpuSwarmWebGL2} gpuSwarm
      * @param {SpriteCrowdBindSwarmOptions} [options]
      * @returns {this}
      */
-    bindGpuSwarm(gpuSwarm: import("../world/gpu-swarm-webgl2.js").GpuSwarmWebGL2, { syncRotation, flipByDirection, frameCount, animFps, worldScale, }?: SpriteCrowdBindSwarmOptions): this;
+    bindGpuSwarm(gpuSwarm: import("../world/gpu-swarm-webgl2.js").GpuSwarmWebGL2, { syncRotation, flipByDirection, frameCount, animFps, worldScale, }?: SpriteCrowdBindSwarmOptions | undefined): this;
     /** Detach any zero-copy swarm binding. @returns {void} */
     unbindSwarm(): void;
     /**
@@ -435,7 +435,7 @@ export class SpriteCrowd2D extends Component {
      * @param {SpriteCrowdSpawnOptions} [options]
      * @returns {number} Instance index, or -1 when the crowd is full.
      */
-    spawn({ x, y, offsetX, offsetY, rotation, scaleX, scaleY, opacity, frame, flipX, tint, }?: SpriteCrowdSpawnOptions): number;
+    spawn({ x, y, offsetX, offsetY, rotation, scaleX, scaleY, opacity, frame, flipX, tint, }?: SpriteCrowdSpawnOptions | undefined): number;
     /**
      * Update an instance transform.
      * @param {number} index Instance index from spawn().
@@ -446,21 +446,21 @@ export class SpriteCrowd2D extends Component {
      * @param {number} [scaleY=1]
      * @returns {boolean} false when the index is invalid or inactive.
      */
-    setTransform(index: number, x: number, y: number, rotation?: number, scaleX?: number, scaleY?: number): boolean;
+    setTransform(index: number, x: number, y: number, rotation?: number | undefined, scaleX?: number | undefined, scaleY?: number | undefined): boolean;
     /**
      * Flash one instance with flashColor, fading over duration.
      * @param {number} index Instance index.
      * @param {number} [duration=0.08] Seconds; <= 0 clears the flash.
      * @returns {boolean} false when the index is invalid or inactive.
      */
-    hitFlash(index: number, duration?: number): boolean;
+    hitFlash(index: number, duration?: number | undefined): boolean;
     /**
      * Sets a crowd status code (0=normal, 1..4=white flash, 5=frozen, 6=poison, 7=burn).
      * @param {number} index
      * @param {number} [code=0]
      * @returns {boolean}
      */
-    setStatus(index: number, code?: number): boolean;
+    setStatus(index: number, code?: number | undefined): boolean;
     /**
      * Release an instance (swap-removes from the active list).
      * @param {number} index Instance index.
@@ -509,41 +509,41 @@ export type Camera2DBounds = {
     /**
      * Minimum camera X (world units).
      */
-    minX?: number;
+    minX?: number | undefined;
     /**
      * Minimum camera Y (world units).
      */
-    minY?: number;
+    minY?: number | undefined;
     /**
      * Maximum camera X (world units).
      */
-    maxX?: number;
+    maxX?: number | undefined;
     /**
      * Maximum camera Y (world units).
      */
-    maxY?: number;
+    maxY?: number | undefined;
 };
 export type Camera2DOptions = {
     /**
      * Camera centre X in world units (finite).
      */
-    x?: number;
+    x?: number | undefined;
     /**
      * Camera centre Y in world units (finite).
      */
-    y?: number;
+    y?: number | undefined;
     /**
      * Scale factor, > 0 (2 = twice as large on screen).
      */
-    zoom?: number;
+    zoom?: number | undefined;
     /**
      * Camera rotation in radians.
      */
-    rotation?: number;
+    rotation?: number | undefined;
     /**
      * Clamp region for the camera centre (world units).
      */
-    bounds?: Camera2DBounds | null;
+    bounds?: Camera2DBounds | null | undefined;
 };
 /**
  * Anything Camera2D#follow can track: a point, or an object exposing worldPosition() such as an Entity.
@@ -561,23 +561,23 @@ export type Camera2DFollowOptions = {
     /**
      * Follow factor per call in [0, 1] (1 = snap, smaller = smoother).
      */
-    lerp?: number;
+    lerp?: number | undefined;
     /**
      * Target offset X (world units).
      */
-    offsetX?: number;
+    offsetX?: number | undefined;
     /**
      * Target offset Y (world units).
      */
-    offsetY?: number;
+    offsetY?: number | undefined;
     /**
      * Half-width of the no-move zone around the camera (world units).
      */
-    deadzoneX?: number;
+    deadzoneX?: number | undefined;
     /**
      * Half-height of the no-move zone around the camera (world units).
      */
-    deadzoneY?: number;
+    deadzoneY?: number | undefined;
 };
 export type BufferCanvas2D = HTMLCanvasElement | OffscreenCanvas;
 /**
@@ -609,11 +609,11 @@ export type SplitViewOptions = {
     /**
      * CSS colour of the divider lines.
      */
-    dividerColor?: string;
+    dividerColor?: string | undefined;
     /**
      * Divider width in logical pixels (>= 0).
      */
-    dividerWidth?: number;
+    dividerWidth?: number | undefined;
 };
 export type Canvas2DAdapterOptions = {
     /**
@@ -623,39 +623,39 @@ export type Canvas2DAdapterOptions = {
     /**
      * Logical design width in world pixels.
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Logical design height in world pixels.
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Clear colour.
      */
-    background?: string;
+    background?: string | undefined;
     /**
      * Device pixel ratio, clamped by the quality preset (max 3).
      */
-    pixelRatio?: number;
+    pixelRatio?: number | undefined;
     /**
      * Smooth scaled images (overridden by the quality preset).
      */
-    imageSmoothing?: boolean;
+    imageSmoothing?: boolean | undefined;
     /**
      * Always render interpolated transforms (entities with interpolate=true always do).
      */
-    interpolate?: boolean;
+    interpolate?: boolean | undefined;
     /**
      * Skip sprites outside the camera view.
      */
-    cull?: boolean;
+    cull?: boolean | undefined;
     /**
      * Quality tier ('low' | 'medium' | 'high' | 'ultra'); null disables presets.
      */
-    quality?: QualityPresetTier | null;
+    quality?: import("./quality3d.js").QualityPresetTier | null | undefined;
     /**
      * Factory for offscreen buffers (tint/shadow caches).
      */
-    createBufferCanvas?: ((width: number, height: number) => BufferCanvas2D | null) | null;
+    createBufferCanvas?: ((width: number, height: number) => BufferCanvas2D | null) | null | undefined;
 };
 export type Renderer2DStats = {
     /**
@@ -836,35 +836,35 @@ export type GroundShadowOptions = {
     /**
      * Shadow width / sprite width.
      */
-    widthRatio?: number;
+    widthRatio?: number | undefined;
     /**
      * Shadow height / sprite height.
      */
-    heightRatio?: number;
+    heightRatio?: number | undefined;
     /**
      * Maximum opacity in [0, 1].
      */
-    alpha?: number;
+    alpha?: number | undefined;
     /**
      * Upward shift of the shadow centre / sprite height.
      */
-    tuckRatio?: number;
+    tuckRatio?: number | undefined;
     /**
      * Shrink and fade the shadow while the sprite is lifted (negative offsetY).
      */
-    jumpScale?: boolean;
+    jumpScale?: boolean | undefined;
     /**
      * Shadow CSS colour.
      */
-    color?: string;
+    color?: string | undefined;
     /**
      * Extra shadow X offset (local units).
      */
-    offsetX?: number;
+    offsetX?: number | undefined;
     /**
      * Extra shadow Y offset (local units).
      */
-    offsetY?: number;
+    offsetY?: number | undefined;
 };
 /**
  * Source rectangle inside an image, in pixels.
@@ -904,211 +904,211 @@ export type Sprite2DOptions = {
     /**
      * Procedural shape used when no image/sheet/customDraw is set (circle uses width as diameter).
      */
-    shape?: "rect" | "circle" | "text";
+    shape?: "text" | "rect" | "circle" | undefined;
     /**
      * Width in local units (world pixels).
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Height in local units (world pixels).
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Fill colour for procedural shapes and text.
      */
-    color?: string;
+    color?: string | undefined;
     /**
      * Text for shape 'text'.
      */
-    text?: string;
+    text?: string | undefined;
     /**
      * CSS font for shape 'text'.
      */
-    font?: string;
+    font?: string | undefined;
     /**
      * Draw order within a layer (higher draws on top).
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Draw layer (higher layers draw on top of lower ones).
      */
-    layer?: number;
+    layer?: number | undefined;
     /**
      * Sort by world Y within a layer/z (for top-down depth).
      */
-    ySort?: boolean;
+    ySort?: boolean | undefined;
     /**
      * Hide without removing the component.
      */
-    visible?: boolean;
+    visible?: boolean | undefined;
     /**
      * Alpha in [0, 1].
      */
-    opacity?: number;
+    opacity?: number | undefined;
     /**
      * Mirror horizontally.
      */
-    flipX?: boolean;
+    flipX?: boolean | undefined;
     /**
      * Mirror vertically.
      */
-    flipY?: boolean;
+    flipY?: boolean | undefined;
     /**
      * Image to draw (takes priority over sheet.image).
      */
-    image?: CanvasImageSource | null;
+    image?: CanvasImageSource | null | undefined;
     /**
      * Sprite sheet providing frame rectangles (and the image when image is null).
      */
-    sheet?: SpriteSheet | null;
+    sheet?: import("../index.js").SpriteSheet | null | undefined;
     /**
      * Sheet frame index (ignored while an animation is set).
      */
-    frame?: number;
+    frame?: number | undefined;
     /**
      * Explicit source rectangle in pixels (overrides sheet frames).
      */
-    sourceRect?: SpriteSourceRect | null;
+    sourceRect?: SpriteSourceRect | null | undefined;
     /**
      * Animation whose .frame selects the sheet frame.
      */
-    animation?: SpriteFrameSource | null;
+    animation?: SpriteFrameSource | null | undefined;
     /**
      * Replaces the built-in drawing.
      */
-    customDraw?: Sprite2DCustomDraw | null;
+    customDraw?: Sprite2DCustomDraw | null | undefined;
     /**
      * Horizontal anchor 0..1; null falls back to entity.anchorX, then 0.5.
      */
-    anchorX?: number | null;
+    anchorX?: number | null | undefined;
     /**
      * Vertical anchor 0..1; null falls back to entity.anchorY, then 0.5.
      */
-    anchorY?: number | null;
+    anchorY?: number | null | undefined;
     /**
      * Visual X offset in local units (does not move the entity; ground shadow stays put).
      */
-    offsetX?: number;
+    offsetX?: number | undefined;
     /**
      * Visual Y offset in local units (negative = lifted, e.g. jump bounce).
      */
-    offsetY?: number;
+    offsetY?: number | undefined;
     /**
      * Visual X scale.
      */
-    scaleX?: number;
+    scaleX?: number | undefined;
     /**
      * Visual Y scale.
      */
-    scaleY?: number;
+    scaleY?: number | undefined;
     /**
      * Visual rotation in radians.
      */
-    rotation?: number;
+    rotation?: number | undefined;
     /**
      * CSS colour overlay (images get a 55% silhouette overlay; shapes use it as fill).
      */
-    tint?: string | null;
+    tint?: string | null | undefined;
     /**
      * Hit-flash intensity in [0, 1]; normally driven by Sprite2D#hitFlash.
      */
-    flash?: number;
+    flash?: number | undefined;
     /**
      * Hit-flash colour.
      */
-    flashColor?: string;
+    flashColor?: string | undefined;
     /**
      * Draw an elliptical ground shadow (true = defaults).
      */
-    groundShadow?: boolean | GroundShadowOptions;
+    groundShadow?: boolean | GroundShadowOptions | undefined;
 };
 export type SpriteCrowdBindSwarmOptions = {
     /**
      * Rotate each instance toward its swarm heading.
      */
-    syncRotation?: boolean;
+    syncRotation?: boolean | undefined;
     /**
      * Flip horizontally when heading left (`sin(rot) < 0`).
      */
-    flipByDirection?: boolean;
+    flipByDirection?: boolean | undefined;
     /**
      * Cyclic animation frame count (`> 1` advances by `animTime * animFps`).
      */
-    frameCount?: number;
+    frameCount?: number | undefined;
     /**
      * Animation frames per second when `frameCount > 1`.
      */
-    animFps?: number;
+    animFps?: number | undefined;
     /**
      * Multiplier from swarm simulation coordinates to crowd local coordinates.
      */
-    worldScale?: number;
+    worldScale?: number | undefined;
 };
 export type SpriteCrowd2DOptions = {
     /**
      * Maximum simultaneous instances (integer 1..262144).
      */
-    capacity?: number;
+    capacity?: number | undefined;
     /**
      * Procedural shape when no image/sheet is set.
      */
-    shape?: "rect" | "circle";
+    shape?: "rect" | "circle" | undefined;
     /**
      * Instance width in local units.
      */
-    width?: number;
+    width?: number | undefined;
     /**
      * Instance height in local units.
      */
-    height?: number;
+    height?: number | undefined;
     /**
      * Fill colour for procedural shapes.
      */
-    color?: string;
+    color?: string | undefined;
     /**
      * Shared image (takes priority over sheet.image).
      */
-    image?: CanvasImageSource | null;
+    image?: CanvasImageSource | null | undefined;
     /**
      * Shared sprite sheet; each instance picks a frame.
      */
-    sheet?: SpriteSheet | null;
+    sheet?: import("../index.js").SpriteSheet | null | undefined;
     /**
      * Explicit source rectangle in pixels shared by all instances.
      */
-    sourceRect?: SpriteSourceRect | null;
+    sourceRect?: SpriteSourceRect | null | undefined;
     /**
      * Horizontal anchor 0..1.
      */
-    anchorX?: number;
+    anchorX?: number | undefined;
     /**
      * Vertical anchor 0..1.
      */
-    anchorY?: number;
+    anchorY?: number | undefined;
     /**
      * Draw layer.
      */
-    layer?: number;
+    layer?: number | undefined;
     /**
      * Draw order within a layer.
      */
-    z?: number;
+    z?: number | undefined;
     /**
      * Sort every instance individually by world Y (slower; enables per-agent depth).
      */
-    ySort?: boolean;
+    ySort?: boolean | undefined;
     /**
      * Hide the whole crowd.
      */
-    visible?: boolean;
+    visible?: boolean | undefined;
     /**
      * Ground shadow for every instance.
      */
-    groundShadow?: boolean | GroundShadowOptions;
+    groundShadow?: boolean | GroundShadowOptions | undefined;
     /**
      * Hit-flash colour.
      */
-    flashColor?: string;
+    flashColor?: string | undefined;
 };
 /**
  * Per-instance initial values for SpriteCrowd2D#spawn.
@@ -1117,46 +1117,46 @@ export type SpriteCrowdSpawnOptions = {
     /**
      * Local X (relative to the owning entity, world units).
      */
-    x?: number;
+    x?: number | undefined;
     /**
      * Local Y (relative to the owning entity, world units).
      */
-    y?: number;
+    y?: number | undefined;
     /**
      * Visual X offset.
      */
-    offsetX?: number;
+    offsetX?: number | undefined;
     /**
      * Visual Y offset (negative = lifted).
      */
-    offsetY?: number;
+    offsetY?: number | undefined;
     /**
      * Rotation in radians.
      */
-    rotation?: number;
+    rotation?: number | undefined;
     /**
      * X scale.
      */
-    scaleX?: number;
+    scaleX?: number | undefined;
     /**
      * Y scale.
      */
-    scaleY?: number;
+    scaleY?: number | undefined;
     /**
      * Alpha in [0, 1].
      */
-    opacity?: number;
+    opacity?: number | undefined;
     /**
      * Sheet frame index (0..65535).
      */
-    frame?: number;
+    frame?: number | undefined;
     /**
      * Mirror horizontally.
      */
-    flipX?: boolean;
+    flipX?: boolean | undefined;
     /**
      * CSS colour tint (rgb used as fill for procedural shapes).
      */
-    tint?: string | null;
+    tint?: string | null | undefined;
 };
 import { Component } from '../core/component.js';
