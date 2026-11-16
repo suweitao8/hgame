@@ -20,6 +20,7 @@ const repoRoot = path.resolve(scriptDir, '..');
 const blenderHelperPath = path.join(scriptDir, 'blender-model3d.py');
 
 export const DEFAULT_TRELLIS2_WORKFLOW_REL = 'user/default/workflows/PixelArtistry/MeshWithTexturing_Pixal3D_GGUF.json';
+export const DEFAULT_TRELLIS2_HQ_WORKFLOW_REL = 'user/default/workflows/Trellis2GGUF/High_Quality_GGUF.json';
 export const DEFAULT_ULTRATEX_WORKFLOW_REL = 'user/default/workflows/PixelArtistry/PixelArtistry_UltraTex_03_LowVRAM_GGUF.json';
 
 export const SKIP_UI_NODE_TYPES = new Set([
@@ -69,6 +70,46 @@ export const TRELLIS2_WIDGET_ORDER = {
     'remesh_band', 'remesh_project', 'dual_contouring_resolution',
     'remove_floaters', 'remove_inner_faces',
   ],
+  Trellis2ReconstructMeshWithQuad: [
+    'remesh_band', 'resolution', 'remove_floaters', 'remove_inner_faces',
+  ],
+  Trellis2MeshWithVoxelToTrimesh: ['reorient_vertices'],
+  Trellis2MeshWithVoxelAdvancedGenerator: [
+    'seed', 'seed:__control__', 'pipeline_type',
+    'sparse_structure_steps', 'sparse_structure_guidance_strength',
+    'sparse_structure_guidance_rescale', 'sparse_structure_rescale_t',
+    'shape_steps', 'shape_guidance_strength', 'shape_guidance_rescale', 'shape_rescale_t',
+    'texture_steps', 'texture_guidance_strength', 'texture_guidance_rescale', 'texture_rescale_t',
+    'max_num_tokens', 'max_views', 'sparse_structure_resolution', 'generate_texture_slat',
+    'sparse_structure_guidance_interval_start', 'sparse_structure_guidance_interval_end',
+    'shape_guidance_interval_start', 'shape_guidance_interval_end',
+    'texture_guidance_interval_start', 'texture_guidance_interval_end',
+    'use_tiled_decoder', 'sampler',
+    'fill_holes', 'hole_iterations', 'verbose', 'dino_lock', 'dino_substeps',
+    'hole_fill_algorithm', 'dino_foundation_cap', 'keep_only_shell',
+  ],
+  Trellis2MeshRefiner: [
+    'seed', 'seed:__control__', 'resolution',
+    'shape_steps', 'shape_guidance_strength', 'shape_guidance_rescale', 'shape_rescale_t',
+    'texture_steps', 'texture_guidance_strength', 'texture_guidance_rescale', 'texture_rescale_t',
+    'max_num_tokens', 'generate_texture_slat', 'downsampling',
+    'shape_guidance_interval_start', 'shape_guidance_interval_end',
+    'texture_guidance_interval_start', 'texture_guidance_interval_end',
+    'use_tiled_decoder', 'max_views', 'sampler',
+    'verbose', 'dino_lock', 'dino_substeps', 'dino_foundation_cap',
+  ],
+  Trellis2MeshTexturing: [
+    'seed', 'seed:__control__', 'texture_steps', 'texture_guidance_strength',
+    'texture_guidance_rescale', 'texture_rescale_t', 'resolution', 'texture_size',
+    'texture_alpha_mode', 'double_side_material',
+    'texture_guidance_interval_start', 'texture_guidance_interval_end',
+    'max_views', 'bake_on_vertices', 'use_custom_normals',
+    'mesh_cluster_threshold_cone_half_angle_rad', 'sampler', 'inpainting',
+    'verbose', 'dino_lock', 'dino_substeps', 'dino_foundation_cap',
+  ],
+  Trellis2SmoothNormals: [],
+  Trellis2Continue: [],
+  StringConcatenate: ['string_a', 'string_b', 'delimiter'],
   Trellis2FillHolesWithMeshlib: [],
   Trellis2UnWrapAndRasterizer: [
     'mesh_cluster_threshold_cone_half_angle_rad',
@@ -313,6 +354,12 @@ function setLinkedOrDirectInput(prompt, node, inputName, value) {
   node.inputs[inputName] = value;
 }
 
+function applyMissingDefaults(inputs, defaults) {
+  for (const [k, v] of Object.entries(defaults)) {
+    if (inputs[k] === undefined) inputs[k] = v;
+  }
+}
+
 /** Builds a calibrated Trellis2-GGUF `/prompt` payload for image-to-3D GLB generation. */
 export function buildTrellis2Prompt(workflowJson, opts = {}) {
   const { prompt, warnings } = convertComfyUiWorkflowToApi(workflowJson, TRELLIS2_WIDGET_ORDER);
@@ -325,8 +372,22 @@ export function buildTrellis2Prompt(workflowJson, opts = {}) {
 
   const exporters = findNodesByClass(prompt, 'Trellis2ExportMesh');
   if (exporters.length === 0) throw new Error('Trellis2 workflow missing Trellis2ExportMesh');
+  // In multi-stage workflows (e.g. High_Quality_GGUF), pick the final textured exporter.
+  const finalExporter = exporters.find(({ node }) => {
+    const src = Array.isArray(node.inputs.trimesh) ? prompt[String(node.inputs.trimesh[0])] : null;
+    return src && /Texturing|Rasterizer/i.test(src.class_type);
+  }) || exporters[exporters.length - 1];
+
   if (opts.prefix) {
-    setLinkedOrDirectInput(prompt, exporters[0].node, 'filename_prefix', assertAsciiPath(opts.prefix, 'Output prefix'));
+    for (const { node } of exporters) {
+      const basePrefix = assertAsciiPath(opts.prefix, 'Output prefix');
+      if (node === finalExporter.node) {
+        setLinkedOrDirectInput(prompt, node, 'filename_prefix', basePrefix);
+      } else {
+        const curName = typeof node.inputs.filename_prefix === 'string' ? node.inputs.filename_prefix : 'stage';
+        setLinkedOrDirectInput(prompt, node, 'filename_prefix', `${basePrefix}_${sanitizeSlug(curName)}`);
+      }
+    }
   }
 
   const simplifiers = findNodesByClass(prompt, 'Trellis2SimplifyMesh');
@@ -335,13 +396,49 @@ export function buildTrellis2Prompt(workflowJson, opts = {}) {
     if (!Number.isInteger(faces) || faces < 100) {
       throw new RangeError('--faces must be an integer >= 100');
     }
-    setLinkedOrDirectInput(prompt, simplifiers[0].node, 'target_face_num', faces);
+    const targetSimplifier = simplifiers[simplifiers.length - 1];
+    setLinkedOrDirectInput(prompt, targetSimplifier.node, 'target_face_num', faces);
   }
 
   for (const { node } of findNodesByClass(prompt, 'Trellis2LoadModel_GGUF')) {
     if (!node.inputs.modelname || node.inputs.modelname === 'Pixal3D-GGUF') {
       node.inputs.modelname = opts.modelName || 'TRELLIS.2-4B';
     }
+  }
+
+  for (const { node } of findNodesByClass(prompt, 'Trellis2MeshWithVoxelAdvancedGenerator')) {
+    applyMissingDefaults(node.inputs, {
+      fill_holes: true,
+      hole_iterations: 1,
+      verbose: false,
+      dino_lock: 0,
+      dino_substeps: 4,
+      hole_fill_algorithm: 'flood_fill',
+      dino_foundation_cap: 1,
+      keep_only_shell: true,
+    });
+    if (opts.seed !== undefined && opts.seed !== null) node.inputs.seed = Number(opts.seed);
+  }
+
+  for (const { node } of findNodesByClass(prompt, 'Trellis2MeshRefiner')) {
+    applyMissingDefaults(node.inputs, {
+      verbose: false,
+      dino_lock: 0,
+      dino_substeps: 4,
+      dino_foundation_cap: 1,
+    });
+    if (opts.seed !== undefined && opts.seed !== null) node.inputs.seed = Number(opts.seed);
+  }
+
+  for (const { node } of findNodesByClass(prompt, 'Trellis2MeshTexturing')) {
+    applyMissingDefaults(node.inputs, {
+      verbose: false,
+      dino_lock: 0,
+      dino_substeps: 4,
+      dino_foundation_cap: 1,
+    });
+    if (opts.seed !== undefined && opts.seed !== null) node.inputs.seed = Number(opts.seed);
+    if (opts.textureSize) node.inputs.texture_size = Number(opts.textureSize);
   }
 
   for (const { node } of findNodesByClass(prompt, 'Trellis2ShapeCascadeGenerator')) {
@@ -367,13 +464,14 @@ export function buildTrellis2Prompt(workflowJson, opts = {}) {
   return {
     prompt,
     warnings,
-    exportNodeId: exporters[0].id,
+    exportNodeId: finalExporter.id,
   };
 }
 
 /** Builds a calibrated UltraTex LowVRAM GGUF `/prompt` payload for GLB re-texturing. */
 export function buildUltratexPrompt(workflowJson, opts = {}) {
   const { prompt, warnings } = convertComfyUiWorkflowToApi(workflowJson, ULTRATEX_WIDGET_ORDER);
+  const hq = String(opts.quality || 'standard').toLowerCase() === 'high';
 
   const load3ds = findNodesByClass(prompt, 'Load3DAdvanced');
   if (load3ds.length === 0) throw new Error('UltraTex workflow missing Load3DAdvanced');
@@ -387,28 +485,41 @@ export function buildUltratexPrompt(workflowJson, opts = {}) {
     loadImgs[0].node.inputs.image = assertAsciiPath(opts.refImageName, 'Reference image name');
   }
 
+  // Keep 1024 view/normal res in 12GB LowVRAM preset so Flux2 avoids PCIe RAM paging; override with --normal-view-res / --view-res.
+  const normalViewRes = opts.normalViewRes ?? (hq ? 1024 : undefined);
   const prepNodes = findNodesByClass(prompt, 'UTXPrepareTextureV25');
   for (const { node } of prepNodes) {
     if (opts.alignment) node.inputs.alignment = opts.alignment;
+    if (normalViewRes) node.inputs.normal_view_resolution = Number(normalViewRes);
+    if (opts.cameraFit) node.inputs.camera_fit = opts.cameraFit;
   }
 
+  // GPU unwrap stays fast on 300k+ face meshes where CPU xatlas stalls; pass --uv-mode to override.
+  const uvMode = opts.uvMode ?? (hq ? 'comfy_gpu' : undefined);
+  const uvPadding = opts.padding ?? (hq ? 4 : undefined);
   const unwrapNodes = findNodesByClass(prompt, 'UTXUnwrapMeshUVV25');
   for (const { node } of unwrapNodes) {
-    if (opts.uvMode) node.inputs.uv_mode = opts.uvMode;
+    if (uvMode) node.inputs.uv_mode = uvMode;
     if (opts.atlasSize) node.inputs.atlas_size = Number(opts.atlasSize);
+    if (uvPadding !== undefined && uvPadding !== null) node.inputs.padding = Number(uvPadding);
   }
 
+  const viewRes = opts.viewRes ?? (hq ? 1024 : undefined);
+  const steps = opts.steps ?? (hq ? 6 : undefined);
+  const extraSteps = opts.extraSteps ?? (hq ? 4 : undefined);
   const genNodes = findNodesByClass(prompt, 'UTXGenerateTextureViewsV23');
   for (const { node } of genNodes) {
-    if (opts.viewRes) node.inputs.view_resolution = Number(opts.viewRes);
-    if (opts.steps !== undefined && opts.steps !== null) node.inputs.steps = Number(opts.steps);
+    if (viewRes) node.inputs.view_resolution = Number(viewRes);
+    if (steps !== undefined && steps !== null) node.inputs.steps = Number(steps);
+    if (extraSteps !== undefined && extraSteps !== null) node.inputs.extra_steps = Number(extraSteps);
     if (opts.seed !== undefined && opts.seed !== null) node.inputs.seed = Number(opts.seed);
   }
 
+  const textureSize = opts.textureSize ?? (hq ? 4096 : undefined);
   const bakers = findNodesByClass(prompt, 'UTXFastSurfaceTextureBaker');
   const bakerIds = new Set(bakers.map((b) => b.id));
   for (const { node } of bakers) {
-    if (opts.textureSize) node.inputs.texture_size = Number(opts.textureSize);
+    if (textureSize) node.inputs.texture_size = Number(textureSize);
   }
 
   if (opts.prompt !== undefined || opts.negativePrompt !== undefined) {
@@ -654,8 +765,8 @@ function printUsage() {
     '  inspect <mesh.glb> [--out-dir <dir>]           Inspect bounds/UVs/tris and optionally render 4/6 views',
     '  normalize <mesh.glb> --out <out.glb> [opts]    Rotate (--rx/--ry/--rz), apply transforms, ground/scale/decimate',
     '  qa <mesh.glb> --out-dir <dir>                  Render multi-view QA images and print mesh/texture diagnostics',
-    '  generate --input <img.png> --out <out.glb>     Run Trellis2-GGUF image-to-3D (--faces 10000, --panel auto|left|right|full)',
-    '  texture --mesh <glb> --ref <png> --out <glb>   Run UltraTex LowVRAM GGUF PBR texturing (--ref-panel auto|left|right|full)',
+    '  generate --input <img.png> --out <out.glb>     Run Trellis2-GGUF image-to-3D (--quality standard|high, --faces, --panel)',
+    '  texture --mesh <glb> --ref <png> --out <glb>   Run UltraTex LowVRAM GGUF PBR texturing (--quality standard|high, --ref-panel)',
   ].join('\n'));
 }
 
@@ -743,7 +854,15 @@ function buildBlenderNormalizeArgs(inputPath, outPath, flags) {
 }
 
 async function cmdGenerate(config, flags) {
-  if (!config.comfyUiDir || !config.trellis2Workflow) {
+  const quality = typeof flags.quality === 'string' ? flags.quality : 'standard';
+  const hqCandidate = config.comfyUiDir
+    ? path.join(config.comfyUiDir, DEFAULT_TRELLIS2_HQ_WORKFLOW_REL)
+    : null;
+  let workflowPath = typeof flags.workflow === 'string' ? flags.workflow : config.trellis2Workflow;
+  if (!flags.workflow && quality === 'high' && hqCandidate && existsSync(hqCandidate)) {
+    workflowPath = hqCandidate;
+  }
+  if (!config.comfyUiDir || !workflowPath) {
     throw new Error('ComfyUI directory/workflow not configured. Add model3d config in .hgame.local.json or env vars.');
   }
   const inputFile = flags.input;
@@ -758,12 +877,12 @@ async function cmdGenerate(config, flags) {
     panelMode: typeof flags.panel === 'string' ? flags.panel : 'auto',
   });
 
-  const wfJson = JSON.parse(await readFile(config.trellis2Workflow, 'utf8'));
+  const wfJson = JSON.parse(await readFile(workflowPath, 'utf8'));
   const prefix = `hgame_t2_${slug}_${Date.now()}`;
   const { prompt, warnings, exportNodeId } = buildTrellis2Prompt(wfJson, {
     inputImageName: staged.filename,
     prefix,
-    faces: flags.faces !== undefined ? Number(flags.faces) : 10000,
+    faces: flags.faces !== undefined ? Number(flags.faces) : (quality === 'high' ? 400000 : 10000),
     seed: flags.seed !== undefined ? Number(flags.seed) : undefined,
     reorient: flags.reorient,
     textureSize: flags['texture-size'] ? Number(flags['texture-size']) : undefined,
@@ -794,6 +913,8 @@ async function cmdGenerate(config, flags) {
 
   console.log(JSON.stringify({
     command: 'generate',
+    quality,
+    workflowUsed: workflowPath,
     promptId,
     warnings,
     stagedInput: staged.destPath,
@@ -825,18 +946,25 @@ async function cmdTexture(config, flags) {
     panelMode: typeof (flags['ref-panel'] || flags.panel) === 'string' ? (flags['ref-panel'] || flags.panel) : 'auto',
   });
 
-  const wfJson = JSON.parse(await readFile(config.ultratexWorkflow, 'utf8'));
+  const utxWorkflowPath = typeof flags.workflow === 'string' ? flags.workflow : config.ultratexWorkflow;
+  const wfJson = JSON.parse(await readFile(utxWorkflowPath, 'utf8'));
   const outPrefix = `ultratex/${slug}_${stamp}`;
+  const quality = typeof flags.quality === 'string' ? flags.quality : 'standard';
   const { prompt, warnings, saveGlbNodeId, pbrNodeIds } = buildUltratexPrompt(wfJson, {
     meshFile: `3d/${stagedMesh.filename}`,
     refImageName: stagedRef.filename,
     prefix: outPrefix,
+    quality,
     alignment: flags.alignment || 'front',
     uvMode: flags['uv-mode'],
+    padding: flags.padding !== undefined ? Number(flags.padding) : undefined,
     atlasSize: flags['atlas-size'] ? Number(flags['atlas-size']) : undefined,
     viewRes: flags['view-res'] ? Number(flags['view-res']) : undefined,
+    normalViewRes: flags['normal-view-res'] ? Number(flags['normal-view-res']) : undefined,
+    cameraFit: typeof flags['camera-fit'] === 'string' ? flags['camera-fit'] : undefined,
     textureSize: flags['texture-size'] ? Number(flags['texture-size']) : undefined,
     steps: flags.steps !== undefined ? Number(flags.steps) : undefined,
+    extraSteps: flags['extra-steps'] !== undefined ? Number(flags['extra-steps']) : undefined,
     seed: flags.seed !== undefined ? Number(flags.seed) : undefined,
     prompt: flags.prompt,
     negativePrompt: flags['negative-prompt'],
@@ -875,6 +1003,8 @@ async function cmdTexture(config, flags) {
 
   console.log(JSON.stringify({
     command: 'texture',
+    quality,
+    workflowUsed: utxWorkflowPath,
     promptId,
     warnings,
     stagedMesh: stagedMesh.destPath,

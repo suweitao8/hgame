@@ -99,17 +99,18 @@ HGame connects to a local ComfyUI (`Trellis2-GGUF` + `UltraTex LowVRAM GGUF`) an
    ```bash
    npm run process:model3d -- doctor
    ```
-2. **Image-to-3D GLB (Trellis2-GGUF)** — defaults `--faces 10000` for real-time WebGL budgets:
+2. **Image-to-3D GLB (Trellis2-GGUF)** — defaults `--faces 10000` for real-time WebGL budgets, or `--quality high` (`High_Quality_GGUF`, 50 steps + `MeshRefiner` + `SmoothNormals`, default `400000` tris); 2:1 front+side sheets auto-crop the front half via `--panel auto|left|right|full`:
    ```bash
    npm run process:model3d -- generate --input ref.png --faces 10000 --out raw.glb
+   npm run process:model3d -- generate --input sheet.png --quality high --out hq_raw.glb
    ```
-3. **Orientation Inspection & Blender Pose Normalization** — required before UltraTex `alignment=front` and before game import (`-Y_blender` / `+Z_gltf` forward, `+Z_blender` / `+Y_gltf` up, `min_z = 0` ground origin, ASCII paths only):
+3. **Orientation Inspection & Blender Pose Normalization** — required before UltraTex `alignment=front` and before game import (`-Y_blender` / `+Z_gltf` forward, `+Z_blender` / `+Y_gltf` up, `min_z = 0` ground origin, ASCII paths only; inspect `qa` first since `High_Quality_GGUF` may already be upright):
    ```bash
    npm run process:model3d -- inspect raw.glb --out-dir qa_6view
    npm run process:model3d -- normalize raw.glb --rx -90 --origin ground --out norm.glb --qa-dir qa_norm
    ```
-4. **PBR Re-Texturing (UltraTex LowVRAM GGUF) + Multi-View QA Render**:
+4. **PBR Re-Texturing (UltraTex LowVRAM GGUF) + Multi-View QA Render** — use `--quality high` (`padding=4`, `steps=6`, `extra_steps=4`, `texture_size=4096`) and `--ref-panel auto|left|right|full` for dual-view sheets:
    ```bash
-   npm run process:model3d -- texture --mesh norm.glb --ref ref.png --out final.glb --pbr-dir pbr --qa-dir qa_utx
+   npm run process:model3d -- texture --mesh norm.glb --ref ref.png --quality high --out final.glb --pbr-dir pbr --qa-dir qa_utx
    ```
 

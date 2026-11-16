@@ -309,3 +309,91 @@ test('scripts/process-model3d.mjs --help exits cleanly', () => {
   assert.equal(res.status, 0);
   assert.match(res.stdout, /Usage: node scripts\/process-model3d\.mjs/);
 });
+
+test('buildTrellis2Prompt handles High_Quality_GGUF multi-stage graph and selects final textured exporter', () => {
+  const workflow = {
+    nodes: [
+      { id: 1, type: 'Trellis2LoadImageWithTransparency', widgets_values: ['in.png', 'image'], inputs: [] },
+      { id: 2, type: 'Trellis2MeshWithVoxelAdvancedGenerator', widgets_values: [0, 'randomize', '1024_cascade', 50, 7.5, 0.5, 5.0, 50, 7.5, 0.5, 5.0, 25, 7.5, 0.5, 5.0, 9999999, 6, 32, true, 0.5, 1.0, 0.1, 1.0, 0.1, 1.0, true, 'euler'], inputs: [] },
+      { id: 3, type: 'Trellis2MeshWithVoxelToTrimesh', widgets_values: ['90 degrees'], inputs: [{ name: 'voxelgrid', link: 1 }] },
+      { id: 15, type: 'Trellis2ExportMesh', widgets_values: ['WhiteMesh', 'glb'], inputs: [{ name: 'trimesh', link: 2 }] },
+      { id: 16, type: 'Trellis2MeshRefiner', widgets_values: [1, 'fixed', '1024_cascade', 50, 7.5, 0.5, 5.0, 25, 7.5, 0.5, 5.0, 999999, false, 1, 0.1, 1.0, 0.1, 1.0, true, 6, 'euler'], inputs: [{ name: 'mesh', link: 2 }] },
+      { id: 21, type: 'Trellis2SmoothNormals', widgets_values: [], inputs: [{ name: 'mesh', link: 3 }] },
+      { id: 22, type: 'Trellis2SimplifyMesh', widgets_values: [1000000, 'Cumsum'], inputs: [{ name: 'trimesh', link: 4 }] },
+      { id: 24, type: 'Trellis2ExportMesh', widgets_values: ['Refined', 'glb'], inputs: [{ name: 'trimesh', link: 5 }] },
+      { id: 25, type: 'Trellis2MeshTexturing', widgets_values: [1, 'fixed', 25, 7.5, 0.5, 5.0, '1024_cascade', 4096, 'OPAQUE', true, 0.1, 1.0, 6, false, true, 0.5, 'euler', true], inputs: [{ name: 'trimesh', link: 5 }] },
+      { id: 26, type: 'Trellis2ExportMesh', widgets_values: ['Textured', 'glb'], inputs: [{ name: 'trimesh', link: 6 }] },
+    ],
+    links: [
+      [1, 2, 0, 3, 0, 'VOXELGRID'],
+      [2, 3, 0, 15, 0, 'TRIMESH'],
+      [3, 3, 0, 16, 0, 'MESH'],
+      [4, 16, 0, 21, 0, 'MESH'],
+      [5, 21, 0, 22, 0, 'TRIMESH'],
+      [6, 25, 0, 26, 0, 'TRIMESH'],
+    ],
+  };
+
+  const { prompt, warnings, exportNodeId } = buildTrellis2Prompt(workflow, {
+    inputImageName: 'cat_front.png',
+    prefix: 'hgame_t2_cat_hq',
+    faces: 400000,
+    seed: 123,
+    textureSize: 4096,
+  });
+
+  assert.deepEqual(warnings, []);
+  assert.equal(exportNodeId, '26');
+  assert.equal(prompt['1'].inputs.image, 'cat_front.png');
+  assert.equal(prompt['2'].inputs.seed, 123);
+  assert.equal(prompt['2'].inputs.fill_holes, true);
+  assert.equal(prompt['2'].inputs.keep_only_shell, true);
+  assert.equal(prompt['16'].inputs.seed, 123);
+  assert.equal(prompt['16'].inputs.dino_substeps, 4);
+  assert.equal(prompt['22'].inputs.target_face_num, 400000);
+  assert.equal(prompt['25'].inputs.seed, 123);
+  assert.equal(prompt['25'].inputs.texture_size, 4096);
+  assert.equal(prompt['25'].inputs.dino_foundation_cap, 1);
+  assert.equal(prompt['26'].inputs.filename_prefix, 'hgame_t2_cat_hq');
+  assert.equal(prompt['15'].inputs.filename_prefix, 'hgame_t2_cat_hq_WhiteMesh');
+  assert.equal(prompt['24'].inputs.filename_prefix, 'hgame_t2_cat_hq_Refined');
+});
+
+test('buildUltratexPrompt applies high quality defaults without breaking explicit overrides', () => {
+  const workflow = {
+    nodes: [
+      { id: 1, type: 'Load3DAdvanced', widgets_values: ['3d/in.glb'], inputs: [] },
+      { id: 3, type: 'LoadImage', widgets_values: ['ref.png', 'image'], inputs: [] },
+      { id: 44, type: 'UTXUnwrapMeshUVV25', widgets_values: [4096, 'xatlas', 16], inputs: [{ name: 'mesh', link: 1 }] },
+      { id: 45, type: 'UTXPrepareTextureV25', widgets_values: ['front', 'foreground', 'auto_smooth', 1024, 'custom', 0, 0, 1], inputs: [{ name: 'mesh', link: 2 }] },
+      { id: 9, type: 'UTXGenerateTextureViewsV23', widgets_values: ['m.safetensors', 1, 'd.pt', 'albedo', 1024, 12, 0, 'fixed', 4, 4, 1, 0.2, 'guided', 0.55, 4, true], inputs: [{ name: 'source', link: 3 }] },
+      { id: 48, type: 'UTXFastSurfaceTextureBaker', widgets_values: [2048, 'surface_fill', 'fast_detail', 'auto'], inputs: [{ name: 'albedo_views', link: 4 }] },
+      { id: 13, type: 'SaveGLB', widgets_values: ['ultratex/textured', ''], inputs: [{ name: 'mesh', link: 5 }] },
+    ],
+    links: [
+      [1, 1, 0, 44, 0, 'MESH'],
+      [2, 44, 0, 45, 0, 'MESH'],
+      [3, 45, 0, 9, 0, 'UTX_SOURCE'],
+      [4, 9, 0, 48, 0, 'UTX_VIEWS'],
+      [5, 48, 0, 13, 0, 'MESH'],
+    ],
+  };
+
+  const { prompt, warnings } = buildUltratexPrompt(workflow, {
+    meshFile: '3d/cat.glb',
+    refImageName: 'cat_front.png',
+    prefix: 'ultratex/cat_hq',
+    quality: 'high',
+    cameraFit: 'full',
+  });
+
+  assert.deepEqual(warnings, []);
+  assert.equal(prompt['44'].inputs.uv_mode, 'comfy_gpu');
+  assert.equal(prompt['44'].inputs.padding, 4);
+  assert.equal(prompt['45'].inputs.normal_view_resolution, 1024);
+  assert.equal(prompt['45'].inputs.camera_fit, 'full');
+  assert.equal(prompt['9'].inputs.view_resolution, 1024);
+  assert.equal(prompt['9'].inputs.steps, 6);
+  assert.equal(prompt['9'].inputs.extra_steps, 4);
+  assert.equal(prompt['48'].inputs.texture_size, 4096);
+});
