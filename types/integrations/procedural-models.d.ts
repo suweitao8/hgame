@@ -2,7 +2,7 @@
  * @param {ProceduralModelOptions} options
  * @returns {ProceduralModelSlots}
  */
-export function createProceduralModelSlots({ THREE, slots, materialPalette, GLTFLoader, projectBaseUrl, }?: ProceduralModelOptions): ProceduralModelSlots;
+export function createProceduralModelSlots({ THREE, slots, materialPalette, GLTFLoader, loadGLTF, projectBaseUrl, }?: ProceduralModelOptions): ProceduralModelSlots;
 /**
  * Minimal structural Three.js Object3D.
  */
@@ -85,6 +85,13 @@ export type ProceduralModelOptions = {
         }>;
     }) | undefined;
     /**
+     * Optional lazy loader for replacement assets.
+     */
+    loadGLTF?: ((url: string) => Promise<{
+        scene: ProceduralObject3D;
+        animations?: unknown[];
+    }>) | undefined;
+    /**
      * Base for resolving replacement URLs.
      */
     projectBaseUrl?: string | undefined;
@@ -119,11 +126,11 @@ export type ProceduralModelSlots = {
      */
     instantiate: (id: string) => Promise<ProceduralObject3D>;
     /**
-     * 1..20000 placements; InstancedMesh or fallback Group.
+     * 1..20000 placements; one instance batch per eligible mesh.
      */
-    instantiateBatch: (id: string, placements: Array<ProceduralPlacement | {
+    instantiateBatch: (id: string, placements: readonly (ProceduralPlacement | {
         isMatrix4: true;
-    }>) => Promise<ProceduralObject3D>;
+    })[]) => Promise<ProceduralObject3D>;
     setReplacement: (id: string, url: string | null) => void;
     dispose: () => Promise<void>;
 };

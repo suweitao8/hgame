@@ -48,6 +48,7 @@
  * @property {Record<string, ProceduralSlotDefinition>} slots Keys match `group.name` (lowercase dotted ids).
  * @property {{ get(name: string): object }} materialPalette e.g. from createWorldMaterialPalette.
  * @property {(new () => { loadAsync(url: string): Promise<{ scene: ProceduralObject3D, animations?: unknown[] }> })} [GLTFLoader] Only needed if a replacement is configured.
+ * @property {(url: string) => Promise<{scene: ProceduralObject3D, animations?: unknown[]}>} [loadGLTF] Optional lazy loader for replacement assets.
  * @property {string} [projectBaseUrl='http://localhost/'] Base for resolving replacement URLs.
  */
 /**
@@ -63,7 +64,7 @@
  * @property {(id: string) => ProceduralSlotSpec} get Copy of a slot definition.
  * @property {(id: string) => Promise<ProceduralObject3D>} prototype Shared, cached prototype.
  * @property {(id: string) => Promise<ProceduralObject3D>} instantiate Deep clone of the prototype.
- * @property {(id: string, placements: Array<ProceduralPlacement|{ isMatrix4: true }>) => Promise<ProceduralObject3D>} instantiateBatch 1..20000 placements; InstancedMesh or fallback Group.
+ * @property {(id: string, placements: readonly (ProceduralPlacement|{ isMatrix4: true })[]) => Promise<ProceduralObject3D>} instantiateBatch 1..20000 placements; one instance batch per eligible mesh.
  * @property {(id: string, url: string|null) => void} setReplacement
  * @property {() => Promise<void>} dispose
  */
@@ -98,7 +99,7 @@ const replacementPath = url => {
  * @returns {ProceduralModelSlots}
  */
 export function createProceduralModelSlots({
-  THREE, slots, materialPalette, GLTFLoader, projectBaseUrl,
+  THREE, slots, materialPalette, GLTFLoader, loadGLTF, projectBaseUrl,
 } = {}) {
   if (!THREE?.Group || !THREE?.BoxGeometry || !THREE?.InstancedMesh ||
       !slots || typeof slots !== 'object' || Array.isArray(slots) ||
@@ -284,13 +285,14 @@ export function createProceduralModelSlots({
       if (!prototypes.has(id)) prototypes.set(id, build(id));
       return prototypes.get(id);
     }
-    if (typeof GLTFLoader !== 'function') {
+    if (!loadGLTF && typeof GLTFLoader !== 'function') {
       throw new Error('GLTFLoader required only if a custom GLB replacement is configured');
     }
     const url = new URL(spec.replacement, projectBaseUrl ?? 'http://localhost/').href;
     if (!replacementCache.has(url)) {
-      const loader = new GLTFLoader();
-      const request = Promise.resolve(loader.loadAsync(url)).then(gltf => {
+      const request = Promise.resolve().then(() =>
+        loadGLTF ? loadGLTF(url) : new GLTFLoader().loadAsync(url)
+      ).then(gltf => {
         if (!gltf?.scene || gltf.animations?.length) {
           throw new Error('Only static unanimated GLB replacements supported');
         }
@@ -316,38 +318,47 @@ export function createProceduralModelSlots({
     if (!Array.isArray(placements) || placements.length < 1 || placements.length > 20000) {
       throw new RangeError('A batch needs 1–20,000 placements');
     }
+    const isProcedural = !definitions.get(id)?.replacement;
     const root = await prototype(id);
     root.updateMatrixWorld(true);
     const meshes = [];
     root.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
-    // Three.js InstancedMesh supports multi-material BoxGeometry groups, so
-    // top/sides can use distinct PBR materials without cloning 81 cubes.
-    if (meshes.length === 1) {
-      const src = meshes[0];
-      const out = new THREE.InstancedMesh(src.geometry, src.material, placements.length);
+    // Procedural parts have static transforms. Keep the clone path for GLB
+    // hierarchies and transparent parts which rely on per-object sorting.
+    const opaqueProcedural = isProcedural && meshes.every(mesh =>
+      (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).every(material => !material?.transparent));
+    if (meshes.length === 1 || (meshes.length > 1 && opaqueProcedural)) {
+      for (const item of placements) {
+        if (!item?.isMatrix4) placement(item);
+      }
       const tmp = new THREE.Object3D();
       const matrix = new THREE.Matrix4();
+      const batches = meshes.map(mesh => new THREE.InstancedMesh(mesh.geometry, mesh.material, placements.length));
       for (let i = 0; i < placements.length; i++) {
         const item = placements[i];
-        if (item?.isMatrix4) matrix.multiplyMatrices(item, src.matrixWorld);
-        else {
-          placement(item);
+        if (!item.isMatrix4) {
           tmp.position.set(item.x ?? 0, item.y ?? 0, item.z ?? 0);
           tmp.rotation.set(0, item.rotationY ?? 0, 0);
           tmp.scale.setScalar(item.scale ?? 1);
           tmp.updateMatrix();
-          matrix.multiplyMatrices(tmp.matrix, src.matrixWorld);
         }
-        out.setMatrixAt(i, matrix);
+        for (let part = 0; part < meshes.length; part++) {
+          matrix.multiplyMatrices(item.isMatrix4 ? item : tmp.matrix, meshes[part].matrixWorld);
+          batches[part].setMatrixAt(i, matrix);
+        }
       }
-      out.instanceMatrix.needsUpdate = true;
-      out.castShadow = true;
-      out.receiveShadow = true;
-      out.computeBoundingSphere();
-      return out;
+      for (let part = 0; part < batches.length; part++) {
+        const batch = batches[part];
+        batch.instanceMatrix.needsUpdate = true;
+        batch.castShadow = meshes.length === 1 || meshes[part].castShadow;
+        batch.receiveShadow = meshes.length === 1 || meshes[part].receiveShadow;
+        batch.computeBoundingSphere();
+      }
+      if (batches.length === 1) return batches[0];
+      const group = new THREE.Group();
+      group.add(...batches);
+      return group;
     }
-    // More than one mesh: keep shared geometry/materials via clone, rather
-    // than merging by changing the source mesh's shape or UV.
     const group = new THREE.Group();
     group.userData.instancingFallback = 'multi-mesh';
     for (const item of placements) {

@@ -78,6 +78,7 @@
  * @property {() => void} clear Remove the mounted level.
  * @property {() => void} dispose Clear and disable the renderer.
  * @property {ModularLevelStats} stats Copy of last committed stats.
+ * @property {CompiledModularLevel | null} level Immutable metadata of the mounted level.
  * @property {object | null} root Mounted Group or null.
  */
 const SLOT = /^[a-z][a-z0-9-]*(?:.[a-z][a-z0-9-]*)+$/;
@@ -301,30 +302,48 @@ export function createModularLevelRenderer({ THREE, models, parent } = {}) {
     group.clear();
   }
 
-  async function setLevel(level) {
+  async function mountLevel(compiled) {
     if (disposed) throw new Error('Modular level renderer is disposed');
-    const compiled = compileModularLevel(level);
     // Fail fast on misspelled scene slots before requesting any model.
     for (const group of compiled.batches) models.get(group.slot);
     const next = new THREE.Group();
     next.name = 'modular-level';
     const myGeneration = ++generation;
-    try {
-      for (const batch of compiled.batches) {
-        const placements = batch.placements;
-        const node = placements.length === 1 ?
-          await models.instantiate(batch.slot) :
-          await models.instantiateBatch(batch.slot, placements);
-        if (!node?.isObject3D) throw new Error('Model slot returned no Object3D: ' + batch.slot);
-        if (placements.length === 1) {
-          const placement = placements[0];
-          node.position.set(placement.x, placement.y, placement.z);
-          node.rotation.y = placement.rotationY;
-          node.scale.setScalar(placement.scale);
+    const batches = compiled.batches;
+    const nodes = new Array(batches.length);
+    let nextBatch = 0;
+    let failed = false;
+    async function prepareBatches() {
+      try {
+        while (!failed && !disposed && myGeneration === generation && nextBatch < batches.length) {
+          const index = nextBatch++;
+          const { slot, placements } = batches[index];
+          const node = placements.length === 1
+            ? await models.instantiate(slot)
+            : await models.instantiateBatch(slot, placements);
+          if (!node?.isObject3D) throw new Error('Model slot returned no Object3D: ' + slot);
+          nodes[index] = node;
+          if (placements.length === 1) {
+            const placement = placements[0];
+            node.position.set(placement.x, placement.y, placement.z);
+            node.rotation.y = placement.rotationY;
+            node.scale.setScalar(placement.scale);
+          }
+          node.userData.levelSlot = slot;
         }
-        node.userData.levelSlot = batch.slot;
-        next.add(node);
+      } catch (error) {
+        failed = true;
+        throw error;
       }
+    }
+    try {
+      // Limit concurrent model loads and attach objects in authored order.
+      const outcomes = await Promise.allSettled(Array.from(
+        { length: Math.min(batches.length, 4) }, prepareBatches,
+      ));
+      for (const node of nodes) if (node) next.add(node);
+      const failure = outcomes.find(outcome => outcome.status === 'rejected');
+      if (failure) throw failure.reason;
       if (myGeneration !== generation || disposed) {
         detach(next);
         return { committed: false, ...compiled.stats };
@@ -332,7 +351,7 @@ export function createModularLevelRenderer({ THREE, models, parent } = {}) {
       parent.add(next);
       detach(mounted);
       mounted = next;
-      lastLevel = JSON.parse(JSON.stringify(level));
+      lastLevel = compiled;
       lastStats = compiled.stats;
       return { committed: true, ...compiled.stats };
     } catch (error) {
@@ -340,9 +359,13 @@ export function createModularLevelRenderer({ THREE, models, parent } = {}) {
       throw error;
     }
   }
+  async function setLevel(level) {
+    if (disposed) throw new Error('Modular level renderer is disposed');
+    return mountLevel(compileModularLevel(level));
+  }
   async function rebuild() {
     if (!lastLevel) throw new Error('No modular level to rebuild');
-    return setLevel(lastLevel);
+    return mountLevel(lastLevel);
   }
   function clear() {
     generation++;
@@ -359,6 +382,7 @@ export function createModularLevelRenderer({ THREE, models, parent } = {}) {
   return {
     setLevel, rebuild, clear, dispose,
     get stats() { return { ...lastStats }; },
+    get level() { return lastLevel; },
     get root() { return mounted; },
   };
 }

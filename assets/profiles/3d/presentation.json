@@ -1,0 +1,21 @@
+{
+  "quality": "auto",
+  "renderer": {
+    "cameraPosition": [9, 8.5, 12],
+    "cameraTarget": [0, 1, 0],
+    "background": "#8eafc2",
+    "toneMapping": "ueFilmic",
+    "exposure": 1.15,
+    "shadows": true,
+    "worldLighting": {
+      "fog": { "near": 17, "far": 50 },
+      "hemisphere": { "sky": "#ffffff", "ground": "#61707b", "intensity": 2 },
+      "sun": {
+        "color": "#fff3dd",
+        "intensity": 2.6,
+        "position": [7, 13, 9],
+        "shadow": { "extent": 13, "near": 0.5, "far": 45, "mapSize": 1024, "bias": -0.0002 }
+      }
+    }
+  }
+}

@@ -236,6 +236,10 @@ export type ModularLevelRenderer = {
      */
     stats: ModularLevelStats;
     /**
+     * Immutable metadata of the mounted level.
+     */
+    level: CompiledModularLevel | null;
+    /**
      * Mounted Group or null.
      */
     root: object | null;

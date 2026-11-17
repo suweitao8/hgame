@@ -31,7 +31,7 @@ const CAPABILITY_MAP = [
   { need: '2D sprites, camera, tilemap, A* path', module: 'integrations/canvas2d.js, animation/*, world/tilemap.js', keyApis: 'createCanvas2DAdapter, Camera2D, Sprite2D(groundShadow/hitFlash), SpriteSheet.fromGrid, findGridPath' },
   { need: '2D 5k-150k+ hordes / bullets', module: 'integrations/webgl2d.js, world/swarm-ecs.js, world/gpu-swarm-webgl2.js', keyApis: 'createWebGL2DAdapter, SpriteCrowd2D.bindSwarm/bindGpuSwarm, createSwarmSimulation, createGpuSwarmWebGL2' },
   { need: '2D ambient lighting, 32 lights, bloom', module: 'integrations/post2d.js', keyApis: 'setAmbientLight, addLight2D, setLights2D, clearLights2D, setPost2D' },
-  { need: '3D sky, MegaLights, post, culling, camera', module: 'integrations/three.js, sky3d.js, lighting3d.js, post3d.js, culling3d.js, camera3d.js', keyApis: 'createThreeAdapter, createProceduralSky3D, createMegaLights3D, createPostProcessVolumeStack, createCameraRig3D' },
+  { need: '3D presentation, sky, lights, post, culling, camera', module: 'integrations/three.js, sky3d.js, lighting3d.js, post3d.js, culling3d.js, camera3d.js', keyApis: 'src/presentation.json (3D starter), createThreeAdapter, createProceduralSky3D, createMegaLights3D, createPostProcessVolumeStack, createCameraRig3D' },
   { need: '3D terrain + Rapier heightfield, NavMesh', module: 'world/terrain3d.js, world/navmesh3d.js', keyApis: 'createHeightfieldTerrain3D, fbmNoise2D, scatterPositions, attachPhysics, createNavMesh3D' },
   { need: '3D rigged GLB, 17 props, VAT crowds', module: 'integrations/model3d.js, procedural-models.js, world-aligned-material.js', keyApis: 'createModel3DProvider, createProceduralModelSlots, createBoneVatCrowd3D, createWorldMaterialPalette, npm run process:model3d' },
   { need: 'Enemy/NPC AI (HFSM + Behavior Tree)', module: 'ai/index.js (ai/fsm.js, ai/bt.js)', keyApis: 'createStateMachine, createBehaviorTree, BT_STATUS, sequence, selector, parallel, cooldown, condition, action' },
@@ -127,25 +127,31 @@ import { createHeightfieldTerrain3D } from '../vendor/hgame/world/terrain3d.js';
 import { createThreeAdapter } from '../vendor/hgame/integrations/three.js';
 import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
 
-const engineConfig = await fetch('./engine.config.json').then(r => r.json());
+const [engineConfig, presentation] = await Promise.all([
+  fetch('./engine.config.json').then(r => r.json()),
+  fetch('./src/presentation.json').then(r => r.json()),
+]);
 const canvas = document.querySelector('#game');
 const project = defineProject(engineConfig);
-const renderer = createThreeAdapter({ THREE, canvas, quality3d: { mode: 'auto' } });
+const renderer = createThreeAdapter({
+  ...presentation.renderer, THREE, canvas,
+  quality3d: project.features.includes('adaptiveQuality3d') ? { mode: presentation.quality } : null,
+});
 const app = createGameApplication({ project, gameId: 'arena-3d', gameVersion: '1.0.0', renderer });
 await app.installFeatures();
 
 const scene = app.scenes.add(new Scene('world'));
 const world = renderer.getWorld(scene);
-world.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.8));
 const terrain = createHeightfieldTerrain3D({ width: 120, depth: 120, segmentsX: 48, segmentsZ: 48, edgeFalloff: 'island' });
 world.add(terrain.createMesh(THREE).mesh);
 terrain.attachPhysics(scene.physics);
 const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: world });
+scene.onDispose(() => vfx.dispose());
 app.scenes.start('world');
 app.start();
 canvas.dataset.engineReady = 'true';
 window.__hgameState = () => ({ tick: app.stats.ticks, terrainMaxY: terrain.maxHeight });
-window.addEventListener('pagehide', () => { vfx.dispose(); app.dispose(); }, { once: true });`,
+window.addEventListener('pagehide', event => { if (!event.persisted) app.dispose(); });`,
   ui: `// Create: ${recipeCreateCommand('ui')}
 import { defineProject } from '../vendor/hgame/core/config.js';
 import { createGameApplication } from '../vendor/hgame/core/application.js';

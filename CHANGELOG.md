@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Generate 3D starters with a shared JSON layout for camera, lighting, tone mapping and quality. Manage lighting and level resources with the scene lifecycle. Reuse compiled level data, prepare independent model slots concurrently and instance opaque procedural models by mesh part.
+
 - Add level preloading and scene transitions with catalog asset groups. Candidate loading or entry failure preserves the current scene. Successful transitions retire the old scene and release its resources, with separate reporting for cleanup errors.
 
 - Add a logical asset catalog shared by runtime and release packaging. Scopes share active downloads and decoded images, then release resources when their final owner leaves. Catalog releases include named media and sidecar files, with CAS fallback.

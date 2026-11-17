@@ -1,0 +1,10 @@
+{
+  "quality": "auto",
+  "renderer": {
+    "cameraPosition": [0, 4, 8],
+    "cameraTarget": [0, 0, 0],
+    "worldLighting": {
+      "hemisphere": { "sky": "#ffffff", "ground": "#555555", "intensity": 2 }
+    }
+  }
+}

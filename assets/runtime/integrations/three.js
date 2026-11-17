@@ -4,6 +4,7 @@ import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
 import { fitDirectionalShadowFrustum } from './shadow3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
+import { cleanupAll } from '../internal/cleanup.js';
 
 const SCRATCH_WORLD_MAT = new Float64Array(16);
 
@@ -59,6 +60,9 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  *   BoxGeometry?: new (...args: number[]) => ThreeDisposable,
  *   MeshStandardMaterial?: new (options: object) => ThreeDisposable,
  *   Color?: new (value: number | string) => object,
+ *   Fog?: new (color: number | string, near: number, far: number) => object,
+ *   HemisphereLight?: new (sky: number | string, ground: number | string, intensity: number) => object,
+ *   DirectionalLight?: new (color: number | string, intensity: number) => ThreeDirectionalLight,
  *   Vector3?: new (x?: number, y?: number, z?: number) => ThreeVector3,
  *   Matrix4?: new () => ThreeMatrix4,
  *   [key: string]: unknown
@@ -133,6 +137,24 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  */
 
 /**
+ * @typedef {object} ThreeDirectionalLight
+ * @property {{set(x: number, y: number, z: number): unknown}} position
+ * @property {boolean} castShadow
+ * @property {{mapSize: {x: number, set(x: number, y: number): unknown},
+ *   camera: {updateProjectionMatrix?(): void}, bias: number}} shadow
+ * @property {() => void} [dispose]
+ */
+
+/**
+ * Default lighting for each world created by this adapter.
+ * @typedef {object} ThreeWorldLighting
+ * @property {{color?: number | string, near: number, far: number}} [fog]
+ * @property {{sky: number | string, ground: number | string, intensity: number}} [hemisphere]
+ * @property {{color: number | string, intensity: number, position: [number, number, number],
+ *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number}}} [sun]
+ */
+
+/**
  * @typedef {object} ThreeAdapterOptions
  * @property {ThreeNamespace} THREE Injected Three.js namespace (required).
  * @property {HTMLCanvasElement | object} canvas Target canvas (required).
@@ -140,9 +162,12 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {number} [height=540] Initial height in CSS px.
  * @property {number} [pixelRatio=globalThis.devicePixelRatio||1] Requested device pixel ratio.
  * @property {number} [cameraFov=60] Vertical field of view, degrees.
+ * @property {[number, number, number]} [cameraPosition] Starting camera position.
+ * @property {[number, number, number]} [cameraTarget] Starting camera look-at target.
  * @property {number} [near=0.1] Camera near plane, world units.
  * @property {number} [far=1000] Camera far plane / cull distance, world units.
- * @property {number} [background=0x101820] Scene background colour (0xRRGGBB).
+ * @property {number | string} [background=0x101820] Scene background colour.
+ * @property {ThreeWorldLighting | null} [worldLighting=null] Default fog and lights, allocated per scene.
  * @property {ThreeQuality3DOptions | null} [quality3d=null] Adaptive quality options.
  * @property {boolean | Record<string, unknown> | null} [post3d=null] Enable post pipeline (true or its options).
  * @property {boolean | null} [shadows=null] Force shadows on/off; null follows the quality preset.
@@ -226,9 +251,12 @@ export function createThreeAdapter({
   height = 540,
   pixelRatio = globalThis.devicePixelRatio || 1,
   cameraFov = 60,
+  cameraPosition = [0, 4, 11],
+  cameraTarget = [0, 0, 0],
   near = 0.1,
   far = 1000,
   background = 0x101820,
+  worldLighting = null,
   quality3d = null,
   post3d = null,
   shadows = null,
@@ -252,6 +280,9 @@ export function createThreeAdapter({
 
   let postPipeline = null;
   let activeSunLight = sunLight;
+  let worldSunLight = null;
+  const worldSuns = new WeakMap();
+  const ownedSuns = new Set();
   let activeViewCamera = viewCamera;
   let activeSky = sky;
   let activePostVolumes = postVolumes;
@@ -263,6 +294,16 @@ export function createThreeAdapter({
     gl: renderer.getContext?.() ?? null,
   });
 
+  function applySunShadowPreset(light, preset) {
+    if (!preset || !light?.shadow?.mapSize) return;
+    const wanted = preset.shadowMapSize;
+    if (!Number.isFinite(wanted) || wanted <= 0 || light.shadow.mapSize.x === wanted) return;
+    light.shadow.mapSize.set?.(wanted, wanted);
+    light.shadow.map?.dispose?.();
+    light.shadow.map = null;
+    light.shadow.needsUpdate = true;
+  }
+
   function applyQualityToRenderer(preset = null) {
     const enableShadows = shadows === false
       ? false
@@ -273,15 +314,7 @@ export function createThreeAdapter({
       renderer.shadowMap.enabled = enableShadows;
       if (enableShadows && THREE.PCFShadowMap !== undefined) renderer.shadowMap.type = THREE.PCFShadowMap;
     }
-    if (preset && activeSunLight?.shadow?.mapSize) {
-      const wanted = preset.shadowMapSize;
-      if (Number.isFinite(wanted) && wanted > 0 && activeSunLight.shadow.mapSize.x !== wanted) {
-        activeSunLight.shadow.mapSize.set?.(wanted, wanted);
-        activeSunLight.shadow.map?.dispose?.();
-        activeSunLight.shadow.map = null;
-        activeSunLight.shadow.needsUpdate = true;
-      }
-    }
+    applySunShadowPreset(activeSunLight ?? worldSunLight, preset);
     if (preset) {
       culler3d.setMaxDistance(preset.drawDistance ?? far);
       culler3d.setOcclusionEnabled(preset.occlusionCulling ?? true);
@@ -381,8 +414,8 @@ export function createThreeAdapter({
   applyQualityToRenderer(appliedPreset);
 
   const camera = new THREE.PerspectiveCamera(cameraFov, width / height, near, far);
-  camera.position.set(0, 4, 11);
-  camera.lookAt?.(0, 0, 0);
+  camera.position.set(...cameraPosition);
+  camera.lookAt?.(...cameraTarget);
 
   const worlds = new WeakMap();
   const viewWorlds = new WeakMap();
@@ -395,6 +428,38 @@ export function createThreeAdapter({
     if (!worlds.has(scene)) {
       const world = new THREE.Scene();
       if (THREE.Color && 'background' in world) world.background = new THREE.Color(background);
+      const { fog, hemisphere, sun } = worldLighting ?? {};
+      if (fog && THREE.Fog) world.fog = new THREE.Fog(fog.color ?? background, fog.near, fog.far);
+      if (hemisphere && THREE.HemisphereLight) {
+        world.add(new THREE.HemisphereLight(hemisphere.sky, hemisphere.ground, hemisphere.intensity));
+      }
+      if (sun && THREE.DirectionalLight) {
+        const light = new THREE.DirectionalLight(sun.color, sun.intensity);
+        light.position.set(...sun.position);
+        light.castShadow = Boolean(sun.shadow);
+        if (sun.shadow) {
+          const { extent, near, far, bias = 0, mapSize = 1024 } = sun.shadow;
+          Object.assign(light.shadow.camera, {
+            left: -extent, right: extent, top: extent, bottom: -extent, near, far,
+          });
+          light.shadow.camera.updateProjectionMatrix?.();
+          light.shadow.mapSize.set(mapSize, mapSize);
+          light.shadow.bias = bias;
+        }
+        const release = () => {
+          if (!ownedSuns.delete(release)) return;
+          offDispose?.();
+          worldSuns.delete(world);
+          worlds.delete(scene);
+          if (worldSunLight === light) worldSunLight = null;
+          world.remove(light);
+          light.dispose?.();
+        };
+        const offDispose = scene.onDispose?.(release);
+        ownedSuns.add(release);
+        worldSuns.set(world, light);
+        world.add(light);
+      }
       worlds.set(scene, world);
     }
     return worlds.get(scene);
@@ -597,6 +662,11 @@ export function createThreeAdapter({
   function render(scene, _app = null) {
     if (contextLost) return;
     const world = getWorld(scene);
+    const sceneSun = worldLighting?.sun ? worldSuns.get(world) ?? null : null;
+    if (worldSunLight !== sceneSun) {
+      worldSunLight = sceneSun;
+      applySunShadowPreset(activeSunLight ?? worldSunLight, appliedPreset);
+    }
 
     if (activeViews && activeViews.length > 0) {
       const rect = canvasRect();
@@ -659,7 +729,7 @@ export function createThreeAdapter({
       postPipeline.render(world, camera, {
         viewScene,
         viewCamera: activeViewCamera,
-        sunLight: activeSunLight,
+        sunLight: activeSunLight ?? worldSunLight,
         dt: lastDtSeconds,
       });
       return;
@@ -704,8 +774,8 @@ export function createThreeAdapter({
       activeSunLight = light;
       if (qualityController?.state?.preset) applyQualityToRenderer(qualityController.state.preset);
     },
-    fitShadowToPreset(sun = activeSunLight, target = { x: 0, y: 0, z: 0 }, options = {}) {
-      const light = sun ?? activeSunLight;
+    fitShadowToPreset(sun = activeSunLight ?? worldSunLight, target = { x: 0, y: 0, z: 0 }, options = {}) {
+      const light = sun ?? activeSunLight ?? worldSunLight;
       if (!light) return null;
       const presetDist = qualityController?.state?.preset?.shadowDistance;
       const shadowDistance = Number.isFinite(options?.shadowDistance)
@@ -762,9 +832,12 @@ export function createThreeAdapter({
       canvas.removeEventListener?.('webglcontextlost', onContextLost, false);
       canvas.removeEventListener?.('webglcontextrestored', onContextRestored, false);
       registeredPalettes.clear();
-      culler3d.dispose();
-      postPipeline?.dispose?.();
-      renderer.dispose();
+      cleanupAll([
+        ...ownedSuns,
+        () => culler3d.dispose(),
+        () => postPipeline?.dispose?.(),
+        () => renderer.dispose(),
+      ], 'Three renderer disposal failed');
     },
   };
 }

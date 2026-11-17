@@ -146,10 +146,9 @@ async function main() {
       await cp(path.join(mainSource, file), path.join(stage, 'src', file), { force: false });
     }
     if (options.recipe.profile === '3d') {
-      const entryFile = path.join(stage, 'src', 'main.js');
-      await writeFile(entryFile, (await readFile(entryFile, 'utf8')).replace(
-        'const defaultQualityMode = "auto";',
-        `const defaultQualityMode = ${JSON.stringify(options.quality ?? 'auto')};`));
+      const presentation = JSON.parse(await readFile(path.join(mainSource, 'presentation.json'), 'utf8'));
+      presentation.quality = options.quality ?? presentation.quality;
+      await writeFile(path.join(stage, 'src', 'presentation.json'), JSON.stringify(presentation, null, 2) + '\n');
       const threeDest = path.join(stage, 'assets', 'vendor', 'three');
       await mkdir(threeDest, { recursive: true });
       for (const file of THREE_FILES) {

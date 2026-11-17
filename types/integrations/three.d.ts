@@ -12,6 +12,9 @@
  *   BoxGeometry?: new (...args: number[]) => ThreeDisposable,
  *   MeshStandardMaterial?: new (options: object) => ThreeDisposable,
  *   Color?: new (value: number | string) => object,
+ *   Fog?: new (color: number | string, near: number, far: number) => object,
+ *   HemisphereLight?: new (sky: number | string, ground: number | string, intensity: number) => object,
+ *   DirectionalLight?: new (color: number | string, intensity: number) => ThreeDirectionalLight,
  *   Vector3?: new (x?: number, y?: number, z?: number) => ThreeVector3,
  *   Matrix4?: new () => ThreeMatrix4,
  *   [key: string]: unknown
@@ -75,6 +78,22 @@
  * @typedef {{ setAnisotropy?(value: number): void, [key: string]: unknown }} ThreeMaterialPalette
  */
 /**
+ * @typedef {object} ThreeDirectionalLight
+ * @property {{set(x: number, y: number, z: number): unknown}} position
+ * @property {boolean} castShadow
+ * @property {{mapSize: {x: number, set(x: number, y: number): unknown},
+ *   camera: {updateProjectionMatrix?(): void}, bias: number}} shadow
+ * @property {() => void} [dispose]
+ */
+/**
+ * Default lighting for each world created by this adapter.
+ * @typedef {object} ThreeWorldLighting
+ * @property {{color?: number | string, near: number, far: number}} [fog]
+ * @property {{sky: number | string, ground: number | string, intensity: number}} [hemisphere]
+ * @property {{color: number | string, intensity: number, position: [number, number, number],
+ *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number}}} [sun]
+ */
+/**
  * @typedef {object} ThreeAdapterOptions
  * @property {ThreeNamespace} THREE Injected Three.js namespace (required).
  * @property {HTMLCanvasElement | object} canvas Target canvas (required).
@@ -82,9 +101,12 @@
  * @property {number} [height=540] Initial height in CSS px.
  * @property {number} [pixelRatio=globalThis.devicePixelRatio||1] Requested device pixel ratio.
  * @property {number} [cameraFov=60] Vertical field of view, degrees.
+ * @property {[number, number, number]} [cameraPosition] Starting camera position.
+ * @property {[number, number, number]} [cameraTarget] Starting camera look-at target.
  * @property {number} [near=0.1] Camera near plane, world units.
  * @property {number} [far=1000] Camera far plane / cull distance, world units.
- * @property {number} [background=0x101820] Scene background colour (0xRRGGBB).
+ * @property {number | string} [background=0x101820] Scene background colour.
+ * @property {ThreeWorldLighting | null} [worldLighting=null] Default fog and lights, allocated per scene.
  * @property {ThreeQuality3DOptions | null} [quality3d=null] Adaptive quality options.
  * @property {boolean | Record<string, unknown> | null} [post3d=null] Enable post pipeline (true or its options).
  * @property {boolean | null} [shadows=null] Force shadows on/off; null follows the quality preset.
@@ -156,7 +178,7 @@
  * @param {ThreeAdapterOptions} options
  * @returns {ThreeAdapter}
  */
-export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, near, far, background, quality3d, post3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, }?: ThreeAdapterOptions): ThreeAdapter;
+export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, background, worldLighting, quality3d, post3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, }?: ThreeAdapterOptions): ThreeAdapter;
 /**
  * @typedef {object} ThreeMeshComponentOptions
  * @property {'box' | 'sphere' | 'capsule' | 'cylinder' | 'plane'} [type='box'] Primitive shape.
@@ -201,6 +223,9 @@ export type ThreeNamespace = {
     BoxGeometry?: new (...args: number[]) => ThreeDisposable;
     MeshStandardMaterial?: new (options: object) => ThreeDisposable;
     Color?: new (value: number | string) => object;
+    Fog?: new (color: number | string, near: number, far: number) => object;
+    HemisphereLight?: new (sky: number | string, ground: number | string, intensity: number) => object;
+    DirectionalLight?: new (color: number | string, intensity: number) => ThreeDirectionalLight;
     Vector3?: new (x?: number, y?: number, z?: number) => ThreeVector3;
     Matrix4?: new () => ThreeMatrix4;
     [key: string]: unknown;
@@ -335,6 +360,50 @@ export type ThreeMaterialPalette = {
     setAnisotropy?(value: number): void;
     [key: string]: unknown;
 };
+export type ThreeDirectionalLight = {
+    position: {
+        set(x: number, y: number, z: number): unknown;
+    };
+    castShadow: boolean;
+    shadow: {
+        mapSize: {
+            x: number;
+            set(x: number, y: number): unknown;
+        };
+        camera: {
+            updateProjectionMatrix?(): void;
+        };
+        bias: number;
+    };
+    dispose?: (() => void) | undefined;
+};
+/**
+ * Default lighting for each world created by this adapter.
+ */
+export type ThreeWorldLighting = {
+    fog?: {
+        color?: number | string;
+        near: number;
+        far: number;
+    } | undefined;
+    hemisphere?: {
+        sky: number | string;
+        ground: number | string;
+        intensity: number;
+    } | undefined;
+    sun?: {
+        color: number | string;
+        intensity: number;
+        position: [number, number, number];
+        shadow?: {
+            extent: number;
+            near: number;
+            far: number;
+            mapSize?: number;
+            bias?: number;
+        };
+    } | undefined;
+};
 export type ThreeAdapterOptions = {
     /**
      * Injected Three.js namespace (required).
@@ -361,6 +430,14 @@ export type ThreeAdapterOptions = {
      */
     cameraFov?: number | undefined;
     /**
+     * Starting camera position.
+     */
+    cameraPosition?: [number, number, number] | undefined;
+    /**
+     * Starting camera look-at target.
+     */
+    cameraTarget?: [number, number, number] | undefined;
+    /**
      * Camera near plane, world units.
      */
     near?: number | undefined;
@@ -369,9 +446,13 @@ export type ThreeAdapterOptions = {
      */
     far?: number | undefined;
     /**
-     * Scene background colour (0xRRGGBB).
+     * Scene background colour.
      */
-    background?: number | undefined;
+    background?: string | number | undefined;
+    /**
+     * Default fog and lights, allocated per scene.
+     */
+    worldLighting?: ThreeWorldLighting | null | undefined;
     /**
      * Adaptive quality options.
      */

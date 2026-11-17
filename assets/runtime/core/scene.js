@@ -124,6 +124,8 @@ export class Scene {
     /** @type {TweenManager | null} */
     this._tweens = null;
     this._disposing = false;
+    /** @type {Set<() => void>} */
+    this._disposeListeners = new Set();
   }
   /** Lazily created per-scene tween manager. @returns {TweenManager} */
   get tweens() {
@@ -203,7 +205,18 @@ export class Scene {
     this[phase]?.(dt, app);
     runPhaseOnRoots(this.objects, phase, dt, app, this);
   }
-  /** Deactivate and destroy all entities, tweens and physics. @returns {void} */
+  /**
+   * Run a scene-owned cleanup after entities and physics are disposed.
+   * @param {() => void} listener
+   * @returns {() => boolean} Unregister the cleanup.
+   */
+  onDispose(listener) {
+    if (this._disposing || this.app?.disposed) throw new Error('Scene is disposing or application disposed');
+    if (typeof listener !== 'function') throw new TypeError('Disposal listener must be a function');
+    this._disposeListeners.add(listener);
+    return () => this._disposeListeners.delete(listener);
+  }
+  /** Deactivate and destroy all entities, tweens, physics and scene-owned resources. @returns {void} */
   dispose() {
     if (this._disposing) return;
     this._disposing = true;
@@ -213,12 +226,14 @@ export class Scene {
         () => this._tweens?.dispose?.(),
         ...this.objects.map(object => () => object.destroy()),
         () => this.physics?.dispose?.(),
+        ...[...this._disposeListeners].reverse(),
       ], 'Scene disposal failed');
     } finally {
       this.objects.length = 0;
       this._tweens = null;
       this.physics = null;
       this.app = null;
+      this._disposeListeners.clear();
       this._disposing = false;
     }
   }

@@ -13,6 +13,8 @@ export class Scene {
     /** @type {TweenManager | null} */
     _tweens: TweenManager | null;
     _disposing: boolean;
+    /** @type {Set<() => void>} */
+    _disposeListeners: Set<() => void>;
     /** Lazily created per-scene tween manager. @returns {TweenManager} */
     get tweens(): TweenManager;
     /** Add a root entity. @template {Entity} T @param {T} entity @returns {T} */
@@ -43,7 +45,13 @@ export class Scene {
     _capturePreviousTransforms(): void;
     /** @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @returns {void} */
     _run(phase: "fixedUpdate" | "update" | "lateUpdate", dt: number, app: import("./application.js").GameApplication): void;
-    /** Deactivate and destroy all entities, tweens and physics. @returns {void} */
+    /**
+     * Run a scene-owned cleanup after entities and physics are disposed.
+     * @param {() => void} listener
+     * @returns {() => boolean} Unregister the cleanup.
+     */
+    onDispose(listener: () => void): () => boolean;
+    /** Deactivate and destroy all entities, tweens, physics and scene-owned resources. @returns {void} */
     dispose(): void;
 }
 /** Registry and switcher of {@link Scene}s. */
