@@ -9,18 +9,29 @@
 import { spawnSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
+import { summarizeSamples } from '../scripts/lib/performance-stats.mjs';
+import { numberOption } from '../scripts/lib/cli-numbers.mjs';
+import { benchmarkBrowserOptions, captureCanvasEnvironment, readBrowserEnvironment } from '../scripts/lib/browser-benchmark.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
-const instances = Number(opt('--instances', 2000));
-const lights = Number(opt('--lights', 64));
-const frames = Number(opt('--frames', 40));
-const budgetP95 = Number(opt('--budget-p95', 4000));
+let instances, lights, frames, budgetP95, gpu, launchOptions;
+try {
+  gpu = opt('--gpu', 'software');
+  launchOptions = benchmarkBrowserOptions(gpu);
+  instances = numberOption(opt('--instances', 2000), '--instances', { min: 1, integer: true });
+  lights = numberOption(opt('--lights', 64), '--lights', { integer: true });
+  frames = numberOption(opt('--frames', 40), '--frames', { min: 1, integer: true });
+  budgetP95 = numberOption(opt('--budget-p95', gpu === 'hardware' ? 1000 / 60 : 4000), '--budget-p95');
+} catch (error) {
+  console.error(error.message);
+  process.exit(2);
+}
 const usePost = !argv.includes('--no-post');
 const chrome = opt('--chrome', process.env.HGAME_CHROME) || [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -56,11 +67,12 @@ for (let i = 0; i < L; i++) {
 const sky = createProceduralSky3D(THREE, {});
 renderer.setSky(sky);
 const rig = createCameraRig3D({ THREE, camera: renderer.camera, mode: 'thirdPerson', baseFov: 65, thirdPerson: { armLength: 30, pitch: -0.45 } });
-const stats = { calls: 0, triangles: 0, visible: 0, activeLights: 0 };
+const stats = { calls: 0, triangles: 0, visible: 0, activeLights: 0, simulationSteps: 0 };
 class StressDriver extends Component {
-  update(dt) {
-    this.t = (this.t || 0) + dt;
-    const t = this.t;
+  update() {
+    // Advance the same scene pose per frame on hardware and software rendering paths.
+    const dt = 1 / 60;
+    const t = ++stats.simulationSteps * dt;
     for (let i = 0; i < Math.min(300, ids.length); i++) batch.setRotation(ids[i], t + i, t * 0.7 + i, 0);
     stats.visible = batch.flush({ culler: renderer.culler3d }).visible;
     rig.update(dt, { x: Math.cos(t * 0.5) * 20, y: 0, z: Math.sin(t * 0.5) * 20 });
@@ -71,6 +83,7 @@ scene.add(new Entity({ name: 'stress-driver' })).addComponent(new StressDriver()
 window.__stress = { instances: N, lights: L };
 window.__frames = []; let last = performance.now();
 const gl = renderer.renderer.getContext(); const px1 = new Uint8Array(4);
+window.__hgameBenchmarkEnvironment = (${captureCanvasEnvironment.toString()})('#game');
 const tick = () => {
   gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); const now = performance.now(); // a sync readPixels makes the sample include GPU/SwiftShader work, not just command submission
   window.__frames.push(now - last); last = now;
@@ -87,10 +100,9 @@ async function freePort() { const s = createServer(); await new Promise(r => s.l
 const tmp = mkdtempSync(path.join(os.tmpdir(), 'hgame-rbench3d-'));
 let browser, failed = false, result;
 try {
-  browser = await chromium.launch({ headless: true, ...(chrome ? { executablePath: chrome } : {}),
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl', '--ignore-gpu-blocklist', '--disable-frame-rate-limit'] });
+  browser = await chromium.launch({ ...launchOptions, ...(chrome ? { executablePath: chrome } : {}) });
   const game = path.join(tmp, 'stress3d');
-  const gen = spawnSync(process.execPath, [path.join(root, 'scripts', 'create-game.mjs'), game, '--profile', '3d', '--quality', 'auto', '--no-git'], { encoding: 'utf8' });
+  const gen = spawnSync(process.execPath, [path.join(root, 'scripts', 'create-game.mjs'), game, '--profile', '3d', '--quality', 'medium', '--no-git'], { encoding: 'utf8' });
   if (gen.status !== 0) throw new Error(gen.stderr || gen.stdout);
   const mainPath = path.join(game, 'src', 'main.js');
   let src = readFileSync(mainPath, 'utf8');
@@ -102,18 +114,22 @@ try {
   src = src.replace(/app\.scenes\.start\('(\w+)'\);/, m => stress + '\n' + m);
   writeFileSync(mainPath, src);
   const port = await freePort();
-  const server = spawn(process.execPath, [path.join(root, 'scripts', 'preview.mjs'), game, '--port', String(port)], { stdio: 'ignore' });
+  const server = spawn(process.execPath, [path.join(root, 'scripts', 'preview.mjs'), game, '--port', String(port)], { stdio: 'ignore', windowsHide: true });
   try {
     const url = `http://127.0.0.1:${port}/`;
     for (let i = 0; ; i++) { if (i > 100) throw new Error('preview failed'); try { if ((await fetch(url)).ok) break; } catch {} await new Promise(r => setTimeout(r, 60)); }
     const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
     const errors = []; page.on('pageerror', e => errors.push(e.message));
     page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+    page.on('response', response => { if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) errors.push(`HTTP ${response.status()} ${response.url()}`); });
     await page.goto(url);
     await page.waitForFunction('window.__done === true || window.__frames?.length > 0 && false', null, { timeout: 240000, polling: 200 }).catch(e => errors.push('timeout: ' + e.message.split('\n')[0]));
     // Screenshot while the scene is still live, then measure how many pixels differ from the corner colour.
     const shot = await page.evaluate('window.__shot').catch(() => null); const png = shot ? Buffer.from(shot, 'base64') : null; if (!png) errors.push('no canvas capture');
-    const f = ((await page.evaluate('window.__frames').catch(() => null)) || []).slice(10).sort((a, b) => a - b);
+    const f = ((await page.evaluate('window.__frames').catch(() => null)) || []).slice(10).filter(value => value > 0);
+    const timings = summarizeSamples(f);
+    const environment = await readBrowserEnvironment(page, browser, gpu);
+    if (!environment.gpuModeMatches) errors.push(`Requested ${gpu} GPU, observed ${environment.actualGpu}: ${environment.renderer}`);
     const gs = (await page.evaluate('window.__stats').catch(() => null)) || {};
     const px = png ? await page.evaluate(async (b64) => {
       const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
@@ -126,14 +142,20 @@ try {
       }
       return { nonBlankRatio: +(nb / n).toFixed(4), meanLuma: +(luma / n).toFixed(2), uniqueColors: colors.size };
     }, png.toString('base64')) : null;
-    const pj = opt('--png'); if (pj && png) writeFileSync(pj, png);
-    const mean = f.length ? f.reduce((a, b) => a + b, 0) / f.length : NaN;
-    result = { scene: 'stress3d', instances, lights, post3d: usePost, frames: f.length, meanMs: +mean.toFixed(2),
-      p50Ms: f.length ? +f[f.length >> 1].toFixed(2) : null, p95Ms: f.length ? +f[Math.floor(f.length * 0.95)].toFixed(2) : null, maxMs: f.length ? +f.at(-1).toFixed(2) : null,
+    const pj = opt('--png');
+    if (pj && png) {
+      mkdirSync(path.dirname(path.resolve(pj)), { recursive: true });
+      writeFileSync(pj, png);
+    }
+    result = { scene: 'stress3d', instances, lights, quality: 'medium', post3d: usePost, frames: timings.samples, meanMs: +timings.meanMs.toFixed(2),
+      p50Ms: +timings.p50Ms.toFixed(2), p95Ms: +timings.p95Ms.toFixed(2), p99Ms: +timings.p99Ms.toFixed(2), maxMs: +timings.maxMs.toFixed(2),
+      warmupFrames: 10, budgetP95Ms: budgetP95, budgetKind: gpu === 'software' ? 'software-health' : 'target-frame', environment,
+      measurementMode: 'synchronized-readback',
       drawCalls: gs.calls ?? null, triangles: gs.triangles ?? null, visibleInstances: gs.visible ?? null, activeLights: gs.activeLights ?? null,
+      simulationSteps: gs.simulationSteps ?? null,
       pixels: px, centerProbe: await page.evaluate('window.__px1').catch(() => null), errors };
     const nonBlank = px && px.nonBlankRatio >= 0.05 && px.uniqueColors >= 16;
-    result.ok = !errors.length && f.length >= frames && nonBlank && result.p95Ms <= budgetP95;
+    result.ok = !errors.length && timings.samples >= frames && nonBlank && timings.p95Ms <= budgetP95;
     failed = !result.ok;
     console.log(`${result.ok ? 'PASS' : 'FAIL'}  stress3d ${instances} inst / ${lights} lights${usePost ? ' + post3d' : ''}  mean ${result.meanMs}ms  p95 ${result.p95Ms}ms  max ${result.maxMs}ms  (budget p95 ${budgetP95}ms)`
       + `\n      calls ${result.drawCalls} tris ${result.triangles} visible ${result.visibleInstances} lights ${result.activeLights}  nonBlank ${px?.nonBlankRatio} colors ${px?.uniqueColors}`
@@ -141,7 +163,12 @@ try {
     await page.close();
   } finally { server.kill(); }
 } finally { await browser?.close(); await new Promise(r => setTimeout(r, 300)); rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
-const j = argv.indexOf('--json'); if (j >= 0) writeFileSync(argv[j + 1], JSON.stringify({ node: process.version, results: [result] }, null, 2));
+const j = argv.indexOf('--json');
+if (j >= 0) {
+  const output = path.resolve(argv[j + 1]);
+  mkdirSync(path.dirname(output), { recursive: true });
+  writeFileSync(output, JSON.stringify({ node: process.version, percentileMethod: 'linear-interpolation', results: [result] }, null, 2));
+}
 process.exit(failed ? 1 : 0);
 
 

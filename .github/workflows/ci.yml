@@ -67,6 +67,7 @@ jobs:
       - run: npm run test:browser:pbr
       - run: npm run test:browser:snapshot
       - run: npm run test:browser:safety
+      - run: npm run test:browser:telemetry
       - run: node scripts/build-examples.mjs
       - run: npm run test:examples
       - name: Compare against accepted visual reference

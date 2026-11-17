@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preserve multi-second and end-of-window stalls in automated playtest telemetry. Retain whole-run counters and extrema with bounded, explicitly labelled reservoir quantiles, and report requested and actual measurement durations.
+- Replace best-only CPU timings with repeated median/tail distributions and repeatable swarm/VFX preparation. Add synchronized render measurements, explicit software/hardware modes, actual GPU/browser provenance, and target-frame versus software-health budget labels.
+- Reject invalid numeric workload, viewport and timing options before starting browser or CPU work, including malformed input-action durations.
+
 - Strengthen FSM, behavior-tree and versioned-save declarations with context/schema generics, typed methods and discriminated load results. Generate declarations with strict nullability and verify public consumers, including detached component getters. These type-level corrections expose invalid calls and unsafe historical-data assumptions in TypeScript consumers.
 - Preserve imported type-query bindings in generated facades, validate declarations without skipping library checks, and correct inferred VFX options and panel payload types. Correct the 3D API recipe's VFX scene argument.
 - Preserve each API export's implementation stability and declaration origin through root facades and aliases, and expose these fields in API query results.

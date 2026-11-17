@@ -61,12 +61,12 @@ Files include `scripts/playtest.mjs`, `benchmarks/run.mjs`, both render benchmar
 
 Interfaces retain existing report fields and add sample/warmup counts, P50/P99, measured duration and environment metadata. Software-renderer health budgets remain distinguishable from explicit target-device budgets. `--gpu software|hardware` selects browser rendering mode without silently relabeling fallback rendering.
 
-- [ ] Add failing tests for multi-second stalls, invalid/empty samples, percentile boundaries, long recordings, and invalid numeric CLI options.
-- [ ] Preserve positive finite intervals and whole-run count/sum/max/long-frame totals. Keep bounded detail with explicit sampling metadata for long reports.
-- [ ] Replace best-only CPU measurements with warmup plus repeated distribution sampling. Reset or replenish workloads so measured objects remain active. Preserve legacy `ms` as the documented median.
-- [ ] Add frame distributions, actual WebGL renderer/browser metadata, workload/viewport information and explicit GPU selection to browser benchmarks.
-- [ ] Run Node tests, CPU budgets, software render benchmarks and available hardware rendering. Record measured limits without inferring mobile performance.
-- [ ] Run `npm run check`, review, commit and push.
+- [x] Add failing tests for multi-second stalls, invalid/empty samples, percentile boundaries, long recordings, and invalid numeric CLI options.
+- [x] Preserve positive finite intervals and whole-run count/sum/max/long-frame totals. Keep bounded detail with explicit sampling metadata for long reports.
+- [x] Replace best-only CPU measurements with warmup plus repeated distribution sampling. Reset or replenish workloads so measured objects remain active. Preserve legacy `ms` as the documented median.
+- [x] Add frame distributions, actual WebGL renderer/browser metadata, workload/viewport information and explicit GPU selection to browser benchmarks.
+- [x] Run Node tests, CPU budgets, software render benchmarks and available hardware rendering. Record measured limits without inferring mobile performance.
+- [x] Run `npm run check`, review, commit and push.
 
 ## Task 4. Complete game and lifecycle checks
 

@@ -13,6 +13,8 @@ import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createFrameTelemetry, summarizeFrameTelemetry } from './lib/performance-stats.mjs';
+import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
@@ -27,7 +29,7 @@ export function parsePlaytestActions(raw) {
   for (const token of raw.split(',').map(s => s.trim()).filter(Boolean)) {
     const [head, durRaw] = token.split(':');
     const name = (head ?? '').trim();
-    const ms = Math.max(16, Number(durRaw || 180) || 180);
+    const ms = Math.max(16, numberOption(durRaw || 180, 'action duration'));
     if (!name) continue;
     if (name === 'wait' || name === 'pause') {
       list.push({ type: 'wait', ms });
@@ -46,25 +48,10 @@ export function parsePlaytestActions(raw) {
  * @param {number[]} frameDeltasMs
  */
 export function summarizeFrameDeltas(frameDeltasMs) {
-  const valid = (frameDeltasMs ?? []).filter(d => Number.isFinite(d) && d > 0 && d < 2000);
-  if (!valid.length) {
-    return { frames: 0, meanMs: 0, p95Ms: 0, maxMs: 0, fps: 0, longFrames: 0 };
-  }
-  const sorted = [...valid].sort((a, b) => a - b);
-  const sum = valid.reduce((a, b) => a + b, 0);
-  const meanMs = sum / valid.length;
-  const p95Idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
-  const p95Ms = sorted[p95Idx];
-  const maxMs = sorted[sorted.length - 1];
-  const longFrames = valid.filter(d => d > 50).length;
-  return {
-    frames: valid.length,
-    meanMs: +meanMs.toFixed(2),
-    p95Ms: +p95Ms.toFixed(2),
-    maxMs: +maxMs.toFixed(2),
-    fps: meanMs > 0 ? +(1000 / meanMs).toFixed(1) : 0,
-    longFrames,
-  };
+  const values = frameDeltasMs ?? [];
+  const collector = createFrameTelemetry(Math.max(1, values.length));
+  for (const value of values) collector.record(value);
+  return summarizeFrameTelemetry(collector.snapshot());
 }
 
 function findChrome(explicitPath) {
@@ -144,17 +131,30 @@ async function runCli() {
     if (cfg?.profile) profile = cfg.profile;
   } catch { /* Optional config check. */ }
 
-  const durationMs = Math.max(400, Number(opt('--duration', 1800)));
+  let durationMs, viewport, maxLongFrames;
+  try {
+    durationMs = Math.max(400, numberOption(opt('--duration', 1800), '--duration'));
+    viewport = viewportOption(opt('--viewport', '960x540'));
+    maxLongFrames = numberOption(opt('--max-long-frames', 9999), '--max-long-frames', { integer: true });
+  } catch (error) {
+    console.error(error.message);
+    process.exit(2);
+  }
   const selector = opt('--selector', '#game');
   const ready = opt('--ready', '');
-  const [vw, vh] = opt('--viewport', '960x540').split('x').map(Number);
+  const { width: vw, height: vh } = viewport;
   const stateHook = opt('--state-hook', '__hgameState');
   const query = opt('--query', '');
   const allowStatic = flag('--allow-static') || profile === 'ui';
   const usePointer = !flag('--no-pointer');
   const actionsRaw = opt('--actions', profile === 'ui' ? 'click,wait:250' : 'd:320,w:260,j:160,a:260,space:160,wait:250');
-  const actions = parsePlaytestActions(actionsRaw);
-  const maxLongFrames = Number(opt('--max-long-frames', 9999));
+  let actions;
+  try {
+    actions = parsePlaytestActions(actionsRaw);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(2);
+  }
 
   const exe = findChrome(opt('--chrome', ''));
   let playwrightMod;
@@ -198,18 +198,30 @@ async function runCli() {
       if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) httpErrors.push(`HTTP ${r.status()} ${r.url()}`);
     });
 
-    await page.addInitScript(() => {
-      const deltas = [];
+    await page.addInitScript({ content: `(() => {
+      const createCollector = ${createFrameTelemetry.toString()};
+      let collector = createCollector(600);
       let last = performance.now();
+      let running = true;
+      let frameId;
       function sample(now) {
-        deltas.push(now - last);
+        if (!running) return;
+        collector.record(now - last);
         last = now;
-        if (deltas.length > 600) deltas.shift();
-        requestAnimationFrame(sample);
+        frameId = requestAnimationFrame(sample);
       }
-      requestAnimationFrame(sample);
-      window.__hgamePlaytestTelemetry = () => deltas.slice();
-    });
+      frameId = requestAnimationFrame(sample);
+      window.__hgamePlaytestTelemetry = () => collector.snapshot();
+      window.__hgamePlaytestTelemetryReset = () => { collector = createCollector(600); last = performance.now(); };
+      window.__hgamePlaytestTelemetryStop = () => new Promise(resolve => {
+        requestAnimationFrame(now => {
+          collector.record(now - last);
+          running = false;
+          cancelAnimationFrame(frameId);
+          resolve(collector.snapshot());
+        });
+      });
+    })();` });
 
     await page.goto(url, { waitUntil: 'load' });
     if (ready) {
@@ -224,7 +236,8 @@ async function runCli() {
     const beforeHash = createHash('sha256').update(shotBefore).digest('hex').slice(0, 16);
     const stateBefore = await page.evaluate(async n => typeof window[n] === 'function' ? JSON.parse(JSON.stringify(await window[n]() ?? null)) : null, stateHook).catch(() => null);
 
-    let elapsed = 0;
+    await page.evaluate(() => window.__hgamePlaytestTelemetryReset());
+    const measurementStart = performance.now();
     for (const act of actions) {
       if (act.type === 'wait') {
         await page.waitForTimeout(act.ms);
@@ -236,7 +249,6 @@ async function runCli() {
         await page.waitForTimeout(act.ms);
         await page.keyboard.up(act.key);
       }
-      elapsed += act.ms;
     }
     if (usePointer) {
       await page.mouse.move(vw * 0.65, vh * 0.45);
@@ -244,19 +256,19 @@ async function runCli() {
       await page.mouse.move(vw * 0.45, vh * 0.55, { steps: 4 });
       await page.mouse.up();
     }
-    if (elapsed < durationMs) {
-      await page.waitForTimeout(durationMs - elapsed);
-    }
+    const remainingMs = durationMs - (performance.now() - measurementStart);
+    if (remainingMs > 0) await page.waitForTimeout(remainingMs);
+    const recording = await page.evaluate(() => window.__hgamePlaytestTelemetryStop());
+    const actualDurationMs = performance.now() - measurementStart;
 
     const shotAfter = await captureBuf();
     const afterHash = createHash('sha256').update(shotAfter).digest('hex').slice(0, 16);
     const stateAfter = await page.evaluate(async n => typeof window[n] === 'function' ? JSON.parse(JSON.stringify(await window[n]() ?? null)) : null, stateHook).catch(() => null);
-    const deltas = await page.evaluate(() => (typeof window.__hgamePlaytestTelemetry === 'function' ? window.__hgamePlaytestTelemetry() : []));
     const canvasStats = await page.evaluate(analyzeCanvasStats, {
       shot: 'data:image/png;base64,' + shotAfter.toString('base64'),
     });
 
-    const frameStats = summarizeFrameDeltas(deltas);
+    const frameStats = summarizeFrameTelemetry(recording);
     const visualChanged = beforeHash !== afterHash;
     const stateChanged = stateBefore !== null && JSON.stringify(stateBefore) !== JSON.stringify(stateAfter);
 
@@ -271,6 +283,8 @@ async function runCli() {
       afterHash,
       visualChanged,
       stateChanged,
+      requestedDurationMs: durationMs,
+      actualDurationMs: +actualDurationMs.toFixed(2),
       frameStats,
       canvasStats,
       consoleErrors,

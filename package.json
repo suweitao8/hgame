@@ -54,6 +54,7 @@
     "bench:render3d": "node benchmarks/render-bench-3d.mjs",
     "test:browser:snapshot": "node tests/browser-snapshot.mjs",
     "test:browser:safety": "node --test --test-concurrency=1 tests/browser-snapshot-safety.mjs tests/browser-visual-regression.mjs",
+    "test:browser:telemetry": "node --test tests/browser-playtest-telemetry.mjs",
     "check:visual": "node scripts/check-visual-regression.mjs"
   },
   "devDependencies": {

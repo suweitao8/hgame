@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { writeSnapshotOutput } from './lib/snapshot-output.mjs';
+import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const argv = process.argv.slice(2);
@@ -26,19 +27,30 @@ const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1
 if (!gameDir) { console.error('Usage: node scripts/snapshot.mjs <game-dir> [options] (see file header)'); process.exit(2); }
 
 const outPng = path.resolve(opt('--out', path.join(gameDir, 'build', 'snapshot.png')));
-const waitMs = Number(opt('--wait', 800));
 const selector = opt('--selector', '#game');
 const ready = opt('--ready', '');
-const [vw, vh] = opt('--viewport', '960x540').split('x').map(Number);
 const baseline = opt('--baseline', '');
 const query = opt('--query', '');
-const threshold = Number(opt('--threshold', 0.01));
 const evalExpr = opt('--eval', '');
 const freeze = flag('--freeze-time') || argv.includes('--steps');
 const stepsArg = opt('--steps', '');
 const stateHook = opt('--state-hook', '__hgameState');
 const FRAME_MS = 1000 / 60;
-const keys = opt('--keys', '').split(',').filter(Boolean).map(s => { const [k, ms] = s.split(':'); return { key: k === 'space' ? ' ' : k, ms: Number(ms || 150) }; });
+let waitMs, threshold, viewport, requestedSteps, keys;
+try {
+  waitMs = numberOption(opt('--wait', 800), '--wait');
+  threshold = numberOption(opt('--threshold', 0.01), '--threshold', { max: 1 });
+  viewport = viewportOption(opt('--viewport', '960x540'));
+  if (argv.includes('--steps')) requestedSteps = numberOption(stepsArg, '--steps', { integer: true });
+  keys = opt('--keys', '').split(',').filter(Boolean).map(token => {
+    const [key, ms] = token.split(':');
+    return { key: key === 'space' ? ' ' : key, ms: numberOption(ms || 150, '--keys duration') };
+  });
+} catch (error) {
+  console.error(error.message);
+  process.exit(2);
+}
+const { width: vw, height: vh } = viewport;
 
 function findChrome() {
   const env = opt('--chrome', process.env.HGAME_CHROME);
@@ -157,7 +169,7 @@ try {
   }
   if (freeze) {
     await page.waitForTimeout(50);
-    await step(stepsArg !== '' ? Number(stepsArg) : Math.round(waitMs / FRAME_MS));
+    await step(requestedSteps ?? Math.round(waitMs / FRAME_MS));
     for (const { key, ms } of keys) { await page.keyboard.down(key); await step(Math.max(1, Math.round(ms / FRAME_MS))); await page.keyboard.up(key); await step(1); }
   } else {
     await page.waitForTimeout(waitMs);
