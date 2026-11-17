@@ -214,6 +214,8 @@ export {
  * @property {() => Promise<AudioContext>} unlock Create / resume the context (call from a user gesture).
  * @property {(data: ArrayBuffer) => Promise<AudioBuffer>} decode
  * @property {(buffer: AudioBuffer, options?: AudioPlayOptions) => Promise<AudioVoice | null>} play Resolves null when muted, throttled or no slot is free.
+ * @property {(presetOrConfig: string | object, options?: SynthPlayOptions) => SynthVoice} playSynth Play a synthesized sound through the shared mixer and voice budget.
+ * @property {(options?: import('./audio/bgm-synth.js').ProceduralBgmOptions) => ReturnType<typeof createProceduralBgm>} createBgm Create a procedural music controller.
  * @property {(name: string, variantsOrConfig: readonly AudioBuffer[] | AudioCueConfig, extraOptions?: Omit<AudioCueConfig, 'variants'>) => AudioCueInspection} registerCue
  * @property {(name: string, overrides?: AudioCueOverrides) => Promise<AudioVoice | null>} playCue
  * @property {(name: string) => AudioCueInspection | null} inspectCue
@@ -231,6 +233,28 @@ export {
  * @property {(next?: AudioListenerUpdate) => AudioListenerState} setListener
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
+ */
+
+/**
+ * @typedef {object} SynthPlayOptions
+ * @property {string} [bus='sfx'] Mixer bus.
+ * @property {number} [volume=1] Voice volume.
+ * @property {number} [pitchJitter=0.08]
+ * @property {number} [gainJitter=0.05]
+ * @property {number} [playbackRate=1]
+ * @property {number} [pitch] Alias for playbackRate.
+ * @property {number} [duration] Duration in seconds.
+ * @property {() => number} [random] Random source for pitch and gain variation.
+ * @property {() => void} [onEnded] Called when a playing sound ends or is stopped.
+ */
+
+/**
+ * @typedef {object} SynthVoice
+ * @property {string} preset
+ * @property {number} pitchFactor
+ * @property {number} duration Duration in seconds.
+ * @property {boolean} played False when audio is unavailable, muted, or no voice is free.
+ * @property {() => void} stop Stop and release the voice.
  */
 
 /**
@@ -545,13 +569,31 @@ export function createAudioManager({
     if (ctx.muted || typeof AudioContextClass !== 'function') {
       return playSynthPresetOnContext(null, null, presetOrConfig, options);
     }
+    while (ctx.activeSources.size >= ctx.maxPolyphony) {
+      let candidate = null;
+      for (const source of ctx.activeSources) {
+        if (!source.loop) { candidate = source; break; }
+      }
+      if (!candidate) return playSynthPresetOnContext(null, null, presetOrConfig, options);
+      candidate.stop();
+    }
     if (!ctx.context) {
       buses.unlock().catch(() => {});
     }
     const c = ctx.context;
     const busName = options.bus || 'sfx';
     const dest = ctx.getBusNode ? ctx.getBusNode(busName) : ctx.master;
-    return playSynthPresetOnContext(c, dest, presetOrConfig, options);
+    let voice = null, ended = false;
+    voice = playSynthPresetOnContext(c, dest, presetOrConfig, {
+      ...options,
+      onEnded() {
+        ended = true;
+        if (voice) ctx.activeSources.delete(voice);
+        try { options.onEnded?.(); } catch (error) { console.error('Synth onEnded callback failed:', error); }
+      },
+    });
+    if (voice.played && !ended) ctx.activeSources.add(voice);
+    return voice;
   }
 
   const bgmInstances = new Set();

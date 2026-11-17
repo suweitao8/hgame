@@ -22,4 +22,5 @@ bgm.setMood('boss');
 
 ## Pitfalls
 - WebAudio unlocks on first user pointer/key gesture; trigger `bgm.start()` inside input or let `createAudioManager` resume once unlocked.
+- `playSynth` shares `maxPolyphony` with audio-buffer voices; it returns a handle with `played`, `duration`, and `stop()`. Active sounds are stopped on manager disposal.
 - For deterministic headless tests without browser `AudioContext`, call `bgm.update(dt)` / `generateBgmStep(...)` directly.

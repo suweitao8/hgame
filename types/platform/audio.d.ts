@@ -164,6 +164,8 @@
  * @property {() => Promise<AudioContext>} unlock Create / resume the context (call from a user gesture).
  * @property {(data: ArrayBuffer) => Promise<AudioBuffer>} decode
  * @property {(buffer: AudioBuffer, options?: AudioPlayOptions) => Promise<AudioVoice | null>} play Resolves null when muted, throttled or no slot is free.
+ * @property {(presetOrConfig: string | object, options?: SynthPlayOptions) => SynthVoice} playSynth Play a synthesized sound through the shared mixer and voice budget.
+ * @property {(options?: import('./audio/bgm-synth.js').ProceduralBgmOptions) => ReturnType<typeof createProceduralBgm>} createBgm Create a procedural music controller.
  * @property {(name: string, variantsOrConfig: readonly AudioBuffer[] | AudioCueConfig, extraOptions?: Omit<AudioCueConfig, 'variants'>) => AudioCueInspection} registerCue
  * @property {(name: string, overrides?: AudioCueOverrides) => Promise<AudioVoice | null>} playCue
  * @property {(name: string) => AudioCueInspection | null} inspectCue
@@ -181,6 +183,26 @@
  * @property {(next?: AudioListenerUpdate) => AudioListenerState} setListener
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
+ */
+/**
+ * @typedef {object} SynthPlayOptions
+ * @property {string} [bus='sfx'] Mixer bus.
+ * @property {number} [volume=1] Voice volume.
+ * @property {number} [pitchJitter=0.08]
+ * @property {number} [gainJitter=0.05]
+ * @property {number} [playbackRate=1]
+ * @property {number} [pitch] Alias for playbackRate.
+ * @property {number} [duration] Duration in seconds.
+ * @property {() => number} [random] Random source for pitch and gain variation.
+ * @property {() => void} [onEnded] Called when a playing sound ends or is stopped.
+ */
+/**
+ * @typedef {object} SynthVoice
+ * @property {string} preset
+ * @property {number} pitchFactor
+ * @property {number} duration Duration in seconds.
+ * @property {boolean} played False when audio is unavailable, muted, or no voice is free.
+ * @property {() => void} stop Stop and release the voice.
  */
 /**
  * Web Audio manager supporting buses, master dynamics limiter, 3D HRTF / 2D left-right
@@ -574,6 +596,14 @@ export type AudioManager = {
      * Resolves null when muted, throttled or no slot is free.
      */
     play: (buffer: AudioBuffer, options?: AudioPlayOptions) => Promise<AudioVoice | null>;
+    /**
+     * Play a synthesized sound through the shared mixer and voice budget.
+     */
+    playSynth: (presetOrConfig: string | object, options?: SynthPlayOptions) => SynthVoice;
+    /**
+     * Create a procedural music controller.
+     */
+    createBgm: (options?: import("./audio/bgm-synth.js").ProceduralBgmOptions) => ReturnType<typeof createProceduralBgm>;
     registerCue: (name: string, variantsOrConfig: readonly AudioBuffer[] | AudioCueConfig, extraOptions?: Omit<AudioCueConfig, "variants">) => AudioCueInspection;
     playCue: (name: string, overrides?: AudioCueOverrides) => Promise<AudioVoice | null>;
     inspectCue: (name: string) => AudioCueInspection | null;
@@ -613,6 +643,51 @@ export type AudioManager = {
      * Stop everything and close the context.
      */
     dispose: () => Promise<void> | undefined;
+};
+export type SynthPlayOptions = {
+    /**
+     * Mixer bus.
+     */
+    bus?: string | undefined;
+    /**
+     * Voice volume.
+     */
+    volume?: number | undefined;
+    pitchJitter?: number | undefined;
+    gainJitter?: number | undefined;
+    playbackRate?: number | undefined;
+    /**
+     * Alias for playbackRate.
+     */
+    pitch?: number | undefined;
+    /**
+     * Duration in seconds.
+     */
+    duration?: number | undefined;
+    /**
+     * Random source for pitch and gain variation.
+     */
+    random?: (() => number) | undefined;
+    /**
+     * Called when a playing sound ends or is stopped.
+     */
+    onEnded?: (() => void) | undefined;
+};
+export type SynthVoice = {
+    preset: string;
+    pitchFactor: number;
+    /**
+     * Duration in seconds.
+     */
+    duration: number;
+    /**
+     * False when audio is unavailable, muted, or no voice is free.
+     */
+    played: boolean;
+    /**
+     * Stop and release the voice.
+     */
+    stop: () => void;
 };
 import { analyzeAudioBuffer } from './audio/analysis.js';
 import { normalizeVariantSet } from './audio/variants.js';

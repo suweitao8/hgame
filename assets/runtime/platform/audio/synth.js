@@ -217,7 +217,7 @@ export function synthesizeSfxPcm(presetOrConfig, {
  * @param {AudioContext|null} audioCtx
  * @param {AudioNode|null} destination
  * @param {string|object} presetOrConfig
- * @param {object} [options]
+ * @param {import('../audio.js').SynthPlayOptions} [options]
  */
 export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, options = {}) {
   const cfg = resolveSynthPreset(presetOrConfig);
@@ -250,6 +250,7 @@ export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, 
   envGain.gain.exponentialRampToValueAtTime(0.0001, endTime);
 
   let outNode = envGain;
+  let filterNode = null;
   if (typeof audioCtx.createBiquadFilter === 'function' && cfg.filterType) {
     const filter = audioCtx.createBiquadFilter();
     filter.type = cfg.filterType;
@@ -260,7 +261,7 @@ export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, 
       filter.frequency.exponentialRampToValueAtTime(f1, endTime);
     }
     envGain.connect(filter);
-    outNode = filter;
+    outNode = filter; filterNode = filter;
   }
   outNode.connect(destination);
 
@@ -289,7 +290,7 @@ export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, 
   osc.start(now);
   osc.stop(endTime + 0.01);
 
-  let noiseSrc = null;
+  let noiseSrc = null, noiseGain = null;
   if (noiseMix > 0.01 && typeof audioCtx.createBuffer === 'function' && typeof audioCtx.createBufferSource === 'function') {
     if (!audioCtx.__hgameSynthNoiseBuf) {
       const sr = audioCtx.sampleRate || 44100;
@@ -305,12 +306,25 @@ export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, 
     noiseSrc = audioCtx.createBufferSource();
     noiseSrc.buffer = audioCtx.__hgameSynthNoiseBuf;
     const nGain = audioCtx.createGain();
+    noiseGain = nGain;
     nGain.gain.setValueAtTime(noiseMix, now);
     noiseSrc.connect(nGain);
     nGain.connect(envGain);
     noiseSrc.start(now);
     noiseSrc.stop(endTime + 0.01);
   }
+
+  let ended = false;
+  const finish = () => {
+    if (ended) return;
+    ended = true;
+    for (const node of [osc, oscGain, noiseSrc, noiseGain, envGain, filterNode]) {
+      try { node?.disconnect?.(); } catch { /* A closed context may have already disconnected the node. */ }
+    }
+    if (typeof options.onEnded === 'function') options.onEnded();
+  };
+  if (typeof osc.addEventListener === 'function') osc.addEventListener('ended', finish, { once: true });
+  else osc.onended = finish;
 
   return {
     preset: name,
@@ -320,6 +334,7 @@ export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, 
     stop() {
       try { osc.stop(); } catch {}
       try { noiseSrc?.stop?.(); } catch {}
+      finish();
     },
   };
 }

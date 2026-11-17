@@ -16,9 +16,9 @@ export function synthesizeSfxPcm(presetOrConfig: string | object, { sampleRate, 
  * @param {AudioContext|null} audioCtx
  * @param {AudioNode|null} destination
  * @param {string|object} presetOrConfig
- * @param {object} [options]
+ * @param {import('../audio.js').SynthPlayOptions} [options]
  */
-export function playSynthPresetOnContext(audioCtx: AudioContext | null, destination: AudioNode | null, presetOrConfig: string | object, options?: object): {
+export function playSynthPresetOnContext(audioCtx: AudioContext | null, destination: AudioNode | null, presetOrConfig: string | object, options?: import("../audio.js").SynthPlayOptions | undefined): {
     preset: any;
     pitchFactor: number;
     duration: number;

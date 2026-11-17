@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Count procedural synth sounds against the shared audio voice budget and release their nodes when stopped, ended, or the manager is disposed. Expose synth and procedural music on the audio manager's documented API.
+
 - Share concurrent 3D model and animation-clip requests for the same GLTF within a model provider.
 
 - Run deferred 3D starter model upgrades from the application loop and support touch movement alongside keyboard input.
