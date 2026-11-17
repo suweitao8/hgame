@@ -98,8 +98,19 @@ export class ProceduralAtlas {
       this.rowHeight = 0;
     }
     if (this.y + height + 2 > this.size) throw new RangeError('Procedural atlas is full');
-    this.ctx.drawImage(image, this.x, this.y);
-    this.frames.set(name, new Rectangle(this.x, this.y, width, height));
+    const x = this.x, y = this.y, ctx = this.ctx;
+    ctx.drawImage(image, x, y);
+    // Duplicate the outer texels into the existing padding. Linear sampling
+    // near a frame boundary then sees that frame's edge rather than empty atlas.
+    ctx.drawImage(image, 0, 0, width, 1, x, y - 1, width, 1);
+    ctx.drawImage(image, 0, height - 1, width, 1, x, y + height, width, 1);
+    ctx.drawImage(image, 0, 0, 1, height, x - 1, y, 1, height);
+    ctx.drawImage(image, width - 1, 0, 1, height, x + width, y, 1, height);
+    ctx.drawImage(image, 0, 0, 1, 1, x - 1, y - 1, 1, 1);
+    ctx.drawImage(image, width - 1, 0, 1, 1, x + width, y - 1, 1, 1);
+    ctx.drawImage(image, 0, height - 1, 1, 1, x - 1, y + height, 1, 1);
+    ctx.drawImage(image, width - 1, height - 1, 1, 1, x + width, y + height, 1, 1);
+    this.frames.set(name, new Rectangle(x, y, width, height));
     this.x += width + 4;
     this.rowHeight = Math.max(this.rowHeight, height);
   }
