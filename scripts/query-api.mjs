@@ -24,7 +24,7 @@ function printUsage() {
 }
 
 const CAPABILITY_MAP = [
-  { need: 'Default 2D PixiJS rendering, input and effects', module: 'generated project src/engine/*', keyApis: 'Renderer2D, ProceduralAtlas, JuiceSystem, InputAndAudio; npm run api -- --recipe 2d' },
+  { need: 'Default 2D PixiJS rendering, input and effects', module: 'generated project src/engine/*', keyApis: 'Renderer2D, ProceduralAtlas, createCatalogGameAtlas, JuiceSystem, InputAndAudio; npm run api -- --recipe 2d' },
   { need: 'Logical media IDs, scoped loading and release asset selection', module: 'platform/asset-catalog.js', keyApis: 'createAssetCatalog, openScope, loadGroup, projectPath, assets/catalog.json' },
   { need: 'Preload and switch levels with shared scene assets', module: 'world/level-flow.js', keyApis: 'createLevelFlow, prefetch, go, cancel, discard' },
   { need: 'App loop, Scene, Entity, Tags, hitStop', module: 'index.js / core/*', keyApis: 'HGame.defineProject, createGameApplication, Scene, Entity({name}), addTag, scene.queryTags' },

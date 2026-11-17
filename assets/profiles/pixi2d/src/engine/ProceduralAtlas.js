@@ -2,6 +2,7 @@ import { CanvasSource, Rectangle, Texture } from 'pixi.js';
 
 export class ProceduralAtlas {
   constructor(size = 1024) {
+    if (!Number.isInteger(size) || size < 8) throw new RangeError('Atlas size must be an integer of at least 8 pixels');
     this.size = size;
     this.canvas = document.createElement('canvas');
     this.canvas.width = this.canvas.height = size;
@@ -15,6 +16,9 @@ export class ProceduralAtlas {
 
   register(name, width, height, draw, { makeWhite = true } = {}) {
     if (this.source || this.frames.has(name) || this.frames.has(name + '_white')) throw new Error('Invalid or duplicate atlas frame: ' + name);
+    if (typeof name !== 'string' || !name || !Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 || typeof draw !== 'function') {
+      throw new TypeError('Atlas frames require a name, positive integer dimensions and a draw function');
+    }
     const scratch = document.createElement('canvas');
     scratch.width = width;
     scratch.height = height;
@@ -27,6 +31,15 @@ export class ProceduralAtlas {
       ctx.fillRect(0, 0, width, height);
       this.pack(name + '_white', scratch);
     }
+  }
+
+  registerImage(name, image, { width = image?.width, height = image?.height, makeWhite = true } = {}) {
+    if (!(image?.width > 0 && image?.height > 0)) throw new TypeError('Atlas image must be decoded and have positive dimensions: ' + name);
+    this.register(name, width, height, (ctx, w, h) => {
+      const scale = Math.min(w / image.width, h / image.height);
+      const dw = image.width * scale, dh = image.height * scale;
+      ctx.drawImage(image, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    }, { makeWhite });
   }
 
   pack(name, image) {
@@ -60,8 +73,8 @@ export class ProceduralAtlas {
   }
 }
 
-export function createDefaultGameAtlas({ playerImage = null, enemyImage = null } = {}) {
-  const atlas = new ProceduralAtlas();
+export function createDefaultGameAtlas({ playerImage = null, enemyImage = null, eliteImage = enemyImage, extraFrames = [], size = 1024 } = {}) {
+  const atlas = new ProceduralAtlas(size);
   const circle = (color, radius = 0.4) => (ctx, w, h) => {
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -69,13 +82,14 @@ export function createDefaultGameAtlas({ playerImage = null, enemyImage = null }
     ctx.fill();
   };
   const character = image => (ctx, width, height) => {
+    if (!(image?.width > 0 && image?.height > 0)) throw new TypeError('Character image must be decoded and have positive dimensions');
     const scale = Math.min(width / image.width, height / image.height);
     const w = image.width * scale, h = image.height * scale;
     ctx.drawImage(image, (width - w) / 2, (height - h) / 2, w, h);
   };
   atlas.register('player_hero', 64, 64, playerImage ? character(playerImage) : circle('#53eccc'));
   atlas.register('enemy_chaser', 40, 40, enemyImage ? character(enemyImage) : circle('#fa536e'));
-  atlas.register('enemy_elite', 56, 56, enemyImage ? character(enemyImage) : circle('#ffad53'));
+  atlas.register('enemy_elite', 56, 56, eliteImage ? character(eliteImage) : circle('#ffad53'));
   atlas.register('bullet_orb', 20, 20, circle('#92faff'));
   atlas.register('particle_soft', 20, 20, (ctx, w, h) => {
     const gradient = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
@@ -100,5 +114,45 @@ export function createDefaultGameAtlas({ playerImage = null, enemyImage = null }
     ctx.fillStyle = '#101b2a'; ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = '#244256'; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
   }, { makeWhite: false });
+  for (const frame of extraFrames) atlas.registerImage(frame.name, frame.image, frame);
   return atlas.build();
+}
+
+/** Bake named catalog images into the shared atlas, then release their decoded sources. */
+export async function createCatalogGameAtlas(catalog, frames, { size = 1024, signal } = {}) {
+  if (!catalog || typeof catalog.openScope !== 'function' || typeof catalog.get !== 'function' || !Array.isArray(frames)) {
+    throw new TypeError('A HGame asset catalog and an array of frame definitions are required');
+  }
+  const names = new Set();
+  for (const frame of frames) {
+    if (!frame || typeof frame.name !== 'string' || !frame.name || typeof frame.asset !== 'string' || !frame.asset || names.has(frame.name)) {
+      throw new TypeError('Each atlas frame needs a unique name and a catalog image ID');
+    }
+    names.add(frame.name);
+    if (catalog.get(frame.asset).kind !== 'image') throw new TypeError('Atlas frame must refer to a catalog image: ' + frame.asset);
+  }
+  const scope = catalog.openScope();
+  let atlas;
+  try {
+    const loaded = [];
+    for (let offset = 0; offset < frames.length; offset += 4) {
+      signal?.throwIfAborted();
+      const batch = frames.slice(offset, offset + 4);
+      const results = await Promise.allSettled(batch.map(frame => scope.load(frame.asset, { signal })));
+      const failure = results.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
+      for (let i = 0; i < batch.length; i++) loaded.push({ ...batch[i], image: results[i].value });
+    }
+    signal?.throwIfAborted();
+    const playerImage = loaded.find(frame => frame.name === 'player_hero')?.image ?? null;
+    const enemyImage = loaded.find(frame => frame.name === 'enemy_chaser')?.image ?? null;
+    const eliteImage = loaded.find(frame => frame.name === 'enemy_elite')?.image ?? enemyImage;
+    const extraFrames = loaded.filter(frame => !['player_hero', 'enemy_chaser', 'enemy_elite'].includes(frame.name));
+    atlas = createDefaultGameAtlas({ playerImage, enemyImage, eliteImage, extraFrames, size });
+  } catch (error) {
+    try { scope.dispose(); } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Atlas creation and asset cleanup failed'); }
+    throw error;
+  }
+  try { scope.dispose(); } catch (error) { atlas.dispose(); throw error; }
+  return atlas;
 }
