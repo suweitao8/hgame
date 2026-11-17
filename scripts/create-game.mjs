@@ -49,9 +49,12 @@ function parse(argv) {
   }
   if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--preset 2d|horde|pixi2d|3d|ui | --profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--bare (2d|3d)] [--no-git] [--dry-run]');
   const preset = result.preset === null ? null : getProjectPreset(result.preset);
+  const explicitRenderer = result.renderer !== null;
   if (preset && result.profile && result.profile !== preset.profile) throw new Error('--profile conflicts with --preset ' + result.preset);
   result.profile ??= preset?.profile ?? '2d';
   result.renderer ??= preset?.renderer ?? null;
+  if (result.profile === '2d' && result.renderer === null && result.preset === null) result.renderer = 'webgl2d';
+  if (result.preset === 'pixi2d' && explicitRenderer) throw new Error('The pixi2d preset selects its own renderer; omit --renderer');
   result.quality ??= preset?.quality ?? null;
   result.with = [...(preset?.features ?? []), ...result.with];
   if (preset?.starter === 'horde' && !result.bare && result.renderer !== 'webgl2d') throw new Error('The horde starter requires webgl2d');
@@ -86,7 +89,8 @@ function parse(argv) {
     ...(physics ? { physics } : {}),
     ...(result.tickHz === null ? {} : { tickHz: result.tickHz }), features,
   });
-  const starter = result.bare ? result.profile + '-bare' : (preset?.starter ?? result.profile);
+  const usePixi = result.profile === '2d' && !explicitRenderer && (result.preset === null || result.preset === '2d' || result.preset === 'pixi2d');
+  const starter = usePixi ? 'pixi2d' : result.bare ? result.profile + '-bare' : (result.preset === '2d' && explicitRenderer ? '2d' : preset?.starter ?? result.profile);
   return { ...result, target, slug, starter, name: result.name || slug, recipe };
 }
 
@@ -143,7 +147,8 @@ async function main() {
     if (options.starter === 'pixi2d') {
       await cp(path.join(mainSource, 'dist'), stage, { recursive: true, force: true });
       await cp(path.join(mainSource, 'src'), path.join(stage, 'src'), { recursive: true, force: true });
-      await cp(path.join(mainSource, 'index.html'), path.join(stage, 'index.source.html'));
+      if (options.bare) await cp(path.join(mainSource, 'dist', 'index.bare.html'), path.join(stage, 'index.html'), { force: true });
+      await cp(path.join(mainSource, options.bare ? 'index.bare.html' : 'index.html'), path.join(stage, 'index.source.html'));
       await cp(path.join(mainSource, 'install-build.mjs'), path.join(stage, 'scripts', 'install-pixi-build.mjs'));
       await cp(path.join(mainSource, 'package-lock.json'), path.join(stage, 'package-lock.json'));
       await cp(path.join(mainSource, 'CLAUDE.md'), path.join(stage, 'CLAUDE.md'));
@@ -168,9 +173,9 @@ async function main() {
       }
     }
     await writeFile(path.join(stage, 'engine.config.json'), JSON.stringify(options.recipe, null, 2) + '\n');
-    if (options.preset) {
+    if (options.preset || options.starter === 'pixi2d') {
       await writeFile(path.join(stage, 'hgame.project.json'), JSON.stringify({
-        schemaVersion: 1, preset: options.preset, runtime: 'entry-graph',
+        schemaVersion: 1, ...(options.preset ? { preset: options.preset } : {}), runtime: 'entry-graph',
         includeRuntime: options.starter === 'pixi2d'
           ? ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js']
           : [],

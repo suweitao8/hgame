@@ -7,7 +7,7 @@ export const RENDERERS = Object.freeze({
 });
 
 export const PROJECT_PRESETS = Object.freeze({
-  '2d': { profile: '2d', renderer: 'webgl2d', title: '2D Action', features: ['audio', 'save'], exampleBare: true },
+  '2d': { profile: '2d', renderer: 'webgl2d', title: '2D Action', features: ['audio', 'save'], starter: 'pixi2d', exampleBare: true },
   horde: { profile: '2d', renderer: 'webgl2d', title: 'Horde', features: ['audio', 'save'], starter: 'horde', exampleBare: true },
   pixi2d: { profile: '2d', renderer: 'webgl2d', title: 'Pixi Arena', features: ['audio', 'save'], starter: 'pixi2d' },
   '3d': { profile: '3d', renderer: 'threejs', title: '3D Action', features: ['assets', 'audio', 'save'],

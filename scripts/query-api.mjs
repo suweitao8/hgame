@@ -24,6 +24,7 @@ function printUsage() {
 }
 
 const CAPABILITY_MAP = [
+  { need: 'Default 2D PixiJS rendering, input and effects', module: 'generated project src/engine/*', keyApis: 'Renderer2D, ProceduralAtlas, JuiceSystem, InputAndAudio; npm run api -- --recipe 2d' },
   { need: 'Logical media IDs, scoped loading and release asset selection', module: 'platform/asset-catalog.js', keyApis: 'createAssetCatalog, openScope, loadGroup, projectPath, assets/catalog.json' },
   { need: 'Preload and switch levels with shared scene assets', module: 'world/level-flow.js', keyApis: 'createLevelFlow, prefetch, go, cancel, discard' },
   { need: 'App loop, Scene, Entity, Tags, hitStop', module: 'index.js / core/*', keyApis: 'HGame.defineProject, createGameApplication, Scene, Entity({name}), addTag, scene.queryTags' },
@@ -51,39 +52,7 @@ const CAPABILITY_MAP = [
 ];
 
 const RECIPES = {
-  '2d': `// Create: ${recipeCreateCommand('2d')}
-import { defineProject } from '../vendor/hgame/core/config.js';
-import { createGameApplication } from '../vendor/hgame/core/application.js';
-import { Scene } from '../vendor/hgame/core/scene.js';
-import { Entity } from '../vendor/hgame/core/entity.js';
-import { Component } from '../vendor/hgame/core/component.js';
-import { createVersionedStore } from '../vendor/hgame/platform/storage.js';
-import { createWebGL2DAdapter, Sprite2D } from '../vendor/hgame/integrations/webgl2d.js';
-import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
-
-const engineConfig = await fetch('./engine.config.json').then(r => r.json());
-const canvas = document.querySelector('#game');
-const project = defineProject(engineConfig);
-const renderer = createWebGL2DAdapter({ canvas, width: 960, height: 540, background: '#0e131f' });
-const app = createGameApplication({ project, gameId: 'my-2d', gameVersion: '1.0.0', renderer });
-await app.installFeatures();
-
-const scene = app.scenes.add(new Scene('main'));
-const hero = scene.add(new Entity({ name: 'hero', x: 0, y: 0, width: 32, height: 32 }));
-hero.addComponent(new Sprite2D({ shape: 'circle', width: 32, height: 32, color: '#60d9b7' }));
-const vfx = createVfxSystem({ mode: 'webgl2d', sceneOrAdapter: renderer });
-hero.addComponent(new class extends Component {
-  fixedUpdate(dt) { hero.x += (app.input.isDown('KeyD') - app.input.isDown('KeyA')) * 180 * dt; vfx.update(dt); }
-  onDestroy() { vfx.dispose(); }
-}());
-const saves = createVersionedStore({ gameId: 'my-2d', schemaVersion: 1 });
-app.services.audio?.createBgm?.({ mood: 'adventure', intensity: 0.4 });
-renderer.setAmbientLight('#24304a', 0.85);
-app.scenes.start('main');
-app.start();
-canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ tick: app.stats.ticks, hero: { x: hero.x, y: hero.y } });
-window.addEventListener('pagehide', () => app.dispose(), { once: true });`,
+  '2d': `// Create: ${recipeCreateCommand('2d')}\n// The generated src/bare.js is the empty PixiJS scene entry.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/bare.js'), 'utf8')}`,
   horde: `// Create: ${recipeCreateCommand('horde')}
 import { defineProject } from '../vendor/hgame/core/config.js';
 import { createGameApplication } from '../vendor/hgame/core/application.js';

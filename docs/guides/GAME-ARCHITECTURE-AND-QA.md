@@ -6,7 +6,8 @@
 |---|---|---|
 | Cards, dialogue, turn-based, management panels | DOM / CSS / SVG, command-driven | `ui` profile; no idle 60 Hz loop |
 | Small 2D action, tower defense, top-down maps | Canvas 2D | `2d` profile; optional TileMap and sprite animation |
-| Large sprite counts or advanced 2D effects | `2d` profile with `webgl2d` renderer + `SpriteCrowd2D` (or PixiJS) | Hardware-instanced WebGL2 batching with automatic Canvas2D fallback and a single RAF |
+| Standard 2D projects | `2d` preset / profile (PixiJS starter) | PixiJS scene graph, shared atlas, batched sprites and effects, with the HGame application scheduler |
+| Existing custom WebGL2 swarms | `horde` preset or explicit `--renderer webgl2d` | Hardware-instanced WebGL2 batching with automatic Canvas2D fallback and a single RAF |
 | 3D scenes, first/third person, model animation | Three.js + HGame `post3d` / `lighting3d` / `culling3d` / `model3d` | `3d` profile or explicit renderer adapter |
 | Advanced joints, CCD, or complex character controllers | Dedicated physics system | Enable the matching deterministic Rapier backend when suitable |
 
