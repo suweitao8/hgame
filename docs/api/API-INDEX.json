@@ -318,7 +318,7 @@
   {"name":"stepEyeAdaptation","tier":"experimental","declaredIn":"integrations/post3d/color.js","summary":"Computes one asymmetric temporal eye-adaptation step from scene average luminance.","kind":"function","signature":"(currentExposure, avgLuminance, {keyValue=0.18, minExposure=0.35, maxExposure=2.6, adaptSpeedUp=3.0, adaptSpeedDown=1.4, exposureCompensation=1.0}={}, dt=1 / 60)"}
  ]},
  "integrations/procedural-models.js":{"tier":"experimental","exports":[
-  {"name":"createProceduralModelSlots","tier":"experimental","declaredIn":"integrations/procedural-models.js","summary":"","kind":"function","signature":"({THREE, slots, materialPalette, assetCatalog=null, GLTFLoader, loadGLTF, projectBaseUrl}={})","returns":["dispose","get","instantiate","instantiateBatch","prototype","setReplacement"]}
+  {"name":"createProceduralModelSlots","tier":"experimental","declaredIn":"integrations/procedural-models.js","summary":"","kind":"function","signature":"({THREE, slots, materialPalette, assetCatalog=null, GLTFLoader, loadGLTF, projectBaseUrl, instanceStaticModels=false, deferredReplacements=[]}={})","returns":["dispose","enableDeferredReplacements","get","instantiate","instantiateBatch","prototype","setReplacement"]}
  ]},
  "integrations/quality3d.js":{"tier":"stable","exports":[
   {"name":"chooseInitial3dQuality","tier":"stable","declaredIn":"integrations/quality3d.js","summary":"Pure, conservative hint selection. Does not allocate a probing WebGL context.","kind":"function","signature":"({mobile=false, rendererName='', memoryGB=null}={})"},

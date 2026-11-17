@@ -151,7 +151,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {{color?: number | string, near: number, far: number}} [fog]
  * @property {{sky: number | string, ground: number | string, intensity: number}} [hemisphere]
  * @property {{color: number | string, intensity: number, position: [number, number, number],
- *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number}}} [sun]
+ *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, adaptiveExtent?: boolean}}} [sun]
  */
 
 /**
@@ -298,6 +298,16 @@ export function createThreeAdapter({
 
   function applySunShadowPreset(light, preset) {
     if (!preset || !light?.shadow?.mapSize) return;
+    const configured = light === worldSunLight ? worldLighting?.sun?.shadow : null;
+    if (configured?.adaptiveExtent && preset.shadowDistance > 0) {
+      const extent = Math.min(configured.extent, preset.shadowDistance * 0.5);
+      const camera = light.shadow.camera;
+      if (camera && camera.right !== extent) {
+        Object.assign(camera, { left: -extent, right: extent, top: extent, bottom: -extent });
+        camera.updateProjectionMatrix?.();
+        light.shadow.needsUpdate = true;
+      }
+    }
     const wanted = preset.shadowMapSize;
     if (!Number.isFinite(wanted) || wanted <= 0 || light.shadow.mapSize.x === wanted) return;
     light.shadow.mapSize.set?.(wanted, wanted);

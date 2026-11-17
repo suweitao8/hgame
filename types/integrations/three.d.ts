@@ -91,7 +91,7 @@
  * @property {{color?: number | string, near: number, far: number}} [fog]
  * @property {{sky: number | string, ground: number | string, intensity: number}} [hemisphere]
  * @property {{color: number | string, intensity: number, position: [number, number, number],
- *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number}}} [sun]
+ *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, adaptiveExtent?: boolean}}} [sun]
  */
 /**
  * @typedef {object} ThreeAdapterOptions
@@ -403,6 +403,7 @@ export type ThreeWorldLighting = {
             far: number;
             mapSize?: number;
             bias?: number;
+            adaptiveExtent?: boolean;
         };
     } | undefined;
 };
@@ -605,7 +606,7 @@ export type ThreeMeshComponentOptions = {
     /**
      * Primitive shape.
      */
-    type?: "capsule" | "box" | "sphere" | "cylinder" | "plane" | undefined;
+    type?: "box" | "capsule" | "sphere" | "cylinder" | "plane" | undefined;
     /**
      * Default material colour (0xRRGGBB).
      */

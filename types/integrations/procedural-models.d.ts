@@ -2,7 +2,7 @@
  * @param {ProceduralModelOptions} options
  * @returns {ProceduralModelSlots}
  */
-export function createProceduralModelSlots({ THREE, slots, materialPalette, assetCatalog, GLTFLoader, loadGLTF, projectBaseUrl, }?: ProceduralModelOptions): ProceduralModelSlots;
+export function createProceduralModelSlots({ THREE, slots, materialPalette, assetCatalog, GLTFLoader, loadGLTF, projectBaseUrl, instanceStaticModels, deferredReplacements, }?: ProceduralModelOptions): ProceduralModelSlots;
 /**
  * Minimal structural Three.js Object3D.
  */
@@ -115,6 +115,14 @@ export type ProceduralModelOptions = {
      * Base for resolving replacement URLs.
      */
     projectBaseUrl?: string | undefined;
+    /**
+     * Instance eligible multi-mesh model replacements as well as procedural props.
+     */
+    instanceStaticModels?: boolean | undefined;
+    /**
+     * Slot IDs that use their procedural geometry until replacements are enabled.
+     */
+    deferredReplacements?: Iterable<string> | undefined;
 };
 export type ProceduralPlacement = {
     /**
@@ -152,5 +160,9 @@ export type ProceduralModelSlots = {
         isMatrix4: true;
     })[]) => Promise<ProceduralObject3D>;
     setReplacement: (id: string, url: string | null) => void;
+    /**
+     * Enable the configured replacements for subsequent builds.
+     */
+    enableDeferredReplacements: () => boolean;
     dispose: () => Promise<void>;
 };

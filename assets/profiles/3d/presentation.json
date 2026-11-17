@@ -1,6 +1,7 @@
 {
   "quality": "auto",
   "chunkCells": 16,
+  "startupModelSlots": [],
   "renderer": {
     "cameraPosition": [9, 8.5, 12],
     "cameraTarget": [0, 1, 0],
@@ -16,7 +17,7 @@
         "color": "#fff3dd",
         "intensity": 2.6,
         "position": [7, 13, 9],
-        "shadow": { "extent": 13, "near": 0.5, "far": 45, "mapSize": 1024, "bias": -0.0002 }
+        "shadow": { "extent": 13, "near": 0.5, "far": 45, "mapSize": 1024, "bias": -0.0002, "adaptiveExtent": true }
       }
     }
   }

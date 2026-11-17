@@ -24,6 +24,9 @@ const FLOATS_PER_INSTANCE = 20;
 const BYTES_PER_INSTANCE = FLOATS_PER_INSTANCE * 4;
 const MAX_CAPACITY_CAP = 262144;
 const BATCH_TEXTURES = 4;
+const NUMERIC_GLYPHS = '0123456789+-.,:%/ ';
+const NUMERIC_TEXT = /^(?=.*[0-9])[0-9+\-.,:%/ ]{1,32}$/;
+const GLYPH_PADDING = 4;
 
 const COMPACT_VERTEX_SHADER_GLSL3 = `#version 300 es
 precision highp float;
@@ -677,13 +680,34 @@ export function createWebGL2DAdapter({
     return record;
   }
 
-  function getTextTexture(text, font, color, smooth) {
-    const key = `${text}|${font}|${color}`;
-    let entry = textCache.get(key);
+  function cachedText(key, smooth) {
+    const entry = textCache.get(key);
     if (entry) {
       getTextureRecord(entry.canvas, smooth);
-      return entry;
+      textCache.delete(key);
+      textCache.set(key, entry);
     }
+    return entry;
+  }
+
+  function cacheText(key, entry, smooth) {
+    entry.rec = getTextureRecord(entry.canvas, smooth);
+    if (textCache.size >= 128) {
+      const oldestKey = textCache.keys().next().value;
+      const oldest = textCache.get(oldestKey);
+      textCache.delete(oldestKey);
+      dropTexture(oldest.canvas, oldest.rec);
+      oldest.canvas.width = 0;
+      oldest.canvas.height = 0;
+    }
+    textCache.set(key, entry);
+    return entry;
+  }
+
+  function getTextTexture(text, font, color, smooth) {
+    const key = `text|${text}|${font}|${color}`;
+    const cached = cachedText(key, smooth);
+    if (cached) return cached;
     const buf = allocBuffer(256, 64);
     const bctx = buf?.getContext?.('2d') ?? null;
     if (!buf || !bctx) return null;
@@ -699,18 +723,71 @@ export function createWebGL2DAdapter({
     bctx.textAlign = 'center';
     bctx.textBaseline = 'middle';
     bctx.fillText(text, w * 0.5, h * 0.5);
-    const rec = getTextureRecord(buf, smooth);
-    if (textCache.size >= 128) {
-      const oldestKey = textCache.keys().next().value;
-      const oldest = textCache.get(oldestKey);
-      textCache.delete(oldestKey);
-      dropTexture(oldest.canvas, oldest.rec);
-      oldest.canvas.width = 0;
-      oldest.canvas.height = 0;
+    return cacheText(key, { w, h, canvas: buf }, smooth);
+  }
+
+  function getNumericAtlas(font, color, smooth) {
+    const key = `digits|${font}|${color}`;
+    const cached = cachedText(key, smooth);
+    if (cached) return cached;
+    const canvas = allocBuffer(1, 1);
+    const ctx = canvas?.getContext?.('2d');
+    if (!ctx?.measureText) return null;
+    const h = Math.max(16, Math.ceil(parseInt(font, 10) * 1.5 || 32));
+    if (h > 128) return null;
+    ctx.font = font;
+    ctx.textAlign = 'left';
+    const glyphs = new Map();
+    let w = 0;
+    for (const char of NUMERIC_GLYPHS) {
+      const metric = ctx.measureText(char);
+      if (!Number.isFinite(metric.width)) return null;
+      const left = Math.max(GLYPH_PADDING, Math.ceil(metric.actualBoundingBoxLeft || 0) + 2);
+      const width = left + Math.ceil(Math.max(metric.width, metric.actualBoundingBoxRight || 0)) + GLYPH_PADDING;
+      glyphs.set(char, { x: w, left, width, advance: metric.width });
+      w += width;
     }
-    entry = { rec, w, h, canvas: buf };
-    textCache.set(key, entry);
-    return entry;
+    if (w > 2048) return null;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.font = font;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = color;
+    for (const [char, glyph] of glyphs) ctx.fillText(char, glyph.x + glyph.left, h * 0.5);
+    return cacheText(key, { w, h, canvas, glyphs }, smooth);
+  }
+
+  function submitNumericText(item, text, atlas, baseAlpha, ax, ay) {
+    const sprite = item.sprite;
+    let advance = 0;
+    for (const char of text) advance += atlas.glyphs.get(char).advance;
+    const width = Math.ceil(advance + 12);
+    let pen = (width - advance) * 0.5 - ax * width;
+    const ly = -atlas.h * ay;
+    const rotation = sprite.rotation || 0;
+    const cos = rotation ? Math.cos(rotation) : 1;
+    const sin = rotation ? Math.sin(rotation) : 0;
+    const sx = (sprite.flipX ? -1 : 1) * (sprite.scaleX ?? 1);
+    const sy = (sprite.flipY ? -1 : 1) * (sprite.scaleY ?? 1);
+    const ox = sprite.offsetX || 0;
+    const oy = sprite.offsetY || 0;
+    const flash = sprite.flash > 0 ? Math.min(1, sprite.flash) : 0;
+    if (flash) parseColorRgba(sprite.flashColor || '#ffffff', SCRATCH_FLASH);
+    for (const char of text) {
+      const glyph = atlas.glyphs.get(char);
+      const lx = pen - glyph.left;
+      if (char !== ' ') emitOrientedQuad(
+        item.a, item.b, item.c, item.d, item.e, item.f,
+        glyph.width, atlas.h, 0, 0,
+        ox + cos * sx * lx - sin * sy * ly, oy + sin * sx * lx + cos * sy * ly,
+        rotation, sx, sy, glyph.x / atlas.w, 0, glyph.width / atlas.w, 1, 0, 0,
+        1, 1, 1, baseAlpha, SCRATCH_FLASH[0], SCRATCH_FLASH[1], SCRATCH_FLASH[2], flash,
+        atlas.rec,
+      );
+      pen += glyph.advance;
+    }
+    stats.drawnSprites++;
   }
 
   function flushBatch() {
@@ -906,6 +983,19 @@ export function createWebGL2DAdapter({
       requiredTex = getTextureRecord(img, smooth);
       mode = 0;
     } else if (sprite.shape === 'text') {
+      if (!rect && typeof sprite.text === 'string' && NUMERIC_TEXT.test(sprite.text)) {
+        const atlas = getNumericAtlas(sprite.font, sprite.tint ?? sprite.color, smooth);
+        if (atlas?.rec) {
+          if (allowShadows && sprite.groundShadow) {
+            emitGroundShadow(
+              item.a, item.b, item.c, item.d, item.e, item.f,
+              w, h, ax, ay, sprite.offsetX, sprite.offsetY, baseAlpha, sprite.groundShadow,
+            );
+          }
+          submitNumericText(item, sprite.text, atlas, baseAlpha, ax, ay);
+          return;
+        }
+      }
       const entry = getTextTexture(sprite.text, sprite.font, sprite.tint ?? sprite.color, smooth);
       if (!entry?.rec) return;
       requiredTex = entry.rec;

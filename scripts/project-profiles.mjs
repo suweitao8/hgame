@@ -7,7 +7,7 @@ export const RENDERERS = Object.freeze({
 });
 
 export const PROJECT_PRESETS = Object.freeze({
-  '2d': { profile: '2d', renderer: 'canvas2d', title: '2D Action', features: ['audio', 'save'], exampleBare: true },
+  '2d': { profile: '2d', renderer: 'webgl2d', title: '2D Action', features: ['audio', 'save'], exampleBare: true },
   horde: { profile: '2d', renderer: 'webgl2d', title: 'Horde', features: ['audio', 'save'], starter: 'horde', exampleBare: true },
   '3d': { profile: '3d', renderer: 'threejs', title: '3D Action', features: ['assets', 'audio', 'save'],
     physics: 'rapier3d', quality: 'auto', exampleBare: true },

@@ -58,20 +58,20 @@ import { Scene } from '../vendor/hgame/core/scene.js';
 import { Entity } from '../vendor/hgame/core/entity.js';
 import { Component } from '../vendor/hgame/core/component.js';
 import { createVersionedStore } from '../vendor/hgame/platform/storage.js';
-import { createCanvas2DAdapter, Sprite2D } from '../vendor/hgame/integrations/canvas2d.js';
+import { createWebGL2DAdapter, Sprite2D } from '../vendor/hgame/integrations/webgl2d.js';
 import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
 
 const engineConfig = await fetch('./engine.config.json').then(r => r.json());
 const canvas = document.querySelector('#game');
 const project = defineProject(engineConfig);
-const renderer = createCanvas2DAdapter({ canvas, width: 960, height: 540, background: '#0e131f' });
+const renderer = createWebGL2DAdapter({ canvas, width: 960, height: 540, background: '#0e131f' });
 const app = createGameApplication({ project, gameId: 'my-2d', gameVersion: '1.0.0', renderer });
 await app.installFeatures();
 
 const scene = app.scenes.add(new Scene('main'));
 const hero = scene.add(new Entity({ name: 'hero', x: 0, y: 0, width: 32, height: 32 }));
 hero.addComponent(new Sprite2D({ shape: 'circle', width: 32, height: 32, color: '#60d9b7' }));
-const vfx = createVfxSystem({ mode: 'canvas2d', sceneOrAdapter: renderer });
+const vfx = createVfxSystem({ mode: 'webgl2d', sceneOrAdapter: renderer });
 hero.addComponent(new class extends Component {
   fixedUpdate(dt) { hero.x += (app.input.isDown('KeyD') - app.input.isDown('KeyA')) * 180 * dt; vfx.update(dt); }
   onDestroy() { vfx.dispose(); }

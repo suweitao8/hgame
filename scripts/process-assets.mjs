@@ -784,9 +784,78 @@ function parseArgs(argv) {
   return args;
 }
 
+function writeSpriteAtlas(inputDir, output, maxSize) {
+  if (typeof inputDir !== 'string' || typeof output !== 'string' || !/\.png$/i.test(output)) {
+    throw new Error('Usage: node scripts/process-assets.mjs --atlas-dir <sprites-dir> --atlas-out <atlas.png> [--max-size 2048]');
+  }
+  if (!Number.isInteger(maxSize) || maxSize < 16 || maxSize > 4096) {
+    throw new RangeError('--max-size must be an integer from 16 to 4096');
+  }
+  const target = path.resolve(output);
+  const sources = fs.readdirSync(inputDir, { withFileTypes: true })
+    .filter(entry => entry.isFile() && /\.png$/i.test(entry.name))
+    .map(entry => path.resolve(inputDir, entry.name))
+    .filter(file => file !== target)
+    .sort();
+  if (sources.length === 0) throw new Error('No PNG sprites found in ' + inputDir);
+  const names = new Set();
+  const sprites = sources.map(file => {
+    const name = path.basename(file).slice(0, -4);
+    if (names.has(name.toLowerCase())) throw new Error('Duplicate sprite name: ' + name);
+    names.add(name.toLowerCase());
+    const image = decodePng(fs.readFileSync(file));
+    if (image.width + 2 > maxSize || image.height + 2 > maxSize) {
+      throw new Error('Sprite exceeds atlas dimensions: ' + name);
+    }
+    return { ...image, name, x: 0, y: 0 };
+  }).sort((a, b) => b.height - a.height || b.width - a.width);
+
+  let rowX = 0, rowY = 0, rowHeight = 0, width = 0;
+  for (const sprite of sprites) {
+    if (rowX + sprite.width + 2 > maxSize) {
+      rowY += rowHeight;
+      rowX = 0;
+      rowHeight = 0;
+    }
+    if (rowY + sprite.height + 2 > maxSize) {
+      throw new Error('Sprites do not fit in one atlas. Pack smaller scene or animation groups.');
+    }
+    sprite.x = rowX + 1;
+    sprite.y = rowY + 1;
+    rowX += sprite.width + 2;
+    rowHeight = Math.max(rowHeight, sprite.height + 2);
+    width = Math.max(width, rowX);
+  }
+  const height = rowY + rowHeight;
+  const rgba = Buffer.alloc(width * height * 4);
+  const frames = Object.create(null);
+  for (const sprite of sprites) {
+    const { name, x, y, width: w, height: h, data } = sprite;
+    frames[name] = { x, y, width: w, height: h };
+    // Extrude the outer texels to avoid sampling a neighboring sprite.
+    for (let v = -1; v <= h; v++) {
+      const sourceRow = Math.max(0, Math.min(h - 1, v)) * w * 4;
+      const destination = ((y + v) * width + x) * 4;
+      rgba.set(data.subarray(sourceRow, sourceRow + w * 4), destination);
+      rgba.set(data.subarray(sourceRow, sourceRow + 4), destination - 4);
+      rgba.set(data.subarray(sourceRow + (w - 1) * 4, sourceRow + w * 4), destination + w * 4);
+    }
+  }
+  const metadata = target.slice(0, -4) + '.json';
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, encodePng({ width, height, data: rgba }));
+  fs.writeFileSync(metadata, JSON.stringify({
+    schemaVersion: 1, image: path.basename(target), width, height, frames,
+  }, null, 2) + '\n');
+  return { image: target, metadata, width, height, count: sprites.length };
+}
+
 /** CLI helper for processing single, 2x2, or 3x3 generated artwork sheets. */
 export function runAssetCli(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  if (args['atlas-dir'] !== undefined || args['atlas-out'] !== undefined) {
+    return writeSpriteAtlas(args['atlas-dir'], args['atlas-out'], Number(args['max-size'] ?? 2048));
+  }
   if (!args.input || !args['out-dir']) {
     throw new Error('Usage: node scripts/process-assets.mjs --input <sheet.png> --out-dir <dir> [--grid 1|2|3] [--bg transparent|green|white] [--mode actor|icon|background] [--names a,b,c] [--bake-shadow]');
   }

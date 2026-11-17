@@ -36,9 +36,13 @@ npm run api -- --module post2d   # Every export in one module
 
 Use `--preset horde` to start with batched swarm simulation and `SpriteCrowd2D`. Its capacity, population and sprite dimensions are in `src/swarm.json`. The 3D preset selects adaptive quality and Rapier 3D. Pass `--physics none` when the design needs no physics backend. Existing `--profile` commands retain their standalone compatibility defaults.
 
+New `2d` and `horde` presets both use WebGL2 with automatic Canvas2D fallback. Use `Sprite2D` with either renderer. On WebGL2, short ASCII numbers such as scores, timers and percentages share a glyph texture.
+
 Both 3D starters put camera, fog, lights, tone mapping and exposure in `src/presentation.json` under `renderer`. Use `quality` to choose the initial mode and `renderer.worldLighting` to tune fog, hemisphere light and sun. The populated starter uses `materials.json` for the PBR palette, `model-slots.json` for procedural props or replacement GLBs, and `level.json` for placements, spawn and collision. Scenes release these presentation resources on unload.
 
 `renderer.limitCameraDrawDistance` applies the quality tier's draw distance up to the configured camera far plane. `chunkCells` controls the grid region size for large static instance batches. Dense regions each get their own culling bounds. Small and scattered batches stay grouped. Set `chunkCells` to `0` to batch by slot across the whole level.
+
+List model slots that must have their final art before the first playable frame in `presentation.startupModelSlots`. Other replacement slots start with their procedural geometry and upgrade after startup. Keep the fallback geometry coherent with separately authored collision. Enable `renderer.worldLighting.sun.shadow.adaptiveExtent` to cap the built-in sun's shadow coverage by the active quality tier.
 
 `engine.config.json` owns the active renderer and runtime feature selection. `hgame.project.json` records release policy for a preset project. `runtime: "entry-graph"` includes the active renderer and feature modules and traces scripts from the HTML entry and game imports. A wide `vendor/hgame/index.js` import still brings along its dependencies. Prefer leaf imports in new `src/` files. Add fully computed HGame module paths to `includeRuntime`, for example `["gameplay/quests.js"]`, and computed `src/` imports to `includeSource`, for example `["levels/intro.js"]`. The generated standalone packager uses the same rules.
 
@@ -49,6 +53,7 @@ Both 3D starters put camera, fog, lights, tone mapping and exposure in `src/pres
 - **Runtime asset IDs and scoped loading**: author `assets/catalog.json`, use `createAssetCatalog` and release a scope when its scene unloads. `assetMode: "catalog"` in `hgame.project.json` selects catalog assets for release. [Asset catalog workflow](ASSET-CATALOG.md)
 - **2D Actor Cutout**: generate 1K pure white `#FFFFFF` `3x3` grid sheets, shadow-free:
   `npm run process:assets -- --input sheet.png --grid 3 --bg white --mode actor --out-dir "<dir>/assets/actors"`
+- **2D Sprite Atlas**: group frequently co-rendered sprites and run `npm run process:assets -- --atlas-dir "<png-dir>" --atlas-out "<game-dir>/assets/atlases/world.png"`. Load the PNG once and use the matching `frames[name]` from the JSON as each `Sprite2D.sourceRect`.
 - **Audio Normalization** (when using real `.mp3`; otherwise skip and use `playSynth` + `createBgm` 0-KB synth):
   `npm run process:audio -- --cue hit --inputs t1.mp3,t2.mp3,t3.mp3,t4.mp3 --out-dir "<dir>/assets/audio/sfx"`
 - **Local 3D AI Modeling & Normalization** (ComfyUI Trellis2/UltraTex + headless Blender; paths in `.hgame.local.json`):

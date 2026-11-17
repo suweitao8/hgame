@@ -53,6 +53,8 @@
  * @property {(new () => { loadAsync(url: string): Promise<{ scene: ProceduralObject3D, animations?: unknown[] }> })} [GLTFLoader] Only needed if a replacement is configured.
  * @property {(url: string) => Promise<{scene: ProceduralObject3D, animations?: unknown[]}>} [loadGLTF] Optional lazy loader for replacement assets.
  * @property {string} [projectBaseUrl='http://localhost/'] Base for resolving replacement URLs.
+ * @property {boolean} [instanceStaticModels=false] Instance eligible multi-mesh model replacements as well as procedural props.
+ * @property {Iterable<string>} [deferredReplacements] Slot IDs that use their procedural geometry until replacements are enabled.
  */
 /**
  * @typedef {object} ProceduralPlacement
@@ -69,6 +71,7 @@
  * @property {(id: string) => Promise<ProceduralObject3D>} instantiate Deep clone of the prototype.
  * @property {(id: string, placements: readonly (ProceduralPlacement|{ isMatrix4: true })[]) => Promise<ProceduralObject3D>} instantiateBatch 1..20000 placements; one instance batch per eligible mesh.
  * @property {(id: string, url: string|null) => void} setReplacement
+ * @property {() => boolean} enableDeferredReplacements Enable the configured replacements for subsequent builds.
  * @property {() => Promise<void>} dispose
  */
 
@@ -103,6 +106,8 @@ const replacementPath = url => {
  */
 export function createProceduralModelSlots({
   THREE, slots, materialPalette, assetCatalog = null, GLTFLoader, loadGLTF, projectBaseUrl,
+  instanceStaticModels = false,
+  deferredReplacements = [],
 } = {}) {
   if (!THREE?.Group || !THREE?.BoxGeometry || !THREE?.InstancedMesh ||
       !slots || typeof slots !== 'object' || Array.isArray(slots) ||
@@ -138,6 +143,10 @@ export function createProceduralModelSlots({
       replacement,
       ...(replacementAsset === undefined ? {} : { replacementAsset }),
     });
+  }
+  const deferred = new Set(deferredReplacements);
+  for (const id of deferred) {
+    if (!definitions.has(id)) throw new Error('Unknown deferred model slot: ' + id);
   }
   const prototypes = new Map();
   const replacementCache = new Map();
@@ -297,7 +306,7 @@ export function createProceduralModelSlots({
   async function prototype(id) {
     if (disposed) throw new Error('Procedural model library disposed');
     const spec = get(id);
-    if (!spec.replacement && !spec.replacementAsset) {
+    if (deferred.has(id) || (!spec.replacement && !spec.replacementAsset)) {
       if (!prototypes.has(id)) prototypes.set(id, build(id));
       return prototypes.get(id);
     }
@@ -337,16 +346,34 @@ export function createProceduralModelSlots({
       throw new RangeError('A batch needs 1–20,000 placements');
     }
     const spec = definitions.get(id);
-    const isProcedural = !spec?.replacement && !spec?.replacementAsset;
+    const isProcedural = deferred.has(id) || (!spec?.replacement && !spec?.replacementAsset);
     const root = await prototype(id);
     root.updateMatrixWorld(true);
     const meshes = [];
-    root.traverse(obj => { if (obj.isMesh) meshes.push(obj); });
-    // Procedural parts have static transforms. Keep the clone path for GLB
-    // hierarchies and transparent parts which rely on per-object sorting.
+    const rootMatrix = root.matrix?.elements;
+    let flattenSafe = !rootMatrix || rootMatrix.every((value, index) => value === (index % 5 === 0 ? 1 : 0));
+    root.traverse(obj => {
+      if (obj.isMesh) meshes.push(obj);
+      if (isProcedural || !instanceStaticModels) return;
+      if (obj.isLight || obj.isCamera || obj.isLine || obj.isPoints || obj.isSprite ||
+          obj.visible === false || obj.frustumCulled === false || obj.renderOrder ||
+          (obj.layers && obj.layers.mask !== 1)) {
+        flattenSafe = false;
+      }
+      if (obj.isMesh && (
+        obj.isInstancedMesh || obj.isBatchedMesh || obj.morphTargetInfluences?.length ||
+        obj.matrixWorld?.determinant?.() <= 0 ||
+        (Array.isArray(obj.material) ? obj.material : [obj.material]).some(material =>
+          !material || material.transparent || material.transmission > 0 ||
+          (THREE.NormalBlending !== undefined && material.blending !== THREE.NormalBlending))
+      )) flattenSafe = false;
+    });
+    // The static model path keeps per-part transforms and material assignment.
+    // Hierarchies with special rendering state retain their normal clone path.
     const opaqueProcedural = isProcedural && meshes.every(mesh =>
       (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).every(material => !material?.transparent));
-    if (meshes.length === 1 || (meshes.length > 1 && opaqueProcedural)) {
+    const legacySingle = meshes.length === 1 && (isProcedural || !instanceStaticModels);
+    if (legacySingle || (meshes.length > 0 && (opaqueProcedural || (!isProcedural && instanceStaticModels && flattenSafe)))) {
       for (const item of placements) {
         if (!item?.isMatrix4) placement(item);
       }
@@ -369,6 +396,7 @@ export function createProceduralModelSlots({
       for (let part = 0; part < batches.length; part++) {
         const batch = batches[part];
         batch.instanceMatrix.needsUpdate = true;
+        batch.name = meshes[part].name;
         batch.castShadow = meshes.length === 1 || meshes[part].castShadow;
         batch.receiveShadow = meshes.length === 1 || meshes[part].receiveShadow;
         batch.computeBoundingSphere();
@@ -396,6 +424,12 @@ export function createProceduralModelSlots({
     if (!spec) throw new Error('Unknown procedural model slot: ' + id);
     spec.replacement = replacementPath(url);
     delete spec.replacementAsset;
+    deferred.delete(id);
+  }
+  function enableDeferredReplacements() {
+    if (disposed || !deferred.size) return false;
+    deferred.clear();
+    return true;
   }
   async function dispose() {
     if (disposed) return;
@@ -414,6 +448,7 @@ export function createProceduralModelSlots({
     importedResources.clear();
     prototypes.clear();
     replacementCache.clear();
+    deferred.clear();
   }
-  return { get, prototype, instantiate, instantiateBatch, setReplacement, dispose };
+  return { get, prototype, instantiate, instantiateBatch, setReplacement, enableDeferredReplacements, dispose };
 }

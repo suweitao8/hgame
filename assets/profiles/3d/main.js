@@ -82,7 +82,9 @@ async function startWorld() {
   const materialPalette = createWorldMaterialPalette(THREE, materialConfig.materials);
   let models;
   let levelView;
+  let pendingUpgrade = null;
   scene.onDispose(() => {
+    if (pendingUpgrade !== null) cancelAnimationFrame(pendingUpgrade);
     renderer.unregisterMaterialPalette(materialPalette);
     try {
       levelView?.dispose();
@@ -93,8 +95,25 @@ async function startWorld() {
     }
   });
   renderer.registerMaterialPalette(materialPalette);
+  const slots = slotConfig.slots;
+  const startup = presentation.startupModelSlots;
+  const deferredReplacements = [];
+  if (startup !== undefined) {
+    if (!Array.isArray(startup) || startup.some(id => typeof id !== 'string' || !Object.hasOwn(slots ?? {}, id))) {
+      throw new Error('startupModelSlots must list model slot IDs');
+    }
+    const immediate = new Set(startup);
+    for (const group of levelConfig.groups ?? []) {
+      const slot = slots?.[group.slot];
+      if ((slot?.replacement || slot?.replacementAsset) && !immediate.has(group.slot)) {
+        immediate.add(group.slot);
+        deferredReplacements.push(group.slot);
+      }
+    }
+  }
   models = createProceduralModelSlots({
     THREE, slots: slotConfig.slots, materialPalette, assetCatalog, projectBaseUrl: location.href,
+    instanceStaticModels: true, deferredReplacements,
     async loadGLTF(url) {
       const { GLTFLoader } = await import('../assets/vendor/three/jsm/loaders/GLTFLoader.js');
       return new GLTFLoader().loadAsync(url);
@@ -107,6 +126,18 @@ async function startWorld() {
   app.scenes.start('world');
   app.start();
   viewCanvas.dataset.engineReady = 'true';
+  if (deferredReplacements.length > 0) {
+    // Give the started scene a paint opportunity before staging the authored art.
+    pendingUpgrade = requestAnimationFrame(() => {
+      pendingUpgrade = requestAnimationFrame(() => {
+        pendingUpgrade = null;
+        if (app.disposed || !models.enableDeferredReplacements()) return;
+        void levelView.rebuild().catch(error => {
+          if (!app.disposed) console.error('3D model upgrade failed', error);
+        });
+      });
+    });
+  }
 }
 
 function addPlayer(scene, compiled) {
