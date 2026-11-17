@@ -75,4 +75,6 @@ Costs are paid when a cast commits, after rechecking tags and resource availabil
 
 For turn-based or UI games, import `createGameplayActor` from the same subpath and call `actor.update(seconds)` as part of an explicit turn or command. For scene entities, the component advances the actor automatically. Keep `execute` synchronous and implement target selection and gameplay outcomes in the project.
 
+Use a timeline to author a skill's animation, impact and presentation cues in one configuration. [Ability timeline guide](21-ability-timelines.md)
+
 Use `actor.snapshot()` with `createVersionedStore` if a game saves in-progress effects and cooldowns. Recreate the actor with compatible definitions before `actor.restore(saved)`. Snapshots include base attributes, active effects, and remaining cooldowns. Restore recreates effect grants without repeating their original changes. Save equipment, external tags, and other game state separately. In-progress casts, channels, and buffered inputs are transient.

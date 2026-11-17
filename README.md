@@ -56,6 +56,7 @@ npm run release
 
 - **Core & Sim**: `Scene/Entity/Component`, `GameplayTags`, `app.renderAlpha`, `app.hitStop`, `TweenManager`, `SpringDamper1D/2D/3D`, `sim/` (`createSeededRng`, `hashState`, `runScripted`).
 - **Gameplay**: attributes, resource costs, Buff/Debuff stacking, periodic effects, cooldowns, charges, casting, channeling and buffered input. Import `GameplayComponent` or `createGameplayActor` from `gameplay/index.js`. [Gameplay guide](docs/guides/systems/17-gameplay.md)
+- **Skill timing**: drive animation, sound and visual cues from the same fixed-step timeline as skill commitment and recovery. [Ability timeline guide](docs/guides/systems/21-ability-timelines.md)
 - **Progression**: branching dialogue, conditional choices, event-driven quests, reward claims and resumable state in `gameplay/story.js` and `gameplay/quests.js`. [Story and quest guide](docs/guides/systems/18-story-and-quests.md)
 - **Inventory**: item stacks, equipment modifiers, resource exchanges and quest reward admission through `createInventory`. [Inventory guide](docs/guides/systems/19-inventory-and-equipment.md)
 - **Loot and crafting**: seeded drop tables, pending reward claims and atomic crafting recipes. [Loot and crafting guide](docs/guides/systems/20-loot-and-crafting.md)

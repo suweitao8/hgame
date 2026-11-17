@@ -1,5 +1,11 @@
 import { normalizeGameplayTag } from '../core/tags.js';
 import { changes, finite, identifier, nonNegative, positiveInteger, publisher } from '../internal/gameplay.js';
+import { compileAbilityTimeline, createAbilityTimelineRun } from '../internal/ability-timeline.js';
+import { cleanupAll } from '../internal/cleanup.js';
+
+/** @typedef {import('../internal/ability-timeline.js').AbilityTimeline} AbilityTimeline */
+/** @typedef {import('../internal/ability-timeline.js').AbilityTimelineEvent} AbilityTimelineEvent */
+/** @typedef {import('../internal/ability-timeline.js').AbilityTimelineRun} AbilityTimelineRun */
 
 /**
  * @typedef {object} AbilityDefinition
@@ -16,13 +22,14 @@ import { changes, finite, identifier, nonNegative, positiveInteger, publisher } 
  * @property {readonly string[]} [blockedTags]
  * @property {readonly string[]} [activeTags] Granted only while casting/channeling.
  * @property {readonly string[]} [effects] Effect definitions applied to this actor on commit.
+ * @property {AbilityTimeline} [timeline] Set cast and recovery timing from one clock, with animation and event cues.
  */
 /** @typedef {{target?: unknown, payload?: unknown}} AbilityContext */
 /** @typedef {{id: string, phase: 'activate' | 'channel', ticks: number, target?: unknown, payload?: unknown, attributes: import('./attributes.js').AttributeSet, tags: import('../core/tags.js').TagContainer, effects: import('./effects.js').EffectController}} AbilityExecution */
 /** @typedef {'unknown' | 'disposed' | 'busy' | 'tags' | 'cooldown' | 'global-cooldown' | 'group-cooldown' | 'resources'} AbilityBlockReason */
 /** @typedef {{ok: true} | {ok: false, reason: AbilityBlockReason}} AbilityAvailability */
 /** @typedef {{ok: true, id: string, phase: 'casting' | 'committed'} | {ok: false, reason: AbilityBlockReason}} AbilityActivation */
-/** @typedef {{id: string, charges: number, maxCharges: number, rechargeRemaining: number, active: 'casting' | 'channeling' | null}} AbilityState */
+/** @typedef {{id: string, charges: number, maxCharges: number, rechargeRemaining: number, active: 'casting' | 'channeling' | null, timeline?: {elapsed: number, duration: number, commitAt: number, clip?: string}}} AbilityState */
 /** @typedef {{schemaVersion: 1, abilities: Record<string, {charges: number, rechargeRemaining: number}>, globalRemaining: number, groups: Record<string, number>}} AbilitySnapshot */
 /** @typedef {{type: 'cast' | 'commit' | 'channel' | 'end' | 'cancel' | 'queued' | 'queue-expired', id: string, reason?: string, count?: number}} AbilityEvent */
 /**
@@ -46,13 +53,14 @@ import { changes, finite, identifier, nonNegative, positiveInteger, publisher } 
  * Data-driven skills, shared resource costs, rechargeable charges, casting and input buffering.
  * Call update from the application's existing fixedUpdate; this system creates no timers.
  * Execution is synchronous and game-owned; targets, hit detection and damage formulas remain game rules.
- * @param {{attributes: import('./attributes.js').AttributeSet, tags: import('../core/tags.js').TagContainer, effects: import('./effects.js').EffectController, definitions?: Record<string, AbilityDefinition>, execute?: (context: AbilityExecution) => void, onEvent?: (event: AbilityEvent) => void}} options
+ * @param {{attributes: import('./attributes.js').AttributeSet, tags: import('../core/tags.js').TagContainer, effects: import('./effects.js').EffectController, definitions?: Record<string, AbilityDefinition>, execute?: (context: AbilityExecution) => void, onEvent?: (event: AbilityEvent) => void, onTimeline?: (event: AbilityTimelineEvent) => void}} options
  * @returns {AbilitySystem}
  */
-export function createAbilitySystem({ attributes, tags, effects, definitions = {}, execute, onEvent }) {
+export function createAbilitySystem({ attributes, tags, effects, definitions = {}, execute, onEvent, onTimeline }) {
   const catalog = new Map(), states = new Map(), groups = new Map();
   const events = publisher(onEvent);
   let clock = 0, globalUntil = 0, current = null, queued = null;
+  let nextActivation = 1;
   let disposed = false, committing = false, updating = false;
   function live() { if (disposed) throw new Error('AbilitySystem is disposed'); }
   function define(id, input) {
@@ -66,9 +74,14 @@ export function createAbilitySystem({ attributes, tags, effects, definitions = {
     const effectIds = [...(input.effects ?? [])];
     for (const effect of effectIds) if (!effects.hasDefinition(effect)) throw new Error('Unknown ability effect: ' + effect);
     const cooldown = nonNegative(input.cooldown ?? 0, 'cooldown');
+    const timeline = input.timeline === undefined ? null : compileAbilityTimeline(input.timeline);
+    if (timeline && (input.castTime !== undefined || input.channelTime !== undefined)) {
+      throw new Error('Use either an ability timeline or castTime/channelTime: ' + id);
+    }
     const def = Object.freeze({ cooldown, charges: positiveInteger(input.charges ?? 1, 'charges'), costs,
-      castTime: nonNegative(input.castTime ?? 0, 'castTime'),
-      channelTime: nonNegative(input.channelTime ?? 0, 'channelTime'),
+      castTime: timeline?.commitAt ?? nonNegative(input.castTime ?? 0, 'castTime'),
+      channelTime: timeline ? timeline.duration - timeline.commitAt : nonNegative(input.channelTime ?? 0, 'channelTime'),
+      timeline,
       channelInterval: nonNegative(input.channelInterval ?? 0, 'channelInterval'),
       globalCooldown: nonNegative(input.globalCooldown ?? 0, 'globalCooldown'),
       group: input.group === undefined ? null : identifier(input.group, 'cooldown group'),
@@ -107,9 +120,12 @@ export function createAbilitySystem({ attributes, tags, effects, definitions = {
     if (current === entry) current = null;
     if (entry.granted.length) { const granted = entry.granted; entry.granted = []; tags.remove(granted); }
   }
-  function begin(id, def, context, phase, seconds) {
-    const entry = { id, def, context, phase, endsAt: clock + seconds,
-      nextTick: def.channelInterval > 0 ? clock + def.channelInterval : Infinity,
+  /** @param {AbilityTimelineRun | null} track */
+  function begin(id, def, context, phase, seconds, track) {
+    const phaseStart = track ? track.startAt + (phase === 'casting' ? 0 : track.timeline.commitAt) : clock;
+    const endsAt = track && phase === 'channeling' ? track.startAt + track.timeline.duration : phaseStart + seconds;
+    const entry = { id, def, context, phase, endsAt, track,
+      nextTick: def.channelInterval > 0 ? phaseStart + def.channelInterval : Infinity,
       granted: [...new Set([phase === 'casting' ? 'State.Casting' : 'State.Channeling', ...def.activeTags])] };
     current = entry;
     tags.add(entry.granted);
@@ -118,27 +134,48 @@ export function createAbilitySystem({ attributes, tags, effects, definitions = {
   function run(id, context, phase, ticks = 1) {
     execute?.({ id, phase, ticks, target: context.target, payload: context.payload, attributes, tags, effects });
   }
-  function commit(id, def, context, cast = null) {
+  /** @param {AbilityTimelineRun | null | undefined} track @param {string} [reason] */
+  function finishTimeline(track, reason) { if (track) track.finish(clock - track.startAt, reason); }
+  function cancelEntry(entry, reason) {
+    cleanupAll([
+      () => release(entry),
+      () => finishTimeline(entry.track, reason),
+      () => { if (!disposed) events.emit({ type: 'cancel', id: entry.id, reason }); },
+    ], 'Ability cancellation failed');
+  }
+  function rethrowWithCleanup(error, actions) {
+    try { cleanupAll(actions, 'Ability cleanup failed'); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Ability and its cleanup failed'); }
+    throw error;
+  }
+  /** @param {AbilityTimelineRun | null} track */
+  function commit(id, def, context, track, cast = null) {
     committing = true;
     try {
       if (cast) release(cast);
       const allowed = availability(id, true);
-      if (!allowed.ok) return allowed;
-      if (!attributes.spend(def.costs)) return { ok: false, reason: 'resources' };
-      if (disposed) return { ok: false, reason: 'disposed' };
+      if (!allowed.ok) { finishTimeline(track, allowed.reason); return allowed; }
+      if (!attributes.spend(def.costs)) { finishTimeline(track, 'resources'); return { ok: false, reason: 'resources' }; }
+      if (disposed) { finishTimeline(track, 'disposed'); return { ok: false, reason: 'disposed' }; }
       const state = replenish(id);
       state.charges--;
       if (state.nextCharge === Infinity && def.cooldown > 0) state.nextCharge = clock + def.cooldown;
       globalUntil = Math.max(globalUntil, clock + def.globalCooldown);
       if (def.group) groups.set(def.group, clock + def.groupCooldown);
-      if (def.channelTime > 0) begin(id, def, context, 'channeling', def.channelTime);
+      if (def.channelTime > 0) begin(id, def, context, 'channeling', def.channelTime, track);
+      if (!disposed) track?.start();
       for (const effect of def.effects) { if (disposed) break; effects.apply(effect, { source: id }); }
       if (!disposed) run(id, context, 'activate');
       if (!disposed) events.emit({ type: 'commit', id });
+      if (!disposed && track) track.advance(track.timeline.commitAt, true);
+      if (disposed) finishTimeline(track, 'disposed');
+      else if (def.channelTime === 0) finishTimeline(track);
       return { ok: true, id, phase: 'committed' };
     } catch (error) {
-      if (current?.id === id) { const entry = current; release(entry); }
-      throw error;
+      rethrowWithCleanup(error, [
+        () => { if (current?.id === id) release(current); },
+        () => finishTimeline(track, 'error'),
+      ]);
     } finally { committing = false; }
   }
   /** @type {AbilitySystem} */
@@ -149,9 +186,21 @@ export function createAbilitySystem({ attributes, tags, effects, definitions = {
       const allowed = availability(id);
       if (!allowed.ok) return allowed;
       const def = catalog.get(id);
-      if (def.castTime === 0) return commit(id, def, context);
-      begin(id, def, { ...context }, 'casting', def.castTime);
-      if (!disposed) events.emit({ type: 'cast', id });
+      const track = def.timeline ? createAbilityTimelineRun(def.timeline, clock,
+        { ability: id, activation: nextActivation++, context: Object.freeze({ ...context }) }, onTimeline) : null;
+      if (def.castTime === 0) return commit(id, def, context, track);
+      const entry = begin(id, def, { ...context }, 'casting', def.castTime, track);
+      if (!disposed && current === entry) {
+        try {
+          track?.start();
+          track?.advance(0, false);
+          if (!disposed && current === entry) events.emit({ type: 'cast', id });
+        } catch (error) {
+          rethrowWithCleanup(error, [
+            () => { if (current === entry) cancelEntry(entry, 'error'); },
+          ]);
+        }
+      }
       return { ok: true, id, phase: 'casting' };
     },
     queue(id, context = {}, seconds = 0.15) {
@@ -164,16 +213,19 @@ export function createAbilitySystem({ attributes, tags, effects, definitions = {
     clearQueue() { queued = null; },
     cancel(reason = 'cancelled') {
       if (!current || committing) return false;
-      const entry = current; release(entry);
-      events.emit({ type: 'cancel', id: entry.id, reason });
+      cancelEntry(current, reason);
       return true;
     },
     getState(id) {
       if (!catalog.has(id)) throw new Error('Unknown ability: ' + id);
       const state = replenish(id), def = catalog.get(id);
+      const entry = current?.id === id ? current : null;
+      const track = entry?.track;
       return { id, charges: state.charges, maxCharges: def.charges,
         rechargeRemaining: state.nextCharge === Infinity ? 0 : Math.max(0, state.nextCharge - clock),
-        active: current?.id === id ? current.phase : null };
+        active: entry?.phase ?? null,
+        ...(track ? { timeline: { elapsed: Math.min(track.timeline.duration, Math.max(0, clock - track.startAt)),
+          duration: track.timeline.duration, commitAt: track.timeline.commitAt, clip: track.timeline.clip } } : {}) };
     },
     getActive() { return current?.id ?? null; },
     update(dt) {
@@ -183,21 +235,35 @@ export function createAbilitySystem({ attributes, tags, effects, definitions = {
       updating = true;
       try {
         for (const id of catalog.keys()) replenish(id);
-        const entry = current;
+        let entry = current;
         if (entry && !permitted(entry.def)) api.cancel('tags');
-        else if (entry?.phase === 'casting' && clock >= entry.endsAt) {
-          const result = commit(entry.id, entry.def, entry.context, entry);
-          if (!result.ok && !disposed) events.emit({ type: 'cancel', id: entry.id, reason: result.reason });
-        } else if (entry?.phase === 'channeling') {
+        else if (entry?.phase === 'casting') {
+          if (entry.track) entry.track.advance(clock - entry.track.startAt, false);
+          const due = clock >= entry.endsAt || (entry.track && clock + 1e-9 >= entry.endsAt);
+          if (!disposed && current === entry && due) {
+            const cast = entry;
+            const result = commit(cast.id, cast.def, cast.context, cast.track, cast);
+            if (!result.ok && !disposed) events.emit({ type: 'cancel', id: cast.id, reason: result.reason });
+            // Advance a timeline's recovery against its original start even when a step crosses commit.
+            entry = cast.track && current?.track === cast.track ? current : null;
+          }
+        }
+        if (!disposed && current === entry && entry?.phase === 'channeling') {
           const until = Math.min(clock, entry.endsAt);
-          if (entry.nextTick <= until) {
+          if (entry.track) entry.track.advance(until - entry.track.startAt, true);
+          if (!disposed && current === entry && entry.nextTick <= until) {
             const count = Math.min(Number.MAX_SAFE_INTEGER, Math.floor((until - entry.nextTick) / entry.def.channelInterval + 1e-9) + 1);
             entry.nextTick += count * entry.def.channelInterval;
             run(entry.id, entry.context, 'channel', count);
             if (!disposed && current === entry) events.emit({ type: 'channel', id: entry.id, count });
           }
-          if (!disposed && current === entry && clock >= entry.endsAt) {
-            release(entry); events.emit({ type: 'end', id: entry.id });
+          if (!disposed && current === entry && (clock >= entry.endsAt || (entry.track && clock + 1e-9 >= entry.endsAt))) {
+            const done = entry;
+            cleanupAll([
+              () => release(done),
+              () => finishTimeline(done.track),
+              () => { if (!disposed) events.emit({ type: 'end', id: done.id }); },
+            ], 'Ability end failed');
           }
         }
         if (!disposed && queued) {
@@ -236,7 +302,10 @@ export function createAbilitySystem({ attributes, tags, effects, definitions = {
     dispose() {
       if (disposed) return;
       disposed = true; queued = null;
-      try { if (current) { const entry = current; release(entry); } }
+      try {
+        const entry = current;
+        if (entry) cleanupAll([() => release(entry), () => finishTimeline(entry.track, 'disposed')], 'Ability disposal failed');
+      }
       finally { events.clear(); catalog.clear(); states.clear(); groups.clear(); }
     },
   };

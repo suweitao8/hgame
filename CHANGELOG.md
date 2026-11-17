@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add fixed-step ability timelines with animation clip hints, timed cues, a commit point and recovery. Presentation can share one start/cue/end/cancel contract across sprite and model animation.
+
 - Add deterministic weighted loot tables, persistent per-source reward receipts and batch crafting with station and tag requirements. Loot claims and crafting use inventory transactions to preserve pending rewards and materials when the bag is full.
 
 - Add slotted inventories with stack limits, atomic exchanges, equipment and attribute modifiers. Claim a complete quest's rewards only when its entire item bundle fits. Inventory snapshots retain slot layout and equipment.

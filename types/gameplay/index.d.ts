@@ -9,6 +9,7 @@
  * @property {(event: import('./attributes.js').AttributeChange) => void} [onAttributeChange]
  * @property {(event: import('./effects.js').EffectEvent) => void} [onEffect]
  * @property {(event: import('./abilities.js').AbilityEvent) => void} [onAbility]
+ * @property {(event: import('./abilities.js').AbilityTimelineEvent) => void} [onTimeline]
  */
 /** @typedef {{schemaVersion: 1, attributes: Record<string, number>, effects: import('./effects.js').EffectSnapshot, abilities: import('./abilities.js').AbilitySnapshot}} GameplayActorSnapshot */
 /**
@@ -54,6 +55,7 @@ export type GameplayActorOptions = {
     onAttributeChange?: ((event: import("./attributes.js").AttributeChange) => void) | undefined;
     onEffect?: ((event: import("./effects.js").EffectEvent) => void) | undefined;
     onAbility?: ((event: import("./abilities.js").AbilityEvent) => void) | undefined;
+    onTimeline?: ((event: import("./abilities.js").AbilityTimelineEvent) => void) | undefined;
 };
 export type GameplayActorSnapshot = {
     schemaVersion: 1;

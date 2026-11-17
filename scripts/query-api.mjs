@@ -33,6 +33,7 @@ const CAPABILITY_MAP = [
   { need: '3D rigged GLB, 17 props, VAT crowds', module: 'integrations/model3d.js, procedural-models.js, world-aligned-material.js', keyApis: 'createModel3DProvider, createProceduralModelSlots, createBoneVatCrowd3D, createWorldMaterialPalette, npm run process:model3d' },
   { need: 'Enemy/NPC AI (HFSM + Behavior Tree)', module: 'ai/index.js (ai/fsm.js, ai/bt.js)', keyApis: 'createStateMachine, createBehaviorTree, BT_STATUS, sequence, selector, parallel, cooldown, condition, action' },
   { need: 'Attributes, stackable buffs and abilities', module: 'gameplay/index.js', keyApis: 'GameplayComponent, createGameplayActor, createAttributeSet, createEffectController, createAbilitySystem' },
+  { need: 'Sync skill impact, recovery, animation, audio and effect cues', module: 'gameplay/abilities.js', keyApis: 'AbilityDefinition.timeline, GameplayActorOptions.onTimeline' },
   { need: 'Branching dialogue, objectives and quest progression', module: 'gameplay/story.js, gameplay/quests.js', keyApis: 'createStoryRunner, createQuestLog' },
   { need: 'Item stacks, equipment, exchanges and quest rewards', module: 'gameplay/inventory.js', keyApis: 'createInventory, transact, equip, claimQuestRewards' },
   { need: 'Weighted loot, pending loot claims and crafting recipes', module: 'gameplay/loot.js, gameplay/crafting.js', keyApis: 'createLootSystem, createCraftingBook' },

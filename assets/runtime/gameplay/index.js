@@ -21,6 +21,7 @@ export { createAbilitySystem } from './abilities.js';
  * @property {(event: import('./attributes.js').AttributeChange) => void} [onAttributeChange]
  * @property {(event: import('./effects.js').EffectEvent) => void} [onEffect]
  * @property {(event: import('./abilities.js').AbilityEvent) => void} [onAbility]
+ * @property {(event: import('./abilities.js').AbilityTimelineEvent) => void} [onTimeline]
  */
 /** @typedef {{schemaVersion: 1, attributes: Record<string, number>, effects: import('./effects.js').EffectSnapshot, abilities: import('./abilities.js').AbilitySnapshot}} GameplayActorSnapshot */
 /**
@@ -46,7 +47,7 @@ export function createGameplayActor(options = {}) {
   const effects = createEffectController({ attributes, tags, definitions: options.effects,
     maxEffects: options.maxEffects, onEvent: options.onEffect });
   const abilities = createAbilitySystem({ attributes, tags, effects, definitions: options.abilities,
-    execute: options.execute, onEvent: options.onAbility });
+    execute: options.execute, onEvent: options.onAbility, onTimeline: options.onTimeline });
   let disposed = false;
   let updating = false;
   function live() { if (disposed) throw new Error('GameplayActor is disposed'); }

@@ -1,3 +1,6 @@
+/** @typedef {import('../internal/ability-timeline.js').AbilityTimeline} AbilityTimeline */
+/** @typedef {import('../internal/ability-timeline.js').AbilityTimelineEvent} AbilityTimelineEvent */
+/** @typedef {import('../internal/ability-timeline.js').AbilityTimelineRun} AbilityTimelineRun */
 /**
  * @typedef {object} AbilityDefinition
  * @property {number} [cooldown=0] Seconds to replenish one charge; sequential recharge.
@@ -13,13 +16,14 @@
  * @property {readonly string[]} [blockedTags]
  * @property {readonly string[]} [activeTags] Granted only while casting/channeling.
  * @property {readonly string[]} [effects] Effect definitions applied to this actor on commit.
+ * @property {AbilityTimeline} [timeline] Set cast and recovery timing from one clock, with animation and event cues.
  */
 /** @typedef {{target?: unknown, payload?: unknown}} AbilityContext */
 /** @typedef {{id: string, phase: 'activate' | 'channel', ticks: number, target?: unknown, payload?: unknown, attributes: import('./attributes.js').AttributeSet, tags: import('../core/tags.js').TagContainer, effects: import('./effects.js').EffectController}} AbilityExecution */
 /** @typedef {'unknown' | 'disposed' | 'busy' | 'tags' | 'cooldown' | 'global-cooldown' | 'group-cooldown' | 'resources'} AbilityBlockReason */
 /** @typedef {{ok: true} | {ok: false, reason: AbilityBlockReason}} AbilityAvailability */
 /** @typedef {{ok: true, id: string, phase: 'casting' | 'committed'} | {ok: false, reason: AbilityBlockReason}} AbilityActivation */
-/** @typedef {{id: string, charges: number, maxCharges: number, rechargeRemaining: number, active: 'casting' | 'channeling' | null}} AbilityState */
+/** @typedef {{id: string, charges: number, maxCharges: number, rechargeRemaining: number, active: 'casting' | 'channeling' | null, timeline?: {elapsed: number, duration: number, commitAt: number, clip?: string}}} AbilityState */
 /** @typedef {{schemaVersion: 1, abilities: Record<string, {charges: number, rechargeRemaining: number}>, globalRemaining: number, groups: Record<string, number>}} AbilitySnapshot */
 /** @typedef {{type: 'cast' | 'commit' | 'channel' | 'end' | 'cancel' | 'queued' | 'queue-expired', id: string, reason?: string, count?: number}} AbilityEvent */
 /**
@@ -42,17 +46,21 @@
  * Data-driven skills, shared resource costs, rechargeable charges, casting and input buffering.
  * Call update from the application's existing fixedUpdate; this system creates no timers.
  * Execution is synchronous and game-owned; targets, hit detection and damage formulas remain game rules.
- * @param {{attributes: import('./attributes.js').AttributeSet, tags: import('../core/tags.js').TagContainer, effects: import('./effects.js').EffectController, definitions?: Record<string, AbilityDefinition>, execute?: (context: AbilityExecution) => void, onEvent?: (event: AbilityEvent) => void}} options
+ * @param {{attributes: import('./attributes.js').AttributeSet, tags: import('../core/tags.js').TagContainer, effects: import('./effects.js').EffectController, definitions?: Record<string, AbilityDefinition>, execute?: (context: AbilityExecution) => void, onEvent?: (event: AbilityEvent) => void, onTimeline?: (event: AbilityTimelineEvent) => void}} options
  * @returns {AbilitySystem}
  */
-export function createAbilitySystem({ attributes, tags, effects, definitions, execute, onEvent }: {
+export function createAbilitySystem({ attributes, tags, effects, definitions, execute, onEvent, onTimeline }: {
     attributes: import("./attributes.js").AttributeSet;
     tags: import("../core/tags.js").TagContainer;
     effects: import("./effects.js").EffectController;
     definitions?: Record<string, AbilityDefinition>;
     execute?: (context: AbilityExecution) => void;
     onEvent?: (event: AbilityEvent) => void;
+    onTimeline?: (event: AbilityTimelineEvent) => void;
 }): AbilitySystem;
+export type AbilityTimeline = import("../internal/ability-timeline.js").AbilityTimeline;
+export type AbilityTimelineEvent = import("../internal/ability-timeline.js").AbilityTimelineEvent;
+export type AbilityTimelineRun = import("../internal/ability-timeline.js").AbilityTimelineRun;
 export type AbilityDefinition = {
     /**
      * Seconds to replenish one charge; sequential recharge.
@@ -94,6 +102,10 @@ export type AbilityDefinition = {
      * Effect definitions applied to this actor on commit.
      */
     effects?: readonly string[] | undefined;
+    /**
+     * Set cast and recovery timing from one clock, with animation and event cues.
+     */
+    timeline?: import("../internal/ability-timeline.js").AbilityTimeline | undefined;
 };
 export type AbilityContext = {
     target?: unknown;
@@ -130,6 +142,12 @@ export type AbilityState = {
     maxCharges: number;
     rechargeRemaining: number;
     active: "casting" | "channeling" | null;
+    timeline?: {
+        elapsed: number;
+        duration: number;
+        commitAt: number;
+        clip?: string;
+    };
 };
 export type AbilitySnapshot = {
     schemaVersion: 1;
