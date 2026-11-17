@@ -3,13 +3,16 @@ import { ShockwaveFilter } from 'pixi-filters';
 import { gsap } from 'gsap';
 
 const hitEase = gsap.parseEase('elastic.out(1, 0.45)');
+const explosionOptions = [0xff6622, 0xffbb33, 0xffed99].map(color => Object.freeze({
+  speedMin: 25, speedMax: 110, lifeMin: 3, lifeMax: 3, scaleStart: 0.8, drag: 1.5, color,
+}));
 
 export class JuiceSystem {
   constructor(renderer, capacity = 10000) {
     this.renderer = renderer; this.trauma = 0;
     this.hitStop = 0; this.simTimeScale = 1; this.clock = 0; this.active = 0; this.visibleParticles = 0;
     this.effects = []; this.liveParticles = []; this.shockwaves = new Set(); this.hitTweens = new Map();
-    this.expiredParticles = [];
+    this.expiredParticles = []; this.pendingParticles = []; this.batchDepth = 0;
     this.particles = Array.from({ length: capacity }, () => {
       const particle = new Particle({ texture: renderer.atlas.get('particle_soft'), x: 0, y: 0, alpha: 0 });
       return { particle, life: 0, duration: 0, vx: 0, vy: 0, start: 1, end: 0, drag: 0 };
@@ -35,26 +38,38 @@ export class JuiceSystem {
     this.renderer.app.stage.filters = this.shockwaves.size ? [this.renderer.bloom, ...this.shockwaves] : [];
   }
   burstParticles(x, y, count, opts = {}) {
+    if (!Number.isSafeInteger(count) || count < 0) throw new RangeError('Particle count must be a non-negative safe integer');
+    const texture = this.renderer.atlas.get(opts.tex ?? 'particle_soft');
     for (let i = 0; i < count; i++) {
       const p = this.freeParticles.pop() ?? { particle: new Particle({ texture: this.renderer.atlas.get('particle_soft') }) };
       this.liveParticles.push(p);
-      this.renderer.particleLayer.addParticle(p.particle);
+      this.pendingParticles.push(p.particle);
+      if (this.pendingParticles.length === 4096) this.flushPending();
       const angle = Math.random() * Math.PI * 2, speed = (opts.speedMin ?? 80) + Math.random() * ((opts.speedMax ?? 300) - (opts.speedMin ?? 80));
       p.vx = Math.cos(angle) * speed; p.vy = Math.sin(angle) * speed;
       p.duration = p.life = (opts.lifeMin ?? 0.3) + Math.random() * ((opts.lifeMax ?? 0.9) - (opts.lifeMin ?? 0.3));
       p.start = opts.scaleStart ?? 0.7; p.end = opts.scaleEnd ?? 0; p.drag = opts.drag ?? 1;
-      p.particle.texture = this.renderer.atlas.get(opts.tex ?? 'particle_soft');
+      p.particle.texture = texture;
       p.particle.x = x; p.particle.y = y; p.particle.alpha = 1; p.particle.tint = opts.color ?? 0xffffff;
     }
+    if (this.batchDepth === 0) this.flushPending();
+  }
+  flushPending() {
+    if (this.pendingParticles.length) this.renderer.particleLayer.addParticle(...this.pendingParticles);
+    this.pendingParticles.length = 0;
   }
   spawnExplosions(count) {
-    const screen = this.renderer.app.screen;
-    for (let i = 0; i < count; i++) {
-      const pos = this.renderer.screenToWorld(Math.random() * screen.width, Math.random() * screen.height);
-      this.effects.push(3);
-      this.burstParticles(pos.x, pos.y, 8, { speedMin: 25, speedMax: 110, lifeMin: 3, lifeMax: 3,
-        scaleStart: 0.8, drag: 1.5, color: [0xff6622, 0xffbb33, 0xffed99][i % 3] });
-    }
+    if (!Number.isSafeInteger(count) || count < 0) throw new RangeError('Explosion count must be a non-negative safe integer');
+    const screen = this.renderer.app.screen, camera = this.renderer.camera;
+    this.batchDepth++;
+    try {
+      for (let i = 0; i < count; i++) {
+        const x = (Math.random() * screen.width - screen.width / 2 - camera.shakeX) / camera.zoom + camera.x;
+        const y = (Math.random() * screen.height - screen.height / 2 - camera.shakeY) / camera.zoom + camera.y;
+        this.effects.push(3);
+        this.burstParticles(x, y, 8, explosionOptions[i % explosionOptions.length]);
+      }
+    } finally { if (--this.batchDepth === 0) this.flushPending(); }
   }
   update(dt) {
     this.clock += dt; this.hitStop = Math.max(0, this.hitStop - dt); if (!this.hitStop) this.simTimeScale = 1;
@@ -80,10 +95,12 @@ export class JuiceSystem {
     this.effects.length = effectWrite;
     let write = 0; this.visibleParticles = 0; const expired = this.expiredParticles; expired.length = 0;
     const camera = this.renderer.camera, screen = this.renderer.app.screen;
+    let previousDrag = NaN, damping = 1;
     for (const p of this.liveParticles) {
       p.life = Math.max(0, p.life - dt); const t = p.life / p.duration;
       p.particle.x += p.vx * dt; p.particle.y += p.vy * dt;
-      const damping = Math.exp(-p.drag * dt); p.vx *= damping; p.vy *= damping;
+      if (p.drag !== previousDrag) { previousDrag = p.drag; damping = Math.exp(-p.drag * dt); }
+      p.vx *= damping; p.vy *= damping;
       p.particle.alpha = t; p.particle.scaleX = p.particle.scaleY = p.end + (p.start - p.end) * t;
       if (p.life <= 0) { expired.push(p.particle); this.freeParticles.push(p); }
       else {
@@ -109,6 +126,6 @@ export class JuiceSystem {
     for (const filter of this.shockwaves) filter.destroy();
     this.shockwaves.clear(); this.hitTweens.clear();
     this.liveParticles.length = 0; this.freeParticles.length = 0; this.particles.length = 0;
-    this.expiredParticles.length = 0; this.effects.length = 0;
+    this.expiredParticles.length = 0; this.pendingParticles.length = 0; this.effects.length = 0;
   }
 }

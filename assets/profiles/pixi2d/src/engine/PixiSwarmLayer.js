@@ -21,7 +21,7 @@ export class PixiSwarmLayer {
     });
     this.layer = new ParticleContainer({ dynamicProperties: { position: true, uvs: true, rotation: true, vertex: true } });
     renderer.worldRoot.addChildAt(this.layer, renderer.worldRoot.getChildIndex(renderer.entityLayer));
-    this.particles = []; this.pool = []; this.visibleCount = 0; this.disposed = false;
+    this.particles = []; this.pool = []; this.pendingParticles = []; this.visibleCount = 0; this.disposed = false;
   }
 
   sync(swarm) {
@@ -50,7 +50,8 @@ export class PixiSwarmLayer {
       const texture = swarm.flash?.[id] > 0 ? frame.white : frame.texture;
       if (!particle) {
         particle = this.pool.pop() ?? new Particle({ texture, anchorX: 0.5, anchorY: 0.5 });
-        this.particles.push(particle); this.layer.addParticle(particle);
+        this.particles.push(particle); this.pendingParticles.push(particle);
+        if (this.pendingParticles.length === 4096) this.flushPending();
       }
       if (particle.texture !== texture) particle.texture = texture;
       particle.x = x; particle.y = y;
@@ -60,19 +61,25 @@ export class PixiSwarmLayer {
       particle.scaleY = size;
       used++;
     }
+    this.flushPending();
     if (used < this.particles.length) {
-      const removed = this.particles.splice(used);
-      for (let i = 0; i < removed.length; i += 10000) this.layer.removeParticle(...removed.slice(i, i + 10000));
+      const removed = this.layer.removeParticles(used);
+      this.particles.length = used;
       for (const particle of removed) this.pool.push(particle);
     }
     this.visibleCount = used;
     return used;
   }
 
+  flushPending() {
+    if (this.pendingParticles.length) this.layer.addParticle(...this.pendingParticles);
+    this.pendingParticles.length = 0;
+  }
+
   dispose() {
     if (this.disposed) return;
     this.disposed = true; this.layer.removeFromParent(); this.layer.destroy();
-    this.particles.length = 0; this.pool.length = 0; this.visibleCount = 0;
+    this.particles.length = 0; this.pool.length = 0; this.pendingParticles.length = 0; this.visibleCount = 0;
     this.renderer.swarmLayers.delete(this);
   }
 }

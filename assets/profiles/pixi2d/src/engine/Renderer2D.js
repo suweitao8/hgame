@@ -35,6 +35,7 @@ export class Renderer2D {
     this.enemyLayer = new ParticleContainer({ dynamicProperties: { position: true, uvs: true, rotation: true, vertex: true } });
     this.enemyParticles = [];
     this.enemyPool = [];
+    this.pendingEnemies = [];
     this.trailLayer = new Container();
     this.particleLayer = new ParticleContainer({ dynamicProperties: { position: true, vertex: true, rotation: true, color: true, uvs: true } });
     this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, this.trailLayer, this.particleLayer);
@@ -70,8 +71,8 @@ export class Renderer2D {
   }
   syncEnemies(enemies, time) {
     if (this.enemyParticles.length > enemies.length) {
-      const removed = this.enemyParticles.splice(enemies.length);
-      for (let i = 0; i < removed.length; i += 10000) this.enemyLayer.removeParticle(...removed.slice(i, i + 10000));
+      const removed = this.enemyLayer.removeParticles(enemies.length);
+      this.enemyParticles.length = enemies.length;
       for (const particle of removed) this.enemyPool.push(particle);
     }
     for (let i = 0; i < enemies.length; i++) {
@@ -81,7 +82,8 @@ export class Renderer2D {
       if (!particle) {
         particle = this.enemyPool.pop() ?? new Particle({ texture: this.atlas.get(key), anchorX: 0.5, anchorY: 0.5 });
         this.enemyParticles.push(particle);
-        this.enemyLayer.addParticle(particle);
+        this.pendingEnemies.push(particle);
+        if (this.pendingEnemies.length === 4096) this.flushEnemies();
       }
       particle.texture = this.atlas.get(key);
       particle.x = enemy.x;
@@ -91,6 +93,11 @@ export class Renderer2D {
       particle.scaleX = 1 + Math.sin(phase * 2) * 0.035;
       particle.scaleY = 1 - Math.sin(phase * 2) * 0.05;
     }
+    this.flushEnemies();
+  }
+  flushEnemies() {
+    if (this.pendingEnemies.length) this.enemyLayer.addParticle(...this.pendingEnemies);
+    this.pendingEnemies.length = 0;
   }
   alloc(name) {
     const sprite = this.spritePool.pop() ?? new Sprite();
@@ -138,7 +145,7 @@ export class Renderer2D {
     this.resizeObserver?.disconnect(); this.resizeObserver = null; this.onResize = null;
     for (const layer of this.swarmLayers) layer.dispose();
     for (const sprite of this.spritePool) sprite.destroy();
-    this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.entityMap.clear();
+    this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.pendingEnemies.length = 0; this.entityMap.clear();
     this.app.stage.filters = [];
     this.bloom.destroy();
     this.app.destroy({ removeView: true }, { children: true }); this.atlas.dispose();
