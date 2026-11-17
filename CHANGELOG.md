@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Run deferred 3D starter model upgrades from the application loop and support touch movement alongside keyboard input.
+
 - Keep GLTF scene resources loaded with standalone 3D animation clips under the model provider's ownership, and wait for in-flight clip loads during provider disposal.
 
 - Share the 3D starter's GLTF loader across static slots and the optional rigged model service. Load the Meshopt decoder only when a model uses compressed geometry.

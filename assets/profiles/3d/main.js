@@ -87,7 +87,7 @@ async function startWorld() {
   let levelView;
   let pendingUpgrade = null;
   scene.onDispose(() => {
-    if (pendingUpgrade !== null) cancelAnimationFrame(pendingUpgrade);
+    if (pendingUpgrade !== null) clearTimeout(pendingUpgrade);
     renderer.unregisterMaterialPalette(materialPalette);
     try {
       levelView?.dispose();
@@ -123,21 +123,30 @@ async function startWorld() {
   const mounted = await levelView.setLevel(levelConfig);
   if (!mounted.committed || app.disposed) return;
   addPlayer(scene, levelView.level);
+  function upgradeModels() {
+    pendingUpgrade = null;
+    if (app.disposed || app.scenes.current !== scene || !models.enableDeferredReplacements()) return;
+    void levelView.rebuild().catch(error => {
+      if (!app.disposed) console.error('3D model upgrade failed', error);
+    });
+  }
+  if (deferredReplacements.length > 0 && project.tickHz > 0) {
+    // Start after the scene has rendered once, using the application scheduler.
+    const deferred = scene.add(new Entity({ name: 'deferred-model-upgrade' }));
+    deferred.addComponent(new class extends Component {
+      update() {
+        if (!this.frames) this.frames = 0;
+        if (++this.frames < 2) return;
+        this.entity.destroy();
+        upgradeModels();
+      }
+    }());
+  }
   app.scenes.start('world');
   app.start();
   viewCanvas.dataset.engineReady = 'true';
-  if (deferredReplacements.length > 0) {
-    // Give the started scene a paint opportunity before staging the authored art.
-    pendingUpgrade = requestAnimationFrame(() => {
-      pendingUpgrade = requestAnimationFrame(() => {
-        pendingUpgrade = null;
-        if (app.disposed || !models.enableDeferredReplacements()) return;
-        void levelView.rebuild().catch(error => {
-          if (!app.disposed) console.error('3D model upgrade failed', error);
-        });
-      });
-    });
-  }
+  // Command-driven scenes have no frame loop, so defer once after their initial render.
+  if (deferredReplacements.length > 0 && project.tickHz === 0) pendingUpgrade = setTimeout(upgradeModels, 0);
 }
 
 function addPlayer(scene, compiled) {
@@ -168,11 +177,18 @@ function addPlayer(scene, compiled) {
   class Control extends Component {
     fixedUpdate(dt) {
       const input = this.scene.app.input;
-      const dx = Number(input.isDown('KeyD') || input.isDown('ArrowRight')) -
+      let dx = Number(input.isDown('KeyD') || input.isDown('ArrowRight')) -
         Number(input.isDown('KeyA') || input.isDown('ArrowLeft'));
-      const dz = Number(input.isDown('KeyS') || input.isDown('ArrowDown')) -
+      let dz = Number(input.isDown('KeyS') || input.isDown('ArrowDown')) -
         Number(input.isDown('KeyW') || input.isDown('ArrowUp'));
-      const len = Math.hypot(dx, dz) || 1;
+      if (input.pointerCount > 0) {
+        for (const pointer of input.pointers) {
+          if (pointer.pointerType !== 'touch' || pointer.startX >= window.innerWidth / 2) continue;
+          dx = (pointer.x - pointer.startX) / 48; dz = (pointer.y - pointer.startY) / 48;
+          break;
+        }
+      }
+      const len = Math.max(1, Math.hypot(dx, dz));
       if (actorBody) {
         let vx = dx / len * 4, vz = dz / len * 4;
         if (this.entity.x + vx * dt < -3.5 || this.entity.x + vx * dt > 3.5) vx = 0;

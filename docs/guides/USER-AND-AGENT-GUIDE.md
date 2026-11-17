@@ -34,11 +34,11 @@ npm run api -- --module post2d   # Every export in one module
 | **Card / Narrative / Commercial UI** | `node scripts/create-game.mjs "<dir>" --preset ui --name "Title"` |
 | **Blank Scaffold (no demo assets)** | Add `--bare` (`2d` or `3d`). Preview config without writing: `--dry-run`. |
 
-Use `--preset horde` to start with batched swarm simulation and `SpriteCrowd2D`. Its capacity, population and sprite dimensions are in `src/swarm.json`. The 3D preset selects adaptive quality and Rapier 3D. Pass `--physics none` when the design needs no physics backend. Existing `--profile` commands retain their standalone compatibility defaults.
+Use `--preset horde` to start with HGame's CPU swarm simulation and a PixiJS particle layer. Its capacity, population and sprite dimensions are in `src/swarm.json`. The 3D preset selects adaptive quality and Rapier 3D. Pass `--physics none` when the design needs no physics backend.
 
-New `2d` and `horde` presets both use WebGL2 with automatic Canvas2D fallback. Use `Sprite2D` with either renderer. On WebGL2, short ASCII numbers such as scores, timers and percentages share a glyph texture.
+New `2d` and `horde` presets use PixiJS. For `2d`, explicit `--renderer webgl2d` or `--renderer canvas2d` selects a legacy renderer; `horde` also supports explicit `--renderer webgl2d`. Existing games are not migrated.
 
-Both 3D starters put camera, fog, lights, tone mapping and exposure in `src/presentation.json` under `renderer`. Use `quality` to choose the initial mode and `renderer.worldLighting` to tune fog, hemisphere light and sun. The populated starter uses `materials.json` for the PBR palette, `model-slots.json` for procedural props or replacement GLBs, and `level.json` for placements, spawn and collision. Scenes release these presentation resources on unload.
+Both 3D starters put camera, fog, lights, tone mapping and exposure in `src/presentation.json` under `renderer`. Use `quality` to choose the initial mode and `renderer.worldLighting` to tune fog, hemisphere light and sun. The populated starter uses `materials.json` for the PBR palette, `model-slots.json` for procedural props or replacement GLBs, and `level.json` for placements, spawn and collision. It supports keyboard and left-side touch movement, and scenes release presentation resources on unload.
 
 `renderer.limitCameraDrawDistance` applies the quality tier's draw distance up to the configured camera far plane. `chunkCells` controls the grid region size for large static instance batches. Dense regions each get their own culling bounds. Small and scattered batches stay grouped. Set `chunkCells` to `0` to batch by slot across the whole level.
 
