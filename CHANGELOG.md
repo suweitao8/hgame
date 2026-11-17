@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep up to four textures in a WebGL2 2D sprite batch while preserving draw order and the existing instance layout. Flush pending sprites before replacing custom-draw textures or evicting cached text.
+
 - Generate 3D starters with a shared JSON layout for camera, lighting, tone mapping and quality. Manage lighting and level resources with the scene lifecycle. Reuse compiled level data, prepare independent model slots concurrently and instance opaque procedural models by mesh part.
 
 - Add level preloading and scene transitions with catalog asset groups. Candidate loading or entry failure preserves the current scene. Successful transitions retire the old scene and release its resources, with separate reporting for cleanup errors.

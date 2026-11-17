@@ -22,6 +22,7 @@ const SCRATCH_FLASH = [1, 1, 1, 1];
 const FLOATS_PER_INSTANCE = 20;
 const BYTES_PER_INSTANCE = FLOATS_PER_INSTANCE * 4;
 const MAX_CAPACITY_CAP = 262144;
+const BATCH_TEXTURES = 4;
 
 const COMPACT_VERTEX_SHADER_GLSL3 = `#version 300 es
 precision highp float;
@@ -169,7 +170,7 @@ void main() {
 const FRAGMENT_SHADER_GLSL3 = `#version 300 es
 precision mediump float;
 
-uniform sampler2D uTex;
+uniform sampler2D uTex[${BATCH_TEXTURES}];
 
 in vec2 vQuad;
 in vec2 vUv;
@@ -179,6 +180,14 @@ in vec4 vColor;
 in vec4 vFlash;
 
 out vec4 fragColor;
+
+vec4 sampleSprite() {
+  // GLSL ES 3.00 sampler arrays require constant indices.
+  if (vMode == -1.0) return texture(uTex[1], vUv);
+  if (vMode == -2.0) return texture(uTex[2], vUv);
+  if (vMode == -3.0) return texture(uTex[3], vUv);
+  return texture(uTex[0], vUv);
+}
 
 void main() {
   if (vMode > 0.5 && vMode < 1.5) {
@@ -204,8 +213,8 @@ void main() {
     fragColor = vec4(rgb, vColor.a);
     return;
   }
-  // Textured sprite / sheet frame (mode == 0)
-  vec4 tex = texture(uTex, vUv);
+  // Textured modes store the negated sampler slot.
+  vec4 tex = sampleSprite();
   if (tex.a <= 0.001) discard;
   vec3 rgb = mix(tex.rgb, vColor.rgb, vTintStrength);
   rgb = mix(rgb, vFlash.rgb, vFlash.a);
@@ -408,7 +417,6 @@ export function createWebGL2DAdapter({
   let whiteTex = null;
   let uViewXLoc = null;
   let uViewYLoc = null;
-  let uTexLoc = null;
 
   let compactProgram = null;
   let compactVao = null;
@@ -443,7 +451,8 @@ export function createWebGL2DAdapter({
   let prevLayer = -Infinity;
   let prevZ = -Infinity;
   let prevYSort = false;
-  let boundTexRecord = null;
+  const batchTextures = [];
+  const boundTextureUnits = new Array(BATCH_TEXTURES).fill(null);
   let lastSmoothingFlag = null;
 
   const stats = {
@@ -475,7 +484,10 @@ export function createWebGL2DAdapter({
     program = compileProgram(gl, VERTEX_SHADER_GLSL3, FRAGMENT_SHADER_GLSL3);
     uViewXLoc = gl.getUniformLocation(program, 'uViewX');
     uViewYLoc = gl.getUniformLocation(program, 'uViewY');
-    uTexLoc = gl.getUniformLocation(program, 'uTex');
+    gl.useProgram(program);
+    for (let unit = 0; unit < BATCH_TEXTURES; unit++) {
+      gl.uniform1i(gl.getUniformLocation(program, `uTex[${unit}]`), unit);
+    }
 
     vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
@@ -550,7 +562,8 @@ export function createWebGL2DAdapter({
     compactData = null;
     compactCapacity = 0;
     whiteTex = null;
-    boundTexRecord = null;
+    batchTextures.length = 0;
+    boundTextureUnits.fill(null);
     postPass.destroy();
   }
 
@@ -669,7 +682,9 @@ export function createWebGL2DAdapter({
     const cached = textureCache.get(img);
     if (cached) {
       if (refresh || cached.smooth !== smooth) {
+        if (batchTextures.includes(cached)) flushBatch();
         gl.bindTexture(gl.TEXTURE_2D, cached.glTex);
+        boundTextureUnits[0] = cached.glTex;
         if (cached.smooth !== smooth) {
           setTextureFilter(smooth);
           cached.smooth = smooth;
@@ -683,12 +698,14 @@ export function createWebGL2DAdapter({
     const record = { glTex, w: 0, h: 0, smooth };
     try {
       gl.bindTexture(gl.TEXTURE_2D, glTex);
+      boundTextureUnits[0] = glTex;
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       setTextureFilter(smooth);
       uploadTexture(img, record);
     } catch (error) {
       gl.deleteTexture?.(glTex);
+      boundTextureUnits[0] = null;
       throw error;
     }
     ownedTextures.add(glTex);
@@ -699,7 +716,10 @@ export function createWebGL2DAdapter({
   function getTextTexture(text, font, color, smooth) {
     const key = `${text}|${font}|${color}`;
     let entry = textCache.get(key);
-    if (entry) return entry;
+    if (entry) {
+      getTextureRecord(entry.canvas, smooth);
+      return entry;
+    }
     const buf = allocBuffer(256, 64);
     const bctx = buf?.getContext?.('2d') ?? null;
     if (!buf || !bctx) return null;
@@ -720,11 +740,11 @@ export function createWebGL2DAdapter({
       const oldestKey = textCache.keys().next().value;
       const oldest = textCache.get(oldestKey);
       textCache.delete(oldestKey);
-      if (oldest.rec === boundTexRecord) {
-        flushBatch();
-        boundTexRecord = null;
-      }
+      if (batchTextures.includes(oldest.rec)) flushBatch();
       gl.deleteTexture?.(oldest.rec.glTex);
+      for (let unit = 0; unit < BATCH_TEXTURES; unit++) {
+        if (boundTextureUnits[unit] === oldest.rec.glTex) boundTextureUnits[unit] = null;
+      }
       ownedTextures.delete(oldest.rec.glTex);
       textureCache.delete(oldest.canvas);
       oldest.canvas.width = 0;
@@ -738,21 +758,24 @@ export function createWebGL2DAdapter({
   function flushBatch() {
     if (instanceCount <= 0) return;
     gl.bindBuffer(gl.ARRAY_BUFFER, instanceVbo);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, instanceData.subarray(0, instanceCount * FLOATS_PER_INSTANCE));
-    gl.bindTexture(gl.TEXTURE_2D, boundTexRecord ? boundTexRecord.glTex : whiteTex);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, instanceData, 0, instanceCount * FLOATS_PER_INSTANCE);
+    for (let unit = BATCH_TEXTURES - 1; unit >= 0; unit--) {
+      const texture = batchTextures[unit]?.glTex ?? whiteTex;
+      if (boundTextureUnits[unit] !== texture) {
+        gl.activeTexture(gl.TEXTURE0 + unit);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        boundTextureUnits[unit] = texture;
+      }
+    }
+    gl.activeTexture(gl.TEXTURE0);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, instanceCount);
     stats.drawCalls++;
     stats.instances += instanceCount;
     instanceCount = 0;
+    batchTextures.length = 0;
   }
 
-  function ensureTexAndCapacity(neededTex) {
-    if (neededTex && boundTexRecord && neededTex !== boundTexRecord) {
-      flushBatch();
-      boundTexRecord = neededTex;
-    } else if (neededTex && !boundTexRecord) {
-      boundTexRecord = neededTex;
-    }
+  function ensureCapacity() {
     if (instanceCount >= capacity) {
       if (capacity < MAX_CAPACITY_CAP) {
         flushBatch();
@@ -775,7 +798,16 @@ export function createWebGL2DAdapter({
     fr, fg, fb, fa,
     requiredTex = null,
   ) {
-    ensureTexAndCapacity(requiredTex);
+    ensureCapacity();
+    if (requiredTex) {
+      let unit = batchTextures.indexOf(requiredTex);
+      if (unit === -1) {
+        if (batchTextures.length === BATCH_TEXTURES) flushBatch();
+        unit = batchTextures.length;
+        batchTextures.push(requiredTex);
+      }
+      mode = -unit;
+    }
     const base = instanceCount * FLOATS_PER_INSTANCE;
     instanceData[base]      = m00;
     instanceData[base + 1]  = m01;
@@ -800,7 +832,7 @@ export function createWebGL2DAdapter({
     instanceCount++;
   }
 
-  function emitGroundShadow(a, b, c, d, e, f, w, h, ax, ay, offsetX, offsetY, baseAlpha, groundShadow, preferredTex) {
+  function emitGroundShadow(a, b, c, d, e, f, w, h, ax, ay, offsetX, offsetY, baseAlpha, groundShadow) {
     const cfg = typeof groundShadow === 'object' ? groundShadow : {};
     const widthRatio = cfg.widthRatio ?? 0.72;
     const heightRatio = cfg.heightRatio ?? 0.18;
@@ -832,7 +864,6 @@ export function createWebGL2DAdapter({
       0, 0, 1, 1, 1, 0,
       SCRATCH_RGBA[0], SCRATCH_RGBA[1], SCRATCH_RGBA[2], finalAlpha,
       0, 0, 0, 0,
-      preferredTex,
     );
   }
 
@@ -1006,8 +1037,6 @@ export function createWebGL2DAdapter({
         } finally {
           bctx.restore();
         }
-        // Issue any queued draws that still sample the previous scratch upload.
-        if (boundTexRecord && boundTexRecord === textureCache.get(buf)) flushBatch();
         requiredTex = getTextureRecord(buf, smooth, true);
         mode = 0;
         drawW = bw;
@@ -1030,7 +1059,7 @@ export function createWebGL2DAdapter({
     if (allowShadows && sprite.groundShadow) {
       emitGroundShadow(
         item.a, item.b, item.c, item.d, item.e, item.f,
-        w, h, ax, ay, sprite.offsetX, sprite.offsetY, baseAlpha, sprite.groundShadow, requiredTex,
+        w, h, ax, ay, sprite.offsetX, sprite.offsetY, baseAlpha, sprite.groundShadow,
       );
     }
 
@@ -1081,7 +1110,7 @@ export function createWebGL2DAdapter({
     if (allowShadows && crowd.groundShadow) {
       emitGroundShadow(
         a, b, c, d, wx, wy,
-        w, h, ax, ay, crowd.offsetX[idx], crowd.offsetY[idx], op, crowd.groundShadow, imgRec,
+        w, h, ax, ay, crowd.offsetX[idx], crowd.offsetY[idx], op, crowd.groundShadow,
       );
     }
 
@@ -1329,10 +1358,12 @@ export function createWebGL2DAdapter({
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, imgRec ? imgRec.glTex : whiteTex);
+    boundTextureUnits[0] = imgRec ? imgRec.glTex : whiteTex;
     gl.uniform1i(uCompactTexLoc, 0);
 
     gl.activeTexture(gl.TEXTURE0 + 1);
     gl.bindTexture(gl.TEXTURE_2D, useGpuTex ? gpuSwarm.glTexture : whiteTex);
+    boundTextureUnits[1] = useGpuTex ? gpuSwarm.glTexture : whiteTex;
     gl.uniform1i(uCompactGpuTexLoc, 1);
 
     if (allowShadows && crowd.groundShadow) {
@@ -1359,8 +1390,6 @@ export function createWebGL2DAdapter({
     gl.activeTexture(gl.TEXTURE0);
     gl.useProgram(program);
     gl.bindVertexArray(vao);
-    gl.uniform1i(uTexLoc, 0);
-    boundTexRecord = null;
   }
 
   function submitCrowdBatch(item, viewBounds, allowShadows, smooth) {
@@ -1428,7 +1457,7 @@ export function createWebGL2DAdapter({
     prevLayer = -Infinity;
     prevZ = -Infinity;
     prevYSort = false;
-    boundTexRecord = null;
+    batchTextures.length = 0;
     instanceCount = 0;
 
     const viewBounds = typeof cam.getViewBounds === 'function'
@@ -1499,7 +1528,7 @@ export function createWebGL2DAdapter({
     gl.useProgram(program);
     gl.bindVertexArray(vao);
     gl.activeTexture(gl.TEXTURE0);
-    gl.uniform1i(uTexLoc, 0);
+    boundTextureUnits.fill(null);
 
     stats.drawnSprites = 0;
     stats.drawnCrowds = 0;
