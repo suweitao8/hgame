@@ -28,6 +28,8 @@ g.fillStyle = '#123'; g.fillRect(0, 0, 64, 64); g.fillStyle = '${color}'; g.fill
   const accepted = readFileSync(path.join(options.outDir, 'probe.reference.png'));
   writeFileSync(candidateFile, page('#0af'));
   const changed = compareVisualScenarios(options);
+  assert.equal(changed[0].reference.ok, true, JSON.stringify(changed[0].reference));
+  assert.ok(changed[0].candidate, JSON.stringify(changed[0]));
   assert.equal(changed[0].ok, false);
   assert.ok(changed[0].candidate.baseline.diffRatio > 0.1);
   assert.deepEqual(readFileSync(path.join(options.outDir, 'probe.reference.png')), accepted);

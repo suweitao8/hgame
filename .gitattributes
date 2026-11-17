@@ -1,4 +1,5 @@
 * text=auto
+assets/runtime/vendor/rapier*/rapier*.mjs text eol=lf
 *.wasm binary
 *.png binary
 *.jpg binary
