@@ -2,22 +2,30 @@ import { Particle, ParticleContainer } from 'pixi.js';
 
 /** Render an HGame CPU SwarmSimulation without allocating per-unit game objects. */
 export class PixiSwarmLayer {
-  constructor(renderer, { textures = ['enemy_chaser'], scale = 1, worldScale = 1, offsetX = 0, offsetY = 0,
+  constructor(renderer, { textures = ['enemy_chaser'], clips = null, scale = 1, worldScale = 1, offsetX = 0, offsetY = 0,
     syncRotation = false, flipByDirection = false, cull = true } = {}) {
     if (!renderer?.worldRoot || !renderer?.atlas?.textures) throw new TypeError('Initialize Renderer2D before creating a swarm layer');
-    if (!Array.isArray(textures) || textures.length === 0 || textures.some(name => typeof name !== 'string' || !renderer.atlas.textures.has(name))) {
-      throw new TypeError('Swarm textures must be existing atlas frame names');
-    }
+    const definitions = clips ?? (Array.isArray(textures) ? textures.map(name => ({ frames: [name] })) : null);
+    if (!Array.isArray(definitions) || definitions.length === 0) throw new TypeError('Swarm clips or textures must be a non-empty array');
     if (![scale, worldScale, offsetX, offsetY].every(Number.isFinite) || scale <= 0 || worldScale <= 0) {
       throw new RangeError('Swarm scale and worldScale must be positive and offsets must be finite');
     }
     this.renderer = renderer; this.scale = scale; this.worldScale = worldScale;
     this.offsetX = offsetX; this.offsetY = offsetY; this.syncRotation = Boolean(syncRotation);
     this.flipByDirection = Boolean(flipByDirection); this.cull = Boolean(cull);
-    this.frames = textures.map(name => {
-      const texture = renderer.atlas.textures.get(name);
-      return { texture, white: renderer.atlas.textures.get(name + '_white') ?? texture,
-        radius: Math.hypot(texture.orig.width, texture.orig.height) * 0.5 };
+    this.clips = definitions.map(clip => {
+      if (!clip || !Array.isArray(clip.frames) || clip.frames.length === 0 ||
+          clip.frames.some(name => typeof name !== 'string' || !renderer.atlas.textures.has(name))) {
+        throw new TypeError('Swarm clip frames must be existing atlas frame names');
+      }
+      const fps = clip.fps ?? 8;
+      if (!Number.isFinite(fps) || fps <= 0) throw new RangeError('Swarm clip fps must be positive');
+      const frames = clip.frames.map(name => {
+        const texture = renderer.atlas.textures.get(name);
+        return { texture, white: renderer.atlas.textures.get(name + '_white') ?? texture,
+          radius: Math.hypot(texture.orig.width, texture.orig.height) * 0.5 };
+      });
+      return { frames, fps, loop: clip.loop !== false, radius: Math.max(...frames.map(frame => frame.radius)) };
     });
     this.layer = new ParticleContainer({ dynamicProperties: { position: true, uvs: true, rotation: true, vertex: true } });
     renderer.worldRoot.addChildAt(this.layer, renderer.worldRoot.getChildIndex(renderer.entityLayer));
@@ -38,14 +46,21 @@ export class PixiSwarmLayer {
     for (let i = 0; i < count; i++) {
       const id = swarm.activeIds[i], x = swarm.posX[id] * this.worldScale + this.offsetX;
       const y = swarm.posY[id] * this.worldScale + this.offsetY;
-      const frame = this.frames[(swarm.animClip?.[id] ?? 0) % this.frames.length];
+      const clip = this.clips[(swarm.animClip?.[id] ?? 0) % this.clips.length];
       const size = (swarm.scale?.[id] ?? 1) * this.scale;
       if (this.cull) {
         const sx = (x - camera.x) * zoom + halfW + camera.shakeX;
         const sy = (y - camera.y) * zoom + halfH + camera.shakeY;
-        const radius = frame.radius * Math.abs(size) * zoom;
+        const radius = clip.radius * Math.abs(size) * zoom;
         if (sx + radius < 0 || sx - radius > screen.width || sy + radius < 0 || sy - radius > screen.height) continue;
       }
+      let frameIndex = 0;
+      if (clip.frames.length > 1) {
+        const time = swarm.animTime?.[id] ?? 0;
+        const elapsedFrames = Number.isFinite(time) ? Math.max(0, Math.floor(time * clip.fps)) : 0;
+        frameIndex = clip.loop ? elapsedFrames % clip.frames.length : Math.min(elapsedFrames, clip.frames.length - 1);
+      }
+      const frame = clip.frames[frameIndex];
       let particle = this.particles[used];
       const texture = swarm.flash?.[id] > 0 ? frame.white : frame.texture;
       if (!particle) {

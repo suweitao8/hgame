@@ -64,3 +64,16 @@ const crowd = renderer.createSwarmLayer({ textures: ['enemy_chaser'], scale: 0.5
 ```
 
 The layer reads live IDs, positions, scale, rotation, clip IDs and hit-flash state from the CPU swarm. It uses Pixi `Particle` instances sharing the atlas, batches additions, and reuses particles as units enter or leave the view. `worldScale` scales simulation positions; `scale` scales sprites. Set `syncRotation`, `flipByDirection`, or `cull: false` when required. This adapter does not consume the GPU-only swarm texture and its per-frame CPU synchronization cost still depends on the number of active units.
+
+For animated crowds, bake sprite sheets into the same atlas and pass `clips` instead of `textures`:
+
+```js
+const crowd = renderer.createSwarmLayer({
+  clips: [
+    { frames: ['walk/0', 'walk/1', 'walk/2', 'walk/3'], fps: 8 },
+    { frames: ['attack/0', 'attack/1', 'attack/2'], fps: 12, loop: false },
+  ],
+});
+```
+
+The swarm's `animClip[id]` selects the clip and `animTime[id]` selects its frame in seconds; time is owned by the simulation and is not reset automatically when the clip changes. For an unpromoted swarm unit, set `swarm.animTime[id] = 0` when switching clips if playback should restart. Units promoted into the combat ECS can have their clip overwritten by ECS synchronization; coordinate changes with the ECS. White hit-flash frames are used when available. Animated clips keep the same shared-atlas particle rendering and off-screen culling as static crowds.

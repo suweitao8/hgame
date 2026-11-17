@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Support sprite-sheet clips for Pixi CPU swarms using the simulation's per-unit animation time and existing shared-atlas particle rendering.
+
 - Let new 3D starters opt into a scene-owned procedural sky and optional baked environment reflections through presentation.json.
 
 - Allow Pixi scenes to configure persistent bloom independently of temporary shockwaves, preserving glow when effects end.
