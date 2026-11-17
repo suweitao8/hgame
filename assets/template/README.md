@@ -12,6 +12,7 @@
 - `hgame.project.json`：使用 `--preset` 生成时会包含这个文件。`runtime: "entry-graph"` 按入口保留运行时代码。计算式导入可以通过 `includeRuntime`（相对 `vendor/hgame/`）和 `includeSource`（相对 `src/`）补充。
 - `game.config.json`：游戏 `id`、名称、`version`、入口 HTML 与宿主协议元数据。
 - `assets.manifest.json`：美术/音频资产清单（路径、SHA-256 与体积元数据，提交到 Git；二进制文件本身由 `.gitignore` 忽略，通过统一资产库同步）。
+- `assets/catalog.json`：预设项目的逻辑资源 ID、文件和资源组。代码可按 ID 加载。将 `hgame.project.json` 中的 `assetMode` 改为 `catalog` 后，发布会收集目录列出的资源和脚本、HTML、CSS 直接引用的文件。
 - `scripts/assets.mjs` & `scripts/package-game.mjs`：统一资产同步与精简依赖追踪打包脚本。
 
 ## 统一美术资产管理（Git 只维护代码与清单）

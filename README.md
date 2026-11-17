@@ -55,6 +55,7 @@ npm run release
 
 ## Runtime Subsystems
 
+- **Asset catalog**: logical media IDs, scoped loading and catalog-based release selection. [Asset catalog workflow](docs/guides/ASSET-CATALOG.md)
 - **Core & Sim**: `Scene/Entity/Component`, `GameplayTags`, `app.renderAlpha`, `app.hitStop`, `TweenManager`, `SpringDamper1D/2D/3D`, `sim/` (`createSeededRng`, `hashState`, `runScripted`).
 - **Gameplay**: attributes, resource costs, Buff/Debuff stacking, periodic effects, cooldowns, charges, casting, channeling and buffered input. Import `GameplayComponent` or `createGameplayActor` from `gameplay/index.js`. [Gameplay guide](docs/guides/systems/17-gameplay.md)
 - **Skill timing**: drive animation, sound and visual cues from the same fixed-step timeline as skill commitment and recovery. [Ability timeline guide](docs/guides/systems/21-ability-timelines.md)

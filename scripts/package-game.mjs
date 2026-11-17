@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { runToyPreflight } from './toy-preflight.mjs';
 import { normalizeReleaseProfile, runtimeSeeds } from './project-profiles.mjs';
+import { casObjectPath, readAssetManifest, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -899,7 +899,7 @@ export async function packageGameRelease({
 
   // Copy non-Three runtime game assets while excluding authoring raw files (PSD/Blend/FBX/raw/)
   const assetsRoot = path.join(absGameDir, 'assets');
-  if (await existsDir(assetsRoot)) {
+  if (releaseProfile.assetMode === 'all' && await existsDir(assetsRoot)) {
     const allAssets = await collectFilesRecursively(assetsRoot);
     for (const f of allAssets) {
       const relPosix = toPosixRel(f.rel);
@@ -916,52 +916,76 @@ export async function packageGameRelease({
     }
   }
 
-  // Fallback for manifest-tracked art/audio assets stored outside Git in unified asset store
-  let resolvedFromStore = 0;
-  const assetManifestPath = path.join(absGameDir, 'assets.manifest.json');
-  if (await existsFile(assetManifestPath)) {
-    const manifest = JSON.parse(await readFile(assetManifestPath, 'utf8'));
-    const entries = manifest && typeof manifest.assets === 'object' ? manifest.assets : null;
-    if (entries) {
-      const storeDir = assetStore
-        ? path.resolve(assetStore)
-        : (process.env.HGAME_ASSET_STORE?.trim()
-            ? path.resolve(process.env.HGAME_ASSET_STORE.trim())
-            : path.join(os.homedir(), '.hgame', 'asset-store'));
-      const missingManifestAssets = [];
-      for (const relPosix of Object.keys(entries).sort()) {
-        const parts = relPosix.split('/');
-        const lowerParts = parts.map(p => p.toLowerCase());
-        if (lowerParts[0] === 'vendor' && lowerParts[1] === 'three') continue;
-        if (lowerParts.some(p => AUTHORING_ASSET_DIRS.has(p))) continue;
-        const base = lowerParts[lowerParts.length - 1];
-        const ext = path.posix.extname(base);
-        if (SKIP_BASENAMES.has(base) || AUTHORING_EXTS.has(ext)) continue;
+  const catalogRel = 'assets/catalog.json';
+  const catalogPath = path.join(absGameDir, catalogRel);
+  let assetsRealPath;
+  let projectRealPath;
+  async function catalogLocalFile(file, local) {
+    assetsRealPath ??= await realpath(assetsRoot);
+    const resolved = await realpath(local);
+    const relative = path.relative(assetsRealPath, resolved);
+    if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep)) {
+      throw new Error('Catalog file resolves outside assets/: ' + file);
+    }
+    projectRealPath ??= await realpath(absGameDir);
+    const projectRelative = path.relative(projectRealPath, resolved);
+    if (path.isAbsolute(projectRelative) || projectRelative === '..' || projectRelative.startsWith('..' + path.sep)) {
+      throw new Error('Catalog file resolves outside the project: ' + file);
+    }
+    return resolved;
+  }
+  let catalogFiles = [];
+  if (await existsFile(catalogPath)) {
+    const catalogModule = resolveSourceCandidate('vendor/hgame/platform/asset-catalog.js');
+    if (!catalogModule) throw new Error('Asset catalog requires HGame platform/asset-catalog.js');
+    const { listCatalogFiles } = await import(pathToFileURL(catalogModule).href);
+    const localCatalog = await catalogLocalFile('catalog.json', catalogPath);
+    catalogFiles = listCatalogFiles(JSON.parse(await readFile(localCatalog, 'utf8')));
+    includedFiles.set(catalogRel, localCatalog);
+  } else if (releaseProfile.assetMode === 'catalog') {
+    throw new Error('assetMode catalog requires assets/catalog.json');
+  }
 
-        const targetRel = `assets/${relPosix}`;
-        if (includedFiles.has(targetRel)) continue;
-
-        const sha = typeof entries[relPosix]?.sha256 === 'string' ? entries[relPosix].sha256.toLowerCase() : '';
-        const blobAbs = /^[a-f0-9]{64}$/.test(sha) ? path.join(storeDir, 'objects', sha.slice(0, 2), sha) : null;
-        if (blobAbs && (await existsFile(blobAbs))) {
-          includedFiles.set(targetRel, blobAbs);
-          resolvedFromStore++;
-        } else {
-          missingManifestAssets.push(relPosix);
-        }
-      }
-      if (missingManifestAssets.length > 0) {
-        throw new Error(
-          `Missing art assets declared in assets.manifest.json (${missingManifestAssets.slice(0, 5).join(', ')}` +
-          `${missingManifestAssets.length > 5 ? `, +${missingManifestAssets.length - 5} more` : ''}). ` +
-          'Run `npm run assets -- pull` or set HGAME_ASSET_STORE before packaging.',
-        );
-      }
-      if (resolvedFromStore > 0) {
-        notes.push(`Resolved ${resolvedFromStore} manifest asset(s) directly from unified store (${storeDir}).`);
-      }
+  // The catalog names logical resources. The CAS manifest maps files to bytes.
+  const { assets: assetManifest } = await readAssetManifest(absGameDir);
+  const files = new Set(catalogFiles);
+  if (releaseProfile.assetMode === 'all') {
+    for (const file of Object.keys(assetManifest)) {
+      if (!shouldIgnoreForAssetTracking(file)) files.add(file);
     }
   }
+  let resolvedFromStore = 0;
+  const storeDir = resolveAssetStoreDir(assetStore);
+  const requiredCatalogFiles = new Set(catalogFiles);
+  const missing = [];
+  for (const file of [...files].sort()) {
+    const parts = file.split('/');
+    if (/[\\:\x00-\x1f]/.test(file) || parts.some(part => !part || part === '.' || part === '..' || /[. ]$/.test(part))) {
+      throw new Error('Invalid release asset path: ' + file);
+    }
+    const lower = parts.map(part => part.toLowerCase());
+    const basename = lower.at(-1);
+    if (shouldIgnoreForAssetTracking(file) || lower.some(part => AUTHORING_ASSET_DIRS.has(part)) ||
+      SKIP_BASENAMES.has(basename) || AUTHORING_EXTS.has(path.posix.extname(basename))) {
+      if (requiredCatalogFiles.has(file)) throw new Error('Catalog asset is not a runtime file: ' + file);
+      continue;
+    }
+    const target = `assets/${file}`;
+    const local = path.join(assetsRoot, file);
+    if (await existsFile(local)) {
+      includedFiles.set(target, requiredCatalogFiles.has(file) ? await catalogLocalFile(file, local) : local);
+      continue;
+    }
+    const sha = Object.hasOwn(assetManifest, file) ? assetManifest[file]?.sha256 : undefined;
+    const blob = typeof sha === 'string' && /^[a-f0-9]{64}$/i.test(sha) ? casObjectPath(storeDir, sha) : null;
+    if (blob && await existsFile(blob)) { includedFiles.set(target, blob); resolvedFromStore++; }
+    else missing.push(file);
+  }
+  if (missing.length) {
+    const preview = missing.slice(0, 5).join(', ') + (missing.length > 5 ? `, +${missing.length - 5} more` : '');
+    throw new Error('Missing art assets declared in the catalog or assets.manifest.json (' + preview + '). Restore the files or set HGAME_ASSET_STORE.');
+  }
+  if (resolvedFromStore) notes.push(`Resolved ${resolvedFromStore} manifest asset(s) directly from unified store (${storeDir}).`);
 
   // Transform assets in-memory first so Toy target can apply contenthash & SDK injection cleanly.
   const esbuild = await loadOptionalEsbuild(minify);
@@ -1114,6 +1138,8 @@ export async function packageGameRelease({
     profile: project.profile,
     renderer: project.renderer,
     runtime: releaseProfile.runtime,
+    assetMode: releaseProfile.assetMode,
+    catalogAssets: catalogFiles.length,
     physics: project.physics,
     wasm: includedWasm,
     wasmSkipped: physicsDecision && !physicsDecision.bundle ? physicsDecision.reason : null,

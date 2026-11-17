@@ -42,6 +42,7 @@ Use `--preset horde` to start with batched swarm simulation and `SpriteCrowd2D`.
 
 ## 4. Curate Art & Audio & Sync Off-Git CAS
 
+- **Runtime asset IDs and scoped loading**: author `assets/catalog.json`, use `createAssetCatalog` and release a scope when its scene unloads. `assetMode: "catalog"` in `hgame.project.json` selects catalog assets for release. [Asset catalog workflow](ASSET-CATALOG.md)
 - **2D Actor Cutout**: generate 1K pure white `#FFFFFF` `3x3` grid sheets, shadow-free:
   `npm run process:assets -- --input sheet.png --grid 3 --bg white --mode actor --out-dir "<dir>/assets/actors"`
 - **Audio Normalization** (when using real `.mp3`; otherwise skip and use `playSynth` + `createBgm` 0-KB synth):

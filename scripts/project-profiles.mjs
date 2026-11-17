@@ -52,11 +52,13 @@ export function runtimeSeeds(project) {
 
 /** Read packaging metadata independently of runtime engine and WebAsset configurations. */
 export function normalizeReleaseProfile(input) {
-  if (input === undefined) return { runtime: 'compat', includeRuntime: [], includeSource: [] };
+  if (input === undefined) return { runtime: 'compat', includeRuntime: [], includeSource: [], assetMode: 'all' };
   if (!input || input.schemaVersion !== 1 || !['entry-graph', 'compat'].includes(input.runtime)) {
     throw new Error('hgame.project.json requires schemaVersion 1 and runtime entry-graph or compat');
   }
   if (input.preset !== undefined) getProjectPreset(input.preset);
+  const assetMode = input.assetMode ?? 'all';
+  if (assetMode !== 'all' && assetMode !== 'catalog') throw new Error('assetMode must be all or catalog');
   function explicitModules(field, base) {
     const entries = input[field] ?? [];
     if (!Array.isArray(entries)) throw new TypeError(field + ' must be an array of module paths');
@@ -67,5 +69,5 @@ export function normalizeReleaseProfile(input) {
     }
     return [...new Set(entries)];
   }
-  return { runtime: input.runtime, includeRuntime: explicitModules('includeRuntime', 'vendor/hgame'), includeSource: explicitModules('includeSource', 'src') };
+  return { runtime: input.runtime, includeRuntime: explicitModules('includeRuntime', 'vendor/hgame'), includeSource: explicitModules('includeSource', 'src'), assetMode };
 }

@@ -161,7 +161,11 @@ async function main() {
     await writeFile(path.join(stage, 'engine.config.json'), JSON.stringify(options.recipe, null, 2) + '\n');
     if (options.preset) {
       await writeFile(path.join(stage, 'hgame.project.json'), JSON.stringify({
-        schemaVersion: 1, preset: options.preset, runtime: 'entry-graph', includeRuntime: [], includeSource: [],
+        schemaVersion: 1, preset: options.preset, runtime: 'entry-graph', includeRuntime: [], includeSource: [], assetMode: 'all',
+      }, null, 2) + '\n');
+      await mkdir(path.join(stage, 'assets'), { recursive: true });
+      await writeFile(path.join(stage, 'assets', 'catalog.json'), JSON.stringify({
+        schemaVersion: 1, assets: {}, groups: {},
       }, null, 2) + '\n');
     }
 

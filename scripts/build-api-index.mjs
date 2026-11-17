@@ -16,6 +16,7 @@ const outFile = path.join(root, 'docs', 'api', 'API-INDEX.json');
 const check = process.argv.includes('--check');
 
 const tiers = [
+  [/^platform\/asset-catalog\.js$/, 'experimental'],
   [/^(index|core\/|platform\/|animation\/|time\/|ui\/|world\/(tilemap|spatial2d|swarm-ecs|gpu-swarm-webgl2))/, 'stable'],
   [/^integrations\/(canvas2d|webgl2d|three|camera3d|quality3d|touch-controls|trace)/, 'stable'],
   [/^physics\//, 'stable'],
