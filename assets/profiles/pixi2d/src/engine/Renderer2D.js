@@ -3,8 +3,12 @@ import { AdvancedBloomFilter } from 'pixi-filters';
 import { PixiSwarmLayer } from './PixiSwarmLayer.js';
 
 export class Renderer2D {
-  constructor(atlas) {
+  constructor(atlas, { maxPixels = 2300000, maxPixelRatio = 2 } = {}) {
+    if (!Number.isFinite(maxPixels) || maxPixels < 1 || !Number.isFinite(maxPixelRatio) || maxPixelRatio <= 0) {
+      throw new RangeError('Renderer pixel budget and maximum pixel ratio must be positive');
+    }
     this.atlas = atlas;
+    this.maxPixels = maxPixels; this.maxPixelRatio = maxPixelRatio;
     this.app = new Application();
     this.entityMap = new Map();
     this.spritePool = [];
@@ -12,7 +16,9 @@ export class Renderer2D {
     this.camera = { x: 0, y: 0, targetX: 0, targetY: 0, zoom: 1, shakeX: 0, shakeY: 0 };
   }
   async init(mount) {
-    await this.app.init({ preference: 'webgpu', resizeTo: mount, resolution: Math.min(2, devicePixelRatio || 1), autoDensity: true, backgroundColor: 0x0b101b, autoStart: false });
+    this.mount = mount;
+    const { width, height, resolution } = this.planViewport();
+    await this.app.init({ preference: 'webgpu', width, height, resolution, autoDensity: true, backgroundColor: 0x0b101b, autoStart: false });
     this.app.ticker.stop();
     this.app.canvas.id = 'game';
     this.app.canvas.setAttribute('aria-label', '游戏画面');
@@ -35,6 +41,27 @@ export class Renderer2D {
     this.app.stage.addChild(this.worldRoot);
     this.bloom = new AdvancedBloomFilter({ threshold: 0.62, bloomScale: 0.4, brightness: 1, blur: 3 });
     this.app.stage.filters = [];
+    this.viewport = { width, height, resolution };
+    if (typeof ResizeObserver === 'function') {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(mount);
+    }
+  }
+  planViewport() {
+    const width = Math.max(1, Math.floor(this.mount?.clientWidth || 1));
+    const height = Math.max(1, Math.floor(this.mount?.clientHeight || 1));
+    const deviceRatio = Number(globalThis.devicePixelRatio) || 1;
+    const resolution = Math.max(1 / Math.min(width, height), Math.min(deviceRatio, this.maxPixelRatio, Math.sqrt(this.maxPixels / (width * height))));
+    return { width, height, resolution };
+  }
+  resize() {
+    if (this.disposed || !this.app.renderer) return false;
+    const next = this.planViewport(), prev = this.viewport;
+    if (prev && prev.width === next.width && prev.height === next.height && prev.resolution === next.resolution) return false;
+    this.app.renderer.resize(next.width, next.height, next.resolution);
+    this.viewport = next;
+    this.onResize?.();
+    return true;
   }
   createSwarmLayer(options) {
     const layer = new PixiSwarmLayer(this, options);
@@ -108,6 +135,7 @@ export class Renderer2D {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.resizeObserver?.disconnect(); this.resizeObserver = null; this.onResize = null;
     for (const layer of this.swarmLayers) layer.dispose();
     for (const sprite of this.spritePool) sprite.destroy();
     this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.entityMap.clear();

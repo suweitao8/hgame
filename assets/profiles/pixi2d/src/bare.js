@@ -14,8 +14,9 @@ const mount = document.querySelector('#game-canvas');
 await renderer.init(mount);
 let visibility;
 const app = createGameApplication({ project: defineProject(engineConfig), gameId: gameConfig.id, gameVersion: gameConfig.version,
-  renderer: { render() { renderer.render(); }, resize() {}, dispose() { visibility?.dispose(); renderer.dispose(); } } });
+  renderer: { render() { renderer.render(); }, resize() { renderer.resize(); }, dispose() { visibility?.dispose(); renderer.dispose(); } } });
 await app.installFeatures();
+renderer.onResize = () => { if (app.project.tickHz === 0 && app.running && !app.paused) renderer.render(); };
 visibility = bindVisibilitySuspension(app);
 app.scenes.add(new Scene('main'));
 app.scenes.start('main'); app.start(); visibility.sync(); mount.dataset.engineReady = 'true';

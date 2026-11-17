@@ -34,8 +34,9 @@ for (const button of hud.burstButtons) {
 hud.addEnemies.addEventListener('click', () => arena.addEnemies(10000));
 let visibility;
 const app = createGameApplication({ project: defineProject(engineConfig), gameId: gameConfig.id, gameVersion: gameConfig.version,
-  renderer: { render() { renderer.render(); }, resize() {}, dispose() { visibility?.dispose(); input.dispose(); juice.dispose(); renderer.dispose(); } } });
+  renderer: { render() { renderer.render(); }, resize() { renderer.resize(); }, dispose() { visibility?.dispose(); input.dispose(); juice.dispose(); renderer.dispose(); } } });
 await app.installFeatures();
+renderer.onResize = () => { if (app.project.tickHz === 0 && app.running && !app.paused) renderer.render(); };
 const scene = app.scenes.add(new Scene('arena'));
 const controller = scene.add(new Entity({ name: 'arena' }));
 let controls = {}, fps = 0, elapsed = 0, fpsFrames = 0, fpsSince = performance.now();
