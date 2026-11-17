@@ -2,11 +2,14 @@ import { Particle, MeshRope, Point } from 'pixi.js';
 import { ShockwaveFilter } from 'pixi-filters';
 import { gsap } from 'gsap';
 
+const hitEase = gsap.parseEase('elastic.out(1, 0.45)');
+
 export class JuiceSystem {
   constructor(renderer, capacity = 10000) {
     this.renderer = renderer; this.trauma = 0;
     this.hitStop = 0; this.simTimeScale = 1; this.clock = 0; this.active = 0; this.visibleParticles = 0;
-    this.effects = []; this.liveParticles = []; this.shockwaves = new Set();
+    this.effects = []; this.liveParticles = []; this.shockwaves = new Set(); this.hitTweens = new Map();
+    this.expiredParticles = [];
     this.particles = Array.from({ length: capacity }, () => {
       const particle = new Particle({ texture: renderer.atlas.get('particle_soft'), x: 0, y: 0, alpha: 0 });
       return { particle, life: 0, duration: 0, vx: 0, vy: 0, start: 1, end: 0, drag: 0 };
@@ -18,21 +21,18 @@ export class JuiceSystem {
   }
   triggerHitJuice(id, { flashSec = 0.065, squashX = 1.35, squashY = 0.72 } = {}) {
     const entry = this.renderer.entityMap.get(id); if (!entry) return;
-    entry.flashTimer = flashSec; gsap.killTweensOf(entry); entry.animScaleX = squashX; entry.animScaleY = squashY;
-    gsap.to(entry, { animScaleX: 1, animScaleY: 1, duration: 0.22, ease: 'elastic.out(1, 0.45)' });
+    entry.flashTimer = flashSec; entry.animScaleX = squashX; entry.animScaleY = squashY;
+    this.hitTweens.set(id, { entry, squashX, squashY, elapsed: 0 });
   }
   triggerHitStop(duration = 0.045, scale = 0.04) { this.hitStop = Math.max(this.hitStop, duration); this.simTimeScale = scale; }
   addTrauma(amount = 0.4) { this.trauma = Math.min(1, this.trauma + amount); }
   spawnShockwave(x, y) {
     const center = this.renderer.worldToScreen(x, y);
     const filter = new ShockwaveFilter({ center, time: 0 });
-    this.shockwaves.add(filter);
-    this.renderer.app.stage.filters = [this.renderer.bloom, ...this.shockwaves];
-    gsap.to(filter, { time: 0.45, duration: 0.45, onComplete: () => {
-      this.shockwaves.delete(filter);
-      if (this.renderer.app.stage) this.renderer.app.stage.filters = this.shockwaves.size ? [this.renderer.bloom, ...this.shockwaves] : [];
-      filter.destroy();
-    } });
+    this.shockwaves.add(filter); this.syncShockwaveFilters();
+  }
+  syncShockwaveFilters() {
+    this.renderer.app.stage.filters = this.shockwaves.size ? [this.renderer.bloom, ...this.shockwaves] : [];
   }
   burstParticles(x, y, count, opts = {}) {
     for (let i = 0; i < count; i++) {
@@ -58,13 +58,27 @@ export class JuiceSystem {
   }
   update(dt) {
     this.clock += dt; this.hitStop = Math.max(0, this.hitStop - dt); if (!this.hitStop) this.simTimeScale = 1;
+    for (const [id, tween] of this.hitTweens) {
+      if (this.renderer.entityMap.get(id) !== tween.entry) { this.hitTweens.delete(id); continue; }
+      tween.elapsed = Math.min(0.22, tween.elapsed + dt);
+      const eased = hitEase(tween.elapsed / 0.22);
+      tween.entry.animScaleX = tween.squashX + (1 - tween.squashX) * eased;
+      tween.entry.animScaleY = tween.squashY + (1 - tween.squashY) * eased;
+      if (tween.elapsed >= 0.22) this.hitTweens.delete(id);
+    }
+    let filtersChanged = false;
+    for (const filter of this.shockwaves) {
+      filter.time += dt;
+      if (filter.time >= 0.45) { this.shockwaves.delete(filter); filter.destroy(); filtersChanged = true; }
+    }
+    if (filtersChanged) this.syncShockwaveFilters();
     this.trauma = Math.max(0, this.trauma - dt * 1.5);
     const shake = 15 * this.trauma * this.trauma;
     this.renderer.camera.shakeX = Math.sin(this.clock * 67) * shake; this.renderer.camera.shakeY = Math.cos(this.clock * 83) * shake;
     let effectWrite = 0;
     for (const life of this.effects) if (life > dt) this.effects[effectWrite++] = life - dt;
     this.effects.length = effectWrite;
-    let write = 0; this.visibleParticles = 0; const expired = [];
+    let write = 0; this.visibleParticles = 0; const expired = this.expiredParticles; expired.length = 0;
     const camera = this.renderer.camera, screen = this.renderer.app.screen;
     for (const p of this.liveParticles) {
       p.life = Math.max(0, p.life - dt); const t = p.life / p.duration;
@@ -91,8 +105,10 @@ export class JuiceSystem {
     this.trail.visible = true; this.trailTime = 0.14;
   }
   dispose() {
-    for (const filter of this.shockwaves) { gsap.killTweensOf(filter); filter.destroy(); }
-    this.shockwaves.clear();
-    for (const entry of this.renderer.entityMap.values()) gsap.killTweensOf(entry);
+    this.renderer.app.stage.filters = [];
+    for (const filter of this.shockwaves) filter.destroy();
+    this.shockwaves.clear(); this.hitTweens.clear();
+    this.liveParticles.length = 0; this.freeParticles.length = 0; this.particles.length = 0;
+    this.expiredParticles.length = 0; this.effects.length = 0;
   }
 }

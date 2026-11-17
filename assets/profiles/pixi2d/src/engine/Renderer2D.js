@@ -26,6 +26,7 @@ export class Renderer2D {
     this.entityLayer = new Container({ sortableChildren: true });
     this.enemyLayer = new ParticleContainer({ dynamicProperties: { position: true, uvs: true, rotation: true, vertex: true } });
     this.enemyParticles = [];
+    this.enemyPool = [];
     this.trailLayer = new Container();
     this.particleLayer = new ParticleContainer({ dynamicProperties: { position: true, vertex: true, rotation: true, color: true, uvs: true } });
     this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, this.trailLayer, this.particleLayer);
@@ -34,12 +35,17 @@ export class Renderer2D {
     this.app.stage.filters = [];
   }
   syncEnemies(enemies, time) {
+    if (this.enemyParticles.length > enemies.length) {
+      const removed = this.enemyParticles.splice(enemies.length);
+      for (let i = 0; i < removed.length; i += 10000) this.enemyLayer.removeParticle(...removed.slice(i, i + 10000));
+      for (const particle of removed) this.enemyPool.push(particle);
+    }
     for (let i = 0; i < enemies.length; i++) {
       const enemy = enemies[i];
       let particle = this.enemyParticles[i];
       const key = (enemy.elite ? 'enemy_elite' : 'enemy_chaser') + (enemy.flash > 0 ? '_white' : '');
       if (!particle) {
-        particle = new Particle({ texture: this.atlas.get(key), anchorX: 0.5, anchorY: 0.5 });
+        particle = this.enemyPool.pop() ?? new Particle({ texture: this.atlas.get(key), anchorX: 0.5, anchorY: 0.5 });
         this.enemyParticles.push(particle);
         this.enemyLayer.addParticle(particle);
       }
@@ -92,5 +98,13 @@ export class Renderer2D {
   screenToWorld(x, y) { return { x: (x - this.app.screen.width / 2 - this.camera.shakeX) / this.camera.zoom + this.camera.x, y: (y - this.app.screen.height / 2 - this.camera.shakeY) / this.camera.zoom + this.camera.y }; }
   worldToScreen(x, y) { return { x: (x - this.camera.x) * this.camera.zoom + this.app.screen.width / 2 + this.camera.shakeX, y: (y - this.camera.y) * this.camera.zoom + this.app.screen.height / 2 + this.camera.shakeY }; }
   render() { this.app.renderer.render(this.app.stage); }
-  dispose() { this.app.destroy({ removeView: true }, { children: true }); this.atlas.dispose(); }
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const sprite of this.spritePool) sprite.destroy();
+    this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.entityMap.clear();
+    this.app.stage.filters = [];
+    this.bloom.destroy();
+    this.app.destroy({ removeView: true }, { children: true }); this.atlas.dispose();
+  }
 }
