@@ -89,7 +89,7 @@ function parse(argv) {
     ...(physics ? { physics } : {}),
     ...(result.tickHz === null ? {} : { tickHz: result.tickHz }), features,
   });
-  const usePixi = result.profile === '2d' && !explicitRenderer && (result.preset === null || result.preset === '2d' || result.preset === 'pixi2d');
+  const usePixi = result.profile === '2d' && !explicitRenderer && (result.preset === null || result.preset === '2d' || result.preset === 'pixi2d' || result.preset === 'horde');
   const starter = usePixi ? 'pixi2d' : result.bare ? result.profile + '-bare' : (result.preset === '2d' && explicitRenderer ? '2d' : preset?.starter ?? result.profile);
   return { ...result, target, slug, starter, name: result.name || slug, recipe };
 }
@@ -147,8 +147,10 @@ async function main() {
     if (options.starter === 'pixi2d') {
       await cp(path.join(mainSource, 'dist'), stage, { recursive: true, force: true });
       await cp(path.join(mainSource, 'src'), path.join(stage, 'src'), { recursive: true, force: true });
-      if (options.bare) await cp(path.join(mainSource, 'dist', 'index.bare.html'), path.join(stage, 'index.html'), { force: true });
-      await cp(path.join(mainSource, options.bare ? 'index.bare.html' : 'index.html'), path.join(stage, 'index.source.html'));
+      const sourceEntry = options.bare ? 'index.bare.html' : options.preset === 'horde' ? 'index.horde.html' : 'index.html';
+      if (sourceEntry !== 'index.html') await cp(path.join(mainSource, 'dist', sourceEntry), path.join(stage, 'index.html'), { force: true });
+      await cp(path.join(mainSource, sourceEntry), path.join(stage, 'index.source.html'));
+      if (options.preset === 'horde' && !options.bare) await cp(path.join(profiles, 'horde', 'swarm.json'), path.join(stage, 'src', 'swarm.json'));
       await cp(path.join(mainSource, 'install-build.mjs'), path.join(stage, 'scripts', 'install-pixi-build.mjs'));
       const seed = spawnSync(process.execPath, ['scripts/install-pixi-build.mjs', '--seed', path.join(mainSource, 'dist', 'assets')], { cwd: stage, encoding: 'utf8' });
       if (seed.error || seed.status !== 0) throw new Error('Failed to record Pixi build assets: ' + (seed.stderr || seed.error?.message || 'unknown error'));
@@ -179,7 +181,8 @@ async function main() {
       await writeFile(path.join(stage, 'hgame.project.json'), JSON.stringify({
         schemaVersion: 1, ...(options.preset ? { preset: options.preset } : {}), runtime: 'entry-graph',
         includeRuntime: options.starter === 'pixi2d'
-          ? ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js']
+          ? ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
+            ...(options.preset === 'horde' && !options.bare ? ['world/swarm-ecs.js'] : [])]
           : [],
         includeSource: [], assetMode: 'all',
       }, null, 2) + '\n');

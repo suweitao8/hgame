@@ -28,6 +28,8 @@ Catalog entries must have `kind: "image"`; extra frames use the image dimensions
 
 For larger CPU-simulated crowds, use the existing HGame `createSwarmSimulation` and a Pixi swarm layer. Call `swarm.step` in the scene's fixed update and synchronize once per visual update; no extra application loop or per-unit game objects are required:
 
+`node scripts/create-game.mjs <new-game-dir> --preset horde` creates this combination with a configurable `src/swarm.json`. Add `--bare` for an empty Pixi scene, or `--renderer webgl2d` to retain the previous custom-renderer horde starter. Existing projects are not changed.
+
 ```js
 const crowd = renderer.createSwarmLayer({ textures: ['enemy_chaser'], scale: 0.5 });
 // fixedUpdate(dt): swarm.step(dt, { heroX, heroY });

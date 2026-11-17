@@ -30,7 +30,8 @@ const CAPABILITY_MAP = [
   { need: 'App loop, Scene, Entity, Tags, hitStop', module: 'index.js / core/*', keyApis: 'HGame.defineProject, createGameApplication, Scene, Entity({name}), addTag, scene.queryTags' },
   { need: 'Tweens, springs, idle/attack juice', module: 'time/tween.js', keyApis: 'scene.tweens, EASING, damp, dampAngle, SpringDamper1D/2D/3D' },
   { need: '2D sprites, camera, tilemap, A* path', module: 'integrations/canvas2d.js, animation/*, world/tilemap.js', keyApis: 'createCanvas2DAdapter, Camera2D, Sprite2D(groundShadow/hitFlash), SpriteSheet.fromGrid, findGridPath' },
-  { need: '2D 5k-150k+ hordes / bullets', module: 'integrations/webgl2d.js, world/swarm-ecs.js, world/gpu-swarm-webgl2.js', keyApis: 'createWebGL2DAdapter, SpriteCrowd2D.bindSwarm/bindGpuSwarm, createSwarmSimulation, createGpuSwarmWebGL2' },
+  { need: '2D CPU swarms with PixiJS', module: 'world/swarm-ecs.js, generated project src/engine/PixiSwarmLayer.js', keyApis: 'createSwarmSimulation, renderer.createSwarmLayer, crowd.sync; npm run api -- --recipe horde' },
+  { need: 'Legacy 2D GPU swarms / bullets', module: 'integrations/webgl2d.js, world/gpu-swarm-webgl2.js', keyApis: 'createWebGL2DAdapter, SpriteCrowd2D.bindGpuSwarm, createGpuSwarmWebGL2' },
   { need: '2D ambient lighting, 32 lights, bloom', module: 'integrations/post2d.js', keyApis: 'setAmbientLight, addLight2D, setLights2D, clearLights2D, setPost2D' },
   { need: '3D presentation, sky, lights, post, culling, camera', module: 'integrations/three.js, sky3d.js, lighting3d.js, post3d.js, culling3d.js, camera3d.js', keyApis: 'src/presentation.json (3D starter), createThreeAdapter, createProceduralSky3D, createMegaLights3D, createPostProcessVolumeStack, createCameraRig3D' },
   { need: '3D terrain + Rapier heightfield, NavMesh', module: 'world/terrain3d.js, world/navmesh3d.js', keyApis: 'createHeightfieldTerrain3D, fbmNoise2D, scatterPositions, attachPhysics, createNavMesh3D' },
@@ -53,40 +54,7 @@ const CAPABILITY_MAP = [
 
 const RECIPES = {
   '2d': `// Create: ${recipeCreateCommand('2d')}\n// The generated src/bare.js is the empty PixiJS scene entry.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/bare.js'), 'utf8')}`,
-  horde: `// Create: ${recipeCreateCommand('horde')}
-import { defineProject } from '../vendor/hgame/core/config.js';
-import { createGameApplication } from '../vendor/hgame/core/application.js';
-import { Scene } from '../vendor/hgame/core/scene.js';
-import { Entity } from '../vendor/hgame/core/entity.js';
-import { Component } from '../vendor/hgame/core/component.js';
-import { createSwarmSimulation } from '../vendor/hgame/world/swarm-ecs.js';
-import { createWebGL2DAdapter, SpriteCrowd2D } from '../vendor/hgame/integrations/webgl2d.js';
-import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
-
-const engineConfig = await fetch('./engine.config.json').then(r => r.json());
-const canvas = document.querySelector('#game');
-const project = defineProject(engineConfig);
-const renderer = createWebGL2DAdapter({ canvas, width: 960, height: 540, background: '#090d16' });
-const app = createGameApplication({ project, gameId: 'horde', gameVersion: '1.0.0', renderer });
-await app.installFeatures();
-
-const scene = app.scenes.add(new Scene('main'));
-const swarm = createSwarmSimulation({ capacity: 12000, cellSize: 48, originX: -3072, originY: -3072 });
-swarm.spawnWave({ count: 300, minRadius: 180, maxRadius: 260, speed: 30 });
-const hordeEntity = scene.add(new Entity({ name: 'horde' }));
-const crowd = hordeEntity.addComponent(new SpriteCrowd2D({ capacity: 12000, width: 12, height: 12 })).bindSwarm(swarm);
-const vfx = createVfxSystem({ mode: 'webgl2d', sceneOrAdapter: renderer });
-hordeEntity.addComponent(new class extends Component {
-  fixedUpdate(dt) { swarm.step(dt, { heroX: 0, heroY: 0 }); vfx.update(dt); }
-  onDestroy() { vfx.dispose(); }
-}());
-renderer.setAmbientLight('#1f263a', 0.78);
-renderer.setPost2D({ bloomIntensity: 0.35, vignette: 0.25 });
-app.scenes.start('main');
-app.start();
-canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ tick: app.stats.ticks, activeUnits: swarm.count });
-window.addEventListener('pagehide', () => app.dispose(), { once: true });`,
+  horde: `// Create: ${recipeCreateCommand('horde')}\n// Generated src/horde.js connects the HGame CPU swarm to PixiJS.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/horde.js'), 'utf8')}`,
   '3d': `// Create: ${recipeCreateCommand('3d')}
 import * as THREE from '../assets/vendor/three/three.module.js';
 import { defineProject } from '../vendor/hgame/core/config.js';
