@@ -22,4 +22,8 @@ app.scenes.start('cards');
 app.start(); // No RAF: DOM updates only after commands.
 document.querySelector('#draw').addEventListener('click', () => app.dispatch({ type: 'draw' }));
 document.querySelector('#draw').disabled = false;
-window.addEventListener('pagehide', () => app.dispose(), { once: true });
+window.addEventListener('pagehide', function onPageHide(event) {
+  if (event.persisted) return;
+  window.removeEventListener('pagehide', onPageHide);
+  app.dispose();
+});

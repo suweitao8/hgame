@@ -195,4 +195,9 @@ window.__hgameState = () => ({ phase: sim.state.over ? 'over' : 'playing', tick:
   player: { x: sim.player.x, y: sim.player.y, z: sim.player.z, hp: sim.player.hp }, best: { ...best },
   running: app.running, disposed: app.disposed, scheduler: app.stats });
 canvas.dataset.engineReady = 'true';
-window.addEventListener('pagehide', () => { touch.dispose(); app.dispose(); }, { once: true });
+window.addEventListener('pagehide', function onPageHide(event) {
+  if (event.persisted) return;
+  window.removeEventListener('pagehide', onPageHide);
+  touch.dispose();
+  app.dispose();
+});

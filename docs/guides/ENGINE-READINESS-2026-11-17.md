@@ -74,6 +74,19 @@ Chrome 157 与 SwiftShader 在 3840×2160、DPR 2、中档下启动时，画布�
 
 本阶段 `npm run check:all` 通过 264 个主测试和 32 个 network 测试。7 种浏览器配置及固定基线视觉对比通过。软件渲染测试夹具和 WebAsset 硬件路径均通过两款参考游戏的完整生命周期、两次 WebGL 上下文恢复和 3D 缓冲区缩放检查。
 
+### 五分钟耐久测试与页面缓存恢复
+
+基于 `0d148e3` 的 WebAsset 游戏在 Chrome 157、RTX 4070、960×540、DPR 1 下各运行 300 秒。Survivor 以 3000 个敌人开局并点选 33 次升级。Arena 使用固定中档。测试使用参考游戏的无敌参数以持续施加负载。两款游戏四个时间窗均有战斗进展，P95/P99 为 7.0/7.1 ms，丢失模拟步和超过 50 ms 的帧均为零。
+
+| 样板 | 实测时长 | 击杀 | 最长帧 | 四个检查点的回收后 JS 堆 |
+|---|---:|---:|---:|---:|
+| 2D Survivor | 300.06 s | 83,461 | 27.8 ms | 3757–4203 KiB |
+| 3D Arena | 300.08 s | 105 | 20.9 ms | 6912–7081 KiB |
+
+分位数来自每段最多 600 个动画帧间隔样本，最长帧来自全量计数。堆读数只覆盖 JS。原始报告位于 `build/performance/webasset-soak-300.jsonl`。
+
+Chrome 还复现了从前进后退缓存返回时，两款旧样板的应用已被销毁。修复覆盖生成模板和样板游戏，`pagehide.persisted` 期间保留场景，真正退出时释放资源。原生导航探针移除了测试浏览器所见的本地 `no-store` 响应头，使页面满足缓存条件。两款修复后的样板各连续恢复两次，模拟步继续推进，按住的移动键已释放。原始报告位于 `build/performance/webasset-history-restore.jsonl`。
+
 ## 可试玩参考
 
 - [Horde Survivor](http://127.0.0.1:4175/local-games/survivor-2d/index.html)

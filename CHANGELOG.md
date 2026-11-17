@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve starter and reference game state when a browser caches the document during navigation. Continue disposing resources on page exit. Report the current scene in the bare starter state hooks.
+
 - Apply adaptive 3D resolution scaling to the capped drawing buffer. Keep the reduced scale when switching to a lower quality tier and honor the configured maximum on entry to auto mode.
 - Size 3D post-processing targets to the canvas drawing buffer and combine size and preset changes into one rebuild. Skip repeated renderer and target sizing when the dimensions are unchanged.
 

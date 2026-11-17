@@ -469,6 +469,16 @@ try {
     await page.locator('#game[data-engine-ready=true]').waitFor();
     const reloaded = await read();
     assert.deepEqual(reloaded.best, completed.best, `${id} persistence after reload`);
+    for (let i = 0; i < 2; i++) {
+      await page.evaluate(() => {
+        window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+        window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+      });
+      const restored = await read();
+      assert.equal(restored.running, true, `${id} remains running after cached navigation ${i + 1}`);
+      assert.equal(restored.disposed, false);
+      await page.waitForFunction(tick => window.__hgameState().tick > tick, restored.tick);
+    }
     await page.keyboard.down('d');
     const disposal = await page.evaluate(id => {
       const { app } = id === 'survivor-2d' ? window.__survivor : window.__arena;
@@ -476,11 +486,14 @@ try {
       let disposed = 0;
       const dispose = renderer.dispose.bind(renderer);
       renderer.dispose = () => { disposed++; return dispose(); };
-      const first = app.dispose(), second = app.dispose();
-      return { first, second, disposed, running: app.running, inputHeld: app.input.isDown('KeyD'),
+      const active = !app.disposed;
+      window.dispatchEvent(new PageTransitionEvent('pagehide'));
+      const exited = active && app.disposed;
+      const second = app.dispose();
+      return { exited, second, disposed, running: app.running, inputHeld: app.input.isDown('KeyD'),
         touchRoots: document.querySelectorAll('[data-hgame-touch-root]').length };
     }, id);
-    assert.deepEqual(disposal, { first: true, second: false, disposed: 1, running: false, inputHeld: false, touchRoots: 0 });
+    assert.deepEqual(disposal, { exited: true, second: false, disposed: 1, running: false, inputHeld: false, touchRoots: 0 });
     const stopped = await read();
     await page.waitForTimeout(150);
     await page.keyboard.up('d');

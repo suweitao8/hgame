@@ -30,11 +30,12 @@ async function getPort() {
 }
 async function serve(profile) {
   const project = path.join(tmp, 'sample-' + profile);
-  const selected = profile.startsWith('3d') ? '3d' : profile;
+  const selected = profile.startsWith('3d') ? '3d' : profile === '2d-bare' ? '2d' : profile;
   const result = spawnSync(process.execPath, [builder, project, '--profile', selected, '--no-git',
     ...(profile === '3d-physics' ? ['--with', 'physics3d'] : []),
     ...(profile === '3d-quality' ? ['--quality', 'auto'] : []),
     ...(profile === '3d-bare-low' ? ['--quality', 'low', '--bare'] : []),
+    ...(profile === '2d-bare' ? ['--bare'] : []),
 ], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error('Generate ' + profile + ': ' + result.stderr);
   const port = await getPort();
@@ -57,7 +58,7 @@ try {
     headless: true, ...(executablePath ? { executablePath } : {}),
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'],
   });
-  for (const profile of ['2d', '3d', '3d-physics', '3d-none', '3d-quality', '3d-bare-low', 'ui']) {
+  for (const profile of ['2d', '2d-bare', '3d', '3d-physics', '3d-none', '3d-quality', '3d-bare-low', 'ui']) {
     const url = await serve(profile);
     const page = await browser.newPage({
       viewport: { width: 960, height: 540 },
@@ -72,14 +73,21 @@ try {
     await page.waitForTimeout(650);
     let result;
     if (profile === 'ui') {
+      await page.locator('#draw:enabled').waitFor();
+    } else {
+      await page.locator('#game[data-engine-ready="true"]').waitFor({ timeout: 20000 });
+    }
+    await page.evaluate(() => {
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    if (profile === 'ui') {
       await page.locator('#draw').click();
       result = { text: await page.locator('#count').innerText() };
-      if (result.text !== '1') throw new Error('UI command did not advance');
+      if (result.text !== '1') throw new Error('UI command did not advance after cached navigation');
     } else {
       const canvas = page.locator('#game');
-      if (profile.startsWith('3d')) {
-        await page.locator('#game[data-engine-ready="true"]').waitFor({ timeout: 20000 });
-      }
+      const bare = profile === '2d-bare' || profile === '3d-bare-low';
       const before = await canvas.screenshot();
       await page.keyboard.down('d');
       await page.waitForTimeout(360);
@@ -87,7 +95,17 @@ try {
       const after = await canvas.screenshot();
       result = { canvasPixels: await canvas.evaluate(element => [element.width, element.height]),
         changed: !before.equals(after), bytes: after.length };
-      if (!result.changed && profile !== '3d-bare-low') throw new Error('Canvas did not update for ' + profile);
+      if (!result.changed && !bare) throw new Error('Canvas did not update after cached navigation for ' + profile);
+      if (bare) {
+        const activeScene = await page.evaluate(() => window.__hgameState().scene);
+        const expectedScene = profile === '2d-bare' ? 'main' : 'world';
+        if (activeScene !== expectedScene) throw new Error('Active scene did not survive cached navigation for ' + profile);
+        const exitedScene = await page.evaluate(() => {
+          window.dispatchEvent(new PageTransitionEvent('pagehide'));
+          return window.__hgameState().scene;
+        });
+        if (exitedScene !== null) throw new Error('Active scene remained after page exit for ' + profile);
+      }
       if (profile === '3d-bare-low') {
         const tier = await canvas.getAttribute('data-quality-tier');
         // Bare starters expose their controller through the canvas just like demo starters.

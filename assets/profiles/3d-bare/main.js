@@ -36,5 +36,9 @@ world.add(new THREE.HemisphereLight(0xffffff, 0x555555, 2));
 app.scenes.start('world');
 app.start();
 viewCanvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ scene: app.scenes.active?.name ?? null });
-window.addEventListener('pagehide', () => app.dispose(), { once: true });
+window.__hgameState = () => ({ scene: app.scenes.current?.name ?? null });
+window.addEventListener('pagehide', function onPageHide(event) {
+  if (event.persisted) return;
+  window.removeEventListener('pagehide', onPageHide);
+  app.dispose();
+});

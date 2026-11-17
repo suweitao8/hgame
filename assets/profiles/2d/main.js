@@ -52,4 +52,8 @@ actor.addComponent(new Move());
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.addEventListener('pagehide', () => app.dispose(), { once: true });
+window.addEventListener('pagehide', function onPageHide(event) {
+  if (event.persisted) return;
+  window.removeEventListener('pagehide', onPageHide);
+  app.dispose();
+});

@@ -143,8 +143,10 @@ app.start();
 // Async material generation and level assembly may complete after DOM load.
 // Host/browser QA must wait for a genuine started scene before sending input.
 document.querySelector('#game').dataset.engineReady = 'true';
-window.addEventListener('pagehide', () => {
+window.addEventListener('pagehide', function onPageHide(event) {
+  if (event.persisted) return;
+  window.removeEventListener('pagehide', onPageHide);
   app.dispose();
   levelView.dispose();
   void models.dispose().finally(() => materialPalette.dispose());
-}, { once: true });
+});
