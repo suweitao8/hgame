@@ -1,4 +1,5 @@
 import { cleanupAll } from '../internal/cleanup.js';
+import { releaseScopedImage, retainScopedImage } from '../internal/scoped-image.js';
 
 /** @typedef {'image' | 'json' | 'text' | 'bytes' | 'blob' | 'audio' | 'model' | 'url'} AssetKind */
 /** @typedef {{kind: AssetKind, path: string, files?: readonly string[]}} AssetCatalogEntry */
@@ -112,9 +113,9 @@ export function createAssetCatalog(data, { loader }) {
   function close(record) {
     if (!record.ready) return;
     record.ready = false;
-    const image = /** @type {{close?: () => void} | null} */ (record.value);
+    const image = record.value;
     record.value = undefined;
-    if (record.image) image?.close?.();
+    if (record.image) releaseScopedImage(image);
   }
 
   /** @param {Acquisition} record */
@@ -137,6 +138,7 @@ export function createAssetCatalog(data, { loader }) {
     }).then(result => {
       record.ready = true;
       record.value = result;
+      if (record.image) retainScopedImage(result);
       if (record.refs === 0) { close(record); throw aborted(); }
       return result;
     }, error => {

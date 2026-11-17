@@ -29,7 +29,7 @@ const heroImage = assets['hero.sprite'];
 const heroModelPath = catalog.projectPath('hero.model');
 ```
 
-Call `scope.dispose()` after removing the scene's consumers. The catalog shares active acquisitions by file and load kind. An image acquired by two scenes stays available until both release it. When nothing holds a pending request, the catalog signals its cancellation and closes any bitmap that arrives afterward. On a failed group load, dispose the abandoned scope. `catalog.dispose()` releases all its scopes.
+Call `scope.dispose()` after removing the scene's consumers. The catalog shares active acquisitions by file and load kind. An image acquired by two scenes stays available until both release it. The final release drops WebGL2 textures and Canvas2D tint buffers for that image, then closes the decoded bitmap. When nothing holds a pending request, the catalog signals its cancellation and closes any bitmap that arrives afterward. On a failed group load, dispose the abandoned scope. `catalog.dispose()` releases all its scopes.
 
 Pass asset groups to a level route so the level flow opens and releases each scene's scope. [Level flow guide](systems/24-level-flow.md)
 

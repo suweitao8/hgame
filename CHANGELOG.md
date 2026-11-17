@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release cached WebGL2 textures and Canvas2D tint buffers when the final catalog scope releases an image. Drop evicted tint canvases from renderer ownership.
+
 - Partition large static instance batches by grid region in the 3D starter and apply quality-tier draw distance to the default camera. Keep sparse regions batched and cull dense regions independently.
 
 - Share scene traversal, culling and sprite ordering between Canvas2D and WebGL2. Reuse ancestor transforms during each camera pass, including scenes with mixed fixed-step interpolation.

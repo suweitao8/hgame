@@ -1,4 +1,5 @@
 import { createSpriteQueue } from '../internal/sprite-queue.js';
+import { onScopedImageRelease } from '../internal/scoped-image.js';
 import {
   Camera2D,
   Sprite2D,
@@ -387,6 +388,7 @@ export function createWebGL2DAdapter({
 
   let textureCache = new WeakMap();
   const ownedTextures = new Set();
+  const imageReleases = new Set();
   const textCache = new Map();
   let customDrawCanvas = null;
   const drawQueue = createSpriteQueue({
@@ -470,6 +472,8 @@ export function createWebGL2DAdapter({
   }
 
   function destroyGlResources() {
+    for (const unsubscribe of imageReleases) unsubscribe();
+    imageReleases.clear();
     for (const texture of ownedTextures) gl.deleteTexture?.(texture);
     ownedTextures.clear();
     // The same image objects may outlive the GL context and need fresh uploads.
@@ -618,6 +622,20 @@ export function createWebGL2DAdapter({
     record.h = h;
   }
 
+  function dropTexture(img, record) {
+    if (textureCache.get(img) !== record) return;
+    try {
+      if (batchTextures.includes(record)) flushBatch();
+    } finally {
+      textureCache.delete(img);
+      ownedTextures.delete(record.glTex);
+      for (let unit = 0; unit < BATCH_TEXTURES; unit++) {
+        if (boundTextureUnits[unit] === record.glTex) boundTextureUnits[unit] = null;
+      }
+      gl.deleteTexture?.(record.glTex);
+    }
+  }
+
   function getTextureRecord(img, smooth, refresh = false) {
     if (!img) return null;
     const cached = textureCache.get(img);
@@ -651,6 +669,11 @@ export function createWebGL2DAdapter({
     }
     ownedTextures.add(glTex);
     textureCache.set(img, record);
+    const unsubscribe = onScopedImageRelease(img, releasedImage => {
+      imageReleases.delete(unsubscribe);
+      dropTexture(releasedImage, record);
+    });
+    if (unsubscribe) imageReleases.add(unsubscribe);
     return record;
   }
 
@@ -681,13 +704,7 @@ export function createWebGL2DAdapter({
       const oldestKey = textCache.keys().next().value;
       const oldest = textCache.get(oldestKey);
       textCache.delete(oldestKey);
-      if (batchTextures.includes(oldest.rec)) flushBatch();
-      gl.deleteTexture?.(oldest.rec.glTex);
-      for (let unit = 0; unit < BATCH_TEXTURES; unit++) {
-        if (boundTextureUnits[unit] === oldest.rec.glTex) boundTextureUnits[unit] = null;
-      }
-      ownedTextures.delete(oldest.rec.glTex);
-      textureCache.delete(oldest.canvas);
+      dropTexture(oldest.canvas, oldest.rec);
       oldest.canvas.width = 0;
       oldest.canvas.height = 0;
     }

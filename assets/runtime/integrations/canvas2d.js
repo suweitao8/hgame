@@ -1,4 +1,5 @@
 import { createSpriteQueue } from '../internal/sprite-queue.js';
+import { onScopedImageRelease } from '../internal/scoped-image.js';
 import { Component } from '../core/component.js';
 import { resolveQualityPreset } from './quality3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
@@ -873,8 +874,9 @@ export function createCanvas2DAdapter({
   let shadowBuffer = null;
   let qualityTier = quality ? (resolveQualityPreset(quality, '2d'), quality) : null;
   let qualityPreset = qualityTier ? resolveQualityPreset(qualityTier, '2d') : null;
-  const tintCache = new WeakMap();
-  const ownedTintCanvases = [];
+  let tintCache = new WeakMap();
+  const ownedTintCanvases = new Set();
+  const imageReleases = new Set();
   const lighting2D = createLighting2DState();
   const stats = { drawnSprites: 0, drawnCrowds: 0, culled: 0, sorted: false, postPassActive: false, backend: 'canvas2d' };
 
@@ -889,11 +891,25 @@ export function createCanvas2DAdapter({
     return null;
   });
 
+  function dropTintCanvas(buffer) {
+    ownedTintCanvases.delete(buffer);
+    buffer.width = 0;
+    buffer.height = 0;
+  }
+
   function getCachedTintedSilhouette(img, rect, fillColor, bw, bh) {
     let perImage = tintCache.get(img);
     if (!perImage) {
       perImage = new Map();
       tintCache.set(img, perImage);
+      const buffers = perImage;
+      const unsubscribe = onScopedImageRelease(img, releasedImage => {
+        imageReleases.delete(unsubscribe);
+        tintCache.delete(releasedImage);
+        for (const buffer of buffers.values()) dropTintCanvas(buffer);
+        buffers.clear();
+      });
+      if (unsubscribe) imageReleases.add(unsubscribe);
     }
     const key = rect
       ? `${rect.x},${rect.y},${rect.width},${rect.height}|${fillColor}|${bw}x${bh}`
@@ -917,13 +933,10 @@ export function createCanvas2DAdapter({
       const oldestKey = perImage.keys().next().value;
       const oldest = perImage.get(oldestKey);
       perImage.delete(oldestKey);
-      if (oldest) {
-        oldest.width = 0;
-        oldest.height = 0;
-      }
+      if (oldest) dropTintCanvas(oldest);
     }
     perImage.set(key, bufCanvas);
-    ownedTintCanvases.push(bufCanvas);
+    ownedTintCanvases.add(bufCanvas);
     return bufCanvas;
   }
 
@@ -1454,11 +1467,10 @@ export function createCanvas2DAdapter({
     getLighting2DState: lighting2D.snapshot,
     dispose() {
       drawQueue.dispose();
-      for (let i = 0; i < ownedTintCanvases.length; i++) {
-        ownedTintCanvases[i].width = 0;
-        ownedTintCanvases[i].height = 0;
-      }
-      ownedTintCanvases.length = 0;
+      for (const unsubscribe of imageReleases) unsubscribe();
+      imageReleases.clear();
+      for (const buffer of ownedTintCanvases) dropTintCanvas(buffer);
+      tintCache = new WeakMap();
       if (shadowBuffer) {
         shadowBuffer.canvas.width = 0;
         shadowBuffer.canvas.height = 0;
