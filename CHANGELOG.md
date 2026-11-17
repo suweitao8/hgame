@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Run `story.json` graphs with conditional choices, variables, signals and resumable saves. Track prerequisite quests, consecutive stages and filtered objectives from the same signals, with explicit reward claims and JSON snapshots.
+
 - Add an opt-in gameplay runtime with bounded attributes, source-owned modifiers, stackable and periodic effects, and abilities with costs, shared cooldowns, charges, casting, channeling and buffered input. Use `GameplayComponent` in fixed-step scenes or `createGameplayActor` for command-driven games. Actor snapshots persist attributes, effects and cooldown state.
 
 - Keep readable save storage when writes are blocked or its quota is exhausted, preserving existing progress and surfacing explicit write errors. Probe availability without modifying storage. Successful migrated/recovered loads report automatic writeback failures through optional `writebackError` while keeping valid data readable; retry on the next load.

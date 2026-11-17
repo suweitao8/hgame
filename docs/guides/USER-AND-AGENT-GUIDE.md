@@ -70,6 +70,7 @@ npm run api -- --module post2d   # Every export in one module
 | 15 | Commercial UI Kit (`PanelStack`, `VirtualList`, `i18n`) & `createVersionedStore` | [systems/15-ui-kit-i18n-versioned-save.md](systems/15-ui-kit-i18n-versioned-save.md) |
 | 16 | 0-KB Synth SFX (`playSynth`) & Adaptive BGM Sequencer (`createBgm`) | [systems/16-procedural-bgm.md](systems/16-procedural-bgm.md) |
 | 17 | Attributes, Status Effects, Skills & Cooldowns (`GameplayComponent`, `createGameplayActor`) | [systems/17-gameplay.md](systems/17-gameplay.md) |
+| 18 | Branching Dialogue & Quest Progression (`createStoryRunner`, `createQuestLog`) | [systems/18-story-and-quests.md](systems/18-story-and-quests.md) |
 
 ---
 

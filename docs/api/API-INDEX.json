@@ -84,6 +84,12 @@
   {"name":"createGameplayActor","tier":"experimental","declaredIn":"gameplay/index.js","summary":"Compose attributes, effects and abilities for one actor in a renderer-neutral simulation.","kind":"function","signature":"(options={})","returns":["abilities","attributes","dispose","effects","restore","snapshot","tags","update"]},
   {"name":"GameplayComponent","tier":"experimental","declaredIn":"gameplay/index.js","summary":"Attach to an entity to run an actor on the scene's existing fixed-step loop.","kind":"class","signature":"new(options={})","members":["actor","awake","enabled","entity","fixedUpdate","gameObject","lateUpdate","onDestroy","onDisable","onEnable","scene","start","update"]}
  ]},
+ "gameplay/quests.js":{"tier":"experimental","exports":[
+  {"name":"createQuestLog","tier":"experimental","declaredIn":"gameplay/quests.js","summary":"Track staged quests from game signals. The caller owns acceptance UI and reward delivery. An incoming signal counts once per matching objective in the current s","kind":"function","signature":"(definitions, {onEvent}={})","returns":["accept","claim","get","list","record","restore","snapshot","subscribe"]}
+ ]},
+ "gameplay/story.js":{"tier":"experimental","exports":[
+  {"name":"createStoryRunner","tier":"experimental","declaredIn":"gameplay/story.js","summary":"Run a story.json graph with gated choices, variable changes, signals and save snapshots. Commands are synchronous. Subscribe before calling start() to receive e","kind":"function","signature":"(definition, {onEvent}={})","returns":["advance","choose","getVariable","restore","setVariables","snapshot","start","subscribe","view","visitCount"]}
+ ]},
  "index.js":{"tier":"stable","exports":[
   {"name":"action","tier":"experimental","declaredIn":"ai/bt.js","summary":"Executes an action callback `(blackboard, context, dt) => BTStatus | boolean | void`.","kind":"function","signature":"(fn)","returns":["fn","kind"]},
   {"name":"analyzeAudioBuffer","tier":"stable","declaredIn":"platform/audio/analysis.js","summary":"Inspects decoded PCM AudioBuffer data to strip encoder padding / trailing silence and compute active duration, RMS loudness, and peak amplitude.","kind":"function","signature":"(buffer, {silenceThreshold=0.0035, minActiveDuration=0.01}={})","returns":["activeDuration","analyzable","duration","peak","rms","trimEnd","trimStart"]},
