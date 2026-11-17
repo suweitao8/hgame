@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reuse world-space viewport bounds when culling Pixi swarm particles, reducing per-unit camera transformations.
+
+- Rebuild swarm spatial chunks on demand after movement and ECS patching so later spatial queries do not rely on pre-movement membership.
+
 - Compact expired Pixi effect particles in one pass and release active particles and the trail when the effect system is disposed.
 
 - Let Pixi starters optionally reuse HGame's adaptive quality controller to scale their render resolution within the existing pixel budget.

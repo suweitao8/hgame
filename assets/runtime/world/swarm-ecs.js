@@ -1716,6 +1716,10 @@ export function createSwarmSimulation({
       ecs,
     );
 
+    // Step-grid membership describes pre-movement positions. Subsequent spatial
+    // queries must rebuild before relying on the lists or their bounds.
+    chunksDirty = true;
+
     // 3. Resolve ECS combat queue, frozen/knockback kinematics, and patch flush back to swarm.
     ecs.damageResolutionSystem();
     ecs.kinematicsSystem(dtSec);
@@ -1760,6 +1764,9 @@ export function createSwarmSimulation({
     );
 
     tickCount = (tickCount + 1) | 0;
+    // ECS callbacks may have queried and rebuilt chunks while patches were
+    // still being applied; the final positions need a fresh index as well.
+    chunksDirty = true;
 
     return {
       activeCount,

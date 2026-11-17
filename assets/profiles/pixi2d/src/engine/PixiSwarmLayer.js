@@ -42,6 +42,11 @@ export class PixiSwarmLayer {
     const camera = this.renderer.camera, screen = this.renderer.app.screen;
     const halfW = screen.width / 2, halfH = screen.height / 2, zoom = camera.zoom;
     if (!(zoom > 0) || !Number.isFinite(zoom)) throw new RangeError('Camera zoom must be finite and positive');
+    // Transform the viewport once, rather than each unit into screen space.
+    const left = camera.x + (-halfW - camera.shakeX) / zoom;
+    const right = camera.x + (halfW - camera.shakeX) / zoom;
+    const top = camera.y + (-halfH - camera.shakeY) / zoom;
+    const bottom = camera.y + (halfH - camera.shakeY) / zoom;
     let used = 0;
     for (let i = 0; i < count; i++) {
       const id = swarm.activeIds[i], x = swarm.posX[id] * this.worldScale + this.offsetX;
@@ -49,10 +54,8 @@ export class PixiSwarmLayer {
       const clip = this.clips[(swarm.animClip?.[id] ?? 0) % this.clips.length];
       const size = (swarm.scale?.[id] ?? 1) * this.scale;
       if (this.cull) {
-        const sx = (x - camera.x) * zoom + halfW + camera.shakeX;
-        const sy = (y - camera.y) * zoom + halfH + camera.shakeY;
-        const radius = clip.radius * Math.abs(size) * zoom;
-        if (sx + radius < 0 || sx - radius > screen.width || sy + radius < 0 || sy - radius > screen.height) continue;
+        const radius = clip.radius * Math.abs(size);
+        if (x + radius < left || x - radius > right || y + radius < top || y - radius > bottom) continue;
       }
       let frameIndex = 0;
       if (clip.frames.length > 1) {
