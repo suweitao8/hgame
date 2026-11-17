@@ -12,7 +12,7 @@ export class JuiceSystem {
     this.renderer = renderer; this.trauma = 0;
     this.hitStop = 0; this.simTimeScale = 1; this.clock = 0; this.active = 0; this.visibleParticles = 0;
     this.effects = []; this.liveParticles = []; this.shockwaves = new Set(); this.hitTweens = new Map();
-    this.expiredParticles = []; this.pendingParticles = []; this.batchDepth = 0;
+    this.removedParticles = new Set(); this.pendingParticles = []; this.batchDepth = 0;
     this.particles = Array.from({ length: capacity }, () => {
       const particle = new Particle({ texture: renderer.atlas.get('particle_soft'), x: 0, y: 0, alpha: 0 });
       return { particle, life: 0, duration: 0, vx: 0, vy: 0, start: 1, end: 0, drag: 0 };
@@ -58,6 +58,20 @@ export class JuiceSystem {
     if (this.pendingParticles.length) this.renderer.particleLayer.addParticle(...this.pendingParticles);
     this.pendingParticles.length = 0;
   }
+  removeMarkedParticles() {
+    const removed = this.removedParticles;
+    if (removed.size === 0) return;
+    // Pixi documents direct particleChildren edits followed by update(). Keep
+    // other owners' particles and their ordering while compacting only once.
+    const layer = this.renderer.particleLayer, children = layer.particleChildren;
+    let write = 0;
+    for (let read = 0; read < children.length; read++) {
+      const particle = children[read];
+      if (!removed.has(particle)) children[write++] = particle;
+    }
+    if (write !== children.length) { children.length = write; layer.update(); }
+    removed.clear();
+  }
   spawnExplosions(count) {
     if (!Number.isSafeInteger(count) || count < 0) throw new RangeError('Explosion count must be a non-negative safe integer');
     const screen = this.renderer.app.screen, camera = this.renderer.camera;
@@ -93,7 +107,7 @@ export class JuiceSystem {
     let effectWrite = 0;
     for (const life of this.effects) if (life > dt) this.effects[effectWrite++] = life - dt;
     this.effects.length = effectWrite;
-    let write = 0; this.visibleParticles = 0; const expired = this.expiredParticles; expired.length = 0;
+    let write = 0; this.visibleParticles = 0; const expired = this.removedParticles;
     const camera = this.renderer.camera, screen = this.renderer.app.screen;
     let previousDrag = NaN, damping = 1;
     for (const p of this.liveParticles) {
@@ -102,7 +116,7 @@ export class JuiceSystem {
       if (p.drag !== previousDrag) { previousDrag = p.drag; damping = Math.exp(-p.drag * dt); }
       p.vx *= damping; p.vy *= damping;
       p.particle.alpha = t; p.particle.scaleX = p.particle.scaleY = p.end + (p.start - p.end) * t;
-      if (p.life <= 0) { expired.push(p.particle); this.freeParticles.push(p); }
+      if (p.life <= 0) { expired.add(p.particle); this.freeParticles.push(p); }
       else {
         this.liveParticles[write++] = p;
         const sx = (p.particle.x - camera.x) * camera.zoom + screen.width / 2 + camera.shakeX;
@@ -111,7 +125,7 @@ export class JuiceSystem {
       }
     }
     this.liveParticles.length = write; this.active = write;
-    for (let i = 0; i < expired.length; i += 10000) this.renderer.particleLayer.removeParticle(...expired.slice(i, i + 10000));
+    this.removeMarkedParticles();
     if (this.trailTime > 0) { this.trailTime -= dt; this.trail.visible = this.trailTime > 0; }
   }
   slash(x, y, angle) {
@@ -122,10 +136,15 @@ export class JuiceSystem {
     this.trail.visible = true; this.trailTime = 0.14;
   }
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
     this.renderer.setEffectFilters([]);
     for (const filter of this.shockwaves) filter.destroy();
     this.shockwaves.clear(); this.hitTweens.clear();
+    for (const item of this.liveParticles) this.removedParticles.add(item.particle);
+    this.removeMarkedParticles();
+    this.trail.removeFromParent(); this.trail.destroy();
     this.liveParticles.length = 0; this.freeParticles.length = 0; this.particles.length = 0;
-    this.expiredParticles.length = 0; this.pendingParticles.length = 0; this.effects.length = 0;
+    this.pendingParticles.length = 0; this.effects.length = 0; this.active = 0; this.visibleParticles = 0;
   }
 }

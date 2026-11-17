@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Compact expired Pixi effect particles in one pass and release active particles and the trail when the effect system is disposed.
+
 - Let Pixi starters optionally reuse HGame's adaptive quality controller to scale their render resolution within the existing pixel budget.
 
 - Support sprite-sheet clips for Pixi CPU swarms using the simulation's per-unit animation time and existing shared-atlas particle rendering.
