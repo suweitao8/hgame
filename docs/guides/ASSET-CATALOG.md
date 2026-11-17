@@ -35,4 +35,8 @@ Pass asset groups to a level route so the level flow opens and releases each sce
 
 `image` returns the loader's decoded image. `audio` and `bytes` return `ArrayBuffer`. `model` and `url` return a resolved URL. The existing audio and model providers still own decoding and GPU resources. Treat values shared between scopes as read-only. If an audio decoder transfers its input, pass a copy of the bytes. `files` includes sidecars the consuming loader requests itself.
 
+The 3D starter accepts `"replacementAsset": "hero.model"` in a slot in `src/model-slots.json`. Use an unanimated, unrigged GLB or glTF with catalog kind `model`. Declare any external buffers and textures in the entry's `files` array. The starter loads the catalog on demand and the level keeps its existing slot IDs and collision data.
+
+Run `npm run assets -- push "<game-dir>" --catalog` from the engine root, or `npm run assets -- push --catalog` from a generated game. This stores the catalog's primary and sidecar files in CAS and fills in their manifest entries. Existing manifest entries are retained by default. With `--exact`, the manifest is limited to catalog files.
+
 Set `assetMode` to `catalog` in `hgame.project.json` to package the catalog's primary and sidecar files and retain files found by the existing entry tracer. Add URLs constructed at runtime to the catalog. This mode includes every declared catalog item, including items outside groups. Render providers and game code can continue using paths for assets found by the entry tracer. Missing catalog files are resolved from the existing CAS by their manifest hashes or reported with their exact asset-relative paths. An `all` release keeps the normal asset directory sweep.

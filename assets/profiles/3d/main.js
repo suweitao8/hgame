@@ -65,8 +65,19 @@ window.addEventListener('pagehide', onPageHide);
 
 async function startWorld() {
   await app.installFeatures();
+  const loader = app.platform.assets;
+  let assetCatalog = null;
+  if (!app.disposed && Object.values(slotConfig.slots ?? {}).some(slot => slot?.replacementAsset !== undefined)) {
+    const [{ createAssetCatalog }, catalogData] = await Promise.all([
+      import(base + '/platform/asset-catalog.js'),
+      loader.json('catalog.json'),
+    ]);
+    if (app.disposed) return;
+    assetCatalog = createAssetCatalog(catalogData, { loader });
+  }
   if (app.disposed) return;
   const scene = app.scenes.add(new Scene('world'));
+  if (assetCatalog) scene.onDispose(() => assetCatalog.dispose());
   const world = renderer.getWorld(scene);
   const materialPalette = createWorldMaterialPalette(THREE, materialConfig.materials);
   let models;
@@ -83,7 +94,7 @@ async function startWorld() {
   });
   renderer.registerMaterialPalette(materialPalette);
   models = createProceduralModelSlots({
-    THREE, slots: slotConfig.slots, materialPalette, projectBaseUrl: location.href,
+    THREE, slots: slotConfig.slots, materialPalette, assetCatalog, projectBaseUrl: location.href,
     async loadGLTF(url) {
       const { GLTFLoader } = await import('../assets/vendor/three/jsm/loaders/GLTFLoader.js');
       return new GLTFLoader().loadAsync(url);

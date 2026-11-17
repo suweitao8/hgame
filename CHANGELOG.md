@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resolve 3D starter model replacements by logical catalog ID. Let `assets push --catalog` store the same selected files and sidecars that the release packager includes.
+
 - Keep up to four textures in a WebGL2 2D sprite batch while preserving draw order and the existing instance layout. Flush pending sprites before replacing custom-draw textures or evicting cached text.
 
 - Generate 3D starters with a shared JSON layout for camera, lighting, tone mapping and quality. Manage lighting and level resources with the scene lifecycle. Reuse compiled level data, prepare independent model slots concurrently and instance opaque procedural models by mesh part.

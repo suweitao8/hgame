@@ -2,7 +2,7 @@
  * @param {ProceduralModelOptions} options
  * @returns {ProceduralModelSlots}
  */
-export function createProceduralModelSlots({ THREE, slots, materialPalette, GLTFLoader, loadGLTF, projectBaseUrl, }?: ProceduralModelOptions): ProceduralModelSlots;
+export function createProceduralModelSlots({ THREE, slots, materialPalette, assetCatalog, GLTFLoader, loadGLTF, projectBaseUrl, }?: ProceduralModelOptions): ProceduralModelSlots;
 /**
  * Minimal structural Three.js Object3D.
  */
@@ -54,6 +54,10 @@ export type ProceduralSlotDefinition = {
      * Relative `assets/models/<name>.glb` replacement.
      */
     replacement?: string | null | undefined;
+    /**
+     * Logical ID of a static model in the project asset catalog.
+     */
+    replacementAsset?: string | undefined;
 };
 export type ProceduralSlotSpec = {
     shape: ProceduralShape;
@@ -62,6 +66,7 @@ export type ProceduralSlotSpec = {
     topMaterial: string | null;
     size: [number, number, number];
     replacement: string | null;
+    replacementAsset?: string | undefined;
 };
 export type ProceduralModelOptions = {
     THREE: ProceduralModelThree;
@@ -75,6 +80,21 @@ export type ProceduralModelOptions = {
     materialPalette: {
         get(name: string): object;
     };
+    /**
+     * Resolves model IDs from replacementAsset.
+     */
+    assetCatalog?: Pick<{
+        definition: Readonly<{
+            schemaVersion: 1;
+            assets: Readonly<Record<string, import("../platform/asset-catalog.js").AssetDescriptor>>;
+            groups: Readonly<Record<string, readonly string[]>>;
+        }>;
+        get: (id: string) => AssetDescriptor;
+        url(id: string): string;
+        projectPath(id: string): string;
+        openScope(): AssetScope;
+        dispose(): void;
+    }, "url" | "get"> | null | undefined;
     /**
      * Only needed if a replacement is configured.
      */

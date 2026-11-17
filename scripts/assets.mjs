@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const ASSET_MANIFEST_FILENAME = 'assets.manifest.json';
 export const STORE_LAYOUT = 'cas-sha256-v1';
@@ -17,6 +17,7 @@ const RAW_EXTS = new Set([
   '.bak', '.tmp', '.log',
 ]);
 const SKIP_BASENAMES = new Set(['.ds_store', 'thumbs.db', '.gitkeep', 'assets.manifest.json']);
+const CATALOG_RELATIVE_PATH = 'assets/catalog.json';
 
 const KIND_BY_EXT = new Map([
   ['.png', 'image'], ['.jpg', 'image'], ['.jpeg', 'image'], ['.webp', 'image'],
@@ -120,6 +121,48 @@ async function collectFiles(rootDir, baseDir = rootDir, out = []) {
   return out;
 }
 
+export async function readProjectAssetCatalog(gameDir, { runtimeModule } = {}) {
+  const assetsDir = path.resolve(gameDir, 'assets');
+  const catalogPath = path.resolve(gameDir, CATALOG_RELATIVE_PATH);
+  let roots;
+  async function localFile(file) {
+    let resolved;
+    try {
+      resolved = await realpath(path.join(assetsDir, file));
+      if (!(await stat(resolved)).isFile()) throw new Error('Catalog entry requires a file: ' + file);
+    } catch (error) {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    }
+    roots ??= await Promise.all([realpath(assetsDir), realpath(gameDir)]);
+    for (const root of roots) {
+      const relative = path.relative(root, resolved);
+      if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep)) {
+        throw new Error('Catalog file resolves outside the project assets: ' + file);
+      }
+    }
+    return resolved;
+  }
+
+  const source = await localFile(path.basename(catalogPath));
+  if (!source) return null;
+  if (runtimeModule === undefined) {
+    // The CLI is copied into generated projects and also runs at the engine root.
+    for (const relative of ['../vendor/hgame/', '../assets/runtime/']) {
+      const file = fileURLToPath(new URL(relative + 'platform/asset-catalog.js', import.meta.url));
+      try {
+        if ((await stat(file)).isFile()) { runtimeModule = file; break; }
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+      }
+    }
+  }
+  if (!runtimeModule) throw new Error('Asset catalog requires HGame platform/asset-catalog.js');
+  const { listCatalogFiles } = await import(pathToFileURL(runtimeModule).href);
+  const files = listCatalogFiles(JSON.parse(await readFile(source, 'utf8')));
+  return { source, files, localFile };
+}
+
 async function ensureFileInStore(srcAbs, sha256, bytes, storeDir) {
   const dst = casObjectPath(storeDir, sha256);
   try {
@@ -198,10 +241,8 @@ export async function readAssetManifest(gameDir) {
 export async function writeAssetManifest(gameDir, manifest) {
   const absGame = path.resolve(gameDir);
   const manifestPath = path.join(absGame, ASSET_MANIFEST_FILENAME);
-  const sortedAssets = {};
-  for (const key of Object.keys(manifest.assets || {}).sort()) {
-    sortedAssets[key] = manifest.assets[key];
-  }
+  const sortedAssets = Object.fromEntries(Object.keys(manifest.assets || {}).sort()
+    .map(key => [key, manifest.assets[key]]));
   const normalized = {
     schemaVersion: 1,
     gameId: manifest.gameId || path.basename(absGame),
@@ -219,12 +260,13 @@ export async function writeAssetManifest(gameDir, manifest) {
  * Scans `<gameDir>/assets/`, stores deduplicated binaries in the unified asset store,
  * and updates `<gameDir>/assets.manifest.json`.
  * @param {string} gameDir
- * @param {{ storeDir?: string|null, includeRaw?: boolean, exact?: boolean, remoteBaseUrl?: string|null }} [options]
+ * @param {{ storeDir?: string|null, includeRaw?: boolean, exact?: boolean, catalog?: boolean, remoteBaseUrl?: string|null }} [options]
  */
 export async function pushAssets(gameDir, {
   storeDir = null,
   includeRaw = false,
   exact = false,
+  catalog = false,
   remoteBaseUrl = undefined,
 } = {}) {
   const absGame = path.resolve(gameDir);
@@ -235,8 +277,22 @@ export async function pushAssets(gameDir, {
   }
 
   const assetsRoot = path.join(absGame, 'assets');
-  const files = await collectFiles(assetsRoot);
-  const nextAssets = exact ? {} : { ...manifest.assets };
+  const nextAssets = Object.assign(Object.create(null), exact ? {} : manifest.assets);
+  let files;
+  if (catalog) {
+    const selection = await readProjectAssetCatalog(absGame);
+    if (!selection) throw new Error('--catalog requires assets/catalog.json');
+    files = [];
+    for (const relPosix of selection.files) {
+      if (shouldIgnoreForAssetTracking(relPosix)) throw new Error('Catalog asset is not a runtime file: ' + relPosix);
+      const abs = await selection.localFile(relPosix);
+      if (abs) files.push({ abs, relPosix });
+      else if (Object.hasOwn(manifest.assets, relPosix)) nextAssets[relPosix] = manifest.assets[relPosix];
+      else throw new Error('Catalog asset is missing locally and has no CAS entry: ' + relPosix);
+    }
+  } else {
+    files = await collectFiles(assetsRoot);
+  }
   let uploadedObjects = 0;
   let reusedObjects = 0;
   let updatedEntries = 0;
@@ -251,7 +307,7 @@ export async function pushAssets(gameDir, {
     if (res.stored) uploadedObjects++;
     else reusedObjects++;
 
-    const prev = manifest.assets[file.relPosix];
+    const prev = Object.hasOwn(manifest.assets, file.relPosix) ? manifest.assets[file.relPosix] : null;
     const kind = classifyAssetKind(file.relPosix);
     const unchanged = prev && prev.sha256 === sha256 && prev.bytes === bytes && prev.kind === kind;
     if (!unchanged) updatedEntries++;
@@ -504,6 +560,7 @@ function parseCli(argv) {
     remote: null,
     only: '',
     exact: false,
+    catalog: false,
     force: false,
     includeRaw: false,
     allowUntracked: false,
@@ -518,6 +575,7 @@ function parseCli(argv) {
     else if (a === '--only') flags.only = argv[++i] || '';
     else if (a === '--games') flags.games.push(...(argv[++i] || '').split(',').filter(Boolean));
     else if (a === '--exact') flags.exact = true;
+    else if (a === '--catalog') flags.catalog = true;
     else if (a === '--force') flags.force = true;
     else if (a === '--include-raw') flags.includeRaw = true;
     else if (a === '--allow-untracked') flags.allowUntracked = true;
@@ -534,7 +592,7 @@ async function runCli() {
   if (command === 'help') {
     console.log(
       'Usage: node scripts/assets.mjs <push|pull|status|verify|rm|prune-store> [game-dir] [options]\n' +
-      '  push [game-dir]        Hash assets/ binaries into unified store and update assets.manifest.json\n' +
+      '  push [game-dir] [--catalog]  Hash assets/ binaries into unified store and update assets.manifest.json\n' +
       '  pull [game-dir]        Restore assets/ binaries from unified store or --remote URL\n' +
       '  status [game-dir]      Show diff between assets/ on disk, assets.manifest.json, and store\n' +
       '  verify [game-dir]      Like status; exits 1 if missing/modified/untracked files exist\n' +
@@ -545,11 +603,13 @@ async function runCli() {
   }
 
   const gameDir = positionals[0] || '.';
+  if (flags.catalog && command !== 'push') throw new Error('--catalog is supported by assets push');
   if (command === 'push') {
     const out = await pushAssets(gameDir, {
       storeDir: flags.store,
       includeRaw: flags.includeRaw,
       exact: flags.exact,
+      catalog: flags.catalog,
       ...(flags.remote !== null ? { remoteBaseUrl: flags.remote } : {}),
     });
     console.log(JSON.stringify(out, null, 2));

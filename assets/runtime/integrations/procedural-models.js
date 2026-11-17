@@ -32,6 +32,7 @@
  * @property {string} [topMaterial] Palette name for the top face of 'box'.
  * @property {[number, number, number]} [size=[1,1,1]] Width, height, depth in world units (each 0..100].
  * @property {string|null} [replacement=null] Relative `assets/models/<name>.glb` replacement.
+ * @property {string} [replacementAsset] Logical ID of a static model in the project asset catalog.
  */
 /**
  * @typedef {object} ProceduralSlotSpec
@@ -41,12 +42,14 @@
  * @property {string|null} topMaterial
  * @property {[number, number, number]} size
  * @property {string|null} replacement
+ * @property {string} [replacementAsset]
  */
 /**
  * @typedef {object} ProceduralModelOptions
  * @property {ProceduralModelThree} THREE
  * @property {Record<string, ProceduralSlotDefinition>} slots Keys match `group.name` (lowercase dotted ids).
  * @property {{ get(name: string): object }} materialPalette e.g. from createWorldMaterialPalette.
+ * @property {Pick<ReturnType<typeof import('../platform/asset-catalog.js').createAssetCatalog>, 'get'|'url'> | null} [assetCatalog] Resolves model IDs from replacementAsset.
  * @property {(new () => { loadAsync(url: string): Promise<{ scene: ProceduralObject3D, animations?: unknown[] }> })} [GLTFLoader] Only needed if a replacement is configured.
  * @property {(url: string) => Promise<{scene: ProceduralObject3D, animations?: unknown[]}>} [loadGLTF] Optional lazy loader for replacement assets.
  * @property {string} [projectBaseUrl='http://localhost/'] Base for resolving replacement URLs.
@@ -99,7 +102,7 @@ const replacementPath = url => {
  * @returns {ProceduralModelSlots}
  */
 export function createProceduralModelSlots({
-  THREE, slots, materialPalette, GLTFLoader, loadGLTF, projectBaseUrl,
+  THREE, slots, materialPalette, assetCatalog = null, GLTFLoader, loadGLTF, projectBaseUrl,
 } = {}) {
   if (!THREE?.Group || !THREE?.BoxGeometry || !THREE?.InstancedMesh ||
       !slots || typeof slots !== 'object' || Array.isArray(slots) ||
@@ -112,6 +115,18 @@ export function createProceduralModelSlots({
         !SHAPES.has(raw.shape) || typeof raw.material !== 'string') {
       throw new Error('Invalid geometry definition ' + id);
     }
+    const replacement = replacementPath(raw.replacement ?? null);
+    const replacementAsset = raw.replacementAsset;
+    if (replacementAsset !== undefined) {
+      if (replacement || typeof replacementAsset !== 'string' || !replacementAsset.trim()) {
+        throw new Error('Expected one replacement path or catalog ID for model slot ' + id);
+      }
+      if (!assetCatalog) throw new Error('Model slot ' + id + ' requires an asset catalog');
+      const entry = assetCatalog.get(replacementAsset);
+      if (entry.kind !== 'model' || !/\.gl(?:b|tf)$/i.test(entry.path)) {
+        throw new Error('Model slot ' + id + ' requires a GLB or glTF catalog model: ' + replacementAsset);
+      }
+    }
     // Check references eagerly, before building scene objects.
     materialPalette.get(raw.material);
     if (raw.accent) materialPalette.get(raw.accent);
@@ -120,7 +135,8 @@ export function createProceduralModelSlots({
       shape: raw.shape, material: raw.material, accent: raw.accent ?? raw.material,
       topMaterial: raw.topMaterial ?? null,
       size: validateSize(raw.size),
-      replacement: replacementPath(raw.replacement ?? null),
+      replacement,
+      ...(replacementAsset === undefined ? {} : { replacementAsset }),
     });
   }
   const prototypes = new Map();
@@ -281,20 +297,22 @@ export function createProceduralModelSlots({
   async function prototype(id) {
     if (disposed) throw new Error('Procedural model library disposed');
     const spec = get(id);
-    if (!spec.replacement) {
+    if (!spec.replacement && !spec.replacementAsset) {
       if (!prototypes.has(id)) prototypes.set(id, build(id));
       return prototypes.get(id);
     }
     if (!loadGLTF && typeof GLTFLoader !== 'function') {
       throw new Error('GLTFLoader required only if a custom GLB replacement is configured');
     }
-    const url = new URL(spec.replacement, projectBaseUrl ?? 'http://localhost/').href;
+    const url = spec.replacementAsset
+      ? assetCatalog.url(spec.replacementAsset)
+      : new URL(spec.replacement, projectBaseUrl ?? 'http://localhost/').href;
     if (!replacementCache.has(url)) {
       const request = Promise.resolve().then(() =>
         loadGLTF ? loadGLTF(url) : new GLTFLoader().loadAsync(url)
       ).then(gltf => {
         if (!gltf?.scene || gltf.animations?.length) {
-          throw new Error('Only static unanimated GLB replacements supported');
+          throw new Error('Only static unanimated model replacements supported');
         }
         gltf.scene.traverse(obj => {
           if (obj.isSkinnedMesh) throw new Error('Static scene replacement cannot contain a character rig');
@@ -318,7 +336,8 @@ export function createProceduralModelSlots({
     if (!Array.isArray(placements) || placements.length < 1 || placements.length > 20000) {
       throw new RangeError('A batch needs 1–20,000 placements');
     }
-    const isProcedural = !definitions.get(id)?.replacement;
+    const spec = definitions.get(id);
+    const isProcedural = !spec?.replacement && !spec?.replacementAsset;
     const root = await prototype(id);
     root.updateMatrixWorld(true);
     const meshes = [];
@@ -373,8 +392,10 @@ export function createProceduralModelSlots({
   }
   function setReplacement(id, url) {
     if (disposed) throw new Error('Procedural model library disposed');
-    if (!definitions.has(id)) throw new Error('Unknown procedural model slot: ' + id);
-    definitions.get(id).replacement = replacementPath(url);
+    const spec = definitions.get(id);
+    if (!spec) throw new Error('Unknown procedural model slot: ' + id);
+    spec.replacement = replacementPath(url);
+    delete spec.replacementAsset;
   }
   async function dispose() {
     if (disposed) return;

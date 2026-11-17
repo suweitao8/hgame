@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { mkdir, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { runToyPreflight } from './toy-preflight.mjs';
 import { normalizeReleaseProfile, runtimeSeeds } from './project-profiles.mjs';
-import { casObjectPath, readAssetManifest, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
+import { casObjectPath, readAssetManifest, readProjectAssetCatalog, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -917,31 +917,12 @@ export async function packageGameRelease({
   }
 
   const catalogRel = 'assets/catalog.json';
-  const catalogPath = path.join(absGameDir, catalogRel);
-  let assetsRealPath;
-  let projectRealPath;
-  async function catalogLocalFile(file, local) {
-    assetsRealPath ??= await realpath(assetsRoot);
-    const resolved = await realpath(local);
-    const relative = path.relative(assetsRealPath, resolved);
-    if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep)) {
-      throw new Error('Catalog file resolves outside assets/: ' + file);
-    }
-    projectRealPath ??= await realpath(absGameDir);
-    const projectRelative = path.relative(projectRealPath, resolved);
-    if (path.isAbsolute(projectRelative) || projectRelative === '..' || projectRelative.startsWith('..' + path.sep)) {
-      throw new Error('Catalog file resolves outside the project: ' + file);
-    }
-    return resolved;
-  }
-  let catalogFiles = [];
-  if (await existsFile(catalogPath)) {
-    const catalogModule = resolveSourceCandidate('vendor/hgame/platform/asset-catalog.js');
-    if (!catalogModule) throw new Error('Asset catalog requires HGame platform/asset-catalog.js');
-    const { listCatalogFiles } = await import(pathToFileURL(catalogModule).href);
-    const localCatalog = await catalogLocalFile('catalog.json', catalogPath);
-    catalogFiles = listCatalogFiles(JSON.parse(await readFile(localCatalog, 'utf8')));
-    includedFiles.set(catalogRel, localCatalog);
+  const catalog = await readProjectAssetCatalog(absGameDir, {
+    runtimeModule: resolveSourceCandidate('vendor/hgame/platform/asset-catalog.js') ?? null,
+  });
+  const catalogFiles = catalog?.files ?? [];
+  if (catalog) {
+    includedFiles.set(catalogRel, catalog.source);
   } else if (releaseProfile.assetMode === 'catalog') {
     throw new Error('assetMode catalog requires assets/catalog.json');
   }
@@ -971,9 +952,11 @@ export async function packageGameRelease({
       continue;
     }
     const target = `assets/${file}`;
-    const local = path.join(assetsRoot, file);
-    if (await existsFile(local)) {
-      includedFiles.set(target, requiredCatalogFiles.has(file) ? await catalogLocalFile(file, local) : local);
+    const pathOnDisk = path.join(assetsRoot, file);
+    const local = requiredCatalogFiles.has(file) ? await catalog.localFile(file)
+      : (await existsFile(pathOnDisk) ? pathOnDisk : null);
+    if (local) {
+      includedFiles.set(target, local);
       continue;
     }
     const sha = Object.hasOwn(assetManifest, file) ? assetManifest[file]?.sha256 : undefined;
