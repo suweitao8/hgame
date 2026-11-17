@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add slotted inventories with stack limits, atomic exchanges, equipment and attribute modifiers. Claim a complete quest's rewards only when its entire item bundle fits. Inventory snapshots retain slot layout and equipment.
+
 - Run `story.json` graphs with conditional choices, variables, signals and resumable saves. Track prerequisite quests, consecutive stages and filtered objectives from the same signals, with explicit reward claims and JSON snapshots.
 
 - Add an opt-in gameplay runtime with bounded attributes, source-owned modifiers, stackable and periodic effects, and abilities with costs, shared cooldowns, charges, casting, channeling and buffered input. Use `GameplayComponent` in fixed-step scenes or `createGameplayActor` for command-driven games. Actor snapshots persist attributes, effects and cooldown state.

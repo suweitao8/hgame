@@ -17,8 +17,19 @@ export function createQuestLog(definitions: Record<string, QuestDefinition>, { o
         amount?: number;
         data?: SignalData;
     } | undefined): number;
-    /** Mark rewards as claimed and return their descriptors once. @param {string} id @returns {{id: string, amount: number}[] | null} */
-    claim(id: string): {
+    /**
+     * Mark rewards as claimed and return their descriptors once. `accept` is a synchronous
+     * admission check; returning false or throwing leaves the quest complete and claimable.
+     * @param {string} id
+     * @param {{accept?: (rewards: readonly Readonly<{id: string, amount: number}>[]) => boolean}} [options]
+     * @returns {{id: string, amount: number}[] | null}
+     */
+    claim(id: string, { accept }?: {
+        accept?: (rewards: readonly Readonly<{
+            id: string;
+            amount: number;
+        }>[]) => boolean;
+    } | undefined): {
         id: string;
         amount: number;
     }[] | null;

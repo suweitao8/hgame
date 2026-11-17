@@ -57,3 +57,5 @@ Choice conditions are combined with AND. They compare variables by equality, num
 Quest objectives count only on the current stage of an accepted quest. An objective can filter a signal by exact payload values. One signal can advance multiple objectives in that stage. The next stage starts with fresh counters. A quest becomes available when every quest in `requires` is complete or claimed. `claim()` returns reward descriptors once and marks the quest claimed. The game can apply the returned rewards and save its inventory and quest state in one save envelope. Use the returned value to refresh the reward UI.
 
 Save `story.snapshot()` and `quests.snapshot()` with `createVersionedStore`. Restore against compatible definitions and use stable IDs for stories, stages and objectives. Restoring state does not replay entry actions, completion events or rewards. Use the game's save migration when changing IDs or the structure of active objectives.
+
+When rewards are item stacks, use `inventory.claimQuestRewards(quests, id)` to keep rewards claimable if the bag is full. [Inventory and equipment guide](19-inventory-and-equipment.md)

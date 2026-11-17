@@ -181,12 +181,26 @@ export function createQuestLog(definitions, { onEvent } = {}) {
       if (batch.length) publish(batch);
       return batch.length;
     },
-    /** Mark rewards as claimed and return their descriptors once. @param {string} id @returns {{id: string, amount: number}[] | null} */
-    claim(id) {
+    /**
+     * Mark rewards as claimed and return their descriptors once. `accept` is a synchronous
+     * admission check; returning false or throwing leaves the quest complete and claimable.
+     * @param {string} id
+     * @param {{accept?: (rewards: readonly Readonly<{id: string, amount: number}>[]) => boolean}} [options]
+     * @returns {{id: string, amount: number}[] | null}
+     */
+    claim(id, { accept } = {}) {
       writable();
       const state = progress.get(id);
       if (state?.status !== 'complete') return null;
       const rewards = catalog.get(id).rewards.map(reward => ({ ...reward }));
+      if (accept) {
+        dispatching = true;
+        try {
+          const accepted = accept(Object.freeze(rewards.map(reward => Object.freeze({ ...reward }))));
+          if (typeof accepted !== 'boolean') throw new TypeError('Reward admission must return a boolean');
+          if (!accepted) return null;
+        } finally { dispatching = false; }
+      }
       state.status = 'claimed';
       return rewards;
     },

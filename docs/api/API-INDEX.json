@@ -84,6 +84,9 @@
   {"name":"createGameplayActor","tier":"experimental","declaredIn":"gameplay/index.js","summary":"Compose attributes, effects and abilities for one actor in a renderer-neutral simulation.","kind":"function","signature":"(options={})","returns":["abilities","attributes","dispose","effects","restore","snapshot","tags","update"]},
   {"name":"GameplayComponent","tier":"experimental","declaredIn":"gameplay/index.js","summary":"Attach to an entity to run an actor on the scene's existing fixed-step loop.","kind":"class","signature":"new(options={})","members":["actor","awake","enabled","entity","fixedUpdate","gameObject","lateUpdate","onDestroy","onDisable","onEnable","scene","start","update"]}
  ]},
+ "gameplay/inventory.js":{"tier":"experimental","exports":[
+  {"name":"createInventory","tier":"experimental","declaredIn":"gameplay/inventory.js","summary":"Create a slotted inventory with atomic exchanges, equipment modifiers and reward admission. Create one per actor or party. Item definitions, presentation and it","kind":"function","signature":"({items, capacity, equipmentSlots=[], attributes, onEvent})","returns":["add","canTransact","capacity","claimQuestRewards","count","dispose","equip","getEquipped","getSlot","list","move","remove","restore","revision","snapshot","subscribe","transact","unequip"]}
+ ]},
  "gameplay/quests.js":{"tier":"experimental","exports":[
   {"name":"createQuestLog","tier":"experimental","declaredIn":"gameplay/quests.js","summary":"Track staged quests from game signals. The caller owns acceptance UI and reward delivery. An incoming signal counts once per matching objective in the current s","kind":"function","signature":"(definitions, {onEvent}={})","returns":["accept","claim","get","list","record","restore","snapshot","subscribe"]}
  ]},
