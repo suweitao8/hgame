@@ -264,15 +264,23 @@ export function createModel3DProvider({
     const { key, resolved } = resolveRelativeAssetPath(url, projectBaseUrl);
     if (!clipCache.has(key)) {
       const request = Promise.resolve().then(async () => {
+        ensureActive();
         const gltf = await loadWithLoader(getLoader(), resolved);
+        // Animation-only files can still allocate meshes, materials and textures.
+        // Track the root even if disposal began while the loader was in flight.
+        if (gltf?.scene) ownedRoots.add(gltf.scene);
+        ensureActive();
         return Array.isArray(gltf?.animations) ? gltf.animations : [];
       });
       clipCache.set(key, request);
-      request.catch(() => {
+      pendingLoads.add(request);
+      request.then(() => pendingLoads.delete(request), () => {
+        pendingLoads.delete(request);
         if (clipCache.get(key) === request) clipCache.delete(key);
       });
     }
     const rawClips = await clipCache.get(key);
+    ensureActive();
     const prepared = prepareAnimationClips(THREE, rawClips, {
       stripNamespace,
       stripRootMotion,

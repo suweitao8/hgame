@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep GLTF scene resources loaded with standalone 3D animation clips under the model provider's ownership, and wait for in-flight clip loads during provider disposal.
+
 - Share the 3D starter's GLTF loader across static slots and the optional rigged model service. Load the Meshopt decoder only when a model uses compressed geometry.
 
 - Use the same WebGL2 default for new 2D and horde projects. Share glyph textures across changing number labels and pack loose PNG sprites into a padded atlas with reusable source rectangles.
