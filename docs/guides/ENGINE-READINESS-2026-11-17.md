@@ -108,6 +108,10 @@ Chrome 157 的前进后退缓存对照将页面挂起约 1.1 秒。使用 `481c8
 
 标准打包后的 2D、Rapier 3D 和 UI 项目均在独立浏览器测试中启动成功。3D 项目请求了所选 WASM，2D、UI 与两款样板的浏览器启动未请求 Rapier。
 
+在相同限速环境中对 Arena 交错测试三种预加载设置，每组 3 次冷启动。无提示、仅预加载 `three.core.js` 和同时预加载两个模块的中位数分别为 5.144、4.753 和 4.721 秒。两项预加载各只传输一次，该组每轮请求 55 个子资源，共约 2.74 MB。3D 模板和 Arena 采用两项提示，WebAsset 正式入口在一次独立冷启动中于 4.814 秒就绪。原始记录位于 `build/performance/arena-modulepreload.jsonl`。
+
+标准 Rapier 3D 包与 Bilibili Toy 3D 包均在本地 Chromium 通过启动及单次模块请求检查。Toy ZIP 通过预检，带内容指纹的入口从子目录启动成功。
+
 ## 可试玩参考
 
 - [Horde Survivor](http://127.0.0.1:4175/local-games/survivor-2d/index.html)

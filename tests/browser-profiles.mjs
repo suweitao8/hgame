@@ -81,6 +81,17 @@ try {
       await page.locator('#game[data-engine-ready="true"]').waitFor({ timeout: 20000 });
     }
     page.off('request', trackStartup);
+    if (profile.startsWith('3d')) {
+      const preloads = await page.locator('head link[rel="modulepreload"]').evaluateAll(
+        links => links.map(link => new URL(link.href).pathname),
+      );
+      for (const file of ['three.module.js', 'three.core.js']) {
+        const pathname = new URL('./assets/vendor/three/' + file, url).pathname;
+        if (!preloads.includes(pathname) || startupPaths.filter(value => value === pathname).length !== 1) {
+          throw new Error('3D starter must preload and fetch ' + file + ' once for ' + profile);
+        }
+      }
+    }
     if (startupPaths.some(pathname => pathname.endsWith('/hgame/index.js'))) {
       throw new Error('Starter loaded the full runtime entry for ' + profile);
     }

@@ -22,7 +22,7 @@ The lifecycle command defaults to Chromium. To repeat the desktop scenarios on a
 
 The browser profile and lifecycle suites dispatch persisted page transition events to check that games keep running when a document enters the back/forward cache. The reference games each exercise two persisted cycles and a final non-persisted `pagehide` to verify renderer, input and touch cleanup. The generated bare starters also verify that their state hooks report the live scene and clear it on exit.
 
-The profile and lifecycle suites observe actual startup requests. Generated starters and references load their required runtime modules directly. The explicit 3D physics profile must request its Rapier WASM, and the other tested startup paths must issue zero Rapier requests.
+The profile and lifecycle suites observe actual startup requests. Generated starters and references load their required runtime modules directly. The 3D starters preload both vendored Three.js modules and fetch each once. The explicit 3D physics profile must request its Rapier WASM, and the other tested startup paths must issue zero Rapier requests.
 
 The Chromium touch suite holds a drag through a simulated visibility change, checks that pointer state and the virtual stick clear, then verifies a fresh drag and cancellation after returning. Scheduler tests control the animation timestamps across a visibility transition and verify that the first visible frame uses zero elapsed time and starts a fresh diagnostic window. Hidden frames are excluded from runtime diagnostic and adaptive-quality sampling. Playtest telemetry still records stalls throughout its own measurement window.
 

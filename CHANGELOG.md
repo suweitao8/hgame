@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preload the vendored Three.js entry and core modules in 3D starters and Arena, so both downloads can start during HTML parsing.
+
 - Start generated profiles and reference games from their required runtime modules, loading configuration and shared modules in parallel.
 - Remove unused Rapier 3D from the Arena reference game's engine configuration. Its simulation uses its own ray and box collision code.
 
