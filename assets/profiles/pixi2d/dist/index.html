@@ -2,11 +2,11 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><link rel="icon" href="data:,"><title>竞技场</title>
 <style>
 *{box-sizing:border-box}html,body,#game-canvas{margin:0;width:100%;height:100%;overflow:hidden;background:#0b101b}canvas{display:block;touch-action:none}#ui-layer{position:absolute;inset:0;pointer-events:none;color:white;font:600 16px system-ui}#hud{position:absolute;top:max(16px,env(safe-area-inset-top));left:16px;display:flex;align-items:center;gap:12px}.bar{width:130px;height:10px;border-radius:9px;background:#23364c;overflow:hidden}.bar span{display:block;height:100%;width:100%;background:#5eebc0}#debug{position:absolute;top:55px;left:16px;background:#111d;padding:8px;border-radius:8px;pointer-events:auto}button{border:0;border-radius:50%;background:#263e55;color:white;padding:14px;touch-action:none}#mobile{position:absolute;right:24px;bottom:24px;display:none;gap:12px;pointer-events:auto}.virtual-stick{position:absolute;width:96px;height:96px;margin:-48px;border:2px solid #ffffff88;border-radius:50%;background:#172a3888}.virtual-stick span{position:absolute;left:30px;top:30px;width:32px;height:32px;border-radius:50%;background:#d8ffffaa}@media(pointer:coarse){#mobile{display:flex}}
-</style>  <script type="module" crossorigin src="./assets/index-Cs-wyuN0.js"></script>
+</style>  <script type="module" crossorigin src="./assets/index-CCrvYBQI.js"></script>
   <link rel="modulepreload" crossorigin href="./assets/Geometry-b4_yFV4e.js">
   <link rel="modulepreload" crossorigin href="./assets/canvasUtils-DiiUq8Hs.js">
   <link rel="modulepreload" crossorigin href="./assets/init-CWUIAUpk.js">
   <link rel="modulepreload" crossorigin href="./assets/colorToUniform-MIizxb8Q.js">
   <link rel="modulepreload" crossorigin href="./assets/localUniformBit-BOGrcT1E.js">
-  <link rel="modulepreload" crossorigin href="./assets/Renderer2D-BfiF6QSe.js">
+  <link rel="modulepreload" crossorigin href="./assets/VisibilityController-CXxDjOFE.js">
 </head><body><div id="game-canvas"></div><div id="ui-layer"><div id="hud"><div class="bar"><span id="health"></span></div><span id="kills">0</span></div><div id="debug"><span id="stats"></span><button id="add-enemies">敌人+10000</button><button data-count="100">爆炸100</button><button data-count="1000">爆炸1000</button><button data-count="10000">爆炸10000</button></div><div id="mobile"><button id="dash">冲</button><button id="shockwave">震</button></div></div></body></html>

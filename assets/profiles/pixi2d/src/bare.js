@@ -1,6 +1,7 @@
 // HGame owns the scheduler; add game entities to this empty scene.
 import { createDefaultGameAtlas } from './engine/ProceduralAtlas.js';
 import { Renderer2D } from './engine/Renderer2D.js';
+import { bindVisibilitySuspension } from './engine/VisibilityController.js';
 
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
@@ -11,10 +12,12 @@ const [gameConfig, engineConfig, { createGameApplication }, { defineProject }, {
 const renderer = new Renderer2D(createDefaultGameAtlas());
 const mount = document.querySelector('#game-canvas');
 await renderer.init(mount);
+let visibility;
 const app = createGameApplication({ project: defineProject(engineConfig), gameId: gameConfig.id, gameVersion: gameConfig.version,
-  renderer: { render() { renderer.render(); }, resize() {}, dispose() { renderer.dispose(); } } });
+  renderer: { render() { renderer.render(); }, resize() {}, dispose() { visibility?.dispose(); renderer.dispose(); } } });
 await app.installFeatures();
+visibility = bindVisibilitySuspension(app);
 app.scenes.add(new Scene('main'));
-app.scenes.start('main'); app.start(); mount.dataset.engineReady = 'true';
+app.scenes.start('main'); app.start(); visibility.sync(); mount.dataset.engineReady = 'true';
 window.__hgameState = () => ({ scene: app.scenes.current?.name ?? null });
 window.addEventListener('pagehide', event => { if (!event.persisted) app.dispose(); });

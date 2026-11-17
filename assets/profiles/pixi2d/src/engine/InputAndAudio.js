@@ -10,21 +10,23 @@ export class InputAndAudio {
       this.unlock();
     }, options);
     window.addEventListener('keyup', event => this.keys.delete(event.code), options);
-    window.addEventListener('blur', () => { this.keys.clear(); this.pointer.down = false; this.clearTouches(); }, options);
+    window.addEventListener('blur', () => this.reset(), options);
     const canvas = renderer.app.canvas;
-    canvas.addEventListener('pointerdown', event => { this.unlock(); canvas.setPointerCapture(event.pointerId); if (event.pointerType !== 'touch') this.pointer.down = true; this.movePointer(event); }, options);
+    canvas.addEventListener('pointerdown', event => { this.unlock(); canvas.setPointerCapture(event.pointerId); if (event.pointerType !== 'touch') this.pointer.down = true; this.movePointer(event, true); }, options);
     canvas.addEventListener('pointermove', event => this.movePointer(event), options);
     canvas.addEventListener('pointerup', event => this.endPointer(event), options);
     canvas.addEventListener('pointercancel', event => this.endPointer(event), options);
+    canvas.addEventListener('lostpointercapture', event => this.endPointer(event), options);
     ui.dash.addEventListener('pointerdown', event => { event.stopPropagation(); this.dash = true; this.unlock(); }, options);
     ui.shockwave.addEventListener('pointerdown', event => { event.stopPropagation(); this.shockwave = true; this.unlock(); }, options);
   }
-  movePointer(event) {
+  movePointer(event, begin = false) {
     const rect = this.renderer.app.canvas.getBoundingClientRect();
     const x = event.clientX - rect.left, y = event.clientY - rect.top;
     if (event.pointerType === 'touch') {
       let touch = this.touches.get(event.pointerId);
       if (!touch) {
+        if (!begin) return;
         const left = x < rect.width / 2;
         if ([...this.touches.values()].some(item => item.left === left)) return;
         const visual = document.createElement('div'); visual.className = 'virtual-stick'; visual.innerHTML = '<span></span>';
@@ -42,6 +44,7 @@ export class InputAndAudio {
     const touch = this.touches.get(event.pointerId); touch?.visual.remove(); this.touches.delete(event.pointerId);
   }
   clearTouches() { for (const touch of this.touches.values()) touch.visual.remove(); this.touches.clear(); }
+  reset() { this.keys.clear(); this.pointer.down = false; this.dash = this.shockwave = this.slash = false; this.clearTouches(); }
   getState(player) {
     let moveX = Number(this.keys.has('KeyD') || this.keys.has('ArrowRight')) - Number(this.keys.has('KeyA') || this.keys.has('ArrowLeft'));
     let moveY = Number(this.keys.has('KeyS') || this.keys.has('ArrowDown')) - Number(this.keys.has('KeyW') || this.keys.has('ArrowUp'));
@@ -68,5 +71,5 @@ export class InputAndAudio {
     oscillator.connect(gain).connect(ctx.destination); oscillator.onended = () => { this.voices--; oscillator.disconnect(); gain.disconnect(); };
     oscillator.start(); oscillator.stop(ctx.currentTime + 0.14);
   }
-  dispose() { this.abort.abort(); this.clearTouches(); void this.audio?.close(); }
+  dispose() { this.abort.abort(); this.reset(); void this.audio?.close(); }
 }

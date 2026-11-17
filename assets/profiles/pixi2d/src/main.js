@@ -4,6 +4,7 @@ import { JuiceSystem } from './engine/JuiceSystem.js';
 import { InputAndAudio } from './engine/InputAndAudio.js';
 import { DemoArena } from './sim/demoArena.js';
 import { HudController } from './ui/HudController.js';
+import { bindVisibilitySuspension } from './engine/VisibilityController.js';
 
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
@@ -31,12 +32,14 @@ for (const button of hud.burstButtons) {
   button.addEventListener('click', () => juice.spawnExplosions(Number(button.dataset.count)));
 }
 hud.addEnemies.addEventListener('click', () => arena.addEnemies(10000));
+let visibility;
 const app = createGameApplication({ project: defineProject(engineConfig), gameId: gameConfig.id, gameVersion: gameConfig.version,
-  renderer: { render() { renderer.render(); }, resize() {}, dispose() { input.dispose(); juice.dispose(); renderer.dispose(); } } });
+  renderer: { render() { renderer.render(); }, resize() {}, dispose() { visibility?.dispose(); input.dispose(); juice.dispose(); renderer.dispose(); } } });
 await app.installFeatures();
 const scene = app.scenes.add(new Scene('arena'));
 const controller = scene.add(new Entity({ name: 'arena' }));
 let controls = {}, fps = 0, elapsed = 0, fpsFrames = 0, fpsSince = performance.now();
+visibility = bindVisibilitySuspension(app, { resetInput: () => input.reset(), onVisibility: () => { fpsFrames = 0; fpsSince = performance.now(); } });
 let renderedBullets = 0;
 controller.addComponent(new class extends Component {
   fixedUpdate(dt) {
@@ -64,6 +67,6 @@ controller.addComponent(new class extends Component {
     if (elapsed > 0.2) { hud.update(arena, juice, fps); elapsed = 0; }
   }
 }());
-app.scenes.start('arena'); app.start(); document.querySelector('#game-canvas').dataset.engineReady = 'true';
+app.scenes.start('arena'); app.start(); visibility.sync(); document.querySelector('#game-canvas').dataset.engineReady = 'true';
 window.__hgameState = () => ({ enemies: arena.enemies.length, effects: juice.effects.length, particles: juice.visibleParticles, activeParticles: juice.active, fps, kills: arena.kills });
 window.addEventListener('pagehide', event => { if (!event.persisted) app.dispose(); });
