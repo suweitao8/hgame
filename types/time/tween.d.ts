@@ -162,6 +162,7 @@ export class TweenManager {
     _tweenStep: TweenHandle<object>[];
     /** @type {[number, TimerEntry][]} */
     _timerStep: [number, TimerEntry][];
+    _generation: number;
     /**
      * Tween numeric properties of `target` to `values`.
      * @template {object} T

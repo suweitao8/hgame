@@ -7,6 +7,7 @@ How an agent proves a change works without a human looking at the screen.
 | Find an API / its option keys | `docs/api/API-INDEX.json` (grep by name; one export per line: `signature` shows option-bag keys + defaults, `returns` lists returned object keys, `members` lists class methods) | JSON |
 | Logic regression | `npm test` | TAP |
 | Complete reference games | `npm run test:browser:lifecycle [-- --chrome <path>]` | Keyboard movement, combat and natural death, three restart cycles, reload persistence, input/renderer/touch teardown, and zero browser errors. `--webasset` verifies the registered live examples. |
+| Runnable API recipes | `npm run test:browser:recipes [-- --chrome <path>]` | Generate projects using each recipe's documented command, execute the recipe as its entry, and assert advancing 2D/3D ticks, 2D movement, swarm population, terrain and UI locale. Also verify the network recipe's imports. |
 | Types / index not stale | `npm run check` (runs `check:types` and `check:api-index`; fix with `npm run build:types` / `npm run build:api-index`) | exit code |
 | **See the render** | `npm run snapshot -- <game-dir> [--keys d:300] [--wait 800] [--ready "#game[data-engine-ready=true]"]` | PNG + JSON: `nonBlankRatio`, `meanLuma`, `uniqueColors`, `lumaHistogram8`, `sha256`, `consoleErrors`, `httpErrors`, `problems` |
 | Render regression | `npm run snapshot -- <game-dir> --baseline baseline.png` (create/refresh with `--update-baseline`) | JSON `baseline.diffRatio` + `bbox` of changed pixels; exit 1 above `--threshold` (default 0.01) |

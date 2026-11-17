@@ -42,8 +42,8 @@ const CAPABILITY_MAP = [
 
 const RECIPES = {
   '2d': `// Create: node scripts/create-game.mjs "<dir>" --profile 2d --with audio,save --bare --name "Title"
-import { HGame, Scene, Entity, createVersionedStore } from '../vendor/hgame/index.js';
-import { createCanvas2DAdapter } from '../vendor/hgame/integrations/canvas2d.js';
+import { HGame, Scene, Entity, Component, createVersionedStore } from '../vendor/hgame/index.js';
+import { createCanvas2DAdapter, Sprite2D } from '../vendor/hgame/integrations/canvas2d.js';
 import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
 
 const engineConfig = await fetch('./engine.config.json').then(r => r.json());
@@ -55,16 +55,22 @@ await app.installFeatures();
 
 const scene = app.scenes.add(new Scene('main'));
 const hero = scene.add(new Entity({ name: 'hero', x: 0, y: 0, width: 32, height: 32 }));
-const vfx = createVfxSystem({ mode: 'canvas2d' });
+hero.addComponent(new Sprite2D({ shape: 'circle', width: 32, height: 32, color: '#60d9b7' }));
+const vfx = createVfxSystem({ mode: 'canvas2d', sceneOrAdapter: renderer });
+hero.addComponent(new class extends Component {
+  fixedUpdate(dt) { hero.x += (app.input.isDown('KeyD') - app.input.isDown('KeyA')) * 180 * dt; vfx.update(dt); }
+  onDestroy() { vfx.dispose(); }
+}());
 const saves = createVersionedStore({ gameId: 'my-2d', schemaVersion: 1 });
 app.services.audio?.createBgm?.({ mood: 'adventure', intensity: 0.4 });
 renderer.setAmbientLight('#24304a', 0.85);
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ tick: app.tick, hero: { x: hero.x, y: hero.y } });`,
+window.__hgameState = () => ({ tick: app.stats.ticks, hero: { x: hero.x, y: hero.y } });
+window.addEventListener('pagehide', () => app.dispose(), { once: true });`,
   horde: `// Create: node scripts/create-game.mjs "<dir>" --profile 2d --renderer webgl2d --with audio,save --bare --name "Horde"
-import { HGame, Scene, Entity, createSwarmSimulation } from '../vendor/hgame/index.js';
+import { HGame, Scene, Entity, Component, createSwarmSimulation } from '../vendor/hgame/index.js';
 import { createWebGL2DAdapter, SpriteCrowd2D } from '../vendor/hgame/integrations/webgl2d.js';
 import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
 
@@ -76,17 +82,23 @@ const app = HGame.createApplication({ project, gameId: 'horde', gameVersion: '1.
 await app.installFeatures();
 
 const scene = app.scenes.add(new Scene('main'));
-const swarm = createSwarmSimulation({ maxUnits: 12000, cellSize: 48 });
+const swarm = createSwarmSimulation({ capacity: 12000, cellSize: 48, originX: -3072, originY: -3072 });
+swarm.spawnWave({ count: 300, minRadius: 180, maxRadius: 260, speed: 30 });
 const hordeEntity = scene.add(new Entity({ name: 'horde' }));
-const crowd = hordeEntity.addComponent(new SpriteCrowd2D({ capacity: 12000 })).bindSwarm(swarm);
-const vfx = createVfxSystem({ mode: 'webgl2d' });
+const crowd = hordeEntity.addComponent(new SpriteCrowd2D({ capacity: 12000, width: 12, height: 12 })).bindSwarm(swarm);
+const vfx = createVfxSystem({ mode: 'webgl2d', sceneOrAdapter: renderer });
+hordeEntity.addComponent(new class extends Component {
+  fixedUpdate(dt) { swarm.step(dt, { heroX: 0, heroY: 0 }); vfx.update(dt); }
+  onDestroy() { vfx.dispose(); }
+}());
 renderer.setAmbientLight('#1f263a', 0.78);
 renderer.setPost2D({ bloomIntensity: 0.35, vignette: 0.25 });
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ tick: app.tick, activeUnits: swarm.activeCount ?? 0 });`,
-  '3d': `// Create: node scripts/create-game.mjs "<dir>" --profile 3d --quality auto --with physics3d,model3d,audio,save --bare --name "3D"
+window.__hgameState = () => ({ tick: app.stats.ticks, activeUnits: swarm.count });
+window.addEventListener('pagehide', () => app.dispose(), { once: true });`,
+  '3d': `// Create: node scripts/create-game.mjs "<dir>" --profile 3d --quality auto --with physics3d,audio,save --bare --name "3D"
 import * as THREE from '../assets/vendor/three/three.module.js';
 import { HGame, Scene, createHeightfieldTerrain3D, createNavMesh3D } from '../vendor/hgame/index.js';
 import { createThreeAdapter } from '../vendor/hgame/integrations/three.js';
@@ -109,7 +121,8 @@ const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: world });
 app.scenes.start('world');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ tick: app.tick, terrainMaxY: terrain.maxHeight });`,
+window.__hgameState = () => ({ tick: app.stats.ticks, terrainMaxY: terrain.maxHeight });
+window.addEventListener('pagehide', () => { vfx.dispose(); app.dispose(); }, { once: true });`,
   ui: `// Create: node scripts/create-game.mjs "<dir>" --profile ui --with audio,save --name "Card/UI"
 import { HGame, Scene, createPanelStack, createI18n, createRedDotSystem, createVersionedStore } from '../vendor/hgame/index.js';
 
@@ -124,10 +137,12 @@ const redDots = createRedDotSystem();
 const saves = createVersionedStore({ gameId: 'card-ui', schemaVersion: 1 });
 app.scenes.start('ui');
 app.start(); // renders once; dispatch updates via app.dispatch(...), never run an idle 60Hz loop
-window.__hgameState = () => ({ topPanel: panels.top()?.id ?? null, locale: i18n.locale });`,
+window.__hgameState = () => ({ topPanel: panels.top()?.id ?? null, locale: i18n.getLocale() });
+window.addEventListener('pagehide', () => { panels.dispose(); app.dispose(); }, { once: true });`,
   network: `// Client connects to workspace network/ (@hgame/network-client). Use StateSyncRoom or LockstepRoom.
 // Run server checks from engine root: npm run check:all
-import { createConfirmedFrameScheduler, hashState } from '../vendor/hgame/index.js';
+import { hashState } from '../vendor/hgame/index.js';
+import { createConfirmedFrameScheduler } from '../vendor/hgame/lockstep/confirmed-frames.js';
 // Keep authoritative rules in game src/; lockstep offline/online both keep pinned Rapier 0.21.0 determinism.`,
 };
 

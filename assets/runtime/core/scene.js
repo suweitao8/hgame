@@ -123,6 +123,7 @@ export class Scene {
     this.physics = null;
     /** @type {TweenManager | null} */
     this._tweens = null;
+    this._disposing = false;
   }
   /** Lazily created per-scene tween manager. @returns {TweenManager} */
   get tweens() {
@@ -130,7 +131,8 @@ export class Scene {
   }
   /** Add a root entity. @template {Entity} T @param {T} entity @returns {T} */
   add(entity) {
-    if (!(entity instanceof Entity) || entity.destroyed) throw new TypeError('Scene needs an Entity');
+    if (this._disposing || this.app?.disposed) throw new Error('Scene is disposing or application disposed');
+    if (!(entity instanceof Entity) || entity.destroyed || entity._destroying) throw new TypeError('Scene needs an Entity that is not being destroyed');
     entity.detach();
     this.objects.push(entity);
     entity.parent = null;
@@ -197,11 +199,14 @@ export class Scene {
         this._tweens.update(dt);
       }
     }
+    if (!this.active || app?.disposed) return;
     this[phase]?.(dt, app);
     runPhaseOnRoots(this.objects, phase, dt, app, this);
   }
   /** Deactivate and destroy all entities, tweens and physics. @returns {void} */
   dispose() {
+    if (this._disposing) return;
+    this._disposing = true;
     try {
       cleanupAll([
         () => this._setActive(false),
@@ -214,6 +219,7 @@ export class Scene {
       this._tweens = null;
       this.physics = null;
       this.app = null;
+      this._disposing = false;
     }
   }
 }
@@ -255,10 +261,13 @@ export class SceneManager {
     const old = this.current;
     if (old) {
       old._setActive(false);
+      if (this.app.disposed) return false;
       old.exit(this.app);
+      if (this.app.disposed) return false;
     }
     this.current = scene;
     scene._setActive(true);
+    if (this.app.disposed) return false;
     scene.enter(this.app, data);
     return true;
   }

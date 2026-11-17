@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Execute all API recipes against generated entry points in CI. Correct tick/locale getters, swarm capacity/spawn/step/count wiring, VFX adapter ownership, the optional model provider requirement, and the confirmed-frame scheduler's explicit subpath import.
+- Prevent scene-transition callbacks from activating the next scene after application disposal, and reject entity reattachment or new roots during scene cleanup.
+- Cancel the rest of an in-flight tween/timer update when its callback disposes the manager or application. Do not execute scene hooks, later timers or tween completion callbacks after teardown.
+
 - Prevent asynchronous installation and ready callbacks from reviving disposed applications. Terminate in-flight update work after disposal and expose `app.disposed`.
 - Complete entity, scene, service, renderer and owned-platform cleanup even when user cleanup callbacks throw, then report all errors with `AggregateError`. Preserve idempotent disposal and borrowed-platform ownership.
 - Keep generated 3D quality settings in entry code so `game.config.json` conforms to WebAsset's discovery allowlist, including bare starters. Legacy quality metadata remains readable.

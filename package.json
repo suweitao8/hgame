@@ -56,7 +56,8 @@
     "test:browser:safety": "node --test --test-concurrency=1 tests/browser-snapshot-safety.mjs tests/browser-visual-regression.mjs",
     "test:browser:telemetry": "node --test tests/browser-playtest-telemetry.mjs",
     "check:visual": "node scripts/check-visual-regression.mjs",
-    "test:browser:lifecycle": "node tests/browser-game-lifecycle.mjs"
+    "test:browser:lifecycle": "node tests/browser-game-lifecycle.mjs",
+    "test:browser:recipes": "node tests/browser-api-recipes.mjs"
   },
   "devDependencies": {
     "@dimforge/rapier2d-deterministic": "0.21.0",

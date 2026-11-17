@@ -12,6 +12,7 @@ export class Scene {
     physics: ScenePhysicsWorld | null;
     /** @type {TweenManager | null} */
     _tweens: TweenManager | null;
+    _disposing: boolean;
     /** Lazily created per-scene tween manager. @returns {TweenManager} */
     get tweens(): TweenManager;
     /** Add a root entity. @template {Entity} T @param {T} entity @returns {T} */

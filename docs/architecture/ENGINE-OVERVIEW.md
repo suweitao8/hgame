@@ -37,7 +37,9 @@ Components may implement `awake`, `onEnable`, `start`, `fixedUpdate`, `update`, 
 
 ## Project configuration
 
-`game.config.json` describes the game and optional Host-facing metadata. `engine.config.json` is the HGame runtime recipe: profile, renderer, physics backend, tick rate, and requested features. `defineProject()` validates incompatible combinations and `resolveFeatureGraph()` resolves feature dependencies.
+`game.config.json` contains WebAsset's allowlisted catalog fields. `engine.config.json` is the HGame runtime recipe: profile, renderer, physics backend, tick rate, and requested features. `defineProject()` validates incompatible combinations and `resolveFeatureGraph()` resolves feature dependencies. The engine backend `webgl2d` maps to the catalog value `webgl-custom`. New 3D starters keep their selected quality mode in entry code; they can still read legacy quality metadata.
+
+Application disposal marks `app.disposed` first, cancels scheduled work, rejects pending installation and prevents later transition callbacks from reviving scenes. Cleanup attempts every entity, scene, service, renderer and owned-platform resource before raising an `AggregateError` for failures. A caller-supplied platform remains caller-owned. Repeated disposal returns false. Scenes being cleaned up reject new roots and dying entities cannot be reattached.
 
 ## Create a project
 

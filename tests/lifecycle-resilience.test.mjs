@@ -159,3 +159,65 @@ test('clearing scenes on a live application still permits a new scene', () => {
   assert.doesNotThrow(() => app.step(1 / 60));
   app.dispose();
 });
+
+test('disposal during a scene transition prevents the next scene from entering', () => {
+  let entered = 0;
+  class Leaving extends Scene { exit(app) { app.dispose(); } }
+  class Arriving extends Scene { enter() { entered++; } }
+  const app = createGameApplication({ renderer: { render() {} } });
+  app.scenes.add(new Leaving('first'));
+  const next = app.scenes.add(new Arriving('next'));
+  app.scenes.start('first');
+  assert.equal(app.scenes.start('next'), false);
+  assert.equal(entered, 0);
+  assert.equal(next.active, false);
+  assert.equal(app.scenes.current, null);
+});
+
+test('scene and entity cleanup cannot reattach dying entities or create orphan roots', () => {
+  const app = createGameApplication({ renderer: { render() {} } });
+  const scene = app.scenes.add(new Scene('main'));
+  const other = new Scene('other');
+  let rejected = 0;
+  class Reattach extends Component {
+    onDestroy() {
+      assert.throws(() => other.add(this.entity), /destroy|dispos/i); rejected++;
+      assert.throws(() => scene.add(new Entity()), /dispos/i); rejected++;
+    }
+  }
+  const entity = scene.add(new Entity());
+  entity.addComponent(new Reattach());
+  app.scenes.start('main');
+  app.dispose();
+  assert.equal(rejected, 2);
+  assert.equal(other.objects.length, 0);
+  assert.equal(scene.objects.length, 0);
+  assert.equal(entity.scene, null);
+});
+
+for (const count of [1, 2]) {
+  test(`timer-triggered disposal cancels scene hooks and remaining callbacks (${count} timers)`, () => {
+    const calls = [];
+    class Timed extends Scene { fixedUpdate() { calls.push('scene-fixed'); } }
+    const app = createGameApplication({ renderer: { render() { calls.push('render'); }, dispose() { calls.push('disposed'); } } });
+    const scene = app.scenes.add(new Timed('timed'));
+    scene.tweens.after(0.001, () => { calls.push('timer'); app.dispose(); });
+    if (count === 2) scene.tweens.after(0.001, () => calls.push('late-timer'));
+    app.scenes.start('timed');
+    assert.doesNotThrow(() => app.step(1 / 60));
+    assert.deepEqual(calls, ['timer', 'disposed']);
+    assert.equal(app.disposed, true);
+  });
+}
+
+test('disposal inside tween onUpdate cancels completion and following tweens', () => {
+  const calls = [];
+  const app = createGameApplication({ renderer: { render() {} } });
+  const scene = app.scenes.add(new Scene('timed'));
+  scene.tweens.add({ x: 0 }, { x: 1 }, { duration: 0, onUpdate() { calls.push('update'); app.dispose(); },
+    onComplete() { calls.push('complete'); } });
+  scene.tweens.add({ x: 0 }, { x: 1 }, { duration: 0, onComplete() { calls.push('late-tween'); } });
+  app.scenes.start('timed');
+  assert.doesNotThrow(() => app.step(1 / 60));
+  assert.deepEqual(calls, ['update']);
+});

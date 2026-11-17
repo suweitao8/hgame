@@ -86,12 +86,12 @@ Interfaces add serializable `window.__hgameState()` hooks to the existing refere
 
 Files are limited to verified hotspots/defects from Tasks 1–4, their regression tests, `CHANGELOG.md`, and a concise readiness report under `docs/guides/`.
 
-- [ ] Inspect new failures and measurements, prioritize high-impact correctness and runtime cost, and add regression coverage before each correction.
-- [ ] Re-run identical before/after scenarios and preserve their actual measurements.
-- [ ] Run `npm run check:all`, CPU budgets, relevant browser/profile/PBR/snapshot/visual/lifecycle checks and strict consumers.
-- [ ] Independently review the complete diff against the approved spec and fix actionable findings.
-- [ ] Audit each numbered acceptance condition in the design against current source and fresh verification outputs. Record actual environments, delivered changes and remaining device coverage limits.
-- [ ] Commit and push the verified final stage. Claim completion only when the approved acceptance conditions are evidenced.
+- [x] Inspect new failures and measurements, prioritize high-impact correctness and runtime cost, and add regression coverage before each correction.
+- [x] Re-run identical before/after scenarios and preserve their actual measurements.
+- [x] Run `npm run check:all`, CPU budgets, relevant browser/profile/PBR/snapshot/visual/lifecycle checks and strict consumers.
+- [x] Independently review the complete diff against the approved spec and fix actionable findings.
+- [x] Audit each numbered acceptance condition in the design against current source and fresh verification outputs. Record actual environments, delivered changes and remaining device coverage limits.
+- [x] Commit and push the verified final stage. Claim completion only when the approved acceptance conditions are evidenced.
 
 ## Plan self-review
 

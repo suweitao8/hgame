@@ -229,6 +229,7 @@ export class TweenManager {
     this._tweenStep = [];
     /** @type {[number, TimerEntry][]} */
     this._timerStep = [];
+    this._generation = 0;
   }
 
   /**
@@ -574,6 +575,7 @@ export class TweenManager {
   /** Advance tweens and timers. @param {number} dt Seconds (>= 0). @returns {void} */
   update(dt) {
     if (!Number.isFinite(dt) || dt < 0) throw new RangeError('Tween delta must be >= 0');
+    const generation = this._generation;
 
     const tweenList = this._tweenStep;
     tweenList.length = 0;
@@ -607,7 +609,9 @@ export class TweenManager {
         }
         this.tweens.delete(tween);
         tween.onUpdate?.(tween.target, 1);
+        if (generation !== this._generation) return;
         tween.onComplete?.();
+        if (generation !== this._generation) return;
         continue;
       }
 
@@ -621,7 +625,9 @@ export class TweenManager {
         }
         this.tweens.delete(tween);
         tween.onUpdate?.(tween.target, endT);
+        if (generation !== this._generation) return;
         tween.onComplete?.();
+        if (generation !== this._generation) return;
         continue;
       }
 
@@ -632,6 +638,7 @@ export class TweenManager {
         tween.target[tween.keys[k]] = tween.from[k] + (tween.to[k] - tween.from[k]) * eased;
       }
       tween.onUpdate?.(tween.target, evalT);
+      if (generation !== this._generation) return;
     }
     tweenList.length = 0;
 
@@ -648,6 +655,7 @@ export class TweenManager {
       while (this.timers.has(id) && timer.remaining <= 0) {
         if (!timer.repeat) this.timers.delete(id);
         timer.callback();
+        if (generation !== this._generation) return;
         if (!timer.repeat) break;
         timer.remaining += timer.delay;
         // Avoid enormous bursts when clients manually advance many seconds.
@@ -662,6 +670,7 @@ export class TweenManager {
 
   /** Cancel everything. @returns {void} */
   dispose() {
+    this._generation++;
     for (const seq of [...this._sequences]) seq.cancel();
     this._sequences.clear();
     this.tweens.clear();
