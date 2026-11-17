@@ -1,3 +1,4 @@
+import { createSpriteQueue } from '../internal/sprite-queue.js';
 import {
   Camera2D,
   Sprite2D,
@@ -16,7 +17,6 @@ export { Camera2D, Sprite2D, SpriteCrowd2D };
 /** @typedef {import('./canvas2d.js').Renderer2DAdapter} Renderer2DAdapter */
 /** @typedef {import('./canvas2d.js').Renderer2DStats} Renderer2DStats */
 
-const SCRATCH_WORLD = new Float64Array(16);
 const SCRATCH_RGBA = [1, 1, 1, 1];
 const SCRATCH_FLASH = [1, 1, 1, 1];
 const FLOATS_PER_INSTANCE = 20;
@@ -262,61 +262,6 @@ function isWebGL2Capable(gl) {
   );
 }
 
-function compareDrawItems(lhs, rhs) {
-  return (
-    lhs.layer - rhs.layer ||
-    lhs.z - rhs.z ||
-    ((lhs.ySort || rhs.ySort) ? (lhs.f - rhs.f) : 0) ||
-    lhs.order - rhs.order
-  );
-}
-
-function canSortSkip(layer, z, ySort, prevLayer, prevZ, prevYSort) {
-  return !(layer < prevLayer || (layer === prevLayer && z < prevZ) || ySort || prevYSort);
-}
-
-function boundsOverlap(sprite, entity, mat, viewBounds) {
-  const w = Math.abs(sprite.width);
-  const h = Math.abs(sprite.height);
-  if ((sprite.shape === 'text' || sprite.customDraw) && !(w > 0 && h > 0)) return true;
-  const ax = sprite.anchorX ?? entity.anchorX ?? 0.5;
-  const ay = sprite.anchorY ?? entity.anchorY ?? 0.5;
-  const shadowCfg = sprite.groundShadow
-    ? (typeof sprite.groundShadow === 'object' ? sprite.groundShadow : {})
-    : null;
-  const shadowHalfW = shadowCfg ? (w * (shadowCfg.widthRatio ?? 0.72)) * 0.5 : 0;
-  const lx0 = shadowCfg ? Math.min(-w * ax, -shadowHalfW + (shadowCfg.offsetX || 0)) : -w * ax;
-  const lx1 = shadowCfg ? Math.max(-w * ax + w, shadowHalfW + (shadowCfg.offsetX || 0)) : (-w * ax + w);
-  const ly0 = -h * ay;
-  const shadowBottom = shadowCfg
-    ? h * (1 - ay) - h * (shadowCfg.tuckRatio ?? 0.032) + (shadowCfg.offsetY || 0) + (h * (shadowCfg.heightRatio ?? 0.18)) * 0.5
-    : ly0 + h;
-  const ly1 = shadowCfg ? Math.max(ly0 + h, shadowBottom) : (ly0 + h);
-  const a = mat[0], b = mat[1], c = mat[4], d = mat[5], e = mat[12], f = mat[13];
-  const rot = sprite.rotation || 0;
-  const cos = rot ? Math.cos(rot) : 1;
-  const sin = rot ? Math.sin(rot) : 0;
-  const sx = (sprite.flipX ? -1 : 1) * (sprite.scaleX ?? 1);
-  const sy = (sprite.flipY ? -1 : 1) * (sprite.scaleY ?? 1);
-  const ox = sprite.offsetX || 0;
-  const oy = sprite.offsetY || 0;
-  const m00 = a * (cos * sx) + c * (sin * sx);
-  const m01 = b * (cos * sx) + d * (sin * sx);
-  const m10 = a * (-sin * sy) + c * (cos * sy);
-  const m11 = b * (-sin * sy) + d * (cos * sy);
-  const tx = a * ox + c * oy + e;
-  const ty = b * ox + d * oy + f;
-  const x0 = m00 * lx0 + m10 * ly0 + tx, y0 = m01 * lx0 + m11 * ly0 + ty;
-  const x1 = m00 * lx1 + m10 * ly0 + tx, y1 = m01 * lx1 + m11 * ly0 + ty;
-  const x2 = m00 * lx1 + m10 * ly1 + tx, y2 = m01 * lx1 + m11 * ly1 + ty;
-  const x3 = m00 * lx0 + m10 * ly1 + tx, y3 = m01 * lx0 + m11 * ly1 + ty;
-  const minX = Math.min(x0, x1, x2, x3);
-  const maxX = Math.max(x0, x1, x2, x3);
-  const minY = Math.min(y0, y1, y2, y3);
-  const maxY = Math.max(y0, y1, y2, y3);
-  return !(maxX < viewBounds.minX || minX > viewBounds.maxX || maxY < viewBounds.minY || minY > viewBounds.maxY);
-}
-
 /**
  * Options of createWebGL2DAdapter: every Canvas2DAdapterOptions field plus the WebGL-specific ones below.
  * @typedef {Canvas2DAdapterOptions & WebGL2DAdapterExtraOptions} WebGL2DAdapterOptions
@@ -444,13 +389,9 @@ export function createWebGL2DAdapter({
   const ownedTextures = new Set();
   const textCache = new Map();
   let customDrawCanvas = null;
-  const drawPool = [];
-  const sortQueue = [];
-  let drawCount = 0;
-  let needsSort = false;
-  let prevLayer = -Infinity;
-  let prevZ = -Infinity;
-  let prevYSort = false;
+  const drawQueue = createSpriteQueue({
+    Sprite2D, SpriteCrowd2D, cull, interpolate, absoluteTextSize: true,
+  });
   const batchTextures = [];
   const boundTextureUnits = new Array(BATCH_TEXTURES).fill(null);
   let lastSmoothingFlag = null;
@@ -896,106 +837,6 @@ export function createWebGL2DAdapter({
       fr, fg, fb, fa,
       requiredTex,
     );
-  }
-
-  function pushQueueItem(kind, entity, sprite, agentIndex, a, b, c, d, e, f, layer, z, ySort) {
-    let slot;
-    if (drawCount < drawPool.length) {
-      slot = drawPool[drawCount];
-    } else {
-      slot = {
-        kind: 0, entity: null, sprite: null, agentIndex: -1,
-        a: 1, b: 0, c: 0, d: 1, e: 0, f: 0,
-        layer: 0, z: 0, ySort: false, order: 0,
-      };
-      drawPool.push(slot);
-    }
-    slot.kind = kind;
-    slot.entity = entity;
-    slot.sprite = sprite;
-    slot.agentIndex = agentIndex;
-    slot.a = a; slot.b = b; slot.c = c; slot.d = d; slot.e = e; slot.f = f;
-    slot.layer = layer;
-    slot.z = z;
-    slot.ySort = Boolean(ySort);
-    slot.order = drawCount++;
-    if (slot.order > 0 && !canSortSkip(layer, z, slot.ySort, prevLayer, prevZ, prevYSort)) {
-      needsSort = true;
-    }
-    prevLayer = layer;
-    prevZ = z;
-    prevYSort = slot.ySort;
-  }
-
-  function collect(entity, alpha, viewBounds, useInterpolation) {
-    if (!entity.active || entity.destroyed) return;
-    const comps = entity.components;
-    let computed = false;
-    for (let ci = 0, cn = comps.length; ci < cn; ci++) {
-      const comp = comps[ci];
-      if (!comp._running || !comp.visible) continue;
-      if (comp instanceof Sprite2D) {
-        if (!(comp.opacity > 0)) continue;
-        if (!computed) {
-          if (useInterpolation || entity.interpolate) entity.interpolatedWorldMatrixInto(alpha, SCRATCH_WORLD);
-          else entity.worldMatrixInto(SCRATCH_WORLD);
-          computed = true;
-        }
-        if (cull && !boundsOverlap(comp, entity, SCRATCH_WORLD, viewBounds)) {
-          stats.culled++;
-          continue;
-        }
-        pushQueueItem(
-          0, entity, comp, -1,
-          SCRATCH_WORLD[0], SCRATCH_WORLD[1], SCRATCH_WORLD[4],
-          SCRATCH_WORLD[5], SCRATCH_WORLD[12], SCRATCH_WORLD[13],
-          comp.layer, comp.z, comp.ySort,
-        );
-      } else if (comp instanceof SpriteCrowd2D) {
-        if (comp.count <= 0) continue;
-        if (!computed) {
-          if (useInterpolation || entity.interpolate) entity.interpolatedWorldMatrixInto(alpha, SCRATCH_WORLD);
-          else entity.worldMatrixInto(SCRATCH_WORLD);
-          computed = true;
-        }
-        if (!comp.ySort) {
-          pushQueueItem(
-            1, entity, comp, -1,
-            SCRATCH_WORLD[0], SCRATCH_WORLD[1], SCRATCH_WORLD[4],
-            SCRATCH_WORLD[5], SCRATCH_WORLD[12], SCRATCH_WORLD[13],
-            comp.layer, comp.z, false,
-          );
-        } else {
-          const halfPad = Math.max(Math.abs(comp.width), Math.abs(comp.height)) * 2;
-          const baseTx = SCRATCH_WORLD[12];
-          const baseTy = SCRATCH_WORLD[13];
-          for (let i = 0; i < comp._activeCount; i++) {
-            const idx = comp._activeIndices[i];
-            if (!(comp.opacity[idx] > 0)) continue;
-            const lx = comp.x[idx], ly = comp.y[idx];
-            const wx = baseTx + SCRATCH_WORLD[0] * lx + SCRATCH_WORLD[4] * ly;
-            const wy = baseTy + SCRATCH_WORLD[1] * lx + SCRATCH_WORLD[5] * ly;
-            if (cull && (
-              wx + halfPad < viewBounds.minX || wx - halfPad > viewBounds.maxX ||
-              wy + halfPad < viewBounds.minY || wy - halfPad > viewBounds.maxY
-            )) {
-              stats.culled++;
-              continue;
-            }
-            pushQueueItem(
-              2, entity, comp, idx,
-              SCRATCH_WORLD[0], SCRATCH_WORLD[1], SCRATCH_WORLD[4],
-              SCRATCH_WORLD[5], wx, wy,
-              comp.layer, comp.z, true,
-            );
-          }
-        }
-      }
-    }
-    const children = entity.children;
-    for (let i = 0, n = children.length; i < n; i++) {
-      collect(children[i], alpha, viewBounds, useInterpolation);
-    }
   }
 
   function submitSprite(item, allowShadows, smooth) {
@@ -1452,11 +1293,6 @@ export function createWebGL2DAdapter({
     gl.uniform4f(uViewXLoc, curViewX0, curViewX1, curViewX2, curViewX3);
     gl.uniform4f(uViewYLoc, curViewY0, curViewY1, curViewY2, curViewY3);
 
-    drawCount = 0;
-    needsSort = false;
-    prevLayer = -Infinity;
-    prevZ = -Infinity;
-    prevYSort = false;
     batchTextures.length = 0;
     instanceCount = 0;
 
@@ -1468,19 +1304,8 @@ export function createWebGL2DAdapter({
           minY: camY - subH / (2 * zoom),
           maxY: camY + subH / (2 * zoom),
         };
-    for (let i = 0, n = scene.objects.length; i < n; i++) {
-      collect(scene.objects[i], alpha, viewBounds, interpolate);
-    }
-
-    let items = drawPool;
-    if (needsSort && drawCount > 1) {
-      stats.sorted = true;
-      sortQueue.length = drawCount;
-      for (let i = 0; i < drawCount; i++) sortQueue[i] = drawPool[i];
-      sortQueue.sort(compareDrawItems);
-      items = sortQueue;
-    }
-
+    const items = drawQueue.gather(scene.objects, alpha, viewBounds, stats);
+    const drawCount = drawQueue.count;
     for (let i = 0; i < drawCount; i++) {
       const item = items[i];
       if (item.kind === 0) {
@@ -1501,13 +1326,10 @@ export function createWebGL2DAdapter({
           SCRATCH_FLASH[0], SCRATCH_FLASH[1], SCRATCH_FLASH[2], allowShadows, true,
         );
       }
-      item.entity = null;
-      item.sprite = null;
     }
 
     flushBatch();
-    sortQueue.length = 0;
-    drawCount = 0;
+    drawQueue.clear();
   }
 
   function render(scene, app = null) {
@@ -1617,8 +1439,7 @@ export function createWebGL2DAdapter({
       disposed = true;
       canvas.removeEventListener?.('webglcontextlost', onContextLost, false);
       canvas.removeEventListener?.('webglcontextrestored', onContextRestored, false);
-      drawPool.length = 0;
-      sortQueue.length = 0;
+      drawQueue.dispose();
       destroyGlResources();
     },
   };

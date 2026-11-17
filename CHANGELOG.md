@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share scene traversal, culling and sprite ordering between Canvas2D and WebGL2. Reuse ancestor transforms during each camera pass, including scenes with mixed fixed-step interpolation.
+
 - Resolve 3D starter model replacements by logical catalog ID. Let `assets push --catalog` store the same selected files and sidecars that the release packager includes.
 
 - Keep up to four textures in a WebGL2 2D sprite batch while preserving draw order and the existing instance layout. Flush pending sprites before replacing custom-draw textures or evicting cached text.
