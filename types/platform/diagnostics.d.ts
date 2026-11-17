@@ -27,7 +27,7 @@
  */
 /**
  * @typedef {object} Diagnostics
- * @property {(timestampMs: number) => void} recordFrame Record a `requestAnimationFrame` timestamp (milliseconds).
+ * @property {(timestampMs: number, startWindow?: boolean) => void} recordFrame Record a `requestAnimationFrame` timestamp (milliseconds). Pass true to start a fresh timing window after an interruption.
  * @property {(error: unknown, context?: Record<string, unknown>) => ErrorReport} reportError
  * @property {() => Readonly<DiagnosticsSnapshot>} snapshot
  * @property {() => boolean} dispose Detach window listeners; false if already disposed.
@@ -103,9 +103,9 @@ export type DiagnosticsSnapshot = {
 };
 export type Diagnostics = {
     /**
-     * Record a `requestAnimationFrame` timestamp (milliseconds).
+     * Record a `requestAnimationFrame` timestamp (milliseconds). Pass true to start a fresh timing window after an interruption.
      */
-    recordFrame: (timestampMs: number) => void;
+    recordFrame: (timestampMs: number, startWindow?: boolean) => void;
     reportError: (error: unknown, context?: Record<string, unknown>) => ErrorReport;
     snapshot: () => Readonly<DiagnosticsSnapshot>;
     /**

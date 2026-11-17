@@ -36,6 +36,7 @@ export function applyRadialDeadzone(dx: number, dy: number, radius: number, dead
  * @property {(x?: number, y?: number) => unknown} setVirtualStick Receives the normalized stick vector.
  * @property {() => void} clearVirtualStick Reset the stick.
  * @property {(nameOrSlot: string, down: boolean) => unknown} setVirtualButton Press/release an action.
+ * @property {(nameOrSlot: string) => boolean} [consumeBuffered] Discard a pending button action when focus is lost or the page becomes hidden.
  */
 /**
  * @typedef {object} TouchControlsOptions
@@ -154,6 +155,10 @@ export type TouchControlsPlayer = {
      * Press/release an action.
      */
     setVirtualButton: (nameOrSlot: string, down: boolean) => unknown;
+    /**
+     * Discard a pending button action when focus is lost or the page becomes hidden.
+     */
+    consumeBuffered?: ((nameOrSlot: string) => boolean) | undefined;
 };
 export type TouchControlsOptions = {
     /**

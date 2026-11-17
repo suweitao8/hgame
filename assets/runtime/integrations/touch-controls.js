@@ -258,6 +258,7 @@ function injectStylesheet(documentRef) {
  * @property {(x?: number, y?: number) => unknown} setVirtualStick Receives the normalized stick vector.
  * @property {() => void} clearVirtualStick Reset the stick.
  * @property {(nameOrSlot: string, down: boolean) => unknown} setVirtualButton Press/release an action.
+ * @property {(nameOrSlot: string) => boolean} [consumeBuffered] Discard a pending button action when focus is lost or the page becomes hidden.
  */
 
 /**
@@ -624,6 +625,15 @@ export function createTouchControls({
     }
   }
 
+  function resetOnPageInterruption() {
+    releaseAll();
+    for (const pane of panes) {
+      for (const button of pane.buttonList) {
+        pane.player.consumeBuffered?.(button.binding.name);
+      }
+    }
+  }
+
   if (windowRef) {
     listen(windowRef, 'pointerdown', event => {
       if (disposed || touchDetected) return;
@@ -632,12 +642,12 @@ export function createTouchControls({
         if (currentMode === 'touch-only') syncVisibility();
       }
     }, { passive: true, capture: true });
-    listen(windowRef, 'blur', releaseAll);
+    listen(windowRef, 'blur', resetOnPageInterruption);
     listen(windowRef, 'resize', refreshLayout);
   }
   if (documentRef) {
     listen(documentRef, 'visibilitychange', () => {
-      if (documentRef.hidden) releaseAll();
+      if (documentRef.hidden) resetOnPageInterruption();
     });
   }
 

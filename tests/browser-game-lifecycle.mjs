@@ -275,27 +275,43 @@ async function exerciseTouch(page, read, id) {
   const y = Math.round(zone.y + zone.height / 2);
   const cdp = await page.context().newCDPSession(page);
   const touch = (type, touchPoints = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
-  const before = await read();
-  const dragX = x + 45;
-  await touch('touchStart', [{ x, y, id: 0 }]);
-  await touch('touchMove', [{ x: dragX, y, id: 0 }]);
-  await page.waitForFunction(({ tick }) => window.__hgameState().tick >= tick + 10, { tick: before.tick });
-  const moved = await read();
-  assert.ok(distance(before.player, moved.player) > 0.1, `${id} touch movement`);
   const input = () => page.evaluate(() => ({
     pointers: (window.__arena ?? window.__survivor).app.input.pointerCount,
     joystick: document.querySelector('.hgame-joy-base').dataset.active,
   }));
-  assert.deepEqual(await input(), { pointers: 1, joystick: 'true' });
-  await touch('touchCancel');
-  assert.deepEqual(await input(), { pointers: 0, joystick: 'false' });
-  const cancelled = await read();
-  await page.waitForFunction(tick => window.__hgameState().tick >= tick + 36, cancelled.tick);
-  const settled = await read();
-  await page.waitForFunction(tick => window.__hgameState().tick >= tick + 12, settled.tick);
-  assert.ok(distance(settled.player, (await read()).player) < 0.05, `${id} motion settled after touch cancel`);
-  await cdp.detach();
-  return { moved: true, cancelled: true };
+  try {
+    for (const interruption of ['hidden', 'cancel']) {
+      const before = await read();
+      await touch('touchStart', [{ x, y, id: 0 }]);
+      await touch('touchMove', [{ x: x + (interruption === 'hidden' ? 45 : -45), y, id: 0 }]);
+      await page.waitForFunction(tick => window.__hgameState().tick >= tick + 10, before.tick);
+      assert.ok(distance(before.player, (await read()).player) > 0.1, `${id} touch movement`);
+      assert.deepEqual(await input(), { pointers: 1, joystick: 'true' });
+      if (interruption === 'hidden') {
+        await page.evaluate(() => {
+          Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+          Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+          try { document.dispatchEvent(new Event('visibilitychange')); }
+          finally {
+            delete document.visibilityState;
+            delete document.hidden;
+          }
+        });
+        assert.deepEqual(await input(), { pointers: 0, joystick: 'false' }, `${id} releases touch on hiding`);
+      }
+      await touch('touchCancel');
+      if (interruption === 'hidden') {
+        await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+      }
+      assert.deepEqual(await input(), { pointers: 0, joystick: 'false' });
+      const released = await read();
+      await page.waitForFunction(tick => window.__hgameState().tick >= tick + 36, released.tick);
+      const settled = await read();
+      await page.waitForFunction(tick => window.__hgameState().tick >= tick + 12, settled.tick);
+      assert.ok(distance(settled.player, (await read()).player) < 0.05, `${id} motion settled after ${interruption}`);
+    }
+  } finally { await cdp.detach(); }
+  return { moved: true, cancelled: true, hidden: true };
 }
 
 async function exerciseSoak(page, read, id, errors) {

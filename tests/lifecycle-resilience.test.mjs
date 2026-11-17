@@ -160,6 +160,65 @@ test('UI scenes remain command-driven through transitions and repeated disposal'
   assert.equal(app.start(), false);
 });
 
+test('returning from a hidden document rebases simulation and render timing', async () => {
+  const clock = scheduler();
+  const samples = [];
+  const renderer = {
+    render() {},
+    qualityController: {},
+    recordFrameInterval(ms) { samples.push(ms); },
+  };
+  const project = { profile: '3d', features: ['scene', 'diagnostics', 'adaptiveQuality3d'] };
+  const app = createGameApplication({ ...clock, project, renderer });
+  await app.installFeatures();
+  app.scenes.add(new Scene('main'));
+  app.scenes.start('main');
+  app.start();
+  clock.advance(100);
+  clock.advance(120);
+  assert.deepEqual(samples, [20]);
+
+  app.platform.lifecycle.setVisible(false);
+  clock.advance(160);
+  clock.advance(200);
+  assert.deepEqual(samples, [20], 'hidden frames must not drive adaptive quality');
+  const before = app.stats;
+
+  app.platform.lifecycle.setVisible(true);
+  clock.advance(1300);
+  assert.equal(app.unscaledDeltaSeconds, 0);
+  assert.deepEqual(app.stats, { ...before, frames: before.frames + 1 });
+  assert.equal(clock.pending.size, 1, 'the original scheduler continues');
+  assert.equal(app.services.diagnostics.snapshot().frameCount, 1);
+  clock.advance(1320);
+  assert.equal(app.stats.ticks, before.ticks + 1);
+  assert.deepEqual(samples, [20, 20]);
+  assert.equal(app.services.diagnostics.snapshot().frameTimeMaxMs, 20);
+  app.dispose();
+});
+
+test('disposing from an adaptive quality callback leaves diagnostics disposed', async () => {
+  const clock = scheduler();
+  const renderer = {
+    render() {},
+    qualityController: {},
+    recordFrameInterval() { app.dispose(); },
+  };
+  const project = { profile: '3d', features: ['scene', 'diagnostics', 'adaptiveQuality3d'] };
+  const app = createGameApplication({ ...clock, project, renderer });
+  await app.installFeatures();
+  const { diagnostics } = app.services;
+  app.scenes.add(new Scene('main'));
+  app.scenes.start('main');
+  app.start();
+  clock.advance(100);
+  assert.equal(diagnostics.snapshot().frameCount, 1);
+  clock.advance(120);
+  assert.equal(app.disposed, true);
+  assert.equal(diagnostics.snapshot().frameCount, 0);
+  assert.equal(clock.pending.size, 0);
+});
+
 test('disposing from the platform ready callback leaves no scheduled frame', () => {
   const clock = scheduler();
   let app;

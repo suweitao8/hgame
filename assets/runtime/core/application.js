@@ -171,7 +171,10 @@ export function createGameApplication({
 
   const offResize = runtime.lifecycle?.on?.('resize', () => renderer.resize?.());
   const offFocus = runtime.lifecycle?.on?.('focus', focused => { if (!focused) runtime.input?.reset?.(); });
-  const offVisibility = runtime.lifecycle?.on?.('visibility', visible => { if (!visible) runtime.input?.reset?.(); });
+  const offVisibility = runtime.lifecycle?.on?.('visibility', visible => {
+    previousTime = null;
+    if (!visible) runtime.input?.reset?.();
+  });
 
   async function installFeatures(adapters = {}) {
     if (disposed) throw new Error('Application disposed');
@@ -363,12 +366,17 @@ export function createGameApplication({
     frameId = null;
     if (!running || disposed || paused) return;
     try {
-      const dt = previousTime === null ? 0 : Math.max(0, (time - previousTime) / 1000);
+      const priorTime = previousTime;
+      const dt = priorTime === null ? 0 : Math.max(0, (time - priorTime) / 1000);
       previousTime = time;
       step(dt);
       if (disposed) return;
-      if (services.adaptiveQuality3d && dt > 0) renderer.recordFrameInterval(dt * 1000);
-      runtime.diagnostics?.recordFrame?.(time);
+      if (previousTime !== null && runtime.lifecycle?.visible !== false) {
+        if (services.adaptiveQuality3d && dt > 0) renderer.recordFrameInterval(dt * 1000);
+        if (!disposed && previousTime !== null) {
+          runtime.diagnostics?.recordFrame?.(time, priorTime === null);
+        }
+      }
     } catch (error) {
       stop();
       runtime.diagnostics?.reportError?.(error, { subsystem: 'hgame' });

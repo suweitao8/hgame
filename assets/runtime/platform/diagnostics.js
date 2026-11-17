@@ -30,7 +30,7 @@
 
 /**
  * @typedef {object} Diagnostics
- * @property {(timestampMs: number) => void} recordFrame Record a `requestAnimationFrame` timestamp (milliseconds).
+ * @property {(timestampMs: number, startWindow?: boolean) => void} recordFrame Record a `requestAnimationFrame` timestamp (milliseconds). Pass true to start a fresh timing window after an interruption.
  * @property {(error: unknown, context?: Record<string, unknown>) => ErrorReport} reportError
  * @property {() => Readonly<DiagnosticsSnapshot>} snapshot
  * @property {() => boolean} dispose Detach window listeners; false if already disposed.
@@ -73,8 +73,9 @@ export function createDiagnostics({
   windowRef?.addEventListener?.('error', onError);
   windowRef?.addEventListener?.('unhandledrejection', onRejection);
 
-  function recordFrame(timestamp) {
+  function recordFrame(timestamp, startWindow = false) {
     if (!Number.isFinite(timestamp)) return;
+    if (startWindow) frames.length = 0;
     frames.push(timestamp);
     if (frames.length > Math.max(2, sampleFrames)) frames.shift();
   }

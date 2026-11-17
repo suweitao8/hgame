@@ -87,6 +87,14 @@ Chrome 157 与 SwiftShader 在 3840×2160、DPR 2、中档下启动时，画布�
 
 Chrome 还复现了从前进后退缓存返回时，两款旧样板的应用已被销毁。修复覆盖生成模板和样板游戏，`pagehide.persisted` 期间保留场景，真正退出时释放资源。原生导航探针移除了测试浏览器所见的本地 `no-store` 响应头，使页面满足缓存条件。两款修复后的样板各连续恢复两次，模拟步继续推进，按住的移动键已释放。原始报告位于 `build/performance/webasset-history-restore.jsonl`。
 
+### 恢复前台计时与触控
+
+Chrome 157 的前进后退缓存对照将页面挂起约 1.1 秒。使用 `481c8de` 的调度器时，Survivor 和 Arena 的恢复首帧分别收到 1111 和 1118 ms，两者都推进 5 个固定步并增加 10 个丢步。Survivor 的运行时诊断也记录了 1111 ms 的卡顿。
+
+新版在可见性改变时重置动画时钟。两款游戏恢复首帧的时间增量为 0，固定步与丢步计数未增加，之后继续推进。Survivor 从首帧开始新的诊断窗口，隐藏时的帧不参与画质决策。原始记录位于 `build/performance/webasset-background-clock.jsonl`。
+
+触控回归模拟按住拖杆时隐藏页面，验证平台指针与拖杆清零，返回后可以重新拖动。单元测试还验证缓冲中的屏幕按键动作被清除、普通短按仍可缓冲，以及画质回调中销毁应用后诊断窗口保持清空。
+
 ## 可试玩参考
 
 - [Horde Survivor](http://127.0.0.1:4175/local-games/survivor-2d/index.html)

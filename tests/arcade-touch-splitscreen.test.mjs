@@ -372,6 +372,50 @@ test('createTouchControls handles auto touch reveal, radial deadzone, multi-touc
   ui2p.dispose();
 });
 
+test('suspending touch controls discards pending actions and allows a fresh gesture', () => {
+  const dom = makeMockDom({ maxTouchPoints: 2 });
+  const controls = createArcadeControls({ actions: ['attack'], bufferWindow: 0.2 });
+  const ui = createTouchControls({
+    controls,
+    container: dom.body,
+    documentRef: dom.documentRef,
+    windowRef: dom.windowRef,
+    navigatorRef: dom.navigatorRef,
+  });
+  const [stick] = ui.root.querySelectorAll('.hgame-joy-zone');
+  const [button] = ui.root.querySelectorAll('.hgame-skill-btn');
+  controls.p1.router.setVirtualAction('externalAction', true);
+  function press() {
+    stick.emit('pointerdown', { pointerId: 1, clientX: 100, clientY: 100 });
+    stick.emit('pointermove', { pointerId: 1, clientX: 150, clientY: 100 });
+    button.emit('pointerdown', { pointerId: 2 });
+    controls.update(1 / 60);
+    assert.equal(controls.p1.move.active, true);
+    assert.equal(controls.p1.isBuffered('attack'), true);
+  }
+  for (const suspend of [
+    () => { dom.documentRef.hidden = true; dom.documentRef.emit('visibilitychange'); },
+    () => dom.windowRef.emit('blur'),
+  ]) {
+    press();
+    suspend();
+    controls.update(1 / 60);
+    assert.equal(stick.capturedPointers.size, 0);
+    assert.equal(button.capturedPointers.size, 0);
+    assert.equal(controls.p1.move.active, false);
+    assert.equal(controls.p1.isDown('attack'), false);
+    assert.equal(controls.p1.consumeBuffered('attack'), false);
+    assert.equal(controls.p1.router.isDown('externalAction'), true);
+    dom.documentRef.hidden = false;
+    dom.documentRef.emit('visibilitychange');
+  }
+  press();
+  button.emit('pointerup', { pointerId: 2 });
+  controls.update(1 / 60);
+  assert.equal(controls.p1.consumeBuffered('attack'), true, 'a normal tap still buffers the action');
+  ui.dispose();
+});
+
 test('computeSplitScreenViews and setViews work across Canvas2D, WebGL2D, and Three.js adapters', () => {
   const views2 = computeSplitScreenViews(2, { width: 960, height: 540 });
   assert.equal(views2.length, 2);

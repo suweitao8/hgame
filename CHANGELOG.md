@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Rebase application frame timing on browser visibility transitions. Hidden frames leave adaptive 3D quality alone, and the next visible frame starts a new diagnostic timing window.
+- Skip recording a frame when an adaptive-quality callback disposes the application or resets its frame clock.
+- Release touch gestures and discard buffered overlay button actions when the page becomes hidden or loses focus.
+
 - Preserve starter and reference game state when a browser caches the document during navigation. Continue disposing resources on page exit. Report the current scene in the bare starter state hooks.
 
 - Apply adaptive 3D resolution scaling to the capped drawing buffer. Keep the reduced scale when switching to a lower quality tier and honor the configured maximum on entry to auto mode.
