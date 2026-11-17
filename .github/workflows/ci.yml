@@ -63,8 +63,6 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npx playwright-core install --with-deps chromium
-      - name: Use the installed Chromium for snapshots
-        run: node -e 'require("node:fs").appendFileSync(process.env.GITHUB_ENV, "HGAME_CHROME=" + require("playwright-core").chromium.executablePath() + "\n")'
       - run: node scripts/create-game.mjs ${{ runner.temp }}/snap-game --profile 2d --no-git
       - run: npm run snapshot -- ${{ runner.temp }}/snap-game --keys d:200
       - run: npm run test:browser

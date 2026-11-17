@@ -58,9 +58,7 @@ try {
 }
 const { width: vw, height: vh } = viewport;
 
-function findChrome() {
-  const env = opt('--chrome', process.env.HGAME_CHROME);
-  if (env) return env;
+function findSystemChrome() {
   const c = [
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
@@ -139,8 +137,19 @@ const freezeClock = (frameMs) => {
     return now;
   };
 };
-const exe = findChrome();
 const { chromium } = createRequire(import.meta.url)('playwright-core');
+async function launchBrowser() {
+  const settings = { headless: true, args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'] };
+  const executablePath = opt('--chrome', process.env.HGAME_CHROME);
+  if (executablePath) return chromium.launch({ ...settings, executablePath });
+  try {
+    return await chromium.launch(settings);
+  } catch (error) {
+    const fallback = findSystemChrome();
+    if (!fallback || !error.message.includes("Executable doesn't exist at ")) throw error;
+    return chromium.launch({ ...settings, executablePath: fallback });
+  }
+}
 const port = await freePort();
 const server = spawn(process.execPath, [path.join(root, 'scripts', 'preview.mjs'), path.resolve(gameDir), '--port', String(port)],
   { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -154,8 +163,8 @@ try {
     try { if ((await fetch(url)).ok) break; } catch {}
     await new Promise(r => setTimeout(r, 60));
   }
-  browser = await chromium.launch({ headless: true, ...(exe ? { executablePath: exe } : {}),
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'] });
+  browser = await launchBrowser();
+  report.browserVersion = browser.version();
   const page = await browser.newPage({ viewport: { width: vw, height: vh }, deviceScaleFactor: 1 });
   page.on('pageerror', e => consoleErrors.push(e.message));
   page.on('console', m => { if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) consoleErrors.push(m.text()); });
