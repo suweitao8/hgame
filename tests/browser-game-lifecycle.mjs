@@ -303,6 +303,10 @@ async function exerciseTouch(page, read, id) {
       if (interruption === 'hidden') {
         await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
       }
+      await page.waitForFunction(() => {
+        const input = (window.__arena ?? window.__survivor).app.input;
+        return input.pointerCount === 0 && document.querySelector('.hgame-joy-base').dataset.active === 'false';
+      }, null, { timeout: 3000 });
       assert.deepEqual(await input(), { pointers: 0, joystick: 'false' });
       const released = await read();
       await page.waitForFunction(tick => window.__hgameState().tick >= tick + 36, released.tick);
