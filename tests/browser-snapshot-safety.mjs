@@ -73,4 +73,30 @@ window.__hgameState = () => { if (mode === 'state') throw new Error('state-faile
     assert.equal(repeat.status, 0, JSON.stringify(repeat.report));
     assert.equal(repeat.report.sha256, result.report.sha256);
   });
+  await t.test('captures a nested entry within the fixture', () => {
+    const entry = 'toy/release-probe/index.html';
+    const nested = path.join(game, 'toy', 'release-probe');
+    mkdirSync(nested, { recursive: true });
+    const html = readFileSync(path.join(game, 'index.html'), 'utf8');
+    writeFileSync(path.join(nested, 'index.html'), html.replace('{ ready: true }', '{ entry: location.pathname }'));
+    const result = run(['--entry', entry]);
+    assert.equal(result.status, 0, JSON.stringify(result.report));
+    assert.deepEqual(result.report.state, { entry: '/' + entry });
+  });
+  await t.test('early failure reports HTTP and JavaScript errors', () => {
+    const entryFile = path.join(game, 'index.html');
+    const html = readFileSync(entryFile, 'utf8');
+    writeFileSync(baseline, 'accepted');
+    try {
+      writeFileSync(entryFile, `<!doctype html><img src="./missing-module.png" hidden><canvas hidden id="game"></canvas>
+<script>throw new Error('early-boot-failure');</script>`);
+      const result = run();
+      assert.equal(result.status, 1, JSON.stringify(result.report));
+      assert.ok(result.report.httpErrors?.some(error => error.includes('404') && error.endsWith('/missing-module.png')));
+      assert.ok(result.report.consoleErrors?.some(error => error.includes('early-boot-failure')));
+      assert.equal(readFileSync(baseline, 'utf8'), 'accepted');
+    } finally {
+      writeFileSync(entryFile, html);
+    }
+  });
 });

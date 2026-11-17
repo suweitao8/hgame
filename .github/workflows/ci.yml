@@ -68,6 +68,12 @@ jobs:
       - run: npm run test:browser:snapshot
       - run: npm run test:browser:safety
       - run: npm run test:browser:telemetry
+      - run: npm run test:browser:packages
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: package-browser
+          path: build/package-browser/
       - run: node scripts/build-examples.mjs
       - run: npm run test:examples
       - run: npm run test:browser:lifecycle -- --context-recovery

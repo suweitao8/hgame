@@ -125,6 +125,8 @@ Chrome 157 的前进后退缓存对照将页面挂起约 1.1 秒。使用 `481c8
 
 原始数据位于 `build/performance/three-release-settings.json` 和 `build/performance/three-release-cold-start.jsonl`。标准 Arena、Toy Arena 和启用 Rapier 的 PBR 3D 模板均用固定步进和键盘输入与旧包做画面比较，像素差异为 0，浏览器错误为 0。Toy ZIP 通过本地预检。
 
+`npm run test:browser:packages` 将验证接入 Chromium CI。脚本从实际 ZIP 解包启用 Rapier 的 PBR 3D 模板，检查 Three.js 和 WASM 的请求，并将标准包、Toy 包冻结截图与原始字节包对照。Toy 从 `/toy/release-probe/index.html` 加载。本机三张 PNG 的哈希一致。故意修改画面或在 Toy 入口加入根相对模块引用均会让检查失败。启动超时报告保留实际 404 URL，检查结果保存于 `build/package-browser/`。
+
 ## 可试玩参考
 
 - [Horde Survivor](http://127.0.0.1:4175/local-games/survivor-2d/index.html)

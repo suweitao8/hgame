@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Verify rendered 3D releases directly from standard and Toy ZIPs in Chromium CI. Capture nested entry paths and retain startup HTTP and JavaScript errors in snapshot reports.
+
 - Minify the two vendored Three.js modules in standard and Toy game releases when esbuild is available. Preserve constructor names, module paths and the MIT notice. Use `--no-minify` to package the source files.
 
 - Preload the vendored Three.js entry and core modules in 3D starters and Arena, so both downloads can start during HTML parsing.

@@ -7,6 +7,7 @@
 //        [--selector "#game"] [--viewport 960x540] [--baseline base.png] [--update-baseline]
 //        [--eval "<js expr>"] [--freeze-time] [--steps N] [--state-hook __hgameState]
 //        [--threshold 0.01] [--query horde=3000] [--chrome <path>] [--ready "#game[data-engine-ready=true]"]
+//        [--entry toy/<slug>/index.html]
 //
 // Exit code 1 when: page errors, blank canvas, or baseline diff above threshold.
 import { spawn } from 'node:child_process';
@@ -30,14 +31,19 @@ const outPng = path.resolve(opt('--out', path.join(gameDir, 'build', 'snapshot.p
 const selector = opt('--selector', '#game');
 const ready = opt('--ready', '');
 const baseline = opt('--baseline', '');
+const entry = opt('--entry', '/');
 const query = opt('--query', '');
 const evalExpr = opt('--eval', '');
 const freeze = flag('--freeze-time') || argv.includes('--steps');
 const stepsArg = opt('--steps', '');
 const stateHook = opt('--state-hook', '__hgameState');
 const FRAME_MS = 1000 / 60;
-let waitMs, threshold, viewport, requestedSteps, keys;
+let entryPath, waitMs, threshold, viewport, requestedSteps, keys;
 try {
+  const origin = 'http://127.0.0.1';
+  const url = new URL(entry, origin);
+  if (!entry || url.origin !== origin || url.search || url.hash) throw new Error('--entry must be a path inside the fixture');
+  entryPath = url.pathname;
   waitMs = numberOption(opt('--wait', 800), '--wait');
   threshold = numberOption(opt('--threshold', 0.01), '--threshold', { max: 1 });
   viewport = viewportOption(opt('--viewport', '960x540'));
@@ -139,9 +145,10 @@ const port = await freePort();
 const server = spawn(process.execPath, [path.join(root, 'scripts', 'preview.mjs'), path.resolve(gameDir), '--port', String(port)],
   { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let browser;
-const report = { ok: true, problems: [] };
+const report = { ok: true, problems: [], consoleErrors: [], httpErrors: [] };
+const { consoleErrors, httpErrors } = report;
 try {
-  const url = `http://127.0.0.1:${port}/` + (query ? '?' + query.replace(/^\?/, '') : '');
+  const url = `http://127.0.0.1:${port}${entryPath}` + (query ? '?' + query.replace(/^\?/, '') : '');
   for (let i = 0; ; i++) {
     if (server.exitCode !== null || i > 100) throw new Error('preview server failed to start');
     try { if ((await fetch(url)).ok) break; } catch {}
@@ -150,7 +157,6 @@ try {
   browser = await chromium.launch({ headless: true, ...(exe ? { executablePath: exe } : {}),
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'] });
   const page = await browser.newPage({ viewport: { width: vw, height: vh }, deviceScaleFactor: 1 });
-  const consoleErrors = [], httpErrors = [];
   page.on('pageerror', e => consoleErrors.push(e.message));
   page.on('console', m => { if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) consoleErrors.push(m.text()); });
   page.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) httpErrors.push(`HTTP ${r.status()} ${r.url()}`); });
@@ -197,7 +203,7 @@ try {
     ? 'data:image/png;base64,' + readFileSync(baseline).toString('base64') : null;
   const { stats, diff } = await page.evaluate(analyze, { shot: 'data:image/png;base64,' + png.toString('base64'), base: baseB64 });
   const diagnostics = await page.evaluate(() => ({ canvasAttrs: Object.fromEntries([...document.querySelectorAll('canvas')].flatMap(c => [...c.attributes].filter(a => a.name.startsWith('data-')).map(a => [a.name, a.value]))) }));
-  Object.assign(report, { frozenTime: freeze || undefined, png: outPng, sha256: createHash('sha256').update(png).digest('hex').slice(0, 16), stats, diagnostics, consoleErrors, httpErrors });
+  Object.assign(report, { frozenTime: freeze || undefined, png: outPng, sha256: createHash('sha256').update(png).digest('hex').slice(0, 16), stats, diagnostics });
   if (consoleErrors.length || httpErrors.length) report.problems.push('page errors');
   if (stats.nonBlankRatio < 0.001) report.problems.push('canvas is blank');
   if (baseline && !flag('--update-baseline') && !baseB64) report.problems.push(`baseline missing: ${baseline} (run with --update-baseline)`);
