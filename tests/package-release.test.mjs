@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -260,6 +260,51 @@ test('standalone 3D project release traces Three.js transitive modules while pru
     ]) {
       assert.equal(await exists(path.join(outDir, prunedRel)), false, `Expected ${prunedRel} to be pruned`);
     }
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('3D release minifies the Three.js runtime and preserves its exports, license, and source fallback', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-pkg-three-minify-'));
+  const game = path.join(tmp, 'arena');
+  const threeDir = path.join('assets', 'vendor', 'three');
+  try {
+    const generated = spawnSync(process.execPath, [createGame, game, '--profile', '3d', '--bare', '--no-git'],
+      { encoding: 'utf8' });
+    assert.equal(generated.status, 0, generated.stderr || generated.stdout);
+
+    function build(tag, options = []) {
+      const result = spawnSync(process.execPath, [packageGame, game, '--version', '1.0', '--tag', tag, ...options],
+        { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      return JSON.parse(result.stdout);
+    }
+
+    const compact = build('compact');
+    const raw = build('raw', ['--no-minify']);
+    assert.equal(compact.minified, true);
+    assert.equal(raw.minified, false);
+
+    for (const file of ['three.module.js', 'three.core.js', 'LICENSE']) {
+      const source = await readFile(path.join(game, threeDir, file));
+      const original = await readFile(path.join(raw.outputDir, threeDir, file));
+      const minified = await readFile(path.join(compact.outputDir, threeDir, file));
+      assert.deepEqual(original, source, `${file} is preserved with --no-minify`);
+      if (file === 'LICENSE') {
+        assert.deepEqual(minified, source, 'the MIT notice is included verbatim');
+      } else {
+        assert.ok(minified.length < source.length * 0.8, `${file} must shrink in the standard release`);
+      }
+    }
+
+    const [original, minified] = await Promise.all([raw, compact].map(({ outputDir }) =>
+      import(pathToFileURL(path.join(outputDir, threeDir, 'three.module.js')).href)));
+    assert.deepEqual(Object.keys(minified), Object.keys(original));
+    assert.equal(minified.REVISION, original.REVISION);
+    assert.equal(minified.WebGLRenderer.name, original.WebGLRenderer.name);
+    assert.equal(minified.Vector3.name, original.Vector3.name);
+    assert.equal(new minified.Vector3(3, 4, 0).length(), 5);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

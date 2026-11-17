@@ -982,10 +982,11 @@ export async function packageGameRelease({
   for (const [relPosix, absSrc] of includedFiles) {
     let data = await readFile(absSrc);
     const ext = path.posix.extname(relPosix).toLowerCase();
+    const isThreeRuntime = /^assets\/vendor\/three\/three\.(module|core)\.js$/.test(relPosix);
     if (
       esbuild &&
       (ext === '.js' || ext === '.mjs' || ext === '.css') &&
-      !relPosix.startsWith('assets/vendor/three/') &&
+      (isThreeRuntime || !relPosix.startsWith('assets/vendor/three/')) &&
       !relPosix.startsWith('vendor/hgame/vendor/')
     ) {
       const transformed = await esbuild.transform(data.toString('utf8'), {
@@ -994,7 +995,8 @@ export async function packageGameRelease({
         target: 'es2022',
         minifySyntax: true,
         minifyWhitespace: true,
-        minifyIdentifiers: false,
+        minifyIdentifiers: isThreeRuntime,
+        keepNames: isThreeRuntime,
         legalComments: 'inline',
       });
       data = Buffer.from(transformed.code, 'utf8');

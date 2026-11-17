@@ -112,6 +112,19 @@ Chrome 157 的前进后退缓存对照将页面挂起约 1.1 秒。使用 `481c8
 
 标准 Rapier 3D 包与 Bilibili Toy 3D 包均在本地 Chromium 通过启动及单次模块请求检查。Toy ZIP 通过预检，带内容指纹的入口从子目录启动成功。
 
+### 3D 发布包
+
+发布打包器在 esbuild 可用时压缩 `three.module.js` 和 `three.core.js`，保留导出、构造器名称和 MIT 许可文件。`--no-minify` 可按原始字节打包。以下为 Arena 的标准发布包对照，旧版打包器取自 `13835b0`。同一源码、浏览器和限速设置下，前后各交错跑 3 次冷启动。
+
+| 指标 | 改动前 | 改动后 |
+|---|---:|---:|
+| 两个 Three.js 模块 | 2,133,698 B | 793,305 B |
+| 标准 ZIP | 612,150 B | 396,894 B |
+| 启动子资源传输量 | 2,474,178 B | 1,133,785 B |
+| 冷启动中位数 | 4.383 s | 2.312 s |
+
+原始数据位于 `build/performance/three-release-settings.json` 和 `build/performance/three-release-cold-start.jsonl`。标准 Arena、Toy Arena 和启用 Rapier 的 PBR 3D 模板均用固定步进和键盘输入与旧包做画面比较，像素差异为 0，浏览器错误为 0。Toy ZIP 通过本地预检。
+
 ## 可试玩参考
 
 - [Horde Survivor](http://127.0.0.1:4175/local-games/survivor-2d/index.html)
