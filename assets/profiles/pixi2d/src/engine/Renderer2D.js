@@ -1,5 +1,6 @@
 import { Application, Container, Sprite, TilingSprite, ParticleContainer, Particle } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
+import { PixiSwarmLayer } from './PixiSwarmLayer.js';
 
 export class Renderer2D {
   constructor(atlas) {
@@ -7,6 +8,7 @@ export class Renderer2D {
     this.app = new Application();
     this.entityMap = new Map();
     this.spritePool = [];
+    this.swarmLayers = new Set();
     this.camera = { x: 0, y: 0, targetX: 0, targetY: 0, zoom: 1, shakeX: 0, shakeY: 0 };
   }
   async init(mount) {
@@ -33,6 +35,11 @@ export class Renderer2D {
     this.app.stage.addChild(this.worldRoot);
     this.bloom = new AdvancedBloomFilter({ threshold: 0.62, bloomScale: 0.4, brightness: 1, blur: 3 });
     this.app.stage.filters = [];
+  }
+  createSwarmLayer(options) {
+    const layer = new PixiSwarmLayer(this, options);
+    this.swarmLayers.add(layer);
+    return layer;
   }
   syncEnemies(enemies, time) {
     if (this.enemyParticles.length > enemies.length) {
@@ -101,6 +108,7 @@ export class Renderer2D {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    for (const layer of this.swarmLayers) layer.dispose();
     for (const sprite of this.spritePool) sprite.destroy();
     this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.entityMap.clear();
     this.app.stage.filters = [];

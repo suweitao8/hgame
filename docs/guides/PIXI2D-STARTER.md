@@ -25,3 +25,14 @@ const renderer = new Renderer2D(atlas);
 ```
 
 Catalog entries must have `kind: "image"`; extra frames use the image dimensions unless `width` and `height` are supplied. Frames get a `_white` silhouette by default; set `makeWhite: false` to omit it. The atlas has a fixed size and reports overflow instead of silently dropping a frame. `options.signal` can cancel loading. The built-in character slots retain their fixed atlas dimensions.
+
+For larger CPU-simulated crowds, use the existing HGame `createSwarmSimulation` and a Pixi swarm layer. Call `swarm.step` in the scene's fixed update and synchronize once per visual update; no extra application loop or per-unit game objects are required:
+
+```js
+const crowd = renderer.createSwarmLayer({ textures: ['enemy_chaser'], scale: 0.5 });
+// fixedUpdate(dt): swarm.step(dt, { heroX, heroY });
+// update(dt): renderer.update(dt); crowd.sync(swarm);
+// On scene exit: crowd.dispose(); renderer disposal also releases attached layers.
+```
+
+The layer reads live IDs, positions, scale, rotation, clip IDs and hit-flash state from the CPU swarm. It uses Pixi `Particle` instances sharing the atlas and reuses them as units enter or leave the view. `worldScale` scales simulation positions; `scale` scales sprites. Set `syncRotation`, `flipByDirection`, or `cull: false` when required. This adapter does not consume the GPU-only swarm texture and its per-frame CPU synchronization cost still depends on the number of active units.
