@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Re-upload WebGL2D sprite images after context restoration and allow retry after a failed upload. Release GPU textures when text cache entries are evicted. Reuse one scratch canvas and GPU texture for `customDraw` sprites with a clean drawing state for every callback.
+
 - Keep one pending animation frame when a ready or update callback pauses and resumes its application. Stopping the application cancels that frame.
 - Roll back a failed startup if a ready callback or initial render throws so the application can be started again.
 

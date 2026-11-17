@@ -57,12 +57,47 @@ function distance(a, b) {
 }
 
 async function exerciseContextRecovery(page, id) {
-  const results = await page.evaluate(async () => {
+  const textured = id === 'survivor-2d';
+  const results = await page.evaluate(async ({ textured, runtime }) => {
     const canvas = document.querySelector('#game');
     const { app } = window.__arena ?? window.__survivor;
     const gl = canvas.getContext('webgl2');
     const extension = gl?.getExtension('WEBGL_lose_context');
     if (!extension) throw new Error('WEBGL_lose_context is required for this test');
+
+    const markers = [];
+    const markerColors = [0xff00ff, 0x00ff00, 0x00ffff];
+    if (textured) {
+      const [{ Entity }, { Sprite2D }] = await Promise.all([
+        import(`${runtime}/index.js`), import(`${runtime}/integrations/webgl2d.js`),
+      ]);
+      // Preserve the exact same image object across both context losses.
+      const image = document.createElement('canvas');
+      image.width = image.height = 32;
+      const ctx = image.getContext('2d');
+      ctx.fillStyle = '#ff00ff';
+      ctx.fillRect(0, 0, 32, 32);
+      const { x, y } = app.renderer.camera;
+      const addMarker = (offset, options) => {
+        const entity = app.scenes.current.add(new Entity({ x: x + offset, y }));
+        entity.addComponent(new Sprite2D({ width: 32, height: 32, layer: 1000, ...options }));
+        markers.push(entity);
+      };
+      addMarker(0, { image });
+      addMarker(-80, { customDraw(ctx) {
+        ctx.fillStyle = '#00ff00';
+        ctx.rect(-16, -16, 32, 32);
+        ctx.fill();
+        // The next callback still gets a fresh drawing state.
+        ctx.save();
+        ctx.translate(150, 150);
+      } });
+      addMarker(80, { customDraw(ctx) {
+        ctx.fillStyle = '#00ffff';
+        ctx.rect(-8, -16, 16, 32);
+        ctx.fill();
+      } });
+    }
 
     function contextEvent(type, action) {
       return new Promise((resolve, reject) => {
@@ -91,10 +126,14 @@ async function exerciseContextRecovery(page, id) {
           const pixels = new Uint8Array(canvas.width * canvas.height * 4);
           gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
           const colors = new Set();
+          const markerPixels = [0, 0, 0];
           for (let i = 0; i < pixels.length; i += 16) {
-            colors.add((pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2]);
+            const color = (pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2];
+            colors.add(color);
+            const marker = markerColors.indexOf(color);
+            if (marker >= 0) markerPixels[marker]++;
           }
-          resolve({ colors: colors.size, glError: gl.getError(), tick: app.stats.ticks });
+          resolve({ colors: colors.size, markerPixels, glError: gl.getError(), tick: app.stats.ticks });
         });
       });
     }
@@ -113,15 +152,19 @@ async function exerciseContextRecovery(page, id) {
       const after = await sampleFrame();
       rounds.push({ lost, restored, lostTick, after, recoveryMs: +(performance.now() - recoveryStart).toFixed(2) });
     }
+    for (const marker of markers) marker.destroy();
     return { before, rounds };
-  });
+  }, { textured, runtime: live ? './assets/vendor/hgame' : './vendor/hgame' });
+  const hasMarkers = ({ markerPixels: [image, full, half] }) => image > 100 && full > 100 && half > 80 && half < full * 0.75;
   assert.ok(results.before.colors > 1, `${id} initial WebGL frame contains scene pixels`);
+  if (textured) assert.ok(hasMarkers(results.before), `${id} initial texture markers: ${results.before.markerPixels}`);
   assert.equal(results.before.glError, 0, `${id} initial GL error`);
   for (const [index, result] of results.rounds.entries()) {
     const label = `${id} restore ${index + 1}: ${JSON.stringify(result)}`;
     assert.ok(result.lost && result.restored, label);
     assert.ok(result.after.tick > result.lostTick, label);
     assert.ok(result.after.colors > 1, label);
+    if (textured) assert.ok(hasMarkers(result.after), `${label} contains all texture markers`);
     assert.equal(result.after.glError, 0, label);
   }
   return results;

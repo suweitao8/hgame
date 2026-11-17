@@ -91,6 +91,9 @@ function makeMockBufferFactory() {
       textAlign: 'center',
       textBaseline: 'middle',
       clearRect() {},
+      save() {},
+      restore() {},
+      translate() {},
       drawImage() { ops.drawImage++; },
       fillRect() {
         if (this.globalCompositeOperation === 'source-in') ops.sourceIn++;
@@ -116,6 +119,7 @@ function makeMockWebGL2Canvas({ width = 960, height = 540 } = {}) {
   const glCalls = {
     drawArraysInstanced: [],
     texImage2D: 0,
+    liveTextures: new Set(),
   };
   const gl = {
     VERTEX_SHADER: 0x8b31,
@@ -167,11 +171,17 @@ function makeMockWebGL2Canvas({ width = 960, height = 540 } = {}) {
     enableVertexAttribArray() {},
     vertexAttribPointer() {},
     vertexAttribDivisor() {},
-    createTexture() { return { tex: true }; },
-    bindTexture() {},
+    createTexture() {
+      const texture = {};
+      glCalls.liveTextures.add(texture);
+      return texture;
+    },
+    bindTexture(_target, texture) {
+      assert.ok(texture === null || glCalls.liveTextures.has(texture), 'cannot bind a deleted WebGL texture');
+    },
     texParameteri() {},
     texImage2D() { glCalls.texImage2D++; },
-    deleteTexture() {},
+    deleteTexture(texture) { glCalls.liveTextures.delete(texture); },
     disable() {},
     enable() {},
     scissor() {},
@@ -368,7 +378,9 @@ test('WebGL2D adapter batches 3,000 textured sprites + ground shadows into 1 dra
   assert.equal(adapter.contextLost, false);
   adapter.render(scene);
   assert.equal(glCalls.drawArraysInstanced.length, 1);
+  assert.equal(glCalls.liveTextures.size, 2, 'both white and sprite textures were recreated');
   adapter.dispose();
+  assert.equal(glCalls.liveTextures.size, 0);
 
   // Automatic fallback when WebGL2 context is null
   const { canvas: canvas2dOnly } = makeMockCanvas2D({ width: 960, height: 540 });
@@ -376,6 +388,78 @@ test('WebGL2D adapter batches 3,000 textured sprites + ground shadows into 1 dra
   assert.equal(Boolean(fallback.isWebGL2), false);
   assert.equal(fallback.stats.backend, 'canvas2d');
   fallback.dispose();
+});
+
+test('WebGL2D releases evicted text textures after drawing any queued use this frame', () => {
+  const { canvas, glCalls } = makeMockWebGL2Canvas();
+  const { createBufferCanvas } = makeMockBufferFactory();
+  const adapter = createWebGL2DAdapter({ canvas, createBufferCanvas });
+  const scene = new Scene('changing-text');
+  const label = scene.add(new Entity()).addComponent(new Sprite2D({ shape: 'text' }));
+  const next = scene.add(new Entity()).addComponent(new Sprite2D({ shape: 'text', visible: false }));
+  scene._setActive(true);
+  for (let i = 0; i < 128; i++) {
+    label.text = `Score ${i}`;
+    adapter.render(scene);
+  }
+  assert.equal(glCalls.liveTextures.size, 129);
+  label.text = 'Score 0';
+  next.text = 'Score 128';
+  next.visible = true;
+  adapter.render(scene);
+  assert.equal(glCalls.liveTextures.size, 129, 'the oldest GPU texture was released');
+  for (let i = 129; i < 400; i++) {
+    next.text = `Score ${i}`;
+    adapter.render(scene);
+  }
+  assert.equal(glCalls.liveTextures.size, 129, 'dynamic text has a bounded texture cache');
+  adapter.dispose();
+  assert.equal(glCalls.liveTextures.size, 0);
+});
+
+test('WebGL2D retries the same image after its first upload throws', () => {
+  const { canvas, gl, glCalls } = makeMockWebGL2Canvas();
+  const adapter = createWebGL2DAdapter({ canvas });
+  const scene = new Scene('late-image');
+  const image = { width: 32, height: 32 };
+  scene.add(new Entity()).addComponent(new Sprite2D({ image }));
+  scene._setActive(true);
+  const upload = gl.texImage2D;
+  let attempts = 0;
+  gl.texImage2D = (...args) => {
+    if (++attempts === 1) throw new Error('Image not ready');
+    upload(...args);
+  };
+  assert.throws(() => adapter.render(scene), /Image not ready/);
+  const retainedAfterFailure = glCalls.liveTextures.size;
+  adapter.render(scene);
+  assert.equal(attempts, 2, 'a failed upload was not cached');
+  assert.equal(retainedAfterFailure, 1, 'only the white texture survived the failed upload');
+  assert.equal(glCalls.liveTextures.size, 2);
+  adapter.dispose();
+  assert.equal(glCalls.liveTextures.size, 0);
+});
+
+test('WebGL2D customDraw reuses its upload resources while drawing fresh content every frame', () => {
+  const { canvas, glCalls } = makeMockWebGL2Canvas();
+  const { createBufferCanvas, created } = makeMockBufferFactory();
+  const adapter = createWebGL2DAdapter({ canvas, createBufferCanvas });
+  const scene = new Scene('custom-drawing');
+  let calls = 0;
+  const customDraw = ctx => { calls++; ctx.fillRect(0, 0, 16, 16); };
+  const first = scene.add(new Entity()).addComponent(new Sprite2D({ width: 32, height: 32, customDraw }));
+  scene.add(new Entity({ x: 128 })).addComponent(new Sprite2D({ width: 64, height: 48, customDraw }));
+  scene._setActive(true);
+  for (let i = 0; i < 180; i++) {
+    first.width = 32 + i % 2;
+    adapter.render(scene);
+  }
+  assert.equal(calls, 360);
+  assert.equal(glCalls.drawArraysInstanced.length, 360, 'each upload is drawn before the next one overwrites it');
+  assert.equal(glCalls.liveTextures.size, 2, 'only the white and scratch textures remain allocated');
+  assert.equal(created.length, 1, 'the scratch canvas is reused');
+  adapter.dispose();
+  assert.equal(glCalls.liveTextures.size, 0);
 });
 
 test('3D frustum culling, convex-cone software occlusion, hardware occlusion queries, and InstancedBatch3D compaction', () => {

@@ -432,9 +432,10 @@ export function createWebGL2DAdapter({
   let curViewX0 = 0, curViewX1 = 0, curViewX2 = 0, curViewX3 = 0;
   let curViewY0 = 0, curViewY1 = 0, curViewY2 = 0, curViewY3 = 0;
 
-  const textureCache = new WeakMap();
-  const ownedTextures = [];
+  let textureCache = new WeakMap();
+  const ownedTextures = new Set();
   const textCache = new Map();
+  let customDrawCanvas = null;
   const drawPool = [];
   const sortQueue = [];
   let drawCount = 0;
@@ -511,15 +512,20 @@ export function createWebGL2DAdapter({
       gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0,
       gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]),
     );
-    ownedTextures.push(whiteTex);
+    ownedTextures.add(whiteTex);
     lastSmoothingFlag = null;
   }
 
   function destroyGlResources() {
-    for (let i = 0; i < ownedTextures.length; i++) {
-      gl.deleteTexture?.(ownedTextures[i]);
+    for (const texture of ownedTextures) gl.deleteTexture?.(texture);
+    ownedTextures.clear();
+    // The same image objects may outlive the GL context and need fresh uploads.
+    textureCache = new WeakMap();
+    if (customDrawCanvas) {
+      customDrawCanvas.width = 0;
+      customDrawCanvas.height = 0;
+      customDrawCanvas = null;
     }
-    ownedTextures.length = 0;
     for (const entry of textCache.values()) {
       if (entry.canvas) {
         entry.canvas.width = 0;
@@ -640,35 +646,54 @@ export function createWebGL2DAdapter({
     };
   }
 
-  function getTextureRecord(img, smooth) {
+  function setTextureFilter(smooth) {
+    const filter = smooth ? gl.LINEAR : gl.NEAREST;
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+  }
+
+  function uploadTexture(img, record) {
+    const w = Math.max(1, Number(img.naturalWidth || img.width) || 1);
+    const h = Math.max(1, Number(img.naturalHeight || img.height) || 1);
+    if (img.data && img.data.length) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, img.data);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+    }
+    record.w = w;
+    record.h = h;
+  }
+
+  function getTextureRecord(img, smooth, refresh = false) {
     if (!img) return null;
-    let rec = textureCache.get(img);
-    if (!rec) {
-      const texW = Math.max(1, Number(img.naturalWidth || img.width) || 1);
-      const texH = Math.max(1, Number(img.naturalHeight || img.height) || 1);
-      const glTex = gl.createTexture();
+    const cached = textureCache.get(img);
+    if (cached) {
+      if (refresh || cached.smooth !== smooth) {
+        gl.bindTexture(gl.TEXTURE_2D, cached.glTex);
+        if (cached.smooth !== smooth) {
+          setTextureFilter(smooth);
+          cached.smooth = smooth;
+        }
+        if (refresh) uploadTexture(img, cached);
+      }
+      return cached;
+    }
+
+    const glTex = gl.createTexture();
+    const record = { glTex, w: 0, h: 0, smooth };
+    try {
       gl.bindTexture(gl.TEXTURE_2D, glTex);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      const filter = smooth ? gl.LINEAR : gl.NEAREST;
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
-      if (img.data && img.data.length) {
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, texW, texH, 0, gl.RGBA, gl.UNSIGNED_BYTE, img.data);
-      } else {
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-      }
-      ownedTextures.push(glTex);
-      rec = { glTex, w: texW, h: texH, smooth };
-      textureCache.set(img, rec);
-    } else if (rec.smooth !== smooth) {
-      rec.smooth = smooth;
-      const filter = smooth ? gl.LINEAR : gl.NEAREST;
-      gl.bindTexture(gl.TEXTURE_2D, rec.glTex);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+      setTextureFilter(smooth);
+      uploadTexture(img, record);
+    } catch (error) {
+      gl.deleteTexture?.(glTex);
+      throw error;
     }
-    return rec;
+    ownedTextures.add(glTex);
+    textureCache.set(img, record);
+    return record;
   }
 
   function getTextTexture(text, font, color, smooth) {
@@ -695,10 +720,15 @@ export function createWebGL2DAdapter({
       const oldestKey = textCache.keys().next().value;
       const oldest = textCache.get(oldestKey);
       textCache.delete(oldestKey);
-      if (oldest?.canvas) {
-        oldest.canvas.width = 0;
-        oldest.canvas.height = 0;
+      if (oldest.rec === boundTexRecord) {
+        flushBatch();
+        boundTexRecord = null;
       }
+      gl.deleteTexture?.(oldest.rec.glTex);
+      ownedTextures.delete(oldest.rec.glTex);
+      textureCache.delete(oldest.canvas);
+      oldest.canvas.width = 0;
+      oldest.canvas.height = 0;
     }
     entry = { rec, w, h, canvas: buf };
     textCache.set(key, entry);
@@ -957,15 +987,28 @@ export function createWebGL2DAdapter({
     if (typeof sprite.customDraw === 'function') {
       const bw = Math.max(8, Math.ceil(Math.abs(w) || 64));
       const bh = Math.max(8, Math.ceil(Math.abs(h) || 64));
-      const buf = allocBuffer(bw, bh);
+      const buf = (customDrawCanvas ??= allocBuffer(bw, bh));
       const bctx = buf?.getContext?.('2d') ?? null;
       if (buf && bctx) {
-        bctx.clearRect(0, 0, bw, bh);
+        if (buf.width !== bw || buf.height !== bh) {
+          buf.width = bw;
+          buf.height = bh;
+        } else if (typeof bctx.reset === 'function') {
+          bctx.reset();
+        } else {
+          // Assigning the width resets paths, clipping and saved states on older contexts.
+          buf.width = bw;
+        }
         bctx.save();
-        bctx.translate(bw * ax, bh * ay);
-        sprite.customDraw(bctx, entity, sprite);
-        bctx.restore();
-        requiredTex = getTextureRecord(buf, smooth);
+        try {
+          bctx.translate(bw * ax, bh * ay);
+          sprite.customDraw(bctx, entity, sprite);
+        } finally {
+          bctx.restore();
+        }
+        // Issue any queued draws that still sample the previous scratch upload.
+        if (boundTexRecord && boundTexRecord === textureCache.get(buf)) flushBatch();
+        requiredTex = getTextureRecord(buf, smooth, true);
         mode = 0;
         drawW = bw;
         drawH = bh;
