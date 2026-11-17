@@ -37,7 +37,7 @@ let visibility;
 const app = createGameApplication({ project: defineProject(engineConfig), gameId: gameConfig.id, gameVersion: gameConfig.version,
   renderer: { render() { renderer.render(); }, resize() { renderer.resize(); }, dispose() { visibility?.dispose(); input?.dispose(); juice.dispose(); renderer.dispose(); } } });
 await app.installFeatures();
-input = new InputAndAudio(renderer, hud, app.platform.audio);
+input = new InputAndAudio(renderer, hud, app.platform.audio, app.input);
 renderer.onResize = () => { if (app.project.tickHz === 0 && app.running && !app.paused) renderer.render(); };
 const scene = app.scenes.add(new Scene('arena'));
 const controller = scene.add(new Entity({ name: 'arena' }));

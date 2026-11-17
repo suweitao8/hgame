@@ -1,17 +1,18 @@
 const cuePresets = Object.freeze({ shoot: 'shoot', slash: 'slash', hit: 'hit', kill: 'powerup', dash: 'jump', shockwave: 'explosion' });
 
 export class InputAndAudio {
-  constructor(renderer, ui, audio = null) {
-    this.renderer = renderer; this.ui = ui; this.keys = new Set(); this.pointer = { x: renderer.app.screen.width / 2, y: renderer.app.screen.height / 2, down: false };
+  constructor(renderer, ui, audio = null, input = null) {
+    if (!input || typeof input.isDown !== 'function' || typeof input.on !== 'function') throw new TypeError('HGame input manager is required');
+    this.renderer = renderer; this.ui = ui; this.input = input; this.pointer = { x: renderer.app.screen.width / 2, y: renderer.app.screen.height / 2, down: false };
     this.audio = audio; this.touches = new Map(); this.dash = false; this.shockwave = false; this.slash = false; this.voices = []; this.lastCue = new Map();
     this.abort = new AbortController(); const options = { signal: this.abort.signal };
-    window.addEventListener('keydown', event => {
-      this.keys.add(event.code); if (!event.repeat && event.code === 'Space') this.dash = true;
-      if (!event.repeat && event.code === 'KeyQ') this.shockwave = true;
-      if (!event.repeat && event.code === 'KeyE') this.slash = true;
+    input.preventKeys(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'Space']);
+    this.offKeyDown = input.on('keydown', ({ code, repeat }) => {
+      if (!repeat && code === 'Space') this.dash = true;
+      if (!repeat && code === 'KeyQ') this.shockwave = true;
+      if (!repeat && code === 'KeyE') this.slash = true;
       this.unlock();
-    }, options);
-    window.addEventListener('keyup', event => this.keys.delete(event.code), options);
+    });
     window.addEventListener('blur', () => this.reset(), options);
     const canvas = renderer.app.canvas;
     canvas.addEventListener('pointerdown', event => { this.unlock(); canvas.setPointerCapture(event.pointerId); if (event.pointerType !== 'touch') this.pointer.down = true; this.movePointer(event, true); }, options);
@@ -47,13 +48,13 @@ export class InputAndAudio {
   }
   clearTouches() { for (const touch of this.touches.values()) touch.visual.remove(); this.touches.clear(); }
   reset() {
-    this.keys.clear(); this.pointer.down = false; this.dash = this.shockwave = this.slash = false; this.clearTouches();
+    this.pointer.down = false; this.dash = this.shockwave = this.slash = false; this.clearTouches();
     for (const item of this.voices) item.voice.stop();
     this.voices.length = 0; this.lastCue.clear();
   }
   getState(player) {
-    let moveX = Number(this.keys.has('KeyD') || this.keys.has('ArrowRight')) - Number(this.keys.has('KeyA') || this.keys.has('ArrowLeft'));
-    let moveY = Number(this.keys.has('KeyS') || this.keys.has('ArrowDown')) - Number(this.keys.has('KeyW') || this.keys.has('ArrowUp'));
+    let moveX = Number(this.input.isDown('KeyD') || this.input.isDown('ArrowRight')) - Number(this.input.isDown('KeyA') || this.input.isDown('ArrowLeft'));
+    let moveY = Number(this.input.isDown('KeyS') || this.input.isDown('ArrowDown')) - Number(this.input.isDown('KeyW') || this.input.isDown('ArrowUp'));
     let aim = this.renderer.screenToWorld(this.pointer.x, this.pointer.y), aimX = aim.x - player.x, aimY = aim.y - player.y;
     let firing = this.pointer.down;
     for (const touch of this.touches.values()) {
@@ -77,5 +78,5 @@ export class InputAndAudio {
     if (!voice.played) return;
     this.lastCue.set(name, now); this.voices.push({ voice, until: now + voice.duration * 1000 + 20 });
   }
-  dispose() { this.abort.abort(); this.reset(); this.audio = null; }
+  dispose() { this.abort.abort(); this.offKeyDown(); this.reset(); this.audio = null; }
 }

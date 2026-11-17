@@ -8,9 +8,9 @@ PixiJS prefers WebGPU when available and falls back to WebGL. HGame's applicatio
 
 `new Renderer2D(atlas, { maxPixels, maxPixelRatio })` caps physical rendering resolution without changing CSS coordinates. Defaults are 2.3 million pixels and pixel ratio 2; lower them for fill-rate-constrained devices or increase them for sharper output. The renderer responds to its container's size and host resize events, and disconnects its observer on disposal. This is a fixed budget, not automatic FPS-based quality adjustment.
 
-New Pixi starters bind to the HGame host lifecycle and suspend the application while hidden; they resume only if visibility caused the pause. The demo also clears its independent keyboard and touch state on host focus loss or hiding, so a held input is not replayed when returning.
+New Pixi starters bind to the HGame host lifecycle and suspend the application while hidden; they resume only if visibility caused the pause. The demo reads keyboard state from HGame's input manager and clears its canvas pointer and touch state on host focus loss or hiding, so a held input is not replayed when returning.
 
-The demo passes `app.platform.audio` to `InputAndAudio`, so synthesized cues use HGame's shared context, mixer and limiter. The input helper owns neither the audio manager nor its context; it stops its own active cues on reset and leaves service disposal to the application.
+The demo passes `app.platform.audio` and `app.input` to `InputAndAudio`, so keyboard state and synthesized cues use HGame's shared services. The input helper owns neither service; it unsubscribes and stops its own active cues on disposal.
 
 To replace the procedural characters with images, provide `assets/actors/player.png` and `assets/actors/enemy.png` and add `<meta name="hgame-character-images" content="true">` to `index.source.html` before rebuilding. Both images are baked into the shared runtime atlas. Keep artwork and usage rights appropriate for your project.
 
