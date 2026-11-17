@@ -10,6 +10,8 @@ PixiJS prefers WebGPU when available and falls back to WebGL. HGame's applicatio
 
 New Pixi starters bind to the HGame host lifecycle and suspend the application while hidden; they resume only if visibility caused the pause. The demo also clears its independent keyboard and touch state on host focus loss or hiding, so a held input is not replayed when returning.
 
+The demo passes `app.platform.audio` to `InputAndAudio`, so synthesized cues use HGame's shared context, mixer and limiter. The input helper owns neither the audio manager nor its context; it stops its own active cues on reset and leaves service disposal to the application.
+
 To replace the procedural characters with images, provide `assets/actors/player.png` and `assets/actors/enemy.png` and add `<meta name="hgame-character-images" content="true">` to `index.source.html` before rebuilding. Both images are baked into the shared runtime atlas. Keep artwork and usage rights appropriate for your project.
 
 For games using HGame's `assets/catalog.json`, `createCatalogGameAtlas(catalog, frames, options)` loads image IDs through a temporary catalog scope and bakes them into the same Pixi texture source. The scope releases decoded images after baking; the returned atlas is owned by the renderer and released when the renderer is disposed. Specify `player_hero`, `enemy_chaser`, or `enemy_elite` to replace built-in characters, or any other unused name for an additional frame:

@@ -1,7 +1,9 @@
+const cuePresets = Object.freeze({ shoot: 'shoot', slash: 'slash', hit: 'hit', kill: 'powerup', dash: 'jump', shockwave: 'explosion' });
+
 export class InputAndAudio {
-  constructor(renderer, ui) {
+  constructor(renderer, ui, audio = null) {
     this.renderer = renderer; this.ui = ui; this.keys = new Set(); this.pointer = { x: renderer.app.screen.width / 2, y: renderer.app.screen.height / 2, down: false };
-    this.touches = new Map(); this.dash = false; this.shockwave = false; this.slash = false; this.voices = 0; this.lastCue = new Map();
+    this.audio = audio; this.touches = new Map(); this.dash = false; this.shockwave = false; this.slash = false; this.voices = []; this.lastCue = new Map();
     this.abort = new AbortController(); const options = { signal: this.abort.signal };
     window.addEventListener('keydown', event => {
       this.keys.add(event.code); if (!event.repeat && event.code === 'Space') this.dash = true;
@@ -44,7 +46,11 @@ export class InputAndAudio {
     const touch = this.touches.get(event.pointerId); touch?.visual.remove(); this.touches.delete(event.pointerId);
   }
   clearTouches() { for (const touch of this.touches.values()) touch.visual.remove(); this.touches.clear(); }
-  reset() { this.keys.clear(); this.pointer.down = false; this.dash = this.shockwave = this.slash = false; this.clearTouches(); }
+  reset() {
+    this.keys.clear(); this.pointer.down = false; this.dash = this.shockwave = this.slash = false; this.clearTouches();
+    for (const item of this.voices) item.voice.stop();
+    this.voices.length = 0; this.lastCue.clear();
+  }
   getState(player) {
     let moveX = Number(this.keys.has('KeyD') || this.keys.has('ArrowRight')) - Number(this.keys.has('KeyA') || this.keys.has('ArrowLeft'));
     let moveY = Number(this.keys.has('KeyS') || this.keys.has('ArrowDown')) - Number(this.keys.has('KeyW') || this.keys.has('ArrowUp'));
@@ -59,17 +65,17 @@ export class InputAndAudio {
     const state = { moveX, moveY, aimX, aimY, isFiring: firing, justDashed: this.dash, justShockwaved: this.shockwave, justSlashed: this.slash };
     this.dash = this.shockwave = this.slash = false; return state;
   }
-  unlock() { if (!this.audio) this.audio = new AudioContext(); if (this.audio.state === 'suspended') void this.audio.resume(); }
+  unlock() { if (this.audio?.available) void this.audio.unlock().catch(() => {}); }
   play(name) {
-    const ctx = this.audio; if (!ctx || this.voices >= 12 || ctx.currentTime - (this.lastCue.get(name) ?? -1) < 0.04) return;
-    this.lastCue.set(name, ctx.currentTime); this.voices++;
-    const oscillator = ctx.createOscillator(), gain = ctx.createGain();
-    oscillator.type = name === 'kill' ? 'sawtooth' : 'triangle';
-    oscillator.frequency.setValueAtTime(({ shoot: 620, slash: 240, hit: 340, kill: 180, dash: 420, shockwave: 110 })[name] ?? 220, ctx.currentTime);
-    oscillator.frequency.exponentialRampToValueAtTime(60, ctx.currentTime + 0.12);
-    gain.gain.setValueAtTime(0.05, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.13);
-    oscillator.connect(gain).connect(ctx.destination); oscillator.onended = () => { this.voices--; oscillator.disconnect(); gain.disconnect(); };
-    oscillator.start(); oscillator.stop(ctx.currentTime + 0.14);
+    if (!this.audio?.available) return;
+    const now = performance.now();
+    let write = 0;
+    for (const item of this.voices) if (item.until > now) this.voices[write++] = item;
+    this.voices.length = write;
+    if (write >= 12 || now - (this.lastCue.get(name) ?? -Infinity) < 40) return;
+    const voice = this.audio.playSynth(cuePresets[name] ?? 'hit', { bus: 'sfx', volume: 0.2 });
+    if (!voice.played) return;
+    this.lastCue.set(name, now); this.voices.push({ voice, until: now + voice.duration * 1000 + 20 });
   }
-  dispose() { this.abort.abort(); this.reset(); void this.audio?.close(); }
+  dispose() { this.abort.abort(); this.reset(); this.audio = null; }
 }
