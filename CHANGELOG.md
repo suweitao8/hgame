@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Checksum versioned saves after JSON conversion so dates, optional fields, typed arrays and non-finite numbers remain readable. Validate serialization before changing the primary or backup slot, including migrated saves.
+
 - Verify rendered 3D releases directly from standard and Toy ZIPs in Chromium CI. Capture nested entry paths and retain startup HTTP and JavaScript errors in snapshot reports.
 
 - Minify the two vendored Three.js modules in standard and Toy game releases when esbuild is available. Preserve constructor names, module paths and the MIT notice. Use `--no-minify` to package the source files.

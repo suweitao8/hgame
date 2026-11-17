@@ -25,6 +25,8 @@ export function createSaveStore({ gameId, schemaVersion, storage, prefix, }?: Sa
  * Wrap a SaveStore (or `{ gameId, storage }`) with explicit schema versioning,
  * sequential forward migrations (`v -> v + 1`), FNV-1a checksum tamper detection,
  * and automatic last-known-good backup recovery.
+ * Values follow JSON serialization rules; checksums cover the stored JSON data.
+ * A value that cannot be serialized is rejected before either save slot changes.
  * @template [T=unknown]
  * @param {object} [options]
  * @param {SaveStore} [options.store] Existing SaveStore (overrides `gameId`/`storage`/`prefix`).

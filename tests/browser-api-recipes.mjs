@@ -58,6 +58,50 @@ try {
     if (name === 'ui') assert.equal(after.locale, 'zh', 'UI locale getter');
     assert.deepEqual(errors, [], `${name} errors`);
     console.log(JSON.stringify({ recipe: name, before, after, errors }));
+    if (name === '2d') {
+      // Exercise real localStorage across navigation, then repair a corrupted primary.
+      await page.evaluate(async () => {
+        const { createVersionedStore } = await import('./vendor/hgame/platform/storage.js');
+        const saves = createVersionedStore({ gameId: 'recipe-json', prefix: 'hgame.test' });
+        saves.save('progress', { score: 1 });
+        saves.save('progress', { score: 42, optional: undefined,
+          savedAt: new Date('2026-11-17T00:00:00Z'), values: [NaN, undefined, Infinity] });
+      });
+      await page.reload();
+      await page.waitForFunction(() => typeof window.__hgameState === 'function');
+      const persistence = await page.evaluate(async () => {
+        const { createVersionedStore } = await import('./vendor/hgame/platform/storage.js');
+        const saves = createVersionedStore({ gameId: 'recipe-json', prefix: 'hgame.test' });
+        try {
+          const verified = saves.verify('progress');
+          const loaded = saves.load('progress');
+          const before = [saves.store.get('progress'), saves.store.get('progress.bak')];
+          let rejected = false;
+          try { saves.save('progress', { score: 1n }); } catch { rejected = true; }
+          const unchanged = JSON.stringify(before) === JSON.stringify([
+            saves.store.get('progress'), saves.store.get('progress.bak')]);
+          const damaged = saves.store.get('progress');
+          damaged.data.score = 999;
+          saves.store.set('progress', damaged);
+          return { verified, loaded, rejected, unchanged,
+            recovered: saves.load('progress'), repaired: saves.verify('progress') };
+        } finally { saves.remove('progress'); }
+      });
+      assert.equal(persistence.verified, true);
+      assert.equal(persistence.loaded.ok, true);
+      assert.equal(persistence.loaded.recovered, false);
+      assert.deepEqual(persistence.loaded.value, {
+        score: 42, savedAt: '2026-11-17T00:00:00.000Z', values: [null, null, null],
+      });
+      assert.equal(persistence.rejected, true);
+      assert.equal(persistence.unchanged, true);
+      assert.equal(persistence.recovered.ok, true);
+      assert.equal(persistence.recovered.recovered, true);
+      assert.deepEqual(persistence.recovered.value, { score: 1 });
+      assert.equal(persistence.repaired, true);
+      assert.deepEqual(errors, [], 'storage reload errors');
+      console.log(JSON.stringify({ storage: persistence }));
+    }
     await page.close();
     const ended = once(server, 'exit'); server.kill(); await ended; server = null;
   }

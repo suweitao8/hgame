@@ -133,6 +133,8 @@ function isVersionEnvelope(entry) {
  * Wrap a SaveStore (or `{ gameId, storage }`) with explicit schema versioning,
  * sequential forward migrations (`v -> v + 1`), FNV-1a checksum tamper detection,
  * and automatic last-known-good backup recovery.
+ * Values follow JSON serialization rules; checksums cover the stored JSON data.
+ * A value that cannot be serialized is rejected before either save slot changes.
  * @template [T=unknown]
  * @param {object} [options]
  * @param {SaveStore} [options.store] Existing SaveStore (overrides `gameId`/`storage`/`prefix`).
@@ -178,23 +180,26 @@ export function createVersionedStore({
   }
 
   function makeEnvelope(value) {
+    // Match SaveStore's JSON conversion before hashing, including toJSON('data').
+    const normalized = JSON.parse(JSON.stringify({ data: value }));
+    if (!Object.hasOwn(normalized, 'data')) throw new TypeError('save value must be JSON serializable');
     return {
       __hgSave: 1,
       v: schemaVersion,
-      sum: checksum ? computeEnvelopeSum(schemaVersion, salt, value) : undefined,
+      sum: checksum ? computeEnvelopeSum(schemaVersion, salt, normalized.data) : undefined,
       ts: Date.now(),
-      data: value,
+      data: normalized.data,
     };
   }
 
   function save(key, value) {
+    const env = makeEnvelope(value);
     if (bakSuffix) {
       const prev = backing.get(key, null);
       if (parseCandidate(prev).status === 'ok') {
         try { backing.set(key + bakSuffix, prev); } catch { /* Best-effort backup. */ }
       }
     }
-    const env = makeEnvelope(value);
     backing.set(key, env);
     return value;
   }
