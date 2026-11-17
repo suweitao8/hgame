@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add declarative level assembly with prefab hierarchies, named spawn points and tag-filtered trigger volumes in 2D and 3D. Level-owned entities and staged spawn batches clean up on failure. One-shot triggers can be restored from a save.
+
 - Add fixed-step encounters with scheduled waves, spawn backpressure, clear/survival/signal gates, timeouts and stage-entry checkpoints. Encounter signals can drive quests and scene transitions.
 
 - Add fixed-step ability timelines with animation clip hints, timed cues, a commit point and recovery. Presentation can share one start/cue/end/cancel contract across sprite and model animation.

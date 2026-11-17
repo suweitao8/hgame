@@ -1,5 +1,6 @@
 import { Component } from './component.js';
 import { Entity } from './entity.js';
+import { cleanupAll } from '../internal/cleanup.js';
 
 /**
  * @typedef {Partial<Record<'x' | 'y' | 'z' | 'width' | 'height' | 'depth' | 'anchorX' | 'anchorY' | 'rotationX' | 'rotationY' | 'rotationZ' | 'scaleX' | 'scaleY' | 'scaleZ', number>>} PrefabTransform
@@ -108,10 +109,13 @@ export class PrefabRegistry {
     for (const key of Object.keys(overrides)) {
       if (!['x', 'y', 'z', 'name', 'active'].includes(key)) throw new Error('Invalid prefab override: ' + key);
     }
+    /** @type {Entity[]} */
+    const created = [];
     /** @param {PrefabDescriptor} node @returns {import('./entity.js').Entity} */
     const build = node => {
       const entity = new Entity({ name: node.name ?? '', active: node.active ?? true,
         ...node.transform });
+      created.push(entity);
       for (const item of node.components ?? []) {
         const factory = this.components.get(item.type);
         if (!factory) throw new Error('Unregistered prefab component: ' + item.type);
@@ -122,6 +126,11 @@ export class PrefabRegistry {
       for (const child of node.children ?? []) entity.add(build(child));
       return entity;
     };
-    return Object.assign(build(descriptor), overrides);
+    try { return Object.assign(build(descriptor), overrides); }
+    catch (error) {
+      try { cleanupAll(created.reverse().map(entity => () => entity.destroy()), 'Prefab cleanup failed'); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Prefab construction failed'); }
+      throw error;
+    }
   }
 }

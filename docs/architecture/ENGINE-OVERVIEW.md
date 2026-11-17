@@ -19,6 +19,7 @@ HGame is a small, modular HTML5 runtime for standalone 2D, 3D, and UI-driven gam
 | `time/` | `TweenManager` & `EASING` (`yoyo`, `repeat`, `sequence`, `killTweensOf`, 2D motion presets), analytical `SpringDamper1D/2D/3D`, `damp`, `dampAngle` |
 | `lockstep/` | Optional confirmed-frame scheduler |
 | `gameplay/` | Opt-in attributes, effects, abilities, story, quests, inventory, loot, crafting and encounters. `GameplayComponent` and `EncounterComponent` use the scene's fixed step. Progression and economy modules also respond to commands in any profile. |
+| `world/level.js` | Assemble registered prefab trees, spawn locations and trigger volumes from text data. One mounted root owns the gameplay objects. |
 
 All game-specific rules, AI, content, balance, renderer ownership, and save schemas remain in the game project.
 

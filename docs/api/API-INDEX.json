@@ -611,6 +611,9 @@
  "world/gpu-swarm-webgl2.js":{"tier":"stable","exports":[
   {"name":"createGpuSwarmWebGL2","tier":"stable","declaredIn":"world/gpu-swarm-webgl2.js","summary":"Creates a WebGL2 `RGBA32F` Ping-Pong FBO GPU Swarm simulator (up to `262,144` units).","kind":"function","signature":"({capacity=102400, THREE=null, renderer=null, gl=null, speed=3.5, curlStrength=0.65, animFps=12, frameCount=16, originX=-128, originY=-128, worldWidth=256, worldHeight=256}={})","returns":["capacity","clear","count","data","dispose","glTexture","isGpuAccelerated","spawn","spawnWave","step","texHeight","texWidth","texture","updateFlowField"]}
  ]},
+ "world/level.js":{"tier":"experimental","exports":[
+  {"name":"mountLevel","tier":"experimental","declaredIn":"world/level.js","summary":"Assemble a scoped level from registered prefab trees and named spawn/trigger data. Construct the hierarchy off-scene, then attach one owner root. Dispose it to ","kind":"function","signature":"(scene, registry, data, {onTrigger}={})","returns":["contains","dispose","getEntity","getSpawnPoint","id","restore","root","snapshot","spawn","spawnBatch","subscribe","updateEntityTriggers","updateTriggers"]}
+ ]},
  "world/navmesh3d.js":{"tier":"experimental","exports":[
   {"name":"createNavMesh3D","tier":"experimental","declaredIn":"world/navmesh3d.js","summary":"Lightweight 3D Height-Aware NavMesh + A* + String-Pulling Corridor Smoother. Supports obstacle radius inflation, multi-elevation platforms/ramps within `stepHei","kind":"function","signature":"(options)","returns":["addObstacle","agentRadius","cellSize","clearObstacles","cols","findPath","isWalkable","rebuild","rows","sampleSurfaceHeight","stepHeight"]}
  ]},
@@ -640,5 +643,8 @@
  "world/tilemap.js":{"tier":"stable","exports":[
   {"name":"findGridPath","tier":"stable","declaredIn":"world/tilemap.js","summary":"O(N log N) A* over a TileMap, with optional diagonal movement and corner-cutting guard.","kind":"function","signature":"(map, start, goal, {maxNodes=20000, allowDiagonal=false, preventCornerCutting=true}={})","returns":["at","concat","copyWithin","entries","every","fill","filter","find","findIndex","flat","flatMap","forEach","includes","indexOf","join","keys","lastIndexOf","length","map","pop","push","reduce","reduceRight","reverse","shift","slice","some","sort","splice","toLocaleString","toString","unshift","values"]},
   {"name":"TileMap","tier":"stable","declaredIn":"world/tilemap.js","summary":"Compact map grid with an explicit solid-tile palette and optional tileset/culling support.","kind":"class","signature":"new({tiles, tileWidth=32, tileHeight=32, solid=[]}={})","members":["draw","get","height","isSolid","set","solid","tileHeight","tileToWorld","tileWidth","tiles","width","within","worldToTile"]}
+ ]},
+ "world/trigger-volumes.js":{"tier":"experimental","exports":[
+  {"name":"createTriggerVolumes","tier":"experimental","declaredIn":"world/trigger-volumes.js","summary":"Track named actor points entering/exiting 2D or 3D AABBs using sampled world coordinates. The logic uses the caller's fixed step and shares existing hierarchica","kind":"function","signature":"(definitions, {dimensions, onEvent})","returns":["contains","dispose","restore","snapshot","subscribe","update"]}
  ]}
 }}

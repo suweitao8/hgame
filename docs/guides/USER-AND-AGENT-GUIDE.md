@@ -75,6 +75,7 @@ npm run api -- --module post2d   # Every export in one module
 | 20 | Weighted Loot & Crafting (`createLootSystem`, `createCraftingBook`) | [systems/20-loot-and-crafting.md](systems/20-loot-and-crafting.md) |
 | 21 | Skill timing with animation, sound and effect cues (`AbilityDefinition.timeline`) | [systems/21-ability-timelines.md](systems/21-ability-timelines.md) |
 | 22 | Staged Encounters, Spawn Waves & Checkpoints (`EncounterComponent`) | [systems/22-encounters.md](systems/22-encounters.md) |
+| 23 | Prefab Placement, Spawn Points & Trigger Volumes (`mountLevel`) | [systems/23-level-assembly.md](systems/23-level-assembly.md) |
 
 ---
 
