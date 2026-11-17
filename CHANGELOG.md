@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Make generated Pixi starter rendering, atlas, swarm, effects and input interfaces discoverable through the HGame API lookup, with paths distinguished from runtime imports.
+
 - Avoid allocating an unused statistics snapshot on every scheduled frame; manual `step()` calls now also return a snapshot while paused.
 
 - Reconfigure automatic procedural-music timing when a mood changes tempo, and stop its timer while paused.

@@ -224,19 +224,37 @@ if (!fs.existsSync(indexPath)) {
 
 const apiIndex = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
 const modules = apiIndex.modules || {};
-const moduleEntries = Object.entries(modules);
+// These adapters belong to generated games rather than the renderer-neutral runtime.
+// Include them in the same lookup without pretending they are vendor/hgame modules.
+const pixiStarterModules = {
+  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'createSwarmLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
+  'src/engine/ProceduralAtlas.js': { exports: [
+    { kind: 'class', name: 'ProceduralAtlas', signature: 'new(size=1024)', summary: 'PixiJS shared atlas with optional white hit-flash frames.', members: ['register', 'registerImage', 'registerSheet', 'build', 'get', 'dispose'] },
+    { kind: 'function', name: 'createDefaultGameAtlas', signature: '({playerImage, enemyImage, eliteImage, extraFrames, size}={})', summary: 'Create and build the PixiJS starter atlas.' },
+    { kind: 'function', name: 'createCatalogGameAtlas', signature: '(catalog, frames, {size, signal}={})', summary: 'Bake catalog images and sprite sheets into a PixiJS atlas; releases the temporary asset scope.' },
+  ] },
+  'src/engine/PixiSwarmLayer.js': { exports: [{ kind: 'class', name: 'PixiSwarmLayer', signature: 'new(renderer, options)', summary: 'PixiJS adapter for an HGame CPU swarm; create with renderer.createSwarmLayer(options).', members: ['sync', 'dispose'] }] },
+  'src/engine/JuiceSystem.js': { exports: [{ kind: 'class', name: 'JuiceSystem', signature: 'new(renderer, capacity=10000)', summary: 'PixiJS starter hit effects, particles, shake and trails; dispose before the renderer.', members: ['triggerHitJuice', 'triggerHitStop', 'addTrauma', 'spawnShockwave', 'burstParticles', 'spawnExplosions', 'update', 'slash', 'dispose'] }] },
+  'src/engine/InputAndAudio.js': { exports: [{ kind: 'class', name: 'InputAndAudio', signature: 'new(renderer, ui, audio, input)', summary: 'PixiJS demo input helper using HGame input and audio services.', members: ['getState', 'reset', 'unlock', 'play', 'dispose'] }] },
+};
+const moduleEntries = [
+  ...Object.entries(modules).map(([name, info]) => [name, info, 'runtime']),
+  ...Object.entries(pixiStarterModules).map(([name, info]) => [name, { ...info, tier: 'starter' }, 'pixi-starter']),
+];
+const displayModule = (name, source) => source === 'pixi-starter' ? `generated game ${name}` : `vendor/hgame/${name}`;
 
 if (args.listOnly) {
-  const summary = moduleEntries.map(([modPath, info]) => ({
+  const summary = moduleEntries.map(([modPath, info, source]) => ({
     module: modPath,
     tier: info.tier,
     exports: info.exports?.length ?? 0,
+    source,
   }));
   if (args.jsonOut) {
     console.log(JSON.stringify(summary, null, 2));
   } else {
     for (const row of summary) {
-      console.log(`vendor/hgame/${row.module} (${row.tier}, ${row.exports} exports)`);
+      console.log(`${displayModule(row.module, row.source)} (${row.tier}, ${row.exports} exports)`);
     }
   }
   process.exit(0);
@@ -251,7 +269,7 @@ const modNeedle = args.moduleQuery.toLowerCase();
 const kwNeedle = args.keyword.toLowerCase();
 const matches = [];
 
-for (const [modPath, info] of moduleEntries) {
+for (const [modPath, info, source] of moduleEntries) {
   const modLower = modPath.toLowerCase();
   if (modNeedle && !modLower.includes(modNeedle)) continue;
 
@@ -271,7 +289,7 @@ for (const [modPath, info] of moduleEntries) {
   }
 
   if (matchedExports.length > 0) {
-    matches.push({ module: modPath, tier: info.tier, exports: matchedExports });
+    matches.push({ module: modPath, tier: info.tier, source, exports: matchedExports });
   }
 }
 
@@ -286,8 +304,8 @@ if (matches.length === 0) {
 }
 
 for (const entry of matches) {
-  const dtsText = readModuleDts(entry.module);
-  console.log(`=== vendor/hgame/${entry.module} [${entry.tier}] ===`);
+  const dtsText = entry.source === 'runtime' ? readModuleDts(entry.module) : '';
+  console.log(`=== ${displayModule(entry.module, entry.source)} [${entry.tier}] ===`);
   for (const exp of entry.exports) {
     console.log(formatExport(exp, dtsText));
   }
