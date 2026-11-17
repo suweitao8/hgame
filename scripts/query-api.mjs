@@ -227,7 +227,7 @@ const modules = apiIndex.modules || {};
 // These adapters belong to generated games rather than the renderer-neutral runtime.
 // Include them in the same lookup without pretending they are vendor/hgame modules.
 const pixiStarterModules = {
-  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'createSwarmLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
+  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'setBloom', 'createSwarmLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
   'src/engine/ProceduralAtlas.js': { exports: [
     { kind: 'class', name: 'ProceduralAtlas', signature: 'new(size=1024)', summary: 'PixiJS shared atlas with optional white hit-flash frames.', members: ['register', 'registerImage', 'registerSheet', 'build', 'get', 'dispose'] },
     { kind: 'function', name: 'createDefaultGameAtlas', signature: '({playerImage, enemyImage, eliteImage, extraFrames, size}={})', summary: 'Create and build the PixiJS starter atlas.' },

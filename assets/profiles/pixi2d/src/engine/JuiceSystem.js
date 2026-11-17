@@ -35,7 +35,7 @@ export class JuiceSystem {
     this.shockwaves.add(filter); this.syncShockwaveFilters();
   }
   syncShockwaveFilters() {
-    this.renderer.app.stage.filters = this.shockwaves.size ? [this.renderer.bloom, ...this.shockwaves] : [];
+    this.renderer.setEffectFilters([...this.shockwaves]);
   }
   burstParticles(x, y, count, opts = {}) {
     if (!Number.isSafeInteger(count) || count < 0) throw new RangeError('Particle count must be a non-negative safe integer');
@@ -122,7 +122,7 @@ export class JuiceSystem {
     this.trail.visible = true; this.trailTime = 0.14;
   }
   dispose() {
-    this.renderer.app.stage.filters = [];
+    this.renderer.setEffectFilters([]);
     for (const filter of this.shockwaves) filter.destroy();
     this.shockwaves.clear(); this.hitTweens.clear();
     this.liveParticles.length = 0; this.freeParticles.length = 0; this.particles.length = 0;

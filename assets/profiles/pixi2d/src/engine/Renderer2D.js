@@ -41,7 +41,9 @@ export class Renderer2D {
     this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, this.trailLayer, this.particleLayer);
     this.app.stage.addChild(this.worldRoot);
     this.bloom = new AdvancedBloomFilter({ threshold: 0.62, bloomScale: 0.4, brightness: 1, blur: 3 });
-    this.app.stage.filters = [];
+    this.bloomEnabled = false;
+    this.effectFilters = [];
+    this.applyFilters();
     this.viewport = { width, height, resolution };
     if (typeof ResizeObserver === 'function') {
       this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -63,6 +65,27 @@ export class Renderer2D {
     this.viewport = next;
     this.onResize?.();
     return true;
+  }
+  /** Configure persistent bloom. Transient effect filters remain independently owned. */
+  setBloom({ enabled = true, threshold, bloomScale, brightness, blur } = {}) {
+    if (!this.bloom || this.disposed) throw new Error('Initialize Renderer2D before configuring bloom');
+    for (const [key, value] of Object.entries({ threshold, bloomScale, brightness, blur })) {
+      if (value !== undefined && (!Number.isFinite(value) || value < 0)) throw new RangeError(`Bloom ${key} must be a finite non-negative number`);
+    }
+    if (threshold !== undefined) this.bloom.threshold = threshold;
+    if (bloomScale !== undefined) this.bloom.bloomScale = bloomScale;
+    if (brightness !== undefined) this.bloom.brightness = brightness;
+    if (blur !== undefined) this.bloom.blur = blur;
+    this.bloomEnabled = Boolean(enabled);
+    this.applyFilters();
+  }
+  setEffectFilters(filters) {
+    this.effectFilters = filters;
+    this.applyFilters();
+  }
+  applyFilters() {
+    const effects = this.effectFilters;
+    this.app.stage.filters = this.bloomEnabled || effects.length ? [this.bloom, ...effects] : [];
   }
   createSwarmLayer(options) {
     const layer = new PixiSwarmLayer(this, options);
@@ -146,7 +169,7 @@ export class Renderer2D {
     for (const layer of this.swarmLayers) layer.dispose();
     for (const sprite of this.spritePool) sprite.destroy();
     this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.pendingEnemies.length = 0; this.entityMap.clear();
-    this.app.stage.filters = [];
+    this.app.stage.filters = []; this.effectFilters.length = 0;
     this.bloom.destroy();
     this.app.destroy({ removeView: true }, { children: true }); this.atlas.dispose();
   }

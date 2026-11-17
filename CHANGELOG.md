@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow Pixi scenes to configure persistent bloom independently of temporary shockwaves, preserving glow when effects end.
+
 - Make generated Pixi starter rendering, atlas, swarm, effects and input interfaces discoverable through the HGame API lookup, with paths distinguished from runtime imports.
 
 - Avoid allocating an unused statistics snapshot on every scheduled frame; manual `step()` calls now also return a snapshot while paused.
