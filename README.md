@@ -38,8 +38,9 @@ npm ci
 npm run api -- --map
 npm run api -- --recipe 3d
 
-# Create standalone game
-node scripts/create-game.mjs "D:\Games\my-game" --profile 2d --renderer webgl2d --with audio,save --bare --name "Title"
+# Create a standalone game from the shared preset catalogue
+node scripts/create-game.mjs "D:\Games\my-game" --preset 2d --name "Title"
+node scripts/create-game.mjs "D:\Games\my-horde" --preset horde --name "Horde"
 
 # Verify engine / examples / game
 npm run check:all

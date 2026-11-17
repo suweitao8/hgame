@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { runToyPreflight } from './toy-preflight.mjs';
+import { normalizeReleaseProfile, runtimeSeeds } from './project-profiles.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -645,6 +646,9 @@ export async function packageGameRelease({
 
   const gameConfig = JSON.parse(await readFile(gameConfigPath, 'utf8'));
   const engineConfig = JSON.parse(await readFile(engineConfigPath, 'utf8'));
+  const releaseProfilePath = path.join(absGameDir, 'hgame.project.json');
+  const releaseProfile = normalizeReleaseProfile(await existsFile(releaseProfilePath)
+    ? JSON.parse(await readFile(releaseProfilePath, 'utf8')) : undefined);
 
   const resolvedEngineRoot = engineRoot
     ? path.resolve(engineRoot)
@@ -779,7 +783,10 @@ export async function packageGameRelease({
   function enqueueRel(relPosix, required = false) {
     const norm = toPosixRel(path.posix.normalize(relPosix));
     if (!norm || norm === '.' || norm.startsWith('../')) return;
-    if (isForbiddenRuntimeRel(norm)) return;
+    if (isForbiddenRuntimeRel(norm)) {
+      if (required) throw new Error('Required runtime module is incompatible with engine.config.json: ' + norm);
+      return;
+    }
     if (tracedSet.has(norm)) return;
     const abs = resolveSourceCandidate(norm);
     if (!abs) {
@@ -798,35 +805,15 @@ export async function packageGameRelease({
     if (resolved) enqueueRel(resolved, false);
   }
 
-  // Always seed HGame core entry, active renderer adapter, active optional features, and VERSION.
+  // Older standalone projects can rely on the root facade through computed module paths.
+  // Entry-graph projects include it only when it is referenced or explicitly requested.
   enqueueRel('vendor/hgame/VERSION', false);
-  enqueueRel('vendor/hgame/index.js', true);
+  if (releaseProfile.runtime === 'compat') enqueueRel('vendor/hgame/index.js', true);
+  for (const module of runtimeSeeds(project)) enqueueRel('vendor/hgame/' + module, false);
+  for (const module of releaseProfile.includeRuntime) enqueueRel('vendor/hgame/' + module, true);
+  for (const module of releaseProfile.includeSource) enqueueRel('src/' + module, true);
 
-  const rendererSeeds = {
-    canvas2d: 'vendor/hgame/integrations/canvas2d.js',
-    webgl2d: 'vendor/hgame/integrations/webgl2d.js',
-    threejs: 'vendor/hgame/integrations/three.js',
-    dom: 'vendor/hgame/integrations/dom.js',
-  };
-  if (rendererSeeds[project.renderer]) {
-    enqueueRel(rendererSeeds[project.renderer], false);
-  }
-
-  if (project.features.includes('animation2d')) {
-    enqueueRel('vendor/hgame/animation/player.js', false);
-    enqueueRel('vendor/hgame/animation/spritesheet.js', false);
-  }
-  if (project.features.includes('tilemap2d') || project.features.includes('pathfinding2d')) {
-    enqueueRel('vendor/hgame/world/tilemap.js', false);
-  }
-  if (project.features.includes('physics2d')) {
-    enqueueRel('vendor/hgame/physics/rapier2d.js', false);
-  }
-  if (project.features.includes('physics3d')) {
-    enqueueRel('vendor/hgame/physics/rapier3d.js', false);
-  }
-
-  // Include src/ runtime files (data configs, scripts, shaders) and seed module graph from them.
+  // Include source data files. Entry-graph projects reach JS through the HTML, imports and explicit includes.
   const srcRoot = path.join(absGameDir, 'src');
   if (await existsDir(srcRoot)) {
     const srcFiles = await collectFilesRecursively(srcRoot);
@@ -835,6 +822,7 @@ export async function packageGameRelease({
       const parts = lower.split('/');
       if (parts.some(p => p === 'tests' || p === '__tests__' || p === '.agents' || p === '.re-workspace' || p.startsWith('.hgame.local'))) continue;
       if (/\.(test|spec)\.[cm]?js$/i.test(lower)) continue;
+      if (releaseProfile.runtime === 'entry-graph' && /\.m?js$/i.test(lower)) continue;
       if (AUTHORING_EXTS.has(path.posix.extname(lower)) || SKIP_BASENAMES.has(path.posix.basename(lower))) {
         continue;
       }
@@ -1125,6 +1113,7 @@ export async function packageGameRelease({
     version: String(effectiveVersion),
     profile: project.profile,
     renderer: project.renderer,
+    runtime: releaseProfile.runtime,
     physics: project.physics,
     wasm: includedWasm,
     wasmSkipped: physicsDecision && !physicsDecision.bundle ? physicsDecision.reason : null,

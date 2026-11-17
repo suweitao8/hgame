@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineProject } from '../assets/runtime/core/config.js';
+import { getProjectPreset, PROFILE_FILES, RENDERERS, THREE_FILES } from './project-profiles.mjs';
 
 // Completely standalone: the runtime and starter template ship with this repository.
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -13,12 +14,15 @@ const profiles = path.join(root, 'assets', 'profiles');
 const optionalThree = path.join(root, 'assets', 'optional', 'three');
 
 function parse(argv) {
-  const result = { destination: '', name: '', profile: '2d', renderer: null, with: [], physics: null,
+  const result = { destination: '', name: '', preset: null, profile: null, renderer: null, with: [], physics: null,
     tickHz: null, quality: null, git: true, dryRun: false, bare: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--name') {
       result.name = argv[++i] || '';
+    } else if (arg === '--preset') {
+      result.preset = argv[++i];
+      if (!result.preset || result.preset.startsWith('-')) throw new Error('--preset requires a name');
     } else if (arg === '--profile') {
       result.profile = argv[++i];
     } else if (arg === '--renderer') {
@@ -43,7 +47,14 @@ function parse(argv) {
       throw new Error('Unknown or incomplete argument: ' + arg);
     }
   }
-  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--bare (2d|3d: no demo level/materials/model-slots)] [--no-git] [--dry-run]');
+  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--preset 2d|horde|3d|ui | --profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--bare (2d|3d)] [--no-git] [--dry-run]');
+  const preset = result.preset === null ? null : getProjectPreset(result.preset);
+  if (preset && result.profile && result.profile !== preset.profile) throw new Error('--profile conflicts with --preset ' + result.preset);
+  result.profile ??= preset?.profile ?? '2d';
+  result.renderer ??= preset?.renderer ?? null;
+  result.quality ??= preset?.quality ?? null;
+  result.with = [...(preset?.features ?? []), ...result.with];
+  if (preset?.starter === 'horde' && !result.bare && result.renderer !== 'webgl2d') throw new Error('The horde starter requires webgl2d');
   if (result.bare && !['2d', '3d'].includes(result.profile)) throw new Error('--bare supports --profile 2d or 3d');
   const target = path.resolve(result.destination);
   const slug = path.basename(target);
@@ -62,6 +73,7 @@ function parse(argv) {
   }
   if (!physics && result.with.includes('physics2d')) physics = 'rapier2d';
   if (!physics && result.with.includes('physics3d')) physics = 'rapier3d';
+  physics ??= preset?.physics ?? null;
   if (physics && !['none', 'rapier2d', 'rapier3d'].includes(physics)) {
     throw new Error('HGame projects use deterministic rapier2d or rapier3d physics.');
   }
@@ -74,7 +86,8 @@ function parse(argv) {
     ...(physics ? { physics } : {}),
     ...(result.tickHz === null ? {} : { tickHz: result.tickHz }), features,
   });
-  return { ...result, target, slug, name: result.name || slug, recipe };
+  const starter = result.bare ? result.profile + '-bare' : (preset?.starter ?? result.profile);
+  return { ...result, target, slug, starter, name: result.name || slug, recipe };
 }
 
 async function main() {
@@ -91,6 +104,7 @@ async function main() {
   if (options.dryRun) {
     console.log(JSON.stringify({ action: 'create-html-game', target: options.target, name: options.name,
       engine: 'HGame', engineVersion: '1.0.0', recipe: options.recipe,
+      ...(options.preset ? { preset: options.preset, starter: options.starter, runtime: 'entry-graph' } : {}),
       default3dMaterials: options.recipe.profile === '3d' && !options.bare ? 'native-world-aligned-pbr' : null,
       bare: options.bare, git: options.git }, null, 2));
     return;
@@ -112,6 +126,7 @@ async function main() {
     await cp(runtime, vendor, { recursive: true });
     await mkdir(path.join(stage, 'scripts'), { recursive: true });
     await cp(path.join(root, 'scripts', 'package-game.mjs'), path.join(stage, 'scripts', 'package-game.mjs'));
+    await cp(path.join(root, 'scripts', 'project-profiles.mjs'), path.join(stage, 'scripts', 'project-profiles.mjs'));
     await cp(path.join(root, 'scripts', 'toy-preflight.mjs'), path.join(stage, 'scripts', 'toy-preflight.mjs'));
     await cp(path.join(root, 'scripts', 'assets.mjs'), path.join(stage, 'scripts', 'assets.mjs'));
     for (const dimension of ['2d', '3d']) {
@@ -123,38 +138,37 @@ async function main() {
       await rm(path.join(vendor, 'vendor'), { recursive: true, force: true });
     }
 
-    const profileFiles = path.join(profiles, options.recipe.profile);
-    const mainSource = options.bare ? path.join(profiles, options.recipe.profile + '-bare') : profileFiles;
+    const mainSource = path.join(profiles, options.starter);
+    const files = PROFILE_FILES[options.starter] ?? PROFILE_FILES[options.recipe.profile];
     await cp(path.join(mainSource, 'main.js'), path.join(stage, 'src', 'main.js'), { force: true });
-    if (options.recipe.profile === 'ui') {
-      await cp(path.join(profileFiles, 'index.html'), path.join(stage, 'index.html'), { force: true });
+    if (files.html) await cp(path.join(profiles, files.html), path.join(stage, 'index.html'), { force: true });
+    for (const file of options.bare ? [] : files.demoData) {
+      await cp(path.join(mainSource, file), path.join(stage, 'src', file), { force: false });
     }
     if (options.recipe.profile === '3d') {
       const entryFile = path.join(stage, 'src', 'main.js');
       await writeFile(entryFile, (await readFile(entryFile, 'utf8')).replace(
         'const defaultQualityMode = "auto";',
         `const defaultQualityMode = ${JSON.stringify(options.quality ?? 'auto')};`));
-      await cp(path.join(profileFiles, 'index.html'), path.join(stage, 'index.html'), { force: true });
       const threeDest = path.join(stage, 'assets', 'vendor', 'three');
       await mkdir(threeDest, { recursive: true });
-      for (const file of ['three.module.js', 'three.core.js', 'LICENSE']) {
-        await cp(path.join(optionalThree, file), path.join(threeDest, file), { force: false });
-      }
-      for (const file of ['loaders/GLTFLoader.js', 'utils/BufferGeometryUtils.js', 'utils/SkeletonUtils.js']) {
-        const dest = path.join(threeDest, 'jsm', file);
+      for (const file of THREE_FILES) {
+        const dest = path.join(threeDest, file);
         await mkdir(path.dirname(dest), { recursive: true });
-        await cp(path.join(optionalThree, 'jsm', file), dest, { force: false });
-      }
-      for (const file of options.bare ? [] : ['level.json', 'materials.json', 'model-slots.json']) {
-        await cp(path.join(profileFiles, file), path.join(stage, 'src', file), { force: false });
+        await cp(path.join(optionalThree, file), dest, { force: false });
       }
     }
     await writeFile(path.join(stage, 'engine.config.json'), JSON.stringify(options.recipe, null, 2) + '\n');
+    if (options.preset) {
+      await writeFile(path.join(stage, 'hgame.project.json'), JSON.stringify({
+        schemaVersion: 1, preset: options.preset, runtime: 'entry-graph', includeRuntime: [], includeSource: [],
+      }, null, 2) + '\n');
+    }
 
     const configFile = path.join(stage, 'game.config.json');
     const config = JSON.parse(await readFile(configFile, 'utf8'));
     Object.assign(config, { id: options.slug, name: options.name, standalone: true,
-      renderer: options.recipe.renderer === 'webgl2d' ? 'webgl-custom' : options.recipe.renderer });
+      renderer: RENDERERS[options.recipe.renderer].catalog });
     await writeFile(configFile, JSON.stringify(config, null, 2) + '\n');
     const packageFile = path.join(stage, 'package.json');
     const pkg = JSON.parse(await readFile(packageFile, 'utf8'));
@@ -178,6 +192,7 @@ async function main() {
       success: true, project: options.target, gameId: options.slug,
       engine: 'HGame', engineVersion: '1.0.0', profile: options.recipe.profile, bare: options.bare, features: options.recipe.features,
       physics: options.recipe.physics, standalone: true, gitInitialized: options.git,
+      ...(options.preset ? { preset: options.preset, starter: options.starter, runtime: 'entry-graph' } : {}),
     }, null, 2));
   } catch (error) {
     await rm(stage, { recursive: true, force: true }).catch(() => {});

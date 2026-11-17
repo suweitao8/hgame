@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { recipeCreateCommand } from './project-profiles.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const indexPath = path.join(root, 'docs', 'api', 'API-INDEX.json');
@@ -48,16 +49,21 @@ const CAPABILITY_MAP = [
 ];
 
 const RECIPES = {
-  '2d': `// Create: node scripts/create-game.mjs "<dir>" --profile 2d --with audio,save --bare --name "Title"
-import { HGame, Scene, Entity, Component, createVersionedStore } from '../vendor/hgame/index.js';
+  '2d': `// Create: ${recipeCreateCommand('2d')}
+import { defineProject } from '../vendor/hgame/core/config.js';
+import { createGameApplication } from '../vendor/hgame/core/application.js';
+import { Scene } from '../vendor/hgame/core/scene.js';
+import { Entity } from '../vendor/hgame/core/entity.js';
+import { Component } from '../vendor/hgame/core/component.js';
+import { createVersionedStore } from '../vendor/hgame/platform/storage.js';
 import { createCanvas2DAdapter, Sprite2D } from '../vendor/hgame/integrations/canvas2d.js';
 import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
 
 const engineConfig = await fetch('./engine.config.json').then(r => r.json());
 const canvas = document.querySelector('#game');
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const renderer = createCanvas2DAdapter({ canvas, width: 960, height: 540, background: '#0e131f' });
-const app = HGame.createApplication({ project, gameId: 'my-2d', gameVersion: '1.0.0', renderer });
+const app = createGameApplication({ project, gameId: 'my-2d', gameVersion: '1.0.0', renderer });
 await app.installFeatures();
 
 const scene = app.scenes.add(new Scene('main'));
@@ -76,16 +82,21 @@ app.start();
 canvas.dataset.engineReady = 'true';
 window.__hgameState = () => ({ tick: app.stats.ticks, hero: { x: hero.x, y: hero.y } });
 window.addEventListener('pagehide', () => app.dispose(), { once: true });`,
-  horde: `// Create: node scripts/create-game.mjs "<dir>" --profile 2d --renderer webgl2d --with audio,save --bare --name "Horde"
-import { HGame, Scene, Entity, Component, createSwarmSimulation } from '../vendor/hgame/index.js';
+  horde: `// Create: ${recipeCreateCommand('horde')}
+import { defineProject } from '../vendor/hgame/core/config.js';
+import { createGameApplication } from '../vendor/hgame/core/application.js';
+import { Scene } from '../vendor/hgame/core/scene.js';
+import { Entity } from '../vendor/hgame/core/entity.js';
+import { Component } from '../vendor/hgame/core/component.js';
+import { createSwarmSimulation } from '../vendor/hgame/world/swarm-ecs.js';
 import { createWebGL2DAdapter, SpriteCrowd2D } from '../vendor/hgame/integrations/webgl2d.js';
 import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
 
 const engineConfig = await fetch('./engine.config.json').then(r => r.json());
 const canvas = document.querySelector('#game');
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const renderer = createWebGL2DAdapter({ canvas, width: 960, height: 540, background: '#090d16' });
-const app = HGame.createApplication({ project, gameId: 'horde', gameVersion: '1.0.0', renderer });
+const app = createGameApplication({ project, gameId: 'horde', gameVersion: '1.0.0', renderer });
 await app.installFeatures();
 
 const scene = app.scenes.add(new Scene('main'));
@@ -105,17 +116,20 @@ app.start();
 canvas.dataset.engineReady = 'true';
 window.__hgameState = () => ({ tick: app.stats.ticks, activeUnits: swarm.count });
 window.addEventListener('pagehide', () => app.dispose(), { once: true });`,
-  '3d': `// Create: node scripts/create-game.mjs "<dir>" --profile 3d --quality auto --with physics3d,audio,save --bare --name "3D"
+  '3d': `// Create: ${recipeCreateCommand('3d')}
 import * as THREE from '../assets/vendor/three/three.module.js';
-import { HGame, Scene, createHeightfieldTerrain3D, createNavMesh3D } from '../vendor/hgame/index.js';
+import { defineProject } from '../vendor/hgame/core/config.js';
+import { createGameApplication } from '../vendor/hgame/core/application.js';
+import { Scene } from '../vendor/hgame/core/scene.js';
+import { createHeightfieldTerrain3D } from '../vendor/hgame/world/terrain3d.js';
 import { createThreeAdapter } from '../vendor/hgame/integrations/three.js';
 import { createVfxSystem } from '../vendor/hgame/vfx/index.js';
 
 const engineConfig = await fetch('./engine.config.json').then(r => r.json());
 const canvas = document.querySelector('#game');
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const renderer = createThreeAdapter({ THREE, canvas, quality3d: { mode: 'auto' } });
-const app = HGame.createApplication({ project, gameId: 'arena-3d', gameVersion: '1.0.0', renderer });
+const app = createGameApplication({ project, gameId: 'arena-3d', gameVersion: '1.0.0', renderer });
 await app.installFeatures();
 
 const scene = app.scenes.add(new Scene('world'));
@@ -130,17 +144,20 @@ app.start();
 canvas.dataset.engineReady = 'true';
 window.__hgameState = () => ({ tick: app.stats.ticks, terrainMaxY: terrain.maxHeight });
 window.addEventListener('pagehide', () => { vfx.dispose(); app.dispose(); }, { once: true });`,
-  ui: `// Create: node scripts/create-game.mjs "<dir>" --profile ui --with audio,save --name "Card/UI"
-import { HGame, Scene, createPanelStack, createI18n, createRedDotSystem, createVersionedStore } from '../vendor/hgame/index.js';
+  ui: `// Create: ${recipeCreateCommand('ui')}
+import { defineProject } from '../vendor/hgame/core/config.js';
+import { createGameApplication } from '../vendor/hgame/core/application.js';
+import { Scene } from '../vendor/hgame/core/scene.js';
+import { createPanelStack, createI18n } from '../vendor/hgame/ui/index.js';
+import { createVersionedStore } from '../vendor/hgame/platform/storage.js';
 
 const engineConfig = await fetch('./engine.config.json').then(r => r.json()); // tickHz is 0 (command-driven)
-const project = HGame.defineProject(engineConfig);
-const app = HGame.createApplication({ project, gameId: 'card-ui', gameVersion: '1.0.0', renderer: { render() {} } });
+const project = defineProject(engineConfig);
+const app = createGameApplication({ project, gameId: 'card-ui', gameVersion: '1.0.0', renderer: { render() {} } });
 await app.installFeatures();
 app.scenes.add(new Scene('ui'));
 const panels = createPanelStack();
 const i18n = createI18n({ locale: 'zh', messages: { zh: { play: '开始' }, en: { play: 'Play' } } });
-const redDots = createRedDotSystem();
 const saves = createVersionedStore({ gameId: 'card-ui', schemaVersion: 1 });
 app.scenes.start('ui');
 app.start(); // renders once; dispatch updates via app.dispatch(...), never run an idle 60Hz loop

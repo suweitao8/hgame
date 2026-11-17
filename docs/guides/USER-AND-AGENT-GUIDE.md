@@ -28,11 +28,15 @@ npm run api -- --module post2d   # Every export in one module
 
 | Game Type | Command (from HGame root; basename must be ASCII slug `[A-Za-z0-9_-]`) |
 |---|---|
-| **Standard 2D Action / Platformer** | `node scripts/create-game.mjs "<dir>" --profile 2d --with audio,save --name "Title"` |
-| **2D Horde / Bullet-Hell (5k–150k+)** | `node scripts/create-game.mjs "<dir>" --profile 2d --renderer webgl2d --with audio,save --name "Title"` |
-| **3D Action / Open World** | `node scripts/create-game.mjs "<dir>" --profile 3d --quality auto --with physics3d,model3d,audio,save --name "Title"` |
-| **Card / Narrative / Commercial UI** | `node scripts/create-game.mjs "<dir>" --profile ui --with audio,save --name "Title"` |
+| **Standard 2D Action / Platformer** | `node scripts/create-game.mjs "<dir>" --preset 2d --name "Title"` |
+| **2D Horde / Bullet-Hell** | `node scripts/create-game.mjs "<dir>" --preset horde --name "Horde"` |
+| **3D Action / World** | `node scripts/create-game.mjs "<dir>" --preset 3d --name "3D"` |
+| **Card / Narrative / Commercial UI** | `node scripts/create-game.mjs "<dir>" --preset ui --name "Title"` |
 | **Blank Scaffold (no demo assets)** | Add `--bare` (`2d` or `3d`). Preview config without writing: `--dry-run`. |
+
+Use `--preset horde` to start with batched swarm simulation and `SpriteCrowd2D`. Its capacity, population and sprite dimensions are in `src/swarm.json`. The 3D preset selects adaptive quality and Rapier 3D. Pass `--physics none` when the design needs no physics backend. Existing `--profile` commands retain their standalone compatibility defaults.
+
+`engine.config.json` owns the active renderer and runtime feature selection. `hgame.project.json` records release policy for a preset project. `runtime: "entry-graph"` includes the active renderer and feature modules and traces scripts from the HTML entry and game imports. A wide `vendor/hgame/index.js` import still brings along its dependencies. Prefer leaf imports in new `src/` files. Add fully computed HGame module paths to `includeRuntime`, for example `["gameplay/quests.js"]`, and computed `src/` imports to `includeSource`, for example `["levels/intro.js"]`. The generated standalone packager uses the same rules.
 
 ---
 

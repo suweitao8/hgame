@@ -53,6 +53,8 @@ node scripts/create-game.mjs "D:\Games\demo-ui" --profile ui
 
 The generator refuses to overwrite an existing directory and creates a self-contained `vendor/hgame/` runtime copy. It includes only the selected Rapier dimension; projects without physics receive neither WASM bundle. Three.js files are copied only into 3D projects.
 
+Named `--preset 2d|horde|3d|ui` projects share renderer and starter metadata with the API recipe and packager. Presets generate `hgame.project.json` with `runtime: "entry-graph"`. This includes the renderer and active feature modules plus the traced sources and explicit `includeRuntime` entries. The root runtime facade is included when needed. Older projects without this metadata use compatibility packaging.
+
 ## Scripts & asset tooling
 
 - `scripts/create-game.mjs`: generates standalone 2D / 3D / UI projects with `vendor/hgame/` and `scripts/package-game.mjs`.

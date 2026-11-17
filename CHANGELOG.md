@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share project presets and renderer metadata across the generator, API recipes and standalone packager. New `--preset` projects ship an entry-traced runtime, and the horde preset starts with one swarm simulation and one crowd render component.
+
 - Add declarative level assembly with prefab hierarchies, named spawn points and tag-filtered trigger volumes in 2D and 3D. Level-owned entities and staged spawn batches clean up on failure. One-shot triggers can be restored from a save.
 
 - Add fixed-step encounters with scheduled waves, spawn backpressure, clear/survival/signal gates, timeouts and stage-entry checkpoints. Encounter signals can drive quests and scene transitions.

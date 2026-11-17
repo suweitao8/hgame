@@ -1,0 +1,7 @@
+{
+  "capacity": 12000,
+  "initialCount": 1200,
+  "speed": 48,
+  "spriteSize": 10,
+  "background": "#090d16"
+}
