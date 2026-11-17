@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Partition large static instance batches by grid region in the 3D starter and apply quality-tier draw distance to the default camera. Keep sparse regions batched and cull dense regions independently.
+
 - Share scene traversal, culling and sprite ordering between Canvas2D and WebGL2. Reuse ancestor transforms during each camera pass, including scenes with mixed fixed-step interpolation.
 
 - Resolve 3D starter model replacements by logical catalog ID. Let `assets push --catalog` store the same selected files and sidecars that the release packager includes.

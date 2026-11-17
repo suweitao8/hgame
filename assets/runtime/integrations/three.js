@@ -87,7 +87,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
 /**
  * Minimal structural Three.js camera.
  * @typedef {{ position: { x: number, y: number, z: number, set(x: number, y: number, z: number): unknown },
- *   aspect?: number, updateProjectionMatrix?(): void, updateMatrixWorld?(force?: boolean): void,
+ *   aspect?: number, far?: number, updateProjectionMatrix?(): void, updateMatrixWorld?(force?: boolean): void,
  *   lookAt?(x: number, y: number, z: number): void,
  *   matrixWorld?: object, matrixWorldInverse?: object, projectionMatrix?: object, projectionMatrixInverse?: object,
  *   [key: string]: unknown }} ThreeCamera
@@ -166,6 +166,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {[number, number, number]} [cameraTarget] Starting camera look-at target.
  * @property {number} [near=0.1] Camera near plane, world units.
  * @property {number} [far=1000] Camera far plane / cull distance, world units.
+ * @property {boolean} [limitCameraDrawDistance=false] Limit the adapter camera far plane to the active render tier's draw distance.
  * @property {number | string} [background=0x101820] Scene background colour.
  * @property {ThreeWorldLighting | null} [worldLighting=null] Default fog and lights, allocated per scene.
  * @property {ThreeQuality3DOptions | null} [quality3d=null] Adaptive quality options.
@@ -255,6 +256,7 @@ export function createThreeAdapter({
   cameraTarget = [0, 0, 0],
   near = 0.1,
   far = 1000,
+  limitCameraDrawDistance = false,
   background = 0x101820,
   worldLighting = null,
   quality3d = null,
@@ -492,6 +494,10 @@ export function createThreeAdapter({
       renderer.setSize(w, h, false);
       lastCanvasSize = size;
     }
+    const preset = qualityController?.state?.preset ?? null;
+    if (limitCameraDrawDistance && preset && far > near) {
+      camera.far = Math.max(near + Math.min(0.001, far - near), Math.min(far, preset.drawDistance ?? far));
+    }
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     if (activeViewCamera && 'aspect' in activeViewCamera && typeof activeViewCamera.updateProjectionMatrix === 'function') {
@@ -507,7 +513,6 @@ export function createThreeAdapter({
         }
       }
     }
-    const preset = qualityController?.state?.preset ?? null;
     if (preset && preset !== appliedPreset) {
       postPipeline?.setPreset(preset, { width: bufferWidth, height: bufferHeight });
       appliedPreset = preset;

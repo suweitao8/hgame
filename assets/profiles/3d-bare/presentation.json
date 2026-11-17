@@ -3,6 +3,7 @@
   "renderer": {
     "cameraPosition": [0, 4, 8],
     "cameraTarget": [0, 0, 0],
+    "limitCameraDrawDistance": true,
     "worldLighting": {
       "hemisphere": { "sky": "#ffffff", "ground": "#555555", "intensity": 2 }
     }

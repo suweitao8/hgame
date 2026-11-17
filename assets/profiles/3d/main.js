@@ -100,7 +100,7 @@ async function startWorld() {
       return new GLTFLoader().loadAsync(url);
     },
   });
-  levelView = createModularLevelRenderer({ THREE, models, parent: world });
+  levelView = createModularLevelRenderer({ THREE, models, parent: world, chunkCells: presentation.chunkCells });
   const mounted = await levelView.setLevel(levelConfig);
   if (!mounted.committed || app.disposed) return;
   addPlayer(scene, levelView.level);

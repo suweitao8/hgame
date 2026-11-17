@@ -28,7 +28,7 @@ export function compileModularLevel(level: ModularLevelData): CompiledModularLev
  * @param {ModularLevelRendererOptions} options
  * @returns {ModularLevelRenderer}
  */
-export function createModularLevelRenderer({ THREE, models, parent }?: ModularLevelRendererOptions): ModularLevelRenderer;
+export function createModularLevelRenderer({ THREE, models, parent, chunkCells }?: ModularLevelRendererOptions): ModularLevelRenderer;
 /**
  * Finite `[x, y, z]`.
  */
@@ -210,6 +210,10 @@ export type ModularLevelRendererOptions = {
      * Object3D that receives the level group.
      */
     parent: ModularObject3DLike;
+    /**
+     * Partition large instance batches into chunks of this many cells per axis. Zero keeps one batch per slot.
+     */
+    chunkCells?: number | undefined;
 };
 export type ModularLevelCommit = ModularLevelStats & {
     committed: boolean;

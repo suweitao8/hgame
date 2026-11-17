@@ -38,6 +38,8 @@ Use `--preset horde` to start with batched swarm simulation and `SpriteCrowd2D`.
 
 Both 3D starters put camera, fog, lights, tone mapping and exposure in `src/presentation.json` under `renderer`. Use `quality` to choose the initial mode and `renderer.worldLighting` to tune fog, hemisphere light and sun. The populated starter uses `materials.json` for the PBR palette, `model-slots.json` for procedural props or replacement GLBs, and `level.json` for placements, spawn and collision. Scenes release these presentation resources on unload.
 
+`renderer.limitCameraDrawDistance` applies the quality tier's draw distance up to the configured camera far plane. `chunkCells` controls the grid region size for large static instance batches. Dense regions each get their own culling bounds. Small and scattered batches stay grouped. Set `chunkCells` to `0` to batch by slot across the whole level.
+
 `engine.config.json` owns the active renderer and runtime feature selection. `hgame.project.json` records release policy for a preset project. `runtime: "entry-graph"` includes the active renderer and feature modules and traces scripts from the HTML entry and game imports. A wide `vendor/hgame/index.js` import still brings along its dependencies. Prefer leaf imports in new `src/` files. Add fully computed HGame module paths to `includeRuntime`, for example `["gameplay/quests.js"]`, and computed `src/` imports to `includeSource`, for example `["levels/intro.js"]`. The generated standalone packager uses the same rules.
 
 ---

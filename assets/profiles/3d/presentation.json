@@ -1,8 +1,10 @@
 {
   "quality": "auto",
+  "chunkCells": 16,
   "renderer": {
     "cameraPosition": [9, 8.5, 12],
     "cameraTarget": [0, 1, 0],
+    "limitCameraDrawDistance": true,
     "background": "#8eafc2",
     "toneMapping": "ueFilmic",
     "exposure": 1.15,

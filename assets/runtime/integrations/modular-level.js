@@ -71,6 +71,7 @@
  * @property {ModularThreeLike} THREE Three.js namespace subset.
  * @property {ModularModelSlotsLike} models Slot provider.
  * @property {ModularObject3DLike} parent Object3D that receives the level group.
+ * @property {number} [chunkCells=0] Partition large instance batches into chunks of this many cells per axis. Zero keeps one batch per slot.
  * @typedef {ModularLevelStats & {committed: boolean}} ModularLevelCommit
  * @typedef {object} ModularLevelRenderer
  * @property {(level: ModularLevelData) => Promise<ModularLevelCommit>} setLevel Stage and atomically swap in a level.
@@ -139,6 +140,42 @@ export function worldToGrid(world, grid = { cellSize: 1, origin: [0, 0, 0] }) {
   const coord = vec3(world, 'world');
   const g = validatedGrid(grid);
   return coord.map((n, i) => Math.round((n - g.origin[i]) / g.cellSize));
+}
+
+function spatialBatches(compiled, chunkCells) {
+  if (chunkCells === 0) return compiled.batches;
+  const { origin, cellSize } = compiled.grid;
+  const minBatchSize = 16;
+  const startAt = Math.max(128, chunkCells * chunkCells);
+  const result = [];
+  for (const batch of compiled.batches) {
+    if (batch.placements.length < startAt) {
+      result.push(batch);
+      continue;
+    }
+    const chunks = new Map();
+    const keys = [];
+    for (const position of batch.placements) {
+      const cx = Math.floor(Math.round((position.x - origin[0]) / cellSize) / chunkCells);
+      const cy = Math.floor(Math.round((position.y - origin[1]) / cellSize) / chunkCells);
+      const cz = Math.floor(Math.round((position.z - origin[2]) / cellSize) / chunkCells);
+      const key = `${cx},${cy},${cz}`;
+      let placements = chunks.get(key);
+      if (!placements) chunks.set(key, placements = []);
+      placements.push(position);
+      keys.push(key);
+    }
+    const dense = [...chunks].filter(([, placements]) => placements.length >= minBatchSize);
+    if (chunks.size < 2 || dense.length === 0) {
+      result.push(batch);
+      continue;
+    }
+    // Leave scattered instances in one batch to cap submissions for sparse levels.
+    const scattered = batch.placements.filter((_, i) => chunks.get(keys[i]).length < minBatchSize);
+    for (const [, placements] of dense) result.push({ slot: batch.slot, placements });
+    if (scattered.length) result.push({ slot: batch.slot, placements: scattered });
+  }
+  return result;
 }
 
 /**
@@ -278,12 +315,15 @@ export function compileModularLevel(level) {
  * @param {ModularLevelRendererOptions} options
  * @returns {ModularLevelRenderer}
  */
-export function createModularLevelRenderer({ THREE, models, parent } = {}) {
+export function createModularLevelRenderer({ THREE, models, parent, chunkCells = 0 } = {}) {
   if (!THREE?.Group || !parent?.add || !parent?.remove ||
       typeof models?.get !== 'function' ||
       typeof models?.instantiate !== 'function' ||
       typeof models?.instantiateBatch !== 'function') {
     throw new TypeError('Three, model slots, and a parent Object3D are required');
+  }
+  if (!Number.isInteger(chunkCells) || chunkCells < 0 || chunkCells > MAX_DIMENSION) {
+    throw new RangeError('chunkCells must be an integer from 0 to 512');
   }
   let mounted = null;
   let lastLevel = null;
@@ -309,7 +349,7 @@ export function createModularLevelRenderer({ THREE, models, parent } = {}) {
     const next = new THREE.Group();
     next.name = 'modular-level';
     const myGeneration = ++generation;
-    const batches = compiled.batches;
+    const batches = spatialBatches(compiled, chunkCells).filter(batch => batch.placements.length > 0);
     const nodes = new Array(batches.length);
     let nextBatch = 0;
     let failed = false;
