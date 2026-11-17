@@ -74,6 +74,7 @@ npm run api -- --module post2d   # Every export in one module
 | 19 | Inventory, Equipment & Reward Admission (`createInventory`) | [systems/19-inventory-and-equipment.md](systems/19-inventory-and-equipment.md) |
 | 20 | Weighted Loot & Crafting (`createLootSystem`, `createCraftingBook`) | [systems/20-loot-and-crafting.md](systems/20-loot-and-crafting.md) |
 | 21 | Skill timing with animation, sound and effect cues (`AbilityDefinition.timeline`) | [systems/21-ability-timelines.md](systems/21-ability-timelines.md) |
+| 22 | Staged Encounters, Spawn Waves & Checkpoints (`EncounterComponent`) | [systems/22-encounters.md](systems/22-encounters.md) |
 
 ---
 

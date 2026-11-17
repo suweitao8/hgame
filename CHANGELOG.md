@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add fixed-step encounters with scheduled waves, spawn backpressure, clear/survival/signal gates, timeouts and stage-entry checkpoints. Encounter signals can drive quests and scene transitions.
+
 - Add fixed-step ability timelines with animation clip hints, timed cues, a commit point and recovery. Presentation can share one start/cue/end/cancel contract across sprite and model animation.
 
 - Add deterministic weighted loot tables, persistent per-source reward receipts and batch crafting with station and tag requirements. Loot claims and crafting use inventory transactions to preserve pending rewards and materials when the bag is full.
