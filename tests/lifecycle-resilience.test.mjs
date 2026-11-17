@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Component, Entity, Scene, createGameApplication, createInputManager } from '../assets/runtime/index.js';
+import { Component, Entity, Scene, createGameApplication, createGameEngine, createInputManager } from '../assets/runtime/index.js';
 
 function scheduler() {
   let next = 0;
@@ -91,6 +91,28 @@ test('cleanup failures still destroy sibling trees, release the platform and can
   assert.equal(rendererDisposals, 1);
   assert.equal(app.platform.dispose(), false);
   assert.equal(app.dispose(), false);
+});
+
+test('a throwing platform disposal listener does not leave browser input attached', () => {
+  const target = new EventTarget();
+  const platform = createGameEngine({ gameId: 'cleanup-test', windowRef: target, storage: null });
+  const failure = new Error('platform-dispose-hook');
+  const unsubscribe = platform.lifecycle.on('dispose', () => { throw failure; });
+  const press = () => {
+    const event = new Event('keydown');
+    Object.defineProperty(event, 'code', { value: 'KeyD' });
+    target.dispatchEvent(event);
+  };
+  press();
+  assert.equal(platform.input.isDown('KeyD'), true);
+  assert.throws(() => platform.dispose(), error => error === failure || error.errors?.includes(failure));
+  assert.equal(platform.input.isDown('KeyD'), false, 'held key released during cleanup');
+  press();
+  assert.equal(platform.input.isDown('KeyD'), false, 'disposed input no longer receives browser events');
+  assert.equal(platform.dispose(), false);
+  assert.equal(platform.lifecycle.state, 'disposed');
+  // Disposal subscriptions can still be held by callers, but the emitter must release them.
+  assert.equal(unsubscribe(), false);
 });
 
 test('stop and pause release input while a borrowed platform remains usable after disposal', () => {

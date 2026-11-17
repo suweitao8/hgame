@@ -5,6 +5,7 @@ import { createSaveStore } from './storage.js';
 import { createAudioManager } from './audio.js';
 import { createDiagnostics } from './diagnostics.js';
 import { createGameBridge } from './game-bridge.js';
+import { cleanupAll } from '../internal/cleanup.js';
 import { GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION } from './protocol.js';
 
 /** Platform service version string. */
@@ -153,16 +154,11 @@ export function createGameEngine({
   function dispose() {
     if (disposed) return false;
     disposed = true;
-    offFocus();
-    offHostFocus();
-    offHostResize();
-    offVisibility();
-    offDocumentVisibility();
-    lifecycle.dispose();
-    input.dispose();
-    diagnostics.dispose();
-    host.dispose();
-    void audio.dispose()?.catch?.(() => {});
+    cleanupAll([
+      offFocus, offHostFocus, offHostResize, offVisibility, offDocumentVisibility,
+      lifecycle.dispose, input.dispose, diagnostics.dispose, host.dispose,
+      () => { void audio.dispose()?.catch?.(() => {}); },
+    ], 'Platform disposal failed');
     return true;
   }
 

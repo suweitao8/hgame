@@ -32,7 +32,7 @@ const program = ts.createProgram(files, { allowJs: true, checkJs: false, noEmit:
   module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, skipLibCheck: true });
 const checker = program.getTypeChecker();
 const rel = f => path.relative(rt, f).replaceAll('\\', '/');
-const isInternal = r => r.split('/').length > 2 && !/^(core|platform|integrations|physics|world|time|animation|ui|lockstep)\/[^/]+$/.test(r);
+const isInternal = r => r.startsWith('internal/') || (r.split('/').length > 2 && !/^(core|platform|integrations|physics|world|time|animation|ui|lockstep)\/[^/]+$/.test(r));
 const oneLine = s => s.replace(/\s+/g, ' ').trim();
 const summaryOf = sym => oneLine(ts.displayPartsToString(sym.getDocumentationComment(checker))).slice(0, 160);
 

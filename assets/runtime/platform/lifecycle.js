@@ -118,8 +118,8 @@ export function createLifecycle({ windowRef, documentRef } = {}) {
     windowRef?.removeEventListener?.('blur', onBlur);
     windowRef?.removeEventListener?.('resize', onResize);
     documentRef?.removeEventListener?.('visibilitychange', onVisibility);
-    events.emit('dispose');
-    events.clear();
+    try { events.emit('dispose'); }
+    finally { events.clear(); }
     return true;
   }
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release input and the remaining platform services when a lifecycle disposal listener throws. Clear lifecycle subscriptions even on callback failure and report cleanup errors after teardown.
+
 - Execute all API recipes against generated entry points in CI. Correct tick/locale getters, swarm capacity/spawn/step/count wiring, VFX adapter ownership, the optional model provider requirement, and the confirmed-frame scheduler's explicit subpath import.
 - Prevent scene-transition callbacks from activating the next scene after application disposal, and reject entity reattachment or new roots during scene cleanup.
 - Cancel the rest of an in-flight tween/timer update when its callback disposes the manager or application. Do not execute scene hooks, later timers or tween completion callbacks after teardown.

@@ -1,7 +1,7 @@
 import { createGameEngine } from '../platform/engine.js';
 import { defineProject, resolveFeatureGraph } from './config.js';
 import { SceneManager } from './scene.js';
-import { cleanupAll } from './internal/cleanup.js';
+import { cleanupAll } from '../internal/cleanup.js';
 
 /** @type {import('./config.js').FeatureCatalog} */
 const builtin = {

@@ -1,7 +1,7 @@
 import { Component } from './component.js';
 import { Entity } from './entity.js';
 import { TweenManager } from '../time/tween.js';
-import { cleanupAll } from './internal/cleanup.js';
+import { cleanupAll } from '../internal/cleanup.js';
 
 /**
  * @typedef {{ type: string } & Record<string, unknown>} GameCommand Command delivered to {@link Scene#onCommand}.

@@ -39,6 +39,7 @@ export function createEmitter() {
       for (const listener of [...(listeners.get(type) || [])]) listener(value);
     },
     clear() {
+      for (const bucket of listeners.values()) bucket.clear();
       listeners.clear();
     },
   });

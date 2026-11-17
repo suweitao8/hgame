@@ -1,5 +1,5 @@
 import { Component } from './component.js';
-import { cleanupAll } from './internal/cleanup.js';
+import { cleanupAll } from '../internal/cleanup.js';
 import { createTagContainer, matchGameplayTags } from './tags.js';
 
 let nextEntityId = 1;
