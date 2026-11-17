@@ -150,6 +150,8 @@ async function main() {
       if (options.bare) await cp(path.join(mainSource, 'dist', 'index.bare.html'), path.join(stage, 'index.html'), { force: true });
       await cp(path.join(mainSource, options.bare ? 'index.bare.html' : 'index.html'), path.join(stage, 'index.source.html'));
       await cp(path.join(mainSource, 'install-build.mjs'), path.join(stage, 'scripts', 'install-pixi-build.mjs'));
+      const seed = spawnSync(process.execPath, ['scripts/install-pixi-build.mjs', '--seed', path.join(mainSource, 'dist', 'assets')], { cwd: stage, encoding: 'utf8' });
+      if (seed.error || seed.status !== 0) throw new Error('Failed to record Pixi build assets: ' + (seed.stderr || seed.error?.message || 'unknown error'));
       await cp(path.join(mainSource, 'package-lock.json'), path.join(stage, 'package-lock.json'));
       await cp(path.join(mainSource, 'CLAUDE.md'), path.join(stage, 'CLAUDE.md'));
     } else {

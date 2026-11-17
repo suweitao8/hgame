@@ -869,6 +869,9 @@ export async function packageGameRelease({
   }
 
   // Preserve Third-Party Licenses cleanly
+  for (const license of ['LICENSE-pixijs.txt', 'LICENSE-pixi-filters.txt', 'LICENSE-gsap.txt']) {
+    enqueueRel(license, false);
+  }
   if ([...includedFiles.keys()].some(k => k.startsWith('assets/vendor/three/'))) {
     enqueueRel('assets/vendor/three/LICENSE', false);
     if (includedFiles.has('assets/vendor/three/jsm/libs/meshopt_decoder.module.js')) {
