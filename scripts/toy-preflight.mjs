@@ -67,6 +67,17 @@ function resolveRelativeRef(fromRel, rawUrl) {
   return posixPath.normalize(joined);
 }
 
+// Library banners are informational text, not network requests. Restrict these
+// exclusions to known message shapes; URLs elsewhere, including the same hosts,
+// remain candidates for EXTERNAL_SERVICE_ACCESS.
+function omitKnownLibraryNotices(code) {
+  return code
+    .replace(/\/\*!\s*\*\s*(?:GSAP|CSSPlugin)\s+[\d.]+[\s\S]*?\*\//g, '')
+    .replace(/not found\. https:\/\/gsap\.com(?=["'])/g, 'not found.')
+    .replace(/`%c\s+%c\s+%c\s+%c\s+%c PixiJS %c v\$\{[\w$]+\} \(\$\{[\w$]+\}\) https?:\/\/www\.pixijs\.com\/\s*`/g, '``')
+    .replace(/`PixiJS \$\{[\w$]+\} - \$\{[\w$]+\} - https?:\/\/www\.pixijs\.com\/`/g, '``');
+}
+
 /** Parse PKZIP buffer into Map<posixPath, Buffer>. */
 export function parseZipEntries(zipBuffer) {
   let eocdOffset = -1;
@@ -340,7 +351,7 @@ export async function runToyPreflight({
 
   const checkLocalRef = (fromRel, rawUrl) => {
     if (isIgnoredUrl(rawUrl)) {
-      const m = /^https?:\/\/([^/:?#]+)/i.exec(rawUrl.trim());
+      const m = /^(?:https?:)?\/\/([^/:?#]+)/i.exec(rawUrl.trim());
       if (m && !BILIBILI_OWNED_HOSTS.test(m[1]) && m[1] !== '127.0.0.1' && m[1] !== 'localhost') {
         externalDomains.add(m[1].toLowerCase());
         capabilities.add('EXTERNAL_SERVICE_ACCESS');
@@ -393,8 +404,9 @@ export async function runToyPreflight({
       }
     }
     let extMatch;
-    const extUrlRe = /https?:\/\/([A-Za-z0-9.-]+)/g;
-    while ((extMatch = extUrlRe.exec(code)) !== null) {
+    const extUrlRe = /(?:https?:\/\/|["'`]\s*\/\/)([A-Za-z0-9.-]+)/g;
+    const externalScan = omitKnownLibraryNotices(code);
+    while ((extMatch = extUrlRe.exec(externalScan)) !== null) {
       const host = extMatch[1].toLowerCase();
       if (!BILIBILI_OWNED_HOSTS.test(host) && host !== '127.0.0.1' && host !== 'localhost' && host !== 'www.w3.org') {
         externalDomains.add(host);
