@@ -5,12 +5,24 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
-import { chromium } from 'playwright-core';
+import { chromium, firefox, webkit } from 'playwright-core';
 import { buildExample } from '../scripts/build-examples.mjs';
 
-const live = process.argv.includes('--webasset');
-const chromeIndex = process.argv.indexOf('--chrome');
-const executablePath = chromeIndex >= 0 ? process.argv[chromeIndex + 1] : undefined;
+const argv = process.argv.slice(2);
+const live = argv.includes('--webasset');
+const mobile = argv.includes('--mobile');
+function option(name) {
+  const index = argv.indexOf(name);
+  if (index === -1) return undefined;
+  const value = argv[index + 1];
+  if (!value || value.startsWith('--')) throw new Error(`Missing value for ${name}`);
+  return value;
+}
+const browserName = option('--browser') ?? 'chromium';
+const browserType = { chromium, firefox, webkit }[browserName];
+assert.ok(['chromium', 'firefox', 'webkit'].includes(browserName), 'Use --browser chromium, firefox or webkit');
+assert.ok(!mobile || browserName === 'chromium', '--mobile uses Chromium touch dispatch');
+const executablePath = option('--executable') ?? option('--chrome');
 const children = [];
 let browser;
 async function fixture(id) {
@@ -30,12 +42,50 @@ async function fixture(id) {
   }
   throw new Error(`${id} fixture timed out`);
 }
+
+function distance(a, b) {
+  return Math.hypot(b.x - a.x, (b.z ?? b.y) - (a.z ?? a.y));
+}
+
+async function exerciseTouch(page, read, id) {
+  const joystick = page.locator('.hgame-joy-zone');
+  await joystick.waitFor();
+  const zone = await joystick.boundingBox();
+  const x = Math.round(zone.x + zone.width / 3);
+  const y = Math.round(zone.y + zone.height / 2);
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (type, touchPoints = []) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+  const before = await read();
+  const dragX = x + 45;
+  await touch('touchStart', [{ x, y, id: 0 }]);
+  await touch('touchMove', [{ x: dragX, y, id: 0 }]);
+  await page.waitForFunction(({ tick }) => window.__hgameState().tick >= tick + 10, { tick: before.tick });
+  const moved = await read();
+  assert.ok(distance(before.player, moved.player) > 0.1, `${id} touch movement`);
+  const input = () => page.evaluate(() => ({
+    pointers: (window.__arena ?? window.__survivor).app.input.pointerCount,
+    joystick: document.querySelector('.hgame-joy-base').dataset.active,
+  }));
+  assert.deepEqual(await input(), { pointers: 1, joystick: 'true' });
+  await touch('touchCancel');
+  assert.deepEqual(await input(), { pointers: 0, joystick: 'false' });
+  const cancelled = await read();
+  await page.waitForFunction(tick => window.__hgameState().tick >= tick + 36, cancelled.tick);
+  const settled = await read();
+  await page.waitForFunction(tick => window.__hgameState().tick >= tick + 12, settled.tick);
+  assert.ok(distance(settled.player, (await read()).player) < 0.05, `${id} motion settled after touch cancel`);
+  await cdp.detach();
+  return { moved: true, cancelled: true };
+}
+
 try {
-  browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}),
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'] });
+  browser = await browserType.launch({ headless: true, ...(executablePath ? { executablePath } : {}),
+    ...(browserName === 'chromium' ? { args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'] } : {}) });
   for (const id of ['survivor-2d', 'arena-3d']) {
     const url = await fixture(id);
-    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+    const page = await browser.newPage(mobile
+      ? { viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }
+      : { viewport: { width: 960, height: 540 } });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -53,8 +103,8 @@ try {
     await page.keyboard.up('d');
     const moved = await read();
     assert.ok(moved.tick > initial.tick, `${id} scheduler progress`);
-    assert.ok(Math.hypot(moved.player.x - initial.player.x,
-      (moved.player.z ?? moved.player.y) - (initial.player.z ?? initial.player.y)) > 0.1, `${id} keyboard movement`);
+    assert.ok(distance(initial.player, moved.player) > 0.1, `${id} keyboard movement`);
+    const touch = mobile ? await exerciseTouch(page, read, id) : null;
     assert.equal(await page.locator('#debug').isVisible(), false);
     let completed;
     for (let cycle = 0; cycle < 3; cycle++) {
@@ -80,7 +130,8 @@ try {
       assert.equal(completed.best.runs, initial.best.runs + cycle + 1);
       assert.ok(completed.best.time + 0.005 >= completed.time, `${id} saved time ${JSON.stringify(completed)}`);
       if (cycle < 2) {
-        if (cycle === 0) await page.locator('#restart').click();
+        if (cycle === 0 && mobile) await page.locator('#restart').tap();
+        else if (cycle === 0) await page.locator('#restart').click();
         else { await page.keyboard.down('u'); await page.waitForTimeout(100); await page.keyboard.up('u'); }
         await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 3000 })
           .catch(async error => { throw new Error(`${id} restart cycle ${cycle}: ${JSON.stringify(await read())}; errors: ${errors.join('; ')}; ${error.message}`); });
@@ -112,7 +163,8 @@ try {
     assert.deepEqual(await read(), stopped, `${id} no work after disposal`);
     assert.equal(stopped.disposed, true);
     assert.deepEqual(errors, [], `${id} browser errors`);
-    console.log(JSON.stringify({ id, live, cycles: 3, kills: completed.kills, best: completed.best, disposal, errors }));
+    console.log(JSON.stringify({ id, browser: browserName, version: browser.version(), live, mobile, touch,
+      cycles: 3, kills: completed.kills, best: completed.best, disposal, errors }));
     await page.close();
   }
 } finally {
