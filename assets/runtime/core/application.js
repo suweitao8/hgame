@@ -300,12 +300,17 @@ export function createGameApplication({
     return app;
   }
   function step(deltaSeconds) {
+    advanceFrame(deltaSeconds);
+    return { ...stats };
+  }
+
+  function advanceFrame(deltaSeconds) {
     if (disposed) throw new Error('Application disposed');
     if (requiresInstall && !installed) throw new Error('Call await app.installFeatures() before stepping this project');
     if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) throw new RangeError('deltaSeconds must be >= 0');
     const scene = app.scenes.current;
     if (!scene) throw new Error('Choose a Scene first');
-    if (paused) return stats;
+    if (paused) return;
     lastUnscaledDelta = deltaSeconds;
     const rawStep = Math.min(deltaSeconds, maxDelta);
     let scaledDelta;
@@ -333,9 +338,9 @@ export function createGameApplication({
         const active = app.scenes.current;
         active?._capturePreviousTransforms?.();
         active?._run('fixedUpdate', stepSize, app);
-        if (disposed) return { ...stats };
+        if (disposed) return;
         active?.physics?.step?.(stepSize);
-        if (disposed) return { ...stats };
+        if (disposed) return;
         runtime.input?.endFrame?.();
         accumulator = Math.max(0, accumulator - stepSize);
         stats.ticks++;
@@ -349,11 +354,10 @@ export function createGameApplication({
     }
     const current = app.scenes.current;
     current._run('update', scaledDelta, app);
-    if (disposed) return { ...stats };
+    if (disposed) return;
     current._run('lateUpdate', scaledDelta, app);
-    if (disposed) return { ...stats };
+    if (disposed) return;
     render();
-    return { ...stats };
   }
 
   function scheduleFrame() {
@@ -369,7 +373,7 @@ export function createGameApplication({
       const priorTime = previousTime;
       const dt = priorTime === null ? 0 : Math.max(0, (time - priorTime) / 1000);
       previousTime = time;
-      step(dt);
+      advanceFrame(dt);
       if (disposed) return;
       if (previousTime !== null && runtime.lifecycle?.visible !== false) {
         if (services.adaptiveQuality3d && dt > 0) renderer.recordFrameInterval(dt * 1000);

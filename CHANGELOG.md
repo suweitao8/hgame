@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid allocating an unused statistics snapshot on every scheduled frame; manual `step()` calls now also return a snapshot while paused.
+
 - Reconfigure automatic procedural-music timing when a mood changes tempo, and stop its timer while paused.
 
 - Route procedural BGM through the audio manager's lazily acquired shared context and music bus, with independent per-track gain and explicit controller release.
