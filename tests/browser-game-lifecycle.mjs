@@ -283,9 +283,17 @@ async function exerciseTouch(page, read, id) {
     for (const interruption of ['hidden', 'cancel']) {
       const before = await read();
       await touch('touchStart', [{ x, y, id: 0 }]);
+      await page.waitForFunction(() => {
+        const input = (window.__arena ?? window.__survivor).app.input;
+        return input.pointerCount === 1 && document.querySelector('.hgame-joy-base').dataset.active === 'true';
+      }, null, { timeout: 3000 });
       await touch('touchMove', [{ x: x + (interruption === 'hidden' ? 45 : -45), y, id: 0 }]);
-      await page.waitForFunction(tick => window.__hgameState().tick >= tick + 10, before.tick);
-      assert.ok(distance(before.player, (await read()).player) > 0.1, `${id} touch movement`);
+      await page.waitForFunction(({ tick, player }) => {
+        const state = window.__hgameState();
+        return state.tick >= tick + 10 && Math.hypot(state.player.x - player.x,
+          (state.player.z ?? state.player.y) - (player.z ?? player.y)) > 0.1;
+      }, { tick: before.tick, player: before.player }, { timeout: 3000 });
+      assert.ok(distance(before.player, (await read()).player) > 0.1, `${id} ${interruption} touch movement`);
       assert.deepEqual(await input(), { pointers: 1, joystick: 'true' });
       if (interruption === 'hidden') {
         await page.evaluate(() => {
