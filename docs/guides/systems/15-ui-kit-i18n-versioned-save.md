@@ -28,6 +28,7 @@ const res = saves.load('slot1', { hp: 100, gold: 0 }); // auto-migrates + recove
 ```
 
 ## Pitfalls
+- A readable backend remains in use when full or read-only; explicit `save()`/`set()` calls throw its write error. Automatic migration/recovery writeback failures return the valid data with `writebackError` on the successful `load()` result. Check `'writebackError' in res` to distinguish failed writeback (the thrown value can be anything); the next load retries. `get()` still returns the recovered value, so use `load()` when writeback status matters. Absent/unreadable storage still uses the documented isolated memory fallback.
 - Save values follow JSON rules: dates become strings, undefined object fields disappear, and non-finite numbers become `null`. Checksums cover that stored representation. `save()` returns the original input. The initial migration load returns the migrator's result; subsequent loads read the persisted JSON representation. Cycles, BigInt, and top-level values omitted by JSON (such as `undefined`) throw before changing either save slot.
 - Always pass positive integer `schemaVersion` and pure `migrations[v]` functions (`v -> v + 1`) so legacy saves never crash.
 - UI projects (`tickHz: 0`) must subscribe/trigger render via `app.dispatch(...)` rather than polling DOM inside a RAF loop.

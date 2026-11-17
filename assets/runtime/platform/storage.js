@@ -17,7 +17,8 @@ function createMemoryStorage() {
  * @property {string} gameId Stable slug (`/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/`).
  * @property {number} [schemaVersion=1] Positive integer; part of the key namespace.
  * @property {Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'> | null} [storage]
- *   Backend (default: `localStorage`, falling back to in-memory when unavailable).
+ *   Backend (default: `localStorage`, falling back to in-memory when absent or unreadable).
+ *   A readable backend is retained when writes fail (for example, quota exhaustion).
  * @property {string} [prefix='webasset.game'] Namespace prefix.
  */
 
@@ -25,7 +26,7 @@ function createMemoryStorage() {
  * @typedef {object} SaveStore JSON key/value save store scoped to one game and schema version.
  * @property {string} namespace Full key prefix used in the backend.
  * @property {<T = unknown>(key: string, fallback?: T) => T} get Read a value; returns `fallback` when missing or unparsable.
- * @property {<T>(key: string, value: T) => T} set Persist a JSON-serializable value; returns it.
+ * @property {<T>(key: string, value: T) => T} set Persist a JSON-serializable value; returns it. Backend write errors propagate.
  * @property {(key: string) => void} remove
  * @property {() => string[]} keys Keys saved in this namespace.
  * @property {() => void} clear Remove every key in this namespace.
@@ -52,9 +53,8 @@ export function createSaveStore({
     try { backend = globalThis.localStorage; } catch { backend = null; }
   }
   try {
-    const probe = prefix + '.__probe__';
-    backend?.setItem(probe, '1');
-    backend?.removeItem(probe);
+    // Readability matters independently of quota or write permissions.
+    backend?.getItem(prefix + '.__probe__');
     if (!backend) backend = createMemoryStorage();
   } catch {
     backend = createMemoryStorage();
@@ -108,7 +108,7 @@ function computeEnvelopeSum(version, salt, data) {
 /**
  * @template T
  * @template [TFallback=undefined]
- * @typedef {{ ok: true, value: T, version: number, fromVersion: number, migrated: boolean, recovered: boolean } |
+ * @typedef {{ ok: true, value: T, version: number, fromVersion: number, migrated: boolean, recovered: boolean, writebackError?: unknown } |
  * { ok: false, reason: string, value: TFallback, version: number | null, fromVersion: number | null, migrated: false, recovered: boolean }} VersionedLoadResult
  */
 
@@ -135,6 +135,8 @@ function isVersionEnvelope(entry) {
  * and automatic last-known-good backup recovery.
  * Values follow JSON serialization rules; checksums cover the stored JSON data.
  * A value that cannot be serialized is rejected before either save slot changes.
+ * A failed automatic writeback still returns valid migrated/recovered data with
+ * `writebackError` on the successful load result. Explicit saves continue to throw.
  * @template [T=unknown]
  * @param {object} [options]
  * @param {SaveStore} [options.store] Existing SaveStore (overrides `gameId`/`storage`/`prefix`).
@@ -146,7 +148,7 @@ function isVersionEnvelope(entry) {
  * @param {boolean} [options.checksum=true] Enable FNV-1a tamper detection on envelopes.
  * @param {string} [options.salt=''] Optional application salt mixed into envelope checksums.
  * @param {string} [options.backupKeySuffix='.bak'] Backup key suffix; empty string disables backup slot.
- * @param {boolean} [options.autoPersistMigrated=true] Re-save migrated data immediately on `load()`.
+ * @param {boolean} [options.autoPersistMigrated=true] Re-save migrated/recovered data on `load()`; report write failures in `writebackError`.
  * @returns {Readonly<VersionedStore<T>>}
  */
 export function createVersionedStore({
@@ -274,8 +276,12 @@ export function createVersionedStore({
       data = res.data;
     }
 
+    /** @type {{ writebackError: unknown } | undefined} */
+    let writebackFailure;
     if ((migrated || recovered) && autoPersistMigrated) {
-      backing.set(key, makeEnvelope(data));
+      const envelope = makeEnvelope(data);
+      try { backing.set(key, envelope); }
+      catch (error) { writebackFailure = { writebackError: error }; }
     }
 
     return {
@@ -285,6 +291,7 @@ export function createVersionedStore({
       fromVersion: parsed.version,
       migrated,
       recovered,
+      ...writebackFailure,
     };
   }
 

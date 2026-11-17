@@ -65,6 +65,10 @@ const loaded = saves.load('slot', null);
 if (loaded.ok) {
   const savedHp: number = loaded.value.hp;
   const version: number = loaded.version;
+  const writebackFailure: unknown = loaded.writebackError;
+  type WritebackErrorTyped = ExpectFalse<IsAny<typeof loaded.writebackError>>;
+  // @ts-expect-error writeback errors must be narrowed before reading properties
+  const unsafeErrorMessage: string = loaded.writebackError.message;
 } else {
   const fallback: null = loaded.value;
   const reason: string = loaded.reason;

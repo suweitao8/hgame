@@ -8,6 +8,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
+import { verifyStorageQuota } from './browser-storage-quota.mjs';
 const temp = await mkdtemp(path.join(os.tmpdir(), 'hgame-recipes-'));
 const chrome = process.argv.indexOf('--chrome');
 let browser;
@@ -101,6 +102,8 @@ try {
       assert.equal(persistence.repaired, true);
       assert.deepEqual(errors, [], 'storage reload errors');
       console.log(JSON.stringify({ storage: persistence }));
+      await verifyStorageQuota(page);
+      assert.deepEqual(errors, [], 'quota storage reload errors');
     }
     await page.close();
     const ended = once(server, 'exit'); server.kill(); await ended; server = null;

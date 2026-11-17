@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep readable save storage when writes are blocked or its quota is exhausted, preserving existing progress and surfacing explicit write errors. Probe availability without modifying storage. Successful migrated/recovered loads report automatic writeback failures through optional `writebackError` while keeping valid data readable; retry on the next load.
+
 - Checksum versioned saves after JSON conversion so dates, optional fields, typed arrays and non-finite numbers remain readable. Validate serialization before changing the primary or backup slot, including migrated saves.
 
 - Verify rendered 3D releases directly from standard and Toy ZIPs in Chromium CI. Capture nested entry paths and retain startup HTTP and JavaScript errors in snapshot reports.
