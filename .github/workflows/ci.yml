@@ -70,7 +70,7 @@ jobs:
       - run: npm run test:browser:telemetry
       - run: node scripts/build-examples.mjs
       - run: npm run test:examples
-      - run: npm run test:browser:lifecycle
+      - run: npm run test:browser:lifecycle -- --context-recovery
       - run: npm run test:browser:lifecycle -- --mobile
       - run: npm run test:browser:recipes
       - name: Compare against accepted visual reference

@@ -7,10 +7,14 @@ import { createServer } from 'node:net';
 import { once } from 'node:events';
 import { chromium, firefox, webkit } from 'playwright-core';
 import { buildExample } from '../scripts/build-examples.mjs';
+import { numberOption } from '../scripts/lib/cli-numbers.mjs';
+import { createFrameTelemetry, summarizeFrameTelemetry } from '../scripts/lib/performance-stats.mjs';
+import { readBrowserEnvironment } from '../scripts/lib/browser-benchmark.mjs';
 
 const argv = process.argv.slice(2);
 const live = argv.includes('--webasset');
 const mobile = argv.includes('--mobile');
+const contextRecovery = argv.includes('--context-recovery');
 function option(name) {
   const index = argv.indexOf(name);
   if (index === -1) return undefined;
@@ -20,8 +24,13 @@ function option(name) {
 }
 const browserName = option('--browser') ?? 'chromium';
 const browserType = { chromium, firefox, webkit }[browserName];
+const soakOption = option('--soak-seconds');
+const soakSeconds = soakOption === undefined ? null : numberOption(soakOption, '--soak-seconds', { min: 30, integer: true });
+const gpu = option('--gpu') ?? (soakSeconds ? 'hardware' : 'software');
 assert.ok(['chromium', 'firefox', 'webkit'].includes(browserName), 'Use --browser chromium, firefox or webkit');
 assert.ok(!mobile || browserName === 'chromium', '--mobile uses Chromium touch dispatch');
+assert.ok(gpu === 'hardware' || gpu === 'software', 'Use --gpu hardware or software');
+assert.ok(!soakSeconds || (browserName === 'chromium' && !contextRecovery), 'Soak testing uses Chromium without forced context losses');
 const executablePath = option('--executable') ?? option('--chrome');
 const children = [];
 let browser;
@@ -45,6 +54,77 @@ async function fixture(id) {
 
 function distance(a, b) {
   return Math.hypot(b.x - a.x, (b.z ?? b.y) - (a.z ?? a.y));
+}
+
+async function exerciseContextRecovery(page, id) {
+  const results = await page.evaluate(async () => {
+    const canvas = document.querySelector('#game');
+    const { app } = window.__arena ?? window.__survivor;
+    const gl = canvas.getContext('webgl2');
+    const extension = gl?.getExtension('WEBGL_lose_context');
+    if (!extension) throw new Error('WEBGL_lose_context is required for this test');
+
+    function contextEvent(type, action) {
+      return new Promise((resolve, reject) => {
+        const listener = () => {
+          clearTimeout(deadline);
+          resolve();
+        };
+        const deadline = setTimeout(() => {
+          canvas.removeEventListener(type, listener);
+          reject(new Error(`Timed out waiting for ${type}`));
+        }, 8000);
+        canvas.addEventListener(type, listener, { once: true });
+        action();
+      });
+    }
+
+    function sampleFrame() {
+      return new Promise((resolve, reject) => {
+        const deadline = setTimeout(() => {
+          cancelAnimationFrame(frame);
+          reject(new Error('Timed out waiting for a rendered WebGL frame'));
+        }, 8000);
+        const frame = requestAnimationFrame(() => {
+          clearTimeout(deadline);
+          // The app's scheduled render runs before this callback in the same frame.
+          const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+          gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+          const colors = new Set();
+          for (let i = 0; i < pixels.length; i += 16) {
+            colors.add((pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2]);
+          }
+          resolve({ colors: colors.size, glError: gl.getError(), tick: app.stats.ticks });
+        });
+      });
+    }
+
+    const before = await sampleFrame();
+    const rounds = [];
+    for (let i = 0; i < 2; i++) {
+      await contextEvent('webglcontextlost', () => extension.loseContext());
+      const lost = gl.isContextLost() && app.renderer.contextLost === true;
+      const lostTick = app.stats.ticks;
+      // Real frames can keep advancing game logic while GPU draws are suspended.
+      await new Promise(resolve => setTimeout(resolve, 150));
+      const recoveryStart = performance.now();
+      await contextEvent('webglcontextrestored', () => extension.restoreContext());
+      const restored = !gl.isContextLost() && app.renderer.contextLost === false;
+      const after = await sampleFrame();
+      rounds.push({ lost, restored, lostTick, after, recoveryMs: +(performance.now() - recoveryStart).toFixed(2) });
+    }
+    return { before, rounds };
+  });
+  assert.ok(results.before.colors > 1, `${id} initial WebGL frame contains scene pixels`);
+  assert.equal(results.before.glError, 0, `${id} initial GL error`);
+  for (const [index, result] of results.rounds.entries()) {
+    const label = `${id} restore ${index + 1}: ${JSON.stringify(result)}`;
+    assert.ok(result.lost && result.restored, label);
+    assert.ok(result.after.tick > result.lostTick, label);
+    assert.ok(result.after.colors > 1, label);
+    assert.equal(result.after.glError, 0, label);
+  }
+  return results;
 }
 
 async function exerciseTouch(page, read, id) {
@@ -78,9 +158,101 @@ async function exerciseTouch(page, read, id) {
   return { moved: true, cancelled: true };
 }
 
+async function exerciseSoak(page, read, id, errors) {
+  const environment = await readBrowserEnvironment(page, browser, gpu);
+  assert.equal(environment.gpuModeMatches, true, `${id} requested ${gpu}, observed ${environment.renderer}`);
+  const isSurvivor = id === 'survivor-2d';
+  const upgrade = isSurvivor ? page.locator('#levelup button').first() : null;
+  const moves = ['d', 's', 'a', 'w'];
+  let moveIndex = 0;
+  let upgrades = 0;
+  async function playUntil(deadline) {
+    while (performance.now() < deadline && !errors.length) {
+      const key = moves[moveIndex++ % moves.length];
+      await page.keyboard.down(key);
+      if (!isSurvivor) await page.keyboard.down('k');
+      try {
+        const changeDirection = Math.min(deadline, performance.now() + 2500);
+        while (performance.now() < changeDirection && !errors.length) {
+          if (upgrade && await upgrade.isVisible()) {
+            await upgrade.click({ timeout: 3000 });
+            upgrades++;
+          }
+          await page.waitForTimeout(Math.max(0, Math.min(150, changeDirection - performance.now())));
+        }
+      } finally {
+        if (!isSurvivor) await page.keyboard.up('k');
+        await page.keyboard.up(key);
+      }
+    }
+  }
+
+  const cdp = await page.context().newCDPSession(page);
+  const checkpoint = async () => {
+    // Consistent post-GC heap samples. Collect outside recorded frame windows.
+    await cdp.send('HeapProfiler.collectGarbage');
+    const heap = await cdp.send('Runtime.getHeapUsage');
+    return { state: await read(), heapKiB: Math.round(heap.usedSize / 1024) };
+  };
+  try {
+    await playUntil(performance.now() + 2500);
+    const initial = await checkpoint();
+    const checkpoints = [];
+    for (let i = 0; i < 4 && !errors.length; i++) {
+      await page.evaluate(collectorSource => {
+        // The imported collector is self-contained and has no game dependencies.
+        const create = new Function(`return (${collectorSource})`)();
+        const recorder = create();
+        let frame, last;
+        const record = now => {
+          if (last !== undefined) recorder.record(now - last);
+          last = now;
+          frame = requestAnimationFrame(record);
+        };
+        frame = requestAnimationFrame(record);
+        window.__hgameSoakStop = () => new Promise((resolve, reject) => {
+          const deadline = setTimeout(() => {
+            cancelAnimationFrame(frame);
+            cancelAnimationFrame(finalFrame);
+            delete window.__hgameSoakStop;
+            reject(new Error('Timed out waiting for the final soak frame'));
+          }, 8000);
+          const finalFrame = requestAnimationFrame(() => {
+            clearTimeout(deadline);
+            cancelAnimationFrame(frame);
+            delete window.__hgameSoakStop;
+            resolve(recorder.snapshot());
+          });
+        });
+      }, createFrameTelemetry.toString());
+      const start = performance.now();
+      await playUntil(start + soakSeconds * 250);
+      const frameStats = summarizeFrameTelemetry(await page.evaluate(() => window.__hgameSoakStop()));
+      const elapsedMs = performance.now() - start;
+      const result = { ...(await checkpoint()), elapsedMs: Math.round(elapsedMs), frameStats };
+      const previous = checkpoints.at(-1) ?? initial;
+      assert.ok(result.state.tick - previous.state.tick >= elapsedMs * 0.03,
+        `${id} simulation ran for under half of checkpoint ${i + 1}: ${JSON.stringify(result)}`);
+      assert.ok(frameStats.frames > 0 && result.state.running && !result.state.disposed, `${id} stopped during soak`);
+      checkpoints.push(result);
+      console.error(`${id} checkpoint ${i + 1}/4: tick ${result.state.tick}, ${result.state.kills} kills, P95 ${frameStats.p95Ms} ms`);
+    }
+    assert.equal(checkpoints.length, 4, `${id} soak checkpoints; ${errors.join('; ')}`);
+    const final = checkpoints.at(-1).state;
+    assert.ok(final.kills > initial.state.kills, `${id} no combat progress during soak`);
+    if (isSurvivor) assert.ok(upgrades > 0, `${id} no upgrades selected during soak`);
+    await page.evaluate(() => (window.__arena ?? window.__survivor).app.dispose());
+    assert.ok((await read()).disposed, `${id} soak teardown`);
+    return { environment, initial, checkpoints, upgrades };
+  } finally {
+    await cdp.detach();
+  }
+}
+
 try {
   browser = await browserType.launch({ headless: true, ...(executablePath ? { executablePath } : {}),
-    ...(browserName === 'chromium' ? { args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'] } : {}) });
+    ...(browserName === 'chromium' ? { args: ['--no-sandbox', '--enable-webgl', '--ignore-gpu-blocklist',
+      ...(gpu === 'software' ? ['--use-gl=angle', '--use-angle=swiftshader'] : [])] } : {}) });
   for (const id of ['survivor-2d', 'arena-3d']) {
     const url = await fixture(id);
     const page = await browser.newPage(mobile
@@ -92,11 +264,20 @@ try {
     page.on('response', response => {
       if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) errors.push(`${response.status()} ${response.url()}`);
     });
-    await page.goto(url + '?seed=1&tier=low');
+    const soakQuery = id === 'survivor-2d' ? 'seed=1&horde=3000' : 'seed=1&tier=medium&god=1';
+    const query = soakSeconds ? soakQuery : 'seed=1&tier=low';
+    await page.goto(`${url}?${query}`);
     await page.locator('#game[data-engine-ready=true]').waitFor({ timeout: 20000 })
       .catch(error => { throw new Error(`${id} did not load: ${errors.join('; ')}; ${error.message}`); });
     assert.equal(await page.evaluate(() => typeof window.__hgameState), 'function', `${id} state hook`);
     const read = () => page.evaluate(() => window.__hgameState());
+    if (soakSeconds) {
+      const result = await exerciseSoak(page, read, id, errors);
+      assert.deepEqual(errors, [], `${id} browser errors`);
+      console.log(JSON.stringify({ id, live, mobile, query, soakSeconds, ...result }));
+      await page.close();
+      continue;
+    }
     const initial = await read();
     await page.keyboard.down('d');
     await page.waitForTimeout(500);
@@ -105,6 +286,7 @@ try {
     assert.ok(moved.tick > initial.tick, `${id} scheduler progress`);
     assert.ok(distance(initial.player, moved.player) > 0.1, `${id} keyboard movement`);
     const touch = mobile ? await exerciseTouch(page, read, id) : null;
+    const recovery = contextRecovery ? await exerciseContextRecovery(page, id) : null;
     assert.equal(await page.locator('#debug').isVisible(), false);
     let completed;
     for (let cycle = 0; cycle < 3; cycle++) {
@@ -163,7 +345,7 @@ try {
     assert.deepEqual(await read(), stopped, `${id} no work after disposal`);
     assert.equal(stopped.disposed, true);
     assert.deepEqual(errors, [], `${id} browser errors`);
-    console.log(JSON.stringify({ id, browser: browserName, version: browser.version(), live, mobile, touch,
+    console.log(JSON.stringify({ id, browser: browserName, version: browser.version(), live, mobile, touch, recovery,
       cycles: 3, kills: completed.kills, best: completed.best, disposal, errors }));
     await page.close();
   }

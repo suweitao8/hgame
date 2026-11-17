@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep one pending animation frame when a ready or update callback pauses and resumes its application. Stopping the application cancels that frame.
+- Roll back a failed startup if a ready callback or initial render throws so the application can be started again.
+
 - Release input and the remaining platform services when a lifecycle disposal listener throws. Clear lifecycle subscriptions even on callback failure and report cleanup errors after teardown.
 
 - Execute all API recipes against generated entry points in CI. Correct tick/locale getters, swarm capacity/spawn/step/count wiring, VFX adapter ownership, the optional model provider requirement, and the confirmed-frame scheduler's explicit subpath import.

@@ -353,6 +353,12 @@ export function createGameApplication({
     return { ...stats };
   }
 
+  function scheduleFrame() {
+    if (stepSize !== null && frameId === null && running && !paused && !disposed) {
+      frameId = requestFrame(onFrame) ?? null;
+    }
+  }
+
   function onFrame(time) {
     frameId = null;
     if (!running || disposed || paused) return;
@@ -368,7 +374,7 @@ export function createGameApplication({
       runtime.diagnostics?.reportError?.(error, { subsystem: 'hgame' });
       throw error;
     }
-    if (running && !paused) frameId = requestFrame(onFrame);
+    scheduleFrame();
   }
   function start() {
     if (disposed || running) return false;
@@ -377,13 +383,19 @@ export function createGameApplication({
     running = true;
     paused = false;
     previousTime = null;
-    runtime.ready?.();
-    if (disposed || !running) return false;
-    if (!paused) {
-      if (stepSize !== null) frameId = requestFrame(onFrame);
-      else render();
+    try {
+      runtime.ready?.();
+      if (disposed || !running) return false;
+      if (!paused) {
+        if (stepSize !== null) scheduleFrame();
+        else render();
+      }
+      return true;
+    } catch (error) {
+      try { stop(); }
+      catch (stopError) { throw new AggregateError([error, stopError], 'Application startup failed during cleanup'); }
+      throw error;
     }
-    return true;
   }
   function stop() {
     if (!running) return false;
@@ -413,7 +425,7 @@ export function createGameApplication({
     if (!running || !paused) return false;
     paused = false;
     previousTime = null;
-    if (stepSize !== null) frameId = requestFrame(onFrame);
+    if (stepSize !== null) scheduleFrame();
     else render();
     return true;
   }

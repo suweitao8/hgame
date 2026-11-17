@@ -171,6 +171,53 @@ test('disposing from the platform ready callback leaves no scheduled frame', () 
   assert.equal(app.disposed, true);
 });
 
+for (const phase of ['ready', 'update']) {
+  test(`pause and resume from ${phase} keep one scheduled frame`, () => {
+    const clock = scheduler();
+    let renders = 0;
+    const toggle = owner => {
+      assert.equal(owner.pause(), true);
+      assert.equal(owner.resume(), true);
+    };
+    const app = createGameApplication({ ...clock, platform: {
+      ready() { if (phase === 'ready') toggle(app); },
+    }, renderer: { render() { renders++; } } });
+    class Main extends Scene {
+      update(_dt, owner) { if (phase === 'update' && renders === 0) toggle(owner); }
+    }
+    app.scenes.add(new Main('main'));
+    app.scenes.start('main');
+    app.start();
+    assert.equal(clock.pending.size, 1);
+    clock.advance(10);
+    assert.equal(clock.pending.size, 1);
+    clock.advance(27);
+    assert.equal(renders, 2);
+    app.stop();
+    assert.equal(clock.pending.size, 0);
+    app.dispose();
+  });
+}
+
+test('a failed ready callback rolls back startup and can be retried', () => {
+  const clock = scheduler();
+  const app = createGameApplication({ ...clock, renderer: { render() {} } });
+  app.scenes.add(new Scene('main'));
+  app.scenes.start('main');
+  const failure = new Error('ready-hook-failed');
+  app.platform.lifecycle.on('ready', () => {
+    app.pause();
+    app.resume();
+    throw failure;
+  });
+  assert.throws(() => app.start(), error => error === failure);
+  assert.equal(app.running, false);
+  assert.equal(clock.pending.size, 0);
+  assert.equal(app.start(), true);
+  assert.equal(clock.pending.size, 1);
+  app.dispose();
+});
+
 test('clearing scenes on a live application still permits a new scene', () => {
   const app = createGameApplication({ renderer: { render() {} } });
   app.scenes.add(new Scene('first'));
