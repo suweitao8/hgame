@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add level preloading and scene transitions with catalog asset groups. Candidate loading or entry failure preserves the current scene. Successful transitions retire the old scene and release its resources, with separate reporting for cleanup errors.
+
 - Add a logical asset catalog shared by runtime and release packaging. Scopes share active downloads and decoded images, then release resources when their final owner leaves. Catalog releases include named media and sidecar files, with CAS fallback.
 
 - Share project presets and renderer metadata across the generator, API recipes and standalone packager. New `--preset` projects ship an entry-traced runtime, and the horde preset starts with one swarm simulation and one crowd render component.

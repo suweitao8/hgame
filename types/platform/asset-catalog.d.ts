@@ -57,7 +57,12 @@ export type Acquisition = {
     image: boolean;
 };
 export type AssetScope = {
-    load: (id: string) => Promise<unknown>;
+    /**
+     * Abort the caller's wait without invalidating shared acquisitions.
+     */
+    load: (id: string, options?: {
+        signal?: AbortSignal;
+    }) => Promise<unknown>;
     loadGroup: (group: string) => Promise<Record<string, unknown>>;
     dispose: () => void;
 };

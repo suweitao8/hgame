@@ -7,7 +7,7 @@ import { cleanupAll } from '../internal/cleanup.js';
 /** @typedef {{key: string, refs: number, controller: AbortController, promise: Promise<unknown>, ready: boolean, value: unknown, image: boolean}} Acquisition */
 /**
  * @typedef {object} AssetScope
- * @property {(id: string) => Promise<unknown>} load
+ * @property {(id: string, options?: {signal?: AbortSignal}) => Promise<unknown>} load Abort the caller's wait without invalidating shared acquisitions.
  * @property {(group: string) => Promise<Record<string, unknown>>} loadGroup
  * @property {() => void} dispose
  */
@@ -64,6 +64,17 @@ export function listCatalogFiles(data) {
 }
 
 function aborted() { return new DOMException('Asset scope released', 'AbortError'); }
+
+/** @param {Promise<unknown>} promise @param {AbortSignal | undefined} signal */
+function waitForAsset(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    if (signal.aborted) abort();
+  });
+}
 
 /**
  * Load assets by logical ID and deduplicate downloads/decodes across active scopes.
@@ -150,8 +161,9 @@ export function createAssetCatalog(data, { loader }) {
       let released = false;
       /** @type {AssetScope} */
       const scope = {
-        async load(id) {
+        async load(id, { signal } = {}) {
           if (released) throw aborted();
+          signal?.throwIfAborted();
           const entry = get(id);
           const key = (LOAD_KIND[entry.kind] ?? entry.kind) + ':' + entry.path;
           let record = held.get(key);
@@ -161,11 +173,18 @@ export function createAssetCatalog(data, { loader }) {
             record.refs++;
           }
           try {
-            const result = await record.promise;
+            const result = await waitForAsset(record.promise, signal);
             if (released) throw aborted();
             return result;
           } catch (error) {
-            if (held.get(key) === record) { held.delete(key); drop(record); }
+            if (!signal?.aborted && held.get(key) === record) { held.delete(key); drop(record); }
+            else if (signal?.aborted) {
+              // A cancelled waiter still holds its acquisition until the scope ends.
+              // Remove a failed record so other callers can retry it.
+              void record.promise.catch(() => {
+                if (held.get(key) === record) { held.delete(key); drop(record); }
+              });
+            }
             throw error;
           }
         },

@@ -60,12 +60,31 @@ export class SceneManager {
     /** @type {Scene | null} */
     current: Scene | null;
     _disposing: boolean;
+    _switching: boolean;
+    /** @type {Set<() => void>} */
+    _disposeListeners: Set<() => void>;
     /** Register a uniquely named scene. @template {Scene} T @param {T} scene @returns {T} */
     add<T extends Scene>(scene: T): T;
     /** @param {string} name @returns {Scene | null} */
     get(name: string): Scene | null;
     /** Switch to a registered scene. @param {string} name @param {unknown} [data] Forwarded to `Scene#enter`. @returns {boolean} False if already current. */
     start(name: string, data?: unknown): boolean;
+    /**
+     * Activate a prepared scene before retiring the previous one. The previous scene remains
+     * current through candidate activation. Enter hooks should only modify candidate state.
+     * @param {string} name
+     * @param {unknown} [data]
+     * @param {() => boolean} [canCommit] Checked after lifecycle hooks to honor a cancelled transition.
+     * @returns {{changed: boolean, cleanupErrors: unknown[]}}
+     */
+    activatePrepared(name: string, data?: unknown, canCommit?: (() => boolean) | undefined): {
+        changed: boolean;
+        cleanupErrors: unknown[];
+    };
+    /** Remove and dispose an owned scene. @param {string} name @returns {boolean} */
+    remove(name: string): boolean;
+    /** @param {() => void} listener @returns {() => boolean} */
+    onDispose(listener: () => void): () => boolean;
     dispose(): void;
 }
 /**

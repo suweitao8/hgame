@@ -31,6 +31,8 @@ const heroModelPath = catalog.projectPath('hero.model');
 
 Call `scope.dispose()` after removing the scene's consumers. The catalog shares active acquisitions by file and load kind. An image acquired by two scenes stays available until both release it. When nothing holds a pending request, the catalog signals its cancellation and closes any bitmap that arrives afterward. On a failed group load, dispose the abandoned scope. `catalog.dispose()` releases all its scopes.
 
+Pass asset groups to a level route so the level flow opens and releases each scene's scope. [Level flow guide](systems/24-level-flow.md)
+
 `image` returns the loader's decoded image. `audio` and `bytes` return `ArrayBuffer`. `model` and `url` return a resolved URL. The existing audio and model providers still own decoding and GPU resources. Treat values shared between scopes as read-only. If an audio decoder transfers its input, pass a copy of the bytes. `files` includes sidecars the consuming loader requests itself.
 
 Set `assetMode` to `catalog` in `hgame.project.json` to package the catalog's primary and sidecar files and retain files found by the existing entry tracer. Add URLs constructed at runtime to the catalog. This mode includes every declared catalog item, including items outside groups. Render providers and game code can continue using paths for assets found by the entry tracer. Missing catalog files are resolved from the existing CAS by their manifest hashes or reported with their exact asset-relative paths. An `all` release keeps the normal asset directory sweep.

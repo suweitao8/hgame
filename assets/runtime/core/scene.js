@@ -238,6 +238,9 @@ export class SceneManager {
     /** @type {Scene | null} */
     this.current = null;
     this._disposing = false;
+    this._switching = false;
+    /** @type {Set<() => void>} */
+    this._disposeListeners = new Set();
   }
   /** Register a uniquely named scene. @template {Scene} T @param {T} scene @returns {T} */
   add(scene) {
@@ -247,7 +250,15 @@ export class SceneManager {
     }
     this.registry.set(scene.name, scene);
     scene.app = this.app;
-    this.onScene?.(scene);
+    try { this.onScene?.(scene); }
+    catch (error) {
+      if (this.registry.get(scene.name) === scene) {
+        this.registry.delete(scene.name);
+        try { scene.dispose(); }
+        catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Scene registration failed'); }
+      }
+      throw error;
+    }
     return scene;
   }
   /** @param {string} name @returns {Scene | null} */
@@ -255,21 +266,97 @@ export class SceneManager {
   /** Switch to a registered scene. @param {string} name @param {unknown} [data] Forwarded to `Scene#enter`. @returns {boolean} False if already current. */
   start(name, data) {
     if (this._disposing || this.app.disposed) throw new Error('Application disposed or disposing');
+    if (this._switching) throw new Error('A prepared scene switch is in progress');
     const scene = this.get(name);
     if (!scene) throw new Error('Unknown Scene: ' + name);
     if (scene === this.current) return false;
     const old = this.current;
-    if (old) {
-      old._setActive(false);
+    this._switching = true;
+    try {
+      if (old) {
+        old._setActive(false);
+        if (this.app.disposed || this.get(name) !== scene) return false;
+        old.exit(this.app);
+        if (this.app.disposed || this.get(name) !== scene) return false;
+      }
+      this.current = scene;
+      scene._setActive(true);
       if (this.app.disposed) return false;
-      old.exit(this.app);
-      if (this.app.disposed) return false;
-    }
-    this.current = scene;
-    scene._setActive(true);
-    if (this.app.disposed) return false;
-    scene.enter(this.app, data);
+      scene.enter(this.app, data);
+      return this.current === scene;
+    } finally { this._switching = false; }
+  }
+  /**
+   * Activate a prepared scene before retiring the previous one. The previous scene remains
+   * current through candidate activation. Enter hooks should only modify candidate state.
+   * @param {string} name
+   * @param {unknown} [data]
+   * @param {() => boolean} [canCommit] Checked after lifecycle hooks to honor a cancelled transition.
+   * @returns {{changed: boolean, cleanupErrors: unknown[]}}
+   */
+  activatePrepared(name, data, canCommit) {
+    if (this._disposing || this.app.disposed || this._switching) throw new Error('Scene manager is unavailable for a prepared switch');
+    const next = this.get(name);
+    if (!next) throw new Error('Unknown Scene: ' + name);
+    const old = this.current;
+    if (old === next) return { changed: false, cleanupErrors: [] };
+    const owned = () => !this.app.disposed && this.get(name) === next;
+    let attemptedEnter = false;
+    this._switching = true;
+    try {
+      try {
+        next._setActive(true);
+        if (!owned()) return { changed: false, cleanupErrors: [] };
+        if (canCommit && !canCommit()) throw new DOMException('Scene activation cancelled', 'AbortError');
+        attemptedEnter = true;
+        next.enter(this.app, data);
+        if (owned() && canCommit && !canCommit()) throw new DOMException('Scene activation cancelled', 'AbortError');
+      } catch (error) {
+        if (owned()) {
+          try {
+            cleanupAll([
+              () => next._setActive(false),
+              () => { if (attemptedEnter && owned()) next.exit(this.app); },
+            ], 'Candidate scene rollback failed');
+          } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Prepared scene activation failed'); }
+        }
+        throw error;
+      }
+      if (!owned()) return { changed: false, cleanupErrors: [] };
+      this.current = next;
+      const cleanupErrors = [];
+      try { old?._setActive(false); } catch (error) { cleanupErrors.push(error); }
+      if (old && owned() && this.registry.get(old.name) === old) {
+        try { old.exit(this.app); } catch (error) { cleanupErrors.push(error); }
+      }
+      return { changed: this.current === next, cleanupErrors };
+    } finally { this._switching = false; }
+  }
+  /** Remove and dispose an owned scene. @param {string} name @returns {boolean} */
+  remove(name) {
+    if (this._disposing || this.app.disposed) return false;
+    if (this._switching) throw new Error('A prepared scene switch is in progress');
+    const scene = this.get(name);
+    if (!scene) return false;
+    const wasCurrent = this.current === scene;
+    this.registry.delete(name);
+    if (wasCurrent) this.current = null;
+    this._switching = true;
+    try {
+      cleanupAll([
+        () => scene._setActive(false),
+        () => { if (wasCurrent && !this.app.disposed) scene.exit(this.app); },
+        () => scene.dispose(),
+      ], 'Scene removal failed');
+    } finally { this._switching = false; }
     return true;
+  }
+  /** @param {() => void} listener @returns {() => boolean} */
+  onDispose(listener) {
+    if (this._disposing || this.app.disposed) throw new Error('Application disposed or disposing');
+    if (typeof listener !== 'function') throw new TypeError('Disposal listener must be a function');
+    this._disposeListeners.add(listener);
+    return () => this._disposeListeners.delete(listener);
   }
   dispose() {
     if (this._disposing) return;
@@ -280,9 +367,11 @@ export class SceneManager {
         () => current?._setActive(false),
         () => current?.exit(this.app),
         ...[...this.registry.values()].map(scene => () => scene.dispose()),
+        ...[...this._disposeListeners],
       ], 'Scene manager disposal failed');
     } finally {
       this.registry.clear();
+      this._disposeListeners.clear();
       this.current = null;
       this._disposing = false;
     }

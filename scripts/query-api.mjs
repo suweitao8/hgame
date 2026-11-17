@@ -25,6 +25,7 @@ function printUsage() {
 
 const CAPABILITY_MAP = [
   { need: 'Logical media IDs, scoped loading and release asset selection', module: 'platform/asset-catalog.js', keyApis: 'createAssetCatalog, openScope, loadGroup, projectPath, assets/catalog.json' },
+  { need: 'Preload and switch levels with shared scene assets', module: 'world/level-flow.js', keyApis: 'createLevelFlow, prefetch, go, cancel, discard' },
   { need: 'App loop, Scene, Entity, Tags, hitStop', module: 'index.js / core/*', keyApis: 'HGame.defineProject, createGameApplication, Scene, Entity({name}), addTag, scene.queryTags' },
   { need: 'Tweens, springs, idle/attack juice', module: 'time/tween.js', keyApis: 'scene.tweens, EASING, damp, dampAngle, SpringDamper1D/2D/3D' },
   { need: '2D sprites, camera, tilemap, A* path', module: 'integrations/canvas2d.js, animation/*, world/tilemap.js', keyApis: 'createCanvas2DAdapter, Camera2D, Sprite2D(groundShadow/hitFlash), SpriteSheet.fromGrid, findGridPath' },

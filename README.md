@@ -64,6 +64,7 @@ npm run release
 - **Loot and crafting**: seeded drop tables, pending reward claims and atomic crafting recipes. [Loot and crafting guide](docs/guides/systems/20-loot-and-crafting.md)
 - **Encounters**: timed waves, stage goals, transitions and checkpoint restarts. [Encounter guide](docs/guides/systems/22-encounters.md)
 - **Level assembly**: prefab hierarchies, named spawn points and tag-filtered trigger volumes. [Level guide](docs/guides/systems/23-level-assembly.md)
+- **Level flow**: prepare a new scene with shared catalog resources, then switch and unload the old level. [Level flow guide](docs/guides/systems/24-level-flow.md)
 - **2D & 150k+ Crowds**: `Canvas2D`, `WebGL2D`, `post2d` (ambient + 32 point lights + Bloom/vignette/hitPulse), `SpriteSheet`, `TileMap` A*, `SpriteCrowd2D`, `createSwarmSimulation`, `createGpuSwarmWebGL2`.
 - **3D & Open World**: `ThreeAdapter` (`ueFilmic`), `sky3d`, `MegaLights3D`, `IrradianceProbeVolume3D`, `post3d`, `culling3d`, `camera3d`, `terrain3d` (FBM + Rapier heightfield + scatter), `navmesh3d`, `procedural-models` (17 PBR shapes), `model3d` (`BoneVatCrowd3D`), `open-world` (`WorldPartition`, `HLOD`, `FloatingOrigin`).
 - **AI, UI, Audio & Storage**: `ai/fsm.js` (HFSM), `ai/bt.js` (Behavior Tree), `ui/` (`PanelStack`, `VirtualList`, `i18n`, `RedDotSystem`), `audio.playSynth` (10 SFX presets), `audio.createBgm` (6 adaptive moods), `HRTF` 3D cues, `createVersionedStore` (migrations + FNV-1a + `.bak`).

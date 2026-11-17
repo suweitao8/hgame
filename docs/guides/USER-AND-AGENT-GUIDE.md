@@ -81,6 +81,7 @@ Use `--preset horde` to start with batched swarm simulation and `SpriteCrowd2D`.
 | 21 | Skill timing with animation, sound and effect cues (`AbilityDefinition.timeline`) | [systems/21-ability-timelines.md](systems/21-ability-timelines.md) |
 | 22 | Staged Encounters, Spawn Waves & Checkpoints (`EncounterComponent`) | [systems/22-encounters.md](systems/22-encounters.md) |
 | 23 | Prefab Placement, Spawn Points & Trigger Volumes (`mountLevel`) | [systems/23-level-assembly.md](systems/23-level-assembly.md) |
+| 24 | Level Preload, Scene Switching & Resource Ownership (`createLevelFlow`) | [systems/24-level-flow.md](systems/24-level-flow.md) |
 
 ---
 

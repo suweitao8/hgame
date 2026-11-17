@@ -56,7 +56,7 @@
  ]},
  "core/scene.js":{"tier":"stable","exports":[
   {"name":"Scene","tier":"stable","declaredIn":"core/scene.js","summary":"Logic Scene. The Renderer and physics are per-project optional services.","kind":"class","signature":"new(name)","members":["active","add","app","dispose","enter","exit","find","findByTag","fixedUpdate","lateUpdate","name","objects","onCommand","physics","queryTags","tweens","update"]},
-  {"name":"SceneManager","tier":"stable","declaredIn":"core/scene.js","summary":"Registry and switcher of {@link Scene}s.","kind":"class","signature":"new(app, onScene)","members":["add","app","current","dispose","get","onScene","registry","start"]}
+  {"name":"SceneManager","tier":"stable","declaredIn":"core/scene.js","summary":"Registry and switcher of {@link Scene}s.","kind":"class","signature":"new(app, onScene)","members":["activatePrepared","add","app","current","dispose","get","onDispose","onScene","registry","remove","start"]}
  ]},
  "core/tags.js":{"tier":"stable","exports":[
   {"name":"createTagContainer","tier":"stable","declaredIn":"core/tags.js","summary":"Creates a hierarchical, reference-counted gameplay tag container. Explicit leaf additions maintain O(1) inclusive ancestor counts so queries like `container.has","kind":"function","signature":"(initialTags=null, {registry=GLOBAL_TAG_REGISTRY, onChange=null}={})"},
@@ -206,7 +206,7 @@
   {"name":"resolveFeatureGraph","tier":"stable","declaredIn":"core/config.js","summary":"","kind":"function","signature":"(requested, catalog)","returns":["at","concat","copyWithin","entries","every","fill","filter","find","findIndex","flat","flatMap","forEach","includes","indexOf","join","keys","lastIndexOf","length","map","pop","push","reduce","reduceRight","reverse","shift","slice","some","sort","splice","toLocaleString","toString","unshift","values"]},
   {"name":"runScripted","tier":"experimental","declaredIn":"sim/script.js","summary":"Run a fixed-step simulation from a scripted input stream and return a checksum.","kind":"function","signature":"({step, script, ticks, checksum, every=1, recordEvery=0})","returns":["checksum","hex","samples","ticks"]},
   {"name":"Scene","tier":"stable","declaredIn":"core/scene.js","summary":"Logic Scene. The Renderer and physics are per-project optional services.","kind":"class","signature":"new(name)","members":["active","add","app","dispose","enter","exit","find","findByTag","fixedUpdate","lateUpdate","name","objects","onCommand","physics","queryTags","tweens","update"]},
-  {"name":"SceneManager","tier":"stable","declaredIn":"core/scene.js","summary":"Registry and switcher of {@link Scene}s.","kind":"class","signature":"new(app, onScene)","members":["add","app","current","dispose","get","onScene","registry","start"]},
+  {"name":"SceneManager","tier":"stable","declaredIn":"core/scene.js","summary":"Registry and switcher of {@link Scene}s.","kind":"class","signature":"new(app, onScene)","members":["activatePrepared","add","app","current","dispose","get","onDispose","onScene","registry","remove","start"]},
   {"name":"selector","tier":"experimental","declaredIn":"ai/bt.js","summary":"Runs children left-to-right until one returns SUCCESS or RUNNING (resumes from running child).","kind":"function","signature":"(...children)","returns":["children","kind"]},
   {"name":"sequence","tier":"experimental","declaredIn":"ai/bt.js","summary":"Runs children left-to-right until one returns FAILURE or RUNNING (resumes from running child).","kind":"function","signature":"(...children)","returns":["children","kind"]},
   {"name":"SpatialHash2D","tier":"stable","declaredIn":"world/spatial2d.js","summary":"Uniform-grid spatial hash for circle/AABB broad-phase queries.","kind":"class","signature":"new({cellSize=64}={})","members":["cellSize","clear","count","insert","queryAABB","queryRadius","resolveSoftSeparation"]},
@@ -615,6 +615,9 @@
  ]},
  "world/gpu-swarm-webgl2.js":{"tier":"stable","exports":[
   {"name":"createGpuSwarmWebGL2","tier":"stable","declaredIn":"world/gpu-swarm-webgl2.js","summary":"Creates a WebGL2 `RGBA32F` Ping-Pong FBO GPU Swarm simulator (up to `262,144` units).","kind":"function","signature":"({capacity=102400, THREE=null, renderer=null, gl=null, speed=3.5, curlStrength=0.65, animFps=12, frameCount=16, originX=-128, originY=-128, worldWidth=256, worldHeight=256}={})","returns":["capacity","clear","count","data","dispose","glTexture","isGpuAccelerated","spawn","spawnWave","step","texHeight","texWidth","texture","updateFlowField"]}
+ ]},
+ "world/level-flow.js":{"tier":"experimental","exports":[
+  {"name":"createLevelFlow","tier":"experimental","declaredIn":"world/level-flow.js","summary":"Preload, prepare and switch between game-owned levels on the existing SceneManager. The current scene remains live through loading and candidate activation.","kind":"function","signature":"({scenes, prefabs, assets, catalog, routes, createScene, prepare, onTrigger, onCleanupError})","returns":["cancel","discard","dispose","getCurrent","go","prefetch"]}
  ]},
  "world/level.js":{"tier":"experimental","exports":[
   {"name":"mountLevel","tier":"experimental","declaredIn":"world/level.js","summary":"Assemble a scoped level from registered prefab trees and named spawn/trigger data. Construct the hierarchy off-scene, then attach one owner root. Dispose it to ","kind":"function","signature":"(scene, registry, data, {onTrigger}={})","returns":["contains","dispose","getEntity","getSpawnPoint","id","restore","root","snapshot","spawn","spawnBatch","subscribe","updateEntityTriggers","updateTriggers"]}
