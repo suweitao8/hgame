@@ -79,11 +79,12 @@ export function inspectModel3D(THREE: Model3DThree, assetOrRoot: Model3DAsset | 
  */
 export function prepareAnimationClips(THREE: Model3DThree, clips: Model3DClip[], { stripNamespace, stripRootMotion, rootBoneNames, renameMap, }?: PrepareAnimationClipsOptions | undefined): Model3DClip[];
 /**
- * Disposes geometries, materials, and material textures under a root.
- * @param {Model3DObject|null|undefined} root Root object.
+ * Disposes each owned geometry, material, texture and skeleton once across all roots.
+ * @param {Iterable<Model3DObject>} roots Owned source roots.
+ * @param {WeakSet<object>} [released] Shared across batches when outstanding models are still loading.
  * @returns {void}
  */
-export function disposeObjectResources(root: Model3DObject | null | undefined): void;
+export function disposeObjectResources(roots: Iterable<Model3DObject>, released?: WeakSet<any> | undefined): void;
 /**
  * Loads a URL with a promise- or callback-style loader.
  * @param {Model3DLoader} loader Loader.
@@ -91,7 +92,6 @@ export function disposeObjectResources(root: Model3DObject | null | undefined): 
  * @returns {Promise<unknown>} Loader result.
  */
 export function loadWithLoader(loader: Model3DLoader, resolvedUrl: string): Promise<unknown>;
-/** Model3D shared helpers (clone, inspect, clip preparation). */
 /**
  * Minimal structural view of a Three.js Object3D (or Mesh/Bone/SkinnedMesh) used by the model3d helpers.
  * Additional Three.js members are reachable through the index signature.

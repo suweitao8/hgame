@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep Model3D resources from superseded owned asset revisions until provider disposal, then release shared resources once. Pending model requests reject during disposal, including requests for a superseded version.
+- Release cloned Model3D component bone textures on destruction while keeping borrowed roots and shared asset geometry alive. Allow destruction before `awake()` and finish resource cleanup when a dispose listener throws.
+- Report asynchronous feature disposal failures through diagnostics while keeping application disposal synchronous.
+
 - Re-upload WebGL2D sprite images after context restoration and allow retry after a failed upload. Release GPU textures when text cache entries are evicted. Reuse one scratch canvas and GPU texture for `customDraw` sprites with a clean drawing state for every callback.
 
 - Keep one pending animation frame when a ready or update callback pauses and resumes its application. Stopping the application cancels that frame.

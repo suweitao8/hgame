@@ -1,5 +1,7 @@
 /** Model3D shared helpers (clone, inspect, clip preparation). */
 
+import { cleanupAll } from '../../internal/cleanup.js';
+
 /**
  * Minimal structural view of a Three.js Object3D (or Mesh/Bone/SkinnedMesh) used by the model3d helpers.
  * Additional Three.js members are reachable through the index signature.
@@ -413,26 +415,52 @@ export function prepareAnimationClips(THREE, clips, {
 }
 
 /**
- * Disposes geometries, materials, and material textures under a root.
- * @param {Model3DObject|null|undefined} root Root object.
+ * Disposes each owned geometry, material, texture and skeleton once across all roots.
+ * @param {Iterable<Model3DObject>} roots Owned source roots.
+ * @param {WeakSet<object>} [released] Shared across batches when outstanding models are still loading.
  * @returns {void}
  */
-export function disposeObjectResources(root) {
-  const disposeMat = (material) => {
-    if (!material) return;
-    for (const value of Object.values(material)) {
-      if (value?.isTexture) value.dispose?.();
-    }
-    material.dispose?.();
+export function disposeObjectResources(roots, released = new WeakSet()) {
+  const actions = [];
+  const collect = (resource, dispose = null) => {
+    if (typeof resource?.dispose !== 'function' || released.has(resource)) return;
+    released.add(resource);
+    actions.push(dispose ?? (() => resource.dispose()));
   };
-  root?.traverse?.((node) => {
-    node.geometry?.dispose?.();
-    if (Array.isArray(node.material)) {
-      for (const material of node.material) disposeMat(material);
-    } else if (node.material) {
-      disposeMat(node.material);
+  const collectMaterial = material => {
+    if (!material || released.has(material)) return;
+    for (const value of Object.values(material)) {
+      if (value?.isTexture) collect(value);
     }
-  });
+    collect(material);
+  };
+  const collectSkeleton = skeleton => {
+    if (!skeleton || released.has(skeleton)) return;
+    const texture = skeleton.boneTexture;
+    if (texture?.isTexture) {
+      // Three's Skeleton.dispose() normally disposes this texture itself. Route it
+      // through the shared set because another skeleton or material may reference it.
+      collect(texture);
+      collect(skeleton, () => {
+        if (skeleton.boneTexture === texture) skeleton.boneTexture = null;
+        skeleton.dispose();
+      });
+    } else {
+      collect(skeleton);
+    }
+  };
+  for (const root of roots) {
+    root.traverse?.(node => {
+      collect(node.geometry);
+      if (node.isSkinnedMesh) collectSkeleton(node.skeleton);
+      if (Array.isArray(node.material)) {
+        for (const material of node.material) collectMaterial(material);
+      } else {
+        collectMaterial(node.material);
+      }
+    });
+  }
+  cleanupAll(actions, 'Model3D resource disposal failed');
 }
 
 /**

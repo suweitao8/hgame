@@ -449,7 +449,16 @@ export function createGameApplication({
         try {
           if (service !== app.scenes && service !== runtime.input && service !== runtime.audio &&
               service !== runtime.assets && service !== runtime.save && service !== runtime.diagnostics) {
-            service?.dispose?.();
+            const pending = service?.dispose?.();
+            if (typeof pending?.then === 'function') {
+              void Promise.resolve(pending).catch(error => {
+                if (runtime.diagnostics?.reportError) {
+                  runtime.diagnostics.reportError(error, { subsystem: 'hgame', operation: 'dispose', service: key });
+                } else {
+                  console.error('Feature disposal failed:', key, error);
+                }
+              }).catch(error => console.error('Feature disposal error reporting failed:', key, error));
+            }
           }
         } finally { delete services[key]; }
       }), 'Feature disposal failed'),

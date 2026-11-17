@@ -170,6 +170,44 @@ async function exerciseContextRecovery(page, id) {
   return results;
 }
 
+async function exerciseModelReplacement(page) {
+  const result = await page.evaluate(async runtime => {
+    const { createModel3DProvider } = await import(`${runtime}/integrations/model3d.js`);
+    const { app, renderer } = window.__arena;
+    const { THREE } = renderer;
+    const provider = createModel3DProvider({ THREE });
+    const scene = app.scenes.current;
+    const world = renderer.getWorld(scene);
+    const geometryCount = () => renderer.renderer.info.memory.geometries;
+    renderer.render(scene, app);
+    const before = geometryCount();
+    const events = [0, 0];
+    const instances = [];
+    for (let i = 0; i < 2; i++) {
+      const geometry = new THREE.BoxGeometry(0.7, 0.7, 0.7);
+      geometry.addEventListener('dispose', () => { events[i]++; });
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: i ? 0x00ffff : 0xff00ff }));
+      mesh.frustumCulled = false;
+      mesh.position.set(i - 0.5, 1, 6);
+      provider.registerAsset('hero', { scene: mesh, owned: true });
+      const { root } = await provider.instantiate('hero');
+      instances.push(root);
+      world.add(root);
+    }
+    renderer.render(scene, app);
+    const rendered = geometryCount();
+    const disposedDuringUse = [...events];
+    world.remove(...instances);
+    await provider.dispose();
+    return { before, rendered, after: geometryCount(), disposedDuringUse, events };
+  }, live ? './assets/vendor/hgame' : './vendor/hgame');
+  assert.equal(result.rendered, result.before + 2, 'both model revisions were uploaded');
+  assert.deepEqual(result.disposedDuringUse, [0, 0], 'replacing a key keeps earlier instances alive');
+  assert.equal(result.after, result.before, 'both revisions released their GPU geometry');
+  assert.deepEqual(result.events, [1, 1], 'each geometry was disposed once');
+  return result;
+}
+
 async function exerciseTouch(page, read, id) {
   const joystick = page.locator('.hgame-joy-zone');
   await joystick.waitFor();
@@ -330,6 +368,7 @@ try {
     assert.ok(distance(initial.player, moved.player) > 0.1, `${id} keyboard movement`);
     const touch = mobile ? await exerciseTouch(page, read, id) : null;
     const recovery = contextRecovery ? await exerciseContextRecovery(page, id) : null;
+    const modelReplacement = contextRecovery && id === 'arena-3d' ? await exerciseModelReplacement(page) : null;
     assert.equal(await page.locator('#debug').isVisible(), false);
     let completed;
     for (let cycle = 0; cycle < 3; cycle++) {
@@ -388,7 +427,7 @@ try {
     assert.deepEqual(await read(), stopped, `${id} no work after disposal`);
     assert.equal(stopped.disposed, true);
     assert.deepEqual(errors, [], `${id} browser errors`);
-    console.log(JSON.stringify({ id, browser: browserName, version: browser.version(), live, mobile, touch, recovery,
+    console.log(JSON.stringify({ id, browser: browserName, version: browser.version(), live, mobile, touch, recovery, modelReplacement,
       cycles: 3, kills: completed.kills, best: completed.best, disposal, errors }));
     await page.close();
   }

@@ -1,5 +1,7 @@
 /** GLTF / skinned-model provider. */
 
+import { cleanupAll } from '../../internal/cleanup.js';
+
 /**
  * Options for {@link createModel3DProvider}.
  * @typedef {object} Model3DProviderOptions
@@ -196,6 +198,8 @@ export function createModel3DProvider({
   let activeLoader = loader;
   const cache = new Map();
   const clipCache = new Map();
+  const ownedRoots = new Set();
+  const pendingLoads = new Set();
   let disposed = false;
 
   function ensureActive() {
@@ -221,10 +225,14 @@ export function createModel3DProvider({
     const { key, resolved } = resolveRelativeAssetPath(url, projectBaseUrl);
     if (!cache.has(key)) {
       const request = Promise.resolve().then(async () => {
+        ensureActive();
         const gltf = await loadWithLoader(getLoader(), resolved);
         if (!gltf || !gltf.scene) {
           throw new Error('Loaded GLTF asset contains no scene: ' + key);
         }
+        // A replaced key can still have live clones using its original resources.
+        ownedRoots.add(gltf.scene);
+        ensureActive();
         return {
           key,
           scene: gltf.scene,
@@ -234,11 +242,15 @@ export function createModel3DProvider({
         };
       });
       cache.set(key, request);
-      request.catch(() => {
+      pendingLoads.add(request);
+      request.then(() => pendingLoads.delete(request), () => {
+        pendingLoads.delete(request);
         if (cache.get(key) === request) cache.delete(key);
       });
     }
-    return cache.get(key);
+    const asset = await cache.get(key);
+    ensureActive();
+    return asset;
   }
 
   async function loadClips(url, {
@@ -286,6 +298,7 @@ export function createModel3DProvider({
       gltf: null,
       owned: Boolean(owned),
     };
+    if (entry.owned) ownedRoots.add(scene);
     cache.set(key, Promise.resolve(entry));
     return entry;
   }
@@ -293,6 +306,7 @@ export function createModel3DProvider({
   async function instantiate(urlOrKey) {
     ensureActive();
     const asset = await load(urlOrKey);
+    ensureActive();
     return {
       root: cloneHierarchy(asset.scene),
       animations: asset.animations,
@@ -359,7 +373,12 @@ export function createModel3DProvider({
       awake() {
         const modelRoot = root ?? cloneHierarchy(asset.scene);
         const meshes = [];
+        // Only the built-in clone is known to create private Three skeletons.
+        const ownsSkeletons = !root && !cloneSkeleton && typeof THREE.Skeleton === 'function';
         modelRoot.traverse?.((node) => {
+          if (ownsSkeletons && node.isSkinnedMesh && typeof node.bind === 'function' && node.skeleton) {
+            (this._ownedSkeletons ??= new Set()).add(node.skeleton);
+          }
           if (node.isMesh) {
             node.castShadow = Boolean(castShadow);
             node.receiveShadow = Boolean(receiveShadow);
@@ -951,22 +970,29 @@ export function createModel3DProvider({
       }
 
       onDestroy() {
-        this._pendingFinish = null;
-        this._overlayAction = null;
-        this._overlayOnComplete = null;
-        for (const { bone, child } of this._attachments) bone.remove?.(child);
-        this._attachments.length = 0;
-        if (this._finishedListener) {
-          this.mixer?.removeEventListener?.('finished', this._finishedListener);
-          this._finishedListener = null;
-        }
-        this.mixer?.stopAllAction?.();
-        if (this.modelRoot) this.mixer?.uncacheRoot?.(this.modelRoot);
-        this._currentAction = null;
-        this._currentClipName = null;
-        this._budgetManaged = false;
-        this._notifies?.clear();
-        this.mixer = null;
+        const skeletons = [...(this._ownedSkeletons ?? [])];
+        this._ownedSkeletons?.clear();
+        cleanupAll([
+          () => {
+            this._pendingFinish = null;
+            this._overlayAction = null;
+            this._overlayOnComplete = null;
+            for (const { bone, child } of this._attachments ?? []) bone.remove?.(child);
+            if (this._attachments) this._attachments.length = 0;
+            if (this._finishedListener) {
+              this.mixer?.removeEventListener?.('finished', this._finishedListener);
+              this._finishedListener = null;
+            }
+            this.mixer?.stopAllAction?.();
+            if (this.modelRoot) this.mixer?.uncacheRoot?.(this.modelRoot);
+            this._currentAction = null;
+            this._currentClipName = null;
+            this._budgetManaged = false;
+            this._notifies?.clear();
+            this.mixer = null;
+          },
+          ...skeletons.map(skeleton => () => skeleton.dispose?.()),
+        ], 'Model3D component disposal failed');
       }
     }
 
@@ -976,14 +1002,21 @@ export function createModel3DProvider({
   async function dispose() {
     if (disposed) return false;
     disposed = true;
-    const entries = await Promise.allSettled(cache.values());
-    for (const outcome of entries) {
-      if (outcome.status === 'fulfilled' && outcome.value?.owned) {
-        disposeObjectResources(outcome.value.scene);
-      }
-    }
     cache.clear();
     clipCache.clear();
+    const released = new WeakSet();
+    const errors = [];
+    const releaseReady = () => {
+      const roots = [...ownedRoots];
+      ownedRoots.clear();
+      try { disposeObjectResources(roots, released); }
+      catch (error) { errors.push(error); }
+    };
+    releaseReady();
+    await Promise.allSettled(pendingLoads);
+    releaseReady();
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Model3D disposal failed');
     return true;
   }
 
