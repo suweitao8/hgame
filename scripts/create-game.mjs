@@ -47,7 +47,7 @@ function parse(argv) {
       throw new Error('Unknown or incomplete argument: ' + arg);
     }
   }
-  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--preset 2d|horde|3d|ui | --profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--bare (2d|3d)] [--no-git] [--dry-run]');
+  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--preset 2d|horde|pixi2d|3d|ui | --profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--bare (2d|3d)] [--no-git] [--dry-run]');
   const preset = result.preset === null ? null : getProjectPreset(result.preset);
   if (preset && result.profile && result.profile !== preset.profile) throw new Error('--profile conflicts with --preset ' + result.preset);
   result.profile ??= preset?.profile ?? '2d';
@@ -140,8 +140,17 @@ async function main() {
 
     const mainSource = path.join(profiles, options.starter);
     const files = PROFILE_FILES[options.starter] ?? PROFILE_FILES[options.recipe.profile];
-    await cp(path.join(mainSource, 'main.js'), path.join(stage, 'src', 'main.js'), { force: true });
-    if (files.html) await cp(path.join(profiles, files.html), path.join(stage, 'index.html'), { force: true });
+    if (options.starter === 'pixi2d') {
+      await cp(path.join(mainSource, 'dist'), stage, { recursive: true, force: true });
+      await cp(path.join(mainSource, 'src'), path.join(stage, 'src'), { recursive: true, force: true });
+      await cp(path.join(mainSource, 'index.html'), path.join(stage, 'index.source.html'));
+      await cp(path.join(mainSource, 'install-build.mjs'), path.join(stage, 'scripts', 'install-pixi-build.mjs'));
+      await cp(path.join(mainSource, 'package-lock.json'), path.join(stage, 'package-lock.json'));
+      await cp(path.join(mainSource, 'CLAUDE.md'), path.join(stage, 'CLAUDE.md'));
+    } else {
+      await cp(path.join(mainSource, 'main.js'), path.join(stage, 'src', 'main.js'), { force: true });
+      if (files.html) await cp(path.join(profiles, files.html), path.join(stage, 'index.html'), { force: true });
+    }
     for (const file of options.bare ? [] : files.demoData) {
       await cp(path.join(mainSource, file), path.join(stage, 'src', file), { force: false });
     }
@@ -161,7 +170,11 @@ async function main() {
     await writeFile(path.join(stage, 'engine.config.json'), JSON.stringify(options.recipe, null, 2) + '\n');
     if (options.preset) {
       await writeFile(path.join(stage, 'hgame.project.json'), JSON.stringify({
-        schemaVersion: 1, preset: options.preset, runtime: 'entry-graph', includeRuntime: [], includeSource: [], assetMode: 'all',
+        schemaVersion: 1, preset: options.preset, runtime: 'entry-graph',
+        includeRuntime: options.starter === 'pixi2d'
+          ? ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js']
+          : [],
+        includeSource: [], assetMode: 'all',
       }, null, 2) + '\n');
       await mkdir(path.join(stage, 'assets'), { recursive: true });
       await writeFile(path.join(stage, 'assets', 'catalog.json'), JSON.stringify({
@@ -177,6 +190,15 @@ async function main() {
     const packageFile = path.join(stage, 'package.json');
     const pkg = JSON.parse(await readFile(packageFile, 'utf8'));
     pkg.name = options.slug.toLowerCase();
+    if (options.starter === 'pixi2d') {
+      const pixiPackage = JSON.parse(await readFile(path.join(mainSource, 'package.json'), 'utf8'));
+      pkg.dependencies = pixiPackage.dependencies;
+      pkg.devDependencies = pixiPackage.devDependencies;
+      pkg.scripts['build:pixi'] = 'vite build && node scripts/install-pixi-build.mjs';
+      await cp(path.join(mainSource, 'vite.config.js'), path.join(stage, 'vite.config.js'));
+      const instructions = await readFile(path.join(mainSource, 'AGENTS.md'), 'utf8');
+      await writeFile(path.join(stage, 'AGENTS.md'), (await readFile(path.join(stage, 'AGENTS.md'), 'utf8')) + '\n' + instructions);
+    }
     await writeFile(packageFile, JSON.stringify(pkg, null, 2) + '\n');
     await writeFile(path.join(stage, 'assets.manifest.json'), JSON.stringify({
       schemaVersion: 1,

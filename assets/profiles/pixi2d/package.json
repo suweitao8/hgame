@@ -1,0 +1,9 @@
+{
+  "name": "hgame-pixi2d-starter",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "build": "vite build" },
+  "dependencies": { "pixi.js": "^8.13.0", "pixi-filters": "^6.1.5", "gsap": "^3.12.5" },
+  "devDependencies": { "vite": "^6.0.0" }
+}
