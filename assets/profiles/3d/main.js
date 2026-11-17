@@ -2,6 +2,7 @@
 // materials, and data-driven modular level. No MC models, UV atlases or sprites.
 // Level geometry is visual-only; collisions are authored separately.
 import { createStarterModelLoader, installStarter3DFeatures } from './model-loader.js';
+import { installPresentationSky } from './presentation-sky.js';
 
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
@@ -80,6 +81,8 @@ async function startWorld() {
   }
   if (app.disposed) return;
   const scene = app.scenes.add(new Scene('world'));
+  await installPresentationSky({ app, scene, renderer, THREE, base, Component, Entity, settings: presentation.sky });
+  if (app.disposed) return;
   if (assetCatalog) scene.onDispose(() => assetCatalog.dispose());
   const world = renderer.getWorld(scene);
   const materialPalette = createWorldMaterialPalette(THREE, materialConfig.materials);

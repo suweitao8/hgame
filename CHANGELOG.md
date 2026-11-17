@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Let new 3D starters opt into a scene-owned procedural sky and optional baked environment reflections through presentation.json.
+
 - Allow Pixi scenes to configure persistent bloom independently of temporary shockwaves, preserving glow when effects end.
 
 - Make generated Pixi starter rendering, atlas, swarm, effects and input interfaces discoverable through the HGame API lookup, with paths distinguished from runtime imports.

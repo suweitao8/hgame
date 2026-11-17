@@ -1,5 +1,6 @@
 {
   "quality": "auto",
+  "sky": null,
   "renderer": {
     "cameraPosition": [0, 4, 8],
     "cameraTarget": [0, 0, 0],

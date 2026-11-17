@@ -1,17 +1,20 @@
 // Bare 3D starter (create-game --bare): renderer, one light and an empty scene.
 // No demo level, material palette or model slots.
 import { createStarterModelLoader, installStarter3DFeatures } from './model-loader.js';
+import { installPresentationSky } from './presentation-sky.js';
 
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [gameConfig, engineConfig, presentation,
-  { createGameApplication }, { defineProject }, { Scene }, { createThreeAdapter }, THREE] = await Promise.all([
+  { createGameApplication }, { defineProject }, { Scene }, { Component }, { Entity }, { createThreeAdapter }, THREE] = await Promise.all([
   fetch('./game.config.json').then(r => r.json()),
   fetch('./engine.config.json').then(r => r.json()),
   fetch('./src/presentation.json').then(r => r.json()),
   import(base + '/core/application.js'),
   import(base + '/core/config.js'),
   import(base + '/core/scene.js'),
+  import(base + '/core/component.js'),
+  import(base + '/core/entity.js'),
   import(base + '/integrations/three.js'),
   import('../assets/vendor/three/three.module.js'),
 ]);
@@ -42,7 +45,14 @@ try {
   app.dispose();
   throw error;
 }
-app.scenes.add(new Scene('world'));
+const scene = app.scenes.add(new Scene('world'));
+try {
+  await installPresentationSky({ app, scene, renderer, THREE, base, Component, Entity, settings: presentation.sky });
+} catch (error) {
+  app.dispose();
+  throw error;
+}
+if (app.disposed) throw new Error('Application disposed during sky initialization');
 // TODO: add entities/components to `scene` here.
 app.scenes.start('world');
 app.start();

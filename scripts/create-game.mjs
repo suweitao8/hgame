@@ -165,6 +165,7 @@ async function main() {
     }
     if (options.recipe.profile === '3d') {
       await cp(path.join(profiles, '3d', 'model-loader.js'), path.join(stage, 'src', 'model-loader.js'), { force: false });
+      await cp(path.join(profiles, '3d', 'presentation-sky.js'), path.join(stage, 'src', 'presentation-sky.js'), { force: false });
       const presentation = JSON.parse(await readFile(path.join(mainSource, 'presentation.json'), 'utf8'));
       presentation.quality = options.quality ?? presentation.quality;
       await writeFile(path.join(stage, 'src', 'presentation.json'), JSON.stringify(presentation, null, 2) + '\n');
@@ -183,7 +184,7 @@ async function main() {
         includeRuntime: options.starter === 'pixi2d'
           ? ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
             ...(options.preset === 'horde' && !options.bare ? ['world/swarm-ecs.js'] : [])]
-          : [],
+          : options.recipe.profile === '3d' ? ['integrations/sky3d.js'] : [],
         includeSource: [], assetMode: 'all',
       }, null, 2) + '\n');
       await mkdir(path.join(stage, 'assets'), { recursive: true });

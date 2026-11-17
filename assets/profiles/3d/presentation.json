@@ -1,5 +1,6 @@
 {
   "quality": "auto",
+  "sky": null,
   "chunkCells": 16,
   "startupModelSlots": [],
   "renderer": {
