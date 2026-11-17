@@ -76,6 +76,72 @@ function createMockWebGL2Renderer({ rendererName = 'Mock RTX GPU', maxSamples = 
   return { renderer, calls, gl };
 }
 
+test('one adaptive quality transition rebuilds the post pipeline once at the final drawing-buffer size', () => {
+  const { renderer, calls } = createMockWebGL2Renderer();
+  const allocations = [];
+  const namespace = {
+    ...THREE,
+    WebGLRenderer: class { constructor() { return renderer; } },
+    DepthTexture: class extends THREE.DepthTexture {
+      constructor(w, h, type) { super(w, h, type); allocations.push([w, h]); }
+    },
+  };
+  const notifications = [];
+  const adapter = createThreeAdapter({ THREE: namespace, canvas: { clientWidth: 3840, clientHeight: 2160 }, pixelRatio: 2,
+    quality3d: { mode: 'auto', sampleFrames: 2, settleMs: 0, settleAfterChangeMs: 0,
+      onChange: () => notifications.push(allocations.at(-1)) }, post3d: true });
+  const initial = allocations.at(-1);
+  allocations.length = 0;
+  calls.length = 0;
+  adapter.recordFrameInterval(45);
+  adapter.recordFrameInterval(45);
+  assert.equal(allocations.length, 1, 'no intermediate targets at the old dimensions');
+  assert.ok(allocations[0][0] < initial[0]);
+  assert.equal(calls.filter(([name]) => name === 'setSize').length, 1);
+  assert.deepEqual(notifications, allocations, 'callbacks see the applied size');
+  allocations.length = 0;
+  calls.length = 0;
+  adapter.resize();
+  assert.equal(allocations.length, 0, 'unchanged sizing must not recreate GPU targets');
+  assert.equal(calls.filter(([name]) => name === 'setSize').length, 0);
+  adapter.dispose();
+});
+
+test('the initial adapter quality controls post processing when both presets are supplied', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const namespace = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };
+  const adapter = createThreeAdapter({
+    THREE: namespace, canvas: { clientWidth: 640, clientHeight: 360 },
+    quality3d: { mode: 'low' }, post3d: { preset: QUALITY3D_PRESETS.high },
+  });
+  assert.equal(adapter.postPipeline.preset.msaaSamples, 0);
+  assert.equal(adapter.postPipeline.targets.hasHalfRT, false);
+  adapter.dispose();
+});
+
+test('a quality change triggered by the sky hook leaves the latest post preset applied', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const namespace = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };
+  let nextMode = null;
+  const adapter = createThreeAdapter({
+    THREE: namespace, canvas: { clientWidth: 640, clientHeight: 360 },
+    quality3d: { mode: 'medium' }, post3d: true,
+    sky: {
+      setLinearOutput() {
+        if (!nextMode) return;
+        const requested = nextMode;
+        nextMode = null;
+        adapter.setQuality(requested);
+      },
+    },
+  });
+  nextMode = 'high';
+  adapter.setQuality('low');
+  assert.equal(adapter.getQuality(), 'high');
+  assert.equal(adapter.postPipeline.preset.msaaSamples, QUALITY3D_PRESETS.high.msaaSamples);
+  adapter.dispose();
+});
+
 test('sky3d presets, sky dome, tight texel-snapped shadow frustum and light pool lifecycle', () => {
   assert.deepEqual(Object.keys(SKY3D_PRESETS), ['day', 'goldenHour', 'overcast', 'dusk', 'night']);
   const sky = createProceduralSky3D(THREE, { preset: 'goldenHour' });

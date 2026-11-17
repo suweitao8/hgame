@@ -205,7 +205,7 @@
  * @property {PostPipelineState} state Getter; shallow copy of the current state.
  * @property {PostPipelineTargets} targets Getter; target allocation info.
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
- * @property {(preset: Partial<Quality3DPreset>) => void} setPreset Applies a quality preset and rebuilds targets.
+ * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
  * @property {(patch?: PostPipelineSettings) => void} setState Merges finite numeric/array settings.
  * @property {(world: object, camera: PostPipelineCamera, options?: PostPipelineRenderOptions) => void} render Renders `world` through the pipeline (forward fallback when unsupported).
  * @property {() => void} handleContextLost Releases GPU targets.
@@ -636,9 +636,12 @@ export type PostPipeline3D = {
      */
     resize: (width: number, height: number) => void;
     /**
-     * Applies a quality preset and rebuilds targets.
+     * Applies a preset and optionally resizes in one target rebuild.
      */
-    setPreset: (preset: Partial<Quality3DPreset>) => void;
+    setPreset: (preset: Partial<Quality3DPreset>, buffer?: {
+        width: number;
+        height: number;
+    }) => void;
     /**
      * Merges finite numeric/array settings.
      */

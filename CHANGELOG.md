@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Apply adaptive 3D resolution scaling to the capped drawing buffer. Keep the reduced scale when switching to a lower quality tier and honor the configured maximum on entry to auto mode.
+- Size 3D post-processing targets to the canvas drawing buffer and combine size and preset changes into one rebuild. Skip repeated renderer and target sizing when the dimensions are unchanged.
+
 - Keep Model3D resources from superseded owned asset revisions until provider disposal, then release shared resources once. Pending model requests reject during disposal, including requests for a superseded version.
 - Release cloned Model3D component bone textures on destruction while keeping borrowed roots and shared asset geometry alive. Allow destruction before `awake()` and finish resource cleanup when a dispose listener throws.
 - Report asynchronous feature disposal failures through diagnostics while keeping application disposal synchronous.

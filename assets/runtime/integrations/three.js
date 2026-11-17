@@ -317,12 +317,17 @@ export function createThreeAdapter({
   }
 
   let qualityController = null;
-  let userQualityOnChange = null;
+  let appliedPreset = null;
+  const userQualityOnChange = quality3d?.onChange ?? null;
+  if (userQualityOnChange !== null && typeof userQualityOnChange !== 'function') {
+    throw new TypeError('onChange must be a function');
+  }
+  function onQualityChange(state, reason) {
+    resize();
+    userQualityOnChange?.(state, reason);
+  }
+
   if (quality3d !== null) {
-    userQualityOnChange = quality3d.onChange ?? null;
-    if (userQualityOnChange !== null && typeof userQualityOnChange !== 'function') {
-      throw new TypeError('onChange must be a function');
-    }
     let qualityDevice = quality3d.device ?? {};
     if (quality3d.calibrateGpu === true) {
       const caps = inspectWebGLCapabilities(renderer);
@@ -334,11 +339,7 @@ export function createThreeAdapter({
     qualityController = createAdaptiveQualityController({
       ...quality3d,
       device: qualityDevice,
-      onChange(state, reason) {
-        applyQualityToRenderer(state.preset);
-        postPipeline?.setPreset(state.preset);
-        userQualityOnChange?.(state, reason);
-      },
+      onChange: onQualityChange,
     });
   }
 
@@ -348,19 +349,12 @@ export function createThreeAdapter({
       qualityController = createAdaptiveQualityController({
         mode,
         device: { rendererName: caps.rendererName || '' },
-        onChange(state, reason) {
-          applyQualityToRenderer(state.preset);
-          postPipeline?.setPreset(state.preset);
-          userQualityOnChange?.(state, reason);
-        },
+        onChange: onQualityChange,
       });
-      applyQualityToRenderer(qualityController.state.preset);
-      postPipeline?.setPreset(qualityController.state.preset);
       resize();
       return qualityController.state;
     }
-    qualityController.setMode(mode);
-    resize();
+    if (!qualityController.setMode(mode)) resize();
     return qualityController.state;
   }
 
@@ -370,19 +364,21 @@ export function createThreeAdapter({
 
   if (post3d) {
     const postOptions = typeof post3d === 'object' ? post3d : {};
+    const initialSize = planCanvasSize();
     postPipeline = createPostPipeline3D({
       THREE,
       renderer,
-      width,
-      height,
-      preset: qualityController?.state?.preset,
       exposure: postOptions.exposure ?? baseExposure,
       ...(toneMapping && !postOptions.toneMapping ? { toneMapping } : {}),
       ...postOptions,
+      preset: qualityController?.state.preset ?? postOptions.preset,
+      width: initialSize.bufferWidth,
+      height: initialSize.bufferHeight,
     });
   }
 
-  applyQualityToRenderer(qualityController?.state?.preset ?? null);
+  appliedPreset = qualityController?.state?.preset ?? null;
+  applyQualityToRenderer(appliedPreset);
 
   const camera = new THREE.PerspectiveCamera(cameraFov, width / height, near, far);
   camera.position.set(0, 4, 11);
@@ -393,6 +389,7 @@ export function createThreeAdapter({
   let activeViews = null;
   let contextLost = false;
   let lastDtSeconds = 0;
+  let lastCanvasSize = null;
 
   function getWorld(scene) {
     if (!worlds.has(scene)) {
@@ -411,14 +408,25 @@ export function createThreeAdapter({
     return viewWorlds.get(scene);
   }
 
-  function resize() {
+  function planCanvasSize() {
     const w = Math.max(1, canvas.clientWidth || width);
     const h = Math.max(1, canvas.clientHeight || height);
-    const ratio = qualityController
-      ? qualityController.planViewport(w, h, pixelRatio).pixelRatio
-      : Math.max(1, Math.min(3, pixelRatio));
-    renderer.setPixelRatio(ratio);
-    renderer.setSize(w, h, false);
+    if (qualityController) return qualityController.planViewport(w, h, pixelRatio);
+    const ratio = Math.max(1, Math.min(3, pixelRatio));
+    return { cssWidth: w, cssHeight: h, pixelRatio: ratio,
+      bufferWidth: Math.max(1, Math.floor(w * ratio)), bufferHeight: Math.max(1, Math.floor(h * ratio)) };
+  }
+
+  function resize() {
+    const size = planCanvasSize();
+    const { cssWidth: w, cssHeight: h, pixelRatio: ratio, bufferWidth, bufferHeight } = size;
+    const canvasChanged = typeof canvas.width === 'number' && typeof canvas.height === 'number'
+      && (canvas.width !== bufferWidth || canvas.height !== bufferHeight);
+    if (canvasChanged || lastCanvasSize?.cssWidth !== w || lastCanvasSize.cssHeight !== h || lastCanvasSize.pixelRatio !== ratio) {
+      renderer.setPixelRatio(ratio);
+      renderer.setSize(w, h, false);
+      lastCanvasSize = size;
+    }
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
     if (activeViewCamera && 'aspect' in activeViewCamera && typeof activeViewCamera.updateProjectionMatrix === 'function') {
@@ -434,11 +442,14 @@ export function createThreeAdapter({
         }
       }
     }
-    if (qualityController?.state?.preset) {
-      applyQualityToRenderer(qualityController.state.preset);
-      postPipeline?.setPreset(qualityController.state.preset);
+    const preset = qualityController?.state?.preset ?? null;
+    if (preset && preset !== appliedPreset) {
+      postPipeline?.setPreset(preset, { width: bufferWidth, height: bufferHeight });
+      appliedPreset = preset;
+      applyQualityToRenderer(preset);
+    } else {
+      postPipeline?.resize(bufferWidth, bufferHeight);
     }
-    postPipeline?.resize(Math.max(1, Math.round(w * ratio)), Math.max(1, Math.round(h * ratio)));
   }
 
   const onContextLost = (event) => {
@@ -449,6 +460,7 @@ export function createThreeAdapter({
   const onContextRestored = () => {
     contextLost = false;
     postPipeline?.handleContextRestored?.();
+    lastCanvasSize = null;
     resize();
   };
   canvas.addEventListener?.('webglcontextlost', onContextLost, false);
@@ -742,8 +754,9 @@ export function createThreeAdapter({
     render,
     resize,
     recordFrameInterval(ms) {
+      if (contextLost) return;
       if (Number.isFinite(ms) && ms > 0) lastDtSeconds = ms / 1000;
-      if (qualityController?.sampleFrame(ms)) resize();
+      qualityController?.sampleFrame(ms);
     },
     dispose() {
       canvas.removeEventListener?.('webglcontextlost', onContextLost, false);

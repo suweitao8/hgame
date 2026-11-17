@@ -224,7 +224,7 @@ import { QUALITY3D_PRESETS } from '../quality3d.js';
  * @property {PostPipelineState} state Getter; shallow copy of the current state.
  * @property {PostPipelineTargets} targets Getter; target allocation info.
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
- * @property {(preset: Partial<Quality3DPreset>) => void} setPreset Applies a quality preset and rebuilds targets.
+ * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
  * @property {(patch?: PostPipelineSettings) => void} setState Merges finite numeric/array settings.
  * @property {(world: object, camera: PostPipelineCamera, options?: PostPipelineRenderOptions) => void} render Renders `world` through the pipeline (forward fallback when unsupported).
  * @property {() => void} handleContextLost Releases GPU targets.
@@ -673,8 +673,15 @@ export function createPostPipeline3D(options = {}) {
     buildTargets();
   }
 
-  function setPreset(nextPreset) {
+  function setPreset(nextPreset, buffer) {
     if (disposed || !nextPreset) return;
+    if (buffer) {
+      if (!Number.isFinite(buffer.width) || buffer.width < 1 || !Number.isFinite(buffer.height) || buffer.height < 1) {
+        throw new RangeError('Invalid post-processing buffer size');
+      }
+      bufferWidth = Math.floor(buffer.width);
+      bufferHeight = Math.floor(buffer.height);
+    }
     activePreset = { ...QUALITY3D_PRESETS.medium, ...nextPreset };
     if (!explicitFxaa && 'fxaa' in activePreset) {
       state.fxaa = Boolean(activePreset.fxaa);

@@ -224,7 +224,7 @@ export function createAdaptiveQualityController({
 
   let configuredMode = mode;
   let tier = mode === 'auto' ? chooseInitial3dQuality(device) : mode;
-  let dynamicScale = 1;
+  let dynamicScale = mode === 'auto' ? maxScale : 1;
   let slowAtFloor = 0;
   let transitionCount = 0;
   let droppedLongFrames = 0;
@@ -251,7 +251,7 @@ export function createAdaptiveQualityController({
     if (configuredMode === next) return false;
     configuredMode = next;
     tier = next === 'auto' ? chooseInitial3dQuality(device) : next;
-    dynamicScale = 1;
+    dynamicScale = next === 'auto' ? maxScale : 1;
     slowAtFloor = 0;
     total = 0;
     count = 0;
@@ -269,12 +269,11 @@ export function createAdaptiveQualityController({
     const budget = preset.maxPixels;
     const budgetScale = Math.sqrt(budget / (width * height));
     const effectiveMaxPr = Math.min(maxPixelRatio, preset.maxPixelRatio ?? maxPixelRatio);
-    const idealScale = inRange(dpr, minPixelRatio, effectiveMaxPr) * dynamicScale;
-    // Never render more physical pixels than the selected tier's pixel budget.
-    // Extreme viewports may need less than minPixelRatio to respect hard cap.
-    const pixelRatio = Math.min(idealScale, budgetScale);
-    const bufferWidth = Math.max(1, Math.floor(width * pixelRatio));
-    const bufferHeight = Math.max(1, Math.floor(height * pixelRatio));
+    // Scale the capped buffer so every resolution step can save work at high DPI.
+    const cappedPixelRatio = Math.min(inRange(dpr, minPixelRatio, effectiveMaxPr), budgetScale);
+    const pixelRatio = Math.max(cappedPixelRatio * dynamicScale, 1 / Math.min(width, height));
+    const bufferWidth = Math.floor(width * pixelRatio);
+    const bufferHeight = Math.floor(height * pixelRatio);
     return Object.freeze({
       cssWidth: width, cssHeight: height,
       pixelRatio, bufferWidth, bufferHeight,
@@ -318,7 +317,7 @@ export function createAdaptiveQualityController({
           const index = TIERS.indexOf(tier);
           if (index > 0) {
             tier = TIERS[index - 1];
-            dynamicScale = Math.max(minScale, .8);
+            // Keep the current scale until fast frames earn resolution recovery.
             reason = 'tier';
             settle = settleAfterChangeMs;
             cooldown = 2400;

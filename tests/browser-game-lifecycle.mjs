@@ -208,6 +208,65 @@ async function exerciseModelReplacement(page) {
   return result;
 }
 
+async function exerciseAdaptiveResolution(page) {
+  const result = await page.evaluate(async runtime => {
+    const { createThreeAdapter } = await import(`${runtime}/integrations/three.js`);
+    const { THREE } = window.__arena.renderer;
+    const canvas = document.createElement('canvas');
+    canvas.style.setProperty('width', '3840px', 'important');
+    canvas.style.setProperty('height', '2160px', 'important');
+    canvas.style.position = 'fixed';
+    canvas.style.visibility = 'hidden';
+    document.body.append(canvas);
+    const allocations = [];
+    const namespace = {
+      ...THREE,
+      DepthTexture: class extends THREE.DepthTexture {
+        constructor(width, height, type) {
+          super(width, height, type);
+          allocations.push([width, height]);
+        }
+      },
+    };
+    let adapter;
+    try {
+      adapter = createThreeAdapter({
+        THREE: namespace, canvas, pixelRatio: 2, post3d: { autoExposure: false },
+        quality3d: { mode: 'auto', device: {}, settleMs: 0, settleAfterChangeMs: 0, sampleFrames: 2 },
+      });
+      const gl = adapter.renderer.getContext();
+      const read = () => ({
+        canvas: [canvas.width, canvas.height],
+        drawingBuffer: [gl.drawingBufferWidth, gl.drawingBufferHeight],
+        post: [adapter.postPipeline.targets.bufferWidth, adapter.postPipeline.targets.bufferHeight],
+        css: [canvas.clientWidth, canvas.clientHeight],
+        allocations: [...allocations],
+      });
+      const before = read();
+      allocations.length = 0;
+      adapter.recordFrameInterval(45);
+      adapter.recordFrameInterval(45);
+      adapter.resize();
+      return { before, after: read(), glError: gl.getError() };
+    } finally {
+      adapter?.dispose();
+      canvas.remove();
+    }
+  }, live ? './assets/vendor/hgame' : './vendor/hgame');
+  const { before, after } = result;
+  assert.deepEqual(before.css, [3840, 2160]);
+  assert.deepEqual(after.css, before.css, 'adaptive scaling preserves layout');
+  assert.ok(after.canvas[0] * after.canvas[1] < before.canvas[0] * before.canvas[1] * 0.65,
+    'slow frames reduce the real pixel count below the tier cap');
+  for (const state of [before, after]) {
+    assert.deepEqual(state.drawingBuffer, state.canvas, 'canvas uses the real WebGL drawing buffer size');
+    assert.deepEqual(state.post, state.canvas, 'post processing uses the real WebGL drawing buffer size');
+    assert.deepEqual(state.allocations, [state.canvas], 'allocate once at the final size');
+  }
+  assert.equal(result.glError, 0);
+  return result;
+}
+
 async function exerciseTouch(page, read, id) {
   const joystick = page.locator('.hgame-joy-zone');
   await joystick.waitFor();
@@ -369,6 +428,7 @@ try {
     const touch = mobile ? await exerciseTouch(page, read, id) : null;
     const recovery = contextRecovery ? await exerciseContextRecovery(page, id) : null;
     const modelReplacement = contextRecovery && id === 'arena-3d' ? await exerciseModelReplacement(page) : null;
+    const adaptiveResolution = contextRecovery && id === 'arena-3d' ? await exerciseAdaptiveResolution(page) : null;
     assert.equal(await page.locator('#debug').isVisible(), false);
     let completed;
     for (let cycle = 0; cycle < 3; cycle++) {
@@ -427,7 +487,8 @@ try {
     assert.deepEqual(await read(), stopped, `${id} no work after disposal`);
     assert.equal(stopped.disposed, true);
     assert.deepEqual(errors, [], `${id} browser errors`);
-    console.log(JSON.stringify({ id, browser: browserName, version: browser.version(), live, mobile, touch, recovery, modelReplacement,
+    console.log(JSON.stringify({ id, browser: browserName, version: browser.version(), live, mobile, touch, recovery,
+      modelReplacement, adaptiveResolution,
       cycles: 3, kills: completed.kills, best: completed.best, disposal, errors }));
     await page.close();
   }

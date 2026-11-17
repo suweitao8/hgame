@@ -22,7 +22,8 @@ HGame keeps 3D rendering modular and strictly opt-in. Core runtime modules never
 `QUALITY_TIERS` (`low`, `medium`, `high`) provides unified Low / Medium / High presets across 2D (`QUALITY2D_PRESETS`) and 3D (`QUALITY3D_PRESETS`, which also preserves `ultra` and `auto`). Calling `adapter.setQuality(mode)` dynamically updates DPR caps, directional shadow enablement & `shadowMapSize`, `drawDistance`, `post3d` (`fxaa`, `sharpen`, `ssao`), and `anisotropy` on registered `MaterialPalette` instances:
 - Initial tier selection combines `chooseInitial3dQuality` with optional WebGL capability probing (`inspectWebGLCapabilities` and `refineQualityWithContext`, enabled on `createThreeAdapter` when `quality3d.calibrateGpu: true`).
 - MSAA sample counts (`clampedMsaaSamples`) are clamped to `gl.MAX_SAMPLES` on WebGL2 contexts.
-- `createAdaptiveQualityController` adjusts runtime pixel ratio when frame times exceed or stay safely below target budgets.
+- `createAdaptiveQualityController` computes the tier's capped pixel ratio from the CSS viewport, device pixel ratio, and pixel budget. Auto mode multiplies that capped ratio by its current resolution scale and starts at `maxScale`. When slow frames trigger a tier downgrade, the controller keeps the reduced scale until fast frames qualify it for recovery.
+- The adapter uses the resulting physical size for both the canvas and post-processing targets. When size and preset change together, it rebuilds post targets once at the final dimensions.
 
 ## Frustum, Occlusion Culling & GPU Instancing (`culling3d.js`)
 

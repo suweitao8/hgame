@@ -41,6 +41,35 @@ test('render planning caps 4K HiDPI pixel budgets without touching CSS pixels', 
   assert.throws(() => quality.planViewport(-2, 1080, 1), /width/i);
 });
 
+test('4K pixel cap is the baseline for each resolution step and downgrade does not increase pixels', () => {
+  const controller = createAdaptiveQualityController({
+    device: { rendererName: 'NVIDIA RTX 4070' }, settleMs: 0, settleAfterChangeMs: 0, sampleFrames: 2,
+  });
+  const pixels = (w, h, dpr) => {
+    const plan = controller.planViewport(w, h, dpr);
+    return plan.bufferWidth * plan.bufferHeight;
+  };
+  const initial = pixels(3840, 2160, 2);
+  controller.sampleFrame(45);
+  controller.sampleFrame(45);
+  assert.ok(pixels(3840, 2160, 2) < initial * 0.65, 'the first 0.8 scale step saves about 36% of capped pixels');
+  controller.sampleFrame(45);
+  controller.sampleFrame(45);
+  const beforeTierDrop = pixels(960, 540, 1);
+  for (let i = 0; i < 4; i++) controller.sampleFrame(45);
+  assert.equal(controller.state.tier, 'medium');
+  assert.ok(pixels(960, 540, 1) <= beforeTierDrop, 'an overloaded tier change must not increase resolution');
+});
+
+test('auto quality honours the configured maximum scale at startup and when re-enabled', () => {
+  const controller = createAdaptiveQualityController({ minScale: 0.5, maxScale: 0.7 });
+  assert.equal(controller.state.dynamicScale, 0.7);
+  controller.setMode('high');
+  assert.equal(controller.planViewport(960, 540, 1).bufferWidth, 960, 'manual quality still uses its full budget');
+  controller.setMode('auto');
+  assert.equal(controller.planViewport(960, 540, 1).bufferWidth, 672);
+});
+
 test('slower frame windows reduce render scale, later fast windows recover gradually', () => {
   const quality = createAdaptiveQualityController({
     mode: 'auto', device: { rendererName: 'NVIDIA RTX 4070' },
@@ -138,6 +167,13 @@ test('Three adapter opts into adaptive quality pixel budgets without affecting l
   assert.equal(legacy.qualityController,null);
   assert.equal(legacy.renderer.lastScale,2);
   legacy.dispose();
+});
+
+test('adaptive viewport plans keep at least one physical pixel on each axis', () => {
+  const controller = createAdaptiveQualityController({ maxScale: 0.8 });
+  const viewport = controller.planViewport(1, 540);
+  assert.equal(Math.floor(viewport.cssWidth * viewport.pixelRatio), viewport.bufferWidth);
+  assert.equal(viewport.bufferWidth, 1);
 });
 
 test('the 3D generator enables adaptive quality only on explicit request', async () => {
