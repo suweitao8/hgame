@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share concurrent 3D model and animation-clip requests for the same GLTF within a model provider.
+
 - Run deferred 3D starter model upgrades from the application loop and support touch movement alongside keyboard input.
 
 - Keep GLTF scene resources loaded with standalone 3D animation clips under the model provider's ownership, and wait for in-flight clip loads during provider disposal.

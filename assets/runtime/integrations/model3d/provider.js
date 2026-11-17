@@ -198,6 +198,7 @@ export function createModel3DProvider({
   let activeLoader = loader;
   const cache = new Map();
   const clipCache = new Map();
+  const inFlightGltf = new Map();
   const ownedRoots = new Set();
   const pendingLoads = new Set();
   let disposed = false;
@@ -220,13 +221,29 @@ export function createModel3DProvider({
     return cloneSkeleton ? cloneSkeleton(source) : cloneObject3DWithSkins(THREE, source);
   }
 
+  // Model and animation callers share only concurrent requests. The model and
+  // clip caches retain their existing ownership and independent retry behavior.
+  function loadSharedGltf(key, resolved) {
+    let request = inFlightGltf.get(key);
+    if (!request) {
+      request = Promise.resolve().then(() => {
+        ensureActive();
+        return loadWithLoader(getLoader(), resolved);
+      });
+      inFlightGltf.set(key, request);
+      const clear = () => { if (inFlightGltf.get(key) === request) inFlightGltf.delete(key); };
+      request.then(clear, clear);
+    }
+    return request;
+  }
+
   async function load(url) {
     ensureActive();
     const { key, resolved } = resolveRelativeAssetPath(url, projectBaseUrl);
     if (!cache.has(key)) {
       const request = Promise.resolve().then(async () => {
         ensureActive();
-        const gltf = await loadWithLoader(getLoader(), resolved);
+        const gltf = await loadSharedGltf(key, resolved);
         if (!gltf || !gltf.scene) {
           throw new Error('Loaded GLTF asset contains no scene: ' + key);
         }
@@ -265,7 +282,7 @@ export function createModel3DProvider({
     if (!clipCache.has(key)) {
       const request = Promise.resolve().then(async () => {
         ensureActive();
-        const gltf = await loadWithLoader(getLoader(), resolved);
+        const gltf = await loadSharedGltf(key, resolved);
         // Animation-only files can still allocate meshes, materials and textures.
         // Track the root even if disposal began while the loader was in flight.
         if (gltf?.scene) ownedRoots.add(gltf.scene);
@@ -1012,6 +1029,7 @@ export function createModel3DProvider({
     disposed = true;
     cache.clear();
     clipCache.clear();
+    inFlightGltf.clear();
     const released = new WeakSet();
     const errors = [];
     const releaseReady = () => {
