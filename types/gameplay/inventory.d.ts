@@ -16,8 +16,16 @@ export function createInventory({ items, capacity, equipmentSlots, attributes, o
     getEquipped(slot: string): string | null;
     /** @param {InventoryTransaction} transaction */
     canTransact(transaction: InventoryTransaction): boolean;
-    /** @param {InventoryTransaction} transaction @returns {InventoryResult} */
-    transact(transaction: InventoryTransaction): InventoryResult;
+    /**
+     * Apply the exchange. The optional synchronous onCommit runs once after success,
+     * before inventory observers, and also runs for an empty successful exchange.
+     * @param {InventoryTransaction} transaction
+     * @param {{onCommit?: () => void}} [options]
+     * @returns {InventoryResult}
+     */
+    transact(transaction: InventoryTransaction, { onCommit }?: {
+        onCommit?: () => void;
+    } | undefined): InventoryResult;
     /** @param {string} id @param {number} [amount] @returns {InventoryResult} */
     add(id: string, amount?: number | undefined): InventoryResult;
     /** @param {string} id @param {number} [amount] @returns {InventoryResult} */

@@ -35,6 +35,7 @@ const CAPABILITY_MAP = [
   { need: 'Attributes, stackable buffs and abilities', module: 'gameplay/index.js', keyApis: 'GameplayComponent, createGameplayActor, createAttributeSet, createEffectController, createAbilitySystem' },
   { need: 'Branching dialogue, objectives and quest progression', module: 'gameplay/story.js, gameplay/quests.js', keyApis: 'createStoryRunner, createQuestLog' },
   { need: 'Item stacks, equipment, exchanges and quest rewards', module: 'gameplay/inventory.js', keyApis: 'createInventory, transact, equip, claimQuestRewards' },
+  { need: 'Weighted loot, pending loot claims and crafting recipes', module: 'gameplay/loot.js, gameplay/crafting.js', keyApis: 'createLootSystem, createCraftingBook' },
   { need: 'Zero-GC VFX, telegraphs, damage numbers', module: 'vfx/index.js', keyApis: 'createVfxSystem, emitHitImpact, slashArc, lightningBolt, spawnTelegraph, popupNumber, screenPulse, CROWD_STATUS' },
   { need: 'UI PanelStack, VirtualList, i18n, RedDot', module: 'ui/index.js, integrations/red-dot-dom.js', keyApis: 'createPanelStack, createVirtualList, createI18n, createRedDotSystem, bindRedDotDOM' },
   { need: '0-KB SFX & adaptive BGM + 3D spatial', module: 'platform/audio.js, audio/synth.js, audio/bgm-synth.js', keyApis: 'audio.playSynth(10 presets), audio.createBgm(6 moods, setIntensity), registerCue, updateListenerFromCamera' },

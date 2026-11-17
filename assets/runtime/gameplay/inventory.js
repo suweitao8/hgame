@@ -135,8 +135,8 @@ export function createInventory({ items, capacity, equipmentSlots = [], attribut
     return modifiers;
   }
 
-  /** @param {(ItemQuantity | null)[]} slots @param {Omit<InventoryEvent, 'revision'>} event @param {Map<string, string>} [loadout] */
-  function commit(slots, event, loadout) {
+  /** @param {(ItemQuantity | null)[]} slots @param {Omit<InventoryEvent, 'revision'>} event @param {Map<string, string>} [loadout] @param {() => void} [onCommit] */
+  function commit(slots, event, loadout, onCommit) {
     const modifiers = loadout === undefined ? [] : loadoutModifiers(loadout);
     bag = slots;
     if (loadout !== undefined) equipped = loadout;
@@ -144,6 +144,7 @@ export function createInventory({ items, capacity, equipmentSlots = [], attribut
     busy = true;
     try {
       cleanupAll([
+        () => onCommit?.(),
         () => {
           if (!attributes || loadout === undefined) return;
           if (modifiers.length) attributes.setModifiers(modifierSource, modifiers);
@@ -177,12 +178,25 @@ export function createInventory({ items, capacity, equipmentSlots = [], attribut
     getEquipped(slot) { return equipped.get(slot) ?? null; },
     /** @param {InventoryTransaction} transaction */
     canTransact(transaction) { return !disposed && plan(transaction).ok; },
-    /** @param {InventoryTransaction} transaction @returns {InventoryResult} */
-    transact(transaction) {
+    /**
+     * Apply the exchange. The optional synchronous onCommit runs once after success,
+     * before inventory observers, and also runs for an empty successful exchange.
+     * @param {InventoryTransaction} transaction
+     * @param {{onCommit?: () => void}} [options]
+     * @returns {InventoryResult}
+     */
+    transact(transaction, { onCommit } = {}) {
       writable();
+      if (onCommit !== undefined && typeof onCommit !== 'function') throw new TypeError('onCommit must be a function');
       const pending = plan(transaction);
       if (!pending.ok) return pending;
-      if (transaction.remove?.length || transaction.add?.length) commit(pending.slots, { type: 'transaction' });
+      if (transaction.remove?.length || transaction.add?.length) {
+        commit(pending.slots, { type: 'transaction' }, undefined, onCommit);
+      } else if (onCommit) {
+        busy = true;
+        try { onCommit(); }
+        finally { busy = false; }
+      }
       return { ok: true };
     },
     /** @param {string} id @param {number} [amount] @returns {InventoryResult} */

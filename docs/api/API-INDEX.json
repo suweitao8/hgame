@@ -74,6 +74,9 @@
  "gameplay/attributes.js":{"tier":"experimental","exports":[
   {"name":"createAttributeSet","tier":"experimental","declaredIn":"gameplay/attributes.js","summary":"Create named attributes with live bounds and source-owned modifiers. Effective value = (base + sum(add)) * (1 + sum(percent)) * product(multiply), then clamp. A","kind":"function","signature":"(definitions={}, {onChange}={})","returns":["addBase","canSpend","change","dispose","get","getBase","has","removeModifiers","restore","setBase","setModifiers","setValue","snapshot","spend","subscribe","values"]}
  ]},
+ "gameplay/crafting.js":{"tier":"experimental","exports":[
+  {"name":"createCraftingBook","tier":"experimental","declaredIn":"gameplay/crafting.js","summary":"Compile item recipes with station/tag requirements and batch crafting. A craft exchanges all materials and outputs in one inventory transaction.","kind":"function","signature":"(definitions)","returns":["craft","get","list","quote"]}
+ ]},
  "gameplay/effects.js":{"tier":"experimental","exports":[
   {"name":"createEffectController","tier":"experimental","declaredIn":"gameplay/effects.js","summary":"Create stackable status effects shared by 2D, 3D and command-driven games.","kind":"function","signature":"({attributes, tags=createTagContainer(), definitions={}, maxEffects=256, onEvent})","returns":["apply","attributes","clear","define","dispose","hasDefinition","list","remove","removeByDefinition","restore","snapshot","subscribe","tags","update"]}
  ]},
@@ -86,6 +89,9 @@
  ]},
  "gameplay/inventory.js":{"tier":"experimental","exports":[
   {"name":"createInventory","tier":"experimental","declaredIn":"gameplay/inventory.js","summary":"Create a slotted inventory with atomic exchanges, equipment modifiers and reward admission. Create one per actor or party. Item definitions, presentation and it","kind":"function","signature":"({items, capacity, equipmentSlots=[], attributes, onEvent})","returns":["add","canTransact","capacity","claimQuestRewards","count","dispose","equip","getEquipped","getSlot","list","move","remove","restore","revision","snapshot","subscribe","transact","unequip"]}
+ ]},
+ "gameplay/loot.js":{"tier":"experimental","exports":[
+  {"name":"createLootSystem","tier":"experimental","declaredIn":"gameplay/loot.js","summary":"Compile weighted loot tables and keep one durable roll and claim per game-owned source ID. Identical run seed, table and source ID produce the same result regar","kind":"function","signature":"(definitions, {seed=1}={})","returns":["claim","get","restore","roll","snapshot"]}
  ]},
  "gameplay/quests.js":{"tier":"experimental","exports":[
   {"name":"createQuestLog","tier":"experimental","declaredIn":"gameplay/quests.js","summary":"Track staged quests from game signals. The caller owns acceptance UI and reward delivery. An incoming signal counts once per matching objective in the current s","kind":"function","signature":"(definitions, {onEvent}={})","returns":["accept","claim","get","list","record","restore","snapshot","subscribe"]}

@@ -72,6 +72,7 @@ npm run api -- --module post2d   # Every export in one module
 | 17 | Attributes, Status Effects, Skills & Cooldowns (`GameplayComponent`, `createGameplayActor`) | [systems/17-gameplay.md](systems/17-gameplay.md) |
 | 18 | Branching Dialogue & Quest Progression (`createStoryRunner`, `createQuestLog`) | [systems/18-story-and-quests.md](systems/18-story-and-quests.md) |
 | 19 | Inventory, Equipment & Reward Admission (`createInventory`) | [systems/19-inventory-and-equipment.md](systems/19-inventory-and-equipment.md) |
+| 20 | Weighted Loot & Crafting (`createLootSystem`, `createCraftingBook`) | [systems/20-loot-and-crafting.md](systems/20-loot-and-crafting.md) |
 
 ---
 

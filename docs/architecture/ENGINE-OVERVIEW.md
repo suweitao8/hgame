@@ -18,7 +18,7 @@ HGame is a small, modular HTML5 runtime for standalone 2D, 3D, and UI-driven gam
 | `world/` | TileMap (`viewBounds` viewport culling and `SpriteSheet` rendering), binary-heap octile `findGridPath`, horde `SpatialHash2D` / `ObjectPool` (`spatial2d.js`), and open-world streaming / HLOD / floating origin (`open-world.js`: `createWorldPartition`, `createHLODProxyGroup3D`, `createFloatingOrigin`) |
 | `time/` | `TweenManager` & `EASING` (`yoyo`, `repeat`, `sequence`, `killTweensOf`, 2D motion presets), analytical `SpringDamper1D/2D/3D`, `damp`, `dampAngle` |
 | `lockstep/` | Optional confirmed-frame scheduler |
-| `gameplay/` | Opt-in attributes, status effects, abilities, story graphs, quests and inventory. `GameplayComponent` uses the scene's fixed step and entity tags. Story, quest and inventory modules respond to explicit commands and signals in any profile. |
+| `gameplay/` | Opt-in attributes, status effects, abilities, story graphs, quests, inventory, loot and crafting. `GameplayComponent` uses the scene's fixed step and entity tags. Progression and economy modules respond to commands and signals in any profile. |
 
 All game-specific rules, AI, content, balance, renderer ownership, and save schemas remain in the game project.
 

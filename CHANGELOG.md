@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add deterministic weighted loot tables, persistent per-source reward receipts and batch crafting with station and tag requirements. Loot claims and crafting use inventory transactions to preserve pending rewards and materials when the bag is full.
+
 - Add slotted inventories with stack limits, atomic exchanges, equipment and attribute modifiers. Claim a complete quest's rewards only when its entire item bundle fits. Inventory snapshots retain slot layout and equipment.
 
 - Run `story.json` graphs with conditional choices, variables, signals and resumable saves. Track prerequisite quests, consecutive stages and filtered objectives from the same signals, with explicit reward claims and JSON snapshots.
