@@ -8,7 +8,18 @@ From the HGame repository, `npm run api -- pixi`, `npm run api -- Renderer2D`, o
 
 PixiJS prefers WebGPU when available and falls back to WebGL. HGame's application controls the simulation and render loop; `JuiceSystem.update(dt)` advances hit easing, shockwaves and particles on that loop. Call `juice.dispose()` before `renderer.dispose()` when tearing down an owning scene. The renderer reuses removed crowd particles and destroys its pooled sprites, filter and atlas on disposal. The starter's 1,000-enemy arena includes opt-in buttons to add 10,000 enemies and to trigger 100, 1,000, or 10,000 simultaneous eight-particle explosions; FPS and on-screen particles are displayed in the debug panel. Actual capacity depends on device, resolution, effects and workload.
 
-`new Renderer2D(atlas, { maxPixels, maxPixelRatio })` caps physical rendering resolution without changing CSS coordinates. Defaults are 2.3 million pixels and pixel ratio 2; lower them for fill-rate-constrained devices or increase them for sharper output. The renderer responds to its container's size and host resize events, and disconnects its observer on disposal. This is a fixed budget, not automatic FPS-based quality adjustment.
+`new Renderer2D(atlas, { maxPixels, maxPixelRatio })` caps physical rendering resolution without changing CSS coordinates. Defaults are 2.3 million pixels and pixel ratio 2; lower them for fill-rate-constrained devices or increase them for sharper output. The renderer responds to its container's size and host resize events, and disconnects its observer on disposal. By default this is a fixed budget.
+
+To opt into dynamic resolution, pass HGame's quality controller when creating the renderer:
+
+```js
+const { createAdaptiveQualityController } = await import(base + '/integrations/quality3d.js');
+const quality = createAdaptiveQualityController({ mode: 'auto', minScale: 0.6, maxScale: 1 });
+const renderer = new Renderer2D(atlas, { qualityController: quality });
+// On visibility changes or after a manual pause: renderer.resetQualityMeasurements();
+```
+
+Pixi uses only the controller's dynamic resolution scale; 3D quality presets do not change Pixi materials or effects. The controller uses render-frame intervals, so it cannot distinguish GPU pressure from slow simulation or a browser-imposed frame cap. Changing resolution may not improve a CPU-bound scene. Call `resetQualityMeasurements()` after visibility changes or a manual pause, and call `renderer.resize()` after changing the controller's mode. For a fixed `tickHz: 0` scene, leave adaptive quality disabled.
 
 After `await renderer.init(mount)`, use `renderer.setBloom({ enabled: true, threshold: 0.62, bloomScale: 0.4, brightness: 1, blur: 3 })` for persistent scene glow; all parameters except `enabled` are optional and retain their previous values. Call `renderer.setBloom({ enabled: false })` to disable persistent glow. Shockwaves temporarily use bloom as before and no longer cancel persistent glow when they end or when the juice system is disposed. Full-screen filters add GPU work, so use them according to the target scene and device.
 

@@ -3,12 +3,17 @@ import { AdvancedBloomFilter } from 'pixi-filters';
 import { PixiSwarmLayer } from './PixiSwarmLayer.js';
 
 export class Renderer2D {
-  constructor(atlas, { maxPixels = 2300000, maxPixelRatio = 2 } = {}) {
+  constructor(atlas, { maxPixels = 2300000, maxPixelRatio = 2, qualityController = null } = {}) {
     if (!Number.isFinite(maxPixels) || maxPixels < 1 || !Number.isFinite(maxPixelRatio) || maxPixelRatio <= 0) {
       throw new RangeError('Renderer pixel budget and maximum pixel ratio must be positive');
     }
     this.atlas = atlas;
     this.maxPixels = maxPixels; this.maxPixelRatio = maxPixelRatio;
+    if (qualityController && (typeof qualityController.sampleFrame !== 'function' || typeof qualityController.resetMeasurements !== 'function')) {
+      throw new TypeError('qualityController must support sampleFrame and resetMeasurements');
+    }
+    this.qualityController = qualityController;
+    this.lastFrameTime = null;
     this.app = new Application();
     this.entityMap = new Map();
     this.spritePool = [];
@@ -54,7 +59,8 @@ export class Renderer2D {
     const width = Math.max(1, Math.floor(this.mount?.clientWidth || 1));
     const height = Math.max(1, Math.floor(this.mount?.clientHeight || 1));
     const deviceRatio = Number(globalThis.devicePixelRatio) || 1;
-    const resolution = Math.max(1 / Math.min(width, height), Math.min(deviceRatio, this.maxPixelRatio, Math.sqrt(this.maxPixels / (width * height))));
+    const scale = this.qualityController?.state?.dynamicScale ?? 1;
+    const resolution = Math.max(1 / Math.min(width, height), Math.min(deviceRatio, this.maxPixelRatio, Math.sqrt(this.maxPixels / (width * height))) * scale);
     return { width, height, resolution };
   }
   resize() {
@@ -65,6 +71,10 @@ export class Renderer2D {
     this.viewport = next;
     this.onResize?.();
     return true;
+  }
+  resetQualityMeasurements() {
+    this.lastFrameTime = null;
+    this.qualityController?.resetMeasurements();
   }
   /** Configure persistent bloom. Transient effect filters remain independently owned. */
   setBloom({ enabled = true, threshold, bloomScale, brightness, blur } = {}) {
@@ -161,7 +171,14 @@ export class Renderer2D {
   }
   screenToWorld(x, y) { return { x: (x - this.app.screen.width / 2 - this.camera.shakeX) / this.camera.zoom + this.camera.x, y: (y - this.app.screen.height / 2 - this.camera.shakeY) / this.camera.zoom + this.camera.y }; }
   worldToScreen(x, y) { return { x: (x - this.camera.x) * this.camera.zoom + this.app.screen.width / 2 + this.camera.shakeX, y: (y - this.camera.y) * this.camera.zoom + this.app.screen.height / 2 + this.camera.shakeY }; }
-  render() { this.app.renderer.render(this.app.stage); }
+  render() {
+    if (this.qualityController) {
+      const now = performance.now();
+      if (this.lastFrameTime !== null && this.qualityController.sampleFrame(now - this.lastFrameTime)) this.resize();
+      this.lastFrameTime = now;
+    }
+    this.app.renderer.render(this.app.stage);
+  }
   dispose() {
     if (this.disposed) return;
     this.disposed = true;

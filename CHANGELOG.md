@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Let Pixi starters optionally reuse HGame's adaptive quality controller to scale their render resolution within the existing pixel budget.
+
 - Support sprite-sheet clips for Pixi CPU swarms using the simulation's per-unit animation time and existing shared-atlas particle rendering.
 
 - Let new 3D starters opt into a scene-owned procedural sky and optional baked environment reflections through presentation.json.
