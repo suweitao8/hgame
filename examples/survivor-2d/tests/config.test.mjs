@@ -9,7 +9,8 @@ test('recipe matches the 2d/webgl2d profile and main.js wires the engine', async
   assert.equal(config.renderer, 'webgl-custom');
   assert.equal(recipe.renderer, 'webgl2d');
   assert.match(config.id, /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/);
-  for (const needle of ['createApplication', 'SpriteCrowd2D', 'createArcadeControls', 'createTouchControls', 'hgame']) {
+  assert.match(source, /\bcreateGameApplication\(/);
+  for (const needle of ['SpriteCrowd2D', 'createArcadeControls', 'createTouchControls', 'hgame']) {
     assert.ok(source.includes(needle), `main.js should use ${needle}`);
   }
 });
