@@ -23,6 +23,8 @@ const [{ HGame, Component, Entity, Scene }, { createThreeAdapter }, { createSpri
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed') || 1);
 const god = params.get('god') === '1';
+const debug = params.get('debug') === '1';
+const lifetime = new AbortController();
 
 const project = HGame.defineProject(engineConfig);
 const canvas = document.querySelector('#game');
@@ -102,14 +104,14 @@ const arm = createSpringArm3D({
 });
 arm.snap({ x: sim.player.x, y: 0, z: sim.player.z });
 let drag = null;
-canvas.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') drag = { x: e.clientX, y: e.clientY, moved: 0 }; });
-window.addEventListener('pointerup', () => { drag = null; });
+canvas.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse') drag = { x: e.clientX, y: e.clientY, moved: 0 }; }, { signal: lifetime.signal });
+window.addEventListener('pointerup', () => { drag = null; }, { signal: lifetime.signal });
 window.addEventListener('pointermove', e => {
   if (!drag) return;
   arm.addAngles(-(e.clientX - drag.x) * 0.006, -(e.clientY - drag.y) * 0.004);
   drag.moved += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
   drag.x = e.clientX; drag.y = e.clientY;
-});
+}, { signal: lifetime.signal });
 
 // ---- input: WASD/arrows + touch stick (camera-relative), Space/J jump, K/click spin, Q/E orbit, U restart ----
 const arcade = HGame.createArcadeControls({
@@ -120,18 +122,20 @@ const touch = createTouchControls({ controls: arcade.p1, container: document.bod
 const mv = { x: 0, y: 0, magnitude: 0, active: false };
 const input = { mx: 0, mz: 0, jump: false, attack: false };
 let clickSpin = false;
-canvas.addEventListener('click', () => { if (!drag || drag.moved < 6) clickSpin = true; });
+canvas.addEventListener('click', () => { if (!drag || drag.moved < 6) clickSpin = true; }, { signal: lifetime.signal });
 
 // ---- HUD ----
 const el = id => document.getElementById(id);
 const hud = { hp: el('hp').firstElementChild, stats: el('stats'), gameover: el('gameover'), result: el('result') };
+el('debug').hidden = !debug;
 function syncHud() {
   const { player, state } = sim;
   hud.hp.style.transform = `scaleX(${player.hp / CONFIG.player.hp})`;
   const fps = app.services.diagnostics?.snapshot().fps;
-  hud.stats.textContent = `${state.time.toFixed(0)}s   kills ${state.kills}\nenemies ${sim.en.count}/${sim.cap}   tier ${sim.tier}   best ${best.kills}k` + (fps ? `   ${fps.toFixed(0)} fps` : '');
+  hud.stats.textContent = `${state.time.toFixed(0)}s   ✦ ${state.kills}`;
+  if (debug) el('debug').textContent = `${sim.en.count}/${sim.cap} enemies   ${sim.tier}   ${fps?.toFixed(0) ?? 0} fps`;
   if (state.over && hud.gameover.hidden) {
-    if (!saved) { saved = true; const r = recordRun(save, { time: state.time, kills: state.kills, level: 1 }); best = r.best; hud.result.textContent = `${state.kills} kills, ${state.time.toFixed(1)}s${r.record ? ' - new best!' : ''}`; }
+    if (!saved) { saved = true; const r = recordRun(save, { time: state.time, kills: state.kills, level: 1 }); best = r.best; hud.result.textContent = `✦ ${state.kills} · ${state.time.toFixed(1)}s${r.record ? ' ★' : ''}`; }
     hud.gameover.hidden = false;
   }
 }
@@ -161,6 +165,7 @@ function syncView(dt) {
 }
 
 class Driver extends Component {
+  onDestroy() { lifetime.abort(); touch.dispose(); el('restart').onclick = null; }
   fixedUpdate(dt) {
     arcade.update(dt);
     const p1 = arcade.p1;
@@ -185,5 +190,9 @@ scene.add(new Entity({ name: 'driver' })).addComponent(new Driver());
 app.scenes.start('arena');
 app.start();
 window.__arena = { app, sim, renderer, arm };
+window.__hgameState = () => ({ phase: sim.state.over ? 'over' : 'playing', tick: sim.state.tick,
+  time: sim.state.time, kills: sim.state.kills, enemies: sim.en.count,
+  player: { x: sim.player.x, y: sim.player.y, z: sim.player.z, hp: sim.player.hp }, best: { ...best },
+  running: app.running, disposed: app.disposed, scheduler: app.stats });
 canvas.dataset.engineReady = 'true';
 window.addEventListener('pagehide', () => { touch.dispose(); app.dispose(); }, { once: true });

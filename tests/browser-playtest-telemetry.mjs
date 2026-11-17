@@ -6,6 +6,25 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+test('playtest fails when a declared state hook throws or returns unserializable state', t => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-hook-'));
+  t.after(() => rmSync(game, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+  for (const body of ["throw new Error('broken hook')", 'return { value: 1n }']) {
+    writeFileSync(path.join(game, 'index.html'), `<!doctype html><canvas id="game" width="64" height="64"></canvas><script>
+const g=document.getElementById('game').getContext('2d');g.fillStyle='#f80';g.fillRect(0,0,32,32);
+window.__hgameState=()=>{${body}};
+</script>`);
+    const result = spawnSync(process.execPath, [path.join(root, 'scripts/playtest.mjs'), game,
+      '--duration', '100', '--actions', 'wait:100', '--no-pointer', '--allow-static'],
+    { encoding: 'utf8', timeout: 25000, windowsHide: true });
+    assert.ifError(result.error);
+    const report = JSON.parse(result.stdout);
+    assert.equal(result.status, 1, JSON.stringify(report));
+    assert.ok(report.problems.some(problem => problem.includes('state hook')), JSON.stringify(report));
+  }
+});
+
 test('playtest reports a stall that overlaps the end of its requested measurement window', t => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-stall-'));

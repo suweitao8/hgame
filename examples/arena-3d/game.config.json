@@ -6,8 +6,5 @@
   "entry": "index.html",
   "renderer": "threejs",
   "runtime": "webasset-v1",
-  "standalone": true,
-  "quality3d": {
-    "mode": "auto"
-  }
+  "standalone": true
 }

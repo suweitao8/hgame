@@ -1,6 +1,7 @@
 import { Component } from './component.js';
 import { Entity } from './entity.js';
 import { TweenManager } from '../time/tween.js';
+import { cleanupAll } from './internal/cleanup.js';
 
 /**
  * @typedef {{ type: string } & Record<string, unknown>} GameCommand Command delivered to {@link Scene#onCommand}.
@@ -201,13 +202,19 @@ export class Scene {
   }
   /** Deactivate and destroy all entities, tweens and physics. @returns {void} */
   dispose() {
-    this._setActive(false);
-    this._tweens?.dispose?.();
-    this._tweens = null;
-    for (const object of [...this.objects]) object.destroy();
-    this.physics?.dispose?.();
-    this.physics = null;
-    this.app = null;
+    try {
+      cleanupAll([
+        () => this._setActive(false),
+        () => this._tweens?.dispose?.(),
+        ...this.objects.map(object => () => object.destroy()),
+        () => this.physics?.dispose?.(),
+      ], 'Scene disposal failed');
+    } finally {
+      this.objects.length = 0;
+      this._tweens = null;
+      this.physics = null;
+      this.app = null;
+    }
   }
 }
 
@@ -224,9 +231,11 @@ export class SceneManager {
     this.registry = new Map();
     /** @type {Scene | null} */
     this.current = null;
+    this._disposing = false;
   }
   /** Register a uniquely named scene. @template {Scene} T @param {T} scene @returns {T} */
   add(scene) {
+    if (this._disposing || this.app.disposed) throw new Error('Application disposed or disposing');
     if (!(scene instanceof Scene) || this.registry.has(scene.name)) {
       throw new Error('A unique Scene is required');
     }
@@ -239,6 +248,7 @@ export class SceneManager {
   get(name) { return this.registry.get(name) ?? null; }
   /** Switch to a registered scene. @param {string} name @param {unknown} [data] Forwarded to `Scene#enter`. @returns {boolean} False if already current. */
   start(name, data) {
+    if (this._disposing || this.app.disposed) throw new Error('Application disposed or disposing');
     const scene = this.get(name);
     if (!scene) throw new Error('Unknown Scene: ' + name);
     if (scene === this.current) return false;
@@ -253,12 +263,19 @@ export class SceneManager {
     return true;
   }
   dispose() {
-    if (this.current) {
-      this.current._setActive(false);
-      this.current.exit(this.app);
+    if (this._disposing) return;
+    this._disposing = true;
+    const current = this.current;
+    try {
+      cleanupAll([
+        () => current?._setActive(false),
+        () => current?.exit(this.app),
+        ...[...this.registry.values()].map(scene => () => scene.dispose()),
+      ], 'Scene manager disposal failed');
+    } finally {
+      this.registry.clear();
+      this.current = null;
+      this._disposing = false;
     }
-    for (const scene of this.registry.values()) scene.dispose();
-    this.registry.clear();
-    this.current = null;
   }
 }

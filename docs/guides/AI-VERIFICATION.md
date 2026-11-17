@@ -6,6 +6,7 @@ How an agent proves a change works without a human looking at the screen.
 |---|---|---|
 | Find an API / its option keys | `docs/api/API-INDEX.json` (grep by name; one export per line: `signature` shows option-bag keys + defaults, `returns` lists returned object keys, `members` lists class methods) | JSON |
 | Logic regression | `npm test` | TAP |
+| Complete reference games | `npm run test:browser:lifecycle [-- --chrome <path>]` | Keyboard movement, combat and natural death, three restart cycles, reload persistence, input/renderer/touch teardown, and zero browser errors. `--webasset` verifies the registered live examples. |
 | Types / index not stale | `npm run check` (runs `check:types` and `check:api-index`; fix with `npm run build:types` / `npm run build:api-index`) | exit code |
 | **See the render** | `npm run snapshot -- <game-dir> [--keys d:300] [--wait 800] [--ready "#game[data-engine-ready=true]"]` | PNG + JSON: `nonBlankRatio`, `meanLuma`, `uniqueColors`, `lumaHistogram8`, `sha256`, `consoleErrors`, `httpErrors`, `problems` |
 | Render regression | `npm run snapshot -- <game-dir> --baseline baseline.png` (create/refresh with `--update-baseline`) | JSON `baseline.diffRatio` + `bbox` of changed pixels; exit 1 above `--threshold` (default 0.01) |
@@ -21,6 +22,9 @@ Browser benchmarks default to `--gpu software` and retain their CI health thresh
 Playtest reports retain whole-run frame count, duration, mean, maximum and long-frame totals. A bounded uniform reservoir holds up to 600 detailed intervals. P50/P95/P99 are exact within that set and are explicitly marked `quantilesApproximate` when the run exceeds its capacity. Multi-second intervals remain included. The stop checkpoint waits for a final frame so a stall crossing the requested end time remains visible. `requestedDurationMs`, `actualDurationMs` and `frameStats.measuredMs` describe the actual measurement window after startup and initial capture.
 
 ## Rules of thumb
+
+- A declared state hook must return JSON-serializable state. Exceptions and serialization errors fail the playtest explicitly. Reference lifecycle scenarios use the existing game-owned simulation API to accelerate combat and apply controlled enemy pressure. They never overwrite health, death flags or scores.
+- `app.dispose()` is idempotent and marks `app.disposed` before cleanup. Pending installation rejects and scheduled work stops. Cleanup continues after callback failures, then reports an `AggregateError`. Injected platforms remain caller-owned. UI projects retain command-driven rendering with no idle RAF.
 - Snapshots use the same inputs and SwiftShader environment for each reference/candidate pair. `check:visual` renders its fixed accepted commit from a temporary Git archive and requires that commit to be available locally. CI fetches full history. Source changes and cache misses preserve the accepted reference.
 - Review intentional visual changes with `npm run check:visual -- --reference <commit>` and inspect the PNG pairs. Accept a new reference by changing the full commit hash in `tests/visual-reference.json` in a reviewed commit.
 - `--update-baseline` replaces a baseline atomically only after capture checks succeed. Failed page, HTTP, state, eval, blank-image or output checks preserve the previous baseline. An output path equal to the baseline requires an explicit update.

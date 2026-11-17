@@ -27,11 +27,12 @@ const [
   import('../assets/vendor/three/three.module.js'),
 ]);
 
+const defaultQualityMode = "auto";
 const project = HGame.defineProject(engineConfig);
 const qualityEnabled = project.features.includes('adaptiveQuality3d');
 const viewCanvas = document.querySelector('#game');
 const qualitySettings = qualityEnabled ? {
-  mode: gameConfig.quality3d?.mode ?? 'auto',
+  mode: gameConfig.quality3d?.mode ?? defaultQualityMode,
   // Passive device hints only: never create a throwaway WebGL context just
   // to detect a GPU. Desktop with an unknown GPU begins conservatively.
   device: {

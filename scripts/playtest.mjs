@@ -234,7 +234,16 @@ async function runCli() {
     const captureBuf = async () => (hasTarget ? target.screenshot() : page.screenshot());
     const shotBefore = await captureBuf();
     const beforeHash = createHash('sha256').update(shotBefore).digest('hex').slice(0, 16);
-    const stateBefore = await page.evaluate(async n => typeof window[n] === 'function' ? JSON.parse(JSON.stringify(await window[n]() ?? null)) : null, stateHook).catch(() => null);
+    const readState = async () => {
+      try {
+        return await page.evaluate(async n => typeof window[n] === 'function'
+          ? JSON.parse(JSON.stringify(await window[n]() ?? null)) : null, stateHook);
+      } catch (error) {
+        report.problems.push(`state hook ${stateHook} failed: ${error.message}`);
+        return null;
+      }
+    };
+    const stateBefore = await readState();
 
     await page.evaluate(() => window.__hgamePlaytestTelemetryReset());
     const measurementStart = performance.now();
@@ -263,7 +272,7 @@ async function runCli() {
 
     const shotAfter = await captureBuf();
     const afterHash = createHash('sha256').update(shotAfter).digest('hex').slice(0, 16);
-    const stateAfter = await page.evaluate(async n => typeof window[n] === 'function' ? JSON.parse(JSON.stringify(await window[n]() ?? null)) : null, stateHook).catch(() => null);
+    const stateAfter = await readState();
     const canvasStats = await page.evaluate(analyzeCanvasStats, {
       shot: 'data:image/png;base64,' + shotAfter.toString('base64'),
     });

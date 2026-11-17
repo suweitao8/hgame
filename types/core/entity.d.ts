@@ -57,6 +57,7 @@ export class Entity {
     /** @type {import('./scene.js').Scene | null} */
     scene: import("./scene.js").Scene | null;
     destroyed: boolean;
+    _destroying: boolean;
     /** @type {import('./tags.js').TagContainer | null} */
     _tags: import("./tags.js").TagContainer | null;
     /** Lazily created tag container. @returns {import('./tags.js').TagContainer} */

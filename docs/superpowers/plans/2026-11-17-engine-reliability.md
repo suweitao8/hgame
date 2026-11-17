@@ -74,13 +74,13 @@ Files include both reference games' `src/main.js`, their existing simulation/met
 
 Interfaces add serializable `window.__hgameState()` hooks to the existing reference projects and reuse current controls and debug simulation hooks. The browser command returns nonzero for stalled gameplay, restart/persistence failures, errors or active work after disposal.
 
-- [ ] Add tests covering repeated create/start/stop/dispose, scene changes, callback cancellation and input release. Verify UI mode remains command-driven.
-- [ ] Run failing tests before fixing confirmed runtime defects, then document the behavior changes.
-- [ ] Add browser scenarios for movement, combat progress, death/completion, repeated restart, saved-progress reload and teardown, using actual existing entry points.
-- [ ] Add deterministic state assertions and browser error capture. Keep verification controls hidden from normal gameplay and follow the existing UI rules.
-- [ ] Run reference simulation, UI lint, browser lifecycle, snapshot and playtest checks. Add the complete browser scenarios to CI.
-- [ ] Verify live WebAsset discovery/loading for any delivered playable examples using the approved managed root and strict config schema.
-- [ ] Run `npm run check`, review, commit and push.
+- [x] Add tests covering repeated create/start/stop/dispose, scene changes, callback cancellation and input release. Verify UI mode remains command-driven.
+- [x] Run failing tests before fixing confirmed runtime defects, then document the behavior changes.
+- [x] Add browser scenarios for movement, combat progress, death/completion, repeated restart, saved-progress reload and teardown, using actual existing entry points.
+- [x] Add deterministic state assertions and browser error capture. Keep verification controls hidden from normal gameplay and follow the existing UI rules.
+- [x] Run reference simulation, UI lint, browser lifecycle, snapshot and playtest checks. Add the complete browser scenarios to CI.
+- [x] Verify live WebAsset discovery/loading for any delivered playable examples using the approved managed root and strict config schema.
+- [x] Run `npm run check`, review, commit and push.
 
 ## Task 5. Runtime refinement and completion audit
 

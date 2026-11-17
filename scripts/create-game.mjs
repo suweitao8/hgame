@@ -130,6 +130,10 @@ async function main() {
       await cp(path.join(profileFiles, 'index.html'), path.join(stage, 'index.html'), { force: true });
     }
     if (options.recipe.profile === '3d') {
+      const entryFile = path.join(stage, 'src', 'main.js');
+      await writeFile(entryFile, (await readFile(entryFile, 'utf8')).replace(
+        'const defaultQualityMode = "auto";',
+        `const defaultQualityMode = ${JSON.stringify(options.quality ?? 'auto')};`));
       await cp(path.join(profileFiles, 'index.html'), path.join(stage, 'index.html'), { force: true });
       const threeDest = path.join(stage, 'assets', 'vendor', 'three');
       await mkdir(threeDest, { recursive: true });
@@ -150,10 +154,7 @@ async function main() {
     const configFile = path.join(stage, 'game.config.json');
     const config = JSON.parse(await readFile(configFile, 'utf8'));
     Object.assign(config, { id: options.slug, name: options.name, standalone: true,
-      renderer: options.recipe.renderer });
-    if (options.recipe.features.includes('adaptiveQuality3d')) {
-      config.quality3d = { mode: options.quality ?? 'auto' };
-    }
+      renderer: options.recipe.renderer === 'webgl2d' ? 'webgl-custom' : options.recipe.renderer });
     await writeFile(configFile, JSON.stringify(config, null, 2) + '\n');
     const packageFile = path.join(stage, 'package.json');
     const pkg = JSON.parse(await readFile(packageFile, 'utf8'));

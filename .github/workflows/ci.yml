@@ -70,6 +70,7 @@ jobs:
       - run: npm run test:browser:telemetry
       - run: node scripts/build-examples.mjs
       - run: npm run test:examples
+      - run: npm run test:browser:lifecycle
       - name: Compare against accepted visual reference
         run: npm run check:visual
       - uses: actions/upload-artifact@v4

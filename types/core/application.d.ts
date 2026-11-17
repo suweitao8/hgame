@@ -61,6 +61,7 @@
  * @property {ApplicationServices} services
  * @property {boolean} running
  * @property {boolean} paused
+ * @property {boolean} disposed Whether application ownership has ended.
  * @property {GameApplicationStats} stats Snapshot copy.
  * @property {number} baseTimeScale
  * @property {number} hitStopRemaining Seconds of hit-stop left.
@@ -222,6 +223,10 @@ export type GameApplication = {
     services: ApplicationServices;
     running: boolean;
     paused: boolean;
+    /**
+     * Whether application ownership has ended.
+     */
+    disposed: boolean;
     /**
      * Snapshot copy.
      */

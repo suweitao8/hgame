@@ -1,4 +1,5 @@
 import { Component } from './component.js';
+import { cleanupAll } from './internal/cleanup.js';
 import { createTagContainer, matchGameplayTags } from './tags.js';
 
 let nextEntityId = 1;
@@ -159,6 +160,7 @@ export class Entity {
     /** @type {import('./scene.js').Scene | null} */
     this.scene = null;
     this.destroyed = false;
+    this._destroying = false;
     /** @type {import('./tags.js').TagContainer | null} */
     this._tags = tags != null ? createTagContainer(tags) : null;
   }
@@ -224,15 +226,15 @@ export class Entity {
   }
   /** True when this entity, every ancestor and its Scene are active. @type {boolean} */
   get activeInHierarchy() {
-    if (!this.active || this.destroyed) return false;
+    if (!this.active || this.destroyed || this._destroying) return false;
     for (let current = this.parent; current; current = current.parent) {
-      if (!current.active || current.destroyed) return false;
+      if (!current.active || current.destroyed || current._destroying) return false;
     }
     return Boolean(this.scene?.active);
   }
   /** Attach a child entity (re-parenting if needed). @param {Entity} child @returns {Entity} */
   add(child) {
-    if (!(child instanceof Entity) || child.destroyed || this.destroyed) {
+    if (!(child instanceof Entity) || child.destroyed || child._destroying || this.destroyed || this._destroying) {
       throw new TypeError('Cannot attach a destroyed or non-Entity child');
     }
     for (let node = this; node; node = node.parent) {
@@ -252,7 +254,7 @@ export class Entity {
    * @returns {T}
    */
   addComponent(component) {
-    if (!(component instanceof Component) || component.entity || this.destroyed) {
+    if (!(component instanceof Component) || component.entity || this.destroyed || this._destroying) {
       throw new TypeError('Cannot attach a non-Component, already owned, or destroyed component');
     }
     this.components.push(component);
@@ -282,16 +284,16 @@ export class Entity {
   }
   /** @returns {void} */
   _deactivate() {
-    for (const component of this.components) {
+    cleanupAll(this.components.map(component => () => {
       if (component._running) {
         component._running = false;
         component.onDisable();
       }
-    }
+    }), 'Component deactivation failed');
   }
   /** @returns {void} */
   _syncComponents() {
-    if (this.destroyed) return;
+    if (this.destroyed || this._destroying) return;
     const active = this.activeInHierarchy;
     for (const component of [...this.components]) {
       if (component._destroyed) continue;
@@ -382,22 +384,33 @@ export class Entity {
   }
   /** Destroy the entity, its children and components. @returns {boolean} False if already destroyed. */
   destroy() {
-    if (this.destroyed) return false;
-    for (const child of [...this.children]) child.destroy();
-    this.scene?.physics?.remove?.(this);
-    this._deactivate();
-    for (const component of [...this.components]) {
-      if (!component._destroyed) {
-        component._destroyed = true;
-        component.onDestroy();
-        component.entity = null;
-      }
+    if (this.destroyed || this._destroying) return false;
+    this._destroying = true;
+    try {
+      cleanupAll([
+        ...this.children.map(child => () => child.destroy()),
+        () => this.scene?.physics?.remove?.(this),
+        () => this._deactivate(),
+        ...this.components.map(component => () => {
+          if (!component._destroyed) {
+            component._destroyed = true;
+            try { component.onDestroy(); } finally { component.entity = null; }
+          }
+        }),
+        () => this._tags?.clear(),
+      ], 'Entity destruction failed');
+    } finally {
+      const siblings = this.parent?.children ?? this.scene?.objects;
+      const index = siblings?.indexOf(this) ?? -1;
+      if (index >= 0) siblings.splice(index, 1);
+      this.parent = null;
+      this.scene = null;
+      this.children.length = 0;
+      this.components.length = 0;
+      this._tags = null;
+      this.destroyed = true;
+      this._destroying = false;
     }
-    this.components.length = 0;
-    this._tags?.clear();
-    this._tags = null;
-    this.detach();
-    this.destroyed = true;
     return true;
   }
 }

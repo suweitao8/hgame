@@ -151,10 +151,26 @@ test('the 3D generator enables adaptive quality only on explicit request', async
     const recipe = JSON.parse(await readFile(path.join(game,'engine.config.json'),'utf8'));
     assert.ok(recipe.features.includes('adaptiveQuality3d'));
     const cfg = JSON.parse(await readFile(path.join(game,'game.config.json'),'utf8'));
-    assert.deepEqual(cfg.quality3d,{mode:'auto'});
+    assert.deepEqual(Object.keys(cfg).sort(), ['schemaVersion','id','name','version','entry','renderer','runtime','standalone'].sort());
     const main = await readFile(path.join(game,'src/main.js'),'utf8');
     assert.match(main,/qualityController/);
     assert.match(main,/quality3d/);
+    assert.match(main,/const defaultQualityMode = "auto";/);
+    const bare = path.join(temp,'bare-low');
+    const bareCreated = spawnSync(process.execPath, [tool,bare,'--profile','3d',
+      '--quality','low','--bare','--no-git'], { encoding:'utf8' });
+    assert.equal(bareCreated.status,0,bareCreated.stderr);
+    const bareCfg = JSON.parse(await readFile(path.join(bare,'game.config.json'),'utf8'));
+    assert.deepEqual(Object.keys(bareCfg).sort(), Object.keys(cfg).sort());
+    assert.match(await readFile(path.join(bare,'src/main.js'),'utf8'), /const defaultQualityMode = "low";/);
+    const gl2d = path.join(temp,'gl2d');
+    const glCreated = spawnSync(process.execPath, [tool,gl2d,'--profile','2d',
+      '--renderer','webgl2d','--no-git'], { encoding:'utf8' });
+    assert.equal(glCreated.status,0,glCreated.stderr);
+    assert.equal(JSON.parse(await readFile(path.join(gl2d,'game.config.json'),'utf8')).renderer,'webgl-custom');
+    assert.equal(JSON.parse(await readFile(path.join(gl2d,'engine.config.json'),'utf8')).renderer,'webgl2d');
+    const generatedTests = spawnSync(process.execPath, ['--test','tests/config.test.mjs'], {cwd:gl2d,encoding:'utf8'});
+    assert.equal(generatedTests.status,0,generatedTests.stdout + generatedTests.stderr);
     const disabled = spawnSync(process.execPath, [tool,path.join(temp,'invalid-ui'),
       '--profile','ui','--quality','auto','--no-git'], { encoding:'utf8' });
     assert.notEqual(disabled.status,0);

@@ -58,6 +58,7 @@ export class SceneManager {
     registry: Map<string, Scene>;
     /** @type {Scene | null} */
     current: Scene | null;
+    _disposing: boolean;
     /** Register a uniquely named scene. @template {Scene} T @param {T} scene @returns {T} */
     add<T extends Scene>(scene: T): T;
     /** @param {string} name @returns {Scene | null} */

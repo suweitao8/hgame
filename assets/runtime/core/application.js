@@ -1,6 +1,7 @@
 import { createGameEngine } from '../platform/engine.js';
 import { defineProject, resolveFeatureGraph } from './config.js';
 import { SceneManager } from './scene.js';
+import { cleanupAll } from './internal/cleanup.js';
 
 /** @type {import('./config.js').FeatureCatalog} */
 const builtin = {
@@ -89,6 +90,7 @@ const builtin = {
  * @property {ApplicationServices} services
  * @property {boolean} running
  * @property {boolean} paused
+ * @property {boolean} disposed Whether application ownership has ended.
  * @property {GameApplicationStats} stats Snapshot copy.
  * @property {number} baseTimeScale
  * @property {number} hitStopRemaining Seconds of hit-stop left.
@@ -146,6 +148,7 @@ export function createGameApplication({
     project, platform: runtime, renderer, services,
     get running() { return running; },
     get paused() { return paused; },
+    get disposed() { return disposed; },
     get stats() { return { ...stats }; },
     get baseTimeScale() { return baseTimeScale; },
     get hitStopRemaining() { return hitStopRemaining; },
@@ -178,6 +181,7 @@ export function createGameApplication({
     installing = Promise.resolve().then(async () => {
       try {
         for (const name of order) {
+          if (disposed) throw new Error('Application disposed during feature installation');
           switch (name) {
             case 'scene': services.scene = app.scenes; break;
             case 'input': services.input = runtime.input; break;
@@ -228,6 +232,7 @@ export function createGameApplication({
             default: throw new Error('Feature unavailable: ' + name);
           }
         }
+        if (disposed) throw new Error('Application disposed during feature installation');
         for (const scene of app.scenes.registry.values()) {
           if (!scene.physics) {
             if (services.physics2d) scene.physics = services.physics2d.createWorld();
@@ -238,7 +243,7 @@ export function createGameApplication({
         return app;
       } catch (error) {
         for (const key of Object.keys(services)) {
-          if (key !== 'scene') delete services[key];
+          if (key !== 'scene' || disposed) delete services[key];
         }
         throw error;
       } finally {
@@ -325,7 +330,9 @@ export function createGameApplication({
         const active = app.scenes.current;
         active?._capturePreviousTransforms?.();
         active?._run('fixedUpdate', stepSize, app);
+        if (disposed) return { ...stats };
         active?.physics?.step?.(stepSize);
+        if (disposed) return { ...stats };
         runtime.input?.endFrame?.();
         accumulator = Math.max(0, accumulator - stepSize);
         stats.ticks++;
@@ -339,7 +346,9 @@ export function createGameApplication({
     }
     const current = app.scenes.current;
     current._run('update', scaledDelta, app);
+    if (disposed) return { ...stats };
     current._run('lateUpdate', scaledDelta, app);
+    if (disposed) return { ...stats };
     render();
     return { ...stats };
   }
@@ -351,6 +360,7 @@ export function createGameApplication({
       const dt = previousTime === null ? 0 : Math.max(0, (time - previousTime) / 1000);
       previousTime = time;
       step(dt);
+      if (disposed) return;
       if (services.adaptiveQuality3d && dt > 0) renderer.recordFrameInterval(dt * 1000);
       runtime.diagnostics?.recordFrame?.(time);
     } catch (error) {
@@ -368,8 +378,11 @@ export function createGameApplication({
     paused = false;
     previousTime = null;
     runtime.ready?.();
-    if (stepSize !== null) frameId = requestFrame(onFrame);
-    else render();
+    if (disposed || !running) return false;
+    if (!paused) {
+      if (stepSize !== null) frameId = requestFrame(onFrame);
+      else render();
+    }
     return true;
   }
   function stop() {
@@ -405,6 +418,7 @@ export function createGameApplication({
     return true;
   }
   function dispatch(command) {
+    if (disposed) throw new Error('Application disposed');
     if (!command || typeof command.type !== 'string') throw new TypeError('Command needs type');
     if (!app.scenes.current) throw new Error('Choose a Scene before dispatch');
     app.scenes.current.onCommand(command, app);
@@ -412,19 +426,24 @@ export function createGameApplication({
   }
   function dispose() {
     if (disposed) return false;
-    stop();
     disposed = true;
-    app.scenes.dispose();
-    offResize?.(); offFocus?.(); offVisibility?.();
-    for (const [key, service] of Object.entries(services).reverse()) {
-      if (service !== app.scenes && service !== runtime.input && service !== runtime.audio &&
-          service !== runtime.assets && service !== runtime.save && service !== runtime.diagnostics) {
-        service?.dispose?.();
-      }
-      delete services[key];
-    }
-    renderer.dispose?.();
-    if (ownsPlatform) runtime.dispose?.();
+    cleanupAll([
+      () => stop(),
+      () => app.scenes.dispose(),
+      () => offResize?.(),
+      () => offFocus?.(),
+      () => offVisibility?.(),
+      () => cleanupAll(Object.entries(services).reverse().map(([key, service]) => () => {
+        try {
+          if (service !== app.scenes && service !== runtime.input && service !== runtime.audio &&
+              service !== runtime.assets && service !== runtime.save && service !== runtime.diagnostics) {
+            service?.dispose?.();
+          }
+        } finally { delete services[key]; }
+      }), 'Feature disposal failed'),
+      () => renderer.dispose?.(),
+      () => { if (ownsPlatform) runtime.dispose?.(); },
+    ], 'Application disposal failed');
     return true;
   }
   return app;

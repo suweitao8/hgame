@@ -34,6 +34,7 @@ async function serve(profile) {
   const result = spawnSync(process.execPath, [builder, project, '--profile', selected, '--no-git',
     ...(profile === '3d-physics' ? ['--with', 'physics3d'] : []),
     ...(profile === '3d-quality' ? ['--quality', 'auto'] : []),
+    ...(profile === '3d-bare-low' ? ['--quality', 'low', '--bare'] : []),
 ], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error('Generate ' + profile + ': ' + result.stderr);
   const port = await getPort();
@@ -56,7 +57,7 @@ try {
     headless: true, ...(executablePath ? { executablePath } : {}),
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'],
   });
-  for (const profile of ['2d', '3d', '3d-physics', '3d-none', '3d-quality', 'ui']) {
+  for (const profile of ['2d', '3d', '3d-physics', '3d-none', '3d-quality', '3d-bare-low', 'ui']) {
     const url = await serve(profile);
     const page = await browser.newPage({
       viewport: { width: 960, height: 540 },
@@ -86,7 +87,12 @@ try {
       const after = await canvas.screenshot();
       result = { canvasPixels: await canvas.evaluate(element => [element.width, element.height]),
         changed: !before.equals(after), bytes: after.length };
-      if (!result.changed) throw new Error('Canvas did not update for ' + profile);
+      if (!result.changed && profile !== '3d-bare-low') throw new Error('Canvas did not update for ' + profile);
+      if (profile === '3d-bare-low') {
+        const tier = await canvas.getAttribute('data-quality-tier');
+        // Bare starters expose their controller through the canvas just like demo starters.
+        if (tier !== 'low') throw new Error('Explicit bare quality was lost: ' + tier);
+      }
       if (profile === '3d-quality') {
         const tier = await canvas.getAttribute('data-quality-tier');
         if (tier !== 'medium') throw new Error('Unknown desktop GPU must start conservative medium: ' + tier);

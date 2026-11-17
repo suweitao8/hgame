@@ -4,7 +4,7 @@
   "name": "Horde Survivor (HGame reference)",
   "version": "0.1.0",
   "entry": "index.html",
-  "renderer": "webgl2d",
+  "renderer": "webgl-custom",
   "runtime": "webasset-v1",
   "standalone": true
 }

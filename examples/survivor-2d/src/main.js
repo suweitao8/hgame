@@ -20,6 +20,7 @@ const { createWebGL2DAdapter, Sprite2D, SpriteCrowd2D } = gl2d;
 const params = new URLSearchParams(location.search);
 const horde = Number(params.get('horde') || 0);
 const seed = Number(params.get('seed') || 1);
+const debug = params.get('debug') === '1';
 
 const project = HGame.defineProject(engineConfig);
 const canvas = document.querySelector('#game');
@@ -103,15 +104,16 @@ function syncView() {
 const el = id => document.getElementById(id);
 const hud = { hp: el('hp').firstElementChild, xp: el('xp').firstElementChild, stats: el('stats'), levelup: el('levelup'),
   gameover: el('gameover'), result: el('result') };
-const LABELS = { damage: 'Damage +30%', rate: 'Fire rate +', multishot: '+1 bolt', pierce: '+1 pierce', speed: 'Move speed +10%',
-  magnet: 'Magnet +40%', nova: 'Nova bigger', heal: 'Heal +40' };
+const LABELS = { damage: '+30% 伤害', rate: '+ 射速', multishot: '+1 弹体', pierce: '+1 穿透', speed: '+10% 移速',
+  magnet: '+40% 拾取', nova: '+ 范围', heal: '+40 生命' };
+el('debug').hidden = !debug;
 let shownPending = null;
 function syncHud(fps) {
   const { player, state } = sim;
   hud.hp.style.transform = `scaleX(${player.hp / player.maxHp})`;
   hud.xp.style.transform = `scaleX(${player.xp / player.xpNeed})`;
-  hud.stats.textContent = `Lv ${player.level}   ${state.time.toFixed(0)}s   kills ${state.kills}\nenemies ${sim.en.count}   best ${best.kills}k/${best.time.toFixed(0)}s` +
-    (fps ? `   ${fps.toFixed(0)} fps` : '');
+  hud.stats.textContent = `Lv ${player.level}   ${state.time.toFixed(0)}s   ✦ ${state.kills}`;
+  if (debug) el('debug').textContent = `${sim.en.count} enemies   ${fps?.toFixed(0) ?? 0} fps`;
   if (state.pending !== shownPending) {
     shownPending = state.pending;
     hud.levelup.hidden = !state.pending;
@@ -124,7 +126,7 @@ function syncHud(fps) {
     for (const n of ['pick1', 'pick2', 'pick3']) touch.setButtonEnabled(n, Boolean(state.pending));
   }
   if (state.over && hud.gameover.hidden) {
-    if (!saved) { saved = true; const r = recordRun(save, sim.summary()); best = r.best; hud.result.textContent = `Level ${player.level}, ${state.kills} kills, ${state.time.toFixed(1)}s${r.record ? ' - new best!' : ''}`; }
+    if (!saved) { saved = true; const r = recordRun(save, sim.summary()); best = r.best; hud.result.textContent = `Lv ${player.level} · ✦ ${state.kills} · ${state.time.toFixed(1)}s${r.record ? ' ★' : ''}`; }
     hud.gameover.hidden = false;
   }
 }
@@ -138,6 +140,7 @@ function restart() {
 el('restart').onclick = restart;
 
 class Driver extends Component {
+  onDestroy() { touch.dispose(); el('restart').onclick = null; }
   fixedUpdate(dt) {
     arcade.update(dt);
     const p1 = arcade.p1;
@@ -160,5 +163,9 @@ playerEntity.addComponent(new Driver());
 app.scenes.start('main');
 app.start();
 window.__survivor = { app, sim, horde };
+window.__hgameState = () => ({ phase: sim.state.over ? 'over' : sim.state.pending ? 'upgrade' : 'playing',
+  tick: sim.state.tick, time: sim.state.time, kills: sim.state.kills, enemies: sim.en.count,
+  player: { x: sim.player.x, y: sim.player.y, hp: sim.player.hp }, best: { ...best },
+  running: app.running, disposed: app.disposed, scheduler: app.stats });
 canvas.dataset.engineReady = 'true';
 window.addEventListener('pagehide', () => { touch.dispose(); app.dispose(); }, { once: true });

@@ -12,16 +12,18 @@ const [{ HGame, Scene }, { createThreeAdapter }, THREE] = await Promise.all([
   import('../assets/vendor/three/three.module.js'),
 ]);
 
+const defaultQualityMode = "auto";
 const project = HGame.defineProject(engineConfig);
 const viewCanvas = document.querySelector('#game');
 const qualityEnabled = project.features.includes('adaptiveQuality3d');
 const renderer = createThreeAdapter({
   THREE,
   canvas: viewCanvas,
-  quality3d: qualityEnabled ? { mode: gameConfig.quality3d?.mode ?? 'auto' } : null,
+  quality3d: qualityEnabled ? { mode: gameConfig.quality3d?.mode ?? defaultQualityMode } : null,
 });
 renderer.camera.position.set(0, 4, 8);
 renderer.camera.lookAt(0, 0, 0);
+viewCanvas.dataset.qualityTier = renderer.qualityController?.state.tier ?? 'high';
 
 const app = HGame.createApplication({
   project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer,

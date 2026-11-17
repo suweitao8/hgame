@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Prevent asynchronous installation and ready callbacks from reviving disposed applications. Terminate in-flight update work after disposal and expose `app.disposed`.
+- Complete entity, scene, service, renderer and owned-platform cleanup even when user cleanup callbacks throw, then report all errors with `AggregateError`. Preserve idempotent disposal and borrowed-platform ownership.
+- Keep generated 3D quality settings in entry code so `game.config.json` conforms to WebAsset's discovery allowlist, including bare starters. Legacy quality metadata remains readable.
+- Map the engine's `webgl2d` renderer to WebAsset's `webgl-custom` catalog value while preserving the selected backend in `engine.config.json`.
+- Verify reference-game movement, combat, natural death under controlled pressure, three restart cycles, persistent best scores, input release and renderer/touch teardown in browser CI. Add serializable state hooks and compact HUDs with opt-in debug stats.
+- Make automated playtests fail explicitly when a declared state hook throws or cannot serialize its result.
+
 - Preserve multi-second and end-of-window stalls in automated playtest telemetry. Retain whole-run counters and extrema with bounded, explicitly labelled reservoir quantiles, and report requested and actual measurement durations.
 - Replace best-only CPU timings with repeated median/tail distributions and repeatable swarm/VFX preparation. Add synchronized render measurements, explicit software/hardware modes, actual GPU/browser provenance, and target-frame versus software-health budget labels.
 - Reject invalid numeric workload, viewport and timing options before starting browser or CPU work, including malformed input-action durations.
