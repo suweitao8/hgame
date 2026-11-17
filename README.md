@@ -6,7 +6,7 @@ HGame is a standalone, renderer-neutral, **zero-GUI-editor** HTML5 game runtime 
 
 - **Zero-Blind-Scan API CLI**: `npm run api -- --map` | `npm run api -- --recipe <2d|horde|3d|ui|network>` | `npm run api -- <keyword>`
 - **Workspace Rules & AI Runbook**: [AGENTS.md](AGENTS.md) | [assets/template/AGENTS.md](assets/template/AGENTS.md) | [.agents/skills/hgame/SKILL.md](.agents/skills/hgame/SKILL.md)
-- **System Cards Index**: [docs/guides/USER-AND-AGENT-GUIDE.md](docs/guides/USER-AND-AGENT-GUIDE.md) (`docs/guides/systems/01..16.md`)
+- **System Cards Index**: [docs/guides/USER-AND-AGENT-GUIDE.md](docs/guides/USER-AND-AGENT-GUIDE.md)
 
 ## Repository Layout
 
@@ -55,6 +55,7 @@ npm run release
 ## Runtime Subsystems
 
 - **Core & Sim**: `Scene/Entity/Component`, `GameplayTags`, `app.renderAlpha`, `app.hitStop`, `TweenManager`, `SpringDamper1D/2D/3D`, `sim/` (`createSeededRng`, `hashState`, `runScripted`).
+- **Gameplay**: attributes, resource costs, Buff/Debuff stacking, periodic effects, cooldowns, charges, casting, channeling and buffered input. Import `GameplayComponent` or `createGameplayActor` from `gameplay/index.js`. [Gameplay guide](docs/guides/systems/17-gameplay.md)
 - **2D & 150k+ Crowds**: `Canvas2D`, `WebGL2D`, `post2d` (ambient + 32 point lights + Bloom/vignette/hitPulse), `SpriteSheet`, `TileMap` A*, `SpriteCrowd2D`, `createSwarmSimulation`, `createGpuSwarmWebGL2`.
 - **3D & Open World**: `ThreeAdapter` (`ueFilmic`), `sky3d`, `MegaLights3D`, `IrradianceProbeVolume3D`, `post3d`, `culling3d`, `camera3d`, `terrain3d` (FBM + Rapier heightfield + scatter), `navmesh3d`, `procedural-models` (17 PBR shapes), `model3d` (`BoneVatCrowd3D`), `open-world` (`WorldPartition`, `HLOD`, `FloatingOrigin`).
 - **AI, UI, Audio & Storage**: `ai/fsm.js` (HFSM), `ai/bt.js` (Behavior Tree), `ui/` (`PanelStack`, `VirtualList`, `i18n`, `RedDotSystem`), `audio.playSynth` (10 SFX presets), `audio.createBgm` (6 adaptive moods), `HRTF` 3D cues, `createVersionedStore` (migrations + FNV-1a + `.bak`).

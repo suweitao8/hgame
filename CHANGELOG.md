@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an opt-in gameplay runtime with bounded attributes, source-owned modifiers, stackable and periodic effects, and abilities with costs, shared cooldowns, charges, casting, channeling and buffered input. Use `GameplayComponent` in fixed-step scenes or `createGameplayActor` for command-driven games. Actor snapshots persist attributes, effects and cooldown state.
+
 - Keep readable save storage when writes are blocked or its quota is exhausted, preserving existing progress and surfacing explicit write errors. Probe availability without modifying storage. Successful migrated/recovered loads report automatic writeback failures through optional `writebackError` while keeping valid data readable; retry on the next load.
 
 - Checksum versioned saves after JSON conversion so dates, optional fields, typed arrays and non-finite numbers remain readable. Validate serialization before changing the primary or backup slot, including migrated saves.

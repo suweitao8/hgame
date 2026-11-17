@@ -18,6 +18,7 @@ const RUNTIME_DIR_PREFIXES = new Set([
   'vfx',
   'sim',
   'ai',
+  'gameplay',
   'world',
   'time',
   'animation',
@@ -440,7 +441,7 @@ function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSu
   const runtimeSubpaths = [];
   if (includeSrcSubpaths) {
     const literalRe = /['"`]([^'"`\r\n]+)['"`]/g;
-    const subpathMatchRe = /(?:^|vendor\/hgame\/|runtime\/hgame\/|\/)((?:core|platform|integrations|ui|vfx|sim|ai|world|time|animation|physics|lockstep)\/[A-Za-z0-9_./-]+\.m?js)$/i;
+    const subpathMatchRe = /(?:^|vendor\/hgame\/|runtime\/hgame\/|\/)((?:core|platform|integrations|ui|vfx|sim|ai|gameplay|world|time|animation|physics|lockstep)\/[A-Za-z0-9_./-]+\.m?js)$/i;
     let lit;
     while ((lit = literalRe.exec(clean)) !== null) {
       const raw = lit[1].replace(/\$\{[^}]+\}/g, '');

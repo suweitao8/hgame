@@ -69,6 +69,7 @@ npm run api -- --module post2d   # Every export in one module
 | 14 | 2D Atmospheric Lighting/Bloom (`post2d`), 3D Terrain (`terrain3d`) & 17 Props | [systems/14-post2d-terrain3d-props.md](systems/14-post2d-terrain3d-props.md) |
 | 15 | Commercial UI Kit (`PanelStack`, `VirtualList`, `i18n`) & `createVersionedStore` | [systems/15-ui-kit-i18n-versioned-save.md](systems/15-ui-kit-i18n-versioned-save.md) |
 | 16 | 0-KB Synth SFX (`playSynth`) & Adaptive BGM Sequencer (`createBgm`) | [systems/16-procedural-bgm.md](systems/16-procedural-bgm.md) |
+| 17 | Attributes, Status Effects, Skills & Cooldowns (`GameplayComponent`, `createGameplayActor`) | [systems/17-gameplay.md](systems/17-gameplay.md) |
 
 ---
 

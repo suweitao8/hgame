@@ -32,6 +32,7 @@ const CAPABILITY_MAP = [
   { need: '3D terrain + Rapier heightfield, NavMesh', module: 'world/terrain3d.js, world/navmesh3d.js', keyApis: 'createHeightfieldTerrain3D, fbmNoise2D, scatterPositions, attachPhysics, createNavMesh3D' },
   { need: '3D rigged GLB, 17 props, VAT crowds', module: 'integrations/model3d.js, procedural-models.js, world-aligned-material.js', keyApis: 'createModel3DProvider, createProceduralModelSlots, createBoneVatCrowd3D, createWorldMaterialPalette, npm run process:model3d' },
   { need: 'Enemy/NPC AI (HFSM + Behavior Tree)', module: 'ai/index.js (ai/fsm.js, ai/bt.js)', keyApis: 'createStateMachine, createBehaviorTree, BT_STATUS, sequence, selector, parallel, cooldown, condition, action' },
+  { need: 'Attributes, stackable buffs and abilities', module: 'gameplay/index.js', keyApis: 'GameplayComponent, createGameplayActor, createAttributeSet, createEffectController, createAbilitySystem' },
   { need: 'Zero-GC VFX, telegraphs, damage numbers', module: 'vfx/index.js', keyApis: 'createVfxSystem, emitHitImpact, slashArc, lightningBolt, spawnTelegraph, popupNumber, screenPulse, CROWD_STATUS' },
   { need: 'UI PanelStack, VirtualList, i18n, RedDot', module: 'ui/index.js, integrations/red-dot-dom.js', keyApis: 'createPanelStack, createVirtualList, createI18n, createRedDotSystem, bindRedDotDOM' },
   { need: '0-KB SFX & adaptive BGM + 3D spatial', module: 'platform/audio.js, audio/synth.js, audio/bgm-synth.js', keyApis: 'audio.playSynth(10 presets), audio.createBgm(6 moods, setIntensity), registerCue, updateListenerFromCamera' },
