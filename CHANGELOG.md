@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Create Pixi entity shadows only when needed, avoid redundant crowd texture writes and trigonometry, and fall back to the base texture if a hit-flash silhouette was omitted.
+
 - Preserve independent skeletons in skinned 3D model slots instead of flattening them into static instances; the 3D starter loads SkeletonUtils only when needed.
 
 - Reuse world-space viewport bounds when culling Pixi swarm particles, reducing per-unit camera transformations.

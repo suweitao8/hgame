@@ -45,6 +45,8 @@ const renderer = new Renderer2D(atlas);
 
 Catalog entries must have `kind: "image"`; extra frames use the image dimensions unless `width` and `height` are supplied. Frames get a `_white` silhouette by default; set `makeWhite: false` to omit it. The atlas has a fixed size and reports overflow instead of silently dropping a frame. `options.signal` can cancel loading. The built-in character slots retain their fixed atlas dimensions.
 
+`renderer.syncEntity(id, state)` creates a shadow only when `state.hasShadow !== false`; returned entries can therefore have `shadow: null`. If a frame has no `_white` silhouette, hit flash retains the base texture instead of substituting a white rectangle.
+
 For frame animation, use the existing HGame `SpriteSheet` and `AnimationPlayer`. A catalog entry can provide a `sheet` factory; its cells are baked as `prefix/0`, `prefix/1`, and so on, including matching white hit-flash frames:
 
 ```js

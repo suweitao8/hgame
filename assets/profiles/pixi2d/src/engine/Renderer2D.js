@@ -118,13 +118,15 @@ export class Renderer2D {
         this.pendingEnemies.push(particle);
         if (this.pendingEnemies.length === 4096) this.flushEnemies();
       }
-      particle.texture = this.atlas.get(key);
+      const texture = this.atlas.get(key);
+      if (particle.texture !== texture) particle.texture = texture;
       particle.x = enemy.x;
       particle.y = enemy.y;
       const phase = time * 7 + enemy.id * 0.37;
       particle.rotation = Math.sin(phase) * 0.09;
-      particle.scaleX = 1 + Math.sin(phase * 2) * 0.035;
-      particle.scaleY = 1 - Math.sin(phase * 2) * 0.05;
+      const stride = Math.sin(phase * 2);
+      particle.scaleX = 1 + stride * 0.035;
+      particle.scaleY = 1 - stride * 0.05;
     }
     this.flushEnemies();
   }
@@ -141,26 +143,34 @@ export class Renderer2D {
   syncEntity(id, state) {
     let entry = this.entityMap.get(id);
     if (!entry) {
-      entry = { sprite: this.alloc(state.tex), shadow: this.alloc('shadow_oval'), flashTimer: 0, animScaleX: 1, animScaleY: 1 };
+      entry = { sprite: this.alloc(state.tex), shadow: null, flashTimer: 0, animScaleX: 1, animScaleY: 1 };
       this.entityMap.set(id, entry);
-      this.entityLayer.addChild(entry.sprite); this.shadowLayer.addChild(entry.shadow);
+      this.entityLayer.addChild(entry.sprite);
     }
     entry.baseTex = state.tex;
     const sprite = entry.sprite;
-    sprite.texture = this.atlas.get(entry.flashTimer > 0 ? state.tex + '_white' : state.tex);
+    const baseTexture = this.atlas.get(state.tex);
+    sprite.texture = entry.flashTimer > 0 ? (this.atlas.textures.get(state.tex + '_white') ?? baseTexture) : baseTexture;
     sprite.position.set(state.x, state.y); sprite.rotation = state.rot ?? 0;
     sprite.scale.set((state.scaleX ?? 1) * entry.animScaleX, (state.scaleY ?? 1) * entry.animScaleY);
     sprite.tint = entry.flashTimer > 0 ? 0xffffff : (state.tint ?? 0xffffff);
     sprite.alpha = state.alpha ?? 1; sprite.zIndex = state.zIndex ?? state.y;
-    entry.shadow.visible = state.hasShadow !== false;
-    entry.shadow.position.set(state.x, state.y + 18); entry.shadow.alpha = 0.35;
+    if (state.hasShadow !== false) {
+      if (!entry.shadow) {
+        entry.shadow = this.alloc('shadow_oval');
+        this.shadowLayer.addChild(entry.shadow);
+      }
+      entry.shadow.visible = true;
+      entry.shadow.position.set(state.x, state.y + 18); entry.shadow.alpha = 0.35;
+    } else if (entry.shadow) entry.shadow.visible = false;
     return entry;
   }
   releaseEntity(id) {
     const entry = this.entityMap.get(id);
     if (!entry) return;
-    entry.sprite.removeFromParent(); entry.shadow.removeFromParent();
-    this.spritePool.push(entry.sprite, entry.shadow); this.entityMap.delete(id);
+    entry.sprite.removeFromParent(); this.spritePool.push(entry.sprite);
+    if (entry.shadow) { entry.shadow.removeFromParent(); this.spritePool.push(entry.shadow); }
+    this.entityMap.delete(id);
   }
   update(dt) {
     const c = this.camera, a = 1 - Math.exp(-10 * dt);
