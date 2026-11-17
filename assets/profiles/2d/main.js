@@ -1,12 +1,16 @@
-const [gameConfig, engineConfig] = await Promise.all([
-  fetch('./game.config.json').then(r => r.json()),
-  fetch('./engine.config.json').then(r => r.json()),
-]);
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
-const { HGame, Component, Entity, Scene } = await import(base + '/index.js');
+const [gameConfig, engineConfig, { createGameApplication }, { defineProject }, { Component }, { Entity }, { Scene }] = await Promise.all([
+  fetch('./game.config.json').then(r => r.json()),
+  fetch('./engine.config.json').then(r => r.json()),
+  import(base + '/core/application.js'),
+  import(base + '/core/config.js'),
+  import(base + '/core/component.js'),
+  import(base + '/core/entity.js'),
+  import(base + '/core/scene.js'),
+]);
 
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const canvas = document.querySelector('#game');
 const quality = gameConfig?.quality2d?.tier ?? null;
 let renderer;
@@ -20,7 +24,7 @@ if (project.renderer === 'webgl2d') {
   renderer = mod.createCanvas2DAdapter({ canvas, width: 960, height: 540, ...(quality ? { quality } : {}) });
   Sprite2D = mod.Sprite2D;
 }
-const app = HGame.createApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
+const app = createGameApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
 await app.installFeatures();
 
 const scene = app.scenes.add(new Scene('main'));

@@ -1,17 +1,18 @@
-const [gameConfig, engineConfig] = await Promise.all([
-  fetch('./game.config.json').then(r => r.json()),
-  fetch('./engine.config.json').then(r => r.json()),
-]);
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
-const [{ HGame, Scene }, { createDOMAdapter }] = await Promise.all([
-  import(base + '/index.js'), import(base + '/integrations/dom.js'),
+const [gameConfig, engineConfig, { createGameApplication }, { defineProject }, { Scene }, { createDOMAdapter }] = await Promise.all([
+  fetch('./game.config.json').then(r => r.json()),
+  fetch('./engine.config.json').then(r => r.json()),
+  import(base + '/core/application.js'),
+  import(base + '/core/config.js'),
+  import(base + '/core/scene.js'),
+  import(base + '/integrations/dom.js'),
 ]);
 
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const count = document.querySelector('#count');
 const renderer = createDOMAdapter({ render: () => { count.textContent = String(state.draws); } });
-const app = HGame.createApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
+const app = createGameApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
 await app.installFeatures();
 const state = { draws: 0 };
 const scene = app.scenes.add(new Scene('cards'));

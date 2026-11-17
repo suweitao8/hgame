@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Start generated profiles and reference games from their required runtime modules, loading configuration and shared modules in parallel.
+- Remove unused Rapier 3D from the Arena reference game's engine configuration. Its simulation uses its own ray and box collision code.
+
 - Rebase application frame timing on browser visibility transitions. Hidden frames leave adaptive 3D quality alone, and the next visible frame starts a new diagnostic timing window.
 - Skip recording a frame when an adaptive-quality callback disposes the application or resets its frame clock.
 - Release touch gestures and discard buffered overlay button actions when the page becomes hidden or loses focus.

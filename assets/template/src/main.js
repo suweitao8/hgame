@@ -1,12 +1,17 @@
-const [gameConfig, engineConfig] = await Promise.all([
-  fetch('./game.config.json').then(r => r.json()),
-  fetch('./engine.config.json').then(r => r.json()),
-]);
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
-const [{ createGameApplication, defineProject, Component, Entity, Scene },
-  { createCanvas2DAdapter, Sprite2D }] = await Promise.all([
-  import(base + '/index.js'), import(base + '/integrations/canvas2d.js'),
+const [
+  gameConfig, engineConfig, { createGameApplication }, { defineProject },
+  { Component }, { Entity }, { Scene }, { createCanvas2DAdapter, Sprite2D },
+] = await Promise.all([
+  fetch('./game.config.json').then(r => r.json()),
+  fetch('./engine.config.json').then(r => r.json()),
+  import(base + '/core/application.js'),
+  import(base + '/core/config.js'),
+  import(base + '/core/component.js'),
+  import(base + '/core/entity.js'),
+  import(base + '/core/scene.js'),
+  import(base + '/integrations/canvas2d.js'),
 ]);
 
 const project = defineProject(engineConfig);

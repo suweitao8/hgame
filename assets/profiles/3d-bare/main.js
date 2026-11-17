@@ -1,19 +1,19 @@
 // Bare 3D starter (create-game --bare): renderer, one light and an empty scene.
 // No demo level, material palette or model slots.
-const [gameConfig, engineConfig] = await Promise.all([
-  fetch('./game.config.json').then(r => r.json()),
-  fetch('./engine.config.json').then(r => r.json()),
-]);
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
-const [{ HGame, Scene }, { createThreeAdapter }, THREE] = await Promise.all([
-  import(base + '/index.js'),
+const [gameConfig, engineConfig, { createGameApplication }, { defineProject }, { Scene }, { createThreeAdapter }, THREE] = await Promise.all([
+  fetch('./game.config.json').then(r => r.json()),
+  fetch('./engine.config.json').then(r => r.json()),
+  import(base + '/core/application.js'),
+  import(base + '/core/config.js'),
+  import(base + '/core/scene.js'),
   import(base + '/integrations/three.js'),
   import('../assets/vendor/three/three.module.js'),
 ]);
 
 const defaultQualityMode = "auto";
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const viewCanvas = document.querySelector('#game');
 const qualityEnabled = project.features.includes('adaptiveQuality3d');
 const renderer = createThreeAdapter({
@@ -25,7 +25,7 @@ renderer.camera.position.set(0, 4, 8);
 renderer.camera.lookAt(0, 0, 0);
 viewCanvas.dataset.qualityTier = renderer.qualityController?.state.tier ?? 'high';
 
-const app = HGame.createApplication({
+const app = createGameApplication({
   project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer,
 });
 await app.installFeatures();

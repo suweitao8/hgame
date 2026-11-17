@@ -5,14 +5,22 @@ import { TIER_BUDGET, CONFIG } from './sim/config.js';
 import { rayBoxes } from './sim/collide.js';
 import { recordRun, loadBest } from './meta.js';
 
-const [gameConfig, engineConfig] = await Promise.all([
-  fetch('./game.config.json').then(r => r.json()),
-  fetch('./engine.config.json').then(r => r.json()),
-]);
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
-const [{ HGame, Component, Entity, Scene }, { createThreeAdapter }, { createSpringArm3D }, { createTouchControls }, THREE] = await Promise.all([
-  import(base + '/index.js'),
+const [
+  gameConfig, engineConfig, { createGameApplication }, { defineProject },
+  { Component }, { Entity }, { Scene }, { createSaveStore }, { createArcadeControls },
+  { createThreeAdapter }, { createSpringArm3D }, { createTouchControls }, THREE,
+] = await Promise.all([
+  fetch('./game.config.json').then(r => r.json()),
+  fetch('./engine.config.json').then(r => r.json()),
+  import(base + '/core/application.js'),
+  import(base + '/core/config.js'),
+  import(base + '/core/component.js'),
+  import(base + '/core/entity.js'),
+  import(base + '/core/scene.js'),
+  import(base + '/platform/storage.js'),
+  import(base + '/platform/input/arcade.js'),
   import(base + '/integrations/three.js'),
   import(base + '/integrations/camera3d.js'),
   import(base + '/integrations/touch-controls.js'),
@@ -26,7 +34,7 @@ const god = params.get('god') === '1';
 const debug = params.get('debug') === '1';
 const lifetime = new AbortController();
 
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const canvas = document.querySelector('#game');
 const renderer = createThreeAdapter({
   THREE, canvas, shadows: true, toneMapping: 'ueFilmic', exposure: 1.1,
@@ -35,9 +43,9 @@ const renderer = createThreeAdapter({
     onChange(state) { canvas.dataset.qualityTier = state.tier; } },
 });
 canvas.dataset.qualityTier = renderer.qualityController?.state.tier ?? 'high';
-const app = HGame.createApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
+const app = createGameApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
 await app.installFeatures();
-const save = app.services.save ?? HGame.createSaveStore({ gameId: gameConfig.id });
+const save = app.services.save ?? createSaveStore({ gameId: gameConfig.id });
 
 // The enemy cap is part of the sim config, so it is fixed per run from the tier we start in.
 const tierNow = () => renderer.qualityController?.state.tier ?? 'high';
@@ -114,7 +122,7 @@ window.addEventListener('pointermove', e => {
 }, { signal: lifetime.signal });
 
 // ---- input: WASD/arrows + touch stick (camera-relative), Space/J jump, K/click spin, Q/E orbit, U restart ----
-const arcade = HGame.createArcadeControls({
+const arcade = createArcadeControls({
   input: app.input,
   actions: [{ name: 'jump', label: 'Jump', slot: 'j' }, { name: 'spin', label: 'Spin', slot: 'k' }, { name: 'restart', label: 'Again', slot: 'u' }],
 });

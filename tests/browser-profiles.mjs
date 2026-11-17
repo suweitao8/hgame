@@ -65,6 +65,9 @@ try {
       deviceScaleFactor: profile === '3d-quality' ? 2 : 1,
     });
     const errors = [];
+    const startupPaths = [];
+    const trackStartup = request => startupPaths.push(new URL(request.url()).pathname);
+    page.on('request', trackStartup);
     page.on('pageerror', error => errors.push(error.message));
     page.on('response', response => {
       if (response.status() >= 400) errors.push('HTTP ' + response.status() + ': ' + response.url());
@@ -76,6 +79,18 @@ try {
       await page.locator('#draw:enabled').waitFor();
     } else {
       await page.locator('#game[data-engine-ready="true"]').waitFor({ timeout: 20000 });
+    }
+    page.off('request', trackStartup);
+    if (startupPaths.some(pathname => pathname.endsWith('/hgame/index.js'))) {
+      throw new Error('Starter loaded the full runtime entry for ' + profile);
+    }
+    const rapierLoads = startupPaths.filter(pathname => /\/vendor\/rapier[23]d\//.test(pathname));
+    if (profile === '3d-physics') {
+      if (!rapierLoads.some(pathname => pathname.endsWith('/rapier3d.wasm'))) {
+        throw new Error('Explicit Rapier 3D starter did not load its WASM');
+      }
+    } else if (rapierLoads.length) {
+      throw new Error('Starter loaded unselected physics for ' + profile);
     }
     await page.evaluate(() => {
       window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));

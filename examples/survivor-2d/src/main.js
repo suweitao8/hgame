@@ -3,18 +3,26 @@
 import { createSurvivorSim } from './sim/survivor.js';
 import { recordRun, loadBest } from './meta.js';
 
-const [gameConfig, engineConfig] = await Promise.all([
-  fetch('./game.config.json').then(r => r.json()),
-  fetch('./engine.config.json').then(r => r.json()),
-]);
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
-const [{ HGame, Component, Entity, Scene }, gl2d, { createTouchControls }] = await Promise.all([
-  import(base + '/index.js'),
+const [
+  gameConfig, engineConfig, { createGameApplication }, { defineProject },
+  { Component }, { Entity }, { Scene }, { createSaveStore }, { createArcadeControls }, { SpatialHash2D },
+  { createWebGL2DAdapter, Sprite2D, SpriteCrowd2D }, { createTouchControls },
+] = await Promise.all([
+  fetch('./game.config.json').then(r => r.json()),
+  fetch('./engine.config.json').then(r => r.json()),
+  import(base + '/core/application.js'),
+  import(base + '/core/config.js'),
+  import(base + '/core/component.js'),
+  import(base + '/core/entity.js'),
+  import(base + '/core/scene.js'),
+  import(base + '/platform/storage.js'),
+  import(base + '/platform/input/arcade.js'),
+  import(base + '/world/spatial2d.js'),
   import(base + '/integrations/webgl2d.js'),
   import(base + '/integrations/touch-controls.js'),
 ]);
-const { createWebGL2DAdapter, Sprite2D, SpriteCrowd2D } = gl2d;
 
 // URL knobs for QA: ?horde=3000 starts with a 3000-enemy swarm and an invulnerable player; ?seed=N.
 const params = new URLSearchParams(location.search);
@@ -22,16 +30,16 @@ const horde = Number(params.get('horde') || 0);
 const seed = Number(params.get('seed') || 1);
 const debug = params.get('debug') === '1';
 
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const canvas = document.querySelector('#game');
 const renderer = createWebGL2DAdapter({ canvas, width: 960, height: 540, background: '#0d1117' });
-const app = HGame.createApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
+const app = createGameApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
 await app.installFeatures();
-const save = app.services.save ?? HGame.createSaveStore({ gameId: gameConfig.id });
-const cfgSim = () => ({ SpatialHash2D: HGame.SpatialHash2D, seed, godMode: horde > 0 });
+const save = app.services.save ?? createSaveStore({ gameId: gameConfig.id });
+const cfgSim = () => ({ SpatialHash2D, seed, godMode: horde > 0 });
 
 // ---- input: WASD + touch stick via arcade controls, plus arrow keys; J/K/L pick upgrades, U restarts ----
-const arcade = HGame.createArcadeControls({
+const arcade = createArcadeControls({
   input: app.input,
   actions: [{ name: 'pick1', label: '1', slot: 'j' }, { name: 'pick2', label: '2', slot: 'k' },
     { name: 'pick3', label: '3', slot: 'l' }, { name: 'restart', label: 'Again', slot: 'u' }],

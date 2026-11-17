@@ -1,24 +1,27 @@
 // Default 3D scene: native procedural geometry, continuous WORLD-ALIGNED PBR
 // materials, and data-driven modular level. No MC models, UV atlases or sprites.
 // Level geometry is visual-only; collisions are authored separately.
-const [gameConfig, engineConfig, slotConfig, materialConfig, levelConfig] = await Promise.all([
-  fetch('./game.config.json').then(r => r.json()),
-  fetch('./engine.config.json').then(r => r.json()),
-  fetch('./src/model-slots.json').then(r => r.json()),
-  fetch('./src/materials.json').then(r => r.json()),
-  fetch('./src/level.json').then(r => r.json()),
-]);
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
-  { HGame, Component, Entity, Scene },
+  gameConfig, engineConfig, slotConfig, materialConfig, levelConfig,
+  { createGameApplication }, { defineProject }, { Component }, { Entity }, { Scene },
   { createThreeAdapter, createThreeMeshComponent },
   { createWorldMaterialPalette },
   { createProceduralModelSlots },
   { compileModularLevel, createModularLevelRenderer },
   { GLTFLoader }, THREE,
 ] = await Promise.all([
-  import(base + '/index.js'),
+  fetch('./game.config.json').then(r => r.json()),
+  fetch('./engine.config.json').then(r => r.json()),
+  fetch('./src/model-slots.json').then(r => r.json()),
+  fetch('./src/materials.json').then(r => r.json()),
+  fetch('./src/level.json').then(r => r.json()),
+  import(base + '/core/application.js'),
+  import(base + '/core/config.js'),
+  import(base + '/core/component.js'),
+  import(base + '/core/entity.js'),
+  import(base + '/core/scene.js'),
   import(base + '/integrations/three.js'),
   import(base + '/integrations/world-aligned-material.js'),
   import(base + '/integrations/procedural-models.js'),
@@ -28,7 +31,7 @@ const [
 ]);
 
 const defaultQualityMode = "auto";
-const project = HGame.defineProject(engineConfig);
+const project = defineProject(engineConfig);
 const qualityEnabled = project.features.includes('adaptiveQuality3d');
 const viewCanvas = document.querySelector('#game');
 const qualitySettings = qualityEnabled ? {
@@ -56,7 +59,7 @@ if (renderer.qualityController) {
 renderer.camera.position.set(9, 8.5, 12);
 renderer.camera.lookAt(0, 1, 0);
 
-const app = HGame.createApplication({
+const app = createGameApplication({
   project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer,
 });
 await app.installFeatures();

@@ -20,6 +20,7 @@ test('HGame 1.0 exposes deterministic physics and retains optional lockstep, PBR
   assert.equal(HGAME_VERSION, '1.0.0');
   assert.equal(HGame.name, 'HGame');
   assert.equal(HGame.version, '1.0.0');
+  assert.equal(HGame.createApplication, createGameApplication);
 });
 
 test('repository package, runtime entry and VERSION file stay on the same release', async () => {
@@ -60,18 +61,18 @@ test('trace recorder validates metadata, events and JSON serialization before em
   assert.equal(recorder.sequence, 0);
 });
 
-test('new HGame starter profiles use the HGame facade and drive collidable actors through Rapier velocities', async () => {
+test('starter profiles use the application runtime and drive collidable actors through Rapier velocities', async () => {
   const profiles = path.join(skill, 'assets', 'profiles');
   const twoD = await readFile(path.join(profiles, '2d', 'main.js'), 'utf8');
   const threeD = await readFile(path.join(profiles, '3d', 'main.js'), 'utf8');
   const ui = await readFile(path.join(profiles, 'ui', 'main.js'), 'utf8');
-  assert.match(twoD, /HGame\.createApplication/);
+  assert.match(twoD, /createGameApplication\(\{/);
   assert.match(twoD, /type: 'dynamic', shape: 'cuboid', gravityScale: 0/);
   assert.match(twoD, /actorBody\.setVelocity/);
-  assert.match(threeD, /HGame\.createApplication/);
+  assert.match(threeD, /createGameApplication\(\{/);
   assert.match(threeD, /type: 'dynamic', gravityScale: 0, friction: 0/);
   assert.match(threeD, /actorBody\.setVelocity/);
-  assert.match(ui, /HGame\.createApplication/);
+  assert.match(ui, /createGameApplication\(\{/);
 });
 
 function platform() {

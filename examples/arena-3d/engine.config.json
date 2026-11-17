@@ -2,12 +2,11 @@
   "configVersion": 1,
   "profile": "3d",
   "renderer": "threejs",
-  "physics": "rapier3d",
+  "physics": "none",
   "tickHz": 60,
   "features": [
     "scene",
     "input",
-    "physics3d",
     "audio",
     "save",
     "adaptiveQuality3d"

@@ -415,6 +415,9 @@ try {
       ? { viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }
       : { viewport: { width: 960, height: 540 } });
     const errors = [];
+    const startupPaths = [];
+    const trackStartup = request => startupPaths.push(new URL(request.url()).pathname);
+    page.on('request', trackStartup);
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     page.on('response', response => {
@@ -425,6 +428,11 @@ try {
     await page.goto(`${url}?${query}`);
     await page.locator('#game[data-engine-ready=true]').waitFor({ timeout: 20000 })
       .catch(error => { throw new Error(`${id} did not load: ${errors.join('; ')}; ${error.message}`); });
+    page.off('request', trackStartup);
+    assert.equal(startupPaths.some(pathname => pathname.endsWith('/hgame/index.js')), false,
+      `${id} starts from its required runtime modules`);
+    assert.equal(startupPaths.some(pathname => /\/vendor\/rapier[23]d\//.test(pathname)), false,
+      `${id} starts without downloading unselected physics`);
     assert.equal(await page.evaluate(() => typeof window.__hgameState), 'function', `${id} state hook`);
     const read = () => page.evaluate(() => window.__hgameState());
     if (soakSeconds) {
