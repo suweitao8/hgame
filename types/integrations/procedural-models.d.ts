@@ -2,7 +2,7 @@
  * @param {ProceduralModelOptions} options
  * @returns {ProceduralModelSlots}
  */
-export function createProceduralModelSlots({ THREE, slots, materialPalette, assetCatalog, GLTFLoader, loadGLTF, projectBaseUrl, instanceStaticModels, deferredReplacements, }?: ProceduralModelOptions): ProceduralModelSlots;
+export function createProceduralModelSlots({ THREE, slots, materialPalette, assetCatalog, GLTFLoader, loadGLTF, cloneSkeleton, projectBaseUrl, instanceStaticModels, deferredReplacements, }?: ProceduralModelOptions): ProceduralModelSlots;
 /**
  * Minimal structural Three.js Object3D.
  */
@@ -111,6 +111,10 @@ export type ProceduralModelOptions = {
         scene: ProceduralObject3D;
         animations?: unknown[];
     }>) | undefined;
+    /**
+     * Skeleton-aware Three.js clone for skinned model replacements.
+     */
+    cloneSkeleton?: ((root: ProceduralObject3D) => ProceduralObject3D | Promise<ProceduralObject3D>) | undefined;
     /**
      * Base for resolving replacement URLs.
      */

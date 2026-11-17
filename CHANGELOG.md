@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve independent skeletons in skinned 3D model slots instead of flattening them into static instances; the 3D starter loads SkeletonUtils only when needed.
+
 - Reuse world-space viewport bounds when culling Pixi swarm particles, reducing per-unit camera transformations.
 
 - Rebuild swarm spatial chunks on demand after movement and ECS patching so later spatial queries do not rely on pre-movement membership.

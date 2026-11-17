@@ -121,6 +121,7 @@ async function startWorld() {
     THREE, slots: slotConfig.slots, materialPalette, assetCatalog, projectBaseUrl: location.href,
     instanceStaticModels: true, deferredReplacements,
     loadGLTF: url => modelLoader.loadAsync(url),
+    cloneSkeleton: async root => (await import('../assets/vendor/three/jsm/utils/SkeletonUtils.js')).clone(root),
   });
   levelView = createModularLevelRenderer({ THREE, models, parent: world, chunkCells: presentation.chunkCells });
   const mounted = await levelView.setLevel(levelConfig);

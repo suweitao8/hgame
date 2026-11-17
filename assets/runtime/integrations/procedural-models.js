@@ -52,6 +52,7 @@
  * @property {Pick<ReturnType<typeof import('../platform/asset-catalog.js').createAssetCatalog>, 'get'|'url'> | null} [assetCatalog] Resolves model IDs from replacementAsset.
  * @property {(new () => { loadAsync(url: string): Promise<{ scene: ProceduralObject3D, animations?: unknown[] }> })} [GLTFLoader] Only needed if a replacement is configured.
  * @property {(url: string) => Promise<{scene: ProceduralObject3D, animations?: unknown[]}>} [loadGLTF] Optional lazy loader for replacement assets.
+ * @property {(root: ProceduralObject3D) => ProceduralObject3D | Promise<ProceduralObject3D>} [cloneSkeleton] Skeleton-aware Three.js clone for skinned model replacements.
  * @property {string} [projectBaseUrl='http://localhost/'] Base for resolving replacement URLs.
  * @property {boolean} [instanceStaticModels=false] Instance eligible multi-mesh model replacements as well as procedural props.
  * @property {Iterable<string>} [deferredReplacements] Slot IDs that use their procedural geometry until replacements are enabled.
@@ -105,7 +106,7 @@ const replacementPath = url => {
  * @returns {ProceduralModelSlots}
  */
 export function createProceduralModelSlots({
-  THREE, slots, materialPalette, assetCatalog = null, GLTFLoader, loadGLTF, projectBaseUrl,
+  THREE, slots, materialPalette, assetCatalog = null, GLTFLoader, loadGLTF, cloneSkeleton, projectBaseUrl,
   instanceStaticModels = false,
   deferredReplacements = [],
 } = {}) {
@@ -114,7 +115,21 @@ export function createProceduralModelSlots({
       typeof materialPalette?.get !== 'function') {
     throw new TypeError('THREE, slot definitions, and materialPalette are required');
   }
+  if (cloneSkeleton !== undefined && typeof cloneSkeleton !== 'function') throw new TypeError('cloneSkeleton must be a function');
   const definitions = new Map();
+  const skinnedRoots = new WeakMap();
+  function hasSkinnedMesh(root) {
+    if (skinnedRoots.has(root)) return skinnedRoots.get(root);
+    let skinned = false;
+    root.traverse(obj => { if (obj.isSkinnedMesh) skinned = true; });
+    skinnedRoots.set(root, skinned);
+    return skinned;
+  }
+  async function cloneModel(root) {
+    if (!hasSkinnedMesh(root)) return root.clone(true);
+    if (!cloneSkeleton) throw new Error('Skinned model slot requires a skeleton-aware cloneSkeleton function; use Three.js SkeletonUtils.clone');
+    return cloneSkeleton(root);
+  }
   for (const [id, raw] of Object.entries(slots)) {
     if (!ID.test(id) || !raw || typeof raw !== 'object' ||
         !SHAPES.has(raw.shape) || typeof raw.material !== 'string') {
@@ -339,7 +354,7 @@ export function createProceduralModelSlots({
     return replacementCache.get(url);
   }
   async function instantiate(id) {
-    return (await prototype(id)).clone(true);
+    return cloneModel(await prototype(id));
   }
   async function instantiateBatch(id, placements) {
     if (!Array.isArray(placements) || placements.length < 1 || placements.length > 20000) {
@@ -348,6 +363,7 @@ export function createProceduralModelSlots({
     const spec = definitions.get(id);
     const isProcedural = deferred.has(id) || (!spec?.replacement && !spec?.replacementAsset);
     const root = await prototype(id);
+    const skinned = hasSkinnedMesh(root);
     root.updateMatrixWorld(true);
     const meshes = [];
     const rootMatrix = root.matrix?.elements;
@@ -373,7 +389,7 @@ export function createProceduralModelSlots({
     const opaqueProcedural = isProcedural && meshes.every(mesh =>
       (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).every(material => !material?.transparent));
     const legacySingle = meshes.length === 1 && (isProcedural || !instanceStaticModels);
-    if (legacySingle || (meshes.length > 0 && (opaqueProcedural || (!isProcedural && instanceStaticModels && flattenSafe)))) {
+    if (!skinned && (legacySingle || (meshes.length > 0 && (opaqueProcedural || (!isProcedural && instanceStaticModels && flattenSafe))))) {
       for (const item of placements) {
         if (!item?.isMatrix4) placement(item);
       }
@@ -410,7 +426,7 @@ export function createProceduralModelSlots({
     group.userData.instancingFallback = 'multi-mesh';
     for (const item of placements) {
       placement(item);
-      const obj = root.clone(true);
+      const obj = await cloneModel(root);
       obj.position.set(item.x ?? 0, item.y ?? 0, item.z ?? 0);
       obj.rotation.y = item.rotationY ?? 0;
       obj.scale.setScalar(item.scale ?? 1);

@@ -48,6 +48,8 @@ List model slots that must have their final art before the first playable frame 
 
 Both 3D starters can load glTF geometry compressed with Meshopt. The same loader backs modular replacements and `--with model3d`, which exposes the rigged model provider as `app.services.model3d`. The decoder loads only when compressed geometry is requested.
 
+The populated starter also supplies a lazy skeleton-aware clone for skinned GLB model slots. Skinned models are cloned rather than flattened into static instances, so each placement has independent bones. For animated characters, use `app.services.model3d` to manage animation playback; a level model slot alone does not start animation clips. Direct users of `createProceduralModelSlots` must provide `cloneSkeleton` (for example Three.js `SkeletonUtils.clone`) when a slot contains a skinned mesh.
+
 `engine.config.json` owns the active renderer and runtime feature selection. `hgame.project.json` records release policy for a preset project. `runtime: "entry-graph"` includes the active renderer and feature modules and traces scripts from the HTML entry and game imports. A wide `vendor/hgame/index.js` import still brings along its dependencies. Prefer leaf imports in new `src/` files. Add fully computed HGame module paths to `includeRuntime`, for example `["gameplay/quests.js"]`, and computed `src/` imports to `includeSource`, for example `["levels/intro.js"]`. The generated standalone packager uses the same rules.
 
 ---
