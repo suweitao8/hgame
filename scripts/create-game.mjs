@@ -146,6 +146,7 @@ async function main() {
       await cp(path.join(mainSource, file), path.join(stage, 'src', file), { force: false });
     }
     if (options.recipe.profile === '3d') {
+      await cp(path.join(profiles, '3d', 'model-loader.js'), path.join(stage, 'src', 'model-loader.js'), { force: false });
       const presentation = JSON.parse(await readFile(path.join(mainSource, 'presentation.json'), 'utf8'));
       presentation.quality = options.quality ?? presentation.quality;
       await writeFile(path.join(stage, 'src', 'presentation.json'), JSON.stringify(presentation, null, 2) + '\n');

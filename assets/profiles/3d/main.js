@@ -1,6 +1,8 @@
 // Default 3D scene: native procedural geometry, continuous WORLD-ALIGNED PBR
 // materials, and data-driven modular level. No MC models, UV atlases or sprites.
 // Level geometry is visual-only; collisions are authored separately.
+import { createStarterModelLoader, installStarter3DFeatures } from './model-loader.js';
+
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
@@ -64,7 +66,8 @@ function onPageHide(event) {
 window.addEventListener('pagehide', onPageHide);
 
 async function startWorld() {
-  await app.installFeatures();
+  const modelLoader = createStarterModelLoader();
+  await installStarter3DFeatures(app, THREE, base, modelLoader);
   const loader = app.platform.assets;
   let assetCatalog = null;
   if (!app.disposed && Object.values(slotConfig.slots ?? {}).some(slot => slot?.replacementAsset !== undefined)) {
@@ -114,10 +117,7 @@ async function startWorld() {
   models = createProceduralModelSlots({
     THREE, slots: slotConfig.slots, materialPalette, assetCatalog, projectBaseUrl: location.href,
     instanceStaticModels: true, deferredReplacements,
-    async loadGLTF(url) {
-      const { GLTFLoader } = await import('../assets/vendor/three/jsm/loaders/GLTFLoader.js');
-      return new GLTFLoader().loadAsync(url);
-    },
+    loadGLTF: url => modelLoader.loadAsync(url),
   });
   levelView = createModularLevelRenderer({ THREE, models, parent: world, chunkCells: presentation.chunkCells });
   const mounted = await levelView.setLevel(levelConfig);

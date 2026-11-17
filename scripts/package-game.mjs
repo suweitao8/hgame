@@ -871,6 +871,9 @@ export async function packageGameRelease({
   // Preserve Third-Party Licenses cleanly
   if ([...includedFiles.keys()].some(k => k.startsWith('assets/vendor/three/'))) {
     enqueueRel('assets/vendor/three/LICENSE', false);
+    if (includedFiles.has('assets/vendor/three/jsm/libs/meshopt_decoder.module.js')) {
+      enqueueRel('assets/vendor/three/jsm/libs/LICENSE-meshoptimizer.txt', true);
+    }
   }
 
   // Strictly verify and package deterministic Rapier WASM only when the game uses physics

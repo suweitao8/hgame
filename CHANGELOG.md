@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share the 3D starter's GLTF loader across static slots and the optional rigged model service. Load the Meshopt decoder only when a model uses compressed geometry.
+
 - Use the same WebGL2 default for new 2D and horde projects. Share glyph textures across changing number labels and pack loose PNG sprites into a padded atlas with reusable source rectangles.
 - Let new 3D projects start with procedural geometry for background model replacements. Stage authored assets after startup, instance eligible static multi-mesh models, and limit the built-in sun's shadow coverage by the quality tier.
 

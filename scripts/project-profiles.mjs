@@ -24,6 +24,7 @@ export const PROFILE_FILES = Object.freeze({
 export const THREE_FILES = Object.freeze([
   'three.module.js', 'three.core.js', 'LICENSE', 'jsm/loaders/GLTFLoader.js',
   'jsm/utils/BufferGeometryUtils.js', 'jsm/utils/SkeletonUtils.js',
+  'jsm/libs/meshopt_decoder.module.js', 'jsm/libs/LICENSE-meshoptimizer.txt',
 ]);
 
 const FEATURE_MODULES = {

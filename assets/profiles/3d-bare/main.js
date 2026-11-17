@@ -1,5 +1,7 @@
 // Bare 3D starter (create-game --bare): renderer, one light and an empty scene.
 // No demo level, material palette or model slots.
+import { createStarterModelLoader, installStarter3DFeatures } from './model-loader.js';
+
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [gameConfig, engineConfig, presentation,
@@ -34,7 +36,12 @@ viewCanvas.dataset.qualityTier = renderer.qualityController?.state.tier ?? 'high
 const app = createGameApplication({
   project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer,
 });
-await app.installFeatures();
+try {
+  await installStarter3DFeatures(app, THREE, base, createStarterModelLoader());
+} catch (error) {
+  app.dispose();
+  throw error;
+}
 app.scenes.add(new Scene('world'));
 // TODO: add entities/components to `scene` here.
 app.scenes.start('world');

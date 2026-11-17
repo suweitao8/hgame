@@ -44,6 +44,8 @@ Both 3D starters put camera, fog, lights, tone mapping and exposure in `src/pres
 
 List model slots that must have their final art before the first playable frame in `presentation.startupModelSlots`. Other replacement slots start with their procedural geometry and upgrade after startup. Keep the fallback geometry coherent with separately authored collision. Enable `renderer.worldLighting.sun.shadow.adaptiveExtent` to cap the built-in sun's shadow coverage by the active quality tier.
 
+Both 3D starters can load glTF geometry compressed with Meshopt. The same loader backs modular replacements and `--with model3d`, which exposes the rigged model provider as `app.services.model3d`. The decoder loads only when compressed geometry is requested.
+
 `engine.config.json` owns the active renderer and runtime feature selection. `hgame.project.json` records release policy for a preset project. `runtime: "entry-graph"` includes the active renderer and feature modules and traces scripts from the HTML entry and game imports. A wide `vendor/hgame/index.js` import still brings along its dependencies. Prefer leaf imports in new `src/` files. Add fully computed HGame module paths to `includeRuntime`, for example `["gameplay/quests.js"]`, and computed `src/` imports to `includeSource`, for example `["levels/intro.js"]`. The generated standalone packager uses the same rules.
 
 ---
