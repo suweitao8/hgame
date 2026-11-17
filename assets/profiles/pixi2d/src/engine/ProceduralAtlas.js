@@ -15,10 +15,11 @@ export class ProceduralAtlas {
   }
 
   register(name, width, height, draw, { makeWhite = true } = {}) {
-    if (this.source || this.frames.has(name) || this.frames.has(name + '_white')) throw new Error('Invalid or duplicate atlas frame: ' + name);
     if (typeof name !== 'string' || !name || !Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 || typeof draw !== 'function') {
       throw new TypeError('Atlas frames require a name, positive integer dimensions and a draw function');
     }
+    if (this.frames.has(name + '_white')) throw new Error('Invalid or duplicate atlas frame: ' + name);
+    this.checkCapacity([{ name, width, height }, ...(makeWhite ? [{ name: name + '_white', width, height }] : [])]);
     const scratch = document.createElement('canvas');
     scratch.width = width;
     scratch.height = height;
@@ -33,6 +34,22 @@ export class ProceduralAtlas {
     }
   }
 
+  /** Reserve-check before writing so overflow or name collisions do not leave partial frames. */
+  checkCapacity(items) {
+    if (this.source) throw new Error('Cannot add frames to a built atlas');
+    let x = this.x, y = this.y, rowHeight = this.rowHeight;
+    const names = new Set();
+    for (const { name, width, height } of items) {
+      if (typeof name !== 'string' || !name || names.has(name) || this.frames.has(name)) throw new Error('Invalid or duplicate atlas frame: ' + name);
+      if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) throw new RangeError('Atlas dimensions must be positive integers');
+      names.add(name);
+      if (width + 4 > this.size || height + 4 > this.size) throw new RangeError('Atlas frame too large: ' + name);
+      if (x + width + 2 > this.size) { x = 2; y += rowHeight + 4; rowHeight = 0; }
+      if (y + height + 2 > this.size) throw new RangeError('Procedural atlas is full');
+      x += width + 4; rowHeight = Math.max(rowHeight, height);
+    }
+  }
+
   registerImage(name, image, { width = image?.width, height = image?.height, makeWhite = true } = {}) {
     if (!(image?.width > 0 && image?.height > 0)) throw new TypeError('Atlas image must be decoded and have positive dimensions: ' + name);
     this.register(name, width, height, (ctx, w, h) => {
@@ -40,6 +57,36 @@ export class ProceduralAtlas {
       const dw = image.width * scale, dh = image.height * scale;
       ctx.drawImage(image, (w - dw) / 2, (h - dh) / 2, dw, dh);
     }, { makeWhite });
+  }
+
+  /** Bake a HGame SpriteSheet as prefix/0, prefix/1, ... and matching white frames. */
+  registerSheet(prefix, sheet, { width, height, makeWhite = true } = {}) {
+    const image = sheet?.image;
+    if (typeof prefix !== 'string' || !prefix || !image || !(image.width > 0 && image.height > 0) ||
+        !Number.isSafeInteger(sheet.length) || sheet.length < 1 || typeof sheet.frame !== 'function') {
+      throw new TypeError('registerSheet requires a name and a decoded HGame SpriteSheet');
+    }
+    const frames = [], plan = [];
+    for (let index = 0; index < sheet.length; index++) {
+      const rect = sheet.frame(index), name = `${prefix}/${index}`;
+      if (![rect?.x, rect?.y, rect?.width, rect?.height].every(Number.isFinite) || rect.x < 0 || rect.y < 0 ||
+          rect.width <= 0 || rect.height <= 0 || rect.x + rect.width > image.width || rect.y + rect.height > image.height) {
+        throw new RangeError('SpriteSheet frame is outside the image: ' + name);
+      }
+      const w = width ?? rect.width, h = height ?? rect.height;
+      if (this.frames.has(name + '_white')) throw new Error('Invalid or duplicate atlas frame: ' + name);
+      frames.push({ name, rect, width: w, height: h });
+      plan.push({ name, width: w, height: h });
+      if (makeWhite) plan.push({ name: name + '_white', width: w, height: h });
+    }
+    this.checkCapacity(plan);
+    for (const frame of frames) {
+      const r = frame.rect;
+      this.register(frame.name, frame.width, frame.height, (ctx, w, h) => {
+        ctx.drawImage(image, r.x, r.y, r.width, r.height, 0, 0, w, h);
+      }, { makeWhite });
+    }
+    return frames.map(frame => frame.name);
   }
 
   pack(name, image) {
@@ -114,7 +161,10 @@ export function createDefaultGameAtlas({ playerImage = null, enemyImage = null, 
     ctx.fillStyle = '#101b2a'; ctx.fillRect(0, 0, w, h);
     ctx.strokeStyle = '#244256'; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
   }, { makeWhite: false });
-  for (const frame of extraFrames) atlas.registerImage(frame.name, frame.image, frame);
+  for (const frame of extraFrames) {
+    if (typeof frame.sheet === 'function') atlas.registerSheet(frame.name, frame.sheet(frame.image), frame);
+    else atlas.registerImage(frame.name, frame.image, frame);
+  }
   return atlas.build();
 }
 
@@ -129,6 +179,8 @@ export async function createCatalogGameAtlas(catalog, frames, { size = 1024, sig
       throw new TypeError('Each atlas frame needs a unique name and a catalog image ID');
     }
     names.add(frame.name);
+    if (frame.sheet !== undefined && typeof frame.sheet !== 'function') throw new TypeError('Atlas sheet must be a function that creates a SpriteSheet');
+    if (frame.sheet && ['player_hero', 'enemy_chaser', 'enemy_elite'].includes(frame.name)) throw new TypeError('Sprite sheets require a separate frame prefix');
     if (catalog.get(frame.asset).kind !== 'image') throw new TypeError('Atlas frame must refer to a catalog image: ' + frame.asset);
   }
   const scope = catalog.openScope();

@@ -14,6 +14,7 @@ The simulation must not import PixiJS or access the DOM. Use the renderer and ju
 - Cache static containers using `cacheAsTexture(true)`.
 - Use atlas `_white` frames for hit flashes and reserve filters for layers.
 - Use `createCatalogGameAtlas(catalog, frames)` to bake catalog images into the shared atlas; let the renderer dispose the finished atlas.
+- For sprite-sheet animation, bake HGame `SpriteSheet` frames using `registerSheet` or a catalog `sheet` factory; advance HGame `AnimationPlayer` in the existing loop.
 - For HGame CPU swarms use `renderer.createSwarmLayer()` and call `sync(swarm)` once per visual update; release the layer on scene exit.
 - Do not use `app.view`, `@pixi/*` v7 packages, `beginFill`/`drawCircle`, `BaseTexture`, `interactive`, `cacheAsBitmap`, or `addChild(Sprite)` on a `ParticleContainer`.
 - After changing source, run `npm run build:pixi` in the generated game to update its playable entry and bundles. It preserves authored assets.

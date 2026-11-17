@@ -30,6 +30,24 @@ const renderer = new Renderer2D(atlas);
 
 Catalog entries must have `kind: "image"`; extra frames use the image dimensions unless `width` and `height` are supplied. Frames get a `_white` silhouette by default; set `makeWhite: false` to omit it. The atlas has a fixed size and reports overflow instead of silently dropping a frame. `options.signal` can cancel loading. The built-in character slots retain their fixed atlas dimensions.
 
+For frame animation, use the existing HGame `SpriteSheet` and `AnimationPlayer`. A catalog entry can provide a `sheet` factory; its cells are baked as `prefix/0`, `prefix/1`, and so on, including matching white hit-flash frames:
+
+```js
+import { SpriteSheet } from '../vendor/hgame/animation/spritesheet.js';
+import { AnimationPlayer } from '../vendor/hgame/animation/player.js';
+
+const atlas = await createCatalogGameAtlas(catalog, [{
+  name: 'hero_walk', asset: 'hero.walk_sheet', width: 64, height: 64,
+  sheet: image => SpriteSheet.fromGrid(image, { columns: 4, rows: 2 }),
+}], { size: 2048 });
+const walk = new AnimationPlayer().define('walk', { frames: [0, 1, 2, 3], fps: 8 }).play('walk');
+// fixedUpdate(dt): walk.update(dt);
+// update(): renderer.syncEntity('hero', { x, y, tex: `hero_walk/${walk.frame}` });
+// On scene exit: walk.dispose(); renderer.dispose();
+```
+
+For an already decoded image, `atlas.registerSheet('hero_walk', sheet, options)` returns the generated frame names before `atlas.build()`. Supply integer output dimensions if a sheet uses fractional inset values. Packing checks the complete sheet before writing it, and reports duplicate names or overflow.
+
 For larger CPU-simulated crowds, use the existing HGame `createSwarmSimulation` and a Pixi swarm layer. Call `swarm.step` in the scene's fixed update and synchronize once per visual update; no extra application loop or per-unit game objects are required:
 
 `node scripts/create-game.mjs <new-game-dir> --preset horde` creates this combination with a configurable `src/swarm.json`. Add `--bare` for an empty Pixi scene, or `--renderer webgl2d` to retain the previous custom-renderer horde starter. Existing projects are not changed.
