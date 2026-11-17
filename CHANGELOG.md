@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Route procedural BGM through the audio manager's lazily acquired shared context and music bus, with independent per-track gain and explicit controller release.
+
 - Count procedural synth sounds against the shared audio voice budget and release their nodes when stopped, ended, or the manager is disposed. Expose synth and procedural music on the audio manager's documented API.
 
 - Share concurrent 3D model and animation-clip requests for the same GLTF within a model provider.

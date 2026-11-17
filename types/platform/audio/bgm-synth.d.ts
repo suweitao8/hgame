@@ -27,6 +27,7 @@ export function generateBgmStep(mood?: string | undefined, stepIndex?: number | 
  * @property {(new () => AudioContext) | undefined} [AudioContextClass]
  * @property {AudioContext | null} [context=null]
  * @property {AudioNode | null} [destination=null]
+ * @property {(() => {context: AudioContext | null, destination: AudioNode | null} | null) | null} [resolveAudio=null] Lazily acquire a shared context and destination.
  * @property {keyof typeof BGM_MOODS | string} [mood='adventure']
  * @property {number} [intensity=0.5]
  * @property {number} [bpm]
@@ -149,6 +150,13 @@ export type ProceduralBgmOptions = {
     AudioContextClass?: (new () => AudioContext) | undefined;
     context?: AudioContext | null | undefined;
     destination?: AudioNode | null | undefined;
+    /**
+     * Lazily acquire a shared context and destination.
+     */
+    resolveAudio?: (() => {
+        context: AudioContext | null;
+        destination: AudioNode | null;
+    } | null) | null | undefined;
     mood?: string | undefined;
     intensity?: number | undefined;
     bpm?: number | undefined;

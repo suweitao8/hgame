@@ -599,12 +599,17 @@ export function createAudioManager({
   const bgmInstances = new Set();
 
   function createBgm(bgmOpts = {}) {
-    const dest = ctx.getBusNode ? ctx.getBusNode('music') : ctx.master;
-    const bgm = createProceduralBgm({
+    const controller = createProceduralBgm({
       AudioContextClass,
-      context: ctx.context,
-      destination: dest,
+      resolveAudio() {
+        if (!ctx.context) void buses.unlock().catch(() => {});
+        return { context: ctx.context, destination: ctx.getBusNode ? ctx.getBusNode('music') : ctx.master };
+      },
       ...bgmOpts,
+    });
+    const bgm = Object.freeze({
+      ...controller,
+      dispose() { bgmInstances.delete(bgm); controller.dispose(); },
     });
     bgmInstances.add(bgm);
     return bgm;

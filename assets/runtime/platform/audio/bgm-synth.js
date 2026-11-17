@@ -197,6 +197,7 @@ function triggerPercussion(audioCtx, dest, drumKind, gainScale, time) {
  * @property {(new () => AudioContext) | undefined} [AudioContextClass]
  * @property {AudioContext | null} [context=null]
  * @property {AudioNode | null} [destination=null]
+ * @property {(() => {context: AudioContext | null, destination: AudioNode | null} | null) | null} [resolveAudio=null] Lazily acquire a shared context and destination.
  * @property {keyof typeof BGM_MOODS | string} [mood='adventure']
  * @property {number} [intensity=0.5]
  * @property {number} [bpm]
@@ -213,7 +214,8 @@ function triggerPercussion(audioCtx, dest, drumKind, gainScale, time) {
 export function createProceduralBgm(options = {}) {
   const Ctor = options.AudioContextClass ?? globalThis.AudioContext ?? globalThis.webkitAudioContext;
   let ctx = options.context ?? null;
-  let master = options.destination ?? null;
+  let destination = options.destination ?? null;
+  let master = null;
   let ownsCtx = false;
 
   let mood = BGM_MOODS[options.mood] ? options.mood : 'adventure';
@@ -223,12 +225,18 @@ export function createProceduralBgm(options = {}) {
   let muted = false;
   let playing = false;
   let paused = false;
+  let disposed = false;
   let stepIndex = 0;
   let accumSec = 0;
   let timerId = null;
 
   function ensureContext() {
     if (ctx && master) return ctx;
+    if (!ctx && typeof options.resolveAudio === 'function') {
+      const shared = options.resolveAudio();
+      ctx = shared?.context ?? null;
+      destination ??= shared?.destination ?? null;
+    }
     if (!ctx && typeof Ctor === 'function') {
       ctx = new Ctor();
       ownsCtx = true;
@@ -236,7 +244,7 @@ export function createProceduralBgm(options = {}) {
     if (ctx && !master && typeof ctx.createGain === 'function') {
       master = ctx.createGain();
       master.gain.value = muted ? 0 : volume;
-      master.connect(ctx.destination);
+      master.connect(destination ?? ctx.destination);
     }
     return ctx;
   }
@@ -295,6 +303,7 @@ export function createProceduralBgm(options = {}) {
   }
 
   function start(startOpts = {}) {
+    if (disposed) throw new Error('BGM controller is disposed');
     if (startOpts.mood) setMood(startOpts.mood);
     if (startOpts.intensity !== undefined) setIntensity(startOpts.intensity);
     ensureContext();
@@ -326,6 +335,7 @@ export function createProceduralBgm(options = {}) {
   }
 
   function resume() {
+    if (disposed) throw new Error('BGM controller is disposed');
     if (!playing) return start();
     paused = false;
     if (ctx?.state === 'suspended') ctx.resume?.().catch?.(() => {});
@@ -385,10 +395,14 @@ export function createProceduralBgm(options = {}) {
   }
 
   function dispose() {
+    if (disposed) return;
+    disposed = true;
     stop();
+    try { master?.disconnect?.(); } catch { /* The context may already be closed. */ }
     if (ownsCtx) ctx?.close?.().catch?.(() => {});
     ctx = null;
     master = null;
+    destination = null;
   }
 
   return Object.freeze({
