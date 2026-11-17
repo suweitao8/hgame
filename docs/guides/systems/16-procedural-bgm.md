@@ -24,4 +24,4 @@ bgm.setMood('boss');
 - WebAudio unlocks on first user pointer/key gesture; trigger `bgm.start()` inside input or let `createAudioManager` resume once unlocked.
 - `playSynth` shares `maxPolyphony` with audio-buffer voices; it returns a handle with `played`, `duration`, and `stop()`. Active sounds are stopped on manager disposal.
 - `audio.createBgm()` acquires the shared context and music bus when started. Each controller has its own gain; `audio.setBusVolume('music', value)` adjusts the shared music bus.
-- For deterministic headless tests without browser `AudioContext`, call `bgm.update(dt)` / `generateBgmStep(...)` directly.
+- For a game-owned clock, create BGM with `autoSchedule: false` and call `bgm.update(dt)`; do not drive `update` alongside the automatic scheduler.

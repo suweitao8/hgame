@@ -251,7 +251,7 @@ export function createProceduralBgm(options = {}) {
 
   function applyGain() {
     if (master?.gain) {
-      master.gain.value = muted ? 0 : volume;
+      master.gain.value = muted || paused || !playing ? 0 : volume;
     }
   }
 
@@ -302,6 +302,15 @@ export function createProceduralBgm(options = {}) {
     }
   }
 
+  function startScheduler() {
+    if (options.autoSchedule === false || timerId !== null || typeof setInterval !== 'function' || !ctx || !playing || paused) return;
+    const tickMs = Math.max(20, Math.round(generateBgmStep(mood, 0, intensity, bpmOverride).stepDuration * 1000));
+    timerId = setInterval(() => {
+      if (playing && !paused) advanceStep(ctx.currentTime || 0);
+    }, tickMs);
+    timerId.unref?.();
+  }
+
   function start(startOpts = {}) {
     if (disposed) throw new Error('BGM controller is disposed');
     if (startOpts.mood) setMood(startOpts.mood);
@@ -310,14 +319,8 @@ export function createProceduralBgm(options = {}) {
     if (ctx?.state === 'suspended') ctx.resume?.().catch?.(() => {});
     playing = true;
     paused = false;
-    if (options.autoSchedule !== false && timerId === null && typeof setInterval === 'function' && ctx) {
-      const tickMs = Math.max(20, Math.round(generateBgmStep(mood, 0, intensity, bpmOverride).stepDuration * 1000));
-      timerId = setInterval(() => {
-        if (!playing || paused) return;
-        advanceStep(ctx.currentTime || 0);
-      }, tickMs);
-      timerId.unref?.();
-    }
+    applyGain();
+    startScheduler();
     return getState();
   }
 
@@ -327,11 +330,14 @@ export function createProceduralBgm(options = {}) {
     stepIndex = 0;
     accumSec = 0;
     clearScheduler();
+    applyGain();
   }
 
   function pause() {
     if (!playing) return;
     paused = true;
+    clearScheduler();
+    applyGain();
   }
 
   function resume() {
@@ -339,6 +345,8 @@ export function createProceduralBgm(options = {}) {
     if (!playing) return start();
     paused = false;
     if (ctx?.state === 'suspended') ctx.resume?.().catch?.(() => {});
+    applyGain();
+    startScheduler();
   }
 
   /**
@@ -363,7 +371,10 @@ export function createProceduralBgm(options = {}) {
 
   function setMood(nextMood) {
     if (!BGM_MOODS[nextMood]) throw new Error(`Unknown BGM mood "${nextMood}".`);
+    const previousBpm = Number.isFinite(bpmOverride) ? bpmOverride : BGM_MOODS[mood].bpm;
     mood = nextMood;
+    const nextBpm = Number.isFinite(bpmOverride) ? bpmOverride : BGM_MOODS[mood].bpm;
+    if (playing && !paused && previousBpm !== nextBpm) { clearScheduler(); startScheduler(); }
   }
 
   function setIntensity(nextIntensity) {
@@ -390,7 +401,7 @@ export function createProceduralBgm(options = {}) {
       playing,
       paused,
       stepIndex,
-      available: typeof Ctor === 'function',
+      available: Boolean(ctx || typeof Ctor === 'function'),
     };
   }
 
