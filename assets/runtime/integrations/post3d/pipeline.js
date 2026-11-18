@@ -805,6 +805,7 @@ export function createPostPipeline3D(options = {}) {
         uFade: { value: 0 },
         uTime: { value: 0 },
         uToneMapping: { value: state.toneMapping },
+        uWriteLuma: { value: 0 },
       }, { ...exposureDefines, ...giDepthDefines }),
       fxaaSharpen: makeShader(FXAA_SHARPEN_FRAGMENT_GLSL3, {
         tDiffuse: { value: null },
@@ -1179,6 +1180,7 @@ export function createPostPipeline3D(options = {}) {
       compU.uFlash.value = state.flash;
       compU.uFade.value = state.fade;
       compU.uToneMapping.value = state.toneMapping;
+      compU.uWriteLuma.value = useFinalFxaaPass ? 1 : 0;
       runPass(mats.composite, useFinalFxaaPass ? ldrRT : null);
 
       // 4. FXAA + edge-attenuated unsharp mask + IGN dither

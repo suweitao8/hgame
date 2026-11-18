@@ -657,6 +657,13 @@ void main() {
 }
 `;
 
+const OUTPUT_DITHER_GLSL3 = `
+vec3 ditherDisplayColor(vec3 rgb) {
+  float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  return clamp(rgb + (noise - 0.5) / 255.0, 0.0, 1.0);
+}
+`;
+
 export const COMPOSITE_FRAGMENT_GLSL3 = `
 uniform sampler2D tScene;
 uniform sampler2D tDepth;
@@ -703,6 +710,7 @@ uniform float uFlash;
 uniform float uFade;
 uniform float uTime;
 uniform int uToneMapping;
+uniform float uWriteLuma;
 
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
@@ -710,6 +718,7 @@ layout(location = 0) out vec4 fragColor;
 ${EXPOSURE_PACKING_GLSL3}
 ${DEPTH_GUIDE_GLSL3}
 ${SCENE_PROJECTION_GLSL3}
+${OUTPUT_DITHER_GLSL3}
 
 float compIgn(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -931,8 +940,11 @@ void main() {
   mapped *= (1.0 - clamp(uFade, 0.0, 1.0));
 
   vec3 srgb = clamp(linearToSrgb(mapped), 0.0, 1.0);
-  float perceptualLuma = dot(srgb, vec3(0.299, 0.587, 0.114));
-  fragColor = vec4(srgb, perceptualLuma);
+  if (uWriteLuma > 0.5) {
+    fragColor = vec4(srgb, dot(srgb, vec3(0.299, 0.587, 0.114)));
+  } else {
+    fragColor = vec4(ditherDisplayColor(srgb), 1.0);
+  }
 #endif
 }
 `;
@@ -946,9 +958,7 @@ uniform float uFxaaEnabled;
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
-float ignDither(vec2 p) {
-  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
-}
+${OUTPUT_DITHER_GLSL3}
 
 void main() {
   vec4 center = texture(tDiffuse, vUv);
@@ -956,10 +966,11 @@ void main() {
   vec2 e = uTexelSize;
 
   float lC = center.a;
-  float lN = texture(tDiffuse, vUv + vec2( 0.0,  e.y)).a;
-  float lS = texture(tDiffuse, vUv + vec2( 0.0, -e.y)).a;
-  float lE = texture(tDiffuse, vUv + vec2( e.x,  0.0)).a;
-  float lW = texture(tDiffuse, vUv + vec2(-e.x,  0.0)).a;
+  vec4 north = texture(tDiffuse, vUv + vec2(0.0, e.y));
+  vec4 south = texture(tDiffuse, vUv - vec2(0.0, e.y));
+  vec4 east = texture(tDiffuse, vUv + vec2(e.x, 0.0));
+  vec4 west = texture(tDiffuse, vUv - vec2(e.x, 0.0));
+  float lN = north.a, lS = south.a, lE = east.a, lW = west.a;
   float lMin = min(lC, min(min(lN, lS), min(lE, lW)));
   float lMax = max(lC, max(max(lN, lS), max(lE, lW)));
   float range = lMax - lMin;
@@ -976,50 +987,57 @@ void main() {
     subpix = smoothstep(0.0, 1.0, subpix);
     subpix = subpix * subpix * 0.65;
 
-    bool horzSpan = (abs((lNW + lNE) - 2.0 * lN) + 2.0 * abs(lEW - 2.0 * lC) + abs((lSW + lSE) - 2.0 * lS)) >=
-                    (abs((lNW + lSW) - 2.0 * lW) + 2.0 * abs(lNS - 2.0 * lC) + abs((lNE + lSE) - 2.0 * lE));
-    float lPos = horzSpan ? lN : lE;
-    float lNeg = horzSpan ? lS : lW;
-    vec2 stepNorm = horzSpan ? vec2(0.0, e.y) : vec2(e.x, 0.0);
+    float edgeX = abs(lNW + lNE - 2.0 * lN) + 2.0 * abs(lEW - 2.0 * lC) + abs(lSW + lSE - 2.0 * lS);
+    float edgeY = abs(lNW + lSW - 2.0 * lW) + 2.0 * abs(lNS - 2.0 * lC) + abs(lNE + lSE - 2.0 * lE);
+    bool normalAlongY = edgeY >= edgeX;
+    float lPos = normalAlongY ? lN : lE;
+    float lNeg = normalAlongY ? lS : lW;
+    vec2 stepNorm = normalAlongY ? vec2(0.0, e.y) : vec2(e.x, 0.0);
     float gradPos = abs(lPos - lC);
     float gradNeg = abs(lNeg - lC);
     if (gradNeg >= gradPos) stepNorm = -stepNorm;
 
-    vec2 tanStep = horzSpan ? vec2(e.x, 0.0) : vec2(0.0, e.y);
+    vec2 tanStep = normalAlongY ? vec2(e.x, 0.0) : vec2(0.0, e.y);
     float refLuma = 0.5 * (lC + (gradNeg >= gradPos ? lNeg : lPos));
-    float gradThresh = 0.25 * max(gradPos, gradNeg);
+    float gradThresh = max(0.25 * max(gradPos, gradNeg), 1.0 / 255.0);
+    vec2 edgeOrigin = vUv + stepNorm * 0.5;
 
     float distPos = 4.0;
     float distNeg = 4.0;
+    float deltaPos = 0.0;
+    float deltaNeg = 0.0;
     bool endPos = false;
     bool endNeg = false;
     for (int i = 1; i <= 4; i++) {
       if (!endPos) {
-        float l = texture(tDiffuse, vUv + stepNorm * 0.5 + tanStep * float(i)).a - refLuma;
-        if (abs(l) >= gradThresh) { distPos = float(i); endPos = true; }
+        deltaPos = textureLod(tDiffuse, edgeOrigin + tanStep * float(i), 0.0).a - refLuma;
+        if (abs(deltaPos) >= gradThresh) { distPos = float(i); endPos = true; }
       }
       if (!endNeg) {
-        float l = texture(tDiffuse, vUv + stepNorm * 0.5 - tanStep * float(i)).a - refLuma;
-        if (abs(l) >= gradThresh) { distNeg = float(i); endNeg = true; }
+        deltaNeg = textureLod(tDiffuse, edgeOrigin - tanStep * float(i), 0.0).a - refLuma;
+        if (abs(deltaNeg) >= gradThresh) { distNeg = float(i); endNeg = true; }
       }
+      if (endPos && endNeg) break;
     }
-    float edgeBlend = max(subpix, 0.5 - min(distPos, distNeg) / max(distPos + distNeg, 1.0));
-    rgb = texture(tDiffuse, vUv + stepNorm * clamp(edgeBlend, 0.0, 0.75)).rgb;
+    bool nearestPositive = distPos <= distNeg;
+    float endDelta = nearestPositive ? deltaPos : deltaNeg;
+    bool validSpan = (nearestPositive ? endPos : endNeg) && ((endDelta < 0.0) != (lC < refLuma));
+    float spanBlend = validSpan ? 0.5 - min(distPos, distNeg) / (distPos + distNeg) : 0.0;
+    float edgeBlend = max(subpix, spanBlend);
+    if (edgeBlend > 0.0) rgb = textureLod(tDiffuse, vUv + stepNorm * edgeBlend, 0.0).rgb;
   }
 
   if (uSharpness > 0.001) {
-    vec3 blur = 0.25 * (
-      texture(tDiffuse, vUv + vec2( 0.0,  e.y)).rgb +
-      texture(tDiffuse, vUv + vec2( 0.0, -e.y)).rgb +
-      texture(tDiffuse, vUv + vec2( e.x,  0.0)).rgb +
-      texture(tDiffuse, vUv + vec2(-e.x,  0.0)).rgb
-    );
     float edgeAtten = 1.0 - smoothstep(0.06, 0.32, range);
-    rgb = clamp(rgb + (rgb - blur) * (uSharpness * edgeAtten), 0.0, 1.0);
+    if (edgeAtten > 0.0) {
+      vec3 blur = 0.25 * (north.rgb + south.rgb + east.rgb + west.rgb);
+      vec3 localMin = min(center.rgb, min(min(north.rgb, south.rgb), min(east.rgb, west.rgb)));
+      vec3 localMax = max(center.rgb, max(max(north.rgb, south.rgb), max(east.rgb, west.rgb)));
+      rgb = clamp(rgb + (center.rgb - blur) * (uSharpness * edgeAtten), localMin, localMax);
+    }
   }
 
-  float dither = (ignDither(gl_FragCoord.xy) - 0.5) / 255.0;
-  fragColor = vec4(clamp(rgb + dither, 0.0, 1.0), 1.0);
+  fragColor = vec4(ditherDisplayColor(rgb), 1.0);
 }
 `;
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix FXAA edge orientation, reuse cardinal taps for sharpening, and keep canvas alpha opaque when tone mapping writes directly to the screen.
+
 - Store bloom mips in packed RGB float targets where supported. Reconstruct the upsampling tent kernel with four bilinear reads instead of nine.
 
 - Resolve multisampled scene depth only for active depth effects. Select MSAA counts supported by both HDR color and depth attachments.
