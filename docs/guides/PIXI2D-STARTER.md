@@ -49,7 +49,8 @@ Catalog entries must have `kind: "image"`; extra frames use the image dimensions
 The atlas copies frame edges into one pixel of the existing padding to reduce transparent seams from linear texture sampling. This adds canvas work while the atlas is built; it does not increase the allocated atlas dimensions.
 
 Disposal releases both the textures and the backing canvas. Create a new atlas for a new renderer after disposal.
-On WebGPU, uploading an atlas uses a temporary RGBA readback to avoid retaining external-image copy allocations across renderer restarts. Large atlases incur a one-time readback and upload during initialization.
+
+When `Renderer2D` selects WebGPU, uploading an atlas uses a temporary RGBA readback to avoid retaining external-image copy allocations across renderer restarts. Large atlases incur a one-time readback and upload during initialization.
 
 `renderer.syncEntity(id, state)` creates a shadow only when `state.hasShadow !== false`; returned entries can therefore have `shadow: null`. If a frame has no `_white` silhouette, hit flash retains the base texture instead of substituting a white rectangle.
 

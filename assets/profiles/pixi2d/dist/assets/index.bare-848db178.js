@@ -1,1 +1,0 @@
-import{r as e}from"./chunk-9f0e0858.js";await e(({app:e,Scene:t})=>(e.scenes.add(new t(`main`)),{scene:`main`,state:()=>({scene:e.scenes.current?.name??null})}));

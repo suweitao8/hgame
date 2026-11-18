@@ -56,6 +56,12 @@ async function serve(profile) {
   throw new Error('Preview never started for ' + profile);
 }
 
+function startupTransfer(page) {
+  return page.evaluate(() => [
+    ...performance.getEntriesByType('navigation'), ...performance.getEntriesByType('resource'),
+  ].reduce((total, entry) => total + entry.transferSize, 0));
+}
+
 async function checkPixiWebGpuAtlas(url) {
   const webGpuBrowser = await chromium.launch({
     headless: true, ...(executablePath ? { executablePath } : { channel: 'chrome' }),
@@ -67,7 +73,13 @@ async function checkPixiWebGpuAtlas(url) {
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
     await page.addInitScript(() => {
-      const probe = window.__atlasUpload = { writes: [], externalCopies: 0 };
+      const probe = window.__atlasUpload = { writes: [], externalCopies: 0, validationErrors: [] };
+      const requestDevice = GPUAdapter.prototype.requestDevice;
+      GPUAdapter.prototype.requestDevice = async function (...args) {
+        const device = await requestDevice.apply(this, args);
+        device.addEventListener('uncapturederror', event => probe.validationErrors.push(event.error.message));
+        return device;
+      };
       const readPixels = CanvasRenderingContext2D.prototype.getImageData;
       CanvasRenderingContext2D.prototype.getImageData = function (...args) {
         const image = readPixels.apply(this, args);
@@ -100,12 +112,14 @@ async function checkPixiWebGpuAtlas(url) {
     await page.route('**/src/presentation.json', route => route.fulfill({ json: { backend: 'webgpu', quality: 'low' } }));
     await page.goto(url);
     try {
-      await page.waitForFunction(() => window.__hgameState?.().tick > 5, { timeout: 10000 });
+      await page.waitForFunction(() => window.__hgameState?.().tick > 5, undefined, { timeout: 10000 });
     } catch (error) {
       throw new Error(`Pixi WebGPU did not start in Chromium ${webGpuBrowser.version()}. ${errors.join(' ')}`, { cause: error });
     }
     assert.equal(await page.locator('canvas#game').getAttribute('data-renderer-backend'), 'webgpu');
-    const { writes, sample, externalCopies } = await page.evaluate(() => window.__atlasUpload);
+    const startupBytes = await startupTransfer(page);
+    assert.ok(startupBytes > 0 && startupBytes <= 900_000, `Horde WebGPU cold startup transferred ${startupBytes} bytes (budget 900,000)`);
+    const { writes, sample, externalCopies, validationErrors } = await page.evaluate(() => window.__atlasUpload);
     assert.equal(externalCopies, 0, 'The WebGPU atlas must avoid the external image upload path');
     assert.ok(sample && writes.length > 0, 'The renderer must upload the atlas bytes');
     const [red, green, blue, alpha] = sample.rgba;
@@ -113,8 +127,9 @@ async function checkPixiWebGpuAtlas(url) {
       format: 'rgba8unorm',
       rgba: [red, green, blue].map(channel => Math.round(channel * alpha / 255)).concat(alpha),
     });
+    assert.deepEqual(validationErrors, []);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ profile: 'pixi-webgpu', browserVersion: webGpuBrowser.version(), atlasBytes: true, premultipliedAlpha: true }));
+    console.log(JSON.stringify({ profile: 'pixi-webgpu', browserVersion: webGpuBrowser.version(), startupBytes, atlasBytes: true, premultipliedAlpha: true }));
   } finally {
     await webGpuBrowser.close();
   }
@@ -156,9 +171,7 @@ async function checkPixiRecovery() {
     const canvas = page.locator('canvas#game[data-engine-ready="true"]');
     await canvas.waitFor();
     assert.equal(await canvas.getAttribute('data-renderer-backend'), 'webgl');
-    const startupBytes = await page.evaluate(() => [
-      ...performance.getEntriesByType('navigation'), ...performance.getEntriesByType('resource'),
-    ].reduce((total, entry) => total + entry.transferSize, 0));
+    const startupBytes = await startupTransfer(page);
     assert.ok(startupBytes > 0 && startupBytes <= 900_000, `Horde cold startup transferred ${startupBytes} bytes (budget 900,000)`);
     const before = await page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });

@@ -63,6 +63,7 @@ export class Renderer2D {
       }
     }
     if (!initialized) throw new AggregateError(errors, 'Unable to initialize a Pixi renderer');
+    if (this.backend === 'webgpu') this.atlas.useWebGpuUpload?.();
     this.isCanvas = this.app.renderer.type === RendererType.CANVAS;
     this.app.ticker.stop();
     this.app.canvas.id = 'game';

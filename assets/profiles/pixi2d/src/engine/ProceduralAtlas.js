@@ -1,11 +1,8 @@
-import { CanvasSource, ExtensionType, Rectangle, Texture, extensions, glUploadImageResource } from 'pixi.js';
+import { CanvasSource, ExtensionType, Rectangle, Texture, extensions } from 'pixi.js';
 
 const atlasUpload = 'hgame-atlas';
 
 extensions.add({
-  extension: { type: ExtensionType.TextureUploaderWebGL, name: atlasUpload },
-  upload: glUploadImageResource.upload,
-}, {
   extension: { type: ExtensionType.TextureUploaderWebGPU, name: atlasUpload },
   upload(source, texture, { device }, layer = 0) {
     const { pixelWidth: width, pixelHeight: height } = source;
@@ -145,9 +142,13 @@ export class ProceduralAtlas {
     if (this.disposed) throw new Error('Cannot build a disposed atlas');
     if (this.source) return this;
     this.source = new CanvasSource({ resource: this.canvas, scaleMode: 'linear', format: 'rgba8unorm' });
-    this.source.uploadMethodId = atlasUpload;
     for (const [name, frame] of this.frames) this.textures.set(name, new Texture({ source: this.source, frame }));
     return this;
+  }
+
+  /** @internal Select the byte uploader before the WebGPU renderer first draws this atlas. */
+  useWebGpuUpload() {
+    if (this.source) this.source.uploadMethodId = atlasUpload;
   }
 
   get(name) { return this.textures.get(name) ?? Texture.WHITE; }
