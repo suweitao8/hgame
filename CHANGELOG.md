@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Render HGame TileMaps in the Pixi starter using shared-atlas particle chunks, camera visibility, and per-chunk refresh after map edits.
+
 - Release model-slot-owned cloned skeletons when 3D modular levels are replaced or disposed, while keeping shared model assets alive.
 
 - Extrude Pixi atlas frame edges into the existing padding to reduce linear-filter seams around scaled and rotated sprites.

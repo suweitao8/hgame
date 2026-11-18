@@ -1,6 +1,7 @@
 import { Application, Container, Sprite, TilingSprite, ParticleContainer, Particle } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
 import { PixiSwarmLayer } from './PixiSwarmLayer.js';
+import { PixiTilemapLayer } from './PixiTilemapLayer.js';
 
 export class Renderer2D {
   constructor(atlas, { maxPixels = 2300000, maxPixelRatio = 2, qualityController = null } = {}) {
@@ -18,6 +19,7 @@ export class Renderer2D {
     this.entityMap = new Map();
     this.spritePool = [];
     this.swarmLayers = new Set();
+    this.tilemapLayers = new Set();
     this.camera = { x: 0, y: 0, targetX: 0, targetY: 0, zoom: 1, shakeX: 0, shakeY: 0 };
   }
   async init(mount) {
@@ -33,6 +35,7 @@ export class Renderer2D {
     this.worldRoot.interactiveChildren = false;
     this.bgLayer = new Container();
     const grid = new TilingSprite({ texture: this.atlas.get('ground_grid'), width: 4096, height: 4096 });
+    this.grid = grid;
     grid.position.set(-2048, -2048);
     this.bgLayer.addChild(grid);
     this.shadowLayer = new Container();
@@ -100,6 +103,11 @@ export class Renderer2D {
   createSwarmLayer(options) {
     const layer = new PixiSwarmLayer(this, options);
     this.swarmLayers.add(layer);
+    return layer;
+  }
+  createTilemapLayer(map, options) {
+    const layer = new PixiTilemapLayer(this, map, options);
+    this.tilemapLayers.add(layer);
     return layer;
   }
   syncEnemies(enemies, time) {
@@ -177,6 +185,7 @@ export class Renderer2D {
     c.x += (c.targetX - c.x) * a; c.y += (c.targetY - c.y) * a;
     this.worldRoot.scale.set(c.zoom);
     this.worldRoot.position.set(this.app.screen.width / 2 - c.x * c.zoom + c.shakeX, this.app.screen.height / 2 - c.y * c.zoom + c.shakeY);
+    for (const layer of this.tilemapLayers) layer.update();
     for (const entry of this.entityMap.values()) entry.flashTimer = Math.max(0, entry.flashTimer - dt);
   }
   screenToWorld(x, y) { return { x: (x - this.app.screen.width / 2 - this.camera.shakeX) / this.camera.zoom + this.camera.x, y: (y - this.app.screen.height / 2 - this.camera.shakeY) / this.camera.zoom + this.camera.y }; }
@@ -194,6 +203,7 @@ export class Renderer2D {
     this.disposed = true;
     this.resizeObserver?.disconnect(); this.resizeObserver = null; this.onResize = null;
     for (const layer of this.swarmLayers) layer.dispose();
+    for (const layer of this.tilemapLayers) layer.dispose();
     for (const sprite of this.spritePool) sprite.destroy();
     this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.pendingEnemies.length = 0; this.entityMap.clear();
     this.app.stage.filters = []; this.effectFilters.length = 0;

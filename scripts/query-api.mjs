@@ -29,10 +29,11 @@ const CAPABILITY_MAP = [
   { need: 'Preload and switch levels with shared scene assets', module: 'world/level-flow.js', keyApis: 'createLevelFlow, prefetch, go, cancel, discard' },
   { need: 'App loop, Scene, Entity, Tags, hitStop', module: 'index.js / core/*', keyApis: 'HGame.defineProject, createGameApplication, Scene, Entity({name}), addTag, scene.queryTags' },
   { need: 'Tweens, springs, idle/attack juice', module: 'time/tween.js', keyApis: 'scene.tweens, EASING, damp, dampAngle, SpringDamper1D/2D/3D' },
-  { need: '2D sprites, camera, tilemap, A* path', module: 'integrations/canvas2d.js, animation/*, world/tilemap.js', keyApis: 'createCanvas2DAdapter, Camera2D, Sprite2D(groundShadow/hitFlash), SpriteSheet.fromGrid, findGridPath' },
+  { need: 'Pixi tilemap rendering and A* path', module: 'generated project src/engine/PixiTilemapLayer.js; runtime world/tilemap.js', keyApis: 'renderer.createTilemapLayer, refreshTile, TileMap, findGridPath' },
+  { need: 'Legacy Canvas 2D sprites and camera', module: 'integrations/canvas2d.js, animation/*', keyApis: 'createCanvas2DAdapter, Camera2D, Sprite2D, SpriteSheet.fromGrid' },
   { need: '2D CPU swarms with PixiJS', module: 'world/swarm-ecs.js, generated project src/engine/PixiSwarmLayer.js', keyApis: 'createSwarmSimulation, renderer.createSwarmLayer, crowd.sync; npm run api -- --recipe horde' },
   { need: 'Legacy 2D GPU swarms / bullets', module: 'integrations/webgl2d.js, world/gpu-swarm-webgl2.js', keyApis: 'createWebGL2DAdapter, SpriteCrowd2D.bindGpuSwarm, createGpuSwarmWebGL2' },
-  { need: '2D ambient lighting, 32 lights, bloom', module: 'integrations/post2d.js', keyApis: 'setAmbientLight, addLight2D, setLights2D, clearLights2D, setPost2D' },
+  { need: 'Legacy Canvas/WebGL2D lighting and post effects', module: 'integrations/post2d.js', keyApis: 'setAmbientLight, addLight2D, setLights2D, clearLights2D, setPost2D (not the Pixi starter)' },
   { need: '3D presentation, sky, lights, post, culling, camera', module: 'integrations/three.js, sky3d.js, lighting3d.js, post3d.js, culling3d.js, camera3d.js', keyApis: 'src/presentation.json (3D starter), createThreeAdapter, createProceduralSky3D, createMegaLights3D, createPostProcessVolumeStack, createCameraRig3D' },
   { need: '3D terrain + Rapier heightfield, NavMesh', module: 'world/terrain3d.js, world/navmesh3d.js', keyApis: 'createHeightfieldTerrain3D, fbmNoise2D, scatterPositions, attachPhysics, createNavMesh3D' },
   { need: '3D rigged GLB, 17 props, VAT crowds', module: 'integrations/model3d.js, procedural-models.js, world-aligned-material.js', keyApis: 'createModel3DProvider, createProceduralModelSlots, createBoneVatCrowd3D, createWorldMaterialPalette, npm run process:model3d' },
@@ -195,7 +196,7 @@ if (args.mapOnly) {
   } else {
     console.log('=== HGame 1.0.0 Capability Map (Need -> Runtime Module -> Key APIs) ===');
     for (const row of CAPABILITY_MAP) {
-      console.log(`- [${row.need}] => vendor/hgame/${row.module}`);
+      console.log(`- [${row.need}] => ${row.module}`);
       console.log(`    ${row.keyApis}`);
     }
   }
@@ -227,13 +228,14 @@ const modules = apiIndex.modules || {};
 // These adapters belong to generated games rather than the renderer-neutral runtime.
 // Include them in the same lookup without pretending they are vendor/hgame modules.
 const pixiStarterModules = {
-  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio, qualityController}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'resetQualityMeasurements', 'setBloom', 'createSwarmLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
+  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio, qualityController}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'resetQualityMeasurements', 'setBloom', 'createSwarmLayer', 'createTilemapLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
   'src/engine/ProceduralAtlas.js': { exports: [
     { kind: 'class', name: 'ProceduralAtlas', signature: 'new(size=1024)', summary: 'PixiJS shared atlas with optional white hit-flash frames.', members: ['register', 'registerImage', 'registerSheet', 'build', 'get', 'dispose'] },
     { kind: 'function', name: 'createDefaultGameAtlas', signature: '({playerImage, enemyImage, eliteImage, extraFrames, size}={})', summary: 'Create and build the PixiJS starter atlas.' },
     { kind: 'function', name: 'createCatalogGameAtlas', signature: '(catalog, frames, {size, signal}={})', summary: 'Bake catalog images and sprite sheets into a PixiJS atlas; releases the temporary asset scope.' },
   ] },
   'src/engine/PixiSwarmLayer.js': { exports: [{ kind: 'class', name: 'PixiSwarmLayer', signature: 'new(renderer, options)', summary: 'PixiJS adapter for an HGame CPU swarm; create with renderer.createSwarmLayer(options).', members: ['sync', 'dispose'] }] },
+  'src/engine/PixiTilemapLayer.js': { exports: [{ kind: 'class', name: 'PixiTilemapLayer', signature: 'new(renderer, map, {frames, chunkSize, originX, originY})', summary: 'PixiJS atlas-backed HGame TileMap rendering; create with renderer.createTilemapLayer(map, options).', members: ['refreshTile', 'update', 'dispose'] }] },
   'src/engine/JuiceSystem.js': { exports: [{ kind: 'class', name: 'JuiceSystem', signature: 'new(renderer, capacity=10000)', summary: 'PixiJS starter hit effects, particles, shake and trails; dispose before the renderer.', members: ['triggerHitJuice', 'triggerHitStop', 'addTrauma', 'spawnShockwave', 'burstParticles', 'spawnExplosions', 'update', 'slash', 'dispose'] }] },
   'src/engine/InputAndAudio.js': { exports: [{ kind: 'class', name: 'InputAndAudio', signature: 'new(renderer, ui, audio, input)', summary: 'PixiJS demo input helper using HGame input and audio services.', members: ['getState', 'reset', 'unlock', 'play', 'dispose'] }] },
 };

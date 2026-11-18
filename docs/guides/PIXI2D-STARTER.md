@@ -49,6 +49,20 @@ The atlas copies frame edges into one pixel of the existing padding to reduce tr
 
 `renderer.syncEntity(id, state)` creates a shadow only when `state.hasShadow !== false`; returned entries can therefore have `shadow: null`. If a frame has no `_white` silhouette, hit flash retains the base texture instead of substituting a white rectangle.
 
+For tile-based maps, generate a 2D project with `--with tilemap2d`, bake tile images or sheet frames into the atlas, and connect the existing HGame `TileMap` to Pixi:
+
+```js
+const { TileMap, findGridPath } = await import(base + '/world/tilemap.js');
+const map = new TileMap({ tiles: [[1, 1, 1], [1, 2, 1]], tileWidth: 32, tileHeight: 32, solid: [2] });
+renderer.grid.visible = false;
+const layer = renderer.createTilemapLayer(map, { frames: { 1: 'floor/0', 2: 'wall/0' }, chunkSize: 32 });
+// map.set(1, 1, 1); layer.refreshTile(1, 1); // rebuilds only this chunk
+// findGridPath(map, { x: 0, y: 0 }, { x: 2, y: 1 });
+// renderer.update(dt) updates chunk visibility; layer.dispose() releases it.
+```
+
+Map values absent from `frames` are transparent. All named frames must exist in the renderer's shared atlas. The layer builds static Pixi particle chunks and hides chunks outside the current camera; it creates particles for the full map, so split very large worlds into separate maps. After changing map data, call `refreshTile` for each affected chunk. Map collision and pathfinding remain governed by `TileMap`, not the visual layer. The renderer also disposes its tilemap layers on shutdown.
+
 For frame animation, use the existing HGame `SpriteSheet` and `AnimationPlayer`. A catalog entry can provide a `sheet` factory; its cells are baked as `prefix/0`, `prefix/1`, and so on, including matching white hit-flash frames:
 
 ```js
