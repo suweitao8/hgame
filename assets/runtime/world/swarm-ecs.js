@@ -1286,7 +1286,7 @@ function stepSwarmSequential(
  * @property {Float32Array} flash
  * @property {Float32Array} sepX Cached neighbor separation X vector per unit.
  * @property {Float32Array} sepY Cached neighbor separation Y/Z vector per unit.
- * @property {Uint16Array} cellDensity Live unit count per spatial grid cell.
+ * @property {Uint16Array|Uint32Array} cellDensity Unit count per cell at the start of the latest step; 32-bit when capacity exceeds 65535.
  * @property {Int32Array} activeIds Contiguous slice `[0 .. count - 1]` of live unit IDs.
  * @property {number} chunkCols
  * @property {number} chunkRows
@@ -1421,7 +1421,11 @@ export function createSwarmSimulation({
   const chunkMinY = new Float32Array(baseChunkMinY);
   const chunkMaxY = new Float32Array(baseChunkMaxY);
   const unitCell = new Int32Array(capacity);
-  const cellDensity = new Uint16Array(gridCols * gridRows);
+  // Every live unit can occupy the same cell, including out-of-world units
+  // clamped to an edge cell. Select the counter width from total capacity.
+  const cellDensity = capacity <= 0xffff
+    ? new Uint16Array(gridCols * gridRows)
+    : new Uint32Array(gridCols * gridRows);
 
   const swarmToCrowd2D = new Int32Array(capacity).fill(-1);
   let boundCrowd2D = null;

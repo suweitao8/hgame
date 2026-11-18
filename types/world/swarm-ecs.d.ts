@@ -106,7 +106,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {Float32Array} flash
  * @property {Float32Array} sepX Cached neighbor separation X vector per unit.
  * @property {Float32Array} sepY Cached neighbor separation Y/Z vector per unit.
- * @property {Uint16Array} cellDensity Live unit count per spatial grid cell.
+ * @property {Uint16Array|Uint32Array} cellDensity Unit count per cell at the start of the latest step; 32-bit when capacity exceeds 65535.
  * @property {Int32Array} activeIds Contiguous slice `[0 .. count - 1]` of live unit IDs.
  * @property {number} chunkCols
  * @property {number} chunkRows
@@ -659,9 +659,9 @@ export type SwarmSimulation = {
      */
     sepY: Float32Array;
     /**
-     * Live unit count per spatial grid cell.
+     * Unit count per cell at the start of the latest step; 32-bit when capacity exceeds 65535.
      */
-    cellDensity: Uint16Array;
+    cellDensity: Uint16Array | Uint32Array;
     /**
      * Contiguous slice `[0 .. count - 1]` of live unit IDs.
      */

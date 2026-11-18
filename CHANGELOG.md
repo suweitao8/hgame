@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prevent per-cell swarm density counters from wrapping above 65,535 units by using 32-bit counters for larger swarm capacities.
+
 - Avoid rebuilding the swarm's coarse spatial chunks before movement; rebuild them lazily for combat and rendering queries after positions change.
 
 - Allow the CPU swarm hit-event queue capacity to be configured independently from combat slots, and expose both budgets in the Pixi horde starter.
