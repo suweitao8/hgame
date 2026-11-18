@@ -89,6 +89,7 @@
  */
 import { cloneObject3DWithSkins } from './helpers.js';
 import { createInstancedBatch3D } from '../culling3d.js';
+import { createInstanceUpdateRanges } from '../../internal/instance-buffer-updates.js';
 
 /**
  * Bakes Skeletal AnimationClips into a Vertex Animation Texture (VAT) RGBA Float DataTexture
@@ -266,8 +267,12 @@ export function createInstancedCrowd3D(THREE, {
   let animAttr = null;
   if (THREE.InstancedBufferAttribute) {
     animAttr = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4);
+    if (THREE.DynamicDrawUsage !== undefined) animAttr.setUsage?.(THREE.DynamicDrawUsage);
     bakedGeometry.setAttribute('aCrowdAnim', animAttr);
   }
+  const animationUpdates = createInstanceUpdateRanges(4);
+  let animationArray = null;
+  let bufferedAnimationRows = 0;
 
   const batch = createInstancedBatch3D(THREE, {
     geometry: bakedGeometry,
@@ -334,9 +339,34 @@ export function createInstancedCrowd3D(THREE, {
     return ok;
   }
 
+  function writeVisibleAnimation(outSlot, idx) {
+    const animArr = animationArray;
+    const meta = agentClip[idx];
+    let firstFrame = meta?.startFrame ?? 0;
+    let nextFrame = firstFrame;
+    let blend = 0;
+    if (meta && meta.frames > 0 && meta.duration > 0) {
+      const norm = ((agentTime[idx] % meta.duration) + meta.duration) % meta.duration;
+      const maxFrame = meta.frames - 1;
+      const framePosition = maxFrame > 0 ? (norm / meta.duration) * maxFrame : 0;
+      const current = Math.min(maxFrame, Math.floor(framePosition));
+      firstFrame = meta.startFrame + current;
+      nextFrame = meta.startFrame + (current + 1 < meta.frames ? current + 1 : current);
+      blend = Math.fround(framePosition - current);
+    }
+    const flash = agentFlash[idx] ?? 0;
+    const base = outSlot * 4;
+    if (outSlot < bufferedAnimationRows && animArr[base] === firstFrame && animArr[base + 1] === nextFrame &&
+        animArr[base + 2] === blend && animArr[base + 3] === flash) return;
+    animArr[base] = firstFrame;
+    animArr[base + 1] = nextFrame;
+    animArr[base + 2] = blend;
+    animArr[base + 3] = flash;
+    animationUpdates.add(outSlot);
+  }
+
   function update(dt = 0, { culler = null } = {}) {
     const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
-    const animArr = animAttr?.array ?? null;
     if (step > 0) {
       for (const idx of activeSet) {
         agentTime[idx] += step * agentSpeed[idx];
@@ -352,30 +382,19 @@ export function createInstancedCrowd3D(THREE, {
       }
     }
 
-    const flushStats = batch.flush({
-      culler,
-      onVisible: animArr
-        ? (outSlot, idx) => {
-            const meta = agentClip[idx];
-            const base = outSlot * 4;
-            if (meta && meta.frames > 0 && meta.duration > 0) {
-              const norm = ((agentTime[idx] % meta.duration) + meta.duration) % meta.duration;
-              const maxF = Math.max(0, meta.frames - 1);
-              const framePos = maxF > 0 ? (norm / meta.duration) * maxF : 0;
-              const f0 = Math.min(maxF, Math.floor(framePos));
-              const f1 = f0 + 1 < meta.frames ? f0 + 1 : f0;
-              animArr[base]     = meta.startFrame + f0;
-              animArr[base + 1] = meta.startFrame + f1;
-              animArr[base + 2] = framePos - f0;
-            } else {
-              const f = meta?.startFrame ?? 0;
-              animArr[base] = f; animArr[base + 1] = f; animArr[base + 2] = 0;
-            }
-            animArr[base + 3] = agentFlash[idx] ?? 0;
-          }
-        : null,
-    });
-    if (animAttr) animAttr.needsUpdate = true;
+    const nextAnimationArray = animAttr?.array ?? null;
+    if (nextAnimationArray !== animationArray) {
+      animationArray = nextAnimationArray;
+      bufferedAnimationRows = 0;
+    }
+    animationUpdates.reset();
+    let flushStats;
+    try {
+      flushStats = batch.flush({ culler, onVisible: animationArray ? writeVisibleAnimation : null });
+    } finally {
+      animationUpdates.submit(animAttr);
+    }
+    bufferedAnimationRows = Math.max(bufferedAnimationRows, flushStats.visible);
     return {
       activeCount: flushStats.totalActive,
       visibleCount: flushStats.visible,
