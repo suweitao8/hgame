@@ -890,6 +890,15 @@ export function createInstancedBatch3D(THREE, {
   for (let i = 0; i < capacity; i++) freeStack[i] = capacity - 1 - i;
   const activeIndices = new Int32Array(capacity);
   const indexInActive = new Int32Array(capacity).fill(-1);
+  const packedSlots = new Int32Array(capacity).fill(-1);
+  const transformDirty = new Uint8Array(capacity);
+  const colorDirty = new Uint8Array(capacity);
+  const matrixUpdates = createInstanceUpdateRanges(16);
+  const colorUpdates = createInstanceUpdateRanges(3);
+  let lastMatrixAttribute = null;
+  let lastMatrixArray = null;
+  let lastColorArray = null;
+  let packedCount = 0;
   let activeCount = 0;
 
   function alloc({
@@ -917,26 +926,39 @@ export function createInstancedBatch3D(THREE, {
     } else {
       cr[idx] = 1; cg[idx] = 1; cb[idx] = 1;
     }
+    transformDirty[idx] = 1;
+    colorDirty[idx] = 1;
     return idx;
   }
 
   function setTransform(idx, x, y, z, rotY = 0, scale = 1) {
     if (idx < 0 || idx >= capacity || !active[idx]) return false;
+    x = Math.fround(x); y = Math.fround(y); z = Math.fround(z);
+    rotY = Math.fround(rotY); scale = Math.fround(scale);
+    if (px[idx] === x && py[idx] === y && pz[idx] === z && ry[idx] === rotY &&
+        sx[idx] === scale && sy[idx] === scale && sz[idx] === scale) return true;
     px[idx] = x; py[idx] = y; pz[idx] = z;
     ry[idx] = rotY;
     sx[idx] = scale; sy[idx] = scale; sz[idx] = scale;
+    transformDirty[idx] = 1;
     return true;
   }
 
   function setRotation(idx, rotX, rotY, rotZ) {
     if (idx < 0 || idx >= capacity || !active[idx]) return false;
+    rotX = Math.fround(rotX); rotY = Math.fround(rotY); rotZ = Math.fround(rotZ);
+    if (rx[idx] === rotX && ry[idx] === rotY && rz[idx] === rotZ) return true;
     rx[idx] = rotX; ry[idx] = rotY; rz[idx] = rotZ;
+    transformDirty[idx] = 1;
     return true;
   }
 
   function setColor(idx, r, g, b) {
     if (idx < 0 || idx >= capacity || !active[idx]) return false;
+    r = Math.fround(r); g = Math.fround(g); b = Math.fround(b);
+    if (cr[idx] === r && cg[idx] === g && cb[idx] === b) return true;
     cr[idx] = r; cg[idx] = g; cb[idx] = b;
+    colorDirty[idx] = 1;
     return true;
   }
 
@@ -971,48 +993,66 @@ export function createInstancedBatch3D(THREE, {
       freeStack[freeTop++] = idx;
     }
     activeCount = 0;
+    packedSlots.fill(-1, 0, packedCount);
+    packedCount = 0;
     mesh.count = 0;
   }
 
   function flush({ culler = null, onVisible = null } = {}) {
-    const matArr = mesh.instanceMatrix?.array;
+    const matrixAttribute = mesh.instanceMatrix;
+    const matArr = matrixAttribute?.array;
     const colArr = colorAttr?.array ?? null;
+    const matrixReplaced = matrixAttribute !== lastMatrixAttribute || matArr !== lastMatrixArray;
+    const colorReplaced = colArr !== lastColorArray;
     if (culler) mesh.updateWorldMatrix?.(true, false);
     const world = culler ? mesh.matrixWorld?.elements : null;
+    matrixUpdates.reset();
+    colorUpdates.reset();
     let outCount = 0;
 
-    for (let i = 0; i < activeCount; i++) {
-      const idx = activeIndices[i];
-      if (!visibleFlag[idx]) continue;
-      const x = px[idx], y = py[idx], z = pz[idx];
-      if (culler) {
-        const worldX = world ? world[0] * x + world[4] * y + world[8] * z + world[12] : x;
-        const worldY = world ? world[1] * x + world[5] * y + world[9] * z + world[13] : y;
-        const worldZ = world ? world[2] * x + world[6] * y + world[10] * z + world[14] : z;
-        if (!culler.testSphere(worldX, worldY, worldZ, radii[idx])) continue;
+    try {
+      for (let i = 0; i < activeCount; i++) {
+        const idx = activeIndices[i];
+        if (!visibleFlag[idx]) continue;
+        const x = px[idx], y = py[idx], z = pz[idx];
+        if (culler) {
+          const worldX = world ? world[0] * x + world[4] * y + world[8] * z + world[12] : x;
+          const worldY = world ? world[1] * x + world[5] * y + world[9] * z + world[13] : y;
+          const worldZ = world ? world[2] * x + world[6] * y + world[10] * z + world[14] : z;
+          if (!culler.testSphere(worldX, worldY, worldZ, radii[idx])) continue;
+        }
+        const moved = packedSlots[outCount] !== idx;
+        if (matArr && (moved || matrixReplaced || transformDirty[idx])) {
+          writeMat4ToFloat32(
+            matArr, outCount * 16,
+            x, y, z, rx[idx], ry[idx], rz[idx], sx[idx], sy[idx], sz[idx],
+          );
+          matrixUpdates.add(outCount);
+          transformDirty[idx] = 0;
+        }
+        if (colArr && (moved || colorReplaced || colorDirty[idx])) {
+          const co = outCount * 3;
+          colArr[co] = cr[idx]; colArr[co + 1] = cg[idx]; colArr[co + 2] = cb[idx];
+          colorUpdates.add(outCount);
+          colorDirty[idx] = 0;
+        }
+        packedSlots[outCount] = idx;
+        outCount++;
+        onVisible?.(outCount - 1, idx);
       }
-      if (matArr) {
-        writeMat4ToFloat32(
-          matArr, outCount * 16,
-          x, y, z, rx[idx], ry[idx], rz[idx], sx[idx], sy[idx], sz[idx],
-        );
-      }
-      if (colArr) {
-        const co = outCount * 3;
-        colArr[co] = cr[idx]; colArr[co + 1] = cg[idx]; colArr[co + 2] = cb[idx];
-      }
-      onVisible?.(outCount, idx);
-      outCount++;
+    } finally {
+      // A row outside the new prefix can contain an earlier copy of a slot.
+      // Invalidate it before that slot's dirty flags are cleared in another row.
+      if (outCount < packedCount) packedSlots.fill(-1, outCount, packedCount);
+      packedCount = outCount;
+      mesh.count = outCount;
+      matrixUpdates.submit(matrixAttribute);
+      colorUpdates.submit(colorAttr);
     }
 
-    mesh.count = outCount;
-    // Three.js update ranges are measured in array components, not instances.
-    // Each flush overwrites the complete visible prefix, so it supersedes any
-    // pending prefix from a previous flush before the next renderer upload.
-    if (outCount > 0) {
-      markInstanceBufferUpdated(mesh.instanceMatrix, outCount * 16);
-      if (colorAttr) markInstanceBufferUpdated(colorAttr, outCount * 3);
-    }
+    lastMatrixAttribute = matrixAttribute;
+    lastMatrixArray = matArr;
+    lastColorArray = colArr;
     return {
       totalActive: activeCount,
       visible: outCount,
@@ -1042,11 +1082,55 @@ export function createInstancedBatch3D(THREE, {
   };
 }
 
-/** @param {InstanceBufferLike} attribute @param {number} components */
-function markInstanceBufferUpdated(attribute, components) {
-  if (typeof attribute.clearUpdateRanges === 'function' && typeof attribute.addUpdateRange === 'function') {
-    attribute.clearUpdateRanges();
-    attribute.addUpdateRange(0, components);
+// Bound the number of GL uploads in fragmented batches and across flushes
+// that run before Three.js consumes the pending update ranges.
+const MAX_INSTANCE_UPDATE_RANGES = 8;
+
+function createInstanceUpdateRanges(componentsPerRow) {
+  const ranges = new Int32Array(MAX_INSTANCE_UPDATE_RANGES * 2);
+  let length = 0;
+  let collapsed = false;
+
+  function reset() {
+    length = 0;
+    collapsed = false;
   }
-  attribute.needsUpdate = true;
+
+  function add(row) {
+    const start = row * componentsPerRow;
+    const end = start + componentsPerRow;
+    if (length && (collapsed || ranges[length - 1] === start)) {
+      ranges[length - 1] = end;
+    } else if (length === ranges.length) {
+      length = 2;
+      collapsed = true;
+      ranges[1] = end;
+    } else {
+      ranges[length++] = start;
+      ranges[length++] = end;
+    }
+  }
+
+  /** @param {InstanceBufferLike | null | undefined} attribute */
+  function submit(attribute) {
+    if (!length || !attribute) return;
+    if (typeof attribute.clearUpdateRanges === 'function' && typeof attribute.addUpdateRange === 'function') {
+      const pending = 'updateRanges' in attribute && Array.isArray(attribute.updateRanges) ? attribute.updateRanges : null;
+      if (pending && pending.length + length / 2 <= MAX_INSTANCE_UPDATE_RANGES) {
+        for (let i = 0; i < length; i += 2) attribute.addUpdateRange(ranges[i], ranges[i + 1] - ranges[i]);
+      } else {
+        let start = pending ? ranges[0] : 0;
+        let end = pending ? ranges[length - 1] : attribute.array.length;
+        for (const range of pending ?? []) {
+          start = Math.min(start, range.start);
+          end = Math.max(end, range.start + range.count);
+        }
+        attribute.clearUpdateRanges();
+        attribute.addUpdateRange(start, end - start);
+      }
+    }
+    attribute.needsUpdate = true;
+  }
+
+  return { reset, add, submit };
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse unchanged 3D instance matrices and colors. Upload only changed ranges when they can be submitted in a bounded number of GPU calls.
+
 - Skip redundant 3D scene clears with Three.js auto-clear enabled and only recompute white balance when temperature or tint changes.
 
 - Resize the Three.js drawing buffer in one update. Defer 3D post-processing allocations during WebGL context loss and retain auto-exposure history across resolution changes.

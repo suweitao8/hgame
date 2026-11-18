@@ -29,7 +29,7 @@ HGame keeps 3D rendering modular and strictly opt-in. Core runtime modules never
 ## Frustum, Occlusion Culling & GPU Instancing (`culling3d.js`)
 
 - `createSceneCuller3D` integrates per-frame Gribb-Hartmann 6-plane frustum + `maxDistance` tests with a 5-ray convex-cone software AABB occluder pass (`addOccluderAABB` / `setOccludersFromColliders`) and optional WebGL2 `ANY_SAMPLES_PASSED_CONSERVATIVE` async query pool (`createHardwareOcclusionPool` with `graceFrames`).
-- `createInstancedBatch3D(THREE, { geometry, material, capacity, useColor })` provides `O(1)` slot `alloc`/`free` and compacts visible instances per frame against `culler.testSphere`.
+- `createInstancedBatch3D(THREE, { geometry, material, capacity, perInstanceColor })` provides `O(1)` slot `alloc`/`free` and compacts visible instances per frame against `culler.testSphere`. The batch owns the instance matrix and color buffers. Updates to transforms, colors and the visible slot order schedule bounded upload ranges for each buffer. An unchanged batch keeps its existing GPU data and still calls `onVisible` for every visible instance.
 - Instance positions are batch-local; culling transforms them through the mesh's world matrix. Supply each `radius` (or batch `cullRadius`) in world units large enough to contain the scaled instance.
 - `createInstancedCrowd3D` / `provider.createCrowd` bakes `SkinnedMesh` `AnimationClip` frames into an RGBA Float Vertex Animation Texture (`DataTexture`) and drives per-instance frame interpolation + `hitFlash` via GPU instancing in a single draw call.
 
