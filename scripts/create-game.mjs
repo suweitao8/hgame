@@ -47,15 +47,16 @@ function parse(argv) {
       throw new Error('Unknown or incomplete argument: ' + arg);
     }
   }
-  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--preset 2d|horde|pixi2d|3d|ui | --profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (3D only)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--bare (2d|3d)] [--no-git] [--dry-run]');
+  if (!result.destination) throw new Error('Usage: node create-game.mjs <new-project-path> [--preset 2d|horde|pixi2d|3d|ui | --profile 2d|3d|ui] [--renderer canvas2d|webgl2d|threejs|dom] [--quality auto|low|medium|high|ultra (Pixi 2D or 3D)] [--with save,audio,physics2d,physics3d] [--physics rapier2d|rapier3d|none] [--tick-hz 60] [--name "游戏名称"] [--bare (2d|3d)] [--no-git] [--dry-run]');
   const preset = result.preset === null ? null : getProjectPreset(result.preset);
   const explicitRenderer = result.renderer !== null;
   if (preset && result.profile && result.profile !== preset.profile) throw new Error('--profile conflicts with --preset ' + result.preset);
   result.profile ??= preset?.profile ?? '2d';
+  const usePixi = result.profile === '2d' && !explicitRenderer && (result.preset === null || result.preset === '2d' || result.preset === 'pixi2d' || result.preset === 'horde');
   result.renderer ??= preset?.renderer ?? null;
   if (result.profile === '2d' && result.renderer === null && result.preset === null) result.renderer = 'webgl2d';
   if (result.preset === 'pixi2d' && explicitRenderer) throw new Error('The pixi2d preset selects its own renderer; omit --renderer');
-  result.quality ??= preset?.quality ?? null;
+  result.quality ??= preset?.quality ?? (usePixi ? 'auto' : null);
   result.with = [...(preset?.features ?? []), ...result.with];
   if (preset?.starter === 'horde' && !result.bare && result.renderer !== 'webgl2d') throw new Error('The horde starter requires webgl2d');
   if (result.bare && !['2d', '3d'].includes(result.profile)) throw new Error('--bare supports --profile 2d or 3d');
@@ -69,7 +70,7 @@ function parse(argv) {
   }
   let physics = result.physics;
   if (result.quality !== null) {
-    if (result.profile !== '3d') throw new Error('--quality requires --profile 3d');
+    if (result.profile !== '3d' && !usePixi) throw new Error('--quality requires Pixi 2D or --profile 3d');
     if (!['auto','low','medium','high','ultra'].includes(result.quality)) {
       throw new Error('--quality must be auto, low, medium, high or ultra');
     }
@@ -81,7 +82,7 @@ function parse(argv) {
     throw new Error('HGame projects use deterministic rapier2d or rapier3d physics.');
   }
   const features = ['scene', ...(result.profile !== 'ui' ? ['input'] : []), ...result.with,
-    ...(result.quality === null ? [] : ['adaptiveQuality3d'])];
+    ...(result.profile === '3d' && result.quality !== null ? ['adaptiveQuality3d'] : [])];
   if (physics === 'rapier2d') features.push('physics2d');
   if (physics === 'rapier3d') features.push('physics3d');
   const recipe = defineProject({
@@ -89,7 +90,6 @@ function parse(argv) {
     ...(physics ? { physics } : {}),
     ...(result.tickHz === null ? {} : { tickHz: result.tickHz }), features,
   });
-  const usePixi = result.profile === '2d' && !explicitRenderer && (result.preset === null || result.preset === '2d' || result.preset === 'pixi2d' || result.preset === 'horde');
   const starter = usePixi ? 'pixi2d' : result.bare ? result.profile + '-bare' : (result.preset === '2d' && explicitRenderer ? '2d' : preset?.starter ?? result.profile);
   return { ...result, target, slug, starter, name: result.name || slug, recipe };
 }
@@ -109,6 +109,7 @@ async function main() {
     console.log(JSON.stringify({ action: 'create-html-game', target: options.target, name: options.name,
       engine: 'HGame', engineVersion: '1.0.0', recipe: options.recipe,
       ...(options.preset ? { preset: options.preset, starter: options.starter, runtime: 'entry-graph' } : {}),
+      ...(options.quality ? { quality: options.quality } : {}),
       default3dMaterials: options.recipe.profile === '3d' && !options.bare ? 'native-world-aligned-pbr' : null,
       bare: options.bare, git: options.git }, null, 2));
     return;
@@ -153,6 +154,10 @@ async function main() {
     if (options.starter === 'pixi2d') {
       await cp(path.join(mainSource, 'dist'), stage, { recursive: true, force: true });
       await cp(path.join(mainSource, 'src'), path.join(stage, 'src'), { recursive: true, force: true });
+      const presentationFile = path.join(stage, 'src', 'presentation.json');
+      const presentation = JSON.parse(await readFile(presentationFile, 'utf8'));
+      presentation.quality = options.quality;
+      await writeFile(presentationFile, JSON.stringify(presentation, null, 2) + '\n');
       const sourceEntry = options.bare ? 'index.bare.html' : options.preset === 'horde' ? 'index.horde.html' : 'index.html';
       if (options.bare) projectEntry = 'src/bare.js';
       else if (options.preset === 'horde') projectEntry = 'src/horde.js';

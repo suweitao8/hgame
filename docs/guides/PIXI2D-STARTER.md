@@ -12,20 +12,9 @@ PixiJS prefers WebGPU and retries with WebGL (then Pixi's Canvas renderer if nee
 
 On the Canvas fallback, particles use their atlas frame colors instead of runtime `opts.color` tinting. The default explosion has precolored atlas frames; supply precolored frames for custom particle colors on that backend.
 
-`new Renderer2D(atlas, { maxPixels, maxPixelRatio })` caps physical rendering resolution without changing CSS coordinates. Defaults are 2.3 million pixels and pixel ratio 2; lower them for fill-rate-constrained devices or increase them for sharper output. The renderer responds to its container's size and host resize events, and disconnects its observer on disposal. By default this is a fixed budget.
+Pixi projects start in automatic quality mode. Set `--quality low|medium|high|ultra` at creation, edit `src/presentation.json`, or call `renderer.setQuality(mode)` during play. The mode sets a physical pixel-ratio cap from HGame's 2D presets (1, 1.5, 2, or 3). Set `rendererOptions.maxPixels` in `startPixiGame` to change the default 2.3-million-pixel ceiling. Resolution changes preserve logical camera and input coordinates.
 
-To opt into dynamic resolution, pass HGame's quality controller when creating the renderer:
-
-```js
-import { loadRuntime, startPixiGame } from './engine/startPixiGame.js';
-
-const { createAdaptiveQualityController } = await loadRuntime('integrations/quality3d.js');
-const quality = createAdaptiveQualityController({ mode: 'auto', minScale: 0.6, maxScale: 1 });
-await startPixiGame(setup, { rendererOptions: { qualityController: quality } });
-// On visibility changes or after a manual pause: renderer.resetQualityMeasurements();
-```
-
-Pixi uses only the controller's dynamic resolution scale; 3D quality presets do not change Pixi materials or effects. The controller uses render-frame intervals, so it cannot distinguish GPU pressure from slow simulation or a browser-imposed frame cap. Changing resolution may not improve a CPU-bound scene. Call `resetQualityMeasurements()` after visibility changes or a manual pause, and call `renderer.resize()` after changing the controller's mode. For a fixed `tickHz: 0` scene, leave adaptive quality disabled.
+Auto mode starts from device hints and adjusts resolution using HGame's unscaled frame intervals. Visibility changes reset the sample window, and command-driven games with `tickHz: 0` use a fixed high preset when configured for auto. Frame intervals include CPU and GPU work. A CPU-bound scene may need fewer simulation or rendering tasks to improve frame rate.
 
 After `await renderer.init(mount)`, use `renderer.setBloom({ enabled: true, threshold: 0.62, bloomScale: 0.4, brightness: 1, blur: 3 })` for persistent scene glow; all parameters except `enabled` are optional and retain their previous values. Call `renderer.setBloom({ enabled: false })` to disable persistent glow. Shockwaves temporarily use bloom as before and no longer cancel persistent glow when they end or when the juice system is disposed. Full-screen filters add GPU work, so use them according to the target scene and device.
 

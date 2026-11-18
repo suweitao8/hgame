@@ -34,13 +34,22 @@ export async function startPixiGame(setup, {
 } = {}) {
   if (!mount) throw new Error('Missing Pixi game canvas mount');
   if (typeof setup !== 'function') throw new TypeError('Pixi game setup callback is required');
-  const [gameConfig, engineConfig, { createGameApplication }, { defineProject },
-    { Scene }, { Entity }, { Component }] = await Promise.all([
-    readGameJson('./game.config.json'), readGameJson('./engine.config.json'),
+  const [gameConfig, engineConfig, presentation, { createGameApplication }, { defineProject },
+    { Scene }, { Entity }, { Component }, { createAdaptiveQualityController, QUALITY2D_PRESETS }] = await Promise.all([
+    readGameJson('./game.config.json'), readGameJson('./engine.config.json'), readGameJson('./src/presentation.json'),
     loadRuntime('core/application.js'), loadRuntime('core/config.js'), loadRuntime('core/scene.js'),
-    loadRuntime('core/entity.js'), loadRuntime('core/component.js'),
+    loadRuntime('core/entity.js'), loadRuntime('core/component.js'), loadRuntime('integrations/quality3d.js'),
   ]);
   const project = defineProject(engineConfig);
+  const requestedMode = presentation.quality ?? 'auto';
+  const mode = requestedMode === 'auto' && project.tickHz === 0 ? 'high' : requestedMode;
+  const qualityController = createAdaptiveQualityController({
+    mode,
+    device: {
+      mobile: globalThis.matchMedia?.('(pointer: coarse)')?.matches ?? false,
+      memoryGB: navigator.deviceMemory ?? null,
+    },
+  });
   const atlas = await createAtlas();
   let app;
   let renderer;
@@ -51,12 +60,18 @@ export async function startPixiGame(setup, {
   }
 
   try {
-    renderer = new Renderer2D(atlas, rendererOptions);
+    renderer = new Renderer2D(atlas, {
+      qualityController, qualityPresets: QUALITY2D_PRESETS, maxPixelRatio: 3,
+      ...rendererOptions,
+    });
     await renderer.init(mount);
     app = createGameApplication({
       project, gameId: gameConfig.id, gameVersion: gameConfig.version,
       renderer: {
-        render() { renderer.render(); },
+        render(_scene, app) {
+          const elapsed = app?.unscaledDeltaSeconds;
+          renderer.render(project.tickHz === 0 ? null : elapsed === undefined ? undefined : elapsed * 1000);
+        },
         resize() { renderer.resize(); },
         dispose() {
           window.removeEventListener('pagehide', pagehide);
@@ -73,8 +88,14 @@ export async function startPixiGame(setup, {
     if (typeof ready?.scene !== 'string' || !app.scenes.get(ready.scene)) {
       throw new Error('Pixi game setup must return the name of a registered scene in { scene }');
     }
-    visibility = bindVisibilitySuspension(app, ready.visibility);
-    renderer.onResize = () => { if (project.tickHz === 0 && app.running && !app.paused) renderer.render(); };
+    visibility = bindVisibilitySuspension(app, {
+      ...ready.visibility,
+      onVisibility(visible) {
+        renderer.resetQualityMeasurements();
+        ready.visibility?.onVisibility?.(visible);
+      },
+    });
+    renderer.onResize = () => { if (project.tickHz === 0 && app.running && !app.paused) renderer.render(null); };
     app.scenes.start(ready.scene);
     app.start();
     visibility.sync();

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add Pixi 2D quality presets to the game generator and adapt resolution from HGame frame timing by default.
+
 - Share Pixi startup and teardown across the bare, arena, and horde starters, including renderer cleanup when initialization fails.
 
 - Bound concurrent asset catalog downloads and decodes across scene scopes, and cancel a disposed scope's pending waits independently of shared requests.

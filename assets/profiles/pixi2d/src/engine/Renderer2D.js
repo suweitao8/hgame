@@ -4,7 +4,7 @@ import { PixiSwarmLayer } from './PixiSwarmLayer.js';
 import { PixiTilemapLayer } from './PixiTilemapLayer.js';
 
 export class Renderer2D {
-  constructor(atlas, { maxPixels = 2300000, maxPixelRatio = 2, qualityController = null } = {}) {
+  constructor(atlas, { maxPixels = 2300000, maxPixelRatio = 2, qualityController = null, qualityPresets = null } = {}) {
     if (!Number.isFinite(maxPixels) || maxPixels < 1 || !Number.isFinite(maxPixelRatio) || maxPixelRatio <= 0) {
       throw new RangeError('Renderer pixel budget and maximum pixel ratio must be positive');
     }
@@ -14,6 +14,7 @@ export class Renderer2D {
       throw new TypeError('qualityController must support sampleFrame and resetMeasurements');
     }
     this.qualityController = qualityController;
+    this.qualityPresets = qualityPresets;
     this.lastFrameTime = null;
     this.app = new Application();
     this.entityMap = new Map();
@@ -86,8 +87,11 @@ export class Renderer2D {
     const width = Math.max(1, Math.floor(this.mount?.clientWidth || 1));
     const height = Math.max(1, Math.floor(this.mount?.clientHeight || 1));
     const deviceRatio = Number(globalThis.devicePixelRatio) || 1;
-    const scale = this.qualityController?.state?.dynamicScale ?? 1;
-    const resolution = Math.max(1 / Math.min(width, height), Math.min(deviceRatio, this.maxPixelRatio, Math.sqrt(this.maxPixels / (width * height))) * scale);
+    const quality = this.qualityController?.state;
+    const scale = quality?.dynamicScale ?? 1;
+    const tierLimit = this.qualityPresets?.[quality?.tier]?.maxPixelRatio ?? this.maxPixelRatio;
+    const resolution = Math.max(1 / Math.min(width, height),
+      Math.min(deviceRatio, this.maxPixelRatio, tierLimit, Math.sqrt(this.maxPixels / (width * height))) * scale);
     return { width, height, resolution };
   }
   resize() {
@@ -102,6 +106,13 @@ export class Renderer2D {
   resetQualityMeasurements() {
     this.lastFrameTime = null;
     this.qualityController?.resetMeasurements();
+  }
+  setQuality(mode) {
+    if (typeof this.qualityController?.setMode !== 'function') throw new Error('Renderer2D has no configurable quality controller');
+    if (!this.qualityController.setMode(mode)) return false;
+    this.lastFrameTime = null;
+    this.resize();
+    return true;
   }
   /** Configure persistent bloom. Transient effect filters remain independently owned. */
   setBloom({ enabled = true, threshold, bloomScale, brightness, blur } = {}) {
@@ -214,11 +225,17 @@ export class Renderer2D {
   }
   screenToWorld(x, y) { return { x: (x - this.app.screen.width / 2 - this.camera.shakeX) / this.camera.zoom + this.camera.x, y: (y - this.app.screen.height / 2 - this.camera.shakeY) / this.camera.zoom + this.camera.y }; }
   worldToScreen(x, y) { return { x: (x - this.camera.x) * this.camera.zoom + this.app.screen.width / 2 + this.camera.shakeX, y: (y - this.camera.y) * this.camera.zoom + this.app.screen.height / 2 + this.camera.shakeY }; }
-  render() {
-    if (this.qualityController) {
-      const now = performance.now();
-      if (this.lastFrameTime !== null && this.qualityController.sampleFrame(now - this.lastFrameTime)) this.resize();
-      this.lastFrameTime = now;
+  /** @param {number | null} [frameIntervalMs] Pass null for redraws that do not advance the frame clock. */
+  render(frameIntervalMs) {
+    if (this.qualityController && frameIntervalMs !== null) {
+      if (frameIntervalMs === undefined) {
+        const now = performance.now();
+        frameIntervalMs = this.lastFrameTime === null ? 0 : now - this.lastFrameTime;
+        this.lastFrameTime = now;
+      } else if (frameIntervalMs === 0) {
+        this.resetQualityMeasurements();
+      }
+      if (frameIntervalMs > 0 && this.qualityController.sampleFrame(frameIntervalMs)) this.resize();
     }
     this.app.renderer.render(this.app.stage);
   }

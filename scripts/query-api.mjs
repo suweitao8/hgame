@@ -263,7 +263,7 @@ const pixiStarterModules = {
     { kind: 'function', name: 'loadRuntime', signature: '(module)', summary: 'Import an HGame runtime module by its path, using the starter host configuration.' },
     { kind: 'function', name: 'readGameJson', signature: '(path)', summary: 'Load a JSON file relative to the game document and report HTTP errors.' },
   ] },
-  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio, qualityController}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'resetQualityMeasurements', 'setBloom', 'createSwarmLayer', 'createTilemapLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
+  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio, qualityController, qualityPresets}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'resetQualityMeasurements', 'setQuality', 'setBloom', 'createSwarmLayer', 'createTilemapLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
   'src/engine/ProceduralAtlas.js': { exports: [
     { kind: 'class', name: 'ProceduralAtlas', signature: 'new(size=1024)', summary: 'PixiJS shared atlas with optional white hit-flash frames.', members: ['register', 'registerImage', 'registerSheet', 'build', 'get', 'dispose'] },
     { kind: 'function', name: 'createDefaultGameAtlas', signature: '({playerImage, enemyImage, eliteImage, extraFrames, size}={})', summary: 'Create and build the PixiJS starter atlas.' },
