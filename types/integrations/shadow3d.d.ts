@@ -1,7 +1,3 @@
-/**
- * Directional shadow frustum fitter shared between the Three.js adapter
- * and procedural sky helpers without pulling sky shaders into minimal 3D builds.
- */
 /** @typedef {[number, number, number]} ShadowVec3Tuple Direction/point [x, y, z]. */
 /** @typedef {ShadowVec3Tuple|{ x: number, y: number, z: number }} ShadowVec3Input */
 /**
@@ -19,7 +15,7 @@
  */
 /**
  * @typedef {object} ShadowFitOptions
- * @property {ShadowVec3Input|null} [sunDirection=null] Defaults to light.position - light.target.position.
+ * @property {ShadowVec3Input|null} [sunDirection=null] Defaults to the world-space direction from the target to the light.
  * @property {number} [distance=40] Light distance from bounds centre, world units.
  * @property {number} [padding=2] World units added on each side.
  * @property {boolean} [snapToTexels=true] Snap to shadow-map texels to avoid shimmer.
@@ -102,7 +98,7 @@ export type ShadowFitBounds = {
 };
 export type ShadowFitOptions = {
     /**
-     * Defaults to light.position - light.target.position.
+     * Defaults to the world-space direction from the target to the light.
      */
     sunDirection?: ShadowVec3Input | null | undefined;
     /**

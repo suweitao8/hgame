@@ -16,6 +16,7 @@ import {
 import { createFullscreenTriangle, inspectWebGLCapabilities } from './capabilities.js';
 import { computeWhiteBalanceRGB } from './color.js';
 import { QUALITY3D_PRESETS } from '../quality3d.js';
+import { readWorldPosition } from '../shadow3d/transform.js';
 
 const POST_STATE_SCALAR_KEYS = [
   'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
@@ -430,6 +431,7 @@ export function createPostPipeline3D(options = {}) {
   let scratchInvProj = null;
   let scratchCamToShadow = null;
   let scratchSunView = null;
+  let scratchSunTarget = null;
   const hdrType = capabilities.halfFloatRenderable && THREE.HalfFloatType
     ? THREE.HalfFloatType
     : THREE.UnsignedByteType;
@@ -630,6 +632,7 @@ export function createPostPipeline3D(options = {}) {
     scratchInvProj = new THREE.Matrix4();
     scratchCamToShadow = new THREE.Matrix4();
     scratchSunView = new THREE.Vector3(0, 1, 0);
+    scratchSunTarget = new THREE.Vector3();
     const exposureDefines = usesByteColorTargets ? { HGAME_EXPOSURE_UNORM: 1 } : {};
     const giDepthDefines = usesByteColorTargets ? { HGAME_BYTE_GI_DEPTH: 1 } : {};
     const storedExposureRange = { value: new THREE.Vector2(state.minExposure, state.maxExposure) };
@@ -900,13 +903,12 @@ export function createPostPipeline3D(options = {}) {
 
       camera.updateMatrixWorld?.();
       scratchInvProj.copy(camera.projectionMatrixInverse);
-      const hasSunDir = Boolean(sunLight?.position && sunLight.visible !== false);
-      if (hasSunDir) {
-        scratchSunView.set(
-          sunLight.position.x - (sunLight.target?.position?.x ?? 0),
-          sunLight.position.y - (sunLight.target?.position?.y ?? 0),
-          sunLight.position.z - (sunLight.target?.position?.z ?? 0),
-        ).normalize().transformDirection(camera.matrixWorldInverse);
+      let hasSunDir = false;
+      if (sunLight?.position && sunLight.visible !== false) {
+        readWorldPosition(sunLight, scratchSunView).sub(readWorldPosition(sunLight.target, scratchSunTarget));
+        const lengthSq = scratchSunView.lengthSq();
+        hasSunDir = Number.isFinite(lengthSq) && lengthSq > 0;
+        if (hasSunDir) scratchSunView.transformDirection(camera.matrixWorldInverse);
         if (sunLight.color && state.sunColor) state.sunColor.copy(sunLight.color);
       }
 

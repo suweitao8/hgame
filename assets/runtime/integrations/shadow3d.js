@@ -2,6 +2,7 @@
  * Directional shadow frustum fitter shared between the Three.js adapter
  * and procedural sky helpers without pulling sky shaders into minimal 3D builds.
  */
+import { readWorldPosition, writeWorldPosition } from './shadow3d/transform.js';
 
 /** @typedef {[number, number, number]} ShadowVec3Tuple Direction/point [x, y, z]. */
 /** @typedef {ShadowVec3Tuple|{ x: number, y: number, z: number }} ShadowVec3Input */
@@ -20,7 +21,7 @@
  */
 /**
  * @typedef {object} ShadowFitOptions
- * @property {ShadowVec3Input|null} [sunDirection=null] Defaults to light.position - light.target.position.
+ * @property {ShadowVec3Input|null} [sunDirection=null] Defaults to the world-space direction from the target to the light.
  * @property {number} [distance=40] Light distance from bounds centre, world units.
  * @property {number} [padding=2] World units added on each side.
  * @property {boolean} [snapToTexels=true] Snap to shadow-map texels to avoid shimmer.
@@ -83,28 +84,34 @@ export function fitDirectionalShadowFrustum(THREE, light, bounds, {
   const cx = (minX + maxX) * 0.5;
   const cy = (minY + maxY) * 0.5;
   const cz = (minZ + maxZ) * 0.5;
+  const cam = light.shadow.camera;
+  const scratch = new THREE.Vector3();
+  const currentDirection = sunDirection == null && light.position && light.target
+    ? readWorldPosition(light, new THREE.Vector3()).sub(readWorldPosition(light.target, scratch))
+    : null;
   const dirArr = normalizeShadowVec3(
-    sunDirection ?? (light.position && light.target
-      ? [light.position.x - light.target.position.x, light.position.y - light.target.position.y, light.position.z - light.target.position.z]
-      : [0.46, 0.72, 0.52]),
+    sunDirection ?? currentDirection,
     [0.46, 0.72, 0.52],
   );
 
   // Light looks from target + dirArr * distance toward target (cx, cy, cz).
   const dir = new THREE.Vector3(dirArr[0], dirArr[1], dirArr[2]);
-  const forward = dir.clone().negate().normalize(); // view look direction (-Z of light camera)
-  const worldUp = Math.abs(forward.y) > 0.99
-    ? new THREE.Vector3(0, 0, 1)
-    : new THREE.Vector3(0, 1, 0);
-  const right = new THREE.Vector3().crossVectors(forward, worldUp).normalize();
-  const up = new THREE.Vector3().crossVectors(right, forward).normalize();
-
   const lx = cx + dir.x * distance;
   const ly = cy + dir.y * distance;
   const lz = cz + dir.z * distance;
-  light.position?.set?.(lx, ly, lz);
-  light.target?.position?.set?.(cx, cy, cz);
-  light.target?.updateMatrixWorld?.(true);
+  const cameraUp = cam.up ?? new THREE.Vector3(0, 1, 0);
+  const backward = new THREE.Vector3(lx - cx, ly - cy, lz - cz);
+  if (backward.lengthSq() === 0) backward.z = 1;
+  backward.normalize();
+  const right = new THREE.Vector3().crossVectors(cameraUp, backward);
+  // Match Three.js lookAt for a shadow direction parallel to the camera up axis.
+  if (right.lengthSq() === 0) {
+    if (Math.abs(cameraUp.z) === 1) backward.x += 0.0001;
+    else backward.z += 0.0001;
+    right.crossVectors(cameraUp, backward.normalize());
+  }
+  right.normalize();
+  const up = new THREE.Vector3().crossVectors(backward, right);
 
   let left = Infinity, rightBound = -Infinity;
   let bottom = Infinity, top = -Infinity;
@@ -118,7 +125,7 @@ export function fitDirectionalShadowFrustum(THREE, light, bounds, {
         const pz = (iz === 0 ? minZ : maxZ) - lz;
         const u = px * right.x + py * right.y + pz * right.z;
         const v = px * up.x + py * up.y + pz * up.z;
-        const d = px * forward.x + py * forward.y + pz * forward.z;
+        const d = -(px * backward.x + py * backward.y + pz * backward.z);
         if (u < left) left = u;
         if (u > rightBound) rightBound = u;
         if (v < bottom) bottom = v;
@@ -138,20 +145,31 @@ export function fitDirectionalShadowFrustum(THREE, light, bounds, {
 
   const mapW = light.shadow.mapSize?.x ?? 0;
   const mapH = light.shadow.mapSize?.y ?? 0;
-  if (snapToTexels && mapW > 0 && mapH > 0) {
-    const texelX = (rightBound - left) / mapW;
-    const texelY = (top - bottom) / mapH;
-    if (texelX > 0) {
-      left = Math.floor(left / texelX) * texelX;
-      rightBound = Math.ceil(rightBound / texelX) * texelX;
+  if (snapToTexels) {
+    // Reserve one texel of span so rounding the center cannot crop fitted bounds.
+    if (mapW > 1 && rightBound > left) {
+      const texel = (rightBound - left) / (mapW - 1);
+      const worldCenter = (left + rightBound) * 0.5 + lx * right.x + ly * right.y + lz * right.z;
+      const shift = Math.round(worldCenter / texel) * texel - worldCenter;
+      left += shift - texel * 0.5;
+      rightBound += shift + texel * 0.5;
     }
-    if (texelY > 0) {
-      bottom = Math.floor(bottom / texelY) * texelY;
-      top = Math.ceil(top / texelY) * texelY;
+    if (mapH > 1 && top > bottom) {
+      const texel = (top - bottom) / (mapH - 1);
+      const worldCenter = (bottom + top) * 0.5 + lx * up.x + ly * up.y + lz * up.z;
+      const shift = Math.round(worldCenter / texel) * texel - worldCenter;
+      bottom += shift - texel * 0.5;
+      top += shift + texel * 0.5;
     }
   }
 
-  const cam = light.shadow.camera;
+  // Move a parented light/target in hierarchy order.
+  let parent = light.parent;
+  while (parent && parent !== light.target) parent = parent.parent;
+  if (parent) writeWorldPosition(light.target, cx, cy, cz, scratch);
+  writeWorldPosition(light, lx, ly, lz, scratch);
+  if (!parent) writeWorldPosition(light.target, cx, cy, cz, scratch);
+
   cam.left = left;
   cam.right = rightBound;
   cam.bottom = bottom;
