@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse a model provider's parsed GLTF when the same file is requested sequentially for its scene and animation clips.
+
 - Add Pixi tilemap edit helpers that update the existing TileMap and rebuild each affected cached visual chunk once per batch.
 
 - Restrict CPU swarm circle-damage queries to overlapping spatial chunk coordinates, retaining edge chunks for out-of-world units.

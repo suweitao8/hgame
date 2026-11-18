@@ -198,7 +198,7 @@ export function createModel3DProvider({
   let activeLoader = loader;
   const cache = new Map();
   const clipCache = new Map();
-  const inFlightGltf = new Map();
+  const gltfCache = new Map();
   const ownedRoots = new Set();
   const pendingLoads = new Set();
   let disposed = false;
@@ -221,18 +221,17 @@ export function createModel3DProvider({
     return cloneSkeleton ? cloneSkeleton(source) : cloneObject3DWithSkins(THREE, source);
   }
 
-  // Model and animation callers share only concurrent requests. The model and
-  // clip caches retain their existing ownership and independent retry behavior.
+  // A loaded GLTF can supply both scene and clips. Keep one parsed result for
+  // this provider's lifetime so sequential consumers also share decoding.
   function loadSharedGltf(key, resolved) {
-    let request = inFlightGltf.get(key);
+    let request = gltfCache.get(key);
     if (!request) {
       request = Promise.resolve().then(() => {
         ensureActive();
         return loadWithLoader(getLoader(), resolved);
       });
-      inFlightGltf.set(key, request);
-      const clear = () => { if (inFlightGltf.get(key) === request) inFlightGltf.delete(key); };
-      request.then(clear, clear);
+      gltfCache.set(key, request);
+      request.catch(() => { if (gltfCache.get(key) === request) gltfCache.delete(key); });
     }
     return request;
   }
@@ -245,6 +244,7 @@ export function createModel3DProvider({
         ensureActive();
         const gltf = await loadSharedGltf(key, resolved);
         if (!gltf || !gltf.scene) {
+          gltfCache.delete(key);
           throw new Error('Loaded GLTF asset contains no scene: ' + key);
         }
         // A replaced key can still have live clones using its original resources.
@@ -1029,7 +1029,7 @@ export function createModel3DProvider({
     disposed = true;
     cache.clear();
     clipCache.clear();
-    inFlightGltf.clear();
+    gltfCache.clear();
     const released = new WeakSet();
     const errors = [];
     const releaseReady = () => {
