@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow Pixi tilemaps to render as foreground or background layers so games can compose scenery around character sprites.
+
 - Avoid allocating a notify-event array on every 3D animation step when neither active clip has notifications, while continuing to advance notify cursors.
 
 - Reuse a model provider's parsed GLTF when the same file is requested sequentially for its scene and animation clips.

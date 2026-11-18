@@ -40,13 +40,14 @@ export class Renderer2D {
     this.bgLayer.addChild(grid);
     this.shadowLayer = new Container();
     this.entityLayer = new Container({ sortableChildren: true });
+    this.foregroundLayer = new Container();
     this.enemyLayer = new ParticleContainer({ dynamicProperties: { position: true, uvs: true, rotation: true, vertex: true } });
     this.enemyParticles = [];
     this.enemyPool = [];
     this.pendingEnemies = [];
     this.trailLayer = new Container();
     this.particleLayer = new ParticleContainer({ dynamicProperties: { position: true, vertex: true, rotation: true, color: true, uvs: true } });
-    this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, this.trailLayer, this.particleLayer);
+    this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, this.foregroundLayer, this.trailLayer, this.particleLayer);
     this.app.stage.addChild(this.worldRoot);
     this.bloom = new AdvancedBloomFilter({ threshold: 0.62, bloomScale: 0.4, brightness: 1, blur: 3 });
     this.bloomEnabled = false;

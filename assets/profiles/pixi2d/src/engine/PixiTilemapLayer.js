@@ -2,13 +2,14 @@ import { Container, Particle, ParticleContainer } from 'pixi.js';
 
 /** Draw an HGame TileMap from frames already baked into the renderer's atlas. */
 export class PixiTilemapLayer {
-  constructor(renderer, map, { frames, chunkSize = 32, maxCachedChunks = 128, originX = 0, originY = 0 } = {}) {
+  constructor(renderer, map, { frames, layer = 'background', chunkSize = 32, maxCachedChunks = 128, originX = 0, originY = 0 } = {}) {
     if (!renderer?.bgLayer || !renderer?.atlas?.textures) throw new TypeError('Initialize Renderer2D before creating a tilemap layer');
     if (!map || typeof map.get !== 'function' || !Number.isInteger(map.width) || !Number.isInteger(map.height) ||
         map.width < 1 || map.height < 1 || !Number.isFinite(map.tileWidth) || !Number.isFinite(map.tileHeight) || !(map.tileWidth > 0) || !(map.tileHeight > 0)) {
       throw new TypeError('A rectangular HGame TileMap with positive tile dimensions is required');
     }
     if (!frames || typeof frames !== 'object' || Array.isArray(frames)) throw new TypeError('frames must map tile values to atlas frame names');
+    if (layer !== 'background' && layer !== 'foreground') throw new RangeError('Tilemap layer must be background or foreground');
     if (!Number.isInteger(chunkSize) || chunkSize < 1 || chunkSize > 128) throw new RangeError('chunkSize must be an integer from 1 to 128');
     if (!Number.isInteger(maxCachedChunks) || maxCachedChunks < 1 || maxCachedChunks > 4096) throw new RangeError('maxCachedChunks must be an integer from 1 to 4096');
     if (!Number.isFinite(originX) || !Number.isFinite(originY)) throw new RangeError('Tilemap origin must be finite');
@@ -24,7 +25,7 @@ export class PixiTilemapLayer {
     this.root = new Container(); this.root.eventMode = 'none'; this.root.interactiveChildren = false;
     this.chunks = new Map(); this.frame = 0; this.visibleRange = null; this.disposed = false;
     try {
-      renderer.bgLayer.addChild(this.root);
+      (layer === 'foreground' ? renderer.foregroundLayer : renderer.bgLayer).addChild(this.root);
       this.update();
     } catch (error) {
       this.root.destroy({ children: true });
