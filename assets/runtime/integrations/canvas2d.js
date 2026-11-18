@@ -1280,8 +1280,12 @@ export function createCanvas2DAdapter({
         const cMaxX = swarm.chunkMaxX;
         const cMinY = swarm.chunkMinY;
         const cMaxY = swarm.chunkMaxY;
-        for (let ck = 0, cn = cHead.length; ck < cn; ck++) {
-          if (cCount[ck] === 0) continue;
+        const occupiedCount = swarm.occupiedChunkCount;
+        const occupiedIds = occupiedCount === undefined ? null : swarm.occupiedChunkIds;
+        const chunkLimit = occupiedIds ? occupiedCount : cHead.length;
+        for (let i = 0; i < chunkLimit; i++) {
+          const ck = occupiedIds ? occupiedIds[i] : i;
+          if (!occupiedIds && cCount[ck] === 0) continue;
           if (simpleMatrix && (cMaxX[ck] < lMinX || cMinX[ck] > lMaxX || cMaxY[ck] < lMinY || cMinY[ck] > lMaxY)) {
             stats.culled += cCount[ck];
             continue;

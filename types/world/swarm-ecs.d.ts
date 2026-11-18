@@ -114,6 +114,8 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {Int32Array} chunkHead Per-chunk intrusive head index (`-1` = empty).
  * @property {Int32Array} chunkNext Per-unit next index inside its chunk list.
  * @property {Uint32Array} chunkCount Unit count per chunk.
+ * @property {Uint16Array} [occupiedChunkIds] Read-only ascending chunk IDs in the prefix up to `occupiedChunkCount`, after `ensureChunks()`.
+ * @property {number} [occupiedChunkCount] Length of the occupied-chunk prefix.
  * @property {Float32Array} chunkMinX Tight minimum X per non-empty chunk.
  * @property {Float32Array} chunkMaxX Tight maximum X per non-empty chunk.
  * @property {Float32Array} chunkMinY Tight minimum Y/Z per non-empty chunk.
@@ -685,6 +687,14 @@ export type SwarmSimulation = {
      * Unit count per chunk.
      */
     chunkCount: Uint32Array;
+    /**
+     * Read-only ascending chunk IDs in the prefix up to `occupiedChunkCount`, after `ensureChunks()`.
+     */
+    occupiedChunkIds?: Uint16Array | undefined;
+    /**
+     * Length of the occupied-chunk prefix.
+     */
+    occupiedChunkCount?: number | undefined;
     /**
      * Tight minimum X per non-empty chunk.
      */

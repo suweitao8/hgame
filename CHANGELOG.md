@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Track occupied swarm chunks in grid order. Rebuild sparse chunk indices without clearing the full grid and skip empty chunks in crowd rendering and circle damage queries.
+
 - Add distance hysteresis for CPU-driven Bone-VAT crowds to reduce LOD switching and buffer repacking near thresholds. Track swarm slot generations so respawned units start with fresh LOD and status.
 
 - Apply the Bone-VAT crowd group's world transform to CPU culling, LOD distances and impostor camera-facing, including under scaled and rotated ancestors.

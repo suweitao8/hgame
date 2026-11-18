@@ -35,6 +35,7 @@ HGame keeps 3D rendering modular and strictly opt-in. Core runtime modules never
 - `createBoneVatCrowd3D` packs CPU-driven instances into 16-byte rows per LOD and schedules updates only for changed spans. Its `uploadedBytes` reports scheduled instance data and excludes allocation. Skinned LODs and distant impostors use the same packed animation and status format.
 - Bone-VAT positions and `baseY` are local to `crowd.group`. Move, rotate or scale that group or its parents. CPU-driven crowds measure LOD distances and test visibility in world space. Far impostors face the render camera around the transformed crowd up axis. Texture-driven crowds use the same transform for rendering and assign LOD counts explicitly through `syncFromGpuSwarm`.
 - CPU-driven Bone-VAT crowds default to `lodHysteresis: 0.1`. At a 25-unit threshold, an instance moving away switches at 27.5 units, and an instance moving closer switches below 22.5. A new instance uses the nominal threshold. Set `lodHysteresis: 0` for a single threshold. A chunk can still select a common LOD when its entire distance range yields the same result for every previous LOD. Custom swarm sources can expose `slotGeneration` to enable history across frames.
+- After `ensureChunks()`, the native swarm exposes a read-only prefix of `occupiedChunkIds` with length `occupiedChunkCount`. IDs are ascending, preserving submission order when the renderer skips empty cells. Canvas2D, WebGL2D and Bone-VAT use this prefix when available.
 
 ## Sky, Shadows & Pooled Lighting (`sky3d.js`)
 

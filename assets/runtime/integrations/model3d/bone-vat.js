@@ -1751,15 +1751,18 @@ export function createBoneVatCrowd3D(THREE, {
       const cMaxX = swarm.chunkMaxX;
       const cMinZ = swarm.chunkMinY;
       const cMaxZ = swarm.chunkMaxY;
-      const numChunks = cHead.length;
+      const occupiedCount = swarm.occupiedChunkCount;
+      const occupiedIds = occupiedCount === undefined ? null : swarm.occupiedChunkIds;
+      const chunkLimit = occupiedIds ? occupiedCount : cHead.length;
       const minimumLod1 = swarmLod ? nearLod1 : lod1Radius;
       const maximumLod1 = swarmLod ? farLod1 : lod1Radius;
       const minimumLod2 = swarmLod ? nearLod2 : lod2Radius;
       const maximumLod2 = swarmLod ? farLod2 : lod2Radius;
       const maxDistRad = maxDistance > 0 && Number.isFinite(maxDistance) ? maxDistance : Infinity;
 
-      for (let ck = 0; ck < numChunks; ck++) {
-        if (cCount[ck] === 0) continue;
+      for (let i = 0; i < chunkLimit; i++) {
+        const ck = occupiedIds ? occupiedIds[i] : i;
+        if (!occupiedIds && cCount[ck] === 0) continue;
         const minX = cMinX[ck];
         const maxX = cMaxX[ck];
         const minZ = cMinZ[ck];

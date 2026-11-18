@@ -1294,6 +1294,8 @@ function stepSwarmSequential(
  * @property {Int32Array} chunkHead Per-chunk intrusive head index (`-1` = empty).
  * @property {Int32Array} chunkNext Per-unit next index inside its chunk list.
  * @property {Uint32Array} chunkCount Unit count per chunk.
+ * @property {Uint16Array} [occupiedChunkIds] Read-only ascending chunk IDs in the prefix up to `occupiedChunkCount`, after `ensureChunks()`.
+ * @property {number} [occupiedChunkCount] Length of the occupied-chunk prefix.
  * @property {Float32Array} chunkMinX Tight minimum X per non-empty chunk.
  * @property {Float32Array} chunkMaxX Tight maximum X per non-empty chunk.
  * @property {Float32Array} chunkMinY Tight minimum Y/Z per non-empty chunk.
@@ -1394,7 +1396,7 @@ export function createSwarmSimulation({
     if (sId >= 0 && sId < capacity) unitFlags[sId] |= SWARM_UNIT_FLAGS.ECS_CLAIMED;
   };
 
-  // Coarse 32x32 spatial chunks with tight bounds for O(chunks) frustum & AOE culling.
+  // At most 32 columns, so one bit mask covers all occupied chunks in a row.
   const chunkCols = Math.min(gridCols, 32);
   const chunkRows = Math.min(gridRows, 32);
   const totalChunks = chunkCols * chunkRows;
@@ -1405,23 +1407,13 @@ export function createSwarmSimulation({
   const chunkHead = new Int32Array(totalChunks).fill(-1);
   const chunkNext = new Int32Array(capacity).fill(-1);
   const chunkCount = new Uint32Array(totalChunks);
-  const baseChunkMinX = new Float32Array(totalChunks);
-  const baseChunkMaxX = new Float32Array(totalChunks);
-  const baseChunkMinY = new Float32Array(totalChunks);
-  const baseChunkMaxY = new Float32Array(totalChunks);
-  for (let ky = 0; ky < chunkRows; ky++) {
-    for (let kx = 0; kx < chunkCols; kx++) {
-      const ck = ky * chunkCols + kx;
-      baseChunkMinX[ck] = originX + kx * chunkW - 0.5;
-      baseChunkMaxX[ck] = originX + (kx + 1) * chunkW + 0.5;
-      baseChunkMinY[ck] = originY + ky * chunkH - 0.5;
-      baseChunkMaxY[ck] = originY + (ky + 1) * chunkH + 0.5;
-    }
-  }
-  const chunkMinX = new Float32Array(baseChunkMinX);
-  const chunkMaxX = new Float32Array(baseChunkMaxX);
-  const chunkMinY = new Float32Array(baseChunkMinY);
-  const chunkMaxY = new Float32Array(baseChunkMaxY);
+  const chunkMinX = new Float32Array(totalChunks).fill(Infinity);
+  const chunkMaxX = new Float32Array(totalChunks).fill(-Infinity);
+  const chunkMinY = new Float32Array(totalChunks).fill(Infinity);
+  const chunkMaxY = new Float32Array(totalChunks).fill(-Infinity);
+  const occupiedColumns = new Uint32Array(chunkRows);
+  const occupiedChunkIds = new Uint16Array(totalChunks);
+  let occupiedChunkCount = 0;
   const unitCell = new Int32Array(capacity);
   // Every live unit can occupy the same cell, including out-of-world units
   // clamped to an edge cell. Select the counter width from total capacity.
@@ -1447,14 +1439,36 @@ export function createSwarmSimulation({
   const sepSq = separationRadius * separationRadius;
   const invSepRadius = separationRadius > 0 ? 1 / separationRadius : 0;
 
+  function firstOccupiedColumn(mask) {
+    return 31 - Math.clz32(mask & -mask);
+  }
+
+  function resetChunkIndex() {
+    if (occupiedChunkCount * 2 >= totalChunks) {
+      chunkHead.fill(-1);
+      chunkCount.fill(0);
+      chunkMinX.fill(Infinity);
+      chunkMaxX.fill(-Infinity);
+      chunkMinY.fill(Infinity);
+      chunkMaxY.fill(-Infinity);
+    } else {
+      for (let i = 0; i < occupiedChunkCount; i++) {
+        const ck = occupiedChunkIds[i];
+        chunkHead[ck] = -1;
+        chunkCount[ck] = 0;
+        chunkMinX[ck] = Infinity;
+        chunkMaxX[ck] = -Infinity;
+        chunkMinY[ck] = Infinity;
+        chunkMaxY[ck] = -Infinity;
+      }
+    }
+    occupiedColumns.fill(0);
+    occupiedChunkCount = 0;
+  }
+
   function ensureChunks() {
     if (!chunksDirty) return;
-    chunkHead.fill(-1);
-    chunkCount.fill(0);
-    chunkMinX.fill(Infinity);
-    chunkMaxX.fill(-Infinity);
-    chunkMinY.fill(Infinity);
-    chunkMaxY.fill(-Infinity);
+    resetChunkIndex();
 
     for (let a = 0; a < activeCount; a++) {
       const id = activeIds[a];
@@ -1467,13 +1481,20 @@ export function createSwarmSimulation({
       if (ky < 0) ky = 0;
       else if (ky >= chunkRows) ky = chunkRows - 1;
       const ck = ky * chunkCols + kx;
-      chunkNext[id] = chunkHead[ck];
+      const previousHead = chunkHead[ck];
+      if (previousHead === -1) occupiedColumns[ky] |= 1 << kx;
+      chunkNext[id] = previousHead;
       chunkHead[ck] = id;
       chunkCount[ck]++;
       if (px < chunkMinX[ck]) chunkMinX[ck] = px;
       if (px > chunkMaxX[ck]) chunkMaxX[ck] = px;
       if (py < chunkMinY[ck]) chunkMinY[ck] = py;
       if (py > chunkMaxY[ck]) chunkMaxY[ck] = py;
+    }
+    for (let row = 0; row < chunkRows; row++) {
+      for (let mask = occupiedColumns[row]; mask !== 0; mask &= mask - 1) {
+        occupiedChunkIds[occupiedChunkCount++] = row * chunkCols + firstOccupiedColumn(mask);
+      }
     }
     chunksDirty = false;
   }
@@ -1606,8 +1627,7 @@ export function createSwarmSimulation({
     activeCount = 0;
     ecs.clear();
     spatialHash.clear();
-    chunkHead.fill(-1);
-    chunkCount.fill(0);
+    resetChunkIndex();
     cellDensity.fill(0);
     chunksDirty = false;
     if (boundCrowd2D) {
@@ -1638,10 +1658,10 @@ export function createSwarmSimulation({
       minChunkY = Math.max(0, Math.min(chunkRows - 1, Math.floor((y - r - originY) * invChunkH)));
       maxChunkY = Math.max(0, Math.min(chunkRows - 1, Math.floor((y + r - originY) * invChunkH)));
     }
-    for (let cy = minChunkY; cy <= maxChunkY; cy++) for (let cx = minChunkX; cx <= maxChunkX; cx++) {
-      const ck = cy * chunkCols + cx;
+    const columnRange = (-1 << minChunkX) & (-1 >>> (31 - maxChunkX));
+    for (let cy = minChunkY; cy <= maxChunkY; cy++) for (let mask = occupiedColumns[cy] & columnRange; mask !== 0; mask &= mask - 1) {
+      const ck = cy * chunkCols + firstOccupiedColumn(mask);
       let id = chunkHead[ck];
-      if (id === -1) continue;
       if (x + r < chunkMinX[ck] || x - r > chunkMaxX[ck] || y + r < chunkMinY[ck] || y - r > chunkMaxY[ck]) {
         continue;
       }
@@ -1869,6 +1889,8 @@ export function createSwarmSimulation({
     chunkHead,
     chunkNext,
     chunkCount,
+    occupiedChunkIds,
+    get occupiedChunkCount() { return occupiedChunkCount; },
     chunkMinX,
     chunkMaxX,
     chunkMinY,

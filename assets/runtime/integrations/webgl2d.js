@@ -1242,9 +1242,13 @@ export function createWebGL2DAdapter({
         const cMaxX = swarm.chunkMaxX;
         const cMinY = swarm.chunkMinY;
         const cMaxY = swarm.chunkMaxY;
+        const occupiedCount = swarm.occupiedChunkCount;
+        const occupiedIds = occupiedCount === undefined ? null : swarm.occupiedChunkIds;
+        const chunkLimit = occupiedIds ? occupiedCount : cHead.length;
 
-        for (let ck = 0, cn = cHead.length; ck < cn; ck++) {
-          if (cCount[ck] === 0) continue;
+        for (let i = 0; i < chunkLimit; i++) {
+          const ck = occupiedIds ? occupiedIds[i] : i;
+          if (!occupiedIds && cCount[ck] === 0) continue;
           const ckMinX = cMinX[ck], ckMaxX = cMaxX[ck], ckMinY = cMinY[ck], ckMaxY = cMaxY[ck];
           if (simpleMatrix && (ckMaxX < lMinX || ckMinX > lMaxX || ckMaxY < lMinY || ckMinY > lMaxY)) {
             stats.culled += cCount[ck];
