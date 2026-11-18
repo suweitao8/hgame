@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow unanimated skinned model replacements to reach the skeleton-aware model-slot cloning path; animated GLBs remain handled by the model3d provider.
+
 - Avoid toggling Pixi tilemap chunk visibility or revisiting the cache while the camera remains within the same chunk range.
 
 - Load Pixi tilemap render chunks on demand and bound the off-screen chunk cache, while retaining visible chunks and the full TileMap data grid.

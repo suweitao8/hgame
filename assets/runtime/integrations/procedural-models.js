@@ -357,7 +357,6 @@ export function createProceduralModelSlots({
           throw new Error('Only static unanimated model replacements supported');
         }
         gltf.scene.traverse(obj => {
-          if (obj.isSkinnedMesh) throw new Error('Static scene replacement cannot contain a character rig');
           if (!obj.isMesh) return;
           if (obj.geometry) importedResources.add(obj.geometry);
           for (const mat of Array.isArray(obj.material) ? obj.material : [obj.material]) {
