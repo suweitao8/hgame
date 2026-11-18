@@ -1,4 +1,4 @@
-import { Application, Container, Sprite, TilingSprite, ParticleContainer, Particle } from 'pixi.js';
+import { Application, Container, Sprite, TilingSprite, ParticleContainer, Particle, RendererType } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
 import { PixiSwarmLayer } from './PixiSwarmLayer.js';
 import { PixiTilemapLayer } from './PixiTilemapLayer.js';
@@ -48,6 +48,7 @@ export class Renderer2D {
       }
     }
     if (!initialized) throw new AggregateError(errors, 'Unable to initialize a Pixi renderer');
+    this.isCanvas = this.app.renderer.type === RendererType.CANVAS;
     this.app.ticker.stop();
     this.app.canvas.id = 'game';
     this.app.canvas.setAttribute('aria-label', '游戏画面');
@@ -121,7 +122,7 @@ export class Renderer2D {
   }
   applyFilters() {
     const effects = this.effectFilters;
-    this.app.stage.filters = this.bloomEnabled || effects.length ? [this.bloom, ...effects] : [];
+    this.app.stage.filters = !this.isCanvas && (this.bloomEnabled || effects.length) ? [this.bloom, ...effects] : [];
   }
   createSwarmLayer(options) {
     const layer = new PixiSwarmLayer(this, options);

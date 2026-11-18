@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use a simple drawn slash and particle shockwave on Pixi's Canvas fallback, and avoid unsupported GPU filters there.
+
 - Retry each Pixi backend separately, including Canvas when WebGL initialization fails after capability detection.
 
 - Retry Pixi initialization with WebGL/Canvas if WebGPU is unavailable or fails during renderer initialization.

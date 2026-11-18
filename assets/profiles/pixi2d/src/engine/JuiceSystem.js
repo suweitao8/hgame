@@ -1,4 +1,4 @@
-import { Particle, MeshRope, Point } from 'pixi.js';
+import { Particle, MeshRope, Point, Graphics } from 'pixi.js';
 import { ShockwaveFilter } from 'pixi-filters';
 import { gsap } from 'gsap';
 
@@ -19,7 +19,7 @@ export class JuiceSystem {
     });
     this.freeParticles = this.particles.slice();
     this.points = Array.from({ length: 12 }, () => new Point());
-    this.trail = new MeshRope({ texture: renderer.atlas.get('slash_trail'), points: this.points });
+    this.trail = renderer.isCanvas ? new Graphics() : new MeshRope({ texture: renderer.atlas.get('slash_trail'), points: this.points });
     this.trail.visible = false; renderer.trailLayer.addChild(this.trail); this.trailTime = 0;
   }
   triggerHitJuice(id, { flashSec = 0.065, squashX = 1.35, squashY = 0.72 } = {}) {
@@ -30,6 +30,10 @@ export class JuiceSystem {
   triggerHitStop(duration = 0.045, scale = 0.04) { this.hitStop = Math.max(this.hitStop, duration); this.simTimeScale = scale; }
   addTrauma(amount = 0.4) { this.trauma = Math.min(1, this.trauma + amount); }
   spawnShockwave(x, y) {
+    if (this.renderer.isCanvas) {
+      this.burstParticles(x, y, 24, { tex: 'particle_spark', speedMin: 100, speedMax: 180, lifeMin: 0.2, lifeMax: 0.45 });
+      return;
+    }
     const center = this.renderer.worldToScreen(x, y);
     const filter = new ShockwaveFilter({ center, time: 0 });
     this.shockwaves.add(filter); this.syncShockwaveFilters();
@@ -132,6 +136,11 @@ export class JuiceSystem {
     for (let i = 0; i < this.points.length; i++) {
       const a = angle - 0.8 + i * 1.6 / (this.points.length - 1);
       this.points[i].set(x + Math.cos(a) * 90, y + Math.sin(a) * 90);
+    }
+    if (this.renderer.isCanvas) {
+      this.trail.clear().moveTo(this.points[0].x, this.points[0].y);
+      for (let i = 1; i < this.points.length; i++) this.trail.lineTo(this.points[i].x, this.points[i].y);
+      this.trail.stroke({ width: 8, color: 0xc6ffff, alpha: 0.85 });
     }
     this.trail.visible = true; this.trailTime = 0.14;
   }
