@@ -40,7 +40,7 @@ Use `--preset horde` to start with HGame's CPU swarm simulation and a PixiJS par
 
 New `2d` and `horde` presets use PixiJS. For `2d`, explicit `--renderer webgl2d` or `--renderer canvas2d` selects a legacy renderer; `horde` also supports explicit `--renderer webgl2d`. Existing games are not migrated.
 
-Pixi projects open in WebAsset immediately from the seeded bundle. Run `npm run build:pixi` after editing the entry or its imports to refresh the WebAsset preview. Packaging a newly generated project rebuilds the entry when it detects source changes. If build dependencies are missing, run `npm ci` in the project. The release retains reachable chunks with their Vite filenames and original bytes.
+Pixi projects open in WebAsset immediately from the seeded bundle. Run `npm run build:pixi` after editing the entry or its imports to refresh the WebAsset preview. Packaging a newly generated project rebuilds the entry when it detects source changes. If build dependencies are missing, run `npm ci` in the project. The release retains reachable chunks with their content-hashed filenames and original bytes.
 
 Both 3D starters put camera, fog, lights, tone mapping and exposure in `src/presentation.json` under `renderer`. Use `quality` to choose the initial mode and `renderer.worldLighting` to tune fog, hemisphere light and sun. The populated starter uses `materials.json` for the PBR palette, `model-slots.json` for procedural props or replacement GLBs, and `level.json` for placements, spawn and collision. It supports keyboard and left-side touch movement, and scenes release presentation resources on unload.
 

@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineProject } from '../assets/runtime/core/config.js';
+import { PIXI_BUNDLER_PATH } from './assets.mjs';
 import { getProjectPreset, PROFILE_FILES, RENDERERS, THREE_FILES } from './project-profiles.mjs';
 
 // Completely standalone: the runtime and starter template ship with this repository.
@@ -165,6 +166,7 @@ async function main() {
       await cp(path.join(mainSource, sourceEntry), path.join(stage, 'index.source.html'));
       if (options.preset === 'horde' && !options.bare) await cp(path.join(profiles, 'horde', 'swarm.json'), path.join(stage, 'src', 'swarm.json'));
       await cp(path.join(mainSource, 'install-build.mjs'), path.join(stage, 'scripts', 'install-pixi-build.mjs'));
+      await cp(path.join(mainSource, 'bundle.mjs'), path.join(stage, PIXI_BUNDLER_PATH));
       await cp(path.join(mainSource, 'package-lock.json'), path.join(stage, 'package-lock.json'));
       await cp(path.join(mainSource, 'CLAUDE.md'), path.join(stage, 'CLAUDE.md'));
     } else {
@@ -221,7 +223,6 @@ async function main() {
       pkg.dependencies = pixiPackage.dependencies;
       pkg.devDependencies = pixiPackage.devDependencies;
       pkg.scripts['build:pixi'] = 'node scripts/install-pixi-build.mjs --build';
-      await cp(path.join(mainSource, 'vite.config.js'), path.join(stage, 'vite.config.js'));
       await writeFile(path.join(stage, '.gitattributes'), 'assets/*.js text eol=lf\nassets/*.mjs text eol=lf\nassets/*.css text eol=lf\n');
       const instructions = await readFile(path.join(mainSource, 'AGENTS.md'), 'utf8');
       await writeFile(path.join(stage, 'AGENTS.md'), (await readFile(path.join(stage, 'AGENTS.md'), 'utf8')) + '\n' + instructions);

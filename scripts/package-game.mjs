@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { runToyPreflight } from './toy-preflight.mjs';
 import { normalizeReleaseProfile, runtimeSeeds } from './project-profiles.mjs';
-import { casObjectPath, hashPixiSources, matchPixiBuildBytes, readAssetManifest, readPixiBuildManifest, readProjectAssetCatalog, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
+import { PIXI_BUNDLER_PATH, casObjectPath, hashPixiSources, matchPixiBuildBytes, readAssetManifest, readPixiBuildManifest, readProjectAssetCatalog, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -726,7 +726,10 @@ export async function packageGameRelease({
     ? JSON.parse(await readFile(releaseProfilePath, 'utf8')) : undefined);
   let pixiBuild = await readPixiBuildManifest(absGameDir);
   if (pixiBuild.sourceHash && pixiBuild.sourceHash !== await hashPixiSources(absGameDir)) {
-    if (!(await existsFile(path.join(absGameDir, 'node_modules/vite/bin/vite.js')))) {
+    const dependency = await existsFile(path.join(absGameDir, PIXI_BUNDLER_PATH))
+      ? 'node_modules/esbuild/package.json'
+      : 'node_modules/vite/bin/vite.js';
+    if (!(await existsFile(path.join(absGameDir, dependency)))) {
       throw new Error('Pixi source changed since the last build. Install the project dependencies with npm ci before packaging.');
     }
     const build = spawnSync(process.execPath, ['scripts/install-pixi-build.mjs', '--build'], {
@@ -1145,7 +1148,7 @@ export async function packageGameRelease({
       if (clean.startsWith('/')) return null;
       const resolved = toPosixRel(path.posix.normalize(entryDir === '.' ? clean : `${entryDir}/${clean}`));
       if (!stagedOutputs.has(resolved)) return null;
-      if (pixiBuildFiles.has(resolved)) return null; // Vite has already named these by content.
+      if (pixiBuildFiles.has(resolved)) return null; // The Pixi build has already named these by content.
       if (!/\.(?:js|mjs|css)$/i.test(resolved) || /\.min\.(?:js|mjs|css)$/i.test(resolved)) return null;
       if (/[-._][A-Za-z0-9_-]*[0-9_-][A-Za-z0-9_-]*\.(?:js|mjs|css)$/i.test(path.posix.basename(resolved))) {
         return null;

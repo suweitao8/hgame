@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export const ASSET_MANIFEST_FILENAME = 'assets.manifest.json';
 export const STORE_LAYOUT = 'cas-sha256-v1';
+export const PIXI_BUNDLER_PATH = 'scripts/bundle-pixi.mjs';
 
 const RAW_ASSET_DIRS = new Set(['raw', 'art_src', 'art-src', 'source', '.git', 'node_modules', '.cache']);
 const RAW_EXTS = new Set([
@@ -19,6 +20,11 @@ const RAW_EXTS = new Set([
 const SKIP_BASENAMES = new Set(['.ds_store', 'thumbs.db', '.gitkeep', 'assets.manifest.json']);
 const CATALOG_RELATIVE_PATH = 'assets/catalog.json';
 
+function isPixiInputPath(input) {
+  return typeof input === 'string' && input.length > 0 && !/[:\\\x00-\x1f]/.test(input) &&
+    input.split('/').every(segment => segment && !segment.startsWith('.'));
+}
+
 // The Pixi installer tracks compiled outputs separately from authored assets.
 export async function readPixiBuildManifest(gameDir) {
   try {
@@ -28,12 +34,13 @@ export async function readPixiBuildManifest(gameDir) {
       const files = new Map(Object.entries(manifest.files)
         .filter(([name, hash]) => /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name) && /^[a-f0-9]{64}$/.test(hash)));
       const sourceHash = /^[a-f0-9]{64}$/.test(manifest.sourceHash) ? manifest.sourceHash : undefined;
-      return { files, sourceHash };
+      const inputs = Array.isArray(manifest.inputs) ? [...new Set(manifest.inputs.filter(isPixiInputPath))] : [];
+      return { files, sourceHash, inputs };
     }
   } catch (error) {
     if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
   }
-  return { files: new Map() };
+  return { files: new Map(), inputs: [] };
 }
 
 function isGitOwnedProjectAsset(file, buildFiles) {
@@ -55,16 +62,38 @@ export function matchPixiBuildBytes(file, bytes, expectedHash) {
 
 // The scaffold can bundle authored source and vendored HGame imports.
 // Presentation and swarm settings are fetched at runtime.
-export async function hashPixiSources(gameDir) {
+export async function hashPixiSources(gameDir, knownInputs) {
   const folders = await Promise.all(['src', 'vendor/hgame'].map(name => collectFiles(path.join(gameDir, name), gameDir)));
   const sourceFiles = folders.flat().filter(({ relPosix }) =>
     !relPosix.endsWith('.d.ts') && relPosix !== 'src/presentation.json' && relPosix !== 'src/swarm.json');
-  const inputs = ['index.source.html', 'vite.config.js', 'package.json', 'package-lock.json'];
+  const inputs = ['index.source.html', 'package.json', 'package-lock.json'];
+  let extra = [];
+  try {
+    await stat(path.join(gameDir, PIXI_BUNDLER_PATH));
+    inputs.push(PIXI_BUNDLER_PATH, 'scripts/install-pixi-build.mjs');
+    extra = knownInputs ?? (await readPixiBuildManifest(gameDir)).inputs;
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    inputs.push('vite.config.js');
+  }
   const files = sourceFiles.concat(inputs.map(relPosix => ({ relPosix, abs: path.join(gameDir, relPosix) })));
+  const included = new Set(files.map(file => file.relPosix));
+  for (const relPosix of extra) {
+    if (isPixiInputPath(relPosix) && !included.has(relPosix)) {
+      files.push({ relPosix, abs: path.join(gameDir, relPosix), optional: true });
+      included.add(relPosix);
+    }
+  }
   files.sort((a, b) => a.relPosix < b.relPosix ? -1 : a.relPosix === b.relPosix ? 0 : 1);
   const hash = createHash('sha256');
-  for (const { abs, relPosix } of files) {
-    const bytes = await readFile(abs);
+  for (const { abs, relPosix, optional } of files) {
+    let bytes;
+    try { bytes = await readFile(abs); }
+    catch (error) {
+      if (!optional || error.code !== 'ENOENT') throw error;
+      hash.update(relPosix).update('\0missing\0');
+      continue;
+    }
     const stable = /(?:\/VERSION|\.(?:[cm]?[jt]sx?|css|html?|json|svg|txt|md))$/i.test(relPosix)
       ? bytes.toString('utf8').replace(/\r\n/g, '\n')
       : bytes;

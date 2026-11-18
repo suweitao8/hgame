@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -301,6 +301,66 @@ test('standard and Toy releases trace only the chosen Pixi entry and preserve it
       assert.match(entries.get(prefix + 'index.html').toString(), /assets\/toy-entry-12345678\.js/);
       assert.equal(summary.toySdkInjected, target === 'toy');
     }
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('a generated Pixi game rebuilds its changed entry and includes its CSS and dynamic chunk', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'hgame-pixi-rebuild-'));
+  const game = path.join(temp, 'pixi-rebuild');
+  try {
+    const generated = spawnSync(process.execPath, [createGame, game, '--profile', '2d', '--bare', '--no-git'], { encoding: 'utf8' });
+    assert.equal(generated.status, 0, generated.stderr);
+    const pkg = JSON.parse(await readFile(path.join(game, 'package.json'), 'utf8'));
+    assert.ok(pkg.devDependencies.esbuild);
+    assert.equal(pkg.devDependencies.vite, undefined);
+    const lock = JSON.parse(await readFile(path.join(game, 'package-lock.json'), 'utf8'));
+    assert.ok(!Object.keys(lock.packages).some(name => name.endsWith('/picomatch')));
+
+    await mkdir(path.join(game, 'node_modules'));
+    await symlink(path.join(root, 'node_modules', 'esbuild'), path.join(game, 'node_modules', 'esbuild'), 'junction');
+    const manifestPath = path.join(game, '.hgame-pixi-build.json');
+    const original = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const sourceHtml = path.join(game, 'index.source.html');
+    const htmlSource = await readFile(sourceHtml, 'utf8');
+    await writeFile(sourceHtml, htmlSource.replace('</body>',
+      '<!-- <script type="module" src="./missing.js"></script> -->\n' +
+      '<script type="module">import { marker } from "./src/inline.js"; window.marker = marker;</script></body>'));
+    const authored = path.join(game, 'assets', 'authored.css');
+    await writeFile(authored, 'body { cursor: pointer; }');
+    await writeFile(path.join(game, 'src', 'bare.js'), 'import "./style.css"; window.ready = () => import("./extra.js");\n');
+    const image = '棋 子.svg';
+    const imagePath = path.join(game, 'assets', image);
+    await writeFile(imagePath, '<svg xmlns="http://www.w3.org/2000/svg"><title>asset-one</title></svg>');
+    await writeFile(path.join(game, 'src', 'style.css'), `body { background-image: url("../assets/${image}"); }\n`);
+    await writeFile(path.join(game, 'src', 'extra.js'), 'export const probe = "dynamic-pixi-probe";\n');
+    await writeFile(path.join(game, 'src', 'inline.js'), 'export const marker = "inline-pixi-probe";\n');
+    const output = spawnSync(process.execPath, [packageGame, game, '--version', '1.0.0', '--tag', 'rebuilt'], { encoding: 'utf8' });
+    assert.equal(output.status, 0, output.stderr || output.stdout);
+    const updated = JSON.parse(await readFile(manifestPath, 'utf8'));
+    assert.notEqual(updated.sourceHash, original.sourceHash);
+    assert.deepEqual(updated.inputs, ['assets/' + image]);
+    assert.equal(await readFile(authored, 'utf8'), 'body { cursor: pointer; }');
+    const entries = readZipEntries(await readFile(JSON.parse(output.stdout).zipPath));
+    const html = entries.get('rebuilt/index.html').toString();
+    assert.match(html, /\.\/assets\/[^"']+\.css/);
+    for (const name of Object.keys(updated.files)) assert.ok(entries.has('rebuilt/assets/' + name), name);
+    assert.ok([...entries.values()].some(bytes => bytes.includes('dynamic-pixi-probe')));
+    assert.ok([...entries.values()].some(bytes => bytes.includes('inline-pixi-probe')));
+
+    const firstAsset = Object.keys(updated.files).find(name => /^asset-[A-Z0-9]+\.svg$/.test(name));
+    assert.ok(firstAsset);
+    assert.ok(entries.get('rebuilt/assets/' + firstAsset).includes('asset-one'));
+    await writeFile(imagePath, '<svg xmlns="http://www.w3.org/2000/svg"><title>asset-two</title></svg>');
+    const changed = spawnSync(process.execPath, [packageGame, game, '--version', '1.0.0', '--tag', 'changed-art'], { encoding: 'utf8' });
+    assert.equal(changed.status, 0, changed.stderr || changed.stdout);
+    const newManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    assert.notEqual(newManifest.sourceHash, updated.sourceHash);
+    assert.equal(await exists(path.join(game, 'assets', firstAsset)), false);
+    const changedEntries = readZipEntries(await readFile(JSON.parse(changed.stdout).zipPath));
+    const newAsset = Object.keys(newManifest.files).find(name => /^asset-[A-Z0-9]+\.svg$/.test(name));
+    assert.ok(changedEntries.get('changed-art/assets/' + newAsset).includes('asset-two'));
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

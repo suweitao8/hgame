@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Build new Pixi projects with esbuild, removing the affected Picomatch dependency from their build toolchain. Preserve release rebuilds for existing Vite projects.
+
 - Release the Pixi atlas when renderer initialization fails before mounting a canvas. Cover automatic WebGL fallback, hidden-page context recovery and fixed-backend startup errors in browser CI.
 
 - Avoid SwiftShader's per-instance draw overhead in general WebGL2D sprite batches by fetching packed instances in one triangle stream.
