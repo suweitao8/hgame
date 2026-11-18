@@ -97,6 +97,7 @@ jobs:
       matrix:
         browser: [firefox, webkit]
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -105,9 +106,33 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci
-      - run: npx playwright-core install --with-deps ${{ matrix.browser }}
-      - run: npm run test:browser:recipes -- --browser ${{ matrix.browser }}
-      - run: npm run test:browser:lifecycle -- --browser ${{ matrix.browser }}
+      - name: Install and verify ${{ matrix.browser }}
+        env:
+          HGAME_CI_BROWSER: ${{ matrix.browser }}
+        shell: bash
+        run: |
+          run_logged() {
+            local name="$1"
+            shift
+            mkdir -p build/browser-compatibility
+            local log="build/browser-compatibility/$name.log"
+            if "$@" 2>&1 | tee "$log"; then
+              return
+            fi
+            local message
+            message="$(grep -m1 -E 'Error:|Error \[|^E:' "$log" || true)"
+            message="${message:-See the $name.log artifact for details}"
+            printf '::error title=%s failed::%s\n' "$name" "${message//%/%25}"
+            return 1
+          }
+          run_logged install npx playwright-core install --with-deps "$HGAME_CI_BROWSER"
+          run_logged recipes npm run test:browser:recipes -- --browser "$HGAME_CI_BROWSER"
+          run_logged lifecycle npm run test:browser:lifecycle -- --browser "$HGAME_CI_BROWSER"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-compatibility-${{ matrix.browser }}
+          path: build/browser-compatibility/
   render:
     name: Rendering budget (${{ matrix.workload }})
     strategy:
