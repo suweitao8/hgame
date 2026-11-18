@@ -4,6 +4,8 @@ This guide documents HGame's editor-free, AI-first asset workflows for 2D grid s
 
 ## 1. 2D Art Grid Batching & Dynamic Ground Shadows
 
+> **Image Generation Policy:** Generate all 2D art, character concepts, turnaround sheets, and sprite grids using the active LLM/Agent host's built-in image generation tool (e.g., Codex `imagegen`, Antigravity `image-generator`). **Do not use local ComfyUI workflows for 2D image generation** — local ComfyUI is reserved strictly for 3D mesh generation from approved images.
+
 ### Generation Tiers
 Generate square (`1:1`) images with a **pure white `#FFFFFF` background (`--bg white`, recommended default to eliminate green spill on character soles/edges)**, or transparent alpha / `#00FF00` green chroma-key, and **zero ground shadow** in the prompt so shadows are not baked into tilt/bounce animations:
 
@@ -114,3 +116,39 @@ HGame connects to a local ComfyUI (`Trellis2-GGUF` + `UltraTex LowVRAM GGUF`) an
    npm run process:model3d -- texture --mesh norm.glb --ref ref.png --quality high --out final.glb --pbr-dir pbr --qa-dir qa_utx
    ```
 
+
+### 4.1 固定低显存角色建模流水线（12GB GPU，单角色全流程 ~5–6 分钟）
+
+为兼顾 12GB 显存稳定性、简洁低耗风格与游戏运行时性能，且不在 WebAsset 建模阶段区分主角/NPC，所有角色统一按以下 5 步及顶点数红线执行：
+
+| 档位 | --preset | 目标四边面 (--target-quads) | 顶点硬上限 | 贴图尺寸 | 适用范围 |
+|---|---|---:|---:|---:|---|
+| **统一角色低模（默认，含绑定 + `Run`）** | low（兼容 general/player） | 1,750 四边面 | **≤ 3,000 顶点**（含 glTF UV 分裂后） | 1024×1024 PBR | 全部 WebAsset / 游戏角色（默认自带骨骼+`Run` 循环） |
+| **高模烘焙母版** | high | 16,000 四边面 | ~24k 顶点 | 2048×2048 PBR | 展示预览 / 法线与颜色烘焙源 |
+
+**实测耗时明细（RTX 4070 12GB，带 `--reserve-vram 4.8`，2026-11-18「丑橘」实测全套 `335.6s` + 自动绑定动画 `~3s` ≈ 5 分 39 秒）**：
+1. **单视图 AI 3D 生模**（ComfyUI `TRELLIS.2-4B GGUF Q4_K_M`、`euler` 12步、`max_num_tokens=20480`）：约 **4.2 – 7.5 分钟**（显存余量充足时「丑橘」实测 `251.7s`；桌面/编辑器占显存多时约 7.5 分钟）。
+2. **Blender 姿态归一化 `normalize`**：约 **1–2 秒**。
+3. **高模四边面重建 + Auto Unwrap + 2K 烘焙 `remesh-bake`**（可选，仅主角或需展示高模时跑）：约 **1 – 2 分钟**。
+4. **统一角色低模重拓扑 + UV + 1K PBR 烘焙 + 自动绑定 & 默认 `Run` 动画**：`remesh-bake --preset low --rig-run`（`generate --remesh --low-out` 默认已自动开启 `--rig-run`，加 `--no-rig` 可关闭），合计约 **28–48 秒**（其中自动绑定+`Run` 动画约 **~3 秒**）。
+5. **WebAsset 上传 + 多视角与 `Run` 播放检查**：约 **5–10 秒**。
+- **单角色全流程总耗时**：**仅出低模（含 UV+贴图+绑定+`Run`）约 5 分钟**（显存偏紧时约 8 分钟）；**高模 + 低模（含绑定+`Run`）全套约 `5.6 分钟`**（显存偏紧时约 `9–10 分钟`）。
+
+**标准固定命令**：
+```bash
+# 1. 一条命令出全套（ComfyUI 生模 -> 归一化 -> 高模 + 统一 ≤3000 顶点低模+UV+贴图+绑定+Run）：
+node scripts/process-model3d.mjs generate --input <front.png> --out <char_high.glb> \
+  --quality high --normalize --origin ground --target-height 1.0 \
+  --remesh --low-out <char_low.glb> --preset low
+
+# 2. 对已有高模直接烘焙统一标准低模（≤3000 顶点）并附带绑定 + Run 动画：
+node scripts/process-model3d.mjs remesh-bake --input <norm_high.glb> --out <low.glb> --preset low --rig-run
+
+# 3. 对已有低模单独补充自动绑定 + 默认 Run 动画：
+node scripts/process-model3d.mjs rig-run --input <low.glb> --out <low_run.glb> --qa-dir <qa_run_dir>
+```
+
+- ⚠️ **避坑固定规则**：
+  - ComfyUI 必须带 `--reserve-vram 4.8` 启动（可写入本地 ComfyUI 启动脚本或 CLI 参数），勿跑 `pipeline_type="512"` 的纹理 GGUF（会产生彩色噪点）。
+  - AI 概念图不使用 `--multiview`（非严格正交会导致额头凸起/耳朵撕裂），也不再默认跑 8–10 分钟的 UltraTex 重绘。
+  - 自动绑定使用 UE/Anim58 命名的 23 根主骨骼；检测到身后斗篷或尾巴时，会额外生成 `cape_01-03`（父骨骼 `spine_03`）或 `tail_01-03`（父骨骼 `pelvis`）。这些区域的权重只分配给对应骨链，不再被腿或手臂骨骼拉伸。斗篷和尾巴的轻微摆动会烘焙进默认 `Run`；套用 Anim58 动作时，它们会刚性跟随父骨骼。

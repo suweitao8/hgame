@@ -23,6 +23,26 @@ export const DEFAULT_TRELLIS2_WORKFLOW_REL = 'user/default/workflows/PixelArtist
 export const DEFAULT_TRELLIS2_HQ_WORKFLOW_REL = 'user/default/workflows/Trellis2GGUF/High_Quality_GGUF.json';
 export const DEFAULT_ULTRATEX_WORKFLOW_REL = 'user/default/workflows/PixelArtistry/PixelArtistry_UltraTex_03_LowVRAM_GGUF.json';
 
+/**
+ * Fixed character low-poly budget: unified <= 3,000 vertices (both raw mesh & post-UV-split glTF)
+ * via targetQuads = 1750 (~1,800-2,000 mesh verts / ~2,400-2,850 glTF verts) for simple, low-cost runtime perf.
+ */
+export const CHARACTER_POLY_PRESETS = Object.freeze({
+  low: Object.freeze({ targetQuads: 1750, maxVertices: 3000, textureSize: 1024, normalStrength: 0.25 }),
+  high: Object.freeze({ targetQuads: 16000, maxVertices: 24000, textureSize: 2048, normalStrength: 0.28 }),
+});
+
+export function resolveLowPolyPreset(name = 'low') {
+  const key = String(name || 'low').trim().toLowerCase();
+  if (key === 'high' || key === 'hq') {
+    return { name: 'high', ...CHARACTER_POLY_PRESETS.high };
+  }
+  if (['low', 'character', 'general', 'npc', 'mob', 'standard', 'player', 'hero', 'protagonist'].includes(key)) {
+    return { name: 'low', ...CHARACTER_POLY_PRESETS.low };
+  }
+  throw new RangeError(`Unknown character poly preset "${name}"; expected low|high`);
+}
+
 export const SKIP_UI_NODE_TYPES = new Set([
   'Reroute',
   'Note',
@@ -131,6 +151,7 @@ export const ULTRATEX_WIDGET_ORDER = {
   UnetLoaderGGUF: ['unet_name'],
   VAELoader: ['vae_name'],
   CLIPLoaderGGUF: ['clip_name', 'type'],
+  CLIPLoader: ['clip_name', 'type', 'device'],
   UTXTextEncode: ['text'],
   UTXGenerateTextureViewsV23: [
     'lora_name', 'lora_strength', 'decoder_name', 'task',
@@ -153,6 +174,13 @@ export const ULTRATEX_WIDGET_ORDER = {
     'image_padding_pixels', 'reference_zoom',
   ],
   UTXFastSurfaceTextureBaker: ['texture_size', 'completion', 'upscale_mode', 'device'],
+  UTXConfigureRuntime: [
+    'spill_directory', 'ram_cache_mb', 'disk_budget_gb', 'system_headroom_mb',
+    'gpu_headroom_mb', 'token_chunk', 'activation_factor', 'atlas_tile', 'decode_tile',
+    'performance_mode', 'max_vram_mb', 'adaptive_diagnostics',
+  ],
+  InvertMask: [],
+  JoinImageWithAlpha: [],
 };
 
 function findLocalConfigFile(startDir) {
@@ -233,6 +261,11 @@ export function resolveModel3dConfig(startDir = process.cwd(), overrides = {}) {
     cleanStr(section.startBatPath) || (rootDir ? path.join(rootDir, 'ComfyUI-Easy-Install', 'Start ComfyUI FlashAttention.bat') : '')
   );
 
+  const runAnimGlb = resolveMaybeRelative(
+    rootDir,
+    cleanStr(overrides.runAnimGlb) || cleanStr(process.env.HGAME_MODEL3D_RUN_ANIM_GLB) || cleanStr(section.runAnimGlb)
+  );
+
   return {
     configPath,
     rootDir,
@@ -242,6 +275,7 @@ export function resolveModel3dConfig(startDir = process.cwd(), overrides = {}) {
     trellis2Workflow,
     ultratexWorkflow,
     startBatPath,
+    runAnimGlb,
   };
 }
 
@@ -361,6 +395,279 @@ function applyMissingDefaults(inputs, defaults) {
 }
 
 /** Builds a calibrated Trellis2-GGUF `/prompt` payload for image-to-3D GLB generation. */
+export function buildBiRefNetCutoutPrompt(imagesMap, opts = {}) {
+  const bgModel = opts.bgModel || 'birefnet.safetensors';
+  const prompt = {
+    '1': {
+      class_type: 'LoadBackgroundRemovalModel',
+      inputs: { bg_removal_name: bgModel },
+    },
+  };
+  const saveNodes = {};
+  let nextId = 2;
+  for (const [viewKey, info] of Object.entries(imagesMap)) {
+    if (!info || !info.filename) continue;
+    const loadId = String(nextId++);
+    const rmId = String(nextId++);
+    const invId = String(nextId++);
+    const joinId = String(nextId++);
+    const saveId = String(nextId++);
+    prompt[loadId] = { class_type: 'LoadImage', inputs: { image: info.filename } };
+    prompt[rmId] = { class_type: 'RemoveBackground', inputs: { bg_removal_model: ['1', 0], image: [loadId, 0] } };
+    prompt[invId] = { class_type: 'InvertMask', inputs: { mask: [rmId, 0] } };
+    prompt[joinId] = { class_type: 'JoinImageWithAlpha', inputs: { image: [loadId, 0], alpha: [invId, 0] } };
+    prompt[saveId] = {
+      class_type: 'SaveImage',
+      inputs: { images: [joinId, 0], filename_prefix: info.savePrefix || `${opts.prefix || 'hgame_cutout'}_${viewKey}` },
+    };
+    saveNodes[viewKey] = saveId;
+  }
+  return { prompt, saveNodes };
+}
+
+export function buildTrellis2MultiviewPrompt(opts = {}) {
+  const views = opts.views || {};
+  if (!views.front) {
+    throw new Error('buildTrellis2MultiviewPrompt requires views.front');
+  }
+  const steps = opts.steps !== undefined ? Number(opts.steps) : 14;
+  const sampler = opts.sampler || 'heun';
+  const seed = opts.seed !== undefined ? Number(opts.seed) : 12345;
+  const targetFaces = opts.faces !== undefined ? Number(opts.faces) : 400000;
+  const textureSize = opts.textureSize !== undefined ? Number(opts.textureSize) : 4096;
+  const maxNumTokens = opts.maxNumTokens !== undefined ? Number(opts.maxNumTokens) : 32768;
+  const prefix = opts.prefix ? assertAsciiPath(opts.prefix, 'Output prefix').replace(/^\/+|\/+$/g, '') : 'hgame_t2_mv';
+
+  const prompt = {
+    '1': {
+      class_type: 'Trellis2LoadModel_GGUF',
+      inputs: {
+        modelname: 'TRELLIS.2-4B',
+        model_format: opts.modelFormat || 'GGUF Q4_K_M',
+        backend: opts.backend || 'flash_attn',
+        device: 'cuda',
+        low_vram: true,
+        keep_models_loaded: false,
+      },
+    },
+  };
+
+  let nextId = 2;
+  const preIds = {};
+  for (const viewKey of ['front', 'back', 'left', 'right']) {
+    if (!views[viewKey]) continue;
+    const loadId = String(nextId++);
+    const preId = String(nextId++);
+    prompt[loadId] = {
+      class_type: 'Trellis2LoadImageWithTransparency_GGUF',
+      inputs: { image: views[viewKey] },
+    };
+    prompt[preId] = {
+      class_type: 'Trellis2PreProcessImage_GGUF',
+      inputs: {
+        image: [loadId, 2],
+        padding: 0,
+        remove_background: Boolean(opts.useRembgFallback),
+      },
+    };
+    preIds[viewKey] = preId;
+  }
+
+  const mvInputs = {
+    pipeline: ['1', 0],
+    front_image: [preIds.front, 0],
+    seed,
+    pipeline_type: opts.pipelineType || '1024_cascade',
+    sparse_structure_steps: steps,
+    sparse_structure_guidance_strength: 6.5,
+    sparse_structure_guidance_rescale: 0.05,
+    sparse_structure_rescale_t: 4.0,
+    shape_steps: steps,
+    shape_guidance_strength: 6.5,
+    shape_guidance_rescale: 0.05,
+    shape_rescale_t: 4.0,
+    texture_steps: steps,
+    texture_guidance_strength: 3.5,
+    texture_guidance_rescale: 0.15,
+    texture_rescale_t: 3.0,
+    max_num_tokens: maxNumTokens,
+    sparse_structure_resolution: 32,
+    generate_texture_slat: true,
+    sparse_structure_guidance_interval_start: 0.1,
+    sparse_structure_guidance_interval_end: 1.0,
+    shape_guidance_interval_start: 0.1,
+    shape_guidance_interval_end: 1.0,
+    texture_guidance_interval_start: 0.0,
+    texture_guidance_interval_end: 0.9,
+    use_tiled_decoder: true,
+    front_axis: 'z',
+    blend_temperature: opts.blendTemperature !== undefined ? Number(opts.blendTemperature) : 2.0,
+    sparse_structure_sampler: sampler,
+    shape_sampler: sampler,
+    texture_sampler: sampler,
+  };
+  if (preIds.back) mvInputs.back_image = [preIds.back, 0];
+  if (preIds.left) mvInputs.left_image = [preIds.left, 0];
+  if (preIds.right) mvInputs.right_image = [preIds.right, 0];
+
+  prompt['21'] = {
+    class_type: 'Trellis2MeshWithVoxelMultiViewGenerator_GGUF',
+    inputs: mvInputs,
+  };
+  prompt['22'] = {
+    class_type: 'Trellis2PostProcessAndUnWrapAndRasterizer_GGUF',
+    inputs: {
+      mesh: ['21', 0],
+      bvh: ['21', 1],
+      mesh_cluster_threshold_cone_half_angle_rad: 75.0,
+      mesh_cluster_refine_iterations: 2,
+      mesh_cluster_global_iterations: 1,
+      mesh_cluster_smooth_strength: 1,
+      texture_size: textureSize,
+      remesh: true,
+      remesh_band: 1.0,
+      remesh_project: 0.0,
+      target_face_num: targetFaces,
+      simplify_method: 'Cumesh',
+      fill_holes: true,
+      texture_alpha_mode: 'OPAQUE',
+      dual_contouring_resolution: '1024',
+      double_side_material: false,
+      remove_floaters: true,
+      bake_on_vertices: false,
+      use_custom_normals: false,
+      uv_unwrap_method: 'Xatlas',
+      remove_inner_faces: true,
+    },
+  };
+  prompt['23'] = {
+    class_type: 'Trellis2ExportMesh_GGUF',
+    inputs: {
+      trimesh: ['22', 0],
+      filename_prefix: prefix,
+      file_format: 'glb',
+    },
+  };
+  return { prompt, warnings: [], exportNodeId: '23', prefix };
+}
+
+/**
+ * Fast 12GB LowVRAM single-view GGUF workflow graph.
+ * Uses TRELLIS.2-4B GGUF Q4_K_M with `euler` (1 NFE/step) and bounded `max_num_tokens` (20480)
+ * on `1024_cascade` so sampling fits in ~7GB free VRAM without WDDM paging stalls.
+ * Note: the `512` texture DiT GGUF corrupts colors into rainbow patches, so we always keep `1024_cascade`.
+ */
+export function buildTrellis2FastSinglePrompt(opts = {}) {
+  const imageName = opts.inputImageName || 'input.png';
+  const prefix = opts.prefix || 'hgame_t2_fast';
+  const seed = Number.isFinite(Number(opts.seed)) ? Number(opts.seed) : 42;
+  const steps = Number.isFinite(Number(opts.steps)) ? Number(opts.steps) : 12;
+  const sampler = typeof opts.sampler === 'string' && opts.sampler ? opts.sampler : 'euler';
+  const pipelineType = typeof opts.pipelineType === 'string' && opts.pipelineType ? opts.pipelineType : '1024_cascade';
+  const maxNumTokens = Number.isFinite(Number(opts.maxNumTokens)) ? Number(opts.maxNumTokens) : 20480;
+  const textureSize = Number.isFinite(Number(opts.textureSize)) ? Number(opts.textureSize) : 2048;
+  const faces = Number.isFinite(Number(opts.faces)) ? Number(opts.faces) : 180000;
+  const usePreCutout = Boolean(opts.usePreCutout);
+
+  const prompt = {
+    '1': {
+      class_type: 'Trellis2LoadModel_GGUF',
+      inputs: {
+        modelname: 'TRELLIS.2-4B',
+        model_format: 'GGUF Q4_K_M',
+        backend: 'flash_attn',
+        device: 'cuda',
+        low_vram: true,
+        keep_models_loaded: false,
+      },
+    },
+    '2': {
+      class_type: usePreCutout ? 'Trellis2LoadImageWithTransparency_GGUF' : 'LoadImage',
+      inputs: { image: imageName },
+    },
+    '3': {
+      class_type: 'Trellis2PreProcessImage_GGUF',
+      inputs: {
+        image: ['2', 0],
+        padding: usePreCutout ? 0 : 10,
+        remove_background: !usePreCutout,
+      },
+    },
+    '4': {
+      class_type: 'Trellis2MeshWithVoxelAdvancedGenerator_GGUF',
+      inputs: {
+        pipeline: ['1', 0],
+        image: ['3', 0],
+        seed,
+        pipeline_type: pipelineType,
+        sparse_structure_steps: steps,
+        sparse_structure_guidance_strength: 6.5,
+        sparse_structure_guidance_rescale: 0.05,
+        sparse_structure_rescale_t: 4.0,
+        sparse_structure_sampler: sampler,
+        shape_steps: steps,
+        shape_guidance_strength: 6.5,
+        shape_guidance_rescale: 0.05,
+        shape_rescale_t: 4.0,
+        shape_sampler: sampler,
+        texture_steps: steps,
+        texture_guidance_strength: 3.0,
+        texture_guidance_rescale: 0.2,
+        texture_rescale_t: 3.0,
+        texture_sampler: sampler,
+        max_num_tokens: maxNumTokens,
+        max_views: 4,
+        sparse_structure_resolution: 32,
+        generate_texture_slat: true,
+        sparse_structure_guidance_interval_start: 0.1,
+        sparse_structure_guidance_interval_end: 1.0,
+        shape_guidance_interval_start: 0.1,
+        shape_guidance_interval_end: 1.0,
+        texture_guidance_interval_start: 0.0,
+        texture_guidance_interval_end: 0.9,
+        use_tiled_decoder: true,
+      },
+    },
+    '5': {
+      class_type: 'Trellis2PostProcessAndUnWrapAndRasterizer_GGUF',
+      inputs: {
+        mesh: ['4', 0],
+        bvh: ['4', 1],
+        mesh_cluster_threshold_cone_half_angle_rad: 75.0,
+        mesh_cluster_refine_iterations: 0,
+        mesh_cluster_global_iterations: 1,
+        mesh_cluster_smooth_strength: 1,
+        texture_size: textureSize,
+        remesh: true,
+        remesh_band: 1.0,
+        remesh_project: 0.0,
+        target_face_num: faces,
+        simplify_method: 'Cumesh',
+        fill_holes: true,
+        texture_alpha_mode: 'OPAQUE',
+        dual_contouring_resolution: '1024',
+        double_side_material: false,
+        remove_floaters: true,
+        bake_on_vertices: false,
+        use_custom_normals: false,
+        uv_unwrap_method: 'Xatlas',
+        remove_inner_faces: true,
+        inpainting: true,
+      },
+    },
+    '6': {
+      class_type: 'Trellis2ExportMesh_GGUF',
+      inputs: {
+        trimesh: ['5', 0],
+        filename_prefix: prefix,
+        file_format: 'glb',
+      },
+    },
+  };
+
+  return { prompt, warnings: [], exportNodeId: '6' };
+}
+
 export function buildTrellis2Prompt(workflowJson, opts = {}) {
   const { prompt, warnings } = convertComfyUiWorkflowToApi(workflowJson, TRELLIS2_WIDGET_ORDER);
 
@@ -486,7 +793,7 @@ export function buildUltratexPrompt(workflowJson, opts = {}) {
   }
 
   // Keep 1024 view/normal res in 12GB LowVRAM preset so Flux2 avoids PCIe RAM paging; override with --normal-view-res / --view-res.
-  const normalViewRes = opts.normalViewRes ?? (hq ? 1024 : undefined);
+  const normalViewRes = opts.normalViewRes ?? (hq ? 2048 : undefined);
   const prepNodes = findNodesByClass(prompt, 'UTXPrepareTextureV25');
   for (const { node } of prepNodes) {
     if (opts.alignment) node.inputs.alignment = opts.alignment;
@@ -495,7 +802,7 @@ export function buildUltratexPrompt(workflowJson, opts = {}) {
   }
 
   // GPU unwrap stays fast on 300k+ face meshes where CPU xatlas stalls; pass --uv-mode to override.
-  const uvMode = opts.uvMode ?? (hq ? 'comfy_gpu' : undefined);
+  const uvMode = opts.uvMode ?? (hq ? 'keep_existing' : undefined);
   const uvPadding = opts.padding ?? (hq ? 4 : undefined);
   const unwrapNodes = findNodesByClass(prompt, 'UTXUnwrapMeshUVV25');
   for (const { node } of unwrapNodes) {
@@ -504,9 +811,9 @@ export function buildUltratexPrompt(workflowJson, opts = {}) {
     if (uvPadding !== undefined && uvPadding !== null) node.inputs.padding = Number(uvPadding);
   }
 
-  const viewRes = opts.viewRes ?? (hq ? 1024 : undefined);
-  const steps = opts.steps ?? (hq ? 6 : undefined);
-  const extraSteps = opts.extraSteps ?? (hq ? 4 : undefined);
+  const viewRes = opts.viewRes ?? (hq ? 768 : undefined);
+  const steps = opts.steps ?? (hq ? 20 : undefined);
+  const extraSteps = opts.extraSteps ?? (hq ? 12 : undefined);
   const genNodes = findNodesByClass(prompt, 'UTXGenerateTextureViewsV23');
   for (const { node } of genNodes) {
     if (viewRes) node.inputs.view_resolution = Number(viewRes);
@@ -515,11 +822,23 @@ export function buildUltratexPrompt(workflowJson, opts = {}) {
     if (opts.seed !== undefined && opts.seed !== null) node.inputs.seed = Number(opts.seed);
   }
 
-  const textureSize = opts.textureSize ?? (hq ? 4096 : undefined);
+  const textureSize = opts.textureSize ?? (hq ? 2048 : undefined);
   const bakers = findNodesByClass(prompt, 'UTXFastSurfaceTextureBaker');
   const bakerIds = new Set(bakers.map((b) => b.id));
   for (const { node } of bakers) {
     if (textureSize) node.inputs.texture_size = Number(textureSize);
+  }
+
+  for (const { node } of findNodesByClass(prompt, 'UTXConfigureRuntime')) {
+    if (opts.maxVramMb !== undefined) node.inputs.max_vram_mb = Number(opts.maxVramMb);
+    if (opts.tokenChunk !== undefined) node.inputs.token_chunk = Number(opts.tokenChunk);
+    if (opts.performanceMode) node.inputs.performance_mode = String(opts.performanceMode);
+  }
+
+  if (opts.guidance !== undefined) {
+    for (const { node } of genNodes) {
+      node.inputs.guidance = Number(opts.guidance);
+    }
   }
 
   if (opts.prompt !== undefined || opts.negativePrompt !== undefined) {
@@ -531,8 +850,19 @@ export function buildUltratexPrompt(workflowJson, opts = {}) {
       if (opts.prompt !== undefined && Array.isArray(posLink) && prompt[String(posLink[0])]) {
         prompt[String(posLink[0])].inputs.text = String(opts.prompt);
       }
-      if (opts.negativePrompt !== undefined && Array.isArray(negLink) && prompt[String(negLink[0])]) {
-        prompt[String(negLink[0])].inputs.text = String(opts.negativePrompt);
+      if (opts.negativePrompt !== undefined) {
+        if (Array.isArray(negLink) && prompt[String(negLink[0])]) {
+          prompt[String(negLink[0])].inputs.text = String(opts.negativePrompt);
+        } else if (Array.isArray(posLink) && prompt[String(posLink[0])]?.inputs?.clip) {
+          const negId = '9901';
+          prompt[negId] = {
+            class_type: 'UTXTextEncode',
+            inputs: { clip: prompt[String(posLink[0])].inputs.clip, text: String(opts.negativePrompt) },
+          };
+          for (const { node } of genNodes) {
+            node.inputs.negative = [negId, 0];
+          }
+        }
       }
     }
   }
@@ -649,7 +979,10 @@ async function copyComfyOutputFile(config, item, destPath) {
 function runBlenderHelper(config, args) {
   assertAsciiPath(blenderHelperPath, 'Blender helper script');
   const fullArgs = ['--background', '--factory-startup', '-P', blenderHelperPath, '--', ...args];
-  const res = spawnSync(config.blenderPath, fullArgs, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+  const env = config.runAnimGlb && !process.env.HGAME_MODEL3D_RUN_ANIM_GLB
+    ? { ...process.env, HGAME_MODEL3D_RUN_ANIM_GLB: config.runAnimGlb }
+    : process.env;
+  const res = spawnSync(config.blenderPath, fullArgs, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024, env });
   if (res.error) throw res.error;
   if (res.status !== 0) {
     throw new Error(`Blender exited with code ${res.status}:\n${res.stderr || res.stdout}`);
@@ -764,9 +1097,12 @@ function printUsage() {
     '  doctor                                         Check ComfyUI, Blender, and local workflow files',
     '  inspect <mesh.glb> [--out-dir <dir>]           Inspect bounds/UVs/tris and optionally render 4/6 views',
     '  normalize <mesh.glb> --out <out.glb> [opts]    Rotate (--rx/--ry/--rz), apply transforms, ground/scale/decimate',
+    '  remesh-bake --input <glb> --out <glb> [opts]   QuadRemesher + AutoUnwrap + Cycles PBR (--preset low|high, --rig-run)',
+    '  rig-run --input <glb> --out <out.glb> [opts]   Auto-rig humanoid character + embed looping Run animation QA',
+    '  assemble-pbr --mesh <glb> --base-color <png> --roughness <png> [--normal <png>] --out <glb>',
     '  qa <mesh.glb> --out-dir <dir>                  Render multi-view QA images and print mesh/texture diagnostics',
-    '  generate --input <img.png> --out <out.glb>     Run Trellis2-GGUF image-to-3D (--quality standard|high, --faces, --panel)',
-    '  texture --mesh <glb> --ref <png> --out <glb>   Run UltraTex LowVRAM GGUF PBR texturing (--quality standard|high, --ref-panel)',
+    '  generate --input <img.png> --out <out.glb>     12GB LowVRAM single-view GGUF (--remesh, --low-out, --preset low, --no-rig)',
+    '  texture --mesh <glb> --ref <png> --out <glb>   Run UltraTex LowVRAM GGUF PBR texturing (--quality standard|high, --uv-mode)',
   ].join('\n'));
 }
 
@@ -853,16 +1189,147 @@ function buildBlenderNormalizeArgs(inputPath, outPath, flags) {
   return args;
 }
 
+export function buildBlenderRemeshBakeArgs(inputPath, outPath, flags = {}) {
+  const preset = (flags.preset || flags.role) ? resolveLowPolyPreset(flags.preset || flags.role) : null;
+  const args = [
+    'remesh-bake',
+    '--input', assertAsciiPath(path.resolve(inputPath), 'Input model'),
+    '--out', assertAsciiPath(path.resolve(outPath), 'Output model'),
+    '--target-quads', String(flags['target-quads'] ?? flags.targetQuads ?? preset?.targetQuads ?? 16000),
+    '--uv-solver', String(flags['uv-solver'] ?? flags.uvSolver ?? 'organic'),
+    '--texture-size', String(flags['texture-size'] ?? flags.textureSize ?? preset?.textureSize ?? 2048),
+    '--normal-strength', String(flags['normal-strength'] ?? flags.normalStrength ?? preset?.normalStrength ?? 0.28),
+    '--cage-extrusion', String(flags['cage-extrusion'] ?? 0.022),
+    '--max-ray-distance', String(flags['max-ray-distance'] ?? 0.08),
+    '--voxel-div', String(flags['voxel-div'] ?? 260),
+    '--samples', String(flags.samples ?? 16),
+  ];
+  if (flags['work-dir'] || flags.workDir) {
+    args.push('--work-dir', assertAsciiPath(path.resolve(flags['work-dir'] || flags.workDir), 'Work dir'));
+  }
+  if (flags['clean-uv-out'] || flags.cleanUvOut) {
+    args.push('--clean-uv-out', assertAsciiPath(path.resolve(flags['clean-uv-out'] || flags.cleanUvOut), 'Clean UV GLB'));
+  }
+  if (flags['smooth-head-z'] !== undefined) {
+    args.push('--smooth-head-z', String(flags['smooth-head-z']));
+  }
+  if (flags['no-weld-high']) args.push('--no-weld-high');
+  if (flags['rig-run'] || flags.rigRun) args.push('--rig-run');
+  if (flags['anim-glb'] || flags.animGlb) args.push('--anim-glb', String(flags['anim-glb'] || flags.animGlb));
+  if (flags['qa-dir'] || flags.qaDir) {
+    args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
+  }
+  if (flags.views) args.push('--views', String(flags.views));
+  if (flags.size) args.push('--size', String(flags.size));
+  if (flags.elev !== undefined) args.push('--elev', String(flags.elev));
+  if (flags.engine) args.push('--engine', String(flags.engine));
+  return args;
+}
+
+export function buildBlenderRigRunArgs(inputPath, outPath, flags = {}) {
+  const args = [
+    'rig-run',
+    '--input', assertAsciiPath(path.resolve(inputPath), 'Input model'),
+    '--out', assertAsciiPath(path.resolve(outPath), 'Output model'),
+    '--action-name', String(flags['action-name'] ?? flags.actionName ?? 'Run'),
+  ];
+  if (flags['anim-glb'] || flags.animGlb) args.push('--anim-glb', String(flags['anim-glb'] || flags.animGlb));
+  if (flags['qa-dir'] || flags.qaDir) {
+    args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
+  }
+  if (flags.size) args.push('--size', String(flags.size));
+  if (flags.engine) args.push('--engine', String(flags.engine));
+  return args;
+}
+
+export function buildBlenderAssemblePbrArgs(meshPath, outPath, flags = {}) {
+  const bc = flags['base-color'] || flags.baseColor;
+  const rg = flags.roughness;
+  if (!bc || !rg) {
+    throw new Error('assemble-pbr requires --base-color and --roughness');
+  }
+  const args = [
+    'assemble-pbr',
+    '--mesh', assertAsciiPath(path.resolve(meshPath), 'Mesh GLB'),
+    '--base-color', assertAsciiPath(path.resolve(bc), 'BaseColor texture'),
+    '--roughness', assertAsciiPath(path.resolve(rg), 'Roughness texture'),
+    '--out', assertAsciiPath(path.resolve(outPath), 'Output GLB'),
+  ];
+  if (flags.metallic) args.push('--metallic', assertAsciiPath(path.resolve(flags.metallic), 'Metallic texture'));
+  if (flags.normal) args.push('--normal', assertAsciiPath(path.resolve(flags.normal), 'Normal texture'));
+  if (flags['flip-v'] || flags.flipV) args.push('--flip-v');
+  if (flags['qa-dir'] || flags.qaDir) {
+    args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
+  }
+  if (flags.views) args.push('--views', String(flags.views));
+  if (flags.size) args.push('--size', String(flags.size));
+  if (flags.elev !== undefined) args.push('--elev', String(flags.elev));
+  if (flags.engine) args.push('--engine', String(flags.engine));
+  return args;
+}
+
+async function freeComfyMemory(comfyUiUrl) {
+  await fetch(`${comfyUiUrl.replace(/\/+$/, '')}/free`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ unload_models: true, free_memory: true }),
+  }).catch(() => {});
+}
+
+async function findLatestComfyOutputByPrefix(outputDir, prefix, ext = '.glb') {
+  const { readdir, stat } = await import('node:fs/promises');
+  const baseName = path.basename(prefix);
+  const subDir = path.dirname(prefix);
+  const searchDir = subDir && subDir !== '.' ? path.join(outputDir, subDir) : outputDir;
+  if (!existsSync(searchDir)) return null;
+  const entries = await readdir(searchDir);
+  const matches = entries.filter((f) => f.startsWith(`${baseName}_`) && f.toLowerCase().endsWith(ext));
+  if (!matches.length) return null;
+  let newest = null;
+  let newestMs = -1;
+  for (const name of matches) {
+    const full = path.join(searchDir, name);
+    const st = await stat(full);
+    if (st.mtimeMs > newestMs) {
+      newestMs = st.mtimeMs;
+      newest = { filename: name, subfolder: subDir && subDir !== '.' ? subDir : '', type: 'output' };
+    }
+  }
+  return newest;
+}
+
+async function runBiRefNetCutouts(config, stagedViews, prefix) {
+  const { prompt, saveNodes } = buildBiRefNetCutoutPrompt(stagedViews, { prefix });
+  const { entry } = await submitAndWaitComfyPrompt(config.comfyUiUrl, prompt, { timeoutMs: 300000 });
+  await freeComfyMemory(config.comfyUiUrl);
+  const inputDir = path.join(config.comfyUiDir, 'input');
+  const cutoutViews = {};
+  for (const [viewKey, nodeId] of Object.entries(saveNodes)) {
+    const imgItem = entry.outputs?.[nodeId]?.images?.[0];
+    if (!imgItem) {
+      throw new Error(`BiRefNet cutout produced no output for view ${viewKey}`);
+    }
+    const outName = `${prefix}_${viewKey}_rgba.png`;
+    await copyComfyOutputFile(config, imgItem, path.join(inputDir, outName));
+    cutoutViews[viewKey] = outName;
+  }
+  return cutoutViews;
+}
+
 async function cmdGenerate(config, flags) {
   const quality = typeof flags.quality === 'string' ? flags.quality : 'standard';
+  const multiview = Boolean(flags.multiview || flags.right || flags.left || flags.back);
+  const explicitWorkflow = typeof flags.workflow === 'string' ? flags.workflow : '';
+  const useFastBuiltIn = !multiview && !explicitWorkflow;
+  const useBiRefNet = Boolean(flags.birefnet || multiview);
   const hqCandidate = config.comfyUiDir
     ? path.join(config.comfyUiDir, DEFAULT_TRELLIS2_HQ_WORKFLOW_REL)
     : null;
-  let workflowPath = typeof flags.workflow === 'string' ? flags.workflow : config.trellis2Workflow;
-  if (!flags.workflow && quality === 'high' && hqCandidate && existsSync(hqCandidate)) {
+  let workflowPath = explicitWorkflow || config.trellis2Workflow;
+  if (!explicitWorkflow && quality === 'high' && hqCandidate && existsSync(hqCandidate)) {
     workflowPath = hqCandidate;
   }
-  if (!config.comfyUiDir || !workflowPath) {
+  if (!config.comfyUiDir || (!multiview && !useFastBuiltIn && !workflowPath)) {
     throw new Error('ComfyUI directory/workflow not configured. Add model3d config in .hgame.local.json or env vars.');
   }
   const inputFile = flags.input;
@@ -872,39 +1339,146 @@ async function cmdGenerate(config, flags) {
   }
 
   const absOut = assertAsciiPath(path.resolve(outFile), 'Output GLB');
+  const stamp = Date.now();
   const slug = sanitizeSlug(flags.name || path.basename(absOut, path.extname(absOut)));
-  const staged = await stageInputFile(inputFile, path.join(config.comfyUiDir, 'input'), `hgame_t2_${slug}_${Date.now()}`, {
-    panelMode: typeof flags.panel === 'string' ? flags.panel : 'auto',
+  const comfyInputDir = path.join(config.comfyUiDir, 'input');
+  const staged = await stageInputFile(inputFile, comfyInputDir, `hgame_t2_${slug}_${stamp}`, {
+    panelMode: typeof flags.panel === 'string' ? flags.panel : (multiview ? 'left' : 'auto'),
   });
 
-  const wfJson = JSON.parse(await readFile(workflowPath, 'utf8'));
-  const prefix = `hgame_t2_${slug}_${Date.now()}`;
-  const { prompt, warnings, exportNodeId } = buildTrellis2Prompt(wfJson, {
-    inputImageName: staged.filename,
-    prefix,
-    faces: flags.faces !== undefined ? Number(flags.faces) : (quality === 'high' ? 400000 : 10000),
-    seed: flags.seed !== undefined ? Number(flags.seed) : undefined,
-    reorient: flags.reorient,
-    textureSize: flags['texture-size'] ? Number(flags['texture-size']) : undefined,
-  });
+  const prefix = `hgame_t2_${slug}_${stamp}`;
+  let prompt;
+  let warnings = [];
+  let exportNodeId;
+
+  if (multiview) {
+    const viewFiles = { front: { filename: staged.filename } };
+    if (flags.back) {
+      const sBack = await stageInputFile(flags.back, comfyInputDir, `${prefix}_back`);
+      viewFiles.back = { filename: sBack.filename };
+    }
+    if (flags.left) {
+      const sLeft = await stageInputFile(flags.left, comfyInputDir, `${prefix}_left`);
+      viewFiles.left = { filename: sLeft.filename };
+    }
+    if (flags.right) {
+      const sRight = await stageInputFile(flags.right, comfyInputDir, `${prefix}_right`);
+      viewFiles.right = { filename: sRight.filename };
+    } else if (!flags.left && staged.panelInfo?.split) {
+      // Auto-extract right panel (character side profile) from 2:1 front+side sheets
+      const sRight = await stageInputFile(inputFile, comfyInputDir, `${prefix}_right`, { panelMode: 'right' });
+      viewFiles.right = { filename: sRight.filename };
+    }
+
+    const mvViews = useBiRefNet
+      ? await runBiRefNetCutouts(config, viewFiles, `${prefix}_cut`)
+      : Object.fromEntries(Object.entries(viewFiles).map(([k, v]) => [k, v.filename]));
+
+    const built = buildTrellis2MultiviewPrompt({
+      views: mvViews,
+      prefix,
+      faces: flags.faces !== undefined ? Number(flags.faces) : 200000,
+      seed: flags.seed !== undefined ? Number(flags.seed) : undefined,
+      steps: flags.steps !== undefined ? Number(flags.steps) : 12,
+      sampler: typeof flags.sampler === 'string' ? flags.sampler : 'euler',
+      pipelineType: typeof flags['pipeline-type'] === 'string' ? flags['pipeline-type'] : '1024_cascade',
+      maxNumTokens: flags['max-num-tokens'] !== undefined ? Number(flags['max-num-tokens']) : 20480,
+      textureSize: flags['texture-size'] ? Number(flags['texture-size']) : 2048,
+      useRembgFallback: !useBiRefNet,
+    });
+    prompt = built.prompt;
+    warnings = built.warnings;
+    exportNodeId = built.exportNodeId;
+  } else if (useFastBuiltIn) {
+    let frontName = staged.filename;
+    if (flags.birefnet) {
+      const cut = await runBiRefNetCutouts(config, { front: { filename: staged.filename } }, `${prefix}_cut`);
+      frontName = cut.front;
+    }
+    const built = buildTrellis2FastSinglePrompt({
+      inputImageName: frontName,
+      prefix,
+      faces: flags.faces !== undefined ? Number(flags.faces) : (quality === 'high' ? 180000 : 120000),
+      seed: flags.seed !== undefined ? Number(flags.seed) : undefined,
+      steps: flags.steps !== undefined ? Number(flags.steps) : (quality === 'high' ? 12 : 10),
+      sampler: typeof flags.sampler === 'string' ? flags.sampler : 'euler',
+      pipelineType: typeof flags['pipeline-type'] === 'string' ? flags['pipeline-type'] : '1024_cascade',
+      maxNumTokens: flags['max-num-tokens'] !== undefined ? Number(flags['max-num-tokens']) : 20480,
+      textureSize: flags['texture-size'] ? Number(flags['texture-size']) : 2048,
+      usePreCutout: Boolean(flags.birefnet),
+    });
+    workflowPath = 'builtin:trellis2-fast-lowvram-gguf';
+    prompt = built.prompt;
+    warnings = built.warnings;
+    exportNodeId = built.exportNodeId;
+  } else {
+    const wfJson = JSON.parse(await readFile(workflowPath, 'utf8'));
+    let frontName = staged.filename;
+    if (flags.birefnet) {
+      const cut = await runBiRefNetCutouts(config, { front: { filename: staged.filename } }, `${prefix}_cut`);
+      frontName = cut.front;
+    }
+    const built = buildTrellis2Prompt(wfJson, {
+      inputImageName: frontName,
+      prefix,
+      faces: flags.faces !== undefined ? Number(flags.faces) : (quality === 'high' ? 400000 : 10000),
+      seed: flags.seed !== undefined ? Number(flags.seed) : undefined,
+      reorient: flags.reorient,
+      textureSize: flags['texture-size'] ? Number(flags['texture-size']) : undefined,
+    });
+    prompt = built.prompt;
+    warnings = built.warnings;
+    exportNodeId = built.exportNodeId;
+  }
 
   const { promptId, entry } = await submitAndWaitComfyPrompt(config.comfyUiUrl, prompt, {
     timeoutMs: flags.timeout ? Number(flags.timeout) : 1800000,
   });
 
-  const outItems = entry.outputs?.[exportNodeId]?.['3d'];
-  if (!Array.isArray(outItems) || outItems.length === 0) {
+  let outItem = entry.outputs?.[exportNodeId]?.['3d']?.[0] || null;
+  if (!outItem) {
+    outItem = await findLatestComfyOutputByPrefix(path.join(config.comfyUiDir, 'output'), prefix, '.glb');
+  }
+  if (!outItem) {
     throw new Error(`Trellis2 prompt ${promptId} produced no 3d output on node ${exportNodeId}`);
   }
 
-  const rawOutPath = flags.normalize ? absOut.replace(/\.glb$/i, '.raw.glb') : absOut;
-  await copyComfyOutputFile(config, outItems[0], rawOutPath);
+  const hasPost = Boolean(flags.normalize || flags.remesh);
+  const rawOutPath = hasPost ? absOut.replace(/\.glb$/i, '.raw.glb') : absOut;
+  await copyComfyOutputFile(config, outItem, rawOutPath);
 
   let normalizeSummary = null;
+  let remeshSummary = null;
+  let lowSummary = null;
   let qaSummary = null;
+  const normTarget = flags.remesh ? absOut.replace(/\.glb$/i, '.norm.glb') : absOut;
   if (flags.normalize) {
-    normalizeSummary = runBlenderHelper(config, buildBlenderNormalizeArgs(rawOutPath, absOut, flags));
-  } else if (flags['qa-dir'] || flags.qaDir) {
+    normalizeSummary = runBlenderHelper(config, buildBlenderNormalizeArgs(rawOutPath, normTarget, flags));
+  }
+  if (flags.remesh) {
+    const remeshInput = flags.normalize ? normTarget : rawOutPath;
+    const highPreset = resolveLowPolyPreset('high');
+    remeshSummary = runBlenderHelper(config, buildBlenderRemeshBakeArgs(remeshInput, absOut, {
+      ...flags,
+      preset: undefined,
+      role: undefined,
+      'rig-run': false,
+      'target-quads': flags['target-quads'] ?? flags.targetQuads ?? highPreset.targetQuads,
+      'texture-size': flags['high-texture-size'] ?? flags['texture-size'] ?? highPreset.textureSize,
+    }));
+    if (flags['low-out']) {
+      const lowPreset = resolveLowPolyPreset(flags.preset || flags.role || 'general');
+      lowSummary = runBlenderHelper(config, buildBlenderRemeshBakeArgs(remeshInput, flags['low-out'], {
+        ...flags,
+        preset: lowPreset.name,
+        'rig-run': flags['no-rig'] ? false : (flags['rig-run'] ?? flags.rigRun ?? true),
+        'target-quads': flags['low-quads'] ?? lowPreset.targetQuads,
+        'texture-size': flags['low-texture-size'] ?? lowPreset.textureSize,
+        'normal-strength': flags['low-normal-strength'] ?? lowPreset.normalStrength,
+        'qa-dir': flags['low-qa-dir'] || '',
+      }));
+    }
+  } else if (!flags.normalize && (flags['qa-dir'] || flags.qaDir)) {
     qaSummary = runBlenderHelper(config, buildBlenderInspectArgs(absOut, {
       ...flags,
       'out-dir': flags['qa-dir'] || flags.qaDir,
@@ -914,7 +1488,9 @@ async function cmdGenerate(config, flags) {
   console.log(JSON.stringify({
     command: 'generate',
     quality,
-    workflowUsed: workflowPath,
+    multiview,
+    birefnet: useBiRefNet,
+    workflowUsed: multiview ? 'builtin:Trellis2MultiView_GGUF' : workflowPath,
     promptId,
     warnings,
     stagedInput: staged.destPath,
@@ -922,6 +1498,8 @@ async function cmdGenerate(config, flags) {
     rawOutput: rawOutPath,
     output: absOut,
     normalized: normalizeSummary,
+    remeshed: remeshSummary,
+    lowOutput: lowSummary,
     qa: qaSummary,
   }, null, 2));
 }
@@ -966,6 +1544,10 @@ async function cmdTexture(config, flags) {
     steps: flags.steps !== undefined ? Number(flags.steps) : undefined,
     extraSteps: flags['extra-steps'] !== undefined ? Number(flags['extra-steps']) : undefined,
     seed: flags.seed !== undefined ? Number(flags.seed) : undefined,
+    guidance: flags.guidance !== undefined ? Number(flags.guidance) : undefined,
+    maxVramMb: flags['max-vram-mb'] !== undefined ? Number(flags['max-vram-mb']) : (quality === 'high' ? 3584 : undefined),
+    tokenChunk: flags['token-chunk'] !== undefined ? Number(flags['token-chunk']) : (quality === 'high' ? 2048 : undefined),
+    performanceMode: typeof flags['performance-mode'] === 'string' ? flags['performance-mode'] : (quality === 'high' ? 'conservative' : undefined),
     prompt: flags.prompt,
     negativePrompt: flags['negative-prompt'],
   });
@@ -1062,6 +1644,33 @@ async function main() {
     const out = flags.out;
     if (!input || !out) throw new Error('Usage: node scripts/process-model3d.mjs normalize <mesh.glb> --out <out.glb> [options]');
     const summary = runBlenderHelper(config, buildBlenderNormalizeArgs(input, out, flags));
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
+
+  if (command === 'remesh-bake') {
+    const input = flags.input || positional[0];
+    const out = flags.out;
+    if (!input || !out) throw new Error('Usage: node scripts/process-model3d.mjs remesh-bake --input <mesh.glb> --out <out.glb> [options]');
+    const summary = runBlenderHelper(config, buildBlenderRemeshBakeArgs(input, out, flags));
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
+
+  if (command === 'rig-run') {
+    const input = flags.input || positional[0];
+    const out = flags.out;
+    if (!input || !out) throw new Error('Usage: node scripts/process-model3d.mjs rig-run --input <mesh.glb> --out <out.glb> [options]');
+    const summary = runBlenderHelper(config, buildBlenderRigRunArgs(input, out, flags));
+    console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
+
+  if (command === 'assemble-pbr') {
+    const mesh = flags.mesh || positional[0];
+    const out = flags.out;
+    if (!mesh || !out) throw new Error('Usage: node scripts/process-model3d.mjs assemble-pbr --mesh <uv.glb> --base-color <png> --roughness <png> --out <out.glb>');
+    const summary = runBlenderHelper(config, buildBlenderAssemblePbrArgs(mesh, out, flags));
     console.log(JSON.stringify(summary, null, 2));
     return;
   }

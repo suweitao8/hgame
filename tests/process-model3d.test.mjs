@@ -388,12 +388,180 @@ test('buildUltratexPrompt applies high quality defaults without breaking explici
   });
 
   assert.deepEqual(warnings, []);
-  assert.equal(prompt['44'].inputs.uv_mode, 'comfy_gpu');
+  assert.equal(prompt['44'].inputs.uv_mode, 'keep_existing');
   assert.equal(prompt['44'].inputs.padding, 4);
-  assert.equal(prompt['45'].inputs.normal_view_resolution, 1024);
+  assert.equal(prompt['45'].inputs.normal_view_resolution, 2048);
   assert.equal(prompt['45'].inputs.camera_fit, 'full');
-  assert.equal(prompt['9'].inputs.view_resolution, 1024);
-  assert.equal(prompt['9'].inputs.steps, 6);
-  assert.equal(prompt['9'].inputs.extra_steps, 4);
-  assert.equal(prompt['48'].inputs.texture_size, 4096);
+  assert.equal(prompt['9'].inputs.view_resolution, 768);
+  assert.equal(prompt['9'].inputs.steps, 20);
+  assert.equal(prompt['9'].inputs.extra_steps, 12);
+  assert.equal(prompt['48'].inputs.texture_size, 2048);
+});
+
+import {
+  buildBiRefNetCutoutPrompt,
+  buildTrellis2FastSinglePrompt,
+  resolveLowPolyPreset,
+  CHARACTER_POLY_PRESETS,
+  buildTrellis2MultiviewPrompt,
+  buildBlenderRemeshBakeArgs,
+  buildBlenderRigRunArgs,
+  buildBlenderAssemblePbrArgs,
+} from '../scripts/process-model3d.mjs';
+
+test('buildBiRefNetCutoutPrompt wires RemoveBackground -> InvertMask -> JoinImageWithAlpha -> SaveImage', () => {
+  const { prompt, saveNodes } = buildBiRefNetCutoutPrompt(
+    { front: { filename: 'ck_front.png' }, right: { filename: 'ck_side.png' } },
+    { prefix: 'ck_cut' }
+  );
+  assert.equal(prompt['1'].class_type, 'LoadBackgroundRemovalModel');
+  assert.equal(prompt['1'].inputs.bg_removal_name, 'birefnet.safetensors');
+  assert.ok(saveNodes.front);
+  assert.ok(saveNodes.right);
+  const saveFront = prompt[saveNodes.front];
+  assert.equal(saveFront.class_type, 'SaveImage');
+  const joinFront = prompt[String(saveFront.inputs.images[0])];
+  assert.equal(joinFront.class_type, 'JoinImageWithAlpha');
+  const invFront = prompt[String(joinFront.inputs.alpha[0])];
+  assert.equal(invFront.class_type, 'InvertMask');
+});
+
+test('buildTrellis2MultiviewPrompt wires GGUF MultiView with RGBA inputs and heun 1024_cascade', () => {
+  const { prompt, exportNodeId } = buildTrellis2MultiviewPrompt({
+    views: { front: 'front_rgba.png', right: 'side_rgba.png' },
+    prefix: 'ck_mv',
+    steps: 14,
+    sampler: 'heun',
+  });
+  assert.equal(prompt['1'].class_type, 'Trellis2LoadModel_GGUF');
+  assert.equal(prompt['1'].inputs.model_format, 'GGUF Q4_K_M');
+  assert.equal(prompt['2'].class_type, 'Trellis2LoadImageWithTransparency_GGUF');
+  assert.equal(prompt['3'].class_type, 'Trellis2PreProcessImage_GGUF');
+  assert.equal(prompt['3'].inputs.padding, 0);
+  assert.equal(prompt['3'].inputs.remove_background, false);
+  assert.deepEqual(prompt['3'].inputs.image, ['2', 2]);
+  assert.equal(prompt['21'].class_type, 'Trellis2MeshWithVoxelMultiViewGenerator_GGUF');
+  assert.equal(prompt['21'].inputs.pipeline_type, '1024_cascade');
+  assert.equal(prompt['21'].inputs.shape_sampler, 'heun');
+  assert.equal(prompt['21'].inputs.max_num_tokens, 32768);
+  assert.ok(prompt['21'].inputs.right_image);
+  assert.equal(prompt[exportNodeId].class_type, 'Trellis2ExportMesh_GGUF');
+  assert.equal(prompt[exportNodeId].inputs.filename_prefix, 'ck_mv');
+});
+
+test('buildUltratexPrompt applies runtime VRAM caps and attaches negative UTXTextEncode when unlinked', () => {
+  const workflow = {
+    nodes: [
+      { id: 0, type: 'CLIPLoader', widgets_values: ['qwen_3_8b_fp8mixed.safetensors', 'flux2', 'default'] },
+      { id: 1, type: 'UnetLoaderGGUF', widgets_values: ['flux-2-klein-base-9b-Q4_0.gguf'] },
+      { id: 2, type: 'UTXTextEncode', inputs: [{ name: 'clip', type: 'CLIP', link: 11 }], widgets_values: ['pos'] },
+      { id: 3, type: 'Load3DAdvanced', widgets_values: ['3d/in.glb', 1024, 1024] },
+      { id: 4, type: 'LoadImage', widgets_values: ['ref.png', 'image'] },
+      { id: 8, type: 'UTXConfigureRuntime', widgets_values: ['', 256, 16, 2048, 768, 4096, 12, 512, 64, 'adaptive', 0, false] },
+      { id: 44, type: 'UTXUnwrapMeshUVV25', widgets_values: [4096, 'comfy_gpu', 4] },
+      { id: 45, type: 'UTXPrepareTextureV25', widgets_values: ['front', 'background', 'auto_smooth', 1024, 'native_mesh_fit', 2, 8, 1] },
+      { id: 9, type: 'UTXGenerateTextureViewsV23', inputs: [{ name: 'positive', type: 'CONDITIONING', link: 10 }], widgets_values: ['ultratex_flux2.safetensors', 1, 'ultratex_flux2_decoder.pt', 'albedo', 1024, 10, 0, 6, 4, 1, 0.2, 'guided', 0.55, 4, true] },
+      { id: 48, type: 'UTXFastSurfaceTextureBaker', widgets_values: [2048, 'surface_fill', 'fast_detail', 'auto'] },
+    ],
+    links: [[10, 2, 0, 9, 0, 'CONDITIONING'], [11, 0, 0, 2, 0, 'CLIP']],
+  };
+  const { prompt } = buildUltratexPrompt(workflow, {
+    quality: 'high',
+    maxVramMb: 3584,
+    tokenChunk: 2048,
+    performanceMode: 'conservative',
+    negativePrompt: 'black back of head',
+  });
+  assert.equal(prompt['8'].inputs.max_vram_mb, 3584);
+  assert.equal(prompt['8'].inputs.token_chunk, 2048);
+  assert.equal(prompt['8'].inputs.performance_mode, 'conservative');
+  const negId = String(prompt['9'].inputs.negative[0]);
+  assert.equal(prompt[negId].class_type, 'UTXTextEncode');
+  assert.equal(prompt[negId].inputs.text, 'black back of head');
+});
+
+test('buildBlenderRemeshBakeArgs and buildBlenderAssemblePbrArgs construct clean CLI args', () => {
+  const rbArgs = buildBlenderRemeshBakeArgs('in.glb', 'out.glb', {
+    'target-quads': 4400,
+    'smooth-head-z': 1.12,
+    'clean-uv-out': 'clean.glb',
+    'flip-v': true,
+  });
+  assert.equal(rbArgs[0], 'remesh-bake');
+  assert.ok(rbArgs.includes('4400'));
+  assert.ok(rbArgs.includes('1.12'));
+  assert.ok(rbArgs.some((a) => a.endsWith('clean.glb')));
+
+  const asmArgs = buildBlenderAssemblePbrArgs('uv.glb', 'final.glb', {
+    'base-color': 'bc.png',
+    roughness: 'rg.png',
+    metallic: 'mt.png',
+    normal: 'nm.png',
+    'flip-v': true,
+  });
+  assert.equal(asmArgs[0], 'assemble-pbr');
+  assert.ok(asmArgs.includes('--flip-v'));
+});
+
+test('buildTrellis2FastSinglePrompt wires 12GB low-VRAM single-view GGUF with euler and bounded tokens', () => {
+  const { prompt, exportNodeId } = buildTrellis2FastSinglePrompt({
+    inputImageName: 'front.png',
+    prefix: 'ck_fast',
+  });
+  assert.equal(prompt['1'].class_type, 'Trellis2LoadModel_GGUF');
+  assert.equal(prompt['1'].inputs.model_format, 'GGUF Q4_K_M');
+  assert.equal(prompt['1'].inputs.low_vram, true);
+  assert.equal(prompt['2'].class_type, 'LoadImage');
+  assert.equal(prompt['3'].inputs.remove_background, true);
+  assert.equal(prompt['3'].inputs.padding, 10);
+  assert.equal(prompt['4'].inputs.pipeline_type, '1024_cascade');
+  assert.equal(prompt['4'].inputs.shape_sampler, 'euler');
+  assert.equal(prompt['4'].inputs.texture_sampler, 'euler');
+  assert.equal(prompt['4'].inputs.max_num_tokens, 20480);
+  assert.equal(prompt['4'].inputs.texture_guidance_strength, 3.0);
+  assert.equal(prompt['5'].inputs.texture_size, 2048);
+  assert.deepEqual(prompt['5'].inputs.bvh, ['4', 1]);
+  assert.equal(prompt[exportNodeId].class_type, 'Trellis2ExportMesh_GGUF');
+  assert.equal(prompt[exportNodeId].inputs.filename_prefix, 'ck_fast');
+});
+
+test('resolveLowPolyPreset enforces unified <=3000 vertex low-poly character budget', () => {
+  assert.equal(CHARACTER_POLY_PRESETS.low.maxVertices, 3000);
+  assert.equal(resolveLowPolyPreset('low').targetQuads, 1750);
+  assert.equal(resolveLowPolyPreset('general').targetQuads, 1750);
+  assert.equal(resolveLowPolyPreset('player').targetQuads, 1750);
+
+  const lowArgs = buildBlenderRemeshBakeArgs('in.glb', 'char.glb', { preset: 'low' });
+  assert.equal(lowArgs[lowArgs.indexOf('--target-quads') + 1], '1750');
+  assert.equal(lowArgs[lowArgs.indexOf('--texture-size') + 1], '1024');
+});
+
+test('buildBlenderRemeshBakeArgs forwards --rig-run and buildBlenderRigRunArgs targets Run clip', () => {
+  const bakeRigArgs = buildBlenderRemeshBakeArgs('high.glb', 'low.glb', { preset: 'low', 'rig-run': true });
+  assert.ok(bakeRigArgs.includes('--rig-run'));
+
+  const bakeNoRigArgs = buildBlenderRemeshBakeArgs('high.glb', 'low.glb', { preset: 'low' });
+  assert.equal(bakeNoRigArgs.includes('--rig-run'), false);
+
+  const rigArgs = buildBlenderRigRunArgs('low.glb', 'low_run.glb', { 'qa-dir': 'qa_out', size: 512 });
+  assert.equal(rigArgs[0], 'rig-run');
+  assert.equal(rigArgs[rigArgs.indexOf('--action-name') + 1], 'Run');
+  assert.ok(rigArgs.includes('--qa-dir'));
+  assert.equal(rigArgs[rigArgs.indexOf('--size') + 1], '512');
+});
+
+test('resolveModel3dConfig resolves optional runAnimGlb without hardcoded paths', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-m3d-runanim-'));
+  try {
+    fs.writeFileSync(path.join(dir, '.hgame.local.json'), JSON.stringify({
+      model3d: {
+        rootDir: path.join(dir, 'm3d'),
+        runAnimGlb: 'anims/run_fwd.glb',
+      },
+    }), 'utf8');
+    const cfg = resolveModel3dConfig(dir);
+    assert.equal(cfg.runAnimGlb, path.join(dir, 'm3d', 'anims', 'run_fwd.glb'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
