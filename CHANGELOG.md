@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clamp directional shadow atlas sizes to the GPU limit and refresh manually updated shadows after quality changes, frustum refits and WebGL context restoration.
+
 - Fit directional shadows and derive screen-space sun lighting from world-space light and target transforms. Snap the shadow projection to a world-anchored texel grid.
 
 - Step contact shadows and volumetric lighting in projected coordinates. Stop contact shadows at the first valid occluder and reuse depth reads when consecutive samples reach the same texel.

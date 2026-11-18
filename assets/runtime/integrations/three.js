@@ -285,6 +285,7 @@ export function createThreeAdapter({
   let worldSunLight = null;
   const worldSuns = new WeakMap();
   const ownedSuns = new Set();
+  const appliedShadowExtents = new WeakMap();
   let activeViewCamera = viewCamera;
   let activeSky = sky;
   let activePostVolumes = postVolumes;
@@ -296,24 +297,53 @@ export function createThreeAdapter({
     gl: renderer.getContext?.() ?? null,
   });
 
-  function applySunShadowPreset(light, preset) {
-    if (!preset || !light?.shadow?.mapSize) return;
+  function invalidateSunShadow(light) {
+    if (!light?.shadow) return;
+    light.shadow.needsUpdate = true;
+    if (renderer.shadowMap) renderer.shadowMap.needsUpdate = true;
+  }
+
+  function applySunShadowPreset(light, preset, needsRefresh = false) {
+    const shadow = light?.shadow;
+    if (!preset || !shadow?.mapSize) {
+      if (needsRefresh) invalidateSunShadow(light);
+      return;
+    }
     const configured = light === worldSunLight ? worldLighting?.sun?.shadow : null;
     if (configured?.adaptiveExtent && preset.shadowDistance > 0) {
       const extent = Math.min(configured.extent, preset.shadowDistance * 0.5);
-      const camera = light.shadow.camera;
-      if (camera && camera.right !== extent) {
-        Object.assign(camera, { left: -extent, right: extent, top: extent, bottom: -extent });
-        camera.updateProjectionMatrix?.();
-        light.shadow.needsUpdate = true;
+      const camera = shadow.camera;
+      if (camera && appliedShadowExtents.get(camera) !== extent) {
+        if (camera.left !== -extent || camera.right !== extent || camera.top !== extent || camera.bottom !== -extent) {
+          Object.assign(camera, { left: -extent, right: extent, top: extent, bottom: -extent });
+          camera.updateProjectionMatrix?.();
+          needsRefresh = true;
+        }
+        appliedShadowExtents.set(camera, extent);
       }
     }
-    const wanted = preset.shadowMapSize;
-    if (!Number.isFinite(wanted) || wanted <= 0 || light.shadow.mapSize.x === wanted) return;
-    light.shadow.mapSize.set?.(wanted, wanted);
-    light.shadow.map?.dispose?.();
-    light.shadow.map = null;
-    light.shadow.needsUpdate = true;
+
+    const requestedSize = preset.shadowMapSize;
+    if (Number.isFinite(requestedSize) && requestedSize > 0) {
+      const maxTextureSize = renderer.capabilities?.maxTextureSize ?? Infinity;
+      const frameExtents = shadow.getFrameExtents?.();
+      const atlasSpan = Math.max(1, frameExtents?.x ?? 1, frameExtents?.y ?? 1);
+      const wanted = Math.max(1, Math.floor(Math.min(requestedSize, maxTextureSize / atlasSpan)));
+      if (shadow.mapSize.x !== wanted || shadow.mapSize.y !== wanted) {
+        if (typeof shadow.mapSize.set === 'function') shadow.mapSize.set(wanted, wanted);
+        else Object.assign(shadow.mapSize, { x: wanted, y: wanted });
+
+        const map = shadow.map;
+        const mapPass = shadow.mapPass;
+        shadow.map = null;
+        if (mapPass) shadow.mapPass = null;
+        map?.dispose?.();
+        if (mapPass !== map) mapPass?.dispose?.();
+        needsRefresh = true;
+      }
+    }
+
+    if (needsRefresh) invalidateSunShadow(light);
   }
 
   function applyQualityToRenderer(preset = null) {
@@ -322,11 +352,17 @@ export function createThreeAdapter({
       : (preset
           ? Boolean(preset.shadowsEnabled ?? (preset.shadowMapSize > 0))
           : Boolean(shadows));
+    let refreshShadow = false;
     if (renderer.shadowMap) {
+      const previousEnabled = renderer.shadowMap.enabled;
+      const previousType = renderer.shadowMap.type;
       renderer.shadowMap.enabled = enableShadows;
-      if (enableShadows && THREE.PCFShadowMap !== undefined) renderer.shadowMap.type = THREE.PCFShadowMap;
+      if (enableShadows && THREE.PCFShadowMap !== undefined) {
+        renderer.shadowMap.type = THREE.PCFShadowMap;
+      }
+      refreshShadow = enableShadows && (!previousEnabled || previousType !== renderer.shadowMap.type);
     }
-    applySunShadowPreset(activeSunLight ?? worldSunLight, preset);
+    applySunShadowPreset(activeSunLight ?? worldSunLight, preset, refreshShadow);
     if (preset) {
       culler3d.setMaxDistance(preset.drawDistance ?? far);
       culler3d.setOcclusionEnabled(preset.occlusionCulling ?? true);
@@ -546,6 +582,7 @@ export function createThreeAdapter({
     contextLost = false;
     lastCanvasSize = null;
     resize();
+    applySunShadowPreset(activeSunLight ?? worldSunLight, appliedPreset, true);
     postPipeline?.handleContextRestored?.();
   };
   canvas.addEventListener?.('webglcontextlost', onContextLost, false);
@@ -685,7 +722,7 @@ export function createThreeAdapter({
     const sceneSun = worldLighting?.sun ? worldSuns.get(world) ?? null : null;
     if (worldSunLight !== sceneSun) {
       worldSunLight = sceneSun;
-      applySunShadowPreset(activeSunLight ?? worldSunLight, appliedPreset);
+      applySunShadowPreset(activeSunLight ?? worldSunLight, appliedPreset, true);
     }
 
     if (activeViews && activeViews.length > 0) {
@@ -791,8 +828,11 @@ export function createThreeAdapter({
     removeView(scene, object) { if (scene && viewWorlds.has(scene)) getViewWorld(scene).remove(object); },
     setViewCamera(cam) { activeViewCamera = cam; },
     setSunLight(light) {
+      const previousSun = activeSunLight ?? worldSunLight;
       activeSunLight = light;
       if (qualityController?.state?.preset) applyQualityToRenderer(qualityController.state.preset);
+      const nextSun = activeSunLight ?? worldSunLight;
+      if (nextSun !== previousSun) invalidateSunShadow(nextSun);
     },
     fitShadowToPreset(sun = activeSunLight ?? worldSunLight, target = { x: 0, y: 0, z: 0 }, options = {}) {
       const light = sun ?? activeSunLight ?? worldSunLight;
@@ -806,7 +846,9 @@ export function createThreeAdapter({
         ? [Number(target[0]) || 0, Number(target[1]) || 0, Number(target[2]) || 0]
         : [Number(target?.x) || 0, Number(target?.y) || 0, Number(target?.z) || 0];
       const sunDirection = options?.sunDirection ?? (activeSky?.sunDirection ?? null);
-      return fitDirectionalShadowFrustum(THREE, light, { center, radius }, { ...options, sunDirection });
+      const frustum = fitDirectionalShadowFrustum(THREE, light, { center, radius }, { ...options, sunDirection });
+      invalidateSunShadow(light);
+      return frustum;
     },
     setSky(nextSky) {
       activeSky = nextSky ?? null;
