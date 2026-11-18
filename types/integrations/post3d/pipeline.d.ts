@@ -35,7 +35,7 @@
  * @property {boolean} [autoClear] Restored after each render.
  * @property {number} [toneMapping] Restored after each render.
  * @property {{enabled: boolean}} [shadowMap]
- * @property {{isWebGL2?: boolean, getMaxAnisotropy?(): number}} [capabilities]
+ * @property {{isWebGL2?: boolean, logarithmicDepthBuffer?: boolean, getMaxAnisotropy?(): number}} [capabilities]
  * @property {(target: object | null) => void} setRenderTarget
  * @property {(scene: object, camera: object) => void} render
  * @property {(color?: boolean, depth?: boolean, stencil?: boolean) => void} [clear]
@@ -174,6 +174,10 @@
 /**
  * Camera members read by `render`.
  * @typedef {object} PostPipelineCamera
+ * @property {boolean} [isCamera]
+ * @property {boolean} [isOrthographicCamera]
+ * @property {number} [coordinateSystem]
+ * @property {boolean} [reversedDepth]
  * @property {number} [near] Default 0.1.
  * @property {number} [far] Default 1000.
  * @property {object} projectionMatrix
@@ -181,6 +185,7 @@
  * @property {object} matrixWorld
  * @property {object} matrixWorldInverse
  * @property {(force?: boolean) => void} [updateMatrixWorld]
+ * @property {(updateParents: boolean, updateChildren: boolean) => void} [updateWorldMatrix]
  */
 /**
  * Directional (sun) light members read by `render`.
@@ -280,6 +285,7 @@ export type PostPipelineRenderer = {
     } | undefined;
     capabilities?: {
         isWebGL2?: boolean;
+        logarithmicDepthBuffer?: boolean;
         getMaxAnisotropy?(): number;
     } | undefined;
     setRenderTarget: (target: object | null) => void;
@@ -554,6 +560,10 @@ export type PostPipelineTargets = {
  * Camera members read by `render`.
  */
 export type PostPipelineCamera = {
+    isCamera?: boolean | undefined;
+    isOrthographicCamera?: boolean | undefined;
+    coordinateSystem?: number | undefined;
+    reversedDepth?: boolean | undefined;
     /**
      * Default 0.1.
      */
@@ -567,6 +577,7 @@ export type PostPipelineCamera = {
     matrixWorld: object;
     matrixWorldInverse: object;
     updateMatrixWorld?: ((force?: boolean) => void) | undefined;
+    updateWorldMatrix?: ((updateParents: boolean, updateChildren: boolean) => void) | undefined;
 };
 /**
  * Directional (sun) light members read by `render`.

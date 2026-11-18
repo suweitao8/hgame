@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share depth reconstruction across 3D post-processing passes, including reversed depth. March volumetric lighting along parallel rays in orthographic views.
+
 - Preserve native camera matrices for parented 3D views. Use parallel rays for orthographic occlusion and picking. Recognize zero-to-one depth when extracting frustums.
 
 - Keep off-camera Three.js mesh components eligible to cast shadows. Apply optional camera culling to other meshes at draw time using their world-space geometry bounds.

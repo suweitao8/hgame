@@ -17,7 +17,7 @@ import { createFullscreenTriangle, inspectWebGLCapabilities } from './capabiliti
 import { computeWhiteBalanceRGB } from './color.js';
 import { QUALITY3D_PRESETS } from '../quality3d.js';
 import { readWorldPosition } from '../shadow3d/transform.js';
-import { syncCameraWorldMatrices } from '../camera3d/matrices.js';
+import { syncCameraWorldMatrices, usesZeroToOneDepth } from '../camera3d/matrices.js';
 
 const POST_STATE_SCALAR_KEYS = [
   'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
@@ -71,7 +71,7 @@ const POST_STATE_SCALAR_KEYS = [
  * @property {boolean} [autoClear] Restored after each render.
  * @property {number} [toneMapping] Restored after each render.
  * @property {{enabled: boolean}} [shadowMap]
- * @property {{isWebGL2?: boolean, getMaxAnisotropy?(): number}} [capabilities]
+ * @property {{isWebGL2?: boolean, logarithmicDepthBuffer?: boolean, getMaxAnisotropy?(): number}} [capabilities]
  * @property {(target: object | null) => void} setRenderTarget
  * @property {(scene: object, camera: object) => void} render
  * @property {(color?: boolean, depth?: boolean, stencil?: boolean) => void} [clear]
@@ -217,6 +217,10 @@ const POST_STATE_SCALAR_KEYS = [
 /**
  * Camera members read by `render`.
  * @typedef {object} PostPipelineCamera
+ * @property {boolean} [isCamera]
+ * @property {boolean} [isOrthographicCamera]
+ * @property {number} [coordinateSystem]
+ * @property {boolean} [reversedDepth]
  * @property {number} [near] Default 0.1.
  * @property {number} [far] Default 1000.
  * @property {object} projectionMatrix
@@ -224,6 +228,7 @@ const POST_STATE_SCALAR_KEYS = [
  * @property {object} matrixWorld
  * @property {object} matrixWorldInverse
  * @property {(force?: boolean) => void} [updateMatrixWorld]
+ * @property {(updateParents: boolean, updateChildren: boolean) => void} [updateWorldMatrix]
  */
 
 /**
@@ -429,7 +434,7 @@ export function createPostPipeline3D(options = {}) {
   let quadGeom = null;
   let quadMesh = null;
   let mats = null;
-  let scratchInvProj = null;
+  let sceneProjectionUniforms = null;
   let scratchCamToShadow = null;
   let scratchViewToWorld = null;
   let scratchSunView = null;
@@ -631,7 +636,12 @@ export function createPostPipeline3D(options = {}) {
       depthWrite: false,
     });
 
-    scratchInvProj = new THREE.Matrix4();
+    sceneProjectionUniforms = {
+      uInvProj: { value: new THREE.Matrix4() },
+      uProj: { value: new THREE.Matrix4() },
+      uSceneDepthMode: { value: 0 },
+      uSceneDepthGuideOffset: { value: 0 },
+    };
     scratchCamToShadow = new THREE.Matrix4();
     scratchViewToWorld = new THREE.Matrix4();
     scratchSunView = new THREE.Vector3(0, 1, 0);
@@ -643,8 +653,7 @@ export function createPostPipeline3D(options = {}) {
     const aoVolUniforms = {
       tDepth: { value: null },
       tSunShadow: { value: null },
-      uInvProj: { value: scratchInvProj },
-      uProj: { value: new THREE.Matrix4() },
+      ...sceneProjectionUniforms,
       uCamToShadow: { value: scratchCamToShadow },
       uSunViewDir: { value: scratchSunView },
       uResolution: { value: new THREE.Vector2(bufferWidth, bufferHeight) },
@@ -665,8 +674,7 @@ export function createPostPipeline3D(options = {}) {
       giSsr: makeShader(HALF_GI_SSR_FRAGMENT_GLSL3, {
         tScene: { value: null },
         tDepth: { value: null },
-        uInvProj: { value: scratchInvProj },
-        uProj: { value: new THREE.Matrix4() },
+        ...sceneProjectionUniforms,
         uResolution: { value: new THREE.Vector2(bufferWidth, bufferHeight) },
         uSsgiEnabled: { value: 0 },
         uSsrEnabled: { value: 0 },
@@ -723,8 +731,7 @@ export function createPostPipeline3D(options = {}) {
         tBloom: { value: null },
         tAutoExposure: { value: null },
         uStoredExposureRange: storedExposureRange,
-        uInvProj: { value: scratchInvProj },
-        uProj: { value: new THREE.Matrix4() },
+        ...sceneProjectionUniforms,
         uSunViewDir: { value: scratchSunView },
         uSunColor: { value: state.sunColor },
         uWhiteBalance: { value: state.whiteBalanceVec },
@@ -905,7 +912,16 @@ export function createPostPipeline3D(options = {}) {
       renderer.render(world, camera);
 
       syncCameraWorldMatrices(camera);
-      scratchInvProj.copy(camera.projectionMatrixInverse);
+      // Logarithmic frag depth does not match the inverse projection matrix.
+      const readSceneDepth = renderer.capabilities?.logarithmicDepthBuffer !== true;
+      if (readSceneDepth) {
+        sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
+        sceneProjectionUniforms.uProj.value.copy(camera.projectionMatrix);
+        sceneProjectionUniforms.uSceneDepthMode.value = camera.reversedDepth ? 2 : Number(usesZeroToOneDepth(camera));
+        // Orthographic views can include geometry behind the camera origin.
+        sceneProjectionUniforms.uSceneDepthGuideOffset.value = camera.isOrthographicCamera
+          ? Math.max(0, -(camera.near ?? 0)) : 0;
+      }
       let hasSunDir = false;
       if (sunLight?.position && sunLight.visible !== false) {
         readWorldPosition(sunLight, scratchSunView).sub(readWorldPosition(sunLight.target, scratchSunTarget));
@@ -917,13 +933,13 @@ export function createPostPipeline3D(options = {}) {
 
       // 1. Half-res SSAO + Volumetric sun shafts + separable bilateral blur
       const aoScratch = aoBlurRT ?? halfScratchRT;
-      const useAo = Boolean(activePreset.ssao && state.ssaoIntensity > 0 && halfRT && aoScratch);
+      const useAo = Boolean(readSceneDepth && activePreset.ssao && state.ssaoIntensity > 0 && halfRT && aoScratch);
       const volSteps = activePreset.volumetricSteps ?? 0;
       const shadow = sunLight?.shadow;
       const depthTexture = shadow?.map?.depthTexture;
       const sunShadowTex = depthTexture ?? shadow?.map?.texture;
       const shadowMatrix = shadow?.matrix;
-      const useVolumetric = Boolean(volSteps > 0.5 && state.volumetricIntensity !== 0 &&
+      const useVolumetric = Boolean(readSceneDepth && volSteps > 0.5 && state.volumetricIntensity !== 0 &&
         hasSunDir && sunLight.castShadow !== false && renderer.shadowMap?.enabled !== false &&
         sunShadowTex && shadowMatrix && halfRT && aoScratch);
 
@@ -932,7 +948,6 @@ export function createPostPipeline3D(options = {}) {
         const aoMaterial = useVolumetric && depthTexture?.compareFunction != null ? mats.aoVolCompare : mats.aoVol;
         const ao = aoMaterial.uniforms;
         ao.tDepth.value = sceneRT.depthTexture;
-        ao.uProj.value.copy(camera.projectionMatrix);
         ao.uResolution.value.set(hw, hh);
         ao.uSsaoEnabled.value = useAo ? 1 : 0;
         ao.uSsaoRadius.value = state.ssaoRadius;
@@ -959,12 +974,11 @@ export function createPostPipeline3D(options = {}) {
       // 1b. Half-res HDR SSGI + SSR bounce reflections + depth-guided bilateral denoise
       const useSsgi = ssgiEnabled();
       const useSsr = ssrEnabled();
-      const useGiSsr = Boolean((useSsgi || useSsr) && giSsrRT && halfScratchRT);
+      const useGiSsr = Boolean(readSceneDepth && (useSsgi || useSsr) && giSsrRT && halfScratchRT);
       if (useGiSsr) {
         const giU = mats.giSsr.uniforms;
         giU.tScene.value = sceneRT.texture;
         giU.tDepth.value = sceneRT.depthTexture;
-        giU.uProj.value.copy(camera.projectionMatrix);
         giU.uResolution.value.set(hw, hh);
         giU.uSsgiEnabled.value = useSsgi ? 1 : 0;
         giU.uSsrEnabled.value = useSsr ? 1 : 0;
@@ -990,12 +1004,11 @@ export function createPostPipeline3D(options = {}) {
       compU.tDepth.value = sceneRT.depthTexture;
       compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
       compU.tGiSsr.value = useGiSsr ? giSsrRT.texture : null;
-      compU.uProj.value.copy(camera.projectionMatrix);
       compU.uUseAo.value = useAo ? 1 : 0;
       compU.uUseVolumetric.value = useVolumetric ? 1 : 0;
       compU.uUseGiSsr.value = useGiSsr ? 1 : 0;
       compU.uHasSunDir.value = hasSunDir ? 1 : 0;
-      compU.uContactShadows.value = state.contactShadows;
+      compU.uContactShadows.value = readSceneDepth ? state.contactShadows : 0;
       compU.uContactShadowLength.value = state.contactShadowLength;
       compU.uContactShadowThickness.value = state.contactShadowThickness;
       compU.uSsaoIntensity.value = state.ssaoIntensity;
@@ -1007,7 +1020,7 @@ export function createPostPipeline3D(options = {}) {
         || viewScene.onBeforeRender !== THREE.Scene.prototype.onBeforeRender
         || viewScene.onAfterRender !== THREE.Scene.prototype.onAfterRender
       ));
-      const useContactShadows = hasSunDir && state.contactShadows > 0.001;
+      const useContactShadows = hasSunDir && compU.uContactShadows.value > 0.001;
       const separateViewModel = hasViewModel && (sceneRT.samples > 0 || useAo || useVolumetric || useGiSsr || useContactShadows);
       syncViewCompositeTarget(separateViewModel);
       if (hasViewModel) {
@@ -1154,6 +1167,7 @@ export function createPostPipeline3D(options = {}) {
     quadGeom?.dispose?.();
     if (mats) for (const mat of Object.values(mats)) mat.dispose?.();
     mats = null;
+    sceneProjectionUniforms = null;
     quadGeom = null;
     quadMesh = null;
     postScene = null;

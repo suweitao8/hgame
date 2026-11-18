@@ -7,10 +7,38 @@ void main() {
 }
 `;
 
+const SCENE_PROJECTION_GLSL3 = `
+uniform mat4 uInvProj;
+uniform mat4 uProj;
+// 0: WebGL [-1,1], 1: [0,1], 2: reversed [0,1].
+uniform int uSceneDepthMode;
+uniform float uSceneDepthGuideOffset;
+
+float skyDepth() { return uSceneDepthMode == 2 ? 0.0 : 1.0; }
+bool hasSceneGeometry(float depth) {
+  return uSceneDepthMode == 2 ? depth > 0.0 : depth < 1.0;
+}
+bool isOrthographicProjection() { return uProj[2].w == 0.0; }
+
+vec3 reconstructViewPos(vec2 uv, float depth) {
+  float clipZ = uSceneDepthMode == 0 ? depth * 2.0 - 1.0 : depth;
+  vec4 view = uInvProj * vec4(uv * 2.0 - 1.0, clipZ, 1.0);
+  return view.xyz / max(abs(view.w), 1e-8);
+}
+
+vec3 lowerClipDistances(vec4 clip) {
+  return vec3(clip.xy + clip.ww, uSceneDepthMode == 0 ? clip.z + clip.w : clip.z);
+}
+
+bool insideSceneClip(vec4 clip) {
+  return clip.w > 0.0 && all(greaterThanEqual(lowerClipDistances(clip), vec3(0.0))) &&
+    all(lessThanEqual(clip.xyz, clip.www));
+}
+`;
+
 const DEPTH_GUIDE_GLSL3 = `
 // Reserve 1 for the sky. Log depth preserves nearby separation with 8-bit storage.
-float encodeDepthGuide(float depth, float viewZ) {
-  if (depth >= 1.0) return 1.0;
+float encodeDepthGuide(float viewZ) {
   return min(log2(1.0 + max(0.0, -viewZ)) / 16.0, 254.0 / 255.0);
 }
 
@@ -39,40 +67,7 @@ const float GI_DEPTH_PRECISION = 0.0005;
 const float AO_DEPTH_PRECISION = 0.00002;
 `;
 
-export const HALF_AO_VOL_FRAGMENT_GLSL3 = `
-uniform sampler2D tDepth;
-#ifdef HGAME_SHADOW_COMPARE
-uniform highp sampler2DShadow tSunShadow;
-#else
-uniform sampler2D tSunShadow;
-#endif
-uniform mat4 uInvProj;
-uniform mat4 uProj;
-uniform mat4 uCamToShadow;
-uniform vec3 uSunViewDir;
-uniform vec2 uResolution;
-uniform float uSsaoEnabled;
-uniform float uSsaoRadius;
-uniform float uSsaoBias;
-uniform float uVolumetricSteps;
-uniform float uShadowDepthSign;
-uniform float uTime;
-
-in vec2 vUv;
-layout(location = 0) out vec4 fragColor;
-
-${DEPTH_GUIDE_GLSL3}
-
-float ign(vec2 p) {
-  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
-}
-
-vec3 reconstructViewPos(vec2 uv, float depth) {
-  vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-  vec4 view = uInvProj * ndc;
-  return view.xyz / max(abs(view.w), 1e-5);
-}
-
+const SURFACE_NORMAL_GLSL3 = `
 vec3 reconstructEdgeAwareNormal(vec2 uv, vec3 viewPos, float depthC) {
   vec2 texel = 1.0 / max(uResolution, vec2(1.0));
   vec2 uvL = clamp(uv - vec2(texel.x, 0.0), vec2(0.001), vec2(0.999));
@@ -99,13 +94,45 @@ vec3 reconstructEdgeAwareNormal(vec2 uv, vec3 viewPos, float depthC) {
   if (n.z < 0.0) n = -n;
   return n;
 }
+`;
+
+export const HALF_AO_VOL_FRAGMENT_GLSL3 = `
+uniform sampler2D tDepth;
+#ifdef HGAME_SHADOW_COMPARE
+uniform highp sampler2DShadow tSunShadow;
+#else
+uniform sampler2D tSunShadow;
+#endif
+uniform mat4 uCamToShadow;
+uniform vec3 uSunViewDir;
+uniform vec2 uResolution;
+uniform float uSsaoEnabled;
+uniform float uSsaoRadius;
+uniform float uSsaoBias;
+uniform float uVolumetricSteps;
+uniform float uShadowDepthSign;
+uniform float uTime;
+
+in vec2 vUv;
+layout(location = 0) out vec4 fragColor;
+
+${DEPTH_GUIDE_GLSL3}
+${SCENE_PROJECTION_GLSL3}
+
+float ign(vec2 p) {
+  return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+}
+
+${SURFACE_NORMAL_GLSL3}
 
 void main() {
   float depth = texture(tDepth, vUv).r;
-  vec3 viewPos = reconstructViewPos(vUv, depth);
+  bool hasGeometry = hasSceneGeometry(depth);
+  bool useVolumetric = uVolumetricSteps > 0.5;
+  vec3 viewPos = (hasGeometry || useVolumetric) ? reconstructViewPos(vUv, depth) : vec3(0.0);
   float ao = 1.0;
 
-  if (uSsaoEnabled > 0.5 && depth < 1.0) {
+  if (uSsaoEnabled > 0.5 && hasGeometry) {
     vec3 viewNormal = reconstructEdgeAwareNormal(vUv, viewPos, depth);
     vec3 tangent = normalize(abs(viewNormal.z) < 0.99 ? cross(viewNormal, vec3(0.0, 0.0, 1.0)) : cross(viewNormal, vec3(1.0, 0.0, 0.0)));
     vec3 bitangent = cross(viewNormal, tangent);
@@ -127,11 +154,11 @@ void main() {
       vec3 hemi = tangent * k2.x + bitangent * k2.y + viewNormal * zOff;
       vec3 samplePos = viewPos + normalize(hemi) * (radius * (0.25 + float(i) * 0.095));
       vec4 proj = uProj * vec4(samplePos, 1.0);
-      if (proj.w <= 0.0 || any(greaterThan(abs(proj.xyz), proj.www))) continue;
+      if (!insideSceneClip(proj)) continue;
       vec2 sUv = proj.xy / proj.w * 0.5 + 0.5;
       float sDepth = textureLod(tDepth, sUv, 0.0).r;
       weightSum += 1.0;
-      if (sDepth < 1.0) {
+      if (hasSceneGeometry(sDepth)) {
         float sampleZ = reconstructViewPos(sUv, sDepth).z;
         if (sampleZ >= samplePos.z + uSsaoBias) {
           occlusion += smoothstep(0.0, 1.0, radius / max(abs(viewPos.z - sampleZ), 0.001));
@@ -142,17 +169,19 @@ void main() {
   }
 
   float vol = 0.0;
-  if (uVolumetricSteps > 0.5) {
+  if (useVolumetric) {
     int steps = int(clamp(uVolumetricSteps, 1.0, 32.0));
-    vec3 rayDir = normalize(viewPos);
-    float hitDist = depth >= 1.0 ? 48.0 : min(length(viewPos), 48.0);
+    bool orthographic = isOrthographicProjection();
+    vec3 rayOrigin = orthographic ? reconstructViewPos(vUv, 1.0 - skyDepth()) : vec3(0.0);
+    vec3 rayDir = orthographic ? vec3(0.0, 0.0, -1.0) : normalize(viewPos);
+    float hitDist = hasGeometry ? clamp(dot(viewPos - rayOrigin, rayDir), 0.0, 48.0) : 48.0;
     float jitter = ign(gl_FragCoord.xy + vec2(fract(uTime) * 37.0, 11.0));
     float cosTheta = dot(rayDir, uSunViewDir);
     float g = 0.65;
     float phase = (1.0 - g * g) / (4.0 * 3.14159265 * pow(max(0.01, 1.0 + g * g - 2.0 * g * cosTheta), 1.5));
     float stepLen = hitDist / float(steps);
     vec4 shadowStep = uCamToShadow * vec4(rayDir * stepLen, 0.0);
-    vec4 shadowCoord = uCamToShadow[3] + shadowStep * jitter;
+    vec4 shadowCoord = uCamToShadow * vec4(rayOrigin, 1.0) + shadowStep * jitter;
     float accum = 0.0;
     for (int s = 0; s < 32; s++, shadowCoord += shadowStep) {
       if (s >= steps) break;
@@ -171,15 +200,13 @@ void main() {
     vol = (accum / float(steps)) * clamp(phase * 1.4, 0.05, 1.25) * clamp(hitDist / 24.0, 0.0, 1.0);
   }
 
-  fragColor = vec4(ao, vol, packDepthGuide(encodeDepthGuide(depth, viewPos.z)));
+  fragColor = vec4(ao, vol, packDepthGuide(hasGeometry ? encodeDepthGuide(viewPos.z - uSceneDepthGuideOffset) : 1.0));
 }
 `;
 
 export const HALF_GI_SSR_FRAGMENT_GLSL3 = `
 uniform sampler2D tScene;
 uniform sampler2D tDepth;
-uniform mat4 uInvProj;
-uniform mat4 uProj;
 uniform vec2 uResolution;
 uniform float uSsgiEnabled;
 uniform float uSsrEnabled;
@@ -194,48 +221,18 @@ in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
 ${DEPTH_GUIDE_GLSL3}
+${SCENE_PROJECTION_GLSL3}
 
 float ign(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
-vec3 reconstructViewPos(vec2 uv, float depth) {
-  vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-  vec4 view = uInvProj * ndc;
-  return view.xyz / max(abs(view.w), 1e-5);
-}
-
-vec3 reconstructEdgeAwareNormal(vec2 uv, vec3 viewPos, float depthC) {
-  vec2 texel = 1.0 / max(uResolution, vec2(1.0));
-  vec2 uvL = clamp(uv - vec2(texel.x, 0.0), vec2(0.001), vec2(0.999));
-  vec2 uvR = clamp(uv + vec2(texel.x, 0.0), vec2(0.001), vec2(0.999));
-  vec2 uvD = clamp(uv - vec2(0.0, texel.y), vec2(0.001), vec2(0.999));
-  vec2 uvU = clamp(uv + vec2(0.0, texel.y), vec2(0.001), vec2(0.999));
-
-  float dL = texture(tDepth, uvL).r;
-  float dR = texture(tDepth, uvR).r;
-  float dD = texture(tDepth, uvD).r;
-  float dU = texture(tDepth, uvU).r;
-
-  vec3 dPdx = abs(dR - depthC) < abs(depthC - dL)
-    ? (reconstructViewPos(uvR, dR) - viewPos)
-    : (viewPos - reconstructViewPos(uvL, dL));
-  vec3 dPdy = abs(dU - depthC) < abs(depthC - dD)
-    ? (reconstructViewPos(uvU, dU) - viewPos)
-    : (viewPos - reconstructViewPos(uvD, dD));
-
-  vec3 n = cross(dPdx, dPdy);
-  float lenSq = dot(n, n);
-  if (lenSq < 1e-10) return vec3(0.0, 0.0, 1.0);
-  n *= inversesqrt(lenSq);
-  if (n.z < 0.0) n = -n;
-  return n;
-}
+${SURFACE_NORMAL_GLSL3}
 
 float clipRayToFrustum(vec4 start, vec4 end) {
-  vec3 startMin = start.www + start.xyz;
+  vec3 startMin = lowerClipDistances(start);
   vec3 startMax = start.www - start.xyz;
-  vec3 endMin = end.www + end.xyz;
+  vec3 endMin = lowerClipDistances(end);
   vec3 endMax = end.www - end.xyz;
   if (any(lessThan(startMin, vec3(0.0))) || any(lessThan(startMax, vec3(0.0)))) return 0.0;
   float t = 1.0;
@@ -258,7 +255,7 @@ ivec2 reflectionPixel(vec2 uv, ivec2 size) {
 
 float reflectionDepthGap(vec4 raySample, ivec2 pixel, ivec2 size) {
   float depth = texelFetch(tDepth, pixel, 0).r;
-  if (depth >= 1.0) return -1.0;
+  if (!hasSceneGeometry(depth)) return -1.0;
   vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
   return reconstructViewPos(uv, depth).z - raySample.z / raySample.w;
 }
@@ -328,7 +325,7 @@ bool traceReflection(vec3 origin, vec3 direction, out vec2 hitUv, out float conf
 
 void main() {
   float depth = texture(tDepth, vUv).r;
-  if (depth >= 1.0) {
+  if (!hasSceneGeometry(depth)) {
     fragColor = vec4(0.0, 0.0, 0.0, 1.0);
     return;
   }
@@ -353,10 +350,10 @@ void main() {
       vec3 probePos = viewPos + sampleDir * (radius * rFrac);
       vec4 clip = uProj * vec4(probePos, 1.0);
       vec2 sUv = (clip.xy / max(clip.w, 1e-5)) * 0.5 + 0.5;
-      if (clip.w > 0.0 && abs(clip.z) <= clip.w &&
+      if (insideSceneClip(clip) &&
           sUv.x > 0.01 && sUv.x < 0.99 && sUv.y > 0.01 && sUv.y < 0.99) {
         float sDepth = texture(tDepth, sUv).r;
-        if (sDepth < 1.0) {
+        if (hasSceneGeometry(sDepth)) {
           vec3 sView = reconstructViewPos(sUv, sDepth);
           vec3 delta = sView - viewPos;
           float dist2 = max(0.08, dot(delta, delta));
@@ -378,7 +375,7 @@ void main() {
   }
 
   if (uSsrEnabled > 0.5 && uSsrIntensity > 0.001) {
-    vec3 viewDir = uProj[3].w == 0.0 ? normalize(-viewPos) : vec3(0.0, 0.0, 1.0);
+    vec3 viewDir = isOrthographicProjection() ? vec3(0.0, 0.0, 1.0) : normalize(-viewPos);
     vec3 reflDir = reflect(-viewDir, viewNormal);
     vec2 hitUv;
     float confidence;
@@ -392,7 +389,7 @@ void main() {
     }
   }
 
-  fragColor = vec4(giAccum * uGiIntensity + ssrColor * uSsrIntensity, encodeDepthGuide(depth, viewPos.z));
+  fragColor = vec4(giAccum * uGiIntensity + ssrColor * uSsrIntensity, encodeDepthGuide(viewPos.z - uSceneDepthGuideOffset));
 }
 `;
 
@@ -667,8 +664,6 @@ uniform sampler2D tAutoExposure;
 #ifdef HGAME_EXPOSURE_UNORM
 uniform vec2 uStoredExposureRange;
 #endif
-uniform mat4 uInvProj;
-uniform mat4 uProj;
 uniform vec3 uSunViewDir;
 uniform vec3 uSunColor;
 uniform vec3 uWhiteBalance;
@@ -711,15 +706,10 @@ layout(location = 0) out vec4 fragColor;
 
 ${EXPOSURE_PACKING_GLSL3}
 ${DEPTH_GUIDE_GLSL3}
+${SCENE_PROJECTION_GLSL3}
 
 float compIgn(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
-}
-
-vec3 compReconstructViewPos(vec2 uv, float depth) {
-  vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-  vec4 view = uInvProj * ndc;
-  return view.xyz / max(abs(view.w), 1e-5);
 }
 
 float traceContactShadow(vec3 viewPos) {
@@ -737,14 +727,14 @@ float traceContactShadow(vec3 viewPos) {
 
   for (int i = 0; i < 8; i++, clip += clipStep, rayZ += rayStep.z) {
     // The ray starts inside the convex frustum and cannot re-enter after leaving.
-    if (clip.w <= 0.0 || any(greaterThan(abs(clip.xyz), clip.www))) break;
+    if (!insideSceneClip(clip)) break;
     vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
     ivec2 pixel = clamp(ivec2(uv * vec2(size)), ivec2(0), size - ivec2(1));
     if (any(notEqual(pixel, lastPixel))) {
       lastPixel = pixel;
       float depth = texelFetch(tDepth, pixel, 0).r;
-      hasGeometry = depth < 1.0;
-      if (hasGeometry) sceneZ = compReconstructViewPos((vec2(pixel) + 0.5) / vec2(size), depth).z;
+      hasGeometry = hasSceneGeometry(depth);
+      if (hasGeometry) sceneZ = reconstructViewPos((vec2(pixel) + 0.5) / vec2(size), depth).z;
     }
     float gap = sceneZ - rayZ;
     if (hasGeometry && gap > 0.008 && gap < thickness) return 1.0 - float(i) / 8.0;
@@ -848,22 +838,23 @@ vec3 applyWorldLighting(vec3 hdr) {
   bool useAoVol = uUseAo > 0.5 || uUseVolumetric > 0.5;
   bool useGiSsr = uUseGiSsr > 0.5;
   bool useContact = uContactShadows > 0.001 && uHasSunDir > 0.5;
-  float depth = (useAoVol || useGiSsr || useContact) ? texture(tDepth, vUv).r : 1.0;
-  vec3 viewPos = depth < 1.0 ? compReconstructViewPos(vUv, depth) : vec3(0.0);
-  float guide = (useAoVol || useGiSsr) ? encodeDepthGuide(depth, viewPos.z) : 1.0;
+  float depth = (useAoVol || useGiSsr || useContact) ? texture(tDepth, vUv).r : skyDepth();
+  bool hasGeometry = hasSceneGeometry(depth);
+  vec3 viewPos = hasGeometry ? reconstructViewPos(vUv, depth) : vec3(0.0);
+  float guide = hasGeometry && (useAoVol || useGiSsr) ? encodeDepthGuide(viewPos.z - uSceneDepthGuideOffset) : 1.0;
 
-  if (useGiSsr && depth < 1.0) {
+  if (useGiSsr && hasGeometry) {
     vec3 giSsr = max(vec3(0.0), upsampleHalfLighting(tGiSsr, guide, false));
     hdr += giSsr;
   }
 
-  if (useContact && depth < 1.0) {
+  if (useContact && hasGeometry) {
     hdr *= 1.0 - traceContactShadow(viewPos) * clamp(uContactShadows, 0.0, 1.0);
   }
 
-  if (useAoVol && (depth < 1.0 || uUseVolumetric > 0.5)) {
+  if (useAoVol && (hasGeometry || uUseVolumetric > 0.5)) {
     vec2 aoVol = upsampleHalfLighting(tAoVol, guide, true).rg;
-    if (uUseAo > 0.5 && depth < 1.0) {
+    if (uUseAo > 0.5 && hasGeometry) {
       float aoStrength = uSsaoIntensity * (1.0 - smoothstep(0.6, 2.4, lumaHdr) * 0.65);
       hdr *= mix(1.0, aoVol.r, clamp(aoStrength, 0.0, 1.0));
     }
