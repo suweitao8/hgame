@@ -1487,6 +1487,10 @@ export function createSwarmSimulation({
     clipId = 0,
     animTime: t0 = 0,
   } = {}) {
+    return spawnUnit(x, y, r, spd, sc, initHp, clipId, t0);
+  }
+
+  function spawnUnit(x, y, r, spd, sc, initHp, clipId, t0) {
     if (freeTop <= 0) return -1;
     const id = freeStack[--freeTop];
     const slot = activeCount++;
@@ -1539,16 +1543,7 @@ export function createSwarmSimulation({
       const px = centerX + Math.cos(ang) * dist;
       const py = centerY + Math.sin(ang) * dist;
       const yaw = Math.atan2(centerX - px, centerY - py);
-      const id = spawn({
-        x: px,
-        y: py,
-        rot: yaw,
-        speed: spd,
-        scale: sc,
-        hp: initHp,
-        clipId,
-        animTime: nextRand() * 2.0,
-      });
+      const id = spawnUnit(px, py, yaw, spd, sc, initHp, clipId, nextRand() * 2.0);
       if (id < 0) break;
       spawned++;
     }

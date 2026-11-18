@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid a temporary options object per enemy when spawning large CPU swarm waves; retain the existing individual spawn interface and random sequence.
+
 - Allow unanimated skinned model replacements to reach the skeleton-aware model-slot cloning path; animated GLBs remain handled by the model3d provider.
 
 - Avoid toggling Pixi tilemap chunk visibility or revisiting the cache while the camera remains within the same chunk range.
