@@ -9,18 +9,23 @@ import ts from 'typescript';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const check = process.argv.includes('--check');
+const runtimeDir = path.join(root, 'assets', 'runtime');
 const typesDir = path.join(root, 'types');
 const tsc = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
 
 function listSources(dir) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap(e => e.name === 'vendor' ? []
-    : e.isDirectory() ? listSources(path.join(dir, e.name)) : /\.m?js$/.test(e.name) ? [path.join(dir, e.name)] : []);
+  // The compiler follows imports into the internal directory from public entries.
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const source = path.join(dir, entry.name);
+    if (!entry.isDirectory()) return /\.m?js$/.test(entry.name) ? [source] : [];
+    if (entry.name === 'vendor' || (dir === runtimeDir && entry.name === 'internal')) return [];
+    return listSources(source);
+  });
 }
 function emit(outDir) {
   const r = spawnSync(process.execPath, [tsc, '--allowJs', '--declaration', '--emitDeclarationOnly', '--skipLibCheck', '--strictNullChecks',
     '--target', 'es2022', '--module', 'esnext', '--moduleResolution', 'bundler',
-    '--outDir', outDir, '--rootDir', path.join(root, 'assets', 'runtime'),
-    ...listSources(path.join(root, 'assets', 'runtime'))], { encoding: 'utf8' });
+    '--outDir', outDir, '--rootDir', runtimeDir, ...listSources(runtimeDir)], { encoding: 'utf8' });
   if (r.status !== 0) { process.stderr.write(r.stdout + r.stderr); process.exit(r.status || 1); }
   rmSync(path.join(outDir, 'vendor'), { recursive: true, force: true }); // vendored WASM typings are not ours
   preserveTypeQueryImports(outDir);
@@ -38,7 +43,7 @@ function importNames(clause) {
 // even when an inferred facade still refers to `typeof binding`. Preserve those referenced imports.
 function preserveTypeQueryImports(outDir) {
   for (const [relative, text] of walk(outDir)) {
-    const sourcePath = path.join(root, 'assets/runtime', relative.replace(/\.d\.ts$/, '.js'));
+    const sourcePath = path.join(runtimeDir, relative.replace(/\.d\.ts$/, '.js'));
     if (!existsSync(sourcePath)) continue;
     const declaration = ts.createSourceFile(relative, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const bound = new Set();
