@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release model-slot-owned cloned skeletons when 3D modular levels are replaced or disposed, while keeping shared model assets alive.
+
 - Extrude Pixi atlas frame edges into the existing padding to reduce linear-filter seams around scaled and rotated sprites.
 
 - Create Pixi entity shadows only when needed, avoid redundant crowd texture writes and trigonometry, and fall back to the base texture if a hit-flash silhouette was omitted.

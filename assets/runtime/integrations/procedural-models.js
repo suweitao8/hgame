@@ -70,6 +70,7 @@
  * @property {(id: string) => ProceduralSlotSpec} get Copy of a slot definition.
  * @property {(id: string) => Promise<ProceduralObject3D>} prototype Shared, cached prototype.
  * @property {(id: string) => Promise<ProceduralObject3D>} instantiate Deep clone of the prototype.
+ * @property {(root: ProceduralObject3D) => void} releaseInstance Release skeletons owned by a cloned instance without disposing shared geometry or materials.
  * @property {(id: string, placements: readonly (ProceduralPlacement|{ isMatrix4: true })[]) => Promise<ProceduralObject3D>} instantiateBatch 1..20000 placements; one instance batch per eligible mesh.
  * @property {(id: string, url: string|null) => void} setReplacement
  * @property {() => boolean} enableDeferredReplacements Enable the configured replacements for subsequent builds.
@@ -118,6 +119,7 @@ export function createProceduralModelSlots({
   if (cloneSkeleton !== undefined && typeof cloneSkeleton !== 'function') throw new TypeError('cloneSkeleton must be a function');
   const definitions = new Map();
   const skinnedRoots = new WeakMap();
+  const ownedSkeletons = new Set();
   function hasSkinnedMesh(root) {
     if (skinnedRoots.has(root)) return skinnedRoots.get(root);
     let skinned = false;
@@ -128,7 +130,23 @@ export function createProceduralModelSlots({
   async function cloneModel(root) {
     if (!hasSkinnedMesh(root)) return root.clone(true);
     if (!cloneSkeleton) throw new Error('Skinned model slot requires a skeleton-aware cloneSkeleton function; use Three.js SkeletonUtils.clone');
-    return cloneSkeleton(root);
+    const sourceSkeletons = new Set();
+    root.traverse(obj => { if (obj.isSkinnedMesh && obj.skeleton) sourceSkeletons.add(obj.skeleton); });
+    const clone = await cloneSkeleton(root);
+    clone.traverse(obj => {
+      if (obj.isSkinnedMesh && obj.skeleton && !sourceSkeletons.has(obj.skeleton)) ownedSkeletons.add(obj.skeleton);
+    });
+    if (disposed) {
+      releaseInstance(clone);
+      throw new Error('Procedural model library disposed during cloning');
+    }
+    return clone;
+  }
+  function releaseInstance(root) {
+    root?.traverse(obj => {
+      const skeleton = obj.isSkinnedMesh ? obj.skeleton : null;
+      if (skeleton && ownedSkeletons.delete(skeleton)) skeleton.dispose?.();
+    });
   }
   for (const [id, raw] of Object.entries(slots)) {
     if (!ID.test(id) || !raw || typeof raw !== 'object' ||
@@ -424,13 +442,18 @@ export function createProceduralModelSlots({
     }
     const group = new THREE.Group();
     group.userData.instancingFallback = 'multi-mesh';
-    for (const item of placements) {
-      placement(item);
-      const obj = await cloneModel(root);
-      obj.position.set(item.x ?? 0, item.y ?? 0, item.z ?? 0);
-      obj.rotation.y = item.rotationY ?? 0;
-      obj.scale.setScalar(item.scale ?? 1);
-      group.add(obj);
+    try {
+      for (const item of placements) {
+        placement(item);
+        const obj = await cloneModel(root);
+        group.add(obj);
+        obj.position.set(item.x ?? 0, item.y ?? 0, item.z ?? 0);
+        obj.rotation.y = item.rotationY ?? 0;
+        obj.scale.setScalar(item.scale ?? 1);
+      }
+    } catch (error) {
+      releaseInstance(group);
+      throw error;
     }
     return group;
   }
@@ -451,6 +474,8 @@ export function createProceduralModelSlots({
     if (disposed) return;
     disposed = true;
     await Promise.allSettled(replacementCache.values());
+    for (const skeleton of ownedSkeletons) skeleton.dispose?.();
+    ownedSkeletons.clear();
     for (const geo of geometries) geo.dispose();
     for (const resource of importedResources) {
       if (resource.isMaterial) {
@@ -466,5 +491,5 @@ export function createProceduralModelSlots({
     replacementCache.clear();
     deferred.clear();
   }
-  return { get, prototype, instantiate, instantiateBatch, setReplacement, enableDeferredReplacements, dispose };
+  return { get, prototype, instantiate, instantiateBatch, releaseInstance, setReplacement, enableDeferredReplacements, dispose };
 }

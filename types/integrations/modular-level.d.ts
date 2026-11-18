@@ -196,6 +196,10 @@ export type ModularModelSlotsLike = {
     get: (slot: string) => unknown;
     instantiate: (slot: string) => Promise<object> | object;
     instantiateBatch: (slot: string, placements: readonly ModularPlacement[]) => Promise<object> | object;
+    /**
+     * Release resources owned by instantiated objects.
+     */
+    releaseInstance?: ((root: object) => void) | undefined;
 };
 export type ModularLevelRendererOptions = {
     /**

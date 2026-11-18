@@ -67,6 +67,7 @@
  * @property {(slot: string) => unknown} get Throws/returns for unknown slots.
  * @property {(slot: string) => Promise<object> | object} instantiate
  * @property {(slot: string, placements: readonly ModularPlacement[]) => Promise<object> | object} instantiateBatch
+ * @property {(root: object) => void} [releaseInstance] Release resources owned by instantiated objects.
  * @typedef {object} ModularLevelRendererOptions
  * @property {ModularThreeLike} THREE Three.js namespace subset.
  * @property {ModularModelSlotsLike} models Slot provider.
@@ -334,6 +335,7 @@ export function createModularLevelRenderer({ THREE, models, parent, chunkCells =
   function detach(group) {
     if (!group) return;
     if (group.parent) group.parent.remove(group);
+    models.releaseInstance?.(group);
     group.traverse(obj => {
       // InstancedMesh has an instance-owned GPU buffer and dispose event.
       // DO NOT dispose textures, shared materials or geometry here.

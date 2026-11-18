@@ -158,6 +158,10 @@ export type ProceduralModelSlots = {
      */
     instantiate: (id: string) => Promise<ProceduralObject3D>;
     /**
+     * Release skeletons owned by a cloned instance without disposing shared geometry or materials.
+     */
+    releaseInstance: (root: ProceduralObject3D) => void;
+    /**
      * 1..20000 placements; one instance batch per eligible mesh.
      */
     instantiateBatch: (id: string, placements: readonly (ProceduralPlacement | {
