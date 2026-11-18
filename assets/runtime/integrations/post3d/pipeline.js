@@ -13,7 +13,7 @@ import {
   COMPOSITE_FRAGMENT_GLSL3,
   FXAA_SHARPEN_FRAGMENT_GLSL3,
 } from './shaders.js';
-import { createFullscreenTriangle, inspectWebGLCapabilities } from './capabilities.js';
+import { createFullscreenTriangle, inspectWebGLCapabilities, readSceneSampleCounts } from './capabilities.js';
 import { computeWhiteBalanceRGB } from './color.js';
 import { QUALITY3D_PRESETS } from '../quality3d.js';
 import { readWorldPosition } from '../shadow3d/transform.js';
@@ -446,6 +446,7 @@ export function createPostPipeline3D(options = {}) {
     ? THREE.HalfFloatType
     : THREE.UnsignedByteType;
   const usesByteColorTargets = hdrType === THREE.UnsignedByteType;
+  let sceneSampleCounts;
 
   function makeColorTarget(w, h, { type, samples = 0, depthTexture = null, depthBuffer = Boolean(depthTexture) } = {}) {
     const rt = new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
@@ -509,18 +510,33 @@ export function createPostPipeline3D(options = {}) {
   }
 
   function syncSceneTarget() {
-    const msaa = Math.min(Math.max(0, activePreset.msaaSamples ?? 0), capabilities.maxSamples);
-    if (sceneRT?.width === bufferWidth && sceneRT.height === bufferHeight && sceneRT.samples === msaa) return;
+    const requestedSamples = Math.min(Math.max(0, activePreset.msaaSamples ?? 0), capabilities.maxSamples);
+    let msaa = requestedSamples;
+    if (requestedSamples > 0) {
+      if (sceneSampleCounts === undefined) {
+        sceneSampleCounts = readSceneSampleCounts(renderer.getContext?.(), !usesByteColorTargets);
+      }
+      if (sceneSampleCounts !== null) {
+        msaa = sceneSampleCounts.reduce((best, count) => count <= requestedSamples ? Math.max(count, best) : best, 0);
+      }
+    }
+    const sampleDepth = renderer.capabilities?.logarithmicDepthBuffer !== true;
+    if (sceneRT?.width === bufferWidth && sceneRT.height === bufferHeight &&
+        sceneRT.samples === msaa && Boolean(sceneRT.depthTexture) === sampleDepth) return;
 
-    const depthTex = new THREE.DepthTexture(bufferWidth, bufferHeight, THREE.UnsignedIntType);
-    depthTex.minFilter = THREE.NearestFilter;
-    depthTex.magFilter = THREE.NearestFilter;
-    depthTex.generateMipmaps = false;
+    let depthTexture = null;
+    if (sampleDepth) {
+      depthTexture = new THREE.DepthTexture(bufferWidth, bufferHeight, THREE.UnsignedIntType);
+      depthTexture.minFilter = THREE.NearestFilter;
+      depthTexture.magFilter = THREE.NearestFilter;
+      depthTexture.generateMipmaps = false;
+    }
 
     const replacement = makeColorTarget(bufferWidth, bufferHeight, {
       type: hdrType,
       samples: msaa,
-      depthTexture: depthTex,
+      depthBuffer: true,
+      depthTexture,
     });
     sceneRT?.depthTexture?.dispose?.();
     sceneRT?.dispose?.();
@@ -575,7 +591,7 @@ export function createPostPipeline3D(options = {}) {
     syncSceneTarget();
     const hw = Math.max(1, bufferWidth >> 1);
     const hh = Math.max(1, bufferHeight >> 1);
-    const useAoVol = activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0;
+    const useAoVol = Boolean(sceneRT.depthTexture && (activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0));
     halfRT = syncColorTarget(halfRT, useAoVol, hw, hh, THREE.UnsignedByteType);
     aoBlurRT = syncColorTarget(aoBlurRT, useAoVol && !usesByteColorTargets, hw, hh, THREE.UnsignedByteType);
     syncBloomTargets(hw, hh);
@@ -598,7 +614,7 @@ export function createPostPipeline3D(options = {}) {
 
     const hw = Math.max(1, bufferWidth >> 1);
     const hh = Math.max(1, bufferHeight >> 1);
-    const useGiSsr = ssgiEnabled() || ssrEnabled();
+    const useGiSsr = Boolean(sceneRT.depthTexture && (ssgiEnabled() || ssrEnabled()));
     giSsrRT = syncColorTarget(giSsrRT, useGiSsr, hw, hh, hdrType);
     // AO and GI finish their blur before bloom writes the final upsample.
     const useHalfScratch = useGiSsr || bloomMips.length > 1 || (usesByteColorTargets && Boolean(halfRT));
@@ -907,8 +923,25 @@ export function createPostPipeline3D(options = {}) {
     const prevToneMapping = renderer.toneMapping;
     const hw = Math.max(1, bufferWidth >> 1);
     const hh = Math.max(1, bufferHeight >> 1);
+    const readSceneDepth = Boolean(sceneRT.depthTexture);
+    const hasSun = Boolean(sunLight?.position && sunLight.visible !== false);
+    const aoScratch = aoBlurRT ?? halfScratchRT;
+    const useAo = Boolean(readSceneDepth && activePreset.ssao && state.ssaoIntensity > 0 && halfRT && aoScratch);
+    const useSsgi = readSceneDepth && ssgiEnabled();
+    const useSsr = readSceneDepth && ssrEnabled();
+    const wantsGiSsr = Boolean((useSsgi || useSsr) && giSsrRT && halfScratchRT);
+    const wantsContact = readSceneDepth && hasSun && state.contactShadows > 0.001;
+    const volSteps = activePreset.volumetricSteps ?? 0;
+    const shadow = sunLight?.shadow;
+    const wantsVolumetric = Boolean(readSceneDepth && hasSun && volSteps > 0.5 &&
+      state.volumetricIntensity !== 0 && sunLight.castShadow !== false &&
+      renderer.shadowMap?.enabled !== false && shadow?.matrix && halfRT && aoScratch);
+    const needsDepth = useAo || wantsGiSsr || wantsContact || wantsVolumetric;
 
     try {
+      // Retain the attachments for volume changes. Only resolve/store depth if this frame reads it.
+      sceneRT.resolveDepthBuffer = needsDepth;
+      sceneRT.storeMultisampledDepthBuffer = needsDepth;
       renderer.setRenderTarget(sceneRT);
       renderer.autoClear = true;
       // Three clears both attachments during ordinary scene rendering. XR and
@@ -918,10 +951,8 @@ export function createPostPipeline3D(options = {}) {
       }
       renderer.render(world, camera);
 
-      syncCameraWorldMatrices(camera);
-      // Logarithmic frag depth does not match the inverse projection matrix.
-      const readSceneDepth = renderer.capabilities?.logarithmicDepthBuffer !== true;
-      if (readSceneDepth) {
+      if (needsDepth) {
+        syncCameraWorldMatrices(camera);
         sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
         sceneProjectionUniforms.uProj.value.copy(camera.projectionMatrix);
         sceneProjectionUniforms.uSceneDepthMode.value = camera.reversedDepth ? 2 : Number(usesZeroToOneDepth(camera));
@@ -930,7 +961,7 @@ export function createPostPipeline3D(options = {}) {
           ? Math.max(0, -(camera.near ?? 0)) : 0;
       }
       let hasSunDir = false;
-      if (sunLight?.position && sunLight.visible !== false) {
+      if (wantsContact || wantsVolumetric) {
         readWorldPosition(sunLight, scratchSunView).sub(readWorldPosition(sunLight.target, scratchSunTarget));
         const lengthSq = scratchSunView.lengthSq();
         hasSunDir = Number.isFinite(lengthSq) && lengthSq > 0;
@@ -939,16 +970,12 @@ export function createPostPipeline3D(options = {}) {
       }
 
       // 1. Half-res SSAO + Volumetric sun shafts + separable bilateral blur
-      const aoScratch = aoBlurRT ?? halfScratchRT;
-      const useAo = Boolean(readSceneDepth && activePreset.ssao && state.ssaoIntensity > 0 && halfRT && aoScratch);
-      const volSteps = activePreset.volumetricSteps ?? 0;
-      const shadow = sunLight?.shadow;
       const depthTexture = shadow?.map?.depthTexture;
       const sunShadowTex = depthTexture ?? shadow?.map?.texture;
       const shadowMatrix = shadow?.matrix;
-      const useVolumetric = Boolean(readSceneDepth && volSteps > 0.5 && state.volumetricIntensity !== 0 &&
-        hasSunDir && sunLight.castShadow !== false && renderer.shadowMap?.enabled !== false &&
-        sunShadowTex && shadowMatrix && halfRT && aoScratch);
+      // Three can allocate the sun's shadow texture during the world draw.
+      const useVolumetric = Boolean(wantsVolumetric && hasSunDir && sunShadowTex && shadowMatrix);
+      const useContactShadows = wantsContact && hasSunDir;
 
       renderer.autoClear = false;
       if (useAo || useVolumetric) {
@@ -979,9 +1006,7 @@ export function createPostPipeline3D(options = {}) {
       }
 
       // 1b. Half-res HDR SSGI + SSR bounce reflections + depth-guided bilateral denoise
-      const useSsgi = ssgiEnabled();
-      const useSsr = ssrEnabled();
-      const useGiSsr = Boolean(readSceneDepth && (useSsgi || useSsr) && giSsrRT && halfScratchRT);
+      const useGiSsr = Boolean(wantsGiSsr && giSsrRT && halfScratchRT);
       if (useGiSsr) {
         const giU = mats.giSsr.uniforms;
         giU.tScene.value = sceneRT.texture;
@@ -1008,14 +1033,14 @@ export function createPostPipeline3D(options = {}) {
 
       const compU = mats.composite.uniforms;
       compU.tScene.value = sceneRT.texture;
-      compU.tDepth.value = sceneRT.depthTexture;
+      compU.tDepth.value = needsDepth ? sceneRT.depthTexture : null;
       compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
       compU.tGiSsr.value = useGiSsr ? giSsrRT.texture : null;
       compU.uUseAo.value = useAo ? 1 : 0;
       compU.uUseVolumetric.value = useVolumetric ? 1 : 0;
       compU.uUseGiSsr.value = useGiSsr ? 1 : 0;
       compU.uHasSunDir.value = hasSunDir ? 1 : 0;
-      compU.uContactShadows.value = readSceneDepth ? state.contactShadows : 0;
+      compU.uContactShadows.value = useContactShadows ? state.contactShadows : 0;
       compU.uContactShadowLength.value = state.contactShadowLength;
       compU.uContactShadowThickness.value = state.contactShadowThickness;
       compU.uSsaoIntensity.value = state.ssaoIntensity;
@@ -1027,7 +1052,6 @@ export function createPostPipeline3D(options = {}) {
         || viewScene.onBeforeRender !== THREE.Scene.prototype.onBeforeRender
         || viewScene.onAfterRender !== THREE.Scene.prototype.onAfterRender
       ));
-      const useContactShadows = hasSunDir && compU.uContactShadows.value > 0.001;
       const separateViewModel = hasViewModel && (sceneRT.samples > 0 || useAo || useVolumetric || useGiSsr || useContactShadows);
       syncViewCompositeTarget(separateViewModel);
       if (hasViewModel) {
@@ -1164,6 +1188,7 @@ export function createPostPipeline3D(options = {}) {
   function handleContextRestored() {
     if (disposed) return;
     contextLost = false;
+    sceneSampleCounts = undefined;
     if (supported) {
       targetLimits = readDrawingBufferLimits(renderer);
       setBufferDimensions(requestedWidth, requestedHeight);

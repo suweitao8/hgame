@@ -32,6 +32,7 @@ export function createFullscreenTriangle(THREE: FullscreenTriangleTHREE): {
  * @returns {Readonly<WebGLCapabilities>} Frozen capability record (safe fallback when no context).
  */
 export function inspectWebGLCapabilities(renderer: WebGLRendererLike | null | undefined): Readonly<WebGLCapabilities>;
+export function readSceneSampleCounts(gl: any, useHalfFloat: any): any[] | null;
 /**
  * @typedef {object} QualityControllerLike
  * @property {{preset?: {msaaSamples?: number, anisotropy?: number}}} [state] Active quality state.

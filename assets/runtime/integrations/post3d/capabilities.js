@@ -92,6 +92,18 @@ export function inspectWebGLCapabilities(renderer) {
   });
 }
 
+export function readSceneSampleCounts(gl, useHalfFloat) {
+  const colorFormat = useHalfFloat ? gl?.RGBA16F : gl?.RGBA8;
+  if (typeof gl?.getInternalformatParameter !== 'function' ||
+      !colorFormat || !gl.DEPTH_COMPONENT24 || !gl.RENDERBUFFER || !gl.SAMPLES) return null;
+
+  const colorSamples = gl.getInternalformatParameter(gl.RENDERBUFFER, colorFormat, gl.SAMPLES);
+  const depthSamples = gl.getInternalformatParameter(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, gl.SAMPLES);
+  // An empty list means the format can render without multisampling only.
+  if (!colorSamples || !depthSamples) return [];
+  return Array.from(colorSamples).filter(count => count > 0 && depthSamples.includes(count));
+}
+
 /**
  * @typedef {object} QualityControllerLike
  * @property {{preset?: {msaaSamples?: number, anisotropy?: number}}} [state] Active quality state.

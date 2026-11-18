@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resolve multisampled scene depth only for active depth effects. Select MSAA counts supported by both HDR color and depth attachments.
+
 - Respect WebGL texture, renderbuffer and viewport dimensions when sizing 3D buffers. Keep HDR targets and split-view edges aligned with the allocated canvas buffer.
 
 - Restore 3D quality tiers after sustained render headroom. Limit the initial resolution increase when enabling higher-tier effects and back off after a failed promotion.
