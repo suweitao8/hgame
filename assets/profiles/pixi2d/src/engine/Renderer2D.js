@@ -3,13 +3,19 @@ import { AdvancedBloomFilter } from 'pixi-filters';
 import { PixiSwarmLayer } from './PixiSwarmLayer.js';
 import { PixiTilemapLayer } from './PixiTilemapLayer.js';
 
+const RENDERER_BACKENDS = ['webgpu', 'webgl', 'canvas'];
+
 export class Renderer2D {
-  constructor(atlas, { maxPixels = 2300000, maxPixelRatio = 2, qualityController = null, qualityPresets = null } = {}) {
+  constructor(atlas, { backend = 'auto', maxPixels = 2300000, maxPixelRatio = 2, qualityController = null, qualityPresets = null } = {}) {
+    if (backend !== 'auto' && !RENDERER_BACKENDS.includes(backend)) {
+      throw new RangeError('Invalid Pixi renderer backend: ' + backend);
+    }
     if (!Number.isFinite(maxPixels) || maxPixels < 1 || !Number.isFinite(maxPixelRatio) || maxPixelRatio <= 0) {
       throw new RangeError('Renderer pixel budget and maximum pixel ratio must be positive');
     }
     this.atlas = atlas;
     this.maxPixels = maxPixels; this.maxPixelRatio = maxPixelRatio;
+    this.backendPreference = backend;
     if (qualityController && (typeof qualityController.sampleFrame !== 'function' || typeof qualityController.resetMeasurements !== 'function')) {
       throw new TypeError('qualityController must support sampleFrame and resetMeasurements');
     }
@@ -33,10 +39,12 @@ export class Renderer2D {
     // during initialization. Try each backend with a fresh application.
     const errors = [];
     let initialized = false;
-    for (const backend of ['webgpu', 'webgl', 'canvas']) {
+    const backends = this.backendPreference === 'auto' ? RENDERER_BACKENDS : [this.backendPreference];
+    for (const [index, backend] of backends.entries()) {
       try {
         await this.app.init({ ...options, preference: [backend] });
         initialized = true;
+        this.backend = backend;
         break;
       } catch (error) {
         errors.push(error);
@@ -47,7 +55,7 @@ export class Renderer2D {
           errors.push(cleanupError);
           console.warn('Failed to clean up a Pixi renderer:', cleanupError);
         }
-        if (backend !== 'canvas') this.app = new Application();
+        if (index + 1 < backends.length) this.app = new Application();
       }
     }
     if (!initialized) throw new AggregateError(errors, 'Unable to initialize a Pixi renderer');
@@ -55,6 +63,8 @@ export class Renderer2D {
     this.app.ticker.stop();
     this.app.canvas.id = 'game';
     this.app.canvas.setAttribute('aria-label', '游戏画面');
+    this.app.canvas.dataset.rendererBackend = this.backend;
+    this.updateQualityMarker();
     mount.appendChild(this.app.canvas);
     this.worldRoot = new Container();
     this.worldRoot.eventMode = 'none';
@@ -100,6 +110,7 @@ export class Renderer2D {
   }
   resize() {
     if (this.disposed || !this.app.renderer) return false;
+    this.updateQualityMarker();
     const next = this.planViewport(), prev = this.viewport;
     if (prev && prev.width === next.width && prev.height === next.height && prev.resolution === next.resolution) return false;
     this.app.renderer.resize(next.width, next.height, next.resolution);
@@ -108,6 +119,24 @@ export class Renderer2D {
     this.syncCameraView();
     this.onResize?.();
     return true;
+  }
+  updateQualityMarker() {
+    const tier = this.qualityController?.state?.tier;
+    if (tier) this.app.canvas.dataset.qualityTier = tier;
+  }
+  renderDiagnostics() {
+    const adapter = this.app.renderer.gpu?.adapter;
+    const info = adapter?.info;
+    return {
+      backend: this.backend,
+      adapter: adapter ? {
+        vendor: info?.vendor || null,
+        architecture: info?.architecture || null,
+        device: info?.device || null,
+        description: info?.description || null,
+        fallback: info?.isFallbackAdapter ?? adapter.isFallbackAdapter ?? null,
+      } : null,
+    };
   }
   resetQualityMeasurements() {
     this.lastFrameTime = null;
@@ -168,22 +197,29 @@ export class Renderer2D {
     return layer;
   }
   syncEnemies(enemies, time) {
-    if (this.enemyParticles.length > enemies.length) {
-      const removed = this.enemyLayer.removeParticles(enemies.length);
-      this.enemyParticles.length = enemies.length;
-      for (const particle of removed) this.enemyPool.push(particle);
-    }
+    const frames = this.enemyTextures ??= ['enemy_chaser', 'enemy_chaser_white', 'enemy_elite', 'enemy_elite_white']
+      .map(name => this.atlas.get(name));
+    // Include the widest frame at its maximum wobble scale and any rotation.
+    const radius = this.enemyCullRadius ??= Math.max(...frames.map(texture =>
+      Math.hypot(texture.orig.width, texture.orig.height) * 0.525));
+    const { x, y, zoom, shakeX, shakeY } = this.camera;
+    const { width, height } = this.app.screen;
+    const left = x + (-width / 2 - shakeX) / zoom - radius;
+    const right = x + (width / 2 - shakeX) / zoom + radius;
+    const top = y + (-height / 2 - shakeY) / zoom - radius;
+    const bottom = y + (height / 2 - shakeY) / zoom + radius;
+    let used = 0;
     for (let i = 0; i < enemies.length; i++) {
       const enemy = enemies[i];
-      let particle = this.enemyParticles[i];
-      const key = (enemy.elite ? 'enemy_elite' : 'enemy_chaser') + (enemy.flash > 0 ? '_white' : '');
+      if (enemy.x < left || enemy.x > right || enemy.y < top || enemy.y > bottom) continue;
+      const texture = frames[(enemy.elite ? 2 : 0) + (enemy.flash > 0 ? 1 : 0)];
+      let particle = this.enemyParticles[used++];
       if (!particle) {
-        particle = this.enemyPool.pop() ?? new Particle({ texture: this.atlas.get(key), anchorX: 0.5, anchorY: 0.5 });
+        particle = this.enemyPool.pop() ?? new Particle({ texture, anchorX: 0.5, anchorY: 0.5 });
         this.enemyParticles.push(particle);
         this.pendingEnemies.push(particle);
         if (this.pendingEnemies.length === 4096) this.flushEnemies();
       }
-      const texture = this.atlas.get(key);
       if (particle.texture !== texture) particle.texture = texture;
       particle.x = enemy.x;
       particle.y = enemy.y;
@@ -194,6 +230,11 @@ export class Renderer2D {
       particle.scaleY = 1 - stride * 0.05;
     }
     this.flushEnemies();
+    if (used < this.enemyParticles.length) {
+      const removed = this.enemyLayer.removeParticles(used);
+      this.enemyParticles.length = used;
+      for (const particle of removed) this.enemyPool.push(particle);
+    }
   }
   flushEnemies() {
     if (this.pendingEnemies.length) this.enemyLayer.addParticle(...this.pendingEnemies);

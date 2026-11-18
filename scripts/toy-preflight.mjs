@@ -33,6 +33,7 @@ const AUDIO_VIDEO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
 const FORBIDDEN_TOP_OR_PATH_RE = /(?:^|\/)(?:\.git|\.agents|\.re-workspace|node_modules|__MACOSX)(?:\/|$)/i;
 const BILIBILI_OWNED_HOSTS = /(?:^|\.)(?:bilibili\.com|hdslb\.com|b23\.tv|bilivideo\.com)$/i;
+const HOST_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i;
 
 function normalizePosix(rel) {
   return rel.replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
@@ -407,7 +408,9 @@ export async function runToyPreflight({
     const extUrlRe = /(?:https?:\/\/|["'`]\s*\/\/)([A-Za-z0-9.-]+)/g;
     const externalScan = omitKnownLibraryNotices(code);
     while ((extMatch = extUrlRe.exec(externalScan)) !== null) {
-      const host = extMatch[1].toLowerCase();
+      const host = extMatch[1].toLowerCase().replace(/\.$/, '');
+      // Shader chunks commonly start with //---- separators inside strings.
+      if (!host.split('.').every(label => HOST_LABEL_RE.test(label))) continue;
       if (!BILIBILI_OWNED_HOSTS.test(host) && host !== '127.0.0.1' && host !== 'localhost' && host !== 'www.w3.org') {
         externalDomains.add(host);
         capabilities.add('EXTERNAL_SERVICE_ACCESS');

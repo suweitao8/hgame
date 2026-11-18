@@ -26,6 +26,10 @@ export class HGameLockstepChannel {
   private sequence = 0;
   private lastTargetNetTick = 0;
   private disposed = false;
+  private syncFrom = 0;
+  private queuedSyncFrom = 0;
+  private replayThrough = 0;
+  private replayPaused = false;
   private readonly autoSyncOnReconnect: boolean;
   private readonly queue: ConfirmedFrameQueue;
   private readonly handlers = new Set<(frame: ConfirmedLockstepFrame) => void>();
@@ -55,7 +59,10 @@ export class HGameLockstepChannel {
     );
     this.unsubscribeReconnect = this.autoSyncOnReconnect && typeof connection.onReconnect === 'function'
       ? connection.onReconnect(() => {
-        if (!this.disposed) this.requestSync(this.expectedNetTick);
+        this.syncFrom = 0;
+        this.replayPaused = false;
+        this.replayThrough = Math.max(this.replayThrough, this.expectedNetTick);
+        this.resumeReplay();
       })
       : () => undefined;
   }
@@ -89,13 +96,22 @@ export class HGameLockstepChannel {
     if (!Number.isInteger(fromNetTick) || fromNetTick < 1 || fromNetTick > 0xffff_ffff) {
       throw new RangeError('fromNetTick must be a positive UInt32');
     }
+    if (this.syncFrom) {
+      if (fromNetTick !== this.syncFrom) {
+        this.queuedSyncFrom = this.queuedSyncFrom ? Math.min(this.queuedSyncFrom, fromNetTick) : fromNetTick;
+      }
+      return;
+    }
     this.connection.send('lockstep:sync', { fromNetTick });
+    this.syncFrom = fromNetTick;
+    this.replayPaused = false;
   }
 
   onFrame(handler: (frame: ConfirmedLockstepFrame) => void): () => void {
     if (this.disposed) throw new Error('Lockstep channel is disposed');
     this.handlers.add(handler);
     this.flushFrames();
+    this.resumeReplay();
     return () => this.handlers.delete(handler);
   }
 
@@ -118,21 +134,38 @@ export class HGameLockstepChannel {
   }
 
   private receiveSyncStatus(status: LockstepSyncStatus): void {
+    const from = this.syncFrom;
+    const isCurrent = from > 0 && (status?.fromNetTick === undefined || status.fromNetTick === from);
+    if (isCurrent) {
+      this.syncFrom = 0;
+      // On history_evicted, let the game choose a snapshot or exit. Live
+      // frames must not trigger another request for the same unavailable tick.
+      this.replayPaused = status?.ok !== true;
+      const to = status?.toNetTick;
+      if (status?.ok && status.hasMore && typeof to === 'number' && Number.isInteger(to) && to >= from && to < 0xffff_ffff) {
+        this.replayThrough = Math.max(this.replayThrough, to + 1, this.expectedNetTick);
+      }
+    }
     for (const handler of this.syncStatusHandlers) handler(status);
-    if (
-      this.autoSyncOnReconnect &&
-      !this.disposed &&
-      status?.ok === true &&
-      status.hasMore === true &&
-      typeof status.toNetTick === 'number'
-    ) {
-      this.requestSync(status.toNetTick + 1);
+    if (isCurrent && this.expectedNetTick > from) this.resumeReplay();
+    if (isCurrent && !this.syncFrom && this.queuedSyncFrom) {
+      const queued = this.queuedSyncFrom;
+      this.queuedSyncFrom = 0;
+      this.requestSync(queued);
     }
   }
 
   private receive(bytes: Uint8Array): void {
     if (!(bytes instanceof Uint8Array)) throw new TypeError('Lockstep frame transport returned a non-binary message');
     const frame = decodeConfirmedFrame(bytes);
+    if (this.autoSyncOnReconnect && frame.matchTag === this.matchTag &&
+        frame.netTick >= this.expectedNetTick + this.queue.maxBufferedFrames) {
+      // A live frame can precede replay on the same socket. Keep the observed
+      // horizon, then request its bytes later through the authoritative history.
+      this.replayThrough = Math.max(this.replayThrough, frame.netTick);
+      this.resumeReplay();
+      return;
+    }
     if (!this.queue.push(frame)) return;
     this.flushFrames();
   }
@@ -141,6 +174,13 @@ export class HGameLockstepChannel {
     if (this.handlers.size === 0) return;
     for (const ready of this.queue.drainContiguous()) {
       for (const handler of this.handlers) handler(ready);
+    }
+  }
+
+  private resumeReplay(): void {
+    if (!this.disposed && this.autoSyncOnReconnect && this.handlers.size && !this.syncFrom &&
+        !this.replayPaused && this.replayThrough >= this.expectedNetTick) {
+      this.requestSync(this.expectedNetTick);
     }
   }
 }

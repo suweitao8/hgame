@@ -5,6 +5,7 @@ This starter uses PixiJS for 2D. The generic HGame renderer entries in the share
 The simulation must not import PixiJS or access the DOM. Use the renderer and juice interfaces for presentation. HGame owns the application loop.
 
 - Use `startPixiGame(setup, options)` in the entry file. Build the scene in `setup({ app, renderer, Scene, Entity, Component })`, register game-owned cleanup via `scene.onDispose`, and return `{ scene: scene.name }`.
+- Set `backend` in `src/presentation.json` to `auto`, `webgpu`, `webgl`, or `canvas`. Auto retries in that order. A fixed backend is strict and is useful for diagnostics.
 - Create `new Application()` and await `app.init()`, using `app.canvas`.
 - Import core classes from `pixi.js` and effects from `pixi-filters`.
 - Ticker callbacks receive a `Ticker`, with seconds from `deltaMS / 1000`. HGame owns the scheduler.

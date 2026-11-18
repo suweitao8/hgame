@@ -182,6 +182,15 @@ test('HGameLockstepChannel requests sync on reconnect, chains hasMore batches, a
   reconnectHandler();
   assert.deepEqual(sentMessages, [{ type: 'lockstep:sync', payload: { fromNetTick: 1 } }]);
 
+  // A real reconnect can expose live ticks ahead of the history request.
+  const liveAhead = encodeConfirmedFrame({
+    matchTag: 0x11223344, netTick: 65,
+    inputs: [{ slot: 0, sequence: 65, flags: LockstepInputFlags.NONE, payload: new Uint8Array([65]) }],
+  });
+  emitMessage('lockstep:frame', liveAhead);
+  assert.equal(channel.bufferedFrames, 0);
+  assert.equal(sentMessages.length, 1);
+
   // Simulate server replaying tick 1 and reporting hasMore=true
   emitMessage(
     'lockstep:frame',
@@ -205,6 +214,11 @@ test('HGameLockstepChannel requests sync on reconnect, chains hasMore batches, a
   // Multi-batch continuation should request from toNetTick + 1 = 2
   assert.deepEqual(sentMessages[1], { type: 'lockstep:sync', payload: { fromNetTick: 2 } });
 
+  emitMessage('lockstep:sync-status', { ok: false, fromNetTick: 2, reason: 'history_evicted' });
+  emitMessage('lockstep:frame', liveAhead);
+  assert.equal(sentMessages.length, 2);
+  assert.equal(channel.expectedNetTick, 2);
+
   // Clean up on dispose
   channel.dispose();
   assert.equal(reconnectUnsubscribed, true);
@@ -212,4 +226,25 @@ test('HGameLockstepChannel requests sync on reconnect, chains hasMore batches, a
   assert.equal(listeners.get('lockstep:sync-status').size, 0);
   channel.requestSync(3);
   assert.equal(sentMessages.length, 2);
+});
+
+test('lockstep replay skips old batches when the consumer already advanced', () => {
+  const sent = [];
+  const handlers = new Map();
+  const connection = {
+    send: (_type, { fromNetTick }) => sent.push(fromNetTick),
+    onMessage(type, handler) {
+      handlers.set(type, handler);
+      return () => handlers.delete(type);
+    },
+  };
+  const channel = new HGameLockstepChannel(connection, 42, 501);
+  try {
+    channel.onFrame(() => undefined);
+    channel.requestSync(1);
+    channel.requestSync(300);
+    assert.deepEqual(sent, [1]);
+    handlers.get('lockstep:sync-status')({ ok: true, fromNetTick: 1, toNetTick: 240, hasMore: true });
+    assert.deepEqual(sent, [1, 501]);
+  } finally { channel.dispose(); }
 });

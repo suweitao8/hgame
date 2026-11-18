@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Cull offscreen Pixi arena enemies before particle updates. Expose the selected backend and adapter diagnostics and add WebGPU and touch/DPR modes to the render benchmark.
+
+- Catch up from a bounded lockstep receive window when live frames arrive before replay, and stop automatic retries when the server has evicted the required history.
+
+- Exclude shader line separators from the Toy preflight's external host detection.
+
 - Stage game and SDK releases before publishing. Preserve the previous artifacts if assembly or Toy preflight fails and use stable archive timestamps.
 
 - Deduplicate client reconnect attempts, detach replaced room subscriptions, and keep confirmed lockstep frames bounded before a consumer subscribes.

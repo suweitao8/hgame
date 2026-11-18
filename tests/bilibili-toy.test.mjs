@@ -175,6 +175,19 @@ test('package-game --target toy produces flat content-hashed zip, injects toy-sd
   }
 });
 
+test('toy-preflight distinguishes external URLs from shader separators', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hgame-toy-shader-'));
+  try {
+    await writeFile(path.join(dir, 'index.html'), '<script type="module" src="./app.js"></script>');
+    await writeFile(path.join(dir, 'app.js'), 'export const shader = "//----";\nfetch("https://api.example.com/data");\n');
+    const report = await runToyPreflight({ targetPath: dir });
+    assert.deepEqual(report.externalDomains, ['api.example.com']);
+    assert.equal(report.requiredCapabilities.includes('EXTERNAL_SERVICE_ACCESS'), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('toy-preflight blocks >1MB index.html, root-relative paths, >=10000px images, oversized icons, and flags capabilities', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-toy-bad-'));
   try {

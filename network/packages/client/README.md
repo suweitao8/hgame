@@ -29,3 +29,5 @@ The room session stores reconnect tokens in sessionStorage under `(gameId, roomN
 For a lockstep room that retains disconnected seats, resume with the server-replicated `player.lastInputSequence + 1` and a valid target frame. Reconnection does not restore a lost game world; the game must own its snapshot/replay policy.
 
 Concurrent `session.reconnect()` calls share one transport attempt. When the room is replaced, existing subscriptions move to the new room, `onRoomReplaced` runs, then `onReconnect` runs so lockstep consumers can request missed frames. Attach the frame consumer before the confirmed-frame queue reaches its configured cap.
+
+With automatic replay enabled, a live frame beyond the receive window triggers history replay from the first missing tick. The client remembers the latest observed tick and fetches its frame through server history. Replay requests are serialized so late responses cannot replace the active cursor. If the server reports `history_evicted`, use the game's canonical snapshot or exit the match.

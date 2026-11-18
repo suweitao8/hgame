@@ -56,12 +56,14 @@ export async function startPixiGame(setup, {
   let canvas;
   let visibility;
   let state;
+  const diagnostics = () => renderer.renderDiagnostics();
   function pagehide(event) {
     if (!event.persisted) app.dispose();
   }
 
   try {
     renderer = new Renderer2D(atlas, {
+      backend: presentation.backend ?? 'auto',
       qualityController, qualityPresets: QUALITY2D_PRESETS, maxPixelRatio: 3,
       ...rendererOptions,
     });
@@ -78,6 +80,7 @@ export async function startPixiGame(setup, {
         dispose() {
           window.removeEventListener('pagehide', pagehide);
           if (state && window.__hgameState === state) delete window.__hgameState;
+          if (window.__hgameRenderDiagnostics === diagnostics) delete window.__hgameRenderDiagnostics;
           delete mount.dataset.engineReady;
           delete canvas.dataset.engineReady;
           try { visibility?.dispose(); } finally { renderer.dispose(); }
@@ -104,6 +107,7 @@ export async function startPixiGame(setup, {
     visibility.sync();
     state = ready.state;
     if (state) window.__hgameState = state;
+    window.__hgameRenderDiagnostics = diagnostics;
     mount.dataset.engineReady = 'true';
     canvas.dataset.engineReady = 'true';
     return { app, renderer };

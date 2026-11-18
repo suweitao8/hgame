@@ -252,6 +252,7 @@ export class LockstepRoom extends Room {
       const oldestAvailableTick = this.frameHistory.keys().next().value ?? null;
       client.send('lockstep:sync-status', {
         ok: false,
+        fromNetTick,
         reason: 'history_evicted',
         oldestAvailableTick,
         currentNetTick: this.state.netTick,

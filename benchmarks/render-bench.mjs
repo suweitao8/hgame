@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import { summarizeSamples } from '../scripts/lib/performance-stats.mjs';
-import { numberOption } from '../scripts/lib/cli-numbers.mjs';
+import { numberOption, viewportOption } from '../scripts/lib/cli-numbers.mjs';
 import { benchmarkBrowserOptions, readBrowserEnvironment } from '../scripts/lib/browser-benchmark.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -18,7 +18,8 @@ const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
 const renderers = ['pixi', 'webgl2d', 'canvas2d', 'three'];
 const warmupFrames = 30;
-let count, frames, budgetP95, gpu, launchOptions, measurement, selected;
+let count, frames, budgetP95, gpu, launchOptions, measurement, selected, backend, viewport, dpr, quality;
+const touch = argv.includes('--touch');
 try {
   gpu = opt('--gpu', 'software');
   launchOptions = benchmarkBrowserOptions(gpu);
@@ -28,6 +29,15 @@ try {
   const renderer = opt('--renderer');
   if (argv.includes('--renderer') && !renderers.includes(renderer)) throw new RangeError('--renderer must be pixi, webgl2d, canvas2d or three');
   selected = renderer ? [renderer] : renderers;
+  backend = opt('--backend', 'webgl');
+  if (!['auto', 'webgpu', 'webgl', 'canvas'].includes(backend)) throw new RangeError('--backend must be auto, webgpu, webgl, or canvas');
+  if (backend === 'webgpu' && measurement === 'readback' && selected.includes('pixi')) {
+    throw new RangeError('Use --measurement frame for the Pixi WebGPU backend');
+  }
+  viewport = viewportOption(opt('--viewport', touch ? '844x390' : '960x540'));
+  dpr = numberOption(opt('--dpr', touch ? 2 : 1), '--dpr', { min: 0.5, max: 8 });
+  quality = opt('--quality', 'medium');
+  if (!['auto', 'low', 'medium', 'high', 'ultra'].includes(quality)) throw new RangeError('--quality must be auto, low, medium, high, or ultra');
   count = numberOption(opt('--count', 10000), '--count', { min: 1, integer: true });
   frames = numberOption(opt('--frames', 90), '--frames', { min: 1, integer: true });
   const defaultBudget = gpu === 'software' ? 250 : measurement === 'frame' ? 1000 / 60 + 1 : null;
@@ -41,6 +51,7 @@ const chrome = opt('--chrome', process.env.HGAME_CHROME) || [
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser'].find(existsSync);
 const { chromium } = createRequire(import.meta.url)('playwright-core');
+const measurementMode = measurement === 'readback' ? 'synchronized-readback' : 'frame-interval';
 
 async function measureFrames({ frameCount, warmupFrames, readback }) {
   const sampleCount = frameCount + warmupFrames;
@@ -89,11 +100,15 @@ try {
   browser = await chromium.launch({ ...launchOptions, ...(chrome ? { executablePath: chrome } : {}) });
   for (const renderer of selected) {
     const game = path.join(tmp, renderer);
-    const profileFlags = renderer === 'pixi' ? ['--preset', 'horde', '--quality', 'medium'] :
+    const profileFlags = renderer === 'pixi' ? ['--preset', 'horde', '--quality', quality] :
       renderer === 'three' ? ['--profile', '3d'] : ['--profile', '2d', '--renderer', renderer];
     const gen = spawnSync(process.execPath, [path.join(root, 'scripts', 'create-game.mjs'), game, ...profileFlags, '--no-git'], { encoding: 'utf8' });
     if (gen.status !== 0) throw new Error(gen.stderr);
     if (renderer === 'pixi') {
+      const presentationPath = path.join(game, 'src', 'presentation.json');
+      const presentation = JSON.parse(readFileSync(presentationPath, 'utf8'));
+      presentation.backend = backend;
+      writeFileSync(presentationPath, JSON.stringify(presentation));
       const settingsPath = path.join(game, 'src', 'swarm.json');
       const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
       settings.capacity = Math.max(settings.capacity, count);
@@ -108,38 +123,63 @@ try {
     }
     const port = await freePort();
     const server = spawn(process.execPath, [path.join(root, 'scripts', 'preview.mjs'), game, '--port', String(port)], { stdio: 'ignore', windowsHide: true });
+    const errors = [];
+    let page;
     try {
       const url = `http://127.0.0.1:${port}/`;
       for (let i = 0; ; i++) { if (i > 100) throw new Error('preview failed'); try { if ((await fetch(url)).ok) break; } catch {} await new Promise(r => setTimeout(r, 60)); }
-      const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
-      const errors = []; page.on('pageerror', e => errors.push(e.message));
+      page = await browser.newPage({ viewport, deviceScaleFactor: dpr, hasTouch: touch, isMobile: touch });
+      page.on('pageerror', e => errors.push(e.message));
       page.on('console', message => { if (message.type() === 'error' && !message.text().startsWith('Failed to load resource')) errors.push(message.text()); });
       page.on('response', response => { if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) errors.push(`HTTP ${response.status()} ${response.url()}`); });
-      // Keep the Pixi benchmark on WebGL so both Chrome GPU modes are verifiable.
-      if (renderer === 'pixi') await page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }));
       await page.goto(url);
-      await page.locator('#game[data-engine-ready=true]').waitFor();
+      try {
+        await page.locator('#game[data-engine-ready=true]').waitFor({ timeout: 15000 });
+      } catch (error) {
+        throw new Error('Renderer did not become ready: ' + errors.join(' | '), { cause: error });
+      }
       const environment = await readBrowserEnvironment(page, browser, gpu);
-      if (renderer !== 'canvas2d' && !environment.gpuModeMatches) errors.push(`Requested ${gpu} GPU, observed ${environment.actualGpu}: ${environment.renderer}`);
+      if (environment.backend === 'webgpu' && measurement === 'readback') {
+        throw new Error('Use --measurement frame for the selected WebGPU backend');
+      }
+      const allowsCanvas = renderer === 'canvas2d' ||
+        (renderer === 'pixi' && (backend === 'canvas' || backend === 'auto'));
+      const usesCanvas = environment.backend === 'canvas' && allowsCanvas;
+      if (!usesCanvas && !environment.gpuModeMatches) errors.push(`Requested ${gpu} GPU, observed ${environment.actualGpu}: ${environment.renderer}`);
+      if (renderer === 'pixi' && backend !== 'auto' && environment.backend !== backend) {
+        errors.push(`Requested Pixi ${backend}, observed ${environment.backend}`);
+      }
       const before = renderer === 'pixi' ? await page.evaluate(() => window.__hgameState()) : null;
       const intervals = await page.evaluate(measureFrames, { frameCount: frames, warmupFrames, readback: measurement === 'readback' });
       const after = renderer === 'pixi' ? await page.evaluate(() => window.__hgameState()) : null;
+      const finalEnvironment = await readBrowserEnvironment(page, browser, gpu);
+      if (finalEnvironment.backend !== environment.backend || finalEnvironment.actualGpu !== environment.actualGpu) {
+        errors.push('Renderer backend or GPU mode changed during sampling');
+      }
       if (after && (after.activeUnits !== count || after.tick <= before.tick)) errors.push('Pixi horde population or simulation did not match the workload');
       const timings = summarizeSamples(intervals);
       const r = { renderer, count: renderer === 'three' ? 0 : count, frames: timings.samples,
         meanMs: +timings.meanMs.toFixed(2), p50Ms: +timings.p50Ms.toFixed(2), p95Ms: +timings.p95Ms.toFixed(2),
         p99Ms: +timings.p99Ms.toFixed(2), maxMs: +timings.maxMs.toFixed(2), warmupFrames,
         longFrames: intervals.filter(ms => ms > 50).length, visibleUnits: after?.visibleUnits,
-        measurementMode: measurement === 'readback' ? 'synchronized-readback' : 'frame-interval',
-        budgetP95Ms: budgetP95, budgetKind: budgetP95 === null ? 'informational' :
-          gpu === 'software' ? 'software-health' : measurement === 'readback' ? 'readback' : 'target-frame', environment, errors };
-      r.gated = renderer !== 'canvas2d' && budgetP95 !== null;
+        measurementMode,
+        requestedBackend: renderer === 'pixi' ? backend : undefined,
+        requestedQuality: renderer === 'pixi' ? quality : undefined,
+        budgetP95Ms: budgetP95, budgetKind: usesCanvas || budgetP95 === null ? 'informational' :
+          gpu === 'software' ? 'software-health' : measurement === 'readback' ? 'readback' : 'target-frame', environment, finalEnvironment, errors };
+      r.gated = !usesCanvas && budgetP95 !== null;
       r.ok = !errors.length && timings.samples >= frames && (!r.gated || timings.p95Ms <= budgetP95);
       failed ||= !r.ok; results.push(r);
       const budgetLabel = r.gated ? ` (budget p95 ${budgetP95}ms)` : '';
       console.log(`${r.ok ? (r.gated ? 'PASS' : 'INFO') : 'FAIL'}  ${renderer}${renderer === 'three' ? ' (default 3D scene)' : ' x' + count}  mean ${r.meanMs}ms  p95 ${r.p95Ms}ms${budgetLabel}${errors.length ? '  errors: ' + errors.join('|') : ''}`);
-      await page.close();
-    } finally { server.kill(); }
+    } catch (error) {
+      failed = true;
+      errors.push(error.message);
+      results.push({ renderer, measurementMode, frames: 0, ok: false, errors });
+      console.error('FAIL  ' + renderer + '  ' + errors.join(' | '));
+    } finally {
+      try { await page?.close(); } finally { server.kill(); }
+    }
   }
 } finally { await browser?.close(); await new Promise(r => setTimeout(r, 300)); rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
 const j = argv.indexOf('--json');
