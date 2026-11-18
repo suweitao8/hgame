@@ -36,6 +36,12 @@ export const LockstepRoomState = schema({
 const MAX_SYNC_BATCH_FRAMES = 240;
 const MAX_SYNC_BATCH_BYTES = 128 * 1024;
 const MAX_SYNC_BUFFERED_BYTES = 512 * 1024;
+const MAX_LIVE_BUFFERED_BYTES = 1024 * 1024;
+
+function bufferedBytes(ref: Client['ref']): number {
+  // HGame's WebSocket transport exposes its write backlog on the client ref.
+  return 'bufferedAmount' in ref && typeof ref.bufferedAmount === 'number' ? ref.bufferedAmount : 0;
+}
 
 type DeferredSync = {
   fromNetTick: number;
@@ -237,9 +243,23 @@ export class LockstepRoom extends Room {
         this.frameHistory.delete(oldest);
       }
 
-      for (const client of this.clients) client.sendBytes('lockstep:frame', bytes);
       this.pending.delete(nextTick);
       this.state.netTick = nextTick;
+
+      for (const client of this.clients) {
+        const player = this.state.players.get(client.sessionId);
+        if (!player?.connected) continue;
+        const ref = client.ref;
+        if (bufferedBytes(ref) + bytes.byteLength > MAX_LIVE_BUFFERED_BYTES &&
+          'terminate' in ref && typeof ref.terminate === 'function') {
+          // A graceful close would wait behind the queued writes. End the socket
+          // so the client can use the normal reconnect and history replay path.
+          player.connected = false;
+          ref.terminate();
+          continue;
+        }
+        client.sendBytes('lockstep:frame', bytes);
+      }
     }
   }
 
@@ -283,10 +303,7 @@ export class LockstepRoom extends Room {
       return;
     }
 
-    // HGame's WebSocket transport exposes its write backlog on the client ref.
-    // A transport without this property still has the page and rate limits.
-    const buffered = 'bufferedAmount' in client.ref ? client.ref.bufferedAmount : 0;
-    if ((typeof buffered === 'number' && buffered >= MAX_SYNC_BUFFERED_BYTES) || !this.syncLimiter.consume(client.sessionId)) {
+    if (bufferedBytes(client.ref) >= MAX_SYNC_BUFFERED_BYTES || !this.syncLimiter.consume(client.sessionId)) {
       // Defer one request per session without changing the replay protocol
       // for installed clients. Other players can keep receiving live frames.
       const timer = this.clock.setTimeout(() => {

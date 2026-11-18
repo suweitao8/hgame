@@ -8,6 +8,7 @@ import {
   encodeLockstepInput,
 } from '@hgame/network-protocol';
 import { createHGameNetworkServer } from '../dist/create-server.js';
+import { LockstepRoom } from '../dist/rooms/LockstepRoom.js';
 
 function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -77,6 +78,50 @@ test('StateSyncRoom enforces per-session TokenBucketRateLimiter and rejects floo
     if (room) await room.leave().catch(() => {});
     await server.gracefullyShutdown(false);
   }
+});
+
+test('LockstepRoom drops a congested socket and retains ordered frames for replay', () => {
+  const room = new LockstepRoom();
+  room.maxClients = 2;
+  room.state.matchTag = 1;
+
+  const liveTicks = [];
+  let terminations = 0;
+  const healthy = {
+    sessionId: 'healthy',
+    ref: { bufferedAmount: 0 },
+    send() {},
+    sendBytes: (_type, bytes) => liveTicks.push(decodeConfirmedFrame(bytes).netTick),
+  };
+  const slow = {
+    sessionId: 'slow',
+    ref: { bufferedAmount: 1024 * 1024 - 1, terminate: () => { terminations++; } },
+    sendBytes: () => assert.fail('A congested socket must not receive additional frames'),
+  };
+
+  for (const client of [healthy, slow]) {
+    room.clients.push(client);
+    room.onJoin(client);
+    for (const tick of [1, 2]) {
+      room.receiveInput(client, encodeLockstepInput({
+        matchTag: 1,
+        sequence: tick,
+        targetNetTick: tick,
+        payload: new Uint8Array(0),
+      }));
+    }
+  }
+
+  room.sealAvailableFrames();
+
+  assert.equal(terminations, 1);
+  assert.equal(room.state.players.get(slow.sessionId).connected, false);
+  assert.equal(room.state.netTick, 2);
+  assert.deepEqual(liveTicks, [1, 2]);
+
+  liveTicks.length = 0;
+  room.handleSyncRequest(healthy, { fromNetTick: 1 });
+  assert.deepEqual(liveTicks, [1, 2]);
 });
 
 test('LockstepRoom synthesizes NO_OP after frameDeadlineTicks and replays bounded sync history', async () => {

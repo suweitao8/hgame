@@ -85,6 +85,8 @@ Confirmed frame (`HGFR`) has a 16-byte header followed by sorted per-slot entrie
 
 Each history reply sends up to 240 frames or 128 KiB of frame payload, whichever limit it reaches first. The room scales its replay quota to its configured live frame rate and defers one pending request per session during congestion. A competing cursor receives a correlated `retry_later` status with `retryAfterMs`. `HGameLockstepChannel` honors that delay. Successful responses report `sentBytes` and the last frame sent.
 
+Before sending a live frame, the room terminates a WebSocket if its queued bytes plus the frame payload would exceed 1 MiB. Other peers still receive the confirmed frame, and a peer with reconnection enabled can replay it while it remains in history. The configured frame deadline and reconnection window still determine how the room handles missing inputs.
+
 ## Production boundaries
 
 - Colyseus rooms are in-memory and stateful while running. A process restart ends active matches; there is no database, Redis, persistence or multi-process adapter in this first foundation.

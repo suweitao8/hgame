@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Disconnect congested lockstep WebSockets at a bounded live-frame backlog and retain the confirmed frames for reconnect replay.
+
 - Bound lockstep replay by bytes and send rate, defer replay during WebSocket congestion, and cancel deferred work when a session drops.
 
 - Add a fixed-duration rendering benchmark mode with frame-time windows and adaptive-quality checkpoints.
