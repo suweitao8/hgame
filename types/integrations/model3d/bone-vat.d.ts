@@ -57,17 +57,17 @@ export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3D
  * @property {number} [lod1Distance=25] World distance threshold switching LOD0 -> LOD1.
  * @property {number} [lod2Distance=80] World distance threshold switching LOD1 -> LOD2 impostor.
  * @property {number} [maxDistance=240] Far draw cutoff (`<= 0` disables).
- * @property {number} [cullRadius=1.2] Frustum culling radius in world units.
- * @property {number} [baseY=0] Global ground Y offset in world units.
+ * @property {number} [cullRadius=1.2] Culling radius before applying crowd scale and the group's world transform.
+ * @property {number} [baseY=0] Ground Y offset in crowd-local units.
  * @property {number} [scale=1] Global uniform crowd scale.
  * @property {boolean} [castShadow=false] Whether LOD0/LOD1 meshes cast shadows.
  * @property {boolean} [receiveShadow=true] Whether LOD meshes receive shadows.
  */
 /**
  * @typedef {object} BoneVatSpawnOptions
- * @property {number} [x=0]
+ * @property {number} [x=0] Crowd-local horizontal position.
  * @property {number} [y=0] Ignored per-instance (uses shared `baseY`); retained for API symmetry.
- * @property {number} [z=0]
+ * @property {number} [z=0] Crowd-local depth position.
  * @property {number} [rotationY=0]
  * @property {string | null} [clip=null]
  * @property {number} [time=0]
@@ -258,11 +258,11 @@ export type BoneVatCrowd3DOptions = {
      */
     maxDistance?: number | undefined;
     /**
-     * Frustum culling radius in world units.
+     * Culling radius before applying crowd scale and the group's world transform.
      */
     cullRadius?: number | undefined;
     /**
-     * Global ground Y offset in world units.
+     * Ground Y offset in crowd-local units.
      */
     baseY?: number | undefined;
     /**
@@ -279,11 +279,17 @@ export type BoneVatCrowd3DOptions = {
     receiveShadow?: boolean | undefined;
 };
 export type BoneVatSpawnOptions = {
+    /**
+     * Crowd-local horizontal position.
+     */
     x?: number | undefined;
     /**
      * Ignored per-instance (uses shared `baseY`); retained for API symmetry.
      */
     y?: number | undefined;
+    /**
+     * Crowd-local depth position.
+     */
     z?: number | undefined;
     rotationY?: number | undefined;
     clip?: string | null | undefined;

@@ -33,6 +33,7 @@ HGame keeps 3D rendering modular and strictly opt-in. Core runtime modules never
 - Instance positions are batch-local; culling transforms them through the mesh's world matrix. Supply each `radius` (or batch `cullRadius`) in world units large enough to contain the scaled instance.
 - `createInstancedCrowd3D` / `provider.createCrowd` bakes `SkinnedMesh` `AnimationClip` frames into an RGBA Float Vertex Animation Texture (`DataTexture`) and drives per-instance frame interpolation and `hitFlash` via GPU instancing in a single draw call. It schedules animation buffer uploads for changes in the packed visible rows.
 - `createBoneVatCrowd3D` packs CPU-driven instances into 16-byte rows per LOD and schedules updates only for changed spans. Its `uploadedBytes` reports scheduled instance data and excludes allocation. Skinned LODs and distant impostors use the same packed animation and status format.
+- Bone-VAT positions and `baseY` are local to `crowd.group`. Move, rotate or scale that group or its parents. CPU-driven crowds measure LOD distances and test visibility in world space. Far impostors face the render camera around the transformed crowd up axis. Texture-driven crowds use the same transform for rendering and assign LOD counts explicitly through `syncFromGpuSwarm`.
 
 ## Sky, Shadows & Pooled Lighting (`sky3d.js`)
 

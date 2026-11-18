@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Apply the Bone-VAT crowd group's world transform to CPU culling, LOD distances and impostor camera-facing, including under scaled and rotated ancestors.
+
 - Reuse unchanged packed Bone-VAT instance data and report scheduled upload bytes. Preserve animation and status colors across chunk culling and impostor LOD transitions.
 
 - Upload vertex animation data for changed visible crowd instances and skip animation uploads while the crowd is unchanged or hidden.

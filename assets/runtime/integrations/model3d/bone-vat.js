@@ -12,6 +12,7 @@ import { cloneObject3DWithSkins, computeRootBounds } from './helpers.js';
 const HVAT_MAGIC = 0x54415648; // "HVAT" LE
 const HVAT_VERSION = 1;
 const HVAT_HEADER_BYTES = 32;
+const IDENTITY_TRANSFORM = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const CROWD_STATUS_COLOR_GLSL = [
   '#include <color_fragment>',
   'if (vCrowdFlash > 0.5) {',
@@ -940,7 +941,7 @@ function patchImpostorMaterial(material, {
   gpuSwarmWidthUniform = { value: 1 },
   gpuInstanceOffsetUniform = { value: 0 },
 }) {
-  material.customProgramCacheKey = () => `hgame-bone-impostor-v3:${impostorCols}x${impostorRows}:${vatHeight}`;
+  material.customProgramCacheKey = () => `hgame-bone-impostor-v4:${impostorCols}x${impostorRows}:${vatHeight}`;
   const prevCompile = material.onBeforeCompile;
 
   material.onBeforeCompile = (shader, renderer) => {
@@ -985,13 +986,37 @@ function patchImpostorMaterial(material, {
         [
           '#include <uv_vertex>',
           'vec4 _impostorPacked = hgameReadCrowdPacked();',
-          'vec2 _toCamUv = cameraPosition.xz - _impostorPacked.xy;',
-          'float _impostorDistance = length(_toCamUv);',
+          'vec3 _axisX = modelMatrix[0].xyz;',
+          'vec3 _axisY = modelMatrix[1].xyz;',
+          'vec3 _axisZ = modelMatrix[2].xyz;',
+          'vec2 _toCamUv;',
+          'vec2 _impostorFacing;',
+          'vec3 _impostorNormal;',
+          'if (all(equal(_axisX, vec3(1.0, 0.0, 0.0))) && all(equal(_axisY, vec3(0.0, 1.0, 0.0))) && all(equal(_axisZ, vec3(0.0, 0.0, 1.0)))) {',
+          '  _toCamUv = (cameraPosition - modelMatrix[3].xyz).xz - _impostorPacked.xy;',
+          '  _impostorFacing = _toCamUv;',
+          '  _impostorNormal = vec3(_toCamUv.x, max(0.001, length(_toCamUv)) * 0.25, _toCamUv.y);',
+          '} else {',
+          '  vec3 _localOffset = _axisX * _impostorPacked.x + _axisY * uCrowdBaseY + _axisZ * _impostorPacked.y;',
+          '  vec3 _toEye = (cameraPosition - modelMatrix[3].xyz) - _localOffset;',
+          '  float _upLength = length(_axisY);',
+          '  vec3 _up = _upLength > 0.0 ? _axisY / _upLength : vec3(0.0, 1.0, 0.0);',
+          '  vec3 _forward = _toEye - _up * dot(_toEye, _up);',
+          // The cofactors recover local atlas azimuth without a per-vertex matrix inverse.
+          '  vec3 _dualX = cross(_axisY, _axisZ);',
+          '  vec3 _dualZ = cross(_axisX, _axisY);',
+          '  float _handedness = dot(_axisX, _dualX) < 0.0 ? -1.0 : 1.0;',
+          '  _toCamUv = vec2(dot(_dualX, _toEye), dot(_dualZ, _toEye)) * _handedness;',
+          // The local right vector is perpendicular to the projected world view in both bases.
+          '  _impostorFacing = vec2(dot(_axisX, _forward), dot(_axisZ, _forward));',
+          '  vec3 _normalWorld = _forward + _up * (max(0.001, length(_forward)) * 0.25);',
+          '  _impostorNormal = transpose(mat3(modelMatrix)) * _normalWorld;',
+          '}',
           'float _impostorAbsW = abs(_impostorPacked.w);',
           'float _impostorStatus = floor(_impostorAbsW / 16384.0);',
           '#ifdef USE_MAP',
           '{',
-          '  float _camAzimuth = _impostorDistance > 0.0001 ? atan(_toCamUv.x, _toCamUv.y) : 0.0;',
+          '  float _camAzimuth = dot(_toCamUv, _toCamUv) > 0.0 ? atan(_toCamUv.x, _toCamUv.y) : 0.0;',
           '  float _relAngle = fract((_camAzimuth - _impostorPacked.z) * 0.15915494309 + 1.0);',
           '  float _col = floor(_relAngle * float(uImpostorCols));',
           '  float _framePos = max(0.0, _impostorAbsW - _impostorStatus * 16384.0 - 1.0);',
@@ -1006,7 +1031,7 @@ function patchImpostorMaterial(material, {
         '#include <beginnormal_vertex>',
         [
           '#include <beginnormal_vertex>',
-          'objectNormal = normalize(vec3(_toCamUv.x, max(0.001, _impostorDistance) * 0.25, _toCamUv.y));',
+          'objectNormal = dot(_impostorNormal, _impostorNormal) > 0.0 ? normalize(_impostorNormal) : vec3(0.0, 1.0, 0.0);',
         ].join('\n'),
       )
       .replace(
@@ -1014,7 +1039,7 @@ function patchImpostorMaterial(material, {
         [
           '#include <begin_vertex>',
           '{',
-          '  vec2 _fwd = _impostorDistance > 0.0001 ? (_toCamUv / _impostorDistance) : vec2(0.0, 1.0);',
+          '  vec2 _fwd = dot(_impostorFacing, _impostorFacing) > 0.0 ? normalize(_impostorFacing) : vec2(0.0, 1.0);',
           '  vec2 _right = vec2(_fwd.y, -_fwd.x);',
           '  float _sx = position.x * uCrowdScale;',
           '  float _sy = position.y * uCrowdScale;',
@@ -1050,8 +1075,8 @@ function patchImpostorMaterial(material, {
  * @property {number} [lod1Distance=25] World distance threshold switching LOD0 -> LOD1.
  * @property {number} [lod2Distance=80] World distance threshold switching LOD1 -> LOD2 impostor.
  * @property {number} [maxDistance=240] Far draw cutoff (`<= 0` disables).
- * @property {number} [cullRadius=1.2] Frustum culling radius in world units.
- * @property {number} [baseY=0] Global ground Y offset in world units.
+ * @property {number} [cullRadius=1.2] Culling radius before applying crowd scale and the group's world transform.
+ * @property {number} [baseY=0] Ground Y offset in crowd-local units.
  * @property {number} [scale=1] Global uniform crowd scale.
  * @property {boolean} [castShadow=false] Whether LOD0/LOD1 meshes cast shadows.
  * @property {boolean} [receiveShadow=true] Whether LOD meshes receive shadows.
@@ -1059,9 +1084,9 @@ function patchImpostorMaterial(material, {
 
 /**
  * @typedef {object} BoneVatSpawnOptions
- * @property {number} [x=0]
+ * @property {number} [x=0] Crowd-local horizontal position.
  * @property {number} [y=0] Ignored per-instance (uses shared `baseY`); retained for API symmetry.
- * @property {number} [z=0]
+ * @property {number} [z=0] Crowd-local depth position.
  * @property {number} [rotationY=0]
  * @property {string | null} [clip=null]
  * @property {number} [time=0]
@@ -1377,7 +1402,13 @@ export function createBoneVatCrowd3D(THREE, {
   const lod1Sq = lod1Distance * lod1Distance;
   const lod2Sq = Math.max(lod1Distance, lod2Distance) ** 2;
   const maxDistSq = maxDistance > 0 && Number.isFinite(maxDistance) ? maxDistance * maxDistance : Infinity;
-  const effCullRadius = cullRadius * (Number.isFinite(scale) ? scale : 1);
+  const localCullRadius = Math.abs(cullRadius * scaleUniform.value);
+  let worldMatrix = IDENTITY_TRANSFORM;
+  let simpleGroundPlane = true;
+  let worldCullRadius = localCullRadius;
+  let originToEyeX = 0, originToEyeY = 0, originToEyeZ = 0;
+  let cullOriginX = 0, cullOriginY = 0, cullOriginZ = 0;
+  let axisXSquared = 1, axisZSquared = 1, axisXZAbsDot = 0;
 
   function resolveCameraPos(camera, culler) {
     const mw = camera?.matrixWorld?.elements;
@@ -1386,6 +1417,65 @@ export function createBoneVatCrowd3D(THREE, {
     const cp = culler?.frustum?.cameraPosition;
     if (cp) return [cp.x ?? 0, cp.y ?? 0, cp.z ?? 0];
     return [0, 0, 0];
+  }
+
+  function prepareVisibility(camera, culler) {
+    group.updateWorldMatrix?.(true, false);
+    camera?.updateWorldMatrix?.(true, false);
+    const m = group.matrixWorld?.elements;
+    worldMatrix = m?.length >= 16 ? m : IDENTITY_TRANSFORM;
+    const [xx, xy, xz, , yx, yy, yz, , zx, zy, zz, , tx, ty, tz] = worldMatrix;
+    simpleGroundPlane = xx === 1 && xy === 0 && xz === 0 && zx === 0 && zy === 0 && zz === 1;
+    const [eyeX, eyeY, eyeZ] = resolveCameraPos(camera, culler);
+    const y = baseYUniform.value;
+    const centerY = y + charH * scaleUniform.value * 0.5;
+    originToEyeX = tx + yx * y - eyeX;
+    originToEyeY = ty + yy * y - eyeY;
+    originToEyeZ = tz + yz * y - eyeZ;
+    cullOriginX = tx + yx * centerY;
+    cullOriginY = ty + yy * centerY;
+    cullOriginZ = tz + yz * centerY;
+
+    axisXSquared = xx * xx + xy * xy + xz * xz;
+    axisZSquared = zx * zx + zy * zy + zz * zz;
+    axisXZAbsDot = Math.abs(xx * zx + xy * zy + xz * zz);
+    const axisYSquared = yx * yx + yy * yy + yz * yz;
+    const axisXYAbsDot = Math.abs(xx * yx + xy * yy + xz * yz);
+    const axisYZAbsDot = Math.abs(yx * zx + yy * zy + yz * zz);
+    // Bound the maximum stretch using the row sums of the basis Gram matrix.
+    // Using only column lengths would underestimate spheres under parent shear.
+    const maxStretch = Math.sqrt(Math.max(
+      axisXSquared + axisXYAbsDot + axisXZAbsDot,
+      axisYSquared + axisXYAbsDot + axisYZAbsDot,
+      axisZSquared + axisXZAbsDot + axisYZAbsDot,
+    ));
+    worldCullRadius = localCullRadius * maxStretch;
+  }
+
+  function worldDistanceSquared(x, z) {
+    let dx, dy, dz;
+    if (simpleGroundPlane) {
+      dx = x + originToEyeX;
+      dy = originToEyeY;
+      dz = z + originToEyeZ;
+    } else {
+      const m = worldMatrix;
+      dx = m[0] * x + m[8] * z + originToEyeX;
+      dy = m[1] * x + m[9] * z + originToEyeY;
+      dz = m[2] * x + m[10] * z + originToEyeZ;
+    }
+    return dx * dx + dy * dy + dz * dz;
+  }
+
+  function classifyWorldSphere(culler, x, z, radius, preferClassify = false) {
+    const m = worldMatrix;
+    const wx = cullOriginX + (simpleGroundPlane ? x : m[0] * x + m[8] * z);
+    const wy = cullOriginY + (simpleGroundPlane ? 0 : m[1] * x + m[9] * z);
+    const wz = cullOriginZ + (simpleGroundPlane ? z : m[2] * x + m[10] * z);
+    if ((preferClassify || typeof culler.testSphere !== 'function') && typeof culler.classifySphere === 'function') {
+      return culler.classifySphere(wx, wy, wz, radius);
+    }
+    return culler.testSphere(wx, wy, wz, radius) ? 1 : 0;
   }
 
   function computeFramePos(meta, t) {
@@ -1531,9 +1621,8 @@ export function createBoneVatCrowd3D(THREE, {
     gpuOffsetUniforms[2].value = 0;
 
     const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
-    const [camX, camY, camZ] = resolveCameraPos(camera, culler);
-    const baseYVal = baseYUniform.value;
-    const hasCuller = Boolean(culler && typeof culler.testSphere === 'function');
+    prepareVisibility(camera, culler);
+    const hasCuller = typeof culler?.testSphere === 'function' || typeof culler?.classifySphere === 'function';
     const lodCounts = [0, 0, 0];
     beginCpuPacking();
 
@@ -1548,12 +1637,9 @@ export function createBoneVatCrowd3D(THREE, {
 
       const px = posX[id];
       const pz = posZ[id];
-      const dx = px - camX;
-      const dy = baseYVal - camY;
-      const dz = pz - camZ;
-      const distSq = dx * dx + dy * dy + dz * dz;
+      const distSq = worldDistanceSquared(px, pz);
       if (distSq > maxDistSq) continue;
-      if (hasCuller && !culler.testSphere(px, baseYVal + charH * 0.5, pz, effCullRadius)) continue;
+      if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
 
       const bucket = distSq < lod1Sq ? 0 : (distSq < lod2Sq ? 1 : 2);
       const dstSlot = lodCounts[bucket];
@@ -1577,10 +1663,8 @@ export function createBoneVatCrowd3D(THREE, {
     gpuOffsetUniforms[1].value = 0;
     gpuOffsetUniforms[2].value = 0;
 
-    const [camX, camY, camZ] = resolveCameraPos(camera, culler);
-    const baseYVal = baseYUniform.value;
-    const hasCuller = Boolean(culler && typeof culler.testSphere === 'function');
-    const hasClassify = Boolean(culler && typeof culler.classifySphere === 'function');
+    prepareVisibility(camera, culler);
+    const hasCuller = typeof culler?.testSphere === 'function' || typeof culler?.classifySphere === 'function';
     const total = swarm.count;
     const sPosX = swarm.posX;
     const sPosZ = swarm.posY;
@@ -1616,9 +1700,6 @@ export function createBoneVatCrowd3D(THREE, {
       const cMinZ = swarm.chunkMinY;
       const cMaxZ = swarm.chunkMaxY;
       const numChunks = cHead.length;
-      const dy = baseYVal - camY;
-      const dySq = dy * dy;
-      const midY = baseYVal + charH * 0.5;
       const lod1Rad = lod1Distance;
       const lod2Rad = Math.max(lod1Distance, lod2Distance);
       const maxDistRad = maxDistance > 0 && Number.isFinite(maxDistance) ? maxDistance : Infinity;
@@ -1631,18 +1712,14 @@ export function createBoneVatCrowd3D(THREE, {
         const maxZ = cMaxZ[ck];
         const cx = (minX + maxX) * 0.5;
         const cz = (minZ + maxZ) * 0.5;
-        const dxC = cx - camX;
-        const dzC = cz - camZ;
         const halfW = (maxX - minX) * 0.5;
         const halfD = (maxZ - minZ) * 0.5;
-        const halfDiag = Math.sqrt(halfW * halfW + halfD * halfD);
-        const chunkRadius = halfDiag + effCullRadius;
-        const centerDist = Math.sqrt(dxC * dxC + dySq + dzC * dzC);
+        const halfDiag = Math.sqrt(halfW * halfW * axisXSquared + halfD * halfD * axisZSquared + 2 * halfW * halfD * axisXZAbsDot);
+        const chunkRadius = halfDiag + worldCullRadius;
+        const centerDist = Math.sqrt(worldDistanceSquared(cx, cz));
         if (maxDistRad < Infinity && centerDist - chunkRadius > maxDistRad) continue;
 
-        let cullState = 2;
-        if (hasClassify) cullState = culler.classifySphere(cx, midY, cz, chunkRadius);
-        else if (hasCuller) cullState = culler.testSphere(cx, midY, cz, chunkRadius) ? 1 : 0;
+        const cullState = hasCuller ? classifyWorldSphere(culler, cx, cz, chunkRadius, true) : 2;
         if (cullState === 0) continue;
 
         let singleBucket = -1;
@@ -1688,10 +1765,8 @@ export function createBoneVatCrowd3D(THREE, {
           while (id !== -1) {
             const px = sPosX[id];
             const pz = sPosZ[id];
-            const dx = px - camX;
-            const dz = pz - camZ;
-            const distSq = dx * dx + dySq + dz * dz;
-            if (distSq <= maxDistSq && (!needPerUnitCull || culler.testSphere(px, midY, pz, effCullRadius))) {
+            const distSq = worldDistanceSquared(px, pz);
+            if (distSq <= maxDistSq && (!needPerUnitCull || classifyWorldSphere(culler, px, pz, worldCullRadius) !== 0)) {
               const bucket = distSq < lod1Sq ? 0 : (distSq < lod2Sq ? 1 : 2);
               const dstSlot = lodCounts[bucket];
               if (dstSlot < capacity) {
@@ -1732,12 +1807,9 @@ export function createBoneVatCrowd3D(THREE, {
       const id = ids[i];
       const px = sPosX[id];
       const pz = sPosZ[id];
-      const dx = px - camX;
-      const dy = baseYVal - camY;
-      const dz = pz - camZ;
-      const distSq = dx * dx + dy * dy + dz * dz;
+      const distSq = worldDistanceSquared(px, pz);
       if (distSq > maxDistSq) continue;
-      if (hasCuller && !culler.testSphere(px, baseYVal + charH * 0.5, pz, effCullRadius)) continue;
+      if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
 
       const bucket = distSq < lod1Sq ? 0 : (distSq < lod2Sq ? 1 : 2);
       const dstSlot = lodCounts[bucket];
