@@ -111,6 +111,11 @@ jobs:
           HGAME_CI_BROWSER: ${{ matrix.browser }}
         shell: bash
         run: |
+          if [[ "$HGAME_CI_BROWSER" == webkit ]]; then
+            # The EC2 regional mirror stalled on WebKit's multimedia dependencies.
+            sudo sed -Ei 's@https?://[[:alnum:].-]+\.ec2\.archive\.ubuntu\.com/ubuntu/?@https://archive.ubuntu.com/ubuntu/@g' \
+              /etc/apt/sources.list.d/ubuntu.sources
+          fi
           run_logged() {
             local name="$1"
             shift
