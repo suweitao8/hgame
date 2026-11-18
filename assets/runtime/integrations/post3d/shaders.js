@@ -127,15 +127,15 @@ void main() {
       vec3 hemi = tangent * k2.x + bitangent * k2.y + viewNormal * zOff;
       vec3 samplePos = viewPos + normalize(hemi) * (radius * (0.25 + float(i) * 0.095));
       vec4 proj = uProj * vec4(samplePos, 1.0);
-      vec2 sUv = (proj.xy / max(abs(proj.w), 1e-5)) * 0.5 + 0.5;
-      if (sUv.x >= 0.0 && sUv.x <= 1.0 && sUv.y >= 0.0 && sUv.y <= 1.0) {
-        float sDepth = texture(tDepth, sUv).r;
-        vec3 sView = reconstructViewPos(sUv, sDepth);
-        float rangeCheck = smoothstep(0.0, 1.0, radius / max(abs(viewPos.z - sView.z), 0.001));
-        if (sView.z >= samplePos.z + uSsaoBias && sDepth < 1.0) {
-          occlusion += rangeCheck;
+      if (proj.w <= 0.0 || any(greaterThan(abs(proj.xyz), proj.www))) continue;
+      vec2 sUv = proj.xy / proj.w * 0.5 + 0.5;
+      float sDepth = textureLod(tDepth, sUv, 0.0).r;
+      weightSum += 1.0;
+      if (sDepth < 1.0) {
+        float sampleZ = reconstructViewPos(sUv, sDepth).z;
+        if (sampleZ >= samplePos.z + uSsaoBias) {
+          occlusion += smoothstep(0.0, 1.0, radius / max(abs(viewPos.z - sampleZ), 0.001));
         }
-        weightSum += 1.0;
       }
     }
     ao = 1.0 - clamp(occlusion / max(weightSum, 1.0), 0.0, 1.0);
@@ -147,28 +147,26 @@ void main() {
     vec3 rayDir = normalize(viewPos);
     float hitDist = depth >= 1.0 ? 48.0 : min(length(viewPos), 48.0);
     float jitter = ign(gl_FragCoord.xy + vec2(fract(uTime) * 37.0, 11.0));
-    float cosTheta = dot(rayDir, normalize(uSunViewDir));
+    float cosTheta = dot(rayDir, uSunViewDir);
     float g = 0.65;
     float phase = (1.0 - g * g) / (4.0 * 3.14159265 * pow(max(0.01, 1.0 + g * g - 2.0 * g * cosTheta), 1.5));
     float stepLen = hitDist / float(steps);
+    vec4 shadowStep = uCamToShadow * vec4(rayDir * stepLen, 0.0);
+    vec4 shadowCoord = uCamToShadow[3] + shadowStep * jitter;
     float accum = 0.0;
-    for (int s = 0; s < 32; s++) {
+    for (int s = 0; s < 32; s++, shadowCoord += shadowStep) {
       if (s >= steps) break;
-      float t = (float(s) + jitter) * stepLen;
-      vec3 pView = rayDir * t;
-      vec4 shadowCoord = uCamToShadow * vec4(pView, 1.0);
       if (shadowCoord.w <= 0.0) continue;
       // Three.js's shadow matrix already maps into texture coordinates.
+      if (any(lessThan(shadowCoord.xyz, vec3(0.0))) || any(greaterThan(shadowCoord.xyz, shadowCoord.www))) continue;
       vec3 sc = shadowCoord.xyz / shadowCoord.w;
-      if (all(greaterThanEqual(sc, vec3(0.0))) && all(lessThanEqual(sc, vec3(1.0)))) {
-        float receiverDepth = sc.z - 0.0025 * uShadowDepthSign;
-        #ifdef HGAME_SHADOW_COMPARE
-          accum += texture(tSunShadow, vec3(sc.xy, receiverDepth));
-        #else
-          float mapDepth = texture(tSunShadow, sc.xy).r;
-          accum += step(0.0, (mapDepth - receiverDepth) * uShadowDepthSign);
-        #endif
-      }
+      float receiverDepth = sc.z - 0.0025 * uShadowDepthSign;
+      #ifdef HGAME_SHADOW_COMPARE
+        accum += texture(tSunShadow, vec3(sc.xy, receiverDepth));
+      #else
+        float mapDepth = textureLod(tSunShadow, sc.xy, 0.0).r;
+        accum += step(0.0, (mapDepth - receiverDepth) * uShadowDepthSign);
+      #endif
     }
     vol = (accum / float(steps)) * clamp(phase * 1.4, 0.05, 1.25) * clamp(hitDist / 24.0, 0.0, 1.0);
   }
@@ -724,6 +722,36 @@ vec3 compReconstructViewPos(vec2 uv, float depth) {
   return view.xyz / max(abs(view.w), 1e-5);
 }
 
+float traceContactShadow(vec3 viewPos) {
+  float rayLen = clamp(uContactShadowLength, 0.05, 1.5);
+  float thickness = clamp(uContactShadowThickness, 0.01, 0.4);
+  vec3 rayStep = uSunViewDir * (rayLen / 8.0);
+  vec4 clipStep = uProj * vec4(rayStep, 0.0);
+  float start = compIgn(gl_FragCoord.xy + vec2(fract(uTime) * 13.0, 5.0)) + 0.25;
+  vec4 clip = uProj * vec4(viewPos, 1.0) + clipStep * start;
+  float rayZ = viewPos.z + rayStep.z * start;
+  ivec2 size = textureSize(tDepth, 0);
+  ivec2 lastPixel = ivec2(-1);
+  float sceneZ = 0.0;
+  bool hasGeometry = false;
+
+  for (int i = 0; i < 8; i++, clip += clipStep, rayZ += rayStep.z) {
+    // The ray starts inside the convex frustum and cannot re-enter after leaving.
+    if (clip.w <= 0.0 || any(greaterThan(abs(clip.xyz), clip.www))) break;
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    ivec2 pixel = clamp(ivec2(uv * vec2(size)), ivec2(0), size - ivec2(1));
+    if (any(notEqual(pixel, lastPixel))) {
+      lastPixel = pixel;
+      float depth = texelFetch(tDepth, pixel, 0).r;
+      hasGeometry = depth < 1.0;
+      if (hasGeometry) sceneZ = compReconstructViewPos((vec2(pixel) + 0.5) / vec2(size), depth).z;
+    }
+    float gap = sceneZ - rayZ;
+    if (hasGeometry && gap > 0.008 && gap < thickness) return 1.0 - float(i) / 8.0;
+  }
+  return 0.0;
+}
+
 vec3 upsampleHalfLighting(sampler2D effect, float centerGuide, bool packedGuide) {
   ivec2 size = textureSize(effect, 0);
   vec2 halfPixel = vUv * vec2(size) - 0.5;
@@ -830,27 +858,7 @@ vec3 applyWorldLighting(vec3 hdr) {
   }
 
   if (useContact && depth < 1.0) {
-    float jitter = compIgn(gl_FragCoord.xy + vec2(fract(uTime) * 13.0, 5.0));
-    float rayLen = clamp(uContactShadowLength, 0.05, 1.5);
-    float thickness = clamp(uContactShadowThickness, 0.01, 0.4);
-    vec3 rayStep = uSunViewDir * (rayLen / 8.0);
-    float occ = 0.0;
-    for (int i = 0; i < 8; i++) {
-      vec3 p = viewPos + rayStep * (float(i) + jitter + 0.25);
-      vec4 clip = uProj * vec4(p, 1.0);
-      vec2 sUv = (clip.xy / max(abs(clip.w), 1e-5)) * 0.5 + 0.5;
-      if (sUv.x >= 0.0 && sUv.x <= 1.0 && sUv.y >= 0.0 && sUv.y <= 1.0) {
-        float sD = texture(tDepth, sUv).r;
-        if (sD < 1.0) {
-          float sceneZ = compReconstructViewPos(sUv, sD).z;
-          float dz = sceneZ - p.z;
-          if (dz > 0.008 && dz < thickness) {
-            occ = max(occ, 1.0 - float(i) / 8.0);
-          }
-        }
-      }
-    }
-    hdr *= (1.0 - occ * clamp(uContactShadows, 0.0, 1.0));
+    hdr *= 1.0 - traceContactShadow(viewPos) * clamp(uContactShadows, 0.0, 1.0);
   }
 
   if (useAoVol && (depth < 1.0 || uUseVolumetric > 0.5)) {

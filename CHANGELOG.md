@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Step contact shadows and volumetric lighting in projected coordinates. Stop contact shadows at the first valid occluder and reuse depth reads when consecutive samples reach the same texel.
+
 - Clip screen-space reflection rays to the camera frustum and march in projected pixel space with perspective-correct depth. Refine depth crossings and fade hits near view edges.
 
 - Use a logarithmic depth guide for 3D screen-space lighting denoising and upsampling. Reject sky and foreground bleeding at silhouettes while keeping effects at half resolution.
