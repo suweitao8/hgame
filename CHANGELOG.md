@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Build the network lab with esbuild and remove the affected Picomatch dependency from the network workspace.
+
 - Disconnect congested lockstep WebSockets at a bounded live-frame backlog and retain the confirmed frames for reconnect replay.
 
 - Bound lockstep replay by bytes and send rate, defer replay during WebSocket congestion, and cancel deferred work when a session drops.

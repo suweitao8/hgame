@@ -40,6 +40,8 @@ npm run dev:lab
 
 Open `http://127.0.0.1:5173/` in two browser tabs. Both tabs can join the same room to verify state replication, prediction and confirmed frames. The default server endpoint is `http://127.0.0.1:2567`.
 
+The lab rebuilds TypeScript and CSS during development. Refresh the tab after these edits, and restart the lab after changing `index.html`. Its production build writes a static page and bundled assets to `apps/network-lab/dist/`.
+
 The end-to-end client test expects a running development server. Start it in one terminal, then run the test in another:
 
 ```powershell
