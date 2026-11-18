@@ -418,7 +418,7 @@ async function exerciseSoak(page, read, id, errors) {
 }
 
 try {
-  browser = await browserType.launch({ headless: true, ...(executablePath ? { executablePath } : {}),
+  browser = await browserType.launch({ headless: !argv.includes('--headed'), ...(executablePath ? { executablePath } : {}),
     ...(browserName === 'chromium' ? { args: ['--no-sandbox', '--enable-webgl', '--ignore-gpu-blocklist',
       ...(gpu === 'software' ? ['--use-gl=angle', '--use-angle=swiftshader'] : [])] } : {}) });
   for (const id of ['survivor-2d', 'arena-3d']) {

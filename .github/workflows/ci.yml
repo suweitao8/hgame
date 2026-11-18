@@ -126,8 +126,15 @@ jobs:
             return 1
           }
           run_logged install npx playwright-core install --with-deps "$HGAME_CI_BROWSER"
-          run_logged recipes npm run test:browser:recipes -- --browser "$HGAME_CI_BROWSER"
-          run_logged lifecycle npm run test:browser:lifecycle -- --browser "$HGAME_CI_BROWSER"
+          launch=()
+          browser_args=(--browser "$HGAME_CI_BROWSER")
+          if [[ "$HGAME_CI_BROWSER" == firefox ]]; then
+            # Firefox needs a display to initialize WebGL on the Linux runner.
+            launch=(xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1)
+            browser_args+=(--headed)
+          fi
+          run_logged recipes "${launch[@]}" npm run test:browser:recipes -- "${browser_args[@]}"
+          run_logged lifecycle "${launch[@]}" npm run test:browser:lifecycle -- "${browser_args[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -12,23 +12,24 @@ export async function verifyStorageQuota(page) {
     damaged.data.score = 999;
     saves.store.set('recover', damaged);
     saves.store.set('legacy', { coins: 7 });
-    let block = 'x'.repeat(64 * 1024);
-    let exhausted = false;
-    for (let attempt = 0; attempt < 256 && block.length; attempt++) {
-      try { localStorage.setItem('hgame.quota.test.fill.' + attempt, block); }
-      catch (error) {
-        if (error.name !== 'QuotaExceededError') throw error;
-        exhausted = true;
-        block = block.slice(0, Math.floor(block.length / 2));
-      }
-    }
-    if (!exhausted || block.length) throw new Error('Storage quota was not exhausted');
   });
   try {
     await page.reload();
     await page.waitForFunction(() => typeof window.__hgameState === 'function');
     const result = await page.evaluate(async () => {
       const { createVersionedStore } = await import('./vendor/hgame/platform/storage.js');
+      // Fill storage in the same document that checks the failure and retry paths.
+      let block = 'x'.repeat(64 * 1024);
+      let exhausted = false;
+      for (let attempt = 0; attempt < 256 && block.length; attempt++) {
+        try { localStorage.setItem('hgame.quota.test.fill.' + attempt, block); }
+        catch (error) {
+          if (error.name !== 'QuotaExceededError') throw error;
+          exhausted = true;
+          block = block.slice(0, Math.floor(block.length / 2));
+        }
+      }
+      if (!exhausted || block.length) throw new Error('Storage quota was not exhausted');
       const options = { gameId: 'recipe-quota', prefix: 'hgame.quota.test' };
       const saves = createVersionedStore(options);
       const migrated = createVersionedStore({ ...options, schemaVersion: 2,

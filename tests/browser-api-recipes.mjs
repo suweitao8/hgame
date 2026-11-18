@@ -12,8 +12,8 @@ import { chromium, firefox, webkit } from 'playwright-core';
 import { benchmarkBrowserOptions } from '../scripts/lib/browser-benchmark.mjs';
 import { verifyStorageQuota } from './browser-storage-quota.mjs';
 
-const { values: { browser: browserName, chrome } } = parseArgs({
-  options: { browser: { type: 'string', default: 'chromium' }, chrome: { type: 'string' } },
+const { values: { browser: browserName, chrome, headed } } = parseArgs({
+  options: { browser: { type: 'string', default: 'chromium' }, chrome: { type: 'string' }, headed: { type: 'boolean' } },
 });
 const browserTypes = new Map([['chromium', chromium], ['firefox', firefox], ['webkit', webkit]]);
 const browserType = browserTypes.get(browserName);
@@ -30,7 +30,7 @@ const run = args => {
 try {
   const options = browserType === chromium ? benchmarkBrowserOptions('software', chrome) : { headless: true };
   if (options.args) options.args = options.args.filter(arg => arg !== '--disable-frame-rate-limit');
-  browser = await browserType.launch(options);
+  browser = await browserType.launch({ ...options, headless: !headed });
   for (const name of ['2d', 'horde', '3d', 'ui']) {
     const recipe = JSON.parse(run(['scripts/query-api.mjs', '--recipe', name, '--json']));
     const args = recipe.code.split('\n')[0].slice('// Create: node '.length)
