@@ -33,14 +33,19 @@ export class InputAndAudio {
         const left = x < rect.width / 2;
         if ([...this.touches.values()].some(item => item.left === left)) return;
         const visual = document.createElement('div'); visual.className = 'virtual-stick'; visual.innerHTML = '<span></span>';
-        visual.style.left = `${event.clientX}px`; visual.style.top = `${event.clientY}px`;
-        document.querySelector('#ui-layer').appendChild(visual);
+        const uiLayer = document.querySelector('#ui-layer'), uiRect = uiLayer.getBoundingClientRect();
+        visual.style.left = `${event.clientX - uiRect.left}px`; visual.style.top = `${event.clientY - uiRect.top}px`;
+        uiLayer.appendChild(visual);
         touch = { startX: x, startY: y, x, y, left, visual }; this.touches.set(event.pointerId, touch);
       }
       touch.x = x; touch.y = y;
       const dx = x - touch.startX, dy = y - touch.startY, scale = Math.min(1, 42 / (Math.hypot(dx, dy) || 1));
       touch.visual.firstChild.style.transform = `translate(${dx * scale}px, ${dy * scale}px)`;
-    } else { this.pointer.x = x; this.pointer.y = y; }
+    } else {
+      const screen = this.renderer.app.screen;
+      this.pointer.x = rect.width > 0 ? x * screen.width / rect.width : 0;
+      this.pointer.y = rect.height > 0 ? y * screen.height / rect.height : 0;
+    }
   }
   endPointer(event) {
     if (event.pointerType !== 'touch') this.pointer.down = false;
@@ -59,7 +64,7 @@ export class InputAndAudio {
     let firing = this.pointer.down;
     for (const touch of this.touches.values()) {
       const dx = touch.x - touch.startX, dy = touch.y - touch.startY;
-      if (touch.left) { moveX = dx; moveY = dy; } else { aimX = dx; aimY = dy; firing = true; }
+      if (touch.left) { moveX = dx / 42; moveY = dy / 42; } else { aimX = dx; aimY = dy; firing = true; }
     }
     let length = Math.max(1, Math.hypot(moveX, moveY)); moveX /= length; moveY /= length;
     length = Math.hypot(aimX, aimY) || 1; aimX /= length; aimY /= length;

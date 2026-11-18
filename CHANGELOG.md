@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Map Pixi demo pointer input through the canvas CSS bounds, preserve analog touch movement, and constrain horde touch movement to the canvas.
+
 - Track combat-slot generations so queued hits cannot damage a different swarm unit after a slot is recycled.
 
 - Count only successfully queued swarm area hits, and stop promoting targets when the bounded hit queue is full.

@@ -37,8 +37,12 @@ hero.addComponent(new class extends Component {
   fixedUpdate(dt) {
     let dx = Number(app.input.isDown('KeyD') || app.input.isDown('ArrowRight')) - Number(app.input.isDown('KeyA') || app.input.isDown('ArrowLeft'));
     let dy = Number(app.input.isDown('KeyS') || app.input.isDown('ArrowDown')) - Number(app.input.isDown('KeyW') || app.input.isDown('ArrowUp'));
+    let canvasRect = null;
     for (const pointer of app.input.pointers) {
-      if (pointer.pointerType !== 'touch' || pointer.startX >= window.innerWidth / 2) continue;
+      if (pointer.pointerType !== 'touch') continue;
+      canvasRect ??= renderer.app.canvas.getBoundingClientRect();
+      if (pointer.startX < canvasRect.left || pointer.startX >= canvasRect.left + canvasRect.width / 2 ||
+          pointer.startY < canvasRect.top || pointer.startY >= canvasRect.bottom) continue;
       dx = (pointer.x - pointer.startX) / 48; dy = (pointer.y - pointer.startY) / 48; break;
     }
     const speed = 175 * dt / Math.max(1, Math.hypot(dx, dy));
