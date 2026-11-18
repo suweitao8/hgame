@@ -8,6 +8,8 @@ From the HGame repository, `npm run api -- pixi`, `npm run api -- Renderer2D`, o
 
 PixiJS prefers WebGPU and retries with WebGL (then Pixi's Canvas renderer if needed) when WebGPU is unavailable or initialization fails. HGame's application controls the simulation and render loop; `JuiceSystem.update(dt)` advances hit easing, shockwaves and particles on that loop. Call `juice.dispose()` before `renderer.dispose()` when tearing down an owning scene. The renderer reuses removed crowd particles and destroys its pooled sprites, filter and atlas on disposal. The starter's 1,000-enemy arena includes opt-in buttons to add 10,000 enemies and to trigger 100, 1,000, or 10,000 simultaneous eight-particle explosions; FPS and on-screen particles are displayed in the debug panel. Actual capacity depends on device, resolution, effects and workload. Canvas uses a simple drawn slash and particles for shockwaves; GPU bloom and distortion filters are disabled on this fallback.
 
+On the Canvas fallback, particles use their atlas frame colors instead of runtime `opts.color` tinting. The default explosion has precolored atlas frames; supply precolored frames for custom particle colors on that backend.
+
 `new Renderer2D(atlas, { maxPixels, maxPixelRatio })` caps physical rendering resolution without changing CSS coordinates. Defaults are 2.3 million pixels and pixel ratio 2; lower them for fill-rate-constrained devices or increase them for sharper output. The renderer responds to its container's size and host resize events, and disconnects its observer on disposal. By default this is a fixed budget.
 
 To opt into dynamic resolution, pass HGame's quality controller when creating the renderer:

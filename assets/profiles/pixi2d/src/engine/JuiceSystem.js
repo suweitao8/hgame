@@ -6,6 +6,9 @@ const hitEase = gsap.parseEase('elastic.out(1, 0.45)');
 const explosionOptions = [0xff6622, 0xffbb33, 0xffed99].map(color => Object.freeze({
   speedMin: 25, speedMax: 110, lifeMin: 3, lifeMax: 3, scaleStart: 0.8, drag: 1.5, color,
 }));
+const canvasExplosionOptions = explosionOptions.map((options, index) => Object.freeze({
+  ...options, tex: 'particle_fire_' + index, color: 0xffffff,
+}));
 
 export class JuiceSystem {
   constructor(renderer, capacity = 10000) {
@@ -54,7 +57,10 @@ export class JuiceSystem {
       p.duration = p.life = (opts.lifeMin ?? 0.3) + Math.random() * ((opts.lifeMax ?? 0.9) - (opts.lifeMin ?? 0.3));
       p.start = opts.scaleStart ?? 0.7; p.end = opts.scaleEnd ?? 0; p.drag = opts.drag ?? 1;
       p.particle.texture = texture;
-      p.particle.x = x; p.particle.y = y; p.particle.alpha = 1; p.particle.tint = opts.color ?? 0xffffff;
+      p.particle.x = x; p.particle.y = y; p.particle.alpha = 1;
+      // Pixi's Canvas particle adapter expects an atlas source, while its tint
+      // helper returns a cropped canvas. Keep Canvas particles untinted.
+      p.particle.tint = this.renderer.isCanvas ? 0xffffff : (opts.color ?? 0xffffff);
     }
     if (this.batchDepth === 0) this.flushPending();
   }
@@ -79,13 +85,16 @@ export class JuiceSystem {
   spawnExplosions(count) {
     if (!Number.isSafeInteger(count) || count < 0) throw new RangeError('Explosion count must be a non-negative safe integer');
     const screen = this.renderer.app.screen, camera = this.renderer.camera;
+    const presets = this.renderer.isCanvas
+      ? canvasExplosionOptions.map((option, index) => this.renderer.atlas.textures.has(option.tex) ? option : explosionOptions[index])
+      : explosionOptions;
     this.batchDepth++;
     try {
       for (let i = 0; i < count; i++) {
         const x = (Math.random() * screen.width - screen.width / 2 - camera.shakeX) / camera.zoom + camera.x;
         const y = (Math.random() * screen.height - screen.height / 2 - camera.shakeY) / camera.zoom + camera.y;
         this.effects.push(3);
-        this.burstParticles(x, y, 8, explosionOptions[i % explosionOptions.length]);
+        this.burstParticles(x, y, 8, presets[i % presets.length]);
       }
     } finally { if (--this.batchDepth === 0) this.flushPending(); }
   }

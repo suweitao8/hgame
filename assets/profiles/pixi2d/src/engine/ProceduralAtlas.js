@@ -156,6 +156,14 @@ export function createDefaultGameAtlas({ playerImage = null, enemyImage = null, 
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, w, h);
   });
+  for (const [index, color] of ['#ff6622', '#ffbb33', '#ffed99'].entries()) {
+    atlas.register('particle_fire_' + index, 20, 20, (ctx, w, h) => {
+      const gradient = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+      gradient.addColorStop(0, color);
+      gradient.addColorStop(1, color + '00');
+      ctx.fillStyle = gradient; ctx.fillRect(0, 0, w, h);
+    }, { makeWhite: false });
+  }
   atlas.register('particle_spark', 12, 12, (ctx, w, h) => {
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.moveTo(w / 2, 0); ctx.lineTo(w, h / 2); ctx.lineTo(w / 2, h); ctx.lineTo(0, h / 2); ctx.closePath(); ctx.fill();

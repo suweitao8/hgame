@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use precolored explosion atlas frames on the Pixi Canvas fallback and avoid Canvas particle tinting of atlas subframes.
+
 - Use a simple drawn slash and particle shockwave on Pixi's Canvas fallback, and avoid unsupported GPU filters there.
 
 - Retry each Pixi backend separately, including Canvas when WebGL initialization fails after capability detection.
