@@ -91,6 +91,18 @@ Before sending a live frame, the room terminates a WebSocket if its queued bytes
 
 The server test suite interrupts a real client TCP connection through a loopback proxy. It checks same-session reconnection, uninterrupted frame ordering after replay, and one `history_evicted` notification when the missing frames have expired.
 
+### Verify a sustained two-client match
+
+Build the workspace with `npm run build` and use an isolated acceptance server that registers `lab_lockstep`. Use `http://127.0.0.1:2567` for a local baseline. For a WAN run, start the clients on separate networks and give both the authorized staging HTTPS endpoint.
+
+```text
+npm run test:lockstep-soak -- --endpoint <url> --role host --seconds 60 --out host.json
+npm run test:lockstep-soak -- --endpoint <url> --role peer --room <room-id> --seconds 60 --drop-after 20 --out peer.json
+npm run test:lockstep-soak -- --compare host.json --with peer.json
+```
+
+The host prints the room ID when it creates the room. Fill in that ID on the peer and give each run a fresh report path. Compare the reports after both clients exit successfully. The timer starts once each client sees both players. `--connect-timeout` defaults to 15 seconds. `--drop-after` closes that client's socket at the specified second to exercise same-session reconnection and confirmed-frame replay. Reports include replay duration, intervals between confirmed frames and SHA-256 digests of one-second tick blocks. These intervals measure delivery pacing. Comparison requires contiguous blocks from the same match, matching confirmed input on both clients and at least 80% input coverage per player over the shared frames. CI runs an abbreviated smoke test with two processes over loopback.
+
 ## Production boundaries
 
 - Colyseus rooms are in-memory and stateful while running. A process restart ends active matches; there is no database, Redis, persistence or multi-process adapter in this first foundation.

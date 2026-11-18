@@ -21,6 +21,7 @@
     "check": "npm run build:protocol && npm run build:simulation && npm run build:client-lib && npm run check --workspaces --if-present",
     "test": "npm run test --workspace @hgame/network-protocol && npm run test --workspace @hgame/network-simulation && npm run test --workspace @hgame/network-client && npm run test --workspace @hgame/network-server",
     "test:e2e": "node apps/server/test/e2e.mjs",
+    "test:lockstep-soak": "node apps/server/test/lockstep-soak.mjs",
     "test:browser": "node apps/network-lab/test/cdp-smoke.mjs",
     "dev:server": "npm run build:protocol && npm run build:simulation && npm run dev --workspace @hgame/network-server",
     "dev:lab": "npm run build:protocol && npm run build:simulation && npm run build:client-lib && npm --workspace @hgame/network-lab run dev",
