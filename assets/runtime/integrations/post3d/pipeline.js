@@ -327,6 +327,7 @@ export function createPostPipeline3D(options = {}) {
   let bufferWidth = Math.max(1, Math.floor(width));
   let bufferHeight = Math.max(1, Math.floor(height));
   let disposed = false;
+  let contextLost = false;
   let elapsed = 0;
   let adaptIndex = 0;
   let adaptNeedsReset = true;
@@ -421,7 +422,14 @@ export function createPostPipeline3D(options = {}) {
     return rt;
   }
 
-  function disposeTargets() {
+  function disposeExposureTargets() {
+    for (const mip of lumaMips) mip.rt.dispose?.();
+    for (const rt of adaptRT) rt.dispose?.();
+    lumaMips = [];
+    adaptRT = [];
+  }
+
+  function disposeTargets({ keepExposure = false } = {}) {
     sceneRT?.depthTexture?.dispose?.();
     sceneRT?.dispose?.();
     halfRT?.dispose?.();
@@ -429,8 +437,7 @@ export function createPostPipeline3D(options = {}) {
     giSsrRT?.dispose?.();
     giSsrBlurRT?.dispose?.();
     ldrRT?.dispose?.();
-    for (const mip of lumaMips) mip.rt?.dispose?.();
-    for (const rt of adaptRT) rt?.dispose?.();
+    if (!keepExposure) disposeExposureTargets();
     for (const mip of bloomMips) {
       mip.down?.dispose?.();
       mip.up?.dispose?.();
@@ -440,15 +447,14 @@ export function createPostPipeline3D(options = {}) {
     halfBlurRT = null;
     giSsrRT = null;
     giSsrBlurRT = null;
-    lumaMips = [];
-    adaptRT = [];
     ldrRT = null;
     bloomMips = [];
   }
 
   function buildTargets() {
-    if (!supported || disposed) return;
-    disposeTargets();
+    if (!supported || disposed || contextLost) return;
+    // Auto-exposure uses fixed-size targets. Keep its history across resolution changes.
+    disposeTargets({ keepExposure: true });
     const msaa = Math.min(Math.max(0, activePreset.msaaSamples ?? 0), capabilities.maxSamples);
     const depthTex = new THREE.DepthTexture(bufferWidth, bufferHeight, THREE.UnsignedIntType);
     depthTex.minFilter = THREE.NearestFilter;
@@ -525,10 +531,7 @@ export function createPostPipeline3D(options = {}) {
         adaptNeedsReset = true;
       }
     } else if (adaptRT.length > 0) {
-      for (const mip of lumaMips) mip.rt.dispose?.();
-      for (const rt of adaptRT) rt.dispose?.();
-      lumaMips = [];
-      adaptRT = [];
+      disposeExposureTargets();
     }
 
     if (state.fxaa || state.sharpness > 0.001) {
@@ -806,7 +809,7 @@ export function createPostPipeline3D(options = {}) {
   }
 
   function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, dt = 0 } = {}) {
-    if (disposed) return;
+    if (disposed || contextLost) return;
     const stepDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
     if (stepDt > 0) elapsed += stepDt;
     if (!supported || !sceneRT) {
@@ -1039,11 +1042,15 @@ export function createPostPipeline3D(options = {}) {
   }
 
   function handleContextLost() {
+    if (disposed || contextLost) return;
+    contextLost = true;
     disposeTargets();
   }
 
   function handleContextRestored() {
-    if (!disposed && supported) buildTargets();
+    if (disposed) return;
+    contextLost = false;
+    buildTargets();
   }
 
   function dispose() {

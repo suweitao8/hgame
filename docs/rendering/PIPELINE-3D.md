@@ -24,6 +24,7 @@ HGame keeps 3D rendering modular and strictly opt-in. Core runtime modules never
 - MSAA sample counts (`clampedMsaaSamples`) are clamped to `gl.MAX_SAMPLES` on WebGL2 contexts.
 - `createAdaptiveQualityController` computes the tier's capped pixel ratio from the CSS viewport, device pixel ratio, and pixel budget. Auto mode multiplies that capped ratio by its current resolution scale and starts at `maxScale`. When slow frames trigger a tier downgrade, the controller keeps the reduced scale until fast frames qualify it for recovery.
 - The adapter uses the resulting physical size for both the canvas and post-processing targets. When size and preset change together, it rebuilds post targets once at the final dimensions.
+- On WebGL context loss the post pipeline releases its targets and retains the latest size and preset. It allocates the targets once at the restored size. During ordinary resolution or preset changes, fixed-size auto-exposure targets retain their exposure history.
 
 ## Frustum, Occlusion Culling & GPU Instancing (`culling3d.js`)
 

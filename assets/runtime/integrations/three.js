@@ -499,9 +499,14 @@ export function createThreeAdapter({
     const { cssWidth: w, cssHeight: h, pixelRatio: ratio, bufferWidth, bufferHeight } = size;
     const canvasChanged = typeof canvas.width === 'number' && typeof canvas.height === 'number'
       && (canvas.width !== bufferWidth || canvas.height !== bufferHeight);
-    if (canvasChanged || lastCanvasSize?.cssWidth !== w || lastCanvasSize.cssHeight !== h || lastCanvasSize.pixelRatio !== ratio) {
-      renderer.setPixelRatio(ratio);
-      renderer.setSize(w, h, false);
+    const viewportChanged = lastCanvasSize?.cssWidth !== w || lastCanvasSize.cssHeight !== h || lastCanvasSize.pixelRatio !== ratio;
+    if (!contextLost && (canvasChanged || viewportChanged)) {
+      if (typeof renderer.setDrawingBufferSize === 'function' && !renderer.xr?.isPresenting) {
+        renderer.setDrawingBufferSize(w, h, ratio);
+      } else {
+        renderer.setPixelRatio(ratio);
+        renderer.setSize(w, h, false);
+      }
       lastCanvasSize = size;
     }
     const preset = qualityController?.state?.preset ?? null;
@@ -539,9 +544,9 @@ export function createThreeAdapter({
   };
   const onContextRestored = () => {
     contextLost = false;
-    postPipeline?.handleContextRestored?.();
     lastCanvasSize = null;
     resize();
+    postPipeline?.handleContextRestored?.();
   };
   canvas.addEventListener?.('webglcontextlost', onContextLost, false);
   canvas.addEventListener?.('webglcontextrestored', onContextRestored, false);
