@@ -33,11 +33,11 @@ export function createMissionView(THREE, world, objective) {
     const signal = new THREE.Mesh(isExit ? gate : crystal, material);
     signal.position.y = isExit ? 1.5 : 2.3;
     group.add(signal);
-    if (isExit) return { material, signal };
-
-    const pillar = new THREE.Mesh(stem, material);
-    pillar.position.y = 0.9;
-    group.add(pillar);
+    if (!isExit) {
+      const pillar = new THREE.Mesh(stem, material);
+      pillar.position.y = 0.9;
+      group.add(pillar);
+    }
     const fill = new THREE.RingGeometry(objective.radius - 0.32, objective.radius - 0.17, SEGMENTS);
     geometries.push(fill);
     const progress = new THREE.Mesh(fill, material);
@@ -64,6 +64,7 @@ export function createMissionView(THREE, world, objective) {
       const unlocked = mission.chargedCount === beacons.length;
       exit.material.color.setHex(unlocked ? CHARGED : LOCKED);
       exit.signal.visible = unlocked;
+      exit.fill.setDrawRange(0, Math.floor(mission.exitProgress / objective.exitHoldSeconds * SEGMENTS) * 6);
 
       let target = objective.exit;
       let nearest = Infinity;

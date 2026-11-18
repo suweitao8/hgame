@@ -12,7 +12,10 @@
 
 ## Follow-on scorecard work
 
-- Observe gameplay and iterate on navigation clarity, combat decisions, pacing, and replay value. Collect human playtest evidence before treating enjoyment or retention as verified.
+- The arena now has distinct synthesized combat and objective audio. Start with a procedural runner immediately, then attach the authored rig at the live player position. Keep visual asset waits passive in frozen snapshots.
+- Give each run a dodge decision. Add a pulse enemy that marks a fixed ground target before impact. Stepping out or jumping at the right moment avoids damage. A jump inside a beacon ring pauses charge and keeps progress. Leaving the ring still resets it. Exercise the rule, telegraph and normal browser controls.
+- Give the run a finale. The open gate visibly channels extraction while the player holds the zone. Charge persists while the player briefly dodges or clears space. Gate interference guarantees recognizable pulses during the hold. Validate both routes and compare no-dodge and timed-dodge runs.
+- Observe gameplay and iterate on navigation clarity, pacing, and replay value. Collect human playtest evidence before treating enjoyment or retention as verified.
 - The arena now loads an authored replacement glTF with five named animation roles. Browser playtests exercised animation switches, the spin notify, and a missing binding with a playable fallback. Its local release contains the same glTF bytes and loader.
 - Gameplay trace verified. The diagnostics service retains bounded tick-addressed events. The arena and playtest runner identify the affected beacon, player, or asset and the relevant opponent slot or animation name.
 - Re-evaluate the original seven categories using the playable game and verified evidence. Score gameplay, content production, runtime, and agent workflows under the existing HTML-only review criteria.

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clear 3D telegraphs from the renderer when the VFX system resets so warnings from a previous run cannot reappear.
+
 - Record bounded gameplay events in runtime diagnostics and collect them in AI playtest reports. The arena reference traces beacon interruptions and combat events in debug mode.
 
 - Upload Pixi atlas pixels through WebGPU's byte upload to keep GPU memory bounded across repeated renderer restarts.

@@ -1,12 +1,13 @@
 # Beacon Run / 信标撤离
 
-Charge both beacons and leave through the extraction gate. Either route works. Enemies pause the charge when they enter its perimeter, so time the spin to create space. Finishing saves the win count and fastest extraction time.
+Charge both beacons in either order, then hold the gate circle until extraction completes. Enemies inside a beacon's perimeter interrupt charging, so time the spin to create space. Tall violet sentries and the gate mark the floor before a pulse. Step clear or jump as it strikes. Jumping inside a beacon ring keeps charge already earned, and gate progress stays even if you briefly leave its circle. Finishing saves the win count and fastest extraction time for this course.
 
 This HGame 3D reference uses a spring-arm camera, adaptive presentation and deterministic rules in `src/sim/` at 60 Hz.
 
 ```powershell
 npm run build:examples   # from repo root: regenerates git-ignored vendor/ and assets/vendor/three
 node --test examples/arena-3d/tests/*.test.mjs
+node examples/arena-3d/tools/simulate-routes.mjs
 ```
 
 Controls: WASD/arrows move (camera-relative), Space jump, K/click spin, Q/E or mouse-drag orbit, U restart. QA: `?tier=low|medium|high&seed=N&god=1`.

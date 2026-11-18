@@ -1,5 +1,6 @@
 import {
   VFX_RENDER_ORDERS,
+  markAttributeRangeDirty,
   packRgb24,
   submitRingBufferRanges,
   unpackRgb24Into,
@@ -399,6 +400,12 @@ export function createTelegraphSystem({
     simTime = 0;
     cursor = dirtyStart = dirtyCount = totalSpawned = 0;
     p1.fill(0);
+    if (attrs) {
+      const durationAttribute = attrs[1];
+      durationAttribute.clearUpdateRanges?.();
+      markAttributeRangeDirty(durationAttribute, 0, p1.length);
+      mat.uniforms.uTime.value = 0;
+    }
   }
 
   function dispose() {

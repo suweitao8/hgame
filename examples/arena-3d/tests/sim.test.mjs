@@ -66,7 +66,11 @@ test('enemies chase, deal contact damage with invulnerability frames, and end th
   let sawIframes = false, last = sim.player.hp;
   for (let i = 0; i < 60 * 120 && !sim.state.over; i++) {
     sim.step(1 / 60, {});
-    if (sim.player.hp < last) { assert.ok(last - sim.player.hp === CONFIG.enemy.contactDamage || sim.player.hp === 0); sawIframes ||= sim.player.invuln > 0; last = sim.player.hp; }
+    if (sim.player.hp < last) {
+      assert.ok(sim.player.hp === 0 || [CONFIG.enemy.contactDamage, CONFIG.enemy.pulse.damage].includes(last - sim.player.hp));
+      sawIframes ||= sim.player.invuln > 0;
+      last = sim.player.hp;
+    }
   }
   assert.ok(sim.state.over && sim.player.hp === 0);
   assert.equal(sim.state.outcome, 'defeat');
@@ -78,7 +82,7 @@ test('enemies chase, deal contact damage with invulnerability frames, and end th
 test('beacons charge in either order and only the unlocked exit ends the run', () => {
   for (const order of [[0, 1], [1, 0]]) {
     const sim = make({ godMode: true, maxEnemies: 0 });
-    const { beacons, exit, holdSeconds } = CONFIG.mission;
+    const { beacons, exit, holdSeconds, exitHoldSeconds } = CONFIG.mission;
     const place = point => { sim.player.x = point.x; sim.player.z = point.z; };
     const charge = () => {
       for (let i = 0; i <= Math.ceil(holdSeconds * 60); i++) sim.step();
@@ -95,6 +99,8 @@ test('beacons charge in either order and only the unlocked exit ends the run', (
     assert.equal(sim.mission.chargedCount, 2);
     assert.equal(sim.state.over, false, 'charging does not complete the exit');
     place(exit); sim.step();
+    assert.equal(sim.state.over, false, 'the gate needs time to complete extraction');
+    for (let i = 0; i < Math.ceil(exitHoldSeconds * 60) - 1; i++) sim.step();
     assert.equal(sim.state.outcome, 'victory');
     assert.equal(sim.state.over, true);
     const tick = sim.state.tick;
@@ -191,4 +197,16 @@ test('victory count and fastest extraction survive older saved records', () => {
   assert.equal(loadBest(store).fastestWin, 21);
   assert.equal(loadBest(store).kills, 10);
   assert.equal(loadBest(store).runs, 5);
+});
+
+test('the longer extraction records its own fastest time while keeping previous results', () => {
+  let saved = { time: 30, kills: 10, level: 1, runs: 2, wins: 1, fastestWin: 13 };
+  const store = { get: () => saved, set(key, value) { saved = value; } };
+  assert.equal(loadBest(store, 'held-gate').fastestWin, null);
+  recordRun(store, { time: 22, kills: 7, level: 1, outcome: 'victory' }, 'held-gate');
+  recordRun(store, { time: 23, kills: 11, level: 1, outcome: 'victory' }, 'held-gate');
+  assert.equal(loadBest(store, 'held-gate').fastestWin, 22);
+  assert.equal(loadBest(store).fastestWin, 13);
+  assert.equal(loadBest(store).wins, 3);
+  assert.equal(loadBest(store).kills, 11);
 });

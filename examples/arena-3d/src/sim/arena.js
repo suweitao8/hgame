@@ -1,6 +1,6 @@
 // Arena brawler simulation: pure, deterministic (seeded RNG, fixed step), headless-testable.
 // A third-person character (jump, spin attack) fights chasing enemies in a walled arena with climbable boxes.
-import { CONFIG, TICK, TIER_BUDGET } from './config.js';
+import { CONFIG, ENEMY_KIND, TICK, TIER_BUDGET } from './config.js';
 import { createRng, createHasher } from './rng.js';
 import { pushCircleOutOfBox, circleOverlapsBox } from './collide.js';
 
@@ -20,11 +20,13 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     active: -1,
     progress: 0,
     blocked: false,
+    exitProgress: 0,
   };
   const pl = {
     x: 0, y: 0, z: 6, vx: 0, vz: 0, vy: 0, yaw: 0, hp: P.hp, grounded: true,
     invuln: 0, spinCd: 0, spinT: 0, spins: 0, jumps: 0,
   };
+  const pulse = E.pulse && { x: 0, y: 0, z: 0, resolveAt: 0, nextAt: 0 };
   // Enemy SoA, densely packed [0, count); death swaps the last enemy into the hole (deterministic order).
   const en = {
     count: 0, x: new Float64Array(cap), z: new Float64Array(cap), vx: new Float64Array(cap), vz: new Float64Array(cap),
@@ -59,7 +61,9 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     resolveStatics(x, z, E.radius, null, tmp); x = tmp.x; z = tmp.z;
     const i = en.count++;
     en.x[i] = x; en.z[i] = z; en.vx[i] = 0; en.vz[i] = 0; en.hp[i] = E.hp + (state.wave >= 4 ? 1 : 0);
-    en.hit[i] = 0; en.kind[i] = rng.int(3);
+    en.hit[i] = 0;
+    const kind = rng.int(ENEMY_KIND.PULSE);
+    en.kind[i] = pulse && state.spawned === 2 ? ENEMY_KIND.PULSE : kind;
     state.spawned++;
   }
 
@@ -76,6 +80,14 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     state.over = true;
     state.outcome = outcome;
     emit?.('run.finished', 'arena', { outcome, kills: state.kills });
+  }
+
+  function damagePlayer(amount, details) {
+    if (godMode || pl.invuln > 0) return false;
+    pl.hp = Math.max(0, pl.hp - amount);
+    pl.invuln = P.invuln;
+    emit?.('player.damaged', 'player', { hp: pl.hp, ...details });
+    return true;
   }
 
   function stepPlayer(dt, input) {
@@ -129,13 +141,14 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
       const al = Math.hypot(ax, az) || 1;
       const kd = Math.exp(-E.knockDecay * dt);
       en.vx[i] *= kd; en.vz[i] *= kd;
-      resolveStatics(en.x[i] + (ax / al * speed + en.vx[i]) * dt, en.z[i] + (az / al * speed + en.vz[i]) * dt, E.radius, null, tmp);
+      const canCast = pulse && en.kind[i] === ENEMY_KIND.PULSE;
+      const advance = canCast && d <= E.pulse.range * 0.65 ? 0 : speed;
+      resolveStatics(en.x[i] + (ax / al * advance + en.vx[i]) * dt, en.z[i] + (az / al * advance + en.vz[i]) * dt, E.radius, null, tmp);
       en.x[i] = tmp.x; en.z[i] = tmp.z;
       // Contact damage while the player is not airborne above the enemy.
       if (!godMode && pl.invuln === 0 && pl.y < 1.1 && d < P.radius + E.radius + 0.05) {
-        pl.hp = Math.max(0, pl.hp - E.contactDamage); pl.invuln = P.invuln;
-        emit?.('player.damaged', 'player', { hp: pl.hp, enemySlot: i });
-        if (pl.hp === 0) finish('defeat');
+        damagePlayer(E.contactDamage, { enemySlot: i });
+        if (pl.hp === 0) { finish('defeat'); return; }
       }
     }
   }
@@ -145,11 +158,47 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     return dx * dx + dz * dz <= radius * radius;
   }
 
+  function warnPulse(source, enemySlot = -1) {
+    const { radius, windup } = E.pulse;
+    pulse.x = pl.x;
+    pulse.y = supportHeight(pl.x, pl.z, pl.y);
+    pulse.z = pl.z;
+    pulse.resolveAt = state.time + windup;
+    emit?.('pulse.warned', 'pulse', { x: pulse.x, y: pulse.y, z: pulse.z, radius, windup, source, enemySlot });
+  }
+
+  function stepPulse() {
+    if (!pulse) return;
+    const { cooldown, radius, range, damage, jumpHeight } = E.pulse;
+    if (pulse.resolveAt > 0) {
+      if (state.time + 1e-9 < pulse.resolveAt) return;
+      pulse.resolveAt = 0;
+      pulse.nextAt = state.time + cooldown;
+      const hit = pl.y >= pulse.y && pl.y < pulse.y + jumpHeight && within(pl.x, pl.z, pulse, radius)
+        && damagePlayer(damage, { cause: 'pulse' });
+      emit?.('pulse.resolved', 'pulse', { x: pulse.x, y: pulse.y, z: pulse.z, radius, hit });
+      if (pl.hp === 0) finish('defeat');
+      return;
+    }
+    if (state.time + 1e-9 < pulse.nextAt) return;
+    if (mission?.exitProgress > 0 && within(pl.x, pl.z, objective.exit, range)) {
+      warnPulse('exit');
+      return;
+    }
+    for (let i = 0; i < en.count; i++) {
+      if (en.kind[i] !== ENEMY_KIND.PULSE || Math.hypot(en.x[i] - pl.x, en.z[i] - pl.z) > range) continue;
+      warnPulse('sentry', i);
+      return;
+    }
+  }
+
   function stepMission(dt) {
     let active = -1;
     if (pl.grounded) {
       active = objective.beacons.findIndex((beacon, i) =>
         !mission.charged[i] && within(pl.x, pl.z, beacon, objective.radius));
+    } else if (mission.active >= 0 && within(pl.x, pl.z, objective.beacons[mission.active], objective.radius)) {
+      active = mission.active;
     }
     const wasBlocked = active === mission.active && mission.blocked;
     if (active !== mission.active) {
@@ -168,6 +217,7 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
         return;
       }
       if (wasBlocked) emit?.('beacon.resumed', `beacon:${active}`);
+      if (!pl.grounded) return;
       mission.progress += dt;
       if (mission.progress + 1e-9 >= objective.holdSeconds) {
         mission.charged[active] = 1;
@@ -180,7 +230,16 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     }
     if (mission.chargedCount === objective.beacons.length && pl.grounded &&
         within(pl.x, pl.z, objective.exit, objective.radius)) {
-      finish('victory');
+      const hold = objective.exitHoldSeconds ?? 0;
+      if (mission.exitProgress === 0) {
+        emit?.('exit.started', 'exit', { hold });
+        if (hold > 0 && pulse && pulse.resolveAt === 0) warnPulse('exit');
+      }
+      mission.exitProgress += dt;
+      if (mission.exitProgress + 1e-9 >= hold) {
+        mission.exitProgress = hold;
+        finish('victory');
+      }
     }
   }
 
@@ -195,6 +254,7 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
       spawnEnemy();
     }
     stepEnemies(dt);
+    if (!state.over) stepPulse();
     if (mission && !state.over) stepMission(dt);
   }
 
@@ -204,15 +264,20 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     for (const k of ['x', 'y', 'z', 'vx', 'vy', 'vz', 'yaw', 'hp', 'spins', 'jumps']) h.number(pl[k]);
     h.number(en.count);
     h.bytes(en.x.subarray(0, en.count)); h.bytes(en.z.subarray(0, en.count)); h.bytes(en.hp.subarray(0, en.count));
+    h.bytes(en.kind.subarray(0, en.count));
     h.number(rng.state);
     if (mission) {
       h.bytes(mission.charged);
       h.number(mission.active);
       h.number(mission.progress);
+      h.number(mission.exitProgress);
       h.number(state.outcome === 'victory' ? 1 : 0);
+    }
+    if (pulse) {
+      h.number(pulse.x); h.number(pulse.y); h.number(pulse.z); h.number(pulse.resolveAt); h.number(pulse.nextAt);
     }
     return h.hex();
   }
 
-  return { config, state, mission, player: pl, en, cap, tier, step, checksum, supportHeight };
+  return { config, state, mission, pulse, player: pl, en, cap, tier, step, checksum, supportHeight };
 }

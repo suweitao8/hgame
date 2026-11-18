@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as THREE from '../assets/optional/three/three.module.js';
 
 import {
   CROWD_STATUS,
@@ -168,4 +169,35 @@ test('createVfxSystem runs cleanly in headless and canvas2d fallback modes', () 
   vfx2d.render(mockCtx, { x: 0, y: 0, zoom: 1 }, 960, 540);
   assert.ok(ops.includes('save') && ops.includes('restore'));
   vfx2d.dispose();
+});
+
+test('reset immediately clears uploaded 3D telegraphs, including the shrink zone', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxTelegraphs: 4, maxParticles: 8 });
+  try {
+    vfx.update(0.5);
+    const slot = vfx.spawnTelegraph({ duration: 1 });
+    vfx.setShrinkZone({ active: true });
+    vfx.update(0.25);
+    const mesh = scene.getObjectByName('HGameVfxTelegraphs');
+    const instances = mesh.geometry.getAttribute('aTeleP1');
+    assert.equal(instances.array[slot * 4 + 3], 1);
+    assert.equal(instances.array[instances.array.length - 1], 99999);
+
+    // Three consumes the queued ranges after sending them to the GPU.
+    instances.clearUpdateRanges();
+    const uploadedVersion = instances.version;
+    vfx.reset();
+    assert.equal(instances.version, uploadedVersion + 1);
+    assert.deepEqual(instances.updateRanges, [{ start: 0, count: instances.array.length }]);
+    assert.ok(instances.array.every(value => value === 0));
+    assert.equal(mesh.material.uniforms.uTime.value, 0);
+
+    const next = vfx.spawnTelegraph({ duration: 2 });
+    vfx.update(0.1);
+    assert.equal(instances.array[next * 4 + 3], 2);
+    assert.equal(instances.array[instances.array.length - 1], 0);
+  } finally {
+    vfx.dispose();
+  }
 });

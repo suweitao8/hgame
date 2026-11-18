@@ -4,6 +4,9 @@ const VICTORY = Object.freeze({
   duration: 0.55,
   noiseMix: 0,
 });
+const PULSE_WARNING = Object.freeze({
+  preset: 'laser', freqStart: 410, freqEnd: 790, duration: 0.32, noiseMix: 0.03,
+});
 
 export function arenaCue({ type, details }, totalBeacons) {
   switch (type) {
@@ -11,6 +14,8 @@ export function arenaCue({ type, details }, totalBeacons) {
     case 'player.damaged': return 'hurt';
     case 'beacon.charged': return details.chargedCount < totalBeacons ? 'pickup' : null;
     case 'exit.opened': return 'powerup';
+    case 'pulse.warned': return PULSE_WARNING;
+    case 'pulse.resolved': return details.hit ? null : 'explosion';
     case 'run.finished': return details.outcome === 'victory' ? VICTORY : null;
     default: return null;
   }

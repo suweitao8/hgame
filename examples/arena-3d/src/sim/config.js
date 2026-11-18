@@ -1,5 +1,6 @@
 // Tunable constants for the arena sim. Pure data: no engine imports, safe in Node and the browser.
 export const TICK = 1 / 60;
+export const ENEMY_KIND = Object.freeze({ CHASER: 0, CHASER_AMBER: 1, CHASER_MAGENTA: 2, PULSE: 3 });
 
 // Quality tier -> sim/view budget. The tier is chosen once per run (enemy cap changes gameplay, so it is part
 // of the sim config and of the seed's replay identity), never mid-run.
@@ -29,9 +30,11 @@ export const CONFIG = Object.freeze({
     radius: 2,
     dangerRadius: 2.65,
     holdSeconds: 2,
+    exitHoldSeconds: 7.5,
   }),
   player: { radius: 0.45, speed: 6.5, accel: 40, jumpSpeed: 8.2, gravity: 24, stepUp: 0.35, hp: 100,
     invuln: 0.6, spinCooldown: 0.9, spinRadius: 3, spinKnock: 9, spinDamage: 1, spinTime: 0.25 },
   enemy: { radius: 0.5, speed: 2.4, speedGain: 0.012, speedMax: 4.2, hp: 2, contactDamage: 9, separation: 3.2,
-    spawnRadius: 16, spawnEvery: 1.6, spawnEveryMin: 0.45, knockDecay: 6 },
+    spawnRadius: 16, spawnEvery: 1.6, spawnEveryMin: 0.45, knockDecay: 6,
+    pulse: Object.freeze({ range: 6.2, radius: 1.65, windup: 0.8, cooldown: 3.2, jumpHeight: 0.55, damage: 20 }) },
 });

@@ -1,7 +1,7 @@
 // Arena Brawler: reference game for the HGame 3D profile (three adapter + spring-arm camera + adaptive quality).
 // Rules live in ./sim (pure, headless-testable). This file wires input, procedural meshes, camera and HUD.
 import { createArenaSim } from './sim/arena.js';
-import { TIER_BUDGET, CONFIG } from './sim/config.js';
+import { TIER_BUDGET, CONFIG, ENEMY_KIND } from './sim/config.js';
 import { rayBoxes } from './sim/collide.js';
 import { recordRun, loadBest } from './meta.js';
 import { createMissionView } from './mission-view.js';
@@ -13,7 +13,7 @@ const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
   gameConfig, engineConfig, { createGameApplication }, { defineProject },
   { Component }, { Entity }, { Scene }, { createSaveStore }, { createArcadeControls },
-  { createThreeAdapter }, { createSpringArm3D }, { createTouchControls }, { createModel3DProvider }, THREE,
+  { createThreeAdapter }, { createSpringArm3D }, { createTouchControls }, { createModel3DProvider }, { createVfxSystem }, THREE,
 ] = await Promise.all([
   fetch('./game.config.json').then(r => r.json()),
   fetch('./engine.config.json').then(r => r.json()),
@@ -28,12 +28,14 @@ const [
   import(base + '/integrations/camera3d.js'),
   import(base + '/integrations/touch-controls.js'),
   import(base + '/integrations/model3d.js'),
+  import(base + '/vfx/index.js'),
   import('../assets/vendor/three/three.module.js'),
 ]);
 
 // QA knobs: ?seed=N, ?tier=low|medium|high (otherwise the adaptive controller picks), ?god=1 for invulnerability.
 const params = new URLSearchParams(location.search);
 const seed = Number(params.get('seed') || 1);
+const course = 'held-gate';
 const god = params.get('god') === '1';
 const debug = params.get('debug') === '1';
 const lifetime = new AbortController();
@@ -76,6 +78,13 @@ if (audio?.available) {
 
 function onEvent(event) {
   trace?.recordEvent(event);
+  if (event.type === 'pulse.warned') {
+    const { x, y, z, radius, windup } = event.details;
+    vfx.spawnTelegraph({ x, y, z, radius, duration: windup, color: 0xff467c });
+  } else if (event.type === 'pulse.resolved') {
+    const { x, y, z, radius } = event.details;
+    vfx.spawnTelegraph({ shape: 'ring', x, y, z, radius, innerRatio: 0.76, duration: 0.18, color: 0xffbb8b });
+  }
   if (audioContext?.state !== 'running') return;
   const cue = arenaCue(event, CONFIG.mission.beacons.length);
   if (cue) audio.playSynth(cue, { volume: 0.54 });
@@ -84,13 +93,14 @@ function onEvent(event) {
 // The enemy cap is part of the sim config, so it is fixed per run from the tier we start in.
 const tierNow = () => renderer.qualityController?.state.tier ?? 'high';
 const newSim = s => createArenaSim({ seed: s, tier: tierNow(), godMode: god, onEvent });
-let sim = newSim(seed);
-let best = loadBest(save);
-let saved = false;
 
 // ---- scene: procedural meshes only ----
 const scene = app.scenes.add(new Scene('arena'));
 const world = renderer.getWorld(scene);
+const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: world, maxParticles: 128, maxFloatingGlyphs: 32 });
+let sim = newSim(seed);
+let best = loadBest(save, course);
+let saved = false;
 const SKY = 0x0d1522;
 world.background = new THREE.Color(SKY);
 world.fog = new THREE.Fog(SKY, 22, 60);
@@ -136,7 +146,7 @@ const enemyMesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(CONFIG.e
 enemyMesh.castShadow = true; enemyMesh.frustumCulled = false; enemyMesh.count = 0;
 enemyMesh.setColorAt(0, new THREE.Color(0xffffff));
 world.add(enemyMesh);
-const kindColor = [new THREE.Color(0xe0566b), new THREE.Color(0xe08a3c), new THREE.Color(0xc454e0)];
+const kindColor = [new THREE.Color(0xe0566b), new THREE.Color(0xe08a3c), new THREE.Color(0xc454e0), new THREE.Color(0x8b65f9)];
 const flash = new THREE.Color(0xffffff);
 const mat4 = new THREE.Matrix4(), pos = new THREE.Vector3(), quat = new THREE.Quaternion(), scl = new THREE.Vector3(1, 1, 1);
 const flashLeft = new Float32Array(MAXE);
@@ -193,14 +203,16 @@ function syncHud() {
     hud.outcome.textContent = state.outcome === 'victory' ? '撤离成功' : '失守';
     if (!saved) {
       saved = true;
-      const run = recordRun(save, { time: state.time, kills: state.kills, level: 1, outcome: state.outcome });
+      const run = recordRun(save, { time: state.time, kills: state.kills, level: 1, outcome: state.outcome }, course);
       best = run.best;
-      hud.result.textContent = `✦ ${state.kills} · ${state.time.toFixed(1)}s${run.record ? ' ★' : ''}`;
+      const record = best.fastestWin === null ? '' : ` · ★ ${best.fastestWin.toFixed(1)}s`;
+      hud.result.textContent = `✦ ${state.kills} · ${state.time.toFixed(1)}s${record}`;
     }
     hud.gameover.hidden = false;
   }
 }
 function restart() {
+  vfx.reset();
   sim = newSim(seed + Math.floor(performance.now()));
   saved = false; hud.gameover.hidden = true; window.__arena.sim = sim;
   arm.snap({ x: sim.player.x, y: 0, z: sim.player.z });
@@ -221,7 +233,9 @@ function syncView(dt) {
   for (let i = 0; i < en.count; i++) {
     if (en.hit[i]) { en.hit[i] = 0; flashLeft[i] = 0.08; }
     flashLeft[i] = Math.max(0, flashLeft[i] - dt);
-    pos.set(en.x[i], CONFIG.enemy.radius, en.z[i]);
+    const sentry = en.kind[i] === ENEMY_KIND.PULSE;
+    pos.set(en.x[i], CONFIG.enemy.radius * (sentry ? 1.8 : 1), en.z[i]);
+    scl.set(sentry ? 0.76 : 1, sentry ? 1.6 : 1, sentry ? 0.76 : 1);
     mat4.compose(pos, quat, scl); enemyMesh.setMatrixAt(i, mat4);
     enemyMesh.setColorAt(i, flashLeft[i] > 0 ? flash : kindColor[en.kind[i]]);
   }
@@ -235,6 +249,7 @@ class Driver extends Component {
     lifetime.abort();
     touch.dispose();
     missionView.dispose();
+    vfx.dispose();
     el('restart').onclick = null;
     if (trace && window.__hgameTrace === trace.readEvents) delete window.__hgameTrace;
   }
@@ -254,6 +269,7 @@ class Driver extends Component {
     arm.addAngles((app.input.isDown('KeyQ') - app.input.isDown('KeyE')) * 2.2 * dt, 0);
     if (sim.state.over && (p1.consumeBuffered('restart') || app.input.isDown('KeyU'))) { restart(); return; }
     sim.step(dt, input);
+    vfx.update(dt);
   }
   lateUpdate(dt) { syncView(dt); syncHud(); }
 }
@@ -280,6 +296,7 @@ window.__hgameState = () => ({ phase: sim.state.over ? 'over' : 'playing', tick:
   time: sim.state.time, kills: sim.state.kills, enemies: sim.en.count,
   outcome: sim.state.outcome,
   animation: runner?.role ?? null,
+  pulse: { ...sim.pulse },
   mission: { ...sim.mission, charged: Array.from(sim.mission.charged), exitOpen: sim.mission.chargedCount === CONFIG.mission.beacons.length },
   player: { x: sim.player.x, y: sim.player.y, z: sim.player.z, hp: sim.player.hp }, best: { ...best },
   running: app.running, disposed: app.disposed, scheduler: app.stats });
