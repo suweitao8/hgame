@@ -14,7 +14,8 @@ const mime = {
   '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.bin': 'application/octet-stream',
   '.wasm': 'application/wasm', '.ogg': 'audio/ogg',
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.mp4': 'video/mp4',
-  '.woff2': 'font/woff2',
+  '.woff2': 'font/woff2', '.woff': 'font/woff',
+  '.ttf': 'font/ttf', '.otf': 'font/otf',
 };
 const forbidden = new Set(['.git', '.svn', 'node_modules', 'tests', 'tools', 'scripts', 'build', 'analysis', 'private', '.env']);
 
