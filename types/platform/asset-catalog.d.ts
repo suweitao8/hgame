@@ -12,10 +12,11 @@ export function listCatalogFiles(data: AssetCatalogDefinition): string[];
 /**
  * Load assets by logical ID and deduplicate downloads/decodes across active scopes.
  * @param {AssetCatalogDefinition} data
- * @param {{loader: import('./assets.js').AssetLoader}} options
+ * @param {{loader: import('./assets.js').AssetLoader, maxConcurrentLoads?: number}} options Queue distinct downloads and decodes together across scopes (default 6).
  */
-export function createAssetCatalog(data: AssetCatalogDefinition, { loader }: {
+export function createAssetCatalog(data: AssetCatalogDefinition, { loader, maxConcurrentLoads }: {
     loader: import("./assets.js").AssetLoader;
+    maxConcurrentLoads?: number;
 }): {
     definition: Readonly<{
         schemaVersion: 1;

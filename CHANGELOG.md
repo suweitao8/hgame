@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bound concurrent asset catalog downloads and decodes across scene scopes, and cancel a disposed scope's pending waits independently of shared requests.
+
 - Reduce world-transform calculations and single-component dispatch overhead, and stop physics stepping when an update switches away from its scene.
 
 - Limit 3D A* workspace updates to visited cells, support per-query node budgets, and preserve traversability when smoothing paths or snapping destinations.

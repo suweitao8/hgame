@@ -382,7 +382,7 @@
   {"name":"RapierPhysicsWorld3D","tier":"stable","declaredIn":"physics/rapier3d.js","summary":"3D deterministic Rapier world class.","kind":"const","type":"import(\"./physics/rapier-world\").RapierPhysicsWorldConstructor"}
  ]},
  "platform/asset-catalog.js":{"tier":"experimental","exports":[
-  {"name":"createAssetCatalog","tier":"experimental","declaredIn":"platform/asset-catalog.js","summary":"Load assets by logical ID and deduplicate downloads/decodes across active scopes.","kind":"function","signature":"(data, {loader})","returns":["definition","dispose","get","openScope","projectPath","url"]},
+  {"name":"createAssetCatalog","tier":"experimental","declaredIn":"platform/asset-catalog.js","summary":"Load assets by logical ID and deduplicate downloads/decodes across active scopes.","kind":"function","signature":"(data, {loader, maxConcurrentLoads=6})","returns":["definition","dispose","get","openScope","projectPath","url"]},
   {"name":"listCatalogFiles","tier":"experimental","declaredIn":"platform/asset-catalog.js","summary":"","kind":"function","signature":"(data)","returns":["at","concat","copyWithin","entries","every","fill","filter","find","findIndex","flat","flatMap","forEach","includes","indexOf","join","keys","lastIndexOf","length","map","pop","push","reduce","reduceRight","reverse","shift","slice","some","sort","splice","toLocaleString","toString","unshift","values"]},
   {"name":"normalizeAssetCatalog","tier":"experimental","declaredIn":"platform/asset-catalog.js","summary":"Normalize a logical asset catalog. The release packager uses the same rules as the browser.","kind":"function","signature":"(data)","returns":["assets","groups","schemaVersion"]}
  ]},

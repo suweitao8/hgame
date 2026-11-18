@@ -31,6 +31,8 @@ const heroModelPath = catalog.projectPath('hero.model');
 
 Call `scope.dispose()` after removing the scene's consumers. The catalog shares active acquisitions by file and load kind. An image acquired by two scenes stays available until both release it. The final release drops WebGL2 textures and Canvas2D tint buffers for that image, then closes the decoded bitmap. When nothing holds a pending request, the catalog signals its cancellation and closes any bitmap that arrives afterward. On a failed group load, dispose the abandoned scope. `catalog.dispose()` releases all its scopes.
 
+By default the catalog runs at most six distinct downloads and decodes at once across all its scopes. Supply `maxConcurrentLoads` when creating a catalog to tune that limit. Shared requests use one slot, and model or URL entries resolve without taking a slot. Disposing a scope immediately rejects its pending waits. Other scopes keep their shared requests, and queued assets with no remaining owners never start.
+
 Pass asset groups to a level route so the level flow opens and releases each scene's scope. [Level flow guide](systems/24-level-flow.md)
 
 `image` returns the loader's decoded image. `audio` and `bytes` return `ArrayBuffer`. `model` and `url` return a resolved URL. The existing audio and model providers still own decoding and GPU resources. Treat values shared between scopes as read-only. If an audio decoder transfers its input, pass a copy of the bytes. `files` includes sidecars the consuming loader requests itself.

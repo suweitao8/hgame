@@ -66,28 +66,40 @@ export function listCatalogFiles(data) {
 
 function aborted() { return new DOMException('Asset scope released', 'AbortError'); }
 
-/** @param {Promise<unknown>} promise @param {AbortSignal | undefined} signal */
-function waitForAsset(promise, signal) {
-  if (!signal) return promise;
+/** @param {Promise<unknown>} promise @param {AbortSignal | undefined} signal @param {Set<() => void>} waiters */
+function waitForAsset(promise, signal, waiters) {
   return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener('abort', abort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
-    if (signal.aborted) abort();
+    function finish() {
+      if (!waiters.delete(release)) return false;
+      signal?.removeEventListener('abort', abort);
+      return true;
+    }
+    function release() { if (finish()) reject(aborted()); }
+    function abort() { if (finish()) reject(signal.reason); }
+    waiters.add(release);
+    signal?.addEventListener('abort', abort, { once: true });
+    promise.then(value => { if (finish()) resolve(value); }, error => { if (finish()) reject(error); });
+    if (signal?.aborted) abort();
   });
 }
 
 /**
  * Load assets by logical ID and deduplicate downloads/decodes across active scopes.
  * @param {AssetCatalogDefinition} data
- * @param {{loader: import('./assets.js').AssetLoader}} options
+ * @param {{loader: import('./assets.js').AssetLoader, maxConcurrentLoads?: number}} options Queue distinct downloads and decodes together across scopes (default 6).
  */
-export function createAssetCatalog(data, { loader }) {
+export function createAssetCatalog(data, { loader, maxConcurrentLoads = 6 }) {
+  if (!Number.isSafeInteger(maxConcurrentLoads) || maxConcurrentLoads < 1) {
+    throw new RangeError('Asset catalog maxConcurrentLoads must be a positive integer');
+  }
   const definition = normalizeAssetCatalog(data);
   /** @type {Map<string, Acquisition>} */
   const acquired = new Map();
   /** @type {Set<AssetScope>} */
   const scopes = new Set();
+  /** @type {Map<Acquisition, {entry: AssetDescriptor, resolve: (value: unknown) => void, reject: (reason: unknown) => void}>} */
+  const queue = new Map();
+  let running = 0;
   let disposed = false;
 
   /** @param {string} id @returns {AssetDescriptor} */
@@ -109,6 +121,37 @@ export function createAssetCatalog(data, { loader }) {
     }
   }
 
+  function drainQueue() {
+    while (running < maxConcurrentLoads && queue.size > 0) {
+      const [record, job] = queue.entries().next().value;
+      queue.delete(record);
+      running++;
+      const signal = record.controller.signal;
+      void Promise.resolve().then(() => {
+        signal.throwIfAborted();
+        return request(job.entry, signal);
+      }).then(job.resolve, job.reject).finally(() => {
+        running--;
+        drainQueue();
+      });
+    }
+  }
+
+  /** @param {Acquisition} record @param {AssetDescriptor} entry */
+  function schedule(record, entry) {
+    // Resolving a URL does not download or decode anything.
+    if (entry.kind === 'url' || entry.kind === 'model') {
+      return Promise.resolve().then(() => {
+        record.controller.signal.throwIfAborted();
+        return request(entry, record.controller.signal);
+      });
+    }
+    return new Promise((resolve, reject) => {
+      queue.set(record, { entry, resolve, reject });
+      drainQueue();
+    });
+  }
+
   /** @param {Acquisition} record */
   function close(record) {
     if (!record.ready) return;
@@ -123,7 +166,13 @@ export function createAssetCatalog(data, { loader }) {
     record.refs--;
     if (record.refs !== 0) return;
     if (acquired.get(record.key) === record) acquired.delete(record.key);
-    record.controller.abort(aborted());
+    const reason = aborted();
+    record.controller.abort(reason);
+    const queued = queue.get(record);
+    if (queued) {
+      queue.delete(record);
+      queued.reject(reason);
+    }
     close(record);
   }
 
@@ -132,10 +181,7 @@ export function createAssetCatalog(data, { loader }) {
     const controller = new AbortController();
     /** @type {Acquisition} */
     const record = { key, refs: 0, controller, promise: Promise.resolve(), ready: false, value: undefined, image: entry.kind === 'image' };
-    record.promise = Promise.resolve().then(() => {
-      controller.signal.throwIfAborted();
-      return request(entry, controller.signal);
-    }).then(result => {
+    record.promise = schedule(record, entry).then(result => {
       record.ready = true;
       record.value = result;
       if (record.image) retainScopedImage(result);
@@ -160,6 +206,8 @@ export function createAssetCatalog(data, { loader }) {
       if (disposed) throw new Error('Asset catalog is disposed');
       /** @type {Map<string, Acquisition>} */
       const held = new Map();
+      /** @type {Set<() => void>} */
+      const waiters = new Set();
       let released = false;
       /** @type {AssetScope} */
       const scope = {
@@ -175,7 +223,7 @@ export function createAssetCatalog(data, { loader }) {
             record.refs++;
           }
           try {
-            const result = await waitForAsset(record.promise, signal);
+            const result = await waitForAsset(record.promise, signal, waiters);
             if (released) throw aborted();
             return result;
           } catch (error) {
@@ -201,6 +249,7 @@ export function createAssetCatalog(data, { loader }) {
           if (released) return;
           released = true;
           scopes.delete(scope);
+          for (const release of waiters) release();
           const records = [...held.values()];
           held.clear();
           cleanupAll(records.map(record => () => drop(record)), 'Asset scope disposal failed');
