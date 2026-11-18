@@ -43,10 +43,11 @@
 npm test
 npm run check
 
-# Query engine capability map, runnable recipe, or API via the HGame engine root (<hgame-repo>):
-node "<hgame-repo>/scripts/query-api.mjs" --map
-node "<hgame-repo>/scripts/query-api.mjs" --recipe 2d
-node "<hgame-repo>/scripts/query-api.mjs" <keyword>
+# Query the API for this game's bundled runtime and open its starter entry:
+npm run api -- --map
+npm run api -- --recipe current
+npm run api -- --module level-flow --json
+# Engine-wide tools still run from the HGame repository:
 node "<hgame-repo>/scripts/snapshot.mjs" .
 node "<hgame-repo>/scripts/playtest.mjs" . --duration 2000 --actions "d:300,w:300,j:150"
 node "<hgame-repo>/.agents/skills/hgame-balance-sim/scripts/sim-balance.mjs" --config <balance.json>

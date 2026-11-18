@@ -4,9 +4,9 @@
 
 ## 工程目录
 
-- `src/main.js`：当前选定 Profile 的入口文件。
+- `src/main.js`：默认源码入口。Pixi 空白与群怪模板使用各自的入口，运行 `npm run api -- --recipe current` 可查看生成时选择的入口及当前代码。
 - `src/`：游戏规则、状态、AI、关卡与表现逻辑。
-- `vendor/hgame/`：内置精简版 HGame 运行时副本，无任何外部 CDN 依赖。
+- `vendor/hgame/`：内置 HGame 运行时和同版本的 TypeScript 声明，可直接从本目录导入。
 - `assets/vendor/three/`：仅 3D 工程拷贝的 Three.js 运行时文件。
 - `engine.config.json`：HGame Profile（`2d` / `3d` / `ui`）、渲染器、确定性物理后端与特性列表。
 - `hgame.project.json`：使用 `--preset` 生成时会包含这个文件。`runtime: "entry-graph"` 按入口保留运行时代码。计算式导入可以通过 `includeRuntime`（相对 `vendor/hgame/`）和 `includeSource`（相对 `src/`）补充。
@@ -14,6 +14,7 @@
 - `assets.manifest.json`：美术/音频资产清单（路径、SHA-256 与体积元数据，提交到 Git；二进制文件本身由 `.gitignore` 忽略，通过统一资产库同步）。
 - `assets/catalog.json`：预设项目的逻辑资源 ID、文件和资源组。代码可按 ID 加载。将 `hgame.project.json` 中的 `assetMode` 改为 `catalog` 后，发布会收集目录列出的资源和脚本、HTML、CSS 直接引用的文件。
 - `scripts/assets.mjs` & `scripts/package-game.mjs`：统一资产同步与精简依赖追踪打包脚本。
+- `docs/api/API-INDEX.json`：项目自带的 API 索引，运行 `npm run api -- --map` 或 `npm run api -- --module <模块名> --json` 查询。
 
 ## 统一美术资产管理（Git 只维护代码与清单）
 

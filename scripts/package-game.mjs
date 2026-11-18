@@ -1195,7 +1195,8 @@ export async function packageEngineRelease({
       const relPosix = `${toPosixRel(srcRel)}/${toPosixRel(item.rel)}`;
       const lower = relPosix.toLowerCase();
       const parts = lower.split('/');
-      if (parts.some(p => p === '.git' || p === 'node_modules' || p === 'dist' || p === 'build' || p === '.re-workspace' || p.startsWith('.hgame.local'))) continue;
+      if (parts.some(p => p === '.git' || p === 'node_modules' || p === 'build' || p === '.re-workspace' || p.startsWith('.hgame.local'))) continue;
+      if (parts.includes('dist') && !lower.startsWith('assets/profiles/pixi2d/dist/')) continue;
       if (SKIP_BASENAMES.has(parts[parts.length - 1])) continue;
       if (filterFn && !filterFn(relPosix)) continue;
       const dst = path.join(targetDir, ...relPosix.split('/'));
@@ -1212,6 +1213,7 @@ export async function packageEngineRelease({
   fileCount += await copyTree('assets/profiles');
   fileCount += await copyTree('assets/optional/three');
   fileCount += await copyTree('scripts');
+  fileCount += await copyTree('types', rel => rel.endsWith('.d.ts'));
   fileCount += await copyTree('docs', rel => !rel.startsWith('docs/superpowers/'));
   fileCount += await copyTree('.agents/skills');
 

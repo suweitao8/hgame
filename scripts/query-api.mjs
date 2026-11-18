@@ -11,12 +11,16 @@ import { recipeCreateCommand } from './project-profiles.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const indexPath = path.join(root, 'docs', 'api', 'API-INDEX.json');
-const typesRoot = path.join(root, 'types');
+const vendorRoot = path.join(root, 'vendor', 'hgame');
+const standalone = fs.existsSync(path.join(vendorRoot, 'VERSION'));
+const typesRoot = standalone ? vendorRoot : path.join(root, 'types');
 
 function printUsage() {
   console.log('Usage:');
   console.log('  npm run api -- --map                 Compact intent -> module capability router');
-  console.log('  npm run api -- --recipe <type>       Minimal runnable wiring for 2d|horde|3d|ui|network');
+  console.log(standalone
+    ? '  npm run api -- --recipe current      Show the source entry selected at project creation'
+    : '  npm run api -- --recipe <type>       Minimal runnable wiring for 2d|horde|3d|ui|network');
   console.log('  npm run api -- <keyword>             Search modules, exports, and summaries');
   console.log('  npm run api -- --module <name>       List exports in matching module(s)');
   console.log('  npm run api -- --list                List all indexed runtime modules');
@@ -54,8 +58,8 @@ const CAPABILITY_MAP = [
 ];
 
 const RECIPES = {
-  '2d': `// Create: ${recipeCreateCommand('2d')}\n// The generated src/bare.js is the empty PixiJS scene entry.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/bare.js'), 'utf8')}`,
-  horde: `// Create: ${recipeCreateCommand('horde')}\n// Generated src/horde.js connects the HGame CPU swarm to PixiJS.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/horde.js'), 'utf8')}`,
+  '2d': () => `// Create: ${recipeCreateCommand('2d')}\n// The generated src/bare.js is the empty PixiJS scene entry.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/bare.js'), 'utf8')}`,
+  horde: () => `// Create: ${recipeCreateCommand('horde')}\n// Generated src/horde.js connects the HGame CPU swarm to PixiJS.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/horde.js'), 'utf8')}`,
   '3d': `// Create: ${recipeCreateCommand('3d')}
 import * as THREE from '../assets/vendor/three/three.module.js';
 import { defineProject } from '../vendor/hgame/core/config.js';
@@ -191,11 +195,19 @@ function formatExport(exp, dtsText) {
 const args = parseArgs(process.argv.slice(2));
 
 if (args.mapOnly) {
+  const hasPixi = fs.existsSync(path.join(root, 'src', 'engine', 'Renderer2D.js'));
+  const map = standalone
+    ? CAPABILITY_MAP
+      .filter(row => !row.module.includes('generated project') || hasPixi)
+      .map(row => row.module === 'scripts/*.mjs'
+        ? { need: 'Package the game', module: 'scripts/package-game.mjs', keyApis: 'npm run release -- --version 1.0' }
+        : { ...row, keyApis: row.keyApis.replace(/; npm run (?:api -- --recipe \w+|process:model3d)$/, '') })
+    : CAPABILITY_MAP;
   if (args.jsonOut) {
-    console.log(JSON.stringify(CAPABILITY_MAP, null, 2));
+    console.log(JSON.stringify(map, null, 2));
   } else {
     console.log('=== HGame 1.0.0 Capability Map (Need -> Runtime Module -> Key APIs) ===');
-    for (const row of CAPABILITY_MAP) {
+    for (const row of map) {
       console.log(`- [${row.need}] => ${row.module}`);
       console.log(`    ${row.keyApis}`);
     }
@@ -205,25 +217,43 @@ if (args.mapOnly) {
 
 if (args.recipeQuery) {
   const key = args.recipeQuery.toLowerCase();
-  const code = RECIPES[key];
-  if (!code) {
-    console.error(`Unknown recipe "${args.recipeQuery}". Valid recipes: ${Object.keys(RECIPES).join(', ')}`);
+  const validRecipes = standalone ? ['current'] : Object.keys(RECIPES);
+  if (!validRecipes.includes(key)) {
+    console.error(`Unknown recipe "${args.recipeQuery}". Valid recipes: ${validRecipes.join(', ')}`);
     process.exit(1);
   }
-  if (args.jsonOut) {
-    console.log(JSON.stringify({ recipe: key, code }, null, 2));
+  let entry;
+  let code;
+  if (standalone) {
+    ({ projectEntry: entry } = readApiIndex());
+    if (typeof entry !== 'string' || !/^src\/[\w-]+\.js$/.test(entry) || !fs.existsSync(path.join(root, entry))) {
+      console.error('The starter entry recorded in docs/api/API-INDEX.json is missing or invalid.');
+      process.exit(1);
+    }
+    code = fs.readFileSync(path.join(root, entry), 'utf8');
   } else {
-    console.log(`=== HGame Recipe: ${key} ===\n${code}`);
+    const recipe = RECIPES[key];
+    code = typeof recipe === 'function' ? recipe() : recipe;
+  }
+  if (args.jsonOut) {
+    console.log(JSON.stringify({ recipe: key, ...(entry ? { entry } : {}), code }, null, 2));
+  } else {
+    console.log(`=== HGame Recipe: ${entry ?? key} ===\n${code}`);
   }
   process.exit(0);
 }
 
-if (!fs.existsSync(indexPath)) {
-  console.error('Missing docs/api/API-INDEX.json. Run: npm run build:api-index');
-  process.exit(1);
+function readApiIndex() {
+  if (!fs.existsSync(indexPath)) {
+    console.error(standalone
+      ? 'Missing docs/api/API-INDEX.json. Restore the API index from the engine version used to create the project.'
+      : 'Missing docs/api/API-INDEX.json. Run: npm run build:api-index');
+    process.exit(1);
+  }
+  return JSON.parse(fs.readFileSync(indexPath, 'utf8'));
 }
 
-const apiIndex = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+const apiIndex = readApiIndex();
 const modules = apiIndex.modules || {};
 // These adapters belong to generated games rather than the renderer-neutral runtime.
 // Include them in the same lookup without pretending they are vendor/hgame modules.
@@ -240,10 +270,16 @@ const pixiStarterModules = {
   'src/engine/InputAndAudio.js': { exports: [{ kind: 'class', name: 'InputAndAudio', signature: 'new(renderer, ui, audio, input)', summary: 'PixiJS demo input helper using HGame input and audio services.', members: ['getState', 'reset', 'unlock', 'play', 'dispose'] }] },
 };
 const moduleEntries = [
-  ...Object.entries(modules).map(([name, info]) => [name, info, 'runtime']),
-  ...Object.entries(pixiStarterModules).map(([name, info]) => [name, { ...info, tier: 'starter' }, 'pixi-starter']),
+  ...Object.entries(modules)
+    .filter(([name]) => !standalone || fs.existsSync(path.join(vendorRoot, name)))
+    .map(([name, info]) => [name, info, 'runtime']),
+  ...Object.entries(pixiStarterModules)
+    .filter(([name]) => !standalone || fs.existsSync(path.join(root, name)))
+    .map(([name, info]) => [name, { ...info, tier: 'starter' }, 'pixi-starter']),
 ];
-const displayModule = (name, source) => source === 'pixi-starter' ? `generated game ${name}` : `vendor/hgame/${name}`;
+const displayModule = (name, source) => source === 'pixi-starter'
+  ? (standalone ? name : `generated game ${name}`)
+  : `vendor/hgame/${name}`;
 
 if (args.listOnly) {
   const summary = moduleEntries.map(([modPath, info, source]) => ({
@@ -267,7 +303,8 @@ if (!args.moduleQuery && !args.keyword) {
   process.exit(1);
 }
 
-const modNeedle = args.moduleQuery.toLowerCase();
+const modNeedle = args.moduleQuery.toLowerCase().replaceAll('\\', '/')
+  .replace(/^(?:\.\.?\/)+/, '').replace(/^vendor\/hgame\//, '');
 const kwNeedle = args.keyword.toLowerCase();
 const matches = [];
 

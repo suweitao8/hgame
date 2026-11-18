@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bundle local API lookup, the selected starter entry reference, and runtime type declarations in generated games. Include the Pixi starter build and declarations in the engine SDK archive.
+
 - Reduce per-unit Pixi swarm synchronization work for common single-clip and fixed-orientation crowds.
 
 - Restrict 3D instanced batch GPU buffer updates to the visible prefix when the Three.js buffer API supports update ranges.

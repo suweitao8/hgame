@@ -8,6 +8,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
+    "api": "node scripts/query-api.mjs",
     "assets": "node scripts/assets.mjs",
     "build": "node scripts/package-game.mjs",
     "release": "node scripts/package-game.mjs",

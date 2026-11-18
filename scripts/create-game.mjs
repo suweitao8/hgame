@@ -128,7 +128,12 @@ async function main() {
     await cp(template, stage, { recursive: true, force: false, errorOnExist: true });
     const vendor = path.join(stage, 'vendor', 'hgame');
     await cp(runtime, vendor, { recursive: true });
+    await cp(path.join(root, 'types'), vendor, {
+      recursive: true,
+      filter: async source => source.endsWith('.d.ts') || (await stat(source)).isDirectory(),
+    });
     await mkdir(path.join(stage, 'scripts'), { recursive: true });
+    await cp(path.join(root, 'scripts', 'query-api.mjs'), path.join(stage, 'scripts', 'query-api.mjs'));
     await cp(path.join(root, 'scripts', 'package-game.mjs'), path.join(stage, 'scripts', 'package-game.mjs'));
     await cp(path.join(root, 'scripts', 'project-profiles.mjs'), path.join(stage, 'scripts', 'project-profiles.mjs'));
     await cp(path.join(root, 'scripts', 'toy-preflight.mjs'), path.join(stage, 'scripts', 'toy-preflight.mjs'));
@@ -144,10 +149,13 @@ async function main() {
 
     const mainSource = path.join(profiles, options.starter);
     const files = PROFILE_FILES[options.starter] ?? PROFILE_FILES[options.recipe.profile];
+    let projectEntry = 'src/main.js';
     if (options.starter === 'pixi2d') {
       await cp(path.join(mainSource, 'dist'), stage, { recursive: true, force: true });
       await cp(path.join(mainSource, 'src'), path.join(stage, 'src'), { recursive: true, force: true });
       const sourceEntry = options.bare ? 'index.bare.html' : options.preset === 'horde' ? 'index.horde.html' : 'index.html';
+      if (options.bare) projectEntry = 'src/bare.js';
+      else if (options.preset === 'horde') projectEntry = 'src/horde.js';
       if (sourceEntry !== 'index.html') await cp(path.join(mainSource, 'dist', sourceEntry), path.join(stage, 'index.html'), { force: true });
       await cp(path.join(mainSource, sourceEntry), path.join(stage, 'index.source.html'));
       if (options.preset === 'horde' && !options.bare) await cp(path.join(profiles, 'horde', 'swarm.json'), path.join(stage, 'src', 'swarm.json'));
@@ -198,6 +206,10 @@ async function main() {
     Object.assign(config, { id: options.slug, name: options.name, standalone: true,
       renderer: RENDERERS[options.recipe.renderer].catalog });
     await writeFile(configFile, JSON.stringify(config, null, 2) + '\n');
+    const apiDirectory = path.join(stage, 'docs', 'api');
+    const apiIndex = JSON.parse(await readFile(path.join(root, 'docs', 'api', 'API-INDEX.json'), 'utf8'));
+    await mkdir(apiDirectory, { recursive: true });
+    await writeFile(path.join(apiDirectory, 'API-INDEX.json'), JSON.stringify({ ...apiIndex, projectEntry }) + '\n');
     const packageFile = path.join(stage, 'package.json');
     const pkg = JSON.parse(await readFile(packageFile, 'utf8'));
     pkg.name = options.slug.toLowerCase();

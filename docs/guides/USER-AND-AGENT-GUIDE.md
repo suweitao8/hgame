@@ -4,7 +4,7 @@
 
 ## 1. Lookup First (Zero Blind Scan)
 
-Always run `npm run api` from the HGame repo root instead of reading `assets/runtime/` or `assets/optional/three/`:
+Run `npm run api` from the HGame repo root for engine-wide discovery:
 
 ```powershell
 npm run api -- --map             # Capability router (Need -> Module -> Key APIs)
@@ -12,6 +12,8 @@ npm run api -- --recipe 2d       # Runnable wiring for: 2d | horde | 3d | ui | n
 npm run api -- <keyword>         # Exact signatures, return fields & option keys
 npm run api -- --module post2d   # Every export in one module
 ```
+
+In a generated game, run `npm run api -- --module <name> --json` against the game's bundled API snapshot. Use `npm run api -- --recipe current` to read the current contents of its selected starter entry. Runtime TypeScript declarations live alongside the JavaScript under `vendor/hgame/`.
 
 ---
 
