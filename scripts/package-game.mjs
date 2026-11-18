@@ -521,8 +521,8 @@ function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSu
 
   const buildSubpaths = [];
   if (pixiBuildFiles) {
-    // Vite's preloader can reference emitted files through a string table.
-    for (const match of clean.matchAll(/(['"])((?:assets\/|\.\/)[A-Za-z0-9_.-]+)\1/g)) {
+    // Preload tables and literal dynamic imports both reference hashed output files.
+    for (const match of clean.matchAll(/(['"\x60])((?:assets\/|\.\/)[A-Za-z0-9_.-]+)\1/g)) {
       const output = match[2].startsWith('./') ? 'assets/' + match[2].slice(2) : match[2];
       if (pixiBuildFiles.has(output)) buildSubpaths.push(output);
     }

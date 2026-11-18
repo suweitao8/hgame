@@ -7,6 +7,7 @@ import { createServer } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import zlib from 'node:zlib';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -314,12 +315,15 @@ test('a generated Pixi game rebuilds its changed entry and includes its CSS and 
     assert.equal(generated.status, 0, generated.stderr);
     const pkg = JSON.parse(await readFile(path.join(game, 'package.json'), 'utf8'));
     assert.ok(pkg.devDependencies.esbuild);
+    assert.ok(pkg.devDependencies.rolldown);
     assert.equal(pkg.devDependencies.vite, undefined);
     const lock = JSON.parse(await readFile(path.join(game, 'package-lock.json'), 'utf8'));
     assert.ok(!Object.keys(lock.packages).some(name => name.endsWith('/picomatch')));
 
     await mkdir(path.join(game, 'node_modules'));
-    await symlink(path.join(root, 'node_modules', 'esbuild'), path.join(game, 'node_modules', 'esbuild'), 'junction');
+    for (const compiler of ['esbuild', 'rolldown']) {
+      await symlink(path.join(root, 'node_modules', compiler), path.join(game, 'node_modules', compiler), 'junction');
+    }
     const manifestPath = path.join(game, '.hgame-pixi-build.json');
     const original = JSON.parse(await readFile(manifestPath, 'utf8'));
     const sourceHtml = path.join(game, 'index.source.html');
@@ -329,8 +333,9 @@ test('a generated Pixi game rebuilds its changed entry and includes its CSS and 
       '<script type="module">import { marker } from "./src/inline.js"; window.marker = marker;</script></body>'));
     const authored = path.join(game, 'assets', 'authored.css');
     await writeFile(authored, 'body { cursor: pointer; }');
-    await writeFile(path.join(game, 'src', 'bare.js'), 'import "./style.css"; window.ready = () => import("./extra.js");\n');
     const image = '棋 子.svg';
+    await writeFile(path.join(game, 'src', 'bare.js'),
+      `import "./style.css"; import cover from "../assets/${image}"; window.cover = cover; window.ready = () => import("./extra.js");\n`);
     const imagePath = path.join(game, 'assets', image);
     await writeFile(imagePath, '<svg xmlns="http://www.w3.org/2000/svg"><title>asset-one</title></svg>');
     await writeFile(path.join(game, 'src', 'style.css'), `body { background-image: url("../assets/${image}"); }\n`);
@@ -350,8 +355,10 @@ test('a generated Pixi game rebuilds its changed entry and includes its CSS and 
     assert.ok([...entries.values()].some(bytes => bytes.includes('inline-pixi-probe')));
 
     const firstAsset = Object.keys(updated.files).find(name => /^asset-[A-Z0-9]+\.svg$/.test(name));
+    const scriptAsset = Object.keys(updated.files).find(name => /^asset-[a-f0-9]+\.svg$/.test(name));
     assert.ok(firstAsset);
     assert.ok(entries.get('rebuilt/assets/' + firstAsset).includes('asset-one'));
+    assert.ok(entries.get('rebuilt/assets/' + scriptAsset).includes('asset-one'));
     await writeFile(imagePath, '<svg xmlns="http://www.w3.org/2000/svg"><title>asset-two</title></svg>');
     const changed = spawnSync(process.execPath, [packageGame, game, '--version', '1.0.0', '--tag', 'changed-art'], { encoding: 'utf8' });
     assert.equal(changed.status, 0, changed.stderr || changed.stdout);
@@ -361,6 +368,20 @@ test('a generated Pixi game rebuilds its changed entry and includes its CSS and 
     const changedEntries = readZipEntries(await readFile(JSON.parse(changed.stdout).zipPath));
     const newAsset = Object.keys(newManifest.files).find(name => /^asset-[A-Z0-9]+\.svg$/.test(name));
     assert.ok(changedEntries.get('changed-art/assets/' + newAsset).includes('asset-two'));
+
+    await writeFile(path.join(game, 'assets', 'menu.module.css'), '.button { color: red; }');
+    await writeFile(path.join(game, 'src', 'bare.js'),
+      'import { button } from "../assets/menu.module.css"; window.menuClass = button;\n');
+    const cssModule = spawnSync(process.execPath, [packageGame, game, '--version', '1.0.0', '--tag', 'css-module'], { encoding: 'utf8' });
+    assert.equal(cssModule.status, 0, cssModule.stderr || cssModule.stdout);
+    const cssModuleEntries = readZipEntries(await readFile(JSON.parse(cssModule.stdout).zipPath));
+    const stylesheet = [...cssModuleEntries].find(([file]) => /\/assets\/index\.source-[A-Z0-9]+\.css$/.test(file))?.[1];
+    const selector = /\.([\w-]+)\{color:red\}/.exec(stylesheet?.toString() ?? '')?.[1];
+    assert.ok(selector && selector !== 'button', 'CSS Modules must generate a scoped class name');
+    const entry = [...cssModuleEntries].find(([file]) => /\/assets\/index\.source-[A-Z0-9]+\.js$/.test(file))?.[1];
+    const window = {};
+    runInNewContext(entry.toString(), { window });
+    assert.equal(window.menuClass, selector);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

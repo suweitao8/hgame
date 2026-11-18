@@ -63,10 +63,28 @@ async function checkPixiRecovery() {
     await page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }));
     await page.route('**/src/presentation.json', route => route.fulfill({ json: { backend: 'auto', quality: 'medium' } }));
     page.on('pageerror', error => errors.push(error.message));
-    await page.goto(url);
+    const engineConfig = Promise.withResolvers();
+    await page.route('**/engine.config.json', async route => {
+      await engineConfig.promise;
+      await route.continue();
+    });
+    try {
+      await Promise.all([
+        page.waitForRequest('**/src/swarm.json', { timeout: 5000 }),
+        page.goto(url, { waitUntil: 'commit' }),
+      ]);
+    } catch (error) {
+      throw new Error('Horde must request its swarm settings while engine configuration is pending', { cause: error });
+    } finally {
+      engineConfig.resolve();
+    }
     const canvas = page.locator('canvas#game[data-engine-ready="true"]');
     await canvas.waitFor();
     assert.equal(await canvas.getAttribute('data-renderer-backend'), 'webgl');
+    const startupBytes = await page.evaluate(() => [
+      ...performance.getEntriesByType('navigation'), ...performance.getEntriesByType('resource'),
+    ].reduce((total, entry) => total + entry.transferSize, 0));
+    assert.ok(startupBytes > 0 && startupBytes <= 900_000, `Horde cold startup transferred ${startupBytes} bytes (budget 900,000)`);
     const before = await page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
       document.dispatchEvent(new Event('visibilitychange'));
@@ -129,7 +147,7 @@ async function checkPixiRecovery() {
   } finally {
     await failed.close();
   }
-  console.log(JSON.stringify({ profile: 'pixi-recovery', contextRecovery: true, startupCleanup: true }));
+  console.log(JSON.stringify({ profile: 'pixi-recovery', contextRecovery: true, startupCleanup: true, startupBudget: true }));
 }
 
 try {

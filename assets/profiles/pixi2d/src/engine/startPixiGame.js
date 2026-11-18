@@ -1,7 +1,7 @@
-import { createDefaultGameAtlas } from './ProceduralAtlas.js';
-import { Renderer2D } from './Renderer2D.js';
 import { bindVisibilitySuspension } from './VisibilityController.js';
 
+/** @typedef {import('./Renderer2D.js').Renderer2D} Renderer2D */
+/** @typedef {typeof import('./ProceduralAtlas.js').createDefaultGameAtlas} CreateDefaultAtlas */
 /** @typedef {import('../../vendor/hgame/core/application.js').GameApplication} GameApplication */
 /** @typedef {{app: GameApplication, renderer: Renderer2D, Scene: typeof import('../../vendor/hgame/core/scene.js').Scene, Entity: typeof import('../../vendor/hgame/core/entity.js').Entity, Component: typeof import('../../vendor/hgame/core/component.js').Component}} PixiGameContext */
 /** @typedef {{scene: string, state?: () => unknown, visibility?: Parameters<typeof bindVisibilitySuspension>[1]}} PixiGameSetupResult */
@@ -23,22 +23,30 @@ export function loadRuntime(module) {
 /**
  * Start one HGame application backed by Pixi. The setup callback receives
  * installed services and returns { scene, state?, visibility? }.
- * @param {(context: PixiGameContext) => PixiGameSetupResult | Promise<PixiGameSetupResult>} setup
- * @param {{mount?: HTMLElement | null, createAtlas?: () => ReturnType<typeof createDefaultGameAtlas> | Promise<ReturnType<typeof createDefaultGameAtlas>>, rendererOptions?: ConstructorParameters<typeof Renderer2D>[1]}} [options]
+ * @template [Resources=undefined]
+ * @param {(context: PixiGameContext, resources: Resources) => PixiGameSetupResult | Promise<PixiGameSetupResult>} setup
+ * @param {object} [options]
+ * @param {HTMLElement | null} [options.mount]
+ * @param {() => ReturnType<CreateDefaultAtlas> | Promise<ReturnType<CreateDefaultAtlas>>} [options.createAtlas]
+ * @param {ConstructorParameters<typeof import('./Renderer2D.js').Renderer2D>[1]} [options.rendererOptions]
+ * @param {() => Promise<Resources>} [options.loadResources]
  * @returns {Promise<{app: GameApplication, renderer: Renderer2D}>}
  */
 export async function startPixiGame(setup, {
   mount = document.querySelector('#game-canvas'),
-  createAtlas = createDefaultGameAtlas,
+  createAtlas,
   rendererOptions,
+  loadResources,
 } = {}) {
   if (!mount) throw new Error('Missing Pixi game canvas mount');
   if (typeof setup !== 'function') throw new TypeError('Pixi game setup callback is required');
   const [gameConfig, engineConfig, presentation, { createGameApplication }, { defineProject },
-    { Scene }, { Entity }, { Component }, { createAdaptiveQualityController, QUALITY2D_PRESETS }] = await Promise.all([
+    { Scene }, { Entity }, { Component }, { createAdaptiveQualityController, QUALITY2D_PRESETS },
+    { createDefaultGameAtlas }, { Renderer2D }, resources] = await Promise.all([
     readGameJson('./game.config.json'), readGameJson('./engine.config.json'), readGameJson('./src/presentation.json'),
     loadRuntime('core/application.js'), loadRuntime('core/config.js'), loadRuntime('core/scene.js'),
     loadRuntime('core/entity.js'), loadRuntime('core/component.js'), loadRuntime('integrations/quality3d.js'),
+    import('./ProceduralAtlas.js'), import('./Renderer2D.js'), Promise.resolve().then(loadResources),
   ]);
   const project = defineProject(engineConfig);
   const requestedMode = presentation.quality ?? 'auto';
@@ -50,7 +58,7 @@ export async function startPixiGame(setup, {
       memoryGB: navigator.deviceMemory ?? null,
     },
   });
-  const atlas = await createAtlas();
+  const atlas = await (createAtlas ?? createDefaultGameAtlas)();
   let app;
   let renderer;
   let canvas;
@@ -89,7 +97,7 @@ export async function startPixiGame(setup, {
     });
     window.addEventListener('pagehide', pagehide);
     await app.installFeatures();
-    const ready = await setup({ app, renderer, Scene, Entity, Component });
+    const ready = await setup({ app, renderer, Scene, Entity, Component }, resources);
     if (app.disposed) throw new Error('Pixi game was disposed during setup');
     if (typeof ready?.scene !== 'string' || !app.scenes.get(ready.scene)) {
       throw new Error('Pixi game setup must return the name of a registered scene in { scene }');

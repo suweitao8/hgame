@@ -1,10 +1,7 @@
 // CPU swarm simulation and PixiJS rendering share HGame's application loop.
 import { loadRuntime, readGameJson, startPixiGame } from './engine/startPixiGame.js';
 
-await startPixiGame(async ({ app, renderer, Scene, Entity, Component }) => {
-  const [settings, { createSwarmSimulation }] = await Promise.all([
-    readGameJson('./src/swarm.json'), loadRuntime('world/swarm-ecs.js'),
-  ]);
+await startPixiGame(({ app, renderer, Scene, Entity, Component }, [settings, { createSwarmSimulation }]) => {
   app.input.preventKeys(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
   const scene = app.scenes.add(new Scene('main'));
   const hero = scene.add(new Entity({ name: 'player', width: 26, height: 26 }));
@@ -42,4 +39,6 @@ await startPixiGame(async ({ app, renderer, Scene, Entity, Component }) => {
     scene: 'main',
     state: () => ({ tick: app.stats.ticks, activeUnits: swarm.count, visibleUnits: crowd.visibleCount, hero: { x: hero.x, y: hero.y } }),
   };
+}, {
+  loadResources: () => Promise.all([readGameJson('./src/swarm.json'), loadRuntime('world/swarm-ecs.js')]),
 });

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Split Pixi's JavaScript by renderer and load Horde settings and simulation alongside the engine. Check the cold-start transfer budget and request ordering in browser CI.
+
 - Build new Pixi projects with esbuild, removing the affected Picomatch dependency from their build toolchain. Preserve release rebuilds for existing Vite projects.
 
 - Release the Pixi atlas when renderer initialization fails before mounting a canvas. Cover automatic WebGL fallback, hidden-page context recovery and fixed-backend startup errors in browser CI.
