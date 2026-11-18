@@ -371,6 +371,7 @@ export class FlatCombatECS {
     _freeStack: Int32Array;
     _freeTop: number;
     _activeCount: number;
+    _scanLimit: number;
     _hitTargetSlot: Int32Array;
     _hitDamage: Int32Array;
     _hitPushX: Float32Array;
@@ -381,6 +382,8 @@ export class FlatCombatECS {
     _onPromote: ((swarmId: number, slot: number) => void) | null;
     /** Active promoted slot count. @returns {number} */
     get activeCount(): number;
+    /** @returns {void} */
+    _trimScanLimit(): void;
     /**
      * Looks up an active ECS slot by external swarm unit ID, or returns `-1`.
      * @param {number} swarmId

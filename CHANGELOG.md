@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Limit combat-ECS scans to the highest active slot while keeping ascending slot-order processing and trimming the range as slots are recycled.
+
 - Skip full combat-ECS slot scans when no swarm units are promoted, while retaining normal slot-order processing when combat is active.
 
 - Reuse a coordinate object when building swarm flow-field walls from HGame TileMaps, avoiding one temporary allocation per sampled cell.

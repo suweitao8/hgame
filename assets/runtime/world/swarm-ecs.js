@@ -662,6 +662,7 @@ export class FlatCombatECS {
     this._freeTop = maxSlots;
     for (let i = 0; i < maxSlots; i++) this._freeStack[i] = maxSlots - 1 - i;
     this._activeCount = 0;
+    this._scanLimit = 0;
 
     this._hitTargetSlot = new Int32Array(maxHitEvents);
     this._hitDamage = new Int32Array(maxHitEvents);
@@ -675,6 +676,11 @@ export class FlatCombatECS {
 
   /** Active promoted slot count. @returns {number} */
   get activeCount() { return this._activeCount; }
+
+  /** @returns {void} */
+  _trimScanLimit() {
+    while (this._scanLimit > 0 && (this.flags[this._scanLimit - 1] & ECS_SLOT_FLAGS.ACTIVE) === 0) this._scanLimit--;
+  }
 
   /**
    * Looks up an active ECS slot by external swarm unit ID, or returns `-1`.
@@ -704,6 +710,7 @@ export class FlatCombatECS {
     if (this._freeTop <= 0) return -1;
 
     const slot = this._freeStack[--this._freeTop];
+    if (slot >= this._scanLimit) this._scanLimit = slot + 1;
     this.flags[slot] = ECS_SLOT_FLAGS.ACTIVE | ECS_SLOT_FLAGS.DIRTY;
     this.swarmUnitId[slot] = swarmId;
     this.posX[slot] = x;
@@ -794,7 +801,7 @@ export class FlatCombatECS {
     if (!(dt > 0) || this._activeCount === 0) return;
     // Frame-rate-independent decay equivalent to 0.85 per 60Hz frame.
     const damp = Math.pow(0.85, dt * 60);
-    for (let slot = 0; slot < this.maxSlots; slot++) {
+    for (let slot = 0; slot < this._scanLimit; slot++) {
       const f = this.flags[slot];
       if ((f & ECS_SLOT_FLAGS.ACTIVE) === 0 || (f & ECS_SLOT_FLAGS.DEAD) !== 0) continue;
 
@@ -863,7 +870,7 @@ export class FlatCombatECS {
       stillClaimed: true,
     };
 
-    for (let slot = 0; slot < this.maxSlots; slot++) {
+    for (let slot = 0; slot < this._scanLimit; slot++) {
       const f = this.flags[slot];
       if ((f & ECS_SLOT_FLAGS.ACTIVE) === 0) continue;
 
@@ -906,6 +913,7 @@ export class FlatCombatECS {
       }
     }
 
+    this._trimScanLimit();
     return { patchesEmitted: emitted, pendingRemaining, activeSlots: this._activeCount };
   }
 
@@ -917,6 +925,7 @@ export class FlatCombatECS {
     for (let i = 0; i < this.maxSlots; i++) this._freeStack[i] = this.maxSlots - 1 - i;
     this._freeTop = this.maxSlots;
     this._activeCount = 0;
+    this._scanLimit = 0;
     this._hitCount = 0;
   }
 }
@@ -1590,6 +1599,7 @@ export function createSwarmSimulation({
       ecs.swarmToSlot[id] = -1;
       ecs._freeStack[ecs._freeTop++] = ecsSlot;
       ecs._activeCount = Math.max(0, ecs._activeCount - 1);
+      ecs._trimScanLimit();
     }
     _releaseSwarmUnit(id);
     return true;
