@@ -325,20 +325,20 @@ export type InstancedMeshLike = {
      * Rendered instance count.
      */
     count: number;
-    instanceMatrix: {
-        array: Float32Array;
-        needsUpdate: boolean;
-    };
-    instanceColor?: {
-        array: Float32Array;
-        needsUpdate: boolean;
-    } | null | undefined;
+    instanceMatrix: InstanceBufferLike;
+    instanceColor?: InstanceBufferLike | null | undefined;
     matrixWorld?: { elements: ArrayLike<number> } | undefined;
     updateWorldMatrix?: ((updateParents: boolean, updateChildren: boolean) => void) | undefined;
     parent?: {
         remove?: (o: object) => unknown;
     } | null | undefined;
     dispose?: (() => void) | undefined;
+};
+export type InstanceBufferLike = {
+    array: Float32Array;
+    needsUpdate: boolean;
+    clearUpdateRanges?: (() => void) | undefined;
+    addUpdateRange?: ((start: number, count: number) => void) | undefined;
 };
 /**
  * Minimal THREE namespace subset used by the instanced batch.

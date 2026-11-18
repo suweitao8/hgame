@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restrict 3D instanced batch GPU buffer updates to the visible prefix when the Three.js buffer API supports update ranges.
+
 - Cull 3D instance batches in world space when the batch mesh or its parents are transformed.
 
 - Prevent per-cell swarm density counters from wrapping above 65,535 units by using 32-bit counters for larger swarm capacities.

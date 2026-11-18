@@ -135,12 +135,20 @@
  * @property {boolean} castShadow
  * @property {boolean} receiveShadow
  * @property {number} count Rendered instance count.
- * @property {{array: Float32Array, needsUpdate: boolean}} instanceMatrix
- * @property {{array: Float32Array, needsUpdate: boolean} | null} [instanceColor]
+ * @property {InstanceBufferLike} instanceMatrix
+ * @property {InstanceBufferLike | null} [instanceColor]
  * @property {{elements: ArrayLike<number>}} [matrixWorld]
  * @property {(updateParents: boolean, updateChildren: boolean) => void} [updateWorldMatrix]
  * @property {{remove?: (o: object) => unknown} | null} [parent]
  * @property {() => void} [dispose]
+ */
+
+/**
+ * @typedef {object} InstanceBufferLike
+ * @property {Float32Array} array
+ * @property {boolean} needsUpdate
+ * @property {() => void} [clearUpdateRanges]
+ * @property {(start: number, count: number) => void} [addUpdateRange]
  */
 
 /**
@@ -998,8 +1006,13 @@ export function createInstancedBatch3D(THREE, {
     }
 
     mesh.count = outCount;
-    if (mesh.instanceMatrix) mesh.instanceMatrix.needsUpdate = true;
-    if (colorAttr) colorAttr.needsUpdate = true;
+    // Three.js update ranges are measured in array components, not instances.
+    // Each flush overwrites the complete visible prefix, so it supersedes any
+    // pending prefix from a previous flush before the next renderer upload.
+    if (outCount > 0) {
+      markInstanceBufferUpdated(mesh.instanceMatrix, outCount * 16);
+      if (colorAttr) markInstanceBufferUpdated(colorAttr, outCount * 3);
+    }
     return {
       totalActive: activeCount,
       visible: outCount,
@@ -1027,4 +1040,13 @@ export function createInstancedBatch3D(THREE, {
     flush,
     dispose,
   };
+}
+
+/** @param {InstanceBufferLike} attribute @param {number} components */
+function markInstanceBufferUpdated(attribute, components) {
+  if (typeof attribute.clearUpdateRanges === 'function' && typeof attribute.addUpdateRange === 'function') {
+    attribute.clearUpdateRanges();
+    attribute.addUpdateRange(0, components);
+  }
+  attribute.needsUpdate = true;
 }
