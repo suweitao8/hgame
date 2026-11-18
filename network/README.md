@@ -83,6 +83,8 @@ Confirmed frame (`HGFR`) has a 16-byte header followed by sorted per-slot entrie
 
 `LockstepRoom` buffers bounded confirmed-frame history (`maxHistoryFrames`) so `HGameLockstepChannel` can request catch-up replay via `'lockstep:sync'` on reconnect (configurable `reconnectionSeconds`), while state recovery for full mid-match drop-in still relies on a game-defined canonical snapshot contract. Client-reported hashes are compared peer-to-peer and remain non-authoritative.
 
+Each history reply sends up to 240 frames or 128 KiB of frame payload, whichever limit it reaches first. The room scales its replay quota to its configured live frame rate and defers one pending request per session during congestion. A competing cursor receives a correlated `retry_later` status with `retryAfterMs`. `HGameLockstepChannel` honors that delay. Successful responses report `sentBytes` and the last frame sent.
+
 ## Production boundaries
 
 - Colyseus rooms are in-memory and stateful while running. A process restart ends active matches; there is no database, Redis, persistence or multi-process adapter in this first foundation.

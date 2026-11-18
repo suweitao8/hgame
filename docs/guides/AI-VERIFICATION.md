@@ -41,6 +41,8 @@ Run `npm run test:browser:lifecycle -- --webasset --soak-seconds 120 --executabl
 
 `--touch` emulates a mobile Chromium viewport at 844×390 CSS pixels and DPR 2. Override it with `--viewport` and `--dpr`. Use `--quality auto` to record the resulting quality tier and physical canvas dimensions before and after sampling. This captures mobile layout and rendering load on the host GPU.
 
+Add `--soak-seconds 120` for sustained frame pacing. The report includes elapsed time, approximately five-second windows aligned to frame boundaries, and the quality tier and canvas size at each boundary. The frame budget applies to the whole-run P95. A timeout preserves the recorded windows.
+
 Use `--measurement readback` to measure frame intervals with a synchronized pixel read. This mode includes the GPU work waiting in the queue and the CPU/GPU synchronization cost. Hardware readback is informational unless `--budget-p95 <ms>` is supplied. Hardware frame pacing defaults to a 60 Hz interval plus 1 ms of tolerance. The default software budgets are intended for CI smoke checks. The separate 3D stress fixture uses synchronized readback, fixed medium quality and `1/60` of simulation per rendered frame.
 
 Playtest reports retain whole-run frame count, duration, mean, maximum and long-frame totals. A bounded uniform reservoir holds up to 600 detailed intervals. P50/P95/P99 are exact within that set and are explicitly marked `quantilesApproximate` when the run exceeds its capacity. Multi-second intervals remain included. The stop checkpoint waits for a final frame so a stall crossing the requested end time remains visible. `requestedDurationMs`, `actualDurationMs` and `frameStats.measuredMs` describe the actual measurement window after startup and initial capture.

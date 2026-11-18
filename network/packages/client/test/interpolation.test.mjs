@@ -277,3 +277,32 @@ test('lockstep keeps undelivered frames when the last consumer unsubscribes duri
     assert.equal(channel.bufferedFrames, 0);
   } finally { channel.dispose(); }
 });
+
+test('lockstep retries a busy cursor and cancels the retry on disposal', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const sent = [];
+  const handlers = new Map();
+  const connection = {
+    send: (_type, { fromNetTick }) => sent.push(fromNetTick),
+    onMessage(type, handler) {
+      handlers.set(type, handler);
+      return () => handlers.delete(type);
+    },
+  };
+  const channel = new HGameLockstepChannel(connection, 42, 10);
+  try {
+    channel.requestSync();
+    const receive = handlers.get('lockstep:sync-status');
+    const busy = { ok: false, fromNetTick: 10, reason: 'retry_later', retryAfterMs: 125 };
+    receive(busy);
+    receive({ ok: true, fromNetTick: 1, toNetTick: 4 });
+    t.mock.timers.tick(124);
+    assert.deepEqual(sent, [10]);
+    t.mock.timers.tick(1);
+    assert.deepEqual(sent, [10, 10]);
+    receive(busy);
+    channel.dispose();
+    t.mock.timers.tick(125);
+    assert.deepEqual(sent, [10, 10]);
+  } finally { channel.dispose(); }
+});

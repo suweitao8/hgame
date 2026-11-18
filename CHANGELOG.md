@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Bound lockstep replay by bytes and send rate, defer replay during WebSocket congestion, and cancel deferred work when a session drops.
+
+- Add a fixed-duration rendering benchmark mode with frame-time windows and adaptive-quality checkpoints.
+
 - Ship the engine and network lockfiles and documented tool sources in full SDK exports. Use tracked paths in a Git checkout and keep local caches and planning files outside the SDK.
 
 - Deliver confirmed lockstep frames individually so the remaining queue survives subscription changes during a burst.

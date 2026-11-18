@@ -165,6 +165,7 @@ test('LockstepRoom synthesizes NO_OP after frameDeadlineTicks and replays bounde
     assert.equal(syncStatusesA[0].ok, true);
     assert.equal(syncStatusesA[0].fromNetTick, deadlineTargetTick);
     assert.ok(syncStatusesA[0].sentFrames >= 1);
+    assert.ok(syncStatusesA[0].sentBytes > 0 && syncStatusesA[0].sentBytes <= 128 * 1024);
     assert.equal(syncStatusesA[0].hasMore, false);
 
     // Seal 18 more frames from both players to evict tick 1 from the 16-frame bounded history.

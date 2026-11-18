@@ -12,8 +12,10 @@ export interface LockstepSyncStatus {
   fromNetTick?: number;
   toNetTick?: number;
   sentFrames?: number;
+  sentBytes?: number;
   hasMore?: boolean;
   reason?: string;
+  retryAfterMs?: number;
   oldestAvailableTick?: number | null;
   currentNetTick?: number;
 }
@@ -27,6 +29,7 @@ export class HGameLockstepChannel {
   private lastTargetNetTick = 0;
   private disposed = false;
   private syncFrom = 0;
+  private syncRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private queuedSyncFrom = 0;
   private replayThrough = 0;
   private replayPaused = false;
@@ -61,6 +64,7 @@ export class HGameLockstepChannel {
     );
     this.unsubscribeReconnect = this.autoSyncOnReconnect && typeof connection.onReconnect === 'function'
       ? connection.onReconnect(() => {
+        this.cancelReplayRetry();
         this.syncFrom = 0;
         this.replayPaused = false;
         this.replayThrough = Math.max(this.replayThrough, this.expectedNetTick);
@@ -139,6 +143,7 @@ export class HGameLockstepChannel {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.cancelReplayRetry();
     this.unsubscribeFrame();
     this.unsubscribeSyncStatus();
     this.unsubscribeReconnect();
@@ -152,10 +157,21 @@ export class HGameLockstepChannel {
     const from = this.syncFrom;
     const isCurrent = from > 0 && (status?.fromNetTick === undefined || status.fromNetTick === from);
     if (isCurrent) {
-      this.syncFrom = 0;
-      // On history_evicted, let the game choose a snapshot or exit. Live
-      // frames must not trigger another request for the same unavailable tick.
-      this.replayPaused = status?.ok !== true;
+      if (status?.ok === false && status.reason === 'retry_later') {
+        this.scheduleReplayRetry(from, status.retryAfterMs);
+      } else {
+        this.cancelReplayRetry();
+        this.syncFrom = 0;
+      }
+      const oldest = status?.oldestAvailableTick;
+      const cursorAlreadyConsumed = status?.reason === 'history_evicted' && this.expectedNetTick > from &&
+        typeof oldest === 'number' && Number.isInteger(oldest) && oldest > 0 && oldest <= this.expectedNetTick;
+      // The game owns recovery if the first missing frame is no longer retained.
+      this.replayPaused = status?.ok !== true && this.syncRetryTimer === null && !cursorAlreadyConsumed;
+      const current = status?.currentNetTick;
+      if (cursorAlreadyConsumed && typeof current === 'number' && Number.isInteger(current) && current <= 0xffff_ffff) {
+        this.replayThrough = Math.max(this.replayThrough, current);
+      }
       const to = status?.toNetTick;
       if (status?.ok && status.hasMore && typeof to === 'number' && Number.isInteger(to) && to >= from && to < 0xffff_ffff) {
         this.replayThrough = Math.max(this.replayThrough, to + 1, this.expectedNetTick);
@@ -168,6 +184,23 @@ export class HGameLockstepChannel {
       this.queuedSyncFrom = 0;
       this.requestSync(queued);
     }
+  }
+
+  private scheduleReplayRetry(from: number, delay?: number): void {
+    if (this.syncRetryTimer !== null) return;
+    const waitMs = typeof delay === 'number' && Number.isFinite(delay) ? Math.min(5000, Math.max(25, delay)) : 250;
+    this.syncRetryTimer = setTimeout(() => {
+      this.syncRetryTimer = null;
+      this.syncFrom = 0;
+      const next = Math.max(from, this.expectedNetTick);
+      if (this.connection.room?.connection?.isOpen !== false && next <= 0xffff_ffff) this.requestSync(next);
+    }, waitMs);
+  }
+
+  private cancelReplayRetry(): void {
+    if (this.syncRetryTimer === null) return;
+    clearTimeout(this.syncRetryTimer);
+    this.syncRetryTimer = null;
   }
 
   private receive(bytes: Uint8Array): void {

@@ -2,6 +2,7 @@
 // Browser benchmarks for the Pixi horde, legacy sprite crowds, and the default 3D scene.
 // Frame pacing is the default; --measurement readback measures synchronous pixel reads.
 // --renderer pixi|webgl2d|canvas2d|three selects one workload; --count sets the 2D population.
+// --soak-seconds records a fixed-duration workload with five-second window summaries.
 import { spawnSync, spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
@@ -18,7 +19,7 @@ const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
 const renderers = ['pixi', 'webgl2d', 'canvas2d', 'three'];
 const warmupFrames = 30;
-let count, frames, budgetP95, gpu, launchOptions, measurement, selected, backend, viewport, dpr, quality;
+let count, frames, soakSeconds, budgetP95, gpu, launchOptions, measurement, selected, backend, viewport, dpr, quality;
 const touch = argv.includes('--touch');
 try {
   gpu = opt('--gpu', 'software');
@@ -40,6 +41,12 @@ try {
   if (!['auto', 'low', 'medium', 'high', 'ultra'].includes(quality)) throw new RangeError('--quality must be auto, low, medium, high, or ultra');
   count = numberOption(opt('--count', 10000), '--count', { min: 1, integer: true });
   frames = numberOption(opt('--frames', 90), '--frames', { min: 1, integer: true });
+  soakSeconds = argv.includes('--soak-seconds')
+    ? numberOption(opt('--soak-seconds'), '--soak-seconds', { min: 5, max: 300, integer: true })
+    : 0;
+  if (soakSeconds && (argv.includes('--frames') || measurement !== 'frame')) {
+    throw new RangeError('--soak-seconds requires frame pacing and cannot be combined with --frames');
+  }
   const defaultBudget = gpu === 'software' ? 250 : measurement === 'frame' ? 1000 / 60 + 1 : null;
   const budget = opt('--budget-p95', defaultBudget);
   budgetP95 = budget === null ? null : numberOption(budget, '--budget-p95', { min: 0.01 });
@@ -53,28 +60,54 @@ const chrome = opt('--chrome', process.env.HGAME_CHROME) || [
 const { chromium } = createRequire(import.meta.url)('playwright-core');
 const measurementMode = measurement === 'readback' ? 'synchronized-readback' : 'frame-interval';
 
-async function measureFrames({ frameCount, warmupFrames, readback }) {
-  const sampleCount = frameCount + warmupFrames;
+async function measureFrames({ frameCount, durationMs, warmupFrames, readback }) {
   const canvas = document.querySelector('#game');
   const gl = readback && (canvas.getContext('webgl2') || canvas.getContext('webgl'));
   const context2d = readback && !gl && canvas.getContext('2d');
   if (readback && !gl && !context2d) throw new Error('Synchronized readback requires WebGL or Canvas2D');
   const pixel = gl ? new Uint8Array(4) : null;
   const samples = [];
+  const windows = [];
+  let elapsedMs = 0;
+  let windowStartMs = 0;
+  let windowStartSample = 0;
+  let warmed = 0;
   let previous;
-  await new Promise((resolve, reject) => {
+  let timedOut = false;
+  function checkpoint() {
+    if (!durationMs || samples.length === windowStartSample) return;
+    windows.push({
+      startMs: windowStartMs, endMs: elapsedMs, fromSample: windowStartSample, toSample: samples.length,
+      qualityTier: canvas.dataset.qualityTier ?? null,
+      canvasPixels: [canvas.width, canvas.height],
+    });
+    windowStartMs = elapsedMs;
+    windowStartSample = samples.length;
+  }
+  await new Promise(resolve => {
     let request;
     const deadline = setTimeout(() => {
       cancelAnimationFrame(request);
-      reject(new Error('Timed out waiting for render frame samples'));
-    }, 120000);
+      timedOut = true;
+      checkpoint();
+      resolve();
+    }, Math.max(120000, durationMs + 30000));
     const frame = timestamp => {
       if (gl) gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
       if (context2d) context2d.getImageData(0, 0, 1, 1);
       const now = readback ? performance.now() : timestamp;
-      if (previous !== undefined && now > previous) samples.push(now - previous);
+      if (previous !== undefined && now > previous) {
+        if (warmed < warmupFrames) {
+          warmed++;
+        } else {
+          const interval = now - previous;
+          elapsedMs += interval;
+          samples.push(interval);
+          if (durationMs && (elapsedMs - windowStartMs >= 5000 || elapsedMs >= durationMs)) checkpoint();
+        }
+      }
       previous = now;
-      if (samples.length < sampleCount) request = requestAnimationFrame(frame);
+      if (durationMs ? elapsedMs < durationMs : samples.length < frameCount) request = requestAnimationFrame(frame);
       else {
         clearTimeout(deadline);
         resolve();
@@ -82,7 +115,7 @@ async function measureFrames({ frameCount, warmupFrames, readback }) {
     };
     request = requestAnimationFrame(frame);
   });
-  return samples.slice(warmupFrames);
+  return { samples, elapsedMs, windows, timedOut };
 }
 const bench = (mod) => `
 const { SpriteCrowd2D: Crowd } = await import(base + '/integrations/${mod}.js');
@@ -150,7 +183,10 @@ try {
         errors.push(`Requested Pixi ${backend}, observed ${environment.backend}`);
       }
       const before = renderer === 'pixi' ? await page.evaluate(() => window.__hgameState()) : null;
-      const intervals = await page.evaluate(measureFrames, { frameCount: frames, warmupFrames, readback: measurement === 'readback' });
+      const { samples: intervals, elapsedMs, windows, timedOut } = await page.evaluate(measureFrames, {
+        frameCount: frames, durationMs: soakSeconds * 1000, warmupFrames, readback: measurement === 'readback',
+      });
+      if (timedOut) errors.push('Timed out waiting for render frame samples');
       const after = renderer === 'pixi' ? await page.evaluate(() => window.__hgameState()) : null;
       const finalEnvironment = await readBrowserEnvironment(page, browser, gpu);
       if (finalEnvironment.backend !== environment.backend || finalEnvironment.actualGpu !== environment.actualGpu) {
@@ -158,20 +194,27 @@ try {
       }
       if (after && (after.activeUnits !== count || after.tick <= before.tick)) errors.push('Pixi horde population or simulation did not match the workload');
       const timings = summarizeSamples(intervals);
+      const windowResults = windows.map(({ fromSample, toSample, ...window }) => {
+        const samples = intervals.slice(fromSample, toSample);
+        return { ...window, longFrames: samples.filter(ms => ms > 50).length, ...summarizeSamples(samples) };
+      });
+      const worstWindowP95Ms = windowResults.length ? Math.max(...windowResults.map(window => window.p95Ms)) : null;
       const r = { renderer, count: renderer === 'three' ? 0 : count, frames: timings.samples,
         meanMs: +timings.meanMs.toFixed(2), p50Ms: +timings.p50Ms.toFixed(2), p95Ms: +timings.p95Ms.toFixed(2),
         p99Ms: +timings.p99Ms.toFixed(2), maxMs: +timings.maxMs.toFixed(2), warmupFrames,
         longFrames: intervals.filter(ms => ms > 50).length, visibleUnits: after?.visibleUnits,
-        measurementMode,
+        measurementMode, elapsedMs, ...(soakSeconds ? { soakSeconds, worstWindowP95Ms, windows: windowResults } : {}),
         requestedBackend: renderer === 'pixi' ? backend : undefined,
         requestedQuality: renderer === 'pixi' ? quality : undefined,
         budgetP95Ms: budgetP95, budgetKind: usesCanvas || budgetP95 === null ? 'informational' :
           gpu === 'software' ? 'software-health' : measurement === 'readback' ? 'readback' : 'target-frame', environment, finalEnvironment, errors };
       r.gated = !usesCanvas && budgetP95 !== null;
-      r.ok = !errors.length && timings.samples >= frames && (!r.gated || timings.p95Ms <= budgetP95);
+      const workloadComplete = soakSeconds ? elapsedMs >= soakSeconds * 1000 && timings.samples > 0 : timings.samples >= frames;
+      r.ok = !errors.length && workloadComplete && (!r.gated || timings.p95Ms <= budgetP95);
       failed ||= !r.ok; results.push(r);
       const budgetLabel = r.gated ? ` (budget p95 ${budgetP95}ms)` : '';
-      console.log(`${r.ok ? (r.gated ? 'PASS' : 'INFO') : 'FAIL'}  ${renderer}${renderer === 'three' ? ' (default 3D scene)' : ' x' + count}  mean ${r.meanMs}ms  p95 ${r.p95Ms}ms${budgetLabel}${errors.length ? '  errors: ' + errors.join('|') : ''}`);
+      const windowLabel = worstWindowP95Ms === null ? '' : `, worst window p95 ${worstWindowP95Ms.toFixed(2)}ms`;
+      console.log(`${r.ok ? (r.gated ? 'PASS' : 'INFO') : 'FAIL'}  ${renderer}${renderer === 'three' ? ' (default 3D scene)' : ' x' + count}  mean ${r.meanMs}ms  p95 ${r.p95Ms}ms${windowLabel}${budgetLabel}${errors.length ? '  errors: ' + errors.join('|') : ''}`);
     } catch (error) {
       failed = true;
       errors.push(error.message);
