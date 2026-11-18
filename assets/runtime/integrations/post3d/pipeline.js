@@ -43,6 +43,7 @@ import { QUALITY3D_PRESETS } from '../quality3d.js';
  * @typedef {object} PostPipelineRenderer
  * @property {boolean} [autoClear] Restored after each render.
  * @property {number} [toneMapping] Restored after each render.
+ * @property {{enabled: boolean}} [shadowMap]
  * @property {{isWebGL2?: boolean, getMaxAnisotropy?(): number}} [capabilities]
  * @property {(target: object | null) => void} setRenderTarget
  * @property {(scene: object, camera: object) => void} render
@@ -204,7 +205,9 @@ import { QUALITY3D_PRESETS } from '../quality3d.js';
  * @property {{x: number, y: number, z: number}} position
  * @property {{position?: {x: number, y: number, z: number}}} [target]
  * @property {object} [color] THREE.Color copied into the sun color.
- * @property {{map?: ({texture?: object} | null), matrix?: object}} [shadow]
+ * @property {boolean} [visible]
+ * @property {boolean} [castShadow]
+ * @property {{map?: ({texture?: object, depthTexture?: {compareFunction?: number | null} | null} | null), matrix?: object, camera?: {reversedDepth?: boolean}}} [shadow]
  */
 
 /**
@@ -542,11 +545,12 @@ export function createPostPipeline3D(options = {}) {
     postScene = new THREE.Scene();
     quadGeom = createFullscreenTriangle(THREE);
 
-    const makeShader = (fragmentShader, uniforms) => new THREE.ShaderMaterial({
+    const makeShader = (fragmentShader, uniforms, defines = {}) => new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
       vertexShader: FULLSCREEN_VERTEX_GLSL3,
       fragmentShader,
       uniforms,
+      defines,
       depthTest: false,
       depthWrite: false,
     });
@@ -555,24 +559,26 @@ export function createPostPipeline3D(options = {}) {
     scratchCamToShadow = new THREE.Matrix4();
     scratchSunView = new THREE.Vector3(0, 1, 0);
 
+    const aoVolUniforms = {
+      tDepth: { value: null },
+      tSunShadow: { value: null },
+      uInvProj: { value: scratchInvProj },
+      uProj: { value: new THREE.Matrix4() },
+      uCamToShadow: { value: scratchCamToShadow },
+      uSunViewDir: { value: scratchSunView },
+      uResolution: { value: new THREE.Vector2(bufferWidth, bufferHeight) },
+      uNear: { value: 0.1 },
+      uFar: { value: 1000 },
+      uSsaoEnabled: { value: 0 },
+      uSsaoRadius: { value: state.ssaoRadius },
+      uSsaoBias: { value: state.ssaoBias },
+      uVolumetricSteps: { value: 0 },
+      uShadowDepthSign: { value: 1 },
+      uTime: { value: 0 },
+    };
     mats = {
-      aoVol: makeShader(HALF_AO_VOL_FRAGMENT_GLSL3, {
-        tDepth: { value: null },
-        tSunShadow: { value: null },
-        uInvProj: { value: scratchInvProj },
-        uProj: { value: new THREE.Matrix4() },
-        uCamToShadow: { value: scratchCamToShadow },
-        uSunViewDir: { value: scratchSunView },
-        uResolution: { value: new THREE.Vector2(bufferWidth, bufferHeight) },
-        uNear: { value: 0.1 },
-        uFar: { value: 1000 },
-        uSsaoEnabled: { value: 0 },
-        uSsaoRadius: { value: state.ssaoRadius },
-        uSsaoBias: { value: state.ssaoBias },
-        uVolumetricSteps: { value: 0 },
-        uHasSunShadow: { value: 0 },
-        uTime: { value: 0 },
-      }),
+      aoVol: makeShader(HALF_AO_VOL_FRAGMENT_GLSL3, aoVolUniforms),
+      aoVolCompare: makeShader(HALF_AO_VOL_FRAGMENT_GLSL3, aoVolUniforms, { HGAME_SHADOW_COMPARE: 1 }),
       blur: makeShader(BILATERAL_BLUR_FRAGMENT_GLSL3, {
         tInput: { value: null },
         uTexelStep: { value: new THREE.Vector2(1 / bufferWidth, 0) },
@@ -830,7 +836,7 @@ export function createPostPipeline3D(options = {}) {
 
       camera.updateMatrixWorld?.();
       scratchInvProj.copy(camera.projectionMatrixInverse);
-      const hasSunDir = Boolean(sunLight?.position);
+      const hasSunDir = Boolean(sunLight?.position && sunLight.visible !== false);
       if (hasSunDir) {
         scratchSunView.set(
           sunLight.position.x - (sunLight.target?.position?.x ?? 0),
@@ -843,34 +849,32 @@ export function createPostPipeline3D(options = {}) {
       // 1. Half-res SSAO + Volumetric sun shafts + separable bilateral blur
       const useAo = Boolean(activePreset.ssao && state.ssaoIntensity > 0 && halfRT && halfBlurRT);
       const volSteps = activePreset.volumetricSteps ?? 0;
-      const sunShadowTex = sunLight?.shadow?.map?.texture ?? null;
-      const shadowMatrix = sunLight?.shadow?.matrix;
+      const shadow = sunLight?.shadow;
+      const depthTexture = shadow?.map?.depthTexture;
+      const sunShadowTex = depthTexture ?? shadow?.map?.texture;
+      const shadowMatrix = shadow?.matrix;
       const useVolumetric = Boolean(volSteps > 0.5 && state.volumetricIntensity !== 0 &&
+        hasSunDir && sunLight.castShadow !== false && renderer.shadowMap?.enabled !== false &&
         sunShadowTex && shadowMatrix && halfRT && halfBlurRT);
 
       renderer.autoClear = false;
       if (useAo || useVolumetric) {
-        mats.aoVol.uniforms.tDepth.value = sceneRT.depthTexture;
-        mats.aoVol.uniforms.uProj.value.copy(camera.projectionMatrix);
-        mats.aoVol.uniforms.uResolution.value.set(hw, hh);
-        mats.aoVol.uniforms.uNear.value = camera.near ?? 0.1;
-        mats.aoVol.uniforms.uFar.value = camera.far ?? 1000;
-        mats.aoVol.uniforms.uSsaoEnabled.value = useAo ? 1 : 0;
-        mats.aoVol.uniforms.uSsaoRadius.value = state.ssaoRadius;
-        mats.aoVol.uniforms.uSsaoBias.value = state.ssaoBias;
-        mats.aoVol.uniforms.uVolumetricSteps.value = useVolumetric ? volSteps : 0;
-        mats.aoVol.uniforms.uTime.value = elapsed;
-
-        if (useVolumetric) {
-          scratchCamToShadow.multiplyMatrices(shadowMatrix, camera.matrixWorld);
-          mats.aoVol.uniforms.tSunShadow.value = sunShadowTex;
-          mats.aoVol.uniforms.uHasSunShadow.value = 1;
-        } else {
-          mats.aoVol.uniforms.tSunShadow.value = null;
-          mats.aoVol.uniforms.uHasSunShadow.value = 0;
-        }
-
-        runPass(mats.aoVol, halfRT);
+        const aoMaterial = useVolumetric && depthTexture?.compareFunction != null ? mats.aoVolCompare : mats.aoVol;
+        const ao = aoMaterial.uniforms;
+        ao.tDepth.value = sceneRT.depthTexture;
+        ao.uProj.value.copy(camera.projectionMatrix);
+        ao.uResolution.value.set(hw, hh);
+        ao.uNear.value = camera.near ?? 0.1;
+        ao.uFar.value = camera.far ?? 1000;
+        ao.uSsaoEnabled.value = useAo ? 1 : 0;
+        ao.uSsaoRadius.value = state.ssaoRadius;
+        ao.uSsaoBias.value = state.ssaoBias;
+        ao.uVolumetricSteps.value = useVolumetric ? volSteps : 0;
+        ao.uTime.value = elapsed;
+        ao.tSunShadow.value = useVolumetric ? sunShadowTex : null;
+        ao.uShadowDepthSign.value = shadow?.camera?.reversedDepth ? -1 : 1;
+        if (useVolumetric) scratchCamToShadow.multiplyMatrices(shadowMatrix, camera.matrixWorld);
+        runPass(aoMaterial, halfRT);
 
         mats.blur.uniforms.tInput.value = halfRT.texture;
         mats.blur.uniforms.uTexelStep.value.set(1 / hw, 0);

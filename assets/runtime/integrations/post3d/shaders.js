@@ -9,7 +9,11 @@ void main() {
 
 export const HALF_AO_VOL_FRAGMENT_GLSL3 = `
 uniform sampler2D tDepth;
+#ifdef HGAME_SHADOW_COMPARE
+uniform highp sampler2DShadow tSunShadow;
+#else
 uniform sampler2D tSunShadow;
+#endif
 uniform mat4 uInvProj;
 uniform mat4 uProj;
 uniform mat4 uCamToShadow;
@@ -21,7 +25,7 @@ uniform float uSsaoEnabled;
 uniform float uSsaoRadius;
 uniform float uSsaoBias;
 uniform float uVolumetricSteps;
-uniform float uHasSunShadow;
+uniform float uShadowDepthSign;
 uniform float uTime;
 
 in vec2 vUv;
@@ -113,7 +117,7 @@ void main() {
   }
 
   float vol = 0.0;
-  if (uVolumetricSteps > 0.5 && uHasSunShadow > 0.5) {
+  if (uVolumetricSteps > 0.5) {
     int steps = int(clamp(uVolumetricSteps, 1.0, 32.0));
     vec3 rayDir = normalize(viewPos);
     float hitDist = depth >= 0.9999 ? 48.0 : min(length(viewPos), 48.0);
@@ -127,11 +131,18 @@ void main() {
       if (s >= steps) break;
       float t = (float(s) + jitter) * stepLen;
       vec3 pView = rayDir * t;
-      vec4 shadowClip = uCamToShadow * vec4(pView, 1.0);
-      vec3 sc = (shadowClip.xyz / max(abs(shadowClip.w), 1e-5)) * 0.5 + 0.5;
-      if (sc.x >= 0.0 && sc.x <= 1.0 && sc.y >= 0.0 && sc.y <= 1.0 && sc.z <= 1.0) {
-        float mapZ = texture(tSunShadow, sc.xy).r;
-        if (sc.z - 0.0025 <= mapZ) accum += 1.0;
+      vec4 shadowCoord = uCamToShadow * vec4(pView, 1.0);
+      if (shadowCoord.w <= 0.0) continue;
+      // Three.js's shadow matrix already maps into texture coordinates.
+      vec3 sc = shadowCoord.xyz / shadowCoord.w;
+      if (all(greaterThanEqual(sc, vec3(0.0))) && all(lessThanEqual(sc, vec3(1.0)))) {
+        float receiverDepth = sc.z - 0.0025 * uShadowDepthSign;
+        #ifdef HGAME_SHADOW_COMPARE
+          accum += texture(tSunShadow, vec3(sc.xy, receiverDepth));
+        #else
+          float mapDepth = texture(tSunShadow, sc.xy).r;
+          accum += step(0.0, (mapDepth - receiverDepth) * uShadowDepthSign);
+        #endif
       }
     }
     vol = (accum / float(steps)) * clamp(phase * 1.4, 0.05, 1.25) * clamp(hitDist / 24.0, 0.0, 1.0);

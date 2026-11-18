@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Sample the directional shadow depth texture in 3D volumetric lighting using the correct texture coordinates and PCF comparison mode.
+
 - Skip inactive 3D post-processing passes and preserve scene buffers and eye-adaptation history when effect settings change.
 
 - Bundle local API lookup, the selected starter entry reference, and runtime type declarations in generated games. Include the Pixi starter build and declarations in the engine SDK archive.

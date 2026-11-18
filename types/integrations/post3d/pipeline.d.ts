@@ -34,6 +34,7 @@
  * @typedef {object} PostPipelineRenderer
  * @property {boolean} [autoClear] Restored after each render.
  * @property {number} [toneMapping] Restored after each render.
+ * @property {{enabled: boolean}} [shadowMap]
  * @property {{isWebGL2?: boolean, getMaxAnisotropy?(): number}} [capabilities]
  * @property {(target: object | null) => void} setRenderTarget
  * @property {(scene: object, camera: object) => void} render
@@ -187,7 +188,9 @@
  * @property {{x: number, y: number, z: number}} position
  * @property {{position?: {x: number, y: number, z: number}}} [target]
  * @property {object} [color] THREE.Color copied into the sun color.
- * @property {{map?: ({texture?: object} | null), matrix?: object}} [shadow]
+ * @property {boolean} [visible]
+ * @property {boolean} [castShadow]
+ * @property {{map?: ({texture?: object, depthTexture?: {compareFunction?: number | null} | null} | null), matrix?: object, camera?: {reversedDepth?: boolean}}} [shadow]
  */
 /**
  * Per-frame render options.
@@ -272,6 +275,9 @@ export type PostPipelineRenderer = {
      * Restored after each render.
      */
     toneMapping?: number | undefined;
+    shadowMap?: {
+        enabled: boolean;
+    } | undefined;
     capabilities?: {
         isWebGL2?: boolean;
         getMaxAnisotropy?(): number;
@@ -582,11 +588,19 @@ export type PostPipelineSunLight = {
      * THREE.Color copied into the sun color.
      */
     color?: object;
+    visible?: boolean | undefined;
+    castShadow?: boolean | undefined;
     shadow?: {
         map?: ({
             texture?: object;
+            depthTexture?: {
+                compareFunction?: number | null;
+            } | null;
         } | null);
         matrix?: object;
+        camera?: {
+            reversedDepth?: boolean;
+        };
     } | undefined;
 };
 /**
