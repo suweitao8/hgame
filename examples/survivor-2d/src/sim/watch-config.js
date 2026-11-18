@@ -9,3 +9,11 @@ export const WATCH_CONFIG = Object.freeze({
     relays: Object.freeze([{ x: -460, y: -100 }, { x: 460, y: 100 }]),
   }),
 });
+
+export const STORM_CONFIG = Object.freeze({
+  ...WATCH_CONFIG,
+  spawn: { ...WATCH_CONFIG.spawn, base: 28, perSecond: 7, bruteAfter: 10 },
+  extraction: Object.freeze({
+    ...WATCH_CONFIG.extraction, requiredRelays: 2, unlockSeconds: 0, holdSeconds: 7, radius: 72, deadlineSeconds: 17,
+  }),
+});

@@ -30,3 +30,24 @@
 
 - [x] Use the same five clips on a second rig with different bone names, proportions, and rest rotations. Preserve its extra beacon bone and keep the mapping in the game manifest.
 - [x] Exercise the shipped files with the vendored glTF loader and Three mixer. Confirm a target bone moves, the Spin notify fires, and a missing mapping retains a playable procedural runner.
+
+## Second 2D playthrough
+
+- [x] Unlock Storm after a first victory. It requires both relays, reduces the exit area, and applies a 17-second deadline to a seven-second hold. Retain the chosen mode and unlock on reload.
+- [x] Verify both routes across 1,200 seeds. Staying on the one-relay route always timed out. Both routed strategies completed all 400 seeds per route with a mean of 14.15 seconds.
+- [x] Replay both modes over WebAsset with normal input using `examples/survivor-2d/pixi/playtest.mjs`. Check the unlock, restart, saved score and selected mode after reload.
+
+## Scorecard
+
+| Criterion | Maximum | Prior workspace | Updated |
+| --- | ---: | ---: | ---: |
+| AI authoring and iteration | 20 | 19 | 19 |
+| Playable game completeness | 22 | 18 | 20 |
+| HTML runtime and delivery | 18 | 16 | 16 |
+| 2D rendering and production | 10 | 8 | 9 |
+| 3D rendering and animation | 12 | 9 | 10 |
+| Asset handling | 8 | 7 | 8 |
+| Automated playtest and regression | 10 | 9 | 9 |
+| Total | 100 | 86 | 91 |
+
+These are engineering scores for the AI-authored HTML workflow. The updated score credits the two reference games' complete browser sessions, a second 2D challenge, verified catalog restore and package inclusion, and motion transfer between the two compatible rigs. Game enjoyment and long-term replay value still need human playtest evidence. The 2D art can be restored from the project asset store. A source-only checkout can use the procedural atlas.

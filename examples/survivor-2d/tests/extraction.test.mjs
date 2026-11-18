@@ -89,3 +89,24 @@ test('either relay unlocks extraction after the timer, while staying at spawn ca
     assert.equal(sim.summary().outcome, 'victory');
   }
 });
+
+test('a storm requires both relays and has a fixed deadline', () => {
+  const relays = [{ x: -220, y: 0 }, { x: 220, y: 0 }];
+  const objective = { ...extraction, relays, relayRadius: 25, requiredRelays: 2, deadlineSeconds: 3 };
+  const sim = createSim(objective);
+  Object.assign(sim.player, relays[0]);
+  ticks(sim, 65);
+  assert.equal(sim.extraction.relayMask, 1);
+  assert.equal(sim.extraction.open, false);
+  Object.assign(sim.player, relays[1]);
+  sim.step(dt);
+  assert.equal(sim.extraction.relayMask, 3);
+  assert.equal(sim.extraction.open, true);
+  Object.assign(sim.player, { x: 0, y: 0 });
+  ticks(sim, 31);
+  assert.equal(sim.extraction.outcome, 'victory');
+  const tardy = createSim(objective);
+  ticks(tardy, 180);
+  assert.equal(tardy.extraction.outcome, 'defeat');
+  assert.equal(tardy.extraction.reason, 'timeout');
+});

@@ -1,20 +1,25 @@
 import { SpatialHash2D } from '../../../assets/runtime/world/spatial2d.js';
 import { createSurvivorSim } from '../src/sim/survivor.js';
-import { WATCH_CONFIG } from '../src/sim/watch-config.js';
+import { STORM_CONFIG, WATCH_CONFIG } from '../src/sim/watch-config.js';
 
-const policies = ['idle', 'left-relay', 'right-relay'];
+const storm = process.argv.includes('--storm');
+const config = storm ? STORM_CONFIG : WATCH_CONFIG;
+const policies = storm ? ['one-relay', 'left-first', 'right-first'] : ['idle', 'left-relay', 'right-relay'];
 const steps = 60 * 45;
 const perPolicy = 400;
-const objective = WATCH_CONFIG.extraction;
+const objective = config.extraction;
 
 function play(seed, policy) {
-  const sim = createSurvivorSim({ SpatialHash2D, seed, config: WATCH_CONFIG });
+  const sim = createSurvivorSim({ SpatialHash2D, seed, config });
   const input = { x: 0, y: 0, choice: 0 };
   const keys = [[1, 0], [0, 1], [-1, 0], [0, -1]];
   for (let frame = 0; frame < steps && !sim.state.over; frame++) {
     if (policy !== 'idle') {
-      if (sim.extraction.relay === null || sim.extraction.open) {
-        const target = sim.extraction.relay !== null ? { x: 0, y: 0 } : objective.relays[policy === 'left-relay' ? 0 : 1];
+      const { relayCount, open } = sim.extraction;
+      const first = policy.startsWith('right') ? 1 : 0;
+      const collect = relayCount < (objective.requiredRelays ?? 1) && (relayCount === 0 || policy !== 'one-relay');
+      if (collect || open || policy === 'one-relay') {
+        const target = collect ? objective.relays[relayCount ? 1 - first : first] : { x: 0, y: 0 };
         const dx = target.x - sim.player.x, dy = target.y - sim.player.y;
         input.x = Math.abs(dx) > 16 ? Math.sign(dx) : 0;
         input.y = Math.abs(dy) > 16 ? Math.sign(dy) : 0;

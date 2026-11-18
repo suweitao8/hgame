@@ -2,13 +2,10 @@ import { Graphics } from 'pixi.js';
 import { loadRuntime, readGameJson, startPixiGame } from './engine/startPixiGame.js';
 import { createCatalogGameAtlas, createDefaultGameAtlas } from './engine/ProceduralAtlas.js';
 import { JuiceSystem } from './engine/JuiceSystem.js';
-import { WATCH_CONFIG } from './sim/watch-config.js';
+import { STORM_CONFIG, WATCH_CONFIG } from './sim/watch-config.js';
 import { createSurvivorSim } from './sim/survivor.js';
 import { loadBest, recordRun } from './meta.js';
 
-const config = WATCH_CONFIG;
-const objective = config.extraction;
-const [leftRelay, rightRelay] = objective.relays;
 const exit = { x: 0, y: 0 };
 const choices = {
   damage: '+30% 弹伤', rate: '−15% 射击间隔', multishot: '+1 弹体', pierce: '+1 穿透',
@@ -19,6 +16,9 @@ const el = id => document.getElementById(id);
 function setup({ app, renderer, Scene, Entity, Component }, [{ SpatialHash2D }, { createArcadeControls }, { createTouchControls }]) {
   const scene = app.scenes.add(new Scene('watch'));
   const save = app.services.save;
+  let stormUnlocked = save.get('storm-unlocked', false) === true;
+  let config = stormUnlocked && save.get('last-mode', 'watch') === 'storm' ? STORM_CONFIG : WATCH_CONFIG;
+  let objective = config.extraction;
   const seed = new URLSearchParams(location.search).get('seed') ?? 1;
   const makeRun = () => createSurvivorSim({ SpatialHash2D, config, seed });
   let sim = makeRun();
@@ -42,15 +42,15 @@ function setup({ app, renderer, Scene, Entity, Component }, [{ SpatialHash2D }, 
   const juice = new JuiceSystem(renderer, 192, { maxShockwaveFilters: 0 });
   const ring = new Graphics();
   const progress = new Graphics();
-  const relayGraphics = new Graphics();
-  const marker = new Graphics();
-  renderer.bgLayer.addChild(ring, progress, relayGraphics);
-  renderer.foregroundLayer.addChild(marker);
-  for (const { x, y } of objective.relays) {
-    relayGraphics.circle(x, y, objective.relayRadius).fill({ color: 0xffad58, alpha: 0.17 })
+  const relays = objective.relays.map(({ x, y }) => {
+    const marker = new Graphics();
+    return marker.circle(x, y, objective.relayRadius).fill({ color: 0xffad58, alpha: 0.17 })
       .circle(x, y, objective.relayRadius).stroke({ color: 0xffad58, width: 3 })
       .poly([x, y - 20, x + 13, y, x, y + 20, x - 13, y]).fill(0xffbc73);
-  }
+  });
+  const marker = new Graphics();
+  renderer.bgLayer.addChild(ring, progress, ...relays);
+  renderer.foregroundLayer.addChild(marker);
   const liveEnemies = [];
   const enemyView = Array.from({ length: config.maxEnemies }, (_, id) => ({ id, x: 0, y: 0, elite: false, flash: 0 }));
   const spriteState = { x: 0, y: 0, tex: '', scaleX: 1, scaleY: 1, tint: 0xffffff, hasShadow: false };
@@ -89,12 +89,16 @@ function setup({ app, renderer, Scene, Entity, Component }, [{ SpatialHash2D }, 
     }
     const { x, y } = renderer.camera;
     const { width, height } = renderer.app.screen;
-    relayGraphics.visible = sim.extraction.relay === null;
     let target = exit;
-    if (relayGraphics.visible) {
-      const left = (leftRelay.x - x) ** 2 + (leftRelay.y - y) ** 2;
-      const right = (rightRelay.x - x) ** 2 + (rightRelay.y - y) ** 2;
-      target = left <= right ? leftRelay : rightRelay;
+    let closest = Infinity;
+    const needsRelay = sim.extraction.relayCount < (objective.requiredRelays ?? 1);
+    for (let i = 0; i < relays.length; i++) {
+      const visible = needsRelay && (sim.extraction.relayMask & (1 << i)) === 0;
+      relays[i].visible = visible;
+      if (!visible) continue;
+      const point = objective.relays[i];
+      const distance = (point.x - x) ** 2 + (point.y - y) ** 2;
+      if (distance < closest) { closest = distance; target = point; }
     }
     const dx = target.x - x;
     const dy = target.y - y;
@@ -151,7 +155,10 @@ function setup({ app, renderer, Scene, Entity, Component }, [{ SpatialHash2D }, 
   function syncHud() {
     const { state, player, extraction } = sim;
     hud.hidden = Boolean(state.pending || state.over);
-    const meter = extraction.relay === null ? '◇' : extraction.open ? '◎' : '◷ ' + Math.ceil(objective.unlockSeconds - state.time);
+    const needsRelay = extraction.relayCount < (objective.requiredRelays ?? 1);
+    const meter = config === STORM_CONFIG
+      ? ['◇◇', '◆◇', '◎'][extraction.relayCount] + ' · ◷ ' + Math.max(0, Math.ceil(objective.deadlineSeconds - state.time))
+      : needsRelay ? '◇' : extraction.open ? '◎' : '◷ ' + Math.ceil(objective.unlockSeconds - state.time);
     const next = meter + ' · Lv ' + player.level + ' · ✦ ' + state.kills;
     if (status.textContent !== next) status.textContent = next;
     health.style.transform = 'scaleX(' + player.hp / player.maxHp + ')';
@@ -173,7 +180,13 @@ function setup({ app, renderer, Scene, Entity, Component }, [{ SpatialHash2D }, 
       touch.releaseAll();
       const run = sim.summary();
       best = recordRun(save, run).best;
-      el('outcome').textContent = extraction.outcome === 'victory' ? '撤离成功' : '余烬熄灭';
+      if (!stormUnlocked && extraction.outcome === 'victory') {
+        stormUnlocked = true;
+        save.set('storm-unlocked', true);
+      }
+      el('storm').hidden = !stormUnlocked;
+      el('storm').textContent = config === STORM_CONFIG ? '守望' : '风暴';
+      el('outcome').textContent = extraction.outcome === 'victory' ? '撤离成功' : extraction.reason === 'timeout' ? '超时' : '余烬熄灭';
       el('result').textContent = '✦ ' + run.kills + ' · ' + run.time.toFixed(1) + 's' + (best.kills > 0 ? ' · ★ ' + best.kills : '');
       gameover.hidden = false;
       el('restart').focus();
@@ -188,11 +201,19 @@ function setup({ app, renderer, Scene, Entity, Component }, [{ SpatialHash2D }, 
     previousNova = previousPickup = 0;
     for (const view of enemyView) view.flash = 0;
     renderer.camera.x = renderer.camera.y = 0;
+    ringOpen = null;
+    lastProgress = -1;
     gameover.hidden = true;
     syncHud();
   }
 
   el('restart').addEventListener('click', restart, { signal: buttons.signal });
+  el('storm').addEventListener('click', () => {
+    config = config === STORM_CONFIG ? WATCH_CONFIG : STORM_CONFIG;
+    objective = config.extraction;
+    save.set('last-mode', config === STORM_CONFIG ? 'storm' : 'watch');
+    restart();
+  }, { signal: buttons.signal });
   el('choices').addEventListener('click', event => {
     if (event.target.matches('button[data-choice]')) picked = Number(event.target.dataset.choice);
   }, { signal: buttons.signal });
@@ -228,7 +249,7 @@ function setup({ app, renderer, Scene, Entity, Component }, [{ SpatialHash2D }, 
     state: () => ({
       ...sim.summary(), tick: sim.state.tick, phase: sim.state.over ? 'over' : sim.state.pending ? 'upgrade' : 'playing',
       player: { x: sim.player.x, y: sim.player.y, hp: sim.player.hp }, best,
-      extraction: { ...sim.extraction }, backend: renderer.backend,
+      extraction: { ...sim.extraction }, backend: renderer.backend, mode: config === STORM_CONFIG ? 'storm' : 'watch', stormUnlocked,
     }),
   };
 }

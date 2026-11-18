@@ -42,7 +42,7 @@ export function createSurvivorSim({ SpatialHash2D, seed = 1, config = CONFIG, go
   };
   const state = { tick: 0, time: 0, kills: 0, over: false, pending: null, godMode, lastPickup: 0 };
   const objective = config.extraction;
-  const extraction = objective ? { open: false, progress: 0, outcome: null, relay: null } : null;
+  const extraction = objective ? { open: false, progress: 0, outcome: null, relay: null, relayMask: 0, relayCount: 0, reason: null } : null;
   const levels = {};
 
   function addEnemy(x, y, kind) {
@@ -138,16 +138,25 @@ export function createSurvivorSim({ SpatialHash2D, seed = 1, config = CONFIG, go
   }
 
   function stepExtraction(dt) {
-    if (state.over) {
+    const timedOut = state.time + 1e-9 >= objective.deadlineSeconds;
+    if (state.over || timedOut) {
+      extraction.reason = state.over ? 'damage' : 'timeout';
       extraction.outcome = 'defeat';
       state.pending = null;
+      state.over = true;
       return;
     }
-    if (objective.relays && extraction.relay === null) {
-      const index = objective.relays.findIndex(({ x, y }) =>
-        (player.x - x) ** 2 + (player.y - y) ** 2 <= objective.relayRadius ** 2);
-      if (index < 0) return;
-      extraction.relay = index;
+    if (objective.relays && extraction.relayCount < (objective.requiredRelays ?? 1)) {
+      for (let index = 0; index < objective.relays.length; index++) {
+        const { x, y } = objective.relays[index];
+        const bit = 1 << index;
+        if ((extraction.relayMask & bit) || (player.x - x) ** 2 + (player.y - y) ** 2 > objective.relayRadius ** 2) continue;
+        extraction.relay ??= index;
+        extraction.relayMask |= bit;
+        extraction.relayCount++;
+        break;
+      }
+      if (extraction.relayCount < (objective.requiredRelays ?? 1)) return;
     }
     if (state.time + 1e-9 < objective.unlockSeconds) return;
     extraction.open = true;
@@ -297,6 +306,7 @@ export function createSurvivorSim({ SpatialHash2D, seed = 1, config = CONFIG, go
       h.number(extraction.progress);
       h.number(Number(extraction.outcome === 'victory'));
       h.number(extraction.relay ?? -1);
+      h.number(extraction.relayMask);
     }
     return h.hex();
   }
