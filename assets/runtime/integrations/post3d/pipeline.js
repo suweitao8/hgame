@@ -400,6 +400,9 @@ export function createPostPipeline3D(options = {}) {
   let scratchInvProj = null;
   let scratchCamToShadow = null;
   let scratchSunView = null;
+  const hdrType = capabilities.halfFloatRenderable && THREE.HalfFloatType
+    ? THREE.HalfFloatType
+    : THREE.UnsignedByteType;
 
   function makeColorTarget(w, h, { type, samples = 0, depthTexture = null } = {}) {
     const rt = new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
@@ -443,9 +446,6 @@ export function createPostPipeline3D(options = {}) {
   function buildTargets() {
     if (!supported || disposed) return;
     disposeTargets();
-    const hdrType = capabilities.halfFloatRenderable && THREE.HalfFloatType
-      ? THREE.HalfFloatType
-      : THREE.UnsignedByteType;
     const msaa = Math.min(Math.max(0, activePreset.msaaSamples ?? 0), capabilities.maxSamples);
     const depthTex = new THREE.DepthTexture(bufferWidth, bufferHeight, THREE.UnsignedIntType);
     depthTex.minFilter = THREE.NearestFilter;
@@ -465,22 +465,6 @@ export function createPostPipeline3D(options = {}) {
       halfBlurRT = makeColorTarget(hw, hh, { type: THREE.UnsignedByteType });
     }
 
-    if ((activePreset.ssgi || activePreset.ssr) && (state.giIntensity > 0.001 || state.ssrIntensity > 0.001)) {
-      giSsrRT = makeColorTarget(hw, hh, { type: hdrType });
-      giSsrBlurRT = makeColorTarget(hw, hh, { type: hdrType });
-    }
-
-    if (state.autoExposure) {
-      for (const dim of [64, 16, 4, 1]) {
-        lumaMips.push({ size: dim, rt: makeColorTarget(dim, dim, { type: hdrType }) });
-      }
-      adaptRT = [
-        makeColorTarget(1, 1, { type: hdrType }),
-        makeColorTarget(1, 1, { type: hdrType }),
-      ];
-      adaptNeedsReset = true;
-    }
-
     if (activePreset.bloom) {
       let mw = hw;
       let mh = hh;
@@ -494,8 +478,61 @@ export function createPostPipeline3D(options = {}) {
       }
     }
 
+    syncOptionalTargets();
+  }
+
+  // Match the shader's branch thresholds, including whether each effect is
+  // available in the current quality tier.
+  function ssgiEnabled() {
+    return Boolean(activePreset.ssgi && state.giIntensity > 0.001);
+  }
+
+  function ssrEnabled() {
+    return Boolean(activePreset.ssr && state.ssrIntensity > 0.001);
+  }
+
+  function syncOptionalTargets() {
+    if (!sceneRT) return;
+
+    if (ssgiEnabled() || ssrEnabled()) {
+      if (!giSsrRT) {
+        const hw = Math.max(1, bufferWidth >> 1);
+        const hh = Math.max(1, bufferHeight >> 1);
+        giSsrRT = makeColorTarget(hw, hh, { type: hdrType });
+        giSsrBlurRT = makeColorTarget(hw, hh, { type: hdrType });
+      }
+    } else if (giSsrRT) {
+      giSsrRT.dispose?.();
+      giSsrBlurRT?.dispose?.();
+      giSsrRT = null;
+      giSsrBlurRT = null;
+    }
+
+    if (state.autoExposure) {
+      if (adaptRT.length === 0) {
+        lumaMips = [64, 16, 4, 1].map(size => ({
+          size,
+          rt: makeColorTarget(size, size, { type: hdrType }),
+        }));
+        adaptRT = [
+          makeColorTarget(1, 1, { type: hdrType }),
+          makeColorTarget(1, 1, { type: hdrType }),
+        ];
+        adaptIndex = 0;
+        adaptNeedsReset = true;
+      }
+    } else if (adaptRT.length > 0) {
+      for (const mip of lumaMips) mip.rt.dispose?.();
+      for (const rt of adaptRT) rt.dispose?.();
+      lumaMips = [];
+      adaptRT = [];
+    }
+
     if (state.fxaa || state.sharpness > 0.001) {
-      ldrRT = makeColorTarget(bufferWidth, bufferHeight, { type: THREE.UnsignedByteType });
+      if (!ldrRT) ldrRT = makeColorTarget(bufferWidth, bufferHeight, { type: THREE.UnsignedByteType });
+    } else if (ldrRT) {
+      ldrRT.dispose?.();
+      ldrRT = null;
     }
   }
 
@@ -697,17 +734,8 @@ export function createPostPipeline3D(options = {}) {
 
   function setState(patch = {}) {
     if (disposed || !patch || typeof patch !== 'object') return;
-    let needTargetRebuild = false;
-    if ('fxaa' in patch) {
-      const nextFxaa = Boolean(patch.fxaa);
-      if (nextFxaa !== state.fxaa) needTargetRebuild = true;
-      state.fxaa = nextFxaa;
-    }
-    if ('autoExposure' in patch) {
-      const nextAuto = Boolean(patch.autoExposure);
-      if (nextAuto !== state.autoExposure) needTargetRebuild = true;
-      state.autoExposure = nextAuto;
-    }
+    if ('fxaa' in patch) state.fxaa = Boolean(patch.fxaa);
+    if ('autoExposure' in patch) state.autoExposure = Boolean(patch.autoExposure);
     if ('toneMapping' in patch) {
       state.toneMapping = resolveToneMappingIndex(patch.toneMapping);
     }
@@ -743,19 +771,7 @@ export function createPostPipeline3D(options = {}) {
       'sharpness', 'vignette', 'saturation', 'damage', 'lowHealth',
       'focus', 'flash', 'fade',
     ]) {
-      if (Number.isFinite(patch[key])) {
-        if (key === 'sharpness' && ((state.sharpness > 0.001) !== (patch.sharpness > 0.001))) {
-          needTargetRebuild = true;
-        }
-        if ((key === 'giIntensity' || key === 'ssrIntensity') && (activePreset.ssgi || activePreset.ssr)) {
-          const hadGi = state.giIntensity > 0.001 || state.ssrIntensity > 0.001;
-          state[key] = patch[key];
-          const hasGi = state.giIntensity > 0.001 || state.ssrIntensity > 0.001;
-          if (hadGi !== hasGi) needTargetRebuild = true;
-          continue;
-        }
-        state[key] = patch[key];
-      }
+      if (Number.isFinite(patch[key])) state[key] = patch[key];
     }
 
     if ('whiteTemp' in patch || 'whiteTint' in patch) {
@@ -763,7 +779,7 @@ export function createPostPipeline3D(options = {}) {
       state.whiteBalanceVec?.set(wb[0], wb[1], wb[2]);
     }
 
-    if (needTargetRebuild) buildTargets();
+    syncOptionalTargets();
   }
 
   function renderForwardWithViewmodel(world, camera, viewScene, viewCamera) {
@@ -825,10 +841,12 @@ export function createPostPipeline3D(options = {}) {
       }
 
       // 1. Half-res SSAO + Volumetric sun shafts + separable bilateral blur
-      const useAo = Boolean(activePreset.ssao && halfRT && halfBlurRT);
+      const useAo = Boolean(activePreset.ssao && state.ssaoIntensity > 0 && halfRT && halfBlurRT);
       const volSteps = activePreset.volumetricSteps ?? 0;
       const sunShadowTex = sunLight?.shadow?.map?.texture ?? null;
-      const useVolumetric = Boolean(volSteps > 0 && sunShadowTex && halfRT && halfBlurRT);
+      const shadowMatrix = sunLight?.shadow?.matrix;
+      const useVolumetric = Boolean(volSteps > 0.5 && state.volumetricIntensity !== 0 &&
+        sunShadowTex && shadowMatrix && halfRT && halfBlurRT);
 
       renderer.autoClear = false;
       if (useAo || useVolumetric) {
@@ -843,8 +861,8 @@ export function createPostPipeline3D(options = {}) {
         mats.aoVol.uniforms.uVolumetricSteps.value = useVolumetric ? volSteps : 0;
         mats.aoVol.uniforms.uTime.value = elapsed;
 
-        if (useVolumetric && sunLight?.shadow?.matrix) {
-          scratchCamToShadow.multiplyMatrices(sunLight.shadow.matrix, camera.matrixWorld);
+        if (useVolumetric) {
+          scratchCamToShadow.multiplyMatrices(shadowMatrix, camera.matrixWorld);
           mats.aoVol.uniforms.tSunShadow.value = sunShadowTex;
           mats.aoVol.uniforms.uHasSunShadow.value = 1;
         } else {
@@ -864,12 +882,9 @@ export function createPostPipeline3D(options = {}) {
       }
 
       // 1b. Half-res HDR SSGI + SSR bounce reflections + depth-guided bilateral denoise
-      const useGiSsr = Boolean(
-        (activePreset.ssgi || activePreset.ssr) &&
-        giSsrRT &&
-        giSsrBlurRT &&
-        (state.giIntensity > 0.001 || state.ssrIntensity > 0.001),
-      );
+      const useSsgi = ssgiEnabled();
+      const useSsr = ssrEnabled();
+      const useGiSsr = Boolean((useSsgi || useSsr) && giSsrRT && giSsrBlurRT);
       if (useGiSsr) {
         const giU = mats.giSsr.uniforms;
         giU.tScene.value = sceneRT.texture;
@@ -878,8 +893,8 @@ export function createPostPipeline3D(options = {}) {
         giU.uResolution.value.set(hw, hh);
         giU.uNear.value = camera.near ?? 0.1;
         giU.uFar.value = camera.far ?? 1000;
-        giU.uSsgiEnabled.value = activePreset.ssgi ? 1 : 0;
-        giU.uSsrEnabled.value = activePreset.ssr ? 1 : 0;
+        giU.uSsgiEnabled.value = useSsgi ? 1 : 0;
+        giU.uSsrEnabled.value = useSsr ? 1 : 0;
         giU.uGiRadius.value = state.giRadius;
         giU.uGiIntensity.value = state.giIntensity;
         giU.uSsrIntensity.value = state.ssrIntensity;
@@ -928,7 +943,7 @@ export function createPostPipeline3D(options = {}) {
       }
 
       // 2. Multi-mip Karis-average Bloom pyramid
-      const useBloom = Boolean(activePreset.bloom && bloomMips.length > 0);
+      const useBloom = Boolean(activePreset.bloom && state.bloomStrength !== 0 && bloomMips.length > 0);
       if (useBloom) {
         mats.prefilter.uniforms.tSource.value = sceneRT.texture;
         mats.prefilter.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);

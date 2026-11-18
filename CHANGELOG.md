@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Skip inactive 3D post-processing passes and preserve scene buffers and eye-adaptation history when effect settings change.
+
 - Bundle local API lookup, the selected starter entry reference, and runtime type declarations in generated games. Include the Pixi starter build and declarations in the engine SDK archive.
 
 - Reduce per-unit Pixi swarm synchronization work for common single-clip and fixed-orientation crowds.
