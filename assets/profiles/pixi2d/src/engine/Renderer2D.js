@@ -25,7 +25,30 @@ export class Renderer2D {
   async init(mount) {
     this.mount = mount;
     const { width, height, resolution } = this.planViewport();
-    await this.app.init({ preference: 'webgpu', width, height, resolution, autoDensity: true, backgroundColor: 0x0b101b, autoStart: false });
+    const options = { width, height, resolution, autoDensity: true, backgroundColor: 0x0b101b, autoStart: false };
+    try {
+      await this.app.init({ ...options, preference: ['webgpu'] });
+    } catch (gpuError) {
+      // Pixi detects unsupported backends but does not retry if the selected
+      // renderer fails during initialization. Retry with a fresh application.
+      try {
+        if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
+        else this.app.stage?.destroy({ children: true });
+      } catch (cleanupError) {
+        console.warn('Failed to clean up the initial Pixi renderer:', cleanupError);
+      }
+      this.app = new Application();
+      try {
+        await this.app.init({ ...options, preference: ['webgl', 'canvas'] });
+      } catch (fallbackError) {
+        const errors = [gpuError, fallbackError];
+        try {
+          if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
+          else this.app.stage?.destroy({ children: true });
+        } catch (cleanupError) { errors.push(cleanupError); }
+        throw new AggregateError(errors, 'Unable to initialize a Pixi renderer');
+      }
+    }
     this.app.ticker.stop();
     this.app.canvas.id = 'game';
     this.app.canvas.setAttribute('aria-label', '游戏画面');

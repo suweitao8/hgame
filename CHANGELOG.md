@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Retry Pixi initialization with WebGL/Canvas if WebGPU is unavailable or fails during renderer initialization.
+
 - Preserve authored model root transforms when a 3D modular level places a single instance, matching the batch placement path.
 
 - Release already-created 3D instance buffers if a later part of the same model batch fails to build.
