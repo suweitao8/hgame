@@ -234,6 +234,100 @@ vec3 reconstructEdgeAwareNormal(vec2 uv, vec3 viewPos, float depthC) {
   return n;
 }
 
+float clipRayToFrustum(vec4 start, vec4 end) {
+  vec3 startMin = start.www + start.xyz;
+  vec3 startMax = start.www - start.xyz;
+  vec3 endMin = end.www + end.xyz;
+  vec3 endMax = end.www - end.xyz;
+  if (any(lessThan(startMin, vec3(0.0))) || any(lessThan(startMax, vec3(0.0)))) return 0.0;
+  float t = 1.0;
+  for (int axis = 0; axis < 3; axis++) {
+    if (endMin[axis] < 0.0) t = min(t, startMin[axis] / (startMin[axis] - endMin[axis]));
+    if (endMax[axis] < 0.0) t = min(t, startMax[axis] / (startMax[axis] - endMax[axis]));
+  }
+  return t;
+}
+
+// XY is screen UV. Z and W carry view Z / clip W and 1 / clip W.
+vec4 projectReflectionEndpoint(vec4 clip, float viewZ) {
+  float invW = 1.0 / clip.w;
+  return vec4(clip.xy * invW * 0.5 + 0.5, viewZ * invW, invW);
+}
+
+ivec2 reflectionPixel(vec2 uv, ivec2 size) {
+  return clamp(ivec2(uv * vec2(size)), ivec2(0), size - ivec2(1));
+}
+
+float reflectionDepthGap(vec4 raySample, ivec2 pixel, ivec2 size) {
+  float depth = texelFetch(tDepth, pixel, 0).r;
+  if (depth >= 1.0) return -1.0;
+  vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+  return reconstructViewPos(uv, depth).z - raySample.z / raySample.w;
+}
+
+bool traceReflection(vec3 origin, vec3 direction, out vec2 hitUv, out float confidence) {
+  float maxDist = clamp(uSsrMaxDist, 4.0, 64.0);
+  float thickness = clamp(uSsrThickness, 0.05, 1.5);
+  vec3 start = origin + direction * 0.04;
+  vec3 end = origin + direction * maxDist;
+  vec4 startClip = uProj * vec4(start, 1.0);
+  vec4 endClip = uProj * vec4(end, 1.0);
+  float clipT = clipRayToFrustum(startClip, endClip);
+  if (clipT <= 0.0 || startClip.w <= 0.0) return false;
+  endClip = mix(startClip, endClip, clipT);
+  if (endClip.w <= 0.0) return false;
+
+  vec4 a = projectReflectionEndpoint(startClip, start.z);
+  vec4 b = projectReflectionEndpoint(endClip, mix(start.z, end.z, clipT));
+  ivec2 depthSize = textureSize(tDepth, 0);
+  vec2 span = abs(b.xy - a.xy) * vec2(depthSize);
+  float pixelLength = max(span.x, span.y);
+  if (pixelLength < 1.0) return false;
+  int steps = int(clamp(ceil(pixelLength * 0.5), 1.0, 12.0));
+  float firstT = max(1.0 / pixelLength, (0.65 + 0.35 * ign(gl_FragCoord.xy)) / float(steps));
+  float previousT = 0.0;
+  bool wasInFront = true;
+  ivec2 sourcePixel = reflectionPixel(vUv, depthSize);
+
+  for (int i = 0; i < 12; i++) {
+    if (i >= steps) break;
+    float t = steps == 1 ? 1.0 : mix(firstT, 1.0, float(i) / float(steps - 1));
+    vec4 raySample = mix(a, b, t);
+    ivec2 pixel = reflectionPixel(raySample.xy, depthSize);
+    if (all(equal(pixel, sourcePixel))) {
+      previousT = t;
+      continue;
+    }
+    float gap = reflectionDepthGap(raySample, pixel, depthSize);
+    if (gap >= 0.0 && wasInFront) {
+      float lo = previousT;
+      float hi = t;
+      for (int r = 0; r < 2; r++) {
+        float mid = 0.5 * (lo + hi);
+        vec4 candidate = mix(a, b, mid);
+        ivec2 candidatePixel = reflectionPixel(candidate.xy, depthSize);
+        bool isSource = all(equal(candidatePixel, sourcePixel));
+        float candidateGap = isSource ? -1.0 : reflectionDepthGap(candidate, candidatePixel, depthSize);
+        if (candidateGap >= 0.0) {
+          hi = mid;
+          raySample = candidate;
+          gap = candidateGap;
+        } else {
+          lo = mid;
+        }
+      }
+      if (gap < thickness) {
+        hitUv = clamp(raySample.xy, 0.0, 1.0);
+        confidence = 1.0 - smoothstep(thickness * 0.5, thickness, gap);
+        return true;
+      }
+    }
+    wasInFront = gap < 0.0;
+    previousT = t;
+  }
+  return false;
+}
+
 void main() {
   float depth = texture(tDepth, vUv).r;
   if (depth >= 1.0) {
@@ -243,7 +337,6 @@ void main() {
 
   vec3 viewPos = reconstructViewPos(vUv, depth);
   vec3 viewNormal = reconstructEdgeAwareNormal(vUv, viewPos, depth);
-  vec3 viewDir = normalize(-viewPos);
   vec3 giAccum = vec3(0.0);
   vec3 ssrColor = vec3(0.0);
 
@@ -261,8 +354,9 @@ void main() {
       vec3 sampleDir = normalize(tangent * cos(a) * (1.0 - elev * 0.4) + bitangent * sin(a) * (1.0 - elev * 0.4) + viewNormal * elev);
       vec3 probePos = viewPos + sampleDir * (radius * rFrac);
       vec4 clip = uProj * vec4(probePos, 1.0);
-      vec2 sUv = (clip.xy / max(abs(clip.w), 1e-5)) * 0.5 + 0.5;
-      if (sUv.x > 0.01 && sUv.x < 0.99 && sUv.y > 0.01 && sUv.y < 0.99) {
+      vec2 sUv = (clip.xy / max(clip.w, 1e-5)) * 0.5 + 0.5;
+      if (clip.w > 0.0 && abs(clip.z) <= clip.w &&
+          sUv.x > 0.01 && sUv.x < 0.99 && sUv.y > 0.01 && sUv.y < 0.99) {
         float sDepth = texture(tDepth, sUv).r;
         if (sDepth < 1.0) {
           vec3 sView = reconstructViewPos(sUv, sDepth);
@@ -286,60 +380,17 @@ void main() {
   }
 
   if (uSsrEnabled > 0.5 && uSsrIntensity > 0.001) {
+    vec3 viewDir = uProj[3].w == 0.0 ? normalize(-viewPos) : vec3(0.0, 0.0, 1.0);
     vec3 reflDir = reflect(-viewDir, viewNormal);
-    if (reflDir.z < 0.35) {
-      float maxDist = clamp(uSsrMaxDist, 4.0, 64.0);
-      float thickness = clamp(uSsrThickness, 0.05, 1.5);
-      float jitter = ign(gl_FragCoord.xy + vec2(3.0, fract(uTime) * 23.0));
-      float stepLen = maxDist / 12.0;
-      float prevT = 0.05;
-      bool hit = false;
-      vec2 hitUv = vec2(0.0);
-
-      for (int s = 0; s < 12; s++) {
-        float t = (float(s) + jitter + 0.35) * stepLen;
-        vec3 pView = viewPos + reflDir * t;
-        if (pView.z > -0.05) break;
-        vec4 clip = uProj * vec4(pView, 1.0);
-        vec2 rUv = (clip.xy / max(abs(clip.w), 1e-5)) * 0.5 + 0.5;
-        if (rUv.x < 0.0 || rUv.x > 1.0 || rUv.y < 0.0 || rUv.y > 1.0) break;
-        float sDepth = texture(tDepth, rUv).r;
-        if (sDepth < 1.0) {
-          float sceneZ = reconstructViewPos(rUv, sDepth).z;
-          float dz = sceneZ - pView.z;
-          if (dz > 0.0 && dz < thickness + t * 0.04) {
-            float lo = prevT;
-            float hi = t;
-            for (int r = 0; r < 2; r++) {
-              float mid = 0.5 * (lo + hi);
-              vec3 mp = viewPos + reflDir * mid;
-              vec4 mc = uProj * vec4(mp, 1.0);
-              vec2 mUv = (mc.xy / max(abs(mc.w), 1e-5)) * 0.5 + 0.5;
-              float md = texture(tDepth, clamp(mUv, vec2(0.0), vec2(1.0))).r;
-              float mz = reconstructViewPos(clamp(mUv, vec2(0.0), vec2(1.0)), md).z;
-              if (mz - mp.z > 0.0) {
-                hi = mid;
-                rUv = mUv;
-              } else {
-                lo = mid;
-              }
-            }
-            hit = true;
-            hitUv = rUv;
-            break;
-          }
-        }
-        prevT = t;
-      }
-
-      if (hit) {
-        vec2 edge = smoothstep(vec2(0.0), vec2(0.12), hitUv) * smoothstep(vec2(1.0), vec2(0.88), hitUv);
-        float edgeFade = edge.x * edge.y;
-        float dirFade = 1.0 - smoothstep(0.0, 0.35, reflDir.z);
-        float fresnel = mix(0.08, 0.92, pow(1.0 - max(0.0, dot(viewNormal, viewDir)), 4.0));
-        vec3 reflCol = min(max(vec3(0.0), texture(tScene, hitUv).rgb), vec3(8.0));
-        ssrColor = reflCol * (edgeFade * dirFade * fresnel);
-      }
+    vec2 hitUv;
+    float confidence;
+    if (reflDir.z < 0.35 && traceReflection(viewPos, reflDir, hitUv, confidence)) {
+      vec2 edge = smoothstep(vec2(0.0), vec2(0.12), min(hitUv, 1.0 - hitUv));
+      float edgeFade = edge.x * edge.y;
+      float dirFade = 1.0 - smoothstep(0.0, 0.35, reflDir.z);
+      float fresnel = mix(0.08, 0.92, pow(1.0 - max(0.0, dot(viewNormal, viewDir)), 4.0));
+      vec3 reflCol = min(max(vec3(0.0), textureLod(tScene, hitUv, 0.0).rgb), vec3(8.0));
+      ssrColor = reflCol * (edgeFade * dirFade * fresnel * confidence);
     }
   }
 

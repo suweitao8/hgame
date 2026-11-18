@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clip screen-space reflection rays to the camera frustum and march in projected pixel space with perspective-correct depth. Refine depth crossings and fade hits near view edges.
+
 - Use a logarithmic depth guide for 3D screen-space lighting denoising and upsampling. Reject sky and foreground bleeding at silhouettes while keeping effects at half resolution.
 
 - Finish screen-space effects using world scene depth before drawing a first-person layer. Apply bloom, exposure and tone mapping to the combined HDR image.
