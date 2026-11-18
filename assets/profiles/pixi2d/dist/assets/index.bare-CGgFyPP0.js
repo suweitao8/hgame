@@ -1,0 +1,1 @@
+import{s as r}from"./startPixiGame-DvRsX8P7.js";import"./Geometry-DuktKPGT.js";import"./init-D5TSuBEl.js";import"./canvasUtils-B-n9KQGi.js";import"./colorToUniform-BRamFM33.js";import"./localUniformBit-BOGrcT1E.js";await r(({app:e,Scene:t})=>(e.scenes.add(new t("main")),{scene:"main",state:()=>({scene:e.scenes.current?.name??null})}));

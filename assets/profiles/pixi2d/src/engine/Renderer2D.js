@@ -25,6 +25,9 @@ export class Renderer2D {
     this.app = new Application();
     this.entityMap = new Map();
     this.spritePool = [];
+    this.enemyParticles = [];
+    this.enemyPool = [];
+    this.pendingEnemies = [];
     this.swarmLayers = new Set();
     this.tilemapLayers = new Set();
     this.effectChannels = new Map();
@@ -40,22 +43,23 @@ export class Renderer2D {
     const errors = [];
     let initialized = false;
     const backends = this.backendPreference === 'auto' ? RENDERER_BACKENDS : [this.backendPreference];
-    for (const [index, backend] of backends.entries()) {
+    for (const backend of backends) {
+      const app = this.app ??= new Application();
       try {
-        await this.app.init({ ...options, preference: [backend] });
+        await app.init({ ...options, preference: [backend] });
         initialized = true;
         this.backend = backend;
         break;
       } catch (error) {
         errors.push(error);
+        this.app = null;
         try {
-          if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
-          else this.app.stage?.destroy({ children: true });
+          if (app.renderer) app.destroy({ removeView: true }, { children: true });
+          else app.stage?.destroy({ children: true });
         } catch (cleanupError) {
           errors.push(cleanupError);
           console.warn('Failed to clean up a Pixi renderer:', cleanupError);
         }
-        if (index + 1 < backends.length) this.app = new Application();
       }
     }
     if (!initialized) throw new AggregateError(errors, 'Unable to initialize a Pixi renderer');
@@ -78,9 +82,6 @@ export class Renderer2D {
     this.entityLayer = new Container({ sortableChildren: true });
     this.foregroundLayer = new Container();
     this.enemyLayer = new ParticleContainer({ dynamicProperties: { position: true, uvs: true, rotation: true, vertex: true } });
-    this.enemyParticles = [];
-    this.enemyPool = [];
-    this.pendingEnemies = [];
     this.trailLayer = new Container();
     this.particleLayer = new ParticleContainer({ dynamicProperties: { position: true, vertex: true, rotation: true, color: true, uvs: true } });
     this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, this.foregroundLayer, this.trailLayer, this.particleLayer);
@@ -109,7 +110,7 @@ export class Renderer2D {
     return { width, height, resolution };
   }
   resize() {
-    if (this.disposed || !this.app.renderer) return false;
+    if (this.disposed || !this.app?.renderer) return false;
     this.updateQualityMarker();
     const next = this.planViewport(), prev = this.viewport;
     if (prev && prev.width === next.width && prev.height === next.height && prev.resolution === next.resolution) return false;
@@ -318,18 +319,18 @@ export class Renderer2D {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    this.resizeObserver?.disconnect(); this.resizeObserver = null; this.onResize = null;
-    for (const layer of this.swarmLayers) layer.dispose();
-    for (const layer of this.tilemapLayers) layer.dispose();
-    for (const sprite of this.spritePool) sprite.destroy();
-    this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.pendingEnemies.length = 0; this.entityMap.clear();
-    const stage = this.app.stage;
     try {
+      this.resizeObserver?.disconnect(); this.resizeObserver = null; this.onResize = null;
+      for (const layer of this.swarmLayers) layer.dispose();
+      for (const layer of this.tilemapLayers) layer.dispose();
+      for (const sprite of this.spritePool) sprite.destroy();
+      this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.pendingEnemies.length = 0; this.entityMap.clear();
+      const stage = this.app?.stage;
       if (stage) stage.filters = [];
       this.effectChannels.clear();
       this.beforeRenderCallbacks.clear();
       this.bloom?.destroy();
-      if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
+      if (this.app?.renderer) this.app.destroy({ removeView: true }, { children: true });
       else if (stage && !stage.destroyed) stage.destroy({ children: true });
     } finally { this.atlas.dispose(); }
   }

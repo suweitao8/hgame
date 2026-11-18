@@ -2,6 +2,7 @@
 // Optional browser acceptance test. Pass --playwright <absolute-playwright-core-path>
 // when playwright-core is not locally resolvable. No permanent project changes.
 import { spawn, spawnSync } from 'node:child_process';
+import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -30,8 +31,9 @@ async function getPort() {
 }
 async function serve(profile) {
   const project = path.join(tmp, 'sample-' + profile);
-  const selected = profile.startsWith('3d') ? '3d' : profile === '2d-bare' ? '2d' : profile;
-  const result = spawnSync(process.execPath, [builder, project, '--profile', selected, '--no-git',
+  const selected = profile.startsWith('3d') ? '3d' : profile.startsWith('2d') ? '2d' : profile;
+  const starter = profile === 'pixi-recovery' ? ['--preset', 'horde'] : ['--profile', selected];
+  const result = spawnSync(process.execPath, [builder, project, ...starter, '--no-git',
     ...(profile === '3d-physics' ? ['--with', 'physics3d'] : []),
     ...(profile === '3d-quality' ? ['--quality', 'auto'] : []),
     ...(profile === '3d-bare-low' ? ['--quality', 'low', '--bare'] : []),
@@ -53,11 +55,89 @@ async function serve(profile) {
   throw new Error('Preview never started for ' + profile);
 }
 
+async function checkPixiRecovery() {
+  const url = await serve('pixi-recovery');
+  const page = await browser.newPage({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
+  const errors = [];
+  try {
+    await page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }));
+    await page.route('**/src/presentation.json', route => route.fulfill({ json: { backend: 'auto', quality: 'medium' } }));
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(url);
+    const canvas = page.locator('canvas#game[data-engine-ready="true"]');
+    await canvas.waitFor();
+    assert.equal(await canvas.getAttribute('data-renderer-backend'), 'webgl');
+    const before = await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+      return window.__hgameState().tick;
+    });
+    const lost = await canvas.evaluate(element => {
+      const gl = element.getContext('webgl2');
+      const extension = gl?.getExtension('WEBGL_lose_context');
+      if (!extension) throw new Error('Pixi recovery probe needs WEBGL_lose_context');
+      return new Promise((resolve, reject) => {
+        const onLost = () => {
+          clearTimeout(timeout);
+          resolve(gl.isContextLost());
+          setTimeout(() => extension.restoreContext(), 50);
+        };
+        const timeout = setTimeout(() => {
+          element.removeEventListener('webglcontextlost', onLost);
+          reject(new Error('Pixi did not report WebGL context loss'));
+        }, 5000);
+        element.addEventListener('webglcontextlost', onLost, { once: true });
+        extension.loseContext();
+      });
+    });
+    assert.equal(lost, true);
+    await page.waitForFunction(() => !document.querySelector('#game').getContext('webgl2').isContextLost());
+    assert.equal(await page.evaluate(() => window.__hgameState().tick), before, 'hidden Pixi game must pause simulation');
+    await page.evaluate(() => {
+      delete document.visibilityState;
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForFunction(tick => window.__hgameState().tick >= tick + 10, before);
+    const after = await canvas.screenshot();
+    const colors = await page.evaluate(async png => {
+      const image = new Image();
+      image.src = 'data:image/png;base64,' + png;
+      await image.decode();
+      const sample = document.createElement('canvas');
+      sample.width = 80;
+      sample.height = 40;
+      const ctx = sample.getContext('2d');
+      ctx.drawImage(image, 0, 0, 80, 40);
+      const data = ctx.getImageData(0, 0, 80, 40).data;
+      const colors = new Set();
+      for (let i = 0; i < data.length; i += 4) colors.add(data[i] * 65536 + data[i + 1] * 256 + data[i + 2]);
+      return colors.size;
+    }, after.toString('base64'));
+    assert.ok(colors > 8, 'Pixi must restore the game frame after returning to the foreground');
+    assert.equal(await canvas.evaluate(element => element.getContext('webgl2').getError()), 0);
+    assert.deepEqual(errors, []);
+  } finally {
+    await page.close();
+  }
+  const failed = await browser.newPage();
+  try {
+    await failed.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }));
+    await failed.route('**/src/presentation.json', route => route.fulfill({ json: { backend: 'webgpu' } }));
+    const [error] = await Promise.all([failed.waitForEvent('pageerror', { timeout: 15000 }), failed.goto(url)]);
+    assert.equal(error.message, 'Unable to initialize a Pixi renderer');
+    assert.equal(await failed.locator('canvas#game').count(), 0);
+  } finally {
+    await failed.close();
+  }
+  console.log(JSON.stringify({ profile: 'pixi-recovery', contextRecovery: true, startupCleanup: true }));
+}
+
 try {
   browser = await chromium.launch({
     headless: true, ...(executablePath ? { executablePath } : {}),
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'],
+    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl', '--enable-unsafe-swiftshader'],
   });
+  await checkPixiRecovery();
   for (const profile of ['2d', '2d-bare', '3d', '3d-physics', '3d-none', '3d-quality', '3d-bare-low', 'ui']) {
     const url = await serve(profile);
     const page = await browser.newPage({

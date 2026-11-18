@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release the Pixi atlas when renderer initialization fails before mounting a canvas. Cover automatic WebGL fallback, hidden-page context recovery and fixed-backend startup errors in browser CI.
+
 - Avoid SwiftShader's per-instance draw overhead in general WebGL2D sprite batches by fetching packed instances in one triangle stream.
 
 - Render WebGL2D instanced quads with four vertices and skip interpolation of per-instance colors. Run the frame pacing and 3D stress budgets independently in CI.
