@@ -79,7 +79,7 @@ try {
       await page.locator('#draw:enabled').waitFor();
     } else {
       try {
-        await page.locator('#game[data-engine-ready="true"], #game-canvas[data-engine-ready="true"]').waitFor({ timeout: 20000 });
+        await page.locator('canvas#game[data-engine-ready="true"]').waitFor({ timeout: 20000 });
       } catch (error) {
         throw new Error(profile + ' did not become ready. ' + errors.join(' | '), { cause: error });
       }
