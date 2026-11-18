@@ -7,10 +7,19 @@ import { once } from 'node:events';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { chromium } from 'playwright-core';
+import { parseArgs } from 'node:util';
+import { chromium, firefox, webkit } from 'playwright-core';
+import { benchmarkBrowserOptions } from '../scripts/lib/browser-benchmark.mjs';
 import { verifyStorageQuota } from './browser-storage-quota.mjs';
+
+const { values: { browser: browserName, chrome } } = parseArgs({
+  options: { browser: { type: 'string', default: 'chromium' }, chrome: { type: 'string' } },
+});
+const browserTypes = new Map([['chromium', chromium], ['firefox', firefox], ['webkit', webkit]]);
+const browserType = browserTypes.get(browserName);
+assert.ok(browserType, 'Use --browser chromium, firefox or webkit');
+assert.ok(!chrome || browserType === chromium, '--chrome requires Chromium');
 const temp = await mkdtemp(path.join(os.tmpdir(), 'hgame-recipes-'));
-const chrome = process.argv.indexOf('--chrome');
 let browser;
 let server;
 const run = args => {
@@ -19,9 +28,9 @@ const run = args => {
   return result.stdout;
 };
 try {
-  browser = await chromium.launch({ headless: true,
-    ...(chrome >= 0 ? { executablePath: process.argv[chrome + 1] } : {}),
-    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'] });
+  const options = browserType === chromium ? benchmarkBrowserOptions('software', chrome) : { headless: true };
+  if (options.args) options.args = options.args.filter(arg => arg !== '--disable-frame-rate-limit');
+  browser = await browserType.launch(options);
   for (const name of ['2d', 'horde', '3d', 'ui']) {
     const recipe = JSON.parse(run(['scripts/query-api.mjs', '--recipe', name, '--json']));
     const args = recipe.code.split('\n')[0].slice('// Create: node '.length)
@@ -68,7 +77,7 @@ try {
     if (name === '3d') assert.ok(Number.isFinite(after.terrainMaxY), '3d terrain/physics wiring');
     if (name === 'ui') assert.equal(after.locale, 'zh', 'UI locale getter');
     assert.deepEqual(errors, [], `${name} errors`);
-    console.log(JSON.stringify({ recipe: name, before, after, errors }));
+    console.log(JSON.stringify({ browser: browserName, version: browser.version(), recipe: name, before, after, errors }));
     if (name === '2d') {
       // Exercise real localStorage across navigation, then repair a corrupted primary.
       await page.evaluate(async () => {
