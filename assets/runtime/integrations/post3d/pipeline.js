@@ -4,6 +4,18 @@ import { createFullscreenTriangle, inspectWebGLCapabilities } from './capabiliti
 import { computeWhiteBalanceRGB } from './color.js';
 import { QUALITY3D_PRESETS } from '../quality3d.js';
 
+const POST_STATE_SCALAR_KEYS = [
+  'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
+  'ssaoRadius', 'ssaoBias', 'ssaoIntensity', 'volumetricIntensity',
+  'giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxDist', 'ssrThickness',
+  'contactShadows', 'contactShadowLength', 'contactShadowThickness',
+  'minExposure', 'maxExposure', 'adaptSpeedUp', 'adaptSpeedDown', 'keyValue', 'exposureCompensation',
+  'whiteTemp', 'whiteTint', 'contrast', 'chromaticAberration', 'filmGrain',
+  'filmSlope', 'filmToe', 'filmShoulder', 'filmBlackClip', 'filmWhiteClip',
+  'sharpness', 'vignette', 'saturation', 'damage', 'lowHealth',
+  'focus', 'flash', 'fade',
+];
+
 /** @typedef {import('./color.js').RGBTuple} RGBTuple */
 /** @typedef {import('../quality3d.js').Quality3DPreset} Quality3DPreset */
 /** @typedef {import('./capabilities.js').WebGLCapabilities} WebGLCapabilities */
@@ -332,7 +344,7 @@ export function createPostPipeline3D(options = {}) {
   let adaptIndex = 0;
   let adaptNeedsReset = true;
 
-  const initialWb = computeWhiteBalanceRGB(whiteTemp, whiteTint, [1, 1, 1]);
+  const whiteBalanceRgb = computeWhiteBalanceRGB(whiteTemp, whiteTint);
   const state = {
     toneMapping: resolveToneMappingIndex(toneMapping),
     exposure,
@@ -381,7 +393,7 @@ export function createPostPipeline3D(options = {}) {
     flash: 0,
     fade: 0,
     sunColor: THREE.Color ? new THREE.Color(0xfff1d6) : null,
-    whiteBalanceVec: THREE.Vector3 ? new THREE.Vector3(initialWb[0], initialWb[1], initialWb[2]) : null,
+    whiteBalanceVec: THREE.Vector3 ? new THREE.Vector3(whiteBalanceRgb[0], whiteBalanceRgb[1], whiteBalanceRgb[2]) : null,
     liftVec: THREE.Vector3 ? new THREE.Vector3(...colorLift) : null,
     gammaVec: THREE.Vector3 ? new THREE.Vector3(...colorGamma) : null,
     gainVec: THREE.Vector3 ? new THREE.Vector3(...colorGain) : null,
@@ -769,23 +781,15 @@ export function createPostPipeline3D(options = {}) {
       state.gainVec?.set(state.colorGain[0], state.colorGain[1], state.colorGain[2]);
     }
 
-    for (const key of [
-      'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
-      'ssaoRadius', 'ssaoBias', 'ssaoIntensity', 'volumetricIntensity',
-      'giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxDist', 'ssrThickness',
-      'contactShadows', 'contactShadowLength', 'contactShadowThickness',
-      'minExposure', 'maxExposure', 'adaptSpeedUp', 'adaptSpeedDown', 'keyValue', 'exposureCompensation',
-      'whiteTemp', 'whiteTint', 'contrast', 'chromaticAberration', 'filmGrain',
-      'filmSlope', 'filmToe', 'filmShoulder', 'filmBlackClip', 'filmWhiteClip',
-      'sharpness', 'vignette', 'saturation', 'damage', 'lowHealth',
-      'focus', 'flash', 'fade',
-    ]) {
+    const previousWhiteTemp = state.whiteTemp;
+    const previousWhiteTint = state.whiteTint;
+    for (const key of POST_STATE_SCALAR_KEYS) {
       if (Number.isFinite(patch[key])) state[key] = patch[key];
     }
 
-    if ('whiteTemp' in patch || 'whiteTint' in patch) {
-      const wb = computeWhiteBalanceRGB(state.whiteTemp, state.whiteTint, [1, 1, 1]);
-      state.whiteBalanceVec?.set(wb[0], wb[1], wb[2]);
+    if (state.whiteTemp !== previousWhiteTemp || state.whiteTint !== previousWhiteTint) {
+      computeWhiteBalanceRGB(state.whiteTemp, state.whiteTint, whiteBalanceRgb);
+      state.whiteBalanceVec?.set(whiteBalanceRgb[0], whiteBalanceRgb[1], whiteBalanceRgb[2]);
     }
 
     syncOptionalTargets();
@@ -826,7 +830,11 @@ export function createPostPipeline3D(options = {}) {
     try {
       renderer.setRenderTarget(sceneRT);
       renderer.autoClear = true;
-      renderer.clear(true, true, false);
+      // Three clears both attachments during ordinary scene rendering. XR and
+      // renderers with different clear settings still need an explicit clear.
+      if (renderer.xr?.isPresenting !== false || renderer.autoClearColor !== true || renderer.autoClearDepth !== true) {
+        renderer.clear(true, true, false);
+      }
       renderer.render(world, camera);
 
       if (viewScene && viewCamera) {

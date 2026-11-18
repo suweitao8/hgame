@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Skip redundant 3D scene clears with Three.js auto-clear enabled and only recompute white balance when temperature or tint changes.
+
 - Resize the Three.js drawing buffer in one update. Defer 3D post-processing allocations during WebGL context loss and retain auto-exposure history across resolution changes.
 
 - Support `tickHz: 0` for command-driven 2D games without physics. The Pixi renderer redraws on commands and resize while the idle game schedules zero frames.
