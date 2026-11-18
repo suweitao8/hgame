@@ -578,19 +578,18 @@ export function createModel3DProvider({
       _collectNotifiesForTrack(clipName, action, isLoop, cursor, stepDt, pendingEvents) {
         if (!clipName || !action || stepDt <= 0) return;
         const list = this._notifies.get(clipName);
+        // Three's action already owns the selected clip; avoid searching the
+        // clip list for every animated actor on every update.
+        const clip = action.getClip?.() ?? this._findClip(clipName);
+        const duration = Number(clip?.duration) || 0;
+        const speed = (action.timeScale ?? 1) * (this.mixer?.timeScale ?? 1);
         if (!list || list.length === 0) {
-          const clip = this._findClip(clipName);
-          const d = Number(clip?.duration) || 0;
-          const speed = (action.timeScale ?? 1) * (this.mixer?.timeScale ?? 1);
-          if (d > 0 && speed > 0) {
+          if (duration > 0 && speed > 0) {
             cursor.unwrappedTime += stepDt * speed;
             cursor.started = true;
           }
           return;
         }
-        const clip = this._findClip(clipName);
-        const duration = Number(clip?.duration) || 0;
-        const speed = (action.timeScale ?? 1) * (this.mixer?.timeScale ?? 1);
         if (!(duration > 0) || speed <= 0) return;
 
         const t0 = cursor.unwrappedTime;

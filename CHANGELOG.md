@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse the active Three.js animation action's clip when advancing 3D notify cursors, avoiding repeated clip-name searches.
+
 - Allow Pixi tilemaps to render as foreground or background layers so games can compose scenery around character sprites.
 
 - Avoid allocating a notify-event array on every 3D animation step when neither active clip has notifications, while continuing to advance notify cursors.
