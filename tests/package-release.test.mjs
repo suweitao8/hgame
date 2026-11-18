@@ -306,6 +306,32 @@ test('standard and Toy releases trace only the chosen Pixi entry and preserve it
   }
 });
 
+test('Toy preflight failure preserves the previously published directory and archive', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'hgame-package-rollback-'));
+  const game = path.join(temp, 'toy-release');
+  try {
+    const gen = spawnSync(process.execPath, [createGame, game, '--renderer', 'canvas2d', '--no-git'], { encoding: 'utf8' });
+    assert.equal(gen.status, 0, gen.stderr);
+    const args = [packageGame, game, '--target', 'toy', '--slug', 'toy-release', '--version', '1.0.0'];
+    const first = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    assert.equal(first.status, 0, first.stderr);
+    const { zipPath, outputDir } = JSON.parse(first.stdout);
+    const publishedHtml = path.join(outputDir, 'index.html');
+    const [previousZip, previousHtml] = await Promise.all([readFile(zipPath), readFile(publishedHtml)]);
+    const entry = path.join(game, 'index.html');
+    const html = await readFile(entry, 'utf8');
+    await writeFile(entry, html.replace('</body>', '<img src="/invalid-at-toy-subpath.png"></body>'));
+
+    const failed = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /preflight failed/i);
+    assert.deepEqual(await readFile(zipPath), previousZip);
+    assert.deepEqual(await readFile(publishedHtml), previousHtml);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('3D release minifies the Three.js runtime and preserves its exports, license, and source fallback', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-pkg-three-minify-'));
   const game = path.join(tmp, 'arena');

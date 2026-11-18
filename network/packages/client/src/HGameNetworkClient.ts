@@ -58,7 +58,7 @@ export class HGameNetworkClient {
         const room = await this.client.reconnect(token);
         return new HGameRoomConnection(this.client, room, this.storage, key);
       } catch {
-        this.storage?.removeItem(key);
+        if (this.storage?.getItem(key) === token) this.storage.removeItem(key);
       }
     }
     const room = await this.client.joinOrCreate(options.roomName, options.roomOptions ?? {});
@@ -89,6 +89,9 @@ export class HGameNetworkClient {
 
 export class HGameRoomConnection {
   private currentRoom: Room;
+  private reconnecting: Promise<void> | null = null;
+  private reconnectRevision = 0;
+  private releaseRoomSignals: () => void = () => undefined;
   private readonly messageHandlers = new Map<string, Set<MessageHandler>>();
   private readonly stateHandlers = new Set<StateHandler>();
   private readonly messageUnsubs = new Map<string, Map<MessageHandler, () => void>>();
@@ -130,13 +133,15 @@ export class HGameRoomConnection {
 
   onMessage<T = unknown>(type: string, handler: MessageHandler<T>): () => void {
     const handlers = this.messageHandlers.get(type) ?? new Set<MessageHandler>();
-    handlers.add(handler as MessageHandler);
-    this.messageHandlers.set(type, handlers);
     const unsubscribers = this.messageUnsubs.get(type) ?? new Map<MessageHandler, () => void>();
-    unsubscribers.set(handler as MessageHandler, this.currentRoom.onMessage(type, handler as (message: any) => void));
-    this.messageUnsubs.set(type, unsubscribers);
+    if (!handlers.has(handler as MessageHandler)) {
+      handlers.add(handler as MessageHandler);
+      this.messageHandlers.set(type, handlers);
+      unsubscribers.set(handler as MessageHandler, this.currentRoom.onMessage(type, handler as (message: any) => void));
+      this.messageUnsubs.set(type, unsubscribers);
+    }
     return () => {
-      handlers.delete(handler as MessageHandler);
+      if (this.messageHandlers.get(type) !== handlers || !handlers.delete(handler as MessageHandler)) return;
       const currentUnsubs = this.messageUnsubs.get(type);
       currentUnsubs?.get(handler as MessageHandler)?.();
       currentUnsubs?.delete(handler as MessageHandler);
@@ -146,10 +151,13 @@ export class HGameRoomConnection {
   }
 
   onStateChange(handler: StateHandler): () => void {
-    this.stateHandlers.add(handler);
-    const wrapped = handler as (state: any) => void;
-    this.currentRoom.onStateChange(wrapped);
-    this.stateUnsubs.set(handler, () => this.currentRoom.onStateChange.remove(wrapped));
+    if (!this.stateHandlers.has(handler)) {
+      this.stateHandlers.add(handler);
+      const room = this.currentRoom;
+      const wrapped = handler as (state: any) => void;
+      room.onStateChange(wrapped);
+      this.stateUnsubs.set(handler, () => room.onStateChange.remove(wrapped));
+    }
     return () => {
       this.stateUnsubs.get(handler)?.();
       this.stateUnsubs.delete(handler);
@@ -178,22 +186,50 @@ export class HGameRoomConnection {
   }
 
   async reconnect(): Promise<void> {
-    const token = this.storage?.getItem(this.storageKey) ?? this.currentRoom.reconnectionToken;
+    if (this.reconnecting) return this.reconnecting;
+    const prior = this.currentRoom;
+    const revision = this.reconnectRevision;
+    const token = prior.reconnectionToken || this.storage?.getItem(this.storageKey);
     if (!token) throw new Error('No reconnection token is available');
-    const room = await this.client.reconnect(token);
-    this.currentRoom = room;
-    this.attach(room);
-    for (const handler of this.replaceHandlers) handler(room);
+    this.reconnecting = this.client.reconnect(token).then(async room => {
+      if (this.reconnectRevision !== revision || this.currentRoom !== prior) {
+        await room.leave(true);
+        throw new Error('Room reconnected after the previous session ended');
+      }
+      this.detachRoom();
+      this.currentRoom = room;
+      this.attach(room);
+      for (const handler of this.replaceHandlers) handler(room);
+      for (const handler of this.reconnectHandlers) handler();
+    }).finally(() => { this.reconnecting = null; });
+    return this.reconnecting;
   }
 
   async leave(consented = true): Promise<void> {
-    await this.currentRoom.leave(consented);
-    if (consented) this.storage?.removeItem(this.storageKey);
+    const room = this.currentRoom;
+    if (consented) this.reconnectRevision++;
+    await room.leave(consented);
+    if (consented) this.clearToken(room);
+  }
+
+  private clearToken(room: Room): void {
+    if (this.storage?.getItem(this.storageKey) === room.reconnectionToken) {
+      this.storage.removeItem(this.storageKey);
+    }
+  }
+
+  private detachRoom(): void {
+    this.releaseRoomSignals();
+    for (const unsubscribers of this.messageUnsubs.values()) {
+      for (const unsubscribe of unsubscribers.values()) unsubscribe();
+    }
+    for (const unsubscribe of this.stateUnsubs.values()) unsubscribe();
+    this.messageUnsubs.clear();
+    this.stateUnsubs.clear();
   }
 
   private attach(room: Room): void {
     this.storage?.setItem(this.storageKey, room.reconnectionToken);
-    this.messageUnsubs.clear();
     for (const [type, handlers] of this.messageHandlers) {
       const unsubscribers = new Map<MessageHandler, () => void>();
       for (const handler of handlers) {
@@ -201,22 +237,32 @@ export class HGameRoomConnection {
       }
       this.messageUnsubs.set(type, unsubscribers);
     }
-    this.stateUnsubs.clear();
     for (const handler of this.stateHandlers) {
       const wrapped = handler as (state: any) => void;
       room.onStateChange(wrapped);
       this.stateUnsubs.set(handler, () => room.onStateChange.remove(wrapped));
     }
-    room.onDrop((code, reason) => {
+    const onDrop = (code: number, reason?: string) => {
+      if (room !== this.currentRoom) return;
       for (const handler of this.dropHandlers) handler(code, reason);
-    });
-    room.onReconnect(() => {
+    };
+    const onReconnect = () => {
+      if (room !== this.currentRoom) return;
       this.storage?.setItem(this.storageKey, room.reconnectionToken);
       for (const handler of this.reconnectHandlers) handler();
-    });
-    room.onLeave((code, reason) => {
-      this.storage?.removeItem(this.storageKey);
+    };
+    const onLeave = (code: number, reason?: string) => {
+      if (room !== this.currentRoom) return;
+      this.clearToken(room);
       for (const handler of this.leaveHandlers) handler(code, reason);
-    });
+    };
+    room.onDrop(onDrop);
+    room.onReconnect(onReconnect);
+    room.onLeave(onLeave);
+    this.releaseRoomSignals = () => {
+      room.onDrop.remove(onDrop);
+      room.onReconnect.remove(onReconnect);
+      room.onLeave.remove(onLeave);
+    };
   }
 }

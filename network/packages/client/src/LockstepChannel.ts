@@ -30,7 +30,6 @@ export class HGameLockstepChannel {
   private readonly queue: ConfirmedFrameQueue;
   private readonly handlers = new Set<(frame: ConfirmedLockstepFrame) => void>();
   private readonly syncStatusHandlers = new Set<(status: LockstepSyncStatus) => void>();
-  private readonly unhandledFrames: ConfirmedLockstepFrame[] = [];
   private readonly unsubscribeFrame: () => void;
   private readonly unsubscribeSyncStatus: () => void;
   private readonly unsubscribeReconnect: () => void;
@@ -62,11 +61,12 @@ export class HGameLockstepChannel {
   }
 
   sendInput(targetNetTick: number, payload: Uint8Array, flags = LockstepInputFlags.NONE): number {
+    if (this.disposed) throw new Error('Lockstep channel is disposed');
     if (!Number.isInteger(targetNetTick) || targetNetTick < 1 || targetNetTick > 0xffff_ffff || targetNetTick <= this.lastTargetNetTick) {
       throw new RangeError('targetNetTick must increase strictly for each player input');
     }
     if (this.sequence >= 0xffff_ffff) throw new RangeError('Lockstep input sequence exhausted');
-    const sequence = ++this.sequence;
+    const sequence = this.sequence + 1;
     const packet = encodeLockstepInput({
       matchTag: this.matchTag,
       sequence,
@@ -75,6 +75,7 @@ export class HGameLockstepChannel {
       payload,
     });
     this.connection.sendBytes('lockstep:input', packet);
+    this.sequence = sequence;
     this.lastTargetNetTick = targetNetTick;
     return sequence;
   }
@@ -92,8 +93,9 @@ export class HGameLockstepChannel {
   }
 
   onFrame(handler: (frame: ConfirmedLockstepFrame) => void): () => void {
+    if (this.disposed) throw new Error('Lockstep channel is disposed');
     this.handlers.add(handler);
-    while (this.unhandledFrames.length) handler(this.unhandledFrames.shift()!);
+    this.flushFrames();
     return () => this.handlers.delete(handler);
   }
 
@@ -113,7 +115,6 @@ export class HGameLockstepChannel {
     this.queue.drainContiguous();
     this.handlers.clear();
     this.syncStatusHandlers.clear();
-    this.unhandledFrames.length = 0;
   }
 
   private receiveSyncStatus(status: LockstepSyncStatus): void {
@@ -133,9 +134,13 @@ export class HGameLockstepChannel {
     if (!(bytes instanceof Uint8Array)) throw new TypeError('Lockstep frame transport returned a non-binary message');
     const frame = decodeConfirmedFrame(bytes);
     if (!this.queue.push(frame)) return;
+    this.flushFrames();
+  }
+
+  private flushFrames(): void {
+    if (this.handlers.size === 0) return;
     for (const ready of this.queue.drainContiguous()) {
-      if (this.handlers.size === 0) this.unhandledFrames.push(ready);
-      else for (const handler of this.handlers) handler(ready);
+      for (const handler of this.handlers) handler(ready);
     }
   }
 }

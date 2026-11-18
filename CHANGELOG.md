@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Stage game and SDK releases before publishing. Preserve the previous artifacts if assembly or Toy preflight fails and use stable archive timestamps.
+
+- Deduplicate client reconnect attempts, detach replaced room subscriptions, and keep confirmed lockstep frames bounded before a consumer subscribes.
+
 - Publish the Pixi canvas readiness marker used by browser tools. Trace reachable Pixi build files in releases and detect Toy SDK usage in bundled entries. Keep compiled files and the asset catalog out of media CAS sync.
 
 - Include HGame modules referenced by literal paths in the Pixi bundles reachable from a game's release entry.

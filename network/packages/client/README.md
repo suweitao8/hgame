@@ -27,3 +27,5 @@ session.send('game:command', { type: 'ready' });
 The room session stores reconnect tokens in sessionStorage under `(gameId, roomName)`. Pass a custom `StorageLike` in tests or when the host platform provides its own session storage. Call `session.leave()` for a consented leave; `leave(false)` intentionally drops the connection and permits the server's reconnection policy to apply.
 
 For a lockstep room that retains disconnected seats, resume with the server-replicated `player.lastInputSequence + 1` and a valid target frame. Reconnection does not restore a lost game world; the game must own its snapshot/replay policy.
+
+Concurrent `session.reconnect()` calls share one transport attempt. When the room is replaced, existing subscriptions move to the new room, `onRoomReplaced` runs, then `onReconnect` runs so lockstep consumers can request missed frames. Attach the frame consumer before the confirmed-frame queue reaches its configured cap.

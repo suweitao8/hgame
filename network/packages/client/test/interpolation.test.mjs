@@ -7,8 +7,64 @@ import {
 import {
   AdaptiveInputLeadController,
   HGameLockstepChannel,
+  HGameRoomConnection,
   SnapshotInterpolationBuffer,
 } from '../dist/index.js';
+
+test('manual reconnect shares one attempt and transfers room subscriptions once', async () => {
+  function signal() {
+    const handlers = new Set();
+    const subscribe = handler => handlers.add(handler);
+    subscribe.remove = handler => handlers.delete(handler);
+    subscribe.emit = (...args) => { for (const handler of handlers) handler(...args); };
+    return subscribe;
+  }
+  function room(reconnectionToken) {
+    const message = signal();
+    return {
+      reconnectionToken, onStateChange: signal(), onDrop: signal(), onLeave: signal(), onReconnect: signal(),
+      onMessage(_type, handler) { message(handler); return () => message.remove(handler); },
+      emitMessage: message.emit,
+    };
+  }
+  const prior = room('first');
+  const next = room('second');
+  const pending = Promise.withResolvers();
+  let attempts = 0;
+  const client = {
+    reconnect(token) {
+      assert.equal(token, 'first');
+      attempts++;
+      return pending.promise;
+    },
+  };
+  const tokens = new Map();
+  const storage = {
+    getItem: key => tokens.get(key) ?? null,
+    setItem: (key, value) => tokens.set(key, value),
+    removeItem: key => tokens.delete(key),
+  };
+  const connection = new HGameRoomConnection(client, prior, storage, 'test');
+  const received = [];
+  const message = value => received.push(value);
+  connection.onMessage('tick', message);
+  connection.onMessage('tick', message);
+  connection.onStateChange(value => received.push(value));
+  connection.onRoomReplaced(() => received.push('replaced'));
+  connection.onReconnect(() => received.push('reconnected'));
+  const first = connection.reconnect();
+  const second = connection.reconnect();
+  pending.resolve(next);
+  await Promise.all([first, second]);
+  assert.equal(attempts, 1);
+  prior.onLeave.emit(1000);
+  prior.onStateChange.emit('old-state');
+  prior.emitMessage('old-message');
+  next.onStateChange.emit('new-state');
+  next.emitMessage('new-message');
+  assert.deepEqual(received, ['replaced', 'reconnected', 'new-state', 'new-message']);
+  assert.equal(tokens.get('test'), 'second');
+});
 
 test('SnapshotInterpolationBuffer interpolates linearly, wraps shortest-arc angles, and bounds extrapolation', () => {
   const buffer = new SnapshotInterpolationBuffer({

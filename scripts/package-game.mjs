@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
@@ -271,14 +271,15 @@ async function collectFilesRecursively(dir) {
 /**
  * Packages every file inside `sourceDir` into `zipFilePath` using only Node built-ins.
  */
-export async function writeZipArchive(sourceDir, zipFilePath, { rootPrefix = '' } = {}) {
-  const files = await collectFilesRecursively(sourceDir);
+export async function writeZipArchive(sourceDir, zipFilePath, { rootPrefix = '', mtime } = {}) {
+  const files = (await collectFilesRecursively(sourceDir))
+    .sort((a, b) => a.rel < b.rel ? -1 : a.rel === b.rel ? 0 : 1);
   const cleanPrefix = rootPrefix ? rootPrefix.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '') : '';
   const entries = await Promise.all(
     files.map(async ({ rel, abs }) => {
       const [data, st] = await Promise.all([readFile(abs), stat(abs)]);
       const zipPath = cleanPrefix ? `${cleanPrefix}/${rel}` : rel;
-      return { path: zipPath, data, mtime: st.mtime };
+      return { path: zipPath, data, mtime: mtime ?? st.mtime };
     }),
   );
   const buf = createZipBuffer(entries);
@@ -291,6 +292,60 @@ export async function writeZipArchive(sourceDir, zipFilePath, { rootPrefix = '' 
     uncompressedBytes: entries.reduce((sum, e) => sum + e.data.length, 0),
   };
 }
+
+// Assemble next to the destination so publishing and rollback can use renames.
+// The previous release stays available throughout compression and preflight.
+async function stageRelease(targetDir, zipPath, assemble) {
+  const parent = path.dirname(targetDir);
+  await mkdir(parent, { recursive: true });
+  const stage = await mkdtemp(path.join(parent, '.hgame-release-'));
+  if (path.dirname(stage) !== parent || path.dirname(zipPath) !== parent) {
+    throw new Error('Invalid release staging directory');
+  }
+  const files = path.join(stage, 'files');
+  const archive = path.join(stage, 'release.zip');
+  const lock = path.join(parent, '.' + path.basename(targetDir) + '.publish');
+  let preserveStage = false;
+  try {
+    await mkdir(files);
+    const result = await assemble(files, archive);
+    await mkdir(lock);
+    try {
+      const undo = [];
+      async function move(from, to, { optional = false } = {}) {
+        try { await rename(from, to); }
+        catch (error) {
+          if (optional && error.code === 'ENOENT') return;
+          throw error;
+        }
+        undo.push([to, from]);
+      }
+      try {
+        await move(targetDir, path.join(stage, 'previous'), { optional: true });
+        await move(zipPath, path.join(stage, 'previous.zip'), { optional: true });
+        await move(files, targetDir);
+        await move(archive, zipPath);
+      } catch (error) {
+        const rollbackErrors = [];
+        for (const [from, to] of undo.reverse()) {
+          try { await rename(from, to); } catch (failure) { rollbackErrors.push(failure); }
+        }
+        if (rollbackErrors.length) {
+          preserveStage = true;
+          throw new AggregateError([error, ...rollbackErrors], 'Release rollback was incomplete. Backups are in ' + stage);
+        }
+        throw error;
+      }
+    } finally {
+      await rmdir(lock);
+    }
+    return result;
+  } finally {
+    if (!preserveStage) await rm(stage, { recursive: true, force: true });
+  }
+}
+
+const RELEASE_ZIP_DATE = new Date(1980, 0, 1);
 
 function toPosixRel(p) {
   return p.replace(/\\/g, '/').replace(/^\.\//, '');
@@ -726,10 +781,6 @@ export async function packageGameRelease({
   const targetDir = path.join(resolvedOutParent, releaseTag);
   const zipPath = path.join(resolvedOutParent, `${releaseTag}.zip`);
 
-  await rm(targetDir, { recursive: true, force: true });
-  await rm(zipPath, { force: true });
-  await mkdir(targetDir, { recursive: true });
-
   const includedFiles = new Map(); // relPosix -> absSourcePath
   const generatedBuffers = new Map(); // relPosix -> Buffer
 
@@ -807,6 +858,9 @@ export async function packageGameRelease({
   generatedBuffers.set('engine.config.json', Buffer.from(JSON.stringify(project, null, 2) + '\n'));
 
   const entryRel = toPosixRel((gameConfig.entry || 'index.html').replace(/^\/+/, ''));
+  if (/[:\x00-\x1f]/.test(entryRel) || entryRel.split('/').some(part => !part || part === '.' || part === '..')) {
+    throw new Error('Game entry must be a relative path inside the project: ' + entryRel);
+  }
   const entryAbs = resolveSourceCandidate(entryRel);
   if (!entryAbs) {
     throw new Error(`Entry HTML file missing: ${entryRel}`);
@@ -1127,43 +1181,41 @@ export async function packageGameRelease({
     stagedOutputs.set(entryRel, Buffer.from(entryHtml, 'utf8'));
   }
 
-  let totalBytes = 0;
-  for (const [relPosix, data] of stagedOutputs) {
-    const dst = path.join(targetDir, ...relPosix.split('/'));
-    await mkdir(path.dirname(dst), { recursive: true });
-    await writeFile(dst, data);
-    totalBytes += data.length;
-  }
+  const { zipStats, toyPreflight } = await stageRelease(targetDir, zipPath, async (files, archive) => {
+    for (const [relPosix, data] of stagedOutputs) {
+      const dst = path.join(files, ...relPosix.split('/'));
+      await mkdir(path.dirname(dst), { recursive: true });
+      await writeFile(dst, data);
+    }
 
-  const zipStats = await writeZipArchive(targetDir, zipPath, {
-    rootPrefix: effectiveFlatZip ? '' : releaseTag,
-  });
-
-  let toyPreflight = null;
-  if (target === 'toy') {
-    toyPreflight = await runToyPreflight({
-      targetPath: targetDir,
+    const preflight = target === 'toy' ? await runToyPreflight({
+      targetPath: files,
       slug: slug || gameConfig?.toy?.slug || effectiveId,
       poster,
       icon,
       requireRootIndex: true,
-    });
-    for (const f of toyPreflight.findings) {
+    }) : null;
+    for (const f of preflight?.findings ?? []) {
       if (f.severity === 'WARN') {
         notes.push(`[toy WARN] ${f.file}: ${f.message}`);
       }
     }
-    if (toyPreflight.requiredCapabilities.length > 0) {
-      notes.push(`[toy capabilities] Required/detected: ${toyPreflight.requiredCapabilities.join(', ')}`);
+    if (preflight?.requiredCapabilities.length) {
+      notes.push(`[toy capabilities] Required/detected: ${preflight.requiredCapabilities.join(', ')}`);
     }
-    if (!toyPreflight.ok) {
-      const errLines = toyPreflight.findings
+    if (preflight && !preflight.ok) {
+      const errLines = preflight.findings
         .filter(f => f.severity === 'ERROR')
         .map(f => `${f.file}: ${f.message}`)
         .join('; ');
       throw new Error(`Bilibili Toy preflight failed: ${errLines}`);
     }
-  }
+    const zipStats = await writeZipArchive(files, archive, {
+      rootPrefix: effectiveFlatZip ? '' : releaseTag,
+      mtime: RELEASE_ZIP_DATE,
+    });
+    return { zipStats, toyPreflight: preflight && { ...preflight, target: targetDir } };
+  });
 
   return {
     mode: 'game',
@@ -1185,7 +1237,7 @@ export async function packageGameRelease({
     minified: Boolean(esbuild),
     resolvedFromStore,
     fileCount: stagedOutputs.size,
-    outputBytes: totalBytes,
+    outputBytes: zipStats.uncompressedBytes,
     outputDir: targetDir,
     zipPath,
     zipBytes: zipStats.compressedBytes,
@@ -1229,51 +1281,43 @@ export async function packageEngineRelease({
   const targetDir = path.join(resolvedOutParent, releaseTag);
   const zipPath = path.join(resolvedOutParent, `${releaseTag}.zip`);
 
-  await rm(targetDir, { recursive: true, force: true });
-  await rm(zipPath, { force: true });
-  await mkdir(targetDir, { recursive: true });
+  const zipStats = await stageRelease(targetDir, zipPath, async (files, archive) => {
+    const copyTree = async (srcRel, filterFn = null) => {
+      const srcAbs = path.join(absRoot, srcRel);
+      if (!(await existsDir(srcAbs))) return;
+      for (const item of await collectFilesRecursively(srcAbs)) {
+        const relPosix = `${toPosixRel(srcRel)}/${toPosixRel(item.rel)}`;
+        const lower = relPosix.toLowerCase();
+        const parts = lower.split('/');
+        if (parts.some(p => ['.git', 'node_modules', 'build', '.re-workspace', '__pycache__'].includes(p) ||
+          p.startsWith('.hgame.local') || p === '.env' || (p.startsWith('.env.') && p !== '.env.example'))) continue;
+        if (parts.includes('dist') && !lower.startsWith('assets/profiles/pixi2d/dist/')) continue;
+        if (SKIP_BASENAMES.has(parts.at(-1))) continue;
+        if (filterFn && !filterFn(relPosix)) continue;
+        const dst = path.join(files, ...relPosix.split('/'));
+        await mkdir(path.dirname(dst), { recursive: true });
+        await writeFile(dst, await readFile(item.abs));
+      }
+    };
 
-  const copyTree = async (srcRel, filterFn = null) => {
-    const srcAbs = path.join(absRoot, srcRel);
-    if (!(await existsDir(srcAbs))) return 0;
-    const items = await collectFilesRecursively(srcAbs);
-    let count = 0;
-    for (const item of items) {
-      const relPosix = `${toPosixRel(srcRel)}/${toPosixRel(item.rel)}`;
-      const lower = relPosix.toLowerCase();
-      const parts = lower.split('/');
-      if (parts.some(p => p === '.git' || p === 'node_modules' || p === 'build' || p === '.re-workspace' || p.startsWith('.hgame.local'))) continue;
-      if (parts.includes('dist') && !lower.startsWith('assets/profiles/pixi2d/dist/')) continue;
-      if (SKIP_BASENAMES.has(parts[parts.length - 1])) continue;
-      if (filterFn && !filterFn(relPosix)) continue;
-      const dst = path.join(targetDir, ...relPosix.split('/'));
-      await mkdir(path.dirname(dst), { recursive: true });
-      await writeFile(dst, await readFile(item.abs));
-      count++;
+    await copyTree('assets/runtime');
+    await copyTree('assets/template');
+    await copyTree('assets/profiles');
+    await copyTree('assets/optional/three');
+    await copyTree('scripts');
+    await copyTree('types', rel => rel.endsWith('.d.ts'));
+    await copyTree('docs', rel => !rel.startsWith('docs/superpowers/'));
+    await copyTree('.agents/skills');
+
+    for (const rootFile of ['LICENSE', 'README.md', 'AGENTS.md', 'CHANGELOG.md', 'package.json']) {
+      const src = path.join(absRoot, rootFile);
+      if (await existsFile(src)) await writeFile(path.join(files, rootFile), await readFile(src));
     }
-    return count;
-  };
 
-  let fileCount = 0;
-  fileCount += await copyTree('assets/runtime');
-  fileCount += await copyTree('assets/template');
-  fileCount += await copyTree('assets/profiles');
-  fileCount += await copyTree('assets/optional/three');
-  fileCount += await copyTree('scripts');
-  fileCount += await copyTree('types', rel => rel.endsWith('.d.ts'));
-  fileCount += await copyTree('docs', rel => !rel.startsWith('docs/superpowers/'));
-  fileCount += await copyTree('.agents/skills');
-
-  for (const rootFile of ['LICENSE', 'README.md', 'AGENTS.md', 'CHANGELOG.md', 'package.json']) {
-    const src = path.join(absRoot, rootFile);
-    if (await existsFile(src)) {
-      await writeFile(path.join(targetDir, rootFile), await readFile(src));
-      fileCount++;
-    }
-  }
-
-  const zipStats = await writeZipArchive(targetDir, zipPath, {
-    rootPrefix: flatZip ? '' : releaseTag,
+    return writeZipArchive(files, archive, {
+      rootPrefix: flatZip ? '' : releaseTag,
+      mtime: RELEASE_ZIP_DATE,
+    });
   });
 
   return {
@@ -1281,7 +1325,7 @@ export async function packageEngineRelease({
     releaseTag,
     version: String(effectiveVersion),
     runtimeVersion: rtVersion,
-    fileCount,
+    fileCount: zipStats.entryCount,
     outputBytes: zipStats.uncompressedBytes,
     outputDir: targetDir,
     zipPath,
