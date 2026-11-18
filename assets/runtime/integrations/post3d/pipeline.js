@@ -3,7 +3,6 @@ import {
   FULLSCREEN_VERTEX_GLSL3,
   HALF_AO_VOL_FRAGMENT_GLSL3,
   HALF_GI_SSR_FRAGMENT_GLSL3,
-  BILATERAL_RGBA_BLUR_FRAGMENT_GLSL3,
   LUMA_EXTRACT_FRAGMENT_GLSL3,
   LUMA_DOWNSAMPLE_FRAGMENT_GLSL3,
   EYE_ADAPT_FRAGMENT_GLSL3,
@@ -632,6 +631,7 @@ export function createPostPipeline3D(options = {}) {
     scratchCamToShadow = new THREE.Matrix4();
     scratchSunView = new THREE.Vector3(0, 1, 0);
     const exposureDefines = usesByteColorTargets ? { HGAME_EXPOSURE_UNORM: 1 } : {};
+    const giDepthDefines = usesByteColorTargets ? { HGAME_BYTE_GI_DEPTH: 1 } : {};
     const storedExposureRange = { value: new THREE.Vector2(state.minExposure, state.maxExposure) };
 
     const aoVolUniforms = {
@@ -642,8 +642,6 @@ export function createPostPipeline3D(options = {}) {
       uCamToShadow: { value: scratchCamToShadow },
       uSunViewDir: { value: scratchSunView },
       uResolution: { value: new THREE.Vector2(bufferWidth, bufferHeight) },
-      uNear: { value: 0.1 },
-      uFar: { value: 1000 },
       uSsaoEnabled: { value: 0 },
       uSsaoRadius: { value: state.ssaoRadius },
       uSsaoBias: { value: state.ssaoBias },
@@ -656,7 +654,7 @@ export function createPostPipeline3D(options = {}) {
       aoVolCompare: makeShader(HALF_AO_VOL_FRAGMENT_GLSL3, aoVolUniforms, { HGAME_SHADOW_COMPARE: 1 }),
       blur: makeShader(BILATERAL_BLUR_FRAGMENT_GLSL3, {
         tInput: { value: null },
-        uTexelStep: { value: new THREE.Vector2(1 / bufferWidth, 0) },
+        uAxis: { value: new THREE.Vector2(1, 0) },
       }),
       giSsr: makeShader(HALF_GI_SSR_FRAGMENT_GLSL3, {
         tScene: { value: null },
@@ -664,8 +662,6 @@ export function createPostPipeline3D(options = {}) {
         uInvProj: { value: scratchInvProj },
         uProj: { value: new THREE.Matrix4() },
         uResolution: { value: new THREE.Vector2(bufferWidth, bufferHeight) },
-        uNear: { value: 0.1 },
-        uFar: { value: 1000 },
         uSsgiEnabled: { value: 0 },
         uSsrEnabled: { value: 0 },
         uGiRadius: { value: state.giRadius },
@@ -675,10 +671,10 @@ export function createPostPipeline3D(options = {}) {
         uSsrThickness: { value: state.ssrThickness },
         uTime: { value: 0 },
       }),
-      blurRgba: makeShader(BILATERAL_RGBA_BLUR_FRAGMENT_GLSL3, {
+      blurRgba: makeShader(BILATERAL_BLUR_FRAGMENT_GLSL3, {
         tInput: { value: null },
-        uTexelStep: { value: new THREE.Vector2(1 / bufferWidth, 0) },
-      }),
+        uAxis: { value: new THREE.Vector2(1, 0) },
+      }, { ...giDepthDefines, HGAME_BLUR_GI: 1 }),
       lumaExtract: makeShader(LUMA_EXTRACT_FRAGMENT_GLSL3, {
         tScene: { value: null },
       }, exposureDefines),
@@ -759,7 +755,7 @@ export function createPostPipeline3D(options = {}) {
         uFade: { value: 0 },
         uTime: { value: 0 },
         uToneMapping: { value: state.toneMapping },
-      }, exposureDefines),
+      }, { ...exposureDefines, ...giDepthDefines }),
       fxaaSharpen: makeShader(FXAA_SHARPEN_FRAGMENT_GLSL3, {
         tDiffuse: { value: null },
         uTexelSize: { value: new THREE.Vector2(1 / bufferWidth, 1 / bufferHeight) },
@@ -767,7 +763,10 @@ export function createPostPipeline3D(options = {}) {
         uFxaaEnabled: { value: state.fxaa ? 1 : 0 },
       }),
     };
-    mats.worldLighting = makeShader(COMPOSITE_FRAGMENT_GLSL3, mats.composite.uniforms, { HGAME_WORLD_LIGHTING_ONLY: 1 });
+    mats.worldLighting = makeShader(COMPOSITE_FRAGMENT_GLSL3, mats.composite.uniforms, {
+      ...giDepthDefines,
+      HGAME_WORLD_LIGHTING_ONLY: 1,
+    });
 
     quadMesh = new THREE.Mesh(quadGeom, mats.composite);
     quadMesh.frustumCulled = false;
@@ -930,8 +929,6 @@ export function createPostPipeline3D(options = {}) {
         ao.tDepth.value = sceneRT.depthTexture;
         ao.uProj.value.copy(camera.projectionMatrix);
         ao.uResolution.value.set(hw, hh);
-        ao.uNear.value = camera.near ?? 0.1;
-        ao.uFar.value = camera.far ?? 1000;
         ao.uSsaoEnabled.value = useAo ? 1 : 0;
         ao.uSsaoRadius.value = state.ssaoRadius;
         ao.uSsaoBias.value = state.ssaoBias;
@@ -943,11 +940,11 @@ export function createPostPipeline3D(options = {}) {
         runPass(aoMaterial, halfRT);
 
         mats.blur.uniforms.tInput.value = halfRT.texture;
-        mats.blur.uniforms.uTexelStep.value.set(1 / hw, 0);
+        mats.blur.uniforms.uAxis.value.set(1, 0);
         runPass(mats.blur, aoScratch);
 
         mats.blur.uniforms.tInput.value = aoScratch.texture;
-        mats.blur.uniforms.uTexelStep.value.set(0, 1 / hh);
+        mats.blur.uniforms.uAxis.value.set(0, 1);
         runPass(mats.blur, halfRT);
       }
 
@@ -961,8 +958,6 @@ export function createPostPipeline3D(options = {}) {
         giU.tDepth.value = sceneRT.depthTexture;
         giU.uProj.value.copy(camera.projectionMatrix);
         giU.uResolution.value.set(hw, hh);
-        giU.uNear.value = camera.near ?? 0.1;
-        giU.uFar.value = camera.far ?? 1000;
         giU.uSsgiEnabled.value = useSsgi ? 1 : 0;
         giU.uSsrEnabled.value = useSsr ? 1 : 0;
         giU.uGiRadius.value = state.giRadius;
@@ -974,11 +969,11 @@ export function createPostPipeline3D(options = {}) {
         runPass(mats.giSsr, giSsrRT);
 
         mats.blurRgba.uniforms.tInput.value = giSsrRT.texture;
-        mats.blurRgba.uniforms.uTexelStep.value.set(1 / hw, 0);
+        mats.blurRgba.uniforms.uAxis.value.set(1, 0);
         runPass(mats.blurRgba, halfScratchRT);
 
         mats.blurRgba.uniforms.tInput.value = halfScratchRT.texture;
-        mats.blurRgba.uniforms.uTexelStep.value.set(0, 1 / hh);
+        mats.blurRgba.uniforms.uAxis.value.set(0, 1);
         runPass(mats.blurRgba, giSsrRT);
       }
 

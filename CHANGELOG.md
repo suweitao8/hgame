@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use a logarithmic depth guide for 3D screen-space lighting denoising and upsampling. Reject sky and foreground bleeding at silhouettes while keeping effects at half resolution.
+
 - Finish screen-space effects using world scene depth before drawing a first-person layer. Apply bloom, exposure and tone mapping to the combined HDR image.
 
 - Reuse 3D post-processing targets across quality and viewport changes. Share half-resolution scratch storage between GI/reflection denoising and bloom, including AO/volumetrics on the 8-bit path.

@@ -7,6 +7,38 @@ void main() {
 }
 `;
 
+const DEPTH_GUIDE_GLSL3 = `
+// Reserve 1 for the sky. Log depth preserves nearby separation with 8-bit storage.
+float encodeDepthGuide(float depth, float viewZ) {
+  if (depth >= 1.0) return 1.0;
+  return min(log2(1.0 + max(0.0, -viewZ)) / 16.0, 254.0 / 255.0);
+}
+
+vec2 packDepthGuide(float guide) {
+  float scaled = guide * 255.0;
+  return vec2(floor(scaled) / 255.0, fract(scaled));
+}
+
+float unpackDepthGuide(vec2 channels) {
+  return channels.x + channels.y / 255.0;
+}
+
+float depthGuideWeight(float sampleGuide, float centerGuide, float quantization) {
+  if (sampleGuide == 1.0 || centerGuide == 1.0) {
+    return sampleGuide == centerGuide ? 1.0 : 0.0;
+  }
+  float delta = max(0.0, abs(sampleGuide - centerGuide) - quantization);
+  return 1.0 - smoothstep(0.0015, 0.009, delta);
+}
+
+#ifdef HGAME_BYTE_GI_DEPTH
+const float GI_DEPTH_PRECISION = 1.0 / 255.0;
+#else
+const float GI_DEPTH_PRECISION = 0.0005;
+#endif
+const float AO_DEPTH_PRECISION = 0.00002;
+`;
+
 export const HALF_AO_VOL_FRAGMENT_GLSL3 = `
 uniform sampler2D tDepth;
 #ifdef HGAME_SHADOW_COMPARE
@@ -19,8 +51,6 @@ uniform mat4 uProj;
 uniform mat4 uCamToShadow;
 uniform vec3 uSunViewDir;
 uniform vec2 uResolution;
-uniform float uNear;
-uniform float uFar;
 uniform float uSsaoEnabled;
 uniform float uSsaoRadius;
 uniform float uSsaoBias;
@@ -30,6 +60,8 @@ uniform float uTime;
 
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
+
+${DEPTH_GUIDE_GLSL3}
 
 float ign(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -68,19 +100,12 @@ vec3 reconstructEdgeAwareNormal(vec2 uv, vec3 viewPos, float depthC) {
   return n;
 }
 
-float linearizeDepth01(float depth) {
-  float zNdc = depth * 2.0 - 1.0;
-  float linearZ = (2.0 * uNear * uFar) / max(1e-4, uFar + uNear - zNdc * (uFar - uNear));
-  return clamp((linearZ - uNear) / max(1.0, uFar - uNear), 0.0, 1.0);
-}
-
 void main() {
   float depth = texture(tDepth, vUv).r;
   vec3 viewPos = reconstructViewPos(vUv, depth);
-  float linDepth = depth >= 0.9999 ? 1.0 : linearizeDepth01(depth);
   float ao = 1.0;
 
-  if (uSsaoEnabled > 0.5 && depth < 0.9999) {
+  if (uSsaoEnabled > 0.5 && depth < 1.0) {
     vec3 viewNormal = reconstructEdgeAwareNormal(vUv, viewPos, depth);
     vec3 tangent = normalize(abs(viewNormal.z) < 0.99 ? cross(viewNormal, vec3(0.0, 0.0, 1.0)) : cross(viewNormal, vec3(1.0, 0.0, 0.0)));
     vec3 bitangent = cross(viewNormal, tangent);
@@ -107,7 +132,7 @@ void main() {
         float sDepth = texture(tDepth, sUv).r;
         vec3 sView = reconstructViewPos(sUv, sDepth);
         float rangeCheck = smoothstep(0.0, 1.0, radius / max(abs(viewPos.z - sView.z), 0.001));
-        if (sView.z >= samplePos.z + uSsaoBias && sDepth < 0.9999) {
+        if (sView.z >= samplePos.z + uSsaoBias && sDepth < 1.0) {
           occlusion += rangeCheck;
         }
         weightSum += 1.0;
@@ -120,7 +145,7 @@ void main() {
   if (uVolumetricSteps > 0.5) {
     int steps = int(clamp(uVolumetricSteps, 1.0, 32.0));
     vec3 rayDir = normalize(viewPos);
-    float hitDist = depth >= 0.9999 ? 48.0 : min(length(viewPos), 48.0);
+    float hitDist = depth >= 1.0 ? 48.0 : min(length(viewPos), 48.0);
     float jitter = ign(gl_FragCoord.xy + vec2(fract(uTime) * 37.0, 11.0));
     float cosTheta = dot(rayDir, normalize(uSunViewDir));
     float g = 0.65;
@@ -148,7 +173,7 @@ void main() {
     vol = (accum / float(steps)) * clamp(phase * 1.4, 0.05, 1.25) * clamp(hitDist / 24.0, 0.0, 1.0);
   }
 
-  fragColor = vec4(ao, vol, linDepth, 1.0);
+  fragColor = vec4(ao, vol, packDepthGuide(encodeDepthGuide(depth, viewPos.z)));
 }
 `;
 
@@ -158,8 +183,6 @@ uniform sampler2D tDepth;
 uniform mat4 uInvProj;
 uniform mat4 uProj;
 uniform vec2 uResolution;
-uniform float uNear;
-uniform float uFar;
 uniform float uSsgiEnabled;
 uniform float uSsrEnabled;
 uniform float uGiRadius;
@@ -171,6 +194,8 @@ uniform float uTime;
 
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
+
+${DEPTH_GUIDE_GLSL3}
 
 float ign(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -209,17 +234,10 @@ vec3 reconstructEdgeAwareNormal(vec2 uv, vec3 viewPos, float depthC) {
   return n;
 }
 
-float linearizeDepth01(float depth) {
-  float zNdc = depth * 2.0 - 1.0;
-  float linearZ = (2.0 * uNear * uFar) / max(1e-4, uFar + uNear - zNdc * (uFar - uNear));
-  return clamp((linearZ - uNear) / max(1.0, uFar - uNear), 0.0, 1.0);
-}
-
 void main() {
   float depth = texture(tDepth, vUv).r;
-  float linDepth = depth >= 0.9999 ? 1.0 : linearizeDepth01(depth);
-  if (depth >= 0.9999) {
-    fragColor = vec4(0.0, 0.0, 0.0, linDepth);
+  if (depth >= 1.0) {
+    fragColor = vec4(0.0, 0.0, 0.0, 1.0);
     return;
   }
 
@@ -246,7 +264,7 @@ void main() {
       vec2 sUv = (clip.xy / max(abs(clip.w), 1e-5)) * 0.5 + 0.5;
       if (sUv.x > 0.01 && sUv.x < 0.99 && sUv.y > 0.01 && sUv.y < 0.99) {
         float sDepth = texture(tDepth, sUv).r;
-        if (sDepth < 0.9999) {
+        if (sDepth < 1.0) {
           vec3 sView = reconstructViewPos(sUv, sDepth);
           vec3 delta = sView - viewPos;
           float dist2 = max(0.08, dot(delta, delta));
@@ -286,7 +304,7 @@ void main() {
         vec2 rUv = (clip.xy / max(abs(clip.w), 1e-5)) * 0.5 + 0.5;
         if (rUv.x < 0.0 || rUv.x > 1.0 || rUv.y < 0.0 || rUv.y > 1.0) break;
         float sDepth = texture(tDepth, rUv).r;
-        if (sDepth < 0.9999) {
+        if (sDepth < 1.0) {
           float sceneZ = reconstructViewPos(rUv, sDepth).z;
           float dz = sceneZ - pView.z;
           if (dz > 0.0 && dz < thickness + t * 0.04) {
@@ -325,33 +343,53 @@ void main() {
     }
   }
 
-  fragColor = vec4(giAccum * uGiIntensity + ssrColor * uSsrIntensity, linDepth);
+  fragColor = vec4(giAccum * uGiIntensity + ssrColor * uSsrIntensity, encodeDepthGuide(depth, viewPos.z));
 }
 `;
 
-export const BILATERAL_RGBA_BLUR_FRAGMENT_GLSL3 = `
+export const BILATERAL_BLUR_FRAGMENT_GLSL3 = `
 uniform sampler2D tInput;
-uniform vec2 uTexelStep;
+uniform ivec2 uAxis;
 
-in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
+${DEPTH_GUIDE_GLSL3}
+
+float blurGuide(vec4 value) {
+#ifdef HGAME_BLUR_GI
+  return value.a;
+#else
+  return unpackDepthGuide(value.ba);
+#endif
+}
+
 void main() {
-  vec4 center = texture(tInput, vUv);
-  float centerDepth = center.a;
+  ivec2 pixel = ivec2(gl_FragCoord.xy);
+  ivec2 last = textureSize(tInput, 0) - ivec2(1);
+  vec4 center = texelFetch(tInput, pixel, 0);
+  float centerGuide = blurGuide(center);
+#ifdef HGAME_BLUR_GI
+  const float quantization = GI_DEPTH_PRECISION;
+#else
+  const float quantization = AO_DEPTH_PRECISION;
+#endif
   const float W[3] = float[3](0.4026, 0.2442, 0.0545);
   vec3 accum = center.rgb * W[0];
   float wSum = W[0];
   for (int i = -2; i <= 2; i++) {
     if (i == 0) continue;
     int idx = i < 0 ? -i : i;
-    vec4 s = texture(tInput, clamp(vUv + uTexelStep * float(i), vec2(0.001), vec2(0.999)));
-    float depthWeight = exp(-abs(s.a - centerDepth) * 90.0);
-    float w = W[idx] * depthWeight;
+    vec4 s = texelFetch(tInput, clamp(pixel + uAxis * i, ivec2(0), last), 0);
+    float w = W[idx] * depthGuideWeight(blurGuide(s), centerGuide, quantization);
     accum += s.rgb * w;
     wSum += w;
   }
-  fragColor = vec4(accum / max(wSum, 1e-4), centerDepth);
+  vec3 blurred = accum / wSum;
+#ifdef HGAME_BLUR_GI
+  fragColor = vec4(blurred, center.a);
+#else
+  fragColor = vec4(blurred.rg, center.ba);
+#endif
 }
 `;
 
@@ -470,32 +508,6 @@ void main() {
 #else
   fragColor = vec4(nextExp, avgLuma, targetExp, 1.0);
 #endif
-}
-`;
-
-export const BILATERAL_BLUR_FRAGMENT_GLSL3 = `
-uniform sampler2D tInput;
-uniform vec2 uTexelStep;
-
-in vec2 vUv;
-layout(location = 0) out vec4 fragColor;
-
-void main() {
-  vec4 center = texture(tInput, vUv);
-  float centerDepth = center.b;
-  const float W[3] = float[3](0.4026, 0.2442, 0.0545);
-  vec2 accum = center.rg * W[0];
-  float wSum = W[0];
-  for (int i = -2; i <= 2; i++) {
-    if (i == 0) continue;
-    int idx = i < 0 ? -i : i;
-    vec4 s = texture(tInput, clamp(vUv + uTexelStep * float(i), vec2(0.001), vec2(0.999)));
-    float depthWeight = exp(-abs(s.b - centerDepth) * 90.0);
-    float w = W[idx] * depthWeight;
-    accum += s.rg * w;
-    wSum += w;
-  }
-  fragColor = vec4(accum / max(wSum, 1e-4), centerDepth, 1.0);
 }
 `;
 
@@ -649,6 +661,7 @@ in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
 ${EXPOSURE_PACKING_GLSL3}
+${DEPTH_GUIDE_GLSL3}
 
 float compIgn(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -658,6 +671,29 @@ vec3 compReconstructViewPos(vec2 uv, float depth) {
   vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
   vec4 view = uInvProj * ndc;
   return view.xyz / max(abs(view.w), 1e-5);
+}
+
+vec3 upsampleHalfLighting(sampler2D effect, float centerGuide, bool packedGuide) {
+  ivec2 size = textureSize(effect, 0);
+  vec2 halfPixel = vUv * vec2(size) - 0.5;
+  ivec2 base = ivec2(floor(halfPixel));
+  vec2 fraction = fract(halfPixel);
+  vec3 neutral = packedGuide ? vec3(1.0, 0.0, 0.0) : vec3(0.0);
+  float quantization = packedGuide ? AO_DEPTH_PRECISION : GI_DEPTH_PRECISION;
+  vec3 accum = vec3(0.0);
+  float weightSum = 0.0;
+  for (int i = 0; i < 4; i++) {
+    ivec2 corner = ivec2(i & 1, i >> 1);
+    vec2 axisWeight = mix(1.0 - fraction, fraction, vec2(corner));
+    ivec2 pixel = clamp(base + corner, ivec2(0), size - ivec2(1));
+    vec4 tap = texelFetch(effect, pixel, 0);
+    float guide = packedGuide ? unpackDepthGuide(tap.ba) : tap.a;
+    float weight = axisWeight.x * axisWeight.y * depthGuideWeight(guide, centerGuide, quantization);
+    accum += (tap.rgb - neutral) * weight;
+    weightSum += weight;
+  }
+  // An isolated full-resolution surface may have no matching half-resolution texel.
+  return neutral + accum / max(weightSum, 0.0625);
 }
 
 vec3 acesFilmic(vec3 x) {
@@ -730,43 +766,45 @@ vec3 linearToSrgb(vec3 c) {
 
 vec3 applyWorldLighting(vec3 hdr) {
   float lumaHdr = dot(hdr, vec3(0.2126, 0.7152, 0.0722));
+  bool useAoVol = uUseAo > 0.5 || uUseVolumetric > 0.5;
+  bool useGiSsr = uUseGiSsr > 0.5;
+  bool useContact = uContactShadows > 0.001 && uHasSunDir > 0.5;
+  float depth = (useAoVol || useGiSsr || useContact) ? texture(tDepth, vUv).r : 1.0;
+  vec3 viewPos = depth < 1.0 ? compReconstructViewPos(vUv, depth) : vec3(0.0);
+  float guide = (useAoVol || useGiSsr) ? encodeDepthGuide(depth, viewPos.z) : 1.0;
 
-  if (uUseGiSsr > 0.5) {
-    vec3 giSsr = max(vec3(0.0), texture(tGiSsr, vUv).rgb);
+  if (useGiSsr && depth < 1.0) {
+    vec3 giSsr = max(vec3(0.0), upsampleHalfLighting(tGiSsr, guide, false));
     hdr += giSsr;
   }
 
-  if (uContactShadows > 0.001 && uHasSunDir > 0.5) {
-    float cDepth = texture(tDepth, vUv).r;
-    if (cDepth < 0.9999) {
-      vec3 vPos = compReconstructViewPos(vUv, cDepth);
-      float jitter = compIgn(gl_FragCoord.xy + vec2(fract(uTime) * 13.0, 5.0));
-      float rayLen = clamp(uContactShadowLength, 0.05, 1.5);
-      float thickness = clamp(uContactShadowThickness, 0.01, 0.4);
-      vec3 rayStep = uSunViewDir * (rayLen / 8.0);
-      float occ = 0.0;
-      for (int i = 0; i < 8; i++) {
-        vec3 p = vPos + rayStep * (float(i) + jitter + 0.25);
-        vec4 clip = uProj * vec4(p, 1.0);
-        vec2 sUv = (clip.xy / max(abs(clip.w), 1e-5)) * 0.5 + 0.5;
-        if (sUv.x >= 0.0 && sUv.x <= 1.0 && sUv.y >= 0.0 && sUv.y <= 1.0) {
-          float sD = texture(tDepth, sUv).r;
-          if (sD < 0.9999) {
-            float sceneZ = compReconstructViewPos(sUv, sD).z;
-            float dz = sceneZ - p.z;
-            if (dz > 0.008 && dz < thickness) {
-              occ = max(occ, 1.0 - float(i) / 8.0);
-            }
+  if (useContact && depth < 1.0) {
+    float jitter = compIgn(gl_FragCoord.xy + vec2(fract(uTime) * 13.0, 5.0));
+    float rayLen = clamp(uContactShadowLength, 0.05, 1.5);
+    float thickness = clamp(uContactShadowThickness, 0.01, 0.4);
+    vec3 rayStep = uSunViewDir * (rayLen / 8.0);
+    float occ = 0.0;
+    for (int i = 0; i < 8; i++) {
+      vec3 p = viewPos + rayStep * (float(i) + jitter + 0.25);
+      vec4 clip = uProj * vec4(p, 1.0);
+      vec2 sUv = (clip.xy / max(abs(clip.w), 1e-5)) * 0.5 + 0.5;
+      if (sUv.x >= 0.0 && sUv.x <= 1.0 && sUv.y >= 0.0 && sUv.y <= 1.0) {
+        float sD = texture(tDepth, sUv).r;
+        if (sD < 1.0) {
+          float sceneZ = compReconstructViewPos(sUv, sD).z;
+          float dz = sceneZ - p.z;
+          if (dz > 0.008 && dz < thickness) {
+            occ = max(occ, 1.0 - float(i) / 8.0);
           }
         }
       }
-      hdr *= (1.0 - occ * clamp(uContactShadows, 0.0, 1.0));
     }
+    hdr *= (1.0 - occ * clamp(uContactShadows, 0.0, 1.0));
   }
 
-  if (uUseAo > 0.5 || uUseVolumetric > 0.5) {
-    vec2 aoVol = texture(tAoVol, vUv).rg;
-    if (uUseAo > 0.5) {
+  if (useAoVol && (depth < 1.0 || uUseVolumetric > 0.5)) {
+    vec2 aoVol = upsampleHalfLighting(tAoVol, guide, true).rg;
+    if (uUseAo > 0.5 && depth < 1.0) {
       float aoStrength = uSsaoIntensity * (1.0 - smoothstep(0.6, 2.4, lumaHdr) * 0.65);
       hdr *= mix(1.0, aoVol.r, clamp(aoStrength, 0.0, 1.0));
     }
