@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Load Pixi tilemap render chunks on demand and bound the off-screen chunk cache, while retaining visible chunks and the full TileMap data grid.
+
 - Render HGame TileMaps in the Pixi starter using shared-atlas particle chunks, camera visibility, and per-chunk refresh after map edits.
 
 - Release model-slot-owned cloned skeletons when 3D modular levels are replaced or disposed, while keeping shared model assets alive.

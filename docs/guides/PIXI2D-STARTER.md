@@ -61,7 +61,7 @@ const layer = renderer.createTilemapLayer(map, { frames: { 1: 'floor/0', 2: 'wal
 // renderer.update(dt) updates chunk visibility; layer.dispose() releases it.
 ```
 
-Map values absent from `frames` are transparent. All named frames must exist in the renderer's shared atlas. The layer builds static Pixi particle chunks and hides chunks outside the current camera; it creates particles for the full map, so split very large worlds into separate maps. After changing map data, call `refreshTile` for each affected chunk. Map collision and pathfinding remain governed by `TileMap`, not the visual layer. The renderer also disposes its tilemap layers on shutdown.
+Map values absent from `frames` are transparent. All named frames must exist in the renderer's shared atlas. The layer creates static particle chunks as they enter the camera and retains up to `maxCachedChunks` chunks (default 128), evicting the least recently visible off-screen chunks. If the camera sees more than the limit, all visible chunks remain loaded. The underlying `TileMap` still holds the entire grid in memory. After changing map data, call `refreshTile` for each affected chunk; an uncached chunk reads the latest data when it next appears. Map collision and pathfinding remain governed by `TileMap`, not the visual layer. The renderer also disposes its tilemap layers on shutdown.
 
 For frame animation, use the existing HGame `SpriteSheet` and `AnimationPlayer`. A catalog entry can provide a `sheet` factory; its cells are baked as `prefix/0`, `prefix/1`, and so on, including matching white hit-flash frames:
 

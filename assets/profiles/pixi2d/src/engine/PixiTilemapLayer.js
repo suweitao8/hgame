@@ -2,14 +2,15 @@ import { Container, Particle, ParticleContainer } from 'pixi.js';
 
 /** Draw an HGame TileMap from frames already baked into the renderer's atlas. */
 export class PixiTilemapLayer {
-  constructor(renderer, map, { frames, chunkSize = 32, originX = 0, originY = 0 } = {}) {
+  constructor(renderer, map, { frames, chunkSize = 32, maxCachedChunks = 128, originX = 0, originY = 0 } = {}) {
     if (!renderer?.bgLayer || !renderer?.atlas?.textures) throw new TypeError('Initialize Renderer2D before creating a tilemap layer');
     if (!map || typeof map.get !== 'function' || !Number.isInteger(map.width) || !Number.isInteger(map.height) ||
-        map.width < 1 || map.height < 1 || !(map.tileWidth > 0) || !(map.tileHeight > 0)) {
+        map.width < 1 || map.height < 1 || !Number.isFinite(map.tileWidth) || !Number.isFinite(map.tileHeight) || !(map.tileWidth > 0) || !(map.tileHeight > 0)) {
       throw new TypeError('A rectangular HGame TileMap with positive tile dimensions is required');
     }
     if (!frames || typeof frames !== 'object' || Array.isArray(frames)) throw new TypeError('frames must map tile values to atlas frame names');
     if (!Number.isInteger(chunkSize) || chunkSize < 1 || chunkSize > 128) throw new RangeError('chunkSize must be an integer from 1 to 128');
+    if (!Number.isInteger(maxCachedChunks) || maxCachedChunks < 1 || maxCachedChunks > 4096) throw new RangeError('maxCachedChunks must be an integer from 1 to 4096');
     if (!Number.isFinite(originX) || !Number.isFinite(originY)) throw new RangeError('Tilemap origin must be finite');
     this.renderer = renderer; this.map = map; this.frames = new Map();
     for (const [value, name] of Object.entries(frames)) {
@@ -18,12 +19,11 @@ export class PixiTilemapLayer {
       if (!texture) throw new Error('Unknown tilemap atlas frame: ' + name);
       this.frames.set(value, texture);
     }
-    this.chunkSize = chunkSize; this.originX = originX; this.originY = originY;
+    this.chunkSize = chunkSize; this.maxCachedChunks = maxCachedChunks; this.originX = originX; this.originY = originY;
     this.cols = Math.ceil(map.width / chunkSize); this.rows = Math.ceil(map.height / chunkSize);
     this.root = new Container(); this.root.eventMode = 'none'; this.root.interactiveChildren = false;
-    this.chunks = new Array(this.cols * this.rows); this.disposed = false;
+    this.chunks = new Map(); this.frame = 0; this.disposed = false;
     try {
-      for (let y = 0; y < this.rows; y++) for (let x = 0; x < this.cols; x++) this.buildChunk(x, y);
       renderer.bgLayer.addChild(this.root);
       this.update();
     } catch (error) {
@@ -33,11 +33,13 @@ export class PixiTilemapLayer {
   }
   buildChunk(cx, cy) {
     const index = cy * this.cols + cx;
-    let chunk = this.chunks[index];
-    if (!chunk) {
-      chunk = new ParticleContainer({ dynamicProperties: { position: false, vertex: false, uvs: false, rotation: false, color: false } });
-      this.chunks[index] = chunk; this.root.addChild(chunk);
-    } else chunk.removeParticles();
+    let record = this.chunks.get(index);
+    if (!record) {
+      const view = new ParticleContainer({ dynamicProperties: { position: false, vertex: false, uvs: false, rotation: false, color: false } });
+      record = { view, lastVisible: 0 };
+      this.chunks.set(index, record); this.root.addChild(view);
+    } else record.view.removeParticles();
+    const chunk = record.view;
     const x0 = cx * this.chunkSize, y0 = cy * this.chunkSize;
     const x1 = Math.min(this.map.width, x0 + this.chunkSize), y1 = Math.min(this.map.height, y0 + this.chunkSize);
     const pending = [];
@@ -51,12 +53,14 @@ export class PixiTilemapLayer {
       if (pending.length === 4096) { chunk.addParticle(...pending); pending.length = 0; }
     }
     if (pending.length) chunk.addParticle(...pending);
+    return record;
   }
   /** Refresh the chunk containing a tile after map.set(x, y, value). */
   refreshTile(x, y) {
     if (this.disposed) throw new Error('Tilemap layer is disposed');
     if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= this.map.width || y >= this.map.height) throw new RangeError('Tile is outside the map');
-    this.buildChunk(Math.floor(x / this.chunkSize), Math.floor(y / this.chunkSize));
+    const cx = Math.floor(x / this.chunkSize), cy = Math.floor(y / this.chunkSize);
+    if (this.chunks.has(cy * this.cols + cx)) this.buildChunk(cx, cy);
   }
   update() {
     if (this.disposed) return;
@@ -67,14 +71,28 @@ export class PixiTilemapLayer {
     const top = camera.y + (-screen.height / 2 - camera.shakeY) / zoom;
     const bottom = camera.y + (screen.height / 2 - camera.shakeY) / zoom;
     const cw = this.chunkSize * this.map.tileWidth, ch = this.chunkSize * this.map.tileHeight;
-    for (let y = 0; y < this.rows; y++) for (let x = 0; x < this.cols; x++) {
-      const x0 = this.originX + x * cw, y0 = this.originY + y * ch;
-      this.chunks[y * this.cols + x].visible = !(x0 + cw < left || x0 > right || y0 + ch < top || y0 > bottom);
+    const x0 = Math.max(0, Math.ceil((left - this.originX) / cw) - 1);
+    const x1 = Math.min(this.cols - 1, Math.floor((right - this.originX) / cw));
+    const y0 = Math.max(0, Math.ceil((top - this.originY) / ch) - 1);
+    const y1 = Math.min(this.rows - 1, Math.floor((bottom - this.originY) / ch));
+    const frame = ++this.frame;
+    for (const record of this.chunks.values()) record.view.visible = false;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const record = this.chunks.get(y * this.cols + x) ?? this.buildChunk(x, y);
+      record.view.visible = true; record.lastVisible = frame;
+    }
+    if (this.chunks.size > this.maxCachedChunks) {
+      const candidates = [...this.chunks].filter(([, record]) => record.lastVisible !== frame);
+      candidates.sort((a, b) => a[1].lastVisible - b[1].lastVisible);
+      for (const [key, record] of candidates) {
+        if (this.chunks.size <= this.maxCachedChunks) break;
+        record.view.removeFromParent(); record.view.destroy(); this.chunks.delete(key);
+      }
     }
   }
   dispose() {
     if (this.disposed) return;
     this.disposed = true; this.root.removeFromParent(); this.root.destroy({ children: true });
-    this.chunks.length = 0; this.renderer.tilemapLayers.delete(this);
+    this.chunks.clear(); this.renderer.tilemapLayers.delete(this);
   }
 }
