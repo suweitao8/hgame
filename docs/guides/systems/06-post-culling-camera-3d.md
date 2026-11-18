@@ -25,3 +25,4 @@ const props = createInstancedBatch3D(THREE, { geometry: boxGeo, material: rockMa
 - 若接 Rapier 物理世界，可用内置零 GC 适配器 `createSpringArmRayProbe((o, d, max) => world.castRay(o, d, max))`（自动跳过非正 `maxDistance`）。
 - 若关卡只有静态方块障碍数组，无需物理世界即可直接用 `createBoxCollisionTest(boxes, { inflateByProbe })`（支持 `{ minX..maxZ }`、`{ x, y, z, hx, hy, hz }` 与落地柱 `{ x, z, hx, hz, h, y? }`）。
 - 方向光阴影边界拟合请直接调用 `renderer.fitShadowToPreset(sunLight, targetPos, options)`，自动按当前画质预设的 `shadowDistance` 与贴图分辨率进行 texel-snapped 拟合。
+- 静态场景可在 `worldLighting.sun.shadow` 设置 `autoUpdate: false`，复用方向光的阴影贴图。通过适配器增删场景对象会触发刷新。直接移动投影物、修改几何或透明裁切、移动太阳或调用 `getWorld(scene).add/remove` 后，调用 `renderer.invalidateSunShadow(scene)`。使用缓存的投影物应保持独立于主相机的可见性。

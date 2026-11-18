@@ -151,7 +151,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {{color?: number | string, near: number, far: number}} [fog]
  * @property {{sky: number | string, ground: number | string, intensity: number}} [hemisphere]
  * @property {{color: number | string, intensity: number, position: [number, number, number],
- *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, adaptiveExtent?: boolean}}} [sun]
+ *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, adaptiveExtent?: boolean, autoUpdate?: boolean}}} [sun] Set shadow.autoUpdate to false to cache static shadows.
  */
 
 /**
@@ -221,6 +221,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {(scene: object, object: object) => void} removeView
  * @property {(cam: ThreeCamera | null) => void} setViewCamera
  * @property {(light: object | null) => void} setSunLight
+ * @property {(scene?: object | null) => boolean} invalidateSunShadow Request a fresh sun shadow map for a scene or the active sun.
  * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
  * @property {(nextExposure: number) => void} setExposure
@@ -284,8 +285,9 @@ export function createThreeAdapter({
   let activeSunLight = sunLight;
   let worldSunLight = null;
   const worldSuns = new WeakMap();
-  const ownedSuns = new Set();
+  const ownedSuns = new Map();
   const appliedShadowExtents = new WeakMap();
+  const cachedShadowLayers = new WeakMap();
   let activeViewCamera = viewCamera;
   let activeSky = sky;
   let activePostVolumes = postVolumes;
@@ -297,16 +299,38 @@ export function createThreeAdapter({
     gl: renderer.getContext?.() ?? null,
   });
 
-  function invalidateSunShadow(light) {
-    if (!light?.shadow) return;
+  function markSunShadowDirty(light) {
+    if (!light?.shadow) return false;
     light.shadow.needsUpdate = true;
     if (renderer.shadowMap) renderer.shadowMap.needsUpdate = true;
+    return true;
+  }
+
+  function invalidateCachedWorldSun(world) {
+    const light = world && worldSuns.get(world);
+    if (light?.shadow?.autoUpdate === false) markSunShadowDirty(light);
+  }
+
+  function prepareSunShadows(world, camera) {
+    if (activeSunLight?.shadow?.needsUpdate && renderer.shadowMap) renderer.shadowMap.needsUpdate = true;
+    const light = worldSuns.get(world);
+    const shadow = light?.castShadow ? light.shadow : null;
+    if (shadow?.autoUpdate !== false) return;
+    const shadowLayers = shadow.camera?.layers?.mask;
+    // Match Three.js's selection of shadow caster layers.
+    const layers = (shadowLayers & 0xfffffffe) !== 0 ? shadowLayers : camera.layers?.mask;
+    if (!cachedShadowLayers.has(shadow) || cachedShadowLayers.get(shadow) !== layers) {
+      cachedShadowLayers.set(shadow, layers);
+      markSunShadowDirty(light);
+    } else if (shadow.needsUpdate && renderer.shadowMap) {
+      renderer.shadowMap.needsUpdate = true;
+    }
   }
 
   function applySunShadowPreset(light, preset, needsRefresh = false) {
     const shadow = light?.shadow;
     if (!preset || !shadow?.mapSize) {
-      if (needsRefresh) invalidateSunShadow(light);
+      if (needsRefresh) markSunShadowDirty(light);
       return;
     }
     const configured = light === worldSunLight ? worldLighting?.sun?.shadow : null;
@@ -343,7 +367,7 @@ export function createThreeAdapter({
       }
     }
 
-    if (needsRefresh) invalidateSunShadow(light);
+    if (needsRefresh) markSunShadowDirty(light);
   }
 
   function applyQualityToRenderer(preset = null) {
@@ -486,16 +510,18 @@ export function createThreeAdapter({
         light.position.set(...sun.position);
         light.castShadow = Boolean(sun.shadow);
         if (sun.shadow) {
-          const { extent, near, far, bias = 0, mapSize = 1024 } = sun.shadow;
+          const { extent, near, far, bias = 0, mapSize = 1024, autoUpdate = true } = sun.shadow;
           Object.assign(light.shadow.camera, {
             left: -extent, right: extent, top: extent, bottom: -extent, near, far,
           });
           light.shadow.camera.updateProjectionMatrix?.();
           light.shadow.mapSize.set(mapSize, mapSize);
           light.shadow.bias = bias;
+          light.shadow.autoUpdate = autoUpdate !== false;
+          if (!light.shadow.autoUpdate) markSunShadowDirty(light);
         }
         const release = () => {
-          if (!ownedSuns.delete(release)) return;
+          if (!ownedSuns.delete(light)) return;
           offDispose?.();
           worldSuns.delete(world);
           worlds.delete(scene);
@@ -504,7 +530,7 @@ export function createThreeAdapter({
           light.dispose?.();
         };
         const offDispose = scene.onDispose?.(release);
-        ownedSuns.add(release);
+        ownedSuns.set(light, release);
         worldSuns.set(world, light);
         world.add(light);
       }
@@ -582,6 +608,9 @@ export function createThreeAdapter({
     contextLost = false;
     lastCanvasSize = null;
     resize();
+    for (const light of ownedSuns.keys()) {
+      if (light.shadow?.autoUpdate === false) markSunShadowDirty(light);
+    }
     applySunShadowPreset(activeSunLight ?? worldSunLight, appliedPreset, true);
     postPipeline?.handleContextRestored?.();
   };
@@ -722,7 +751,7 @@ export function createThreeAdapter({
     const sceneSun = worldLighting?.sun ? worldSuns.get(world) ?? null : null;
     if (worldSunLight !== sceneSun) {
       worldSunLight = sceneSun;
-      applySunShadowPreset(activeSunLight ?? worldSunLight, appliedPreset, true);
+      applySunShadowPreset(activeSunLight ?? worldSunLight, appliedPreset, Boolean(activeSunLight));
     }
 
     if (activeViews && activeViews.length > 0) {
@@ -760,6 +789,7 @@ export function createThreeAdapter({
           culler3d.beginFrame(v.camera);
           renderer.setViewport?.(vx, vyBottomUp, vw, vh);
           renderer.setScissor?.(vx, vyBottomUp, vw, vh);
+          prepareSunShadows(world, v.camera);
           renderer.render(world, v.camera);
         }
       } finally {
@@ -777,6 +807,7 @@ export function createThreeAdapter({
 
     syncCameraMatrices(camera);
     culler3d.beginFrame(camera);
+    prepareSunShadows(world, camera);
     const viewScene = scene && viewWorlds.has(scene) ? viewWorlds.get(scene) : null;
 
     if (postPipeline) {
@@ -822,8 +853,22 @@ export function createThreeAdapter({
     get contextLost() { return contextLost; },
     getWorld,
     getViewWorld,
-    add(scene, object) { getWorld(scene).add(object); },
-    remove(scene, object) { if (scene && worlds.has(scene)) getWorld(scene).remove(object); },
+    add(scene, object) {
+      const world = getWorld(scene);
+      const previousParent = object?.parent;
+      world.add(object);
+      if (object?.parent === world && previousParent !== world) {
+        invalidateCachedWorldSun(previousParent);
+        invalidateCachedWorldSun(world);
+      }
+    },
+    remove(scene, object) {
+      const world = scene && worlds.get(scene);
+      if (!world) return;
+      const wasChild = object?.parent === world;
+      world.remove(object);
+      if (wasChild) invalidateCachedWorldSun(world);
+    },
     addView(scene, object) { getViewWorld(scene).add(object); },
     removeView(scene, object) { if (scene && viewWorlds.has(scene)) getViewWorld(scene).remove(object); },
     setViewCamera(cam) { activeViewCamera = cam; },
@@ -832,7 +877,11 @@ export function createThreeAdapter({
       activeSunLight = light;
       if (qualityController?.state?.preset) applyQualityToRenderer(qualityController.state.preset);
       const nextSun = activeSunLight ?? worldSunLight;
-      if (nextSun !== previousSun) invalidateSunShadow(nextSun);
+      if (nextSun !== previousSun) markSunShadowDirty(nextSun);
+    },
+    invalidateSunShadow(scene = null) {
+      const light = scene ? worldSuns.get(worlds.get(scene)) : activeSunLight ?? worldSunLight;
+      return markSunShadowDirty(light);
     },
     fitShadowToPreset(sun = activeSunLight ?? worldSunLight, target = { x: 0, y: 0, z: 0 }, options = {}) {
       const light = sun ?? activeSunLight ?? worldSunLight;
@@ -847,7 +896,7 @@ export function createThreeAdapter({
         : [Number(target?.x) || 0, Number(target?.y) || 0, Number(target?.z) || 0];
       const sunDirection = options?.sunDirection ?? (activeSky?.sunDirection ?? null);
       const frustum = fitDirectionalShadowFrustum(THREE, light, { center, radius }, { ...options, sunDirection });
-      invalidateSunShadow(light);
+      markSunShadowDirty(light);
       return frustum;
     },
     setSky(nextSky) {
@@ -895,7 +944,7 @@ export function createThreeAdapter({
       canvas.removeEventListener?.('webglcontextrestored', onContextRestored, false);
       registeredPalettes.clear();
       cleanupAll([
-        ...ownedSuns,
+        ...ownedSuns.values(),
         () => culler3d.dispose(),
         () => postPipeline?.dispose?.(),
         () => renderer.dispose(),

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow static scenes to reuse their built-in sun's shadow map. Refresh cached maps on scene edits, camera layer changes, quality transitions, context restoration or explicit requests.
+
 - Clamp directional shadow atlas sizes to the GPU limit and refresh manually updated shadows after quality changes, frustum refits and WebGL context restoration.
 
 - Fit directional shadows and derive screen-space sun lighting from world-space light and target transforms. Snap the shadow projection to a world-anchored texel grid.

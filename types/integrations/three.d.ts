@@ -91,7 +91,7 @@
  * @property {{color?: number | string, near: number, far: number}} [fog]
  * @property {{sky: number | string, ground: number | string, intensity: number}} [hemisphere]
  * @property {{color: number | string, intensity: number, position: [number, number, number],
- *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, adaptiveExtent?: boolean}}} [sun]
+ *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, adaptiveExtent?: boolean, autoUpdate?: boolean}}} [sun] Set shadow.autoUpdate to false to cache static shadows.
  */
 /**
  * @typedef {object} ThreeAdapterOptions
@@ -156,6 +156,7 @@
  * @property {(scene: object, object: object) => void} removeView
  * @property {(cam: ThreeCamera | null) => void} setViewCamera
  * @property {(light: object | null) => void} setSunLight
+ * @property {(scene?: object | null) => boolean} invalidateSunShadow Request a fresh sun shadow map for a scene or the active sun.
  * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
  * @property {(nextExposure: number) => void} setExposure
@@ -393,6 +394,9 @@ export type ThreeWorldLighting = {
         ground: number | string;
         intensity: number;
     } | undefined;
+    /**
+     * Set shadow.autoUpdate to false to cache static shadows.
+     */
     sun?: {
         color: number | string;
         intensity: number;
@@ -404,6 +408,7 @@ export type ThreeWorldLighting = {
             mapSize?: number;
             bias?: number;
             adaptiveExtent?: boolean;
+            autoUpdate?: boolean;
         };
     } | undefined;
 };
@@ -581,6 +586,10 @@ export type ThreeAdapter = {
     removeView: (scene: object, object: object) => void;
     setViewCamera: (cam: ThreeCamera | null) => void;
     setSunLight: (light: object | null) => void;
+    /**
+     * Request a fresh sun shadow map for a scene or the active sun.
+     */
+    invalidateSunShadow: (scene?: object | null) => boolean;
     fitShadowToPreset: (sun?: import("./sky3d.js").DirectionalLightLike | null, target?: import("./sky3d.js").SkyVec3Input, options?: import("./sky3d.js").ShadowFitOptions & {
         shadowDistance?: number;
         radius?: number;
