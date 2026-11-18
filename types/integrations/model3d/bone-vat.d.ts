@@ -56,6 +56,7 @@ export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3D
  * @property {number} [sampleFps=30] Bake sample FPS when `vatData` is not supplied.
  * @property {number} [lod1Distance=25] World distance threshold switching LOD0 -> LOD1.
  * @property {number} [lod2Distance=80] World distance threshold switching LOD1 -> LOD2 impostor.
+ * @property {number} [lodHysteresis=0.1] Fractional CPU LOD margin on either side of a threshold (`0..0.5`).
  * @property {number} [maxDistance=240] Far draw cutoff (`<= 0` disables).
  * @property {number} [cullRadius=1.2] Culling radius before applying crowd scale and the group's world transform.
  * @property {number} [baseY=0] Ground Y offset in crowd-local units.
@@ -127,7 +128,7 @@ export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3D
  * @param {BoneVatCrowd3DOptions} [options]
  * @returns {BoneVatCrowd3D}
  */
-export function createBoneVatCrowd3D(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, vatData, lod0Geometry, lod1Geometry, material, impostorTexture, impostorCols, impostorRows, capacity, sampleFps, lod1Distance, lod2Distance, maxDistance, cullRadius, baseY, scale, castShadow, receiveShadow, }?: BoneVatCrowd3DOptions | undefined): BoneVatCrowd3D;
+export function createBoneVatCrowd3D(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, vatData, lod0Geometry, lod1Geometry, material, impostorTexture, impostorCols, impostorRows, capacity, sampleFps, lod1Distance, lod2Distance, lodHysteresis, maxDistance, cullRadius, baseY, scale, castShadow, receiveShadow, }?: BoneVatCrowd3DOptions | undefined): BoneVatCrowd3D;
 export type BoneVatClipMeta = {
     name: string;
     startFrame: number;
@@ -253,6 +254,10 @@ export type BoneVatCrowd3DOptions = {
      * World distance threshold switching LOD1 -> LOD2 impostor.
      */
     lod2Distance?: number | undefined;
+    /**
+     * Fractional CPU LOD margin on either side of a threshold (`0..0.5`).
+     */
+    lodHysteresis?: number | undefined;
     /**
      * Far draw cutoff (`<= 0` disables).
      */

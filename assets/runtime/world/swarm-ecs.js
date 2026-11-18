@@ -1288,6 +1288,7 @@ function stepSwarmSequential(
  * @property {Float32Array} sepY Cached neighbor separation Y/Z vector per unit.
  * @property {Uint16Array|Uint32Array} cellDensity Unit count per cell at the start of the latest step; 32-bit when capacity exceeds 65535.
  * @property {Int32Array} activeIds Contiguous slice `[0 .. count - 1]` of live unit IDs.
+ * @property {Uint32Array} [slotGeneration] Native simulation's read-only per-slot spawn generation.
  * @property {number} chunkCols
  * @property {number} chunkRows
  * @property {Int32Array} chunkHead Per-chunk intrusive head index (`-1` = empty).
@@ -1359,6 +1360,7 @@ export function createSwarmSimulation({
   const statusCode = new Uint8Array(capacity);
   const sepX = new Float32Array(capacity);
   const sepY = new Float32Array(capacity);
+  const slotGeneration = new Uint32Array(capacity);
 
   const freeStack = new Int32Array(capacity);
   let freeTop = capacity;
@@ -1495,6 +1497,7 @@ export function createSwarmSimulation({
     const slot = activeCount++;
     activeIds[slot] = id;
     indexInActive[id] = slot;
+    slotGeneration[id]++;
 
     unitFlags[id] = SWARM_UNIT_FLAGS.ALIVE;
     posX[id] = x;
@@ -1506,6 +1509,7 @@ export function createSwarmSimulation({
     animClip[id] = clipId & 0xffff;
     animTime[id] = t0;
     flash[id] = 0;
+    statusCode[id] = 0;
     sepX[id] = 0;
     sepY[id] = 0;
     chunksDirty = true;
@@ -1859,6 +1863,7 @@ export function createSwarmSimulation({
     sepY,
     cellDensity,
     activeIds,
+    slotGeneration,
     chunkCols,
     chunkRows,
     chunkHead,

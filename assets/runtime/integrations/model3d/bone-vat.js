@@ -1074,6 +1074,7 @@ function patchImpostorMaterial(material, {
  * @property {number} [sampleFps=30] Bake sample FPS when `vatData` is not supplied.
  * @property {number} [lod1Distance=25] World distance threshold switching LOD0 -> LOD1.
  * @property {number} [lod2Distance=80] World distance threshold switching LOD1 -> LOD2 impostor.
+ * @property {number} [lodHysteresis=0.1] Fractional CPU LOD margin on either side of a threshold (`0..0.5`).
  * @property {number} [maxDistance=240] Far draw cutoff (`<= 0` disables).
  * @property {number} [cullRadius=1.2] Culling radius before applying crowd scale and the group's world transform.
  * @property {number} [baseY=0] Ground Y offset in crowd-local units.
@@ -1167,6 +1168,7 @@ export function createBoneVatCrowd3D(THREE, {
   sampleFps = 30,
   lod1Distance = 25,
   lod2Distance = 80,
+  lodHysteresis = 0.1,
   maxDistance = 240,
   cullRadius = 1.2,
   baseY = 0,
@@ -1183,6 +1185,9 @@ export function createBoneVatCrowd3D(THREE, {
   }
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 262144) {
     throw new RangeError('createBoneVatCrowd3D capacity must be an integer in 1..262144');
+  }
+  if (!Number.isFinite(lodHysteresis) || lodHysteresis < 0 || lodHysteresis > 0.5) {
+    throw new RangeError('lodHysteresis must be between 0 and 0.5');
   }
 
   let baseMesh = null;
@@ -1391,6 +1396,10 @@ export function createBoneVatCrowd3D(THREE, {
   const clipTime = new Float32Array(capacity);
   const clipSpeed = new Float32Array(capacity).fill(1);
   const flashTimer = new Float32Array(capacity);
+  const standaloneLod = lodHysteresis > 0 ? new Uint8Array(capacity) : null;
+  let swarmGenerations = null;
+  let swarmLod = null;
+  let swarmLodGenerations = null;
 
   const freeStack = new Int32Array(capacity);
   let freeTop = capacity;
@@ -1399,8 +1408,18 @@ export function createBoneVatCrowd3D(THREE, {
   const indexInActive = new Int32Array(capacity).fill(-1);
   let activeCount = 0;
 
-  const lod1Sq = lod1Distance * lod1Distance;
-  const lod2Sq = Math.max(lod1Distance, lod2Distance) ** 2;
+  const lod1Radius = Math.abs(lod1Distance);
+  const lod2Radius = Math.max(lod1Radius, lod2Distance);
+  const lod1Sq = lod1Radius ** 2;
+  const lod2Sq = lod2Radius ** 2;
+  const nearLod1 = lod1Radius * (1 - lodHysteresis);
+  const farLod1 = lod1Radius * (1 + lodHysteresis);
+  const nearLod2 = lod2Radius * (1 - lodHysteresis);
+  const farLod2 = lod2Radius * (1 + lodHysteresis);
+  const nearLod1Sq = nearLod1 ** 2;
+  const farLod1Sq = farLod1 ** 2;
+  const nearLod2Sq = nearLod2 ** 2;
+  const farLod2Sq = farLod2 ** 2;
   const maxDistSq = maxDistance > 0 && Number.isFinite(maxDistance) ? maxDistance * maxDistance : Infinity;
   const localCullRadius = Math.abs(cullRadius * scaleUniform.value);
   let worldMatrix = IDENTITY_TRANSFORM;
@@ -1409,6 +1428,33 @@ export function createBoneVatCrowd3D(THREE, {
   let originToEyeX = 0, originToEyeY = 0, originToEyeZ = 0;
   let cullOriginX = 0, cullOriginY = 0, cullOriginZ = 0;
   let axisXSquared = 1, axisZSquared = 1, axisXZAbsDot = 0;
+
+  function selectLod(distanceSquared, previous) {
+    // Track bucket + 1 so a recycled or freshly spawned slot starts at nominal thresholds.
+    const first = previous === 0 ? lod1Sq : (previous === 1 ? farLod1Sq : nearLod1Sq);
+    if (distanceSquared < first) return 0;
+    const second = previous === 0 ? lod2Sq : (previous === 3 ? nearLod2Sq : farLod2Sq);
+    return distanceSquared < second ? 1 : 2;
+  }
+
+  function prepareSwarmLod(swarm) {
+    const generations = lodHysteresis > 0 ? (swarm.slotGeneration ?? null) : null;
+    if (generations === swarmGenerations) return;
+    swarmGenerations = generations;
+    swarmLod = generations ? new Uint8Array(generations.length) : null;
+    swarmLodGenerations = generations ? new Uint32Array(generations.length) : null;
+  }
+
+  function selectSwarmLod(id, distanceSquared) {
+    const previous = swarmLod && swarmLodGenerations[id] === swarmGenerations[id] ? (swarmLod[id] ?? 0) : 0;
+    return selectLod(distanceSquared, previous);
+  }
+
+  function rememberSwarmLod(id, lod) {
+    if (!swarmLod) return;
+    swarmLod[id] = lod + 1;
+    swarmLodGenerations[id] = swarmGenerations[id];
+  }
 
   function resolveCameraPos(camera, culler) {
     const mw = camera?.matrixWorld?.elements;
@@ -1512,6 +1558,7 @@ export function createBoneVatCrowd3D(THREE, {
     clipTime[id] = time;
     clipSpeed[id] = speed;
     flashTimer[id] = 0;
+    if (standaloneLod) standaloneLod[id] = 0;
     return id;
   }
 
@@ -1565,6 +1612,9 @@ export function createBoneVatCrowd3D(THREE, {
       freeStack[freeTop++] = id;
     }
     activeCount = 0;
+    swarmGenerations = null;
+    swarmLod = null;
+    swarmLodGenerations = null;
   }
 
   function beginCpuPacking() {
@@ -1641,10 +1691,11 @@ export function createBoneVatCrowd3D(THREE, {
       if (distSq > maxDistSq) continue;
       if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
 
-      const bucket = distSq < lod1Sq ? 0 : (distSq < lod2Sq ? 1 : 2);
+      const bucket = selectLod(distSq, standaloneLod?.[id] ?? 0);
       const dstSlot = lodCounts[bucket];
       if (dstSlot >= capacity) continue;
       lodCounts[bucket]++;
+      if (standaloneLod) standaloneLod[id] = bucket + 1;
 
       const meta = clipList[clipIdx[id]] ?? clipList[0];
       const framePos = computeFramePos(meta, clipTime[id]);
@@ -1665,6 +1716,7 @@ export function createBoneVatCrowd3D(THREE, {
 
     prepareVisibility(camera, culler);
     const hasCuller = typeof culler?.testSphere === 'function' || typeof culler?.classifySphere === 'function';
+    prepareSwarmLod(swarm);
     const total = swarm.count;
     const sPosX = swarm.posX;
     const sPosZ = swarm.posY;
@@ -1700,8 +1752,10 @@ export function createBoneVatCrowd3D(THREE, {
       const cMinZ = swarm.chunkMinY;
       const cMaxZ = swarm.chunkMaxY;
       const numChunks = cHead.length;
-      const lod1Rad = lod1Distance;
-      const lod2Rad = Math.max(lod1Distance, lod2Distance);
+      const minimumLod1 = swarmLod ? nearLod1 : lod1Radius;
+      const maximumLod1 = swarmLod ? farLod1 : lod1Radius;
+      const minimumLod2 = swarmLod ? nearLod2 : lod2Radius;
+      const maximumLod2 = swarmLod ? farLod2 : lod2Radius;
       const maxDistRad = maxDistance > 0 && Number.isFinite(maxDistance) ? maxDistance : Infinity;
 
       for (let ck = 0; ck < numChunks; ck++) {
@@ -1724,9 +1778,12 @@ export function createBoneVatCrowd3D(THREE, {
 
         let singleBucket = -1;
         if (cullState === 2 && (maxDistRad === Infinity || centerDist + chunkRadius <= maxDistRad)) {
-          if (centerDist + halfDiag < lod1Rad) singleBucket = 0;
-          else if (centerDist - halfDiag >= lod1Rad && centerDist + halfDiag < lod2Rad) singleBucket = 1;
-          else if (centerDist - halfDiag >= lod2Rad) singleBucket = 2;
+          // Use the fast path only when every possible prior LOD yields the same result.
+          const nearDistance = centerDist - halfDiag;
+          const farDistance = centerDist + halfDiag;
+          if (farDistance < minimumLod1) singleBucket = 0;
+          else if (nearDistance >= maximumLod1 && farDistance < minimumLod2) singleBucket = 1;
+          else if (nearDistance >= maximumLod2) singleBucket = 2;
         }
 
         if (singleBucket !== -1) {
@@ -1755,6 +1812,7 @@ export function createBoneVatCrowd3D(THREE, {
               framePos += fOff;
             }
             writePackedRow(singleBucket, dst, sPosX[id], sPosZ[id], sRot[id], framePos, sFlash[id], sStatus?.[id]);
+            rememberSwarmLod(id, singleBucket);
             dst++;
             id = cNext[id];
           }
@@ -1767,10 +1825,11 @@ export function createBoneVatCrowd3D(THREE, {
             const pz = sPosZ[id];
             const distSq = worldDistanceSquared(px, pz);
             if (distSq <= maxDistSq && (!needPerUnitCull || classifyWorldSphere(culler, px, pz, worldCullRadius) !== 0)) {
-              const bucket = distSq < lod1Sq ? 0 : (distSq < lod2Sq ? 1 : 2);
+              const bucket = selectSwarmLod(id, distSq);
               const dstSlot = lodCounts[bucket];
               if (dstSlot < capacity) {
                 lodCounts[bucket]++;
+                rememberSwarmLod(id, bucket);
                 let framePos = sStart0;
                 let span = sSpan0;
                 let dur = sDur0;
@@ -1811,10 +1870,11 @@ export function createBoneVatCrowd3D(THREE, {
       if (distSq > maxDistSq) continue;
       if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
 
-      const bucket = distSq < lod1Sq ? 0 : (distSq < lod2Sq ? 1 : 2);
+      const bucket = selectSwarmLod(id, distSq);
       const dstSlot = lodCounts[bucket];
       if (dstSlot >= capacity) continue;
       lodCounts[bucket]++;
+      rememberSwarmLod(id, bucket);
 
       const cid = sClip[id];
       const mappedName = clipNames?.[cid];

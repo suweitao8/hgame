@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add distance hysteresis for CPU-driven Bone-VAT crowds to reduce LOD switching and buffer repacking near thresholds. Track swarm slot generations so respawned units start with fresh LOD and status.
+
 - Apply the Bone-VAT crowd group's world transform to CPU culling, LOD distances and impostor camera-facing, including under scaled and rotated ancestors.
 
 - Reuse unchanged packed Bone-VAT instance data and report scheduled upload bytes. Preserve animation and status colors across chunk culling and impostor LOD transitions.

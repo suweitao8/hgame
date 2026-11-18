@@ -108,6 +108,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {Float32Array} sepY Cached neighbor separation Y/Z vector per unit.
  * @property {Uint16Array|Uint32Array} cellDensity Unit count per cell at the start of the latest step; 32-bit when capacity exceeds 65535.
  * @property {Int32Array} activeIds Contiguous slice `[0 .. count - 1]` of live unit IDs.
+ * @property {Uint32Array} [slotGeneration] Native simulation's read-only per-slot spawn generation.
  * @property {number} chunkCols
  * @property {number} chunkRows
  * @property {Int32Array} chunkHead Per-chunk intrusive head index (`-1` = empty).
@@ -666,6 +667,10 @@ export type SwarmSimulation = {
      * Contiguous slice `[0 .. count - 1]` of live unit IDs.
      */
     activeIds: Int32Array;
+    /**
+     * Native simulation's read-only per-slot spawn generation.
+     */
+    slotGeneration?: Uint32Array | undefined;
     chunkCols: number;
     chunkRows: number;
     /**
