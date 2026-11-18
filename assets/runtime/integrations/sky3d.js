@@ -244,6 +244,9 @@ void main() {
   vec4 worldPos = modelMatrix * vec4(position, 1.0);
   vWorldDir = position;
   gl_Position = projectionMatrix * viewMatrix * worldPos;
+  // Draw the dome at the far plane even when the camera uses a shorter
+  // quality-tier draw distance than the dome's physical radius.
+  gl_Position.z = gl_Position.w * 0.999999;
 }
 `;
 

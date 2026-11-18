@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep the procedural 3D sky inside the camera's far clipping plane when adaptive quality shortens scene draw distance.
+
 - Allow 3D model slots to configure shadow casting and receiving consistently for individual clones and instanced batches.
 
 - Preserve source mesh shadow settings when creating single-mesh 3D instance batches instead of forcing both shadows on.
