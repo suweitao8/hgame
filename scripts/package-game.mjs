@@ -27,6 +27,21 @@ const RUNTIME_DIR_PREFIXES = new Set([
   'lockstep',
 ]);
 
+async function readPixiBuildFiles(projectDir) {
+  try {
+    const manifest = JSON.parse(await readFile(path.join(projectDir, '.hgame-pixi-build.json'), 'utf8'));
+    if (manifest?.schemaVersion === 1 && manifest.files && typeof manifest.files === 'object' &&
+        !Array.isArray(manifest.files)) {
+      return new Set(Object.entries(manifest.files)
+        .filter(([name, hash]) => /^[A-Za-z0-9_.-]+\.m?js$/.test(name) && /^[a-f0-9]{64}$/.test(hash))
+        .map(([name]) => 'assets/' + name));
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+  }
+  return new Set();
+}
+
 const AUTHORING_ASSET_DIRS = new Set([
   'raw',
   'art_src',
@@ -409,7 +424,7 @@ function stripJsComments(source) {
   return out;
 }
 
-function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSubpaths = false } = {}) {
+function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSubpaths = false, pixiChunk = false } = {}) {
   const clean = stripJsComments(code);
   const specifiers = [];
   const urls = [];
@@ -458,6 +473,18 @@ function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSu
         if (RUNTIME_DIR_PREFIXES.has(firstSeg)) {
           runtimeSubpaths.push(`vendor/hgame/${sub}`);
         }
+      }
+    }
+  }
+
+  if (pixiChunk) {
+    // Vite may rename loadRuntime(), but its literal module arguments survive.
+    // Scan actual chunks in the entry graph, not all source files or assets.
+    const literalPath = /(['"`])((?:[A-Za-z0-9_-]+\/)+[A-Za-z0-9_-]+\.m?js|index\.js)\1/g;
+    while ((m = literalPath.exec(clean)) !== null) {
+      const sub = m[2];
+      if (sub === 'index.js' || RUNTIME_DIR_PREFIXES.has(sub.split('/')[0])) {
+        runtimeSubpaths.push('vendor/hgame/' + sub);
       }
     }
   }
@@ -649,6 +676,7 @@ export async function packageGameRelease({
   const releaseProfilePath = path.join(absGameDir, 'hgame.project.json');
   const releaseProfile = normalizeReleaseProfile(await existsFile(releaseProfilePath)
     ? JSON.parse(await readFile(releaseProfilePath, 'utf8')) : undefined);
+  const pixiBuildFiles = await readPixiBuildFiles(absGameDir);
 
   const resolvedEngineRoot = engineRoot
     ? path.resolve(engineRoot)
@@ -851,6 +879,7 @@ export async function packageGameRelease({
       const { specifiers, urls, runtimeSubpaths } = extractModuleSpecifiers(code, {
         isApplicationCore: rel === 'vendor/hgame/core/application.js',
         includeSrcSubpaths: rel.startsWith('src/'),
+        pixiChunk: pixiBuildFiles.has(rel),
       });
       for (const s of [...specifiers, ...urls]) {
         const target = resolveModulePath(s, rel, importMap);

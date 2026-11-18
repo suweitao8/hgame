@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Include HGame modules referenced by literal paths in the Pixi bundles reachable from a game's release entry.
+
 - Add swept projectile queries to `SpatialHash2D` and use the shared spatial index in the Pixi arena without rebuilding it on idle dense-crowd ticks.
 
 - Cull off-screen Pixi effect particles before rendering while preserving their simulation and the separate active/visible counts.
