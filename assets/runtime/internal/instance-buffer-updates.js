@@ -29,13 +29,22 @@ export function createInstanceUpdateRanges(componentsPerRow) {
     }
   }
 
-  /** @param {{ array: { length: number }, needsUpdate: boolean, clearUpdateRanges?: () => void, addUpdateRange?: (start: number, count: number) => void } | null | undefined} attribute */
+  /**
+   * @param {{ array: { length: number }, needsUpdate: boolean, clearUpdateRanges?: () => void, addUpdateRange?: (start: number, count: number) => void } | null | undefined} attribute
+   * @returns {number} Number of array components scheduled by this submission.
+   */
   function submit(attribute) {
-    if (!length || !attribute) return;
+    if (!length || !attribute) return 0;
+    let components = attribute.array.length;
     if (typeof attribute.clearUpdateRanges === 'function' && typeof attribute.addUpdateRange === 'function') {
       const pending = 'updateRanges' in attribute && Array.isArray(attribute.updateRanges) ? attribute.updateRanges : null;
       if (pending && pending.length + length / 2 <= MAX_INSTANCE_UPDATE_RANGES) {
-        for (let i = 0; i < length; i += 2) attribute.addUpdateRange(ranges[i], ranges[i + 1] - ranges[i]);
+        components = 0;
+        for (let i = 0; i < length; i += 2) {
+          const count = ranges[i + 1] - ranges[i];
+          attribute.addUpdateRange(ranges[i], count);
+          components += count;
+        }
       } else {
         let start = pending ? ranges[0] : 0;
         let end = pending ? ranges[length - 1] : attribute.array.length;
@@ -43,11 +52,13 @@ export function createInstanceUpdateRanges(componentsPerRow) {
           start = Math.min(start, range.start);
           end = Math.max(end, range.start + range.count);
         }
+        components = end - start;
         attribute.clearUpdateRanges();
-        attribute.addUpdateRange(start, end - start);
+        attribute.addUpdateRange(start, components);
       }
     }
     attribute.needsUpdate = true;
+    return components;
   }
 
   return { reset, add, submit };

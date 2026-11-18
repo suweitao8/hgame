@@ -96,7 +96,7 @@ export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3D
  * @property {number} culledCount
  * @property {[number, number, number]} lodCounts Visible `[lod0, lod1, lod2]` counts.
  * @property {number} drawCalls Total active LOD draw calls (`0..3`).
- * @property {number} uploadedBytes Total packed instance bytes uploaded this frame (`visibleCount * 16`).
+ * @property {number} uploadedBytes Packed instance bytes scheduled by this call, excluding buffer creation.
  */
 /**
  * @typedef {object} BoneVatCrowd3D
@@ -351,7 +351,7 @@ export type BoneVatCrowdStats = {
      */
     drawCalls: number;
     /**
-     * Total packed instance bytes uploaded this frame (`visibleCount * 16`).
+     * Packed instance bytes scheduled by this call, excluding buffer creation.
      */
     uploadedBytes: number;
 };

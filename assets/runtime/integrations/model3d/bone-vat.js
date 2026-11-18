@@ -6,11 +6,26 @@
  * with normal-space bone/yaw rotation and view-azimuth billboard selection.
  */
 
+import { createInstanceUpdateRanges } from '../../internal/instance-buffer-updates.js';
 import { cloneObject3DWithSkins, computeRootBounds } from './helpers.js';
 
 const HVAT_MAGIC = 0x54415648; // "HVAT" LE
 const HVAT_VERSION = 1;
 const HVAT_HEADER_BYTES = 32;
+const CROWD_STATUS_COLOR_GLSL = [
+  '#include <color_fragment>',
+  'if (vCrowdFlash > 0.5) {',
+  '  if (vCrowdFlash < 4.5) {',
+  '    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), clamp(vCrowdFlash * 0.23, 0.0, 0.92));',
+  '  } else if (vCrowdFlash < 5.5) {',
+  '    diffuseColor.rgb *= vec3(0.45, 0.85, 1.35);',
+  '  } else if (vCrowdFlash < 6.5) {',
+  '    diffuseColor.rgb *= vec3(0.45, 1.25, 0.45);',
+  '  } else if (vCrowdFlash < 7.5) {',
+  '    diffuseColor.rgb *= vec3(1.35, 0.55, 0.30);',
+  '  }',
+  '}',
+].join('\n');
 
 const _f32Scratch = new Float32Array(1);
 const _u32Scratch = new Uint32Array(_f32Scratch.buffer);
@@ -906,20 +921,7 @@ function patchBoneVatMaterial(material, {
     if (shader.fragmentShader.includes('#include <color_fragment>')) {
       shader.fragmentShader = 'varying float vCrowdFlash;\n' + shader.fragmentShader.replace(
         '#include <color_fragment>',
-        [
-          '#include <color_fragment>',
-          'if (vCrowdFlash > 0.5) {',
-          '  if (vCrowdFlash < 4.5) {',
-          '    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), clamp(vCrowdFlash * 0.23, 0.0, 0.92));',
-          '  } else if (vCrowdFlash < 5.5) {',
-          '    diffuseColor.rgb *= vec3(0.45, 0.85, 1.35);',
-          '  } else if (vCrowdFlash < 6.5) {',
-          '    diffuseColor.rgb *= vec3(0.45, 1.25, 0.45);',
-          '  } else if (vCrowdFlash < 7.5) {',
-          '    diffuseColor.rgb *= vec3(1.35, 0.55, 0.30);',
-          '  }',
-          '}',
-        ].join('\n'),
+        CROWD_STATUS_COLOR_GLSL,
       );
     }
   };
@@ -938,7 +940,7 @@ function patchImpostorMaterial(material, {
   gpuSwarmWidthUniform = { value: 1 },
   gpuInstanceOffsetUniform = { value: 0 },
 }) {
-  material.customProgramCacheKey = () => `hgame-bone-impostor-v2:${impostorCols}x${impostorRows}:${vatHeight}`;
+  material.customProgramCacheKey = () => `hgame-bone-impostor-v3:${impostorCols}x${impostorRows}:${vatHeight}`;
   const prevCompile = material.onBeforeCompile;
 
   material.onBeforeCompile = (shader, renderer) => {
@@ -982,14 +984,17 @@ function patchImpostorMaterial(material, {
         '#include <uv_vertex>',
         [
           '#include <uv_vertex>',
+          'vec4 _impostorPacked = hgameReadCrowdPacked();',
+          'vec2 _toCamUv = cameraPosition.xz - _impostorPacked.xy;',
+          'float _impostorDistance = length(_toCamUv);',
+          'float _impostorAbsW = abs(_impostorPacked.w);',
+          'float _impostorStatus = floor(_impostorAbsW / 16384.0);',
           '#ifdef USE_MAP',
           '{',
-          '  vec4 _cpUv = hgameReadCrowdPacked();',
-          '  vec2 _toCamUv = cameraPosition.xz - _cpUv.xy;',
-          '  float _camAzimuth = atan(_toCamUv.x, _toCamUv.y);',
-          '  float _relAngle = fract((_camAzimuth - _cpUv.z) * 0.15915494309 + 1.0);',
+          '  float _camAzimuth = _impostorDistance > 0.0001 ? atan(_toCamUv.x, _toCamUv.y) : 0.0;',
+          '  float _relAngle = fract((_camAzimuth - _impostorPacked.z) * 0.15915494309 + 1.0);',
           '  float _col = floor(_relAngle * float(uImpostorCols));',
-          '  float _framePos = max(0.0, abs(_cpUv.w) - 1.0);',
+          '  float _framePos = max(0.0, _impostorAbsW - _impostorStatus * 16384.0 - 1.0);',
           '  float _rowNorm = clamp(_framePos / max(1.0, float(uVatHeight)), 0.0, 0.9999);',
           '  float _row = floor(_rowNorm * float(uImpostorRows));',
           '  vMapUv = vec2((_col + uv.x) / float(uImpostorCols), (float(uImpostorRows - 1) - _row + uv.y) / float(uImpostorRows));',
@@ -1001,12 +1006,7 @@ function patchImpostorMaterial(material, {
         '#include <beginnormal_vertex>',
         [
           '#include <beginnormal_vertex>',
-          '{',
-          '  vec4 _cpN = hgameReadCrowdPacked();',
-          '  vec2 _toCamN = cameraPosition.xz - _cpN.xy;',
-          '  float _camLen = max(0.001, length(_toCamN));',
-          '  objectNormal = normalize(vec3(_toCamN.x, _camLen * 0.25, _toCamN.y));',
-          '}',
+          'objectNormal = normalize(vec3(_toCamUv.x, max(0.001, _impostorDistance) * 0.25, _toCamUv.y));',
         ].join('\n'),
       )
       .replace(
@@ -1014,25 +1014,19 @@ function patchImpostorMaterial(material, {
         [
           '#include <begin_vertex>',
           '{',
-          '  vec4 _cpV = hgameReadCrowdPacked();',
-          '  vec2 _toCam = cameraPosition.xz - _cpV.xy;',
-          '  float _len = length(_toCam);',
-          '  vec2 _fwd = _len > 0.0001 ? (_toCam / _len) : vec2(0.0, 1.0);',
+          '  vec2 _fwd = _impostorDistance > 0.0001 ? (_toCamUv / _impostorDistance) : vec2(0.0, 1.0);',
           '  vec2 _right = vec2(_fwd.y, -_fwd.x);',
           '  float _sx = position.x * uCrowdScale;',
           '  float _sy = position.y * uCrowdScale;',
-          '  transformed = vec3(_right.x * _sx + _cpV.x, _sy + uCrowdBaseY, _right.y * _sx + _cpV.y);',
-          '  vCrowdFlash = _cpV.w < 0.0 ? 1.0 : 0.0;',
+          '  transformed = vec3(_right.x * _sx + _impostorPacked.x, _sy + uCrowdBaseY, _right.y * _sx + _impostorPacked.y);',
+          '  vCrowdFlash = (_impostorPacked.w < 0.0 && _impostorStatus < 0.5) ? 4.0 : _impostorStatus;',
           '}',
         ].join('\n'),
       );
 
     shader.fragmentShader = 'varying float vCrowdFlash;\n' + shader.fragmentShader.replace(
       '#include <color_fragment>',
-      [
-        '#include <color_fragment>',
-        'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), clamp(vCrowdFlash, 0.0, 1.0));',
-      ].join('\n'),
+      CROWD_STATUS_COLOR_GLSL,
     );
   };
   material.needsUpdate = true;
@@ -1100,7 +1094,7 @@ function patchImpostorMaterial(material, {
  * @property {number} culledCount
  * @property {[number, number, number]} lodCounts Visible `[lod0, lod1, lod2]` counts.
  * @property {number} drawCalls Total active LOD draw calls (`0..3`).
- * @property {number} uploadedBytes Total packed instance bytes uploaded this frame (`visibleCount * 16`).
+ * @property {number} uploadedBytes Packed instance bytes scheduled by this call, excluding buffer creation.
  */
 
 /**
@@ -1290,6 +1284,9 @@ export function createBoneVatCrowd3D(THREE, {
     if (THREE.DynamicDrawUsage !== undefined) attr.setUsage?.(THREE.DynamicDrawUsage);
     return attr;
   });
+  const packedUpdates = packedBuffers.map(() => createInstanceUpdateRanges(4));
+  const initializedRows = new Uint32Array(3);
+  let packingIncomplete = false;
 
   const instGeo0 = makeInstancedStaticGeometry(THREE, rawLod0Geom, false, packedAttrs[0]);
   const instGeo1 = makeInstancedStaticGeometry(THREE, rawLod1Geom, true, packedAttrs[1]);
@@ -1315,6 +1312,8 @@ export function createBoneVatCrowd3D(THREE, {
   const mesh0 = new THREE.Mesh(instGeo0, lod0Mat);
   const mesh1 = new THREE.Mesh(instGeo1, lod1Mat);
   const mesh2 = new THREE.Mesh(instGeo2, lod2Mat);
+  const lodGeometries = [instGeo0, instGeo1, instGeo2];
+  const lodMeshes = [mesh0, mesh1, mesh2];
 
   let depthMat0 = null;
   let depthMat1 = null;
@@ -1478,31 +1477,50 @@ export function createBoneVatCrowd3D(THREE, {
     activeCount = 0;
   }
 
+  function beginCpuPacking() {
+    // A throwing culler can leave the CPU buffers partially rewritten and unsubmitted.
+    if (packingIncomplete) initializedRows.fill(0);
+    packingIncomplete = true;
+    for (const updates of packedUpdates) updates.reset();
+  }
+
+  function writePackedRow(bucket, row, x, z, yaw, framePos, flash, status = 0) {
+    const frame = framePos + 1;
+    const packedW = Math.fround(status > 0 ? status * 16384 + frame : (flash > 0 ? -frame : frame));
+    const buf = packedBuffers[bucket];
+    const offset = row * 4;
+    if (row < initializedRows[bucket] && buf[offset] === x && buf[offset + 1] === z &&
+        buf[offset + 2] === yaw && buf[offset + 3] === packedW) return;
+    buf[offset] = x;
+    buf[offset + 1] = z;
+    buf[offset + 2] = yaw;
+    buf[offset + 3] = packedW;
+    packedUpdates[bucket].add(row);
+  }
+
   function commitLodBuffers(counts, totalActive) {
-    const geos = [instGeo0, instGeo1, instGeo2];
-    const meshes = [mesh0, mesh1, mesh2];
     let drawCalls = 0;
     let visibleCount = 0;
+    let uploadedComponents = 0;
     for (let k = 0; k < 3; k++) {
       const n = counts[k];
-      geos[k].instanceCount = n;
-      meshes[k].visible = n > 0;
+      lodGeometries[k].instanceCount = n;
+      lodMeshes[k].visible = n > 0;
       if (n > 0) {
         drawCalls++;
         visibleCount += n;
-        const attr = packedAttrs[k];
-        attr.clearUpdateRanges?.();
-        attr.addUpdateRange?.(0, n * 4);
-        attr.needsUpdate = true;
+        uploadedComponents += packedUpdates[k].submit(packedAttrs[k]);
+        initializedRows[k] = Math.max(initializedRows[k], n);
       }
     }
+    packingIncomplete = false;
     return {
       activeCount: totalActive,
       visibleCount,
       culledCount: Math.max(0, totalActive - visibleCount),
       lodCounts: [counts[0], counts[1], counts[2]],
       drawCalls,
-      uploadedBytes: visibleCount * 16,
+      uploadedBytes: uploadedComponents * Float32Array.BYTES_PER_ELEMENT,
     };
   }
 
@@ -1517,6 +1535,7 @@ export function createBoneVatCrowd3D(THREE, {
     const baseYVal = baseYUniform.value;
     const hasCuller = Boolean(culler && typeof culler.testSphere === 'function');
     const lodCounts = [0, 0, 0];
+    beginCpuPacking();
 
     for (let a = 0; a < activeCount; a++) {
       const id = activeIndices[a];
@@ -1543,14 +1562,7 @@ export function createBoneVatCrowd3D(THREE, {
 
       const meta = clipList[clipIdx[id]] ?? clipList[0];
       const framePos = computeFramePos(meta, clipTime[id]);
-      const packedW = flashTimer[id] > 0 ? -(framePos + 1) : (framePos + 1);
-
-      const off = dstSlot * 4;
-      const buf = packedBuffers[bucket];
-      buf[off] = px;
-      buf[off + 1] = pz;
-      buf[off + 2] = rotY[id];
-      buf[off + 3] = packedW;
+      writePackedRow(bucket, dstSlot, px, pz, rotY[id], framePos, flashTimer[id]);
     }
 
     return commitLodBuffers(lodCounts, activeCount);
@@ -1576,7 +1588,9 @@ export function createBoneVatCrowd3D(THREE, {
     const sClip = swarm.animClip;
     const sTime = swarm.animTime;
     const sFlash = swarm.flash;
+    const sStatus = swarm.statusCode;
     const lodCounts = [0, 0, 0];
+    beginCpuPacking();
 
     let cidMap = null;
     if (clipNames && clipNames.length > 0) {
@@ -1639,7 +1653,6 @@ export function createBoneVatCrowd3D(THREE, {
         }
 
         if (singleBucket !== -1) {
-          const buf = packedBuffers[singleBucket];
           let dst = lodCounts[singleBucket];
           let id = cHead[ck];
           while (id !== -1 && dst < capacity) {
@@ -1664,12 +1677,7 @@ export function createBoneVatCrowd3D(THREE, {
               if (fOff > maxOff) fOff = maxOff;
               framePos += fOff;
             }
-            const off = dst * 4;
-            buf[off] = sPosX[id];
-            buf[off + 1] = sPosZ[id];
-            buf[off + 2] = sRot[id];
-            const sc = swarm.statusCode ? swarm.statusCode[id] : 0;
-            buf[off + 3] = sc > 0 ? (sc * 16384.0 + (framePos + 1)) : (sFlash[id] > 0 ? -(framePos + 1) : (framePos + 1));
+            writePackedRow(singleBucket, dst, sPosX[id], sPosZ[id], sRot[id], framePos, sFlash[id], sStatus?.[id]);
             dst++;
             id = cNext[id];
           }
@@ -1709,12 +1717,7 @@ export function createBoneVatCrowd3D(THREE, {
                   if (fOff > maxOff) fOff = maxOff;
                   framePos += fOff;
                 }
-                const off = dstSlot * 4;
-                const buf = packedBuffers[bucket];
-                buf[off] = px;
-                buf[off + 1] = pz;
-                buf[off + 2] = sRot[id];
-                buf[off + 3] = sFlash[id] > 0 ? -(framePos + 1) : (framePos + 1);
+                writePackedRow(bucket, dstSlot, px, pz, sRot[id], framePos, sFlash[id], sStatus?.[id]);
               }
             }
             id = cNext[id];
@@ -1745,15 +1748,7 @@ export function createBoneVatCrowd3D(THREE, {
       const mappedName = clipNames?.[cid];
       const meta = (mappedName && clipByName.get(mappedName)) || clipList[cid % clipList.length] || clipList[0];
       const framePos = computeFramePos(meta, sTime[id]);
-      const sc = swarm.statusCode ? swarm.statusCode[id] : 0;
-      const packedW = sc > 0 ? (sc * 16384.0 + (framePos + 1)) : (sFlash[id] > 0 ? -(framePos + 1) : (framePos + 1));
-
-      const off = dstSlot * 4;
-      const buf = packedBuffers[bucket];
-      buf[off] = px;
-      buf[off + 1] = pz;
-      buf[off + 2] = sRot[id];
-      buf[off + 3] = packedW;
+      writePackedRow(bucket, dstSlot, px, pz, sRot[id], framePos, sFlash[id], sStatus?.[id]);
     }
 
     return commitLodBuffers(lodCounts, total);
@@ -1776,13 +1771,11 @@ export function createBoneVatCrowd3D(THREE, {
     gpuOffsetUniforms[1].value = n0;
     gpuOffsetUniforms[2].value = n0 + n1;
 
-    const geos = [instGeo0, instGeo1, instGeo2];
-    const meshes = [mesh0, mesh1, mesh2];
     let drawCalls = 0;
     for (let k = 0; k < 3; k++) {
       const n = counts[k];
-      geos[k].instanceCount = n;
-      meshes[k].visible = n > 0;
+      lodGeometries[k].instanceCount = n;
+      lodMeshes[k].visible = n > 0;
       if (n > 0) drawCalls++;
     }
     return {

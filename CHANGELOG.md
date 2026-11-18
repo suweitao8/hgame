@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse unchanged packed Bone-VAT instance data and report scheduled upload bytes. Preserve animation and status colors across chunk culling and impostor LOD transitions.
+
 - Upload vertex animation data for changed visible crowd instances and skip animation uploads while the crowd is unchanged or hidden.
 
 - Reuse unchanged 3D instance matrices and colors. Upload only changed ranges when they can be submitted in a bounded number of GPU calls.

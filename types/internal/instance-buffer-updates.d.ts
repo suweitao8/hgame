@@ -9,5 +9,5 @@ export function createInstanceUpdateRanges(componentsPerRow: number): {
         needsUpdate: boolean;
         clearUpdateRanges?: () => void;
         addUpdateRange?: (start: number, count: number) => void;
-    } | null | undefined) => void;
+    } | null | undefined) => number;
 };
