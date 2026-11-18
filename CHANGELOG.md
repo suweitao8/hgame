@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid rebuilding the swarm's coarse spatial chunks before movement; rebuild them lazily for combat and rendering queries after positions change.
+
 - Allow the CPU swarm hit-event queue capacity to be configured independently from combat slots, and expose both budgets in the Pixi horde starter.
 
 - Use precolored explosion atlas frames on the Pixi Canvas fallback and avoid Canvas particle tinting of atlas subframes.

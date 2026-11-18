@@ -955,15 +955,11 @@ function fastAtan2(y, x) {
 
 function buildSwarmStepGrid(
   activeCount, activeIds, posX, posY,
-  ox, oy, worldMaxX, worldMaxY, invCell, cols, rows,
+  ox, oy, invCell, cols, rows,
   hashHead, hashNext, cellDensity, unitCell,
-  chunkHead, chunkNext, chunkCount, chunkMinX, chunkMaxX, chunkMinY, chunkMaxY,
-  chunkCols, chunkRows, pow4ChunkShift, invCellsPerChunkX, invCellsPerChunkY,
   fx, fy, fineLimitSq,
 ) {
   hashHead.fill(-1);
-  chunkHead.fill(-1);
-  chunkCount.fill(0);
   cellDensity.fill(0);
 
   for (let a = 0; a < activeCount; a++) {
@@ -973,11 +969,10 @@ function buildSwarmStepGrid(
 
     let cx = ((px - ox) * invCell) | 0;
     let cy = ((py - oy) * invCell) | 0;
-    let oob = false;
-    if (px < ox) { cx = 0; oob = true; }
-    else if (cx >= cols) { cx = cols - 1; oob = true; }
-    if (py < oy) { cy = 0; oob = true; }
-    else if (cy >= rows) { cy = rows - 1; oob = true; }
+    if (px < ox) cx = 0;
+    else if (cx >= cols) cx = cols - 1;
+    if (py < oy) cy = 0;
+    else if (cy >= rows) cy = rows - 1;
 
     const cell = cy * cols + cx;
     unitCell[id] = cell;
@@ -990,19 +985,6 @@ function buildSwarmStepGrid(
       hashHead[cell] = id;
     }
 
-    const kx = pow4ChunkShift ? (cx >> 2) : Math.min(chunkCols - 1, Math.floor(cx * invCellsPerChunkX));
-    const ky = pow4ChunkShift ? (cy >> 2) : Math.min(chunkRows - 1, Math.floor(cy * invCellsPerChunkY));
-    const ck = ky * chunkCols + kx;
-    chunkNext[id] = chunkHead[ck];
-    chunkHead[ck] = id;
-    chunkCount[ck]++;
-
-    if (oob || px >= worldMaxX || py >= worldMaxY) {
-      if (px < chunkMinX[ck]) chunkMinX[ck] = px;
-      if (px > chunkMaxX[ck]) chunkMaxX[ck] = px;
-      if (py < chunkMinY[ck]) chunkMinY[ck] = py;
-      if (py > chunkMaxY[ck]) chunkMaxY[ck] = py;
-    }
   }
 }
 
@@ -1414,17 +1396,10 @@ export function createSwarmSimulation({
   const chunkCols = Math.min(gridCols, 32);
   const chunkRows = Math.min(gridRows, 32);
   const totalChunks = chunkCols * chunkRows;
-  const cellsPerChunkX = gridCols / chunkCols;
-  const cellsPerChunkY = gridRows / chunkRows;
-  const pow4ChunkShift = (cellsPerChunkX === 4 && cellsPerChunkY === 4);
-  const invCellsPerChunkX = 1 / cellsPerChunkX;
-  const invCellsPerChunkY = 1 / cellsPerChunkY;
   const chunkW = (gridCols * cellSize) / chunkCols;
   const chunkH = (gridRows * cellSize) / chunkRows;
   const invChunkW = 1 / chunkW;
   const invChunkH = 1 / chunkH;
-  const worldMaxX = originX + gridCols * cellSize;
-  const worldMaxY = originY + gridRows * cellSize;
   const chunkHead = new Int32Array(totalChunks).fill(-1);
   const chunkNext = new Int32Array(capacity).fill(-1);
   const chunkCount = new Uint32Array(totalChunks);
@@ -1446,7 +1421,6 @@ export function createSwarmSimulation({
   const chunkMinY = new Float32Array(baseChunkMinY);
   const chunkMaxY = new Float32Array(baseChunkMaxY);
   const unitCell = new Int32Array(capacity);
-  const unitChunk = new Uint16Array(capacity);
   const cellDensity = new Uint16Array(gridCols * gridRows);
 
   const swarmToCrowd2D = new Int32Array(capacity).fill(-1);
@@ -1487,7 +1461,6 @@ export function createSwarmSimulation({
       if (ky < 0) ky = 0;
       else if (ky >= chunkRows) ky = chunkRows - 1;
       const ck = ky * chunkCols + kx;
-      unitChunk[id] = ck;
       chunkNext[id] = chunkHead[ck];
       chunkHead[ck] = id;
       chunkCount[ck]++;
@@ -1733,20 +1706,15 @@ export function createSwarmSimulation({
     const hashHead = spatialHash.head;
     const hashNext = spatialHash.next;
 
-    // 1. Sequential pass: build selective fine spatial hash (<= midSepR), cellDensity, and coarse chunk lists.
-    chunkMinX.set(baseChunkMinX);
-    chunkMaxX.set(baseChunkMaxX);
-    chunkMinY.set(baseChunkMinY);
-    chunkMaxY.set(baseChunkMaxY);
+    // 1. Build the fine hash and density grid. Coarse chunks are rebuilt lazily
+    // after movement only when rendering or combat queries need them.
+    chunksDirty = true;
     buildSwarmStepGrid(
       activeCount, activeIds, posX, posY,
-      ox, oy, worldMaxX, worldMaxY, invCell, cols, rows,
+      ox, oy, invCell, cols, rows,
       hashHead, hashNext, cellDensity, unitCell,
-      chunkHead, chunkNext, chunkCount, chunkMinX, chunkMaxX, chunkMinY, chunkMaxY,
-      chunkCols, chunkRows, pow4ChunkShift, invCellsPerChunkX, invCellsPerChunkY,
       fx, fy, fineLimitSq,
     );
-    chunksDirty = false;
 
     // 2. Sequential autonomous simulation (3-tier distance separation + FlowField + density damping + 10m ECS promotion).
     const needSep = separationRadius > 0 && maxNeighbors > 0 && separationStrength > 0;
@@ -1783,19 +1751,10 @@ export function createSwarmSimulation({
           _releaseSwarmUnit(sId);
           return;
         }
+        // A previous kill callback may have rebuilt the index during this flush.
+        chunksDirty = true;
         posX[sId] = patch.x;
         posY[sId] = patch.y;
-        let kx = ((patch.x - ox) * invChunkW) | 0;
-        let ky = ((patch.y - oy) * invChunkH) | 0;
-        if (patch.x < ox) kx = 0;
-        else if (kx >= chunkCols) kx = chunkCols - 1;
-        if (patch.y < oy) ky = 0;
-        else if (ky >= chunkRows) ky = chunkRows - 1;
-        const ck = ky * chunkCols + kx;
-        if (patch.x < chunkMinX[ck]) chunkMinX[ck] = patch.x;
-        if (patch.x > chunkMaxX[ck]) chunkMaxX[ck] = patch.x;
-        if (patch.y < chunkMinY[ck]) chunkMinY[ck] = patch.y;
-        if (patch.y > chunkMaxY[ck]) chunkMaxY[ck] = patch.y;
         rot[sId] = patch.rot;
         hp[sId] = patch.hp;
         animClip[sId] = patch.clipId;
