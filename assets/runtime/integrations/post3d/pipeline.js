@@ -415,9 +415,9 @@ export function createPostPipeline3D(options = {}) {
 
   let sceneRT = null;
   let halfRT = null;
-  let halfBlurRT = null;
+  let aoBlurRT = null;
+  let halfScratchRT = null;
   let giSsrRT = null;
-  let giSsrBlurRT = null;
   let lumaMips = [];
   let adaptRT = [];
   let ldrRT = null;
@@ -433,7 +433,7 @@ export function createPostPipeline3D(options = {}) {
   const hdrType = capabilities.halfFloatRenderable && THREE.HalfFloatType
     ? THREE.HalfFloatType
     : THREE.UnsignedByteType;
-  const packExposure = hdrType === THREE.UnsignedByteType;
+  const usesByteColorTargets = hdrType === THREE.UnsignedByteType;
 
   function makeColorTarget(w, h, { type, samples = 0, depthTexture = null } = {}) {
     const rt = new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
@@ -449,6 +449,21 @@ export function createPostPipeline3D(options = {}) {
     return rt;
   }
 
+  function syncColorTarget(target, enabled, width, height, type) {
+    if (!enabled) {
+      target?.dispose?.();
+      return null;
+    }
+    if (target?.width === width && target.height === height) return target;
+    if (typeof target?.setSize === 'function') {
+      target.setSize(width, height);
+      return target;
+    }
+    const replacement = makeColorTarget(width, height, { type });
+    target?.dispose?.();
+    return replacement;
+  }
+
   function disposeExposureTargets() {
     for (const rt of lumaMips) rt.dispose?.();
     for (const rt of adaptRT) rt.dispose?.();
@@ -456,63 +471,89 @@ export function createPostPipeline3D(options = {}) {
     adaptRT = [];
   }
 
-  function disposeTargets({ keepExposure = false } = {}) {
+  function disposeTargets() {
     sceneRT?.depthTexture?.dispose?.();
     sceneRT?.dispose?.();
     halfRT?.dispose?.();
-    halfBlurRT?.dispose?.();
+    aoBlurRT?.dispose?.();
+    halfScratchRT?.dispose?.();
     giSsrRT?.dispose?.();
-    giSsrBlurRT?.dispose?.();
     ldrRT?.dispose?.();
-    if (!keepExposure) disposeExposureTargets();
+    disposeExposureTargets();
     for (const mip of bloomMips) {
       mip.down?.dispose?.();
       mip.up?.dispose?.();
     }
     sceneRT = null;
     halfRT = null;
-    halfBlurRT = null;
+    aoBlurRT = null;
+    halfScratchRT = null;
     giSsrRT = null;
-    giSsrBlurRT = null;
     ldrRT = null;
     bloomMips = [];
   }
 
-  function buildTargets() {
-    if (!supported || disposed || contextLost) return;
-    // Auto-exposure uses fixed-size targets. Keep its history across resolution changes.
-    disposeTargets({ keepExposure: true });
+  function syncSceneTarget() {
     const msaa = Math.min(Math.max(0, activePreset.msaaSamples ?? 0), capabilities.maxSamples);
+    if (sceneRT && sceneRT.samples === msaa) {
+      if (sceneRT.width === bufferWidth && sceneRT.height === bufferHeight) return;
+      if (typeof sceneRT.setSize === 'function') {
+        sceneRT.setSize(bufferWidth, bufferHeight);
+        return;
+      }
+    }
+
     const depthTex = new THREE.DepthTexture(bufferWidth, bufferHeight, THREE.UnsignedIntType);
     depthTex.minFilter = THREE.NearestFilter;
     depthTex.magFilter = THREE.NearestFilter;
     depthTex.generateMipmaps = false;
 
-    sceneRT = makeColorTarget(bufferWidth, bufferHeight, {
+    const replacement = makeColorTarget(bufferWidth, bufferHeight, {
       type: hdrType,
       samples: msaa,
       depthTexture: depthTex,
     });
+    sceneRT?.depthTexture?.dispose?.();
+    sceneRT?.dispose?.();
+    sceneRT = replacement;
+  }
 
-    const hw = Math.max(1, bufferWidth >> 1);
-    const hh = Math.max(1, bufferHeight >> 1);
-    if (activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0) {
-      halfRT = makeColorTarget(hw, hh, { type: THREE.UnsignedByteType });
-      halfBlurRT = makeColorTarget(hw, hh, { type: THREE.UnsignedByteType });
-    }
-
+  function syncBloomTargets(hw, hh) {
+    let mipCount = 0;
     if (activePreset.bloom) {
       let mw = hw;
       let mh = hh;
       for (let i = 0; i < 4; i++) {
-        const down = makeColorTarget(mw, mh, { type: hdrType });
-        const up = makeColorTarget(mw, mh, { type: hdrType });
-        bloomMips.push({ w: mw, h: mh, down, up });
-        if (mw === 1 && mh === 1) break;
+        const lastMip = i === 3 || (mw === 1 && mh === 1);
+        const mip = bloomMips[i] ?? { down: null, up: null };
+        mip.w = mw;
+        mip.h = mh;
+        mip.down = syncColorTarget(mip.down, true, mw, mh, hdrType);
+        // Mip zero uses the shared half-resolution scratch target. The last mip only downsamples.
+        mip.up = syncColorTarget(mip.up, i > 0 && !lastMip, mw, mh, hdrType);
+        bloomMips[i] = mip;
+        mipCount++;
+        if (lastMip) break;
         mw = Math.max(1, mw >> 1);
         mh = Math.max(1, mh >> 1);
       }
     }
+    while (bloomMips.length > mipCount) {
+      const mip = bloomMips.pop();
+      mip.down?.dispose?.();
+      mip.up?.dispose?.();
+    }
+  }
+
+  function syncTargets() {
+    if (!supported || disposed || contextLost) return;
+    syncSceneTarget();
+    const hw = Math.max(1, bufferWidth >> 1);
+    const hh = Math.max(1, bufferHeight >> 1);
+    const useAoVol = activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0;
+    halfRT = syncColorTarget(halfRT, useAoVol, hw, hh, THREE.UnsignedByteType);
+    aoBlurRT = syncColorTarget(aoBlurRT, useAoVol && !usesByteColorTargets, hw, hh, THREE.UnsignedByteType);
+    syncBloomTargets(hw, hh);
 
     syncOptionalTargets();
   }
@@ -530,20 +571,15 @@ export function createPostPipeline3D(options = {}) {
   function syncOptionalTargets() {
     if (!sceneRT) return;
 
-    if (ssgiEnabled() || ssrEnabled()) {
-      if (!giSsrRT) {
-        const hw = Math.max(1, bufferWidth >> 1);
-        const hh = Math.max(1, bufferHeight >> 1);
-        giSsrRT = makeColorTarget(hw, hh, { type: hdrType });
-        giSsrBlurRT = makeColorTarget(hw, hh, { type: hdrType });
-      }
-    } else if (giSsrRT) {
-      giSsrRT.dispose?.();
-      giSsrBlurRT?.dispose?.();
-      giSsrRT = null;
-      giSsrBlurRT = null;
-    }
+    const hw = Math.max(1, bufferWidth >> 1);
+    const hh = Math.max(1, bufferHeight >> 1);
+    const useGiSsr = ssgiEnabled() || ssrEnabled();
+    giSsrRT = syncColorTarget(giSsrRT, useGiSsr, hw, hh, hdrType);
+    // AO and GI finish their blur before bloom writes the final upsample.
+    const useHalfScratch = useGiSsr || bloomMips.length > 1 || (usesByteColorTargets && Boolean(halfRT));
+    halfScratchRT = syncColorTarget(halfScratchRT, useHalfScratch, hw, hh, hdrType);
 
+    // The fixed-size exposure targets retain adaptation history across viewport changes.
     if (state.autoExposure) {
       if (adaptRT.length === 0) {
         lumaMips = [64, 16, 4].map(size => makeColorTarget(size, size, { type: hdrType }));
@@ -558,12 +594,8 @@ export function createPostPipeline3D(options = {}) {
       disposeExposureTargets();
     }
 
-    if (state.fxaa || state.sharpness > 0.001) {
-      if (!ldrRT) ldrRT = makeColorTarget(bufferWidth, bufferHeight, { type: THREE.UnsignedByteType });
-    } else if (ldrRT) {
-      ldrRT.dispose?.();
-      ldrRT = null;
-    }
+    const useLdr = state.fxaa || state.sharpness > 0.001;
+    ldrRT = syncColorTarget(ldrRT, useLdr, bufferWidth, bufferHeight, THREE.UnsignedByteType);
   }
 
   function initMaterials() {
@@ -585,7 +617,7 @@ export function createPostPipeline3D(options = {}) {
     scratchInvProj = new THREE.Matrix4();
     scratchCamToShadow = new THREE.Matrix4();
     scratchSunView = new THREE.Vector3(0, 1, 0);
-    const exposureDefines = packExposure ? { HGAME_EXPOSURE_UNORM: 1 } : {};
+    const exposureDefines = usesByteColorTargets ? { HGAME_EXPOSURE_UNORM: 1 } : {};
     const storedExposureRange = { value: new THREE.Vector2(state.minExposure, state.maxExposure) };
 
     const aoVolUniforms = {
@@ -725,7 +757,7 @@ export function createPostPipeline3D(options = {}) {
     quadMesh = new THREE.Mesh(quadGeom, mats.composite);
     quadMesh.frustumCulled = false;
     postScene.add(quadMesh);
-    buildTargets();
+    syncTargets();
   }
 
   initMaterials();
@@ -743,7 +775,7 @@ export function createPostPipeline3D(options = {}) {
     if (nw === bufferWidth && nh === bufferHeight && sceneRT) return;
     bufferWidth = nw;
     bufferHeight = nh;
-    buildTargets();
+    syncTargets();
   }
 
   function setPreset(nextPreset, buffer) {
@@ -765,7 +797,7 @@ export function createPostPipeline3D(options = {}) {
     if (!explicitContactShadows && 'contactShadows' in activePreset) {
       state.contactShadows = activePreset.contactShadows ? 0.65 : 0;
     }
-    buildTargets();
+    syncTargets();
   }
 
   function setState(patch = {}) {
@@ -873,7 +905,8 @@ export function createPostPipeline3D(options = {}) {
       }
 
       // 1. Half-res SSAO + Volumetric sun shafts + separable bilateral blur
-      const useAo = Boolean(activePreset.ssao && state.ssaoIntensity > 0 && halfRT && halfBlurRT);
+      const aoScratch = aoBlurRT ?? halfScratchRT;
+      const useAo = Boolean(activePreset.ssao && state.ssaoIntensity > 0 && halfRT && aoScratch);
       const volSteps = activePreset.volumetricSteps ?? 0;
       const shadow = sunLight?.shadow;
       const depthTexture = shadow?.map?.depthTexture;
@@ -881,7 +914,7 @@ export function createPostPipeline3D(options = {}) {
       const shadowMatrix = shadow?.matrix;
       const useVolumetric = Boolean(volSteps > 0.5 && state.volumetricIntensity !== 0 &&
         hasSunDir && sunLight.castShadow !== false && renderer.shadowMap?.enabled !== false &&
-        sunShadowTex && shadowMatrix && halfRT && halfBlurRT);
+        sunShadowTex && shadowMatrix && halfRT && aoScratch);
 
       renderer.autoClear = false;
       if (useAo || useVolumetric) {
@@ -904,9 +937,9 @@ export function createPostPipeline3D(options = {}) {
 
         mats.blur.uniforms.tInput.value = halfRT.texture;
         mats.blur.uniforms.uTexelStep.value.set(1 / hw, 0);
-        runPass(mats.blur, halfBlurRT);
+        runPass(mats.blur, aoScratch);
 
-        mats.blur.uniforms.tInput.value = halfBlurRT.texture;
+        mats.blur.uniforms.tInput.value = aoScratch.texture;
         mats.blur.uniforms.uTexelStep.value.set(0, 1 / hh);
         runPass(mats.blur, halfRT);
       }
@@ -914,7 +947,7 @@ export function createPostPipeline3D(options = {}) {
       // 1b. Half-res HDR SSGI + SSR bounce reflections + depth-guided bilateral denoise
       const useSsgi = ssgiEnabled();
       const useSsr = ssrEnabled();
-      const useGiSsr = Boolean((useSsgi || useSsr) && giSsrRT && giSsrBlurRT);
+      const useGiSsr = Boolean((useSsgi || useSsr) && giSsrRT && halfScratchRT);
       if (useGiSsr) {
         const giU = mats.giSsr.uniforms;
         giU.tScene.value = sceneRT.texture;
@@ -935,9 +968,9 @@ export function createPostPipeline3D(options = {}) {
 
         mats.blurRgba.uniforms.tInput.value = giSsrRT.texture;
         mats.blurRgba.uniforms.uTexelStep.value.set(1 / hw, 0);
-        runPass(mats.blurRgba, giSsrBlurRT);
+        runPass(mats.blurRgba, halfScratchRT);
 
-        mats.blurRgba.uniforms.tInput.value = giSsrBlurRT.texture;
+        mats.blurRgba.uniforms.tInput.value = halfScratchRT.texture;
         mats.blurRgba.uniforms.uTexelStep.value.set(0, 1 / hh);
         runPass(mats.blurRgba, giSsrRT);
       }
@@ -966,13 +999,14 @@ export function createPostPipeline3D(options = {}) {
         adaptU.uResetAdapt.value = adaptNeedsReset ? 1 : 0;
         runPass(mats.eyeAdapt, nextAdapt);
         // Keep the encoding range of the history texture across settings changes.
-        if (packExposure) adaptU.uStoredExposureRange.value.set(adaptU.uMinExposure.value, adaptU.uMaxExposure.value);
+        if (usesByteColorTargets) adaptU.uStoredExposureRange.value.set(adaptU.uMinExposure.value, adaptU.uMaxExposure.value);
         adaptIndex ^= 1;
         adaptNeedsReset = false;
       }
 
       // 2. Multi-mip Karis-average Bloom pyramid
       const useBloom = Boolean(activePreset.bloom && state.bloomStrength !== 0 && bloomMips.length > 0);
+      let bloomTexture = null;
       if (useBloom) {
         mats.prefilter.uniforms.tSource.value = sceneRT.texture;
         mats.prefilter.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
@@ -993,14 +1027,16 @@ export function createPostPipeline3D(options = {}) {
         let accumH = bloomMips[bloomMips.length - 1].h;
         for (let i = bloomMips.length - 2; i >= 0; i--) {
           const curr = bloomMips[i];
+          const target = i === 0 ? halfScratchRT : curr.up;
           mats.upsample.uniforms.tLower.value = accumTex;
           mats.upsample.uniforms.tUpper.value = curr.down.texture;
           mats.upsample.uniforms.uTexelSize.value.set(1 / accumW, 1 / accumH);
-          runPass(mats.upsample, curr.up);
-          accumTex = curr.up.texture;
+          runPass(mats.upsample, target);
+          accumTex = target.texture;
           accumW = curr.w;
           accumH = curr.h;
         }
+        bloomTexture = accumTex;
       }
 
       // 3. Composite HDR + contact shadows + GI/SSR + grading + UE Filmic/ACES/AgX tone mapping
@@ -1010,9 +1046,7 @@ export function createPostPipeline3D(options = {}) {
       compU.tDepth.value = sceneRT.depthTexture;
       compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
       compU.tGiSsr.value = useGiSsr ? giSsrRT.texture : null;
-      compU.tBloom.value = useBloom
-        ? (bloomMips.length > 1 ? bloomMips[0].up.texture : bloomMips[0].down.texture)
-        : null;
+      compU.tBloom.value = bloomTexture;
       compU.tAutoExposure.value = useAutoExposure ? adaptRT[adaptIndex].texture : null;
       compU.uProj.value.copy(camera.projectionMatrix);
       compU.uUseAo.value = useAo ? 1 : 0;
@@ -1072,7 +1106,7 @@ export function createPostPipeline3D(options = {}) {
   function handleContextRestored() {
     if (disposed) return;
     contextLost = false;
-    buildTargets();
+    syncTargets();
   }
 
   function dispose() {

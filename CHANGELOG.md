@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse 3D post-processing targets across quality and viewport changes. Share half-resolution scratch storage between GI/reflection denoising and bloom, including AO/volumetrics on the 8-bit path.
+
 - Meter auto-exposure over the full luminance grid and combine the final reduction with adaptation. Preserve signed log luminance and exposure above 1 on 8-bit render targets.
 
 - Skip Pixi shockwave filter passes when the distortion ring misses the viewport. Keep wave timing and filter order across camera movement.
