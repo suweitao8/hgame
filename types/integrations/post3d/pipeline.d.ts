@@ -195,7 +195,7 @@
 /**
  * Per-frame render options.
  * @typedef {object} PostPipelineRenderOptions
- * @property {object | null} [viewScene=null] Optional viewmodel scene drawn with compressed depth range.
+ * @property {object | null} [viewScene=null] Optional first-person scene composited before tone mapping.
  * @property {object | null} [viewCamera=null] Camera for `viewScene`.
  * @property {PostPipelineSunLight | null} [sunLight=null] Sun used for volumetrics/contact shadows.
  * @property {number} [dt=0] Frame delta in seconds.
@@ -608,7 +608,7 @@ export type PostPipelineSunLight = {
  */
 export type PostPipelineRenderOptions = {
     /**
-     * Optional viewmodel scene drawn with compressed depth range.
+     * Optional first-person scene composited before tone mapping.
      */
     viewScene?: object | null;
     /**

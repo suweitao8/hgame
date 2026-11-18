@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Finish screen-space effects using world scene depth before drawing a first-person layer. Apply bloom, exposure and tone mapping to the combined HDR image.
+
 - Reuse 3D post-processing targets across quality and viewport changes. Share half-resolution scratch storage between GI/reflection denoising and bloom, including AO/volumetrics on the 8-bit path.
 
 - Meter auto-exposure over the full luminance grid and combine the final reduction with adaptation. Preserve signed log luminance and exposure above 1 on 8-bit render targets.

@@ -728,19 +728,7 @@ vec3 linearToSrgb(vec3 c) {
   return mix(lo, hi, step(vec3(0.0031308), c));
 }
 
-void main() {
-  vec2 centered = vUv * 2.0 - 1.0;
-  vec3 hdr;
-  if (uChromaticAberration > 0.0005) {
-    vec2 caShift = centered * (uChromaticAberration * 0.012);
-    float r = texture(tScene, clamp(vUv - caShift, vec2(0.001), vec2(0.999))).r;
-    float g = texture(tScene, vUv).g;
-    float b = texture(tScene, clamp(vUv + caShift, vec2(0.001), vec2(0.999))).b;
-    hdr = max(vec3(0.0), vec3(r, g, b));
-  } else {
-    hdr = max(vec3(0.0), texture(tScene, vUv).rgb);
-  }
-
+vec3 applyWorldLighting(vec3 hdr) {
   float lumaHdr = dot(hdr, vec3(0.2126, 0.7152, 0.0722));
 
   if (uUseGiSsr > 0.5) {
@@ -786,6 +774,26 @@ void main() {
       hdr += uSunColor * (aoVol.g * uVolumetricIntensity);
     }
   }
+  return hdr;
+}
+
+void main() {
+#ifdef HGAME_WORLD_LIGHTING_ONLY
+  vec4 sceneColor = texture(tScene, vUv);
+  fragColor = vec4(applyWorldLighting(max(vec3(0.0), sceneColor.rgb)), sceneColor.a);
+#else
+  vec2 centered = vUv * 2.0 - 1.0;
+  vec3 hdr;
+  if (uChromaticAberration > 0.0005) {
+    vec2 caShift = centered * (uChromaticAberration * 0.012);
+    float r = texture(tScene, clamp(vUv - caShift, vec2(0.001), vec2(0.999))).r;
+    float g = texture(tScene, vUv).g;
+    float b = texture(tScene, clamp(vUv + caShift, vec2(0.001), vec2(0.999))).b;
+    hdr = max(vec3(0.0), vec3(r, g, b));
+  } else {
+    hdr = max(vec3(0.0), texture(tScene, vUv).rgb);
+  }
+  hdr = applyWorldLighting(hdr);
 
   if (uUseBloom > 0.5) {
     hdr += texture(tBloom, vUv).rgb * uBloomStrength;
@@ -834,6 +842,7 @@ void main() {
   vec3 srgb = clamp(linearToSrgb(mapped), 0.0, 1.0);
   float perceptualLuma = dot(srgb, vec3(0.299, 0.587, 0.114));
   fragColor = vec4(srgb, perceptualLuma);
+#endif
 }
 `;
 

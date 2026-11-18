@@ -239,7 +239,7 @@ const POST_STATE_SCALAR_KEYS = [
 /**
  * Per-frame render options.
  * @typedef {object} PostPipelineRenderOptions
- * @property {object | null} [viewScene=null] Optional viewmodel scene drawn with compressed depth range.
+ * @property {object | null} [viewScene=null] Optional first-person scene composited before tone mapping.
  * @property {object | null} [viewCamera=null] Camera for `viewScene`.
  * @property {PostPipelineSunLight | null} [sunLight=null] Sun used for volumetrics/contact shadows.
  * @property {number} [dt=0] Frame delta in seconds.
@@ -414,6 +414,7 @@ export function createPostPipeline3D(options = {}) {
   };
 
   let sceneRT = null;
+  let viewCompositeRT = null;
   let halfRT = null;
   let aoBlurRT = null;
   let halfScratchRT = null;
@@ -435,11 +436,12 @@ export function createPostPipeline3D(options = {}) {
     : THREE.UnsignedByteType;
   const usesByteColorTargets = hdrType === THREE.UnsignedByteType;
 
-  function makeColorTarget(w, h, { type, samples = 0, depthTexture = null } = {}) {
+  function makeColorTarget(w, h, { type, samples = 0, depthTexture = null, depthBuffer = Boolean(depthTexture) } = {}) {
     const rt = new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
       type,
       samples,
-      depthBuffer: Boolean(depthTexture),
+      depthBuffer,
+      resolveDepthBuffer: Boolean(depthTexture),
       stencilBuffer: false,
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
@@ -474,6 +476,7 @@ export function createPostPipeline3D(options = {}) {
   function disposeTargets() {
     sceneRT?.depthTexture?.dispose?.();
     sceneRT?.dispose?.();
+    viewCompositeRT?.dispose?.();
     halfRT?.dispose?.();
     aoBlurRT?.dispose?.();
     halfScratchRT?.dispose?.();
@@ -485,6 +488,7 @@ export function createPostPipeline3D(options = {}) {
       mip.up?.dispose?.();
     }
     sceneRT = null;
+    viewCompositeRT = null;
     halfRT = null;
     aoBlurRT = null;
     halfScratchRT = null;
@@ -495,13 +499,7 @@ export function createPostPipeline3D(options = {}) {
 
   function syncSceneTarget() {
     const msaa = Math.min(Math.max(0, activePreset.msaaSamples ?? 0), capabilities.maxSamples);
-    if (sceneRT && sceneRT.samples === msaa) {
-      if (sceneRT.width === bufferWidth && sceneRT.height === bufferHeight) return;
-      if (typeof sceneRT.setSize === 'function') {
-        sceneRT.setSize(bufferWidth, bufferHeight);
-        return;
-      }
-    }
+    if (sceneRT?.width === bufferWidth && sceneRT.height === bufferHeight && sceneRT.samples === msaa) return;
 
     const depthTex = new THREE.DepthTexture(bufferWidth, bufferHeight, THREE.UnsignedIntType);
     depthTex.minFilter = THREE.NearestFilter;
@@ -516,6 +514,22 @@ export function createPostPipeline3D(options = {}) {
     sceneRT?.depthTexture?.dispose?.();
     sceneRT?.dispose?.();
     sceneRT = replacement;
+  }
+
+  function syncViewCompositeTarget(enabled) {
+    if (!enabled) {
+      viewCompositeRT?.dispose?.();
+      viewCompositeRT = null;
+    } else if (viewCompositeRT?.width !== bufferWidth || viewCompositeRT.height !== bufferHeight) {
+      // Three can discard multisampled attachments after each render call.
+      // Color must survive the world lighting and first-person draws here.
+      const replacement = makeColorTarget(bufferWidth, bufferHeight, {
+        type: hdrType,
+        depthBuffer: true,
+      });
+      viewCompositeRT?.dispose?.();
+      viewCompositeRT = replacement;
+    }
   }
 
   function syncBloomTargets(hw, hh) {
@@ -753,6 +767,7 @@ export function createPostPipeline3D(options = {}) {
         uFxaaEnabled: { value: state.fxaa ? 1 : 0 },
       }),
     };
+    mats.worldLighting = makeShader(COMPOSITE_FRAGMENT_GLSL3, mats.composite.uniforms, { HGAME_WORLD_LIGHTING_ONLY: 1 });
 
     quadMesh = new THREE.Mesh(quadGeom, mats.composite);
     quadMesh.frustumCulled = false;
@@ -884,14 +899,6 @@ export function createPostPipeline3D(options = {}) {
       }
       renderer.render(world, camera);
 
-      if (viewScene && viewCamera) {
-        renderer.autoClear = false;
-        renderer.clearDepth?.();
-        gl?.depthRange?.(0, 0.05);
-        renderer.render(viewScene, viewCamera);
-        gl?.depthRange?.(0, 1);
-      }
-
       camera.updateMatrixWorld?.();
       scratchInvProj.copy(camera.projectionMatrixInverse);
       const hasSunDir = Boolean(sunLight?.position && sunLight.visible !== false);
@@ -975,10 +982,54 @@ export function createPostPipeline3D(options = {}) {
         runPass(mats.blurRgba, giSsrRT);
       }
 
+      const compU = mats.composite.uniforms;
+      compU.tScene.value = sceneRT.texture;
+      compU.tDepth.value = sceneRT.depthTexture;
+      compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
+      compU.tGiSsr.value = useGiSsr ? giSsrRT.texture : null;
+      compU.uProj.value.copy(camera.projectionMatrix);
+      compU.uUseAo.value = useAo ? 1 : 0;
+      compU.uUseVolumetric.value = useVolumetric ? 1 : 0;
+      compU.uUseGiSsr.value = useGiSsr ? 1 : 0;
+      compU.uHasSunDir.value = hasSunDir ? 1 : 0;
+      compU.uContactShadows.value = state.contactShadows;
+      compU.uContactShadowLength.value = state.contactShadowLength;
+      compU.uContactShadowThickness.value = state.contactShadowThickness;
+      compU.uSsaoIntensity.value = state.ssaoIntensity;
+      compU.uVolumetricIntensity.value = state.volumetricIntensity;
+      compU.uTime.value = elapsed;
+
+      const hasViewModel = Boolean(viewScene && viewCamera && (
+        viewScene.children?.length !== 0 || viewScene.background
+        || viewScene.onBeforeRender !== THREE.Scene.prototype.onBeforeRender
+        || viewScene.onAfterRender !== THREE.Scene.prototype.onAfterRender
+      ));
+      const useContactShadows = hasSunDir && state.contactShadows > 0.001;
+      const separateViewModel = hasViewModel && (sceneRT.samples > 0 || useAo || useVolumetric || useGiSsr || useContactShadows);
+      syncViewCompositeTarget(separateViewModel);
+      if (hasViewModel) {
+        if (separateViewModel) {
+          // Finish the world lighting before clearing depth for the first-person layer.
+          runPass(mats.worldLighting, viewCompositeRT);
+        }
+        if (typeof renderer.clearDepth === 'function') renderer.clearDepth();
+        else renderer.clear?.(false, true, false);
+        gl?.depthRange?.(0, 0.05);
+        renderer.render(viewScene, viewCamera);
+        gl?.depthRange?.(0, 1);
+        if (separateViewModel) {
+          compU.tScene.value = viewCompositeRT.texture;
+          compU.uUseAo.value = 0;
+          compU.uUseVolumetric.value = 0;
+          compU.uUseGiSsr.value = 0;
+          compU.uContactShadows.value = 0;
+        }
+      }
+
       // 1c. GPU Eye Adaptation / Auto-Exposure pyramid
       const useAutoExposure = Boolean(state.autoExposure && lumaMips.length > 0 && adaptRT.length === 2);
       if (useAutoExposure) {
-        mats.lumaExtract.uniforms.tScene.value = sceneRT.texture;
+        mats.lumaExtract.uniforms.tScene.value = compU.tScene.value;
         runPass(mats.lumaExtract, lumaMips[0]);
         for (let i = 1; i < lumaMips.length; i++) {
           mats.lumaDown.uniforms.tSource.value = lumaMips[i - 1].texture;
@@ -1008,7 +1059,7 @@ export function createPostPipeline3D(options = {}) {
       const useBloom = Boolean(activePreset.bloom && state.bloomStrength !== 0 && bloomMips.length > 0);
       let bloomTexture = null;
       if (useBloom) {
-        mats.prefilter.uniforms.tSource.value = sceneRT.texture;
+        mats.prefilter.uniforms.tSource.value = compU.tScene.value;
         mats.prefilter.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
         mats.prefilter.uniforms.uThreshold.value = state.bloomThreshold;
         mats.prefilter.uniforms.uSoftKnee.value = state.bloomSoftKnee;
@@ -1041,25 +1092,10 @@ export function createPostPipeline3D(options = {}) {
 
       // 3. Composite HDR + contact shadows + GI/SSR + grading + UE Filmic/ACES/AgX tone mapping
       const useFinalFxaaPass = Boolean(ldrRT && (state.fxaa || state.sharpness > 0.001));
-      const compU = mats.composite.uniforms;
-      compU.tScene.value = sceneRT.texture;
-      compU.tDepth.value = sceneRT.depthTexture;
-      compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
-      compU.tGiSsr.value = useGiSsr ? giSsrRT.texture : null;
       compU.tBloom.value = bloomTexture;
       compU.tAutoExposure.value = useAutoExposure ? adaptRT[adaptIndex].texture : null;
-      compU.uProj.value.copy(camera.projectionMatrix);
-      compU.uUseAo.value = useAo ? 1 : 0;
-      compU.uUseVolumetric.value = useVolumetric ? 1 : 0;
-      compU.uUseGiSsr.value = useGiSsr ? 1 : 0;
       compU.uUseBloom.value = useBloom ? 1 : 0;
       compU.uUseAutoExposure.value = useAutoExposure ? 1 : 0;
-      compU.uHasSunDir.value = hasSunDir ? 1 : 0;
-      compU.uContactShadows.value = state.contactShadows;
-      compU.uContactShadowLength.value = state.contactShadowLength;
-      compU.uContactShadowThickness.value = state.contactShadowThickness;
-      compU.uSsaoIntensity.value = state.ssaoIntensity;
-      compU.uVolumetricIntensity.value = state.volumetricIntensity;
       compU.uBloomStrength.value = state.bloomStrength;
       compU.uExposure.value = state.exposure;
       compU.uContrast.value = state.contrast;
@@ -1077,7 +1113,6 @@ export function createPostPipeline3D(options = {}) {
       compU.uFocus.value = state.focus;
       compU.uFlash.value = state.flash;
       compU.uFade.value = state.fade;
-      compU.uTime.value = elapsed;
       compU.uToneMapping.value = state.toneMapping;
       runPass(mats.composite, useFinalFxaaPass ? ldrRT : null);
 
