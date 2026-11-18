@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <link rel="icon" href="data:,">
+  <title>余烬守望</title>
+  <script type="importmap">
+    {"imports":{"/runtime/hgame/":"./assets/vendor/hgame/"}}
+  </script>
+  <style>
+    * { box-sizing: border-box }
+    [hidden] { display: none !important }
+    html, body, #game-canvas { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0b101b }
+    canvas { display: block; touch-action: none }
+    body, button { color: #ffe6b7; font: 600 16px system-ui, sans-serif }
+    #hud { position: fixed; inset: max(14px, env(safe-area-inset-top)) auto auto max(14px, env(safe-area-inset-left)); font-variant-numeric: tabular-nums }
+    #health { margin-top: 5px; width: 108px; height: 5px; background: #412522 }
+    #health i { display: block; height: 100%; background: #ff9565; transform-origin: left }
+    .overlay { position: fixed; inset: 0; z-index: 21; display: grid; place-content: center; justify-items: center; gap: 12px; background: #090c16e8 }
+    .overlay h1 { margin: 0; font-size: 30px }
+    .choices { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px }
+    button { min-height: 48px; padding: 8px 16px; background: #25191d; border: 1px solid #ba7850; border-radius: 4px; cursor: pointer }
+    button:hover, button:focus-visible { background: #472828; outline: 2px solid #ffc377; outline-offset: 2px }
+  </style>
+</head>
+<body>
+  <div id="game-canvas"></div>
+  <div id="hud"><div id="status"></div><div id="health" aria-label="生命"><i></i></div></div>
+  <div id="upgrade" class="overlay" hidden><div id="choices" class="choices"></div></div>
+  <div id="gameover" class="overlay" hidden>
+    <h1 id="outcome"></h1><div id="result"></div><button id="restart" type="button">重开</button>
+  </div>
+  <script type="module" src="./src/watch.js"></script>
+</body>
+</html>

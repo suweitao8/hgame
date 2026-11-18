@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "assets": {
+    "guardian": { "kind": "image", "path": "actors/guardian.webp" },
+    "wisp": { "kind": "image", "path": "actors/wisp.webp" },
+    "brute": { "kind": "image", "path": "actors/brute.webp" }
+  },
+  "groups": {
+    "characters": ["guardian", "wisp", "brute"]
+  }
+}

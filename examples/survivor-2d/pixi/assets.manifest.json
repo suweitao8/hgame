@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "gameId": "ember-watch",
+  "storeLayout": "cas-sha256-v1",
+  "remoteBaseUrl": null,
+  "assets": {
+    "actors/brute.webp": {
+      "sha256": "5f1424bcfe9a93c063dd5e5591a94dca28f1570eb11d7a1189ddec656366922b",
+      "bytes": 8156,
+      "kind": "image",
+      "updatedAt": "2026-11-18T15:11:30.411Z"
+    },
+    "actors/guardian.webp": {
+      "sha256": "bd11a9d6ddc29a7fd06076e3642a4132bd7bb84cce6dded5a0ff519014f267c1",
+      "bytes": 7834,
+      "kind": "image",
+      "updatedAt": "2026-11-18T15:11:30.411Z"
+    },
+    "actors/wisp.webp": {
+      "sha256": "5ec21d1f11f0bab0f0b01c6a7985f1f3719fe84edf2898ff47227b5430320dbd",
+      "bytes": 4722,
+      "kind": "image",
+      "updatedAt": "2026-11-18T15:11:30.411Z"
+    }
+  }
+}

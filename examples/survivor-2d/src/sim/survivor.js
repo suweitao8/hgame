@@ -41,6 +41,8 @@ export function createSurvivorSim({ SpatialHash2D, seed = 1, config = CONFIG, go
     novaFlash: 0, // seconds left of the nova ring (view effect)
   };
   const state = { tick: 0, time: 0, kills: 0, over: false, pending: null, godMode, lastPickup: 0 };
+  const objective = config.extraction;
+  const extraction = objective ? { open: false, progress: 0, outcome: null, relay: null } : null;
   const levels = {};
 
   function addEnemy(x, y, kind) {
@@ -133,6 +135,28 @@ export function createSurvivorSim({ SpatialHash2D, seed = 1, config = CONFIG, go
       if (best >= 0 || r >= range) break;
     }
     return best;
+  }
+
+  function stepExtraction(dt) {
+    if (state.over) {
+      extraction.outcome = 'defeat';
+      state.pending = null;
+      return;
+    }
+    if (objective.relays && extraction.relay === null) {
+      const index = objective.relays.findIndex(({ x, y }) =>
+        (player.x - x) ** 2 + (player.y - y) ** 2 <= objective.relayRadius ** 2);
+      if (index < 0) return;
+      extraction.relay = index;
+    }
+    if (state.time + 1e-9 < objective.unlockSeconds) return;
+    extraction.open = true;
+    if (player.x ** 2 + player.y ** 2 > objective.radius ** 2) return;
+    extraction.progress += dt;
+    if (extraction.progress + 1e-9 < objective.holdSeconds) return;
+    extraction.progress = objective.holdSeconds;
+    extraction.outcome = 'victory';
+    state.over = true;
   }
 
   /** Advance one fixed tick. input: { x, y } move vector (-1..1) and { choice } level-up pick (0..2). */
@@ -248,6 +272,7 @@ export function createSurvivorSim({ SpatialHash2D, seed = 1, config = CONFIG, go
       player.hp -= dps * dt;
       if (player.hp <= 0) { player.hp = 0; state.over = true; }
     }
+    if (extraction) stepExtraction(dt);
   }
 
   /** Spawn n enemies on a disc around the player: stress tests and screenshots. */
@@ -267,12 +292,19 @@ export function createSurvivorSim({ SpatialHash2D, seed = 1, config = CONFIG, go
     h.bytes(en.alive.subarray(0, en.hw));
     h.bytes(bl.x.subarray(0, bl.hw)); h.bytes(bl.y.subarray(0, bl.hw));
     h.bytes(gm.x.subarray(0, gm.hw)); h.bytes(gm.y.subarray(0, gm.hw)); h.bytes(gm.alive.subarray(0, gm.hw));
+    if (extraction) {
+      h.number(Number(extraction.open));
+      h.number(extraction.progress);
+      h.number(Number(extraction.outcome === 'victory'));
+      h.number(extraction.relay ?? -1);
+    }
     return h.hex();
   }
 
   function summary() {
-    return { time: +state.time.toFixed(2), kills: state.kills, level: player.level, over: state.over, enemies: en.count };
+    return { time: +state.time.toFixed(2), kills: state.kills, level: player.level, over: state.over, enemies: en.count,
+      ...(extraction && { outcome: extraction.outcome }) };
   }
 
-  return { config, state, player, weapon, levels, en, bl, gm, step, prefill, checksum, summary, applyUpgrade };
+  return { config, state, player, weapon, levels, en, bl, gm, extraction, step, prefill, checksum, summary, applyUpgrade };
 }
