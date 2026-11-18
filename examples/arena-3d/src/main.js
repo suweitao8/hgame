@@ -38,6 +38,7 @@ const seed = Number(params.get('seed') || 1);
 const course = 'held-gate';
 const god = params.get('god') === '1';
 const debug = params.get('debug') === '1';
+const runnerManifest = params.get('runner') === 'scout' ? 'src/assets/scout.json' : 'src/assets/runner.json';
 const lifetime = new AbortController();
 
 const project = defineProject(engineConfig);
@@ -278,7 +279,7 @@ scene.add(new Entity({ name: 'driver' })).addComponent(new Driver());
 canvas.dataset.visualLoading = '';
 void loadRunnerView({
   provider: model3d, scene, Entity, record: trace?.recordEvent,
-  getTick: () => sim.state.tick, signal: lifetime.signal,
+  getTick: () => sim.state.tick, signal: lifetime.signal, manifest: runnerManifest,
 }).then(view => {
   if (lifetime.signal.aborted) return;
   if (view) {

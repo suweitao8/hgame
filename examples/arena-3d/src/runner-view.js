@@ -1,3 +1,5 @@
+import { transferRunnerClips } from './runner-transfer.js';
+
 const ROLES = ['idle', 'run', 'jump', 'spin', 'hit'];
 
 export function validateRunnerClips(animations, bindings) {
@@ -15,8 +17,8 @@ export function validateRunnerClips(animations, bindings) {
   return result;
 }
 
-export async function loadRunnerView({ provider, scene, Entity, record, getTick, signal }) {
-  let path = 'src/assets/runner.json';
+export async function loadRunnerView({ provider, scene, Entity, record, getTick, signal, manifest = 'src/assets/runner.json' }) {
+  let path = manifest;
   let actor = null;
   try {
     const response = await fetch(path, { signal });
@@ -24,14 +26,21 @@ export async function loadRunnerView({ provider, scene, Entity, record, getTick,
     const spec = await response.json();
     if (signal?.aborted) return null;
     path = spec.path ?? path;
-    const asset = await provider.load(path);
+    const [asset, source] = await Promise.all([
+      provider.load(path),
+      spec.transfer ? provider.load(spec.transfer.source).catch(error => {
+        throw new Error('Animation source ' + spec.transfer.source + ' failed: ' + (error?.message ?? error), { cause: error });
+      }) : null,
+    ]);
     if (signal?.aborted) return null;
     if (provider.inspect(asset).meshCount === 0) throw new Error('Runner asset has no renderable meshes');
-    const clips = validateRunnerClips(asset.animations, spec.clips);
+    const animations = source ? transferRunnerClips(provider.THREE, source, asset.scene, spec.transfer) : asset.animations;
+    const clips = validateRunnerClips(animations, spec.clips);
     actor = scene.add(new Entity({ name: 'runner-model' }));
     let role = 'idle';
     const model = provider.createComponent({
       asset,
+      animations,
       clip: clips.idle,
       targetHeight: spec.targetHeight,
       alignGround: true,
@@ -47,7 +56,7 @@ export async function loadRunnerView({ provider, scene, Entity, record, getTick,
       },
     });
     actor.addComponent(model);
-    record?.({ tick: getTick(), type: 'asset.ready', subject: path, details: { clips: asset.animations.length } });
+    record?.({ tick: getTick(), type: 'asset.ready', subject: path, details: { clips: animations.length, transferred: Boolean(source) } });
 
     return {
       get role() { return role; },

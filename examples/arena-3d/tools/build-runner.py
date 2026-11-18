@@ -116,7 +116,7 @@ def animate(rig):
     add_clip(rig, "Hit", [(1, {}, 0), (4, {"Body": (0.23, 0, 0.34)}, -0.04), (8, {}, 0)])
 
 
-def export_embedded():
+def export_embedded(output=OUTPUT):
     # Keep the authored example self-contained and small enough to ship with the SDK.
     with tempfile.TemporaryDirectory() as scratch:
         glb = Path(scratch) / "runner.glb"
@@ -131,8 +131,8 @@ def export_embedded():
         buffer["uri"] = "data:application/octet-stream;base64," + base64.b64encode(
             raw[start:start + buffer["byteLength"]]
         ).decode("ascii")
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(model, indent=2) + "\n", encoding="utf-8")
 
 
 def main():

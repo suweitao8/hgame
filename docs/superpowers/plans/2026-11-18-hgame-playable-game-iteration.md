@@ -25,3 +25,8 @@
 - [x] Exercise optional extraction in the survivor simulation. Retrieve an ember from either relay, survive the opening horde, then hold the origin while enemies approach. Leaving the ring pauses extraction. Upgrade choices freeze both clocks. Lethal contact takes priority.
 - [x] Add a Pixi entry using the generated project's renderer, scheduler, and input. Render the exit and progress in the world, show upgrades and the final score, and persist and restart a finished run.
 - [x] Compile the entry for WebAsset. The Chromium playthrough completed a normal-input right-relay victory, 11 upgrade choices, restart, and score restoration. Across 1,200 headless runs, idle players never unlocked the exit and both relay routes completed on all 400 seeds. Three catalog images round-tripped through the asset store.
+
+## Cross-rig animation proof
+
+- [x] Use the same five clips on a second rig with different bone names, proportions, and rest rotations. Preserve its extra beacon bone and keep the mapping in the game manifest.
+- [x] Exercise the shipped files with the vendored glTF loader and Three mixer. Confirm a target bone moves, the Spin notify fires, and a missing mapping retains a playable procedural runner.

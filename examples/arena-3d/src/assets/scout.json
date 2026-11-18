@@ -1,0 +1,19 @@
+{
+  "path": "src/assets/scout.gltf",
+  "targetHeight": 1.72,
+  "clips": { "idle": "Idle", "run": "Run", "jump": "Jump", "spin": "Spin", "hit": "Hit" },
+  "transfer": {
+    "source": "src/assets/runner.gltf",
+    "root": "Root",
+    "motionScale": 0.9,
+    "bones": {
+      "Root": "Pivot",
+      "Body": "Chassis",
+      "Head": "Sensor",
+      "Arm.L": "VaneLeft",
+      "Arm.R": "VaneRight",
+      "Leg.L": "StrutLeft",
+      "Leg.R": "StrutRight"
+    }
+  }
+}

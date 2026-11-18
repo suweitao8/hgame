@@ -63,6 +63,12 @@ for (const id of Object.keys(runs)) {
           await readFile(path.join(root, 'examples', id, runner.path)),
         );
         assert.ok(existsSync(path.join(report.outputDir, 'assets/vendor/three/jsm/loaders/GLTFLoader.js')));
+        const scout = JSON.parse(await readFile(path.join(report.outputDir, 'src/assets/scout.json'), 'utf8'));
+        assert.equal(scout.transfer.source, runner.path);
+        assert.deepEqual(
+          await readFile(path.join(report.outputDir, scout.path)),
+          await readFile(path.join(root, 'examples', id, scout.path)),
+        );
       }
     } finally {
       await rm(out, { recursive: true, force: true });
