@@ -34,10 +34,10 @@ node .agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs --demo
 }
 ```
 
-## 3. Dialogue Style Rules
+## 3. Dialogue Style & Event Card Rules
 
-- **Short & punchy**: keep each node line `<= 60` characters (configurable with `--max-chars`).
-- **2–3 meaningful choices (no fake branches)**: every branching decision node must offer **2–3 choices with distinct consequences or risk-reward tradeoffs**—forbid fake single-choice illusions or cosmetic duplicates leading to identical outcomes.
-- **Sharp, witty & high-contrast**: write brisk, memorable lines with character contrast or dry humor (`简练有梗、带反差感`); reject preachy exposition, filler lectures, or melodramatic lyricism (`拒绝冗长说教与矫情抒情`).
-- **Zero dead-ends**: non-ending nodes must declare at least one `choices` edge or `next` target.
-- **100% reachable endings**: every node marked `"ending": true` must be reachable from `start`.
+- **Short & direct**: keep each event/node description `<= 60` characters (configurable with `--max-chars`); state only the concrete event fact—forbid filler scene-setting ("大家围坐清点……") or melodramatic lyricism.
+- **No unrequested banter, role pills, or meta eyebrows**: forbid inventing decorative role nickname pills (`老实一家之主`), character monologue quote blocks, or redundant modal eyebrow tags (`第 N 天 · 突发事件`). Only display factual name + mechanic/skill when a card lists members.
+- **Explicit `选项` block (`<= 4` choices, single-content buttons)**: present choices under a clear `选项` section heading, capped at `<= 4` options per event; every choice button MUST show direct single-content option copy (and concise inline cost/probability if mechanical)—forbid splitting a button into a decorative `title + sub-description` two-row stack or inventing fake flavor subtitles.
+- **2–4 meaningful choices (no fake branches)**: decision nodes should offer distinct consequences or risk-reward tradeoffs—forbid cosmetic duplicates leading to identical outcomes.
+- **Zero dead-ends & 100% reachable endings**: non-ending nodes must declare at least one `choices` edge or `next` target, and every node marked `"ending": true` must be reachable from `start`.
