@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse Pixi tile particles on map edits and evict off-screen chunks in cache order without sorting.
+
 - Sample the directional shadow depth texture in 3D volumetric lighting using the correct texture coordinates and PCF comparison mode.
 
 - Skip inactive 3D post-processing passes and preserve scene buffers and eye-adaptation history when effect settings change.
