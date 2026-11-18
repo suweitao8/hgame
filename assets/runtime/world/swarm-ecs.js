@@ -1624,8 +1624,17 @@ export function createSwarmSimulation({
     const r = Math.max(0, radius);
     const rSq = r * r;
     let applied = 0;
-
-    for (let ck = 0; ck < totalChunks; ck++) {
+    // Out-of-world units are stored in edge chunks, so clamp rather than
+    // rejecting a query whose circle lies outside the configured grid.
+    let minChunkX = 0, maxChunkX = chunkCols - 1, minChunkY = 0, maxChunkY = chunkRows - 1;
+    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(r)) {
+      minChunkX = Math.max(0, Math.min(chunkCols - 1, Math.floor((x - r - originX) * invChunkW)));
+      maxChunkX = Math.max(0, Math.min(chunkCols - 1, Math.floor((x + r - originX) * invChunkW)));
+      minChunkY = Math.max(0, Math.min(chunkRows - 1, Math.floor((y - r - originY) * invChunkH)));
+      maxChunkY = Math.max(0, Math.min(chunkRows - 1, Math.floor((y + r - originY) * invChunkH)));
+    }
+    for (let cy = minChunkY; cy <= maxChunkY; cy++) for (let cx = minChunkX; cx <= maxChunkX; cx++) {
+      const ck = cy * chunkCols + cx;
       let id = chunkHead[ck];
       if (id === -1) continue;
       if (x + r < chunkMinX[ck] || x - r > chunkMaxX[ck] || y + r < chunkMinY[ck] || y - r > chunkMaxY[ck]) {
