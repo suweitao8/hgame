@@ -360,13 +360,19 @@ export function createModularLevelRenderer({ THREE, models, parent, chunkCells =
         while (!failed && !disposed && myGeneration === generation && nextBatch < batches.length) {
           const index = nextBatch++;
           const { slot, placements } = batches[index];
-          const node = placements.length === 1
+          let node = placements.length === 1
             ? await models.instantiate(slot)
             : await models.instantiateBatch(slot, placements);
           if (!node?.isObject3D) throw new Error('Model slot returned no Object3D: ' + slot);
           nodes[index] = node;
           if (placements.length === 1) {
             const placement = placements[0];
+            // Apply the level placement outside the clone so its authored root
+            // transform composes the same way as an instanced model part.
+            const placed = new THREE.Group();
+            placed.add(node);
+            nodes[index] = placed;
+            node = placed;
             node.position.set(placement.x, placement.y, placement.z);
             node.rotation.y = placement.rotationY;
             node.scale.setScalar(placement.scale);
