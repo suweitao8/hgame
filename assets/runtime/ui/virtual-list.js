@@ -19,6 +19,8 @@
  * @property {number} scrollTop Clamped scroll offset in pixels.
  */
 
+/** @typedef {'nearest' | 'start' | 'center' | 'end'} VirtualListAlignment */
+
 /**
  * Zero-allocation virtualized viewport window for large inventories, logs, leaderboards, and gacha histories.
  * Supports both fixed-height grids and variable-height single-column lists.
@@ -147,7 +149,7 @@ export function createVirtualList(options = {}) {
 
   /**
    * @param {number} index
-   * @param {'nearest' | 'start' | 'center' | 'end'} [align='nearest']
+   * @param {VirtualListAlignment} [align='nearest']
    */
   function scrollToIndex(index, align = 'nearest') {
     if (totalCount === 0) return 0;

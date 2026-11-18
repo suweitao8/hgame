@@ -17,6 +17,7 @@
  * @property {number} totalHeight Total scrollable content height in pixels.
  * @property {number} scrollTop Clamped scroll offset in pixels.
  */
+/** @typedef {'nearest' | 'start' | 'center' | 'end'} VirtualListAlignment */
 /**
  * Zero-allocation virtualized viewport window for large inventories, logs, leaderboards, and gacha histories.
  * Supports both fixed-height grids and variable-height single-column lists.
@@ -28,7 +29,7 @@ export function createVirtualList(options?: VirtualListOptions | undefined): Rea
     setViewportSize: (heightPx: any) => void;
     scrollTo: (offsetPx: any) => number;
     scrollBy: (deltaPx: any) => number;
-    scrollToIndex: (index: number, align?: "start" | "center" | "end" | "nearest" | undefined) => number;
+    scrollToIndex: (index: number, align?: VirtualListAlignment | undefined) => number;
     getVisibleRange: (out?: VirtualVisibleRange | undefined) => VirtualVisibleRange;
     getTotalCount: () => number;
     getTotalHeight: () => number;
@@ -100,3 +101,4 @@ export type VirtualVisibleRange = {
      */
     scrollTop: number;
 };
+export type VirtualListAlignment = "nearest" | "start" | "center" | "end";
