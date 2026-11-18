@@ -20,7 +20,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {number} [nearSeparationRadius=25] Distance within focus executing full 60Hz neighbor separation.
  * @property {number} [midSeparationRadius=65] Outer distance running 4-frame staggered separation (cached `sepX`/`sepY`); beyond uses flow + cell density damping.
  * @property {number} [maxNeighbors=8] Hard cap on neighbor checks per unit per step.
- * @property {number} [flowInterval=0.1] Flow Field recompute interval in seconds (`<= 0` recomputes every step).
+ * @property {number} [flowInterval=0.1] Flow Field update interval in seconds; unchanged goal cell and costs reuse the previous field (`<= 0` recomputes every step).
  * @property {number} [ecsSlots=5000] Fixed ECS slot budget inside proximity ring.
  * @property {number} [maxPatchesPerStep=1024] Max ECS patches flushed per step.
  * @property {number} [gridCols=128] Spatial hash & Flow Field column count.
@@ -257,6 +257,7 @@ export class FlowField2D {
     _queue: Int32Array;
     _inQueue: Uint8Array;
     _hasComputed: boolean;
+    _computeVersion: number;
     /** Clears all terrain costs back to uniform `1`. @returns {void} */
     clearWalls(): void;
     /**
@@ -462,7 +463,7 @@ export type SwarmSimulationOptions = {
      */
     maxNeighbors?: number | undefined;
     /**
-     * Flow Field recompute interval in seconds (`<= 0` recomputes every step).
+     * Flow Field update interval in seconds; unchanged goal cell and costs reuse the previous field (`<= 0` recomputes every step).
      */
     flowInterval?: number | undefined;
     /**

@@ -269,6 +269,7 @@ export class FlowField2D {
     this._queue = new Int32Array(total);
     this._inQueue = new Uint8Array(total);
     this._hasComputed = false;
+    this._computeVersion = 0;
   }
 
   /** Clears all terrain costs back to uniform `1`. @returns {void} */
@@ -349,6 +350,7 @@ export class FlowField2D {
    * @returns {void}
    */
   compute(goals) {
+    this._computeVersion++;
     const goalList = Array.isArray(goals) ? goals : (goals ? [goals] : []);
     const cols = this.cols;
     const rows = this.rows;
@@ -1193,7 +1195,7 @@ function stepSwarmSequential(
  * @property {number} [nearSeparationRadius=25] Distance within focus executing full 60Hz neighbor separation.
  * @property {number} [midSeparationRadius=65] Outer distance running 4-frame staggered separation (cached `sepX`/`sepY`); beyond uses flow + cell density damping.
  * @property {number} [maxNeighbors=8] Hard cap on neighbor checks per unit per step.
- * @property {number} [flowInterval=0.1] Flow Field recompute interval in seconds (`<= 0` recomputes every step).
+ * @property {number} [flowInterval=0.1] Flow Field update interval in seconds; unchanged goal cell and costs reuse the previous field (`<= 0` recomputes every step).
  * @property {number} [ecsSlots=5000] Fixed ECS slot budget inside proximity ring.
  * @property {number} [maxPatchesPerStep=1024] Max ECS patches flushed per step.
  * @property {number} [gridCols=128] Spatial hash & Flow Field column count.
@@ -1433,6 +1435,8 @@ export function createSwarmSimulation({
   let boundCrowd2D = null;
   let flowAccum = 0;
   let hasFlow = false;
+  let flowGoalX = -1, flowGoalY = -1, flowVersion = -1;
+  const flowCostSnapshot = useFlowField ? new Uint8Array(flowField.cost.length) : null;
   let tickCount = 0;
   let chunksDirty = true;
 
@@ -1681,8 +1685,21 @@ export function createSwarmSimulation({
       flowAccum += dtSec;
       if (!hasFlow || flowInterval <= 0 || flowAccum >= flowInterval) {
         flowAccum = 0;
-        hasFlow = true;
-        flowField.compute({ x: heroX, y: heroY });
+        const goalX = Math.max(0, Math.min(flowField.cols - 1, Math.floor((heroX - flowField.originX) * flowField.invCellSize)));
+        const goalY = Math.max(0, Math.min(flowField.rows - 1, Math.floor((heroY - flowField.originY) * flowField.invCellSize)));
+        let changed = !hasFlow || flowInterval <= 0 || !flowField._hasComputed ||
+          flowField._computeVersion !== flowVersion || goalX !== flowGoalX || goalY !== flowGoalY;
+        if (!changed) {
+          for (let i = 0; i < flowField.cost.length; i++) {
+            if (flowField.cost[i] !== flowCostSnapshot[i]) { changed = true; break; }
+          }
+        }
+        if (changed) {
+          flowField.compute({ x: heroX, y: heroY });
+          flowCostSnapshot.set(flowField.cost);
+          flowGoalX = goalX; flowGoalY = goalY; flowVersion = flowField._computeVersion;
+          hasFlow = true;
+        }
       }
     }
 
