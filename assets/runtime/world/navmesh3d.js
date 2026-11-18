@@ -61,7 +61,8 @@ export function createNavMesh3D(options) {
   const gScore = new Float32Array(total);
   const fScore = new Float32Array(total);
   const cameFrom = new Int32Array(total);
-  const stateMark = new Uint8Array(total); // 0=unvisited, 1=open, 2=closed
+  // Zero is untouched, one is closed, and an open cell stores its heap index + 2.
+  const heapState = new Uint32Array(total);
 
   /** @type {NavObstacleAABB[]} */
   const obstacles = Array.isArray(options.obstacles) ? options.obstacles.map((o) => ({ ...o })) : [];
@@ -77,11 +78,13 @@ export function createNavMesh3D(options) {
   }
 
   function cellCenterX(cx) {
-    return minX + (cx + 0.5) * cellSize;
+    const left = minX + cx * cellSize;
+    return left + Math.min(cellSize, Math.max(0, maxX - left)) * 0.5;
   }
 
   function cellCenterZ(cz) {
-    return minZ + (cz + 0.5) * cellSize;
+    const top = minZ + cz * cellSize;
+    return top + Math.min(cellSize, Math.max(0, maxZ - top)) * 0.5;
   }
 
   function rebuild() {
@@ -193,55 +196,96 @@ export function createNavMesh3D(options) {
       const t = i / steps;
       const cx = Math.round(ax + (bx - ax) * t);
       const cz = Math.round(az + (bz - az) * t);
-      if (!isCellWalkable(cx, cz)) return false;
-      if (Math.abs(heights[cz * cols + cx] - heights[prevCz * cols + prevCx]) > stepHeight) {
-        return false;
-      }
-      // Guard diagonal hops between consecutive samples.
-      if (cx !== prevCx && cz !== prevCz) {
-        if (!isCellWalkable(cx, prevCz) || !isCellWalkable(prevCx, cz)) return false;
-      }
+      if (cx === prevCx && cz === prevCz) continue;
+      if (!canTraverse(prevCx, prevCz, cx, cz)) return false;
       prevCx = cx;
       prevCz = cz;
     }
     return true;
   }
 
-  // Min-heap over packed node indices for A* open list.
+  // Indexed min-heap over packed cell IDs. Priority changes move the existing
+  // entry up instead of leaving copies with inconsistent priorities.
   const heap = [];
-  function heapPush(node) {
-    heap.push(node);
-    let i = heap.length - 1;
+  const touched = [];
+  function queueNode(node) {
+    let i = heapState[node] - 2;
+    if (i < 0) {
+      touched.push(node);
+      i = heap.length;
+      heap.push(node);
+    }
     while (i > 0) {
       const p = (i - 1) >>> 1;
-      if (fScore[heap[p]] <= fScore[heap[i]]) break;
-      const tmp = heap[p];
-      heap[p] = heap[i];
-      heap[i] = tmp;
+      const parent = heap[p];
+      if (fScore[parent] <= fScore[node]) break;
+      heap[i] = parent;
+      heapState[parent] = i + 2;
       i = p;
     }
+    heap[i] = node;
+    heapState[node] = i + 2;
   }
   function heapPop() {
     const top = heap[0];
     const last = heap.pop();
+    heapState[top] = 1;
     if (heap.length > 0) {
-      heap[0] = last;
       let i = 0;
       const len = heap.length;
-      while (true) {
-        let best = i;
-        const l = i * 2 + 1;
-        const r = l + 1;
-        if (l < len && fScore[heap[l]] < fScore[heap[best]]) best = l;
-        if (r < len && fScore[heap[r]] < fScore[heap[best]]) best = r;
-        if (best === i) break;
-        const tmp = heap[i];
-        heap[i] = heap[best];
-        heap[best] = tmp;
-        i = best;
+      while (i * 2 + 1 < len) {
+        let child = i * 2 + 1;
+        const right = child + 1;
+        if (right < len && fScore[heap[right]] < fScore[heap[child]]) child = right;
+        const childNode = heap[child];
+        if (fScore[last] <= fScore[childNode]) break;
+        heap[i] = childNode;
+        heapState[childNode] = i + 2;
+        i = child;
       }
+      heap[i] = last;
+      heapState[last] = i + 2;
     }
     return top;
+  }
+
+  function searchCells(startIdx, goalIdx, goalX, goalZ, maxNodes) {
+    const startX = startIdx % cols;
+    const startZ = (startIdx - startX) / cols;
+    gScore[startIdx] = 0;
+    fScore[startIdx] = Math.hypot(goalX - startX, goalZ - startZ);
+    cameFrom[startIdx] = -1;
+    queueNode(startIdx);
+
+    let visited = 0;
+    try {
+      while (heap.length > 0 && visited++ < maxNodes) {
+        const cur = heapPop();
+        if (cur === goalIdx) return true;
+        const cx = cur % cols;
+        const cz = (cur - cx) / cols;
+        for (let d = 0; d < 8; d++) {
+          const nx = cx + DX[d];
+          const nz = cz + DZ[d];
+          if (!canTraverse(cx, cz, nx, nz)) continue;
+          const nIdx = nz * cols + nx;
+          const state = heapState[nIdx];
+          if (state === 1) continue;
+          const slopePenalty = Math.abs(heights[nIdx] - heights[cur]) * 0.5;
+          const tentative = gScore[cur] + STEP_COST[d] + slopePenalty;
+          if (!(tentative < (state === 0 ? Infinity : gScore[nIdx]))) continue;
+          cameFrom[nIdx] = cur;
+          gScore[nIdx] = tentative;
+          fScore[nIdx] = tentative + Math.hypot(goalX - nx, goalZ - nz);
+          queueNode(nIdx);
+        }
+      }
+      return false;
+    } finally {
+      for (let i = 0; i < touched.length; i++) heapState[touched[i]] = 0;
+      touched.length = 0;
+      heap.length = 0;
+    }
   }
 
   /**
@@ -249,12 +293,17 @@ export function createNavMesh3D(options) {
    * or `null` if unreachable.
    * @param {{ x: number, y?: number, z: number }} start
    * @param {{ x: number, y?: number, z: number }} goal
-   * @param {{ smooth?: boolean, maxSnapCells?: number }} [pathOpts]
+   * @param {{ smooth?: boolean, maxSnapCells?: number, maxNodes?: number }} [pathOpts] `maxNodes` caps visited cells and defaults to unlimited.
    * @returns {Vec3Point[] | null}
    */
   function findPath(start, goal, pathOpts = {}) {
     const smooth = pathOpts.smooth !== false;
     const maxSnap = Number.isInteger(pathOpts.maxSnapCells) ? pathOpts.maxSnapCells : 6;
+    const maxNodes = pathOpts.maxNodes ?? Infinity;
+    if (maxNodes !== Infinity && (!Number.isSafeInteger(maxNodes) || maxNodes < 0)) {
+      throw new RangeError('3D pathfinding maxNodes must be a non-negative integer or Infinity');
+    }
+    if (maxNodes === 0) return null;
     const sCell = findNearestWalkableCell(worldToCellX(start.x), worldToCellZ(start.z), maxSnap);
     const gCell = findNearestWalkableCell(worldToCellX(goal.x), worldToCellZ(goal.z), maxSnap);
     if (!sCell || !gCell) return null;
@@ -262,50 +311,12 @@ export function createNavMesh3D(options) {
     const startIdx = sCell[1] * cols + sCell[0];
     const goalIdx = gCell[1] * cols + gCell[0];
     if (startIdx === goalIdx) {
-      return [{ x: goal.x, y: heights[goalIdx], z: goal.z }];
+      return isWalkable(goal.x, goal.z)
+        ? [{ x: goal.x, y: heights[goalIdx], z: goal.z }]
+        : [{ x: cellCenterX(gCell[0]), y: heights[goalIdx], z: cellCenterZ(gCell[1]) }];
     }
 
-    stateMark.fill(0);
-    gScore.fill(Infinity);
-    cameFrom.fill(-1);
-    heap.length = 0;
-
-    gScore[startIdx] = 0;
-    fScore[startIdx] = Math.hypot(gCell[0] - sCell[0], gCell[1] - sCell[1]);
-    stateMark[startIdx] = 1;
-    heapPush(startIdx);
-
-    let found = false;
-    while (heap.length > 0) {
-      const cur = heapPop();
-      if (stateMark[cur] === 2) continue;
-      if (cur === goalIdx) {
-        found = true;
-        break;
-      }
-      stateMark[cur] = 2;
-      const cx = cur % cols;
-      const cz = (cur - cx) / cols;
-
-      for (let d = 0; d < 8; d++) {
-        const nx = cx + DX[d];
-        const nz = cz + DZ[d];
-        if (!canTraverse(cx, cz, nx, nz)) continue;
-        const nIdx = nz * cols + nx;
-        if (stateMark[nIdx] === 2) continue;
-        const slopePenalty = Math.abs(heights[nIdx] - heights[cur]) * 0.5;
-        const tentative = gScore[cur] + STEP_COST[d] + slopePenalty;
-        if (tentative < gScore[nIdx]) {
-          cameFrom[nIdx] = cur;
-          gScore[nIdx] = tentative;
-          fScore[nIdx] = tentative + Math.hypot(gCell[0] - nx, gCell[1] - nz);
-          stateMark[nIdx] = 1;
-          heapPush(nIdx);
-        }
-      }
-    }
-
-    if (!found) return null;
+    if (!searchCells(startIdx, goalIdx, gCell[0], gCell[1], maxNodes)) return null;
 
     // Reconstruct raw cell sequence start -> goal.
     const rawCells = [];

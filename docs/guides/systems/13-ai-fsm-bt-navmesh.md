@@ -22,11 +22,16 @@ const tree = createBehaviorTree(selector([
 const mem = tree.createMemory();
 tree.tick(ctx, dt, mem);
 
-const nav = createNavMesh3D({ minX: -40, maxX: 40, minZ: -40, maxZ: 40, cellSize: 1.5, agentRadius: 0.6 });
-nav.addBoxObstacle(4, 4, 3, 3, 2);
-const path = nav.findPath({ x: -10, y: 0, z: 0 }, { x: 12, y: 0, z: 8 });
+const nav = createNavMesh3D({
+  bounds: { minX: -40, maxX: 40, minZ: -40, maxZ: 40 },
+  cellSize: 1.5,
+  agentRadius: 0.6,
+  obstacles: [{ minX: 2.5, maxX: 5.5, minZ: 2.5, maxZ: 5.5, minY: 0, maxY: 2 }],
+});
+const path = nav.findPath({ x: -10, z: 0 }, { x: 12, z: 8 }, { maxNodes: 2000 });
 ```
 
 ## Pitfalls
 - Reuse one compiled `createBehaviorTree(root)` across all enemies; allocate only per-agent `tree.createMemory()` (never rebuild BT nodes inside `update`).
-- Keep `nav.addBoxObstacle(...)` synchronized with `level.json` colliders, never derived dynamically from PBR visual meshes.
+- Supply navigation obstacles from `level.json` colliders through `obstacles` or `nav.addObstacle(aabb)`.
+- `maxNodes` caps the cells visited by one search and defaults to unlimited. A blocked destination or an exhausted budget yields `null` when the search cannot reach the goal.

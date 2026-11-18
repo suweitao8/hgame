@@ -25,6 +25,7 @@ export function createNavMesh3D(options: NavMesh3DOptions): Readonly<{
     }, pathOpts?: {
         smooth?: boolean;
         maxSnapCells?: number;
+        maxNodes?: number;
     } | undefined) => Vec3Point[] | null;
     sampleSurfaceHeight: (x: any, z: any) => number;
 }>;

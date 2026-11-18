@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Limit 3D A* workspace updates to visited cells, support per-query node budgets, and preserve traversability when smoothing paths or snapping destinations.
+
 - Reuse a bounded per-map grid pathfinding workspace and update queued priorities in place so duplicate entries cannot consume the A* node budget.
 
 - Reuse Pixi tile particles on map edits and evict off-screen chunks in cache order without sorting.
