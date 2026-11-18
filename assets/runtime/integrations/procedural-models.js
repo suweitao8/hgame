@@ -433,6 +433,10 @@ export function createProceduralModelSlots({
       const tmp = new THREE.Object3D();
       const matrix = new THREE.Matrix4();
       const batches = meshes.map(mesh => new THREE.InstancedMesh(mesh.geometry, mesh.material, placements.length));
+      const identityParts = meshes.map(mesh => {
+        const elements = mesh.matrixWorld.elements;
+        return elements.every((value, index) => value === (index % 5 === 0 ? 1 : 0));
+      });
       for (let i = 0; i < placements.length; i++) {
         const item = placements[i];
         if (!item.isMatrix4) {
@@ -441,9 +445,14 @@ export function createProceduralModelSlots({
           tmp.scale.setScalar(item.scale ?? 1);
           tmp.updateMatrix();
         }
+        const placementMatrix = item.isMatrix4 ? item : tmp.matrix;
         for (let part = 0; part < meshes.length; part++) {
-          matrix.multiplyMatrices(item.isMatrix4 ? item : tmp.matrix, meshes[part].matrixWorld);
-          batches[part].setMatrixAt(i, matrix);
+          if (identityParts[part]) {
+            batches[part].setMatrixAt(i, placementMatrix);
+          } else {
+            matrix.multiplyMatrices(placementMatrix, meshes[part].matrixWorld);
+            batches[part].setMatrixAt(i, matrix);
+          }
         }
       }
       for (let part = 0; part < batches.length; part++) {
