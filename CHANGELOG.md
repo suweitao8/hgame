@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse static quad vertices for Pixi swarm sprites with stable geometry. Keep per-frame geometry uploads for direction flips, changing frame bounds, or opt-in animated scales.
+
 - Track occupied swarm chunks in grid order. Rebuild sparse chunk indices without clearing the full grid and skip empty chunks in crowd rendering and circle damage queries.
 
 - Add distance hysteresis for CPU-driven Bone-VAT crowds to reduce LOD switching and buffer repacking near thresholds. Track swarm slot generations so respawned units start with fresh LOD and status.

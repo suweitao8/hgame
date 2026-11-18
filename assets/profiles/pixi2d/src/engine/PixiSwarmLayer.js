@@ -1,9 +1,19 @@
 import { Particle, ParticleContainer } from 'pixi.js';
 
+function sameCenteredQuad(a, b) {
+  if (a === b) return true;
+  const aTrim = a.trim;
+  const bTrim = b.trim;
+  return (aTrim?.width ?? a.orig.width) === (bTrim?.width ?? b.orig.width) &&
+    (aTrim?.height ?? a.orig.height) === (bTrim?.height ?? b.orig.height) &&
+    (aTrim?.x ?? 0) - a.orig.width * 0.5 === (bTrim?.x ?? 0) - b.orig.width * 0.5 &&
+    (aTrim?.y ?? 0) - a.orig.height * 0.5 === (bTrim?.y ?? 0) - b.orig.height * 0.5;
+}
+
 /** Render an HGame CPU SwarmSimulation without allocating per-unit game objects. */
 export class PixiSwarmLayer {
   constructor(renderer, { textures = ['enemy_chaser'], clips = null, scale = 1, worldScale = 1, offsetX = 0, offsetY = 0,
-    syncRotation = false, flipByDirection = false, cull = true } = {}) {
+    syncRotation = false, flipByDirection = false, dynamicScale = false, cull = true } = {}) {
     if (!renderer?.worldRoot || !renderer?.atlas?.textures) throw new TypeError('Initialize Renderer2D before creating a swarm layer');
     const definitions = clips ?? (Array.isArray(textures) ? textures.map(name => ({ frames: [name] })) : null);
     if (!Array.isArray(definitions) || definitions.length === 0) throw new TypeError('Swarm clips or textures must be a non-empty array');
@@ -27,10 +37,13 @@ export class PixiSwarmLayer {
       });
       return { frames, fps, loop: clip.loop !== false, radius: Math.max(...frames.map(frame => frame.radius)) };
     });
-    this.dynamicUvs = this.clips.some(clip => clip.frames.length > 1);
+    const hasMutableTextures = this.clips.some(clip => clip.frames.some(frame => frame.texture.dynamic || frame.white.dynamic));
+    this.dynamicUvs = hasMutableTextures || this.clips.some(clip => clip.frames.length > 1);
     this.dynamicRotation = this.syncRotation;
+    this.dynamicVertices = Boolean(dynamicScale) || this.flipByDirection || hasMutableTextures || this.clips.some(({ frames }) =>
+      frames.some(frame => !sameCenteredQuad(frames[0].texture, frame.texture) || !sameCenteredQuad(frame.texture, frame.white)));
     this.layer = new ParticleContainer({
-      dynamicProperties: { position: true, uvs: this.dynamicUvs, rotation: this.dynamicRotation, vertex: true },
+      dynamicProperties: { position: true, uvs: this.dynamicUvs, rotation: this.dynamicRotation, vertex: this.dynamicVertices },
     });
     renderer.worldRoot.addChildAt(this.layer, renderer.worldRoot.getChildIndex(renderer.entityLayer));
     this.particles = []; this.pool = []; this.pendingParticles = []; this.visibleCount = 0; this.disposed = false;
@@ -57,7 +70,7 @@ export class PixiSwarmLayer {
     const animTimes = swarm.animTime, flashes = swarm.flash;
     const worldScale = this.worldScale, offsetX = this.offsetX, offsetY = this.offsetY;
     const renderScale = this.scale, cull = this.cull, syncRotation = this.syncRotation, flipByDirection = this.flipByDirection;
-    const dynamicUvs = this.dynamicUvs, dynamicRotation = this.dynamicRotation;
+    const dynamicUvs = this.dynamicUvs, dynamicRotation = this.dynamicRotation, dynamicVertices = this.dynamicVertices;
     let staticDirty = false;
     let used = 0;
     for (let i = 0; i < count; i++) {
@@ -84,8 +97,8 @@ export class PixiSwarmLayer {
         if (this.pendingParticles.length === 4096) this.flushPending();
       }
       if (particle.texture !== texture) {
+        if (!dynamicUvs || (!dynamicVertices && !sameCenteredQuad(particle.texture, texture))) staticDirty = true;
         particle.texture = texture;
-        if (!dynamicUvs) staticDirty = true;
       }
       particle.x = x; particle.y = y;
       const rotation = syncRotation || flipByDirection ? (rotations?.[id] ?? 0) : 0;
@@ -94,8 +107,12 @@ export class PixiSwarmLayer {
         particle.rotation = renderRotation;
         if (!dynamicRotation) staticDirty = true;
       }
-      particle.scaleX = flipByDirection && Math.sin(rotation) < 0 ? -size : size;
-      particle.scaleY = size;
+      const scaleX = flipByDirection && Math.sin(rotation) < 0 ? -size : size;
+      if (particle.scaleX !== scaleX || particle.scaleY !== size) {
+        particle.scaleX = scaleX;
+        particle.scaleY = size;
+        if (!dynamicVertices) staticDirty = true;
+      }
       used++;
     }
     this.flushPending();

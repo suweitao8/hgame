@@ -120,3 +120,5 @@ const crowd = renderer.createSwarmLayer({
 ```
 
 The swarm's `animClip[id]` selects the clip and `animTime[id]` selects its frame in seconds; time is owned by the simulation and is not reset automatically when the clip changes. For an unpromoted swarm unit, set `swarm.animTime[id] = 0` when switching clips if playback should restart. Units promoted into the combat ECS can have their clip overwritten by ECS synchronization; coordinate changes with the ECS. White hit-flash frames are used when available. Animated clips keep the same shared-atlas particle rendering and off-screen culling as static crowds.
+
+The swarm layer keeps sprite quad vertices static when frames share the same geometry. It refreshes them when a visible unit changes scale or switches to a different quad. Clips with changing frame bounds and directional flips use dynamic vertices. Pass `dynamicScale: true` if the swarm animates `scale[id]` continuously.
