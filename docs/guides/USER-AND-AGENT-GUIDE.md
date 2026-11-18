@@ -2,6 +2,8 @@
 
 > Pure AI-Native Contract: **Zero manual GUI editors**. Author all scenes, levels, balance tables, dialogue graphs, UI stacks, shaders, and audio parameters in code + declarative JSON, then verify via zero-dependency validators, `snapshot`, and `playtest`.
 
+Start with a playable HTML game in WebAsset. Play its core loop and use the result to prioritize gameplay and engine improvements. Evaluate the game and the AI workflow against the [repository review criteria](../../AGENTS.md#product-scope-reviews-and-priorities). Add a publishing target when a specific game has a concrete release request for it.
+
 ## 1. Lookup First (Zero Blind Scan)
 
 Run `npm run api` from the HGame repo root for engine-wide discovery:
