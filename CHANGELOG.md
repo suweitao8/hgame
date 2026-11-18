@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve source mesh shadow settings when creating single-mesh 3D instance batches instead of forcing both shadows on.
+
 - Preserve model root transforms and Matrix4 placements when 3D scene-model batches fall back to cloned objects instead of instancing.
 
 - Limit combat-ECS scans to the highest active slot while keeping ascending slot-order processing and trimming the range as slots are recycled.

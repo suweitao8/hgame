@@ -430,8 +430,8 @@ export function createProceduralModelSlots({
         const batch = batches[part];
         batch.instanceMatrix.needsUpdate = true;
         batch.name = meshes[part].name;
-        batch.castShadow = meshes.length === 1 || meshes[part].castShadow;
-        batch.receiveShadow = meshes.length === 1 || meshes[part].receiveShadow;
+        batch.castShadow = meshes[part].castShadow;
+        batch.receiveShadow = meshes[part].receiveShadow;
         batch.computeBoundingSphere();
       }
       if (batches.length === 1) return batches[0];
