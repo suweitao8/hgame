@@ -158,9 +158,13 @@ export class TileMap {
    * Convert a world position to the containing cell.
    * @param {number} x World X relative to the map origin.
    * @param {number} y World Y relative to the map origin.
+   * @param {TileCoord} [out] Optional reusable result.
    * @returns {TileCoord}
    */
-  worldToTile(x, y) { return { x: Math.floor(x / this.tileWidth), y: Math.floor(y / this.tileHeight) }; }
+  worldToTile(x, y, out = { x: 0, y: 0 }) {
+    out.x = Math.floor(x / this.tileWidth); out.y = Math.floor(y / this.tileHeight);
+    return out;
+  }
   /**
    * World-space centre of a cell.
    * @param {number} x Column.

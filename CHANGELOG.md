@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse a coordinate object when building swarm flow-field walls from HGame TileMaps, avoiding one temporary allocation per sampled cell.
+
 - Reuse the CPU swarm flow field when the goal cell and terrain costs are unchanged; detect direct cost-array edits and external recomputations.
 
 - Reuse the active Three.js animation action's clip when advancing 3D notify cursors, avoiding repeated clip-name searches.

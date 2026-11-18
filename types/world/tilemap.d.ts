@@ -105,9 +105,10 @@ export class TileMap<T = number> {
      * Convert a world position to the containing cell.
      * @param {number} x World X relative to the map origin.
      * @param {number} y World Y relative to the map origin.
+     * @param {TileCoord} [out] Optional reusable result.
      * @returns {TileCoord}
      */
-    worldToTile(x: number, y: number): TileCoord;
+    worldToTile(x: number, y: number, out?: TileCoord | undefined): TileCoord;
     /**
      * World-space centre of a cell.
      * @param {number} x Column.

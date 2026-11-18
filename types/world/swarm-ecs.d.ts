@@ -280,7 +280,7 @@ export class FlowField2D {
     setObstacleRect(minX: number, minY: number, maxX: number, maxY: number, costValue?: number | undefined): void;
     /**
      * Populates solid walls (`cost = 255`) from an HGame `TileMap`.
-     * @param {{ width: number, height: number, tileWidth: number, tileHeight: number, worldToTile: (x: number, y: number) => { x: number, y: number }, isSolid: (tx: number, ty: number) => boolean }} tileMap
+     * @param {{ width: number, height: number, tileWidth: number, tileHeight: number, worldToTile: (x: number, y: number, out?: { x: number, y: number }) => { x: number, y: number }, isSolid: (tx: number, ty: number) => boolean }} tileMap
      * @param {FlowFieldTileMapOptions} [options]
      * @returns {void}
      */
@@ -289,7 +289,10 @@ export class FlowField2D {
         height: number;
         tileWidth: number;
         tileHeight: number;
-        worldToTile: (x: number, y: number) => {
+        worldToTile: (x: number, y: number, out?: {
+            x: number;
+            y: number;
+        } | undefined) => {
             x: number;
             y: number;
         };

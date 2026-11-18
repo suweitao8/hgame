@@ -320,7 +320,7 @@ export class FlowField2D {
 
   /**
    * Populates solid walls (`cost = 255`) from an HGame `TileMap`.
-   * @param {{ width: number, height: number, tileWidth: number, tileHeight: number, worldToTile: (x: number, y: number) => { x: number, y: number }, isSolid: (tx: number, ty: number) => boolean }} tileMap
+   * @param {{ width: number, height: number, tileWidth: number, tileHeight: number, worldToTile: (x: number, y: number, out?: { x: number, y: number }) => { x: number, y: number }, isSolid: (tx: number, ty: number) => boolean }} tileMap
    * @param {FlowFieldTileMapOptions} [options]
    * @returns {void}
    */
@@ -331,12 +331,13 @@ export class FlowField2D {
     const cols = this.cols;
     const rows = this.rows;
     const half = this.cellSize * 0.5;
+    const tileScratch = { x: 0, y: 0 };
     for (let cy = 0; cy < rows; cy++) {
       const wy = this.originY + cy * this.cellSize + half - worldOriginY;
       const row = cy * cols;
       for (let cx = 0; cx < cols; cx++) {
         const wx = this.originX + cx * this.cellSize + half - worldOriginX;
-        const tile = tileMap.worldToTile(wx, wy);
+        const tile = tileMap.worldToTile(wx, wy, tileScratch);
         if (tile.x >= 0 && tile.y >= 0 && tile.x < tileMap.width && tile.y < tileMap.height) {
           this.cost[row + cx] = tileMap.isSolid(tile.x, tile.y) ? WALL_COST : 1;
         }
