@@ -27,6 +27,7 @@
     "@hgame/network-simulation": "1.0.0"
   },
   "devDependencies": {
+    "@hgame/network-client": "1.0.0",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"

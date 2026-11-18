@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { Client } from '@colyseus/sdk';
+import { HGameLockstepChannel, HGameNetworkClient } from '@hgame/network-client';
 import {
   LockstepInputFlags,
   decodeConfirmedFrame,
@@ -39,6 +40,46 @@ function waitFor(predicate, timeoutMs = 4000, label = 'condition') {
     };
     poll();
   });
+}
+
+async function createInterruptibleProxy(port) {
+  const peers = new Set();
+  let accepting = true;
+  const server = net.createServer((client) => {
+    if (!accepting) {
+      client.destroy();
+      return;
+    }
+    const remote = net.connect(port, '127.0.0.1');
+    const disconnect = () => {
+      peers.delete(disconnect);
+      client.destroy();
+      remote.destroy();
+    };
+    peers.add(disconnect);
+    for (const socket of [client, remote]) {
+      socket.on('error', disconnect);
+      socket.once('close', disconnect);
+    }
+    client.pipe(remote).pipe(client);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const interrupt = () => {
+    accepting = false;
+    for (const disconnect of peers) disconnect();
+  };
+  return {
+    port: server.address().port,
+    interrupt,
+    resume() { accepting = true; },
+    async close() {
+      interrupt();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
 }
 
 test('StateSyncRoom enforces per-session TokenBucketRateLimiter and rejects floods', async () => {
@@ -122,6 +163,82 @@ test('LockstepRoom drops a congested socket and retains ordered frames for repla
   liveTicks.length = 0;
   room.handleSyncRequest(healthy, { fromNetTick: 1 });
   assert.deepEqual(liveTicks, [1, 2]);
+});
+
+test('LockstepRoom reconnects after a TCP outage and recovers only retained history', async (t) => {
+  const port = await getFreePort();
+  const server = createHGameNetworkServer();
+  await server.listen(port, '127.0.0.1');
+  try {
+    for (const { label, maxHistoryFrames, evicted } of [
+      { label: 'replays retained frames in order', maxHistoryFrames: 240, evicted: false },
+      { label: 'reports an expired prefix once', maxHistoryFrames: 16, evicted: true },
+    ]) {
+      await t.test(label, async () => {
+        const proxy = await createInterruptibleProxy(port);
+        let host;
+        let peer;
+        let channel;
+        try {
+          const hostClient = new HGameNetworkClient({ endpoint: `http://127.0.0.1:${port}` });
+          const peerClient = new HGameNetworkClient({ endpoint: `http://127.0.0.1:${proxy.port}` });
+          const joinOptions = { gameId: 'lockstep-outage', roomName: 'lab_lockstep', resume: false };
+          host = await hostClient.joinOrCreate({ ...joinOptions, roomOptions: {
+            maxClients: 2, netHz: 30, frameDeadlineTicks: 1, maxHistoryFrames, reconnectSeconds: 10,
+          } });
+          host.onMessage('lockstep:frame', () => {});
+          peer = await peerClient.joinById({ ...joinOptions, roomId: host.roomId });
+          const sessionId = peer.sessionId;
+          Object.assign(peer.room.reconnection, { minUptime: 0, minDelay: 200, maxDelay: 200, maxRetries: 40 });
+          await waitFor(() => peer.room.state.players?.size === 2 && peer.room.state.matchTag > 0,
+            4000, 'joined peers receive the initialized state');
+          const initialTick = peer.room.state.netTick + 1;
+          channel = new HGameLockstepChannel(peer, peer.room.state.matchTag, initialTick);
+          const ticks = [];
+          const statuses = [];
+          channel.onFrame(frame => ticks.push(frame.netTick));
+          channel.onSyncStatus(status => statuses.push(status));
+          let firstMissing = 0;
+          let reconnected = false;
+          peer.onDrop(() => { firstMissing ||= channel.expectedNetTick; });
+          peer.onReconnect(() => { reconnected = true; });
+          await waitFor(() => ticks.length >= 2, 4000, 'live frames before outage');
+
+          proxy.interrupt();
+          await waitFor(() => firstMissing > 0 && !host.room.state.players.get(sessionId)?.connected,
+            4000, 'server observes the dropped peer');
+          await waitFor(() => host.room.state.netTick >= firstMissing + 20, 4000, 'frames sealed during outage');
+          proxy.resume();
+          await waitFor(() => reconnected && statuses.length > 0, 4000, 'reconnected peer receives sync status');
+          assert.equal(peer.sessionId, sessionId);
+          const [status] = statuses;
+          assert.equal(status.fromNetTick, firstMissing);
+
+          if (evicted) {
+            assert.equal(status.ok, false);
+            assert.equal(status.reason, 'history_evicted');
+            assert.ok(status.oldestAvailableTick > firstMissing);
+            const tick = host.room.state.netTick;
+            await waitFor(() => host.room.state.netTick >= tick + 5, 4000, 'live frames after history expiry');
+            assert.equal(channel.expectedNetTick, firstMissing);
+            assert.equal(statuses.length, 1);
+          } else {
+            assert.equal(status.ok, true);
+            assert.ok(status.sentFrames >= 20);
+            await waitFor(() => channel.expectedNetTick > status.toNetTick + 1, 4000, 'replay and subsequent live frames');
+            assert.deepEqual(ticks, Array.from({ length: ticks.length }, (_, index) => initialTick + index));
+          }
+        } finally {
+          channel?.dispose();
+          proxy.resume();
+          await Promise.allSettled([peer?.leave(), host?.leave()]);
+          await proxy.close();
+        }
+      });
+    }
+  } finally {
+    await server.gracefullyShutdown(false);
+  }
 });
 
 test('LockstepRoom synthesizes NO_OP after frameDeadlineTicks and replays bounded sync history', async () => {

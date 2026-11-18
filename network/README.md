@@ -83,11 +83,13 @@ The client does not send its player slot. The server derives slot identity from 
 
 Confirmed frame (`HGFR`) has a 16-byte header followed by sorted per-slot entries. Each entry contains slot, flags, payload length, accepted input sequence and payload. By default (`frameDeadlineTicks: 0`), a frame is sealed strictly once every active slot has submitted that tick; rooms can opt into `frameDeadlineTicks > 0` to emit bounded `NO_OP` entries when a deadline expires. Both `StateSyncRoom` and `LockstepRoom` enforce per-session `TokenBucketRateLimiter` input flood protection.
 
-`LockstepRoom` buffers bounded confirmed-frame history (`maxHistoryFrames`) so `HGameLockstepChannel` can request catch-up replay via `'lockstep:sync'` on reconnect (configurable `reconnectionSeconds`), while state recovery for full mid-match drop-in still relies on a game-defined canonical snapshot contract. Client-reported hashes are compared peer-to-peer and remain non-authoritative.
+`LockstepRoom` buffers bounded confirmed-frame history (`maxHistoryFrames`) so `HGameLockstepChannel` can request catch-up replay via `'lockstep:sync'` on reconnect (configurable `reconnectSeconds`), while state recovery for full mid-match drop-in still relies on a game-defined canonical snapshot contract. Client-reported hashes are compared peer-to-peer and remain non-authoritative.
 
 Each history reply sends up to 240 frames or 128 KiB of frame payload, whichever limit it reaches first. The room scales its replay quota to its configured live frame rate and defers one pending request per session during congestion. A competing cursor receives a correlated `retry_later` status with `retryAfterMs`. `HGameLockstepChannel` honors that delay. Successful responses report `sentBytes` and the last frame sent.
 
 Before sending a live frame, the room terminates a WebSocket if its queued bytes plus the frame payload would exceed 1 MiB. Other peers still receive the confirmed frame, and a peer with reconnection enabled can replay it while it remains in history. The configured frame deadline and reconnection window still determine how the room handles missing inputs.
+
+The server test suite interrupts a real client TCP connection through a loopback proxy. It checks same-session reconnection, uninterrupted frame ordering after replay, and one `history_evicted` notification when the missing frames have expired.
 
 ## Production boundaries
 
