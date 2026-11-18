@@ -157,6 +157,11 @@ export type HeapNode = {
      */
     seq: number;
 };
+export type SearchNode = HeapNode & {
+    g: number;
+    heapIndex: number;
+    parent: SearchNode | null;
+};
 export type TileMapOptions<T = number> = {
     /**
      * Rectangular row-major grid (tiles[y][x]); rows are copied.

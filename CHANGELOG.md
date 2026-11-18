@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse a bounded per-map grid pathfinding workspace and update queued priorities in place so duplicate entries cannot consume the A* node budget.
+
 - Reuse Pixi tile particles on map edits and evict off-screen chunks in cache order without sorting.
 
 - Sample the directional shadow depth texture in 3D volumetric lighting using the correct texture coordinates and PCF comparison mode.

@@ -7,32 +7,42 @@
  * @property {number} seq Insertion sequence for stable tie-breaking.
  */
 
+/** @typedef {HeapNode & {g: number, heapIndex: number, parent: SearchNode | null}} SearchNode */
+
 class MinHeap {
   constructor() {
-    /** @type {HeapNode[]} */
+    /** @type {SearchNode[]} */
     this.items = [];
   }
   /** @returns {number} */
   get size() { return this.items.length; }
-  /** @param {HeapNode} node @returns {void} */
+  /** @param {SearchNode} node @returns {void} */
   push(node) {
+    node.heapIndex = this.items.length;
+    this.items.push(node);
+    this.moveUp(node);
+  }
+  /** @param {SearchNode} node */
+  moveUp(node) {
     const items = this.items;
-    let index = items.length;
-    items.push(node);
+    let index = node.heapIndex;
     while (index > 0) {
       const parent = (index - 1) >> 1;
       const pNode = items[parent];
       if (node.f > pNode.f || (node.f === pNode.f && node.seq >= pNode.seq)) break;
       items[index] = pNode;
+      pNode.heapIndex = index;
       index = parent;
     }
     items[index] = node;
+    node.heapIndex = index;
   }
-  /** @returns {HeapNode} */
+  /** @returns {SearchNode} */
   pop() {
     const items = this.items;
     const top = items[0];
     const last = items.pop();
+    top.heapIndex = -1;
     if (items.length > 0 && last) {
       let index = 0;
       const half = items.length >> 1;
@@ -46,13 +56,55 @@ class MinHeap {
         const bNode = items[best];
         if (last.f < bNode.f || (last.f === bNode.f && last.seq <= bNode.seq)) break;
         items[index] = bNode;
+        bNode.heapIndex = index;
         index = best;
       }
       items[index] = last;
+      last.heapIndex = index;
     }
     return top;
   }
 }
+
+// Keep common repeated searches allocation-light without keeping the
+// working set of an unusually large search alive for the map's lifetime.
+const RETAINED_PATH_NODES = 8192;
+class GridSearchWorkspace {
+  constructor() {
+    /** @type {Map<number, SearchNode>} */
+    this.byId = new Map();
+    /** @type {SearchNode[]} */
+    this.pool = [];
+    this.open = new MinHeap();
+    this.inUse = false;
+  }
+
+  /** @param {number} id @param {number} x @param {number} y @param {number} g @param {number} f @param {number} seq @param {SearchNode | null} parent */
+  add(id, x, y, g, f, seq, parent) {
+    const slot = this.byId.size;
+    let node = this.pool[slot];
+    if (!node) {
+      node = { id, x, y, g, f, seq, heapIndex: -1, parent };
+      if (slot < RETAINED_PATH_NODES) this.pool.push(node);
+    } else {
+      node.id = id; node.x = x; node.y = y;
+      node.g = g; node.f = f; node.seq = seq; node.parent = parent;
+    }
+    this.byId.set(id, node);
+    this.open.push(node);
+  }
+
+  clear() {
+    const used = Math.min(this.byId.size, this.pool.length);
+    for (let i = 0; i < used; i++) this.pool[i].parent = null;
+    this.byId.clear();
+    this.open.items.length = 0;
+    this.inUse = false;
+  }
+}
+
+/** @type {WeakMap<object, GridSearchWorkspace>} */
+const gridSearchByMap = new WeakMap();
 
 /**
  * @template [T=number]
@@ -243,38 +295,46 @@ export function findGridPath(map, start, goal, {
 } = {}) {
   const sx = start.x, sy = start.y, gx = goal.x, gy = goal.y;
   if (map.isSolid(sx, sy) || map.isSolid(gx, gy)) return [];
+  let workspace = gridSearchByMap.get(map);
+  if (!workspace) {
+    workspace = new GridSearchWorkspace();
+    gridSearchByMap.set(map, workspace);
+  } else if (workspace.inUse) {
+    // Custom isSolid implementations can call back into pathfinding.
+    workspace = new GridSearchWorkspace();
+  }
+  workspace.inUse = true;
+  try {
+    return searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal, preventCornerCutting);
+  } finally {
+    workspace.clear();
+  }
+}
+
+function searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal, preventCornerCutting) {
   const width = map.width;
-  const id = (x, y) => y * width + x;
-  const startId = id(sx, sy), goalId = id(gx, gy);
-  /** @type {Map<number, number>} */
-  const g = new Map([[startId, 0]]);
-  /** @type {Map<number, number>} */
-  const prev = new Map();
-  const open = new MinHeap();
+  const startId = sy * width + sx, goalId = gy * width + gx;
+  const { byId, open } = workspace;
   let seq = 0;
   const heuristic = allowDiagonal
     ? (x, y) => octile(x - gx, y - gy)
     : (x, y) => Math.abs(x - gx) + Math.abs(y - gy);
-  open.push({ id: startId, x: sx, y: sy, f: heuristic(sx, sy), seq: seq++ });
-  const closed = new Set();
+  workspace.add(startId, sx, sy, 0, heuristic(sx, sy), seq++, null);
   const dirs = allowDiagonal ? DIRS_8 : DIRS_4;
   let visited = 0;
   while (open.size && visited++ < maxNodes) {
     const current = open.pop();
-    if (closed.has(current.id)) continue;
     if (current.id === goalId) {
       /** @type {TileCoord[]} */
       const result = [];
-      /** @type {number | undefined} */
-      let key = goalId;
-      while (key !== undefined) {
-        result.push({ x: key % width, y: Math.floor(key / width) });
-        key = prev.get(key);
+      /** @type {SearchNode | null} */
+      let node = current;
+      while (node) {
+        result.push({ x: node.x, y: node.y });
+        node = node.parent;
       }
       return result.reverse();
     }
-    closed.add(current.id);
-    const currentG = /** @type {number} */ (g.get(current.id));
     for (let i = 0; i < dirs.length; i++) {
       const dx = dirs[i][0], dy = dirs[i][1], stepCost = dirs[i][2];
       const x = current.x + dx, y = current.y + dy;
@@ -283,13 +343,21 @@ export function findGridPath(map, start, goal, {
           (map.isSolid(current.x + dx, current.y) || map.isSolid(current.x, current.y + dy))) {
         continue;
       }
-      const key = id(x, y);
-      if (closed.has(key)) continue;
-      const cost = currentG + stepCost;
-      if (cost >= (g.get(key) ?? Infinity)) continue;
-      g.set(key, cost);
-      prev.set(key, current.id);
-      open.push({ id: key, x, y, f: cost + heuristic(x, y), seq: seq++ });
+      const key = y * width + x;
+      const node = byId.get(key);
+      const cost = current.g + stepCost;
+      if (!node) {
+        workspace.add(key, x, y, cost, cost + heuristic(x, y), seq++, current);
+      } else if (node.heapIndex >= 0 && cost < node.g) {
+        node.g = cost;
+        node.parent = current;
+        const priority = cost + heuristic(x, y);
+        if (priority < node.f) {
+          node.f = priority;
+          node.seq = seq++;
+          open.moveUp(node);
+        }
+      }
     }
   }
   return [];
