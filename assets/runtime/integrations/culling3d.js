@@ -137,6 +137,8 @@
  * @property {number} count Rendered instance count.
  * @property {{array: Float32Array, needsUpdate: boolean}} instanceMatrix
  * @property {{array: Float32Array, needsUpdate: boolean} | null} [instanceColor]
+ * @property {{elements: ArrayLike<number>}} [matrixWorld]
+ * @property {(updateParents: boolean, updateChildren: boolean) => void} [updateWorldMatrix]
  * @property {{remove?: (o: object) => unknown} | null} [parent]
  * @property {() => void} [dispose]
  */
@@ -165,9 +167,9 @@
 
 /**
  * @typedef {object} InstanceAllocOptions
- * @property {number} [x=0]
- * @property {number} [y=0]
- * @property {number} [z=0]
+ * @property {number} [x=0] Position in batch-local coordinates.
+ * @property {number} [y=0] Position in batch-local coordinates.
+ * @property {number} [z=0] Position in batch-local coordinates.
  * @property {number} [rotationX=0] Radians.
  * @property {number} [rotationY=0] Radians.
  * @property {number} [rotationZ=0] Radians.
@@ -967,13 +969,20 @@ export function createInstancedBatch3D(THREE, {
   function flush({ culler = null, onVisible = null } = {}) {
     const matArr = mesh.instanceMatrix?.array;
     const colArr = colorAttr?.array ?? null;
+    if (culler) mesh.updateWorldMatrix?.(true, false);
+    const world = culler ? mesh.matrixWorld?.elements : null;
     let outCount = 0;
 
     for (let i = 0; i < activeCount; i++) {
       const idx = activeIndices[i];
       if (!visibleFlag[idx]) continue;
       const x = px[idx], y = py[idx], z = pz[idx];
-      if (culler && !culler.testSphere(x, y, z, radii[idx])) continue;
+      if (culler) {
+        const worldX = world ? world[0] * x + world[4] * y + world[8] * z + world[12] : x;
+        const worldY = world ? world[1] * x + world[5] * y + world[9] * z + world[13] : y;
+        const worldZ = world ? world[2] * x + world[6] * y + world[10] * z + world[14] : z;
+        if (!culler.testSphere(worldX, worldY, worldZ, radii[idx])) continue;
+      }
       if (matArr) {
         writeMat4ToFloat32(
           matArr, outCount * 16,

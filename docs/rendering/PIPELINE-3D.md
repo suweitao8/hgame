@@ -29,6 +29,7 @@ HGame keeps 3D rendering modular and strictly opt-in. Core runtime modules never
 
 - `createSceneCuller3D` integrates per-frame Gribb-Hartmann 6-plane frustum + `maxDistance` tests with a 5-ray convex-cone software AABB occluder pass (`addOccluderAABB` / `setOccludersFromColliders`) and optional WebGL2 `ANY_SAMPLES_PASSED_CONSERVATIVE` async query pool (`createHardwareOcclusionPool` with `graceFrames`).
 - `createInstancedBatch3D(THREE, { geometry, material, capacity, useColor })` provides `O(1)` slot `alloc`/`free` and compacts visible instances per frame against `culler.testSphere`.
+- Instance positions are batch-local; culling transforms them through the mesh's world matrix. Supply each `radius` (or batch `cullRadius`) in world units large enough to contain the scaled instance.
 - `createInstancedCrowd3D` / `provider.createCrowd` bakes `SkinnedMesh` `AnimationClip` frames into an RGBA Float Vertex Animation Texture (`DataTexture`) and drives per-instance frame interpolation + `hitFlash` via GPU instancing in a single draw call.
 
 ## Sky, Shadows & Pooled Lighting (`sky3d.js`)

@@ -333,6 +333,8 @@ export type InstancedMeshLike = {
         array: Float32Array;
         needsUpdate: boolean;
     } | null | undefined;
+    matrixWorld?: { elements: ArrayLike<number> } | undefined;
+    updateWorldMatrix?: ((updateParents: boolean, updateChildren: boolean) => void) | undefined;
     parent?: {
         remove?: (o: object) => unknown;
     } | null | undefined;
@@ -381,8 +383,17 @@ export type InstanceColor = [number, number, number] | {
     b: number;
 };
 export type InstanceAllocOptions = {
+    /**
+     * Position in batch-local coordinates.
+     */
     x?: number | undefined;
+    /**
+     * Position in batch-local coordinates.
+     */
     y?: number | undefined;
+    /**
+     * Position in batch-local coordinates.
+     */
     z?: number | undefined;
     /**
      * Radians.

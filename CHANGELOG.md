@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Cull 3D instance batches in world space when the batch mesh or its parents are transformed.
+
 - Prevent per-cell swarm density counters from wrapping above 65,535 units by using 32-bit counters for larger swarm capacities.
 
 - Avoid rebuilding the swarm's coarse spatial chunks before movement; rebuild them lazily for combat and rendering queries after positions change.
