@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": "865f9467505671a42a4735117bdb544a2bb226c2",
+  "revision": "5a92d1693b2380d09e100f5742259db16e675e3f",
   "viewport": "960x540",
   "scenarios": [
     { "id": "survivor-2d", "steps": 120, "keys": "d:300", "query": "seed=1", "threshold": 0.01 },
