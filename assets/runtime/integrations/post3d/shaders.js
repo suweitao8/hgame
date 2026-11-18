@@ -355,10 +355,46 @@ void main() {
 }
 `;
 
+const EXPOSURE_PACKING_GLSL3 = `
+#ifdef HGAME_EXPOSURE_UNORM
+const vec2 LOG_LUMA_RANGE = vec2(-14.0, 14.0);
+
+vec2 packExposureScalar(float value, vec2 range) {
+  float span = range.y - range.x;
+  float scaled = span > 0.0 ? clamp((value - range.x) / span, 0.0, 1.0) * 255.0 : 0.0;
+  return vec2(floor(scaled) / 255.0, fract(scaled));
+}
+
+float unpackExposureScalar(vec2 encoded, vec2 range) {
+  return mix(range.x, range.y, encoded.x + encoded.y / 255.0);
+}
+#endif
+`;
+
+const LUMA_REDUCTION_GLSL3 = `
+float reduceLogLuma(sampler2D source, vec2 uv) {
+  // Four bilinear reads cover the four 2x2 quadrants of a 4x4 block.
+  vec2 d = 1.0 / vec2(textureSize(source, 0));
+  vec2 avg = 0.25 * (
+    texture(source, uv + vec2(-d.x, -d.y)).rg +
+    texture(source, uv + vec2( d.x, -d.y)).rg +
+    texture(source, uv + vec2(-d.x,  d.y)).rg +
+    texture(source, uv + vec2( d.x,  d.y)).rg
+  );
+#ifdef HGAME_EXPOSURE_UNORM
+  return unpackExposureScalar(avg, LOG_LUMA_RANGE);
+#else
+  return avg.r;
+#endif
+}
+`;
+
 export const LUMA_EXTRACT_FRAGMENT_GLSL3 = `
 uniform sampler2D tScene;
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
+
+${EXPOSURE_PACKING_GLSL3}
 
 void main() {
   vec3 hdr = max(vec3(0.0), texture(tScene, vUv).rgb);
@@ -366,30 +402,38 @@ void main() {
   vec2 c = vUv * 2.0 - 1.0;
   float meterWeight = clamp(1.15 - 0.55 * dot(c, c), 0.25, 1.15);
   float logLuma = log2(max(luma * meterWeight, 1e-4));
+#ifdef HGAME_EXPOSURE_UNORM
+  fragColor = vec4(packExposureScalar(logLuma, LOG_LUMA_RANGE), 0.0, 1.0);
+#else
   fragColor = vec4(logLuma, logLuma, logLuma, 1.0);
+#endif
 }
 `;
 
-export const BOX4_DOWNSAMPLE_FRAGMENT_GLSL3 = `
+export const LUMA_DOWNSAMPLE_FRAGMENT_GLSL3 = `
 uniform sampler2D tSource;
-uniform vec2 uTexelSize;
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
+${EXPOSURE_PACKING_GLSL3}
+${LUMA_REDUCTION_GLSL3}
+
 void main() {
-  vec2 d = uTexelSize * 0.5;
-  float v0 = texture(tSource, vUv + vec2(-d.x, -d.y)).r;
-  float v1 = texture(tSource, vUv + vec2( d.x, -d.y)).r;
-  float v2 = texture(tSource, vUv + vec2(-d.x,  d.y)).r;
-  float v3 = texture(tSource, vUv + vec2( d.x,  d.y)).r;
-  float avg = 0.25 * (v0 + v1 + v2 + v3);
+  float avg = reduceLogLuma(tSource, vUv);
+#ifdef HGAME_EXPOSURE_UNORM
+  fragColor = vec4(packExposureScalar(avg, LOG_LUMA_RANGE), 0.0, 1.0);
+#else
   fragColor = vec4(avg, avg, avg, 1.0);
+#endif
 }
 `;
 
 export const EYE_ADAPT_FRAGMENT_GLSL3 = `
-uniform sampler2D tAvgLogLuma;
+uniform sampler2D tLogLuma;
 uniform sampler2D tPrevAdapt;
+#ifdef HGAME_EXPOSURE_UNORM
+uniform vec2 uStoredExposureRange;
+#endif
 uniform float uDt;
 uniform float uKeyValue;
 uniform float uExposureComp;
@@ -399,18 +443,33 @@ uniform float uAdaptSpeedUp;
 uniform float uAdaptSpeedDown;
 uniform float uResetAdapt;
 
-in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
+${EXPOSURE_PACKING_GLSL3}
+${LUMA_REDUCTION_GLSL3}
+
 void main() {
-  float avgLog = texture(tAvgLogLuma, vec2(0.5)).r;
+  float avgLog = reduceLogLuma(tLogLuma, vec2(0.5));
   float avgLuma = clamp(exp2(avgLog), 1e-4, 1e4);
   float targetExp = clamp((uKeyValue / avgLuma) * uExposureComp, uMinExposure, uMaxExposure);
-  float prevExp = uResetAdapt > 0.5 ? targetExp : clamp(texture(tPrevAdapt, vec2(0.5)).r, uMinExposure, uMaxExposure);
+  float prevExp = targetExp;
+  if (uResetAdapt < 0.5) {
+    vec2 stored = texelFetch(tPrevAdapt, ivec2(0), 0).rg;
+#ifdef HGAME_EXPOSURE_UNORM
+    prevExp = unpackExposureScalar(stored, uStoredExposureRange);
+#else
+    prevExp = stored.r;
+#endif
+    prevExp = clamp(prevExp, uMinExposure, uMaxExposure);
+  }
   float speed = targetExp > prevExp ? uAdaptSpeedDown : uAdaptSpeedUp;
   float alpha = 1.0 - exp(-max(0.0, uDt) * max(0.05, speed));
   float nextExp = prevExp + (targetExp - prevExp) * alpha;
+#ifdef HGAME_EXPOSURE_UNORM
+  fragColor = vec4(packExposureScalar(nextExp, vec2(uMinExposure, uMaxExposure)), 0.0, 1.0);
+#else
   fragColor = vec4(nextExp, avgLuma, targetExp, 1.0);
+#endif
 }
 `;
 
@@ -544,6 +603,9 @@ uniform sampler2D tAoVol;
 uniform sampler2D tGiSsr;
 uniform sampler2D tBloom;
 uniform sampler2D tAutoExposure;
+#ifdef HGAME_EXPOSURE_UNORM
+uniform vec2 uStoredExposureRange;
+#endif
 uniform mat4 uInvProj;
 uniform mat4 uProj;
 uniform vec3 uSunViewDir;
@@ -585,6 +647,8 @@ uniform int uToneMapping;
 
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
+
+${EXPOSURE_PACKING_GLSL3}
 
 float compIgn(vec2 p) {
   return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
@@ -728,7 +792,15 @@ void main() {
   }
 
   hdr += vec3(uFlash);
-  float adapted = uUseAutoExposure > 0.5 ? texture(tAutoExposure, vec2(0.5)).r : 1.0;
+  float adapted = 1.0;
+  if (uUseAutoExposure > 0.5) {
+    vec2 stored = texelFetch(tAutoExposure, ivec2(0), 0).rg;
+#ifdef HGAME_EXPOSURE_UNORM
+    adapted = unpackExposureScalar(stored, uStoredExposureRange);
+#else
+    adapted = stored.r;
+#endif
+  }
   hdr *= uExposure * adapted;
   hdr *= uWhiteBalance;
 

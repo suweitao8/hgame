@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Meter auto-exposure over the full luminance grid and combine the final reduction with adaptation. Preserve signed log luminance and exposure above 1 on 8-bit render targets.
+
 - Skip Pixi shockwave filter passes when the distortion ring misses the viewport. Keep wave timing and filter order across camera movement.
 
 - Process only entering and leaving Pixi tilemap chunks on camera movement. Stage new chunks before changing the visible set and skip empty chunks during drawing.

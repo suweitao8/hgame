@@ -1,5 +1,19 @@
 /** HDR post-processing pipeline composer. */
-import { FULLSCREEN_VERTEX_GLSL3, HALF_AO_VOL_FRAGMENT_GLSL3, HALF_GI_SSR_FRAGMENT_GLSL3, BILATERAL_RGBA_BLUR_FRAGMENT_GLSL3, LUMA_EXTRACT_FRAGMENT_GLSL3, BOX4_DOWNSAMPLE_FRAGMENT_GLSL3, EYE_ADAPT_FRAGMENT_GLSL3, BILATERAL_BLUR_FRAGMENT_GLSL3, BLOOM_PREFILTER_FRAGMENT_GLSL3, BLOOM_DOWNSAMPLE_FRAGMENT_GLSL3, BLOOM_UPSAMPLE_FRAGMENT_GLSL3, COMPOSITE_FRAGMENT_GLSL3, FXAA_SHARPEN_FRAGMENT_GLSL3 } from './shaders.js';
+import {
+  FULLSCREEN_VERTEX_GLSL3,
+  HALF_AO_VOL_FRAGMENT_GLSL3,
+  HALF_GI_SSR_FRAGMENT_GLSL3,
+  BILATERAL_RGBA_BLUR_FRAGMENT_GLSL3,
+  LUMA_EXTRACT_FRAGMENT_GLSL3,
+  LUMA_DOWNSAMPLE_FRAGMENT_GLSL3,
+  EYE_ADAPT_FRAGMENT_GLSL3,
+  BILATERAL_BLUR_FRAGMENT_GLSL3,
+  BLOOM_PREFILTER_FRAGMENT_GLSL3,
+  BLOOM_DOWNSAMPLE_FRAGMENT_GLSL3,
+  BLOOM_UPSAMPLE_FRAGMENT_GLSL3,
+  COMPOSITE_FRAGMENT_GLSL3,
+  FXAA_SHARPEN_FRAGMENT_GLSL3,
+} from './shaders.js';
 import { createFullscreenTriangle, inspectWebGLCapabilities } from './capabilities.js';
 import { computeWhiteBalanceRGB } from './color.js';
 import { QUALITY3D_PRESETS } from '../quality3d.js';
@@ -419,6 +433,7 @@ export function createPostPipeline3D(options = {}) {
   const hdrType = capabilities.halfFloatRenderable && THREE.HalfFloatType
     ? THREE.HalfFloatType
     : THREE.UnsignedByteType;
+  const packExposure = hdrType === THREE.UnsignedByteType;
 
   function makeColorTarget(w, h, { type, samples = 0, depthTexture = null } = {}) {
     const rt = new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
@@ -435,7 +450,7 @@ export function createPostPipeline3D(options = {}) {
   }
 
   function disposeExposureTargets() {
-    for (const mip of lumaMips) mip.rt.dispose?.();
+    for (const rt of lumaMips) rt.dispose?.();
     for (const rt of adaptRT) rt.dispose?.();
     lumaMips = [];
     adaptRT = [];
@@ -531,10 +546,7 @@ export function createPostPipeline3D(options = {}) {
 
     if (state.autoExposure) {
       if (adaptRT.length === 0) {
-        lumaMips = [64, 16, 4, 1].map(size => ({
-          size,
-          rt: makeColorTarget(size, size, { type: hdrType }),
-        }));
+        lumaMips = [64, 16, 4].map(size => makeColorTarget(size, size, { type: hdrType }));
         adaptRT = [
           makeColorTarget(1, 1, { type: hdrType }),
           makeColorTarget(1, 1, { type: hdrType }),
@@ -573,6 +585,8 @@ export function createPostPipeline3D(options = {}) {
     scratchInvProj = new THREE.Matrix4();
     scratchCamToShadow = new THREE.Matrix4();
     scratchSunView = new THREE.Vector3(0, 1, 0);
+    const exposureDefines = packExposure ? { HGAME_EXPOSURE_UNORM: 1 } : {};
+    const storedExposureRange = { value: new THREE.Vector2(state.minExposure, state.maxExposure) };
 
     const aoVolUniforms = {
       tDepth: { value: null },
@@ -621,14 +635,14 @@ export function createPostPipeline3D(options = {}) {
       }),
       lumaExtract: makeShader(LUMA_EXTRACT_FRAGMENT_GLSL3, {
         tScene: { value: null },
-      }),
-      boxDown: makeShader(BOX4_DOWNSAMPLE_FRAGMENT_GLSL3, {
+      }, exposureDefines),
+      lumaDown: makeShader(LUMA_DOWNSAMPLE_FRAGMENT_GLSL3, {
         tSource: { value: null },
-        uTexelSize: { value: new THREE.Vector2(1 / 64, 1 / 64) },
-      }),
+      }, exposureDefines),
       eyeAdapt: makeShader(EYE_ADAPT_FRAGMENT_GLSL3, {
-        tAvgLogLuma: { value: null },
+        tLogLuma: { value: null },
         tPrevAdapt: { value: null },
+        uStoredExposureRange: storedExposureRange,
         uDt: { value: 1 / 60 },
         uKeyValue: { value: state.keyValue },
         uExposureComp: { value: state.exposureCompensation },
@@ -637,7 +651,7 @@ export function createPostPipeline3D(options = {}) {
         uAdaptSpeedUp: { value: state.adaptSpeedUp },
         uAdaptSpeedDown: { value: state.adaptSpeedDown },
         uResetAdapt: { value: 1 },
-      }),
+      }, exposureDefines),
       prefilter: makeShader(BLOOM_PREFILTER_FRAGMENT_GLSL3, {
         tSource: { value: null },
         uTexelSize: { value: new THREE.Vector2(1 / bufferWidth, 1 / bufferHeight) },
@@ -660,6 +674,7 @@ export function createPostPipeline3D(options = {}) {
         tGiSsr: { value: null },
         tBloom: { value: null },
         tAutoExposure: { value: null },
+        uStoredExposureRange: storedExposureRange,
         uInvProj: { value: scratchInvProj },
         uProj: { value: new THREE.Matrix4() },
         uSunViewDir: { value: scratchSunView },
@@ -698,7 +713,7 @@ export function createPostPipeline3D(options = {}) {
         uFade: { value: 0 },
         uTime: { value: 0 },
         uToneMapping: { value: state.toneMapping },
-      }),
+      }, exposureDefines),
       fxaaSharpen: makeShader(FXAA_SHARPEN_FRAGMENT_GLSL3, {
         tDiffuse: { value: null },
         uTexelSize: { value: new THREE.Vector2(1 / bufferWidth, 1 / bufferHeight) },
@@ -931,18 +946,15 @@ export function createPostPipeline3D(options = {}) {
       const useAutoExposure = Boolean(state.autoExposure && lumaMips.length > 0 && adaptRT.length === 2);
       if (useAutoExposure) {
         mats.lumaExtract.uniforms.tScene.value = sceneRT.texture;
-        runPass(mats.lumaExtract, lumaMips[0].rt);
+        runPass(mats.lumaExtract, lumaMips[0]);
         for (let i = 1; i < lumaMips.length; i++) {
-          const prev = lumaMips[i - 1];
-          const curr = lumaMips[i];
-          mats.boxDown.uniforms.tSource.value = prev.rt.texture;
-          mats.boxDown.uniforms.uTexelSize.value.set(1 / prev.size, 1 / prev.size);
-          runPass(mats.boxDown, curr.rt);
+          mats.lumaDown.uniforms.tSource.value = lumaMips[i - 1].texture;
+          runPass(mats.lumaDown, lumaMips[i]);
         }
         const prevAdapt = adaptRT[adaptIndex];
         const nextAdapt = adaptRT[adaptIndex ^ 1];
         const adaptU = mats.eyeAdapt.uniforms;
-        adaptU.tAvgLogLuma.value = lumaMips[lumaMips.length - 1].rt.texture;
+        adaptU.tLogLuma.value = lumaMips[lumaMips.length - 1].texture;
         adaptU.tPrevAdapt.value = prevAdapt.texture;
         adaptU.uDt.value = stepDt > 0 ? stepDt : 1 / 60;
         adaptU.uKeyValue.value = state.keyValue;
@@ -953,6 +965,8 @@ export function createPostPipeline3D(options = {}) {
         adaptU.uAdaptSpeedDown.value = state.adaptSpeedDown;
         adaptU.uResetAdapt.value = adaptNeedsReset ? 1 : 0;
         runPass(mats.eyeAdapt, nextAdapt);
+        // Keep the encoding range of the history texture across settings changes.
+        if (packExposure) adaptU.uStoredExposureRange.value.set(adaptU.uMinExposure.value, adaptU.uMaxExposure.value);
         adaptIndex ^= 1;
         adaptNeedsReset = false;
       }
