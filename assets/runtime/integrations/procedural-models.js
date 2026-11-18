@@ -33,6 +33,8 @@
  * @property {[number, number, number]} [size=[1,1,1]] Width, height, depth in world units (each 0..100].
  * @property {string|null} [replacement=null] Relative `assets/models/<name>.glb` replacement.
  * @property {string} [replacementAsset] Logical ID of a static model in the project asset catalog.
+ * @property {boolean} [castShadow] Override shadow casting for instantiated meshes.
+ * @property {boolean} [receiveShadow] Override shadow receiving for instantiated meshes.
  */
 /**
  * @typedef {object} ProceduralSlotSpec
@@ -43,6 +45,8 @@
  * @property {[number, number, number]} size
  * @property {string|null} replacement
  * @property {string} [replacementAsset]
+ * @property {boolean} [castShadow]
+ * @property {boolean} [receiveShadow]
  */
 /**
  * @typedef {object} ProceduralModelOptions
@@ -154,6 +158,10 @@ export function createProceduralModelSlots({
       throw new Error('Invalid geometry definition ' + id);
     }
     const replacement = replacementPath(raw.replacement ?? null);
+    if ((raw.castShadow !== undefined && typeof raw.castShadow !== 'boolean') ||
+        (raw.receiveShadow !== undefined && typeof raw.receiveShadow !== 'boolean')) {
+      throw new TypeError('Model slot shadow settings must be boolean: ' + id);
+    }
     const replacementAsset = raw.replacementAsset;
     if (replacementAsset !== undefined) {
       if (replacement || typeof replacementAsset !== 'string' || !replacementAsset.trim()) {
@@ -175,6 +183,8 @@ export function createProceduralModelSlots({
       size: validateSize(raw.size),
       replacement,
       ...(replacementAsset === undefined ? {} : { replacementAsset }),
+      ...(raw.castShadow === undefined ? {} : { castShadow: raw.castShadow }),
+      ...(raw.receiveShadow === undefined ? {} : { receiveShadow: raw.receiveShadow }),
     });
   }
   const deferred = new Set(deferredReplacements);
@@ -371,7 +381,17 @@ export function createProceduralModelSlots({
     return replacementCache.get(url);
   }
   async function instantiate(id) {
-    return cloneModel(await prototype(id));
+    const root = await cloneModel(await prototype(id));
+    applyShadowOverrides(root, definitions.get(id));
+    return root;
+  }
+  function applyShadowOverrides(root, spec) {
+    if (spec.castShadow === undefined && spec.receiveShadow === undefined) return;
+    root.traverse(obj => {
+      if (!obj.isMesh) return;
+      if (spec.castShadow !== undefined) obj.castShadow = spec.castShadow;
+      if (spec.receiveShadow !== undefined) obj.receiveShadow = spec.receiveShadow;
+    });
   }
   async function instantiateBatch(id, placements) {
     if (!Array.isArray(placements) || placements.length < 1 || placements.length > 20000) {
@@ -430,8 +450,8 @@ export function createProceduralModelSlots({
         const batch = batches[part];
         batch.instanceMatrix.needsUpdate = true;
         batch.name = meshes[part].name;
-        batch.castShadow = meshes[part].castShadow;
-        batch.receiveShadow = meshes[part].receiveShadow;
+        batch.castShadow = spec.castShadow ?? meshes[part].castShadow;
+        batch.receiveShadow = spec.receiveShadow ?? meshes[part].receiveShadow;
         batch.computeBoundingSphere();
       }
       if (batches.length === 1) return batches[0];
@@ -450,6 +470,7 @@ export function createProceduralModelSlots({
         const placed = new THREE.Group();
         group.add(placed);
         placed.add(obj);
+        applyShadowOverrides(obj, spec);
         if (item.isMatrix4) {
           placed.matrix.copy(item);
           placed.matrixAutoUpdate = false;

@@ -58,6 +58,14 @@ export type ProceduralSlotDefinition = {
      * Logical ID of a static model in the project asset catalog.
      */
     replacementAsset?: string | undefined;
+    /**
+     * Override shadow casting for instantiated meshes.
+     */
+    castShadow?: boolean | undefined;
+    /**
+     * Override shadow receiving for instantiated meshes.
+     */
+    receiveShadow?: boolean | undefined;
 };
 export type ProceduralSlotSpec = {
     shape: ProceduralShape;
@@ -67,6 +75,8 @@ export type ProceduralSlotSpec = {
     size: [number, number, number];
     replacement: string | null;
     replacementAsset?: string | undefined;
+    castShadow?: boolean | undefined;
+    receiveShadow?: boolean | undefined;
 };
 export type ProceduralModelOptions = {
     THREE: ProceduralModelThree;

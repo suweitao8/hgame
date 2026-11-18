@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow 3D model slots to configure shadow casting and receiving consistently for individual clones and instanced batches.
+
 - Preserve source mesh shadow settings when creating single-mesh 3D instance batches instead of forcing both shadows on.
 
 - Preserve model root transforms and Matrix4 placements when 3D scene-model batches fall back to cloned objects instead of instancing.
