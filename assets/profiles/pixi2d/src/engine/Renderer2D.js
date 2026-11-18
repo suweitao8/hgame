@@ -230,8 +230,13 @@ export class Renderer2D {
     for (const layer of this.tilemapLayers) layer.dispose();
     for (const sprite of this.spritePool) sprite.destroy();
     this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.pendingEnemies.length = 0; this.entityMap.clear();
-    this.app.stage.filters = []; this.effectFilters.length = 0;
-    this.bloom.destroy();
-    this.app.destroy({ removeView: true }, { children: true }); this.atlas.dispose();
+    const stage = this.app.stage;
+    try {
+      if (stage) stage.filters = [];
+      if (this.effectFilters) this.effectFilters.length = 0;
+      this.bloom?.destroy();
+      if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
+      else if (stage && !stage.destroyed) stage.destroy({ children: true });
+    } finally { this.atlas.dispose(); }
   }
 }

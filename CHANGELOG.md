@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Share Pixi startup and teardown across the bare, arena, and horde starters, including renderer cleanup when initialization fails.
+
 - Bound concurrent asset catalog downloads and decodes across scene scopes, and cancel a disposed scope's pending waits independently of shared requests.
 
 - Reduce world-transform calculations and single-component dispatch overhead, and stop physics stepping when an update switches away from its scene.

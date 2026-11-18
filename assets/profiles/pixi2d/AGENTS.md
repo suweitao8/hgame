@@ -4,6 +4,7 @@ Game rules live in `src/sim/`, DOM controls in `src/ui/`, and renderer integrati
 This starter uses PixiJS for 2D. The generic HGame renderer entries in the shared project instructions describe optional legacy paths; do not mix their rendering components into this Pixi scene.
 The simulation must not import PixiJS or access the DOM. Use the renderer and juice interfaces for presentation. HGame owns the application loop.
 
+- Use `startPixiGame(setup, options)` in the entry file. Build the scene in `setup({ app, renderer, Scene, Entity, Component })`, register game-owned cleanup via `scene.onDispose`, and return `{ scene: scene.name }`.
 - Create `new Application()` and await `app.init()`, using `app.canvas`.
 - Import core classes from `pixi.js` and effects from `pixi-filters`.
 - Ticker callbacks receive a `Ticker`, with seconds from `deltaMS / 1000`. HGame owns the scheduler.

@@ -6,6 +6,8 @@ For changes, edit `src/sim/` for rules, `src/ui/` for DOM HUD, and use the inter
 
 From the HGame repository, `npm run api -- pixi`, `npm run api -- Renderer2D`, or `npm run api -- --module ProceduralAtlas` finds the generated Pixi starter interfaces alongside runtime APIs. Results marked `generated game` are copied into a new game under `src/engine/`; they are not `vendor/hgame` imports. Use `npm run api -- --recipe 2d` for the starter wiring.
 
+The empty, arena, and horde entries use `startPixiGame` from `src/engine/startPixiGame.js`. Register a scene in its setup callback and return `{ scene: scene.name }`. The callback can be asynchronous and receives the renderer and application with its services installed. Attach game-owned cleanup to `scene.onDispose`. Options include `createAtlas` for custom art and `rendererOptions` for resolution settings.
+
 PixiJS prefers WebGPU and retries with WebGL (then Pixi's Canvas renderer if needed) when WebGPU is unavailable or initialization fails. HGame's application controls the simulation and render loop; `JuiceSystem.update(dt)` advances hit easing, shockwaves and particles on that loop. Call `juice.dispose()` before `renderer.dispose()` when tearing down an owning scene. The renderer reuses removed crowd particles and destroys its pooled sprites, filter and atlas on disposal. The starter's 1,000-enemy arena includes opt-in buttons to add 10,000 enemies and to trigger 100, 1,000, or 10,000 simultaneous eight-particle explosions; FPS and on-screen particles are displayed in the debug panel. Actual capacity depends on device, resolution, effects and workload. Canvas uses a simple drawn slash and particles for shockwaves; GPU bloom and distortion filters are disabled on this fallback.
 
 On the Canvas fallback, particles use their atlas frame colors instead of runtime `opts.color` tinting. The default explosion has precolored atlas frames; supply precolored frames for custom particle colors on that backend.
@@ -15,9 +17,11 @@ On the Canvas fallback, particles use their atlas frame colors instead of runtim
 To opt into dynamic resolution, pass HGame's quality controller when creating the renderer:
 
 ```js
-const { createAdaptiveQualityController } = await import(base + '/integrations/quality3d.js');
+import { loadRuntime, startPixiGame } from './engine/startPixiGame.js';
+
+const { createAdaptiveQualityController } = await loadRuntime('integrations/quality3d.js');
 const quality = createAdaptiveQualityController({ mode: 'auto', minScale: 0.6, maxScale: 1 });
-const renderer = new Renderer2D(atlas, { qualityController: quality });
+await startPixiGame(setup, { rendererOptions: { qualityController: quality } });
 // On visibility changes or after a manual pause: renderer.resetQualityMeasurements();
 ```
 
@@ -54,7 +58,7 @@ The atlas copies frame edges into one pixel of the existing padding to reduce tr
 For tile-based maps, generate a 2D project with `--with tilemap2d`, bake tile images or sheet frames into the atlas, and connect the existing HGame `TileMap` to Pixi:
 
 ```js
-const { TileMap, findGridPath } = await import(base + '/world/tilemap.js');
+const { TileMap, findGridPath } = await loadRuntime('world/tilemap.js');
 const map = new TileMap({ tiles: [[1, 1, 1], [1, 2, 1]], tileWidth: 32, tileHeight: 32, solid: [2] });
 renderer.grid.visible = false;
 const layer = renderer.createTilemapLayer(map, { frames: { 1: 'floor/0', 2: 'wall/0' }, chunkSize: 32 });
