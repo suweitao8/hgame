@@ -28,3 +28,4 @@ const props = createInstancedBatch3D(THREE, { geometry: boxGeo, material: rockMa
 - 静态场景可在 `worldLighting.sun.shadow` 设置 `autoUpdate: false`，复用方向光的阴影贴图。通过适配器增删场景对象会触发刷新。直接移动投影物、修改几何或透明裁切、移动太阳或调用 `getWorld(scene).add/remove` 后，调用 `renderer.invalidateSunShadow(scene)`。使用缓存的投影物应保持独立于主相机的可见性。
 - `createThreeMeshComponent` 的投影物由 Three.js 分别按主相机和光源视锥剔除。其他网格可以设置 `cull: true`，按当前视角做距离和遮挡剔除。主视角之外仍能投到画面上的阴影由光源通道保留。
 - 3D 自适应画质默认尝试异步读取 GPU 绘制耗时。样本充足时，帧间隔变长且 GPU 仍有余量会保留当前画质。可从 `qualityController.state.lastMeanGpuMs` 读取窗口均值，或设置 `quality3d.gpuTiming: false` 将计时留给外部 profiler。
+- 自动模式降档后会先恢复当前档的分辨率。持续有帧时间余量时再恢复更高的阴影和后处理档位，最高回到设备初始档。升档后很快降档会延长下一次升档的等待时间。

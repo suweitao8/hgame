@@ -153,6 +153,10 @@ export const QUALITY2D_PRESETS = Object.freeze({
 
 const TIERS = Object.freeze(Object.keys(QUALITY3D_PRESETS));
 const VALID_MODES = Object.freeze(['auto', ...TIERS]);
+const TIER_RECOVERY_MS = 4500;
+const TIER_MAX_RETRY_MS = 30000;
+const TIER_PROBE_MS = 8000;
+const TIER_COOLDOWN_MS = 2400;
 /** @type {(x: number, lo: number, hi: number) => number} */
 const inRange = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
 
@@ -224,9 +228,13 @@ export function createAdaptiveQualityController({
   if (onChange !== null && typeof onChange !== 'function') throw new TypeError('onChange must be a function');
 
   let configuredMode = mode;
-  let tier = mode === 'auto' ? chooseInitial3dQuality(device) : mode;
+  let autoCeiling = mode === 'auto' ? chooseInitial3dQuality(device) : null;
+  let tier = autoCeiling ?? mode;
   let dynamicScale = mode === 'auto' ? maxScale : 1;
   let slowAtFloor = 0;
+  let healthyAtMaxScaleMs = 0;
+  let tierRecoveryDelayMs = TIER_RECOVERY_MS;
+  let tierProbeRemainingMs = 0;
   let transitionCount = 0;
   let droppedLongFrames = 0;
   let settle = settleMs;
@@ -254,9 +262,13 @@ export function createAdaptiveQualityController({
     if (!VALID_MODES.includes(next)) throw new RangeError('Unsupported 3D quality mode: ' + next);
     if (configuredMode === next) return false;
     configuredMode = next;
-    tier = next === 'auto' ? chooseInitial3dQuality(device) : next;
+    autoCeiling = next === 'auto' ? chooseInitial3dQuality(device) : null;
+    tier = autoCeiling ?? next;
     dynamicScale = next === 'auto' ? maxScale : 1;
     slowAtFloor = 0;
+    healthyAtMaxScaleMs = 0;
+    tierRecoveryDelayMs = TIER_RECOVERY_MS;
+    tierProbeRemainingMs = 0;
     clearWindow();
     lastMeanGpuMs = null;
     settle = settleMs;
@@ -291,6 +303,20 @@ export function createAdaptiveQualityController({
     gpuCount = 0;
   }
 
+  function promoteTier(nextTier) {
+    const current = QUALITY3D_PRESETS[tier];
+    const next = QUALITY3D_PRESETS[nextTier];
+    const currentCap = Math.min(maxPixelRatio, current.maxPixelRatio);
+    const nextCap = Math.min(maxPixelRatio, next.maxPixelRatio);
+    // Bound the initial increase in GPU work when the new tier enables more effects.
+    const ratio = Math.min(currentCap / nextCap, Math.sqrt(current.maxPixels / next.maxPixels));
+    dynamicScale = inRange(dynamicScale * ratio, minScale, maxScale);
+    tier = nextTier;
+    healthyAtMaxScaleMs = 0;
+    tierProbeRemainingMs = TIER_PROBE_MS;
+    cooldown = TIER_COOLDOWN_MS;
+  }
+
   function sampleFrame(ms, gpuMs = null) {
     if (!Number.isFinite(ms) || ms <= 0) return false;
     // A hidden tab, debugger pause or page suspension must not trigger
@@ -300,11 +326,16 @@ export function createAdaptiveQualityController({
       clearWindow();
       lastMeanGpuMs = null;
       slowAtFloor = 0;
+      healthyAtMaxScaleMs = 0;
       return false;
     }
     if (configuredMode !== 'auto') return false;
     settle = Math.max(0, settle - ms);
     cooldown = Math.max(0, cooldown - ms);
+    if (tierProbeRemainingMs > 0) {
+      tierProbeRemainingMs = Math.max(0, tierProbeRemainingMs - ms);
+      if (tierProbeRemainingMs === 0) tierRecoveryDelayMs = TIER_RECOVERY_MS;
+    }
     if (settle > 0) return false;
     total += ms;
     count++;
@@ -313,7 +344,8 @@ export function createAdaptiveQualityController({
       gpuCount++;
     }
     if (count < sampleFrames) return false;
-    const mean = total / count;
+    const windowMs = total;
+    const mean = windowMs / count;
     lastMeanGpuMs = gpuCount >= Math.ceil(count / 4) ? gpuTotal / gpuCount : null;
     clearWindow();
     lastMeanMs = mean;
@@ -321,6 +353,7 @@ export function createAdaptiveQualityController({
     let reason = 'resolution';
     const gpuHasHeadroom = lastMeanGpuMs !== null && lastMeanGpuMs < recoverFrameMs;
     if (mean > degradeFrameMs && !gpuHasHeadroom) {
+      healthyAtMaxScaleMs = 0;
       if (dynamicScale > minScale + 0.00001) {
         dynamicScale = inRange(
           Math.round((dynamicScale - (mean > 34 ? .2 : .1)) * 100) / 100,
@@ -336,21 +369,37 @@ export function createAdaptiveQualityController({
             tier = TIERS[index - 1];
             // Keep the current scale until fast frames earn resolution recovery.
             reason = 'tier';
-            settle = settleAfterChangeMs;
-            cooldown = 2400;
+            cooldown = TIER_COOLDOWN_MS;
+            if (tierProbeRemainingMs > 0) {
+              tierRecoveryDelayMs = Math.min(tierRecoveryDelayMs * 2, TIER_MAX_RETRY_MS);
+              tierProbeRemainingMs = 0;
+            }
             changed = true;
           }
           slowAtFloor = 0;
         }
       }
-    } else if (mean < recoverFrameMs && (gpuHasHeadroom || lastMeanGpuMs === null) &&
-        dynamicScale < maxScale && cooldown <= 0) {
-      dynamicScale = inRange(Math.round((dynamicScale + .1) * 100) / 100, minScale, maxScale);
-      changed = true;
-      cooldown = 900;
+    } else if (mean < recoverFrameMs && (gpuHasHeadroom || lastMeanGpuMs === null) && cooldown <= 0) {
       slowAtFloor = 0;
+      const gpuCanPromote = lastMeanGpuMs === null || lastMeanGpuMs < recoverFrameMs * 0.8;
+      if (dynamicScale < maxScale) {
+        dynamicScale = inRange(Math.round((dynamicScale + .1) * 100) / 100, minScale, maxScale);
+        healthyAtMaxScaleMs = 0;
+        changed = true;
+        cooldown = 900;
+      } else if (tier !== autoCeiling && gpuCanPromote) {
+        healthyAtMaxScaleMs += windowMs;
+        if (healthyAtMaxScaleMs >= tierRecoveryDelayMs) {
+          promoteTier(TIERS[TIERS.indexOf(tier) + 1]);
+          reason = 'tier';
+          changed = true;
+        }
+      } else {
+        healthyAtMaxScaleMs = 0;
+      }
     } else {
       slowAtFloor = 0;
+      healthyAtMaxScaleMs = 0;
     }
     if (changed) {
       settle = Math.max(settle, settleAfterChangeMs);
@@ -364,6 +413,7 @@ export function createAdaptiveQualityController({
     settle = settleMs;
     cooldown = 0;
     slowAtFloor = 0;
+    healthyAtMaxScaleMs = 0;
   }
   return Object.freeze({
     get state() { return snapshot(); },

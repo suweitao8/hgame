@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restore 3D quality tiers after sustained render headroom. Limit the initial resolution increase when enabling higher-tier effects and back off after a failed promotion.
+
 - Use bounded, asynchronous WebGL GPU timing to avoid unnecessary 3D quality reductions when slow frames leave GPU render headroom. Keep frame-interval adaptation when timer samples are unavailable.
 
 - Share depth reconstruction across 3D post-processing passes, including reversed depth. March volumetric lighting along parallel rays in orthographic views.
