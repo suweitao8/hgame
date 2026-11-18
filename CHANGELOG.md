@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Count only successfully queued swarm area hits, and stop promoting targets when the bounded hit queue is full.
+
 - Keep the procedural 3D sky inside the camera's far clipping plane when adaptive quality shortens scene draw distance.
 
 - Allow 3D model slots to configure shadow casting and receiving consistently for individual clones and instanced batches.

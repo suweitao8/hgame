@@ -124,7 +124,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {(options?: SwarmWaveSpawnOptions) => number} spawnWave
  * @property {(id: number) => boolean} kill
  * @property {() => void} clear
- * @property {(options?: SwarmCircleDamageOptions) => number} applyCircleDamage
+ * @property {(options?: SwarmCircleDamageOptions) => number} applyCircleDamage Number of hit events accepted into the bounded combat queue.
  * @property {(dt: number, options?: SwarmStepOptions) => SwarmStepStats} step
  * @property {(crowd2d: import('../integrations/canvas2d.js').SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number} syncToSpriteCrowd2D
  */
@@ -700,6 +700,9 @@ export type SwarmSimulation = {
     spawnWave: (options?: SwarmWaveSpawnOptions) => number;
     kill: (id: number) => boolean;
     clear: () => void;
+    /**
+     * Number of hit events accepted into the bounded combat queue.
+     */
     applyCircleDamage: (options?: SwarmCircleDamageOptions) => number;
     step: (dt: number, options?: SwarmStepOptions) => SwarmStepStats;
     syncToSpriteCrowd2D: (crowd2d: import("../integrations/canvas2d.js").SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number;

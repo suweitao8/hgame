@@ -1317,7 +1317,7 @@ function stepSwarmSequential(
  * @property {(options?: SwarmWaveSpawnOptions) => number} spawnWave
  * @property {(id: number) => boolean} kill
  * @property {() => void} clear
- * @property {(options?: SwarmCircleDamageOptions) => number} applyCircleDamage
+ * @property {(options?: SwarmCircleDamageOptions) => number} applyCircleDamage Number of hit events accepted into the bounded combat queue.
  * @property {(dt: number, options?: SwarmStepOptions) => SwarmStepStats} step
  * @property {(crowd2d: import('../integrations/canvas2d.js').SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number} syncToSpriteCrowd2D
  */
@@ -1636,6 +1636,7 @@ export function createSwarmSimulation({
     knockback = 0,
     freezeDuration = 0,
   } = {}) {
+    if (ecs._hitCount >= ecs.maxHitEvents) return 0;
     ensureChunks();
     const r = Math.max(0, radius);
     const rSq = r * r;
@@ -1661,10 +1662,9 @@ export function createSwarmSimulation({
           const dx = posX[id] - x;
           const dy = posY[id] - y;
           if (dx * dx + dy * dy <= rSq) {
+            if (ecs._hitCount >= ecs.maxHitEvents) return applied;
             const slot = ecs.promoteSwarmUnit(id, posX[id], posY[id], rot[id], hp[id], animClip[id], 0);
             if (slot >= 0) {
-              unitFlags[id] |= SWARM_UNIT_FLAGS.ECS_CLAIMED | SWARM_UNIT_FLAGS.FLASHING;
-              flash[id] = 1;
               let pushX = 0;
               let pushY = 0;
               if (knockback !== 0) {
@@ -1677,8 +1677,11 @@ export function createSwarmSimulation({
                   pushX = knockback;
                 }
               }
-              ecs.enqueueHit(slot, damage, pushX, pushY, freezeDuration);
-              applied++;
+              if (ecs.enqueueHit(slot, damage, pushX, pushY, freezeDuration)) {
+                unitFlags[id] |= SWARM_UNIT_FLAGS.ECS_CLAIMED | SWARM_UNIT_FLAGS.FLASHING;
+                flash[id] = 1;
+                applied++;
+              }
             }
           }
         }
