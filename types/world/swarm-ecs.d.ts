@@ -121,6 +121,8 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {Float32Array} chunkMinY Tight minimum Y/Z per non-empty chunk.
  * @property {Float32Array} chunkMaxY Tight maximum Y/Z per non-empty chunk.
  * @property {() => void} ensureChunks Rebuilds coarse chunk lists & tight bounds when dirty.
+ * @property {() => void} [invalidateChunks] Invalidate spatial data after direct writes to positions or scales.
+ * @property {(minX: number, minY: number, maxX: number, maxY: number, radiusPerScale: number, out: Uint32Array) => boolean} [writeChunkCandidateMask] Marks active-order slots using the current chunk index. Returns false when the index is dirty or a linear scan is preferable.
  * @property {FlatSpatialHash2D} spatialHash
  * @property {FlowField2D} flowField
  * @property {FlatCombatECS} ecs
@@ -715,6 +717,14 @@ export type SwarmSimulation = {
      * Rebuilds coarse chunk lists & tight bounds when dirty.
      */
     ensureChunks: () => void;
+    /**
+     * Invalidate spatial data after direct writes to positions or scales.
+     */
+    invalidateChunks?: (() => void) | undefined;
+    /**
+     * Marks active-order slots using the current chunk index. Returns false when the index is dirty or a linear scan is preferable.
+     */
+    writeChunkCandidateMask?: ((minX: number, minY: number, maxX: number, maxY: number, radiusPerScale: number, out: Uint32Array) => boolean) | undefined;
     spatialHash: FlatSpatialHash2D;
     flowField: FlowField2D;
     ecs: FlatCombatECS;

@@ -1301,6 +1301,8 @@ function stepSwarmSequential(
  * @property {Float32Array} chunkMinY Tight minimum Y/Z per non-empty chunk.
  * @property {Float32Array} chunkMaxY Tight maximum Y/Z per non-empty chunk.
  * @property {() => void} ensureChunks Rebuilds coarse chunk lists & tight bounds when dirty.
+ * @property {() => void} [invalidateChunks] Invalidate spatial data after direct writes to positions or scales.
+ * @property {(minX: number, minY: number, maxX: number, maxY: number, radiusPerScale: number, out: Uint32Array) => boolean} [writeChunkCandidateMask] Marks active-order slots using the current chunk index. Returns false when the index is dirty or a linear scan is preferable.
  * @property {FlatSpatialHash2D} spatialHash
  * @property {FlowField2D} flowField
  * @property {FlatCombatECS} ecs
@@ -1411,8 +1413,10 @@ export function createSwarmSimulation({
   const chunkMaxX = new Float32Array(totalChunks).fill(-Infinity);
   const chunkMinY = new Float32Array(totalChunks).fill(Infinity);
   const chunkMaxY = new Float32Array(totalChunks).fill(-Infinity);
+  let chunkMaxScale = null;
   const occupiedColumns = new Uint32Array(chunkRows);
   const occupiedChunkIds = new Uint16Array(totalChunks);
+  const candidateChunkIds = new Uint16Array(totalChunks);
   let occupiedChunkCount = 0;
   const unitCell = new Int32Array(capacity);
   // Every live unit can occupy the same cell, including out-of-world units
@@ -1443,6 +1447,11 @@ export function createSwarmSimulation({
     return 31 - Math.clz32(mask & -mask);
   }
 
+  function recordChunkScale(ck, id) {
+    const absScale = Math.abs(scale[id]);
+    if (!(absScale <= chunkMaxScale[ck])) chunkMaxScale[ck] = absScale || Infinity;
+  }
+
   function resetChunkIndex() {
     if (occupiedChunkCount * 2 >= totalChunks) {
       chunkHead.fill(-1);
@@ -1451,6 +1460,7 @@ export function createSwarmSimulation({
       chunkMaxX.fill(-Infinity);
       chunkMinY.fill(Infinity);
       chunkMaxY.fill(-Infinity);
+      chunkMaxScale?.fill(0);
     } else {
       for (let i = 0; i < occupiedChunkCount; i++) {
         const ck = occupiedChunkIds[i];
@@ -1460,6 +1470,7 @@ export function createSwarmSimulation({
         chunkMaxX[ck] = -Infinity;
         chunkMinY[ck] = Infinity;
         chunkMaxY[ck] = -Infinity;
+        if (chunkMaxScale) chunkMaxScale[ck] = 0;
       }
     }
     occupiedColumns.fill(0);
@@ -1490,6 +1501,7 @@ export function createSwarmSimulation({
       if (px > chunkMaxX[ck]) chunkMaxX[ck] = px;
       if (py < chunkMinY[ck]) chunkMinY[ck] = py;
       if (py > chunkMaxY[ck]) chunkMaxY[ck] = py;
+      if (chunkMaxScale) recordChunkScale(ck, id);
     }
     for (let row = 0; row < chunkRows; row++) {
       for (let mask = occupiedColumns[row]; mask !== 0; mask &= mask - 1) {
@@ -1497,6 +1509,47 @@ export function createSwarmSimulation({
       }
     }
     chunksDirty = false;
+  }
+
+  function invalidateChunks() {
+    chunksDirty = true;
+  }
+
+  function writeChunkCandidateMask(minX, minY, maxX, maxY, radiusPerScale, out) {
+    // Never rebuild a simulation index just to decide whether a render can use it.
+    if (chunksDirty || !Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) ||
+        !Number.isFinite(maxY) || !Number.isFinite(radiusPerScale) || radiusPerScale < 0) return false;
+    if (!chunkMaxScale) {
+      chunkMaxScale = new Float32Array(totalChunks);
+      for (let i = 0; i < occupiedChunkCount; i++) {
+        const ck = occupiedChunkIds[i];
+        for (let id = chunkHead[ck]; id !== -1; id = chunkNext[id]) recordChunkScale(ck, id);
+      }
+    }
+    let candidateChunks = 0;
+    let candidateUnits = 0;
+    for (let i = 0; i < occupiedChunkCount; i++) {
+      const ck = occupiedChunkIds[i];
+      const pad = radiusPerScale * chunkMaxScale[ck];
+      if (chunkMaxX[ck] + pad < minX || chunkMinX[ck] - pad > maxX ||
+          chunkMaxY[ck] + pad < minY || chunkMinY[ck] - pad > maxY) continue;
+      candidateUnits += chunkCount[ck];
+      // A linear pass avoids copying the order of a mostly visible crowd.
+      if (candidateUnits * 2 >= activeCount) return false;
+      candidateChunkIds[candidateChunks++] = ck;
+    }
+    const wordCount = (activeCount + 31) >>> 5;
+    if (out.length < wordCount) throw new RangeError('Chunk candidate mask is too small');
+    out.fill(0, 0, wordCount);
+    for (let i = 0; i < candidateChunks; i++) {
+      let id = chunkHead[candidateChunkIds[i]];
+      while (id !== -1) {
+        const slot = indexInActive[id];
+        out[slot >>> 5] |= 1 << (slot & 31);
+        id = chunkNext[id];
+      }
+    }
+    return true;
   }
 
   function spawn({
@@ -1896,6 +1949,8 @@ export function createSwarmSimulation({
     chunkMinY,
     chunkMaxY,
     ensureChunks,
+    invalidateChunks,
+    writeChunkCandidateMask,
     spatialHash,
     flowField,
     ecs,

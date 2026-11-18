@@ -1,5 +1,7 @@
 import { Particle, ParticleContainer } from 'pixi.js';
 
+const MIN_CHUNK_CULL_UNITS = 512;
+
 function sameCenteredQuad(a, b) {
   if (a === b) return true;
   const aTrim = a.trim;
@@ -13,7 +15,7 @@ function sameCenteredQuad(a, b) {
 /** Render an HGame CPU SwarmSimulation without allocating per-unit game objects. */
 export class PixiSwarmLayer {
   constructor(renderer, { textures = ['enemy_chaser'], clips = null, scale = 1, worldScale = 1, offsetX = 0, offsetY = 0,
-    syncRotation = false, flipByDirection = false, dynamicScale = false, cull = true } = {}) {
+    syncRotation = false, flipByDirection = false, dynamicScale = false, cull = true, chunkCull = false } = {}) {
     if (!renderer?.worldRoot || !renderer?.atlas?.textures) throw new TypeError('Initialize Renderer2D before creating a swarm layer');
     const definitions = clips ?? (Array.isArray(textures) ? textures.map(name => ({ frames: [name] })) : null);
     if (!Array.isArray(definitions) || definitions.length === 0) throw new TypeError('Swarm clips or textures must be a non-empty array');
@@ -23,6 +25,8 @@ export class PixiSwarmLayer {
     this.renderer = renderer; this.scale = scale; this.worldScale = worldScale;
     this.offsetX = offsetX; this.offsetY = offsetY; this.syncRotation = Boolean(syncRotation);
     this.flipByDirection = Boolean(flipByDirection); this.cull = Boolean(cull);
+    this.chunkCull = Boolean(chunkCull);
+    this.chunkMask = null;
     this.clips = definitions.map(clip => {
       if (!clip || !Array.isArray(clip.frames) || clip.frames.length === 0 ||
           clip.frames.some(name => typeof name !== 'string' || !renderer.atlas.textures.has(name))) {
@@ -37,6 +41,7 @@ export class PixiSwarmLayer {
       });
       return { frames, fps, loop: clip.loop !== false, radius: Math.max(...frames.map(frame => frame.radius)) };
     });
+    this.maxClipRadius = this.clips.reduce((maximum, clip) => Math.max(maximum, clip.radius), 0);
     const hasMutableTextures = this.clips.some(clip => clip.frames.some(frame => frame.texture.dynamic || frame.white.dynamic));
     this.dynamicUvs = hasMutableTextures || this.clips.some(clip => clip.frames.length > 1);
     this.dynamicRotation = this.syncRotation;
@@ -71,10 +76,34 @@ export class PixiSwarmLayer {
     const worldScale = this.worldScale, offsetX = this.offsetX, offsetY = this.offsetY;
     const renderScale = this.scale, cull = this.cull, syncRotation = this.syncRotation, flipByDirection = this.flipByDirection;
     const dynamicUvs = this.dynamicUvs, dynamicRotation = this.dynamicRotation, dynamicVertices = this.dynamicVertices;
+    const wordCount = (count + 31) >>> 5;
+    let candidateMask = null;
+    if (cull && this.chunkCull && count >= MIN_CHUNK_CULL_UNITS && worldScale > 0 &&
+        typeof swarm.writeChunkCandidateMask === 'function') {
+      if (!this.chunkMask || this.chunkMask.length < wordCount) {
+        this.chunkMask = new Uint32Array(Math.max(wordCount, (this.chunkMask?.length ?? 0) * 2));
+      }
+      // Expand the coarse query slightly for the round trip between coordinate spaces.
+      const padX = Math.max(1, Math.abs(left), Math.abs(right), Math.abs(offsetX)) * Number.EPSILON * 16 / worldScale;
+      const padY = Math.max(1, Math.abs(top), Math.abs(bottom), Math.abs(offsetY)) * Number.EPSILON * 16 / worldScale;
+      if (swarm.writeChunkCandidateMask(
+        (left - offsetX) / worldScale - padX, (top - offsetY) / worldScale - padY,
+        (right - offsetX) / worldScale + padX, (bottom - offsetY) / worldScale + padY,
+        this.maxClipRadius * Math.abs(renderScale) / worldScale, this.chunkMask,
+      )) candidateMask = this.chunkMask;
+    }
+    let word = 0;
+    let slots = 0;
     let staticDirty = false;
     let used = 0;
-    for (let i = 0; i < count; i++) {
-      const id = activeIds[i], x = positionsX[id] * worldScale + offsetX;
+    for (let i = 0; i < count;) {
+      if (candidateMask) {
+        while (slots === 0 && word < wordCount) slots = candidateMask[word++];
+        if (slots === 0) break;
+        i = (word - 1) * 32 + 31 - Math.clz32(slots & -slots);
+        slots &= slots - 1;
+      }
+      const id = activeIds[i++], x = positionsX[id] * worldScale + offsetX;
       const y = positionsY[id] * worldScale + offsetY;
       const clip = singleClip ?? clips[(animClips?.[id] ?? 0) % clips.length];
       const size = (scales?.[id] ?? 1) * renderScale;
