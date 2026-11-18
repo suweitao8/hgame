@@ -4,6 +4,7 @@ import { createArenaSim } from './sim/arena.js';
 import { TIER_BUDGET, CONFIG } from './sim/config.js';
 import { rayBoxes } from './sim/collide.js';
 import { recordRun, loadBest } from './meta.js';
+import { createMissionView } from './mission-view.js';
 
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
@@ -83,6 +84,7 @@ CONFIG.obstacles.forEach((b, i) => {
   const m = new THREE.Mesh(new THREE.BoxGeometry(b.hx * 2, b.h, b.hz * 2), new THREE.MeshStandardMaterial({ color: hues[i % hues.length], roughness: 0.7 }));
   m.position.set(b.x, b.h / 2, b.z); m.castShadow = m.receiveShadow = true; world.add(m);
 });
+const missionView = createMissionView(THREE, world, CONFIG.mission);
 
 // Player: capsule body + nose (shows facing) + spin ring.
 const hero = new THREE.Group();
@@ -134,16 +136,32 @@ canvas.addEventListener('click', () => { if (!drag || drag.moved < 6) clickSpin 
 
 // ---- HUD ----
 const el = id => document.getElementById(id);
-const hud = { hp: el('hp').firstElementChild, stats: el('stats'), gameover: el('gameover'), result: el('result') };
+const hud = {
+  hp: el('hp').firstElementChild, stats: el('stats'), objectives: el('objectives'),
+  gameover: el('gameover'), outcome: el('outcome'), result: el('result'),
+};
 el('debug').hidden = !debug;
+let shownBeacons = -1;
 function syncHud() {
-  const { player, state } = sim;
+  const { player, state, mission } = sim;
   hud.hp.style.transform = `scaleX(${player.hp / CONFIG.player.hp})`;
-  const fps = app.services.diagnostics?.snapshot().fps;
+  if (shownBeacons !== mission.chargedCount) {
+    shownBeacons = mission.chargedCount;
+    hud.objectives.textContent = '◆'.repeat(shownBeacons) + '◇'.repeat(mission.charged.length - shownBeacons);
+  }
   hud.stats.textContent = `${state.time.toFixed(0)}s   ✦ ${state.kills}`;
-  if (debug) el('debug').textContent = `${sim.en.count}/${sim.cap} enemies   ${sim.tier}   ${fps?.toFixed(0) ?? 0} fps`;
+  if (debug) {
+    const fps = app.services.diagnostics?.snapshot().fps;
+    el('debug').textContent = `${sim.en.count}/${sim.cap} enemies   ${sim.tier}   ${fps?.toFixed(0) ?? 0} fps`;
+  }
   if (state.over && hud.gameover.hidden) {
-    if (!saved) { saved = true; const r = recordRun(save, { time: state.time, kills: state.kills, level: 1 }); best = r.best; hud.result.textContent = `✦ ${state.kills} · ${state.time.toFixed(1)}s${r.record ? ' ★' : ''}`; }
+    hud.outcome.textContent = state.outcome === 'victory' ? '撤离成功' : '失守';
+    if (!saved) {
+      saved = true;
+      const run = recordRun(save, { time: state.time, kills: state.kills, level: 1, outcome: state.outcome });
+      best = run.best;
+      hud.result.textContent = `✦ ${state.kills} · ${state.time.toFixed(1)}s${run.record ? ' ★' : ''}`;
+    }
     hud.gameover.hidden = false;
   }
 }
@@ -169,11 +187,12 @@ function syncView(dt) {
     enemyMesh.setColorAt(i, flashLeft[i] > 0 ? flash : kindColor[en.kind[i]]);
   }
   enemyMesh.instanceMatrix.needsUpdate = true; enemyMesh.instanceColor.needsUpdate = true;
+  missionView.sync(sim.mission, p, sim.state);
   arm.applyToCamera(renderer.camera, dt, { x: p.x, y: p.y, z: p.z });
 }
 
 class Driver extends Component {
-  onDestroy() { lifetime.abort(); touch.dispose(); el('restart').onclick = null; }
+  onDestroy() { lifetime.abort(); touch.dispose(); missionView.dispose(); el('restart').onclick = null; }
   fixedUpdate(dt) {
     arcade.update(dt);
     const p1 = arcade.p1;
@@ -200,6 +219,8 @@ app.start();
 window.__arena = { app, sim, renderer, arm };
 window.__hgameState = () => ({ phase: sim.state.over ? 'over' : 'playing', tick: sim.state.tick,
   time: sim.state.time, kills: sim.state.kills, enemies: sim.en.count,
+  outcome: sim.state.outcome,
+  mission: { ...sim.mission, charged: Array.from(sim.mission.charged), exitOpen: sim.mission.chargedCount === CONFIG.mission.beacons.length },
   player: { x: sim.player.x, y: sim.player.y, z: sim.player.z, hp: sim.player.hp }, best: { ...best },
   running: app.running, disposed: app.disposed, scheduler: app.stats });
 canvas.dataset.engineReady = 'true';

@@ -20,6 +20,16 @@ export const CONFIG = Object.freeze({
     { x: 10, z: 9, hx: 2.2, hz: 2.2, h: 1.6 },
     { x: -13, z: -3, hx: 0.8, hz: 0.8, h: 3.2 },
   ]),
+  mission: Object.freeze({
+    beacons: Object.freeze([
+      Object.freeze({ x: -9, z: -6 }),
+      Object.freeze({ x: 10, z: 2 }),
+    ]),
+    exit: Object.freeze({ x: 0, z: 14 }),
+    radius: 2,
+    dangerRadius: 2.65,
+    holdSeconds: 2,
+  }),
   player: { radius: 0.45, speed: 6.5, accel: 40, jumpSpeed: 8.2, gravity: 24, stepUp: 0.35, hp: 100,
     invuln: 0.6, spinCooldown: 0.9, spinRadius: 3, spinKnock: 9, spinDamage: 1, spinTime: 0.25 },
   enemy: { radius: 0.5, speed: 2.4, speedGain: 0.012, speedMax: 4.2, hp: 2, contactDamage: 9, separation: 3.2,

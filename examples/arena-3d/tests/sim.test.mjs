@@ -69,9 +69,78 @@ test('enemies chase, deal contact damage with invulnerability frames, and end th
     if (sim.player.hp < last) { assert.ok(last - sim.player.hp === CONFIG.enemy.contactDamage || sim.player.hp === 0); sawIframes ||= sim.player.invuln > 0; last = sim.player.hp; }
   }
   assert.ok(sim.state.over && sim.player.hp === 0);
+  assert.equal(sim.state.outcome, 'defeat');
   assert.ok(sawIframes);
   const t = sim.state.tick; sim.step(1 / 60, {});
   assert.equal(sim.state.tick, t, 'sim frozen after game over');
+});
+
+test('beacons charge in either order and only the unlocked exit ends the run', () => {
+  for (const order of [[0, 1], [1, 0]]) {
+    const sim = make({ godMode: true, maxEnemies: 0 });
+    const { beacons, exit, holdSeconds } = CONFIG.mission;
+    const place = point => { sim.player.x = point.x; sim.player.z = point.z; };
+    const charge = () => {
+      for (let i = 0; i <= Math.ceil(holdSeconds * 60); i++) sim.step();
+    };
+    place(exit); sim.step();
+    assert.equal(sim.state.over, false, 'the exit starts locked');
+
+    place(beacons[order[0]]); charge();
+    assert.equal(sim.mission.chargedCount, 1);
+    place(exit); sim.step();
+    assert.equal(sim.state.over, false, 'both beacons are required');
+
+    place(beacons[order[1]]); charge();
+    assert.equal(sim.mission.chargedCount, 2);
+    assert.equal(sim.state.over, false, 'charging does not complete the exit');
+    place(exit); sim.step();
+    assert.equal(sim.state.outcome, 'victory');
+    assert.equal(sim.state.over, true);
+    const tick = sim.state.tick;
+    sim.step();
+    assert.equal(sim.state.tick, tick);
+  }
+});
+
+test('nearby enemies interrupt beacon charging and leaving clears unfinished progress', () => {
+  const sim = make({ godMode: true, maxEnemies: 1 });
+  const [beacon] = CONFIG.mission.beacons;
+  sim.player.x = beacon.x; sim.player.z = beacon.z;
+  for (let i = 0; i < 15; i++) sim.step();
+  const progress = sim.mission.progress;
+  assert.ok(progress > 0);
+
+  sim.en.count = 1;
+  sim.en.x[0] = beacon.x + CONFIG.mission.dangerRadius - 0.3;
+  sim.en.z[0] = beacon.z;
+  sim.en.hp[0] = 2;
+  sim.step();
+  assert.equal(sim.mission.blocked, true);
+  assert.equal(sim.mission.progress, progress);
+  sim.step(1 / 60, { attack: true });
+  for (let i = 0; i < 20 && sim.mission.blocked; i++) sim.step();
+  assert.equal(sim.mission.blocked, false, 'knockback opens a charging window');
+  assert.ok(sim.mission.progress > progress);
+
+  sim.player.x = 0; sim.player.z = 6;
+  sim.step();
+  assert.equal(sim.mission.active, -1);
+  assert.equal(sim.mission.progress, 0);
+  assert.equal(sim.mission.chargedCount, 0);
+});
+
+test('a lethal hit on the exit takes precedence over victory', () => {
+  const sim = make();
+  const { exit } = CONFIG.mission;
+  sim.mission.charged.fill(1);
+  sim.mission.chargedCount = sim.mission.charged.length;
+  sim.player.x = exit.x; sim.player.z = exit.z;
+  sim.player.hp = 1;
+  sim.en.count = 1;
+  sim.en.x[0] = exit.x; sim.en.z[0] = exit.z;
+  sim.step();
+  assert.equal(sim.state.outcome, 'defeat');
 });
 
 test('stays inside the arena and never inside an obstacle over a long run', () => {
@@ -103,4 +172,17 @@ test('best-run save store keeps maxima', () => {
   const a = recordRun(store, { time: 30, kills: 5, level: 1 });
   assert.equal(a.best.runs, 1);
   assert.deepEqual(loadBest({ get: () => a.best }).kills, 5);
+});
+
+test('victory count and fastest extraction survive older saved records', () => {
+  let saved = { time: 30, kills: 10, level: 1, runs: 2 };
+  const store = { get: () => saved, set(key, value) { saved = value; } };
+  assert.equal(loadBest(store).wins, 0);
+  recordRun(store, { time: 24, kills: 5, level: 1, outcome: 'victory' });
+  recordRun(store, { time: 12, kills: 2, level: 1, outcome: 'defeat' });
+  recordRun(store, { time: 21, kills: 6, level: 1, outcome: 'victory' });
+  assert.equal(loadBest(store).wins, 2);
+  assert.equal(loadBest(store).fastestWin, 21);
+  assert.equal(loadBest(store).kills, 10);
+  assert.equal(loadBest(store).runs, 5);
 });

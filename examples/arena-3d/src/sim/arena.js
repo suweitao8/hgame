@@ -7,11 +7,18 @@ import { pushCircleOutOfBox, circleOverlapsBox } from './collide.js';
 export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config = CONFIG, godMode = false } = {}) {
   const budget = TIER_BUDGET[tier] ?? TIER_BUDGET.medium;
   const cap = maxEnemies ?? budget.maxEnemies;
-  const { player: P, enemy: E, arenaHalf, obstacles } = config;
+  const { player: P, enemy: E, arenaHalf, obstacles, mission: objective } = config;
   const rng = createRng(seed);
   const tmp = { x: 0, z: 0 };
 
-  const state = { tick: 0, time: 0, kills: 0, spawned: 0, over: false, spawnTimer: 1, wave: 0 };
+  const state = { tick: 0, time: 0, kills: 0, spawned: 0, over: false, outcome: null, spawnTimer: 1, wave: 0 };
+  const mission = objective && {
+    charged: new Uint8Array(objective.beacons.length),
+    chargedCount: 0,
+    active: -1,
+    progress: 0,
+    blocked: false,
+  };
   const pl = {
     x: 0, y: 0, z: 6, vx: 0, vz: 0, vy: 0, yaw: 0, hp: P.hp, grounded: true,
     invuln: 0, spinCd: 0, spinT: 0, spins: 0, jumps: 0,
@@ -101,8 +108,8 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     const sep2 = E.separation * E.separation * 0.1;
     for (let i = 0; i < en.count; i++) {
       let dx = pl.x - en.x[i], dz = pl.z - en.z[i];
-      const d = Math.hypot(dx, dz) || 1;
-      let ax = dx / d, az = dz / d;
+      const d = Math.hypot(dx, dz);
+      let ax = dx / (d || 1), az = dz / (d || 1);
       for (let j = 0; j < en.count; j++) {
         if (j === i) continue;
         const sx = en.x[i] - en.x[j], sz = en.z[i] - en.z[j], s2 = sx * sx + sz * sz;
@@ -116,8 +123,44 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
       // Contact damage while the player is not airborne above the enemy.
       if (!godMode && pl.invuln === 0 && pl.y < 1.1 && d < P.radius + E.radius + 0.05) {
         pl.hp -= E.contactDamage; pl.invuln = P.invuln;
-        if (pl.hp <= 0) { pl.hp = 0; state.over = true; }
+        if (pl.hp <= 0) { pl.hp = 0; state.over = true; state.outcome = 'defeat'; }
       }
+    }
+  }
+
+  function within(x, z, point, radius) {
+    const dx = x - point.x, dz = z - point.z;
+    return dx * dx + dz * dz <= radius * radius;
+  }
+
+  function stepMission(dt) {
+    let active = -1;
+    if (pl.grounded) {
+      active = objective.beacons.findIndex((beacon, i) =>
+        !mission.charged[i] && within(pl.x, pl.z, beacon, objective.radius));
+    }
+    if (active !== mission.active) mission.progress = 0;
+    mission.active = active;
+    mission.blocked = false;
+    if (active >= 0) {
+      const beacon = objective.beacons[active];
+      for (let i = 0; i < en.count; i++) {
+        if (!within(en.x[i], en.z[i], beacon, objective.dangerRadius)) continue;
+        mission.blocked = true;
+        return;
+      }
+      mission.progress += dt;
+      if (mission.progress + 1e-9 >= objective.holdSeconds) {
+        mission.charged[active] = 1;
+        mission.chargedCount++;
+        mission.active = -1;
+        mission.progress = 0;
+      }
+    }
+    if (mission.chargedCount === objective.beacons.length && pl.grounded &&
+        within(pl.x, pl.z, objective.exit, objective.radius)) {
+      state.over = true;
+      state.outcome = 'victory';
     }
   }
 
@@ -132,6 +175,7 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
       spawnEnemy();
     }
     stepEnemies(dt);
+    if (mission && !state.over) stepMission(dt);
   }
 
   function checksum() {
@@ -141,8 +185,14 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     h.number(en.count);
     h.bytes(en.x.subarray(0, en.count)); h.bytes(en.z.subarray(0, en.count)); h.bytes(en.hp.subarray(0, en.count));
     h.number(rng.state);
+    if (mission) {
+      h.bytes(mission.charged);
+      h.number(mission.active);
+      h.number(mission.progress);
+      h.number(state.outcome === 'victory' ? 1 : 0);
+    }
     return h.hex();
   }
 
-  return { config, state, player: pl, en, cap, tier, step, checksum, supportHeight };
+  return { config, state, mission, player: pl, en, cap, tier, step, checksum, supportHeight };
 }

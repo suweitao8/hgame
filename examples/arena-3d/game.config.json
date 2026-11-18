@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "arena-3d",
-  "name": "arena-3d",
+  "name": "信标撤离",
   "version": "0.1.0",
   "entry": "index.html",
   "renderer": "threejs",
