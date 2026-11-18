@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep off-camera Three.js mesh components eligible to cast shadows. Apply optional camera culling to other meshes at draw time using their world-space geometry bounds.
+
 - Allow static scenes to reuse their built-in sun's shadow map. Refresh cached maps on scene edits, camera layer changes, quality transitions, context restoration or explicit requests.
 
 - Clamp directional shadow atlas sizes to the GPU limit and refresh manually updated shadows after quality changes, frustum refits and WebGL context restoration.

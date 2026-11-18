@@ -193,8 +193,8 @@ export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, c
  * @property {boolean} [castShadow=false]
  * @property {boolean} [receiveShadow=false]
  * @property {boolean} [interpolate=false] Use render-alpha interpolated transforms.
- * @property {boolean} [cull=false] Enable frustum culling via the adapter.
- * @property {number} [cullRadius=0] Culling sphere radius (0 = derived), world units.
+ * @property {boolean} [cull=false] Enable adapter distance and occlusion culling for meshes that do not contribute to shadow maps.
+ * @property {number} [cullRadius=0] Minimum culling sphere radius in world units (0 = geometry bounds).
  */
 /**
  * Minimal renderer-owned 3D mesh component (not a physics body).
@@ -647,11 +647,11 @@ export type ThreeMeshComponentOptions = {
      */
     interpolate?: boolean | undefined;
     /**
-     * Enable frustum culling via the adapter.
+     * Enable adapter distance and occlusion culling for meshes that do not contribute to shadow maps.
      */
     cull?: boolean | undefined;
     /**
-     * Culling sphere radius (0 = derived), world units.
+     * Minimum culling sphere radius in world units (0 = geometry bounds).
      */
     cullRadius?: number | undefined;
 };

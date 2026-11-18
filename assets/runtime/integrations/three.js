@@ -965,8 +965,8 @@ export function createThreeAdapter({
  * @property {boolean} [castShadow=false]
  * @property {boolean} [receiveShadow=false]
  * @property {boolean} [interpolate=false] Use render-alpha interpolated transforms.
- * @property {boolean} [cull=false] Enable frustum culling via the adapter.
- * @property {number} [cullRadius=0] Culling sphere radius (0 = derived), world units.
+ * @property {boolean} [cull=false] Enable adapter distance and occlusion culling for meshes that do not contribute to shadow maps.
+ * @property {number} [cullRadius=0] Minimum culling sphere radius in world units (0 = geometry bounds).
  */
 
 /**
@@ -1003,22 +1003,36 @@ export function createThreeMeshComponent(THREE, {
       this.mesh.castShadow = Boolean(castShadow);
       this.mesh.receiveShadow = Boolean(receiveShadow);
       this._scratchMat4 = THREE.Matrix4 ? new THREE.Matrix4() : null;
-      this._effectiveRadius = cullRadius > 0 ? cullRadius : Math.max(0.5, Math.max(size, height, radius * 2) * 0.9);
+      if (cull) this.installViewCulling();
       this.updateTransform();
+    }
+    installViewCulling() {
+      const mesh = this.mesh;
+      const nativeIntersects = mesh.intersectsFrustum;
+      if (typeof nativeIntersects !== 'function' || !THREE.Sphere) return;
+      const bounds = new THREE.Sphere();
+      mesh.intersectsFrustum = (frustum) => {
+        if (!nativeIntersects.call(mesh, frustum)) return false;
+        // Shadow passes use the same mesh hook with the light's frustum.
+        // Preserve native per-pass visibility for every shadow contributor.
+        const adapter = this.scene?.app?.renderer;
+        const shadowType = adapter?.renderer?.shadowMap?.type;
+        const contributesToShadow = mesh.castShadow ||
+          (mesh.receiveShadow && THREE.VSMShadowMap !== undefined && shadowType === THREE.VSMShadowMap);
+        const culler = adapter?.culler3d;
+        if (contributesToShadow || !culler?.frustum?.hasPlanes) return true;
+
+        const localSphere = mesh.geometry?.boundingSphere;
+        if (!localSphere || !mesh.matrixWorld) return true;
+        bounds.copy(localSphere).applyMatrix4(mesh.matrixWorld);
+        if (!Number.isFinite(bounds.radius)) return true;
+        const { x, y, z } = bounds.center;
+        return culler.testSphere(x, y, z, Math.max(bounds.radius, cullRadius > 0 ? cullRadius : 0));
+      };
     }
     onEnable() { this.scene?.app?.renderer?.add(this.scene, this.mesh); }
     start() { this.updateTransform(); }
-    lateUpdate() {
-      this.updateTransform();
-      if (cull && this.mesh?.position) {
-        const culler = this.scene?.app?.renderer?.culler3d;
-        if (culler && culler.frustum?.hasPlanes) {
-          this.mesh.visible = culler.testSphere(
-            this.mesh.position.x, this.mesh.position.y, this.mesh.position.z, this._effectiveRadius,
-          );
-        }
-      }
-    }
+    lateUpdate() { this.updateTransform(); }
     updateTransform() {
       if (!this.mesh || !this.entity) return;
       const app = this.scene?.app;
