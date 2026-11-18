@@ -72,3 +72,59 @@ setTimeout(()=>{ const until=performance.now()+3500; while(performance.now()<unt
   assert.ok(report.actualDurationMs >= 3000);
   assert.ok(report.problems.some(problem => problem.includes('long frames')));
 });
+
+test('playtest scenarios report named input and reload checks with a failing outcome', t => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-scenario-'));
+  t.after(() => rmSync(game, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+  writeFileSync(path.join(game, 'index.html'), `<!doctype html><canvas id="game" width="64" height="64"></canvas><script>
+const canvas = document.querySelector('canvas');
+const ctx = canvas.getContext('2d');
+function draw() {
+  ctx.clearRect(0,0,64,64);
+  ctx.fillStyle='#f80';
+  ctx.fillRect(localStorage.score ? 32 : 0,0,32,32);
+}
+draw();
+addEventListener('keydown', event => { if (event.code === 'KeyD') { localStorage.score = '1'; draw(); } });
+window.__hgameState = () => ({ score: Number(localStorage.score ?? 0) });
+</script>`);
+  const scenario = path.join(game, 'scenario.mjs');
+  writeFileSync(scenario, `import assert from 'node:assert/strict';
+export async function run({ page, readState, checkpoint }) {
+  await page.keyboard.press('d');
+  await checkpoint('keyboard scores', async () => assert.equal((await readState()).score, 1));
+  if (page.url().includes('navigate=1')) await page.reload();
+}
+export async function verify({ page, readState, checkpoint }) {
+  await page.reload();
+  await checkpoint('reload retains score', async () => {
+    assert.equal((await readState()).score, page.url().includes('wrong=1') ? 2 : 1);
+  });
+}`);
+  const run = (query = '') => {
+    const result = spawnSync(process.execPath, [path.join(root, 'scripts/playtest.mjs'), game,
+      '--scenario', scenario, '--query', query], { encoding: 'utf8', timeout: 25000, windowsHide: true });
+    assert.ifError(result.error);
+    return { status: result.status, report: JSON.parse(result.stdout) };
+  };
+  const passed = run();
+  assert.equal(passed.status, 0, JSON.stringify(passed.report));
+  assert.deepEqual(passed.report.checkpoints.map(check => [check.name, check.ok]),
+    [['keyboard scores', true], ['reload retains score', true]]);
+  assert.equal(passed.report.stateBefore.score, 0);
+  assert.equal(passed.report.stateAfter.score, 1);
+  assert.ok(passed.report.frameStats.measuredMs > 0);
+
+  const failed = run('wrong=1');
+  assert.equal(failed.status, 1, JSON.stringify(failed.report));
+  assert.equal(failed.report.checkpoints.at(-1).name, 'reload retains score');
+  assert.equal(failed.report.checkpoints.at(-1).ok, false);
+  assert.ok(failed.report.problems.some(problem => problem.includes('reload retains score')));
+  assert.equal(failed.report.stateAfter.score, 1);
+
+  const navigated = run('navigate=1');
+  assert.equal(navigated.status, 1, JSON.stringify(navigated.report));
+  assert.ok(navigated.report.problems.some(problem => /document.*verify/i.test(problem)));
+  assert.equal(navigated.report.frameStats, undefined);
+});

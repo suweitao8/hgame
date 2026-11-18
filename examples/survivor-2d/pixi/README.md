@@ -14,7 +14,7 @@ npm --prefix <game-dir> ci
 node examples/survivor-2d/pixi/build.mjs <game-dir>
 node examples/survivor-2d/pixi/simulate.mjs
 node examples/survivor-2d/pixi/simulate.mjs --storm
-node examples/survivor-2d/pixi/playtest.mjs
+npm run playtest -- ember-watch --webasset --scenario examples/survivor-2d/pixi/playtest.mjs --ready '#game[data-engine-ready=true]'
 ```
 
 For a source checkout without the shared media store, add `--procedural` to the build command to use the starter's procedural atlas. The standard build restores the authored characters using the manifest and `HGAME_ASSET_STORE`. To replace a character, update its catalog path and refresh the manifest with the asset CLI.
