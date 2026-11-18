@@ -26,29 +26,28 @@ export class Renderer2D {
     this.mount = mount;
     const { width, height, resolution } = this.planViewport();
     const options = { width, height, resolution, autoDensity: true, backgroundColor: 0x0b101b, autoStart: false };
-    try {
-      await this.app.init({ ...options, preference: ['webgpu'] });
-    } catch (gpuError) {
-      // Pixi detects unsupported backends but does not retry if the selected
-      // renderer fails during initialization. Retry with a fresh application.
+    // Pixi does not retry the next backend if the selected renderer fails
+    // during initialization. Try each backend with a fresh application.
+    const errors = [];
+    let initialized = false;
+    for (const backend of ['webgpu', 'webgl', 'canvas']) {
       try {
-        if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
-        else this.app.stage?.destroy({ children: true });
-      } catch (cleanupError) {
-        console.warn('Failed to clean up the initial Pixi renderer:', cleanupError);
-      }
-      this.app = new Application();
-      try {
-        await this.app.init({ ...options, preference: ['webgl', 'canvas'] });
-      } catch (fallbackError) {
-        const errors = [gpuError, fallbackError];
+        await this.app.init({ ...options, preference: [backend] });
+        initialized = true;
+        break;
+      } catch (error) {
+        errors.push(error);
         try {
           if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
           else this.app.stage?.destroy({ children: true });
-        } catch (cleanupError) { errors.push(cleanupError); }
-        throw new AggregateError(errors, 'Unable to initialize a Pixi renderer');
+        } catch (cleanupError) {
+          errors.push(cleanupError);
+          console.warn('Failed to clean up a Pixi renderer:', cleanupError);
+        }
+        if (backend !== 'canvas') this.app = new Application();
       }
     }
+    if (!initialized) throw new AggregateError(errors, 'Unable to initialize a Pixi renderer');
     this.app.ticker.stop();
     this.app.canvas.id = 'game';
     this.app.canvas.setAttribute('aria-label', '游戏画面');
