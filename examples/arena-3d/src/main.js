@@ -6,6 +6,7 @@ import { rayBoxes } from './sim/collide.js';
 import { recordRun, loadBest } from './meta.js';
 import { createMissionView } from './mission-view.js';
 import { loadRunnerView } from './runner-view.js';
+import { arenaCue } from './feedback.js';
 
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
@@ -52,10 +53,28 @@ const model3d = createModel3DProvider({ THREE, GLTFLoader, projectBaseUrl: locat
 await app.installFeatures({ model3d });
 const save = app.services.save ?? createSaveStore({ gameId: gameConfig.id });
 const trace = debug ? app.platform.diagnostics : null;
+const audio = app.services.audio;
+let audioContext;
+if (audio?.available) {
+  function unlockAudio(event) {
+    if (!event.isTrusted || event.repeat || audioContext?.state === 'running') return;
+    audio.unlock().then(context => { audioContext = context; }).catch(() => {});
+  }
+  for (const event of ['keydown', 'pointerdown', 'pointerup']) {
+    window.addEventListener(event, unlockAudio, { signal: lifetime.signal });
+  }
+}
+
+function onEvent(event) {
+  trace?.recordEvent(event);
+  if (audioContext?.state !== 'running') return;
+  const cue = arenaCue(event, CONFIG.mission.beacons.length);
+  if (cue) audio.playSynth(cue, { volume: 0.54 });
+}
 
 // The enemy cap is part of the sim config, so it is fixed per run from the tier we start in.
 const tierNow = () => renderer.qualityController?.state.tier ?? 'high';
-const newSim = s => createArenaSim({ seed: s, tier: tierNow(), godMode: god, onEvent: trace?.recordEvent });
+const newSim = s => createArenaSim({ seed: s, tier: tierNow(), godMode: god, onEvent });
 let sim = newSim(seed);
 let best = loadBest(save);
 let saved = false;

@@ -11,6 +11,8 @@ node --test examples/arena-3d/tests/*.test.mjs
 
 Controls: WASD/arrows move (camera-relative), Space jump, K/click spin, Q/E or mouse-drag orbit, U restart. QA: `?tier=low|medium|high&seed=N&god=1`.
 
+The first trusted input enables Web Audio. The shared HGame mixer synthesizes different cues for a missed spin, a hit, damage, a charged beacon, the gate opening and extraction. These cues require no extra downloads.
+
 The rig and five gameplay clips are authored in `tools/build-runner.py`. Regenerate the self-contained glTF with Blender 5.
 
 ```powershell
