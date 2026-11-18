@@ -11,10 +11,20 @@ const canvasExplosionOptions = explosionOptions.map((options, index) => Object.f
 }));
 
 export class JuiceSystem {
-  constructor(renderer, capacity = 10000) {
+  constructor(renderer, capacity = 10000, { maxShockwaveFilters = 3 } = {}) {
+    if (!Number.isInteger(maxShockwaveFilters) || maxShockwaveFilters < 0 || maxShockwaveFilters > 16) {
+      throw new RangeError('maxShockwaveFilters must be an integer from 0 to 16');
+    }
     this.renderer = renderer; this.trauma = 0;
     this.hitStop = 0; this.simTimeScale = 1; this.clock = 0; this.active = 0; this.visibleParticles = 0;
     this.effects = []; this.liveParticles = []; this.shockwaves = new Set(); this.hitTweens = new Map();
+    this.maxShockwaveFilters = maxShockwaveFilters;
+    this.freeShockwaves = [];
+    this.shockwaveChannel = {
+      owner: this,
+      bloom: false,
+      beforeRender: () => this.syncShockwaveCenters(),
+    };
     this.removedParticles = new Set(); this.pendingParticles = []; this.batchDepth = 0;
     this.particles = Array.from({ length: capacity }, () => {
       const particle = new Particle({ texture: renderer.atlas.get('particle_soft'), x: 0, y: 0, alpha: 0 });
@@ -33,16 +43,29 @@ export class JuiceSystem {
   triggerHitStop(duration = 0.045, scale = 0.04) { this.hitStop = Math.max(this.hitStop, duration); this.simTimeScale = scale; }
   addTrauma(amount = 0.4) { this.trauma = Math.min(1, this.trauma + amount); }
   spawnShockwave(x, y) {
-    if (this.renderer.isCanvas) {
+    if (this.renderer.isCanvas || this.shockwaves.size >= this.maxShockwaveFilters) {
       this.burstParticles(x, y, 24, { tex: 'particle_spark', speedMin: 100, speedMax: 180, lifeMin: 0.2, lifeMax: 0.45 });
       return;
     }
-    const center = this.renderer.worldToScreen(x, y);
-    const filter = new ShockwaveFilter({ center, time: 0 });
-    this.shockwaves.add(filter); this.syncShockwaveFilters();
+    let wave = this.freeShockwaves.pop();
+    if (!wave) {
+      const filter = new ShockwaveFilter({ center: { x: 0, y: 0 } });
+      filter.resolution = 'inherit';
+      wave = { filter, x: 0, y: 0 };
+    }
+    wave.x = x;
+    wave.y = y;
+    wave.filter.time = 0;
+    this.shockwaves.add(wave);
+    this.syncShockwaveFilters();
   }
   syncShockwaveFilters() {
-    this.renderer.setEffectFilters([...this.shockwaves]);
+    this.renderer.setEffectFilters(Array.from(this.shockwaves, wave => wave.filter), this.shockwaveChannel);
+  }
+  syncShockwaveCenters() {
+    for (const wave of this.shockwaves) {
+      this.renderer.worldToScreen(wave.x, wave.y, wave.filter.center);
+    }
   }
   burstParticles(x, y, count, opts = {}) {
     if (!Number.isSafeInteger(count) || count < 0) throw new RangeError('Particle count must be a non-negative safe integer');
@@ -109,9 +132,13 @@ export class JuiceSystem {
       if (tween.elapsed >= 0.22) this.hitTweens.delete(id);
     }
     let filtersChanged = false;
-    for (const filter of this.shockwaves) {
-      filter.time += dt;
-      if (filter.time >= 0.45) { this.shockwaves.delete(filter); filter.destroy(); filtersChanged = true; }
+    for (const wave of this.shockwaves) {
+      wave.filter.time += dt;
+      if (wave.filter.time >= 0.45) {
+        this.shockwaves.delete(wave);
+        this.freeShockwaves.push(wave);
+        filtersChanged = true;
+      }
     }
     if (filtersChanged) this.syncShockwaveFilters();
     this.trauma = Math.max(0, this.trauma - dt * 1.5);
@@ -156,8 +183,10 @@ export class JuiceSystem {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    this.renderer.setEffectFilters([]);
-    for (const filter of this.shockwaves) filter.destroy();
+    this.renderer.setEffectFilters([], this.shockwaveChannel);
+    for (const wave of this.shockwaves) wave.filter.destroy();
+    for (const wave of this.freeShockwaves) wave.filter.destroy();
+    this.freeShockwaves.length = 0;
     this.shockwaves.clear(); this.hitTweens.clear();
     for (const item of this.liveParticles) this.removedParticles.add(item.particle);
     this.removeMarkedParticles();

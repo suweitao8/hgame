@@ -263,7 +263,7 @@ const pixiStarterModules = {
     { kind: 'function', name: 'loadRuntime', signature: '(module)', summary: 'Import an HGame runtime module by its path, using the starter host configuration.' },
     { kind: 'function', name: 'readGameJson', signature: '(path)', summary: 'Load a JSON file relative to the game document and report HTTP errors.' },
   ] },
-  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio, qualityController, qualityPresets}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'resetQualityMeasurements', 'setQuality', 'setBloom', 'createSwarmLayer', 'createTilemapLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
+  'src/engine/Renderer2D.js': { exports: [{ kind: 'class', name: 'Renderer2D', signature: 'new(atlas, {maxPixels, maxPixelRatio, qualityController, qualityPresets}={})', summary: 'PixiJS starter renderer and camera; takes ownership of the atlas.', members: ['init', 'resize', 'resetQualityMeasurements', 'setQuality', 'setBloom', 'setEffectFilters', 'createSwarmLayer', 'createTilemapLayer', 'syncEntity', 'releaseEntity', 'update', 'screenToWorld', 'worldToScreen', 'render', 'dispose'] }] },
   'src/engine/ProceduralAtlas.js': { exports: [
     { kind: 'class', name: 'ProceduralAtlas', signature: 'new(size=1024)', summary: 'PixiJS shared atlas with optional white hit-flash frames.', members: ['register', 'registerImage', 'registerSheet', 'build', 'get', 'dispose'] },
     { kind: 'function', name: 'createDefaultGameAtlas', signature: '({playerImage, enemyImage, eliteImage, extraFrames, size}={})', summary: 'Create and build the PixiJS starter atlas.' },
@@ -271,7 +271,7 @@ const pixiStarterModules = {
   ] },
   'src/engine/PixiSwarmLayer.js': { exports: [{ kind: 'class', name: 'PixiSwarmLayer', signature: 'new(renderer, options)', summary: 'PixiJS adapter for an HGame CPU swarm; create with renderer.createSwarmLayer(options).', members: ['sync', 'dispose'] }] },
   'src/engine/PixiTilemapLayer.js': { exports: [{ kind: 'class', name: 'PixiTilemapLayer', signature: 'new(renderer, map, {frames, layer, chunkSize, maxCachedChunks, originX, originY})', summary: 'PixiJS atlas-backed HGame TileMap rendering; create with renderer.createTilemapLayer(map, options).', members: ['setTile', 'setTiles', 'refreshTile', 'update', 'dispose'] }] },
-  'src/engine/JuiceSystem.js': { exports: [{ kind: 'class', name: 'JuiceSystem', signature: 'new(renderer, capacity=10000)', summary: 'PixiJS starter hit effects, particles, shake and trails; dispose before the renderer.', members: ['triggerHitJuice', 'triggerHitStop', 'addTrauma', 'spawnShockwave', 'burstParticles', 'spawnExplosions', 'update', 'slash', 'dispose'] }] },
+  'src/engine/JuiceSystem.js': { exports: [{ kind: 'class', name: 'JuiceSystem', signature: 'new(renderer, capacity=10000, {maxShockwaveFilters=3}={})', summary: 'PixiJS starter hit effects, particles, shake and trails; dispose before the renderer.', members: ['triggerHitJuice', 'triggerHitStop', 'addTrauma', 'spawnShockwave', 'burstParticles', 'spawnExplosions', 'update', 'slash', 'dispose'] }] },
   'src/engine/InputAndAudio.js': { exports: [{ kind: 'class', name: 'InputAndAudio', signature: 'new(renderer, ui, audio, input)', summary: 'PixiJS demo input helper using HGame input and audio services.', members: ['getState', 'reset', 'unlock', 'play', 'dispose'] }] },
 };
 const moduleEntries = [

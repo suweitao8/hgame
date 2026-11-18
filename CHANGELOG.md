@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Anchor Pixi shockwaves in world space, pool and cap their GPU filters, and run bloom independently of distortion.
+
 - Add Pixi 2D quality presets to the game generator and adapt resolution from HGame frame timing by default.
 
 - Share Pixi startup and teardown across the bare, arena, and horde starters, including renderer cleanup when initialization fails.

@@ -21,6 +21,7 @@ export class Renderer2D {
     this.spritePool = [];
     this.swarmLayers = new Set();
     this.tilemapLayers = new Set();
+    this.effectChannels = new Map();
     this.camera = { x: 0, y: 0, targetX: 0, targetY: 0, zoom: 1, shakeX: 0, shakeY: 0 };
   }
   async init(mount) {
@@ -74,10 +75,12 @@ export class Renderer2D {
     this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, this.foregroundLayer, this.trailLayer, this.particleLayer);
     this.app.stage.addChild(this.worldRoot);
     this.bloom = new AdvancedBloomFilter({ threshold: 0.62, bloomScale: 0.4, brightness: 1, blur: 3 });
+    this.bloom.resolution = 'inherit';
     this.bloomEnabled = false;
-    this.effectFilters = [];
+    this.app.stage.filterArea = this.app.screen;
     this.applyFilters();
     this.viewport = { width, height, resolution };
+    this.syncCameraView();
     if (typeof ResizeObserver === 'function') {
       this.resizeObserver = new ResizeObserver(() => this.resize());
       this.resizeObserver.observe(mount);
@@ -100,6 +103,8 @@ export class Renderer2D {
     if (prev && prev.width === next.width && prev.height === next.height && prev.resolution === next.resolution) return false;
     this.app.renderer.resize(next.width, next.height, next.resolution);
     this.viewport = next;
+    this.app.stage.filterArea = this.app.screen;
+    this.syncCameraView();
     this.onResize?.();
     return true;
   }
@@ -127,13 +132,23 @@ export class Renderer2D {
     this.bloomEnabled = Boolean(enabled);
     this.applyFilters();
   }
-  setEffectFilters(filters) {
-    this.effectFilters = filters;
+  /** Set one owner's transient filters. An empty list removes that owner. */
+  setEffectFilters(filters, { owner = this, beforeRender = null, bloom = true } = {}) {
+    if (filters.length) this.effectChannels.set(owner, { filters, beforeRender, bloom });
+    else this.effectChannels.delete(owner);
     this.applyFilters();
   }
   applyFilters() {
-    const effects = this.effectFilters;
-    this.app.stage.filters = !this.isCanvas && (this.bloomEnabled || effects.length) ? [this.bloom, ...effects] : [];
+    const filters = [];
+    if (!this.isCanvas) {
+      let useBloom = this.bloomEnabled;
+      for (const effect of this.effectChannels.values()) {
+        filters.push(...effect.filters);
+        useBloom ||= effect.bloom;
+      }
+      if (useBloom) filters.unshift(this.bloom);
+    }
+    this.app.stage.filters = filters;
   }
   createSwarmLayer(options) {
     const layer = new PixiSwarmLayer(this, options);
@@ -218,13 +233,21 @@ export class Renderer2D {
   update(dt) {
     const c = this.camera, a = 1 - Math.exp(-10 * dt);
     c.x += (c.targetX - c.x) * a; c.y += (c.targetY - c.y) * a;
+    this.syncCameraView();
+    for (const entry of this.entityMap.values()) entry.flashTimer = Math.max(0, entry.flashTimer - dt);
+  }
+  syncCameraView() {
+    const c = this.camera;
     this.worldRoot.scale.set(c.zoom);
     this.worldRoot.position.set(this.app.screen.width / 2 - c.x * c.zoom + c.shakeX, this.app.screen.height / 2 - c.y * c.zoom + c.shakeY);
     for (const layer of this.tilemapLayers) layer.update();
-    for (const entry of this.entityMap.values()) entry.flashTimer = Math.max(0, entry.flashTimer - dt);
   }
   screenToWorld(x, y) { return { x: (x - this.app.screen.width / 2 - this.camera.shakeX) / this.camera.zoom + this.camera.x, y: (y - this.app.screen.height / 2 - this.camera.shakeY) / this.camera.zoom + this.camera.y }; }
-  worldToScreen(x, y) { return { x: (x - this.camera.x) * this.camera.zoom + this.app.screen.width / 2 + this.camera.shakeX, y: (y - this.camera.y) * this.camera.zoom + this.app.screen.height / 2 + this.camera.shakeY }; }
+  worldToScreen(x, y, out = { x: 0, y: 0 }) {
+    out.x = (x - this.camera.x) * this.camera.zoom + this.app.screen.width / 2 + this.camera.shakeX;
+    out.y = (y - this.camera.y) * this.camera.zoom + this.app.screen.height / 2 + this.camera.shakeY;
+    return out;
+  }
   /** @param {number | null} [frameIntervalMs] Pass null for redraws that do not advance the frame clock. */
   render(frameIntervalMs) {
     if (this.qualityController && frameIntervalMs !== null) {
@@ -236,6 +259,9 @@ export class Renderer2D {
         this.resetQualityMeasurements();
       }
       if (frameIntervalMs > 0 && this.qualityController.sampleFrame(frameIntervalMs)) this.resize();
+    }
+    if (!this.isCanvas) {
+      for (const channel of this.effectChannels.values()) channel.beforeRender?.();
     }
     this.app.renderer.render(this.app.stage);
   }
@@ -250,7 +276,7 @@ export class Renderer2D {
     const stage = this.app.stage;
     try {
       if (stage) stage.filters = [];
-      if (this.effectFilters) this.effectFilters.length = 0;
+      this.effectChannels.clear();
       this.bloom?.destroy();
       if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
       else if (stage && !stage.destroyed) stage.destroy({ children: true });
