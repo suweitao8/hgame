@@ -1,5 +1,6 @@
 import { Component } from '../core/component.js';
 import { createAdaptiveQualityController, resolveQualityPreset } from './quality3d.js';
+import { createGpuFrameTimer } from './quality3d/gpu-timer.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
 import { fitDirectionalShadowFrustum } from './shadow3d.js';
@@ -119,6 +120,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {(state: { preset: object, tier?: string, [key: string]: unknown }, reason?: string) => void} [onChange] Called after the adapter applied a quality change.
  * @property {Record<string, unknown>} [device] Device hints (e.g. `rendererName`).
  * @property {boolean} [calibrateGpu] Fill `device.rendererName` from the WebGL context.
+ * @property {boolean} [gpuTiming=true] Use asynchronous GPU timings in automatic quality mode when available.
  * @property {string} [mode] Quality mode: 'auto' | 'low' | 'medium' | 'high' | 'ultra'.
  */
 
@@ -424,11 +426,16 @@ export function createThreeAdapter({
 
   let qualityController = null;
   let appliedPreset = null;
+  let gpuFrameTimer;
+  let measureGpu = false;
+  const enableGpuTiming = quality3d?.gpuTiming !== false;
   const userQualityOnChange = quality3d?.onChange ?? null;
   if (userQualityOnChange !== null && typeof userQualityOnChange !== 'function') {
     throw new TypeError('onChange must be a function');
   }
   function onQualityChange(state, reason) {
+    measureGpu = enableGpuTiming && state.mode === 'auto';
+    gpuFrameTimer?.reset();
     resize();
     userQualityOnChange?.(state, reason);
   }
@@ -447,6 +454,7 @@ export function createThreeAdapter({
       device: qualityDevice,
       onChange: onQualityChange,
     });
+    measureGpu = enableGpuTiming && qualityController.state.mode === 'auto';
   }
 
   function setQuality(mode) {
@@ -457,6 +465,7 @@ export function createThreeAdapter({
         device: { rendererName: caps.rendererName || '' },
         onChange: onQualityChange,
       });
+      measureGpu = enableGpuTiming && qualityController.state.mode === 'auto';
       resize();
       return qualityController.state;
     }
@@ -564,6 +573,7 @@ export function createThreeAdapter({
       && (canvas.width !== bufferWidth || canvas.height !== bufferHeight);
     const viewportChanged = lastCanvasSize?.cssWidth !== w || lastCanvasSize.cssHeight !== h || lastCanvasSize.pixelRatio !== ratio;
     if (!contextLost && (canvasChanged || viewportChanged)) {
+      gpuFrameTimer?.reset();
       if (typeof renderer.setDrawingBufferSize === 'function' && !renderer.xr?.isPresenting) {
         renderer.setDrawingBufferSize(w, h, ratio);
       } else {
@@ -603,6 +613,8 @@ export function createThreeAdapter({
   const onContextLost = (event) => {
     event?.preventDefault?.();
     contextLost = true;
+    gpuFrameTimer?.reset();
+    gpuFrameTimer = undefined;
     postPipeline?.handleContextLost?.();
   };
   const onContextRestored = () => {
@@ -746,8 +758,7 @@ export function createThreeAdapter({
     return { x: sx, y: sy, ndcZ: scratchView.z, visible };
   }
 
-  function render(scene, _app = null) {
-    if (contextLost) return;
+  function renderWorld(scene) {
     const world = getWorld(scene);
     const sceneSun = worldLighting?.sun ? worldSuns.get(world) ?? null : null;
     if (worldSunLight !== sceneSun) {
@@ -839,6 +850,20 @@ export function createThreeAdapter({
     }
 
     renderer.render(world, camera);
+  }
+
+  function render(scene, _app = null) {
+    if (contextLost) return;
+    const timer = measureGpu ? gpuFrameTimer : null;
+    if (!timer?.begin()) {
+      renderWorld(scene);
+      return;
+    }
+    try {
+      renderWorld(scene);
+    } finally {
+      timer.end();
+    }
   }
 
   return {
@@ -936,7 +961,13 @@ export function createThreeAdapter({
     recordFrameInterval(ms) {
       if (contextLost) return;
       if (Number.isFinite(ms) && ms > 0) lastDtSeconds = ms / 1000;
-      qualityController?.sampleFrame(ms);
+      let gpuMs = null;
+      if (measureGpu && Number.isFinite(ms) && ms > 0) {
+        if (gpuFrameTimer === undefined) gpuFrameTimer = createGpuFrameTimer(renderer.getContext?.());
+        if (ms >= 250) gpuFrameTimer?.reset();
+        else gpuMs = gpuFrameTimer?.poll() ?? null;
+      }
+      qualityController?.sampleFrame(ms, gpuMs);
     },
     dispose() {
       canvas.removeEventListener?.('webglcontextlost', onContextLost, false);
@@ -944,6 +975,7 @@ export function createThreeAdapter({
       registeredPalettes.clear();
       cleanupAll([
         ...ownedSuns.values(),
+        () => gpuFrameTimer?.reset(),
         () => culler3d.dispose(),
         () => postPipeline?.dispose?.(),
         () => renderer.dispose(),

@@ -73,6 +73,7 @@ export function createAdaptiveQualityController({ mode, device, minScale, maxSca
  * @property {Quality3DPreset} preset
  * @property {number} dynamicScale Resolution scale 0..1.
  * @property {number} lastMeanMs Last mean frame time in ms.
+ * @property {number|null} lastMeanGpuMs Mean GPU time in the latest window, when enough samples were available.
  * @property {number} transitionCount
  * @property {number} droppedLongFrames
  */
@@ -106,7 +107,7 @@ export function createAdaptiveQualityController({ mode, device, minScale, maxSca
  * @typedef {object} AdaptiveQualityController
  * @property {QualitySnapshot} state Current snapshot (getter).
  * @property {(next: QualityMode) => boolean} setMode
- * @property {(ms: number) => boolean} sampleFrame
+ * @property {(ms: number, gpuMs?: number|null) => boolean} sampleFrame
  * @property {(cssWidth: number, cssHeight: number, dpr?: number) => ViewportPlan} planViewport
  * @property {() => void} resetMeasurements
  */
@@ -191,6 +192,10 @@ export type QualitySnapshot = {
      * Last mean frame time in ms.
      */
     lastMeanMs: number;
+    /**
+     * Mean GPU time in the latest window, when enough samples were available.
+     */
+    lastMeanGpuMs: number | null;
     transitionCount: number;
     droppedLongFrames: number;
 };
@@ -242,7 +247,7 @@ export type AdaptiveQualityController = {
      */
     state: QualitySnapshot;
     setMode: (next: QualityMode) => boolean;
-    sampleFrame: (ms: number) => boolean;
+    sampleFrame: (ms: number, gpuMs?: number | null) => boolean;
     planViewport: (cssWidth: number, cssHeight: number, dpr?: number) => ViewportPlan;
     resetMeasurements: () => void;
 };

@@ -63,6 +63,7 @@
  * @property {(state: { preset: object, tier?: string, [key: string]: unknown }, reason?: string) => void} [onChange] Called after the adapter applied a quality change.
  * @property {Record<string, unknown>} [device] Device hints (e.g. `rendererName`).
  * @property {boolean} [calibrateGpu] Fill `device.rendererName` from the WebGL context.
+ * @property {boolean} [gpuTiming=true] Use asynchronous GPU timings in automatic quality mode when available.
  * @property {string} [mode] Quality mode: 'auto' | 'low' | 'medium' | 'high' | 'ultra'.
  */
 /**
@@ -334,6 +335,10 @@ export type ThreeQuality3DOptions = {
      * Fill `device.rendererName` from the WebGL context.
      */
     calibrateGpu?: boolean | undefined;
+    /**
+     * Use asynchronous GPU timings in automatic quality mode when available.
+     */
+    gpuTiming?: boolean | undefined;
     /**
      * Quality mode: 'auto' | 'low' | 'medium' | 'high' | 'ultra'.
      */

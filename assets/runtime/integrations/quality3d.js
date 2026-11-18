@@ -57,6 +57,7 @@
  * @property {Quality3DPreset} preset
  * @property {number} dynamicScale Resolution scale 0..1.
  * @property {number} lastMeanMs Last mean frame time in ms.
+ * @property {number|null} lastMeanGpuMs Mean GPU time in the latest window, when enough samples were available.
  * @property {number} transitionCount
  * @property {number} droppedLongFrames
  */
@@ -90,7 +91,7 @@
  * @typedef {object} AdaptiveQualityController
  * @property {QualitySnapshot} state Current snapshot (getter).
  * @property {(next: QualityMode) => boolean} setMode
- * @property {(ms: number) => boolean} sampleFrame
+ * @property {(ms: number, gpuMs?: number|null) => boolean} sampleFrame
  * @property {(cssWidth: number, cssHeight: number, dpr?: number) => ViewportPlan} planViewport
  * @property {() => void} resetMeasurements
  */
@@ -232,13 +233,16 @@ export function createAdaptiveQualityController({
   let cooldown = 0;
   let total = 0;
   let count = 0;
+  let gpuTotal = 0;
+  let gpuCount = 0;
   let lastMeanMs = 0;
+  let lastMeanGpuMs = null;
 
   function snapshot() {
     return Object.freeze({
       mode: configuredMode,
       tier, preset: QUALITY3D_PRESETS[tier],
-      dynamicScale, lastMeanMs, transitionCount, droppedLongFrames,
+      dynamicScale, lastMeanMs, lastMeanGpuMs, transitionCount, droppedLongFrames,
     });
   }
   function notify(reason) {
@@ -253,8 +257,8 @@ export function createAdaptiveQualityController({
     tier = next === 'auto' ? chooseInitial3dQuality(device) : next;
     dynamicScale = next === 'auto' ? maxScale : 1;
     slowAtFloor = 0;
-    total = 0;
-    count = 0;
+    clearWindow();
+    lastMeanGpuMs = null;
     settle = settleMs;
     cooldown = 0;
     return notify('mode');
@@ -280,14 +284,22 @@ export function createAdaptiveQualityController({
       tier, dynamicScale, maxPixels: budget,
     });
   }
-  function sampleFrame(ms) {
+  function clearWindow() {
+    total = 0;
+    count = 0;
+    gpuTotal = 0;
+    gpuCount = 0;
+  }
+
+  function sampleFrame(ms, gpuMs = null) {
     if (!Number.isFinite(ms) || ms <= 0) return false;
     // A hidden tab, debugger pause or page suspension must not trigger
     // a false quality collapse. The main app resets its frame clock on resume.
     if (ms >= 250) {
       droppedLongFrames++;
-      total = 0;
-      count = 0;
+      clearWindow();
+      lastMeanGpuMs = null;
+      slowAtFloor = 0;
       return false;
     }
     if (configuredMode !== 'auto') return false;
@@ -296,14 +308,19 @@ export function createAdaptiveQualityController({
     if (settle > 0) return false;
     total += ms;
     count++;
+    if (gpuMs !== null && Number.isFinite(gpuMs) && gpuMs > 0) {
+      gpuTotal += gpuMs;
+      gpuCount++;
+    }
     if (count < sampleFrames) return false;
     const mean = total / count;
-    count = 0;
-    total = 0;
+    lastMeanGpuMs = gpuCount >= Math.ceil(count / 4) ? gpuTotal / gpuCount : null;
+    clearWindow();
     lastMeanMs = mean;
     let changed = false;
     let reason = 'resolution';
-    if (mean > degradeFrameMs) {
+    const gpuHasHeadroom = lastMeanGpuMs !== null && lastMeanGpuMs < recoverFrameMs;
+    if (mean > degradeFrameMs && !gpuHasHeadroom) {
       if (dynamicScale > minScale + 0.00001) {
         dynamicScale = inRange(
           Math.round((dynamicScale - (mean > 34 ? .2 : .1)) * 100) / 100,
@@ -326,12 +343,13 @@ export function createAdaptiveQualityController({
           slowAtFloor = 0;
         }
       }
-    } else if (mean < recoverFrameMs && dynamicScale < maxScale && cooldown <= 0) {
+    } else if (mean < recoverFrameMs && (gpuHasHeadroom || lastMeanGpuMs === null) &&
+        dynamicScale < maxScale && cooldown <= 0) {
       dynamicScale = inRange(Math.round((dynamicScale + .1) * 100) / 100, minScale, maxScale);
       changed = true;
       cooldown = 900;
       slowAtFloor = 0;
-    } else if (mean <= degradeFrameMs) {
+    } else {
       slowAtFloor = 0;
     }
     if (changed) {
@@ -341,8 +359,8 @@ export function createAdaptiveQualityController({
     return false;
   }
   function resetMeasurements() {
-    total = 0;
-    count = 0;
+    clearWindow();
+    lastMeanGpuMs = null;
     settle = settleMs;
     cooldown = 0;
     slowAtFloor = 0;
