@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid toggling Pixi tilemap chunk visibility or revisiting the cache while the camera remains within the same chunk range.
+
 - Load Pixi tilemap render chunks on demand and bound the off-screen chunk cache, while retaining visible chunks and the full TileMap data grid.
 
 - Render HGame TileMaps in the Pixi starter using shared-atlas particle chunks, camera visibility, and per-chunk refresh after map edits.

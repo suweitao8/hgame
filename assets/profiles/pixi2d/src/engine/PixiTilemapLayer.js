@@ -22,7 +22,7 @@ export class PixiTilemapLayer {
     this.chunkSize = chunkSize; this.maxCachedChunks = maxCachedChunks; this.originX = originX; this.originY = originY;
     this.cols = Math.ceil(map.width / chunkSize); this.rows = Math.ceil(map.height / chunkSize);
     this.root = new Container(); this.root.eventMode = 'none'; this.root.interactiveChildren = false;
-    this.chunks = new Map(); this.frame = 0; this.disposed = false;
+    this.chunks = new Map(); this.frame = 0; this.visibleRange = null; this.disposed = false;
     try {
       renderer.bgLayer.addChild(this.root);
       this.update();
@@ -75,11 +75,16 @@ export class PixiTilemapLayer {
     const x1 = Math.min(this.cols - 1, Math.floor((right - this.originX) / cw));
     const y0 = Math.max(0, Math.ceil((top - this.originY) / ch) - 1);
     const y1 = Math.min(this.rows - 1, Math.floor((bottom - this.originY) / ch));
+    const previous = this.visibleRange;
+    if (previous && previous.x0 === x0 && previous.x1 === x1 && previous.y0 === y0 && previous.y1 === y1) return;
     const frame = ++this.frame;
-    for (const record of this.chunks.values()) record.view.visible = false;
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
       const record = this.chunks.get(y * this.cols + x) ?? this.buildChunk(x, y);
-      record.view.visible = true; record.lastVisible = frame;
+      if (!record.view.visible) record.view.visible = true;
+      record.lastVisible = frame;
+    }
+    for (const record of this.chunks.values()) {
+      if (record.lastVisible !== frame && record.view.visible) record.view.visible = false;
     }
     if (this.chunks.size > this.maxCachedChunks) {
       const candidates = [...this.chunks].filter(([, record]) => record.lastVisible !== frame);
@@ -89,10 +94,11 @@ export class PixiTilemapLayer {
         record.view.removeFromParent(); record.view.destroy(); this.chunks.delete(key);
       }
     }
+    this.visibleRange = { x0, x1, y0, y1 };
   }
   dispose() {
     if (this.disposed) return;
     this.disposed = true; this.root.removeFromParent(); this.root.destroy({ children: true });
-    this.chunks.clear(); this.renderer.tilemapLayers.delete(this);
+    this.chunks.clear(); this.visibleRange = null; this.renderer.tilemapLayers.delete(this);
   }
 }
