@@ -12,6 +12,7 @@ export class ProceduralAtlas {
     this.frames = new Map();
     this.textures = new Map();
     this.source = null;
+    this.disposed = false;
   }
 
   register(name, width, height, draw, { makeWhite = true } = {}) {
@@ -36,6 +37,7 @@ export class ProceduralAtlas {
 
   /** Reserve-check before writing so overflow or name collisions do not leave partial frames. */
   checkCapacity(items) {
+    if (this.disposed) throw new Error('Cannot add frames to a disposed atlas');
     if (this.source) throw new Error('Cannot add frames to a built atlas');
     let x = this.x, y = this.y, rowHeight = this.rowHeight;
     const names = new Set();
@@ -116,6 +118,7 @@ export class ProceduralAtlas {
   }
 
   build() {
+    if (this.disposed) throw new Error('Cannot build a disposed atlas');
     if (this.source) return this;
     this.source = new CanvasSource({ resource: this.canvas, scaleMode: 'linear' });
     for (const [name, frame] of this.frames) this.textures.set(name, new Texture({ source: this.source, frame }));
@@ -124,10 +127,16 @@ export class ProceduralAtlas {
 
   get(name) { return this.textures.get(name) ?? Texture.WHITE; }
   dispose() {
-    for (const texture of this.textures.values()) texture.destroy();
-    this.textures.clear();
-    this.source?.destroy();
-    this.source = null;
+    if (this.disposed) return;
+    this.disposed = true;
+    try {
+      for (const texture of this.textures.values()) texture.destroy();
+      this.source?.destroy();
+    } finally {
+      this.textures.clear();
+      this.source = null;
+      this.canvas.width = this.canvas.height = 0;
+    }
   }
 }
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release the Pixi atlas backing canvas on game shutdown and startup failure. Create a fresh atlas when starting another renderer.
+
 - Split Pixi's JavaScript by renderer and load Horde settings and simulation alongside the engine. Check the cold-start transfer budget and request ordering in browser CI.
 
 - Build new Pixi projects with esbuild, removing the affected Picomatch dependency from their build toolchain. Preserve release rebuilds for existing Vite projects.

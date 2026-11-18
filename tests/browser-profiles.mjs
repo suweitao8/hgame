@@ -59,8 +59,18 @@ async function checkPixiRecovery() {
   const url = await serve('pixi-recovery');
   const page = await browser.newPage({ viewport: { width: 844, height: 390 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
   const errors = [];
+  const trackAtlas = () => {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, ...options) {
+      const context = getContext.call(this, type, ...options);
+      if (type === '2d' && this.width === 1024 && this.height === 1024) window.__testAtlas = this;
+      return context;
+    };
+  };
+  const atlasSize = () => window.__testAtlas && [window.__testAtlas.width, window.__testAtlas.height];
   try {
     await page.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }));
+    await page.addInitScript(trackAtlas);
     await page.route('**/src/presentation.json', route => route.fulfill({ json: { backend: 'auto', quality: 'medium' } }));
     page.on('pageerror', error => errors.push(error.message));
     const engineConfig = Promise.withResolvers();
@@ -133,6 +143,10 @@ async function checkPixiRecovery() {
     }, after.toString('base64'));
     assert.ok(colors > 8, 'Pixi must restore the game frame after returning to the foreground');
     assert.equal(await canvas.evaluate(element => element.getContext('webgl2').getError()), 0);
+    assert.deepEqual(await page.evaluate(atlasSize), [1024, 1024]);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide')));
+    assert.equal(await page.locator('canvas#game').count(), 0);
+    assert.deepEqual(await page.evaluate(atlasSize), [0, 0], 'Pixi shutdown must release the atlas backing canvas');
     assert.deepEqual(errors, []);
   } finally {
     await page.close();
@@ -140,10 +154,12 @@ async function checkPixiRecovery() {
   const failed = await browser.newPage();
   try {
     await failed.addInitScript(() => Object.defineProperty(navigator, 'gpu', { value: undefined }));
+    await failed.addInitScript(trackAtlas);
     await failed.route('**/src/presentation.json', route => route.fulfill({ json: { backend: 'webgpu' } }));
     const [error] = await Promise.all([failed.waitForEvent('pageerror', { timeout: 15000 }), failed.goto(url)]);
     assert.equal(error.message, 'Unable to initialize a Pixi renderer');
     assert.equal(await failed.locator('canvas#game').count(), 0);
+    assert.deepEqual(await failed.evaluate(atlasSize), [0, 0], 'Pixi startup failure must release the atlas backing canvas');
   } finally {
     await failed.close();
   }

@@ -48,6 +48,8 @@ Catalog entries must have `kind: "image"`; extra frames use the image dimensions
 
 The atlas copies frame edges into one pixel of the existing padding to reduce transparent seams from linear texture sampling. This adds canvas work while the atlas is built; it does not increase the allocated atlas dimensions.
 
+Disposal releases both the textures and the backing canvas. Create a new atlas for a new renderer after disposal.
+
 `renderer.syncEntity(id, state)` creates a shadow only when `state.hasShadow !== false`; returned entries can therefore have `shadow: null`. If a frame has no `_white` silhouette, hit flash retains the base texture instead of substituting a white rectangle.
 
 For tile-based maps, generate a 2D project with `--with tilemap2d`, bake tile images or sheet frames into the atlas, and connect the existing HGame `TileMap` to Pixi:
