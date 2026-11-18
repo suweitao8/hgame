@@ -1213,6 +1213,7 @@ function stepSwarmSequential(
  * @property {number} [maxNeighbors=8] Hard cap on neighbor checks per unit per step.
  * @property {number} [flowInterval=0.1] Flow Field update interval in seconds; unchanged goal cell and costs reuse the previous field (`<= 0` recomputes every step).
  * @property {number} [ecsSlots=5000] Fixed ECS slot budget inside proximity ring.
+ * @property {number} [maxHitEvents] Queued hits per simulation step; defaults to `Math.max(4096, ecsSlots)`.
  * @property {number} [maxPatchesPerStep=1024] Max ECS patches flushed per step.
  * @property {number} [gridCols=128] Spatial hash & Flow Field column count.
  * @property {number} [gridRows=128] Spatial hash & Flow Field row count.
@@ -1345,6 +1346,7 @@ export function createSwarmSimulation({
   maxNeighbors = 8,
   flowInterval = 0.1,
   ecsSlots = 5000,
+  maxHitEvents = Math.max(4096, ecsSlots),
   maxPatchesPerStep = 1024,
   gridCols = 128,
   gridRows = 128,
@@ -1401,7 +1403,7 @@ export function createSwarmSimulation({
   });
   const ecs = new FlatCombatECS({
     maxSlots: Math.min(ecsSlots, capacity),
-    maxHitEvents: Math.max(4096, ecsSlots),
+    maxHitEvents,
     swarmCapacity: capacity,
   });
   ecs._onPromote = (sId) => {

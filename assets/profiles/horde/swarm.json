@@ -1,5 +1,8 @@
 {
   "capacity": 12000,
+  "ecsSlots": 5000,
+  "maxHitEvents": 5000,
+  "maxPatchesPerStep": 1024,
   "initialCount": 1200,
   "speed": 48,
   "spriteSize": 10,

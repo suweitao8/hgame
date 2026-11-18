@@ -90,6 +90,8 @@ For larger CPU-simulated crowds, use the existing HGame `createSwarmSimulation` 
 
 `node scripts/create-game.mjs <new-game-dir> --preset horde` creates this combination with a configurable `src/swarm.json`. Add `--bare` for an empty Pixi scene, or `--renderer webgl2d` to retain the previous custom-renderer horde starter. Existing projects are not changed.
 
+In `src/swarm.json`, `capacity` limits total swarm units, `ecsSlots` limits simultaneously promoted combat units, `maxHitEvents` limits hits queued before the next simulation step, and `maxPatchesPerStep` limits combat-state patches flushed in one step. These budgets are independent: a 10,000-unit swarm does not imply 10,000 combat slots or successful hits. Increase them according to the game's workload and memory budget; `applyCircleDamage` returns the number of accepted hit events when either queue or combat slots are saturated.
+
 ```js
 const crowd = renderer.createSwarmLayer({ textures: ['enemy_chaser'], scale: 0.5 });
 // fixedUpdate(dt): swarm.step(dt, { heroX, heroY });

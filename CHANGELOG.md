@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow the CPU swarm hit-event queue capacity to be configured independently from combat slots, and expose both budgets in the Pixi horde starter.
+
 - Use precolored explosion atlas frames on the Pixi Canvas fallback and avoid Canvas particle tinting of atlas subframes.
 
 - Use a simple drawn slash and particle shockwave on Pixi's Canvas fallback, and avoid unsupported GPU filters there.

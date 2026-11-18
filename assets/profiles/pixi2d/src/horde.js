@@ -29,7 +29,10 @@ visibility = bindVisibilitySuspension(app);
 app.input.preventKeys(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight']);
 const scene = app.scenes.add(new Scene('main'));
 const hero = scene.add(new Entity({ name: 'player', width: 26, height: 26 }));
-const swarm = createSwarmSimulation({ capacity: settings.capacity, cellSize: 48, originX: -3072, originY: -3072 });
+const swarm = createSwarmSimulation({
+  capacity: settings.capacity, ecsSlots: settings.ecsSlots, maxHitEvents: settings.maxHitEvents,
+  maxPatchesPerStep: settings.maxPatchesPerStep, cellSize: 48, originX: -3072, originY: -3072,
+});
 swarm.spawnWave({ count: settings.initialCount, centerX: hero.x, centerY: hero.y, minRadius: 140, maxRadius: 240, speed: settings.speed });
 const crowd = renderer.createSwarmLayer({ textures: ['enemy_chaser'], scale: settings.spriteSize / 40 });
 const target = { heroX: hero.x, heroY: hero.y };

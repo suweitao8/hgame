@@ -22,6 +22,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {number} [maxNeighbors=8] Hard cap on neighbor checks per unit per step.
  * @property {number} [flowInterval=0.1] Flow Field update interval in seconds; unchanged goal cell and costs reuse the previous field (`<= 0` recomputes every step).
  * @property {number} [ecsSlots=5000] Fixed ECS slot budget inside proximity ring.
+ * @property {number} [maxHitEvents] Queued hits per simulation step; defaults to `Math.max(4096, ecsSlots)`.
  * @property {number} [maxPatchesPerStep=1024] Max ECS patches flushed per step.
  * @property {number} [gridCols=128] Spatial hash & Flow Field column count.
  * @property {number} [gridRows=128] Spatial hash & Flow Field row count.
@@ -135,7 +136,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @param {SwarmSimulationOptions} [options]
  * @returns {SwarmSimulation}
  */
-export function createSwarmSimulation({ capacity, promoteRadius, demoteRadius, separationRadius, separationStrength, nearSeparationRadius, midSeparationRadius, maxNeighbors, flowInterval, ecsSlots, maxPatchesPerStep, gridCols, gridRows, cellSize, originX, originY, useFlowField, flashDuration, }?: SwarmSimulationOptions | undefined): SwarmSimulation;
+export function createSwarmSimulation({ capacity, promoteRadius, demoteRadius, separationRadius, separationStrength, nearSeparationRadius, midSeparationRadius, maxNeighbors, flowInterval, ecsSlots, maxHitEvents, maxPatchesPerStep, gridCols, gridRows, cellSize, originX, originY, useFlowField, flashDuration, }?: SwarmSimulationOptions | undefined): SwarmSimulation;
 /** Bit flags stored in `swarm.unitFlags[id]`. */
 export const SWARM_UNIT_FLAGS: Readonly<{
     NONE: 0;
@@ -478,6 +479,10 @@ export type SwarmSimulationOptions = {
      * Fixed ECS slot budget inside proximity ring.
      */
     ecsSlots?: number | undefined;
+    /**
+     * Queued hits per simulation step; defaults to `Math.max(4096, ecsSlots)`.
+     */
+    maxHitEvents?: number | undefined;
     /**
      * Max ECS patches flushed per step.
      */
