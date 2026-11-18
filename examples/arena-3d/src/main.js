@@ -5,13 +5,14 @@ import { TIER_BUDGET, CONFIG } from './sim/config.js';
 import { rayBoxes } from './sim/collide.js';
 import { recordRun, loadBest } from './meta.js';
 import { createMissionView } from './mission-view.js';
+import { loadRunnerView } from './runner-view.js';
 
 const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
   gameConfig, engineConfig, { createGameApplication }, { defineProject },
   { Component }, { Entity }, { Scene }, { createSaveStore }, { createArcadeControls },
-  { createThreeAdapter }, { createSpringArm3D }, { createTouchControls }, THREE,
+  { createThreeAdapter }, { createSpringArm3D }, { createTouchControls }, { createModel3DProvider }, THREE, { GLTFLoader },
 ] = await Promise.all([
   fetch('./game.config.json').then(r => r.json()),
   fetch('./engine.config.json').then(r => r.json()),
@@ -25,7 +26,9 @@ const [
   import(base + '/integrations/three.js'),
   import(base + '/integrations/camera3d.js'),
   import(base + '/integrations/touch-controls.js'),
+  import(base + '/integrations/model3d.js'),
   import('../assets/vendor/three/three.module.js'),
+  import('../assets/vendor/three/jsm/loaders/GLTFLoader.js'),
 ]);
 
 // QA knobs: ?seed=N, ?tier=low|medium|high (otherwise the adaptive controller picks), ?god=1 for invulnerability.
@@ -45,7 +48,8 @@ const renderer = createThreeAdapter({
 });
 canvas.dataset.qualityTier = renderer.qualityController?.state.tier ?? 'high';
 const app = createGameApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
-await app.installFeatures();
+const model3d = createModel3DProvider({ THREE, GLTFLoader, projectBaseUrl: location.href });
+await app.installFeatures({ model3d });
 const save = app.services.save ?? createSaveStore({ gameId: gameConfig.id });
 const trace = debug ? app.platform.diagnostics : null;
 
@@ -95,6 +99,12 @@ const nose = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.4), new THREE.Me
 const ring = new THREE.Mesh(new THREE.TorusGeometry(CONFIG.player.spinRadius, 0.08, 6, 48), new THREE.MeshBasicMaterial({ color: 0x4cc3ff, transparent: true, opacity: 0.8 }));
 ring.rotation.x = Math.PI / 2; ring.position.y = 0.15; ring.visible = false;
 hero.add(body, nose, ring); world.add(hero);
+app.scenes.start('arena');
+const runner = await loadRunnerView({ provider: model3d, scene, Entity, record: trace?.recordEvent, getTick: () => sim.state.tick });
+if (runner) {
+  body.visible = false;
+  nose.visible = false;
+}
 
 // Enemies: one InstancedMesh; per-instance colour carries kind and the hit flash.
 const MAXE = TIER_BUDGET.high.maxEnemies;
@@ -178,7 +188,11 @@ function syncView(dt) {
   hero.position.set(p.x, p.y, p.z);
   hero.rotation.y = p.yaw;
   bodyMat.emissive.setHex(p.invuln > 0 && Math.floor(sim.state.time * 20) % 2 ? 0xff3030 : 0x000000);
-  ring.visible = p.spinT > 0;
+  const spinning = p.spinT > 0;
+  ring.visible = spinning || (p.invuln > 0 && !sim.state.over);
+  ring.scale.setScalar(spinning ? 1 : 0.26);
+  ring.material.color.setHex(spinning ? 0x4cc3ff : 0xff715c);
+  runner?.sync(p, sim.state, CONFIG.player.invuln);
   enemyMesh.count = en.count;
   for (let i = 0; i < en.count; i++) {
     if (en.hit[i]) { en.hit[i] = 0; flashLeft[i] = 0.08; }
@@ -221,13 +235,13 @@ class Driver extends Component {
 }
 scene.add(new Entity({ name: 'driver' })).addComponent(new Driver());
 
-app.scenes.start('arena');
 app.start();
 window.__arena = { app, sim, renderer, arm };
 if (trace) window.__hgameTrace = trace.readEvents;
 window.__hgameState = () => ({ phase: sim.state.over ? 'over' : 'playing', tick: sim.state.tick,
   time: sim.state.time, kills: sim.state.kills, enemies: sim.en.count,
   outcome: sim.state.outcome,
+  animation: runner?.role ?? null,
   mission: { ...sim.mission, charged: Array.from(sim.mission.charged), exitOpen: sim.mission.chargedCount === CONFIG.mission.beacons.length },
   player: { x: sim.player.x, y: sim.player.y, z: sim.player.z, hp: sim.player.hp }, best: { ...best },
   running: app.running, disposed: app.disposed, scheduler: app.stats });

@@ -9,6 +9,7 @@
     "input",
     "audio",
     "save",
+    "model3d",
     "adaptiveQuality3d"
   ]
 }

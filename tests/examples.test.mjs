@@ -56,6 +56,14 @@ for (const id of Object.keys(runs)) {
       assert.ok(existsSync(report.zipPath));
       const cfg = JSON.parse(await readFile(path.join(report.outputDir, 'game.config.json'), 'utf8'));
       assert.equal(cfg.id, id);
+      if (id === 'arena-3d') {
+        const runner = JSON.parse(await readFile(path.join(report.outputDir, 'src/assets/runner.json'), 'utf8'));
+        assert.deepEqual(
+          await readFile(path.join(report.outputDir, runner.path)),
+          await readFile(path.join(root, 'examples', id, runner.path)),
+        );
+        assert.ok(existsSync(path.join(report.outputDir, 'assets/vendor/three/jsm/loaders/GLTFLoader.js')));
+      }
     } finally {
       await rm(out, { recursive: true, force: true });
     }

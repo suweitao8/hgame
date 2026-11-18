@@ -455,7 +455,11 @@ try {
       continue;
     }
     const initial = await read();
+    if (id === 'arena-3d') assert.equal(initial.animation, 'idle', 'arena starts with its authored runner rig');
     await page.keyboard.down('d');
+    if (id === 'arena-3d') {
+      await page.waitForFunction(() => window.__hgameState().animation === 'run', null, { timeout: 3000 });
+    }
     await page.waitForTimeout(500);
     await page.keyboard.up('d');
     const moved = await read();

@@ -1,0 +1,11 @@
+{
+  "path": "src/assets/runner.gltf",
+  "targetHeight": 1.72,
+  "clips": {
+    "idle": "Idle",
+    "run": "Run",
+    "jump": "Jump",
+    "spin": "Spin",
+    "hit": "Hit"
+  }
+}

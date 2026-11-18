@@ -13,6 +13,6 @@
 ## Follow-on scorecard work
 
 - Observe gameplay and iterate on navigation clarity, combat decisions, pacing, and replay value. Collect human playtest evidence before treating enjoyment or retention as verified.
-- Use replacement character assets in the same game to exercise import, animation mapping, and state transitions. Improve shared tooling where the game reveals an integration problem.
-- Gameplay trace verified. The diagnostics service retains bounded tick-addressed events. The arena and playtest runner confirm that the report identifies the beacon or player and the relevant enemy slot. Animation and asset attribution are part of the model replacement stage.
+- The arena now loads an authored replacement glTF with five named animation roles. Browser playtests exercised animation switches, the spin notify, and a missing binding with a playable fallback. Its local release contains the same glTF bytes and loader.
+- Gameplay trace verified. The diagnostics service retains bounded tick-addressed events. The arena and playtest runner identify the affected beacon, player, or asset and the relevant opponent slot or animation name.
 - Re-evaluate the original seven categories using the playable game and verified evidence. Score gameplay, content production, runtime, and agent workflows under the existing HTML-only review criteria.
