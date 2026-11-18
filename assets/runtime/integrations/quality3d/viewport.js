@@ -22,11 +22,16 @@ export function fitDrawingBuffer(width, height, requestedRatio, {
   scale = 1,
 } = {}) {
   // Cap each side by the area budget too, since the other side cannot round below one pixel.
-  const pixelRatio = Math.min(
+  const scaledRatio = Math.min(
     requestedRatio, Math.sqrt(maxPixels / width / height),
     Math.min(positiveLimit(maxBufferWidth), maxPixels) / width,
     Math.min(positiveLimit(maxBufferHeight), maxPixels) / height,
   ) * scale;
+  const pixelRatio = Math.min(
+    Math.max(scaledRatio, 1 / Math.min(width, height)),
+    positiveLimit(maxBufferWidth) / width,
+    positiveLimit(maxBufferHeight) / height,
+  );
   return {
     pixelRatio,
     bufferWidth: Math.max(1, Math.floor(width * pixelRatio)),

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Ensure adaptive 3D viewports retain at least one physical pixel per axis within GPU buffer limits.
+
 - Fix FXAA edge orientation, reuse cardinal taps for sharpening, and keep canvas alpha opaque when tone mapping writes directly to the screen.
 
 - Store bloom mips in packed RGB float targets where supported. Reconstruct the upsampling tent kernel with four bilinear reads instead of nine.
