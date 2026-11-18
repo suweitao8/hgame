@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prepare render chunk bounds in the swarm movement pass when the latest viewport is likely to cull most units. Invalidate the index on subsequent ECS movement or removal.
+
 - Reuse current swarm chunk bounds in Pixi to skip off-screen units while preserving particle submission order. Fall back to a linear scan when the index is dirty or most units remain candidates.
 
 - Reuse static quad vertices for Pixi swarm sprites with stable geometry. Keep per-frame geometry uploads for direction flips, changing frame bounds, or opt-in animated scales.

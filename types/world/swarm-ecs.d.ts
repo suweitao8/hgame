@@ -72,6 +72,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {number} [heroY=0]
  * @property {number} [focusX] Optional focal X for 3-tier LOD separation (defaults to `heroX`).
  * @property {number} [focusY] Optional focal Y/Z for 3-tier LOD separation (defaults to `heroY`).
+ * @property {boolean} [prepareRenderChunks=false] Collect final-position chunks during movement when the latest render query is likely to prune most units.
  * @property {((swarmId: number, x: number, y: number) => void) | null} [onUnitKilled=null]
  */
 /**
@@ -593,6 +594,10 @@ export type SwarmStepOptions = {
      * Optional focal Y/Z for 3-tier LOD separation (defaults to `heroY`).
      */
     focusY?: number | undefined;
+    /**
+     * Collect final-position chunks during movement when the latest render query is likely to prune most units.
+     */
+    prepareRenderChunks?: boolean | undefined;
     onUnitKilled?: ((swarmId: number, x: number, y: number) => void) | null | undefined;
 };
 export type SwarmStepStats = {

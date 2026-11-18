@@ -994,7 +994,7 @@ function stepSwarmSequential(
   needSep, separationRadius, separationStrength, sepSq, invSepRadius, maxNeighbors, maxProbes, tickCount,
   ox, oy, invCell, cols, rows, hashHead, hashNext,
   ffHas, ffCost, ffDirX, ffDirY,
-  ecs,
+  ecs, indexMovedUnit,
 ) {
   let promotedThisStep = 0;
   const tickPhase = tickCount & 3;
@@ -1179,6 +1179,7 @@ function stepSwarmSequential(
         }
       }
     }
+    indexMovedUnit?.(id);
   }
   return promotedThisStep;
 }
@@ -1249,6 +1250,7 @@ function stepSwarmSequential(
  * @property {number} [heroY=0]
  * @property {number} [focusX] Optional focal X for 3-tier LOD separation (defaults to `heroX`).
  * @property {number} [focusY] Optional focal Y/Z for 3-tier LOD separation (defaults to `heroY`).
+ * @property {boolean} [prepareRenderChunks=false] Collect final-position chunks during movement when the latest render query is likely to prune most units.
  * @property {((swarmId: number, x: number, y: number) => void) | null} [onUnitKilled=null]
  */
 
@@ -1418,6 +1420,7 @@ export function createSwarmSimulation({
   const occupiedChunkIds = new Uint16Array(totalChunks);
   const candidateChunkIds = new Uint16Array(totalChunks);
   let occupiedChunkCount = 0;
+  let lastChunkView = null;
   const unitCell = new Int32Array(capacity);
   // Every live unit can occupy the same cell, including out-of-world units
   // clamped to an edge cell. Select the counter width from total capacity.
@@ -1477,37 +1480,42 @@ export function createSwarmSimulation({
     occupiedChunkCount = 0;
   }
 
-  function ensureChunks() {
-    if (!chunksDirty) return;
-    resetChunkIndex();
+  function indexUnitInChunk(id) {
+    const px = posX[id];
+    const py = posY[id];
+    let kx = Math.floor((px - originX) * invChunkW);
+    let ky = Math.floor((py - originY) * invChunkH);
+    if (kx < 0) kx = 0;
+    else if (kx >= chunkCols) kx = chunkCols - 1;
+    if (ky < 0) ky = 0;
+    else if (ky >= chunkRows) ky = chunkRows - 1;
+    const ck = ky * chunkCols + kx;
+    const previousHead = chunkHead[ck];
+    if (previousHead === -1) occupiedColumns[ky] |= 1 << kx;
+    chunkNext[id] = previousHead;
+    chunkHead[ck] = id;
+    chunkCount[ck]++;
+    if (px < chunkMinX[ck]) chunkMinX[ck] = px;
+    if (px > chunkMaxX[ck]) chunkMaxX[ck] = px;
+    if (py < chunkMinY[ck]) chunkMinY[ck] = py;
+    if (py > chunkMaxY[ck]) chunkMaxY[ck] = py;
+    if (chunkMaxScale) recordChunkScale(ck, id);
+  }
 
-    for (let a = 0; a < activeCount; a++) {
-      const id = activeIds[a];
-      const px = posX[id];
-      const py = posY[id];
-      let kx = Math.floor((px - originX) * invChunkW);
-      let ky = Math.floor((py - originY) * invChunkH);
-      if (kx < 0) kx = 0;
-      else if (kx >= chunkCols) kx = chunkCols - 1;
-      if (ky < 0) ky = 0;
-      else if (ky >= chunkRows) ky = chunkRows - 1;
-      const ck = ky * chunkCols + kx;
-      const previousHead = chunkHead[ck];
-      if (previousHead === -1) occupiedColumns[ky] |= 1 << kx;
-      chunkNext[id] = previousHead;
-      chunkHead[ck] = id;
-      chunkCount[ck]++;
-      if (px < chunkMinX[ck]) chunkMinX[ck] = px;
-      if (px > chunkMaxX[ck]) chunkMaxX[ck] = px;
-      if (py < chunkMinY[ck]) chunkMinY[ck] = py;
-      if (py > chunkMaxY[ck]) chunkMaxY[ck] = py;
-      if (chunkMaxScale) recordChunkScale(ck, id);
-    }
+  function finishChunkIndex() {
+    occupiedChunkCount = 0;
     for (let row = 0; row < chunkRows; row++) {
       for (let mask = occupiedColumns[row]; mask !== 0; mask &= mask - 1) {
         occupiedChunkIds[occupiedChunkCount++] = row * chunkCols + firstOccupiedColumn(mask);
       }
     }
+  }
+
+  function ensureChunks() {
+    if (!chunksDirty) return;
+    resetChunkIndex();
+    for (let a = 0; a < activeCount; a++) indexUnitInChunk(activeIds[a]);
+    finishChunkIndex();
     chunksDirty = false;
   }
 
@@ -1516,9 +1524,16 @@ export function createSwarmSimulation({
   }
 
   function writeChunkCandidateMask(minX, minY, maxX, maxY, radiusPerScale, out) {
-    // Never rebuild a simulation index just to decide whether a render can use it.
-    if (chunksDirty || !Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) ||
-        !Number.isFinite(maxY) || !Number.isFinite(radiusPerScale) || radiusPerScale < 0) return false;
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) ||
+        !Number.isFinite(maxY) || minX > maxX || minY > maxY ||
+        !Number.isFinite(radiusPerScale) || radiusPerScale < 0) return false;
+    lastChunkView ??= { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    // This estimate guides collection only. The query uses exact per-chunk scale bounds below.
+    lastChunkView.minX = minX - radiusPerScale;
+    lastChunkView.minY = minY - radiusPerScale;
+    lastChunkView.maxX = maxX + radiusPerScale;
+    lastChunkView.maxY = maxY + radiusPerScale;
+    if (chunksDirty) return false;
     if (!chunkMaxScale) {
       chunkMaxScale = new Float32Array(totalChunks);
       for (let i = 0; i < occupiedChunkCount; i++) {
@@ -1547,6 +1562,26 @@ export function createSwarmSimulation({
         const slot = indexInActive[id];
         out[slot >>> 5] |= 1 << (slot & 31);
         id = chunkNext[id];
+      }
+    }
+    return true;
+  }
+
+  function shouldPrepareRenderChunks() {
+    if (!lastChunkView || activeCount === 0) return false;
+    const { minX, minY, maxX, maxY } = lastChunkView;
+    const { cols, rows, invCellSize } = spatialHash;
+    const x0 = Math.max(0, Math.min(cols - 1, Math.floor((minX - originX) * invCellSize)));
+    const x1 = Math.max(0, Math.min(cols - 1, Math.floor((maxX - originX) * invCellSize)));
+    const y0 = Math.max(0, Math.min(rows - 1, Math.floor((minY - originY) * invCellSize)));
+    const y1 = Math.max(0, Math.min(rows - 1, Math.floor((maxY - originY) * invCellSize)));
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) * 2 >= activeCount) return false;
+    let candidates = 0;
+    for (let y = y0; y <= y1; y++) {
+      const row = y * cols;
+      for (let x = x0; x <= x1; x++) {
+        candidates += cellDensity[row + x];
+        if (candidates * 2 >= activeCount) return false;
       }
     }
     return true;
@@ -1681,6 +1716,7 @@ export function createSwarmSimulation({
     ecs.clear();
     spatialHash.clear();
     resetChunkIndex();
+    lastChunkView = null;
     cellDensity.fill(0);
     chunksDirty = false;
     if (boundCrowd2D) {
@@ -1752,7 +1788,7 @@ export function createSwarmSimulation({
     return applied;
   }
 
-  function step(dt = 0, { heroX = 0, heroY = 0, focusX = heroX, focusY = heroY, onUnitKilled = null } = {}) {
+  function step(dt = 0, { heroX = 0, heroY = 0, focusX = heroX, focusY = heroY, prepareRenderChunks = false, onUnitKilled = null } = {}) {
     const dtSec = Number.isFinite(dt) && dt > 0 ? dt : 0;
     const fx = Number.isFinite(focusX) ? focusX : heroX;
     const fy = Number.isFinite(focusY) ? focusY : heroY;
@@ -1787,8 +1823,7 @@ export function createSwarmSimulation({
     const hashHead = spatialHash.head;
     const hashNext = spatialHash.next;
 
-    // 1. Build the fine hash and density grid. Coarse chunks are rebuilt lazily
-    // after movement only when rendering or combat queries need them.
+    // 1. Build the fine hash and density grid for the movement step.
     chunksDirty = true;
     buildSwarmStepGrid(
       activeCount, activeIds, posX, posY,
@@ -1798,25 +1833,34 @@ export function createSwarmSimulation({
     );
 
     // 2. Sequential autonomous simulation (3-tier distance separation + FlowField + density damping + 10m ECS promotion).
+    const collectRenderChunks = prepareRenderChunks && shouldPrepareRenderChunks();
+    if (collectRenderChunks) {
+      chunkMaxScale ??= new Float32Array(totalChunks);
+      resetChunkIndex();
+    }
     const needSep = separationRadius > 0 && maxNeighbors > 0 && separationStrength > 0;
-    const promotedThisStep = stepSwarmSequential(
-      activeCount, activeIds, unitFlags, posX, posY, rot, speed, animTime, animClip, hp, flash, sepX, sepY, unitCell, cellDensity,
-      dtSec, flashDecay, heroX, heroY, fx, fy, nearSepSq, midSepSq, promoteSq,
-      needSep, separationRadius, separationStrength, sepSq, invSepRadius, maxNeighbors, maxNeighbors * 2, tickCount,
-      ox, oy, invCell, cols, rows, hashHead, hashNext,
-      useFlowField && flowField._hasComputed, flowField.cost, flowField.dirX, flowField.dirY,
-      ecs,
-    );
-
-    // Step-grid membership describes pre-movement positions. Subsequent spatial
-    // queries must rebuild before relying on the lists or their bounds.
-    chunksDirty = true;
+    let promotedThisStep;
+    try {
+      promotedThisStep = stepSwarmSequential(
+        activeCount, activeIds, unitFlags, posX, posY, rot, speed, animTime, animClip, hp, flash, sepX, sepY, unitCell, cellDensity,
+        dtSec, flashDecay, heroX, heroY, fx, fy, nearSepSq, midSepSq, promoteSq,
+        needSep, separationRadius, separationStrength, sepSq, invSepRadius, maxNeighbors, maxNeighbors * 2, tickCount,
+        ox, oy, invCell, cols, rows, hashHead, hashNext,
+        useFlowField && flowField._hasComputed, flowField.cost, flowField.dirX, flowField.dirY,
+        ecs, collectRenderChunks ? indexUnitInChunk : null,
+      );
+    } finally {
+      // Include partially written chunks in the next reset if movement failed.
+      if (collectRenderChunks) finishChunkIndex();
+    }
+    chunksDirty = !collectRenderChunks;
 
     // 3. Resolve ECS combat queue, frozen/knockback kinematics, and patch flush back to swarm.
     ecs.damageResolutionSystem();
     ecs.kinematicsSystem(dtSec);
 
     let killedThisStep = 0;
+    let invalidatedAfterMovement = false;
     const flushStats = ecs.flushPatchesAndCleanup(
       heroX,
       heroY,
@@ -1829,11 +1873,14 @@ export function createSwarmSimulation({
 
         if (patch.isDead) {
           killedThisStep++;
+          invalidatedAfterMovement = true;
           _releaseSwarmUnit(sId);
           return;
         }
-        // A previous kill callback may have rebuilt the index during this flush.
-        chunksDirty = true;
+        if (posX[sId] !== patch.x || posY[sId] !== patch.y) {
+          invalidatedAfterMovement = true;
+          chunksDirty = true;
+        }
         posX[sId] = patch.x;
         posY[sId] = patch.y;
         rot[sId] = patch.rot;
@@ -1847,9 +1894,8 @@ export function createSwarmSimulation({
     );
 
     tickCount = (tickCount + 1) | 0;
-    // ECS callbacks may have queried and rebuilt chunks while patches were
-    // still being applied; the final positions need a fresh index as well.
-    chunksDirty = true;
+    // Kill callbacks or later patches can invalidate a partially rebuilt index.
+    if (invalidatedAfterMovement) chunksDirty = true;
 
     return {
       activeCount,

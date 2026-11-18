@@ -11,7 +11,7 @@ await startPixiGame(({ app, renderer, Scene, Entity, Component }, [settings, { c
   });
   swarm.spawnWave({ count: settings.initialCount, centerX: hero.x, centerY: hero.y, minRadius: 140, maxRadius: 240, speed: settings.speed });
   const crowd = renderer.createSwarmLayer({ textures: ['enemy_chaser'], scale: settings.spriteSize / 40, chunkCull: true });
-  const target = { heroX: hero.x, heroY: hero.y };
+  const target = { heroX: hero.x, heroY: hero.y, prepareRenderChunks: true };
   hero.addComponent(new class extends Component {
     fixedUpdate(dt) {
       let dx = Number(app.input.isDown('KeyD') || app.input.isDown('ArrowRight')) - Number(app.input.isDown('KeyA') || app.input.isDown('ArrowLeft'));
