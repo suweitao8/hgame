@@ -34,7 +34,7 @@
 ## Second 2D playthrough
 
 - [x] Unlock Storm after a first victory. It requires both relays, reduces the exit area, and applies a 17-second deadline to a seven-second hold. Retain the chosen mode and unlock on reload.
-- [x] Verify both routes across 1,200 seeds. Staying on the one-relay route always timed out. Both routed strategies completed all 400 seeds per route with a mean of 14.15 seconds.
+- [x] Run 1,200 trials across 400 seeds and three strategies. The one-relay strategy always timed out. Both complete routes won on every seed with a mean of 14.15 seconds.
 - [x] Replay both modes over WebAsset with normal input using `examples/survivor-2d/pixi/playtest.mjs`. Check the unlock, restart, saved score and selected mode after reload.
 
 ## Scorecard
