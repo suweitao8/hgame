@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Skip Pixi shockwave filter passes when the distortion ring misses the viewport. Keep wave timing and filter order across camera movement.
+
 - Process only entering and leaving Pixi tilemap chunks on camera movement. Stage new chunks before changing the visible set and skip empty chunks during drawing.
 
 - Prepare render chunk bounds in the swarm movement pass when the latest viewport is likely to cull most units. Invalidate the index on subsequent ECS movement or removal.

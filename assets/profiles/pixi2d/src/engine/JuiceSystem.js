@@ -10,6 +10,21 @@ const canvasExplosionOptions = explosionOptions.map((options, index) => Object.f
   ...options, tex: 'particle_fire_' + index, color: 0xffffff,
 }));
 
+function shockwaveIntersectsViewport(filter, width, height, margin) {
+  const { x, y } = filter.center;
+  const radius = filter.time * filter.speed;
+  const halfWavelength = filter.wavelength / 2;
+  const outer = radius + halfWavelength;
+  const nearX = Math.max(0, -x, x - width);
+  const nearY = Math.max(0, -y, y - height);
+  if (nearX * nearX + nearY * nearY > (outer + margin) ** 2) return false;
+
+  const inner = Math.max(0, radius - halfWavelength - margin);
+  const farX = Math.max(Math.abs(x), Math.abs(x - width));
+  const farY = Math.max(Math.abs(y), Math.abs(y - height));
+  return !(farX * farX + farY * farY < inner * inner);
+}
+
 export class JuiceSystem {
   constructor(renderer, capacity = 10000, { maxShockwaveFilters = 3 } = {}) {
     if (!Number.isInteger(maxShockwaveFilters) || maxShockwaveFilters < 0 || maxShockwaveFilters > 16) {
@@ -57,6 +72,7 @@ export class JuiceSystem {
     wave.x = x;
     wave.y = y;
     wave.filter.time = 0;
+    wave.filter.enabled = true;
     this.shockwaves.add(wave);
     this.syncShockwaveFilters();
   }
@@ -64,8 +80,18 @@ export class JuiceSystem {
     this.renderer.setEffectFilters(Array.from(this.shockwaves, wave => wave.filter), this.shockwaveChannel);
   }
   syncShockwaveCenters() {
-    for (const wave of this.shockwaves) {
-      this.renderer.worldToScreen(wave.x, wave.y, wave.filter.center);
+    const { app, viewport } = this.renderer;
+    const { screen, stage } = app;
+    // Only bypass passes when all filters use the standard viewport target.
+    const usesViewport = stage.filterArea === screen && stage.filters.every(
+      filter => filter.clipToViewport && filter.padding === 0
+        && filter.resolution === 'inherit' && filter.antialias === 'off',
+    );
+    // Pixi rounds the filter frame outward at the backing resolution.
+    const margin = 1 + Math.SQRT2 / viewport.resolution;
+    for (const { filter, x, y } of this.shockwaves) {
+      this.renderer.worldToScreen(x, y, filter.center);
+      filter.enabled = !usesViewport || shockwaveIntersectsViewport(filter, screen.width, screen.height, margin);
     }
   }
   createParticle(texture) {
