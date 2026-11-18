@@ -27,7 +27,11 @@ export class PixiSwarmLayer {
       });
       return { frames, fps, loop: clip.loop !== false, radius: Math.max(...frames.map(frame => frame.radius)) };
     });
-    this.layer = new ParticleContainer({ dynamicProperties: { position: true, uvs: true, rotation: true, vertex: true } });
+    this.dynamicUvs = this.clips.some(clip => clip.frames.length > 1);
+    this.dynamicRotation = this.syncRotation;
+    this.layer = new ParticleContainer({
+      dynamicProperties: { position: true, uvs: this.dynamicUvs, rotation: this.dynamicRotation, vertex: true },
+    });
     renderer.worldRoot.addChildAt(this.layer, renderer.worldRoot.getChildIndex(renderer.entityLayer));
     this.particles = []; this.pool = []; this.pendingParticles = []; this.visibleCount = 0; this.disposed = false;
   }
@@ -53,6 +57,8 @@ export class PixiSwarmLayer {
     const animTimes = swarm.animTime, flashes = swarm.flash;
     const worldScale = this.worldScale, offsetX = this.offsetX, offsetY = this.offsetY;
     const renderScale = this.scale, cull = this.cull, syncRotation = this.syncRotation, flipByDirection = this.flipByDirection;
+    const dynamicUvs = this.dynamicUvs, dynamicRotation = this.dynamicRotation;
+    let staticDirty = false;
     let used = 0;
     for (let i = 0; i < count; i++) {
       const id = activeIds[i], x = positionsX[id] * worldScale + offsetX;
@@ -77,20 +83,29 @@ export class PixiSwarmLayer {
         this.particles.push(particle); this.pendingParticles.push(particle);
         if (this.pendingParticles.length === 4096) this.flushPending();
       }
-      if (particle.texture !== texture) particle.texture = texture;
+      if (particle.texture !== texture) {
+        particle.texture = texture;
+        if (!dynamicUvs) staticDirty = true;
+      }
       particle.x = x; particle.y = y;
       const rotation = syncRotation || flipByDirection ? (rotations?.[id] ?? 0) : 0;
-      particle.rotation = syncRotation ? rotation : 0;
+      const renderRotation = syncRotation ? rotation : 0;
+      if (particle.rotation !== renderRotation) {
+        particle.rotation = renderRotation;
+        if (!dynamicRotation) staticDirty = true;
+      }
       particle.scaleX = flipByDirection && Math.sin(rotation) < 0 ? -size : size;
       particle.scaleY = size;
       used++;
     }
     this.flushPending();
     if (used < this.particles.length) {
-      const removed = this.layer.removeParticles(used);
+      for (let i = used; i < this.particles.length; i++) this.pool.push(this.particles[i]);
       this.particles.length = used;
-      for (const particle of removed) this.pool.push(particle);
+      this.layer.particleChildren.length = used;
+      staticDirty = true;
     }
+    if (staticDirty) this.layer.update();
     this.visibleCount = used;
     return used;
   }

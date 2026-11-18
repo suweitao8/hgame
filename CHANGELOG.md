@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Ship the engine and network lockfiles and documented tool sources in full SDK exports. Use tracked paths in a Git checkout and keep local caches and planning files outside the SDK.
+
+- Deliver confirmed lockstep frames individually so the remaining queue survives subscription changes during a burst.
+
+- Refresh Pixi swarm UV and rotation buffers when their static values change. Recycle offscreen particle tails without temporary removal arrays.
+
 - Cull offscreen Pixi arena enemies before particle updates. Expose the selected backend and adapter diagnostics and add WebGPU and touch/DPR modes to the render benchmark.
 
 - Catch up from a bounded lockstep receive window when live frames arrive before replay, and stop automatic retries when the server has evicted the required history.

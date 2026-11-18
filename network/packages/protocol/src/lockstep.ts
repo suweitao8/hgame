@@ -225,14 +225,21 @@ export class ConfirmedFrameQueue {
 
   drainContiguous(): ConfirmedLockstepFrame[] {
     const result: ConfirmedLockstepFrame[] = [];
-    while (this.pending.has(this.nextNetTick)) {
-      const frame = this.pending.get(this.nextNetTick)!;
-      this.pending.delete(this.nextNetTick);
+    for (let frame = this.takeNext(); frame; frame = this.takeNext()) {
       result.push(frame);
-      this.nextNetTick++;
     }
     return result;
   }
+
+  takeNext(): ConfirmedLockstepFrame | null {
+    const frame = this.pending.get(this.nextNetTick);
+    if (!frame) return null;
+    this.pending.delete(this.nextNetTick);
+    this.nextNetTick++;
+    return frame;
+  }
+
+  clear(): void { this.pending.clear(); }
 
   get expectedNetTick(): number { return this.nextNetTick; }
   get bufferedFrames(): number { return this.pending.size; }

@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
@@ -250,12 +250,13 @@ export function createZipBuffer(entries) {
   return Buffer.concat([...localParts, centralDirBuf, eocd]);
 }
 
-async function collectFilesRecursively(dir) {
+async function collectFilesRecursively(dir, include = () => true) {
   const out = [];
   async function walk(curr, prefix) {
     const dirents = await readdir(curr, { withFileTypes: true });
     for (const d of dirents) {
       const nextRel = prefix ? `${prefix}/${d.name}` : d.name;
+      if (!include(nextRel)) continue;
       const abs = path.join(curr, d.name);
       if (d.isDirectory()) {
         await walk(abs, nextRel);
@@ -1244,9 +1245,71 @@ export async function packageGameRelease({
   };
 }
 
-/**
- * Packages the clean HGame Engine SDK distribution into `build/hgame_<ver>/` and `.zip`.
- */
+const SDK_DIRECTORIES = [
+  'assets/runtime', 'assets/template', 'assets/profiles', 'assets/optional/three',
+  'scripts', 'types', 'docs', '.agents/skills', 'network', 'tests', 'benchmarks', 'examples',
+];
+const SDK_LOCAL_CONFIG_EXAMPLE = '.hgame.local.example.json';
+const SDK_ROOT_FILES = [
+  '.gitattributes', '.gitignore', SDK_LOCAL_CONFIG_EXAMPLE, 'LICENSE', 'README.md', 'AGENTS.md', 'CHANGELOG.md',
+  'package.json', 'package-lock.json',
+];
+const SDK_FILE_MANIFEST = 'hgame.sdk-files.json';
+const SDK_CACHE_DIRS = new Set(['.git', 'node_modules', 'build', '.re-workspace', '__pycache__', '.cache', 'coverage']);
+
+function includeSdkPath(rel) {
+  if (typeof rel !== 'string' || /[\\:\x00-\x1f]/.test(rel)) return false;
+  if (rel === SDK_LOCAL_CONFIG_EXAMPLE) return true;
+  if (!SDK_ROOT_FILES.includes(rel) && !SDK_DIRECTORIES.some(dir => rel === dir || rel.startsWith(dir + '/'))) return false;
+  const lower = rel.toLowerCase();
+  const parts = lower.split('/');
+  if (parts.some(p => !p || p === '.' || p === '..' || /[. ]$/.test(p) || SDK_CACHE_DIRS.has(p) || p.startsWith('.hgame.local') || p === '.npmrc' ||
+    p === '.env' || (p.startsWith('.env.') && p !== '.env.example'))) return false;
+  if (lower === 'docs/superpowers' || lower.startsWith('docs/superpowers/')) return false;
+  if (parts.includes('dist') && lower !== 'assets/profiles/pixi2d/dist' &&
+    !lower.startsWith('assets/profiles/pixi2d/dist/')) return false;
+  return !SKIP_BASENAMES.has(parts.at(-1));
+}
+
+async function listSdkFiles(root) {
+  if (fs.existsSync(path.join(root, '.git'))) {
+    const tracked = spawnSync('git', ['ls-files', '--cached', '-z', '--', ...SDK_ROOT_FILES, ...SDK_DIRECTORIES], {
+      cwd: root, encoding: 'utf8', windowsHide: true,
+    });
+    if (tracked.error) throw tracked.error;
+    if (tracked.status !== 0) throw new Error('Could not read tracked SDK files: ' + tracked.stderr);
+    return [...new Set(tracked.stdout.split('\0').filter(Boolean))].filter(includeSdkPath);
+  }
+
+  const manifestPath = path.join(root, SDK_FILE_MANIFEST);
+  if (await existsFile(manifestPath)) {
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    if (manifest?.schemaVersion !== 1 || !Array.isArray(manifest.files) || !manifest.files.every(includeSdkPath)) {
+      throw new Error('Invalid SDK file manifest');
+    }
+    return [...new Set(manifest.files)];
+  }
+
+  const paths = [];
+  for (const relative of SDK_DIRECTORIES) {
+    const dir = path.join(root, relative);
+    if (!(await existsDir(dir))) continue;
+    const items = await collectFilesRecursively(dir, child => {
+      if (!includeSdkPath(relative + '/' + child)) return false;
+      if (relative !== 'examples') return true;
+      const parts = child.split('/');
+      if (parts[1] === 'vendor' || parts[1] === 'scripts') return false;
+      return parts[1] !== 'assets' || parts.length < 3 || !shouldIgnoreForAssetTracking(parts.slice(2).join('/'));
+    });
+    for (const { rel } of items) paths.push(relative + '/' + rel);
+  }
+  for (const file of SDK_ROOT_FILES) {
+    if (await existsFile(path.join(root, file))) paths.push(file);
+  }
+  return paths;
+}
+
+/** Packages the full HGame SDK, including its documented tool entry points. */
 export async function packageEngineRelease({
   engineRoot = DEFAULT_ENGINE_ROOT,
   version,
@@ -1281,38 +1344,24 @@ export async function packageEngineRelease({
   const targetDir = path.join(resolvedOutParent, releaseTag);
   const zipPath = path.join(resolvedOutParent, `${releaseTag}.zip`);
 
+  const canonicalRoot = await realpath(absRoot);
+  const sdkPaths = (await listSdkFiles(absRoot))
+    .filter(rel => !rel.startsWith('types/') || rel.endsWith('.d.ts'))
+    .sort();
   const zipStats = await stageRelease(targetDir, zipPath, async (files, archive) => {
-    const copyTree = async (srcRel, filterFn = null) => {
-      const srcAbs = path.join(absRoot, srcRel);
-      if (!(await existsDir(srcAbs))) return;
-      for (const item of await collectFilesRecursively(srcAbs)) {
-        const relPosix = `${toPosixRel(srcRel)}/${toPosixRel(item.rel)}`;
-        const lower = relPosix.toLowerCase();
-        const parts = lower.split('/');
-        if (parts.some(p => ['.git', 'node_modules', 'build', '.re-workspace', '__pycache__'].includes(p) ||
-          p.startsWith('.hgame.local') || p === '.env' || (p.startsWith('.env.') && p !== '.env.example'))) continue;
-        if (parts.includes('dist') && !lower.startsWith('assets/profiles/pixi2d/dist/')) continue;
-        if (SKIP_BASENAMES.has(parts.at(-1))) continue;
-        if (filterFn && !filterFn(relPosix)) continue;
-        const dst = path.join(files, ...relPosix.split('/'));
-        await mkdir(path.dirname(dst), { recursive: true });
-        await writeFile(dst, await readFile(item.abs));
+    for (const relative of sdkPaths) {
+      const src = path.join(canonicalRoot, ...relative.split('/'));
+      if (!(await lstat(src)).isFile()) throw new Error('SDK entry is not a regular file: ' + relative);
+      const resolved = await realpath(src);
+      const contained = path.relative(canonicalRoot, resolved);
+      if (path.isAbsolute(contained) || contained === '..' || contained.startsWith('..' + path.sep)) {
+        throw new Error('SDK entry resolves outside the engine root: ' + relative);
       }
-    };
-
-    await copyTree('assets/runtime');
-    await copyTree('assets/template');
-    await copyTree('assets/profiles');
-    await copyTree('assets/optional/three');
-    await copyTree('scripts');
-    await copyTree('types', rel => rel.endsWith('.d.ts'));
-    await copyTree('docs', rel => !rel.startsWith('docs/superpowers/'));
-    await copyTree('.agents/skills');
-
-    for (const rootFile of ['LICENSE', 'README.md', 'AGENTS.md', 'CHANGELOG.md', 'package.json']) {
-      const src = path.join(absRoot, rootFile);
-      if (await existsFile(src)) await writeFile(path.join(files, rootFile), await readFile(src));
+      const dst = path.join(files, ...relative.split('/'));
+      await mkdir(path.dirname(dst), { recursive: true });
+      await writeFile(dst, await readFile(resolved));
     }
+    await writeFile(path.join(files, SDK_FILE_MANIFEST), JSON.stringify({ schemaVersion: 1, files: sdkPaths }, null, 2) + '\n');
 
     return writeZipArchive(files, archive, {
       rootPrefix: flatZip ? '' : releaseTag,

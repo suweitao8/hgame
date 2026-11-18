@@ -248,3 +248,32 @@ test('lockstep replay skips old batches when the consumer already advanced', () 
     assert.deepEqual(sent, [1, 501]);
   } finally { channel.dispose(); }
 });
+
+test('lockstep keeps undelivered frames when the last consumer unsubscribes during a burst', () => {
+  const handlers = new Map();
+  const connection = {
+    onMessage(type, handler) {
+      handlers.set(type, handler);
+      return () => handlers.delete(type);
+    },
+  };
+  const channel = new HGameLockstepChannel(connection, 42, 1);
+  const received = [];
+  const emit = netTick => handlers.get('lockstep:frame')(encodeConfirmedFrame({
+    matchTag: 42, netTick,
+    inputs: [{ slot: 0, sequence: netTick, flags: LockstepInputFlags.NONE, payload: new Uint8Array([1]) }],
+  }));
+  try {
+    const stop = channel.onFrame(frame => {
+      received.push(frame.netTick);
+      stop();
+    });
+    emit(2);
+    emit(1);
+    assert.equal(channel.expectedNetTick, 2);
+    assert.equal(channel.bufferedFrames, 1);
+    channel.onFrame(frame => received.push(frame.netTick));
+    assert.deepEqual(received, [1, 2]);
+    assert.equal(channel.bufferedFrames, 0);
+  } finally { channel.dispose(); }
+});

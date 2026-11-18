@@ -410,6 +410,17 @@ test('package-game --engine outputs complete SDK build with workspace skill, use
       'AGENTS.md',
       'README.md',
       'LICENSE',
+      'package-lock.json',
+      'hgame.sdk-files.json',
+      '.hgame.local.example.json',
+      'scripts/re-pipeline.mjs',
+      'scripts/doctor-playability.mjs',
+      'network/package-lock.json',
+      'network/.env.example',
+      'network/packages/client/src/HGameNetworkClient.ts',
+      'tests/engine.test.mjs',
+      'benchmarks/run.mjs',
+      'examples/survivor-2d/engine.config.json',
       'assets/runtime/VERSION',
       'assets/runtime/vendor/rapier2d/rapier2d.wasm',
       'assets/runtime/vendor/rapier3d/rapier3d.wasm',
@@ -428,6 +439,7 @@ test('package-game --engine outputs complete SDK build with workspace skill, use
     assert.equal(zipEntries.has('hgame_1_0/.agents/skills/hgame/SKILL.md'), true);
     assert.equal(zipEntries.has('hgame_1_0/.agents/skills/hgame-vfx-juice/SKILL.md'), true);
     assert.equal(zipEntries.has('hgame_1_0/docs/guides/USER-AND-AGENT-GUIDE.md'), true);
+    assert.equal(zipEntries.has('hgame_1_0/network/package-lock.json'), true);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

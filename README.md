@@ -35,6 +35,7 @@ docs/               # Compact AI specs, architecture invariants & API-INDEX.json
 
 ```powershell
 npm ci
+npm ci --prefix network
 npm run api -- --map
 npm run api -- --recipe 3d
 
@@ -44,6 +45,7 @@ node scripts/create-game.mjs "D:\Games\my-horde" --preset horde --name "Horde"
 
 # Verify engine / examples / game
 npm run check:all
+npm run build:examples
 npm run test:examples
 npm run snapshot -- examples/survivor-2d
 npm run playtest -- examples/survivor-2d
@@ -52,6 +54,8 @@ npm run playtest -- examples/survivor-2d
 npm run package:game -- "D:\Games\my-game" --version 1.0
 npm run release
 ```
+
+The full SDK ZIP includes both npm lockfiles, the optional network workspace, and the source for the bundled examples, benchmarks, and verification commands. SDK exports from a Git checkout use tracked or staged paths and the current local contents of those files. Repacking an extracted SDK uses its included file manifest.
 
 ## Runtime Subsystems
 

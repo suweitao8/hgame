@@ -231,9 +231,10 @@ export class Renderer2D {
     }
     this.flushEnemies();
     if (used < this.enemyParticles.length) {
-      const removed = this.enemyLayer.removeParticles(used);
+      for (let i = used; i < this.enemyParticles.length; i++) this.enemyPool.push(this.enemyParticles[i]);
       this.enemyParticles.length = used;
-      for (const particle of removed) this.enemyPool.push(particle);
+      this.enemyLayer.particleChildren.length = used;
+      this.enemyLayer.update();
     }
   }
   flushEnemies() {

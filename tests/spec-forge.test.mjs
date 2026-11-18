@@ -358,18 +358,27 @@ test('doctor-playability evaluators detect 0-damage pass-through, NaN, instakill
   }
 });
 
-test('HGame repository files contain zero hardcoded machine-specific RE paths', () => {
+test('HGame source files contain zero hardcoded machine-specific RE paths', (t) => {
   const trackedExts = new Set(['.md', '.mjs', '.js', '.json', '.ps1']);
-  const ls = spawnSync('git', ['-C', repoRoot, 'ls-files'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
-  assert.equal(ls.status, 0, ls.stderr);
-
-  const candidates = new Set(ls.stdout.split(/\r?\n/).filter(Boolean));
-  const unmerged = spawnSync('git', ['-C', repoRoot, 'ls-files', '--others', '--exclude-standard', '.agents', 'scripts', 'tests', '.hgame.local.example.json'], {
-    encoding: 'utf8',
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  if (unmerged.status === 0) {
-    for (const f of unmerged.stdout.split(/\r?\n/).filter(Boolean)) candidates.add(f);
+  let candidates;
+  if (existsSync(path.join(repoRoot, '.git'))) {
+    const ls = spawnSync('git', ['-C', repoRoot, 'ls-files', '-z'], { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+    assert.equal(ls.status, 0, ls.stderr);
+    candidates = new Set(ls.stdout.split('\0').filter(Boolean));
+    const untracked = spawnSync('git', ['-C', repoRoot, 'ls-files', '--others', '--exclude-standard', '-z', '--', '.agents', 'scripts', 'tests', '.hgame.local.example.json'], {
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    assert.equal(untracked.status, 0, untracked.stderr);
+    for (const file of untracked.stdout.split('\0').filter(Boolean)) candidates.add(file);
+  } else {
+    const manifestPath = path.join(repoRoot, 'hgame.sdk-files.json');
+    if (!existsSync(manifestPath)) {
+      t.skip('Requires Git metadata or an SDK file manifest');
+      return;
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    candidates = new Set(manifest.files);
   }
 
   const forbiddenLiterals = [
@@ -394,14 +403,6 @@ test('HGame repository files contain zero hardcoded machine-specific RE paths', 
     }
   }
   assert.deepEqual(hits, [], hits.join('\n'));
-});
-
-test('package-game excludes RE local files in game mode while keeping RE skills/scripts in --engine mode', () => {
-  const pkgGameSrc = readFileSync(path.join(repoRoot, 'scripts', 'package-game.mjs'), 'utf8');
-  assert.match(pkgGameSrc, /\.hgame\.local/);
-  assert.match(pkgGameSrc, /re-pipeline\.mjs/);
-  assert.match(pkgGameSrc, /doctor-playability\.mjs/);
-  assert.match(pkgGameSrc, /copyTree\('\.agents\/skills'\)/);
 });
 
 test('re:forge defaults output directory to gamesRootDir/<slug> from HGAME_GAMES_ROOT or .hgame.local.json', () => {

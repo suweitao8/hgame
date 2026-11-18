@@ -30,9 +30,11 @@ export class HGameLockstepChannel {
   private queuedSyncFrom = 0;
   private replayThrough = 0;
   private replayPaused = false;
+  private flushingFrames = false;
   private readonly autoSyncOnReconnect: boolean;
   private readonly queue: ConfirmedFrameQueue;
   private readonly handlers = new Set<(frame: ConfirmedLockstepFrame) => void>();
+  private frameSubscribers: Array<(frame: ConfirmedLockstepFrame) => void> | null = null;
   private readonly syncStatusHandlers = new Set<(status: LockstepSyncStatus) => void>();
   private readonly unsubscribeFrame: () => void;
   private readonly unsubscribeSyncStatus: () => void;
@@ -109,13 +111,24 @@ export class HGameLockstepChannel {
 
   onFrame(handler: (frame: ConfirmedLockstepFrame) => void): () => void {
     if (this.disposed) throw new Error('Lockstep channel is disposed');
+    const alreadySubscribed = this.handlers.has(handler);
     this.handlers.add(handler);
-    this.flushFrames();
-    this.resumeReplay();
-    return () => this.handlers.delete(handler);
+    if (!alreadySubscribed) this.frameSubscribers = null;
+    const unsubscribe = () => {
+      if (this.handlers.delete(handler)) this.frameSubscribers = null;
+    };
+    try {
+      this.flushFrames();
+      this.resumeReplay();
+    } catch (error) {
+      if (!alreadySubscribed) unsubscribe();
+      throw error;
+    }
+    return unsubscribe;
   }
 
   onSyncStatus(handler: (status: LockstepSyncStatus) => void): () => void {
+    if (this.disposed) throw new Error('Lockstep channel is disposed');
     this.syncStatusHandlers.add(handler);
     return () => this.syncStatusHandlers.delete(handler);
   }
@@ -124,12 +137,14 @@ export class HGameLockstepChannel {
   get bufferedFrames(): number { return this.queue.bufferedFrames; }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
     this.unsubscribeFrame();
     this.unsubscribeSyncStatus();
     this.unsubscribeReconnect();
-    this.queue.drainContiguous();
+    this.queue.clear();
     this.handlers.clear();
+    this.frameSubscribers = null;
     this.syncStatusHandlers.clear();
   }
 
@@ -156,6 +171,7 @@ export class HGameLockstepChannel {
   }
 
   private receive(bytes: Uint8Array): void {
+    if (this.disposed) return;
     if (!(bytes instanceof Uint8Array)) throw new TypeError('Lockstep frame transport returned a non-binary message');
     const frame = decodeConfirmedFrame(bytes);
     if (this.autoSyncOnReconnect && frame.matchTag === this.matchTag &&
@@ -171,9 +187,24 @@ export class HGameLockstepChannel {
   }
 
   private flushFrames(): void {
-    if (this.handlers.size === 0) return;
-    for (const ready of this.queue.drainContiguous()) {
-      for (const handler of this.handlers) handler(ready);
+    if (this.flushingFrames) return;
+    this.flushingFrames = true;
+    try {
+      while (!this.disposed && this.handlers.size) {
+        const ready = this.queue.takeNext();
+        if (!ready) break;
+        let errors: unknown[] | undefined;
+        const subscribers = this.frameSubscribers ??= [...this.handlers];
+        for (const handler of subscribers) {
+          if (!this.handlers.has(handler)) continue;
+          try { handler(ready); }
+          catch (error) { (errors ??= []).push(error); }
+        }
+        if (errors?.length === 1) throw errors[0];
+        if (errors) throw new AggregateError(errors, 'Lockstep frame consumers failed');
+      }
+    } finally {
+      this.flushingFrames = false;
     }
   }
 
