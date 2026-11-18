@@ -293,7 +293,7 @@ export class FlowField2D {
         worldToTile: (x: number, y: number, out?: {
             x: number;
             y: number;
-        } | undefined) => {
+        }) => {
             x: number;
             y: number;
         };

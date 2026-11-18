@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Publish the Pixi canvas readiness marker used by browser tools. Trace reachable Pixi build files in releases and detect Toy SDK usage in bundled entries. Keep compiled files and the asset catalog out of media CAS sync.
+
 - Include HGame modules referenced by literal paths in the Pixi bundles reachable from a game's release entry.
 
 - Add swept projectile queries to `SpatialHash2D` and use the shared spatial index in the Pixi arena without rebuilding it on idle dense-crowd ticks.

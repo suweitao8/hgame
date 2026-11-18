@@ -16,7 +16,9 @@ const fail = msg => { console.error('FAIL ' + msg); process.exitCode = 1; };
 try {
   for (const profile of ['2d', '3d']) {
     const game = path.join(tmp, profile);
-    const gen = run('create-game.mjs', [game, '--profile', profile, '--no-git']);
+    const gen = run('create-game.mjs', [
+      game, '--profile', profile, ...(profile === '2d' ? ['--renderer', 'canvas2d'] : []), '--no-git',
+    ]);
     if (gen.status !== 0) throw new Error(gen.stderr);
     const base = path.join(tmp, `${profile}-base.png`);
     const common = [game, '--ready', '#game[data-engine-ready=true]', '--wait', '600', ...chrome];

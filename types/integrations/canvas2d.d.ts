@@ -267,7 +267,7 @@ export class Sprite2D extends Component {
     flipX: boolean;
     flipY: boolean;
     image: CanvasImageSource | null;
-    sheet: import("../animation/spritesheet.js").SpriteSheet | null;
+    sheet: import("../index.js").SpriteSheet | null;
     frame: number;
     sourceRect: SpriteSourceRect | null;
     animation: SpriteFrameSource | null;
@@ -360,7 +360,7 @@ export class SpriteCrowd2D extends Component {
     height: number;
     color: string;
     image: CanvasImageSource | null;
-    sheet: import("../animation/spritesheet.js").SpriteSheet | null;
+    sheet: import("../index.js").SpriteSheet | null;
     sourceRect: SpriteSourceRect | null;
     anchorX: number;
     anchorY: number;
@@ -960,7 +960,7 @@ export type Sprite2DOptions = {
     /**
      * Sprite sheet providing frame rectangles (and the image when image is null).
      */
-    sheet?: import("../animation/spritesheet.js").SpriteSheet | null | undefined;
+    sheet?: import("../index.js").SpriteSheet | null | undefined;
     /**
      * Sheet frame index (ignored while an animation is set).
      */
@@ -1072,7 +1072,7 @@ export type SpriteCrowd2DOptions = {
     /**
      * Shared sprite sheet; each instance picks a frame.
      */
-    sheet?: import("../animation/spritesheet.js").SpriteSheet | null | undefined;
+    sheet?: import("../index.js").SpriteSheet | null | undefined;
     /**
      * Explicit source rectangle in pixels shared by all instances.
      */

@@ -8,7 +8,7 @@ export function classifyGpuRenderer(renderer) {
 export function benchmarkBrowserOptions(gpu = 'software', executablePath) {
   if (!['software', 'hardware'].includes(gpu)) throw new RangeError('--gpu must be software or hardware.');
   const args = ['--no-sandbox', '--enable-webgl', '--ignore-gpu-blocklist', '--disable-frame-rate-limit'];
-  if (gpu === 'software') args.push('--use-gl=angle', '--use-angle=swiftshader');
+  if (gpu === 'software') args.push('--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader');
   return { headless: true, ...(executablePath ? { executablePath } : {}), args };
 }
 

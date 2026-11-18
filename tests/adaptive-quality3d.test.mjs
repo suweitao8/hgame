@@ -176,7 +176,7 @@ test('adaptive viewport plans keep at least one physical pixel on each axis', ()
   assert.equal(viewport.bufferWidth, 1);
 });
 
-test('the 3D generator enables adaptive quality only on explicit request', async () => {
+test('the 3D generator writes explicit quality settings outside the WebAsset manifest', async () => {
   const tool = fileURLToPath(new URL('../scripts/create-game.mjs', import.meta.url));
   const temp = await mkdtemp(path.join(os.tmpdir(),'hgame-quality-'));
   try {
@@ -191,14 +191,14 @@ test('the 3D generator enables adaptive quality only on explicit request', async
     const main = await readFile(path.join(game,'src/main.js'),'utf8');
     assert.match(main,/qualityController/);
     assert.match(main,/quality3d/);
-    assert.match(main,/const defaultQualityMode = "auto";/);
+    assert.equal(JSON.parse(await readFile(path.join(game,'src/presentation.json'),'utf8')).quality, 'auto');
     const bare = path.join(temp,'bare-low');
     const bareCreated = spawnSync(process.execPath, [tool,bare,'--profile','3d',
       '--quality','low','--bare','--no-git'], { encoding:'utf8' });
     assert.equal(bareCreated.status,0,bareCreated.stderr);
     const bareCfg = JSON.parse(await readFile(path.join(bare,'game.config.json'),'utf8'));
     assert.deepEqual(Object.keys(bareCfg).sort(), Object.keys(cfg).sort());
-    assert.match(await readFile(path.join(bare,'src/main.js'),'utf8'), /const defaultQualityMode = "low";/);
+    assert.equal(JSON.parse(await readFile(path.join(bare,'src/presentation.json'),'utf8')).quality, 'low');
     const gl2d = path.join(temp,'gl2d');
     const glCreated = spawnSync(process.execPath, [tool,gl2d,'--profile','2d',
       '--renderer','webgl2d','--no-git'], { encoding:'utf8' });

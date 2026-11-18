@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { once } from 'node:events';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright-core';
@@ -28,7 +28,14 @@ try {
       .match(/"[^"]*"|\S+/g).map(value => value.replace(/^"|"$/g, ''));
     const game = path.join(temp, 'recipe-' + name);
     run(args.map(value => value === '<dir>' ? game : value).concat('--no-git'));
-    await writeFile(path.join(game, 'src/main.js'), recipe.code);
+    // The Pixi recipes print the same starter source that create-game builds.
+    if (name === '2d' || name === 'horde') {
+      const entry = name === '2d' ? 'bare.js' : 'horde.js';
+      const generatedSource = await readFile(path.join(game, 'src', entry), 'utf8');
+      assert.ok(recipe.code.trimEnd().endsWith(generatedSource.trimEnd()), name + ' recipe matches packaged starter source');
+    } else {
+      await writeFile(path.join(game, 'src/main.js'), recipe.code);
+    }
     const socket = createServer();
     await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
     const port = socket.address().port;
@@ -52,9 +59,12 @@ try {
     await page.waitForTimeout(300);
     await page.keyboard.up('d');
     const after = await page.evaluate(() => window.__hgameState());
-    if (name !== 'ui') assert.ok(Number.isInteger(after.tick) && after.tick > before.tick, `${name} advancing tick ${JSON.stringify(after)}`);
-    if (name === '2d') assert.ok(after.hero.x > before.hero.x, '2d keyboard wiring');
-    if (name === 'horde') assert.equal(after.activeUnits, 300, 'horde simulation and count wiring');
+    if (name === '2d') assert.equal(after.scene, 'main', 'bare Pixi scene starts');
+    if (name === '3d' || name === 'horde') assert.ok(Number.isInteger(after.tick) && after.tick > before.tick, name + ' advancing tick');
+    if (name === 'horde') {
+      assert.equal(after.activeUnits, 1200, 'default horde population');
+      assert.ok(after.hero.x > before.hero.x, 'Pixi input moves the player');
+    }
     if (name === '3d') assert.ok(Number.isFinite(after.terrainMaxY), '3d terrain/physics wiring');
     if (name === 'ui') assert.equal(after.locale, 'zh', 'UI locale getter');
     assert.deepEqual(errors, [], `${name} errors`);

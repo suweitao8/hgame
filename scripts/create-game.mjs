@@ -165,8 +165,6 @@ async function main() {
       await cp(path.join(mainSource, sourceEntry), path.join(stage, 'index.source.html'));
       if (options.preset === 'horde' && !options.bare) await cp(path.join(profiles, 'horde', 'swarm.json'), path.join(stage, 'src', 'swarm.json'));
       await cp(path.join(mainSource, 'install-build.mjs'), path.join(stage, 'scripts', 'install-pixi-build.mjs'));
-      const seed = spawnSync(process.execPath, ['scripts/install-pixi-build.mjs', '--seed', path.join(mainSource, 'dist', 'assets')], { cwd: stage, encoding: 'utf8' });
-      if (seed.error || seed.status !== 0) throw new Error('Failed to record Pixi build assets: ' + (seed.stderr || seed.error?.message || 'unknown error'));
       await cp(path.join(mainSource, 'package-lock.json'), path.join(stage, 'package-lock.json'));
       await cp(path.join(mainSource, 'CLAUDE.md'), path.join(stage, 'CLAUDE.md'));
     } else {
@@ -222,12 +220,17 @@ async function main() {
       const pixiPackage = JSON.parse(await readFile(path.join(mainSource, 'package.json'), 'utf8'));
       pkg.dependencies = pixiPackage.dependencies;
       pkg.devDependencies = pixiPackage.devDependencies;
-      pkg.scripts['build:pixi'] = 'vite build && node scripts/install-pixi-build.mjs';
+      pkg.scripts['build:pixi'] = 'node scripts/install-pixi-build.mjs --build';
       await cp(path.join(mainSource, 'vite.config.js'), path.join(stage, 'vite.config.js'));
+      await writeFile(path.join(stage, '.gitattributes'), 'assets/*.js text eol=lf\nassets/*.mjs text eol=lf\nassets/*.css text eol=lf\n');
       const instructions = await readFile(path.join(mainSource, 'AGENTS.md'), 'utf8');
       await writeFile(path.join(stage, 'AGENTS.md'), (await readFile(path.join(stage, 'AGENTS.md'), 'utf8')) + '\n' + instructions);
     }
     await writeFile(packageFile, JSON.stringify(pkg, null, 2) + '\n');
+    if (options.starter === 'pixi2d') {
+      const seed = spawnSync(process.execPath, ['scripts/install-pixi-build.mjs', '--seed', path.join(mainSource, 'dist', 'assets')], { cwd: stage, encoding: 'utf8' });
+      if (seed.error || seed.status !== 0) throw new Error('Failed to record Pixi build assets: ' + (seed.stderr || seed.error?.message || 'unknown error'));
+    }
     await writeFile(path.join(stage, 'assets.manifest.json'), JSON.stringify({
       schemaVersion: 1,
       gameId: options.slug,

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { runToyPreflight } from './toy-preflight.mjs';
 import { normalizeReleaseProfile, runtimeSeeds } from './project-profiles.mjs';
-import { casObjectPath, readAssetManifest, readProjectAssetCatalog, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
+import { casObjectPath, hashPixiSources, matchPixiBuildBytes, readAssetManifest, readPixiBuildManifest, readProjectAssetCatalog, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -26,21 +27,6 @@ const RUNTIME_DIR_PREFIXES = new Set([
   'physics',
   'lockstep',
 ]);
-
-async function readPixiBuildFiles(projectDir) {
-  try {
-    const manifest = JSON.parse(await readFile(path.join(projectDir, '.hgame-pixi-build.json'), 'utf8'));
-    if (manifest?.schemaVersion === 1 && manifest.files && typeof manifest.files === 'object' &&
-        !Array.isArray(manifest.files)) {
-      return new Set(Object.entries(manifest.files)
-        .filter(([name, hash]) => /^[A-Za-z0-9_.-]+\.m?js$/.test(name) && /^[a-f0-9]{64}$/.test(hash))
-        .map(([name]) => 'assets/' + name));
-    }
-  } catch (error) {
-    if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
-  }
-  return new Set();
-}
 
 const AUTHORING_ASSET_DIRS = new Set([
   'raw',
@@ -424,14 +410,14 @@ function stripJsComments(source) {
   return out;
 }
 
-function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSubpaths = false, pixiChunk = false } = {}) {
+function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSubpaths = false, pixiBuildFiles } = {}) {
   const clean = stripJsComments(code);
   const specifiers = [];
   const urls = [];
 
-  const sideEffectImportRe = /(?:^|[;\n}])\s*import\s+['"]([^'"]+)['"]/g;
-  const importFromRe = /\bimport\s+(?:\*\s+as\s+[\w$]+|[\w$]+(?:\s*,\s*(?:\*\s+as\s+[\w$]+|\{[^}]*\}))?|\{[^}]*\})\s+from\s+['"]([^'"]+)['"]/g;
-  const exportFromRe = /\bexport\s+(?:\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s+from\s+['"]([^'"]+)['"]/g;
+  const sideEffectImportRe = /(?:^|[;\n}])\s*import\s*['"]([^'"]+)['"]/g;
+  const importFromRe = /\bimport\b\s*(?:\*\s*as\s+[\w$]+|[\w$]+(?:\s*,\s*(?:\*\s*as\s+[\w$]+|\{[^}]*\}))?|\{[^}]*\})\s*\bfrom\s*['"]([^'"]+)['"]/g;
+  const exportFromRe = /\bexport\b\s*(?:\*(?:\s*as\s+[\w$]+)?|\{[^}]*\})\s*\bfrom\s*['"]([^'"]+)['"]/g;
   const dynamicImportRe = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
   const newUrlRe = /\bnew\s+URL\s*\(\s*['"]([^'"]+)['"]\s*,\s*import\.meta\.url\s*\)/g;
 
@@ -477,7 +463,13 @@ function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSu
     }
   }
 
-  if (pixiChunk) {
+  const buildSubpaths = [];
+  if (pixiBuildFiles) {
+    // Vite's preloader can reference emitted files through a string table.
+    for (const match of clean.matchAll(/(['"])((?:assets\/|\.\/)[A-Za-z0-9_.-]+)\1/g)) {
+      const output = match[2].startsWith('./') ? 'assets/' + match[2].slice(2) : match[2];
+      if (pixiBuildFiles.has(output)) buildSubpaths.push(output);
+    }
     // Vite may rename loadRuntime(), but its literal module arguments survive.
     // Scan actual chunks in the entry graph, not all source files or assets.
     const literalPath = /(['"`])((?:[A-Za-z0-9_-]+\/)+[A-Za-z0-9_-]+\.m?js|index\.js)\1/g;
@@ -489,7 +481,7 @@ function extractModuleSpecifiers(code, { isApplicationCore = false, includeSrcSu
     }
   }
 
-  return { specifiers, urls, runtimeSubpaths };
+  return { specifiers, urls, runtimeSubpaths, buildSubpaths };
 }
 
 function extractCssDependencies(cssText) {
@@ -676,7 +668,21 @@ export async function packageGameRelease({
   const releaseProfilePath = path.join(absGameDir, 'hgame.project.json');
   const releaseProfile = normalizeReleaseProfile(await existsFile(releaseProfilePath)
     ? JSON.parse(await readFile(releaseProfilePath, 'utf8')) : undefined);
-  const pixiBuildFiles = await readPixiBuildFiles(absGameDir);
+  let pixiBuild = await readPixiBuildManifest(absGameDir);
+  if (pixiBuild.sourceHash && pixiBuild.sourceHash !== await hashPixiSources(absGameDir)) {
+    if (!(await existsFile(path.join(absGameDir, 'node_modules/vite/bin/vite.js')))) {
+      throw new Error('Pixi source changed since the last build. Install the project dependencies with npm ci before packaging.');
+    }
+    const build = spawnSync(process.execPath, ['scripts/install-pixi-build.mjs', '--build'], {
+      cwd: absGameDir, stdio: ['ignore', 2, 2], windowsHide: true,
+    });
+    if (build.error) throw build.error;
+    if (build.status !== 0) throw new Error('Pixi compilation failed before packaging.');
+    pixiBuild = await readPixiBuildManifest(absGameDir);
+  }
+  const pixiBuildFiles = new Map([...pixiBuild.files].map(([name, hash]) => ['assets/' + name, hash]));
+  const { assets: assetManifest } = await readAssetManifest(absGameDir);
+  const storeDir = resolveAssetStoreDir(assetStore);
 
   const resolvedEngineRoot = engineRoot
     ? path.resolve(engineRoot)
@@ -731,6 +737,11 @@ export async function packageGameRelease({
     const localAbs = path.join(absGameDir, relPosix);
     if (fs.existsSync(localAbs) && fs.statSync(localAbs).isFile()) {
       return localAbs;
+    }
+    const buildHash = pixiBuildFiles.get(relPosix);
+    if (buildHash && assetManifest[relPosix.slice('assets/'.length)]?.sha256 === buildHash) {
+      const blob = casObjectPath(storeDir, buildHash);
+      if (fs.existsSync(blob) && fs.statSync(blob).isFile()) return blob;
     }
     if (resolvedEngineRoot && relPosix.startsWith('vendor/hgame/')) {
       const fallbackRel = relPosix.slice('vendor/hgame/'.length);
@@ -830,7 +841,7 @@ export async function packageGameRelease({
 
   for (const ref of assetRefs) {
     const resolved = resolveModulePath(ref, entryRel, importMap);
-    if (resolved) enqueueRel(resolved, false);
+    if (resolved) enqueueRel(resolved, pixiBuildFiles.has(resolved));
   }
 
   // Older standalone projects can rely on the root facade through computed module paths.
@@ -876,23 +887,26 @@ export async function packageGameRelease({
     const ext = path.posix.extname(rel).toLowerCase();
     if (ext === '.js' || ext === '.mjs') {
       const code = await readFile(abs, 'utf8');
-      const { specifiers, urls, runtimeSubpaths } = extractModuleSpecifiers(code, {
+      const { specifiers, urls, runtimeSubpaths, buildSubpaths } = extractModuleSpecifiers(code, {
         isApplicationCore: rel === 'vendor/hgame/core/application.js',
         includeSrcSubpaths: rel.startsWith('src/'),
-        pixiChunk: pixiBuildFiles.has(rel),
+        pixiBuildFiles: pixiBuildFiles.has(rel) ? pixiBuildFiles : undefined,
       });
       for (const s of [...specifiers, ...urls]) {
         const target = resolveModulePath(s, rel, importMap);
-        if (target) enqueueRel(target, false);
+        if (target) enqueueRel(target, pixiBuildFiles.has(target));
       }
       for (const sub of runtimeSubpaths) {
         enqueueRel(sub, false);
+      }
+      for (const sub of buildSubpaths) {
+        enqueueRel(sub, true);
       }
     } else if (ext === '.css') {
       const css = await readFile(abs, 'utf8');
       for (const ref of extractCssDependencies(css)) {
         const target = resolveModulePath(ref, rel, importMap);
-        if (target) enqueueRel(target, false);
+        if (target) enqueueRel(target, pixiBuildFiles.has(target));
       }
     }
   }
@@ -938,6 +952,7 @@ export async function packageGameRelease({
     const allAssets = await collectFilesRecursively(assetsRoot);
     for (const f of allAssets) {
       const relPosix = toPosixRel(f.rel);
+      if (pixiBuildFiles.has('assets/' + relPosix)) continue;
       const parts = relPosix.split('/');
       const lowerParts = parts.map(p => p.toLowerCase());
       if (lowerParts[0] === 'vendor' && lowerParts[1] === 'three') {
@@ -963,15 +978,13 @@ export async function packageGameRelease({
   }
 
   // The catalog names logical resources. The CAS manifest maps files to bytes.
-  const { assets: assetManifest } = await readAssetManifest(absGameDir);
   const files = new Set(catalogFiles);
   if (releaseProfile.assetMode === 'all') {
     for (const file of Object.keys(assetManifest)) {
-      if (!shouldIgnoreForAssetTracking(file)) files.add(file);
+      if (file !== 'catalog.json' && !pixiBuildFiles.has('assets/' + file) && !shouldIgnoreForAssetTracking(file)) files.add(file);
     }
   }
   let resolvedFromStore = 0;
-  const storeDir = resolveAssetStoreDir(assetStore);
   const requiredCatalogFiles = new Set(catalogFiles);
   const missing = [];
   for (const file of [...files].sort()) {
@@ -1012,10 +1025,16 @@ export async function packageGameRelease({
 
   for (const [relPosix, absSrc] of includedFiles) {
     let data = await readFile(absSrc);
+    const buildHash = pixiBuildFiles.get(relPosix);
+    if (buildHash) {
+      data = matchPixiBuildBytes(relPosix, data, buildHash);
+      if (!data) throw new Error('Pixi build file changed after compilation: ' + relPosix + '. Run npm run build:pixi before packaging.');
+    }
     const ext = path.posix.extname(relPosix).toLowerCase();
     const isThreeRuntime = /^assets\/vendor\/three\/three\.(module|core)\.js$/.test(relPosix);
     if (
       esbuild &&
+      !buildHash &&
       (ext === '.js' || ext === '.mjs' || ext === '.css') &&
       (isThreeRuntime || !relPosix.startsWith('assets/vendor/three/')) &&
       !relPosix.startsWith('vendor/hgame/vendor/')
@@ -1032,11 +1051,9 @@ export async function packageGameRelease({
       });
       data = Buffer.from(transformed.code, 'utf8');
     }
-    if (relPosix.startsWith('src/') && (ext === '.js' || ext === '.mjs')) {
-      const srcStr = data.toString('utf8');
-      if (/bilibili-toy\.js|\bwindow\.toy\b|\bglobalThis\.toy\b/.test(srcStr)) {
-        usesToySdkSource = true;
-      }
+    if (target === 'toy' && !usesToySdkSource &&
+        (relPosix.startsWith('src/') || pixiBuildFiles.has(relPosix)) && (ext === '.js' || ext === '.mjs')) {
+      usesToySdkSource = /bilibili-toy\.js|\b(?:window|globalThis)\??\.toy\b/.test(stripJsComments(data.toString('utf8')));
     }
     stagedOutputs.set(relPosix, data);
   }
@@ -1073,6 +1090,7 @@ export async function packageGameRelease({
       if (clean.startsWith('/')) return null;
       const resolved = toPosixRel(path.posix.normalize(entryDir === '.' ? clean : `${entryDir}/${clean}`));
       if (!stagedOutputs.has(resolved)) return null;
+      if (pixiBuildFiles.has(resolved)) return null; // Vite has already named these by content.
       if (!/\.(?:js|mjs|css)$/i.test(resolved) || /\.min\.(?:js|mjs|css)$/i.test(resolved)) return null;
       if (/[-._][A-Za-z0-9_-]*[0-9_-][A-Za-z0-9_-]*\.(?:js|mjs|css)$/i.test(path.posix.basename(resolved))) {
         return null;

@@ -339,9 +339,9 @@ test('generator produces 2D, 3D and UI profiles from any directory without overw
       const recipe = JSON.parse(await readFile(path.join(destination, 'engine.config.json'), 'utf8'));
       assert.equal(recipe.profile, mode);
       const config = JSON.parse(await readFile(path.join(destination, 'game.config.json'), 'utf8'));
-      assert.equal(config.renderer, mode === '3d' ? 'threejs' : mode === 'ui' ? 'dom' : 'canvas2d');
+      assert.equal(config.renderer, { '2d': 'webgl-custom', '3d': 'threejs', ui: 'dom' }[mode]);
       const js = await readFile(path.join(destination, 'src', 'main.js'), 'utf8');
-      assert.match(js, /vendor\/hgame/);
+      assert.match(js, mode === '2d' ? /startPixiGame/ : /vendor\/hgame/);
       const threePath = path.join(destination, 'assets', 'vendor', 'three');
       const hasThree = await import('node:fs').then(fs => fs.existsSync(threePath));
       assert.equal(hasThree, mode === '3d');

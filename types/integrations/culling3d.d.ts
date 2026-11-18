@@ -327,7 +327,9 @@ export type InstancedMeshLike = {
     count: number;
     instanceMatrix: InstanceBufferLike;
     instanceColor?: InstanceBufferLike | null | undefined;
-    matrixWorld?: { elements: ArrayLike<number> } | undefined;
+    matrixWorld?: {
+        elements: ArrayLike<number>;
+    } | undefined;
     updateWorldMatrix?: ((updateParents: boolean, updateChildren: boolean) => void) | undefined;
     parent?: {
         remove?: (o: object) => unknown;

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import os from 'node:os';
@@ -73,7 +74,7 @@ test('package-game outputs lean build/lol_1_1 + .zip excluding tests/scripts/git
   const game = path.join(tmp, 'lol');
   let child = null;
   try {
-    const gen = spawnSync(process.execPath, [createGame, game, '--name', '英雄试炼', '--no-git'], { encoding: 'utf8' });
+    const gen = spawnSync(process.execPath, [createGame, game, '--renderer', 'canvas2d', '--name', '英雄试炼', '--no-git'], { encoding: 'utf8' });
     assert.equal(gen.status, 0, gen.stderr);
 
     // Simulate dev/authoring clutter inside the project that must NOT enter the release archive
@@ -177,7 +178,7 @@ test('package-game auto-provisions verified Rapier2D WASM when enabled post-crea
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-pkg-wasm-'));
   const game = path.join(tmp, 'arena');
   try {
-    const gen = spawnSync(process.execPath, [createGame, game, '--no-git'], { encoding: 'utf8' });
+    const gen = spawnSync(process.execPath, [createGame, game, '--renderer', 'canvas2d', '--no-git'], { encoding: 'utf8' });
     assert.equal(gen.status, 0, gen.stderr);
 
     // Project was created without physics; enable deterministic rapier2d afterward
@@ -246,6 +247,7 @@ test('standalone 3D project release traces Three.js transitive modules while pru
       'vendor/hgame/integrations/world-aligned-material.js',
       'vendor/hgame/integrations/procedural-models.js',
       'vendor/hgame/integrations/modular-level.js',
+      'vendor/hgame/integrations/sky3d.js',
     ]) {
       assert.equal(await exists(path.join(outDir, requiredRel)), true, `Expected ${requiredRel} in 3D release`);
     }
@@ -254,7 +256,6 @@ test('standalone 3D project release traces Three.js transitive modules while pru
       'assets/vendor/three/jsm/utils/UnusedHelper.js',
       'vendor/hgame/integrations/canvas2d.js',
       'vendor/hgame/integrations/lighting3d.js',
-      'vendor/hgame/integrations/sky3d.js',
       'vendor/hgame/vendor/rapier2d/rapier2d.wasm',
       'vendor/hgame/vendor/rapier3d/rapier3d.wasm',
     ]) {
@@ -262,6 +263,46 @@ test('standalone 3D project release traces Three.js transitive modules while pru
     }
   } finally {
     await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('standard and Toy releases trace only the chosen Pixi entry and preserve its hashed output', async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), 'hgame-package-pixi-'));
+  const game = path.join(temp, 'pixi-release');
+  try {
+    const gen = spawnSync(process.execPath, [createGame, game, '--profile', '2d', '--no-git'], { encoding: 'utf8' });
+    assert.equal(gen.status, 0, gen.stderr);
+
+    const manifestPath = path.join(game, '.hgame-pixi-build.json');
+    const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+    const htmlPath = path.join(game, 'index.html');
+    const html = await readFile(htmlPath, 'utf8');
+    const originalEntry = html.match(/src="\.\/assets\/([^"]+\.js)"/)[1];
+    const fixtureEntry = 'toy-entry-12345678.js';
+    const code = await readFile(path.join(game, 'assets', originalEntry), 'utf8') + '\nwindow.toy?.getMyRank();\n';
+    await writeFile(path.join(game, 'assets', fixtureEntry), code);
+    await writeFile(htmlPath, html.replace(originalEntry, fixtureEntry));
+    manifest.files[fixtureEntry] = createHash('sha256').update(code).digest('hex');
+    await writeFile(manifestPath, JSON.stringify(manifest));
+
+    for (const target of ['standard', 'toy']) {
+      const args = [packageGame, game, '--target', target, '--tag', target, '--version', '1.0.0'];
+      if (target === 'toy') args.push('--slug', 'pixi-release');
+      const result = spawnSync(process.execPath, args, { encoding: 'utf8' });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const summary = JSON.parse(result.stdout);
+      const entries = readZipEntries(await readFile(summary.zipPath));
+      const prefix = target === 'toy' ? '' : 'standard/';
+      assert.equal(entries.get(prefix + 'assets/' + fixtureEntry).toString(), code);
+      assert.equal(entries.has(prefix + 'assets/' + originalEntry), false);
+      for (const name of Object.keys(manifest.files).filter(name => /^index\.(bare|horde)-/.test(name))) {
+        assert.equal(entries.has(prefix + 'assets/' + name), false, name + ' is outside the entry graph');
+      }
+      assert.match(entries.get(prefix + 'index.html').toString(), /assets\/toy-entry-12345678\.js/);
+      assert.equal(summary.toySdkInjected, target === 'toy');
+    }
+  } finally {
+    await rm(temp, { recursive: true, force: true });
   }
 });
 
@@ -420,14 +461,14 @@ test('package-game retains vfx/ and sim/ runtime subpaths when referenced from g
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-pkg-vfx-sim-'));
   const game = path.join(tmp, 'subpaths');
   try {
-    const gen = spawnSync(process.execPath, [createGame, game, '--bare', '--no-git'], { encoding: 'utf8' });
+    const gen = spawnSync(process.execPath, [createGame, game, '--renderer', 'canvas2d', '--bare', '--no-git'], { encoding: 'utf8' });
     assert.equal(gen.status, 0, gen.stderr);
 
     const srcMain = path.join(game, 'src', 'main.js');
     const prev = await readFile(srcMain, 'utf8');
     await writeFile(
       srcMain,
-      `import { createVfxSystem } from '../vendor/hgame/vfx/index.js';\nimport { createRng } from '../vendor/hgame/sim/rng.js';\n${prev}\nvoid createVfxSystem; void createRng;\n`,
+      `import { createVfxSystem } from '../vendor/hgame/vfx/index.js';\nimport { createSeededRng } from '../vendor/hgame/sim/rng.js';\n${prev}\nvoid createVfxSystem; void createSeededRng;\n`,
     );
 
     const pack = spawnSync(process.execPath, [packageGame, game, '--version', '1.0.0'], { encoding: 'utf8' });

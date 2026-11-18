@@ -114,7 +114,7 @@ test('package-game --target toy produces flat content-hashed zip, injects toy-sd
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-toy-pkg-'));
   const game = path.join(tmp, 'toy-sample');
   try {
-    const gen = spawnSync(process.execPath, [createGame, game, '--name', '测试Toy', '--no-git'], { encoding: 'utf8' });
+    const gen = spawnSync(process.execPath, [createGame, game, '--renderer', 'canvas2d', '--name', '测试Toy', '--no-git'], { encoding: 'utf8' });
     assert.equal(gen.status, 0, gen.stderr);
 
     // Reference bilibili-toy.js in src/main.js so auto-injection triggers

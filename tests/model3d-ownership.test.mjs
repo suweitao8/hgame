@@ -34,6 +34,7 @@ test('Model3D keeps replaced assets usable and disposes shared owned resources o
 });
 
 test('Model3D disposal drains a superseded load and does not return a disposed asset', async () => {
+  const loaderStarted = Promise.withResolvers();
   const loaded = Promise.withResolvers();
   const slowGeometry = new THREE.BoxGeometry();
   const replacementGeometry = new THREE.BoxGeometry();
@@ -41,9 +42,12 @@ test('Model3D disposal drains a superseded load and does not return a disposed a
   const slowCount = monitor(slowGeometry);
   const replacementCount = monitor(replacementGeometry);
   const materialCount = monitor(sharedMaterial);
-  const provider = createModel3DProvider({ THREE, loader: { loadAsync: () => loaded.promise } });
+  const provider = createModel3DProvider({ THREE, loader: { loadAsync: () => {
+    loaderStarted.resolve();
+    return loaded.promise;
+  } } });
   const pending = provider.load('hero.glb');
-  await Promise.resolve();
+  await loaderStarted.promise;
   provider.registerAsset('hero.glb', { scene: new THREE.Mesh(replacementGeometry, sharedMaterial), owned: true });
   const rejected = assert.rejects(pending, /disposed/i);
   const teardown = provider.dispose();

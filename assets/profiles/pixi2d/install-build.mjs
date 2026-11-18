@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
-import { cp, copyFile, lstat, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { copyFile, lstat, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { hashPixiSources, matchPixiBuildBytes, readPixiBuildManifest } from './assets.mjs';
 
 const manifestPath = '.hgame-pixi-build.json';
-const safeName = /^[A-Za-z0-9_.-]+$/;
+const safeName = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
 // Track only the flat Vite output; art and manually authored files are never owned.
@@ -17,30 +19,42 @@ async function emittedFiles(dir) {
   return files;
 }
 
-async function readPrevious() {
-  try {
-    const value = JSON.parse(await readFile(manifestPath, 'utf8'));
-    return value?.schemaVersion === 1 && value.files && typeof value.files === 'object' ? value.files : {};
-  } catch (error) {
-    if (error.code === 'ENOENT' || error instanceof SyntaxError) return {};
-    throw error;
-  }
-}
-
 const seedDir = process.argv[2] === '--seed' ? process.argv[3] : null;
+const sourceHash = await hashPixiSources(process.cwd());
+if (process.argv[2] === '--build') {
+  const build = spawnSync(process.execPath, ['node_modules/vite/bin/vite.js', 'build'], { stdio: 'inherit', windowsHide: true });
+  if (build.error) throw build.error;
+  if (build.status !== 0) process.exit(build.status || 1);
+  if (await hashPixiSources(process.cwd()) !== sourceHash) throw new Error('Pixi source changed during compilation. Rebuild before publishing.');
+}
 const files = await emittedFiles(seedDir || 'dist/assets');
 if (!seedDir) {
-  const previous = await readPrevious();
+  const { files: previous } = await readPixiBuildManifest(process.cwd());
   await mkdir('assets', { recursive: true });
-  await cp('dist/assets', 'assets', { recursive: true, force: true });
-  await copyFile('dist/index.source.html', 'index.html');
-  for (const [name, hash] of Object.entries(previous)) {
-    if (!safeName.test(name) || Object.hasOwn(files, name) || !/^[a-f0-9]{64}$/.test(hash)) continue;
+  const pending = [];
+  for (const [name, hash] of Object.entries(files)) {
     const target = path.join('assets', name);
     try {
       const info = await lstat(target);
-      if (info.isFile() && !info.isSymbolicLink() && digest(await readFile(target)) === hash) await unlink(target);
+      if (!info.isFile()) throw new Error('Pixi output collides with an existing project path: ' + target);
+      const current = await readFile(target);
+      if (digest(current) === hash) continue;
+      if (!matchPixiBuildBytes(name, current, hash) && !matchPixiBuildBytes(name, current, previous.get(name))) {
+        throw new Error('Pixi output would overwrite an authored asset: ' + target);
+      }
+    } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    pending.push([name, target]);
+  }
+  for (const [name, target] of pending) await copyFile(path.join('dist/assets', name), target);
+  await copyFile('dist/index.source.html', 'dist/index.install.html');
+  await rename('dist/index.install.html', 'index.html');
+  for (const [name, hash] of previous) {
+    if (Object.hasOwn(files, name)) continue;
+    const target = path.join('assets', name);
+    try {
+      const info = await lstat(target);
+      if (info.isFile() && matchPixiBuildBytes(name, await readFile(target), hash)) await unlink(target);
     } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
 }
-await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, files }, null, 2) + '\n');
+await writeFile(manifestPath, JSON.stringify({ schemaVersion: 1, sourceHash, files }, null, 2) + '\n');

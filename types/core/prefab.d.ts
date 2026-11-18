@@ -45,7 +45,7 @@ export type PrefabComponentDescriptor = {
 export type PrefabDescriptor = {
     name?: string | undefined;
     active?: boolean | undefined;
-    transform?: Partial<Record<"width" | "height" | "x" | "y" | "z" | "depth" | "anchorX" | "anchorY" | "rotationX" | "rotationY" | "rotationZ" | "scaleX" | "scaleY" | "scaleZ", number>> | undefined;
+    transform?: Partial<Record<"width" | "height" | "x" | "y" | "z" | "rotationX" | "rotationY" | "rotationZ" | "scaleX" | "scaleY" | "scaleZ" | "depth" | "anchorX" | "anchorY", number>> | undefined;
     components?: PrefabComponentDescriptor[] | undefined;
     /**
      * Nesting limited to 32 levels.

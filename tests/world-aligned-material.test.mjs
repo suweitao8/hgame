@@ -85,7 +85,16 @@ test('shared PBR palette reuses high-resolution smooth textures and supports ins
   assert.ok(stair.children.length >= 2, 'stair geometry is assembled without MC GLB');
   const benchBatch = await models.instantiateBatch('prop.bench', [{ x: 0 }, { x: 2 }]);
   assert.equal(benchBatch.isGroup, true);
-  assert.equal(benchBatch.children.length, 2);
+  const bench = await models.instantiate('prop.bench');
+  const benchMeshes = [];
+  bench.traverse(mesh => { if (mesh.isMesh) benchMeshes.push(mesh); });
+  assert.equal(benchBatch.children.length, benchMeshes.length);
+  for (const [index, mesh] of benchBatch.children.entries()) {
+    assert.equal(mesh.isInstancedMesh, true);
+    assert.equal(mesh.count, 2);
+    assert.equal(mesh.geometry, benchMeshes[index].geometry);
+    assert.equal(mesh.material, benchMeshes[index].material);
+  }
   assert.throws(() => models.setReplacement('ground.stone', 'https://invalid.test/model.glb'));
   models.setReplacement('ground.stone', 'assets/models/stone-final.glb');
   assert.equal(models.get('ground.stone').replacement, 'assets/models/stone-final.glb');

@@ -78,7 +78,11 @@ try {
     if (profile === 'ui') {
       await page.locator('#draw:enabled').waitFor();
     } else {
-      await page.locator('#game[data-engine-ready="true"]').waitFor({ timeout: 20000 });
+      try {
+        await page.locator('#game[data-engine-ready="true"], #game-canvas[data-engine-ready="true"]').waitFor({ timeout: 20000 });
+      } catch (error) {
+        throw new Error(profile + ' did not become ready. ' + errors.join(' | '), { cause: error });
+      }
     }
     page.off('request', trackStartup);
     if (profile.startsWith('3d')) {
@@ -128,7 +132,7 @@ try {
         if (activeScene !== expectedScene) throw new Error('Active scene did not survive cached navigation for ' + profile);
         const exitedScene = await page.evaluate(() => {
           window.dispatchEvent(new PageTransitionEvent('pagehide'));
-          return window.__hgameState().scene;
+          return window.__hgameState?.()?.scene ?? null;
         });
         if (exitedScene !== null) throw new Error('Active scene remained after page exit for ' + profile);
       }

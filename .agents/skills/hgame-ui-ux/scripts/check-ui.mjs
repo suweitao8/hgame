@@ -227,6 +227,8 @@ function checkHtmlMarkup(html, rawSource, file, baseOffset, opts, violations) {
 
 function isIgnorableCodeString(str, contextBefore) {
   if (!str) return true;
+  if (/\bthrow\s+new\s+(?:Error|TypeError|RangeError|AggregateError)\s*\(\s*$/.test(contextBefore)) return true;
+  if (/\bthrow\s+new\s+AggregateError\s*\(\s*\[[^\]]*\]\s*,\s*$/.test(contextBefore)) return true;
   if (/^\s*(?:import|export)\b[^;]*\bfrom\s*$/.test(contextBefore)) return true;
   if (/\b(?:fetch|import|require)\s*\(\s*$/.test(contextBefore)) return true;
   if (/^(?:\.{0,2}\/|https?:\/\/|data:|#[0-9a-fA-F]{3,8}$)/.test(str)) return true;

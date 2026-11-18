@@ -104,7 +104,7 @@ export type ProceduralModelOptions = {
         projectPath(id: string): string;
         openScope(): AssetScope;
         dispose(): void;
-    }, "url" | "get"> | null | undefined;
+    }, "get" | "url"> | null | undefined;
     /**
      * Only needed if a replacement is configured.
      */

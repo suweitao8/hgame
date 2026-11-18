@@ -1,5 +1,6 @@
 * text=auto
 assets/runtime/vendor/rapier*/rapier*.mjs text eol=lf
+assets/profiles/pixi2d/dist/assets/*.js text eol=lf
 *.wasm binary
 *.png binary
 *.jpg binary

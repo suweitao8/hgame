@@ -64,6 +64,7 @@ export class ObjectPool<T, A extends unknown[] = unknown[]> {
  * @property {number} radius Radius in world units (>= 0).
  * @property {number} stamp Internal per-query de-duplication stamp.
  */
+/** @template T @typedef {{item: T | null, t: number, x: number, y: number}} SpatialSegmentHit */
 /**
  * Agent shape accepted by SpatialHash2D#resolveSoftSeparation; x/y are mutated in place.
  * @typedef {object} SeparationAgent

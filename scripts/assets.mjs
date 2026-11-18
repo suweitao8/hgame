@@ -19,6 +19,60 @@ const RAW_EXTS = new Set([
 const SKIP_BASENAMES = new Set(['.ds_store', 'thumbs.db', '.gitkeep', 'assets.manifest.json']);
 const CATALOG_RELATIVE_PATH = 'assets/catalog.json';
 
+// The Pixi installer tracks compiled outputs separately from authored assets.
+export async function readPixiBuildManifest(gameDir) {
+  try {
+    const manifest = JSON.parse(await readFile(path.join(gameDir, '.hgame-pixi-build.json'), 'utf8'));
+    if (manifest?.schemaVersion === 1 && manifest.files && typeof manifest.files === 'object' &&
+        !Array.isArray(manifest.files)) {
+      const files = new Map(Object.entries(manifest.files)
+        .filter(([name, hash]) => /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(name) && /^[a-f0-9]{64}$/.test(hash)));
+      const sourceHash = /^[a-f0-9]{64}$/.test(manifest.sourceHash) ? manifest.sourceHash : undefined;
+      return { files, sourceHash };
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+  }
+  return { files: new Map() };
+}
+
+function isGitOwnedProjectAsset(file, buildFiles) {
+  return file === 'catalog.json' || (/\.(?:m?js|css)$/i.test(file) && buildFiles.has(file));
+}
+
+// A checkout of a legacy project may normalize line endings. Return bytes
+// matching the recorded digest; reject content edits and altered binary files.
+export function matchPixiBuildBytes(file, bytes, expectedHash) {
+  const matches = input => createHash('sha256').update(input).digest('hex') === expectedHash;
+  if (matches(bytes)) return bytes;
+  if (!/\.(?:m?js|css)$/i.test(file)) return null;
+  const lf = bytes.toString('utf8').replace(/\r\n/g, '\n');
+  const normalized = Buffer.from(lf);
+  if (matches(normalized)) return normalized;
+  const windows = Buffer.from(lf.replace(/\n/g, '\r\n'));
+  return matches(windows) ? windows : null;
+}
+
+// The scaffold can bundle authored source and vendored HGame imports.
+// Presentation and swarm settings are fetched at runtime.
+export async function hashPixiSources(gameDir) {
+  const folders = await Promise.all(['src', 'vendor/hgame'].map(name => collectFiles(path.join(gameDir, name), gameDir)));
+  const sourceFiles = folders.flat().filter(({ relPosix }) =>
+    !relPosix.endsWith('.d.ts') && relPosix !== 'src/presentation.json' && relPosix !== 'src/swarm.json');
+  const inputs = ['index.source.html', 'vite.config.js', 'package.json', 'package-lock.json'];
+  const files = sourceFiles.concat(inputs.map(relPosix => ({ relPosix, abs: path.join(gameDir, relPosix) })));
+  files.sort((a, b) => a.relPosix < b.relPosix ? -1 : a.relPosix === b.relPosix ? 0 : 1);
+  const hash = createHash('sha256');
+  for (const { abs, relPosix } of files) {
+    const bytes = await readFile(abs);
+    const stable = /(?:\/VERSION|\.(?:[cm]?[jt]sx?|css|html?|json|svg|txt|md))$/i.test(relPosix)
+      ? bytes.toString('utf8').replace(/\r\n/g, '\n')
+      : bytes;
+    hash.update(relPosix).update('\0').update(createHash('sha256').update(stable).digest());
+  }
+  return hash.digest('hex');
+}
+
 const KIND_BY_EXT = new Map([
   ['.png', 'image'], ['.jpg', 'image'], ['.jpeg', 'image'], ['.webp', 'image'],
   ['.avif', 'image'], ['.gif', 'image'], ['.bmp', 'image'], ['.tga', 'image'],
@@ -278,13 +332,20 @@ export async function pushAssets(gameDir, {
 
   const assetsRoot = path.join(absGame, 'assets');
   const nextAssets = Object.assign(Object.create(null), exact ? {} : manifest.assets);
+  const { files: buildFiles } = await readPixiBuildManifest(absGame);
+  const isProjectFile = file => isGitOwnedProjectAsset(file, buildFiles);
+  for (const file of Object.keys(nextAssets)) {
+    if (isProjectFile(file)) delete nextAssets[file];
+  }
   let files;
   if (catalog) {
     const selection = await readProjectAssetCatalog(absGame);
     if (!selection) throw new Error('--catalog requires assets/catalog.json');
     files = [];
     for (const relPosix of selection.files) {
-      if (shouldIgnoreForAssetTracking(relPosix)) throw new Error('Catalog asset is not a runtime file: ' + relPosix);
+      if (isProjectFile(relPosix) || shouldIgnoreForAssetTracking(relPosix)) {
+        throw new Error('Catalog entry must refer to authored media or data: ' + relPosix);
+      }
       const abs = await selection.localFile(relPosix);
       if (abs) files.push({ abs, relPosix });
       else if (Object.hasOwn(manifest.assets, relPosix)) nextAssets[relPosix] = manifest.assets[relPosix];
@@ -300,7 +361,7 @@ export async function pushAssets(gameDir, {
   const now = new Date().toISOString();
 
   for (const file of files) {
-    if (shouldIgnoreForAssetTracking(file.relPosix, { includeRaw })) continue;
+    if (isProjectFile(file.relPosix) || shouldIgnoreForAssetTracking(file.relPosix, { includeRaw })) continue;
     const { sha256, bytes } = await hashAndSizeFile(file.abs);
     totalBytes += bytes;
     const res = await ensureFileInStore(file.abs, sha256, bytes, store);
@@ -347,6 +408,7 @@ export async function pullAssets(gameDir, {
   const absGame = path.resolve(gameDir);
   const store = resolveAssetStoreDir(storeDir);
   const manifest = await readAssetManifest(absGame);
+  const { files: buildFiles } = await readPixiBuildManifest(absGame);
   const baseUrl = (remote ?? manifest.remoteBaseUrl)?.replace(/\/+$/, '') || null;
 
   let pulled = 0;
@@ -357,7 +419,7 @@ export async function pullAssets(gameDir, {
 
   const keys = Object.keys(manifest.assets).sort();
   for (const relPosix of keys) {
-    if (prefix && !relPosix.startsWith(prefix)) continue;
+    if ((prefix && !relPosix.startsWith(prefix)) || isGitOwnedProjectAsset(relPosix, buildFiles)) continue;
     const entry = manifest.assets[relPosix];
     if (!entry || typeof entry.sha256 !== 'string') continue;
 
@@ -441,10 +503,11 @@ export async function inspectAssetStatus(gameDir, {
   const store = resolveAssetStoreDir(storeDir);
   const manifest = await readAssetManifest(absGame);
   const files = await collectFiles(path.join(absGame, 'assets'));
-
+  const { files: buildFiles } = await readPixiBuildManifest(absGame);
+  const isProjectFile = file => isGitOwnedProjectAsset(file, buildFiles);
   const diskMap = new Map();
   for (const file of files) {
-    if (shouldIgnoreForAssetTracking(file.relPosix, { includeRaw })) continue;
+    if (isProjectFile(file.relPosix) || shouldIgnoreForAssetTracking(file.relPosix, { includeRaw })) continue;
     diskMap.set(file.relPosix, file.abs);
   }
 
@@ -454,6 +517,7 @@ export async function inspectAssetStatus(gameDir, {
   const missingInStore = [];
 
   for (const relPosix of Object.keys(manifest.assets).sort()) {
+    if (isProjectFile(relPosix)) continue;
     const entry = manifest.assets[relPosix];
     const abs = diskMap.get(relPosix);
     if (!abs) {
