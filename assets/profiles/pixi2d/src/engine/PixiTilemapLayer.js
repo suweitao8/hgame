@@ -62,6 +62,33 @@ export class PixiTilemapLayer {
     const cx = Math.floor(x / this.chunkSize), cy = Math.floor(y / this.chunkSize);
     if (this.chunks.has(cy * this.cols + cx)) this.buildChunk(cx, cy);
   }
+  /** Update gameplay data and its cached visual chunk together. */
+  setTile(x, y, value) {
+    if (this.disposed) throw new Error('Tilemap layer is disposed');
+    if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0 || x >= this.map.width || y >= this.map.height) throw new RangeError('Tile is outside the map');
+    if (typeof this.map.set !== 'function') throw new TypeError('Tilemap must support set');
+    if (Object.is(this.map.get(x, y), value)) return;
+    this.map.set(x, y, value);
+    this.refreshTile(x, y);
+  }
+  /** Apply edits and rebuild each affected cached chunk at most once. */
+  setTiles(edits) {
+    if (this.disposed) throw new Error('Tilemap layer is disposed');
+    if (!Array.isArray(edits)) throw new TypeError('Tile edits must be an array');
+    if (typeof this.map.set !== 'function') throw new TypeError('Tilemap must support set');
+    for (const edit of edits) {
+      if (!edit || !Object.hasOwn(edit, 'value') || !Number.isInteger(edit.x) || !Number.isInteger(edit.y) ||
+          edit.x < 0 || edit.y < 0 || edit.x >= this.map.width || edit.y >= this.map.height) throw new RangeError('Each tile edit needs an in-bounds x, y, and value');
+    }
+    const changed = new Set();
+    for (const { x, y, value } of edits) {
+      if (Object.is(this.map.get(x, y), value)) continue;
+      this.map.set(x, y, value);
+      const cx = Math.floor(x / this.chunkSize), cy = Math.floor(y / this.chunkSize), key = cy * this.cols + cx;
+      if (this.chunks.has(key)) changed.add(key);
+    }
+    for (const key of changed) this.buildChunk(key % this.cols, Math.floor(key / this.cols));
+  }
   update() {
     if (this.disposed) return;
     const camera = this.renderer.camera, screen = this.renderer.app.screen, zoom = camera.zoom;

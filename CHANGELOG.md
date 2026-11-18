@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add Pixi tilemap edit helpers that update the existing TileMap and rebuild each affected cached visual chunk once per batch.
+
 - Restrict CPU swarm circle-damage queries to overlapping spatial chunk coordinates, retaining edge chunks for out-of-world units.
 
 - Avoid a temporary options object per enemy when spawning large CPU swarm waves; retain the existing individual spawn interface and random sequence.

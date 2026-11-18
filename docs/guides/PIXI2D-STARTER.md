@@ -56,12 +56,13 @@ const { TileMap, findGridPath } = await import(base + '/world/tilemap.js');
 const map = new TileMap({ tiles: [[1, 1, 1], [1, 2, 1]], tileWidth: 32, tileHeight: 32, solid: [2] });
 renderer.grid.visible = false;
 const layer = renderer.createTilemapLayer(map, { frames: { 1: 'floor/0', 2: 'wall/0' }, chunkSize: 32 });
-// map.set(1, 1, 1); layer.refreshTile(1, 1); // rebuilds only this chunk
+// layer.setTile(1, 1, 1); // updates map and the cached visual chunk
+// layer.setTiles([{ x: 0, y: 0, value: 2 }, { x: 1, y: 0, value: 2 }]);
 // findGridPath(map, { x: 0, y: 0 }, { x: 2, y: 1 });
 // renderer.update(dt) updates chunk visibility; layer.dispose() releases it.
 ```
 
-Map values absent from `frames` are transparent. All named frames must exist in the renderer's shared atlas. The layer creates static particle chunks as they enter the camera and retains up to `maxCachedChunks` chunks (default 128), evicting the least recently visible off-screen chunks. If the camera sees more than the limit, all visible chunks remain loaded. The underlying `TileMap` still holds the entire grid in memory. After changing map data, call `refreshTile` for each affected chunk; an uncached chunk reads the latest data when it next appears. Map collision and pathfinding remain governed by `TileMap`, not the visual layer. The renderer also disposes its tilemap layers on shutdown.
+Map values absent from `frames` are transparent. All named frames must exist in the renderer's shared atlas. The layer creates static particle chunks as they enter the camera and retains up to `maxCachedChunks` chunks (default 128), evicting the least recently visible off-screen chunks. If the camera sees more than the limit, all visible chunks remain loaded. The underlying `TileMap` still holds the entire grid in memory. `setTile` changes the underlying map and updates its cached chunk; `setTiles` validates coordinates first and rebuilds each affected cached chunk once. If the map is changed directly, call `refreshTile` for each affected chunk; an uncached chunk reads the latest data when it next appears. Map collision and pathfinding remain governed by `TileMap`, not the visual layer. The renderer also disposes its tilemap layers on shutdown.
 
 For frame animation, use the existing HGame `SpriteSheet` and `AnimationPlayer`. A catalog entry can provide a `sheet` factory; its cells are baked as `prefix/0`, `prefix/1`, and so on, including matching white hit-flash frames:
 
