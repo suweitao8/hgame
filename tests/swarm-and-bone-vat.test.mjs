@@ -588,6 +588,7 @@ test('SpriteCrowd2D zero-copy bindSwarm/bindGpuSwarm + WebGL2D 16-Byte compact i
     DYNAMIC_DRAW: 35048,
     FLOAT: 5126,
     TRIANGLES: 4,
+    TRIANGLE_STRIP: 5,
     TEXTURE_2D: 3553,
     RGBA: 6408,
     UNSIGNED_BYTE: 5121,
@@ -641,7 +642,12 @@ test('SpriteCrowd2D zero-copy bindSwarm/bindGpuSwarm + WebGL2D 16-Byte compact i
     activeTexture: () => {},
     uniform1i: () => {},
     uniform4f: () => {},
-    drawArraysInstanced: (_mode, _first, _vcount, instCount) => { drawCalls.push(instCount); },
+    drawArraysInstanced: (mode, first, vertexCount, instCount) => {
+      assert.equal(mode, gl.TRIANGLE_STRIP);
+      assert.equal(first, 0);
+      assert.equal(vertexCount, 4);
+      drawCalls.push(instCount);
+    },
   };
   const canvas = {
     width: 800,

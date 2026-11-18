@@ -45,6 +45,8 @@ Add `--soak-seconds 120` for sustained frame pacing. The report includes elapsed
 
 Use `--measurement readback` to measure frame intervals with a synchronized pixel read. This mode includes the GPU work waiting in the queue and the CPU/GPU synchronization cost. Hardware readback is informational unless `--budget-p95 <ms>` is supplied. Hardware frame pacing defaults to a 60 Hz interval plus 1 ms of tolerance. The default software budgets are intended for CI smoke checks. The separate 3D stress fixture uses synchronized readback, fixed medium quality and `1/60` of simulation per rendered frame.
 
+CI runs frame pacing and 3D stress in independent jobs. Each job uploads its JSON report (`render-bench` or `render-bench-3d`) when the benchmark wrote one, including when it exceeds its budget.
+
 Playtest reports retain whole-run frame count, duration, mean, maximum and long-frame totals. A bounded uniform reservoir holds up to 600 detailed intervals. P50/P95/P99 are exact within that set and are explicitly marked `quantilesApproximate` when the run exceeds its capacity. Multi-second intervals remain included. The stop checkpoint waits for a final frame so a stall crossing the requested end time remains visible. `requestedDurationMs`, `actualDurationMs` and `frameStats.measuredMs` describe the actual measurement window after startup and initial capture.
 
 ## Rules of thumb

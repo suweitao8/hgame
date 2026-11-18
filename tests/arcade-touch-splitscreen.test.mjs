@@ -490,7 +490,7 @@ test('computeSplitScreenViews and setViews work across Canvas2D, WebGL2D, and Th
     TEXTURE_MIN_FILTER: 0x2801, TEXTURE_MAG_FILTER: 0x2800, CLAMP_TO_EDGE: 0x812f,
     NEAREST: 0x2600, LINEAR: 0x2601, RGBA: 0x1908, UNSIGNED_BYTE: 0x1401,
     SCISSOR_TEST: 0x0c11, COLOR_BUFFER_BIT: 0x4000, BLEND: 0x0be2, SRC_ALPHA: 0x0302,
-    ONE_MINUS_SRC_ALPHA: 0x0303, TEXTURE0: 0x84c0, TRIANGLES: 0x0004,
+    ONE_MINUS_SRC_ALPHA: 0x0303, TEXTURE0: 0x84c0, TRIANGLES: 0x0004, TRIANGLE_STRIP: 0x0005,
     createShader() { return {}; }, shaderSource() {}, compileShader() {},
     getShaderParameter() { return true; }, getShaderInfoLog() { return ''; }, deleteShader() {},
     createProgram() { return {}; }, attachShader() {}, linkProgram() {},

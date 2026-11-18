@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Render WebGL2D instanced quads with four vertices and skip interpolation of per-instance colors. Run the frame pacing and 3D stress budgets independently in CI.
+
 - Build the network lab with esbuild and remove the affected Picomatch dependency from the network workspace.
 
 - Disconnect congested lockstep WebSockets at a bounded live-frame backlog and retain the confirmed frames for reconnect replay.

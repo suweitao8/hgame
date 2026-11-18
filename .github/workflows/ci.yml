@@ -88,15 +88,34 @@ jobs:
         with:
           name: visual-regression
           path: build/visual-regression/
-      - run: npm run bench:render -- --json render-bench.json
-      - run: npm run bench:render3d -- --json render-bench-3d.json
-      - uses: actions/upload-artifact@v4
-        if: always()
+  render:
+    name: Rendering budget (${{ matrix.workload }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - workload: frame pacing
+            script: bench:render
+            report: render-bench
+          - workload: 3D stress
+            script: bench:render3d
+            report: render-bench-3d
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          name: render-bench
-          path: |
-            render-bench.json
-            render-bench-3d.json
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npx playwright-core install --with-deps chromium
+      - run: npm run ${{ matrix.script }} -- --json ${{ matrix.report }}.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ matrix.report }}
+          path: ${{ matrix.report }}.json
 
   bench:
     name: Performance budgets

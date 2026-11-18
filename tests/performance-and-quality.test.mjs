@@ -147,6 +147,7 @@ function makeMockWebGL2Canvas({ width = 960, height = 540 } = {}) {
     ONE_MINUS_SRC_ALPHA: 0x0303,
     TEXTURE0: 0x84c0,
     TRIANGLES: 0x0004,
+    TRIANGLE_STRIP: 0x0005,
     createShader(type) { return { type }; },
     shaderSource() {},
     compileShader() {},
@@ -365,7 +366,9 @@ test('WebGL2D adapter batches 3,000 textured sprites + ground shadows into 1 dra
   assert.equal(adapter.stats.drawCalls, 1, '3,000 shadows + 3,000 sprites share 1 instanced draw call');
   assert.equal(adapter.stats.instances, 6000);
   assert.equal(glCalls.drawArraysInstanced.length, 1);
-  assert.equal(glCalls.drawArraysInstanced[0].primcount, 6000);
+  assert.deepEqual(glCalls.drawArraysInstanced[0], {
+    mode: 0x0005, first: 0, count: 4, primcount: 6000,
+  });
 
   // Context loss halts draws and restore rebuilds GPU state cleanly
   canvas.dispatch('webglcontextlost');

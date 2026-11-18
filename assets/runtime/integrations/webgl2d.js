@@ -151,8 +151,8 @@ out vec2 vQuad;
 out vec2 vUv;
 flat out float vMode;
 flat out float vTintStrength;
-out vec4 vColor;
-out vec4 vFlash;
+flat out vec4 vColor;
+flat out vec4 vFlash;
 
 void main() {
   vec2 worldPos = vec2(
@@ -180,8 +180,8 @@ in vec2 vQuad;
 in vec2 vUv;
 flat in float vMode;
 flat in float vTintStrength;
-in vec4 vColor;
-in vec4 vFlash;
+flat in vec4 vColor;
+flat in vec4 vFlash;
 
 out vec4 fragColor;
 
@@ -442,7 +442,7 @@ export function createWebGL2DAdapter({
     gl.bindBuffer(gl.ARRAY_BUFFER, quadVbo);
     gl.bufferData(
       gl.ARRAY_BUFFER,
-      new Float32Array([0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 1]),
+      new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]),
       gl.STATIC_DRAW,
     );
     gl.enableVertexAttribArray(0);
@@ -803,7 +803,7 @@ export function createWebGL2DAdapter({
       }
     }
     gl.activeTexture(gl.TEXTURE0);
-    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, instanceCount);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, instanceCount);
     stats.drawCalls++;
     stats.instances += instanceCount;
     instanceCount = 0;
@@ -1323,13 +1323,13 @@ export function createWebGL2DAdapter({
       const shCol = parseColorRgba(cfg.color || '#000000');
       gl.uniform4f(uCompactShadowColorLoc, shCol[0], shCol[1], shCol[2], cfg.alpha ?? 0.45);
       gl.uniform4f(uCompactShadowBoxLoc, sw, sh, gx0, gy0);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, drawCountCompact);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, drawCountCompact);
       stats.drawCalls++;
       stats.instances += drawCountCompact;
     }
 
     gl.uniform4f(uCompactShadowBoxLoc, 0, 0, 0, 0);
-    gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, drawCountCompact);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, drawCountCompact);
     stats.drawCalls++;
     stats.instances += drawCountCompact;
     stats.drawnSprites += drawCountCompact;

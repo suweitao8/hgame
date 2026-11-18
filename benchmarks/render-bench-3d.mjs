@@ -90,8 +90,17 @@ const tick = () => {
   const info = renderer.renderer?.info; info.autoReset = false;
   if (info.render.calls) { stats.calls = Math.max(stats.calls, info.render.calls); stats.triangles = Math.max(stats.triangles, info.render.triangles); }
   info.reset();
-  if (window.__frames.length === ${frames + 9}) { renderer.render(scene, app); window.__shot = viewCanvas.toDataURL('image/png').split(',')[1]; }
-  if (window.__frames.length < ${frames + 10}) requestAnimationFrame(tick); else { window.__stats = stats; window.__px1 = Array.from(px1); window.__done = true; app.dispose(); }
+  if (window.__frames.length < ${frames + 10}) {
+    requestAnimationFrame(tick);
+    return;
+  }
+  renderer.render(scene, app);
+  window.__shot = viewCanvas.toDataURL('image/png').split(',')[1];
+  stats.post3dActive = renderer.postPipeline?.supported === true && renderer.postPipeline.targets.hasSceneRT;
+  window.__stats = stats;
+  window.__px1 = Array.from(px1);
+  window.__done = true;
+  app.dispose();
 };
 requestAnimationFrame(tick);
 `;
@@ -104,12 +113,12 @@ try {
   const game = path.join(tmp, 'stress3d');
   const gen = spawnSync(process.execPath, [path.join(root, 'scripts', 'create-game.mjs'), game, '--profile', '3d', '--quality', 'medium', '--no-git'], { encoding: 'utf8' });
   if (gen.status !== 0) throw new Error(gen.stderr || gen.stdout);
+  const presentationPath = path.join(game, 'src', 'presentation.json');
+  const presentation = JSON.parse(readFileSync(presentationPath, 'utf8'));
+  presentation.renderer.post3d = usePost;
+  writeFileSync(presentationPath, JSON.stringify(presentation));
   const mainPath = path.join(game, 'src', 'main.js');
   let src = readFileSync(mainPath, 'utf8');
-  if (usePost) {
-    if (!src.includes("toneMapping: 'ueFilmic',")) throw new Error('template changed: cannot enable post3d');
-    src = src.replace("toneMapping: 'ueFilmic',", "toneMapping: 'ueFilmic',\n  post3d: true,");
-  }
   if (!/app\.scenes\.start\('\w+'\);/.test(src)) throw new Error('template changed: scenes.start not found');
   src = src.replace(/app\.scenes\.start\('(\w+)'\);/, m => stress + '\n' + m);
   writeFileSync(mainPath, src);
@@ -131,6 +140,7 @@ try {
     const environment = await readBrowserEnvironment(page, browser, gpu);
     if (!environment.gpuModeMatches) errors.push(`Requested ${gpu} GPU, observed ${environment.actualGpu}: ${environment.renderer}`);
     const gs = (await page.evaluate('window.__stats').catch(() => null)) || {};
+    if (gs.post3dActive !== usePost) errors.push(`Requested post3d=${usePost}, observed ${gs.post3dActive}`);
     const px = png ? await page.evaluate(async (b64) => {
       const img = new Image(); img.src = 'data:image/png;base64,' + b64; await img.decode();
       const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
@@ -147,7 +157,8 @@ try {
       mkdirSync(path.dirname(path.resolve(pj)), { recursive: true });
       writeFileSync(pj, png);
     }
-    result = { scene: 'stress3d', instances, lights, quality: 'medium', post3d: usePost, frames: timings.samples, meanMs: +timings.meanMs.toFixed(2),
+    result = { scene: 'stress3d', instances, lights, quality: 'medium', post3d: usePost, post3dActive: gs.post3dActive ?? null,
+      frames: timings.samples, meanMs: +timings.meanMs.toFixed(2),
       p50Ms: +timings.p50Ms.toFixed(2), p95Ms: +timings.p95Ms.toFixed(2), p99Ms: +timings.p99Ms.toFixed(2), maxMs: +timings.maxMs.toFixed(2),
       warmupFrames: 10, budgetP95Ms: budgetP95, budgetKind: gpu === 'software' ? 'software-health' : 'target-frame', environment,
       measurementMode: 'synchronized-readback',
