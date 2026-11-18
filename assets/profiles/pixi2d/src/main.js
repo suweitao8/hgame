@@ -1,5 +1,6 @@
 import { createDefaultGameAtlas } from './engine/ProceduralAtlas.js';
 import { startPixiGame } from './engine/startPixiGame.js';
+import { SpatialHash2D } from '../vendor/hgame/world/spatial2d.js';
 import { JuiceSystem } from './engine/JuiceSystem.js';
 import { InputAndAudio } from './engine/InputAndAudio.js';
 import { DemoArena } from './sim/demoArena.js';
@@ -24,7 +25,8 @@ async function createArenaAtlas() {
 
 function setupArena({ app, renderer, Scene, Entity, Component }) {
   const scene = app.scenes.add(new Scene('arena'));
-  const arena = new DemoArena(1000), hud = new HudController(), juice = new JuiceSystem(renderer);
+  const arena = new DemoArena(new SpatialHash2D({ cellSize: 48 }));
+  const hud = new HudController(), juice = new JuiceSystem(renderer);
   scene.onDispose(() => juice.dispose());
   const buttons = new AbortController();
   scene.onDispose(() => buttons.abort());

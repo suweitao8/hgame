@@ -1,12 +1,14 @@
 export class DemoArena {
-  constructor(count = 1000) {
+  constructor(grid, count = 1000) {
     this.player = { x: 0, y: 0, health: 100 }; this.kills = 0; this.time = 0;
     this.enemies = Array.from({ length: count }, (_, i) => {
       const a = i * 2.399963, r = 210 + Math.sqrt(i) * 24;
       return { id: i + 1, x: Math.cos(a) * r, y: Math.sin(a) * r, health: 3, elite: i % 40 === 0 };
     });
     this.bullets = []; this.cooldown = 0; this.events = [];
-    this.grid = new Map();
+    this.grid = grid;
+    this.neighbors = [];
+    this.hit = { item: null, x: 0, y: 0, t: 0 };
   }
   addEnemies(count) {
     for (let i = 0; i < count; i++) {
@@ -28,45 +30,59 @@ export class DemoArena {
     }
     if (input.justShockwaved || input.justSlashed) {
       const radius = input.justShockwaved ? 700 : 130;
-      for (const enemy of this.enemies) if (Math.hypot(enemy.x - p.x, enemy.y - p.y) < radius) {
+      const radiusSq = radius * radius;
+      for (const enemy of this.enemies) {
+        const dx = enemy.x - p.x, dy = enemy.y - p.y;
+        if (dx * dx + dy * dy >= radiusSq) continue;
         enemy.health--; enemy.flash = 0.065; this.events.push({ type: 'hit', id: enemy.id, x: enemy.x, y: enemy.y });
       }
       this.events.push({ type: input.justShockwaved ? 'shockwave' : 'slash', x: p.x, y: p.y, angle: Math.atan2(input.aimY, input.aimX) });
     }
-    this.grid.clear();
+    const grid = this.grid, neighbors = this.neighbors;
+    const separate = this.enemies.length <= 3000;
+    const needsGrid = separate || this.bullets.length > 0;
+    if (grid.count > 0) grid.clear();
     for (const enemy of this.enemies) {
-      const cellX = Math.floor(enemy.x / 48), cellY = Math.floor(enemy.y / 48);
-      const key = cellX + ',' + cellY;
-      const neighbors = this.grid.get(key);
-      if (neighbors) {
-        for (const other of this.enemies.length > 3000 ? [] : neighbors) {
+      if (separate) {
+        grid.queryRadius(enemy.x, enemy.y, 24, neighbors);
+        for (const other of neighbors) {
           const dx = enemy.x - other.x, dy = enemy.y - other.y;
-          const distance = Math.hypot(dx, dy);
-          if (distance > 0 && distance < 24) {
-            enemy.x += dx / distance * (24 - distance) * 0.25;
-            enemy.y += dy / distance * (24 - distance) * 0.25;
-          }
-        }
-        neighbors.push(enemy);
-      } else this.grid.set(key, [enemy]);
-      const dx = p.x - enemy.x, dy = p.y - enemy.y, d = Math.hypot(dx, dy) || 1;
-      enemy.flash = Math.max(0, (enemy.flash || 0) - dt);
-      if (d > 24) { enemy.x += dx / d * 44 * dt; enemy.y += dy / d * 44 * dt; }
-      if (enemy.health <= 0) { this.kills++; enemy.health = 3; const a = enemy.id * 2.399963 + this.time; enemy.x = p.x + Math.cos(a) * 900; enemy.y = p.y + Math.sin(a) * 900; }
-    }
-    for (const bullet of this.bullets) {
-      bullet.x += bullet.vx * dt; bullet.y += bullet.vy * dt; bullet.life -= dt;
-      const cellX = Math.floor(bullet.x / 48), cellY = Math.floor(bullet.y / 48);
-      for (let y = cellY - 1; y <= cellY + 1 && bullet.life > 0; y++) {
-        for (let x = cellX - 1; x <= cellX + 1 && bullet.life > 0; x++) {
-          for (const enemy of this.grid.get(x + ',' + y) ?? []) {
-            if (Math.abs(enemy.x - bullet.x) >= 20 || Math.abs(enemy.y - bullet.y) >= 20) continue;
-            enemy.health--; enemy.flash = 0.065; bullet.life = 0; this.events.push({ type: 'hit', id: enemy.id, x: enemy.x, y: enemy.y }); break;
-          }
+          const distanceSq = dx * dx + dy * dy;
+          if (!(distanceSq > 0) || distanceSq >= 24 * 24) continue;
+          const distance = Math.sqrt(distanceSq);
+          const push = (24 - distance) * 0.25 / distance;
+          enemy.x += dx * push;
+          enemy.y += dy * push;
         }
       }
+      const dx = p.x - enemy.x, dy = p.y - enemy.y;
+      const distanceSq = dx * dx + dy * dy;
+      enemy.flash = Math.max(0, (enemy.flash || 0) - dt);
+      if (distanceSq > 24 * 24) {
+        const travel = 44 * dt / Math.sqrt(distanceSq);
+        enemy.x += dx * travel;
+        enemy.y += dy * travel;
+      }
+      if (enemy.health <= 0) { this.kills++; enemy.health = 3; const a = enemy.id * 2.399963 + this.time; enemy.x = p.x + Math.cos(a) * 900; enemy.y = p.y + Math.sin(a) * 900; }
+      if (needsGrid) grid.insert(enemy, enemy.x, enemy.y);
     }
-    this.bullets = this.bullets.filter(bullet => bullet.life > 0);
+    let bulletWrite = 0;
+    for (const bullet of this.bullets) {
+      const travel = Math.min(dt, bullet.life);
+      const x = bullet.x + bullet.vx * travel, y = bullet.y + bullet.vy * travel;
+      const enemy = grid.castSegment(bullet.x, bullet.y, x, y, 20, this.hit)?.item;
+      if (enemy) {
+        enemy.health--;
+        enemy.flash = 0.065;
+        this.events.push({ type: 'hit', id: enemy.id, x: enemy.x, y: enemy.y });
+        continue;
+      }
+      bullet.x = x;
+      bullet.y = y;
+      bullet.life -= dt;
+      if (bullet.life > 0) this.bullets[bulletWrite++] = bullet;
+    }
+    this.bullets.length = bulletWrite;
     return this.events;
   }
 }

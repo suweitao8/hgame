@@ -134,6 +134,17 @@ export class SpatialHash2D<T = unknown> {
      */
     queryAABB(minX: number, minY: number, maxX: number, maxY: number, out?: T[] | undefined): T[];
     /**
+     * Return the first circle touched by a segment or capsule sweep.
+     * @param {number} x0 Start X.
+     * @param {number} y0 Start Y.
+     * @param {number} x1 End X.
+     * @param {number} y1 End Y.
+     * @param {number} [padding=0] Sweep radius in world units.
+     * @param {SpatialSegmentHit<T>} [out] Reusable hit result.
+     * @returns {SpatialSegmentHit<T> | null} Hit with `t` in [0, 1], or null. A miss leaves `out` unchanged.
+     */
+    castSegment(x0: number, y0: number, x1: number, y1: number, padding?: number | undefined, out?: SpatialSegmentHit<T> | undefined): SpatialSegmentHit<T> | null;
+    /**
      * Push overlapping agents apart (mutates x/y). Rebuilds the hash each iteration, indexing agents by array position.
      * @param {SeparationAgent[]} agents
      * @param {SoftSeparationOptions} [options]
@@ -189,6 +200,12 @@ export type SpatialHash2DEntry<T> = {
      * Internal per-query de-duplication stamp.
      */
     stamp: number;
+};
+export type SpatialSegmentHit<T> = {
+    item: T | null;
+    t: number;
+    x: number;
+    y: number;
 };
 /**
  * Agent shape accepted by SpatialHash2D#resolveSoftSeparation; x/y are mutated in place.

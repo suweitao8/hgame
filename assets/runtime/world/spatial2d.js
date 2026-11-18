@@ -98,6 +98,19 @@ function packCell(cx, cy) {
   return sx * HASH_STRIDE + sy;
 }
 
+function segmentCircleDistance(entry, x, y, ux, uy, length, padding) {
+  const ex = entry.x - x, ey = entry.y - y;
+  const radius = entry.radius + padding;
+  const radiusSq = radius * radius;
+  if (ex * ex + ey * ey <= radiusSq) return 0;
+  if (length === 0) return Infinity;
+  const along = ex * ux + ey * uy;
+  if (along < 0) return Infinity;
+  const across = ex * uy - ey * ux;
+  const chordSq = radiusSq - across * across;
+  return chordSq >= 0 ? Math.max(0, along - Math.sqrt(chordSq)) : Infinity;
+}
+
 /**
  * @typedef {object} SpatialHash2DOptions
  * @property {number} [cellSize=64] Grid cell edge length in world units (> 0).
@@ -113,6 +126,8 @@ function packCell(cx, cy) {
  * @property {number} radius Radius in world units (>= 0).
  * @property {number} stamp Internal per-query de-duplication stamp.
  */
+
+/** @template T @typedef {{item: T | null, t: number, x: number, y: number}} SpatialSegmentHit */
 
 /**
  * Agent shape accepted by SpatialHash2D#resolveSoftSeparation; x/y are mutated in place.
@@ -293,6 +308,72 @@ export class SpatialHash2D {
         }
       }
     }
+    return out;
+  }
+
+  /**
+   * Return the first circle touched by a segment or capsule sweep.
+   * @param {number} x0 Start X.
+   * @param {number} y0 Start Y.
+   * @param {number} x1 End X.
+   * @param {number} y1 End Y.
+   * @param {number} [padding=0] Sweep radius in world units.
+   * @param {SpatialSegmentHit<T>} [out] Reusable hit result.
+   * @returns {SpatialSegmentHit<T> | null} Hit with `t` in [0, 1], or null. A miss leaves `out` unchanged.
+   */
+  castSegment(x0, y0, x1, y1, padding = 0, out = { item: null, t: 0, x: 0, y: 0 }) {
+    if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) {
+      throw new TypeError('SpatialHash2D segment coordinates must be finite');
+    }
+    if (!Number.isFinite(padding) || padding < 0) throw new RangeError('SpatialHash2D sweep radius must be >= 0');
+    if (this._entries.length === 0) return null;
+    const dx = x1 - x0, dy = y1 - y0;
+    const length = Math.hypot(dx, dy);
+    if (!Number.isFinite(length)) throw new RangeError('SpatialHash2D segment length must be finite');
+    const ux = length > 0 ? dx / length : 0, uy = length > 0 ? dy / length : 0;
+    const stamp = ++this._queryId;
+    const inv = this._invCellSize;
+    const minCx = Math.floor((Math.min(x0, x1) - padding) * inv);
+    const maxCx = Math.floor((Math.max(x0, x1) + padding) * inv);
+    const minCy = Math.floor((Math.min(y0, y1) - padding) * inv);
+    const maxCy = Math.floor((Math.max(y0, y1) + padding) * inv);
+    let best = null, bestDistance = length;
+
+    // A long sweep across mostly empty space should cost at most one scan
+    // of the inserted entries.
+    const cellCount = (maxCx - minCx + 1) * (maxCy - minCy + 1);
+    if (!(cellCount < this._entries.length) ||
+        minCx < -HASH_HALF_SPAN || maxCx > HASH_HALF_SPAN ||
+        minCy < -HASH_HALF_SPAN || maxCy > HASH_HALF_SPAN) {
+      for (const entry of this._entries) {
+        const distance = segmentCircleDistance(entry, x0, y0, ux, uy, length, padding);
+        if (distance > bestDistance || (best && distance === bestDistance)) continue;
+        best = entry;
+        bestDistance = distance;
+        if (distance === 0) break;
+      }
+    } else {
+      scanCells: for (let cy = minCy; cy <= maxCy; cy++) {
+        for (let cx = minCx; cx <= maxCx; cx++) {
+          const bucket = this._cells.get(packCell(cx, cy));
+          if (!bucket) continue;
+          for (const entry of bucket) {
+            if (entry.stamp === stamp) continue;
+            entry.stamp = stamp;
+            const distance = segmentCircleDistance(entry, x0, y0, ux, uy, length, padding);
+            if (distance > bestDistance || (best && distance === bestDistance)) continue;
+            best = entry;
+            bestDistance = distance;
+            if (distance === 0) break scanCells;
+          }
+        }
+      }
+    }
+    if (!best) return null;
+    out.item = best.item;
+    out.t = length > 0 ? bestDistance / length : 0;
+    out.x = x0 + ux * bestDistance;
+    out.y = y0 + uy * bestDistance;
     return out;
   }
 

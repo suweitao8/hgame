@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add swept projectile queries to `SpatialHash2D` and use the shared spatial index in the Pixi arena without rebuilding it on idle dense-crowd ticks.
+
 - Cull off-screen Pixi effect particles before rendering while preserving their simulation and the separate active/visible counts.
 
 - Anchor Pixi shockwaves in world space, pool and cap their GPU filters, and run bloom independently of distortion.
