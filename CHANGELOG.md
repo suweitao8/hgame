@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Preserve model root transforms and Matrix4 placements when 3D scene-model batches fall back to cloned objects instead of instancing.
+
 - Limit combat-ECS scans to the highest active slot while keeping ascending slot-order processing and trimming the range as slots are recycled.
 
 - Skip full combat-ECS slot scans when no swarm units are promoted, while retaining normal slot-order processing when combat is active.

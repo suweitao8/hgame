@@ -443,12 +443,21 @@ export function createProceduralModelSlots({
     group.userData.instancingFallback = 'multi-mesh';
     try {
       for (const item of placements) {
-        placement(item);
+        if (!item?.isMatrix4) placement(item);
         const obj = await cloneModel(root);
-        group.add(obj);
-        obj.position.set(item.x ?? 0, item.y ?? 0, item.z ?? 0);
-        obj.rotation.y = item.rotationY ?? 0;
-        obj.scale.setScalar(item.scale ?? 1);
+        // Keep the prototype's root transform intact, as the instanced path
+        // does when it composes placement * mesh.matrixWorld.
+        const placed = new THREE.Group();
+        group.add(placed);
+        placed.add(obj);
+        if (item.isMatrix4) {
+          placed.matrix.copy(item);
+          placed.matrixAutoUpdate = false;
+        } else {
+          placed.position.set(item.x ?? 0, item.y ?? 0, item.z ?? 0);
+          placed.rotation.y = item.rotationY ?? 0;
+          placed.scale.setScalar(item.scale ?? 1);
+        }
       }
     } catch (error) {
       releaseInstance(group);
