@@ -6,14 +6,18 @@
  * @param {object | null} [options.THREE] Three.js namespace for 3D rendering.
  * @param {number} [options.maxParticles]
  * @param {number} [options.maxFloatingGlyphs]
+ * @param {number} [options.maxPopups]
+ * @param {boolean} [options.renderThroughWalls=true]
  * @param {number} [options.seed=0x9e3779b9]
  */
-export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, maxFloatingGlyphs, seed, }?: {
+export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, maxFloatingGlyphs, maxPopups, renderThroughWalls, seed, }?: {
     mode?: "3d" | "canvas2d" | "webgl2d" | "headless" | null | undefined;
     sceneOrAdapter?: object | null;
     THREE?: object | null;
     maxParticles?: number | undefined;
     maxFloatingGlyphs?: number | undefined;
+    maxPopups?: number | undefined;
+    renderThroughWalls?: boolean | undefined;
     seed?: number | undefined;
 } | undefined): {
     mode: any;
@@ -105,15 +109,41 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         };
     };
     floatingText: {
-        popupNumber: (opts?: {}) => number;
-        update: (visualDt: any) => void;
+        popupNumber: (opts?: object) => number;
+        update: (visualDt: number, rawDtOrCameraPos?: number | object | null, maybeCameraPos?: object | null) => void;
+        renderWebGL2: (camera: any, viewWidth: any, viewHeight: any) => void;
         renderCanvas2D: (ctx: any, camera: any, viewWidth: any, viewHeight: any) => void;
+        getActivePopups: () => {
+            id: number;
+            x: number;
+            y: number;
+            z: number;
+            renderX: number;
+            renderY: number;
+            renderZ: number;
+            value: number;
+            text: string;
+            topText: string;
+            bottomText: string;
+            alpha: number;
+            scaleX: number;
+            scaleY: number;
+            rotRad: number;
+            color: number;
+            spamGroup: string;
+            destroying: boolean;
+            absorbing: boolean;
+        }[];
         reset: () => void;
         dispose: () => void;
         getStats(): {
             capacity: number;
+            popupCapacity: number;
+            activePopups: number;
+            activeGlyphs: number;
             totalEmitted: number;
-            cursor: number;
+            totalPopupsSpawned: number;
+            totalCombined: number;
         };
     };
     screenFeedback: {
@@ -131,7 +161,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         reset: () => void;
         dispose: () => void;
     };
-    emitHitImpact: ({ x, y, z, damage, isCrit, isHeal, isMiss, dirX, dirY, dirZ, element, hitstopSec, shakeIntensity, }?: {
+    emitHitImpact: ({ x, y, z, damage, isCrit, isHeal, isMiss, dirX, dirY, dirZ, element, numberPreset, spamGroup, follow, combination, hitstopSec, shakeIntensity, }?: {
         x?: number | undefined;
         y?: number | undefined;
         z?: number | undefined;
@@ -143,6 +173,10 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         dirY?: number | undefined;
         dirZ?: number | undefined;
         element?: string | undefined;
+        numberPreset?: string | undefined;
+        spamGroup?: string | undefined;
+        follow?: object;
+        combination?: object;
         hitstopSec?: number | undefined;
         shakeIntensity?: number | undefined;
     } | undefined) => void;
@@ -162,7 +196,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         mapRadius?: number | undefined;
         active?: boolean | undefined;
     }) => void;
-    popupNumber: (opts?: {}) => number;
+    popupNumber: (opts?: object) => number;
     screenPulse: ({ ndcX, ndcY, strength, duration, color, }?: {
         ndcX?: number | undefined;
         ndcY?: number | undefined;
@@ -172,7 +206,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     }) => void;
     setLowHpIntensity: (intensity: any) => void;
     setSpeedLines: (intensity: any) => void;
-    update: (rawDt?: number) => {
+    update: (rawDt?: number, cameraPos?: null) => {
         visualDt: number;
         cameraOffset: {
             x: number;
@@ -209,8 +243,12 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         };
         floatingText: {
             capacity: number;
+            popupCapacity: number;
+            activePopups: number;
+            activeGlyphs: number;
             totalEmitted: number;
-            cursor: number;
+            totalPopupsSpawned: number;
+            totalCombined: number;
         };
     };
 };
@@ -318,10 +356,19 @@ import { TELEGRAPH_VERTEX_GLSL } from './vfx-telegraph.js';
 import { TELEGRAPH_FRAGMENT_GLSL } from './vfx-telegraph.js';
 import { createTelegraphSystem } from './vfx-telegraph.js';
 import { GLYPH_CHARS } from './vfx-floating-text.js';
+import { DAMAGE_ATLAS_CHARS } from './vfx-damage-presets.js';
+import { DAMAGE_NUMBER_PRESETS } from './vfx-damage-presets.js';
+import { registerDamagePreset } from './vfx-damage-presets.js';
+import { getDamagePreset } from './vfx-damage-presets.js';
+import { formatDamageValue } from './vfx-damage-presets.js';
+import { evaluateColorByNumber } from './vfx-damage-presets.js';
+import { evaluateScaleByNumber } from './vfx-damage-presets.js';
 import { extractGlyphIndices } from './vfx-floating-text.js';
 import { bakeGlyphAtlasCanvas } from './vfx-floating-text.js';
 import { FLOATING_TEXT_VERTEX_GLSL } from './vfx-floating-text.js';
 import { FLOATING_TEXT_FRAGMENT_GLSL } from './vfx-floating-text.js';
+import { FLOATING_TEXT_WEBGL2_2D_VS } from './vfx-floating-text.js';
+import { FLOATING_TEXT_WEBGL2_2D_FS } from './vfx-floating-text.js';
 import { createFloatingTextPool } from './vfx-floating-text.js';
 import { CROWD_STATUS } from './vfx-screen-crowd.js';
 import { packCrowdAnimStatus } from './vfx-screen-crowd.js';
@@ -329,4 +376,4 @@ import { unpackCrowdAnimStatus } from './vfx-screen-crowd.js';
 import { SCREEN_FEEDBACK_VERTEX_GLSL } from './vfx-screen-crowd.js';
 import { SCREEN_FEEDBACK_FRAGMENT_GLSL } from './vfx-screen-crowd.js';
 import { createScreenFeedbackPass } from './vfx-screen-crowd.js';
-export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass };
+export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass };

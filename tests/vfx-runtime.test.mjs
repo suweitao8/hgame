@@ -4,15 +4,21 @@ import * as THREE from '../assets/optional/three/three.module.js';
 
 import {
   CROWD_STATUS,
+  DAMAGE_NUMBER_PRESETS,
   VFX_SHAPE,
   createCameraShake,
   createHitstopClock,
   createStatelessParticlePool,
   createVfxSystem,
   createVisualPrng,
+  evaluateColorByNumber,
+  evaluateScaleByNumber,
   extractGlyphIndices,
+  formatDamageValue,
+  getDamagePreset,
   packCrowdAnimStatus,
   packRgb24,
+  registerDamagePreset,
   unpackCrowdAnimStatus,
   unpackRgb24Into,
 } from '../assets/runtime/vfx/index.js';
@@ -197,6 +203,123 @@ test('reset immediately clears uploaded 3D telegraphs, including the shrink zone
     vfx.update(0.1);
     assert.equal(instances.array[next * 4 + 3], 2);
     assert.equal(instances.array[instances.array.length - 1], 0);
+  } finally {
+    vfx.dispose();
+  }
+});
+
+test('damage number formatting supports decimals, grouping separators, and K/M/B/T suffix shortening', () => {
+  assert.equal(formatDamageValue(1234.56, { decimals: 2 }), '1234.56');
+  assert.equal(formatDamageValue(12.50, { decimals: 2, hideZeros: true }), '12.5');
+  assert.equal(formatDamageValue(12.00, { decimals: 2, hideZeros: true }), '12');
+  assert.equal(formatDamageValue(1234567, { dotSeparation: true, dotDistance: 3, dotChar: ',' }), '1,234,567');
+  assert.equal(formatDamageValue(12500, { suffixShorten: true }), '12.5K');
+  assert.equal(formatDamageValue(10000, { suffixShorten: { maxDigits: 3, hideZeros: true } }), '10K');
+  assert.equal(formatDamageValue(2450000, { suffixShorten: true }), '2.5M');
+  assert.equal(formatDamageValue(999, { suffixShorten: true }), '999');
+
+  const c0 = evaluateColorByNumber(10, { fromNumber: 10, toNumber: 100, fromColor: 0x00ff00, toColor: 0xff0000 });
+  const c1 = evaluateColorByNumber(100, { fromNumber: 10, toNumber: 100, fromColor: 0x00ff00, toColor: 0xff0000 });
+  assert.equal(c0, 0x00ff00);
+  assert.equal(c1, 0xff0000);
+  assert.equal(evaluateScaleByNumber(500, { fromNumber: 0, toNumber: 1000, fromScale: 1, toScale: 2 }), 1.5);
+});
+
+test('damage number presets, combination, collision separation, destruction, follow, and unscaledTime work cleanly', () => {
+  registerDamagePreset('testBossHit', {
+    color: 0xff5500,
+    topText: '连击',
+    lifetime: 0.9,
+  });
+  assert.equal(getDamagePreset('testBossHit').color, 0xff5500);
+  assert.ok(DAMAGE_NUMBER_PRESETS.crit && DAMAGE_NUMBER_PRESETS.combo);
+
+  const vfx = createVfxSystem({ mode: 'headless', maxFloatingGlyphs: 1024, maxPopups: 64 });
+  try {
+    // 1. Combination: absorbNew (instantGain + animated)
+    vfx.popupNumber({
+      x: 0, y: 0, value: 120, spamGroup: 'boss1',
+      combination: { method: 'absorbNew', maxDistance: 5, spawnDelay: 0.02, instantGain: true, bonusLifetime: 0.5, absorberScaleFactor: 1.5 },
+    });
+    vfx.update(0.05);
+    vfx.popupNumber({
+      x: 0.5, y: 0.2, value: 80, spamGroup: 'boss1',
+      combination: { method: 'absorbNew', maxDistance: 5, spawnDelay: 0.02, instantGain: true, bonusLifetime: 0.5, absorberScaleFactor: 1.5 },
+    });
+    let active = vfx.floatingText.getActivePopups();
+    assert.equal(active.length, 1);
+    assert.equal(active[0].value, 200);
+    assert.equal(vfx.floatingText.getStats().totalCombined, 1);
+
+    // Animated absorption
+    vfx.popupNumber({
+      x: 1.0, y: 0.0, value: 50, spamGroup: 'boss1',
+      combination: { method: 'absorbNew', maxDistance: 5, spawnDelay: 0.02, instantGain: false, absorbDuration: 0.2, bonusLifetime: 0.5 },
+    });
+    assert.equal(vfx.floatingText.getActivePopups().length, 2);
+    vfx.update(0.12);
+    assert.equal(vfx.floatingText.getActivePopups().some(p => p.absorbing), true);
+    vfx.update(0.12);
+    active = vfx.floatingText.getActivePopups();
+    assert.equal(active.length, 1);
+    assert.equal(active[0].value, 250);
+
+    // 2. Follow target + unscaledTime during hitstop
+    vfx.reset();
+    const enemy = { x: 10, y: 2, z: 0 };
+    vfx.popupNumber({
+      x: 10, y: 3, z: 0, value: 300,
+      lerp: { enabled: false },
+      follow: { target: enemy, speed: 20 },
+      unscaledTime: true,
+    });
+    vfx.hitstop.trigger(0.1, 0.0); // freeze visualDt completely
+    enemy.x = 15;
+    vfx.update(0.05);
+    const followed = vfx.floatingText.getActivePopups()[0];
+    assert.ok(followed.x > 12, 'follow + unscaledTime should advance even during hitstop');
+
+    // 3. Collision separation
+    vfx.reset();
+    vfx.popupNumber({ x: 0, y: 0, value: 10, spamGroup: 'col', lerp: { enabled: false }, collision: { radius: 1, pushFactor: 2 } });
+    vfx.popupNumber({ x: 0.1, y: 0, value: 20, spamGroup: 'col', lerp: { enabled: false }, collision: { radius: 1, pushFactor: 2 } });
+    vfx.update(0.05);
+    const colPopups = vfx.floatingText.getActivePopups();
+    assert.ok(Math.abs(colPopups[1].x - colPopups[0].x) > 0.2);
+
+    // 4. Destruction on overlap
+    vfx.reset();
+    vfx.popupNumber({ x: 0, y: 0, value: 10, spamGroup: 'dest', lerp: { enabled: false }, destruction: { maxDistance: 3, spawnDelay: 0.01, duration: 0.1 } });
+    vfx.update(0.05);
+    vfx.popupNumber({ x: 0.2, y: 0, value: 20, spamGroup: 'dest', lerp: { enabled: false }, destruction: { maxDistance: 3, spawnDelay: 0.01, duration: 0.1 } });
+    assert.equal(vfx.floatingText.getActivePopups().filter(p => p.destroying).length, 1);
+    vfx.update(0.12);
+    assert.equal(vfx.floatingText.getActivePopups().length, 1);
+  } finally {
+    vfx.dispose();
+  }
+});
+
+test('3D floating text packs active glyphs, scales by camera distance, and resets cleanly', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 8, maxFloatingGlyphs: 64 });
+  try {
+    vfx.popupNumber({
+      x: 0, y: 2, z: -20,
+      value: 12500,
+      preset: 'crit',
+      digits: { suffixShorten: true },
+      consistentScreenSize: true,
+      distanceScaling: { baseDistance: 10, closeDistance: 2, farDistance: 30, closeScale: 2, farScale: 0.5 },
+    });
+    vfx.update(0.05, { x: 0, y: 2, z: 0 });
+    const mesh = scene.getObjectByName('HGameVfxFloatingText');
+    assert.ok(mesh);
+    assert.ok(mesh.geometry.instanceCount >= 6);
+    const p1 = mesh.geometry.getAttribute('aTextP1');
+    assert.ok(p1.array[1] > 0);
+    vfx.reset();
+    assert.equal(mesh.geometry.instanceCount, 0);
   } finally {
     vfx.dispose();
   }

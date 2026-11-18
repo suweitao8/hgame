@@ -38,8 +38,19 @@ import {
   bakeGlyphAtlasCanvas,
   FLOATING_TEXT_VERTEX_GLSL,
   FLOATING_TEXT_FRAGMENT_GLSL,
+  FLOATING_TEXT_WEBGL2_2D_VS,
+  FLOATING_TEXT_WEBGL2_2D_FS,
   createFloatingTextPool,
 } from './vfx-floating-text.js';
+import {
+  DAMAGE_ATLAS_CHARS,
+  DAMAGE_NUMBER_PRESETS,
+  evaluateColorByNumber,
+  evaluateScaleByNumber,
+  formatDamageValue,
+  getDamagePreset,
+  registerDamagePreset,
+} from './vfx-damage-presets.js';
 import {
   CROWD_STATUS,
   packCrowdAnimStatus,
@@ -77,10 +88,19 @@ export {
   TELEGRAPH_FRAGMENT_GLSL,
   createTelegraphSystem,
   GLYPH_CHARS,
+  DAMAGE_ATLAS_CHARS,
+  DAMAGE_NUMBER_PRESETS,
+  registerDamagePreset,
+  getDamagePreset,
+  formatDamageValue,
+  evaluateColorByNumber,
+  evaluateScaleByNumber,
   extractGlyphIndices,
   bakeGlyphAtlasCanvas,
   FLOATING_TEXT_VERTEX_GLSL,
   FLOATING_TEXT_FRAGMENT_GLSL,
+  FLOATING_TEXT_WEBGL2_2D_VS,
+  FLOATING_TEXT_WEBGL2_2D_FS,
   createFloatingTextPool,
   CROWD_STATUS,
   packCrowdAnimStatus,
@@ -186,6 +206,8 @@ function detectMode(modeOpt, sceneOrAdapter, THREE) {
  * @param {object | null} [options.THREE] Three.js namespace for 3D rendering.
  * @param {number} [options.maxParticles]
  * @param {number} [options.maxFloatingGlyphs]
+ * @param {number} [options.maxPopups]
+ * @param {boolean} [options.renderThroughWalls=true]
  * @param {number} [options.seed=0x9e3779b9]
  */
 export function createVfxSystem({
@@ -194,6 +216,8 @@ export function createVfxSystem({
   THREE = globalThis.THREE ?? null,
   maxParticles,
   maxFloatingGlyphs,
+  maxPopups,
+  renderThroughWalls = true,
   seed = 0x9e3779b9,
 } = {}) {
   const resolvedMode = detectMode(mode, sceneOrAdapter, THREE);
@@ -231,8 +255,12 @@ export function createVfxSystem({
     mode: resolvedMode,
     THREE,
     scene,
+    gl,
     is2D,
     maxFloatingGlyphs,
+    maxPopups,
+    renderThroughWalls,
+    prng,
   });
   const screenFeedback = createScreenFeedbackPass({
     mode: resolvedMode,
@@ -281,6 +309,10 @@ export function createVfxSystem({
     isCrit: false,
     isHeal: false,
     isMiss: false,
+    preset: undefined,
+    spamGroup: undefined,
+    follow: undefined,
+    combination: undefined,
   };
 
   function burstParticles(presetOrConfig) {
@@ -305,6 +337,10 @@ export function createVfxSystem({
    * @param {number} [options.dirY=0]
    * @param {number} [options.dirZ=0]
    * @param {string} [options.element='physical']
+   * @param {string} [options.numberPreset]
+   * @param {string} [options.spamGroup]
+   * @param {object} [options.follow]
+   * @param {object} [options.combination]
    * @param {number} [options.hitstopSec]
    * @param {number} [options.shakeIntensity]
    */
@@ -320,6 +356,10 @@ export function createVfxSystem({
     dirY = 0,
     dirZ = 0,
     element = 'physical',
+    numberPreset,
+    spamGroup,
+    follow,
+    combination,
     hitstopSec,
     shakeIntensity,
   } = {}) {
@@ -364,6 +404,11 @@ export function createVfxSystem({
       popupScratch.isCrit = isCrit;
       popupScratch.isHeal = isHeal;
       popupScratch.isMiss = isMiss;
+      popupScratch.preset = numberPreset
+        ?? (isCrit ? 'crit' : isHeal ? 'heal' : isMiss ? 'miss' : (element !== 'physical' ? element : 'normal'));
+      popupScratch.spamGroup = spamGroup;
+      popupScratch.follow = follow;
+      popupScratch.combination = combination;
       floatingText.popupNumber(popupScratch);
     }
 
@@ -373,13 +418,14 @@ export function createVfxSystem({
     }
   }
 
-  function update(rawDt = 0.016) {
+  function update(rawDt = 0.016, cameraPos = null) {
+    const clampedRaw = Math.min(Math.max(rawDt, 0), 0.1);
     const visualDt = hitstop.step(rawDt);
     shake.update(rawDt);
     particles.update(visualDt);
     trails.update(visualDt);
     telegraphs.update(visualDt);
-    floatingText.update(visualDt);
+    floatingText.update(visualDt, clampedRaw, cameraPos);
     screenFeedback.update(visualDt);
     updateOut.visualDt = visualDt;
     updateOut.cameraOffset = shake.offset;
@@ -393,6 +439,7 @@ export function createVfxSystem({
       const w = cameraOrWidth ?? vp?.width ?? 960;
       const h = widthOrHeight ?? vp?.height ?? 540;
       particles.renderWebGL2(cam, w, h);
+      floatingText.renderWebGL2(cam, w, h);
     } else if (resolvedMode === 'canvas2d') {
       const ctx = ctxOrCamera?.save ? ctxOrCamera : sceneOrAdapter?.ctx;
       const cam = ctxOrCamera?.save ? cameraOrWidth : (ctxOrCamera ?? sceneOrAdapter?.camera);

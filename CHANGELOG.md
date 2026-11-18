@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Integrate clean-room DamageNumbersPro capabilities into `vfx/vfx-floating-text.js` and `vfx/vfx-damage-presets.js` (64-glyph GPU atlas, K/M/B/T suffix shortening, grouping separators, color/scale-by-number, 13 presets, damped lerp, velocity/gravity, target following, combination/absorption, collision separation, push, destruction, unscaled time, 3D distance scaling, and WebGL2 2D rendering).
+
 - Ensure adaptive 3D viewports retain at least one physical pixel per axis within GPU buffer limits.
 
 - Fix FXAA edge orientation, reuse cardinal taps for sharpening, and keep canvas alpha opaque when tone mapping writes directly to the screen.

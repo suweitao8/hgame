@@ -8,25 +8,70 @@
  * @returns {number} Glyph count written into outBuffer
  */
 export function extractGlyphIndices(intValue: number, isCrit?: boolean | undefined, isHeal?: boolean | undefined, isMiss?: boolean | undefined, outBuffer?: Int32Array | undefined): number;
+/**
+ * Bakes the 64-glyph (16x4) crisp outlined damage-number atlas canvas.
+ * Indices 0..15 match `GLYPH_CHARS` for backward compatibility.
+ * @returns {HTMLCanvasElement | null}
+ */
 export function bakeGlyphAtlasCanvas(): HTMLCanvasElement | null;
-export function createFloatingTextPool({ mode, THREE, scene, is2D, maxFloatingGlyphs, }?: {
+/**
+ * Creates a clean-room DamageNumbersPro-grade zero-GC floating damage number pool
+ * supporting 3D billboards, WebGL2 2D instancing, Canvas2D rendering, and headless mode.
+ */
+export function createFloatingTextPool({ mode, THREE, scene, gl, is2D, maxFloatingGlyphs, maxPopups, renderThroughWalls, prng, }?: {
     mode?: string | undefined;
     THREE?: any;
     scene?: any;
+    gl?: WebGL2RenderingContext | null | undefined;
     is2D?: boolean | undefined;
     maxFloatingGlyphs?: number | undefined;
+    maxPopups?: number | undefined;
+    renderThroughWalls?: boolean | undefined;
+    prng?: {
+        nextFloat(): number;
+        range(min: any, max: any): any;
+        reset(newSeed?: number): void;
+    } | undefined;
 }): {
-    popupNumber: (opts?: {}) => number;
-    update: (visualDt: any) => void;
+    popupNumber: (opts?: object) => number;
+    update: (visualDt: number, rawDtOrCameraPos?: number | object | null, maybeCameraPos?: object | null) => void;
+    renderWebGL2: (camera: any, viewWidth: any, viewHeight: any) => void;
     renderCanvas2D: (ctx: any, camera: any, viewWidth: any, viewHeight: any) => void;
+    getActivePopups: () => {
+        id: number;
+        x: number;
+        y: number;
+        z: number;
+        renderX: number;
+        renderY: number;
+        renderZ: number;
+        value: number;
+        text: string;
+        topText: string;
+        bottomText: string;
+        alpha: number;
+        scaleX: number;
+        scaleY: number;
+        rotRad: number;
+        color: number;
+        spamGroup: string;
+        destroying: boolean;
+        absorbing: boolean;
+    }[];
     reset: () => void;
     dispose: () => void;
     getStats(): {
         capacity: number;
+        popupCapacity: number;
+        activePopups: number;
+        activeGlyphs: number;
         totalEmitted: number;
-        cursor: number;
+        totalPopupsSpawned: number;
+        totalCombined: number;
     };
 };
 export const GLYPH_CHARS: readonly string[];
-export const FLOATING_TEXT_VERTEX_GLSL: "\nprecision highp float;\n\nattribute vec3 position;\nattribute vec2 uv;\nattribute vec4 aTextP0; // x, y, z, spawnTime\nattribute vec4 aTextP1; // vx, vy, charOffsetPx, duration\nattribute vec4 aTextP2; // glyphIndex, rgb24, scale, isCrit\n\nuniform mat4 projectionMatrix;\nuniform mat4 modelViewMatrix;\nuniform float uTime;\nuniform float uIs2D;\n\nvarying vec2 vAtlasUv;\nvarying vec3 vColor;\nvarying float vAlpha;\n\nvec3 unpackRgb24(float v) {\n  float r = floor(v / 65536.0);\n  float rem = v - r * 65536.0;\n  float g = floor(rem / 256.0);\n  float b = rem - g * 256.0;\n  return vec3(r, g, b) / 255.0;\n}\n\nvoid main() {\n  float age = uTime - aTextP0.w;\n  float dur = aTextP1.w;\n  if (dur <= 0.0 || age < 0.0 || age >= dur) {\n    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n    return;\n  }\n\n  float t = age / dur;\n  vAlpha = 1.0 - smoothstep(0.55, 1.0, t);\n  vColor = unpackRgb24(aTextP2.y);\n\n  float u0 = aTextP2.x / 16.0;\n  vAtlasUv = vec2(u0 + uv.x / 16.0, uv.y);\n\n  float pop = 1.0;\n  if (aTextP2.w > 0.5 && age < 0.12) {\n    float p = age / 0.12;\n    pop = mix(1.65, 1.0, p * p);\n  } else if (age < 0.08) {\n    pop = mix(1.3, 1.0, age / 0.08);\n  }\n\n  float scale = aTextP2.z * pop;\n  float grav = (uIs2D > 0.5) ? 240.0 : 9.0;\n  vec3 worldCenter = aTextP0.xyz + vec3(aTextP1.x * age, aTextP1.y * age - 0.5 * grav * age * age * ((uIs2D > 0.5) ? -1.0 : 1.0), 0.0);\n\n  if (uIs2D > 0.5) {\n    vec2 p2 = worldCenter.xy + vec2(aTextP1.z * scale + position.x * scale * 0.65, position.y * scale * 1.3);\n    gl_Position = projectionMatrix * modelViewMatrix * vec4(p2, worldCenter.z, 1.0);\n  } else {\n    vec4 mv = modelViewMatrix * vec4(worldCenter, 1.0);\n    mv.x += aTextP1.z * scale + position.x * scale * 0.65;\n    mv.y += position.y * scale * 1.3;\n    gl_Position = projectionMatrix * mv;\n  }\n}\n";
+export const FLOATING_TEXT_VERTEX_GLSL: "\nprecision highp float;\n\nattribute vec3 position;\nattribute vec2 uv;\nattribute vec4 aTextP0; // x, y, z, alpha\nattribute vec4 aTextP1; // rotRad, scaleX, scaleY, glyphIndex\nattribute vec4 aTextP2; // rgb24, reserved, reserved, reserved\n\nuniform mat4 projectionMatrix;\nuniform mat4 modelViewMatrix;\nuniform float uIs2D;\n\nvarying vec2 vAtlasUv;\nvarying vec3 vColor;\nvarying float vAlpha;\n\nvec3 unpackRgb24(float v) {\n  float r = floor(v / 65536.0);\n  float rem = v - r * 65536.0;\n  float g = floor(rem / 256.0);\n  float b = rem - g * 256.0;\n  return vec3(r, g, b) / 255.0;\n}\n\nvoid main() {\n  float alpha = aTextP0.w;\n  if (alpha <= 0.002) {\n    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n    return;\n  }\n\n  vAlpha = alpha;\n  vColor = unpackRgb24(aTextP2.x);\n\n  float idx = aTextP1.w;\n  float col = mod(idx, 16.0);\n  float row = floor(idx / 16.0);\n  vAtlasUv = vec2((col + uv.x) / 16.0, (3.0 - row + uv.y) / 4.0);\n\n  float c = cos(aTextP1.x);\n  float s = sin(aTextP1.x);\n  vec2 scaled = vec2(position.x * aTextP1.y, position.y * aTextP1.z);\n  vec2 rotated = vec2(scaled.x * c - scaled.y * s, scaled.x * s + scaled.y * c);\n\n  if (uIs2D > 0.5) {\n    vec2 p2 = aTextP0.xy + vec2(rotated.x, -rotated.y);\n    gl_Position = projectionMatrix * modelViewMatrix * vec4(p2, aTextP0.z, 1.0);\n  } else {\n    vec4 mv = modelViewMatrix * vec4(aTextP0.xyz, 1.0);\n    mv.xy += rotated;\n    gl_Position = projectionMatrix * mv;\n  }\n}\n";
 export const FLOATING_TEXT_FRAGMENT_GLSL: "\nprecision highp float;\n\nuniform sampler2D uGlyphAtlas;\n\nvarying vec2 vAtlasUv;\nvarying vec3 vColor;\nvarying float vAlpha;\n\nvoid main() {\n  vec4 tex = texture2D(uGlyphAtlas, vAtlasUv);\n  float alpha = tex.a * vAlpha;\n  if (alpha < 0.02) discard;\n  gl_FragColor = vec4(tex.rgb * vColor, alpha);\n}\n";
+export const FLOATING_TEXT_WEBGL2_2D_VS: "#version 300 es\nprecision highp float;\n\nlayout(location = 0) in vec2 aQuadPos;\nlayout(location = 1) in vec4 aTextP0;\nlayout(location = 2) in vec4 aTextP1;\nlayout(location = 3) in vec4 aTextP2;\n\nuniform vec2 uCamPos;\nuniform float uCamZoom;\nuniform vec2 uViewSize;\n\nout vec2 vAtlasUv;\nout vec3 vColor;\nout float vAlpha;\n\nvec3 unpackRgb24(float v) {\n  float r = floor(v / 65536.0);\n  float rem = v - r * 65536.0;\n  float g = floor(rem / 256.0);\n  float b = rem - g * 256.0;\n  return vec3(r, g, b) / 255.0;\n}\n\nvoid main() {\n  float alpha = aTextP0.w;\n  if (alpha <= 0.002) {\n    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);\n    return;\n  }\n\n  vAlpha = alpha;\n  vColor = unpackRgb24(aTextP2.x);\n\n  float idx = aTextP1.w;\n  float col = mod(idx, 16.0);\n  float row = floor(idx / 16.0);\n  vec2 uv = aQuadPos + 0.5;\n  vAtlasUv = vec2((col + uv.x) / 16.0, (3.0 - row + uv.y) / 4.0);\n\n  float c = cos(aTextP1.x);\n  float s = sin(aTextP1.x);\n  vec2 scaled = vec2(aQuadPos.x * aTextP1.y, aQuadPos.y * aTextP1.z);\n  vec2 rotated = vec2(scaled.x * c - scaled.y * s, scaled.x * s + scaled.y * c);\n  vec2 worldPos = aTextP0.xy + vec2(rotated.x, -rotated.y);\n\n  vec2 screenPx = (worldPos - uCamPos) * uCamZoom + uViewSize * 0.5;\n  vec2 ndc = vec2(\n    (screenPx.x / max(1.0, uViewSize.x)) * 2.0 - 1.0,\n    1.0 - (screenPx.y / max(1.0, uViewSize.y)) * 2.0\n  );\n  gl_Position = vec4(ndc, 0.0, 1.0);\n}\n";
+export const FLOATING_TEXT_WEBGL2_2D_FS: "#version 300 es\nprecision highp float;\n\nuniform sampler2D uGlyphAtlas;\n\nin vec2 vAtlasUv;\nin vec3 vColor;\nin float vAlpha;\n\nout vec4 fragColor;\n\nvoid main() {\n  vec4 tex = texture(uGlyphAtlas, vAtlasUv);\n  float alpha = tex.a * vAlpha;\n  if (alpha < 0.02) discard;\n  fragColor = vec4(tex.rgb * vColor, alpha);\n}\n";
