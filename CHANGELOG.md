@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Skip full combat-ECS slot scans when no swarm units are promoted, while retaining normal slot-order processing when combat is active.
+
 - Reuse a coordinate object when building swarm flow-field walls from HGame TileMaps, avoiding one temporary allocation per sampled cell.
 
 - Reuse the CPU swarm flow field when the goal cell and terrain costs are unchanged; detect direct cost-array edits and external recomputations.

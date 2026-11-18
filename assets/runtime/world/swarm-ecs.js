@@ -791,7 +791,7 @@ export class FlatCombatECS {
    * @returns {void}
    */
   kinematicsSystem(dt) {
-    if (!(dt > 0)) return;
+    if (!(dt > 0) || this._activeCount === 0) return;
     // Frame-rate-independent decay equivalent to 0.85 per 60Hz frame.
     const damp = Math.pow(0.85, dt * 60);
     for (let slot = 0; slot < this.maxSlots; slot++) {
@@ -845,6 +845,7 @@ export class FlatCombatECS {
     onPatch = null,
     onUnitKilled = null,
   ) {
+    if (this._activeCount === 0) return { patchesEmitted: 0, pendingRemaining: 0, activeSlots: 0 };
     const demoteSq = demoteRadius * demoteRadius;
     const cap = Math.max(0, maxPatches | 0);
     let emitted = 0;
