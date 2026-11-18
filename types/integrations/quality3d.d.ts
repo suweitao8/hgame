@@ -15,15 +15,6 @@ export function chooseInitial3dQuality({ mobile, rendererName, memoryGB, }?: Qua
  * @returns {Readonly<AdaptiveQualityController>}
  */
 export function createAdaptiveQualityController({ mode, device, minScale, maxScale, minPixelRatio, maxPixelRatio, settleMs, settleAfterChangeMs, sampleFrames, degradeFrameMs, recoverFrameMs, onChange, }?: AdaptiveQualityOptions | undefined): Readonly<AdaptiveQualityController>;
-/**
- * Optional 3D render-quality controller.
- *
- * Uses explicit quality budgets, conservative device selection, hysteresis
- * and resolution-only scaling before an expensive quality-tier drop.
- *
- * No Three.js, DOM, GPU probe, scheduler, localStorage or network dependency.
- * Game rules and fixed ticks MUST NOT depend on render quality.
- */
 /** @typedef {'low'|'medium'|'high'} QualityTier */
 /** @typedef {QualityTier|'ultra'} QualityPresetTier Tier names accepted by preset tables. */
 /** @typedef {'auto'|QualityTier} QualityMode */
@@ -89,6 +80,11 @@ export function createAdaptiveQualityController({ mode, device, minScale, maxSca
  * @property {number} maxPixels
  */
 /**
+ * @typedef {object} ViewportLimits
+ * @property {number} [maxBufferWidth]
+ * @property {number} [maxBufferHeight]
+ */
+/**
  * @typedef {object} AdaptiveQualityOptions
  * @property {QualityMode} [mode='auto']
  * @property {QualityDeviceHints} [device={}]
@@ -108,7 +104,7 @@ export function createAdaptiveQualityController({ mode, device, minScale, maxSca
  * @property {QualitySnapshot} state Current snapshot (getter).
  * @property {(next: QualityMode) => boolean} setMode
  * @property {(ms: number, gpuMs?: number|null) => boolean} sampleFrame
- * @property {(cssWidth: number, cssHeight: number, dpr?: number) => ViewportPlan} planViewport
+ * @property {(cssWidth: number, cssHeight: number, dpr?: number, limits?: ViewportLimits) => ViewportPlan} planViewport
  * @property {() => void} resetMeasurements
  */
 /** @type {readonly QualityTier[]} */
@@ -209,6 +205,10 @@ export type ViewportPlan = {
     dynamicScale: number;
     maxPixels: number;
 };
+export type ViewportLimits = {
+    maxBufferWidth?: number | undefined;
+    maxBufferHeight?: number | undefined;
+};
 export type AdaptiveQualityOptions = {
     mode?: QualityMode | undefined;
     device?: QualityDeviceHints | undefined;
@@ -248,6 +248,6 @@ export type AdaptiveQualityController = {
     state: QualitySnapshot;
     setMode: (next: QualityMode) => boolean;
     sampleFrame: (ms: number, gpuMs?: number | null) => boolean;
-    planViewport: (cssWidth: number, cssHeight: number, dpr?: number) => ViewportPlan;
+    planViewport: (cssWidth: number, cssHeight: number, dpr?: number, limits?: ViewportLimits) => ViewportPlan;
     resetMeasurements: () => void;
 };

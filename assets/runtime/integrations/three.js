@@ -1,6 +1,7 @@
 import { Component } from '../core/component.js';
 import { createAdaptiveQualityController, resolveQualityPreset } from './quality3d.js';
 import { createGpuFrameTimer } from './quality3d/gpu-timer.js';
+import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
 import { fitDirectionalShadowFrustum } from './shadow3d.js';
@@ -426,6 +427,7 @@ export function createThreeAdapter({
 
   let qualityController = null;
   let appliedPreset = null;
+  let drawingBufferLimits = readDrawingBufferLimits(renderer);
   let gpuFrameTimer;
   let measureGpu = false;
   const enableGpuTiming = quality3d?.gpuTiming !== false;
@@ -558,30 +560,62 @@ export function createThreeAdapter({
   }
 
   function planCanvasSize() {
-    const w = Math.max(1, canvas.clientWidth || width);
-    const h = Math.max(1, canvas.clientHeight || height);
-    if (qualityController) return qualityController.planViewport(w, h, pixelRatio);
+    const w = Math.max(1, Math.floor(canvas.clientWidth || width));
+    const h = Math.max(1, Math.floor(canvas.clientHeight || height));
+    if (qualityController) return qualityController.planViewport(w, h, pixelRatio, drawingBufferLimits);
     const ratio = Math.max(1, Math.min(3, pixelRatio));
-    return { cssWidth: w, cssHeight: h, pixelRatio: ratio,
-      bufferWidth: Math.max(1, Math.floor(w * ratio)), bufferHeight: Math.max(1, Math.floor(h * ratio)) };
+    return { cssWidth: w, cssHeight: h, ...fitDrawingBuffer(w, h, ratio, drawingBufferLimits) };
+  }
+
+  function writeDrawingBuffer(w, h, ratio) {
+    if (typeof renderer.setDrawingBufferSize === 'function' && !renderer.xr?.isPresenting) {
+      renderer.setDrawingBufferSize(w, h, ratio);
+    } else {
+      renderer.setPixelRatio(ratio);
+      renderer.setSize(w, h, false);
+    }
+  }
+
+  function applyCanvasSize(plan) {
+    let { cssWidth: w, cssHeight: h, pixelRatio: ratio, bufferWidth, bufferHeight } = plan;
+    // A degenerate aspect ratio may require rounding one axis up to a pixel.
+    if (w * ratio < 1 || h * ratio < 1) {
+      w = bufferWidth;
+      h = bufferHeight;
+      ratio = 1;
+    }
+    writeDrawingBuffer(w, h, ratio);
+    const gl = renderer.getContext?.();
+    if (gl?.canvas === canvas && !renderer.xr?.isPresenting) {
+      const actualWidth = gl.drawingBufferWidth;
+      const actualHeight = gl.drawingBufferHeight;
+      if (actualWidth > 0 && actualHeight > 0 && (actualWidth < bufferWidth || actualHeight < bufferHeight)) {
+        // Normalize renderer coordinates to the smaller buffer the browser accepted.
+        writeDrawingBuffer(actualWidth, actualHeight, 1);
+        bufferWidth = gl.drawingBufferWidth || actualWidth;
+        bufferHeight = gl.drawingBufferHeight || actualHeight;
+        ratio = 1;
+      }
+    }
+    renderer.setViewport?.(0, 0, bufferWidth / ratio, bufferHeight / ratio);
+    return {
+      plan, bufferWidth, bufferHeight, rendererRatio: ratio,
+      canvasWidth: canvas.width, canvasHeight: canvas.height,
+    };
   }
 
   function resize() {
     const size = planCanvasSize();
-    const { cssWidth: w, cssHeight: h, pixelRatio: ratio, bufferWidth, bufferHeight } = size;
-    const canvasChanged = typeof canvas.width === 'number' && typeof canvas.height === 'number'
-      && (canvas.width !== bufferWidth || canvas.height !== bufferHeight);
-    const viewportChanged = lastCanvasSize?.cssWidth !== w || lastCanvasSize.cssHeight !== h || lastCanvasSize.pixelRatio !== ratio;
+    const { cssWidth: w, cssHeight: h, pixelRatio: ratio } = size;
+    const lastPlan = lastCanvasSize?.plan;
+    const canvasChanged = lastCanvasSize &&
+      (canvas.width !== lastCanvasSize.canvasWidth || canvas.height !== lastCanvasSize.canvasHeight);
+    const viewportChanged = !lastPlan || lastPlan.cssWidth !== w || lastPlan.cssHeight !== h || lastPlan.pixelRatio !== ratio;
     if (!contextLost && (canvasChanged || viewportChanged)) {
       gpuFrameTimer?.reset();
-      if (typeof renderer.setDrawingBufferSize === 'function' && !renderer.xr?.isPresenting) {
-        renderer.setDrawingBufferSize(w, h, ratio);
-      } else {
-        renderer.setPixelRatio(ratio);
-        renderer.setSize(w, h, false);
-      }
-      lastCanvasSize = size;
+      lastCanvasSize = applyCanvasSize(size);
     }
+    const { bufferWidth, bufferHeight } = contextLost ? size : lastCanvasSize;
     const preset = qualityController?.state?.preset ?? null;
     if (limitCameraDrawDistance && preset && far > near) {
       camera.far = Math.max(near + Math.min(0.001, far - near), Math.min(far, preset.drawDistance ?? far));
@@ -619,6 +653,7 @@ export function createThreeAdapter({
   };
   const onContextRestored = () => {
     contextLost = false;
+    drawingBufferLimits = readDrawingBufferLimits(renderer);
     lastCanvasSize = null;
     resize();
     for (const light of ownedSuns.keys()) {
@@ -768,8 +803,9 @@ export function createThreeAdapter({
 
     if (activeViews && activeViews.length > 0) {
       const rect = canvasRect();
-      const rectW = Math.max(1, rect.width);
-      const rectH = Math.max(1, rect.height);
+      const outputWidth = lastCanvasSize?.bufferWidth ?? Math.max(1, Math.floor(rect.width));
+      const outputHeight = lastCanvasSize?.bufferHeight ?? Math.max(1, Math.floor(rect.height));
+      const ratio = lastCanvasSize?.rendererRatio ?? 1;
       const prevAutoClear = renderer.autoClear;
       const prevToneMapping = renderer.toneMapping;
       const prevExposure = renderer.toneMappingExposure;
@@ -782,19 +818,25 @@ export function createThreeAdapter({
           activeSky?.setLinearOutput?.(false);
         }
         renderer.setScissorTest?.(false);
-        renderer.setViewport?.(0, 0, rectW, rectH);
+        renderer.setViewport?.(0, 0, outputWidth / ratio, outputHeight / ratio);
         renderer.clear?.(true, true, true);
         renderer.autoClear = false;
         renderer.setScissorTest?.(true);
 
         for (let i = 0; i < activeViews.length; i++) {
           const v = activeViews[i];
-          const vw = Math.max(1, rectW * v.width);
-          const vh = Math.max(1, rectH * v.height);
-          const vx = rectW * v.x;
-          const vyBottomUp = rectH - (v.y + v.height) * rectH;
-          if ('aspect' in v.camera && Math.abs(v.camera.aspect - vw / vh) > 1e-4) {
-            v.camera.aspect = vw / vh;
+          const left = Math.round(v.x * outputWidth);
+          const right = Math.round((v.x + v.width) * outputWidth);
+          const top = Math.round(v.y * outputHeight);
+          const bottom = Math.round((v.y + v.height) * outputHeight);
+          if (left === right || top === bottom) continue;
+          const vx = left / ratio;
+          const vyBottomUp = (outputHeight - bottom) / ratio;
+          const vw = (right - left) / ratio;
+          const vh = (bottom - top) / ratio;
+          const aspect = Math.max(1, rect.width * v.width) / Math.max(1, rect.height * v.height);
+          if ('aspect' in v.camera && Math.abs(v.camera.aspect - aspect) > 1e-4) {
+            v.camera.aspect = aspect;
             v.camera.updateProjectionMatrix?.();
           }
           culler3d.beginFrame(v.camera);
@@ -805,7 +847,7 @@ export function createThreeAdapter({
         }
       } finally {
         renderer.setScissorTest?.(false);
-        renderer.setViewport?.(0, 0, rectW, rectH);
+        renderer.setViewport?.(0, 0, outputWidth / ratio, outputHeight / ratio);
         renderer.autoClear = prevAutoClear;
         if (postPipeline?.supported) {
           if ('toneMapping' in renderer) renderer.toneMapping = prevToneMapping;

@@ -7,6 +7,8 @@
  * No Three.js, DOM, GPU probe, scheduler, localStorage or network dependency.
  * Game rules and fixed ticks MUST NOT depend on render quality.
  */
+import { fitDrawingBuffer } from './quality3d/viewport.js';
+
 /** @typedef {'low'|'medium'|'high'} QualityTier */
 /** @typedef {QualityTier|'ultra'} QualityPresetTier Tier names accepted by preset tables. */
 /** @typedef {'auto'|QualityTier} QualityMode */
@@ -73,6 +75,11 @@
  * @property {number} maxPixels
  */
 /**
+ * @typedef {object} ViewportLimits
+ * @property {number} [maxBufferWidth]
+ * @property {number} [maxBufferHeight]
+ */
+/**
  * @typedef {object} AdaptiveQualityOptions
  * @property {QualityMode} [mode='auto']
  * @property {QualityDeviceHints} [device={}]
@@ -92,7 +99,7 @@
  * @property {QualitySnapshot} state Current snapshot (getter).
  * @property {(next: QualityMode) => boolean} setMode
  * @property {(ms: number, gpuMs?: number|null) => boolean} sampleFrame
- * @property {(cssWidth: number, cssHeight: number, dpr?: number) => ViewportPlan} planViewport
+ * @property {(cssWidth: number, cssHeight: number, dpr?: number, limits?: ViewportLimits) => ViewportPlan} planViewport
  * @property {() => void} resetMeasurements
  */
 
@@ -275,7 +282,7 @@ export function createAdaptiveQualityController({
     cooldown = 0;
     return notify('mode');
   }
-  function planViewport(cssWidth, cssHeight, dpr = 1) {
+  function planViewport(cssWidth, cssHeight, dpr = 1, limits = {}) {
     if (!Number.isFinite(cssWidth) || cssWidth <= 0) throw new RangeError('Invalid canvas width');
     if (!Number.isFinite(cssHeight) || cssHeight <= 0) throw new RangeError('Invalid canvas height');
     if (!Number.isFinite(dpr) || dpr <= 0) throw new RangeError('Invalid device pixel ratio');
@@ -283,16 +290,15 @@ export function createAdaptiveQualityController({
     const height = Math.max(1, Math.floor(cssHeight));
     const preset = QUALITY3D_PRESETS[tier];
     const budget = preset.maxPixels;
-    const budgetScale = Math.sqrt(budget / (width * height));
     const effectiveMaxPr = Math.min(maxPixelRatio, preset.maxPixelRatio ?? maxPixelRatio);
-    // Scale the capped buffer so every resolution step can save work at high DPI.
-    const cappedPixelRatio = Math.min(inRange(dpr, minPixelRatio, effectiveMaxPr), budgetScale);
-    const pixelRatio = Math.max(cappedPixelRatio * dynamicScale, 1 / Math.min(width, height));
-    const bufferWidth = Math.floor(width * pixelRatio);
-    const bufferHeight = Math.floor(height * pixelRatio);
     return Object.freeze({
       cssWidth: width, cssHeight: height,
-      pixelRatio, bufferWidth, bufferHeight,
+      ...fitDrawingBuffer(width, height, inRange(dpr, minPixelRatio, effectiveMaxPr), {
+        maxBufferWidth: limits.maxBufferWidth,
+        maxBufferHeight: limits.maxBufferHeight,
+        maxPixels: budget,
+        scale: dynamicScale,
+      }),
       tier, dynamicScale, maxPixels: budget,
     });
   }

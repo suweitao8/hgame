@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Respect WebGL texture, renderbuffer and viewport dimensions when sizing 3D buffers. Keep HDR targets and split-view edges aligned with the allocated canvas buffer.
+
 - Restore 3D quality tiers after sustained render headroom. Limit the initial resolution increase when enabling higher-tier effects and back off after a failed promotion.
 
 - Use bounded, asynchronous WebGL GPU timing to avoid unnecessary 3D quality reductions when slow frames leave GPU render headroom. Keep frame-interval adaptation when timer samples are unavailable.

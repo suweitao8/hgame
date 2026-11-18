@@ -18,6 +18,7 @@ import { computeWhiteBalanceRGB } from './color.js';
 import { QUALITY3D_PRESETS } from '../quality3d.js';
 import { readWorldPosition } from '../shadow3d/transform.js';
 import { syncCameraWorldMatrices, usesZeroToOneDepth } from '../camera3d/matrices.js';
+import { fitDrawingBuffer, readDrawingBufferLimits } from '../quality3d/viewport.js';
 
 const POST_STATE_SCALAR_KEYS = [
   'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
@@ -356,8 +357,10 @@ export function createPostPipeline3D(options = {}) {
   );
 
   let activePreset = preset ? { ...QUALITY3D_PRESETS.medium, ...preset } : { ...QUALITY3D_PRESETS.medium };
-  let bufferWidth = Math.max(1, Math.floor(width));
-  let bufferHeight = Math.max(1, Math.floor(height));
+  let targetLimits = supported ? readDrawingBufferLimits(renderer) : undefined;
+  let requestedWidth = Math.max(1, Math.floor(width));
+  let requestedHeight = Math.max(1, Math.floor(height));
+  let { bufferWidth, bufferHeight } = fitDrawingBuffer(requestedWidth, requestedHeight, 1, targetLimits);
   let disposed = false;
   let contextLost = false;
   let elapsed = 0;
@@ -795,14 +798,19 @@ export function createPostPipeline3D(options = {}) {
     renderer.render(postScene, postCamera);
   }
 
+  function setBufferDimensions(w, h) {
+    requestedWidth = Math.max(1, Math.floor(w));
+    requestedHeight = Math.max(1, Math.floor(h));
+    const next = fitDrawingBuffer(requestedWidth, requestedHeight, 1, targetLimits);
+    const changed = next.bufferWidth !== bufferWidth || next.bufferHeight !== bufferHeight;
+    bufferWidth = next.bufferWidth;
+    bufferHeight = next.bufferHeight;
+    return changed;
+  }
+
   function resize(w, h) {
     if (disposed) return;
-    const nw = Math.max(1, Math.floor(w));
-    const nh = Math.max(1, Math.floor(h));
-    if (nw === bufferWidth && nh === bufferHeight && sceneRT) return;
-    bufferWidth = nw;
-    bufferHeight = nh;
-    syncTargets();
+    if (setBufferDimensions(w, h) || !sceneRT) syncTargets();
   }
 
   function setPreset(nextPreset, buffer) {
@@ -811,8 +819,7 @@ export function createPostPipeline3D(options = {}) {
       if (!Number.isFinite(buffer.width) || buffer.width < 1 || !Number.isFinite(buffer.height) || buffer.height < 1) {
         throw new RangeError('Invalid post-processing buffer size');
       }
-      bufferWidth = Math.floor(buffer.width);
-      bufferHeight = Math.floor(buffer.height);
+      setBufferDimensions(buffer.width, buffer.height);
     }
     activePreset = { ...QUALITY3D_PRESETS.medium, ...nextPreset };
     if (!explicitFxaa && 'fxaa' in activePreset) {
@@ -1157,6 +1164,10 @@ export function createPostPipeline3D(options = {}) {
   function handleContextRestored() {
     if (disposed) return;
     contextLost = false;
+    if (supported) {
+      targetLimits = readDrawingBufferLimits(renderer);
+      setBufferDimensions(requestedWidth, requestedHeight);
+    }
     syncTargets();
   }
 
