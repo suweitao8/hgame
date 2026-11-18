@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid allocating a notify-event array on every 3D animation step when neither active clip has notifications, while continuing to advance notify cursors.
+
 - Reuse a model provider's parsed GLTF when the same file is requested sequentially for its scene and animation clips.
 
 - Add Pixi tilemap edit helpers that update the existing TileMap and rebuild each affected cached visual chunk once per batch.

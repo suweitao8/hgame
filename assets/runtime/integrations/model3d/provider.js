@@ -671,7 +671,11 @@ export function createModel3DProvider({
 
       _stepMixerWithNotifies(stepDt) {
         if (!this.mixer || !(stepDt > 0)) return;
-        const pendingEvents = [];
+        // Most animated characters have no notifies for their active clips.
+        // Cursors must still advance so notifies added later keep correct time.
+        const hasActiveNotifies = (this._currentClipName && this._notifies.has(this._currentClipName)) ||
+          (this._overlayName && this._notifies.has(this._overlayName));
+        const pendingEvents = hasActiveNotifies ? [] : null;
         if (this._currentAction && this._currentClipName) {
           this._collectNotifiesForTrack(
             this._currentClipName,
@@ -695,7 +699,7 @@ export function createModel3DProvider({
 
         this.mixer.update(stepDt);
 
-        if (pendingEvents.length > 0) {
+        if (pendingEvents?.length > 0) {
           pendingEvents.sort((a, b) => (a.sortKey - b.sortKey) || (a.order - b.order));
           for (let i = 0; i < pendingEvents.length; i++) {
             const evt = pendingEvents[i];
