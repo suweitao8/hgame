@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reduce per-unit Pixi swarm synchronization work for common single-clip and fixed-orientation crowds.
+
 - Restrict 3D instanced batch GPU buffer updates to the visible prefix when the Three.js buffer API supports update ranges.
 
 - Cull 3D instance batches in world space when the batch mesh or its parents are transformed.

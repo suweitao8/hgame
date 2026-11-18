@@ -47,25 +47,31 @@ export class PixiSwarmLayer {
     const right = camera.x + (halfW - camera.shakeX) / zoom;
     const top = camera.y + (-halfH - camera.shakeY) / zoom;
     const bottom = camera.y + (halfH - camera.shakeY) / zoom;
+    const clips = this.clips, singleClip = clips.length === 1 ? clips[0] : null;
+    const positionsX = swarm.posX, positionsY = swarm.posY, activeIds = swarm.activeIds;
+    const animClips = swarm.animClip, scales = swarm.scale, rotations = swarm.rot;
+    const animTimes = swarm.animTime, flashes = swarm.flash;
+    const worldScale = this.worldScale, offsetX = this.offsetX, offsetY = this.offsetY;
+    const renderScale = this.scale, cull = this.cull, syncRotation = this.syncRotation, flipByDirection = this.flipByDirection;
     let used = 0;
     for (let i = 0; i < count; i++) {
-      const id = swarm.activeIds[i], x = swarm.posX[id] * this.worldScale + this.offsetX;
-      const y = swarm.posY[id] * this.worldScale + this.offsetY;
-      const clip = this.clips[(swarm.animClip?.[id] ?? 0) % this.clips.length];
-      const size = (swarm.scale?.[id] ?? 1) * this.scale;
-      if (this.cull) {
+      const id = activeIds[i], x = positionsX[id] * worldScale + offsetX;
+      const y = positionsY[id] * worldScale + offsetY;
+      const clip = singleClip ?? clips[(animClips?.[id] ?? 0) % clips.length];
+      const size = (scales?.[id] ?? 1) * renderScale;
+      if (cull) {
         const radius = clip.radius * Math.abs(size);
         if (x + radius < left || x - radius > right || y + radius < top || y - radius > bottom) continue;
       }
       let frameIndex = 0;
       if (clip.frames.length > 1) {
-        const time = swarm.animTime?.[id] ?? 0;
+        const time = animTimes?.[id] ?? 0;
         const elapsedFrames = Number.isFinite(time) ? Math.max(0, Math.floor(time * clip.fps)) : 0;
         frameIndex = clip.loop ? elapsedFrames % clip.frames.length : Math.min(elapsedFrames, clip.frames.length - 1);
       }
       const frame = clip.frames[frameIndex];
       let particle = this.particles[used];
-      const texture = swarm.flash?.[id] > 0 ? frame.white : frame.texture;
+      const texture = flashes?.[id] > 0 ? frame.white : frame.texture;
       if (!particle) {
         particle = this.pool.pop() ?? new Particle({ texture, anchorX: 0.5, anchorY: 0.5 });
         this.particles.push(particle); this.pendingParticles.push(particle);
@@ -73,9 +79,9 @@ export class PixiSwarmLayer {
       }
       if (particle.texture !== texture) particle.texture = texture;
       particle.x = x; particle.y = y;
-      const rotation = swarm.rot?.[id] ?? 0;
-      particle.rotation = this.syncRotation ? rotation : 0;
-      particle.scaleX = this.flipByDirection && Math.sin(rotation) < 0 ? -size : size;
+      const rotation = syncRotation || flipByDirection ? (rotations?.[id] ?? 0) : 0;
+      particle.rotation = syncRotation ? rotation : 0;
+      particle.scaleX = flipByDirection && Math.sin(rotation) < 0 ? -size : size;
       particle.scaleY = size;
       used++;
     }
