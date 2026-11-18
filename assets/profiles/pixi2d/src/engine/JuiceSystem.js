@@ -1,4 +1,4 @@
-import { Particle, MeshRope, Point, Graphics } from 'pixi.js';
+import { Particle, ParticleContainer, MeshRope, Point, Graphics } from 'pixi.js';
 import { ShockwaveFilter } from 'pixi-filters';
 import { gsap } from 'gsap';
 
@@ -25,12 +25,13 @@ export class JuiceSystem {
       bloom: false,
       beforeRender: () => this.syncShockwaveCenters(),
     };
-    this.removedParticles = new Set(); this.pendingParticles = []; this.batchDepth = 0;
-    this.particles = Array.from({ length: capacity }, () => {
-      const particle = new Particle({ texture: renderer.atlas.get('particle_soft'), x: 0, y: 0, alpha: 0 });
-      return { particle, life: 0, duration: 0, vx: 0, vy: 0, start: 1, end: 0, drag: 0 };
+    this.particleBatch = new ParticleContainer({
+      dynamicProperties: { position: true, vertex: true, color: true, rotation: false, uvs: false },
     });
-    this.freeParticles = this.particles.slice();
+    renderer.worldRoot.addChild(this.particleBatch);
+    this.particleUvsDirty = false;
+    this.freeParticles = Array.from({ length: capacity }, () => this.createParticle(renderer.atlas.get('particle_soft')));
+    this.offBeforeRender = renderer.onBeforeRender(() => this.syncVisibleParticles());
     this.points = Array.from({ length: 12 }, () => new Point());
     this.trail = renderer.isCanvas ? new Graphics() : new MeshRope({ texture: renderer.atlas.get('slash_trail'), points: this.points });
     this.trail.visible = false; renderer.trailLayer.addChild(this.trail); this.trailTime = 0;
@@ -67,43 +68,67 @@ export class JuiceSystem {
       this.renderer.worldToScreen(wave.x, wave.y, wave.filter.center);
     }
   }
+  createParticle(texture) {
+    const particle = new Particle({ texture, anchorX: 0, anchorY: 0, rotation: 0 });
+    return { particle, life: 0, duration: 0, vx: 0, vy: 0, start: 1, end: 0, drag: 0, width: 0, height: 0 };
+  }
   burstParticles(x, y, count, opts = {}) {
     if (!Number.isSafeInteger(count) || count < 0) throw new RangeError('Particle count must be a non-negative safe integer');
     const texture = this.renderer.atlas.get(opts.tex ?? 'particle_soft');
+    const speedMin = opts.speedMin ?? 80, speedRange = (opts.speedMax ?? 300) - speedMin;
+    const lifeMin = opts.lifeMin ?? 0.3, lifeRange = (opts.lifeMax ?? 0.9) - lifeMin;
+    const scaleStart = opts.scaleStart ?? 0.7, scaleEnd = opts.scaleEnd ?? 0, drag = opts.drag ?? 1;
+    const { width, height } = texture.orig;
+    // Canvas particle tinting crops the source and misaligns atlas UVs.
+    const tint = this.renderer.isCanvas ? 0xffffff : (opts.color ?? 0xffffff);
     for (let i = 0; i < count; i++) {
-      const p = this.freeParticles.pop() ?? { particle: new Particle({ texture: this.renderer.atlas.get('particle_soft') }) };
+      const p = this.freeParticles.pop() ?? this.createParticle(texture);
       this.liveParticles.push(p);
-      this.pendingParticles.push(p.particle);
-      if (this.pendingParticles.length === 4096) this.flushPending();
-      const angle = Math.random() * Math.PI * 2, speed = (opts.speedMin ?? 80) + Math.random() * ((opts.speedMax ?? 300) - (opts.speedMin ?? 80));
+      const angle = Math.random() * Math.PI * 2, speed = speedMin + Math.random() * speedRange;
       p.vx = Math.cos(angle) * speed; p.vy = Math.sin(angle) * speed;
-      p.duration = p.life = (opts.lifeMin ?? 0.3) + Math.random() * ((opts.lifeMax ?? 0.9) - (opts.lifeMin ?? 0.3));
-      p.start = opts.scaleStart ?? 0.7; p.end = opts.scaleEnd ?? 0; p.drag = opts.drag ?? 1;
-      p.particle.texture = texture;
+      p.duration = p.life = lifeMin + Math.random() * lifeRange;
+      p.start = scaleStart; p.end = scaleEnd; p.drag = drag;
+      if (p.particle.texture !== texture) {
+        p.particle.texture = texture;
+        this.particleUvsDirty = true;
+      }
+      p.width = width; p.height = height;
       p.particle.x = x; p.particle.y = y; p.particle.alpha = 1;
-      // Pixi's Canvas particle adapter expects an atlas source, while its tint
-      // helper returns a cropped canvas. Keep Canvas particles untinted.
-      p.particle.tint = this.renderer.isCanvas ? 0xffffff : (opts.color ?? 0xffffff);
+      p.particle.scaleX = p.particle.scaleY = p.start;
+      p.particle.tint = tint;
     }
-    if (this.batchDepth === 0) this.flushPending();
+    this.active = this.liveParticles.length;
   }
-  flushPending() {
-    if (this.pendingParticles.length) this.renderer.particleLayer.addParticle(...this.pendingParticles);
-    this.pendingParticles.length = 0;
-  }
-  removeMarkedParticles() {
-    const removed = this.removedParticles;
-    if (removed.size === 0) return;
-    // Pixi documents direct particleChildren edits followed by update(). Keep
-    // other owners' particles and their ordering while compacting only once.
-    const layer = this.renderer.particleLayer, children = layer.particleChildren;
+  syncVisibleParticles() {
+    const layer = this.particleBatch, children = layer.particleChildren;
+    const camera = this.renderer.camera, screen = this.renderer.app.screen;
+    const left = camera.x + (-screen.width / 2 - camera.shakeX) / camera.zoom;
+    const right = camera.x + (screen.width / 2 - camera.shakeX) / camera.zoom;
+    const top = camera.y + (-screen.height / 2 - camera.shakeY) / camera.zoom;
+    const bottom = camera.y + (screen.height / 2 - camera.shakeY) / camera.zoom;
+    let changed = this.particleUvsDirty;
     let write = 0;
-    for (let read = 0; read < children.length; read++) {
-      const particle = children[read];
-      if (!removed.has(particle)) children[write++] = particle;
+    for (const p of this.liveParticles) {
+      const particle = p.particle;
+      const scale = particle.scaleX;
+      if (scale === 0 || particle.alpha <= 0) continue;
+      const x = particle.x, y = particle.y;
+      const farX = x + scale * p.width, farY = y + scale * p.height;
+      if (scale > 0 ? farX <= left || x >= right || farY <= top || y >= bottom
+        : x <= left || farX >= right || y <= top || farY >= bottom) continue;
+      if (children[write] !== particle) {
+        children[write] = particle;
+        changed = true;
+      }
+      write++;
     }
-    if (write !== children.length) { children.length = write; layer.update(); }
-    removed.clear();
+    if (write !== children.length) {
+      children.length = write;
+      changed = true;
+    }
+    if (changed) layer.update();
+    this.visibleParticles = write;
+    this.particleUvsDirty = false;
   }
   spawnExplosions(count) {
     if (!Number.isSafeInteger(count) || count < 0) throw new RangeError('Explosion count must be a non-negative safe integer');
@@ -111,15 +136,13 @@ export class JuiceSystem {
     const presets = this.renderer.isCanvas
       ? canvasExplosionOptions.map((option, index) => this.renderer.atlas.textures.has(option.tex) ? option : explosionOptions[index])
       : explosionOptions;
-    this.batchDepth++;
-    try {
-      for (let i = 0; i < count; i++) {
-        const x = (Math.random() * screen.width - screen.width / 2 - camera.shakeX) / camera.zoom + camera.x;
-        const y = (Math.random() * screen.height - screen.height / 2 - camera.shakeY) / camera.zoom + camera.y;
-        this.effects.push(3);
-        this.burstParticles(x, y, 8, presets[i % presets.length]);
-      }
-    } finally { if (--this.batchDepth === 0) this.flushPending(); }
+    const width = screen.width / camera.zoom, height = screen.height / camera.zoom;
+    const left = camera.x - width / 2 - camera.shakeX / camera.zoom;
+    const top = camera.y - height / 2 - camera.shakeY / camera.zoom;
+    for (let i = 0; i < count; i++) {
+      this.effects.push(3);
+      this.burstParticles(left + Math.random() * width, top + Math.random() * height, 8, presets[i % presets.length]);
+    }
   }
   update(dt) {
     this.clock += dt; this.hitStop = Math.max(0, this.hitStop - dt); if (!this.hitStop) this.simTimeScale = 1;
@@ -147,25 +170,19 @@ export class JuiceSystem {
     let effectWrite = 0;
     for (const life of this.effects) if (life > dt) this.effects[effectWrite++] = life - dt;
     this.effects.length = effectWrite;
-    let write = 0; this.visibleParticles = 0; const expired = this.removedParticles;
-    const camera = this.renderer.camera, screen = this.renderer.app.screen;
+    let write = 0;
     let previousDrag = NaN, damping = 1;
     for (const p of this.liveParticles) {
-      p.life = Math.max(0, p.life - dt); const t = p.life / p.duration;
+      p.life -= dt;
+      if (p.life <= 0) { this.freeParticles.push(p); continue; }
+      const t = p.life / p.duration;
       p.particle.x += p.vx * dt; p.particle.y += p.vy * dt;
       if (p.drag !== previousDrag) { previousDrag = p.drag; damping = Math.exp(-p.drag * dt); }
       p.vx *= damping; p.vy *= damping;
       p.particle.alpha = t; p.particle.scaleX = p.particle.scaleY = p.end + (p.start - p.end) * t;
-      if (p.life <= 0) { expired.add(p.particle); this.freeParticles.push(p); }
-      else {
-        this.liveParticles[write++] = p;
-        const sx = (p.particle.x - camera.x) * camera.zoom + screen.width / 2 + camera.shakeX;
-        const sy = (p.particle.y - camera.y) * camera.zoom + screen.height / 2 + camera.shakeY;
-        if (sx >= 0 && sx < screen.width && sy >= 0 && sy < screen.height) this.visibleParticles++;
-      }
+      this.liveParticles[write++] = p;
     }
     this.liveParticles.length = write; this.active = write;
-    this.removeMarkedParticles();
     if (this.trailTime > 0) { this.trailTime -= dt; this.trail.visible = this.trailTime > 0; }
   }
   slash(x, y, angle) {
@@ -183,15 +200,17 @@ export class JuiceSystem {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.offBeforeRender();
     this.renderer.setEffectFilters([], this.shockwaveChannel);
     for (const wave of this.shockwaves) wave.filter.destroy();
     for (const wave of this.freeShockwaves) wave.filter.destroy();
     this.freeShockwaves.length = 0;
     this.shockwaves.clear(); this.hitTweens.clear();
-    for (const item of this.liveParticles) this.removedParticles.add(item.particle);
-    this.removeMarkedParticles();
+    this.particleBatch.removeFromParent();
+    this.particleBatch.particleChildren.length = 0;
+    this.particleBatch.destroy();
     this.trail.removeFromParent(); this.trail.destroy();
-    this.liveParticles.length = 0; this.freeParticles.length = 0; this.particles.length = 0;
-    this.pendingParticles.length = 0; this.effects.length = 0; this.active = 0; this.visibleParticles = 0;
+    this.liveParticles.length = 0; this.freeParticles.length = 0;
+    this.effects.length = 0; this.active = 0; this.visibleParticles = 0;
   }
 }

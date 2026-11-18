@@ -12,6 +12,8 @@ PixiJS prefers WebGPU and retries with WebGL (then Pixi's Canvas renderer if nee
 
 On the Canvas fallback, particles use their atlas frame colors instead of runtime `opts.color` tinting. The default explosion has precolored atlas frames; supply precolored frames for custom particle colors on that backend.
 
+Juice simulates particles for their full lifetime and submits only quads intersecting the current camera viewport. `active` counts all living particles. `visibleParticles` counts the particles submitted in the latest draw. Static UV data is refreshed when visible membership or textures change.
+
 Pixi projects start in automatic quality mode. Set `--quality low|medium|high|ultra` at creation, edit `src/presentation.json`, or call `renderer.setQuality(mode)` during play. The mode sets a physical pixel-ratio cap from HGame's 2D presets (1, 1.5, 2, or 3). Set `rendererOptions.maxPixels` in `startPixiGame` to change the default 2.3-million-pixel ceiling. Resolution changes preserve logical camera and input coordinates.
 
 Auto mode starts from device hints and adjusts resolution using HGame's unscaled frame intervals. Visibility changes reset the sample window, and command-driven games with `tickHz: 0` use a fixed high preset when configured for auto. Frame intervals include CPU and GPU work. A CPU-bound scene may need fewer simulation or rendering tasks to improve frame rate.

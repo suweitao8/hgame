@@ -22,6 +22,7 @@ export class Renderer2D {
     this.swarmLayers = new Set();
     this.tilemapLayers = new Set();
     this.effectChannels = new Map();
+    this.beforeRenderCallbacks = new Set();
     this.camera = { x: 0, y: 0, targetX: 0, targetY: 0, zoom: 1, shakeX: 0, shakeY: 0 };
   }
   async init(mount) {
@@ -137,6 +138,12 @@ export class Renderer2D {
     if (filters.length) this.effectChannels.set(owner, { filters, beforeRender, bloom });
     else this.effectChannels.delete(owner);
     this.applyFilters();
+  }
+  /** Run a callback after quality and camera updates, just before Pixi draws. */
+  onBeforeRender(callback) {
+    if (typeof callback !== 'function') throw new TypeError('Expected a render preparation callback');
+    this.beforeRenderCallbacks.add(callback);
+    return () => this.beforeRenderCallbacks.delete(callback);
   }
   applyFilters() {
     const filters = [];
@@ -260,6 +267,7 @@ export class Renderer2D {
       }
       if (frameIntervalMs > 0 && this.qualityController.sampleFrame(frameIntervalMs)) this.resize();
     }
+    for (const callback of this.beforeRenderCallbacks) callback();
     if (!this.isCanvas) {
       for (const channel of this.effectChannels.values()) channel.beforeRender?.();
     }
@@ -277,6 +285,7 @@ export class Renderer2D {
     try {
       if (stage) stage.filters = [];
       this.effectChannels.clear();
+      this.beforeRenderCallbacks.clear();
       this.bloom?.destroy();
       if (this.app.renderer) this.app.destroy({ removeView: true }, { children: true });
       else if (stage && !stage.destroyed) stage.destroy({ children: true });
