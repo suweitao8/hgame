@@ -28,6 +28,8 @@
  * @property {number} UnsignedByteType
  * @property {number} UnsignedIntType
  * @property {number} [HalfFloatType]
+ * @property {number} [RGBFormat]
+ * @property {number} [UnsignedInt101111Type]
  */
 /**
  * Structural subset of THREE.WebGLRenderer used by the pipeline.
@@ -267,6 +269,8 @@ export type PostPipelineTHREE = {
     UnsignedByteType: number;
     UnsignedIntType: number;
     HalfFloatType?: number | undefined;
+    RGBFormat?: number | undefined;
+    UnsignedInt101111Type?: number | undefined;
 };
 /**
  * Structural subset of THREE.WebGLRenderer used by the pipeline.

@@ -638,17 +638,20 @@ in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
 
 void main() {
-  vec2 d = uTexelSize;
+  // Each axis's three filtered taps span four texels. Pair adjacent texels
+  // with bilinear fetches using their weights at the actual fractional phase.
+  vec2 texel = vUv / uTexelSize - 0.5;
+  vec2 cell = floor(texel);
+  vec2 phase = fract(texel);
+  vec2 leftWeight = 3.0 - 2.0 * phase;
+  vec2 rightWeight = 1.0 + 2.0 * phase;
+  vec2 leftUv = (cell - 0.5 + (2.0 - phase) / leftWeight) * uTexelSize;
+  vec2 rightUv = (cell + 1.5 + phase / rightWeight) * uTexelSize;
   vec3 tent =
-    texture(tLower, vUv + vec2(-d.x, -d.y)).rgb * 1.0 +
-    texture(tLower, vUv + vec2( 0.0, -d.y)).rgb * 2.0 +
-    texture(tLower, vUv + vec2( d.x, -d.y)).rgb * 1.0 +
-    texture(tLower, vUv + vec2(-d.x,  0.0)).rgb * 2.0 +
-    texture(tLower, vUv).rgb * 4.0 +
-    texture(tLower, vUv + vec2( d.x,  0.0)).rgb * 2.0 +
-    texture(tLower, vUv + vec2(-d.x,  d.y)).rgb * 1.0 +
-    texture(tLower, vUv + vec2( 0.0,  d.y)).rgb * 2.0 +
-    texture(tLower, vUv + vec2( d.x,  d.y)).rgb * 1.0;
+    texture(tLower, leftUv).rgb * (leftWeight.x * leftWeight.y) +
+    texture(tLower, vec2(rightUv.x, leftUv.y)).rgb * (rightWeight.x * leftWeight.y) +
+    texture(tLower, vec2(leftUv.x, rightUv.y)).rgb * (leftWeight.x * rightWeight.y) +
+    texture(tLower, rightUv).rgb * (rightWeight.x * rightWeight.y);
   vec3 up = texture(tUpper, vUv).rgb;
   fragColor = vec4(up + tent / 16.0, 1.0);
 }

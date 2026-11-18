@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Store bloom mips in packed RGB float targets where supported. Reconstruct the upsampling tent kernel with four bilinear reads instead of nine.
+
 - Resolve multisampled scene depth only for active depth effects. Select MSAA counts supported by both HDR color and depth attachments.
 
 - Respect WebGL texture, renderbuffer and viewport dimensions when sizing 3D buffers. Keep HDR targets and split-view edges aligned with the allocated canvas buffer.

@@ -64,6 +64,8 @@ const POST_STATE_SCALAR_KEYS = [
  * @property {number} UnsignedByteType
  * @property {number} UnsignedIntType
  * @property {number} [HalfFloatType]
+ * @property {number} [RGBFormat]
+ * @property {number} [UnsignedInt101111Type]
  */
 
 /**
@@ -447,10 +449,20 @@ export function createPostPipeline3D(options = {}) {
     : THREE.UnsignedByteType;
   const usesByteColorTargets = hdrType === THREE.UnsignedByteType;
   let sceneSampleCounts;
+  let bloomStorage = chooseBloomStorage();
 
-  function makeColorTarget(w, h, { type, samples = 0, depthTexture = null, depthBuffer = Boolean(depthTexture) } = {}) {
+  function chooseBloomStorage() {
+    if (supported && !usesByteColorTargets && THREE.RGBFormat !== undefined && THREE.UnsignedInt101111Type !== undefined &&
+        renderer.getContext?.()?.getExtension?.('EXT_color_buffer_float')) {
+      return { type: THREE.UnsignedInt101111Type, format: THREE.RGBFormat };
+    }
+    return { type: hdrType };
+  }
+
+  function makeColorTarget(w, h, { type, format, samples = 0, depthTexture = null, depthBuffer = Boolean(depthTexture) } = {}) {
     const rt = new THREE.WebGLRenderTarget(Math.max(1, w), Math.max(1, h), {
       type,
+      ...(format === undefined ? {} : { format }),
       samples,
       depthBuffer,
       resolveDepthBuffer: Boolean(depthTexture),
@@ -463,17 +475,20 @@ export function createPostPipeline3D(options = {}) {
     return rt;
   }
 
-  function syncColorTarget(target, enabled, width, height, type) {
+  function syncColorTarget(target, enabled, width, height, type, format) {
     if (!enabled) {
       target?.dispose?.();
       return null;
     }
-    if (target?.width === width && target.height === height) return target;
-    if (typeof target?.setSize === 'function') {
-      target.setSize(width, height);
-      return target;
+    if (target && (target.texture?.type ?? type) === type &&
+        (format === undefined || (target.texture?.format ?? format) === format)) {
+      if (target.width === width && target.height === height) return target;
+      if (typeof target.setSize === 'function') {
+        target.setSize(width, height);
+        return target;
+      }
     }
-    const replacement = makeColorTarget(width, height, { type });
+    const replacement = makeColorTarget(width, height, { type, format });
     target?.dispose?.();
     return replacement;
   }
@@ -569,9 +584,9 @@ export function createPostPipeline3D(options = {}) {
         const mip = bloomMips[i] ?? { down: null, up: null };
         mip.w = mw;
         mip.h = mh;
-        mip.down = syncColorTarget(mip.down, true, mw, mh, hdrType);
+        mip.down = syncColorTarget(mip.down, true, mw, mh, bloomStorage.type, bloomStorage.format);
         // Mip zero uses the shared half-resolution scratch target. The last mip only downsamples.
-        mip.up = syncColorTarget(mip.up, i > 0 && !lastMip, mw, mh, hdrType);
+        mip.up = syncColorTarget(mip.up, i > 0 && !lastMip, mw, mh, bloomStorage.type, bloomStorage.format);
         bloomMips[i] = mip;
         mipCount++;
         if (lastMip) break;
@@ -618,7 +633,10 @@ export function createPostPipeline3D(options = {}) {
     giSsrRT = syncColorTarget(giSsrRT, useGiSsr, hw, hh, hdrType);
     // AO and GI finish their blur before bloom writes the final upsample.
     const useHalfScratch = useGiSsr || bloomMips.length > 1 || (usesByteColorTargets && Boolean(halfRT));
-    halfScratchRT = syncColorTarget(halfScratchRT, useHalfScratch, hw, hh, hdrType);
+    // Reserve alpha when the preset can denoise GI/SSR, including while those effects fade out.
+    const bloomOnly = bloomMips.length > 1 && !(sceneRT.depthTexture && (activePreset.ssgi || activePreset.ssr));
+    halfScratchRT = syncColorTarget(halfScratchRT, useHalfScratch, hw, hh,
+      bloomOnly ? bloomStorage.type : hdrType, bloomOnly ? bloomStorage.format : undefined);
 
     // The fixed-size exposure targets retain adaptation history across viewport changes.
     if (state.autoExposure) {
@@ -1189,6 +1207,7 @@ export function createPostPipeline3D(options = {}) {
     if (disposed) return;
     contextLost = false;
     sceneSampleCounts = undefined;
+    bloomStorage = chooseBloomStorage();
     if (supported) {
       targetLimits = readDrawingBufferLimits(renderer);
       setBufferDimensions(requestedWidth, requestedHeight);
