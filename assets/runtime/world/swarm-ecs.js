@@ -663,8 +663,10 @@ export class FlatCombatECS {
     for (let i = 0; i < maxSlots; i++) this._freeStack[i] = maxSlots - 1 - i;
     this._activeCount = 0;
     this._scanLimit = 0;
+    this._slotGeneration = new Uint32Array(maxSlots);
 
     this._hitTargetSlot = new Int32Array(maxHitEvents);
+    this._hitGeneration = new Uint32Array(maxHitEvents);
     this._hitDamage = new Int32Array(maxHitEvents);
     this._hitPushX = new Float32Array(maxHitEvents);
     this._hitPushY = new Float32Array(maxHitEvents);
@@ -710,6 +712,7 @@ export class FlatCombatECS {
     if (this._freeTop <= 0) return -1;
 
     const slot = this._freeStack[--this._freeTop];
+    this._slotGeneration[slot] = (this._slotGeneration[slot] + 1) >>> 0;
     if (slot >= this._scanLimit) this._scanLimit = slot + 1;
     this.flags[slot] = ECS_SLOT_FLAGS.ACTIVE | ECS_SLOT_FLAGS.DIRTY;
     this.swarmUnitId[slot] = swarmId;
@@ -743,6 +746,7 @@ export class FlatCombatECS {
     if (slot < 0 || slot >= this.maxSlots || this._hitCount >= this.maxHitEvents) return false;
     const idx = this._hitCount++;
     this._hitTargetSlot[idx] = slot;
+    this._hitGeneration[idx] = this._slotGeneration[this._hitTargetSlot[idx]];
     this._hitDamage[idx] = Math.max(0, Math.round(damage));
     this._hitPushX[idx] = pushX;
     this._hitPushY[idx] = pushY;
@@ -756,6 +760,7 @@ export class FlatCombatECS {
     let resolved = 0;
     for (let i = 0; i < n; i++) {
       const slot = this._hitTargetSlot[i];
+      if (this._hitGeneration[i] !== this._slotGeneration[slot]) continue;
       const f = this.flags[slot];
       if ((f & ECS_SLOT_FLAGS.ACTIVE) === 0 || (f & ECS_SLOT_FLAGS.DEAD) !== 0) continue;
 

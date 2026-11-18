@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Track combat-slot generations so queued hits cannot damage a different swarm unit after a slot is recycled.
+
 - Count only successfully queued swarm area hits, and stop promoting targets when the bounded hit queue is full.
 
 - Keep the procedural 3D sky inside the camera's far clipping plane when adaptive quality shortens scene draw distance.

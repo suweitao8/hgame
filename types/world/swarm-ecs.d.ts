@@ -372,7 +372,9 @@ export class FlatCombatECS {
     _freeTop: number;
     _activeCount: number;
     _scanLimit: number;
+    _slotGeneration: Uint32Array;
     _hitTargetSlot: Int32Array;
+    _hitGeneration: Uint32Array;
     _hitDamage: Int32Array;
     _hitPushX: Float32Array;
     _hitPushY: Float32Array;
