@@ -62,3 +62,27 @@ test('shared clips only emit the spin notify when spinning and the fatal hit sti
   runner.sync({ ...player, invuln: 0.6 }, { tick: 3, over: true }, 0.6);
   assert.equal(runner.role, 'hit');
 });
+
+test('late model completion cannot mount an actor after leaving the arena', async t => {
+  const lifetime = new AbortController();
+  const asset = Promise.withResolvers();
+  const requested = Promise.withResolvers();
+  t.mock.method(globalThis, 'fetch', async () => ({
+    ok: true, json: async () => ({ path: 'hero.gltf', clips: bindings }),
+  }));
+  const mounted = t.mock.fn(() => { throw new Error('late scene mutation'); });
+  const record = t.mock.fn();
+  const loading = loadRunnerView({
+    provider: {
+      load() { requested.resolve(); return asset.promise; },
+      inspect: () => ({ meshCount: 1 }),
+    },
+    scene: { add: mounted }, Entity: class {}, record, getTick: () => 0, signal: lifetime.signal,
+  });
+  await requested.promise;
+  lifetime.abort();
+  asset.resolve({ animations: clips });
+  assert.equal(await loading, null);
+  assert.equal(mounted.mock.callCount(), 0);
+  assert.equal(record.mock.callCount(), 0);
+});

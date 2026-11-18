@@ -7,6 +7,7 @@
 //        [--selector "#game"] [--viewport 960x540] [--baseline base.png] [--update-baseline]
 //        [--eval "<js expr>"] [--freeze-time] [--steps N] [--state-hook __hgameState]
 //        [--threshold 0.01] [--query horde=3000] [--chrome <path>] [--ready "#game[data-engine-ready=true]"]
+//        [--visual-ready "#game:not([data-visual-loading])"]
 //        [--entry toy/<slug>/index.html]
 //
 // Exit code 1 when: page errors, blank canvas, or baseline diff above threshold.
@@ -30,6 +31,7 @@ if (!gameDir) { console.error('Usage: node scripts/snapshot.mjs <game-dir> [opti
 const outPng = path.resolve(opt('--out', path.join(gameDir, 'build', 'snapshot.png')));
 const selector = opt('--selector', '#game');
 const ready = opt('--ready', '');
+const visualReady = opt('--visual-ready', '');
 const baseline = opt('--baseline', '');
 const entry = opt('--entry', '/');
 const query = opt('--query', '');
@@ -182,6 +184,7 @@ try {
       for (;;) { await step(1); if (await page.locator(ready).count()) break; if (Date.now() - t0 > 20000) throw new Error('ready selector timeout'); await page.waitForTimeout(5); }
     }
   }
+  if (visualReady) await page.locator(visualReady).waitFor({ timeout: 20000 });
   if (freeze) {
     await page.waitForTimeout(50);
     await step(requestedSteps ?? Math.round(waitMs / FRAME_MS));

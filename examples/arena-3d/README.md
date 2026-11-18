@@ -19,6 +19,6 @@ The rig and five gameplay clips are authored in `tools/build-runner.py`. Regener
 blender --background --factory-startup --python-exit-code 1 --python examples/arena-3d/tools/build-runner.py
 ```
 
-Use `src/assets/runner.json` to point to a replacement glTF and map its clip names to the game's animation roles. A missing or ambiguous clip leaves the procedural runner playable and records the affected asset and role in the debug trace.
+Use `src/assets/runner.json` to point to a replacement glTF and map its clip names to the game's animation roles. The procedural runner responds to controls while the model loads. The authored rig takes over in the player's current pose state and position. A missing or ambiguous clip leaves the procedural runner playable and records the affected asset and role in the debug trace. For a deterministic snapshot of the rig, pass `--ready '#game[data-engine-ready=true]' --visual-ready '#game:not([data-visual-loading])'`.
 
 Play in [WebAsset](http://127.0.0.1:4175/local-games/arena-3d/index.html).

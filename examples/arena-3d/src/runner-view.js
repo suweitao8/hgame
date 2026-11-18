@@ -15,15 +15,17 @@ export function validateRunnerClips(animations, bindings) {
   return result;
 }
 
-export async function loadRunnerView({ provider, scene, Entity, record, getTick }) {
+export async function loadRunnerView({ provider, scene, Entity, record, getTick, signal }) {
   let path = 'src/assets/runner.json';
   let actor = null;
   try {
-    const response = await fetch(path);
+    const response = await fetch(path, { signal });
     if (!response.ok) throw new Error(`Runner manifest HTTP ${response.status}`);
     const spec = await response.json();
+    if (signal?.aborted) return null;
     path = spec.path ?? path;
     const asset = await provider.load(path);
+    if (signal?.aborted) return null;
     if (provider.inspect(asset).meshCount === 0) throw new Error('Runner asset has no renderable meshes');
     const clips = validateRunnerClips(asset.animations, spec.clips);
     actor = scene.add(new Entity({ name: 'runner-model' }));
@@ -72,6 +74,7 @@ export async function loadRunnerView({ provider, scene, Entity, record, getTick 
       },
     };
   } catch (error) {
+    if (signal?.aborted) return null;
     let reason = String(error?.message ?? error);
     try { actor?.destroy(); } catch (cleanupError) { reason += ` (cleanup failed: ${cleanupError?.message ?? cleanupError})`; }
     record?.({

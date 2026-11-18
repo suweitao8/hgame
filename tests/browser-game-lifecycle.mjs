@@ -56,6 +56,47 @@ function distance(a, b) {
   return Math.hypot(b.x - a.x, (b.z ?? b.y) - (a.z ?? a.y));
 }
 
+async function exerciseRunnerLoading(page, url) {
+  const loaderPattern = '**/jsm/loaders/GLTFLoader.js';
+  const modelPattern = '**/src/assets/runner.gltf';
+  const releaseLoader = Promise.withResolvers();
+  const releaseModel = Promise.withResolvers();
+  await page.route(loaderPattern, async route => {
+    await releaseLoader.promise;
+    await route.continue();
+  });
+  await page.route(modelPattern, async route => {
+    await releaseModel.promise;
+    await route.continue();
+  });
+  try {
+    await Promise.all([page.waitForRequest(loaderPattern), page.goto(url, { waitUntil: 'domcontentloaded' })]);
+    await page.locator('#game[data-engine-ready=true]').waitFor({ timeout: 10000 });
+    const read = () => page.evaluate(() => window.__hgameState());
+    const initial = await read();
+    assert.equal(initial.animation, null);
+    await page.keyboard.down('d');
+    try {
+      await page.waitForFunction(x => window.__hgameState().player.x < x - 0.5, initial.player.x, { timeout: 4000 });
+      const modelRequested = page.waitForRequest(modelPattern, { timeout: 5000 });
+      releaseLoader.resolve();
+      await modelRequested;
+      const loading = await read();
+      assert.equal(loading.animation, null);
+      await page.waitForFunction(x => window.__hgameState().player.x < x - 0.5, loading.player.x, { timeout: 4000 });
+      releaseModel.resolve();
+      await page.waitForFunction(() => window.__hgameState().animation !== null, null, { timeout: 5000 });
+    } finally {
+      await page.keyboard.up('d');
+    }
+  } finally {
+    releaseLoader.resolve();
+    releaseModel.resolve();
+    await page.unroute(loaderPattern);
+    await page.unroute(modelPattern);
+  }
+}
+
 async function exerciseContextRecovery(page, id) {
   const textured = id === 'survivor-2d';
   const results = await page.evaluate(async ({ textured, runtime }) => {
@@ -437,7 +478,10 @@ try {
     });
     const soakQuery = id === 'survivor-2d' ? 'seed=1&horde=3000' : 'seed=1&tier=medium&god=1';
     const query = soakSeconds ? soakQuery : 'seed=1&tier=low';
-    await page.goto(`${url}?${query}`);
+    const entry = `${url}?${query}`;
+    const runnerLoading = id === 'arena-3d' && !mobile && !soakSeconds;
+    if (runnerLoading) await exerciseRunnerLoading(page, entry);
+    else await page.goto(entry);
     await page.locator('#game[data-engine-ready=true]').waitFor({ timeout: 20000 })
       .catch(error => { throw new Error(`${id} did not load: ${errors.join('; ')}; ${error.message}`); });
     page.off('request', trackStartup);
@@ -455,7 +499,9 @@ try {
       continue;
     }
     const initial = await read();
-    if (id === 'arena-3d') assert.equal(initial.animation, 'idle', 'arena starts with its authored runner rig');
+    if (id === 'arena-3d' && !runnerLoading) {
+      await page.waitForFunction(() => window.__hgameState().animation !== null, null, { timeout: 5000 });
+    }
     await page.keyboard.down('d');
     if (id === 'arena-3d') {
       await page.waitForFunction(() => window.__hgameState().animation === 'run', null, { timeout: 3000 });
@@ -541,7 +587,7 @@ try {
     assert.equal(stopped.disposed, true);
     assert.deepEqual(errors, [], `${id} browser errors`);
     console.log(JSON.stringify({ id, browser: browserName, version: browser.version(), live, mobile, touch, recovery,
-      modelReplacement, adaptiveResolution,
+      modelReplacement, adaptiveResolution, runnerLoading,
       cycles: 3, kills: completed.kills, best: completed.best, disposal, errors }));
     await page.close();
   }

@@ -13,7 +13,7 @@ const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
   gameConfig, engineConfig, { createGameApplication }, { defineProject },
   { Component }, { Entity }, { Scene }, { createSaveStore }, { createArcadeControls },
-  { createThreeAdapter }, { createSpringArm3D }, { createTouchControls }, { createModel3DProvider }, THREE, { GLTFLoader },
+  { createThreeAdapter }, { createSpringArm3D }, { createTouchControls }, { createModel3DProvider }, THREE,
 ] = await Promise.all([
   fetch('./game.config.json').then(r => r.json()),
   fetch('./engine.config.json').then(r => r.json()),
@@ -29,7 +29,6 @@ const [
   import(base + '/integrations/touch-controls.js'),
   import(base + '/integrations/model3d.js'),
   import('../assets/vendor/three/three.module.js'),
-  import('../assets/vendor/three/jsm/loaders/GLTFLoader.js'),
 ]);
 
 // QA knobs: ?seed=N, ?tier=low|medium|high (otherwise the adaptive controller picks), ?god=1 for invulnerability.
@@ -49,7 +48,17 @@ const renderer = createThreeAdapter({
 });
 canvas.dataset.qualityTier = renderer.qualityController?.state.tier ?? 'high';
 const app = createGameApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
-const model3d = createModel3DProvider({ THREE, GLTFLoader, projectBaseUrl: location.href });
+const model3d = createModel3DProvider({
+  THREE,
+  projectBaseUrl: location.href,
+  loader: {
+    async loadAsync(url) {
+      const { GLTFLoader } = await import('../assets/vendor/three/jsm/loaders/GLTFLoader.js');
+      lifetime.signal.throwIfAborted();
+      return new GLTFLoader().loadAsync(url);
+    },
+  },
+});
 await app.installFeatures({ model3d });
 const save = app.services.save ?? createSaveStore({ gameId: gameConfig.id });
 const trace = debug ? app.platform.diagnostics : null;
@@ -119,11 +128,7 @@ const ring = new THREE.Mesh(new THREE.TorusGeometry(CONFIG.player.spinRadius, 0.
 ring.rotation.x = Math.PI / 2; ring.position.y = 0.15; ring.visible = false;
 hero.add(body, nose, ring); world.add(hero);
 app.scenes.start('arena');
-const runner = await loadRunnerView({ provider: model3d, scene, Entity, record: trace?.recordEvent, getTick: () => sim.state.tick });
-if (runner) {
-  body.visible = false;
-  nose.visible = false;
-}
+let runner = null;
 
 // Enemies: one InstancedMesh; per-instance colour carries kind and the hit flash.
 const MAXE = TIER_BUDGET.high.maxEnemies;
@@ -254,6 +259,20 @@ class Driver extends Component {
 }
 scene.add(new Entity({ name: 'driver' })).addComponent(new Driver());
 
+canvas.dataset.visualLoading = '';
+void loadRunnerView({
+  provider: model3d, scene, Entity, record: trace?.recordEvent,
+  getTick: () => sim.state.tick, signal: lifetime.signal,
+}).then(view => {
+  if (lifetime.signal.aborted) return;
+  if (view) {
+    runner = view;
+    runner.sync(sim.player, sim.state, CONFIG.player.invuln);
+    body.visible = false;
+    nose.visible = false;
+  }
+  delete canvas.dataset.visualLoading;
+});
 app.start();
 window.__arena = { app, sim, renderer, arm };
 if (trace) window.__hgameTrace = trace.readEvents;

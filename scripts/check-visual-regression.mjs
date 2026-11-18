@@ -60,7 +60,8 @@ export function compareVisualScenarios({ referenceRoot, candidateRoot, outDir, v
   for (const scenario of scenarios) {
     const referencePng = path.join(outDir, `${scenario.id}.reference.png`);
     const candidatePng = path.join(outDir, `${scenario.id}.candidate.png`);
-    const common = ['--ready', '#game[data-engine-ready=true]', '--freeze-time', '--steps', String(scenario.steps),
+    const common = ['--ready', '#game[data-engine-ready=true]', '--visual-ready', '#game:not([data-visual-loading])',
+      '--freeze-time', '--steps', String(scenario.steps),
       '--viewport', viewport, '--keys', scenario.keys, '--query', scenario.query];
     if (chrome) common.push('--chrome', chrome);
     const reference = capture([path.join(referenceRoot, 'examples', scenario.id), ...common, '--out', referencePng]);
