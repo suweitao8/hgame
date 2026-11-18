@@ -114,10 +114,12 @@ function makeMockBufferFactory() {
   return { created, createBufferCanvas };
 }
 
-function makeMockWebGL2Canvas({ width = 960, height = 540 } = {}) {
+function makeMockWebGL2Canvas({ width = 960, height = 540, renderer = 'Generic GPU' } = {}) {
   const listeners = new Map();
   const glCalls = {
     drawArraysInstanced: [],
+    drawArrays: [],
+    instanceUploads: [],
     texImage2D: 0,
     liveTextures: new Set(),
   };
@@ -139,6 +141,7 @@ function makeMockWebGL2Canvas({ width = 960, height = 540 } = {}) {
     NEAREST: 0x2600,
     LINEAR: 0x2601,
     RGBA: 0x1908,
+    RGBA32F: 0x8814,
     UNSIGNED_BYTE: 0x1401,
     SCISSOR_TEST: 0x0c11,
     COLOR_BUFFER_BIT: 0x4000,
@@ -148,6 +151,10 @@ function makeMockWebGL2Canvas({ width = 960, height = 540 } = {}) {
     TEXTURE0: 0x84c0,
     TRIANGLES: 0x0004,
     TRIANGLE_STRIP: 0x0005,
+    getExtension(name) {
+      return name === 'WEBGL_debug_renderer_info' ? { UNMASKED_RENDERER_WEBGL: 0x9246 } : null;
+    },
+    getParameter(parameter) { return parameter === 0x9246 ? renderer : null; },
     createShader(type) { return { type }; },
     shaderSource() {},
     compileShader() {},
@@ -182,6 +189,11 @@ function makeMockWebGL2Canvas({ width = 960, height = 540 } = {}) {
     },
     texParameteri() {},
     texImage2D() { glCalls.texImage2D++; },
+    texSubImage2D(_target, _level, _x, _y, width, height, _format, type, data) {
+      assert.equal(type, this.FLOAT);
+      assert.ok(data.length >= width * height * 4);
+      glCalls.instanceUploads.push({ width, height, x: data[4] });
+    },
     deleteTexture(texture) { glCalls.liveTextures.delete(texture); },
     disable() {},
     enable() {},
@@ -197,6 +209,7 @@ function makeMockWebGL2Canvas({ width = 960, height = 540 } = {}) {
     drawArraysInstanced(mode, first, count, primcount) {
       glCalls.drawArraysInstanced.push({ mode, first, count, primcount });
     },
+    drawArrays(mode, first, count) { glCalls.drawArrays.push({ mode, first, count }); },
   };
 
   const canvas = {
@@ -391,6 +404,33 @@ test('WebGL2D adapter batches 3,000 textured sprites + ground shadows into 1 dra
   assert.equal(Boolean(fallback.isWebGL2), false);
   assert.equal(fallback.stats.backend, 'canvas2d');
   fallback.dispose();
+});
+
+test('WebGL2D fetches SwiftShader batch instances from a texture and restores that texture after context loss', () => {
+  const { canvas, gl, glCalls } = makeMockWebGL2Canvas({ renderer: 'ANGLE (SwiftShader Device)' });
+  const adapter = createWebGL2DAdapter({ canvas, maxBatchInstances: 129 });
+  const scene = new Scene('software-batch');
+  const crowd = scene.add(new Entity()).addComponent(new SpriteCrowd2D({ capacity: 130, width: 4, height: 4 }));
+  scene._setActive(true);
+  for (let i = 0; i < 130; i++) crowd.spawn({ x: i, y: 0 });
+
+  adapter.render(scene);
+  assert.equal(glCalls.drawArraysInstanced.length, 0);
+  assert.deepEqual(glCalls.drawArrays.map(draw => draw.count), [129 * 6, 6]);
+  assert.ok(glCalls.drawArrays.every(draw => draw.mode === gl.TRIANGLES && draw.first === 0));
+  assert.deepEqual(glCalls.instanceUploads.map(upload => [upload.height, upload.x]), [[2, -2], [1, 127]]);
+  assert.equal(adapter.stats.instances, 130);
+  assert.equal(glCalls.liveTextures.size, 2);
+
+  canvas.dispatch('webglcontextlost');
+  adapter.render(scene);
+  assert.equal(glCalls.drawArrays.length, 2);
+  canvas.dispatch('webglcontextrestored');
+  adapter.render(scene);
+  assert.equal(glCalls.drawArrays.length, 3);
+  assert.equal(glCalls.liveTextures.size, 2);
+  adapter.dispose();
+  assert.equal(glCalls.liveTextures.size, 0);
 });
 
 test('WebGL2D releases evicted text textures after drawing any queued use this frame', () => {

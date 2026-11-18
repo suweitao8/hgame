@@ -24,6 +24,9 @@ const FLOATS_PER_INSTANCE = 20;
 const BYTES_PER_INSTANCE = FLOATS_PER_INSTANCE * 4;
 const MAX_CAPACITY_CAP = 262144;
 const BATCH_TEXTURES = 4;
+const INSTANCES_PER_TEXTURE_ROW = 128;
+const INSTANCE_TEXTURE_WIDTH = INSTANCES_PER_TEXTURE_ROW * (FLOATS_PER_INSTANCE / 4);
+const INSTANCE_TEXTURE_UNIT = BATCH_TEXTURES;
 const NUMERIC_GLYPHS = '0123456789+-.,:%/ ';
 const NUMERIC_TEXT = /^(?=.*[0-9])[0-9+\-.,:%/ ]{1,32}$/;
 const GLYPH_PADDING = 4;
@@ -137,12 +140,16 @@ void main() {
 const VERTEX_SHADER_GLSL3 = `#version 300 es
 precision highp float;
 
+#ifdef FETCH_INSTANCES
+uniform highp sampler2D uInstanceData;
+#else
 layout(location = 0) in vec2 aQuad;
 layout(location = 1) in vec4 iMat;
 layout(location = 2) in vec4 iTransUv;
 layout(location = 3) in vec4 iUvSizeMode;
 layout(location = 4) in vec4 iColor;
 layout(location = 5) in vec4 iFlash;
+#endif
 
 uniform vec4 uViewX;
 uniform vec4 uViewY;
@@ -155,6 +162,20 @@ flat out vec4 vColor;
 flat out vec4 vFlash;
 
 void main() {
+#ifdef FETCH_INSTANCES
+  // The same two triangles as the four-vertex instanced strip.
+  int vertex = gl_VertexID % 6;
+  vec2 aQuad = vec2((vertex == 1 || vertex >= 4) ? 1.0 : 0.0,
+    (vertex == 2 || vertex == 3 || vertex == 5) ? 1.0 : 0.0);
+  int instance = gl_VertexID / 6;
+  ivec2 cell = ivec2((instance % ${INSTANCES_PER_TEXTURE_ROW}) * ${FLOATS_PER_INSTANCE / 4},
+    instance / ${INSTANCES_PER_TEXTURE_ROW});
+  vec4 iMat = texelFetch(uInstanceData, cell, 0);
+  vec4 iTransUv = texelFetch(uInstanceData, cell + ivec2(1, 0), 0);
+  vec4 iUvSizeMode = texelFetch(uInstanceData, cell + ivec2(2, 0), 0);
+  vec4 iColor = texelFetch(uInstanceData, cell + ivec2(3, 0), 0);
+  vec4 iFlash = texelFetch(uInstanceData, cell + ivec2(4, 0), 0);
+#endif
   vec2 worldPos = vec2(
     iMat.x * aQuad.x + iMat.z * aQuad.y + iTransUv.x,
     iMat.y * aQuad.x + iMat.w * aQuad.y + iTransUv.y
@@ -355,14 +376,19 @@ export function createWebGL2DAdapter({
   let contextLost = false;
   let disposed = false;
 
+  // SwiftShader spends substantial time assembling a separate strip per instance.
+  // Fetch the same records in one triangle stream when that renderer is identifiable.
+  const debugInfo = gl.getExtension?.('WEBGL_debug_renderer_info');
+  const fetchInstances = debugInfo && /\bswiftshader\b/i.test(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL));
   let capacity = maxBatchInstances;
-  let instanceData = new Float32Array(capacity * FLOATS_PER_INSTANCE);
+  let instanceData;
   let instanceCount = 0;
 
   let program = null;
   let vao = null;
   let quadVbo = null;
   let instanceVbo = null;
+  let instanceTexture = null;
   let whiteTex = null;
   let uViewXLoc = null;
   let uViewYLoc = null;
@@ -425,9 +451,27 @@ export function createWebGL2DAdapter({
     return null;
   });
 
+  function allocateInstanceStorage() {
+    if (instanceTexture) {
+      const rows = Math.ceil(capacity / INSTANCES_PER_TEXTURE_ROW);
+      instanceData = new Float32Array(rows * INSTANCE_TEXTURE_WIDTH * 4);
+      gl.activeTexture(gl.TEXTURE0 + INSTANCE_TEXTURE_UNIT);
+      gl.bindTexture(gl.TEXTURE_2D, instanceTexture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, INSTANCE_TEXTURE_WIDTH, rows, 0, gl.RGBA, gl.FLOAT, null);
+      gl.activeTexture(gl.TEXTURE0);
+    } else {
+      instanceData = new Float32Array(capacity * FLOATS_PER_INSTANCE);
+      gl.bindBuffer(gl.ARRAY_BUFFER, instanceVbo);
+      gl.bufferData(gl.ARRAY_BUFFER, instanceData.byteLength, gl.DYNAMIC_DRAW);
+    }
+  }
+
   function initGlResources() {
     if (disposed || contextLost) return;
-    program = compileProgram(gl, VERTEX_SHADER_GLSL3, FRAGMENT_SHADER_GLSL3);
+    const vertexSource = fetchInstances
+      ? VERTEX_SHADER_GLSL3.replace('#version 300 es', '#version 300 es\n#define FETCH_INSTANCES')
+      : VERTEX_SHADER_GLSL3;
+    program = compileProgram(gl, vertexSource, FRAGMENT_SHADER_GLSL3);
     uViewXLoc = gl.getUniformLocation(program, 'uViewX');
     uViewYLoc = gl.getUniformLocation(program, 'uViewY');
     gl.useProgram(program);
@@ -448,15 +492,23 @@ export function createWebGL2DAdapter({
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-    instanceVbo = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, instanceVbo);
-    gl.bufferData(gl.ARRAY_BUFFER, instanceData.byteLength, gl.DYNAMIC_DRAW);
-
-    for (let attr = 1; attr <= 5; attr++) {
-      gl.enableVertexAttribArray(attr);
-      gl.vertexAttribPointer(attr, 4, gl.FLOAT, false, BYTES_PER_INSTANCE, (attr - 1) * 16);
-      gl.vertexAttribDivisor(attr, 1);
+    if (fetchInstances) {
+      instanceTexture = gl.createTexture();
+      ownedTextures.add(instanceTexture);
+      gl.uniform1i(gl.getUniformLocation(program, 'uInstanceData'), INSTANCE_TEXTURE_UNIT);
+      gl.activeTexture(gl.TEXTURE0 + INSTANCE_TEXTURE_UNIT);
+      gl.bindTexture(gl.TEXTURE_2D, instanceTexture);
+      setTextureFilter(false);
+    } else {
+      instanceVbo = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, instanceVbo);
+      for (let attr = 1; attr <= 5; attr++) {
+        gl.enableVertexAttribArray(attr);
+        gl.vertexAttribPointer(attr, 4, gl.FLOAT, false, BYTES_PER_INSTANCE, (attr - 1) * 16);
+        gl.vertexAttribDivisor(attr, 1);
+      }
     }
+    allocateInstanceStorage();
 
     gl.bindVertexArray(null);
 
@@ -504,6 +556,7 @@ export function createWebGL2DAdapter({
     vao = null;
     quadVbo = null;
     instanceVbo = null;
+    instanceTexture = null;
     compactProgram = null;
     compactVao = null;
     compactVbo = null;
@@ -792,8 +845,16 @@ export function createWebGL2DAdapter({
 
   function flushBatch() {
     if (instanceCount <= 0) return;
-    gl.bindBuffer(gl.ARRAY_BUFFER, instanceVbo);
-    gl.bufferSubData(gl.ARRAY_BUFFER, 0, instanceData, 0, instanceCount * FLOATS_PER_INSTANCE);
+    if (instanceTexture) {
+      const rows = Math.ceil(instanceCount / INSTANCES_PER_TEXTURE_ROW);
+      const columns = Math.min(instanceCount * (FLOATS_PER_INSTANCE / 4), INSTANCE_TEXTURE_WIDTH);
+      gl.activeTexture(gl.TEXTURE0 + INSTANCE_TEXTURE_UNIT);
+      gl.bindTexture(gl.TEXTURE_2D, instanceTexture);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, columns, rows, gl.RGBA, gl.FLOAT, instanceData);
+    } else {
+      gl.bindBuffer(gl.ARRAY_BUFFER, instanceVbo);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, instanceData, 0, instanceCount * FLOATS_PER_INSTANCE);
+    }
     for (let unit = BATCH_TEXTURES - 1; unit >= 0; unit--) {
       const texture = batchTextures[unit]?.glTex ?? whiteTex;
       if (boundTextureUnits[unit] !== texture) {
@@ -803,7 +864,8 @@ export function createWebGL2DAdapter({
       }
     }
     gl.activeTexture(gl.TEXTURE0);
-    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, instanceCount);
+    if (instanceTexture) gl.drawArrays(gl.TRIANGLES, 0, 6 * instanceCount);
+    else gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, instanceCount);
     stats.drawCalls++;
     stats.instances += instanceCount;
     instanceCount = 0;
@@ -814,12 +876,8 @@ export function createWebGL2DAdapter({
     if (instanceCount >= capacity) {
       if (capacity < MAX_CAPACITY_CAP) {
         flushBatch();
-        const nextCap = Math.min(MAX_CAPACITY_CAP, capacity * 2);
-        const nextArr = new Float32Array(nextCap * FLOATS_PER_INSTANCE);
-        capacity = nextCap;
-        instanceData = nextArr;
-        gl.bindBuffer(gl.ARRAY_BUFFER, instanceVbo);
-        gl.bufferData(gl.ARRAY_BUFFER, instanceData.byteLength, gl.DYNAMIC_DRAW);
+        capacity = Math.min(MAX_CAPACITY_CAP, capacity * 2);
+        allocateInstanceStorage();
       } else {
         flushBatch();
       }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Avoid SwiftShader's per-instance draw overhead in general WebGL2D sprite batches by fetching packed instances in one triangle stream.
+
 - Render WebGL2D instanced quads with four vertices and skip interpolation of per-instance colors. Run the frame pacing and 3D stress budgets independently in CI.
 
 - Build the network lab with esbuild and remove the affected Picomatch dependency from the network workspace.
