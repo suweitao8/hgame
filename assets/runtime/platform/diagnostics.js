@@ -13,6 +13,15 @@
  * @property {Window} [windowRef] Window that receives `error`/`unhandledrejection` listeners.
  * @property {(report: ErrorReport) => void} [onReport] Called for every reported error.
  * @property {number} [sampleFrames=60] Rolling frame window used for FPS statistics (min 2).
+ * @property {number} [eventCapacity=128] Maximum retained gameplay events. Set to zero to disable recording.
+ */
+
+/**
+ * @typedef {object} DiagnosticEvent
+ * @property {number} tick Nonnegative simulation tick.
+ * @property {string} type Game-defined event type.
+ * @property {string} subject Entity, objective, asset, or other affected object.
+ * @property {Record<string, string | number | boolean | null>} [details] Optional JSON-safe scalar fields.
  */
 
 /**
@@ -32,6 +41,8 @@
  * @typedef {object} Diagnostics
  * @property {(timestampMs: number, startWindow?: boolean) => void} recordFrame Record a `requestAnimationFrame` timestamp (milliseconds). Pass true to start a fresh timing window after an interruption.
  * @property {(error: unknown, context?: Record<string, unknown>) => ErrorReport} reportError
+ * @property {(event: DiagnosticEvent) => boolean} recordEvent Append a gameplay event. Returns false when disabled or disposed.
+ * @property {() => {dropped: number, events: Readonly<DiagnosticEvent>[]}} readEvents Read the retained events in their emission order.
  * @property {() => Readonly<DiagnosticsSnapshot>} snapshot
  * @property {() => boolean} dispose Detach window listeners; false if already disposed.
  */
@@ -46,13 +57,51 @@ export function createDiagnostics({
   windowRef = globalThis.window,
   onReport = () => {},
   sampleFrames = 60,
+  eventCapacity = 128,
 } = {}) {
+  if (!Number.isSafeInteger(eventCapacity) || eventCapacity < 0) {
+    throw new RangeError('eventCapacity must be a nonnegative safe integer');
+  }
   /** @type {number[]} */
   let frames = [];
   let errors = 0;
   /** @type {ErrorReport | null} */
   let lastError = null;
   let disposed = false;
+  /** @type {Readonly<DiagnosticEvent>[]} */
+  const events = [];
+  let eventCount = 0;
+  let nextEvent = 0;
+
+  /** @param {DiagnosticEvent} input */
+  function recordEvent({ tick, type, subject, details }) {
+    if (disposed || eventCapacity === 0) return false;
+    if (!Number.isSafeInteger(tick) || tick < 0 || typeof type !== 'string' || !type ||
+        typeof subject !== 'string' || !subject) {
+      throw new TypeError('Diagnostic events require a nonnegative tick, type, and subject');
+    }
+    /** @type {DiagnosticEvent} */
+    const event = { tick, type, subject };
+    if (details !== undefined) {
+      if (!details || typeof details !== 'object' || Array.isArray(details) ||
+          Object.values(details).some(value => value !== null && typeof value !== 'string' &&
+            typeof value !== 'boolean' && !Number.isFinite(value))) {
+        throw new TypeError('Diagnostic event details must contain only JSON-safe scalar fields');
+      }
+      event.details = Object.freeze({ ...details });
+    }
+    events[nextEvent] = Object.freeze(event);
+    nextEvent = (nextEvent + 1) % eventCapacity;
+    eventCount++;
+    return true;
+  }
+
+  function readEvents() {
+    return {
+      dropped: eventCount - events.length,
+      events: eventCount > events.length ? events.slice(nextEvent).concat(events.slice(0, nextEvent)) : events.slice(),
+    };
+  }
 
   function reportError(error, context = {}) {
     const detail = {
@@ -101,8 +150,11 @@ export function createDiagnostics({
     windowRef?.removeEventListener?.('error', onError);
     windowRef?.removeEventListener?.('unhandledrejection', onRejection);
     frames = [];
+    events.length = 0;
+    eventCount = 0;
+    nextEvent = 0;
     return true;
   }
 
-  return Object.freeze({ recordFrame, reportError, snapshot, dispose });
+  return Object.freeze({ recordFrame, reportError, recordEvent, readEvents, snapshot, dispose });
 }

@@ -4,7 +4,7 @@ import { CONFIG, TICK, TIER_BUDGET } from './config.js';
 import { createRng, createHasher } from './rng.js';
 import { pushCircleOutOfBox, circleOverlapsBox } from './collide.js';
 
-export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config = CONFIG, godMode = false } = {}) {
+export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config = CONFIG, godMode = false, onEvent } = {}) {
   const budget = TIER_BUDGET[tier] ?? TIER_BUDGET.medium;
   const cap = maxEnemies ?? budget.maxEnemies;
   const { player: P, enemy: E, arenaHalf, obstacles, mission: objective } = config;
@@ -12,6 +12,8 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
   const tmp = { x: 0, z: 0 };
 
   const state = { tick: 0, time: 0, kills: 0, spawned: 0, over: false, outcome: null, spawnTimer: 1, wave: 0 };
+  const emit = onEvent ? (type, subject, details) => onEvent({ tick: state.tick, type, subject, details }) : null;
+  emit?.('run.started', 'arena', { seed, tier });
   const mission = objective && {
     charged: new Uint8Array(objective.beacons.length),
     chargedCount: 0,
@@ -70,6 +72,12 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     state.kills++;
   }
 
+  function finish(outcome) {
+    state.over = true;
+    state.outcome = outcome;
+    emit?.('run.finished', 'arena', { outcome, kills: state.kills });
+  }
+
   function stepPlayer(dt, input) {
     let mx = input.mx || 0, mz = input.mz || 0;
     const len = Math.hypot(mx, mz);
@@ -92,14 +100,17 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
     if (input.attack && pl.spinCd === 0) {
       pl.spinCd = P.spinCooldown; pl.spinT = P.spinTime; pl.spins++;
       const r = P.spinRadius + E.radius;
+      let hits = 0;
       for (let i = en.count - 1; i >= 0; i--) {
         const dx = en.x[i] - pl.x, dz = en.z[i] - pl.z, d2 = dx * dx + dz * dz;
         if (d2 > r * r) continue;
+        hits++;
         const d = Math.sqrt(d2) || 1;
         en.vx[i] = dx / d * P.spinKnock; en.vz[i] = dz / d * P.spinKnock; en.hit[i] = 1;
         en.hp[i] -= P.spinDamage;
         if (en.hp[i] <= 0) killEnemy(i);
       }
+      emit?.('player.spin', 'player', { hits });
     }
   }
 
@@ -122,8 +133,9 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
       en.x[i] = tmp.x; en.z[i] = tmp.z;
       // Contact damage while the player is not airborne above the enemy.
       if (!godMode && pl.invuln === 0 && pl.y < 1.1 && d < P.radius + E.radius + 0.05) {
-        pl.hp -= E.contactDamage; pl.invuln = P.invuln;
-        if (pl.hp <= 0) { pl.hp = 0; state.over = true; state.outcome = 'defeat'; }
+        pl.hp = Math.max(0, pl.hp - E.contactDamage); pl.invuln = P.invuln;
+        emit?.('player.damaged', 'player', { hp: pl.hp, enemySlot: i });
+        if (pl.hp === 0) finish('defeat');
       }
     }
   }
@@ -139,7 +151,12 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
       active = objective.beacons.findIndex((beacon, i) =>
         !mission.charged[i] && within(pl.x, pl.z, beacon, objective.radius));
     }
-    if (active !== mission.active) mission.progress = 0;
+    const wasBlocked = active === mission.active && mission.blocked;
+    if (active !== mission.active) {
+      if (mission.active >= 0) emit?.('beacon.left', `beacon:${mission.active}`, { progress: mission.progress });
+      if (active >= 0) emit?.('beacon.entered', `beacon:${active}`);
+      mission.progress = 0;
+    }
     mission.active = active;
     mission.blocked = false;
     if (active >= 0) {
@@ -147,20 +164,23 @@ export function createArenaSim({ seed = 1, tier = 'medium', maxEnemies, config =
       for (let i = 0; i < en.count; i++) {
         if (!within(en.x[i], en.z[i], beacon, objective.dangerRadius)) continue;
         mission.blocked = true;
+        if (!wasBlocked) emit?.('beacon.blocked', `beacon:${active}`, { enemySlot: i });
         return;
       }
+      if (wasBlocked) emit?.('beacon.resumed', `beacon:${active}`);
       mission.progress += dt;
       if (mission.progress + 1e-9 >= objective.holdSeconds) {
         mission.charged[active] = 1;
         mission.chargedCount++;
+        emit?.('beacon.charged', `beacon:${active}`, { chargedCount: mission.chargedCount });
+        if (mission.chargedCount === objective.beacons.length) emit?.('exit.opened', 'exit');
         mission.active = -1;
         mission.progress = 0;
       }
     }
     if (mission.chargedCount === objective.beacons.length && pl.grounded &&
         within(pl.x, pl.z, objective.exit, objective.radius)) {
-      state.over = true;
-      state.outcome = 'victory';
+      finish('victory');
     }
   }
 

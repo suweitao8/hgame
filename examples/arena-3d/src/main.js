@@ -47,10 +47,11 @@ canvas.dataset.qualityTier = renderer.qualityController?.state.tier ?? 'high';
 const app = createGameApplication({ project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer });
 await app.installFeatures();
 const save = app.services.save ?? createSaveStore({ gameId: gameConfig.id });
+const trace = debug ? app.platform.diagnostics : null;
 
 // The enemy cap is part of the sim config, so it is fixed per run from the tier we start in.
 const tierNow = () => renderer.qualityController?.state.tier ?? 'high';
-const newSim = (s) => createArenaSim({ seed: s, tier: tierNow(), godMode: god });
+const newSim = s => createArenaSim({ seed: s, tier: tierNow(), godMode: god, onEvent: trace?.recordEvent });
 let sim = newSim(seed);
 let best = loadBest(save);
 let saved = false;
@@ -192,7 +193,13 @@ function syncView(dt) {
 }
 
 class Driver extends Component {
-  onDestroy() { lifetime.abort(); touch.dispose(); missionView.dispose(); el('restart').onclick = null; }
+  onDestroy() {
+    lifetime.abort();
+    touch.dispose();
+    missionView.dispose();
+    el('restart').onclick = null;
+    if (trace && window.__hgameTrace === trace.readEvents) delete window.__hgameTrace;
+  }
   fixedUpdate(dt) {
     arcade.update(dt);
     const p1 = arcade.p1;
@@ -217,6 +224,7 @@ scene.add(new Entity({ name: 'driver' })).addComponent(new Driver());
 app.scenes.start('arena');
 app.start();
 window.__arena = { app, sim, renderer, arm };
+if (trace) window.__hgameTrace = trace.readEvents;
 window.__hgameState = () => ({ phase: sim.state.over ? 'over' : 'playing', tick: sim.state.tick,
   time: sim.state.time, kills: sim.state.kills, enemies: sim.en.count,
   outcome: sim.state.outcome,

@@ -12,6 +12,14 @@
  * @property {Window} [windowRef] Window that receives `error`/`unhandledrejection` listeners.
  * @property {(report: ErrorReport) => void} [onReport] Called for every reported error.
  * @property {number} [sampleFrames=60] Rolling frame window used for FPS statistics (min 2).
+ * @property {number} [eventCapacity=128] Maximum retained gameplay events. Set to zero to disable recording.
+ */
+/**
+ * @typedef {object} DiagnosticEvent
+ * @property {number} tick Nonnegative simulation tick.
+ * @property {string} type Game-defined event type.
+ * @property {string} subject Entity, objective, asset, or other affected object.
+ * @property {Record<string, string | number | boolean | null>} [details] Optional JSON-safe scalar fields.
  */
 /**
  * @typedef {object} DiagnosticsSnapshot
@@ -29,6 +37,8 @@
  * @typedef {object} Diagnostics
  * @property {(timestampMs: number, startWindow?: boolean) => void} recordFrame Record a `requestAnimationFrame` timestamp (milliseconds). Pass true to start a fresh timing window after an interruption.
  * @property {(error: unknown, context?: Record<string, unknown>) => ErrorReport} reportError
+ * @property {(event: DiagnosticEvent) => boolean} recordEvent Append a gameplay event. Returns false when disabled or disposed.
+ * @property {() => {dropped: number, events: Readonly<DiagnosticEvent>[]}} readEvents Read the retained events in their emission order.
  * @property {() => Readonly<DiagnosticsSnapshot>} snapshot
  * @property {() => boolean} dispose Detach window listeners; false if already disposed.
  */
@@ -37,7 +47,7 @@
  * @param {DiagnosticsOptions} [options]
  * @returns {Diagnostics}
  */
-export function createDiagnostics({ gameId, windowRef, onReport, sampleFrames, }?: DiagnosticsOptions | undefined): Diagnostics;
+export function createDiagnostics({ gameId, windowRef, onReport, sampleFrames, eventCapacity, }?: DiagnosticsOptions | undefined): Diagnostics;
 export type ErrorReport = {
     gameId: string;
     message: string;
@@ -68,6 +78,28 @@ export type DiagnosticsOptions = {
      * Rolling frame window used for FPS statistics (min 2).
      */
     sampleFrames?: number | undefined;
+    /**
+     * Maximum retained gameplay events. Set to zero to disable recording.
+     */
+    eventCapacity?: number | undefined;
+};
+export type DiagnosticEvent = {
+    /**
+     * Nonnegative simulation tick.
+     */
+    tick: number;
+    /**
+     * Game-defined event type.
+     */
+    type: string;
+    /**
+     * Entity, objective, asset, or other affected object.
+     */
+    subject: string;
+    /**
+     * Optional JSON-safe scalar fields.
+     */
+    details?: Record<string, string | number | boolean | null> | undefined;
 };
 export type DiagnosticsSnapshot = {
     gameId: string;
@@ -107,6 +139,17 @@ export type Diagnostics = {
      */
     recordFrame: (timestampMs: number, startWindow?: boolean) => void;
     reportError: (error: unknown, context?: Record<string, unknown>) => ErrorReport;
+    /**
+     * Append a gameplay event. Returns false when disabled or disposed.
+     */
+    recordEvent: (event: DiagnosticEvent) => boolean;
+    /**
+     * Read the retained events in their emission order.
+     */
+    readEvents: () => {
+        dropped: number;
+        events: Readonly<DiagnosticEvent>[];
+    };
     snapshot: () => Readonly<DiagnosticsSnapshot>;
     /**
      * Detach window listeners; false if already disposed.

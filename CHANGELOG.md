@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Record bounded gameplay events in runtime diagnostics and collect them in AI playtest reports. The arena reference traces beacon interruptions and combat events in debug mode.
+
 - Upload Pixi atlas pixels through WebGPU's byte upload to keep GPU memory bounded across repeated renderer restarts.
 
 - Release the Pixi atlas backing canvas on game shutdown and startup failure. Create a fresh atlas when starting another renderer.

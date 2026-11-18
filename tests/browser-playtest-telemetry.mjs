@@ -6,6 +6,32 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+test('playtest collects requested gameplay events and fails when the trace hook is missing', t => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-trace-'));
+  t.after(() => rmSync(game, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+  const events = { dropped: 2, events: [
+    { tick: 18, type: 'beacon.blocked', subject: 'beacon:1', details: { enemy: 4 } },
+  ] };
+  writeFileSync(path.join(game, 'index.html'), `<!doctype html><canvas id="game" width="64" height="64"></canvas><script>
+const g=document.getElementById('game').getContext('2d');g.fillStyle='#f80';g.fillRect(0,0,32,32);
+window.__trace=()=>(${JSON.stringify(events)});
+</script>`);
+  const run = hook => {
+    const result = spawnSync(process.execPath, [path.join(root, 'scripts/playtest.mjs'), game,
+      '--duration', '400', '--actions', 'wait:100', '--no-pointer', '--allow-static', '--trace-hook', hook],
+    { encoding: 'utf8', timeout: 25000, windowsHide: true });
+    assert.ifError(result.error);
+    return { status: result.status, report: JSON.parse(result.stdout) };
+  };
+  const present = run('__trace');
+  assert.equal(present.status, 0, JSON.stringify(present.report));
+  assert.deepEqual(present.report.trace, events);
+  const missing = run('__absent');
+  assert.equal(missing.status, 1);
+  assert.ok(missing.report.problems.some(problem => problem.includes('trace hook __absent')));
+});
+
 test('playtest fails when a declared state hook throws or returns unserializable state', t => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-hook-'));

@@ -104,7 +104,8 @@ test('beacons charge in either order and only the unlocked exit ends the run', (
 });
 
 test('nearby enemies interrupt beacon charging and leaving clears unfinished progress', () => {
-  const sim = make({ godMode: true, maxEnemies: 1 });
+  const events = [];
+  const sim = make({ godMode: true, maxEnemies: 1, onEvent: event => events.push(event) });
   const [beacon] = CONFIG.mission.beacons;
   sim.player.x = beacon.x; sim.player.z = beacon.z;
   for (let i = 0; i < 15; i++) sim.step();
@@ -128,6 +129,11 @@ test('nearby enemies interrupt beacon charging and leaving clears unfinished pro
   assert.equal(sim.mission.active, -1);
   assert.equal(sim.mission.progress, 0);
   assert.equal(sim.mission.chargedCount, 0);
+  assert.deepEqual(events.map(event => event.type),
+    ['run.started', 'beacon.entered', 'beacon.blocked', 'player.spin', 'beacon.resumed', 'beacon.left']);
+  assert.deepEqual(events.find(event => event.type === 'beacon.blocked'), {
+    tick: 16, type: 'beacon.blocked', subject: 'beacon:0', details: { enemySlot: 0 },
+  });
 });
 
 test('a lethal hit on the exit takes precedence over victory', () => {

@@ -4,7 +4,7 @@
 // canvas pixels actually respond (or state hook mutates), and asserts zero console/page/HTTP errors.
 //
 //   node scripts/playtest.mjs <game-dir> [--duration 2000] [--actions "d:350,w:300,j:150,k:150"]
-//        [--selector "#game"] [--viewport 960x540] [--state-hook __hgameState]
+//        [--selector "#game"] [--viewport 960x540] [--state-hook __hgameState] [--trace-hook __hgameTrace]
 //        [--ready "#game[data-engine-ready=true]"] [--allow-static] [--no-pointer] [--chrome <path>]
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -109,13 +109,13 @@ const analyzeCanvasStats = async ({ shot }) => {
 
 async function runCli() {
   const argv = process.argv.slice(2);
-  const valueFlags = new Set(['--duration', '--actions', '--selector', '--viewport', '--state-hook', '--ready', '--chrome', '--query', '--max-long-frames']);
+  const valueFlags = new Set(['--duration', '--actions', '--selector', '--viewport', '--state-hook', '--trace-hook', '--ready', '--chrome', '--query', '--max-long-frames']);
   const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
   const flag = name => argv.includes(name);
   const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && valueFlags.has(argv[i - 1])));
 
   if (!gameDir || flag('--help')) {
-    console.error('Usage: node scripts/playtest.mjs <game-dir> [--duration 2000] [--actions "d:350,w:300,j:150,k:150"] [--selector "#game"] [--viewport 960x540] [--state-hook __hgameState] [--allow-static]');
+    console.error('Usage: node scripts/playtest.mjs <game-dir> [--duration 2000] [--actions "d:350,w:300,j:150,k:150"] [--selector "#game"] [--viewport 960x540] [--state-hook __hgameState] [--trace-hook __hgameTrace] [--allow-static]');
     process.exit(flag('--help') ? 0 : 2);
   }
 
@@ -144,6 +144,11 @@ async function runCli() {
   const ready = opt('--ready', '');
   const { width: vw, height: vh } = viewport;
   const stateHook = opt('--state-hook', '__hgameState');
+  const traceHook = opt('--trace-hook', '');
+  if (flag('--trace-hook') && (!traceHook || traceHook.startsWith('--'))) {
+    console.error('--trace-hook requires a window function name');
+    process.exit(2);
+  }
   const query = opt('--query', '');
   const allowStatic = flag('--allow-static') || profile === 'ui';
   const usePointer = !flag('--no-pointer');
@@ -273,6 +278,27 @@ async function runCli() {
     const shotAfter = await captureBuf();
     const afterHash = createHash('sha256').update(shotAfter).digest('hex').slice(0, 16);
     const stateAfter = await readState();
+    if (traceHook) {
+      try {
+        report.trace = await page.evaluate(async name => {
+          if (typeof window[name] !== 'function') throw new Error('window function is missing');
+          const trace = await window[name]();
+          if (!Array.isArray(trace?.events) || !Number.isSafeInteger(trace.dropped) || trace.dropped < 0) {
+            throw new Error('expected { dropped, events }');
+          }
+          const events = trace.events.slice(-128);
+          for (const event of events) {
+            if (!Number.isSafeInteger(event?.tick) || event.tick < 0 || typeof event.type !== 'string' ||
+                !event.type || typeof event.subject !== 'string' || !event.subject) {
+              throw new Error('each event requires a nonnegative tick, type, and subject');
+            }
+          }
+          return JSON.parse(JSON.stringify({ dropped: trace.dropped + trace.events.length - events.length, events }));
+        }, traceHook);
+      } catch (error) {
+        report.problems.push(`trace hook ${traceHook} failed: ${error.message}`);
+      }
+    }
     const canvasStats = await page.evaluate(analyzeCanvasStats, {
       shot: 'data:image/png;base64,' + shotAfter.toString('base64'),
     });
