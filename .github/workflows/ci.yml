@@ -67,7 +67,7 @@ jobs:
       - run: npx playwright-core install --with-deps chromium
       - run: node scripts/create-game.mjs ${{ runner.temp }}/snap-game --profile 2d --no-git
       - run: npm run snapshot -- ${{ runner.temp }}/snap-game --keys d:200
-      - run: npm run test:browser
+      - run: npm run test:browser -- --webgpu
       - run: npm run test:browser:pbr
       - run: npm run test:browser:snapshot
       - run: npm run test:browser:safety

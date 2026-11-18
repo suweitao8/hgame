@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upload Pixi atlas pixels through WebGPU's byte upload to keep GPU memory bounded across repeated renderer restarts.
+
 - Release the Pixi atlas backing canvas on game shutdown and startup failure. Create a fresh atlas when starting another renderer.
 
 - Split Pixi's JavaScript by renderer and load Horde settings and simulation alongside the engine. Check the cold-start transfer budget and request ordering in browser CI.

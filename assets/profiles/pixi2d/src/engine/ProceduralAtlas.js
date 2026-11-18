@@ -1,4 +1,28 @@
-import { CanvasSource, Rectangle, Texture } from 'pixi.js';
+import { CanvasSource, ExtensionType, Rectangle, Texture, extensions, glUploadImageResource } from 'pixi.js';
+
+const atlasUpload = 'hgame-atlas';
+
+extensions.add({
+  extension: { type: ExtensionType.TextureUploaderWebGL, name: atlasUpload },
+  upload: glUploadImageResource.upload,
+}, {
+  extension: { type: ExtensionType.TextureUploaderWebGPU, name: atlasUpload },
+  upload(source, texture, { device }, layer = 0) {
+    const { pixelWidth: width, pixelHeight: height } = source;
+    const { data } = source.context2D.getImageData(0, 0, width, height);
+    // Canvas uploads can retain GPU copy allocations across device shutdowns.
+    // writeTexture takes raw bytes, so premultiply RGB before submitting them.
+    for (let offset = 0; offset < data.length; offset += 4) {
+      const alpha = data[offset + 3];
+      if (alpha === 255) continue;
+      const opacity = alpha / 255;
+      data[offset] *= opacity;
+      data[offset + 1] *= opacity;
+      data[offset + 2] *= opacity;
+    }
+    device.queue.writeTexture({ texture, origin: { z: layer } }, data, { bytesPerRow: width * 4 }, [width, height]);
+  },
+});
 
 export class ProceduralAtlas {
   constructor(size = 1024) {
@@ -120,7 +144,8 @@ export class ProceduralAtlas {
   build() {
     if (this.disposed) throw new Error('Cannot build a disposed atlas');
     if (this.source) return this;
-    this.source = new CanvasSource({ resource: this.canvas, scaleMode: 'linear' });
+    this.source = new CanvasSource({ resource: this.canvas, scaleMode: 'linear', format: 'rgba8unorm' });
+    this.source.uploadMethodId = atlasUpload;
     for (const [name, frame] of this.frames) this.textures.set(name, new Texture({ source: this.source, frame }));
     return this;
   }

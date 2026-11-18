@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Optional browser acceptance test. Pass --playwright <absolute-playwright-core-path>
-// when playwright-core is not locally resolvable. No permanent project changes.
+// when playwright-core is not locally resolvable. --webgpu also tests installed Chrome.
 import { spawn, spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:net';
@@ -16,6 +16,7 @@ const preview = path.join(root, 'scripts', 'preview.mjs');
 const argv = process.argv.slice(2);
 const modulePath = argv.indexOf('--playwright') >= 0 ? argv[argv.indexOf('--playwright') + 1] : 'playwright-core';
 const executablePath = argv.indexOf('--chrome') >= 0 ? argv[argv.indexOf('--chrome') + 1] : undefined;
+const verifyWebGpu = argv.includes('--webgpu');
 const require = createRequire(import.meta.url);
 const { chromium } = require(modulePath);
 
@@ -53,6 +54,70 @@ async function serve(profile) {
     await new Promise(resolve => setTimeout(resolve, 60));
   }
   throw new Error('Preview never started for ' + profile);
+}
+
+async function checkPixiWebGpuAtlas(url) {
+  const webGpuBrowser = await chromium.launch({
+    headless: true, ...(executablePath ? { executablePath } : { channel: 'chrome' }),
+    args: ['--enable-unsafe-webgpu', '--enable-unsafe-swiftshader', '--use-webgpu-adapter=swiftshader'],
+  });
+  try {
+    const page = await webGpuBrowser.newPage({ viewport: { width: 640, height: 360 } });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+    await page.addInitScript(() => {
+      const probe = window.__atlasUpload = { writes: [], externalCopies: 0 };
+      const readPixels = CanvasRenderingContext2D.prototype.getImageData;
+      CanvasRenderingContext2D.prototype.getImageData = function (...args) {
+        const image = readPixels.apply(this, args);
+        if (this.canvas.width === 1024 && this.canvas.height === 1024) {
+          const { data } = image;
+          for (let offset = 0; offset < data.length; offset += 4) {
+            const [red, green, blue, alpha] = data.subarray(offset, offset + 4);
+            if (alpha === 0 || alpha === 255 || red + green + blue === 0) continue;
+            probe.sample = { offset, rgba: [red, green, blue, alpha] };
+            break;
+          }
+        }
+        return image;
+      };
+      const isAtlas = texture => texture.width === 1024 && texture.height === 1024;
+      const copyExternal = GPUQueue.prototype.copyExternalImageToTexture;
+      GPUQueue.prototype.copyExternalImageToTexture = function (source, destination, size) {
+        if (isAtlas(destination.texture)) probe.externalCopies++;
+        return copyExternal.call(this, source, destination, size);
+      };
+      const writeTexture = GPUQueue.prototype.writeTexture;
+      GPUQueue.prototype.writeTexture = function (destination, data, layout, size) {
+        if (isAtlas(destination.texture) && probe.sample) {
+          const { offset } = probe.sample;
+          probe.writes.push({ format: destination.texture.format, rgba: Array.from(data.subarray(offset, offset + 4)) });
+        }
+        return writeTexture.call(this, destination, data, layout, size);
+      };
+    });
+    await page.route('**/src/presentation.json', route => route.fulfill({ json: { backend: 'webgpu', quality: 'low' } }));
+    await page.goto(url);
+    try {
+      await page.waitForFunction(() => window.__hgameState?.().tick > 5, { timeout: 10000 });
+    } catch (error) {
+      throw new Error(`Pixi WebGPU did not start in Chromium ${webGpuBrowser.version()}. ${errors.join(' ')}`, { cause: error });
+    }
+    assert.equal(await page.locator('canvas#game').getAttribute('data-renderer-backend'), 'webgpu');
+    const { writes, sample, externalCopies } = await page.evaluate(() => window.__atlasUpload);
+    assert.equal(externalCopies, 0, 'The WebGPU atlas must avoid the external image upload path');
+    assert.ok(sample && writes.length > 0, 'The renderer must upload the atlas bytes');
+    const [red, green, blue, alpha] = sample.rgba;
+    assert.deepEqual(writes[0], {
+      format: 'rgba8unorm',
+      rgba: [red, green, blue].map(channel => Math.round(channel * alpha / 255)).concat(alpha),
+    });
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ profile: 'pixi-webgpu', browserVersion: webGpuBrowser.version(), atlasBytes: true, premultipliedAlpha: true }));
+  } finally {
+    await webGpuBrowser.close();
+  }
 }
 
 async function checkPixiRecovery() {
@@ -163,6 +228,7 @@ async function checkPixiRecovery() {
   } finally {
     await failed.close();
   }
+  if (verifyWebGpu) await checkPixiWebGpuAtlas(url);
   console.log(JSON.stringify({ profile: 'pixi-recovery', contextRecovery: true, startupCleanup: true, startupBudget: true }));
 }
 
