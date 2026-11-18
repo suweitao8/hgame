@@ -51,16 +51,21 @@ function writeLocalMatrix(out, x, y, z, rx, ry, rz, sx, sy, sz) {
   return out;
 }
 
-/** @param {Float64Array} out @param {Float64Array} a @param {Float64Array} b @returns {Float64Array} */
-export function multiplyMatrixInto(out, a, b) {
-  for (let col = 0; col < 4; col++) {
+/** Multiply TRS matrices whose bottom row is [0, 0, 0, 1]. @param {Float64Array} out @param {Float64Array} a @param {Float64Array} b @returns {Float64Array} */
+export function multiplyAffineInto(out, a, b) {
+  for (let col = 0; col < 3; col++) {
     const colOffset = col * 4;
-    const b0 = b[colOffset], b1 = b[colOffset + 1], b2 = b[colOffset + 2], b3 = b[colOffset + 3];
-    out[colOffset]     = a[0] * b0 + a[4] * b1 + a[8] * b2 + a[12] * b3;
-    out[colOffset + 1] = a[1] * b0 + a[5] * b1 + a[9] * b2 + a[13] * b3;
-    out[colOffset + 2] = a[2] * b0 + a[6] * b1 + a[10] * b2 + a[14] * b3;
-    out[colOffset + 3] = a[3] * b0 + a[7] * b1 + a[11] * b2 + a[15] * b3;
+    const b0 = b[colOffset], b1 = b[colOffset + 1], b2 = b[colOffset + 2];
+    out[colOffset]     = a[0] * b0 + a[4] * b1 + a[8] * b2;
+    out[colOffset + 1] = a[1] * b0 + a[5] * b1 + a[9] * b2;
+    out[colOffset + 2] = a[2] * b0 + a[6] * b1 + a[10] * b2;
+    out[colOffset + 3] = 0;
   }
+  const x = b[12], y = b[13], z = b[14];
+  out[12] = a[0] * x + a[4] * y + a[8] * z + a[12];
+  out[13] = a[1] * x + a[5] * y + a[9] * z + a[13];
+  out[14] = a[2] * x + a[6] * y + a[10] * z + a[14];
+  out[15] = 1;
   return out;
 }
 

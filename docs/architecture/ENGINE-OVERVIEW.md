@@ -36,6 +36,8 @@ Physics and other optional modules are selected explicitly in `engine.config.jso
 
 ## Component lifecycle
 
+If a fixed update switches scenes, the previous scene's physics step is skipped. Each subsequent fixed tick uses the current scene.
+
 Components may implement `awake`, `onEnable`, `start`, `fixedUpdate`, `update`, `lateUpdate`, `onDisable`, and `onDestroy`. The Application owns the only animation-frame scheduler and the fixed-step accumulator. Before each fixed step, the Application snapshots entity transforms and exposes `app.renderAlpha` in `[0, 1]` (`1` for UI profile) so renderers can smooth motion via `Entity.interpolatedWorldMatrixInto(alpha, out)` or `Entity.interpolatedWorldPosition(alpha, out)` (calling `entity.snapTransform()` after teleports to avoid trailing interpolation). Do not start a second RAF or advance the physics world from a renderer callback.
 
 ## Project configuration

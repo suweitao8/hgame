@@ -57,8 +57,20 @@ function captureTransformsOnRoots(roots) {
   }
 }
 
-/** @param {readonly Entity[]} roots @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @param {Scene} scene @returns {void} */
-function runPhaseOnRoots(roots, phase, dt, app, scene) {
+/** @param {Component} component @param {Entity} entity @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @param {Scene} scene */
+function runComponentPhase(component, entity, phase, dt, app, scene) {
+  if (component._destroyed || !component._running || entity.scene !== scene || !scene.active) return;
+  if (!component._started) {
+    component._started = true;
+    component.start();
+    if (!component._running || entity.scene !== scene || !scene.active) return;
+  }
+  const hook = component[phase];
+  if (typeof hook === 'function' && hook !== PROTO_HOOKS[phase]) hook.call(component, dt, app);
+}
+
+/** @param {readonly Entity[]} roots @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @param {Scene} scene @param {Entity | null} [parent] @returns {void} */
+function runPhaseOnRoots(roots, phase, dt, app, scene, parent = null) {
   const len = roots.length;
   if (len === 0 || !scene.active) return;
   const depth = walkDepth++;
@@ -69,10 +81,12 @@ function runPhaseOnRoots(roots, phase, dt, app, scene) {
     for (; i < len; i++) {
       const entity = buf[i];
       buf[i] = null;
-      if (entity.destroyed || !entity.activeInHierarchy || !scene.active) continue;
+      if (!scene.active || entity.destroyed || entity.scene !== scene || entity.parent !== parent || !entity.activeInHierarchy) continue;
       const comps = entity.components;
       const clen = comps.length;
-      if (clen > 0) {
+      if (clen === 1) {
+        runComponentPhase(comps[0], entity, phase, dt, app, scene);
+      } else if (clen > 1) {
         const cdepth = compDepth++;
         const cbuf = SCRATCH_COMPS[cdepth] ?? (SCRATCH_COMPS[cdepth] = []);
         let ci = 0;
@@ -81,25 +95,15 @@ function runPhaseOnRoots(roots, phase, dt, app, scene) {
           for (; ci < clen; ci++) {
             const component = cbuf[ci];
             cbuf[ci] = null;
-            if (component._destroyed || !component._running) continue;
-            if (!component._started) {
-              component._started = true;
-              component.start();
-            }
-            if (component._running && scene.active) {
-              const hook = component[phase];
-              if (typeof hook === 'function' && hook !== PROTO_HOOKS[phase]) {
-                hook.call(component, dt, app);
-              }
-            }
+            runComponentPhase(component, entity, phase, dt, app, scene);
           }
         } finally {
           while (ci < clen) cbuf[ci++] = null;
           compDepth--;
         }
       }
-      if (!entity.destroyed && entity.children.length > 0 && scene.active) {
-        runPhaseOnRoots(entity.children, phase, dt, app, scene);
+      if (!entity.destroyed && entity.scene === scene && entity.children.length > 0 && scene.active) {
+        runPhaseOnRoots(entity.children, phase, dt, app, scene, entity);
       }
     }
   } finally {

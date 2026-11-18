@@ -1,6 +1,6 @@
 import { Component } from './component.js';
 import { cleanupAll } from '../internal/cleanup.js';
-import { multiplyMatrixInto, writeEntityLocalMatrix } from '../internal/entity-transform.js';
+import { multiplyAffineInto, writeEntityLocalMatrix } from '../internal/entity-transform.js';
 import { createTagContainer, matchGameplayTags } from './tags.js';
 
 let nextEntityId = 1;
@@ -17,12 +17,41 @@ function composeWorldMatrix(entity, out, useInterpolation, alpha) {
   let scratch = SCRATCH_PROD;
   for (let node = entity.parent; node; node = node.parent) {
     writeEntityLocalMatrix(node, SCRATCH_LOCAL, sample);
-    if (!node.parent) return multiplyMatrixInto(out, SCRATCH_LOCAL, current);
-    multiplyMatrixInto(scratch, SCRATCH_LOCAL, current);
+    if (!node.parent) return multiplyAffineInto(out, SCRATCH_LOCAL, current);
+    multiplyAffineInto(scratch, SCRATCH_LOCAL, current);
     const swap = current;
     current = scratch;
     scratch = swap;
   }
+  return out;
+}
+
+/**
+ * Compose only the translation column. The entity's own orientation and
+ * scale do not affect its origin; each ancestor transforms the point once.
+ * @param {Entity} entity
+ * @param {number} alpha
+ * @param {Vec3Like} out
+ */
+function writeWorldPosition(entity, alpha, out) {
+  let x = entity.x, y = entity.y, z = entity.z;
+  if (alpha < 1) {
+    const t = Math.max(0, alpha);
+    x = entity._prevX + (x - entity._prevX) * t;
+    y = entity._prevY + (y - entity._prevY) * t;
+    z = entity._prevZ + (z - entity._prevZ) * t;
+  }
+  for (let parent = entity.parent; parent; parent = parent.parent) {
+    const local = writeEntityLocalMatrix(parent, SCRATCH_LOCAL, alpha);
+    const nextX = local[0] * x + local[4] * y + local[8] * z + local[12];
+    const nextY = local[1] * x + local[5] * y + local[9] * z + local[13];
+    z = local[2] * x + local[6] * y + local[10] * z + local[14];
+    x = nextX;
+    y = nextY;
+  }
+  out.x = x;
+  out.y = y;
+  out.z = z;
   return out;
 }
 
@@ -250,6 +279,9 @@ export class Entity {
    * @returns {T | Vec3Like}
    */
   worldPosition(out = null) {
+    if (this.worldMatrixInto === builtinWorldMatrix) {
+      return writeWorldPosition(this, 1, out ?? { x: 0, y: 0, z: 0 });
+    }
     const world = this.worldMatrixInto(SCRATCH_POS_MAT);
     if (out) {
       out.x = world[12];
@@ -275,6 +307,9 @@ export class Entity {
    * @returns {T | Vec3Like}
    */
   interpolatedWorldPosition(alpha = 1, out = null) {
+    if (this.interpolatedWorldMatrixInto === builtinInterpolatedWorldMatrix) {
+      return writeWorldPosition(this, alpha, out ?? { x: 0, y: 0, z: 0 });
+    }
     const world = this.interpolatedWorldMatrixInto(alpha, SCRATCH_POS_MAT);
     if (out) {
       out.x = world[12];
@@ -330,3 +365,6 @@ export class Entity {
     return true;
   }
 }
+
+const builtinWorldMatrix = Entity.prototype.worldMatrixInto;
+const builtinInterpolatedWorldMatrix = Entity.prototype.interpolatedWorldMatrixInto;

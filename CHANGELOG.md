@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reduce world-transform calculations and single-component dispatch overhead, and stop physics stepping when an update switches away from its scene.
+
 - Limit 3D A* workspace updates to visited cells, support per-query node budgets, and preserve traversability when smoothing paths or snapping destinations.
 
 - Reuse a bounded per-map grid pathfinding workspace and update queued priorities in place so duplicate entries cannot consume the A* node budget.

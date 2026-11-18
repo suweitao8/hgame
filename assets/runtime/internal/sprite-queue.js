@@ -1,5 +1,5 @@
 import { Entity } from '../core/entity.js';
-import { multiplyMatrixInto, writeEntityLocalMatrix } from './entity-transform.js';
+import { multiplyAffineInto, writeEntityLocalMatrix } from './entity-transform.js';
 
 const entityWorldCurrent = Entity.prototype.worldMatrixInto;
 const entityWorldSampled = Entity.prototype.interpolatedWorldMatrixInto;
@@ -100,7 +100,7 @@ export function createSpriteQueue({ Sprite2D, SpriteCrowd2D, cull, interpolate, 
     } else if (depth > 0 && frames[depth - 1].entity === entity.parent) {
       const parent = worldAt(depth - 1, alpha, sampled);
       writeEntityLocalMatrix(entity, localMatrix, blend);
-      multiplyMatrixInto(world, parent, localMatrix);
+      multiplyAffineInto(world, parent, localMatrix);
     } else if (sampled) {
       entityWorldSampled.call(entity, alpha, world);
     } else {

@@ -339,7 +339,7 @@ export function createGameApplication({
         active?._capturePreviousTransforms?.();
         active?._run('fixedUpdate', stepSize, app);
         if (disposed) return;
-        active?.physics?.step?.(stepSize);
+        if (active?.active && app.scenes.current === active) active.physics?.step?.(stepSize);
         if (disposed) return;
         runtime.input?.endFrame?.();
         accumulator = Math.max(0, accumulator - stepSize);
@@ -353,9 +353,9 @@ export function createGameApplication({
       }
     }
     const current = app.scenes.current;
-    current._run('update', scaledDelta, app);
+    current?._run('update', scaledDelta, app);
     if (disposed) return;
-    current._run('lateUpdate', scaledDelta, app);
+    current?._run('lateUpdate', scaledDelta, app);
     if (disposed) return;
     render();
   }
