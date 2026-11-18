@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Process only entering and leaving Pixi tilemap chunks on camera movement. Stage new chunks before changing the visible set and skip empty chunks during drawing.
+
 - Prepare render chunk bounds in the swarm movement pass when the latest viewport is likely to cull most units. Invalidate the index on subsequent ECS movement or removal.
 
 - Reuse current swarm chunk bounds in Pixi to skip off-screen units while preserving particle submission order. Fall back to a linear scan when the index is dirty or most units remain candidates.

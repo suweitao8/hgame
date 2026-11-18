@@ -1,5 +1,34 @@
 import { Container, Particle, ParticleContainer } from 'pixi.js';
 
+function visitChunkRectangle(x0, y0, x1, y1, visit) {
+  if (x0 > x1) return;
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) visit(x, y);
+}
+
+// Visit the four changed strips in row-major order, skipping the overlap.
+function visitChunkDifference(range, other, visit) {
+  if (!range || !(range.x0 <= range.x1 && range.y0 <= range.y1)) return;
+  const { x0, y0, x1, y1 } = range;
+  if (!other) {
+    visitChunkRectangle(x0, y0, x1, y1, visit);
+    return;
+  }
+  const ix0 = Math.max(x0, other.x0), ix1 = Math.min(x1, other.x1);
+  const iy0 = Math.max(y0, other.y0), iy1 = Math.min(y1, other.y1);
+  if (!(ix0 <= ix1 && iy0 <= iy1)) {
+    visitChunkRectangle(x0, y0, x1, y1, visit);
+    return;
+  }
+  visitChunkRectangle(x0, y0, x1, iy0 - 1, visit);
+  if (x0 < ix0 || ix1 < x1) {
+    for (let y = iy0; y <= iy1; y++) {
+      for (let x = x0; x < ix0; x++) visit(x, y);
+      for (let x = ix1 + 1; x <= x1; x++) visit(x, y);
+    }
+  }
+  visitChunkRectangle(x0, iy1 + 1, x1, y1, visit);
+}
+
 /** Draw an HGame TileMap from frames already baked into the renderer's atlas. */
 export class PixiTilemapLayer {
   constructor(renderer, map, { frames, layer = 'background', chunkSize = 32, maxCachedChunks = 128, originX = 0, originY = 0 } = {}) {
@@ -23,7 +52,7 @@ export class PixiTilemapLayer {
     this.chunkSize = chunkSize; this.maxCachedChunks = maxCachedChunks; this.originX = originX; this.originY = originY;
     this.cols = Math.ceil(map.width / chunkSize); this.rows = Math.ceil(map.height / chunkSize);
     this.root = new Container(); this.root.eventMode = 'none'; this.root.interactiveChildren = false;
-    this.chunks = new Map(); this.visibleRange = null; this.disposed = false;
+    this.chunks = new Map(); this.hiddenChunks = new Map(); this.visibleRange = null; this.disposed = false;
     try {
       (layer === 'foreground' ? renderer.foregroundLayer : renderer.bgLayer).addChild(this.root);
       this.update();
@@ -37,10 +66,17 @@ export class PixiTilemapLayer {
     const x0 = cx * this.chunkSize, y0 = cy * this.chunkSize;
     const x1 = Math.min(this.map.width, x0 + this.chunkSize), y1 = Math.min(this.map.height, y0 + this.chunkSize);
     const view = new ParticleContainer({ dynamicProperties: { position: false, vertex: false, uvs: false, rotation: false, color: false } });
-    const record = { view, x0, y0, x1, y1, cells: new Array((x1 - x0) * (y1 - y0)).fill(null) };
+    view.visible = false;
+    const record = { index, view, inView: false, x0, y0, x1, y1, cells: new Array((x1 - x0) * (y1 - y0)).fill(null) };
+    try {
+      this.refreshChunk(record);
+      this.root.addChild(view);
+    } catch (error) {
+      view.destroy();
+      throw error;
+    }
     this.chunks.set(index, record);
-    this.root.addChild(view);
-    this.refreshChunk(record);
+    this.hiddenChunks.set(index, record);
     return record;
   }
 
@@ -73,6 +109,7 @@ export class PixiTilemapLayer {
       const particles = record.view.particleChildren;
       particles.length = 0;
       for (const particle of record.cells) if (particle) particles.push(particle);
+      record.view.visible = record.inView && particles.length > 0;
     }
     if (change > 0) record.view.update();
   }
@@ -128,6 +165,15 @@ export class PixiTilemapLayer {
       for (const [record, change] of changed) this.commitChunkChanges(record, change);
     }
   }
+  evictHiddenChunks() {
+    for (const [key, record] of this.hiddenChunks) {
+      if (this.chunks.size <= this.maxCachedChunks) break;
+      this.hiddenChunks.delete(key);
+      this.chunks.delete(key);
+      record.view.removeFromParent();
+      record.view.destroy();
+    }
+  }
   update() {
     if (this.disposed) return;
     const camera = this.renderer.camera, screen = this.renderer.app.screen, zoom = camera.zoom;
@@ -143,30 +189,34 @@ export class PixiTilemapLayer {
     const y1 = Math.min(this.rows - 1, Math.floor((bottom - this.originY) / ch));
     const previous = this.visibleRange;
     if (previous && previous.x0 === x0 && previous.x1 === x1 && previous.y0 === y0 && previous.y1 === y1) return;
-    if (previous) {
-      for (let y = previous.y0; y <= previous.y1; y++) for (let x = previous.x0; x <= previous.x1; x++) {
-        if (x < x0 || x > x1 || y < y0 || y > y1) {
-          this.chunks.get(y * this.cols + x).view.visible = false;
-        }
-      }
+    const next = { x0, x1, y0, y1 };
+    const entering = [];
+    try {
+      visitChunkDifference(next, previous, (x, y) => {
+        entering.push(this.chunks.get(y * this.cols + x) ?? this.buildChunk(x, y));
+      });
+    } catch (error) {
+      this.evictHiddenChunks();
+      throw error;
     }
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    visitChunkDifference(previous, next, (x, y) => {
       const key = y * this.cols + x;
-      const record = this.chunks.get(key) ?? this.buildChunk(x, y);
-      record.view.visible = true;
-      // Map iteration order places all visible chunks after the unseen ones.
-      this.chunks.delete(key);
-      this.chunks.set(key, record);
+      const record = this.chunks.get(key);
+      record.inView = false;
+      record.view.visible = false;
+      this.hiddenChunks.set(key, record);
+    });
+    for (const record of entering) {
+      record.inView = true;
+      record.view.visible = record.view.particleChildren.length > 0;
+      this.hiddenChunks.delete(record.index);
     }
-    for (const [key, record] of this.chunks) {
-      if (this.chunks.size <= this.maxCachedChunks || record.view.visible) break;
-      record.view.removeFromParent(); record.view.destroy(); this.chunks.delete(key);
-    }
-    this.visibleRange = { x0, x1, y0, y1 };
+    this.visibleRange = next;
+    this.evictHiddenChunks();
   }
   dispose() {
     if (this.disposed) return;
     this.disposed = true; this.root.removeFromParent(); this.root.destroy({ children: true });
-    this.chunks.clear(); this.visibleRange = null; this.renderer.tilemapLayers.delete(this);
+    this.chunks.clear(); this.hiddenChunks.clear(); this.visibleRange = null; this.renderer.tilemapLayers.delete(this);
   }
 }
