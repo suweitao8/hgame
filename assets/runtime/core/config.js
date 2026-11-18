@@ -17,7 +17,7 @@
  * @property {ProjectProfile} [profile='2d']
  * @property {ProjectRenderer} [renderer] Default depends on profile (`canvas2d` / `threejs` / `dom`).
  * @property {PhysicsBackend} [physics='none'] Deterministic backend; must match the physics feature.
- * @property {number} [tickHz] Fixed ticks per second, integer 1..240 (`0` only for the `ui` profile, default 60 / 0).
+ * @property {number} [tickHz] Fixed ticks per second, integer 1..240. Use 0 for command-driven 2D or UI projects without physics.
  * @property {readonly FeatureName[]} [features] Optional modules to load (default `['scene','input']`, `['scene']` for ui).
  */
 
@@ -100,10 +100,10 @@ export function defineProject(options = {}) {
   if (!allowedPhysics.includes(physics)) throw new Error('Physics ' + physics + ' is incompatible with ' + profile + ' profile. Allowed: ' + allowedPhysics.join(', '));
   const tickHz = options.tickHz ?? defaults.tickHz;
   if (!Number.isInteger(tickHz) || tickHz < 0 || tickHz > 240 ||
-      (profile === 'ui' && tickHz !== 0) ||
-      (profile !== 'ui' && tickHz < 1)) {
+      (profile === 'ui' && tickHz !== 0) || (profile === '3d' && tickHz === 0)) {
     throw new RangeError('Invalid tickHz for ' + profile + ' profile');
   }
+  if (tickHz === 0 && physics !== 'none') throw new RangeError('tickHz 0 cannot run fixed-step physics');
   const features = options.features ?? defaults.features;
   if (!Array.isArray(features)) throw new TypeError('features must be an array');
   const unique = [...new Set(features)];

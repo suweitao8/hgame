@@ -61,6 +61,9 @@ function parse(argv) {
   result.with = [...(preset?.features ?? []), ...result.with];
   if (preset?.starter === 'horde' && !result.bare && result.renderer !== 'webgl2d') throw new Error('The horde starter requires webgl2d');
   if (result.bare && !['2d', '3d'].includes(result.profile)) throw new Error('--bare supports --profile 2d or 3d');
+  if (result.profile === '2d' && result.tickHz === 0 && !result.bare) {
+    throw new Error('--tick-hz 0 requires --bare for 2D projects because the demo uses fixed updates');
+  }
   const target = path.resolve(result.destination);
   const slug = path.basename(target);
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(slug)) {

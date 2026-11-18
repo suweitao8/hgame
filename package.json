@@ -49,7 +49,7 @@
     "test:re": "node --test .agents/skills/hgame-reverse-engineering/tests/*.test.mjs .agents/skills/hgame-reverse-engineering/tools/game-reverse-scanner/test/*.test.mjs",
     "sync:skills": "node scripts/sync-skills.mjs",
     "build:examples": "node scripts/build-examples.mjs",
-    "test:examples": "node --test tests/examples.test.mjs examples/survivor-2d/tests/*.test.mjs examples/arena-3d/tests/*.test.mjs",
+    "test:examples": "node --test tests/examples.test.mjs examples/survivor-2d/tests/*.test.mjs examples/arena-3d/tests/*.test.mjs examples/signal-vault/tests/*.test.mjs",
     "bench:render": "node benchmarks/render-bench.mjs",
     "bench:render3d": "node benchmarks/render-bench-3d.mjs",
     "test:browser:snapshot": "node tests/browser-snapshot.mjs",

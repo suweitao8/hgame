@@ -1,0 +1,14 @@
+* { box-sizing: border-box }
+[hidden] { display: none !important }
+html, body, #game-canvas { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #0b111b }
+canvas { display: block; touch-action: none }
+body, button { color: #d7eef5; font: 600 16px system-ui, sans-serif }
+button { border: 1px solid #5d8595; border-radius: 5px; background: #182b39; color: #f0fcff; cursor: pointer; touch-action: manipulation }
+button:hover, button:focus-visible { outline: 2px solid #74dcf0; outline-offset: 3px }
+button:disabled { opacity: .42; cursor: default }
+#hud { position: fixed; top: 14px; left: 14px; display: flex; gap: 14px; font-variant-numeric: tabular-nums }
+#moves { color: #91b7c7 }
+#undo { position: fixed; top: 12px; right: 12px; width: 44px; height: 44px; font-size: 27px }
+#result { position: fixed; inset: 0; background: #07121bdb; display: grid; justify-items: center; align-content: center; gap: 18px }
+#result h1 { margin: 0; font-size: 30px }
+#next { padding: 10px 28px }

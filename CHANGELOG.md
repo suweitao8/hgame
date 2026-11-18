@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Support `tickHz: 0` for command-driven 2D games without physics. The Pixi renderer redraws on commands and resize while the idle game schedules zero frames.
+
 - Clear 3D telegraphs from the renderer when the VFX system resets so warnings from a previous run cannot reappear.
 
 - Record bounded gameplay events in runtime diagnostics and collect them in AI playtest reports. The arena reference traces beacon interruptions and combat events in debug mode.

@@ -22,6 +22,25 @@ const nullRenderer = () => {
   const r = { renders: 0, render() { r.renders++; }, resize() {}, dispose() {} };
   return r;
 };
+
+test('a command-driven 2D project renders on dispatch without scheduling idle frames', () => {
+  let frames = 0;
+  const { app, renderer } = makeApp({ profile: '2d', tickHz: 0, features: ['scene'] },
+    { requestFrame: () => { frames++; return 1; } });
+  const scene = app.scenes.add(new Scene('board'));
+  const commands = [];
+  scene.onCommand = command => commands.push(command.type);
+  app.scenes.start('board');
+  app.start();
+  app.dispatch({ type: 'move' });
+  assert.equal(renderer.renders, 2);
+  assert.deepEqual(commands, ['move']);
+  assert.equal(frames, 0);
+  assert.equal(app.stats.ticks, 0);
+  app.dispose();
+  assert.throws(() => defineProject({ profile: '2d', tickHz: 0, physics: 'rapier2d', features: ['physics2d'] }), /tickHz.*physics/i);
+  assert.throws(() => defineProject({ profile: '3d', tickHz: 0 }), /tickHz/);
+});
 function makeApp(recipe, extra = {}) {
   const renderer = nullRenderer();
   const app = createGameApplication({

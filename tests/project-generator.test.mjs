@@ -11,6 +11,19 @@ const skill = fileURLToPath(new URL('../', import.meta.url));
 const createGame = path.join(skill, 'scripts', 'create-game.mjs');
 const preview = path.join(skill, 'scripts', 'preview.mjs');
 
+test('zero-tick 2D generation requires a bare starter', () => {
+  const game = path.join(os.tmpdir(), 'hgame-zero-tick-dry-run');
+  const run = (...args) => spawnSync(process.execPath, [createGame, game, '--tick-hz', '0', '--dry-run', ...args], { encoding: 'utf8' });
+  for (const args of [['--preset', 'horde'], ['--profile', '2d']]) {
+    const result = run(...args);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /--tick-hz 0.*--bare/);
+  }
+  const bare = run('--preset', 'pixi2d', '--bare');
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.equal(JSON.parse(bare.stdout).recipe.tickHz, 0);
+});
+
 test('HGame generator creates a standalone 2D game anywhere, with independent git and lean dependencies', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'html-game-global-'));
   const game = path.join(tmp, 'anything', 'sample-game');

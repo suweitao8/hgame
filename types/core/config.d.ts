@@ -40,7 +40,7 @@ export type ProjectOptions = {
      */
     physics?: PhysicsBackend | undefined;
     /**
-     * Fixed ticks per second, integer 1..240 (`0` only for the `ui` profile, default 60 / 0).
+     * Fixed ticks per second, integer 1..240. Use 0 for command-driven 2D or UI projects without physics.
      */
     tickHz?: number | undefined;
     /**
