@@ -432,41 +432,51 @@ export function createProceduralModelSlots({
       }
       const tmp = new THREE.Object3D();
       const matrix = new THREE.Matrix4();
-      const batches = meshes.map(mesh => new THREE.InstancedMesh(mesh.geometry, mesh.material, placements.length));
-      const identityParts = meshes.map(mesh => {
-        const elements = mesh.matrixWorld.elements;
-        return elements.every((value, index) => value === (index % 5 === 0 ? 1 : 0));
-      });
-      for (let i = 0; i < placements.length; i++) {
-        const item = placements[i];
-        if (!item.isMatrix4) {
-          tmp.position.set(item.x ?? 0, item.y ?? 0, item.z ?? 0);
-          tmp.rotation.set(0, item.rotationY ?? 0, 0);
-          tmp.scale.setScalar(item.scale ?? 1);
-          tmp.updateMatrix();
-        }
-        const placementMatrix = item.isMatrix4 ? item : tmp.matrix;
-        for (let part = 0; part < meshes.length; part++) {
-          if (identityParts[part]) {
-            batches[part].setMatrixAt(i, placementMatrix);
-          } else {
-            matrix.multiplyMatrices(placementMatrix, meshes[part].matrixWorld);
-            batches[part].setMatrixAt(i, matrix);
+      const batches = [];
+      try {
+        for (const mesh of meshes) batches.push(new THREE.InstancedMesh(mesh.geometry, mesh.material, placements.length));
+        const identityParts = meshes.map(mesh => {
+          const elements = mesh.matrixWorld.elements;
+          return elements.every((value, index) => value === (index % 5 === 0 ? 1 : 0));
+        });
+        for (let i = 0; i < placements.length; i++) {
+          const item = placements[i];
+          if (!item.isMatrix4) {
+            tmp.position.set(item.x ?? 0, item.y ?? 0, item.z ?? 0);
+            tmp.rotation.set(0, item.rotationY ?? 0, 0);
+            tmp.scale.setScalar(item.scale ?? 1);
+            tmp.updateMatrix();
+          }
+          const placementMatrix = item.isMatrix4 ? item : tmp.matrix;
+          for (let part = 0; part < meshes.length; part++) {
+            if (identityParts[part]) {
+              batches[part].setMatrixAt(i, placementMatrix);
+            } else {
+              matrix.multiplyMatrices(placementMatrix, meshes[part].matrixWorld);
+              batches[part].setMatrixAt(i, matrix);
+            }
           }
         }
+        for (let part = 0; part < batches.length; part++) {
+          const batch = batches[part];
+          batch.instanceMatrix.needsUpdate = true;
+          batch.name = meshes[part].name;
+          batch.castShadow = spec.castShadow ?? meshes[part].castShadow;
+          batch.receiveShadow = spec.receiveShadow ?? meshes[part].receiveShadow;
+          batch.computeBoundingSphere();
+        }
+        if (batches.length === 1) return batches[0];
+        const group = new THREE.Group();
+        group.add(...batches);
+        return group;
+      } catch (error) {
+        const failures = [error];
+        for (const batch of batches) {
+          try { batch.dispose?.(); } catch (cleanupError) { failures.push(cleanupError); }
+        }
+        if (failures.length > 1) throw new AggregateError(failures, 'Model batch creation and cleanup failed');
+        throw error;
       }
-      for (let part = 0; part < batches.length; part++) {
-        const batch = batches[part];
-        batch.instanceMatrix.needsUpdate = true;
-        batch.name = meshes[part].name;
-        batch.castShadow = spec.castShadow ?? meshes[part].castShadow;
-        batch.receiveShadow = spec.receiveShadow ?? meshes[part].receiveShadow;
-        batch.computeBoundingSphere();
-      }
-      if (batches.length === 1) return batches[0];
-      const group = new THREE.Group();
-      group.add(...batches);
-      return group;
     }
     const group = new THREE.Group();
     group.userData.instancingFallback = 'multi-mesh';

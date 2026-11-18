@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Release already-created 3D instance buffers if a later part of the same model batch fails to build.
+
 - Skip redundant placement-matrix multiplication when 3D instanced model parts have identity world transforms.
 
 - Map Pixi demo pointer input through the canvas CSS bounds, preserve analog touch movement, and constrain horde touch movement to the canvas.
