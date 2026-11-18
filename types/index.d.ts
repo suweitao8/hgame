@@ -13,6 +13,7 @@ import { createGpuSwarmWebGL2 } from "./world/gpu-swarm-webgl2.js";
 import { createNavMesh3D } from "./world/navmesh3d.js";
 import { fbmNoise2D, createHeightfieldTerrain3D } from "./world/terrain3d.js";
 import { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from "./world/open-world.js";
+import { extractTileMapObstacles, createFogOfWarWorld } from "./world/fog-of-war.js";
 import { damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
 import { createVfxSystem } from "./vfx/index.js";
 export const HGAME_VERSION: "1.0.0";
@@ -302,6 +303,21 @@ export const HGame: Readonly<{
     createWorldPartition: typeof createWorldPartition;
     createHLODProxyGroup3D: typeof createHLODProxyGroup3D;
     createFloatingOrigin: typeof createFloatingOrigin;
+    FOG_FADE_TYPE: Readonly<{
+        LINEAR: "linear";
+        SMOOTH: "smooth";
+        SMOOTHER: "smoother";
+        SMOOTHSTEP: "smoothstep";
+        EXPONENTIAL: "exponential";
+    }>;
+    FOG_QUALITY: Readonly<{
+        LOW: 48;
+        MEDIUM: 96;
+        HIGH: 180;
+        ULTRA: 360;
+    }>;
+    extractTileMapObstacles: typeof extractTileMapObstacles;
+    createFogOfWarWorld: typeof createFogOfWarWorld;
     createStateMachine: typeof createStateMachine;
     BT_STATUS: Readonly<{
         SUCCESS: "success";
@@ -771,6 +787,7 @@ export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";
 export { SWARM_UNIT_FLAGS, ECS_SLOT_FLAGS, FlatSpatialHash2D, createFlatSpatialHash2D, FlowField2D, createFlowField2D, FlatCombatECS, createSwarmSimulation } from "./world/swarm-ecs.js";
 export { fbmNoise2D, createHeightfieldTerrain3D } from "./world/terrain3d.js";
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from "./world/open-world.js";
+export { FOG_FADE_TYPE, FOG_QUALITY, extractTileMapObstacles, createFogOfWarWorld } from "./world/fog-of-war.js";
 export { createStateMachine, BT_STATUS, sequence, selector, parallel, inverter, repeater, cooldown, condition, action, wait, createBehaviorTree } from "./ai/index.js";
 export { createSeededRng, createStateChecksum, hashState, runScripted } from "./sim/index.js";
 export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";

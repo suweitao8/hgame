@@ -620,7 +620,7 @@ export type ThreeMeshComponentOptions = {
     /**
      * Primitive shape.
      */
-    type?: "capsule" | "box" | "sphere" | "cylinder" | "plane" | undefined;
+    type?: "capsule" | "plane" | "box" | "sphere" | "cylinder" | undefined;
     /**
      * Default material colour (0xRRGGBB).
      */

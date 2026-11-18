@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add clean-room Fog of War system (`world/fog-of-war.js` + `integrations/fog-of-war.js`) with analytical corner-ray LOS occlusion, vision cones, persistent exploration memory/regrow, hider tracking, TileMap obstacle merging, minimap export, and Canvas2D/Three.js overlays.
+
 - Integrate clean-room DamageNumbersPro capabilities into `vfx/vfx-floating-text.js` and `vfx/vfx-damage-presets.js` (64-glyph GPU atlas, K/M/B/T suffix shortening, grouping separators, color/scale-by-number, 13 presets, damped lerp, velocity/gravity, target following, combination/absorption, collision separation, push, destruction, unscaled time, 3D distance scaling, and WebGL2 2D rendering).
 
 - Ensure adaptive 3D viewports retain at least one physical pixel per axis within GPU buffer limits.

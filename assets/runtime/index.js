@@ -54,6 +54,12 @@ export { createNavMesh3D } from './world/navmesh3d.js';
 export { fbmNoise2D, createHeightfieldTerrain3D } from './world/terrain3d.js';
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
 export {
+  FOG_FADE_TYPE,
+  FOG_QUALITY,
+  extractTileMapObstacles,
+  createFogOfWarWorld,
+} from './world/fog-of-war.js';
+export {
   createStateMachine,
   BT_STATUS,
   sequence,
@@ -135,6 +141,12 @@ import { createGpuSwarmWebGL2 } from './world/gpu-swarm-webgl2.js';
 import { createNavMesh3D } from './world/navmesh3d.js';
 import { fbmNoise2D, createHeightfieldTerrain3D } from './world/terrain3d.js';
 import { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from './world/open-world.js';
+import {
+  FOG_FADE_TYPE,
+  FOG_QUALITY,
+  extractTileMapObstacles,
+  createFogOfWarWorld,
+} from './world/fog-of-war.js';
 import {
   createStateMachine,
   BT_STATUS,
@@ -261,6 +273,10 @@ export const HGame = Object.freeze({
   createWorldPartition,
   createHLODProxyGroup3D,
   createFloatingOrigin,
+  FOG_FADE_TYPE,
+  FOG_QUALITY,
+  extractTileMapObstacles,
+  createFogOfWarWorld,
   createStateMachine,
   BT_STATUS,
   sequence,
