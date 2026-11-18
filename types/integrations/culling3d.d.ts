@@ -39,6 +39,14 @@ export function createInstancedBatch3D(THREE: InstancedBatchTHREE, { geometry, m
  * Structural subset of THREE.Camera read by the cullers.
  */
 export type CullCameraLike = {
+    isCamera?: boolean | undefined;
+    isOrthographicCamera?: boolean | undefined;
+    /**
+     * Three.js clip-space coordinate system.
+     */
+    coordinateSystem?: number | undefined;
+    reversedDepth?: boolean | undefined;
+    updateWorldMatrix?: ((updateParents: boolean, updateChildren: boolean) => void) | undefined;
     updateMatrixWorld?: ((force?: boolean) => void) | undefined;
     matrixWorldInverse?: {
         elements: ArrayLike<number>;
@@ -96,7 +104,7 @@ export type FrustumCuller3D = {
     /**
      * Extracts planes from a column-major view-projection matrix (>= 16 numbers).
      */
-    setFromProjectionMatrix: (m: ArrayLike<number>) => boolean;
+    setFromProjectionMatrix: (m: ArrayLike<number>, zeroToOneDepth?: boolean) => boolean;
     /**
      * Updates planes and eye from a camera; false if unavailable.
      */

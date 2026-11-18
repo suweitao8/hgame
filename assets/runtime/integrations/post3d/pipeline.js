@@ -17,6 +17,7 @@ import { createFullscreenTriangle, inspectWebGLCapabilities } from './capabiliti
 import { computeWhiteBalanceRGB } from './color.js';
 import { QUALITY3D_PRESETS } from '../quality3d.js';
 import { readWorldPosition } from '../shadow3d/transform.js';
+import { syncCameraWorldMatrices } from '../camera3d/matrices.js';
 
 const POST_STATE_SCALAR_KEYS = [
   'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
@@ -430,6 +431,7 @@ export function createPostPipeline3D(options = {}) {
   let mats = null;
   let scratchInvProj = null;
   let scratchCamToShadow = null;
+  let scratchViewToWorld = null;
   let scratchSunView = null;
   let scratchSunTarget = null;
   const hdrType = capabilities.halfFloatRenderable && THREE.HalfFloatType
@@ -631,6 +633,7 @@ export function createPostPipeline3D(options = {}) {
 
     scratchInvProj = new THREE.Matrix4();
     scratchCamToShadow = new THREE.Matrix4();
+    scratchViewToWorld = new THREE.Matrix4();
     scratchSunView = new THREE.Vector3(0, 1, 0);
     scratchSunTarget = new THREE.Vector3();
     const exposureDefines = usesByteColorTargets ? { HGAME_EXPOSURE_UNORM: 1 } : {};
@@ -901,7 +904,7 @@ export function createPostPipeline3D(options = {}) {
       }
       renderer.render(world, camera);
 
-      camera.updateMatrixWorld?.();
+      syncCameraWorldMatrices(camera);
       scratchInvProj.copy(camera.projectionMatrixInverse);
       let hasSunDir = false;
       if (sunLight?.position && sunLight.visible !== false) {
@@ -938,7 +941,10 @@ export function createPostPipeline3D(options = {}) {
         ao.uTime.value = elapsed;
         ao.tSunShadow.value = useVolumetric ? sunShadowTex : null;
         ao.uShadowDepthSign.value = shadow?.camera?.reversedDepth ? -1 : 1;
-        if (useVolumetric) scratchCamToShadow.multiplyMatrices(shadowMatrix, camera.matrixWorld);
+        if (useVolumetric) {
+          scratchViewToWorld.copy(camera.matrixWorldInverse).invert();
+          scratchCamToShadow.multiplyMatrices(shadowMatrix, scratchViewToWorld);
+        }
         runPass(aoMaterial, halfRT);
 
         mats.blur.uniforms.tInput.value = halfRT.texture;

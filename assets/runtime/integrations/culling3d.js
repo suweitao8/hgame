@@ -9,9 +9,15 @@
  * The Three.js namespace is injected into GPU helpers; non-3D games import nothing.
  */
 import { createInstanceUpdateRanges } from '../internal/instance-buffer-updates.js';
+import { syncCameraWorldMatrices, usesZeroToOneDepth } from './camera3d/matrices.js';
 
 /**
  * @typedef {object} CullCameraLike Structural subset of THREE.Camera read by the cullers.
+ * @property {boolean} [isCamera]
+ * @property {boolean} [isOrthographicCamera]
+ * @property {number} [coordinateSystem] Three.js clip-space coordinate system.
+ * @property {boolean} [reversedDepth]
+ * @property {(updateParents: boolean, updateChildren: boolean) => void} [updateWorldMatrix]
  * @property {(force?: boolean) => void} [updateMatrixWorld]
  * @property {{elements: ArrayLike<number>, copy?: (m: object) => unknown, invert?: () => unknown}} [matrixWorldInverse]
  * @property {{elements: ArrayLike<number>}} [matrixWorld] Column-major world matrix (translation at 12..14).
@@ -30,7 +36,7 @@ import { createInstanceUpdateRanges } from '../internal/instance-buffer-updates.
  * @property {boolean} hasPlanes Getter; true once planes were extracted from a camera/matrix.
  * @property {{x: number, y: number, z: number}} cameraPosition Getter; last camera world position (copy).
  * @property {(value: number) => void} setMaxDistance Sets the draw-distance cutoff in world units.
- * @property {(m: ArrayLike<number>) => boolean} setFromProjectionMatrix Extracts planes from a column-major view-projection matrix (>= 16 numbers).
+ * @property {(m: ArrayLike<number>, zeroToOneDepth?: boolean) => boolean} setFromProjectionMatrix Extracts planes from a column-major view-projection matrix (>= 16 numbers).
  * @property {(camera: CullCameraLike | null | undefined) => boolean} updateFromCamera Updates planes and eye from a camera; false if unavailable.
  * @property {(x: number, y: number, z: number, radius?: number) => boolean} intersectsSphere True if the sphere may be visible.
  * @property {(x: number, y: number, z: number, radius?: number) => number} classifySphere 0 = outside, 1 = intersecting, 2 = strictly inside.
@@ -299,31 +305,33 @@ function writeMat4ToFloat32(out, offset, x, y, z, rx, ry, rz, sx, sy, sz) {
 export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
   const planes = new Float64Array(24);
   let camX = 0, camY = 0, camZ = 0;
+  let hasEye = true;
   let hasPlanes = false;
   let distLimit = Number.isFinite(maxDistance) && maxDistance > 0 ? maxDistance : Infinity;
 
-  function setFromProjectionMatrix(m) {
+  function setFromProjectionMatrix(m, zeroToOneDepth = false) {
+    hasPlanes = false;
     if (!m || m.length < 16) return false;
-    // Left, Right, Bottom, Top, Near, Far
+    for (let i = 0; i < 16; i++) if (!Number.isFinite(m[i])) return false;
+    // Left, right, bottom, top and the two clip-space depth boundaries.
     setPlane(planes, 0, m[3] + m[0], m[7] + m[4], m[11] + m[8],  m[15] + m[12]);
     setPlane(planes, 1, m[3] - m[0], m[7] - m[4], m[11] - m[8],  m[15] - m[12]);
     setPlane(planes, 2, m[3] + m[1], m[7] + m[5], m[11] + m[9],  m[15] + m[13]);
     setPlane(planes, 3, m[3] - m[1], m[7] - m[5], m[11] - m[9],  m[15] - m[13]);
-    setPlane(planes, 4, m[3] + m[2], m[7] + m[6], m[11] + m[10], m[15] + m[14]);
+    if (zeroToOneDepth) setPlane(planes, 4, m[2], m[6], m[10], m[14]);
+    else setPlane(planes, 4, m[3] + m[2], m[7] + m[6], m[11] + m[10], m[15] + m[14]);
     setPlane(planes, 5, m[3] - m[2], m[7] - m[6], m[11] - m[10], m[15] - m[14]);
     hasPlanes = true;
     return true;
   }
 
   function updateFromCamera(camera) {
+    hasEye = false;
     if (!camera) {
       hasPlanes = false;
       return false;
     }
-    camera.updateMatrixWorld?.(true);
-    if (camera.matrixWorldInverse && camera.matrixWorld && typeof camera.matrixWorldInverse.copy === 'function') {
-      camera.matrixWorldInverse.copy(camera.matrixWorld).invert?.();
-    }
+    syncCameraWorldMatrices(camera);
     const mw = camera.matrixWorld?.elements;
     if (mw && mw.length >= 16) {
       camX = mw[12]; camY = mw[13]; camZ = mw[14];
@@ -331,12 +339,16 @@ export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
       camX = camera.position.x ?? 0;
       camY = camera.position.y ?? 0;
       camZ = camera.position.z ?? 0;
+    } else {
+      camX = 0; camY = 0; camZ = 0;
     }
+    hasEye = Boolean((mw?.length >= 16 || camera.position) &&
+      Number.isFinite(camX) && Number.isFinite(camY) && Number.isFinite(camZ));
     const proj = camera.projectionMatrix?.elements;
     const viewInv = camera.matrixWorldInverse?.elements;
-    if (proj && viewInv) {
+    if (proj?.length >= 16 && viewInv?.length >= 16) {
       multiply4x4Into(SCRATCH_PROJ_VIEW, proj, viewInv);
-      return setFromProjectionMatrix(SCRATCH_PROJ_VIEW);
+      return setFromProjectionMatrix(SCRATCH_PROJ_VIEW, usesZeroToOneDepth(camera));
     }
     hasPlanes = false;
     return false;
@@ -344,7 +356,7 @@ export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
 
   function intersectsSphere(x, y, z, radius = 0) {
     const r = radius > 0 ? radius : 0;
-    if (distLimit < Infinity) {
+    if (hasEye && distLimit < Infinity) {
       const dx = x - camX, dy = y - camY, dz = z - camZ;
       const limit = distLimit + r;
       if (dx * dx + dy * dy + dz * dz > limit * limit) return false;
@@ -359,7 +371,7 @@ export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
   }
 
   function intersectsAABB(minX, minY, minZ, maxX, maxY, maxZ) {
-    if (distLimit < Infinity) {
+    if (hasEye && distLimit < Infinity) {
       const cx = camX < minX ? minX : (camX > maxX ? maxX : camX);
       const cy = camY < minY ? minY : (camY > maxY ? maxY : camY);
       const cz = camZ < minZ ? minZ : (camZ > maxZ ? maxZ : camZ);
@@ -388,7 +400,7 @@ export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
   function classifySphere(x, y, z, radius = 0) {
     const r = radius > 0 ? radius : 0;
     let strictlyInside = true;
-    if (distLimit < Infinity) {
+    if (hasEye && distLimit < Infinity) {
       const dx = x - camX, dy = y - camY, dz = z - camZ;
       const distSq = dx * dx + dy * dy + dz * dz;
       const outer = distLimit + r;
@@ -475,6 +487,11 @@ export function createOcclusionCuller3D({ maxOccluders = 64, maxTestedOccluders 
   const occluders = [];
   const activeOccluders = [];
   let eyeX = 0, eyeY = 0, eyeZ = 0;
+  let orthographic = false;
+  let near = 0;
+  let forwardX = 0, forwardY = 0, forwardZ = -1;
+  let rightX = 1, rightY = 0, rightZ = 0;
+  let upX = 0, upY = 1, upZ = 0;
 
   function addOccluderAABB({ id = null, min, max }) {
     if (!Array.isArray(min) || !Array.isArray(max) || min.length !== 3 || max.length !== 3) {
@@ -543,6 +560,7 @@ export function createOcclusionCuller3D({ maxOccluders = 64, maxTestedOccluders 
   function beginFrame(camera, frustumCuller = null) {
     activeOccluders.length = 0;
     if (!camera || occluders.length === 0) return 0;
+    if (!frustumCuller) syncCameraWorldMatrices(camera);
     const mw = camera.matrixWorld?.elements;
     if (mw && mw.length >= 16) {
       eyeX = mw[12]; eyeY = mw[13]; eyeZ = mw[14];
@@ -550,6 +568,35 @@ export function createOcclusionCuller3D({ maxOccluders = 64, maxTestedOccluders 
       eyeX = camera.position.x ?? 0;
       eyeY = camera.position.y ?? 0;
       eyeZ = camera.position.z ?? 0;
+    } else {
+      return 0;
+    }
+    if (!Number.isFinite(eyeX) || !Number.isFinite(eyeY) || !Number.isFinite(eyeZ)) return 0;
+
+    orthographic = camera.isOrthographicCamera === true;
+    if (orthographic) {
+      const view = camera.matrixWorldInverse?.elements;
+      const proj = camera.projectionMatrix?.elements;
+      if (!view || view.length < 16 || !proj || proj.length < 16) return 0;
+      // The projected near plane must be perpendicular to the parallel rays.
+      if (proj[2] !== 0 || proj[6] !== 0 || proj[11] !== 0 || proj[10] === 0) return 0;
+      const len = Math.hypot(view[2], view[6], view[10]);
+      const rightLen = Math.hypot(view[0], view[4], view[8]);
+      if (!(len > 0 && rightLen > 0) || !Number.isFinite(len) || !Number.isFinite(rightLen)) return 0;
+      const nearDepth = camera.reversedDepth ? 1 : (usesZeroToOneDepth(camera) ? 0 : -1);
+      near = (proj[14] - nearDepth * proj[15]) / (proj[10] * len);
+      if (!Number.isFinite(near)) return 0;
+      forwardX = -view[2] / len;
+      forwardY = -view[6] / len;
+      forwardZ = -view[10] / len;
+      rightX = view[0] / rightLen;
+      rightY = view[4] / rightLen;
+      rightZ = view[8] / rightLen;
+      // Camera view axes must be orthogonal to keep the square conservative.
+      if (Math.abs(forwardX * rightX + forwardY * rightY + forwardZ * rightZ) > 1e-6) return 0;
+      upX = rightY * forwardZ - rightZ * forwardY;
+      upY = rightZ * forwardX - rightX * forwardZ;
+      upZ = rightX * forwardY - rightY * forwardX;
     }
     for (let i = 0; i < occluders.length; i++) {
       const o = occluders[i];
@@ -575,11 +622,35 @@ export function createOcclusionCuller3D({ maxOccluders = 64, maxTestedOccluders 
     return activeOccluders.length;
   }
 
+  function isParallelSphereOccluded(x, y, z, radius) {
+    const depth = (x - eyeX) * forwardX + (y - eyeY) * forwardY + (z - eyeZ) * forwardZ - near;
+    const length = depth - radius;
+    if (length <= 0) return false;
+    const startX = x - forwardX * depth;
+    const startY = y - forwardY * depth;
+    const startZ = z - forwardZ * depth;
+    const rx = rightX * radius, ry = rightY * radius, rz = rightZ * radius;
+    const ux = upX * radius, uy = upY * radius, uz = upZ * radius;
+    for (const o of activeOccluders) {
+      if (!rayHitsAABBSegment(startX, startY, startZ, forwardX, forwardY, forwardZ, length,
+        o.minX, o.minY, o.minZ, o.maxX, o.maxY, o.maxZ)) continue;
+      // The square contains the projected sphere. All corners must be blocked before its front.
+      if (rayHitsAABBSegment(startX - rx - ux, startY - ry - uy, startZ - rz - uz, forwardX, forwardY, forwardZ, length, o.minX, o.minY, o.minZ, o.maxX, o.maxY, o.maxZ) &&
+          rayHitsAABBSegment(startX + rx - ux, startY + ry - uy, startZ + rz - uz, forwardX, forwardY, forwardZ, length, o.minX, o.minY, o.minZ, o.maxX, o.maxY, o.maxZ) &&
+          rayHitsAABBSegment(startX + rx + ux, startY + ry + uy, startZ + rz + uz, forwardX, forwardY, forwardZ, length, o.minX, o.minY, o.minZ, o.maxX, o.maxY, o.maxZ) &&
+          rayHitsAABBSegment(startX - rx + ux, startY - ry + uy, startZ - rz + uz, forwardX, forwardY, forwardZ, length, o.minX, o.minY, o.minZ, o.maxX, o.maxY, o.maxZ)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   function isSphereOccluded(x, y, z, radius = 0) {
     if (activeOccluders.length === 0) return false;
+    const r = radius > 0 ? radius : 0.05;
+    if (orthographic) return isParallelSphereOccluded(x, y, z, r);
     const dx = x - eyeX, dy = y - eyeY, dz = z - eyeZ;
     const distSq = dx * dx + dy * dy + dz * dz;
-    const r = radius > 0 ? radius : 0.05;
     if (distSq <= r * r + 1e-4) return false;
     const dist = Math.sqrt(distSq);
     const invDist = 1 / dist;

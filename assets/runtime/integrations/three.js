@@ -3,6 +3,7 @@ import { createAdaptiveQualityController, resolveQualityPreset } from './quality
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
 import { fitDirectionalShadowFrustum } from './shadow3d.js';
+import { syncCameraWorldMatrices, usesZeroToOneDepth } from './camera3d/matrices.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { cleanupAll } from '../internal/cleanup.js';
 
@@ -622,6 +623,7 @@ export function createThreeAdapter({
   const scratchOrigin = THREE.Vector3 ? new THREE.Vector3() : null;
   const scratchPoint = THREE.Vector3 ? new THREE.Vector3() : null;
   const scratchView = THREE.Vector3 ? new THREE.Vector3() : null;
+  const scratchViewToWorld = THREE.Matrix4 ? new THREE.Matrix4() : null;
 
   function canvasRect() {
     if (typeof canvas.getBoundingClientRect === 'function') {
@@ -634,13 +636,6 @@ export function createThreeAdapter({
       width: Math.max(1, canvas.clientWidth || width),
       height: Math.max(1, canvas.clientHeight || height),
     };
-  }
-
-  function syncCameraMatrices(cam = camera) {
-    cam.updateMatrixWorld?.(true);
-    if (cam.matrixWorldInverse && cam.matrixWorld && typeof cam.matrixWorldInverse.copy === 'function') {
-      cam.matrixWorldInverse.copy(cam.matrixWorld).invert?.();
-    }
   }
 
   function setViews(views, options = {}) {
@@ -681,16 +676,22 @@ export function createThreeAdapter({
     const vh = targetView ? targetView.height : 1;
     const ndcX = ((nxFull - vx) / vw) * 2 - 1;
     const ndcY = -(((nyFull - vy) / vh) * 2 - 1);
-    syncCameraMatrices(cam);
+    syncCameraWorldMatrices(cam);
+    const viewToWorld = scratchViewToWorld && cam.matrixWorldInverse
+      ? scratchViewToWorld.copy(cam.matrixWorldInverse).invert()
+      : cam.matrixWorld;
 
-    if (typeof scratchOrigin.setFromMatrixPosition === 'function') {
-      scratchOrigin.setFromMatrixPosition(cam.matrixWorld);
+    if (cam.isOrthographicCamera) {
+      const nearDepth = cam.reversedDepth ? 1 : (usesZeroToOneDepth(cam) ? 0 : -1);
+      scratchOrigin.set(ndcX, ndcY, nearDepth).applyMatrix4(cam.projectionMatrixInverse).applyMatrix4(viewToWorld);
+    } else if (typeof scratchOrigin.setFromMatrixPosition === 'function') {
+      scratchOrigin.setFromMatrixPosition(viewToWorld);
     } else {
       scratchOrigin.copy(cam.position);
     }
     scratchPoint.set(ndcX, ndcY, 0.5)
       .applyMatrix4(cam.projectionMatrixInverse)
-      .applyMatrix4(cam.matrixWorld)
+      .applyMatrix4(viewToWorld)
       .sub(scratchOrigin)
       .normalize();
 
@@ -717,9 +718,9 @@ export function createThreeAdapter({
     if (!cam.matrixWorldInverse || !cam.projectionMatrix) {
       throw new Error('worldToScreen requires Three.js Vector3 and PerspectiveCamera matrices');
     }
-    syncCameraMatrices(cam);
+    syncCameraWorldMatrices(cam);
     scratchView.set(x, y, z).applyMatrix4(cam.matrixWorldInverse);
-    const inFront = scratchView.z < 0;
+    const inFront = cam.isOrthographicCamera || scratchView.z < 0;
     scratchView.applyMatrix4(cam.projectionMatrix);
 
     const vx = targetView ? targetView.x : 0;
@@ -730,7 +731,7 @@ export function createThreeAdapter({
     const sy = (vy + (-scratchView.y * 0.5 + 0.5) * vh) * rect.height;
     const visible = Boolean(
       inFront &&
-      scratchView.z >= -1 && scratchView.z <= 1 &&
+      scratchView.z >= (usesZeroToOneDepth(cam) ? 0 : -1) && scratchView.z <= 1 &&
       scratchView.x >= -1 && scratchView.x <= 1 &&
       scratchView.y >= -1 && scratchView.y <= 1
     );
@@ -785,7 +786,6 @@ export function createThreeAdapter({
             v.camera.aspect = vw / vh;
             v.camera.updateProjectionMatrix?.();
           }
-          syncCameraMatrices(v.camera);
           culler3d.beginFrame(v.camera);
           renderer.setViewport?.(vx, vyBottomUp, vw, vh);
           renderer.setScissor?.(vx, vyBottomUp, vw, vh);
@@ -805,7 +805,6 @@ export function createThreeAdapter({
       return;
     }
 
-    syncCameraMatrices(camera);
     culler3d.beginFrame(camera);
     prepareSunShadows(world, camera);
     const viewScene = scene && viewWorlds.has(scene) ? viewWorlds.get(scene) : null;
