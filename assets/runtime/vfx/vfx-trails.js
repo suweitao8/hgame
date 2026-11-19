@@ -207,10 +207,11 @@ void main() {
 export const RIBBON_VERTEX_GLSL = /* glsl */ `
 precision highp float;
 
-attribute vec3 position; // x in [0..1] along segment, y in [-0.5..0.5] across width
-attribute vec4 aSegA;    // x0, y0, z0, t0 (birth/ageWeight)
+attribute vec3 position; // x in [-0.5..0.5] along segment, y in [-0.5..0.5] across width
+attribute vec4 aSegA;    // x0, y0, z0, t0 (head-to-tail [0..1])
 attribute vec4 aSegB;    // x1, y1, z1, t1
 attribute vec4 aSegMeta; // rgb24, width, alpha0, alpha1
+attribute vec4 aSegExtra; // endRgb24, widthScale0, widthScale1, hdr
 
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
@@ -219,6 +220,7 @@ uniform float uIs2D;
 varying vec2 vUv;
 varying vec3 vColor;
 varying float vAlpha;
+varying float vHdr;
 
 vec3 unpackRgb24(float v) {
   float r = floor(v / 65536.0);
@@ -236,9 +238,13 @@ void main() {
   }
 
   float u = clamp(position.x + 0.5, 0.0, 1.0);
-  vUv = vec2(u, position.y + 0.5);
-  vColor = unpackRgb24(aSegMeta.x);
+  float spanT = mix(aSegA.w, aSegB.w, u);
+  vUv = vec2(1.0 - spanT, position.y + 0.5);
+  vec3 c0 = unpackRgb24(aSegMeta.x);
+  vec3 c1 = unpackRgb24(aSegExtra.x);
+  vColor = mix(c0, c1, spanT);
   vAlpha = mix(aSegMeta.z, aSegMeta.w, u);
+  vHdr = aSegExtra.w;
 
   vec3 a = aSegA.xyz;
   vec3 b = aSegB.xyz;
@@ -253,8 +259,8 @@ void main() {
     ? vec3(-dir.y, dir.x, 0.0)
     : normalize(cross(dir, vec3(0.0, 1.0, 0.001)));
 
-  float taper = mix(aSegMeta.z, aSegMeta.w, u);
-  vec3 worldPos = mix(a, b, u) + side * (position.y * w * taper);
+  float wScale = mix(aSegExtra.y, aSegExtra.z, u);
+  vec3 worldPos = mix(a, b, u) + side * (position.y * w * wScale);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
 }
 `;
@@ -262,17 +268,37 @@ void main() {
 export const RIBBON_FRAGMENT_GLSL = /* glsl */ `
 precision highp float;
 
+uniform sampler2D uTrailTex;
+uniform float uHasTrailTex;
+uniform float uTrailFlipV;
+uniform vec4 uTrailUvRect;
+
 varying vec2 vUv;
 varying vec3 vColor;
 varying float vAlpha;
+varying float vHdr;
 
 void main() {
-  float d = abs(vUv.y - 0.5) * 2.0;
-  float edge = 1.0 - smoothstep(0.25, 1.0, d);
-  float alpha = edge * vAlpha;
+  float alpha = vAlpha;
+  vec3 col = vColor;
+  if (uHasTrailTex > 0.5) {
+    float localV = 1.0 - vUv.y;
+    vec2 mapped = vec2(
+      mix(uTrailUvRect.x, uTrailUvRect.z, clamp(vUv.x, 0.0, 1.0)),
+      mix(uTrailUvRect.y, uTrailUvRect.w, localV)
+    );
+    if (uTrailFlipV > 0.5) mapped.y = 1.0 - mapped.y;
+    vec4 texCol = texture2D(uTrailTex, mapped);
+    alpha *= texCol.a;
+    col *= texCol.rgb;
+  } else {
+    float d = abs(vUv.y - 0.5) * 2.0;
+    float edge = 1.0 - smoothstep(0.25, 1.0, d);
+    alpha *= edge;
+    col = mix(col, vec3(1.0), edge * 0.35);
+  }
   if (alpha < 0.01) discard;
-  vec3 col = mix(vColor, vec3(1.0), edge * 0.35);
-  gl_FragColor = vec4(col, alpha);
+  gl_FragColor = vec4(col * max(0.0, vHdr), alpha);
 }
 `;
 
@@ -341,11 +367,15 @@ export function createTrailsSystem({
   const segA = new Float32Array(totalRibbonSegs * 4);
   const segB = new Float32Array(totalRibbonSegs * 4);
   const segMeta = new Float32Array(totalRibbonSegs * 4);
+  const segExtra = new Float32Array(totalRibbonSegs * 4);
   const trailPoints = new Float32Array(trailCap * trailNodes * 3);
   const trailHead = new Int32Array(trailCap);
   const trailCount = new Int32Array(trailCap);
   const trailColor = new Float32Array(trailCap);
+  const trailEndColor = new Float32Array(trailCap);
   const trailWidth = new Float32Array(trailCap);
+  const trailEndWidthScale = new Float32Array(trailCap);
+  const trailHdr = new Float32Array(trailCap);
   const trailActive = new Uint8Array(trailCap);
   const freeTrailStack = new Int32Array(trailCap);
   let freeTrailTop = trailCap;
@@ -432,13 +462,21 @@ export function createTrailsSystem({
     const ra0 = new THREE.InstancedBufferAttribute(segA, 4);
     const ra1 = new THREE.InstancedBufferAttribute(segB, 4);
     const ra2 = new THREE.InstancedBufferAttribute(segMeta, 4);
+    const ra3 = new THREE.InstancedBufferAttribute(segExtra, 4);
     rGeo.setAttribute('aSegA', ra0);
     rGeo.setAttribute('aSegB', ra1);
     rGeo.setAttribute('aSegMeta', ra2);
+    rGeo.setAttribute('aSegExtra', ra3);
     ribbonMat = new MatCtor({
       vertexShader: RIBBON_VERTEX_GLSL,
       fragmentShader: RIBBON_FRAGMENT_GLSL,
-      uniforms: { uIs2D: { value: is2D ? 1.0 : 0.0 } },
+      uniforms: {
+        uIs2D: { value: is2D ? 1.0 : 0.0 },
+        uTrailTex: { value: null },
+        uHasTrailTex: { value: 0.0 },
+        uTrailFlipV: { value: 0.0 },
+        uTrailUvRect: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 1, 1) : { set() {} } },
+      },
       transparent: true,
       depthTest: true,
       depthWrite: false,
@@ -450,7 +488,7 @@ export function createTrailsSystem({
     ribbonMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     ribbonMesh.name = 'HGameVfxRibbonTrails';
     scene.add(ribbonMesh);
-    ribbonAttrs = [ra0, ra1, ra2];
+    ribbonAttrs = [ra0, ra1, ra2, ra3];
   }
 
   function slashArc(opts = {}) {
@@ -505,7 +543,10 @@ export function createTrailsSystem({
     const count = trailCount[trackId];
     const segBase = trackId * segsPerTrail;
     const rgb = trailColor[trackId];
+    const endRgb = trailEndColor[trackId];
     const w = trailWidth[trackId];
+    const endScale = trailEndWidthScale[trackId];
+    const hdr = trailHdr[trackId];
 
     for (let s = 0; s < segsPerTrail; s++) {
       const segIdx = segBase + s;
@@ -521,34 +562,77 @@ export function createTrailsSystem({
       const pA = (trackId * trailNodes + idxA) * 3;
       const pB = (trackId * trailNodes + idxB) * 3;
 
+      const t0 = s / Math.max(1, count - 1);
+      const t1 = (s + 1) / Math.max(1, count - 1);
+
       segA[i4] = trailPoints[pA];
       segA[i4 + 1] = trailPoints[pA + 1];
       segA[i4 + 2] = trailPoints[pA + 2];
+      segA[i4 + 3] = t0;
       segB[i4] = trailPoints[pB];
       segB[i4 + 1] = trailPoints[pB + 1];
       segB[i4 + 2] = trailPoints[pB + 2];
+      segB[i4 + 3] = t1;
 
       segMeta[i4] = rgb;
       segMeta[i4 + 1] = w;
-      segMeta[i4 + 2] = Math.max(0, 1 - s / Math.max(1, count - 1));
-      segMeta[i4 + 3] = Math.max(0, 1 - (s + 1) / Math.max(1, count - 1));
+      segMeta[i4 + 2] = Math.max(0, 1 - t0);
+      segMeta[i4 + 3] = Math.max(0, 1 - t1);
+
+      segExtra[i4] = endRgb;
+      segExtra[i4 + 1] = 1 + (endScale - 1) * t0;
+      segExtra[i4 + 2] = 1 + (endScale - 1) * t1;
+      segExtra[i4 + 3] = hdr;
     }
 
     if (ribbonAttrs) {
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < ribbonAttrs.length; i++) {
         submitRingBufferRanges(ribbonAttrs[i], segBase, segsPerTrail, totalRibbonSegs, 4);
       }
     }
   }
 
-  function allocTrail(color = 0x38bdf8, width = 0.25) {
+  /**
+   * Binds an optional texture and top-down UV rect `[u0, v0, u1, v1]` for ribbon trails.
+   * @param {object | null} texture
+   * @param {readonly number[]} [uvRect]
+   */
+  function setTrailTexture(texture, uvRect = [0, 0, 1, 1]) {
+    if (!ribbonMat) return;
+    ribbonMat.uniforms.uTrailTex.value = texture;
+    ribbonMat.uniforms.uHasTrailTex.value = texture ? 1.0 : 0.0;
+    ribbonMat.uniforms.uTrailFlipV.value = texture && texture.flipY ? 1.0 : 0.0;
+    ribbonMat.uniforms.uTrailUvRect.value.set(uvRect[0] ?? 0, uvRect[1] ?? 0, uvRect[2] ?? 1, uvRect[3] ?? 1);
+  }
+
+  /**
+   * Allocates a ribbon trail slot.
+   * @param {number | object} [colorOrOpts=0x38bdf8]
+   * @param {number} [width=0.25]
+   */
+  function allocTrail(colorOrOpts = 0x38bdf8, width = 0.25) {
     if (freeTrailTop <= 0) return -1;
     const id = freeTrailStack[--freeTrailTop];
     trailActive[id] = 1;
     trailHead[id] = 0;
     trailCount[id] = 0;
-    trailColor[id] = packRgb24(color);
-    trailWidth[id] = width;
+    if (typeof colorOrOpts === 'object' && colorOrOpts !== null) {
+      const startRgb = packRgb24(colorOrOpts.color ?? 0x38bdf8);
+      const wStart = colorOrOpts.width ?? width;
+      const wEnd = colorOrOpts.endWidth ?? 0;
+      trailColor[id] = startRgb;
+      trailEndColor[id] = colorOrOpts.endColor !== undefined ? packRgb24(colorOrOpts.endColor) : startRgb;
+      trailWidth[id] = wStart;
+      trailEndWidthScale[id] = wStart > 0.0001 ? Math.max(0, wEnd / wStart) : 0;
+      trailHdr[id] = colorOrOpts.hdr ?? 1.0;
+    } else {
+      const rgb = packRgb24(colorOrOpts);
+      trailColor[id] = rgb;
+      trailEndColor[id] = rgb;
+      trailWidth[id] = width;
+      trailEndWidthScale[id] = 0;
+      trailHdr[id] = 1.0;
+    }
     return id;
   }
 
@@ -682,6 +766,7 @@ export function createTrailsSystem({
   return {
     slashArc,
     lightningBolt,
+    setTrailTexture,
     allocTrail,
     pushTrailPoint,
     freeTrail,

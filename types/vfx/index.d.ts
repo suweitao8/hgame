@@ -96,7 +96,16 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         regions: Record<string, readonly number[]>;
         compileCurves: (colorCurveRaw: any, sizeCurveRaw: any) => any;
         setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined) => void;
+        setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
+            near?: number | undefined;
+            far?: number | undefined;
+            width?: number | undefined;
+            height?: number | undefined;
+            softFade?: number | undefined;
+        }) => void;
         emit: (opts?: object) => number;
+        updateSlot: (additive: any, idx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
+        killSlot: (additive: any, idx: any) => void;
         flushDirty: () => void;
         update: (visualDt: any) => void;
         renderWebGL2: (camera: any, viewWidth: any, viewHeight: any) => void;
@@ -144,7 +153,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     trails: {
         slashArc: (opts?: {}) => void;
         lightningBolt: (opts?: {}) => void;
-        allocTrail: (color?: number, width?: number) => number;
+        setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
+        allocTrail: (colorOrOpts?: number | object, width?: number | undefined) => number;
         pushTrailPoint: (trackId: any, x: any, y: any, z?: number) => void;
         freeTrail: (trackId: any) => void;
         update: (visualDt: any) => void;
@@ -232,6 +242,14 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         dispose: () => void;
     };
     setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined) => void;
+    setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
+        near?: number | undefined;
+        far?: number | undefined;
+        width?: number | undefined;
+        height?: number | undefined;
+        softFade?: number | undefined;
+    }) => void;
+    setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
     registerMesh: (id: string, geometryOrObject3D: object) => boolean;
     registerEffect: (recipe: object) => object;
     playEffect: (recipeOrId: string | object, options?: object) => object | null;
@@ -258,7 +276,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     burstParticles: (presetOrConfig: any) => void;
     slashArc: (opts?: {}) => void;
     lightningBolt: (opts?: {}) => void;
-    allocTrail: (color?: number, width?: number) => number;
+    allocTrail: (colorOrOpts?: number | object, width?: number | undefined) => number;
     pushTrailPoint: (trackId: any, x: any, y: any, z?: number) => void;
     freeTrail: (trackId: any) => void;
     spawnTelegraph: (opts?: {}) => number;

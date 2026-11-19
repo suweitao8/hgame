@@ -1,7 +1,9 @@
 import {
   VFX_RENDER_ORDERS,
   createVisualPrng,
+  packRgb24,
   submitRingBufferRanges,
+  unpackRgb24Into,
 } from './vfx-core.js';
 
 export const VFX_RENDER_MODE = Object.freeze({
@@ -9,6 +11,7 @@ export const VFX_RENDER_MODE = Object.freeze({
   HORIZONTAL: 1,
   STRETCHED: 2,
   MESH: 3,
+  VERTICAL: 4,
 });
 
 const LUT_HALF = 32;
@@ -521,6 +524,7 @@ attribute vec4 aAtlasP3; // rot0, angularVel, hdr, renderMode (0=billboard, 1=ho
 attribute vec4 aAtlasP4; // u0, v0, u1, v1
 attribute vec4 aAtlasP5; // cols, rows, cycles, blendFlag
 attribute vec4 aAtlasP6; // noiseStrength, noiseFreq, stretch, phase
+attribute vec4 aAtlasP7; // tintRgb24, orbitalY, centerOffX, centerOffZ
 
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
@@ -534,6 +538,15 @@ varying float vCurveRow;
 varying float vHdr;
 varying vec4 vUvRect;
 varying vec4 vFlipbook;
+varying vec3 vTint;
+
+vec3 unpackRgb24(float v) {
+  float r = floor(v / 65536.0);
+  float rem = v - r * 65536.0;
+  float g = floor(rem / 256.0);
+  float b = rem - g * 256.0;
+  return vec3(r, g, b) / 255.0;
+}
 
 float sampleSizeCurve(float row, float t) {
   float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
@@ -563,26 +576,44 @@ void main() {
   vHdr = aAtlasP3.z;
   vUvRect = aAtlasP4;
   vFlipbook = aAtlasP5;
+  vTint = unpackRgb24(aAtlasP7.x);
 
   float k = aAtlasP2.z;
-  float dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
-  float velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
+  vec3 worldPos;
+  vec3 curVel;
+  if (k < -0.5) {
+    worldPos = aAtlasP0.xyz;
+    curVel = aAtlasP1.xyz;
+  } else {
+    float dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
+    float velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
+    vec3 gVec = (uIs2D > 0.5) ? vec3(0.0, aAtlasP2.y, 0.0) : vec3(0.0, -aAtlasP2.y, 0.0);
+    worldPos = aAtlasP0.xyz + aAtlasP1.xyz * dispFactor + 0.5 * gVec * (age * age);
+    curVel = aAtlasP1.xyz * velDecay + gVec * age;
 
-  vec3 gVec = (uIs2D > 0.5) ? vec3(0.0, aAtlasP2.y, 0.0) : vec3(0.0, -aAtlasP2.y, 0.0);
-  vec3 worldPos = aAtlasP0.xyz + aAtlasP1.xyz * dispFactor + 0.5 * gVec * (age * age);
-  vec3 curVel = aAtlasP1.xyz * velDecay + gVec * age;
+    float orb = aAtlasP7.y;
+    if (abs(orb) > 0.0001 && uIs2D < 0.5) {
+      vec2 cxz = aAtlasP0.xz - aAtlasP7.zw;
+      vec2 rel = worldPos.xz - cxz;
+      float oa = orb * age;
+      float oc = cos(oa);
+      float os = sin(oa);
+      worldPos.xz = cxz + vec2(rel.x * oc - rel.y * os, rel.x * os + rel.y * oc);
+      curVel.xz = vec2(curVel.x * oc - curVel.z * os, curVel.x * os + curVel.z * oc);
+    }
 
-  float nStr = aAtlasP6.x;
-  if (nStr > 0.001) {
-    float nFreq = max(0.05, aAtlasP6.y);
-    float ph = aAtlasP6.w * 6.2831853;
-    float wt = age * nFreq * 3.14159265;
-    vec3 noiseOff = vec3(
-      sin(wt + ph) * cos(wt * 0.73 + ph * 1.3),
-      sin(wt * 1.17 + ph * 2.1),
-      cos(wt * 0.89 + ph * 1.7)
-    ) * (nStr * min(1.0, age * 1.5) * 0.45);
-    worldPos += noiseOff;
+    float nStr = aAtlasP6.x;
+    if (nStr > 0.001) {
+      float nFreq = max(0.05, aAtlasP6.y);
+      float ph = aAtlasP6.w * 6.2831853;
+      float wt = age * nFreq * 3.14159265;
+      vec3 noiseOff = vec3(
+        sin(wt + ph) * cos(wt * 0.73 + ph * 1.3),
+        sin(wt * 1.17 + ph * 2.1),
+        cos(wt * 0.89 + ph * 1.7)
+      ) * (nStr * min(1.0, age * 1.5) * 0.45);
+      worldPos += noiseOff;
+    }
   }
 
   float curSize = aAtlasP2.x * sampleSizeCurve(aAtlasP2.w, t);
@@ -595,7 +626,7 @@ void main() {
     vec2 axisX = vec2(c, s);
     vec2 axisY = vec2(-s, c);
     float lenScale = curSize;
-    if (renderMode > 1.5) {
+    if (renderMode > 1.5 && renderMode < 2.5) {
       float spd = length(curVel.xy);
       if (spd > 0.001) {
         axisX = curVel.xy / spd;
@@ -614,11 +645,21 @@ void main() {
       (position.x * s + position.y * c) * curSize
     );
     gl_Position = projectionMatrix * modelViewMatrix * vec4(worldQuad, 1.0);
+  } else if (renderMode > 3.5) {
+    vec3 camRight = vec3(modelViewMatrix[0][0], 0.0, modelViewMatrix[2][0]);
+    float rLen = length(camRight);
+    camRight = rLen > 0.0001 ? (camRight / rLen) : vec3(1.0, 0.0, 0.0);
+    vec3 upW = vec3(0.0, 1.0, 0.0);
+    float c = cos(rot);
+    float s = sin(rot);
+    vec2 rPos = vec2(position.x * c - position.y * s, position.x * s + position.y * c) * curSize;
+    vec3 worldQuad = worldPos + camRight * rPos.x + upW * rPos.y;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(worldQuad, 1.0);
   } else {
     vec4 mvCenter = modelViewMatrix * vec4(worldPos, 1.0);
     vec2 rightAxis;
     float major = curSize;
-    if (renderMode > 1.5) {
+    if (renderMode > 1.5 && renderMode < 2.5) {
       vec3 viewVel = mat3(modelViewMatrix) * curVel;
       float spd = length(viewVel.xy);
       rightAxis = spd > 0.001 ? (viewVel.xy / spd) : vec2(cos(rot), sin(rot));
@@ -638,8 +679,13 @@ precision highp float;
 
 uniform sampler2D uCurveLut;
 uniform sampler2D uAtlasTex;
+uniform sampler2D uSoftDepthTex;
 uniform float uHasAtlas;
 uniform float uFlipV;
+uniform float uHasSoftDepth;
+uniform float uSoftFade;
+uniform vec2 uInvViewport;
+uniform vec2 uCamNearFar;
 
 varying vec2 vUv;
 varying float vLifeRatio;
@@ -647,6 +693,14 @@ varying float vCurveRow;
 varying float vHdr;
 varying vec4 vUvRect;
 varying vec4 vFlipbook;
+varying vec3 vTint;
+
+float linearizeDepth(float zNdc) {
+  float z = zNdc * 2.0 - 1.0;
+  float n = uCamNearFar.x;
+  float f = uCamNearFar.y;
+  return (2.0 * n * f) / max(0.0001, f + n - z * (f - n));
+}
 
 vec4 sampleColorCurve(float row, float t) {
   float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
@@ -708,9 +762,17 @@ void main() {
     texCol.a = exp(-3.6 * r * r);
   }
 
-  float alpha = texCol.a * curveCol.a;
+  float softMul = 1.0;
+  if (uHasSoftDepth > 0.5 && uSoftFade > 0.001) {
+    float sceneDepthRaw = texture2D(uSoftDepthTex, gl_FragCoord.xy * uInvViewport).r;
+    float sceneZ = linearizeDepth(sceneDepthRaw);
+    float partZ = linearizeDepth(gl_FragCoord.z);
+    softMul = clamp((sceneZ - partZ) / uSoftFade, 0.0, 1.0);
+  }
+
+  float alpha = texCol.a * curveCol.a * softMul;
   if (alpha < 0.005) discard;
-  vec3 rgb = texCol.rgb * curveCol.rgb * max(0.0, vHdr);
+  vec3 rgb = texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr);
   gl_FragColor = vec4(rgb, alpha);
 }
 `;
@@ -726,6 +788,7 @@ layout(location = 4) in vec4 aAtlasP3;
 layout(location = 5) in vec4 aAtlasP4;
 layout(location = 6) in vec4 aAtlasP5;
 layout(location = 7) in vec4 aAtlasP6;
+layout(location = 8) in vec4 aAtlasP7;
 
 uniform sampler2D uCurveLut;
 uniform float uTime;
@@ -739,6 +802,15 @@ out float vCurveRow;
 out float vHdr;
 out vec4 vUvRect;
 out vec4 vFlipbook;
+out vec3 vTint;
+
+vec3 unpackRgb24(float v) {
+  float r = floor(v / 65536.0);
+  float rem = v - r * 65536.0;
+  float g = floor(rem / 256.0);
+  float b = rem - g * 256.0;
+  return vec3(r, g, b) / 255.0;
+}
 
 float sampleSizeCurve(float row, float t) {
   float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
@@ -767,20 +839,28 @@ void main() {
   vHdr = aAtlasP3.z;
   vUvRect = aAtlasP4;
   vFlipbook = aAtlasP5;
+  vTint = unpackRgb24(aAtlasP7.x);
 
   float k = aAtlasP2.z;
-  float dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
-  float velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
-  vec2 gVec = vec2(0.0, aAtlasP2.y);
-  vec2 worldPos = aAtlasP0.xy + aAtlasP1.xy * dispFactor + 0.5 * gVec * (age * age);
-  vec2 curVel = aAtlasP1.xy * velDecay + gVec * age;
+  vec2 worldPos;
+  vec2 curVel;
+  if (k < -0.5) {
+    worldPos = aAtlasP0.xy;
+    curVel = aAtlasP1.xy;
+  } else {
+    float dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
+    float velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
+    vec2 gVec = vec2(0.0, aAtlasP2.y);
+    worldPos = aAtlasP0.xy + aAtlasP1.xy * dispFactor + 0.5 * gVec * (age * age);
+    curVel = aAtlasP1.xy * velDecay + gVec * age;
 
-  float nStr = aAtlasP6.x;
-  if (nStr > 0.001) {
-    float nFreq = max(0.05, aAtlasP6.y);
-    float ph = aAtlasP6.w * 6.2831853;
-    float wt = age * nFreq * 3.14159265;
-    worldPos += vec2(sin(wt + ph) * cos(wt * 0.73 + ph), cos(wt * 1.17 + ph)) * (nStr * min(1.0, age * 1.5) * 12.0);
+    float nStr = aAtlasP6.x;
+    if (nStr > 0.001) {
+      float nFreq = max(0.05, aAtlasP6.y);
+      float ph = aAtlasP6.w * 6.2831853;
+      float wt = age * nFreq * 3.14159265;
+      worldPos += vec2(sin(wt + ph) * cos(wt * 0.73 + ph), cos(wt * 1.17 + ph)) * (nStr * min(1.0, age * 1.5) * 12.0);
+    }
   }
 
   float curSize = aAtlasP2.x * sampleSizeCurve(aAtlasP2.w, t);
@@ -788,7 +868,7 @@ void main() {
   vec2 axisX = vec2(cos(rot), sin(rot));
   vec2 axisY = vec2(-axisX.y, axisX.x);
   float lenScale = curSize;
-  if (aAtlasP3.w > 1.5) {
+  if (aAtlasP3.w > 1.5 && aAtlasP3.w < 2.5) {
     float spd = length(curVel);
     if (spd > 0.001) {
       axisX = curVel / spd;
@@ -820,6 +900,7 @@ in float vCurveRow;
 in float vHdr;
 in vec4 vUvRect;
 in vec4 vFlipbook;
+in vec3 vTint;
 
 out vec4 fragColor;
 
@@ -873,7 +954,7 @@ void main() {
 
   float alpha = texCol.a * curveCol.a;
   if (alpha < 0.005) discard;
-  fragColor = vec4(texCol.rgb * curveCol.rgb * max(0.0, vHdr), alpha);
+  fragColor = vec4(texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr), alpha);
 }
 `;
 
@@ -888,6 +969,7 @@ function createAtlasChannel(capacity, additive) {
     p4: new Float32Array(capacity * 4),
     p5: new Float32Array(capacity * 4),
     p6: new Float32Array(capacity * 4),
+    p7: new Float32Array(capacity * 4),
     cursor: 0,
     totalEmitted: 0,
     dirtyStart: 0,
@@ -952,6 +1034,9 @@ function compileWebGL2Program(gl, vsSrc, fsSrc) {
  * @param {number} age
  * @param {boolean} is2D
  * @param {Float32Array | number[]} outPos
+ * @param {number} [orbitalY=0]
+ * @param {number} [centerOffX=0]
+ * @param {number} [centerOffZ=0]
  */
 export function evaluateAtlasParticlePosition(
   x0, y0, z0,
@@ -959,12 +1044,24 @@ export function evaluateAtlasParticlePosition(
   gravity, drag,
   noiseStrength, noiseFreq, phase,
   age, is2D, outPos,
+  orbitalY = 0, centerOffX = 0, centerOffZ = 0,
 ) {
   const disp = drag > 0.001 ? ((1 - Math.exp(-drag * age)) / drag) : age;
   const gY = is2D ? gravity : -gravity;
   let px = x0 + vx * disp;
   let py = y0 + vy * disp + 0.5 * gY * age * age;
   let pz = z0 + vz * disp;
+  if (!is2D && Math.abs(orbitalY) > 0.0001) {
+    const cx = x0 - centerOffX;
+    const cz = z0 - centerOffZ;
+    const rx = px - cx;
+    const rz = pz - cz;
+    const oa = orbitalY * age;
+    const oc = Math.cos(oa);
+    const os = Math.sin(oa);
+    px = cx + rx * oc - rz * os;
+    pz = cz + rx * os + rz * oc;
+  }
   if (noiseStrength > 0.001) {
     const nf = Math.max(0.05, noiseFreq);
     const ph = phase * 6.283185307179586;
@@ -1038,6 +1135,7 @@ export function createAtlasParticlePool({
   let glUniforms = /** @type {Record<string, WebGLUniformLocation | null> | null} */ (null);
   let disposed = false;
   const scratchRgba = new Float32Array(4);
+  const scratchTint = new Float32Array(3);
   const scratchPos = new Float32Array(3);
 
   function updateThreeAtlasUniforms(ch) {
@@ -1056,7 +1154,7 @@ export function createAtlasParticlePool({
     geo.attributes.uv = base.attributes.uv;
     geo.instanceCount = capacity;
 
-    const arrays = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6];
+    const arrays = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
     const attrs = [];
     for (let i = 0; i < arrays.length; i++) {
       const attr = new THREE.InstancedBufferAttribute(arrays[i], 4);
@@ -1076,6 +1174,11 @@ export function createAtlasParticlePool({
         uAtlasTex: { value: activeAtlasTex },
         uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
         uFlipV: { value: activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0 },
+        uSoftDepthTex: { value: null },
+        uHasSoftDepth: { value: 0.0 },
+        uSoftFade: { value: 0.45 },
+        uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
+        uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
       },
       transparent: true,
       depthTest: true,
@@ -1143,7 +1246,7 @@ export function createAtlasParticlePool({
       gl.enableVertexAttribArray(0);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-      const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6];
+      const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
       const vbos = [];
       for (let i = 0; i < dataArrs.length; i++) {
         const vbo = gl.createBuffer();
@@ -1199,8 +1302,20 @@ export function createAtlasParticlePool({
     return [0, 0, 1, 1];
   }
 
+  function setDepthTexture(depthTexture, { near = 0.1, far = 200, width = 1280, height = 720, softFade = 0.45 } = {}) {
+    for (let c = 0; c < channels.length; c++) {
+      const mat = channels[c].threeMat;
+      if (!mat) continue;
+      mat.uniforms.uSoftDepthTex.value = depthTexture;
+      mat.uniforms.uHasSoftDepth.value = depthTexture ? 1.0 : 0.0;
+      mat.uniforms.uSoftFade.value = softFade;
+      mat.uniforms.uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
+      mat.uniforms.uCamNearFar.value.set(near, far);
+    }
+  }
+
   /**
-   * Emits a single textured/curve particle and returns its slot index + channel flag.
+   * Emits a single textured/curve particle and returns its slot index.
    * @param {object} [opts]
    * @returns {number} Slot index in its channel
    */
@@ -1221,7 +1336,19 @@ export function createAtlasParticlePool({
         ? VFX_RENDER_MODE.HORIZONTAL
         : opts.renderMode === 'stretched'
           ? VFX_RENDER_MODE.STRETCHED
-          : VFX_RENDER_MODE.BILLBOARD;
+          : opts.renderMode === 'vertical'
+            ? VFX_RENDER_MODE.VERTICAL
+            : VFX_RENDER_MODE.BILLBOARD;
+
+    const tintRgb24 = opts.tintRgb24 !== undefined
+      ? opts.tintRgb24
+      : opts.tint !== undefined
+        ? packRgb24(
+          Math.round((opts.tint[0] ?? 1) * 255),
+          Math.round((opts.tint[1] ?? 1) * 255),
+          Math.round((opts.tint[2] ?? 1) * 255),
+        )
+        : 0xffffff;
 
     ch.p0[i4] = opts.x ?? 0;
     ch.p0[i4 + 1] = opts.y ?? 0;
@@ -1235,7 +1362,7 @@ export function createAtlasParticlePool({
 
     ch.p2[i4] = opts.sizeStart ?? 1.0;
     ch.p2[i4 + 1] = opts.gravity ?? 0;
-    ch.p2[i4 + 2] = opts.drag ?? 0;
+    ch.p2[i4 + 2] = opts.staticPos ? -1.0 : (opts.drag ?? 0);
     ch.p2[i4 + 3] = curveRow;
 
     ch.p3[i4] = opts.rotation ?? 0;
@@ -1258,6 +1385,11 @@ export function createAtlasParticlePool({
     ch.p6[i4 + 2] = opts.stretch ?? 0.8;
     ch.p6[i4 + 3] = opts.phase !== undefined ? opts.phase : prng.nextFloat();
 
+    ch.p7[i4] = tintRgb24;
+    ch.p7[i4 + 1] = opts.orbitalY ?? 0;
+    ch.p7[i4 + 2] = opts.centerOffX ?? 0;
+    ch.p7[i4 + 3] = opts.centerOffZ ?? 0;
+
     if (ch.dirtyCount === 0) ch.dirtyStart = idx;
     ch.dirtyCount = Math.min(ch.capacity, ch.dirtyCount + 1);
 
@@ -1270,6 +1402,38 @@ export function createAtlasParticlePool({
     }
     ch.totalEmitted += 1;
     return idx;
+  }
+
+  function markSlotDirty(ch, idx) {
+    if (ch.dirtyCount === 0) {
+      ch.dirtyStart = idx;
+      ch.dirtyCount = 1;
+      return;
+    }
+    if (idx >= ch.dirtyStart && idx < ch.dirtyStart + ch.dirtyCount) return;
+    // Expand conservatively or flush via full-range upload when random-access update occurs.
+    ch.dirtyStart = 0;
+    ch.dirtyCount = Math.min(ch.capacity, Math.max(ch.totalEmitted, idx + 1));
+  }
+
+  function updateSlot(additive, idx, x, y, z, vx, vy, vz) {
+    const ch = additive ? additivePool : normalPool;
+    if (idx < 0 || idx >= ch.capacity) return;
+    const i4 = idx * 4;
+    ch.p0[i4] = x;
+    ch.p0[i4 + 1] = y;
+    ch.p0[i4 + 2] = z;
+    ch.p1[i4] = vx;
+    ch.p1[i4 + 1] = vy;
+    ch.p1[i4 + 2] = vz;
+    markSlotDirty(ch, idx);
+  }
+
+  function killSlot(additive, idx) {
+    const ch = additive ? additivePool : normalPool;
+    if (idx < 0 || idx >= ch.capacity) return;
+    ch.p1[idx * 4 + 3] = 0;
+    markSlotDirty(ch, idx);
   }
 
   function flushChannel(ch) {
@@ -1288,7 +1452,7 @@ export function createAtlasParticlePool({
     } else {
       submitRingBufferRanges(null, ch.dirtyStart, ch.dirtyCount, ch.capacity, 4, ch.lastDirtyRanges);
       if (gl && ch.glVbos) {
-        const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6];
+        const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
         for (let r = 0; r < ch.lastDirtyRanges.length; r++) {
           const range = ch.lastDirtyRanges[r];
           const byteOff = range.offset * 16;
@@ -1397,9 +1561,10 @@ export function createAtlasParticlePool({
         if (size <= 0.5) continue;
 
         ctx.globalAlpha = Math.max(0, Math.min(1, scratchRgba[3]));
-        const r8 = (Math.min(1, scratchRgba[0] * ch.p3[i4 + 2]) * 255) | 0;
-        const g8 = (Math.min(1, scratchRgba[1] * ch.p3[i4 + 2]) * 255) | 0;
-        const b8 = (Math.min(1, scratchRgba[2] * ch.p3[i4 + 2]) * 255) | 0;
+        unpackRgb24Into(ch.p7[i4], scratchTint);
+        const r8 = (Math.min(1, scratchRgba[0] * scratchTint[0] * ch.p3[i4 + 2]) * 255) | 0;
+        const g8 = (Math.min(1, scratchRgba[1] * scratchTint[1] * ch.p3[i4 + 2]) * 255) | 0;
+        const b8 = (Math.min(1, scratchRgba[2] * scratchTint[2] * ch.p3[i4 + 2]) * 255) | 0;
 
         if (activeAtlasCanvas && typeof ctx.drawImage === 'function') {
           const cols = Math.max(1, ch.p5[i4] | 0);
@@ -1482,7 +1647,10 @@ export function createAtlasParticlePool({
     regions,
     compileCurves: lut.compile,
     setAtlas,
+    setDepthTexture,
     emit,
+    updateSlot,
+    killSlot,
     flushDirty,
     update,
     renderWebGL2,

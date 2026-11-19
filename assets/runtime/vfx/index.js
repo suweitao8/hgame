@@ -576,6 +576,8 @@ export function createVfxSystem({
     floatingText,
     screenFeedback,
     setAtlas: atlasParticles.setAtlas,
+    setDepthTexture: atlasParticles.setDepthTexture,
+    setTrailTexture: trails.setTrailTexture,
     registerMesh: meshVfx.registerMesh,
     registerEffect: effects.registerEffect,
     playEffect: effects.playEffect,

@@ -5,10 +5,11 @@ const MAX_ACTIVE_EFFECTS = 128;
 const MAX_LAYERS_PER_EFFECT = 16;
 const MAX_BURSTS_PER_LAYER = 8;
 const MAX_TRAIL_FOLLOWERS = 256;
+const MAX_TRACKED_PARTICLES = 256;
 const MAX_POINT_LIGHTS = 8;
 
 const VALID_LAYER_KINDS = new Set(['particle', 'mesh', 'slash', 'lightning', 'telegraph']);
-const VALID_RENDER_MODES = new Set(['billboard', 'horizontal', 'stretched', 'mesh']);
+const VALID_RENDER_MODES = new Set(['billboard', 'horizontal', 'stretched', 'vertical', 'mesh']);
 const VALID_BLENDS = new Set(['alpha', 'additive']);
 
 function parseColorNumber(val, fallback = 0xffffff) {
@@ -82,12 +83,12 @@ export function validateVfxRecipe(recipe) {
       }
       if (layer.colorCurve !== undefined) {
         if (!Array.isArray(layer.colorCurve) || layer.colorCurve.length === 0) {
-          errors.push(`layers[${i}].colorCurve must be a non-empty array of [t, [r,g,b,a]]`);
+          errors.push(`layers[${i}].colorCurve invalid`);
         }
       }
       if (layer.sizeCurve !== undefined) {
         if (!Array.isArray(layer.sizeCurve) || layer.sizeCurve.length === 0) {
-          errors.push(`layers[${i}].sizeCurve must be a non-empty array of [t, scale]`);
+          errors.push(`layers[${i}].sizeCurve invalid`);
         }
       }
     }
@@ -141,6 +142,28 @@ export function createEffectPlayer({
   const scratchPos = new Float32Array(3);
   const scratchVel = new Float32Array(3);
   const scratchRgb = [1, 1, 1];
+  const scratchTintA = [1, 1, 1];
+  const scratchTintB = [1, 1, 1];
+  const scratchTintOut = [1, 1, 1];
+
+  function sampleStartColor(startColor, out) {
+    if (!startColor) {
+      out[0] = 1;
+      out[1] = 1;
+      out[2] = 1;
+      return out;
+    }
+    if (Array.isArray(startColor) && startColor.length === 2 && (Array.isArray(startColor[0]) || typeof startColor[0] === 'string' || typeof startColor[0] === 'number')) {
+      parseColorRgb01(startColor[0], scratchTintA);
+      parseColorRgb01(startColor[1], scratchTintB);
+      const t = prng.nextFloat();
+      out[0] = scratchTintA[0] + (scratchTintB[0] - scratchTintA[0]) * t;
+      out[1] = scratchTintA[1] + (scratchTintB[1] - scratchTintA[1]) * t;
+      out[2] = scratchTintA[2] + (scratchTintB[2] - scratchTintA[2]) * t;
+      return out;
+    }
+    return parseColorRgb01(startColor, out);
+  }
 
   // Pre-allocated point light pool (3D only, max 8 concurrent dynamic VFX lights).
   const lightSlots = [];
@@ -173,6 +196,28 @@ export function createEffectPlayer({
       vx: 0, vy: 0, vz: 0,
       gravity: 0, drag: 0,
       noiseStrength: 0, noiseFreq: 0.5, phase: 0,
+      orbitalY: 0, centerOffX: 0, centerOffZ: 0,
+      trackedSlot: -1,
+    });
+  }
+
+  // Pre-allocated CPU-tracked particle pool for CollisionModule & SubModule layers.
+  const trackedParticles = [];
+  for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
+    trackedParticles.push({
+      active: false,
+      additive: false,
+      atlasSlot: -1,
+      age: 0,
+      duration: 1,
+      x: 0, y: 0, z: 0,
+      vx: 0, vy: 0, vz: 0,
+      gravity: 0, drag: 0,
+      hasCollision: false,
+      groundY: 0, bounce: 0.45, dampen: 0.2, minSpeed: 0.15, bouncesLeft: 3,
+      /** @type {Array<{ trigger?: string, effect?: string | object, probability?: number }> | null} */
+      subEmitters: null,
+      subDepth: 0,
     });
   }
 
@@ -200,6 +245,7 @@ export function createEffectPlayer({
       x: 0, y: 0, z: 0,
       yaw: 0,
       scale: 1,
+      subDepth: 0,
       /** @type {{ x?: number, y?: number, z?: number, yaw?: number } | null} */
       follow: null,
       lightSlotIdx: -1,
@@ -275,7 +321,9 @@ export function createEffectPlayer({
     vx, vy, vz,
     gravity, drag,
     noiseStrength, noiseFreq, phase,
-    duration, trailCfg,
+    duration, trailCfg, tintRgb,
+    orbitalY = 0, centerOffX = 0, centerOffZ = 0,
+    trackedSlot = -1,
   ) {
     if (!trails || typeof trails.allocTrail !== 'function') return;
     let slot = null;
@@ -286,9 +334,19 @@ export function createEffectPlayer({
       }
     }
     if (!slot) return;
-    const color = parseColorNumber(trailCfg.color, 0xff9f43);
+    const baseColor = trailCfg.inheritColor
+      ? packRgb24(Math.round(tintRgb[0] * 255), Math.round(tintRgb[1] * 255), Math.round(tintRgb[2] * 255))
+      : parseColorNumber(trailCfg.color, 0xff9f43);
+    const endColor = trailCfg.endColor !== undefined ? parseColorNumber(trailCfg.endColor, baseColor) : baseColor;
     const width = trailCfg.width ?? 0.08;
-    const tid = trails.allocTrail(color, width);
+    const endWidth = trailCfg.endWidth ?? 0;
+    const tid = trails.allocTrail({
+      color: baseColor,
+      endColor,
+      width,
+      endWidth,
+      hdr: trailCfg.hdr ?? 1.0,
+    });
     if (tid < 0) return;
     slot.active = true;
     slot.trailId = tid;
@@ -305,7 +363,58 @@ export function createEffectPlayer({
     slot.noiseStrength = noiseStrength;
     slot.noiseFreq = noiseFreq;
     slot.phase = phase;
+    slot.orbitalY = orbitalY;
+    slot.centerOffX = centerOffX;
+    slot.centerOffZ = centerOffZ;
+    slot.trackedSlot = trackedSlot;
     trails.pushTrailPoint(tid, x0, y0, z0);
+  }
+
+  function fireSubEmitters(subEmitters, triggerType, x, y, z, depth) {
+    if (!Array.isArray(subEmitters) || depth >= 2) return;
+    for (let i = 0; i < subEmitters.length; i++) {
+      const sub = subEmitters[i];
+      if (!sub || (sub.trigger || 'death') !== triggerType || !sub.effect) continue;
+      const prob = sub.probability ?? 1.0;
+      if (prob < 1.0 && prng.nextFloat() > prob) continue;
+      if (typeof sub.effect === 'string' && !registry.has(sub.effect)) continue;
+      playEffect(sub.effect, { x, y, z, _subDepth: depth + 1 });
+    }
+  }
+
+  function allocTrackedParticle({
+    additive, atlasSlot, duration,
+    x, y, z, vx, vy, vz, gravity, drag,
+    collision, subEmitters, subDepth,
+  }) {
+    for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
+      const tp = trackedParticles[i];
+      if (!tp.active) {
+        tp.active = true;
+        tp.additive = additive;
+        tp.atlasSlot = atlasSlot;
+        tp.age = 0;
+        tp.duration = duration;
+        tp.x = x;
+        tp.y = y;
+        tp.z = z;
+        tp.vx = vx;
+        tp.vy = vy;
+        tp.vz = vz;
+        tp.gravity = gravity;
+        tp.drag = drag;
+        tp.hasCollision = Boolean(collision);
+        tp.groundY = collision?.groundY ?? 0;
+        tp.bounce = collision?.bounce ?? 0.45;
+        tp.dampen = collision?.dampen ?? 0.2;
+        tp.minSpeed = collision?.minSpeed ?? 0.15;
+        tp.bouncesLeft = collision?.maxBounces ?? 3;
+        tp.subEmitters = Array.isArray(subEmitters) ? subEmitters : null;
+        tp.subDepth = subDepth;
+        return i;
+      }
+    }
+    return -1;
   }
 
   function sampleShapeAndVelocity(layer, slot, scale) {
@@ -327,19 +436,25 @@ export function createEffectPlayer({
       dy = is2D ? Math.sin(ang) : elev;
       dz = is2D ? 0 : Math.sin(ang) * horiz;
       if (is2D) dx = Math.cos(ang);
-      const r = rad * Math.cbrt(prng.nextFloat());
+      const r = shape.shell ? rad : (rad * Math.cbrt(prng.nextFloat()));
       lx = dx * r;
       ly = dy * r;
       lz = dz * r;
     } else if (sType === 'circle') {
       const ang = prng.nextFloat() * 6.283185307179586;
-      const r = rad * Math.sqrt(prng.nextFloat());
+      const r = shape.shell ? rad : (rad * Math.sqrt(prng.nextFloat()));
       lx = Math.cos(ang) * r;
       ly = is2D ? Math.sin(ang) * r : 0;
       lz = is2D ? 0 : Math.sin(ang) * r;
       dx = Math.cos(ang);
       dy = is2D ? Math.sin(ang) : 0.2;
       dz = is2D ? 0 : Math.sin(ang);
+    } else if (sType === 'edge') {
+      const len = (shape.radius ?? 1) * scale;
+      lx = prng.range(-len, len);
+      dx = 0;
+      dy = is2D ? -1 : 1;
+      dz = 0;
     } else if (sType === 'cone') {
       const ang = prng.nextFloat() * 6.283185307179586;
       const halfCone = ((shape.angle ?? 25) * Math.PI) / 180;
@@ -436,6 +551,15 @@ export function createEffectPlayer({
     const noiseStrength = (layer.noise?.strength ?? 0) * scale;
     const noiseFreq = layer.noise?.frequency ?? 0.5;
     const phase = prng.nextFloat();
+    const orbitalY = layer.velocity?.orbitalY ?? layer.velocity?.orbital?.[1] ?? 0;
+    const centerOffX = scratchPos[0] - slot.x;
+    const centerOffZ = scratchPos[2] - slot.z;
+    sampleStartColor(layer.startColor, scratchTintOut);
+    const tintRgb24 = packRgb24(
+      Math.round(scratchTintOut[0] * 255),
+      Math.round(scratchTintOut[1] * 255),
+      Math.round(scratchTintOut[2] * 255),
+    );
 
     if (layer._kind === 'mesh' || layer.renderMode === 'mesh') {
       if (!meshVfx) return;
@@ -449,6 +573,9 @@ export function createEffectPlayer({
         vz: scratchVel[2],
         gravity,
         drag,
+        orbitalY,
+        centerX: slot.x,
+        centerZ: slot.z,
         duration: dur,
         sizeStart,
         rotX: layer.rotX ?? 0,
@@ -457,7 +584,14 @@ export function createEffectPlayer({
         spinX: layer.spin?.[0] ?? 0,
         spinY: layer.spin?.[1] ?? angVel,
         spinZ: layer.spin?.[2] ?? 0,
+        alignToVelocity: layer.alignToVelocity,
+        forwardAxis: layer.forwardAxis,
         hdr: layer.hdr ?? 1.0,
+        tint: scratchTintOut,
+        lit: layer.lit,
+        emission: layer.emission,
+        cullMode: layer.cullMode,
+        opaque: layer.opaque,
         blend: layer.blend ?? 'alpha',
         colorCurve: layer.colorCurve,
         sizeCurve: layer.sizeCurve,
@@ -469,7 +603,9 @@ export function createEffectPlayer({
     }
 
     if (!atlasParticles) return;
-    atlasParticles.emit({
+    const additive = layer.blend === 'additive';
+    const needsTracking = Boolean(layer.collision) || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0);
+    const atlasSlot = atlasParticles.emit({
       x: scratchPos[0],
       y: scratchPos[1],
       z: scratchPos[2],
@@ -480,10 +616,15 @@ export function createEffectPlayer({
       sizeStart,
       gravity,
       drag,
+      staticPos: Boolean(layer.collision),
       curveRow: layer._curveRow,
       rotation: rot0,
       angularVel: angVel,
       hdr: layer.hdr ?? 1.0,
+      tintRgb24,
+      orbitalY,
+      centerOffX,
+      centerOffZ,
       renderMode: layer.renderMode ?? 'billboard',
       blend: layer.blend ?? 'alpha',
       sprite: layer.sprite,
@@ -495,12 +636,37 @@ export function createEffectPlayer({
       phase,
     });
 
+    let trackedSlot = -1;
+    if (needsTracking) {
+      if (layer.subEmitters) {
+        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth);
+      }
+      trackedSlot = allocTrackedParticle({
+        additive,
+        atlasSlot,
+        duration: dur,
+        x: scratchPos[0],
+        y: scratchPos[1],
+        z: scratchPos[2],
+        vx: scratchVel[0],
+        vy: scratchVel[1],
+        vz: scratchVel[2],
+        gravity,
+        drag,
+        collision: layer.collision,
+        subEmitters: layer.subEmitters,
+        subDepth: slot.subDepth,
+      });
+    }
+
     if (layer.trail) {
       allocTrailFollower(
         scratchPos[0], scratchPos[1], scratchPos[2],
         scratchVel[0], scratchVel[1], scratchVel[2],
         gravity, drag, noiseStrength, noiseFreq, phase,
-        dur, layer.trail,
+        dur, layer.trail, scratchTintOut,
+        orbitalY, centerOffX, centerOffZ,
+        trackedSlot,
       );
     }
   }
@@ -624,6 +790,7 @@ export function createEffectPlayer({
     slot.z = slot.follow?.z ?? options.z ?? 0;
     slot.yaw = slot.follow?.yaw ?? options.yaw ?? 0;
     slot.scale = options.scale ?? 1;
+    slot.subDepth = options._subDepth ?? 0;
     slot.lightSlotIdx = -1;
 
     for (let l = 0; l < compiled.layers.length; l++) {
@@ -754,6 +921,51 @@ export function createEffectPlayer({
       }
     }
 
+    for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
+      const tp = trackedParticles[i];
+      if (!tp.active) continue;
+      tp.age += dt;
+      if (tp.age >= tp.duration) {
+        if (tp.subEmitters) {
+          fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth);
+        }
+        tp.active = false;
+        continue;
+      }
+      if (dt > 0) {
+        if (tp.drag > 0.001) {
+          const d = Math.exp(-tp.drag * dt);
+          tp.vx *= d;
+          tp.vy *= d;
+          tp.vz *= d;
+        }
+        tp.vy += (is2D ? tp.gravity : -tp.gravity) * dt;
+        tp.x += tp.vx * dt;
+        tp.y += tp.vy * dt;
+        tp.z += tp.vz * dt;
+        if (tp.hasCollision && !is2D && tp.y <= tp.groundY && tp.vy < 0) {
+          tp.y = tp.groundY;
+          if (tp.bouncesLeft > 0 && Math.abs(tp.vy) >= tp.minSpeed) {
+            tp.vy = Math.abs(tp.vy) * tp.bounce;
+            const fric = Math.max(0, 1 - tp.dampen);
+            tp.vx *= fric;
+            tp.vz *= fric;
+            tp.bouncesLeft -= 1;
+          } else {
+            tp.vy = 0;
+            tp.vx *= 0.85;
+            tp.vz *= 0.85;
+          }
+          if (tp.subEmitters) {
+            fireSubEmitters(tp.subEmitters, 'collision', tp.x, tp.y, tp.z, tp.subDepth);
+          }
+        }
+        if (tp.hasCollision && atlasParticles && tp.atlasSlot >= 0) {
+          atlasParticles.updateSlot(tp.additive, tp.atlasSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
+        }
+      }
+    }
+
     if (trails) {
       for (let i = 0; i < MAX_TRAIL_FOLLOWERS; i++) {
         const tf = trailFollowers[i];
@@ -765,14 +977,20 @@ export function createEffectPlayer({
           tf.trailId = -1;
           continue;
         }
-        evaluateAtlasParticlePosition(
-          tf.x0, tf.y0, tf.z0,
-          tf.vx, tf.vy, tf.vz,
-          tf.gravity, tf.drag,
-          tf.noiseStrength, tf.noiseFreq, tf.phase,
-          tf.age, is2D, scratchPos,
-        );
-        trails.pushTrailPoint(tf.trailId, scratchPos[0], scratchPos[1], scratchPos[2]);
+        if (tf.trackedSlot >= 0 && trackedParticles[tf.trackedSlot]?.active) {
+          const tp = trackedParticles[tf.trackedSlot];
+          trails.pushTrailPoint(tf.trailId, tp.x, tp.y, tp.z);
+        } else {
+          evaluateAtlasParticlePosition(
+            tf.x0, tf.y0, tf.z0,
+            tf.vx, tf.vy, tf.vz,
+            tf.gravity, tf.drag,
+            tf.noiseStrength, tf.noiseFreq, tf.phase,
+            tf.age, is2D, scratchPos,
+            tf.orbitalY, tf.centerOffX, tf.centerOffZ,
+          );
+          trails.pushTrailPoint(tf.trailId, scratchPos[0], scratchPos[1], scratchPos[2]);
+        }
       }
     }
   }
@@ -780,6 +998,9 @@ export function createEffectPlayer({
   function stopAll() {
     for (let i = 0; i < MAX_ACTIVE_EFFECTS; i++) {
       if (effectSlots[i].active) stopSlot(effectSlots[i]);
+    }
+    for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
+      trackedParticles[i].active = false;
     }
     if (trails) {
       for (let i = 0; i < MAX_TRAIL_FOLLOWERS; i++) {

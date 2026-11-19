@@ -16,6 +16,7 @@ import {
   createStatelessParticlePool,
   createVfxSystem,
   createVisualPrng,
+  evaluateAtlasParticlePosition,
   evaluateColorByNumber,
   evaluateColorCurve,
   evaluateScaleByNumber,
@@ -565,6 +566,106 @@ test('createVfxSystem.playEffect orchestrates composite one-shot explosion and l
 
     shieldHandle.stop();
     assert.equal(shieldHandle.isActive(), false);
+  } finally {
+    vfx.dispose();
+  }
+});
+
+test('vfx extensions support vertical billboard, orbital motion, startColor, textured tapered trails, lit/aligned mesh, collision bounce, and subEmitters', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 32, maxAtlasParticles: 128, maxMeshVfx: 8 });
+  try {
+    // 1. Textured & tapered ribbon trail + orbital position evaluator
+    const dummyTex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    vfx.setTrailTexture(dummyTex, [0, 0.75, 0.25, 1.0]);
+    vfx.setDepthTexture(dummyTex, { near: 0.1, far: 100, width: 800, height: 600, softFade: 0.5 });
+
+    const tid = vfx.allocTrail({ color: 0xff8800, endColor: 0x220000, width: 0.4, endWidth: 0.05, hdr: 2.5 });
+    assert.ok(tid >= 0);
+    vfx.pushTrailPoint(tid, 0, 0, 0);
+    vfx.pushTrailPoint(tid, 1, 0, 0);
+    vfx.pushTrailPoint(tid, 2, 0, 0);
+    const ribbonMesh = scene.getObjectByName('HGameVfxRibbonTrails');
+    const segExtra = ribbonMesh.geometry.getAttribute('aSegExtra');
+    assert.equal(segExtra.array[tid * 2 * 7 * 4 + 3], 2.5);
+    vfx.freeTrail(tid);
+
+    const orbPos = new Float32Array(3);
+    evaluateAtlasParticlePosition(2, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0, Math.PI * 0.5, false, orbPos, 1.0, 2, 0);
+    assert.ok(Math.abs(orbPos[0]) < 1e-4 && Math.abs(orbPos[2] - 2) < 1e-4);
+
+    // 2. Vertical billboard + startColor + orbital + soft depth uniforms
+    vfx.atlasParticles.emit({
+      x: 1, y: 0, z: 0,
+      duration: 1.0,
+      renderMode: 'vertical',
+      tintRgb24: packRgb24(0x33ccff),
+      orbitalY: 1.5,
+      centerOffX: 1,
+      centerOffZ: 0,
+    });
+    vfx.update(0.05);
+    const atlasNormal = scene.getObjectByName('HGameVfxAtlasNormal');
+    const p3 = atlasNormal.geometry.getAttribute('aAtlasP3');
+    const p7 = atlasNormal.geometry.getAttribute('aAtlasP7');
+    assert.equal(p3.array[3], VFX_RENDER_MODE.VERTICAL);
+    assert.equal(p7.array[0], packRgb24(0x33ccff));
+    assert.equal(p7.array[1], 1.5);
+    assert.equal(atlasNormal.material.uniforms.uHasSoftDepth.value, 1.0);
+
+    // 3. Velocity-aligned lit mesh particle
+    const mSlot = vfx.meshVfx.spawn({
+      mesh: 'crystal',
+      x: 0, y: 1, z: 0,
+      vx: 3, vy: 4, vz: 0,
+      duration: 0.6,
+      alignToVelocity: true,
+      forwardAxis: 'z',
+      lit: true,
+      emission: [0.2, 0.5, 0.8],
+    });
+    assert.equal(mSlot, 0);
+    const mObj = scene.getObjectByName('HGameVfxMesh_0');
+    assert.equal(mObj.material.uniforms.uLit.value, 1.0);
+    assert.ok(Math.abs(mObj.quaternion.x) > 0.01 || Math.abs(mObj.quaternion.y) > 0.01 || Math.abs(mObj.quaternion.z) > 0.01);
+
+    // 4. CollisionModule bounce + SubModule (birth, collision, death)
+    vfx.registerEffect({
+      schemaVersion: 1,
+      id: 'sub_spark_pop',
+      loop: false,
+      duration: 0.3,
+      layers: [{ kind: 'particle', bursts: [{ time: 0, count: 2 }], life: 0.2, size: 0.3 }],
+    });
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'bouncing_bomb',
+      loop: false,
+      duration: 1.0,
+      layers: [
+        {
+          kind: 'particle',
+          bursts: [{ time: 0, count: 1 }],
+          life: 0.5,
+          size: 0.5,
+          offset: [0, 0.4, 0],
+          velocity: { linear: [1, -4, 0] },
+          gravity: 9.8,
+          startColor: ['#ff4400', '#ffff00'],
+          collision: { groundY: 0, bounce: 0.6, dampen: 0.2, maxBounces: 2 },
+          subEmitters: [
+            { trigger: 'birth', effect: 'sub_spark_pop' },
+            { trigger: 'collision', effect: 'sub_spark_pop' },
+            { trigger: 'death', effect: 'sub_spark_pop' },
+          ],
+        },
+      ],
+    });
+    // Step through bounce (t ~ 0.1s) and death (t ~ 0.5s)
+    for (let i = 0; i < 15; i++) vfx.update(0.05);
+    // 1 main + birth(2) + collision(2) + death(2) = 7+ normal particles
+    assert.ok(vfx.atlasParticles.getStats().normalTotal >= 7);
+    dummyTex.dispose();
   } finally {
     vfx.dispose();
   }

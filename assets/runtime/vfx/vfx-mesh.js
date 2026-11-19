@@ -28,6 +28,9 @@ uniform float uHasTex;
 uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uHdr;
+uniform float uLit;
+uniform vec3 uLightDirView;
+uniform vec3 uEmission;
 uniform vec2 uFresnel;     // power, intensity
 uniform vec3 uDissolve;    // progress [0..1], edgeWidth, enabled
 uniform vec3 uDissolveColor;
@@ -61,9 +64,19 @@ void main() {
   float alpha = texCol.a * uOpacity;
   vec3 baseCol = texCol.rgb * uColor * max(0.0, uHdr);
 
+  vec3 N = normalize(vNormalView);
+  vec3 V = normalize(vViewPos);
+  if (uLit > 0.5) {
+    vec3 L = normalize(uLightDirView);
+    float ndotl = max(dot(N, L), 0.0);
+    float hemi = 0.5 + 0.5 * N.y;
+    vec3 H = normalize(L + V);
+    float spec = pow(max(dot(N, H), 0.0), 28.0) * 0.45;
+    baseCol = baseCol * (0.35 + 0.45 * hemi + 0.65 * ndotl) + vec3(spec) * uColor;
+  }
+  baseCol += uEmission;
+
   if (uFresnel.y > 0.001) {
-    vec3 N = normalize(vNormalView);
-    vec3 V = normalize(vViewPos);
     float ndotv = clamp(abs(dot(N, V)), 0.0, 1.0);
     float rim = pow(1.0 - ndotv, max(0.25, uFresnel.x)) * uFresnel.y;
     baseCol += uColor * (rim * max(1.0, uHdr));
@@ -149,6 +162,9 @@ export function createMeshVfxPool({
   const builtinGeometries = new Map();
   const slots = [];
   const scratchColor = new Float32Array(4);
+  const scratchFwd = THREE?.Vector3 ? new THREE.Vector3(0, 0, 1) : null;
+  const scratchDir = THREE?.Vector3 ? new THREE.Vector3(0, 1, 0) : null;
+  const scratchQuat = THREE?.Quaternion ? new THREE.Quaternion() : null;
   let simTime = 0;
   let totalSpawned = 0;
   let cursor = 0;
@@ -169,6 +185,9 @@ export function createMeshVfxPool({
           uColor: { value: THREE.Color ? new THREE.Color(1, 1, 1) : { setRGB() {} } },
           uOpacity: { value: 1 },
           uHdr: { value: 1 },
+          uLit: { value: 0 },
+          uLightDirView: { value: THREE.Vector3 ? new THREE.Vector3(0.4, 0.8, 0.45) : { set() {} } },
+          uEmission: { value: THREE.Color ? new THREE.Color(0, 0, 0) : { setRGB() {} } },
           uUvScroll: { value: THREE.Vector2 ? new THREE.Vector2(0, 0) : { set() {} } },
           uTime: { value: 0 },
           uFresnel: { value: THREE.Vector2 ? new THREE.Vector2(2.5, 0) : { set() {} } },
@@ -201,14 +220,22 @@ export function createMeshVfxPool({
       vz: 0,
       gravity: 0,
       drag: 0,
+      orbitalY: 0,
+      centerX: 0,
+      centerZ: 0,
       rotX: 0,
       rotY: 0,
       rotZ: 0,
       spinX: 0,
       spinY: 0,
       spinZ: 0,
+      alignToVelocity: false,
+      forwardAxis: 'z',
       baseScale: 1,
       hdr: 1,
+      tintR: 1,
+      tintG: 1,
+      tintB: 1,
       /** @type {Array<[number, number[]]> | null} */
       colorCurve: null,
       /** @type {Array<[number, number]> | null} */
@@ -274,14 +301,22 @@ export function createMeshVfxPool({
     s.vz = opts.vz ?? 0;
     s.gravity = opts.gravity ?? 0;
     s.drag = opts.drag ?? 0;
+    s.orbitalY = opts.orbitalY ?? 0;
+    s.centerX = opts.centerX ?? s.x;
+    s.centerZ = opts.centerZ ?? s.z;
     s.rotX = opts.rotX ?? 0;
     s.rotY = opts.rotY ?? 0;
     s.rotZ = opts.rotZ ?? 0;
     s.spinX = opts.spinX ?? 0;
     s.spinY = opts.spinY ?? 0;
     s.spinZ = opts.spinZ ?? 0;
+    s.alignToVelocity = Boolean(opts.alignToVelocity);
+    s.forwardAxis = opts.forwardAxis || 'z';
     s.baseScale = opts.sizeStart ?? opts.scale ?? 1.0;
     s.hdr = opts.hdr ?? 1.0;
+    s.tintR = opts.tint?.[0] ?? 1.0;
+    s.tintG = opts.tint?.[1] ?? 1.0;
+    s.tintB = opts.tint?.[2] ?? 1.0;
     s.colorCurve = Array.isArray(opts.colorCurve) ? opts.colorCurve : null;
     s.sizeCurve = Array.isArray(opts.sizeCurve) ? opts.sizeCurve : null;
     s.dissolveEnabled = Boolean(opts.dissolve);
@@ -293,7 +328,17 @@ export function createMeshVfxPool({
       const additive = opts.blend === 'additive' || Boolean(opts.additive);
       if (THREE) {
         s.mat.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+        s.mat.side = opts.cullMode === 'front'
+          ? THREE.BackSide
+          : opts.cullMode === 'back'
+            ? THREE.FrontSide
+            : THREE.DoubleSide;
       }
+      s.mat.depthWrite = Boolean(opts.opaque);
+      s.mat.transparent = !opts.opaque;
+      s.mat.uniforms.uLit.value = opts.lit ? 1.0 : 0.0;
+      const em = opts.emission || [0, 0, 0];
+      s.mat.uniforms.uEmission.value.setRGB(em[0] ?? 0, em[1] ?? 0, em[2] ?? 0);
       const uvScroll = opts.uvScroll || [0, 0];
       s.mat.uniforms.uUvScroll.value.set(uvScroll[0] ?? 0, uvScroll[1] ?? 0);
       const fresnel = opts.fresnel;
@@ -316,10 +361,25 @@ export function createMeshVfxPool({
     const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t);
     evaluateColorCurve(s.colorCurve, t, scratchColor);
     s.mesh.position.set(s.x, s.y, s.z);
-    s.mesh.rotation.set(s.rotX, s.rotY, s.rotZ);
+    if (s.alignToVelocity && scratchFwd && scratchDir && scratchQuat) {
+      const spd = Math.hypot(s.vx, s.vy, s.vz);
+      if (spd > 0.001) {
+        if (s.forwardAxis === 'y') scratchFwd.set(0, 1, 0);
+        else if (s.forwardAxis === 'x') scratchFwd.set(1, 0, 0);
+        else scratchFwd.set(0, 0, 1);
+        scratchDir.set(s.vx / spd, s.vy / spd, s.vz / spd);
+        scratchQuat.setFromUnitVectors(scratchFwd, scratchDir);
+        s.mesh.quaternion.copy(scratchQuat);
+        if (s.rotZ !== 0) s.mesh.rotateZ(s.rotZ);
+      } else {
+        s.mesh.rotation.set(s.rotX, s.rotY, s.rotZ);
+      }
+    } else {
+      s.mesh.rotation.set(s.rotX, s.rotY, s.rotZ);
+    }
     s.mesh.scale.set(sc, sc, sc);
     s.mat.uniforms.uTime.value = simTime;
-    s.mat.uniforms.uColor.value.setRGB(scratchColor[0], scratchColor[1], scratchColor[2]);
+    s.mat.uniforms.uColor.value.setRGB(scratchColor[0] * s.tintR, scratchColor[1] * s.tintG, scratchColor[2] * s.tintB);
     s.mat.uniforms.uOpacity.value = scratchColor[3];
     s.mat.uniforms.uHdr.value = s.hdr;
     if (s.dissolveEnabled) {
@@ -351,6 +411,19 @@ export function createMeshVfxPool({
         s.x += s.vx * dt;
         s.y += s.vy * dt;
         s.z += s.vz * dt;
+        if (Math.abs(s.orbitalY) > 0.0001) {
+          const oa = s.orbitalY * dt;
+          const oc = Math.cos(oa);
+          const os = Math.sin(oa);
+          const rx = s.x - s.centerX;
+          const rz = s.z - s.centerZ;
+          s.x = s.centerX + rx * oc - rz * os;
+          s.z = s.centerZ + rx * os + rz * oc;
+          const vx = s.vx;
+          const vz = s.vz;
+          s.vx = vx * oc - vz * os;
+          s.vz = vx * os + vz * oc;
+        }
         s.rotX += s.spinX * dt;
         s.rotY += s.spinY * dt;
         s.rotZ += s.spinZ * dt;
