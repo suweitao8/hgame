@@ -63,12 +63,22 @@ function readMinMaxScalar(block, fieldName, fallback = 0) {
   const sub = block.match(new RegExp(`(?:^|\\n) {4}${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n {4}[A-Za-z_]|$)`));
   if (!sub) return fallback;
   const mode = Number((sub[1].match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
-  const maxVal = Number((sub[1].match(/\bscalar:\s*([-\d.eE+]+)/) || [])[1] ?? fallback);
-  const minVal = Number((sub[1].match(/\bminScalar:\s*([-\d.eE+]+)/) || [])[1] ?? maxVal);
+  const numOrInf = (m) => {
+    if (!m) return null;
+    if (m[1] === 'Infinity') return Infinity;
+    if (m[1] === '-Infinity') return -Infinity;
+    return Number(m[1]);
+  };
+  const parsedMax = numOrInf(sub[1].match(/\bscalar:\s*(Infinity|-Infinity|[-\d.eE+]+)/));
+  const maxVal = parsedMax !== null ? parsedMax : fallback;
+  const parsedMin = numOrInf(sub[1].match(/\bminScalar:\s*(Infinity|-Infinity|[-\d.eE+]+)/));
+  const minVal = parsedMin !== null ? parsedMin : maxVal;
   if (mode === 3 && minVal !== maxVal) {
-    return [Number(Math.min(minVal, maxVal).toFixed(4)), Number(Math.max(minVal, maxVal).toFixed(4))];
+    const lo = Math.min(minVal, maxVal);
+    const hi = Math.max(minVal, maxVal);
+    return [Number.isFinite(lo) ? Number(lo.toFixed(4)) : lo, Number.isFinite(hi) ? Number(hi.toFixed(4)) : hi];
   }
-  return Number(maxVal.toFixed(4));
+  return Number.isFinite(maxVal) ? Number(maxVal.toFixed(4)) : maxVal;
 }
 
 function srgbToLinear(c) {
@@ -99,9 +109,11 @@ function normalizeHdrColor(rgba) {
 }
 
 function parseCurveKeys(curveBlock) {
+  const maxCurveText = curveBlock.split(/\n\s*minCurve:/)[0] || curveBlock;
+  const postInf = Number((maxCurveText.match(/m_PostInfinity:\s*(\d+)/) || [])[1] ?? 2);
   const re = /time:\s*([-\d.eE+]+)\s*\r?\n\s*value:\s*([-\d.eE+]+)(?:\s*\r?\n\s*inSlope:\s*([-\d.eE+]+)\s*\r?\n\s*outSlope:\s*([-\d.eE+]+))?/g;
   const raw = [];
-  for (const k of curveBlock.matchAll(re)) {
+  for (const k of maxCurveText.matchAll(re)) {
     const t = Math.max(0, Math.min(1, Number(k[1])));
     const v = Math.max(0, Number(k[2]));
     const inS = k[3] !== undefined ? Number(k[3]) : null;
@@ -109,7 +121,7 @@ function parseCurveKeys(curveBlock) {
     if (raw.length === 0 || t >= raw[raw.length - 1].t) {
       raw.push({ t, v, inS: Number.isFinite(inS) ? inS : null, outS: Number.isFinite(outS) ? outS : null });
     } else {
-      break; // ignore Unity minCurve duplicate following maxCurve
+      break;
     }
   }
   if (raw.length < 2) return null;
@@ -140,6 +152,41 @@ function parseCurveKeys(curveBlock) {
   }
   const last = raw[raw.length - 1];
   out.push([Number(last.t.toFixed(3)), Number(last.v.toFixed(3))]);
+
+  const tStart = out[0][0];
+  const period = out[out.length - 1][0] - tStart;
+  if ((postInf === 0 || postInf === 1) && period > 0.02 && out[out.length - 1][0] < 0.995) {
+    const tiled = [...out];
+    const maxStops = 56;
+    let cycle = 1;
+    let done = false;
+    while (!done && tiled.length < maxStops) {
+      const baseT = out[out.length - 1][0] + (cycle - 1) * period;
+      const reverse = postInf === 1 && (cycle % 2 === 1);
+      const seq = reverse ? [...out].reverse() : out;
+      for (let idx = 1; idx < seq.length; idx++) {
+        const localT = reverse ? (out[out.length - 1][0] - seq[idx][0]) : (seq[idx][0] - tStart);
+        const absT = baseT + localT;
+        const val = seq[idx][1];
+        if (absT >= 1.0) {
+          const prev = tiled[tiled.length - 1];
+          const span = Math.max(1e-6, absT - prev[0]);
+          const f = (1.0 - prev[0]) / span;
+          const endVal = prev[1] + (val - prev[1]) * Math.max(0, Math.min(1, f));
+          tiled.push([1, Number(endVal.toFixed(3))]);
+          done = true;
+          break;
+        }
+        tiled.push([Number(absT.toFixed(3)), val]);
+        if (tiled.length >= maxStops) {
+          done = true;
+          break;
+        }
+      }
+      cycle += 1;
+    }
+    return tiled;
+  }
   return out;
 }
 
@@ -306,7 +353,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const maxParticles = Number((initMod.match(/^\s*maxNumParticles:\s*(\d+)/m) || [])[1] ?? 1000);
     const size3D = /^\s*size3D:\s*1\b/m.test(initMod);
     const rawLife = readMinMaxScalar(initMod, 'startLifetime', 1);
-    const fixInf = (v) => (typeof v === 'number' && !Number.isFinite(v) ? dur : v);
+    const isInf = (v) => typeof v === 'number' && !Number.isFinite(v);
+    const hasInfiniteLife = Array.isArray(rawLife) ? (isInf(rawLife[0]) || isInf(rawLife[1])) : isInf(rawLife);
+    const fixInf = (v) => (isInf(v) ? dur : v);
     const life = Array.isArray(rawLife) ? [fixInf(rawLife[0]), fixInf(rawLife[1])] : fixInf(rawLife);
     const speed = readMinMaxScalar(initMod, 'startSpeed', 0);
     const size = readMinMaxScalar(initMod, 'startSize', 1);
@@ -385,6 +434,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(typeof delay === 'number' && delay > 0 ? { delay } : {}),
       ...(effectiveBursts.length > 0 ? { bursts: effectiveBursts } : {}),
       ...(hasPositiveRate ? { rate: effectiveRate } : {}),
+      ...(hasInfiniteLife ? { persistent: true } : {}),
       life,
       speed,
       size,
@@ -469,20 +519,19 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         ],
       ]);
     } else {
-      layer.colorCurve = [
-        [0, [
-          Number((startMul[0] * (mainMat?.tintRgb?.[0] ?? 1)).toFixed(3)),
-          Number((startMul[1] * (mainMat?.tintRgb?.[1] ?? 1)).toFixed(3)),
-          Number((startMul[2] * (mainMat?.tintRgb?.[2] ?? 1)).toFixed(3)),
-          Number(startMul[3].toFixed(3)),
-        ]],
-        [1, [
-          Number((startMul[0] * (mainMat?.tintRgb?.[0] ?? 1)).toFixed(3)),
-          Number((startMul[1] * (mainMat?.tintRgb?.[1] ?? 1)).toFixed(3)),
-          Number((startMul[2] * (mainMat?.tintRgb?.[2] ?? 1)).toFixed(3)),
-          0,
-        ]],
+      const constRgba = [
+        Number((startMul[0] * (mainMat?.tintRgb?.[0] ?? 1)).toFixed(3)),
+        Number((startMul[1] * (mainMat?.tintRgb?.[1] ?? 1)).toFixed(3)),
+        Number((startMul[2] * (mainMat?.tintRgb?.[2] ?? 1)).toFixed(3)),
+        Number(startMul[3].toFixed(3)),
       ];
+      layer.colorCurve = [
+        [0, constRgba],
+        [1, constRgba],
+      ];
+    }
+    if (hasInfiniteLife && (colCurve || layer.sizeCurve)) {
+      layer.curveCycle = dur;
     }
 
     const velMod = extractSection(ps, 'VelocityModule');

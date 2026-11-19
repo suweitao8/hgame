@@ -14,8 +14,8 @@ export const VFX_RENDER_MODE = Object.freeze({
   VERTICAL: 4,
 });
 
-const LUT_HALF = 32;
-const LUT_WIDTH = 64;
+const LUT_HALF = 128;
+const LUT_WIDTH = 256;
 const LUT_ROWS = 256;
 const SIZE_CURVE_MAX = 8.0;
 
@@ -98,7 +98,7 @@ export function evaluateSizeCurve(keys, t) {
 
 function normalizeStops(stops, isColor) {
   if (!Array.isArray(stops) || stops.length === 0) return null;
-  const copy = stops.slice(0, 8).map((item) => {
+  const copy = stops.slice(0, 64).map((item) => {
     const t = Math.max(0, Math.min(1, Number(item?.[0]) || 0));
     if (isColor) {
       const c = Array.isArray(item?.[1]) ? item[1] : [1, 1, 1, 1];
@@ -550,12 +550,12 @@ vec3 unpackRgb24(float v) {
 
 float sampleSizeCurve(float row, float t) {
   float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
-  float s = clamp(t, 0.0, 1.0) * 31.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
   float i0 = floor(s);
-  float i1 = min(31.0, i0 + 1.0);
+  float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 t0 = texture2D(uCurveLut, vec2((32.0 + i0 + 0.5) / 64.0, rowV));
-  vec4 t1 = texture2D(uCurveLut, vec2((32.0 + i1 + 0.5) / 64.0, rowV));
+  vec4 t0 = texture2D(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
+  vec4 t1 = texture2D(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
   float s0 = (t0.r * 255.0 * 256.0 + t0.g * 255.0) / 65535.0 * 8.0;
   float s1 = (t1.r * 255.0 * 256.0 + t1.g * 255.0) / 65535.0 * 8.0;
   return mix(s0, s1, f);
@@ -564,15 +564,19 @@ float sampleSizeCurve(float row, float t) {
 void main() {
   float age = uTime - aAtlasP0.w;
   float dur = aAtlasP1.w;
-  if (dur <= 0.0 || age < 0.0 || age >= dur) {
+  float rawCurve = aAtlasP2.w;
+  bool isPersistent = rawCurve >= 1023.5;
+  bool isLoopCurve = rawCurve >= 1023.5 && rawCurve < 2047.5;
+  float curveRow = mod(rawCurve, 1024.0);
+  if (dur <= 0.0 || age < 0.0 || (!isPersistent && age >= dur)) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
 
-  float t = age / dur;
+  float t = isLoopCurve ? fract(age / max(0.001, dur)) : (isPersistent ? 0.0 : age / dur);
   vLifeRatio = t;
   vUv = uv;
-  vCurveRow = aAtlasP2.w;
+  vCurveRow = curveRow;
   vHdr = aAtlasP3.z;
   vUvRect = aAtlasP4;
   vFlipbook = aAtlasP5;
@@ -628,7 +632,7 @@ void main() {
     }
   }
 
-  float curSize = aAtlasP2.x * sampleSizeCurve(aAtlasP2.w, t);
+  float curSize = aAtlasP2.x * sampleSizeCurve(curveRow, t);
   float rot = aAtlasP3.x + aAtlasP3.y * age;
   float renderMode = aAtlasP3.w;
 
@@ -721,12 +725,12 @@ float linearizeDepth(float zNdc) {
 
 vec4 sampleColorCurve(float row, float t) {
   float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
-  float s = clamp(t, 0.0, 1.0) * 31.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
   float i0 = floor(s);
-  float i1 = min(31.0, i0 + 1.0);
+  float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 c0 = texture2D(uCurveLut, vec2((i0 + 0.5) / 64.0, rowV));
-  vec4 c1 = texture2D(uCurveLut, vec2((i1 + 0.5) / 64.0, rowV));
+  vec4 c0 = texture2D(uCurveLut, vec2((i0 + 0.5) / 256.0, rowV));
+  vec4 c1 = texture2D(uCurveLut, vec2((i1 + 0.5) / 256.0, rowV));
   return mix(c0, c1, f);
 }
 
@@ -831,12 +835,12 @@ vec3 unpackRgb24(float v) {
 
 float sampleSizeCurve(float row, float t) {
   float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
-  float s = clamp(t, 0.0, 1.0) * 31.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
   float i0 = floor(s);
-  float i1 = min(31.0, i0 + 1.0);
+  float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 t0 = texture(uCurveLut, vec2((32.0 + i0 + 0.5) / 64.0, rowV));
-  vec4 t1 = texture(uCurveLut, vec2((32.0 + i1 + 0.5) / 64.0, rowV));
+  vec4 t0 = texture(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
+  vec4 t1 = texture(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
   float s0 = (t0.r * 255.0 * 256.0 + t0.g * 255.0) / 65535.0 * 8.0;
   float s1 = (t1.r * 255.0 * 256.0 + t1.g * 255.0) / 65535.0 * 8.0;
   return mix(s0, s1, f);
@@ -845,14 +849,18 @@ float sampleSizeCurve(float row, float t) {
 void main() {
   float age = uTime - aAtlasP0.w;
   float dur = aAtlasP1.w;
-  if (dur <= 0.0 || age < 0.0 || age >= dur) {
+  float rawCurve = aAtlasP2.w;
+  bool isPersistent = rawCurve >= 1023.5;
+  bool isLoopCurve = rawCurve >= 1023.5 && rawCurve < 2047.5;
+  float curveRow = mod(rawCurve, 1024.0);
+  if (dur <= 0.0 || age < 0.0 || (!isPersistent && age >= dur)) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
-  float t = age / dur;
+  float t = isLoopCurve ? fract(age / max(0.001, dur)) : (isPersistent ? 0.0 : age / dur);
   vLifeRatio = t;
   vUv = aQuadPos + 0.5;
-  vCurveRow = aAtlasP2.w;
+  vCurveRow = curveRow;
   vHdr = aAtlasP3.z;
   vUvRect = aAtlasP4;
   vFlipbook = aAtlasP5;
@@ -880,7 +888,7 @@ void main() {
     }
   }
 
-  float curSize = aAtlasP2.x * sampleSizeCurve(aAtlasP2.w, t);
+  float curSize = aAtlasP2.x * sampleSizeCurve(curveRow, t);
   float rot = aAtlasP3.x + aAtlasP3.y * age;
   vec2 axisX = vec2(cos(rot), sin(rot));
   vec2 axisY = vec2(-axisX.y, axisX.x);
@@ -923,12 +931,12 @@ out vec4 fragColor;
 
 vec4 sampleColorCurve(float row, float t) {
   float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
-  float s = clamp(t, 0.0, 1.0) * 31.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
   float i0 = floor(s);
-  float i1 = min(31.0, i0 + 1.0);
+  float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 c0 = texture(uCurveLut, vec2((i0 + 0.5) / 64.0, rowV));
-  vec4 c1 = texture(uCurveLut, vec2((i1 + 0.5) / 64.0, rowV));
+  vec4 c0 = texture(uCurveLut, vec2((i0 + 0.5) / 256.0, rowV));
+  vec4 c1 = texture(uCurveLut, vec2((i1 + 0.5) / 256.0, rowV));
   return mix(c0, c1, f);
 }
 
@@ -1379,6 +1387,15 @@ export function createAtlasParticlePool({
         )
         : 0xffffff;
 
+    const persistent = Boolean(opts.persistent);
+    const curveCycle = Number(opts.curveCycle ?? 0);
+    const packedRow = persistent
+      ? (curveRow + (curveCycle > 0 ? 1024 : 2048))
+      : curveRow;
+    const storedDur = persistent
+      ? (curveCycle > 0 ? curveCycle : 1e6)
+      : (opts.duration ?? 0.5);
+
     ch.p0[i4] = opts.x ?? 0;
     ch.p0[i4 + 1] = opts.y ?? 0;
     ch.p0[i4 + 2] = opts.z ?? 0;
@@ -1387,12 +1404,12 @@ export function createAtlasParticlePool({
     ch.p1[i4] = opts.vx ?? 0;
     ch.p1[i4 + 1] = opts.vy ?? 0;
     ch.p1[i4 + 2] = opts.vz ?? 0;
-    ch.p1[i4 + 3] = opts.duration ?? 0.5;
+    ch.p1[i4 + 3] = storedDur;
 
     ch.p2[i4] = opts.sizeStart ?? 1.0;
     ch.p2[i4 + 1] = opts.gravity ?? 0;
     ch.p2[i4 + 2] = opts.staticPos ? -1.0 : (opts.drag ?? 0);
-    ch.p2[i4 + 3] = curveRow;
+    ch.p2[i4 + 3] = packedRow;
 
     ch.p3[i4] = opts.rotation ?? 0;
     ch.p3[i4 + 1] = opts.angularVel ?? 0;
@@ -1576,9 +1593,12 @@ export function createAtlasParticlePool({
         const i4 = i * 4;
         const age = simTime - ch.p0[i4 + 3];
         const dur = ch.p1[i4 + 3];
-        if (dur <= 0 || age < 0 || age >= dur) continue;
-        const t = age / dur;
-        const curveRow = ch.p2[i4 + 3];
+        const rawCurve = ch.p2[i4 + 3];
+        const isPersistent = rawCurve >= 1023.5;
+        const isLoopCurve = rawCurve >= 1023.5 && rawCurve < 2047.5;
+        const curveRow = rawCurve % 1024;
+        if (dur <= 0 || age < 0 || (!isPersistent && age >= dur)) continue;
+        const t = isLoopCurve ? ((age / Math.max(0.001, dur)) % 1) : (isPersistent ? 0 : age / dur);
         lut.sampleColor(curveRow, t, scratchRgba);
         if (scratchRgba[3] < 0.01) continue;
 

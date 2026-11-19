@@ -754,6 +754,8 @@ export function createEffectPlayer({
       gravity,
       drag,
       staticPos: Boolean(layer.collision),
+      persistent: Boolean(layer.persistent),
+      curveCycle: layer.curveCycle ?? 0,
       curveRow: layer._curveRow,
       rotation: rot0,
       angularVel: angVel,
@@ -835,7 +837,7 @@ export function createEffectPlayer({
     if (active >= cap) return false;
     const remDur = emitParticleOrMesh(layer, slot, 0) ?? 0.5;
     const writeIdx = freeIdx >= 0 ? freeIdx : (ls.activeEndCursor++ % 64);
-    ls.activeEndTimes[writeIdx] = slot.age + remDur;
+    ls.activeEndTimes[writeIdx] = layer.persistent ? Infinity : (slot.age + remDur);
     return true;
   }
 

@@ -851,6 +851,54 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     const addRibbon = scene.getObjectByName('HGameVfxRibbonTrails');
     const segUv = addRibbon.geometry.getAttribute('aSegUvRect').array;
     assert.ok(Math.abs(segUv[0] - 0.25) < 1e-4 && Math.abs(segUv[1] - 0.5) < 1e-4 && Math.abs(segUv[2] - 0.75) < 1e-4 && Math.abs(segUv[3] - 0.625) < 1e-4, `expected per-trail aSegUvRect=[0.25,0.5,0.75,0.625], got [${segUv[0]},${segUv[1]},${segUv[2]},${segUv[3]}]`);
+
+    // 11. Persistent layers encode curveRow+1024/+2048 and emit only once across loop cycles, while LUT supports >8 stops
+    vfx.reset();
+    const multiStopSize = [];
+    for (let k = 0; k <= 16; k++) multiStopSize.push([k / 16, k % 2 === 0 ? 1.0 : 0.1]);
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'persistent_flicker_test',
+      loop: true,
+      duration: 5.0,
+      layers: [
+        {
+          name: 'base_glyph',
+          kind: 'particle',
+          maxParticles: 1,
+          rate: 10,
+          persistent: true,
+          curveCycle: 5.0,
+          life: 5.0,
+          size: 8,
+          sizeCurve: multiStopSize,
+          colorCurve: [[0, [0, 1, 0, 1]], [0.5, [0, 1, 0, 0.4]], [1, [0, 1, 0, 1]]],
+        },
+        {
+          name: 'outer_static',
+          kind: 'particle',
+          maxParticles: 1,
+          rate: 10,
+          persistent: true,
+          life: 5.0,
+          size: 10,
+        },
+      ],
+    }, { x: 0, y: 0, z: 0 });
+    for (let i = 0; i < 60; i++) vfx.update(0.1); // t = 6.0s > duration 5.0s
+    assert.equal(vfx.atlasParticles.getStats().normalTotal, 2, 'persistent maxParticles=1 layers emit once without respawning across loops');
+    const p1 = atlasNorm.geometry.getAttribute('aAtlasP1').array;
+    const p2 = atlasNorm.geometry.getAttribute('aAtlasP2').array;
+    assert.equal(p1[3], 5.0, 'curveCycle layer keeps cycle duration in p1.w');
+    assert.ok(p2[3] >= 1024 && p2[3] < 2048, `curveCycle layer packs +1024 row offset (got ${p2[3]})`);
+    assert.ok(p2[7] >= 2048, `static persistent layer packs +2048 row offset (got ${p2[7]})`);
+
+    const lutHi = createCurveLutTable(THREE);
+    const hiRow = lutHi.compile(null, multiStopSize);
+    const valValley = lutHi.sampleSize(hiRow, 1 / 16);
+    const valPeak = lutHi.sampleSize(hiRow, 2 / 16);
+    assert.ok(valValley < 0.2 && valPeak > 0.9, `expected >8-stop PingPong sizeCurve preserved in LUT (valley=${valValley.toFixed(2)}, peak=${valPeak.toFixed(2)})`);
+    lutHi.dispose();
     dummyTex.dispose();
   } finally {
     vfx.dispose();
