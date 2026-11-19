@@ -10,6 +10,7 @@ import {
 import { resolveQualityPreset } from './quality3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { createLighting2DState, createWebGL2DPostPass } from './post2d.js';
+import { createRenderDiagnostics2D } from './render-diagnostics-2d.js';
 
 export { Camera2D, Sprite2D, SpriteCrowd2D };
 
@@ -336,6 +337,7 @@ export function createWebGL2DAdapter({
   maxBatchInstances = 16384,
   allowFallback = true,
   createBufferCanvas = null,
+  diagnostics2d = false,
 } = {}) {
   if (!canvas?.getContext) throw new TypeError('WebGL2D adapter needs a canvas');
   if (!Number.isInteger(maxBatchInstances) || maxBatchInstances < 64 || maxBatchInstances > MAX_CAPACITY_CAP) {
@@ -364,6 +366,7 @@ export function createWebGL2DAdapter({
       cull,
       quality,
       createBufferCanvas,
+      diagnostics2d,
     });
   }
 
@@ -439,6 +442,7 @@ export function createWebGL2DAdapter({
   };
   const lighting2D = createLighting2DState();
   const postPass = createWebGL2DPostPass(gl);
+  const diagnostics = diagnostics2d ? createRenderDiagnostics2D({ gl }) : null;
 
   const allocBuffer = createBufferCanvas ?? ((w, h) => {
     if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(w, h);
@@ -1501,13 +1505,22 @@ export function createWebGL2DAdapter({
     drawQueue.clear();
   }
 
-  function render(scene, app = null) {
+  function renderView(report, index, target, scene, alpha, cam, subW, subH, vx, vy, vwPx, vhPx, allowShadows, allowSmoothing) {
+    report?.beginView(index);
+    const world = report?.beginPass('world', target);
+    try {
+      renderCameraView(scene, alpha, cam, subW, subH, vx, vy, vwPx, vhPx, allowShadows, allowSmoothing);
+    } finally { world?.(); }
+  }
+
+  function renderFrame(scene, app, report = null) {
     if (contextLost || disposed || !program) return;
     if (!viewport) resize();
     const { vh, dpr, scale, x, y } = viewport;
     const allowSmoothing = qualityPreset ? qualityPreset.imageSmoothing : imageSmoothing;
     const allowShadows = qualityPreset ? qualityPreset.groundShadows : true;
     const usePost = lighting2D.hasActivePass() && postPass.beginScene(canvas.width, canvas.height);
+    const sceneTarget = usePost ? postPass.sceneTarget : null;
 
     gl.disable(gl.SCISSOR_TEST);
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -1547,27 +1560,43 @@ export function createWebGL2DAdapter({
         const vy = Math.round((vh - cssY - cssH) * dpr);
         const vwPx = Math.max(1, Math.round(cssW * dpr));
         const vhPx = Math.max(1, Math.round(cssH * dpr));
-        renderCameraView(scene, alpha, v.camera, subW, subH, vx, vy, vwPx, vhPx, allowShadows, Boolean(allowSmoothing));
+        renderView(report, v.index, sceneTarget, scene, alpha, v.camera, subW, subH, vx, vy, vwPx, vhPx, allowShadows, Boolean(allowSmoothing));
       }
     } else {
       const vx = Math.round(x * dpr);
       const vy = Math.round((vh - y - height * scale) * dpr);
       const vwPx = Math.max(1, Math.round(width * scale * dpr));
       const vhPx = Math.max(1, Math.round(height * scale * dpr));
-      renderCameraView(scene, alpha, camera, width, height, vx, vy, vwPx, vhPx, allowShadows, Boolean(allowSmoothing));
+      renderView(report, 0, sceneTarget, scene, alpha, camera, width, height, vx, vy, vwPx, vhPx, allowShadows, Boolean(allowSmoothing));
     }
 
     gl.disable(gl.SCISSOR_TEST);
     gl.bindVertexArray(null);
     if (usePost) {
       const activeCam = (activeViews && activeViews.length > 0) ? activeViews[0].camera : camera;
-      postPass.endAndComposite(canvas.width, canvas.height, lighting2D, activeCam, viewport, width, height);
+      report?.beginView(-1);
+      postPass.endAndComposite(canvas.width, canvas.height, lighting2D, activeCam, viewport, width, height, report);
+    }
+  }
+
+  function render(scene, app = null) {
+    if (contextLost || disposed || !program) return;
+    if (!diagnostics?.beginFrame()) return renderFrame(scene, app);
+    let complete = false;
+    try {
+      renderFrame(scene, app, diagnostics);
+      complete = true;
+    } finally {
+      diagnostics.beginView(-1);
+      postPass.recordTargets?.(diagnostics);
+      diagnostics.endFrame(complete);
     }
   }
 
   const onContextLost = (event) => {
     event?.preventDefault?.();
     contextLost = true;
+    diagnostics?.resetGpu(true);
     destroyGlResources();
   };
   const onContextRestored = () => {
@@ -1596,6 +1625,7 @@ export function createWebGL2DAdapter({
     getQuality,
     get qualityPreset() { return qualityPreset; },
     get stats() { return { ...stats }; },
+    getRenderDiagnostics: () => diagnostics?.snapshot() ?? null,
     getViewport: () => ({ ...viewport }),
     setAmbientLight: lighting2D.setAmbientLight,
     addLight2D: lighting2D.addLight,
@@ -1606,6 +1636,7 @@ export function createWebGL2DAdapter({
     dispose() {
       if (disposed) return;
       disposed = true;
+      diagnostics?.resetGpu(true);
       canvas.removeEventListener?.('webglcontextlost', onContextLost, false);
       canvas.removeEventListener?.('webglcontextrestored', onContextRestored, false);
       drawQueue.dispose();

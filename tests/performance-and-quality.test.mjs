@@ -406,6 +406,33 @@ test('WebGL2D adapter batches 3,000 textured sprites + ground shadows into 1 dra
   fallback.dispose();
 });
 
+test('WebGL2D diagnostics include world and bloom submissions with unique attachment bytes', () => {
+  const { canvas, gl } = makeMockWebGL2Canvas({ width: 320, height: 180 });
+  // Enable the native post path on the test context.
+  Object.assign(gl, { createFramebuffer: () => ({}), bindFramebuffer() {}, framebufferTexture2D() {},
+    deleteFramebuffer() {}, uniform4fv() {}, uniform2f() {}, uniform1f() {}, drawArrays() {} });
+  const adapter = createWebGL2DAdapter({ canvas, width: 320, height: 180, pixelRatio: 1, diagnostics2d: true });
+  const scene = new Scene('gl-diagnostics');
+  scene.add(new Entity()).addComponent(new Sprite2D({ width: 12, height: 12 }));
+  scene._setActive(true);
+  adapter.setPost2D({ bloomIntensity: 1 });
+  const original = gl.drawArrays;
+  adapter.render(scene);
+  const snapshot = adapter.getRenderDiagnostics();
+  assert.deepEqual(snapshot.passes.map(({ name, drawCalls }) => [name, drawCalls]), [
+    ['world', 1], ['bloom-extract', 1], ['bloom-blur-x', 1], ['bloom-blur-y', 1], ['lighting-composite', 1],
+  ]);
+  assert.equal(snapshot.drawCalls, 5);
+  assert.equal(snapshot.triangles, 6);
+  assert.equal(snapshot.targets.length, 3);
+  assert.equal(snapshot.estimatedTargetBytes, 320 * 180 * 4 + 2 * 160 * 90 * 4);
+  assert.ok(snapshot.uploads.bufferBytes > 0);
+  assert.equal(gl.drawArrays, original);
+  canvas.dispatch('webglcontextlost');
+  assert.equal(adapter.getRenderDiagnostics(), null);
+  adapter.dispose();
+});
+
 test('WebGL2D fetches SwiftShader batch instances from a texture and restores that texture after context loss', () => {
   const { canvas, gl, glCalls } = makeMockWebGL2Canvas({ renderer: 'ANGLE (SwiftShader Device)' });
   const adapter = createWebGL2DAdapter({ canvas, maxBatchInstances: 129 });

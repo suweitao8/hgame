@@ -4,6 +4,7 @@ import { Scene, Entity } from '../assets/runtime/index.js';
 import { Sprite2D, createCanvas2DAdapter } from '../assets/runtime/integrations/canvas2d.js';
 import { createWebGL2DAdapter } from '../assets/runtime/integrations/webgl2d.js';
 import { createLighting2DState, MAX_2D_LIGHTS } from '../assets/runtime/integrations/post2d.js';
+import { createRenderDiagnostics2D } from '../assets/runtime/integrations/render-diagnostics-2d.js';
 
 function createMockCanvas2D() {
   const ops = [];
@@ -117,4 +118,105 @@ test('createCanvas2DAdapter skips post pass again once lights and post effects a
   c2d.render(scene);
   assert.equal(c2d.stats.postPassActive, false);
   c2d.dispose();
+});
+
+test('Canvas fallback reports ordered CPU stages and unavailable GPU counters', () => {
+  const { canvas } = createMockCanvas2D();
+  const renderer = createWebGL2DAdapter({ canvas, diagnostics2d: true });
+  assert.equal(renderer.getRenderDiagnostics(), null);
+  renderer.setViews([{ camera: renderer.camera, width: 0.5 }, { camera: renderer.camera, x: 0.5, width: 0.5 }]);
+  renderer.setPost2D({ vignette: 0.3 });
+  renderer.render(new Scene('canvas-diagnostics'));
+  const snapshot = renderer.getRenderDiagnostics();
+  assert.equal(snapshot.complete, true);
+  assert.deepEqual(snapshot.passes.map(({ name, viewIndex }) => [name, viewIndex]),
+    [['world', 0], ['lighting-composite', 0], ['world', 1], ['lighting-composite', 1]]);
+  assert.equal(snapshot.drawCalls, null);
+  assert.equal(snapshot.triangles, null);
+  assert.equal(snapshot.uploads, null);
+  assert.equal(snapshot.gpu.supported, false);
+  assert.ok(snapshot.passes.every(pass => pass.cpuMs >= 0 && pass.drawCalls === null));
+  renderer.dispose();
+  assert.equal(renderer.getRenderDiagnostics(), null);
+});
+
+test('Pixi WebGPU diagnostics observe queue writes and flag opaque bundles', () => {
+  const queue = { writeBuffer() {}, writeTexture() {}, copyExternalImageToTexture() {} };
+  const pass = () => ({ draw() {}, drawIndexed() {}, drawIndirect() {}, drawIndexedIndirect() {}, executeBundles() {} });
+  const device = { queue, createCommandEncoder: () => ({ beginRenderPass: pass }) };
+  const renderTarget = { bind: value => value };
+  const screenTarget = { isRoot: true, pixelWidth: 128, pixelHeight: 128 };
+  const renderer = { gpu: { device }, renderTarget, view: { renderTarget: screenTarget } };
+  const report = createRenderDiagnostics2D({ pixiRenderer: renderer });
+  const originalEncoder = device.createCommandEncoder;
+  const originalBind = renderTarget.bind;
+  assert.equal(report.beginFrame(), true);
+  const stage = report.beginPass('scene', null);
+  const target = { isRoot: true, pixelWidth: 32, pixelHeight: 16, colorAttachments: [{ texture: { format: 'rgba8unorm' } }] };
+  renderTarget.bind(target);
+  renderTarget.bind(target);
+  renderTarget.bind(screenTarget);
+  queue.writeBuffer({}, 0, new Float32Array(12), 2, 4);
+  queue.writeTexture({ texture: { format: 'rgba16float' } }, new Uint16Array(96), {}, [4, 3, 2]);
+  queue.copyExternalImageToTexture({}, { texture: { format: 'unknown' } }, [4, 2]);
+  const encoder = device.createCommandEncoder().beginRenderPass();
+  encoder.draw();
+  encoder.drawIndirect();
+  stage();
+  const bundle = report.beginPass('bundle', null);
+  encoder.executeBundles([{}]);
+  bundle();
+  const next = report.beginPass('next', null);
+  device.createCommandEncoder().beginRenderPass().drawIndexed();
+  next();
+  report.endFrame(true);
+  const snapshot = report.snapshot();
+  assert.equal(snapshot.drawCalls, null);
+  assert.equal(snapshot.passes[0].drawCalls, 2);
+  assert.equal(snapshot.passes[0].triangles, null);
+  assert.equal(snapshot.passes[1].drawCalls, null);
+  assert.equal(snapshot.passes[2].drawCalls, 1);
+  assert.deepEqual(snapshot.uploads, { bufferBytes: 16, textureBytes: 192, calls: 3, unmeasuredCalls: 1 });
+  assert.equal(snapshot.estimatedTargetBytes, 2048);
+  assert.equal(device.createCommandEncoder, originalEncoder);
+  assert.equal(renderTarget.bind, originalBind);
+});
+
+test('2D diagnostics release hooks and discard the active frame on context loss', () => {
+  let lost = false;
+  const gl = { drawArrays() {}, isContextLost: () => lost };
+  const original = gl.drawArrays;
+  const report = createRenderDiagnostics2D({ gl });
+  assert.equal(report.beginFrame(), true);
+  const finish = report.beginPass('world', null);
+  assert.notEqual(gl.drawArrays, original);
+  lost = true;
+  report.resetGpu(true);
+  assert.equal(gl.drawArrays, original);
+  finish();
+  report.endFrame(true);
+  assert.equal(report.snapshot(), null);
+  assert.equal(report.beginFrame(), false);
+  lost = false;
+  assert.equal(report.beginFrame(), true);
+  report.endFrame(true);
+  assert.equal(report.snapshot().complete, true);
+});
+
+test('Pixi diagnostics discard snapshots when the WebGPU device is lost or replaced', async () => {
+  let lose;
+  const first = { lost: new Promise(resolve => { lose = resolve; }) };
+  const pixiRenderer = { gpu: { device: first } };
+  const report = createRenderDiagnostics2D({ pixiRenderer });
+  assert.equal(report.beginFrame(), true);
+  report.endFrame(true);
+  lose();
+  await first.lost;
+  assert.equal(report.snapshot(), null);
+  assert.equal(report.beginFrame(), false);
+  pixiRenderer.gpu.device = {};
+  assert.equal(report.beginFrame(), true);
+  report.endFrame(true);
+  pixiRenderer.gpu.device = {};
+  assert.equal(report.snapshot(), null);
 });

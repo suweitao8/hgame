@@ -70,6 +70,7 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @property {string} [background='#101820'] Clear colour.
  * @property {number} [pixelRatio=globalThis.devicePixelRatio || 1] Device pixel ratio, clamped by the quality preset (max 3).
  * @property {boolean} [imageSmoothing=true] Smooth scaled images (overridden by the quality preset).
+ * @property {boolean} [diagnostics2d=false] Collect comparable per-frame and per-stage diagnostics.
  * @property {boolean} [interpolate=false] Always render interpolated transforms (entities with interpolate=true always do).
  * @property {boolean} [cull=true] Skip sprites outside the camera view.
  * @property {QualityPresetTier | null} [quality=null] Quality tier ('low' | 'medium' | 'high' | 'ultra'); null disables presets.
@@ -107,6 +108,7 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @property {() => QualityPresetTier | null} getQuality Active quality tier.
  * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
  * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
+ * @property {() => import('./render-diagnostics-2d.js').RenderDiagnosticsSnapshot2D | null} getRenderDiagnostics Latest opt-in render frame.
  * @property {() => Viewport2D} getViewport Copy of the current viewport.
  * @property {(color?: string | number, intensity?: number) => void} setAmbientLight Configure global 2D ambient darkness/tint.
  * @property {(light: { x: number, y: number, radius?: number, color?: string | number, intensity?: number }) => boolean} addLight2D Append a dynamic 2D point light.
@@ -124,7 +126,7 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @param {Canvas2DAdapterOptions} options
  * @returns {Canvas2DAdapter}
  */
-export function createCanvas2DAdapter({ canvas, width, height, background, pixelRatio, imageSmoothing, interpolate, cull, quality, createBufferCanvas, }?: Canvas2DAdapterOptions): Canvas2DAdapter;
+export function createCanvas2DAdapter({ canvas, width, height, background, pixelRatio, imageSmoothing, interpolate, cull, quality, createBufferCanvas, diagnostics2d, }?: Canvas2DAdapterOptions): Canvas2DAdapter;
 /** 2D camera supporting smooth follow, deadzones, bounds clamping, zoom, rotation and shake. */
 export class Camera2D {
     /** @param {Camera2DOptions} [options] */
@@ -641,6 +643,10 @@ export type Canvas2DAdapterOptions = {
      */
     imageSmoothing?: boolean | undefined;
     /**
+     * Collect comparable per-frame and per-stage diagnostics.
+     */
+    diagnostics2d?: boolean | undefined;
+    /**
      * Always render interpolated transforms (entities with interpolate=true always do).
      */
     interpolate?: boolean | undefined;
@@ -764,6 +770,10 @@ export type Renderer2DAdapter = {
      * Copy of last-frame statistics (getter).
      */
     stats: Renderer2DStats;
+    /**
+     * Latest opt-in render frame.
+     */
+    getRenderDiagnostics: () => import("./render-diagnostics-2d.js").RenderDiagnosticsSnapshot2D | null;
     /**
      * Copy of the current viewport.
      */

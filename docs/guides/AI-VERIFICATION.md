@@ -49,6 +49,18 @@ From the target project root, run `node "<hgame-repo>/scripts/task-check.mjs" bu
 - Exit `0` means every declared automated check passed. Exit `1` means a check failed or still needs evidence. Exit `2` means the task record or invocation is invalid. JSON includes statuses, the record hash, and fresh test and browser evidence. `review-required` is a pending item for the agent to inspect. Record the observed evidence in the final audit. Repeat that review when the relevant code or assets change.
 - Audit the correspondence between the request and the test. For example, a restart assertion should prove both a new round and retained score. A ready canvas or changing pixels is evidence for rendering activity. The full interaction needs its own assertion. For performance requirements, use the requested hardware and workload with the render benchmarks below and record the actual conditions.
 
+## Per-frame render diagnostics
+
+Pass `diagnostics2d: true` to `createCanvas2DAdapter` or `createWebGL2DAdapter`, or set `rendererOptions.diagnostics2d: true` in `startPixiGame`. Read `renderer.getRenderDiagnostics()` after a render. The Pixi profile also makes the enabled snapshot available through its existing `window.__hgameRenderDiagnostics()` hook. The snapshot has the same frame ID, pass timing, draw, upload and attachment fields as the Three recorder. Measurements describe renderer submissions and nominal attachment payloads.
+
+- **WebGL2D** records each view's world draw plus the shared Bloom extract, blur and lighting composite when active. It counts observed WebGL draw calls, triangle submissions and upload bytes. When a timer query is available, GPU samples arrive asynchronously with the originating frame and pass index. Shared stages use `viewIndex: -1`.
+- **Canvas2D** records CPU timing for world and lighting by view and estimates the owned tint and shadow canvases. Draw calls, triangles, uploads and GPU timing are unavailable through Canvas2D and appear as `null` or unsupported.
+- **Pixi** records preparation, effect preparation and scene submission. Pixi's internal filters are included in the scene submission. The recorder estimates bound offscreen attachments from their explicit base-level formats. Pixi WebGL uses the WebGL counters and timer query path. Pixi WebGPU observes direct and indirect render-pass draws and supported queue writes. A pass executing opaque bundles reports `null` for its draw count. WebGPU triangle counts and GPU time report unavailable.
+
+`complete: false` identifies a frame that threw during rendering. Context changes and disposal clear the previous snapshot. Enable collection when diagnosing a workload. CPU timing includes the cost of diagnostics and attachment totals are estimates.
+
+## Verification commands
+
 | Need | Command | Output |
 |---|---|---|
 | Find an API / its option keys | `docs/api/API-INDEX.json` (grep by name; one export per line: `signature` shows option-bag keys + defaults, `returns` lists returned object keys, `members` lists class methods) | JSON |

@@ -47,16 +47,54 @@ function delta(value, previous) {
   return value === null || previous === null ? null : Math.max(0, value - previous);
 }
 
+function drawDelta(after, before) {
+  return after?.opaqueDraws === before?.opaqueDraws ? delta(after?.calls ?? null, before?.calls ?? null) : null;
+}
+
 function uploadDelta(after, before) {
   if (!after || !before) return null;
   return Object.freeze({ bufferBytes: after.bufferBytes - before.bufferBytes, textureBytes: after.textureBytes - before.textureBytes,
     calls: after.calls - before.calls, unmeasuredCalls: after.unmeasuredCalls - before.unmeasuredCalls });
 }
 
-/** Internal opt-in recorder for the adapter's frame and ordered view draws. */
+function beginThreeCounters(renderer) {
+  const info = renderer.info;
+  const autoReset = info?.autoReset;
+  if (typeof autoReset === 'boolean') {
+    if (autoReset) info.reset?.();
+    info.autoReset = false;
+  }
+  return {
+    read: () => ({ calls: counter(info, 'calls'), triangles: counter(info, 'triangles') }),
+    stop() { if (typeof autoReset === 'boolean') info.autoReset = autoReset; },
+  };
+}
+
 export function createRenderDiagnostics3D(THREE, renderer) {
+  return createRenderDiagnostics({ getContext: () => renderer.getContext?.(),
+    beginCounters: () => beginThreeCounters(renderer), describeTarget: (target, view) => describeTarget(THREE, target, view) });
+}
+
+/**
+ * @typedef {object} RenderDiagnosticsOptions
+ * @property {() => any} [getContext] WebGL context for GPU samples.
+ * @property {() => unknown} [getIdentity] Context or device identity.
+ * @property {() => boolean} [isUnavailable] Whether the backend is unavailable.
+ * @property {(context: any) => {read: () => {calls: number | null, triangles: number | null, opaqueDraws?: number}, stop: () => void} | null} [beginCounters]
+ * @property {(target: any, viewIndex: number) => RenderTargetUsage3D | null} [describeTarget]
+ * @property {typeof beginWebGlUploadProbe} [beginUploads]
+ * @property {(record: (target: any) => RenderTargetUsage3D | null) => (() => void) | null} [observeTargets]
+ */
+
+/**
+ * Shared opt-in recorder for frame and ordered view submissions.
+ * @param {RenderDiagnosticsOptions} [options]
+ */
+export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable, beginCounters, describeTarget,
+  beginUploads = beginWebGlUploadProbe, observeTargets } = {}) {
   const gpuSamples = [];
   let timer;
+  let sourceIdentity;
   let frame = null;
   /** @type {RenderDiagnosticsSnapshot3D | null} */
   let snapshot = null;
@@ -69,7 +107,7 @@ export function createRenderDiagnostics3D(THREE, renderer) {
     timer?.poll((identity, ms, status) => {
       gpuSamples.push(Object.freeze({ ...identity, status, ms }));
       if (gpuSamples.length > MAX_GPU_SAMPLES) gpuSamples.shift();
-      if (identity.viewIndex === null && ms !== null) {
+      if (identity.passIndex === null && ms !== null) {
         gpuFrameSum += ms;
         gpuFrameCount++;
       }
@@ -85,23 +123,28 @@ export function createRenderDiagnostics3D(THREE, renderer) {
 
   function beginFrame() {
     if (frame) return false;
-    const gl = renderer.getContext?.();
+    const gl = getContext?.();
+    const identity = getIdentity ? getIdentity() : gl;
+    if (gl?.isContextLost?.() || isUnavailable?.()) {
+      resetGpu(true);
+      return false;
+    }
+    if (identity !== sourceIdentity) {
+      resetGpu(true);
+      sourceIdentity = identity;
+    }
     if (timer === undefined) timer = createGpuFrameTimer(gl, { alternate: false });
     pollGpu();
-    const info = renderer.info;
-    const autoReset = info?.autoReset;
-    if (typeof autoReset === 'boolean') {
-      if (autoReset) info.reset?.();
-      info.autoReset = false;
-    }
+    const counters = beginCounters?.(gl);
     const id = ++frameId;
     const wholeFrame = id % 2 === 1;
     frame = {
-      id, info, autoReset, viewIndex: 0, passes: [], targets: new Map(),
-      started: performance.now(), calls: counter(info, 'calls'), triangles: counter(info, 'triangles'),
+      id, counters, viewIndex: 0, passes: [], targets: new Map(),
+      started: performance.now(), startCounts: counters?.read(),
       gpuPass: timer && !wholeFrame ? nextGpuPass++ % Math.max(1, snapshot?.passes.length ?? 0) : -1,
       frameTimer: wholeFrame && timer?.begin({ frame: id, name: 'frame', viewIndex: null, passIndex: null }) ? timer : null,
-      upload: beginWebGlUploadProbe(gl),
+      upload: beginUploads(gl),
+      stopObservingTargets: observeTargets?.(recordTarget),
     };
     return true;
   }
@@ -114,7 +157,8 @@ export function createRenderDiagnostics3D(THREE, renderer) {
     if (!frame || !target) return null;
     let description = frame.targets.get(target);
     if (!description) {
-      description = describeTarget(THREE, target, frame.viewIndex);
+      description = describeTarget?.(target, frame.viewIndex);
+      if (!description) return null;
       frame.targets.set(target, description);
     }
     return description;
@@ -123,18 +167,19 @@ export function createRenderDiagnostics3D(THREE, renderer) {
   function beginPass(name, target) {
     const current = frame;
     if (!current) return null;
-    const { info, viewIndex } = current;
+    const { counters, viewIndex } = current;
     const index = current.passes.length;
     const description = recordTarget(target);
     const gpu = index === current.gpuPass && timer?.begin({ frame: current.id, name, viewIndex, passIndex: index }) ? timer : null;
     const start = performance.now();
-    const calls = counter(info, 'calls');
-    const triangles = counter(info, 'triangles');
+    const before = counters?.read();
     const uploads = current.upload?.read();
     return () => {
+      if (frame !== current) return;
       gpu?.end();
+      const after = counters?.read();
       current.passes.push(Object.freeze({ name, viewIndex, target: description, cpuMs: performance.now() - start,
-        drawCalls: delta(counter(info, 'calls'), calls), triangles: delta(counter(info, 'triangles'), triangles),
+        drawCalls: drawDelta(after, before), triangles: delta(after?.triangles ?? null, before?.triangles ?? null),
         uploads: uploadDelta(current.upload?.read(), uploads) }));
     };
   }
@@ -143,13 +188,14 @@ export function createRenderDiagnostics3D(THREE, renderer) {
     const current = frame;
     if (!current) return;
     frame = null;
-    const { info, autoReset } = current;
     try {
       current.frameTimer?.end();
       const targets = [...current.targets.values()];
+      const counts = current.counters?.read();
       snapshot = Object.freeze({
         frame: current.id, complete, cpuMs: performance.now() - current.started,
-        drawCalls: delta(counter(info, 'calls'), current.calls), triangles: delta(counter(info, 'triangles'), current.triangles),
+        drawCalls: drawDelta(counts, current.startCounts),
+        triangles: delta(counts?.triangles ?? null, current.startCounts?.triangles ?? null),
         estimatedTargetBytes: targets.reduce((total, target) => total + target.bytes, 0),
         targets: Object.freeze(targets), passes: Object.freeze(current.passes),
         uploads: current.upload ? Object.freeze(current.upload.read()) : null,
@@ -157,14 +203,24 @@ export function createRenderDiagnostics3D(THREE, renderer) {
         gpu: Object.freeze({ supported: Boolean(timer), samples: Object.freeze(gpuSamples.slice()) }),
       });
     } finally {
-      current.upload?.stop();
-      if (typeof autoReset === 'boolean') info.autoReset = autoReset;
+      stopFrameObservations(current);
     }
+  }
+
+  function stopFrameObservations(current) {
+    current.upload?.stop();
+    current.counters?.stop();
+    current.stopObservingTargets?.();
   }
 
   function resetGpu(forContextChange = false) {
     timer?.reset();
     if (forContextChange) {
+      if (frame) {
+        const current = frame;
+        frame = null;
+        try { timer?.end(); } finally { stopFrameObservations(current); }
+      }
       timer = undefined;
       snapshot = null;
     }
@@ -172,8 +228,18 @@ export function createRenderDiagnostics3D(THREE, renderer) {
     gpuFrameSum = gpuFrameCount = 0;
   }
 
+  function readSnapshot() {
+    const gl = getContext?.();
+    const identity = getIdentity ? getIdentity() : gl;
+    if (gl?.isContextLost?.() || isUnavailable?.() || identity !== sourceIdentity) {
+      resetGpu(true);
+      return null;
+    }
+    return snapshot;
+  }
+
   return { beginFrame, endFrame, beginView, beginPass, recordTarget, consumeGpuFrameMs, resetGpu,
-    snapshot: () => snapshot };
+    snapshot: readSnapshot };
 }
 
 export function drawWithDiagnostics(renderer, onPass, name, target, scene, camera) {

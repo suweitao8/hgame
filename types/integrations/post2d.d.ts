@@ -56,8 +56,17 @@ export function renderCanvas2DPostPass(ctx: any, width: any, height: any, cam: a
  */
 export function createWebGL2DPostPass(gl: WebGL2RenderingContext): {
     supported: boolean;
+    beginScene: () => boolean;
+    endAndComposite: () => void;
+    destroy: () => void;
+    readonly sceneTarget?: undefined;
+    recordTargets?: undefined;
+} | {
+    supported: boolean;
+    readonly sceneTarget: any;
+    recordTargets(report: any): void;
     beginScene: (w: any, h: any) => boolean;
-    endAndComposite: (w: any, h: any, state: any, cam: any, viewport: any, designW: any, designH: any) => void;
+    endAndComposite: (w: any, h: any, state: any, cam: any, viewport: any, designW: any, designH: any, report?: null) => void;
     destroy: () => void;
 };
 /** Maximum simultaneous dynamic 2D point lights evaluated per pass. */

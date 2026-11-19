@@ -29,7 +29,7 @@
  * @param {WebGL2DAdapterOptions} options
  * @returns {WebGL2DAdapter | Canvas2DAdapter} A WebGL2 adapter, or the Canvas2D fallback (check stats.backend or 'gl' in adapter).
  */
-export function createWebGL2DAdapter({ canvas, width, height, background, pixelRatio, imageSmoothing, interpolate, cull, quality, maxBatchInstances, allowFallback, createBufferCanvas, }?: WebGL2DAdapterOptions): WebGL2DAdapter | Canvas2DAdapter;
+export function createWebGL2DAdapter({ canvas, width, height, background, pixelRatio, imageSmoothing, interpolate, cull, quality, maxBatchInstances, allowFallback, createBufferCanvas, diagnostics2d, }?: WebGL2DAdapterOptions): WebGL2DAdapter | Canvas2DAdapter;
 /**
  * Options of createWebGL2DAdapter: every Canvas2DAdapterOptions field plus the WebGL-specific ones below.
  */

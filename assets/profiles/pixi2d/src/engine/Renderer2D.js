@@ -2,11 +2,13 @@ import { Application, Container, Sprite, TilingSprite, ParticleContainer, Partic
 import { AdvancedBloomFilter } from 'pixi-filters';
 import { PixiSwarmLayer } from './PixiSwarmLayer.js';
 import { PixiTilemapLayer } from './PixiTilemapLayer.js';
+import { loadRuntime } from './startPixiGame.js';
 
 const RENDERER_BACKENDS = ['webgpu', 'webgl', 'canvas'];
 
 export class Renderer2D {
-  constructor(atlas, { backend = 'auto', maxPixels = 2300000, maxPixelRatio = 2, qualityController = null, qualityPresets = null } = {}) {
+  constructor(atlas, { backend = 'auto', maxPixels = 2300000, maxPixelRatio = 2, qualityController = null,
+    qualityPresets = null, diagnostics2d = false } = {}) {
     if (backend !== 'auto' && !RENDERER_BACKENDS.includes(backend)) {
       throw new RangeError('Invalid Pixi renderer backend: ' + backend);
     }
@@ -21,6 +23,7 @@ export class Renderer2D {
     }
     this.qualityController = qualityController;
     this.qualityPresets = qualityPresets;
+    this.diagnosticsEnabled = diagnostics2d;
     this.lastFrameTime = null;
     this.app = new Application();
     this.entityMap = new Map();
@@ -65,6 +68,13 @@ export class Renderer2D {
     if (!initialized) throw new AggregateError(errors, 'Unable to initialize a Pixi renderer');
     if (this.backend === 'webgpu') this.atlas.useWebGpuUpload?.();
     this.isCanvas = this.app.renderer.type === RendererType.CANVAS;
+    if (this.diagnosticsEnabled) {
+      const { createRenderDiagnostics2D } = await loadRuntime('integrations/render-diagnostics-2d.js');
+      this.frameDiagnostics = createRenderDiagnostics2D({ pixiRenderer: this.app.renderer });
+      this.resetFrameDiagnostics = () => this.frameDiagnostics.resetGpu(true);
+      this.app.canvas.addEventListener('webglcontextlost', this.resetFrameDiagnostics);
+      this.app.canvas.addEventListener('webglcontextrestored', this.resetFrameDiagnostics);
+    }
     this.app.ticker.stop();
     this.app.canvas.id = 'game';
     this.app.canvas.setAttribute('aria-label', '游戏画面');
@@ -131,6 +141,7 @@ export class Renderer2D {
     const info = adapter?.info;
     return {
       backend: this.backend,
+      ...this.getRenderDiagnostics(),
       adapter: adapter ? {
         vendor: info?.vendor || null,
         architecture: info?.architecture || null,
@@ -140,6 +151,7 @@ export class Renderer2D {
       } : null,
     };
   }
+  getRenderDiagnostics() { return this.frameDiagnostics?.snapshot() ?? null; }
   resetQualityMeasurements() {
     this.lastFrameTime = null;
     this.qualityController?.resetMeasurements();
@@ -301,26 +313,47 @@ export class Renderer2D {
   }
   /** @param {number | null} [frameIntervalMs] Pass null for redraws that do not advance the frame clock. */
   render(frameIntervalMs) {
-    if (this.qualityController && frameIntervalMs !== null) {
-      if (frameIntervalMs === undefined) {
-        const now = performance.now();
-        frameIntervalMs = this.lastFrameTime === null ? 0 : now - this.lastFrameTime;
-        this.lastFrameTime = now;
-      } else if (frameIntervalMs === 0) {
-        this.resetQualityMeasurements();
+    const report = this.frameDiagnostics;
+    if (!report?.beginFrame()) return this.renderFrame(frameIntervalMs);
+    let complete = false;
+    try {
+      this.renderFrame(frameIntervalMs, report);
+      complete = true;
+    } finally { report.endFrame(complete); }
+  }
+  renderFrame(frameIntervalMs, report = null) {
+    let finish = report?.beginPass('prepare', null);
+    try {
+      if (this.qualityController && frameIntervalMs !== null) {
+        if (frameIntervalMs === undefined) {
+          const now = performance.now();
+          frameIntervalMs = this.lastFrameTime === null ? 0 : now - this.lastFrameTime;
+          this.lastFrameTime = now;
+        } else if (frameIntervalMs === 0) {
+          this.resetQualityMeasurements();
+        }
+        if (frameIntervalMs > 0 && this.qualityController.sampleFrame(frameIntervalMs)) this.resize();
       }
-      if (frameIntervalMs > 0 && this.qualityController.sampleFrame(frameIntervalMs)) this.resize();
-    }
-    for (const callback of this.beforeRenderCallbacks) callback();
-    if (!this.isCanvas) {
-      for (const channel of this.effectChannels.values()) channel.beforeRender?.();
-    }
-    this.app.renderer.render(this.app.stage);
+      for (const callback of this.beforeRenderCallbacks) callback();
+      finish?.();
+      finish = report?.beginPass('effects-prepare', null);
+      if (!this.isCanvas) {
+        for (const channel of this.effectChannels.values()) channel.beforeRender?.();
+      }
+      finish?.();
+      finish = report?.beginPass('scene', null);
+      this.app.renderer.render(this.app.stage);
+    } finally { finish?.(); }
   }
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     try {
+      if (this.resetFrameDiagnostics) {
+        this.app.canvas.removeEventListener('webglcontextlost', this.resetFrameDiagnostics);
+        this.app.canvas.removeEventListener('webglcontextrestored', this.resetFrameDiagnostics);
+        this.resetFrameDiagnostics();
+      }
       this.resizeObserver?.disconnect(); this.resizeObserver = null; this.onResize = null;
       for (const layer of this.swarmLayers) layer.dispose();
       for (const layer of this.tilemapLayers) layer.dispose();

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add opt-in frame and pass diagnostics for Canvas2D, WebGL2D, and the Pixi profile, sharing the Three snapshot structure and reporting unavailable backend counters as null.
+
 - Reproject 3D temporal AA with depth-checked motion from opaque rigid meshes and CPU-managed instances. Static views skip the motion draw, and incompatible paths retain camera reprojection.
 
 - Load versioned baked SH irradiance into Three scene lighting, with pane-local SSGI coverage, GPU capability fallback, and scene-owned texture lifetime.

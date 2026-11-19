@@ -492,62 +492,72 @@ export function createWebGL2DPostPass(gl) {
     return true;
   }
 
-  function endAndComposite(w, h, state, cam, viewport, designW, designH) {
+  function endAndComposite(w, h, state, cam, viewport, designW, designH, report = null) {
     if (!sceneRt || !compProg) return;
-    gl.disable(gl.SCISSOR_TEST);
-    gl.disable(gl.BLEND);
-    gl.bindVertexArray(quadVao);
+    let finish;
+    try {
+      gl.disable(gl.SCISSOR_TEST);
+      gl.disable(gl.BLEND);
+      gl.bindVertexArray(quadVao);
 
-    let bloomTex = blackTex;
-    if (state.post.bloomIntensity > 0.001 && bloomA && bloomB) {
-      // 1. Bright extract -> bloomA
-      gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
-      gl.viewport(0, 0, bloomA.w, bloomA.h);
-      gl.useProgram(brightProg);
+      let bloomTex = blackTex;
+      if (state.post.bloomIntensity > 0.001 && bloomA && bloomB) {
+        finish = report?.beginPass('bloom-extract', bloomA);
+        // 1. Bright extract -> bloomA
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
+        gl.viewport(0, 0, bloomA.w, bloomA.h);
+        gl.useProgram(brightProg);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, sceneRt.tex);
+        gl.uniform1i(uBright.scene, 0);
+        gl.uniform1f(uBright.threshold, state.post.bloomThreshold);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+        finish?.();
+        finish = report?.beginPass('bloom-blur-x', bloomB);
+        // 2. Horizontal blur -> bloomB
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bloomB.fbo);
+        gl.useProgram(blurProg);
+        gl.bindTexture(gl.TEXTURE_2D, bloomA.tex);
+        gl.uniform1i(uBlur.tex, 0);
+        gl.uniform2f(uBlur.step, 1 / bloomA.w, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+        finish?.();
+        finish = report?.beginPass('bloom-blur-y', bloomA);
+        // 3. Vertical blur -> bloomA
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
+        gl.bindTexture(gl.TEXTURE_2D, bloomB.tex);
+        gl.uniform2f(uBlur.step, 0, 1 / bloomA.h);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        bloomTex = bloomA.tex;
+      }
+
+      finish?.();
+      finish = report?.beginPass('lighting-composite', null);
+      // Composite to default framebuffer.
+      state.projectLightsToUv(cam, viewport, designW, designH);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(compProg);
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, sceneRt.tex);
-      gl.uniform1i(uBright.scene, 0);
-      gl.uniform1f(uBright.threshold, state.post.bloomThreshold);
+      gl.uniform1i(uComp.scene, 0);
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, bloomTex);
+      gl.uniform1i(uComp.bloom, 1);
+
+      gl.uniform4f(uComp.ambient, state.ambientRgb[0], state.ambientRgb[1], state.ambientRgb[2], state.ambientIntensity);
+      gl.uniform1i(uComp.lightCount, state.lightCount);
+      gl.uniform4fv(uComp.lightsPosRad, state.lightUvPosRad);
+      gl.uniform4fv(uComp.lightsColorInt, state.lightUvColorInt);
+      gl.uniform4f(uComp.post0, state.post.bloomIntensity, state.post.vignette, state.post.hitPulse, state.post.chromatic);
+      gl.uniform2f(uComp.post1, state.post.saturation, state.post.contrast);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-      // 2. Horizontal blur -> bloomB
-      gl.bindFramebuffer(gl.FRAMEBUFFER, bloomB.fbo);
-      gl.useProgram(blurProg);
-      gl.bindTexture(gl.TEXTURE_2D, bloomA.tex);
-      gl.uniform1i(uBlur.tex, 0);
-      gl.uniform2f(uBlur.step, 1 / bloomA.w, 0);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-
-      // 3. Vertical blur -> bloomA
-      gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
-      gl.bindTexture(gl.TEXTURE_2D, bloomB.tex);
-      gl.uniform2f(uBlur.step, 0, 1 / bloomA.h);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-      bloomTex = bloomA.tex;
-    }
-
-    // Composite to default framebuffer.
-    state.projectLightsToUv(cam, viewport, designW, designH);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, w, h);
-    gl.useProgram(compProg);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, sceneRt.tex);
-    gl.uniform1i(uComp.scene, 0);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, bloomTex);
-    gl.uniform1i(uComp.bloom, 1);
-
-    gl.uniform4f(uComp.ambient, state.ambientRgb[0], state.ambientRgb[1], state.ambientRgb[2], state.ambientIntensity);
-    gl.uniform1i(uComp.lightCount, state.lightCount);
-    gl.uniform4fv(uComp.lightsPosRad, state.lightUvPosRad);
-    gl.uniform4fv(uComp.lightsColorInt, state.lightUvColorInt);
-    gl.uniform4f(uComp.post0, state.post.bloomIntensity, state.post.vignette, state.post.hitPulse, state.post.chromatic);
-    gl.uniform2f(uComp.post1, state.post.saturation, state.post.contrast);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindVertexArray(null);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindVertexArray(null);
+    } finally { finish?.(); }
   }
 
   function destroy() {
@@ -573,6 +583,12 @@ export function createWebGL2DPostPass(gl) {
 
   return {
     supported: true,
+    get sceneTarget() { return sceneRt; },
+    recordTargets(report) {
+      report.recordTarget(sceneRt);
+      report.recordTarget(bloomA);
+      report.recordTarget(bloomB);
+    },
     beginScene,
     endAndComposite,
     destroy,

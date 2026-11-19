@@ -1,5 +1,28 @@
-/** Internal opt-in recorder for the adapter's frame and ordered view draws. */
 export function createRenderDiagnostics3D(THREE: any, renderer: any): {
+    beginFrame: () => boolean;
+    endFrame: (complete: any) => void;
+    beginView: (index: any) => void;
+    beginPass: (name: any, target: any) => (() => void) | null;
+    recordTarget: (target: any) => any;
+    consumeGpuFrameMs: () => number | null;
+    resetGpu: (forContextChange?: boolean) => void;
+    snapshot: () => RenderDiagnosticsSnapshot3D | null;
+};
+/**
+ * @typedef {object} RenderDiagnosticsOptions
+ * @property {() => any} [getContext] WebGL context for GPU samples.
+ * @property {() => unknown} [getIdentity] Context or device identity.
+ * @property {() => boolean} [isUnavailable] Whether the backend is unavailable.
+ * @property {(context: any) => {read: () => {calls: number | null, triangles: number | null, opaqueDraws?: number}, stop: () => void} | null} [beginCounters]
+ * @property {(target: any, viewIndex: number) => RenderTargetUsage3D | null} [describeTarget]
+ * @property {typeof beginWebGlUploadProbe} [beginUploads]
+ * @property {(record: (target: any) => RenderTargetUsage3D | null) => (() => void) | null} [observeTargets]
+ */
+/**
+ * Shared opt-in recorder for frame and ordered view submissions.
+ * @param {RenderDiagnosticsOptions} [options]
+ */
+export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable, beginCounters, describeTarget, beginUploads, observeTargets }?: RenderDiagnosticsOptions | undefined): {
     beginFrame: () => boolean;
     endFrame: (complete: any) => void;
     beginView: (index: any) => void;
@@ -84,3 +107,29 @@ export type RenderDiagnosticsSnapshot3D = {
         samples: readonly RenderGpuSample3D[];
     };
 };
+export type RenderDiagnosticsOptions = {
+    /**
+     * WebGL context for GPU samples.
+     */
+    getContext?: (() => any) | undefined;
+    /**
+     * Context or device identity.
+     */
+    getIdentity?: (() => unknown) | undefined;
+    /**
+     * Whether the backend is unavailable.
+     */
+    isUnavailable?: (() => boolean) | undefined;
+    beginCounters?: ((context: any) => {
+        read: () => {
+            calls: number | null;
+            triangles: number | null;
+            opaqueDraws?: number;
+        };
+        stop: () => void;
+    } | null) | undefined;
+    describeTarget?: ((target: any, viewIndex: number) => RenderTargetUsage3D | null) | undefined;
+    beginUploads?: typeof beginWebGlUploadProbe | undefined;
+    observeTargets?: ((record: (target: any) => RenderTargetUsage3D | null) => (() => void) | null) | undefined;
+};
+import { beginWebGlUploadProbe } from './upload-probe.js';

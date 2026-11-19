@@ -4,6 +4,7 @@ import { Component } from '../core/component.js';
 import { resolveQualityPreset } from './quality3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { createLighting2DState, renderCanvas2DPostPass } from './post2d.js';
+import { createRenderDiagnostics2D } from './render-diagnostics-2d.js';
 
 const SCRATCH_RGBA = [1, 1, 1, 1];
 
@@ -795,6 +796,7 @@ export class SpriteCrowd2D extends Component {
  * @property {string} [background='#101820'] Clear colour.
  * @property {number} [pixelRatio=globalThis.devicePixelRatio || 1] Device pixel ratio, clamped by the quality preset (max 3).
  * @property {boolean} [imageSmoothing=true] Smooth scaled images (overridden by the quality preset).
+ * @property {boolean} [diagnostics2d=false] Collect comparable per-frame and per-stage diagnostics.
  * @property {boolean} [interpolate=false] Always render interpolated transforms (entities with interpolate=true always do).
  * @property {boolean} [cull=true] Skip sprites outside the camera view.
  * @property {QualityPresetTier | null} [quality=null] Quality tier ('low' | 'medium' | 'high' | 'ultra'); null disables presets.
@@ -835,6 +837,7 @@ export class SpriteCrowd2D extends Component {
  * @property {() => QualityPresetTier | null} getQuality Active quality tier.
  * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
  * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
+ * @property {() => import('./render-diagnostics-2d.js').RenderDiagnosticsSnapshot2D | null} getRenderDiagnostics Latest opt-in render frame.
  * @property {() => Viewport2D} getViewport Copy of the current viewport.
  * @property {(color?: string | number, intensity?: number) => void} setAmbientLight Configure global 2D ambient darkness/tint.
  * @property {(light: { x: number, y: number, radius?: number, color?: string | number, intensity?: number }) => boolean} addLight2D Append a dynamic 2D point light.
@@ -858,7 +861,7 @@ export function createCanvas2DAdapter({
   canvas, width = 960, height = 540, background = '#101820',
   pixelRatio = globalThis.devicePixelRatio || 1,
   imageSmoothing = true, interpolate = false, cull = true,
-  quality = null, createBufferCanvas = null,
+  quality = null, createBufferCanvas = null, diagnostics2d = false,
 } = {}) {
   if (!canvas?.getContext) throw new TypeError('Canvas adapter needs a canvas');
   const ctx = canvas.getContext('2d', { alpha: false });
@@ -878,6 +881,7 @@ export function createCanvas2DAdapter({
   const ownedTintCanvases = new Set();
   const imageReleases = new Set();
   const lighting2D = createLighting2DState();
+  const diagnostics = diagnostics2d ? createRenderDiagnostics2D() : null;
   const stats = { drawnSprites: 0, drawnCrowds: 0, culled: 0, sorted: false, postPassActive: false, backend: 'canvas2d' };
 
   const allocBuffer = createBufferCanvas ?? ((w, h) => {
@@ -1395,7 +1399,21 @@ export function createCanvas2DAdapter({
     ctx.restore();
   }
 
-  function render(scene, app = null) {
+  function renderView(scene, alpha, cam, subX, subY, subW, subH, allowShadows, clipToView, postActive, report, viewIndex) {
+    report?.beginView(viewIndex);
+    const world = report?.beginPass('world', null);
+    try {
+      renderCameraView(scene, alpha, cam, subX, subY, subW, subH, allowShadows, clipToView);
+    } finally { world?.(); }
+    if (postActive) {
+      const lighting = report?.beginPass('lighting-composite', null);
+      try {
+        renderCanvas2DPostPass(ctx, width, height, cam, lighting2D, subX, subY, subW, subH);
+      } finally { lighting?.(); }
+    }
+  }
+
+  function renderFrame(scene, app, report = null) {
     if (!viewport) resize();
     const { vw, vh, dpr, scale, x, y } = viewport;
     const allowSmoothing = qualityPreset ? qualityPreset.imageSmoothing : imageSmoothing;
@@ -1418,17 +1436,11 @@ export function createCanvas2DAdapter({
     if (activeViews && activeViews.length > 0) {
       for (let i = 0; i < activeViews.length; i++) {
         const v = activeViews[i];
-        renderCameraView(
+        renderView(
           scene, alpha, v.camera,
           v.x * width, v.y * height, v.width * width, v.height * height,
-          allowShadows, true,
+          allowShadows, true, postActive, report, v.index,
         );
-        if (postActive) {
-          renderCanvas2DPostPass(
-            ctx, width, height, v.camera, lighting2D,
-            v.x * width, v.y * height, v.width * width, v.height * height,
-          );
-        }
       }
       if (activeViews.length > 1 && viewDividerWidth > 0 && typeof ctx.strokeRect === 'function') {
         ctx.strokeStyle = viewDividerColor;
@@ -1439,13 +1451,24 @@ export function createCanvas2DAdapter({
         }
       }
     } else {
-      renderCameraView(scene, alpha, camera, 0, 0, width, height, allowShadows, false);
-      if (postActive) {
-        renderCanvas2DPostPass(ctx, width, height, camera, lighting2D, 0, 0, width, height);
-      }
+      renderView(scene, alpha, camera, 0, 0, width, height, allowShadows, false, postActive, report, 0);
     }
 
     ctx.restore();
+  }
+
+  function render(scene, app = null) {
+    if (!diagnostics?.beginFrame()) return renderFrame(scene, app);
+    let complete = false;
+    try {
+      renderFrame(scene, app, diagnostics);
+      complete = true;
+    } finally {
+      diagnostics.beginView(-1);
+      diagnostics.recordTarget(shadowBuffer?.canvas);
+      for (const canvas of ownedTintCanvases) diagnostics.recordTarget(canvas);
+      diagnostics.endFrame(complete);
+    }
   }
 
   resize();
@@ -1462,6 +1485,7 @@ export function createCanvas2DAdapter({
     getQuality,
     get qualityPreset() { return qualityPreset; },
     get stats() { return { ...stats }; },
+    getRenderDiagnostics: () => diagnostics?.snapshot() ?? null,
     getViewport: () => ({ ...viewport }),
     setAmbientLight: lighting2D.setAmbientLight,
     addLight2D: lighting2D.addLight,
@@ -1470,6 +1494,7 @@ export function createCanvas2DAdapter({
     setPost2D: lighting2D.setPost,
     getLighting2DState: lighting2D.snapshot,
     dispose() {
+      diagnostics?.resetGpu(true);
       drawQueue.dispose();
       for (const unsubscribe of imageReleases) unsubscribe();
       imageReleases.clear();
