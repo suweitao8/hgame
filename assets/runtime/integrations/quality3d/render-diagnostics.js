@@ -1,0 +1,173 @@
+import { createGpuFrameTimer } from './gpu-timer.js';
+
+const MAX_GPU_SAMPLES = 32;
+
+/** @typedef {{viewIndex: number, width: number, height: number, samples: number, bytes: number}} RenderTargetUsage3D */
+/** @typedef {{name: string, viewIndex: number, target: RenderTargetUsage3D | null, cpuMs: number, drawCalls: number | null, triangles: number | null}} RenderStageSample3D */
+/** @typedef {{frame: number, name: string, viewIndex: number | null, passIndex: number | null, status: 'ready' | 'disjoint' | 'expired' | 'invalid', ms: number | null}} RenderGpuSample3D */
+/**
+ * @typedef {object} RenderDiagnosticsSnapshot3D
+ * @property {number} frame Adapter frame serial.
+ * @property {boolean} complete True if the frame finished rendering.
+ * @property {number} cpuMs Whole frame CPU time including view setup.
+ * @property {number | null} drawCalls WebGL draw calls, if reported by the renderer.
+ * @property {number | null} triangles Triangles submitted, if reported by the renderer.
+ * @property {number} estimatedTargetBytes Nominal payload of the counted offscreen attachments.
+ * @property {readonly RenderTargetUsage3D[]} targets Unique targets in the rendered views.
+ * @property {readonly RenderStageSample3D[]} passes CPU submission samples in execution order.
+ * @property {{supported: boolean, samples: readonly RenderGpuSample3D[]}} gpu Recent asynchronously resolved GPU samples, keyed by frame and view.
+ */
+
+function textureBytesPerPixel(THREE, texture) {
+  if (texture.type === THREE.UnsignedInt101111Type) return 4;
+  if (texture.internalFormat === 'RGBA8') return 4;
+  const channels = texture.format === THREE.RedFormat ? 1 : texture.format === THREE.RGFormat ? 2 :
+    texture.format === THREE.RGBFormat ? 3 : 4;
+  const bytes = texture.type === THREE.FloatType ? 4 : texture.type === THREE.HalfFloatType ? 2 : 1;
+  return channels * bytes;
+}
+
+function describeTarget(THREE, target, viewIndex) {
+  const { width, height, samples = 0, texture, depthBuffer, depthTexture, stencilBuffer } = target;
+  const bytes = width * height * (textureBytesPerPixel(THREE, texture) * (1 + samples) +
+    (depthBuffer || stencilBuffer ? 4 * Math.max(1, samples) : 0) + (samples && depthTexture ? 4 : 0));
+  return Object.freeze({ viewIndex, width, height, samples, bytes });
+}
+
+function counter(info, key) {
+  const value = info?.render?.[key];
+  return Number.isFinite(value) ? value : null;
+}
+
+function delta(value, previous) {
+  return value === null || previous === null ? null : Math.max(0, value - previous);
+}
+
+/** Internal opt-in recorder for the adapter's frame and ordered view draws. */
+export function createRenderDiagnostics3D(THREE, renderer) {
+  const gpuSamples = [];
+  let timer;
+  let frame = null;
+  /** @type {RenderDiagnosticsSnapshot3D | null} */
+  let snapshot = null;
+  let frameId = 0;
+  let nextGpuPass = 0;
+  let gpuFrameSum = 0;
+  let gpuFrameCount = 0;
+
+  function pollGpu() {
+    timer?.poll((identity, ms, status) => {
+      gpuSamples.push(Object.freeze({ ...identity, status, ms }));
+      if (gpuSamples.length > MAX_GPU_SAMPLES) gpuSamples.shift();
+      if (identity.viewIndex === null && ms !== null) {
+        gpuFrameSum += ms;
+        gpuFrameCount++;
+      }
+    });
+  }
+
+  function consumeGpuFrameMs() {
+    pollGpu();
+    const result = gpuFrameCount > 0 ? gpuFrameSum / gpuFrameCount : null;
+    gpuFrameSum = gpuFrameCount = 0;
+    return result;
+  }
+
+  function beginFrame() {
+    if (frame) return false;
+    if (timer === undefined) timer = createGpuFrameTimer(renderer.getContext?.(), { alternate: false });
+    pollGpu();
+    const info = renderer.info;
+    const autoReset = info?.autoReset;
+    if (typeof autoReset === 'boolean') {
+      if (autoReset) info.reset?.();
+      info.autoReset = false;
+    }
+    const id = ++frameId;
+    const wholeFrame = id % 2 === 1;
+    frame = {
+      id, info, autoReset, viewIndex: 0, passes: [], targets: new Map(),
+      started: performance.now(), calls: counter(info, 'calls'), triangles: counter(info, 'triangles'),
+      gpuPass: timer && !wholeFrame ? nextGpuPass++ % Math.max(1, snapshot?.passes.length ?? 0) : -1,
+      frameTimer: wholeFrame && timer?.begin({ frame: id, name: 'frame', viewIndex: null, passIndex: null }) ? timer : null,
+    };
+    return true;
+  }
+
+  function beginView(index) {
+    if (frame) frame.viewIndex = index;
+  }
+
+  function recordTarget(target) {
+    if (!frame || !target) return null;
+    let description = frame.targets.get(target);
+    if (!description) {
+      description = describeTarget(THREE, target, frame.viewIndex);
+      frame.targets.set(target, description);
+    }
+    return description;
+  }
+
+  function beginPass(name, target) {
+    const current = frame;
+    if (!current) return null;
+    const { info, viewIndex } = current;
+    const index = current.passes.length;
+    const description = recordTarget(target);
+    const gpu = index === current.gpuPass && timer?.begin({ frame: current.id, name, viewIndex, passIndex: index }) ? timer : null;
+    const start = performance.now();
+    const calls = counter(info, 'calls');
+    const triangles = counter(info, 'triangles');
+    return () => {
+      gpu?.end();
+      current.passes.push(Object.freeze({ name, viewIndex, target: description, cpuMs: performance.now() - start,
+        drawCalls: delta(counter(info, 'calls'), calls), triangles: delta(counter(info, 'triangles'), triangles) }));
+    };
+  }
+
+  function endFrame(complete) {
+    const current = frame;
+    if (!current) return;
+    frame = null;
+    const { info, autoReset } = current;
+    try {
+      current.frameTimer?.end();
+      const targets = [...current.targets.values()];
+      snapshot = Object.freeze({
+        frame: current.id, complete, cpuMs: performance.now() - current.started,
+        drawCalls: delta(counter(info, 'calls'), current.calls), triangles: delta(counter(info, 'triangles'), current.triangles),
+        estimatedTargetBytes: targets.reduce((total, target) => total + target.bytes, 0),
+        targets: Object.freeze(targets), passes: Object.freeze(current.passes),
+        gpu: Object.freeze({ supported: Boolean(timer), samples: Object.freeze(gpuSamples.slice()) }),
+      });
+    } finally {
+      if (typeof autoReset === 'boolean') info.autoReset = autoReset;
+    }
+  }
+
+  function resetGpu(forContextChange = false) {
+    timer?.reset();
+    if (forContextChange) {
+      timer = undefined;
+      snapshot = null;
+    }
+    gpuSamples.length = 0;
+    gpuFrameSum = gpuFrameCount = 0;
+  }
+
+  return { beginFrame, endFrame, beginView, beginPass, recordTarget, consumeGpuFrameMs, resetGpu,
+    snapshot: () => snapshot };
+}
+
+export function drawWithDiagnostics(renderer, onPass, name, target, scene, camera) {
+  if (!onPass) {
+    renderer.render(scene, camera);
+    return;
+  }
+  const stop = onPass(name, target);
+  try {
+    renderer.render(scene, camera);
+  } finally {
+    stop?.();
+  }
+}

@@ -1,6 +1,7 @@
 import { Component } from '../core/component.js';
 import { createAdaptiveQualityController, resolveQualityPreset } from './quality3d.js';
 import { createGpuFrameTimer } from './quality3d/gpu-timer.js';
+import { createRenderDiagnostics3D, drawWithDiagnostics } from './quality3d/render-diagnostics.js';
 import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
@@ -175,6 +176,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {ThreeWorldLighting | null} [worldLighting=null] Default fog and lights, allocated per scene.
  * @property {ThreeQuality3DOptions | null} [quality3d=null] Adaptive quality options.
  * @property {boolean | Record<string, unknown> | null} [post3d=null] Enable post pipeline (true or its options).
+ * @property {boolean} [diagnostics3d=false] Collect frame and render-stage performance diagnostics.
  * @property {boolean | null} [shadows=null] Force shadows on/off; null follows the quality preset.
  * @property {string | null} [toneMapping=null] 'aces' | 'ueFilmic' | 'filmic' | 'agx' | 'neutral' | 'none'.
  * @property {number} [exposure=1] Base tone-mapping exposure.
@@ -217,6 +219,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {ReturnType<typeof createPostPipeline3D> | null} postPipeline
  * @property {ReturnType<typeof createSceneCuller3D>} culler3d
  * @property {boolean} contextLost
+ * @property {() => import('./quality3d/render-diagnostics.js').RenderDiagnosticsSnapshot3D | null} getRenderDiagnostics Latest frame when diagnostics are enabled.
  * @property {(scene: object) => ThreeObject3D} getWorld
  * @property {(scene: object) => ThreeObject3D} getViewWorld
  * @property {(scene: object, object: object) => void} add
@@ -266,6 +269,7 @@ export function createThreeAdapter({
   worldLighting = null,
   quality3d = null,
   post3d = null,
+  diagnostics3d = false,
   shadows = null,
   toneMapping = null,
   exposure = 1.0,
@@ -284,6 +288,7 @@ export function createThreeAdapter({
     antialias: !post3d,
     powerPreference: 'high-performance',
   });
+  const renderDiagnostics = diagnostics3d ? createRenderDiagnostics3D(THREE, renderer) : null;
 
   let postPipeline = null;
   const viewPipelines = [];
@@ -439,6 +444,7 @@ export function createThreeAdapter({
   function onQualityChange(state, reason) {
     measureGpu = enableGpuTiming && state.mode === 'auto';
     gpuFrameTimer?.reset();
+    renderDiagnostics?.resetGpu();
     resize();
     userQualityOnChange?.(state, reason);
   }
@@ -619,6 +625,7 @@ export function createThreeAdapter({
     const viewportChanged = !lastPlan || lastPlan.cssWidth !== w || lastPlan.cssHeight !== h || lastPlan.pixelRatio !== ratio;
     if (!contextLost && (canvasChanged || viewportChanged)) {
       gpuFrameTimer?.reset();
+      renderDiagnostics?.resetGpu();
       lastCanvasSize = applyCanvasSize(size);
     }
     const { bufferWidth, bufferHeight } = contextLost ? size : lastCanvasSize;
@@ -659,6 +666,7 @@ export function createThreeAdapter({
     contextLost = true;
     gpuFrameTimer?.reset();
     gpuFrameTimer = undefined;
+    renderDiagnostics?.resetGpu(true);
     postPipeline?.handleContextLost?.();
     // Recreate pane resources from the restored GPU's limits on the next draw.
     removeObsoleteViewPipelines(null);
@@ -842,6 +850,8 @@ export function createThreeAdapter({
   }
 
   function renderView(world, camera, pipeline, options = {}) {
+    const diagnostics = options.diagnostics;
+    diagnostics?.beginView(options.viewIndex ?? 0);
     culler3d.beginFrame(camera);
     prepareSunShadows(world, camera);
     if (pipeline) {
@@ -854,11 +864,11 @@ export function createThreeAdapter({
       const prevAutoClear = renderer.autoClear;
       const gl = renderer.getContext?.();
       try {
-        renderer.render(world, camera);
+        drawWithDiagnostics(renderer, diagnostics?.beginPass, 'forward', null, world, camera);
         renderer.autoClear = false;
         renderer.clearDepth?.();
         gl?.depthRange?.(0, 0.05);
-        renderer.render(viewScene, viewCamera);
+        drawWithDiagnostics(renderer, diagnostics?.beginPass, 'viewmodel', null, viewScene, viewCamera);
       } finally {
         gl?.depthRange?.(0, 1);
         renderer.autoClear = prevAutoClear;
@@ -866,10 +876,10 @@ export function createThreeAdapter({
       return;
     }
 
-    renderer.render(world, camera);
+    drawWithDiagnostics(renderer, diagnostics?.beginPass, 'forward', null, world, camera);
   }
 
-  function renderWorld(scene) {
+  function renderWorld(scene, diagnostics = null) {
     const world = getWorld(scene);
     const sceneSun = worldLighting?.sun ? worldSuns.get(world) ?? null : null;
     if (worldSunLight !== sceneSun) {
@@ -923,6 +933,8 @@ export function createThreeAdapter({
           renderer.setViewport?.(vx, vyBottomUp, vw, vh);
           renderer.setScissor?.(vx, vyBottomUp, vw, vh);
           renderView(world, v.camera, pipeline, {
+            diagnostics,
+            viewIndex: v.index,
             outputViewport: pipeline ? [vx, vyBottomUp, vw, vh] : null,
             sunLight: activeSunLight ?? worldSunLight,
             dt: lastDtSeconds,
@@ -941,6 +953,7 @@ export function createThreeAdapter({
       activePostVolumes.applyToPipeline(postPipeline, camera.position, { exposure: baseExposure });
     }
     renderView(world, camera, postPipeline, {
+      diagnostics,
       viewScene, viewCamera: activeViewCamera,
       sunLight: activeSunLight ?? worldSunLight,
       dt: lastDtSeconds,
@@ -949,6 +962,20 @@ export function createThreeAdapter({
 
   function render(scene, _app = null) {
     if (contextLost) return;
+    if (renderDiagnostics) {
+      if (!renderDiagnostics.beginFrame()) {
+        renderWorld(scene);
+        return;
+      }
+      let complete = false;
+      try {
+        renderWorld(scene, renderDiagnostics);
+        complete = true;
+      } finally {
+        renderDiagnostics.endFrame(complete);
+      }
+      return;
+    }
     const timer = measureGpu ? gpuFrameTimer : null;
     if (!timer?.begin()) {
       renderWorld(scene);
@@ -970,6 +997,7 @@ export function createThreeAdapter({
     postPipeline,
     culler3d,
     get contextLost() { return contextLost; },
+    getRenderDiagnostics: () => renderDiagnostics?.snapshot() ?? null,
     getWorld,
     getViewWorld,
     add(scene, object) {
@@ -1058,9 +1086,14 @@ export function createThreeAdapter({
       if (Number.isFinite(ms) && ms > 0) lastDtSeconds = ms / 1000;
       let gpuMs = null;
       if (measureGpu && Number.isFinite(ms) && ms > 0) {
-        if (gpuFrameTimer === undefined) gpuFrameTimer = createGpuFrameTimer(renderer.getContext?.());
-        if (ms >= 250) gpuFrameTimer?.reset();
-        else gpuMs = gpuFrameTimer?.poll() ?? null;
+        if (renderDiagnostics) {
+          if (ms >= 250) renderDiagnostics.resetGpu();
+          else gpuMs = renderDiagnostics.consumeGpuFrameMs();
+        } else {
+          if (gpuFrameTimer === undefined) gpuFrameTimer = createGpuFrameTimer(renderer.getContext?.());
+          if (ms >= 250) gpuFrameTimer?.reset();
+          else gpuMs = gpuFrameTimer?.poll() ?? null;
+        }
       }
       qualityController?.sampleFrame(ms, gpuMs);
     },
@@ -1071,6 +1104,7 @@ export function createThreeAdapter({
       cleanupAll([
         ...ownedSuns.values(),
         () => gpuFrameTimer?.reset(),
+        () => renderDiagnostics?.resetGpu(true),
         () => culler3d.dispose(),
         () => removeObsoleteViewPipelines(null),
         () => postPipeline?.dispose?.(),

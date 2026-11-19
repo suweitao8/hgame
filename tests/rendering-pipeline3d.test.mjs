@@ -223,6 +223,105 @@ test('custom HDR passes declare color and depth dependencies and chain owned tar
   assert.equal(disposedMaterials, 0);
 });
 
+test('Three diagnostics report named passes, unique target usage and asynchronous GPU sample identity', () => {
+  const { renderer, gl } = createMockWebGL2Renderer();
+  const extension = { TIME_ELAPSED_EXT: 100, QUERY_COUNTER_BITS_EXT: 101, GPU_DISJOINT_EXT: 102 };
+  const previousExtension = gl.getExtension;
+  const previousParameter = gl.getParameter;
+  let active = null;
+  let resultsReady = false;
+  let disjoint = false;
+  let resultReads = 0;
+  Object.assign(gl, {
+    CURRENT_QUERY: 103, QUERY_RESULT_AVAILABLE: 104, QUERY_RESULT: 105,
+    getExtension: name => name === 'EXT_disjoint_timer_query_webgl2' ? extension : previousExtension(name),
+    getParameter: key => key === extension.GPU_DISJOINT_EXT ? disjoint : previousParameter(key),
+    getQuery: (target, key) => key === extension.QUERY_COUNTER_BITS_EXT ? 64 : active,
+    createQuery: () => ({}), deleteQuery() {},
+    beginQuery(target, query) { assert.equal(active, null); active = query; },
+    endQuery() { assert.ok(active); active = null; },
+    getQueryParameter(query, key) {
+      if (key === this.QUERY_RESULT_AVAILABLE) return resultsReady;
+      assert.ok(resultsReady, 'never read the result until available');
+      resultReads++;
+      return 2_500_000;
+    },
+  });
+  const counts = { calls: 99, triangles: 99 };
+  renderer.info = { autoReset: true, render: counts, reset() { counts.calls = counts.triangles = 0; } };
+  renderer.render = () => { counts.calls++; counts.triangles += 3; };
+  const namespace = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };
+  const effect = new THREE.ShaderMaterial({ uniforms: { tColor: { value: null } } });
+  const adapter = createThreeAdapter({ THREE: namespace, canvas: { clientWidth: 320, clientHeight: 180 }, pixelRatio: 1,
+    diagnostics3d: true, post3d: { fxaa: false, sharpness: 0, preset: QUALITY3D_PRESETS.low,
+      passes: [{ id: 'tint', material: effect, inputs: { color: 'tColor' } }] } });
+  const scene = new Scene('diagnostics');
+  assert.equal(adapter.getRenderDiagnostics(), null);
+  adapter.render(scene);
+  const first = adapter.getRenderDiagnostics();
+  assert.equal(first.frame, 1);
+  assert.equal(first.complete, true);
+  assert.equal(first.drawCalls, 3);
+  assert.equal(first.triangles, 9);
+  assert.ok(first.cpuMs >= 0);
+  assert.deepEqual(first.passes.map(pass => [pass.name, pass.viewIndex, pass.drawCalls]), [
+    ['world', 0, 1], ['custom:tint', 0, 1], ['tone-mapping', 0, 1],
+  ]);
+  assert.equal(first.passes[2].target, null);
+  assert.equal(first.targets.length, 2);
+  assert.equal(first.estimatedTargetBytes, first.targets.reduce((sum, target) => sum + target.bytes, 0));
+  assert.equal(resultReads, 0);
+  assert.deepEqual(first.gpu.samples, []);
+  assert.equal(renderer.info.autoReset, true);
+
+  resultsReady = true;
+  adapter.render(scene);
+  const second = adapter.getRenderDiagnostics();
+  assert.deepEqual(second.gpu.samples.map(sample => [sample.frame, sample.name, sample.status, sample.ms]),
+    [[1, 'frame', 'ready', 2.5]]);
+  adapter.render(scene);
+  const third = adapter.getRenderDiagnostics();
+  assert.deepEqual(third.gpu.samples.map(sample => [sample.frame, sample.name, sample.status, sample.ms]),
+    [[1, 'frame', 'ready', 2.5], [2, 'world', 'ready', 2.5]]);
+  assert.equal(third.gpu.samples[1].passIndex, 0);
+  assert.deepEqual(first.gpu.samples, []);
+  disjoint = true;
+  adapter.render(scene);
+  assert.deepEqual(adapter.getRenderDiagnostics().gpu.samples.at(-1),
+    { frame: 3, name: 'frame', viewIndex: null, passIndex: null, status: 'disjoint', ms: null });
+  renderer.render = () => { throw new Error('simulated draw failure'); };
+  assert.throws(() => adapter.render(scene), /simulated draw failure/);
+  assert.equal(adapter.getRenderDiagnostics().complete, false);
+  assert.equal(renderer.info.autoReset, true);
+  assert.equal(active, null);
+  adapter.dispose();
+});
+
+test('Three diagnostics keep forward draw counts when GPU timing is unavailable', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const counts = { calls: 12, triangles: 30 };
+  renderer.info = { autoReset: false, render: counts };
+  let drewAuxiliary = false;
+  renderer.render = () => {
+    counts.calls++;
+    counts.triangles += 3;
+    if (!drewAuxiliary) {
+      drewAuxiliary = true;
+      adapter.render(new Scene('auxiliary-draw'));
+    }
+  };
+  const namespace = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };
+  const adapter = createThreeAdapter({ THREE: namespace, canvas: {}, pixelRatio: 1, diagnostics3d: true });
+  adapter.render(new Scene('forward-diagnostics'));
+  const report = adapter.getRenderDiagnostics();
+  assert.deepEqual(report.passes.map(pass => [pass.name, pass.drawCalls, pass.triangles]), [['forward', 2, 6]]);
+  assert.equal(report.estimatedTargetBytes, 0);
+  assert.deepEqual(report.gpu, { supported: false, samples: [] });
+  assert.deepEqual(counts, { calls: 14, triangles: 36 });
+  assert.equal(renderer.info.autoReset, false);
+  adapter.dispose();
+});
+
 test('one adaptive quality transition rebuilds the post pipeline once at the final drawing-buffer size', () => {
   const { renderer, calls } = createMockWebGL2Renderer();
   const allocations = [];

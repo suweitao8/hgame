@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add optional Three adapter diagnostics for frame and pass CPU submission, draw calls, triangles, viewport target usage, and asynchronously sampled GPU time.
+
 - Compose caller-owned fullscreen HDR effects with declared color and optional world-depth inputs. Reuse pane-local scratch targets and skip effects whose depth input is unavailable.
 
 - Run 3D split views through HDR post-processing when available. Keep exposure and temporal history isolated by view, size targets to physical pane pixels, and release pane resources on removal or context loss.

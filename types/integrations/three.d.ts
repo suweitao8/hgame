@@ -111,6 +111,7 @@
  * @property {ThreeWorldLighting | null} [worldLighting=null] Default fog and lights, allocated per scene.
  * @property {ThreeQuality3DOptions | null} [quality3d=null] Adaptive quality options.
  * @property {boolean | Record<string, unknown> | null} [post3d=null] Enable post pipeline (true or its options).
+ * @property {boolean} [diagnostics3d=false] Collect frame and render-stage performance diagnostics.
  * @property {boolean | null} [shadows=null] Force shadows on/off; null follows the quality preset.
  * @property {string | null} [toneMapping=null] 'aces' | 'ueFilmic' | 'filmic' | 'agx' | 'neutral' | 'none'.
  * @property {number} [exposure=1] Base tone-mapping exposure.
@@ -149,6 +150,7 @@
  * @property {ReturnType<typeof createPostPipeline3D> | null} postPipeline
  * @property {ReturnType<typeof createSceneCuller3D>} culler3d
  * @property {boolean} contextLost
+ * @property {() => import('./quality3d/render-diagnostics.js').RenderDiagnosticsSnapshot3D | null} getRenderDiagnostics Latest frame when diagnostics are enabled.
  * @property {(scene: object) => ThreeObject3D} getWorld
  * @property {(scene: object) => ThreeObject3D} getViewWorld
  * @property {(scene: object, object: object) => void} add
@@ -181,7 +183,7 @@
  * @param {ThreeAdapterOptions} options
  * @returns {ThreeAdapter}
  */
-export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, limitCameraDrawDistance, background, worldLighting, quality3d, post3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, }?: ThreeAdapterOptions): ThreeAdapter;
+export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, limitCameraDrawDistance, background, worldLighting, quality3d, post3d, diagnostics3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, }?: ThreeAdapterOptions): ThreeAdapter;
 /**
  * @typedef {object} ThreeMeshComponentOptions
  * @property {'box' | 'sphere' | 'capsule' | 'cylinder' | 'plane'} [type='box'] Primitive shape.
@@ -479,6 +481,10 @@ export type ThreeAdapterOptions = {
      */
     post3d?: boolean | Record<string, unknown> | null | undefined;
     /**
+     * Collect frame and render-stage performance diagnostics.
+     */
+    diagnostics3d?: boolean | undefined;
+    /**
      * Force shadows on/off; null follows the quality preset.
      */
     shadows?: boolean | null | undefined;
@@ -583,6 +589,10 @@ export type ThreeAdapter = {
     postPipeline: ReturnType<typeof createPostPipeline3D> | null;
     culler3d: ReturnType<typeof createSceneCuller3D>;
     contextLost: boolean;
+    /**
+     * Latest frame when diagnostics are enabled.
+     */
+    getRenderDiagnostics: () => import("./quality3d/render-diagnostics.js").RenderDiagnosticsSnapshot3D | null;
     getWorld: (scene: object) => ThreeObject3D;
     getViewWorld: (scene: object) => ThreeObject3D;
     add: (scene: object, object: object) => void;

@@ -79,6 +79,12 @@ adapter.postPipeline.setPasses([
 
 Use an opaque fullscreen shader material that writes linear color across the output. The pipeline supplies `position` and `uv` attributes and restores the input uniforms after each draw. It owns up to two reusable pane-sized scratch targets. The game owns its materials. `enabled: false` skips an effect, as does a missing depth attachment when the effect requires depth. In forward fallback the engine skips the HDR chain.
 
+### Frame and pass diagnostics
+
+Enable `diagnostics3d: true` on `createThreeAdapter` and read `adapter.getRenderDiagnostics()` after rendering. The snapshot reports full-frame CPU submission, draw calls, triangles, the ordered draws with their view indices, and the estimated payload of the offscreen targets in rendered views. The `world` draw includes Three.js shadow work. Target bytes estimate color, depth and MSAA attachments. The canvas, driver overhead, and textures and buffers owned by the game are outside that estimate.
+
+GPU diagnostics use a bounded WebGL timer query pool. Sampling alternates between a full frame and one rotating pass. A resolved sample includes its original frame and pass index, so results that arrive later can be matched to their draw. `disjoint`, `expired`, and `invalid` samples have a null time. Forward rendering and devices without timer queries still report CPU and draw counters. Upload traffic has yet to be instrumented.
+
 ## World Materials, Models & Adapter Lifecycle
 
 - **Specular Anti-Aliasing, Anisotropy & Floating Origin**: `applyGeometricSpecularAA(material, { strength, maxRoughnessBoost })` injects screen-space normal derivative (`dFdx`/`dFdy`) roughness widening via `onBeforeCompile`. `createWorldAlignedMaterial` and `createWorldMaterialPalette` expose opt-in `specularAA`, `anisotropy`, `palette.setAnisotropy(value)`, and `palette.shiftOffset(dx, dy, dz)` for floating-origin texture continuity.

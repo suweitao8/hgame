@@ -212,6 +212,7 @@
  * @property {PostPipelineSunLight | null} [sunLight=null] Sun used for volumetrics/contact shadows.
  * @property {number} [dt=0] Frame delta in seconds.
  * @property {readonly [number, number, number, number] | null} [outputViewport=null] Screen x, y, width and height in renderer pixels before DPR, with a bottom-left origin.
+ * @property {{beginPass: (name: string, target: object | null) => (() => void) | null, recordTarget: (target: object) => void} | null} [diagnostics=null] Optional stage and target sink.
  */
 /**
  * @typedef {object} PostPipeline3D
@@ -691,6 +692,13 @@ export type PostPipelineRenderOptions = {
      * Screen x, y, width and height in renderer pixels before DPR, with a bottom-left origin.
      */
     outputViewport?: readonly [number, number, number, number] | null | undefined;
+    /**
+     * Optional stage and target sink.
+     */
+    diagnostics?: {
+        beginPass: (name: string, target: object | null) => (() => void) | null;
+        recordTarget: (target: object) => void;
+    } | null | undefined;
 };
 export type PostPipeline3D = {
     /**
