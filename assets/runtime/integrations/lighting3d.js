@@ -8,6 +8,7 @@
  *
  * Never imports 'three' directly; callers pass { THREE } by dependency injection.
  */
+import { createFloatTextureUpdates } from './lighting3d/texture-updates.js';
 
 /**
  * @typedef {[number, number, number]} LightingRGB Linear RGB triple.
@@ -48,6 +49,7 @@
  * @property {number} [FloatType]
  * @property {number} [NearestFilter]
  * @property {number} [ClampToEdgeWrapping]
+ * @property {boolean} [HGAME_FULL_DATA_TEXTURE_INITIAL_UPLOAD] New GPU backing always initializes the whole DataTexture before range updates.
  * @typedef {object} LightingShaderLike Three.js `onBeforeCompile` shader parameter.
  * @property {string} fragmentShader
  * @property {string} [vertexShader]
@@ -72,6 +74,7 @@ const CLUSTER_SLICES_Z = 16;
 const CLUSTER_TOTAL = CLUSTER_TILES_X * CLUSTER_TILES_Y * CLUSTER_SLICES_Z; // 2048
 const CLUSTER_MAX_LIGHTS = 31;
 const CLUSTER_TEXELS_PER_CLUSTER = 8; // 32 floats (1 count + 31 light indices) = 8 RGBA texels
+const CLUSTER_COMPONENTS = CLUSTER_TEXELS_PER_CLUSTER * 4;
 const CLUSTER_TEX_WIDTH = 128; // 16 clusters per row -> zero row wrapping
 const CLUSTER_TEX_HEIGHT = (CLUSTER_TOTAL * CLUSTER_TEXELS_PER_CLUSTER) / CLUSTER_TEX_WIDTH; // 128
 
@@ -299,6 +302,7 @@ function makeFloatDataTexture(THREE, data, width, height) {
  * @property {number[]} clusterDims `[tilesX, tilesY, slicesZ]` (read-only).
  * @property {LightingTextureLike} lightDataTexture (read-only)
  * @property {LightingTextureLike} clusterTexture (read-only)
+ * @property {{light: import('./lighting3d/texture-updates.js').FloatTextureUploadStats, cluster: import('./lighting3d/texture-updates.js').FloatTextureUploadStats}} uploadStats Pending texture payload in bytes, excluding backing allocation and driver overhead.
  * @property {MegaLightsUniforms} uniforms (read-only)
  * @property {(desc?: MegaLightDescriptor) => number | string} addLight Returns the light id.
  * @property {(id: number | string, patch?: MegaLightPatch) => boolean} updateLight False when unknown id.
@@ -332,19 +336,32 @@ function makeFloatDataTexture(THREE, data, width, height) {
 
   let nextId = 1;
   const lights = new Map();
+  const transientIds = new Set();
   let sampleBudget = clamp(Math.floor(samplesPerPixel), 0, 8);
   let lightBudget = clamp(Math.floor(activeBudget), 1, maxLights);
   let activeCount = 0;
   let frameTime = 0;
   let disposed = false;
+  let packingDirty = true;
 
   // 4 RGBA texels per light = 16 floats per light row
-  const lightData = new Float32Array(4 * maxLights * 4);
-  const clusterData = new Float32Array(CLUSTER_TEX_WIDTH * CLUSTER_TEX_HEIGHT * 4);
-  const lightDataTex = makeFloatDataTexture(THREE, lightData, 4, maxLights);
-  const clusterTex = makeFloatDataTexture(THREE, clusterData, CLUSTER_TEX_WIDTH, CLUSTER_TEX_HEIGHT);
+  const lightTextureData = new Float32Array(16 * maxLights);
+  const clusterTextureData = new Float32Array(CLUSTER_TEX_WIDTH * CLUSTER_TEX_HEIGHT * 4);
+  const lightDataTex = makeFloatDataTexture(THREE, lightTextureData, 4, maxLights);
+  const clusterTex = makeFloatDataTexture(THREE, clusterTextureData, CLUSTER_TEX_WIDTH, CLUSTER_TEX_HEIGHT);
+  const partial = THREE?.HGAME_FULL_DATA_TEXTURE_INITIAL_UPLOAD === true;
+  const lightUpload = createFloatTextureUpdates(lightDataTex, lightTextureData, 4, maxLights, partial);
+  const clusterUpload = createFloatTextureUpdates(clusterTex, clusterTextureData, CLUSTER_TEX_WIDTH, CLUSTER_TEX_HEIGHT, partial);
+  const lightData = lightUpload.packed;
+  const clusterData = clusterUpload.packed;
+  const occupiedClusters = new Uint16Array(CLUSTER_TOTAL);
+  const touchedRowStarts = new Uint16Array(CLUSTER_TEX_HEIGHT);
+  const touchedRowEnds = new Uint16Array(CLUSTER_TEX_HEIGHT);
+  let occupiedClusterCount = 0;
 
   const visibleScratch = [];
+  const packedViewMatrix = new Float64Array(16);
+  let hasPackedView = false;
   let cachedNear = 0.1;
   let cachedFar = 1000;
   let cachedAspect = 16 / 9;
@@ -392,6 +409,9 @@ function makeFloatDataTexture(THREE, data, width, height) {
       peakIntensity: Number.isFinite(desc.intensity) ? Math.max(0, desc.intensity) : 4.0,
     };
     lights.set(id, record);
+    if (record.transient) transientIds.add(id);
+    else transientIds.delete(id);
+    packingDirty = true;
     return id;
   }
 
@@ -421,11 +441,15 @@ function makeFloatDataTexture(THREE, data, width, height) {
     }
     if (patch.enabled !== undefined) rec.enabled = Boolean(patch.enabled);
     if (patch.type === 'spot' || patch.type === 'point') rec.type = patch.type;
+    packingDirty = true;
     return true;
   }
 
   function removeLight(id) {
-    return lights.delete(id);
+    if (!lights.delete(id)) return false;
+    transientIds.delete(id);
+    packingDirty = true;
+    return true;
   }
 
   function flash({
@@ -450,12 +474,15 @@ function makeFloatDataTexture(THREE, data, width, height) {
 
   function clear() {
     lights.clear();
+    transientIds.clear();
+    visibleScratch.length = 0;
     activeCount = 0;
+    occupiedClusterCount = 0;
     lightData.fill(0);
     clusterData.fill(0);
     uniformsShared.uMegaActiveCount.value = 0;
-    lightDataTex.needsUpdate = true;
-    clusterTex.needsUpdate = true;
+    lightUpload.publish();
+    clusterUpload.publish();
   }
 
   function setQualityPreset(preset) {
@@ -465,7 +492,9 @@ function makeFloatDataTexture(THREE, data, width, height) {
       uniformsShared.uMegaSamplesPerPixel.value = sampleBudget;
     }
     if (Number.isInteger(preset.maxClusteredLights)) {
-      lightBudget = clamp(preset.maxClusteredLights, 1, maxLights);
+      const nextBudget = clamp(preset.maxClusteredLights, 1, maxLights);
+      packingDirty ||= nextBudget !== lightBudget;
+      lightBudget = nextBudget;
     }
   }
 
@@ -515,6 +544,13 @@ function makeFloatDataTexture(THREE, data, width, height) {
     return { tx0, tx1, ty0, ty1, tz0, tz1 };
   }
 
+  function touchCluster(index) {
+    const row = index >> 4;
+    const start = (index & 15) * CLUSTER_COMPONENTS;
+    touchedRowStarts[row] = Math.min(touchedRowStarts[row], start);
+    touchedRowEnds[row] = Math.max(touchedRowEnds[row], start + CLUSTER_COMPONENTS);
+  }
+
   function update(camera = null, dt = 0, viewport = null) {
     if (disposed) return 0;
     const stepDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
@@ -526,12 +562,13 @@ function makeFloatDataTexture(THREE, data, width, height) {
     }
 
     // 1. Advance transient flash lights & prune expired
-    if (stepDt > 0) {
-      for (const [id, rec] of lights) {
-        if (!rec.transient) continue;
+    if (stepDt > 0 && transientIds.size) {
+      packingDirty = true;
+      for (const id of transientIds) {
+        const rec = lights.get(id);
         rec.age += stepDt;
         if (rec.age >= rec.duration) {
-          lights.delete(id);
+          removeLight(id);
         } else {
           const u = 1 - rec.age / rec.duration;
           rec.intensity = rec.peakIntensity * (u * u);
@@ -544,19 +581,38 @@ function makeFloatDataTexture(THREE, data, width, height) {
       if (camera.matrixWorldInverse && camera.matrixWorld) {
         camera.matrixWorldInverse.copy(camera.matrixWorld).invert?.();
       }
-      cachedNear = Math.max(0.01, camera.near ?? 0.1);
-      cachedFar = Math.max(cachedNear + 1, camera.far ?? 1000);
-      cachedAspect = Math.max(0.1, camera.aspect ?? 16 / 9);
-      const fovDeg = camera.fov ?? 60;
-      cachedTanY = Math.tan((fovDeg * Math.PI) / 360);
+      const near = Math.max(0.01, camera.near ?? 0.1);
+      const far = Math.max(near + 1, camera.far ?? 1000);
+      const aspect = Math.max(0.1, camera.aspect ?? 16 / 9);
+      const tanY = Math.tan(((camera.fov ?? 60) * Math.PI) / 360);
+      packingDirty ||= near !== cachedNear || far !== cachedFar || aspect !== cachedAspect || tanY !== cachedTanY;
+      cachedNear = near;
+      cachedFar = far;
+      cachedAspect = aspect;
+      cachedTanY = tanY;
     }
+
+    const m = camera?.matrixWorldInverse?.elements;
+    packingDirty ||= Boolean(m) !== hasPackedView;
+    if (m) {
+      for (let i = 0; i < 16; i++) {
+        if (packedViewMatrix[i] !== m[i]) packingDirty = true;
+        packedViewMatrix[i] = m[i];
+      }
+    }
+    hasPackedView = Boolean(m);
+    if (!packingDirty) return activeCount;
 
     const logRange = Math.log(cachedFar / cachedNear);
     const zLogScale = CLUSTER_SLICES_Z / Math.max(1e-4, logRange);
     const zLogBias = -(CLUSTER_SLICES_Z * Math.log(cachedNear)) / Math.max(1e-4, logRange);
     uniformsShared.uMegaZParams.value.set(cachedNear, cachedFar, zLogScale, zLogBias);
 
-    const m = camera?.matrixWorldInverse?.elements;
+    if (lights.size === 0 && activeCount === 0) {
+      packingDirty = false;
+      return 0;
+    }
+
     visibleScratch.length = 0;
 
     for (const rec of lights.values()) {
@@ -603,15 +659,19 @@ function makeFloatDataTexture(THREE, data, width, height) {
       visibleScratch.length = lightBudget;
     }
 
+    const previousActiveCount = activeCount;
     activeCount = visibleScratch.length;
     uniformsShared.uMegaActiveCount.value = activeCount;
 
-    // Clear cluster counts first (only texel 0.r per cluster needs clearing!)
-    for (let c = 0; c < CLUSTER_TOTAL; c++) {
-      const row = c >> 4;
-      const col = (c & 15) * CLUSTER_TEXELS_PER_CLUSTER;
-      clusterData[(row * CLUSTER_TEX_WIDTH + col) * 4] = 0;
+    // Track the union of the previously and currently occupied cluster windows.
+    touchedRowStarts.fill(CLUSTER_TEX_WIDTH * 4);
+    touchedRowEnds.fill(0);
+    for (let i = 0; i < occupiedClusterCount; i++) {
+      const cluster = occupiedClusters[i];
+      clusterData[cluster * CLUSTER_COMPONENTS] = 0;
+      touchCluster(cluster);
     }
+    occupiedClusterCount = 0;
 
     // Pack visible lights into lightData + clusterData
     for (let i = 0; i < activeCount; i++) {
@@ -650,24 +710,26 @@ function makeFloatDataTexture(THREE, data, width, height) {
         for (let cy = ty0; cy <= ty1; cy++) {
           for (let cx = tx0; cx <= tx1; cx++) {
             const c = (cz * CLUSTER_TILES_Y + cy) * CLUSTER_TILES_X + cx;
-            const cRow = c >> 4;
-            const cCol = (c & 15) * CLUSTER_TEXELS_PER_CLUSTER;
-            const headOffset = (cRow * CLUSTER_TEX_WIDTH + cCol) * 4;
+            const headOffset = c * CLUSTER_COMPONENTS;
             const count = clusterData[headOffset] | 0;
             if (count < CLUSTER_MAX_LIGHTS) {
+              if (count === 0) {
+                occupiedClusters[occupiedClusterCount++] = c;
+                touchCluster(c);
+              }
               const slot = count + 1;
               clusterData[headOffset] = slot;
-              const texelSlot = slot >> 2;
-              const comp = slot & 3;
-              clusterData[(cRow * CLUSTER_TEX_WIDTH + cCol + texelSlot) * 4 + comp] = i;
+              clusterData[headOffset + slot] = i;
             }
           }
         }
       }
     }
 
-    lightDataTex.needsUpdate = true;
-    clusterTex.needsUpdate = true;
+    if (previousActiveCount > activeCount) lightData.fill(0, activeCount * 16, previousActiveCount * 16);
+    lightUpload.publish(Math.max(activeCount, previousActiveCount));
+    clusterUpload.publish(CLUSTER_TEX_HEIGHT, touchedRowStarts, touchedRowEnds);
+    packingDirty = false;
     return activeCount;
   }
 
@@ -852,6 +914,8 @@ function makeFloatDataTexture(THREE, data, width, height) {
     if (disposed) return false;
     disposed = true;
     lights.clear();
+    transientIds.clear();
+    visibleScratch.length = 0;
     lightDataTex.dispose?.();
     clusterTex.dispose?.();
     return true;
@@ -866,6 +930,7 @@ function makeFloatDataTexture(THREE, data, width, height) {
     get clusterDims() { return [CLUSTER_TILES_X, CLUSTER_TILES_Y, CLUSTER_SLICES_Z]; },
     get lightDataTexture() { return lightDataTex; },
     get clusterTexture() { return clusterTex; },
+    get uploadStats() { return { light: lightUpload.stats(), cluster: clusterUpload.stats() }; },
     get uniforms() { return uniformsShared; },
     addLight,
     updateLight,

@@ -234,6 +234,75 @@ test('UE Filmic curve, White Balance, Eye Adaptation, SSGI/SSR targets, and Post
   post.dispose();
 });
 
+test('MegaLights skips static uploads and queues row-bounded ranges across updates before a draw', () => {
+  const mega = createMegaLights3D(THREE, { maxLights: 16 });
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+  const left = mega.addLight({ x: -2, y: 0, z: -8, range: 0.75 });
+  const right = mega.addLight({ x: 2, y: 0, z: -8, range: 0.75 });
+  const { lightDataTexture: light, clusterTexture: clusters } = mega;
+  const gpuConsumed = texture => {
+    texture.clearUpdateRanges();
+    texture.onUpdate?.(texture);
+  };
+  const versions = () => [light.version, clusters.version];
+  const active = mega.update(camera);
+  assert.equal(active, 2);
+  gpuConsumed(light);
+  gpuConsumed(clusters);
+  const initial = versions();
+  const uploadedLightSourceVersion = light.source.version;
+  mega.update(camera, 0.017, { width: 501, height: 350 });
+  assert.deepEqual(versions(), initial);
+  assert.equal(mega.uniforms.uMegaResolution.value.x, 501);
+  assert.equal(mega.uniforms.uMegaTime.value, 0.017);
+
+  mega.updateLight(left, { intensity: 3 });
+  mega.update(camera);
+  assert.deepEqual(versions(), [initial[0] + 1, initial[1]]);
+  assert.ok(light.updateRanges.length > 0);
+  assert.equal(light.userData.hgameDataTextureRangeBaseVersion, uploadedLightSourceVersion);
+  assert.ok(light.updateRanges.every(range => range.start < 16 && range.start + range.count <= 16));
+  mega.updateLight(right, { intensity: 2 });
+  mega.update(camera);
+  assert.equal(light.updateRanges.length, 2);
+  assert.ok(light.updateRanges.some(range => range.start >= 16));
+  assert.ok(mega.uploadStats.light.queuedBytes < light.image.data.byteLength);
+  assert.equal(mega.uploadStats.cluster.queuedBytes, 0);
+  gpuConsumed(light);
+
+  mega.updateLight(left, { x: 4 });
+  mega.update(camera);
+  assert.ok(clusters.version > initial[1]);
+  assert.ok(clusters.updateRanges.length > 0);
+  assert.ok(clusters.updateRanges.every(({ start, count }) => (start % 512) + count <= 512));
+  assert.ok(mega.uploadStats.cluster.queuedBytes < clusters.image.data.byteLength);
+  gpuConsumed(clusters);
+  const beforeMove = versions();
+  camera.position.x = 1;
+  mega.update(camera);
+  assert.ok(light.version > beforeMove[0]);
+  mega.clear();
+  assert.equal(mega.activeCount, 0);
+  assert.ok(!clusters.image.data.some(Boolean));
+  assert.ok(!light.image.data.some(Boolean));
+  mega.dispose();
+
+  const stock = createMegaLights3D({ ...THREE, HGAME_FULL_DATA_TEXTURE_INITIAL_UPLOAD: false }, { maxLights: 16 });
+  const id = stock.addLight({ z: -8 });
+  stock.update(camera);
+  gpuConsumed(stock.lightDataTexture);
+  stock.updateLight(id, { intensity: 9 });
+  stock.update(camera);
+  assert.deepEqual(stock.lightDataTexture.updateRanges, []);
+  assert.equal(stock.uploadStats.light.queuedBytes, stock.lightDataTexture.image.data.byteLength);
+  stock.dispose();
+
+  const stub = createMegaLights3D({ DataTexture: class { dispose() {} } });
+  stub.addLight({ z: -8 });
+  assert.equal(stub.update(camera), 1);
+  stub.dispose();
+});
+
 test('MegaLights3D 300+ lights, cluster packing, stochastic unbiasedness, SH probes, and full material shader stack', () => {
   const mega = createMegaLights3D(THREE, { maxLights: 512, samplesPerPixel: 3 });
   for (let i = 0; i < 300; i++) {

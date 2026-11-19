@@ -10822,6 +10822,9 @@ function WebGLState( gl, extensions ) {
 
 }
 
+// HGame: advertise that DataTexture update ranges are safe across renderer and context recreation.
+export const HGAME_FULL_DATA_TEXTURE_INITIAL_UPLOAD = true;
+
 function WebGLTextures( _gl, extensions, state, properties, capabilities, utils, info ) {
 
 	const multisampledRTTExt = extensions.has( 'WEBGL_multisampled_render_to_texture' ) ? extensions.get( 'WEBGL_multisampled_render_to_texture' ) : null;
@@ -11674,15 +11677,16 @@ function WebGLTextures( _gl, extensions, state, properties, capabilities, utils,
 
 	}
 
-	function updateTexture( texture, image, glFormat, glType ) {
+	function updateTexture( texture, image, glFormat, glType, initialize ) {
 
 		const componentStride = 4; // only RGBA supported
 
 		const updateRanges = texture.updateRanges;
 
-		if ( updateRanges.length === 0 ) {
+		if ( initialize || updateRanges.length === 0 ) {
 
 			state.texSubImage2D( _gl.TEXTURE_2D, 0, 0, 0, image.width, image.height, glFormat, glType, image.data );
+			if ( initialize ) texture.clearUpdateRanges();
 
 		} else {
 
@@ -11897,7 +11901,9 @@ function WebGLTextures( _gl, extensions, state, properties, capabilities, utils,
 
 						if ( dataReady ) {
 
-							updateTexture( texture, image, glFormat, glType );
+							const rangeBaseVersion = texture.userData.hgameDataTextureRangeBaseVersion;
+							const staleRangeBase = rangeBaseVersion !== undefined && rangeBaseVersion !== sourceProperties.__version;
+							updateTexture( texture, image, glFormat, glType, allocateMemory || staleRangeBase );
 
 						}
 

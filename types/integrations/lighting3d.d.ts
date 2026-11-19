@@ -100,6 +100,7 @@
  * @property {number[]} clusterDims `[tilesX, tilesY, slicesZ]` (read-only).
  * @property {LightingTextureLike} lightDataTexture (read-only)
  * @property {LightingTextureLike} clusterTexture (read-only)
+ * @property {{light: import('./lighting3d/texture-updates.js').FloatTextureUploadStats, cluster: import('./lighting3d/texture-updates.js').FloatTextureUploadStats}} uploadStats Pending texture payload in bytes, excluding backing allocation and driver overhead.
  * @property {MegaLightsUniforms} uniforms (read-only)
  * @property {(desc?: MegaLightDescriptor) => number | string} addLight Returns the light id.
  * @property {(id: number | string, patch?: MegaLightPatch) => boolean} updateLight False when unknown id.
@@ -471,6 +472,13 @@ export type MegaLights3D = {
      */
     clusterTexture: LightingTextureLike;
     /**
+     * Pending texture payload in bytes, excluding backing allocation and driver overhead.
+     */
+    uploadStats: {
+        light: import("./lighting3d/texture-updates.js").FloatTextureUploadStats;
+        cluster: import("./lighting3d/texture-updates.js").FloatTextureUploadStats;
+    };
+    /**
      * (read-only)
      */
     uniforms: MegaLightsUniforms;
@@ -750,6 +758,10 @@ export type LightingThreeLike = {
     FloatType?: number | undefined;
     NearestFilter?: number | undefined;
     ClampToEdgeWrapping?: number | undefined;
+    /**
+     * New GPU backing always initializes the whole DataTexture before range updates.
+     */
+    HGAME_FULL_DATA_TEXTURE_INITIAL_UPLOAD?: boolean | undefined;
 };
 /**
  * Three.js `onBeforeCompile` shader parameter.

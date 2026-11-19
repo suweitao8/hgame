@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse unchanged clustered light bins and upload bounded dirty texture ranges. Initialize all data on fresh GPU backing and retain full-update fallback for injected Three builds.
+
 - Add optional Three adapter diagnostics for frame and pass CPU submission, draw calls, triangles, viewport target usage, and asynchronously sampled GPU time.
 
 - Compose caller-owned fullscreen HDR effects with declared color and optional world-depth inputs. Reuse pane-local scratch targets and skip effects whose depth input is unavailable.

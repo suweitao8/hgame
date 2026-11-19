@@ -85,6 +85,10 @@ Enable `diagnostics3d: true` on `createThreeAdapter` and read `adapter.getRender
 
 GPU diagnostics use a bounded WebGL timer query pool. Sampling alternates between a full frame and one rotating pass. A resolved sample includes its original frame and pass index, so results that arrive later can be matched to their draw. `disjoint`, `expired`, and `invalid` samples have a null time. Forward rendering and devices without timer queries still report CPU and draw counters. Upload traffic has yet to be instrumented.
 
+### Clustered-light texture updates
+
+`createMegaLights3D` reuses the last light bins when the view transform, projection, light budget and light values stay unchanged. The viewport and stochastic sampling clock still advance. Rebuilding compares active light rows and the cluster windows occupied in either build. The bundled Three.js build uploads row-bounded ranges for sparse edits and falls back to a full upload for dense changes. Newly allocated GPU textures and renderers that missed a previous version receive the full data. Other injected Three builds use full uploads for changed textures. `mega.uploadStats` reports the current queued bytes, range count and mode for each texture. A renderer that needs a full refresh can submit more than the pending range estimate.
+
 ## World Materials, Models & Adapter Lifecycle
 
 - **Specular Anti-Aliasing, Anisotropy & Floating Origin**: `applyGeometricSpecularAA(material, { strength, maxRoughnessBoost })` injects screen-space normal derivative (`dFdx`/`dFdy`) roughness widening via `onBeforeCompile`. `createWorldAlignedMaterial` and `createWorldMaterialPalette` expose opt-in `specularAA`, `anisotropy`, `palette.setAnisotropy(value)`, and `palette.shiftOffset(dx, dy, dz)` for floating-origin texture continuity.
