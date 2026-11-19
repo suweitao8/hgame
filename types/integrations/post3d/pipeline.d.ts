@@ -62,6 +62,7 @@
  * @property {number} [ssrIntensity=0.35]
  * @property {number} [ssrMaxDist=28] World units.
  * @property {number} [ssrThickness=0.35] World units.
+ * @property {boolean} [temporalGiSsr=false] Reuse depth-validated GI and reflection history on half-float targets.
  * @property {number} [contactShadows] 0..1; default follows the quality preset (0.65 or 0).
  * @property {number} [contactShadowLength=0.32] World units.
  * @property {number} [contactShadowThickness=0.08] World units.
@@ -123,6 +124,7 @@
  * @property {number} ssrIntensity
  * @property {number} ssrMaxDist
  * @property {number} ssrThickness
+ * @property {boolean} temporalGiSsr
  * @property {number} contactShadows
  * @property {number} contactShadowLength
  * @property {number} contactShadowThickness
@@ -217,6 +219,7 @@
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
  * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
  * @property {(patch?: PostPipelineSettings) => void} setState Merges finite numeric/array settings.
+ * @property {() => void} resetGiSsrHistory Discard GI and reflection history after a scene cut or discontinuous motion.
  * @property {(world: object, camera: PostPipelineCamera, options?: PostPipelineRenderOptions) => void} render Renders `world` through the pipeline (forward fallback when unsupported).
  * @property {() => void} handleContextLost Releases GPU targets.
  * @property {() => void} handleContextRestored Rebuilds GPU targets.
@@ -343,6 +346,10 @@ export type PostPipelineSettings = {
      * World units.
      */
     ssrThickness?: number | undefined;
+    /**
+     * Reuse depth-validated GI and reflection history on half-float targets.
+     */
+    temporalGiSsr?: boolean | undefined;
     /**
      * 0..1; default follows the quality preset (0.65 or 0).
      */
@@ -476,6 +483,7 @@ export type PostPipelineState = {
     ssrIntensity: number;
     ssrMaxDist: number;
     ssrThickness: number;
+    temporalGiSsr: boolean;
     contactShadows: number;
     contactShadowLength: number;
     contactShadowThickness: number;
@@ -675,6 +683,10 @@ export type PostPipeline3D = {
      * Merges finite numeric/array settings.
      */
     setState: (patch?: PostPipelineSettings) => void;
+    /**
+     * Discard GI and reflection history after a scene cut or discontinuous motion.
+     */
+    resetGiSsrHistory: () => void;
     /**
      * Renders `world` through the pipeline (forward fallback when unsupported).
      */

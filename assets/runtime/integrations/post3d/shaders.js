@@ -401,6 +401,37 @@ layout(location = 0) out vec4 fragColor;
 
 ${DEPTH_GUIDE_GLSL3}
 
+#ifdef HGAME_GI_HISTORY
+${SCENE_PROJECTION_GLSL3}
+uniform sampler2D tSceneDepth;
+uniform sampler2D tHistory;
+uniform mat4 uPreviousFromCurrentView;
+uniform mat4 uPreviousProjection;
+uniform float uPreviousGuideOffset;
+uniform float uHistoryWeight;
+in vec2 vUv;
+
+vec3 reuseGiHistory(vec3 current, vec3 localMin, vec3 localMax, ivec2 size) {
+  float depth = textureLod(tSceneDepth, vUv, 0.0).r;
+  if (!hasSceneGeometry(depth)) return current;
+  vec3 viewPos = reconstructViewPos(vUv, depth);
+  vec4 previousView = uPreviousFromCurrentView * vec4(viewPos, 1.0);
+  vec4 previousClip = uPreviousProjection * previousView;
+  if (!insideSceneClip(previousClip)) return current;
+
+  vec2 previousUv = previousClip.xy / previousClip.w * 0.5 + 0.5;
+  float motion = length((previousUv - vUv) * vec2(size));
+  if (motion >= 16.0) return current;
+  ivec2 pixel = clamp(ivec2(previousUv * vec2(size)), ivec2(0), size - ivec2(1));
+  vec4 history = texelFetch(tHistory, pixel, 0);
+  if (history.a == 1.0) return current;
+  float expectedGuide = encodeDepthGuide(previousView.z - uPreviousGuideOffset);
+  float matchDepth = 1.0 - smoothstep(0.0005, 0.003, abs(history.a - expectedGuide));
+  float weight = matchDepth * (1.0 - smoothstep(1.0, 16.0, motion)) * uHistoryWeight;
+  return mix(current, clamp(history.rgb, localMin, localMax), weight);
+}
+#endif
+
 float blurGuide(vec4 value) {
 #ifdef HGAME_BLUR_GI
   return value.a;
@@ -422,6 +453,10 @@ void main() {
   const float W[3] = float[3](0.4026, 0.2442, 0.0545);
   vec3 accum = center.rgb * W[0];
   float wSum = W[0];
+#ifdef HGAME_GI_HISTORY
+  vec3 localMin = center.rgb;
+  vec3 localMax = center.rgb;
+#endif
   for (int i = -2; i <= 2; i++) {
     if (i == 0) continue;
     int idx = i < 0 ? -i : i;
@@ -429,8 +464,17 @@ void main() {
     float w = W[idx] * depthGuideWeight(blurGuide(s), centerGuide, quantization);
     accum += s.rgb * w;
     wSum += w;
+#ifdef HGAME_GI_HISTORY
+    if (w > 0.01) {
+      localMin = min(localMin, s.rgb);
+      localMax = max(localMax, s.rgb);
+    }
+#endif
   }
   vec3 blurred = accum / wSum;
+#ifdef HGAME_GI_HISTORY
+  if (centerGuide != 1.0) blurred = reuseGiHistory(blurred, localMin, localMax, last + ivec2(1));
+#endif
 #ifdef HGAME_BLUR_GI
   fragColor = vec4(blurred, center.a);
 #else

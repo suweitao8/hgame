@@ -31,6 +31,7 @@ const POST_STATE_SCALAR_KEYS = [
   'sharpness', 'vignette', 'saturation', 'damage', 'lowHealth',
   'focus', 'flash', 'fade',
 ];
+const GI_HISTORY_SETTINGS = ['giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxDist', 'ssrThickness'];
 
 /** @typedef {import('./color.js').RGBTuple} RGBTuple */
 /** @typedef {import('../quality3d.js').Quality3DPreset} Quality3DPreset */
@@ -101,6 +102,7 @@ const POST_STATE_SCALAR_KEYS = [
  * @property {number} [ssrIntensity=0.35]
  * @property {number} [ssrMaxDist=28] World units.
  * @property {number} [ssrThickness=0.35] World units.
+ * @property {boolean} [temporalGiSsr=false] Reuse depth-validated GI and reflection history on half-float targets.
  * @property {number} [contactShadows] 0..1; default follows the quality preset (0.65 or 0).
  * @property {number} [contactShadowLength=0.32] World units.
  * @property {number} [contactShadowThickness=0.08] World units.
@@ -165,6 +167,7 @@ const POST_STATE_SCALAR_KEYS = [
  * @property {number} ssrIntensity
  * @property {number} ssrMaxDist
  * @property {number} ssrThickness
+ * @property {boolean} temporalGiSsr
  * @property {number} contactShadows
  * @property {number} contactShadowLength
  * @property {number} contactShadowThickness
@@ -264,6 +267,7 @@ const POST_STATE_SCALAR_KEYS = [
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
  * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
  * @property {(patch?: PostPipelineSettings) => void} setState Merges finite numeric/array settings.
+ * @property {() => void} resetGiSsrHistory Discard GI and reflection history after a scene cut or discontinuous motion.
  * @property {(world: object, camera: PostPipelineCamera, options?: PostPipelineRenderOptions) => void} render Renders `world` through the pipeline (forward fallback when unsupported).
  * @property {() => void} handleContextLost Releases GPU targets.
  * @property {() => void} handleContextRestored Rebuilds GPU targets.
@@ -305,6 +309,7 @@ export function createPostPipeline3D(options = {}) {
     ssaoIntensity = 0.42,
     volumetricIntensity = 0.18,
     giIntensity = 0.55,
+    temporalGiSsr = false,
     giRadius = 2.4,
     ssrIntensity = 0.35,
     ssrMaxDist = 28.0,
@@ -381,6 +386,7 @@ export function createPostPipeline3D(options = {}) {
     ssaoIntensity,
     volumetricIntensity,
     giIntensity,
+    temporalGiSsr: Boolean(temporalGiSsr),
     giRadius,
     ssrIntensity,
     ssrMaxDist,
@@ -430,6 +436,13 @@ export function createPostPipeline3D(options = {}) {
   let aoBlurRT = null;
   let halfScratchRT = null;
   let giSsrRT = null;
+  let giHistoryRT = null;
+  let giHistoryWorld = null;
+  let giHistoryCamera = null;
+  let giHistoryDepthMode = -1;
+  let giHistoryGuideOffset = 0;
+  let giHistoryView = null;
+  let giHistoryProjection = null;
   let lumaMips = [];
   let adaptRT = [];
   let ldrRT = null;
@@ -508,6 +521,7 @@ export function createPostPipeline3D(options = {}) {
     aoBlurRT?.dispose?.();
     halfScratchRT?.dispose?.();
     giSsrRT?.dispose?.();
+    giHistoryRT?.dispose?.();
     ldrRT?.dispose?.();
     disposeExposureTargets();
     for (const mip of bloomMips) {
@@ -520,6 +534,8 @@ export function createPostPipeline3D(options = {}) {
     aoBlurRT = null;
     halfScratchRT = null;
     giSsrRT = null;
+    giHistoryRT = null;
+    resetGiSsrHistory();
     ldrRT = null;
     bloomMips = [];
   }
@@ -631,6 +647,11 @@ export function createPostPipeline3D(options = {}) {
     const hh = Math.max(1, bufferHeight >> 1);
     const useGiSsr = Boolean(sceneRT.depthTexture && (ssgiEnabled() || ssrEnabled()));
     giSsrRT = syncColorTarget(giSsrRT, useGiSsr, hw, hh, hdrType);
+    const useGiHistory = useGiSsr && state.temporalGiSsr && !usesByteColorTargets;
+    if (giHistoryRT && (!useGiHistory || giHistoryRT.width !== hw || giHistoryRT.height !== hh)) {
+      resetGiSsrHistory();
+    }
+    giHistoryRT = syncColorTarget(giHistoryRT, useGiHistory, hw, hh, hdrType);
     // AO and GI finish their blur before bloom writes the final upsample.
     const useHalfScratch = useGiSsr || bloomMips.length > 1 || (usesByteColorTargets && Boolean(halfRT));
     // Reserve alpha when the preset can denoise GI/SSR, including while those effects fade out.
@@ -683,6 +704,8 @@ export function createPostPipeline3D(options = {}) {
     scratchViewToWorld = new THREE.Matrix4();
     scratchSunView = new THREE.Vector3(0, 1, 0);
     scratchSunTarget = new THREE.Vector3();
+    giHistoryView = new THREE.Matrix4();
+    giHistoryProjection = new THREE.Matrix4();
     const exposureDefines = usesByteColorTargets ? { HGAME_EXPOSURE_UNORM: 1 } : {};
     const giDepthDefines = usesByteColorTargets ? { HGAME_BYTE_GI_DEPTH: 1 } : {};
     const storedExposureRange = { value: new THREE.Vector2(state.minExposure, state.maxExposure) };
@@ -726,6 +749,17 @@ export function createPostPipeline3D(options = {}) {
         tInput: { value: null },
         uAxis: { value: new THREE.Vector2(1, 0) },
       }, { ...giDepthDefines, HGAME_BLUR_GI: 1 }),
+      blurGiHistory: makeShader(BILATERAL_BLUR_FRAGMENT_GLSL3, {
+        ...sceneProjectionUniforms,
+        tInput: { value: null },
+        uAxis: { value: new THREE.Vector2(0, 1) },
+        tSceneDepth: { value: null },
+        tHistory: { value: null },
+        uPreviousFromCurrentView: { value: new THREE.Matrix4() },
+        uPreviousProjection: { value: giHistoryProjection },
+        uPreviousGuideOffset: { value: 0 },
+        uHistoryWeight: { value: 0 },
+      }, { HGAME_BLUR_GI: 1, HGAME_GI_HISTORY: 1 }),
       lumaExtract: makeShader(LUMA_EXTRACT_FRAGMENT_GLSL3, {
         tScene: { value: null },
       }, exposureDefines),
@@ -838,6 +872,7 @@ export function createPostPipeline3D(options = {}) {
     requestedHeight = Math.max(1, Math.floor(h));
     const next = fitDrawingBuffer(requestedWidth, requestedHeight, 1, targetLimits);
     const changed = next.bufferWidth !== bufferWidth || next.bufferHeight !== bufferHeight;
+    if (changed) resetGiSsrHistory();
     bufferWidth = next.bufferWidth;
     bufferHeight = next.bufferHeight;
     return changed;
@@ -856,6 +891,7 @@ export function createPostPipeline3D(options = {}) {
       }
       setBufferDimensions(buffer.width, buffer.height);
     }
+    resetGiSsrHistory();
     activePreset = { ...QUALITY3D_PRESETS.medium, ...nextPreset };
     if (!explicitFxaa && 'fxaa' in activePreset) {
       state.fxaa = Boolean(activePreset.fxaa);
@@ -873,6 +909,10 @@ export function createPostPipeline3D(options = {}) {
     if (disposed || !patch || typeof patch !== 'object') return;
     if ('fxaa' in patch) state.fxaa = Boolean(patch.fxaa);
     if ('autoExposure' in patch) state.autoExposure = Boolean(patch.autoExposure);
+    if ('temporalGiSsr' in patch) state.temporalGiSsr = Boolean(patch.temporalGiSsr);
+    if (giHistoryRT && GI_HISTORY_SETTINGS.some(key => Number.isFinite(patch[key]) && patch[key] !== state[key])) {
+      resetGiSsrHistory();
+    }
     if ('toneMapping' in patch) {
       state.toneMapping = resolveToneMappingIndex(patch.toneMapping);
     }
@@ -909,6 +949,56 @@ export function createPostPipeline3D(options = {}) {
     }
 
     syncOptionalTargets();
+  }
+
+  function resetGiSsrHistory() {
+    giHistoryWorld = null;
+    giHistoryCamera = null;
+    giHistoryDepthMode = -1;
+    if (mats?.blurGiHistory) {
+      const uniforms = mats.blurGiHistory.uniforms;
+      uniforms.tHistory.value = null;
+      uniforms.tSceneDepth.value = null;
+      uniforms.tInput.value = null;
+    }
+  }
+
+  function finishGiSsrBlur(world, camera, stepDt, useSsr) {
+    const depthMode = sceneProjectionUniforms.uSceneDepthMode.value;
+    let material = mats.blurRgba;
+    if (giHistoryRT && giHistoryWorld === world && giHistoryCamera === camera &&
+        giHistoryDepthMode === depthMode && stepDt <= 0.125) {
+      scratchViewToWorld.copy(camera.matrixWorldInverse).invert();
+      const uniforms = mats.blurGiHistory.uniforms;
+      const transform = uniforms.uPreviousFromCurrentView.value;
+      transform.multiplyMatrices(giHistoryView, scratchViewToWorld);
+      const e = transform.elements;
+      if (e[10] > 0.82 && e[12] ** 2 + e[13] ** 2 + e[14] ** 2 < 16) {
+        uniforms.tSceneDepth.value = sceneRT.depthTexture;
+        uniforms.tHistory.value = giHistoryRT.texture;
+        uniforms.uPreviousGuideOffset.value = giHistoryGuideOffset;
+        const frameWeight = useSsr ? 0.55 : 0.78;
+        uniforms.uHistoryWeight.value = Math.pow(frameWeight, Math.max(1, stepDt * 60));
+        material = mats.blurGiHistory;
+      }
+    }
+    material.uniforms.tInput.value = halfScratchRT.texture;
+    material.uniforms.uAxis.value.set(0, 1);
+    runPass(material, giSsrRT);
+
+    const texture = giSsrRT.texture;
+    if (giHistoryRT) {
+      const previous = giHistoryRT;
+      giHistoryRT = giSsrRT;
+      giSsrRT = previous;
+      giHistoryView.copy(camera.matrixWorldInverse);
+      giHistoryProjection.copy(camera.projectionMatrix);
+      giHistoryGuideOffset = sceneProjectionUniforms.uSceneDepthGuideOffset.value;
+      giHistoryDepthMode = depthMode;
+      giHistoryWorld = world;
+      giHistoryCamera = camera;
+    }
+    return texture;
   }
 
   function renderForwardWithViewmodel(world, camera, viewScene, viewCamera) {
@@ -1026,6 +1116,7 @@ export function createPostPipeline3D(options = {}) {
 
       // 1b. Half-res HDR SSGI + SSR bounce reflections + depth-guided bilateral denoise
       const useGiSsr = Boolean(wantsGiSsr && giSsrRT && halfScratchRT);
+      let giSsrTexture = null;
       if (useGiSsr) {
         const giU = mats.giSsr.uniforms;
         giU.tScene.value = sceneRT.texture;
@@ -1045,16 +1136,16 @@ export function createPostPipeline3D(options = {}) {
         mats.blurRgba.uniforms.uAxis.value.set(1, 0);
         runPass(mats.blurRgba, halfScratchRT);
 
-        mats.blurRgba.uniforms.tInput.value = halfScratchRT.texture;
-        mats.blurRgba.uniforms.uAxis.value.set(0, 1);
-        runPass(mats.blurRgba, giSsrRT);
+        giSsrTexture = finishGiSsrBlur(world, camera, stepDt, useSsr);
+      } else if (giHistoryRT) {
+        resetGiSsrHistory();
       }
 
       const compU = mats.composite.uniforms;
       compU.tScene.value = sceneRT.texture;
       compU.tDepth.value = needsDepth ? sceneRT.depthTexture : null;
       compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
-      compU.tGiSsr.value = useGiSsr ? giSsrRT.texture : null;
+      compU.tGiSsr.value = giSsrTexture;
       compU.uUseAo.value = useAo ? 1 : 0;
       compU.uUseVolumetric.value = useVolumetric ? 1 : 0;
       compU.uUseGiSsr.value = useGiSsr ? 1 : 0;
@@ -1191,6 +1282,9 @@ export function createPostPipeline3D(options = {}) {
         mats.fxaaSharpen.uniforms.uFxaaEnabled.value = state.fxaa ? 1 : 0;
         runPass(mats.fxaaSharpen, null);
       }
+    } catch (error) {
+      resetGiSsrHistory();
+      throw error;
     } finally {
       gl?.depthRange?.(0, 1);
       renderer.setRenderTarget(null);
@@ -1208,6 +1302,7 @@ export function createPostPipeline3D(options = {}) {
   function handleContextRestored() {
     if (disposed) return;
     contextLost = false;
+    resetGiSsrHistory();
     sceneSampleCounts = undefined;
     bloomStorage = chooseBloomStorage();
     if (supported) {
@@ -1252,6 +1347,7 @@ export function createPostPipeline3D(options = {}) {
     resize,
     setPreset,
     setState,
+    resetGiSsrHistory,
     render,
     handleContextLost,
     handleContextRestored,
