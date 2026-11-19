@@ -683,7 +683,8 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
           size: 0.05,
           velocity: { linear: [0, [0.5, 1.0], 0], orbitalY: [0, 0.3] },
           noise: { strength: 1.0, strengthY: 0.25, frequency: 0.5 },
-          trail: { lifetime: 0.15, widthOverTrail: 1.0, sizeAffectsWidth: true, inheritColor: true },
+          colorCurve: [[0, [1, 0.2, 0.04, 1]], [1, [1, 0.2, 0.04, 0]]],
+          trail: { lifetime: 0.15, blend: 'alpha', widthOverTrail: 1.0, sizeAffectsWidth: true, inheritColor: true, endColor: '#000000' },
         },
         {
           name: 'lances',

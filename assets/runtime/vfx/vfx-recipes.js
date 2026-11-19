@@ -367,6 +367,7 @@ export function createEffectPlayer({
       endWidth,
       hdr: trailCfg.hdr ?? 1.0,
       lifetime: trailLifetime,
+      blend: trailCfg.blend || 'additive',
     });
     if (tid < 0) return;
 
@@ -748,11 +749,17 @@ export function createEffectPlayer({
     }
 
     if (layer.trail) {
+      const c0 = layer.colorCurve?.[0]?.[1];
+      const trailTint = [
+        scratchTintOut[0] * (c0 ? (c0[0] ?? 1) : 1),
+        scratchTintOut[1] * (c0 ? (c0[1] ?? 1) : 1),
+        scratchTintOut[2] * (c0 ? (c0[2] ?? 1) : 1),
+      ];
       allocTrailFollower(
         scratchPos[0], scratchPos[1], scratchPos[2],
         scratchVel[0], scratchVel[1], scratchVel[2],
         gravity, drag, noiseStrength, noiseYScale, noiseFreq, phase,
-        dur, clampedInitAge, layer.trail, scratchTintOut,
+        dur, clampedInitAge, layer.trail, trailTint,
         orbitalY, centerOffX, centerOffZ,
         sizeStart, layer.sizeCurve,
         trackedSlot,

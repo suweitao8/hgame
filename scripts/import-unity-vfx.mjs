@@ -505,14 +505,14 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       let endRgb = maxCol;
       if (cotMode === 0 || cotMode === 2) {
         const mMax = cotBlock.match(/maxColor:\s*\{([^}]+)\}/);
-        startRgb = mMax ? parseColorObject(mMax[1]) : maxCol;
+        startRgb = mMax ? parseColorObject(mMax[1], false) : maxCol;
         endRgb = startRgb;
       } else {
         const cotStops = parseGradientStops(cotBlock);
         if (cotStops && cotStops.length > 0) {
-          const vis = cotStops.filter((s) => (s[1][0] + s[1][1] + s[1][2]) > 0.02);
-          startRgb = (vis[1] || vis[0] || cotStops[0])[1];
-          endRgb = (vis[vis.length - 1] || cotStops[cotStops.length - 1])[1];
+          const opaque = cotStops.filter((s) => s[1][3] >= 0.45);
+          startRgb = (opaque[0] || cotStops[0])[1];
+          endRgb = (opaque[opaque.length - 1] || cotStops[cotStops.length - 1])[1];
         }
       }
       const toHex = (c) => '#' + [c[0], c[1], c[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
@@ -520,6 +520,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const baseSizeMax = typeof size === 'number' ? size : size[1];
       layer.trail = {
         lifetime: tLife,
+        blend: trailMat?.blend || 'alpha',
         width: Number((baseSizeMax * wMax).toFixed(3)),
         widthOverTrail: wScalar,
         sizeAffectsWidth: sizeAffW,

@@ -604,16 +604,24 @@ void main() {
 
     float nStr = aAtlasP6.x;
     if (nStr > 0.001) {
-      float nFreq = max(0.05, aAtlasP6.y);
+      float nFreq = max(0.08, aAtlasP6.y);
       float ph = aAtlasP6.w * 6.2831853;
-      float wt = age * nFreq * 3.14159265;
+      float w1 = nFreq * 3.2;
+      float w2 = nFreq * 5.7;
       float rm = aAtlasP3.w;
       float yScale = (rm > 1.5 && rm < 2.5) ? 1.0 : aAtlasP6.z;
-      vec3 noiseOff = vec3(
-        sin(wt + ph) * cos(wt * 0.73 + ph * 1.3),
-        sin(wt * 1.17 + ph * 2.1) * yScale,
-        cos(wt * 0.89 + ph * 1.7)
-      ) * (nStr * min(1.0, age * 1.5) * 0.45);
+      vec3 disp1 = vec3(
+        (sin(w1 * age + ph) - sin(ph)) / w1,
+        (sin(w1 * age * 1.13 + ph * 2.1) - sin(ph * 2.1)) / (w1 * 1.13),
+        (cos(ph * 1.7) - cos(w1 * age + ph * 1.7)) / w1
+      );
+      vec3 disp2 = vec3(
+        (cos(ph * 2.9) - cos(w2 * age + ph * 2.9)) / w2,
+        (sin(w2 * age * 0.91 + ph * 1.4) - sin(ph * 1.4)) / (w2 * 0.91),
+        (sin(w2 * age + ph * 2.3) - sin(ph * 2.3)) / w2
+      );
+      vec3 noiseOff = (disp1 + 0.55 * disp2) * nStr * 1.95;
+      noiseOff.y *= yScale;
       worldPos += noiseOff;
     }
   }
@@ -670,7 +678,8 @@ void main() {
       rightAxis = vec2(cos(rot), sin(rot));
     }
     vec2 upAxis = vec2(-rightAxis.y, rightAxis.x);
-    mvCenter.xy += rightAxis * (position.x * major) + upAxis * (position.y * curSize);
+    float minBill = (renderMode < 0.5 && curSize > 0.001) ? abs(mvCenter.z) * 0.0042 : 0.0;
+    mvCenter.xy += rightAxis * (position.x * max(major, minBill)) + upAxis * (position.y * max(curSize, minBill));
     gl_Position = projectionMatrix * mvCenter;
   }
 }
@@ -1066,17 +1075,26 @@ export function evaluateAtlasParticlePosition(
     pz = cz + rx * os + rz * oc;
   }
   if (noiseStrength > 0.001) {
-    const nf = Math.max(0.05, noiseFreq);
+    const nf = Math.max(0.08, noiseFreq);
     const ph = phase * 6.283185307179586;
-    const wt = age * nf * 3.141592653589793;
-    const env = noiseStrength * Math.min(1.0, age * 1.5) * (is2D ? 12.0 : 0.45);
     if (is2D) {
+      const wt = age * nf * 3.141592653589793;
+      const env = noiseStrength * Math.min(1.0, age * 1.5) * 12.0;
       px += Math.sin(wt + ph) * Math.cos(wt * 0.73 + ph) * env;
       py += Math.cos(wt * 1.17 + ph) * env * noiseYScale;
     } else {
-      px += Math.sin(wt + ph) * Math.cos(wt * 0.73 + ph * 1.3) * env;
-      py += Math.sin(wt * 1.17 + ph * 2.1) * env * noiseYScale;
-      pz += Math.cos(wt * 0.89 + ph * 1.7) * env;
+      const w1 = nf * 3.2;
+      const w2 = nf * 5.7;
+      const d1x = (Math.sin(w1 * age + ph) - Math.sin(ph)) / w1;
+      const d1y = (Math.sin(w1 * age * 1.13 + ph * 2.1) - Math.sin(ph * 2.1)) / (w1 * 1.13);
+      const d1z = (Math.cos(ph * 1.7) - Math.cos(w1 * age + ph * 1.7)) / w1;
+      const d2x = (Math.cos(ph * 2.9) - Math.cos(w2 * age + ph * 2.9)) / w2;
+      const d2y = (Math.sin(w2 * age * 0.91 + ph * 1.4) - Math.sin(ph * 1.4)) / (w2 * 0.91);
+      const d2z = (Math.sin(w2 * age + ph * 2.3) - Math.sin(ph * 2.3)) / w2;
+      const s = noiseStrength * 1.95;
+      px += (d1x + 0.55 * d2x) * s;
+      py += (d1y + 0.55 * d2y) * s * noiseYScale;
+      pz += (d1z + 0.55 * d2z) * s;
     }
   }
   outPos[0] = px;
