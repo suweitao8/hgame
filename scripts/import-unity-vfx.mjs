@@ -255,14 +255,16 @@ function inspectMaterial(matInfo, guidMap, deps) {
       .replace(/^_+|_+$/g, '');
   }
 
+  const matName = path.basename(matInfo.relPath, path.extname(matInfo.relPath));
   return {
-    matName: path.basename(matInfo.relPath, path.extname(matInfo.relPath)),
+    matName,
     spriteKey,
     hdr: color.hdr,
     tintRgb: color.rgb,
     blend: isAdditive ? 'additive' : 'alpha',
     lit: isLit,
     opaque: isOpaque,
+    isDistortionOnly: color.hdr > 100 && /distortion/i.test(matName),
     flipbookBlend: flipbookMode >= 1,
   };
 }
@@ -516,6 +518,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
     const renderMode = rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : rmNum === 2 ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard';
+    if (renderMode === 'mesh' && mainMat?.isDistortionOnly) return null;
 
     const forceMod = extractSection(ps, 'ForceModule');
     let netGravity = gravScalar * 9.81;
