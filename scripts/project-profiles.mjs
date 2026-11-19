@@ -22,10 +22,18 @@ export const PROFILE_FILES = Object.freeze({
   horde: { html: null, demoData: ['swarm.json'] },
 });
 
+export const THREE_KTX2_FILES = Object.freeze([
+  'jsm/loaders/KTX2Loader.js', 'jsm/math/ColorSpaces.js', 'jsm/utils/WorkerPool.js',
+  'jsm/libs/ktx-parse.module.js', 'jsm/libs/LICENSE-ktx-parse.txt',
+  'jsm/libs/zstddec.module.js', 'jsm/libs/LICENSE-zstddec.txt',
+  'jsm/libs/basis/basis_transcoder.js', 'jsm/libs/basis/basis_transcoder.wasm', 'jsm/libs/basis/LICENSE.txt',
+]);
+
 export const THREE_FILES = Object.freeze([
   'three.module.js', 'three.core.js', 'LICENSE', 'jsm/loaders/GLTFLoader.js',
   'jsm/utils/BufferGeometryUtils.js', 'jsm/utils/SkeletonUtils.js',
   'jsm/libs/meshopt_decoder.module.js', 'jsm/libs/LICENSE-meshoptimizer.txt',
+  ...THREE_KTX2_FILES,
 ]);
 
 const FEATURE_MODULES = {

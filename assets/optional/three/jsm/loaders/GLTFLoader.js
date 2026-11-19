@@ -1540,7 +1540,19 @@ class GLTFTextureBasisUExtension {
 
 		}
 
-		return parser.loadTextureImage( textureIndex, extension.source, loader );
+		return parser.loadTextureImage( textureIndex, extension.source, loader ).then( ( texture ) => {
+
+			if ( texture ) return texture;
+			// HGame: preserve the base glTF image when optional Basis transcoding fails.
+			if ( ! json.extensionsRequired?.includes( this.name ) && textureDef.source !== undefined ) {
+
+				return parser.loadTexture( textureIndex );
+
+			}
+
+			throw new Error( 'THREE.GLTFLoader: Failed to decode KHR_texture_basisu texture ' + textureIndex );
+
+		} );
 
 	}
 

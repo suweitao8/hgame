@@ -67,7 +67,7 @@ function onPageHide(event) {
 window.addEventListener('pagehide', onPageHide);
 
 async function startWorld() {
-  const modelLoader = createStarterModelLoader();
+  const modelLoader = createStarterModelLoader(renderer.renderer);
   await installStarter3DFeatures(app, THREE, base, modelLoader);
   const loader = app.platform.assets;
   let assetCatalog = null;

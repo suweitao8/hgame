@@ -11,6 +11,7 @@ const mime = {
   '.css': 'text/css', '.json': 'application/json',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.svg': 'image/svg+xml', '.webp': 'image/webp',
+  '.ktx2': 'image/ktx2',
   '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.bin': 'application/octet-stream',
   '.wasm': 'application/wasm', '.ogg': 'audio/ogg',
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.mp4': 'video/mp4',

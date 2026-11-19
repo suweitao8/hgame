@@ -241,6 +241,16 @@ test('standalone 3D project release traces Three.js transitive modules while pru
       'assets/vendor/three/three.module.js',
       'assets/vendor/three/three.core.js',
       'assets/vendor/three/jsm/loaders/GLTFLoader.js',
+      'assets/vendor/three/jsm/loaders/KTX2Loader.js',
+      'assets/vendor/three/jsm/libs/basis/basis_transcoder.js',
+      'assets/vendor/three/jsm/libs/basis/basis_transcoder.wasm',
+      'assets/vendor/three/jsm/libs/basis/LICENSE.txt',
+      'assets/vendor/three/jsm/libs/LICENSE-ktx-parse.txt',
+      'assets/vendor/three/jsm/libs/LICENSE-zstddec.txt',
+      'assets/vendor/three/jsm/libs/ktx-parse.module.js',
+      'assets/vendor/three/jsm/libs/zstddec.module.js',
+      'assets/vendor/three/jsm/math/ColorSpaces.js',
+      'assets/vendor/three/jsm/utils/WorkerPool.js',
       'assets/vendor/three/jsm/utils/BufferGeometryUtils.js',
       'assets/vendor/three/jsm/utils/SkeletonUtils.js',
       'assets/vendor/three/LICENSE',
@@ -252,6 +262,8 @@ test('standalone 3D project release traces Three.js transitive modules while pru
     ]) {
       assert.equal(await exists(path.join(outDir, requiredRel)), true, `Expected ${requiredRel} in 3D release`);
     }
+    const basisWasm = await readFile(path.join(outDir, 'assets/vendor/three/jsm/libs/basis/basis_transcoder.wasm'));
+    assert.deepEqual(basisWasm.subarray(0, 4), Buffer.from([0, 0x61, 0x73, 0x6d]));
 
     for (const prunedRel of [
       'assets/vendor/three/jsm/utils/UnusedHelper.js',

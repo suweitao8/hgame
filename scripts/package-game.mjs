@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
 import { runToyPreflight } from './toy-preflight.mjs';
-import { normalizeReleaseProfile, runtimeSeeds } from './project-profiles.mjs';
+import { normalizeReleaseProfile, runtimeSeeds, THREE_KTX2_FILES } from './project-profiles.mjs';
 import { PIXI_BUNDLER_PATH, casObjectPath, hashPixiSources, matchPixiBuildBytes, readAssetManifest, readPixiBuildManifest, readProjectAssetCatalog, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -977,6 +977,9 @@ export async function packageGameRelease({
     enqueueRel('assets/vendor/three/LICENSE', false);
     if (includedFiles.has('assets/vendor/three/jsm/libs/meshopt_decoder.module.js')) {
       enqueueRel('assets/vendor/three/jsm/libs/LICENSE-meshoptimizer.txt', true);
+    }
+    if (includedFiles.has('assets/vendor/three/jsm/loaders/KTX2Loader.js')) {
+      for (const file of THREE_KTX2_FILES) enqueueRel('assets/vendor/three/' + file, true);
     }
   }
 

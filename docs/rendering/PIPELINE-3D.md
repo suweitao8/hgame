@@ -87,6 +87,14 @@ GPU diagnostics use a bounded WebGL timer query pool. Sampling alternates betwee
 
 The opt-in `uploads` counters cover CPU buffer and texture payloads submitted by the frame and each draw. `uploadMethods` lists the WebGL methods observed on that context, and `unmeasuredCalls` indicates when a payload size was unavailable. Buffer subranges use element offsets and lengths. Uncompressed texture bytes use the requested pixel rectangle and format, with row padding and driver storage outside the count. Compressed uploads use the submitted source range. Commands with no client payload, such as empty allocation and GPU buffer offsets, contribute zero bytes. Uploads issued outside the adapter frame are outside the capture. See the [WebGL 2 transfer signatures](https://registry.khronos.org/webgl/specs/latest/2.0/).
 
+### Compressed model textures
+
+The generated 3D loader handles `KHR_texture_basisu` for external KTX2 files and KTX2 images embedded in GLB buffer views. Plain models do not fetch the KTX2 loader or its WASM. The first KTX2 request uses the current renderer's format support and starts at most two Basis workers when transcoding is required. Concurrent loads may share decoded bytes, with each model owning its texture descriptor and sampler settings.
+
+Provide a standard glTF image when Basis is optional. That image can load when Worker or WebAssembly support is absent or when the compressed image cannot be decoded. A failed required Basis texture rejects the model load. Transient transcoder initialization failures can be retried. On application disposal, the starter rejects new model loads, drains started work and releases the workers and their URL. Started network requests can finish during the drain.
+
+Standalone releases include the pinned Three r187 KTX2 loader, Basis JS and WASM, helper modules and their license notices. [Three KTX2 loader](https://raw.githubusercontent.com/mrdoob/three.js/r187/examples/jsm/loaders/KTX2Loader.js) · [glTF Basis extension](https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_texture_basisu)
+
 ### Clustered-light texture updates
 
 `createMegaLights3D` reuses the last light bins when the view transform, projection, light budget and light values stay unchanged. The viewport and stochastic sampling clock still advance. Rebuilding compares active light rows and the cluster windows occupied in either build. The bundled Three.js build uploads row-bounded ranges for sparse edits and falls back to a full upload for dense changes. Newly allocated GPU textures and renderers that missed a previous version receive the full data. Other injected Three builds use full uploads for changed textures. `mega.uploadStats` reports the current queued bytes, range count and mode for each texture. A renderer that needs a full refresh can submit more than the pending range estimate.

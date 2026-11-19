@@ -40,7 +40,7 @@ const app = createGameApplication({
   project, gameId: gameConfig.id, gameVersion: gameConfig.version, renderer,
 });
 try {
-  await installStarter3DFeatures(app, THREE, base, createStarterModelLoader());
+  await installStarter3DFeatures(app, THREE, base, createStarterModelLoader(renderer.renderer));
 } catch (error) {
   app.dispose();
   throw error;

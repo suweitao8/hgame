@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Load glTF KTX2/Basis textures on demand in 3D projects, including self-contained packaged releases. Reuse transcoded bytes with per-model texture ownership and release the worker pool on teardown.
+
 - Report submitted WebGL buffer and texture upload payloads by frame and pass in opt-in Three diagnostics.
 
 - Reuse unchanged clustered light bins and upload bounded dirty texture ranges. Initialize all data on fresh GPU backing and retain full-update fallback for injected Three builds.

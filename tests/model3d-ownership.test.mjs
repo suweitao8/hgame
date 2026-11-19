@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from '../assets/optional/three/three.module.js';
+import { WorkerPool } from '../assets/optional/three/jsm/utils/WorkerPool.js';
 import { createGameApplication, Entity, Scene } from '../assets/runtime/index.js';
 import { createModel3DProvider } from '../assets/runtime/integrations/model3d.js';
 
@@ -9,6 +10,32 @@ function monitor(resource) {
   resource.addEventListener('dispose', () => { calls++; });
   return () => calls;
 }
+
+test('Basis worker errors settle active and queued decode jobs and allow a retry', { timeout: 1500 }, async () => {
+  const workers = [];
+  class FakeWorker extends EventTarget {
+    postMessage() {}
+    terminate() { this.terminated = true; }
+  }
+  const pool = new WorkerPool(1);
+  pool.setWorkerCreator(() => {
+    const worker = new FakeWorker();
+    workers.push(worker);
+    return worker;
+  });
+  const active = pool.postMessage({ type: 'transcode' });
+  const queued = pool.postMessage({ type: 'transcode' });
+  const rejected = Promise.all([assert.rejects(active, /codec init failed/), assert.rejects(queued, /codec init failed/)]);
+  const error = new Event('error');
+  error.message = 'codec init failed';
+  workers[0].dispatchEvent(error);
+  await rejected;
+  assert.equal(workers[0].terminated, true);
+  const retry = pool.postMessage({ type: 'transcode' });
+  workers[1].dispatchEvent(new MessageEvent('message', { data: 'decoded' }));
+  assert.equal((await retry).data, 'decoded');
+  pool.dispose();
+});
 
 test('Model3D keeps replaced assets usable and disposes shared owned resources once', async () => {
   const provider = createModel3DProvider({ THREE });
