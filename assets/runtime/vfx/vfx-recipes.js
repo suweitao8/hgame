@@ -374,7 +374,10 @@ export function createEffectPlayer({
       ? readRange(trailCfg.widthOverTrail, 1, 1, prng) * (sizeAffectsWidth ? sizeStart : 1)
       : readRange(trailCfg.width, 0.08, 0.08, prng);
     const width = Math.max(0.002, widthVal);
-    const endWidth = trailCfg.endWidth ?? 0;
+    const endWidth = trailCfg.endWidthScale !== undefined
+      ? (width * Math.max(0, Number(trailCfg.endWidthScale)))
+      : (trailCfg.endWidth ?? 0);
+    const trailAlpha = Math.max(0, Math.min(1, readRange(trailCfg.alpha, 1, 1, prng)));
     const rawTrailLife = readRange(trailCfg.lifetime, 0.15, 0.15, prng);
     const trailLifetime = Math.max(
       0.03,
@@ -385,6 +388,7 @@ export function createEffectPlayer({
       endColor,
       width,
       endWidth,
+      alpha: trailAlpha,
       hdr: trailCfg.hdr ?? 1.0,
       lifetime: trailLifetime,
       blend: trailCfg.blend || 'additive',

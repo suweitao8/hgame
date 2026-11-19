@@ -791,6 +791,40 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
       if (Math.hypot(x, z) > 0.05 && Math.hypot(vx, vz) > 0.05) nonAxisCount += 1;
     }
     assert.ok(nonAxisCount >= 10, `expected spherical spread off-axis (got ${nonAxisCount})`);
+    // 9. Trail opacity (colorOverLifetime alpha) and endWidthScale scale segMeta alpha and segExtra endWidth
+    vfx.reset();
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'translucent_ribbon_test',
+      loop: false,
+      duration: 1.0,
+      layers: [
+        {
+          name: 'trails',
+          kind: 'particle',
+          bursts: [{ time: 0, count: 1 }],
+          life: 1.0,
+          size: 0.1,
+          velocity: { linear: [1, 0, 0] },
+          trail: {
+            lifetime: 0.5,
+            lifetimeMode: 'fraction',
+            blend: 'alpha',
+            widthOverTrail: 0.5,
+            endWidthScale: 1,
+            alpha: 0.25,
+            color: '#4ef7ff',
+            endColor: '#004dff',
+          },
+        },
+      ],
+    }, { x: 0, y: 0, z: 0 });
+    for (let i = 0; i < 4; i++) vfx.update(0.05);
+    const transRibbon = scene.getObjectByName('HGameVfxRibbonTrailsNormal');
+    const transMeta = transRibbon.geometry.getAttribute('aSegMeta').array;
+    const transExtra = transRibbon.geometry.getAttribute('aSegExtra').array;
+    assert.ok(transMeta[2] > 0 && transMeta[2] <= 0.26, `expected trail alpha scaled <= 0.26 (got ${transMeta[2]})`);
+    assert.ok(Math.abs(transExtra[2] - 1) < 0.05, `expected constant endWidthScale ~1 (got ${transExtra[2]})`);
     dummyTex.dispose();
   } finally {
     vfx.dispose();

@@ -393,6 +393,7 @@ export function createTrailsSystem({
   const trailWidthScale = new Float32Array(trailCap);
   const trailEndWidthScale = new Float32Array(trailCap);
   const trailHdr = new Float32Array(trailCap);
+  const trailOpacity = new Float32Array(trailCap);
   const trailLifetime = new Float32Array(trailCap);
   const trailIsNormal = new Uint8Array(trailCap);
   const trailActive = new Uint8Array(trailCap);
@@ -661,17 +662,18 @@ export function createTrailsSystem({
 
       dstMeta[i4] = rgb;
       dstMeta[i4 + 1] = w;
+      const op = trailOpacity[trackId];
       if (isNormal) {
         const evalNormalAlpha = (t) => (
           t <= 0.06 ? (0.35 + 0.65 * (t / 0.06))
             : t <= 0.86 ? 1.0
             : Math.max(0, (1.0 - t) / 0.14)
         );
-        dstMeta[i4 + 2] = evalNormalAlpha(t0);
-        dstMeta[i4 + 3] = evalNormalAlpha(t1);
+        dstMeta[i4 + 2] = evalNormalAlpha(t0) * op;
+        dstMeta[i4 + 3] = evalNormalAlpha(t1) * op;
       } else {
-        dstMeta[i4 + 2] = Math.max(0, 1 - t0 * t0);
-        dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1);
+        dstMeta[i4 + 2] = Math.max(0, 1 - t0 * t0) * op;
+        dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1) * op;
       }
 
       dstExtra[i4] = endRgb;
@@ -717,6 +719,7 @@ export function createTrailsSystem({
     trailHead[id] = 0;
     trailCount[id] = 0;
     trailWidthScale[id] = 1;
+    trailOpacity[id] = 1;
     trailLifetime[id] = 0;
     trailIsNormal[id] = 0;
     if (typeof colorOrOpts === 'object' && colorOrOpts !== null) {
@@ -728,6 +731,7 @@ export function createTrailsSystem({
       trailWidth[id] = wStart;
       trailEndWidthScale[id] = wStart > 0.0001 ? Math.max(0, wEnd / wStart) : 0;
       trailHdr[id] = colorOrOpts.hdr ?? 1.0;
+      trailOpacity[id] = Math.max(0, Math.min(1, colorOrOpts.alpha ?? 1.0));
       trailLifetime[id] = Math.max(0, colorOrOpts.lifetime ?? 0);
       trailIsNormal[id] = colorOrOpts.blend === 'alpha' ? 1 : 0;
     } else {

@@ -506,20 +506,58 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const wScalar = readMinMaxScalar(trailMod, 'widthOverTrail', 1);
       const sizeAffW = !/sizeAffectsWidth:\s*0\b/.test(trailMod);
       const inheritColor = /inheritParticleColor:\s*1/.test(trailMod);
-      const cotBlock = trailMod.match(/colorOverTrail:[\s\S]*?(?=widthOverTrail:|sizeAffects|$)/)?.[0] || '';
+      const colLifeBlock = trailMod.match(/colorOverLifetime:[\s\S]*?(?=widthOverTrail:|colorOverTrail:|$)/)?.[0] || '';
+      const colLifeMode = Number((colLifeBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
+      let trailAlpha = 1;
+      if (colLifeMode === 0 || colLifeMode === 2) {
+        const mMin = colLifeBlock.match(/minColor:\s*\{([^}]+)\}/);
+        const mMax = colLifeBlock.match(/maxColor:\s*\{([^}]+)\}/);
+        const aMax = mMax ? parseColorObject(mMax[1], false)[3] : 1;
+        const aMin = mMin ? parseColorObject(mMin[1], false)[3] : aMax;
+        if (colLifeMode === 2 && Math.abs(aMin - aMax) > 0.01) {
+          trailAlpha = [Number(Math.min(aMin, aMax).toFixed(3)), Number(Math.max(aMin, aMax).toFixed(3))];
+        } else {
+          trailAlpha = Number(aMax.toFixed(3));
+        }
+      } else {
+        const clStops = parseGradientStops(colLifeBlock);
+        if (clStops && clStops.length > 0) {
+          const avgA = clStops.reduce((s, k) => s + k[1][3], 0) / clStops.length;
+          trailAlpha = Number(avgA.toFixed(3));
+        }
+      }
+      const wBlock = trailMod.match(/widthOverTrail:[\s\S]*?(?=colorOverTrail:|$)/)?.[0] || '';
+      const wCurve = parseCurveKeys(wBlock);
+      const endWidthScale = wCurve ? Number(wCurve[wCurve.length - 1][1].toFixed(3)) : 0;
+
+      const cotBlock = trailMod.match(/colorOverTrail:[\s\S]*$/)?.[0] || '';
       const cotMode = Number((cotBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 1);
       let startRgb = maxCol;
       let endRgb = maxCol;
       if (cotMode === 0 || cotMode === 2) {
         const mMax = cotBlock.match(/maxColor:\s*\{([^}]+)\}/);
-        startRgb = mMax ? parseColorObject(mMax[1], false) : maxCol;
+        startRgb = mMax ? parseColorObject(mMax[1], true) : maxCol;
         endRgb = startRgb;
       } else {
-        const cotStops = parseGradientStops(cotBlock);
-        if (cotStops && cotStops.length > 0) {
-          const opaque = cotStops.filter((s) => s[1][3] >= 0.45);
-          startRgb = (opaque[0] || cotStops[0])[1];
-          endRgb = (opaque[opaque.length - 1] || cotStops[cotStops.length - 1])[1];
+        const maxGrad = cotBlock.match(/maxGradient:[\s\S]*?(?=minGradient:|$)/)?.[0] || cotBlock;
+        const numC = Math.min(8, Number((maxGrad.match(/m_NumColorKeys:\s*(\d+)/) || [])[1] ?? 2));
+        const keyCols = [];
+        for (let i = 0; i < numC; i++) {
+          const km = maxGrad.match(new RegExp(`key${i}:\\s*\\{([^}]+)\\}`));
+          if (km) keyCols.push(parseColorObject(km[1], true));
+        }
+        if (keyCols.length >= 3) {
+          // Skip leading transparent fade-in key and trailing black fade-out key so body color isn't darkened.
+          const firstVisible = keyCols[0][3] < 0.1 ? keyCols[1] : keyCols[0];
+          const last = keyCols[keyCols.length - 1];
+          const lastVisible = (last[3] < 0.1 && Math.max(last[0], last[1], last[2]) < 0.05)
+            ? keyCols[keyCols.length - 2]
+            : last;
+          startRgb = firstVisible;
+          endRgb = lastVisible;
+        } else if (keyCols.length > 0) {
+          startRgb = keyCols[0];
+          endRgb = keyCols[keyCols.length - 1];
         }
       }
       const toHex = (c) => '#' + [c[0], c[1], c[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
@@ -533,6 +571,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         widthOverTrail: wScalar,
         sizeAffectsWidth: sizeAffW,
         endWidth: 0,
+        endWidthScale,
+        ...(trailAlpha !== 1 ? { alpha: trailAlpha } : {}),
         inheritColor,
         color: toHex(startRgb),
         endColor: toHex(endRgb),
