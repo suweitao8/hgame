@@ -186,7 +186,9 @@ export function createZipBuffer(entries) {
 
   for (const entry of sorted) {
     const entryName = entry.path.replace(/\\/g, '/').replace(/^\/+/, '');
-    if (!entryName || entryName.includes('..') || entryName.includes('\0')) {
+    // reject path traversal at segment level only ('..', 'a/../b'); basenames like
+    // "cross_icon..png" from an original asset pack are legitimate (double dot, no slash)
+    if (!entryName || entryName === '.' || entryName.split('/').includes('..') || entryName.includes('\0')) {
       throw new RangeError(`Unsafe ZIP entry name: "${entry.path}"`);
     }
     const nameBuf = Buffer.from(entryName, 'utf8');
@@ -937,6 +939,18 @@ export async function packageGameRelease({
       if (target) enqueueRel(target, false);
     }
     for (const sub of runtimeSubpaths) enqueueRel(sub, false);
+  }
+
+  // game.config.json release.includeDirs: wholesale static directories referenced
+  // via runtime fetch()/url() (content JSONs, asset mirrors) that the ES import
+  // graph cannot see. Paths are game-root relative, packaged as-is.
+  for (const dir of (gameConfig.release?.includeDirs ?? [])) {
+    const absDir = path.join(absGameDir, toPosixRel(dir));
+    if (await existsDir(absDir)) {
+      for (const f of await collectFilesRecursively(absDir)) {
+        enqueueRel(toPosixRel(path.join(toPosixRel(dir), f.rel)), false);
+      }
+    }
   }
 
   // Traverse module & CSS dependency graph
