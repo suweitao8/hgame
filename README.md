@@ -75,6 +75,7 @@ The full SDK ZIP includes both npm lockfiles, the optional network workspace, an
 
 ## Reference Specs
 
+- Engine scorecard: [ENGINE-SCORECARD.md](docs/ENGINE-SCORECARD.md)
 - Architecture & Physics: [ENGINE-OVERVIEW.md](docs/architecture/ENGINE-OVERVIEW.md), [PLATFORM-API.md](docs/architecture/PLATFORM-API.md), [DETERMINISTIC-PHYSICS.md](docs/architecture/DETERMINISTIC-PHYSICS.md)
 - Rendering & PBR: [PIPELINE-3D.md](docs/rendering/PIPELINE-3D.md), [WORLD-ALIGNED-PBR.md](docs/rendering/WORLD-ALIGNED-PBR.md)
 - Art/Audio/Verification: [ASSET-AND-AUDIO-PIPELINE.md](docs/guides/ASSET-AND-AUDIO-PIPELINE.md), [AI-VERIFICATION.md](docs/guides/AI-VERIFICATION.md), [GAME-ARCHITECTURE-AND-QA.md](docs/guides/GAME-ARCHITECTURE-AND-QA.md)
