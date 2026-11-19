@@ -156,6 +156,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         slashArc: (opts?: {}) => void;
         lightningBolt: (opts?: {}) => void;
         setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
+        setAtlasRegions: (regions: Record<string, readonly number[]> | null) => void;
         setTrailWidthScale: (trackId: any, scale?: number) => void;
         allocTrail: (colorOrOpts?: number | object, width?: number | undefined) => number;
         pushTrailPoint: (trackId: any, x: any, y: any, z?: number, timeOverride?: undefined) => void;

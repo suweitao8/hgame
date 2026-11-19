@@ -99,19 +99,48 @@ function normalizeHdrColor(rgba) {
 }
 
 function parseCurveKeys(curveBlock) {
-  const keys = [...curveBlock.matchAll(/time:\s*([-\d.eE+]+)\s*\n\s*value:\s*([-\d.eE+]+)/g)];
-  if (keys.length === 0) return null;
-  const out = [];
-  for (const k of keys) {
+  const re = /time:\s*([-\d.eE+]+)\s*\r?\n\s*value:\s*([-\d.eE+]+)(?:\s*\r?\n\s*inSlope:\s*([-\d.eE+]+)\s*\r?\n\s*outSlope:\s*([-\d.eE+]+))?/g;
+  const raw = [];
+  for (const k of curveBlock.matchAll(re)) {
     const t = Math.max(0, Math.min(1, Number(k[1])));
     const v = Math.max(0, Number(k[2]));
-    if (out.length === 0 || t >= out[out.length - 1][0]) {
-      out.push([Number(t.toFixed(3)), Number(v.toFixed(3))]);
+    const inS = k[3] !== undefined ? Number(k[3]) : null;
+    const outS = k[4] !== undefined ? Number(k[4]) : null;
+    if (raw.length === 0 || t >= raw[raw.length - 1].t) {
+      raw.push({ t, v, inS: Number.isFinite(inS) ? inS : null, outS: Number.isFinite(outS) ? outS : null });
     } else {
       break; // ignore Unity minCurve duplicate following maxCurve
     }
   }
-  return out.length >= 2 ? out : null;
+  if (raw.length < 2) return null;
+  const out = [];
+  for (let i = 0; i < raw.length - 1; i++) {
+    const a = raw[i];
+    const b = raw[i + 1];
+    const dt = b.t - a.t;
+    out.push([Number(a.t.toFixed(3)), Number(a.v.toFixed(3))]);
+    if (dt > 0.05 && a.outS !== null && b.inS !== null) {
+      const linearSlope = (b.v - a.v) / dt;
+      if (Math.abs(a.outS - linearSlope) > 0.15 || Math.abs(b.inS - linearSlope) > 0.15) {
+        const sub = 6;
+        for (let s = 1; s < sub; s++) {
+          const u = s / sub;
+          const u2 = u * u;
+          const u3 = u2 * u;
+          const h00 = 2 * u3 - 3 * u2 + 1;
+          const h10 = u3 - 2 * u2 + u;
+          const h01 = -2 * u3 + 3 * u2;
+          const h11 = u3 - u2;
+          const hv = Math.max(0, h00 * a.v + h10 * dt * a.outS + h01 * b.v + h11 * dt * b.inS);
+          const ht = a.t + dt * u;
+          out.push([Number(ht.toFixed(3)), Number(hv.toFixed(3))]);
+        }
+      }
+    }
+  }
+  const last = raw[raw.length - 1];
+  out.push([Number(last.t.toFixed(3)), Number(last.v.toFixed(3))]);
+  return out;
 }
 
 function parseGradientStops(colorMod) {
@@ -276,7 +305,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const initMod = extractSection(ps, 'InitialModule');
     const maxParticles = Number((initMod.match(/^\s*maxNumParticles:\s*(\d+)/m) || [])[1] ?? 1000);
     const size3D = /^\s*size3D:\s*1\b/m.test(initMod);
-    const life = readMinMaxScalar(initMod, 'startLifetime', 1);
+    const rawLife = readMinMaxScalar(initMod, 'startLifetime', 1);
+    const fixInf = (v) => (typeof v === 'number' && !Number.isFinite(v) ? dur : v);
+    const life = Array.isArray(rawLife) ? [fixInf(rawLife[0]), fixInf(rawLife[1])] : fixInf(rawLife);
     const speed = readMinMaxScalar(initMod, 'startSpeed', 0);
     const size = readMinMaxScalar(initMod, 'startSize', 1);
     const sizeY = size3D ? readMinMaxScalar(initMod, 'startSizeY', 1) : size;
@@ -456,11 +487,19 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const velMod = extractSection(ps, 'VelocityModule');
     if (/enabled:\s*1/.test(velMod)) {
-      const vx = readMinMaxScalar(velMod, 'x', 0);
-      const vy = readMinMaxScalar(velMod, 'y', 0);
-      const vz = readMinMaxScalar(velMod, 'z', 0);
-      const orbY = readMinMaxScalar(velMod, 'orbitalY', 0);
-      const radV = readMinMaxScalar(velMod, 'radial', 0);
+      const spdModRaw = readMinMaxScalar(velMod, 'speedModifier', 1);
+      const spdMul = Array.isArray(spdModRaw) ? spdModRaw[1] : spdModRaw;
+      const mulV = (v) => {
+        if (Math.abs(spdMul - 1) <= 0.001) return v;
+        return Array.isArray(v)
+          ? [Number((v[0] * spdMul).toFixed(3)), Number((v[1] * spdMul).toFixed(3))]
+          : Number((v * spdMul).toFixed(3));
+      };
+      const vx = mulV(readMinMaxScalar(velMod, 'x', 0));
+      const vy = mulV(readMinMaxScalar(velMod, 'y', 0));
+      const vz = mulV(readMinMaxScalar(velMod, 'z', 0));
+      const orbY = mulV(readMinMaxScalar(velMod, 'orbitalY', 0));
+      const radV = mulV(readMinMaxScalar(velMod, 'radial', 0));
       const isNonZero = (v) => Array.isArray(v) ? (v[0] !== 0 || v[1] !== 0) : v !== 0;
       const velObj = {};
       if (isNonZero(vx) || isNonZero(vy) || isNonZero(vz)) {
@@ -588,15 +627,13 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       }
       const wMax = typeof wScalar === 'number' ? wScalar : wScalar[1];
       const baseSizeMax = typeof size === 'number' ? size : size[1];
-      const spriteWidthScale = (trailMat?.spriteKey && trailMat.spriteKey !== 'trail') ? 0.45 : 1.0;
       layer.trail = {
         lifetime: tLife,
         lifetimeMode: trailMode === 1 ? 'seconds' : 'fraction',
         blend: trailMat?.blend || 'alpha',
-        width: Number((baseSizeMax * wMax * spriteWidthScale).toFixed(3)),
-        widthOverTrail: typeof wScalar === 'number'
-          ? Number((wScalar * spriteWidthScale).toFixed(3))
-          : [Number((wScalar[0] * spriteWidthScale).toFixed(3)), Number((wScalar[1] * spriteWidthScale).toFixed(3))],
+        ...(trailMat?.spriteKey ? { sprite: trailMat.spriteKey } : {}),
+        width: Number((baseSizeMax * wMax).toFixed(3)),
+        widthOverTrail: wScalar,
         sizeAffectsWidth: sizeAffW,
         endWidth: 0,
         endWidthScale,

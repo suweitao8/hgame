@@ -212,6 +212,7 @@ attribute vec4 aSegA;    // x0, y0, z0, t0 (head-to-tail [0..1])
 attribute vec4 aSegB;    // x1, y1, z1, t1
 attribute vec4 aSegMeta; // rgb24, width, alpha0, alpha1
 attribute vec4 aSegExtra; // endRgb24, widthScale0, widthScale1, hdr
+attribute vec4 aSegUvRect; // u0, v0, u1, v1 (atlas UV override, z<=x means use uTrailUvRect)
 
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
@@ -221,6 +222,7 @@ varying vec2 vUv;
 varying vec3 vColor;
 varying float vAlpha;
 varying float vHdr;
+varying vec4 vUvRect;
 
 vec3 unpackRgb24(float v) {
   float r = floor(v / 65536.0);
@@ -245,6 +247,7 @@ void main() {
   vColor = mix(c0, c1, smoothstep(0.04, 0.32, spanT));
   vAlpha = mix(aSegMeta.z, aSegMeta.w, u);
   vHdr = aSegExtra.w;
+  vUvRect = aSegUvRect;
 
   vec3 a = aSegA.xyz;
   vec3 b = aSegB.xyz;
@@ -288,15 +291,17 @@ varying vec2 vUv;
 varying vec3 vColor;
 varying float vAlpha;
 varying float vHdr;
+varying vec4 vUvRect;
 
 void main() {
   float alpha = vAlpha;
   vec3 col = vColor;
   if (uHasTrailTex > 0.5) {
+    vec4 uvRect = (vUvRect.z > vUvRect.x && vUvRect.w > vUvRect.y) ? vUvRect : uTrailUvRect;
     float localV = mix(0.08, 0.92, 1.0 - vUv.y);
     vec2 mapped = vec2(
-      mix(uTrailUvRect.x, uTrailUvRect.z, clamp(vUv.x, 0.0, 1.0)),
-      mix(uTrailUvRect.y, uTrailUvRect.w, localV)
+      mix(uvRect.x, uvRect.z, clamp(vUv.x, 0.0, 1.0)),
+      mix(uvRect.y, uvRect.w, localV)
     );
     if (uTrailFlipV > 0.5) mapped.y = 1.0 - mapped.y;
     vec4 texCol = texture2D(uTrailTex, mapped);
@@ -351,6 +356,7 @@ export function createTrailsSystem({
   maxBolts = mode === 'canvas2d' ? 64 : 256,
   maxTrails = mode === 'canvas2d' ? 256 : 1024,
   trailNodes = 8,
+  atlasRegions = /** @type {Record<string, readonly number[]> | null} */ (null),
   prng = createVisualPrng(0x71a11c0d),
 } = {}) {
   const slashCap = Math.max(1, maxSlashes | 0);
@@ -379,10 +385,12 @@ export function createTrailsSystem({
   const segB = new Float32Array(totalRibbonSegs * 4);
   const segMeta = new Float32Array(totalRibbonSegs * 4);
   const segExtra = new Float32Array(totalRibbonSegs * 4);
+  const segUv = new Float32Array(totalRibbonSegs * 4);
   const segA_N = new Float32Array(totalRibbonSegs * 4);
   const segB_N = new Float32Array(totalRibbonSegs * 4);
   const segMeta_N = new Float32Array(totalRibbonSegs * 4);
   const segExtra_N = new Float32Array(totalRibbonSegs * 4);
+  const segUv_N = new Float32Array(totalRibbonSegs * 4);
   const trailPoints = new Float32Array(trailCap * trailNodes * 3);
   const trailPointTimes = new Float32Array(trailCap * trailNodes);
   const trailHead = new Int32Array(trailCap);
@@ -395,8 +403,10 @@ export function createTrailsSystem({
   const trailHdr = new Float32Array(trailCap);
   const trailOpacity = new Float32Array(trailCap);
   const trailLifetime = new Float32Array(trailCap);
+  const trailUvRect = new Float32Array(trailCap * 4);
   const trailIsNormal = new Uint8Array(trailCap);
   const trailActive = new Uint8Array(trailCap);
+  let atlasRegionMap = atlasRegions || null;
   const freeTrailStack = new Int32Array(trailCap);
   let freeTrailTop = trailCap;
   for (let i = 0; i < trailCap; i++) freeTrailStack[i] = trailCap - 1 - i;
@@ -486,10 +496,12 @@ export function createTrailsSystem({
     const ra1 = new THREE.InstancedBufferAttribute(segB, 4);
     const ra2 = new THREE.InstancedBufferAttribute(segMeta, 4);
     const ra3 = new THREE.InstancedBufferAttribute(segExtra, 4);
+    const ra4 = new THREE.InstancedBufferAttribute(segUv, 4);
     rGeo.setAttribute('aSegA', ra0);
     rGeo.setAttribute('aSegB', ra1);
     rGeo.setAttribute('aSegMeta', ra2);
     rGeo.setAttribute('aSegExtra', ra3);
+    rGeo.setAttribute('aSegUvRect', ra4);
     ribbonMat = new MatCtor({
       vertexShader: RIBBON_VERTEX_GLSL,
       fragmentShader: RIBBON_FRAGMENT_GLSL,
@@ -511,7 +523,7 @@ export function createTrailsSystem({
     ribbonMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     ribbonMesh.name = 'HGameVfxRibbonTrails';
     scene.add(ribbonMesh);
-    ribbonAttrs = [ra0, ra1, ra2, ra3];
+    ribbonAttrs = [ra0, ra1, ra2, ra3, ra4];
 
     // 3b. Alpha-blended RibbonTrailPool
     const rGeoN = new THREE.InstancedBufferGeometry();
@@ -522,10 +534,12 @@ export function createTrailsSystem({
     const rn1 = new THREE.InstancedBufferAttribute(segB_N, 4);
     const rn2 = new THREE.InstancedBufferAttribute(segMeta_N, 4);
     const rn3 = new THREE.InstancedBufferAttribute(segExtra_N, 4);
+    const rn4 = new THREE.InstancedBufferAttribute(segUv_N, 4);
     rGeoN.setAttribute('aSegA', rn0);
     rGeoN.setAttribute('aSegB', rn1);
     rGeoN.setAttribute('aSegMeta', rn2);
     rGeoN.setAttribute('aSegExtra', rn3);
+    rGeoN.setAttribute('aSegUvRect', rn4);
     ribbonNormalMat = new MatCtor({
       vertexShader: RIBBON_VERTEX_GLSL,
       fragmentShader: RIBBON_FRAGMENT_GLSL,
@@ -547,7 +561,7 @@ export function createTrailsSystem({
     ribbonNormalMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     ribbonNormalMesh.name = 'HGameVfxRibbonTrailsNormal';
     scene.add(ribbonNormalMesh);
-    ribbonNormalAttrs = [rn0, rn1, rn2, rn3];
+    ribbonNormalAttrs = [rn0, rn1, rn2, rn3, rn4];
   }
 
   function slashArc(opts = {}) {
@@ -623,9 +637,15 @@ export function createTrailsSystem({
     const dstB = isNormal ? segB_N : segB;
     const dstMeta = isNormal ? segMeta_N : segMeta;
     const dstExtra = isNormal ? segExtra_N : segExtra;
+    const dstUv = isNormal ? segUv_N : segUv;
     const otherMeta = isNormal ? segMeta : segMeta_N;
     const dstAttrs = isNormal ? ribbonNormalAttrs : ribbonAttrs;
     const otherAttrs = isNormal ? ribbonAttrs : ribbonNormalAttrs;
+    const uvBase = trackId * 4;
+    const uv0 = trailUvRect[uvBase];
+    const uv1 = trailUvRect[uvBase + 1];
+    const uv2 = trailUvRect[uvBase + 2];
+    const uv3 = trailUvRect[uvBase + 3];
 
     for (let s = 0; s < segsPerTrail; s++) {
       const segIdx = segBase + s;
@@ -680,6 +700,10 @@ export function createTrailsSystem({
       dstExtra[i4 + 1] = 1 + (endScale - 1) * t0;
       dstExtra[i4 + 2] = 1 + (endScale - 1) * t1;
       dstExtra[i4 + 3] = hdr;
+      dstUv[i4] = uv0;
+      dstUv[i4 + 1] = uv1;
+      dstUv[i4 + 2] = uv2;
+      dstUv[i4 + 3] = uv3;
     }
 
     if (dstAttrs) {
@@ -708,6 +732,14 @@ export function createTrailsSystem({
   }
 
   /**
+   * Registers an atlas region dictionary (`{ [spriteKey]: [u0, v0, u1, v1] }`) for per-trail sprites.
+   * @param {Record<string, readonly number[]> | null} regions
+   */
+  function setAtlasRegions(regions) {
+    atlasRegionMap = regions || null;
+  }
+
+  /**
    * Allocates a ribbon trail slot.
    * @param {number | object} [colorOrOpts=0x38bdf8]
    * @param {number} [width=0.25]
@@ -722,6 +754,11 @@ export function createTrailsSystem({
     trailOpacity[id] = 1;
     trailLifetime[id] = 0;
     trailIsNormal[id] = 0;
+    const uvBase = id * 4;
+    trailUvRect[uvBase] = 0;
+    trailUvRect[uvBase + 1] = 0;
+    trailUvRect[uvBase + 2] = 0;
+    trailUvRect[uvBase + 3] = 0;
     if (typeof colorOrOpts === 'object' && colorOrOpts !== null) {
       const startRgb = packRgb24(colorOrOpts.color ?? 0x38bdf8);
       const wStart = colorOrOpts.width ?? width;
@@ -734,6 +771,13 @@ export function createTrailsSystem({
       trailOpacity[id] = Math.max(0, Math.min(1, colorOrOpts.alpha ?? 1.0));
       trailLifetime[id] = Math.max(0, colorOrOpts.lifetime ?? 0);
       trailIsNormal[id] = colorOrOpts.blend === 'alpha' ? 1 : 0;
+      const rect = colorOrOpts.uvRect || (colorOrOpts.sprite && atlasRegionMap?.[colorOrOpts.sprite]);
+      if (rect) {
+        trailUvRect[uvBase] = rect[0] ?? 0;
+        trailUvRect[uvBase + 1] = rect[1] ?? 0;
+        trailUvRect[uvBase + 2] = rect[2] ?? 1;
+        trailUvRect[uvBase + 3] = rect[3] ?? 1;
+      }
     } else {
       const rgb = packRgb24(colorOrOpts);
       trailColor[id] = rgb;
@@ -902,6 +946,7 @@ export function createTrailsSystem({
     slashArc,
     lightningBolt,
     setTrailTexture,
+    setAtlasRegions,
     setTrailWidthScale,
     allocTrail,
     pushTrailPoint,

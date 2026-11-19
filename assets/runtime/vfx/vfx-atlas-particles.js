@@ -606,8 +606,10 @@ void main() {
     if (nStr > 0.001) {
       float nFreq = max(0.08, aAtlasP6.y);
       float ph = aAtlasP6.w * 6.2831853;
-      float w1 = nFreq * 2.5;
-      float w2 = nFreq * 4.2;
+      float travelSpd = length(aAtlasP1.xyz) + abs(aAtlasP7.y) * length(aAtlasP7.zw);
+      float spatialRate = 1.0 + clamp((travelSpd - 2.2) * 0.25, 0.0, 5.5);
+      float w1 = nFreq * 2.5 * spatialRate;
+      float w2 = nFreq * 4.2 * spatialRate;
       float rm = aAtlasP3.w;
       float yScale = (rm > 1.5 && rm < 2.5) ? 1.0 : aAtlasP6.z;
       vec3 disp1 = vec3(
@@ -620,7 +622,7 @@ void main() {
         (sin(w2 * age * 0.91 + ph * 1.4) - sin(ph * 1.4)) / (w2 * 0.91),
         (sin(w2 * age + ph * 2.3) - sin(ph * 2.3)) / w2
       );
-      vec3 noiseOff = (disp1 + 0.45 * disp2) * nStr * 1.18;
+      vec3 noiseOff = (disp1 + 0.45 * disp2) * nStr * 1.18 * (spatialRate > 1.01 ? (0.45 + 0.55 * spatialRate) : 1.0);
       noiseOff.y *= yScale;
       worldPos += noiseOff;
     }
@@ -1087,15 +1089,17 @@ export function evaluateAtlasParticlePosition(
       px += Math.sin(wt + ph) * Math.cos(wt * 0.73 + ph) * env;
       py += Math.cos(wt * 1.17 + ph) * env * noiseYScale;
     } else {
-      const w1 = nf * 2.5;
-      const w2 = nf * 4.2;
+      const travelSpd = Math.hypot(vx, vy, vz) + Math.abs(orbitalY) * Math.hypot(centerOffX, centerOffZ);
+      const spatialRate = 1.0 + Math.max(0, Math.min(5.5, (travelSpd - 2.2) * 0.25));
+      const w1 = nf * 2.5 * spatialRate;
+      const w2 = nf * 4.2 * spatialRate;
       const d1x = (Math.sin(w1 * age + ph) - Math.sin(ph)) / w1;
       const d1y = (Math.sin(w1 * age * 1.13 + ph * 2.1) - Math.sin(ph * 2.1)) / (w1 * 1.13);
       const d1z = (Math.cos(ph * 1.7) - Math.cos(w1 * age + ph * 1.7)) / w1;
       const d2x = (Math.cos(ph * 2.9) - Math.cos(w2 * age + ph * 2.9)) / w2;
       const d2y = (Math.sin(w2 * age * 0.91 + ph * 1.4) - Math.sin(ph * 1.4)) / (w2 * 0.91);
       const d2z = (Math.sin(w2 * age + ph * 2.3) - Math.sin(ph * 2.3)) / w2;
-      const s = noiseStrength * 1.18;
+      const s = noiseStrength * 1.18 * (spatialRate > 1.01 ? (0.45 + 0.55 * spatialRate) : 1.0);
       px += (d1x + 0.45 * d2x) * s;
       py += (d1y + 0.45 * d2y) * s * noiseYScale;
       pz += (d1z + 0.45 * d2z) * s;

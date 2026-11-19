@@ -403,6 +403,8 @@ export function createEffectPlayer({
       hdr: trailCfg.hdr ?? 1.0,
       lifetime: trailLifetime,
       blend: trailCfg.blend || 'additive',
+      sprite: trailCfg.sprite,
+      uvRect: trailCfg.uvRect,
     });
     if (tid < 0) return;
 
@@ -1044,7 +1046,7 @@ export function createEffectPlayer({
           if (dt > 0) ls.rateAccum += rate * dt;
           while (ls.rateAccum >= 1) {
             if (!tryEmitWithCap(layer, ls, slot)) {
-              ls.rateAccum = 1;
+              ls.rateAccum = 0;
               break;
             }
             ls.rateAccum -= 1;

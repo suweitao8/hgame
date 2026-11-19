@@ -311,6 +311,7 @@ export function createVfxSystem({
     scene,
     is2D,
     trailNodes,
+    atlasRegions,
     prng,
   });
   const telegraphs = createTelegraphSystem({

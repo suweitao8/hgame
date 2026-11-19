@@ -825,6 +825,32 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     const transExtra = transRibbon.geometry.getAttribute('aSegExtra').array;
     assert.ok(transMeta[2] > 0 && transMeta[2] <= 0.26, `expected trail alpha scaled <= 0.26 (got ${transMeta[2]})`);
     assert.ok(Math.abs(transExtra[2] - 1) < 0.05, `expected constant endWidthScale ~1 (got ${transExtra[2]})`);
+
+    // 10. Per-trail sprite resolves custom aSegUvRect from registered atlasRegions
+    vfx.reset();
+    vfx.trails.setAtlasRegions({ snow_1: [0.25, 0.5, 0.75, 0.625] });
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'per_trail_sprite_test',
+      loop: false,
+      duration: 1.0,
+      layers: [
+        {
+          name: 'trails',
+          kind: 'particle',
+          bursts: [{ time: 0, count: 1 }],
+          life: 1.0,
+          size: 0.2,
+          velocity: { linear: [2, 0, 0] },
+          trail: { lifetime: 0.5, widthOverTrail: 0.5, sprite: 'snow_1' },
+        },
+      ],
+    }, { x: 0, y: 0, z: 0 });
+    vfx.update(0.05);
+    vfx.update(0.05);
+    const addRibbon = scene.getObjectByName('HGameVfxRibbonTrails');
+    const segUv = addRibbon.geometry.getAttribute('aSegUvRect').array;
+    assert.ok(Math.abs(segUv[0] - 0.25) < 1e-4 && Math.abs(segUv[1] - 0.5) < 1e-4 && Math.abs(segUv[2] - 0.75) < 1e-4 && Math.abs(segUv[3] - 0.625) < 1e-4, `expected per-trail aSegUvRect=[0.25,0.5,0.75,0.625], got [${segUv[0]},${segUv[1]},${segUv[2]},${segUv[3]}]`);
     dummyTex.dispose();
   } finally {
     vfx.dispose();
