@@ -295,6 +295,126 @@ test('fullscreen pass contracts enforce required inputs, writable outputs and fe
   assert.doesNotThrow(() => validateFullscreenPass(toneMapping, { tScene: { value: target.texture } }, null));
 });
 
+function createProbeAdapter() {
+  const { renderer, gl } = createMockWebGL2Renderer();
+  gl.MAX_3D_TEXTURE_SIZE = 0x8073;
+  const getParameter = gl.getParameter;
+  gl.getParameter = key => key === gl.MAX_3D_TEXTURE_SIZE ? 64 : getParameter(key);
+  const namespace = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };
+  const adapter = createThreeAdapter({ THREE: namespace, canvas: { clientWidth: 320, clientHeight: 180 },
+    pixelRatio: 1, post3d: { preset: { ssgi: true, ssr: true }, fxaa: false, sharpness: 0 } });
+  return { adapter, renderer };
+}
+
+function bakedProbeData() {
+  return { schemaVersion: 1, min: [-4, -2, -6], max: [4, 6, 6], resolution: [2, 1, 2],
+    coefficients: Array.from({ length: 108 }, (_, index) => (index - 48) / 16), intensity: 0.5 };
+}
+
+test('baked irradiance data packs RGB SH coefficients and padded atlas slices', () => {
+  const { adapter } = createProbeAdapter();
+  const scene = new Scene('probe-atlas');
+  const input = bakedProbeData();
+  const grid = adapter.setIrradianceProbeGrid(scene, input);
+  const { data, width, height, depth } = grid.texture.image;
+  assert.deepEqual([width, height, depth], [2, 1, 28]);
+  assert.equal(grid.texture.type, THREE.HalfFloatType);
+  assert.equal(grid.texture.minFilter, THREE.LinearFilter);
+  assert.deepEqual(grid.boundingBox.min.toArray(), input.min);
+  assert.deepEqual(grid.boundingBox.max.toArray(), input.max);
+  for (let band = 0; band < 7; band++) {
+    for (let slice = 0; slice < 4; slice++) {
+      const z = slice < 2 ? 0 : 1;
+      for (let x = 0; x < 2; x++) {
+        const probe = z * 2 + x;
+        const offset = ((band * 4 + slice) * 2 + x) * 4;
+        const actual = Array.from(data.subarray(offset, offset + 4), THREE.DataUtils.fromHalfFloat);
+        const expected = Array.from({ length: 4 }, (_, channel) => {
+          const index = band * 4 + channel;
+          return index < 27 ? input.coefficients[probe * 27 + index] * input.intensity : 0;
+        });
+        assert.deepEqual(actual, expected);
+      }
+    }
+  }
+
+  assert.throws(() => adapter.setIrradianceProbeGrid(scene, { ...input, min: input.max }), /bounds/i);
+  assert.throws(() => adapter.setIrradianceProbeGrid(scene, { ...input, min: [3.4e38, -2, -6], max: [3.5e38, 6, 6] }), /bounds/i);
+  assert.throws(() => adapter.setIrradianceProbeGrid(scene, { ...input, coefficients: [NaN] }), /coefficients/i);
+  assert.throws(() => adapter.setIrradianceProbeGrid(scene, { ...input, schemaVersion: 2 }), /schemaVersion/);
+  assert.equal(adapter.setIrradianceProbeGrid(scene, { ...input, resolution: [2, 1, 8], coefficients: Array(432).fill(0) }), null);
+  assert.ok(adapter.getWorld(scene).children.includes(grid));
+  adapter.dispose();
+});
+
+test('the Three adapter owns one baked irradiance grid per scene across views and releases it safely', () => {
+  const { adapter, renderer } = createProbeAdapter();
+  const scene = new Scene('probe-world');
+  const anotherScene = new Scene('plain-world');
+  const grid = adapter.setIrradianceProbeGrid(scene, bakedProbeData());
+  const world = adapter.getWorld(scene);
+  assert.equal(grid.parent, world);
+  assert.equal(grid.isLight && grid.isLightProbeGrid, true);
+  assert.ok(!adapter.getWorld(anotherScene).children.includes(grid));
+  const observations = [];
+  renderer.render = drawn => {
+    const uniforms = drawn.children?.[0]?.material?.uniforms;
+    if (!uniforms?.uSsgiEnabled) return;
+    observations.push([uniforms.uIrradianceWeight.value, uniforms.uIrradianceGridMin.value.toArray(),
+      uniforms.uIrradianceViewToWorld.value.elements[12], uniforms.uSsrEnabled.value]);
+  };
+  const left = new THREE.PerspectiveCamera();
+  left.position.x = -2;
+  const right = new THREE.PerspectiveCamera();
+  right.position.x = 3;
+  adapter.setViews([{ camera: left, width: 0.5 }, { camera: right, x: 0.5, width: 0.5 }]);
+  adapter.render(scene);
+  assert.deepEqual(observations, [[0.5, [-4, -2, -6], -2, 1], [0.5, [-4, -2, -6], 3, 1]]);
+  observations.length = 0;
+  adapter.render(anotherScene);
+  assert.deepEqual(observations.map(([enabled, , , ssr]) => [enabled, ssr]), [[0, 1], [0, 1]]);
+
+  grid.removeFromParent();
+  observations.length = 0;
+  adapter.render(scene);
+  assert.deepEqual(observations.map(([weight]) => weight), [0, 0]);
+  const group = new THREE.Group();
+  group.visible = false;
+  world.add(group);
+  group.add(grid);
+  observations.length = 0;
+  adapter.render(scene);
+  assert.deepEqual(observations.map(([weight]) => weight), [0, 0]);
+  group.visible = true;
+  right.layers.set(1);
+  observations.length = 0;
+  adapter.render(scene);
+  assert.deepEqual(observations.map(([weight]) => weight), [0.5, 0]);
+
+  let disposed = 0;
+  grid.texture.addEventListener('dispose', () => disposed++);
+  const replacement = adapter.setIrradianceProbeGrid(scene, bakedProbeData());
+  replacement.texture.addEventListener('dispose', () => disposed++);
+  assert.equal(disposed, 1);
+  assert.equal(grid.parent, null);
+  assert.equal(replacement.parent, world);
+  replacement.texture = null;
+  scene.dispose();
+  assert.equal(disposed, 2);
+  assert.equal(replacement.parent, null);
+
+  renderer.capabilities.isWebGL2 = false;
+  assert.equal(adapter.setIrradianceProbeGrid(anotherScene, bakedProbeData()), null);
+  assert.equal(adapter.getWorld(anotherScene).children.length, 0);
+  renderer.capabilities.isWebGL2 = true;
+  const last = adapter.setIrradianceProbeGrid(anotherScene, bakedProbeData());
+  last.texture.addEventListener('dispose', () => disposed++);
+  assert.equal(adapter.setIrradianceProbeGrid(anotherScene, null), null);
+  assert.equal(disposed, 3);
+  adapter.dispose();
+  assert.equal(disposed, 3);
+});
+
 test('Three diagnostics report named passes, unique target usage and asynchronous GPU sample identity', () => {
   const { renderer, gl } = createMockWebGL2Renderer();
   const extension = { TIME_ELAPSED_EXT: 100, QUERY_COUNTER_BITS_EXT: 101, GPU_DISJOINT_EXT: 102 };

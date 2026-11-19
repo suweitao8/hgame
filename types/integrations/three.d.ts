@@ -159,6 +159,7 @@
  * @property {(scene: object, object: object) => void} removeView
  * @property {(cam: ThreeCamera | null) => void} setViewCamera
  * @property {(light: object | null) => void} setSunLight
+ * @property {(scene: object, data: import('./lighting3d/baked-probe-grid.js').BakedIrradianceProbeData | null) => ReturnType<typeof createBakedProbeGrid>} setIrradianceProbeGrid Install or clear the scene's baked diffuse lighting. Returns null when unsupported or cleared.
  * @property {(scene?: object | null) => boolean} invalidateSunShadow Request a fresh sun shadow map for a scene or the active sun.
  * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
@@ -602,6 +603,10 @@ export type ThreeAdapter = {
     setViewCamera: (cam: ThreeCamera | null) => void;
     setSunLight: (light: object | null) => void;
     /**
+     * Install or clear the scene's baked diffuse lighting. Returns null when unsupported or cleared.
+     */
+    setIrradianceProbeGrid: (scene: object, data: import("./lighting3d/baked-probe-grid.js").BakedIrradianceProbeData | null) => ReturnType<typeof createBakedProbeGrid>;
+    /**
      * Request a fresh sun shadow map for a scene or the active sun.
      */
     invalidateSunShadow: (scene?: object | null) => boolean;
@@ -674,3 +679,4 @@ import { Component } from '../core/component.js';
 import { createAdaptiveQualityController } from './quality3d.js';
 import { createPostPipeline3D } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
+import { createBakedProbeGrid } from './lighting3d/baked-probe-grid.js';

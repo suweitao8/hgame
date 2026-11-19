@@ -214,6 +214,7 @@
  * @property {object | null} [viewScene=null] Optional first-person scene composited before tone mapping.
  * @property {object | null} [viewCamera=null] Camera for `viewScene`.
  * @property {PostPipelineSunLight | null} [sunLight=null] Sun used for volumetrics/contact shadows.
+ * @property {ReturnType<typeof import('../lighting3d/baked-probe-grid.js').createBakedProbeGrid>} [irradianceGrid=null] World-space baked diffuse coverage for SSGI blending.
  * @property {number} [dt=0] Frame delta in seconds.
  * @property {readonly [number, number, number, number] | null} [outputViewport=null] Screen x, y, width and height in renderer pixels before DPR, with a bottom-left origin.
  * @property {{beginPass: (name: string, target: object | null) => (() => void) | null, recordTarget: (target: object) => void} | null} [diagnostics=null] Optional stage and target sink.
@@ -700,6 +701,10 @@ export type PostPipelineRenderOptions = {
      * Sun used for volumetrics/contact shadows.
      */
     sunLight?: PostPipelineSunLight | null | undefined;
+    /**
+     * World-space baked diffuse coverage for SSGI blending.
+     */
+    irradianceGrid?: ReturnType<typeof import("../lighting3d/baked-probe-grid.js").createBakedProbeGrid>;
     /**
      * Frame delta in seconds.
      */

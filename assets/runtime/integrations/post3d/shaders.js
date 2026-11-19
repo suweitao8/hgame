@@ -212,6 +212,11 @@ uniform float uSsgiEnabled;
 uniform float uSsrEnabled;
 uniform float uGiRadius;
 uniform float uGiIntensity;
+uniform float uIrradianceWeight;
+uniform mat4 uIrradianceViewToWorld;
+uniform vec3 uIrradianceGridMin;
+uniform vec3 uIrradianceGridMax;
+uniform vec3 uIrradianceGridResolution;
 uniform float uSsrIntensity;
 uniform float uSsrMaxDist;
 uniform float uSsrThickness;
@@ -228,6 +233,16 @@ float ign(vec2 p) {
 }
 
 ${SURFACE_NORMAL_GLSL3}
+
+float screenSpaceDiffuseWeight(vec3 viewPos) {
+  if (uIrradianceWeight <= 0.0) return 1.0;
+  vec3 worldPos = (uIrradianceViewToWorld * vec4(viewPos, 1.0)).xyz;
+  vec3 gridPos = (worldPos - uIrradianceGridMin) / (uIrradianceGridMax - uIrradianceGridMin);
+  // Leave room for the native probe's half-cell bias, even with a normal map.
+  vec3 edge = min(gridPos, 1.0 - gridPos) * uIrradianceGridResolution;
+  float inside = smoothstep(0.5, 1.0, min(min(edge.x, edge.y), edge.z));
+  return 1.0 - inside * uIrradianceWeight;
+}
 
 float clipRayToFrustum(vec4 start, vec4 end) {
   vec3 startMin = lowerClipDistances(start);
@@ -335,7 +350,8 @@ void main() {
   vec3 giAccum = vec3(0.0);
   vec3 ssrColor = vec3(0.0);
 
-  if (uSsgiEnabled > 0.5 && uGiIntensity > 0.001) {
+  float giStrength = uSsgiEnabled > 0.5 ? uGiIntensity * screenSpaceDiffuseWeight(viewPos) : 0.0;
+  if (giStrength > 0.001) {
     vec3 tangent = normalize(abs(viewNormal.z) < 0.99 ? cross(viewNormal, vec3(0.0, 0.0, 1.0)) : cross(viewNormal, vec3(1.0, 0.0, 0.0)));
     vec3 bitangent = cross(viewNormal, tangent);
     float phi = ign(gl_FragCoord.xy + vec2(fract(uTime) * 19.0, 7.0)) * 6.2831853;
@@ -389,7 +405,7 @@ void main() {
     }
   }
 
-  fragColor = vec4(giAccum * uGiIntensity + ssrColor * uSsrIntensity, encodeDepthGuide(viewPos.z - uSceneDepthGuideOffset));
+  fragColor = vec4(giAccum * giStrength + ssrColor * uSsrIntensity, encodeDepthGuide(viewPos.z - uSceneDepthGuideOffset));
 }
 `;
 

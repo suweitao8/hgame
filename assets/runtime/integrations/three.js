@@ -5,6 +5,7 @@ import { createRenderDiagnostics3D, drawWithDiagnostics } from './quality3d/rend
 import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
+import { createBakedProbeGrid } from './lighting3d/baked-probe-grid.js';
 import { fitDirectionalShadowFrustum } from './shadow3d.js';
 import { syncCameraWorldMatrices, usesZeroToOneDepth } from './camera3d/matrices.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
@@ -228,6 +229,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {(scene: object, object: object) => void} removeView
  * @property {(cam: ThreeCamera | null) => void} setViewCamera
  * @property {(light: object | null) => void} setSunLight
+ * @property {(scene: object, data: import('./lighting3d/baked-probe-grid.js').BakedIrradianceProbeData | null) => ReturnType<typeof createBakedProbeGrid>} setIrradianceProbeGrid Install or clear the scene's baked diffuse lighting. Returns null when unsupported or cleared.
  * @property {(scene?: object | null) => boolean} invalidateSunShadow Request a fresh sun shadow map for a scene or the active sun.
  * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
@@ -520,6 +522,8 @@ export function createThreeAdapter({
 
   const worlds = new WeakMap();
   const viewWorlds = new WeakMap();
+  const irradianceGrids = new Map();
+  let disposed = false;
   let activeViews = null;
   let contextLost = false;
   let lastDtSeconds = 0;
@@ -574,6 +578,44 @@ export function createThreeAdapter({
       viewWorlds.set(scene, viewWorld);
     }
     return viewWorlds.get(scene);
+  }
+
+  function releaseProbeGrid({ light, texture }) {
+    cleanupAll([() => light.removeFromParent(), () => {
+      light.texture = null;
+      texture.dispose();
+    }], 'Irradiance grid disposal failed');
+  }
+
+  function clearIrradianceProbeGrid(scene) {
+    const entry = irradianceGrids.get(scene);
+    if (!entry) return;
+    irradianceGrids.delete(scene);
+    cleanupAll([() => entry.offDispose?.(), () => releaseProbeGrid(entry)], 'Irradiance grid removal failed');
+  }
+
+  function setIrradianceProbeGrid(scene, data) {
+    if (disposed) return null;
+    if (!scene || typeof scene !== 'object') throw new TypeError('A scene is required for the irradiance grid');
+    if (data === null) {
+      clearIrradianceProbeGrid(scene);
+      return null;
+    }
+    const light = createBakedProbeGrid(THREE, renderer, data);
+    if (!light) return null;
+    const previous = irradianceGrids.get(scene);
+    const entry = { light, texture: light.texture, offDispose: previous?.offDispose };
+    try {
+      if (!previous) entry.offDispose = scene.onDispose?.(() => clearIrradianceProbeGrid(scene));
+      getWorld(scene).add(light);
+    } catch (error) {
+      if (!previous) entry.offDispose?.();
+      releaseProbeGrid(entry);
+      throw error;
+    }
+    irradianceGrids.set(scene, entry);
+    if (previous) releaseProbeGrid(previous);
+    return light;
   }
 
   function planCanvasSize() {
@@ -886,6 +928,7 @@ export function createThreeAdapter({
 
   function renderWorld(scene, diagnostics = null) {
     const world = getWorld(scene);
+    const irradianceGrid = irradianceGrids.get(scene)?.light ?? null;
     const sceneSun = worldLighting?.sun ? worldSuns.get(world) ?? null : null;
     if (worldSunLight !== sceneSun) {
       worldSunLight = sceneSun;
@@ -942,6 +985,7 @@ export function createThreeAdapter({
             viewIndex: v.index,
             outputViewport: pipeline ? [vx, vyBottomUp, vw, vh] : null,
             sunLight: activeSunLight ?? worldSunLight,
+            irradianceGrid,
             dt: lastDtSeconds,
           });
         }
@@ -961,6 +1005,7 @@ export function createThreeAdapter({
       diagnostics,
       viewScene, viewCamera: activeViewCamera,
       sunLight: activeSunLight ?? worldSunLight,
+      irradianceGrid,
       dt: lastDtSeconds,
     });
   }
@@ -1024,6 +1069,7 @@ export function createThreeAdapter({
     addView(scene, object) { getViewWorld(scene).add(object); },
     removeView(scene, object) { if (scene && viewWorlds.has(scene)) getViewWorld(scene).remove(object); },
     setViewCamera(cam) { activeViewCamera = cam; },
+    setIrradianceProbeGrid,
     setSunLight(light) {
       const previousSun = activeSunLight ?? worldSunLight;
       activeSunLight = light;
@@ -1103,10 +1149,12 @@ export function createThreeAdapter({
       qualityController?.sampleFrame(ms, gpuMs);
     },
     dispose() {
+      disposed = true;
       canvas.removeEventListener?.('webglcontextlost', onContextLost, false);
       canvas.removeEventListener?.('webglcontextrestored', onContextRestored, false);
       registeredPalettes.clear();
       cleanupAll([
+        ...Array.from(irradianceGrids.keys(), scene => () => clearIrradianceProbeGrid(scene)),
         ...ownedSuns.values(),
         () => gpuFrameTimer?.reset(),
         () => renderDiagnostics?.resetGpu(true),

@@ -68,13 +68,13 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 
 | 引擎 | 架构 / 25 | 性能设计 / 40 | 渲染 / 35 | 总分 / 100 | Δ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| HGame | 20.9 | 33.2 | 27.0 | **81.1** | — |
-| Unity 6.6 URP Web | 22.5 | 34.0 | 28.8 | **85.3** | −4.2 |
-| PlayCanvas Engine 2.x | 20.9 | 31.0 | 29.2 | **81.1** | 0.0 |
-| Cocos Creator 3.8 Web | 20.0 | 29.2 | 26.1 | **75.3** | +5.8 |
+| HGame | 20.9 | 33.2 | 29.0 | **83.1** | — |
+| Unity 6.6 URP Web | 22.5 | 34.0 | 28.8 | **85.3** | −2.2 |
+| PlayCanvas Engine 2.x | 20.9 | 31.0 | 29.2 | **81.1** | +2.0 |
+| Cocos Creator 3.8 Web | 20.0 | 29.2 | 26.1 | **75.3** | +7.8 |
 
 - **Unity URP Web**。调度契约、资源管理和诊断各高一个原始分。Unity 通过 Render Graph 为 Pass 声明依赖，通过 Addressables 和 Web 场景渐进加载管理资源。HGame 的 3D 诊断已经记录上传与 GPU 时间，Pixi、Canvas2D 和 WebGL2D 还缺同口径数据。两者的 P2 同为 9，HGame 依据是浏览器内的实例化、裁剪、群体 GPU 仿真和增量上传，Unity 依据包括可选 WebGPU 后端的间接绘制和 GPU 蒙皮。 [Unity 6.6 Web](https://discussions.unity.com/t/unity-6-6-is-now-available/1735357) · [URP Render Graph](https://docs.unity.com/en-us/engine/6000.3/manual/render-pipelines/universal-render-pipeline/customizing-urp/render-graph/view)
-- **PlayCanvas**。当前总分相同。HGame 的性能设计高 **2.2** 加权分，PlayCanvas 的渲染高 **2.2**，其中 R2 光照差 **2.0**、R3 输出差 **1.0**，HGame 的 2D 渲染高 **0.8**。PlayCanvas 的运行时光照贴图、环境光、聚簇灯光与 CameraFrame 可以在同一浏览器渲染路径组合。CameraFrame 还支持将低分辨率画面累积到全分辨率。HGame 已有探针、PBR 和聚簇灯光，当前重点是补齐屏外间接光与低档回退的衔接。 [运行时光照贴图](https://developer.playcanvas.com/user-manual/graphics/lighting/runtime-lightmaps/) · [CameraFrame 时间域放大](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/#taa-upscaling)
+- **PlayCanvas**。HGame 的性能设计高 **2.2** 加权分，PlayCanvas 的渲染高 **0.2**，其中 R3 输出高 **1.0**，HGame 的 2D 渲染高 **0.8**。R2 都是 9。PlayCanvas 提供运行时光照贴图与环境光，HGame 的离线探针由 Three 场景统一供给 PBR 材质。CameraFrame 还支持将低分辨率画面累积到全分辨率。 [运行时光照贴图](https://developer.playcanvas.com/user-manual/graphics/lighting/runtime-lightmaps/) · [CameraFrame 时间域放大](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/#taa-upscaling) · [HGame 烘焙探针](rendering/PIPELINE-3D.md#baked-world-irradiance)
 - **Cocos Creator Web**。HGame 在 CPU 仿真、GPU 提交、画质控制和诊断设计上得分更高。Cocos 的 R1 高 1 个原始分，值得参考的是动态图集和统一 2D 排序，尤其是文字、粒子和遮罩混排时如何维持批次。两者 A3 同分，Cocos 可参考的是共享依赖的引用计数与释放。 [动态图集](https://docs.cocos.com/creator/3.8/manual/en/advanced-topics/dynamic-atlas.html) · [排序配置](https://docs.cocos.com/creator/3.8/manual/en/editor/project/) · [资源释放](https://docs.cocos.com/creator/3.8/manual/en/asset/release-manager.html)
 
 ## HGame 到 90 的改进顺序
@@ -83,15 +83,15 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 
 | 顺序 | 评分项 | HGame 当前 → 目标 | Unity / PlayCanvas / Cocos | 加权增量 | 扣分原因与具体改进 |
 | --- | --- | ---: | ---: | ---: | --- |
-| 1 | R2 3D 光照 | 7 → 9 | 8 / 9 / 7 | +2.0 | 屏幕空间间接光依赖视野。把静态光照贴图或可加载的探针与 PBR/IBL 主路径接通，定义屏幕空间结果失效时的混合、能量边界和低档回退。 |
-| 2 | R3 画面输出 | 8 → 9 | 8 / 9 / 7 | +1.0 | 世界画面 TAA 使用相机重投影，移动物体还缺自身速度。先为参与历史积累的不透明网格和实例记录前后变换，将运动向量、遮挡判断与分辨率变化接入同一历史规则。 |
-| 3 | P4 性能诊断 | 8 → 9 | 9 / 8 / 7 | +0.8 | 逐 Pass 数据主要覆盖 3D。为主要 2D 路径复用同一个快照结构，报告阶段 CPU/GPU 时间、绘制、上传及临时目标，按后端标记不支持的计数。 |
-| 4 | P3 帧预算 | 8 → 9 | 8 / 8 / 7 | +1.0 | 3D 已有 GPU 计时与画质迟滞。把临时目标和资源驻留纳入预算，按瓶颈选择先缩分辨率、降特效或释放缓存，并定义恢复条件。 |
-| 5 | A3 资源生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 已有 Meshopt、KTX2 和关卡预取。为已开始的共享加载增加取消和引用生命周期，设定纹理/模型驻留预算，并支持按引用安全回收。 |
-| 6 | A1 调度生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 单一调度器已经管理固定步和插值。明确扩展的阶段注册顺序，统一跨场景任务取消以及退出和销毁回调的契约。 |
-| 7 | P1 CPU 仿真 | 8 → 9 | 8 / 7 / 7 | +1.0 | 固定步、确定性物理和密集群体数据已接入。为可延后的寻路和非关键 AI 更新引入分时预算，保留固定步确定性与背压报告。 |
-| 8 | R1 2D 渲染 | 8 → 9 | 9 / 7 / 9 | +0.8 | 主 2D 路径已有图集、精灵、粒子和 Bloom。明确精灵、文字、粒子和遮罩的排序与混合契约，减轻跨材质与裁剪切换造成的批次打断。 |
-| 9 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
+| 1 | R3 画面输出 | 8 → 9 | 8 / 9 / 7 | +1.0 | 世界画面 TAA 使用相机重投影，移动物体还缺自身速度。先为参与历史积累的不透明网格和实例记录前后变换，将运动向量、遮挡判断与分辨率变化接入同一历史规则。 |
+| 2 | P4 性能诊断 | 8 → 9 | 9 / 8 / 7 | +0.8 | 逐 Pass 数据主要覆盖 3D。为主要 2D 路径复用同一个快照结构，报告阶段 CPU/GPU 时间、绘制、上传及临时目标，按后端标记不支持的计数。 |
+| 3 | P3 帧预算 | 8 → 9 | 8 / 8 / 7 | +1.0 | 3D 已有 GPU 计时与画质迟滞。把临时目标和资源驻留纳入预算，按瓶颈选择先缩分辨率、降特效或释放缓存，并定义恢复条件。 |
+| 4 | A3 资源生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 已有 Meshopt、KTX2 和关卡预取。为已开始的共享加载增加取消和引用生命周期，设定纹理/模型驻留预算，并支持按引用安全回收。 |
+| 5 | A1 调度生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 单一调度器已经管理固定步和插值。明确扩展的阶段注册顺序，统一跨场景任务取消以及退出和销毁回调的契约。 |
+| 6 | P1 CPU 仿真 | 8 → 9 | 8 / 7 / 7 | +1.0 | 固定步、确定性物理和密集群体数据已接入。为可延后的寻路和非关键 AI 更新引入分时预算，保留固定步确定性与背压报告。 |
+| 7 | R1 2D 渲染 | 8 → 9 | 9 / 7 / 9 | +0.8 | 主 2D 路径已有图集、精灵、粒子和 Bloom。明确精灵、文字、粒子和遮罩的排序与混合契约，减轻跨材质与裁剪切换造成的批次打断。 |
+| 8 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
+| — | R2 3D 光照 | 9 → 9 | 8 / 9 / 7 | +0.0 | PBR 材质可直接使用离线 SH 探针。高档在覆盖内衰减 SSGI，低档可以单独使用烘焙项。 |
 | — | A2 渲染架构 | 9 → 9 | 9 / 9 / 8 | +0.0 | 内置和自定义全屏 Pass 通过同一入口检查纹理与输出，HDR 中间目标按视口和使用范围复用。 |
 | — | P2 GPU 提交 | 9 → 9 | 9 / 8 / 8 | +0.0 | 现有实例化、裁剪和增量上传已达到此路径的目标。 |
 
@@ -103,7 +103,7 @@ HGame 已能把任务拆成要求，以精确测试名和浏览器检查点生�
 
 ## HGame 复评记录
 
-当前复评 **81.1／100**，架构 **20.9／25**，性能设计 **33.2／40**，渲染 **27.0／35**。距离目标 **8.9 分**。
+当前复评 **83.1／100**，架构 **20.9／25**，性能设计 **33.2／40**，渲染 **29.0／35**。距离目标 **6.9 分**。
 
 | 阶段 | 构建目标与后端 | 评项 | 原分 | 新分 | 加权变化与工程依据 |
 | --- | --- | --- | ---: | ---: | --- |
@@ -115,5 +115,6 @@ HGame 已能把任务拆成要求，以精确测试名和浏览器检查点生�
 | KTX2/Basis 资源路径 | Web · Three WebGL2 | A3 | 7 | 8 | **+0.8**。默认 glTF 加载器按需转码外置与嵌入的压缩纹理。支持格式探测、可选纹理回退、共享解码与独立采样状态。发布包带齐离线转码资源，应用退出时释放 Worker。已发起请求的取消和统一驻留预算待补齐。 [资源路径](rendering/PIPELINE-3D.md#compressed-model-textures) · [发布包检查](../tests/package-release.test.mjs) |
 | 世界画面 TAA | Web · Three WebGL2 | R3 | 7 | 8 | **+1.0**。世界 HDR 增加可选的逐视口时间域抗锯齿，使用相机重投影和深度校验，提供历史失效与 FXAA 回退。物体级运动向量待接入。 [时间域抗锯齿](rendering/PIPELINE-3D.md#temporal-antialiasing) · [专项测试](../tests/rendering-pipeline3d.test.mjs) |
 | 3D Pass 资源契约 | Web · Three WebGL2 | A2 | 8 | 9 | **+0.9**。内置和自定义全屏阶段声明纹理读取与输出附件，由绘制入口校验绑定。世界光照和自定义链在视口内复用 HDR 目标，资源跟随尺寸、上下文和视口生命周期。通用的跨阶段自动资源调度仍有提升空间。 [绘制和资源契约](rendering/PIPELINE-3D.md#pass-inputs-outputs-and-target-lifetime) · [专项测试](../tests/rendering-pipeline3d.test.mjs) |
+| 烘焙间接光 | Web · Three WebGL2 | R2 | 7 | 9 | **+2.0**。版本化 SH 探针数据在场景级接入 PBR 漫反射，支持前向出图及低档使用。HDR 以有界权重衰减覆盖内部的 SSGI，边界保留重叠，SSR 单独处理。原生网格或 3D 纹理尺寸不支持时沿用已有光照。当前每个场景管理一个烘焙网格。 [资源与混合契约](rendering/PIPELINE-3D.md#baked-world-irradiance) · [专项测试](../tests/rendering-pipeline3d.test.mjs) |
 
 后续评审新增一行，先更新证据，再重算总分。过去包含试玩或交付的评分使用其原始口径，趋势从本页首轮基线开始记录。

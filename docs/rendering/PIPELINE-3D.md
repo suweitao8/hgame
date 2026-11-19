@@ -50,6 +50,20 @@ HGame keeps 3D rendering modular and strictly opt-in. Core runtime modules never
 - `createMegaLights3D(THREE, { maxLights, maxClusteredLights, defaultSamples, ... })`: manages `1..1024` dynamic point, spot, and transient flash lights by packing light data into a float `DataTexture` and partitioning camera view frustums into a `16×8×16` logarithmic-depth cluster texture (`128×128`), selecting lights with stratified Interleaved Gradient Noise stochastic importance sampling (`computeStochasticLightSample`) and composing directly into PBR materials via `onBeforeCompile` without adding scene lights or triggering shader recompilation.
 - `createIrradianceProbeVolume3D(THREE, { bounds, resolution, ... })`: maintains an `SH L1` (4-band RGB) 3D irradiance lattice with analytic hemisphere/bounce baking, CPU trilinear sampling, and composable `onBeforeCompile` shader injection.
 
+### Baked world irradiance
+
+Use `adapter.setIrradianceProbeGrid(scene, data)` with a versioned JSON asset. The adapter registers one grid as a Three scene light, so standard lit materials, including glTF meshes, receive the diffuse irradiance in both forward and HDR rendering. All views of the scene share the atlas. A replacement, `setIrradianceProbeGrid(scene, null)`, scene disposal or adapter disposal frees the owned texture.
+
+```js
+const response = await fetch(new URL('./lighting/room-probes.json', import.meta.url));
+if (!response.ok) throw new Error(`Probe asset returned ${response.status}`);
+adapter.setIrradianceProbeGrid(scene, await response.json());
+```
+
+Include `schemaVersion: 1`, world-space `min` and `max` corners, `resolution: [nx, ny, nz]`, and `coefficients`. Probes sit at the center of their cells. Flatten the grid in X, Y, Z order with X changing fastest. Each probe stores nine linear RGB SH radiance coefficients in Three's L2 order, for 27 values per probe. Keep globally applied sky and environment illumination separate when authoring local bounce data. Optional `intensity` scales the baked term. The adapter packs the coefficients into a padded, linearly filtered RGBA16F 3D texture. Unsupported WebGL backends or a grid exceeding texture dimensions return `null` and keep existing lighting and screen-space effects. [Three WebGL probe format](https://threejs.org/docs/pages/LightProbeGridWebGL.html)
+
+In the HDR path, SSGI diffuse strength falls toward the interior of the active grid by up to `min(intensity, 1)`. The outer half-cell keeps the full screen-space term, and the next half-cell fades it down. This overlap preserves a screen-space contribution where a normal map can push the native probe sample beyond the grid edge. The native baked term retains its own bounds. SSR remains independent, and lower presets keep the baked term with SSGI disabled. Grid changes reset the affected view's GI and temporal history.
+
 ## WebGL2 Post-Processing & Viewmodel Pass (`post3d.js`)
 
 When running on a WebGL2 context supporting floating-point color buffers, `createPostPipeline3D` orchestrates:

@@ -22,6 +22,7 @@ import { syncCameraWorldMatrices, usesZeroToOneDepth } from '../camera3d/matrice
 import { fitDrawingBuffer, readDrawingBufferLimits } from '../quality3d/viewport.js';
 import { drawWithDiagnostics } from '../quality3d/render-diagnostics.js';
 import { createTemporalAA } from './temporal-aa.js';
+import { getVisibleBakedProbeGrid } from '../lighting3d/baked-probe-grid.js';
 import { createHdrTargets } from './hdr-targets.js';
 import { FULLSCREEN_PASSES, validateFullscreenPass } from './pass-contracts.js';
 
@@ -311,6 +312,7 @@ function compileHdrPasses(passes) {
  * @property {object | null} [viewScene=null] Optional first-person scene composited before tone mapping.
  * @property {object | null} [viewCamera=null] Camera for `viewScene`.
  * @property {PostPipelineSunLight | null} [sunLight=null] Sun used for volumetrics/contact shadows.
+ * @property {ReturnType<typeof import('../lighting3d/baked-probe-grid.js').createBakedProbeGrid>} [irradianceGrid=null] World-space baked diffuse coverage for SSGI blending.
  * @property {number} [dt=0] Frame delta in seconds.
  * @property {readonly [number, number, number, number] | null} [outputViewport=null] Screen x, y, width and height in renderer pixels before DPR, with a bottom-left origin.
  * @property {{beginPass: (name: string, target: object | null) => (() => void) | null, recordTarget: (target: object) => void} | null} [diagnostics=null] Optional stage and target sink.
@@ -508,6 +510,7 @@ export function createPostPipeline3D(options = {}) {
   let giHistoryGuideOffset = 0;
   let giHistoryView = null;
   let giHistoryProjection = null;
+  let lastIrradianceGrid = null;
   let lumaMips = [];
   let adaptRT = [];
   let ldrRT = null;
@@ -604,6 +607,7 @@ export function createPostPipeline3D(options = {}) {
     halfScratchRT = null;
     giSsrRT = null;
     giHistoryRT = null;
+    lastIrradianceGrid = null;
     resetGiSsrHistory();
     ldrRT = null;
     bloomMips = [];
@@ -795,6 +799,11 @@ export function createPostPipeline3D(options = {}) {
         uSsrEnabled: { value: 0 },
         uGiRadius: { value: state.giRadius },
         uGiIntensity: { value: state.giIntensity },
+        uIrradianceWeight: { value: 0 },
+        uIrradianceViewToWorld: { value: new THREE.Matrix4() },
+        uIrradianceGridMin: { value: new THREE.Vector3() },
+        uIrradianceGridMax: { value: new THREE.Vector3() },
+        uIrradianceGridResolution: { value: new THREE.Vector3() },
         uSsrIntensity: { value: state.ssrIntensity },
         uSsrMaxDist: { value: state.ssrMaxDist },
         uSsrThickness: { value: state.ssrThickness },
@@ -1161,7 +1170,7 @@ export function createPostPipeline3D(options = {}) {
     compU.uContactShadows.value = 0;
   }
 
-  function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, dt = 0, outputViewport = null,
+  function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, irradianceGrid = null, dt = 0, outputViewport = null,
     diagnostics = null } = {}) {
     if (disposed || contextLost) return;
     const stepDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
@@ -1170,7 +1179,6 @@ export function createPostPipeline3D(options = {}) {
       renderForwardWithViewmodel(world, camera, viewScene, viewCamera, diagnostics);
       return;
     }
-
     const gl = renderer.getContext?.();
     const prevAutoClear = renderer.autoClear;
     const prevToneMapping = renderer.toneMapping;
@@ -1229,6 +1237,11 @@ export function createPostPipeline3D(options = {}) {
       } finally {
         if (useTemporal) temporalFrame = temporalAa.restore(camera);
       }
+      const visibleGrid = getVisibleBakedProbeGrid(irradianceGrid, world, camera);
+      if (visibleGrid !== lastIrradianceGrid) {
+        resetTemporalHistory();
+        lastIrradianceGrid = visibleGrid;
+      }
       let hasSunDir = false;
       if (wantsContact || wantsVolumetric) {
         readWorldPosition(sunLight, scratchSunView).sub(readWorldPosition(sunLight.target, scratchSunTarget));
@@ -1286,6 +1299,14 @@ export function createPostPipeline3D(options = {}) {
         giU.uSsrEnabled.value = useSsr ? 1 : 0;
         giU.uGiRadius.value = state.giRadius;
         giU.uGiIntensity.value = state.giIntensity;
+        giU.uIrradianceWeight.value = useSsgi ? visibleGrid?.diffuseWeight ?? 0 : 0;
+        if (giU.uIrradianceWeight.value > 0) {
+          const { min, max } = visibleGrid.boundingBox;
+          giU.uIrradianceGridMin.value.copy(min);
+          giU.uIrradianceGridMax.value.copy(max);
+          giU.uIrradianceGridResolution.value.copy(visibleGrid.resolution);
+          giU.uIrradianceViewToWorld.value.copy(camera.matrixWorldInverse).invert();
+        }
         giU.uSsrIntensity.value = state.ssrIntensity;
         giU.uSsrMaxDist.value = state.ssrMaxDist;
         giU.uSsrThickness.value = state.ssrThickness;
