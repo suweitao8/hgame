@@ -269,7 +269,7 @@ void main() {
     vec4 mvPos = mix(mvA, mvB, u);
     float worldW = w * wScale;
     float tipKeep = smoothstep(0.001, 0.012, w);
-    float minScreenW = abs(mvPos.z) * 0.0072 * max(0.22, 1.0 - spanT * 0.76) * tipKeep;
+    float minScreenW = abs(mvPos.z) * 0.0038 * max(0.16, 1.0 - spanT * 0.84) * tipKeep;
     mvPos.xy += vside * (position.y * max(worldW, minScreenW));
     gl_Position = projectionMatrix * mvPos;
   }
@@ -293,7 +293,7 @@ void main() {
   float alpha = vAlpha;
   vec3 col = vColor;
   if (uHasTrailTex > 0.5) {
-    float localV = mix(0.14, 0.86, 1.0 - vUv.y);
+    float localV = mix(0.08, 0.92, 1.0 - vUv.y);
     vec2 mapped = vec2(
       mix(uTrailUvRect.x, uTrailUvRect.z, clamp(vUv.x, 0.0, 1.0)),
       mix(uTrailUvRect.y, uTrailUvRect.w, localV)
