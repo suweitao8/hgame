@@ -94,6 +94,11 @@ window.__hgameState = () => ({ score: Number(localStorage.score ?? 0) });
 export async function run({ page, readState, checkpoint }) {
   await page.keyboard.press('d');
   await checkpoint('keyboard scores', async () => assert.equal((await readState()).score, 1));
+  if (page.url().includes('blocked=1')) {
+    await page.route('**/unreachable.png', route => route.abort('failed'));
+    await page.evaluate(() => fetch('unreachable.png').catch(() => {}));
+  }
+  if (page.url().includes('false=1')) await checkpoint('explicit false', () => false);
   if (page.url().includes('navigate=1')) await page.reload();
 }
 export async function verify({ page, readState, checkpoint }) {
@@ -122,6 +127,16 @@ export async function verify({ page, readState, checkpoint }) {
   assert.equal(failed.report.checkpoints.at(-1).ok, false);
   assert.ok(failed.report.problems.some(problem => problem.includes('reload retains score')));
   assert.equal(failed.report.stateAfter.score, 1);
+
+  const blocked = run('blocked=1');
+  assert.equal(blocked.status, 1);
+  assert.ok(blocked.report.httpErrors.some(error => /ERR_FAILED.*unreachable\.png/.test(error)));
+
+  const returnedFalse = run('false=1');
+  assert.equal(returnedFalse.status, 1);
+  assert.deepEqual(returnedFalse.report.checkpoints.at(-1), {
+    name: 'explicit false', ok: false, message: 'Checkpoint returned false',
+  });
 
   const navigated = run('navigate=1');
   assert.equal(navigated.status, 1, JSON.stringify(navigated.report));

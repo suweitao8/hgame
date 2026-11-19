@@ -38,6 +38,7 @@
     "check:api-index": "node scripts/build-api-index.mjs --check",
     "snapshot": "node scripts/snapshot.mjs",
     "playtest": "node scripts/playtest.mjs",
+    "task:check": "node scripts/task-check.mjs",
     "api": "node scripts/query-api.mjs",
     "re:extract": "node scripts/re-pipeline.mjs extract",
     "re:probe": "node scripts/re-pipeline.mjs probe",

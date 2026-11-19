@@ -1,6 +1,53 @@
 # AI Verification Loop
 
-How an agent proves a change works without a human looking at the screen.
+How an agent develops against the user's task, runs checks, and decides whether the requested outcome is ready.
+
+## Task acceptance
+
+1. **Preserve the request.** Before editing, write the task and an observable expected result for each explicit behavior, deliverable and constraint. Note any assumptions. For a bug, reproduce the original failure. For gameplay, cover entry, the requested interaction, and the resulting state. Include restart, persistence, touch or failure paths when the request affects them.
+2. **Choose evidence.** Bind deterministic rules to exact Node test names. Bind player-facing behavior to named WebAsset checkpoints that drive ordinary input and assert the game state or visible result. Use fresh screenshots or a played sequence for art direction, readability and game feel. Map each criterion to evidence that could expose a regression.
+3. **Implement and exercise the real entry point.** Use the existing HGame APIs and relevant domain checks. Get the core interaction running through WebAsset early for game tasks. Reuse the task criteria when iterating. When a check fails, read the concrete assertion, state and browser errors, fix the affected path and rerun it.
+4. **Audit completion.** Match each original requirement to fresh evidence from the final code. Resolve all applicable failures and missing checks. For every visual review, record what was inspected, in which state and viewport, where the evidence is, and the observed result. Run the repository or game-wide checks required by its instructions. Report completion only after this audit. If a genuine blocker remains, report the specific unset condition and the missing evidence.
+
+Keep the task record under `build/` for a local task, or commit it with regression tests when it will be reused. For a generated game, the following example assumes `tests/save.test.mjs` contains the named test and `tests/restart.mjs` exports a playtest scenario with the named checkpoint. Use only the evidence types applicable to the task.
+
+```json
+{
+  "schemaVersion": 1,
+  "task": "Keep the high score when the player restarts, and keep it readable on a narrow screen.",
+  "playtests": {
+    "restart": {
+      "scenario": "tests/restart.mjs",
+      "ready": "#game[data-engine-ready=true]",
+      "viewport": "360x800"
+    }
+  },
+  "requirements": [
+    {
+      "id": "score",
+      "expected": "Restart starts a new round and retains the high score.",
+      "checks": [
+        { "type": "test", "file": "tests/save.test.mjs", "name": "restart preserves the high score" },
+        { "type": "playtest", "run": "restart", "checkpoint": "restart retains high score" }
+      ]
+    },
+    {
+      "id": "layout",
+      "expected": "The score stays unobstructed on a 360×800 viewport.",
+      "checks": [
+        { "type": "review", "inspect": "Read the score in fresh 360×800 images during play and after restart." }
+      ]
+    }
+  ]
+}
+```
+
+From the target project root, run `node "<hgame-repo>/scripts/task-check.mjs" build/task.json`. For tasks in the HGame engine repository, use `npm run task:check -- build/task.json`. Paths inside the task record resolve from the target project root. Use trusted local task records and modules, which can execute code on the development machine.
+
+- The checker runs each referenced Node test file once and each browser scenario once per run ID, then matches exact test and checkpoint names. Before opening WebAsset, it uses a temporary marker to verify that the live URL serves the project being edited. A named test that was skipped, a missing or ambiguous name, and unavailable evidence leave the criterion pending. A failed test file or unstable browser scenario fails its linked checks.
+- For playtests, `scenario` and `ready` are required. Optional keys are `selector`, `viewport`, `query`, `stateHook`, `traceHook`, `maxLongFrames`, `allowStatic` and `timeoutMs` (default 120000). Write the gameplay checkpoint in the scenario and assert an outcome with `node:assert/strict`. For a PNG to review, save `page.screenshot({ path: 'build/restart.png' })` at the relevant checkpoint. The scenario can return artifact paths for the JSON report.
+- Exit `0` means every declared automated check passed. Exit `1` means a check failed or still needs evidence. Exit `2` means the task record or invocation is invalid. JSON includes statuses, the record hash, and fresh test and browser evidence. `review-required` is a pending item for the agent to inspect. Record the observed evidence in the final audit. Repeat that review when the relevant code or assets change.
+- Audit the correspondence between the request and the test. For example, a restart assertion should prove both a new round and retained score. A ready canvas or changing pixels is evidence for rendering activity. The full interaction needs its own assertion. For performance requirements, use the requested hardware and workload with the render benchmarks below and record the actual conditions.
 
 | Need | Command | Output |
 |---|---|---|

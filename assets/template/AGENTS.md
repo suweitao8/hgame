@@ -38,10 +38,13 @@
 
 ## Commands Inside This Project
 
+For each development task, preserve the request and list observable acceptance criteria before editing. Link each criterion to an exact Node test, a real-input WebAsset playtest checkpoint, or a fresh visual review. Run the task checker from this project, inspect any pending or failed items, fix what you can and rerun. Before reporting completion, compare the evidence with the original request and run `npm test` and `npm run check`.
+
 ```powershell
 # Run project tests & syntax checks
 npm test
 npm run check
+node "<hgame-repo>/scripts/task-check.mjs" build/task.json
 
 # Query the API for this game's bundled runtime and open its starter entry:
 npm run api -- --map

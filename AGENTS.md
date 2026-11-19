@@ -39,6 +39,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 
 ## Verification
 
+- Task acceptance: translate each requested outcome into a named criterion before implementation. Use `npm run task:check -- <task.json>` for task-specific Node tests and WebAsset checkpoints, and review any visual or experiential criteria using fresh evidence. Re-run affected checks after fixes, then audit the original task against the results. See [AI-VERIFICATION.md](docs/guides/AI-VERIFICATION.md).
 - Runtime tests: `npm test`.
 - Vendored physics parity: `npm run check:physics`.
 - Network tests/check/build: run the corresponding npm command from `network/` or use the root forwarding scripts (`npm run check:all`).

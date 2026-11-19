@@ -43,6 +43,7 @@ Check which folder the current workspace is in before running commands:
     - API quick lookup: `node "<hgame-repo>/scripts/query-api.mjs" <keyword>` (or `npm --prefix "<hgame-repo>" run api -- <keyword>`)
     - Balance / Level / Narrative checks: `node "<hgame-repo>/.agents/skills/<skill>/scripts/<script>.mjs" ...`
     - Headless snapshot & AI playtest: `node "<hgame-repo>/scripts/snapshot.mjs" .` and `node "<hgame-repo>/scripts/playtest.mjs" .`
+    - Task acceptance: `node "<hgame-repo>/scripts/task-check.mjs" build/task.json` from the game root. Derive observable outcomes from the request before editing. Bind each to a fresh test, WebAsset checkpoint, or visual review. Audit the original request before completing. See [AI-VERIFICATION.md](../../../docs/guides/AI-VERIFICATION.md#task-acceptance).
     - Live playtest & browser QA: open via **WebAsset** (`http://127.0.0.1:4174/#games` -> `http://127.0.0.1:4175/local-games/<game-slug>/index.html`); **never** start a separate per-game website or port.
 
 ---

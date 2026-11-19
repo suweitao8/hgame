@@ -118,6 +118,7 @@ The modular level renderer releases slot-owned cloned skeletons on level replace
 4. **Never Zip Raw Project**: Always release with `npm run release -- --version <ver>` / `npm run package:game -- <dir> --version <ver>`.
 5. **Unified WebAsset Game Management & Preview (No Standalone Websites)**: Register and preview all web games via **WebAsset** (`http://127.0.0.1:4174/#games` -> `http://127.0.0.1:4175/local-games/<slug>/<entry>` via `game.config.json`). **Never** launch per-game dev servers (`npm start`, `npm run serve`, `python -m http.server`, or manual `preview.mjs` websites) during development, playtesting, or browser QA; point browser QA directly at WebAsset. (`scripts/preview.mjs` is strictly an ephemeral internal harness for headless `snapshot`/`playtest`/CI.)
 6. **Verification Commands**:
+   - Task acceptance and completion audit: [AI Verification Loop](AI-VERIFICATION.md#task-acceptance)
    - Logic + types + API index + physics: `npm run check` (or `npm run check:all` when touching `network/`)
    - Headless render PNG & state hook (`window.__hgameState`): `npm run snapshot -- <game-dir>`
    - Live input + FPS + pixel-change assertion: `npm run playtest -- <game-dir>`

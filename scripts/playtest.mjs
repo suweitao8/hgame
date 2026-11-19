@@ -10,6 +10,7 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { unlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import path from 'node:path';
@@ -78,7 +79,7 @@ async function freePort() {
   return p;
 }
 
-async function resolveWebAssetGame(id) {
+export async function resolveWebAssetGame(id) {
   const response = await fetch('http://127.0.0.1:4174/api/games', { signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error('WebAsset catalog returned HTTP ' + response.status);
   const { items } = await response.json();
@@ -90,6 +91,24 @@ async function resolveWebAssetGame(id) {
     throw new Error('Unexpected WebAsset preview address for ' + id);
   }
   return url;
+}
+
+export async function verifyWebAssetSource(gameRootUrl, projectDir) {
+  const token = randomUUID();
+  const name = `hgame-task-${token}.json`;
+  const marker = path.join(projectDir, name);
+  const content = JSON.stringify({ token });
+  await writeFile(marker, content, { flag: 'wx' });
+  try {
+    const response = await fetch(new URL(name, gameRootUrl), {
+      cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok || await response.text() !== content) {
+      throw new Error(`WebAsset does not serve this project directory (${projectDir}). Run from the registered source directory.`);
+    }
+  } finally {
+    await unlink(marker);
+  }
 }
 
 const analyzeCanvasStats = async ({ shot }) => {
@@ -232,6 +251,7 @@ async function runCli() {
       }
     }
     if (query) url.search = query;
+    report.url = url.href;
 
     browser = await chromium.launch({
       headless: true,
@@ -245,6 +265,11 @@ async function runCli() {
     });
     page.on('response', r => {
       if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) httpErrors.push(`HTTP ${r.status()} ${r.url()}`);
+    });
+    page.on('requestfailed', request => {
+      const failure = request.failure()?.errorText;
+      if (failure === 'net::ERR_ABORTED' || request.url().endsWith('/favicon.ico')) return;
+      httpErrors.push(`${failure ?? 'Request failed'} ${request.url()}`);
     });
 
     await page.addInitScript({ content: `(() => {
@@ -298,7 +323,7 @@ async function runCli() {
         throw new TypeError('A checkpoint requires a name and a check function');
       }
       try {
-        await check();
+        if (await check() === false) throw new Error('Checkpoint returned false');
         report.checkpoints.push({ name, ok: true });
       } catch (error) {
         const message = String(error?.message ?? error);
