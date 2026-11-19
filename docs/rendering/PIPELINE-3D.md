@@ -66,6 +66,12 @@ Non-WebGL2 or constrained contexts automatically degrade cleanly to a standard f
 
 When the Three adapter has HDR post-processing enabled, `setViews()` sends every pane through the same world and post-processing stages as the primary camera. Targets are sized to each physical pane. Each pane keeps its own eye adaptation and GI/reflection history while its camera and slot identity match. Pane output is clipped to its own rectangle and post volumes are evaluated at its camera position. Changes made through the adapter's public `postPipeline` supply shared settings. Its idle primary targets shrink to 1×1 during split view, and its full-size targets return when split view ends. Forward-only rendering remains available when HDR is disabled or unsupported.
 
+### Pass inputs, outputs and target lifetime
+
+The world draw supplies HDR color and optional sampleable depth. The pipeline resolves depth only when an active stage reads it. Each built-in and custom fullscreen pass declares the required and optional texture uniforms it samples and whether it writes color, color and depth, or the framebuffer. The draw path checks those bindings before issuing the pass and rejects sampling an output attachment. MSAA resolve, shadow-map availability, quality tiers and missing sampleable depth determine which stages feed those bindings.
+
+Each view owns its HDR intermediates. A stage releases a scratch target after its last reader, allowing another stage with matching dimensions and attachment requirements to reuse it. For example, TAA consumes the world-lighting intermediate before the custom HDR chain can write over it. Consecutive custom stages retain the preceding color until the next draw completes. The pool also checks auxiliary shader uniforms before reusing a target in a custom pass. The first-person layer keeps a separate depth attachment when required. Unused intermediates are disposed after the frame. Resize, context loss and view removal release the affected targets. Exposure, GI and TAA history are owned by their stages and retain their explicit reset rules.
+
 ### Custom HDR effects
 
 Configure `post3d.passes` or replace the chain through `adapter.postPipeline.setPasses(passes)`. Effects run in array order. Each descriptor names its previous-color texture uniform and, optionally, its original world-depth texture uniform. The chain runs after the first-person layer and before exposure metering, bloom and tone mapping. Built-in lighting that has yet to be composited remains in the subsequent HDR composite.
@@ -77,7 +83,7 @@ adapter.postPipeline.setPasses([
 ]);
 ```
 
-Use an opaque fullscreen shader material that writes linear color across the output. The pipeline supplies `position` and `uv` attributes and restores the input uniforms after each draw. It owns up to two reusable pane-sized scratch targets. The game owns its materials. `enabled: false` skips an effect, as does a missing depth attachment when the effect requires depth. In forward fallback the engine skips the HDR chain.
+Use an opaque fullscreen shader material that writes linear color across the output. The pipeline supplies `position` and `uv` attributes and restores the input uniforms after each draw. The standard chain alternates between two reusable pane-sized scratch targets. The game owns its materials. `enabled: false` skips an effect, as does a missing depth attachment when the effect requires depth. In forward fallback the engine skips the HDR chain.
 
 ### Temporal antialiasing
 

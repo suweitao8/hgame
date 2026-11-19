@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Declare built-in and custom 3D fullscreen pass texture dependencies and output attachments. Reuse pane-local HDR intermediates across passes once their inputs have been consumed.
+
 - Extend `vfx/` with textured/flipbook/curve GPU particles (`vfx-atlas-particles.js`), pooled 3D mesh VFX with Fresnel rim glow, UV scroll, and procedural dissolve (`vfx-mesh.js`), and a declarative `.vfx.json` composite effect recipe player (`vfx-recipes.js`, `createVfxSystem.playEffect`, `validateVfxRecipe`, `createProceduralVfxAtlas`). Add `VERTICAL` billboard mode, per-particle `startColor` tinting, GPU `orbitalY` spiral motion, optional depth-based Soft Particles (`setDepthTexture`), textured/tapered ribbon trails (`setTrailTexture`), velocity-aligned & lit 3D mesh particles, ground-plane `CollisionModule` bounce, `SubModule` sub-emitters, and `scripts/import-unity-vfx.mjs`.
 
 - Add opt-in 3D temporal anti-aliasing for the HDR world, with depth-validated color history per view and FXAA fallback.

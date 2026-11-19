@@ -20,6 +20,7 @@ import {
   inspectWebGLCapabilities,
   refineQualityWithContext,
 } from '../assets/runtime/integrations/post3d.js';
+import { FULLSCREEN_PASSES, validateFullscreenPass } from '../assets/runtime/integrations/post3d/pass-contracts.js';
 import {
   applyGeometricSpecularAA,
   createWorldAlignedMaterial,
@@ -234,6 +235,64 @@ test('custom HDR passes declare color and depth dependencies and chain owned tar
   assert.equal(draws[0].input, sceneTarget.texture);
   noDepth.dispose();
   assert.equal(disposedMaterials, 0);
+});
+
+test('3D passes reuse released HDR targets without reading their own output', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  const effect = new THREE.ShaderMaterial({ uniforms: { inputColor: { value: null } } });
+  const pipeline = createPostPipeline3D({ THREE, renderer, width: 320, height: 180,
+    preset: { ...QUALITY3D_PRESETS.low, ssao: true }, temporalAA: true, fxaa: false, sharpness: 0,
+    passes: [{ id: 'test', material: effect, inputs: { color: 'inputColor' } }] });
+  const draws = new Map();
+  const diagnostics = { beginPass(name, target) {
+    draws.set(name, target);
+    return () => {};
+  }, recordTarget() {} };
+
+  pipeline.render(world, camera, { diagnostics });
+  const scratch = draws.get('custom:test');
+  assert.equal(draws.get('world-lighting'), scratch);
+  assert.notEqual(draws.get('temporal-aa'), scratch);
+  pipeline.render(world, camera, { diagnostics });
+  assert.equal(draws.get('world-lighting'), scratch);
+  assert.equal(draws.get('custom:test'), scratch);
+  let disposed = 0;
+  scratch.addEventListener('dispose', () => disposed++);
+  pipeline.resize(640, 360);
+  assert.equal(disposed, 1);
+  pipeline.render(world, camera, { diagnostics });
+  assert.equal(draws.get('custom:test').width, 640);
+  assert.equal(draws.get('world-lighting'), draws.get('custom:test'));
+
+  // A caller texture can be bound through a sampler array or struct.
+  const extraUniform = { value: [] };
+  effect.uniforms.extraTextures = extraUniform;
+  const beginPass = diagnostics.beginPass;
+  diagnostics.beginPass = (name, target) => {
+    if (name === 'world-lighting') extraUniform.value = [{ map: target.texture }];
+    return beginPass(name, target);
+  };
+  pipeline.render(world, camera, { diagnostics });
+  assert.notEqual(draws.get('world-lighting'), draws.get('custom:test'));
+
+  pipeline.dispose();
+});
+
+test('fullscreen pass contracts enforce required inputs, writable outputs and feedback safety', () => {
+  const target = { texture: new THREE.Texture(), depthTexture: new THREE.DepthTexture(1, 1) };
+  const uniforms = { tCurrentColor: { value: new THREE.Texture() }, tCurrentDepth: { value: null },
+    tPreviousDepth: { value: null } };
+  assert.throws(() => validateFullscreenPass(FULLSCREEN_PASSES.temporalAA, uniforms, target), /requires tCurrentDepth/);
+  uniforms.tCurrentDepth.value = new THREE.DepthTexture(1, 1);
+  assert.throws(() => validateFullscreenPass(FULLSCREEN_PASSES.temporalAA, uniforms, { texture: target.texture }), /color-depth output/);
+  assert.doesNotThrow(() => validateFullscreenPass(FULLSCREEN_PASSES.temporalAA, uniforms, target));
+  uniforms.tPreviousDepth.value = target.depthTexture;
+  assert.throws(() => validateFullscreenPass(FULLSCREEN_PASSES.temporalAA, uniforms, target), /own output through tPreviousDepth/);
+  const toneMapping = FULLSCREEN_PASSES.toneMapping;
+  assert.throws(() => validateFullscreenPass(toneMapping, { tScene: { value: target.texture } }, target), /own output through tScene/);
+  assert.doesNotThrow(() => validateFullscreenPass(toneMapping, { tScene: { value: target.texture } }, null));
 });
 
 test('Three diagnostics report named passes, unique target usage and asynchronous GPU sample identity', () => {

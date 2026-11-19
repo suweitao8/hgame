@@ -733,6 +733,7 @@ export const HGame: Readonly<{
         HORIZONTAL: 1;
         STRETCHED: 2;
         MESH: 3;
+        VERTICAL: 4;
     }>;
     PROCEDURAL_VFX_ATLAS_REGIONS: Readonly<{
         glow: readonly number[];

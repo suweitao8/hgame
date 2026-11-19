@@ -1,3 +1,5 @@
+import { FULLSCREEN_PASSES } from './pass-contracts.js';
+
 function halton(index, base) {
   let fraction = 1;
   let result = 0;
@@ -116,7 +118,7 @@ export function createTemporalAA(THREE, createTarget, createMaterial) {
     uniforms.tPreviousDepth.value = historyWeight ? history.depthTexture : null;
     uniforms.uSceneDepthMode.value = depthMode;
     uniforms.uHistoryWeight.value = historyWeight;
-    runPass('temporal-aa', material, output);
+    runPass(FULLSCREEN_PASSES.temporalAA, material, output);
 
     previousView.copy(camera.matrixWorldInverse);
     uniforms.uPreviousInvProj.value.copy(uniforms.uInvProj.value);
