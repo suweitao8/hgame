@@ -311,9 +311,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         });
       }
     }
-    const singleLoopMode = maxParticles === 1 && bursts.length === 0;
-    const effectiveBursts = singleLoopMode ? [{ time: 0, count: 1 }] : bursts;
-    const effectiveRate = singleLoopMode ? 0 : rate;
+    const effectiveBursts = bursts;
+    const effectiveRate = rate;
     const hasPositiveRate = Array.isArray(effectiveRate) ? effectiveRate[1] > 0 : effectiveRate > 0;
 
     const matsBlock = (psr.match(/m_Materials:\s*\n([\s\S]*?)\n  m_/) || ['', ''])[1];
@@ -343,7 +342,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       renderMode,
       blend: mainMat?.blend || 'alpha',
       hdr: mainMat?.hdr ?? 1.0,
-      ...(isPrewarm && !singleLoopMode ? { prewarm: true } : {}),
+      ...(maxParticles > 0 && maxParticles < 1000 ? { maxParticles } : {}),
+      ...(isPrewarm ? { prewarm: true } : {}),
       ...(typeof delay === 'number' && delay > 0 ? { delay } : {}),
       ...(effectiveBursts.length > 0 ? { bursts: effectiveBursts } : {}),
       ...(hasPositiveRate ? { rate: effectiveRate } : {}),

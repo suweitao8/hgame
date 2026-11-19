@@ -242,7 +242,7 @@ void main() {
   vUv = vec2(mix(0.80, 0.20, spanT), position.y + 0.5);
   vec3 c0 = unpackRgb24(aSegMeta.x);
   vec3 c1 = unpackRgb24(aSegExtra.x);
-  vColor = mix(c0, c1, smoothstep(0.05, 0.38, spanT));
+  vColor = mix(c0, c1, smoothstep(0.04, 0.26, spanT));
   vAlpha = mix(aSegMeta.z, aSegMeta.w, u);
   vHdr = aSegExtra.w;
 
@@ -660,8 +660,14 @@ export function createTrailsSystem({
 
       dstMeta[i4] = rgb;
       dstMeta[i4 + 1] = w;
-      dstMeta[i4 + 2] = Math.max(0, 1 - t0 * t0);
-      dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1);
+      if (isNormal) {
+        const evalNormalAlpha = (t) => (t <= 0.06 ? (t / 0.06) : t >= 0.85 ? Math.max(0, (1 - t) / 0.15) : 1);
+        dstMeta[i4 + 2] = evalNormalAlpha(t0);
+        dstMeta[i4 + 3] = evalNormalAlpha(t1);
+      } else {
+        dstMeta[i4 + 2] = Math.max(0, 1 - t0 * t0);
+        dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1);
+      }
 
       dstExtra[i4] = endRgb;
       dstExtra[i4 + 1] = 1 + (endScale - 1) * t0;

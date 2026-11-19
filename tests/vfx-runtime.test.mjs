@@ -704,6 +704,21 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     for (let i = 0; i < 8; i++) vfx.update(0.05);
     assert.ok(vfx.trails.getStats().activeTrails >= 35, 'trail followers stay alive past trailLifetime up to particle life');
     assert.ok(vfx.meshVfx.getStats().activeCount >= 3, 'aligned shell meshes spawn');
+
+    // 6. Layer maxParticles cap triggers continuous immediate replay when life expires (e.g. Aura_Effect 1s inside 5s recipe)
+    vfx.reset();
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'max_particles_loop_test',
+      loop: true,
+      duration: 5.0,
+      layers: [
+        { name: 'pulse_ring', kind: 'particle', maxParticles: 1, rate: 10, life: 1.0, size: 8 },
+      ],
+    }, { x: 0, y: 0, z: 0 });
+    assert.equal(vfx.atlasParticles.getStats().normalTotal, 1, 'maxParticles=1 emits immediately at t=0');
+    for (let i = 0; i < 23; i++) vfx.update(0.1); // t = 2.3s -> t=0, t=1.0, t=2.0 => 3 emissions!
+    assert.equal(vfx.atlasParticles.getStats().normalTotal, 3, 'maxParticles=1 layer replays immediately after each 1s particle expires');
     dummyTex.dispose();
   } finally {
     vfx.dispose();

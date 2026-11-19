@@ -146,6 +146,7 @@ export function createEffectPlayer({
   const scratchTintA = [1, 1, 1];
   const scratchTintB = [1, 1, 1];
   const scratchTintOut = [1, 1, 1];
+  const scratchTrailMult = [1, 1, 1];
 
   function readMagnitude(val, fallback = 0) {
     if (Array.isArray(val)) {
@@ -244,6 +245,8 @@ export function createEffectPlayer({
         rateAccum: 0,
         burstCyclesDone: new Uint16Array(MAX_BURSTS_PER_LAYER),
         burstNextTime: new Float32Array(MAX_BURSTS_PER_LAYER),
+        activeEndTimes: new Float64Array(64),
+        activeEndCursor: 0,
         triggeredOnce: false,
       });
     }
@@ -349,9 +352,21 @@ export function createEffectPlayer({
       }
     }
     if (!slot) return;
-    const baseColor = trailCfg.inheritColor
-      ? packRgb24(Math.round(tintRgb[0] * 255), Math.round(tintRgb[1] * 255), Math.round(tintRgb[2] * 255))
-      : parseColorNumber(trailCfg.color, 0xff9f43);
+    let baseColor;
+    if (trailCfg.inheritColor) {
+      if (trailCfg.color !== undefined) {
+        parseColorRgb01(trailCfg.color, scratchTrailMult);
+        baseColor = packRgb24(
+          Math.round(tintRgb[0] * scratchTrailMult[0] * 255),
+          Math.round(tintRgb[1] * scratchTrailMult[1] * 255),
+          Math.round(tintRgb[2] * scratchTrailMult[2] * 255),
+        );
+      } else {
+        baseColor = packRgb24(Math.round(tintRgb[0] * 255), Math.round(tintRgb[1] * 255), Math.round(tintRgb[2] * 255));
+      }
+    } else {
+      baseColor = parseColorNumber(trailCfg.color, 0xff9f43);
+    }
     const endColor = trailCfg.endColor !== undefined ? parseColorNumber(trailCfg.endColor, baseColor) : baseColor;
     const sizeAffectsWidth = trailCfg.sizeAffectsWidth !== false;
     const widthVal = trailCfg.widthOverTrail !== undefined
@@ -765,6 +780,29 @@ export function createEffectPlayer({
         trackedSlot,
       );
     }
+    return dur - clampedInitAge;
+  }
+
+  function tryEmitWithCap(layer, ls, slot) {
+    const cap = layer.maxParticles | 0;
+    if (cap <= 0 || cap > 64) {
+      emitParticleOrMesh(layer, slot, 0);
+      return true;
+    }
+    let active = 0;
+    let freeIdx = -1;
+    for (let k = 0; k < 64; k++) {
+      if (ls.activeEndTimes[k] > slot.age) {
+        active += 1;
+      } else if (freeIdx === -1) {
+        freeIdx = k;
+      }
+    }
+    if (active >= cap) return false;
+    const remDur = emitParticleOrMesh(layer, slot, 0) ?? 0.5;
+    const writeIdx = freeIdx >= 0 ? freeIdx : (ls.activeEndCursor++ % 64);
+    ls.activeEndTimes[writeIdx] = slot.age + remDur;
+    return true;
   }
 
   function triggerAuxiliaryLayer(layer, slot) {
@@ -890,10 +928,16 @@ export function createEffectPlayer({
     slot.lightSlotIdx = -1;
 
     for (let l = 0; l < compiled.layers.length; l++) {
+      const layer = compiled.layers[l];
       const ls = slot.layers[l];
-      ls.rateAccum = 0;
+      const hasRate = Array.isArray(layer.rate) ? (layer.rate[1] > 0) : ((layer.rate ?? 0) > 0);
+      const noBursts = !Array.isArray(layer.bursts) || layer.bursts.length === 0;
+      // Continuous maxParticles layers (e.g. maxParticles: 1, rate: 10, life: 1) start active on frame 0.
+      ls.rateAccum = (layer.maxParticles > 0 && noBursts && hasRate) ? 1 : 0;
+      ls.activeEndTimes.fill(-1);
+      ls.activeEndCursor = 0;
       ls.triggeredOnce = false;
-      const bursts = compiled.layers[l].bursts;
+      const bursts = layer.bursts;
       for (let b = 0; b < MAX_BURSTS_PER_LAYER; b++) {
         ls.burstCyclesDone[b] = 0;
         ls.burstNextTime[b] = bursts && bursts[b] ? (bursts[b].time ?? 0) : 0;
@@ -953,7 +997,7 @@ export function createEffectPlayer({
           while (ls.burstCyclesDone[b] < cycles && localAge >= ls.burstNextTime[b]) {
             const count = Math.max(1, Math.round(readRange(burst.count, 1, 1, prng)));
             for (let c = 0; c < count; c++) {
-              emitParticleOrMesh(layer, slot);
+              tryEmitWithCap(layer, ls, slot);
             }
             ls.burstCyclesDone[b] += 1;
             ls.burstNextTime[b] += interval;
@@ -962,13 +1006,16 @@ export function createEffectPlayer({
       }
 
       const rate = layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0;
-      if (rate > 0 && dt > 0) {
+      if (rate > 0) {
         const layerDur = layer.duration ?? slot.duration;
         if (slot.loop || localAge <= layerDur) {
-          ls.rateAccum += rate * dt;
+          if (dt > 0) ls.rateAccum += rate * dt;
           while (ls.rateAccum >= 1) {
+            if (!tryEmitWithCap(layer, ls, slot)) {
+              ls.rateAccum = 1;
+              break;
+            }
             ls.rateAccum -= 1;
-            emitParticleOrMesh(layer, slot);
           }
         }
       }
