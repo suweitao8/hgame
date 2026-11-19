@@ -993,6 +993,23 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     assert.ok(shardMesh.position.y < 3.0, `expected cone rotation=[PI,0,0] to emit downward (y=${shardMesh.position.y})`);
     for (let i = 0; i < 6; i++) vfx.update(0.1); // t = 0.7s -> past life=0.4 triggers death subEmitter
     assert.ok(vfx.atlasParticles.getStats().normalTotal >= 2, 'mesh death subEmitter spawned particles');
+
+    // 14. rateOverDistance emits particles interpolated along travel segments when moved via setTransform
+    vfx.reset();
+    const projHandle = vfx.playEffect({
+      schemaVersion: 1,
+      id: 'proj_rate_dist_test',
+      loop: true,
+      duration: 2.0,
+      layers: [
+        { name: 'wake', kind: 'particle', rateOverDistance: 10, life: 1.0, size: 0.4 },
+      ],
+    }, { x: 0, y: 1.4, z: 0 });
+    vfx.update(0.05);
+    assert.equal(vfx.atlasParticles.getStats().normalTotal, 0, 'stationary rateOverDistance emits 0');
+    projHandle.setTransform(2.0, 1.4, 0, 0);
+    vfx.update(0.05);
+    assert.equal(vfx.atlasParticles.getStats().normalTotal, 20, '2m displacement at rateOverDistance=10 emits 20 wake particles');
     dummyTex.dispose();
   } finally {
     vfx.dispose();

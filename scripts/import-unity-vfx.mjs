@@ -485,6 +485,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const emMod = extractSection(ps, 'EmissionModule');
     const rate = readMinMaxScalar(emMod, 'rateOverTime', 0);
+    const rateDist = readMinMaxScalar(emMod, 'rateOverDistance', 0);
     const bursts = [];
     const burstCount = Number((emMod.match(/m_BurstCount:\s*(\d+)/) || [])[1] ?? 0);
     const burstsPart = emMod.split('m_Bursts:')[1] || '';
@@ -506,6 +507,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const effectiveBursts = bursts;
     const effectiveRate = rate;
     const hasPositiveRate = Array.isArray(effectiveRate) ? effectiveRate[1] > 0 : effectiveRate > 0;
+    const hasPositiveRateDist = Array.isArray(rateDist) ? rateDist[1] > 0 : rateDist > 0;
 
     const matsBlock = (psr.match(/m_Materials:\s*\n([\s\S]*?)\n  m_/) || ['', ''])[1];
     const matGuids = [...matsBlock.matchAll(/guid:\s*([0-9a-f]{32})/g)].map((m) => m[1]);
@@ -542,6 +544,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(typeof delay === 'number' && delay > 0 ? { delay } : {}),
       ...(effectiveBursts.length > 0 ? { bursts: effectiveBursts } : {}),
       ...(hasPositiveRate ? { rate: effectiveRate } : {}),
+      ...(hasPositiveRateDist ? { rateOverDistance: rateDist } : {}),
       ...(hasInfiniteLife ? { persistent: true } : {}),
       life,
       speed,

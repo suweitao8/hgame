@@ -244,6 +244,7 @@ export function createEffectPlayer({
     for (let l = 0; l < MAX_LAYERS_PER_EFFECT; l++) {
       layers.push({
         rateAccum: 0,
+        distAccum: 0,
         burstCyclesDone: new Uint16Array(MAX_BURSTS_PER_LAYER),
         burstNextTime: new Float32Array(MAX_BURSTS_PER_LAYER),
         activeEndTimes: new Float64Array(64),
@@ -261,6 +262,7 @@ export function createEffectPlayer({
       duration: 1,
       loop: false,
       x: 0, y: 0, z: 0,
+      prevX: 0, prevY: 0, prevZ: 0,
       yaw: 0,
       scale: 1,
       subDepth: 0,
@@ -1022,6 +1024,9 @@ export function createEffectPlayer({
     slot.x = slot.follow?.x ?? options.x ?? 0;
     slot.y = slot.follow?.y ?? options.y ?? 0;
     slot.z = slot.follow?.z ?? options.z ?? 0;
+    slot.prevX = slot.x;
+    slot.prevY = slot.y;
+    slot.prevZ = slot.z;
     slot.yaw = slot.follow?.yaw ?? options.yaw ?? 0;
     slot.scale = options.scale ?? 1;
     slot.subDepth = options._subDepth ?? 0;
@@ -1034,6 +1039,7 @@ export function createEffectPlayer({
       const noBursts = !Array.isArray(layer.bursts) || layer.bursts.length === 0;
       // Continuous maxParticles layers (e.g. maxParticles: 1, rate: 10, life: 1) start active on frame 0.
       ls.rateAccum = (layer.maxParticles > 0 && noBursts && hasRate) ? 1 : 0;
+      ls.distAccum = 0;
       ls.activeEndTimes.fill(-1);
       ls.activeEndCursor = 0;
       ls.triggeredOnce = false;
@@ -1073,6 +1079,10 @@ export function createEffectPlayer({
     const recipe = slot.recipe;
     if (!recipe) return;
     const layers = recipe.layers;
+    const dxMove = slot.x - slot.prevX;
+    const dyMove = slot.y - slot.prevY;
+    const dzMove = slot.z - slot.prevZ;
+    const moveDist = Math.hypot(dxMove, dyMove, dzMove);
     for (let l = 0; l < layers.length; l++) {
       const layer = layers[l];
       const ls = slot.layers[l];
@@ -1119,7 +1129,37 @@ export function createEffectPlayer({
           }
         }
       }
+
+      const rateDist = layer.rateOverDistance !== undefined ? readRange(layer.rateOverDistance, 0, 0, prng) : 0;
+      if (rateDist > 0 && moveDist > 0.0001) {
+        const layerDur = layer.duration ?? slot.duration;
+        if (slot.loop || localAge <= layerDur) {
+          const totalNeed = ls.distAccum + rateDist * moveDist;
+          const totalSteps = Math.floor(totalNeed);
+          ls.distAccum = totalNeed - totalSteps;
+          const savedX = slot.x;
+          const savedY = slot.y;
+          const savedZ = slot.z;
+          const capped = Math.min(totalSteps, 32);
+          for (let sIdx = 0; sIdx < capped; sIdx++) {
+            const frac = (sIdx + 0.5) / capped;
+            slot.x = slot.prevX + dxMove * frac;
+            slot.y = slot.prevY + dyMove * frac;
+            slot.z = slot.prevZ + dzMove * frac;
+            if (!tryEmitWithCap(layer, ls, slot)) {
+              ls.distAccum = 0;
+              break;
+            }
+          }
+          slot.x = savedX;
+          slot.y = savedY;
+          slot.z = savedZ;
+        }
+      }
     }
+    slot.prevX = slot.x;
+    slot.prevY = slot.y;
+    slot.prevZ = slot.z;
   }
 
   function update(visualDt) {
