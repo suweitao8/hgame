@@ -621,6 +621,88 @@ test('temporal AA jitters the world, restores camera matrices and invalidates pe
   pipeline.dispose();
 });
 
+test('temporal AA uses previous rigid and instance transforms only for moving or new geometry', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.z = 5;
+  const geometry = new THREE.PlaneGeometry(1, 1);
+  const material = new THREE.MeshStandardMaterial();
+  const rigid = new THREE.Mesh(geometry, material);
+  const instances = new THREE.InstancedMesh(geometry, material, 2);
+  instances.setMatrixAt(1, new THREE.Matrix4().makeTranslation(2, 0, 0));
+  world.add(rigid, instances);
+  const pipeline = createPostPipeline3D({ THREE, renderer, width: 160, height: 90,
+    preset: QUALITY3D_PRESETS.low, temporalAA: true, fxaa: false, sharpness: 0 });
+  const motions = [];
+  const resolves = [];
+  let activePass;
+  let target;
+  const diagnostics = { beginPass(name, output) {
+    activePass = name;
+    target = output;
+  }, recordTarget() {} };
+  renderer.render = scene => {
+    if (scene === world) world.updateMatrixWorld();
+    if (activePass === 'temporal-motion') {
+      for (const mesh of scene.children) {
+        mesh.onBeforeRender();
+        const uniforms = mesh.material.uniforms;
+        motions.push({ mesh, isInstance: Boolean(mesh.isInstancedMesh), target, valid: uniforms.uHasPrevious.value,
+          previousX: uniforms.uPreviousModelView.value.elements[12],
+          oldInstance: uniforms.tPreviousInstances.value?.image.data[28] });
+      }
+    }
+    if (activePass === 'temporal-aa') resolves.push(scene.children[0].material.uniforms.tMotionVectors.value);
+  };
+  const draw = (dt = 1 / 60) => pipeline.render(world, camera, { dt, diagnostics });
+  draw();
+  draw();
+  assert.equal(motions.length, 0);
+  assert.deepEqual(resolves, [null, null]);
+
+  rigid.position.x = 0.5;
+  instances.setMatrixAt(1, new THREE.Matrix4().makeTranslation(3, 0, 0));
+  instances.instanceMatrix.needsUpdate = true;
+  draw();
+  assert.deepEqual(motions.map(({ isInstance, valid, previousX, oldInstance }) =>
+    [isInstance, valid, previousX, oldInstance]), [[false, true, 0, undefined], [true, true, 0, 2]]);
+  assert.equal(resolves.at(-1), motions[0].target.texture);
+  assert.equal(motions[0].target, motions[1].target);
+  draw();
+  assert.equal(motions.length, 2);
+  assert.equal(resolves.at(-1), null);
+
+  instances.count = 1;
+  draw();
+  assert.equal(motions.at(-1).isInstance, true);
+  assert.equal(motions.at(-1).valid, false);
+
+  world.add(new THREE.Mesh(geometry, material));
+  draw();
+  assert.equal(motions.at(-1).valid, false);
+  const scratch = motions[0].target;
+  let released = 0;
+  let releasedProxy = 0;
+  scratch.addEventListener('dispose', () => released++);
+  motions[1].mesh.addEventListener('dispose', () => {
+    assert.notEqual(motions[1].mesh.instanceMatrix, instances.instanceMatrix);
+    releasedProxy++;
+  });
+  pipeline.resize(100, 90);
+  assert.equal(released, 1);
+  assert.equal(releasedProxy, 1);
+  draw();
+  assert.equal(resolves.at(-1), null);
+  pipeline.setState({ temporalMotion: false });
+  rigid.position.x = 1;
+  draw();
+  assert.equal(resolves.at(-1), null);
+  pipeline.dispose();
+  geometry.dispose();
+  material.dispose();
+});
+
 test('one adaptive quality transition rebuilds the post pipeline once at the final drawing-buffer size', () => {
   const { renderer, calls } = createMockWebGL2Renderer();
   const allocations = [];

@@ -14,7 +14,7 @@ function halton(index, base) {
 const JITTER = Array.from({ length: 8 }, (_, i) => [halton(i + 1, 2), halton(i + 1, 3)]);
 
 /** Owns one view's color and depth history. */
-export function createTemporalAA(THREE, createTarget, createMaterial) {
+export function createTemporalAA(THREE, createTarget, createMaterial, createMotion = null) {
   const targets = [];
   const originalProjection = new THREE.Matrix4();
   const originalInverse = new THREE.Matrix4();
@@ -26,6 +26,8 @@ export function createTemporalAA(THREE, createTarget, createMaterial) {
     tCurrentDepth: { value: null },
     tPreviousColor: { value: null },
     tPreviousDepth: { value: null },
+    tMotionVectors: { value: null },
+    uHasMotionVectors: { value: false },
     uInvProj: { value: new THREE.Matrix4() },
     uPreviousInvProj: { value: new THREE.Matrix4() },
     uPreviousProjection: { value: new THREE.Matrix4() },
@@ -40,6 +42,7 @@ export function createTemporalAA(THREE, createTarget, createMaterial) {
   let lastWorld = null;
   let lastCamera = null;
   let lastDepthMode = -1;
+  let motion = null;
 
   function reset() {
     lastWorld = null;
@@ -48,7 +51,10 @@ export function createTemporalAA(THREE, createTarget, createMaterial) {
     sampleIndex = 0;
     uniforms.tPreviousColor.value = null;
     uniforms.tPreviousDepth.value = null;
+    uniforms.tMotionVectors.value = null;
+    uniforms.uHasMotionVectors.value = false;
     uniforms.uHistoryWeight.value = 0;
+    motion?.reset();
   }
 
   function release() {
@@ -61,6 +67,7 @@ export function createTemporalAA(THREE, createTarget, createMaterial) {
     uniforms.tCurrentColor.value = null;
     uniforms.tCurrentDepth.value = null;
     reset();
+    motion?.release();
   }
 
   function jitter(camera, width, height) {
@@ -99,7 +106,7 @@ export function createTemporalAA(THREE, createTarget, createMaterial) {
     return true;
   }
 
-  function resolve(world, camera, color, depth, depthMode, dt, runPass) {
+  function resolve(world, camera, color, depth, depthMode, dt, runPass, trackMotion, multisampled) {
     let historyWeight = 0;
     if (lastWorld === world && lastCamera === camera && lastDepthMode === depthMode && dt <= 0.125 &&
         uniforms.uPreviousProjection.value.equals(originalProjection)) {
@@ -112,6 +119,16 @@ export function createTemporalAA(THREE, createTarget, createMaterial) {
 
     const history = targets[index];
     const output = targets[index ^ 1];
+    let vectors = null;
+    if (trackMotion && createMotion) {
+      motion ??= createMotion();
+      vectors = motion.render(world, camera, depth, depthMode, jitteredProjection, uniforms.uJitterUv.value,
+        uniforms.uPreviousProjection.value, previousView, historyWeight, multisampled);
+    } else {
+      motion?.release();
+    }
+    uniforms.tMotionVectors.value = vectors;
+    uniforms.uHasMotionVectors.value = Boolean(vectors);
     uniforms.tCurrentColor.value = color;
     uniforms.tCurrentDepth.value = depth;
     uniforms.tPreviousColor.value = historyWeight ? history.texture : null;
@@ -130,5 +147,9 @@ export function createTemporalAA(THREE, createTarget, createMaterial) {
     return output.texture;
   }
 
-  return { targets, jitter, restore, resolve, reset, release, dispose() { release(); material.dispose?.(); } };
+  return { targets, jitter, restore, resolve, reset, release, get motionTarget() { return motion?.target ?? null; }, dispose() {
+    release();
+    motion?.dispose();
+    material.dispose?.();
+  } };
 }

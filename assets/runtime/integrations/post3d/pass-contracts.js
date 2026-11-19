@@ -17,7 +17,7 @@ export const FULLSCREEN_PASSES = {
   giSsrTemporal: { name: 'gi-ssr-temporal', reads: ['tInput', 'tSceneDepth', 'tHistory'], writes: 'color' },
   worldLighting: { name: 'world-lighting', reads: ['tScene'], optional: ['tDepth', 'tAoVol', 'tGiSsr'], writes: 'color' },
   temporalAA: { name: 'temporal-aa', reads: ['tCurrentColor', 'tCurrentDepth'],
-    optional: ['tPreviousColor', 'tPreviousDepth'], writes: 'color-depth' },
+    optional: ['tPreviousColor', 'tPreviousDepth', 'tMotionVectors'], writes: 'color-depth' },
   luminance: { name: 'luminance', reads: ['tScene'], writes: 'color' },
   luminanceDown: { name: 'luminance-downsample', reads: ['tSource'], writes: 'color' },
   eyeAdaptation: { name: 'eye-adaptation', reads: ['tLogLuma', 'tPrevAdapt'], writes: 'color' },

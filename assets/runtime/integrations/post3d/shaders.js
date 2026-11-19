@@ -1014,6 +1014,8 @@ uniform sampler2D tCurrentColor;
 uniform sampler2D tCurrentDepth;
 uniform sampler2D tPreviousColor;
 uniform sampler2D tPreviousDepth;
+uniform sampler2D tMotionVectors;
+uniform bool uHasMotionVectors;
 uniform mat4 uPreviousProjection;
 uniform mat4 uPreviousInvProj;
 uniform mat4 uPreviousFromCurrentView;
@@ -1035,6 +1037,34 @@ float nearbySolidDepth(sampler2D depths, ivec2 pixel, ivec2 size) {
   return nearest;
 }
 
+bool matchesPreviousDepth(ivec2 pixel, ivec2 size, float depth, float expectedZ) {
+  float clipZ = uSceneDepthMode == 0 ? depth * 2.0 - 1.0 : depth;
+  vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+  vec4 recorded = uPreviousInvProj * vec4(uv * 2.0 - 1.0, clipZ, 1.0);
+  float recordedZ = recorded.z / max(abs(recorded.w), 1e-8);
+  return abs(expectedZ - recordedZ) <= max(0.02, abs(expectedZ) * 0.015);
+}
+
+bool gatherMovingHistory(vec2 uv, ivec2 size, float expectedZ, out vec3 history) {
+  vec2 samplePos = uv * vec2(size) - 0.5;
+  ivec2 base = ivec2(floor(samplePos));
+  vec2 fraction = fract(samplePos);
+  float total = 0.0;
+  history = vec3(0.0);
+  for (int i = 0; i < 4; i++) {
+    ivec2 offset = ivec2(i & 1, i >> 1);
+    ivec2 pixel = clamp(base + offset, ivec2(0), size - 1);
+    float depth = texelFetch(tPreviousDepth, pixel, 0).r;
+    if (!hasSceneGeometry(depth) || !matchesPreviousDepth(pixel, size, depth, expectedZ)) continue;
+    vec2 weights = mix(1.0 - fraction, fraction, vec2(offset));
+    float weight = weights.x * weights.y;
+    history += texelFetch(tPreviousColor, pixel, 0).rgb * weight;
+    total += weight;
+  }
+  history /= max(total, 0.0001);
+  return total > 0.25;
+}
+
 void main() {
   ivec2 size = textureSize(tCurrentColor, 0);
   ivec2 pixel = clamp(ivec2(vUv * vec2(size)), ivec2(0), size - 1);
@@ -1047,23 +1077,34 @@ void main() {
   float reprojectionDepth = currentSolid ? depth : nearbySolidDepth(tCurrentDepth, pixel, size);
   if (!hasSceneGeometry(reprojectionDepth)) return;
 
-  vec3 viewPosition = reconstructViewPos(vUv, reprojectionDepth);
-  vec4 previousView = uPreviousFromCurrentView * vec4(viewPosition, 1.0);
-  vec4 previousClip = uPreviousProjection * previousView;
-  if (!insideSceneClip(previousClip)) return;
-  // Use camera motion without including the difference between jitter samples.
-  vec2 historyUv = previousClip.xy / previousClip.w * 0.5 + 0.5 + uJitterUv;
+  vec4 motion = uHasMotionVectors && currentSolid ? texelFetch(tMotionVectors, pixel, 0) : vec4(0.0);
+  if (motion.a > 1.5) return;
+  vec2 historyUv;
+  float expectedZ;
+  if (motion.a > 0.5) {
+    historyUv = vUv + motion.xy;
+    expectedZ = sign(motion.z) * (exp2(abs(motion.z)) - 1.0);
+  } else {
+    vec3 viewPosition = reconstructViewPos(vUv, reprojectionDepth);
+    vec4 previousView = uPreviousFromCurrentView * vec4(viewPosition, 1.0);
+    vec4 previousClip = uPreviousProjection * previousView;
+    if (!insideSceneClip(previousClip)) return;
+    // Camera motion excludes the difference between jitter samples.
+    historyUv = previousClip.xy / previousClip.w * 0.5 + 0.5 + uJitterUv;
+    expectedZ = previousView.z;
+  }
   if (any(lessThan(historyUv, vec2(0.0))) || any(greaterThanEqual(historyUv, vec2(1.0)))) return;
   ivec2 historyPixel = ivec2(historyUv * vec2(size));
   float previousDepth = texelFetch(tPreviousDepth, historyPixel, 0).r;
   bool previousSolid = hasSceneGeometry(previousDepth);
-  if (!previousSolid) previousDepth = nearbySolidDepth(tPreviousDepth, historyPixel, size);
-  if (!hasSceneGeometry(previousDepth)) return;
-  float previousClipZ = uSceneDepthMode == 0 ? previousDepth * 2.0 - 1.0 : previousDepth;
-  vec2 depthUv = (vec2(historyPixel) + 0.5) / vec2(size);
-  vec4 recordedView = uPreviousInvProj * vec4(depthUv * 2.0 - 1.0, previousClipZ, 1.0);
-  float recordedZ = recordedView.z / max(abs(recordedView.w), 1e-8);
-  if (abs(previousView.z - recordedZ) > max(0.02, abs(previousView.z) * 0.015)) return;
+  vec3 history;
+  if (motion.a > 0.5) {
+    if (!previousSolid || !gatherMovingHistory(historyUv, size, expectedZ, history)) return;
+  } else {
+    if (!previousSolid) previousDepth = nearbySolidDepth(tPreviousDepth, historyPixel, size);
+    if (!hasSceneGeometry(previousDepth) || !matchesPreviousDepth(historyPixel, size, previousDepth, expectedZ)) return;
+    history = texture(tPreviousColor, historyUv).rgb;
+  }
 
   vec3 low = current.rgb;
   vec3 high = current.rgb;
@@ -1072,7 +1113,6 @@ void main() {
     low = min(low, value);
     high = max(high, value);
   }
-  vec3 history = texture(tPreviousColor, historyUv).rgb;
   vec3 clipped = clamp(history, low, high);
   float reactive = length(history - clipped) / max(0.025, length(current.rgb));
   float confidence = 1.0 - smoothstep(0.08, 0.6, reactive);

@@ -66,6 +66,7 @@
  * @property {number} [ssrThickness=0.35] World units.
  * @property {boolean} [temporalGiSsr=false] Reuse depth-validated GI and reflection history on half-float targets.
  * @property {boolean} [temporalAA=false] Jitter and resolve world color using depth-validated temporal history.
+ * @property {boolean} [temporalMotion=true] Use object motion on supported WebGL2 HDR targets while temporalAA is active.
  * @property {number} [contactShadows] 0..1; default follows the quality preset (0.65 or 0).
  * @property {number} [contactShadowLength=0.32] World units.
  * @property {number} [contactShadowThickness=0.08] World units.
@@ -130,6 +131,7 @@
  * @property {number} ssrThickness
  * @property {boolean} temporalGiSsr
  * @property {boolean} temporalAA
+ * @property {boolean} temporalMotion
  * @property {number} contactShadows
  * @property {number} contactShadowLength
  * @property {number} contactShadowThickness
@@ -400,6 +402,10 @@ export type PostPipelineSettings = {
      */
     temporalAA?: boolean | undefined;
     /**
+     * Use object motion on supported WebGL2 HDR targets while temporalAA is active.
+     */
+    temporalMotion?: boolean | undefined;
+    /**
      * 0..1; default follows the quality preset (0.65 or 0).
      */
     contactShadows?: number | undefined;
@@ -538,6 +544,7 @@ export type PostPipelineState = {
     ssrThickness: number;
     temporalGiSsr: boolean;
     temporalAA: boolean;
+    temporalMotion: boolean;
     contactShadows: number;
     contactShadowLength: number;
     contactShadowThickness: number;

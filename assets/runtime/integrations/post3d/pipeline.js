@@ -22,6 +22,7 @@ import { syncCameraWorldMatrices, usesZeroToOneDepth } from '../camera3d/matrice
 import { fitDrawingBuffer, readDrawingBufferLimits } from '../quality3d/viewport.js';
 import { drawWithDiagnostics } from '../quality3d/render-diagnostics.js';
 import { createTemporalAA } from './temporal-aa.js';
+import { createTemporalMotion } from './temporal-motion.js';
 import { getVisibleBakedProbeGrid } from '../lighting3d/baked-probe-grid.js';
 import { createHdrTargets } from './hdr-targets.js';
 import { FULLSCREEN_PASSES, validateFullscreenPass } from './pass-contracts.js';
@@ -157,6 +158,7 @@ function compileHdrPasses(passes) {
  * @property {number} [ssrThickness=0.35] World units.
  * @property {boolean} [temporalGiSsr=false] Reuse depth-validated GI and reflection history on half-float targets.
  * @property {boolean} [temporalAA=false] Jitter and resolve world color using depth-validated temporal history.
+ * @property {boolean} [temporalMotion=true] Use object motion on supported WebGL2 HDR targets while temporalAA is active.
  * @property {number} [contactShadows] 0..1; default follows the quality preset (0.65 or 0).
  * @property {number} [contactShadowLength=0.32] World units.
  * @property {number} [contactShadowThickness=0.08] World units.
@@ -224,6 +226,7 @@ function compileHdrPasses(passes) {
  * @property {number} ssrThickness
  * @property {boolean} temporalGiSsr
  * @property {boolean} temporalAA
+ * @property {boolean} temporalMotion
  * @property {number} contactShadows
  * @property {number} contactShadowLength
  * @property {number} contactShadowThickness
@@ -375,6 +378,7 @@ export function createPostPipeline3D(options = {}) {
     giIntensity = 0.55,
     temporalGiSsr = false,
     temporalAA = false,
+    temporalMotion = true,
     giRadius = 2.4,
     ssrIntensity = 0.35,
     ssrMaxDist = 28.0,
@@ -455,6 +459,7 @@ export function createPostPipeline3D(options = {}) {
     giIntensity,
     temporalGiSsr: Boolean(temporalGiSsr),
     temporalAA: Boolean(temporalAA),
+    temporalMotion: Boolean(temporalMotion),
     giRadius,
     ssrIntensity,
     ssrMaxDist,
@@ -1017,6 +1022,10 @@ export function createPostPipeline3D(options = {}) {
     if ('fxaa' in patch) state.fxaa = Boolean(patch.fxaa);
     if ('autoExposure' in patch) state.autoExposure = Boolean(patch.autoExposure);
     if ('temporalGiSsr' in patch) state.temporalGiSsr = Boolean(patch.temporalGiSsr);
+    if ('temporalMotion' in patch && Boolean(patch.temporalMotion) !== state.temporalMotion) {
+      state.temporalMotion = Boolean(patch.temporalMotion);
+      temporalAa?.release();
+    }
     if ('temporalAA' in patch) {
       state.temporalAA = Boolean(patch.temporalAA);
       if (!state.temporalAA && temporalAa?.targets.length) temporalAa.release();
@@ -1090,7 +1099,11 @@ export function createPostPipeline3D(options = {}) {
         depthTest: true,
         depthWrite: true,
         depthFunc: THREE.AlwaysDepth,
-      }));
+      }), usesByteColorTargets || !THREE.DataTexture || !THREE.Material || !THREE.Color ? null : () =>
+        createTemporalMotion(THREE, renderer,
+          (width, height) => makeColorTarget(width, height, { type: hdrType }),
+          (name, target, scene, camera) => drawWithDiagnostics(renderer, activeDiagnostics?.beginPass, name, target, scene, camera),
+          capabilities.maxTextureSize));
   }
 
   function finishGiSsrBlur(world, camera, stepDt, useSsr) {
@@ -1151,7 +1164,7 @@ export function createPostPipeline3D(options = {}) {
   function reportTargets(sink) {
     if (!sink) return;
     for (const target of [sceneRT, halfRT, aoBlurRT, halfScratchRT, giSsrRT,
-      giHistoryRT, ldrRT, ...lumaMips, ...adaptRT, ...(temporalAa?.targets ?? [])]) {
+      giHistoryRT, ldrRT, ...lumaMips, ...adaptRT, ...(temporalAa?.targets ?? []), temporalAa?.motionTarget]) {
       if (target) sink.recordTarget(target);
     }
     hdrTargets.record(sink);
@@ -1352,7 +1365,8 @@ export function createPostPipeline3D(options = {}) {
         const prelightRT = prelightTemporal ? viewCompositeRT ?? hdrTargets.acquire(bufferWidth, bufferHeight, false) : null;
         if (prelightRT) compositeWorldIntoViewTarget(compU, prelightRT);
         compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, sceneRT.depthTexture,
-          sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass);
+          sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass,
+          state.temporalMotion && !renderer.clippingPlanes?.length, sceneRT.samples > 0);
         if (prelightRT && prelightRT !== viewCompositeRT) hdrTargets.release(prelightRT);
       }
       if (hasViewModel) {
