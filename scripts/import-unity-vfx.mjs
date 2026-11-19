@@ -275,9 +275,16 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const initMod = extractSection(ps, 'InitialModule');
     const maxParticles = Number((initMod.match(/^\s*maxNumParticles:\s*(\d+)/m) || [])[1] ?? 1000);
+    const size3D = /^\s*size3D:\s*1\b/m.test(initMod);
     const life = readMinMaxScalar(initMod, 'startLifetime', 1);
     const speed = readMinMaxScalar(initMod, 'startSpeed', 0);
     const size = readMinMaxScalar(initMod, 'startSize', 1);
+    const sizeY = size3D ? readMinMaxScalar(initMod, 'startSizeY', 1) : size;
+    const sizeXMax = Array.isArray(size) ? size[1] : size;
+    const sizeYMax = Array.isArray(sizeY) ? sizeY[1] : sizeY;
+    const aspectY = size3D && sizeXMax > 0.0001 && Math.abs(sizeYMax / sizeXMax - 1) > 0.05
+      ? Number((sizeYMax / sizeXMax).toFixed(3))
+      : undefined;
     const rot = readMinMaxScalar(initMod, 'startRotation', 0);
     const gravScalar = readMinMaxScalar(initMod, 'gravityModifier', 0);
 
@@ -350,6 +357,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       life,
       speed,
       size,
+      ...(aspectY !== undefined ? { aspectY } : {}),
       rotation: rot,
       ...(gravScalar !== 0 ? { gravity: Number((gravScalar * 9.81).toFixed(3)) } : {}),
     };
@@ -509,15 +517,26 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const colLifeBlock = trailMod.match(/colorOverLifetime:[\s\S]*?(?=widthOverTrail:|colorOverTrail:|$)/)?.[0] || '';
       const colLifeMode = Number((colLifeBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
       let trailAlpha = 1;
+      let trailTint;
+      const toHex = (c) => '#' + [c[0], c[1], c[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
       if (colLifeMode === 0 || colLifeMode === 2) {
         const mMin = colLifeBlock.match(/minColor:\s*\{([^}]+)\}/);
         const mMax = colLifeBlock.match(/maxColor:\s*\{([^}]+)\}/);
-        const aMax = mMax ? parseColorObject(mMax[1], false)[3] : 1;
-        const aMin = mMin ? parseColorObject(mMin[1], false)[3] : aMax;
+        const cMax = mMax ? parseColorObject(mMax[1], true) : [1, 1, 1, 1];
+        const cMin = mMin ? parseColorObject(mMin[1], true) : cMax;
+        const aMax = cMax[3];
+        const aMin = cMin[3];
         if (colLifeMode === 2 && Math.abs(aMin - aMax) > 0.01) {
           trailAlpha = [Number(Math.min(aMin, aMax).toFixed(3)), Number(Math.max(aMin, aMax).toFixed(3))];
         } else {
           trailAlpha = Number(aMax.toFixed(3));
+        }
+        const maxHex = toHex(cMax);
+        const minHex = toHex(cMin);
+        if (colLifeMode === 2 && minHex !== maxHex) {
+          trailTint = [minHex, maxHex];
+        } else if (maxHex !== '#ffffff') {
+          trailTint = maxHex;
         }
       } else {
         const clStops = parseGradientStops(colLifeBlock);
@@ -538,6 +557,13 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         const mMax = cotBlock.match(/maxColor:\s*\{([^}]+)\}/);
         startRgb = mMax ? parseColorObject(mMax[1], true) : maxCol;
         endRgb = startRgb;
+        if (startRgb[3] < 0.99) {
+          if (Array.isArray(trailAlpha)) {
+            trailAlpha = [Number((trailAlpha[0] * startRgb[3]).toFixed(3)), Number((trailAlpha[1] * startRgb[3]).toFixed(3))];
+          } else {
+            trailAlpha = Number((trailAlpha * startRgb[3]).toFixed(3));
+          }
+        }
       } else {
         const maxGrad = cotBlock.match(/maxGradient:[\s\S]*?(?=minGradient:|$)/)?.[0] || cotBlock;
         const numC = Math.min(8, Number((maxGrad.match(/m_NumColorKeys:\s*(\d+)/) || [])[1] ?? 2));
@@ -560,19 +586,22 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           endRgb = keyCols[keyCols.length - 1];
         }
       }
-      const toHex = (c) => '#' + [c[0], c[1], c[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
       const wMax = typeof wScalar === 'number' ? wScalar : wScalar[1];
       const baseSizeMax = typeof size === 'number' ? size : size[1];
+      const spriteWidthScale = (trailMat?.spriteKey && trailMat.spriteKey !== 'trail') ? 0.45 : 1.0;
       layer.trail = {
         lifetime: tLife,
         lifetimeMode: trailMode === 1 ? 'seconds' : 'fraction',
         blend: trailMat?.blend || 'alpha',
-        width: Number((baseSizeMax * wMax).toFixed(3)),
-        widthOverTrail: wScalar,
+        width: Number((baseSizeMax * wMax * spriteWidthScale).toFixed(3)),
+        widthOverTrail: typeof wScalar === 'number'
+          ? Number((wScalar * spriteWidthScale).toFixed(3))
+          : [Number((wScalar[0] * spriteWidthScale).toFixed(3)), Number((wScalar[1] * spriteWidthScale).toFixed(3))],
         sizeAffectsWidth: sizeAffW,
         endWidth: 0,
         endWidthScale,
         ...(trailAlpha !== 1 ? { alpha: trailAlpha } : {}),
+        ...(trailTint ? { tint: trailTint } : {}),
         inheritColor,
         color: toHex(startRgb),
         endColor: toHex(endRgb),

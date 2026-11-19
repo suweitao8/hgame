@@ -662,7 +662,11 @@ void main() {
     vec3 upW = vec3(0.0, 1.0, 0.0);
     float c = cos(rot);
     float s = sin(rot);
-    vec2 rPos = vec2(position.x * c - position.y * s, position.x * s + position.y * c) * curSize;
+    float aspectY = max(0.05, aAtlasP6.z);
+    vec2 rPos = vec2(
+      (position.x * c - position.y * s) * curSize,
+      (position.x * s + position.y * c) * curSize * aspectY
+    );
     vec3 worldQuad = worldPos + camRight * rPos.x + upW * rPos.y;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(worldQuad, 1.0);
   } else {
@@ -1404,7 +1408,9 @@ export function createAtlasParticlePool({
     const nStr = opts.noiseStrength ?? 0;
     const nYScale = renderMode === VFX_RENDER_MODE.STRETCHED
       ? (opts.stretch ?? 0.8)
-      : (opts.noiseYScale ?? 1.0);
+      : renderMode === VFX_RENDER_MODE.VERTICAL
+        ? (opts.stretch ?? 1.0)
+        : (opts.noiseYScale ?? 1.0);
     ch.p6[i4] = nStr;
     ch.p6[i4 + 1] = opts.noiseFreq ?? 0.5;
     ch.p6[i4 + 2] = nYScale;

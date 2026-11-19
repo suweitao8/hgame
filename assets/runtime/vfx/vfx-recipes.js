@@ -368,7 +368,18 @@ export function createEffectPlayer({
     } else {
       baseColor = parseColorNumber(trailCfg.color, 0xff9f43);
     }
-    const endColor = trailCfg.endColor !== undefined ? parseColorNumber(trailCfg.endColor, baseColor) : baseColor;
+    let endColor = trailCfg.endColor !== undefined ? parseColorNumber(trailCfg.endColor, baseColor) : baseColor;
+    if (trailCfg.tint) {
+      sampleStartColor(trailCfg.tint, scratchTrailMult);
+      const sr = ((baseColor >> 16) & 255) * scratchTrailMult[0];
+      const sg = ((baseColor >> 8) & 255) * scratchTrailMult[1];
+      const sb = (baseColor & 255) * scratchTrailMult[2];
+      baseColor = packRgb24(Math.round(sr), Math.round(sg), Math.round(sb));
+      const er = ((endColor >> 16) & 255) * scratchTrailMult[0];
+      const eg = ((endColor >> 8) & 255) * scratchTrailMult[1];
+      const eb = (endColor & 255) * scratchTrailMult[2];
+      endColor = packRgb24(Math.round(er), Math.round(eg), Math.round(eb));
+    }
     const sizeAffectsWidth = trailCfg.sizeAffectsWidth !== false;
     const widthVal = trailCfg.widthOverTrail !== undefined
       ? readRange(trailCfg.widthOverTrail, 1, 1, prng) * (sizeAffectsWidth ? sizeStart : 1)
@@ -757,7 +768,7 @@ export function createEffectPlayer({
       noiseStrength,
       noiseYScale,
       noiseFreq,
-      stretch: layer.stretch ?? 0.8,
+      stretch: layer.aspectY ?? layer.stretch ?? (layer.renderMode === 'vertical' ? 1.0 : 0.8),
       phase,
     });
 
