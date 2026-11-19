@@ -154,13 +154,16 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         slashArc: (opts?: {}) => void;
         lightningBolt: (opts?: {}) => void;
         setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
+        setTrailWidthScale: (trackId: any, scale?: number) => void;
         allocTrail: (colorOrOpts?: number | object, width?: number | undefined) => number;
-        pushTrailPoint: (trackId: any, x: any, y: any, z?: number) => void;
+        pushTrailPoint: (trackId: any, x: any, y: any, z?: number, timeOverride?: undefined) => void;
+        updateTrailHead: (trackId: any, x: any, y: any, z?: number, timeOverride?: undefined) => void;
         freeTrail: (trackId: any) => void;
         update: (visualDt: any) => void;
         renderCanvas2D: (ctx: any, camera: any, viewWidth: any, viewHeight: any) => void;
         reset: () => void;
         dispose: () => void;
+        getTime: () => number;
         getStats(): {
             slashCap: number;
             boltCap: number;
@@ -277,7 +280,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     slashArc: (opts?: {}) => void;
     lightningBolt: (opts?: {}) => void;
     allocTrail: (colorOrOpts?: number | object, width?: number | undefined) => number;
-    pushTrailPoint: (trackId: any, x: any, y: any, z?: number) => void;
+    pushTrailPoint: (trackId: any, x: any, y: any, z?: number, timeOverride?: undefined) => void;
     freeTrail: (trackId: any) => void;
     spawnTelegraph: (opts?: {}) => number;
     updateTelegraph: (slot: any, opts?: {}) => void;

@@ -607,9 +607,11 @@ void main() {
       float nFreq = max(0.05, aAtlasP6.y);
       float ph = aAtlasP6.w * 6.2831853;
       float wt = age * nFreq * 3.14159265;
+      float rm = aAtlasP3.w;
+      float yScale = (rm > 1.5 && rm < 2.5) ? 1.0 : aAtlasP6.z;
       vec3 noiseOff = vec3(
         sin(wt + ph) * cos(wt * 0.73 + ph * 1.3),
-        sin(wt * 1.17 + ph * 2.1),
+        sin(wt * 1.17 + ph * 2.1) * yScale,
         cos(wt * 0.89 + ph * 1.7)
       ) * (nStr * min(1.0, age * 1.5) * 0.45);
       worldPos += noiseOff;
@@ -771,7 +773,7 @@ void main() {
   }
 
   float alpha = texCol.a * curveCol.a * softMul;
-  if (alpha < 0.005) discard;
+  if (alpha < 0.0005) discard;
   vec3 rgb = texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr);
   gl_FragColor = vec4(rgb, alpha);
 }
@@ -953,7 +955,7 @@ void main() {
   }
 
   float alpha = texCol.a * curveCol.a;
-  if (alpha < 0.005) discard;
+  if (alpha < 0.0005) discard;
   fragColor = vec4(texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr), alpha);
 }
 `;
@@ -1045,6 +1047,7 @@ export function evaluateAtlasParticlePosition(
   noiseStrength, noiseFreq, phase,
   age, is2D, outPos,
   orbitalY = 0, centerOffX = 0, centerOffZ = 0,
+  noiseYScale = 1,
 ) {
   const disp = drag > 0.001 ? ((1 - Math.exp(-drag * age)) / drag) : age;
   const gY = is2D ? gravity : -gravity;
@@ -1069,10 +1072,10 @@ export function evaluateAtlasParticlePosition(
     const env = noiseStrength * Math.min(1.0, age * 1.5) * (is2D ? 12.0 : 0.45);
     if (is2D) {
       px += Math.sin(wt + ph) * Math.cos(wt * 0.73 + ph) * env;
-      py += Math.cos(wt * 1.17 + ph) * env;
+      py += Math.cos(wt * 1.17 + ph) * env * noiseYScale;
     } else {
       px += Math.sin(wt + ph) * Math.cos(wt * 0.73 + ph * 1.3) * env;
-      py += Math.sin(wt * 1.17 + ph * 2.1) * env;
+      py += Math.sin(wt * 1.17 + ph * 2.1) * env * noiseYScale;
       pz += Math.cos(wt * 0.89 + ph * 1.7) * env;
     }
   }
@@ -1353,7 +1356,7 @@ export function createAtlasParticlePool({
     ch.p0[i4] = opts.x ?? 0;
     ch.p0[i4 + 1] = opts.y ?? 0;
     ch.p0[i4 + 2] = opts.z ?? 0;
-    ch.p0[i4 + 3] = simTime;
+    ch.p0[i4 + 3] = simTime - Math.max(0, opts.initialAge ?? 0);
 
     ch.p1[i4] = opts.vx ?? 0;
     ch.p1[i4 + 1] = opts.vy ?? 0;
@@ -1380,9 +1383,13 @@ export function createAtlasParticlePool({
     ch.p5[i4 + 2] = fb ? (fb.cycles ?? 1) : 1;
     ch.p5[i4 + 3] = fb && fb.blend !== false ? 1.0 : 0.0;
 
-    ch.p6[i4] = opts.noiseStrength ?? 0;
+    const nStr = opts.noiseStrength ?? 0;
+    const nYScale = renderMode === VFX_RENDER_MODE.STRETCHED
+      ? (opts.stretch ?? 0.8)
+      : (opts.noiseYScale ?? 1.0);
+    ch.p6[i4] = nStr;
     ch.p6[i4 + 1] = opts.noiseFreq ?? 0.5;
-    ch.p6[i4 + 2] = opts.stretch ?? 0.8;
+    ch.p6[i4 + 2] = nYScale;
     ch.p6[i4 + 3] = opts.phase !== undefined ? opts.phase : prng.nextFloat();
 
     ch.p7[i4] = tintRgb24;

@@ -226,6 +226,10 @@ export function createMeshVfxPool({
       rotX: 0,
       rotY: 0,
       rotZ: 0,
+      dirX: 0,
+      dirY: 1,
+      dirZ: 0,
+      hasDir: false,
       spinX: 0,
       spinY: 0,
       spinZ: 0,
@@ -307,6 +311,10 @@ export function createMeshVfxPool({
     s.rotX = opts.rotX ?? 0;
     s.rotY = opts.rotY ?? 0;
     s.rotZ = opts.rotZ ?? 0;
+    s.hasDir = opts.dirX !== undefined || opts.dirY !== undefined || opts.dirZ !== undefined;
+    s.dirX = opts.dirX ?? 0;
+    s.dirY = opts.dirY ?? 1;
+    s.dirZ = opts.dirZ ?? 0;
     s.spinX = opts.spinX ?? 0;
     s.spinY = opts.spinY ?? 0;
     s.spinZ = opts.spinZ ?? 0;
@@ -363,11 +371,15 @@ export function createMeshVfxPool({
     s.mesh.position.set(s.x, s.y, s.z);
     if (s.alignToVelocity && scratchFwd && scratchDir && scratchQuat) {
       const spd = Math.hypot(s.vx, s.vy, s.vz);
-      if (spd > 0.001) {
+      const ax = spd > 0.001 ? s.vx : (s.hasDir ? s.dirX : 0);
+      const ay = spd > 0.001 ? s.vy : (s.hasDir ? s.dirY : 0);
+      const az = spd > 0.001 ? s.vz : (s.hasDir ? s.dirZ : 0);
+      const dLen = Math.hypot(ax, ay, az);
+      if (dLen > 0.001) {
         if (s.forwardAxis === 'y') scratchFwd.set(0, 1, 0);
         else if (s.forwardAxis === 'x') scratchFwd.set(1, 0, 0);
         else scratchFwd.set(0, 0, 1);
-        scratchDir.set(s.vx / spd, s.vy / spd, s.vz / spd);
+        scratchDir.set(ax / dLen, ay / dLen, az / dLen);
         scratchQuat.setFromUnitVectors(scratchFwd, scratchDir);
         s.mesh.quaternion.copy(scratchQuat);
         if (s.rotZ !== 0) s.mesh.rotateZ(s.rotZ);

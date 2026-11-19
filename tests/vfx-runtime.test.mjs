@@ -665,6 +665,44 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     for (let i = 0; i < 15; i++) vfx.update(0.05);
     // 1 main + birth(2) + collision(2) + death(2) = 7+ normal particles
     assert.ok(vfx.atlasParticles.getStats().normalTotal >= 7);
+
+    // 5. Prewarm, long-lived spark trail survival, shape.scale/shell/alignToDirection, noise.strengthY
+    vfx.reset();
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'prewarm_sparks_and_shell',
+      loop: true,
+      duration: 4.0,
+      layers: [
+        {
+          name: 'sparks',
+          kind: 'particle',
+          prewarm: true,
+          rate: 20,
+          life: 2.0,
+          size: 0.05,
+          velocity: { linear: [0, [0.5, 1.0], 0], orbitalY: [0, 0.3] },
+          noise: { strength: 1.0, strengthY: 0.25, frequency: 0.5 },
+          trail: { lifetime: 0.15, widthOverTrail: 1.0, sizeAffectsWidth: true, inheritColor: true },
+        },
+        {
+          name: 'lances',
+          kind: 'mesh',
+          mesh: 'crystal',
+          forwardAxis: 'y',
+          rate: 10,
+          life: 1.0,
+          size: 0.4,
+          shape: { type: 'sphere', radius: 2.0, shell: true, scale: [0.5, 0.8, 0.5], alignToDirection: true },
+        },
+      ],
+    }, { x: 0, y: 0, z: 0 });
+    assert.ok(vfx.atlasParticles.getStats().normalTotal >= 35, 'prewarm emits steady-state sparks on frame 0');
+    assert.ok(vfx.trails.getStats().activeTrails >= 35, 'prewarm allocates trails for prewarmed sparks');
+    // Step 0.4s (> trail.lifetime 0.15s) -> spark trails must remain active for full particle duration (2.0s)
+    for (let i = 0; i < 8; i++) vfx.update(0.05);
+    assert.ok(vfx.trails.getStats().activeTrails >= 35, 'trail followers stay alive past trailLifetime up to particle life');
+    assert.ok(vfx.meshVfx.getStats().activeCount >= 3, 'aligned shell meshes spawn');
     dummyTex.dispose();
   } finally {
     vfx.dispose();

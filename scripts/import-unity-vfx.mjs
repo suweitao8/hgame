@@ -71,12 +71,18 @@ function readMinMaxScalar(block, fieldName, fallback = 0) {
   return Number(maxVal.toFixed(4));
 }
 
-function parseColorObject(str) {
+function srgbToLinear(c) {
+  const v = Math.max(0, Number(c) || 0);
+  if (v <= 0.04045) return v / 12.92;
+  return Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
+function parseColorObject(str, toLinear = true) {
   const r = Number((str.match(/r:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
   const g = Number((str.match(/g:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
   const b = Number((str.match(/b:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
   const a = Number((str.match(/a:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
-  return [r, g, b, a];
+  return toLinear ? [srgbToLinear(r), srgbToLinear(g), srgbToLinear(b), a] : [r, g, b, a];
 }
 
 function normalizeHdrColor(rgba) {
@@ -157,7 +163,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
   const txt = fs.readFileSync(matInfo.fullPath, 'utf8');
   const mainTexGuid = (txt.match(/- _(?:MainTex|BaseMap):[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1];
   const colorMatch = txt.match(/- _(?:Color|BaseColor):\s*\{([^}]+)\}/);
-  const color = colorMatch ? normalizeHdrColor(parseColorObject(colorMatch[1])) : { hdr: 1, rgb: [1, 1, 1], a: 1 };
+  const color = colorMatch ? normalizeHdrColor(parseColorObject(colorMatch[1], false)) : { hdr: 1, rgb: [1, 1, 1], a: 1 };
   const isAdditive = /_Blend:\s*2\b/.test(txt) || /_DstBlend:\s*1\b/.test(txt) || /_ADDITIVE/i.test(txt);
   const isLit = /_NORMALMAP|_METALLIC|_SPECGLOSSMAP|Standard Surface/i.test(txt) || /guid:\s*0406db5a14f94604a8c57ccfbc9f3b46/.test(txt);
   const isOpaque = /_Mode:\s*0\b/.test(txt) || /_Surface:\s*0\b/.test(txt);
@@ -250,7 +256,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const lt = lightByGo.get(goId);
     if (lt && !lightPulse) {
       const cM = lt.match(/m_Color:\s*\{([^}]+)\}/);
-      const col = cM ? parseColorObject(cM[1]) : [1, 1, 1, 1];
+      const col = cM ? parseColorObject(cM[1], false) : [1, 1, 1, 1];
       const intensity = Number((lt.match(/^\s*m_Intensity:\s*([-\d.eE+]+)/m) || [])[1] ?? 2);
       const range = Number((lt.match(/^\s*m_Range:\s*([-\d.eE+]+)/m) || [])[1] ?? 8);
       const hex = '#' + [col[0], col[1], col[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
@@ -262,6 +268,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     if (!ps || !psr) continue;
 
     const isLoop = /^\s*looping:\s*1\b/m.test(ps);
+    const isPrewarm = /^\s*prewarm:\s*1\b/m.test(ps);
     if (isLoop) recipeLoop = true;
     const dur = Number((ps.match(/^\s*lengthInSec:\s*([-\d.eE+]+)/m) || [])[1] ?? 2);
     const delay = readMinMaxScalar(ps, 'startDelay', 0);
@@ -285,26 +292,29 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const minCol = minColM ? parseColorObject(minColM[1]) : maxCol;
 
     const emMod = extractSection(ps, 'EmissionModule');
-    const rateRaw = readMinMaxScalar(emMod, 'rateOverTime', 0);
-    const rate = Array.isArray(rateRaw) ? Number(((rateRaw[0] + rateRaw[1]) * 0.5).toFixed(2)) : rateRaw;
+    const rate = readMinMaxScalar(emMod, 'rateOverTime', 0);
     const bursts = [];
     const burstCount = Number((emMod.match(/m_BurstCount:\s*(\d+)/) || [])[1] ?? 0);
     const burstsPart = emMod.split('m_Bursts:')[1] || '';
     if (burstCount > 0 && burstsPart) {
-      const burstMatches = [...burstsPart.matchAll(/-\s*serializedVersion:\s*\d+\s*\n\s*time:\s*([-\d.eE+]+)[\s\S]*?\bscalar:\s*([-\d.eE+]+)[\s\S]*?cycleCount:\s*(\d+)[\s\S]*?repeatInterval:\s*([-\d.eE+]+)/g)];
+      const burstMatches = [...burstsPart.matchAll(/-\s*serializedVersion:\s*\d+\s*\n\s*time:\s*([-\d.eE+]+)[\s\S]*?minMaxState:\s*(\d+)[\s\S]*?\bscalar:\s*([-\d.eE+]+)[\s\S]*?\bminScalar:\s*([-\d.eE+]+)[\s\S]*?cycleCount:\s*(\d+)[\s\S]*?repeatInterval:\s*([-\d.eE+]+)/g)];
       for (let bi = 0; bi < Math.min(burstCount, burstMatches.length); bi++) {
         const bm = burstMatches[bi];
+        const bMode = Number(bm[2]);
+        const bMax = Math.max(1, Math.round(Number(bm[3])));
+        const bMin = Math.max(1, Math.round(Number(bm[4])));
         bursts.push({
           time: Number(bm[1]),
-          count: Math.max(1, Math.round(Number(bm[2]))),
-          cycles: Math.max(1, Number(bm[3])),
-          interval: Number(bm[4]),
+          count: bMode === 3 && bMin !== bMax ? [Math.min(bMin, bMax), Math.max(bMin, bMax)] : bMax,
+          cycles: Math.max(1, Number(bm[5])),
+          interval: Number(bm[6]),
         });
       }
     }
     const singleLoopMode = maxParticles === 1 && bursts.length === 0;
     const effectiveBursts = singleLoopMode ? [{ time: 0, count: 1 }] : bursts;
     const effectiveRate = singleLoopMode ? 0 : rate;
+    const hasPositiveRate = Array.isArray(effectiveRate) ? effectiveRate[1] > 0 : effectiveRate > 0;
 
     const matsBlock = (psr.match(/m_Materials:\s*\n([\s\S]*?)\n  m_/) || ['', ''])[1];
     const matGuids = [...matsBlock.matchAll(/guid:\s*([0-9a-f]{32})/g)].map((m) => m[1]);
@@ -333,9 +343,10 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       renderMode,
       blend: mainMat?.blend || 'alpha',
       hdr: mainMat?.hdr ?? 1.0,
+      ...(isPrewarm && !singleLoopMode ? { prewarm: true } : {}),
       ...(typeof delay === 'number' && delay > 0 ? { delay } : {}),
       ...(effectiveBursts.length > 0 ? { bursts: effectiveBursts } : {}),
-      ...(typeof effectiveRate === 'number' && effectiveRate > 0 ? { rate: effectiveRate } : {}),
+      ...(hasPositiveRate ? { rate: effectiveRate } : {}),
       life,
       speed,
       size,
@@ -349,6 +360,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     if (renderMode === 'mesh') {
       layer.mesh = meshKey;
+      layer.forwardAxis = 'y';
       if (mainMat?.lit) layer.lit = true;
       if (mainMat?.opaque) layer.opaque = true;
       if (Array.isArray(speed) ? speed[1] > 0.1 : speed > 0.1) layer.alignToVelocity = true;
@@ -363,9 +375,31 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const shapeMod = extractSection(ps, 'ShapeModule');
     if (/enabled:\s*1/.test(shapeMod)) {
       const st = (shapeMod.match(/type:\s*(\d+)/) || [])[1] ?? 0;
+      const mappedType = mapShapeType(st);
       const rad = Number((shapeMod.match(/radius:[\s\S]*?value:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
       const ang = Number((shapeMod.match(/\bangle:\s*([-\d.eE+]+)/) || [])[1] ?? 25);
-      layer.shape = { type: mapShapeType(st), radius: Number(rad.toFixed(3)), angle: Number(ang.toFixed(1)) };
+      const radThick = Number((shapeMod.match(/\bradiusThickness:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+      const alignDir = /alignToDirection:\s*1\b/.test(shapeMod);
+      const sRotM = shapeMod.match(/m_Rotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+      const sSclM = shapeMod.match(/m_Scale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+      const shapeObj = { type: mappedType, radius: Number(rad.toFixed(3)), angle: Number(ang.toFixed(1)) };
+      if (radThick < 0.05) shapeObj.shell = true;
+      else if (radThick < 0.99) shapeObj.radiusThickness = Number(radThick.toFixed(3));
+      if (alignDir) shapeObj.alignToDirection = true;
+      if (sSclM) {
+        let sx = Number(sSclM[1]);
+        let sy = Number(sSclM[2]);
+        let sz = Number(sSclM[3]);
+        const rx = sRotM ? Math.abs(Number(sRotM[1])) : 0;
+        if (mappedType === 'circle' && Math.abs(rx - 90) < 5) {
+          // Unity Circle defaults to XY; with Rx(90) XY scale (sx, sy) maps to XZ (sx, sz, sy).
+          [sy, sz] = [sz, sy];
+        }
+        if (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001 || Math.abs(sz - 1) > 0.001) {
+          shapeObj.scale = [Number(sx.toFixed(3)), Number(sy.toFixed(3)), Number(sz.toFixed(3))];
+        }
+      }
+      layer.shape = shapeObj;
     }
 
     const sizeMod = extractSection(ps, 'SizeModule');
@@ -413,12 +447,13 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const vz = readMinMaxScalar(velMod, 'z', 0);
       const orbY = readMinMaxScalar(velMod, 'orbitalY', 0);
       const radV = readMinMaxScalar(velMod, 'radial', 0);
+      const isNonZero = (v) => Array.isArray(v) ? (v[0] !== 0 || v[1] !== 0) : v !== 0;
       const velObj = {};
-      if ((Array.isArray(vx) || vx !== 0) || (Array.isArray(vy) || vy !== 0) || (Array.isArray(vz) || vz !== 0)) {
-        velObj.linear = [Array.isArray(vx) ? vx[0] : vx, Array.isArray(vy) ? vy[0] : vy, Array.isArray(vz) ? vz[0] : vz];
+      if (isNonZero(vx) || isNonZero(vy) || isNonZero(vz)) {
+        velObj.linear = [vx, vy, vz];
       }
-      if (typeof orbY === 'number' && orbY !== 0) velObj.orbitalY = orbY;
-      if (typeof radV === 'number' && radV !== 0) velObj.radial = radV;
+      if (isNonZero(orbY)) velObj.orbitalY = orbY;
+      if (isNonZero(radV)) velObj.radial = radV;
       if (Object.keys(velObj).length > 0) layer.velocity = velObj;
     }
 
@@ -430,9 +465,15 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const noiseMod = extractSection(ps, 'NoiseModule');
     if (/enabled:\s*1/.test(noiseMod)) {
+      const maxAbs = (v) => Array.isArray(v) ? Math.max(Math.abs(v[0]), Math.abs(v[1])) : Math.abs(v);
       const str = readMinMaxScalar(noiseMod, 'strength', 0.5);
       const freq = Number((noiseMod.match(/\bfrequency:\s*([-\d.eE+]+)/) || [])[1] ?? 0.5);
-      layer.noise = { strength: typeof str === 'number' ? str : str[1], frequency: freq };
+      const noiseObj = { strength: Number(maxAbs(str).toFixed(3)), frequency: freq };
+      if (/separateAxes:\s*1\b/.test(noiseMod)) {
+        const strY = readMinMaxScalar(noiseMod, 'strengthY', 0);
+        noiseObj.strengthY = Number(maxAbs(strY).toFixed(3));
+      }
+      layer.noise = noiseObj;
     }
 
     const uvMod = extractSection(ps, 'UVModule');
@@ -456,15 +497,32 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     if (/enabled:\s*1/.test(trailMod)) {
       const tLife = readMinMaxScalar(trailMod, 'lifetime', 0.2);
       const wScalar = readMinMaxScalar(trailMod, 'widthOverTrail', 1);
+      const sizeAffW = !/sizeAffectsWidth:\s*0\b/.test(trailMod);
       const inheritColor = /inheritParticleColor:\s*1/.test(trailMod);
-      const cotBlock = trailMod.match(/colorOverTrail:[\s\S]*?(?=widthOverTrail:|$)/)?.[0] || '';
-      const cotStops = parseGradientStops(cotBlock);
-      const startRgb = cotStops?.[0]?.[1] || maxCol;
-      const endRgb = cotStops?.[cotStops.length - 1]?.[1] || startRgb;
+      const cotBlock = trailMod.match(/colorOverTrail:[\s\S]*?(?=widthOverTrail:|sizeAffects|$)/)?.[0] || '';
+      const cotMode = Number((cotBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 1);
+      let startRgb = maxCol;
+      let endRgb = maxCol;
+      if (cotMode === 0 || cotMode === 2) {
+        const mMax = cotBlock.match(/maxColor:\s*\{([^}]+)\}/);
+        startRgb = mMax ? parseColorObject(mMax[1]) : maxCol;
+        endRgb = startRgb;
+      } else {
+        const cotStops = parseGradientStops(cotBlock);
+        if (cotStops && cotStops.length > 0) {
+          const vis = cotStops.filter((s) => (s[1][0] + s[1][1] + s[1][2]) > 0.02);
+          startRgb = (vis[1] || vis[0] || cotStops[0])[1];
+          endRgb = (vis[vis.length - 1] || cotStops[cotStops.length - 1])[1];
+        }
+      }
       const toHex = (c) => '#' + [c[0], c[1], c[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
+      const wMax = typeof wScalar === 'number' ? wScalar : wScalar[1];
+      const baseSizeMax = typeof size === 'number' ? size : size[1];
       layer.trail = {
-        lifetime: typeof tLife === 'number' ? tLife : tLife[1],
-        width: Number(((typeof size === 'number' ? size : size[1]) * (typeof wScalar === 'number' ? wScalar : wScalar[1])).toFixed(3)),
+        lifetime: tLife,
+        width: Number((baseSizeMax * wMax).toFixed(3)),
+        widthOverTrail: wScalar,
+        sizeAffectsWidth: sizeAffW,
         endWidth: 0,
         inheritColor,
         color: toHex(startRgb),

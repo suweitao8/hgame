@@ -1,10 +1,10 @@
 import { createVisualPrng, packRgb24 } from './vfx-core.js';
-import { evaluateAtlasParticlePosition } from './vfx-atlas-particles.js';
+import { evaluateAtlasParticlePosition, evaluateSizeCurve } from './vfx-atlas-particles.js';
 
 const MAX_ACTIVE_EFFECTS = 128;
 const MAX_LAYERS_PER_EFFECT = 16;
 const MAX_BURSTS_PER_LAYER = 8;
-const MAX_TRAIL_FOLLOWERS = 256;
+const MAX_TRAIL_FOLLOWERS = 512;
 const MAX_TRACKED_PARTICLES = 256;
 const MAX_POINT_LIGHTS = 8;
 
@@ -141,10 +141,21 @@ export function createEffectPlayer({
 
   const scratchPos = new Float32Array(3);
   const scratchVel = new Float32Array(3);
+  const scratchDir = new Float32Array(3);
   const scratchRgb = [1, 1, 1];
   const scratchTintA = [1, 1, 1];
   const scratchTintB = [1, 1, 1];
   const scratchTintOut = [1, 1, 1];
+
+  function readMagnitude(val, fallback = 0) {
+    if (Array.isArray(val)) {
+      const a = Math.abs(Number(val[0] ?? 0));
+      const b = Math.abs(Number(val[1] ?? a));
+      return Math.max(a, b);
+    }
+    if (typeof val === 'number' && Number.isFinite(val)) return Math.abs(val);
+    return fallback;
+  }
 
   function sampleStartColor(startColor, out) {
     if (!startColor) {
@@ -192,11 +203,14 @@ export function createEffectPlayer({
       trailId: -1,
       age: 0,
       duration: 0.5,
+      trailLifetime: 0.15,
+      sampleAccum: 0,
       x0: 0, y0: 0, z0: 0,
       vx: 0, vy: 0, vz: 0,
       gravity: 0, drag: 0,
-      noiseStrength: 0, noiseFreq: 0.5, phase: 0,
+      noiseStrength: 0, noiseYScale: 1, noiseFreq: 0.5, phase: 0,
       orbitalY: 0, centerOffX: 0, centerOffZ: 0,
+      sizeCurve: null, sizeAffectsWidth: true,
       trackedSlot: -1,
     });
   }
@@ -320,9 +334,10 @@ export function createEffectPlayer({
     x0, y0, z0,
     vx, vy, vz,
     gravity, drag,
-    noiseStrength, noiseFreq, phase,
-    duration, trailCfg, tintRgb,
+    noiseStrength, noiseYScale, noiseFreq, phase,
+    particleDur, initialAge, trailCfg, tintRgb,
     orbitalY = 0, centerOffX = 0, centerOffZ = 0,
+    sizeStart = 1, sizeCurve = null,
     trackedSlot = -1,
   ) {
     if (!trails || typeof trails.allocTrail !== 'function') return;
@@ -338,20 +353,29 @@ export function createEffectPlayer({
       ? packRgb24(Math.round(tintRgb[0] * 255), Math.round(tintRgb[1] * 255), Math.round(tintRgb[2] * 255))
       : parseColorNumber(trailCfg.color, 0xff9f43);
     const endColor = trailCfg.endColor !== undefined ? parseColorNumber(trailCfg.endColor, baseColor) : baseColor;
-    const width = trailCfg.width ?? 0.08;
+    const sizeAffectsWidth = trailCfg.sizeAffectsWidth !== false;
+    const widthVal = trailCfg.widthOverTrail !== undefined
+      ? readRange(trailCfg.widthOverTrail, 1, 1, prng) * (sizeAffectsWidth ? sizeStart : 1)
+      : readRange(trailCfg.width, 0.08, 0.08, prng);
+    const width = Math.max(0.002, widthVal);
     const endWidth = trailCfg.endWidth ?? 0;
+    const trailLifetime = Math.max(0.03, readRange(trailCfg.lifetime, 0.15, 0.15, prng));
     const tid = trails.allocTrail({
       color: baseColor,
       endColor,
       width,
       endWidth,
       hdr: trailCfg.hdr ?? 1.0,
+      lifetime: trailLifetime,
     });
     if (tid < 0) return;
+
     slot.active = true;
     slot.trailId = tid;
-    slot.age = 0;
-    slot.duration = Math.min(duration, Math.max(0.05, trailCfg.lifetime ?? duration));
+    slot.age = initialAge;
+    slot.duration = particleDur;
+    slot.trailLifetime = trailLifetime;
+    slot.sampleAccum = 0;
     slot.x0 = x0;
     slot.y0 = y0;
     slot.z0 = z0;
@@ -361,13 +385,35 @@ export function createEffectPlayer({
     slot.gravity = gravity;
     slot.drag = drag;
     slot.noiseStrength = noiseStrength;
+    slot.noiseYScale = noiseYScale;
     slot.noiseFreq = noiseFreq;
     slot.phase = phase;
     slot.orbitalY = orbitalY;
     slot.centerOffX = centerOffX;
     slot.centerOffZ = centerOffZ;
+    slot.sizeCurve = sizeAffectsWidth && Array.isArray(sizeCurve) ? sizeCurve : null;
+    slot.sizeAffectsWidth = sizeAffectsWidth;
     slot.trackedSlot = trackedSlot;
-    trails.pushTrailPoint(tid, x0, y0, z0);
+
+    if (slot.sizeCurve && typeof trails.setTrailWidthScale === 'function') {
+      trails.setTrailWidthScale(tid, evaluateSizeCurve(slot.sizeCurve, Math.min(1, initialAge / Math.max(0.01, particleDur))));
+    }
+    if (initialAge > 0.005) {
+      const nowT = typeof trails.getTime === 'function' ? trails.getTime() : 0;
+      const tStart = Math.max(0, initialAge - trailLifetime);
+      const samples = 6;
+      for (let s = 0; s <= samples; s++) {
+        const a = tStart + ((initialAge - tStart) * s) / samples;
+        evaluateAtlasParticlePosition(
+          x0, y0, z0, vx, vy, vz, gravity, drag,
+          noiseStrength, noiseFreq, phase, a, is2D, scratchPos,
+          orbitalY, centerOffX, centerOffZ, noiseYScale,
+        );
+        trails.pushTrailPoint(tid, scratchPos[0], scratchPos[1], scratchPos[2], nowT - (initialAge - a));
+      }
+    } else {
+      trails.pushTrailPoint(tid, x0, y0, z0);
+    }
   }
 
   function fireSubEmitters(subEmitters, triggerType, x, y, z, depth) {
@@ -421,6 +467,9 @@ export function createEffectPlayer({
     const shape = layer.shape || {};
     const sType = shape.type || 'point';
     const rad = (shape.radius ?? 0) * scale;
+    const rt = shape.radiusThickness !== undefined
+      ? Math.max(0, Math.min(1, Number(shape.radiusThickness)))
+      : (shape.shell ? 0 : 1);
     let lx = 0;
     let ly = 0;
     let lz = 0;
@@ -436,18 +485,18 @@ export function createEffectPlayer({
       dy = is2D ? Math.sin(ang) : elev;
       dz = is2D ? 0 : Math.sin(ang) * horiz;
       if (is2D) dx = Math.cos(ang);
-      const r = shape.shell ? rad : (rad * Math.cbrt(prng.nextFloat()));
+      const r = rad * Math.cbrt(1 - rt + prng.nextFloat() * rt);
       lx = dx * r;
       ly = dy * r;
       lz = dz * r;
     } else if (sType === 'circle') {
       const ang = prng.nextFloat() * 6.283185307179586;
-      const r = shape.shell ? rad : (rad * Math.sqrt(prng.nextFloat()));
+      const r = rad * Math.sqrt(1 - rt + prng.nextFloat() * rt);
       lx = Math.cos(ang) * r;
       ly = is2D ? Math.sin(ang) * r : 0;
       lz = is2D ? 0 : Math.sin(ang) * r;
       dx = Math.cos(ang);
-      dy = is2D ? Math.sin(ang) : 0.2;
+      dy = is2D ? Math.sin(ang) : 0;
       dz = is2D ? 0 : Math.sin(ang);
     } else if (sType === 'edge') {
       const len = (shape.radius ?? 1) * scale;
@@ -464,7 +513,7 @@ export function createEffectPlayer({
       dx = Math.cos(ang) * sinT;
       dy = is2D ? Math.sin(ang) * sinT : cosT;
       dz = is2D ? 0 : Math.sin(ang) * sinT;
-      const r = rad * Math.sqrt(prng.nextFloat());
+      const r = rad * Math.sqrt(1 - rt + prng.nextFloat() * rt);
       lx = Math.cos(ang) * r;
       ly = is2D ? Math.sin(ang) * r : 0;
       lz = is2D ? 0 : Math.sin(ang) * r;
@@ -489,6 +538,26 @@ export function createEffectPlayer({
       dz /= norm;
     }
 
+    if (Array.isArray(shape.scale)) {
+      const sx = Number(shape.scale[0] ?? 1);
+      const sy = Number(shape.scale[1] ?? 1);
+      const sz = Number(shape.scale[2] ?? 1);
+      lx *= sx;
+      ly *= sy;
+      lz *= sz;
+      if (rad > 0.0001) {
+        const nx = lx;
+        const ny = ly;
+        const nz = lz;
+        const nLen = Math.hypot(nx, ny, nz);
+        if (nLen > 0.0001) {
+          dx = nx / nLen;
+          dy = ny / nLen;
+          dz = nz / nLen;
+        }
+      }
+    }
+
     const off = layer.offset;
     if (Array.isArray(off)) {
       lx += (off[0] ?? 0) * scale;
@@ -502,56 +571,69 @@ export function createEffectPlayer({
       scratchPos[0] = slot.x + lx * cYaw - ly * sYaw;
       scratchPos[1] = slot.y + lx * sYaw + ly * cYaw;
       scratchPos[2] = slot.z;
+      scratchDir[0] = dx * cYaw - dy * sYaw;
+      scratchDir[1] = dx * sYaw + dy * cYaw;
+      scratchDir[2] = 0;
     } else {
       scratchPos[0] = slot.x + lx * cYaw - lz * sYaw;
       scratchPos[1] = slot.y + ly;
       scratchPos[2] = slot.z + lx * sYaw + lz * cYaw;
+      scratchDir[0] = dx * cYaw - dz * sYaw;
+      scratchDir[1] = dy;
+      scratchDir[2] = dx * sYaw + dz * cYaw;
     }
 
     const spd = readRange(layer.speed, 0, 0, prng) * scale;
-    let vx = dx * spd;
-    let vy = dy * spd;
-    let vz = dz * spd;
+    let vx = scratchDir[0] * spd;
+    let vy = scratchDir[1] * spd;
+    let vz = scratchDir[2] * spd;
 
     const vel = layer.velocity;
     if (vel) {
       if (Array.isArray(vel.linear)) {
-        vx += (vel.linear[0] ?? 0) * scale;
-        vy += (vel.linear[1] ?? 0) * scale;
-        vz += (vel.linear[2] ?? 0) * scale;
+        const lvx = readRange(vel.linear[0], 0, 0, prng) * scale;
+        const lvy = readRange(vel.linear[1], 0, 0, prng) * scale;
+        const lvz = readRange(vel.linear[2], 0, 0, prng) * scale;
+        vx += is2D ? (lvx * cYaw - lvy * sYaw) : (lvx * cYaw - lvz * sYaw);
+        vy += is2D ? (lvx * sYaw + lvy * cYaw) : lvy;
+        vz += is2D ? 0 : (lvx * sYaw + lvz * cYaw);
       }
-      if (typeof vel.radial === 'number' && vel.radial !== 0) {
-        const len = Math.hypot(lx, ly, lz) || 1;
-        vx += (lx / len) * vel.radial * scale;
-        vy += (ly / len) * vel.radial * scale;
-        vz += (lz / len) * vel.radial * scale;
+      const radVel = vel.radial !== undefined ? readRange(vel.radial, 0, 0, prng) : 0;
+      if (radVel !== 0) {
+        const ox = scratchPos[0] - slot.x;
+        const oy = scratchPos[1] - slot.y;
+        const oz = scratchPos[2] - slot.z;
+        const len = Math.hypot(ox, oy, oz) || 1;
+        vx += (ox / len) * radVel * scale;
+        vy += (oy / len) * radVel * scale;
+        vz += (oz / len) * radVel * scale;
       }
     }
 
-    if (is2D) {
-      scratchVel[0] = vx * cYaw - vy * sYaw;
-      scratchVel[1] = vx * sYaw + vy * cYaw;
-      scratchVel[2] = 0;
-    } else {
-      scratchVel[0] = vx * cYaw - vz * sYaw;
-      scratchVel[1] = vy;
-      scratchVel[2] = vx * sYaw + vz * cYaw;
-    }
+    scratchVel[0] = vx;
+    scratchVel[1] = vy;
+    scratchVel[2] = vz;
   }
 
-  function emitParticleOrMesh(layer, slot) {
+  function emitParticleOrMesh(layer, slot, initialAge = 0) {
     const scale = slot.scale;
     sampleShapeAndVelocity(layer, slot, scale);
     const dur = Math.max(0.02, readRange(layer.life, 0.4, 0.8, prng));
+    const clampedInitAge = Math.min(Math.max(0, initialAge), Math.max(0, dur - 0.02));
     const sizeStart = readRange(layer.size, 0.5, 0.5, prng) * scale;
     const rot0 = readRange(layer.rotation, 0, 0, prng);
     const angVel = readRange(layer.angularVel, 0, 0, prng);
     const gravity = (layer.gravity ?? 0) * scale;
     const drag = layer.drag ?? 0;
-    const noiseStrength = (layer.noise?.strength ?? 0) * scale;
+    const noiseStrength = readMagnitude(layer.noise?.strength, 0) * scale;
+    const noiseYRaw = layer.noise?.strengthY !== undefined
+      ? readMagnitude(layer.noise.strengthY, 0) * scale
+      : noiseStrength;
+    const noiseYScale = noiseStrength > 0.0001 ? Math.min(2.0, noiseYRaw / noiseStrength) : 1.0;
     const noiseFreq = layer.noise?.frequency ?? 0.5;
     const phase = prng.nextFloat();
-    const orbitalY = layer.velocity?.orbitalY ?? layer.velocity?.orbital?.[1] ?? 0;
+    const rawOrbY = layer.velocity?.orbitalY ?? layer.velocity?.orbital?.[1] ?? 0;
+    const orbitalY = readRange(rawOrbY, 0, 0, prng);
     const centerOffX = scratchPos[0] - slot.x;
     const centerOffZ = scratchPos[2] - slot.z;
     sampleStartColor(layer.startColor, scratchTintOut);
@@ -563,6 +645,7 @@ export function createEffectPlayer({
 
     if (layer._kind === 'mesh' || layer.renderMode === 'mesh') {
       if (!meshVfx) return;
+      const alignDir = Boolean(layer.alignToVelocity || layer.shape?.alignToDirection);
       meshVfx.spawn({
         mesh: layer.mesh || 'crystal',
         x: scratchPos[0],
@@ -571,6 +654,9 @@ export function createEffectPlayer({
         vx: scratchVel[0],
         vy: scratchVel[1],
         vz: scratchVel[2],
+        dirX: alignDir ? scratchDir[0] : undefined,
+        dirY: alignDir ? scratchDir[1] : undefined,
+        dirZ: alignDir ? scratchDir[2] : undefined,
         gravity,
         drag,
         orbitalY,
@@ -584,7 +670,7 @@ export function createEffectPlayer({
         spinX: layer.spin?.[0] ?? 0,
         spinY: layer.spin?.[1] ?? angVel,
         spinZ: layer.spin?.[2] ?? 0,
-        alignToVelocity: layer.alignToVelocity,
+        alignToVelocity: alignDir,
         forwardAxis: layer.forwardAxis,
         hdr: layer.hdr ?? 1.0,
         tint: scratchTintOut,
@@ -613,6 +699,7 @@ export function createEffectPlayer({
       vy: scratchVel[1],
       vz: scratchVel[2],
       duration: dur,
+      initialAge: clampedInitAge,
       sizeStart,
       gravity,
       drag,
@@ -631,6 +718,7 @@ export function createEffectPlayer({
       flipbook: layer.flipbook,
       uvRect: layer.uvRect,
       noiseStrength,
+      noiseYScale,
       noiseFreq,
       stretch: layer.stretch ?? 0.8,
       phase,
@@ -663,9 +751,10 @@ export function createEffectPlayer({
       allocTrailFollower(
         scratchPos[0], scratchPos[1], scratchPos[2],
         scratchVel[0], scratchVel[1], scratchVel[2],
-        gravity, drag, noiseStrength, noiseFreq, phase,
-        dur, layer.trail, scratchTintOut,
+        gravity, drag, noiseStrength, noiseYScale, noiseFreq, phase,
+        dur, clampedInitAge, layer.trail, scratchTintOut,
         orbitalY, centerOffX, centerOffZ,
+        sizeStart, layer.sizeCurve,
         trackedSlot,
       );
     }
@@ -807,7 +896,24 @@ export function createEffectPlayer({
     triggerJuice(compiled, slot);
     totalPlayed += 1;
 
-    // Immediately evaluate t=0 bursts so single-frame triggers appear on the spawn frame.
+    // Immediately evaluate t=0 bursts and prewarmed looping layers so frame 1 is populated.
+    for (let l = 0; l < compiled.layers.length; l++) {
+      const layer = compiled.layers[l];
+      if (!layer.prewarm) continue;
+      const avgRate = Array.isArray(layer.rate)
+        ? (Number(layer.rate[0] ?? 0) + Number(layer.rate[1] ?? layer.rate[0] ?? 0)) * 0.5
+        : Number(layer.rate ?? 0);
+      const avgLife = Array.isArray(layer.life)
+        ? (Number(layer.life[0] ?? 1) + Number(layer.life[1] ?? layer.life[0] ?? 1)) * 0.5
+        : Number(layer.life ?? 1);
+      if (avgRate > 0 && avgLife > 0.05) {
+        const warmCount = Math.min(180, Math.max(1, Math.round(avgRate * avgLife)));
+        for (let k = 0; k < warmCount; k++) {
+          const frac = (k + prng.nextFloat()) / warmCount;
+          emitParticleOrMesh(layer, slot, frac * avgLife);
+        }
+      }
+    }
     stepSlotLayers(slot, 0);
     return slot.handle;
   }
@@ -838,7 +944,7 @@ export function createEffectPlayer({
           const cycles = Math.max(1, burst.cycles ?? 1);
           const interval = Math.max(0.01, burst.interval ?? 0.01);
           while (ls.burstCyclesDone[b] < cycles && localAge >= ls.burstNextTime[b]) {
-            const count = Math.max(1, (burst.count ?? 1) | 0);
+            const count = Math.max(1, Math.round(readRange(burst.count, 1, 1, prng)));
             for (let c = 0; c < count; c++) {
               emitParticleOrMesh(layer, slot);
             }
@@ -848,7 +954,7 @@ export function createEffectPlayer({
         }
       }
 
-      const rate = layer.rate ?? 0;
+      const rate = layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0;
       if (rate > 0 && dt > 0) {
         const layerDur = layer.duration ?? slot.duration;
         if (slot.loop || localAge <= layerDur) {
@@ -977,9 +1083,17 @@ export function createEffectPlayer({
           tf.trailId = -1;
           continue;
         }
+        if (tf.sizeCurve && typeof trails.setTrailWidthScale === 'function') {
+          trails.setTrailWidthScale(tf.trailId, evaluateSizeCurve(tf.sizeCurve, Math.min(1, tf.age / Math.max(0.01, tf.duration))));
+        }
+        let px;
+        let py;
+        let pz;
         if (tf.trackedSlot >= 0 && trackedParticles[tf.trackedSlot]?.active) {
           const tp = trackedParticles[tf.trackedSlot];
-          trails.pushTrailPoint(tf.trailId, tp.x, tp.y, tp.z);
+          px = tp.x;
+          py = tp.y;
+          pz = tp.z;
         } else {
           evaluateAtlasParticlePosition(
             tf.x0, tf.y0, tf.z0,
@@ -988,8 +1102,19 @@ export function createEffectPlayer({
             tf.noiseStrength, tf.noiseFreq, tf.phase,
             tf.age, is2D, scratchPos,
             tf.orbitalY, tf.centerOffX, tf.centerOffZ,
+            tf.noiseYScale,
           );
-          trails.pushTrailPoint(tf.trailId, scratchPos[0], scratchPos[1], scratchPos[2]);
+          px = scratchPos[0];
+          py = scratchPos[1];
+          pz = scratchPos[2];
+        }
+        const stepDt = Math.max(0.012, tf.trailLifetime / 6);
+        tf.sampleAccum += dt;
+        if (tf.sampleAccum >= stepDt || typeof trails.updateTrailHead !== 'function') {
+          tf.sampleAccum = tf.sampleAccum >= stepDt ? (tf.sampleAccum % stepDt) : tf.sampleAccum;
+          trails.pushTrailPoint(tf.trailId, px, py, pz);
+        } else {
+          trails.updateTrailHead(tf.trailId, px, py, pz);
         }
       }
     }

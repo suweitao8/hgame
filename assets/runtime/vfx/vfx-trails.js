@@ -254,14 +254,22 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
-  vec3 dir = seg / len;
-  vec3 side = (uIs2D > 0.5)
-    ? vec3(-dir.y, dir.x, 0.0)
-    : normalize(cross(dir, vec3(0.0, 1.0, 0.001)));
-
   float wScale = mix(aSegExtra.y, aSegExtra.z, u);
-  vec3 worldPos = mix(a, b, u) + side * (position.y * w * wScale);
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+  if (uIs2D > 0.5) {
+    vec3 dir = seg / len;
+    vec3 side = vec3(-dir.y, dir.x, 0.0);
+    vec3 worldPos = mix(a, b, u) + side * (position.y * w * wScale);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
+  } else {
+    vec4 mvA = modelViewMatrix * vec4(a, 1.0);
+    vec4 mvB = modelViewMatrix * vec4(b, 1.0);
+    vec2 vdir = mvB.xy - mvA.xy;
+    float vlen = length(vdir);
+    vec2 vside = vlen > 0.0001 ? (vec2(-vdir.y, vdir.x) / vlen) : vec2(1.0, 0.0);
+    vec4 mvPos = mix(mvA, mvB, u);
+    mvPos.xy += vside * (position.y * w * wScale);
+    gl_Position = projectionMatrix * mvPos;
+  }
 }
 `;
 
@@ -369,13 +377,16 @@ export function createTrailsSystem({
   const segMeta = new Float32Array(totalRibbonSegs * 4);
   const segExtra = new Float32Array(totalRibbonSegs * 4);
   const trailPoints = new Float32Array(trailCap * trailNodes * 3);
+  const trailPointTimes = new Float32Array(trailCap * trailNodes);
   const trailHead = new Int32Array(trailCap);
   const trailCount = new Int32Array(trailCap);
   const trailColor = new Float32Array(trailCap);
   const trailEndColor = new Float32Array(trailCap);
   const trailWidth = new Float32Array(trailCap);
+  const trailWidthScale = new Float32Array(trailCap);
   const trailEndWidthScale = new Float32Array(trailCap);
   const trailHdr = new Float32Array(trailCap);
+  const trailLifetime = new Float32Array(trailCap);
   const trailActive = new Uint8Array(trailCap);
   const freeTrailStack = new Int32Array(trailCap);
   let freeTrailTop = trailCap;
@@ -540,11 +551,22 @@ export function createTrailsSystem({
   }
 
   function syncTrailSegments(trackId) {
-    const count = trailCount[trackId];
+    let count = trailCount[trackId];
+    const life = trailLifetime[trackId];
+    if (life > 0 && count > 1) {
+      while (count > 1) {
+        const oldestIdx = (trailHead[trackId] - count + trailNodes * 2) % trailNodes;
+        const ageOld = simTime - trailPointTimes[trackId * trailNodes + oldestIdx];
+        if (ageOld > life) count -= 1;
+        else break;
+      }
+      trailCount[trackId] = count;
+    }
+
     const segBase = trackId * segsPerTrail;
     const rgb = trailColor[trackId];
     const endRgb = trailEndColor[trackId];
-    const w = trailWidth[trackId];
+    const w = trailWidth[trackId] * trailWidthScale[trackId];
     const endScale = trailEndWidthScale[trackId];
     const hdr = trailHdr[trackId];
 
@@ -557,13 +579,17 @@ export function createTrailsSystem({
         segMeta[i4 + 3] = 0;
         continue;
       }
-      const idxA = (trailHead[trackId] - 1 - s + trailNodes) % trailNodes;
-      const idxB = (trailHead[trackId] - 2 - s + trailNodes) % trailNodes;
+      const idxA = (trailHead[trackId] - 1 - s + trailNodes * 2) % trailNodes;
+      const idxB = (trailHead[trackId] - 2 - s + trailNodes * 2) % trailNodes;
       const pA = (trackId * trailNodes + idxA) * 3;
       const pB = (trackId * trailNodes + idxB) * 3;
 
-      const t0 = s / Math.max(1, count - 1);
-      const t1 = (s + 1) / Math.max(1, count - 1);
+      const t0 = life > 0
+        ? Math.min(1, Math.max(0, (simTime - trailPointTimes[trackId * trailNodes + idxA]) / life))
+        : s / Math.max(1, count - 1);
+      const t1 = life > 0
+        ? Math.min(1, Math.max(0, (simTime - trailPointTimes[trackId * trailNodes + idxB]) / life))
+        : (s + 1) / Math.max(1, count - 1);
 
       segA[i4] = trailPoints[pA];
       segA[i4 + 1] = trailPoints[pA + 1];
@@ -616,6 +642,8 @@ export function createTrailsSystem({
     trailActive[id] = 1;
     trailHead[id] = 0;
     trailCount[id] = 0;
+    trailWidthScale[id] = 1;
+    trailLifetime[id] = 0;
     if (typeof colorOrOpts === 'object' && colorOrOpts !== null) {
       const startRgb = packRgb24(colorOrOpts.color ?? 0x38bdf8);
       const wStart = colorOrOpts.width ?? width;
@@ -625,6 +653,7 @@ export function createTrailsSystem({
       trailWidth[id] = wStart;
       trailEndWidthScale[id] = wStart > 0.0001 ? Math.max(0, wEnd / wStart) : 0;
       trailHdr[id] = colorOrOpts.hdr ?? 1.0;
+      trailLifetime[id] = Math.max(0, colorOrOpts.lifetime ?? 0);
     } else {
       const rgb = packRgb24(colorOrOpts);
       trailColor[id] = rgb;
@@ -636,15 +665,36 @@ export function createTrailsSystem({
     return id;
   }
 
-  function pushTrailPoint(trackId, x, y, z = 0) {
+  function setTrailWidthScale(trackId, scale = 1) {
+    if (trackId < 0 || trackId >= trailCap || !trailActive[trackId]) return;
+    trailWidthScale[trackId] = Math.max(0, scale);
+  }
+
+  function pushTrailPoint(trackId, x, y, z = 0, timeOverride = undefined) {
     if (trackId < 0 || trackId >= trailCap || !trailActive[trackId]) return;
     const h = trailHead[trackId];
     const p = (trackId * trailNodes + h) * 3;
     trailPoints[p] = x;
     trailPoints[p + 1] = y;
     trailPoints[p + 2] = z;
+    trailPointTimes[trackId * trailNodes + h] = timeOverride !== undefined ? timeOverride : simTime;
     trailHead[trackId] = (h + 1) % trailNodes;
     if (trailCount[trackId] < trailNodes) trailCount[trackId] += 1;
+    syncTrailSegments(trackId);
+  }
+
+  function updateTrailHead(trackId, x, y, z = 0, timeOverride = undefined) {
+    if (trackId < 0 || trackId >= trailCap || !trailActive[trackId]) return;
+    if (trailCount[trackId] === 0) {
+      pushTrailPoint(trackId, x, y, z, timeOverride);
+      return;
+    }
+    const idx = (trailHead[trackId] - 1 + trailNodes) % trailNodes;
+    const p = (trackId * trailNodes + idx) * 3;
+    trailPoints[p] = x;
+    trailPoints[p + 1] = y;
+    trailPoints[p + 2] = z;
+    trailPointTimes[trackId * trailNodes + idx] = timeOverride !== undefined ? timeOverride : simTime;
     syncTrailSegments(trackId);
   }
 
@@ -767,13 +817,16 @@ export function createTrailsSystem({
     slashArc,
     lightningBolt,
     setTrailTexture,
+    setTrailWidthScale,
     allocTrail,
     pushTrailPoint,
+    updateTrailHead,
     freeTrail,
     update,
     renderCanvas2D,
     reset,
     dispose,
+    getTime: () => simTime,
     getStats() {
       return {
         slashCap,
