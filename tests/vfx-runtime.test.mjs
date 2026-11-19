@@ -953,6 +953,46 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     assert.ok(Math.abs(meshChild.rotation.x) > 0.1 || Math.abs(meshChild.rotation.y) > 0.1, 'separateAxes spin rotates mesh');
     rockGeom.dispose();
     rockMat.dispose();
+
+    // 13. shape.rotation rotates cone emission downward (-Y), and inline subEmitters pre-register on mesh layers
+    vfx.reset();
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'shape_rot_and_mesh_sub_test',
+      loop: false,
+      duration: 1.5,
+      layers: [
+        {
+          name: 'falling_shards',
+          kind: 'mesh',
+          renderMode: 'mesh',
+          mesh: 'crystal',
+          bursts: [{ time: 0, count: 1 }],
+          life: 0.4,
+          speed: 4.0,
+          size: 0.5,
+          shape: { type: 'cone', radius: 0.001, angle: 5, rotation: [Math.PI, 0, 0] },
+          subEmitters: [
+            {
+              trigger: 'death',
+              effect: {
+                schemaVersion: 1,
+                id: 'shape_rot_and_mesh_sub_test__sub_1',
+                loop: false,
+                duration: 0.6,
+                layers: [{ name: 'burst', kind: 'particle', bursts: [{ time: 0, count: 2 }], life: 0.5, size: 1.0 }],
+              },
+            },
+          ],
+        },
+      ],
+    }, { x: 0, y: 3.0, z: 0 });
+    vfx.update(0.1);
+    const shardMesh = scene.children.find((c) => c.visible && c !== meshChild && c.geometry);
+    assert.ok(shardMesh, 'expected falling crystal mesh');
+    assert.ok(shardMesh.position.y < 3.0, `expected cone rotation=[PI,0,0] to emit downward (y=${shardMesh.position.y})`);
+    for (let i = 0; i < 6; i++) vfx.update(0.1); // t = 0.7s -> past life=0.4 triggers death subEmitter
+    assert.ok(vfx.atlasParticles.getStats().normalTotal >= 2, 'mesh death subEmitter spawned particles');
     dummyTex.dispose();
   } finally {
     vfx.dispose();

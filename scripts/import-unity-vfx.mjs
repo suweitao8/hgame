@@ -249,10 +249,14 @@ function inspectMaterial(matInfo, guidMap, deps) {
   if (mainTexGuid && guidMap.has(mainTexGuid)) {
     const tex = guidMap.get(mainTexGuid);
     deps.textures.set(tex.relPath, tex);
-    spriteKey = path.basename(tex.relPath, path.extname(tex.relPath)).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    spriteKey = path.basename(tex.relPath, path.extname(tex.relPath))
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
   }
 
   return {
+    matName: path.basename(matInfo.relPath, path.extname(matInfo.relPath)),
     spriteKey,
     hdr: color.hdr,
     tintRgb: color.rgb,
@@ -263,19 +267,94 @@ function inspectMaterial(matInfo, guidMap, deps) {
   };
 }
 
+function normAssetKey(str) {
+  return String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function resolveMeshKey(fbxRelPath, matName) {
+  const fbxBase = path.basename(fbxRelPath, path.extname(fbxRelPath));
+  const fbxKey = normAssetKey(fbxBase.replace(/\([^)]*\)/g, ''));
+  const rawFbxKey = normAssetKey(fbxBase);
+  if (!matName) return rawFbxKey;
+  const matKey = normAssetKey(matName);
+  if (matKey === fbxKey || matKey === rawFbxKey) return rawFbxKey;
+  if (matKey.startsWith(fbxKey + '_')) return matKey;
+  return `${rawFbxKey}__${matKey}`;
+}
+
+function quatMul(a, b) {
+  return [
+    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+  ];
+}
+
+function unityEulerToQuat(dx, dy, dz) {
+  const rad = Math.PI / 180;
+  const hx = dx * rad * 0.5, hy = dy * rad * 0.5, hz = dz * rad * 0.5;
+  const qx = [Math.sin(hx), 0, 0, Math.cos(hx)];
+  const qy = [0, Math.sin(hy), 0, Math.cos(hy)];
+  const qz = [0, 0, Math.sin(hz), Math.cos(hz)];
+  // Unity Inspector Euler rotation order: Y * X * Z
+  return quatMul(qy, quatMul(qx, qz));
+}
+
+function computeShapeRotation(trRotMatch, sRotMatch, mappedType) {
+  if (mappedType === 'sphere' || mappedType === 'point') return null;
+  const qTr = trRotMatch
+    ? [Number(trRotMatch[1]), Number(trRotMatch[2]), Number(trRotMatch[3]), Number(trRotMatch[4])]
+    : [0, 0, 0, 1];
+  const qSh = sRotMatch
+    ? unityEulerToQuat(Number(sRotMatch[1]), Number(sRotMatch[2]), Number(sRotMatch[3]))
+    : [0, 0, 0, 1];
+  // Canonical Unity shapes point +Z; HGame cone/circle/hemisphere use +Y (+90 deg X offset from +Y to +Z).
+  const s45 = Math.SQRT1_2;
+  const qOff = quatMul(quatMul(qTr, qSh), [s45, 0, 0, s45]);
+  const [x, y, z, w] = qOff;
+  const r00 = 1 - 2 * (y * y + z * z);
+  const r01 = 2 * (x * y - z * w);
+  const r02 = 2 * (x * z + y * w);
+  const r11 = 1 - 2 * (x * x + z * z);
+  const r12 = 2 * (y * z - x * w);
+  const r21 = 2 * (y * z + x * w);
+  const r22 = 1 - 2 * (x * x + y * y);
+  // Check transformed +Y axis (r01, r11, r21) to omit redundant identity/planar rotations.
+  if (mappedType === 'circle' && Math.abs(r11) > 0.985) return null;
+  if (mappedType !== 'circle' && r11 > 0.985) return null;
+  const ry = Math.asin(Math.max(-1, Math.min(1, r02)));
+  let rx = 0, rz = 0;
+  if (Math.abs(r02) < 0.9995) {
+    rx = Math.atan2(-r12, r22);
+    rz = Math.atan2(-r01, r00);
+  } else {
+    rx = Math.atan2(r21, r11);
+    rz = 0;
+  }
+  return [Number(rx.toFixed(4)), Number(ry.toFixed(4)), Number(rz.toFixed(4))];
+}
+
 function mapShapeType(unityType) {
   switch (Number(unityType)) {
     case 0:
-    case 1: return 'sphere';
+    case 1:
+    case 6: return 'sphere';
     case 2:
     case 3: return 'hemisphere';
-    case 4: return 'cone';
+    case 4:
+    case 7:
+    case 8:
+    case 9: return 'cone';
     case 5:
-    case 6:
     case 15:
-    case 16: return 'box';
+    case 16:
+    case 18: return 'box';
     case 10:
-    case 11: return 'circle';
+    case 11:
+    case 17:
+    case 19:
+    case 20: return 'circle';
     case 12: return 'edge';
     default: return 'sphere';
   }
@@ -287,7 +366,10 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
   const docs = raw.split(/^--- !u!/m).slice(1);
   const goNames = new Map();
   const transforms = [];
+  const trById = new Map();
+  const trByGo = new Map();
   const psByGo = new Map();
+  const psById = new Map();
   const psrByGo = new Map();
   const lightByGo = new Map();
 
@@ -301,10 +383,16 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const act = !/^\s*m_IsActive:\s*0\b/m.test(body);
       goNames.set(fid, { name: nm, active: act });
     } else if (cls === '4') {
-      transforms.push(body);
+      transforms.push({ fid, body });
+      trById.set(fid, body);
+      const goId = (body.match(/m_GameObject:\s*\{fileID:\s*(\d+)\}/) || [])[1];
+      if (goId) trByGo.set(goId, body);
     } else if (cls === '198') {
       const goId = (body.match(/m_GameObject:\s*\{fileID:\s*(\d+)\}/) || [])[1];
-      if (goId) psByGo.set(goId, body);
+      if (goId) {
+        psByGo.set(goId, body);
+        psById.set(fid, { fid, goId, body });
+      }
     } else if (cls === '199') {
       const goId = (body.match(/m_GameObject:\s*\{fileID:\s*(\d+)\}/) || [])[1];
       if (goId) psrByGo.set(goId, body);
@@ -314,34 +402,51 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     }
   }
 
+  // Track which ParticleSystems are invoked strictly as SubEmitters so they do not auto-fire at t=0.
+  const subEmitterPsIds = new Set();
+  for (const psEntry of psById.values()) {
+    const subMod = extractSection(psEntry.body, 'SubModule');
+    if (/^\s*enabled:\s*1\b/m.test(subMod)) {
+      for (const em of subMod.matchAll(/emitter:\s*\{fileID:\s*(\d+)\}/g)) {
+        if (em[1] !== '0' && psById.has(em[1])) subEmitterPsIds.add(em[1]);
+      }
+    }
+  }
+
   const deps = { textures: new Map(), meshes: new Map() };
+  const recipeId = id || path.basename(prefabPath, '.prefab').toLowerCase().replace(/[^a-z0-9_]+/g, '_');
   const layers = [];
   let recipeLoop = false;
   let maxDuration = 0.5;
   let lightPulse = null;
+  let subCounter = 0;
 
-  for (const tr of transforms) {
-    const goId = (tr.match(/m_GameObject:\s*\{fileID:\s*(\d+)\}/) || [])[1];
-    const go = goNames.get(goId) || { name: 'layer', active: true };
-    if (!go.active) continue;
-
-    const fatherId = (tr.match(/m_Father:\s*\{fileID:\s*(\d+)\}/) || [])[1] ?? '0';
-    const posM = tr.match(/m_LocalPosition:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
-    const offset = (fatherId !== '0' && posM) ? [Number(posM[1]), Number(posM[2]), Number(posM[3])] : [0, 0, 0];
-
-    const lt = lightByGo.get(goId);
-    if (lt && !lightPulse) {
-      const cM = lt.match(/m_Color:\s*\{([^}]+)\}/);
-      const col = cM ? parseColorObject(cM[1], false) : [1, 1, 1, 1];
-      const intensity = Number((lt.match(/^\s*m_Intensity:\s*([-\d.eE+]+)/m) || [])[1] ?? 2);
-      const range = Number((lt.match(/^\s*m_Range:\s*([-\d.eE+]+)/m) || [])[1] ?? 8);
-      const hex = '#' + [col[0], col[1], col[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
-      lightPulse = { color: hex, intensity, range, duration: 0.45, offset };
+  function computeHierarchyOffset(trBody) {
+    let x = 0, y = 0, z = 0;
+    let cur = trBody;
+    let guard = 0;
+    while (cur && guard++ < 8) {
+      const fId = (cur.match(/m_Father:\s*\{fileID:\s*(\d+)\}/) || [])[1] ?? '0';
+      if (fId === '0') break;
+      const posM = cur.match(/m_LocalPosition:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+      if (posM) {
+        x += Number(posM[1]);
+        y += Number(posM[2]);
+        z += Number(posM[3]);
+      }
+      cur = trById.get(fId);
     }
+    return [Number(x.toFixed(4)), Number(y.toFixed(4)), Number(z.toFixed(4))];
+  }
 
+  function convertParticleLayer(goId, trBody, isSubChild, subDepth) {
+    const go = goNames.get(goId) || { name: 'layer', active: true };
     const ps = psByGo.get(goId);
     const psr = psrByGo.get(goId);
-    if (!ps || !psr) continue;
+    if (!ps || !psr) return null;
+
+    const offset = isSubChild ? [0, 0, 0] : computeHierarchyOffset(trBody);
+    const trRotM = trBody ? trBody.match(/m_LocalRotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+),\s*w:\s*([-\d.eE+]+)\}/) : null;
 
     const isLoop = /^\s*looping:\s*1\b/m.test(ps);
     const isPrewarm = /^\s*prewarm:\s*1\b/m.test(ps);
@@ -410,17 +515,20 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
     const renderMode = rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : rmNum === 2 ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard';
 
+    const forceMod = extractSection(ps, 'ForceModule');
+    let netGravity = gravScalar * 9.81;
+    if (/enabled:\s*1/.test(forceMod)) {
+      const fy = readMinMaxScalar(forceMod, 'y', 0);
+      const fyVal = Array.isArray(fy) ? (fy[0] + fy[1]) * 0.5 : fy;
+      netGravity -= fyVal;
+    }
+
     const meshGuid = (psr.match(/m_Mesh:[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1];
     let meshKey = 'crystal';
     if (meshGuid && guidMap.has(meshGuid)) {
       const mInfo = guidMap.get(meshGuid);
       deps.meshes.set(mInfo.relPath, mInfo);
-      meshKey = path.basename(mInfo.relPath, path.extname(mInfo.relPath))
-        .replace(/\([^)]*\)/g, '')
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '');
+      meshKey = resolveMeshKey(mInfo.relPath, mainMat?.matName);
     }
 
     const layer = {
@@ -430,7 +538,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       blend: mainMat?.blend || 'alpha',
       hdr: mainMat?.hdr ?? 1.0,
       ...(maxParticles > 0 && maxParticles < 1000 ? { maxParticles } : {}),
-      ...(isPrewarm ? { prewarm: true } : {}),
+      ...(isPrewarm && !isSubChild ? { prewarm: true } : {}),
       ...(typeof delay === 'number' && delay > 0 ? { delay } : {}),
       ...(effectiveBursts.length > 0 ? { bursts: effectiveBursts } : {}),
       ...(hasPositiveRate ? { rate: effectiveRate } : {}),
@@ -440,7 +548,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       size,
       ...(aspectY !== undefined ? { aspectY } : {}),
       rotation: rot,
-      ...(gravScalar !== 0 ? { gravity: Number((gravScalar * 9.81).toFixed(3)) } : {}),
+      ...(Math.abs(netGravity) > 0.001 ? { gravity: Number(netGravity.toFixed(3)) } : {}),
     };
 
     if (offset[0] !== 0 || offset[1] !== 0 || offset[2] !== 0) {
@@ -494,6 +602,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           shapeObj.scale = [Number(sx.toFixed(3)), Number(sy.toFixed(3)), Number(sz.toFixed(3))];
         }
       }
+      const shapeRot = computeShapeRotation(trRotM, sRotM, mappedType);
+      if (shapeRot) shapeObj.rotation = shapeRot;
       layer.shape = shapeObj;
     }
 
@@ -591,7 +701,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     }
 
     const uvMod = extractSection(ps, 'UVModule');
-    if (/enabled:\s*1/.test(uvMod)) {
+    if (renderMode !== 'mesh' && /enabled:\s*1/.test(uvMod)) {
       const cols = Number((uvMod.match(/tilesX:\s*(\d+)/) || [])[1] ?? 1);
       const rows = Number((uvMod.match(/tilesY:\s*(\d+)/) || [])[1] ?? 1);
       const cycles = Number((uvMod.match(/cycles:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
@@ -719,10 +829,67 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       };
     }
 
-    layers.push(layer);
+    const subMod = extractSection(ps, 'SubModule');
+    if (/^\s*enabled:\s*1\b/m.test(subMod) && subDepth < 2) {
+      const subList = [];
+      const subMatches = [...subMod.matchAll(/emitter:\s*\{fileID:\s*(\d+)\}[\s\S]*?\n\s*type:\s*(\d+)[\s\S]*?\n\s*emitProbability:\s*([-\d.eE+]+)/g)];
+      for (const sm of subMatches) {
+        const targetPsId = sm[1];
+        if (targetPsId === '0' || !psById.has(targetPsId)) continue;
+        const targetPs = psById.get(targetPsId);
+        const tGo = goNames.get(targetPs.goId) || { active: true };
+        if (!tGo.active) continue;
+        const targetLayer = convertParticleLayer(targetPs.goId, trByGo.get(targetPs.goId), true, subDepth + 1);
+        if (!targetLayer) continue;
+        const tType = Number(sm[2]);
+        const trigger = tType === 0 ? 'birth' : (tType === 1 ? 'collision' : 'death');
+        const prob = Number(sm[3] ?? 1);
+        const subDur = Array.isArray(targetLayer.life) ? targetLayer.life[1] : (Number(targetLayer.life) || 1);
+        const subId = `${recipeId}__sub_${++subCounter}`;
+        subList.push({
+          trigger,
+          ...(prob < 0.999 ? { probability: Number(prob.toFixed(3)) } : {}),
+          effect: {
+            schemaVersion: 1,
+            id: subId,
+            loop: false,
+            duration: Number(Math.max(0.2, subDur).toFixed(2)),
+            space: 'local',
+            layers: [targetLayer],
+          },
+        });
+      }
+      if (subList.length > 0) layer.subEmitters = subList;
+    }
+
+    return layer;
   }
 
-  const recipeId = id || path.basename(prefabPath, '.prefab').toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+  for (const tr of transforms) {
+    const goId = (tr.body.match(/m_GameObject:\s*\{fileID:\s*(\d+)\}/) || [])[1];
+    const go = goNames.get(goId) || { name: 'layer', active: true };
+    if (!go.active) continue;
+
+    const fatherId = (tr.body.match(/m_Father:\s*\{fileID:\s*(\d+)\}/) || [])[1] ?? '0';
+    const posM = tr.body.match(/m_LocalPosition:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+    const offset = (fatherId !== '0' && posM) ? [Number(posM[1]), Number(posM[2]), Number(posM[3])] : [0, 0, 0];
+
+    const lt = lightByGo.get(goId);
+    if (lt && !lightPulse) {
+      const cM = lt.match(/m_Color:\s*\{([^}]+)\}/);
+      const col = cM ? parseColorObject(cM[1], false) : [1, 1, 1, 1];
+      const intensity = Number((lt.match(/^\s*m_Intensity:\s*([-\d.eE+]+)/m) || [])[1] ?? 2);
+      const range = Number((lt.match(/^\s*m_Range:\s*([-\d.eE+]+)/m) || [])[1] ?? 8);
+      const hex = '#' + [col[0], col[1], col[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
+      lightPulse = { color: hex, intensity, range, duration: 0.45, offset };
+    }
+
+    const psEntry = [...psById.values()].find((p) => p.goId === goId);
+    if (!psEntry || subEmitterPsIds.has(psEntry.fid)) continue;
+    const layer = convertParticleLayer(goId, tr.body, false, 0);
+    if (layer) layers.push(layer);
+  }
+
   const recipe = {
     schemaVersion: 1,
     id: recipeId,

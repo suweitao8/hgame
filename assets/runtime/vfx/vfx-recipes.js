@@ -331,6 +331,17 @@ export function createEffectPlayer({
   function registerEffect(recipe) {
     const compiled = compileRecipe(recipe);
     registry.set(compiled.id, compiled);
+    for (let i = 0; i < compiled.layers.length; i++) {
+      const subs = compiled.layers[i].subEmitters;
+      if (Array.isArray(subs)) {
+        for (let j = 0; j < subs.length; j++) {
+          const eff = subs[j]?.effect;
+          if (eff && typeof eff === 'object' && eff.id && !registry.has(eff.id)) {
+            registerEffect(eff);
+          }
+        }
+      }
+    }
     return compiled;
   }
 
@@ -604,6 +615,35 @@ export function createEffectPlayer({
       }
     }
 
+    if (Array.isArray(shape.rotation)) {
+      const rx = Number(shape.rotation[0] ?? 0);
+      const ry = Number(shape.rotation[1] ?? 0);
+      const rz = Number(shape.rotation[2] ?? 0);
+      if (Math.abs(rx) > 1e-4 || Math.abs(ry) > 1e-4 || Math.abs(rz) > 1e-4) {
+        const cx = Math.cos(rx), sxR = Math.sin(rx);
+        const cy = Math.cos(ry), syR = Math.sin(ry);
+        const cz = Math.cos(rz), szR = Math.sin(rz);
+        // Apply extrinsic XYZ rotation (Z then Y then X) in three separate axis steps.
+        const rotateVec = (vx, vy, vz) => {
+          let x1 = vx * cz - vy * szR;
+          let y1 = vx * szR + vy * cz;
+          let z1 = vz;
+          let x2 = x1 * cy + z1 * syR;
+          let y2 = y1;
+          let z2 = -x1 * syR + z1 * cy;
+          return [
+            x2,
+            y2 * cx - z2 * sxR,
+            y2 * sxR + z2 * cx,
+          ];
+        };
+        const rp = rotateVec(lx, ly, lz);
+        lx = rp[0]; ly = rp[1]; lz = rp[2];
+        const rd = rotateVec(dx, dy, dz);
+        dx = rd[0]; dy = rd[1]; dz = rd[2];
+      }
+    }
+
     const off = layer.offset;
     if (Array.isArray(off)) {
       lx += (off[0] ?? 0) * scale;
@@ -740,7 +780,26 @@ export function createEffectPlayer({
         fresnel: layer.fresnel,
         dissolve: layer.dissolve,
       });
-      return;
+      if (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0) {
+        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth);
+        allocTrackedParticle({
+          additive: false,
+          atlasSlot: -1,
+          duration: dur,
+          x: scratchPos[0],
+          y: scratchPos[1],
+          z: scratchPos[2],
+          vx: scratchVel[0],
+          vy: scratchVel[1],
+          vz: scratchVel[2],
+          gravity,
+          drag,
+          collision: layer.collision,
+          subEmitters: layer.subEmitters,
+          subDepth: slot.subDepth,
+        });
+      }
+      return dur - clampedInitAge;
     }
 
     if (!atlasParticles) return;
