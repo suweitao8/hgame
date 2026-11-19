@@ -719,6 +719,44 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     assert.equal(vfx.atlasParticles.getStats().normalTotal, 1, 'maxParticles=1 emits immediately at t=0');
     for (let i = 0; i < 23; i++) vfx.update(0.1); // t = 2.3s -> t=0, t=1.0, t=2.0 => 3 emissions!
     assert.equal(vfx.atlasParticles.getStats().normalTotal, 3, 'maxParticles=1 layer replays immediately after each 1s particle expires');
+
+    // 7. Unity TrailModule lifetimeMode === 'fraction' multiplies trail lifetime by particle duration
+    vfx.reset();
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'fraction_trail_test',
+      loop: true,
+      duration: 4.0,
+      layers: [
+        {
+          name: 'sparks',
+          kind: 'particle',
+          prewarm: true,
+          rate: 4,
+          life: 4.0,
+          size: 0.05,
+          velocity: { linear: [0, 2, 0] },
+          trail: { lifetime: 0.15, lifetimeMode: 'fraction', blend: 'alpha', widthOverTrail: 1.0, endColor: '#000000' },
+        },
+      ],
+    }, { x: 0, y: 0, z: 0 });
+    const fracRibbon = scene.getObjectByName('HGameVfxRibbonTrailsNormal');
+    const fracA = fracRibbon.geometry.getAttribute('aSegA').array;
+    const fracB = fracRibbon.geometry.getAttribute('aSegB').array;
+    const fracMeta = fracRibbon.geometry.getAttribute('aSegMeta').array;
+    let maxFracLen = 0;
+    for (let t = 0; t < vfx.trails.getStats().trailCap; t++) {
+      let len = 0;
+      for (let s = 0; s < 7; s++) {
+        const i4 = (t * 7 + s) * 4;
+        if (fracMeta[i4 + 1] > 0 && (fracMeta[i4 + 2] > 0.001 || fracMeta[i4 + 3] > 0.001)) {
+          len += Math.hypot(fracB[i4] - fracA[i4], fracB[i4 + 1] - fracA[i4 + 1], fracB[i4 + 2] - fracA[i4 + 2]);
+        }
+      }
+      if (len > maxFracLen) maxFracLen = len;
+    }
+    // 4.0s * 0.15 = 0.60s trail duration at 2 m/s => ~1.2m ribbon length (vs ~0.3m if treated as 0.15s)
+    assert.ok(maxFracLen >= 1.0, `fraction trail length (${maxFracLen.toFixed(2)}m) reflects particleDur * fraction`);
     dummyTex.dispose();
   } finally {
     vfx.dispose();

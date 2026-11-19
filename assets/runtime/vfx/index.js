@@ -247,6 +247,7 @@ function detectMode(modeOpt, sceneOrAdapter, THREE) {
  * @param {number} [options.maxParticles]
  * @param {number} [options.maxAtlasParticles]
  * @param {number} [options.maxMeshVfx]
+ * @param {number} [options.trailNodes]
  * @param {number} [options.maxFloatingGlyphs]
  * @param {number} [options.maxPopups]
  * @param {object | null} [options.atlasTexture=null]
@@ -261,6 +262,7 @@ export function createVfxSystem({
   maxParticles,
   maxAtlasParticles,
   maxMeshVfx,
+  trailNodes,
   maxFloatingGlyphs,
   maxPopups,
   atlasTexture = null,
@@ -308,6 +310,7 @@ export function createVfxSystem({
     THREE,
     scene,
     is2D,
+    trailNodes,
     prng,
   });
   const telegraphs = createTelegraphSystem({

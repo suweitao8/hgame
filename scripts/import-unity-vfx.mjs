@@ -495,6 +495,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const trailMod = extractSection(ps, 'TrailModule');
     if (/enabled:\s*1/.test(trailMod)) {
+      const trailMode = Number((trailMod.match(/mode:\s*(\d+)/) || [])[1] ?? 0);
       const tLife = readMinMaxScalar(trailMod, 'lifetime', 0.2);
       const wScalar = readMinMaxScalar(trailMod, 'widthOverTrail', 1);
       const sizeAffW = !/sizeAffectsWidth:\s*0\b/.test(trailMod);
@@ -520,6 +521,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const baseSizeMax = typeof size === 'number' ? size : size[1];
       layer.trail = {
         lifetime: tLife,
+        lifetimeMode: trailMode === 1 ? 'seconds' : 'fraction',
         blend: trailMat?.blend || 'alpha',
         width: Number((baseSizeMax * wMax).toFixed(3)),
         widthOverTrail: wScalar,

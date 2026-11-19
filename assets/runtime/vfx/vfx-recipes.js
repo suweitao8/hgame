@@ -206,6 +206,7 @@ export function createEffectPlayer({
       duration: 0.5,
       trailLifetime: 0.15,
       sampleAccum: 0,
+      pushedPoints: 0,
       x0: 0, y0: 0, z0: 0,
       vx: 0, vy: 0, vz: 0,
       gravity: 0, drag: 0,
@@ -374,7 +375,11 @@ export function createEffectPlayer({
       : readRange(trailCfg.width, 0.08, 0.08, prng);
     const width = Math.max(0.002, widthVal);
     const endWidth = trailCfg.endWidth ?? 0;
-    const trailLifetime = Math.max(0.03, readRange(trailCfg.lifetime, 0.15, 0.15, prng));
+    const rawTrailLife = readRange(trailCfg.lifetime, 0.15, 0.15, prng);
+    const trailLifetime = Math.max(
+      0.03,
+      trailCfg.lifetimeMode === 'fraction' ? (particleDur * rawTrailLife) : rawTrailLife,
+    );
     const tid = trails.allocTrail({
       color: baseColor,
       endColor,
@@ -417,7 +422,8 @@ export function createEffectPlayer({
     if (initialAge > 0.005) {
       const nowT = typeof trails.getTime === 'function' ? trails.getTime() : 0;
       const tStart = Math.max(0, initialAge - trailLifetime);
-      const samples = 6;
+      const maxNodes = typeof trails.getStats === 'function' ? (trails.getStats().trailNodes ?? 8) : 8;
+      const samples = Math.max(6, Math.min(12, maxNodes - 2));
       for (let s = 0; s <= samples; s++) {
         const a = tStart + ((initialAge - tStart) * s) / samples;
         evaluateAtlasParticlePosition(
@@ -427,8 +433,10 @@ export function createEffectPlayer({
         );
         trails.pushTrailPoint(tid, scratchPos[0], scratchPos[1], scratchPos[2], nowT - (initialAge - a));
       }
+      slot.pushedPoints = samples + 1;
     } else {
       trails.pushTrailPoint(tid, x0, y0, z0);
+      slot.pushedPoints = 1;
     }
   }
 
@@ -1127,6 +1135,8 @@ export function createEffectPlayer({
     }
 
     if (trails) {
+      const maxNodes = typeof trails.getStats === 'function' ? (trails.getStats().trailNodes ?? 8) : 8;
+      const segDiv = Math.max(6, Math.min(12, maxNodes - 2));
       for (let i = 0; i < MAX_TRAIL_FOLLOWERS; i++) {
         const tf = trailFollowers[i];
         if (!tf.active) continue;
@@ -1162,11 +1172,12 @@ export function createEffectPlayer({
           py = scratchPos[1];
           pz = scratchPos[2];
         }
-        const stepDt = Math.max(0.012, tf.trailLifetime / 6);
+        const stepDt = Math.max(0.012, tf.trailLifetime / segDiv);
         tf.sampleAccum += dt;
-        if (tf.sampleAccum >= stepDt || typeof trails.updateTrailHead !== 'function') {
-          tf.sampleAccum = tf.sampleAccum >= stepDt ? (tf.sampleAccum % stepDt) : tf.sampleAccum;
+        if (tf.sampleAccum >= stepDt || (tf.pushedPoints <= 1 && tf.age >= 0.012) || typeof trails.updateTrailHead !== 'function') {
+          tf.sampleAccum = tf.sampleAccum >= stepDt ? (tf.sampleAccum % stepDt) : 0;
           trails.pushTrailPoint(tf.trailId, px, py, pz);
+          tf.pushedPoints += 1;
         } else {
           trails.updateTrailHead(tf.trailId, px, py, pz);
         }

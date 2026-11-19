@@ -239,10 +239,10 @@ void main() {
 
   float u = clamp(position.x + 0.5, 0.0, 1.0);
   float spanT = mix(aSegA.w, aSegB.w, u);
-  vUv = vec2(mix(0.80, 0.20, spanT), position.y + 0.5);
+  vUv = vec2(mix(0.76, 0.24, spanT), position.y + 0.5);
   vec3 c0 = unpackRgb24(aSegMeta.x);
   vec3 c1 = unpackRgb24(aSegExtra.x);
-  vColor = mix(c0, c1, smoothstep(0.06, 0.36, spanT));
+  vColor = mix(c0, c1, smoothstep(0.04, 0.32, spanT));
   vAlpha = mix(aSegMeta.z, aSegMeta.w, u);
   vHdr = aSegExtra.w;
 
@@ -268,7 +268,8 @@ void main() {
     vec2 vside = vlen > 0.0001 ? (vec2(-vdir.y, vdir.x) / vlen) : vec2(1.0, 0.0);
     vec4 mvPos = mix(mvA, mvB, u);
     float worldW = w * wScale;
-    float minScreenW = abs(mvPos.z) * 0.0048 * max(0.18, 1.0 - spanT * 0.78);
+    float tipKeep = smoothstep(0.001, 0.012, w);
+    float minScreenW = abs(mvPos.z) * 0.0072 * max(0.22, 1.0 - spanT * 0.76) * tipKeep;
     mvPos.xy += vside * (position.y * max(worldW, minScreenW));
     gl_Position = projectionMatrix * mvPos;
   }
@@ -292,7 +293,7 @@ void main() {
   float alpha = vAlpha;
   vec3 col = vColor;
   if (uHasTrailTex > 0.5) {
-    float localV = 1.0 - vUv.y;
+    float localV = mix(0.14, 0.86, 1.0 - vUv.y);
     vec2 mapped = vec2(
       mix(uTrailUvRect.x, uTrailUvRect.z, clamp(vUv.x, 0.0, 1.0)),
       mix(uTrailUvRect.y, uTrailUvRect.w, localV)
@@ -661,7 +662,11 @@ export function createTrailsSystem({
       dstMeta[i4] = rgb;
       dstMeta[i4 + 1] = w;
       if (isNormal) {
-        const evalNormalAlpha = (t) => (t <= 0.04 ? (t / 0.04) : Math.pow(Math.max(0, 1 - t), 0.25));
+        const evalNormalAlpha = (t) => (
+          t <= 0.06 ? (0.35 + 0.65 * (t / 0.06))
+            : t <= 0.86 ? 1.0
+            : Math.max(0, (1.0 - t) / 0.14)
+        );
         dstMeta[i4 + 2] = evalNormalAlpha(t0);
         dstMeta[i4 + 3] = evalNormalAlpha(t1);
       } else {
@@ -908,6 +913,7 @@ export function createTrailsSystem({
         slashCap,
         boltCap,
         trailCap,
+        trailNodes,
         activeTrails: trailCap - freeTrailTop,
       };
     },

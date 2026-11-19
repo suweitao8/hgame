@@ -7,6 +7,7 @@
  * @param {number} [options.maxParticles]
  * @param {number} [options.maxAtlasParticles]
  * @param {number} [options.maxMeshVfx]
+ * @param {number} [options.trailNodes]
  * @param {number} [options.maxFloatingGlyphs]
  * @param {number} [options.maxPopups]
  * @param {object | null} [options.atlasTexture=null]
@@ -14,13 +15,14 @@
  * @param {boolean} [options.renderThroughWalls=true]
  * @param {number} [options.seed=0x9e3779b9]
  */
-export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, maxAtlasParticles, maxMeshVfx, maxFloatingGlyphs, maxPopups, atlasTexture, atlasRegions, renderThroughWalls, seed, }?: {
+export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, maxAtlasParticles, maxMeshVfx, trailNodes, maxFloatingGlyphs, maxPopups, atlasTexture, atlasRegions, renderThroughWalls, seed, }?: {
     mode?: "3d" | "canvas2d" | "webgl2d" | "headless" | null | undefined;
     sceneOrAdapter?: object | null;
     THREE?: object | null;
     maxParticles?: number | undefined;
     maxAtlasParticles?: number | undefined;
     maxMeshVfx?: number | undefined;
+    trailNodes?: number | undefined;
     maxFloatingGlyphs?: number | undefined;
     maxPopups?: number | undefined;
     atlasTexture?: object | null;
@@ -168,6 +170,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             slashCap: number;
             boltCap: number;
             trailCap: number;
+            trailNodes: number;
             activeTrails: number;
         };
     };
@@ -350,6 +353,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             slashCap: number;
             boltCap: number;
             trailCap: number;
+            trailNodes: number;
             activeTrails: number;
         };
         telegraphs: {
