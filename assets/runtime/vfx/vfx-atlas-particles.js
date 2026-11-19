@@ -688,8 +688,9 @@ void main() {
       rightAxis = vec2(cos(rot), sin(rot));
     }
     vec2 upAxis = vec2(-rightAxis.y, rightAxis.x);
+    float billH = (renderMode < 0.5 && aAtlasP6.x <= 0.001) ? (curSize * max(0.05, aAtlasP6.z)) : curSize;
     float minBill = (renderMode < 0.5 && curSize > 0.001) ? abs(mvCenter.z) * 0.0042 : 0.0;
-    mvCenter.xy += rightAxis * (position.x * max(major, minBill)) + upAxis * (position.y * max(curSize, minBill));
+    mvCenter.xy += rightAxis * (position.x * max(major, minBill)) + upAxis * (position.y * max(billH, minBill));
     gl_Position = projectionMatrix * mvCenter;
   }
 }
@@ -750,7 +751,7 @@ vec4 sampleAtlasFrame(float frameIdx, vec2 localUv) {
 
 void main() {
   vec4 curveCol = sampleColorCurve(vCurveRow, vLifeRatio);
-  if (curveCol.a < 0.005) discard;
+  if (curveCol.a < 0.001) discard;
 
   vec4 texCol = vec4(1.0);
   if (uHasAtlas > 0.5) {
@@ -794,6 +795,13 @@ void main() {
   float alpha = texCol.a * curveCol.a * softMul;
   if (alpha < 0.0005) discard;
   vec3 rgb = texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr);
+  // Preserve HDR hue and intensity on fixed-point RGBA8 framebuffers before hardware clamp.
+  float peak = max(rgb.r, max(rgb.g, rgb.b));
+  if (peak > 1.0 && alpha > 0.0 && alpha < 1.0) {
+    float boost = min(peak, 1.0 / alpha);
+    rgb /= boost;
+    alpha *= boost;
+  }
   gl_FragColor = vec4(rgb, alpha);
 }
 `;
@@ -902,7 +910,8 @@ void main() {
     lenScale = curSize * (1.0 + aAtlasP6.z * min(spd * 0.015, 4.0));
   }
 
-  vec2 p = worldPos + axisX * (aQuadPos.x * lenScale) + axisY * (aQuadPos.y * curSize);
+  float billH = (aAtlasP3.w < 0.5 && aAtlasP6.x <= 0.001) ? (curSize * max(0.05, aAtlasP6.z)) : curSize;
+  vec2 p = worldPos + axisX * (aQuadPos.x * lenScale) + axisY * (aQuadPos.y * billH);
   vec2 screenPx = (p - uCamPos) * uCamZoom + uViewSize * 0.5;
   vec2 ndc = vec2(
     (screenPx.x / max(1.0, uViewSize.x)) * 2.0 - 1.0,
@@ -952,7 +961,7 @@ vec4 sampleAtlasFrame(float frameIdx, vec2 localUv) {
 
 void main() {
   vec4 curveCol = sampleColorCurve(vCurveRow, vLifeRatio);
-  if (curveCol.a < 0.005) discard;
+  if (curveCol.a < 0.001) discard;
 
   vec4 texCol = vec4(1.0);
   if (uHasAtlas > 0.5) {
@@ -979,7 +988,14 @@ void main() {
 
   float alpha = texCol.a * curveCol.a;
   if (alpha < 0.0005) discard;
-  fragColor = vec4(texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr), alpha);
+  vec3 rgb = texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr);
+  float peak = max(rgb.r, max(rgb.g, rgb.b));
+  if (peak > 1.0 && alpha > 0.0 && alpha < 1.0) {
+    float boost = min(peak, 1.0 / alpha);
+    rgb /= boost;
+    alpha *= boost;
+  }
+  fragColor = vec4(rgb, alpha);
 }
 `;
 
@@ -1431,7 +1447,7 @@ export function createAtlasParticlePool({
       ? (opts.stretch ?? 0.8)
       : renderMode === VFX_RENDER_MODE.VERTICAL
         ? (opts.stretch ?? 1.0)
-        : (opts.noiseYScale ?? 1.0);
+        : (nStr > 0.001 && opts.noiseYScale !== undefined ? opts.noiseYScale : (opts.stretch ?? 1.0));
     ch.p6[i4] = nStr;
     ch.p6[i4 + 1] = opts.noiseFreq ?? 0.5;
     ch.p6[i4 + 2] = nYScale;

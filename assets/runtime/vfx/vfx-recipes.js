@@ -684,8 +684,11 @@ export function createEffectPlayer({
     const phase = prng.nextFloat();
     const rawOrbY = layer.velocity?.orbitalY ?? layer.velocity?.orbital?.[1] ?? 0;
     const orbitalY = readRange(rawOrbY, 0, 0, prng);
-    const centerOffX = scratchPos[0] - slot.x;
-    const centerOffZ = scratchPos[2] - slot.z;
+    const orbOff = layer.velocity?.orbitalOffset;
+    const orbPivotX = orbOff ? (scratchPos[0] + readRange(orbOff[0], 0, 0, prng) * scale) : slot.x;
+    const orbPivotZ = orbOff ? (scratchPos[2] + readRange(orbOff[2], 0, 0, prng) * scale) : slot.z;
+    const centerOffX = scratchPos[0] - orbPivotX;
+    const centerOffZ = scratchPos[2] - orbPivotZ;
     sampleStartColor(layer.startColor, scratchTintOut);
     const tintRgb24 = packRgb24(
       Math.round(scratchTintOut[0] * 255),
@@ -710,16 +713,18 @@ export function createEffectPlayer({
         gravity,
         drag,
         orbitalY,
-        centerX: slot.x,
-        centerZ: slot.z,
+        centerX: orbPivotX,
+        centerZ: orbPivotZ,
         duration: dur,
+        persistent: Boolean(layer.persistent),
+        curveCycle: layer.curveCycle ?? 0,
         sizeStart,
-        rotX: layer.rotX ?? 0,
+        rotX: readRange(layer.rotX, 0, 0, prng),
         rotY: rot0,
-        rotZ: layer.rotZ ?? 0,
-        spinX: layer.spin?.[0] ?? 0,
-        spinY: layer.spin?.[1] ?? angVel,
-        spinZ: layer.spin?.[2] ?? 0,
+        rotZ: readRange(layer.rotZ, 0, 0, prng),
+        spinX: readRange(layer.spin?.[0], 0, 0, prng),
+        spinY: layer.spin?.[1] !== undefined ? readRange(layer.spin[1], 0, 0, prng) : angVel,
+        spinZ: readRange(layer.spin?.[2], 0, 0, prng),
         alignToVelocity: alignDir,
         forwardAxis: layer.forwardAxis,
         hdr: layer.hdr ?? 1.0,
@@ -772,7 +777,7 @@ export function createEffectPlayer({
       noiseStrength,
       noiseYScale,
       noiseFreq,
-      stretch: layer.aspectY ?? layer.stretch ?? (layer.renderMode === 'vertical' ? 1.0 : 0.8),
+      stretch: layer.aspectY ?? layer.stretch ?? (layer.renderMode === 'vertical' || layer.renderMode === 'billboard' ? 1.0 : 0.8),
       phase,
     });
 

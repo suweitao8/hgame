@@ -548,6 +548,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const vy = mulV(readMinMaxScalar(velMod, 'y', 0));
       const vz = mulV(readMinMaxScalar(velMod, 'z', 0));
       const orbY = mulV(readMinMaxScalar(velMod, 'orbitalY', 0));
+      const oox = readMinMaxScalar(velMod, 'orbitalOffsetX', 0);
+      const ooy = readMinMaxScalar(velMod, 'orbitalOffsetY', 0);
+      const ooz = readMinMaxScalar(velMod, 'orbitalOffsetZ', 0);
       const radV = mulV(readMinMaxScalar(velMod, 'radial', 0));
       const isNonZero = (v) => Array.isArray(v) ? (v[0] !== 0 || v[1] !== 0) : v !== 0;
       const velObj = {};
@@ -555,6 +558,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         velObj.linear = [vx, vy, vz];
       }
       if (isNonZero(orbY)) velObj.orbitalY = orbY;
+      if (isNonZero(oox) || isNonZero(ooy) || isNonZero(ooz)) {
+        velObj.orbitalOffset = [oox, ooy, ooz];
+      }
       if (isNonZero(radV)) velObj.radial = radV;
       if (Object.keys(velObj).length > 0) layer.velocity = velObj;
     }
@@ -562,7 +568,13 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const rotMod = extractSection(ps, 'RotationModule');
     if (/enabled:\s*1/.test(rotMod)) {
       const av = readMinMaxScalar(rotMod, 'curve', 0);
-      if (av !== 0) layer.angularVel = av;
+      if (/separateAxes:\s*1\b/.test(rotMod)) {
+        const rx = readMinMaxScalar(rotMod, 'x', 0);
+        const ry = readMinMaxScalar(rotMod, 'y', 0);
+        layer.spin = [rx, ry, av];
+      } else if (av !== 0) {
+        layer.angularVel = av;
+      }
     }
 
     const noiseMod = extractSection(ps, 'NoiseModule');

@@ -899,6 +899,60 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     const valPeak = lutHi.sampleSize(hiRow, 2 / 16);
     assert.ok(valValley < 0.2 && valPeak > 0.9, `expected >8-stop PingPong sizeCurve preserved in LUT (valley=${valValley.toFixed(2)}, peak=${valPeak.toFixed(2)})`);
     lutHi.dispose();
+
+    // 12. Billboard aspectY, persistent orbiting mesh with orbitalOffset, spin axes, and GLB map extraction
+    vfx.reset();
+    const rockGeom = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+    const rockMat = new THREE.MeshBasicMaterial({ map: dummyTex });
+    const rockObj = new THREE.Mesh(rockGeom, rockMat);
+    vfx.registerMesh('rock_test', rockObj);
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'shield_aspect_and_rock_test',
+      loop: true,
+      duration: 5.0,
+      layers: [
+        {
+          name: 'glow',
+          kind: 'particle',
+          renderMode: 'billboard',
+          maxParticles: 1,
+          rate: 10,
+          persistent: true,
+          life: 2.0,
+          size: 3.0,
+          aspectY: 1.333,
+        },
+        {
+          name: 'rock',
+          kind: 'mesh',
+          renderMode: 'mesh',
+          mesh: 'rock_test',
+          maxParticles: 1,
+          rate: 10,
+          persistent: true,
+          curveCycle: 5.0,
+          life: 5.0,
+          size: 1.0,
+          offset: [1.118, 0.21, 0],
+          velocity: { orbitalY: 4, orbitalOffset: [-1, 0, 0] },
+          spin: [2.0, -3.0, 0],
+        },
+      ],
+    }, { x: 0, y: 1.4, z: 0 });
+    vfx.update(0.1);
+    const p6 = atlasNorm.geometry.getAttribute('aAtlasP6').array;
+    assert.ok(Math.abs(p6[2] - 1.333) < 0.01, `expected billboard aspectY=1.333 packed in aAtlasP6.z (got ${p6[2]})`);
+    const meshChild = scene.children.find((c) => c.geometry === rockGeom);
+    assert.ok(meshChild, 'expected orbiting rock mesh spawned in scene');
+    assert.equal(meshChild.material.uniforms.uHasTex.value, 1, 'registerMesh auto-binds material.map to uHasTex=1');
+    const startX = meshChild.position.x;
+    for (let i = 0; i < 60; i++) vfx.update(0.1); // t = 6.1s (> 5.0s)
+    assert.equal(meshChild.visible, true, 'persistent mesh stays alive past duration');
+    assert.ok(Math.abs(meshChild.position.x - startX) > 0.05 || Math.abs(meshChild.position.z) > 0.05, 'orbitalY orbits mesh around orbitalOffset pivot');
+    assert.ok(Math.abs(meshChild.rotation.x) > 0.1 || Math.abs(meshChild.rotation.y) > 0.1, 'separateAxes spin rotates mesh');
+    rockGeom.dispose();
+    rockMat.dispose();
     dummyTex.dispose();
   } finally {
     vfx.dispose();

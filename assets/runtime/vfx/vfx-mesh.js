@@ -109,6 +109,18 @@ function extractGeometry(geometryOrObj) {
   return found;
 }
 
+function extractTexture(geometryOrObj) {
+  if (!geometryOrObj) return null;
+  if (geometryOrObj.material?.map?.isTexture) return geometryOrObj.material.map;
+  let found = null;
+  if (typeof geometryOrObj.traverse === 'function') {
+    geometryOrObj.traverse((child) => {
+      if (!found && child.material?.map?.isTexture) found = child.material.map;
+    });
+  }
+  return found;
+}
+
 function buildBuiltinGeometry(THREE, shapeName) {
   if (!THREE) return null;
   const key = String(shapeName || 'crystal').toLowerCase();
@@ -159,6 +171,7 @@ export function createMeshVfxPool({
 } = {}) {
   const capacity = Math.max(1, maxMeshes | 0);
   const customGeometries = new Map();
+  const customTextures = new Map();
   const builtinGeometries = new Map();
   const slots = [];
   const scratchColor = new Float32Array(4);
@@ -210,6 +223,8 @@ export function createMeshVfxPool({
 
     slots.push({
       active: false,
+      persistent: false,
+      curveCycle: 0,
       age: 0,
       duration: 1,
       x: 0,
@@ -269,7 +284,10 @@ export function createMeshVfxPool({
   function registerMesh(id, geometryOrObject3D) {
     const geo = extractGeometry(geometryOrObject3D);
     if (!id || !geo) return false;
-    customGeometries.set(String(id), geo);
+    const key = String(id);
+    customGeometries.set(key, geo);
+    const tex = extractTexture(geometryOrObject3D);
+    if (tex) customTextures.set(key, tex);
     return true;
   }
 
@@ -295,6 +313,8 @@ export function createMeshVfxPool({
 
     const s = slots[slotIdx];
     s.active = true;
+    s.persistent = Boolean(opts.persistent);
+    s.curveCycle = Number(opts.curveCycle ?? 0);
     s.age = 0;
     s.duration = Math.max(0.01, opts.duration ?? 0.8);
     s.x = opts.x ?? 0;
@@ -331,7 +351,8 @@ export function createMeshVfxPool({
     s.dissolveStart = opts.dissolve?.start ?? 0.55;
 
     if (s.mesh && s.mat) {
-      const geo = getGeometry(opts.mesh || 'crystal');
+      const meshKey = String(opts.mesh || 'crystal');
+      const geo = getGeometry(meshKey);
       if (geo && s.mesh.geometry !== geo) s.mesh.geometry = geo;
       const additive = opts.blend === 'additive' || Boolean(opts.additive);
       if (THREE) {
@@ -351,8 +372,9 @@ export function createMeshVfxPool({
       s.mat.uniforms.uUvScroll.value.set(uvScroll[0] ?? 0, uvScroll[1] ?? 0);
       const fresnel = opts.fresnel;
       s.mat.uniforms.uFresnel.value.set(fresnel?.power ?? 2.5, fresnel?.intensity ?? 0);
-      s.mat.uniforms.uTex.value = opts.texture ?? null;
-      s.mat.uniforms.uHasTex.value = opts.texture ? 1 : 0;
+      const resolvedTex = opts.texture ?? customTextures.get(meshKey) ?? null;
+      s.mat.uniforms.uTex.value = resolvedTex;
+      s.mat.uniforms.uHasTex.value = resolvedTex ? 1 : 0;
       const dc = opts.dissolve?.edgeColor || [1, 0.7, 0.25];
       s.mat.uniforms.uDissolveColor.value.setRGB(dc[0] ?? 1, dc[1] ?? 0.7, dc[2] ?? 0.25);
       s.mat.uniforms.uDissolve.value.set(0, opts.dissolve?.edgeWidth ?? 0.08, s.dissolveEnabled ? 1 : 0);
@@ -407,7 +429,7 @@ export function createMeshVfxPool({
       const s = slots[i];
       if (!s.active) continue;
       s.age += dt;
-      if (s.age >= s.duration) {
+      if (!s.persistent && s.age >= s.duration) {
         s.active = false;
         if (s.mesh) s.mesh.visible = false;
         continue;
@@ -440,7 +462,10 @@ export function createMeshVfxPool({
         s.rotY += s.spinY * dt;
         s.rotZ += s.spinZ * dt;
       }
-      syncMeshSlot(s, s.age / s.duration);
+      const t = s.persistent
+        ? (s.curveCycle > 0 ? ((s.age / s.curveCycle) % 1) : 0)
+        : (s.age / s.duration);
+      syncMeshSlot(s, t);
     }
   }
 
@@ -467,6 +492,7 @@ export function createMeshVfxPool({
     }
     builtinGeometries.clear();
     customGeometries.clear();
+    customTextures.clear();
   }
 
   function getActiveCount() {
