@@ -865,6 +865,10 @@ export function createTrailsSystem({
     segMeta_N.fill(0);
     slashP1.fill(0);
     boltP1.fill(0);
+    if (ribbonAttrs) submitRingBufferRanges(ribbonAttrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
+    if (ribbonNormalAttrs) submitRingBufferRanges(ribbonNormalAttrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
+    if (slashAttrs) submitRingBufferRanges(slashAttrs[1], 0, slashCap, slashCap, 4);
+    if (boltAttrs) submitRingBufferRanges(boltAttrs[1], 0, boltCap, boltCap, 4);
   }
 
   function dispose() {

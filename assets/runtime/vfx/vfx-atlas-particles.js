@@ -1634,11 +1634,16 @@ export function createAtlasParticlePool({
       ch.cursor = 0;
       ch.totalEmitted = 0;
       ch.dirtyStart = 0;
-      ch.dirtyCount = 0;
+      ch.dirtyCount = capacity;
       ch.wrapCount = 0;
       ch.lastDirtyRanges.length = 0;
       ch.p0.fill(0);
       ch.p1.fill(0);
+      if (ch.threeAttrs) {
+        submitRingBufferRanges(ch.threeAttrs[0], 0, capacity, capacity, 4);
+        submitRingBufferRanges(ch.threeAttrs[1], 0, capacity, capacity, 4);
+      }
+      if (ch.threeMat) ch.threeMat.uniforms.uTime.value = 0;
     }
   }
 
