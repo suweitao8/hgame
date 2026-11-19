@@ -322,6 +322,43 @@ test('Three diagnostics keep forward draw counts when GPU timing is unavailable'
   adapter.dispose();
 });
 
+test('Three diagnostics account for frame and pass buffer and texture upload payloads', () => {
+  const { renderer, gl } = createMockWebGL2Renderer();
+  const calls = { buffer: 0, texture: 0 };
+  const bufferData = function () { assert.equal(this, gl); calls.buffer++; };
+  const texSubImage2D = function () { assert.equal(this, gl); calls.texture++; };
+  Object.assign(gl, { RGBA: 6408, FLOAT: 5126, bufferData, texSubImage2D,
+    texImage2D() { calls.texture++; }, compressedTexImage2D() { calls.texture++; } });
+  Object.defineProperty(gl, 'texImage3D', { get() { throw new Error('native method unavailable'); } });
+  const shared = new Float32Array(128);
+  const image = new Uint32Array(10);
+  const namespace = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };
+  const adapter = createThreeAdapter({ THREE: namespace, canvas: {}, pixelRatio: 1, diagnostics3d: true,
+    post3d: { preset: QUALITY3D_PRESETS.low, fxaa: false, sharpness: 0 } });
+  renderer.render = (scene, camera) => {
+    if (camera === adapter.camera) {
+      gl.bufferData(0, shared, 0, 2, 4);
+      gl.bufferData(0, 128, 0);
+      gl.texSubImage2D(0, 0, 0, 0, 3, 1, gl.RGBA, gl.FLOAT, shared);
+    } else {
+      gl.compressedTexImage2D(0, 0, 0, 4, 4, 0, image, 1, 3);
+      gl.texImage2D(0, 0, 0, 1, 1, 0, gl.RGBA, gl.FLOAT, null);
+      gl.texSubImage2D(0, 0, 0, 0, 1, 1, -7, gl.FLOAT, shared);
+    }
+  };
+  adapter.render(new Scene('upload-diagnostics'));
+  const report = adapter.getRenderDiagnostics();
+  assert.deepEqual(report.uploads, { bufferBytes: 16, textureBytes: 60, calls: 4, unmeasuredCalls: 1 });
+  assert.deepEqual(report.passes.map(pass => pass.uploads), [
+    { bufferBytes: 16, textureBytes: 48, calls: 2, unmeasuredCalls: 0 },
+    { bufferBytes: 0, textureBytes: 12, calls: 2, unmeasuredCalls: 1 },
+  ]);
+  assert.deepEqual(calls, { buffer: 2, texture: 4 });
+  assert.equal(gl.bufferData, bufferData);
+  assert.equal(gl.texSubImage2D, texSubImage2D);
+  adapter.dispose();
+});
+
 test('one adaptive quality transition rebuilds the post pipeline once at the final drawing-buffer size', () => {
   const { renderer, calls } = createMockWebGL2Renderer();
   const allocations = [];

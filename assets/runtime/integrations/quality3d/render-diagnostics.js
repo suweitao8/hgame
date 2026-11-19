@@ -1,9 +1,11 @@
 import { createGpuFrameTimer } from './gpu-timer.js';
+import { beginWebGlUploadProbe } from './upload-probe.js';
 
 const MAX_GPU_SAMPLES = 32;
 
 /** @typedef {{viewIndex: number, width: number, height: number, samples: number, bytes: number}} RenderTargetUsage3D */
-/** @typedef {{name: string, viewIndex: number, target: RenderTargetUsage3D | null, cpuMs: number, drawCalls: number | null, triangles: number | null}} RenderStageSample3D */
+/** @typedef {import('./upload-probe.js').WebGlUploadTotals} WebGlUploadTotals */
+/** @typedef {{name: string, viewIndex: number, target: RenderTargetUsage3D | null, cpuMs: number, drawCalls: number | null, triangles: number | null, uploads: WebGlUploadTotals | null}} RenderStageSample3D */
 /** @typedef {{frame: number, name: string, viewIndex: number | null, passIndex: number | null, status: 'ready' | 'disjoint' | 'expired' | 'invalid', ms: number | null}} RenderGpuSample3D */
 /**
  * @typedef {object} RenderDiagnosticsSnapshot3D
@@ -15,6 +17,8 @@ const MAX_GPU_SAMPLES = 32;
  * @property {number} estimatedTargetBytes Nominal payload of the counted offscreen attachments.
  * @property {readonly RenderTargetUsage3D[]} targets Unique targets in the rendered views.
  * @property {readonly RenderStageSample3D[]} passes CPU submission samples in execution order.
+ * @property {WebGlUploadTotals | null} uploads Client transfer payloads submitted while this adapter rendered the frame.
+ * @property {readonly string[]} uploadMethods WebGL calls covered by the frame's upload probe.
  * @property {{supported: boolean, samples: readonly RenderGpuSample3D[]}} gpu Recent asynchronously resolved GPU samples, keyed by frame and view.
  */
 
@@ -41,6 +45,12 @@ function counter(info, key) {
 
 function delta(value, previous) {
   return value === null || previous === null ? null : Math.max(0, value - previous);
+}
+
+function uploadDelta(after, before) {
+  if (!after || !before) return null;
+  return Object.freeze({ bufferBytes: after.bufferBytes - before.bufferBytes, textureBytes: after.textureBytes - before.textureBytes,
+    calls: after.calls - before.calls, unmeasuredCalls: after.unmeasuredCalls - before.unmeasuredCalls });
 }
 
 /** Internal opt-in recorder for the adapter's frame and ordered view draws. */
@@ -75,7 +85,8 @@ export function createRenderDiagnostics3D(THREE, renderer) {
 
   function beginFrame() {
     if (frame) return false;
-    if (timer === undefined) timer = createGpuFrameTimer(renderer.getContext?.(), { alternate: false });
+    const gl = renderer.getContext?.();
+    if (timer === undefined) timer = createGpuFrameTimer(gl, { alternate: false });
     pollGpu();
     const info = renderer.info;
     const autoReset = info?.autoReset;
@@ -90,6 +101,7 @@ export function createRenderDiagnostics3D(THREE, renderer) {
       started: performance.now(), calls: counter(info, 'calls'), triangles: counter(info, 'triangles'),
       gpuPass: timer && !wholeFrame ? nextGpuPass++ % Math.max(1, snapshot?.passes.length ?? 0) : -1,
       frameTimer: wholeFrame && timer?.begin({ frame: id, name: 'frame', viewIndex: null, passIndex: null }) ? timer : null,
+      upload: beginWebGlUploadProbe(gl),
     };
     return true;
   }
@@ -118,10 +130,12 @@ export function createRenderDiagnostics3D(THREE, renderer) {
     const start = performance.now();
     const calls = counter(info, 'calls');
     const triangles = counter(info, 'triangles');
+    const uploads = current.upload?.read();
     return () => {
       gpu?.end();
       current.passes.push(Object.freeze({ name, viewIndex, target: description, cpuMs: performance.now() - start,
-        drawCalls: delta(counter(info, 'calls'), calls), triangles: delta(counter(info, 'triangles'), triangles) }));
+        drawCalls: delta(counter(info, 'calls'), calls), triangles: delta(counter(info, 'triangles'), triangles),
+        uploads: uploadDelta(current.upload?.read(), uploads) }));
     };
   }
 
@@ -138,9 +152,12 @@ export function createRenderDiagnostics3D(THREE, renderer) {
         drawCalls: delta(counter(info, 'calls'), current.calls), triangles: delta(counter(info, 'triangles'), current.triangles),
         estimatedTargetBytes: targets.reduce((total, target) => total + target.bytes, 0),
         targets: Object.freeze(targets), passes: Object.freeze(current.passes),
+        uploads: current.upload ? Object.freeze(current.upload.read()) : null,
+        uploadMethods: Object.freeze(current.upload?.methods ?? []),
         gpu: Object.freeze({ supported: Boolean(timer), samples: Object.freeze(gpuSamples.slice()) }),
       });
     } finally {
+      current.upload?.stop();
       if (typeof autoReset === 'boolean') info.autoReset = autoReset;
     }
   }

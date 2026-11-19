@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Report submitted WebGL buffer and texture upload payloads by frame and pass in opt-in Three diagnostics.
+
 - Reuse unchanged clustered light bins and upload bounded dirty texture ranges. Initialize all data on fresh GPU backing and retain full-update fallback for injected Three builds.
 
 - Add optional Three adapter diagnostics for frame and pass CPU submission, draw calls, triangles, viewport target usage, and asynchronously sampled GPU time.

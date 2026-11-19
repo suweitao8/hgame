@@ -17,6 +17,7 @@ export type RenderTargetUsage3D = {
     samples: number;
     bytes: number;
 };
+export type WebGlUploadTotals = import("./upload-probe.js").WebGlUploadTotals;
 export type RenderStageSample3D = {
     name: string;
     viewIndex: number;
@@ -24,6 +25,7 @@ export type RenderStageSample3D = {
     cpuMs: number;
     drawCalls: number | null;
     triangles: number | null;
+    uploads: WebGlUploadTotals | null;
 };
 export type RenderGpuSample3D = {
     frame: number;
@@ -66,6 +68,14 @@ export type RenderDiagnosticsSnapshot3D = {
      * CPU submission samples in execution order.
      */
     passes: readonly RenderStageSample3D[];
+    /**
+     * Client transfer payloads submitted while this adapter rendered the frame.
+     */
+    uploads: WebGlUploadTotals | null;
+    /**
+     * WebGL calls covered by the frame's upload probe.
+     */
+    uploadMethods: readonly string[];
     /**
      * Recent asynchronously resolved GPU samples, keyed by frame and view.
      */
