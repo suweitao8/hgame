@@ -5,14 +5,21 @@ import * as THREE from '../assets/optional/three/three.module.js';
 import {
   CROWD_STATUS,
   DAMAGE_NUMBER_PRESETS,
+  PROCEDURAL_VFX_ATLAS_REGIONS,
+  VFX_RENDER_MODE,
   VFX_SHAPE,
+  createAtlasParticlePool,
   createCameraShake,
+  createCurveLutTable,
   createHitstopClock,
+  createMeshVfxPool,
   createStatelessParticlePool,
   createVfxSystem,
   createVisualPrng,
   evaluateColorByNumber,
+  evaluateColorCurve,
   evaluateScaleByNumber,
+  evaluateSizeCurve,
   extractGlyphIndices,
   formatDamageValue,
   getDamagePreset,
@@ -21,6 +28,7 @@ import {
   registerDamagePreset,
   unpackCrowdAnimStatus,
   unpackRgb24Into,
+  validateVfxRecipe,
 } from '../assets/runtime/vfx/index.js';
 
 test('stateless particle pool wraps 100,000 emits across 65,536 ring boundary with split dirty ranges', () => {
@@ -320,6 +328,243 @@ test('3D floating text packs active glyphs, scales by camera distance, and reset
     assert.ok(p1.array[1] > 0);
     vfx.reset();
     assert.equal(mesh.geometry.instanceCount, 0);
+  } finally {
+    vfx.dispose();
+  }
+});
+
+test('validateVfxRecipe validates schemaVersion, layers, renderModes, and rejects malformed recipes', () => {
+  const valid = validateVfxRecipe({
+    schemaVersion: 1,
+    id: 'fire_burst',
+    duration: 2.0,
+    layers: [
+      { kind: 'particle', renderMode: 'horizontal', blend: 'alpha', colorCurve: [[0, [1, 0.5, 0, 1]], [1, [0, 0, 0, 0]]] },
+      { kind: 'mesh', renderMode: 'mesh', mesh: 'crystal' },
+    ],
+  });
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.errors, []);
+
+  const invalid = validateVfxRecipe({
+    schemaVersion: 2,
+    id: '',
+    duration: -1,
+    layers: [{ kind: 'unknown', renderMode: 'bad', blend: 'weird', colorCurve: [] }],
+  });
+  assert.equal(invalid.ok, false);
+  assert.ok(invalid.errors.length >= 5);
+});
+
+test('curve LUT table compiles, caches, and decodes 4-stop colorCurve and sizeCurve within tight tolerance', () => {
+  const lut = createCurveLutTable(THREE);
+  const colorCurve = [
+    [0.0, [1.0, 0.2, 0.0, 0.0]],
+    [0.1, [0.9, 0.4, 0.1, 1.0]],
+    [0.8, [0.1, 0.05, 0.05, 1.0]],
+    [1.0, [0.0, 0.0, 0.0, 0.0]],
+  ];
+  const sizeCurve = [
+    [0.0, 0.0],
+    [0.1, 2.5],
+    [1.0, 0.5],
+  ];
+  const rowA = lut.compile(colorCurve, sizeCurve);
+  const rowB = lut.compile(colorCurve, sizeCurve);
+  assert.equal(rowA, rowB);
+  assert.equal(rowA, 1);
+
+  const rgba = new Float32Array(4);
+  lut.sampleColor(rowA, 0.1, rgba);
+  const refRgba = evaluateColorCurve(colorCurve, 0.1);
+  assert.ok(Math.abs(rgba[0] - refRgba[0]) < 0.03);
+  assert.ok(Math.abs(rgba[3] - refRgba[3]) < 0.03);
+
+  const szPeak = lut.sampleSize(rowA, 0.1);
+  assert.ok(Math.abs(szPeak - evaluateSizeCurve(sizeCurve, 0.1)) < 0.1);
+  assert.ok(lut.texture && lut.texture.isDataTexture);
+  lut.dispose();
+});
+
+test('atlas particle pool supports flipbook, horizontal, HDR, noise, and Canvas2D fallback', () => {
+  const scene = new THREE.Scene();
+  const pool = createAtlasParticlePool({ mode: '3d', THREE, scene, maxParticles: 32 });
+  try {
+    pool.emit({
+      x: 1, y: 2, z: 3,
+      vx: 0, vy: 1, vz: 0,
+      duration: 1.5,
+      sizeStart: 2.5,
+      hdr: 3.0,
+      renderMode: 'horizontal',
+      blend: 'alpha',
+      flipbook: { region: 'fireball_flipbook', cols: 8, rows: 1, cycles: 1, blend: true },
+      noiseStrength: 0.8,
+      noiseFreq: 0.5,
+    });
+    pool.update(0.1);
+
+    const normalMesh = scene.getObjectByName('HGameVfxAtlasNormal');
+    assert.ok(normalMesh);
+    const p2 = normalMesh.geometry.getAttribute('aAtlasP2');
+    const p3 = normalMesh.geometry.getAttribute('aAtlasP3');
+    const p4 = normalMesh.geometry.getAttribute('aAtlasP4');
+    const p5 = normalMesh.geometry.getAttribute('aAtlasP5');
+    assert.equal(p2.array[0], 2.5);
+    assert.equal(p3.array[2], 3.0);
+    assert.equal(p3.array[3], VFX_RENDER_MODE.HORIZONTAL);
+    assert.deepEqual(Array.from(p4.array.subarray(0, 4)), Array.from(PROCEDURAL_VFX_ATLAS_REGIONS.fireball_flipbook));
+    assert.deepEqual(Array.from(p5.array.subarray(0, 4)), [8, 1, 1, 1]);
+  } finally {
+    pool.dispose();
+  }
+
+  // Canvas2D fallback smoke
+  const ops = [];
+  const mockCtx = {
+    save() { ops.push('save'); },
+    restore() { ops.push('restore'); },
+    translate() {},
+    rotate() {},
+    beginPath() {},
+    arc() {},
+    fill() {},
+    globalCompositeOperation: 'source-over',
+    globalAlpha: 1,
+    fillStyle: '#fff',
+  };
+  const pool2d = createAtlasParticlePool({ mode: 'canvas2d', maxParticles: 16 });
+  pool2d.emit({
+    x: 50, y: 60, duration: 1.0, sizeStart: 20, hdr: 2.0,
+    colorCurve: [[0, [1, 0.5, 0, 1]], [1, [1, 0.5, 0, 0]]],
+  });
+  pool2d.update(0.2);
+  pool2d.renderCanvas2D(mockCtx, { x: 0, y: 0, zoom: 1 }, 960, 540);
+  assert.ok(ops.includes('save') && ops.includes('restore'));
+  pool2d.dispose();
+});
+
+test('mesh VFX pool spawns custom & built-in meshes with Fresnel/dissolve and recycles on expiry', () => {
+  const scene = new THREE.Scene();
+  const meshPool = createMeshVfxPool({ mode: '3d', THREE, scene, maxMeshes: 4 });
+  try {
+    const customGeo = new THREE.OctahedronGeometry(0.4, 0);
+    assert.equal(meshPool.registerMesh('ice_spike', customGeo), true);
+    const slot = meshPool.spawn({
+      mesh: 'ice_spike',
+      x: 2, y: 1, z: -3,
+      duration: 0.5,
+      sizeStart: 1.5,
+      spinY: 3.14,
+      hdr: 1.6,
+      fresnel: { power: 2.5, intensity: 1.4 },
+      dissolve: { start: 0.4, edgeWidth: 0.1, edgeColor: [0.4, 0.9, 1.0] },
+    });
+    assert.equal(slot, 0);
+    assert.equal(meshPool.getStats().activeCount, 1);
+
+    const obj = scene.getObjectByName('HGameVfxMesh_0');
+    assert.ok(obj && obj.visible === true);
+    assert.equal(obj.geometry, customGeo);
+
+    meshPool.update(0.25);
+    assert.ok(obj.rotation.y > 0.5);
+    assert.ok(obj.material.uniforms.uFresnel.value.y > 1.0);
+
+    meshPool.update(0.35);
+    assert.equal(meshPool.getStats().activeCount, 0);
+    assert.equal(obj.visible, false);
+    customGeo.dispose();
+  } finally {
+    meshPool.dispose();
+  }
+});
+
+test('createVfxSystem.playEffect orchestrates composite one-shot explosion and looping shield recipes', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 64, maxAtlasParticles: 256, maxMeshVfx: 8 });
+  try {
+    const explosionRecipe = {
+      schemaVersion: 1,
+      id: 'test_explosion_fire',
+      loop: false,
+      duration: 1.2,
+      juice: {
+        hitstop: 0.04,
+        shakeTrauma: 0.35,
+        screenPulse: { color: '#ff6a1a', strength: 0.4, duration: 0.2 },
+        lightPulse: { color: '#ff9e44', intensity: 2.5, range: 10, duration: 0.3 },
+      },
+      layers: [
+        {
+          name: 'fireball_flipbook',
+          kind: 'particle',
+          renderMode: 'billboard',
+          blend: 'alpha',
+          hdr: 3.0,
+          bursts: [{ time: 0.0, count: 12 }],
+          life: [0.8, 1.0],
+          size: [0.8, 1.2],
+          flipbook: { region: 'fireball_flipbook', cols: 8, rows: 1, cycles: 1, blend: true },
+          sizeCurve: [[0, 0], [0.1, 1], [1, 1]],
+          colorCurve: [[0, [1, 0.2, 0, 1]], [0.8, [0.1, 0.02, 0.02, 1]], [1, [0, 0, 0, 0]]],
+        },
+        {
+          name: 'wave_ground',
+          kind: 'particle',
+          renderMode: 'horizontal',
+          hdr: 2.4,
+          bursts: [{ time: 0.0, count: 2 }],
+          life: 0.6,
+          size: 3.0,
+          sprite: 'wave',
+        },
+        {
+          name: 'sparks_trail',
+          kind: 'particle',
+          bursts: [{ time: 0.0, count: 6 }],
+          life: 0.5,
+          speed: [2, 4],
+          noise: { strength: 0.8, frequency: 0.5 },
+          trail: { lifetime: 0.2, width: 0.05, color: '#ffaa33' },
+        },
+      ],
+    };
+
+    const handle = vfx.playEffect(explosionRecipe, { x: 4, y: 0, z: -2, scale: 1.2 });
+    assert.ok(handle && handle.isActive());
+    assert.equal(vfx.atlasParticles.getStats().normalTotal, 20);
+    assert.equal(vfx.trails.getStats().activeTrails, 6);
+    const ptLight = scene.getObjectByName('HGameVfxPointLight_0');
+    assert.ok(ptLight && ptLight.visible === true && ptLight.intensity > 2.0);
+
+    // Advance past hitstop & full explosion duration
+    for (let i = 0; i < 30; i++) vfx.update(0.05);
+    assert.equal(handle.isActive(), false);
+    assert.equal(ptLight.visible, false);
+    assert.equal(vfx.trails.getStats().activeTrails, 0);
+
+    // Looping shield with follow target and 3D mesh layer
+    const hero = { x: 0, y: 1, z: 0, yaw: 0 };
+    const shieldHandle = vfx.playEffect({
+      schemaVersion: 1,
+      id: 'test_shield_ice',
+      loop: true,
+      duration: 1.0,
+      layers: [
+        { name: 'dome', kind: 'mesh', mesh: 'sphere', bursts: [{ time: 0, count: 1 }], life: 1.0, size: 2.2, fresnel: { power: 2.5, intensity: 1.2 } },
+        { name: 'snow', kind: 'particle', rate: 20, life: 0.6, size: 0.2, sprite: 'snowflake', shape: { type: 'circle', radius: 1.5 } },
+      ],
+    }, { follow: hero });
+
+    hero.x = 5;
+    vfx.update(0.2);
+    assert.equal(shieldHandle.isActive(), true);
+    assert.ok(vfx.meshVfx.getStats().activeCount >= 1);
+    assert.ok(vfx.atlasParticles.getStats().normalTotal > 20);
+
+    shieldHandle.stop();
+    assert.equal(shieldHandle.isActive(), false);
   } finally {
     vfx.dispose();
   }

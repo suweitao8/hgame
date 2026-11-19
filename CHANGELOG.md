@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Extend `vfx/` with textured/flipbook/curve GPU particles (`vfx-atlas-particles.js`), pooled 3D mesh VFX with Fresnel rim glow, UV scroll, and procedural dissolve (`vfx-mesh.js`), and a declarative `.vfx.json` composite effect recipe player (`vfx-recipes.js`, `createVfxSystem.playEffect`, `validateVfxRecipe`, `createProceduralVfxAtlas`).
+
 - Add opt-in 3D temporal anti-aliasing for the HDR world, with depth-validated color history per view and FXAA fallback.
 
 - Load glTF KTX2/Basis textures on demand in 3D projects, including self-contained packaged releases. Reuse transcoded bytes with per-model texture ownership and release the worker pool on teardown.

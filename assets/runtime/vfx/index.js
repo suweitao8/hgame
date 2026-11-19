@@ -59,6 +59,29 @@ import {
   SCREEN_FEEDBACK_FRAGMENT_GLSL,
   createScreenFeedbackPass,
 } from './vfx-screen-crowd.js';
+import {
+  VFX_RENDER_MODE,
+  PROCEDURAL_VFX_ATLAS_REGIONS,
+  ATLAS_PARTICLE_VERTEX_GLSL,
+  ATLAS_PARTICLE_FRAGMENT_GLSL,
+  ATLAS_PARTICLE_WEBGL2_2D_VS,
+  ATLAS_PARTICLE_WEBGL2_2D_FS,
+  evaluateColorCurve,
+  evaluateSizeCurve,
+  createCurveLutTable,
+  createProceduralVfxAtlas,
+  evaluateAtlasParticlePosition,
+  createAtlasParticlePool,
+} from './vfx-atlas-particles.js';
+import {
+  VFX_MESH_VERTEX_GLSL,
+  VFX_MESH_FRAGMENT_GLSL,
+  createMeshVfxPool,
+} from './vfx-mesh.js';
+import {
+  validateVfxRecipe,
+  createEffectPlayer,
+} from './vfx-recipes.js';
 
 export {
   VFX_EASING,
@@ -108,6 +131,23 @@ export {
   SCREEN_FEEDBACK_VERTEX_GLSL,
   SCREEN_FEEDBACK_FRAGMENT_GLSL,
   createScreenFeedbackPass,
+  VFX_RENDER_MODE,
+  PROCEDURAL_VFX_ATLAS_REGIONS,
+  ATLAS_PARTICLE_VERTEX_GLSL,
+  ATLAS_PARTICLE_FRAGMENT_GLSL,
+  ATLAS_PARTICLE_WEBGL2_2D_VS,
+  ATLAS_PARTICLE_WEBGL2_2D_FS,
+  evaluateColorCurve,
+  evaluateSizeCurve,
+  createCurveLutTable,
+  createProceduralVfxAtlas,
+  evaluateAtlasParticlePosition,
+  createAtlasParticlePool,
+  VFX_MESH_VERTEX_GLSL,
+  VFX_MESH_FRAGMENT_GLSL,
+  createMeshVfxPool,
+  validateVfxRecipe,
+  createEffectPlayer,
 };
 
 export const VFX_PRESETS = Object.freeze({
@@ -205,8 +245,12 @@ function detectMode(modeOpt, sceneOrAdapter, THREE) {
  * @param {object | null} [options.sceneOrAdapter=null] Renderer adapter, scene or 2D context.
  * @param {object | null} [options.THREE] Three.js namespace for 3D rendering.
  * @param {number} [options.maxParticles]
+ * @param {number} [options.maxAtlasParticles]
+ * @param {number} [options.maxMeshVfx]
  * @param {number} [options.maxFloatingGlyphs]
  * @param {number} [options.maxPopups]
+ * @param {object | null} [options.atlasTexture=null]
+ * @param {Record<string, readonly number[]> | null} [options.atlasRegions=null]
  * @param {boolean} [options.renderThroughWalls=true]
  * @param {number} [options.seed=0x9e3779b9]
  */
@@ -215,8 +259,12 @@ export function createVfxSystem({
   sceneOrAdapter = null,
   THREE = globalThis.THREE ?? null,
   maxParticles,
+  maxAtlasParticles,
+  maxMeshVfx,
   maxFloatingGlyphs,
   maxPopups,
+  atlasTexture = null,
+  atlasRegions = null,
   renderThroughWalls = true,
   seed = 0x9e3779b9,
 } = {}) {
@@ -237,6 +285,23 @@ export function createVfxSystem({
     maxParticles,
     is2D,
     prng,
+  });
+  const atlasParticles = createAtlasParticlePool({
+    mode: resolvedMode,
+    THREE,
+    scene,
+    gl,
+    maxParticles: maxAtlasParticles,
+    is2D,
+    prng,
+    atlasTexture,
+    atlasRegions,
+  });
+  const meshVfx = createMeshVfxPool({
+    mode: resolvedMode,
+    THREE,
+    scene,
+    maxMeshes: maxMeshVfx,
   });
   const trails = createTrailsSystem({
     mode: resolvedMode,
@@ -266,6 +331,19 @@ export function createVfxSystem({
     mode: resolvedMode,
     THREE,
     scene,
+  });
+  const effects = createEffectPlayer({
+    atlasParticles,
+    meshVfx,
+    trails,
+    telegraphs,
+    hitstop,
+    shake,
+    screenFeedback,
+    scene,
+    THREE,
+    is2D,
+    prng,
   });
 
   const updateOut = { visualDt: 0, cameraOffset: shake.offset };
@@ -422,7 +500,10 @@ export function createVfxSystem({
     const clampedRaw = Math.min(Math.max(rawDt, 0), 0.1);
     const visualDt = hitstop.step(rawDt);
     shake.update(rawDt);
+    effects.update(visualDt);
     particles.update(visualDt);
+    atlasParticles.update(visualDt);
+    meshVfx.update(visualDt);
     trails.update(visualDt);
     telegraphs.update(visualDt);
     floatingText.update(visualDt, clampedRaw, cameraPos);
@@ -439,6 +520,7 @@ export function createVfxSystem({
       const w = cameraOrWidth ?? vp?.width ?? 960;
       const h = widthOrHeight ?? vp?.height ?? 540;
       particles.renderWebGL2(cam, w, h);
+      atlasParticles.renderWebGL2(cam, w, h);
       floatingText.renderWebGL2(cam, w, h);
     } else if (resolvedMode === 'canvas2d') {
       const ctx = ctxOrCamera?.save ? ctxOrCamera : sceneOrAdapter?.ctx;
@@ -448,6 +530,7 @@ export function createVfxSystem({
       const h = (ctxOrCamera?.save ? maybeHeight : widthOrHeight) ?? vp?.height ?? 540;
       telegraphs.renderCanvas2D(ctx, cam, w, h);
       particles.renderCanvas2D(ctx, cam, w, h);
+      atlasParticles.renderCanvas2D(ctx, cam, w, h);
       trails.renderCanvas2D(ctx, cam, w, h);
       floatingText.renderCanvas2D(ctx, cam, w, h);
       screenFeedback.renderCanvas2D(ctx, w, h);
@@ -458,7 +541,10 @@ export function createVfxSystem({
     prng.reset(seed);
     hitstop.reset();
     shake.reset();
+    effects.reset();
     particles.reset();
+    atlasParticles.reset();
+    meshVfx.reset();
     trails.reset();
     telegraphs.reset();
     floatingText.reset();
@@ -466,7 +552,10 @@ export function createVfxSystem({
   }
 
   function dispose() {
+    effects.dispose();
     particles.dispose();
+    atlasParticles.dispose();
+    meshVfx.dispose();
     trails.dispose();
     telegraphs.dispose();
     floatingText.dispose();
@@ -479,10 +568,18 @@ export function createVfxSystem({
     hitstop,
     shake,
     particles,
+    atlasParticles,
+    meshVfx,
+    effects,
     trails,
     telegraphs,
     floatingText,
     screenFeedback,
+    setAtlas: atlasParticles.setAtlas,
+    registerMesh: meshVfx.registerMesh,
+    registerEffect: effects.registerEffect,
+    playEffect: effects.playEffect,
+    stopAllEffects: effects.stopAll,
     emitHitImpact,
     burstParticles,
     slashArc: trails.slashArc,
@@ -505,6 +602,9 @@ export function createVfxSystem({
       return {
         mode: resolvedMode,
         particles: particles.getStats(),
+        atlasParticles: atlasParticles.getStats(),
+        meshVfx: meshVfx.getStats(),
+        effects: effects.getStats(),
         trails: trails.getStats(),
         telegraphs: telegraphs.getStats(),
         floatingText: floatingText.getStats(),

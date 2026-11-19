@@ -728,6 +728,27 @@ export const HGame: Readonly<{
     packCrowdAnimStatus: typeof packCrowdAnimStatus;
     unpackCrowdAnimStatus: typeof unpackCrowdAnimStatus;
     createVfxSystem: typeof createVfxSystem;
+    VFX_RENDER_MODE: Readonly<{
+        BILLBOARD: 0;
+        HORIZONTAL: 1;
+        STRETCHED: 2;
+        MESH: 3;
+    }>;
+    PROCEDURAL_VFX_ATLAS_REGIONS: Readonly<{
+        glow: readonly number[];
+        spark: readonly number[];
+        ring: readonly number[];
+        wave: readonly number[];
+        smoke: readonly number[];
+        shard: readonly number[];
+        rune_ring: readonly number[];
+        trail: readonly number[];
+        fireball_flipbook: readonly number[];
+        shield_hex: readonly number[];
+        snowflake: readonly number[];
+    }>;
+    createProceduralVfxAtlas: typeof createProceduralVfxAtlas;
+    validateVfxRecipe: typeof validateVfxRecipe;
     Component: typeof Component;
     Entity: typeof Entity;
     Scene: typeof Scene;
@@ -777,6 +798,8 @@ import { getDamagePreset } from './vfx/index.js';
 import { formatDamageValue } from './vfx/index.js';
 import { packCrowdAnimStatus } from './vfx/index.js';
 import { unpackCrowdAnimStatus } from './vfx/index.js';
+import { createProceduralVfxAtlas } from './vfx/index.js';
+import { validateVfxRecipe } from './vfx/index.js';
 export { defineProject, resolveFeatureGraph, PROJECT_PROFILES, OPTIONAL_FEATURES, DETERMINISTIC_PHYSICS_BACKENDS } from "./core/config.js";
 export { Scene, SceneManager } from "./core/scene.js";
 export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTagAncestors, createTagRegistry, GLOBAL_TAG_REGISTRY, createTagContainer, matchGameplayTags } from "./core/tags.js";
@@ -792,4 +815,4 @@ export { createStateMachine, BT_STATUS, sequence, selector, parallel, inverter, 
 export { createSeededRng, createStateChecksum, hashState, runScripted } from "./sim/index.js";
 export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
 export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, createVirtualList, createI18n } from "./ui/index.js";
-export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem } from "./vfx/index.js";
+export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";

@@ -5,18 +5,26 @@
  * @param {object | null} [options.sceneOrAdapter=null] Renderer adapter, scene or 2D context.
  * @param {object | null} [options.THREE] Three.js namespace for 3D rendering.
  * @param {number} [options.maxParticles]
+ * @param {number} [options.maxAtlasParticles]
+ * @param {number} [options.maxMeshVfx]
  * @param {number} [options.maxFloatingGlyphs]
  * @param {number} [options.maxPopups]
+ * @param {object | null} [options.atlasTexture=null]
+ * @param {Record<string, readonly number[]> | null} [options.atlasRegions=null]
  * @param {boolean} [options.renderThroughWalls=true]
  * @param {number} [options.seed=0x9e3779b9]
  */
-export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, maxFloatingGlyphs, maxPopups, renderThroughWalls, seed, }?: {
+export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, maxAtlasParticles, maxMeshVfx, maxFloatingGlyphs, maxPopups, atlasTexture, atlasRegions, renderThroughWalls, seed, }?: {
     mode?: "3d" | "canvas2d" | "webgl2d" | "headless" | null | undefined;
     sceneOrAdapter?: object | null;
     THREE?: object | null;
     maxParticles?: number | undefined;
+    maxAtlasParticles?: number | undefined;
+    maxMeshVfx?: number | undefined;
     maxFloatingGlyphs?: number | undefined;
     maxPopups?: number | undefined;
+    atlasTexture?: object | null;
+    atlasRegions?: Record<string, readonly number[]> | null | undefined;
     renderThroughWalls?: boolean | undefined;
     seed?: number | undefined;
 } | undefined): {
@@ -69,6 +77,68 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             additiveWrapCount: number;
             normalLastRanges: never[];
             additiveLastRanges: never[];
+        };
+    };
+    atlasParticles: {
+        capacity: number;
+        lut: {
+            bytes: Uint8Array;
+            width: number;
+            height: number;
+            texture: any;
+            readonly rowCount: number;
+            compile: (colorCurveRaw: any, sizeCurveRaw: any) => any;
+            flush: () => void;
+            sampleColor: (row: any, t: any, out?: Float32Array) => Float32Array;
+            sampleSize: (row: any, t: any) => number;
+            dispose: () => void;
+        };
+        regions: Record<string, readonly number[]>;
+        compileCurves: (colorCurveRaw: any, sizeCurveRaw: any) => any;
+        setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined) => void;
+        emit: (opts?: object) => number;
+        flushDirty: () => void;
+        update: (visualDt: any) => void;
+        renderWebGL2: (camera: any, viewWidth: any, viewHeight: any) => void;
+        renderCanvas2D: (ctx: any, camera: any, viewWidth: any, viewHeight: any) => void;
+        reset: () => void;
+        dispose: () => void;
+        readonly time: number;
+        getStats(): {
+            capacity: number;
+            curveRows: number;
+            normalCursor: number;
+            additiveCursor: number;
+            normalTotal: number;
+            additiveTotal: number;
+        };
+    };
+    meshVfx: {
+        capacity: number;
+        registerMesh: (id: string, geometryOrObject3D: object) => boolean;
+        spawn: (opts?: object) => number;
+        update: (visualDt: any) => void;
+        reset: () => void;
+        dispose: () => void;
+        getStats(): {
+            capacity: number;
+            activeCount: number;
+            totalSpawned: number;
+            registeredMeshes: number;
+        };
+    };
+    effects: {
+        registerEffect: (recipe: object) => object;
+        getEffect: (id: any) => any;
+        playEffect: (recipeOrId: string | object, options?: object) => object | null;
+        stopAll: () => void;
+        update: (visualDt: any) => void;
+        reset: () => void;
+        dispose: () => void;
+        getStats(): {
+            registeredCount: number;
+            activeEffects: number;
+            totalPlayed: number;
         };
     };
     trails: {
@@ -161,6 +231,11 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         reset: () => void;
         dispose: () => void;
     };
+    setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined) => void;
+    registerMesh: (id: string, geometryOrObject3D: object) => boolean;
+    registerEffect: (recipe: object) => object;
+    playEffect: (recipeOrId: string | object, options?: object) => object | null;
+    stopAllEffects: () => void;
     emitHitImpact: ({ x, y, z, damage, isCrit, isHeal, isMiss, dirX, dirY, dirZ, element, numberPreset, spamGroup, follow, combination, hitstopSec, shakeIntensity, }?: {
         x?: number | undefined;
         y?: number | undefined;
@@ -230,6 +305,25 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             additiveWrapCount: number;
             normalLastRanges: never[];
             additiveLastRanges: never[];
+        };
+        atlasParticles: {
+            capacity: number;
+            curveRows: number;
+            normalCursor: number;
+            additiveCursor: number;
+            normalTotal: number;
+            additiveTotal: number;
+        };
+        meshVfx: {
+            capacity: number;
+            activeCount: number;
+            totalSpawned: number;
+            registeredMeshes: number;
+        };
+        effects: {
+            registeredCount: number;
+            activeEffects: number;
+            totalPlayed: number;
         };
         trails: {
             slashCap: number;
@@ -376,4 +470,21 @@ import { unpackCrowdAnimStatus } from './vfx-screen-crowd.js';
 import { SCREEN_FEEDBACK_VERTEX_GLSL } from './vfx-screen-crowd.js';
 import { SCREEN_FEEDBACK_FRAGMENT_GLSL } from './vfx-screen-crowd.js';
 import { createScreenFeedbackPass } from './vfx-screen-crowd.js';
-export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass };
+import { VFX_RENDER_MODE } from './vfx-atlas-particles.js';
+import { PROCEDURAL_VFX_ATLAS_REGIONS } from './vfx-atlas-particles.js';
+import { ATLAS_PARTICLE_VERTEX_GLSL } from './vfx-atlas-particles.js';
+import { ATLAS_PARTICLE_FRAGMENT_GLSL } from './vfx-atlas-particles.js';
+import { ATLAS_PARTICLE_WEBGL2_2D_VS } from './vfx-atlas-particles.js';
+import { ATLAS_PARTICLE_WEBGL2_2D_FS } from './vfx-atlas-particles.js';
+import { evaluateColorCurve } from './vfx-atlas-particles.js';
+import { evaluateSizeCurve } from './vfx-atlas-particles.js';
+import { createCurveLutTable } from './vfx-atlas-particles.js';
+import { createProceduralVfxAtlas } from './vfx-atlas-particles.js';
+import { evaluateAtlasParticlePosition } from './vfx-atlas-particles.js';
+import { createAtlasParticlePool } from './vfx-atlas-particles.js';
+import { VFX_MESH_VERTEX_GLSL } from './vfx-mesh.js';
+import { VFX_MESH_FRAGMENT_GLSL } from './vfx-mesh.js';
+import { createMeshVfxPool } from './vfx-mesh.js';
+import { validateVfxRecipe } from './vfx-recipes.js';
+import { createEffectPlayer } from './vfx-recipes.js';
+export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, createMeshVfxPool, validateVfxRecipe, createEffectPlayer };

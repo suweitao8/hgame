@@ -114,6 +114,13 @@ export {
   unpackCrowdAnimStatus,
   createScreenFeedbackPass,
   createVfxSystem,
+  VFX_RENDER_MODE,
+  PROCEDURAL_VFX_ATLAS_REGIONS,
+  createProceduralVfxAtlas,
+  createAtlasParticlePool,
+  createMeshVfxPool,
+  validateVfxRecipe,
+  createEffectPlayer,
 } from './vfx/index.js';
 
 import { defineProject, resolveFeatureGraph } from './core/config.js';
@@ -206,6 +213,10 @@ import {
   packCrowdAnimStatus,
   unpackCrowdAnimStatus,
   createVfxSystem,
+  VFX_RENDER_MODE,
+  PROCEDURAL_VFX_ATLAS_REGIONS,
+  createProceduralVfxAtlas,
+  validateVfxRecipe,
 } from './vfx/index.js';
 
 /** Public HGame facade. Physics providers stay lazy and load only when selected. */
@@ -305,6 +316,10 @@ export const HGame = Object.freeze({
   packCrowdAnimStatus,
   unpackCrowdAnimStatus,
   createVfxSystem,
+  VFX_RENDER_MODE,
+  PROCEDURAL_VFX_ATLAS_REGIONS,
+  createProceduralVfxAtlas,
+  validateVfxRecipe,
   Component,
   Entity,
   Scene,
