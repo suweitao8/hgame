@@ -504,6 +504,11 @@ export function createThreeAdapter({
       resetPrimaryHistory();
       for (const entry of viewPipelines) entry?.pipeline.resetGiSsrHistory();
     };
+    const resetTemporalHistory = postPipeline.resetTemporalHistory;
+    postPipeline.resetTemporalHistory = () => {
+      resetTemporalHistory();
+      for (const entry of viewPipelines) entry?.pipeline.resetTemporalHistory();
+    };
   }
 
   appliedPreset = qualityController?.state?.preset ?? null;

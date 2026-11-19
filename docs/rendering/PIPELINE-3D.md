@@ -79,6 +79,12 @@ adapter.postPipeline.setPasses([
 
 Use an opaque fullscreen shader material that writes linear color across the output. The pipeline supplies `position` and `uv` attributes and restores the input uniforms after each draw. It owns up to two reusable pane-sized scratch targets. The game owns its materials. `enabled: false` skips an effect, as does a missing depth attachment when the effect requires depth. In forward fallback the engine skips the HDR chain.
 
+### Temporal antialiasing
+
+Set `post3d: { temporalAA: true }` on the Three adapter or call `adapter.postPipeline.setState({ temporalAA: true })`. Each view jitters the world camera, then uses the camera matrices, scene depth and neighboring colors to accumulate an HDR history. The resolve runs before the first-person layer, custom HDR effects, exposure, bloom and tone mapping. Dynamic surfaces use camera reprojection and depth and color rejection. Object motion vectors and temporal upscaling remain future work.
+
+Each enabled view owns two color and depth targets sized to its render buffer. Camera or world switches, projection changes, large camera movement, pauses and target resizes invalidate accumulation. Call `adapter.postPipeline.resetTemporalHistory()` for an explicit cut across the primary camera and split views. When the world resolves with TAA, the final pass retains FXAA for first-person content if configured. XR, array cameras and unavailable scene depth take the configured FXAA path.
+
 ### Frame and pass diagnostics
 
 Enable `diagnostics3d: true` on `createThreeAdapter` and read `adapter.getRenderDiagnostics()` after rendering. The snapshot reports full-frame CPU submission, draw calls, triangles, the ordered draws with their view indices, and the estimated payload of the offscreen targets in rendered views. The `world` draw includes Three.js shadow work. Target bytes estimate color, depth and MSAA attachments. The canvas, driver overhead, and textures and buffers owned by the game are outside that estimate.

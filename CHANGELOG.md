@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add opt-in 3D temporal anti-aliasing for the HDR world, with depth-validated color history per view and FXAA fallback.
+
 - Load glTF KTX2/Basis textures on demand in 3D projects, including self-contained packaged releases. Reuse transcoded bytes with per-model texture ownership and release the worker pool on teardown.
 
 - Report submitted WebGL buffer and texture upload payloads by frame and pass in opt-in Three diagnostics.

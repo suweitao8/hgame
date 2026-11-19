@@ -993,6 +993,80 @@ void main() {
 }
 `;
 
+export const TEMPORAL_AA_FRAGMENT_GLSL3 = `
+uniform sampler2D tCurrentColor;
+uniform sampler2D tCurrentDepth;
+uniform sampler2D tPreviousColor;
+uniform sampler2D tPreviousDepth;
+uniform mat4 uPreviousProjection;
+uniform mat4 uPreviousInvProj;
+uniform mat4 uPreviousFromCurrentView;
+uniform vec2 uJitterUv;
+uniform float uHistoryWeight;
+in vec2 vUv;
+out vec4 fragColor;
+${SCENE_PROJECTION_GLSL3}
+
+const ivec2 CROSS_OFFSETS[8] = ivec2[8](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1),
+                                       ivec2(-2, 0), ivec2(2, 0), ivec2(0, -2), ivec2(0, 2));
+
+float nearbySolidDepth(sampler2D depths, ivec2 pixel, ivec2 size) {
+  float nearest = skyDepth();
+  for (int i = 0; i < 4; i++) {
+    float sampleDepth = texelFetch(depths, clamp(pixel + CROSS_OFFSETS[i], ivec2(0), size - 1), 0).r;
+    nearest = uSceneDepthMode == 2 ? max(nearest, sampleDepth) : min(nearest, sampleDepth);
+  }
+  return nearest;
+}
+
+void main() {
+  ivec2 size = textureSize(tCurrentColor, 0);
+  ivec2 pixel = clamp(ivec2(vUv * vec2(size)), ivec2(0), size - 1);
+  vec4 current = texelFetch(tCurrentColor, pixel, 0);
+  float depth = texelFetch(tCurrentDepth, pixel, 0).r;
+  gl_FragDepth = depth;
+  fragColor = current;
+  if (uHistoryWeight <= 0.0) return;
+  bool currentSolid = hasSceneGeometry(depth);
+  float reprojectionDepth = currentSolid ? depth : nearbySolidDepth(tCurrentDepth, pixel, size);
+  if (!hasSceneGeometry(reprojectionDepth)) return;
+
+  vec3 viewPosition = reconstructViewPos(vUv, reprojectionDepth);
+  vec4 previousView = uPreviousFromCurrentView * vec4(viewPosition, 1.0);
+  vec4 previousClip = uPreviousProjection * previousView;
+  if (!insideSceneClip(previousClip)) return;
+  // Use camera motion without including the difference between jitter samples.
+  vec2 historyUv = previousClip.xy / previousClip.w * 0.5 + 0.5 + uJitterUv;
+  if (any(lessThan(historyUv, vec2(0.0))) || any(greaterThanEqual(historyUv, vec2(1.0)))) return;
+  ivec2 historyPixel = ivec2(historyUv * vec2(size));
+  float previousDepth = texelFetch(tPreviousDepth, historyPixel, 0).r;
+  bool previousSolid = hasSceneGeometry(previousDepth);
+  if (!previousSolid) previousDepth = nearbySolidDepth(tPreviousDepth, historyPixel, size);
+  if (!hasSceneGeometry(previousDepth)) return;
+  float previousClipZ = uSceneDepthMode == 0 ? previousDepth * 2.0 - 1.0 : previousDepth;
+  vec2 depthUv = (vec2(historyPixel) + 0.5) / vec2(size);
+  vec4 recordedView = uPreviousInvProj * vec4(depthUv * 2.0 - 1.0, previousClipZ, 1.0);
+  float recordedZ = recordedView.z / max(abs(recordedView.w), 1e-8);
+  if (abs(previousView.z - recordedZ) > max(0.02, abs(previousView.z) * 0.015)) return;
+
+  vec3 low = current.rgb;
+  vec3 high = current.rgb;
+  for (int i = 0; i < 8; i++) {
+    vec3 value = texelFetch(tCurrentColor, clamp(pixel + CROSS_OFFSETS[i], ivec2(0), size - 1), 0).rgb;
+    low = min(low, value);
+    high = max(high, value);
+  }
+  vec3 history = texture(tPreviousColor, historyUv).rgb;
+  vec3 clipped = clamp(history, low, high);
+  float reactive = length(history - clipped) / max(0.025, length(current.rgb));
+  float confidence = 1.0 - smoothstep(0.08, 0.6, reactive);
+  // Geometry/background alternation can come from jittered silhouette coverage.
+  // Limit its history so a moving edge cannot retain a strong trail.
+  float weight = currentSolid && previousSolid ? uHistoryWeight : min(uHistoryWeight, 0.55);
+  fragColor.rgb = mix(current.rgb, clipped, weight * confidence);
+}
+`;
+
 export const FXAA_SHARPEN_FRAGMENT_GLSL3 = `
 uniform sampler2D tDiffuse;
 uniform vec2 uTexelSize;

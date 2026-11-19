@@ -11,6 +11,7 @@ import {
   BLOOM_DOWNSAMPLE_FRAGMENT_GLSL3,
   BLOOM_UPSAMPLE_FRAGMENT_GLSL3,
   COMPOSITE_FRAGMENT_GLSL3,
+  TEMPORAL_AA_FRAGMENT_GLSL3,
   FXAA_SHARPEN_FRAGMENT_GLSL3,
 } from './shaders.js';
 import { createFullscreenTriangle, inspectWebGLCapabilities, readSceneSampleCounts } from './capabilities.js';
@@ -20,6 +21,7 @@ import { readWorldPosition } from '../shadow3d/transform.js';
 import { syncCameraWorldMatrices, usesZeroToOneDepth } from '../camera3d/matrices.js';
 import { fitDrawingBuffer, readDrawingBufferLimits } from '../quality3d/viewport.js';
 import { drawWithDiagnostics } from '../quality3d/render-diagnostics.js';
+import { createTemporalAA } from './temporal-aa.js';
 
 const POST_STATE_SCALAR_KEYS = [
   'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
@@ -109,7 +111,7 @@ function normalizeHdrPasses(passes) {
  * @property {boolean} [autoClear] Restored after each render.
  * @property {number} [toneMapping] Restored after each render.
  * @property {{enabled: boolean}} [shadowMap]
- * @property {{isWebGL2?: boolean, logarithmicDepthBuffer?: boolean, getMaxAnisotropy?(): number}} [capabilities]
+ * @property {{isWebGL2?: boolean, logarithmicDepthBuffer?: boolean, reversedDepthBuffer?: boolean, getMaxAnisotropy?(): number}} [capabilities]
  * @property {(target: object | null) => void} setRenderTarget
  * @property {(x: number, y: number, width: number, height: number) => void} [setViewport]
  * @property {(x: number, y: number, width: number, height: number) => void} [setScissor]
@@ -139,6 +141,7 @@ function normalizeHdrPasses(passes) {
  * @property {number} [ssrMaxDist=28] World units.
  * @property {number} [ssrThickness=0.35] World units.
  * @property {boolean} [temporalGiSsr=false] Reuse depth-validated GI and reflection history on half-float targets.
+ * @property {boolean} [temporalAA=false] Jitter and resolve world color using depth-validated temporal history.
  * @property {number} [contactShadows] 0..1; default follows the quality preset (0.65 or 0).
  * @property {number} [contactShadowLength=0.32] World units.
  * @property {number} [contactShadowThickness=0.08] World units.
@@ -205,6 +208,7 @@ function normalizeHdrPasses(passes) {
  * @property {number} ssrMaxDist
  * @property {number} ssrThickness
  * @property {boolean} temporalGiSsr
+ * @property {boolean} temporalAA
  * @property {number} contactShadows
  * @property {number} contactShadowLength
  * @property {number} contactShadowThickness
@@ -255,6 +259,7 @@ function normalizeHdrPasses(passes) {
  * @property {boolean} hasAutoExposureRT Eye-adaptation pyramid allocated.
  * @property {number} bloomMipCount
  * @property {boolean} hasLdrRT Intermediate LDR target for FXAA/sharpen.
+ * @property {boolean} hasTemporalAA Temporal color and depth history allocated.
  */
 
 /**
@@ -262,6 +267,7 @@ function normalizeHdrPasses(passes) {
  * @typedef {object} PostPipelineCamera
  * @property {boolean} [isCamera]
  * @property {boolean} [isOrthographicCamera]
+ * @property {boolean} [isArrayCamera]
  * @property {number} [coordinateSystem]
  * @property {boolean} [reversedDepth]
  * @property {number} [near] Default 0.1.
@@ -309,6 +315,7 @@ function normalizeHdrPasses(passes) {
  * @property {(patch?: PostPipelineSettings) => void} setState Merges finite numeric/array settings.
  * @property {(passes: readonly PostHdrPass[]) => void} setPasses Replaces the HDR effect chain.
  * @property {() => void} resetGiSsrHistory Discard GI and reflection history after a scene cut or discontinuous motion.
+ * @property {() => void} resetTemporalHistory Discard AA, GI and reflection histories after a scene cut.
  * @property {(world: object, camera: PostPipelineCamera, options?: PostPipelineRenderOptions) => void} render Renders `world` through the pipeline (forward fallback when unsupported).
  * @property {() => void} handleContextLost Releases GPU targets.
  * @property {() => void} handleContextRestored Rebuilds GPU targets.
@@ -351,6 +358,7 @@ export function createPostPipeline3D(options = {}) {
     volumetricIntensity = 0.18,
     giIntensity = 0.55,
     temporalGiSsr = false,
+    temporalAA = false,
     giRadius = 2.4,
     ssrIntensity = 0.35,
     ssrMaxDist = 28.0,
@@ -430,6 +438,7 @@ export function createPostPipeline3D(options = {}) {
     volumetricIntensity,
     giIntensity,
     temporalGiSsr: Boolean(temporalGiSsr),
+    temporalAA: Boolean(temporalAA),
     giRadius,
     ssrIntensity,
     ssrMaxDist,
@@ -489,6 +498,7 @@ export function createPostPipeline3D(options = {}) {
   let lumaMips = [];
   let adaptRT = [];
   let ldrRT = null;
+  let temporalAa = null;
   let bloomMips = [];
   let postCamera = null;
   let postScene = null;
@@ -567,6 +577,7 @@ export function createPostPipeline3D(options = {}) {
     giSsrRT?.dispose?.();
     giHistoryRT?.dispose?.();
     ldrRT?.dispose?.();
+    temporalAa?.release();
     disposeExposureTargets();
     syncCustomTargets(0);
     for (const mip of bloomMips) {
@@ -585,6 +596,14 @@ export function createPostPipeline3D(options = {}) {
     bloomMips = [];
   }
 
+  function makeDepthTexture(width, height) {
+    const depth = new THREE.DepthTexture(width, height, THREE.UnsignedIntType);
+    depth.minFilter = THREE.NearestFilter;
+    depth.magFilter = THREE.NearestFilter;
+    depth.generateMipmaps = false;
+    return depth;
+  }
+
   function syncSceneTarget() {
     const requestedSamples = Math.min(Math.max(0, activePreset.msaaSamples ?? 0), capabilities.maxSamples);
     let msaa = requestedSamples;
@@ -600,13 +619,7 @@ export function createPostPipeline3D(options = {}) {
     if (sceneRT?.width === bufferWidth && sceneRT.height === bufferHeight &&
         sceneRT.samples === msaa && Boolean(sceneRT.depthTexture) === sampleDepth) return;
 
-    let depthTexture = null;
-    if (sampleDepth) {
-      depthTexture = new THREE.DepthTexture(bufferWidth, bufferHeight, THREE.UnsignedIntType);
-      depthTexture.minFilter = THREE.NearestFilter;
-      depthTexture.magFilter = THREE.NearestFilter;
-      depthTexture.generateMipmaps = false;
-    }
+    const depthTexture = sampleDepth ? makeDepthTexture(bufferWidth, bufferHeight) : null;
 
     const replacement = makeColorTarget(bufferWidth, bufferHeight, {
       type: hdrType,
@@ -619,16 +632,17 @@ export function createPostPipeline3D(options = {}) {
     sceneRT = replacement;
   }
 
-  function syncViewCompositeTarget(enabled) {
+  function syncViewCompositeTarget(enabled, depthBuffer = true) {
     if (!enabled) {
       viewCompositeRT?.dispose?.();
       viewCompositeRT = null;
-    } else if (viewCompositeRT?.width !== bufferWidth || viewCompositeRT.height !== bufferHeight) {
+    } else if (viewCompositeRT?.width !== bufferWidth || viewCompositeRT.height !== bufferHeight ||
+        viewCompositeRT.depthBuffer !== depthBuffer) {
       // Three can discard multisampled attachments after each render call.
       // Color must survive the world lighting and first-person draws here.
       const replacement = makeColorTarget(bufferWidth, bufferHeight, {
         type: hdrType,
-        depthBuffer: true,
+        depthBuffer,
       });
       viewCompositeRT?.dispose?.();
       viewCompositeRT = replacement;
@@ -960,7 +974,10 @@ export function createPostPipeline3D(options = {}) {
     requestedHeight = Math.max(1, Math.floor(h));
     const next = fitDrawingBuffer(requestedWidth, requestedHeight, 1, targetLimits);
     const changed = next.bufferWidth !== bufferWidth || next.bufferHeight !== bufferHeight;
-    if (changed) resetGiSsrHistory();
+    if (changed) {
+      resetGiSsrHistory();
+      temporalAa?.release();
+    }
     bufferWidth = next.bufferWidth;
     bufferHeight = next.bufferHeight;
     return changed;
@@ -979,7 +996,7 @@ export function createPostPipeline3D(options = {}) {
       }
       setBufferDimensions(buffer.width, buffer.height);
     }
-    resetGiSsrHistory();
+    resetTemporalHistory();
     activePreset = { ...QUALITY3D_PRESETS.medium, ...nextPreset };
     if (!explicitFxaa && 'fxaa' in activePreset) {
       state.fxaa = Boolean(activePreset.fxaa);
@@ -998,6 +1015,10 @@ export function createPostPipeline3D(options = {}) {
     if ('fxaa' in patch) state.fxaa = Boolean(patch.fxaa);
     if ('autoExposure' in patch) state.autoExposure = Boolean(patch.autoExposure);
     if ('temporalGiSsr' in patch) state.temporalGiSsr = Boolean(patch.temporalGiSsr);
+    if ('temporalAA' in patch) {
+      state.temporalAA = Boolean(patch.temporalAA);
+      if (!state.temporalAA && temporalAa?.targets.length) temporalAa.release();
+    }
     if (giHistoryRT && GI_HISTORY_SETTINGS.some(key => Number.isFinite(patch[key]) && patch[key] !== state[key])) {
       resetGiSsrHistory();
     }
@@ -1051,6 +1072,25 @@ export function createPostPipeline3D(options = {}) {
     }
   }
 
+  function resetTemporalHistory() {
+    resetGiSsrHistory();
+    temporalAa?.reset();
+  }
+
+  function createWorldTemporalAA() {
+    return createTemporalAA(THREE,
+      (width, height) => makeColorTarget(width, height, { type: hdrType, depthTexture: makeDepthTexture(width, height) }),
+      uniforms => new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        vertexShader: FULLSCREEN_VERTEX_GLSL3,
+        fragmentShader: TEMPORAL_AA_FRAGMENT_GLSL3,
+        uniforms,
+        depthTest: true,
+        depthWrite: true,
+        depthFunc: THREE.AlwaysDepth,
+      }));
+  }
+
   function finishGiSsrBlur(world, camera, stepDt, useSsr) {
     const depthMode = sceneProjectionUniforms.uSceneDepthMode.value;
     let material = mats.blurRgba;
@@ -1080,7 +1120,7 @@ export function createPostPipeline3D(options = {}) {
       giHistoryRT = giSsrRT;
       giSsrRT = previous;
       giHistoryView.copy(camera.matrixWorldInverse);
-      giHistoryProjection.copy(camera.projectionMatrix);
+      giHistoryProjection.copy(sceneProjectionUniforms.uProj.value);
       giHistoryGuideOffset = sceneProjectionUniforms.uSceneDepthGuideOffset.value;
       giHistoryDepthMode = depthMode;
       giHistoryWorld = world;
@@ -1109,13 +1149,22 @@ export function createPostPipeline3D(options = {}) {
   function reportTargets(sink) {
     if (!sink) return;
     for (const target of [sceneRT, viewCompositeRT, halfRT, aoBlurRT, halfScratchRT, giSsrRT,
-      giHistoryRT, ldrRT, ...lumaMips, ...adaptRT, ...customTargets]) {
+      giHistoryRT, ldrRT, ...lumaMips, ...adaptRT, ...customTargets, ...(temporalAa?.targets ?? [])]) {
       if (target) sink.recordTarget(target);
     }
     for (const { down, up } of bloomMips) {
       if (down) sink.recordTarget(down);
       if (up) sink.recordTarget(up);
     }
+  }
+
+  function compositeWorldIntoViewTarget(compU) {
+    runPass('world-lighting', mats.worldLighting, viewCompositeRT);
+    compU.tScene.value = viewCompositeRT.texture;
+    compU.uUseAo.value = 0;
+    compU.uUseVolumetric.value = 0;
+    compU.uUseGiSsr.value = 0;
+    compU.uContactShadows.value = 0;
   }
 
   function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, dt = 0, outputViewport = null,
@@ -1148,7 +1197,13 @@ export function createPostPipeline3D(options = {}) {
       renderer.shadowMap?.enabled !== false && shadow?.matrix && halfRT && aoScratch);
     const activePasses = customPasses.length ? customPasses.filter(pass => pass.enabled && (!pass.inputs.depth || readSceneDepth)) : customPasses;
     const customDepth = activePasses.some(pass => pass.inputs.depth);
-    const needsDepth = useAo || wantsGiSsr || wantsContact || wantsVolumetric || customDepth;
+    const useTemporal = Boolean(state.temporalAA && readSceneDepth && renderer.xr?.isPresenting !== true &&
+      !renderer.capabilities?.reversedDepthBuffer && !camera.reversedDepth && !camera.isArrayCamera);
+    let temporalFrame = useTemporal;
+    const needsProjection = useAo || wantsGiSsr || wantsContact || wantsVolumetric || useTemporal;
+    const needsDepth = needsProjection || customDepth;
+    if (useTemporal) temporalAa ??= createWorldTemporalAA();
+    else if (temporalAa?.targets.length) temporalAa.release();
 
     const previousDiagnostics = activeDiagnostics;
     activeDiagnostics = diagnostics;
@@ -1163,16 +1218,20 @@ export function createPostPipeline3D(options = {}) {
       if (renderer.xr?.isPresenting !== false || renderer.autoClearColor !== true || renderer.autoClearDepth !== true) {
         renderer.clear(true, true, false);
       }
-      drawWithDiagnostics(renderer, diagnostics?.beginPass, 'world', sceneRT, world, camera);
-
-      if (useAo || wantsGiSsr || wantsContact || wantsVolumetric) {
-        syncCameraWorldMatrices(camera);
-        sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
-        sceneProjectionUniforms.uProj.value.copy(camera.projectionMatrix);
-        sceneProjectionUniforms.uSceneDepthMode.value = camera.reversedDepth ? 2 : Number(usesZeroToOneDepth(camera));
-        // Orthographic views can include geometry behind the camera origin.
-        sceneProjectionUniforms.uSceneDepthGuideOffset.value = camera.isOrthographicCamera
-          ? Math.max(0, -(camera.near ?? 0)) : 0;
+      if (useTemporal) temporalAa.jitter(camera, bufferWidth, bufferHeight);
+      try {
+        drawWithDiagnostics(renderer, diagnostics?.beginPass, 'world', sceneRT, world, camera);
+        if (needsProjection) {
+          syncCameraWorldMatrices(camera);
+          sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
+          sceneProjectionUniforms.uProj.value.copy(camera.projectionMatrix);
+          sceneProjectionUniforms.uSceneDepthMode.value = camera.reversedDepth ? 2 : Number(usesZeroToOneDepth(camera));
+          // Orthographic views can include geometry behind the camera origin.
+          sceneProjectionUniforms.uSceneDepthGuideOffset.value = camera.isOrthographicCamera
+            ? Math.max(0, -(camera.near ?? 0)) : 0;
+        }
+      } finally {
+        if (useTemporal) temporalFrame = temporalAa.restore(camera);
       }
       let hasSunDir = false;
       if (wantsContact || wantsVolumetric) {
@@ -1267,25 +1326,25 @@ export function createPostPipeline3D(options = {}) {
         || viewScene.onBeforeRender !== THREE.Scene.prototype.onBeforeRender
         || viewScene.onAfterRender !== THREE.Scene.prototype.onAfterRender
       ));
-      const separateViewModel = hasViewModel && (sceneRT.samples > 0 || useAo || useVolumetric || useGiSsr || useContactShadows || customDepth);
-      syncViewCompositeTarget(separateViewModel);
+      const worldLightingEnabled = useAo || useVolumetric || useGiSsr || useContactShadows;
+      const separateViewModel = hasViewModel && (sceneRT.samples > 0 || worldLightingEnabled || customDepth || temporalFrame);
+      const prelightTemporal = temporalFrame && worldLightingEnabled;
+      syncViewCompositeTarget(separateViewModel || prelightTemporal, separateViewModel);
+      if (temporalFrame) {
+        if (prelightTemporal) compositeWorldIntoViewTarget(compU);
+        compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, sceneRT.depthTexture,
+          sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass);
+      }
       if (hasViewModel) {
         if (separateViewModel) {
           // Finish the world lighting before clearing depth for the first-person layer.
-          runPass('world-lighting', mats.worldLighting, viewCompositeRT);
+          compositeWorldIntoViewTarget(compU);
         }
         if (typeof renderer.clearDepth === 'function') renderer.clearDepth();
         else renderer.clear?.(false, true, false);
         gl?.depthRange?.(0, 0.05);
         drawWithDiagnostics(renderer, diagnostics?.beginPass, 'viewmodel', separateViewModel ? viewCompositeRT : sceneRT, viewScene, viewCamera);
         gl?.depthRange?.(0, 1);
-        if (separateViewModel) {
-          compU.tScene.value = viewCompositeRT.texture;
-          compU.uUseAo.value = 0;
-          compU.uUseVolumetric.value = 0;
-          compU.uUseGiSsr.value = 0;
-          compU.uContactShadows.value = 0;
-        }
       }
 
       if (activePasses.length || customTargets.length) {
@@ -1357,7 +1416,8 @@ export function createPostPipeline3D(options = {}) {
       }
 
       // 3. Composite HDR + contact shadows + GI/SSR + grading + UE Filmic/ACES/AgX tone mapping
-      const useFinalFxaaPass = Boolean(ldrRT && (state.fxaa || state.sharpness > 0.001));
+      const useFxaa = state.fxaa && (!temporalFrame || hasViewModel);
+      const useFinalFxaaPass = Boolean(ldrRT && (useFxaa || state.sharpness > 0.001));
       compU.tBloom.value = bloomTexture;
       compU.tAutoExposure.value = useAutoExposure ? adaptRT[adaptIndex].texture : null;
       compU.uUseBloom.value = useBloom ? 1 : 0;
@@ -1388,11 +1448,11 @@ export function createPostPipeline3D(options = {}) {
         mats.fxaaSharpen.uniforms.tDiffuse.value = ldrRT.texture;
         mats.fxaaSharpen.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
         mats.fxaaSharpen.uniforms.uSharpness.value = state.sharpness;
-        mats.fxaaSharpen.uniforms.uFxaaEnabled.value = state.fxaa ? 1 : 0;
+        mats.fxaaSharpen.uniforms.uFxaaEnabled.value = useFxaa ? 1 : 0;
         runPass('fxaa-sharpen', mats.fxaaSharpen, null, outputViewport);
       }
     } catch (error) {
-      resetGiSsrHistory();
+      resetTemporalHistory();
       throw error;
     } finally {
       gl?.depthRange?.(0, 1);
@@ -1427,6 +1487,8 @@ export function createPostPipeline3D(options = {}) {
     if (disposed) return false;
     disposed = true;
     disposeTargets();
+    temporalAa?.dispose();
+    temporalAa = null;
     quadGeom?.dispose?.();
     if (mats) for (const mat of Object.values(mats)) mat.dispose?.();
     mats = null;
@@ -1454,6 +1516,7 @@ export function createPostPipeline3D(options = {}) {
         hasAutoExposureRT: Boolean(lumaMips.length > 0 && adaptRT.length === 2),
         bloomMipCount: bloomMips.length,
         hasLdrRT: Boolean(ldrRT),
+        hasTemporalAA: Boolean(temporalAa?.targets.length),
       };
     },
     resize,
@@ -1461,6 +1524,7 @@ export function createPostPipeline3D(options = {}) {
     setState,
     setPasses,
     resetGiSsrHistory,
+    resetTemporalHistory,
     render,
     handleContextLost,
     handleContextRestored,

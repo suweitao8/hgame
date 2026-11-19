@@ -148,6 +148,19 @@ test('split Three views use pane-sized HDR targets, isolated exposure, and physi
   assert.deepEqual(passes.filter(pass => pass.exposure === 1.25).map(pass => pass.target?.width), [451, 450]);
   assert.deepEqual(passes.filter(pass => !pass.target).map(pass => pass.viewport), [[0, 0, 451, 600], [451, 0, 450, 600]]);
   assert.deepEqual(passes.filter(pass => pass.material === effect).map(pass => pass.target.width), [451, 450]);
+  adapter.postPipeline.setState({ temporalAA: true });
+  passes.length = 0;
+  adapter.render(scene);
+  const taa = pass => pass.material?.uniforms?.tPreviousDepth;
+  assert.deepEqual(passes.filter(taa).map(pass => pass.target.width), [451, 450]);
+  const firstTemporalTargets = passes.filter(taa).map(pass => pass.target);
+  passes.length = 0;
+  adapter.render(scene);
+  assert.ok(passes.filter(taa).every((pass, index) => pass.target !== firstTemporalTargets[index]));
+  adapter.postPipeline.resetTemporalHistory();
+  passes.length = 0;
+  adapter.render(scene);
+  assert.deepEqual(passes.filter(taa).map(pass => pass.material.uniforms.uHistoryWeight.value), [0, 0]);
   adapter.setViews(null);
   assert.ok(draws.every(pass => released.includes(pass.target)));
   adapter.render(scene);
@@ -357,6 +370,76 @@ test('Three diagnostics account for frame and pass buffer and texture upload pay
   assert.equal(gl.bufferData, bufferData);
   assert.equal(gl.texSubImage2D, texSubImage2D);
   adapter.dispose();
+});
+
+test('temporal AA jitters the world, restores camera matrices and invalidates per-view history', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const camera = new THREE.PerspectiveCamera(60, 1.5, 0.1, 200);
+  const original = camera.projectionMatrix.toArray();
+  const originalInverse = camera.projectionMatrixInverse.toArray();
+  const viewCamera = new THREE.PerspectiveCamera();
+  const world = new THREE.Scene();
+  const viewScene = new THREE.Scene();
+  viewScene.add(new THREE.Object3D());
+  const stages = [];
+  const historyWeights = [];
+  let jitteredProjection;
+  renderer.render = (scene, drawnCamera) => {
+    if (drawnCamera === camera) jitteredProjection = drawnCamera.projectionMatrix.toArray();
+    if (scene === viewScene) assert.deepEqual(camera.projectionMatrix.toArray(), original);
+    const sampler = scene.children?.[0]?.material?.uniforms;
+    if (sampler?.tPreviousDepth) historyWeights.push(sampler.uHistoryWeight.value);
+  };
+  const pipeline = createPostPipeline3D({ THREE, renderer, width: 318, height: 212,
+    preset: QUALITY3D_PRESETS.low, temporalAA: true, fxaa: false, sharpness: 0 });
+  const diagnostics = { beginPass(name, target) { stages.push([name, target]); }, recordTarget() {} };
+  const draw = (dt = 1 / 60) => pipeline.render(world, camera, { viewScene, viewCamera, dt, diagnostics });
+
+  draw();
+  assert.deepEqual(stages.map(([name]) => name), ['world', 'temporal-aa', 'world-lighting', 'viewmodel', 'tone-mapping']);
+  assert.equal(stages[0][1].resolveDepthBuffer, true);
+  assert.ok(stages[1][1].depthTexture);
+  assert.deepEqual(historyWeights, [0]);
+  assert.notDeepEqual(jitteredProjection, original);
+  assert.deepEqual(camera.projectionMatrix.toArray(), original);
+  assert.deepEqual(camera.projectionMatrixInverse.toArray(), originalInverse);
+  const firstHistory = stages[1][1];
+  stages.length = 0;
+  draw();
+  assert.ok(historyWeights.at(-1) > 0);
+  assert.notEqual(stages[1][1], firstHistory);
+
+  draw(0.5);
+  assert.equal(historyWeights.at(-1), 0);
+  draw();
+  assert.ok(historyWeights.at(-1) > 0);
+  pipeline.resetTemporalHistory();
+  draw();
+  assert.equal(historyWeights.at(-1), 0);
+  draw();
+  camera.position.x = 5;
+  draw();
+  assert.equal(historyWeights.at(-1), 0);
+  pipeline.resize(225, 150);
+  stages.length = 0;
+  draw();
+  assert.equal(historyWeights.at(-1), 0);
+  assert.deepEqual([stages[1][1].width, stages[1][1].height], [225, 150]);
+  renderer.render = (_scene, drawnCamera) => {
+    if (drawnCamera === camera) {
+      camera.fov = 75;
+      camera.updateProjectionMatrix();
+    }
+  };
+  stages.length = 0;
+  draw();
+  const changed = new THREE.PerspectiveCamera(75, 1.5, 0.1, 200);
+  assert.deepEqual(camera.projectionMatrix.toArray(), changed.projectionMatrix.toArray());
+  assert.deepEqual(camera.projectionMatrixInverse.toArray(), changed.projectionMatrixInverse.toArray());
+  assert.ok(!stages.some(([name]) => name === 'temporal-aa'));
+  pipeline.setState({ temporalAA: false });
+  assert.equal(pipeline.targets.hasTemporalAA, false);
+  pipeline.dispose();
 });
 
 test('one adaptive quality transition rebuilds the post pipeline once at the final drawing-buffer size', () => {

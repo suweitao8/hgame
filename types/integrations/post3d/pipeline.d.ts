@@ -37,7 +37,7 @@
  * @property {boolean} [autoClear] Restored after each render.
  * @property {number} [toneMapping] Restored after each render.
  * @property {{enabled: boolean}} [shadowMap]
- * @property {{isWebGL2?: boolean, logarithmicDepthBuffer?: boolean, getMaxAnisotropy?(): number}} [capabilities]
+ * @property {{isWebGL2?: boolean, logarithmicDepthBuffer?: boolean, reversedDepthBuffer?: boolean, getMaxAnisotropy?(): number}} [capabilities]
  * @property {(target: object | null) => void} setRenderTarget
  * @property {(x: number, y: number, width: number, height: number) => void} [setViewport]
  * @property {(x: number, y: number, width: number, height: number) => void} [setScissor]
@@ -65,6 +65,7 @@
  * @property {number} [ssrMaxDist=28] World units.
  * @property {number} [ssrThickness=0.35] World units.
  * @property {boolean} [temporalGiSsr=false] Reuse depth-validated GI and reflection history on half-float targets.
+ * @property {boolean} [temporalAA=false] Jitter and resolve world color using depth-validated temporal history.
  * @property {number} [contactShadows] 0..1; default follows the quality preset (0.65 or 0).
  * @property {number} [contactShadowLength=0.32] World units.
  * @property {number} [contactShadowThickness=0.08] World units.
@@ -128,6 +129,7 @@
  * @property {number} ssrMaxDist
  * @property {number} ssrThickness
  * @property {boolean} temporalGiSsr
+ * @property {boolean} temporalAA
  * @property {number} contactShadows
  * @property {number} contactShadowLength
  * @property {number} contactShadowThickness
@@ -177,12 +179,14 @@
  * @property {boolean} hasAutoExposureRT Eye-adaptation pyramid allocated.
  * @property {number} bloomMipCount
  * @property {boolean} hasLdrRT Intermediate LDR target for FXAA/sharpen.
+ * @property {boolean} hasTemporalAA Temporal color and depth history allocated.
  */
 /**
  * Camera members read by `render`.
  * @typedef {object} PostPipelineCamera
  * @property {boolean} [isCamera]
  * @property {boolean} [isOrthographicCamera]
+ * @property {boolean} [isArrayCamera]
  * @property {number} [coordinateSystem]
  * @property {boolean} [reversedDepth]
  * @property {number} [near] Default 0.1.
@@ -227,6 +231,7 @@
  * @property {(patch?: PostPipelineSettings) => void} setState Merges finite numeric/array settings.
  * @property {(passes: readonly PostHdrPass[]) => void} setPasses Replaces the HDR effect chain.
  * @property {() => void} resetGiSsrHistory Discard GI and reflection history after a scene cut or discontinuous motion.
+ * @property {() => void} resetTemporalHistory Discard AA, GI and reflection histories after a scene cut.
  * @property {(world: object, camera: PostPipelineCamera, options?: PostPipelineRenderOptions) => void} render Renders `world` through the pipeline (forward fallback when unsupported).
  * @property {() => void} handleContextLost Releases GPU targets.
  * @property {() => void} handleContextRestored Rebuilds GPU targets.
@@ -329,6 +334,7 @@ export type PostPipelineRenderer = {
     capabilities?: {
         isWebGL2?: boolean;
         logarithmicDepthBuffer?: boolean;
+        reversedDepthBuffer?: boolean;
         getMaxAnisotropy?(): number;
     } | undefined;
     setRenderTarget: (target: object | null) => void;
@@ -388,6 +394,10 @@ export type PostPipelineSettings = {
      * Reuse depth-validated GI and reflection history on half-float targets.
      */
     temporalGiSsr?: boolean | undefined;
+    /**
+     * Jitter and resolve world color using depth-validated temporal history.
+     */
+    temporalAA?: boolean | undefined;
     /**
      * 0..1; default follows the quality preset (0.65 or 0).
      */
@@ -526,6 +536,7 @@ export type PostPipelineState = {
     ssrMaxDist: number;
     ssrThickness: number;
     temporalGiSsr: boolean;
+    temporalAA: boolean;
     contactShadows: number;
     contactShadowLength: number;
     contactShadowThickness: number;
@@ -609,6 +620,10 @@ export type PostPipelineTargets = {
      * Intermediate LDR target for FXAA/sharpen.
      */
     hasLdrRT: boolean;
+    /**
+     * Temporal color and depth history allocated.
+     */
+    hasTemporalAA: boolean;
 };
 /**
  * Camera members read by `render`.
@@ -616,6 +631,7 @@ export type PostPipelineTargets = {
 export type PostPipelineCamera = {
     isCamera?: boolean | undefined;
     isOrthographicCamera?: boolean | undefined;
+    isArrayCamera?: boolean | undefined;
     coordinateSystem?: number | undefined;
     reversedDepth?: boolean | undefined;
     /**
@@ -748,6 +764,10 @@ export type PostPipeline3D = {
      * Discard GI and reflection history after a scene cut or discontinuous motion.
      */
     resetGiSsrHistory: () => void;
+    /**
+     * Discard AA, GI and reflection histories after a scene cut.
+     */
+    resetTemporalHistory: () => void;
     /**
      * Renders `world` through the pipeline (forward fallback when unsupported).
      */
