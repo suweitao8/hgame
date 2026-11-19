@@ -562,6 +562,16 @@ export function createEffectPlayer({
       dz /= norm;
     }
 
+    if ((shape.randomPos ?? 0) > 0.0001) {
+      const rp = Number(shape.randomPos) * scale * prng.nextFloat();
+      const jAng = prng.nextFloat() * 6.283185307179586;
+      const jElev = is2D ? 0 : prng.range(-1, 1);
+      const jHoriz = is2D ? 1 : Math.sqrt(Math.max(0, 1 - jElev * jElev));
+      lx += Math.cos(jAng) * jHoriz * rp;
+      ly += (is2D ? Math.sin(jAng) : jElev) * rp;
+      lz += (is2D ? 0 : Math.sin(jAng) * jHoriz) * rp;
+    }
+
     if (Array.isArray(shape.scale)) {
       const sx = Number(shape.scale[0] ?? 1);
       const sy = Number(shape.scale[1] ?? 1);
@@ -569,16 +579,11 @@ export function createEffectPlayer({
       lx *= sx;
       ly *= sy;
       lz *= sz;
-      if (rad > 0.0001) {
-        const nx = lx;
-        const ny = ly;
-        const nz = lz;
-        const nLen = Math.hypot(nx, ny, nz);
-        if (nLen > 0.0001) {
-          dx = nx / nLen;
-          dy = ny / nLen;
-          dz = nz / nLen;
-        }
+      const nLen = Math.hypot(lx, ly, lz);
+      if (nLen > 0.0001) {
+        dx = lx / nLen;
+        dy = ly / nLen;
+        dz = lz / nLen;
       }
     }
 
@@ -627,10 +632,14 @@ export function createEffectPlayer({
         const ox = scratchPos[0] - slot.x;
         const oy = scratchPos[1] - slot.y;
         const oz = scratchPos[2] - slot.z;
-        const len = Math.hypot(ox, oy, oz) || 1;
-        vx += (ox / len) * radVel * scale;
-        vy += (oy / len) * radVel * scale;
-        vz += (oz / len) * radVel * scale;
+        const len = Math.hypot(ox, oy, oz);
+        // Guard against Float32-vs-Float64 offset residuals near zero by falling back to shape normal.
+        const rx = len > 0.0005 ? (ox / len) : scratchDir[0];
+        const ry = len > 0.0005 ? (oy / len) : scratchDir[1];
+        const rz = len > 0.0005 ? (oz / len) : scratchDir[2];
+        vx += rx * radVel * scale;
+        vy += ry * radVel * scale;
+        vz += rz * radVel * scale;
       }
     }
 

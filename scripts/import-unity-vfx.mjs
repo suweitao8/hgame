@@ -379,12 +379,18 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const rad = Number((shapeMod.match(/radius:[\s\S]*?value:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
       const ang = Number((shapeMod.match(/\bangle:\s*([-\d.eE+]+)/) || [])[1] ?? 25);
       const radThick = Number((shapeMod.match(/\bradiusThickness:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+      const randPos = Number((shapeMod.match(/\brandomPositionAmount:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
       const alignDir = /alignToDirection:\s*1\b/.test(shapeMod);
       const sRotM = shapeMod.match(/m_Rotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
       const sSclM = shapeMod.match(/m_Scale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
-      const shapeObj = { type: mappedType, radius: Number(rad.toFixed(3)), angle: Number(ang.toFixed(1)) };
+      const shapeObj = {
+        type: mappedType,
+        radius: rad > 0 && rad < 0.001 ? Number(rad.toFixed(4)) : Number(rad.toFixed(3)),
+        angle: Number(ang.toFixed(1)),
+      };
       if (radThick < 0.05) shapeObj.shell = true;
       else if (radThick < 0.99) shapeObj.radiusThickness = Number(radThick.toFixed(3));
+      if (randPos > 0.001) shapeObj.randomPos = Number(randPos.toFixed(3));
       if (alignDir) shapeObj.alignToDirection = true;
       if (sSclM) {
         let sx = Number(sSclM[1]);

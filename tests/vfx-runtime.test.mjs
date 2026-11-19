@@ -757,6 +757,40 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     }
     // 4.0s * 0.15 = 0.60s trail duration at 2 m/s => ~1.2m ribbon length (vs ~0.3m if treated as 0.15s)
     assert.ok(maxFracLen >= 1.0, `fraction trail length (${maxFracLen.toFixed(2)}m) reflects particleDur * fraction`);
+
+    // 8. Near-zero sphere radius with randomPos + radial velocity spreads spherically at non-zero Y (no vertical +Y pillar)
+    vfx.reset();
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'radial_zero_radius_test',
+      loop: true,
+      duration: 2.0,
+      layers: [
+        {
+          name: 'trails',
+          kind: 'particle',
+          rate: 30,
+          life: 1.0,
+          size: 0.1,
+          shape: { type: 'sphere', radius: 0, randomPos: 1, scale: [0.5, 0.8, 0.5] },
+          velocity: { radial: 1, orbitalY: [1, 3] },
+          trail: { lifetime: 0.4, lifetimeMode: 'fraction', width: 0.04, endColor: '#00123c' },
+        },
+      ],
+    }, { x: 0, y: 1.2, z: 0 });
+    for (let i = 0; i < 20; i++) vfx.update(0.05);
+    const atlasNorm = scene.getObjectByName('HGameVfxAtlasNormal');
+    const p0Arr = atlasNorm.geometry.getAttribute('aAtlasP0').array;
+    const p1Arr = atlasNorm.geometry.getAttribute('aAtlasP1').array;
+    let nonAxisCount = 0;
+    for (let i = 0; i < 30; i++) {
+      const x = p0Arr[i * 4];
+      const z = p0Arr[i * 4 + 2];
+      const vx = p1Arr[i * 4];
+      const vz = p1Arr[i * 4 + 2];
+      if (Math.hypot(x, z) > 0.05 && Math.hypot(vx, vz) > 0.05) nonAxisCount += 1;
+    }
+    assert.ok(nonAxisCount >= 10, `expected spherical spread off-axis (got ${nonAxisCount})`);
     dummyTex.dispose();
   } finally {
     vfx.dispose();
