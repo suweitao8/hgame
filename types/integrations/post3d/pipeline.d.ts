@@ -39,6 +39,8 @@
  * @property {{enabled: boolean}} [shadowMap]
  * @property {{isWebGL2?: boolean, logarithmicDepthBuffer?: boolean, getMaxAnisotropy?(): number}} [capabilities]
  * @property {(target: object | null) => void} setRenderTarget
+ * @property {(x: number, y: number, width: number, height: number) => void} [setViewport]
+ * @property {(x: number, y: number, width: number, height: number) => void} [setScissor]
  * @property {(scene: object, camera: object) => void} render
  * @property {(color?: boolean, depth?: boolean, stencil?: boolean) => void} [clear]
  * @property {() => void} [clearDepth]
@@ -208,6 +210,7 @@
  * @property {object | null} [viewCamera=null] Camera for `viewScene`.
  * @property {PostPipelineSunLight | null} [sunLight=null] Sun used for volumetrics/contact shadows.
  * @property {number} [dt=0] Frame delta in seconds.
+ * @property {readonly [number, number, number, number] | null} [outputViewport=null] Screen x, y, width and height in renderer pixels before DPR, with a bottom-left origin.
  */
 /**
  * @typedef {object} PostPipeline3D
@@ -296,6 +299,8 @@ export type PostPipelineRenderer = {
         getMaxAnisotropy?(): number;
     } | undefined;
     setRenderTarget: (target: object | null) => void;
+    setViewport?: ((x: number, y: number, width: number, height: number) => void) | undefined;
+    setScissor?: ((x: number, y: number, width: number, height: number) => void) | undefined;
     render: (scene: object, camera: object) => void;
     clear?: ((color?: boolean, depth?: boolean, stencil?: boolean) => void) | undefined;
     clearDepth?: (() => void) | undefined;
@@ -646,6 +651,10 @@ export type PostPipelineRenderOptions = {
      * Frame delta in seconds.
      */
     dt?: number | undefined;
+    /**
+     * Screen x, y, width and height in renderer pixels before DPR, with a bottom-left origin.
+     */
+    outputViewport?: readonly [number, number, number, number] | null | undefined;
 };
 export type PostPipeline3D = {
     /**

@@ -64,6 +64,8 @@ When running on a WebGL2 context supporting floating-point color buffers, `creat
 
 Non-WebGL2 or constrained contexts automatically degrade cleanly to a standard forward render pass while preserving single exposure ownership and the secondary `depthRange` overlay pass.
 
+When the Three adapter has HDR post-processing enabled, `setViews()` sends every pane through the same world and post-processing stages as the primary camera. Targets are sized to each physical pane. Each pane keeps its own eye adaptation and GI/reflection history while its camera and slot identity match. Pane output is clipped to its own rectangle and post volumes are evaluated at its camera position. Changes made through the adapter's public `postPipeline` supply shared settings. Its idle primary targets shrink to 1×1 during split view, and its full-size targets return when split view ends. Forward-only rendering remains available when HDR is disabled or unsupported.
+
 ## World Materials, Models & Adapter Lifecycle
 
 - **Specular Anti-Aliasing, Anisotropy & Floating Origin**: `applyGeometricSpecularAA(material, { strength, maxRoughnessBoost })` injects screen-space normal derivative (`dFdx`/`dFdy`) roughness widening via `onBeforeCompile`. `createWorldAlignedMaterial` and `createWorldMaterialPalette` expose opt-in `specularAA`, `anisotropy`, `palette.setAnisotropy(value)`, and `palette.shiftOffset(dx, dy, dz)` for floating-origin texture continuity.

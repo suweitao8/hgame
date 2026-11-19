@@ -76,6 +76,82 @@ function createMockWebGL2Renderer({ rendererName = 'Mock RTX GPU', maxSamples = 
   return { renderer, calls, gl };
 }
 
+test('split Three views use pane-sized HDR targets, isolated exposure, and physical output rectangles', () => {
+  const { renderer, calls } = createMockWebGL2Renderer();
+  const passes = [];
+  const released = [];
+  let target = null;
+  let viewport;
+  let scissor;
+  let scissorEnabled = false;
+  renderer.setViewport = (...rect) => { viewport = rect; };
+  renderer.setScissor = (...rect) => { scissor = rect; };
+  renderer.setScissorTest = enabled => { scissorEnabled = enabled; };
+  renderer.setRenderTarget = next => { target = next; };
+  renderer.render = (scene, camera) => passes.push({ camera, target, viewport, scissor, scissorEnabled,
+    exposure: scene.children?.[0]?.material?.uniforms?.uExposure?.value,
+    previousAdapt: scene.children?.[0]?.material?.uniforms?.tPrevAdapt?.value,
+    previousGi: scene.children?.[0]?.material?.uniforms?.tHistory?.value });
+  const namespace = { ...THREE,
+    WebGLRenderer: class { constructor() { return renderer; } },
+    WebGLRenderTarget: class extends THREE.WebGLRenderTarget {
+      dispose() { released.push(this); super.dispose(); }
+    },
+  };
+  const adapter = createThreeAdapter({ THREE: namespace, canvas: { clientWidth: 901, clientHeight: 600 },
+    pixelRatio: 1, post3d: { autoExposure: true, fxaa: false, sharpness: 0, temporalGiSsr: true, preset: { ssgi: true } } });
+  const scene = new Scene('split-hdr');
+  const left = new THREE.PerspectiveCamera();
+  const right = new THREE.PerspectiveCamera();
+  left.position.x = -1;
+  right.position.x = 1;
+  adapter.setPostVolumes({ applyToPipeline(pipeline, position) {
+    pipeline.setState({ exposure: position.x < 0 ? 0.5 : 2 });
+  } });
+  adapter.setViews([{ camera: left, width: 0.5 }, { camera: right, x: 0.5, width: 0.5 }]);
+  adapter.render(scene);
+  const draws = passes.filter(pass => pass.camera === left || pass.camera === right);
+  assert.deepEqual(draws.map(({ target }) => [target?.width, target?.height]), [[451, 600], [450, 600]]);
+  const outputs = passes.filter(pass => !pass.target);
+  assert.deepEqual(outputs.map(pass => [pass.viewport, pass.scissor, pass.scissorEnabled, pass.exposure]), [
+    [[0, 0, 451, 600], [0, 0, 451, 600], true, 0.5],
+    [[451, 0, 450, 600], [451, 0, 450, 600], true, 2],
+  ]);
+  const history = passes.filter(pass => pass.previousAdapt).map(pass => [pass.previousAdapt, pass.target.texture]);
+  assert.equal(history.length, 2);
+  assert.notEqual(history[0][0], history[1][0]);
+  assert.equal(scissorEnabled, false);
+  assert.deepEqual(viewport, [0, 0, 901, 600]);
+  assert.equal(renderer.autoClear, true);
+
+  // Rewiring the same pane identities retains history across frames.
+  passes.length = 0;
+  adapter.setViews([{ camera: left, width: 0.5 }, { camera: right, x: 0.5, width: 0.5 }]);
+  adapter.render(scene);
+  assert.deepEqual(passes.filter(pass => pass.previousAdapt).map(pass => pass.previousAdapt), history.map(pair => pair[1]));
+  assert.equal(passes.filter(pass => pass.previousGi).length, 2);
+  assert.deepEqual([adapter.postPipeline.targets.bufferWidth, adapter.postPipeline.targets.bufferHeight], [1, 1]);
+
+  adapter.postPipeline.resetGiSsrHistory();
+  passes.length = 0;
+  adapter.render(scene);
+  assert.equal(passes.filter(pass => pass.previousGi).length, 0);
+
+  adapter.setPostVolumes(null);
+  adapter.setExposure(1.25);
+  adapter.postPipeline.setState({ fxaa: true });
+  passes.length = 0;
+  adapter.render(scene);
+  assert.deepEqual(passes.filter(pass => pass.exposure === 1.25).map(pass => pass.target?.width), [451, 450]);
+  assert.deepEqual(passes.filter(pass => !pass.target).map(pass => pass.viewport), [[0, 0, 451, 600], [451, 0, 450, 600]]);
+  adapter.setViews(null);
+  assert.ok(draws.every(pass => released.includes(pass.target)));
+  adapter.render(scene);
+  assert.ok(passes.some(pass => pass.camera === adapter.camera && pass.target?.width === 901));
+  adapter.dispose();
+  assert.equal(calls.filter(([name]) => name === 'dispose').length, 1);
+});
+
 test('one adaptive quality transition rebuilds the post pipeline once at the final drawing-buffer size', () => {
   const { renderer, calls } = createMockWebGL2Renderer();
   const allocations = [];

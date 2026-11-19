@@ -286,6 +286,7 @@ export function createThreeAdapter({
   });
 
   let postPipeline = null;
+  const viewPipelines = [];
   let activeSunLight = sunLight;
   let worldSunLight = null;
   const worldSuns = new WeakMap();
@@ -479,19 +480,24 @@ export function createThreeAdapter({
     return qualityController?.state?.tier ?? null;
   }
 
-  if (post3d) {
-    const postOptions = typeof post3d === 'object' ? post3d : {};
-    const initialSize = planCanvasSize();
-    postPipeline = createPostPipeline3D({
-      THREE,
-      renderer,
+  const postOptions = typeof post3d === 'object' && post3d ? { ...post3d } : {};
+  function createViewPostPipeline(width, height, preset) {
+    return createPostPipeline3D({
+      THREE, renderer,
       exposure: postOptions.exposure ?? baseExposure,
       ...(toneMapping && !postOptions.toneMapping ? { toneMapping } : {}),
-      ...postOptions,
-      preset: qualityController?.state.preset ?? postOptions.preset,
-      width: initialSize.bufferWidth,
-      height: initialSize.bufferHeight,
+      ...postOptions, preset, width, height,
     });
+  }
+  if (post3d) {
+    const initialSize = planCanvasSize();
+    postPipeline = createViewPostPipeline(initialSize.bufferWidth, initialSize.bufferHeight,
+      qualityController?.state.preset ?? postOptions.preset);
+    const resetPrimaryHistory = postPipeline.resetGiSsrHistory;
+    postPipeline.resetGiSsrHistory = () => {
+      resetPrimaryHistory();
+      for (const entry of viewPipelines) entry?.pipeline.resetGiSsrHistory();
+    };
   }
 
   appliedPreset = qualityController?.state?.preset ?? null;
@@ -635,12 +641,16 @@ export function createThreeAdapter({
         }
       }
     }
+    // The public pipeline owns the shared settings even while its full-sized
+    // targets are idle. Pane-sized pipelines only allocate for drawn views.
+    const postWidth = activeViews ? 1 : bufferWidth;
+    const postHeight = activeViews ? 1 : bufferHeight;
     if (preset && preset !== appliedPreset) {
-      postPipeline?.setPreset(preset, { width: bufferWidth, height: bufferHeight });
+      postPipeline?.setPreset(preset, { width: postWidth, height: postHeight });
       appliedPreset = preset;
       applyQualityToRenderer(preset);
     } else {
-      postPipeline?.resize(bufferWidth, bufferHeight);
+      postPipeline?.resize(postWidth, postHeight);
     }
   }
 
@@ -650,6 +660,8 @@ export function createThreeAdapter({
     gpuFrameTimer?.reset();
     gpuFrameTimer = undefined;
     postPipeline?.handleContextLost?.();
+    // Recreate pane resources from the restored GPU's limits on the next draw.
+    removeObsoleteViewPipelines(null);
   };
   const onContextRestored = () => {
     contextLost = false;
@@ -687,7 +699,10 @@ export function createThreeAdapter({
 
   function setViews(views, options = {}) {
     const res = normalizeSplitViews(views, options);
+    const changedMode = Boolean(activeViews) !== Boolean(res.views);
     activeViews = res.views;
+    removeObsoleteViewPipelines(activeViews);
+    if (changedMode && postPipeline?.supported) resize();
     if (activeViews) {
       const rect = canvasRect();
       for (let i = 0; i < activeViews.length; i++) {
@@ -699,6 +714,34 @@ export function createThreeAdapter({
       }
     }
     return getViews();
+  }
+
+  function removeObsoleteViewPipelines(views) {
+    for (let i = 0; i < viewPipelines.length; i++) {
+      const entry = viewPipelines[i];
+      const view = views?.[i];
+      if (entry && (!view || entry.camera !== view.camera || entry.playerId !== view.playerId)) {
+        entry.pipeline.dispose();
+        viewPipelines[i] = null;
+      }
+    }
+    viewPipelines.length = Math.min(viewPipelines.length, views?.length ?? 0);
+  }
+
+  function getViewPipeline(view, width, height) {
+    const preset = postPipeline.preset;
+    let entry = viewPipelines[view.index];
+    if (!entry) {
+      entry = { camera: view.camera, playerId: view.playerId, preset,
+        pipeline: createViewPostPipeline(width, height, preset) };
+      viewPipelines[view.index] = entry;
+    } else if (entry.preset !== preset) {
+      entry.pipeline.setPreset(preset, { width, height });
+      entry.preset = preset;
+    } else {
+      entry.pipeline.resize(width, height);
+    }
+    return entry.pipeline;
   }
 
   function getViews() {
@@ -793,6 +836,34 @@ export function createThreeAdapter({
     return { x: sx, y: sy, ndcZ: scratchView.z, visible };
   }
 
+  function renderView(world, camera, pipeline, options = {}) {
+    culler3d.beginFrame(camera);
+    prepareSunShadows(world, camera);
+    if (pipeline) {
+      pipeline.render(world, camera, options);
+      return;
+    }
+
+    const { viewScene, viewCamera } = options;
+    if (viewScene && viewCamera) {
+      const prevAutoClear = renderer.autoClear;
+      const gl = renderer.getContext?.();
+      try {
+        renderer.render(world, camera);
+        renderer.autoClear = false;
+        renderer.clearDepth?.();
+        gl?.depthRange?.(0, 0.05);
+        renderer.render(viewScene, viewCamera);
+      } finally {
+        gl?.depthRange?.(0, 1);
+        renderer.autoClear = prevAutoClear;
+      }
+      return;
+    }
+
+    renderer.render(world, camera);
+  }
+
   function renderWorld(scene) {
     const world = getWorld(scene);
     const sceneSun = worldLighting?.sun ? worldSuns.get(world) ?? null : null;
@@ -807,16 +878,8 @@ export function createThreeAdapter({
       const outputHeight = lastCanvasSize?.bufferHeight ?? Math.max(1, Math.floor(rect.height));
       const ratio = lastCanvasSize?.rendererRatio ?? 1;
       const prevAutoClear = renderer.autoClear;
-      const prevToneMapping = renderer.toneMapping;
-      const prevExposure = renderer.toneMappingExposure;
-      const prevSkyLinear = activeSky?.linearOutput ?? false;
+      const postState = postPipeline?.supported ? postPipeline.state : null;
       try {
-        if (postPipeline?.supported) {
-          const forwardTm = resolveToneMappingConstant(THREE, toneMapping || 'aces');
-          if (forwardTm !== null && 'toneMapping' in renderer) renderer.toneMapping = forwardTm;
-          if ('toneMappingExposure' in renderer) renderer.toneMappingExposure = baseExposure;
-          activeSky?.setLinearOutput?.(false);
-        }
         renderer.setScissorTest?.(false);
         renderer.setViewport?.(0, 0, outputWidth / ratio, outputHeight / ratio);
         renderer.clear?.(true, true, true);
@@ -829,7 +892,11 @@ export function createThreeAdapter({
           const right = Math.round((v.x + v.width) * outputWidth);
           const top = Math.round(v.y * outputHeight);
           const bottom = Math.round((v.y + v.height) * outputHeight);
-          if (left === right || top === bottom) continue;
+          if (left === right || top === bottom) {
+            viewPipelines[i]?.pipeline.dispose();
+            viewPipelines[i] = null;
+            continue;
+          }
           const vx = left / ratio;
           const vyBottomUp = (outputHeight - bottom) / ratio;
           const vw = (right - left) / ratio;
@@ -839,59 +906,40 @@ export function createThreeAdapter({
             v.camera.aspect = aspect;
             v.camera.updateProjectionMatrix?.();
           }
-          culler3d.beginFrame(v.camera);
+          let pipeline = null;
+          if (postState) {
+            pipeline = getViewPipeline(v, right - left, bottom - top);
+            // Merge each volume before touching history-dependent settings in the pane.
+            const state = activePostVolumes ? { ...postState } : postState;
+            activePostVolumes?.applyToPipeline({ setState: patch => Object.assign(state, patch) },
+              v.camera.position, { exposure: baseExposure });
+            pipeline.setState(state);
+          }
           renderer.setViewport?.(vx, vyBottomUp, vw, vh);
           renderer.setScissor?.(vx, vyBottomUp, vw, vh);
-          prepareSunShadows(world, v.camera);
-          renderer.render(world, v.camera);
+          renderView(world, v.camera, pipeline, {
+            outputViewport: pipeline ? [vx, vyBottomUp, vw, vh] : null,
+            sunLight: activeSunLight ?? worldSunLight,
+            dt: lastDtSeconds,
+          });
         }
       } finally {
         renderer.setScissorTest?.(false);
         renderer.setViewport?.(0, 0, outputWidth / ratio, outputHeight / ratio);
         renderer.autoClear = prevAutoClear;
-        if (postPipeline?.supported) {
-          if ('toneMapping' in renderer) renderer.toneMapping = prevToneMapping;
-          if ('toneMappingExposure' in renderer) renderer.toneMappingExposure = prevExposure;
-          activeSky?.setLinearOutput?.(prevSkyLinear);
-        }
       }
       return;
     }
 
-    culler3d.beginFrame(camera);
-    prepareSunShadows(world, camera);
     const viewScene = scene && viewWorlds.has(scene) ? viewWorlds.get(scene) : null;
-
-    if (postPipeline) {
-      if (activePostVolumes) {
-        activePostVolumes.applyToPipeline(postPipeline, camera.position, { exposure: baseExposure });
-      }
-      postPipeline.render(world, camera, {
-        viewScene,
-        viewCamera: activeViewCamera,
-        sunLight: activeSunLight ?? worldSunLight,
-        dt: lastDtSeconds,
-      });
-      return;
+    if (postPipeline && activePostVolumes) {
+      activePostVolumes.applyToPipeline(postPipeline, camera.position, { exposure: baseExposure });
     }
-
-    if (viewScene && activeViewCamera) {
-      const prevAutoClear = renderer.autoClear;
-      const gl = renderer.getContext?.();
-      try {
-        renderer.render(world, camera);
-        renderer.autoClear = false;
-        renderer.clearDepth?.();
-        gl?.depthRange?.(0, 0.05);
-        renderer.render(viewScene, activeViewCamera);
-      } finally {
-        gl?.depthRange?.(0, 1);
-        renderer.autoClear = prevAutoClear;
-      }
-      return;
-    }
-
-    renderer.render(world, camera);
+    renderView(world, camera, postPipeline, {
+      viewScene, viewCamera: activeViewCamera,
+      sunLight: activeSunLight ?? worldSunLight,
+      dt: lastDtSeconds,
+    });
   }
 
   function render(scene, _app = null) {
@@ -1019,6 +1067,7 @@ export function createThreeAdapter({
         ...ownedSuns.values(),
         () => gpuFrameTimer?.reset(),
         () => culler3d.dispose(),
+        () => removeObsoleteViewPipelines(null),
         () => postPipeline?.dispose?.(),
         () => renderer.dispose(),
       ], 'Three renderer disposal failed');

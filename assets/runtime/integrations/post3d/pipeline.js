@@ -77,6 +77,8 @@ const GI_HISTORY_SETTINGS = ['giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxD
  * @property {{enabled: boolean}} [shadowMap]
  * @property {{isWebGL2?: boolean, logarithmicDepthBuffer?: boolean, getMaxAnisotropy?(): number}} [capabilities]
  * @property {(target: object | null) => void} setRenderTarget
+ * @property {(x: number, y: number, width: number, height: number) => void} [setViewport]
+ * @property {(x: number, y: number, width: number, height: number) => void} [setScissor]
  * @property {(scene: object, camera: object) => void} render
  * @property {(color?: boolean, depth?: boolean, stencil?: boolean) => void} [clear]
  * @property {() => void} [clearDepth]
@@ -255,6 +257,7 @@ const GI_HISTORY_SETTINGS = ['giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxD
  * @property {object | null} [viewCamera=null] Camera for `viewScene`.
  * @property {PostPipelineSunLight | null} [sunLight=null] Sun used for volumetrics/contact shadows.
  * @property {number} [dt=0] Frame delta in seconds.
+ * @property {readonly [number, number, number, number] | null} [outputViewport=null] Screen x, y, width and height in renderer pixels before DPR, with a bottom-left origin.
  */
 
 /**
@@ -861,9 +864,15 @@ export function createPostPipeline3D(options = {}) {
 
   initMaterials();
 
-  function runPass(material, target) {
+  function runPass(material, target, viewport = null) {
     quadMesh.material = material;
     renderer.setRenderTarget(target);
+    if (!target && viewport) {
+      // Reapply the rectangle after target binding. Three rounds here, while its
+      // default framebuffer bind floors DPR-scaled coordinates.
+      renderer.setViewport?.(...viewport);
+      renderer.setScissor?.(...viewport);
+    }
     renderer.render(postScene, postCamera);
   }
 
@@ -1018,7 +1027,7 @@ export function createPostPipeline3D(options = {}) {
     }
   }
 
-  function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, dt = 0 } = {}) {
+  function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, dt = 0, outputViewport = null } = {}) {
     if (disposed || contextLost) return;
     const stepDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
     if (stepDt > 0) elapsed += stepDt;
@@ -1272,7 +1281,7 @@ export function createPostPipeline3D(options = {}) {
       compU.uFade.value = state.fade;
       compU.uToneMapping.value = state.toneMapping;
       compU.uWriteLuma.value = useFinalFxaaPass ? 1 : 0;
-      runPass(mats.composite, useFinalFxaaPass ? ldrRT : null);
+      runPass(mats.composite, useFinalFxaaPass ? ldrRT : null, outputViewport);
 
       // 4. FXAA + edge-attenuated unsharp mask + IGN dither
       if (useFinalFxaaPass) {
@@ -1280,7 +1289,7 @@ export function createPostPipeline3D(options = {}) {
         mats.fxaaSharpen.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
         mats.fxaaSharpen.uniforms.uSharpness.value = state.sharpness;
         mats.fxaaSharpen.uniforms.uFxaaEnabled.value = state.fxaa ? 1 : 0;
-        runPass(mats.fxaaSharpen, null);
+        runPass(mats.fxaaSharpen, null, outputViewport);
       }
     } catch (error) {
       resetGiSsrHistory();
