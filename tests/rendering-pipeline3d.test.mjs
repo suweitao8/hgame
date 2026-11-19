@@ -8,7 +8,7 @@ import {
   createGameApplication,
   defineProject,
 } from '../assets/runtime/index.js';
-import { QUALITY3D_PRESETS } from '../assets/runtime/integrations/quality3d.js';
+import { createAdaptiveQualityController, QUALITY3D_PRESETS } from '../assets/runtime/integrations/quality3d.js';
 import {
   SKY3D_PRESETS,
   createLightPool3D,
@@ -701,6 +701,121 @@ test('temporal AA uses previous rigid and instance transforms only for moving or
   pipeline.dispose();
   geometry.dispose();
   material.dispose();
+});
+
+test('adaptive render memory pressure constrains resolution and tier recovery independently of frame time', () => {
+  const changes = [];
+  const mib = 1024 * 1024;
+  const options = { device: { rendererName: 'NVIDIA RTX 4080' }, settleMs: 0, settleAfterChangeMs: 0,
+    sampleFrames: 2, memoryBudgetBytes: 20 * mib, onChange: (_state, reason) => changes.push(reason) };
+  const controller = createAdaptiveQualityController({ ...options, minScale: 0.5 });
+  assert.equal(controller.sampleMemory(16 * mib, 8 * mib), true);
+  const constrained = controller.state.dynamicScale;
+  assert.ok(constrained > 0.5 && constrained < 0.87);
+  assert.deepEqual(changes, ['memory-resolution']);
+  controller.sampleMemory(11.8 * mib, 8 * mib);
+  for (let frame = 0; frame < 20; frame++) controller.sampleFrame(10, 7);
+  assert.equal(controller.state.dynamicScale, constrained);
+  controller.sampleMemory(5 * mib, 2 * mib);
+  controller.sampleFrame(10, 7);
+  assert.equal(controller.sampleFrame(10, 7), true);
+  assert.ok(controller.state.dynamicScale > constrained);
+
+  const tierLimited = createAdaptiveQualityController({ ...options, minScale: 1 });
+  assert.equal(tierLimited.state.tier, 'high');
+  assert.equal(tierLimited.sampleMemory(22 * mib, 2 * mib), true);
+  assert.equal(tierLimited.state.tier, 'medium');
+  tierLimited.sampleMemory(6 * mib, 2 * mib);
+  for (let frame = 0; frame < 500; frame++) tierLimited.sampleFrame(10, 7);
+  assert.equal(tierLimited.state.tier, 'medium');
+  assert.equal(changes.at(-1), 'memory-tier');
+  const fixed = createAdaptiveQualityController({ ...options, mode: 'high', minScale: 1 });
+  assert.equal(fixed.sampleMemory(30 * mib, 0), false);
+  assert.equal(fixed.state.tier, 'high');
+  assert.equal(fixed.state.memory.overBudget, true);
+
+  const canPromote = createAdaptiveQualityController({ ...options, minScale: 0.5, memoryBudgetBytes: 30 * mib });
+  canPromote.sampleMemory(23 * mib, 20 * mib, 10 * mib);
+  assert.equal(canPromote.state.tier, 'medium');
+  canPromote.sampleMemory(8 * mib, 0, 5 * mib);
+  for (let frame = 0; frame < 1000; frame++) canPromote.sampleFrame(10, 7);
+  assert.equal(canPromote.state.tier, 'high');
+  assert.ok(canPromote.state.dynamicScale < 1);
+
+  const low = createAdaptiveQualityController({ ...options, device: { mobile: true }, memoryBudgetBytes: 30 * mib });
+  for (let frame = 0; frame < 10; frame++) {
+    low.sampleMemory(8 * mib, 25 * mib, 6 * mib);
+    low.sampleFrame(40, 38);
+  }
+  assert.equal(low.state.lastMeanMs, 40);
+});
+
+test('Three memory budget measures post attachments and trims idle residency before lowering quality', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const namespace = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };
+  const limit = 16 * 1024 * 1024;
+  let residentBytes = 2 * limit;
+  const trims = [];
+  let canTrim = true;
+  const adapter = createThreeAdapter({ THREE: namespace, canvas: { clientWidth: 320, clientHeight: 180 }, pixelRatio: 1,
+    post3d: true, quality3d: { mode: 'auto', device: { rendererName: 'NVIDIA RTX 4080' }, memoryBudgetBytes: limit,
+      residency: { readBytes: () => residentBytes, trimIdle(bytes) { trims.push(bytes); if (canTrim) residentBytes = 0; } } } });
+  const scene = new Scene('render-budget');
+  adapter.render(scene);
+  assert.equal(adapter.getRenderDiagnostics(), null);
+  const measured = adapter.qualityController.state.memory;
+  assert.ok(measured.targetBytes > 320 * 180 * 8);
+  assert.equal(measured.residentBytes, 0);
+  assert.equal(measured.overBudget, false);
+  assert.equal(adapter.qualityController.state.dynamicScale, 1);
+  assert.deepEqual(trims, [limit + measured.targetBytes]);
+
+  canTrim = false;
+  residentBytes = limit - 1;
+  adapter.render(scene);
+  assert.equal(adapter.qualityController.state.memory.overBudget, true);
+  assert.ok(adapter.qualityController.state.dynamicScale < 1);
+  adapter.render(scene);
+  assert.equal(trims.length, 2, 'an unchanged cache is not retrimmed within its cooldown');
+  canTrim = true;
+  for (let frame = 0; frame < 120; frame++) adapter.render(scene);
+  assert.equal(trims.length, 3);
+  assert.equal(adapter.qualityController.state.memory.residentBytes, 0);
+  adapter.postPipeline.setState({ autoExposure: true });
+  assert.equal(adapter.qualityController.state.memory, null);
+  adapter.render(scene);
+  const fixed = adapter.qualityController.state.memory.fixedTargetBytes;
+  assert.ok(fixed >= (64 ** 2 + 16 ** 2 + 4 ** 2 + 2) * 8);
+  adapter.setViews([{ camera: adapter.camera, width: .5 }, { camera: adapter.camera.clone(), x: .5, width: .5 }]);
+  assert.equal(adapter.qualityController.state.memory, null);
+  adapter.render(scene);
+  assert.ok(adapter.qualityController.state.memory.fixedTargetBytes > fixed * 2);
+  adapter.dispose();
+});
+
+test('memory pressure releases fixed shadow maps when disabled at the hardware size cap', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  renderer.capabilities.maxTextureSize = 1024;
+  const namespace = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };
+  const adapter = createThreeAdapter({ THREE: namespace, canvas: { clientWidth: 320, clientHeight: 180 },
+    worldLighting: { sun: { color: 0xffffff, intensity: 1, position: [1, 2, 3],
+      shadow: { extent: 10, near: 0.1, far: 30, mapSize: 1024 } } },
+    quality3d: { memoryBudgetBytes: 4 * 1024 * 1024, device: { rendererName: 'NVIDIA RTX 4080' } } });
+  const scene = new Scene('shadow-budget');
+  const sun = adapter.getWorld(scene).children.find(object => object.isDirectionalLight);
+  sun.shadow.map = new THREE.WebGLRenderTarget(1024, 1024);
+  let releases = 0;
+  sun.shadow.map.addEventListener('dispose', () => releases++);
+  adapter.render(scene);
+  assert.equal(adapter.getQuality(), 'medium');
+  assert.equal(releases, 0);
+  adapter.render(scene);
+  assert.equal(adapter.getQuality(), 'low');
+  assert.equal(releases, 1);
+  adapter.render(scene);
+  assert.equal(adapter.qualityController.state.memory.fixedTargetBytes, 0);
+  assert.equal(adapter.qualityController.state.memory.overBudget, false);
+  adapter.dispose();
 });
 
 test('one adaptive quality transition rebuilds the post pipeline once at the final drawing-buffer size', () => {

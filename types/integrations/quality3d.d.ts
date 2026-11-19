@@ -14,7 +14,7 @@ export function chooseInitial3dQuality({ mobile, rendererName, memoryGB, }?: Qua
  * @param {AdaptiveQualityOptions} [options]
  * @returns {Readonly<AdaptiveQualityController>}
  */
-export function createAdaptiveQualityController({ mode, device, minScale, maxScale, minPixelRatio, maxPixelRatio, settleMs, settleAfterChangeMs, sampleFrames, degradeFrameMs, recoverFrameMs, onChange, }?: AdaptiveQualityOptions | undefined): Readonly<AdaptiveQualityController>;
+export function createAdaptiveQualityController({ mode, device, minScale, maxScale, minPixelRatio, maxPixelRatio, settleMs, settleAfterChangeMs, sampleFrames, degradeFrameMs, recoverFrameMs, memoryBudgetBytes, onChange, }?: AdaptiveQualityOptions | undefined): Readonly<AdaptiveQualityController>;
 /** @typedef {'low'|'medium'|'high'} QualityTier */
 /** @typedef {QualityTier|'ultra'} QualityPresetTier Tier names accepted by preset tables. */
 /** @typedef {'auto'|QualityTier} QualityMode */
@@ -67,6 +67,7 @@ export function createAdaptiveQualityController({ mode, device, minScale, maxSca
  * @property {number|null} lastMeanGpuMs Mean GPU time in the latest window, when enough samples were available.
  * @property {number} transitionCount
  * @property {number} droppedLongFrames
+ * @property {{limitBytes: number, targetBytes: number, fixedTargetBytes: number, residentBytes: number, overBudget: boolean} | null} memory Latest observed render memory footprint.
  */
 /**
  * @typedef {object} ViewportPlan
@@ -97,6 +98,7 @@ export function createAdaptiveQualityController({ mode, device, minScale, maxSca
  * @property {number} [sampleFrames=45] Frames per sample window (2..300).
  * @property {number} [degradeFrameMs=22] Mean frame ms above which quality drops.
  * @property {number} [recoverFrameMs=17] Mean frame ms below which quality recovers.
+ * @property {number | null} [memoryBudgetBytes=null] Optional nominal target and resident byte budget.
  * @property {((state: QualitySnapshot, reason: string) => void)|null} [onChange=null]
  */
 /**
@@ -104,6 +106,8 @@ export function createAdaptiveQualityController({ mode, device, minScale, maxSca
  * @property {QualitySnapshot} state Current snapshot (getter).
  * @property {(next: QualityMode) => boolean} setMode
  * @property {(ms: number, gpuMs?: number|null) => boolean} sampleFrame
+ * @property {(scalableTargetBytes: number, residentBytes?: number, fixedTargetBytes?: number) => boolean} sampleMemory Record allocation pressure independently of frame time.
+ * @property {() => void} resetMemoryMeasurements Forget observations after a context, resource graph or viewport change.
  * @property {(cssWidth: number, cssHeight: number, dpr?: number, limits?: ViewportLimits) => ViewportPlan} planViewport
  * @property {() => void} resetMeasurements
  */
@@ -194,6 +198,16 @@ export type QualitySnapshot = {
     lastMeanGpuMs: number | null;
     transitionCount: number;
     droppedLongFrames: number;
+    /**
+     * Latest observed render memory footprint.
+     */
+    memory: {
+        limitBytes: number;
+        targetBytes: number;
+        fixedTargetBytes: number;
+        residentBytes: number;
+        overBudget: boolean;
+    } | null;
 };
 export type ViewportPlan = {
     cssWidth: number;
@@ -239,6 +253,10 @@ export type AdaptiveQualityOptions = {
      * Mean frame ms below which quality recovers.
      */
     recoverFrameMs?: number | undefined;
+    /**
+     * Optional nominal target and resident byte budget.
+     */
+    memoryBudgetBytes?: number | null | undefined;
     onChange?: ((state: QualitySnapshot, reason: string) => void) | null | undefined;
 };
 export type AdaptiveQualityController = {
@@ -248,6 +266,14 @@ export type AdaptiveQualityController = {
     state: QualitySnapshot;
     setMode: (next: QualityMode) => boolean;
     sampleFrame: (ms: number, gpuMs?: number | null) => boolean;
+    /**
+     * Record allocation pressure independently of frame time.
+     */
+    sampleMemory: (scalableTargetBytes: number, residentBytes?: number, fixedTargetBytes?: number) => boolean;
+    /**
+     * Forget observations after a context, resource graph or viewport change.
+     */
+    resetMemoryMeasurements: () => void;
     planViewport: (cssWidth: number, cssHeight: number, dpr?: number, limits?: ViewportLimits) => ViewportPlan;
     resetMeasurements: () => void;
 };

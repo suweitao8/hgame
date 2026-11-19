@@ -22,7 +22,7 @@ const MAX_GPU_SAMPLES = 32;
  * @property {{supported: boolean, samples: readonly RenderGpuSample3D[]}} gpu Recent asynchronously resolved GPU samples, keyed by frame and view.
  */
 
-function textureBytesPerPixel(THREE, texture) {
+function textureBytesPerPixel(THREE, texture = {}) {
   if (texture.type === THREE.UnsignedInt101111Type) return 4;
   if (texture.internalFormat === 'RGBA8') return 4;
   const channels = texture.format === THREE.RedFormat ? 1 : texture.format === THREE.RGFormat ? 2 :
@@ -31,11 +31,17 @@ function textureBytesPerPixel(THREE, texture) {
   return channels * bytes;
 }
 
+/** Nominal bytes of known Three render attachments, shared by budgets and diagnostics. */
+export function estimateRenderTargetBytes(THREE, target) {
+  const { width, height, samples = 0, texture, depthBuffer, depthTexture, stencilBuffer } = target ?? {};
+  if (!(width > 0 && height > 0)) return 0;
+  return width * height * ((texture ? textureBytesPerPixel(THREE, texture) : 0) * (1 + samples) +
+    (depthBuffer || stencilBuffer || depthTexture ? 4 * Math.max(1, samples) : 0) + (samples && depthTexture ? 4 : 0));
+}
+
 function describeTarget(THREE, target, viewIndex) {
-  const { width, height, samples = 0, texture, depthBuffer, depthTexture, stencilBuffer } = target;
-  const bytes = width * height * (textureBytesPerPixel(THREE, texture) * (1 + samples) +
-    (depthBuffer || stencilBuffer ? 4 * Math.max(1, samples) : 0) + (samples && depthTexture ? 4 : 0));
-  return Object.freeze({ viewIndex, width, height, samples, bytes });
+  const { width, height, samples = 0 } = target;
+  return Object.freeze({ viewIndex, width, height, samples, bytes: estimateRenderTargetBytes(THREE, target) });
 }
 
 function counter(info, key) {

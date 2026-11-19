@@ -26,6 +26,27 @@ HGame keeps 3D rendering modular and strictly opt-in. Core runtime modules never
 - The adapter uses the resulting physical size for both the canvas and post-processing targets. When size and preset change together, it rebuilds post targets once at the final dimensions.
 - On WebGL context loss the post pipeline releases its targets and retains the latest size and preset. It allocates the targets once at the restored size. During ordinary resolution or preset changes, fixed-size auto-exposure targets retain their exposure history.
 
+### Target and residency budget
+
+Set `quality3d.memoryBudgetBytes` on `createThreeAdapter` to enable a soft budget for estimated render memory. Projects can also report resident assets and reclaim their unused cache entries.
+
+```js
+const quality3d = {
+  mode: 'auto',
+  memoryBudgetBytes: 96 * 1024 * 1024,
+  residency: {
+    readBytes: () => cache.residentBytes,
+    trimIdle: (excessBytes) => cache.trimIdle(excessBytes),
+  },
+};
+```
+
+The adapter counts allocated post-process attachments across active views, shadow maps, the baked probe atlas, and project-reported asset bytes. Individual attachment estimates include color, depth, stencil, and multisample storage where present. Fixed-size attachments such as shadow maps and exposure targets are tracked separately from targets that shrink with resolution. These estimates cover the named allocations. Total device memory and driver overhead are outside their scope.
+
+Auto mode releases inactive owned shadow targets and can call `trimIdle` synchronously before applying quality changes. If the same pressure persists, it retries a cache trim after 120 frames. When a smaller viewport can help, the controller scales resolution within the current tier before reducing effects. Frame-time recovery also considers the estimated memory cost and requires it to fit within 90% of the byte budget. Fixed modes report usage without changing quality.
+
+Read `adapter.qualityController.state.memory` for the latest completed frame's `limitBytes`, `targetBytes`, `fixedTargetBytes`, `residentBytes`, and `overBudget` flag. A resolution or tier change triggered by that frame appears in the next observation.
+
 ## Frustum, Occlusion Culling & GPU Instancing (`culling3d.js`)
 
 - `createSceneCuller3D` integrates per-frame Gribb-Hartmann 6-plane frustum + `maxDistance` tests with a 5-ray convex-cone software AABB occluder pass (`addOccluderAABB` / `setOccludersFromColliders`) and optional WebGL2 `ANY_SAMPLES_PASSED_CONSERVATIVE` async query pool (`createHardwareOcclusionPool` with `graceFrames`).

@@ -228,6 +228,7 @@
  * @property {Quality3DPreset} preset Getter; active (merged) quality preset.
  * @property {PostPipelineState} state Getter; shallow copy of the current state.
  * @property {PostPipelineTargets} targets Getter; target allocation info.
+ * @property {() => {scalableBytes: number, fixedBytes: number}} estimateTargetBytes Nominal bytes of currently owned render attachments.
  * @property {readonly PostHdrPass[]} passes Getter; current fullscreen HDR effects.
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
  * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
@@ -749,6 +750,13 @@ export type PostPipeline3D = {
      * Getter; target allocation info.
      */
     targets: PostPipelineTargets;
+    /**
+     * Nominal bytes of currently owned render attachments.
+     */
+    estimateTargetBytes: () => {
+        scalableBytes: number;
+        fixedBytes: number;
+    };
     /**
      * Getter; current fullscreen HDR effects.
      */

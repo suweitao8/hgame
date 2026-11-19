@@ -64,6 +64,8 @@
  * @property {Record<string, unknown>} [device] Device hints (e.g. `rendererName`).
  * @property {boolean} [calibrateGpu] Fill `device.rendererName` from the WebGL context.
  * @property {boolean} [gpuTiming=true] Use asynchronous GPU timings in automatic quality mode when available.
+ * @property {number | null} [memoryBudgetBytes=null] Soft budget for known render attachments and resident resources.
+ * @property {{readBytes: () => number, trimIdle?: (excessBytes: number) => void}} [residency] Optional project residency report and synchronous idle-cache trim.
  * @property {string} [mode] Quality mode: 'auto' | 'low' | 'medium' | 'high' | 'ultra'.
  */
 /**
@@ -342,6 +344,17 @@ export type ThreeQuality3DOptions = {
      * Use asynchronous GPU timings in automatic quality mode when available.
      */
     gpuTiming?: boolean | undefined;
+    /**
+     * Soft budget for known render attachments and resident resources.
+     */
+    memoryBudgetBytes?: number | null | undefined;
+    /**
+     * Optional project residency report and synchronous idle-cache trim.
+     */
+    residency?: {
+        readBytes: () => number;
+        trimIdle?: (excessBytes: number) => void;
+    } | undefined;
     /**
      * Quality mode: 'auto' | 'low' | 'medium' | 'high' | 'ultra'.
      */

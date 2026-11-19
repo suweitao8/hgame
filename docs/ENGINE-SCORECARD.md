@@ -68,13 +68,13 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 
 | 引擎 | 架构 / 25 | 性能设计 / 40 | 渲染 / 35 | 总分 / 100 | Δ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| HGame | 20.9 | 34.0 | 30.0 | **84.9** | — |
-| Unity 6.6 URP Web | 22.5 | 34.0 | 28.8 | **85.3** | −0.4 |
-| PlayCanvas Engine 2.x | 20.9 | 31.0 | 29.2 | **81.1** | +3.8 |
-| Cocos Creator 3.8 Web | 20.0 | 29.2 | 26.1 | **75.3** | +9.6 |
+| HGame | 20.9 | 35.0 | 30.0 | **85.9** | — |
+| Unity 6.6 URP Web | 22.5 | 34.0 | 28.8 | **85.3** | +0.6 |
+| PlayCanvas Engine 2.x | 20.9 | 31.0 | 29.2 | **81.1** | +4.8 |
+| Cocos Creator 3.8 Web | 20.0 | 29.2 | 26.1 | **75.3** | +10.6 |
 
-- **Unity URP Web**。调度契约和资源管理各高一个原始分。两者的性能设计同为 34.0，P2 和 P4 均为 9。Unity 通过 Render Graph 声明依赖，通过 Addressables 和 Web 场景渐进加载管理资源。HGame 的 2D 与 3D 主路径可导出同格式的逐阶段诊断，具体统计按后端能力报告。 [Unity 6.6 Web](https://discussions.unity.com/t/unity-6-6-is-now-available/1735357) · [URP Render Graph](https://docs.unity.com/en-us/engine/6000.3/manual/render-pipelines/universal-render-pipeline/customizing-urp/render-graph/view) · [HGame 渲染诊断](guides/AI-VERIFICATION.md#per-frame-render-diagnostics)
-- **PlayCanvas**。HGame 的性能设计高 **3.0** 加权分，2D 渲染高 **0.8**。两者的 3D 光照与输出评分相同。PlayCanvas 提供运行时光照贴图、环境光和 TAA 放大，HGame 使用离线探针与支持不透明刚体和 CPU 实例的 TAA。 [运行时光照贴图](https://developer.playcanvas.com/user-manual/graphics/lighting/runtime-lightmaps/) · [CameraFrame 时间域放大](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/#taa-upscaling) · [HGame 时间域抗锯齿](rendering/PIPELINE-3D.md#temporal-antialiasing)
+- **Unity URP Web**。调度契约和资源管理各高一个原始分。HGame 的帧预算高一个原始分，GPU 提交和性能诊断均为 9。Unity 通过 Render Graph 声明依赖，通过 Addressables 和 Web 场景渐进加载管理资源。HGame 的 2D 与 3D 主路径可导出同格式的逐阶段诊断，具体统计按后端能力报告。 [Unity 6.6 Web](https://discussions.unity.com/t/unity-6-6-is-now-available/1735357) · [URP Render Graph](https://docs.unity.com/en-us/engine/6000.3/manual/render-pipelines/universal-render-pipeline/customizing-urp/render-graph/view) · [HGame 渲染诊断](guides/AI-VERIFICATION.md#per-frame-render-diagnostics)
+- **PlayCanvas**。HGame 的性能设计高 **4.0** 加权分，2D 渲染高 **0.8**。两者的 3D 光照与输出评分相同。PlayCanvas 提供运行时光照贴图、环境光和 TAA 放大，HGame 使用离线探针与支持不透明刚体和 CPU 实例的 TAA。 [运行时光照贴图](https://developer.playcanvas.com/user-manual/graphics/lighting/runtime-lightmaps/) · [CameraFrame 时间域放大](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/#taa-upscaling) · [HGame 时间域抗锯齿](rendering/PIPELINE-3D.md#temporal-antialiasing)
 - **Cocos Creator Web**。HGame 在 CPU 仿真、GPU 提交、画质控制和诊断设计上得分更高。Cocos 的 R1 高 1 个原始分，值得参考的是动态图集和统一 2D 排序，尤其是文字、粒子和遮罩混排时如何维持批次。两者 A3 同分，Cocos 可参考的是共享依赖的引用计数与释放。 [动态图集](https://docs.cocos.com/creator/3.8/manual/en/advanced-topics/dynamic-atlas.html) · [排序配置](https://docs.cocos.com/creator/3.8/manual/en/editor/project/) · [资源释放](https://docs.cocos.com/creator/3.8/manual/en/asset/release-manager.html)
 
 ## HGame 到 90 的改进顺序
@@ -83,12 +83,12 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 
 | 顺序 | 评分项 | HGame 当前 → 目标 | Unity / PlayCanvas / Cocos | 加权增量 | 扣分原因与具体改进 |
 | --- | --- | ---: | ---: | ---: | --- |
-| 1 | P3 帧预算 | 8 → 9 | 8 / 8 / 7 | +1.0 | 3D 已有 GPU 计时与画质迟滞。把临时目标和资源驻留纳入预算，按瓶颈选择先缩分辨率、降特效或释放缓存，并定义恢复条件。 |
-| 2 | A3 资源生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 已有 Meshopt、KTX2 和关卡预取。为已开始的共享加载增加取消和引用生命周期，设定纹理/模型驻留预算，并支持按引用安全回收。 |
-| 3 | A1 调度生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 单一调度器已经管理固定步和插值。明确扩展的阶段注册顺序，统一跨场景任务取消以及退出和销毁回调的契约。 |
-| 4 | P1 CPU 仿真 | 8 → 9 | 8 / 7 / 7 | +1.0 | 固定步、确定性物理和密集群体数据已接入。为可延后的寻路和非关键 AI 更新引入分时预算，保留固定步确定性与背压报告。 |
-| 5 | R1 2D 渲染 | 8 → 9 | 9 / 7 / 9 | +0.8 | 主 2D 路径已有图集、精灵、粒子和 Bloom。明确精灵、文字、粒子和遮罩的排序与混合契约，减轻跨材质与裁剪切换造成的批次打断。 |
-| 6 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
+| 1 | A3 资源生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 已有 Meshopt、KTX2 和关卡预取。为已开始的共享加载增加取消和引用生命周期，设定纹理/模型驻留预算，并支持按引用安全回收。 |
+| 2 | A1 调度生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 单一调度器已经管理固定步和插值。明确扩展的阶段注册顺序，统一跨场景任务取消以及退出和销毁回调的契约。 |
+| 3 | P1 CPU 仿真 | 8 → 9 | 8 / 7 / 7 | +1.0 | 固定步、确定性物理和密集群体数据已接入。为可延后的寻路和非关键 AI 更新引入分时预算，保留固定步确定性与背压报告。 |
+| 4 | R1 2D 渲染 | 8 → 9 | 9 / 7 / 9 | +0.8 | 主 2D 路径已有图集、精灵、粒子和 Bloom。明确精灵、文字、粒子和遮罩的排序与混合契约，减轻跨材质与裁剪切换造成的批次打断。 |
+| 5 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
+| — | P3 帧预算 | 9 → 9 | 8 / 8 / 7 | +0.0 | Three 自动画质同时接收耗时和内存压力。可回收空闲目标和已登记的缓存，并在内存有余量时恢复画质。 |
 | — | P4 性能诊断 | 9 → 9 | 9 / 8 / 7 | +0.0 | WebGL2D、Canvas2D、Pixi 和 Three 共用快照结构。绘制、上传、GPU 时间与目标估算按后端能力公开。 |
 | — | R3 画面输出 | 9 → 9 | 8 / 9 / 7 | +0.0 | TAA 复用不透明网格和 CPU 实例的上一帧姿态，并在遮挡变化或重建目标时放弃无效历史。 |
 | — | R2 3D 光照 | 9 → 9 | 8 / 9 / 7 | +0.0 | PBR 材质可直接使用离线 SH 探针。高档在覆盖内衰减 SSGI，低档可以单独使用烘焙项。 |
@@ -103,7 +103,7 @@ HGame 已能把任务拆成要求，以精确测试名和浏览器检查点生�
 
 ## HGame 复评记录
 
-当前复评 **84.9／100**，架构 **20.9／25**，性能设计 **34.0／40**，渲染 **30.0／35**。距离目标 **5.1 分**。
+当前复评 **85.9／100**，架构 **20.9／25**，性能设计 **35.0／40**，渲染 **30.0／35**。距离目标 **4.1 分**。
 
 | 阶段 | 构建目标与后端 | 评项 | 原分 | 新分 | 加权变化与工程依据 |
 | --- | --- | --- | ---: | ---: | --- |
@@ -118,5 +118,6 @@ HGame 已能把任务拆成要求，以精确测试名和浏览器检查点生�
 | 烘焙间接光 | Web · Three WebGL2 | R2 | 7 | 9 | **+2.0**。版本化 SH 探针数据在场景级接入 PBR 漫反射，支持前向出图及低档使用。HDR 以有界权重衰减覆盖内部的 SSGI，边界保留重叠，SSR 单独处理。原生网格或 3D 纹理尺寸不支持时沿用已有光照。当前每个场景管理一个烘焙网格。 [资源与混合契约](rendering/PIPELINE-3D.md#baked-world-irradiance) · [专项测试](../tests/rendering-pipeline3d.test.mjs) |
 | 不透明物体运动重投影 | Web · Three WebGL2 | R3 | 8 | 9 | **+1.0**。刚体和 CPU 实例记录上一帧变换，运动缓冲用当前深度淘汰遮挡像素，TAA 用上一帧深度验证重投影。新物体和尺寸变化有独立的历史失效规则，静止视图跳过运动绘制。骨骼、GPU 动画和时间域上采样仍有提升空间。 [运动与历史](rendering/PIPELINE-3D.md#temporal-antialiasing) · [专项测试](../tests/rendering-pipeline3d.test.mjs) |
 | 2D 渲染诊断 | Web · WebGL2D、Canvas2D、Pixi | P4 | 8 | 9 | **+0.8**。主 2D 后端提供同格式的帧与阶段报告。WebGL 记录实际绘制、上传载荷、目标估算与异步 GPU 采样。Pixi WebGPU 记录可观测的队列传输和提交，Canvas2D 保留 CPU 阶段和缓存估算。Canvas2D 的 GPU 计数与 Pixi WebGPU 的 GPU 时间按不可用报告。 [诊断口径](guides/AI-VERIFICATION.md#per-frame-render-diagnostics) · [专项测试](../tests/webgl2d-lighting-post.test.mjs) |
+| 帧与内存预算 | Web · Three WebGL2 | P3 | 8 | 9 | **+1.0**。普通绘制计入各视口的后处理目标、阴影贴图、烘焙探针与项目登记的缓存占用。自动模式先回收空闲资源，再按目标类型调整分辨率或特效，恢复前留出余量。预算按已知分配估算，覆盖 Three 路径。 [预算接口](rendering/PIPELINE-3D.md#target-and-residency-budget) · [专项测试](../tests/rendering-pipeline3d.test.mjs) |
 
 后续评审新增一行，先更新证据，再重算总分。过去包含试玩或交付的评分使用其原始口径，趋势从本页首轮基线开始记录。

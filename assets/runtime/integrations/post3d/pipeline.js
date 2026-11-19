@@ -20,7 +20,7 @@ import { QUALITY3D_PRESETS } from '../quality3d.js';
 import { readWorldPosition } from '../shadow3d/transform.js';
 import { syncCameraWorldMatrices, usesZeroToOneDepth } from '../camera3d/matrices.js';
 import { fitDrawingBuffer, readDrawingBufferLimits } from '../quality3d/viewport.js';
-import { drawWithDiagnostics } from '../quality3d/render-diagnostics.js';
+import { drawWithDiagnostics, estimateRenderTargetBytes } from '../quality3d/render-diagnostics.js';
 import { createTemporalAA } from './temporal-aa.js';
 import { createTemporalMotion } from './temporal-motion.js';
 import { getVisibleBakedProbeGrid } from '../lighting3d/baked-probe-grid.js';
@@ -328,6 +328,7 @@ function compileHdrPasses(passes) {
  * @property {Quality3DPreset} preset Getter; active (merged) quality preset.
  * @property {PostPipelineState} state Getter; shallow copy of the current state.
  * @property {PostPipelineTargets} targets Getter; target allocation info.
+ * @property {() => {scalableBytes: number, fixedBytes: number}} estimateTargetBytes Nominal bytes of currently owned render attachments.
  * @property {readonly PostHdrPass[]} passes Getter; current fullscreen HDR effects.
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
  * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
@@ -1164,14 +1165,27 @@ export function createPostPipeline3D(options = {}) {
   function reportTargets(sink) {
     if (!sink) return;
     for (const target of [sceneRT, halfRT, aoBlurRT, halfScratchRT, giSsrRT,
-      giHistoryRT, ldrRT, ...lumaMips, ...adaptRT, ...(temporalAa?.targets ?? []), temporalAa?.motionTarget]) {
+      giHistoryRT, ldrRT, ...(temporalAa?.targets ?? []), temporalAa?.motionTarget]) {
       if (target) sink.recordTarget(target);
     }
+    for (const target of lumaMips) sink.recordTarget(target, true);
+    for (const target of adaptRT) sink.recordTarget(target, true);
     hdrTargets.record(sink);
     for (const { down, up } of bloomMips) {
       if (down) sink.recordTarget(down);
       if (up) sink.recordTarget(up);
     }
+  }
+
+  function estimateTargetBytes() {
+    let scalableBytes = 0;
+    let fixedBytes = 0;
+    reportTargets({ recordTarget(target, fixed = false) {
+      const bytes = estimateRenderTargetBytes(THREE, target);
+      if (fixed) fixedBytes += bytes;
+      else scalableBytes += bytes;
+    } });
+    return { scalableBytes, fixedBytes };
   }
 
   function compositeWorldIntoViewTarget(compU, target) {
@@ -1541,6 +1555,7 @@ export function createPostPipeline3D(options = {}) {
     get preset() { return activePreset; },
     get state() { return { ...state }; },
     get passes() { return customPasses; },
+    estimateTargetBytes,
     get targets() {
       return {
         bufferWidth,

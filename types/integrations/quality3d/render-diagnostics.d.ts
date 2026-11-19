@@ -1,3 +1,5 @@
+/** Nominal bytes of known Three render attachments, shared by budgets and diagnostics. */
+export function estimateRenderTargetBytes(THREE: any, target: any): number;
 export function createRenderDiagnostics3D(THREE: any, renderer: any): {
     beginFrame: () => boolean;
     endFrame: (complete: any) => void;

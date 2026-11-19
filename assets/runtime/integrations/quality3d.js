@@ -62,6 +62,7 @@ import { fitDrawingBuffer } from './quality3d/viewport.js';
  * @property {number|null} lastMeanGpuMs Mean GPU time in the latest window, when enough samples were available.
  * @property {number} transitionCount
  * @property {number} droppedLongFrames
+ * @property {{limitBytes: number, targetBytes: number, fixedTargetBytes: number, residentBytes: number, overBudget: boolean} | null} memory Latest observed render memory footprint.
  */
 /**
  * @typedef {object} ViewportPlan
@@ -92,6 +93,7 @@ import { fitDrawingBuffer } from './quality3d/viewport.js';
  * @property {number} [sampleFrames=45] Frames per sample window (2..300).
  * @property {number} [degradeFrameMs=22] Mean frame ms above which quality drops.
  * @property {number} [recoverFrameMs=17] Mean frame ms below which quality recovers.
+ * @property {number | null} [memoryBudgetBytes=null] Optional nominal target and resident byte budget.
  * @property {((state: QualitySnapshot, reason: string) => void)|null} [onChange=null]
  */
 /**
@@ -99,6 +101,8 @@ import { fitDrawingBuffer } from './quality3d/viewport.js';
  * @property {QualitySnapshot} state Current snapshot (getter).
  * @property {(next: QualityMode) => boolean} setMode
  * @property {(ms: number, gpuMs?: number|null) => boolean} sampleFrame
+ * @property {(scalableTargetBytes: number, residentBytes?: number, fixedTargetBytes?: number) => boolean} sampleMemory Record allocation pressure independently of frame time.
+ * @property {() => void} resetMemoryMeasurements Forget observations after a context, resource graph or viewport change.
  * @property {(cssWidth: number, cssHeight: number, dpr?: number, limits?: ViewportLimits) => ViewportPlan} planViewport
  * @property {() => void} resetMeasurements
  */
@@ -213,6 +217,7 @@ export function createAdaptiveQualityController({
   sampleFrames = 45,
   degradeFrameMs = 22,
   recoverFrameMs = 17,
+  memoryBudgetBytes = null,
   onChange = null,
 } = {}) {
   if (!VALID_MODES.includes(mode)) throw new RangeError('Unsupported 3D quality mode: ' + mode);
@@ -231,6 +236,9 @@ export function createAdaptiveQualityController({
   }
   if (!(recoverFrameMs > 0 && degradeFrameMs > recoverFrameMs)) {
     throw new RangeError('Invalid frame-time hysteresis');
+  }
+  if (memoryBudgetBytes !== null && (!Number.isSafeInteger(memoryBudgetBytes) || memoryBudgetBytes <= 0)) {
+    throw new RangeError('memoryBudgetBytes must be a positive safe integer');
   }
   if (onChange !== null && typeof onChange !== 'function') throw new TypeError('onChange must be a function');
 
@@ -252,12 +260,16 @@ export function createAdaptiveQualityController({
   let gpuCount = 0;
   let lastMeanMs = 0;
   let lastMeanGpuMs = null;
+  let memory = null;
+  let memoryScale = null;
+  let memoryTier = null;
+  const measuredTiers = memoryBudgetBytes === null ? null : new Map();
 
   function snapshot() {
     return Object.freeze({
       mode: configuredMode,
       tier, preset: QUALITY3D_PRESETS[tier],
-      dynamicScale, lastMeanMs, lastMeanGpuMs, transitionCount, droppedLongFrames,
+      dynamicScale, lastMeanMs, lastMeanGpuMs, transitionCount, droppedLongFrames, memory,
     });
   }
   function notify(reason) {
@@ -280,6 +292,7 @@ export function createAdaptiveQualityController({
     lastMeanGpuMs = null;
     settle = settleMs;
     cooldown = 0;
+    resetMemoryMeasurements();
     return notify('mode');
   }
   function planViewport(cssWidth, cssHeight, dpr = 1, limits = {}) {
@@ -309,18 +322,78 @@ export function createAdaptiveQualityController({
     gpuCount = 0;
   }
 
-  function promoteTier(nextTier) {
+  function promotionScale(nextTier) {
     const current = QUALITY3D_PRESETS[tier];
     const next = QUALITY3D_PRESETS[nextTier];
     const currentCap = Math.min(maxPixelRatio, current.maxPixelRatio);
     const nextCap = Math.min(maxPixelRatio, next.maxPixelRatio);
     // Bound the initial increase in GPU work when the new tier enables more effects.
     const ratio = Math.min(currentCap / nextCap, Math.sqrt(current.maxPixels / next.maxPixels));
-    dynamicScale = inRange(dynamicScale * ratio, minScale, maxScale);
+    return inRange(dynamicScale * ratio, minScale, maxScale);
+  }
+
+  function promoteTier(nextTier, scale) {
+    dynamicScale = scale;
     tier = nextTier;
     healthyAtMaxScaleMs = 0;
     tierProbeRemainingMs = TIER_PROBE_MS;
     cooldown = TIER_COOLDOWN_MS;
+  }
+
+  function lowerTier() {
+    const index = TIERS.indexOf(tier);
+    if (index === 0) return false;
+    tier = TIERS[index - 1];
+    cooldown = TIER_COOLDOWN_MS;
+    if (tierProbeRemainingMs > 0) {
+      tierRecoveryDelayMs = Math.min(tierRecoveryDelayMs * 2, TIER_MAX_RETRY_MS);
+      tierProbeRemainingMs = 0;
+    }
+    return true;
+  }
+
+  function memoryAllowsGrowth(nextScale, nextTier = tier) {
+    if (memoryBudgetBytes === null) return true;
+    if (!memory || memoryScale !== dynamicScale || memoryTier !== tier || memory.overBudget) return false;
+    // Keep headroom for fixed-size attachments and allocations deferred to the next draw.
+    const observed = measuredTiers.get(nextTier);
+    const targetBytes = observed ? observed.fixed + observed.bytes * (nextScale / observed.scale) ** 2 : memory.targetBytes;
+    return memory.residentBytes + targetBytes <= memoryBudgetBytes * 0.9;
+  }
+
+  function resetMemoryMeasurements() {
+    memory = null;
+    memoryScale = null;
+    memoryTier = null;
+    measuredTiers?.clear();
+  }
+
+  function sampleMemory(scalableTargetBytes, residentBytes = 0, fixedTargetBytes = 0) {
+    if (memoryBudgetBytes === null || ![scalableTargetBytes, fixedTargetBytes, residentBytes].every(bytes => Number.isFinite(bytes) && bytes >= 0)) return false;
+    const targetBytes = scalableTargetBytes + fixedTargetBytes;
+    const overBudget = targetBytes + residentBytes > memoryBudgetBytes;
+    memory = Object.freeze({ limitBytes: memoryBudgetBytes, targetBytes, fixedTargetBytes, residentBytes, overBudget });
+    memoryTier = tier;
+    memoryScale = dynamicScale;
+    measuredTiers.set(tier, { bytes: scalableTargetBytes, fixed: fixedTargetBytes, scale: dynamicScale });
+    if (!overBudget || configuredMode !== 'auto' || targetBytes === 0) return false;
+
+    const remaining = memoryBudgetBytes - residentBytes - fixedTargetBytes;
+    let reason;
+    if (dynamicScale > minScale && remaining > 0 && scalableTargetBytes > 0) {
+      const ratio = Math.sqrt(remaining / scalableTargetBytes);
+      dynamicScale = inRange(Math.floor(dynamicScale * ratio * 100) / 100, minScale, maxScale);
+      reason = 'memory-resolution';
+    } else if (lowerTier()) {
+      reason = 'memory-tier';
+    } else {
+      return false;
+    }
+    healthyAtMaxScaleMs = 0;
+    slowAtFloor = 0;
+    clearWindow();
+    settle = Math.max(settle, settleAfterChangeMs);
+    return notify(reason);
   }
 
   function sampleFrame(ms, gpuMs = null) {
@@ -370,16 +443,9 @@ export function createAdaptiveQualityController({
       } else {
         slowAtFloor++;
         if (slowAtFloor >= 2 && mean > degradeFrameMs + 3) {
-          const index = TIERS.indexOf(tier);
-          if (index > 0) {
-            tier = TIERS[index - 1];
+          if (lowerTier()) {
             // Keep the current scale until fast frames earn resolution recovery.
             reason = 'tier';
-            cooldown = TIER_COOLDOWN_MS;
-            if (tierProbeRemainingMs > 0) {
-              tierRecoveryDelayMs = Math.min(tierRecoveryDelayMs * 2, TIER_MAX_RETRY_MS);
-              tierProbeRemainingMs = 0;
-            }
             changed = true;
           }
           slowAtFloor = 0;
@@ -389,16 +455,23 @@ export function createAdaptiveQualityController({
       slowAtFloor = 0;
       const gpuCanPromote = lastMeanGpuMs === null || lastMeanGpuMs < recoverFrameMs * 0.8;
       if (dynamicScale < maxScale) {
-        dynamicScale = inRange(Math.round((dynamicScale + .1) * 100) / 100, minScale, maxScale);
-        healthyAtMaxScaleMs = 0;
-        changed = true;
-        cooldown = 900;
-      } else if (tier !== autoCeiling && gpuCanPromote) {
-        healthyAtMaxScaleMs += windowMs;
-        if (healthyAtMaxScaleMs >= tierRecoveryDelayMs) {
-          promoteTier(TIERS[TIERS.indexOf(tier) + 1]);
-          reason = 'tier';
+        const nextScale = inRange(Math.round((dynamicScale + .1) * 100) / 100, minScale, maxScale);
+        if (memoryAllowsGrowth(nextScale)) {
+          dynamicScale = nextScale;
+          healthyAtMaxScaleMs = 0;
           changed = true;
+          cooldown = 900;
+        }
+      } else if (tier !== autoCeiling && gpuCanPromote) {
+        healthyAtMaxScaleMs = Math.min(tierRecoveryDelayMs, healthyAtMaxScaleMs + windowMs);
+        if (healthyAtMaxScaleMs >= tierRecoveryDelayMs) {
+          const nextTier = TIERS[TIERS.indexOf(tier) + 1];
+          const nextScale = promotionScale(nextTier);
+          if (memoryAllowsGrowth(nextScale, nextTier)) {
+            promoteTier(nextTier, nextScale);
+            reason = 'tier';
+            changed = true;
+          }
         }
       } else {
         healthyAtMaxScaleMs = 0;
@@ -423,6 +496,6 @@ export function createAdaptiveQualityController({
   }
   return Object.freeze({
     get state() { return snapshot(); },
-    setMode, sampleFrame, planViewport, resetMeasurements,
+    setMode, sampleFrame, sampleMemory, planViewport, resetMeasurements, resetMemoryMeasurements,
   });
 }

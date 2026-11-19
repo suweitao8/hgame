@@ -1,7 +1,7 @@
 import { Component } from '../core/component.js';
 import { createAdaptiveQualityController, resolveQualityPreset } from './quality3d.js';
 import { createGpuFrameTimer } from './quality3d/gpu-timer.js';
-import { createRenderDiagnostics3D, drawWithDiagnostics } from './quality3d/render-diagnostics.js';
+import { createRenderDiagnostics3D, drawWithDiagnostics, estimateRenderTargetBytes } from './quality3d/render-diagnostics.js';
 import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
@@ -12,6 +12,7 @@ import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { cleanupAll } from '../internal/cleanup.js';
 
 const SCRATCH_WORLD_MAT = new Float64Array(16);
+const CACHE_TRIM_RETRY_FRAMES = 120;
 
 function resolveToneMappingConstant(THREE, mode) {
   switch (mode) {
@@ -124,6 +125,8 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {Record<string, unknown>} [device] Device hints (e.g. `rendererName`).
  * @property {boolean} [calibrateGpu] Fill `device.rendererName` from the WebGL context.
  * @property {boolean} [gpuTiming=true] Use asynchronous GPU timings in automatic quality mode when available.
+ * @property {number | null} [memoryBudgetBytes=null] Soft budget for known render attachments and resident resources.
+ * @property {{readBytes: () => number, trimIdle?: (excessBytes: number) => void}} [residency] Optional project residency report and synchronous idle-cache trim.
  * @property {string} [mode] Quality mode: 'auto' | 'low' | 'medium' | 'high' | 'ultra'.
  */
 
@@ -323,6 +326,14 @@ export function createThreeAdapter({
     if (light?.shadow?.autoUpdate === false) markSunShadowDirty(light);
   }
 
+  function releaseSunShadowTargets(shadow) {
+    const { map, mapPass } = shadow;
+    shadow.map = null;
+    if (mapPass) shadow.mapPass = null;
+    map?.dispose?.();
+    if (mapPass !== map) mapPass?.dispose?.();
+  }
+
   function prepareSunShadows(world, camera) {
     if (activeSunLight?.shadow?.needsUpdate && renderer.shadowMap) renderer.shadowMap.needsUpdate = true;
     const light = worldSuns.get(world);
@@ -369,12 +380,7 @@ export function createThreeAdapter({
         if (typeof shadow.mapSize.set === 'function') shadow.mapSize.set(wanted, wanted);
         else Object.assign(shadow.mapSize, { x: wanted, y: wanted });
 
-        const map = shadow.map;
-        const mapPass = shadow.mapPass;
-        shadow.map = null;
-        if (mapPass) shadow.mapPass = null;
-        map?.dispose?.();
-        if (mapPass !== map) mapPass?.dispose?.();
+        releaseSunShadowTargets(shadow);
         needsRefresh = true;
       }
     }
@@ -399,6 +405,13 @@ export function createThreeAdapter({
       refreshShadow = enableShadows && (!previousEnabled || previousType !== renderer.shadowMap.type);
     }
     applySunShadowPreset(activeSunLight ?? worldSunLight, preset, refreshShadow);
+    if (memoryBudgetBytes !== null && !enableShadows && ownedSuns.has(worldSunLight)) {
+      const shadow = worldSunLight.shadow;
+      if (shadow?.map || shadow?.mapPass) {
+        releaseSunShadowTargets(shadow);
+        markSunShadowDirty(worldSunLight);
+      }
+    }
     if (preset) {
       culler3d.setMaxDistance(preset.drawDistance ?? far);
       culler3d.setOcclusionEnabled(preset.occlusionCulling ?? true);
@@ -438,6 +451,11 @@ export function createThreeAdapter({
   let drawingBufferLimits = readDrawingBufferLimits(renderer);
   let gpuFrameTimer;
   let measureGpu = false;
+  const memoryBudgetBytes = quality3d?.memoryBudgetBytes ?? null;
+  const residency = quality3d?.residency;
+  let trimRetryFrames = 0;
+  let lastBudgetScene = null;
+  let measuringMemory = false;
   const enableGpuTiming = quality3d?.gpuTiming !== false;
   const userQualityOnChange = quality3d?.onChange ?? null;
   if (userQualityOnChange !== null && typeof userQualityOnChange !== 'function') {
@@ -489,6 +507,11 @@ export function createThreeAdapter({
   }
 
   const postOptions = typeof post3d === 'object' && post3d ? { ...post3d } : {};
+  function targetOptions(pipeline) {
+    const state = pipeline.state;
+    return [state.temporalAA, state.temporalMotion, state.temporalGiSsr, state.autoExposure,
+      state.fxaa, state.sharpness > 0.001, state.giIntensity > 0.001, state.ssrIntensity > 0.001];
+  }
   function createViewPostPipeline(width, height, preset, passes = postOptions.passes) {
     return createPostPipeline3D({
       THREE, renderer,
@@ -511,6 +534,20 @@ export function createThreeAdapter({
       resetTemporalHistory();
       for (const entry of viewPipelines) entry?.pipeline.resetTemporalHistory();
     };
+    if (memoryBudgetBytes !== null) {
+      const setState = postPipeline.setState;
+      postPipeline.setState = patch => {
+        const before = targetOptions(postPipeline);
+        setState(patch);
+        if (targetOptions(postPipeline).some((value, index) => value !== before[index])) qualityController.resetMemoryMeasurements();
+      };
+      const setPasses = postPipeline.setPasses;
+      postPipeline.setPasses = passes => {
+        const before = postPipeline.passes;
+        setPasses(passes);
+        if (before !== postPipeline.passes) qualityController.resetMemoryMeasurements();
+      };
+    }
   }
 
   appliedPreset = qualityController?.state?.preset ?? null;
@@ -667,6 +704,9 @@ export function createThreeAdapter({
     const size = planCanvasSize();
     const { cssWidth: w, cssHeight: h, pixelRatio: ratio } = size;
     const lastPlan = lastCanvasSize?.plan;
+    if (memoryBudgetBytes !== null && lastPlan && (w !== lastPlan.cssWidth || h !== lastPlan.cssHeight)) {
+      qualityController?.resetMemoryMeasurements();
+    }
     const canvasChanged = lastCanvasSize &&
       (canvas.width !== lastCanvasSize.canvasWidth || canvas.height !== lastCanvasSize.canvasHeight);
     const viewportChanged = !lastPlan || lastPlan.cssWidth !== w || lastPlan.cssHeight !== h || lastPlan.pixelRatio !== ratio;
@@ -714,6 +754,8 @@ export function createThreeAdapter({
     gpuFrameTimer?.reset();
     gpuFrameTimer = undefined;
     renderDiagnostics?.resetGpu(true);
+    qualityController?.resetMemoryMeasurements();
+    trimRetryFrames = 0;
     postPipeline?.handleContextLost?.();
     // Recreate pane resources from the restored GPU's limits on the next draw.
     removeObsoleteViewPipelines(null);
@@ -755,6 +797,14 @@ export function createThreeAdapter({
   function setViews(views, options = {}) {
     const res = normalizeSplitViews(views, options);
     const changedMode = Boolean(activeViews) !== Boolean(res.views);
+    if (memoryBudgetBytes !== null && (changedMode || (res.views && (activeViews.length !== res.views.length ||
+      res.views.some((view, index) => {
+        const previous = activeViews[index];
+        return view.camera !== previous.camera || view.playerId !== previous.playerId ||
+          view.x !== previous.x || view.y !== previous.y || view.width !== previous.width || view.height !== previous.height;
+      }))))) {
+      qualityController?.resetMemoryMeasurements();
+    }
     activeViews = res.views;
     removeObsoleteViewPipelines(activeViews);
     if (changedMode && postPipeline?.supported) resize();
@@ -1010,8 +1060,7 @@ export function createThreeAdapter({
     });
   }
 
-  function render(scene, _app = null) {
-    if (contextLost) return;
+  function renderFrame(scene) {
     if (renderDiagnostics) {
       if (!renderDiagnostics.beginFrame()) {
         renderWorld(scene);
@@ -1036,6 +1085,70 @@ export function createThreeAdapter({
     } finally {
       timer.end();
     }
+  }
+
+  function shadowTargetBytes() {
+    const targets = new Set();
+    for (const sun of ownedSuns.keys()) {
+      targets.add(sun.shadow?.map);
+      targets.add(sun.shadow?.mapPass);
+    }
+    targets.add(activeSunLight?.shadow?.map);
+    targets.add(activeSunLight?.shadow?.mapPass);
+    let bytes = 0;
+    for (const target of targets) bytes += estimateRenderTargetBytes(THREE, target);
+    return bytes;
+  }
+
+  function readProjectResidency() {
+    const bytes = residency?.readBytes?.() ?? 0;
+    return Number.isFinite(bytes) && bytes >= 0 ? bytes : 0;
+  }
+
+  function recordRenderMemory(scene) {
+    if (scene !== lastBudgetScene) {
+      qualityController.resetMemoryMeasurements();
+      lastBudgetScene = scene;
+    }
+    const primary = postPipeline?.estimateTargetBytes();
+    let targetBytes = activeViews ? 0 : primary?.scalableBytes ?? 0;
+    let fixedPostBytes = (primary?.fixedBytes ?? 0) + (activeViews ? primary?.scalableBytes ?? 0 : 0);
+    for (const entry of viewPipelines) {
+      if (!entry) continue;
+      const { scalableBytes, fixedBytes } = entry.pipeline.estimateTargetBytes();
+      targetBytes += scalableBytes;
+      fixedPostBytes += fixedBytes;
+    }
+    let probeBytes = 0;
+    for (const { texture } of irradianceGrids.values()) probeBytes += texture.image?.data?.byteLength ?? 0;
+    let shadowBytes = shadowTargetBytes();
+    let projectBytes = readProjectResidency();
+    const totalBytes = () => targetBytes + fixedPostBytes + shadowBytes + probeBytes + projectBytes;
+    trimRetryFrames = Math.max(0, trimRetryFrames - 1);
+    if (qualityController.state.mode === 'auto' && totalBytes() > memoryBudgetBytes) {
+      for (const sun of ownedSuns.keys()) {
+        if (sun === worldSunLight || sun === activeSunLight || (!sun.shadow?.map && !sun.shadow?.mapPass)) continue;
+        releaseSunShadowTargets(sun.shadow);
+        markSunShadowDirty(sun);
+      }
+      shadowBytes = shadowTargetBytes();
+      const excess = totalBytes() - memoryBudgetBytes;
+      if (excess > 0 && projectBytes > 0 && trimRetryFrames === 0 && typeof residency?.trimIdle === 'function') {
+        residency.trimIdle(excess);
+        projectBytes = readProjectResidency();
+        trimRetryFrames = CACHE_TRIM_RETRY_FRAMES;
+      }
+    }
+    if (totalBytes() <= memoryBudgetBytes) trimRetryFrames = 0;
+    qualityController.sampleMemory(targetBytes, probeBytes + projectBytes, shadowBytes + fixedPostBytes);
+  }
+
+  function render(scene, _app = null) {
+    if (contextLost) return;
+    renderFrame(scene);
+    if (memoryBudgetBytes === null || measuringMemory || contextLost || disposed) return;
+    measuringMemory = true;
+    try { recordRenderMemory(scene); } finally { measuringMemory = false; }
   }
 
   return {
@@ -1068,14 +1181,20 @@ export function createThreeAdapter({
     },
     addView(scene, object) { getViewWorld(scene).add(object); },
     removeView(scene, object) { if (scene && viewWorlds.has(scene)) getViewWorld(scene).remove(object); },
-    setViewCamera(cam) { activeViewCamera = cam; },
+    setViewCamera(cam) {
+      if (cam !== activeViewCamera && memoryBudgetBytes !== null) qualityController.resetMemoryMeasurements();
+      activeViewCamera = cam;
+    },
     setIrradianceProbeGrid,
     setSunLight(light) {
       const previousSun = activeSunLight ?? worldSunLight;
       activeSunLight = light;
       if (qualityController?.state?.preset) applyQualityToRenderer(qualityController.state.preset);
       const nextSun = activeSunLight ?? worldSunLight;
-      if (nextSun !== previousSun) markSunShadowDirty(nextSun);
+      if (nextSun !== previousSun) {
+        markSunShadowDirty(nextSun);
+        if (memoryBudgetBytes !== null) qualityController.resetMemoryMeasurements();
+      }
     },
     invalidateSunShadow(scene = null) {
       const light = scene ? worldSuns.get(worlds.get(scene)) : activeSunLight ?? worldSunLight;
@@ -1114,6 +1233,7 @@ export function createThreeAdapter({
     },
     get postVolumes() { return activePostVolumes; },
     setPostVolumes(stack) {
+      if ((stack ?? null) !== activePostVolumes && memoryBudgetBytes !== null) qualityController.resetMemoryMeasurements();
       activePostVolumes = stack ?? null;
     },
     registerMaterialPalette(palette) {
