@@ -242,7 +242,7 @@ void main() {
   vUv = vec2(mix(0.80, 0.20, spanT), position.y + 0.5);
   vec3 c0 = unpackRgb24(aSegMeta.x);
   vec3 c1 = unpackRgb24(aSegExtra.x);
-  vColor = mix(c0, c1, smoothstep(0.04, 0.26, spanT));
+  vColor = mix(c0, c1, smoothstep(0.06, 0.36, spanT));
   vAlpha = mix(aSegMeta.z, aSegMeta.w, u);
   vHdr = aSegExtra.w;
 
@@ -268,7 +268,7 @@ void main() {
     vec2 vside = vlen > 0.0001 ? (vec2(-vdir.y, vdir.x) / vlen) : vec2(1.0, 0.0);
     vec4 mvPos = mix(mvA, mvB, u);
     float worldW = w * wScale;
-    float minScreenW = abs(mvPos.z) * 0.0028 * (1.0 - spanT * 0.45);
+    float minScreenW = abs(mvPos.z) * 0.0048 * max(0.18, 1.0 - spanT * 0.78);
     mvPos.xy += vside * (position.y * max(worldW, minScreenW));
     gl_Position = projectionMatrix * mvPos;
   }
@@ -661,7 +661,7 @@ export function createTrailsSystem({
       dstMeta[i4] = rgb;
       dstMeta[i4 + 1] = w;
       if (isNormal) {
-        const evalNormalAlpha = (t) => (t <= 0.06 ? (t / 0.06) : t >= 0.85 ? Math.max(0, (1 - t) / 0.15) : 1);
+        const evalNormalAlpha = (t) => (t <= 0.04 ? (t / 0.04) : Math.pow(Math.max(0, 1 - t), 0.25));
         dstMeta[i4 + 2] = evalNormalAlpha(t0);
         dstMeta[i4 + 3] = evalNormalAlpha(t1);
       } else {

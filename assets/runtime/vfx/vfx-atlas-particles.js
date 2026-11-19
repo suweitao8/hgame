@@ -606,8 +606,8 @@ void main() {
     if (nStr > 0.001) {
       float nFreq = max(0.08, aAtlasP6.y);
       float ph = aAtlasP6.w * 6.2831853;
-      float w1 = nFreq * 3.2;
-      float w2 = nFreq * 5.7;
+      float w1 = nFreq * 2.5;
+      float w2 = nFreq * 4.2;
       float rm = aAtlasP3.w;
       float yScale = (rm > 1.5 && rm < 2.5) ? 1.0 : aAtlasP6.z;
       vec3 disp1 = vec3(
@@ -620,7 +620,7 @@ void main() {
         (sin(w2 * age * 0.91 + ph * 1.4) - sin(ph * 1.4)) / (w2 * 0.91),
         (sin(w2 * age + ph * 2.3) - sin(ph * 2.3)) / w2
       );
-      vec3 noiseOff = (disp1 + 0.55 * disp2) * nStr * 1.95;
+      vec3 noiseOff = (disp1 + 0.45 * disp2) * nStr * 1.18;
       noiseOff.y *= yScale;
       worldPos += noiseOff;
     }
@@ -1083,18 +1083,18 @@ export function evaluateAtlasParticlePosition(
       px += Math.sin(wt + ph) * Math.cos(wt * 0.73 + ph) * env;
       py += Math.cos(wt * 1.17 + ph) * env * noiseYScale;
     } else {
-      const w1 = nf * 3.2;
-      const w2 = nf * 5.7;
+      const w1 = nf * 2.5;
+      const w2 = nf * 4.2;
       const d1x = (Math.sin(w1 * age + ph) - Math.sin(ph)) / w1;
       const d1y = (Math.sin(w1 * age * 1.13 + ph * 2.1) - Math.sin(ph * 2.1)) / (w1 * 1.13);
       const d1z = (Math.cos(ph * 1.7) - Math.cos(w1 * age + ph * 1.7)) / w1;
       const d2x = (Math.cos(ph * 2.9) - Math.cos(w2 * age + ph * 2.9)) / w2;
       const d2y = (Math.sin(w2 * age * 0.91 + ph * 1.4) - Math.sin(ph * 1.4)) / (w2 * 0.91);
       const d2z = (Math.sin(w2 * age + ph * 2.3) - Math.sin(ph * 2.3)) / w2;
-      const s = noiseStrength * 1.95;
-      px += (d1x + 0.55 * d2x) * s;
-      py += (d1y + 0.55 * d2y) * s * noiseYScale;
-      pz += (d1z + 0.55 * d2z) * s;
+      const s = noiseStrength * 1.18;
+      px += (d1x + 0.45 * d2x) * s;
+      py += (d1y + 0.45 * d2y) * s * noiseYScale;
+      pz += (d1z + 0.45 * d2z) * s;
     }
   }
   outPos[0] = px;
