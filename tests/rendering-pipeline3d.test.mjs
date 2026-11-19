@@ -89,6 +89,7 @@ test('split Three views use pane-sized HDR targets, isolated exposure, and physi
   renderer.setScissorTest = enabled => { scissorEnabled = enabled; };
   renderer.setRenderTarget = next => { target = next; };
   renderer.render = (scene, camera) => passes.push({ camera, target, viewport, scissor, scissorEnabled,
+    material: scene.children?.[0]?.material,
     exposure: scene.children?.[0]?.material?.uniforms?.uExposure?.value,
     previousAdapt: scene.children?.[0]?.material?.uniforms?.tPrevAdapt?.value,
     previousGi: scene.children?.[0]?.material?.uniforms?.tHistory?.value });
@@ -140,16 +141,86 @@ test('split Three views use pane-sized HDR targets, isolated exposure, and physi
   adapter.setPostVolumes(null);
   adapter.setExposure(1.25);
   adapter.postPipeline.setState({ fxaa: true });
+  const effect = new THREE.ShaderMaterial({ uniforms: { inputColor: { value: null } } });
+  adapter.postPipeline.setPasses([{ id: 'game-effect', material: effect, inputs: { color: 'inputColor' } }]);
   passes.length = 0;
   adapter.render(scene);
   assert.deepEqual(passes.filter(pass => pass.exposure === 1.25).map(pass => pass.target?.width), [451, 450]);
   assert.deepEqual(passes.filter(pass => !pass.target).map(pass => pass.viewport), [[0, 0, 451, 600], [451, 0, 450, 600]]);
+  assert.deepEqual(passes.filter(pass => pass.material === effect).map(pass => pass.target.width), [451, 450]);
   adapter.setViews(null);
   assert.ok(draws.every(pass => released.includes(pass.target)));
   adapter.render(scene);
   assert.ok(passes.some(pass => pass.camera === adapter.camera && pass.target?.width === 901));
   adapter.dispose();
   assert.equal(calls.filter(([name]) => name === 'dispose').length, 1);
+});
+
+test('custom HDR passes declare color and depth dependencies and chain owned targets safely', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const source = { value: 'caller-color' };
+  const depth = { value: 'caller-depth' };
+  const first = new THREE.ShaderMaterial({ uniforms: { colorInput: source, depthInput: depth } });
+  const second = new THREE.ShaderMaterial({ uniforms: { colorInput: source } });
+  const descriptors = [
+    { id: 'fog', material: first, inputs: { color: 'colorInput', depth: 'depthInput' } },
+    { id: 'tint', material: second, inputs: { color: 'colorInput' } },
+    { id: 'glare', material: second, inputs: { color: 'colorInput' } },
+  ];
+  let target = null;
+  let sceneTarget;
+  let overlayTarget;
+  let outputColor;
+  let disposedMaterials = 0;
+  const draws = [];
+  first.addEventListener('dispose', () => disposedMaterials++);
+  second.addEventListener('dispose', () => disposedMaterials++);
+  const world = new THREE.Scene();
+  const overlay = new THREE.Scene();
+  overlay.add(new THREE.Object3D());
+  const camera = new THREE.PerspectiveCamera();
+  renderer.setRenderTarget = next => { target = next; };
+  renderer.render = (scene) => {
+    if (scene === world) sceneTarget = target;
+    if (scene === overlay) overlayTarget = target;
+    const material = scene.children[0]?.material;
+    if (material === first || material === second) draws.push({ material, target, input: source.value, depth: depth.value });
+    else if (target === null) outputColor = material?.uniforms?.tScene?.value;
+  };
+  const make = () => createPostPipeline3D({ THREE, renderer, width: 320, height: 180,
+    preset: QUALITY3D_PRESETS.low, sharpness: 0, fxaa: false, passes: descriptors });
+  const pipeline = make();
+  pipeline.render(world, camera, { viewScene: overlay, viewCamera: camera });
+  assert.equal(draws.length, 3);
+  assert.notEqual(overlayTarget, sceneTarget);
+  assert.equal(draws[0].input, overlayTarget.texture);
+  assert.equal(draws[0].depth, sceneTarget.depthTexture);
+  assert.equal(sceneTarget.resolveDepthBuffer, true);
+  assert.strictEqual(draws[1].input, draws[0].target.texture);
+  assert.strictEqual(draws[2].input, draws[1].target.texture);
+  assert.strictEqual(draws[0].target, draws[2].target);
+  assert.notStrictEqual(draws[0].target, draws[1].target);
+  assert.strictEqual(outputColor, draws[2].target.texture);
+  assert.equal(source.value, 'caller-color');
+  assert.equal(depth.value, 'caller-depth');
+  const originalPasses = pipeline.passes;
+  assert.throws(() => pipeline.setPasses([descriptors[0], descriptors[0]]), /duplicate/i);
+  assert.strictEqual(pipeline.passes, originalPasses);
+  let disposedTargets = 0;
+  draws[0].target.addEventListener('dispose', () => disposedTargets++);
+  draws[1].target.addEventListener('dispose', () => disposedTargets++);
+  pipeline.setPasses([]);
+  assert.equal(disposedTargets, 2);
+  pipeline.dispose();
+
+  draws.length = 0;
+  renderer.capabilities.logarithmicDepthBuffer = true;
+  const noDepth = make();
+  noDepth.render(world, camera);
+  assert.deepEqual(draws.map(draw => draw.material), [second, second]);
+  assert.equal(draws[0].input, sceneTarget.texture);
+  noDepth.dispose();
+  assert.equal(disposedMaterials, 0);
 });
 
 test('one adaptive quality transition rebuilds the post pipeline once at the final drawing-buffer size', () => {

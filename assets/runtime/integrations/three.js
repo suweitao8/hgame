@@ -481,12 +481,12 @@ export function createThreeAdapter({
   }
 
   const postOptions = typeof post3d === 'object' && post3d ? { ...post3d } : {};
-  function createViewPostPipeline(width, height, preset) {
+  function createViewPostPipeline(width, height, preset, passes = postOptions.passes) {
     return createPostPipeline3D({
       THREE, renderer,
       exposure: postOptions.exposure ?? baseExposure,
       ...(toneMapping && !postOptions.toneMapping ? { toneMapping } : {}),
-      ...postOptions, preset, width, height,
+      ...postOptions, preset, passes, width, height,
     });
   }
   if (post3d) {
@@ -730,16 +730,21 @@ export function createThreeAdapter({
 
   function getViewPipeline(view, width, height) {
     const preset = postPipeline.preset;
+    const passes = postPipeline.passes;
     let entry = viewPipelines[view.index];
     if (!entry) {
-      entry = { camera: view.camera, playerId: view.playerId, preset,
-        pipeline: createViewPostPipeline(width, height, preset) };
+      entry = { camera: view.camera, playerId: view.playerId, preset, passes,
+        pipeline: createViewPostPipeline(width, height, preset, passes) };
       viewPipelines[view.index] = entry;
     } else if (entry.preset !== preset) {
       entry.pipeline.setPreset(preset, { width, height });
       entry.preset = preset;
     } else {
       entry.pipeline.resize(width, height);
+    }
+    if (entry.passes !== passes) {
+      entry.pipeline.setPasses(passes);
+      entry.passes = passes;
     }
     return entry.pipeline;
   }

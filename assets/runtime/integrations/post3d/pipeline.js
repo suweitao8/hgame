@@ -33,6 +33,39 @@ const POST_STATE_SCALAR_KEYS = [
 ];
 const GI_HISTORY_SETTINGS = ['giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxDist', 'ssrThickness'];
 
+/**
+ * One fullscreen HDR effect. The pipeline writes its output into a scratch color
+ * target and supplies that texture to the next effect. The caller owns the material.
+ * @typedef {object} PostHdrPass
+ * @property {string} id Unique id in this chain.
+ * @property {{uniforms: Record<string, {value: unknown}>}} material Fullscreen shader material that replaces all output pixels.
+ * @property {{color: string, depth?: string}} inputs Texture uniforms for previous HDR color and optional original world depth.
+ * @property {boolean} [enabled=true] Disabled effects and effects requiring unavailable depth are skipped.
+ */
+
+/** @param {readonly PostHdrPass[]} passes */
+function normalizeHdrPasses(passes) {
+  if (!Array.isArray(passes)) throw new TypeError('HDR passes must be an array');
+  const ids = new Set();
+  return Object.freeze(passes.map(pass => {
+    const id = typeof pass?.id === 'string' ? pass.id.trim() : '';
+    if (!id) throw new TypeError('An HDR pass requires a nonempty id');
+    if (ids.has(id)) throw new TypeError(`Duplicate HDR pass id: ${id}`);
+    ids.add(id);
+    const { material, inputs, enabled = true } = pass;
+    const color = inputs?.color;
+    const depth = inputs?.depth;
+    const uniforms = material?.uniforms ?? {};
+    const colorUniform = typeof color === 'string' && color && Object.hasOwn(uniforms, color) && uniforms[color];
+    const depthUniform = typeof depth === 'string' && depth && Object.hasOwn(uniforms, depth) && uniforms[depth];
+    if (typeof enabled !== 'boolean' || !colorUniform || !Object.hasOwn(colorUniform, 'value') ||
+        (depth !== undefined && (!depthUniform || !Object.hasOwn(depthUniform, 'value') || colorUniform === depthUniform))) {
+      throw new TypeError(`Invalid enabled flag or texture uniforms for HDR pass: ${id}`);
+    }
+    return Object.freeze({ id, material, inputs: Object.freeze({ color, depth }), enabled });
+  }));
+}
+
 /** @typedef {import('./color.js').RGBTuple} RGBTuple */
 /** @typedef {import('../quality3d.js').Quality3DPreset} Quality3DPreset */
 /** @typedef {import('./capabilities.js').WebGLCapabilities} WebGLCapabilities */
@@ -148,6 +181,7 @@ const GI_HISTORY_SETTINGS = ['giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxD
  * @property {number} [width=960] Buffer width in px.
  * @property {number} [height=540] Buffer height in px.
  * @property {Partial<Quality3DPreset> | null} [preset] Quality preset (default: medium preset).
+ * @property {readonly PostHdrPass[]} [passes] HDR effects in execution order before exposure sampling, bloom and tone mapping.
  */
 
 /** @typedef {PostPipelineSettings & PostPipelineCreateBase} PostPipeline3DOptions */
@@ -267,9 +301,11 @@ const GI_HISTORY_SETTINGS = ['giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxD
  * @property {Quality3DPreset} preset Getter; active (merged) quality preset.
  * @property {PostPipelineState} state Getter; shallow copy of the current state.
  * @property {PostPipelineTargets} targets Getter; target allocation info.
+ * @property {readonly PostHdrPass[]} passes Getter; current fullscreen HDR effects.
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
  * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
  * @property {(patch?: PostPipelineSettings) => void} setState Merges finite numeric/array settings.
+ * @property {(passes: readonly PostHdrPass[]) => void} setPasses Replaces the HDR effect chain.
  * @property {() => void} resetGiSsrHistory Discard GI and reflection history after a scene cut or discontinuous motion.
  * @property {(world: object, camera: PostPipelineCamera, options?: PostPipelineRenderOptions) => void} render Renders `world` through the pipeline (forward fallback when unsupported).
  * @property {() => void} handleContextLost Releases GPU targets.
@@ -367,6 +403,8 @@ export function createPostPipeline3D(options = {}) {
   );
 
   let activePreset = preset ? { ...QUALITY3D_PRESETS.medium, ...preset } : { ...QUALITY3D_PRESETS.medium };
+  let customPasses = normalizeHdrPasses(options.passes ?? []);
+  const customTargets = [];
   let targetLimits = supported ? readDrawingBufferLimits(renderer) : undefined;
   let requestedWidth = Math.max(1, Math.floor(width));
   let requestedHeight = Math.max(1, Math.floor(height));
@@ -527,6 +565,7 @@ export function createPostPipeline3D(options = {}) {
     giHistoryRT?.dispose?.();
     ldrRT?.dispose?.();
     disposeExposureTargets();
+    syncCustomTargets(0);
     for (const mip of bloomMips) {
       mip.down?.dispose?.();
       mip.up?.dispose?.();
@@ -876,6 +915,43 @@ export function createPostPipeline3D(options = {}) {
     renderer.render(postScene, postCamera);
   }
 
+  function syncCustomTargets(count) {
+    const needed = Math.min(2, count);
+    while (customTargets.length > needed) customTargets.pop().dispose?.();
+    for (let i = 0; i < needed; i++) {
+      customTargets[i] = syncColorTarget(customTargets[i], true, bufferWidth, bufferHeight, hdrType);
+    }
+  }
+
+  function setPasses(passes) {
+    if (disposed || passes === customPasses) return;
+    customPasses = normalizeHdrPasses(passes);
+    const count = customPasses.filter(pass => pass.enabled && (!pass.inputs.depth || sceneRT?.depthTexture)).length;
+    if (customTargets.length > count) syncCustomTargets(count);
+  }
+
+  function runCustomPasses(passes, color, depth) {
+    syncCustomTargets(passes.length);
+    for (let i = 0; i < passes.length; i++) {
+      const pass = passes[i];
+      const colorUniform = pass.material.uniforms[pass.inputs.color];
+      const depthUniform = pass.inputs.depth ? pass.material.uniforms[pass.inputs.depth] : null;
+      const previousColor = colorUniform.value;
+      const previousDepth = depthUniform?.value;
+      const target = customTargets[i % customTargets.length];
+      colorUniform.value = color;
+      if (depthUniform) depthUniform.value = depth;
+      try {
+        runPass(pass.material, target);
+      } finally {
+        colorUniform.value = previousColor;
+        if (depthUniform) depthUniform.value = previousDepth;
+      }
+      color = target.texture;
+    }
+    return color;
+  }
+
   function setBufferDimensions(w, h) {
     requestedWidth = Math.max(1, Math.floor(w));
     requestedHeight = Math.max(1, Math.floor(h));
@@ -1054,7 +1130,9 @@ export function createPostPipeline3D(options = {}) {
     const wantsVolumetric = Boolean(readSceneDepth && hasSun && volSteps > 0.5 &&
       state.volumetricIntensity !== 0 && sunLight.castShadow !== false &&
       renderer.shadowMap?.enabled !== false && shadow?.matrix && halfRT && aoScratch);
-    const needsDepth = useAo || wantsGiSsr || wantsContact || wantsVolumetric;
+    const activePasses = customPasses.length ? customPasses.filter(pass => pass.enabled && (!pass.inputs.depth || readSceneDepth)) : customPasses;
+    const customDepth = activePasses.some(pass => pass.inputs.depth);
+    const needsDepth = useAo || wantsGiSsr || wantsContact || wantsVolumetric || customDepth;
 
     try {
       // Retain the attachments for volume changes. Only resolve/store depth if this frame reads it.
@@ -1069,7 +1147,7 @@ export function createPostPipeline3D(options = {}) {
       }
       renderer.render(world, camera);
 
-      if (needsDepth) {
+      if (useAo || wantsGiSsr || wantsContact || wantsVolumetric) {
         syncCameraWorldMatrices(camera);
         sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
         sceneProjectionUniforms.uProj.value.copy(camera.projectionMatrix);
@@ -1171,7 +1249,7 @@ export function createPostPipeline3D(options = {}) {
         || viewScene.onBeforeRender !== THREE.Scene.prototype.onBeforeRender
         || viewScene.onAfterRender !== THREE.Scene.prototype.onAfterRender
       ));
-      const separateViewModel = hasViewModel && (sceneRT.samples > 0 || useAo || useVolumetric || useGiSsr || useContactShadows);
+      const separateViewModel = hasViewModel && (sceneRT.samples > 0 || useAo || useVolumetric || useGiSsr || useContactShadows || customDepth);
       syncViewCompositeTarget(separateViewModel);
       if (hasViewModel) {
         if (separateViewModel) {
@@ -1190,6 +1268,10 @@ export function createPostPipeline3D(options = {}) {
           compU.uUseGiSsr.value = 0;
           compU.uContactShadows.value = 0;
         }
+      }
+
+      if (activePasses.length || customTargets.length) {
+        compU.tScene.value = runCustomPasses(activePasses, compU.tScene.value, sceneRT.depthTexture);
       }
 
       // 1c. GPU Eye Adaptation / Auto-Exposure pyramid
@@ -1341,6 +1423,7 @@ export function createPostPipeline3D(options = {}) {
     get capabilities() { return capabilities; },
     get preset() { return activePreset; },
     get state() { return { ...state }; },
+    get passes() { return customPasses; },
     get targets() {
       return {
         bufferWidth,
@@ -1356,6 +1439,7 @@ export function createPostPipeline3D(options = {}) {
     resize,
     setPreset,
     setState,
+    setPasses,
     resetGiSsrHistory,
     render,
     handleContextLost,

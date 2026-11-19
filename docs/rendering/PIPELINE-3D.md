@@ -66,6 +66,19 @@ Non-WebGL2 or constrained contexts automatically degrade cleanly to a standard f
 
 When the Three adapter has HDR post-processing enabled, `setViews()` sends every pane through the same world and post-processing stages as the primary camera. Targets are sized to each physical pane. Each pane keeps its own eye adaptation and GI/reflection history while its camera and slot identity match. Pane output is clipped to its own rectangle and post volumes are evaluated at its camera position. Changes made through the adapter's public `postPipeline` supply shared settings. Its idle primary targets shrink to 1×1 during split view, and its full-size targets return when split view ends. Forward-only rendering remains available when HDR is disabled or unsupported.
 
+### Custom HDR effects
+
+Configure `post3d.passes` or replace the chain through `adapter.postPipeline.setPasses(passes)`. Effects run in array order. Each descriptor names its previous-color texture uniform and, optionally, its original world-depth texture uniform. The chain runs after the first-person layer and before exposure metering, bloom and tone mapping. Built-in lighting that has yet to be composited remains in the subsequent HDR composite.
+
+```js
+adapter.postPipeline.setPasses([
+  { id: 'heat-haze', material: heatHazeShader, inputs: { color: 'tColor', depth: 'tWorldDepth' } },
+  { id: 'tint', material: tintShader, inputs: { color: 'tColor' } },
+]);
+```
+
+Use an opaque fullscreen shader material that writes linear color across the output. The pipeline supplies `position` and `uv` attributes and restores the input uniforms after each draw. It owns up to two reusable pane-sized scratch targets. The game owns its materials. `enabled: false` skips an effect, as does a missing depth attachment when the effect requires depth. In forward fallback the engine skips the HDR chain.
+
 ## World Materials, Models & Adapter Lifecycle
 
 - **Specular Anti-Aliasing, Anisotropy & Floating Origin**: `applyGeometricSpecularAA(material, { strength, maxRoughnessBoost })` injects screen-space normal derivative (`dFdx`/`dFdy`) roughness widening via `onBeforeCompile`. `createWorldAlignedMaterial` and `createWorldMaterialPalette` expose opt-in `specularAA`, `anisotropy`, `palette.setAnisotropy(value)`, and `palette.shiftOffset(dx, dy, dz)` for floating-origin texture continuity.

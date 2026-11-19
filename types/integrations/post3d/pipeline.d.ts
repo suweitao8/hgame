@@ -107,6 +107,7 @@
  * @property {number} [width=960] Buffer width in px.
  * @property {number} [height=540] Buffer height in px.
  * @property {Partial<Quality3DPreset> | null} [preset] Quality preset (default: medium preset).
+ * @property {readonly PostHdrPass[]} [passes] HDR effects in execution order before exposure sampling, bloom and tone mapping.
  */
 /** @typedef {PostPipelineSettings & PostPipelineCreateBase} PostPipeline3DOptions */
 /**
@@ -219,9 +220,11 @@
  * @property {Quality3DPreset} preset Getter; active (merged) quality preset.
  * @property {PostPipelineState} state Getter; shallow copy of the current state.
  * @property {PostPipelineTargets} targets Getter; target allocation info.
+ * @property {readonly PostHdrPass[]} passes Getter; current fullscreen HDR effects.
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
  * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
  * @property {(patch?: PostPipelineSettings) => void} setState Merges finite numeric/array settings.
+ * @property {(passes: readonly PostHdrPass[]) => void} setPasses Replaces the HDR effect chain.
  * @property {() => void} resetGiSsrHistory Discard GI and reflection history after a scene cut or discontinuous motion.
  * @property {(world: object, camera: PostPipelineCamera, options?: PostPipelineRenderOptions) => void} render Renders `world` through the pipeline (forward fallback when unsupported).
  * @property {() => void} handleContextLost Releases GPU targets.
@@ -241,6 +244,35 @@ export function resolveToneMappingIndex(mode: PostToneMappingMode): 0 | 1 | 2 | 
  * @returns {PostPipeline3D}
  */
 export function createPostPipeline3D(options?: PostPipeline3DOptions): PostPipeline3D;
+/**
+ * One fullscreen HDR effect. The pipeline writes its output into a scratch color
+ * target and supplies that texture to the next effect. The caller owns the material.
+ */
+export type PostHdrPass = {
+    /**
+     * Unique id in this chain.
+     */
+    id: string;
+    /**
+     * Fullscreen shader material that replaces all output pixels.
+     */
+    material: {
+        uniforms: Record<string, {
+            value: unknown;
+        }>;
+    };
+    /**
+     * Texture uniforms for previous HDR color and optional original world depth.
+     */
+    inputs: {
+        color: string;
+        depth?: string;
+    };
+    /**
+     * Disabled effects and effects requiring unavailable depth are skipped.
+     */
+    enabled?: boolean | undefined;
+};
 export type RGBTuple = import("./color.js").RGBTuple;
 export type Quality3DPreset = import("../quality3d.js").Quality3DPreset;
 export type WebGLCapabilities = import("./capabilities.js").WebGLCapabilities;
@@ -465,6 +497,10 @@ export type PostPipelineCreateBase = {
      * Quality preset (default: medium preset).
      */
     preset?: Partial<import("../quality3d.js").Quality3DPreset> | null | undefined;
+    /**
+     * HDR effects in execution order before exposure sampling, bloom and tone mapping.
+     */
+    passes?: readonly PostHdrPass[] | undefined;
 };
 export type PostPipeline3DOptions = PostPipelineSettings & PostPipelineCreateBase;
 /**
@@ -678,6 +714,10 @@ export type PostPipeline3D = {
      */
     targets: PostPipelineTargets;
     /**
+     * Getter; current fullscreen HDR effects.
+     */
+    passes: readonly PostHdrPass[];
+    /**
      * Resizes buffers (px).
      */
     resize: (width: number, height: number) => void;
@@ -692,6 +732,10 @@ export type PostPipeline3D = {
      * Merges finite numeric/array settings.
      */
     setState: (patch?: PostPipelineSettings) => void;
+    /**
+     * Replaces the HDR effect chain.
+     */
+    setPasses: (passes: readonly PostHdrPass[]) => void;
     /**
      * Discard GI and reflection history after a scene cut or discontinuous motion.
      */

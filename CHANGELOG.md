@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Compose caller-owned fullscreen HDR effects with declared color and optional world-depth inputs. Reuse pane-local scratch targets and skip effects whose depth input is unavailable.
+
 - Run 3D split views through HDR post-processing when available. Keep exposure and temporal history isolated by view, size targets to physical pane pixels, and release pane resources on removal or context loss.
 
 - Add opt-in temporal accumulation for screen-space GI and reflections. Reproject depth-validated history in the existing bilateral pass and reset it across scene changes, camera cuts and target changes.
