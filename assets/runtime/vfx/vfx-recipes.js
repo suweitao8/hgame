@@ -11,7 +11,7 @@ const MAX_LOCAL_EFFECT_SLOTS = 31;
 
 const VALID_LAYER_KINDS = new Set(['particle', 'mesh', 'slash', 'lightning', 'telegraph']);
 const VALID_RENDER_MODES = new Set(['billboard', 'horizontal', 'stretched', 'vertical', 'mesh']);
-const VALID_BLENDS = new Set(['alpha', 'additive', 'distortion']);
+const VALID_BLENDS = new Set(['alpha', 'additive', 'multiply', 'premultiply', 'distortion']);
 
 function parseColorNumber(val, fallback = 0xffffff) {
   if (typeof val === 'number' && Number.isFinite(val)) return (val & 0xffffff) >>> 0;
@@ -746,6 +746,36 @@ export function createEffectPlayer({
       }
     }
 
+    const sphAmt = Math.max(0, Math.min(1, Number(shape.sphericalDirectionAmount ?? 0)));
+    if (sphAmt > 0.0001) {
+      const pLen = Math.hypot(lx, ly, lz);
+      if (pLen > 0.0001) {
+        const sx = lx / pLen;
+        const sy = ly / pLen;
+        const sz = lz / pLen;
+        dx = dx + (sx - dx) * sphAmt;
+        dy = dy + (sy - dy) * sphAmt;
+        dz = dz + (sz - dz) * sphAmt;
+        const nLen = Math.hypot(dx, dy, dz) || 1;
+        dx /= nLen; dy /= nLen; dz /= nLen;
+      }
+    }
+
+    const randDirAmt = Math.max(0, Math.min(1, Number(shape.randomDirectionAmount ?? 0)));
+    if (randDirAmt > 0.0001) {
+      const rAng = prng.nextFloat() * 6.283185307179586;
+      const rElev = is2D ? 0 : prng.range(-1, 1);
+      const rHoriz = is2D ? 1 : Math.sqrt(Math.max(0, 1 - rElev * rElev));
+      const rx = Math.cos(rAng) * rHoriz;
+      const ry = is2D ? Math.sin(rAng) : rElev;
+      const rz = is2D ? 0 : Math.sin(rAng) * rHoriz;
+      dx = dx + (rx - dx) * randDirAmt;
+      dy = dy + (ry - dy) * randDirAmt;
+      dz = dz + (rz - dz) * randDirAmt;
+      const nLen = Math.hypot(dx, dy, dz) || 1;
+      dx /= nLen; dy /= nLen; dz /= nLen;
+    }
+
     if (Array.isArray(shape.rotation)) {
       const rx = Number(shape.rotation[0] ?? 0);
       const ry = Number(shape.rotation[1] ?? 0);
@@ -956,6 +986,7 @@ export function createEffectPlayer({
         persistent: Boolean(layer.persistent),
         curveCycle: (layer.curveCycle ?? 0) / simSpd,
         sizeStart,
+        meshGlobalScale: layer.meshGlobalScale ?? 1.0,
         aspectY: layer.aspectY ?? 1.0,
         rotX: rotX0,
         rotY: rot0 || rotY0,
@@ -972,6 +1003,11 @@ export function createEffectPlayer({
         lit: layer.lit,
         emission: layer.emission,
         cullMode: layer.cullMode,
+        alphaCutoff: layer.alphaCutoff,
+        cameraFade: layer.cameraFade,
+        pivot: layer.pivot,
+        uvScale: layer.uvScale,
+        uvOffset: layer.uvOffset,
         opaque: layer.opaque,
         blend: layer.blend ?? 'alpha',
         colorCurve: layer.colorCurve,
@@ -1065,6 +1101,16 @@ export function createEffectPlayer({
       centerOffZ,
       renderMode: layer.renderMode ?? 'billboard',
       blend,
+      cullMode: layer.cullMode,
+      alphaCutoff: layer.alphaCutoff,
+      cameraFade: layer.cameraFade,
+      pivot: layer.pivot,
+      velocityScale: layer.velocityScale,
+      lengthScale: layer.lengthScale,
+      uvScale: layer.uvScale,
+      uvOffset: layer.uvOffset,
+      emissionBoost: layer.emissionBoost ?? (Array.isArray(layer.emission) ? Math.max(layer.emission[0] ?? 0, layer.emission[1] ?? 0, layer.emission[2] ?? 0) : 0),
+      dissolve: layer.dissolve,
       sprite: layer.sprite,
       flipbook: resolvedFb,
       uvRect: resolvedUv,
@@ -1549,7 +1595,8 @@ export function createEffectPlayer({
           }
         }
         if (tp.hasCollision && atlasParticles && tp.atlasSlot >= 0) {
-          atlasParticles.updateSlot(tp.blend === 'distortion' ? 'distortion' : tp.additive, tp.atlasSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
+          const chArg = (tp.blend === 'alpha' || tp.blend === 'additive') ? tp.additive : tp.blend;
+          atlasParticles.updateSlot(chArg, tp.atlasSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
         }
         if (tp.hasCollision && meshVfx && tp.meshSlot >= 0) {
           meshVfx.updateSlot(tp.meshSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);

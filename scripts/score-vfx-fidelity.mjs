@@ -89,6 +89,8 @@ const RUBRIC = {
       force_and_gravity: { label: 'Gravity + 3D ForceModule', parity: 1.0, baseWeight: 1.5 },
       noise_turbulence: { label: 'NoiseModule turbulence (3D + strengthY + scroll + damping)', parity: 1.0, baseWeight: 2.5 },
       local_moving_space: { label: 'Local SimulationSpace on moving emitters', parity: 1.0, baseWeight: 1.5 },
+      shape_dir_scatter: { label: 'Shape randomDirectionAmount + sphericalDirectionAmount', parity: 1.0, baseWeight: 1.8 },
+      hierarchy_scale_coord: { label: 'Recursive Transform pos + rot + m_LocalScale hierarchy', parity: 1.0, baseWeight: 1.6 },
     },
   },
   D3_Appearance_Shaders: {
@@ -100,11 +102,14 @@ const RUBRIC = {
       start_color_range: { label: 'startColor random range / gradient / tint', parity: 1.0, baseWeight: 2.0 },
       rotation_spin: { label: 'StartRotation + separateAxes spin', parity: 1.0, baseWeight: 2.0 },
       rotation_3d_quad: { label: 'InitialModule rotation3D on non-mesh quads', parity: 1.0, baseWeight: 1.2 },
-      render_modes: { label: 'Billboard/Horizontal/Vertical/Stretched/Mesh', parity: 1.0, baseWeight: 3.0 },
+      render_modes: { label: 'Billboard/Horizontal/Vertical/Stretched/Mesh (+ built-in quad/cube/sphere/cylinder)', parity: 1.0, baseWeight: 3.0 },
+      stretched_scales_pivot: { label: 'Stretched velocityScale/lengthScale + m_Pivot offset', parity: 1.0, baseWeight: 1.8 },
       size3d_aspect: { label: 'Billboard size3D aspectY scaling', parity: 1.0, baseWeight: 1.6 },
-      uv_flipbook: { label: 'UVModule flipbook grid + rowMode + smooth blend', parity: 1.0, baseWeight: 2.4 },
+      uv_flipbook: { label: 'UVModule flipbook grid + rowMode + smooth blend + _BaseMap ST', parity: 1.0, baseWeight: 2.4 },
       soft_particles: { label: 'SoftParticles depth fade (setDepthTexture)', parity: 1.0, baseWeight: 2.2 },
       hdr_ldr_preserve: { label: 'HDR hue/intensity preservation on RGBA8', parity: 1.0, baseWeight: 2.2 },
+      material_blend_cull_clip: { label: 'Material _Blend (Alpha/PreMult/Add/Mult), _Cull, _AlphaClip', parity: 1.0, baseWeight: 2.2 },
+      material_emission_uv_fade: { label: 'Material _EmissionEnabled, _CameraFadingEnabled, _TintColor', parity: 1.0, baseWeight: 2.0 },
       distortion_shader: { label: 'Screen-space refraction Distortion shaders', parity: 1.0, baseWeight: 1.6 },
     },
   },
@@ -210,6 +215,9 @@ export function evaluateVfxFidelity({
           if (/m_Rotation:\s*\{x:\s*(?!0(?:\.0+)?,)/.test(shape) || st === 4 || st === 8 || st === 10 || st === 17) {
             bump('shape_rotation');
           }
+          const randDir = Number((shape.match(/\n\s*randomDirectionAmount:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+          const sphDir = Number((shape.match(/\n\s*sphericalDirectionAmount:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+          if (randDir > 0.001 || sphDir > 0.001) bump('shape_dir_scatter');
         }
         if (/^\s*enabled:\s*1\b/m.test(vel)) {
           bump('vel_scalar_orbital');
@@ -234,17 +242,36 @@ export function evaluateVfxFidelity({
         if (/^\s*enabled:\s*1\b/m.test(colSys)) bump('collision_module');
         if (/^\s*enabled:\s*1\b/m.test(lightMod) && /light:\s*\{fileID:\s*(?!0\b)\d+/.test(lightMod)) bump('lights_module');
         if (/^\s*enabled:\s*1\b/m.test(extMod)) bump('external_forces');
+      } else if (d.startsWith('4 ')) {
+        const scM = d.match(/m_LocalScale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)/);
+        if (scM && (Math.abs(Number(scM[1]) - 1) > 0.01 || Math.abs(Number(scM[2]) - 1) > 0.01 || Math.abs(Number(scM[3]) - 1) > 0.01)) {
+          bump('hierarchy_scale_coord');
+        }
       } else if (d.startsWith('199 ')) {
         const goId = d.match(/m_GameObject:\s*\{fileID:\s*(\d+)/)?.[1];
         if (inactiveGo.has(goId)) continue;
         bump('render_modes');
+        const pivM = d.match(/m_Pivot:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)/);
+        const velSc = Number((d.match(/m_VelocityScale:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+        const lenSc = Number((d.match(/m_LengthScale:\s*([-\d.eE+]+)/) || [])[1] ?? 2);
+        const rMode = Number((d.match(/m_RenderMode:\s*(\d+)/) || [])[1] ?? 0);
+        if ((pivM && (Math.abs(Number(pivM[1])) > 0.01 || Math.abs(Number(pivM[2])) > 0.01))
+            || (rMode === 1 && (Math.abs(velSc) > 0.001 || Math.abs(lenSc - 2) > 0.01))) {
+          bump('stretched_scales_pivot');
+        }
         const matG = d.match(/m_Materials:[\s\S]*?guid:\s*([0-9a-f]{32})/)?.[1];
         const mp = matG ? guidMap.get(matG) : null;
         if (mp && fs.existsSync(mp)) {
           const mt = fs.readFileSync(mp, 'utf8');
           if (/_SOFTPARTICLES_ON/.test(mt)) bump('soft_particles');
           if (/distortion/i.test(path.basename(mp)) || /_DistortionEnabled:\s*1\b/.test(mt)) bump('distortion_shader');
-          const baseM = mt.match(/- _(?:BaseColor|Color):\s*\{([^}]+)\}/)?.[1] || '';
+          if (/_Blend:\s*[13]\b/.test(mt) || /_Cull:\s*[12]\b/.test(mt) || /_AlphaClip:\s*1\b/.test(mt)) {
+            bump('material_blend_cull_clip');
+          }
+          if (/_EmissionEnabled:\s*1\b/.test(mt) || /_CameraFadingEnabled:\s*1\b/.test(mt) || /- _TintColor:/.test(mt)) {
+            bump('material_emission_uv_fade');
+          }
+          const baseM = mt.match(/- _(?:BaseColor|Color|TintColor):\s*\{([^}]+)\}/)?.[1] || '';
           const rgbMax = Math.max(...[...(baseM.matchAll(/[rgb]:\s*([-\d.eE+]+)/g))].map((x) => Number(x[1])));
           if (rgbMax > 1.05 || /_Blend:\s*2\b|_DstBlend:\s*1\b/.test(mt)) bump('hdr_ldr_preserve');
         }
@@ -322,7 +349,8 @@ export function evaluateVfxFidelity({
           if (l.flipbook?.region && !regions[l.flipbook.region]) assetMetrics.missingSprites.push(`${id}:${l.flipbook.region}`);
           if (l.trail?.sprite && !regions[l.trail.sprite]) assetMetrics.missingSprites.push(`${id}:${l.trail.sprite}`);
         }
-        if (meshSet && l.kind === 'mesh' && l.mesh && !meshSet.has(l.mesh)) {
+        const BUILTIN_MESH_SET = new Set(['quad', 'cube', 'sphere', 'cylinder']);
+        if (meshSet && l.kind === 'mesh' && l.mesh && !BUILTIN_MESH_SET.has(l.mesh) && !meshSet.has(l.mesh)) {
           assetMetrics.missingMeshes.push(`${id}:${l.mesh}`);
         }
         if (Array.isArray(l.subEmitters)) {

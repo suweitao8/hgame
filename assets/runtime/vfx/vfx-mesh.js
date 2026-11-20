@@ -3,6 +3,8 @@ import { evaluateColorCurve, evaluateSizeCurve } from './vfx-atlas-particles.js'
 
 export const VFX_MESH_VERTEX_GLSL = /* glsl */ `
 uniform vec2 uUvScroll;
+uniform vec4 uUvST;
+uniform vec3 uPivot;
 uniform float uTime;
 
 varying vec2 vUv;
@@ -11,10 +13,11 @@ varying vec3 vViewPos;
 varying vec3 vLocalPos;
 
 void main() {
-  vUv = uv + uUvScroll * uTime;
-  vLocalPos = position;
+  vUv = uv * uUvST.xy + uUvST.zw + uUvScroll * uTime;
+  vec3 shiftedPos = position - uPivot;
+  vLocalPos = shiftedPos;
   vNormalView = normalize(normalMatrix * normal);
-  vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
+  vec4 mvPos = modelViewMatrix * vec4(shiftedPos, 1.0);
   vViewPos = -mvPos.xyz;
   gl_Position = projectionMatrix * mvPos;
 }
@@ -28,6 +31,9 @@ uniform float uHasTex;
 uniform sampler2D uSceneTex;
 uniform float uHasSceneTex;
 uniform float uDistortion;
+uniform float uIsMultiply;
+uniform float uAlphaCutoff;
+uniform vec2 uCameraFade;
 uniform vec2 uInvViewport;
 uniform vec3 uColor;
 uniform float uOpacity;
@@ -79,7 +85,10 @@ void main() {
     return;
   }
 
-  float alpha = texCol.a * uOpacity;
+  float camFade = (uCameraFade.y > uCameraFade.x + 0.001)
+    ? clamp((length(vViewPos) - uCameraFade.x) / (uCameraFade.y - uCameraFade.x), 0.0, 1.0)
+    : 1.0;
+  float alpha = texCol.a * uOpacity * camFade;
   vec3 baseCol = texCol.rgb * uColor * max(0.0, uHdr);
   if (uLit > 0.5) {
     vec3 L = normalize(uLightDirView);
@@ -89,7 +98,7 @@ void main() {
     float spec = pow(max(dot(N, H), 0.0), 28.0) * 0.45;
     baseCol = baseCol * (0.35 + 0.45 * hemi + 0.65 * ndotl) + vec3(spec) * uColor;
   }
-  baseCol += uEmission;
+  baseCol += texCol.rgb * uEmission;
 
   if (uFresnel.y > 0.001) {
     float ndotv = clamp(abs(dot(N, V)), 0.0, 1.0);
@@ -106,7 +115,12 @@ void main() {
     baseCol = mix(baseCol, uDissolveColor * max(1.5, uHdr), edge);
   }
 
-  if (alpha < 0.005) discard;
+  if (alpha < max(0.005, uAlphaCutoff)) discard;
+  if (uAlphaCutoff > 0.02) alpha = 1.0;
+  if (uIsMultiply > 0.5) {
+    gl_FragColor = vec4(mix(vec3(1.0), clamp(baseCol, 0.0, 1.0), clamp(alpha, 0.0, 1.0)), 1.0);
+    return;
+  }
   gl_FragColor = vec4(baseCol, alpha);
 }
 `;
@@ -139,6 +153,12 @@ function extractTexture(geometryOrObj) {
 function buildBuiltinGeometry(THREE, shapeName) {
   if (!THREE) return null;
   const key = String(shapeName || 'crystal').toLowerCase();
+  if (key === 'quad' && THREE.PlaneGeometry) {
+    return new THREE.PlaneGeometry(1, 1);
+  }
+  if (key === 'cube' && THREE.BoxGeometry) {
+    return new THREE.BoxGeometry(1, 1, 1);
+  }
   if ((key === 'sphere' || key === 'distortion') && THREE.SphereGeometry) {
     return new THREE.SphereGeometry(0.5, 20, 14);
   }
@@ -219,6 +239,9 @@ export function createMeshVfxPool({
           uSceneTex: { value: null },
           uHasSceneTex: { value: 0 },
           uDistortion: { value: 0 },
+          uIsMultiply: { value: 0 },
+          uAlphaCutoff: { value: 0.005 },
+          uCameraFade: { value: THREE.Vector2 ? new THREE.Vector2(0, 0) : { set() {} } },
           uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(invViewW, invViewH) : { set() {} } },
           uColor: { value: THREE.Color ? new THREE.Color(1, 1, 1) : { setRGB() {} } },
           uOpacity: { value: 1 },
@@ -227,6 +250,8 @@ export function createMeshVfxPool({
           uLightDirView: { value: THREE.Vector3 ? new THREE.Vector3(0.4, 0.8, 0.45) : { set() {} } },
           uEmission: { value: THREE.Color ? new THREE.Color(0, 0, 0) : { setRGB() {} } },
           uUvScroll: { value: THREE.Vector2 ? new THREE.Vector2(0, 0) : { set() {} } },
+          uUvST: { value: THREE.Vector4 ? new THREE.Vector4(1, 1, 0, 0) : { set() {} } },
+          uPivot: { value: THREE.Vector3 ? new THREE.Vector3(0, 0, 0) : { set() {} } },
           uTime: { value: 0 },
           uFresnel: { value: THREE.Vector2 ? new THREE.Vector2(2.5, 0) : { set() {} } },
           uDissolve: { value: THREE.Vector3 ? new THREE.Vector3(0, 0.08, 0) : { set() {} } },
@@ -432,7 +457,7 @@ export function createMeshVfxPool({
     s.spinZ = opts.spinZ ?? 0;
     s.alignToVelocity = Boolean(opts.alignToVelocity);
     s.forwardAxis = opts.forwardAxis || 'z';
-    s.baseScale = opts.sizeStart ?? opts.scale ?? 1.0;
+    s.baseScale = (opts.sizeStart ?? opts.scale ?? 1.0) * Number(opts.meshGlobalScale ?? 1.0);
     s.aspectY = Math.max(0.05, Number(opts.aspectY ?? 1.0));
     s.hdr = opts.hdr ?? 1.0;
     s.tintR = opts.tint?.[0] ?? 1.0;
@@ -449,10 +474,24 @@ export function createMeshVfxPool({
       const meshKey = String(opts.mesh || 'crystal');
       const geo = getGeometry(meshKey);
       if (geo && s.mesh.geometry !== geo) s.mesh.geometry = geo;
-      const additive = opts.blend === 'additive' || Boolean(opts.additive);
-      const isDistortion = opts.blend === 'distortion';
+      const blendMode = opts.blend || (opts.additive ? 'additive' : 'alpha');
+      const isDistortion = blendMode === 'distortion';
+      const isMultiply = blendMode === 'multiply';
+      const isPremul = blendMode === 'premultiply';
       if (THREE) {
-        s.mat.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+        if (isMultiply && THREE.CustomBlending) {
+          s.mat.blending = THREE.CustomBlending;
+          s.mat.blendEquation = THREE.AddEquation;
+          s.mat.blendSrc = THREE.DstColorFactor;
+          s.mat.blendDst = THREE.ZeroFactor;
+        } else if (isPremul && THREE.CustomBlending) {
+          s.mat.blending = THREE.CustomBlending;
+          s.mat.blendEquation = THREE.AddEquation;
+          s.mat.blendSrc = THREE.OneFactor;
+          s.mat.blendDst = THREE.OneMinusSrcAlphaFactor;
+        } else {
+          s.mat.blending = blendMode === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending;
+        }
         s.mat.side = opts.cullMode === 'front'
           ? THREE.BackSide
           : opts.cullMode === 'back'
@@ -462,6 +501,10 @@ export function createMeshVfxPool({
       s.mat.depthWrite = isDistortion ? false : Boolean(opts.opaque);
       s.mat.transparent = isDistortion ? true : !opts.opaque;
       s.mat.uniforms.uDistortion.value = isDistortion ? 1.0 : 0.0;
+      s.mat.uniforms.uIsMultiply.value = isMultiply ? 1.0 : 0.0;
+      s.mat.uniforms.uAlphaCutoff.value = opts.alphaCutoff ?? 0.005;
+      const cf = opts.cameraFade || [0, 0];
+      s.mat.uniforms.uCameraFade.value.set(cf[0] ?? 0, cf[1] ?? 0);
       s.mat.uniforms.uSceneTex.value = activeSceneTex;
       s.mat.uniforms.uHasSceneTex.value = activeSceneTex ? 1.0 : 0.0;
       s.mat.uniforms.uInvViewport.value.set(invViewW, invViewH);
@@ -470,6 +513,11 @@ export function createMeshVfxPool({
       s.mat.uniforms.uEmission.value.setRGB(em[0] ?? 0, em[1] ?? 0, em[2] ?? 0);
       const uvScroll = opts.uvScroll || [0, 0];
       s.mat.uniforms.uUvScroll.value.set(uvScroll[0] ?? 0, uvScroll[1] ?? 0);
+      const uvS = opts.uvScale || [1, 1];
+      const uvO = opts.uvOffset || [0, 0];
+      s.mat.uniforms.uUvST.value.set(uvS[0] ?? 1, uvS[1] ?? 1, uvO[0] ?? 0, uvO[1] ?? 0);
+      const pv = opts.pivot || [0, 0, 0];
+      s.mat.uniforms.uPivot.value.set(pv[0] ?? 0, pv[1] ?? 0, pv[2] ?? 0);
       const fresnel = opts.fresnel;
       s.mat.uniforms.uFresnel.value.set(fresnel?.power ?? 2.5, fresnel?.intensity ?? 0);
       const resolvedTex = opts.texture ?? customTextures.get(meshKey) ?? null;

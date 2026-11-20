@@ -39,11 +39,13 @@ function buildGuidIndex(dir, rootDir, map = new Map()) {
         const assetPath = full.slice(0, -5);
         const alphaUsage = Number((txt.match(/^\s*alphaUsage:\s*(\d+)/m) || [])[1] ?? 1);
         const alphaIsTransparency = /alphaIsTransparency:\s*1/.test(txt);
+        const globalScale = Number((txt.match(/^\s*globalScale:\s*([-\d.eE+]+)/m) || [])[1] ?? 1);
         map.set(g[1], {
           relPath: path.relative(rootDir, assetPath).replace(/\\/g, '/'),
           fullPath: assetPath,
           fromGrayScale: alphaUsage === 2,
           alphaIsTransparency,
+          globalScale: Number.isFinite(globalScale) && globalScale > 0 ? globalScale : 1,
         });
       }
     }
@@ -241,15 +243,81 @@ function inspectMaterial(matInfo, guidMap, deps) {
   const txt = fs.readFileSync(matInfo.fullPath, 'utf8');
   const matName = path.basename(matInfo.relPath, path.extname(matInfo.relPath));
   const isDistortionOnly = /distortion/i.test(matName) || /_DistortionEnabled:\s*1\b/.test(txt);
-  const mainTexGuid = (isDistortionOnly
-    ? (txt.match(/- _(?:NormalMap|BumpMap|DistortionTexture|MainTex|BaseMap):[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1]
-    : (txt.match(/- _(?:MainTex|BaseMap):[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1])
+  const mainTexBlock = isDistortionOnly
+    ? (txt.match(/- _(?:NormalMap|BumpMap|DistortionTexture|MainTex|BaseMap):([\s\S]*?)(?=\n    - |\n  m_|$)/)?.[1] || '')
+    : (txt.match(/- _(?:MainTex|BaseMap):([\s\S]*?)(?=\n    - |\n  m_|$)/)?.[1] || '');
+  const mainTexGuid = (mainTexBlock.match(/guid:\s*([0-9a-f]{32})/) || [])[1]
     || (txt.match(/- _(?:MainTex|BaseMap|BumpMap|NormalMap):[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1];
-  const colorMatch = txt.match(/- _(?:Color|BaseColor):\s*\{([^}]+)\}/);
+  const colorMatch = txt.match(/- _(?:Color|BaseColor|TintColor):\s*\{([^}]+)\}/);
   const color = colorMatch ? normalizeHdrColor(parseColorObject(colorMatch[1], false)) : { hdr: 1, rgb: [1, 1, 1], a: 1 };
-  const isAdditive = /_Blend:\s*2\b/.test(txt) || /_DstBlend:\s*1\b/.test(txt) || /_ADDITIVE/i.test(txt);
+
+  const blendIntM = txt.match(/- _Blend:\s*(\d+)/);
+  const dstBlendM = txt.match(/- _DstBlend:\s*(\d+)/);
+  const srcBlendM = txt.match(/- _SrcBlend:\s*(\d+)/);
+  let blend = 'alpha';
+  if (isDistortionOnly) {
+    blend = 'distortion';
+  } else if (blendIntM) {
+    const bv = Number(blendIntM[1]);
+    blend = bv === 3 ? 'multiply' : bv === 2 ? 'additive' : bv === 1 ? 'premultiply' : 'alpha';
+  } else if (/_ADDITIVE/i.test(txt) || (dstBlendM && dstBlendM[1] === '1')) {
+    blend = 'additive';
+  } else if (srcBlendM && srcBlendM[1] === '2') {
+    blend = 'multiply';
+  } else if (/_ab$/i.test(matName)) {
+    blend = 'alpha';
+  }
+
+  const cullM = txt.match(/- _Cull:\s*(\d+)/);
+  const cullNum = cullM ? Number(cullM[1]) : 0;
+  const cullMode = cullNum === 1 ? 'front' : cullNum === 2 ? 'back' : undefined;
+
+  const alphaClip = /- _AlphaClip:\s*1\b/.test(txt) || /_ALPHATEST_ON/.test(txt);
+  const cutoff = alphaClip ? Number((txt.match(/- _Cutoff:\s*([-\d.eE+]+)/) || [])[1] ?? 0.5) : undefined;
+
+  const emOn = /- _EmissionEnabled:\s*1\b/.test(txt) || /_EMISSION(?:_ON)?\b/.test(txt);
+  let emission;
+  let emissionBoost = 0;
+  if (emOn) {
+    const emM = txt.match(/- _Emissive?Color:\s*\{([^}]+)\}/) || txt.match(/- _EmissionColor:\s*\{([^}]+)\}/);
+    if (emM) {
+      const ec = parseColorObject(emM[1], false);
+      if (ec[0] > 0.005 || ec[1] > 0.005 || ec[2] > 0.005) {
+        emission = [Number(ec[0].toFixed(3)), Number(ec[1].toFixed(3)), Number(ec[2].toFixed(3))];
+        emissionBoost = Number(Math.max(ec[0], ec[1], ec[2]).toFixed(3));
+      }
+    }
+  }
+
+  const camFadeOn = /- _CameraFadingEnabled:\s*1\b/.test(txt);
+  let cameraFade;
+  if (camFadeOn) {
+    const nearD = Number((txt.match(/- _CameraNearFadeDistance:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+    const farD = Number((txt.match(/- _CameraFarFadeDistance:\s*([-\d.eE+]+)/) || [])[1] ?? 2);
+    if (farD > nearD + 0.01) {
+      cameraFade = [Number(nearD.toFixed(3)), Number(farD.toFixed(3))];
+    }
+  }
+
+  let uvScale;
+  let uvOffset;
+  const sclM = mainTexBlock.match(/m_Scale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+)\}/);
+  const offM = mainTexBlock.match(/m_Offset:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+)\}/);
+  if (sclM) {
+    const sx = Number(sclM[1]), sy = Number(sclM[2]);
+    if (Math.abs(sx - 1) > 0.01 || Math.abs(sy - 1) > 0.01) {
+      uvScale = [Number(sx.toFixed(3)), Number(sy.toFixed(3))];
+    }
+  }
+  if (offM) {
+    const ox = Number(offM[1]), oy = Number(offM[2]);
+    if (Math.abs(ox) > 0.005 || Math.abs(oy) > 0.005) {
+      uvOffset = [Number(ox.toFixed(3)), Number(oy.toFixed(3))];
+    }
+  }
+
   const isLit = /_NORMALMAP|_METALLIC|_SPECGLOSSMAP|Standard Surface/i.test(txt) || /guid:\s*0406db5a14f94604a8c57ccfbc9f3b46/.test(txt);
-  const isOpaque = /_Mode:\s*0\b/.test(txt) || /_Surface:\s*0\b/.test(txt);
+  const isOpaque = /- _Mode:\s*0\b/.test(txt) || /- _Surface:\s*0\b/.test(txt);
   const flipbookMode = Number((txt.match(/- _FlipbookMode:\s*([\d.]+)/) || [])[1] ?? 0);
 
   let spriteKey = null;
@@ -267,7 +335,14 @@ function inspectMaterial(matInfo, guidMap, deps) {
     spriteKey,
     hdr: isDistortionOnly ? 1.0 : color.hdr,
     tintRgb: isDistortionOnly ? [1, 1, 1] : color.rgb,
-    blend: isDistortionOnly ? 'distortion' : (isAdditive ? 'additive' : 'alpha'),
+    blend,
+    cullMode,
+    cutoff,
+    emission,
+    emissionBoost,
+    cameraFade,
+    uvScale,
+    uvOffset,
     lit: isLit,
     opaque: isOpaque,
     isDistortionOnly,
@@ -299,6 +374,20 @@ function quatMul(a, b) {
   ];
 }
 
+function quatRotateVec(q, v) {
+  const [qx, qy, qz, qw] = q;
+  const [vx, vy, vz] = v;
+  const ix = qw * vx + qy * vz - qz * vy;
+  const iy = qw * vy + qz * vx - qx * vz;
+  const iz = qw * vz + qx * vy - qy * vx;
+  const iw = -qx * vx - qy * vy - qz * vz;
+  return [
+    ix * qw + iw * -qx + iy * -qz - iz * -qy,
+    iy * qw + iw * -qy + iz * -qx - ix * -qz,
+    iz * qw + iw * -qz + ix * -qy - iy * -qx,
+  ];
+}
+
 function unityEulerToQuat(dx, dy, dz) {
   const rad = Math.PI / 180;
   const hx = dx * rad * 0.5, hy = dy * rad * 0.5, hz = dz * rad * 0.5;
@@ -309,11 +398,13 @@ function unityEulerToQuat(dx, dy, dz) {
   return quatMul(qy, quatMul(qx, qz));
 }
 
-function computeShapeRotation(trRotMatch, sRotMatch, mappedType) {
+function computeShapeRotation(trQuat, sRotMatch, mappedType) {
   if (mappedType === 'sphere' || mappedType === 'point') return null;
-  const qTr = trRotMatch
-    ? [Number(trRotMatch[1]), Number(trRotMatch[2]), Number(trRotMatch[3]), Number(trRotMatch[4])]
-    : [0, 0, 0, 1];
+  const qTr = Array.isArray(trQuat)
+    ? trQuat
+    : trQuat
+      ? [Number(trQuat[1]), Number(trQuat[2]), Number(trQuat[3]), Number(trQuat[4])]
+      : [0, 0, 0, 1];
   const qSh = sRotMatch
     ? unityEulerToQuat(Number(sRotMatch[1]), Number(sRotMatch[2]), Number(sRotMatch[3]))
     : [0, 0, 0, 1];
@@ -432,22 +523,43 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
   let lightPulse = null;
   let subCounter = 0;
 
-  function computeHierarchyOffset(trBody) {
-    let x = 0, y = 0, z = 0;
+  function computeHierarchyTransform(trBody) {
+    if (!trBody) return { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1] };
+    const chain = [];
     let cur = trBody;
     let guard = 0;
     while (cur && guard++ < 8) {
       const fId = (cur.match(/m_Father:\s*\{fileID:\s*(\d+)\}/) || [])[1] ?? '0';
-      if (fId === '0') break;
       const posM = cur.match(/m_LocalPosition:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
-      if (posM) {
-        x += Number(posM[1]);
-        y += Number(posM[2]);
-        z += Number(posM[3]);
-      }
+      const rotM = cur.match(/m_LocalRotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+),\s*w:\s*([-\d.eE+]+)\}/);
+      const sclM = cur.match(/m_LocalScale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+      chain.push({
+        isRoot: fId === '0',
+        pos: posM ? [Number(posM[1]), Number(posM[2]), Number(posM[3])] : [0, 0, 0],
+        rot: rotM ? [Number(rotM[1]), Number(rotM[2]), Number(rotM[3]), Number(rotM[4])] : [0, 0, 0, 1],
+        scale: sclM ? [Number(sclM[1]), Number(sclM[2]), Number(sclM[3])] : [1, 1, 1],
+      });
+      if (fId === '0') break;
       cur = trById.get(fId);
     }
-    return [Number(x.toFixed(4)), Number(y.toFixed(4)), Number(z.toFixed(4))];
+    let pos = [0, 0, 0];
+    let rot = [0, 0, 0, 1];
+    let scale = [1, 1, 1];
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const node = chain[i];
+      if (!node.isRoot) {
+        const scaled = [node.pos[0] * scale[0], node.pos[1] * scale[1], node.pos[2] * scale[2]];
+        const rPos = quatRotateVec(rot, scaled);
+        pos = [pos[0] + rPos[0], pos[1] + rPos[1], pos[2] + rPos[2]];
+      }
+      rot = quatMul(rot, node.rot);
+      scale = [scale[0] * node.scale[0], scale[1] * node.scale[1], scale[2] * node.scale[2]];
+    }
+    return {
+      pos: [Number(pos[0].toFixed(4)), Number(pos[1].toFixed(4)), Number(pos[2].toFixed(4))],
+      rot,
+      scale,
+    };
   }
 
   function convertParticleLayer(goId, trBody, isSubChild, subDepth) {
@@ -455,9 +567,16 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const ps = psByGo.get(goId);
     const psr = psrByGo.get(goId);
     if (!ps || !psr) return null;
+    if (/^\s*m_Enabled:\s*0\b/m.test(psr)) {
+      const tmCheck = extractSection(ps, 'TrailModule');
+      if (!/^\s*enabled:\s*1\b/m.test(tmCheck)) return null;
+    }
 
-    const offset = isSubChild ? [0, 0, 0] : computeHierarchyOffset(trBody);
-    const trRotM = trBody ? trBody.match(/m_LocalRotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+),\s*w:\s*([-\d.eE+]+)\}/) : null;
+    const worldTr = isSubChild
+      ? { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1] }
+      : computeHierarchyTransform(trBody);
+    const offset = worldTr.pos;
+    const trScaleScalar = Number(((Math.abs(worldTr.scale[0]) + Math.abs(worldTr.scale[1]) + Math.abs(worldTr.scale[2])) / 3).toFixed(4));
 
     const isLoop = /^\s*looping:\s*1\b/m.test(ps);
     const isPrewarm = /^\s*prewarm:\s*1\b/m.test(ps);
@@ -533,6 +652,16 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
     const renderMode = rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : rmNum === 2 ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard';
+    const pivM = psr.match(/m_Pivot:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+    const pivot = pivM && (Math.abs(Number(pivM[1])) > 0.005 || Math.abs(Number(pivM[2])) > 0.005 || Math.abs(Number(pivM[3])) > 0.005)
+      ? [Number(Number(pivM[1]).toFixed(3)), Number(Number(pivM[2]).toFixed(3)), Number(Number(pivM[3]).toFixed(3))]
+      : undefined;
+    const velScale = renderMode === 'stretched'
+      ? Number((psr.match(/^\s*m_VelocityScale:\s*([-\d.eE+]+)/m) || [])[1] ?? 0)
+      : 0;
+    const lenScale = renderMode === 'stretched'
+      ? Number((psr.match(/^\s*m_LengthScale:\s*([-\d.eE+]+)/m) || [])[1] ?? 1)
+      : 0;
 
     const forceMod = extractSection(ps, 'ForceModule');
     const netGravity = gravScalar * 9.81;
@@ -552,21 +681,48 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       windMul = Number((extMod.match(/\bmultiplier:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
     }
 
-    const meshGuid = (psr.match(/m_Mesh:[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1];
+    const meshRefM = psr.match(/m_Mesh:\s*\{fileID:\s*(-?\d+)(?:,\s*guid:\s*([0-9a-f]{32}))?/);
+    const meshFid = meshRefM?.[1] || '0';
+    const meshGuid = meshRefM?.[2];
     let meshKey = 'crystal';
+    let meshGlobalScale = 1;
     if (meshGuid && guidMap.has(meshGuid)) {
       const mInfo = guidMap.get(meshGuid);
       deps.meshes.set(mInfo.relPath, mInfo);
       meshKey = resolveMeshKey(mInfo.relPath, mainMat?.matName);
+      meshGlobalScale = mInfo.globalScale ?? 1;
+    } else if (meshFid === '10210') {
+      meshKey = 'quad';
+    } else if (meshFid === '10202') {
+      meshKey = 'cube';
+    } else if (meshFid === '10207') {
+      meshKey = 'sphere';
+    } else if (meshFid === '10206') {
+      meshKey = 'cylinder';
     }
 
     const isNonZeroVal = (v) => Array.isArray(v) ? (Math.abs(v[0]) > 1e-4 || Math.abs(v[1]) > 1e-4) : Math.abs(v) > 1e-4;
+    const scaleRangeBy = (v, s) => {
+      if (Math.abs(s - 1) <= 0.005) return v;
+      return Array.isArray(v) ? [Number((v[0] * s).toFixed(4)), Number((v[1] * s).toFixed(4))] : Number((v * s).toFixed(4));
+    };
+    const scaledSize = scaleRangeBy(size, trScaleScalar);
     const layer = {
       name: go.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
       kind: renderMode === 'mesh' ? 'mesh' : 'particle',
       renderMode,
       blend: mainMat?.blend || 'alpha',
       hdr: mainMat?.hdr ?? 1.0,
+      ...(mainMat?.cullMode ? { cullMode: mainMat.cullMode } : {}),
+      ...(mainMat?.cutoff !== undefined ? { alphaCutoff: Number(mainMat.cutoff.toFixed(3)) } : {}),
+      ...(mainMat?.emission ? { emission: mainMat.emission, emissionBoost: mainMat.emissionBoost } : {}),
+      ...(mainMat?.cameraFade ? { cameraFade: mainMat.cameraFade } : {}),
+      ...(mainMat?.uvScale ? { uvScale: mainMat.uvScale } : {}),
+      ...(mainMat?.uvOffset ? { uvOffset: mainMat.uvOffset } : {}),
+      ...(pivot ? { pivot } : {}),
+      ...(renderMode === 'stretched' && (Math.abs(velScale) > 0.005 || Math.abs(lenScale - 1) > 0.005)
+        ? { velocityScale: Number(velScale.toFixed(3)), lengthScale: Number(lenScale.toFixed(3)) }
+        : {}),
       ...(Math.abs(simSpeed - 1) > 0.01 ? { simulationSpeed: Number(simSpeed.toFixed(3)) } : {}),
       ...(isLocalSpace ? { space: 'local' } : {}),
       ...(maxParticles > 0 && maxParticles < 1000 ? { maxParticles } : {}),
@@ -578,7 +734,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(hasInfiniteLife ? { persistent: true } : {}),
       life,
       speed,
-      size,
+      size: scaledSize,
       ...(aspectY !== undefined ? { aspectY } : {}),
       rotation: rot,
       ...(isNonZeroVal(rotX) ? { rotX } : {}),
@@ -594,6 +750,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     if (renderMode === 'mesh') {
       layer.mesh = meshKey;
+      if (Math.abs(meshGlobalScale - 1) > 0.005) layer.meshGlobalScale = Number(meshGlobalScale.toFixed(4));
       layer.forwardAxis = 'y';
       if (mainMat?.lit) layer.lit = true;
       if (mainMat?.opaque) layer.opaque = true;
@@ -615,19 +772,21 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const ang = Number((shapeMod.match(/\bangle:\s*([-\d.eE+]+)/) || [])[1] ?? 25);
       const radThick = Number((shapeMod.match(/\bradiusThickness:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
       const randPos = Number((shapeMod.match(/\brandomPositionAmount:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+      const randDir = Number((shapeMod.match(/\brandomDirectionAmount:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+      const sphDir = Number((shapeMod.match(/\bsphericalDirectionAmount:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
       const alignDir = /alignToDirection:\s*1\b/.test(shapeMod);
       const sRotM = shapeMod.match(/m_Rotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
       const sSclM = shapeMod.match(/m_Scale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
       const shapeObj = {
         type: mappedType,
-        radius: rad > 0 && rad < 0.001 ? Number(rad.toFixed(4)) : Number(rad.toFixed(3)),
+        radius: rad > 0 && rad < 0.001 ? Number((rad * trScaleScalar).toFixed(4)) : Number((rad * trScaleScalar).toFixed(3)),
         angle: Number(ang.toFixed(1)),
       };
       if (mappedType === 'donut') {
-        shapeObj.donutRadius = Number(donutRad.toFixed(3));
+        shapeObj.donutRadius = Number((donutRad * trScaleScalar).toFixed(3));
       }
       if (mappedType === 'rectangle' && sSclM) {
-        shapeObj.size = [Number(sSclM[1]), Number(sSclM[2]), Number(sSclM[3])];
+        shapeObj.size = [Number((Number(sSclM[1]) * worldTr.scale[0]).toFixed(3)), Number((Number(sSclM[2]) * worldTr.scale[1]).toFixed(3)), Number((Number(sSclM[3]) * worldTr.scale[2]).toFixed(3))];
       }
       if (mappedType === 'mesh') {
         const shapeMeshGuid = (shapeMod.match(/m_Mesh:[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1];
@@ -640,6 +799,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       if (radThick < 0.05) shapeObj.shell = true;
       else if (radThick < 0.99) shapeObj.radiusThickness = Number(radThick.toFixed(3));
       if (randPos > 0.001) shapeObj.randomPos = Number(randPos.toFixed(3));
+      if (randDir > 0.001) shapeObj.randomDirectionAmount = Number(randDir.toFixed(3));
+      if (sphDir > 0.001) shapeObj.sphericalDirectionAmount = Number(sphDir.toFixed(3));
       if (alignDir) shapeObj.alignToDirection = true;
       if (sSclM && mappedType !== 'rectangle') {
         let sx = Number(sSclM[1]);
@@ -654,7 +815,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           shapeObj.scale = [Number(sx.toFixed(3)), Number(sy.toFixed(3)), Number(sz.toFixed(3))];
         }
       }
-      const shapeRot = computeShapeRotation(trRotM, sRotM, mappedType);
+      const shapeRot = computeShapeRotation(worldTr.rot, sRotM, mappedType);
       if (shapeRot) shapeObj.rotation = shapeRot;
       layer.shape = shapeObj;
     }

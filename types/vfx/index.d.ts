@@ -129,9 +129,13 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             curveRows: number;
             normalCursor: number;
             additiveCursor: number;
+            multiplyCursor: number;
+            premultiplyCursor: number;
             distortionCursor: number;
             normalTotal: number;
             additiveTotal: number;
+            multiplyTotal: number;
+            premultiplyTotal: number;
             distortionTotal: number;
         };
     };
@@ -359,9 +363,13 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             curveRows: number;
             normalCursor: number;
             additiveCursor: number;
+            multiplyCursor: number;
+            premultiplyCursor: number;
             distortionCursor: number;
             normalTotal: number;
             additiveTotal: number;
+            multiplyTotal: number;
+            premultiplyTotal: number;
             distortionTotal: number;
         };
         meshVfx: {

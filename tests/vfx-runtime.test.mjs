@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as THREE from '../assets/optional/three/three.module.js';
 import { evaluateVfxFidelity } from '../scripts/score-vfx-fidelity.mjs';
+import { convertUnityPrefab } from '../scripts/import-unity-vfx.mjs';
 
 import {
   CROWD_STATUS,
@@ -1230,6 +1231,280 @@ test('Unity VFX full parity features: velCurve, sizeYCurve, simulationSpeed, don
     triGeo.dispose();
   } finally {
     sceneTex.dispose();
+    vfx.dispose();
+  }
+});
+
+test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintColor, _Blend:3, _Cull, _AlphaClip, built-ins, and parent scale', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 32, maxAtlasParticles: 128, maxMeshVfx: 16 });
+  try {
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'shader_parity_smoke',
+      duration: 1.0,
+      loop: false,
+      layers: [
+        {
+          name: 'mult_cull_layer',
+          kind: 'particle',
+          blend: 'multiply',
+          cullMode: 'front',
+          alphaCutoff: 0.45,
+          cameraFade: [0.3, 1.5],
+          uvScale: [2, 3],
+          uvOffset: [0.1, 0.2],
+          emissionBoost: 2.5,
+          dissolve: { start: 0.4, edge: 0.1 },
+          pivot: [0.25, -0.5],
+          renderMode: 'stretched',
+          velocityScale: 0.25,
+          lengthScale: 1.5,
+          shape: { type: 'cone', radius: 0.5, sphericalDirectionAmount: 1.0, randomDirectionAmount: 0.2 },
+          bursts: [{ time: 0, count: 2, cycles: 1, interval: 0.1 }],
+          life: 1.0,
+          size: 0.8,
+          speed: 3.0,
+        },
+        {
+          name: 'premult_layer',
+          kind: 'particle',
+          blend: 'premultiply',
+          cullMode: 'none',
+          bursts: [{ time: 0, count: 1, cycles: 1, interval: 0.1 }],
+          life: 1.0,
+          size: 0.6,
+        },
+        {
+          name: 'builtin_quad_mesh',
+          kind: 'mesh',
+          mesh: 'quad',
+          meshGlobalScale: 1.75,
+          blend: 'multiply',
+          cullMode: 'none',
+          alphaCutoff: 0.5,
+          uvScale: [2, 2],
+          uvOffset: [0.25, 0.25],
+          pivot: [0, 0.5],
+          bursts: [{ time: 0, count: 1, cycles: 1, interval: 0.1 }],
+          life: 1.0,
+          size: 1.0,
+        },
+        {
+          name: 'builtin_cube_mesh',
+          kind: 'mesh',
+          mesh: 'cube',
+          blend: 'premultiply',
+          bursts: [{ time: 0, count: 1, cycles: 1, interval: 0.1 }],
+          life: 1.0,
+          size: 0.5,
+        },
+      ],
+    });
+    vfx.update(0.05);
+
+    const stats = vfx.atlasParticles.getStats();
+    assert.equal(stats.multiplyTotal, 2, 'multiply blend channel receives 2 particles');
+    assert.equal(stats.premultiplyTotal, 1, 'premultiply blend channel receives 1 particle');
+
+    const multMesh = scene.getObjectByName('HGameVfxAtlasMultiply');
+    assert.ok(multMesh, 'HGameVfxAtlasMultiply mesh attached to scene');
+    const p8 = multMesh.geometry.getAttribute('aAtlasP8').array;
+    const p10 = multMesh.geometry.getAttribute('aAtlasP10').array;
+    const p11 = multMesh.geometry.getAttribute('aAtlasP11').array;
+    assert.ok(Math.abs(p10[0] - 0.25) < 0.01 && Math.abs(p10[1] + 0.5) < 0.01, 'pivot packed in aAtlasP10.xy');
+    assert.ok(Math.abs(p10[2] - 0.25) < 0.01 && Math.abs(p10[3] - 1.5) < 0.01, 'velocityScale/lengthScale packed in aAtlasP10.zw');
+    assert.ok(Math.abs(p11[2] - 2.5) < 0.01, 'emissionBoost packed in aAtlasP11.z');
+    assert.equal(Math.floor(p8[3] / 524288) % 4, 2, 'cullMode front (2) packed in aAtlasP8.w');
+
+    // Verify unpackRgb24 round-trip on cutoff / camFade / uvScale / dissolve
+    const decCut = unpackRgb24Into(p11[0], [0, 0, 0]);
+    assert.ok(Math.abs(decCut[0] - 0.45) < 0.02, 'alphaCutoff round-trips in aAtlasP11.x');
+    const decUv = unpackRgb24Into(p11[1], [0, 0, 0]);
+    assert.ok(Math.abs(decUv[0] * 8 - 2) < 0.1, 'uvScale.x round-trips in aAtlasP11.y');
+
+    // Built-in Unity primitive meshes quad & cube spawn without registerMesh
+    assert.equal(vfx.meshVfx.getStats().activeCount, 2, 'built-in quad + cube mesh VFX spawn automatically');
+
+    // Synthetic Unity .prefab + .mat + .meta conversion test
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-parity-'));
+    try {
+      const texGuid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const matGuid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      const texPath = path.join(tmpDir, 'Spark.png');
+      fs.writeFileSync(texPath, '');
+      fs.writeFileSync(`${texPath}.meta`, `fileFormatVersion: 2\nguid: ${texGuid}\n`);
+      const matPath = path.join(tmpDir, 'MultMat.mat');
+      fs.writeFileSync(
+        matPath,
+        [
+          '%YAML 1.1',
+          'Material:',
+          '  m_SavedProperties:',
+          '    m_TexEnvs:',
+          '    - _MainTex:',
+          `        m_Texture: {fileID: 2800000, guid: ${texGuid}, type: 3}`,
+          '        m_Scale: {x: 2, y: 4}',
+          '        m_Offset: {x: 0.1, y: 0.25}',
+          '    m_Floats:',
+          '    - _Blend: 3',
+          '    - _Cull: 2',
+          '    - _AlphaClip: 1',
+          '    - _Cutoff: 0.35',
+          '    - _EmissionEnabled: 1',
+          '    - _CameraFadingEnabled: 1',
+          '    - _CameraNearFadeDistance: 0.5',
+          '    - _CameraFarFadeDistance: 2.5',
+          '    m_Colors:',
+          '    - _TintColor: {r: 1, g: 0.5, b: 0.25, a: 1}',
+          '    - _EmissionColor: {r: 2, g: 1, b: 0.5, a: 1}',
+        ].join('\n')
+      );
+      fs.writeFileSync(`${matPath}.meta`, `fileFormatVersion: 2\nguid: ${matGuid}\n`);
+
+      const prefabPath = path.join(tmpDir, 'ParityRoot.prefab');
+      fs.writeFileSync(
+        prefabPath,
+        [
+          '%YAML 1.1',
+          '--- !u!1 &10',
+          'GameObject:',
+          '  m_Name: ParityRoot',
+          '  m_IsActive: 1',
+          '--- !u!4 &11',
+          'Transform:',
+          '  m_GameObject: {fileID: 10}',
+          '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+          '  m_LocalPosition: {x: 0, y: 0, z: 0}',
+          '  m_LocalScale: {x: 2, y: 2, z: 2}',
+          '  m_Father: {fileID: 0}',
+          '--- !u!1 &20',
+          'GameObject:',
+          '  m_Name: ChildMesh',
+          '  m_IsActive: 1',
+          '--- !u!4 &21',
+          'Transform:',
+          '  m_GameObject: {fileID: 20}',
+          '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+          '  m_LocalPosition: {x: 0, y: 1, z: 0}',
+          '  m_LocalScale: {x: 1, y: 1, z: 1}',
+          '  m_Father: {fileID: 11}',
+          '--- !u!198 &22',
+          'ParticleSystem:',
+          '  m_GameObject: {fileID: 20}',
+          '  lengthInSec: 1',
+          '  looping: 0',
+          '  simulationSpeed: 1',
+          '  moveWithTransform: 0',
+          '  InitialModule:',
+          '    startLifetime:',
+          '      minMaxState: 0',
+          '      scalar: 1',
+          '    startSpeed:',
+          '      minMaxState: 0',
+          '      scalar: 2',
+          '    startSize:',
+          '      minMaxState: 0',
+          '      scalar: 1.5',
+          '    startColor:',
+          '      minMaxState: 0',
+          '      maxColor: {r: 1, g: 1, b: 1, a: 1}',
+          '  EmissionModule:',
+          '    enabled: 1',
+          '    rateOverTime:',
+          '      minMaxState: 0',
+          '      scalar: 0',
+          '    m_BurstCount: 1',
+          '    m_Bursts:',
+          '    - time: 0',
+          '      countCurve:',
+          '        scalar: 1',
+          '      cycleCount: 1',
+          '      repeatInterval: 0.1',
+          '  ShapeModule:',
+          '    enabled: 1',
+          '    type: 4',
+          '    radius:',
+          '      value: 0.5',
+          '    randomDirectionAmount: 0.3',
+          '    sphericalDirectionAmount: 0.8',
+          '  SizeModule:',
+          '    enabled: 0',
+          '  ColorModule:',
+          '    enabled: 0',
+          '  UVModule:',
+          '    enabled: 0',
+          '  TrailModule:',
+          '    enabled: 0',
+          '  SubModule:',
+          '    enabled: 0',
+          '--- !u!199 &23',
+          'ParticleSystemRenderer:',
+          '  m_GameObject: {fileID: 20}',
+          '  m_Enabled: 1',
+          '  m_RenderMode: 4',
+          '  m_Pivot: {x: 0, y: 0.5, z: 0}',
+          '  m_Materials:',
+          `  - {fileID: 2100000, guid: ${matGuid}, type: 2}`,
+          '  m_Mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}',
+          '--- !u!1 &30',
+          'GameObject:',
+          '  m_Name: DisabledRenderer',
+          '  m_IsActive: 1',
+          '--- !u!4 &31',
+          'Transform:',
+          '  m_GameObject: {fileID: 30}',
+          '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+          '  m_LocalPosition: {x: 0, y: 0, z: 0}',
+          '  m_LocalScale: {x: 1, y: 1, z: 1}',
+          '  m_Father: {fileID: 11}',
+          '--- !u!198 &32',
+          'ParticleSystem:',
+          '  m_GameObject: {fileID: 30}',
+          '  lengthInSec: 1',
+          '  looping: 0',
+          '  InitialModule:',
+          '    startLifetime:',
+          '      minMaxState: 0',
+          '      scalar: 1',
+          '    startSize:',
+          '      minMaxState: 0',
+          '      scalar: 1',
+          '  EmissionModule:',
+          '    enabled: 1',
+          '    rateOverTime:',
+          '      scalar: 1',
+          '  TrailModule:',
+          '    enabled: 0',
+          '--- !u!199 &33',
+          'ParticleSystemRenderer:',
+          '  m_GameObject: {fileID: 30}',
+          '  m_Enabled: 0',
+        ].join('\n')
+      );
+
+      const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'parity_root' });
+      assert.equal(validateVfxRecipe(recipe).ok, true, 'converted synthetic recipe validates cleanly');
+      assert.equal(recipe.layers.length, 1, 'm_Enabled: 0 renderer without trail is skipped');
+      const l = recipe.layers[0];
+      assert.equal(l.mesh, 'quad', 'built-in fileID 10210 maps to quad');
+      assert.equal(l.blend, 'multiply', '_Blend: 3 maps to multiply');
+      assert.equal(l.cullMode, 'back', '_Cull: 2 maps to back');
+      assert.equal(l.alphaCutoff, 0.35, '_AlphaClip + _Cutoff extracted');
+      assert.ok(l.emissionBoost > 1.0, '_EmissionEnabled + HDR _EmissionColor sets emissionBoost');
+      assert.deepEqual(l.cameraFade, [0.5, 2.5], '_CameraFadingEnabled extracts near/far fade distances');
+      assert.deepEqual(l.uvScale, [2, 4], '_MainTex m_Scale extracted');
+      assert.deepEqual(l.uvOffset, [0.1, 0.25], '_MainTex m_Offset extracted');
+      assert.deepEqual(l.pivot, [0, 0.5, 0], 'm_Pivot extracted');
+      assert.equal(l.shape.sphericalDirectionAmount, 0.8, 'sphericalDirectionAmount extracted');
+      assert.equal(l.shape.randomDirectionAmount, 0.3, 'randomDirectionAmount extracted');
+      assert.equal(l.shape.radius, 1, 'parent m_LocalScale:2 scales child shape radius');
+      assert.equal(l.offset[1], 2, 'parent m_LocalScale:2 scales child local offset');
+      assert.equal(l.size, 3, 'parent m_LocalScale:2 scales child startSize 1.5 -> 3');
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  } finally {
     vfx.dispose();
   }
 });
