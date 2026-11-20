@@ -15,6 +15,16 @@
  */
 export function findGridPath<T = number>(map: TileMap<T>, start: TileCoord, goal: TileCoord, { maxNodes, allowDiagonal, preventCornerCutting, }?: FindGridPathOptions | undefined): TileCoord[];
 /**
+ * Create a budgetable A* search over the current map revision.
+ * @template [T=number]
+ * @param {TileMap<T>} map
+ * @param {TileCoord} start
+ * @param {TileCoord} goal
+ * @param {FindGridPathOptions} [options]
+ * @returns {Generator<undefined, TileCoord[], void>}
+ */
+export function createGridPathWork<T = number>(map: TileMap<T>, start: TileCoord, goal: TileCoord, { maxNodes, allowDiagonal, preventCornerCutting, }?: FindGridPathOptions | undefined): Generator<undefined, TileCoord[], void>;
+/**
  * @template [T=number]
  * @typedef {object} TileMapOptions
  * @property {T[][]} tiles Rectangular row-major grid (tiles[y][x]); rows are copied.
@@ -94,6 +104,8 @@ export class TileMap<T = number> {
      * @returns {void}
      */
     set(x: number, y: number, value: T): void;
+    /** Invalidate sliced searches after editing tile rows or the solid palette directly. */
+    invalidateNavigation(): void;
     /**
      * Solid test; out-of-bounds cells count as solid.
      * @param {number} x Column.

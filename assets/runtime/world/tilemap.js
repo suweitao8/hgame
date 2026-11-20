@@ -1,3 +1,5 @@
+import { guardNavigationWork, reversePath } from './internal/path-work.js';
+
 /**
  * @typedef {object} HeapNode
  * @property {number} id Cell id (y * width + x).
@@ -105,6 +107,8 @@ class GridSearchWorkspace {
 
 /** @type {WeakMap<object, GridSearchWorkspace>} */
 const gridSearchByMap = new WeakMap();
+/** @type {WeakMap<object, number>} */
+const navigationRevisions = new WeakMap();
 
 /**
  * @template [T=number]
@@ -197,7 +201,12 @@ export class TileMap {
    */
   set(x, y, value) {
     if (!this.within(x, y)) throw new RangeError('Tile outside map');
+    if (!Object.is(this.tiles[y][x], value)) this.invalidateNavigation();
     this.tiles[y][x] = value;
+  }
+  /** Invalidate sliced searches after editing tile rows or the solid palette directly. */
+  invalidateNavigation() {
+    navigationRevisions.set(this, (navigationRevisions.get(this) ?? 0) + 1);
   }
   /**
    * Solid test; out-of-bounds cells count as solid.
@@ -305,13 +314,36 @@ export function findGridPath(map, start, goal, {
   }
   workspace.inUse = true;
   try {
-    return searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal, preventCornerCutting);
+    return searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal, preventCornerCutting, false).next().value;
   } finally {
     workspace.clear();
   }
 }
 
-function searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal, preventCornerCutting) {
+/**
+ * Create a budgetable A* search over the current map revision.
+ * @template [T=number]
+ * @param {TileMap<T>} map
+ * @param {TileCoord} start
+ * @param {TileCoord} goal
+ * @param {FindGridPathOptions} [options]
+ * @returns {Generator<undefined, TileCoord[], void>}
+ */
+export function createGridPathWork(map, start, goal, {
+  maxNodes = 20000,
+  allowDiagonal = false,
+  preventCornerCutting = true,
+} = {}) {
+  const sx = start.x, sy = start.y, gx = goal.x, gy = goal.y;
+  const revision = navigationRevisions.get(map);
+  function* work() {
+    if (map.isSolid(sx, sy) || map.isSolid(gx, gy)) return [];
+    return yield* searchGridPath(map, new GridSearchWorkspace(), sx, sy, gx, gy, maxNodes, allowDiagonal, preventCornerCutting, true);
+  }
+  return guardNavigationWork(work(), () => navigationRevisions.get(map) === revision);
+}
+
+function* searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal, preventCornerCutting, sliced) {
   const width = map.width;
   const startId = sy * width + sx, goalId = gy * width + gx;
   const { byId, open } = workspace;
@@ -323,6 +355,7 @@ function searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal,
   const dirs = allowDiagonal ? DIRS_8 : DIRS_4;
   let visited = 0;
   while (open.size && visited++ < maxNodes) {
+    if (sliced) yield;
     const current = open.pop();
     if (current.id === goalId) {
       /** @type {TileCoord[]} */
@@ -330,10 +363,13 @@ function searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal,
       /** @type {SearchNode | null} */
       let node = current;
       while (node) {
+        if (sliced) yield;
         result.push({ x: node.x, y: node.y });
         node = node.parent;
       }
-      return result.reverse();
+      if (!sliced) return result.reverse();
+      yield* reversePath(result);
+      return result;
     }
     for (let i = 0; i < dirs.length; i++) {
       const dx = dirs[i][0], dy = dirs[i][1], stepCost = dirs[i][2];

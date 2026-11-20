@@ -34,6 +34,7 @@ const CAPABILITY_MAP = [
   { need: 'App loop, Scene, Entity, Tags, hitStop', module: 'index.js / core/*', keyApis: 'HGame.defineProject, createGameApplication, Scene, Entity({name}), addTag, scene.queryTags' },
   { need: 'Tweens, springs, idle/attack juice', module: 'time/tween.js', keyApis: 'scene.tweens, EASING, damp, dampAngle, SpringDamper1D/2D/3D' },
   { need: 'Pixi tilemap rendering and A* path', module: 'generated project src/engine/PixiTilemapLayer.js; runtime world/tilemap.js', keyApis: 'renderer.createTilemapLayer, refreshTile, TileMap, findGridPath' },
+  { need: 'Budget deferred AI and cross-tick pathfinding', module: 'sim/work-budget.js, world/tilemap.js, world/navmesh3d.js', keyApis: 'createSimulationWorkBudget, createGridPathWork, nav.createPathWork' },
   { need: 'Legacy Canvas 2D sprites and camera', module: 'integrations/canvas2d.js, animation/*', keyApis: 'createCanvas2DAdapter, Camera2D, Sprite2D, SpriteSheet.fromGrid' },
   { need: '2D CPU swarms with PixiJS', module: 'world/swarm-ecs.js, generated project src/engine/PixiSwarmLayer.js', keyApis: 'createSwarmSimulation, renderer.createSwarmLayer, crowd.sync; npm run api -- --recipe horde' },
   { need: 'Legacy 2D GPU swarms / bullets', module: 'integrations/webgl2d.js, world/gpu-swarm-webgl2.js', keyApis: 'createWebGL2DAdapter, SpriteCrowd2D.bindGpuSwarm, createGpuSwarmWebGL2' },

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add an opt-in fixed-tick budget for deferred simulation work and resumable 2D and 3D pathfinding. Navigation jobs use the same routing rules across slices and report backpressure, failures, and cancellation.
+
 - Add ordered application phase hooks and a cancellation signal for each scene activation. Pair scene entry and exit during transition rollback and reentrant teardown.
 
 - Add scene-scoped decoded model acquisition with shared cancellation and idle geometry and texture eviction. Connect model residency to the optional 3D render budget.

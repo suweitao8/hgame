@@ -37,7 +37,7 @@ export {
 } from './time/tween.js';
 export { AnimationPlayer } from './animation/player.js';
 export { SpriteSheet } from './animation/spritesheet.js';
-export { TileMap, findGridPath } from './world/tilemap.js';
+export { TileMap, findGridPath, createGridPathWork } from './world/tilemap.js';
 export { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
 export {
   SWARM_UNIT_FLAGS,
@@ -74,7 +74,7 @@ export {
   createBehaviorTree,
 } from './ai/index.js';
 export { createTraceRecorder } from './integrations/trace.js';
-export { createSeededRng, createStateChecksum, hashState, runScripted } from './sim/index.js';
+export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget } from './sim/index.js';
 export { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 export {
   RED_DOT_STYLES,
@@ -131,7 +131,7 @@ import { PrefabRegistry } from './core/prefab.js';
 import { createTagContainer, createTagRegistry, GLOBAL_TAG_REGISTRY, matchGameplayTags } from './core/tags.js';
 import { createGameApplication } from './core/application.js';
 import { createTraceRecorder } from './integrations/trace.js';
-import { createSeededRng, createStateChecksum, hashState, runScripted } from './sim/index.js';
+import { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget } from './sim/index.js';
 import { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 import { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
 import {
@@ -233,6 +233,7 @@ export const HGame = Object.freeze({
   createStateChecksum,
   hashState,
   runScripted,
+  createSimulationWorkBudget,
   createSpringArmRayProbe,
   cameraRelativeMove,
   defineInputContext,

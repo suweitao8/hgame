@@ -14,19 +14,8 @@ export function createNavMesh3D(options: NavMesh3DOptions): Readonly<{
     addObstacle: (aabb: any) => void;
     clearObstacles: () => void;
     isWalkable: (x: any, z: any) => boolean;
-    findPath: (start: {
-        x: number;
-        y?: number;
-        z: number;
-    }, goal: {
-        x: number;
-        y?: number;
-        z: number;
-    }, pathOpts?: {
-        smooth?: boolean;
-        maxSnapCells?: number;
-        maxNodes?: number;
-    } | undefined) => Vec3Point[] | null;
+    findPath: (start: NavEndpoint, goal: NavEndpoint, pathOpts?: NavPathOptions | undefined) => Vec3Point[] | null;
+    createPathWork: (start: NavEndpoint, goal: NavEndpoint, pathOpts?: NavPathOptions | undefined) => Generator<undefined, Vec3Point[] | null, void>;
     sampleSurfaceHeight: (x: any, z: any) => number;
 }>;
 export type NavObstacleAABB = {
@@ -90,4 +79,14 @@ export type Vec3Point = {
     x: number;
     y: number;
     z: number;
+};
+export type NavEndpoint = {
+    x: number;
+    y?: number;
+    z: number;
+};
+export type NavPathOptions = {
+    smooth?: boolean;
+    maxSnapCells?: number;
+    maxNodes?: number;
 };

@@ -1,3 +1,6 @@
+import { createNavPathWork } from './internal/navmesh3d-work.js';
+import { guardNavigationWork } from './internal/path-work.js';
+
 /**
  * @typedef {object} NavObstacleAABB
  * @property {number} minX
@@ -32,10 +35,21 @@
 /**
  * @typedef {{ x: number, y: number, z: number }} Vec3Point
  */
+/** @typedef {{ x: number, y?: number, z: number }} NavEndpoint */
+/** @typedef {{ smooth?: boolean, maxSnapCells?: number, maxNodes?: number }} NavPathOptions */
 
 const DX = [1, -1, 0, 0, 1, 1, -1, -1];
 const DZ = [0, 0, 1, -1, 1, -1, 1, -1];
 const STEP_COST = [1, 1, 1, 1, Math.SQRT2, Math.SQRT2, Math.SQRT2, Math.SQRT2];
+
+/** @param {NavPathOptions} options */
+function pathNodeLimit(options) {
+  const maxNodes = options.maxNodes ?? Infinity;
+  if (maxNodes !== Infinity && (!Number.isSafeInteger(maxNodes) || maxNodes < 0)) {
+    throw new RangeError('3D pathfinding maxNodes must be a non-negative integer or Infinity');
+  }
+  return maxNodes;
+}
 
 /**
  * Lightweight 3D Height-Aware NavMesh + A* + String-Pulling Corridor Smoother.
@@ -63,6 +77,7 @@ export function createNavMesh3D(options) {
   const cameFrom = new Int32Array(total);
   // Zero is untouched, one is closed, and an open cell stores its heap index + 2.
   const heapState = new Uint32Array(total);
+  let revision = 0;
 
   /** @type {NavObstacleAABB[]} */
   const obstacles = Array.isArray(options.obstacles) ? options.obstacles.map((o) => ({ ...o })) : [];
@@ -88,6 +103,7 @@ export function createNavMesh3D(options) {
   }
 
   function rebuild() {
+    revision++;
     for (let cz = 0; cz < rows; cz++) {
       const wz = cellCenterZ(cz);
       for (let cx = 0; cx < cols; cx++) {
@@ -291,18 +307,15 @@ export function createNavMesh3D(options) {
   /**
    * Computes a smooth 3D waypoint path `{ x, y, z }[]` between `start` and `goal`,
    * or `null` if unreachable.
-   * @param {{ x: number, y?: number, z: number }} start
-   * @param {{ x: number, y?: number, z: number }} goal
-   * @param {{ smooth?: boolean, maxSnapCells?: number, maxNodes?: number }} [pathOpts] `maxNodes` caps visited cells and defaults to unlimited.
+   * @param {NavEndpoint} start
+   * @param {NavEndpoint} goal
+   * @param {NavPathOptions} [pathOpts] `maxNodes` caps visited cells and defaults to unlimited.
    * @returns {Vec3Point[] | null}
    */
   function findPath(start, goal, pathOpts = {}) {
     const smooth = pathOpts.smooth !== false;
     const maxSnap = Number.isInteger(pathOpts.maxSnapCells) ? pathOpts.maxSnapCells : 6;
-    const maxNodes = pathOpts.maxNodes ?? Infinity;
-    if (maxNodes !== Infinity && (!Number.isSafeInteger(maxNodes) || maxNodes < 0)) {
-      throw new RangeError('3D pathfinding maxNodes must be a non-negative integer or Infinity');
-    }
+    const maxNodes = pathNodeLimit(pathOpts);
     if (maxNodes === 0) return null;
     const sCell = findNearestWalkableCell(worldToCellX(start.x), worldToCellZ(start.z), maxSnap);
     const gCell = findNearestWalkableCell(worldToCellX(goal.x), worldToCellZ(goal.z), maxSnap);
@@ -356,6 +369,29 @@ export function createNavMesh3D(options) {
     return waypoints;
   }
 
+  const pathGrid = {
+    cols, rows, heights, canTraverse, isCellWalkable, isWalkable,
+    worldToCellX, worldToCellZ, cellCenterX, cellCenterZ,
+    dx: DX, dz: DZ, stepCost: STEP_COST,
+  };
+  /**
+   * Create an interruptible search, including snapping and waypoint smoothing.
+   * @param {NavEndpoint} start
+   * @param {NavEndpoint} goal
+   * @param {NavPathOptions} [pathOpts]
+   * @returns {Generator<undefined, Vec3Point[] | null, void>}
+   */
+  function createPathWork(start, goal, pathOpts = {}) {
+    const current = revision;
+    const work = createNavPathWork(pathGrid, {
+      sx: start.x, sz: start.z, gx: goal.x, gz: goal.z,
+      maxNodes: pathNodeLimit(pathOpts),
+      maxSnap: Number.isInteger(pathOpts.maxSnapCells) ? pathOpts.maxSnapCells : 6,
+      smooth: pathOpts.smooth !== false,
+    });
+    return guardNavigationWork(work, () => revision === current);
+  }
+
   return Object.freeze({
     cols,
     rows,
@@ -367,6 +403,7 @@ export function createNavMesh3D(options) {
     clearObstacles,
     isWalkable,
     findPath,
+    createPathWork,
     sampleSurfaceHeight: (x, z) => {
       const cx = worldToCellX(x);
       const cz = worldToCellZ(z);
