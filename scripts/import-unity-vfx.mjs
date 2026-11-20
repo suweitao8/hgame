@@ -6,6 +6,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { VFX_DEPTH_TESTS } from '../assets/runtime/vfx/vfx-depth-state.js';
 
 function parseArgs(argv) {
   const opts = {
@@ -326,6 +327,10 @@ function inspectMaterial(matInfo, guidMap, deps) {
 
   const isLit = /_NORMALMAP|_METALLIC|_SPECGLOSSMAP|Standard Surface/i.test(txt) || /guid:\s*0406db5a14f94604a8c57ccfbc9f3b46/.test(txt);
   const isOpaque = surfaceMode !== undefined ? surfaceMode === '0' : /- _Mode:\s*[01]\b/.test(txt);
+  const zWrite = Number(txt.match(/- _ZWrite:[ \t]*([^\s]+)/)?.[1]);
+  const zTest = Number(txt.match(/- _ZTest:[ \t]*([^\s]+)/)?.[1]);
+  const softParticles = Number(txt.match(/- _SoftParticlesEnabled:[ \t]*([^\s]+)/)?.[1]);
+  const clearedBase = !mainTexBlock || /m_Texture:\s*\{fileID:\s*0\s*[,}]/.test(mainTexBlock);
   const flipbookMode = Number((txt.match(/- _FlipbookMode:\s*([\d.]+)/) || [])[1] ?? 0);
 
   let spriteKey = null;
@@ -354,6 +359,10 @@ function inspectMaterial(matInfo, guidMap, deps) {
     uvOffset,
     lit: isLit,
     opaque: isOpaque,
+    depthTest: VFX_DEPTH_TESTS[zTest],
+    depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : undefined,
+    softParticles: softParticles === 0 || softParticles === 1 ? softParticles === 1 : undefined,
+    useTexture: isOpaque && !isDistortionOnly && clearedBase ? false : undefined,
     isDistortionOnly,
     flipbookBlend: flipbookMode >= 1,
   };
@@ -725,6 +734,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(mainMat?.spriteKey ? { sprite: mainMat.spriteKey } : {}),
       ...(mainMat?.cullMode ? { cullMode: mainMat.cullMode } : {}),
       ...(mainMat?.cutoff !== undefined ? { alphaCutoff: Number(mainMat.cutoff.toFixed(3)) } : {}),
+      ...(mainMat?.opaque && !mainMat.isDistortionOnly ? { opaque: true } : {}),
+      ...(mainMat?.depthTest !== undefined ? { depthTest: mainMat.depthTest } : {}),
+      ...(mainMat?.depthWrite !== undefined ? { depthWrite: mainMat.depthWrite } : {}),
+      ...(mainMat?.softParticles !== undefined ? { softParticles: mainMat.softParticles } : {}),
+      ...(mainMat?.useTexture === false ? { useTexture: false } : {}),
       ...(mainMat?.emission ? { emission: mainMat.emission, emissionBoost: mainMat.emissionBoost } : {}),
       ...(mainMat?.cameraFade ? { cameraFade: mainMat.cameraFade } : {}),
       ...(mainMat?.uvScale ? { uvScale: mainMat.uvScale } : {}),
@@ -763,7 +777,6 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       if (Math.abs(meshGlobalScale - 1) > 0.005) layer.meshGlobalScale = Number(meshGlobalScale.toFixed(4));
       layer.forwardAxis = 'y';
       if (mainMat?.lit) layer.lit = true;
-      if (mainMat?.opaque) layer.opaque = true;
       if (Array.isArray(speed) ? speed[1] > 0.1 : speed > 0.1) layer.alignToVelocity = true;
     }
 

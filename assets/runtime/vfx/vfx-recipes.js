@@ -1,5 +1,6 @@
 import { createVisualPrng, packRgb24 } from './vfx-core.js';
 import { evaluateAtlasParticlePosition, evaluateSizeCurve } from './vfx-atlas-particles.js';
+import { VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 
 const MAX_ACTIVE_EFFECTS = 128;
 const MAX_LAYERS_PER_EFFECT = 16;
@@ -81,6 +82,14 @@ export function validateVfxRecipe(recipe) {
       }
       if (layer.blend !== undefined && !VALID_BLENDS.has(layer.blend)) {
         errors.push(`layers[${i}].blend "${String(layer.blend)}" is invalid`);
+      }
+      if (layer.depthTest !== undefined && !VFX_DEPTH_TESTS.includes(layer.depthTest)) {
+        errors.push(`layers[${i}].depthTest "${String(layer.depthTest)}" is invalid`);
+      }
+      for (const field of ['opaque', 'depthWrite', 'softParticles', 'useTexture']) {
+        if (layer[field] !== undefined && typeof layer[field] !== 'boolean') {
+          errors.push(`layers[${i}].${field} must be a boolean`);
+        }
       }
       if (layer.colorCurve !== undefined) {
         if (!Array.isArray(layer.colorCurve) || layer.colorCurve.length === 0) {
@@ -229,8 +238,7 @@ export function createEffectPlayer({
   for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
     trackedParticles.push({
       active: false,
-      additive: false,
-      blend: 'alpha',
+      atlasState: null,
       atlasSlot: -1,
       meshSlot: -1,
       lightSlotIdx: -1,
@@ -345,6 +353,14 @@ export function createEffectPlayer({
       const simSpd = Math.max(0.05, Number(layer.simulationSpeed ?? 1.0));
       return {
         ...layer,
+        _renderState: {
+          blend: layer.blend ?? 'alpha',
+          opaque: layer.opaque,
+          depthTest: layer.depthTest,
+          depthWrite: layer.depthWrite,
+          softParticles: layer.softParticles,
+          useTexture: layer.useTexture,
+        },
         _curveRow: curveRow,
         _kind: layer.kind ?? 'particle',
         _simSpd: simSpd,
@@ -525,7 +541,7 @@ export function createEffectPlayer({
   }
 
   function allocTrackedParticle({
-    additive = false, blend = 'alpha', atlasSlot = -1, meshSlot = -1, duration,
+    atlasState = null, atlasSlot = -1, meshSlot = -1, duration,
     x, y, z, vx, vy, vz, accelX = 0, accelZ = 0, gravity, drag,
     tintR = 1, tintG = 1, tintB = 1,
     collision = null, subEmitters = null, subDepth = 0,
@@ -535,8 +551,7 @@ export function createEffectPlayer({
       const tp = trackedParticles[i];
       if (!tp.active) {
         tp.active = true;
-        tp.additive = additive;
-        tp.blend = blend;
+        tp.atlasState = atlasState;
         tp.atlasSlot = atlasSlot;
         tp.meshSlot = meshSlot;
         tp.lightSlotIdx = lightSlotIdx;
@@ -1012,8 +1027,7 @@ export function createEffectPlayer({
         pivot: layer.pivot,
         uvScale: layer.uvScale,
         uvOffset: layer.uvOffset,
-        opaque: layer.opaque,
-        blend: layer.blend ?? 'alpha',
+        ...layer._renderState,
         colorCurve: layer.colorCurve,
         sizeCurve: layer.sizeCurve,
         sizeYCurve: layer.sizeYCurve,
@@ -1033,8 +1047,6 @@ export function createEffectPlayer({
           fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2]);
         }
         allocTrackedParticle({
-          additive: false,
-          blend: layer.blend ?? 'alpha',
           atlasSlot: -1,
           meshSlot,
           duration: dur,
@@ -1062,8 +1074,6 @@ export function createEffectPlayer({
     }
 
     if (!atlasParticles) return;
-    const blend = layer.blend ?? 'alpha';
-    const additive = blend === 'additive';
     const lightSlotIdx = layer.particleLight
       ? allocParticleLight(layer.particleLight, scratchPos[0], scratchPos[1], scratchPos[2], dur, scratchTintOut)
       : -1;
@@ -1104,7 +1114,7 @@ export function createEffectPlayer({
       centerOffX,
       centerOffZ,
       renderMode: layer.renderMode ?? 'billboard',
-      blend,
+      ...layer._renderState,
       cullMode: layer.cullMode,
       alphaCutoff: layer.alphaCutoff,
       cameraFade: layer.cameraFade,
@@ -1136,8 +1146,7 @@ export function createEffectPlayer({
         fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2]);
       }
       trackedSlot = allocTrackedParticle({
-        additive,
-        blend,
+        atlasState: layer._renderState,
         atlasSlot,
         meshSlot: -1,
         duration: dur,
@@ -1550,6 +1559,7 @@ export function createEffectPlayer({
           tp.lightSlotIdx = -1;
         }
         tp.active = false;
+        tp.atlasState = null;
         continue;
       }
       if (dt > 0) {
@@ -1599,8 +1609,7 @@ export function createEffectPlayer({
           }
         }
         if (tp.hasCollision && atlasParticles && tp.atlasSlot >= 0) {
-          const chArg = (tp.blend === 'alpha' || tp.blend === 'additive') ? tp.additive : tp.blend;
-          atlasParticles.updateSlot(chArg, tp.atlasSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
+          atlasParticles.updateSlot(tp.atlasState, tp.atlasSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
         }
         if (tp.hasCollision && meshVfx && tp.meshSlot >= 0) {
           meshVfx.updateSlot(tp.meshSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
@@ -1675,6 +1684,7 @@ export function createEffectPlayer({
         trackedParticles[i].lightSlotIdx = -1;
       }
       trackedParticles[i].active = false;
+      trackedParticles[i].atlasState = null;
     }
     if (trails) {
       for (let i = 0; i < MAX_TRAIL_FOLLOWERS; i++) {

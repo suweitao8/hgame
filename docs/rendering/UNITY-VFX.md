@@ -8,12 +8,18 @@ node scripts/import-unity-vfx.mjs --unity-root <unity-assets> --prefab <effect.p
 
 | Unity material setting | HGame recipe and rendering behavior |
 | --- | --- |
-| URP `_Surface`, legacy `_Mode` | `_Surface` determines the modern material type when present. Legacy opaque and cutout modes map to `opaque` for mesh layers. Opaque meshes write depth and output full coverage above the clip threshold. |
+| URP `_Surface`, legacy `_Mode` | `_Surface` determines the modern material type when present. Legacy opaque and cutout modes map to `opaque`. In Three, mesh and atlas particles use the opaque queue, disable blending, and write depth by default. |
+| `_ZTest` | `depthTest` accepts `disabled`, `never`, `less`, `equal`, `less-equal` (default), `greater`, `not-equal`, `greater-equal`, and `always`. These map to the corresponding Three depth states. |
+| `_ZWrite` | `depthWrite` accepts `true` or `false` and overrides the surface default. With `depthTest: "disabled"`, WebGL skips both comparison and depth writes. Use `"always"` and `depthWrite: true` to write depth unconditionally. |
 | `_BaseColor`, `_TintColor`, `_Color` | The importer uses the URP base color or legacy tint and combines its RGBA with the particle color curve. Material RGB above 1 is carried as an HDR multiplier. |
 | `_BaseMap`, `_MainTex` | `sprite` names a region in the atlas. Register the region with `vfx.setAtlas(texture, regions)` before playing the recipe. Three mesh layers read that region as well as billboard layers. Mesh layers without a resolved region use the registered mesh's own map when available. |
+| Unassigned opaque base map | The importer sets `useTexture: false`. Three mesh and atlas particles use a white sample, so an unassigned material cannot pick up unrelated atlas regions. |
 | `_AlphaClip`, `_Cutoff` | `alphaCutoff` discards fragments below the threshold. Three applies the threshold before camera or soft depth fading. Transparent Three and WebGL2 2D layers retain fractional alpha above the threshold. Canvas2D uses its normal compositing path. |
+| `_SoftParticlesEnabled` | `softParticles: false` opts a Three atlas layer out of the shared scene-depth fade. `true` uses the bound depth texture and global `softFade` distance when available. |
 | Alpha, Additive, Multiply, Premultiply | `blend` selects the corresponding channel. Premultiply consumes RGB already associated with alpha in the source, following the Unity material convention. Multiply scales destination RGB using source alpha and keeps destination alpha. |
 
-`node tests/browser-vfx-material.mjs --chrome <chromium-path>` checks the three shader paths against fixed pixel values and exercises a transparent mesh atlas region. `vfx:score` reports feature coverage for the importer and runtime. Visual equivalence for a particular effect needs the original shader inputs and matching render conditions.
+The Three atlas pool creates one instanced batch per blend, surface and depth state on first use. Each batch inherits the corresponding blend pool's ring capacity, and equal states share it. Idle batches keep their allocations for reuse and submit zero instances. `renderStateTotal` reports emissions into those batches. To move or kill a returned slot directly, pass the same render-state options to `updateSlot` or `killSlot`. Canvas2D and native WebGL2 2D continue to composite in their flat draw order.
 
-Broader Unity material alignment includes render-state handling for instanced opaque particles, depth comparisons and writes, texture slot and color-space conventions, and a documented mapping for commonly used Shader Graph inputs. These capabilities are tracked as engine work.
+`node tests/browser-vfx-material.mjs --chrome <chromium-path>` checks pixel values for blend, cutout, and depth behavior. `vfx:score` reports feature coverage for the importer and runtime. Visual equivalence for a particular effect needs the original shader inputs and matching render conditions.
+
+Broader Unity material alignment includes mesh texture-sheet animation, texture slot and color-space conventions, and a documented mapping for commonly used Shader Graph inputs.

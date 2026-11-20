@@ -486,6 +486,65 @@ test('mesh VFX pool spawns custom & built-in meshes with Fresnel/dissolve and re
   }
 });
 
+test('Three particle depth state shares atlas batches and resets pooled mesh state', () => {
+  const scene = new THREE.Scene();
+  const atlas = createAtlasParticlePool({ mode: '3d', THREE, scene, maxParticles: 8 });
+  const mesh = createMeshVfxPool({ mode: '3d', THREE, scene, maxMeshes: 1 });
+  const state = { opaque: true, depthTest: 'greater', depthWrite: false };
+  const recipe = { schemaVersion: 1, id: 'depth', layers: [{ kind: 'particle', ...state }] };
+  assert.equal(validateVfxRecipe(recipe).ok, true);
+  assert.equal(validateVfxRecipe({ ...recipe, layers: [{ depthTest: 5, depthWrite: 1 }] }).ok, false);
+  const initialCount = scene.children.length;
+  atlas.update(0.25);
+  atlas.setWind(1, 2, 3);
+  const slot = atlas.emit({ ...state, blend: 'multiply', duration: 1 });
+  atlas.emit({ ...state, duration: 1 });
+  atlas.emit({ depthTest: 'less-equal', depthWrite: false, duration: 1 });
+  atlas.flushDirty();
+  assert.equal(scene.children.length, initialCount + 1, 'equivalent state shares a batch and explicit defaults reuse the base batch');
+  const batch = scene.children.at(-1);
+  assert.equal(batch.geometry.instanceCount, 2);
+  assert.equal(batch.material.blending, THREE.NoBlending);
+  assert.equal(batch.material.transparent, false);
+  assert.equal(batch.material.depthFunc, THREE.GreaterDepth);
+  assert.equal(batch.material.depthWrite, false);
+  assert.equal(batch.material.uniforms.uTime.value, 0.25);
+  assert.deepEqual(batch.material.uniforms.uWind.value.toArray(), [1, 2, 3]);
+  atlas.updateSlot(state, slot, 3, 0, 0, 0, 0, 0);
+  assert.equal(batch.geometry.getAttribute('aAtlasP0').getX(slot), 3);
+  atlas.killSlot(state, slot);
+  assert.equal(batch.geometry.getAttribute('aAtlasP1').getW(slot), 0);
+  atlas.reset();
+  assert.equal(batch.geometry.instanceCount, 0);
+  atlas.emit({ ...state, duration: 0.05 });
+  atlas.update(0.1);
+  assert.equal(batch.geometry.instanceCount, 0, 'an expired batch stops submitting');
+  const persistent = atlas.emit({ ...state, persistent: true });
+  assert.equal(persistent, 1, 'idle retirement preserves ring order for existing slot owners');
+  atlas.update(1);
+  assert.equal(batch.geometry.instanceCount, 2, 'a new burst reuses the idle batch');
+  atlas.killSlot(state, persistent);
+  atlas.flushDirty();
+  assert.equal(batch.geometry.instanceCount, 0, 'killing the final persistent slot retires the batch');
+
+  mesh.spawn({ ...state, mesh: 'quad', duration: 1 });
+  const meshInstance = scene.children.find(child => child.material?.uniforms.uOpaque && child !== batch);
+  assert.equal(meshInstance.material.depthFunc, THREE.GreaterDepth);
+  assert.equal(meshInstance.material.depthWrite, false);
+  mesh.reset();
+  mesh.spawn({ mesh: 'quad', duration: 1, depthTest: 'disabled', depthWrite: true });
+  assert.equal(meshInstance.material.depthTest, false);
+  assert.equal(meshInstance.material.depthWrite, false, 'disabled depth testing disables depth writes on WebGL');
+  mesh.reset();
+  mesh.spawn({ mesh: 'quad', duration: 1 });
+  assert.equal(meshInstance.material.depthTest, true);
+  assert.equal(meshInstance.material.depthFunc, THREE.LessEqualDepth);
+  assert.equal(meshInstance.material.transparent, true);
+  atlas.dispose();
+  assert.ok(!scene.children.includes(batch));
+  mesh.dispose();
+});
+
 test('createVfxSystem.playEffect orchestrates composite one-shot explosion and looping shield recipes', () => {
   const scene = new THREE.Scene();
   const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 64, maxAtlasParticles: 256, maxMeshVfx: 8 });
@@ -1357,6 +1416,9 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
           '    m_Floats:',
           '    - _Surface: 1',
           '    - _Mode: 0',
+          '    - _ZWrite: 1',
+          '    - _ZTest: 5',
+          '    - _SoftParticlesEnabled: 0',
           '    - _Blend: 3',
           '    - _Cull: 2',
           '    - _AlphaClip: 1',
@@ -1502,6 +1564,9 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
       assert.equal(l.mesh, 'quad', 'built-in fileID 10210 maps to quad');
       assert.equal(l.sprite, 'spark', 'mesh particles reuse the material texture by atlas key');
       assert.equal(l.opaque, undefined, 'URP surface type takes precedence over the legacy mode');
+      assert.equal(l.depthWrite, true, 'transparent materials may write depth');
+      assert.equal(l.depthTest, 'greater', 'Unity CompareFunction is translated to a recipe name');
+      assert.equal(l.softParticles, false, 'material can opt out of a shared scene-depth fade');
       assert.equal(l.blend, 'multiply', '_Blend: 3 maps to multiply');
       assert.equal(l.cullMode, 'back', '_Cull: 2 maps to back');
       assert.equal(l.alphaCutoff, 0.35, '_AlphaClip + _Cutoff extracted');
@@ -1518,6 +1583,16 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
       fs.writeFileSync(matPath, emptyBase);
       const { recipe: emptyBaseRecipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'empty' });
       assert.equal(emptyBaseRecipe.layers[0].sprite, undefined, 'a cleared URP base map keeps the default texture');
+      fs.writeFileSync(matPath, emptyBase.replace('_Surface: 1', '_Surface: 0').replace('_ZWrite: 1', '_ZWrite: 0').replace('_ZTest: 5', '_ZTest: 0'));
+      fs.writeFileSync(prefabPath, fs.readFileSync(prefabPath, 'utf8').replace('m_RenderMode: 4', 'm_RenderMode: 0'));
+      const { recipe: billboardRecipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'billboard' });
+      const billboard = billboardRecipe.layers[0];
+      assert.equal(billboard.renderMode, 'billboard');
+      assert.equal(billboard.opaque, true);
+      assert.equal(billboard.useTexture, false, 'a cleared opaque material uses white instead of the entire atlas');
+      assert.equal(billboard.depthWrite, false, 'explicitly disabled depth writes survive on an opaque layer');
+      assert.equal(billboard.depthTest, 'disabled');
+      assert.equal(validateVfxRecipe(billboardRecipe).ok, true);
       assert.ok(l.emissionBoost > 1.0, '_EmissionEnabled + HDR _EmissionColor sets emissionBoost');
       assert.deepEqual(l.cameraFade, [0.5, 2.5], '_CameraFadingEnabled extracts near/far fade distances');
       assert.deepEqual(l.uvScale, [2, 4], 'URP _BaseMap scale is paired with its texture');

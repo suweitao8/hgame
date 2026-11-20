@@ -1,5 +1,6 @@
 import { VFX_RENDER_ORDERS } from './vfx-core.js';
 import { evaluateColorCurve, evaluateSizeCurve } from './vfx-atlas-particles.js';
+import { applyVfxDepthState, getVfxDepthTestIndex } from './vfx-depth-state.js';
 
 export const VFX_MESH_VERTEX_GLSL = /* glsl */ `
 uniform vec2 uUvScroll;
@@ -517,7 +518,7 @@ export function createMeshVfxPool({
             ? THREE.FrontSide
             : THREE.DoubleSide;
       }
-      s.mat.depthWrite = opaque;
+      applyVfxDepthState(s.mat, THREE, getVfxDepthTestIndex(opts.depthTest), opts.depthWrite ?? opaque);
       s.mat.transparent = !opaque;
       s.mat.uniforms.uDistortion.value = isDistortion ? 1.0 : 0.0;
       s.mat.uniforms.uIsMultiply.value = isMultiply ? 1.0 : 0.0;
@@ -540,10 +541,10 @@ export function createMeshVfxPool({
       s.mat.uniforms.uPivot.value.set(pv[0] ?? 0, pv[1] ?? 0, pv[2] ?? 0);
       const fresnel = opts.fresnel;
       s.mat.uniforms.uFresnel.value.set(fresnel?.power ?? 2.5, fresnel?.intensity ?? 0);
-      const resolvedTex = opts.texture ?? customTextures.get(meshKey) ?? null;
+      const resolvedTex = opts.useTexture === false ? null : (opts.texture ?? customTextures.get(meshKey) ?? null);
       s.mat.uniforms.uTex.value = resolvedTex;
       s.mat.uniforms.uHasTex.value = resolvedTex ? 1 : 0;
-      const texRect = opts.textureRect;
+      const texRect = resolvedTex ? opts.textureRect : null;
       s.mat.uniforms.uAtlasUv.value = texRect ? (resolvedTex?.flipY ? 2 : 1) : 0;
       if (texRect) s.mat.uniforms.uTexRect.value.set(texRect[0], texRect[1], texRect[2], texRect[3]);
       const dc = opts.dissolve?.edgeColor || [1, 0.7, 0.25];

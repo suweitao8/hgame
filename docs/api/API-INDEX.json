@@ -661,6 +661,12 @@
   {"name":"lookupDamageGlyph","tier":"experimental","declaredIn":"vfx/vfx-damage-presets.js","summary":"Looks up a character's glyph index in the 64-glyph damage atlas, or -1 if absent.","kind":"function","signature":"(ch)"},
   {"name":"registerDamagePreset","tier":"experimental","declaredIn":"vfx/vfx-damage-presets.js","summary":"Registers or overrides a named damage number preset for reuse across `popupNumber({ preset })`.","kind":"function","signature":"(name, config)"}
  ]},
+ "vfx/vfx-depth-state.js":{"tier":"experimental","exports":[
+  {"name":"applyVfxDepthState","tier":"experimental","declaredIn":"vfx/vfx-depth-state.js","summary":"","kind":"function","signature":"(material, THREE, testIndex, write)"},
+  {"name":"DEFAULT_VFX_DEPTH_TEST","tier":"experimental","declaredIn":"vfx/vfx-depth-state.js","summary":"","kind":"const","type":"4","keys":["toExponential","toFixed","toLocaleString","toPrecision","toString","valueOf"]},
+  {"name":"getVfxDepthTestIndex","tier":"experimental","declaredIn":"vfx/vfx-depth-state.js","summary":"","kind":"function","signature":"(value)"},
+  {"name":"VFX_DEPTH_TESTS","tier":"experimental","declaredIn":"vfx/vfx-depth-state.js","summary":"","kind":"const","type":"readonly string[]","keys":["__@iterator@170","__@unscopables@172","at","concat","entries","every","filter","find","findIndex","flat","flatMap","forEach","includes","indexOf","join","keys","lastIndexOf","length","map","reduce","reduceRight","slice","some","toLocaleString","toString","values"]}
+ ]},
  "vfx/vfx-floating-text.js":{"tier":"experimental","exports":[
   {"name":"bakeGlyphAtlasCanvas","tier":"experimental","declaredIn":"vfx/vfx-floating-text.js","summary":"Bakes the 64-glyph (16x4) crisp outlined damage-number atlas canvas. Indices 0..15 match `GLYPH_CHARS` for backward compatibility.","kind":"function","signature":"()"},
   {"name":"createFloatingTextPool","tier":"experimental","declaredIn":"vfx/vfx-floating-text.js","summary":"Creates a clean-room DamageNumbersPro-grade zero-GC floating damage number pool supporting 3D billboards, WebGL2 2D instancing, Canvas2D rendering, and headless","kind":"function","signature":"({mode='headless', THREE=(null), scene=(null), gl=(null), is2D=mode === 'webgl2d' ||..., maxFloatingGlyphs=mode === 'canvas2d' ?..., maxPopups=mode === 'canvas2d' ?..., renderThroughWalls=true, prng=createVisualPrng(0x51...}={})","returns":["dispose","getActivePopups","getStats","popupNumber","renderCanvas2D","renderWebGL2","reset","update"]},

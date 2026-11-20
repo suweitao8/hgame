@@ -5,6 +5,7 @@ import {
   submitRingBufferRanges,
   unpackRgb24Into,
 } from './vfx-core.js';
+import { applyVfxDepthState, DEFAULT_VFX_DEPTH_TEST, getVfxDepthTestIndex, VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 
 export const VFX_RENDER_MODE = Object.freeze({
   BILLBOARD: 0,
@@ -622,7 +623,7 @@ varying vec4 vFlipbook;
 varying vec3 vTint;
 varying vec4 vMatParams;   // alphaCutoff, emissionBoost, dissolveStart, cullFlag
 varying vec4 vUvTransform; // scaleX, scaleY, offX, offY
-varying float vCamFade;
+varying vec3 vFadesAndTexture; // camera fade, disable soft depth, use white base
 
 vec3 unpackRgb24(float v) {
   float r = floor(v / 65536.0);
@@ -723,6 +724,8 @@ void main() {
   float dissolveStart = uvOD.y;
   vMatParams = vec4(alphaCutoff, max(0.0, aAtlasP11.z), dissolveStart, cullFlag);
   vUvTransform = vec4(uvScaleX, uvScaleY, uvOffX, uvOffY);
+  float materialFlags = floor(uvOD.z * 255.0 + 0.5);
+  vFadesAndTexture.yz = vec2(mod(materialFlags, 2.0), floor(materialFlags / 2.0));
 
   vec3 effDelta = vec3(0.0);
   if (slotIdx > 0) {
@@ -807,7 +810,7 @@ void main() {
   vec2 posLocal = position.xy - aAtlasP10.xy;
 
   if (uIs2D > 0.5) {
-    vCamFade = 1.0;
+    vFadesAndTexture.x = 1.0;
     float c = cos(rot);
     float s = sin(rot);
     vec2 axisX = vec2(c, s);
@@ -827,7 +830,7 @@ void main() {
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p2, worldPos.z, 1.0);
   } else {
     vec4 mvPosCheck = modelViewMatrix * vec4(worldPos, 1.0);
-    vCamFade = (camFadeFar > camFadeNear + 0.001)
+    vFadesAndTexture.x = (camFadeFar > camFadeNear + 0.001)
       ? clamp((abs(mvPosCheck.z) - camFadeNear) / (camFadeFar - camFadeNear), 0.0, 1.0)
       : 1.0;
 
@@ -909,7 +912,7 @@ varying vec4 vFlipbook;
 varying vec3 vTint;
 varying vec4 vMatParams;
 varying vec4 vUvTransform;
-varying float vCamFade;
+varying vec3 vFadesAndTexture;
 
 float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -965,14 +968,16 @@ void main() {
     discard;
   }
   vec4 curveCol = sampleColorCurve(vCurveRow, vLifeRatio);
+#ifndef HGAME_OPAQUE_PARTICLE
   if (curveCol.a < 0.001) discard;
+#endif
 
   vec2 uvBase = vec2(vUv.x, 1.0 - vUv.y);
   bool hasCustomUv = (abs(vUvTransform.x - 1.0) > 0.02 || abs(vUvTransform.y - 1.0) > 0.02 || vUvTransform.z > 0.005 || vUvTransform.w > 0.005);
   vec2 topDownUv = hasCustomUv ? fract(uvBase * vUvTransform.xy + vUvTransform.zw) : uvBase;
 
   vec4 texCol = vec4(1.0);
-  if (uHasAtlas > 0.5) {
+  if (uHasAtlas > 0.5 && vFadesAndTexture.z < 0.5) {
     if (vFlipbook.x > 1.5 || vFlipbook.y > 1.5) {
       float total = max(1.0, floor(vFlipbook.x + 0.5) * floor(vFlipbook.y + 0.5));
       float cycles = max(0.01, vFlipbook.z);
@@ -995,24 +1000,26 @@ void main() {
       if (uFlipV > 0.5) mapped.y = 1.0 - mapped.y;
       texCol = texture2D(uAtlasTex, mapped);
     }
-  } else {
+  } else if (vFadesAndTexture.z < 0.5) {
     float r = length(vUv * 2.0 - 1.0);
     if (r > 1.0) discard;
     texCol.a = exp(-3.6 * r * r);
   }
 
+  float alpha = texCol.a * curveCol.a;
+  if (alpha < vMatParams.x) discard;
+#ifndef HGAME_OPAQUE_PARTICLE
   float softMul = 1.0;
-  if (uHasSoftDepth > 0.5 && uSoftFade > 0.001) {
+  if (uHasSoftDepth > 0.5 && uSoftFade > 0.001 && vFadesAndTexture.y < 0.5) {
     float sceneDepthRaw = texture2D(uSoftDepthTex, gl_FragCoord.xy * uInvViewport).r;
     float sceneZ = linearizeDepth(sceneDepthRaw);
     float partZ = linearizeDepth(gl_FragCoord.z);
     softMul = clamp((sceneZ - partZ) / uSoftFade, 0.0, 1.0);
   }
 
-  float alpha = texCol.a * curveCol.a;
-  if (alpha < vMatParams.x) discard;
-  alpha *= softMul * vCamFade;
+  alpha *= softMul * vFadesAndTexture.x;
   if (alpha < 0.0005) discard;
+#endif
 
   vec3 rgb = texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr) + texCol.rgb * vMatParams.y * vTint;
 
@@ -1024,6 +1031,9 @@ void main() {
     rgb = mix(rgb, vTint * max(2.0, vHdr * 1.5), edge);
   }
 
+#ifdef HGAME_OPAQUE_PARTICLE
+  gl_FragColor = vec4(rgb, 1.0);
+#else
   if (uIsMultiply > 0.5) {
     gl_FragColor = vec4(mix(vec3(1.0), rgb, clamp(alpha, 0.0, 1.0)), 1.0);
     return;
@@ -1041,6 +1051,7 @@ void main() {
     alpha *= boost;
   }
   gl_FragColor = vec4(rgb, alpha);
+#endif
 }
 `;
 
@@ -1423,6 +1434,9 @@ function createAtlasChannel(capacity, blendMode = 'alpha') {
     p10: new Float32Array(capacity * 4),
     p11: new Float32Array(capacity * 4),
     cursor: 0,
+    slotCount: 0,
+    latestDeath: -Infinity,
+    rescanDeath: false,
     totalEmitted: 0,
     dirtyStart: 0,
     dirtyCount: 0,
@@ -1440,6 +1454,12 @@ function createAtlasChannel(capacity, blendMode = 'alpha') {
     /** @type {WebGLBuffer[] | null} */
     glVbos: null,
   };
+}
+
+function atlasSlotDeath(ch, offset) {
+  const duration = ch.p1[offset + 3];
+  if (!(duration > 0)) return -Infinity;
+  return ch.p2[offset + 3] >= 1024 ? Infinity : ch.p0[offset + 3] + duration;
 }
 
 function compileWebGL2Program(gl, vsSrc, fsSrc) {
@@ -1602,6 +1622,7 @@ export function createAtlasParticlePool({
   const premultiplyPool = createAtlasChannel(subCap, 'premultiply');
   const distortionPool = createAtlasChannel(subCap, 'distortion');
   const channels = [normalPool, additivePool, multiplyPool, premultiplyPool, distortionPool];
+  const renderStateChannels = new Map();
   const lut = createCurveLutTable(THREE);
 
   /** @type {Record<string, readonly number[]>} */
@@ -1610,10 +1631,23 @@ export function createAtlasParticlePool({
   let activeAtlasTex = atlasTexture;
   /** @type {HTMLCanvasElement | OffscreenCanvas | null} */
   let activeAtlasCanvas = null;
-  /** @type {object | null} */
-  let activeSceneTex = null;
-  let distortionStrength = 0.045;
   const windVec = new Float32Array([0, 0, 0]);
+  const timeUniform = { value: 0 };
+  const windUniform = { value: THREE?.Vector3 ? new THREE.Vector3() : { set() {} } };
+  const invViewportUniform = () => ({ value: THREE?.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } });
+  const softDepthUniforms = {
+    uSoftDepthTex: { value: null },
+    uHasSoftDepth: { value: 0.0 },
+    uSoftFade: { value: 0.45 },
+    uInvViewport: invViewportUniform(),
+    uCamNearFar: { value: THREE?.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
+  };
+  const sceneColorUniforms = {
+    uSceneTex: { value: null },
+    uHasSceneTex: { value: 0.0 },
+    uDistortionStrength: { value: 0.045 },
+    uInvViewport: invViewportUniform(),
+  };
   const effectDeltas = new Float32Array(32 * 3);
   const effectDeltas2D = new Float32Array(32 * 2);
   const threeEffectVecs = Array.from({ length: 32 }, () => (THREE && THREE.Vector3 ? new THREE.Vector3() : { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; } }));
@@ -1643,14 +1677,14 @@ export function createAtlasParticlePool({
     ch.threeMat.uniforms.uFlipV.value = activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0;
   }
 
-  function initThreeChannel(ch) {
+  function initThreeChannel(ch, depthTest = DEFAULT_VFX_DEPTH_TEST, depthWrite = false, opaque = false) {
     if (!THREE || !scene || !THREE.InstancedBufferGeometry || !THREE.PlaneGeometry) return;
     const base = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
     geo.index = base.index;
     geo.attributes.position = base.attributes.position;
     geo.attributes.uv = base.attributes.uv;
-    geo.instanceCount = ch.capacity;
+    geo.instanceCount = 0;
 
     const arrays = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7, ch.p8, ch.p9, ch.p10, ch.p11];
     const attrs = [];
@@ -1663,7 +1697,7 @@ export function createAtlasParticlePool({
 
     const MatCtor = THREE.RawShaderMaterial || THREE.ShaderMaterial;
     const uniforms = {
-      uTime: { value: 0 },
+      uTime: timeUniform,
       uIs2D: { value: is2D ? 1.0 : 0.0 },
       uIsMultiply: { value: ch.blendMode === 'multiply' && THREE.CustomBlending ? 1.0 : 0.0 },
       uIsPremultiply: { value: ch.blendMode === 'premultiply' && THREE.CustomBlending ? 1.0 : 0.0 },
@@ -1671,21 +1705,9 @@ export function createAtlasParticlePool({
       uAtlasTex: { value: activeAtlasTex },
       uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
       uFlipV: { value: activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0 },
-      uWind: { value: THREE.Vector3 ? new THREE.Vector3() : { set() {} } },
+      uWind: windUniform,
       uEffectDeltas: { value: threeEffectVecs },
-      uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
-      ...(ch.distortion
-        ? {
-            uSceneTex: { value: activeSceneTex },
-            uHasSceneTex: { value: activeSceneTex ? 1.0 : 0.0 },
-            uDistortionStrength: { value: distortionStrength },
-          }
-        : {
-            uSoftDepthTex: { value: null },
-            uHasSoftDepth: { value: 0.0 },
-            uSoftFade: { value: 0.45 },
-            uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
-          }),
+      ...(ch.distortion ? sceneColorUniforms : softDepthUniforms),
     };
 
     const blendCfg = ch.blendMode === 'multiply' && THREE.CustomBlending
@@ -1712,17 +1734,16 @@ export function createAtlasParticlePool({
       vertexShader: ATLAS_PARTICLE_VERTEX_GLSL,
       fragmentShader: ch.distortion ? ATLAS_PARTICLE_DISTORTION_FS : ATLAS_PARTICLE_FRAGMENT_GLSL,
       uniforms,
-      transparent: true,
-      depthTest: true,
-      depthWrite: false,
+      transparent: !opaque,
       side: THREE.DoubleSide,
-      ...blendCfg,
+      ...(opaque ? { blending: THREE.NoBlending, defines: { HGAME_OPAQUE_PARTICLE: 1 } } : blendCfg),
     });
+    applyVfxDepthState(mat, THREE, depthTest, depthWrite);
 
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
     mesh.renderOrder = ch.distortion ? (VFX_RENDER_ORDERS.PARTICLES + 2) : VFX_RENDER_ORDERS.PARTICLES;
-    mesh.visible = ch.distortion ? Boolean(activeSceneTex) : true;
+    mesh.visible = ch.distortion ? Boolean(sceneColorUniforms.uSceneTex.value) : true;
     mesh.name = ch.distortion
       ? 'HGameVfxAtlasDistortion'
       : ch.blendMode === 'multiply'
@@ -1844,15 +1865,11 @@ export function createAtlasParticlePool({
   }
 
   function setDepthTexture(depthTexture, { near = 0.1, far = 200, width = 1280, height = 720, softFade = 0.45 } = {}) {
-    for (let c = 0; c < channels.length; c++) {
-      const mat = channels[c].threeMat;
-      if (!mat || !mat.uniforms.uSoftDepthTex) continue;
-      mat.uniforms.uSoftDepthTex.value = depthTexture;
-      mat.uniforms.uHasSoftDepth.value = depthTexture ? 1.0 : 0.0;
-      mat.uniforms.uSoftFade.value = softFade;
-      mat.uniforms.uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
-      mat.uniforms.uCamNearFar.value.set(near, far);
-    }
+    softDepthUniforms.uSoftDepthTex.value = depthTexture;
+    softDepthUniforms.uHasSoftDepth.value = depthTexture ? 1.0 : 0.0;
+    softDepthUniforms.uSoftFade.value = softFade;
+    softDepthUniforms.uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
+    softDepthUniforms.uCamNearFar.value.set(near, far);
   }
 
   /**
@@ -1861,17 +1878,12 @@ export function createAtlasParticlePool({
    * @param {{ width?: number, height?: number, strength?: number }} [opts]
    */
   function setSceneTexture(sceneTexture, { width = 1280, height = 720, strength = 0.045 } = {}) {
-    activeSceneTex = sceneTexture || null;
-    distortionStrength = Math.max(0, Number(strength) || 0.045);
-    const mat = distortionPool.threeMat;
-    if (mat) {
-      mat.uniforms.uSceneTex.value = activeSceneTex;
-      mat.uniforms.uHasSceneTex.value = activeSceneTex ? 1.0 : 0.0;
-      mat.uniforms.uDistortionStrength.value = distortionStrength;
-      mat.uniforms.uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
-    }
-    if (distortionPool.threeMesh) {
-      distortionPool.threeMesh.visible = Boolean(activeSceneTex);
+    sceneColorUniforms.uSceneTex.value = sceneTexture || null;
+    sceneColorUniforms.uHasSceneTex.value = sceneTexture ? 1.0 : 0.0;
+    sceneColorUniforms.uDistortionStrength.value = Math.max(0, Number(strength) || 0.045);
+    sceneColorUniforms.uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
+    for (const ch of channels) {
+      if (ch.distortion && ch.threeMesh) ch.threeMesh.visible = Boolean(sceneTexture);
     }
   }
 
@@ -1885,10 +1897,7 @@ export function createAtlasParticlePool({
     windVec[0] = wx;
     windVec[1] = wy;
     windVec[2] = wz;
-    for (let c = 0; c < channels.length; c++) {
-      const mat = channels[c].threeMat;
-      if (mat && mat.uniforms.uWind) mat.uniforms.uWind.value.set(wx, wy, wz);
-    }
+    windUniform.value.set(wx, wy, wz);
   }
 
   /**
@@ -1909,22 +1918,46 @@ export function createAtlasParticlePool({
     threeEffectVecs[idx].set(x, y, z);
   }
 
-  /**
-   * Emits a single textured/curve particle and returns its slot index.
-   * @param {object} [opts]
-   * @returns {number} Slot index in its channel
-   */
-  function pickChannel(opts) {
+  function pickBlendChannel(opts) {
     if (opts.blend === 'distortion') return distortionPool;
     if (opts.blend === 'multiply') return multiplyPool;
     if (opts.blend === 'premultiply') return premultiplyPool;
     return (opts.blend === 'additive' || Boolean(opts.additive)) ? additivePool : normalPool;
   }
 
+  function pickChannel(opts, create = false) {
+    const base = pickBlendChannel(opts);
+    if (!base.threeMesh || (!opts.opaque && opts.depthTest === undefined && opts.depthWrite === undefined)) return base;
+
+    const opaque = !base.distortion && Boolean(opts.opaque);
+    const blendChannel = opaque ? normalPool : base;
+    const depthTest = getVfxDepthTestIndex(opts.depthTest);
+    const depthWrite = depthTest !== 0 && (opts.depthWrite ?? opaque);
+    if (!opaque && depthTest === DEFAULT_VFX_DEPTH_TEST && !depthWrite) return base;
+
+    const key = (channels.indexOf(blendChannel) * VFX_DEPTH_TESTS.length + depthTest) * 4
+      + (depthWrite ? 2 : 0) + (opaque ? 1 : 0);
+    let channel = renderStateChannels.get(key);
+    if (!channel && create) {
+      channel = createAtlasChannel(blendChannel.capacity, blendChannel.blendMode);
+      initThreeChannel(channel, depthTest, depthWrite, opaque);
+      renderStateChannels.set(key, channel);
+      channels.push(channel);
+    }
+    return channel;
+  }
+
+  /**
+   * Emits a single textured/curve particle and returns its slot index.
+   * @param {object} [opts]
+   * @returns {number} Slot index in its channel, or -1 after disposal
+   */
   function emit(opts = {}) {
-    const ch = pickChannel(opts);
+    if (disposed) return -1;
+    const ch = pickChannel(opts, true);
     const idx = ch.cursor;
     const i4 = idx * 4;
+    const prevDeath = ch.threeMesh && idx < ch.slotCount ? atlasSlotDeath(ch, i4) : -Infinity;
 
     const curveRow = opts.curveRow !== undefined
       ? opts.curveRow
@@ -2058,7 +2091,19 @@ export function createAtlasParticlePool({
     ch.p11[i4] = packRgb24(cutByte, camNearByte, camFarByte);
     ch.p11[i4 + 1] = packRgb24(uvSxByte, uvSyByte, uvOxByte);
     ch.p11[i4 + 2] = opts.emissionBoost ?? 0;
-    ch.p11[i4 + 3] = packRgb24(uvOyByte, disStartByte, 0);
+    const materialFlags = (opts.softParticles === false ? 1 : 0) + (opts.useTexture === false ? 2 : 0);
+    ch.p11[i4 + 3] = packRgb24(uvOyByte, disStartByte, materialFlags);
+
+    ch.slotCount = Math.max(ch.slotCount, idx + 1);
+    if (ch.threeMesh) {
+      const death = atlasSlotDeath(ch, i4);
+      if (death >= ch.latestDeath) {
+        ch.latestDeath = death;
+        ch.rescanDeath = false;
+      } else if (prevDeath === ch.latestDeath) {
+        ch.rescanDeath = true;
+      }
+    }
 
     if (ch.dirtyCount === 0) ch.dirtyStart = idx;
     ch.dirtyCount = Math.min(ch.capacity, ch.dirtyCount + 1);
@@ -2082,19 +2127,21 @@ export function createAtlasParticlePool({
     }
     if (idx >= ch.dirtyStart && idx < ch.dirtyStart + ch.dirtyCount) return;
     ch.dirtyStart = 0;
-    ch.dirtyCount = Math.min(ch.capacity, Math.max(ch.totalEmitted, idx + 1));
+    ch.dirtyCount = ch.slotCount;
   }
 
   function resolveChannelArg(blendOrAdditive) {
+    if (blendOrAdditive && typeof blendOrAdditive === 'object') return pickChannel(blendOrAdditive);
+    if (blendOrAdditive === 'alpha') return normalPool;
     if (blendOrAdditive === 'distortion') return distortionPool;
     if (blendOrAdditive === 'multiply') return multiplyPool;
     if (blendOrAdditive === 'premultiply') return premultiplyPool;
     return blendOrAdditive ? additivePool : normalPool;
   }
 
-  function updateSlot(additive, idx, x, y, z, vx, vy, vz) {
-    const ch = resolveChannelArg(additive);
-    if (idx < 0 || idx >= ch.capacity) return;
+  function updateSlot(blendOrState, idx, x, y, z, vx, vy, vz) {
+    const ch = resolveChannelArg(blendOrState);
+    if (!ch || idx < 0 || idx >= ch.slotCount) return;
     const i4 = idx * 4;
     ch.p0[i4] = x;
     ch.p0[i4 + 1] = y;
@@ -2105,14 +2152,29 @@ export function createAtlasParticlePool({
     markSlotDirty(ch, idx);
   }
 
-  function killSlot(additive, idx) {
-    const ch = resolveChannelArg(additive);
-    if (idx < 0 || idx >= ch.capacity) return;
+  function killSlot(blendOrState, idx) {
+    const ch = resolveChannelArg(blendOrState);
+    if (!ch || idx < 0 || idx >= ch.slotCount) return;
+    if (ch.threeMesh && atlasSlotDeath(ch, idx * 4) === ch.latestDeath) ch.rescanDeath = true;
     ch.p1[idx * 4 + 3] = 0;
     markSlotDirty(ch, idx);
   }
 
+  function retireExpiredThreeBatch(ch) {
+    if (ch.rescanDeath) {
+      ch.latestDeath = -Infinity;
+      for (let i = 0; i < ch.slotCount; i++) {
+        ch.latestDeath = Math.max(ch.latestDeath, atlasSlotDeath(ch, i * 4));
+      }
+      ch.rescanDeath = false;
+    }
+    // A CPU-tracked particle may still own an expired visual slot. Preserve
+    // the ring order when the batch goes idle so the slot isn't reused early.
+    ch.threeMesh.geometry.instanceCount = Math.fround(simTime) <= ch.latestDeath ? ch.slotCount : 0;
+  }
+
   function flushChannel(ch) {
+    if (ch.threeMesh) retireExpiredThreeBatch(ch);
     if (ch.dirtyCount <= 0) return;
     if (ch.threeAttrs) {
       for (let i = 0; i < ch.threeAttrs.length; i++) {
@@ -2151,10 +2213,8 @@ export function createAtlasParticlePool({
 
   function update(visualDt) {
     simTime += Math.max(0, visualDt);
+    timeUniform.value = simTime;
     flushDirty();
-    for (let c = 0; c < channels.length; c++) {
-      if (channels[c].threeMat) channels[c].threeMat.uniforms.uTime.value = simTime;
-    }
   }
 
   function renderWebGL2(camera, viewWidth, viewHeight) {
@@ -2341,12 +2401,16 @@ export function createAtlasParticlePool({
 
   function reset() {
     simTime = 0;
+    timeUniform.value = 0;
     effectDeltas.fill(0);
     effectDeltas2D.fill(0);
     for (let i = 0; i < 32; i++) threeEffectVecs[i].set(0, 0, 0);
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
       ch.cursor = 0;
+      ch.slotCount = 0;
+      ch.latestDeath = -Infinity;
+      ch.rescanDeath = false;
       ch.totalEmitted = 0;
       ch.dirtyStart = 0;
       ch.dirtyCount = ch.capacity;
@@ -2358,7 +2422,7 @@ export function createAtlasParticlePool({
         submitRingBufferRanges(ch.threeAttrs[0], 0, ch.capacity, ch.capacity, 4);
         submitRingBufferRanges(ch.threeAttrs[1], 0, ch.capacity, ch.capacity, 4);
       }
-      if (ch.threeMat) ch.threeMat.uniforms.uTime.value = 0;
+      if (ch.threeMesh) ch.threeMesh.geometry.instanceCount = 0;
     }
   }
 
@@ -2383,6 +2447,10 @@ export function createAtlasParticlePool({
     if (gl && glLutTex) gl.deleteTexture(glLutTex);
     if (gl && glAtlasTex) gl.deleteTexture(glAtlasTex);
     if (gl && glProg) gl.deleteProgram(glProg);
+    channels.length -= renderStateChannels.size;
+    renderStateChannels.clear();
+    softDepthUniforms.uSoftDepthTex.value = null;
+    sceneColorUniforms.uSceneTex.value = null;
     lut.dispose();
   }
 
@@ -2408,6 +2476,8 @@ export function createAtlasParticlePool({
     dispose,
     get time() { return simTime; },
     getStats() {
+      let renderStateTotal = 0;
+      for (const ch of renderStateChannels.values()) renderStateTotal += ch.totalEmitted;
       return {
         capacity,
         curveRows: lut.rowCount,
@@ -2421,6 +2491,8 @@ export function createAtlasParticlePool({
         multiplyTotal: multiplyPool.totalEmitted,
         premultiplyTotal: premultiplyPool.totalEmitted,
         distortionTotal: distortionPool.totalEmitted,
+        renderStateChannels: renderStateChannels.size,
+        renderStateTotal,
       };
     },
   };

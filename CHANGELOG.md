@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Carry Unity material depth comparisons and explicit depth-write settings into Three mesh and instanced particle draws. Batch opaque atlas cutouts by render state, preserve white default textures, and honor each atlas material's soft-particle toggle. Idle batches submit zero instances.
+
 - Preserve Unity URP material surface type, tint alpha, and mesh texture masks in particle recipes. Apply alpha clipping before camera and soft-particle fades, support premultiplied source textures, and restore the WebGL2 2D atlas shader.
 
 - Extend `vfx/` shaders, importer (`scripts/import-unity-vfx.mjs`), and fidelity scorer (`scripts/score-vfx-fidelity.mjs`) for Unity URP/Legacy ParticleShader and material feature coverage: add `multiply` (`DstColor/Zero` with alpha-interpolated white neutral) and `premultiply` (`One/OneMinusSrcAlpha`) blend channels across 3D/WebGL2/Canvas2D (`vfx-atlas-particles.js`, `vfx-mesh.js`), per-particle `cullMode` (`gl_FrontFacing` discard), `alphaCutoff`, `_CameraFadingEnabled` near/far distance fading (`cameraFade`), `_BaseMap`/`_MainTex` `uvScale` + `uvOffset`, `_EmissionEnabled` HDR `emissionBoost`, particle `dissolve`, `m_Pivot` + Unity `StretchedBillboard` (`size * lengthScale + speed * velocityScale`), built-in Unity primitive meshes (`quad`/`cube`/`sphere`/`cylinder`) + `.fbx.meta` `meshGlobalScale`, `ShapeModule` `sphericalDirectionAmount` + `randomDirectionAmount`, recursive Transform hierarchy scale/rotation (`computeHierarchyTransform`), `ParticleSystemRenderer.m_Enabled: 0` filtering, and Legacy `_TintColor` support.

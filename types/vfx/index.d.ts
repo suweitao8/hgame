@@ -115,9 +115,9 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         } | undefined) => void;
         setWind: (wx?: number, wy?: number, wz?: number) => void;
         setEffectOffset: (slotIdx: number, x?: number, y?: number, z?: number) => void;
-        emit: (opts?: {}) => any;
-        updateSlot: (additive: any, idx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
-        killSlot: (additive: any, idx: any) => void;
+        emit: (opts?: object) => number;
+        updateSlot: (blendOrState: any, idx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
+        killSlot: (blendOrState: any, idx: any) => void;
         flushDirty: () => void;
         update: (visualDt: any) => void;
         renderWebGL2: (camera: any, viewWidth: any, viewHeight: any) => void;
@@ -138,6 +138,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             multiplyTotal: number;
             premultiplyTotal: number;
             distortionTotal: number;
+            renderStateChannels: number;
+            renderStateTotal: number;
         };
     };
     meshVfx: {
@@ -372,6 +374,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             multiplyTotal: number;
             premultiplyTotal: number;
             distortionTotal: number;
+            renderStateChannels: number;
+            renderStateTotal: number;
         };
         meshVfx: {
             capacity: number;

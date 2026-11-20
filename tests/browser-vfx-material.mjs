@@ -143,6 +143,42 @@ try {
     });
     vfx.update(0.01);
     result.recipeMesh = [capture(23), capture(41)];
+    const nearParticle = {
+      sprite: 'mask', opaque: true, alphaCutoff: 0.45, offset: [0, 0, 1],
+      size: 2.5, life: 1, colorCurve: straight, bursts: [{ time: 0, count: 1 }],
+    };
+    const farMesh = {
+      kind: 'mesh', mesh: 'quad', size: 2.5, life: 1,
+      colorCurve: constantColor([0, 0, 1, 1]), bursts: [{ time: 0, count: 1 }],
+    };
+    function playCase(id, layers) {
+      vfx.reset();
+      vfx.playEffect({ schemaVersion: 1, id, duration: 1, layers });
+      vfx.update(0.01);
+      return [capture(23), capture(41)];
+    }
+    result.atlasDepthWrite = playCase('atlas_write', [nearParticle, farMesh]);
+    result.atlasNoDepthWrite = playCase('atlas_no_write', [{ ...nearParticle, depthWrite: false }, farMesh]);
+    result.atlasWhiteBase = playCase('atlas_white_base', [{ ...nearParticle, sprite: undefined, useTexture: false }]);
+    const blocker = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 2.5), new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+    blocker.position.z = 1;
+    scene.add(blocker);
+    result.depthComparisons = {};
+    for (const depthTest of ['less-equal', 'greater', 'always', 'disabled', 'never']) {
+      result.depthComparisons[depthTest] = playCase('atlas_' + depthTest, [{ ...nearParticle, depthTest, offset: [0, 0, 0] }]);
+    }
+    result.meshDepthComparison = playCase('mesh_greater', [{ ...farMesh, depthTest: 'greater' }]);
+    const blockerDepth = new THREE.DataTexture(new Float32Array([0]), 1, 1, THREE.RedFormat, THREE.FloatType);
+    blockerDepth.needsUpdate = true;
+    vfx.setDepthTexture(blockerDepth, { width: dimensions, height: dimensions });
+    const transparent = { ...nearParticle, opaque: false, depthTest: 'greater', offset: [0, 0, 0] };
+    result.materialSoftDepth = [false, true].map(softParticles =>
+      playCase('atlas_soft_' + softParticles, [{ ...transparent, softParticles }])[0]);
+    vfx.setDepthTexture(null);
+    blockerDepth.dispose();
+    scene.remove(blocker);
+    blocker.geometry.dispose();
+    blocker.material.dispose();
     vfx.dispose();
     sheetTexture.dispose();
     target.dispose();
@@ -168,6 +204,19 @@ try {
   near(captures.opaqueMesh, [204, 102, 51], 'opaque cutout writes the covered pixel at full opacity');
   near(captures.recipeMesh[0], [134, 83, 57], 'mesh recipe uses the selected atlas region');
   near(captures.recipeMesh[1], [64, 64, 64], 'mesh recipe clips transparent texels in the region');
+  near(captures.atlasDepthWrite[0], [204, 102, 51], 'opaque atlas particle blocks the farther fragment with a depth write');
+  near(captures.atlasDepthWrite[1], [0, 0, 255], 'alpha-clipped texels leave the far mesh visible');
+  near(captures.atlasNoDepthWrite[0], [0, 0, 255], 'an explicit depth-write override leaves the farther mesh visible');
+  for (const pixel of captures.atlasWhiteBase) near(pixel, [204, 102, 51], 'white base ignores neighboring atlas regions');
+  for (const depthTest of ['less-equal', 'never']) {
+    near(captures.depthComparisons[depthTest][0], [0, 255, 0], depthTest + ' rejects the farther particle');
+  }
+  for (const depthTest of ['greater', 'always', 'disabled']) {
+    near(captures.depthComparisons[depthTest][0], [204, 102, 51], depthTest + ' permits the farther particle');
+  }
+  near(captures.meshDepthComparison[0], [0, 0, 255], 'mesh recipe forwards the depth comparison');
+  near(captures.materialSoftDepth[0], [102, 179, 26], 'soft particles can opt out of scene-depth fade when they pass the depth test');
+  near(captures.materialSoftDepth[1], [0, 255, 0], 'enabled soft particles retain depth fade');
 } finally {
   await browser.close();
 }
