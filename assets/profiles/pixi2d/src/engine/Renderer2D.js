@@ -1,7 +1,8 @@
-import { Application, Container, Sprite, TilingSprite, ParticleContainer, Particle, RendererType } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, TilingSprite, ParticleContainer, Particle, RendererType } from 'pixi.js';
 import { AdvancedBloomFilter } from 'pixi-filters';
 import { PixiSwarmLayer } from './PixiSwarmLayer.js';
 import { PixiTilemapLayer } from './PixiTilemapLayer.js';
+import { createPixiDrawGroups, synchronizePixiCanvasBlend } from './PixiDrawGroups.js';
 import { loadRuntime } from './startPixiGame.js';
 
 const RENDERER_BACKENDS = ['webgpu', 'webgl', 'canvas'];
@@ -95,7 +96,14 @@ export class Renderer2D {
     this.enemyLayer = new ParticleContainer({ dynamicProperties: { position: true, uvs: true, rotation: true, vertex: true } });
     this.trailLayer = new Container();
     this.particleLayer = new ParticleContainer({ dynamicProperties: { position: true, vertex: true, rotation: true, color: true, uvs: true } });
-    this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, this.foregroundLayer, this.trailLayer, this.particleLayer);
+    const order = await loadRuntime('integrations/draw-order-2d.js');
+    const orderedRoot = new Container();
+    this.drawGroups = createPixiDrawGroups({
+      root: orderedRoot, stage: this.app.stage, Container, Graphics, order,
+      onRemove: container => this.releaseGroupContent(container),
+    });
+    this.worldRoot.addChild(this.bgLayer, this.shadowLayer, this.enemyLayer, this.entityLayer, orderedRoot,
+      this.foregroundLayer, this.trailLayer, this.particleLayer);
     this.app.stage.addChild(this.worldRoot);
     this.bloom = new AdvancedBloomFilter({ threshold: 0.62, bloomScale: 0.4, brightness: 1, blur: 3 });
     this.bloom.resolution = 'inherit';
@@ -210,6 +218,19 @@ export class Renderer2D {
     this.tilemapLayers.add(layer);
     return layer;
   }
+  /** Create an ordered world container for sprites, text, tiles, and particles. */
+  createDrawGroup(options) {
+    if (!this.drawGroups || this.disposed) throw new Error('Initialize Renderer2D before creating draw groups');
+    const group = this.drawGroups.create(options);
+    if (this.isCanvas) this.restoreCanvasBlend ??= synchronizePixiCanvasBlend(this.app.renderer.canvasContext);
+    return group;
+  }
+  getDrawGroupContainer(group) { return this.drawGroups.getContainer(group); }
+  releaseGroupContent(container) {
+    for (const [id, entry] of this.entityMap) if (entry.drawGroup === container) this.releaseEntity(id);
+    for (const layer of this.tilemapLayers) if (layer.root.parent === container) layer.dispose();
+    for (const layer of this.swarmLayers) if (layer.layer.parent === container) layer.dispose();
+  }
   syncEnemies(enemies, time) {
     const frames = this.enemyTextures ??= ['enemy_chaser', 'enemy_chaser_white', 'enemy_elite', 'enemy_elite_white']
       .map(name => this.atlas.get(name));
@@ -259,31 +280,42 @@ export class Renderer2D {
     const sprite = this.spritePool.pop() ?? new Sprite();
     sprite.texture = this.atlas.get(name); sprite.anchor.set(0.5); sprite.alpha = 1;
     sprite.tint = 0xffffff; sprite.scale.set(1); sprite.rotation = 0; sprite.visible = true;
+    sprite.blendMode = 'inherit'; sprite.zIndex = 0;
     return sprite;
   }
   syncEntity(id, state) {
+    const group = state.drawGroup == null ? null : this.getDrawGroupContainer(state.drawGroup);
+    const parent = group ?? this.entityLayer;
     let entry = this.entityMap.get(id);
     if (!entry) {
       entry = { sprite: this.alloc(state.tex), shadow: null, flashTimer: 0, animScaleX: 1, animScaleY: 1 };
       this.entityMap.set(id, entry);
-      this.entityLayer.addChild(entry.sprite);
     }
     entry.baseTex = state.tex;
     const sprite = entry.sprite;
+    const groupChanged = entry.drawGroup !== group;
+    if ((groupChanged || group) && sprite.parent !== parent) parent.addChild(sprite);
+    entry.drawGroup = group;
     const baseTexture = this.atlas.get(state.tex);
     sprite.texture = entry.flashTimer > 0 ? (this.atlas.textures.get(state.tex + '_white') ?? baseTexture) : baseTexture;
     sprite.position.set(state.x, state.y); sprite.rotation = state.rot ?? 0;
     sprite.scale.set((state.scaleX ?? 1) * entry.animScaleX, (state.scaleY ?? 1) * entry.animScaleY);
     sprite.tint = entry.flashTimer > 0 ? 0xffffff : (state.tint ?? 0xffffff);
     sprite.alpha = state.alpha ?? 1; sprite.zIndex = state.zIndex ?? state.y;
-    if (state.hasShadow !== false) {
-      if (!entry.shadow) {
-        entry.shadow = this.alloc('shadow_oval');
-        this.shadowLayer.addChild(entry.shadow);
+    const hasShadow = state.hasShadow !== false;
+    const shadowParent = group ?? this.shadowLayer;
+    if (hasShadow && !entry.shadow) {
+      entry.shadow = this.alloc('shadow_oval');
+      shadowParent.addChild(entry.shadow);
+    }
+    if (entry.shadow) {
+      if ((groupChanged || group) && entry.shadow.parent !== shadowParent) shadowParent.addChild(entry.shadow);
+      if (groupChanged || group) entry.shadow.zIndex = group ? Number.MIN_SAFE_INTEGER : 0;
+      entry.shadow.visible = hasShadow;
+      if (hasShadow) {
+        entry.shadow.position.set(state.x, state.y + 18); entry.shadow.alpha = 0.35;
       }
-      entry.shadow.visible = true;
-      entry.shadow.position.set(state.x, state.y + 18); entry.shadow.alpha = 0.35;
-    } else if (entry.shadow) entry.shadow.visible = false;
+    }
     return entry;
   }
   releaseEntity(id) {
@@ -340,6 +372,7 @@ export class Renderer2D {
       if (!this.isCanvas) {
         for (const channel of this.effectChannels.values()) channel.beforeRender?.();
       }
+      this.drawGroups.prepare(this.app.screen.width, this.app.screen.height);
       finish?.();
       finish = report?.beginPass('scene', null);
       this.app.renderer.render(this.app.stage);
@@ -357,6 +390,8 @@ export class Renderer2D {
       this.resizeObserver?.disconnect(); this.resizeObserver = null; this.onResize = null;
       for (const layer of this.swarmLayers) layer.dispose();
       for (const layer of this.tilemapLayers) layer.dispose();
+      this.drawGroups?.dispose();
+      this.restoreCanvasBlend?.();
       for (const sprite of this.spritePool) sprite.destroy();
       this.spritePool.length = 0; this.enemyParticles.length = 0; this.enemyPool.length = 0; this.pendingEnemies.length = 0; this.entityMap.clear();
       const stage = this.app?.stage;

@@ -15,8 +15,9 @@ function sameCenteredQuad(a, b) {
 /** Render an HGame CPU SwarmSimulation without allocating per-unit game objects. */
 export class PixiSwarmLayer {
   constructor(renderer, { textures = ['enemy_chaser'], clips = null, scale = 1, worldScale = 1, offsetX = 0, offsetY = 0,
-    syncRotation = false, flipByDirection = false, dynamicScale = false, cull = true, chunkCull = false } = {}) {
+    syncRotation = false, flipByDirection = false, dynamicScale = false, cull = true, chunkCull = false, drawGroup = null } = {}) {
     if (!renderer?.worldRoot || !renderer?.atlas?.textures) throw new TypeError('Initialize Renderer2D before creating a swarm layer');
+    const parent = drawGroup === null ? null : renderer.getDrawGroupContainer(drawGroup);
     const definitions = clips ?? (Array.isArray(textures) ? textures.map(name => ({ frames: [name] })) : null);
     if (!Array.isArray(definitions) || definitions.length === 0) throw new TypeError('Swarm clips or textures must be a non-empty array');
     if (![scale, worldScale, offsetX, offsetY].every(Number.isFinite) || scale <= 0 || worldScale <= 0) {
@@ -50,7 +51,8 @@ export class PixiSwarmLayer {
     this.layer = new ParticleContainer({
       dynamicProperties: { position: true, uvs: this.dynamicUvs, rotation: this.dynamicRotation, vertex: this.dynamicVertices },
     });
-    renderer.worldRoot.addChildAt(this.layer, renderer.worldRoot.getChildIndex(renderer.entityLayer));
+    if (parent) parent.addChild(this.layer);
+    else renderer.worldRoot.addChildAt(this.layer, renderer.worldRoot.getChildIndex(renderer.entityLayer));
     this.particles = []; this.pool = []; this.pendingParticles = []; this.visibleCount = 0; this.disposed = false;
   }
 

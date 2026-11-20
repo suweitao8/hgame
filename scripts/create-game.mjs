@@ -198,7 +198,8 @@ async function main() {
       await writeFile(path.join(stage, 'hgame.project.json'), JSON.stringify({
         schemaVersion: 1, ...(options.preset ? { preset: options.preset } : {}), runtime: 'entry-graph',
         includeRuntime: options.starter === 'pixi2d'
-          ? ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js', 'integrations/quality3d.js',
+          ? ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
+            'integrations/quality3d.js', 'integrations/draw-order-2d.js',
             ...(options.preset === 'horde' && !options.bare ? ['world/swarm-ecs.js'] : [])]
           : options.recipe.profile === '3d' ? ['integrations/sky3d.js'] : [],
         includeSource: [], assetMode: 'all',

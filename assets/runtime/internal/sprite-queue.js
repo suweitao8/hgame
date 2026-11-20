@@ -1,5 +1,6 @@
 import { Entity } from '../core/entity.js';
 import { multiplyAffineInto, writeEntityLocalMatrix } from './entity-transform.js';
+import { createDrawOrder2D } from '../integrations/draw-order-2d.js';
 
 const entityWorldCurrent = Entity.prototype.worldMatrixInto;
 const entityWorldSampled = Entity.prototype.interpolatedWorldMatrixInto;
@@ -10,7 +11,7 @@ const entityWorldSampled = Entity.prototype.interpolatedWorldMatrixInto;
 /** @typedef {{ culled: number, sorted: boolean }} QueueStats */
 /** @typedef {{ kind: 0|1|2, entity: Entity|null, sprite: Sprite|Crowd|null, agentIndex: number,
  *   a: number, b: number, c: number, d: number, e: number, f: number,
- *   layer: number, z: number, ySort: boolean, order: number }} QueueItem */
+ *   layer: number, z: number, ySort: boolean }} QueueItem */
 
 function spriteBoundsVisible(sprite, entity, mat, viewBounds, absoluteTextSize) {
   const w = Math.abs(sprite.width);
@@ -57,15 +58,6 @@ function spriteBoundsVisible(sprite, entity, mat, viewBounds, absoluteTextSize) 
   return !(maxX < viewBounds.minX || minX > viewBounds.maxX || maxY < viewBounds.minY || minY > viewBounds.maxY);
 }
 
-function compareDrawItems(lhs, rhs) {
-  return (
-    lhs.layer - rhs.layer ||
-    lhs.z - rhs.z ||
-    ((lhs.ySort || rhs.ySort) ? (lhs.f - rhs.f) : 0) ||
-    lhs.order - rhs.order
-  );
-}
-
 /**
  * Shared 2D draw queue. Cache world transforms for the active ancestor chain
  * during collection. A camera pass reads actual transforms again on entry.
@@ -76,16 +68,15 @@ function compareDrawItems(lhs, rhs) {
 export function createSpriteQueue({ Sprite2D, SpriteCrowd2D, cull, interpolate, absoluteTextSize = false }) {
   /** @type {QueueItem[]} */
   const drawPool = [];
-  /** @type {QueueItem[]} */
-  const sortQueue = [];
+  const order = createDrawOrder2D((/** @type {QueueItem} */ item) => item.f);
   const frames = [];
   const localMatrix = new Float64Array(16);
   const customMatrix = new Float64Array(16);
   let drawCount = 0;
-  let needsSort = false;
+  let needsLayerSort = false;
+  let usesDepthSort = false;
   let prevLayer = -Infinity;
   let prevZ = -Infinity;
-  let prevYSort = false;
 
   function worldAt(depth, alpha, sampled) {
     const frame = frames[depth];
@@ -115,7 +106,7 @@ export function createSpriteQueue({ Sprite2D, SpriteCrowd2D, cull, interpolate, 
     const slot = drawPool[drawCount] ?? (drawPool[drawCount] = {
       kind: 0, entity: null, sprite: null, agentIndex: -1,
       a: 1, b: 0, c: 0, d: 1, e: 0, f: 0,
-      layer: 0, z: 0, ySort: false, order: 0,
+      layer: 0, z: 0, ySort: false,
     });
     slot.kind = kind;
     slot.entity = entity;
@@ -125,14 +116,13 @@ export function createSpriteQueue({ Sprite2D, SpriteCrowd2D, cull, interpolate, 
     slot.e = x; slot.f = y;
     const layer = slot.layer = comp.layer;
     const z = slot.z = comp.z;
-    const ySort = slot.ySort = kind !== 1 && Boolean(comp.ySort);
-    slot.order = drawCount++;
-    if (slot.order > 0 && (layer < prevLayer || (layer === prevLayer && z < prevZ) || ySort || prevYSort)) {
-      needsSort = true;
+    slot.ySort = Boolean(comp.ySort);
+    usesDepthSort ||= slot.ySort;
+    if (drawCount++ > 0 && (layer < prevLayer || (layer === prevLayer && z < prevZ))) {
+      needsLayerSort = true;
     }
     prevLayer = layer;
     prevZ = z;
-    prevYSort = ySort;
   }
 
   function collect(entity, alpha, viewBounds, stats, depth) {
@@ -172,7 +162,7 @@ export function createSpriteQueue({ Sprite2D, SpriteCrowd2D, cull, interpolate, 
           continue;
         }
         push(0, entity, comp, -1, world);
-      } else if (!comp.ySort) {
+      } else if (!comp.ySort || comp._boundSwarm || comp._boundGpuSwarm) {
         push(1, entity, comp, -1, world);
       } else {
         const halfPad = Math.max(Math.abs(comp.width), Math.abs(comp.height)) * 2;
@@ -204,9 +194,9 @@ export function createSpriteQueue({ Sprite2D, SpriteCrowd2D, cull, interpolate, 
       drawPool[i].entity = null;
       drawPool[i].sprite = null;
     }
-    sortQueue.length = 0;
+    order.clear();
     drawCount = 0;
-    needsSort = false;
+    needsLayerSort = usesDepthSort = false;
   }
 
   /** @param {readonly Entity[]} roots @param {number} alpha @param {ViewBounds} viewBounds @param {QueueStats} stats */
@@ -219,11 +209,9 @@ export function createSpriteQueue({ Sprite2D, SpriteCrowd2D, cull, interpolate, 
       clear();
       throw error;
     }
-    if (!needsSort || drawCount < 2) return drawPool;
-    stats.sorted = true;
-    for (let i = 0; i < drawCount; i++) sortQueue[i] = drawPool[i];
-    sortQueue.sort(compareDrawItems);
-    return sortQueue;
+    const ordered = order.apply(drawPool, drawCount, needsLayerSort, usesDepthSort);
+    if (ordered !== drawPool) stats.sorted = true;
+    return ordered;
   }
 
   return {

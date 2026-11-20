@@ -43,6 +43,5 @@ export type QueueItem = {
     layer: number;
     z: number;
     ySort: boolean;
-    order: number;
 };
 import { Entity } from '../core/entity.js';

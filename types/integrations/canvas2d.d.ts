@@ -3,6 +3,8 @@
 /** @typedef {import('../animation/spritesheet.js').SpriteSheet} SpriteSheet */
 /** @typedef {import('./quality3d.js').QualityPresetTier} QualityPresetTier */
 /** @typedef {import('./quality3d.js').Quality2DPreset} Quality2DPreset */
+/** @typedef {import('./draw-order-2d.js').BlendMode2D} BlendMode2D */
+/** @typedef {import('./draw-order-2d.js').ClipRect2D} ClipRect2D */
 /**
  * Axis-aligned world-space rectangle.
  * @typedef {object} ViewBounds2D
@@ -229,6 +231,8 @@ export class Camera2D {
  * @property {number} [z=0] Draw order within a layer (higher draws on top).
  * @property {number} [layer=0] Draw layer (higher layers draw on top of lower ones).
  * @property {boolean} [ySort=false] Sort by world Y within a layer/z (for top-down depth).
+ * @property {BlendMode2D} [blendMode='normal'] Draw compositing mode.
+ * @property {ClipRect2D | null} [clipRect=null] Clip to a viewport-relative rectangle.
  * @property {boolean} [visible=true] Hide without removing the component.
  * @property {number} [opacity=1] Alpha in [0, 1].
  * @property {boolean} [flipX=false] Mirror horizontally.
@@ -254,7 +258,7 @@ export class Camera2D {
 /** Renderable 2D visual component drawn by the Canvas2D / WebGL2D adapters. */
 export class Sprite2D extends Component {
     /** @param {Sprite2DOptions} [options] */
-    constructor({ shape, width, height, color, text, font, z, layer, ySort, visible, opacity, flipX, flipY, image, sheet, frame, sourceRect, animation, customDraw, anchorX, anchorY, offsetX, offsetY, scaleX, scaleY, rotation, tint, flash, flashColor, groundShadow, }?: Sprite2DOptions | undefined);
+    constructor({ shape, width, height, color, text, font, z, layer, ySort, blendMode, clipRect, visible, opacity, flipX, flipY, image, sheet, frame, sourceRect, animation, customDraw, anchorX, anchorY, offsetX, offsetY, scaleX, scaleY, rotation, tint, flash, flashColor, groundShadow, }?: Sprite2DOptions | undefined);
     shape: "text" | "rect" | "circle";
     width: number;
     height: number;
@@ -264,6 +268,14 @@ export class Sprite2D extends Component {
     z: number;
     layer: number;
     ySort: boolean;
+    /** @param {BlendMode2D} mode */
+    set blendMode(mode: import("./draw-order-2d.js").BlendMode2D);
+    /** @returns {BlendMode2D} */
+    get blendMode(): import("./draw-order-2d.js").BlendMode2D;
+    /** @param {ClipRect2D | null} rect */
+    set clipRect(rect: import("./draw-order-2d.js").ClipRect2D | null);
+    /** @returns {Readonly<ClipRect2D> | null} */
+    get clipRect(): Readonly<import("./draw-order-2d.js").ClipRect2D> | null;
     visible: boolean;
     opacity: number;
     flipX: boolean;
@@ -291,6 +303,8 @@ export class Sprite2D extends Component {
     set visualRotation(value: number);
     /** Alias of rotation (radians). @returns {number} */
     get visualRotation(): number;
+    _blendMode: import("./draw-order-2d.js").BlendMode2D | undefined;
+    _clipRect: Readonly<import("./draw-order-2d.js").ClipRect2D> | null | undefined;
     /**
      * Flash the sprite with a colour that fades out over duration.
      * @param {number} [duration=0.08] Seconds (>= 0); 0 clears the flash.
@@ -328,6 +342,8 @@ export class Sprite2D extends Component {
  * @property {number} [layer=0] Draw layer.
  * @property {number} [z=0] Draw order within a layer.
  * @property {boolean} [ySort=false] Sort every instance individually by world Y (slower; enables per-agent depth).
+ * @property {BlendMode2D} [blendMode='normal'] Draw compositing mode for the crowd.
+ * @property {ClipRect2D | null} [clipRect=null] Clip to a viewport-relative rectangle.
  * @property {boolean} [visible=true] Hide the whole crowd.
  * @property {boolean | GroundShadowOptions} [groundShadow=false] Ground shadow for every instance.
  * @property {string} [flashColor='#ffffff'] Hit-flash colour.
@@ -355,7 +371,7 @@ export class Sprite2D extends Component {
  */
 export class SpriteCrowd2D extends Component {
     /** @param {SpriteCrowd2DOptions} [options] */
-    constructor({ capacity, shape, width, height, color, image, sheet, sourceRect, anchorX, anchorY, layer, z, ySort, visible, groundShadow, flashColor, }?: SpriteCrowd2DOptions | undefined);
+    constructor({ capacity, shape, width, height, color, image, sheet, sourceRect, anchorX, anchorY, layer, z, ySort, blendMode, clipRect, visible, groundShadow, flashColor, }?: SpriteCrowd2DOptions | undefined);
     capacity: number;
     shape: "rect" | "circle";
     width: number;
@@ -369,6 +385,14 @@ export class SpriteCrowd2D extends Component {
     layer: number;
     z: number;
     ySort: boolean;
+    /** @param {BlendMode2D} mode */
+    set blendMode(mode: import("./draw-order-2d.js").BlendMode2D);
+    /** @returns {BlendMode2D} */
+    get blendMode(): import("./draw-order-2d.js").BlendMode2D;
+    /** @param {ClipRect2D | null} rect */
+    set clipRect(rect: import("./draw-order-2d.js").ClipRect2D | null);
+    /** @returns {Readonly<ClipRect2D> | null} */
+    get clipRect(): Readonly<import("./draw-order-2d.js").ClipRect2D> | null;
     visible: boolean;
     groundShadow: boolean | GroundShadowOptions;
     flashColor: string;
@@ -414,6 +438,8 @@ export class SpriteCrowd2D extends Component {
         animFps: number;
         worldScale: number;
     } | null;
+    _blendMode: import("./draw-order-2d.js").BlendMode2D | undefined;
+    _clipRect: Readonly<import("./draw-order-2d.js").ClipRect2D> | null | undefined;
     /** Number of live instances. @returns {number} */
     get count(): number;
     /**
@@ -483,6 +509,8 @@ export type Scene = import("../core/scene.js").Scene;
 export type SpriteSheet = import("../animation/spritesheet.js").SpriteSheet;
 export type QualityPresetTier = import("./quality3d.js").QualityPresetTier;
 export type Quality2DPreset = import("./quality3d.js").Quality2DPreset;
+export type BlendMode2D = import("./draw-order-2d.js").BlendMode2D;
+export type ClipRect2D = import("./draw-order-2d.js").ClipRect2D;
 /**
  * Axis-aligned world-space rectangle.
  */
@@ -948,6 +976,14 @@ export type Sprite2DOptions = {
      */
     ySort?: boolean | undefined;
     /**
+     * Draw compositing mode.
+     */
+    blendMode?: import("./draw-order-2d.js").BlendMode2D | undefined;
+    /**
+     * Clip to a viewport-relative rectangle.
+     */
+    clipRect?: import("./draw-order-2d.js").ClipRect2D | null | undefined;
+    /**
      * Hide without removing the component.
      */
     visible?: boolean | undefined;
@@ -1107,6 +1143,14 @@ export type SpriteCrowd2DOptions = {
      * Sort every instance individually by world Y (slower; enables per-agent depth).
      */
     ySort?: boolean | undefined;
+    /**
+     * Draw compositing mode for the crowd.
+     */
+    blendMode?: import("./draw-order-2d.js").BlendMode2D | undefined;
+    /**
+     * Clip to a viewport-relative rectangle.
+     */
+    clipRect?: import("./draw-order-2d.js").ClipRect2D | null | undefined;
     /**
      * Hide the whole crowd.
      */

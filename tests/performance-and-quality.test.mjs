@@ -228,6 +228,160 @@ function makeMockWebGL2Canvas({ width = 960, height = 540, renderer = 'Generic G
   return { canvas, gl, glCalls };
 }
 
+test('Canvas2D sorts mixed depth items transitively and reuses an equal clip rectangle', () => {
+  const { canvas } = makeMockCanvas2D({ width: 100, height: 100 });
+  const ctx = canvas.getContext('2d');
+  const trace = [];
+  const stack = [];
+  ctx.save = () => stack.push(ctx.globalCompositeOperation);
+  ctx.restore = () => { ctx.globalCompositeOperation = stack.pop(); };
+  ctx.rect = (...args) => trace.push(['clip-rect', ...args]);
+  ctx.clip = () => {};
+  ctx.fillRect = () => trace.push([ctx.fillStyle, ctx.globalCompositeOperation]);
+  ctx.fillText = text => trace.push([text, ctx.globalCompositeOperation]);
+  const adapter = createCanvas2DAdapter({ canvas, width: 100, height: 100, background: '#000000' });
+  const scene = new Scene('draw-order');
+  const sprites = [
+    [30, new Sprite2D({ color: '#303030' })],
+    [10, new Sprite2D({ shape: 'text', text: 'label', blendMode: 'add', clipRect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 } })],
+    [20, new SpriteCrowd2D({ capacity: 1, ySort: true, color: '#202020', blendMode: 'add', clipRect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 } })],
+  ];
+  sprites[2][1].spawn({ x: 0, y: 0 });
+  for (const [y, sprite] of sprites) scene.add(new Entity({ y })).addComponent(sprite);
+  scene._setActive(true);
+  adapter.render(scene);
+  assert.deepEqual(trace, [
+    ['#000000', 'source-over'], ['clip-rect', 25, 25, 50, 50],
+    ['label', 'lighter'], ['#202020', 'lighter'], ['#303030', 'source-over'],
+  ]);
+  assert.equal(stack.length, 0);
+  assert.equal(ctx.globalCompositeOperation, 'source-over');
+  trace.length = 0;
+  sprites[1][1].clipRect = { x: 0, y: 0, width: 1, height: 1 };
+  adapter.render(scene);
+  assert.deepEqual(trace[1], ['clip-rect', 0, 0, 100, 100]);
+  sprites[1][1].customDraw = () => { throw new Error('drawing failed'); };
+  assert.throws(() => adapter.render(scene), /drawing failed/);
+  assert.equal(stack.length, 0);
+  assert.equal(ctx.globalCompositeOperation, 'source-over');
+  adapter.dispose();
+});
+
+test('WebGL2D batches adjacent compatible items without crossing blend or clip boundaries', () => {
+  const { canvas, gl } = makeMockWebGL2Canvas({ width: 100, height: 100 });
+  const adapter = createWebGL2DAdapter({ canvas, width: 100, height: 100, allowFallback: false });
+  const scene = new Scene('batch-order');
+  gl.ONE = 1;
+  let clip, blend;
+  const draws = [];
+  gl.scissor = (...args) => { clip = args; };
+  gl.blendFunc = (_src, dst) => { blend = dst; };
+  gl.drawArraysInstanced = (_mode, _first, _count, instances) => draws.push({ clip, blend, instances });
+  const rect = () => ({ x: 0.25, y: 0.1, width: 0.5, height: 0.4 });
+  for (const mode of [
+    { blendMode: 'add', clipRect: rect() }, { blendMode: 'add', clipRect: rect() },
+    {}, { blendMode: 'add', clipRect: rect() },
+    { clipRect: { x: 0.25, y: 0, width: 0, height: 1 } },
+  ]) scene.add(new Entity()).addComponent(new Sprite2D(mode));
+  scene._setActive(true);
+  adapter.render(scene);
+  assert.deepEqual(draws, [
+    { clip: [25, 50, 50, 40], blend: gl.ONE, instances: 2 },
+    { clip: [0, 0, 100, 100], blend: gl.ONE_MINUS_SRC_ALPHA, instances: 1 },
+    { clip: [25, 50, 50, 40], blend: gl.ONE, instances: 1 },
+  ]);
+  assert.equal(adapter.stats.drawCalls, 3);
+  draws.length = 0;
+  adapter.setViews([{ camera: adapter.camera, width: 0.5 }, { camera: adapter.camera, x: 0.5, width: 0.5 }]);
+  adapter.render(scene);
+  assert.deepEqual(draws.map(draw => draw.clip), [
+    [13, 50, 25, 40], [0, 0, 50, 100], [13, 50, 25, 40],
+    [63, 50, 25, 40], [50, 0, 50, 100], [63, 50, 25, 40],
+  ]);
+  adapter.dispose();
+});
+
+test('Pixi ordered draw groups share adjacent clips and keep a stable mixed draw order', async () => {
+  const { createPixiDrawGroups, synchronizePixiCanvasBlend } = await import('../assets/profiles/pixi2d/src/engine/PixiDrawGroups.js');
+  const order = await import('../assets/runtime/integrations/draw-order-2d.js');
+  class Container {
+    children = [];
+    parent = null;
+    addChild(child) { this.addChildAt(child, this.children.length); }
+    addChildAt(child, index) { child.removeFromParent(); this.children.splice(index, 0, child); child.parent = this; }
+    removeFromParent() { if (!this.parent) return; this.parent.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
+    destroy({ children } = {}) {
+      this.removeFromParent();
+      for (const child of [...this.children]) {
+        child.removeFromParent();
+        if (children) child.destroy();
+      }
+      this.destroyed = true;
+    }
+  }
+  class Graphics extends Container {
+    clear() { return this; }
+    rect(...bounds) { this.bounds = bounds; return this; }
+    fill() { return this; }
+  }
+  const root = new Container(), stage = new Container();
+  const removed = [];
+  const groups = createPixiDrawGroups({ root, stage, Container, Graphics, order,
+    onRemove(container) { removed.push(container.children[0].name); },
+  });
+  const rect = () => ({ x: 0.25, y: 0.1, width: 0.5, height: 0.4 });
+  const sprite = groups.create({ y: 30 });
+  const text = groups.create({ y: 10, clipRect: rect() });
+  const swarm = groups.create({ y: 20, ySort: true, clipRect: rect(), blendMode: 'add' });
+  const tiles = groups.create({ layer: -1 });
+  for (const [name, group] of Object.entries({ sprite, text, swarm, tiles })) {
+    const child = new Container();
+    child.name = name;
+    groups.getContainer(group).addChild(child);
+  }
+  const names = () => root.children.filter(run => run.visible).flatMap(run => run.children.map(group => group.children[0].name));
+  groups.prepare(100, 100);
+  assert.deepEqual(names(), ['tiles', 'text', 'swarm', 'sprite']);
+  assert.equal(stage.children.length, 1);
+  const mask = stage.children[0];
+  assert.deepEqual(mask.bounds, [25, 10, 50, 40]);
+  assert.equal(text.container.parent, swarm.container.parent);
+  assert.equal(swarm.container.blendMode, 'add');
+  groups.prepare(200, 150);
+  assert.equal(stage.children[0], mask);
+  assert.deepEqual(mask.bounds, [50, 15, 100, 60]);
+  sprite.setOrder({ y: 15 });
+  groups.prepare(200, 150);
+  assert.deepEqual(names(), ['tiles', 'text', 'sprite', 'swarm']);
+  assert.equal(stage.children.length, 2);
+  assert.equal(swarm.dispose(), true);
+  assert.deepEqual(removed, ['swarm']);
+  groups.prepare(200, 150);
+  assert.deepEqual(names(), ['tiles', 'sprite', 'text']);
+  assert.throws(() => groups.getContainer(swarm), /active draw group/i);
+  groups.dispose();
+  assert.equal(stage.children.length, 0);
+  assert.equal(root.destroyed, true);
+  const ctx = { globalCompositeOperation: 'source-over' };
+  const system = {
+    activeContext: ctx, blendModes: { normal: 'source-over', add: 'lighter' }, current: 'normal',
+    setBlendMode(mode) {
+      if (this.current === mode) return;
+      this.current = mode;
+      ctx.globalCompositeOperation = this.blendModes[mode];
+    },
+  };
+  const restoreBlend = synchronizePixiCanvasBlend(system);
+  system.setBlendMode('add');
+  ctx.globalCompositeOperation = 'source-over'; // A native mask restore bypasses Pixi's cache.
+  system.setBlendMode('add');
+  assert.equal(ctx.globalCompositeOperation, 'lighter');
+  restoreBlend();
+  ctx.globalCompositeOperation = 'source-over';
+  system.setBlendMode('add');
+  assert.equal(ctx.globalCompositeOperation, 'source-over');
+});
+
 test('repository carries Apache-2.0 LICENSE and consistent package metadata with third-party notices preserved', async () => {
   const licenseText = await readFile(path.join(ROOT, 'LICENSE'), 'utf8');
   assert.match(licenseText, /Apache License/);

@@ -11,6 +11,7 @@ import { resolveQualityPreset } from './quality3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { createLighting2DState, createWebGL2DPostPass } from './post2d.js';
 import { createRenderDiagnostics2D } from './render-diagnostics-2d.js';
+import { sameClipRect2D } from './draw-order-2d.js';
 
 export { Camera2D, Sprite2D, SpriteCrowd2D };
 
@@ -386,6 +387,7 @@ export function createWebGL2DAdapter({
   let capacity = maxBatchInstances;
   let instanceData;
   let instanceCount = 0;
+  let blendMode = 'normal';
 
   let program = null;
   let vao = null;
@@ -1479,8 +1481,27 @@ export function createWebGL2DAdapter({
         };
     const items = drawQueue.gather(scene.objects, alpha, viewBounds, stats);
     const drawCount = drawQueue.count;
+    let activeClip = null;
     for (let i = 0; i < drawCount; i++) {
       const item = items[i];
+      let clip = item.sprite.clipRect;
+      if (clip?.width === 1 && clip.height === 1) clip = null; // The view already has a scissor.
+      if (clip && (clip.width === 0 || clip.height === 0)) continue;
+      const clipChanged = clip !== activeClip && !sameClipRect2D(clip, activeClip);
+      const nextBlend = item.sprite.blendMode;
+      if (clipChanged || nextBlend !== blendMode) flushBatch();
+      if (clipChanged) {
+        if (clip) {
+          const left = Math.round(clip.x * vwPx), right = Math.round((clip.x + clip.width) * vwPx);
+          const top = Math.round(clip.y * vhPx), bottom = Math.round((clip.y + clip.height) * vhPx);
+          gl.scissor(vx + left, vy + vhPx - bottom, right - left, bottom - top);
+        } else gl.scissor(vx, vy, vwPx, vhPx);
+        activeClip = clip;
+      }
+      if (nextBlend !== blendMode) {
+        blendMode = nextBlend;
+        gl.blendFunc(gl.SRC_ALPHA, blendMode === 'add' ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
+      }
       if (item.kind === 0) {
         submitSprite(item, allowShadows, allowSmoothing);
       } else if (item.kind === 1) {
@@ -1528,6 +1549,7 @@ export function createWebGL2DAdapter({
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.enable(gl.BLEND);
+    blendMode = 'normal';
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(program);
     gl.bindVertexArray(vao);

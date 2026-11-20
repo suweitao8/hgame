@@ -31,7 +31,7 @@ function visitChunkDifference(range, other, visit) {
 
 /** Draw an HGame TileMap from frames already baked into the renderer's atlas. */
 export class PixiTilemapLayer {
-  constructor(renderer, map, { frames, layer = 'background', chunkSize = 32, maxCachedChunks = 128, originX = 0, originY = 0 } = {}) {
+  constructor(renderer, map, { frames, layer = 'background', chunkSize = 32, maxCachedChunks = 128, originX = 0, originY = 0, drawGroup = null } = {}) {
     if (!renderer?.bgLayer || !renderer?.atlas?.textures) throw new TypeError('Initialize Renderer2D before creating a tilemap layer');
     if (!map || typeof map.get !== 'function' || !Number.isInteger(map.width) || !Number.isInteger(map.height) ||
         map.width < 1 || map.height < 1 || !Number.isFinite(map.tileWidth) || !Number.isFinite(map.tileHeight) || !(map.tileWidth > 0) || !(map.tileHeight > 0)) {
@@ -54,7 +54,9 @@ export class PixiTilemapLayer {
     this.root = new Container(); this.root.eventMode = 'none'; this.root.interactiveChildren = false;
     this.chunks = new Map(); this.hiddenChunks = new Map(); this.visibleRange = null; this.disposed = false;
     try {
-      (layer === 'foreground' ? renderer.foregroundLayer : renderer.bgLayer).addChild(this.root);
+      const parent = drawGroup === null ? (layer === 'foreground' ? renderer.foregroundLayer : renderer.bgLayer)
+        : renderer.getDrawGroupContainer(drawGroup);
+      parent.addChild(this.root);
       this.update();
     } catch (error) {
       this.root.destroy({ children: true });

@@ -5,6 +5,7 @@ import { resolveQualityPreset } from './quality3d.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { createLighting2DState, renderCanvas2DPostPass } from './post2d.js';
 import { createRenderDiagnostics2D } from './render-diagnostics-2d.js';
+import { normalizeBlend2D, normalizeClipRect2D, sameClipRect2D } from './draw-order-2d.js';
 
 const SCRATCH_RGBA = [1, 1, 1, 1];
 
@@ -13,6 +14,8 @@ const SCRATCH_RGBA = [1, 1, 1, 1];
 /** @typedef {import('../animation/spritesheet.js').SpriteSheet} SpriteSheet */
 /** @typedef {import('./quality3d.js').QualityPresetTier} QualityPresetTier */
 /** @typedef {import('./quality3d.js').Quality2DPreset} Quality2DPreset */
+/** @typedef {import('./draw-order-2d.js').BlendMode2D} BlendMode2D */
+/** @typedef {import('./draw-order-2d.js').ClipRect2D} ClipRect2D */
 
 /**
  * Axis-aligned world-space rectangle.
@@ -289,6 +292,8 @@ export class Camera2D {
  * @property {number} [z=0] Draw order within a layer (higher draws on top).
  * @property {number} [layer=0] Draw layer (higher layers draw on top of lower ones).
  * @property {boolean} [ySort=false] Sort by world Y within a layer/z (for top-down depth).
+ * @property {BlendMode2D} [blendMode='normal'] Draw compositing mode.
+ * @property {ClipRect2D | null} [clipRect=null] Clip to a viewport-relative rectangle.
  * @property {boolean} [visible=true] Hide without removing the component.
  * @property {number} [opacity=1] Alpha in [0, 1].
  * @property {boolean} [flipX=false] Mirror horizontally.
@@ -318,7 +323,7 @@ export class Sprite2D extends Component {
   constructor({
     shape = 'rect', width = 32, height = 32, color = '#80e2c2',
     text = '', font = '20px sans-serif', z = 0,
-    layer = 0, ySort = false, visible = true, opacity = 1,
+    layer = 0, ySort = false, blendMode = 'normal', clipRect = null, visible = true, opacity = 1,
     flipX = false, flipY = false, image = null, sheet = null,
     frame = 0, sourceRect = null, animation = null, customDraw = null,
     anchorX = null, anchorY = null, offsetX = 0, offsetY = 0,
@@ -331,6 +336,8 @@ export class Sprite2D extends Component {
     this.color = color; this.text = text; this.font = font; this.z = z;
     this.layer = layer;
     this.ySort = Boolean(ySort);
+    this.blendMode = blendMode;
+    this.clipRect = clipRect;
     this.visible = Boolean(visible);
     this.opacity = opacity;
     this.flipX = Boolean(flipX);
@@ -360,6 +367,15 @@ export class Sprite2D extends Component {
   get visualRotation() { return this.rotation; }
   /** @param {number} value Rotation in radians. */
   set visualRotation(value) { this.rotation = value; }
+
+  /** @returns {BlendMode2D} */
+  get blendMode() { return this._blendMode; }
+  /** @param {BlendMode2D} mode */
+  set blendMode(mode) { this._blendMode = normalizeBlend2D(mode); }
+  /** @returns {Readonly<ClipRect2D> | null} */
+  get clipRect() { return this._clipRect; }
+  /** @param {ClipRect2D | null} rect */
+  set clipRect(rect) { this._clipRect = normalizeClipRect2D(rect); }
 
   /**
    * Flash the sprite with a colour that fades out over duration.
@@ -415,6 +431,8 @@ export class Sprite2D extends Component {
  * @property {number} [layer=0] Draw layer.
  * @property {number} [z=0] Draw order within a layer.
  * @property {boolean} [ySort=false] Sort every instance individually by world Y (slower; enables per-agent depth).
+ * @property {BlendMode2D} [blendMode='normal'] Draw compositing mode for the crowd.
+ * @property {ClipRect2D | null} [clipRect=null] Clip to a viewport-relative rectangle.
  * @property {boolean} [visible=true] Hide the whole crowd.
  * @property {boolean | GroundShadowOptions} [groundShadow=false] Ground shadow for every instance.
  * @property {string} [flashColor='#ffffff'] Hit-flash colour.
@@ -458,6 +476,8 @@ export class SpriteCrowd2D extends Component {
     layer = 0,
     z = 0,
     ySort = false,
+    blendMode = 'normal',
+    clipRect = null,
     visible = true,
     groundShadow = false,
     flashColor = '#ffffff',
@@ -479,6 +499,8 @@ export class SpriteCrowd2D extends Component {
     this.layer = layer;
     this.z = z;
     this.ySort = Boolean(ySort);
+    this.blendMode = blendMode;
+    this.clipRect = clipRect;
     this.visible = Boolean(visible);
     this.groundShadow = groundShadow;
     this.flashColor = flashColor;
@@ -516,6 +538,15 @@ export class SpriteCrowd2D extends Component {
     this._boundGpuSwarm = null;
     this._boundGpuSwarmOpts = null;
   }
+
+  /** @returns {BlendMode2D} */
+  get blendMode() { return this._blendMode; }
+  /** @param {BlendMode2D} mode */
+  set blendMode(mode) { this._blendMode = normalizeBlend2D(mode); }
+  /** @returns {Readonly<ClipRect2D> | null} */
+  get clipRect() { return this._clipRect; }
+  /** @param {ClipRect2D | null} rect */
+  set clipRect(rect) { this._clipRect = normalizeClipRect2D(rect); }
 
   /** Number of live instances. @returns {number} */
   get count() {
@@ -1150,7 +1181,8 @@ export function createCanvas2DAdapter({
     if (sx !== 1 || sy !== 1) ctx.scale(sx, sy);
 
     if (typeof sprite.customDraw === 'function') {
-      sprite.customDraw(ctx, entity, sprite);
+      try { sprite.customDraw(ctx, entity, sprite); }
+      catch (error) { ctx.restore(); throw error; }
     } else if (sprite.image || sprite.sheet?.image) {
       const img = sprite.image ?? sprite.sheet.image;
       const rect = sprite.sourceRect ?? (sprite.sheet
@@ -1365,14 +1397,16 @@ export function createCanvas2DAdapter({
       ctx.rect(subX, subY, subW, subH);
       ctx.clip();
     }
-    ctx.translate(subX + subW * 0.5, subY + subH * 0.5);
     const zoom = cam.zoom || 1;
     const rot = cam.rotation || 0;
-    if (zoom !== 1) ctx.scale(zoom, zoom);
-    if (rot !== 0) ctx.rotate(-rot);
     const camX = cam.x + (cam.offsetX || 0);
     const camY = cam.y + (cam.offsetY || 0);
-    if (camX !== 0 || camY !== 0) ctx.translate(-camX, -camY);
+    function applyCamera() {
+      ctx.translate(subX + subW * 0.5, subY + subH * 0.5);
+      if (zoom !== 1) ctx.scale(zoom, zoom);
+      if (rot !== 0) ctx.rotate(-rot);
+      if (camX !== 0 || camY !== 0) ctx.translate(-camX, -camY);
+    }
 
     const viewBounds = typeof cam.getViewBounds === 'function'
       ? cam.getViewBounds(subW, subH)
@@ -1382,21 +1416,48 @@ export function createCanvas2DAdapter({
           minY: camY - subH / (2 * zoom),
           maxY: camY + subH / (2 * zoom),
         };
-    const items = drawQueue.gather(scene.objects, alpha, viewBounds, stats);
-    const drawCount = drawQueue.count;
-    for (let i = 0; i < drawCount; i++) {
-      const item = items[i];
-      if (item.kind === 0) drawSprite(item, allowShadows);
-      else if (item.kind === 1) drawCrowdBatch(item, viewBounds, allowShadows);
-      else {
-        const crowd = item.sprite;
-        const w = crowd.width, h = crowd.height;
-        const ax = crowd.anchorX ?? 0.5, ay = crowd.anchorY ?? 0.5;
-        drawCrowdAgent(crowd, item.agentIndex, ctx.globalAlpha, ax, ay, -w * ax, -h * ay, w, h, allowShadows, item.e, item.f);
+    let activeClip = null;
+    let blendMode = 'normal';
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.save();
+    try {
+      applyCamera();
+      const items = drawQueue.gather(scene.objects, alpha, viewBounds, stats);
+      const drawCount = drawQueue.count;
+      for (let i = 0; i < drawCount; i++) {
+        const item = items[i];
+        const clip = item.sprite.clipRect;
+        if (clip && (clip.width === 0 || clip.height === 0)) continue;
+        if (clip !== activeClip && !sameClipRect2D(clip, activeClip)) {
+          ctx.restore();
+          ctx.save();
+          if (clip) {
+            ctx.beginPath();
+            ctx.rect(subX + clip.x * subW, subY + clip.y * subH, clip.width * subW, clip.height * subH);
+            ctx.clip();
+          }
+          applyCamera();
+          activeClip = clip;
+          blendMode = 'normal';
+        }
+        if (item.sprite.blendMode !== blendMode) {
+          blendMode = item.sprite.blendMode;
+          ctx.globalCompositeOperation = blendMode === 'add' ? 'lighter' : 'source-over';
+        }
+        if (item.kind === 0) drawSprite(item, allowShadows);
+        else if (item.kind === 1) drawCrowdBatch(item, viewBounds, allowShadows);
+        else {
+          const crowd = item.sprite;
+          const w = crowd.width, h = crowd.height;
+          const ax = crowd.anchorX ?? 0.5, ay = crowd.anchorY ?? 0.5;
+          drawCrowdAgent(crowd, item.agentIndex, ctx.globalAlpha, ax, ay, -w * ax, -h * ay, w, h, allowShadows, item.e, item.f);
+        }
       }
+    } finally {
+      drawQueue.clear();
+      ctx.restore();
+      ctx.restore();
     }
-    drawQueue.clear();
-    ctx.restore();
   }
 
   function renderView(scene, alpha, cam, subX, subY, subW, subH, allowShadows, clipToView, postActive, report, viewIndex) {
@@ -1423,38 +1484,38 @@ export function createCanvas2DAdapter({
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, vw, vh);
     ctx.save();
-    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, x * dpr, y * dpr);
+    try {
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, x * dpr, y * dpr);
 
-    stats.drawnSprites = 0;
-    stats.drawnCrowds = 0;
-    stats.culled = 0;
-    stats.sorted = false;
+      stats.drawnSprites = 0;
+      stats.drawnCrowds = 0;
+      stats.culled = 0;
+      stats.sorted = false;
 
-    const alpha = app?.renderAlpha ?? 1;
-    const postActive = lighting2D.hasActivePass();
-    stats.postPassActive = postActive;
-    if (activeViews && activeViews.length > 0) {
-      for (let i = 0; i < activeViews.length; i++) {
-        const v = activeViews[i];
-        renderView(
-          scene, alpha, v.camera,
-          v.x * width, v.y * height, v.width * width, v.height * height,
-          allowShadows, true, postActive, report, v.index,
-        );
-      }
-      if (activeViews.length > 1 && viewDividerWidth > 0 && typeof ctx.strokeRect === 'function') {
-        ctx.strokeStyle = viewDividerColor;
-        ctx.lineWidth = viewDividerWidth / Math.max(0.01, scale);
+      const alpha = app?.renderAlpha ?? 1;
+      const postActive = lighting2D.hasActivePass();
+      stats.postPassActive = postActive;
+      if (activeViews && activeViews.length > 0) {
         for (let i = 0; i < activeViews.length; i++) {
           const v = activeViews[i];
-          ctx.strokeRect(v.x * width, v.y * height, v.width * width, v.height * height);
+          renderView(
+            scene, alpha, v.camera,
+            v.x * width, v.y * height, v.width * width, v.height * height,
+            allowShadows, true, postActive, report, v.index,
+          );
         }
+        if (activeViews.length > 1 && viewDividerWidth > 0 && typeof ctx.strokeRect === 'function') {
+          ctx.strokeStyle = viewDividerColor;
+          ctx.lineWidth = viewDividerWidth / Math.max(0.01, scale);
+          for (let i = 0; i < activeViews.length; i++) {
+            const v = activeViews[i];
+            ctx.strokeRect(v.x * width, v.y * height, v.width * width, v.height * height);
+          }
+        }
+      } else {
+        renderView(scene, alpha, camera, 0, 0, width, height, allowShadows, false, postActive, report, 0);
       }
-    } else {
-      renderView(scene, alpha, camera, 0, 0, width, height, allowShadows, false, postActive, report, 0);
-    }
-
-    ctx.restore();
+    } finally { ctx.restore(); }
   }
 
   function render(scene, app = null) {

@@ -68,14 +68,14 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 
 | 引擎 | 架构 / 25 | 性能设计 / 40 | 渲染 / 35 | 总分 / 100 | Δ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| HGame | 22.5 | 36.0 | 30.0 | **88.5** | — |
-| Unity 6.6 URP Web | 22.5 | 34.0 | 28.8 | **85.3** | +3.2 |
-| PlayCanvas Engine 2.x | 20.9 | 31.0 | 29.2 | **81.1** | +7.4 |
-| Cocos Creator 3.8 Web | 20.0 | 29.2 | 26.1 | **75.3** | +13.2 |
+| HGame | 22.5 | 36.0 | 30.8 | **89.3** | — |
+| Unity 6.6 URP Web | 22.5 | 34.0 | 28.8 | **85.3** | +4.0 |
+| PlayCanvas Engine 2.x | 20.9 | 31.0 | 29.2 | **81.1** | +8.2 |
+| Cocos Creator 3.8 Web | 20.0 | 29.2 | 26.1 | **75.3** | +14.0 |
 
 - **Unity URP Web**。两者的架构同为 **22.5／25**。Unity 提供可定制的 Player Loop。HGame 在应用调度器内提供固定扩展点，能把 2D、3D 寻路和可延后的 AI 工作按固定步分批执行。CPU 仿真与帧预算各高一个原始分，GPU 提交和性能诊断同为 9。 [Unity 调度顺序](https://docs.unity3d.com/6000.0/Documentation/Manual/execution-order.html) · [HGame 固定步工作预算](guides/systems/13-ai-fsm-bt-navmesh.md#fixed-tick-budget-for-deferred-ai-and-navigation)
-- **PlayCanvas**。HGame 的性能设计高 **5.0** 加权分，2D 渲染高 **0.8**。两者的 3D 光照与输出评分相同。PlayCanvas 提供运行时光照贴图、环境光和 TAA 放大，HGame 使用离线探针与支持不透明刚体和 CPU 实例的 TAA。 [运行时光照贴图](https://developer.playcanvas.com/user-manual/graphics/lighting/runtime-lightmaps/) · [CameraFrame 时间域放大](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/#taa-upscaling) · [HGame 时间域抗锯齿](rendering/PIPELINE-3D.md#temporal-antialiasing)
-- **Cocos Creator Web**。HGame 在资源生命周期、CPU 仿真、GPU 提交、画质控制和诊断设计上得分更高。Cocos 的 R1 高 1 个原始分，值得参考的是动态图集和统一 2D 排序，尤其是文字、粒子和遮罩混排时如何维持批次。 [动态图集](https://docs.cocos.com/creator/3.8/manual/en/advanced-topics/dynamic-atlas.html) · [排序配置](https://docs.cocos.com/creator/3.8/manual/en/editor/project/) · [资源释放](https://docs.cocos.com/creator/3.8/manual/en/asset/release-manager.html)
+- **PlayCanvas**。HGame 的性能设计高 **5.0** 加权分，2D 渲染高 **1.6**。两者的 3D 光照与输出评分相同。PlayCanvas 提供运行时光照贴图、环境光和 TAA 放大，HGame 使用离线探针与支持不透明刚体和 CPU 实例的 TAA。 [运行时光照贴图](https://developer.playcanvas.com/user-manual/graphics/lighting/runtime-lightmaps/) · [CameraFrame 时间域放大](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/#taa-upscaling) · [HGame 时间域抗锯齿](rendering/PIPELINE-3D.md#temporal-antialiasing)
+- **Cocos Creator Web**。两者 2D 渲染同为 **9／10**。Cocos 提供动态图集与渲染优先级。HGame 的原生队列和 Pixi 绘制组采用同一排序规则，合并相邻兼容的裁剪状态。HGame 在资源生命周期、CPU 仿真、GPU 提交、画质控制和诊断设计上得分更高。 [Cocos 动态图集](https://docs.cocos.com/creator/3.8/manual/en/advanced-topics/dynamic-atlas.html) · [HGame 绘制组](guides/PIXI2D-STARTER.md#ordered-draw-groups)
 
 ## HGame 到 90 的改进顺序
 
@@ -83,8 +83,8 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 
 | 顺序 | 评分项 | HGame 当前 → 目标 | Unity / PlayCanvas / Cocos | 加权增量 | 扣分原因与具体改进 |
 | --- | --- | ---: | ---: | ---: | --- |
-| 1 | R1 2D 渲染 | 8 → 9 | 9 / 7 / 9 | +0.8 | 主 2D 路径已有图集、精灵、粒子和 Bloom。明确精灵、文字、粒子和遮罩的排序与混合契约，减轻跨材质与裁剪切换造成的批次打断。 |
-| 2 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
+| 1 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
+| — | R1 2D 渲染 | 9 → 9 | 9 / 7 / 9 | +0.0 | 原生队列和 Pixi 绘制组共享排序。两条路径支持视口矩形裁剪和普通、加色混合，相邻兼容状态保持顺序并复用。 |
 | — | P1 CPU 仿真 | 9 → 9 | 8 / 7 / 7 | +0.0 | 固定步可按操作预算轮转处理可延后的 AI 和 2D、3D 寻路。队列有容量上限、积压和拒绝统计。 |
 | — | A1 调度生命周期 | 9 → 9 | 9 / 8 / 8 | +0.0 | 应用调度提供固定顺序的扩展点。场景激活在停用前发出取消信号，准备回滚和重入销毁沿用同一套退出契约。 |
 | — | A3 资源生命周期 | 9 → 9 | 9 / 8 / 8 | +0.0 | 关卡资源作用域和 3D 模型槽可持有共享解码模型。主请求可取消，空闲模型几何和纹理可按引用和预算回收。 |
@@ -103,7 +103,7 @@ HGame 已能把任务拆成要求，以精确测试名和浏览器检查点生�
 
 ## HGame 复评记录
 
-当前复评 **88.5／100**，架构 **22.5／25**，性能设计 **36.0／40**，渲染 **30.0／35**。距离目标 **1.5 分**。
+当前复评 **89.3／100**，架构 **22.5／25**，性能设计 **36.0／40**，渲染 **30.8／35**。距离目标 **0.7 分**。
 
 | 阶段 | 构建目标与后端 | 评项 | 原分 | 新分 | 加权变化与工程依据 |
 | --- | --- | --- | ---: | ---: | --- |
@@ -122,5 +122,6 @@ HGame 已能把任务拆成要求，以精确测试名和浏览器检查点生�
 | 模型资源驻留 | Web · 资源目录与 Three 模型服务 | A3 | 8 | 9 | **+0.8**。关卡和模型槽共享解码结果，最后一个待加载的持有者离开时取消主请求，迟到的解码结果按引用清理。模型几何和纹理可按估算驻留量回收，生成项目可把同一份占用接入渲染预算。已开始的 glTF 内部解析和部分外部依赖加载可能继续完成。 [使用契约](guides/ASSET-CATALOG.md#scene-owned-decoded-models) · [专项测试](../tests/model3d-ownership.test.mjs) |
 | 阶段扩展与场景取消 | Web · 应用核心 | A1 | 8 | 9 | **+0.8**。固定更新、物理、逻辑和渲染的扩展按优先级及注册顺序执行。每次场景激活提供取消信号。候选回滚仅取消候选，重入销毁仍先停用组件再执行一次退出。可扩展位置由核心预先定义。 [调度与场景契约](guides/systems/01-core-lifecycle-tags.md#调度扩展与场景生命周期) · [专项测试](../tests/lifecycle-resilience.test.mjs) |
 | 固定步工作预算 | Web · 仿真与 2D、3D 导航 | P1 | 8 | 9 | **+1.0**。可延后任务在物理之后按操作数轮转，渲染帧分组变化时保持固定步执行顺序。预算覆盖 A* 扩展、路径回溯和 3D 平滑。队列报告积压、拒绝与失败，场景切换可取消任务。执行模式为主线程协作分时。 [使用契约](guides/systems/13-ai-fsm-bt-navmesh.md#fixed-tick-budget-for-deferred-ai-and-navigation) · [专项测试](../tests/ai-navmesh.test.mjs) |
+| 2D 排序与批处理 | Web · Canvas2D、WebGL2D、Pixi | R1 | 8 | 9 | **+0.8**。同层同深度的对象使用统一排序，普通精灵、文字和粒子可共享队列。Pixi 绘制组也可接入图块层。相邻绘制复用等值矩形裁剪，WebGL2D 按混合与裁剪边界提交实例。统一裁剪约定覆盖视口矩形，批绘粒子与图块层以组为单位参与排序。 [原生接口](guides/systems/03-sprite-2d-pathfinding.md#混排裁剪与混合) · [Pixi 接口](guides/PIXI2D-STARTER.md#ordered-draw-groups) · [专项测试](../tests/performance-and-quality.test.mjs) |
 
 后续评审新增一行，先更新证据，再重算总分。过去包含试玩或交付的评分使用其原始口径，趋势从本页首轮基线开始记录。

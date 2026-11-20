@@ -54,6 +54,25 @@ When `Renderer2D` selects WebGPU, uploading an atlas uses a temporary RGBA readb
 
 `renderer.syncEntity(id, state)` creates a shadow only when `state.hasShadow !== false`; returned entries can therefore have `shadow: null`. If a frame has no `_white` silhouette, hit flash retains the base texture instead of substituting a white rectangle.
 
+## Ordered draw groups
+
+Use `renderer.createDrawGroup({ layer, z, y, ySort, blendMode, clipRect })` to mix content in the managed world slot between the existing entity and foreground layers. Groups draw in ascending layer and z order. If any group at the same layer and z enables `ySort`, those groups draw in ascending `y` order. Ties preserve registration order. Supply `group.setOrder({ y })` when the group's depth changes. A tilemap or particle batch in a group moves as one unit.
+
+```js
+const clipRect = { x: 0.1, y: 0.1, width: 0.8, height: 0.8 };
+const ground = renderer.createDrawGroup({ layer: 0, clipRect });
+const actor = renderer.createDrawGroup({ layer: 1, y: player.y, ySort: true, clipRect });
+const particles = renderer.createDrawGroup({ layer: 2, clipRect, blendMode: 'add' });
+const tiles = renderer.createTilemapLayer(map, { frames, drawGroup: ground });
+renderer.syncEntity('player', { x: player.x, y: player.y, tex: 'player_hero', drawGroup: actor });
+actor.container.addChild(label);
+renderer.createSwarmLayer({ textures: ['enemy_chaser'], drawGroup: particles });
+```
+
+The optional clip is normalized to the visible viewport and follows viewport resize. It stays fixed on screen during camera movement. Adjacent groups with equal clip rectangles share a mask, including when their blend modes differ. `normal` and `add` apply through Pixi blend inheritance. A child with an explicit Pixi blend mode uses its own setting.
+
+`group.dispose()` releases entities, tilemap layers and swarm layers registered through the renderer for that group. Directly attached display objects are detached for their owner to reuse or destroy. An empty clip hides the group. [Native adapter ordering](systems/03-sprite-2d-pathfinding.md#混排裁剪与混合)
+
 For tile-based maps, generate a 2D project with `--with tilemap2d`, bake tile images or sheet frames into the atlas, and connect the existing HGame `TileMap` to Pixi:
 
 ```js
