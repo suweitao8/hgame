@@ -5,7 +5,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 ## Product scope, reviews, and priorities
 
 - HGame is built for AI agents to independently develop complete HTML games. Author gameplay and content in code and declarative data. Use CLI tools and browser playtests to build, inspect, and verify the game end to end.
-- Score HGame and any comparable engines on the same AI-developed HTML game workflow. Assess the quality and completeness of playable games, AI authoring and iteration, asset handling, and browser runtime performance and reliability. Exclude plugin ecosystems, distribution platform support, and visual editor features from scores, comparisons, and roadmap priorities.
+- Compare HGame with Unity and Godot in [ENGINE-SCORECARD.md](docs/ENGINE-SCORECARD.md). Use the same browser-local scope and fixed architecture, performance design, and rendering weights for all three engines. Record AI authoring and acceptance separately. Keep plugin ecosystems, distribution platform support, and visual editor features outside the comparison and roadmap priorities.
 - Prioritize making a good game. Play the core loop through WebAsset early and use the playable result to guide engine work. Evaluate controls, feedback, pacing, progression, and a complete play session as appropriate to the game.
 - Add a publishing target only when a specific game has a concrete release request for that platform. Keep the game as HTML and handle target-specific requirements at the packaging or host integration boundary.
 
