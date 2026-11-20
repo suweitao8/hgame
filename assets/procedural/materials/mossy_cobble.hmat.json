@@ -1,0 +1,97 @@
+{
+  "format": "hgame.material",
+  "version": 1,
+  "id": "mossy_cobble",
+  "meta": {
+    "category": "terrain",
+    "tileMeters": 2.0,
+    "seed": 6422
+  },
+  "params": {
+    "cobbleScale": 7,
+    "mossAmount": 0.6
+  },
+  "nodes": [
+    {
+      "id": "cobbles",
+      "op": "worley",
+      "args": { "scale": "$cobbleScale", "mode": "f2_minus_f1", "jitter": 0.88, "seamless": true }
+    },
+    {
+      "id": "stone_noise",
+      "op": "fbm",
+      "args": { "scale": 14, "octaves": 4, "persistence": 0.52, "seamless": true }
+    },
+    {
+      "id": "cobble_mask",
+      "op": "remap",
+      "args": { "input": "cobbles.f2_minus_f1", "inMin": 0.04, "inMax": 0.18, "outMin": 0.0, "outMax": 1.0 }
+    },
+    {
+      "id": "stone_dome",
+      "op": "power",
+      "args": { "input": "cobble_mask", "exp": 0.65 }
+    },
+    {
+      "id": "height_final",
+      "op": "blend",
+      "args": { "mode": "multiply", "a": "stone_dome", "b": "stone_noise", "strength": 0.25 }
+    },
+    {
+      "id": "normal_map",
+      "op": "height_to_normal",
+      "args": { "input": "height_final", "strength": 2.8 }
+    },
+    {
+      "id": "stone_tone",
+      "op": "mix_scalar",
+      "args": { "a": "cobbles.cellRand", "b": "stone_noise", "mask": 0.4 }
+    },
+    {
+      "id": "stone_color",
+      "op": "color_ramp",
+      "args": {
+        "input": "stone_tone",
+        "stops": [
+          [0.0, "#504d47"],
+          [0.5, "#67635b"],
+          [1.0, "#817b70"]
+        ]
+      }
+    },
+    {
+      "id": "gap_moss_mix",
+      "op": "blend",
+      "args": { "mode": "multiply", "a": "cobbles.edge", "b": "stone_noise", "strength": 0.55 }
+    },
+    {
+      "id": "gap_color",
+      "op": "mix_color",
+      "args": { "a": "#433b32", "b": "#3e4d31", "mask": "gap_moss_mix" }
+    },
+    {
+      "id": "albedo_final",
+      "op": "mix_color",
+      "args": { "a": "gap_color", "b": "stone_color", "mask": "cobble_mask" }
+    },
+    {
+      "id": "stone_rough",
+      "op": "remap",
+      "args": { "input": "stone_noise", "inMin": 0.2, "inMax": 0.85, "outMin": 0.38, "outMax": 0.68 }
+    },
+    {
+      "id": "roughness_final",
+      "op": "mix_scalar",
+      "args": { "a": 0.92, "b": "stone_rough", "mask": "cobble_mask" }
+    }
+  ],
+  "outputs": {
+    "albedo": "albedo_final",
+    "height": "height_final",
+    "normal": "normal_map",
+    "ao": { "op": "remap", "input": "height_final", "outMin": 0.38, "outMax": 1.0 },
+    "roughness": "roughness_final",
+    "metalness": 0.0,
+    "porosity": 0.68
+  }
+}

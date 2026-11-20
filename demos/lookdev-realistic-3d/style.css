@@ -1,0 +1,106 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #14181d;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #e6edf3;
+}
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+#game:active {
+  cursor: grabbing;
+}
+#hud {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  width: 268px;
+  background: rgba(16, 20, 26, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.45;
+  backdrop-filter: blur(6px);
+  z-index: 10;
+}
+.hud-title {
+  font-weight: 700;
+  font-size: 12px;
+  margin-bottom: 6px;
+  color: #9dd1ff;
+}
+.hud-metrics {
+  background: rgba(0, 0, 0, 0.32);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  white-space: pre-line;
+}
+.hud-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.hud-row select,
+.hud-row input[type="range"] {
+  width: 132px;
+  background: #1d242d;
+  color: #e6edf3;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.hud-cameras {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin-top: 6px;
+}
+.hud-cameras button {
+  background: #232c37;
+  color: #e6edf3;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  padding: 5px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.hud-cameras button:hover {
+  background: #2e3b4a;
+}
+.hud-audit {
+  margin-top: 7px;
+  color: #9fb2c7;
+  font-size: 10px;
+  word-break: break-word;
+}
+#drop-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 36, 56, 0.72);
+  border: 3px dashed #7bc4ff;
+  font-size: 18px;
+  font-weight: 700;
+  z-index: 20;
+  pointer-events: none;
+}
+#drop-overlay[hidden] {
+  display: none;
+}

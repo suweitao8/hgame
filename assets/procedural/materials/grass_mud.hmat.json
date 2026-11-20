@@ -1,0 +1,113 @@
+{
+  "format": "hgame.material",
+  "version": 1,
+  "id": "grass_mud",
+  "meta": {
+    "category": "terrain",
+    "tileMeters": 3.0,
+    "seed": 4201
+  },
+  "params": {
+    "grassCoverage": 0.48
+  },
+  "nodes": [
+    {
+      "id": "soil_fbm",
+      "op": "fbm",
+      "args": { "scale": 8, "octaves": 5, "persistence": 0.56, "seamless": true }
+    },
+    {
+      "id": "clods",
+      "op": "worley",
+      "args": { "scale": 16, "mode": "f1", "seamless": true }
+    },
+    {
+      "id": "pebbles",
+      "op": "speckle",
+      "args": { "scale": 36, "density": 0.32, "softness": 0.4 }
+    },
+    {
+      "id": "grass_patches",
+      "op": "fbm",
+      "args": { "scale": 5, "octaves": 4, "persistence": 0.55, "seamless": true }
+    },
+    {
+      "id": "grass_blades",
+      "op": "speckle",
+      "args": { "scale": 44, "density": 0.58, "softness": 0.75, "seedOffset": 91 }
+    },
+    {
+      "id": "grass_mask_raw",
+      "op": "blend",
+      "args": { "mode": "multiply", "a": "grass_patches", "b": "grass_blades", "strength": 0.65 }
+    },
+    {
+      "id": "grass_mask",
+      "op": "remap",
+      "args": { "input": "grass_mask_raw", "inMin": 0.24, "inMax": 0.56, "outMin": 0.0, "outMax": 1.0 }
+    },
+    {
+      "id": "mud_height",
+      "op": "blend",
+      "args": { "mode": "overlay", "a": "soil_fbm", "b": "clods", "strength": 0.45 }
+    },
+    {
+      "id": "height_final",
+      "op": "mix_scalar",
+      "args": { "a": "mud_height", "b": "pebbles", "mask": 0.18 }
+    },
+    {
+      "id": "normal_map",
+      "op": "height_to_normal",
+      "args": { "input": "height_final", "strength": 2.4 }
+    },
+    {
+      "id": "mud_color",
+      "op": "color_ramp",
+      "args": {
+        "input": "soil_fbm",
+        "stops": [
+          [0.0, "#413a32"],
+          [0.5, "#52463a"],
+          [1.0, "#685948"]
+        ]
+      }
+    },
+    {
+      "id": "grass_color",
+      "op": "color_ramp",
+      "args": {
+        "input": "grass_patches",
+        "stops": [
+          [0.0, "#424f34"],
+          [0.5, "#52633e"],
+          [1.0, "#6a7446"]
+        ]
+      }
+    },
+    {
+      "id": "albedo_final",
+      "op": "mix_color",
+      "args": { "a": "mud_color", "b": "grass_color", "mask": "grass_mask" }
+    },
+    {
+      "id": "mud_rough",
+      "op": "remap",
+      "args": { "input": "soil_fbm", "inMin": 0.2, "inMax": 0.85, "outMin": 0.65, "outMax": 0.88 }
+    },
+    {
+      "id": "roughness_final",
+      "op": "mix_scalar",
+      "args": { "a": "mud_rough", "b": 0.94, "mask": "grass_mask" }
+    }
+  ],
+  "outputs": {
+    "albedo": "albedo_final",
+    "height": "height_final",
+    "normal": "normal_map",
+    "ao": { "op": "remap", "input": "height_final", "outMin": 0.48, "outMax": 1.0 },
+    "roughness": "roughness_final",
+    "metalness": 0.0,
+    "porosity": 0.85
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "three": ["./src/modules/realistic-pcg/types/three.d.ts"],
+      "three/examples/jsm/loaders/GLTFLoader.js": ["./src/modules/realistic-pcg/types/gltf-loader.d.ts"],
+      "three/examples/jsm/utils/SkeletonUtils.js": ["./src/modules/realistic-pcg/types/skeleton-utils.d.ts"]
+    }
+  },
+  "include": [
+    "src/modules/realistic-pcg/**/*.ts",
+    "demos/lookdev-realistic-3d/**/*.ts"
+  ]
+}

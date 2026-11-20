@@ -61,7 +61,11 @@
     "test:browser:packages": "node tests/browser-packages.mjs",
     "check:visual": "node scripts/check-visual-regression.mjs",
     "test:browser:lifecycle": "node tests/browser-game-lifecycle.mjs",
-    "test:browser:recipes": "node tests/browser-api-recipes.mjs"
+    "test:browser:recipes": "node tests/browser-api-recipes.mjs",
+    "build:realistic-pcg": "node scripts/build-realistic-pcg.mjs",
+    "check:realistic-pcg": "node scripts/build-realistic-pcg.mjs --check",
+    "validate:procedural": "node scripts/validate-procedural.mjs",
+    "test:browser:realistic-pcg": "node tests/browser-realistic-pcg.mjs"
   },
   "devDependencies": {
     "@dimforge/rapier2d-deterministic": "0.21.0",

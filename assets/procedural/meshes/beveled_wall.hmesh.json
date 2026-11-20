@@ -1,0 +1,60 @@
+{
+  "format": "hgame.mesh",
+  "version": 1,
+  "id": "beveled_wall",
+  "meta": {
+    "unit": "meter",
+    "collider": "auto_boxes"
+  },
+  "params": {
+    "width": 4.0,
+    "height": 3.0,
+    "thickness": 0.35,
+    "bevel": 0.02,
+    "hasWindow": true
+  },
+  "materialSlots": {
+    "wall": "wet_stone_brick",
+    "trim": "concrete_weathered"
+  },
+  "parts": [
+    {
+      "id": "plinth",
+      "op": "beveled_box",
+      "material": "$trim",
+      "args": {
+        "size": ["$width", 0.35, "expr:$thickness + 0.06"],
+        "bevel": "$bevel"
+      },
+      "transform": { "pos": [0, 0.175, 0] },
+      "vertexMeta": { "edgeWear": 0.65, "groundAO": true }
+    },
+    {
+      "id": "main_body",
+      "op": "beveled_wall_opening",
+      "material": "$wall",
+      "args": {
+        "width": "$width",
+        "height": "expr:$height - 0.35",
+        "thickness": "$thickness",
+        "bevel": "$bevel",
+        "openings": [
+          { "when": "$hasWindow", "x": 0, "y": 0.8, "w": 1.1, "h": 1.15 }
+        ]
+      },
+      "transform": { "pos": [0, 0.35, 0] },
+      "vertexMeta": { "edgeWear": 0.55 }
+    },
+    {
+      "id": "top_coping",
+      "op": "beveled_box",
+      "material": "$trim",
+      "args": {
+        "size": ["expr:$width + 0.08", 0.12, "expr:$thickness + 0.08"],
+        "bevel": 0.018
+      },
+      "transform": { "pos": [0, "expr:$height + 0.06", 0] },
+      "vertexMeta": { "edgeWear": 0.8 }
+    }
+  ]
+}
