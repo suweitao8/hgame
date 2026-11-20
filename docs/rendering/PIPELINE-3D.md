@@ -150,6 +150,8 @@ Standalone releases include the pinned Three r187 KTX2 loader, Basis JS and WASM
 
 ## World Materials, Models & Adapter Lifecycle
 
+For imported or hand-authored particle effects, see the [Unity particle material reference](UNITY-VFX.md).
+
 ### Model LOD and cell handoff
 
 `createModelLod3D` in `integrations/model3d.js` switches an actor between skeletal animation, a slot in a shared Bone-VAT crowd, and a distant proxy. The two distances have hysteresis. The game owns the actor position, yaw, clip and clip time. Pass those values to `update(distance, state)` before packing the shared crowd with `crowd.update`. The controller uses the same looping clip time to sample every animated tier. `near` and `far` factories may prepare asynchronously and return detached slots. A slot joins the scene when its `sync(state)` first applies the latest state. The previous slot is released after that call succeeds.

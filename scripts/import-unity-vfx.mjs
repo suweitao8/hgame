@@ -243,12 +243,20 @@ function inspectMaterial(matInfo, guidMap, deps) {
   const txt = fs.readFileSync(matInfo.fullPath, 'utf8');
   const matName = path.basename(matInfo.relPath, path.extname(matInfo.relPath));
   const isDistortionOnly = /distortion/i.test(matName) || /_DistortionEnabled:\s*1\b/.test(txt);
-  const mainTexBlock = isDistortionOnly
-    ? (txt.match(/- _(?:NormalMap|BumpMap|DistortionTexture|MainTex|BaseMap):([\s\S]*?)(?=\n    - |\n  m_|$)/)?.[1] || '')
-    : (txt.match(/- _(?:MainTex|BaseMap):([\s\S]*?)(?=\n    - |\n  m_|$)/)?.[1] || '');
-  const mainTexGuid = (mainTexBlock.match(/guid:\s*([0-9a-f]{32})/) || [])[1]
-    || (txt.match(/- _(?:MainTex|BaseMap|BumpMap|NormalMap):[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1];
-  const colorMatch = txt.match(/- _(?:Color|BaseColor|TintColor):\s*\{([^}]+)\}/);
+  const surfaceMode = txt.match(/- _Surface:\s*([01])\b/)?.[1];
+  const textureBlock = name => txt.match(new RegExp(`- ${name}:([\\s\\S]*?)(?=\\n {0,4}(?:- |m_)|$)`))?.[1];
+  const textureGuid = block => block?.match(/m_Texture:[^\n]*guid:\s*([0-9a-f]{32})/)?.[1];
+  const baseBlock = textureBlock('_BaseMap');
+  const legacyBlock = textureBlock('_MainTex');
+  const baseTexture = surfaceMode !== undefined ? (baseBlock ?? legacyBlock) : (legacyBlock ?? baseBlock);
+  const refractionTexture = isDistortionOnly
+    ? ['_DistortionTexture', '_NormalMap', '_BumpMap'].map(textureBlock).find(textureGuid)
+    : undefined;
+  const mainTexBlock = refractionTexture ?? baseTexture ?? '';
+  const mainTexGuid = textureGuid(mainTexBlock);
+  const baseColor = txt.match(/- _BaseColor:\s*\{([^}]+)\}/);
+  const legacyColor = txt.match(/- _TintColor:\s*\{([^}]+)\}/) || txt.match(/- _Color:\s*\{([^}]+)\}/);
+  const colorMatch = surfaceMode !== undefined ? (baseColor || legacyColor) : (legacyColor || baseColor);
   const color = colorMatch ? normalizeHdrColor(parseColorObject(colorMatch[1], false)) : { hdr: 1, rgb: [1, 1, 1], a: 1 };
 
   const blendIntM = txt.match(/- _Blend:\s*(\d+)/);
@@ -317,7 +325,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
   }
 
   const isLit = /_NORMALMAP|_METALLIC|_SPECGLOSSMAP|Standard Surface/i.test(txt) || /guid:\s*0406db5a14f94604a8c57ccfbc9f3b46/.test(txt);
-  const isOpaque = /- _Mode:\s*0\b/.test(txt) || /- _Surface:\s*0\b/.test(txt);
+  const isOpaque = surfaceMode !== undefined ? surfaceMode === '0' : /- _Mode:\s*[01]\b/.test(txt);
   const flipbookMode = Number((txt.match(/- _FlipbookMode:\s*([\d.]+)/) || [])[1] ?? 0);
 
   let spriteKey = null;
@@ -335,6 +343,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
     spriteKey,
     hdr: isDistortionOnly ? 1.0 : color.hdr,
     tintRgb: isDistortionOnly ? [1, 1, 1] : color.rgb,
+    tintAlpha: color.a,
     blend,
     cullMode,
     cutoff,
@@ -713,6 +722,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       renderMode,
       blend: mainMat?.blend || 'alpha',
       hdr: mainMat?.hdr ?? 1.0,
+      ...(mainMat?.spriteKey ? { sprite: mainMat.spriteKey } : {}),
       ...(mainMat?.cullMode ? { cullMode: mainMat.cullMode } : {}),
       ...(mainMat?.cutoff !== undefined ? { alphaCutoff: Number(mainMat.cutoff.toFixed(3)) } : {}),
       ...(mainMat?.emission ? { emission: mainMat.emission, emissionBoost: mainMat.emissionBoost } : {}),
@@ -755,8 +765,6 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       if (mainMat?.lit) layer.lit = true;
       if (mainMat?.opaque) layer.opaque = true;
       if (Array.isArray(speed) ? speed[1] > 0.1 : speed > 0.1) layer.alignToVelocity = true;
-    } else if (mainMat?.spriteKey) {
-      layer.sprite = mainMat.spriteKey;
     }
 
     if (scMode === 2) {
@@ -833,6 +841,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     }
 
     const startMul = scMode === 2 ? [1, 1, 1, maxCol[3]] : maxCol;
+    const tintAlpha = mainMat?.tintAlpha ?? 1;
     const colorMod = extractSection(ps, 'ColorModule');
     const colCurve = /enabled:\s*1/.test(colorMod) ? parseGradientStops(colorMod) : null;
     const evalGradAt = (stops, t) => {
@@ -862,7 +871,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
             Number((cm[0] * sm[0] * (mainMat?.tintRgb?.[0] ?? 1)).toFixed(3)),
             Number((cm[1] * sm[1] * (mainMat?.tintRgb?.[1] ?? 1)).toFixed(3)),
             Number((cm[2] * sm[2] * (mainMat?.tintRgb?.[2] ?? 1)).toFixed(3)),
-            Number((cm[3] * sm[3]).toFixed(3)),
+            Number((cm[3] * sm[3] * tintAlpha).toFixed(3)),
           ],
         ];
       });
@@ -871,7 +880,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         Number((startMul[0] * (mainMat?.tintRgb?.[0] ?? 1)).toFixed(3)),
         Number((startMul[1] * (mainMat?.tintRgb?.[1] ?? 1)).toFixed(3)),
         Number((startMul[2] * (mainMat?.tintRgb?.[2] ?? 1)).toFixed(3)),
-        Number(startMul[3].toFixed(3)),
+        Number((startMul[3] * tintAlpha).toFixed(3)),
       ];
       layer.colorCurve = [
         [0, constRgba],

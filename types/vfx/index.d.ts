@@ -82,6 +82,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         };
     };
     atlasParticles: {
+        readonly texture: any;
         capacity: number;
         lut: {
             bytes: Uint8Array;
@@ -97,7 +98,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             sampleVelDisp: (row: any, t: any) => number;
             dispose: () => void;
         };
-        regions: Record<string, readonly number[]>;
+        readonly regions: Record<string, readonly number[]>;
         compileCurves: (colorCurveRaw: any, sizeCurveRaw: any, sizeYCurveRaw?: null, velocityCurveRaw?: null) => any;
         setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined) => void;
         setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {

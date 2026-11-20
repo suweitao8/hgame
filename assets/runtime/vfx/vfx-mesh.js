@@ -28,10 +28,13 @@ precision highp float;
 
 uniform sampler2D uTex;
 uniform float uHasTex;
+uniform vec4 uTexRect;
+uniform float uAtlasUv;
 uniform sampler2D uSceneTex;
 uniform float uHasSceneTex;
 uniform float uDistortion;
 uniform float uIsMultiply;
+uniform float uOpaque;
 uniform float uAlphaCutoff;
 uniform vec2 uCameraFade;
 uniform vec2 uInvViewport;
@@ -70,13 +73,19 @@ float valueNoise3(vec3 x) {
 }
 
 void main() {
-  vec4 texCol = (uHasTex > 0.5) ? texture2D(uTex, fract(vUv)) : vec4(1.0);
+  vec2 sampleUv = fract(vUv);
+  if (uAtlasUv > 0.5) {
+    sampleUv = mix(uTexRect.xy, uTexRect.zw, vec2(sampleUv.x, 1.0 - sampleUv.y));
+    if (uAtlasUv > 1.5) sampleUv.y = 1.0 - sampleUv.y;
+  }
+  vec4 texCol = (uHasTex > 0.5) ? texture2D(uTex, sampleUv) : vec4(1.0);
   vec3 N = normalize(vNormalView);
   vec3 V = normalize(vViewPos);
+  float alpha = texCol.a * uOpacity;
   if (uDistortion > 0.5) {
-    if (uHasSceneTex < 0.5) discard;
+    if (uHasSceneTex < 0.5 || alpha < uAlphaCutoff) discard;
     float ndotv = clamp(abs(dot(N, V)), 0.0, 1.0);
-    float dAlpha = texCol.a * uOpacity * smoothstep(0.0, 0.28, ndotv);
+    float dAlpha = alpha * smoothstep(0.0, 0.28, ndotv);
     if (dAlpha < 0.005) discard;
     vec2 nOff = (uHasTex > 0.5) ? (texCol.rg * 2.0 - 1.0) : (N.xy * ndotv);
     vec2 screenUv = gl_FragCoord.xy * uInvViewport;
@@ -85,10 +94,6 @@ void main() {
     return;
   }
 
-  float camFade = (uCameraFade.y > uCameraFade.x + 0.001)
-    ? clamp((length(vViewPos) - uCameraFade.x) / (uCameraFade.y - uCameraFade.x), 0.0, 1.0)
-    : 1.0;
-  float alpha = texCol.a * uOpacity * camFade;
   vec3 baseCol = texCol.rgb * uColor * max(0.0, uHdr);
   if (uLit > 0.5) {
     vec3 L = normalize(uLightDirView);
@@ -115,10 +120,14 @@ void main() {
     baseCol = mix(baseCol, uDissolveColor * max(1.5, uHdr), edge);
   }
 
-  if (alpha < max(0.005, uAlphaCutoff)) discard;
-  if (uAlphaCutoff > 0.02) alpha = 1.0;
+  if (alpha < uAlphaCutoff) discard;
+  float camFade = (uCameraFade.y > uCameraFade.x + 0.001)
+    ? clamp((abs(vViewPos.z) - uCameraFade.x) / (uCameraFade.y - uCameraFade.x), 0.0, 1.0)
+    : 1.0;
+  alpha = uOpaque > 0.5 ? 1.0 : alpha * camFade;
+  if (alpha < 0.005) discard;
   if (uIsMultiply > 0.5) {
-    gl_FragColor = vec4(mix(vec3(1.0), clamp(baseCol, 0.0, 1.0), clamp(alpha, 0.0, 1.0)), 1.0);
+    gl_FragColor = vec4(mix(vec3(1.0), baseCol, clamp(alpha, 0.0, 1.0)), 1.0);
     return;
   }
   gl_FragColor = vec4(baseCol, alpha);
@@ -240,7 +249,10 @@ export function createMeshVfxPool({
           uHasSceneTex: { value: 0 },
           uDistortion: { value: 0 },
           uIsMultiply: { value: 0 },
-          uAlphaCutoff: { value: 0.005 },
+          uOpaque: { value: 0.0 },
+          uTexRect: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 1, 1) : { set() {} } },
+          uAtlasUv: { value: 0.0 },
+          uAlphaCutoff: { value: 0.0 },
           uCameraFade: { value: THREE.Vector2 ? new THREE.Vector2(0, 0) : { set() {} } },
           uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(invViewW, invViewH) : { set() {} } },
           uColor: { value: THREE.Color ? new THREE.Color(1, 1, 1) : { setRGB() {} } },
@@ -476,19 +488,26 @@ export function createMeshVfxPool({
       if (geo && s.mesh.geometry !== geo) s.mesh.geometry = geo;
       const blendMode = opts.blend || (opts.additive ? 'additive' : 'alpha');
       const isDistortion = blendMode === 'distortion';
-      const isMultiply = blendMode === 'multiply';
-      const isPremul = blendMode === 'premultiply';
+      const opaque = !isDistortion && Boolean(opts.opaque);
+      const isMultiply = !opaque && blendMode === 'multiply' && Boolean(THREE?.CustomBlending);
+      const isPremul = !opaque && blendMode === 'premultiply' && Boolean(THREE?.CustomBlending);
       if (THREE) {
-        if (isMultiply && THREE.CustomBlending) {
+        if (opaque) {
+          s.mat.blending = THREE.NoBlending;
+        } else if (isMultiply) {
           s.mat.blending = THREE.CustomBlending;
           s.mat.blendEquation = THREE.AddEquation;
           s.mat.blendSrc = THREE.DstColorFactor;
           s.mat.blendDst = THREE.ZeroFactor;
-        } else if (isPremul && THREE.CustomBlending) {
+          s.mat.blendSrcAlpha = THREE.ZeroFactor;
+          s.mat.blendDstAlpha = THREE.OneFactor;
+        } else if (isPremul) {
           s.mat.blending = THREE.CustomBlending;
           s.mat.blendEquation = THREE.AddEquation;
           s.mat.blendSrc = THREE.OneFactor;
           s.mat.blendDst = THREE.OneMinusSrcAlphaFactor;
+          s.mat.blendSrcAlpha = THREE.OneFactor;
+          s.mat.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
         } else {
           s.mat.blending = blendMode === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending;
         }
@@ -498,11 +517,12 @@ export function createMeshVfxPool({
             ? THREE.FrontSide
             : THREE.DoubleSide;
       }
-      s.mat.depthWrite = isDistortion ? false : Boolean(opts.opaque);
-      s.mat.transparent = isDistortion ? true : !opts.opaque;
+      s.mat.depthWrite = opaque;
+      s.mat.transparent = !opaque;
       s.mat.uniforms.uDistortion.value = isDistortion ? 1.0 : 0.0;
       s.mat.uniforms.uIsMultiply.value = isMultiply ? 1.0 : 0.0;
-      s.mat.uniforms.uAlphaCutoff.value = opts.alphaCutoff ?? 0.005;
+      s.mat.uniforms.uOpaque.value = opaque ? 1.0 : 0.0;
+      s.mat.uniforms.uAlphaCutoff.value = opts.alphaCutoff ?? 0.0;
       const cf = opts.cameraFade || [0, 0];
       s.mat.uniforms.uCameraFade.value.set(cf[0] ?? 0, cf[1] ?? 0);
       s.mat.uniforms.uSceneTex.value = activeSceneTex;
@@ -523,6 +543,9 @@ export function createMeshVfxPool({
       const resolvedTex = opts.texture ?? customTextures.get(meshKey) ?? null;
       s.mat.uniforms.uTex.value = resolvedTex;
       s.mat.uniforms.uHasTex.value = resolvedTex ? 1 : 0;
+      const texRect = opts.textureRect;
+      s.mat.uniforms.uAtlasUv.value = texRect ? (resolvedTex?.flipY ? 2 : 1) : 0;
+      if (texRect) s.mat.uniforms.uTexRect.value.set(texRect[0], texRect[1], texRect[2], texRect[3]);
       const dc = opts.dissolve?.edgeColor || [1, 0.7, 0.25];
       s.mat.uniforms.uDissolveColor.value.setRGB(dc[0] ?? 1, dc[1] ?? 0.7, dc[2] ?? 0.25);
       s.mat.uniforms.uDissolve.value.set(0, opts.dissolve?.edgeWidth ?? 0.08, s.dissolveEnabled ? 1 : 0);

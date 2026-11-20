@@ -1331,9 +1331,13 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
     try {
       const texGuid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
       const matGuid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      const legacyTexGuid = 'cccccccccccccccccccccccccccccccc';
       const texPath = path.join(tmpDir, 'Spark.png');
       fs.writeFileSync(texPath, '');
       fs.writeFileSync(`${texPath}.meta`, `fileFormatVersion: 2\nguid: ${texGuid}\n`);
+      const legacyTexPath = path.join(tmpDir, 'Old.png');
+      fs.writeFileSync(legacyTexPath, '');
+      fs.writeFileSync(`${legacyTexPath}.meta`, `fileFormatVersion: 2\nguid: ${legacyTexGuid}\n`);
       const matPath = path.join(tmpDir, 'MultMat.mat');
       fs.writeFileSync(
         matPath,
@@ -1343,10 +1347,16 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
           '  m_SavedProperties:',
           '    m_TexEnvs:',
           '    - _MainTex:',
+          `        m_Texture: {fileID: 2800000, guid: ${legacyTexGuid}, type: 3}`,
+          '        m_Scale: {x: 1, y: 1}',
+          '        m_Offset: {x: 0, y: 0}',
+          '    - _BaseMap:',
           `        m_Texture: {fileID: 2800000, guid: ${texGuid}, type: 3}`,
           '        m_Scale: {x: 2, y: 4}',
           '        m_Offset: {x: 0.1, y: 0.25}',
           '    m_Floats:',
+          '    - _Surface: 1',
+          '    - _Mode: 0',
           '    - _Blend: 3',
           '    - _Cull: 2',
           '    - _AlphaClip: 1',
@@ -1356,7 +1366,9 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
           '    - _CameraNearFadeDistance: 0.5',
           '    - _CameraFarFadeDistance: 2.5',
           '    m_Colors:',
-          '    - _TintColor: {r: 1, g: 0.5, b: 0.25, a: 1}',
+          '    - _Color: {r: 0.1, g: 1, b: 0.1, a: 1}',
+          '    - _TintColor: {r: 1, g: 0.5, b: 0.25, a: 0.4}',
+          '    - _BaseColor: {r: 1, g: 0.5, b: 0.25, a: 0.6}',
           '    - _EmissionColor: {r: 2, g: 1, b: 0.5, a: 1}',
         ].join('\n')
       );
@@ -1488,13 +1500,28 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
       assert.equal(recipe.layers.length, 1, 'm_Enabled: 0 renderer without trail is skipped');
       const l = recipe.layers[0];
       assert.equal(l.mesh, 'quad', 'built-in fileID 10210 maps to quad');
+      assert.equal(l.sprite, 'spark', 'mesh particles reuse the material texture by atlas key');
+      assert.equal(l.opaque, undefined, 'URP surface type takes precedence over the legacy mode');
       assert.equal(l.blend, 'multiply', '_Blend: 3 maps to multiply');
       assert.equal(l.cullMode, 'back', '_Cull: 2 maps to back');
       assert.equal(l.alphaCutoff, 0.35, '_AlphaClip + _Cutoff extracted');
+      assert.ok(l.colorCurve.every(([, color]) => color[3] === 0.6), 'URP base color alpha modulates the particle lifetime color');
+      const legacyMaterial = fs.readFileSync(matPath, 'utf8')
+        .replace(/^.*_Surface:.*\n/m, '')
+        .replace(/^.*_BaseColor:.*\n/m, '')
+        .replace('_Mode: 0', '_Mode: 3');
+      fs.writeFileSync(matPath, legacyMaterial);
+      const { recipe: legacyRecipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'legacy' });
+      assert.ok(legacyRecipe.layers[0].colorCurve.every(([, color]) => color[3] === 0.4), 'legacy tint alpha modulates the particle lifetime color');
+      assert.equal(legacyRecipe.layers[0].sprite, 'old', 'legacy materials prefer their _MainTex');
+      const emptyBase = legacyMaterial.replace(/(- _BaseMap:\n\s+m_Texture: ).+/, '$1{fileID: 0}').replace('_Mode: 3', '_Surface: 1');
+      fs.writeFileSync(matPath, emptyBase);
+      const { recipe: emptyBaseRecipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'empty' });
+      assert.equal(emptyBaseRecipe.layers[0].sprite, undefined, 'a cleared URP base map keeps the default texture');
       assert.ok(l.emissionBoost > 1.0, '_EmissionEnabled + HDR _EmissionColor sets emissionBoost');
       assert.deepEqual(l.cameraFade, [0.5, 2.5], '_CameraFadingEnabled extracts near/far fade distances');
-      assert.deepEqual(l.uvScale, [2, 4], '_MainTex m_Scale extracted');
-      assert.deepEqual(l.uvOffset, [0.1, 0.25], '_MainTex m_Offset extracted');
+      assert.deepEqual(l.uvScale, [2, 4], 'URP _BaseMap scale is paired with its texture');
+      assert.deepEqual(l.uvOffset, [0.1, 0.25], 'URP _BaseMap offset is paired with its texture');
       assert.deepEqual(l.pivot, [0, 0.5, 0], 'm_Pivot extracted');
       assert.equal(l.shape.sphericalDirectionAmount, 0.8, 'sphericalDirectionAmount extracted');
       assert.equal(l.shape.randomDirectionAmount, 0.3, 'randomDirectionAmount extracted');

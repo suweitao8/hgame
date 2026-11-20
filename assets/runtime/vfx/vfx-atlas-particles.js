@@ -896,6 +896,7 @@ uniform float uFlipV;
 uniform float uHasSoftDepth;
 uniform float uSoftFade;
 uniform float uIsMultiply;
+uniform float uIsPremultiply;
 uniform vec2 uInvViewport;
 uniform vec2 uCamNearFar;
 
@@ -1008,10 +1009,10 @@ void main() {
     softMul = clamp((sceneZ - partZ) / uSoftFade, 0.0, 1.0);
   }
 
-  float alpha = texCol.a * curveCol.a * softMul * vCamFade;
-  float minCutoff = max(0.0005, vMatParams.x);
-  if (alpha < minCutoff) discard;
-  if (vMatParams.x > 0.02) alpha = 1.0;
+  float alpha = texCol.a * curveCol.a;
+  if (alpha < vMatParams.x) discard;
+  alpha *= softMul * vCamFade;
+  if (alpha < 0.0005) discard;
 
   vec3 rgb = texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr) + texCol.rgb * vMatParams.y * vTint;
 
@@ -1024,7 +1025,11 @@ void main() {
   }
 
   if (uIsMultiply > 0.5) {
-    gl_FragColor = vec4(mix(vec3(1.0), clamp(rgb, 0.0, 1.0), clamp(alpha, 0.0, 1.0)), 1.0);
+    gl_FragColor = vec4(mix(vec3(1.0), rgb, clamp(alpha, 0.0, 1.0)), 1.0);
+    return;
+  }
+  if (uIsPremultiply > 0.5) {
+    gl_FragColor = vec4(rgb, alpha);
     return;
   }
 
@@ -1058,6 +1063,7 @@ varying float vHdr;
 varying vec4 vUvRect;
 varying vec4 vFlipbook;
 varying vec3 vTint;
+varying vec4 vMatParams;
 
 vec4 sampleColorCurve(float row, float t) {
   float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
@@ -1093,6 +1099,7 @@ void main() {
   float rad = length(centered);
   vec2 nOffset = vec2(0.0);
   float maskAlpha = curveCol.a;
+  float sourceAlpha = curveCol.a;
 
   if (uHasAtlas > 0.5) {
     vec2 topDownUv = vec2(vUv.x, 1.0 - vUv.y);
@@ -1116,6 +1123,7 @@ void main() {
       texCol = texture2D(uAtlasTex, mapped);
     }
     nOffset = texCol.rg * 2.0 - 1.0;
+    sourceAlpha *= texCol.a;
     float radialFade = clamp(1.0 - rad * rad, 0.0, 1.0);
     float edgeAlpha = (texCol.a < 0.995) ? texCol.a : radialFade;
     maskAlpha *= edgeAlpha;
@@ -1124,9 +1132,10 @@ void main() {
     float falloff = exp(-3.4 * rad * rad);
     nOffset = centered * falloff;
     maskAlpha *= falloff;
+    sourceAlpha *= falloff;
   }
 
-  if (maskAlpha < 0.002) discard;
+  if (sourceAlpha < vMatParams.x || maskAlpha < 0.002) discard;
   vec2 screenUv = gl_FragCoord.xy * uInvViewport;
   vec2 refractedUv = clamp(screenUv + nOffset * uDistortionStrength * maskAlpha, vec2(0.002), vec2(0.998));
   vec3 refracted = texture2D(uSceneTex, refractedUv).rgb;
@@ -1163,6 +1172,7 @@ out float vHdr;
 out vec4 vUvRect;
 out vec4 vFlipbook;
 out vec3 vTint;
+flat out float vAlphaCutoff;
 
 vec3 unpackRgb24(float v) {
   float r = floor(v / 65536.0);
@@ -1238,19 +1248,8 @@ void main() {
   float noiseScroll = scrollQ * 0.25;
   float windMul = windQ * 0.25;
 
-  vec3 cutCam = unpackRgb24(aAtlasP11.x);
-  vec3 uvS = unpackRgb24(aAtlasP11.y);
-  vec3 uvOD = unpackRgb24(aAtlasP11.w);
-  float alphaCutoff = cutCam.x;
-  float camFadeNear = cutCam.y * 16.0;
-  float camFadeFar = cutCam.z * 32.0;
-  float uvScaleX = max(0.01, uvS.x * 8.0);
-  float uvScaleY = max(0.01, uvS.y * 8.0);
-  float uvOffX = uvS.z;
-  float uvOffY = uvOD.x;
-  float dissolveStart = uvOD.y;
-  vMatParams = vec4(alphaCutoff, max(0.0, aAtlasP11.z), dissolveStart, cullFlag);
-  vUvTransform = vec4(uvScaleX, uvScaleY, uvOffX, uvOffY);
+  // WebGL2 2D uses the 3D orbital-motion slot for the cutoff.
+  vAlphaCutoff = aAtlasP7.y;
 
   float k = aAtlasP2.z;
   vec2 worldPos;
@@ -1321,6 +1320,7 @@ precision highp float;
 uniform sampler2D uCurveLut;
 uniform sampler2D uAtlasTex;
 uniform float uHasAtlas;
+uniform int uBlendMode; // Straight RGB (0), multiply (1), premultiplied source (2).
 
 in vec2 vUv;
 in float vLifeRatio;
@@ -1329,6 +1329,7 @@ in float vHdr;
 in vec4 vUvRect;
 in vec4 vFlipbook;
 in vec3 vTint;
+flat in float vAlphaCutoff;
 
 out vec4 fragColor;
 
@@ -1381,8 +1382,16 @@ void main() {
   }
 
   float alpha = texCol.a * curveCol.a;
-  if (alpha < 0.0005) discard;
+  if (alpha < max(0.0005, vAlphaCutoff)) discard;
   vec3 rgb = texCol.rgb * curveCol.rgb * vTint * max(0.0, vHdr);
+  if (uBlendMode == 1) {
+    fragColor = vec4(mix(vec3(1.0), rgb, clamp(alpha, 0.0, 1.0)), 1.0);
+    return;
+  }
+  if (uBlendMode == 2) {
+    fragColor = vec4(rgb, alpha);
+    return;
+  }
   float peak = max(rgb.r, max(rgb.g, rgb.b));
   if (peak > 1.0 && alpha > 0.0 && alpha < 1.0) {
     float boost = min(peak, 1.0 / alpha);
@@ -1656,7 +1665,8 @@ export function createAtlasParticlePool({
     const uniforms = {
       uTime: { value: 0 },
       uIs2D: { value: is2D ? 1.0 : 0.0 },
-      uIsMultiply: { value: ch.blendMode === 'multiply' ? 1.0 : 0.0 },
+      uIsMultiply: { value: ch.blendMode === 'multiply' && THREE.CustomBlending ? 1.0 : 0.0 },
+      uIsPremultiply: { value: ch.blendMode === 'premultiply' && THREE.CustomBlending ? 1.0 : 0.0 },
       uCurveLut: { value: lut.texture },
       uAtlasTex: { value: activeAtlasTex },
       uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
@@ -1684,6 +1694,8 @@ export function createAtlasParticlePool({
           blendEquation: THREE.AddEquation,
           blendSrc: THREE.DstColorFactor,
           blendDst: THREE.ZeroFactor,
+          blendSrcAlpha: THREE.ZeroFactor,
+          blendDstAlpha: THREE.OneFactor,
         }
       : ch.blendMode === 'premultiply' && THREE.CustomBlending
         ? {
@@ -1748,6 +1760,7 @@ export function createAtlasParticlePool({
       uCurveLut: gl.getUniformLocation(glProg, 'uCurveLut'),
       uAtlasTex: gl.getUniformLocation(glProg, 'uAtlasTex'),
       uHasAtlas: gl.getUniformLocation(glProg, 'uHasAtlas'),
+      uBlendMode: gl.getUniformLocation(glProg, 'uBlendMode'),
       uWind2D: gl.getUniformLocation(glProg, 'uWind2D'),
       uEffectDeltas2D: gl.getUniformLocation(glProg, 'uEffectDeltas2D'),
     };
@@ -1999,7 +2012,7 @@ export function createAtlasParticlePool({
     ch.p6[i4 + 3] = opts.phase !== undefined ? opts.phase : prng.nextFloat();
 
     ch.p7[i4] = tintRgb24;
-    ch.p7[i4 + 1] = opts.orbitalY ?? 0;
+    ch.p7[i4 + 1] = mode === 'webgl2d' ? (opts.alphaCutoff ?? 0) : (opts.orbitalY ?? 0);
     ch.p7[i4 + 2] = opts.centerOffX ?? 0;
     ch.p7[i4 + 3] = opts.centerOffZ ?? 0;
 
@@ -2178,9 +2191,17 @@ export function createAtlasParticlePool({
       if (ch.distortion) continue;
       const activeCount = Math.min(ch.totalEmitted, ch.capacity);
       if (activeCount <= 0 || !ch.glVao) continue;
-      if (ch.blendMode === 'multiply') gl.blendFunc(gl.DST_COLOR, gl.ZERO);
-      else if (ch.blendMode === 'premultiply') gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      else gl.blendFunc(gl.SRC_ALPHA, ch.additive ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
+      if (ch.blendMode === 'multiply') {
+        gl.uniform1i(glUniforms.uBlendMode, 1);
+        gl.blendFuncSeparate(gl.DST_COLOR, gl.ZERO, gl.ZERO, gl.ONE);
+      } else if (ch.blendMode === 'premultiply') {
+        gl.uniform1i(glUniforms.uBlendMode, 2);
+        gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      } else {
+        gl.uniform1i(glUniforms.uBlendMode, 0);
+        const dst = ch.additive ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA;
+        gl.blendFuncSeparate(gl.SRC_ALPHA, dst, gl.ONE, dst);
+      }
       gl.bindVertexArray(ch.glVao);
       gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, activeCount);
     }
@@ -2366,9 +2387,10 @@ export function createAtlasParticlePool({
   }
 
   return {
+    get texture() { return activeAtlasTex; },
     capacity,
     lut,
-    regions,
+    get regions() { return regions; },
     compileCurves: lut.compile,
     setAtlas,
     setDepthTexture,

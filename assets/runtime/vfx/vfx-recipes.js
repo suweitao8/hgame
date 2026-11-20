@@ -963,8 +963,12 @@ export function createEffectPlayer({
     if (layer._kind === 'mesh' || layer.renderMode === 'mesh') {
       if (!meshVfx) return;
       const alignDir = Boolean(layer.alignToVelocity || layer.shape?.alignToDirection);
+      const texture = layer.sprite ? atlasParticles?.texture : null;
+      const textureRect = texture ? atlasParticles?.regions?.[layer.sprite] : null;
       const meshSlot = meshVfx.spawn({
         mesh: layer.mesh || 'crystal',
+        texture: textureRect ? texture : null,
+        textureRect,
         x: scratchPos[0],
         y: scratchPos[1],
         z: scratchPos[2],
