@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Real headless Chromium verification for demos/lookdev-realistic-3d/ using ephemeral test recipes
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
@@ -146,19 +147,49 @@ try {
     if (res.status() >= 400) { console.error('HTTPERR:', res.status(), res.url()); errors.push(`HTTP ${res.status()} ${res.url()}`); }
   });
 
-  // 1. Verify standalone empty Look-Dev stage (?manifest=) loads with 0 404s and 0 errors
+  // 1. Verify standalone empty Look-Dev stage (?manifest=) loads with 0 404s and 0 errors (HGame stores no assets)
   await page.goto(`${baseDemoUrl}?manifest=`, { waitUntil: 'load' });
   await page.waitForFunction(() => Boolean(window.__HGAME_LOOKDEV__?.isReady()), { timeout: 20000 });
   const emptyMetrics = await page.evaluate(() => window.__HGAME_LOOKDEV__.getMetrics());
   console.log('Empty stage metrics:', JSON.stringify(emptyMetrics));
 
-  // 2. Verify full 13-material, 11-mesh assets/procedural manifest in GPU-first HIGH mode
-  await page.goto(baseDemoUrl, { waitUntil: 'load' });
+  // Resolve procedural recipes from external WebAsset assets/procedural (or ephemeral inline fixture)
+  const webAssetProcDir = path.resolve(root, '..', 'WebAsset', 'assets', 'procedural');
+  const hasWebAssetProc = existsSync(path.join(webAssetProcDir, 'manifest.json'));
+
+  await page.route((url) => url.pathname.startsWith('/__ext_proc__/'), async (route) => {
+    const rel = new URL(route.request().url()).pathname.slice('/__ext_proc__/'.length);
+    if (hasWebAssetProc) {
+      const target = path.resolve(webAssetProcDir, rel);
+      if (target.startsWith(webAssetProcDir) && existsSync(target)) {
+        return route.fulfill({ contentType: 'application/json', body: await readFile(target, 'utf8') });
+      }
+      return route.fulfill({ status: 404, body: 'Not found' });
+    }
+    if (rel === 'manifest.json') {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_MANIFEST) });
+    }
+    const matMatch = /^materials\/([^/]+)\.hmat\.json$/.exec(rel);
+    if (matMatch && TEST_MATERIALS[matMatch[1]]) {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_MATERIALS[matMatch[1]]) });
+    }
+    const meshMatch = /^meshes\/([^/]+)\.hmesh\.json$/.exec(rel);
+    if (meshMatch && TEST_MESHES[meshMatch[1]]) {
+      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_MESHES[meshMatch[1]]) });
+    }
+    return route.fulfill({ status: 404, body: 'Not found' });
+  });
+
+  const extUrl = `${baseDemoUrl}?manifest=/__ext_proc__/manifest.json`;
+  const expectedMatCount = hasWebAssetProc ? 13 : 3;
+
+  // 2. Verify full WebAsset procedural manifest in GPU-first HIGH mode
+  await page.goto(extUrl, { waitUntil: 'load' });
   await page.waitForFunction(() => Boolean(window.__HGAME_LOOKDEV__?.isReady()), { timeout: 30000 });
   await page.waitForTimeout(350);
 
   const highMetrics = await page.evaluate(() => window.__HGAME_LOOKDEV__.getMetrics());
-  console.log('HIGH metrics (13 mats, 11 meshes):', JSON.stringify(highMetrics));
+  console.log(`HIGH metrics (${expectedMatCount} mats):`, JSON.stringify(highMetrics));
 
   if (highMetrics.bakeTimeMs > 1800) throw new Error(`HIGH bakeTimeMs (${highMetrics.bakeTimeMs}) > 1800ms`);
   if (highMetrics.bakeBackend !== 'gpu') {
@@ -166,7 +197,9 @@ try {
   }
   if (highMetrics.drawCalls > 18) throw new Error(`drawCalls (${highMetrics.drawCalls}) > 18`);
   if (highMetrics.staticDrawCalls > 8) throw new Error(`staticDrawCalls (${highMetrics.staticDrawCalls}) > 8`);
-  if (highMetrics.materialCount !== 13) throw new Error(`Expected 13 materials, got ${highMetrics.materialCount}`);
+  if (highMetrics.materialCount !== expectedMatCount) {
+    throw new Error(`Expected ${expectedMatCount} materials, got ${highMetrics.materialCount}`);
+  }
 
   await mkdir(shotsDir, { recursive: true });
   for (const preset of ['overview', 'brick_closeup', 'industrial', 'interior', 'plinths', 'puddle', 'character']) {
@@ -194,12 +227,12 @@ try {
   }
   await page.evaluate(() => window.__HGAME_LOOKDEV__.setBiomeMode('wet_moss'));
 
-  // Hot-reload real wet_stone_brick material & verify pixel delta
+  // Hot-reload wet_stone_brick material & verify pixel delta
   await page.evaluate(() => window.__HGAME_LOOKDEV__.setCameraPreset('brick_closeup'));
   await page.waitForTimeout(80);
-  const brickRecipe = JSON.parse(
-    await readFile(path.join(root, 'assets', 'procedural', 'materials', 'wet_stone_brick.hmat.json'), 'utf8')
-  );
+  const brickRecipe = hasWebAssetProc
+    ? JSON.parse(await readFile(path.join(webAssetProcDir, 'materials', 'wet_stone_brick.hmat.json'), 'utf8'))
+    : structuredClone(TEST_MATERIALS.wet_stone_brick);
   const colorNode = brickRecipe.nodes.find((n) => n.op === 'color_ramp');
   if (colorNode?.args?.stops?.[1]) colorNode.args.stops[1][1] = '#9a4f43';
   const beforeHotShot = await page.screenshot();
@@ -210,12 +243,18 @@ try {
     throw new Error('hotReloadMaterial did not update rendered pixels');
   }
 
-  // Hot-reload mesh (toggle shipping_container doors closed)
-  const contRecipe = JSON.parse(
-    await readFile(path.join(root, 'assets', 'procedural', 'meshes', 'shipping_container.hmesh.json'), 'utf8')
-  );
-  contRecipe.params.doorOpen = false;
-  await page.evaluate((r) => window.__HGAME_LOOKDEV__.hotReloadMesh(r), contRecipe);
+  // Hot-reload mesh
+  if (hasWebAssetProc) {
+    const contRecipe = JSON.parse(
+      await readFile(path.join(webAssetProcDir, 'meshes', 'shipping_container.hmesh.json'), 'utf8')
+    );
+    contRecipe.params.doorOpen = false;
+    await page.evaluate((r) => window.__HGAME_LOOKDEV__.hotReloadMesh(r), contRecipe);
+  } else {
+    const wallRecipe = structuredClone(TEST_MESHES.beveled_wall);
+    wallRecipe.params.hasWindow = false;
+    await page.evaluate((r) => window.__HGAME_LOOKDEV__.hotReloadMesh(r), wallRecipe);
+  }
 
   // Check LOW memory budget
   await page.evaluate(async () => { await window.__HGAME_LOOKDEV__.setQuality('LOW'); });
@@ -230,11 +269,11 @@ try {
     throw new Error(`GPU leak after dispose: ${JSON.stringify(remaining)}`);
   }
 
-  // 3. Measure CPU bake baseline on HIGH (13 mats @ 512px) for CPU vs GPU comparison
-  await page.goto(`${baseDemoUrl}?bakeMode=cpu`, { waitUntil: 'load' });
+  // 3. Measure CPU bake baseline on HIGH (same external manifest)
+  await page.goto(`${extUrl}&bakeMode=cpu`, { waitUntil: 'load' });
   await page.waitForFunction(() => Boolean(window.__HGAME_LOOKDEV__?.isReady()), { timeout: 60000 });
   const cpuMetrics = await page.evaluate(() => window.__HGAME_LOOKDEV__.getMetrics());
-  console.log('CPU HIGH metrics (13 mats, 512px):', JSON.stringify(cpuMetrics));
+  console.log(`CPU HIGH metrics (${expectedMatCount} mats, 512px):`, JSON.stringify(cpuMetrics));
   await page.evaluate(() => window.__HGAME_LOOKDEV__.disposeAndVerify());
 
   if (errors.length > 0) throw new Error(`Browser errors encountered:\n${errors.join('\n')}`);

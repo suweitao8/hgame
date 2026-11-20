@@ -5774,7 +5774,12 @@ async function createLookDevScene(options) {
   if (options.bundle) {
     await loader.loadFromRecipes(options.bundle.materials, options.bundle.meshes);
   } else if (manifestUrl2) {
-    await loader.loadManifest(manifestUrl2);
+    try {
+      await loader.loadManifest(manifestUrl2);
+    } catch {
+      await loader.loadFromRecipes([], []);
+      options.onAuditMessage?.(`External manifest unavailable (${manifestUrl2}); drop recipes to hot-reload`);
+    }
   } else {
     await loader.loadFromRecipes([], []);
   }
@@ -6272,7 +6277,7 @@ var tripoToggle = document.querySelector("#ctrl-tripo");
 var params = new URLSearchParams(location.search);
 var initialQuality = params.get("quality") === "LOW" ? "LOW" : "HIGH";
 var manifestParam = params.get("manifest");
-var manifestUrl = manifestParam !== null ? manifestParam : "../../assets/procedural/manifest.json";
+var manifestUrl = manifestParam !== null ? manifestParam : "http://127.0.0.1:4174/files/procedural/manifest.json";
 var initialBakeMode = params.get("bakeMode") ?? "auto";
 var initialBiome = params.get("biome") ?? "wet_moss";
 qualitySel.value = initialQuality;

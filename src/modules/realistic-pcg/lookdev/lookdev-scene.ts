@@ -285,7 +285,12 @@ export async function createLookDevScene(
   if (options.bundle) {
     await loader.loadFromRecipes(options.bundle.materials, options.bundle.meshes);
   } else if (manifestUrl) {
-    await loader.loadManifest(manifestUrl);
+    try {
+      await loader.loadManifest(manifestUrl);
+    } catch {
+      await loader.loadFromRecipes([], []);
+      options.onAuditMessage?.(`External manifest unavailable (${manifestUrl}); drop recipes to hot-reload`);
+    }
   } else {
     await loader.loadFromRecipes([], []);
   }

@@ -23,7 +23,8 @@ const tripoToggle = document.querySelector<HTMLInputElement>('#ctrl-tripo')!;
 const params = new URLSearchParams(location.search);
 const initialQuality = (params.get('quality') === 'LOW' ? 'LOW' : 'HIGH') as QualityTier;
 const manifestParam = params.get('manifest');
-const manifestUrl = manifestParam !== null ? manifestParam : '../../assets/procedural/manifest.json';
+const manifestUrl =
+  manifestParam !== null ? manifestParam : 'http://127.0.0.1:4174/files/procedural/manifest.json';
 const initialBakeMode = (params.get('bakeMode') as BakeMode | null) ?? 'auto';
 const initialBiome = (params.get('biome') as BiomeOverlayMode | null) ?? 'wet_moss';
 qualitySel.value = initialQuality;

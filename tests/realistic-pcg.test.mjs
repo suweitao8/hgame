@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -346,8 +346,11 @@ test('voxel chunk mesher culls hidden faces, computes 4-neighbor AO, and exports
   chunk.dispose();
 });
 
-test('assets/procedural Fable 5.2 bundle (13 materials, 11 meshes) validates, negates conditions, and evaluates cleanly', () => {
-  const procRoot = path.join(root, 'assets', 'procedural');
+test('WebAsset procedural Fable 5.2 bundle (13 materials, 11 meshes) validates, negates conditions, tiles seamlessly, and evaluates cleanly', () => {
+  const localProc = path.join(root, 'assets', 'procedural');
+  const webAssetProc = path.resolve(root, '..', 'WebAsset', 'assets', 'procedural');
+  const procRoot = existsSync(path.join(localProc, 'manifest.json')) ? localProc : webAssetProc;
+  if (!existsSync(path.join(procRoot, 'manifest.json'))) return; // Standalone HGame without sibling WebAsset
   const manifest = JSON.parse(readFileSync(path.join(procRoot, 'manifest.json'), 'utf8'));
   assert.equal(manifest.materials.length, 13);
   assert.equal(manifest.meshes.length, 11);
