@@ -1163,7 +1163,7 @@ function buildBlenderInspectArgs(inputPath, flags, defaultViews = '6', defaultEl
   return args;
 }
 
-function buildBlenderNormalizeArgs(inputPath, outPath, flags) {
+export function buildBlenderNormalizeArgs(inputPath, outPath, flags) {
   const args = [
     'normalize',
     '--input', assertAsciiPath(path.resolve(inputPath), 'Input model'),
@@ -1179,6 +1179,9 @@ function buildBlenderNormalizeArgs(inputPath, outPath, flags) {
   if (flags['target-faces'] || flags.targetFaces) {
     args.push('--target-faces', String(flags['target-faces'] || flags.targetFaces));
   }
+  if (flags['no-repair'] || flags.repair === false) args.push('--no-repair');
+  if (flags['prune-whiskers'] || flags.pruneWhiskers) args.push('--prune-whiskers');
+  if (flags['keep-largest-island'] || flags.keepLargestIsland) args.push('--keep-largest-island');
   if (flags['qa-dir'] || flags.qaDir) {
     args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
   }

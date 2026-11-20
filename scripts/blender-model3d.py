@@ -75,7 +75,7 @@ def compute_bounds(mesh_objs):
     }
 
 
-def collect_stats(mesh_objs):
+def collect_stats(mesh_objs, include_topology=True):
     meshes = []
     total_tris = 0
     total_verts = 0
@@ -115,7 +115,7 @@ def collect_stats(mesh_objs):
             "hasUv": has_uv,
             "materials": mats,
         })
-    return {
+    res = {
         "meshCount": len(mesh_objs),
         "triangles": total_tris,
         "vertices": total_verts,
@@ -124,6 +124,9 @@ def collect_stats(mesh_objs):
         "meshes": meshes,
         "bounds": compute_bounds(mesh_objs),
     }
+    if include_topology:
+        res["topologyAudit"] = audit_mesh_topology(mesh_objs)
+    return res
 
 
 def apply_all_transforms(objs):
@@ -135,6 +138,193 @@ def apply_all_transforms(objs):
         o.select_set(True)
     bpy.context.view_layer.objects.active = valid[0]
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+
+def _compute_face_islands(bm):
+    """Return sorted list (largest first) of connected face-sets using shared edges."""
+    visited = set()
+    islands = []
+    for f in bm.faces:
+        if f.index in visited:
+            continue
+        stack = [f]
+        visited.add(f.index)
+        comp = []
+        while stack:
+            cur = stack.pop()
+            comp.append(cur)
+            for e in cur.edges:
+                for nf in e.link_faces:
+                    if nf.index not in visited:
+                        visited.add(nf.index)
+                        stack.append(nf)
+        islands.append(comp)
+    islands.sort(key=len, reverse=True)
+    return islands
+
+
+def audit_mesh_topology(mesh_objs, spatial_weld=1e-4):
+    """Inspect raw & spatially welded topology (holes, loose verts/edges, floating islands)."""
+    import bmesh
+
+    totals = {
+        "looseVerts": 0,
+        "looseEdges": 0,
+        "boundaryEdges": 0,
+        "holeLoops": 0,
+        "nonManifoldEdges": 0,
+        "zeroAreaFaces": 0,
+        "spatialIslands": 0,
+        "tinyIslands": 0,
+    }
+    for o in mesh_objs:
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        if spatial_weld and spatial_weld > 0:
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=spatial_weld)
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+
+        totals["looseVerts"] += sum(1 for v in bm.verts if len(v.link_edges) == 0)
+        totals["looseEdges"] += sum(1 for e in bm.edges if len(e.link_faces) == 0)
+        totals["boundaryEdges"] += sum(1 for e in bm.edges if len(e.link_faces) == 1)
+        totals["nonManifoldEdges"] += sum(1 for e in bm.edges if len(e.link_faces) > 2)
+        totals["zeroAreaFaces"] += sum(1 for f in bm.faces if f.calc_area() < 1e-10)
+
+        b_edges = {e.index: e for e in bm.edges if len(e.link_faces) == 1}
+        b_seen = set()
+        for e_idx, e in b_edges.items():
+            if e_idx in b_seen:
+                continue
+            totals["holeLoops"] += 1
+            cur_e, cur_v = e, e.verts[0]
+            while True:
+                b_seen.add(cur_e.index)
+                nxt_v = cur_e.other_vert(cur_v)
+                nxt = next((le for le in nxt_v.link_edges if le.index in b_edges and le.index not in b_seen), None)
+                if nxt is None:
+                    break
+                cur_e, cur_v = nxt, nxt_v
+
+        islands = _compute_face_islands(bm)
+        totals["spatialIslands"] += len(islands)
+        main_len = len(islands[0]) if islands else 0
+        cutoff = max(24, int(main_len * 0.01))
+        totals["tinyIslands"] += sum(1 for comp in islands[1:] if len(comp) < cutoff)
+        bm.free()
+    return totals
+
+
+def repair_mesh_topology(
+    obj,
+    weld_dist=1e-5,
+    fill_holes=True,
+    max_hole_sides=128,
+    prune_whisker_spikes=False,
+    spike_passes=3,
+    min_island_faces=24,
+    min_island_ratio=0.01,
+    keep_largest_only=False,
+):
+    """Weld cracks, fill open holes, relax thin whisker spikes, and prune loose verts/edges/floating islands."""
+    import bmesh
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    stats = {
+        "removedLooseVerts": 0,
+        "removedLooseEdges": 0,
+        "removedZeroFaces": 0,
+        "removedIslands": 0,
+        "filledHoles": 0,
+        "relaxedSpikes": 0,
+    }
+
+    def strip_loose_and_degenerate():
+        bm.verts.ensure_lookup_table()
+        bm.edges.ensure_lookup_table()
+        bm.faces.ensure_lookup_table()
+        zfaces = [f for f in bm.faces if f.calc_area() < 1e-10]
+        if zfaces:
+            stats["removedZeroFaces"] += len(zfaces)
+            bmesh.ops.delete(bm, geom=zfaces, context="FACES")
+        ledges = [e for e in bm.edges if len(e.link_faces) == 0]
+        if ledges:
+            stats["removedLooseEdges"] += len(ledges)
+            bmesh.ops.delete(bm, geom=ledges, context="EDGES")
+        lverts = [v for v in bm.verts if len(v.link_edges) == 0]
+        if lverts:
+            stats["removedLooseVerts"] += len(lverts)
+            bmesh.ops.delete(bm, geom=lverts, context="VERTS")
+
+    strip_loose_and_degenerate()
+    if weld_dist and weld_dist > 0 and len(bm.verts) > 0:
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=weld_dist)
+        strip_loose_and_degenerate()
+
+    # Relax slender needle spikes (e.g. thin extruded cat whiskers) before decimation/voxelization
+    if prune_whisker_spikes and len(bm.verts) > 32:
+        for _ in range(spike_passes):
+            bm.verts.ensure_lookup_table()
+            updates = []
+            for v in bm.verts:
+                nb = [e.other_vert(v).co for e in v.link_edges]
+                if len(nb) < 3:
+                    continue
+                cent = sum(nb, mathutils.Vector((0.0, 0.0, 0.0))) / float(len(nb))
+                avg_edge = sum((c - v.co).length for c in nb) / float(len(nb))
+                if avg_edge <= 1e-6:
+                    continue
+                spread = sum((c - cent).length for c in nb) / float(len(nb))
+                disp = (v.co - cent).length
+                # Slender protrusion: tip extends sharply far from tightly clustered base ring
+                if disp > avg_edge * 0.72 and spread < disp * 1.15:
+                    updates.append((v, cent))
+            if not updates:
+                break
+            stats["relaxedSpikes"] += len(updates)
+            for v, target_co in updates:
+                v.co = v.co.lerp(target_co, 0.85)
+
+    # Close missing faces / open holes before decimation or voxel remesh
+    if fill_holes and len(bm.edges) > 0 and max_hole_sides > 0:
+        for _ in range(2):
+            bm.edges.ensure_lookup_table()
+            b_edges = [e for e in bm.edges if len(e.link_faces) == 1]
+            if not b_edges:
+                break
+            res = bmesh.ops.holes_fill(bm, edges=b_edges, sides=max_hole_sides)
+            new_faces = res.get("faces", []) if isinstance(res, dict) else []
+            if not new_faces:
+                break
+            stats["filledHoles"] += len(new_faces)
+            ngons = [f for f in new_faces if f.is_valid and len(f.verts) > 4]
+            if ngons:
+                bmesh.ops.triangulate(bm, faces=ngons)
+
+    # Prune disconnected floating debris (whisker droplets / stray artifacts)
+    bm.faces.ensure_lookup_table()
+    islands = _compute_face_islands(bm)
+    if len(islands) > 1:
+        main_count = len(islands[0])
+        cutoff = max(min_island_faces, int(main_count * min_island_ratio))
+        drop_faces = []
+        for idx, comp in enumerate(islands[1:], start=1):
+            if keep_largest_only or len(comp) < cutoff:
+                stats["removedIslands"] += 1
+                drop_faces.extend(comp)
+        if drop_faces:
+            bmesh.ops.delete(bm, geom=drop_faces, context="FACES")
+
+    strip_loose_and_degenerate()
+    if len(bm.faces) > 0:
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+
+    bm.to_mesh(obj.data)
+    bm.free()
+    obj.data.update()
+    return stats
 
 
 def look_at_euler(cam_pos, target, world_up=(0.0, 0.0, 1.0)):
@@ -284,6 +474,22 @@ def cmd_normalize(args):
         bpy.context.view_layer.update()
         apply_all_transforms(bpy.context.scene.objects)
 
+    pre_repair_logs = []
+    if not getattr(args, "no_repair", False):
+        for o in mesh_objs:
+            pre_repair_logs.append(
+                repair_mesh_topology(
+                    o,
+                    weld_dist=1e-5,
+                    fill_holes=True,
+                    max_hole_sides=128,
+                    prune_whisker_spikes=bool(getattr(args, "prune_whiskers", False)),
+                    min_island_faces=24,
+                    min_island_ratio=0.005,
+                    keep_largest_only=bool(getattr(args, "keep_largest_island", False)),
+                )
+            )
+
     # Optional triangle budget decimation while preserving UVs.
     if args.target_faces and args.target_faces > 0:
         cur_tris = sum(sum(max(0, len(p.vertices) - 2) for p in o.data.polygons) for o in mesh_objs)
@@ -300,10 +506,29 @@ def cmd_normalize(args):
                 bpy.ops.object.modifier_apply(modifier=mod.name)
                 o.select_set(False)
 
+    post_repair_logs = []
+    if not getattr(args, "no_repair", False):
+        for o in mesh_objs:
+            post_repair_logs.append(
+                repair_mesh_topology(
+                    o,
+                    weld_dist=1e-5,
+                    fill_holes=True,
+                    max_hole_sides=16,
+                    prune_whisker_spikes=False,
+                    min_island_faces=24,
+                    min_island_ratio=0.01,
+                    keep_largest_only=bool(getattr(args, "keep_largest_island", False)),
+                )
+            )
+
     out_dir = os.path.dirname(os.path.abspath(args.out))
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
-    bpy.ops.export_scene.gltf(filepath=args.out, export_format="GLB", export_apply=True)
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in mesh_objs:
+        o.select_set(True)
+    bpy.ops.export_scene.gltf(filepath=args.out, export_format="GLB", use_selection=True, export_apply=True)
 
     after = collect_stats(mesh_objs)
     result = {
@@ -311,6 +536,8 @@ def cmd_normalize(args):
         "output": os.path.abspath(args.out),
         "rotationDeg": [args.rx, args.ry, args.rz],
         "origin": args.origin,
+        "preRepair": pre_repair_logs,
+        "postRepair": post_repair_logs,
         "before": before,
         "after": after,
     }
@@ -602,14 +829,20 @@ def cmd_remesh_bake(args):
     bpy.ops.object.duplicate()
     qr_in = bpy.context.active_object
     qr_in.name = "QRIn"
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.mesh.remove_doubles(threshold=1e-5)
-    bpy.ops.mesh.delete_loose(use_verts=True, use_edges=True, use_faces=False)
-    bpy.ops.object.mode_set(mode="OBJECT")
     for uv in list(qr_in.data.uv_layers):
         qr_in.data.uv_layers.remove(uv)
     qr_in.data.materials.clear()
+    pre_remesh_repair = repair_mesh_topology(
+        qr_in,
+        weld_dist=1e-4,
+        fill_holes=True,
+        max_hole_sides=256,
+        prune_whisker_spikes=True,
+        spike_passes=4,
+        min_island_faces=24,
+        min_island_ratio=0.01,
+        keep_largest_only=False,
+    )
     cur_tris = len(qr_in.data.polygons)
     if cur_tris > 120000:
         dec = qr_in.modifiers.new("QRDecimate", "DECIMATE")
@@ -630,6 +863,14 @@ def cmd_remesh_bake(args):
     sm2.factor = 0.45
     sm2.iterations = 2
     bpy.ops.object.modifier_apply(modifier=sm2.name)
+    post_voxel_repair = repair_mesh_topology(
+        qr_in,
+        weld_dist=0.0,
+        fill_holes=True,
+        max_hole_sides=64,
+        prune_whisker_spikes=False,
+        keep_largest_only=True,
+    )
 
     qr_in_fbx = os.path.join(work_dir, "qr-input.fbx")
     qr_out_fbx = os.path.join(work_dir, "qr-output.fbx")
@@ -646,6 +887,16 @@ def cmd_remesh_bake(args):
     low.select_set(True)
     bpy.context.view_layer.objects.active = low
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    post_low_repair = repair_mesh_topology(
+        low,
+        weld_dist=1e-5,
+        fill_holes=True,
+        max_hole_sides=16,
+        prune_whisker_spikes=False,
+        min_island_faces=24,
+        min_island_ratio=0.01,
+        keep_largest_only=True,
+    )
     run_uv_unwrap(low, solver=args.uv_solver)
     for p in low.data.polygons:
         p.use_smooth = True
@@ -730,16 +981,17 @@ def cmd_remesh_bake(args):
         img.save()
         paths[ch] = out_p
 
-    # Weld split vertices on high mesh before Normal bake so tangents don't crack
+    # Weld split vertices & close open holes on high mesh before Normal bake so tangents don't crack
     if not args.no_weld_high:
-        bpy.ops.object.select_all(action="DESELECT")
-        high.select_set(True)
-        bpy.context.view_layer.objects.active = high
-        bpy.ops.object.mode_set(mode="EDIT")
-        bpy.ops.mesh.select_all(action="SELECT")
-        bpy.ops.mesh.remove_doubles(threshold=1e-5)
-        bpy.ops.mesh.normals_make_consistent(inside=False)
-        bpy.ops.object.mode_set(mode="OBJECT")
+        repair_mesh_topology(
+            high,
+            weld_dist=1e-5,
+            fill_holes=True,
+            max_hole_sides=128,
+            prune_whisker_spikes=False,
+            min_island_faces=24,
+            min_island_ratio=0.005,
+        )
     for p in high.data.polygons:
         p.use_smooth = True
 
@@ -864,6 +1116,11 @@ def cmd_remesh_bake(args):
         "output": os.path.abspath(args.out),
         "workDir": os.path.abspath(work_dir),
         "rig": rig_info,
+        "repair": {
+            "preRemesh": pre_remesh_repair,
+            "postVoxel": post_voxel_repair,
+            "postLow": post_low_repair,
+        },
         "stats": stats,
     }
     if args.qa_dir:
@@ -1855,6 +2112,9 @@ def main():
     p_norm.add_argument("--origin", default="ground", choices=["ground", "center", "keep"])
     p_norm.add_argument("--target-height", type=float, default=0.0)
     p_norm.add_argument("--target-faces", type=int, default=0)
+    p_norm.add_argument("--no-repair", action="store_true", default=False)
+    p_norm.add_argument("--prune-whiskers", action="store_true", default=False)
+    p_norm.add_argument("--keep-largest-island", action="store_true", default=False)
     p_norm.add_argument("--qa-dir", default="")
     p_norm.add_argument("--views", default="4", choices=["4", "6"])
     p_norm.add_argument("--size", type=int, default=512)

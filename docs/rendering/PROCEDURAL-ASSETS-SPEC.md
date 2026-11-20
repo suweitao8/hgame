@@ -1,8 +1,8 @@
 # HGame Procedural Modeling & Realistic PBR Material Standard (v1.0)
 
 > **Authority & Repository Boundary**  
-> **HGame** (`c:\Users\su\Desktop\HGame`) owns the specification, schema validators, geometry/material graph operators, shaders, and automated verification suite.  
-> **WebAsset** (`c:\Users\su\Desktop\WebAsset\assets\procedural\`) acts purely as the centralized asset storage, catalog manifest, and live preview gallery (`http://127.0.0.1:4174/#materials` and `#models`).
+> **HGame** (`<hgame-repo>`) owns the specification, schema validators, geometry/material graph operators, shaders, and automated verification suite.  
+> **WebAsset** (`<webasset-repo>/assets/procedural/`) acts purely as the centralized asset storage, catalog manifest, and live preview gallery (`http://127.0.0.1:4174/#materials` and `#models`).
 
 ---
 
@@ -37,7 +37,8 @@ All procedural `.hmesh.json` recipes must declare `meta.renderMode`:
    - Skinned or hero assets built with explicit armature/normalization (`TripoNormalizer` / `dummy-humanoid.ts`), strictly outside static batch pools.
 
 ### Topology & Collision Gates
-- Every generated geometry must pass [auditGeometry](../../src/modules/realistic-pcg/geometry/geometry-audit.ts): `0` degenerate triangles (`area >= 1e-7`), normalized vertex normals (`|n| - 1 < 0.02`), `0` inverted-winding triangles, finite UVs.
+- Every procedural geometry must pass [auditGeometry](../../src/modules/realistic-pcg/geometry/geometry-audit.ts): `0` degenerate triangles (`area >= 1e-7`), normalized vertex normals (`|n| - 1 < 0.02`), `0` inverted-winding triangles, finite UVs.
+- Every AI-generated / remeshed GLB (`process-model3d.mjs` + `blender-model3d.py`) must pass pre- and post-decimation `repair_mesh_topology`: weld spatial duplicates, **fill open holes before decimation/voxelization**, relax thin whisker spikes (`--prune-whiskers` / proxy pass), and **prune all post-decimation loose vertices, wire edges, and floating debris islands** (`looseVerts === 0`, `looseEdges === 0`, `tinyIslands === 0`).
 - Never feed high-detail render geometry directly to Rapier colliders; declare `meta.collider: "auto_boxes"` or use greedy voxel AABB merging (`collider-exporter.ts`).
 
 ---
@@ -65,7 +66,7 @@ All procedural `.hmesh.json` recipes must declare `meta.renderMode`:
 
 Whenever HGame updates `src/modules/realistic-pcg/`:
 1. `npm run build:realistic-pcg` (strict TypeScript check + demo bundle `demos/lookdev-realistic-3d/app.js`).
-2. Sync browser bundle to WebAsset when serving gallery previews: `C:\Users\su\Desktop\WebAsset\public\js\realistic-pcg.js`.
+2. Sync browser bundle to WebAsset when serving gallery previews: `<webasset-repo>/public/js/realistic-pcg.js`.
 3. `npm run validate:procedural` (validates every `.hmat.json`, `.hmesh.json`, DAG, seamless tiling, and `auditGeometry`).
 4. `node --test tests/realistic-pcg.test.mjs` and `npm test` (deterministic CPU parity, pool stress, zero dangling async handles).
 5. `npm run test:browser:realistic-pcg` (WebGL2 GPU-first + CPU fallback parity, DrawCall budget, biome switching, screenshot review, zero leaked GPU buffers/textures).

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 
 import {
   assertAsciiPath,
+  buildBlenderNormalizeArgs,
   buildTrellis2Prompt,
   buildUltratexPrompt,
   convertComfyUiWorkflowToApi,
@@ -564,4 +565,19 @@ test('resolveModel3dConfig resolves optional runAnimGlb without hardcoded paths'
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('buildBlenderNormalizeArgs forwards topology repair and whisker pruning flags cleanly', () => {
+  const args = buildBlenderNormalizeArgs('high.glb', 'low.glb', {
+    'target-faces': 4000,
+    'prune-whiskers': true,
+    'keep-largest-island': true,
+  });
+  assert.equal(args[0], 'normalize');
+  assert.ok(args.includes('--prune-whiskers'));
+  assert.ok(args.includes('--keep-largest-island'));
+  assert.equal(args.includes('--no-repair'), false);
+
+  const rawArgs = buildBlenderNormalizeArgs('high.glb', 'raw.glb', { 'no-repair': true });
+  assert.ok(rawArgs.includes('--no-repair'));
 });
