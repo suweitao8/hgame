@@ -1,5 +1,5 @@
 // src/modules/realistic-pcg/lookdev/lookdev-scene.ts
-import * as THREE10 from "three";
+import * as THREE11 from "three";
 
 // src/modules/realistic-pcg/core/quality-presets.ts
 var REALISTIC_QUALITY_PRESETS = {
@@ -773,6 +773,11 @@ function createAtmospherePipeline(renderer, scene, options = {}) {
 // src/modules/realistic-pcg/materials/world-pbr-shader.ts
 import * as THREE4 from "three";
 var MAX_MATERIAL_SLOTS = 16;
+function biomeModeToInt(mode) {
+  if (mode === "desert_dust") return 1;
+  if (mode === "clean_indoor") return 2;
+  return 0;
+}
 function buildTileMetersArray(texArray) {
   const arr = new Array(MAX_MATERIAL_SLOTS).fill(1);
   const src = texArray.tileMetersById;
@@ -793,7 +798,10 @@ function createWorldPbrMaterial(options) {
     uGlobalWetness: { value: options.globalWetness ?? 0.45 },
     uGroundHeight: { value: options.groundHeight ?? 0 },
     uNormalStrength: { value: options.normalStrength ?? 1 },
-    uMacroStrength: { value: options.macroStrength ?? 0.14 }
+    uMacroStrength: { value: options.macroStrength ?? 0.14 },
+    uBiomeMode: { value: biomeModeToInt(options.biomeMode ?? "wet_moss") },
+    uBiomeStrength: { value: options.biomeStrength ?? 1 },
+    uTime: { value: 0 }
   };
   const material = new THREE4.MeshStandardMaterial({
     color: 16777215,
@@ -802,7 +810,7 @@ function createWorldPbrMaterial(options) {
     vertexColors: true,
     envMapIntensity: options.envMapIntensity ?? 1
   });
-  material.customProgramCacheKey = () => useTriplanar ? "hgame-world-pbr-triplanar-v1" : "hgame-world-pbr-metric-v1";
+  material.customProgramCacheKey = () => useTriplanar ? "hgame-world-pbr-triplanar-v2" : "hgame-world-pbr-metric-v2";
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     if (useTriplanar) {
@@ -845,6 +853,9 @@ uniform float uGlobalWetness;
 uniform float uGroundHeight;
 uniform float uNormalStrength;
 uniform float uMacroStrength;
+uniform int uBiomeMode;
+uniform float uBiomeStrength;
+uniform float uTime;
 
 varying float vPcgMatId;
 varying vec2 vPcgUv;
@@ -866,6 +877,20 @@ float pcgNoise2( vec2 p ) {
   float c = pcgHash21( i + vec2( 0.0, 1.0 ) );
   float d = pcgHash21( i + vec2( 1.0, 1.0 ) );
   return mix( mix( a, b, u.x ), mix( c, d, u.x ), u.y );
+}
+
+// Raindrop concentric ripples on standing puddles (inspired by saltline ground shader)
+vec2 pcgRainRipple( vec2 xz, float t ) {
+  vec2 cell = floor( xz * 1.35 );
+  vec2 f = fract( xz * 1.35 ) - 0.5;
+  float rnd = pcgHash21( cell );
+  float phase = fract( t * 0.65 + rnd );
+  vec2 center = vec2( pcgHash21( cell + 3.1 ), pcgHash21( cell + 7.9 ) ) - 0.5;
+  vec2 d = f - center * 0.45;
+  float dist = length( d );
+  float ring = sin( ( dist - phase * 0.48 ) * 46.0 ) * exp( -dist * 9.0 ) * ( 1.0 - phase );
+  float env = smoothstep( 0.48, 0.05, dist );
+  return normalize( d + 1e-4 ) * ring * env * 0.045;
 }
 
 mat3 pcgTangentFrame( vec3 eye_pos, vec3 surf_norm, vec2 uv ) {
@@ -927,47 +952,68 @@ float pcgLocalWet = 0.0;
   pcgLocalWet = clamp( vColor.b, 0.0, 1.0 );
 #endif
 
-// 1. Macro world-space variation (8m + 24m) & wetness / puddles
+// 1. Macro world-space variation (8m + 24m)
 float pcgMacro8 = pcgNoise2( vPcgWorldPos.xz * 0.125 );
 float pcgMacro24 = pcgNoise2( vPcgWorldPos.xz * 0.0416667 + vec2( 7.3, 19.1 ) );
 float pcgMacroVar = ( pcgMacro8 * 0.65 + pcgMacro24 * 0.35 ) * 2.0 - 1.0;
 pcgAlbedo *= ( 1.0 + pcgMacroVar * uMacroStrength );
 
-float pcgWetness = clamp( uGlobalWetness * 0.85 + pcgLocalWet * 0.85, 0.0, 1.0 );
-pcgAlbedo *= mix( 1.0, 1.0 - pcgPorosity * 0.42, pcgWetness );
-pcgRoughness = mix( pcgRoughness, max( 0.18, pcgRoughness * ( 1.0 - pcgPorosity * 0.45 ) ), pcgWetness );
-
 vec3 pcgWorldN = normalize( vPcgWorldNormal );
-float pcgPuddleNoise = pcgNoise2( vPcgWorldPos.xz * 0.32 + vec2( 3.1, 5.7 ) );
-float pcgUpFlat = smoothstep( 0.85, 0.96, pcgWorldN.y );
-float pcgPuddleDriver = clamp( uGlobalWetness * 0.55 + pcgLocalWet * 0.95, 0.0, 1.3 );
-float pcgPuddleMask = smoothstep( 0.42, 0.64, pcgPuddleNoise * 0.35 + pcgLocalWet * 0.85 )
-                    * pcgUpFlat
-                    * smoothstep( 0.30, 0.68, pcgPuddleDriver );
-pcgAlbedo = mix( pcgAlbedo, pcgAlbedo * 0.40, pcgPuddleMask * 0.88 );
-pcgRoughness = mix( pcgRoughness, 0.04, pcgPuddleMask );
+float pcgPuddleMask = 0.0;
 
-// 2. Orientation moss/dust & ground-contact grime
-float pcgMossNoise = pcgNoise2( vPcgWorldPos.xz * 0.45 + vec2( 11.4, 2.8 ) );
-float pcgUpMask = smoothstep( 0.60, 0.88, pcgWorldN.y );
-float pcgMossMask = pcgUpMask * smoothstep( 0.52, 0.82, pcgMossNoise * 0.7 + ( 1.0 - pcgHeight ) * 0.35 ) * ( 1.0 - pcgPuddleMask ) * ( 1.0 - pcgMetalness );
-vec3 pcgMossCol = vec3( 0.055, 0.085, 0.035 );
-pcgAlbedo = mix( pcgAlbedo, pcgMossCol, pcgMossMask * 0.38 );
-pcgRoughness = mix( pcgRoughness, 0.92, pcgMossMask * 0.35 );
+if ( uBiomeMode == 0 ) {
+  // ---- BIOME 0: wet_moss (rain dampness, standing puddles, moss & ground mud) ----
+  float pcgWetness = clamp( ( uGlobalWetness * 0.85 + pcgLocalWet * 0.85 ) * uBiomeStrength, 0.0, 1.0 );
+  pcgAlbedo *= mix( 1.0, 1.0 - pcgPorosity * 0.42, pcgWetness );
+  pcgRoughness = mix( pcgRoughness, max( 0.16, pcgRoughness * ( 1.0 - pcgPorosity * 0.48 ) ), pcgWetness );
 
-float pcgGroundProx = 1.0 - smoothstep( uGroundHeight, uGroundHeight + 0.6, vPcgWorldPos.y );
-float pcgGrimeMask = pcgGroundProx * ( 0.55 + 0.45 * pcgMacro8 );
-pcgAlbedo = mix( pcgAlbedo, pcgAlbedo * 0.68, pcgGrimeMask * 0.65 );
-pcgRoughness = mix( pcgRoughness, 0.86, pcgGrimeMask * 0.25 );
+  float pcgPuddleNoise = pcgNoise2( vPcgWorldPos.xz * 0.32 + vec2( 3.1, 5.7 ) );
+  float pcgUpFlat = smoothstep( 0.85, 0.96, pcgWorldN.y );
+  float pcgPuddleDriver = clamp( uGlobalWetness * 0.55 + pcgLocalWet * 0.95, 0.0, 1.3 );
+  pcgPuddleMask = smoothstep( 0.42, 0.64, pcgPuddleNoise * 0.35 + pcgLocalWet * 0.85 )
+                * pcgUpFlat
+                * smoothstep( 0.30, 0.68, pcgPuddleDriver )
+                * uBiomeStrength;
+  pcgAlbedo = mix( pcgAlbedo, pcgAlbedo * 0.40, pcgPuddleMask * 0.88 );
+  pcgRoughness = mix( pcgRoughness, 0.04, pcgPuddleMask );
+
+  float pcgMossNoise = pcgNoise2( vPcgWorldPos.xz * 0.45 + vec2( 11.4, 2.8 ) );
+  float pcgUpMask = smoothstep( 0.60, 0.88, pcgWorldN.y );
+  float pcgMossMask = pcgUpMask * smoothstep( 0.52, 0.82, pcgMossNoise * 0.7 + ( 1.0 - pcgHeight ) * 0.35 ) * ( 1.0 - pcgPuddleMask ) * ( 1.0 - pcgMetalness ) * uBiomeStrength;
+  vec3 pcgMossCol = vec3( 0.055, 0.085, 0.035 );
+  pcgAlbedo = mix( pcgAlbedo, pcgMossCol, pcgMossMask * 0.40 );
+  pcgRoughness = mix( pcgRoughness, 0.92, pcgMossMask * 0.35 );
+
+  float pcgGroundProx = 1.0 - smoothstep( uGroundHeight, uGroundHeight + 0.6, vPcgWorldPos.y );
+  float pcgGrimeMask = pcgGroundProx * ( 0.55 + 0.45 * pcgMacro8 ) * uBiomeStrength;
+  pcgAlbedo = mix( pcgAlbedo, pcgAlbedo * 0.68, pcgGrimeMask * 0.65 );
+  pcgRoughness = mix( pcgRoughness, 0.86, pcgGrimeMask * 0.25 );
+} else if ( uBiomeMode == 1 ) {
+  // ---- BIOME 1: desert_dust (inspired by worm-rider shared sand/dust PBR overlay) ----
+  float pcgDustNoise = pcgNoise2( vPcgWorldPos.xz * 0.22 + vec2( 5.1, 8.7 ) );
+  float pcgStreak = pcgNoise2( vec2( ( abs( pcgWorldN.x ) > abs( pcgWorldN.z ) ? vPcgWorldPos.z : vPcgWorldPos.x ) * 0.9, vPcgWorldPos.y * 0.35 ) );
+  float pcgDustStreak = mix( 1.0, 0.6 + 0.8 * pcgStreak, 1.0 - abs( pcgWorldN.y ) );
+  float pcgUpDust = smoothstep( 0.45, 0.96, pcgWorldN.y ) * 0.72;
+  float pcgLowDust = ( 1.0 - smoothstep( uGroundHeight, uGroundHeight + 1.4, vPcgWorldPos.y ) ) * 0.65;
+  float pcgDustMask = clamp( ( max( pcgUpDust, pcgLowDust ) + 0.08 ) * ( 0.22 + 1.9 * pcgDustNoise * pcgDustNoise ) * pcgDustStreak * uBiomeStrength, 0.0, 0.92 );
+  vec3 pcgDustCol = vec3( 0.43, 0.23, 0.11 ) * ( 0.82 + 0.36 * pcgMacro8 );
+  pcgAlbedo = mix( pcgAlbedo, pcgDustCol, pcgDustMask );
+  pcgRoughness = mix( pcgRoughness, 0.95, pcgDustMask );
+  pcgMetalness *= ( 1.0 - pcgDustMask );
+} else {
+  // ---- BIOME 2: clean_indoor (architectural dry interior, minimal contact shadow grime) ----
+  float pcgGroundProx = 1.0 - smoothstep( uGroundHeight, uGroundHeight + 0.25, vPcgWorldPos.y );
+  pcgAlbedo *= ( 1.0 - pcgGroundProx * 0.08 * uBiomeStrength );
+}
 
 // 3. Edge wear highlight
 pcgAlbedo *= ( 1.0 + pcgEdgeWear * 0.13 );
-pcgRoughness = clamp( pcgRoughness - pcgEdgeWear * 0.14, 0.06, 0.98 );
+pcgRoughness = clamp( pcgRoughness - pcgEdgeWear * 0.14, 0.04, 0.98 );
 
 diffuseColor.rgb = clamp( pcgAlbedo, 0.01, 0.96 );`
     ).replace(
       "#include <roughnessmap_fragment>",
-      `float roughnessFactor = clamp( pcgRoughness, 0.06, 0.98 );`
+      `float roughnessFactor = clamp( pcgRoughness, 0.04, 0.98 );`
     ).replace(
       "#include <metalnessmap_fragment>",
       `float metalnessFactor = clamp( pcgMetalness, 0.0, 1.0 );`
@@ -978,8 +1024,10 @@ pcgMapN.xy *= uNormalStrength;
 mat3 pcgTbn = pcgTangentFrame( -vViewPosition, normal, pcgSampleUv );
 normal = normalize( pcgTbn * pcgMapN );
 if ( pcgPuddleMask > 0.001 ) {
-  vec3 pcgViewUp = normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz );
-  normal = normalize( mix( normal, pcgViewUp, pcgPuddleMask * 0.92 ) );
+  vec2 pcgRip = pcgRainRipple( vPcgWorldPos.xz, uTime ) * smoothstep( 0.2, 0.9, uGlobalWetness );
+  vec3 pcgRipWorld = normalize( vec3( pcgRip.x, 1.0, pcgRip.y ) );
+  vec3 pcgViewUp = normalize( ( viewMatrix * vec4( pcgRipWorld, 0.0 ) ).xyz );
+  normal = normalize( mix( normal, pcgViewUp, pcgPuddleMask * 0.94 ) );
 }`
     ).replace(
       "#include <aomap_fragment>",
@@ -1003,6 +1051,15 @@ reflectedLight.indirectDiffuse *= pcgTotalAO;
     setNormalStrength(strength) {
       uniforms.uNormalStrength.value = Math.max(0, strength);
     },
+    setBiomeMode(mode) {
+      uniforms.uBiomeMode.value = biomeModeToInt(mode);
+    },
+    setBiomeStrength(strength) {
+      uniforms.uBiomeStrength.value = Math.max(0, Math.min(1, strength));
+    },
+    setTime(timeSec) {
+      uniforms.uTime.value = timeSec;
+    },
     syncTextureArray(texArray) {
       uniforms.uAlbedoArray.value = texArray.albedoArray;
       uniforms.uNormalArray.value = texArray.normalArray;
@@ -1019,7 +1076,7 @@ reflectedLight.indirectDiffuse *= pcgTotalAO;
 }
 
 // src/modules/realistic-pcg/materials/texture-array-baker.ts
-import * as THREE5 from "three";
+import * as THREE6 from "three";
 
 // src/modules/realistic-pcg/core/prng.ts
 function hash2i(ix, iy, seed) {
@@ -1155,6 +1212,21 @@ function fillFbm2DRows(out, size, yStart, yEnd, scale, octaves, persistence, lac
       out[rowOff + x] = val < 0 ? 0 : val > 1 ? 1 : val;
     }
   }
+}
+function fbm2DPeriodic(u, v, scale, octaves, persistence, lacunarity, seed) {
+  let sum = 0;
+  let amp = 1;
+  let maxAmp = 0;
+  let freq = Math.max(1, Math.round(scale));
+  const lac = Math.max(1, Math.round(lacunarity));
+  for (let o = 0; o < octaves; o++) {
+    sum += perlin2DPeriodic(u, v, freq, freq, seed + o * 1013 | 0) * amp;
+    maxAmp += amp;
+    amp *= persistence;
+    freq *= lac;
+  }
+  const normalized = maxAmp > 0 ? sum / maxAmp : 0;
+  return Math.max(0, Math.min(1, normalized * 0.5 + 0.5));
 }
 function worley2DPeriodic(u, v, scale, jitter, seed, out = { f1: 0, f2: 0, f2MinusF1: 0, cellRand: 0 }) {
   const period = Math.max(1, Math.round(scale));
@@ -1434,6 +1506,9 @@ function resolveNumber(raw, params2 = {}, fallback) {
 }
 function resolveBoolean(raw, params2 = {}, fallback = false) {
   if (raw === void 0) return fallback;
+  if (typeof raw === "string" && raw.startsWith("!")) {
+    return !resolveBoolean(raw.slice(1).trim(), params2, !fallback);
+  }
   const v = resolveParamValue(raw, params2);
   if (typeof v === "boolean") return v;
   if (typeof v === "number") return v !== 0;
@@ -1460,6 +1535,12 @@ var VALID_MAT_OPS = /* @__PURE__ */ new Set([
   "plank_pattern",
   "stripes",
   "speckle",
+  "corrugated_wave",
+  "edge_wear_mask",
+  "vertical_streak",
+  "rivet_grid",
+  "sand_ripples",
+  "fabric_weave",
   "remap",
   "clamp",
   "invert",
@@ -1479,6 +1560,8 @@ var VALID_MESH_OPS = /* @__PURE__ */ new Set([
   "stairs",
   "displaced_rock",
   "extrude_profile",
+  "corrugated_panel",
+  "pipe_segment",
   "ref"
 ]);
 var HEX_COLOR_RE = /^#([0-9a-fA-F]{6})$/;
@@ -1502,9 +1585,10 @@ function hexLinearLuminance(hex) {
 }
 function collectParamAndExprIssues(value, params2, recipeId, fieldPath, issues) {
   if (typeof value === "string") {
-    if (value.startsWith("expr:")) {
+    const trimmed = value.startsWith("!") ? value.slice(1).trim() : value;
+    if (trimmed.startsWith("expr:")) {
       try {
-        const refs = extractExprParamRefs(value);
+        const refs = extractExprParamRefs(trimmed);
         for (const r of refs) {
           if (!(r in params2)) {
             issues.push({
@@ -1523,8 +1607,8 @@ function collectParamAndExprIssues(value, params2, recipeId, fieldPath, issues) 
           message: err instanceof Error ? err.message : String(err)
         });
       }
-    } else if (value.startsWith("$")) {
-      const name = value.slice(1);
+    } else if (trimmed.startsWith("$")) {
+      const name = trimmed.slice(1);
       if (!(name in params2)) {
         issues.push({
           severity: "error",
@@ -2058,6 +2142,22 @@ function createMaterialBakeJob(recipe, size, paramOverrides) {
       ports.set(`${node.id}.mask`, { kind: "scalar", data: mask });
       ports.set(`${node.id}.cellRand`, { kind: "scalar", data: cellRand });
       ports.set(`${node.id}.nails`, { kind: "scalar", data: nails });
+    } else if (node.op === "corrugated_wave") {
+      const height = new Float32Array(pixelCount);
+      const ridge = new Float32Array(pixelCount);
+      const edge = new Float32Array(pixelCount);
+      curBuffers = { height, ridge, edge };
+      ports.set(node.id, { kind: "scalar", data: height });
+      ports.set(`${node.id}.height`, { kind: "scalar", data: height });
+      ports.set(`${node.id}.ridge`, { kind: "scalar", data: ridge });
+      ports.set(`${node.id}.edge`, { kind: "scalar", data: edge });
+    } else if (node.op === "rivet_grid") {
+      const height = new Float32Array(pixelCount);
+      const mask = new Float32Array(pixelCount);
+      curBuffers = { height, mask };
+      ports.set(node.id, { kind: "scalar", data: height });
+      ports.set(`${node.id}.height`, { kind: "scalar", data: height });
+      ports.set(`${node.id}.mask`, { kind: "scalar", data: mask });
     } else if (node.op === "height_to_normal" || node.op === "mix_color" || node.op === "color_ramp") {
       const rgb = new Float32Array(pixelCount * 3);
       curBuffers = { rgb };
@@ -2261,8 +2361,199 @@ function createMaterialBakeJob(recipe, size, paramOverrides) {
             maskB[idx] = mask;
             crB[idx] = randVal;
             nailsB[idx] = nail;
+            const fiber = perlin2DPeriodic(u, v, planks * 14, joints * 3, seed + 557) * 0.06;
             const plankBias = 1 - variation * 0.25 + (randVal - 0.5) * variation * 0.3;
-            heightB[idx] = clamp01(0.12 + mask * bev * 0.78 * plankBias - nail * 0.22);
+            heightB[idx] = clamp01(0.12 + mask * bev * 0.78 * plankBias + fiber * mask - nail * 0.22);
+          }
+        }
+        return true;
+      }
+      case "corrugated_wave": {
+        const count = Math.max(1, Math.round(resolveNumber(args.count, params2, 5)));
+        const axis = String(args.axis ?? "x");
+        const fin = clamp01(resolveNumber(args.fin, params2, 0.26));
+        const slope = Math.max(0.02, clamp01(resolveNumber(args.slope, params2, 0.24)));
+        const fout = clamp01(resolveNumber(args.fout, params2, 0.26));
+        const depth = clamp01(resolveNumber(args.depth, params2, 1));
+        const heightB = curBuffers.height;
+        const ridgeB = curBuffers.ridge;
+        const edgeB = curBuffers.edge;
+        const t1 = fin;
+        const t2 = t1 + slope;
+        const t3 = t2 + fout;
+        const t4 = Math.min(1, t3 + slope);
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const coord = axis === "y" ? v : u;
+            const ph = coord * count % 1;
+            let h = 0;
+            let ridge = 0;
+            let edge = 0;
+            if (ph < t1) {
+              h = 0;
+            } else if (ph < t2) {
+              const t = (ph - t1) / slope;
+              h = smoothstep(0, 1, t);
+              ridge = smoothstep(0.45, 0.95, t);
+              edge = Math.sin(t * Math.PI);
+            } else if (ph < t3) {
+              h = 1;
+              ridge = 1;
+              const dEdge = Math.min(ph - t2, t3 - ph);
+              edge = 1 - smoothstep(0, 0.04, dEdge);
+            } else if (ph < t4) {
+              const t = 1 - (ph - t3) / Math.max(0.01, t4 - t3);
+              h = smoothstep(0, 1, t);
+              ridge = smoothstep(0.45, 0.95, t);
+              edge = Math.sin(t * Math.PI);
+            }
+            const idx = rowOff + x;
+            heightB[idx] = h * depth;
+            ridgeB[idx] = ridge;
+            edgeB[idx] = edge;
+          }
+        }
+        return true;
+      }
+      case "edge_wear_mask": {
+        const src = resolveScalarBuf(args.input, 0.5);
+        const low = resolveNumber(args.low, params2, 0.35);
+        const high = resolveNumber(args.high, params2, 0.65);
+        const noiseScale = Math.max(2, Math.round(resolveNumber(args.noiseScale, params2, 10)));
+        const spread = resolveNumber(args.spread, params2, 0.45);
+        const out = curBuffers.out;
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const ym = y === 0 ? size - 1 : y - 1;
+          const yp = y + 1 >= size ? 0 : y + 1;
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const idx = rowOff + x;
+            const val = typeof src === "number" ? src : src[idx];
+            let grad = 0;
+            if (typeof src !== "number") {
+              const xm = x === 0 ? size - 1 : x - 1;
+              const xp = x + 1 >= size ? 0 : x + 1;
+              const dx = src[rowOff + xp] - src[rowOff + xm];
+              const dy = src[yp * size + x] - src[ym * size + x];
+              grad = Math.min(1, Math.hypot(dx, dy) * 3.5);
+            }
+            const n = fbm2DPeriodic((x + 0.5) * invSize, v, noiseScale, 3, 0.55, 2, seed + 433);
+            const raw = clamp01(val * 0.65 + grad * 0.55 + (n - 0.5) * spread);
+            out[idx] = smoothstep(low, high, raw);
+          }
+        }
+        return true;
+      }
+      case "vertical_streak": {
+        const scaleX = Math.max(2, Math.round(resolveNumber(args.scaleX, params2, 14)));
+        const scaleY = Math.max(1, Math.round(resolveNumber(args.scaleY, params2, 3)));
+        const threshold = resolveNumber(args.threshold, params2, 0.54);
+        const decayPerTile = resolveNumber(args.decay, params2, 0.16);
+        const seedOff = Math.round(resolveNumber(args.seedOffset, params2, 0));
+        const srcInput = args.input ? resolveScalarBuf(args.input, 0) : null;
+        const out = curBuffers.out;
+        const dec = Math.exp(-0.693 / Math.max(0.02, decayPerTile * size));
+        if (yStart === 0) {
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const colMask = smoothstep(
+              0.25,
+              0.78,
+              perlin2DPeriodic(u, 0.37, scaleX, 1, seed + 811 + seedOff) * 0.5 + 0.5
+            );
+            let streak = 0;
+            for (let pass = 0; pass < 2; pass++) {
+              for (let y = size - 1; y >= 0; y--) {
+                const v = (y + 0.5) * invSize;
+                const i = y * size + x;
+                const n = fbm2DPeriodic(u, v, scaleX, 3, 0.52, 2, seed + 887 + seedOff);
+                const base = srcInput ? typeof srcInput === "number" ? srcInput : srcInput[i] : n;
+                const src = smoothstep(threshold - 0.06, threshold + 0.06, base * 0.65 + n * 0.35);
+                streak = Math.max(src * colMask, streak * dec);
+                if (pass === 1) {
+                  out[i] = clamp01(streak * streak * (1 - src * 0.45));
+                }
+              }
+            }
+          }
+          rowIdx = size;
+        }
+        return true;
+      }
+      case "rivet_grid": {
+        const cols = Math.max(1, Math.round(resolveNumber(args.cols, params2, 4)));
+        const rows = Math.max(1, Math.round(resolveNumber(args.rows, params2, 2)));
+        const radius = Math.max(0.01, resolveNumber(args.radius, params2, 0.08));
+        const heightB = curBuffers.height;
+        const maskB = curBuffers.mask;
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const fy = v * rows % 1 - 0.5;
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const fx = u * cols % 1 - 0.5;
+            const d = Math.hypot(fx, fy) / radius;
+            const m = d < 1 ? 1 - smoothstep(0.75, 1, d) : 0;
+            const dome = d < 1 ? Math.sqrt(Math.max(0, 1 - d * d)) : 0;
+            const idx = rowOff + x;
+            maskB[idx] = m;
+            heightB[idx] = dome;
+          }
+        }
+        return true;
+      }
+      case "sand_ripples": {
+        const freq = resolveNumber(args.freq, params2, 16);
+        const warpScale = Math.max(1, Math.round(resolveNumber(args.warpScale, params2, 3)));
+        const warpStrength = resolveNumber(args.warpStrength, params2, 4.2);
+        const sharpness = resolveNumber(args.sharpness, params2, 1.7);
+        const grainScale = Math.max(4, Math.round(resolveNumber(args.grainScale, params2, 28)));
+        const out = curBuffers.out;
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const w = fbm2DPeriodic(u, v, warpScale, 3, 0.5, 2, seed + 101);
+            const w2 = fbm2DPeriodic(u, v, warpScale * 3, 2, 0.5, 2, seed + 211);
+            const rr = 0.5 + 0.5 * Math.sin((v * freq + w * warpStrength + w2 * 1.1) * Math.PI * 2);
+            const patch = smoothstep(0.25, 0.62, w + 0.15);
+            const rip = Math.pow(rr, sharpness) * patch;
+            const fine = fbm2DPeriodic(u, v, grainScale, 2, 0.5, 2, seed + 313);
+            out[rowOff + x] = clamp01(rip * 0.72 + fine * 0.28);
+          }
+        }
+        return true;
+      }
+      case "fabric_weave": {
+        const threads = Math.max(4, Math.round(resolveNumber(args.threads, params2, 48)));
+        const slub = resolveNumber(args.slub, params2, 0.3);
+        const out = curBuffers.out;
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const py = v * threads;
+          const iy = Math.floor(py);
+          const fy = py - iy;
+          const wy = 0.75 + slub * ((hash2i(3, wrapIdx(iy, threads), seed + 53) & 65535) / 65535 - 0.5) * 1.4;
+          const ty = Math.max(0, 1 - Math.abs(fy - 0.5) * 2 / wy);
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const px = u * threads;
+            const ix = Math.floor(px);
+            const fx = px - ix;
+            const over = (ix + iy & 1) === 1;
+            const wx = 0.75 + slub * ((hash2i(wrapIdx(ix, threads), 7, seed + 59) & 65535) / 65535 - 0.5) * 1.4;
+            const tx = Math.max(0, 1 - Math.abs(fx - 0.5) * 2 / wx);
+            const warp = Math.sqrt(tx) * (over ? 1 : 0.52) * (0.62 + 0.38 * Math.sin(fy * Math.PI));
+            const weft = Math.sqrt(ty) * (over ? 0.52 : 1) * (0.62 + 0.38 * Math.sin(fx * Math.PI));
+            const n = perlin2DPeriodic(u, v, threads, threads, seed + 61) * 0.5 * 0.16 * slub;
+            out[rowOff + x] = clamp01(Math.max(warp, weft) + n);
           }
         }
         return true;
@@ -2804,16 +3095,767 @@ function createMaterialBakeJob(recipe, size, paramOverrides) {
   };
 }
 
+// src/modules/realistic-pcg/materials/gpu-material-baker.ts
+import * as THREE5 from "three";
+var GLSL_NOISE_LIB = (
+  /* glsl */
+  `
+precision highp float;
+
+float h12(vec2 p, float s) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031 + s * 0.0173);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+vec2 h22(vec2 p, float s) {
+  vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973) + s * 0.0137);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.xx + p3.yz) * p3.zy);
+}
+
+float pnoise(vec2 uv, vec2 per, float s) {
+  vec2 p = uv * per;
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  float a = h12(mod(i, per), s);
+  float b = h12(mod(i + vec2(1.0, 0.0), per), s);
+  float c = h12(mod(i + vec2(0.0, 1.0), per), s);
+  float d = h12(mod(i + vec2(1.0, 1.0), per), s);
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float pfbm(vec2 uv, vec2 freq, int octaves, float pers, float lac, float s) {
+  float sum = 0.0;
+  float amp = 1.0;
+  float norm = 0.0;
+  vec2 f = max(vec2(1.0), floor(freq + 0.5));
+  for (int i = 0; i < 8; i++) {
+    if (i >= octaves) break;
+    sum += amp * pnoise(uv, f, s + float(i) * 19.0);
+    norm += amp;
+    amp *= pers;
+    f *= lac;
+  }
+  return clamp(sum / max(1e-4, norm), 0.0, 1.0);
+}
+
+vec4 pworley(vec2 uv, float scale, float jitter, float s) {
+  float per = max(1.0, floor(scale + 0.5));
+  vec2 p = uv * per;
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  float d1 = 9.0;
+  float d2 = 9.0;
+  float cid = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 g = vec2(float(x), float(y));
+      vec2 c = mod(i + g, per);
+      vec2 rnd = (h22(c, s) - 0.5) * jitter + 0.5;
+      vec2 r = g + rnd - f;
+      float d = dot(r, r);
+      if (d < d1) {
+        d2 = d1;
+        d1 = d;
+        cid = h12(c + 7.3, s);
+      } else if (d < d2) {
+        d2 = d;
+      }
+    }
+  }
+  float f1 = min(1.0, sqrt(d1));
+  float f2 = min(1.0, sqrt(d2));
+  return vec4(f1, f2, clamp(f2 - f1, 0.0, 1.0), cid);
+}
+
+vec3 pbrick(vec2 uv, float rows, float cols, float stagger, float mortar, float bevel, float variation, float s) {
+  float gy = uv.y * rows;
+  float r = floor(gy);
+  float fy = gy - r;
+  float wr = mod(r, rows);
+  float shift = mod(wr, 2.0) >= 1.0 ? stagger : 0.0;
+  float gx = uv.x * cols + shift;
+  float c = floor(gx);
+  float fx = gx - c;
+  float wc = mod(c, cols);
+  float cellRand = h12(vec2(wc, wr), s + 3.1);
+  float mx = mortar * (cols / rows);
+  float dx = min(fx, 1.0 - fx) - mx * 0.5;
+  float dy = min(fy, 1.0 - fy) - mortar * 0.5;
+  float dEdge = min(dx, dy);
+  float mask = dEdge > 0.0 ? smoothstep(0.0, max(1e-4, bevel * 0.4), dEdge) : 0.0;
+  float bev = dEdge > 0.0 ? smoothstep(0.0, max(1e-4, bevel), dEdge) : 0.0;
+  float rh = 1.0 - variation * 0.35 + (cellRand - 0.5) * variation * 0.4;
+  float h = clamp(0.18 + mask * bev * 0.72 * rh, 0.0, 1.0);
+  return vec3(h, mask, cellRand);
+}
+
+vec4 pplank(vec2 uv, float planks, float joints, float gap, float bevel, float variation, float nailsOn, float s) {
+  float px = uv.x * planks;
+  float pi = floor(px);
+  float fx = px - pi;
+  float wp = mod(pi, planks);
+  float stag = h12(vec2(wp, 3.0), s + 4.1) * 0.8;
+  float py = (uv.y + stag) * joints;
+  float ji = floor(py);
+  float fy = py - ji;
+  float wj = mod(ji, joints);
+  float cellRand = h12(vec2(wp, wj), s + 7.1);
+  float dx = min(fx, 1.0 - fx) - gap * 0.5 * planks;
+  float dy = min(fy, 1.0 - fy) - gap * 0.5 * joints;
+  float dEdge = min(dx, dy);
+  float mask = dEdge > 0.0 ? smoothstep(0.0, max(1e-4, bevel * 0.5), dEdge) : 0.0;
+  float bev = dEdge > 0.0 ? smoothstep(0.0, max(1e-4, bevel), dEdge) : 0.0;
+  float nail = 0.0;
+  if (nailsOn > 0.5 && mask > 0.5) {
+    float ny = min(abs(fy - 0.08), abs(fy - 0.92)) / joints;
+    float nx = min(abs(fx - 0.25), abs(fx - 0.75)) / planks;
+    nail = 1.0 - smoothstep(0.005, 0.011, length(vec2(nx, ny)));
+  }
+  float pb = 1.0 - variation * 0.25 + (cellRand - 0.5) * variation * 0.3;
+  float fiber = (pnoise(uv, vec2(planks * 14.0, joints * 3.0), s + 5.7) - 0.5) * 0.12;
+  float h = clamp(0.12 + mask * bev * 0.78 * pb + fiber * mask - nail * 0.22, 0.0, 1.0);
+  return vec4(h, mask, cellRand, nail);
+}
+
+vec3 pwood(vec2 uv, float scale, float ringScale, float distortion, float sx, float sy, float s) {
+  float warp = (pnoise(uv, vec2(scale * sx, scale * sy), s + 5.1) - 0.5) * 2.0;
+  float rc = uv.x * ringScale + warp * distortion * 4.0;
+  float ringWave = 0.5 + 0.5 * sin(rc * 6.2831853);
+  float fine = pnoise(uv, vec2(scale * 6.0, scale * 2.0), s + 13.1);
+  float g = clamp(ringWave * 0.65 + fine * 0.35, 0.0, 1.0);
+  return vec3(clamp(0.35 + g * 0.55, 0.0, 1.0), g, 1.0);
+}
+
+vec3 pcorrugated(vec2 uv, float count, float axisY, float fin, float slope, float fout, float depth) {
+  float coord = axisY > 0.5 ? uv.y : uv.x;
+  float ph = fract(coord * count);
+  float t1 = fin;
+  float t2 = t1 + slope;
+  float t3 = t2 + fout;
+  float t4 = min(1.0, t3 + slope);
+  float h = 0.0;
+  float ridge = 0.0;
+  float edge = 0.0;
+  if (ph < t1) {
+    h = 0.0;
+  } else if (ph < t2) {
+    float t = (ph - t1) / max(1e-4, slope);
+    h = smoothstep(0.0, 1.0, t);
+    ridge = smoothstep(0.45, 0.95, t);
+    edge = sin(t * 3.1415926);
+  } else if (ph < t3) {
+    h = 1.0;
+    ridge = 1.0;
+    float dEdge = min(ph - t2, t3 - ph);
+    edge = 1.0 - smoothstep(0.0, 0.04, dEdge);
+  } else if (ph < t4) {
+    float t = 1.0 - (ph - t3) / max(1e-4, t4 - t3);
+    h = smoothstep(0.0, 1.0, t);
+    ridge = smoothstep(0.45, 0.95, t);
+    edge = sin(t * 3.1415926);
+  }
+  return vec3(h * depth, ridge, edge);
+}
+
+float pweave(vec2 uv, float threads, float slub, float s) {
+  vec2 p = uv * threads;
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  float over = mod(i.x + i.y, 2.0);
+  float wx = 0.75 + slub * (h12(vec2(mod(i.x, threads), 7.0), s + 5.9) - 0.5) * 1.4;
+  float wy = 0.75 + slub * (h12(vec2(3.0, mod(i.y, threads)), s + 5.3) - 0.5) * 1.4;
+  float tx = max(0.0, 1.0 - abs(f.x - 0.5) * 2.0 / max(0.1, wx));
+  float ty = max(0.0, 1.0 - abs(f.y - 0.5) * 2.0 / max(0.1, wy));
+  float warp = sqrt(tx) * (over >= 0.5 ? 1.0 : 0.52) * (0.62 + 0.38 * sin(f.y * 3.1415926));
+  float weft = sqrt(ty) * (over >= 0.5 ? 0.52 : 1.0) * (0.62 + 0.38 * sin(f.x * 3.1415926));
+  float n = (pnoise(uv, vec2(threads), s + 6.1) - 0.5) * 0.16 * slub;
+  return clamp(max(warp, weft) + n, 0.0, 1.0);
+}
+
+float psand(vec2 uv, float freq, float warpScale, float warpStrength, float sharpness, float grainScale, float s) {
+  float w = pfbm(uv, vec2(warpScale), 3, 0.5, 2.0, s + 10.1);
+  float w2 = pfbm(uv, vec2(warpScale * 3.0), 2, 0.5, 2.0, s + 21.1);
+  float rr = 0.5 + 0.5 * sin((uv.y * freq + w * warpStrength + w2 * 1.1) * 6.2831853);
+  float patchM = smoothstep(0.25, 0.62, w + 0.15);
+  float rip = pow(max(0.0, rr), sharpness) * patchM;
+  float fine = pfbm(uv, vec2(grainScale), 2, 0.5, 2.0, s + 31.3);
+  return clamp(rip * 0.72 + fine * 0.28, 0.0, 1.0);
+}
+
+vec2 privet(vec2 uv, float cols, float rows, float rad) {
+  vec2 f = fract(uv * vec2(cols, rows)) - 0.5;
+  float d = length(f) / max(0.005, rad);
+  float m = d < 1.0 ? (1.0 - smoothstep(0.75, 1.0, d)) : 0.0;
+  float dome = d < 1.0 ? sqrt(max(0.0, 1.0 - d * d)) : 0.0;
+  return vec2(dome, m);
+}
+
+float pspeckle(vec2 uv, float scale, float density, float softness, float s) {
+  float per = max(2.0, floor(scale + 0.5));
+  vec2 g = uv * per;
+  vec2 ig = mod(floor(g), per);
+  vec2 fg = fract(g) - 0.5;
+  float h = h12(ig, s + 6.13);
+  if (h >= density) return 0.0;
+  vec2 r2 = h22(ig, s + 9.7);
+  float rMax = 0.25 + r2.x * 0.25;
+  vec2 off = (r2 - 0.5) * 0.25;
+  float d = length(fg - off);
+  return 1.0 - smoothstep(rMax * (1.0 - softness * 0.8), rMax, d);
+}
+
+float pstripes(vec2 uv, float count, float axisMode, float width, float softness, float noiseAmt, float s) {
+  float coord = axisMode > 1.5 ? (uv.x + uv.y) : (axisMode > 0.5 ? uv.y : uv.x);
+  float n = noiseAmt > 0.0 ? (pnoise(uv, vec2(count * 2.0), s + 9.9) - 0.5) * 2.0 * noiseAmt : 0.0;
+  float p = fract(coord * count + n);
+  float dist = abs(p - 0.5) * 2.0;
+  return 1.0 - smoothstep(width - softness, width + softness, dist);
+}
+
+float srgbToLin(float c) {
+  return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+}
+vec3 srgbToLin3(vec3 c) {
+  return vec3(srgbToLin(c.r), srgbToLin(c.g), srgbToLin(c.b));
+}
+float linToSrgb(float c) {
+  c = clamp(c, 0.0, 1.0);
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+}
+vec3 linToSrgb3(vec3 c) {
+  return vec3(linToSrgb(c.r), linToSrgb(c.g), linToSrgb(c.b));
+}
+
+vec2 packH16(float h) {
+  h = clamp(h, 0.0, 1.0);
+  float s = h * 255.0;
+  float hi = floor(s) / 255.0;
+  float lo = fract(s);
+  return vec2(hi, lo);
+}
+float unpackH16(vec2 rg) {
+  return rg.r + rg.g / 255.0;
+}
+`
+);
+function fLit(n) {
+  if (!Number.isFinite(n)) return "0.0";
+  const s = n.toFixed(6);
+  return s.includes(".") ? s : s + ".0";
+}
+function hexToGlslVec3(hex) {
+  const rgb = parseHexColor(hex);
+  if (!rgb) return "vec3(0.5)";
+  return `vec3(${fLit(rgb[0] / 255)}, ${fLit(rgb[1] / 255)}, ${fLit(rgb[2] / 255)})`;
+}
+function hexToGlslLinVec3(hex) {
+  const rgb = parseHexColor(hex);
+  if (!rgb) return "vec3(0.2)";
+  return `vec3(${fLit(srgbChannelToLinear(rgb[0]))}, ${fLit(srgbChannelToLinear(rgb[1]))}, ${fLit(srgbChannelToLinear(rgb[2]))})`;
+}
+function sanitizeId(id) {
+  return "n_" + id.replace(/[^A-Za-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_+/, "");
+}
+function createGpuMaterialBaker(renderer) {
+  const scene = new THREE5.Scene();
+  const camera = new THREE5.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const quadGeo = new THREE5.PlaneGeometry(2, 2);
+  const quadMesh = new THREE5.Mesh(quadGeo);
+  quadMesh.frustumCulled = false;
+  scene.add(quadMesh);
+  let cachedSize = 0;
+  let mrtRT = null;
+  let outRT = null;
+  function ensureTargets(size) {
+    if (cachedSize === size && mrtRT && outRT) return;
+    mrtRT?.dispose();
+    outRT?.dispose();
+    const opts = {
+      format: THREE5.RGBAFormat,
+      type: THREE5.UnsignedByteType,
+      wrapS: THREE5.RepeatWrapping,
+      wrapT: THREE5.RepeatWrapping,
+      minFilter: THREE5.LinearFilter,
+      magFilter: THREE5.LinearFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: false
+    };
+    mrtRT = new THREE5.WebGLRenderTarget(size, size, { ...opts, count: 3 });
+    outRT = new THREE5.WebGLRenderTarget(size, size, opts);
+    cachedSize = size;
+  }
+  function compileGraphBody(recipe, params2, size) {
+    const seedF = recipe.meta.seed % 9973 * 0.01;
+    const nodeById = /* @__PURE__ */ new Map();
+    for (const n of recipe.nodes) nodeById.set(n.id, n);
+    const execList = [];
+    const added = /* @__PURE__ */ new Set();
+    const visit = (id) => {
+      if (added.has(id)) return;
+      const n = nodeById.get(id);
+      if (!n) return;
+      for (const k of ["input", "a", "b", "mask", "warpX", "warpY"]) {
+        const ref = n.args[k];
+        if (typeof ref === "string" && !ref.startsWith("#") && !ref.startsWith("$")) {
+          visit(ref.split(".")[0]);
+        }
+      }
+      added.add(id);
+      execList.push(n);
+    };
+    for (const n of recipe.nodes) visit(n.id);
+    const outputKeys = [
+      "albedo",
+      "height",
+      "normal",
+      "ao",
+      "roughness",
+      "metalness",
+      "porosity"
+    ];
+    const inlineNames = {};
+    for (const ok of outputKeys) {
+      const spec = recipe.outputs[ok];
+      if (spec && typeof spec === "object") {
+        const synId = `inline_out_${ok}`;
+        const args = spec.args ? spec.args : { ...spec };
+        execList.push({ id: synId, op: spec.op, args });
+        inlineNames[ok] = synId;
+      }
+    }
+    const colorVars = /* @__PURE__ */ new Set();
+    const lines = [];
+    let hasBlur = false;
+    let normalStrength = 2;
+    let heightNodeName = "";
+    const refScalar = (ref, def = 0) => {
+      if (typeof ref === "number") return fLit(ref);
+      if (typeof ref === "string") {
+        if (ref.startsWith("$") || ref.startsWith("expr:")) {
+          return fLit(resolveNumber(ref, params2, def));
+        }
+        const [base, sub] = ref.split(".");
+        const v = sanitizeId(base);
+        if (sub) return `${v}_${sub}`;
+        return v;
+      }
+      return fLit(def);
+    };
+    const refColor = (ref) => {
+      if (typeof ref === "string") {
+        if (ref.startsWith("#")) return hexToGlslVec3(ref);
+        if (ref.startsWith("$") || ref.startsWith("expr:")) {
+          return `vec3(${fLit(resolveNumber(ref, params2, 0.5))})`;
+        }
+        const v = sanitizeId(ref.split(".")[0]);
+        return colorVars.has(v) ? v : `vec3(${refScalar(ref, 0.5)})`;
+      }
+      if (typeof ref === "number") return `vec3(${fLit(ref)})`;
+      return "vec3(0.5)";
+    };
+    const isColorRef = (ref) => {
+      if (typeof ref !== "string") return false;
+      if (ref.startsWith("#")) return true;
+      return colorVars.has(sanitizeId(ref.split(".")[0]));
+    };
+    for (const node of execList) {
+      const v = sanitizeId(node.id);
+      const args = node.args;
+      switch (node.op) {
+        case "fbm": {
+          const scale = resolveNumber(args.scale, params2, 8);
+          const oct = Math.max(1, Math.min(8, Math.round(resolveNumber(args.octaves, params2, 4))));
+          const pers = resolveNumber(args.persistence, params2, 0.5);
+          const lac = resolveNumber(args.lacunarity, params2, 2);
+          lines.push(`float ${v} = pfbm(uv, vec2(${fLit(scale)}), ${oct}, ${fLit(pers)}, ${fLit(lac)}, ${fLit(seedF)});`);
+          break;
+        }
+        case "worley": {
+          const scale = resolveNumber(args.scale, params2, 8);
+          const jitter = resolveNumber(args.jitter, params2, 0.9);
+          const mode = String(args.mode ?? "f1");
+          lines.push(`vec4 ${v}_w = pworley(uv, ${fLit(scale)}, ${fLit(jitter)}, ${fLit(seedF + 0.17)});`);
+          lines.push(`float ${v}_f1 = ${v}_w.x; float ${v}_f2 = ${v}_w.y; float ${v}_f2_minus_f1 = ${v}_w.z; float ${v}_cellRand = ${v}_w.w;`);
+          lines.push(`float ${v}_edge = 1.0 - smoothstep(0.02, 0.16, ${v}_f2_minus_f1);`);
+          const mainPick = mode === "f2" ? `${v}_f2` : mode === "f2_minus_f1" ? `${v}_f2_minus_f1` : mode === "cell_rand" ? `${v}_cellRand` : mode === "edge" ? `${v}_edge` : `${v}_f1`;
+          lines.push(`float ${v} = ${mainPick};`);
+          break;
+        }
+        case "brick_pattern": {
+          const rows = resolveNumber(args.rows, params2, 8);
+          const cols = resolveNumber(args.cols, params2, 4);
+          const stagger = resolveNumber(args.stagger, params2, 0.5);
+          const mortar = resolveNumber(args.mortar, params2, 0.04);
+          const bevel = resolveNumber(args.bevel, params2, 0.03);
+          const variation = resolveNumber(args.variation, params2, 0.35);
+          lines.push(`vec3 ${v}_b = pbrick(uv, ${fLit(rows)}, ${fLit(cols)}, ${fLit(stagger)}, ${fLit(mortar)}, ${fLit(bevel)}, ${fLit(variation)}, ${fLit(seedF)});`);
+          lines.push(`float ${v} = ${v}_b.x; float ${v}_height = ${v}_b.x; float ${v}_mask = ${v}_b.y; float ${v}_cellRand = ${v}_b.z;`);
+          break;
+        }
+        case "plank_pattern": {
+          const planks = resolveNumber(args.planks, params2, 6);
+          const joints = resolveNumber(args.joints, params2, 2);
+          const gap = resolveNumber(args.gap, params2, 0.015);
+          const bevel = resolveNumber(args.bevel, params2, 0.025);
+          const variation = resolveNumber(args.variation, params2, 0.4);
+          const nails = resolveBoolean(args.nails, params2, true) ? 1 : 0;
+          lines.push(`vec4 ${v}_p = pplank(uv, ${fLit(planks)}, ${fLit(joints)}, ${fLit(gap)}, ${fLit(bevel)}, ${fLit(variation)}, ${fLit(nails)}, ${fLit(seedF)});`);
+          lines.push(`float ${v} = ${v}_p.x; float ${v}_height = ${v}_p.x; float ${v}_mask = ${v}_p.y; float ${v}_cellRand = ${v}_p.z; float ${v}_nails = ${v}_p.w;`);
+          break;
+        }
+        case "wood_grain": {
+          const scale = resolveNumber(args.scale, params2, 6);
+          const ringScale = resolveNumber(args.ringScale, params2, 18);
+          const distortion = resolveNumber(args.distortion, params2, 0.35);
+          const sx = resolveNumber(args.stretchX, params2, 1);
+          const sy = resolveNumber(args.stretchY, params2, 6);
+          lines.push(`vec3 ${v}_wg = pwood(uv, ${fLit(scale)}, ${fLit(ringScale)}, ${fLit(distortion)}, ${fLit(sx)}, ${fLit(sy)}, ${fLit(seedF)});`);
+          lines.push(`float ${v} = ${v}_wg.x; float ${v}_height = ${v}_wg.x; float ${v}_grain = ${v}_wg.y; float ${v}_mask = ${v}_wg.z;`);
+          break;
+        }
+        case "corrugated_wave": {
+          const count = resolveNumber(args.count, params2, 5);
+          const axisY = String(args.axis ?? "x") === "y" ? 1 : 0;
+          const fin = resolveNumber(args.fin, params2, 0.26);
+          const slope = resolveNumber(args.slope, params2, 0.24);
+          const fout = resolveNumber(args.fout, params2, 0.26);
+          const depth = resolveNumber(args.depth, params2, 1);
+          lines.push(`vec3 ${v}_cw = pcorrugated(uv, ${fLit(count)}, ${fLit(axisY)}, ${fLit(fin)}, ${fLit(slope)}, ${fLit(fout)}, ${fLit(depth)});`);
+          lines.push(`float ${v} = ${v}_cw.x; float ${v}_height = ${v}_cw.x; float ${v}_ridge = ${v}_cw.y; float ${v}_edge = ${v}_cw.z;`);
+          break;
+        }
+        case "edge_wear_mask": {
+          const src = refScalar(args.input, 0.5);
+          const low = resolveNumber(args.low, params2, 0.35);
+          const high = resolveNumber(args.high, params2, 0.65);
+          const ns = resolveNumber(args.noiseScale, params2, 10);
+          const spread = resolveNumber(args.spread, params2, 0.45);
+          lines.push(`float ${v}_n = pfbm(uv, vec2(${fLit(ns)}), 3, 0.55, 2.0, ${fLit(seedF + 0.43)});`);
+          lines.push(`float ${v} = smoothstep(${fLit(low)}, ${fLit(high)}, clamp(${src} * 0.8 + (${v}_n - 0.5) * ${fLit(spread)}, 0.0, 1.0));`);
+          break;
+        }
+        case "vertical_streak": {
+          const scaleX = resolveNumber(args.scaleX, params2, 14);
+          const scaleY = resolveNumber(args.scaleY, params2, 3);
+          const thresh = resolveNumber(args.threshold, params2, 0.54);
+          const seedOff = resolveNumber(args.seedOffset, params2, 0) * 0.01;
+          const baseSrc = args.input ? refScalar(args.input, 0.5) : "0.5";
+          lines.push(`float ${v}_col = smoothstep(0.25, 0.78, pnoise(vec2(uv.x, 0.37), vec2(${fLit(scaleX)}, 1.0), ${fLit(seedF + 0.81 + seedOff)}));`);
+          lines.push(`float ${v}_acc = 0.0; for (int k = 0; k < 6; k++) { float dy = float(k) * 0.035; float n = pfbm(vec2(uv.x, fract(uv.y + dy)), vec2(${fLit(scaleX)}, ${fLit(scaleY)}), 3, 0.52, 2.0, ${fLit(seedF + 0.88 + seedOff)}); float src = smoothstep(${fLit(thresh - 0.06)}, ${fLit(thresh + 0.06)}, ${baseSrc} * 0.5 + n * 0.5); ${v}_acc = max(${v}_acc, src * ${v}_col * pow(0.84, float(k))); }`);
+          lines.push(`float ${v} = clamp(${v}_acc * ${v}_acc, 0.0, 1.0);`);
+          break;
+        }
+        case "rivet_grid": {
+          const cols = resolveNumber(args.cols, params2, 4);
+          const rows = resolveNumber(args.rows, params2, 2);
+          const rad = resolveNumber(args.radius, params2, 0.08);
+          lines.push(`vec2 ${v}_rv = privet(uv, ${fLit(cols)}, ${fLit(rows)}, ${fLit(rad)});`);
+          lines.push(`float ${v} = ${v}_rv.x; float ${v}_height = ${v}_rv.x; float ${v}_mask = ${v}_rv.y;`);
+          break;
+        }
+        case "sand_ripples": {
+          const freq = resolveNumber(args.freq, params2, 16);
+          const ws = resolveNumber(args.warpScale, params2, 3);
+          const wstr = resolveNumber(args.warpStrength, params2, 4.2);
+          const sharp = resolveNumber(args.sharpness, params2, 1.7);
+          const gs = resolveNumber(args.grainScale, params2, 28);
+          lines.push(`float ${v} = psand(uv, ${fLit(freq)}, ${fLit(ws)}, ${fLit(wstr)}, ${fLit(sharp)}, ${fLit(gs)}, ${fLit(seedF)});`);
+          break;
+        }
+        case "fabric_weave": {
+          const threads = resolveNumber(args.threads, params2, 48);
+          const slub = resolveNumber(args.slub, params2, 0.3);
+          lines.push(`float ${v} = pweave(uv, ${fLit(threads)}, ${fLit(slub)}, ${fLit(seedF)});`);
+          break;
+        }
+        case "stripes": {
+          const count = resolveNumber(args.count, params2, 12);
+          const axis = String(args.axis ?? "x");
+          const axisMode = axis === "diag" ? 2 : axis === "y" ? 1 : 0;
+          const width = resolveNumber(args.width, params2, 0.5);
+          const soft = resolveNumber(args.softness, params2, 0.15);
+          const n = resolveNumber(args.noise, params2, 0.08);
+          lines.push(`float ${v} = pstripes(uv, ${fLit(count)}, ${fLit(axisMode)}, ${fLit(width)}, ${fLit(soft)}, ${fLit(n)}, ${fLit(seedF)});`);
+          break;
+        }
+        case "speckle": {
+          const scale = resolveNumber(args.scale, params2, 32);
+          const density = resolveNumber(args.density, params2, 0.35);
+          const soft = resolveNumber(args.softness, params2, 0.5);
+          const soff = resolveNumber(args.seedOffset, params2, 0) * 0.01;
+          lines.push(`float ${v} = pspeckle(uv, ${fLit(scale)}, ${fLit(density)}, ${fLit(soft)}, ${fLit(seedF + soff)});`);
+          break;
+        }
+        case "remap": {
+          const src = refScalar(args.input, 0);
+          const i0 = resolveNumber(args.inMin, params2, 0);
+          const i1 = resolveNumber(args.inMax, params2, 1);
+          const o0 = resolveNumber(args.outMin, params2, 0);
+          const o1 = resolveNumber(args.outMax, params2, 1);
+          const span = Math.abs(i1 - i0) < 1e-5 ? 1e-5 : i1 - i0;
+          lines.push(`float ${v} = mix(${fLit(o0)}, ${fLit(o1)}, clamp((${src} - ${fLit(i0)}) / ${fLit(span)}, 0.0, 1.0));`);
+          break;
+        }
+        case "clamp": {
+          const src = refScalar(args.input, 0);
+          const mn = resolveNumber(args.min, params2, 0);
+          const mx = resolveNumber(args.max, params2, 1);
+          lines.push(`float ${v} = clamp(${src}, ${fLit(mn)}, ${fLit(mx)});`);
+          break;
+        }
+        case "invert": {
+          lines.push(`float ${v} = 1.0 - (${refScalar(args.input, 0)});`);
+          break;
+        }
+        case "power": {
+          const exp = resolveNumber(args.exp, params2, 1);
+          lines.push(`float ${v} = pow(max(0.0, ${refScalar(args.input, 0)}), ${fLit(exp)});`);
+          break;
+        }
+        case "blur": {
+          hasBlur = true;
+          lines.push(`float ${v} = ${refScalar(args.input, 0)};`);
+          break;
+        }
+        case "domain_warp": {
+          lines.push(`float ${v} = ${refScalar(args.input, 0.5)};`);
+          break;
+        }
+        case "height_to_normal": {
+          normalStrength = resolveNumber(args.strength, params2, 2);
+          heightNodeName = typeof args.input === "string" ? args.input : "";
+          colorVars.add(v);
+          lines.push(`vec3 ${v} = vec3(0.5, 0.5, 1.0);`);
+          break;
+        }
+        case "mix_scalar": {
+          lines.push(`float ${v} = mix(${refScalar(args.a, 0)}, ${refScalar(args.b, 1)}, clamp(${refScalar(args.mask, 0.5)}, 0.0, 1.0));`);
+          break;
+        }
+        case "mix_color": {
+          colorVars.add(v);
+          const aC = refColor(args.a);
+          const bC = refColor(args.b);
+          const m = `clamp(${refScalar(args.mask, 0.5)}, 0.0, 1.0)`;
+          lines.push(`vec3 ${v} = linToSrgb3(mix(srgbToLin3(${aC}), srgbToLin3(${bC}), ${m}));`);
+          break;
+        }
+        case "color_ramp": {
+          colorVars.add(v);
+          const inp = refScalar(args.input, 0.5);
+          const rawStops = args.stops ?? [[0, "#444444"], [1, "#aaaaaa"]];
+          const stops = [...rawStops].sort((a, b) => a[0] - b[0]);
+          lines.push(`vec3 ${v}_lin = ${hexToGlslLinVec3(stops[0][1])};`);
+          for (let sIdx = 0; sIdx < stops.length - 1; sIdx++) {
+            const s0 = stops[sIdx];
+            const s1 = stops[sIdx + 1];
+            const span = Math.max(1e-5, s1[0] - s0[0]);
+            lines.push(
+              `if (${inp} >= ${fLit(s0[0])}) { ${v}_lin = mix(${hexToGlslLinVec3(s0[1])}, ${hexToGlslLinVec3(s1[1])}, clamp((${inp} - ${fLit(s0[0])}) / ${fLit(span)}, 0.0, 1.0)); }`
+            );
+          }
+          lines.push(`vec3 ${v} = linToSrgb3(${v}_lin);`);
+          break;
+        }
+        case "blend": {
+          const mode = String(args.mode ?? "multiply");
+          const str = Math.max(0, Math.min(1, resolveNumber(args.strength, params2, 1)));
+          const isCol = isColorRef(args.a) || isColorRef(args.b);
+          const fn = (a, b) => {
+            switch (mode) {
+              case "add":
+                return `clamp(${a} + ${b} * ${fLit(str)}, 0.0, 1.0)`;
+              case "sub":
+                return `clamp(${a} - ${b} * ${fLit(str)}, 0.0, 1.0)`;
+              case "min":
+                return `mix(${a}, min(${a}, ${b}), ${fLit(str)})`;
+              case "max":
+                return `mix(${a}, max(${a}, ${b}), ${fLit(str)})`;
+              case "screen":
+                return `mix(${a}, 1.0 - (1.0 - ${a}) * (1.0 - ${b}), ${fLit(str)})`;
+              case "overlay":
+                return `mix(${a}, (${a} < 0.5 ? 2.0 * ${a} * ${b} : 1.0 - 2.0 * (1.0 - ${a}) * (1.0 - ${b})), ${fLit(str)})`;
+              default:
+                return `mix(${a}, ${a} * ${b}, ${fLit(str)})`;
+            }
+          };
+          if (isCol) {
+            colorVars.add(v);
+            lines.push(`vec3 ${v} = ${fn(refColor(args.a), refColor(args.b))};`);
+          } else {
+            lines.push(`float ${v} = ${fn(refScalar(args.a, 0), refScalar(args.b, 0))};`);
+          }
+          break;
+        }
+      }
+    }
+    const outExprColor = (k) => {
+      const syn = inlineNames[k];
+      if (syn) return refColor(syn);
+      return refColor(recipe.outputs[k]);
+    };
+    const outExprScalar = (k, def) => {
+      const syn = inlineNames[k];
+      if (syn) return refScalar(syn, def);
+      return refScalar(recipe.outputs[k], def);
+    };
+    return {
+      body: lines.join("\n"),
+      heightVar: heightNodeName ? refScalar(heightNodeName, 0.5) : outExprScalar("height", 0.5),
+      normalStrength,
+      albedoExpr: outExprColor("albedo"),
+      aoExpr: outExprScalar("ao", 1),
+      roughExpr: outExprScalar("roughness", 0.7),
+      metalExpr: outExprScalar("metalness", 0),
+      porosityExpr: outExprScalar("porosity", 0.3),
+      hasBlur
+    };
+  }
+  const VERT = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
+  const sharedNormalMat = new THREE5.ShaderMaterial({
+    vertexShader: VERT,
+    depthTest: false,
+    depthWrite: false,
+    uniforms: {
+      tH: { value: null },
+      uPx: { value: 1 / 512 },
+      uStr: { value: 2 }
+    },
+    fragmentShader: `${GLSL_NOISE_LIB}
+varying vec2 vUv;
+uniform sampler2D tH;
+uniform float uPx;
+uniform float uStr;
+float sampleH(vec2 uv) { return unpackH16(texture2D(tH, uv).rg); }
+void main() {
+  float tl = sampleH(vUv + vec2(-uPx, -uPx));
+  float t  = sampleH(vUv + vec2( 0.0, -uPx));
+  float tr = sampleH(vUv + vec2( uPx, -uPx));
+  float l  = sampleH(vUv + vec2(-uPx,  0.0));
+  float r  = sampleH(vUv + vec2( uPx,  0.0));
+  float bl = sampleH(vUv + vec2(-uPx,  uPx));
+  float b  = sampleH(vUv + vec2( 0.0,  uPx));
+  float br = sampleH(vUv + vec2( uPx,  uPx));
+  float dX = (tr + 2.0 * r + br) - (tl + 2.0 * l + bl);
+  float dY = (bl + 2.0 * b + br) - (tl + 2.0 * t + tr);
+  vec3 n = normalize(vec3(-dX * uStr, dY * uStr, 1.0));
+  gl_FragColor = vec4(n * 0.5 + 0.5, 1.0);
+}`
+  });
+  return {
+    bakeMaterial(recipe, size, paramOverrides) {
+      ensureTargets(size);
+      const params2 = { ...recipe.params ?? {}, ...paramOverrides ?? {} };
+      const compiled = compileGraphBody(recipe, params2, size);
+      const prevRT = renderer.getRenderTarget();
+      const dagMat = new THREE5.ShaderMaterial({
+        vertexShader: VERT,
+        glslVersion: THREE5.GLSL3,
+        depthTest: false,
+        depthWrite: false,
+        fragmentShader: `${GLSL_NOISE_LIB}
+varying vec2 vUv;
+layout(location = 0) out vec4 oAlbedo;
+layout(location = 1) out vec4 oOrm;
+layout(location = 2) out vec4 oHeight;
+void main() {
+  vec2 uv = vUv;
+  ${compiled.body}
+  float hOut = clamp(${compiled.heightVar}, 0.0, 1.0);
+  vec2 h16 = packH16(hOut);
+  float met = clamp(${compiled.metalExpr}, 0.0, 1.0);
+  vec3 albS = clamp(${compiled.albedoExpr}, 0.0, 1.0);
+  if (met < 0.5) {
+    vec3 lin = srgbToLin3(albS);
+    float luma = dot(lin, vec3(0.2126, 0.7152, 0.0722));
+    if (luma < 0.04) {
+      lin = luma > 1e-4 ? lin * (0.04 / luma) : vec3(0.04);
+      albS = linToSrgb3(lin);
+    } else if (luma > 0.85) {
+      lin *= 0.85 / luma;
+      albS = linToSrgb3(lin);
+    }
+  }
+  float ao = clamp(${compiled.aoExpr}, 0.0, 1.0);
+  float rgh = clamp(${compiled.roughExpr}, 0.05, 1.0);
+  float por = clamp(${compiled.porosityExpr}, 0.0, 1.0);
+  oAlbedo = vec4(albS, hOut);
+  oOrm = vec4(ao, rgh, met, por);
+  oHeight = vec4(h16.x, h16.y, met, hOut);
+}`
+      });
+      quadMesh.material = dagMat;
+      renderer.setRenderTarget(mrtRT);
+      renderer.render(scene, camera);
+      dagMat.dispose();
+      const albedoData = new Uint8Array(size * size * 4);
+      renderer.readRenderTargetPixels(mrtRT, 0, 0, size, size, albedoData, void 0, 0);
+      const ormData = new Uint8Array(size * size * 4);
+      renderer.readRenderTargetPixels(mrtRT, 0, 0, size, size, ormData, void 0, 1);
+      sharedNormalMat.uniforms.tH.value = mrtRT.textures[2];
+      sharedNormalMat.uniforms.uPx.value = 1 / size;
+      sharedNormalMat.uniforms.uStr.value = compiled.normalStrength;
+      quadMesh.material = sharedNormalMat;
+      renderer.setRenderTarget(outRT);
+      renderer.render(scene, camera);
+      const normalData = new Uint8Array(size * size * 4);
+      renderer.readRenderTargetPixels(outRT, 0, 0, size, size, normalData);
+      renderer.setRenderTarget(prevRT);
+      let minR = 1;
+      let maxR = 0;
+      let minL = 1;
+      let maxL = 0;
+      for (let i = 0; i < ormData.length; i += 16) {
+        const r = ormData[i + 1] / 255;
+        if (r < minR) minR = r;
+        if (r > maxR) maxR = r;
+        const rl = srgbChannelToLinear(albedoData[i]);
+        const gl = srgbChannelToLinear(albedoData[i + 1]);
+        const bl = srgbChannelToLinear(albedoData[i + 2]);
+        const luma = 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
+        if (luma < minL) minL = luma;
+        if (luma > maxL) maxL = luma;
+      }
+      return {
+        id: recipe.id,
+        size,
+        albedoData,
+        normalData,
+        ormData,
+        stats: {
+          minRoughness: minR,
+          maxRoughness: maxR,
+          minLinearLuma: minL,
+          maxLinearLuma: maxL
+        }
+      };
+    },
+    dispose() {
+      mrtRT?.dispose();
+      outRT?.dispose();
+      mrtRT = null;
+      outRT = null;
+      sharedNormalMat.dispose();
+      quadGeo.dispose();
+      scene.clear();
+    }
+  };
+}
+
 // src/modules/realistic-pcg/materials/texture-array-baker.ts
 function createArrayTex(data, size, depth, colorSpace, anisotropy) {
-  const tex = new THREE5.DataArrayTexture(data, size, size, depth);
-  tex.format = THREE5.RGBAFormat;
-  tex.type = THREE5.UnsignedByteType;
+  const tex = new THREE6.DataArrayTexture(data, size, size, depth);
+  tex.format = THREE6.RGBAFormat;
+  tex.type = THREE6.UnsignedByteType;
   tex.colorSpace = colorSpace;
-  tex.wrapS = THREE5.RepeatWrapping;
-  tex.wrapT = THREE5.RepeatWrapping;
-  tex.minFilter = THREE5.LinearMipmapLinearFilter;
-  tex.magFilter = THREE5.LinearFilter;
+  tex.wrapS = THREE6.RepeatWrapping;
+  tex.wrapT = THREE6.RepeatWrapping;
+  tex.minFilter = THREE6.LinearMipmapLinearFilter;
+  tex.magFilter = THREE6.LinearFilter;
   tex.anisotropy = anisotropy;
   tex.generateMipmaps = true;
   tex.needsUpdate = true;
@@ -2860,6 +3902,12 @@ function uploadLayerSubImage3D(renderer, tex, layerIdx, size, data) {
     return false;
   }
 }
+function canUseGpuBake(renderer, mode) {
+  if (mode === "cpu") return false;
+  return Boolean(
+    renderer && typeof renderer.setRenderTarget === "function" && typeof renderer.readRenderTargetPixels === "function"
+  );
+}
 async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
   const startTime = performance.now();
   const size = preset.textureSize;
@@ -2885,24 +3933,57 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
       ormAll[p + 3] = 128;
     }
   }
+  const bakeMode = options.bakeMode ?? "auto";
+  const useGpu = canUseGpuBake(options.renderer, bakeMode);
+  let gpuBaker = null;
+  let actualBackend = "cpu";
+  if (useGpu && options.renderer) {
+    try {
+      gpuBaker = createGpuMaterialBaker(options.renderer);
+      actualBackend = "gpu";
+    } catch {
+      gpuBaker = null;
+      actualBackend = "cpu";
+    }
+  }
   const layers = /* @__PURE__ */ new Map();
   const tileMetersById = new Float32Array(maxLayers);
   tileMetersById.fill(1);
   let maxSliceMs = 0;
+  let gpuSliceAccumMs = 0;
   const totalJobs = Math.max(1, recipes.length);
   for (let i = 0; i < recipes.length; i++) {
     const recipe = recipes[i];
-    const job = createMaterialBakeJob(recipe, size);
-    while (true) {
-      const t0 = performance.now();
-      const done = job.step(preset.frameBudgetMs);
-      const dt = performance.now() - t0;
-      if (dt > maxSliceMs) maxSliceMs = dt;
-      if (done) break;
-      options.onProgress?.((i + 0.5) / totalJobs);
-      await nextFrameYield();
+    let baked = null;
+    if (gpuBaker) {
+      try {
+        const t0 = performance.now();
+        baked = gpuBaker.bakeMaterial(recipe, size);
+        const dt = performance.now() - t0;
+        if (dt > maxSliceMs) maxSliceMs = dt;
+        gpuSliceAccumMs += dt;
+        if (gpuSliceAccumMs >= preset.frameBudgetMs && i + 1 < recipes.length) {
+          gpuSliceAccumMs = 0;
+          await nextFrameYield();
+        }
+      } catch {
+        baked = null;
+        actualBackend = "cpu";
+      }
     }
-    const baked = job.getResult();
+    if (!baked) {
+      const job = createMaterialBakeJob(recipe, size);
+      while (true) {
+        const t0 = performance.now();
+        const done = job.step(preset.frameBudgetMs);
+        const dt = performance.now() - t0;
+        if (dt > maxSliceMs) maxSliceMs = dt;
+        if (done) break;
+        options.onProgress?.((i + 0.5) / totalJobs);
+        await nextFrameYield();
+      }
+      baked = job.getResult();
+    }
     copyLayerToArray(albedoAll, baked.albedoData, i, layerBytes);
     copyLayerToArray(normalAll, baked.normalData, i, layerBytes);
     copyLayerToArray(ormAll, baked.ormData, i, layerBytes);
@@ -2916,11 +3997,15 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
     });
     options.onProgress?.((i + 1) / totalJobs);
   }
+  if (gpuBaker) {
+    gpuBaker.dispose();
+    gpuBaker = null;
+  }
   const maxAniso = options.renderer?.capabilities?.getMaxAnisotropy?.() ?? preset.anisotropy;
   const aniso = Math.min(preset.anisotropy, maxAniso);
-  const albedoArray = createArrayTex(albedoAll, size, maxLayers, THREE5.SRGBColorSpace, aniso);
-  const normalArray = createArrayTex(normalAll, size, maxLayers, THREE5.NoColorSpace, 1);
-  const ormArray = createArrayTex(ormAll, size, maxLayers, THREE5.NoColorSpace, 1);
+  const albedoArray = createArrayTex(albedoAll, size, maxLayers, THREE6.SRGBColorSpace, aniso);
+  const normalArray = createArrayTex(normalAll, size, maxLayers, THREE6.NoColorSpace, 1);
+  const ormArray = createArrayTex(ormAll, size, maxLayers, THREE6.NoColorSpace, 1);
   const bakeTimeMs = performance.now() - startTime;
   const estimatedMemoryMB = totalBytes * 3 * (4 / 3) / (1024 * 1024);
   let nextSlot = recipes.length;
@@ -2930,13 +4015,14 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
     ormArray,
     size,
     depth: maxLayers,
+    bakeBackend: actualBackend,
     layers,
     tileMetersById,
     estimatedMemoryMB,
     bakeTimeMs,
     maxSliceMs,
     async updateLayer(recipe, renderer, paramOverrides) {
-      let existing = layers.get(recipe.id);
+      const existing = layers.get(recipe.id);
       let slot;
       if (existing) {
         slot = existing.materialId;
@@ -2946,11 +4032,25 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
         }
         slot = nextSlot++;
       }
-      const job = createMaterialBakeJob(recipe, size, paramOverrides);
-      while (!job.step(preset.frameBudgetMs)) {
-        await nextFrameYield();
+      const activeRenderer = renderer ?? options.renderer ?? null;
+      let baked = null;
+      if (canUseGpuBake(activeRenderer, bakeMode) && activeRenderer) {
+        const tempBaker = createGpuMaterialBaker(activeRenderer);
+        try {
+          baked = tempBaker.bakeMaterial(recipe, size, paramOverrides);
+        } catch {
+          baked = null;
+        } finally {
+          tempBaker.dispose();
+        }
       }
-      const baked = job.getResult();
+      if (!baked) {
+        const job = createMaterialBakeJob(recipe, size, paramOverrides);
+        while (!job.step(preset.frameBudgetMs)) {
+          await nextFrameYield();
+        }
+        baked = job.getResult();
+      }
       copyLayerToArray(albedoAll, baked.albedoData, slot, layerBytes);
       copyLayerToArray(normalAll, baked.normalData, slot, layerBytes);
       copyLayerToArray(ormAll, baked.ormData, slot, layerBytes);
@@ -2962,7 +4062,6 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
         recipe,
         stats: baked.stats
       });
-      const activeRenderer = renderer ?? options.renderer ?? null;
       const subOk = activeRenderer !== null && uploadLayerSubImage3D(activeRenderer, albedoArray, slot, size, baked.albedoData) && uploadLayerSubImage3D(activeRenderer, normalArray, slot, size, baked.normalData) && uploadLayerSubImage3D(activeRenderer, ormArray, slot, size, baked.ormData);
       if (!subOk) {
         albedoArray.needsUpdate = true;
@@ -2981,7 +4080,7 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
 }
 
 // src/modules/realistic-pcg/recipes/mesh-recipe-eval.ts
-import * as THREE6 from "three";
+import * as THREE7 from "three";
 
 // src/modules/realistic-pcg/geometry/primitive-ops.ts
 function opBeveledBox(args, params2, materialId, edgeWear, ao, wetness) {
@@ -3341,18 +4440,186 @@ function opExtrudeProfile(args, params2, materialId, edgeWear, ao, wetness) {
   }
   return mesh;
 }
+function opCorrugatedPanel(args, params2, materialId, edgeWear, ao, wetness) {
+  const width = Math.max(0.2, resolveNumber(args.width, params2, 4));
+  const height = Math.max(0.2, resolveNumber(args.height, params2, 2.3));
+  const pitch = Math.max(0.08, resolveNumber(args.pitch, params2, 0.278));
+  const fin = Math.max(0.01, resolveNumber(args.fin, params2, 0.07));
+  const slope = Math.max(0.01, resolveNumber(args.slope, params2, 0.068));
+  const fout = Math.max(0.01, resolveNumber(args.fout, params2, 0.072));
+  const depth = Math.max(8e-3, resolveNumber(args.depth, params2, 0.036));
+  const thick = Math.max(8e-3, resolveNumber(args.thickness, params2, 0.014));
+  const mesh = createRawMeshData();
+  const count = Math.max(1, Math.round(width / pitch));
+  const actualPitch = width / count;
+  const scale = actualPitch / (fin + slope + fout + slope);
+  const fIn = fin * scale;
+  const fSlope = slope * scale;
+  const fOut = fout * scale;
+  const hy = height * 0.5;
+  const hz = depth * 0.5;
+  for (let i = 0; i < count; i++) {
+    const x0 = -width * 0.5 + i * actualPitch;
+    const x1 = x0 + fIn;
+    const x2 = x1 + fSlope;
+    const x3 = x2 + fOut;
+    const x4 = x0 + actualPitch;
+    const segs = [
+      [x0, -hz, x1, -hz, 0.15],
+      [x1, -hz, x2, hz, 0.65],
+      [x2, hz, x3, hz, 0.9],
+      [x3, hz, x4, -hz, 0.65]
+    ];
+    for (const [ax, az, bx, bz, wearScale] of segs) {
+      const dx = bx - ax;
+      const dz = bz - az;
+      const len = Math.hypot(dx, dz) || 1;
+      const nx = -dz / len;
+      const nz = dx / len;
+      pushOrientedQuad(
+        mesh,
+        [ax, -hy, az],
+        [bx, -hy, bz],
+        [bx, hy, bz],
+        [ax, hy, az],
+        [nx, 0, nz],
+        ao,
+        edgeWear * wearScale,
+        wetness,
+        materialId
+      );
+      pushOrientedQuad(
+        mesh,
+        [bx, -hy, bz - thick],
+        [ax, -hy, az - thick],
+        [ax, hy, az - thick],
+        [bx, hy, bz - thick],
+        [-nx, 0, -nz],
+        ao,
+        edgeWear * wearScale * 0.5,
+        wetness,
+        materialId
+      );
+    }
+  }
+  return mesh;
+}
+function opPipeSegment(args, params2, materialId, edgeWear, ao, wetness) {
+  const radius = Math.max(0.02, resolveNumber(args.radius, params2, 0.11));
+  const length = Math.max(0.2, resolveNumber(args.length, params2, 2));
+  const bendAngle = resolveNumber(args.bendAngle, params2, 0);
+  const bendRadius = Math.max(radius * 1.5, resolveNumber(args.bendRadius, params2, 0.4));
+  const flangeRadius = resolveNumber(args.flangeRadius, params2, radius + 0.045);
+  const flangeThickness = resolveNumber(args.flangeThickness, params2, 0.06);
+  const segments = Math.max(8, Math.min(28, Math.round(resolveNumber(args.segments, params2, 14))));
+  const out = createRawMeshData();
+  if (Math.abs(bendAngle) < 0.01) {
+    const pipe = opCylinder(
+      { radiusTop: radius, radiusBottom: radius, height: length, segments },
+      params2,
+      materialId,
+      edgeWear,
+      ao,
+      wetness
+    );
+    for (let i = 0; i < pipe.positions.length; i += 3) {
+      const px = pipe.positions[i];
+      const py = pipe.positions[i + 1];
+      pipe.positions[i] = py;
+      pipe.positions[i + 1] = -px;
+      const nx = pipe.normals[i];
+      const ny = pipe.normals[i + 1];
+      pipe.normals[i] = ny;
+      pipe.normals[i + 1] = -nx;
+    }
+    appendRawMesh(out, pipe);
+    for (const sx of [-1, 1]) {
+      const flange = opCylinder(
+        { radiusTop: flangeRadius, radiusBottom: flangeRadius, height: flangeThickness, segments },
+        params2,
+        materialId,
+        edgeWear * 1.1,
+        ao,
+        wetness
+      );
+      const xOff = sx * (length * 0.5 - flangeThickness * 0.5);
+      for (let i = 0; i < flange.positions.length; i += 3) {
+        const px = flange.positions[i];
+        const py = flange.positions[i + 1];
+        flange.positions[i] = py + xOff;
+        flange.positions[i + 1] = -px;
+        const nx = flange.normals[i];
+        const ny = flange.normals[i + 1];
+        flange.normals[i] = ny;
+        flange.normals[i + 1] = -nx;
+      }
+      appendRawMesh(out, flange);
+    }
+    return out;
+  }
+  const arcSteps = Math.max(6, Math.round(Math.abs(bendAngle) * 10));
+  const rings = [];
+  for (let s = 0; s <= arcSteps; s++) {
+    const t = s / arcSteps;
+    const ang = t * bendAngle;
+    const cx = Math.sin(ang) * bendRadius;
+    const cz = bendRadius - Math.cos(ang) * bendRadius;
+    const tx = Math.cos(ang);
+    const tz = Math.sin(ang);
+    const rx = -tz;
+    const rz = tx;
+    const ring = [];
+    for (let k = 0; k <= segments; k++) {
+      const phi = k / segments * Math.PI * 2;
+      const cosP = Math.cos(phi);
+      const sinP = Math.sin(phi);
+      const nx = rx * cosP;
+      const ny = sinP;
+      const nz = rz * cosP;
+      const px = cx + nx * radius;
+      const py = ny * radius;
+      const pz = cz + nz * radius;
+      ring.push(
+        pushVertex(
+          out,
+          px,
+          py,
+          pz,
+          nx,
+          ny,
+          nz,
+          t * bendRadius * Math.abs(bendAngle),
+          k / segments * Math.PI * 2 * radius,
+          ao,
+          edgeWear,
+          wetness,
+          materialId
+        )
+      );
+    }
+    rings.push(ring);
+  }
+  for (let s = 0; s < arcSteps; s++) {
+    const r0 = rings[s];
+    const r1 = rings[s + 1];
+    for (let k = 0; k < segments; k++) {
+      out.indices.push(r0[k], r1[k], r1[k + 1], r0[k], r1[k + 1], r0[k + 1]);
+    }
+  }
+  return out;
+}
 
 // src/modules/realistic-pcg/recipes/mesh-recipe-eval.ts
 function applyTransformToRaw(raw, pos, rot, scale) {
-  const mat = new THREE6.Matrix4();
-  const q = new THREE6.Quaternion().setFromEuler(new THREE6.Euler(rot[0], rot[1], rot[2]));
-  mat.compose(new THREE6.Vector3(pos[0], pos[1], pos[2]), q, new THREE6.Vector3(scale[0], scale[1], scale[2]));
+  const mat = new THREE7.Matrix4();
+  const q = new THREE7.Quaternion().setFromEuler(new THREE7.Euler(rot[0], rot[1], rot[2]));
+  mat.compose(new THREE7.Vector3(pos[0], pos[1], pos[2]), q, new THREE7.Vector3(scale[0], scale[1], scale[2]));
   const e = mat.elements;
-  const v = new THREE6.Vector3();
-  const nMat = new THREE6.Matrix4().compose(
-    new THREE6.Vector3(0, 0, 0),
+  const v = new THREE7.Vector3();
+  const nMat = new THREE7.Matrix4().compose(
+    new THREE7.Vector3(0, 0, 0),
     q,
-    new THREE6.Vector3(1 / (scale[0] || 1), 1 / (scale[1] || 1), 1 / (scale[2] || 1))
+    new THREE7.Vector3(1 / (scale[0] || 1), 1 / (scale[1] || 1), 1 / (scale[2] || 1))
   );
   const ne = nMat.elements;
   for (let i = 0; i < raw.positions.length; i += 3) {
@@ -3440,62 +4707,60 @@ function evaluateRecipeRaw(recipe, ctx, paramOverrides, materialOverrides, visit
       continue;
     }
     const basePartRaw = evaluateSinglePart(part, recipe, params2, mergedSlots, ctx, visitStack, partTriangles);
-    const mirroredInstances = [];
-    if (part.mirror) {
-      if (part.mirror.keepOriginal !== false) {
-        mirroredInstances.push(basePartRaw);
-      }
-      const m = cloneRaw(basePartRaw);
-      const sx = part.mirror.axis === "x" ? -1 : 1;
-      const sy = part.mirror.axis === "y" ? -1 : 1;
-      const sz = part.mirror.axis === "z" ? -1 : 1;
-      applyTransformToRaw(m, [0, 0, 0], [0, 0, 0], [sx, sy, sz]);
-      mirroredInstances.push(m);
-    } else {
-      mirroredInstances.push(basePartRaw);
-    }
-    const repeatedAll = createRawMeshData();
+    const repeatedRaw = createRawMeshData();
     const count = part.repeat ? Math.max(1, Math.round(resolveNumber(part.repeat.count, params2, 1))) : 1;
     const stepPos = part.repeat?.stepPos ? resolveVec3(part.repeat.stepPos, params2, [0, 0, 0]) : [0, 0, 0];
     const stepRot = part.repeat?.stepRot ? resolveVec3(part.repeat.stepRot, params2, [0, 0, 0]) : [0, 0, 0];
     const circleRadius = part.repeat?.radius !== void 0 ? resolveNumber(part.repeat.radius, params2, 0) : 0;
     const angleStep = part.repeat?.angleStep !== void 0 ? resolveNumber(part.repeat.angleStep, params2, 0) : 0;
     for (let rIdx = 0; rIdx < count; rIdx++) {
-      for (const inst of mirroredInstances) {
-        const copy = count === 1 && mirroredInstances.length === 1 ? inst : cloneRaw(inst);
-        if (part.repeat) {
-          let px = stepPos[0] * rIdx;
-          let py = stepPos[1] * rIdx;
-          let pz = stepPos[2] * rIdx;
-          let rx = stepRot[0] * rIdx;
-          let ry = stepRot[1] * rIdx;
-          let rz = stepRot[2] * rIdx;
-          if (circleRadius !== 0 && angleStep !== 0) {
-            const ang = angleStep * rIdx;
-            px += Math.cos(ang) * circleRadius;
-            pz += Math.sin(ang) * circleRadius;
-            ry += -ang;
-          }
-          applyTransformToRaw(copy, [px, py, pz], [rx, ry, rz], [1, 1, 1]);
+      const copy = count === 1 ? basePartRaw : cloneRaw(basePartRaw);
+      if (part.repeat) {
+        let px = stepPos[0] * rIdx;
+        let py = stepPos[1] * rIdx;
+        let pz = stepPos[2] * rIdx;
+        let rx = stepRot[0] * rIdx;
+        let ry = stepRot[1] * rIdx;
+        let rz = stepRot[2] * rIdx;
+        if (circleRadius !== 0 && angleStep !== 0) {
+          const ang = angleStep * rIdx;
+          px += Math.cos(ang) * circleRadius;
+          pz += Math.sin(ang) * circleRadius;
+          ry += -ang;
         }
-        appendRawMesh(repeatedAll, copy);
+        applyTransformToRaw(copy, [px, py, pz], [rx, ry, rz], [1, 1, 1]);
       }
+      appendRawMesh(repeatedRaw, copy);
     }
     const pos = resolveVec3(part.transform?.pos, params2, [0, 0, 0]);
     const rot = resolveVec3(part.transform?.rot, params2, [0, 0, 0]);
     const scale = resolveVec3(part.transform?.scale, params2, [1, 1, 1]);
     if (pos[0] !== 0 || pos[1] !== 0 || pos[2] !== 0 || rot[0] !== 0 || rot[1] !== 0 || rot[2] !== 0 || scale[0] !== 1 || scale[1] !== 1 || scale[2] !== 1) {
-      applyTransformToRaw(repeatedAll, pos, rot, scale);
+      applyTransformToRaw(repeatedRaw, pos, rot, scale);
+    }
+    const finalPartRaw = createRawMeshData();
+    if (part.mirror) {
+      if (part.mirror.keepOriginal !== false) {
+        appendRawMesh(finalPartRaw, repeatedRaw);
+      }
+      const m = cloneRaw(repeatedRaw);
+      const sx = part.mirror.axis === "x" ? -1 : 1;
+      const sy = part.mirror.axis === "y" ? -1 : 1;
+      const sz = part.mirror.axis === "z" ? -1 : 1;
+      applyTransformToRaw(m, [0, 0, 0], [0, 0, 0], [sx, sy, sz]);
+      appendRawMesh(finalPartRaw, m);
+    } else {
+      appendRawMesh(finalPartRaw, repeatedRaw);
     }
     if (part.op !== "displaced_rock" && part.op !== "cylinder") {
-      recomputeMetricUVs(repeatedAll);
+      recomputeMetricUVs(finalPartRaw);
     }
     if (part.vertexMeta?.groundAO && resolveBoolean(part.vertexMeta.groundAO, params2, false)) {
       const aoFloor = resolveNumber(part.vertexMeta.aoFloor, params2, 0.42);
-      applyGroundAO(repeatedAll, aoFloor, 0.65);
+      applyGroundAO(finalPartRaw, aoFloor, 0.65);
     }
-    partTriangles.push({ id: `${recipe.id}:${part.id}`, triangles: repeatedAll.indices.length / 3 });
-    appendRawMesh(out, repeatedAll);
+    partTriangles.push({ id: `${recipe.id}:${part.id}`, triangles: finalPartRaw.indices.length / 3 });
+    appendRawMesh(out, finalPartRaw);
   }
   visitStack.delete(recipe.id);
   return out;
@@ -3538,6 +4803,10 @@ function evaluateSinglePart(part, parentRecipe, params2, mergedSlots, ctx, visit
       return opDisplacedRock(args, params2, materialId, edgeWear, ao, wetness);
     case "extrude_profile":
       return opExtrudeProfile(args, params2, materialId, edgeWear, ao, wetness);
+    case "corrugated_panel":
+      return opCorrugatedPanel(args, params2, materialId, edgeWear, ao, wetness);
+    case "pipe_segment":
+      return opPipeSegment(args, params2, materialId, edgeWear, ao, wetness);
     default:
       throw new Error(`Unsupported mesh op "${String(part.op)}"`);
   }
@@ -3579,6 +4848,7 @@ function resolveRelativeUrl(baseUrl, relPath) {
 var ProceduralAssetLoader = class {
   preset;
   renderer;
+  bakeMode;
   fetchJson;
   materialRecipes = /* @__PURE__ */ new Map();
   meshRecipes = /* @__PURE__ */ new Map();
@@ -3587,6 +4857,7 @@ var ProceduralAssetLoader = class {
   constructor(options = {}) {
     this.preset = getQualityPreset(options.quality ?? "HIGH");
     this.renderer = options.renderer ?? null;
+    this.bakeMode = options.bakeMode ?? "auto";
     this.fetchJson = options.fetchJson ?? (async (url) => {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Failed to fetch ${url}: HTTP ${res.status}`);
@@ -3639,7 +4910,8 @@ var ProceduralAssetLoader = class {
     for (const mesh of meshes) this.meshRecipes.set(mesh.id, mesh);
     this.textureArray = await bakeMaterialArrayAsync(mats, this.preset, {
       onProgress,
-      renderer: this.renderer
+      renderer: this.renderer,
+      bakeMode: this.bakeMode
     });
   }
   async loadManifest(manifestUrl2, onProgress) {
@@ -3661,8 +4933,9 @@ var ProceduralAssetLoader = class {
     ]);
     await this.loadFromRecipes(mats, meshes, onProgress);
   }
-  async setQuality(tier, onProgress) {
+  async setQuality(tier, onProgress, overrideBakeMode) {
     this.preset = getQualityPreset(tier);
+    if (overrideBakeMode) this.bakeMode = overrideBakeMode;
     if (this.textureArray) {
       this.textureArray.dispose();
       this.textureArray = null;
@@ -3670,15 +4943,20 @@ var ProceduralAssetLoader = class {
     const mats = [...this.materialRecipes.values()];
     this.textureArray = await bakeMaterialArrayAsync(mats, this.preset, {
       onProgress,
-      renderer: this.renderer
+      renderer: this.renderer,
+      bakeMode: this.bakeMode
     });
     return this.textureArray;
+  }
+  async setBakeMode(mode, onProgress) {
+    return this.setQuality(this.preset.tier, onProgress, mode);
   }
   async registerMaterialRecipe(recipe) {
     this.materialRecipes.set(recipe.id, recipe);
     if (!this.textureArray) {
       this.textureArray = await bakeMaterialArrayAsync([recipe], this.preset, {
-        renderer: this.renderer
+        renderer: this.renderer,
+        bakeMode: this.bakeMode
       });
       return this.getMaterialId(recipe.id);
     }
@@ -3753,11 +5031,11 @@ var ProceduralAssetLoader = class {
 };
 
 // src/modules/realistic-pcg/skeletal/skeletal-loader.ts
-import * as THREE8 from "three";
+import * as THREE9 from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 // src/modules/realistic-pcg/skeletal/dummy-humanoid.ts
-import * as THREE7 from "three";
+import * as THREE8 from "three";
 function mergeSkinnedParts(parts, bones) {
   const positions = [];
   const normals = [];
@@ -3767,11 +5045,11 @@ function mergeSkinnedParts(parts, bones) {
   const skinWeights = [];
   const indices = [];
   bones[0].updateMatrixWorld(true);
-  const tmpColor = new THREE7.Color();
-  const tmpVec = new THREE7.Vector3();
+  const tmpColor = new THREE8.Color();
+  const tmpVec = new THREE8.Vector3();
   for (const part of parts) {
     const bone = bones[part.boneIndex];
-    const boneWorldPos = new THREE7.Vector3();
+    const boneWorldPos = new THREE8.Vector3();
     boneWorldPos.setFromMatrixPosition(bone.matrixWorld);
     tmpColor.setHex(part.colorHex);
     const g = part.geom;
@@ -3804,65 +5082,65 @@ function mergeSkinnedParts(parts, bones) {
     }
     g.dispose();
   }
-  const out = new THREE7.BufferGeometry();
-  out.setAttribute("position", new THREE7.Float32BufferAttribute(new Float32Array(positions), 3));
-  out.setAttribute("normal", new THREE7.Float32BufferAttribute(new Float32Array(normals), 3));
-  out.setAttribute("uv", new THREE7.Float32BufferAttribute(new Float32Array(uvs), 2));
-  out.setAttribute("color", new THREE7.Float32BufferAttribute(new Float32Array(colors), 3));
-  out.setAttribute("skinIndex", new THREE7.Uint16BufferAttribute(new Uint16Array(skinIndices), 4));
-  out.setAttribute("skinWeight", new THREE7.Float32BufferAttribute(new Float32Array(skinWeights), 4));
-  out.setIndex(new THREE7.Uint32BufferAttribute(new Uint32Array(indices), 1));
+  const out = new THREE8.BufferGeometry();
+  out.setAttribute("position", new THREE8.Float32BufferAttribute(new Float32Array(positions), 3));
+  out.setAttribute("normal", new THREE8.Float32BufferAttribute(new Float32Array(normals), 3));
+  out.setAttribute("uv", new THREE8.Float32BufferAttribute(new Float32Array(uvs), 2));
+  out.setAttribute("color", new THREE8.Float32BufferAttribute(new Float32Array(colors), 3));
+  out.setAttribute("skinIndex", new THREE8.Uint16BufferAttribute(new Uint16Array(skinIndices), 4));
+  out.setAttribute("skinWeight", new THREE8.Float32BufferAttribute(new Float32Array(skinWeights), 4));
+  out.setIndex(new THREE8.Uint32BufferAttribute(new Uint32Array(indices), 1));
   out.computeBoundingBox();
   out.computeBoundingSphere();
   return out;
 }
 function createDummyHumanoid() {
-  const root = new THREE7.Group();
+  const root = new THREE8.Group();
   root.name = "DummyHumanoid";
-  const hips = new THREE7.Bone();
+  const hips = new THREE8.Bone();
   hips.name = "Hips";
   hips.position.set(0, 0.92, 0);
-  const spine = new THREE7.Bone();
+  const spine = new THREE8.Bone();
   spine.name = "Spine";
   spine.position.set(0, 0.14, 0);
   hips.add(spine);
-  const chest = new THREE7.Bone();
+  const chest = new THREE8.Bone();
   chest.name = "Chest";
   chest.position.set(0, 0.24, 0);
   spine.add(chest);
-  const head = new THREE7.Bone();
+  const head = new THREE8.Bone();
   head.name = "Head";
   head.position.set(0, 0.24, 0);
   chest.add(head);
-  const leftArm = new THREE7.Bone();
+  const leftArm = new THREE8.Bone();
   leftArm.name = "LeftArm";
   leftArm.position.set(-0.23, 0.16, 0);
   chest.add(leftArm);
-  const leftForearm = new THREE7.Bone();
+  const leftForearm = new THREE8.Bone();
   leftForearm.name = "LeftForearm";
   leftForearm.position.set(0, -0.27, 0);
   leftArm.add(leftForearm);
-  const rightArm = new THREE7.Bone();
+  const rightArm = new THREE8.Bone();
   rightArm.name = "RightArm";
   rightArm.position.set(0.23, 0.16, 0);
   chest.add(rightArm);
-  const rightForearm = new THREE7.Bone();
+  const rightForearm = new THREE8.Bone();
   rightForearm.name = "RightForearm";
   rightForearm.position.set(0, -0.27, 0);
   rightArm.add(rightForearm);
-  const leftThigh = new THREE7.Bone();
+  const leftThigh = new THREE8.Bone();
   leftThigh.name = "LeftThigh";
   leftThigh.position.set(-0.1, -0.04, 0);
   hips.add(leftThigh);
-  const leftShin = new THREE7.Bone();
+  const leftShin = new THREE8.Bone();
   leftShin.name = "LeftShin";
   leftShin.position.set(0, -0.44, 0);
   leftThigh.add(leftShin);
-  const rightThigh = new THREE7.Bone();
+  const rightThigh = new THREE8.Bone();
   rightThigh.name = "RightThigh";
   rightThigh.position.set(0.1, -0.04, 0);
   hips.add(rightThigh);
-  const rightShin = new THREE7.Bone();
+  const rightShin = new THREE8.Bone();
   rightShin.name = "RightShin";
   rightShin.position.set(0, -0.44, 0);
   rightThigh.add(rightShin);
@@ -3882,33 +5160,33 @@ function createDummyHumanoid() {
   ];
   root.add(hips);
   const bodyParts = [
-    { geom: new THREE7.BoxGeometry(0.28, 0.14, 0.18), boneIndex: 0, offset: [0, 0.02, 0], colorHex: 6044712 },
-    { geom: new THREE7.BoxGeometry(0.26, 0.24, 0.17), boneIndex: 1, offset: [0, 0.1, 0], colorHex: 3889218 },
-    { geom: new THREE7.BoxGeometry(0.34, 0.25, 0.2), boneIndex: 2, offset: [0, 0.06, 0], colorHex: 3889218 },
-    { geom: new THREE7.SphereGeometry(0.11, 14, 12), boneIndex: 3, offset: [0, 0.11, 0], colorHex: 12751733 },
-    { geom: new THREE7.CylinderGeometry(0.055, 0.048, 0.27, 10), boneIndex: 4, offset: [0, -0.135, 0], colorHex: 3889218 },
-    { geom: new THREE7.CylinderGeometry(0.045, 0.038, 0.25, 10), boneIndex: 5, offset: [0, -0.125, 0], colorHex: 6044712 },
-    { geom: new THREE7.CylinderGeometry(0.055, 0.048, 0.27, 10), boneIndex: 6, offset: [0, -0.135, 0], colorHex: 3889218 },
-    { geom: new THREE7.CylinderGeometry(0.045, 0.038, 0.25, 10), boneIndex: 7, offset: [0, -0.125, 0], colorHex: 6044712 },
-    { geom: new THREE7.CylinderGeometry(0.075, 0.062, 0.42, 10), boneIndex: 8, offset: [0, -0.21, 0], colorHex: 3889218 },
-    { geom: new THREE7.CylinderGeometry(0.058, 0.05, 0.38, 10), boneIndex: 9, offset: [0, -0.19, 0], colorHex: 6044712 },
-    { geom: new THREE7.BoxGeometry(0.1, 0.08, 0.22), boneIndex: 9, offset: [0, -0.4, 0.04], colorHex: 4533534 },
-    { geom: new THREE7.CylinderGeometry(0.075, 0.062, 0.42, 10), boneIndex: 10, offset: [0, -0.21, 0], colorHex: 3889218 },
-    { geom: new THREE7.CylinderGeometry(0.058, 0.05, 0.38, 10), boneIndex: 11, offset: [0, -0.19, 0], colorHex: 6044712 },
-    { geom: new THREE7.BoxGeometry(0.1, 0.08, 0.22), boneIndex: 11, offset: [0, -0.4, 0.04], colorHex: 4533534 }
+    { geom: new THREE8.BoxGeometry(0.28, 0.14, 0.18), boneIndex: 0, offset: [0, 0.02, 0], colorHex: 6044712 },
+    { geom: new THREE8.BoxGeometry(0.26, 0.24, 0.17), boneIndex: 1, offset: [0, 0.1, 0], colorHex: 3889218 },
+    { geom: new THREE8.BoxGeometry(0.34, 0.25, 0.2), boneIndex: 2, offset: [0, 0.06, 0], colorHex: 3889218 },
+    { geom: new THREE8.SphereGeometry(0.11, 14, 12), boneIndex: 3, offset: [0, 0.11, 0], colorHex: 12751733 },
+    { geom: new THREE8.CylinderGeometry(0.055, 0.048, 0.27, 10), boneIndex: 4, offset: [0, -0.135, 0], colorHex: 3889218 },
+    { geom: new THREE8.CylinderGeometry(0.045, 0.038, 0.25, 10), boneIndex: 5, offset: [0, -0.125, 0], colorHex: 6044712 },
+    { geom: new THREE8.CylinderGeometry(0.055, 0.048, 0.27, 10), boneIndex: 6, offset: [0, -0.135, 0], colorHex: 3889218 },
+    { geom: new THREE8.CylinderGeometry(0.045, 0.038, 0.25, 10), boneIndex: 7, offset: [0, -0.125, 0], colorHex: 6044712 },
+    { geom: new THREE8.CylinderGeometry(0.075, 0.062, 0.42, 10), boneIndex: 8, offset: [0, -0.21, 0], colorHex: 3889218 },
+    { geom: new THREE8.CylinderGeometry(0.058, 0.05, 0.38, 10), boneIndex: 9, offset: [0, -0.19, 0], colorHex: 6044712 },
+    { geom: new THREE8.BoxGeometry(0.1, 0.08, 0.22), boneIndex: 9, offset: [0, -0.4, 0.04], colorHex: 4533534 },
+    { geom: new THREE8.CylinderGeometry(0.075, 0.062, 0.42, 10), boneIndex: 10, offset: [0, -0.21, 0], colorHex: 3889218 },
+    { geom: new THREE8.CylinderGeometry(0.058, 0.05, 0.38, 10), boneIndex: 11, offset: [0, -0.19, 0], colorHex: 6044712 },
+    { geom: new THREE8.BoxGeometry(0.1, 0.08, 0.22), boneIndex: 11, offset: [0, -0.4, 0.04], colorHex: 4533534 }
   ];
   const armorParts = [
-    { geom: new THREE7.BoxGeometry(0.08, 0.06, 0.2), boneIndex: 0, offset: [0, 0.06, 0.01], colorHex: 9146519 },
-    { geom: new THREE7.BoxGeometry(0.18, 0.14, 0.22), boneIndex: 2, offset: [0, 0.09, 0], colorHex: 9146519 },
-    { geom: new THREE7.CylinderGeometry(0.125, 0.13, 0.11, 14), boneIndex: 3, offset: [0, 0.16, 0], colorHex: 9146519 }
+    { geom: new THREE8.BoxGeometry(0.08, 0.06, 0.2), boneIndex: 0, offset: [0, 0.06, 0.01], colorHex: 9146519 },
+    { geom: new THREE8.BoxGeometry(0.18, 0.14, 0.22), boneIndex: 2, offset: [0, 0.09, 0], colorHex: 9146519 },
+    { geom: new THREE8.CylinderGeometry(0.125, 0.13, 0.11, 14), boneIndex: 3, offset: [0, 0.16, 0], colorHex: 9146519 }
   ];
-  const bodyMat = new THREE7.MeshStandardMaterial({
+  const bodyMat = new THREE8.MeshStandardMaterial({
     color: 16777215,
     vertexColors: true,
     roughness: 0.28,
     metalness: 0.06
   });
-  const armorMat = new THREE7.MeshStandardMaterial({
+  const armorMat = new THREE8.MeshStandardMaterial({
     color: 16777215,
     vertexColors: true,
     roughness: 0.24,
@@ -3916,13 +5194,13 @@ function createDummyHumanoid() {
   });
   const bodyGeo = mergeSkinnedParts(bodyParts, bones);
   const armorGeo = mergeSkinnedParts(armorParts, bones);
-  const skeleton = new THREE7.Skeleton(bones);
-  const bodyMesh = new THREE7.SkinnedMesh(bodyGeo, bodyMat);
+  const skeleton = new THREE8.Skeleton(bones);
+  const bodyMesh = new THREE8.SkinnedMesh(bodyGeo, bodyMat);
   bodyMesh.name = "DummyBody";
   bodyMesh.castShadow = true;
   bodyMesh.receiveShadow = true;
   bodyMesh.bind(skeleton);
-  const armorMesh = new THREE7.SkinnedMesh(armorGeo, armorMat);
+  const armorMesh = new THREE8.SkinnedMesh(armorGeo, armorMat);
   armorMesh.name = "DummyArmor";
   armorMesh.castShadow = true;
   armorMesh.receiveShadow = true;
@@ -3930,12 +5208,12 @@ function createDummyHumanoid() {
   root.add(bodyMesh);
   root.add(armorMesh);
   const qIdentity = [0, 0, 0, 1];
-  const qChestUp = new THREE7.Quaternion().setFromEuler(new THREE7.Euler(-0.04, 0, 0));
-  const qArmIdleL = new THREE7.Quaternion().setFromEuler(new THREE7.Euler(0.06, 0, 0.08));
-  const qArmIdleR = new THREE7.Quaternion().setFromEuler(new THREE7.Euler(-0.04, 0, -0.08));
-  const idleClip = new THREE7.AnimationClip("Idle", 2.4, [
-    new THREE7.VectorKeyframeTrack("Hips.position", [0, 1.2, 2.4], [0, 0.92, 0, 0, 0.938, 0, 0, 0.92, 0]),
-    new THREE7.QuaternionKeyframeTrack("Chest.quaternion", [0, 1.2, 2.4], [
+  const qChestUp = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(-0.04, 0, 0));
+  const qArmIdleL = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(0.06, 0, 0.08));
+  const qArmIdleR = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(-0.04, 0, -0.08));
+  const idleClip = new THREE8.AnimationClip("Idle", 2.4, [
+    new THREE8.VectorKeyframeTrack("Hips.position", [0, 1.2, 2.4], [0, 0.92, 0, 0, 0.938, 0, 0, 0.92, 0]),
+    new THREE8.QuaternionKeyframeTrack("Chest.quaternion", [0, 1.2, 2.4], [
       ...qIdentity,
       qChestUp.x,
       qChestUp.y,
@@ -3943,7 +5221,7 @@ function createDummyHumanoid() {
       qChestUp.w,
       ...qIdentity
     ]),
-    new THREE7.QuaternionKeyframeTrack("LeftArm.quaternion", [0, 1.2, 2.4], [
+    new THREE8.QuaternionKeyframeTrack("LeftArm.quaternion", [0, 1.2, 2.4], [
       qArmIdleL.x,
       qArmIdleL.y,
       qArmIdleL.z,
@@ -3957,7 +5235,7 @@ function createDummyHumanoid() {
       qArmIdleL.z,
       qArmIdleL.w
     ]),
-    new THREE7.QuaternionKeyframeTrack("RightArm.quaternion", [0, 1.2, 2.4], [
+    new THREE8.QuaternionKeyframeTrack("RightArm.quaternion", [0, 1.2, 2.4], [
       qArmIdleR.x,
       qArmIdleR.y,
       qArmIdleR.z,
@@ -3972,11 +5250,11 @@ function createDummyHumanoid() {
       qArmIdleR.w
     ])
   ]);
-  const qFwd = new THREE7.Quaternion().setFromEuler(new THREE7.Euler(0.35, 0, 0));
-  const qBwd = new THREE7.Quaternion().setFromEuler(new THREE7.Euler(-0.35, 0, 0));
-  const qKnee = new THREE7.Quaternion().setFromEuler(new THREE7.Euler(0.45, 0, 0));
-  const walkClip = new THREE7.AnimationClip("Walk", 1.2, [
-    new THREE7.VectorKeyframeTrack("Hips.position", [0, 0.3, 0.6, 0.9, 1.2], [
+  const qFwd = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(0.35, 0, 0));
+  const qBwd = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(-0.35, 0, 0));
+  const qKnee = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(0.45, 0, 0));
+  const walkClip = new THREE8.AnimationClip("Walk", 1.2, [
+    new THREE8.VectorKeyframeTrack("Hips.position", [0, 0.3, 0.6, 0.9, 1.2], [
       0,
       0.91,
       0,
@@ -3993,7 +5271,7 @@ function createDummyHumanoid() {
       0.91,
       0
     ]),
-    new THREE7.QuaternionKeyframeTrack("LeftThigh.quaternion", [0, 0.6, 1.2], [
+    new THREE8.QuaternionKeyframeTrack("LeftThigh.quaternion", [0, 0.6, 1.2], [
       qFwd.x,
       qFwd.y,
       qFwd.z,
@@ -4007,7 +5285,7 @@ function createDummyHumanoid() {
       qFwd.z,
       qFwd.w
     ]),
-    new THREE7.QuaternionKeyframeTrack("RightThigh.quaternion", [0, 0.6, 1.2], [
+    new THREE8.QuaternionKeyframeTrack("RightThigh.quaternion", [0, 0.6, 1.2], [
       qBwd.x,
       qBwd.y,
       qBwd.z,
@@ -4021,7 +5299,7 @@ function createDummyHumanoid() {
       qBwd.z,
       qBwd.w
     ]),
-    new THREE7.QuaternionKeyframeTrack("LeftShin.quaternion", [0, 0.3, 0.6, 1.2], [
+    new THREE8.QuaternionKeyframeTrack("LeftShin.quaternion", [0, 0.3, 0.6, 1.2], [
       ...qIdentity,
       qKnee.x,
       qKnee.y,
@@ -4030,7 +5308,7 @@ function createDummyHumanoid() {
       ...qIdentity,
       ...qIdentity
     ]),
-    new THREE7.QuaternionKeyframeTrack("LeftArm.quaternion", [0, 0.6, 1.2], [
+    new THREE8.QuaternionKeyframeTrack("LeftArm.quaternion", [0, 0.6, 1.2], [
       qBwd.x,
       qBwd.y,
       qBwd.z,
@@ -4044,7 +5322,7 @@ function createDummyHumanoid() {
       qBwd.z,
       qBwd.w
     ]),
-    new THREE7.QuaternionKeyframeTrack("RightArm.quaternion", [0, 0.6, 1.2], [
+    new THREE8.QuaternionKeyframeTrack("RightArm.quaternion", [0, 0.6, 1.2], [
       qFwd.x,
       qFwd.y,
       qFwd.z,
@@ -4091,14 +5369,14 @@ function disposeObjectResources(root) {
   });
 }
 function wrapLoadedScene(modelRoot, animations, normalizer, quality, targetHeightMeters) {
-  const wrapper = new THREE8.Group();
+  const wrapper = new THREE9.Group();
   wrapper.name = "SkeletalActorWrapper";
   wrapper.add(modelRoot);
   const audit = normalizer.applyToObject(modelRoot, {
     targetHeightMeters,
     quality
   });
-  const mixer = new THREE8.AnimationMixer(modelRoot);
+  const mixer = new THREE9.AnimationMixer(modelRoot);
   const actions = /* @__PURE__ */ new Map();
   for (const clip of animations) {
     actions.set(clip.name, mixer.clipAction(clip));
@@ -4164,7 +5442,7 @@ function createNormalizedDummyActor(normalizer, options = {}) {
 }
 
 // src/modules/realistic-pcg/skeletal/tripo-normalizer.ts
-import * as THREE9 from "three";
+import * as THREE10 from "three";
 var DEFAULT_TRIPO_CONFIG = {
   albedoSaturation: 0.85,
   albedoMinLuma: 0.05,
@@ -4254,17 +5532,17 @@ if ( uTripoNormEnabled > 0.5 ) {
       root.position.set(0, 0, 0);
       root.scale.set(1, 1, 1);
       root.updateMatrixWorld(true);
-      const box = new THREE9.Box3().setFromObject(root);
-      const size = new THREE9.Vector3();
-      const center = new THREE9.Vector3();
+      const box = new THREE10.Box3().setFromObject(root);
+      const size = new THREE10.Vector3();
+      const center = new THREE10.Vector3();
       box.getSize(size);
       box.getCenter(center);
       const rawHeight = size.y > 0.01 ? size.y : targetHeight;
       const scaleFactor = targetHeight / rawHeight;
       root.scale.set(scaleFactor, scaleFactor, scaleFactor);
       root.updateMatrixWorld(true);
-      const scaledBox = new THREE9.Box3().setFromObject(root);
-      const scaledCenter = new THREE9.Vector3();
+      const scaledBox = new THREE10.Box3().setFromObject(root);
+      const scaledCenter = new THREE10.Vector3();
       scaledBox.getCenter(scaledCenter);
       root.position.set(-scaledCenter.x, -scaledBox.min.y, -scaledCenter.z);
       root.updateMatrixWorld(true);
@@ -4389,39 +5667,43 @@ function mergeStaticGeometries(pieces) {
       g.dispose();
     }
   }
-  const out = new THREE10.BufferGeometry();
-  out.setAttribute("position", new THREE10.Float32BufferAttribute(new Float32Array(positions), 3));
-  out.setAttribute("normal", new THREE10.Float32BufferAttribute(new Float32Array(normals), 3));
-  out.setAttribute("uv", new THREE10.Float32BufferAttribute(new Float32Array(uvs), 2));
-  out.setAttribute("color", new THREE10.Float32BufferAttribute(new Float32Array(colors), 3));
-  out.setAttribute("aMaterialId", new THREE10.Float32BufferAttribute(new Float32Array(matIds), 1));
-  out.setIndex(new THREE10.Uint32BufferAttribute(new Uint32Array(indices), 1));
+  const out = new THREE11.BufferGeometry();
+  out.setAttribute("position", new THREE11.Float32BufferAttribute(new Float32Array(positions), 3));
+  out.setAttribute("normal", new THREE11.Float32BufferAttribute(new Float32Array(normals), 3));
+  out.setAttribute("uv", new THREE11.Float32BufferAttribute(new Float32Array(uvs), 2));
+  out.setAttribute("color", new THREE11.Float32BufferAttribute(new Float32Array(colors), 3));
+  out.setAttribute("aMaterialId", new THREE11.Float32BufferAttribute(new Float32Array(matIds), 1));
+  out.setIndex(new THREE11.Uint32BufferAttribute(new Uint32Array(indices), 1));
   out.computeBoundingBox();
   out.computeBoundingSphere();
   return out;
 }
 var CAMERA_PRESETS = {
-  overview: { pos: [12.5, 9, 14.5], target: [0, 1.4, -1.5] },
+  overview: { pos: [13.5, 9.5, 15], target: [-0.8, 1.4, -2] },
   brick_closeup: { pos: [-5.8, 2, 0.1], target: [-6.1, 1.6, -3.5] },
   puddle: { pos: [-0.8, 0.85, 7.9], target: [-0.8, 0.35, 1.5] },
-  character: { pos: [2.6, 1.45, 2.9], target: [0.9, 1, 0.3] }
+  character: { pos: [2.6, 1.45, 2.9], target: [0.9, 1, 0.3] },
+  industrial: { pos: [-3.4, 2.9, -6], target: [-8.4, 1.35, -10.2] },
+  interior: { pos: [3.2, 2, -7.6], target: [6.4, 0.9, -10.2] },
+  plinths: { pos: [12.5, 4.8, 12.8], target: [6.8, 0.5, 6.2] }
 };
 async function createLookDevScene(options) {
   const { canvas: canvas2 } = options;
   const manifestUrl2 = options.manifestUrl ?? null;
   let qualityTier = options.initialQuality ?? "HIGH";
   let lightingPreset = options.initialLighting ?? "OVERCAST_WET";
+  let biomeMode = options.initialBiome ?? "wet_moss";
   let wetness = 0.55;
   let disposed = false;
   let ready = false;
   let rafId = 0;
-  const renderer = new THREE10.WebGLRenderer({
+  const renderer = new THREE11.WebGLRenderer({
     canvas: canvas2,
     antialias: true,
     powerPreference: "high-performance",
     preserveDrawingBuffer: true
   });
-  renderer.outputColorSpace = THREE10.SRGBColorSpace;
+  renderer.outputColorSpace = THREE11.SRGBColorSpace;
   const applyRendererViewport = (w, h) => {
     const preset = getQualityPreset(qualityTier);
     const dpr = Math.min(window.devicePixelRatio || 1, preset.pixelRatioCap);
@@ -4430,11 +5712,11 @@ async function createLookDevScene(options) {
     camera.aspect = Math.max(1, w) / Math.max(1, h);
     camera.updateProjectionMatrix();
   };
-  const scene = new THREE10.Scene();
-  const camera = new THREE10.PerspectiveCamera(48, 16 / 9, 0.1, 400);
+  const scene = new THREE11.Scene();
+  const camera = new THREE11.PerspectiveCamera(48, 16 / 9, 0.1, 400);
   applyRendererViewport(canvas2.clientWidth || 1280, canvas2.clientHeight || 720);
-  const camTarget = new THREE10.Vector3(...CAMERA_PRESETS.overview.target);
-  const camOffset = new THREE10.Vector3(...CAMERA_PRESETS.overview.pos).sub(camTarget);
+  const camTarget = new THREE11.Vector3(...CAMERA_PRESETS.overview.target);
+  const camOffset = new THREE11.Vector3(...CAMERA_PRESETS.overview.pos).sub(camTarget);
   let camRadius = camOffset.length();
   let camTheta = Math.atan2(camOffset.x, camOffset.z);
   let camPhi = Math.acos(Math.max(-0.99, Math.min(0.99, camOffset.y / camRadius)));
@@ -4485,7 +5767,8 @@ async function createLookDevScene(options) {
   });
   const loader = new ProceduralAssetLoader({
     quality: qualityTier,
-    renderer
+    renderer,
+    bakeMode: options.initialBakeMode ?? "auto"
   });
   if (options.bundle) {
     await loader.loadFromRecipes(options.bundle.materials, options.bundle.meshes);
@@ -4499,13 +5782,15 @@ async function createLookDevScene(options) {
     textureArray: texArray,
     useTriplanar: false,
     globalWetness: wetness,
-    groundHeight: 0
+    groundHeight: 0,
+    biomeMode
   });
   const rockMat = createWorldPbrMaterial({
     textureArray: texArray,
     useTriplanar: getQualityPreset(qualityTier).enableTriplanar,
     globalWetness: wetness,
-    groundHeight: 0
+    groundHeight: 0,
+    biomeMode
   });
   const voxelChunks = [];
   let terrainMesh = null;
@@ -4524,6 +5809,8 @@ async function createLookDevScene(options) {
     const firstMat = loader.listMaterialIds()[0];
     const grassMatId = loader.hasMaterial("grass_mud") ? loader.getMaterialId("grass_mud") : firstMat ? loader.getMaterialId(firstMat) : 0;
     const cobbleMatId = loader.hasMaterial("mossy_cobble") ? loader.getMaterialId("mossy_cobble") : grassMatId;
+    const wetConcMatId = loader.hasMaterial("wet_industrial_concrete") ? loader.getMaterialId("wet_industrial_concrete") : cobbleMatId;
+    const oakFloorMatId = loader.hasMaterial("oak_plank_floor") ? loader.getMaterialId("oak_plank_floor") : cobbleMatId;
     const chunkOffsets = [
       [-16, -16],
       [0, -16],
@@ -4546,11 +5833,17 @@ async function createLookDevScene(options) {
           chunk.setVoxel(x, 0, z, grassMatId, 0.1);
           const dPuddle = Math.hypot(wx + 0.8, wz - 3.6);
           const inPuddle = dPuddle < 3.6;
-          const onPath = Math.abs(wx) < 3.5 && wz > -2.5 && wz < 8.5 || wx > 3 && wx < 10.5 && wz > 2.5 && wz < 8.5;
+          const inIndustrialYard = wx < -3 && wx > -13.5 && wz < -5.5 && wz > -13.5;
+          const inIndoorFloor = wx > 3.2 && wx < 9.8 && wz < -6.8 && wz > -12.8;
+          const onPath = Math.abs(wx) < 3.5 && wz > -2.5 && wz < 8.5 || wx > 3 && wx < 11.5 && wz > 2.5 && wz < 10.5;
           const isBorderBerm = Math.abs(wx) > 13.5 || Math.abs(wz) > 13.5;
           if (inPuddle) {
             const wetStrength = Math.max(0.45, 1 - dPuddle / 3.6 * 0.4);
             chunk.setVoxel(x, 1, z, cobbleMatId, wetStrength);
+          } else if (inIndustrialYard) {
+            chunk.setVoxel(x, 1, z, wetConcMatId, 0.55);
+          } else if (inIndoorFloor) {
+            chunk.setVoxel(x, 1, z, oakFloorMatId, 0.05);
           } else if (onPath) {
             chunk.setVoxel(x, 1, z, cobbleMatId, 0.35);
           } else {
@@ -4572,7 +5865,7 @@ async function createLookDevScene(options) {
       voxelChunks.push(chunk);
     }
     const mergedTerrain = mergeStaticGeometries(chunkPieces);
-    terrainMesh = new THREE10.Mesh(mergedTerrain, worldMat.material);
+    terrainMesh = new THREE11.Mesh(mergedTerrain, worldMat.material);
     terrainMesh.name = "VoxelTerrain32m";
     terrainMesh.receiveShadow = true;
     terrainMesh.castShadow = false;
@@ -4585,7 +5878,7 @@ async function createLookDevScene(options) {
     }
     if (!loader.hasMesh("guard_post")) return;
     const gpAsset = loader.instantiateMesh("guard_post");
-    guardPostMesh = new THREE10.Mesh(gpAsset.geometry, worldMat.material);
+    guardPostMesh = new THREE11.Mesh(gpAsset.geometry, worldMat.material);
     guardPostMesh.name = "GuardPostMain";
     guardPostMesh.position.set(0, 0, -3.5);
     guardPostMesh.castShadow = true;
@@ -4619,16 +5912,54 @@ async function createLookDevScene(options) {
       });
       pieces.push({ geometry: reskinAsset.geometry, pos: [8.5, 0, -4.5], rotY: -0.35 });
     }
+    if (loader.hasMesh("shipping_container")) {
+      const containerAsset = loader.instantiateMesh("shipping_container", {
+        params: { doorOpen: true }
+      });
+      pieces.push({ geometry: containerAsset.geometry, pos: [-8.2, 0, -11], rotY: 0 });
+    }
+    if (loader.hasMesh("industrial_pillar")) {
+      const pilA = loader.instantiateMesh("industrial_pillar", { params: { height: 3.4 } });
+      pieces.push({ geometry: pilA.geometry, pos: [-4.2, 0, -8.2] });
+      const pilB = loader.instantiateMesh("industrial_pillar", { params: { height: 3.4 } });
+      pieces.push({ geometry: pilB.geometry, pos: [-11.8, 0, -8.2] });
+    }
+    if (loader.hasMesh("utility_pipe_segment")) {
+      const pipeAsset = loader.instantiateMesh("utility_pipe_segment", {
+        params: { length: 7.6, radius: 0.14 }
+      });
+      pieces.push({ geometry: pipeAsset.geometry, pos: [-8, 2.6, -8.2] });
+    }
+    if (loader.hasMesh("heavy_crate")) {
+      const crateLarge = loader.instantiateMesh("heavy_crate", { params: { size: 1.1 } });
+      pieces.push({ geometry: crateLarge.geometry, pos: [-4.8, 0, -6.2], rotY: 0.25 });
+      const crateSmall = loader.instantiateMesh("heavy_crate", { params: { size: 0.72 } });
+      pieces.push({ geometry: crateSmall.geometry, pos: [-3.5, 0, -6.5], rotY: -0.4 });
+    }
+    if (loader.hasMesh("beveled_wall") && loader.hasMaterial("matte_plaster_wall")) {
+      const plasterWall = loader.instantiateMesh("beveled_wall", {
+        params: { width: 5, height: 2.8, thickness: 0.28, hasWindow: true },
+        materialOverrides: {
+          wall: "matte_plaster_wall",
+          trim: "oak_plank_floor"
+        }
+      });
+      pieces.push({ geometry: plasterWall.geometry, pos: [6.4, 0, -11.4] });
+    }
+    if (loader.hasMesh("wooden_table_chair")) {
+      const tableChair = loader.instantiateMesh("wooden_table_chair");
+      pieces.push({ geometry: tableChair.geometry, pos: [6.2, 0, -9.5], rotY: -0.2 });
+    }
     const matIds = loader.listMaterialIds();
     for (let i = 0; i < matIds.length; i++) {
       const mName = matIds[i];
       const layerId = loader.getMaterialId(mName);
-      const px = 4.2 + i % 3 * 2.2;
-      const pz = 4.2 + Math.floor(i / 3) * 2.4;
+      const px = 3.8 + i % 4 * 2.1;
+      const pz = 3.6 + Math.floor(i / 4) * 2.2;
       const cubeRaw = buildBeveledBoxRaw(0.75, 0.75, 0.75, 0.03, layerId, 0.85, 1, 0);
       const cubeGeo = buildBufferGeometryFromRaw(cubeRaw);
       pieces.push({ geometry: cubeGeo, pos: [px - 0.42, 0.375, pz], disposeSource: true });
-      const sphereGeo = new THREE10.SphereGeometry(0.38, 20, 14);
+      const sphereGeo = new THREE11.SphereGeometry(0.38, 20, 14);
       pieces.push({
         geometry: sphereGeo,
         pos: [px + 0.45, 0.42, pz],
@@ -4638,7 +5969,7 @@ async function createLookDevScene(options) {
     }
     if (pieces.length === 0) return;
     const merged = mergeStaticGeometries(pieces);
-    showcaseMesh = new THREE10.Mesh(merged, worldMat.material);
+    showcaseMesh = new THREE11.Mesh(merged, worldMat.material);
     showcaseMesh.name = "StaticShowcaseBatch";
     showcaseMesh.castShadow = true;
     showcaseMesh.receiveShadow = true;
@@ -4659,7 +5990,7 @@ async function createLookDevScene(options) {
       { geometry: rockB.geometry, pos: [-4.6, 0, 3.4], rotY: 1.7 },
       { geometry: rockC.geometry, pos: [4.2, 0, 1.5], rotY: -0.9 }
     ]);
-    rockMesh = new THREE10.Mesh(merged, rockMat.material);
+    rockMesh = new THREE11.Mesh(merged, rockMat.material);
     rockMesh.name = "TriplanarRocksBatch";
     rockMesh.castShadow = true;
     rockMesh.receiveShadow = true;
@@ -4694,6 +6025,7 @@ async function createLookDevScene(options) {
     return {
       bakeTimeMs: Math.round((tex?.bakeTimeMs ?? 0) * 10) / 10,
       maxBakeSliceMs: Math.round((tex?.maxSliceMs ?? 0) * 10) / 10,
+      bakeBackend: tex?.bakeBackend ?? "cpu",
       fps: Math.round(fpsSmooth * 10) / 10,
       drawCalls: renderer.info.render.calls,
       staticDrawCalls,
@@ -4703,6 +6035,7 @@ async function createLookDevScene(options) {
       cachedMeshCount: loader.getCachedMeshCount(),
       qualityTier,
       lightingPreset,
+      biomeMode,
       wetness,
       tripoNormalizationEnabled: normalizer.isEnabled()
     };
@@ -4713,8 +6046,11 @@ async function createLookDevScene(options) {
     const dt = Math.min(0.1, Math.max(1e-3, (now - lastTime) * 1e-3));
     lastTime = now;
     fpsSmooth = fpsSmooth * 0.9 + 1 / dt * 0.1;
+    const elapsed = (now - startTime) * 1e-3;
+    worldMat.setTime(elapsed);
+    rockMat.setTime(elapsed);
     actor.update(dt);
-    atmosphere.update((now - startTime) * 1e-3, camera.position);
+    atmosphere.update(elapsed, camera.position);
     renderer.render(scene, camera);
     if (now - lastHudTime > 200) {
       lastHudTime = now;
@@ -4729,7 +6065,7 @@ async function createLookDevScene(options) {
       const p = CAMERA_PRESETS[name];
       if (!p) throw new Error(`Unknown camera preset "${name}"`);
       camTarget.set(...p.target);
-      const off = new THREE10.Vector3(...p.pos).sub(camTarget);
+      const off = new THREE11.Vector3(...p.pos).sub(camTarget);
       camRadius = off.length();
       camTheta = Math.atan2(off.x, off.z);
       camPhi = Math.acos(Math.max(-0.99, Math.min(0.99, off.y / camRadius)));
@@ -4739,6 +6075,20 @@ async function createLookDevScene(options) {
     setLightingPreset(name) {
       lightingPreset = name;
       atmosphere.setPreset(name);
+      renderer.render(scene, camera);
+      options.onMetricsUpdate?.(computeMetrics());
+    },
+    setBiomeMode(mode) {
+      biomeMode = mode;
+      worldMat.setBiomeMode(mode);
+      rockMat.setBiomeMode(mode);
+      renderer.render(scene, camera);
+      options.onMetricsUpdate?.(computeMetrics());
+    },
+    async setBakeMode(mode) {
+      const updatedTex = await loader.setBakeMode(mode);
+      worldMat.syncTextureArray(updatedTex);
+      rockMat.syncTextureArray(updatedTex);
       renderer.render(scene, camera);
       options.onMetricsUpdate?.(computeMetrics());
     },
@@ -4797,7 +6147,7 @@ async function createLookDevScene(options) {
       if (recipe.id === "guard_post") {
         rebuildGuardPost();
         rebuildShowcase();
-      } else if (recipe.id === "beveled_wall") {
+      } else if (recipe.id === "beveled_wall" || recipe.id === "shipping_container" || recipe.id === "industrial_pillar" || recipe.id === "utility_pipe_segment" || recipe.id === "heavy_crate" || recipe.id === "wooden_table_chair") {
         rebuildGuardPost();
         rebuildShowcase();
       } else if (recipe.id === "weathered_rock") {
@@ -4808,7 +6158,7 @@ async function createLookDevScene(options) {
           hotPreviewMesh = null;
         }
         const asset = loader.instantiateMesh(recipe.id);
-        hotPreviewMesh = new THREE10.Mesh(asset.geometry, worldMat.material);
+        hotPreviewMesh = new THREE11.Mesh(asset.geometry, worldMat.material);
         hotPreviewMesh.name = `HotPreview_${recipe.id}`;
         hotPreviewMesh.position.set(-1.5, 0, 6.2);
         hotPreviewMesh.castShadow = true;
@@ -4913,18 +6263,25 @@ var auditEl = document.querySelector("#audit-log");
 var dropOverlay = document.querySelector("#drop-overlay");
 var qualitySel = document.querySelector("#ctrl-quality");
 var lightingSel = document.querySelector("#ctrl-lighting");
+var biomeSel = document.querySelector("#ctrl-biome");
+var bakeModeSel = document.querySelector("#ctrl-bakemode");
 var wetnessSlider = document.querySelector("#ctrl-wetness");
 var wetnessValEl = document.querySelector("#wetness-val");
 var tripoToggle = document.querySelector("#ctrl-tripo");
 var params = new URLSearchParams(location.search);
 var initialQuality = params.get("quality") === "LOW" ? "LOW" : "HIGH";
-var manifestUrl = params.get("manifest");
+var manifestParam = params.get("manifest");
+var manifestUrl = manifestParam !== null ? manifestParam : "../../assets/procedural/manifest.json";
+var initialBakeMode = params.get("bakeMode") ?? "auto";
+var initialBiome = params.get("biome") ?? "wet_moss";
 qualitySel.value = initialQuality;
+biomeSel.value = initialBiome;
+bakeModeSel.value = initialBakeMode;
 function formatMetrics(m) {
   return [
     `FPS: ${m.fps} | DrawCalls: ${m.drawCalls} (Static: ${m.staticDrawCalls})`,
     `Tris: ${m.triangles} | TexMem: ${m.estimatedTextureMB} MB`,
-    `Bake: ${m.bakeTimeMs} ms (maxSlice ${m.maxBakeSliceMs} ms)`,
+    `Bake: ${m.bakeTimeMs} ms [${m.bakeBackend.toUpperCase()}] (maxSlice ${m.maxBakeSliceMs} ms)`,
     `Mats: ${m.materialCount} | MeshCache: ${m.cachedMeshCount}`
   ].join("\n");
 }
@@ -4933,6 +6290,8 @@ var controller = await createLookDevScene({
   manifestUrl,
   initialQuality,
   initialLighting: "OVERCAST_WET",
+  initialBiome,
+  initialBakeMode,
   onMetricsUpdate: (m) => {
     metricsEl.textContent = formatMetrics(m);
   },
@@ -4950,6 +6309,12 @@ qualitySel.addEventListener("change", async () => {
 });
 lightingSel.addEventListener("change", () => {
   controller.api.setLightingPreset(lightingSel.value);
+});
+biomeSel.addEventListener("change", () => {
+  controller.api.setBiomeMode(biomeSel.value);
+});
+bakeModeSel.addEventListener("change", async () => {
+  await controller.api.setBakeMode(bakeModeSel.value);
 });
 wetnessSlider.addEventListener("input", () => {
   const v = Number(wetnessSlider.value);

@@ -211,6 +211,9 @@ export function resolveNumber(raw: unknown, params: ParamMap = {}, fallback?: nu
 
 export function resolveBoolean(raw: unknown, params: ParamMap = {}, fallback = false): boolean {
   if (raw === undefined) return fallback;
+  if (typeof raw === 'string' && raw.startsWith('!')) {
+    return !resolveBoolean(raw.slice(1).trim(), params, !fallback);
+  }
   const v = resolveParamValue(raw, params);
   if (typeof v === 'boolean') return v;
   if (typeof v === 'number') return v !== 0;

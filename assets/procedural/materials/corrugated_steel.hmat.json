@@ -1,0 +1,104 @@
+{
+  "format": "hgame.material",
+  "version": 1,
+  "id": "corrugated_steel",
+  "meta": {
+    "category": "metal",
+    "tileMeters": 1.5,
+    "seed": 7102
+  },
+  "params": {
+    "waveCount": 5,
+    "rustLevel": 0.42
+  },
+  "nodes": [
+    {
+      "id": "waves",
+      "op": "corrugated_wave",
+      "args": { "count": "$waveCount", "axis": "x", "fin": 0.25, "slope": 0.24, "fout": 0.26, "depth": 1.0 }
+    },
+    {
+      "id": "paint_peel",
+      "op": "fbm",
+      "args": { "scale": 10, "octaves": 4, "persistence": 0.56, "seamless": true }
+    },
+    {
+      "id": "edge_chips",
+      "op": "edge_wear_mask",
+      "args": { "input": "waves.edge", "low": 0.42, "high": 0.72, "noiseScale": 12, "spread": 0.55 }
+    },
+    {
+      "id": "rust_drips",
+      "op": "vertical_streak",
+      "args": { "input": "edge_chips", "scaleX": 14, "scaleY": 3, "threshold": 0.5, "decay": 0.18 }
+    },
+    {
+      "id": "rust_mask",
+      "op": "blend",
+      "args": { "mode": "max", "a": "edge_chips", "b": "rust_drips", "strength": 0.9 }
+    },
+    {
+      "id": "height_final",
+      "op": "blend",
+      "args": { "mode": "add", "a": "waves.height", "b": "paint_peel", "strength": 0.12 }
+    },
+    {
+      "id": "normal_map",
+      "op": "height_to_normal",
+      "args": { "input": "height_final", "strength": 2.8 }
+    },
+    {
+      "id": "paint_col",
+      "op": "color_ramp",
+      "args": {
+        "input": "paint_peel",
+        "stops": [
+          [0.0, "#3b5662"],
+          [0.5, "#486875"],
+          [1.0, "#5a7c89"]
+        ]
+      }
+    },
+    {
+      "id": "rust_col",
+      "op": "color_ramp",
+      "args": {
+        "input": "paint_peel",
+        "stops": [
+          [0.0, "#563829"],
+          [0.5, "#744730"],
+          [1.0, "#8d5636"]
+        ]
+      }
+    },
+    {
+      "id": "albedo_final",
+      "op": "mix_color",
+      "args": { "a": "paint_col", "b": "rust_col", "mask": "rust_mask" }
+    },
+    {
+      "id": "paint_rough",
+      "op": "remap",
+      "args": { "input": "paint_peel", "inMin": 0.2, "inMax": 0.85, "outMin": 0.34, "outMax": 0.56 }
+    },
+    {
+      "id": "roughness_final",
+      "op": "mix_scalar",
+      "args": { "a": "paint_rough", "b": 0.89, "mask": "rust_mask" }
+    },
+    {
+      "id": "metalness_final",
+      "op": "mix_scalar",
+      "args": { "a": 0.65, "b": 0.0, "mask": "rust_mask" }
+    }
+  ],
+  "outputs": {
+    "albedo": "albedo_final",
+    "height": "height_final",
+    "normal": "normal_map",
+    "ao": { "op": "remap", "input": "waves.height", "outMin": 0.52, "outMax": 1.0 },
+    "roughness": "roughness_final",
+    "metalness": "metalness_final",
+    "porosity": 0.32
+  }
+}

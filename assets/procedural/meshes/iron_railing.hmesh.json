@@ -1,0 +1,58 @@
+{
+  "format": "hgame.mesh",
+  "version": 1,
+  "id": "iron_railing",
+  "meta": {
+    "unit": "meter",
+    "collider": "auto_boxes"
+  },
+  "params": {
+    "length": 2.4,
+    "height": 0.95,
+    "postCount": 5
+  },
+  "materialSlots": {
+    "iron": "rusted_iron"
+  },
+  "parts": [
+    {
+      "id": "top_rail",
+      "op": "beveled_box",
+      "material": "$iron",
+      "args": {
+        "size": ["$length", 0.055, 0.055],
+        "bevel": 0.012
+      },
+      "transform": { "pos": [0, "$height", 0] },
+      "vertexMeta": { "edgeWear": 0.9 }
+    },
+    {
+      "id": "mid_rail",
+      "op": "beveled_box",
+      "material": "$iron",
+      "args": {
+        "size": ["$length", 0.035, 0.035],
+        "bevel": 0.008
+      },
+      "transform": { "pos": [0, "expr:$height * 0.48", 0] },
+      "vertexMeta": { "edgeWear": 0.75 }
+    },
+    {
+      "id": "posts",
+      "op": "cylinder",
+      "material": "$iron",
+      "args": {
+        "radiusTop": 0.024,
+        "radiusBottom": 0.028,
+        "height": "$height",
+        "segments": 10
+      },
+      "repeat": {
+        "count": "$postCount",
+        "stepPos": ["expr:$length / ($postCount - 1)", 0, 0]
+      },
+      "transform": { "pos": ["expr:-$length * 0.5", "expr:$height * 0.5", 0] },
+      "vertexMeta": { "edgeWear": 0.7, "groundAO": true }
+    }
+  ]
+}

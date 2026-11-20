@@ -1,0 +1,43 @@
+{
+  "format": "hgame.mesh",
+  "version": 1,
+  "id": "utility_pipe_segment",
+  "meta": {
+    "unit": "meter",
+    "collider": "auto_boxes"
+  },
+  "params": {
+    "length": 3.0,
+    "radius": 0.11,
+    "bendAngle": 0.0
+  },
+  "materialSlots": {
+    "pipe": "oxidized_rust_metal",
+    "clamp": "rusted_iron"
+  },
+  "parts": [
+    {
+      "id": "main_pipe",
+      "op": "pipe_segment",
+      "material": "$pipe",
+      "args": {
+        "length": "$length",
+        "radius": "$radius",
+        "bendAngle": "$bendAngle",
+        "bendRadius": 0.45,
+        "segments": 14
+      },
+      "transform": { "pos": [0, 0.24, 0] },
+      "vertexMeta": { "edgeWear": 0.75 }
+    },
+    {
+      "id": "support_clamps",
+      "op": "beveled_box",
+      "material": "$clamp",
+      "args": { "size": [0.08, 0.24, "expr:$radius * 2 + 0.08"], "bevel": 0.012 },
+      "repeat": { "count": 2, "stepPos": ["expr:$length * 0.5", 0, 0] },
+      "transform": { "pos": ["expr:-$length * 0.25", 0.12, 0] },
+      "vertexMeta": { "edgeWear": 0.85, "groundAO": true }
+    }
+  ]
+}

@@ -11,7 +11,12 @@ const pcgDir = path.join(root, 'src', 'modules', 'realistic-pcg');
 const argv = process.argv.slice(2);
 const dirIdx = argv.indexOf('--dir');
 const explicitDir = dirIdx >= 0 ? argv[dirIdx + 1] : process.env.HGAME_PROCEDURAL_DIR;
-const procDir = explicitDir ? path.resolve(explicitDir) : null;
+const defaultDir = path.join(root, 'assets', 'procedural');
+const procDir = explicitDir
+  ? path.resolve(explicitDir)
+  : existsSync(path.join(defaultDir, 'manifest.json'))
+  ? defaultDir
+  : null;
 
 function collectTsFiles(dir) {
   const out = [];

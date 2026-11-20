@@ -1,0 +1,69 @@
+{
+  "format": "hgame.mesh",
+  "version": 1,
+  "id": "industrial_pillar",
+  "meta": {
+    "unit": "meter",
+    "collider": "auto_boxes"
+  },
+  "params": {
+    "height": 3.4,
+    "width": 0.36
+  },
+  "materialSlots": {
+    "body": "oxidized_rust_metal",
+    "base": "wet_industrial_concrete"
+  },
+  "parts": [
+    {
+      "id": "concrete_footing",
+      "op": "beveled_box",
+      "material": "$base",
+      "args": { "size": ["expr:$width + 0.22", 0.36, "expr:$width + 0.22"], "bevel": 0.022 },
+      "transform": { "pos": [0, 0.18, 0] },
+      "vertexMeta": { "edgeWear": 0.7, "groundAO": true }
+    },
+    {
+      "id": "base_flange",
+      "op": "beveled_box",
+      "material": "$body",
+      "args": { "size": ["expr:$width + 0.1", 0.05, "expr:$width + 0.1"], "bevel": 0.012 },
+      "transform": { "pos": [0, 0.385, 0] },
+      "vertexMeta": { "edgeWear": 0.85 }
+    },
+    {
+      "id": "ibeam_web",
+      "op": "beveled_box",
+      "material": "$body",
+      "args": { "size": ["expr:$width - 0.08", "expr:$height - 0.44", 0.05], "bevel": 0.01 },
+      "transform": { "pos": [0, "expr:0.41 + ($height - 0.44) * 0.5", 0] },
+      "vertexMeta": { "edgeWear": 0.65 }
+    },
+    {
+      "id": "ibeam_flanges",
+      "op": "beveled_box",
+      "material": "$body",
+      "args": { "size": ["$width", "expr:$height - 0.44", 0.05], "bevel": 0.012 },
+      "transform": { "pos": [0, "expr:0.41 + ($height - 0.44) * 0.5", "expr:$width * 0.5 - 0.025"] },
+      "mirror": { "axis": "z", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.8 }
+    },
+    {
+      "id": "stiffener_ribs",
+      "op": "beveled_box",
+      "material": "$body",
+      "args": { "size": ["expr:$width + 0.02", 0.035, "expr:$width + 0.02"], "bevel": 0.008 },
+      "repeat": { "count": 3, "stepPos": [0, "expr:($height - 0.7) * 0.42", 0] },
+      "transform": { "pos": [0, 0.9, 0] },
+      "vertexMeta": { "edgeWear": 0.85 }
+    },
+    {
+      "id": "top_bracket",
+      "op": "beveled_box",
+      "material": "$body",
+      "args": { "size": ["expr:$width + 0.14", 0.08, "expr:$width + 0.14"], "bevel": 0.015 },
+      "transform": { "pos": [0, "expr:$height - 0.04", 0] },
+      "vertexMeta": { "edgeWear": 0.9 }
+    }
+  ]
+}

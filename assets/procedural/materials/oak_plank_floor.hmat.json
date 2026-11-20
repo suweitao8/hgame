@@ -1,0 +1,82 @@
+{
+  "format": "hgame.material",
+  "version": 1,
+  "id": "oak_plank_floor",
+  "meta": {
+    "category": "wood",
+    "tileMeters": 2.0,
+    "seed": 7523
+  },
+  "params": {
+    "planks": 8,
+    "joints": 3
+  },
+  "nodes": [
+    {
+      "id": "planks",
+      "op": "plank_pattern",
+      "args": { "planks": "$planks", "joints": "$joints", "gap": 0.012, "bevel": 0.02, "variation": 0.38, "nails": false }
+    },
+    {
+      "id": "oak_grain",
+      "op": "wood_grain",
+      "args": { "scale": 6, "ringScale": 22, "distortion": 0.34, "knots": 2, "stretchX": 1, "stretchY": 8 }
+    },
+    {
+      "id": "varnish_wear",
+      "op": "fbm",
+      "args": { "scale": 5, "octaves": 4, "persistence": 0.5, "seamless": true }
+    },
+    {
+      "id": "height_final",
+      "op": "blend",
+      "args": { "mode": "multiply", "a": "planks.height", "b": "oak_grain.height", "strength": 0.28 }
+    },
+    {
+      "id": "normal_map",
+      "op": "height_to_normal",
+      "args": { "input": "height_final", "strength": 2.0 }
+    },
+    {
+      "id": "oak_tone",
+      "op": "mix_scalar",
+      "args": { "a": "planks.cellRand", "b": "oak_grain.grain", "mask": 0.6 }
+    },
+    {
+      "id": "oak_col",
+      "op": "color_ramp",
+      "args": {
+        "input": "oak_tone",
+        "stops": [
+          [0.0, "#684e35"],
+          [0.5, "#846445"],
+          [1.0, "#a07c56"]
+        ]
+      }
+    },
+    {
+      "id": "albedo_final",
+      "op": "mix_color",
+      "args": { "a": "#4a3a2b", "b": "oak_col", "mask": "planks.mask" }
+    },
+    {
+      "id": "plank_rough",
+      "op": "remap",
+      "args": { "input": "varnish_wear", "inMin": 0.2, "inMax": 0.85, "outMin": 0.28, "outMax": 0.54 }
+    },
+    {
+      "id": "roughness_final",
+      "op": "mix_scalar",
+      "args": { "a": 0.86, "b": "plank_rough", "mask": "planks.mask" }
+    }
+  ],
+  "outputs": {
+    "albedo": "albedo_final",
+    "height": "height_final",
+    "normal": "normal_map",
+    "ao": { "op": "remap", "input": "height_final", "outMin": 0.5, "outMax": 1.0 },
+    "roughness": "roughness_final",
+    "metalness": 0.0,
+    "porosity": 0.35
+  }
+}

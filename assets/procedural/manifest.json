@@ -1,0 +1,32 @@
+{
+  "format": "hgame.manifest",
+  "version": 1,
+  "materials": [
+    { "id": "wet_stone_brick", "path": "materials/wet_stone_brick.hmat.json" },
+    { "id": "aged_plank_wood", "path": "materials/aged_plank_wood.hmat.json" },
+    { "id": "rusted_iron", "path": "materials/rusted_iron.hmat.json" },
+    { "id": "grass_mud", "path": "materials/grass_mud.hmat.json" },
+    { "id": "concrete_weathered", "path": "materials/concrete_weathered.hmat.json" },
+    { "id": "mossy_cobble", "path": "materials/mossy_cobble.hmat.json" },
+    { "id": "corrugated_steel", "path": "materials/corrugated_steel.hmat.json" },
+    { "id": "wet_industrial_concrete", "path": "materials/wet_industrial_concrete.hmat.json" },
+    { "id": "oxidized_rust_metal", "path": "materials/oxidized_rust_metal.hmat.json" },
+    { "id": "desert_sand_rock", "path": "materials/desert_sand_rock.hmat.json" },
+    { "id": "oak_plank_floor", "path": "materials/oak_plank_floor.hmat.json" },
+    { "id": "woven_fabric", "path": "materials/woven_fabric.hmat.json" },
+    { "id": "matte_plaster_wall", "path": "materials/matte_plaster_wall.hmat.json" }
+  ],
+  "meshes": [
+    { "id": "beveled_wall", "path": "meshes/beveled_wall.hmesh.json" },
+    { "id": "timber_beam", "path": "meshes/timber_beam.hmesh.json" },
+    { "id": "iron_railing", "path": "meshes/iron_railing.hmesh.json" },
+    { "id": "stone_stairs", "path": "meshes/stone_stairs.hmesh.json" },
+    { "id": "weathered_rock", "path": "meshes/weathered_rock.hmesh.json" },
+    { "id": "guard_post", "path": "meshes/guard_post.hmesh.json" },
+    { "id": "shipping_container", "path": "meshes/shipping_container.hmesh.json" },
+    { "id": "industrial_pillar", "path": "meshes/industrial_pillar.hmesh.json" },
+    { "id": "utility_pipe_segment", "path": "meshes/utility_pipe_segment.hmesh.json" },
+    { "id": "heavy_crate", "path": "meshes/heavy_crate.hmesh.json" },
+    { "id": "wooden_table_chair", "path": "meshes/wooden_table_chair.hmesh.json" }
+  ]
+}

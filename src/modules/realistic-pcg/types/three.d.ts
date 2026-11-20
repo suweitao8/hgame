@@ -13,6 +13,8 @@ declare module 'three' {
   export const LinearMipmapLinearFilter: number;
   export const RGBAFormat: number;
   export const UnsignedByteType: number;
+  export const HalfFloatType: number;
+  export const GLSL3: string;
 
   export const FrontSide: number;
   export const BackSide: number;
@@ -323,6 +325,7 @@ declare module 'three' {
     bottom: number;
     near: number;
     far: number;
+    constructor(left?: number, right?: number, top?: number, bottom?: number, near?: number, far?: number);
     updateProjectionMatrix(): void;
   }
 
@@ -383,6 +386,13 @@ declare module 'three' {
     uncacheRoot(root: Object3D): void;
   }
 
+  export class WebGLRenderTarget extends RenderTarget {
+    width: number;
+    height: number;
+    textures: Texture[];
+    constructor(width: number, height: number, options?: Record<string, unknown>);
+  }
+
   export class WebGLRenderer {
     domElement: HTMLCanvasElement;
     shadowMap: { enabled: boolean; type: number; autoUpdate: boolean };
@@ -404,6 +414,18 @@ declare module 'three' {
     constructor(parameters?: Record<string, unknown>);
     setSize(width: number, height: number, updateStyle?: boolean): void;
     setPixelRatio(value: number): void;
+    getRenderTarget(): RenderTarget | null;
+    setRenderTarget(target: RenderTarget | null): void;
+    readRenderTargetPixels(
+      renderTarget: RenderTarget,
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+      buffer: Uint8Array | Float32Array,
+      activeCubeFaceIndex?: number,
+      textureIndex?: number
+    ): void;
     render(scene: Scene, camera: Camera): void;
     getContext(): WebGL2RenderingContext;
     dispose(): void;

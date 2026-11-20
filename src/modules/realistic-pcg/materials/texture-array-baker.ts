@@ -7,6 +7,9 @@ import {
   type MaterialBakeJob,
 } from '../recipes/material-graph-eval.js';
 import type { MaterialRecipe } from '../recipes/schema-types.js';
+import { createGpuMaterialBaker, type GpuBakerContext } from './gpu-material-baker.js';
+
+export type BakeMode = 'auto' | 'gpu' | 'cpu';
 
 export interface MaterialLayerInfo {
   id: string;
@@ -22,6 +25,7 @@ export interface TextureArraySet {
   ormArray: THREE.DataArrayTexture;
   size: number;
   depth: number;
+  bakeBackend: 'gpu' | 'cpu';
   layers: Map<string, MaterialLayerInfo>;
   tileMetersById: Float32Array;
   estimatedMemoryMB: number;
@@ -111,12 +115,22 @@ function uploadLayerSubImage3D(
   }
 }
 
+function canUseGpuBake(renderer: THREE.WebGLRenderer | null | undefined, mode: BakeMode): boolean {
+  if (mode === 'cpu') return false;
+  return Boolean(
+    renderer &&
+      typeof renderer.setRenderTarget === 'function' &&
+      typeof renderer.readRenderTargetPixels === 'function'
+  );
+}
+
 export async function bakeMaterialArrayAsync(
   recipes: MaterialRecipe[],
   preset: RealisticQualityPreset,
   options: {
     onProgress?: (ratio: number) => void;
     renderer?: THREE.WebGLRenderer | null;
+    bakeMode?: BakeMode;
   } = {}
 ): Promise<TextureArraySet> {
   const startTime = performance.now();
@@ -129,7 +143,6 @@ export async function bakeMaterialArrayAsync(
   const normalAll = new Uint8Array(totalBytes);
   const ormAll = new Uint8Array(totalBytes);
 
-  // Seed default neutral calibration layer on slice 0 when array starts empty
   if (recipes.length === 0) {
     for (let p = 0; p < layerBytes; p += 4) {
       albedoAll[p] = 128; albedoAll[p + 1] = 128; albedoAll[p + 2] = 128; albedoAll[p + 3] = 128;
@@ -138,28 +151,64 @@ export async function bakeMaterialArrayAsync(
     }
   }
 
+  const bakeMode = options.bakeMode ?? 'auto';
+  const useGpu = canUseGpuBake(options.renderer, bakeMode);
+  let gpuBaker: GpuBakerContext | null = null;
+  let actualBackend: 'gpu' | 'cpu' = 'cpu';
+
+  if (useGpu && options.renderer) {
+    try {
+      gpuBaker = createGpuMaterialBaker(options.renderer);
+      actualBackend = 'gpu';
+    } catch {
+      gpuBaker = null;
+      actualBackend = 'cpu';
+    }
+  }
+
   const layers = new Map<string, MaterialLayerInfo>();
   const tileMetersById = new Float32Array(maxLayers);
   tileMetersById.fill(1.0);
 
   let maxSliceMs = 0;
+  let gpuSliceAccumMs = 0;
   const totalJobs = Math.max(1, recipes.length);
 
   for (let i = 0; i < recipes.length; i++) {
     const recipe = recipes[i]!;
-    const job: MaterialBakeJob = createMaterialBakeJob(recipe, size);
+    let baked: BakedMaterialBuffers | null = null;
 
-    while (true) {
-      const t0 = performance.now();
-      const done = job.step(preset.frameBudgetMs);
-      const dt = performance.now() - t0;
-      if (dt > maxSliceMs) maxSliceMs = dt;
-      if (done) break;
-      options.onProgress?.((i + 0.5) / totalJobs);
-      await nextFrameYield();
+    if (gpuBaker) {
+      try {
+        const t0 = performance.now();
+        baked = gpuBaker.bakeMaterial(recipe, size);
+        const dt = performance.now() - t0;
+        if (dt > maxSliceMs) maxSliceMs = dt;
+        gpuSliceAccumMs += dt;
+        if (gpuSliceAccumMs >= preset.frameBudgetMs && i + 1 < recipes.length) {
+          gpuSliceAccumMs = 0;
+          await nextFrameYield();
+        }
+      } catch {
+        baked = null;
+        actualBackend = 'cpu';
+      }
     }
 
-    const baked = job.getResult();
+    if (!baked) {
+      const job: MaterialBakeJob = createMaterialBakeJob(recipe, size);
+      while (true) {
+        const t0 = performance.now();
+        const done = job.step(preset.frameBudgetMs);
+        const dt = performance.now() - t0;
+        if (dt > maxSliceMs) maxSliceMs = dt;
+        if (done) break;
+        options.onProgress?.((i + 0.5) / totalJobs);
+        await nextFrameYield();
+      }
+      baked = job.getResult();
+    }
+
     copyLayerToArray(albedoAll, baked.albedoData, i, layerBytes);
     copyLayerToArray(normalAll, baked.normalData, i, layerBytes);
     copyLayerToArray(ormAll, baked.ormData, i, layerBytes);
@@ -175,6 +224,11 @@ export async function bakeMaterialArrayAsync(
     options.onProgress?.((i + 1) / totalJobs);
   }
 
+  if (gpuBaker) {
+    gpuBaker.dispose();
+    gpuBaker = null;
+  }
+
   const maxAniso = options.renderer?.capabilities?.getMaxAnisotropy?.() ?? preset.anisotropy;
   const aniso = Math.min(preset.anisotropy, maxAniso);
   const albedoArray = createArrayTex(albedoAll, size, maxLayers, THREE.SRGBColorSpace, aniso);
@@ -182,9 +236,7 @@ export async function bakeMaterialArrayAsync(
   const ormArray = createArrayTex(ormAll, size, maxLayers, THREE.NoColorSpace, 1);
 
   const bakeTimeMs = performance.now() - startTime;
-  // 3 RGBA8 arrays with mipmaps (~4/3 multiplier), computed on allocated capacity
   const estimatedMemoryMB = (totalBytes * 3 * (4 / 3)) / (1024 * 1024);
-
   let nextSlot = recipes.length;
 
   return {
@@ -193,6 +245,7 @@ export async function bakeMaterialArrayAsync(
     ormArray,
     size,
     depth: maxLayers,
+    bakeBackend: actualBackend,
     layers,
     tileMetersById,
     estimatedMemoryMB,
@@ -204,7 +257,7 @@ export async function bakeMaterialArrayAsync(
       renderer?: THREE.WebGLRenderer | null,
       paramOverrides?: ParamMap
     ): Promise<number> {
-      let existing = layers.get(recipe.id);
+      const existing = layers.get(recipe.id);
       let slot: number;
       if (existing) {
         slot = existing.materialId;
@@ -215,11 +268,26 @@ export async function bakeMaterialArrayAsync(
         slot = nextSlot++;
       }
 
-      const job = createMaterialBakeJob(recipe, size, paramOverrides);
-      while (!job.step(preset.frameBudgetMs)) {
-        await nextFrameYield();
+      const activeRenderer = renderer ?? options.renderer ?? null;
+      let baked: BakedMaterialBuffers | null = null;
+      if (canUseGpuBake(activeRenderer, bakeMode) && activeRenderer) {
+        const tempBaker = createGpuMaterialBaker(activeRenderer);
+        try {
+          baked = tempBaker.bakeMaterial(recipe, size, paramOverrides);
+        } catch {
+          baked = null;
+        } finally {
+          tempBaker.dispose();
+        }
       }
-      const baked = job.getResult();
+
+      if (!baked) {
+        const job = createMaterialBakeJob(recipe, size, paramOverrides);
+        while (!job.step(preset.frameBudgetMs)) {
+          await nextFrameYield();
+        }
+        baked = job.getResult();
+      }
 
       copyLayerToArray(albedoAll, baked.albedoData, slot, layerBytes);
       copyLayerToArray(normalAll, baked.normalData, slot, layerBytes);
@@ -234,7 +302,6 @@ export async function bakeMaterialArrayAsync(
         stats: baked.stats,
       });
 
-      const activeRenderer = renderer ?? options.renderer ?? null;
       const subOk =
         activeRenderer !== null &&
         uploadLayerSubImage3D(activeRenderer, albedoArray, slot, size, baked.albedoData) &&

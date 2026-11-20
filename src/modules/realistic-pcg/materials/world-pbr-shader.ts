@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { TextureArraySet } from './texture-array-baker.js';
 
+export type BiomeOverlayMode = 'wet_moss' | 'desert_dust' | 'clean_indoor';
+
 export interface WorldPbrMaterialOptions {
   textureArray: TextureArraySet;
   useTriplanar?: boolean;
@@ -9,6 +11,8 @@ export interface WorldPbrMaterialOptions {
   normalStrength?: number;
   macroStrength?: number;
   envMapIntensity?: number;
+  biomeMode?: BiomeOverlayMode;
+  biomeStrength?: number;
 }
 
 export interface WorldPbrMaterialHandle {
@@ -16,11 +20,20 @@ export interface WorldPbrMaterialHandle {
   setWetness(wetness: number): void;
   setGroundHeight(height: number): void;
   setNormalStrength(strength: number): void;
+  setBiomeMode(mode: BiomeOverlayMode): void;
+  setBiomeStrength(strength: number): void;
+  setTime(timeSec: number): void;
   syncTextureArray(texArray: TextureArraySet): void;
   dispose(): void;
 }
 
 const MAX_MATERIAL_SLOTS = 16;
+
+function biomeModeToInt(mode: BiomeOverlayMode): number {
+  if (mode === 'desert_dust') return 1;
+  if (mode === 'clean_indoor') return 2;
+  return 0;
+}
 
 function buildTileMetersArray(texArray: TextureArraySet): number[] {
   const arr = new Array<number>(MAX_MATERIAL_SLOTS).fill(1.0);
@@ -47,6 +60,9 @@ export function createWorldPbrMaterial(
     uGroundHeight: { value: options.groundHeight ?? 0.0 },
     uNormalStrength: { value: options.normalStrength ?? 1.0 },
     uMacroStrength: { value: options.macroStrength ?? 0.14 },
+    uBiomeMode: { value: biomeModeToInt(options.biomeMode ?? 'wet_moss') },
+    uBiomeStrength: { value: options.biomeStrength ?? 1.0 },
+    uTime: { value: 0.0 },
   };
 
   const material = new THREE.MeshStandardMaterial({
@@ -58,7 +74,7 @@ export function createWorldPbrMaterial(
   });
 
   material.customProgramCacheKey = () =>
-    useTriplanar ? 'hgame-world-pbr-triplanar-v1' : 'hgame-world-pbr-metric-v1';
+    useTriplanar ? 'hgame-world-pbr-triplanar-v2' : 'hgame-world-pbr-metric-v2';
 
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -108,6 +124,9 @@ uniform float uGlobalWetness;
 uniform float uGroundHeight;
 uniform float uNormalStrength;
 uniform float uMacroStrength;
+uniform int uBiomeMode;
+uniform float uBiomeStrength;
+uniform float uTime;
 
 varying float vPcgMatId;
 varying vec2 vPcgUv;
@@ -129,6 +148,20 @@ float pcgNoise2( vec2 p ) {
   float c = pcgHash21( i + vec2( 0.0, 1.0 ) );
   float d = pcgHash21( i + vec2( 1.0, 1.0 ) );
   return mix( mix( a, b, u.x ), mix( c, d, u.x ), u.y );
+}
+
+// Raindrop concentric ripples on standing puddles (inspired by saltline ground shader)
+vec2 pcgRainRipple( vec2 xz, float t ) {
+  vec2 cell = floor( xz * 1.35 );
+  vec2 f = fract( xz * 1.35 ) - 0.5;
+  float rnd = pcgHash21( cell );
+  float phase = fract( t * 0.65 + rnd );
+  vec2 center = vec2( pcgHash21( cell + 3.1 ), pcgHash21( cell + 7.9 ) ) - 0.5;
+  vec2 d = f - center * 0.45;
+  float dist = length( d );
+  float ring = sin( ( dist - phase * 0.48 ) * 46.0 ) * exp( -dist * 9.0 ) * ( 1.0 - phase );
+  float env = smoothstep( 0.48, 0.05, dist );
+  return normalize( d + 1e-4 ) * ring * env * 0.045;
 }
 
 mat3 pcgTangentFrame( vec3 eye_pos, vec3 surf_norm, vec2 uv ) {
@@ -191,48 +224,69 @@ float pcgLocalWet = 0.0;
   pcgLocalWet = clamp( vColor.b, 0.0, 1.0 );
 #endif
 
-// 1. Macro world-space variation (8m + 24m) & wetness / puddles
+// 1. Macro world-space variation (8m + 24m)
 float pcgMacro8 = pcgNoise2( vPcgWorldPos.xz * 0.125 );
 float pcgMacro24 = pcgNoise2( vPcgWorldPos.xz * 0.0416667 + vec2( 7.3, 19.1 ) );
 float pcgMacroVar = ( pcgMacro8 * 0.65 + pcgMacro24 * 0.35 ) * 2.0 - 1.0;
 pcgAlbedo *= ( 1.0 + pcgMacroVar * uMacroStrength );
 
-float pcgWetness = clamp( uGlobalWetness * 0.85 + pcgLocalWet * 0.85, 0.0, 1.0 );
-pcgAlbedo *= mix( 1.0, 1.0 - pcgPorosity * 0.42, pcgWetness );
-pcgRoughness = mix( pcgRoughness, max( 0.18, pcgRoughness * ( 1.0 - pcgPorosity * 0.45 ) ), pcgWetness );
-
 vec3 pcgWorldN = normalize( vPcgWorldNormal );
-float pcgPuddleNoise = pcgNoise2( vPcgWorldPos.xz * 0.32 + vec2( 3.1, 5.7 ) );
-float pcgUpFlat = smoothstep( 0.85, 0.96, pcgWorldN.y );
-float pcgPuddleDriver = clamp( uGlobalWetness * 0.55 + pcgLocalWet * 0.95, 0.0, 1.3 );
-float pcgPuddleMask = smoothstep( 0.42, 0.64, pcgPuddleNoise * 0.35 + pcgLocalWet * 0.85 )
-                    * pcgUpFlat
-                    * smoothstep( 0.30, 0.68, pcgPuddleDriver );
-pcgAlbedo = mix( pcgAlbedo, pcgAlbedo * 0.40, pcgPuddleMask * 0.88 );
-pcgRoughness = mix( pcgRoughness, 0.04, pcgPuddleMask );
+float pcgPuddleMask = 0.0;
 
-// 2. Orientation moss/dust & ground-contact grime
-float pcgMossNoise = pcgNoise2( vPcgWorldPos.xz * 0.45 + vec2( 11.4, 2.8 ) );
-float pcgUpMask = smoothstep( 0.60, 0.88, pcgWorldN.y );
-float pcgMossMask = pcgUpMask * smoothstep( 0.52, 0.82, pcgMossNoise * 0.7 + ( 1.0 - pcgHeight ) * 0.35 ) * ( 1.0 - pcgPuddleMask ) * ( 1.0 - pcgMetalness );
-vec3 pcgMossCol = vec3( 0.055, 0.085, 0.035 );
-pcgAlbedo = mix( pcgAlbedo, pcgMossCol, pcgMossMask * 0.38 );
-pcgRoughness = mix( pcgRoughness, 0.92, pcgMossMask * 0.35 );
+if ( uBiomeMode == 0 ) {
+  // ---- BIOME 0: wet_moss (rain dampness, standing puddles, moss & ground mud) ----
+  float pcgWetness = clamp( ( uGlobalWetness * 0.85 + pcgLocalWet * 0.85 ) * uBiomeStrength, 0.0, 1.0 );
+  pcgAlbedo *= mix( 1.0, 1.0 - pcgPorosity * 0.42, pcgWetness );
+  pcgRoughness = mix( pcgRoughness, max( 0.16, pcgRoughness * ( 1.0 - pcgPorosity * 0.48 ) ), pcgWetness );
 
-float pcgGroundProx = 1.0 - smoothstep( uGroundHeight, uGroundHeight + 0.6, vPcgWorldPos.y );
-float pcgGrimeMask = pcgGroundProx * ( 0.55 + 0.45 * pcgMacro8 );
-pcgAlbedo = mix( pcgAlbedo, pcgAlbedo * 0.68, pcgGrimeMask * 0.65 );
-pcgRoughness = mix( pcgRoughness, 0.86, pcgGrimeMask * 0.25 );
+  float pcgPuddleNoise = pcgNoise2( vPcgWorldPos.xz * 0.32 + vec2( 3.1, 5.7 ) );
+  float pcgUpFlat = smoothstep( 0.85, 0.96, pcgWorldN.y );
+  float pcgPuddleDriver = clamp( uGlobalWetness * 0.55 + pcgLocalWet * 0.95, 0.0, 1.3 );
+  pcgPuddleMask = smoothstep( 0.42, 0.64, pcgPuddleNoise * 0.35 + pcgLocalWet * 0.85 )
+                * pcgUpFlat
+                * smoothstep( 0.30, 0.68, pcgPuddleDriver )
+                * uBiomeStrength;
+  pcgAlbedo = mix( pcgAlbedo, pcgAlbedo * 0.40, pcgPuddleMask * 0.88 );
+  pcgRoughness = mix( pcgRoughness, 0.04, pcgPuddleMask );
+
+  float pcgMossNoise = pcgNoise2( vPcgWorldPos.xz * 0.45 + vec2( 11.4, 2.8 ) );
+  float pcgUpMask = smoothstep( 0.60, 0.88, pcgWorldN.y );
+  float pcgMossMask = pcgUpMask * smoothstep( 0.52, 0.82, pcgMossNoise * 0.7 + ( 1.0 - pcgHeight ) * 0.35 ) * ( 1.0 - pcgPuddleMask ) * ( 1.0 - pcgMetalness ) * uBiomeStrength;
+  vec3 pcgMossCol = vec3( 0.055, 0.085, 0.035 );
+  pcgAlbedo = mix( pcgAlbedo, pcgMossCol, pcgMossMask * 0.40 );
+  pcgRoughness = mix( pcgRoughness, 0.92, pcgMossMask * 0.35 );
+
+  float pcgGroundProx = 1.0 - smoothstep( uGroundHeight, uGroundHeight + 0.6, vPcgWorldPos.y );
+  float pcgGrimeMask = pcgGroundProx * ( 0.55 + 0.45 * pcgMacro8 ) * uBiomeStrength;
+  pcgAlbedo = mix( pcgAlbedo, pcgAlbedo * 0.68, pcgGrimeMask * 0.65 );
+  pcgRoughness = mix( pcgRoughness, 0.86, pcgGrimeMask * 0.25 );
+} else if ( uBiomeMode == 1 ) {
+  // ---- BIOME 1: desert_dust (inspired by worm-rider shared sand/dust PBR overlay) ----
+  float pcgDustNoise = pcgNoise2( vPcgWorldPos.xz * 0.22 + vec2( 5.1, 8.7 ) );
+  float pcgStreak = pcgNoise2( vec2( ( abs( pcgWorldN.x ) > abs( pcgWorldN.z ) ? vPcgWorldPos.z : vPcgWorldPos.x ) * 0.9, vPcgWorldPos.y * 0.35 ) );
+  float pcgDustStreak = mix( 1.0, 0.6 + 0.8 * pcgStreak, 1.0 - abs( pcgWorldN.y ) );
+  float pcgUpDust = smoothstep( 0.45, 0.96, pcgWorldN.y ) * 0.72;
+  float pcgLowDust = ( 1.0 - smoothstep( uGroundHeight, uGroundHeight + 1.4, vPcgWorldPos.y ) ) * 0.65;
+  float pcgDustMask = clamp( ( max( pcgUpDust, pcgLowDust ) + 0.08 ) * ( 0.22 + 1.9 * pcgDustNoise * pcgDustNoise ) * pcgDustStreak * uBiomeStrength, 0.0, 0.92 );
+  vec3 pcgDustCol = vec3( 0.43, 0.23, 0.11 ) * ( 0.82 + 0.36 * pcgMacro8 );
+  pcgAlbedo = mix( pcgAlbedo, pcgDustCol, pcgDustMask );
+  pcgRoughness = mix( pcgRoughness, 0.95, pcgDustMask );
+  pcgMetalness *= ( 1.0 - pcgDustMask );
+} else {
+  // ---- BIOME 2: clean_indoor (architectural dry interior, minimal contact shadow grime) ----
+  float pcgGroundProx = 1.0 - smoothstep( uGroundHeight, uGroundHeight + 0.25, vPcgWorldPos.y );
+  pcgAlbedo *= ( 1.0 - pcgGroundProx * 0.08 * uBiomeStrength );
+}
 
 // 3. Edge wear highlight
 pcgAlbedo *= ( 1.0 + pcgEdgeWear * 0.13 );
-pcgRoughness = clamp( pcgRoughness - pcgEdgeWear * 0.14, 0.06, 0.98 );
+pcgRoughness = clamp( pcgRoughness - pcgEdgeWear * 0.14, 0.04, 0.98 );
 
 diffuseColor.rgb = clamp( pcgAlbedo, 0.01, 0.96 );`
       )
       .replace(
         '#include <roughnessmap_fragment>',
-        `float roughnessFactor = clamp( pcgRoughness, 0.06, 0.98 );`
+        `float roughnessFactor = clamp( pcgRoughness, 0.04, 0.98 );`
       )
       .replace(
         '#include <metalnessmap_fragment>',
@@ -245,8 +299,10 @@ pcgMapN.xy *= uNormalStrength;
 mat3 pcgTbn = pcgTangentFrame( -vViewPosition, normal, pcgSampleUv );
 normal = normalize( pcgTbn * pcgMapN );
 if ( pcgPuddleMask > 0.001 ) {
-  vec3 pcgViewUp = normalize( ( viewMatrix * vec4( 0.0, 1.0, 0.0, 0.0 ) ).xyz );
-  normal = normalize( mix( normal, pcgViewUp, pcgPuddleMask * 0.92 ) );
+  vec2 pcgRip = pcgRainRipple( vPcgWorldPos.xz, uTime ) * smoothstep( 0.2, 0.9, uGlobalWetness );
+  vec3 pcgRipWorld = normalize( vec3( pcgRip.x, 1.0, pcgRip.y ) );
+  vec3 pcgViewUp = normalize( ( viewMatrix * vec4( pcgRipWorld, 0.0 ) ).xyz );
+  normal = normalize( mix( normal, pcgViewUp, pcgPuddleMask * 0.94 ) );
 }`
       )
       .replace(
@@ -271,6 +327,15 @@ reflectedLight.indirectDiffuse *= pcgTotalAO;
     },
     setNormalStrength(strength: number): void {
       uniforms.uNormalStrength.value = Math.max(0, strength);
+    },
+    setBiomeMode(mode: BiomeOverlayMode): void {
+      uniforms.uBiomeMode.value = biomeModeToInt(mode);
+    },
+    setBiomeStrength(strength: number): void {
+      uniforms.uBiomeStrength.value = Math.max(0, Math.min(1, strength));
+    },
+    setTime(timeSec: number): void {
+      uniforms.uTime.value = timeSec;
     },
     syncTextureArray(texArray: TextureArraySet): void {
       uniforms.uAlbedoArray.value = texArray.albedoArray;

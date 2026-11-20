@@ -1,0 +1,32 @@
+{
+  "format": "hgame.mesh",
+  "version": 1,
+  "id": "weathered_rock",
+  "meta": {
+    "unit": "meter",
+    "collider": "trimesh"
+  },
+  "params": {
+    "radius": 0.85,
+    "seed": 771
+  },
+  "materialSlots": {
+    "rock": "mossy_cobble"
+  },
+  "parts": [
+    {
+      "id": "boulder",
+      "op": "displaced_rock",
+      "material": "$rock",
+      "args": {
+        "radius": "$radius",
+        "detail": 2,
+        "noiseScale": 1.85,
+        "displacement": 0.28,
+        "squashY": 0.72,
+        "seed": "$seed"
+      },
+      "vertexMeta": { "edgeWear": 0.55, "groundAO": true }
+    }
+  ]
+}

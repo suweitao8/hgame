@@ -345,3 +345,55 @@ test('voxel chunk mesher culls hidden faces, computes 4-neighbor AO, and exports
 
   chunk.dispose();
 });
+
+test('assets/procedural Fable 5.2 bundle (13 materials, 11 meshes) validates, negates conditions, and evaluates cleanly', () => {
+  const procRoot = path.join(root, 'assets', 'procedural');
+  const manifest = JSON.parse(readFileSync(path.join(procRoot, 'manifest.json'), 'utf8'));
+  assert.equal(manifest.materials.length, 13);
+  assert.equal(manifest.meshes.length, 11);
+
+  const materials = manifest.materials.map((entry) =>
+    JSON.parse(readFileSync(path.join(procRoot, entry.path), 'utf8'))
+  );
+  const meshes = manifest.meshes.map((entry) =>
+    JSON.parse(readFileSync(path.join(procRoot, entry.path), 'utf8'))
+  );
+
+  const meshMap = new Map(meshes.map((m) => [m.id, m]));
+  const matMap = new Map(materials.map((m) => [m.id, m]));
+  const result = pcg.validateProceduralSet(manifest, matMap, meshMap);
+  assert.equal(result.valid, true);
+  assert.equal(result.errors.length, 0);
+  assert.equal(result.warnings.length, 0);
+
+  // Check CPU determinism across all 13 Fable 5.2 material graphs
+  for (const mat of materials) {
+    const baked = pcg.evaluateMaterialGraphSync(mat, 32);
+    assert.equal(baked.albedoData.length, 32 * 32 * 4);
+    assert.equal(baked.normalData.length, 32 * 32 * 4);
+    assert.equal(baked.ormData.length, 32 * 32 * 4);
+    assert.ok(baked.stats.minRoughness >= 0.049 && baked.stats.maxRoughness <= 1.0);
+  }
+
+  const matIds = new Map(materials.map((m, idx) => [m.id, idx]));
+  const ctx = { recipes: meshMap, resolveMaterialId: (id) => matIds.get(id) };
+
+  for (const mesh of meshes) {
+    const out = pcg.evaluateMeshRecipe(mesh, ctx);
+    assert.ok(out.triangleCount > 0, `${mesh.id} should have triangles`);
+    out.geometry.dispose();
+  }
+
+  // Test !$doorOpen negation on shipping_container
+  const containerRecipe = meshMap.get('shipping_container');
+  const closedCont = pcg.evaluateMeshRecipe(containerRecipe, ctx, { params: { doorOpen: false } });
+  const openCont = pcg.evaluateMeshRecipe(containerRecipe, ctx, { params: { doorOpen: true } });
+  closedCont.geometry.computeBoundingBox();
+  openCont.geometry.computeBoundingBox();
+  assert.ok(
+    openCont.geometry.boundingBox.max.x > closedCont.geometry.boundingBox.max.x + 0.3,
+    'open container doors should extend beyond closed bounds'
+  );
+  closedCont.geometry.dispose();
+  openCont.geometry.dispose();
+});

@@ -5,7 +5,12 @@ import { buildBeveledBoxRaw, buildBufferGeometryFromRaw } from '../geometry/metr
 import { createVoxelChunk, type VoxelChunkData } from '../geometry/voxel-chunk-mesher.js';
 import { createAtmospherePipeline, type AtmospherePipelineHandle } from '../lighting/atmosphere-pipeline.js';
 import type { LightingPresetName } from '../lighting/procedural-ibl.js';
-import { createWorldPbrMaterial, type WorldPbrMaterialHandle } from '../materials/world-pbr-shader.js';
+import type { BakeMode } from '../materials/texture-array-baker.js';
+import {
+  createWorldPbrMaterial,
+  type BiomeOverlayMode,
+  type WorldPbrMaterialHandle,
+} from '../materials/world-pbr-shader.js';
 import { ProceduralAssetLoader } from '../recipes/procedural-asset-loader.js';
 import type { MaterialRecipe, MeshRecipe } from '../recipes/schema-types.js';
 import { validateMaterialRecipe, validateMeshRecipe } from '../recipes/schema-validator.js';
@@ -16,11 +21,19 @@ import {
 } from '../skeletal/skeletal-loader.js';
 import { createTripoMaterialNormalizer, type TripoNormalizerHandle } from '../skeletal/tripo-normalizer.js';
 
-export type CameraPresetName = 'overview' | 'brick_closeup' | 'puddle' | 'character';
+export type CameraPresetName =
+  | 'overview'
+  | 'brick_closeup'
+  | 'puddle'
+  | 'character'
+  | 'industrial'
+  | 'interior'
+  | 'plinths';
 
 export interface LookDevMetrics {
   bakeTimeMs: number;
   maxBakeSliceMs: number;
+  bakeBackend: 'gpu' | 'cpu';
   fps: number;
   drawCalls: number;
   staticDrawCalls: number;
@@ -30,6 +43,7 @@ export interface LookDevMetrics {
   cachedMeshCount: number;
   qualityTier: QualityTier;
   lightingPreset: LightingPresetName;
+  biomeMode: BiomeOverlayMode;
   wetness: number;
   tripoNormalizationEnabled: boolean;
 }
@@ -39,6 +53,8 @@ export interface HGameLookDevAPI {
   getMetrics(): LookDevMetrics;
   setCameraPreset(name: CameraPresetName): void;
   setLightingPreset(name: LightingPresetName): void;
+  setBiomeMode(mode: BiomeOverlayMode): void;
+  setBakeMode(mode: BakeMode): Promise<void>;
   setQuality(tier: QualityTier): Promise<void>;
   setWetness(value: number): void;
   setTripoNormalizationEnabled(enabled: boolean): void;
@@ -139,10 +155,13 @@ const CAMERA_PRESETS: Record<
   CameraPresetName,
   { pos: [number, number, number]; target: [number, number, number] }
 > = {
-  overview: { pos: [12.5, 9.0, 14.5], target: [0.0, 1.4, -1.5] },
+  overview: { pos: [13.5, 9.5, 15.0], target: [-0.8, 1.4, -2.0] },
   brick_closeup: { pos: [-5.8, 2.0, 0.1], target: [-6.1, 1.6, -3.5] },
   puddle: { pos: [-0.8, 0.85, 7.9], target: [-0.8, 0.35, 1.5] },
   character: { pos: [2.6, 1.45, 2.9], target: [0.9, 1.0, 0.3] },
+  industrial: { pos: [-3.4, 2.9, -6.0], target: [-8.4, 1.35, -10.2] },
+  interior: { pos: [3.2, 2.0, -7.6], target: [6.4, 0.9, -10.2] },
+  plinths: { pos: [12.5, 4.8, 12.8], target: [6.8, 0.5, 6.2] },
 };
 
 export interface LookDevSceneController {
@@ -161,6 +180,8 @@ export interface CreateLookDevSceneOptions {
   };
   initialQuality?: QualityTier;
   initialLighting?: LightingPresetName;
+  initialBiome?: BiomeOverlayMode;
+  initialBakeMode?: BakeMode;
   onMetricsUpdate?: (metrics: LookDevMetrics) => void;
   onAuditMessage?: (msg: string) => void;
 }
@@ -172,6 +193,7 @@ export async function createLookDevScene(
   const manifestUrl = options.manifestUrl ?? null;
   let qualityTier: QualityTier = options.initialQuality ?? 'HIGH';
   let lightingPreset: LightingPresetName = options.initialLighting ?? 'OVERCAST_WET';
+  let biomeMode: BiomeOverlayMode = options.initialBiome ?? 'wet_moss';
   let wetness = 0.55;
   let disposed = false;
   let ready = false;
@@ -258,6 +280,7 @@ export async function createLookDevScene(
   const loader = new ProceduralAssetLoader({
     quality: qualityTier,
     renderer,
+    bakeMode: options.initialBakeMode ?? 'auto',
   });
   if (options.bundle) {
     await loader.loadFromRecipes(options.bundle.materials, options.bundle.meshes);
@@ -273,12 +296,14 @@ export async function createLookDevScene(
     useTriplanar: false,
     globalWetness: wetness,
     groundHeight: 0,
+    biomeMode,
   });
   const rockMat: WorldPbrMaterialHandle = createWorldPbrMaterial({
     textureArray: texArray,
     useTriplanar: getQualityPreset(qualityTier).enableTriplanar,
     globalWetness: wetness,
     groundHeight: 0,
+    biomeMode,
   });
 
   // 1. Build 32m x 32m voxel terrain from 4 16x16x16 chunks
@@ -307,6 +332,12 @@ export async function createLookDevScene(
     const cobbleMatId = loader.hasMaterial('mossy_cobble')
       ? loader.getMaterialId('mossy_cobble')
       : grassMatId;
+    const wetConcMatId = loader.hasMaterial('wet_industrial_concrete')
+      ? loader.getMaterialId('wet_industrial_concrete')
+      : cobbleMatId;
+    const oakFloorMatId = loader.hasMaterial('oak_plank_floor')
+      ? loader.getMaterialId('oak_plank_floor')
+      : cobbleMatId;
     const chunkOffsets: Array<[number, number]> = [
       [-16, -16],
       [0, -16],
@@ -336,15 +367,23 @@ export async function createLookDevScene(
           const dPuddle = Math.hypot(wx + 0.8, wz - 3.6);
           const inPuddle = dPuddle < 3.6;
 
+          // Industrial concrete dock pad (NW quadrant) & oak indoor pad (NE quadrant)
+          const inIndustrialYard = wx < -3.0 && wx > -13.5 && wz < -5.5 && wz > -13.5;
+          const inIndoorFloor = wx > 3.2 && wx < 9.8 && wz < -6.8 && wz > -12.8;
+
           // Cobble walkway leading from puddle to guard post entrance and plinths
           const onPath =
             (Math.abs(wx) < 3.5 && wz > -2.5 && wz < 8.5) ||
-            (wx > 3.0 && wx < 10.5 && wz > 2.5 && wz < 8.5);
+            (wx > 3.0 && wx < 11.5 && wz > 2.5 && wz < 10.5);
           const isBorderBerm = Math.abs(wx) > 13.5 || Math.abs(wz) > 13.5;
 
           if (inPuddle) {
             const wetStrength = Math.max(0.45, 1.0 - (dPuddle / 3.6) * 0.4);
             chunk.setVoxel(x, 1, z, cobbleMatId, wetStrength);
+          } else if (inIndustrialYard) {
+            chunk.setVoxel(x, 1, z, wetConcMatId, 0.55);
+          } else if (inIndoorFloor) {
+            chunk.setVoxel(x, 1, z, oakFloorMatId, 0.05);
           } else if (onPath) {
             chunk.setVoxel(x, 1, z, cobbleMatId, 0.35);
           } else {
@@ -435,13 +474,55 @@ export async function createLookDevScene(
       pieces.push({ geometry: reskinAsset.geometry, pos: [8.5, 0, -4.5], rotY: -0.35 });
     }
 
-    // Material Calibration Plinths for all registered .hmat.json recipes
+    // Industrial Dock & Pipeline Showcase (NW zone)
+    if (loader.hasMesh('shipping_container')) {
+      const containerAsset = loader.instantiateMesh('shipping_container', {
+        params: { doorOpen: true },
+      });
+      pieces.push({ geometry: containerAsset.geometry, pos: [-8.2, 0, -11.0], rotY: 0.0 });
+    }
+    if (loader.hasMesh('industrial_pillar')) {
+      const pilA = loader.instantiateMesh('industrial_pillar', { params: { height: 3.4 } });
+      pieces.push({ geometry: pilA.geometry, pos: [-4.2, 0, -8.2] });
+      const pilB = loader.instantiateMesh('industrial_pillar', { params: { height: 3.4 } });
+      pieces.push({ geometry: pilB.geometry, pos: [-11.8, 0, -8.2] });
+    }
+    if (loader.hasMesh('utility_pipe_segment')) {
+      const pipeAsset = loader.instantiateMesh('utility_pipe_segment', {
+        params: { length: 7.6, radius: 0.14 },
+      });
+      pieces.push({ geometry: pipeAsset.geometry, pos: [-8.0, 2.6, -8.2] });
+    }
+    if (loader.hasMesh('heavy_crate')) {
+      const crateLarge = loader.instantiateMesh('heavy_crate', { params: { size: 1.1 } });
+      pieces.push({ geometry: crateLarge.geometry, pos: [-4.8, 0, -6.2], rotY: 0.25 });
+      const crateSmall = loader.instantiateMesh('heavy_crate', { params: { size: 0.72 } });
+      pieces.push({ geometry: crateSmall.geometry, pos: [-3.5, 0, -6.5], rotY: -0.4 });
+    }
+
+    // Interior Furniture & Matte Plaster Wall Showcase (NE zone)
+    if (loader.hasMesh('beveled_wall') && loader.hasMaterial('matte_plaster_wall')) {
+      const plasterWall = loader.instantiateMesh('beveled_wall', {
+        params: { width: 5.0, height: 2.8, thickness: 0.28, hasWindow: true },
+        materialOverrides: {
+          wall: 'matte_plaster_wall',
+          trim: 'oak_plank_floor',
+        },
+      });
+      pieces.push({ geometry: plasterWall.geometry, pos: [6.4, 0, -11.4] });
+    }
+    if (loader.hasMesh('wooden_table_chair')) {
+      const tableChair = loader.instantiateMesh('wooden_table_chair');
+      pieces.push({ geometry: tableChair.geometry, pos: [6.2, 0, -9.5], rotY: -0.2 });
+    }
+
+    // Material Calibration Plinths for all registered .hmat.json recipes (4 per row)
     const matIds = loader.listMaterialIds();
     for (let i = 0; i < matIds.length; i++) {
       const mName = matIds[i]!;
       const layerId = loader.getMaterialId(mName);
-      const px = 4.2 + (i % 3) * 2.2;
-      const pz = 4.2 + Math.floor(i / 3) * 2.4;
+      const px = 3.8 + (i % 4) * 2.1;
+      const pz = 3.6 + Math.floor(i / 4) * 2.2;
 
       const cubeRaw = buildBeveledBoxRaw(0.75, 0.75, 0.75, 0.03, layerId, 0.85, 1.0, 0.0);
       const cubeGeo = buildBufferGeometryFromRaw(cubeRaw);
@@ -523,6 +604,7 @@ export async function createLookDevScene(
     return {
       bakeTimeMs: Math.round((tex?.bakeTimeMs ?? 0) * 10) / 10,
       maxBakeSliceMs: Math.round((tex?.maxSliceMs ?? 0) * 10) / 10,
+      bakeBackend: tex?.bakeBackend ?? 'cpu',
       fps: Math.round(fpsSmooth * 10) / 10,
       drawCalls: renderer.info.render.calls,
       staticDrawCalls,
@@ -532,6 +614,7 @@ export async function createLookDevScene(
       cachedMeshCount: loader.getCachedMeshCount(),
       qualityTier,
       lightingPreset,
+      biomeMode,
       wetness,
       tripoNormalizationEnabled: normalizer.isEnabled(),
     };
@@ -544,8 +627,11 @@ export async function createLookDevScene(
     lastTime = now;
     fpsSmooth = fpsSmooth * 0.9 + (1 / dt) * 0.1;
 
+    const elapsed = (now - startTime) * 0.001;
+    worldMat.setTime(elapsed);
+    rockMat.setTime(elapsed);
     actor.update(dt);
-    atmosphere.update((now - startTime) * 0.001, camera.position);
+    atmosphere.update(elapsed, camera.position);
     renderer.render(scene, camera);
 
     if (now - lastHudTime > 200) {
@@ -574,6 +660,22 @@ export async function createLookDevScene(
     setLightingPreset(name: LightingPresetName): void {
       lightingPreset = name;
       atmosphere.setPreset(name);
+      renderer.render(scene, camera);
+      options.onMetricsUpdate?.(computeMetrics());
+    },
+
+    setBiomeMode(mode: BiomeOverlayMode): void {
+      biomeMode = mode;
+      worldMat.setBiomeMode(mode);
+      rockMat.setBiomeMode(mode);
+      renderer.render(scene, camera);
+      options.onMetricsUpdate?.(computeMetrics());
+    },
+
+    async setBakeMode(mode: BakeMode): Promise<void> {
+      const updatedTex = await loader.setBakeMode(mode);
+      worldMat.syncTextureArray(updatedTex);
+      rockMat.syncTextureArray(updatedTex);
       renderer.render(scene, camera);
       options.onMetricsUpdate?.(computeMetrics());
     },
@@ -637,7 +739,14 @@ export async function createLookDevScene(
       if (recipe.id === 'guard_post') {
         rebuildGuardPost();
         rebuildShowcase();
-      } else if (recipe.id === 'beveled_wall') {
+      } else if (
+        recipe.id === 'beveled_wall' ||
+        recipe.id === 'shipping_container' ||
+        recipe.id === 'industrial_pillar' ||
+        recipe.id === 'utility_pipe_segment' ||
+        recipe.id === 'heavy_crate' ||
+        recipe.id === 'wooden_table_chair'
+      ) {
         rebuildGuardPost();
         rebuildShowcase();
       } else if (recipe.id === 'weathered_rock') {

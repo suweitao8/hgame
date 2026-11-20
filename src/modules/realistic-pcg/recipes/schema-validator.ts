@@ -29,6 +29,12 @@ const VALID_MAT_OPS = new Set<MaterialNodeOp>([
   'plank_pattern',
   'stripes',
   'speckle',
+  'corrugated_wave',
+  'edge_wear_mask',
+  'vertical_streak',
+  'rivet_grid',
+  'sand_ripples',
+  'fabric_weave',
   'remap',
   'clamp',
   'invert',
@@ -49,6 +55,8 @@ const VALID_MESH_OPS = new Set<MeshPartOp>([
   'stairs',
   'displaced_rock',
   'extrude_profile',
+  'corrugated_panel',
+  'pipe_segment',
   'ref',
 ]);
 
@@ -83,9 +91,10 @@ function collectParamAndExprIssues(
   issues: ValidationIssue[]
 ): void {
   if (typeof value === 'string') {
-    if (value.startsWith('expr:')) {
+    const trimmed = value.startsWith('!') ? value.slice(1).trim() : value;
+    if (trimmed.startsWith('expr:')) {
       try {
-        const refs = extractExprParamRefs(value);
+        const refs = extractExprParamRefs(trimmed);
         for (const r of refs) {
           if (!(r in params)) {
             issues.push({
@@ -104,8 +113,8 @@ function collectParamAndExprIssues(
           message: err instanceof Error ? err.message : String(err),
         });
       }
-    } else if (value.startsWith('$')) {
-      const name = value.slice(1);
+    } else if (trimmed.startsWith('$')) {
+      const name = trimmed.slice(1);
       if (!(name in params)) {
         issues.push({
           severity: 'error',

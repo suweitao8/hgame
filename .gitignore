@@ -95,6 +95,7 @@ examples/*/assets/**/*.wav
 # Local reverse-engineering machine paths and sandbox workspace
 .hgame.local.json
 .re-workspace/
+.tmp/
 tests-local/
 tools-local/
 __pycache__/

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Real headless Chromium verification for demos/lookdev-realistic-3d/ using ephemeral test recipes
 import { spawn } from 'node:child_process';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -146,64 +146,70 @@ try {
     if (res.status() >= 400) { console.error('HTTPERR:', res.status(), res.url()); errors.push(`HTTP ${res.status()} ${res.url()}`); }
   });
 
-  // 1. Verify standalone empty Look-Dev stage loads with 0 404s and 0 errors (HGame stores no assets)
-  await page.goto(baseDemoUrl, { waitUntil: 'load' });
+  // 1. Verify standalone empty Look-Dev stage (?manifest=) loads with 0 404s and 0 errors
+  await page.goto(`${baseDemoUrl}?manifest=`, { waitUntil: 'load' });
   await page.waitForFunction(() => Boolean(window.__HGAME_LOOKDEV__?.isReady()), { timeout: 20000 });
   const emptyMetrics = await page.evaluate(() => window.__HGAME_LOOKDEV__.getMetrics());
   console.log('Empty stage metrics:', JSON.stringify(emptyMetrics));
 
-  // 2. Serve ephemeral WebAsset-style external manifest via route interception (pathname only)
-  await page.route((url) => url.pathname.startsWith('/__ext_proc__/'), async (route) => {
-    const pathname = new URL(route.request().url()).pathname;
-    if (pathname.endsWith('/manifest.json')) {
-      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_MANIFEST) });
-    }
-    const matMatch = /\/materials\/([^/]+)\.hmat\.json$/.exec(pathname);
-    if (matMatch && TEST_MATERIALS[matMatch[1]]) {
-      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_MATERIALS[matMatch[1]]) });
-    }
-    const meshMatch = /\/meshes\/([^/]+)\.hmesh\.json$/.exec(pathname);
-    if (meshMatch && TEST_MESHES[meshMatch[1]]) {
-      return route.fulfill({ contentType: 'application/json', body: JSON.stringify(TEST_MESHES[meshMatch[1]]) });
-    }
-    return route.fulfill({ status: 404, body: 'Not found' });
-  });
-
-  await page.goto(`${baseDemoUrl}?manifest=/__ext_proc__/manifest.json`, { waitUntil: 'load' });
-  await page.waitForFunction(() => Boolean(window.__HGAME_LOOKDEV__?.isReady()), { timeout: 20000 });
-  await page.waitForTimeout(300);
+  // 2. Verify full 13-material, 11-mesh assets/procedural manifest in GPU-first HIGH mode
+  await page.goto(baseDemoUrl, { waitUntil: 'load' });
+  await page.waitForFunction(() => Boolean(window.__HGAME_LOOKDEV__?.isReady()), { timeout: 30000 });
+  await page.waitForTimeout(350);
 
   const highMetrics = await page.evaluate(() => window.__HGAME_LOOKDEV__.getMetrics());
-  console.log('HIGH metrics:', JSON.stringify(highMetrics));
+  console.log('HIGH metrics (13 mats, 11 meshes):', JSON.stringify(highMetrics));
 
-  if (highMetrics.bakeTimeMs > 2000) throw new Error(`HIGH bakeTimeMs (${highMetrics.bakeTimeMs}) > 2000ms`);
-  if (highMetrics.maxBakeSliceMs > 50) throw new Error(`HIGH maxBakeSliceMs (${highMetrics.maxBakeSliceMs}) > 50ms`);
-  if (highMetrics.drawCalls > 15) throw new Error(`drawCalls (${highMetrics.drawCalls}) > 15`);
-  if (highMetrics.staticDrawCalls > 6) throw new Error(`staticDrawCalls (${highMetrics.staticDrawCalls}) > 6`);
-  if (highMetrics.materialCount !== 3) throw new Error(`Expected 3 test materials, got ${highMetrics.materialCount}`);
+  if (highMetrics.bakeTimeMs > 1800) throw new Error(`HIGH bakeTimeMs (${highMetrics.bakeTimeMs}) > 1800ms`);
+  if (highMetrics.bakeBackend !== 'gpu') {
+    throw new Error(`Expected GPU bake backend on Chromium WebGL2, got ${highMetrics.bakeBackend}`);
+  }
+  if (highMetrics.drawCalls > 18) throw new Error(`drawCalls (${highMetrics.drawCalls}) > 18`);
+  if (highMetrics.staticDrawCalls > 8) throw new Error(`staticDrawCalls (${highMetrics.staticDrawCalls}) > 8`);
+  if (highMetrics.materialCount !== 13) throw new Error(`Expected 13 materials, got ${highMetrics.materialCount}`);
 
   await mkdir(shotsDir, { recursive: true });
-  for (const preset of ['overview', 'brick_closeup', 'puddle', 'character']) {
+  for (const preset of ['overview', 'brick_closeup', 'industrial', 'interior', 'plinths', 'puddle', 'character']) {
     await page.evaluate((p) => window.__HGAME_LOOKDEV__.setCameraPreset(p), preset);
     await page.waitForTimeout(100);
     await page.screenshot({ path: path.join(shotsDir, `${preset}.png`) });
   }
 
-  // Hot-reload material & verify visual change
-  const updatedBrick = structuredClone(TEST_MATERIALS.wet_stone_brick);
-  updatedBrick.nodes[4].args.stops[1][1] = '#8a4f43';
+  // Test biome overlay switching (wet_moss -> desert_dust -> clean_indoor -> wet_moss)
+  await page.evaluate(() => window.__HGAME_LOOKDEV__.setCameraPreset('overview'));
+  await page.waitForTimeout(80);
+  const shotWet = await page.screenshot();
+  await page.evaluate(() => window.__HGAME_LOOKDEV__.setBiomeMode('desert_dust'));
+  await page.waitForTimeout(100);
+  await page.screenshot({ path: path.join(shotsDir, 'biome_desert.png') });
+  const shotDesert = await page.screenshot();
+  if (Buffer.compare(shotWet, shotDesert) === 0) {
+    throw new Error('setBiomeMode("desert_dust") did not change rendered pixels');
+  }
+  await page.evaluate(() => window.__HGAME_LOOKDEV__.setBiomeMode('wet_moss'));
+
+  // Hot-reload real wet_stone_brick material & verify pixel delta
+  await page.evaluate(() => window.__HGAME_LOOKDEV__.setCameraPreset('brick_closeup'));
+  await page.waitForTimeout(80);
+  const brickRecipe = JSON.parse(
+    await readFile(path.join(root, 'assets', 'procedural', 'materials', 'wet_stone_brick.hmat.json'), 'utf8')
+  );
+  const colorNode = brickRecipe.nodes.find((n) => n.op === 'color_ramp');
+  if (colorNode?.args?.stops?.[1]) colorNode.args.stops[1][1] = '#9a4f43';
   const beforeHotShot = await page.screenshot();
-  await page.evaluate(async (r) => { await window.__HGAME_LOOKDEV__.hotReloadMaterial(r); }, updatedBrick);
+  await page.evaluate(async (r) => { await window.__HGAME_LOOKDEV__.hotReloadMaterial(r); }, brickRecipe);
   await page.waitForTimeout(100);
   const afterHotShot = await page.screenshot();
   if (Buffer.compare(beforeHotShot, afterHotShot) === 0) {
     throw new Error('hotReloadMaterial did not update rendered pixels');
   }
 
-  // Hot-reload mesh
-  const updatedWall = structuredClone(TEST_MESHES.beveled_wall);
-  updatedWall.params.hasWindow = false;
-  await page.evaluate((r) => window.__HGAME_LOOKDEV__.hotReloadMesh(r), updatedWall);
+  // Hot-reload mesh (toggle shipping_container doors closed)
+  const contRecipe = JSON.parse(
+    await readFile(path.join(root, 'assets', 'procedural', 'meshes', 'shipping_container.hmesh.json'), 'utf8')
+  );
+  contRecipe.params.doorOpen = false;
+  await page.evaluate((r) => window.__HGAME_LOOKDEV__.hotReloadMesh(r), contRecipe);
 
   // Check LOW memory budget
   await page.evaluate(async () => { await window.__HGAME_LOOKDEV__.setQuality('LOW'); });

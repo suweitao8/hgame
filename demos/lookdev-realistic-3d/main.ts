@@ -1,5 +1,7 @@
 import type { QualityTier } from '../../src/modules/realistic-pcg/core/quality-presets.js';
 import type { LightingPresetName } from '../../src/modules/realistic-pcg/lighting/procedural-ibl.js';
+import type { BakeMode } from '../../src/modules/realistic-pcg/materials/texture-array-baker.js';
+import type { BiomeOverlayMode } from '../../src/modules/realistic-pcg/materials/world-pbr-shader.js';
 import {
   createLookDevScene,
   type CameraPresetName,
@@ -12,20 +14,27 @@ const auditEl = document.querySelector<HTMLElement>('#audit-log')!;
 const dropOverlay = document.querySelector<HTMLElement>('#drop-overlay')!;
 const qualitySel = document.querySelector<HTMLSelectElement>('#ctrl-quality')!;
 const lightingSel = document.querySelector<HTMLSelectElement>('#ctrl-lighting')!;
+const biomeSel = document.querySelector<HTMLSelectElement>('#ctrl-biome')!;
+const bakeModeSel = document.querySelector<HTMLSelectElement>('#ctrl-bakemode')!;
 const wetnessSlider = document.querySelector<HTMLInputElement>('#ctrl-wetness')!;
 const wetnessValEl = document.querySelector<HTMLElement>('#wetness-val')!;
 const tripoToggle = document.querySelector<HTMLInputElement>('#ctrl-tripo')!;
 
 const params = new URLSearchParams(location.search);
 const initialQuality = (params.get('quality') === 'LOW' ? 'LOW' : 'HIGH') as QualityTier;
-const manifestUrl = params.get('manifest');
+const manifestParam = params.get('manifest');
+const manifestUrl = manifestParam !== null ? manifestParam : '../../assets/procedural/manifest.json';
+const initialBakeMode = (params.get('bakeMode') as BakeMode | null) ?? 'auto';
+const initialBiome = (params.get('biome') as BiomeOverlayMode | null) ?? 'wet_moss';
 qualitySel.value = initialQuality;
+biomeSel.value = initialBiome;
+bakeModeSel.value = initialBakeMode;
 
 function formatMetrics(m: LookDevMetrics): string {
   return [
     `FPS: ${m.fps} | DrawCalls: ${m.drawCalls} (Static: ${m.staticDrawCalls})`,
     `Tris: ${m.triangles} | TexMem: ${m.estimatedTextureMB} MB`,
-    `Bake: ${m.bakeTimeMs} ms (maxSlice ${m.maxBakeSliceMs} ms)`,
+    `Bake: ${m.bakeTimeMs} ms [${m.bakeBackend.toUpperCase()}] (maxSlice ${m.maxBakeSliceMs} ms)`,
     `Mats: ${m.materialCount} | MeshCache: ${m.cachedMeshCount}`,
   ].join('\n');
 }
@@ -35,6 +44,8 @@ const controller = await createLookDevScene({
   manifestUrl,
   initialQuality,
   initialLighting: 'OVERCAST_WET',
+  initialBiome,
+  initialBakeMode,
   onMetricsUpdate: (m) => {
     metricsEl.textContent = formatMetrics(m);
   },
@@ -56,6 +67,14 @@ qualitySel.addEventListener('change', async () => {
 
 lightingSel.addEventListener('change', () => {
   controller.api.setLightingPreset(lightingSel.value as LightingPresetName);
+});
+
+biomeSel.addEventListener('change', () => {
+  controller.api.setBiomeMode(biomeSel.value as BiomeOverlayMode);
+});
+
+bakeModeSel.addEventListener('change', async () => {
+  await controller.api.setBakeMode(bakeModeSel.value as BakeMode);
 });
 
 wetnessSlider.addEventListener('input', () => {

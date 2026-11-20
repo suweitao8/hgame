@@ -1,0 +1,92 @@
+{
+  "format": "hgame.material",
+  "version": 1,
+  "id": "concrete_weathered",
+  "meta": {
+    "category": "concrete",
+    "tileMeters": 2.5,
+    "seed": 5317
+  },
+  "params": {
+    "seamCount": 2,
+    "stainStrength": 0.42
+  },
+  "nodes": [
+    {
+      "id": "form_seams",
+      "op": "brick_pattern",
+      "args": { "rows": "$seamCount", "cols": "$seamCount", "stagger": 0.0, "mortar": 0.015, "bevel": 0.015, "variation": 0.2 }
+    },
+    {
+      "id": "surface_fbm",
+      "op": "fbm",
+      "args": { "scale": 12, "octaves": 5, "persistence": 0.54, "seamless": true }
+    },
+    {
+      "id": "pinholes",
+      "op": "speckle",
+      "args": { "scale": 96, "density": 0.22, "softness": 0.45 }
+    },
+    {
+      "id": "rain_streaks",
+      "op": "stripes",
+      "args": { "count": 7, "axis": "x", "width": 0.35, "softness": 0.35, "noise": 0.52 }
+    },
+    {
+      "id": "streak_fade",
+      "op": "blend",
+      "args": { "mode": "multiply", "a": "rain_streaks", "b": "surface_fbm", "strength": 0.65 }
+    },
+    {
+      "id": "pitted",
+      "op": "blend",
+      "args": { "mode": "sub", "a": "form_seams.height", "b": "pinholes", "strength": 0.08 }
+    },
+    {
+      "id": "height_final",
+      "op": "blend",
+      "args": { "mode": "multiply", "a": "pitted", "b": "surface_fbm", "strength": 0.22 }
+    },
+    {
+      "id": "normal_map",
+      "op": "height_to_normal",
+      "args": { "input": "height_final", "strength": 1.6 }
+    },
+    {
+      "id": "base_tone",
+      "op": "color_ramp",
+      "args": {
+        "input": "surface_fbm",
+        "stops": [
+          [0.0, "#706e69"],
+          [0.5, "#87847d"],
+          [1.0, "#9c9890"]
+        ]
+      }
+    },
+    {
+      "id": "albedo_stained",
+      "op": "mix_color",
+      "args": { "a": "base_tone", "b": "#55534d", "mask": "streak_fade" }
+    },
+    {
+      "id": "albedo_final",
+      "op": "mix_color",
+      "args": { "a": "#4d4b47", "b": "albedo_stained", "mask": "form_seams.mask" }
+    },
+    {
+      "id": "roughness_final",
+      "op": "remap",
+      "args": { "input": "surface_fbm", "inMin": 0.15, "inMax": 0.85, "outMin": 0.6, "outMax": 0.9 }
+    }
+  ],
+  "outputs": {
+    "albedo": "albedo_final",
+    "height": "height_final",
+    "normal": "normal_map",
+    "ao": { "op": "remap", "input": "height_final", "outMin": 0.5, "outMax": 1.0 },
+    "roughness": "roughness_final",
+    "metalness": 0.0,
+    "porosity": 0.58
+  }
+}

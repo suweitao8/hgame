@@ -1,0 +1,108 @@
+{
+  "format": "hgame.material",
+  "version": 1,
+  "id": "rusted_iron",
+  "meta": {
+    "category": "metal",
+    "tileMeters": 1.5,
+    "seed": 3109
+  },
+  "params": {
+    "rustSpread": 0.46
+  },
+  "nodes": [
+    {
+      "id": "brush",
+      "op": "stripes",
+      "args": { "count": 48, "axis": "x", "width": 0.55, "softness": 0.35, "noise": 0.22 }
+    },
+    {
+      "id": "rust_fbm",
+      "op": "fbm",
+      "args": { "scale": 6, "octaves": 5, "persistence": 0.58, "seamless": true }
+    },
+    {
+      "id": "rust_pitting",
+      "op": "speckle",
+      "args": { "scale": 28, "density": 0.42, "softness": 0.65 }
+    },
+    {
+      "id": "rust_combo",
+      "op": "blend",
+      "args": { "mode": "overlay", "a": "rust_fbm", "b": "rust_pitting", "strength": 0.45 }
+    },
+    {
+      "id": "rust_mask",
+      "op": "remap",
+      "args": { "input": "rust_combo", "inMin": 0.38, "inMax": 0.62, "outMin": 0.0, "outMax": 1.0 }
+    },
+    {
+      "id": "height_iron",
+      "op": "mix_scalar",
+      "args": { "a": "brush", "b": "rust_pitting", "mask": "rust_mask" }
+    },
+    {
+      "id": "normal_map",
+      "op": "height_to_normal",
+      "args": { "input": "height_iron", "strength": 1.8 }
+    },
+    {
+      "id": "bare_iron",
+      "op": "color_ramp",
+      "args": {
+        "input": "brush",
+        "stops": [
+          [0.0, "#50545a"],
+          [0.5, "#676c73"],
+          [1.0, "#7c8188"]
+        ]
+      }
+    },
+    {
+      "id": "rust_color",
+      "op": "color_ramp",
+      "args": {
+        "input": "rust_fbm",
+        "stops": [
+          [0.0, "#4b382e"],
+          [0.5, "#6d4531"],
+          [1.0, "#8d5636"]
+        ]
+      }
+    },
+    {
+      "id": "albedo_final",
+      "op": "mix_color",
+      "args": { "a": "bare_iron", "b": "rust_color", "mask": "rust_mask" }
+    },
+    {
+      "id": "iron_rough",
+      "op": "remap",
+      "args": { "input": "brush", "inMin": 0.0, "inMax": 1.0, "outMin": 0.26, "outMax": 0.42 }
+    },
+    {
+      "id": "rust_rough",
+      "op": "remap",
+      "args": { "input": "rust_fbm", "inMin": 0.2, "inMax": 0.85, "outMin": 0.78, "outMax": 0.95 }
+    },
+    {
+      "id": "roughness_final",
+      "op": "mix_scalar",
+      "args": { "a": "iron_rough", "b": "rust_rough", "mask": "rust_mask" }
+    },
+    {
+      "id": "metalness_final",
+      "op": "mix_scalar",
+      "args": { "a": 0.85, "b": 0.0, "mask": "rust_mask" }
+    }
+  ],
+  "outputs": {
+    "albedo": "albedo_final",
+    "height": "height_iron",
+    "normal": "normal_map",
+    "ao": { "op": "remap", "input": "height_iron", "outMin": 0.55, "outMax": 1.0 },
+    "roughness": "roughness_final",
+    "metalness": "metalness_final",
+    "porosity": 0.25
+  }
+}

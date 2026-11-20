@@ -455,3 +455,206 @@ export function opExtrudeProfile(
 
   return mesh;
 }
+
+/**
+ * Trapezoidal corrugated metal panel centered at (0, 0, 0), facing +Z/-Z, ribs running vertically along Y.
+ * Profile constants match Fable 5.2 industrial container sheet (pitch=0.278, fin=0.070, slope=0.068, fout=0.072, depth=0.036).
+ */
+export function opCorrugatedPanel(
+  args: Record<string, unknown>,
+  params: ParamMap,
+  materialId: number,
+  edgeWear: number,
+  ao: number,
+  wetness: number
+): RawMeshData {
+  const width = Math.max(0.2, resolveNumber(args.width, params, 4.0));
+  const height = Math.max(0.2, resolveNumber(args.height, params, 2.3));
+  const pitch = Math.max(0.08, resolveNumber(args.pitch, params, 0.278));
+  const fin = Math.max(0.01, resolveNumber(args.fin, params, 0.07));
+  const slope = Math.max(0.01, resolveNumber(args.slope, params, 0.068));
+  const fout = Math.max(0.01, resolveNumber(args.fout, params, 0.072));
+  const depth = Math.max(0.008, resolveNumber(args.depth, params, 0.036));
+  const thick = Math.max(0.008, resolveNumber(args.thickness, params, 0.014));
+
+  const mesh = createRawMeshData();
+  const count = Math.max(1, Math.round(width / pitch));
+  const actualPitch = width / count;
+  const scale = actualPitch / (fin + slope + fout + slope);
+  const fIn = fin * scale;
+  const fSlope = slope * scale;
+  const fOut = fout * scale;
+  const hy = height * 0.5;
+  const hz = depth * 0.5;
+
+  for (let i = 0; i < count; i++) {
+    const x0 = -width * 0.5 + i * actualPitch;
+    const x1 = x0 + fIn;
+    const x2 = x1 + fSlope;
+    const x3 = x2 + fOut;
+    const x4 = x0 + actualPitch;
+
+    const segs: Array<[number, number, number, number, number]> = [
+      [x0, -hz, x1, -hz, 0.15],
+      [x1, -hz, x2, hz, 0.65],
+      [x2, hz, x3, hz, 0.9],
+      [x3, hz, x4, -hz, 0.65],
+    ];
+    for (const [ax, az, bx, bz, wearScale] of segs) {
+      const dx = bx - ax;
+      const dz = bz - az;
+      const len = Math.hypot(dx, dz) || 1;
+      const nx = -dz / len;
+      const nz = dx / len;
+      // Front face (+Z side)
+      pushOrientedQuad(
+        mesh,
+        [ax, -hy, az],
+        [bx, -hy, bz],
+        [bx, hy, bz],
+        [ax, hy, az],
+        [nx, 0, nz],
+        ao,
+        edgeWear * wearScale,
+        wetness,
+        materialId
+      );
+      // Back face (-Z side, inset by thick)
+      pushOrientedQuad(
+        mesh,
+        [bx, -hy, bz - thick],
+        [ax, -hy, az - thick],
+        [ax, hy, az - thick],
+        [bx, hy, bz - thick],
+        [-nx, 0, -nz],
+        ao,
+        edgeWear * wearScale * 0.5,
+        wetness,
+        materialId
+      );
+    }
+  }
+  return mesh;
+}
+
+/**
+ * Industrial straight or bent flanged pipe segment along +X (centered at origin when straight).
+ */
+export function opPipeSegment(
+  args: Record<string, unknown>,
+  params: ParamMap,
+  materialId: number,
+  edgeWear: number,
+  ao: number,
+  wetness: number
+): RawMeshData {
+  const radius = Math.max(0.02, resolveNumber(args.radius, params, 0.11));
+  const length = Math.max(0.2, resolveNumber(args.length, params, 2.0));
+  const bendAngle = resolveNumber(args.bendAngle, params, 0);
+  const bendRadius = Math.max(radius * 1.5, resolveNumber(args.bendRadius, params, 0.4));
+  const flangeRadius = resolveNumber(args.flangeRadius, params, radius + 0.045);
+  const flangeThickness = resolveNumber(args.flangeThickness, params, 0.06);
+  const segments = Math.max(8, Math.min(28, Math.round(resolveNumber(args.segments, params, 14))));
+
+  const out = createRawMeshData();
+
+  if (Math.abs(bendAngle) < 0.01) {
+    // Straight pipe rotated to run along X
+    const pipe = opCylinder(
+      { radiusTop: radius, radiusBottom: radius, height: length, segments },
+      params,
+      materialId,
+      edgeWear,
+      ao,
+      wetness
+    );
+    // Rotate Y -> X (x' = -y, y' = x)
+    for (let i = 0; i < pipe.positions.length; i += 3) {
+      const px = pipe.positions[i]!;
+      const py = pipe.positions[i + 1]!;
+      pipe.positions[i] = py;
+      pipe.positions[i + 1] = -px;
+      const nx = pipe.normals[i]!;
+      const ny = pipe.normals[i + 1]!;
+      pipe.normals[i] = ny;
+      pipe.normals[i + 1] = -nx;
+    }
+    appendRawMesh(out, pipe);
+
+    for (const sx of [-1, 1] as const) {
+      const flange = opCylinder(
+        { radiusTop: flangeRadius, radiusBottom: flangeRadius, height: flangeThickness, segments },
+        params,
+        materialId,
+        edgeWear * 1.1,
+        ao,
+        wetness
+      );
+      const xOff = sx * (length * 0.5 - flangeThickness * 0.5);
+      for (let i = 0; i < flange.positions.length; i += 3) {
+        const px = flange.positions[i]!;
+        const py = flange.positions[i + 1]!;
+        flange.positions[i] = py + xOff;
+        flange.positions[i + 1] = -px;
+        const nx = flange.normals[i]!;
+        const ny = flange.normals[i + 1]!;
+        flange.normals[i] = ny;
+        flange.normals[i + 1] = -nx;
+      }
+      appendRawMesh(out, flange);
+    }
+    return out;
+  }
+
+  // Curved elbow in XZ plane from angle 0 to bendAngle around (0, 0, bendRadius)
+  const arcSteps = Math.max(6, Math.round(Math.abs(bendAngle) * 10));
+  const rings: number[][] = [];
+  for (let s = 0; s <= arcSteps; s++) {
+    const t = s / arcSteps;
+    const ang = t * bendAngle;
+    const cx = Math.sin(ang) * bendRadius;
+    const cz = bendRadius - Math.cos(ang) * bendRadius;
+    const tx = Math.cos(ang);
+    const tz = Math.sin(ang);
+    const rx = -tz;
+    const rz = tx;
+    const ring: number[] = [];
+    for (let k = 0; k <= segments; k++) {
+      const phi = (k / segments) * Math.PI * 2;
+      const cosP = Math.cos(phi);
+      const sinP = Math.sin(phi);
+      const nx = rx * cosP;
+      const ny = sinP;
+      const nz = rz * cosP;
+      const px = cx + nx * radius;
+      const py = ny * radius;
+      const pz = cz + nz * radius;
+      ring.push(
+        pushVertex(
+          out,
+          px,
+          py,
+          pz,
+          nx,
+          ny,
+          nz,
+          t * bendRadius * Math.abs(bendAngle),
+          (k / segments) * Math.PI * 2 * radius,
+          ao,
+          edgeWear,
+          wetness,
+          materialId
+        )
+      );
+    }
+    rings.push(ring);
+  }
+  for (let s = 0; s < arcSteps; s++) {
+    const r0 = rings[s]!;
+    const r1 = rings[s + 1]!;
+    for (let k = 0; k < segments; k++) {
+      out.indices.push(r0[k]!, r1[k]!, r1[k + 1]!, r0[k]!, r1[k + 1]!, r0[k + 1]!);
+    }
+  }
+  return out;
+}

@@ -1,0 +1,157 @@
+{
+  "format": "hgame.mesh",
+  "version": 1,
+  "id": "shipping_container",
+  "meta": {
+    "unit": "meter",
+    "collider": "auto_boxes"
+  },
+  "params": {
+    "length": 6.058,
+    "width": 2.438,
+    "height": 2.591,
+    "doorOpen": false
+  },
+  "materialSlots": {
+    "shell": "corrugated_steel",
+    "frame": "oxidized_rust_metal"
+  },
+  "parts": [
+    {
+      "id": "corner_posts_front",
+      "op": "beveled_box",
+      "material": "$frame",
+      "args": { "size": [0.14, "$height", 0.14], "bevel": 0.018 },
+      "transform": { "pos": ["expr:$length * 0.5 - 0.07", "expr:$height * 0.5", "expr:$width * 0.5 - 0.07"] },
+      "mirror": { "axis": "z", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.85, "groundAO": true }
+    },
+    {
+      "id": "corner_posts_back",
+      "op": "beveled_box",
+      "material": "$frame",
+      "args": { "size": [0.14, "$height", 0.14], "bevel": 0.018 },
+      "transform": { "pos": ["expr:-$length * 0.5 + 0.07", "expr:$height * 0.5", "expr:$width * 0.5 - 0.07"] },
+      "mirror": { "axis": "z", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.85, "groundAO": true }
+    },
+    {
+      "id": "side_rails_top",
+      "op": "beveled_box",
+      "material": "$frame",
+      "args": { "size": ["expr:$length - 0.28", 0.12, 0.1], "bevel": 0.015 },
+      "transform": { "pos": [0, "expr:$height - 0.06", "expr:$width * 0.5 - 0.05"] },
+      "mirror": { "axis": "z", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.8 }
+    },
+    {
+      "id": "side_rails_bottom",
+      "op": "beveled_box",
+      "material": "$frame",
+      "args": { "size": ["expr:$length - 0.28", 0.16, 0.1], "bevel": 0.015 },
+      "transform": { "pos": [0, 0.08, "expr:$width * 0.5 - 0.05"] },
+      "mirror": { "axis": "z", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.8, "groundAO": true }
+    },
+    {
+      "id": "end_header_back",
+      "op": "beveled_box",
+      "material": "$frame",
+      "args": { "size": [0.1, 0.14, "expr:$width - 0.28"], "bevel": 0.015 },
+      "transform": { "pos": ["expr:-$length * 0.5 + 0.05", "expr:$height - 0.07", 0] },
+      "mirror": { "axis": "x", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.75 }
+    },
+    {
+      "id": "end_sill_front",
+      "op": "beveled_box",
+      "material": "$frame",
+      "args": { "size": [0.1, 0.16, "expr:$width - 0.28"], "bevel": 0.015 },
+      "transform": { "pos": ["expr:$length * 0.5 - 0.05", 0.08, 0] },
+      "mirror": { "axis": "x", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.75, "groundAO": true }
+    },
+    {
+      "id": "floor_deck",
+      "op": "beveled_box",
+      "material": "$frame",
+      "args": { "size": ["expr:$length - 0.2", 0.12, "expr:$width - 0.2"], "bevel": 0.01 },
+      "transform": { "pos": [0, 0.06, 0] }
+    },
+    {
+      "id": "side_wall_pos_z",
+      "op": "corrugated_panel",
+      "material": "$shell",
+      "args": {
+        "width": "expr:$length - 0.28",
+        "height": "expr:$height - 0.28",
+        "pitch": 0.278,
+        "depth": 0.038
+      },
+      "transform": { "pos": [0, "expr:$height * 0.5 + 0.02", "expr:$width * 0.5 - 0.055"] },
+      "vertexMeta": { "edgeWear": 0.7, "groundAO": true }
+    },
+    {
+      "id": "side_wall_neg_z",
+      "op": "corrugated_panel",
+      "material": "$shell",
+      "args": {
+        "width": "expr:$length - 0.28",
+        "height": "expr:$height - 0.28",
+        "pitch": 0.278,
+        "depth": 0.038
+      },
+      "transform": { "pos": [0, "expr:$height * 0.5 + 0.02", "expr:-$width * 0.5 + 0.055"], "rot": [0, 3.1415926, 0] },
+      "vertexMeta": { "edgeWear": 0.7, "groundAO": true }
+    },
+    {
+      "id": "back_wall",
+      "op": "corrugated_panel",
+      "material": "$shell",
+      "args": {
+        "width": "expr:$width - 0.28",
+        "height": "expr:$height - 0.28",
+        "pitch": 0.25,
+        "depth": 0.038
+      },
+      "transform": { "pos": ["expr:-$length * 0.5 + 0.055", "expr:$height * 0.5 + 0.02", 0], "rot": [0, -1.5707963, 0] },
+      "vertexMeta": { "edgeWear": 0.65, "groundAO": true }
+    },
+    {
+      "id": "roof_panel",
+      "op": "corrugated_panel",
+      "material": "$shell",
+      "args": {
+        "width": "expr:$length - 0.24",
+        "height": "expr:$width - 0.18",
+        "pitch": 0.22,
+        "depth": 0.025
+      },
+      "transform": { "pos": [0, "expr:$height - 0.045", 0], "rot": [-1.5707963, 0, 0] },
+      "vertexMeta": { "edgeWear": 0.5 }
+    },
+    {
+      "id": "door_closed_left",
+      "when": "!$doorOpen",
+      "op": "beveled_box",
+      "material": "$shell",
+      "args": { "size": [0.06, "expr:$height - 0.3", "expr:($width - 0.3) * 0.5"], "bevel": 0.015 },
+      "transform": { "pos": ["expr:$length * 0.5 - 0.04", "expr:$height * 0.5 + 0.01", "expr:($width - 0.3) * 0.25"] },
+      "mirror": { "axis": "z", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.8 }
+    },
+    {
+      "id": "door_open_left",
+      "when": "$doorOpen",
+      "op": "beveled_box",
+      "material": "$shell",
+      "args": { "size": [0.06, "expr:$height - 0.3", "expr:($width - 0.3) * 0.5"], "bevel": 0.015 },
+      "transform": {
+        "pos": ["expr:$length * 0.5 + ($width - 0.3) * 0.22", "expr:$height * 0.5 + 0.01", "expr:($width - 0.3) * 0.56"],
+        "rot": [0, 1.25, 0]
+      },
+      "mirror": { "axis": "z", "keepOriginal": true },
+      "vertexMeta": { "edgeWear": 0.8 }
+    }
+  ]
+}

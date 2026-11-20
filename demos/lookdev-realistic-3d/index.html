@@ -37,6 +37,22 @@
       </select>
     </div>
     <div class="hud-row">
+      <label>Biome</label>
+      <select id="ctrl-biome">
+        <option value="wet_moss" selected>Wet Moss</option>
+        <option value="desert_dust">Desert Dust</option>
+        <option value="clean_indoor">Clean Indoor</option>
+      </select>
+    </div>
+    <div class="hud-row">
+      <label>Baker</label>
+      <select id="ctrl-bakemode">
+        <option value="auto" selected>AUTO (GPU First)</option>
+        <option value="gpu">GPU FBO</option>
+        <option value="cpu">CPU</option>
+      </select>
+    </div>
+    <div class="hud-row">
       <label>Wetness <span id="wetness-val">0.55</span></label>
       <input id="ctrl-wetness" type="range" min="0" max="1" step="0.05" value="0.55">
     </div>
@@ -46,6 +62,9 @@
     <div class="hud-cameras">
       <button data-cam="overview">Overview</button>
       <button data-cam="brick_closeup">Brick 1m/4m</button>
+      <button data-cam="industrial">Industrial</button>
+      <button data-cam="interior">Interior</button>
+      <button data-cam="plinths">13 Mats</button>
       <button data-cam="puddle">Puddle</button>
       <button data-cam="character">Character</button>
     </div>

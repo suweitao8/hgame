@@ -1,0 +1,92 @@
+{
+  "format": "hgame.material",
+  "version": 1,
+  "id": "wet_industrial_concrete",
+  "meta": {
+    "category": "concrete",
+    "tileMeters": 4.0,
+    "seed": 7205
+  },
+  "params": {
+    "panelGrid": 2,
+    "seepage": 0.45
+  },
+  "nodes": [
+    {
+      "id": "slabs",
+      "op": "brick_pattern",
+      "args": { "rows": "$panelGrid", "cols": "$panelGrid", "stagger": 0.0, "mortar": 0.012, "bevel": 0.012, "variation": 0.16 }
+    },
+    {
+      "id": "agg_fbm",
+      "op": "fbm",
+      "args": { "scale": 14, "octaves": 5, "persistence": 0.54, "seamless": true }
+    },
+    {
+      "id": "pores",
+      "op": "speckle",
+      "args": { "scale": 72, "density": 0.24, "softness": 0.45 }
+    },
+    {
+      "id": "drips",
+      "op": "vertical_streak",
+      "args": { "scaleX": 10, "scaleY": 3, "threshold": 0.52, "decay": 0.22 }
+    },
+    {
+      "id": "pitted",
+      "op": "blend",
+      "args": { "mode": "sub", "a": "slabs.height", "b": "pores", "strength": 0.12 }
+    },
+    {
+      "id": "height_final",
+      "op": "blend",
+      "args": { "mode": "multiply", "a": "pitted", "b": "agg_fbm", "strength": 0.25 }
+    },
+    {
+      "id": "normal_map",
+      "op": "height_to_normal",
+      "args": { "input": "height_final", "strength": 2.1 }
+    },
+    {
+      "id": "base_tone",
+      "op": "color_ramp",
+      "args": {
+        "input": "agg_fbm",
+        "stops": [
+          [0.0, "#5b5954"],
+          [0.5, "#74716a"],
+          [1.0, "#8d8980"]
+        ]
+      }
+    },
+    {
+      "id": "albedo_wet",
+      "op": "mix_color",
+      "args": { "a": "base_tone", "b": "#474540", "mask": "drips" }
+    },
+    {
+      "id": "albedo_final",
+      "op": "mix_color",
+      "args": { "a": "#43413d", "b": "albedo_wet", "mask": "slabs.mask" }
+    },
+    {
+      "id": "dry_rough",
+      "op": "remap",
+      "args": { "input": "agg_fbm", "inMin": 0.15, "inMax": 0.85, "outMin": 0.68, "outMax": 0.9 }
+    },
+    {
+      "id": "roughness_final",
+      "op": "mix_scalar",
+      "args": { "a": "dry_rough", "b": 0.36, "mask": "drips" }
+    }
+  ],
+  "outputs": {
+    "albedo": "albedo_final",
+    "height": "height_final",
+    "normal": "normal_map",
+    "ao": { "op": "remap", "input": "height_final", "outMin": 0.48, "outMax": 1.0 },
+    "roughness": "roughness_final",
+    "metalness": 0.0,
+    "porosity": 0.72
+  }
+}

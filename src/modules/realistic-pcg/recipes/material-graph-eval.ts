@@ -248,6 +248,22 @@ export function createMaterialBakeJob(
       ports.set(`${node.id}.mask`, { kind: 'scalar', data: mask });
       ports.set(`${node.id}.cellRand`, { kind: 'scalar', data: cellRand });
       ports.set(`${node.id}.nails`, { kind: 'scalar', data: nails });
+    } else if (node.op === 'corrugated_wave') {
+      const height = new Float32Array(pixelCount);
+      const ridge = new Float32Array(pixelCount);
+      const edge = new Float32Array(pixelCount);
+      curBuffers = { height, ridge, edge };
+      ports.set(node.id, { kind: 'scalar', data: height });
+      ports.set(`${node.id}.height`, { kind: 'scalar', data: height });
+      ports.set(`${node.id}.ridge`, { kind: 'scalar', data: ridge });
+      ports.set(`${node.id}.edge`, { kind: 'scalar', data: edge });
+    } else if (node.op === 'rivet_grid') {
+      const height = new Float32Array(pixelCount);
+      const mask = new Float32Array(pixelCount);
+      curBuffers = { height, mask };
+      ports.set(node.id, { kind: 'scalar', data: height });
+      ports.set(`${node.id}.height`, { kind: 'scalar', data: height });
+      ports.set(`${node.id}.mask`, { kind: 'scalar', data: mask });
     } else if (
       node.op === 'height_to_normal' ||
       node.op === 'mix_color' ||
@@ -494,8 +510,217 @@ export function createMaterialBakeJob(
             maskB[idx] = mask;
             crB[idx] = randVal;
             nailsB[idx] = nail;
+            const fiber = perlin2DPeriodic(u, v, planks * 14, joints * 3, seed + 557) * 0.06;
             const plankBias = 1 - variation * 0.25 + (randVal - 0.5) * variation * 0.3;
-            heightB[idx] = clamp01(0.12 + mask * bev * 0.78 * plankBias - nail * 0.22);
+            heightB[idx] = clamp01(0.12 + mask * bev * 0.78 * plankBias + fiber * mask - nail * 0.22);
+          }
+        }
+        return true;
+      }
+
+      case 'corrugated_wave': {
+        // Trapezoidal corrugated profile from Fable 5.2 (pitch = fin + slope + fout + slope)
+        const count = Math.max(1, Math.round(resolveNumber(args.count, params, 5)));
+        const axis = String(args.axis ?? 'x');
+        const fin = clamp01(resolveNumber(args.fin, params, 0.26));
+        const slope = Math.max(0.02, clamp01(resolveNumber(args.slope, params, 0.24)));
+        const fout = clamp01(resolveNumber(args.fout, params, 0.26));
+        const depth = clamp01(resolveNumber(args.depth, params, 1.0));
+        const heightB = curBuffers.height!;
+        const ridgeB = curBuffers.ridge!;
+        const edgeB = curBuffers.edge!;
+
+        const t1 = fin;
+        const t2 = t1 + slope;
+        const t3 = t2 + fout;
+        const t4 = Math.min(1.0, t3 + slope);
+
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const coord = axis === 'y' ? v : u;
+            const ph = (coord * count) % 1;
+            let h = 0;
+            let ridge = 0;
+            let edge = 0;
+            if (ph < t1) {
+              h = 0;
+            } else if (ph < t2) {
+              const t = (ph - t1) / slope;
+              h = smoothstep(0, 1, t);
+              ridge = smoothstep(0.45, 0.95, t);
+              edge = Math.sin(t * Math.PI);
+            } else if (ph < t3) {
+              h = 1;
+              ridge = 1;
+              const dEdge = Math.min(ph - t2, t3 - ph);
+              edge = 1 - smoothstep(0, 0.04, dEdge);
+            } else if (ph < t4) {
+              const t = 1 - (ph - t3) / Math.max(0.01, t4 - t3);
+              h = smoothstep(0, 1, t);
+              ridge = smoothstep(0.45, 0.95, t);
+              edge = Math.sin(t * Math.PI);
+            }
+            const idx = rowOff + x;
+            heightB[idx] = h * depth;
+            ridgeB[idx] = ridge;
+            edgeB[idx] = edge;
+          }
+        }
+        return true;
+      }
+
+      case 'edge_wear_mask': {
+        const src = resolveScalarBuf(args.input, 0.5);
+        const low = resolveNumber(args.low, params, 0.35);
+        const high = resolveNumber(args.high, params, 0.65);
+        const noiseScale = Math.max(2, Math.round(resolveNumber(args.noiseScale, params, 10)));
+        const spread = resolveNumber(args.spread, params, 0.45);
+        const out = curBuffers.out!;
+
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const ym = y === 0 ? size - 1 : y - 1;
+          const yp = y + 1 >= size ? 0 : y + 1;
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const idx = rowOff + x;
+            const val = typeof src === 'number' ? src : src[idx]!;
+            let grad = 0;
+            if (typeof src !== 'number') {
+              const xm = x === 0 ? size - 1 : x - 1;
+              const xp = x + 1 >= size ? 0 : x + 1;
+              const dx = src[rowOff + xp]! - src[rowOff + xm]!;
+              const dy = src[yp * size + x]! - src[ym * size + x]!;
+              grad = Math.min(1, Math.hypot(dx, dy) * 3.5);
+            }
+            const n = fbm2DPeriodic((x + 0.5) * invSize, v, noiseScale, 3, 0.55, 2, seed + 433);
+            const raw = clamp01(val * 0.65 + grad * 0.55 + (n - 0.5) * spread);
+            out[idx] = smoothstep(low, high, raw);
+          }
+        }
+        return true;
+      }
+
+      case 'vertical_streak': {
+        // Two-pass seamless vertical drip decay inspired by fable52-fps-repro/demos/02-materials
+        const scaleX = Math.max(2, Math.round(resolveNumber(args.scaleX, params, 14)));
+        const scaleY = Math.max(1, Math.round(resolveNumber(args.scaleY, params, 3)));
+        const threshold = resolveNumber(args.threshold, params, 0.54);
+        const decayPerTile = resolveNumber(args.decay, params, 0.16);
+        const seedOff = Math.round(resolveNumber(args.seedOffset, params, 0));
+        const srcInput = args.input ? resolveScalarBuf(args.input, 0) : null;
+        const out = curBuffers.out!;
+        const dec = Math.exp(-0.693 / Math.max(0.02, decayPerTile * size));
+
+        // Process column-wise in vertical-wrap passes once per node
+        if (yStart === 0) {
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const colMask = smoothstep(
+              0.25,
+              0.78,
+              perlin2DPeriodic(u, 0.37, scaleX, 1, seed + 811 + seedOff) * 0.5 + 0.5
+            );
+            let streak = 0;
+            for (let pass = 0; pass < 2; pass++) {
+              for (let y = size - 1; y >= 0; y--) {
+                const v = (y + 0.5) * invSize;
+                const i = y * size + x;
+                const n = fbm2DPeriodic(u, v, scaleX, 3, 0.52, 2, seed + 887 + seedOff);
+                const base = srcInput ? (typeof srcInput === 'number' ? srcInput : srcInput[i]!) : n;
+                const src = smoothstep(threshold - 0.06, threshold + 0.06, base * 0.65 + n * 0.35);
+                streak = Math.max(src * colMask, streak * dec);
+                if (pass === 1) {
+                  out[i] = clamp01(streak * streak * (1 - src * 0.45));
+                }
+              }
+            }
+          }
+          rowIdx = size;
+        }
+        return true;
+      }
+
+      case 'rivet_grid': {
+        const cols = Math.max(1, Math.round(resolveNumber(args.cols, params, 4)));
+        const rows = Math.max(1, Math.round(resolveNumber(args.rows, params, 2)));
+        const radius = Math.max(0.01, resolveNumber(args.radius, params, 0.08));
+        const heightB = curBuffers.height!;
+        const maskB = curBuffers.mask!;
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const fy = ((v * rows) % 1) - 0.5;
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const fx = ((u * cols) % 1) - 0.5;
+            const d = Math.hypot(fx, fy) / radius;
+            const m = d < 1 ? 1 - smoothstep(0.75, 1.0, d) : 0;
+            const dome = d < 1 ? Math.sqrt(Math.max(0, 1 - d * d)) : 0;
+            const idx = rowOff + x;
+            maskB[idx] = m;
+            heightB[idx] = dome;
+          }
+        }
+        return true;
+      }
+
+      case 'sand_ripples': {
+        // Wind-blown sand ripples + fine grain from worm-rider/src/tex.js
+        const freq = resolveNumber(args.freq, params, 16);
+        const warpScale = Math.max(1, Math.round(resolveNumber(args.warpScale, params, 3)));
+        const warpStrength = resolveNumber(args.warpStrength, params, 4.2);
+        const sharpness = resolveNumber(args.sharpness, params, 1.7);
+        const grainScale = Math.max(4, Math.round(resolveNumber(args.grainScale, params, 28)));
+        const out = curBuffers.out!;
+
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const rowOff = y * size;
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const w = fbm2DPeriodic(u, v, warpScale, 3, 0.5, 2, seed + 101);
+            const w2 = fbm2DPeriodic(u, v, warpScale * 3, 2, 0.5, 2, seed + 211);
+            const rr = 0.5 + 0.5 * Math.sin((v * freq + w * warpStrength + w2 * 1.1) * Math.PI * 2);
+            const patch = smoothstep(0.25, 0.62, w + 0.15);
+            const rip = Math.pow(rr, sharpness) * patch;
+            const fine = fbm2DPeriodic(u, v, grainScale, 2, 0.5, 2, seed + 313);
+            out[rowOff + x] = clamp01(rip * 0.72 + fine * 0.28);
+          }
+        }
+        return true;
+      }
+
+      case 'fabric_weave': {
+        // Plain-weave warp/weft with linen slub irregularity from room-at-dawn/src/scene/materials.js
+        const threads = Math.max(4, Math.round(resolveNumber(args.threads, params, 48)));
+        const slub = resolveNumber(args.slub, params, 0.3);
+        const out = curBuffers.out!;
+
+        for (let y = yStart; y < yEnd; y++) {
+          const v = (y + 0.5) * invSize;
+          const py = v * threads;
+          const iy = Math.floor(py);
+          const fy = py - iy;
+          const wy = 0.75 + slub * (((hash2i(3, wrapIdx(iy, threads), seed + 53) & 0xffff) / 65535) - 0.5) * 1.4;
+          const ty = Math.max(0, 1 - Math.abs(fy - 0.5) * 2 / wy);
+          const rowOff = y * size;
+
+          for (let x = 0; x < size; x++) {
+            const u = (x + 0.5) * invSize;
+            const px = u * threads;
+            const ix = Math.floor(px);
+            const fx = px - ix;
+            const over = ((ix + iy) & 1) === 1;
+            const wx = 0.75 + slub * (((hash2i(wrapIdx(ix, threads), 7, seed + 59) & 0xffff) / 65535) - 0.5) * 1.4;
+            const tx = Math.max(0, 1 - Math.abs(fx - 0.5) * 2 / wx);
+            const warp = Math.sqrt(tx) * (over ? 1.0 : 0.52) * (0.62 + 0.38 * Math.sin(fy * Math.PI));
+            const weft = Math.sqrt(ty) * (over ? 0.52 : 1.0) * (0.62 + 0.38 * Math.sin(fx * Math.PI));
+            const n = (perlin2DPeriodic(u, v, threads, threads, seed + 61) * 0.5) * 0.16 * slub;
+            out[rowOff + x] = clamp01(Math.max(warp, weft) + n);
           }
         }
         return true;

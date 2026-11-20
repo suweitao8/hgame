@@ -17,9 +17,11 @@ import {
 import {
   opBeveledBox,
   opBeveledWallOpening,
+  opCorrugatedPanel,
   opCylinder,
   opDisplacedRock,
   opExtrudeProfile,
+  opPipeSegment,
   opStairs,
 } from '../geometry/primitive-ops.js';
 import type { MeshPartSpec, MeshRecipe } from './schema-types.js';
@@ -164,24 +166,8 @@ function evaluateRecipeRaw(
 
     const basePartRaw = evaluateSinglePart(part, recipe, params, mergedSlots, ctx, visitStack, partTriangles);
 
-    // Optional mirror
-    const mirroredInstances: RawMeshData[] = [];
-    if (part.mirror) {
-      if (part.mirror.keepOriginal !== false) {
-        mirroredInstances.push(basePartRaw);
-      }
-      const m = cloneRaw(basePartRaw);
-      const sx = part.mirror.axis === 'x' ? -1 : 1;
-      const sy = part.mirror.axis === 'y' ? -1 : 1;
-      const sz = part.mirror.axis === 'z' ? -1 : 1;
-      applyTransformToRaw(m, [0, 0, 0], [0, 0, 0], [sx, sy, sz]);
-      mirroredInstances.push(m);
-    } else {
-      mirroredInstances.push(basePartRaw);
-    }
-
-    // Optional repeat (linear or circular)
-    const repeatedAll = createRawMeshData();
+    // 1. Optional repeat (linear or circular)
+    const repeatedRaw = createRawMeshData();
     const count = part.repeat ? Math.max(1, Math.round(resolveNumber(part.repeat.count, params, 1))) : 1;
     const stepPos = part.repeat?.stepPos ? resolveVec3(part.repeat.stepPos, params, [0, 0, 0]) : [0, 0, 0];
     const stepRot = part.repeat?.stepRot ? resolveVec3(part.repeat.stepRot, params, [0, 0, 0]) : [0, 0, 0];
@@ -189,28 +175,26 @@ function evaluateRecipeRaw(
     const angleStep = part.repeat?.angleStep !== undefined ? resolveNumber(part.repeat.angleStep, params, 0) : 0;
 
     for (let rIdx = 0; rIdx < count; rIdx++) {
-      for (const inst of mirroredInstances) {
-        const copy = count === 1 && mirroredInstances.length === 1 ? inst : cloneRaw(inst);
-        if (part.repeat) {
-          let px = stepPos[0]! * rIdx;
-          let py = stepPos[1]! * rIdx;
-          let pz = stepPos[2]! * rIdx;
-          let rx = stepRot[0]! * rIdx;
-          let ry = stepRot[1]! * rIdx;
-          let rz = stepRot[2]! * rIdx;
-          if (circleRadius !== 0 && angleStep !== 0) {
-            const ang = angleStep * rIdx;
-            px += Math.cos(ang) * circleRadius;
-            pz += Math.sin(ang) * circleRadius;
-            ry += -ang;
-          }
-          applyTransformToRaw(copy, [px, py, pz], [rx, ry, rz], [1, 1, 1]);
+      const copy = count === 1 ? basePartRaw : cloneRaw(basePartRaw);
+      if (part.repeat) {
+        let px = stepPos[0]! * rIdx;
+        let py = stepPos[1]! * rIdx;
+        let pz = stepPos[2]! * rIdx;
+        let rx = stepRot[0]! * rIdx;
+        let ry = stepRot[1]! * rIdx;
+        let rz = stepRot[2]! * rIdx;
+        if (circleRadius !== 0 && angleStep !== 0) {
+          const ang = angleStep * rIdx;
+          px += Math.cos(ang) * circleRadius;
+          pz += Math.sin(ang) * circleRadius;
+          ry += -ang;
         }
-        appendRawMesh(repeatedAll, copy);
+        applyTransformToRaw(copy, [px, py, pz], [rx, ry, rz], [1, 1, 1]);
       }
+      appendRawMesh(repeatedRaw, copy);
     }
 
-    // Apply part transform
+    // 2. Apply part transform before mirroring so recipe offsets (e.g. +X corner legs) mirror across the recipe axis
     const pos = resolveVec3(part.transform?.pos, params, [0, 0, 0]);
     const rot = resolveVec3(part.transform?.rot, params, [0, 0, 0]);
     const scale = resolveVec3(part.transform?.scale, params, [1, 1, 1]);
@@ -219,21 +203,37 @@ function evaluateRecipeRaw(
       rot[0] !== 0 || rot[1] !== 0 || rot[2] !== 0 ||
       scale[0] !== 1 || scale[1] !== 1 || scale[2] !== 1
     ) {
-      applyTransformToRaw(repeatedAll, pos, rot, scale);
+      applyTransformToRaw(repeatedRaw, pos, rot, scale);
+    }
+
+    // 3. Optional mirror across recipe axis
+    const finalPartRaw = createRawMeshData();
+    if (part.mirror) {
+      if (part.mirror.keepOriginal !== false) {
+        appendRawMesh(finalPartRaw, repeatedRaw);
+      }
+      const m = cloneRaw(repeatedRaw);
+      const sx = part.mirror.axis === 'x' ? -1 : 1;
+      const sy = part.mirror.axis === 'y' ? -1 : 1;
+      const sz = part.mirror.axis === 'z' ? -1 : 1;
+      applyTransformToRaw(m, [0, 0, 0], [0, 0, 0], [sx, sy, sz]);
+      appendRawMesh(finalPartRaw, m);
+    } else {
+      appendRawMesh(finalPartRaw, repeatedRaw);
     }
 
     // Recompute metric UVs in recipe physical meter space when non-unit scale or rotation occurred
     if (part.op !== 'displaced_rock' && part.op !== 'cylinder') {
-      recomputeMetricUVs(repeatedAll);
+      recomputeMetricUVs(finalPartRaw);
     }
 
     if (part.vertexMeta?.groundAO && resolveBoolean(part.vertexMeta.groundAO, params, false)) {
       const aoFloor = resolveNumber(part.vertexMeta.aoFloor, params, 0.42);
-      applyGroundAO(repeatedAll, aoFloor, 0.65);
+      applyGroundAO(finalPartRaw, aoFloor, 0.65);
     }
 
-    partTriangles.push({ id: `${recipe.id}:${part.id}`, triangles: repeatedAll.indices.length / 3 });
-    appendRawMesh(out, repeatedAll);
+    partTriangles.push({ id: `${recipe.id}:${part.id}`, triangles: finalPartRaw.indices.length / 3 });
+    appendRawMesh(out, finalPartRaw);
   }
 
   visitStack.delete(recipe.id);
@@ -289,6 +289,10 @@ function evaluateSinglePart(
       return opDisplacedRock(args, params, materialId, edgeWear, ao, wetness);
     case 'extrude_profile':
       return opExtrudeProfile(args, params, materialId, edgeWear, ao, wetness);
+    case 'corrugated_panel':
+      return opCorrugatedPanel(args, params, materialId, edgeWear, ao, wetness);
+    case 'pipe_segment':
+      return opPipeSegment(args, params, materialId, edgeWear, ao, wetness);
     default:
       throw new Error(`Unsupported mesh op "${String(part.op)}"`);
   }

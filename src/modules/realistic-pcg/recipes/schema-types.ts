@@ -8,6 +8,12 @@ export type MaterialNodeOp =
   | 'plank_pattern'
   | 'stripes'
   | 'speckle'
+  | 'corrugated_wave'
+  | 'edge_wear_mask'
+  | 'vertical_streak'
+  | 'rivet_grid'
+  | 'sand_ripples'
+  | 'fabric_weave'
   | 'remap'
   | 'clamp'
   | 'invert'
@@ -66,6 +72,8 @@ export type MeshPartOp =
   | 'stairs'
   | 'displaced_rock'
   | 'extrude_profile'
+  | 'corrugated_panel'
+  | 'pipe_segment'
   | 'ref';
 
 export interface PartTransformSpec {

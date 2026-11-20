@@ -2,7 +2,7 @@ import type * as THREE from 'three';
 import { getQualityPreset, type QualityTier, type RealisticQualityPreset } from '../core/quality-presets.js';
 import type { ParamMap } from '../core/safe-expr.js';
 import { extractBoundsBox, extractTriMesh } from '../geometry/collider-exporter.js';
-import { bakeMaterialArrayAsync, type TextureArraySet } from '../materials/texture-array-baker.js';
+import { bakeMaterialArrayAsync, type BakeMode, type TextureArraySet } from '../materials/texture-array-baker.js';
 import { evaluateMeshRecipe } from './mesh-recipe-eval.js';
 import type {
   AABB,
@@ -27,6 +27,7 @@ export interface InstantiatedMeshAsset {
 export interface ProceduralAssetLoaderOptions {
   quality?: QualityTier;
   renderer?: THREE.WebGLRenderer | null;
+  bakeMode?: BakeMode;
   fetchJson?: (url: string) => Promise<unknown>;
 }
 
@@ -46,6 +47,7 @@ function resolveRelativeUrl(baseUrl: string, relPath: string): string {
 export class ProceduralAssetLoader {
   private preset: RealisticQualityPreset;
   private renderer: THREE.WebGLRenderer | null;
+  private bakeMode: BakeMode;
   private fetchJson: (url: string) => Promise<unknown>;
   private materialRecipes = new Map<string, MaterialRecipe>();
   private meshRecipes = new Map<string, MeshRecipe>();
@@ -55,6 +57,7 @@ export class ProceduralAssetLoader {
   constructor(options: ProceduralAssetLoaderOptions = {}) {
     this.preset = getQualityPreset(options.quality ?? 'HIGH');
     this.renderer = options.renderer ?? null;
+    this.bakeMode = options.bakeMode ?? 'auto';
     this.fetchJson =
       options.fetchJson ??
       (async (url: string) => {
@@ -127,6 +130,7 @@ export class ProceduralAssetLoader {
     this.textureArray = await bakeMaterialArrayAsync(mats, this.preset, {
       onProgress,
       renderer: this.renderer,
+      bakeMode: this.bakeMode,
     });
   }
 
@@ -155,8 +159,13 @@ export class ProceduralAssetLoader {
     await this.loadFromRecipes(mats, meshes, onProgress);
   }
 
-  async setQuality(tier: QualityTier, onProgress?: (ratio: number) => void): Promise<TextureArraySet> {
+  async setQuality(
+    tier: QualityTier,
+    onProgress?: (ratio: number) => void,
+    overrideBakeMode?: BakeMode
+  ): Promise<TextureArraySet> {
     this.preset = getQualityPreset(tier);
+    if (overrideBakeMode) this.bakeMode = overrideBakeMode;
     if (this.textureArray) {
       this.textureArray.dispose();
       this.textureArray = null;
@@ -165,8 +174,13 @@ export class ProceduralAssetLoader {
     this.textureArray = await bakeMaterialArrayAsync(mats, this.preset, {
       onProgress,
       renderer: this.renderer,
+      bakeMode: this.bakeMode,
     });
     return this.textureArray;
+  }
+
+  async setBakeMode(mode: BakeMode, onProgress?: (ratio: number) => void): Promise<TextureArraySet> {
+    return this.setQuality(this.preset.tier, onProgress, mode);
   }
 
   async registerMaterialRecipe(recipe: MaterialRecipe): Promise<number> {
@@ -174,6 +188,7 @@ export class ProceduralAssetLoader {
     if (!this.textureArray) {
       this.textureArray = await bakeMaterialArrayAsync([recipe], this.preset, {
         renderer: this.renderer,
+        bakeMode: this.bakeMode,
       });
       return this.getMaterialId(recipe.id);
     }
