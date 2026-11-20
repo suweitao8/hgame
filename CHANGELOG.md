@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bring `vfx/` and `scripts/import-unity-vfx.mjs` to 100/100 Grade-S parity (`scripts/score-vfx-fidelity.mjs`) against Unity ParticleSystem features: add `sizeYCurve` + signed cumulative `velCurve` LUT channels (`128..255` `.b`/`.a`), `aAtlasP8`/`aAtlasP9` for 3D forces/wind (`setWind`), `aspectY`, 3D Euler quad rotation (`rotation3D`), scrolled/damped `NoiseModule`, moving local-space anchor tracking (`uEffectDeltas`), screen-space refraction distortion channels (`setSceneTexture` on billboard particles & smooth `distortion` spheres in `vfx-mesh.js`), `donut`/`rectangle`/`mesh` surface shapes (`getSurfaceSamples`), `simulationSpeed`, `UVModule.rowMode`, multi-stop trail `widthCurve`, custom `setCollisionResolver` + mesh bounce sync, `SubModule` property/velocity inheritance, and pooled `LightsModule` per-particle `PointLight` instances.
+
 - Add a distance-based 3D model LOD controller for skeletal models, shared Bone-VAT slots and distant proxies. Preserve animation time and keep the active representation while the next one prepares. World partition now preserves its fallback during failed loads and prepares distant proxies within budget before releasing full cells.
 
 - Use stable 2D layer and depth ordering across native and Pixi draws. Add normalized viewport clips and additive blending, and keep adjacent compatible draws together.

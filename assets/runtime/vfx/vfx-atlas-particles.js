@@ -115,7 +115,7 @@ function normalizeStops(stops, isColor) {
   return copy;
 }
 
-function buildCurveKey(colorCurve, sizeCurve) {
+function buildCurveKey(colorCurve, sizeCurve, sizeYCurve = null, velCurve = null) {
   let k = '';
   if (colorCurve) {
     for (let i = 0; i < colorCurve.length; i++) {
@@ -133,12 +133,25 @@ function buildCurveKey(colorCurve, sizeCurve) {
   } else {
     k += 'sDef;';
   }
+  if (Array.isArray(sizeYCurve) && sizeYCurve.length > 0) {
+    for (let i = 0; i < sizeYCurve.length; i++) {
+      const s = sizeYCurve[i];
+      k += `y${Number(s[0]).toFixed(3)}:${Number(s[1]).toFixed(3)};`;
+    }
+  }
+  if (Array.isArray(velCurve) && velCurve.length > 0) {
+    for (let i = 0; i < velCurve.length; i++) {
+      const s = velCurve[i];
+      k += `v${Number(s[0]).toFixed(3)}:${Number(s[1]).toFixed(3)};`;
+    }
+  }
   return k;
 }
 
 /**
- * Compiles color/size curves into a zero-GC 256x1024 RGBA8 lookup table + DataTexture.
- * Left 128 texels encode RGBA colorCurve; right 128 texels encode 16-bit sizeCurve [0..8].
+ * Compiles color/size/velocity curves into a zero-GC 256x1024 RGBA8 lookup table + DataTexture.
+ * Left 128 texels encode RGBA colorCurve; right 128 texels encode 16-bit sizeX (.rg),
+ * 8-bit sizeY (.b), and 8-bit integrated velocity displacement (.a).
  */
 export function createCurveLutTable(THREE = /** @type {object | null} */ (null)) {
   const bytes = new Uint8Array(LUT_WIDTH * LUT_ROWS * 4);
@@ -160,10 +173,35 @@ export function createCurveLutTable(THREE = /** @type {object | null} */ (null))
     threeTexture.needsUpdate = true;
   }
 
-  function compile(colorCurveRaw, sizeCurveRaw) {
+  function evalSignedCurve(stops, t) {
+    if (stops.length === 0) return 1;
+    if (t <= stops[0][0]) return stops[0][1];
+    const last = stops[stops.length - 1];
+    if (t >= last[0]) return last[1];
+    for (let i = 0; i < stops.length - 1; i++) {
+      if (t <= stops[i + 1][0]) {
+        const span = Math.max(1e-6, stops[i + 1][0] - stops[i][0]);
+        const f = (t - stops[i][0]) / span;
+        return stops[i][1] + (stops[i + 1][1] - stops[i][1]) * f;
+      }
+    }
+    return last[1];
+  }
+
+  function compile(colorCurveRaw, sizeCurveRaw, sizeYCurveRaw = null, velocityCurveRaw = null) {
     const colorCurve = normalizeStops(colorCurveRaw, true);
     const sizeCurve = normalizeStops(sizeCurveRaw, false);
-    const key = buildCurveKey(colorCurve, sizeCurve);
+    const sizeYCurve = Array.isArray(sizeYCurveRaw) && sizeYCurveRaw.length > 0
+      ? normalizeStops(sizeYCurveRaw, false)
+      : null;
+    const velCurve = Array.isArray(velocityCurveRaw) && velocityCurveRaw.length > 0
+      ? velocityCurveRaw
+        .filter((k) => Array.isArray(k) && k.length >= 2)
+        .map((k) => [Math.max(0, Math.min(1, Number(k[0]) || 0)), Number(k[1]) || 0])
+        .sort((a, b) => a[0] - b[0])
+      : null;
+
+    const key = buildCurveKey(colorCurve, sizeCurve, sizeYCurve, velCurve);
     const cached = keyToRow.get(key);
     if (cached !== undefined) return cached;
 
@@ -171,8 +209,10 @@ export function createCurveLutTable(THREE = /** @type {object | null} */ (null))
     keyToRow.set(key, row);
 
     const rowBase = row * LUT_WIDTH * 4;
+    let velIntegral = 0;
+    const dtStep = 1 / (LUT_HALF - 1);
     for (let i = 0; i < LUT_HALF; i++) {
-      const t = i / (LUT_HALF - 1);
+      const t = i * dtStep;
       evaluateColorCurve(colorCurve, t, scratchRgba);
       const cOff = rowBase + i * 4;
       bytes[cOff] = Math.max(0, Math.min(255, Math.round(scratchRgba[0] * 255)));
@@ -182,11 +222,20 @@ export function createCurveLutTable(THREE = /** @type {object | null} */ (null))
 
       const sz = Math.max(0, Math.min(SIZE_CURVE_MAX, evaluateSizeCurve(sizeCurve, t)));
       const q = Math.round((sz / SIZE_CURVE_MAX) * 65535);
+      const szY = sizeYCurve
+        ? Math.max(0, Math.min(SIZE_CURVE_MAX, evaluateSizeCurve(sizeYCurve, t)))
+        : sz;
+      if (velCurve && i > 0) {
+        velIntegral += evalSignedCurve(velCurve, (i - 0.5) * dtStep) * dtStep;
+      }
+      const encodedVelDisp = velCurve
+        ? Math.max(0, Math.min(255, Math.round(((velIntegral + 4.0) / 8.0) * 255)))
+        : Math.max(0, Math.min(255, Math.round(((t + 4.0) / 8.0) * 255)));
       const sOff = rowBase + (LUT_HALF + i) * 4;
       bytes[sOff] = (q >> 8) & 255;
       bytes[sOff + 1] = q & 255;
-      bytes[sOff + 2] = 0;
-      bytes[sOff + 3] = 255;
+      bytes[sOff + 2] = Math.max(0, Math.min(255, Math.round((szY / SIZE_CURVE_MAX) * 255)));
+      bytes[sOff + 3] = encodedVelDisp;
     }
     dirty = true;
     return row;
@@ -231,6 +280,30 @@ export function createCurveLutTable(THREE = /** @type {object | null} */ (null))
     return v0 + (v1 - v0) * f;
   }
 
+  function sampleSizeY(row, t) {
+    const r = Math.max(0, Math.min(LUT_ROWS - 1, row | 0));
+    const s = Math.max(0, Math.min(1, t)) * (LUT_HALF - 1);
+    const i0 = Math.floor(s);
+    const i1 = Math.min(LUT_HALF - 1, i0 + 1);
+    const f = s - i0;
+    const base = r * LUT_WIDTH * 4;
+    const v0 = (bytes[base + (LUT_HALF + i0) * 4 + 2] / 255) * SIZE_CURVE_MAX;
+    const v1 = (bytes[base + (LUT_HALF + i1) * 4 + 2] / 255) * SIZE_CURVE_MAX;
+    return v0 + (v1 - v0) * f;
+  }
+
+  function sampleVelDisp(row, t) {
+    const r = Math.max(0, Math.min(LUT_ROWS - 1, row | 0));
+    const s = Math.max(0, Math.min(1, t)) * (LUT_HALF - 1);
+    const i0 = Math.floor(s);
+    const i1 = Math.min(LUT_HALF - 1, i0 + 1);
+    const f = s - i0;
+    const base = r * LUT_WIDTH * 4;
+    const v0 = (bytes[base + (LUT_HALF + i0) * 4 + 3] / 255) * 8.0 - 4.0;
+    const v1 = (bytes[base + (LUT_HALF + i1) * 4 + 3] / 255) * 8.0 - 4.0;
+    return v0 + (v1 - v0) * f;
+  }
+
   function dispose() {
     if (threeTexture && typeof threeTexture.dispose === 'function') {
       threeTexture.dispose();
@@ -248,6 +321,8 @@ export function createCurveLutTable(THREE = /** @type {object | null} */ (null))
     flush,
     sampleColor,
     sampleSize,
+    sampleSizeY,
+    sampleVelDisp,
     dispose,
   };
 }
@@ -520,17 +595,21 @@ attribute vec2 uv;
 attribute vec4 aAtlasP0; // x0, y0, z0, spawnTime
 attribute vec4 aAtlasP1; // vx, vy, vz, duration
 attribute vec4 aAtlasP2; // sizeStart, gravity, drag, curveRow
-attribute vec4 aAtlasP3; // rot0, angularVel, hdr, renderMode (0=billboard, 1=horizontal, 2=stretched)
+attribute vec4 aAtlasP3; // rot0, angularVel, hdr, renderMode (0=billboard, 1=horizontal, 2=stretched, 4=vertical)
 attribute vec4 aAtlasP4; // u0, v0, u1, v1
 attribute vec4 aAtlasP5; // cols, rows, cycles, blendFlag
-attribute vec4 aAtlasP6; // noiseStrength, noiseFreq, stretch, phase
+attribute vec4 aAtlasP6; // noiseStrength, noiseFreq, stretchOrYScale, phase
 attribute vec4 aAtlasP7; // tintRgb24, orbitalY, centerOffX, centerOffZ
+attribute vec4 aAtlasP8; // accelX, accelZ, aspectY, packedFlags
+attribute vec4 aAtlasP9; // rotX0, rotY0, spinX, spinY
 
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
 uniform sampler2D uCurveLut;
 uniform float uTime;
 uniform float uIs2D;
+uniform vec3 uWind;
+uniform vec3 uEffectDeltas[32];
 
 varying vec2 vUv;
 varying float vLifeRatio;
@@ -561,6 +640,39 @@ float sampleSizeCurve(float row, float t) {
   return mix(s0, s1, f);
 }
 
+float sampleSizeYCurve(float row, float t) {
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
+  float i0 = floor(s);
+  float i1 = min(127.0, i0 + 1.0);
+  float f = s - i0;
+  vec4 t0 = texture2D(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
+  vec4 t1 = texture2D(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
+  return mix(t0.b, t1.b, f) * 8.0;
+}
+
+float sampleVelDispCurve(float row, float t) {
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
+  float i0 = floor(s);
+  float i1 = min(127.0, i0 + 1.0);
+  float f = s - i0;
+  vec4 t0 = texture2D(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
+  vec4 t1 = texture2D(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
+  return mix(t0.a, t1.a, f) * 8.0 - 4.0;
+}
+
+mat3 euler3D(float rx, float ry, float rz) {
+  float cx = cos(rx), sx = sin(rx);
+  float cy = cos(ry), sy = sin(ry);
+  float cz = cos(rz), sz = sin(rz);
+  return mat3(
+    cy * cz + sy * sx * sz, cx * sz, -sy * cz + cy * sx * sz,
+    -cy * sz + sy * sx * cz, cx * cz, sy * sz + cy * sx * cz,
+    sy * cx, -sx, cy * cx
+  );
+}
+
 void main() {
   float age = uTime - aAtlasP0.w;
   float dur = aAtlasP1.w;
@@ -582,6 +694,23 @@ void main() {
   vFlipbook = aAtlasP5;
   vTint = unpackRgb24(aAtlasP7.x);
 
+  float fl = floor(max(0.0, aAtlasP8.w) + 0.5);
+  float scrollQ = floor(fl / 8192.0); fl -= scrollQ * 8192.0;
+  float windQ = floor(fl / 256.0); fl -= windQ * 256.0;
+  float hasSizeSep = step(127.5, fl); fl -= hasSizeSep * 128.0;
+  float noiseDamp = step(63.5, fl); fl -= noiseDamp * 64.0;
+  float hasVelCurve = step(31.5, fl); fl -= hasVelCurve * 32.0;
+  int slotIdx = int(fl + 0.5);
+  float noiseScroll = scrollQ * 0.25;
+  float windMul = windQ * 0.25;
+
+  vec3 effDelta = vec3(0.0);
+  if (slotIdx > 0) {
+    for (int i = 1; i < 32; i++) {
+      if (i == slotIdx) effDelta = uEffectDeltas[i];
+    }
+  }
+
   float k = aAtlasP2.z;
   vec3 worldPos;
   vec3 curVel;
@@ -589,9 +718,22 @@ void main() {
     worldPos = aAtlasP0.xyz;
     curVel = aAtlasP1.xyz;
   } else {
-    float dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
-    float velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
-    vec3 gVec = (uIs2D > 0.5) ? vec3(0.0, aAtlasP2.y, 0.0) : vec3(0.0, -aAtlasP2.y, 0.0);
+    float dispFactor;
+    float velDecay;
+    if (hasVelCurve > 0.5) {
+      float vInt = sampleVelDispCurve(curveRow, t);
+      dispFactor = vInt * dur;
+      float dtStep = 0.015;
+      float t1 = min(1.0, t + dtStep);
+      float t0 = max(0.0, t - dtStep);
+      velDecay = (sampleVelDispCurve(curveRow, t1) - sampleVelDispCurve(curveRow, t0)) / max(0.001, t1 - t0);
+    } else {
+      dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
+      velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
+    }
+    vec3 gVec = (uIs2D > 0.5)
+      ? vec3(aAtlasP8.x, aAtlasP2.y, aAtlasP8.y) + uWind * windMul
+      : vec3(aAtlasP8.x, -aAtlasP2.y, aAtlasP8.y) + uWind * windMul;
     worldPos = aAtlasP0.xyz + aAtlasP1.xyz * dispFactor + 0.5 * gVec * (age * age);
     curVel = aAtlasP1.xyz * velDecay + gVec * age;
 
@@ -609,7 +751,8 @@ void main() {
     float nStr = aAtlasP6.x;
     if (nStr > 0.001) {
       float nFreq = max(0.08, aAtlasP6.y);
-      float ph = aAtlasP6.w * 6.2831853;
+      float ph = aAtlasP6.w * 6.2831853 + noiseScroll * age * 1.7;
+      float ph0 = aAtlasP6.w * 6.2831853;
       float travelSpd = length(aAtlasP1.xyz) + abs(aAtlasP7.y) * length(aAtlasP7.zw);
       float spatialRate = 1.0 + clamp((travelSpd - 2.2) * 0.25, 0.0, 5.5);
       float w1 = nFreq * 2.5 * spatialRate;
@@ -617,24 +760,30 @@ void main() {
       float rm = aAtlasP3.w;
       float yScale = (rm > 1.5 && rm < 2.5) ? 1.0 : aAtlasP6.z;
       vec3 disp1 = vec3(
-        (sin(w1 * age + ph) - sin(ph)) / w1,
-        (sin(w1 * age * 1.13 + ph * 2.1) - sin(ph * 2.1)) / (w1 * 1.13),
-        (cos(ph * 1.7) - cos(w1 * age + ph * 1.7)) / w1
+        (sin(w1 * age + ph) - sin(ph0)) / w1,
+        (sin(w1 * age * 1.13 + ph * 2.1) - sin(ph0 * 2.1)) / (w1 * 1.13),
+        (cos(ph0 * 1.7) - cos(w1 * age + ph * 1.7)) / w1
       );
       vec3 disp2 = vec3(
-        (cos(ph * 2.9) - cos(w2 * age + ph * 2.9)) / w2,
-        (sin(w2 * age * 0.91 + ph * 1.4) - sin(ph * 1.4)) / (w2 * 0.91),
-        (sin(w2 * age + ph * 2.3) - sin(ph * 2.3)) / w2
+        (cos(ph0 * 2.9) - cos(w2 * age + ph * 2.9)) / w2,
+        (sin(w2 * age * 0.91 + ph * 1.4) - sin(ph0 * 1.4)) / (w2 * 0.91),
+        (sin(w2 * age + ph * 2.3) - sin(ph0 * 2.3)) / w2
       );
-      vec3 noiseOff = (disp1 + 0.45 * disp2) * nStr * 1.18 * (spatialRate > 1.01 ? (0.45 + 0.55 * spatialRate) : 1.0);
+      float dampScale = (noiseDamp > 0.5) ? clamp(length(curVel) * 0.3, 0.15, 2.0) : 1.0;
+      vec3 noiseOff = (disp1 + 0.45 * disp2) * nStr * 1.18 * dampScale * (spatialRate > 1.01 ? (0.45 + 0.55 * spatialRate) : 1.0);
       noiseOff.y *= yScale;
       worldPos += noiseOff;
     }
   }
 
+  worldPos += effDelta;
+
   float curSize = aAtlasP2.x * sampleSizeCurve(curveRow, t);
+  float curSizeY = (hasSizeSep > 0.5) ? (aAtlasP2.x * sampleSizeYCurve(curveRow, t)) : curSize;
+  float aspectY = max(0.05, aAtlasP8.z);
   float rot = aAtlasP3.x + aAtlasP3.y * age;
   float renderMode = aAtlasP3.w;
+  bool hasRot3D = (abs(aAtlasP9.x) + abs(aAtlasP9.y) + abs(aAtlasP9.z) + abs(aAtlasP9.w)) > 0.001;
 
   if (uIs2D > 0.5) {
     float c = cos(rot);
@@ -650,15 +799,23 @@ void main() {
       }
       lenScale = curSize * (1.0 + aAtlasP6.z * min(spd * 0.015, 4.0));
     }
-    vec2 p2 = worldPos.xy + axisX * (position.x * lenScale) + axisY * (position.y * curSize);
+    vec2 p2 = worldPos.xy + axisX * (position.x * lenScale) + axisY * (position.y * curSizeY * aspectY);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p2, worldPos.z, 1.0);
+  } else if (hasRot3D && (renderMode < 1.5 || renderMode > 3.5)) {
+    mat3 rotMat = euler3D(aAtlasP9.x + aAtlasP9.z * age, aAtlasP9.y + aAtlasP9.w * age, rot);
+    vec3 localQ = vec3(position.x * curSize, position.y * curSizeY * aspectY, 0.0);
+    if (renderMode > 0.5 && renderMode < 1.5) {
+      localQ = vec3(position.x * curSize, 0.0, position.y * curSizeY * aspectY);
+    }
+    vec3 worldQuad = worldPos + rotMat * localQ;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(worldQuad, 1.0);
   } else if (renderMode > 0.5 && renderMode < 1.5) {
     float c = cos(rot);
     float s = sin(rot);
     vec3 worldQuad = worldPos + vec3(
       (position.x * c - position.y * s) * curSize,
       0.0,
-      (position.x * s + position.y * c) * curSize
+      (position.x * s + position.y * c) * curSizeY * aspectY
     );
     gl_Position = projectionMatrix * modelViewMatrix * vec4(worldQuad, 1.0);
   } else if (renderMode > 3.5) {
@@ -668,10 +825,9 @@ void main() {
     vec3 upW = vec3(0.0, 1.0, 0.0);
     float c = cos(rot);
     float s = sin(rot);
-    float aspectY = max(0.05, aAtlasP6.z);
     vec2 rPos = vec2(
       (position.x * c - position.y * s) * curSize,
-      (position.x * s + position.y * c) * curSize * aspectY
+      (position.x * s + position.y * c) * curSizeY * aspectY
     );
     vec3 worldQuad = worldPos + camRight * rPos.x + upW * rPos.y;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(worldQuad, 1.0);
@@ -688,7 +844,7 @@ void main() {
       rightAxis = vec2(cos(rot), sin(rot));
     }
     vec2 upAxis = vec2(-rightAxis.y, rightAxis.x);
-    float billH = (renderMode < 0.5 && aAtlasP6.x <= 0.001) ? (curSize * max(0.05, aAtlasP6.z)) : curSize;
+    float billH = (renderMode < 0.5) ? (curSizeY * aspectY) : curSizeY;
     float minBill = (renderMode < 0.5 && curSize > 0.001) ? abs(mvCenter.z) * 0.0042 : 0.0;
     mvCenter.xy += rightAxis * (position.x * max(major, minBill)) + upAxis * (position.y * max(billH, minBill));
     gl_Position = projectionMatrix * mvCenter;
@@ -806,6 +962,101 @@ void main() {
 }
 `;
 
+export const ATLAS_PARTICLE_DISTORTION_FS = /* glsl */ `
+precision highp float;
+
+uniform sampler2D uCurveLut;
+uniform sampler2D uAtlasTex;
+uniform sampler2D uSceneTex;
+uniform float uHasAtlas;
+uniform float uFlipV;
+uniform float uHasSceneTex;
+uniform float uDistortionStrength;
+uniform vec2 uInvViewport;
+
+varying vec2 vUv;
+varying float vLifeRatio;
+varying float vCurveRow;
+varying float vHdr;
+varying vec4 vUvRect;
+varying vec4 vFlipbook;
+varying vec3 vTint;
+
+vec4 sampleColorCurve(float row, float t) {
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
+  float i0 = floor(s);
+  float i1 = min(127.0, i0 + 1.0);
+  float f = s - i0;
+  vec4 c0 = texture2D(uCurveLut, vec2((i0 + 0.5) / 256.0, rowV));
+  vec4 c1 = texture2D(uCurveLut, vec2((i1 + 0.5) / 256.0, rowV));
+  return mix(c0, c1, f);
+}
+
+vec4 sampleAtlasFrame(float frameIdx, vec2 localUv) {
+  float cols = max(1.0, floor(vFlipbook.x + 0.5));
+  float rows = max(1.0, floor(vFlipbook.y + 0.5));
+  float col = mod(frameIdx, cols);
+  float row = floor(frameIdx / cols);
+  vec2 cellUv = vec2((col + localUv.x) / cols, (row + localUv.y) / rows);
+  vec2 mapped = vec2(
+    mix(vUvRect.x, vUvRect.z, cellUv.x),
+    mix(vUvRect.y, vUvRect.w, cellUv.y)
+  );
+  if (uFlipV > 0.5) mapped.y = 1.0 - mapped.y;
+  return texture2D(uAtlasTex, mapped);
+}
+
+void main() {
+  if (uHasSceneTex < 0.5) discard;
+  vec4 curveCol = sampleColorCurve(vCurveRow, vLifeRatio);
+  if (curveCol.a < 0.002) discard;
+
+  vec2 centered = vUv * 2.0 - 1.0;
+  float rad = length(centered);
+  vec2 nOffset = vec2(0.0);
+  float maskAlpha = curveCol.a;
+
+  if (uHasAtlas > 0.5) {
+    vec2 topDownUv = vec2(vUv.x, 1.0 - vUv.y);
+    vec4 texCol;
+    if (vFlipbook.x > 1.5 || vFlipbook.y > 1.5) {
+      float total = max(1.0, floor(vFlipbook.x + 0.5) * floor(vFlipbook.y + 0.5));
+      float cycles = max(0.01, vFlipbook.z);
+      float framePos = clamp(fract(vLifeRatio * cycles), 0.0, 0.9999) * total;
+      float f0 = floor(framePos);
+      texCol = sampleAtlasFrame(f0, topDownUv);
+      if (vFlipbook.w > 0.5) {
+        float f1 = min(total - 1.0, f0 + 1.0);
+        texCol = mix(texCol, sampleAtlasFrame(f1, topDownUv), fract(framePos));
+      }
+    } else {
+      vec2 mapped = vec2(
+        mix(vUvRect.x, vUvRect.z, topDownUv.x),
+        mix(vUvRect.y, vUvRect.w, topDownUv.y)
+      );
+      if (uFlipV > 0.5) mapped.y = 1.0 - mapped.y;
+      texCol = texture2D(uAtlasTex, mapped);
+    }
+    nOffset = texCol.rg * 2.0 - 1.0;
+    float radialFade = clamp(1.0 - rad * rad, 0.0, 1.0);
+    float edgeAlpha = (texCol.a < 0.995) ? texCol.a : radialFade;
+    maskAlpha *= edgeAlpha;
+  } else {
+    if (rad > 1.0) discard;
+    float falloff = exp(-3.4 * rad * rad);
+    nOffset = centered * falloff;
+    maskAlpha *= falloff;
+  }
+
+  if (maskAlpha < 0.002) discard;
+  vec2 screenUv = gl_FragCoord.xy * uInvViewport;
+  vec2 refractedUv = clamp(screenUv + nOffset * uDistortionStrength * maskAlpha, vec2(0.002), vec2(0.998));
+  vec3 refracted = texture2D(uSceneTex, refractedUv).rgb;
+  gl_FragColor = vec4(refracted, clamp(maskAlpha * 1.15, 0.0, 1.0));
+}
+`;
+
 export const ATLAS_PARTICLE_WEBGL2_2D_VS = /* glsl */ `#version 300 es
 precision highp float;
 
@@ -818,12 +1069,15 @@ layout(location = 5) in vec4 aAtlasP4;
 layout(location = 6) in vec4 aAtlasP5;
 layout(location = 7) in vec4 aAtlasP6;
 layout(location = 8) in vec4 aAtlasP7;
+layout(location = 9) in vec4 aAtlasP8;
 
 uniform sampler2D uCurveLut;
 uniform float uTime;
 uniform vec2 uCamPos;
 uniform float uCamZoom;
 uniform vec2 uViewSize;
+uniform vec2 uWind2D;
+uniform vec2 uEffectDeltas2D[32];
 
 out vec2 vUv;
 out float vLifeRatio;
@@ -854,6 +1108,28 @@ float sampleSizeCurve(float row, float t) {
   return mix(s0, s1, f);
 }
 
+float sampleSizeYCurve(float row, float t) {
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
+  float i0 = floor(s);
+  float i1 = min(127.0, i0 + 1.0);
+  float f = s - i0;
+  vec4 t0 = texture(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
+  vec4 t1 = texture(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
+  return mix(t0.b, t1.b, f) * 8.0;
+}
+
+float sampleVelDispCurve(float row, float t) {
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
+  float s = clamp(t, 0.0, 1.0) * 127.0;
+  float i0 = floor(s);
+  float i1 = min(127.0, i0 + 1.0);
+  float f = s - i0;
+  vec4 t0 = texture(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
+  vec4 t1 = texture(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
+  return mix(t0.a, t1.a, f) * 8.0 - 4.0;
+}
+
 void main() {
   float age = uTime - aAtlasP0.w;
   float dur = aAtlasP1.w;
@@ -874,6 +1150,16 @@ void main() {
   vFlipbook = aAtlasP5;
   vTint = unpackRgb24(aAtlasP7.x);
 
+  float fl = floor(max(0.0, aAtlasP8.w) + 0.5);
+  float scrollQ = floor(fl / 8192.0); fl -= scrollQ * 8192.0;
+  float windQ = floor(fl / 256.0); fl -= windQ * 256.0;
+  float hasSizeSep = step(127.5, fl); fl -= hasSizeSep * 128.0;
+  float noiseDamp = step(63.5, fl); fl -= noiseDamp * 64.0;
+  float hasVelCurve = step(31.5, fl); fl -= hasVelCurve * 32.0;
+  int slotIdx = int(fl + 0.5);
+  float noiseScroll = scrollQ * 0.25;
+  float windMul = windQ * 0.25;
+
   float k = aAtlasP2.z;
   vec2 worldPos;
   vec2 curVel;
@@ -881,22 +1167,38 @@ void main() {
     worldPos = aAtlasP0.xy;
     curVel = aAtlasP1.xy;
   } else {
-    float dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
-    float velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
-    vec2 gVec = vec2(0.0, aAtlasP2.y);
+    float dispFactor;
+    float velDecay;
+    if (hasVelCurve > 0.5) {
+      dispFactor = sampleVelDispCurve(curveRow, t) * dur;
+      float dtStep = 0.015;
+      float t1 = min(1.0, t + dtStep);
+      float t0 = max(0.0, t - dtStep);
+      velDecay = (sampleVelDispCurve(curveRow, t1) - sampleVelDispCurve(curveRow, t0)) / max(0.001, t1 - t0);
+    } else {
+      dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
+      velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
+    }
+    vec2 gVec = vec2(aAtlasP8.x, aAtlasP2.y) + uWind2D * windMul;
     worldPos = aAtlasP0.xy + aAtlasP1.xy * dispFactor + 0.5 * gVec * (age * age);
     curVel = aAtlasP1.xy * velDecay + gVec * age;
 
     float nStr = aAtlasP6.x;
     if (nStr > 0.001) {
       float nFreq = max(0.05, aAtlasP6.y);
-      float ph = aAtlasP6.w * 6.2831853;
+      float ph = aAtlasP6.w * 6.2831853 + noiseScroll * age * 1.7;
       float wt = age * nFreq * 3.14159265;
-      worldPos += vec2(sin(wt + ph) * cos(wt * 0.73 + ph), cos(wt * 1.17 + ph)) * (nStr * min(1.0, age * 1.5) * 12.0);
+      float dampScale = (noiseDamp > 0.5) ? clamp(length(curVel) * 0.03, 0.15, 2.0) : 1.0;
+      worldPos += vec2(sin(wt + ph) * cos(wt * 0.73 + ph), cos(wt * 1.17 + ph)) * (nStr * min(1.0, age * 1.5) * 12.0 * dampScale);
     }
+  }
+  if (slotIdx > 0 && slotIdx < 32) {
+    worldPos += uEffectDeltas2D[slotIdx];
   }
 
   float curSize = aAtlasP2.x * sampleSizeCurve(curveRow, t);
+  float curSizeY = (hasSizeSep > 0.5) ? (aAtlasP2.x * sampleSizeYCurve(curveRow, t)) : curSize;
+  float aspectY = max(0.05, aAtlasP8.z);
   float rot = aAtlasP3.x + aAtlasP3.y * age;
   vec2 axisX = vec2(cos(rot), sin(rot));
   vec2 axisY = vec2(-axisX.y, axisX.x);
@@ -910,7 +1212,7 @@ void main() {
     lenScale = curSize * (1.0 + aAtlasP6.z * min(spd * 0.015, 4.0));
   }
 
-  float billH = (aAtlasP3.w < 0.5 && aAtlasP6.x <= 0.001) ? (curSize * max(0.05, aAtlasP6.z)) : curSize;
+  float billH = (aAtlasP3.w < 0.5) ? (curSizeY * aspectY) : curSizeY;
   vec2 p = worldPos + axisX * (aQuadPos.x * lenScale) + axisY * (aQuadPos.y * billH);
   vec2 screenPx = (p - uCamPos) * uCamZoom + uViewSize * 0.5;
   vec2 ndc = vec2(
@@ -999,10 +1301,11 @@ void main() {
 }
 `;
 
-function createAtlasChannel(capacity, additive) {
+function createAtlasChannel(capacity, additive, distortion = false) {
   return {
     capacity,
     additive,
+    distortion,
     p0: new Float32Array(capacity * 4),
     p1: new Float32Array(capacity * 4),
     p2: new Float32Array(capacity * 4),
@@ -1011,6 +1314,8 @@ function createAtlasChannel(capacity, additive) {
     p5: new Float32Array(capacity * 4),
     p6: new Float32Array(capacity * 4),
     p7: new Float32Array(capacity * 4),
+    p8: new Float32Array(capacity * 4),
+    p9: new Float32Array(capacity * 4),
     cursor: 0,
     totalEmitted: 0,
     dirtyStart: 0,
@@ -1087,12 +1392,22 @@ export function evaluateAtlasParticlePosition(
   age, is2D, outPos,
   orbitalY = 0, centerOffX = 0, centerOffZ = 0,
   noiseYScale = 1,
+  ext = null,
 ) {
-  const disp = drag > 0.001 ? ((1 - Math.exp(-drag * age)) / drag) : age;
-  const gY = is2D ? gravity : -gravity;
-  let px = x0 + vx * disp;
-  let py = y0 + vy * disp + 0.5 * gY * age * age;
-  let pz = z0 + vz * disp;
+  const hasVelCurve = Boolean(ext && ext.hasVelCurve);
+  const disp = hasVelCurve
+    ? (ext.velDispIntegral ?? 0) * (ext.duration ?? 1)
+    : (drag > 0.001 ? ((1 - Math.exp(-drag * age)) / drag) : age);
+  const velDecay = hasVelCurve
+    ? (ext.velMul ?? 1)
+    : (drag > 0.001 ? Math.exp(-drag * age) : 1);
+  const ax = (ext?.accelX ?? 0) + (ext?.windX ?? 0) * (ext?.windMul ?? 0);
+  const ay = (is2D ? gravity : -gravity) + (ext?.windY ?? 0) * (ext?.windMul ?? 0);
+  const az = (ext?.accelZ ?? 0) + (ext?.windZ ?? 0) * (ext?.windMul ?? 0);
+
+  let px = x0 + vx * disp + 0.5 * ax * age * age;
+  let py = y0 + vy * disp + 0.5 * ay * age * age;
+  let pz = z0 + vz * disp + 0.5 * az * age * age;
   if (!is2D && Math.abs(orbitalY) > 0.0001) {
     const cx = x0 - centerOffX;
     const cz = z0 - centerOffZ;
@@ -1106,10 +1421,17 @@ export function evaluateAtlasParticlePosition(
   }
   if (noiseStrength > 0.001) {
     const nf = Math.max(0.08, noiseFreq);
-    const ph = phase * 6.283185307179586;
+    const ph0 = phase * 6.283185307179586;
+    const noiseScroll = ext?.noiseScroll ?? 0;
+    const ph = ph0 + noiseScroll * age * 1.7;
+    const noiseDamp = Boolean(ext?.noiseDamp);
+    const cvx = vx * velDecay + ax * age;
+    const cvy = vy * velDecay + ay * age;
+    const cvz = vz * velDecay + az * age;
     if (is2D) {
       const wt = age * nf * 3.141592653589793;
-      const env = noiseStrength * Math.min(1.0, age * 1.5) * 12.0;
+      const dampScale = noiseDamp ? Math.max(0.15, Math.min(2.0, Math.hypot(cvx, cvy) * 0.03)) : 1.0;
+      const env = noiseStrength * Math.min(1.0, age * 1.5) * 12.0 * dampScale;
       px += Math.sin(wt + ph) * Math.cos(wt * 0.73 + ph) * env;
       py += Math.cos(wt * 1.17 + ph) * env * noiseYScale;
     } else {
@@ -1117,17 +1439,23 @@ export function evaluateAtlasParticlePosition(
       const spatialRate = 1.0 + Math.max(0, Math.min(5.5, (travelSpd - 2.2) * 0.25));
       const w1 = nf * 2.5 * spatialRate;
       const w2 = nf * 4.2 * spatialRate;
-      const d1x = (Math.sin(w1 * age + ph) - Math.sin(ph)) / w1;
-      const d1y = (Math.sin(w1 * age * 1.13 + ph * 2.1) - Math.sin(ph * 2.1)) / (w1 * 1.13);
-      const d1z = (Math.cos(ph * 1.7) - Math.cos(w1 * age + ph * 1.7)) / w1;
-      const d2x = (Math.cos(ph * 2.9) - Math.cos(w2 * age + ph * 2.9)) / w2;
-      const d2y = (Math.sin(w2 * age * 0.91 + ph * 1.4) - Math.sin(ph * 1.4)) / (w2 * 0.91);
-      const d2z = (Math.sin(w2 * age + ph * 2.3) - Math.sin(ph * 2.3)) / w2;
-      const s = noiseStrength * 1.18 * (spatialRate > 1.01 ? (0.45 + 0.55 * spatialRate) : 1.0);
+      const d1x = (Math.sin(w1 * age + ph) - Math.sin(ph0)) / w1;
+      const d1y = (Math.sin(w1 * age * 1.13 + ph * 2.1) - Math.sin(ph0 * 2.1)) / (w1 * 1.13);
+      const d1z = (Math.cos(ph0 * 1.7) - Math.cos(w1 * age + ph * 1.7)) / w1;
+      const d2x = (Math.cos(ph0 * 2.9) - Math.cos(w2 * age + ph * 2.9)) / w2;
+      const d2y = (Math.sin(w2 * age * 0.91 + ph * 1.4) - Math.sin(ph0 * 1.4)) / (w2 * 0.91);
+      const d2z = (Math.sin(w2 * age + ph * 2.3) - Math.sin(ph0 * 2.3)) / w2;
+      const dampScale = noiseDamp ? Math.max(0.15, Math.min(2.0, Math.hypot(cvx, cvy, cvz) * 0.3)) : 1.0;
+      const s = noiseStrength * 1.18 * dampScale * (spatialRate > 1.01 ? (0.45 + 0.55 * spatialRate) : 1.0);
       px += (d1x + 0.45 * d2x) * s;
       py += (d1y + 0.45 * d2y) * s * noiseYScale;
       pz += (d1z + 0.45 * d2z) * s;
     }
+  }
+  if (ext) {
+    px += ext.effectOffX ?? 0;
+    py += ext.effectOffY ?? 0;
+    pz += ext.effectOffZ ?? 0;
   }
   outPos[0] = px;
   outPos[1] = py;
@@ -1161,9 +1489,10 @@ export function createAtlasParticlePool({
   atlasRegions = /** @type {Record<string, readonly number[]> | null} */ (null),
 } = {}) {
   const capacity = Math.max(1, maxParticles | 0);
-  const normalPool = createAtlasChannel(capacity, false);
-  const additivePool = createAtlasChannel(capacity, true);
-  const channels = [normalPool, additivePool];
+  const normalPool = createAtlasChannel(capacity, false, false);
+  const additivePool = createAtlasChannel(capacity, true, false);
+  const distortionPool = createAtlasChannel(Math.max(128, (capacity >> 2) | 0), false, true);
+  const channels = [normalPool, additivePool, distortionPool];
   const lut = createCurveLutTable(THREE);
 
   /** @type {Record<string, readonly number[]>} */
@@ -1172,6 +1501,13 @@ export function createAtlasParticlePool({
   let activeAtlasTex = atlasTexture;
   /** @type {HTMLCanvasElement | OffscreenCanvas | null} */
   let activeAtlasCanvas = null;
+  /** @type {object | null} */
+  let activeSceneTex = null;
+  let distortionStrength = 0.045;
+  const windVec = new Float32Array([0, 0, 0]);
+  const effectDeltas = new Float32Array(32 * 3);
+  const effectDeltas2D = new Float32Array(32 * 2);
+  const threeEffectVecs = Array.from({ length: 32 }, () => (THREE && THREE.Vector3 ? new THREE.Vector3() : { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; } }));
 
   if (!activeAtlasTex && (mode === '3d' || mode === 'webgl2d' || mode === 'canvas2d')) {
     const proc = createProceduralVfxAtlas(THREE);
@@ -1205,9 +1541,9 @@ export function createAtlasParticlePool({
     geo.index = base.index;
     geo.attributes.position = base.attributes.position;
     geo.attributes.uv = base.attributes.uv;
-    geo.instanceCount = capacity;
+    geo.instanceCount = ch.capacity;
 
-    const arrays = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
+    const arrays = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7, ch.p8, ch.p9];
     const attrs = [];
     for (let i = 0; i < arrays.length; i++) {
       const attr = new THREE.InstancedBufferAttribute(arrays[i], 4);
@@ -1217,22 +1553,34 @@ export function createAtlasParticlePool({
     }
 
     const MatCtor = THREE.RawShaderMaterial || THREE.ShaderMaterial;
+    const uniforms = {
+      uTime: { value: 0 },
+      uIs2D: { value: is2D ? 1.0 : 0.0 },
+      uCurveLut: { value: lut.texture },
+      uAtlasTex: { value: activeAtlasTex },
+      uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
+      uFlipV: { value: activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0 },
+      uWind: { value: THREE.Vector3 ? new THREE.Vector3() : { set() {} } },
+      uEffectDeltas: { value: threeEffectVecs },
+      uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
+      ...(ch.distortion
+        ? {
+            uSceneTex: { value: activeSceneTex },
+            uHasSceneTex: { value: activeSceneTex ? 1.0 : 0.0 },
+            uDistortionStrength: { value: distortionStrength },
+          }
+        : {
+            uSoftDepthTex: { value: null },
+            uHasSoftDepth: { value: 0.0 },
+            uSoftFade: { value: 0.45 },
+            uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
+          }),
+    };
+
     const mat = new MatCtor({
       vertexShader: ATLAS_PARTICLE_VERTEX_GLSL,
-      fragmentShader: ATLAS_PARTICLE_FRAGMENT_GLSL,
-      uniforms: {
-        uTime: { value: 0 },
-        uIs2D: { value: is2D ? 1.0 : 0.0 },
-        uCurveLut: { value: lut.texture },
-        uAtlasTex: { value: activeAtlasTex },
-        uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
-        uFlipV: { value: activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0 },
-        uSoftDepthTex: { value: null },
-        uHasSoftDepth: { value: 0.0 },
-        uSoftFade: { value: 0.45 },
-        uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
-        uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
-      },
+      fragmentShader: ch.distortion ? ATLAS_PARTICLE_DISTORTION_FS : ATLAS_PARTICLE_FRAGMENT_GLSL,
+      uniforms,
       transparent: true,
       depthTest: true,
       depthWrite: false,
@@ -1242,8 +1590,9 @@ export function createAtlasParticlePool({
 
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
-    mesh.renderOrder = VFX_RENDER_ORDERS.PARTICLES;
-    mesh.name = ch.additive ? 'HGameVfxAtlasAdditive' : 'HGameVfxAtlasNormal';
+    mesh.renderOrder = ch.distortion ? (VFX_RENDER_ORDERS.PARTICLES + 2) : VFX_RENDER_ORDERS.PARTICLES;
+    mesh.visible = ch.distortion ? Boolean(activeSceneTex) : true;
+    mesh.name = ch.distortion ? 'HGameVfxAtlasDistortion' : (ch.additive ? 'HGameVfxAtlasAdditive' : 'HGameVfxAtlasNormal');
     scene.add(mesh);
 
     ch.threeMesh = mesh;
@@ -1274,6 +1623,8 @@ export function createAtlasParticlePool({
       uCurveLut: gl.getUniformLocation(glProg, 'uCurveLut'),
       uAtlasTex: gl.getUniformLocation(glProg, 'uAtlasTex'),
       uHasAtlas: gl.getUniformLocation(glProg, 'uHasAtlas'),
+      uWind2D: gl.getUniformLocation(glProg, 'uWind2D'),
+      uEffectDeltas2D: gl.getUniformLocation(glProg, 'uEffectDeltas2D'),
     };
     glLutTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, glLutTex);
@@ -1293,13 +1644,14 @@ export function createAtlasParticlePool({
 
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
+      if (ch.distortion) continue;
       const vao = gl.createVertexArray();
       gl.bindVertexArray(vao);
       gl.bindBuffer(gl.ARRAY_BUFFER, glQuadVbo);
       gl.enableVertexAttribArray(0);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-      const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
+      const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7, ch.p8];
       const vbos = [];
       for (let i = 0; i < dataArrs.length; i++) {
         const vbo = gl.createBuffer();
@@ -1319,6 +1671,7 @@ export function createAtlasParticlePool({
   if (mode === '3d' && THREE && scene) {
     initThreeChannel(normalPool);
     initThreeChannel(additivePool);
+    initThreeChannel(distortionPool);
   } else if (mode === 'webgl2d' && gl) {
     initWebGL2();
   }
@@ -1345,6 +1698,7 @@ export function createAtlasParticlePool({
     if (newRegions) regions = { ...newRegions };
     updateThreeAtlasUniforms(normalPool);
     updateThreeAtlasUniforms(additivePool);
+    updateThreeAtlasUniforms(distortionPool);
     if (gl && activeAtlasCanvas) uploadWebGL2Atlas(activeAtlasCanvas);
   }
 
@@ -1358,7 +1712,7 @@ export function createAtlasParticlePool({
   function setDepthTexture(depthTexture, { near = 0.1, far = 200, width = 1280, height = 720, softFade = 0.45 } = {}) {
     for (let c = 0; c < channels.length; c++) {
       const mat = channels[c].threeMat;
-      if (!mat) continue;
+      if (!mat || !mat.uniforms.uSoftDepthTex) continue;
       mat.uniforms.uSoftDepthTex.value = depthTexture;
       mat.uniforms.uHasSoftDepth.value = depthTexture ? 1.0 : 0.0;
       mat.uniforms.uSoftFade.value = softFade;
@@ -1368,19 +1722,77 @@ export function createAtlasParticlePool({
   }
 
   /**
+   * Binds a background scene color texture for screen-space refraction distortion particles.
+   * @param {object | null} sceneTexture
+   * @param {{ width?: number, height?: number, strength?: number }} [opts]
+   */
+  function setSceneTexture(sceneTexture, { width = 1280, height = 720, strength = 0.045 } = {}) {
+    activeSceneTex = sceneTexture || null;
+    distortionStrength = Math.max(0, Number(strength) || 0.045);
+    const mat = distortionPool.threeMat;
+    if (mat) {
+      mat.uniforms.uSceneTex.value = activeSceneTex;
+      mat.uniforms.uHasSceneTex.value = activeSceneTex ? 1.0 : 0.0;
+      mat.uniforms.uDistortionStrength.value = distortionStrength;
+      mat.uniforms.uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
+    }
+    if (distortionPool.threeMesh) {
+      distortionPool.threeMesh.visible = Boolean(activeSceneTex);
+    }
+  }
+
+  /**
+   * Sets global wind vector `(wx, wy, wz)` affecting particles with non-zero `windMul`.
+   * @param {number} wx
+   * @param {number} wy
+   * @param {number} wz
+   */
+  function setWind(wx = 0, wy = 0, wz = 0) {
+    windVec[0] = wx;
+    windVec[1] = wy;
+    windVec[2] = wz;
+    for (let c = 0; c < channels.length; c++) {
+      const mat = channels[c].threeMat;
+      if (mat && mat.uniforms.uWind) mat.uniforms.uWind.value.set(wx, wy, wz);
+    }
+  }
+
+  /**
+   * Updates active local-space effect anchor offset (`slotIdx` in `1..31`).
+   * @param {number} slotIdx
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   */
+  function setEffectOffset(slotIdx, x = 0, y = 0, z = 0) {
+    const idx = slotIdx | 0;
+    if (idx <= 0 || idx >= 32) return;
+    effectDeltas[idx * 3] = x;
+    effectDeltas[idx * 3 + 1] = y;
+    effectDeltas[idx * 3 + 2] = z;
+    effectDeltas2D[idx * 2] = x;
+    effectDeltas2D[idx * 2 + 1] = y;
+    threeEffectVecs[idx].set(x, y, z);
+  }
+
+  /**
    * Emits a single textured/curve particle and returns its slot index.
    * @param {object} [opts]
    * @returns {number} Slot index in its channel
    */
+  function pickChannel(opts) {
+    if (opts.blend === 'distortion') return distortionPool;
+    return (opts.blend === 'additive' || Boolean(opts.additive)) ? additivePool : normalPool;
+  }
+
   function emit(opts = {}) {
-    const additive = opts.blend === 'additive' || Boolean(opts.additive);
-    const ch = additive ? additivePool : normalPool;
+    const ch = pickChannel(opts);
     const idx = ch.cursor;
     const i4 = idx * 4;
 
     const curveRow = opts.curveRow !== undefined
       ? opts.curveRow
-      : lut.compile(opts.colorCurve, opts.sizeCurve);
+      : lut.compile(opts.colorCurve, opts.sizeCurve, opts.sizeYCurve ?? null, opts.velCurve ?? null);
     const uv = resolveUvRect(opts);
     const fb = opts.flipbook;
     const renderMode = typeof opts.renderMode === 'number'
@@ -1412,9 +1824,19 @@ export function createAtlasParticlePool({
       ? (curveCycle > 0 ? curveCycle : 1e6)
       : (opts.duration ?? 0.5);
 
-    ch.p0[i4] = opts.x ?? 0;
-    ch.p0[i4 + 1] = opts.y ?? 0;
-    ch.p0[i4 + 2] = opts.z ?? 0;
+    const slotIdx = Math.max(0, Math.min(31, (opts.space === 'local' ? (opts.effectSlotIdx | 0) : 0)));
+    let px0 = opts.x ?? 0;
+    let py0 = opts.y ?? 0;
+    let pz0 = opts.z ?? 0;
+    if (slotIdx > 0) {
+      px0 -= effectDeltas[slotIdx * 3];
+      py0 -= effectDeltas[slotIdx * 3 + 1];
+      pz0 -= effectDeltas[slotIdx * 3 + 2];
+    }
+
+    ch.p0[i4] = px0;
+    ch.p0[i4 + 1] = py0;
+    ch.p0[i4 + 2] = pz0;
     ch.p0[i4 + 3] = simTime - Math.max(0, opts.initialAge ?? 0);
 
     ch.p1[i4] = opts.vx ?? 0;
@@ -1446,8 +1868,8 @@ export function createAtlasParticlePool({
     const nYScale = renderMode === VFX_RENDER_MODE.STRETCHED
       ? (opts.stretch ?? 0.8)
       : renderMode === VFX_RENDER_MODE.VERTICAL
-        ? (opts.stretch ?? 1.0)
-        : (nStr > 0.001 && opts.noiseYScale !== undefined ? opts.noiseYScale : (opts.stretch ?? 1.0));
+        ? 1.0
+        : (nStr > 0.001 && opts.noiseYScale !== undefined ? opts.noiseYScale : 1.0);
     ch.p6[i4] = nStr;
     ch.p6[i4 + 1] = opts.noiseFreq ?? 0.5;
     ch.p6[i4 + 2] = nYScale;
@@ -1457,6 +1879,28 @@ export function createAtlasParticlePool({
     ch.p7[i4 + 1] = opts.orbitalY ?? 0;
     ch.p7[i4 + 2] = opts.centerOffX ?? 0;
     ch.p7[i4 + 3] = opts.centerOffZ ?? 0;
+
+    const hasVelCurve = Boolean(opts.hasVelCurve || opts.velCurve);
+    const hasSizeSep = Boolean(opts.hasSizeSep || opts.sizeYCurve);
+    const noiseDamp = Boolean(opts.noiseDamp);
+    const windQ = Math.round(Math.max(0, Math.min(7, Number(opts.windMul ?? 0))) * 4);
+    const scrollQ = Math.round(Math.max(0, Math.min(15, Number(opts.noiseScroll ?? 0))) * 4);
+    const packedFlags = slotIdx
+      + (hasVelCurve ? 32 : 0)
+      + (noiseDamp ? 64 : 0)
+      + (hasSizeSep ? 128 : 0)
+      + windQ * 256
+      + scrollQ * 8192;
+
+    ch.p8[i4] = opts.accelX ?? 0;
+    ch.p8[i4 + 1] = opts.accelZ ?? 0;
+    ch.p8[i4 + 2] = opts.aspectY ?? ((renderMode === VFX_RENDER_MODE.BILLBOARD || renderMode === VFX_RENDER_MODE.VERTICAL) && nStr <= 0.001 ? (opts.stretch ?? 1.0) : 1.0);
+    ch.p8[i4 + 3] = packedFlags;
+
+    ch.p9[i4] = opts.rotX ?? 0;
+    ch.p9[i4 + 1] = opts.rotY ?? 0;
+    ch.p9[i4 + 2] = opts.spinX ?? 0;
+    ch.p9[i4 + 3] = opts.spinY ?? 0;
 
     if (ch.dirtyCount === 0) ch.dirtyStart = idx;
     ch.dirtyCount = Math.min(ch.capacity, ch.dirtyCount + 1);
@@ -1479,13 +1923,17 @@ export function createAtlasParticlePool({
       return;
     }
     if (idx >= ch.dirtyStart && idx < ch.dirtyStart + ch.dirtyCount) return;
-    // Expand conservatively or flush via full-range upload when random-access update occurs.
     ch.dirtyStart = 0;
     ch.dirtyCount = Math.min(ch.capacity, Math.max(ch.totalEmitted, idx + 1));
   }
 
+  function resolveChannelArg(blendOrAdditive) {
+    if (blendOrAdditive === 'distortion') return distortionPool;
+    return blendOrAdditive ? additivePool : normalPool;
+  }
+
   function updateSlot(additive, idx, x, y, z, vx, vy, vz) {
-    const ch = additive ? additivePool : normalPool;
+    const ch = resolveChannelArg(additive);
     if (idx < 0 || idx >= ch.capacity) return;
     const i4 = idx * 4;
     ch.p0[i4] = x;
@@ -1498,7 +1946,7 @@ export function createAtlasParticlePool({
   }
 
   function killSlot(additive, idx) {
-    const ch = additive ? additivePool : normalPool;
+    const ch = resolveChannelArg(additive);
     if (idx < 0 || idx >= ch.capacity) return;
     ch.p1[idx * 4 + 3] = 0;
     markSlotDirty(ch, idx);
@@ -1520,7 +1968,7 @@ export function createAtlasParticlePool({
     } else {
       submitRingBufferRanges(null, ch.dirtyStart, ch.dirtyCount, ch.capacity, 4, ch.lastDirtyRanges);
       if (gl && ch.glVbos) {
-        const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
+        const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7, ch.p8];
         for (let r = 0; r < ch.lastDirtyRanges.length; r++) {
           const range = ch.lastDirtyRanges[r];
           const byteOff = range.offset * 16;
@@ -1540,6 +1988,7 @@ export function createAtlasParticlePool({
     lut.flush();
     flushChannel(normalPool);
     flushChannel(additivePool);
+    flushChannel(distortionPool);
   }
 
   function update(visualDt) {
@@ -1547,6 +1996,7 @@ export function createAtlasParticlePool({
     flushDirty();
     if (normalPool.threeMat) normalPool.threeMat.uniforms.uTime.value = simTime;
     if (additivePool.threeMat) additivePool.threeMat.uniforms.uTime.value = simTime;
+    if (distortionPool.threeMat) distortionPool.threeMat.uniforms.uTime.value = simTime;
   }
 
   function renderWebGL2(camera, viewWidth, viewHeight) {
@@ -1570,6 +2020,8 @@ export function createAtlasParticlePool({
     gl.uniform1i(glUniforms.uCurveLut, 0);
     gl.uniform1i(glUniforms.uAtlasTex, 1);
     gl.uniform1f(glUniforms.uHasAtlas, glAtlasTex ? 1.0 : 0.0);
+    if (glUniforms.uWind2D) gl.uniform2f(glUniforms.uWind2D, windVec[0], windVec[1]);
+    if (glUniforms.uEffectDeltas2D) gl.uniform2fv(glUniforms.uEffectDeltas2D, effectDeltas2D);
 
     if (glAtlasTex) {
       gl.activeTexture(gl.TEXTURE1);
@@ -1578,6 +2030,7 @@ export function createAtlasParticlePool({
 
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
+      if (ch.distortion) continue;
       const activeCount = Math.min(ch.totalEmitted, ch.capacity);
       if (activeCount <= 0 || !ch.glVao) continue;
       gl.blendFunc(gl.SRC_ALPHA, ch.additive ? gl.ONE : gl.ONE_MINUS_SRC_ALPHA);
@@ -1598,10 +2051,28 @@ export function createAtlasParticlePool({
     const zoom = camera?.zoom ?? 1;
     const halfW = viewWidth * 0.5;
     const halfH = viewHeight * 0.5;
+    const evalExt = {
+      accelX: 0,
+      accelZ: 0,
+      windX: windVec[0],
+      windY: windVec[1],
+      windZ: windVec[2],
+      windMul: 0,
+      noiseScroll: 0,
+      noiseDamp: false,
+      hasVelCurve: false,
+      velDispIntegral: 0,
+      velMul: 1,
+      duration: 0,
+      effectOffX: 0,
+      effectOffY: 0,
+      effectOffZ: 0,
+    };
 
     ctx.save();
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
+      if (ch.distortion) continue;
       const count = Math.min(ch.totalEmitted, ch.capacity);
       if (count <= 0) continue;
       ctx.globalCompositeOperation = ch.additive ? 'lighter' : 'source-over';
@@ -1618,18 +2089,45 @@ export function createAtlasParticlePool({
         lut.sampleColor(curveRow, t, scratchRgba);
         if (scratchRgba[3] < 0.01) continue;
 
+        let fl = Math.floor(Math.max(0, ch.p8[i4 + 3]) + 0.5);
+        const scrollQ = Math.floor(fl / 8192); fl -= scrollQ * 8192;
+        const windQ = Math.floor(fl / 256); fl -= windQ * 256;
+        const hasSizeSep = fl >= 128; if (hasSizeSep) fl -= 128;
+        const noiseDamp = fl >= 64; if (noiseDamp) fl -= 64;
+        const hasVelCurve = fl >= 32; if (hasVelCurve) fl -= 32;
+        const slotIdx = fl | 0;
+
+        evalExt.accelX = ch.p8[i4];
+        evalExt.accelZ = ch.p8[i4 + 1];
+        evalExt.windMul = windQ * 0.25;
+        evalExt.noiseScroll = scrollQ * 0.25;
+        evalExt.noiseDamp = noiseDamp;
+        evalExt.hasVelCurve = hasVelCurve;
+        evalExt.duration = dur;
+        if (hasVelCurve) {
+          evalExt.velDispIntegral = lut.sampleVelDisp(curveRow, t);
+          const t1 = Math.min(1, t + 0.015);
+          const t0 = Math.max(0, t - 0.015);
+          evalExt.velMul = (lut.sampleVelDisp(curveRow, t1) - lut.sampleVelDisp(curveRow, t0)) / Math.max(0.001, t1 - t0);
+        }
+        evalExt.effectOffX = slotIdx > 0 ? effectDeltas[slotIdx * 3] : 0;
+        evalExt.effectOffY = slotIdx > 0 ? effectDeltas[slotIdx * 3 + 1] : 0;
+        evalExt.effectOffZ = slotIdx > 0 ? effectDeltas[slotIdx * 3 + 2] : 0;
+
         evaluateAtlasParticlePosition(
           ch.p0[i4], ch.p0[i4 + 1], ch.p0[i4 + 2],
           ch.p1[i4], ch.p1[i4 + 1], ch.p1[i4 + 2],
           ch.p2[i4 + 1], ch.p2[i4 + 2],
           ch.p6[i4], ch.p6[i4 + 1], ch.p6[i4 + 3],
           age, true, scratchPos,
+          0, 0, 0, ch.p6[i4 + 2], evalExt,
         );
 
         const sx = (scratchPos[0] - camX) * zoom + halfW;
         const sy = (scratchPos[1] - camY) * zoom + halfH;
-        const size = ch.p2[i4] * lut.sampleSize(curveRow, t) * zoom;
-        if (size <= 0.5) continue;
+        const sizeX = ch.p2[i4] * lut.sampleSize(curveRow, t) * zoom;
+        const sizeY = (hasSizeSep ? ch.p2[i4] * lut.sampleSizeY(curveRow, t) * zoom : sizeX) * Math.max(0.05, ch.p8[i4 + 2]);
+        if (sizeX <= 0.5 && sizeY <= 0.5) continue;
 
         ctx.globalAlpha = Math.max(0, Math.min(1, scratchRgba[3]));
         unpackRgb24Into(ch.p7[i4], scratchTint);
@@ -1659,13 +2157,13 @@ export function createAtlasParticlePool({
           ctx.drawImage(
             activeAtlasCanvas,
             rx + col * cw, ry + row * chPx, cw, chPx,
-            -size * 0.5, -size * 0.5, size, size,
+            -sizeX * 0.5, -sizeY * 0.5, sizeX, sizeY,
           );
           ctx.restore();
         } else {
           ctx.fillStyle = `rgb(${r8},${g8},${b8})`;
           ctx.beginPath();
-          ctx.arc(sx, sy, size * 0.5, 0, 6.2831853);
+          ctx.ellipse ? ctx.ellipse(sx, sy, sizeX * 0.5, sizeY * 0.5, ch.p3[i4] + ch.p3[i4 + 1] * age, 0, 6.2831853) : ctx.arc(sx, sy, sizeX * 0.5, 0, 6.2831853);
           ctx.fill();
         }
       }
@@ -1675,19 +2173,22 @@ export function createAtlasParticlePool({
 
   function reset() {
     simTime = 0;
+    effectDeltas.fill(0);
+    effectDeltas2D.fill(0);
+    for (let i = 0; i < 32; i++) threeEffectVecs[i].set(0, 0, 0);
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
       ch.cursor = 0;
       ch.totalEmitted = 0;
       ch.dirtyStart = 0;
-      ch.dirtyCount = capacity;
+      ch.dirtyCount = ch.capacity;
       ch.wrapCount = 0;
       ch.lastDirtyRanges.length = 0;
       ch.p0.fill(0);
       ch.p1.fill(0);
       if (ch.threeAttrs) {
-        submitRingBufferRanges(ch.threeAttrs[0], 0, capacity, capacity, 4);
-        submitRingBufferRanges(ch.threeAttrs[1], 0, capacity, capacity, 4);
+        submitRingBufferRanges(ch.threeAttrs[0], 0, ch.capacity, ch.capacity, 4);
+        submitRingBufferRanges(ch.threeAttrs[1], 0, ch.capacity, ch.capacity, 4);
       }
       if (ch.threeMat) ch.threeMat.uniforms.uTime.value = 0;
     }
@@ -1724,6 +2225,9 @@ export function createAtlasParticlePool({
     compileCurves: lut.compile,
     setAtlas,
     setDepthTexture,
+    setSceneTexture,
+    setWind,
+    setEffectOffset,
     emit,
     updateSlot,
     killSlot,
@@ -1740,8 +2244,10 @@ export function createAtlasParticlePool({
         curveRows: lut.rowCount,
         normalCursor: normalPool.cursor,
         additiveCursor: additivePool.cursor,
+        distortionCursor: distortionPool.cursor,
         normalTotal: normalPool.totalEmitted,
         additiveTotal: additivePool.totalEmitted,
+        distortionTotal: distortionPool.totalEmitted,
       };
     },
   };

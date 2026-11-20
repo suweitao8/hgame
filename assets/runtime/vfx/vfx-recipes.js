@@ -6,11 +6,12 @@ const MAX_LAYERS_PER_EFFECT = 16;
 const MAX_BURSTS_PER_LAYER = 8;
 const MAX_TRAIL_FOLLOWERS = 512;
 const MAX_TRACKED_PARTICLES = 256;
-const MAX_POINT_LIGHTS = 8;
+const MAX_POINT_LIGHTS = 16;
+const MAX_LOCAL_EFFECT_SLOTS = 31;
 
 const VALID_LAYER_KINDS = new Set(['particle', 'mesh', 'slash', 'lightning', 'telegraph']);
 const VALID_RENDER_MODES = new Set(['billboard', 'horizontal', 'stretched', 'vertical', 'mesh']);
-const VALID_BLENDS = new Set(['alpha', 'additive']);
+const VALID_BLENDS = new Set(['alpha', 'additive', 'distortion']);
 
 function parseColorNumber(val, fallback = 0xffffff) {
   if (typeof val === 'number' && Number.isFinite(val)) return (val & 0xffffff) >>> 0;
@@ -147,6 +148,7 @@ export function createEffectPlayer({
   const scratchTintB = [1, 1, 1];
   const scratchTintOut = [1, 1, 1];
   const scratchTrailMult = [1, 1, 1];
+  let collisionResolver = /** @type {((x:number,y:number,z:number,vx:number,vy:number,vz:number)=>{hit:boolean,y?:number,nx?:number,ny?:number,nz?:number}|null) | null} */ (null);
 
   function readMagnitude(val, fallback = 0) {
     if (Array.isArray(val)) {
@@ -177,7 +179,7 @@ export function createEffectPlayer({
     return parseColorRgb01(startColor, out);
   }
 
-  // Pre-allocated point light pool (3D only, max 8 concurrent dynamic VFX lights).
+  // Pre-allocated point light pool (3D only, up to MAX_POINT_LIGHTS concurrent dynamic VFX lights).
   const lightSlots = [];
   if (THREE && scene && THREE.PointLight) {
     for (let i = 0; i < MAX_POINT_LIGHTS; i++) {
@@ -191,10 +193,15 @@ export function createEffectPlayer({
         duration: 0.3,
         maxIntensity: 1,
         loop: false,
+        particleTrackIdx: -1,
         light,
       });
     }
   }
+
+  // Free pool of 1..31 GPU/mesh local-space effect anchor slots.
+  const freeLocalSlots = [];
+  for (let i = MAX_LOCAL_EFFECT_SLOTS; i >= 1; i--) freeLocalSlots.push(i);
 
   // Pre-allocated trail follower pool for `layer.trail` particles.
   const trailFollowers = [];
@@ -217,21 +224,28 @@ export function createEffectPlayer({
     });
   }
 
-  // Pre-allocated CPU-tracked particle pool for CollisionModule & SubModule layers.
+  // Pre-allocated CPU-tracked particle pool for CollisionModule, SubModule, and LightsModule layers.
   const trackedParticles = [];
   for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
     trackedParticles.push({
       active: false,
       additive: false,
+      blend: 'alpha',
       atlasSlot: -1,
+      meshSlot: -1,
+      lightSlotIdx: -1,
+      lightBaseIntensity: 0,
       age: 0,
       duration: 1,
       x: 0, y: 0, z: 0,
       vx: 0, vy: 0, vz: 0,
+      accelX: 0, accelZ: 0,
       gravity: 0, drag: 0,
+      tintR: 1, tintG: 1, tintB: 1,
+      sizeMul: 1,
       hasCollision: false,
       groundY: 0, bounce: 0.45, dampen: 0.2, minSpeed: 0.15, bouncesLeft: 3,
-      /** @type {Array<{ trigger?: string, effect?: string | object, probability?: number }> | null} */
+      /** @type {Array<{ trigger?: string, effect?: string | object, probability?: number, inheritVelocity?: number, inheritColor?: boolean, inheritSize?: boolean }> | null} */
       subEmitters: null,
       subDepth: 0,
     });
@@ -266,6 +280,13 @@ export function createEffectPlayer({
       yaw: 0,
       scale: 1,
       subDepth: 0,
+      inheritVx: 0,
+      inheritVy: 0,
+      inheritVz: 0,
+      inheritTintR: 1,
+      inheritTintG: 1,
+      inheritTintB: 1,
+      localSlotIdx: 0,
       /** @type {{ x?: number, y?: number, z?: number, yaw?: number } | null} */
       follow: null,
       lightSlotIdx: -1,
@@ -289,15 +310,25 @@ export function createEffectPlayer({
     effectSlots.push(slot);
   }
 
+  function releaseLightSlot(lightIdx) {
+    if (lightIdx < 0 || lightIdx >= lightSlots.length) return;
+    const ls = lightSlots[lightIdx];
+    ls.active = false;
+    ls.particleTrackIdx = -1;
+    ls.light.intensity = 0;
+    ls.light.visible = false;
+  }
+
   function stopSlot(slot) {
     slot.active = false;
     slot.follow = null;
     slot.recipe = null;
-    if (slot.lightSlotIdx >= 0 && slot.lightSlotIdx < lightSlots.length) {
-      const ls = lightSlots[slot.lightSlotIdx];
-      ls.active = false;
-      ls.light.intensity = 0;
-      ls.light.visible = false;
+    if (slot.localSlotIdx > 0) {
+      freeLocalSlots.push(slot.localSlotIdx);
+      slot.localSlotIdx = 0;
+    }
+    if (slot.lightSlotIdx >= 0) {
+      releaseLightSlot(slot.lightSlotIdx);
       slot.lightSlotIdx = -1;
     }
   }
@@ -309,12 +340,14 @@ export function createEffectPlayer({
     }
     const compiledLayers = recipe.layers.map((layer) => {
       const curveRow = atlasParticles
-        ? atlasParticles.compileCurves(layer.colorCurve, layer.sizeCurve)
+        ? atlasParticles.compileCurves(layer.colorCurve, layer.sizeCurve, layer.sizeYCurve ?? null, layer.velCurve ?? null)
         : 0;
+      const simSpd = Math.max(0.05, Number(layer.simulationSpeed ?? 1.0));
       return {
         ...layer,
         _curveRow: curveRow,
         _kind: layer.kind ?? 'particle',
+        _simSpd: simSpd,
       };
     });
     return {
@@ -412,6 +445,7 @@ export function createEffectPlayer({
       endColor,
       width,
       endWidth,
+      widthCurve: trailCfg.widthCurve || null,
       alpha: trailAlpha,
       hdr: trailCfg.hdr ?? 1.0,
       lifetime: trailLifetime,
@@ -470,7 +504,7 @@ export function createEffectPlayer({
     }
   }
 
-  function fireSubEmitters(subEmitters, triggerType, x, y, z, depth) {
+  function fireSubEmitters(subEmitters, triggerType, x, y, z, depth, vx = 0, vy = 0, vz = 0, tintR = 1, tintG = 1, tintB = 1) {
     if (!Array.isArray(subEmitters) || depth >= 2) return;
     for (let i = 0; i < subEmitters.length; i++) {
       const sub = subEmitters[i];
@@ -478,21 +512,35 @@ export function createEffectPlayer({
       const prob = sub.probability ?? 1.0;
       if (prob < 1.0 && prng.nextFloat() > prob) continue;
       if (typeof sub.effect === 'string' && !registry.has(sub.effect)) continue;
-      playEffect(sub.effect, { x, y, z, _subDepth: depth + 1 });
+      const iv = Number(sub.inheritVelocity ?? 0);
+      playEffect(sub.effect, {
+        x, y, z,
+        _subDepth: depth + 1,
+        _inheritVx: iv !== 0 ? vx * iv : 0,
+        _inheritVy: iv !== 0 ? vy * iv : 0,
+        _inheritVz: iv !== 0 ? vz * iv : 0,
+        _inheritTint: sub.inheritColor ? [tintR, tintG, tintB] : null,
+      });
     }
   }
 
   function allocTrackedParticle({
-    additive, atlasSlot, duration,
-    x, y, z, vx, vy, vz, gravity, drag,
-    collision, subEmitters, subDepth,
+    additive = false, blend = 'alpha', atlasSlot = -1, meshSlot = -1, duration,
+    x, y, z, vx, vy, vz, accelX = 0, accelZ = 0, gravity, drag,
+    tintR = 1, tintG = 1, tintB = 1,
+    collision = null, subEmitters = null, subDepth = 0,
+    lightSlotIdx = -1, lightBaseIntensity = 0,
   }) {
     for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
       const tp = trackedParticles[i];
       if (!tp.active) {
         tp.active = true;
         tp.additive = additive;
+        tp.blend = blend;
         tp.atlasSlot = atlasSlot;
+        tp.meshSlot = meshSlot;
+        tp.lightSlotIdx = lightSlotIdx;
+        tp.lightBaseIntensity = lightBaseIntensity;
         tp.age = 0;
         tp.duration = duration;
         tp.x = x;
@@ -501,8 +549,13 @@ export function createEffectPlayer({
         tp.vx = vx;
         tp.vy = vy;
         tp.vz = vz;
+        tp.accelX = accelX;
+        tp.accelZ = accelZ;
         tp.gravity = gravity;
         tp.drag = drag;
+        tp.tintR = tintR;
+        tp.tintG = tintG;
+        tp.tintB = tintB;
         tp.hasCollision = Boolean(collision);
         tp.groundY = collision?.groundY ?? 0;
         tp.bounce = collision?.bounce ?? 0.45;
@@ -511,10 +564,41 @@ export function createEffectPlayer({
         tp.bouncesLeft = collision?.maxBounces ?? 3;
         tp.subEmitters = Array.isArray(subEmitters) ? subEmitters : null;
         tp.subDepth = subDepth;
+        if (lightSlotIdx >= 0 && lightSlotIdx < lightSlots.length) {
+          lightSlots[lightSlotIdx].particleTrackIdx = i;
+        }
         return i;
       }
     }
     return -1;
+  }
+
+  function allocParticleLight(plCfg, x, y, z, duration, tintRgb) {
+    if (lightSlots.length === 0 || !plCfg) return -1;
+    const ratio = plCfg.ratio ?? 1.0;
+    if (ratio < 1.0 && prng.nextFloat() > ratio) return -1;
+    const maxL = Math.max(1, plCfg.maxLights ?? 6);
+    let activeP = 0;
+    let freeLi = -1;
+    for (let i = 0; i < lightSlots.length; i++) {
+      if (lightSlots[i].particleTrackIdx >= 0) activeP += 1;
+      if (!lightSlots[i].active && freeLi === -1) freeLi = i;
+    }
+    if (freeLi === -1 || activeP >= maxL) return -1;
+    const ls = lightSlots[freeLi];
+    ls.active = true;
+    ls.age = 0;
+    ls.duration = Math.max(0.02, duration);
+    ls.maxIntensity = plCfg.intensity ?? 2.0;
+    ls.loop = false;
+    parseColorRgb01(plCfg.color, scratchRgb);
+    const mult = plCfg.useParticleColor !== false ? tintRgb : [1, 1, 1];
+    ls.light.color.setRGB(scratchRgb[0] * mult[0], scratchRgb[1] * mult[1], scratchRgb[2] * mult[2]);
+    ls.light.distance = plCfg.range ?? 8;
+    ls.light.position.set(x, y, z);
+    ls.light.intensity = ls.maxIntensity;
+    ls.light.visible = true;
+    return freeLi;
   }
 
   function sampleShapeAndVelocity(layer, slot, scale) {
@@ -552,6 +636,51 @@ export function createEffectPlayer({
       dx = Math.cos(ang);
       dy = is2D ? Math.sin(ang) : 0;
       dz = is2D ? 0 : Math.sin(ang);
+    } else if (sType === 'donut') {
+      const phi = prng.nextFloat() * 6.283185307179586;
+      const theta = prng.nextFloat() * 6.283185307179586;
+      const tubeR = (shape.donutRadius ?? Math.max(0.15, rad * 0.25)) * scale;
+      const rMinor = tubeR * Math.sqrt(1 - rt + prng.nextFloat() * rt);
+      const cPhi = Math.cos(phi), sPhi = Math.sin(phi);
+      const cTh = Math.cos(theta), sTh = Math.sin(theta);
+      dx = cPhi * cTh;
+      dy = is2D ? (sPhi * cTh) : sTh;
+      dz = is2D ? 0 : (sPhi * cTh);
+      if (is2D) {
+        lx = cPhi * rad + dx * rMinor;
+        ly = sPhi * rad + dy * rMinor;
+        lz = 0;
+      } else {
+        lx = cPhi * rad + dx * rMinor;
+        ly = dy * rMinor;
+        lz = sPhi * rad + dz * rMinor;
+      }
+    } else if (sType === 'rectangle') {
+      const hw = (shape.size?.[0] ?? shape.radius ?? 1) * 0.5 * scale;
+      const hh = (shape.size?.[2] ?? shape.size?.[1] ?? shape.radius ?? 1) * 0.5 * scale;
+      lx = prng.range(-hw, hw);
+      ly = is2D ? prng.range(-hh, hh) : 0;
+      lz = is2D ? 0 : prng.range(-hh, hh);
+      dx = 0;
+      dy = is2D ? 0 : 1;
+      dz = is2D ? 1 : 0;
+    } else if (sType === 'mesh') {
+      const samples = meshVfx?.getSurfaceSamples?.(shape.mesh || layer.mesh || 'crystal');
+      if (samples && samples.count > 0) {
+        const si = Math.min(samples.count - 1, Math.floor(prng.nextFloat() * samples.count)) * 3;
+        const mScale = Number(shape.meshScale ?? 1) * scale;
+        lx = samples.points[si] * mScale;
+        ly = samples.points[si + 1] * mScale;
+        lz = samples.points[si + 2] * mScale;
+        dx = samples.normals[si];
+        dy = samples.normals[si + 1];
+        dz = samples.normals[si + 2];
+      } else {
+        lx = prng.range(-0.5, 0.5) * scale;
+        ly = prng.range(-0.5, 0.5) * scale;
+        lz = is2D ? 0 : prng.range(-0.5, 0.5) * scale;
+        dx = 0; dy = 1; dz = 0;
+      }
     } else if (sType === 'edge') {
       const len = (shape.radius ?? 1) * scale;
       lx = prng.range(-len, len);
@@ -702,46 +831,109 @@ export function createEffectPlayer({
       }
     }
 
-    scratchVel[0] = vx;
-    scratchVel[1] = vy;
-    scratchVel[2] = vz;
+    scratchVel[0] = vx + slot.inheritVx;
+    scratchVel[1] = vy + slot.inheritVy;
+    scratchVel[2] = vz + slot.inheritVz;
+  }
+
+  const scratchRowUv = [0, 0, 1, 1];
+  const scratchRowFb = { cols: 1, rows: 1, cycles: 1, blend: true, region: '' };
+
+  function resolveFlipbookAndUv(layer) {
+    const fb = layer.flipbook;
+    if (!fb || !fb.rows || fb.rows <= 1) {
+      return { flipbook: fb, uvRect: layer.uvRect };
+    }
+    const mode = fb.rowMode || 'grid';
+    if (mode !== 'random' && fb.rowIndex === undefined) {
+      return { flipbook: fb, uvRect: layer.uvRect };
+    }
+    const regKey = fb.region || layer.sprite;
+    const baseUv = Array.isArray(layer.uvRect) && layer.uvRect.length >= 4
+      ? layer.uvRect
+      : (regKey && atlasParticles?.regions?.[regKey])
+        ? atlasParticles.regions[regKey]
+        : [0, 0, 1, 1];
+    const rows = Math.max(1, fb.rows | 0);
+    const rowIdx = fb.rowIndex !== undefined
+      ? Math.max(0, Math.min(rows - 1, fb.rowIndex | 0))
+      : Math.floor(prng.nextFloat() * rows);
+    const vSpan = (baseUv[3] - baseUv[1]) / rows;
+    scratchRowUv[0] = baseUv[0];
+    scratchRowUv[1] = baseUv[1] + vSpan * rowIdx;
+    scratchRowUv[2] = baseUv[2];
+    scratchRowUv[3] = baseUv[1] + vSpan * (rowIdx + 1);
+    scratchRowFb.cols = fb.cols ?? 1;
+    scratchRowFb.rows = 1;
+    scratchRowFb.cycles = fb.cycles ?? 1;
+    scratchRowFb.blend = fb.blend;
+    scratchRowFb.region = regKey || '';
+    return { flipbook: scratchRowFb, uvRect: scratchRowUv };
   }
 
   function emitParticleOrMesh(layer, slot, initialAge = 0) {
     const scale = slot.scale;
+    const simSpd = layer._simSpd ?? Math.max(0.05, Number(layer.simulationSpeed ?? 1.0));
     sampleShapeAndVelocity(layer, slot, scale);
-    const dur = Math.max(0.02, readRange(layer.life, 0.4, 0.8, prng));
-    const clampedInitAge = Math.min(Math.max(0, initialAge), Math.max(0, dur - 0.02));
+    const rawDur = Math.max(0.02, readRange(layer.life, 0.4, 0.8, prng));
+    const dur = rawDur / simSpd;
+    const clampedInitAge = Math.min(Math.max(0, initialAge / simSpd), Math.max(0, dur - 0.01));
+    scratchVel[0] *= simSpd;
+    scratchVel[1] *= simSpd;
+    scratchVel[2] *= simSpd;
+
     const sizeStart = readRange(layer.size, 0.5, 0.5, prng) * scale;
     const rot0 = readRange(layer.rotation, 0, 0, prng);
-    const angVel = readRange(layer.angularVel, 0, 0, prng);
-    const gravity = (layer.gravity ?? 0) * scale;
-    const drag = layer.drag ?? 0;
-    const noiseStrength = readMagnitude(layer.noise?.strength, 0) * scale;
+    const angVel = readRange(layer.angularVel, 0, 0, prng) * simSpd;
+    const rotX0 = readRange(layer.rotX, 0, 0, prng);
+    const rotY0 = readRange(layer.rotY, 0, 0, prng);
+    const spinX = readRange(layer.spin?.[0], 0, 0, prng) * simSpd;
+    const spinY = (layer.spin?.[1] !== undefined ? readRange(layer.spin[1], 0, 0, prng) : 0) * simSpd;
+    const spinZ = readRange(layer.spin?.[2], 0, 0, prng) * simSpd;
+
+    const forceArr = Array.isArray(layer.force) ? layer.force : null;
+    const forceX = forceArr ? readRange(forceArr[0], 0, 0, prng) * scale * simSpd * simSpd : 0;
+    const forceY = forceArr ? readRange(forceArr[1], 0, 0, prng) * scale * simSpd * simSpd : 0;
+    const forceZ = forceArr ? readRange(forceArr[2], 0, 0, prng) * scale * simSpd * simSpd : 0;
+    const gravity = ((layer.gravity ?? 0) * scale * simSpd * simSpd) - forceY;
+    const accelX = forceX;
+    const accelZ = forceZ;
+    const drag = (layer.drag ?? 0) * simSpd;
+    const windMul = Math.max(0, Number(layer.windMul ?? 0));
+
+    const noiseStrength = readMagnitude(layer.noise?.strength, 0) * scale * simSpd;
     const noiseYRaw = layer.noise?.strengthY !== undefined
-      ? readMagnitude(layer.noise.strengthY, 0) * scale
+      ? readMagnitude(layer.noise.strengthY, 0) * scale * simSpd
       : noiseStrength;
     const noiseYScale = noiseStrength > 0.0001 ? Math.min(2.0, noiseYRaw / noiseStrength) : 1.0;
-    const noiseFreq = layer.noise?.frequency ?? 0.5;
+    const noiseFreq = (layer.noise?.frequency ?? 0.5) * simSpd;
+    const noiseScroll = Math.max(0, Number(layer.noise?.scrollSpeed ?? 0)) * simSpd;
+    const noiseDamp = Boolean(layer.noise?.damping);
     const phase = prng.nextFloat();
+
     const rawOrbY = layer.velocity?.orbitalY ?? layer.velocity?.orbital?.[1] ?? 0;
-    const orbitalY = readRange(rawOrbY, 0, 0, prng);
+    const orbitalY = readRange(rawOrbY, 0, 0, prng) * simSpd;
     const orbOff = layer.velocity?.orbitalOffset;
     const orbPivotX = orbOff ? (scratchPos[0] + readRange(orbOff[0], 0, 0, prng) * scale) : slot.x;
     const orbPivotZ = orbOff ? (scratchPos[2] + readRange(orbOff[2], 0, 0, prng) * scale) : slot.z;
     const centerOffX = scratchPos[0] - orbPivotX;
     const centerOffZ = scratchPos[2] - orbPivotZ;
+
     sampleStartColor(layer.startColor, scratchTintOut);
+    scratchTintOut[0] *= slot.inheritTintR;
+    scratchTintOut[1] *= slot.inheritTintG;
+    scratchTintOut[2] *= slot.inheritTintB;
     const tintRgb24 = packRgb24(
       Math.round(scratchTintOut[0] * 255),
       Math.round(scratchTintOut[1] * 255),
       Math.round(scratchTintOut[2] * 255),
     );
+    const isLocalSpace = layer.space === 'local' && slot.localSlotIdx > 0;
 
     if (layer._kind === 'mesh' || layer.renderMode === 'mesh') {
       if (!meshVfx) return;
       const alignDir = Boolean(layer.alignToVelocity || layer.shape?.alignToDirection);
-      meshVfx.spawn({
+      const meshSlot = meshVfx.spawn({
         mesh: layer.mesh || 'crystal',
         x: scratchPos[0],
         y: scratchPos[1],
@@ -749,6 +941,9 @@ export function createEffectPlayer({
         vx: scratchVel[0],
         vy: scratchVel[1],
         vz: scratchVel[2],
+        accelX,
+        accelZ,
+        windMul,
         dirX: alignDir ? scratchDir[0] : undefined,
         dirY: alignDir ? scratchDir[1] : undefined,
         dirZ: alignDir ? scratchDir[2] : undefined,
@@ -759,16 +954,19 @@ export function createEffectPlayer({
         centerZ: orbPivotZ,
         duration: dur,
         persistent: Boolean(layer.persistent),
-        curveCycle: layer.curveCycle ?? 0,
+        curveCycle: (layer.curveCycle ?? 0) / simSpd,
         sizeStart,
-        rotX: readRange(layer.rotX, 0, 0, prng),
-        rotY: rot0,
+        aspectY: layer.aspectY ?? 1.0,
+        rotX: rotX0,
+        rotY: rot0 || rotY0,
         rotZ: readRange(layer.rotZ, 0, 0, prng),
-        spinX: readRange(layer.spin?.[0], 0, 0, prng),
-        spinY: layer.spin?.[1] !== undefined ? readRange(layer.spin[1], 0, 0, prng) : angVel,
-        spinZ: readRange(layer.spin?.[2], 0, 0, prng),
+        spinX,
+        spinY: layer.spin?.[1] !== undefined ? spinY : angVel,
+        spinZ,
         alignToVelocity: alignDir,
         forwardAxis: layer.forwardAxis,
+        space: isLocalSpace ? 'local' : 'world',
+        effectSlotIdx: isLocalSpace ? slot.localSlotIdx : 0,
         hdr: layer.hdr ?? 1.0,
         tint: scratchTintOut,
         lit: layer.lit,
@@ -778,15 +976,27 @@ export function createEffectPlayer({
         blend: layer.blend ?? 'alpha',
         colorCurve: layer.colorCurve,
         sizeCurve: layer.sizeCurve,
+        sizeYCurve: layer.sizeYCurve,
+        velCurve: layer.velCurve,
         uvScroll: layer.uvScroll,
         fresnel: layer.fresnel,
         dissolve: layer.dissolve,
       });
-      if (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0) {
-        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth);
+      const lightSlotIdx = layer.particleLight
+        ? allocParticleLight(layer.particleLight, scratchPos[0], scratchPos[1], scratchPos[2], dur, scratchTintOut)
+        : -1;
+      const needsTracking = Boolean(layer.collision)
+        || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)
+        || lightSlotIdx >= 0;
+      if (needsTracking) {
+        if (layer.subEmitters) {
+          fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2]);
+        }
         allocTrackedParticle({
           additive: false,
+          blend: layer.blend ?? 'alpha',
           atlasSlot: -1,
+          meshSlot,
           duration: dur,
           x: scratchPos[0],
           y: scratchPos[1],
@@ -794,19 +1004,33 @@ export function createEffectPlayer({
           vx: scratchVel[0],
           vy: scratchVel[1],
           vz: scratchVel[2],
+          accelX,
+          accelZ,
           gravity,
           drag,
+          tintR: scratchTintOut[0],
+          tintG: scratchTintOut[1],
+          tintB: scratchTintOut[2],
           collision: layer.collision,
           subEmitters: layer.subEmitters,
           subDepth: slot.subDepth,
+          lightSlotIdx,
+          lightBaseIntensity: layer.particleLight?.intensity ?? 2.0,
         });
       }
       return dur - clampedInitAge;
     }
 
     if (!atlasParticles) return;
-    const additive = layer.blend === 'additive';
-    const needsTracking = Boolean(layer.collision) || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0);
+    const blend = layer.blend ?? 'alpha';
+    const additive = blend === 'additive';
+    const lightSlotIdx = layer.particleLight
+      ? allocParticleLight(layer.particleLight, scratchPos[0], scratchPos[1], scratchPos[2], dur, scratchTintOut)
+      : -1;
+    const needsTracking = Boolean(layer.collision)
+      || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)
+      || lightSlotIdx >= 0;
+    const { flipbook: resolvedFb, uvRect: resolvedUv } = resolveFlipbookAndUv(layer);
     const atlasSlot = atlasParticles.emit({
       x: scratchPos[0],
       y: scratchPos[1],
@@ -814,6 +1038,9 @@ export function createEffectPlayer({
       vx: scratchVel[0],
       vy: scratchVel[1],
       vz: scratchVel[2],
+      accelX,
+      accelZ,
+      windMul,
       duration: dur,
       initialAge: clampedInitAge,
       sizeStart,
@@ -821,23 +1048,34 @@ export function createEffectPlayer({
       drag,
       staticPos: Boolean(layer.collision),
       persistent: Boolean(layer.persistent),
-      curveCycle: layer.curveCycle ?? 0,
+      curveCycle: (layer.curveCycle ?? 0) / simSpd,
       curveRow: layer._curveRow,
+      hasVelCurve: Boolean(layer.velCurve),
+      hasSizeSep: Boolean(layer.sizeYCurve),
       rotation: rot0,
       angularVel: angVel,
+      rotX: rotX0,
+      rotY: rotY0,
+      spinX,
+      spinY,
       hdr: layer.hdr ?? 1.0,
       tintRgb24,
       orbitalY,
       centerOffX,
       centerOffZ,
       renderMode: layer.renderMode ?? 'billboard',
-      blend: layer.blend ?? 'alpha',
+      blend,
       sprite: layer.sprite,
-      flipbook: layer.flipbook,
-      uvRect: layer.uvRect,
+      flipbook: resolvedFb,
+      uvRect: resolvedUv,
       noiseStrength,
       noiseYScale,
       noiseFreq,
+      noiseScroll,
+      noiseDamp,
+      space: isLocalSpace ? 'local' : 'world',
+      effectSlotIdx: isLocalSpace ? slot.localSlotIdx : 0,
+      aspectY: layer.aspectY,
       stretch: layer.aspectY ?? layer.stretch ?? (layer.renderMode === 'vertical' || layer.renderMode === 'billboard' ? 1.0 : 0.8),
       phase,
     });
@@ -845,11 +1083,13 @@ export function createEffectPlayer({
     let trackedSlot = -1;
     if (needsTracking) {
       if (layer.subEmitters) {
-        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth);
+        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2]);
       }
       trackedSlot = allocTrackedParticle({
         additive,
+        blend,
         atlasSlot,
+        meshSlot: -1,
         duration: dur,
         x: scratchPos[0],
         y: scratchPos[1],
@@ -857,11 +1097,18 @@ export function createEffectPlayer({
         vx: scratchVel[0],
         vy: scratchVel[1],
         vz: scratchVel[2],
+        accelX,
+        accelZ,
         gravity,
         drag,
+        tintR: scratchTintOut[0],
+        tintG: scratchTintOut[1],
+        tintB: scratchTintOut[2],
         collision: layer.collision,
         subEmitters: layer.subEmitters,
         subDepth: slot.subDepth,
+        lightSlotIdx,
+        lightBaseIntensity: layer.particleLight?.intensity ?? 2.0,
       });
     }
 
@@ -1030,14 +1277,26 @@ export function createEffectPlayer({
     slot.yaw = slot.follow?.yaw ?? options.yaw ?? 0;
     slot.scale = options.scale ?? 1;
     slot.subDepth = options._subDepth ?? 0;
+    slot.inheritVx = options._inheritVx ?? 0;
+    slot.inheritVy = options._inheritVy ?? 0;
+    slot.inheritVz = options._inheritVz ?? 0;
+    slot.inheritTintR = options._inheritTint?.[0] ?? 1;
+    slot.inheritTintG = options._inheritTint?.[1] ?? 1;
+    slot.inheritTintB = options._inheritTint?.[2] ?? 1;
+    slot.localSlotIdx = 0;
+    if (compiled.layers.some((l) => l.space === 'local') && freeLocalSlots.length > 0) {
+      slot.localSlotIdx = freeLocalSlots.pop();
+      atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
+      meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
+    }
     slot.lightSlotIdx = -1;
 
     for (let l = 0; l < compiled.layers.length; l++) {
       const layer = compiled.layers[l];
       const ls = slot.layers[l];
+      const simSpd = layer._simSpd ?? 1;
       const hasRate = Array.isArray(layer.rate) ? (layer.rate[1] > 0) : ((layer.rate ?? 0) > 0);
       const noBursts = !Array.isArray(layer.bursts) || layer.bursts.length === 0;
-      // Continuous maxParticles layers (e.g. maxParticles: 1, rate: 10, life: 1) start active on frame 0.
       ls.rateAccum = (layer.maxParticles > 0 && noBursts && hasRate) ? 1 : 0;
       ls.distAccum = 0;
       ls.activeEndTimes.fill(-1);
@@ -1046,7 +1305,7 @@ export function createEffectPlayer({
       const bursts = layer.bursts;
       for (let b = 0; b < MAX_BURSTS_PER_LAYER; b++) {
         ls.burstCyclesDone[b] = 0;
-        ls.burstNextTime[b] = bursts && bursts[b] ? (bursts[b].time ?? 0) : 0;
+        ls.burstNextTime[b] = bursts && bursts[b] ? ((bursts[b].time ?? 0) / simSpd) : 0;
       }
     }
 
@@ -1057,17 +1316,18 @@ export function createEffectPlayer({
     for (let l = 0; l < compiled.layers.length; l++) {
       const layer = compiled.layers[l];
       if (!layer.prewarm) continue;
-      const avgRate = Array.isArray(layer.rate)
+      const simSpd = layer._simSpd ?? 1;
+      const avgRate = (Array.isArray(layer.rate)
         ? (Number(layer.rate[0] ?? 0) + Number(layer.rate[1] ?? layer.rate[0] ?? 0)) * 0.5
-        : Number(layer.rate ?? 0);
-      const avgLife = Array.isArray(layer.life)
+        : Number(layer.rate ?? 0)) * simSpd;
+      const avgLife = (Array.isArray(layer.life)
         ? (Number(layer.life[0] ?? 1) + Number(layer.life[1] ?? layer.life[0] ?? 1)) * 0.5
-        : Number(layer.life ?? 1);
+        : Number(layer.life ?? 1)) / simSpd;
       if (avgRate > 0 && avgLife > 0.05) {
         const warmCount = Math.min(180, Math.max(1, Math.round(avgRate * avgLife)));
         for (let k = 0; k < warmCount; k++) {
           const frac = (k + prng.nextFloat()) / warmCount;
-          emitParticleOrMesh(layer, slot, frac * avgLife);
+          emitParticleOrMesh(layer, slot, frac * avgLife * simSpd);
         }
       }
     }
@@ -1086,7 +1346,8 @@ export function createEffectPlayer({
     for (let l = 0; l < layers.length; l++) {
       const layer = layers[l];
       const ls = slot.layers[l];
-      const delay = layer.delay ?? 0;
+      const simSpd = layer._simSpd ?? 1;
+      const delay = (layer.delay ?? 0) / simSpd;
       const localAge = slot.cycleAge - delay;
       if (localAge < 0) continue;
 
@@ -1103,7 +1364,7 @@ export function createEffectPlayer({
         for (let b = 0; b < bLen; b++) {
           const burst = layer.bursts[b];
           const cycles = Math.max(1, burst.cycles ?? 1);
-          const interval = Math.max(0.01, burst.interval ?? 0.01);
+          const interval = Math.max(0.01, (burst.interval ?? 0.01) / simSpd);
           while (ls.burstCyclesDone[b] < cycles && localAge >= ls.burstNextTime[b]) {
             const count = Math.max(1, Math.round(readRange(burst.count, 1, 1, prng)));
             for (let c = 0; c < count; c++) {
@@ -1115,9 +1376,9 @@ export function createEffectPlayer({
         }
       }
 
-      const rate = layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0;
+      const rate = (layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0) * simSpd;
       if (rate > 0) {
-        const layerDur = layer.duration ?? slot.duration;
+        const layerDur = (layer.duration ?? slot.duration) / simSpd;
         if (slot.loop || localAge <= layerDur) {
           if (dt > 0) ls.rateAccum += rate * dt;
           while (ls.rateAccum >= 1) {
@@ -1132,7 +1393,7 @@ export function createEffectPlayer({
 
       const rateDist = layer.rateOverDistance !== undefined ? readRange(layer.rateOverDistance, 0, 0, prng) : 0;
       if (rateDist > 0 && moveDist > 0.0001) {
-        const layerDur = layer.duration ?? slot.duration;
+        const layerDur = (layer.duration ?? slot.duration) / simSpd;
         if (slot.loop || localAge <= layerDur) {
           const totalNeed = ls.distAccum + rateDist * moveDist;
           const totalSteps = Math.floor(totalNeed);
@@ -1176,18 +1437,25 @@ export function createEffectPlayer({
         if (slot.follow.yaw !== undefined) slot.yaw = slot.follow.yaw;
       }
 
+      if (slot.localSlotIdx > 0) {
+        atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
+        meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
+      }
+
       slot.age += dt;
       slot.cycleAge += dt;
 
       if (slot.loop && slot.cycleAge >= slot.duration) {
         slot.cycleAge %= slot.duration;
         for (let l = 0; l < slot.recipe.layers.length; l++) {
+          const layer = slot.recipe.layers[l];
+          const simSpd = layer._simSpd ?? 1;
           const ls = slot.layers[l];
           ls.triggeredOnce = false;
-          const bursts = slot.recipe.layers[l].bursts;
+          const bursts = layer.bursts;
           for (let b = 0; b < MAX_BURSTS_PER_LAYER; b++) {
             ls.burstCyclesDone[b] = 0;
-            ls.burstNextTime[b] = bursts && bursts[b] ? (bursts[b].time ?? 0) : 0;
+            ls.burstNextTime[b] = bursts && bursts[b] ? ((bursts[b].time ?? 0) / simSpd) : 0;
           }
         }
       }
@@ -1207,13 +1475,11 @@ export function createEffectPlayer({
 
     for (let i = 0; i < lightSlots.length; i++) {
       const ls = lightSlots[i];
-      if (!ls.active) continue;
+      if (!ls.active || ls.particleTrackIdx >= 0) continue;
       if (!ls.loop) {
         ls.age += dt;
         if (ls.age >= ls.duration) {
-          ls.active = false;
-          ls.light.intensity = 0;
-          ls.light.visible = false;
+          releaseLightSlot(i);
         } else {
           const k = 1 - ls.age / ls.duration;
           ls.light.intensity = ls.maxIntensity * k * k;
@@ -1227,7 +1493,11 @@ export function createEffectPlayer({
       tp.age += dt;
       if (tp.age >= tp.duration) {
         if (tp.subEmitters) {
-          fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth);
+          fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth, tp.vx, tp.vy, tp.vz, tp.tintR, tp.tintG, tp.tintB);
+        }
+        if (tp.lightSlotIdx >= 0) {
+          releaseLightSlot(tp.lightSlotIdx);
+          tp.lightSlotIdx = -1;
         }
         tp.active = false;
         continue;
@@ -1239,30 +1509,57 @@ export function createEffectPlayer({
           tp.vy *= d;
           tp.vz *= d;
         }
+        tp.vx += tp.accelX * dt;
         tp.vy += (is2D ? tp.gravity : -tp.gravity) * dt;
+        tp.vz += tp.accelZ * dt;
         tp.x += tp.vx * dt;
         tp.y += tp.vy * dt;
         tp.z += tp.vz * dt;
-        if (tp.hasCollision && !is2D && tp.y <= tp.groundY && tp.vy < 0) {
-          tp.y = tp.groundY;
-          if (tp.bouncesLeft > 0 && Math.abs(tp.vy) >= tp.minSpeed) {
-            tp.vy = Math.abs(tp.vy) * tp.bounce;
-            const fric = Math.max(0, 1 - tp.dampen);
-            tp.vx *= fric;
-            tp.vz *= fric;
-            tp.bouncesLeft -= 1;
-          } else {
-            tp.vy = 0;
-            tp.vx *= 0.85;
-            tp.vz *= 0.85;
-          }
-          if (tp.subEmitters) {
-            fireSubEmitters(tp.subEmitters, 'collision', tp.x, tp.y, tp.z, tp.subDepth);
+        if (tp.hasCollision && !is2D) {
+          const col = collisionResolver ? collisionResolver(tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz) : null;
+          const hitGround = !col && tp.y <= tp.groundY && tp.vy < 0;
+          if ((col && col.hit) || hitGround) {
+            const nx = col?.nx ?? 0;
+            const ny = col?.ny ?? 1;
+            const nz = col?.nz ?? 0;
+            if (col?.y !== undefined) tp.y = col.y;
+            else if (hitGround) tp.y = tp.groundY;
+            const vn = tp.vx * nx + tp.vy * ny + tp.vz * nz;
+            if (vn < 0) {
+              if (tp.bouncesLeft > 0 && Math.abs(vn) >= tp.minSpeed) {
+                const imp = (1 + tp.bounce) * vn;
+                tp.vx -= imp * nx;
+                tp.vy -= imp * ny;
+                tp.vz -= imp * nz;
+                const fric = Math.max(0, 1 - tp.dampen);
+                tp.vx *= fric;
+                tp.vz *= fric;
+                tp.bouncesLeft -= 1;
+              } else {
+                tp.vx -= vn * nx;
+                tp.vy -= vn * ny;
+                tp.vz -= vn * nz;
+                tp.vx *= 0.85;
+                tp.vz *= 0.85;
+              }
+            }
+            if (tp.subEmitters) {
+              fireSubEmitters(tp.subEmitters, 'collision', tp.x, tp.y, tp.z, tp.subDepth, tp.vx, tp.vy, tp.vz, tp.tintR, tp.tintG, tp.tintB);
+            }
           }
         }
         if (tp.hasCollision && atlasParticles && tp.atlasSlot >= 0) {
-          atlasParticles.updateSlot(tp.additive, tp.atlasSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
+          atlasParticles.updateSlot(tp.blend === 'distortion' ? 'distortion' : tp.additive, tp.atlasSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
         }
+        if (tp.hasCollision && meshVfx && tp.meshSlot >= 0) {
+          meshVfx.updateSlot(tp.meshSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
+        }
+      }
+      if (tp.lightSlotIdx >= 0 && tp.lightSlotIdx < lightSlots.length) {
+        const ls = lightSlots[tp.lightSlotIdx];
+        ls.light.position.set(tp.x, tp.y, tp.z);
+        const k = Math.max(0, 1 - tp.age / Math.max(0.01, tp.duration));
+        ls.light.intensity = tp.lightBaseIntensity * k;
       }
     }
 
@@ -1322,6 +1619,10 @@ export function createEffectPlayer({
       if (effectSlots[i].active) stopSlot(effectSlots[i]);
     }
     for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
+      if (trackedParticles[i].lightSlotIdx >= 0) {
+        releaseLightSlot(trackedParticles[i].lightSlotIdx);
+        trackedParticles[i].lightSlotIdx = -1;
+      }
       trackedParticles[i].active = false;
     }
     if (trails) {
@@ -1359,10 +1660,15 @@ export function createEffectPlayer({
     return n;
   }
 
+  function setCollisionResolver(fn) {
+    collisionResolver = typeof fn === 'function' ? fn : null;
+  }
+
   return {
     registerEffect,
     getEffect: (id) => registry.get(id) ?? null,
     playEffect,
+    setCollisionResolver,
     stopAll,
     update,
     reset,

@@ -89,14 +89,16 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             height: number;
             texture: any;
             readonly rowCount: number;
-            compile: (colorCurveRaw: any, sizeCurveRaw: any) => any;
+            compile: (colorCurveRaw: any, sizeCurveRaw: any, sizeYCurveRaw?: null, velocityCurveRaw?: null) => any;
             flush: () => void;
             sampleColor: (row: any, t: any, out?: Float32Array) => Float32Array;
             sampleSize: (row: any, t: any) => number;
+            sampleSizeY: (row: any, t: any) => number;
+            sampleVelDisp: (row: any, t: any) => number;
             dispose: () => void;
         };
         regions: Record<string, readonly number[]>;
-        compileCurves: (colorCurveRaw: any, sizeCurveRaw: any) => any;
+        compileCurves: (colorCurveRaw: any, sizeCurveRaw: any, sizeYCurveRaw?: null, velocityCurveRaw?: null) => any;
         setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined) => void;
         setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
             near?: number | undefined;
@@ -105,7 +107,14 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             height?: number | undefined;
             softFade?: number | undefined;
         }) => void;
-        emit: (opts?: object) => number;
+        setSceneTexture: (sceneTexture: object | null, { width, height, strength }?: {
+            width?: number;
+            height?: number;
+            strength?: number;
+        } | undefined) => void;
+        setWind: (wx?: number, wy?: number, wz?: number) => void;
+        setEffectOffset: (slotIdx: number, x?: number, y?: number, z?: number) => void;
+        emit: (opts?: {}) => any;
         updateSlot: (additive: any, idx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
         killSlot: (additive: any, idx: any) => void;
         flushDirty: () => void;
@@ -120,14 +129,24 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             curveRows: number;
             normalCursor: number;
             additiveCursor: number;
+            distortionCursor: number;
             normalTotal: number;
             additiveTotal: number;
+            distortionTotal: number;
         };
     };
     meshVfx: {
         capacity: number;
         registerMesh: (id: string, geometryOrObject3D: object) => boolean;
+        getSurfaceSamples: (name: any) => any;
         spawn: (opts?: object) => number;
+        updateSlot: (slotIdx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
+        setWind: (wx?: number, wy?: number, wz?: number) => void;
+        setEffectOffset: (slotIdx: any, x?: number, y?: number, z?: number) => void;
+        setSceneTexture: (sceneTexture: any, { width, height }?: {
+            width?: number | undefined;
+            height?: number | undefined;
+        }) => void;
         update: (visualDt: any) => void;
         reset: () => void;
         dispose: () => void;
@@ -142,6 +161,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         registerEffect: (recipe: object) => object;
         getEffect: (id: any) => any;
         playEffect: (recipeOrId: string | object, options?: object) => object | null;
+        setCollisionResolver: (fn: any) => void;
         stopAll: () => void;
         update: (visualDt: any) => void;
         reset: () => void;
@@ -256,6 +276,9 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         height?: number | undefined;
         softFade?: number | undefined;
     }) => void;
+    setSceneTexture(tex: any, opts: any): void;
+    setWind(wx?: number, wy?: number, wz?: number): void;
+    setCollisionResolver: (fn: any) => void;
     setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
     registerMesh: (id: string, geometryOrObject3D: object) => boolean;
     registerEffect: (recipe: object) => object;
@@ -336,8 +359,10 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             curveRows: number;
             normalCursor: number;
             additiveCursor: number;
+            distortionCursor: number;
             normalTotal: number;
             additiveTotal: number;
+            distortionTotal: number;
         };
         meshVfx: {
             capacity: number;
@@ -500,6 +525,7 @@ import { VFX_RENDER_MODE } from './vfx-atlas-particles.js';
 import { PROCEDURAL_VFX_ATLAS_REGIONS } from './vfx-atlas-particles.js';
 import { ATLAS_PARTICLE_VERTEX_GLSL } from './vfx-atlas-particles.js';
 import { ATLAS_PARTICLE_FRAGMENT_GLSL } from './vfx-atlas-particles.js';
+import { ATLAS_PARTICLE_DISTORTION_FS } from './vfx-atlas-particles.js';
 import { ATLAS_PARTICLE_WEBGL2_2D_VS } from './vfx-atlas-particles.js';
 import { ATLAS_PARTICLE_WEBGL2_2D_FS } from './vfx-atlas-particles.js';
 import { evaluateColorCurve } from './vfx-atlas-particles.js';
@@ -513,4 +539,4 @@ import { VFX_MESH_FRAGMENT_GLSL } from './vfx-mesh.js';
 import { createMeshVfxPool } from './vfx-mesh.js';
 import { validateVfxRecipe } from './vfx-recipes.js';
 import { createEffectPlayer } from './vfx-recipes.js';
-export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, createMeshVfxPool, validateVfxRecipe, createEffectPlayer };
+export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_DISTORTION_FS, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, createMeshVfxPool, validateVfxRecipe, createEffectPlayer };

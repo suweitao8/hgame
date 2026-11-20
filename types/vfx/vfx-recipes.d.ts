@@ -42,6 +42,7 @@ export function createEffectPlayer({ atlasParticles, meshVfx, trails, telegraphs
     registerEffect: (recipe: object) => object;
     getEffect: (id: any) => any;
     playEffect: (recipeOrId: string | object, options?: object) => object | null;
+    setCollisionResolver: (fn: any) => void;
     stopAll: () => void;
     update: (visualDt: any) => void;
     reset: () => void;

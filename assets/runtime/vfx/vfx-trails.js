@@ -5,6 +5,7 @@ import {
   submitRingBufferRanges,
   unpackRgb24Into,
 } from './vfx-core.js';
+import { evaluateSizeCurve } from './vfx-atlas-particles.js';
 
 export const SLASH_VERTEX_GLSL = /* glsl */ `
 precision highp float;
@@ -400,6 +401,7 @@ export function createTrailsSystem({
   const trailWidth = new Float32Array(trailCap);
   const trailWidthScale = new Float32Array(trailCap);
   const trailEndWidthScale = new Float32Array(trailCap);
+  const trailWidthCurves = new Array(trailCap).fill(null);
   const trailHdr = new Float32Array(trailCap);
   const trailOpacity = new Float32Array(trailCap);
   const trailLifetime = new Float32Array(trailCap);
@@ -696,9 +698,10 @@ export function createTrailsSystem({
         dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1) * op;
       }
 
+      const wCurve = trailWidthCurves[trackId];
       dstExtra[i4] = endRgb;
-      dstExtra[i4 + 1] = 1 + (endScale - 1) * t0;
-      dstExtra[i4 + 2] = 1 + (endScale - 1) * t1;
+      dstExtra[i4 + 1] = wCurve ? evaluateSizeCurve(wCurve, t0) : (1 + (endScale - 1) * t0);
+      dstExtra[i4 + 2] = wCurve ? evaluateSizeCurve(wCurve, t1) : (1 + (endScale - 1) * t1);
       dstExtra[i4 + 3] = hdr;
       dstUv[i4] = uv0;
       dstUv[i4 + 1] = uv1;
@@ -751,6 +754,8 @@ export function createTrailsSystem({
     trailHead[id] = 0;
     trailCount[id] = 0;
     trailWidthScale[id] = 1;
+    trailEndWidthScale[id] = 0;
+    trailWidthCurves[id] = null;
     trailOpacity[id] = 1;
     trailLifetime[id] = 0;
     trailIsNormal[id] = 0;
@@ -767,6 +772,7 @@ export function createTrailsSystem({
       trailEndColor[id] = colorOrOpts.endColor !== undefined ? packRgb24(colorOrOpts.endColor) : startRgb;
       trailWidth[id] = wStart;
       trailEndWidthScale[id] = wStart > 0.0001 ? Math.max(0, wEnd / wStart) : 0;
+      trailWidthCurves[id] = Array.isArray(colorOrOpts.widthCurve) && colorOrOpts.widthCurve.length > 0 ? colorOrOpts.widthCurve : null;
       trailHdr[id] = colorOrOpts.hdr ?? 1.0;
       trailOpacity[id] = Math.max(0, Math.min(1, colorOrOpts.alpha ?? 1.0));
       trailLifetime[id] = Math.max(0, colorOrOpts.lifetime ?? 0);

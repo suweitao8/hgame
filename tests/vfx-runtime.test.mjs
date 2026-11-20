@@ -945,8 +945,8 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
       ],
     }, { x: 0, y: 1.4, z: 0 });
     vfx.update(0.1);
-    const p6 = atlasNorm.geometry.getAttribute('aAtlasP6').array;
-    assert.ok(Math.abs(p6[2] - 1.333) < 0.01, `expected billboard aspectY=1.333 packed in aAtlasP6.z (got ${p6[2]})`);
+    const p8 = atlasNorm.geometry.getAttribute('aAtlasP8').array;
+    assert.ok(Math.abs(p8[2] - 1.333) < 0.01, `expected billboard aspectY=1.333 packed in aAtlasP8.z (got ${p8[2]})`);
     const meshChild = scene.children.find((c) => c.geometry === rockGeom);
     assert.ok(meshChild, 'expected orbiting rock mesh spawned in scene');
     assert.equal(meshChild.material.uniforms.uHasTex.value, 1, 'registerMesh auto-binds material.map to uHasTex=1');
@@ -1079,6 +1079,157 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     }
     dummyTex.dispose();
   } finally {
+    vfx.dispose();
+  }
+});
+
+test('Unity VFX full parity features: velCurve, sizeYCurve, simulationSpeed, donut/rectangle/mesh shapes, local moving offsets, wind, particle lights, widthCurve trails, collision resolver, and distortion pass', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 64, maxAtlasParticles: 128, maxMeshVfx: 16 });
+  const sceneTex = new THREE.DataTexture(new Uint8Array([128, 128, 255, 255]), 1, 1);
+  try {
+    // 1. Separate Y sizeCurve + cumulative signed velCurve in 1024-row Curve LUT
+    const row = vfx.atlasParticles.compileCurves(
+      [[0, [1, 1, 1, 1]], [1, [1, 1, 1, 0]]],
+      [[0, 1], [1, 3]],
+      [[0, 2], [1, 0.5]],
+      [[0, 2], [1, 0]],
+    );
+    assert.ok(Math.abs(vfx.atlasParticles.lut.sampleSize(row, 0.5) - 2.0) < 0.05);
+    assert.ok(Math.abs(vfx.atlasParticles.lut.sampleSizeY(row, 0.5) - 1.25) < 0.05);
+    // Integral of v(u) = 2*(1-u) from 0..0.5 is 2*0.5 - 0.25 = 0.75
+    assert.ok(Math.abs(vfx.atlasParticles.lut.sampleVelDisp(row, 0.5) - 0.75) < 0.06);
+
+    // 2. Distortion channel starts hidden until setSceneTexture is bound
+    const distMesh = scene.getObjectByName('HGameVfxAtlasDistortion');
+    assert.ok(distMesh, 'expected distortion channel mesh created in 3D mode');
+    assert.equal(distMesh.visible, false, 'distortion channel stays hidden without scene texture');
+    vfx.setSceneTexture(sceneTex, { width: 640, height: 360, strength: 0.06 });
+    assert.equal(distMesh.visible, true, 'distortion channel activates once scene texture is bound');
+
+    // 3. simulationSpeed, rotation3D, 3D force, windMul, donut shape, moving local space, particleLight
+    vfx.setWind(1.5, 0, -0.5);
+    const h = vfx.playEffect({
+      schemaVersion: 1,
+      id: 'parity_showcase',
+      duration: 2.0,
+      loop: false,
+      layers: [
+        {
+          name: 'local_torus_sparks',
+          kind: 'particle',
+          renderMode: 'billboard',
+          blend: 'additive',
+          space: 'local',
+          simulationSpeed: 2.0,
+          bursts: [{ time: 0, count: 2, cycles: 1, interval: 0.1 }],
+          shape: { type: 'donut', radius: 1.5, donutRadius: 0.25 },
+          life: 1.0,
+          speed: 0,
+          size: 0.6,
+          rotX: 0.7,
+          rotY: 1.1,
+          force: [2.5, 0, -1.5],
+          windMul: 2.0,
+          sizeCurve: [[0, 1], [1, 0]],
+          sizeYCurve: [[0, 2], [1, 0.5]],
+          velCurve: [[0, 1], [1, -1]],
+          particleLight: { color: '#ff8822', intensity: 3.0, range: 9, ratio: 1.0, maxLights: 4 },
+          trail: {
+            lifetime: 0.2,
+            width: 0.3,
+            widthCurve: [[0, 0.2], [0.5, 1.5], [1, 0.1]],
+          },
+        },
+        {
+          name: 'dist_wave',
+          kind: 'particle',
+          renderMode: 'horizontal',
+          blend: 'distortion',
+          bursts: [{ time: 0, count: 1, cycles: 1, interval: 0.1 }],
+          life: 0.5,
+          size: 1.2,
+        },
+      ],
+    }, { x: 1, y: 0.5, z: -1 });
+
+    vfx.update(0.05);
+    const addMesh = scene.getObjectByName('HGameVfxAtlasAdditive');
+    const p1 = addMesh.geometry.getAttribute('aAtlasP1').array;
+    const p8 = addMesh.geometry.getAttribute('aAtlasP8').array;
+    const p9 = addMesh.geometry.getAttribute('aAtlasP9').array;
+    assert.ok(Math.abs(p1[3] - 0.5) < 0.01, `simulationSpeed=2 halves duration 1.0->0.5 (got ${p1[3]})`);
+    assert.ok(Math.abs(p8[0] - 10.0) < 0.05, `forceX=2.5 * simSpd^2(4) == 10.0 packed in aAtlasP8.x (got ${p8[0]})`);
+    assert.ok(Math.abs(p9[0] - 0.7) < 0.01 && Math.abs(p9[1] - 1.1) < 0.01, 'rotation3D rotX/rotY packed in aAtlasP9');
+    assert.equal(vfx.atlasParticles.getStats().distortionTotal, 1, 'distortion particle routed to distortion channel');
+
+    // Local emitter translation updates uEffectDeltas uniform
+    h.setTransform(5, 1, 2, 0);
+    vfx.update(0.05);
+    const effDeltas = addMesh.material.uniforms.uEffectDeltas.value;
+    const hasMovedAnchor = effDeltas.some((v) => Math.abs(v.x - 5) < 0.01 && Math.abs(v.z - 2) < 0.01);
+    assert.equal(hasMovedAnchor, true, 'moving local-space effect updates GPU uEffectDeltas anchor');
+
+    // Particle light active and following
+    const activeLights = scene.children.filter((c) => c.isPointLight && c.visible);
+    assert.ok(activeLights.length >= 1, 'LightsModule activates pooled PointLight on emitted particle');
+
+    // Trail multi-stop widthCurve applied onto ribbon segments
+    vfx.update(0.05);
+    const ribbonMesh = scene.getObjectByName('HGameVfxRibbonTrails');
+    const segExtra = ribbonMesh.geometry.getAttribute('aSegExtra').array;
+    let nonLinearWidth = false;
+    for (let i = 1; i < segExtra.length; i += 4) {
+      if (segExtra[i] > 1.05 || segExtra[i + 1] > 1.05) {
+        nonLinearWidth = true;
+        break;
+      }
+    }
+    assert.equal(nonLinearWidth, true, 'TrailModule multi-stop widthCurve scales segment widths > 1.0');
+
+    // 4. Mesh surface shape sampling & custom collision resolver syncing mesh pool
+    const triGeo = new THREE.BoxGeometry(2, 2, 2);
+    vfx.registerMesh('box_surface_emitter', triGeo);
+    const surf = vfx.meshVfx.getSurfaceSamples('box_surface_emitter');
+    assert.ok(surf && surf.count > 0, 'getSurfaceSamples extracts triangle centroids and normals');
+
+    let customResolverCalled = false;
+    vfx.setCollisionResolver((x, y, z, vx, vy) => {
+      customResolverCalled = true;
+      return (y <= 1.2 && vy < 0) ? { hit: true, y: 1.2, nx: 0, ny: 1, nz: 0 } : null;
+    });
+    vfx.playEffect({
+      schemaVersion: 1,
+      id: 'mesh_bounce_test',
+      duration: 1.0,
+      loop: false,
+      layers: [
+        {
+          name: 'rect_spawn',
+          kind: 'particle',
+          shape: { type: 'rectangle', size: [2, 2, 0] },
+          bursts: [{ time: 0, count: 1, cycles: 1, interval: 0.1 }],
+          life: 0.4,
+          size: 0.3,
+        },
+        {
+          name: 'mesh_surface_spawn',
+          kind: 'mesh',
+          mesh: 'box_surface_emitter',
+          shape: { type: 'mesh', mesh: 'box_surface_emitter' },
+          bursts: [{ time: 0, count: 1, cycles: 1, interval: 0.1 }],
+          offset: [0, 1.4, 0],
+          life: 0.8,
+          gravity: 12,
+          collision: { groundY: 0, bounce: 0.6, dampen: 0.1, maxBounces: 2 },
+        },
+      ],
+    });
+    for (let k = 0; k < 10; k++) vfx.update(0.04);
+    assert.equal(customResolverCalled, true, 'custom collision resolver invoked for collision layers');
+    triGeo.dispose();
+  } finally {
+    sceneTex.dispose();
     vfx.dispose();
   }
 });

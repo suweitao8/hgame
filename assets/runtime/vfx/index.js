@@ -64,6 +64,7 @@ import {
   PROCEDURAL_VFX_ATLAS_REGIONS,
   ATLAS_PARTICLE_VERTEX_GLSL,
   ATLAS_PARTICLE_FRAGMENT_GLSL,
+  ATLAS_PARTICLE_DISTORTION_FS,
   ATLAS_PARTICLE_WEBGL2_2D_VS,
   ATLAS_PARTICLE_WEBGL2_2D_FS,
   evaluateColorCurve,
@@ -135,6 +136,7 @@ export {
   PROCEDURAL_VFX_ATLAS_REGIONS,
   ATLAS_PARTICLE_VERTEX_GLSL,
   ATLAS_PARTICLE_FRAGMENT_GLSL,
+  ATLAS_PARTICLE_DISTORTION_FS,
   ATLAS_PARTICLE_WEBGL2_2D_VS,
   ATLAS_PARTICLE_WEBGL2_2D_FS,
   evaluateColorCurve,
@@ -581,6 +583,15 @@ export function createVfxSystem({
     screenFeedback,
     setAtlas: atlasParticles.setAtlas,
     setDepthTexture: atlasParticles.setDepthTexture,
+    setSceneTexture(tex, opts) {
+      atlasParticles.setSceneTexture(tex, opts);
+      meshVfx.setSceneTexture(tex, opts);
+    },
+    setWind(wx = 0, wy = 0, wz = 0) {
+      atlasParticles.setWind(wx, wy, wz);
+      meshVfx.setWind(wx, wy, wz);
+    },
+    setCollisionResolver: effects.setCollisionResolver,
     setTrailTexture: trails.setTrailTexture,
     registerMesh: meshVfx.registerMesh,
     registerEffect: effects.registerEffect,
