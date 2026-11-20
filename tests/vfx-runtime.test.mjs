@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as THREE from '../assets/optional/three/three.module.js';
+import { evaluateVfxFidelity } from '../scripts/score-vfx-fidelity.mjs';
 
 import {
   CROWD_STATUS,
@@ -1020,6 +1024,59 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     assert.equal(seenRows[299], 300, '300th distinct curve receives unique row 300 (>256)');
     assert.ok(Math.abs(lutBig.sampleSize(300, 1.0) - 3.0) < 0.02, 'row 300 samples exact high-row sizeCurve');
     lutBig.dispose();
+
+    // 16. Unity VFX fidelity evaluator scores synthetic prefab + converted recipe accurately
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-score-'));
+    try {
+      const pfDir = path.join(tmpRoot, 'unity/Particles/Prefabs/Auras');
+      const vfxOut = path.join(tmpRoot, 'vfx');
+      fs.mkdirSync(pfDir, { recursive: true });
+      fs.mkdirSync(vfxOut, { recursive: true });
+      fs.writeFileSync(path.join(pfDir, 'Aura_Test.prefab'), [
+        '%YAML 1.1',
+        '--- !u!1 &1',
+        'GameObject:',
+        '  m_Name: Aura_Test',
+        '  m_IsActive: 1',
+        '--- !u!198 &2',
+        'ParticleSystem:',
+        '  m_GameObject: {fileID: 1}',
+        '  simulationSpeed: 1',
+        '  InitialModule:',
+        '    enabled: 1',
+        '    maxNumParticles: 1',
+        '    startLifetime: { minMaxState: 0, scalar: Infinity }',
+        '  EmissionModule:',
+        '    enabled: 1',
+        '    rateOverTime: { minMaxState: 0, scalar: 10 }',
+        '    m_BurstCount: 0',
+        '  ShapeModule:',
+        '    enabled: 1',
+        '    type: 10',
+        '--- !u!199 &3',
+        'ParticleSystemRenderer:',
+        '  m_GameObject: {fileID: 1}',
+        '  m_RenderMode: 2',
+      ].join('\n'), 'utf8');
+      fs.writeFileSync(path.join(vfxOut, 'aura_test.vfx.json'), JSON.stringify({
+        schemaVersion: 1,
+        id: 'aura_test',
+        duration: 5,
+        loop: true,
+        layers: [{ name: 'aura_test', kind: 'particle', renderMode: 'horizontal', rate: 10, maxParticles: 1, persistent: true, life: 5 }],
+      }), 'utf8');
+      const report = evaluateVfxFidelity({
+        unityRoot: path.join(tmpRoot, 'unity'),
+        vfxDir: vfxOut,
+        subfolders: ['Auras'],
+      });
+      assert.equal(report.summary.prefabsAudited, 1);
+      assert.equal(report.summary.activeParticleSystems, 1);
+      assert.equal(report.dimensions.D5_Asset_Integrity.score, 15);
+      assert.ok(report.summary.totalScore >= 95, `expected high score on 100%-matched prefab (got ${report.summary.totalScore})`);
+    } finally {
+      fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
     dummyTex.dispose();
   } finally {
     vfx.dispose();
