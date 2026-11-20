@@ -38,6 +38,11 @@ const qualityEnabled = project.features.includes('adaptiveQuality3d');
 const viewCanvas = document.querySelector('#game');
 const qualitySettings = qualityEnabled ? {
   mode: gameConfig.quality3d?.mode ?? presentation.quality,
+  memoryBudgetBytes: presentation.renderMemoryBudgetBytes ?? null,
+  residency: {
+    readBytes: () => app.services.model3d?.residency.readBytes() ?? 0,
+    trimIdle: bytes => app.services.model3d?.residency.trimIdle(bytes),
+  },
   // Passive device hints only: never create a throwaway WebGL context just
   // to detect a GPU. Desktop with an unknown GPU begins conservatively.
   device: {
@@ -77,7 +82,7 @@ async function startWorld() {
       loader.json('catalog.json'),
     ]);
     if (app.disposed) return;
-    assetCatalog = createAssetCatalog(catalogData, { loader });
+    assetCatalog = createAssetCatalog(catalogData, { loader, modelProvider: app.services.model3d });
   }
   if (app.disposed) return;
   const scene = app.scenes.add(new Scene('world'));
@@ -121,6 +126,7 @@ async function startWorld() {
     THREE, slots: slotConfig.slots, materialPalette, assetCatalog, projectBaseUrl: location.href,
     instanceStaticModels: true, deferredReplacements,
     loadGLTF: url => modelLoader.loadAsync(url),
+    acquireGLTF: app.services.model3d?.acquire,
     cloneSkeleton: async root => (await import('../assets/vendor/three/jsm/utils/SkeletonUtils.js')).clone(root),
   });
   levelView = createModularLevelRenderer({ THREE, models, parent: world, chunkCells: presentation.chunkCells });

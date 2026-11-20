@@ -28,6 +28,11 @@ const renderer = createThreeAdapter({
   canvas: viewCanvas,
   quality3d: qualityEnabled ? {
     mode: gameConfig.quality3d?.mode ?? presentation.quality,
+    memoryBudgetBytes: presentation.renderMemoryBudgetBytes ?? null,
+    residency: {
+      readBytes: () => app.services.model3d?.residency.readBytes() ?? 0,
+      trimIdle: bytes => app.services.model3d?.residency.trimIdle(bytes),
+    },
     device: {
       mobile: typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches,
     },

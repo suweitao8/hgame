@@ -5,7 +5,8 @@ import { releaseScopedImage, retainScopedImage } from '../internal/scoped-image.
 /** @typedef {{kind: AssetKind, path: string, files?: readonly string[]}} AssetCatalogEntry */
 /** @typedef {{schemaVersion: 1, assets: Record<string, AssetCatalogEntry>, groups?: Record<string, readonly string[]>}} AssetCatalogDefinition */
 /** @typedef {{kind: AssetKind, path: string, files: readonly string[]}} AssetDescriptor */
-/** @typedef {{key: string, refs: number, controller: AbortController, promise: Promise<unknown>, ready: boolean, value: unknown, image: boolean}} Acquisition */
+/** @typedef {{key: string, refs: number, controller: AbortController, promise: Promise<unknown>, ready: boolean, value: unknown, image: boolean, releaseValue: (() => void) | null}} Acquisition */
+/** @typedef {{acquire: (path: string, options: {signal: AbortSignal, resolvedUrl: string}) => Promise<{asset: unknown, release: () => void}>}} CatalogModelProvider */
 /**
  * @typedef {object} AssetScope
  * @property {(id: string, options?: {signal?: AbortSignal}) => Promise<unknown>} load Abort the caller's wait without invalidating shared acquisitions.
@@ -86,9 +87,9 @@ function waitForAsset(promise, signal, waiters) {
 /**
  * Load assets by logical ID and deduplicate downloads/decodes across active scopes.
  * @param {AssetCatalogDefinition} data
- * @param {{loader: import('./assets.js').AssetLoader, maxConcurrentLoads?: number}} options Queue distinct downloads and decodes together across scopes (default 6).
+ * @param {{loader: import('./assets.js').AssetLoader, modelProvider?: CatalogModelProvider, maxConcurrentLoads?: number}} options Queue distinct downloads and decodes together across scopes (default 6). With a model provider, model entries acquire decoded assets.
  */
-export function createAssetCatalog(data, { loader, maxConcurrentLoads = 6 }) {
+export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentLoads = 6 }) {
   if (!Number.isSafeInteger(maxConcurrentLoads) || maxConcurrentLoads < 1) {
     throw new RangeError('Asset catalog maxConcurrentLoads must be a positive integer');
   }
@@ -109,15 +110,23 @@ export function createAssetCatalog(data, { loader, maxConcurrentLoads = 6 }) {
     return entry;
   }
 
-  /** @param {AssetDescriptor} entry @param {AbortSignal} signal @returns {Promise<unknown>} */
-  function request(entry, signal) {
+  /** @param {AssetDescriptor} entry @param {Acquisition} record @returns {Promise<unknown>} */
+  function request(entry, record) {
+    const { signal } = record.controller;
     switch (entry.kind) {
       case 'image': return loader.image(entry.path, { signal });
       case 'json': return loader.json(entry.path, { signal });
       case 'text': return loader.text(entry.path, { signal });
       case 'blob': return loader.blob(entry.path, { signal });
       case 'audio': case 'bytes': return loader.arrayBuffer(entry.path, { signal });
-      case 'model': case 'url': return Promise.resolve(loader.resolve(entry.path));
+      case 'model': {
+        if (!modelProvider) return Promise.resolve(loader.resolve(entry.path));
+        return modelProvider.acquire('assets/' + entry.path, { signal, resolvedUrl: loader.resolve(entry.path) }).then(lease => {
+          record.releaseValue = lease.release;
+          return lease.asset;
+        });
+      }
+      case 'url': return Promise.resolve(loader.resolve(entry.path));
     }
   }
 
@@ -129,7 +138,7 @@ export function createAssetCatalog(data, { loader, maxConcurrentLoads = 6 }) {
       const signal = record.controller.signal;
       void Promise.resolve().then(() => {
         signal.throwIfAborted();
-        return request(job.entry, signal);
+        return request(job.entry, record);
       }).then(job.resolve, job.reject).finally(() => {
         running--;
         drainQueue();
@@ -140,10 +149,10 @@ export function createAssetCatalog(data, { loader, maxConcurrentLoads = 6 }) {
   /** @param {Acquisition} record @param {AssetDescriptor} entry */
   function schedule(record, entry) {
     // Resolving a URL does not download or decode anything.
-    if (entry.kind === 'url' || entry.kind === 'model') {
+    if (entry.kind === 'url' || (entry.kind === 'model' && !modelProvider)) {
       return Promise.resolve().then(() => {
         record.controller.signal.throwIfAborted();
-        return request(entry, record.controller.signal);
+        return request(entry, record);
       });
     }
     return new Promise((resolve, reject) => {
@@ -158,6 +167,9 @@ export function createAssetCatalog(data, { loader, maxConcurrentLoads = 6 }) {
     record.ready = false;
     const image = record.value;
     record.value = undefined;
+    const releaseValue = record.releaseValue;
+    record.releaseValue = null;
+    if (releaseValue) releaseValue();
     if (record.image) releaseScopedImage(image);
   }
 
@@ -180,7 +192,7 @@ export function createAssetCatalog(data, { loader, maxConcurrentLoads = 6 }) {
   function makeAcquisition(key, entry) {
     const controller = new AbortController();
     /** @type {Acquisition} */
-    const record = { key, refs: 0, controller, promise: Promise.resolve(), ready: false, value: undefined, image: entry.kind === 'image' };
+    const record = { key, refs: 0, controller, promise: Promise.resolve(), ready: false, value: undefined, image: entry.kind === 'image', releaseValue: null };
     record.promise = schedule(record, entry).then(result => {
       record.ready = true;
       record.value = result;
@@ -215,7 +227,8 @@ export function createAssetCatalog(data, { loader, maxConcurrentLoads = 6 }) {
           if (released) throw aborted();
           signal?.throwIfAborted();
           const entry = get(id);
-          const key = (LOAD_KIND[entry.kind] ?? entry.kind) + ':' + entry.path;
+          const kind = entry.kind === 'model' && modelProvider ? 'model' : LOAD_KIND[entry.kind] ?? entry.kind;
+          const key = kind + ':' + entry.path;
           let record = held.get(key);
           if (!record) {
             record = acquired.get(key) ?? makeAcquisition(key, entry);

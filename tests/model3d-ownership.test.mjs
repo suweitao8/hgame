@@ -4,12 +4,221 @@ import * as THREE from '../assets/optional/three/three.module.js';
 import { WorkerPool } from '../assets/optional/three/jsm/utils/WorkerPool.js';
 import { createGameApplication, Entity, Scene } from '../assets/runtime/index.js';
 import { createModel3DProvider } from '../assets/runtime/integrations/model3d.js';
+import { createAssetCatalog } from '../assets/runtime/platform/asset-catalog.js';
+import { createAssetLoader } from '../assets/runtime/platform/assets.js';
+import { PrefabRegistry } from '../assets/runtime/core/prefab.js';
+import { createLevelFlow } from '../assets/runtime/world/level-flow.js';
+import { createProceduralModelSlots } from '../assets/runtime/integrations/procedural-models.js';
 
 function monitor(resource) {
   let calls = 0;
   resource.addEventListener('dispose', () => { calls++; });
   return () => calls;
 }
+
+test('scoped model acquisition shares a decode and aborts transport only after the last pending owner leaves', async () => {
+  const jobs = [];
+  const loader = { loadWithSignal(url, signal) {
+    const pending = Promise.withResolvers();
+    jobs.push({ url, signal, pending });
+    return pending.promise;
+  } };
+  const provider = createModel3DProvider({ THREE, loader });
+  const a = new AbortController();
+  const b = new AbortController();
+  const first = provider.acquire('shared.glb', { signal: a.signal });
+  const second = provider.acquire('shared.glb', { signal: b.signal });
+  const cancelled = [first, second].map(pending => assert.rejects(pending, { name: 'AbortError' }));
+  await Promise.resolve();
+  assert.equal(jobs.length, 1);
+  a.abort();
+  await cancelled[0];
+  assert.equal(jobs[0].signal.aborted, false);
+  b.abort();
+  await cancelled[1];
+  assert.equal(jobs[0].signal.aborted, true);
+  const fresh = provider.acquire('shared.glb');
+  await Promise.resolve();
+  assert.equal(jobs.length, 2);
+  const staleGeometry = new THREE.BoxGeometry();
+  const freshGeometry = new THREE.BoxGeometry();
+  const staleDisposals = monitor(staleGeometry);
+  const freshDisposals = monitor(freshGeometry);
+  const material = new THREE.MeshBasicMaterial();
+  const materialDisposals = monitor(material);
+  jobs[1].pending.resolve({ scene: new THREE.Mesh(freshGeometry, material) });
+  const lease = await fresh;
+  jobs[0].pending.resolve({ scene: new THREE.Mesh(staleGeometry, material) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(staleDisposals(), 1);
+  assert.equal(freshDisposals(), 0);
+  assert.equal(materialDisposals(), 0);
+  assert.equal(lease.asset.scene.geometry, freshGeometry);
+  lease.release();
+  await provider.dispose();
+  assert.equal(freshDisposals(), 1);
+  assert.equal(materialDisposals(), 1);
+});
+
+test('catalog model scopes retain shared live GPU resources while an LRU budget reclaims idle models', async () => {
+  const texture = new THREE.DataTexture(new Uint8Array(64), 4, 4, THREE.RGBAFormat);
+  const material = new THREE.MeshBasicMaterial({ map: texture });
+  const textureDisposals = monitor(texture);
+  const loaded = [];
+  const provider = createModel3DProvider({ THREE, maxResidentBytes: 100_000, loader: { loadAsync(url) {
+    const geometry = new THREE.BoxGeometry();
+    loaded.push({ url, geometry, count: monitor(geometry) });
+    return { scene: new THREE.Mesh(geometry, material) };
+  } } });
+  const catalog = createAssetCatalog({ schemaVersion: 1, assets: {
+    hero: { kind: 'model', path: 'hero.glb' }, heroAlias: { kind: 'model', path: 'hero.glb' },
+    robot: { kind: 'model', path: 'robot.glb' },
+  } }, { loader: createAssetLoader(), modelProvider: provider });
+  const first = catalog.openScope();
+  const second = catalog.openScope();
+  const robotScope = catalog.openScope();
+  const [hero, alias, robot] = await Promise.all([first.load('hero'), second.load('heroAlias'), robotScope.load('robot')]);
+  assert.equal(loaded.length, 2);
+  assert.equal(hero, alias);
+  assert.notEqual(hero, robot);
+  const resident = provider.residency.readBytes();
+  assert.ok(resident > texture.image.data.byteLength);
+  first.dispose();
+  provider.residency.trimIdle(resident);
+  assert.deepEqual(loaded.map(model => model.count()), [0, 0]);
+  second.dispose();
+  assert.equal(provider.residency.readBytes(), resident, 'released models may remain as idle cache');
+  provider.residency.trimIdle(1);
+  assert.deepEqual(loaded.map(model => model.count()), [1, 0]);
+  assert.equal(textureDisposals(), 0);
+  assert.ok(provider.residency.readBytes() < resident);
+  robotScope.dispose();
+  provider.residency.trimIdle(resident);
+  assert.deepEqual(loaded.map(model => model.count()), [1, 1]);
+  assert.equal(textureDisposals(), 1);
+  assert.equal(provider.residency.readBytes(), 0);
+  catalog.dispose();
+  await provider.dispose();
+});
+
+test('level flow transfers a shared decoded model between prepared scenes and reclaims it after the last unload', async () => {
+  const app = createGameApplication({
+    project: { profile: '3d', physics: 'none', features: ['scene'] },
+    renderer: { render() {} },
+  });
+  const geometry = new THREE.BoxGeometry();
+  const disposals = monitor(geometry);
+  let loads = 0;
+  const provider = createModel3DProvider({ THREE, maxResidentBytes: 0, loader: { loadAsync() {
+    loads++;
+    return { scene: new THREE.Mesh(geometry) };
+  } } });
+  const catalog = createAssetCatalog({
+    schemaVersion: 1,
+    assets: { hero: { kind: 'model', path: 'hero.glb' } },
+    groups: { character: ['hero'] },
+  }, { loader: app.platform.assets, modelProvider: provider });
+  const withHero = id => ({ level: { schemaVersion: 1, id, dimensions: 3 }, assetGroups: ['character'] });
+  const flow = createLevelFlow({ scenes: app.scenes, prefabs: new PrefabRegistry(), catalog, routes: {
+    first: withHero('first'), second: withHero('second'),
+    empty: { level: { schemaVersion: 1, id: 'empty', dimensions: 3 } },
+  } });
+  const first = (await flow.go('first')).session;
+  await flow.prefetch('second');
+  const second = await flow.go('second');
+  assert.deepEqual(second.cleanupErrors, []);
+  assert.equal(first.assets.hero, second.session.assets.hero);
+  assert.equal(second.session.assets.hero.scene.geometry, geometry);
+  assert.equal(loads, 1);
+  assert.equal(disposals(), 0);
+  await flow.go('empty');
+  assert.equal(disposals(), 1);
+  assert.equal(provider.residency.readBytes(), 0);
+  await flow.dispose();
+  catalog.dispose();
+  await provider.dispose();
+  app.dispose();
+});
+
+test('a reused GPU resource can be released again after a model fetch restores its residency', async () => {
+  const geometry = new THREE.BoxGeometry();
+  const disposals = monitor(geometry);
+  const provider = createModel3DProvider({ THREE, maxResidentBytes: 0, loader: {
+    loadAsync: () => ({ scene: new THREE.Mesh(geometry) }),
+  } });
+  const first = await provider.acquire('reused.glb');
+  first.release();
+  const second = await provider.acquire('reused.glb');
+  second.release();
+  assert.equal(disposals(), 2);
+  await provider.dispose();
+});
+
+test('catalog resolution and residency cover custom asset roots and secondary glTF scenes', async () => {
+  const primary = new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  const data = new Float32Array(9);
+  geometry.setAttribute('position', new THREE.BufferAttribute(data, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(data, 3));
+  const secondary = new THREE.Mesh(geometry);
+  const disposals = monitor(geometry);
+  const urls = [];
+  const provider = createModel3DProvider({ THREE, projectBaseUrl: 'https://game.example/level/index.html',
+    maxResidentBytes: 0, loader: { loadAsync(url) {
+      urls.push(url);
+      return { scene: primary, scenes: [primary, secondary] };
+    } },
+  });
+  const catalog = createAssetCatalog({ schemaVersion: 1, assets: { hero: { kind: 'model', path: 'hero.gltf' } } }, {
+    loader: createAssetLoader({ baseURI: 'https://game.example/level/index.html', baseUrl: './media/' }),
+    modelProvider: provider,
+  });
+  const scope = catalog.openScope();
+  await scope.load('hero');
+  assert.deepEqual(urls, ['https://game.example/level/media/hero.gltf']);
+  assert.equal(provider.residency.readBytes(), data.byteLength * 2);
+  scope.dispose();
+  assert.equal(disposals(), 1);
+  await provider.dispose();
+  catalog.dispose();
+});
+
+test('managed procedural model slots share their source with a scene scope and cancel replacements on disposal', async () => {
+  const started = Promise.withResolvers();
+  const geometry = new THREE.BoxGeometry();
+  const disposals = monitor(geometry);
+  const provider = createModel3DProvider({ THREE, maxResidentBytes: 0, loader: {
+    loadWithSignal(url, signal) {
+      if (url.endsWith('hero.glb')) return { scene: new THREE.Mesh(geometry) };
+      started.resolve(signal);
+      return new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    },
+  } });
+  const otherScene = await provider.acquire('assets/hero.glb');
+  const catalog = createAssetCatalog({ schemaVersion: 1, assets: {
+    hero: { kind: 'model', path: 'hero.glb' },
+  } }, { loader: createAssetLoader() });
+  const slots = createProceduralModelSlots({
+    THREE, assetCatalog: catalog, materialPalette: { get() { return new THREE.MeshBasicMaterial(); } },
+    slots: {
+      'model.hero': { shape: 'box', material: 'default', size: [1, 1, 1], replacementAsset: 'hero' },
+      'model.pending': { shape: 'box', material: 'default', size: [1, 1, 1], replacement: 'assets/models/pending.glb' },
+    },
+    acquireGLTF: provider.acquire,
+  });
+  const hero = await slots.instantiate('model.hero');
+  assert.equal(hero.geometry, otherScene.asset.scene.geometry);
+  const pending = assert.rejects(slots.instantiate('model.pending'), { name: 'AbortError' });
+  const signal = await started.promise;
+  await slots.dispose();
+  await pending;
+  assert.equal(signal.aborted, true);
+  assert.equal(disposals(), 0);
+  otherScene.release();
+  assert.equal(disposals(), 1);
+  await provider.dispose();
+  catalog.dispose();
+});
 
 test('Basis worker errors settle active and queued decode jobs and allow a retry', { timeout: 1500 }, async () => {
   const workers = [];
@@ -44,18 +253,22 @@ test('Model3D keeps replaced assets usable and disposes shared owned resources o
   const first = new THREE.BoxGeometry();
   const second = new THREE.BoxGeometry();
   const borrowed = new THREE.BoxGeometry();
-  const counts = [first, second, material, texture, borrowed].map(monitor);
+  const promoted = new THREE.BoxGeometry();
+  const counts = [first, second, material, texture, borrowed, promoted].map(monitor);
   const oldModel = new THREE.Group();
   oldModel.add(new THREE.Mesh(first, material), new THREE.Mesh(first, material));
   provider.registerAsset('hero', { scene: oldModel, owned: true });
   const instance = await provider.instantiate('hero');
   provider.registerAsset('hero', { scene: new THREE.Mesh(second, material), owned: true });
   provider.registerAsset('borrowed', { scene: new THREE.Mesh(borrowed) });
+  const promotedRoot = new THREE.Mesh(promoted);
+  provider.registerAsset('promoted', { scene: promotedRoot });
+  provider.registerAsset('promoted', { scene: promotedRoot, owned: true });
   assert.equal(instance.root.children[0].geometry, first);
   assert.equal((await provider.instantiate('hero')).root.geometry, second);
-  assert.deepEqual(counts.map(count => count()), [0, 0, 0, 0, 0]);
+  assert.deepEqual(counts.map(count => count()), [0, 0, 0, 0, 0, 0]);
   assert.equal(await provider.dispose(), true);
-  assert.deepEqual(counts.map(count => count()), [1, 1, 1, 1, 0]);
+  assert.deepEqual(counts.map(count => count()), [1, 1, 1, 1, 0, 1]);
   assert.equal(await provider.dispose(), false);
   borrowed.dispose();
 });

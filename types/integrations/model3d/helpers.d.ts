@@ -79,19 +79,22 @@ export function inspectModel3D(THREE: Model3DThree, assetOrRoot: Model3DAsset | 
  */
 export function prepareAnimationClips(THREE: Model3DThree, clips: Model3DClip[], { stripNamespace, stripRootMotion, rootBoneNames, renameMap, }?: PrepareAnimationClipsOptions | undefined): Model3DClip[];
 /**
- * Disposes each owned geometry, material, texture and skeleton once across all roots.
- * @param {Iterable<Model3DObject>} roots Owned source roots.
- * @param {WeakSet<object>} [released] Shared across batches when outstanding models are still loading.
- * @returns {void}
+ * Collect source geometry, materials, textures and skeletons once per resource.
+ * @param {Iterable<Model3DObject>} roots
  */
-export function disposeObjectResources(roots: Iterable<Model3DObject>, released?: WeakSet<any> | undefined): void;
+export function collectObjectResources(roots: Iterable<Model3DObject>): Map<any, () => void>;
+/** @param {Iterable<Model3DObject>} roots @param {WeakSet<object>} released @param {{has(resource: object): boolean}} [retained] */
+export function disposeObjectResources(roots: Iterable<Model3DObject>, released?: WeakSet<object>, retained?: {
+    has(resource: object): boolean;
+} | undefined): void;
 /**
  * Loads a URL with a promise- or callback-style loader.
  * @param {Model3DLoader} loader Loader.
  * @param {string} resolvedUrl URL to load.
+ * @param {AbortSignal} [signal] Shared request cancellation.
  * @returns {Promise<unknown>} Loader result.
  */
-export function loadWithLoader(loader: Model3DLoader, resolvedUrl: string): Promise<unknown>;
+export function loadWithLoader(loader: Model3DLoader, resolvedUrl: string, signal?: AbortSignal | undefined): Promise<unknown>;
 /**
  * Minimal structural view of a Three.js Object3D (or Mesh/Bone/SkinnedMesh) used by the model3d helpers.
  * Additional Three.js members are reachable through the index signature.
@@ -171,6 +174,7 @@ export function loadWithLoader(loader: Model3DLoader, resolvedUrl: string): Prom
 /**
  * Minimal GLTF-loader contract: either `loadAsync(url)` or callback-style `load(...)`.
  * @typedef {object} Model3DLoader
+ * @property {(url: string, signal: AbortSignal) => Promise<unknown>} [loadWithSignal] Loader with cancellation support.
  * @property {(url: string) => Promise<unknown>} [loadAsync] Promise loader.
  * @property {(url: string, onLoad: (result: unknown) => void, onProgress?: ((event: unknown) => void) | undefined, onError?: (error: unknown) => void) => void} [load] Callback loader.
  */
@@ -399,6 +403,10 @@ export type PrepareAnimationClipsOptions = {
  * Minimal GLTF-loader contract: either `loadAsync(url)` or callback-style `load(...)`.
  */
 export type Model3DLoader = {
+    /**
+     * Loader with cancellation support.
+     */
+    loadWithSignal?: ((url: string, signal: AbortSignal) => Promise<unknown>) | undefined;
     /**
      * Promise loader.
      */

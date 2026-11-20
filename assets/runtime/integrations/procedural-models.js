@@ -5,6 +5,8 @@
  *
  * The logical slot IDs remain stable even when replaced by authored GLBs.
  */
+import { cleanupAll } from '../internal/cleanup.js';
+
 /**
  * @typedef {object} ProceduralObject3D Minimal structural Three.js Object3D.
  * @property {string} name
@@ -56,6 +58,7 @@
  * @property {Pick<ReturnType<typeof import('../platform/asset-catalog.js').createAssetCatalog>, 'get'|'url'> | null} [assetCatalog] Resolves model IDs from replacementAsset.
  * @property {(new () => { loadAsync(url: string): Promise<{ scene: ProceduralObject3D, animations?: unknown[] }> })} [GLTFLoader] Only needed if a replacement is configured.
  * @property {(url: string) => Promise<{scene: ProceduralObject3D, animations?: unknown[]}>} [loadGLTF] Optional lazy loader for replacement assets.
+ * @property {(path: string, options: {signal: AbortSignal, resolvedUrl: string}) => Promise<{asset: {scene: ProceduralObject3D, animations?: unknown[]}, release: () => void}>} [acquireGLTF] Optional shared model acquisition for the slot library lifetime.
  * @property {(root: ProceduralObject3D) => ProceduralObject3D | Promise<ProceduralObject3D>} [cloneSkeleton] Skeleton-aware Three.js clone for skinned model replacements.
  * @property {string} [projectBaseUrl='http://localhost/'] Base for resolving replacement URLs.
  * @property {boolean} [instanceStaticModels=false] Instance eligible multi-mesh model replacements as well as procedural props.
@@ -111,7 +114,7 @@ const replacementPath = url => {
  * @returns {ProceduralModelSlots}
  */
 export function createProceduralModelSlots({
-  THREE, slots, materialPalette, assetCatalog = null, GLTFLoader, loadGLTF, cloneSkeleton, projectBaseUrl,
+  THREE, slots, materialPalette, assetCatalog = null, GLTFLoader, loadGLTF, acquireGLTF, cloneSkeleton, projectBaseUrl,
   instanceStaticModels = false,
   deferredReplacements = [],
 } = {}) {
@@ -193,6 +196,8 @@ export function createProceduralModelSlots({
   }
   const prototypes = new Map();
   const replacementCache = new Map();
+  const replacementLifetime = new AbortController();
+  const releaseReplacements = new Set();
   const geometries = new Set();
   const importedResources = new Set();
   let disposed = false;
@@ -353,16 +358,27 @@ export function createProceduralModelSlots({
       if (!prototypes.has(id)) prototypes.set(id, build(id));
       return prototypes.get(id);
     }
-    if (!loadGLTF && typeof GLTFLoader !== 'function') {
+    if (!acquireGLTF && !loadGLTF && typeof GLTFLoader !== 'function') {
       throw new Error('GLTFLoader required only if a custom GLB replacement is configured');
     }
     const url = spec.replacementAsset
       ? assetCatalog.url(spec.replacementAsset)
       : new URL(spec.replacement, projectBaseUrl ?? 'http://localhost/').href;
     if (!replacementCache.has(url)) {
-      const request = Promise.resolve().then(() =>
-        loadGLTF ? loadGLTF(url) : new GLTFLoader().loadAsync(url)
-      ).then(gltf => {
+      const request = Promise.resolve().then(async () => {
+        if (acquireGLTF) {
+          const path = spec.replacementAsset ? 'assets/' + assetCatalog.get(spec.replacementAsset).path : spec.replacement;
+          const signal = replacementLifetime.signal;
+          const { asset, release } = await acquireGLTF(path, { signal, resolvedUrl: url });
+          if (signal.aborted || !asset?.scene || asset.animations?.length) {
+            release();
+            signal.throwIfAborted();
+            throw new Error('Only static unanimated model replacements supported');
+          }
+          releaseReplacements.add(release);
+          return asset.scene;
+        }
+        const gltf = await (loadGLTF ? loadGLTF(url) : new GLTFLoader().loadAsync(url));
         if (!gltf?.scene || gltf.animations?.length) {
           throw new Error('Only static unanimated model replacements supported');
         }
@@ -521,23 +537,29 @@ export function createProceduralModelSlots({
   async function dispose() {
     if (disposed) return;
     disposed = true;
+    replacementLifetime.abort();
     await Promise.allSettled(replacementCache.values());
-    for (const skeleton of ownedSkeletons) skeleton.dispose?.();
-    ownedSkeletons.clear();
-    for (const geo of geometries) geo.dispose();
     for (const resource of importedResources) {
       if (resource.isMaterial) {
         for (const tex of Object.values(resource)) {
           if (tex?.isTexture) importedResources.add(tex);
         }
       }
-      resource.dispose?.();
     }
-    geometries.clear();
-    importedResources.clear();
-    prototypes.clear();
-    replacementCache.clear();
-    deferred.clear();
+    try {
+      cleanupAll([
+        ...[...ownedSkeletons, ...geometries, ...importedResources].map(resource => () => resource.dispose?.()),
+        ...releaseReplacements,
+      ], 'Procedural model disposal failed');
+    } finally {
+      ownedSkeletons.clear();
+      geometries.clear();
+      importedResources.clear();
+      releaseReplacements.clear();
+      prototypes.clear();
+      replacementCache.clear();
+      deferred.clear();
+    }
   }
   return { get, prototype, instantiate, instantiateBatch, releaseInstance, setReplacement, enableDeferredReplacements, dispose };
 }

@@ -12,10 +12,11 @@ export function listCatalogFiles(data: AssetCatalogDefinition): string[];
 /**
  * Load assets by logical ID and deduplicate downloads/decodes across active scopes.
  * @param {AssetCatalogDefinition} data
- * @param {{loader: import('./assets.js').AssetLoader, maxConcurrentLoads?: number}} options Queue distinct downloads and decodes together across scopes (default 6).
+ * @param {{loader: import('./assets.js').AssetLoader, modelProvider?: CatalogModelProvider, maxConcurrentLoads?: number}} options Queue distinct downloads and decodes together across scopes (default 6). With a model provider, model entries acquire decoded assets.
  */
-export function createAssetCatalog(data: AssetCatalogDefinition, { loader, maxConcurrentLoads }: {
+export function createAssetCatalog(data: AssetCatalogDefinition, { loader, modelProvider, maxConcurrentLoads }: {
     loader: import("./assets.js").AssetLoader;
+    modelProvider?: CatalogModelProvider;
     maxConcurrentLoads?: number;
 }): {
     definition: Readonly<{
@@ -56,6 +57,16 @@ export type Acquisition = {
     ready: boolean;
     value: unknown;
     image: boolean;
+    releaseValue: (() => void) | null;
+};
+export type CatalogModelProvider = {
+    acquire: (path: string, options: {
+        signal: AbortSignal;
+        resolvedUrl: string;
+    }) => Promise<{
+        asset: unknown;
+        release: () => void;
+    }>;
 };
 export type AssetScope = {
     /**

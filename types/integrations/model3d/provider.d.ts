@@ -4,7 +4,7 @@
  * @param {Model3DProviderOptions} options Provider options.
  * @returns {Model3DProvider} Provider API.
  */
-export function createModel3DProvider({ THREE, GLTFLoader, loader, cloneSkeleton, projectBaseUrl, }?: Model3DProviderOptions): Model3DProvider;
+export function createModel3DProvider({ THREE, GLTFLoader, loader, cloneSkeleton, projectBaseUrl, maxResidentBytes, }?: Model3DProviderOptions): Model3DProvider;
 /**
  * Options for {@link createModel3DProvider}.
  */
@@ -29,6 +29,10 @@ export type Model3DProviderOptions = {
      * Base URL that relative asset paths resolve against.
      */
     projectBaseUrl?: string | URL | null | undefined;
+    /**
+     * Soft budget for resident models. Only idle scoped models can be evicted.
+     */
+    maxResidentBytes?: number | undefined;
 };
 /**
  * A loaded or registered model asset.
@@ -54,6 +58,18 @@ export type Model3DAssetEntry = {
      * True when the provider disposes the resources on `dispose()`.
      */
     owned: boolean;
+};
+export type Model3DLease = {
+    asset: Model3DAssetEntry;
+    release: () => boolean;
+};
+export type Model3DLoad = {
+    asset: Model3DAssetEntry | null;
+    roots: import("./helpers.js").Model3DObject[];
+    controller: AbortController;
+    request: Promise<any>;
+    refs: number;
+    pinned: boolean;
 };
 /**
  * Extra property `clipName` renames the clip when the file holds exactly one clip (default `null`).
@@ -403,6 +419,20 @@ export type Model3DProvider = {
      * Loads (and caches) a GLTF by relative path.
      */
     load: (url: string) => Promise<Model3DAssetEntry>;
+    /**
+     * Hold a model until the lease is released. A signal cancels the pending acquisition. A catalog may supply its resolved asset URL.
+     */
+    acquire: (url: string, options?: {
+        signal?: AbortSignal;
+        resolvedUrl?: string;
+    }) => Promise<Model3DLease>;
+    /**
+     * Estimated owned geometry and texture bytes and an idle eviction hook.
+     */
+    residency: {
+        readBytes: () => number;
+        trimIdle: (excessBytes: number) => void;
+    };
     /**
      * Loads and prepares animation clips from a file.
      */

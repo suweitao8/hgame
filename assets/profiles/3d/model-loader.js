@@ -41,16 +41,32 @@ export function createStarterModelLoader(renderer = null) {
     return gltfPending;
   }
 
-  function loadAsync(url) {
+  function runLoad(load) {
     if (closed) return Promise.reject(new Error('Starter model loader is disposed'));
     const request = getGltfLoader().then(loader => {
       if (closed) throw new Error('Starter model loader is disposed');
-      return loader.loadAsync(url);
+      return load(loader);
     });
     loads.add(request);
     const retire = () => loads.delete(request);
     request.then(retire, retire);
     return request;
+  }
+
+  function loadAsync(url) {
+    return runLoad(loader => loader.loadAsync(url));
+  }
+
+  function loadWithSignal(url, signal) {
+    return runLoad(async loader => {
+      signal.throwIfAborted();
+      const response = await fetch(url, { signal });
+      if (!response.ok) throw new Error('Model request failed: ' + url + ' (' + response.status + ')');
+      const data = await response.arrayBuffer();
+      signal.throwIfAborted();
+      const base = new URL(url, globalThis.document?.baseURI ?? globalThis.location?.href);
+      return loader.parseAsync(data, new URL('.', base).href);
+    });
   }
 
   function dispose() {
@@ -66,7 +82,7 @@ export function createStarterModelLoader(renderer = null) {
     return disposing;
   }
 
-  return { loadAsync, dispose };
+  return { loadAsync, loadWithSignal, dispose };
 }
 
 export async function installStarter3DFeatures(app, THREE, base, loader) {

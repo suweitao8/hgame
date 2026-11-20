@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add scene-scoped decoded model acquisition with shared cancellation and idle geometry and texture eviction. Connect model residency to the optional 3D render budget.
+
 - Add an opt-in Three render memory budget that trims idle resources and adjusts resolution or effects independently of GPU timing.
 
 - Add opt-in frame and pass diagnostics for Canvas2D, WebGL2D, and the Pixi profile, sharing the Three snapshot structure and reporting unavailable backend counters as null.

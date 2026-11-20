@@ -10,6 +10,7 @@ import { cleanupAll } from '../../internal/cleanup.js';
  * @property {import('./helpers.js').Model3DLoader | null} [loader=null] Loader instance.
  * @property {((source: import('./helpers.js').Model3DObject) => import('./helpers.js').Model3DObject) | null} [cloneSkeleton=null] Custom hierarchy cloner (e.g. SkeletonUtils.clone).
  * @property {string | URL | null} [projectBaseUrl=null] Base URL that relative asset paths resolve against.
+ * @property {number} [maxResidentBytes=67108864] Soft budget for resident models. Only idle scoped models can be evicted.
  */
 
 /**
@@ -21,6 +22,9 @@ import { cleanupAll } from '../../internal/cleanup.js';
  * @property {unknown} gltf Raw loader result, or null for registered assets.
  * @property {boolean} owned True when the provider disposes the resources on `dispose()`.
  */
+
+/** @typedef {{ asset: Model3DAssetEntry, release: () => boolean }} Model3DLease */
+/** @typedef {{ asset: Model3DAssetEntry | null, roots: import('./helpers.js').Model3DObject[], controller: AbortController, request: Promise<any>, refs: number, pinned: boolean }} Model3DLoad */
 
 /**
  * Options for {@link Model3DProvider.loadClips}.
@@ -161,6 +165,8 @@ import { cleanupAll } from '../../internal/cleanup.js';
  * @typedef {object} Model3DProvider
  * @property {import('./helpers.js').Model3DThree} THREE The Three.js namespace passed in.
  * @property {(url: string) => Promise<Model3DAssetEntry>} load Loads (and caches) a GLTF by relative path.
+ * @property {(url: string, options?: {signal?: AbortSignal, resolvedUrl?: string}) => Promise<Model3DLease>} acquire Hold a model until the lease is released. A signal cancels the pending acquisition. A catalog may supply its resolved asset URL.
+ * @property {{readBytes: () => number, trimIdle: (excessBytes: number) => void}} residency Estimated owned geometry and texture bytes and an idle eviction hook.
  * @property {(url: string, options?: Model3DLoadClipsOptions) => Promise<import('./helpers.js').Model3DClip[]>} loadClips Loads and prepares animation clips from a file.
  * @property {(urlOrKey: string, options: Model3DRegisterAssetOptions) => Model3DAssetEntry} registerAsset Registers an in-memory asset.
  * @property {(urlOrKey: string) => Promise<Model3DInstance>} instantiate Loads and clones an asset.
@@ -170,10 +176,13 @@ import { cleanupAll } from '../../internal/cleanup.js';
  * @property {(options?: import('./budget.js').AnimationBudgetAllocatorOptions) => import('./budget.js').AnimationBudgetAllocator} createBudgetAllocator Creates an animation budget allocator.
  * @property {() => Promise<boolean>} dispose Disposes owned resources; false when already disposed.
  */
-import { SCRATCH_WORLD_MAT, DEFAULT_ROOT_BONE_NAMES, stripNodeNamespace, resolveRelativeAssetPath, cloneObject3DWithSkins, computeRootBounds, inspectModel3D, prepareAnimationClips, disposeObjectResources, loadWithLoader } from './helpers.js';
+import { SCRATCH_WORLD_MAT, DEFAULT_ROOT_BONE_NAMES, stripNodeNamespace, resolveRelativeAssetPath, cloneObject3DWithSkins, computeRootBounds, inspectModel3D, prepareAnimationClips, collectObjectResources, disposeObjectResources, loadWithLoader } from './helpers.js';
+import { estimateModelBytes, waitForModel } from './residency.js';
 import { createAnimationBudgetAllocator } from './budget.js';
 import { createInstancedCrowd3D } from './crowd.js';
 import { Component } from '../../core/component.js';
+
+const MAX_IDLE_MODELS = 64;
 
 /**
  * Creates a clean-room GLTF / skinned-model & animation provider compatible with
@@ -187,6 +196,7 @@ export function createModel3DProvider({
   loader = null,
   cloneSkeleton = null,
   projectBaseUrl = null,
+  maxResidentBytes = 64 * 1024 * 1024,
 } = {}) {
   if (!THREE) {
     throw new TypeError('createModel3DProvider requires THREE');
@@ -194,13 +204,24 @@ export function createModel3DProvider({
   if (cloneSkeleton !== null && typeof cloneSkeleton !== 'function') {
     throw new TypeError('cloneSkeleton must be a function when provided');
   }
+  if (!Number.isSafeInteger(maxResidentBytes) || maxResidentBytes < 0) {
+    throw new RangeError('Model3D maxResidentBytes must be a nonnegative integer');
+  }
 
   let activeLoader = loader;
   const cache = new Map();
   const clipCache = new Map();
+  /** @type {Map<string, Model3DLoad>} */
   const gltfCache = new Map();
+  /** @type {Map<string, Model3DLoad>} */
+  const idle = new Map();
   const ownedRoots = new Set();
+  const borrowedRoots = new Set();
   const pendingLoads = new Set();
+  const released = new WeakSet();
+  const lifetime = new AbortController();
+  const disposalErrors = [];
+  let residentBytes = null;
   let disposed = false;
 
   function ensureActive() {
@@ -221,19 +242,133 @@ export function createModel3DProvider({
     return cloneSkeleton ? cloneSkeleton(source) : cloneObject3DWithSkins(THREE, source);
   }
 
-  // A loaded GLTF can supply both scene and clips. Keep one parsed result for
-  // this provider's lifetime so sequential consumers also share decoding.
-  function loadSharedGltf(key, resolved) {
-    let request = gltfCache.get(key);
-    if (!request) {
-      request = Promise.resolve().then(() => {
-        ensureActive();
-        return loadWithLoader(getLoader(), resolved);
-      });
-      gltfCache.set(key, request);
-      request.catch(() => { if (gltfCache.get(key) === request) gltfCache.delete(key); });
+  function* residentRoots() {
+    yield* ownedRoots;
+    for (const { roots } of gltfCache.values()) yield* roots;
+  }
+
+  function readBytes() {
+    residentBytes ??= estimateModelBytes(collectObjectResources(residentRoots()).keys());
+    return residentBytes;
+  }
+
+  function releaseRoots(roots) {
+    if (!roots.length) return;
+    residentBytes = null;
+    disposeObjectResources(roots, released, collectObjectResources([...residentRoots(), ...borrowedRoots]));
+  }
+
+  function trimIdle(excessBytes) {
+    if (disposed || idle.size === 0 || !(excessBytes > 0)) return;
+    const targetBytes = Math.max(0, readBytes() - excessBytes);
+    while (idle.size && (maxResidentBytes === 0 || idle.size > MAX_IDLE_MODELS || readBytes() > targetBytes)) {
+      const [key, record] = idle.entries().next().value;
+      idle.delete(key);
+      gltfCache.delete(key);
+      releaseRoots(record.roots);
     }
-    return request;
+  }
+
+  function enforceBudget() {
+    if (!idle.size) return;
+    const excess = readBytes() - maxResidentBytes;
+    if (excess > 0 || maxResidentBytes === 0 || idle.size > MAX_IDLE_MODELS) trimIdle(Math.max(1, excess));
+  }
+
+  function readGltf(key, resolved, pinned) {
+    let record = gltfCache.get(key);
+    if (record) {
+      if (pinned) record.pinned = true;
+      idle.delete(key);
+      return record;
+    }
+
+    const controller = new AbortController();
+    record = { asset: null, roots: [], controller, request: null, refs: 0, pinned };
+    const { signal } = controller;
+    const request = Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      ensureActive();
+      return loadWithLoader(getLoader(), resolved, signal);
+    }).then(gltf => {
+      const roots = Array.isArray(gltf?.scenes) ? gltf.scenes.filter(Boolean) : [];
+      if (gltf?.scene && !roots.includes(gltf.scene)) roots.push(gltf.scene);
+      if (signal.aborted) {
+        try { releaseRoots(roots); }
+        catch (error) {
+          if (!disposed) throw error;
+          disposalErrors.push(error);
+        }
+        signal.throwIfAborted();
+      }
+      for (const resource of collectObjectResources(roots).keys()) released.delete(resource);
+      record.roots = roots;
+      if (gltf?.scene) record.asset = entryFromGltf(key, gltf);
+      residentBytes = null;
+      return gltf;
+    });
+    record.request = request;
+    gltfCache.set(key, record);
+    pendingLoads.add(request);
+    request.then(() => pendingLoads.delete(request), () => {
+      pendingLoads.delete(request);
+      if (gltfCache.get(key) === record) gltfCache.delete(key);
+    });
+    return record;
+  }
+
+  function entryFromGltf(key, gltf) {
+    if (!gltf?.scene) throw new Error('Loaded GLTF asset contains no scene: ' + key);
+    return { key, scene: gltf.scene, animations: Array.isArray(gltf.animations) ? gltf.animations : [], gltf, owned: true };
+  }
+
+  async function acquire(url, { signal, resolvedUrl } = {}) {
+    ensureActive();
+    signal?.throwIfAborted();
+    let { key, resolved } = resolveRelativeAssetPath(url, projectBaseUrl);
+    if (resolvedUrl !== undefined) {
+      const target = new URL(resolvedUrl);
+      if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) {
+        throw new TypeError('Expected an HTTP model asset URL');
+      }
+      const base = projectBaseUrl ?? globalThis.document?.baseURI ?? globalThis.location?.href ?? 'http://127.0.0.1/';
+      if (target.href !== new URL(key, base).href) key = target.href;
+      resolved = target.href;
+    }
+    const pinned = cache.get(key);
+    if (pinned) {
+      const asset = await waitForModel(pinned, [signal, lifetime.signal]);
+      ensureActive();
+      signal?.throwIfAborted();
+      return { asset, release: () => false };
+    }
+    const record = readGltf(key, resolved, false);
+    record.refs++;
+    let held = true;
+    function release() {
+      if (!held) return false;
+      held = false;
+      if (--record.refs > 0 || record.pinned || gltfCache.get(key) !== record) return true;
+      if (!record.asset) {
+        gltfCache.delete(key);
+        record.controller.abort(new DOMException('Model acquisition released', 'AbortError'));
+      } else {
+        idle.set(key, record);
+        enforceBudget();
+      }
+      return true;
+    }
+    try {
+      await waitForModel(record.request, [signal, record.controller.signal]);
+      ensureActive();
+      signal?.throwIfAborted();
+      if (!record.asset) throw new Error('Loaded GLTF asset contains no scene: ' + key);
+      enforceBudget();
+      return { asset: record.asset, release };
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
 
   async function load(url) {
@@ -242,21 +377,18 @@ export function createModel3DProvider({
     if (!cache.has(key)) {
       const request = Promise.resolve().then(async () => {
         ensureActive();
-        const gltf = await loadSharedGltf(key, resolved);
-        if (!gltf || !gltf.scene) {
-          gltfCache.delete(key);
+        const record = readGltf(key, resolved, true);
+        await record.request;
+        if (!record.asset) {
+          if (gltfCache.get(key) === record) {
+            gltfCache.delete(key);
+            releaseRoots(record.roots);
+          }
           throw new Error('Loaded GLTF asset contains no scene: ' + key);
         }
-        // A replaced key can still have live clones using its original resources.
-        ownedRoots.add(gltf.scene);
         ensureActive();
-        return {
-          key,
-          scene: gltf.scene,
-          animations: Array.isArray(gltf.animations) ? gltf.animations : [],
-          gltf,
-          owned: true,
-        };
+        enforceBudget();
+        return record.asset;
       });
       cache.set(key, request);
       pendingLoads.add(request);
@@ -282,11 +414,9 @@ export function createModel3DProvider({
     if (!clipCache.has(key)) {
       const request = Promise.resolve().then(async () => {
         ensureActive();
-        const gltf = await loadSharedGltf(key, resolved);
-        // Animation-only files can still allocate meshes, materials and textures.
-        // Track the root even if disposal began while the loader was in flight.
-        if (gltf?.scene) ownedRoots.add(gltf.scene);
+        const gltf = await readGltf(key, resolved, true).request;
         ensureActive();
+        enforceBudget();
         return Array.isArray(gltf?.animations) ? gltf.animations : [];
       });
       clipCache.set(key, request);
@@ -323,8 +453,16 @@ export function createModel3DProvider({
       gltf: null,
       owned: Boolean(owned),
     };
-    if (entry.owned) ownedRoots.add(scene);
+    if (entry.owned) {
+      ownedRoots.add(scene);
+      borrowedRoots.delete(scene);
+      for (const resource of collectObjectResources([scene]).keys()) released.delete(resource);
+    } else {
+      borrowedRoots.add(scene);
+    }
+    residentBytes = null;
     cache.set(key, Promise.resolve(entry));
+    enforceBudget();
     return entry;
   }
 
@@ -1032,20 +1170,21 @@ export function createModel3DProvider({
     disposed = true;
     cache.clear();
     clipCache.clear();
+    const roots = [...residentRoots()];
+    const loads = [...gltfCache.values()];
     gltfCache.clear();
-    const released = new WeakSet();
-    const errors = [];
-    const releaseReady = () => {
-      const roots = [...ownedRoots];
-      ownedRoots.clear();
-      try { disposeObjectResources(roots, released); }
-      catch (error) { errors.push(error); }
-    };
-    releaseReady();
+    idle.clear();
+    ownedRoots.clear();
+    borrowedRoots.clear();
+    residentBytes = 0;
+    const reason = new Error('Model3D provider has been disposed');
+    lifetime.abort(reason);
+    for (const { controller } of loads) controller.abort(reason);
+    try { disposeObjectResources(roots, released); }
+    catch (error) { disposalErrors.push(error); }
     await Promise.allSettled(pendingLoads);
-    releaseReady();
-    if (errors.length === 1) throw errors[0];
-    if (errors.length > 1) throw new AggregateError(errors, 'Model3D disposal failed');
+    if (disposalErrors.length === 1) throw disposalErrors[0];
+    if (disposalErrors.length > 1) throw new AggregateError(disposalErrors, 'Model3D disposal failed');
     return true;
   }
 
@@ -1062,6 +1201,8 @@ export function createModel3DProvider({
   return {
     THREE,
     load,
+    acquire,
+    residency: { readBytes, trimIdle },
     loadClips,
     registerAsset,
     instantiate,

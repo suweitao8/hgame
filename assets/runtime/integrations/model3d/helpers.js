@@ -90,6 +90,7 @@ import { cleanupAll } from '../../internal/cleanup.js';
 /**
  * Minimal GLTF-loader contract: either `loadAsync(url)` or callback-style `load(...)`.
  * @typedef {object} Model3DLoader
+ * @property {(url: string, signal: AbortSignal) => Promise<unknown>} [loadWithSignal] Loader with cancellation support.
  * @property {(url: string) => Promise<unknown>} [loadAsync] Promise loader.
  * @property {(url: string, onLoad: (result: unknown) => void, onProgress?: ((event: unknown) => void) | undefined, onError?: (error: unknown) => void) => void} [load] Callback loader.
  */
@@ -415,27 +416,25 @@ export function prepareAnimationClips(THREE, clips, {
 }
 
 /**
- * Disposes each owned geometry, material, texture and skeleton once across all roots.
- * @param {Iterable<Model3DObject>} roots Owned source roots.
- * @param {WeakSet<object>} [released] Shared across batches when outstanding models are still loading.
- * @returns {void}
+ * Collect source geometry, materials, textures and skeletons once per resource.
+ * @param {Iterable<Model3DObject>} roots
  */
-export function disposeObjectResources(roots, released = new WeakSet()) {
-  const actions = [];
+export function collectObjectResources(roots) {
+  /** @type {Map<object, () => void>} */
+  const resources = new Map();
   const collect = (resource, dispose = null) => {
-    if (typeof resource?.dispose !== 'function' || released.has(resource)) return;
-    released.add(resource);
-    actions.push(dispose ?? (() => resource.dispose()));
+    if (typeof resource?.dispose !== 'function' || resources.has(resource)) return;
+    resources.set(resource, dispose ?? (() => resource.dispose()));
   };
   const collectMaterial = material => {
-    if (!material || released.has(material)) return;
+    if (!material || resources.has(material)) return;
     for (const value of Object.values(material)) {
       if (value?.isTexture) collect(value);
     }
     collect(material);
   };
   const collectSkeleton = skeleton => {
-    if (!skeleton || released.has(skeleton)) return;
+    if (!skeleton || resources.has(skeleton)) return;
     const texture = skeleton.boneTexture;
     if (texture?.isTexture) {
       // Three's Skeleton.dispose() normally disposes this texture itself. Route it
@@ -460,6 +459,17 @@ export function disposeObjectResources(roots, released = new WeakSet()) {
       }
     });
   }
+  return resources;
+}
+
+/** @param {Iterable<Model3DObject>} roots @param {WeakSet<object>} released @param {{has(resource: object): boolean}} [retained] */
+export function disposeObjectResources(roots, released = new WeakSet(), retained) {
+  const actions = [];
+  for (const [resource, dispose] of collectObjectResources(roots)) {
+    if (released.has(resource) || retained?.has(resource)) continue;
+    released.add(resource);
+    actions.push(dispose);
+  }
   cleanupAll(actions, 'Model3D resource disposal failed');
 }
 
@@ -467,9 +477,13 @@ export function disposeObjectResources(roots, released = new WeakSet()) {
  * Loads a URL with a promise- or callback-style loader.
  * @param {Model3DLoader} loader Loader.
  * @param {string} resolvedUrl URL to load.
+ * @param {AbortSignal} [signal] Shared request cancellation.
  * @returns {Promise<unknown>} Loader result.
  */
-export function loadWithLoader(loader, resolvedUrl) {
+export function loadWithLoader(loader, resolvedUrl, signal) {
+  if (signal && typeof loader.loadWithSignal === 'function') {
+    return Promise.resolve(loader.loadWithSignal(resolvedUrl, signal));
+  }
   if (typeof loader.loadAsync === 'function') {
     return Promise.resolve(loader.loadAsync(resolvedUrl));
   }
