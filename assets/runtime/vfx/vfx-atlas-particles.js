@@ -16,7 +16,7 @@ export const VFX_RENDER_MODE = Object.freeze({
 
 const LUT_HALF = 128;
 const LUT_WIDTH = 256;
-const LUT_ROWS = 256;
+const LUT_ROWS = 1024;
 const SIZE_CURVE_MAX = 8.0;
 
 /**
@@ -137,8 +137,8 @@ function buildCurveKey(colorCurve, sizeCurve) {
 }
 
 /**
- * Compiles color/size curves into a zero-GC 64x256 RGBA8 lookup table + DataTexture.
- * Left 32 texels encode RGBA colorCurve; right 32 texels encode 16-bit sizeCurve [0..8].
+ * Compiles color/size curves into a zero-GC 256x1024 RGBA8 lookup table + DataTexture.
+ * Left 128 texels encode RGBA colorCurve; right 128 texels encode 16-bit sizeCurve [0..8].
  */
 export function createCurveLutTable(THREE = /** @type {object | null} */ (null)) {
   const bytes = new Uint8Array(LUT_WIDTH * LUT_ROWS * 4);
@@ -549,7 +549,7 @@ vec3 unpackRgb24(float v) {
 }
 
 float sampleSizeCurve(float row, float t) {
-  float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
   float s = clamp(t, 0.0, 1.0) * 127.0;
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
@@ -725,7 +725,7 @@ float linearizeDepth(float zNdc) {
 }
 
 vec4 sampleColorCurve(float row, float t) {
-  float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
   float s = clamp(t, 0.0, 1.0) * 127.0;
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
@@ -842,7 +842,7 @@ vec3 unpackRgb24(float v) {
 }
 
 float sampleSizeCurve(float row, float t) {
-  float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
   float s = clamp(t, 0.0, 1.0) * 127.0;
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
@@ -939,7 +939,7 @@ in vec3 vTint;
 out vec4 fragColor;
 
 vec4 sampleColorCurve(float row, float t) {
-  float rowV = (clamp(row, 0.0, 255.0) + 0.5) / 256.0;
+  float rowV = (clamp(row, 0.0, 1023.0) + 0.5) / 1024.0;
   float s = clamp(t, 0.0, 1.0) * 127.0;
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);

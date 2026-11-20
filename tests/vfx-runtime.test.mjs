@@ -1010,6 +1010,16 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
     projHandle.setTransform(2.0, 1.4, 0, 0);
     vfx.update(0.05);
     assert.equal(vfx.atlasParticles.getStats().normalTotal, 20, '2m displacement at rateOverDistance=10 emits 20 wake particles');
+
+    // 15. Curve LUT supports up to 1024 unique curve rows without overwriting past 256
+    const lutBig = createCurveLutTable(THREE);
+    const seenRows = [];
+    for (let k = 1; k <= 300; k++) {
+      seenRows.push(lutBig.compile([[0, [k / 300, 0.5, 0.2, 1]], [1, [0, 0, 0, 0]]], [[0, 1], [1, k / 100]]));
+    }
+    assert.equal(seenRows[299], 300, '300th distinct curve receives unique row 300 (>256)');
+    assert.ok(Math.abs(lutBig.sampleSize(300, 1.0) - 3.0) < 0.02, 'row 300 samples exact high-row sizeCurve');
+    lutBig.dispose();
     dummyTex.dispose();
   } finally {
     vfx.dispose();
