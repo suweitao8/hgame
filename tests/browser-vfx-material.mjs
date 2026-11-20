@@ -151,10 +151,10 @@ try {
       kind: 'mesh', mesh: 'quad', size: 2.5, life: 1,
       colorCurve: constantColor([0, 0, 1, 1]), bursts: [{ time: 0, count: 1 }],
     };
-    function playCase(id, layers) {
+    function playCase(id, layers, steps = [0.01]) {
       vfx.reset();
       vfx.playEffect({ schemaVersion: 1, id, duration: 1, layers });
-      vfx.update(0.01);
+      for (const step of steps) vfx.update(step);
       return [capture(23), capture(41)];
     }
     result.atlasDepthWrite = playCase('atlas_write', [nearParticle, farMesh]);
@@ -179,7 +179,61 @@ try {
     scene.remove(blocker);
     blocker.geometry.dispose();
     blocker.material.dispose();
+
+    const grid = document.createElement('canvas');
+    grid.width = grid.height = 8;
+    const framePaint = grid.getContext('2d');
+    framePaint.fillStyle = '#f0f';
+    framePaint.fillRect(0, 0, 4, 8);
+    for (const [i, color] of ['#f00', '#0f0', '#00f', '#fff'].entries()) {
+      framePaint.fillStyle = color;
+      framePaint.fillRect(4 + (i % 2) * 2, Math.floor(i / 2) * 4, 2, 4);
+    }
+    const gridTexture = new THREE.CanvasTexture(grid);
+    gridTexture.magFilter = THREE.NearestFilter;
+    vfx.setAtlas(gridTexture, { grid: [0.5, 0, 1, 1] });
+    const sheetCases = [
+      [{ blend: true }, 0],
+      [{ blend: true }, 2],
+      [{ blend: false }, 2],
+      [{ blend: false }, 4],
+      [{ rowMode: 'custom', rowIndex: 1 }, 0],
+      [{ rowMode: 'custom', rowIndex: 1 }, 4],
+      [{ cycles: 2 }, 8],
+    ];
+    result.flipbook = {};
+    for (const kind of ['mesh', 'particle']) {
+      result.flipbook[kind] = sheetCases.map(([options, steps], i) => playCase(kind + '_grid_' + i, [{
+        kind, mesh: 'quad', size: 2.5, life: 1, colorCurve: constantColor([1, 1, 1, 1]),
+        flipbook: { region: 'grid', cols: 2, rows: 2, ...options }, bursts: [{ time: 0, count: 1 }],
+      }], steps ? Array(steps).fill(0.0625) : [0])[0]);
+    }
+    const embeddedGrid = document.createElement('canvas');
+    embeddedGrid.width = embeddedGrid.height = 4;
+    const embeddedPaint = embeddedGrid.getContext('2d');
+    for (const [i, color] of ['#f00', '#0f0', '#00f', '#fff'].entries()) {
+      embeddedPaint.fillStyle = color;
+      embeddedPaint.fillRect((i % 2) * 2, Math.floor(i / 2) * 2, 2, 2);
+    }
+    const embeddedTexture = new THREE.CanvasTexture(embeddedGrid);
+    embeddedTexture.flipY = false;
+    embeddedTexture.magFilter = THREE.NearestFilter;
+    const embeddedGeometry = new THREE.PlaneGeometry(1, 1);
+    const embeddedUv = embeddedGeometry.getAttribute('uv');
+    for (let i = 0; i < embeddedUv.count; i++) embeddedUv.setY(i, 1 - embeddedUv.getY(i));
+    const embeddedMaterial = new THREE.MeshBasicMaterial({ map: embeddedTexture });
+    vfx.registerMesh('embedded_sheet', new THREE.Mesh(embeddedGeometry, embeddedMaterial));
+    playCase('embedded_flipbook', [{
+      kind: 'mesh', mesh: 'embedded_sheet', size: 2.5, life: 1,
+      colorCurve: constantColor([1, 1, 1, 1]), bursts: [{ time: 0, count: 1 }],
+      flipbook: { region: 'unregistered', cols: 2, rows: 1, blend: false },
+    }], [0]);
+    result.embeddedFlipbook = [capture(32, 40), capture(32, 24)];
     vfx.dispose();
+    embeddedGeometry.dispose();
+    embeddedMaterial.dispose();
+    embeddedTexture.dispose();
+    gridTexture.dispose();
     sheetTexture.dispose();
     target.dispose();
     renderer.dispose();
@@ -217,6 +271,12 @@ try {
   near(captures.meshDepthComparison[0], [0, 0, 255], 'mesh recipe forwards the depth comparison');
   near(captures.materialSoftDepth[0], [102, 179, 26], 'soft particles can opt out of scene-depth fade when they pass the depth test');
   near(captures.materialSoftDepth[1], [0, 255, 0], 'enabled soft particles retain depth fade');
+  const expectedFrames = [[255, 0, 0], [128, 128, 0], [255, 0, 0], [0, 255, 0], [0, 0, 255], [128, 128, 255], [255, 0, 0]];
+  for (const kind of ['mesh', 'particle']) {
+    captures.flipbook[kind].forEach((pixel, i) => near(pixel, expectedFrames[i], kind + ' texture-sheet frame ' + i));
+  }
+  near(captures.embeddedFlipbook[0], [255, 0, 0], 'embedded glTF texture keeps the top of the frame');
+  near(captures.embeddedFlipbook[1], [0, 0, 255], 'embedded glTF texture keeps the bottom of the frame');
 } finally {
   await browser.close();
 }

@@ -147,6 +147,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         registerMesh: (id: string, geometryOrObject3D: object) => boolean;
         getSurfaceSamples: (name: any) => any;
         spawn: (opts?: object) => number;
+        readSlotMotion: (slotIdx: any, position: any, velocity: any) => void;
         updateSlot: (slotIdx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
         setWind: (wx?: number, wy?: number, wz?: number) => void;
         setEffectOffset: (slotIdx: any, x?: number, y?: number, z?: number) => void;

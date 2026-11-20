@@ -6,6 +6,7 @@ import {
   unpackRgb24Into,
 } from './vfx-core.js';
 import { applyVfxDepthState, DEFAULT_VFX_DEPTH_TEST, getVfxDepthTestIndex, VFX_DEPTH_TESTS } from './vfx-depth-state.js';
+import { VFX_FLIPBOOK_GLSL } from './vfx-flipbook.js';
 
 export const VFX_RENDER_MODE = Object.freeze({
   BILLBOARD: 0,
@@ -949,12 +950,10 @@ vec4 sampleColorCurve(float row, float t) {
   return mix(c0, c1, f);
 }
 
-vec4 sampleAtlasFrame(float frameIdx, vec2 localUv) {
-  float cols = max(1.0, floor(vFlipbook.x + 0.5));
-  float rows = max(1.0, floor(vFlipbook.y + 0.5));
-  float col = mod(frameIdx, cols);
-  float row = floor(frameIdx / cols);
-  vec2 cellUv = vec2((col + localUv.x) / cols, (row + localUv.y) / rows);
+${VFX_FLIPBOOK_GLSL}
+
+vec4 sampleAtlasFrame(float frameIdx, vec2 localUv, vec2 grid) {
+  vec2 cellUv = vfxFlipbookFrameUv(frameIdx, localUv, grid);
   vec2 mapped = vec2(
     mix(vUvRect.x, vUvRect.z, cellUv.x),
     mix(vUvRect.y, vUvRect.w, cellUv.y)
@@ -979,17 +978,13 @@ void main() {
   vec4 texCol = vec4(1.0);
   if (uHasAtlas > 0.5 && vFadesAndTexture.z < 0.5) {
     if (vFlipbook.x > 1.5 || vFlipbook.y > 1.5) {
-      float total = max(1.0, floor(vFlipbook.x + 0.5) * floor(vFlipbook.y + 0.5));
-      float cycles = max(0.01, vFlipbook.z);
-      float framePos = clamp(fract(vLifeRatio * cycles), 0.0, 0.9999) * total;
-      if (vLifeRatio * cycles >= 1.0 && cycles <= 1.001) {
-        framePos = total - 0.001;
-      }
+      vec2 grid = vfxFlipbookGrid(vFlipbook.xy);
+      float framePos = vfxFlipbookFramePosition(vLifeRatio, grid, vFlipbook.z);
       float f0 = floor(framePos);
-      texCol = sampleAtlasFrame(f0, topDownUv);
+      texCol = sampleAtlasFrame(f0, topDownUv, grid);
       if (vFlipbook.w > 0.5) {
-        float f1 = min(total - 1.0, f0 + 1.0);
-        vec4 nextCol = sampleAtlasFrame(f1, topDownUv);
+        float f1 = min(grid.x * grid.y - 1.0, f0 + 1.0);
+        vec4 nextCol = sampleAtlasFrame(f1, topDownUv, grid);
         texCol = mix(texCol, nextCol, fract(framePos));
       }
     } else {
@@ -1087,12 +1082,10 @@ vec4 sampleColorCurve(float row, float t) {
   return mix(c0, c1, f);
 }
 
-vec4 sampleAtlasFrame(float frameIdx, vec2 localUv) {
-  float cols = max(1.0, floor(vFlipbook.x + 0.5));
-  float rows = max(1.0, floor(vFlipbook.y + 0.5));
-  float col = mod(frameIdx, cols);
-  float row = floor(frameIdx / cols);
-  vec2 cellUv = vec2((col + localUv.x) / cols, (row + localUv.y) / rows);
+${VFX_FLIPBOOK_GLSL}
+
+vec4 sampleAtlasFrame(float frameIdx, vec2 localUv, vec2 grid) {
+  vec2 cellUv = vfxFlipbookFrameUv(frameIdx, localUv, grid);
   vec2 mapped = vec2(
     mix(vUvRect.x, vUvRect.z, cellUv.x),
     mix(vUvRect.y, vUvRect.w, cellUv.y)
@@ -1116,14 +1109,13 @@ void main() {
     vec2 topDownUv = vec2(vUv.x, 1.0 - vUv.y);
     vec4 texCol;
     if (vFlipbook.x > 1.5 || vFlipbook.y > 1.5) {
-      float total = max(1.0, floor(vFlipbook.x + 0.5) * floor(vFlipbook.y + 0.5));
-      float cycles = max(0.01, vFlipbook.z);
-      float framePos = clamp(fract(vLifeRatio * cycles), 0.0, 0.9999) * total;
+      vec2 grid = vfxFlipbookGrid(vFlipbook.xy);
+      float framePos = vfxFlipbookFramePosition(vLifeRatio, grid, vFlipbook.z);
       float f0 = floor(framePos);
-      texCol = sampleAtlasFrame(f0, topDownUv);
+      texCol = sampleAtlasFrame(f0, topDownUv, grid);
       if (vFlipbook.w > 0.5) {
-        float f1 = min(total - 1.0, f0 + 1.0);
-        texCol = mix(texCol, sampleAtlasFrame(f1, topDownUv), fract(framePos));
+        float f1 = min(grid.x * grid.y - 1.0, f0 + 1.0);
+        texCol = mix(texCol, sampleAtlasFrame(f1, topDownUv, grid), fract(framePos));
       }
     } else {
       vec2 mapped = vec2(
@@ -1355,12 +1347,10 @@ vec4 sampleColorCurve(float row, float t) {
   return mix(c0, c1, f);
 }
 
-vec4 sampleAtlasFrame(float frameIdx, vec2 localUv) {
-  float cols = max(1.0, floor(vFlipbook.x + 0.5));
-  float rows = max(1.0, floor(vFlipbook.y + 0.5));
-  float col = mod(frameIdx, cols);
-  float row = floor(frameIdx / cols);
-  vec2 cellUv = vec2((col + localUv.x) / cols, (row + localUv.y) / rows);
+${VFX_FLIPBOOK_GLSL}
+
+vec4 sampleAtlasFrame(float frameIdx, vec2 localUv, vec2 grid) {
+  vec2 cellUv = vfxFlipbookFrameUv(frameIdx, localUv, grid);
   vec2 mapped = vec2(mix(vUvRect.x, vUvRect.z, cellUv.x), mix(vUvRect.y, vUvRect.w, cellUv.y));
   return texture(uAtlasTex, mapped);
 }
@@ -1373,14 +1363,13 @@ void main() {
   if (uHasAtlas > 0.5) {
     vec2 topDownUv = vec2(vUv.x, 1.0 - vUv.y);
     if (vFlipbook.x > 1.5 || vFlipbook.y > 1.5) {
-      float total = max(1.0, floor(vFlipbook.x + 0.5) * floor(vFlipbook.y + 0.5));
-      float cycles = max(0.01, vFlipbook.z);
-      float framePos = clamp(fract(vLifeRatio * cycles), 0.0, 0.9999) * total;
+      vec2 grid = vfxFlipbookGrid(vFlipbook.xy);
+      float framePos = vfxFlipbookFramePosition(vLifeRatio, grid, vFlipbook.z);
       float f0 = floor(framePos);
-      texCol = sampleAtlasFrame(f0, topDownUv);
+      texCol = sampleAtlasFrame(f0, topDownUv, grid);
       if (vFlipbook.w > 0.5) {
-        float f1 = min(total - 1.0, f0 + 1.0);
-        texCol = mix(texCol, sampleAtlasFrame(f1, topDownUv), fract(framePos));
+        float f1 = min(grid.x * grid.y - 1.0, f0 + 1.0);
+        texCol = mix(texCol, sampleAtlasFrame(f1, topDownUv, grid), fract(framePos));
       }
     } else {
       vec2 mapped = vec2(mix(vUvRect.x, vUvRect.z, topDownUv.x), mix(vUvRect.y, vUvRect.w, topDownUv.y));

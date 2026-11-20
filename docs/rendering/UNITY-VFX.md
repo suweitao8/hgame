@@ -20,6 +20,28 @@ node scripts/import-unity-vfx.mjs --unity-root <unity-assets> --prefab <effect.p
 
 The Three atlas pool creates one instanced batch per blend, surface and depth state on first use. Each batch inherits the corresponding blend pool's ring capacity, and equal states share it. Idle batches keep their allocations for reuse and submit zero instances. `renderStateTotal` reports emissions into those batches. To move or kill a returned slot directly, pass the same render-state options to `updateSlot` or `killSlot`. Canvas2D and native WebGL2 2D continue to composite in their flat draw order.
 
-`node tests/browser-vfx-material.mjs --chrome <chromium-path>` checks pixel values for blend, cutout, and depth behavior. `vfx:score` reports feature coverage for the importer and runtime. Visual equivalence for a particular effect needs the original shader inputs and matching render conditions.
+`node tests/browser-vfx-material.mjs --chrome <chromium-path>` checks pixel values for blending, cutout, depth, and texture-sheet frames. `vfx:score` reports feature coverage for the importer and runtime. Visual equivalence for a particular effect needs the original shader inputs and matching render conditions.
 
-Broader Unity material alignment includes mesh texture-sheet animation, texture slot and color-space conventions, and a documented mapping for commonly used Shader Graph inputs.
+## Texture Sheet Animation
+
+Unity Grid mode maps to `flipbook` on mesh and billboard layers. Frames run left to right, then top to bottom. `cols` and `rows` set the grid size, and `cycles` controls the number of repetitions over the particle lifetime. In a single row, the importer emits a fixed `rowIndex` or `rowMode: "random"`. Mesh Index imports use row zero for the converted renderer's single mesh. Modern URP `_FlipbookBlending` takes priority over legacy `_FlipbookMode`.
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "mesh_blast",
+  "duration": 0.6,
+  "layers": [{
+    "kind": "mesh",
+    "mesh": "quad",
+    "size": 1.2,
+    "life": 0.6,
+    "flipbook": { "region": "blast", "cols": 4, "rows": 2, "rowIndex": 1, "blend": true },
+    "bursts": [{ "time": 0, "count": 1 }]
+  }]
+}
+```
+
+Register `blast` with `vfx.setAtlas(texture, regions)`. A mesh with an unresolved atlas region can use its own registered texture with the mesh's UV orientation. The GPU paths blend adjacent frames when `blend` is enabled. Prewarmed mesh particles advance motion and frame age together, using up to 32 motion steps per particle at spawn. The importer currently maps linear lifetime playback. Unity's Speed and FPS modes, start-frame offsets, custom timing curves, sprite lists, and additional UV channels need further mapping. [Unity Texture Sheet Animation](https://docs.unity.com/en-us/engine/6000.6/manual/visual-effects/particle-systems/particle-system-modules/part-sys-tex-sheet-anim-module)
+
+Broader Unity material alignment includes texture slot and color-space conventions and a documented mapping for commonly used Shader Graph inputs.

@@ -545,6 +545,36 @@ test('Three particle depth state shares atlas batches and resets pooled mesh sta
   mesh.dispose();
 });
 
+test('Three mesh recipes use texture-sheet rows and clear recycled sheet state', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxAtlasParticles: 4, maxMeshVfx: 1 });
+  const atlas = new THREE.Texture();
+  vfx.setAtlas(atlas, { sheet: [0.5, 0, 1, 1] });
+  vfx.playEffect({
+    schemaVersion: 1, id: 'sheet_mesh', duration: 1,
+    layers: [{
+      kind: 'mesh', mesh: 'quad', life: 1, rate: 1, prewarm: true,
+      flipbook: { region: 'sheet', cols: 2, rows: 2, rowMode: 'custom', rowIndex: 1, cycles: 2, blend: true },
+    }],
+  });
+  const uniforms = scene.children.find(child => child.material?.uniforms.uOpaque).material.uniforms;
+  assert.equal(uniforms.uTex.value, atlas);
+  assert.deepEqual(uniforms.uTexRect.value.toArray(), [0.5, 0.5, 1, 1]);
+  assert.deepEqual(uniforms.uFlipbook.value.toArray(), [2, 1, 2, 1]);
+  assert.ok(uniforms.uLifeRatio.value > 0, 'prewarmed mesh starts at the matching texture-sheet age');
+  vfx.meshVfx.spawn({ mesh: 'quad', x: 1, vx: 10, spinZ: 3, duration: 1, initialAge: 0.4 });
+  const mesh = scene.children.find(child => child.material?.uniforms.uOpaque);
+  assert.ok(Math.abs(mesh.position.x - 5) < 1e-6, 'initial age advances the mesh position');
+  assert.ok(Math.abs(mesh.rotation.z - 1.2) < 1e-6, 'initial age advances mesh rotation');
+  vfx.reset();
+  vfx.meshVfx.spawn({ mesh: 'quad', texture: atlas, duration: 1 });
+  assert.deepEqual(uniforms.uFlipbook.value.toArray(), [1, 1, 1, 0]);
+  assert.equal(uniforms.uLifeRatio.value, 0);
+  assert.equal(uniforms.uAtlasUv.value, 0, 'ordinary mesh textures keep their UV convention');
+  vfx.dispose();
+  atlas.dispose();
+});
+
 test('createVfxSystem.playEffect orchestrates composite one-shot explosion and looping shield recipes', () => {
   const scene = new THREE.Scene();
   const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 64, maxAtlasParticles: 256, maxMeshVfx: 8 });
@@ -1584,7 +1614,8 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
       const { recipe: emptyBaseRecipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'empty' });
       assert.equal(emptyBaseRecipe.layers[0].sprite, undefined, 'a cleared URP base map keeps the default texture');
       fs.writeFileSync(matPath, emptyBase.replace('_Surface: 1', '_Surface: 0').replace('_ZWrite: 1', '_ZWrite: 0').replace('_ZTest: 5', '_ZTest: 0'));
-      fs.writeFileSync(prefabPath, fs.readFileSync(prefabPath, 'utf8').replace('m_RenderMode: 4', 'm_RenderMode: 0'));
+      const meshPrefab = fs.readFileSync(prefabPath, 'utf8');
+      fs.writeFileSync(prefabPath, meshPrefab.replace('m_RenderMode: 4', 'm_RenderMode: 0'));
       const { recipe: billboardRecipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'billboard' });
       const billboard = billboardRecipe.layers[0];
       assert.equal(billboard.renderMode, 'billboard');
@@ -1593,6 +1624,17 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
       assert.equal(billboard.depthWrite, false, 'explicitly disabled depth writes survive on an opaque layer');
       assert.equal(billboard.depthTest, 'disabled');
       assert.equal(validateVfxRecipe(billboardRecipe).ok, true);
+      const uvBlock = ['  UVModule:', '    enabled: 1', '    tilesX: 2', '    tilesY: 3', '    cycles: 2',
+        '    animationType: 0', '    rowMode: 1', '    rowIndex: 2'].join('\n');
+      const meshSheet = meshPrefab.replace('  UVModule:\n    enabled: 0', uvBlock);
+      fs.writeFileSync(matPath, legacyMaterial.replace('_Mode: 3', '_Surface: 1\n    - _FlipbookMode: 0\n    - _FlipbookBlending: 1'));
+      fs.writeFileSync(prefabPath, meshSheet);
+      const { recipe: wholeSheet } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'whole_sheet' });
+      const expectedSheet = { region: 'spark', cols: 2, rows: 3, cycles: 2, blend: true };
+      assert.deepEqual(wholeSheet.layers[0].flipbook, expectedSheet, 'whole sheet ignores an inactive row mode');
+      fs.writeFileSync(prefabPath, meshSheet.replace('animationType: 0', 'animationType: 1').replace('rowMode: 1', 'rowMode: 0'));
+      const { recipe: singleRow } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'single_row' });
+      assert.deepEqual(singleRow.layers[0].flipbook, { ...expectedSheet, rowMode: 'custom', rowIndex: 2 });
       assert.ok(l.emissionBoost > 1.0, '_EmissionEnabled + HDR _EmissionColor sets emissionBoost');
       assert.deepEqual(l.cameraFade, [0.5, 2.5], '_CameraFadingEnabled extracts near/far fade distances');
       assert.deepEqual(l.uvScale, [2, 4], 'URP _BaseMap scale is paired with its texture');

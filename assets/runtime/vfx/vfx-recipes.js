@@ -541,7 +541,7 @@ export function createEffectPlayer({
   }
 
   function allocTrackedParticle({
-    atlasState = null, atlasSlot = -1, meshSlot = -1, duration,
+    atlasState = null, atlasSlot = -1, meshSlot = -1, duration, initialAge = 0,
     x, y, z, vx, vy, vz, accelX = 0, accelZ = 0, gravity, drag,
     tintR = 1, tintG = 1, tintB = 1,
     collision = null, subEmitters = null, subDepth = 0,
@@ -556,7 +556,7 @@ export function createEffectPlayer({
         tp.meshSlot = meshSlot;
         tp.lightSlotIdx = lightSlotIdx;
         tp.lightBaseIntensity = lightBaseIntensity;
-        tp.age = 0;
+        tp.age = initialAge;
         tp.duration = duration;
         tp.x = x;
         tp.y = y;
@@ -886,19 +886,16 @@ export function createEffectPlayer({
 
   function resolveFlipbookAndUv(layer) {
     const fb = layer.flipbook;
+    const uvRect = Array.isArray(layer.uvRect) && layer.uvRect.length >= 4 ? layer.uvRect : undefined;
     if (!fb || !fb.rows || fb.rows <= 1) {
-      return { flipbook: fb, uvRect: layer.uvRect };
+      return { flipbook: fb, uvRect };
     }
     const mode = fb.rowMode || 'grid';
     if (mode !== 'random' && fb.rowIndex === undefined) {
-      return { flipbook: fb, uvRect: layer.uvRect };
+      return { flipbook: fb, uvRect };
     }
     const regKey = fb.region || layer.sprite;
-    const baseUv = Array.isArray(layer.uvRect) && layer.uvRect.length >= 4
-      ? layer.uvRect
-      : (regKey && atlasParticles?.regions?.[regKey])
-        ? atlasParticles.regions[regKey]
-        : [0, 0, 1, 1];
+    const baseUv = uvRect ?? (regKey ? atlasParticles?.regions?.[regKey] : null) ?? [0, 0, 1, 1];
     const rows = Math.max(1, fb.rows | 0);
     const rowIdx = fb.rowIndex !== undefined
       ? Math.max(0, Math.min(rows - 1, fb.rowIndex | 0))
@@ -978,12 +975,16 @@ export function createEffectPlayer({
     if (layer._kind === 'mesh' || layer.renderMode === 'mesh') {
       if (!meshVfx) return;
       const alignDir = Boolean(layer.alignToVelocity || layer.shape?.alignToDirection);
-      const texture = layer.sprite ? atlasParticles?.texture : null;
-      const textureRect = texture ? atlasParticles?.regions?.[layer.sprite] : null;
+      const { flipbook, uvRect } = resolveFlipbookAndUv(layer);
+      const atlasTexture = atlasParticles?.texture;
+      const regionKey = flipbook?.region || layer.sprite;
+      const atlasRegion = atlasTexture && (atlasParticles.regions?.[regionKey]
+        ?? (Array.isArray(layer.uvRect) && layer.uvRect.length >= 4 ? layer.uvRect : null));
       const meshSlot = meshVfx.spawn({
         mesh: layer.mesh || 'crystal',
-        texture: textureRect ? texture : null,
-        textureRect,
+        texture: atlasRegion ? atlasTexture : null,
+        textureRect: uvRect ?? atlasRegion,
+        flipbook,
         x: scratchPos[0],
         y: scratchPos[1],
         z: scratchPos[2],
@@ -1002,6 +1003,7 @@ export function createEffectPlayer({
         centerX: orbPivotX,
         centerZ: orbPivotZ,
         duration: dur,
+        initialAge: clampedInitAge,
         persistent: Boolean(layer.persistent),
         curveCycle: (layer.curveCycle ?? 0) / simSpd,
         sizeStart,
@@ -1036,6 +1038,7 @@ export function createEffectPlayer({
         fresnel: layer.fresnel,
         dissolve: layer.dissolve,
       });
+      if (clampedInitAge > 0) meshVfx.readSlotMotion?.(meshSlot, scratchPos, scratchVel);
       const lightSlotIdx = layer.particleLight
         ? allocParticleLight(layer.particleLight, scratchPos[0], scratchPos[1], scratchPos[2], dur, scratchTintOut)
         : -1;
@@ -1050,6 +1053,7 @@ export function createEffectPlayer({
           atlasSlot: -1,
           meshSlot,
           duration: dur,
+          initialAge: clampedInitAge,
           x: scratchPos[0],
           y: scratchPos[1],
           z: scratchPos[2],
@@ -1150,6 +1154,7 @@ export function createEffectPlayer({
         atlasSlot,
         meshSlot: -1,
         duration: dur,
+        initialAge: clampedInitAge,
         x: scratchPos[0],
         y: scratchPos[1],
         z: scratchPos[2],

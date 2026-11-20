@@ -331,7 +331,8 @@ function inspectMaterial(matInfo, guidMap, deps) {
   const zTest = Number(txt.match(/- _ZTest:[ \t]*([^\s]+)/)?.[1]);
   const softParticles = Number(txt.match(/- _SoftParticlesEnabled:[ \t]*([^\s]+)/)?.[1]);
   const clearedBase = !mainTexBlock || /m_Texture:\s*\{fileID:\s*0\s*[,}]/.test(mainTexBlock);
-  const flipbookMode = Number((txt.match(/- _FlipbookMode:\s*([\d.]+)/) || [])[1] ?? 0);
+  const flipbookMode = Number(txt.match(/- _FlipbookBlending:[ \t]*([\d.]+)/)?.[1]
+    ?? txt.match(/- _FlipbookMode:[ \t]*([\d.]+)/)?.[1] ?? 0);
 
   let spriteKey = null;
   if (mainTexGuid && guidMap.has(mainTexGuid)) {
@@ -992,12 +993,20 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     }
 
     const uvMod = extractSection(ps, 'UVModule');
-    if (renderMode !== 'mesh' && /enabled:\s*1/.test(uvMod)) {
+    const sheetMode = Number(uvMod.match(/\n {4}mode:\s*(\d+)/)?.[1] ?? 0);
+    if (sheetMode === 0 && /enabled:\s*1/.test(uvMod)) {
       const cols = Number((uvMod.match(/tilesX:\s*(\d+)/) || [])[1] ?? 1);
       const rows = Number((uvMod.match(/tilesY:\s*(\d+)/) || [])[1] ?? 1);
       const cycles = Number((uvMod.match(/cycles:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
-      const rowModeNum = Number((uvMod.match(/rowMode:\s*(\d+)/) || [])[1] ?? 0);
+      const legacyRandomRow = /\brandomRow:\s*1\b/.test(uvMod);
+      const rowModeNum = Number(uvMod.match(/\browMode:\s*(\d+)/)?.[1] ?? Number(legacyRandomRow));
       const rowIndexNum = Number((uvMod.match(/rowIndex:\s*(\d+)/) || [])[1] ?? 0);
+      const animationType = Number(uvMod.match(/\banimationType:\s*(\d+)/)?.[1] ?? (rowModeNum ? 1 : 0));
+      const row = animationType === 1
+        ? (rowModeNum === 1
+            ? { rowMode: 'random' }
+            : { rowMode: rowModeNum === 2 ? 'mesh' : 'custom', rowIndex: rowModeNum === 2 ? 0 : rowIndexNum })
+        : {};
       if (cols > 1 || rows > 1) {
         layer.flipbook = {
           region: mainMat?.spriteKey || 'flipbook',
@@ -1005,7 +1014,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           rows,
           cycles,
           blend: mainMat?.flipbookBlend ?? true,
-          ...(rowModeNum === 1 ? { rowMode: 'random' } : rowModeNum === 2 ? { rowMode: 'mesh', rowIndex: rowIndexNum } : {}),
+          ...row,
         };
         delete layer.sprite;
       }

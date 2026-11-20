@@ -1,6 +1,9 @@
 import { VFX_RENDER_ORDERS } from './vfx-core.js';
 import { evaluateColorCurve, evaluateSizeCurve } from './vfx-atlas-particles.js';
 import { applyVfxDepthState, getVfxDepthTestIndex } from './vfx-depth-state.js';
+import { VFX_FLIPBOOK_GLSL } from './vfx-flipbook.js';
+
+const FULL_TEXTURE_RECT = [0, 0, 1, 1];
 
 export const VFX_MESH_VERTEX_GLSL = /* glsl */ `
 uniform vec2 uUvScroll;
@@ -31,6 +34,9 @@ uniform sampler2D uTex;
 uniform float uHasTex;
 uniform vec4 uTexRect;
 uniform float uAtlasUv;
+uniform float uFlipLocalV;
+uniform vec4 uFlipbook;
+uniform float uLifeRatio;
 uniform sampler2D uSceneTex;
 uniform float uHasSceneTex;
 uniform float uDistortion;
@@ -73,13 +79,34 @@ float valueNoise3(vec3 x) {
   );
 }
 
-void main() {
-  vec2 sampleUv = fract(vUv);
-  if (uAtlasUv > 0.5) {
-    sampleUv = mix(uTexRect.xy, uTexRect.zw, vec2(sampleUv.x, 1.0 - sampleUv.y));
-    if (uAtlasUv > 1.5) sampleUv.y = 1.0 - sampleUv.y;
+${VFX_FLIPBOOK_GLSL}
+
+vec4 sampleAtlas(vec2 localUv) {
+  vec2 texUv = mix(uTexRect.xy, uTexRect.zw, localUv);
+  if (uAtlasUv > 1.5) texUv.y = 1.0 - texUv.y;
+  return texture2D(uTex, texUv);
+}
+
+vec4 sampleParticleTexture() {
+  if (uHasTex < 0.5) return vec4(1.0);
+  vec2 localUv = fract(vUv);
+  if (uAtlasUv < 0.5) return texture2D(uTex, localUv);
+  if (uFlipLocalV > 0.5) localUv.y = 1.0 - localUv.y;
+  if (uFlipbook.x < 1.5 && uFlipbook.y < 1.5) return sampleAtlas(localUv);
+
+  vec2 grid = vfxFlipbookGrid(uFlipbook.xy);
+  float frame = vfxFlipbookFramePosition(uLifeRatio, grid, uFlipbook.z);
+  float first = floor(frame);
+  vec4 color = sampleAtlas(vfxFlipbookFrameUv(first, localUv, grid));
+  if (uFlipbook.w > 0.5) {
+    float next = min(first + 1.0, grid.x * grid.y - 1.0);
+    color = mix(color, sampleAtlas(vfxFlipbookFrameUv(next, localUv, grid)), fract(frame));
   }
-  vec4 texCol = (uHasTex > 0.5) ? texture2D(uTex, sampleUv) : vec4(1.0);
+  return color;
+}
+
+void main() {
+  vec4 texCol = sampleParticleTexture();
   vec3 N = normalize(vNormalView);
   vec3 V = normalize(vViewPos);
   float alpha = texCol.a * uOpacity;
@@ -199,6 +226,11 @@ function buildBuiltinGeometry(THREE, shapeName) {
   return THREE.BoxGeometry ? new THREE.BoxGeometry(0.4, 1.0, 0.4) : null;
 }
 
+function meshLifeRatio(slot, age = slot.age) {
+  if (!slot.persistent) return Math.min(1, age / slot.duration);
+  return slot.curveCycle > 0 ? (age / slot.curveCycle) % 1 : 0;
+}
+
 /**
  * Pooled 3D Mesh VFX renderer for `renderMode: 'mesh'` layers (shields, ice lances, shock domes).
  * Supports custom GLBs, built-in geometries, UV scrolling, Fresnel rim glow, and procedural dissolve.
@@ -253,6 +285,9 @@ export function createMeshVfxPool({
           uOpaque: { value: 0.0 },
           uTexRect: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 1, 1) : { set() {} } },
           uAtlasUv: { value: 0.0 },
+          uFlipLocalV: { value: 1.0 },
+          uFlipbook: { value: THREE.Vector4 ? new THREE.Vector4(1, 1, 1, 0) : { set() {} } },
+          uLifeRatio: { value: 0 },
           uAlphaCutoff: { value: 0.0 },
           uCameraFade: { value: THREE.Vector2 ? new THREE.Vector2(0, 0) : { set() {} } },
           uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(invViewW, invViewH) : { set() {} } },
@@ -440,7 +475,7 @@ export function createMeshVfxPool({
     s.active = true;
     s.persistent = Boolean(opts.persistent);
     s.curveCycle = Number(opts.curveCycle ?? 0);
-    s.age = 0;
+    s.age = Number.isFinite(opts.initialAge) ? Math.max(0, opts.initialAge) : 0;
     s.duration = Math.max(0.01, opts.duration ?? 0.8);
     s.space = opts.space === 'local' ? 'local' : 'world';
     s.effectSlotIdx = effSlot;
@@ -482,6 +517,14 @@ export function createMeshVfxPool({
     s.velCurve = Array.isArray(opts.velCurve) ? opts.velCurve : null;
     s.dissolveEnabled = Boolean(opts.dissolve);
     s.dissolveStart = opts.dissolve?.start ?? 0.55;
+
+    if (s.age > 0) {
+      // Advance position and spin with the same integrator as ordinary ticks.
+      // Bound prewarm work for effects with long lifetimes.
+      const steps = Math.min(32, Math.ceil(s.age * 60));
+      const step = s.age / steps;
+      for (let i = 1; i <= steps; i++) advanceMeshMotion(s, step, meshLifeRatio(s, i * step));
+    }
 
     if (s.mesh && s.mat) {
       const meshKey = String(opts.mesh || 'crystal');
@@ -544,13 +587,21 @@ export function createMeshVfxPool({
       const resolvedTex = opts.useTexture === false ? null : (opts.texture ?? customTextures.get(meshKey) ?? null);
       s.mat.uniforms.uTex.value = resolvedTex;
       s.mat.uniforms.uHasTex.value = resolvedTex ? 1 : 0;
-      const texRect = resolvedTex ? opts.textureRect : null;
+      const fb = opts.flipbook;
+      const cols = Math.max(1, fb?.cols | 0);
+      const rows = Math.max(1, fb?.rows | 0);
+      const hasSheet = cols > 1 || rows > 1;
+      const texRect = resolvedTex ? (opts.textureRect ?? (hasSheet ? FULL_TEXTURE_RECT : null)) : null;
       s.mat.uniforms.uAtlasUv.value = texRect ? (resolvedTex?.flipY ? 2 : 1) : 0;
+      // Explicit atlas regions use Three plane UVs. A native glTF map with
+      // flipY disabled already pairs its geometry UVs with top-left rows.
+      s.mat.uniforms.uFlipLocalV.value = (opts.texture && opts.textureRect) || resolvedTex?.flipY ? 1 : 0;
       if (texRect) s.mat.uniforms.uTexRect.value.set(texRect[0], texRect[1], texRect[2], texRect[3]);
+      s.mat.uniforms.uFlipbook.value.set(cols, rows, fb?.cycles ?? 1, hasSheet && fb.blend !== false ? 1 : 0);
       const dc = opts.dissolve?.edgeColor || [1, 0.7, 0.25];
       s.mat.uniforms.uDissolveColor.value.setRGB(dc[0] ?? 1, dc[1] ?? 0.7, dc[2] ?? 0.25);
       s.mat.uniforms.uDissolve.value.set(0, opts.dissolve?.edgeWidth ?? 0.08, s.dissolveEnabled ? 1 : 0);
-      syncMeshSlot(s, 0);
+      syncMeshSlot(s, meshLifeRatio(s));
       s.mesh.visible = isDistortion ? Boolean(activeSceneTex) : true;
     }
 
@@ -589,6 +640,7 @@ export function createMeshVfxPool({
     }
     s.mesh.scale.set(sc, scY, sc);
     s.mat.uniforms.uTime.value = simTime;
+    s.mat.uniforms.uLifeRatio.value = t;
     s.mat.uniforms.uColor.value.setRGB(scratchColor[0] * s.tintR, scratchColor[1] * s.tintG, scratchColor[2] * s.tintB);
     s.mat.uniforms.uOpacity.value = scratchColor[3];
     s.mat.uniforms.uHdr.value = s.hdr;
@@ -611,6 +663,19 @@ export function createMeshVfxPool({
     s.vx = vx;
     s.vy = vy;
     s.vz = vz;
+  }
+
+  /** Copies the slot's current world position and velocity into caller-owned buffers. */
+  function readSlotMotion(slotIdx, position, velocity) {
+    const s = slots[slotIdx];
+    if (!s?.active) return;
+    const base = s.effectSlotIdx * 3;
+    position[0] = s.x + effectDeltas[base];
+    position[1] = s.y + effectDeltas[base + 1];
+    position[2] = s.z + effectDeltas[base + 2];
+    velocity[0] = s.vx;
+    velocity[1] = s.vy;
+    velocity[2] = s.vz;
   }
 
   function setWind(wx = 0, wy = 0, wz = 0) {
@@ -643,6 +708,41 @@ export function createMeshVfxPool({
     }
   }
 
+  function advanceMeshMotion(s, dt, t) {
+    if (s.drag > 0.001) {
+      const d = Math.exp(-s.drag * dt);
+      s.vx *= d;
+      s.vy *= d;
+      s.vz *= d;
+    }
+    const ax = s.accelX + windVec[0] * s.windMul;
+    const ay = -s.gravity + windVec[1] * s.windMul;
+    const az = s.accelZ + windVec[2] * s.windMul;
+    s.vx += ax * dt;
+    s.vy += ay * dt;
+    s.vz += az * dt;
+    const vScale = s.velCurve ? evaluateSizeCurve(s.velCurve, t) : 1.0;
+    s.x += s.vx * vScale * dt;
+    s.y += s.vy * vScale * dt;
+    s.z += s.vz * vScale * dt;
+    if (Math.abs(s.orbitalY) > 0.0001) {
+      const oa = s.orbitalY * dt;
+      const oc = Math.cos(oa);
+      const os = Math.sin(oa);
+      const rx = s.x - s.centerX;
+      const rz = s.z - s.centerZ;
+      s.x = s.centerX + rx * oc - rz * os;
+      s.z = s.centerZ + rx * os + rz * oc;
+      const vx = s.vx;
+      const vz = s.vz;
+      s.vx = vx * oc - vz * os;
+      s.vz = vx * os + vz * oc;
+    }
+    s.rotX += s.spinX * dt;
+    s.rotY += s.spinY * dt;
+    s.rotZ += s.spinZ * dt;
+  }
+
   function update(visualDt) {
     const dt = Math.max(0, visualDt);
     simTime += dt;
@@ -655,43 +755,8 @@ export function createMeshVfxPool({
         if (s.mesh) s.mesh.visible = false;
         continue;
       }
-      const t = s.persistent
-        ? (s.curveCycle > 0 ? ((s.age / s.curveCycle) % 1) : 0)
-        : (s.age / s.duration);
-      if (dt > 0) {
-        if (s.drag > 0.001) {
-          const d = Math.exp(-s.drag * dt);
-          s.vx *= d;
-          s.vy *= d;
-          s.vz *= d;
-        }
-        const ax = s.accelX + windVec[0] * s.windMul;
-        const ay = -s.gravity + windVec[1] * s.windMul;
-        const az = s.accelZ + windVec[2] * s.windMul;
-        s.vx += ax * dt;
-        s.vy += ay * dt;
-        s.vz += az * dt;
-        const vScale = s.velCurve ? evaluateSizeCurve(s.velCurve, t) : 1.0;
-        s.x += s.vx * vScale * dt;
-        s.y += s.vy * vScale * dt;
-        s.z += s.vz * vScale * dt;
-        if (Math.abs(s.orbitalY) > 0.0001) {
-          const oa = s.orbitalY * dt;
-          const oc = Math.cos(oa);
-          const os = Math.sin(oa);
-          const rx = s.x - s.centerX;
-          const rz = s.z - s.centerZ;
-          s.x = s.centerX + rx * oc - rz * os;
-          s.z = s.centerZ + rx * os + rz * oc;
-          const vx = s.vx;
-          const vz = s.vz;
-          s.vx = vx * oc - vz * os;
-          s.vz = vx * os + vz * oc;
-        }
-        s.rotX += s.spinX * dt;
-        s.rotY += s.spinY * dt;
-        s.rotZ += s.spinZ * dt;
-      }
+      const t = meshLifeRatio(s);
+      if (dt > 0) advanceMeshMotion(s, dt, t);
       syncMeshSlot(s, t);
     }
   }
@@ -737,6 +802,7 @@ export function createMeshVfxPool({
     registerMesh,
     getSurfaceSamples,
     spawn,
+    readSlotMotion,
     updateSlot,
     setWind,
     setEffectOffset,

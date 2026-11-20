@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Play Unity grid texture sheets on Three mesh particles. Mesh and atlas particles share frame selection and interpolation, including single-row atlas regions and prewarmed mesh lifetime.
+
 - Carry Unity material depth comparisons and explicit depth-write settings into Three mesh and instanced particle draws. Batch opaque atlas cutouts by render state, preserve white default textures, and honor each atlas material's soft-particle toggle. Idle batches submit zero instances.
 
 - Preserve Unity URP material surface type, tint alpha, and mesh texture masks in particle recipes. Apply alpha clipping before camera and soft-particle fades, support premultiplied source textures, and restore the WebGL2 2D atlas shader.
