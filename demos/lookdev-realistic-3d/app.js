@@ -2531,7 +2531,8 @@ function createMaterialBakeJob(recipe, size, paramOverrides) {
         return true;
       }
       case "fabric_weave": {
-        const threads = Math.max(4, Math.round(resolveNumber(args.threads, params2, 48)));
+        let threads = Math.max(4, Math.round(resolveNumber(args.threads, params2, 48)));
+        threads = threads + 1 & ~1;
         const slub = resolveNumber(args.slub, params2, 0.3);
         const out = curBuffers.out;
         for (let y = yStart; y < yEnd; y++) {
