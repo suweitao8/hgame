@@ -433,6 +433,16 @@ test('WebAsset procedural Fable 5.2 bundle (13 materials, 11 meshes) validates, 
   );
   closedCont.geometry.dispose();
   openCont.geometry.dispose();
+
+  // Verify pipe_segment preserves continuous cylindrical circumference UVs instead of overwriting with Box UVs
+  const pipeRecipe = meshMap.get('utility_pipe_segment');
+  const pipeRadius = 0.25;
+  const pipeOut = pcg.evaluateMeshRecipe(pipeRecipe, ctx, { params: { radius: pipeRadius, length: 2.0, bendAngle: 0 } });
+  const pipeUv = pipeOut.geometry.getAttribute('uv');
+  let maxPipeU = 0;
+  for (let i = 0; i < pipeUv.count; i++) maxPipeU = Math.max(maxPipeU, pipeUv.getX(i));
+  assert.ok(maxPipeU > Math.PI * 2 * pipeRadius * 0.9, `Expected cylindrical UV circum span > ${(Math.PI * 2 * pipeRadius * 0.9).toFixed(3)}, got ${maxPipeU}`);
+  pipeOut.geometry.dispose();
 });
 
 test('ProceduralMeshBuilder fixes winding, recomputes metric UVs under non-uniform scale, and picks Uint16/Uint32', () => {
@@ -540,4 +550,28 @@ test('InstancedPropPool buckets prototypes, grows 2x cleanly, and preserves hand
   pool.dispose();
   mat.dispose();
   loader.dispose();
+});
+
+test('world-pbr-shader uses world-space tangent perturbation under Triplanar mode', () => {
+  const dummyTex = new THREE.DataTexture(new Uint8Array(4), 1, 1);
+  const handle = pcg.createWorldPbrMaterial({
+    useTriplanar: true,
+    textureArray: {
+      albedoArray: dummyTex,
+      normalArray: dummyTex,
+      ormArray: dummyTex,
+      tileMetersById: [1.0],
+    },
+  });
+  const fakeShader = {
+    uniforms: {},
+    vertexShader: '#include <common>\n#include <uv_vertex>\n#include <project_vertex>',
+    fragmentShader: '#include <common>\n#include <color_fragment>\n#include <roughnessmap_fragment>\n#include <metalnessmap_fragment>\n#include <normal_fragment_maps>\n#include <aomap_fragment>',
+  };
+  handle.material.onBeforeCompile(fakeShader);
+  assert.ok(fakeShader.fragmentShader.includes('#define HG_USE_TRIPLANAR 1'));
+  assert.ok(fakeShader.fragmentShader.includes('pcgTriWorldDelta'));
+  assert.ok(fakeShader.fragmentShader.includes('#else\n  vec3 pcgMapN'));
+  handle.dispose();
+  dummyTex.dispose();
 });

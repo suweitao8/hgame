@@ -206,9 +206,10 @@ vec2 pcgSampleUv = vPcgUv / pcgTile;
   vec4 pcgAlb = texture( uAlbedoArray, vec3( pcgUvX, pcgLayerF ) ) * pcgBlendW.x
               + texture( uAlbedoArray, vec3( pcgUvY, pcgLayerF ) ) * pcgBlendW.y
               + texture( uAlbedoArray, vec3( pcgUvZ, pcgLayerF ) ) * pcgBlendW.z;
-  vec3 pcgNrm = texture( uNormalArray, vec3( pcgUvX, pcgLayerF ) ).xyz * pcgBlendW.x
-              + texture( uNormalArray, vec3( pcgUvY, pcgLayerF ) ).xyz * pcgBlendW.y
-              + texture( uNormalArray, vec3( pcgUvZ, pcgLayerF ) ).xyz * pcgBlendW.z;
+  vec3 pcgNrmX = texture( uNormalArray, vec3( pcgUvX, pcgLayerF ) ).xyz;
+  vec3 pcgNrmY = texture( uNormalArray, vec3( pcgUvY, pcgLayerF ) ).xyz;
+  vec3 pcgNrmZ = texture( uNormalArray, vec3( pcgUvZ, pcgLayerF ) ).xyz;
+  vec3 pcgNrm = pcgNrmX * pcgBlendW.x + pcgNrmY * pcgBlendW.y + pcgNrmZ * pcgBlendW.z;
   vec4 pcgOrm = texture( uOrmArray, vec3( pcgUvX, pcgLayerF ) ) * pcgBlendW.x
               + texture( uOrmArray, vec3( pcgUvY, pcgLayerF ) ) * pcgBlendW.y
               + texture( uOrmArray, vec3( pcgUvZ, pcgLayerF ) ) * pcgBlendW.z;
@@ -313,10 +314,21 @@ diffuseColor.rgb = clamp( pcgAlbedo, 0.01, 0.96 );`
       )
       .replace(
         '#include <normal_fragment_maps>',
-        `vec3 pcgMapN = pcgNrm * 2.0 - 1.0;
-pcgMapN.xy *= uNormalStrength;
-mat3 pcgTbn = pcgTangentFrame( -vViewPosition, normal, pcgSampleUv );
-normal = normalize( pcgTbn * pcgMapN );
+        `#ifdef HG_USE_TRIPLANAR
+  vec2 pcgTriDX = ( pcgNrmX.xy * 2.0 - 1.0 ) * uNormalStrength;
+  vec2 pcgTriDY = ( pcgNrmY.xy * 2.0 - 1.0 ) * uNormalStrength;
+  vec2 pcgTriDZ = ( pcgNrmZ.xy * 2.0 - 1.0 ) * uNormalStrength;
+  vec3 pcgTriWorldDelta = vec3( 0.0, pcgTriDX.y, pcgTriDX.x ) * pcgBlendW.x
+                        + vec3( pcgTriDY.x, 0.0, pcgTriDY.y ) * pcgBlendW.y
+                        + vec3( pcgTriDZ.x, pcgTriDZ.y, 0.0 ) * pcgBlendW.z;
+  vec3 pcgPerturbedWorldN = normalize( pcgWorldN + pcgTriWorldDelta );
+  normal = normalize( ( viewMatrix * vec4( pcgPerturbedWorldN, 0.0 ) ).xyz );
+#else
+  vec3 pcgMapN = pcgNrm * 2.0 - 1.0;
+  pcgMapN.xy *= uNormalStrength;
+  mat3 pcgTbn = pcgTangentFrame( -vViewPosition, normal, pcgSampleUv );
+  normal = normalize( pcgTbn * pcgMapN );
+#endif
 if ( pcgPuddleMask > 0.001 ) {
   vec2 pcgRip = pcgRainRipple( vPcgWorldPos.xz, uTime ) * smoothstep( 0.2, 0.9, uGlobalWetness );
   vec3 pcgRipWorld = normalize( vec3( pcgRip.x, 1.0, pcgRip.y ) );

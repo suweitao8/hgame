@@ -223,7 +223,7 @@ function evaluateRecipeRaw(
     }
 
     // Recompute metric UVs in recipe physical meter space when non-unit scale or rotation occurred
-    if (part.op !== 'displaced_rock' && part.op !== 'cylinder') {
+    if (part.op !== 'displaced_rock' && part.op !== 'cylinder' && part.op !== 'pipe_segment') {
       recomputeMetricUVs(finalPartRaw);
     }
 
