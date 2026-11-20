@@ -1,7 +1,7 @@
 # Generated HGame Project Rules
 
 1. `engine.config.json` is the authoritative runtime recipe. Load only the selected profile and declared optional features.
-2. The self-contained runtime copy is in `vendor/hgame/`. Do not edit that copy as a substitute for changing the HGame source repository and regenerating/updating the project deliberately.
+2. The engine-managed runtime copy lives in `vendor/hgame/` (plus `assets/vendor/three/` for 3D, `docs/api/API-INDEX.json`, and core engine `scripts/*.mjs`), tracked via `.hgame-sync.json` and ignored by `.gitignore`. Do not edit those files directly inside a game project; update the HGame source repository and run `npm run sync:games -- --game <slug>` from HGame.
 3. Keep game rules, AI, authoritative state, content, renderer code, and save schemas inside this game project.
 4. Keep Git focused on code, configs, tests, and `assets.manifest.json`. Heavy art/audio binaries under `assets/` and raw authoring files (`.psd`, `.blend`, `.fbx`, `assets/raw/`) are excluded by `.gitignore`; sync them through the unified content-addressed store via `npm run assets -- push|pull|status|verify` (configure `HGAME_ASSET_STORE` or `--store <dir>`). `npm run release` automatically resolves missing manifest assets from the unified store when present.
 5. The Application owns the only RAF and fixed-step scheduler. Do not create a second RAF or step physics from a renderer callback.

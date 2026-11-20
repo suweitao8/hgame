@@ -4,15 +4,14 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineProject } from '../assets/runtime/core/config.js';
-import { PIXI_BUNDLER_PATH } from './assets.mjs';
-import { getProjectPreset, PROFILE_FILES, RENDERERS, THREE_FILES } from './project-profiles.mjs';
+import { syncEngineFilesToProject } from './lib/engine-sync.mjs';
+import { getProjectPreset, PROFILE_FILES, RENDERERS } from './project-profiles.mjs';
 
 // Completely standalone: the runtime and starter template ship with this repository.
 const root = fileURLToPath(new URL('../', import.meta.url));
 const template = path.join(root, 'assets', 'template');
 const runtime = path.join(root, 'assets', 'runtime');
 const profiles = path.join(root, 'assets', 'profiles');
-const optionalThree = path.join(root, 'assets', 'optional', 'three');
 
 function parse(argv) {
   const result = { destination: '', name: '', preset: null, profile: null, renderer: null, with: [], physics: null,
@@ -131,26 +130,6 @@ async function main() {
   }
   try {
     await cp(template, stage, { recursive: true, force: false, errorOnExist: true });
-    const vendor = path.join(stage, 'vendor', 'hgame');
-    await cp(runtime, vendor, { recursive: true });
-    await cp(path.join(root, 'types'), vendor, {
-      recursive: true,
-      filter: async source => source.endsWith('.d.ts') || (await stat(source)).isDirectory(),
-    });
-    await mkdir(path.join(stage, 'scripts'), { recursive: true });
-    await cp(path.join(root, 'scripts', 'query-api.mjs'), path.join(stage, 'scripts', 'query-api.mjs'));
-    await cp(path.join(root, 'scripts', 'package-game.mjs'), path.join(stage, 'scripts', 'package-game.mjs'));
-    await cp(path.join(root, 'scripts', 'project-profiles.mjs'), path.join(stage, 'scripts', 'project-profiles.mjs'));
-    await cp(path.join(root, 'scripts', 'toy-preflight.mjs'), path.join(stage, 'scripts', 'toy-preflight.mjs'));
-    await cp(path.join(root, 'scripts', 'assets.mjs'), path.join(stage, 'scripts', 'assets.mjs'));
-    for (const dimension of ['2d', '3d']) {
-      if (options.recipe.physics !== `rapier${dimension}`) {
-        await rm(path.join(vendor, 'vendor', `rapier${dimension}`), { recursive: true, force: true });
-      }
-    }
-    if (!['rapier2d', 'rapier3d'].includes(options.recipe.physics)) {
-      await rm(path.join(vendor, 'vendor'), { recursive: true, force: true });
-    }
 
     const mainSource = path.join(profiles, options.starter);
     const files = PROFILE_FILES[options.starter] ?? PROFILE_FILES[options.recipe.profile];
@@ -168,8 +147,6 @@ async function main() {
       if (sourceEntry !== 'index.html') await cp(path.join(mainSource, 'dist', sourceEntry), path.join(stage, 'index.html'), { force: true });
       await cp(path.join(mainSource, sourceEntry), path.join(stage, 'index.source.html'));
       if (options.preset === 'horde' && !options.bare) await cp(path.join(profiles, 'horde', 'swarm.json'), path.join(stage, 'src', 'swarm.json'));
-      await cp(path.join(mainSource, 'install-build.mjs'), path.join(stage, 'scripts', 'install-pixi-build.mjs'));
-      await cp(path.join(mainSource, 'bundle.mjs'), path.join(stage, PIXI_BUNDLER_PATH));
       await cp(path.join(mainSource, 'package-lock.json'), path.join(stage, 'package-lock.json'));
       await cp(path.join(mainSource, 'CLAUDE.md'), path.join(stage, 'CLAUDE.md'));
     } else {
@@ -185,13 +162,6 @@ async function main() {
       const presentation = JSON.parse(await readFile(path.join(mainSource, 'presentation.json'), 'utf8'));
       presentation.quality = options.quality ?? presentation.quality;
       await writeFile(path.join(stage, 'src', 'presentation.json'), JSON.stringify(presentation, null, 2) + '\n');
-      const threeDest = path.join(stage, 'assets', 'vendor', 'three');
-      await mkdir(threeDest, { recursive: true });
-      for (const file of THREE_FILES) {
-        const dest = path.join(threeDest, file);
-        await mkdir(path.dirname(dest), { recursive: true });
-        await cp(path.join(optionalThree, file), dest, { force: false });
-      }
     }
     await writeFile(path.join(stage, 'engine.config.json'), JSON.stringify(options.recipe, null, 2) + '\n');
     if (options.preset || options.starter === 'pixi2d') {
@@ -215,10 +185,14 @@ async function main() {
     Object.assign(config, { id: options.slug, name: options.name, standalone: true,
       renderer: RENDERERS[options.recipe.renderer].catalog });
     await writeFile(configFile, JSON.stringify(config, null, 2) + '\n');
-    const apiDirectory = path.join(stage, 'docs', 'api');
-    const apiIndex = JSON.parse(await readFile(path.join(root, 'docs', 'api', 'API-INDEX.json'), 'utf8'));
-    await mkdir(apiDirectory, { recursive: true });
-    await writeFile(path.join(apiDirectory, 'API-INDEX.json'), JSON.stringify({ ...apiIndex, projectEntry }) + '\n');
+    await syncEngineFilesToProject({
+      repoRoot: root,
+      targetDir: stage,
+      recipe: options.recipe,
+      projectEntry,
+      includePixi2dScripts: options.starter === 'pixi2d',
+      rebuildPixi: false,
+    });
     const packageFile = path.join(stage, 'package.json');
     const pkg = JSON.parse(await readFile(packageFile, 'utf8'));
     pkg.name = options.slug.toLowerCase();

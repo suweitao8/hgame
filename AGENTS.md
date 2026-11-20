@@ -14,6 +14,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 - Canonical runtime: `assets/runtime/`.
 - Runtime version: `assets/runtime/VERSION`; keep it consistent with `HGAME_VERSION` in `assets/runtime/index.js` and the root package version.
 - New project generator: `scripts/create-game.mjs`.
+- Engine-to-game sync: `scripts/sync-games.mjs` (`npm run sync:games -- --status|--game <slug>|--all`) syncs engine-managed files (`vendor/hgame/`, `assets/vendor/three/`, `docs/api/API-INDEX.json`, core `scripts/*.mjs`) into projects under `gamesRootDir` and records `.hgame-sync.json` without touching `src/`, `tests/`, or authored assets.
 - Lean release & WASM packager: `scripts/package-game.mjs` (`build/<id>_<version>/` + `.zip`), plus Bilibili Toy standard packager & preflight (`--target toy` / `scripts/toy-preflight.mjs`, see `.agents/skills/hgame-bilibili-toy/SKILL.md` and `docs/guides/BILIBILI-TOY-STANDARD.md`).
 - Offline media curation: `scripts/process-assets.mjs`, `scripts/process-audio.mjs`, and local 3D AI modeling/normalization (`scripts/process-model3d.mjs` + `scripts/blender-model3d.py`, configured via gitignored `.hgame.local.json`).
 - Unified off-Git asset management: `scripts/assets.mjs` (`npm run assets -- push|pull|status|verify`), storing content-addressed binaries in `HGAME_ASSET_STORE` (or `~/.hgame/asset-store`) and tracking `assets.manifest.json` in Git while `.gitignore` excludes heavy art/audio binaries.

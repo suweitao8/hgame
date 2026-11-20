@@ -7,6 +7,18 @@ build/
 .asset-store/
 *.log
 
+# Engine-managed files synced from HGame (re-hydrate via `npm run sync:games` in HGame)
+vendor/hgame/
+assets/vendor/
+docs/api/
+scripts/assets.mjs
+scripts/bundle-pixi.mjs
+scripts/install-pixi-build.mjs
+scripts/package-game.mjs
+scripts/project-profiles.mjs
+scripts/query-api.mjs
+scripts/toy-preflight.mjs
+
 # OS / editor noise
 .DS_Store
 Thumbs.db
