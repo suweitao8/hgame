@@ -72,6 +72,14 @@ export class ProceduralAssetLoader {
     return this.textureArray;
   }
 
+  hasMaterial(id: string): boolean {
+    return this.materialRecipes.has(id);
+  }
+
+  hasMesh(id: string): boolean {
+    return this.meshRecipes.has(id);
+  }
+
   getMaterialId(id: string): number {
     const info = this.textureArray?.layers.get(id);
     if (!info) {
@@ -100,6 +108,28 @@ export class ProceduralAssetLoader {
     return this.meshCache.size;
   }
 
+  async loadFromRecipes(
+    mats: MaterialRecipe[],
+    meshes: MeshRecipe[],
+    onProgress?: (ratio: number) => void
+  ): Promise<void> {
+    this.materialRecipes.clear();
+    this.meshRecipes.clear();
+    this.clearMeshCache();
+    if (this.textureArray) {
+      this.textureArray.dispose();
+      this.textureArray = null;
+    }
+
+    for (const mat of mats) this.materialRecipes.set(mat.id, mat);
+    for (const mesh of meshes) this.meshRecipes.set(mesh.id, mesh);
+
+    this.textureArray = await bakeMaterialArrayAsync(mats, this.preset, {
+      onProgress,
+      renderer: this.renderer,
+    });
+  }
+
   async loadManifest(
     manifestUrl: string,
     onProgress?: (ratio: number) => void
@@ -122,21 +152,7 @@ export class ProceduralAssetLoader {
       ),
     ]);
 
-    this.materialRecipes.clear();
-    this.meshRecipes.clear();
-    this.clearMeshCache();
-    if (this.textureArray) {
-      this.textureArray.dispose();
-      this.textureArray = null;
-    }
-
-    for (const mat of mats) this.materialRecipes.set(mat.id, mat);
-    for (const mesh of meshes) this.meshRecipes.set(mesh.id, mesh);
-
-    this.textureArray = await bakeMaterialArrayAsync(mats, this.preset, {
-      onProgress,
-      renderer: this.renderer,
-    });
+    await this.loadFromRecipes(mats, meshes, onProgress);
   }
 
   async setQuality(tier: QualityTier, onProgress?: (ratio: number) => void): Promise<TextureArraySet> {

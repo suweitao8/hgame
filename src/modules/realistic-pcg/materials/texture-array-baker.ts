@@ -129,6 +129,15 @@ export async function bakeMaterialArrayAsync(
   const normalAll = new Uint8Array(totalBytes);
   const ormAll = new Uint8Array(totalBytes);
 
+  // Seed default neutral calibration layer on slice 0 when array starts empty
+  if (recipes.length === 0) {
+    for (let p = 0; p < layerBytes; p += 4) {
+      albedoAll[p] = 128; albedoAll[p + 1] = 128; albedoAll[p + 2] = 128; albedoAll[p + 3] = 128;
+      normalAll[p] = 128; normalAll[p + 1] = 128; normalAll[p + 2] = 255; normalAll[p + 3] = 255;
+      ormAll[p] = 255; ormAll[p + 1] = 204; ormAll[p + 2] = 0; ormAll[p + 3] = 128;
+    }
+  }
+
   const layers = new Map<string, MaterialLayerInfo>();
   const tileMetersById = new Float32Array(maxLayers);
   tileMetersById.fill(1.0);

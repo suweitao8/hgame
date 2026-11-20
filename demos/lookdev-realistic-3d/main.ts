@@ -18,6 +18,7 @@ const tripoToggle = document.querySelector<HTMLInputElement>('#ctrl-tripo')!;
 
 const params = new URLSearchParams(location.search);
 const initialQuality = (params.get('quality') === 'LOW' ? 'LOW' : 'HIGH') as QualityTier;
+const manifestUrl = params.get('manifest');
 qualitySel.value = initialQuality;
 
 function formatMetrics(m: LookDevMetrics): string {
@@ -31,7 +32,7 @@ function formatMetrics(m: LookDevMetrics): string {
 
 const controller = await createLookDevScene({
   canvas,
-  manifestUrl: '../../assets/procedural/manifest.json',
+  manifestUrl,
   initialQuality,
   initialLighting: 'OVERCAST_WET',
   onMetricsUpdate: (m) => {

@@ -2869,6 +2869,22 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
   const albedoAll = new Uint8Array(totalBytes);
   const normalAll = new Uint8Array(totalBytes);
   const ormAll = new Uint8Array(totalBytes);
+  if (recipes.length === 0) {
+    for (let p = 0; p < layerBytes; p += 4) {
+      albedoAll[p] = 128;
+      albedoAll[p + 1] = 128;
+      albedoAll[p + 2] = 128;
+      albedoAll[p + 3] = 128;
+      normalAll[p] = 128;
+      normalAll[p + 1] = 128;
+      normalAll[p + 2] = 255;
+      normalAll[p + 3] = 255;
+      ormAll[p] = 255;
+      ormAll[p + 1] = 204;
+      ormAll[p + 2] = 0;
+      ormAll[p + 3] = 128;
+    }
+  }
   const layers = /* @__PURE__ */ new Map();
   const tileMetersById = new Float32Array(maxLayers);
   tileMetersById.fill(1);
@@ -3583,6 +3599,12 @@ var ProceduralAssetLoader = class {
   getTextureArray() {
     return this.textureArray;
   }
+  hasMaterial(id) {
+    return this.materialRecipes.has(id);
+  }
+  hasMesh(id) {
+    return this.meshRecipes.has(id);
+  }
   getMaterialId(id) {
     const info = this.textureArray?.layers.get(id);
     if (!info) {
@@ -3605,23 +3627,7 @@ var ProceduralAssetLoader = class {
   getCachedMeshCount() {
     return this.meshCache.size;
   }
-  async loadManifest(manifestUrl, onProgress) {
-    const manifest = await this.fetchJson(manifestUrl);
-    if (manifest.format !== "hgame.manifest" || manifest.version !== 1) {
-      throw new Error(`Invalid manifest at ${manifestUrl}`);
-    }
-    const [mats, meshes] = await Promise.all([
-      Promise.all(
-        manifest.materials.map(
-          (m) => this.fetchJson(resolveRelativeUrl(manifestUrl, m.path))
-        )
-      ),
-      Promise.all(
-        manifest.meshes.map(
-          (m) => this.fetchJson(resolveRelativeUrl(manifestUrl, m.path))
-        )
-      )
-    ]);
+  async loadFromRecipes(mats, meshes, onProgress) {
     this.materialRecipes.clear();
     this.meshRecipes.clear();
     this.clearMeshCache();
@@ -3635,6 +3641,25 @@ var ProceduralAssetLoader = class {
       onProgress,
       renderer: this.renderer
     });
+  }
+  async loadManifest(manifestUrl2, onProgress) {
+    const manifest = await this.fetchJson(manifestUrl2);
+    if (manifest.format !== "hgame.manifest" || manifest.version !== 1) {
+      throw new Error(`Invalid manifest at ${manifestUrl2}`);
+    }
+    const [mats, meshes] = await Promise.all([
+      Promise.all(
+        manifest.materials.map(
+          (m) => this.fetchJson(resolveRelativeUrl(manifestUrl2, m.path))
+        )
+      ),
+      Promise.all(
+        manifest.meshes.map(
+          (m) => this.fetchJson(resolveRelativeUrl(manifestUrl2, m.path))
+        )
+      )
+    ]);
+    await this.loadFromRecipes(mats, meshes, onProgress);
   }
   async setQuality(tier, onProgress) {
     this.preset = getQualityPreset(tier);
@@ -4383,7 +4408,7 @@ var CAMERA_PRESETS = {
 };
 async function createLookDevScene(options) {
   const { canvas: canvas2 } = options;
-  const manifestUrl = options.manifestUrl ?? "../../assets/procedural/manifest.json";
+  const manifestUrl2 = options.manifestUrl ?? null;
   let qualityTier = options.initialQuality ?? "HIGH";
   let lightingPreset = options.initialLighting ?? "OVERCAST_WET";
   let wetness = 0.55;
@@ -4462,7 +4487,13 @@ async function createLookDevScene(options) {
     quality: qualityTier,
     renderer
   });
-  await loader.loadManifest(manifestUrl);
+  if (options.bundle) {
+    await loader.loadFromRecipes(options.bundle.materials, options.bundle.meshes);
+  } else if (manifestUrl2) {
+    await loader.loadManifest(manifestUrl2);
+  } else {
+    await loader.loadFromRecipes([], []);
+  }
   const texArray = loader.getTextureArray();
   const worldMat = createWorldPbrMaterial({
     textureArray: texArray,
@@ -4490,8 +4521,9 @@ async function createLookDevScene(options) {
       terrainMesh.geometry.dispose();
       terrainMesh = null;
     }
-    const grassMatId = loader.getMaterialId("grass_mud");
-    const cobbleMatId = loader.getMaterialId("mossy_cobble");
+    const firstMat = loader.listMaterialIds()[0];
+    const grassMatId = loader.hasMaterial("grass_mud") ? loader.getMaterialId("grass_mud") : firstMat ? loader.getMaterialId(firstMat) : 0;
+    const cobbleMatId = loader.hasMaterial("mossy_cobble") ? loader.getMaterialId("mossy_cobble") : grassMatId;
     const chunkOffsets = [
       [-16, -16],
       [0, -16],
@@ -4551,6 +4583,7 @@ async function createLookDevScene(options) {
       scene.remove(guardPostMesh);
       guardPostMesh = null;
     }
+    if (!loader.hasMesh("guard_post")) return;
     const gpAsset = loader.instantiateMesh("guard_post");
     guardPostMesh = new THREE10.Mesh(gpAsset.geometry, worldMat.material);
     guardPostMesh.name = "GuardPostMain";
@@ -4566,22 +4599,26 @@ async function createLookDevScene(options) {
       showcaseMesh = null;
     }
     const pieces = [];
-    const pillarAsset = loader.instantiateMesh("beveled_wall", {
-      params: { width: 1, height: 3, thickness: 1, hasWindow: false }
-    });
-    pieces.push({ geometry: pillarAsset.geometry, pos: [-4.2, 0, -3.5] });
-    const wallAsset = loader.instantiateMesh("beveled_wall", {
-      params: { width: 4, height: 3, thickness: 0.35, hasWindow: true }
-    });
-    pieces.push({ geometry: wallAsset.geometry, pos: [-7.6, 0, -3.5] });
-    const reskinAsset = loader.instantiateMesh("guard_post", {
-      materialOverrides: {
-        wallMat: "concrete_weathered",
-        woodMat: "rusted_iron",
-        baseMat: "mossy_cobble"
-      }
-    });
-    pieces.push({ geometry: reskinAsset.geometry, pos: [8.5, 0, -4.5], rotY: -0.35 });
+    if (loader.hasMesh("beveled_wall")) {
+      const pillarAsset = loader.instantiateMesh("beveled_wall", {
+        params: { width: 1, height: 3, thickness: 1, hasWindow: false }
+      });
+      pieces.push({ geometry: pillarAsset.geometry, pos: [-4.2, 0, -3.5] });
+      const wallAsset = loader.instantiateMesh("beveled_wall", {
+        params: { width: 4, height: 3, thickness: 0.35, hasWindow: true }
+      });
+      pieces.push({ geometry: wallAsset.geometry, pos: [-7.6, 0, -3.5] });
+    }
+    if (loader.hasMesh("guard_post") && loader.hasMaterial("concrete_weathered") && loader.hasMaterial("rusted_iron") && loader.hasMaterial("mossy_cobble")) {
+      const reskinAsset = loader.instantiateMesh("guard_post", {
+        materialOverrides: {
+          wallMat: "concrete_weathered",
+          woodMat: "rusted_iron",
+          baseMat: "mossy_cobble"
+        }
+      });
+      pieces.push({ geometry: reskinAsset.geometry, pos: [8.5, 0, -4.5], rotY: -0.35 });
+    }
     const matIds = loader.listMaterialIds();
     for (let i = 0; i < matIds.length; i++) {
       const mName = matIds[i];
@@ -4599,6 +4636,7 @@ async function createLookDevScene(options) {
         disposeSource: true
       });
     }
+    if (pieces.length === 0) return;
     const merged = mergeStaticGeometries(pieces);
     showcaseMesh = new THREE10.Mesh(merged, worldMat.material);
     showcaseMesh.name = "StaticShowcaseBatch";
@@ -4612,6 +4650,7 @@ async function createLookDevScene(options) {
       rockMesh.geometry.dispose();
       rockMesh = null;
     }
+    if (!loader.hasMesh("weathered_rock")) return;
     const rockA = loader.instantiateMesh("weathered_rock", { params: { radius: 0.95, seed: 771 } });
     const rockB = loader.instantiateMesh("weathered_rock", { params: { radius: 0.65, seed: 912 } });
     const rockC = loader.instantiateMesh("weathered_rock", { params: { radius: 1.15, seed: 1031 } });
@@ -4738,6 +4777,7 @@ async function createLookDevScene(options) {
       worldMat.syncTextureArray(activeTex);
       rockMat.syncTextureArray(activeTex);
       if (isNew) {
+        buildTerrain();
         rebuildShowcase();
       }
       renderer.render(scene, camera);
@@ -4878,6 +4918,7 @@ var wetnessValEl = document.querySelector("#wetness-val");
 var tripoToggle = document.querySelector("#ctrl-tripo");
 var params = new URLSearchParams(location.search);
 var initialQuality = params.get("quality") === "LOW" ? "LOW" : "HIGH";
+var manifestUrl = params.get("manifest");
 qualitySel.value = initialQuality;
 function formatMetrics(m) {
   return [
@@ -4889,7 +4930,7 @@ function formatMetrics(m) {
 }
 var controller = await createLookDevScene({
   canvas,
-  manifestUrl: "../../assets/procedural/manifest.json",
+  manifestUrl,
   initialQuality,
   initialLighting: "OVERCAST_WET",
   onMetricsUpdate: (m) => {
