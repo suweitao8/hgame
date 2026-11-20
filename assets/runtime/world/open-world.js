@@ -59,13 +59,14 @@ function clampLen3(vx, vy, vz, maxLen) {
  * @property {number} [lookaheadSeconds=0.75] Seconds of viewer velocity added to the load-priority focus point.
  * @property {number} [maxLookaheadDistance] Clamp for the lookahead offset (world units). Default cellSize * 1.5.
  * @property {number} [maxLoadsPerStep=2] Maximum cell loads started per step().
- * @property {number} [maxUnloadsPerStep=4] Maximum unloads (and HLOD drops) per step().
+ * @property {number} [maxUnloadsPerStep=4] Per-step cap for full-cell unloads and cancellations, and a separate cap for standalone HLOD drops.
  * @property {number} [maxHlodBuildsPerStep=4] Maximum HLOD proxy builds per step().
  * @property {((desc: WorldCellDescriptor) => boolean) | null} [cellFilter=null] Return false to ignore a cell entirely.
- * @property {((desc: WorldCellDescriptor) => unknown) | null} [loadCell=null] Load a cell; may return data or a Promise of data. Without it cells become loaded immediately.
+ * @property {((desc: WorldCellDescriptor, context: {signal: AbortSignal}) => unknown) | null} [loadCell=null] Load a cell; may return data or a Promise of data. Keep the signal with the request. Results delivered after cancellation go to unloadCell.
  * @property {((desc: WorldCellDescriptor, data: unknown) => void) | null} [unloadCell=null] Release the data returned by loadCell.
- * @property {((desc: WorldCellDescriptor) => unknown) | null} [createHLOD=null] Build a distant proxy for a cell; returned value is passed to destroyHLOD.
+ * @property {((desc: WorldCellDescriptor) => unknown) | null} [createHLOD=null] Synchronously build a distant proxy before unloading full cell data. The returned value is passed to destroyHLOD.
  * @property {((desc: WorldCellDescriptor, hlodData: unknown) => void) | null} [destroyHLOD=null] Dispose a proxy built by createHLOD.
+ * @property {((desc: WorldCellDescriptor, error: unknown, stage: 'load' | 'hlod') => void) | null} [onCellError=null] Observe a failed replacement. The current representation stays active and can be retried on a future step.
  */
 
 /**
@@ -139,6 +140,7 @@ export function createWorldPartition(options = {}) {
     unloadCell = null,
     createHLOD = null,
     destroyHLOD = null,
+    onCellError = null,
   } = options;
 
   if (!Number.isFinite(cellSize) || cellSize <= 0) {
@@ -152,6 +154,7 @@ export function createWorldPartition(options = {}) {
   const useVertical = !use2D && Boolean(verticalCells);
   const cells = new Map();
   const pinned = new Set();
+  let hlodFailureOrder = 0;
 
   function keyFor(cx, cy, cz = 0) {
     return useVertical ? `${cx},${cy},${cz}` : `${cx},${cy}`;
@@ -241,7 +244,8 @@ export function createWorldPartition(options = {}) {
         state: 'unloaded',
         data: null,
         hlodData: null,
-        epoch: 0,
+        hlodFailure: 0,
+        load: null,
       };
       cells.set(key, rec);
     }
@@ -257,49 +261,94 @@ export function createWorldPartition(options = {}) {
   }
 
   function disposeHlod(rec, summary) {
-    if (rec.hlodData == null && rec.state !== 'hlod') return;
-    if (rec.hlodData != null) {
-      destroyHLOD?.(rec.desc, rec.hlodData);
-      rec.hlodData = null;
-      summary.hlodDestroyed++;
-    }
+    if (rec.hlodData == null) return;
+    const proxy = rec.hlodData;
+    rec.hlodData = null;
+    if (summary) summary.hlodDestroyed++;
+    destroyHLOD?.(rec.desc, proxy);
   }
 
   function beginLoadCell(rec, summary) {
-    rec.epoch++;
-    const myEpoch = rec.epoch;
     if (!loadCell) {
-      disposeHlod(rec, summary);
       rec.state = 'loaded';
       summary.loaded++;
+      disposeHlod(rec, summary);
       return;
     }
-    const result = loadCell(rec.desc);
+    const controller = new AbortController();
+    rec.load = controller;
+    rec.state = 'loading';
+    function failed(error) {
+      if (rec.load !== controller) return;
+      rec.load = null;
+      rec.state = rec.hlodData == null ? 'unloaded' : 'hlod';
+      onCellError?.(rec.desc, error, 'load');
+    }
+    function ready(data, immediateSummary = null) {
+      if (rec.load !== controller) {
+        unloadCell?.(rec.desc, data);
+        return;
+      }
+      rec.load = null;
+      rec.data = data;
+      rec.state = 'loaded';
+      if (immediateSummary) immediateSummary.loaded++;
+      disposeHlod(rec, immediateSummary);
+    }
+    let result;
+    try {
+      result = loadCell(rec.desc, { signal: controller.signal });
+    } catch (error) {
+      failed(error);
+      return;
+    }
     if (result && typeof result.then === 'function') {
-      rec.state = 'loading';
-      result.then(
-        data => {
-          if (rec.epoch !== myEpoch) {
-            unloadCell?.(rec.desc, data);
-            return;
-          }
-          if (rec.hlodData != null) {
-            destroyHLOD?.(rec.desc, rec.hlodData);
-            rec.hlodData = null;
-          }
-          rec.data = data;
-          rec.state = 'loaded';
-        },
-        () => {
-          if (rec.epoch === myEpoch) rec.state = 'unloaded';
-        },
-      );
-      return;
+      Promise.resolve(result).then(data => ready(data), failed);
+    } else {
+      ready(result ?? true, summary);
     }
-    disposeHlod(rec, summary);
-    rec.data = result ?? true;
-    rec.state = 'loaded';
-    summary.loaded++;
+  }
+
+  function prepareHlod(rec, summary) {
+    let proxy;
+    try {
+      proxy = createHLOD(rec.desc) ?? true;
+    } catch (error) {
+      rec.hlodFailure = ++hlodFailureOrder;
+      onCellError?.(rec.desc, error, 'hlod');
+      return false;
+    }
+    if (cells.get(rec.desc.key) !== rec) {
+      destroyHLOD?.(rec.desc, proxy);
+      return false;
+    }
+    rec.hlodFailure = 0;
+    rec.hlodData = proxy;
+    summary.hlodCreated++;
+    return true;
+  }
+
+  function leaveFullCell(rec, nextState, summary) {
+    const controller = rec.load;
+    const wasLoaded = rec.state === 'loaded';
+    const data = rec.data;
+    rec.load = null;
+    rec.data = null;
+    rec.state = nextState;
+    controller?.abort();
+    if (wasLoaded) {
+      if (summary) summary.unloaded++;
+      unloadCell?.(rec.desc, data);
+    }
+  }
+
+  function dropCell(rec, summary = null) {
+    cells.delete(rec.desc.key);
+    try {
+      leaveFullCell(rec, 'unloaded', summary);
+    } finally {
+      disposeHlod(rec, summary);
+    }
   }
 
   function stepInternal(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0], overrideBudget = null) {
@@ -338,7 +387,6 @@ export function createWorldPartition(options = {}) {
     const toLoad = [];
     const toHlod = [];
     const toUnload = [];
-    const toDropHlod = [];
 
     for (const key of candidates) {
       const parts = key.split(',').map(Number);
@@ -362,7 +410,7 @@ export function createWorldPartition(options = {}) {
       } else if (createHLOD && dist <= hlodRadius) {
         desired = 'hlod';
       } else if (createHLOD && dist <= hlodUnloadRadius) {
-        desired = rec?.state === 'hlod' ? 'hlod' : 'unloaded';
+        desired = rec?.hlodData != null ? 'hlod' : 'unloaded';
       }
 
       if (!rec && desired === 'unloaded') continue;
@@ -373,74 +421,66 @@ export function createWorldPartition(options = {}) {
           toLoad.push({ rec, pinned: isPinned ? 1 : 0, score: distSqToFocus(rec.desc, fx, fy, fz) });
         }
       } else if (desired === 'hlod') {
-        if (rec.state === 'loaded' || rec.state === 'loading') {
-          toUnload.push({ rec, dist, downgradeToHlod: true });
-        } else if (rec.state === 'unloaded' && createHLOD) {
-          toHlod.push({ rec, score: distSqToFocus(rec.desc, fx, fy, fz) });
+        if (rec.state === 'loading') {
+          toUnload.push({ rec, dist, nextState: rec.hlodData == null ? 'unloaded' : 'hlod' });
+        }
+        if (rec.hlodData == null) {
+          const score = rec.state === 'loaded' ? -dist : distSqToFocus(rec.desc, fx, fy, fz);
+          toHlod.push({ rec, score });
         }
       } else {
-        if (rec.state === 'loaded' || rec.state === 'loading') {
-          toUnload.push({ rec, dist, downgradeToHlod: false });
-        } else if (rec.state === 'hlod') {
-          toDropHlod.push({ rec, dist });
+        if (rec.state !== 'unloaded') {
+          toUnload.push({ rec, dist, nextState: null });
+        } else {
+          cells.delete(key);
         }
       }
     }
 
     toLoad.sort((a, b) => (b.pinned - a.pinned) || (a.score - b.score));
-    toHlod.sort((a, b) => a.score - b.score);
+    // Successful and unseen cells stay ahead of retries. Among failures, retry the oldest first.
+    toHlod.sort((a, b) => (a.rec.hlodFailure - b.rec.hlodFailure) || (a.score - b.score));
     toUnload.sort((a, b) => b.dist - a.dist);
-    toDropHlod.sort((a, b) => b.dist - a.dist);
 
     const summary = { loaded: 0, unloaded: 0, hlodCreated: 0, hlodDestroyed: 0, inFlight: 0 };
 
-    // 2. Unloads first so budgets free resources before instantiating incoming cells
-    const capUnload = overrideBudget ?? maxUnloadsPerStep;
+    // 2. Free out-of-range resources and cancel superseded full loads first.
+    let remainingUnloads = overrideBudget ?? maxUnloadsPerStep;
+    let remainingProxyDrops = remainingUnloads;
     const capLoad = overrideBudget ?? maxLoadsPerStep;
-    const capHlod = overrideBudget ?? maxHlodBuildsPerStep;
+    let remainingHlodBuilds = overrideBudget ?? maxHlodBuildsPerStep;
 
-    const unloadLimit = Math.min(capUnload, toUnload.length);
-    for (let i = 0; i < unloadLimit; i++) {
-      const { rec, downgradeToHlod } = toUnload[i];
-      rec.epoch++;
-      if (rec.state === 'loaded') {
-        unloadCell?.(rec.desc, rec.data);
-        summary.unloaded++;
-      }
-      rec.data = null;
-      if (downgradeToHlod && createHLOD) {
-        rec.hlodData = createHLOD(rec.desc) ?? true;
-        rec.state = 'hlod';
-        summary.hlodCreated++;
+    for (const { rec, nextState } of toUnload) {
+      if (cells.get(rec.desc.key) !== rec) continue;
+      if (rec.state === 'hlod') {
+        if (remainingProxyDrops <= 0) continue;
+        remainingProxyDrops--;
       } else {
-        rec.state = 'unloaded';
-        cells.delete(rec.desc.key);
+        if (remainingUnloads <= 0) continue;
+        remainingUnloads--;
+      }
+      if (nextState == null) dropCell(rec, summary);
+      else leaveFullCell(rec, nextState, summary);
+    }
+
+    // 3. Build proxies in a single budget, keeping a full cell until its proxy succeeds.
+    for (const { rec } of toHlod) {
+      if (remainingHlodBuilds <= 0) break;
+      if (cells.get(rec.desc.key) !== rec || rec.state === 'loading' || rec.hlodData != null) continue;
+      const wasLoaded = rec.state === 'loaded';
+      if (wasLoaded && remainingUnloads <= 0) continue;
+      remainingHlodBuilds--;
+      if (prepareHlod(rec, summary)) {
+        if (wasLoaded) remainingUnloads--;
+        leaveFullCell(rec, 'hlod', summary);
       }
     }
 
-    const dropHlodLimit = Math.min(capUnload, toDropHlod.length);
-    for (let i = 0; i < dropHlodLimit; i++) {
-      const { rec } = toDropHlod[i];
-      disposeHlod(rec, summary);
-      rec.state = 'unloaded';
-      cells.delete(rec.desc.key);
-    }
-
-    // 3. Full loads sorted by velocity lookahead proximity
+    // 4. Full loads sorted by velocity lookahead proximity.
     const loadLimit = Math.min(capLoad, toLoad.length);
     for (let i = 0; i < loadLimit; i++) {
-      beginLoadCell(toLoad[i].rec, summary);
-    }
-
-    // 4. HLOD proxy builds for mid/far ring
-    const hlodBuildLimit = Math.min(capHlod, toHlod.length);
-    for (let i = 0; i < hlodBuildLimit; i++) {
-      const rec = toHlod[i].rec;
-      if (rec.state === 'unloaded' && createHLOD) {
-        rec.hlodData = createHLOD(rec.desc) ?? true;
-        rec.state = 'hlod';
-        summary.hlodCreated++;
-      }
+      const { rec } = toLoad[i];
+      if (cells.get(rec.desc.key) === rec) beginLoadCell(rec, summary);
     }
 
     for (const rec of cells.values()) {
@@ -462,7 +502,7 @@ export function createWorldPartition(options = {}) {
     for (const rec of cells.values()) {
       if (rec.state === 'loaded') loaded++;
       else if (rec.state === 'loading') loading++;
-      else if (rec.state === 'hlod') hlod++;
+      if (rec.hlodData != null) hlod++;
     }
     return { loaded, loading, hlod, pinned: pinned.size, tracked: cells.size };
   }
@@ -486,18 +526,15 @@ export function createWorldPartition(options = {}) {
   function getHlodCells() {
     const out = [];
     for (const rec of cells.values()) {
-      if (rec.state === 'hlod') out.push(rec.desc);
+      if (rec.hlodData != null) out.push(rec.desc);
     }
     return out;
   }
 
   function clear() {
-    for (const rec of cells.values()) {
-      rec.epoch++;
-      if (rec.state === 'loaded') unloadCell?.(rec.desc, rec.data);
-      if (rec.hlodData != null) destroyHLOD?.(rec.desc, rec.hlodData);
+    for (const rec of [...cells.values()]) {
+      if (cells.get(rec.desc.key) === rec) dropCell(rec);
     }
-    cells.clear();
   }
 
   return {

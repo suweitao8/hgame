@@ -28,7 +28,38 @@ origin.registerWorldPalette(materialPalette);
 
 const partition = createWorldPartition({
   cellSize: 128, loadRadius: 256, unloadRadius: 320, hlodRadius: 640,
-  loadCell: async (cell) => { /* 加载区域实体 */ },
-  unloadCell: (cell) => { /* 卸载区域实体 */ },
+  loadCell: async (cell, { signal }) => { /* 使用信号加载区域实体 */ },
+  unloadCell: (cell, data) => { /* 释放对应加载结果 */ },
 });
 ```
+
+## 角色距离切换
+
+需要在同一角色上切换骨骼、群体实例和代理时，从 `integrations/model3d.js` 导入 `createModelLod3D`。`near` 可用 `model3d.acquire(url, { signal })` 获取模型，再用 `cloneObject3DWithSkins` 克隆骨骼。`sync(state)` 应把当前变换和循环动画时间应用到克隆和 `AnimationMixer`，按片段时长归一化播放时间，首次调用时才挂到场景。`dispose()` 卸下对象、释放独立骨骼和动画绑定，并释放模型引用。远景工厂可直接使用 `createHLODProxyGroup3D`，同样在 `sync` 里挂载，并把代理的 `dispose` 交给控制器。
+
+```js
+const lod = createModelLod3D({
+  near: loadSkeletalSlot,
+  crowd: standaloneCrowd,
+  far: () => {
+    const proxy = createHLODProxyGroup3D(THREE, { proxies: actorProxyParts });
+    return {
+      sync({ x, y, z, rotationY }) {
+        proxy.group.position.set(x, y, z);
+        proxy.group.rotation.y = rotationY;
+        if (!proxy.group.parent) world.add(proxy.group);
+      },
+      dispose: proxy.dispose,
+    };
+  },
+  crowdDistance: 25,
+  farDistance: 80,
+  signal: scene.activationSignal,
+});
+
+// 每次渲染更新。所有角色提交状态后，共享 crowd 更新一次。
+lod.update(cameraDistance, { x, y, z, rotationY, clip, time });
+standaloneCrowd.update(0, { camera });
+```
+
+三层共享同一坐标系，中景 Bone-VAT 使用群体配置的地平面高度。用于角色切换的群体通过 `update` 绘制，由控制器接管其角色槽位。玩法、动画事件和时间推进仍由游戏逻辑负责。场景取消后再销毁共享群体。

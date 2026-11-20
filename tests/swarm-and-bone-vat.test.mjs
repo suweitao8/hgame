@@ -32,7 +32,10 @@ import {
   decodeBoneVatBinary,
   buildSimplifiedLodGeometry,
   createBoneVatCrowd3D,
+  cloneObject3DWithSkins,
 } from '../assets/runtime/integrations/model3d.js';
+import * as models from '../assets/runtime/integrations/model3d.js';
+import { createHLODProxyGroup3D } from '../assets/runtime/world/open-world.js';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 
@@ -331,6 +334,166 @@ test('SwarmSimulation & FlatCombatECS: 10m/12m hysteresis, freeze/knockback, Bug
   const synced = sim.syncToSpriteCrowd2D(crowd2d, { syncRotation: true, frameCount: 4 });
   assert.equal(synced, 2);
   assert.equal(crowd2d.count, 2);
+});
+
+test('Model LOD keeps the same transform and animation clock across skeletal, Bone-VAT and proxy tiers', () => {
+  const { mesh, root, clips } = createProceduralSkinnedHero(THREE);
+  const world = new THREE.Group();
+  const vatData = bakeBoneVatData(THREE, { root, animations: clips, sampleFps: 15 });
+  const crowd = createBoneVatCrowd3D(THREE, { root, vatData, capacity: 2 });
+  world.add(crowd.group);
+  let skeletal, proxy;
+  const lod = models.createModelLod3D({
+    crowd, crowdDistance: 10, farDistance: 30, hysteresis: 0.1,
+    near() {
+      skeletal = cloneObject3DWithSkins(THREE, root);
+      const mixer = new THREE.AnimationMixer(skeletal);
+      const action = mixer.clipAction(clips.find(clip => clip.name === 'walk')).play();
+      return {
+        sync({ x, y, z, rotationY, time }) {
+          skeletal.position.set(x, y, z);
+          skeletal.rotation.y = rotationY;
+          action.time = time % action.getClip().duration;
+          mixer.update(0);
+          if (!skeletal.parent) world.add(skeletal);
+        },
+        dispose() {
+          skeletal.removeFromParent();
+          mixer.stopAllAction().uncacheRoot(skeletal);
+          skeletal.children[0].skeleton.dispose();
+        },
+      };
+    },
+    far() {
+      proxy = createHLODProxyGroup3D(THREE, { proxies: [{ sx: 2, sy: 2 }] });
+      return {
+        sync({ x, y, z, rotationY }) {
+          proxy.group.position.set(x, y, z);
+          proxy.group.rotation.y = rotationY;
+          if (!proxy.group.parent) world.add(proxy.group);
+        },
+        dispose: proxy.dispose,
+      };
+    },
+  });
+  const state = { x: 2, y: 0, z: -5, rotationY: 0.5, clip: 'walk', time: 0.6 };
+  lod.update(5, state);
+  assert.equal(lod.tier, 'near');
+  assert.deepEqual(skeletal.position.toArray(), [2, 0, -5]);
+  assert.ok(Math.abs(skeletal.getObjectByName('Upper').quaternion.z) > 0.15);
+  lod.update(10.5, state);
+  assert.equal(lod.tier, 'near');
+  const oldSkeletal = skeletal;
+  lod.update(12, state);
+  assert.equal(lod.tier, 'crowd');
+  assert.equal(oldSkeletal.parent, null);
+  assert.equal(crowd.update(0.1).visibleCount, 1);
+  const packed = crowd.lodMeshes[0].geometry.getAttribute('aCrowdPacked').array;
+  const clip = vatData.clips.find(item => item.name === 'walk');
+  assert.deepEqual(Array.from(packed.slice(0, 3)), [2, -5, 0.5]);
+  assert.ok(Math.abs(packed[3] - (1 + clip.startFrame + (clip.frames - 1) * 0.5)) < 1e-5);
+  const longTime = 1e40;
+  lod.update(12, { ...state, time: longTime });
+  crowd.update(0);
+  const longFrame = 1 + clip.startFrame + (clip.frames - 1) * (longTime % clip.duration) / clip.duration;
+  assert.ok(Math.abs(packed[3] - longFrame) < 1e-4);
+  lod.update(9.5, state);
+  assert.equal(lod.tier, 'crowd');
+  lod.update(35, { ...state, x: 4 });
+  assert.equal(lod.tier, 'far');
+  assert.equal(crowd.update(0).visibleCount, 0);
+  assert.deepEqual(proxy.group.position.toArray(), [4, 0, -5]);
+  lod.update(4, { ...state, time: 0 });
+  assert.equal(lod.tier, 'near');
+  assert.equal(proxy.group.parent, null);
+  assert.equal(skeletal.getObjectByName('Upper').quaternion.z, 0);
+  lod.dispose();
+  assert.equal(world.children.length, 1);
+  crowd.dispose();
+  mesh.skeleton.dispose();
+  mesh.geometry.dispose();
+  mesh.material.dispose();
+});
+
+test('Model LOD preserves the active tier on failure and releases superseded or scene-cancelled tiers', async () => {
+  const jobs = [];
+  const drawn = new Set();
+  const released = [];
+  let latest;
+  const scene = new AbortController();
+  const { mesh, root, clips } = createProceduralSkinnedHero(THREE);
+  const crowd = createBoneVatCrowd3D(THREE, { root, animations: clips, capacity: 1 });
+  const blocker = crowd.spawn();
+  const slot = label => ({
+    sync(state) { drawn.add(label); latest = state; },
+    dispose() { drawn.delete(label); released.push(label); },
+  });
+  const lod = models.createModelLod3D({
+    crowd, signal: scene.signal, crowdDistance: 10, farDistance: 30, hysteresis: 0,
+    near: () => slot('near'),
+    far({ signal }) {
+      const job = Promise.withResolvers();
+      jobs.push({ ...job, signal });
+      return job.promise;
+    },
+  });
+  const state = { x: 0, y: 0, z: -5, rotationY: 0, clip: 'walk', time: 0.1 };
+  lod.update(1, state);
+  lod.update(20, state);
+  assert.equal(lod.tier, 'near');
+  assert.match(String(lod.error), /capacity/i);
+  crowd.kill(blocker);
+  lod.retry();
+  lod.update(20, state);
+  assert.equal(lod.tier, 'crowd');
+  assert.deepEqual(released, ['near']);
+  lod.update(40, state);
+  assert.equal(lod.pendingTier, 'far');
+  assert.equal(crowd.count, 1);
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.z = 250;
+  camera.updateMatrixWorld();
+  assert.equal(crowd.update(0, { camera }).visibleCount, 1);
+  const failure = new Error('unavailable proxy');
+  jobs[0].reject(failure);
+  await Promise.resolve();
+  lod.update(40, state);
+  assert.equal(lod.tier, 'crowd');
+  assert.equal(lod.error, failure);
+  assert.equal(jobs.length, 1);
+  assert.equal(crowd.update(0, { camera }).visibleCount, 1);
+  lod.retry();
+  lod.update(40, state);
+  lod.update(2, state);
+  assert.equal(jobs[1].signal.aborted, true);
+  jobs[1].resolve(slot('stale'));
+  await Promise.resolve();
+  assert.deepEqual([...drawn], ['near']);
+  assert.deepEqual(released, ['near', 'stale']);
+  lod.update(40, state);
+  jobs[2].resolve(slot('ready'));
+  await Promise.resolve();
+  assert.deepEqual([...drawn], ['near']);
+  const nextState = { ...state, x: 5, time: 0.3 };
+  lod.update(40, nextState);
+  assert.equal(latest, nextState);
+  assert.deepEqual([...drawn], ['ready']);
+  assert.deepEqual(released, ['near', 'stale', 'near']);
+  lod.update(2, state);
+  lod.update(40, state);
+  scene.abort();
+  assert.equal(jobs[3].signal.aborted, true);
+  jobs[3].resolve(slot('scene-late'));
+  await Promise.resolve();
+  assert.equal(drawn.size, 0);
+  assert.deepEqual(released, ['near', 'stale', 'near', 'ready', 'near', 'scene-late']);
+  assert.equal(lod.tier, null);
+  assert.equal(lod.dispose(), false);
+  assert.equal(crowd.count, 0);
+  crowd.dispose();
+  mesh.skeleton.dispose();
+  mesh.geometry.dispose();
+  mesh.material.dispose();
 });
 
 test('HalfFloat IEEE-754 codec, Bake Bone-VAT, HVAT Binary Codec, LOD1 Simplifier & createBoneVatCrowd3D (Bug #4 & #5)', () => {

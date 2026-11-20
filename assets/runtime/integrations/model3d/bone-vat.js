@@ -1136,6 +1136,8 @@ function patchImpostorMaterial(material, {
  * @property {(options?: BoneVatSpawnOptions) => number} spawn
  * @property {(index: number, x: number, y: number, z: number, rotY?: number) => boolean} setTransform
  * @property {(index: number, clipName: string, options?: { speed?: number, randomizePhase?: boolean, phase?: number }) => boolean} play
+ * @property {(index: number, clipName: string, time: number, speed?: number) => boolean} setPlayback Sample a named clip at an explicit time in seconds. Speed defaults to zero for an external clock.
+ * @property {(index: number, enabled: boolean) => boolean} setDistanceFallback Allow a standalone slot to draw past maxDistance while a replacement is unavailable. Frustum and occlusion culling still apply.
  * @property {(index: number, duration?: number) => boolean} hitFlash
  * @property {(index: number) => boolean} kill
  * @property {() => void} clear
@@ -1388,6 +1390,7 @@ export function createBoneVatCrowd3D(THREE, {
   group.add(mesh0, mesh1, mesh2);
 
   // Local standalone SoA slots (used when driving createBoneVatCrowd3D directly without SwarmSimulation).
+  // 0 is free, 1 uses maxDistance, and 2 is a retained LOD fallback.
   const activeFlags = new Uint8Array(capacity);
   const posX = new Float32Array(capacity);
   const posZ = new Float32Array(capacity);
@@ -1581,6 +1584,27 @@ export function createBoneVatCrowd3D(THREE, {
     return true;
   }
 
+  function setPlayback(index, clipName, time, speed = 0) {
+    const packedSpeed = Math.fround(speed);
+    if (!activeFlags[index] || !Number.isFinite(time) || !Number.isFinite(packedSpeed)) return false;
+    let meta = clipList[clipIdx[index]];
+    if (meta?.name !== clipName) {
+      meta = clipByName.get(clipName);
+      if (!meta) return false;
+      clipIdx[index] = clipList.indexOf(meta);
+    }
+    const wrappedTime = meta.duration > 0 ? time % meta.duration : 0;
+    clipTime[index] = wrappedTime < 0 ? wrappedTime + meta.duration : wrappedTime;
+    clipSpeed[index] = packedSpeed;
+    return true;
+  }
+
+  function setDistanceFallback(index, enabled) {
+    if (!activeFlags[index]) return false;
+    activeFlags[index] = enabled ? 2 : 1;
+    return true;
+  }
+
   function hitFlash(index, duration = 0.08) {
     if (index < 0 || index >= capacity || !activeFlags[index]) return false;
     flashTimer[index] = duration > 0 ? duration : 0;
@@ -1688,7 +1712,7 @@ export function createBoneVatCrowd3D(THREE, {
       const px = posX[id];
       const pz = posZ[id];
       const distSq = worldDistanceSquared(px, pz);
-      if (distSq > maxDistSq) continue;
+      if (distSq > maxDistSq && activeFlags[id] === 1) continue;
       if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
 
       const bucket = selectLod(distSq, standaloneLod?.[id] ?? 0);
@@ -1964,6 +1988,8 @@ export function createBoneVatCrowd3D(THREE, {
     spawn,
     setTransform,
     play,
+    setPlayback,
+    setDistanceFallback,
     hitFlash,
     kill,
     clear,

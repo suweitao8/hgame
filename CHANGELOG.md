@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a distance-based 3D model LOD controller for skeletal models, shared Bone-VAT slots and distant proxies. Preserve animation time and keep the active representation while the next one prepares. World partition now preserves its fallback during failed loads and prepares distant proxies within budget before releasing full cells.
+
 - Use stable 2D layer and depth ordering across native and Pixi draws. Add normalized viewport clips and additive blending, and keep adjacent compatible draws together.
 
 - Add an opt-in fixed-tick budget for deferred simulation work and resumable 2D and 3D pathfinding. Navigation jobs use the same routing rules across slices and report backpressure, failures, and cancellation.

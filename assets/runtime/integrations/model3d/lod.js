@@ -1,0 +1,194 @@
+/**
+ * @typedef {object} ModelLodState3D
+ * @property {number} x Actor position in the representations' common coordinate space.
+ * @property {number} y Actor height. The shared Bone-VAT crowd uses its configured ground plane.
+ * @property {number} z Actor position in the representations' common coordinate space.
+ * @property {number} rotationY Yaw in radians.
+ * @property {string} clip A looping clip shared by the skeletal model and the crowd.
+ * @property {number} time Authoritative clip time in seconds.
+ */
+
+/**
+ * @typedef {object} ModelLodSlot3D
+ * @property {(state: ModelLodState3D) => void} sync Apply the actual state and attach on first call. Throw if preparation cannot finish.
+ * @property {() => void} dispose Detach if shown and release owned resources, including for a prepared slot that was never shown.
+ */
+
+/** @typedef {'near' | 'crowd' | 'far'} ModelLodTier3D */
+/** @typedef {(options: {signal: AbortSignal}) => ModelLodSlot3D | Promise<ModelLodSlot3D>} ModelLodFactory3D */
+
+/**
+ * @typedef {object} ModelLodOptions3D
+ * @property {ModelLodFactory3D} near Prepare a detached skeletal representation.
+ * @property {import('./bone-vat.js').BoneVatCrowd3D} crowd Shared standalone crowd, updated once after all controllers.
+ * @property {ModelLodFactory3D} far Prepare a detached proxy, such as a group from createHLODProxyGroup3D.
+ * @property {number} [crowdDistance=25] Distance at which the crowd tier begins.
+ * @property {number} [farDistance=80] Distance at which the proxy tier begins.
+ * @property {number} [hysteresis=0.1] Fractional dead band on either side of each threshold, in [0, 1).
+ * @property {AbortSignal} [signal] Scene activation or another owner lifetime.
+ */
+
+/**
+ * @typedef {object} ModelLod3D
+ * @property {ModelLodTier3D | null} tier Currently shown representation.
+ * @property {ModelLodTier3D | null} pendingTier Tier preparing or awaiting the next update.
+ * @property {unknown} error Latest transition failure, or null.
+ * @property {(distance: number, state: ModelLodState3D) => void} update Select a tier and apply the latest actor state.
+ * @property {() => void} retry Allow another attempt on the next update after a failed transition.
+ * @property {() => boolean} dispose Cancel pending work and release the shown representation. Leaves the shared crowd owned by the caller.
+ */
+
+const TIERS = /** @type {const} */ (['near', 'crowd', 'far']);
+
+/**
+ * Switches one actor between a skeletal model, a shared Bone-VAT slot and a distant proxy.
+ * The current tier stays visible while a replacement prepares. The next update samples
+ * the replacement at the latest transform and clip time before releasing the old tier.
+ * @param {ModelLodOptions3D} options
+ * @returns {ModelLod3D}
+ */
+export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDistance = 80, hysteresis = 0.1, signal }) {
+  if (typeof near !== 'function' || typeof far !== 'function' || typeof crowd?.setPlayback !== 'function') {
+    throw new TypeError('Model LOD requires near and far factories and a Bone-VAT crowd');
+  }
+  if (!(crowdDistance > 0 && farDistance > crowdDistance && Number.isFinite(farDistance) && hysteresis >= 0 && hysteresis < 1)) {
+    throw new RangeError('Model LOD requires increasing finite distances and hysteresis in [0, 1)');
+  }
+
+  const thresholds = [crowdDistance, farDistance];
+  const enter = thresholds.map(distance => distance * (1 + hysteresis));
+  const leave = thresholds.map(distance => distance * (1 - hysteresis));
+  let desired = -1;
+  let current = null;
+  let pending = null;
+  let failure = null;
+  let disposed = Boolean(signal?.aborted);
+  let updating = false;
+
+  function prepareCrowd() {
+    const index = crowd.spawn({ speed: 0 });
+    if (index < 0) throw new Error('Bone-VAT crowd has no available slot capacity');
+    return {
+      sync({ x, y, z, rotationY, clip, time }) {
+        if (!crowd.setPlayback(index, clip, time) || !crowd.setTransform(index, x, y, z, rotationY)) {
+          throw new Error(`Cannot sample Bone-VAT clip ${clip} in the LOD slot`);
+        }
+        crowd.setDistanceFallback(index, desired !== 1);
+      },
+      dispose() { crowd.kill(index); },
+    };
+  }
+
+  const factories = [near, prepareCrowd, far];
+
+  function cancelPending() {
+    const job = pending;
+    pending = null;
+    if (job) {
+      job.controller.abort();
+      job.slot?.dispose();
+    }
+  }
+
+  function prepare(target) {
+    const controller = new AbortController();
+    const job = { target, controller, slot: null };
+    pending = job;
+    function reject(error) {
+      if (pending !== job) return;
+      pending = null;
+      failure = { error };
+    }
+    function ready(slot) {
+      if (pending !== job) {
+        slot?.dispose?.();
+      } else if (typeof slot?.sync !== 'function' || typeof slot?.dispose !== 'function') {
+        reject(new TypeError('Model LOD factory must return a slot with sync and dispose'));
+        slot?.dispose?.();
+      } else {
+        job.slot = slot;
+      }
+    }
+    try {
+      const result = factories[target]({ signal: controller.signal });
+      if (typeof result?.then === 'function') Promise.resolve(result).then(ready, reject);
+      else ready(result);
+    } catch (error) {
+      reject(error);
+    }
+  }
+
+  function activate(job, state) {
+    const slot = job.slot;
+    job.slot = null;
+    try {
+      slot.sync(state);
+    } catch (error) {
+      if (pending === job) {
+        pending = null;
+        failure = { error };
+      }
+      slot.dispose();
+      return false;
+    }
+    if (pending !== job) {
+      slot.dispose();
+      return false;
+    }
+    pending = null;
+    const previous = current;
+    current = { target: job.target, slot };
+    previous?.slot.dispose();
+    return true;
+  }
+
+  function update(distance, state) {
+    if (disposed || updating) return;
+    if (!Number.isFinite(distance) || distance < 0) throw new RangeError('Model LOD distance must be finite and nonnegative');
+    updating = true;
+    try {
+      let target = desired;
+      if (target < 0) {
+        target = distance < crowdDistance ? 0 : distance < farDistance ? 1 : 2;
+      } else {
+        while (target < 2 && distance >= enter[target]) target++;
+        while (target > 0 && distance < leave[target - 1]) target--;
+      }
+      if (target !== desired) {
+        desired = target;
+        failure = null;
+        cancelPending();
+      }
+      if (disposed) return;
+      if (!failure && !pending && current?.target !== target) prepare(target);
+      if (pending?.slot && activate(pending, state)) return;
+      current?.slot.sync(state);
+    } finally {
+      updating = false;
+    }
+  }
+
+  function dispose() {
+    if (disposed) return false;
+    disposed = true;
+    signal?.removeEventListener('abort', dispose);
+    const previous = current;
+    current = null;
+    try {
+      cancelPending();
+    } finally {
+      previous?.slot.dispose();
+    }
+    return true;
+  }
+
+  if (!disposed) signal?.addEventListener('abort', dispose, { once: true });
+  return {
+    get tier() { return current ? TIERS[current.target] : null; },
+    get pendingTier() { return pending ? TIERS[pending.target] : null; },
+    get error() { return failure?.error ?? null; },
+    update,
+    retry() { failure = null; },
+    dispose,
+  };
+}

@@ -23,13 +23,14 @@
  * @property {number} [lookaheadSeconds=0.75] Seconds of viewer velocity added to the load-priority focus point.
  * @property {number} [maxLookaheadDistance] Clamp for the lookahead offset (world units). Default cellSize * 1.5.
  * @property {number} [maxLoadsPerStep=2] Maximum cell loads started per step().
- * @property {number} [maxUnloadsPerStep=4] Maximum unloads (and HLOD drops) per step().
+ * @property {number} [maxUnloadsPerStep=4] Per-step cap for full-cell unloads and cancellations, and a separate cap for standalone HLOD drops.
  * @property {number} [maxHlodBuildsPerStep=4] Maximum HLOD proxy builds per step().
  * @property {((desc: WorldCellDescriptor) => boolean) | null} [cellFilter=null] Return false to ignore a cell entirely.
- * @property {((desc: WorldCellDescriptor) => unknown) | null} [loadCell=null] Load a cell; may return data or a Promise of data. Without it cells become loaded immediately.
+ * @property {((desc: WorldCellDescriptor, context: {signal: AbortSignal}) => unknown) | null} [loadCell=null] Load a cell; may return data or a Promise of data. Keep the signal with the request. Results delivered after cancellation go to unloadCell.
  * @property {((desc: WorldCellDescriptor, data: unknown) => void) | null} [unloadCell=null] Release the data returned by loadCell.
- * @property {((desc: WorldCellDescriptor) => unknown) | null} [createHLOD=null] Build a distant proxy for a cell; returned value is passed to destroyHLOD.
+ * @property {((desc: WorldCellDescriptor) => unknown) | null} [createHLOD=null] Synchronously build a distant proxy before unloading full cell data. The returned value is passed to destroyHLOD.
  * @property {((desc: WorldCellDescriptor, hlodData: unknown) => void) | null} [destroyHLOD=null] Dispose a proxy built by createHLOD.
+ * @property {((desc: WorldCellDescriptor, error: unknown, stage: 'load' | 'hlod') => void) | null} [onCellError=null] Observe a failed replacement. The current representation stays active and can be retried on a future step.
  */
 /**
  * @typedef {object} WorldPartitionStepSummary
@@ -279,7 +280,7 @@ export type WorldPartitionOptions = {
      */
     maxLoadsPerStep?: number | undefined;
     /**
-     * Maximum unloads (and HLOD drops) per step().
+     * Per-step cap for full-cell unloads and cancellations, and a separate cap for standalone HLOD drops.
      */
     maxUnloadsPerStep?: number | undefined;
     /**
@@ -291,21 +292,27 @@ export type WorldPartitionOptions = {
      */
     cellFilter?: ((desc: WorldCellDescriptor) => boolean) | null | undefined;
     /**
-     * Load a cell; may return data or a Promise of data. Without it cells become loaded immediately.
+     * Load a cell; may return data or a Promise of data. Keep the signal with the request. Results delivered after cancellation go to unloadCell.
      */
-    loadCell?: ((desc: WorldCellDescriptor) => unknown) | null | undefined;
+    loadCell?: ((desc: WorldCellDescriptor, context: {
+        signal: AbortSignal;
+    }) => unknown) | null | undefined;
     /**
      * Release the data returned by loadCell.
      */
     unloadCell?: ((desc: WorldCellDescriptor, data: unknown) => void) | null | undefined;
     /**
-     * Build a distant proxy for a cell; returned value is passed to destroyHLOD.
+     * Synchronously build a distant proxy before unloading full cell data. The returned value is passed to destroyHLOD.
      */
     createHLOD?: ((desc: WorldCellDescriptor) => unknown) | null | undefined;
     /**
      * Dispose a proxy built by createHLOD.
      */
     destroyHLOD?: ((desc: WorldCellDescriptor, hlodData: unknown) => void) | null | undefined;
+    /**
+     * Observe a failed replacement. The current representation stays active and can be retried on a future step.
+     */
+    onCellError?: ((desc: WorldCellDescriptor, error: unknown, stage: "load" | "hlod") => void) | null | undefined;
 };
 export type WorldPartitionStepSummary = {
     /**

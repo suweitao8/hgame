@@ -1,4 +1,5 @@
 export { createModel3DProvider } from "./model3d/provider.js";
+export { createModelLod3D } from "./model3d/lod.js";
 export { createAnimationBudgetAllocator } from "./model3d/budget.js";
 export { createInstancedCrowd3D } from "./model3d/crowd.js";
 export { cloneObject3DWithSkins, inspectModel3D, prepareAnimationClips } from "./model3d/helpers.js";

@@ -422,6 +422,96 @@ test('MegaLights3D 300+ lights, cluster packing, stochastic unbiasedness, SH pro
   probes.dispose();
 });
 
+test('World partition keeps its proxy during failed or cancelled promotion', async () => {
+  const created = [], destroyed = [], released = [], jobs = [], failures = [];
+  const partition = createWorldPartition({
+    cellSize: 10, loadRadius: 2, unloadRadius: 4, hlodRadius: 20, hlodUnloadRadius: 30,
+    cellFilter: cell => cell.key === '0,0',
+    loadCell(_cell, { signal } = {}) {
+      const job = Promise.withResolvers();
+      jobs.push({ ...job, signal });
+      return job.promise;
+    },
+    unloadCell(_cell, data) { released.push(data); },
+    createHLOD() { const proxy = {}; created.push(proxy); return proxy; },
+    destroyHLOD(_cell, proxy) { destroyed.push(proxy); },
+    onCellError(cell, error, stage) { failures.push([cell.key, error, stage]); },
+  });
+  const near = [5, 0, 5], far = [25, 0, 5], hysteresisRing = [37, 0, 5];
+  partition.step(far);
+  partition.step(near);
+  assert.equal(partition.getCellState(0, 0), 'loading');
+  assert.deepEqual(partition.getHlodCells().map(cell => cell.key), ['0,0']);
+  assert.equal(partition.stats.hlod, 1);
+  const error = new Error('detail load failed');
+  jobs[0].reject(error);
+  await Promise.resolve();
+  assert.equal(partition.getCellState(0, 0), 'hlod');
+  assert.deepEqual(failures, [['0,0', error, 'load']]);
+  partition.step(near);
+  partition.step(hysteresisRing);
+  assert.equal(jobs[1].signal.aborted, true);
+  assert.equal(partition.getCellState(0, 0), 'hlod');
+  assert.equal(created.length, 1);
+  const stale = {};
+  jobs[1].resolve(stale);
+  await Promise.resolve();
+  assert.deepEqual(released, [stale]);
+  assert.deepEqual(destroyed, []);
+  partition.step(near);
+  const ready = {};
+  jobs[2].resolve(ready);
+  await Promise.resolve();
+  assert.equal(partition.getCellState(0, 0), 'loaded');
+  assert.equal(partition.getCellData(0, 0), ready);
+  assert.deepEqual(destroyed, created);
+  partition.step(far);
+  partition.step(near);
+  partition.clear();
+  assert.equal(jobs[3].signal.aborted, true);
+  assert.equal(partition.stats.tracked, 0);
+  assert.deepEqual(destroyed, created);
+  const cleared = {};
+  jobs[3].resolve(cleared);
+  await Promise.resolve();
+  assert.deepEqual(released, [stale, ready, cleared]);
+});
+
+test('World partition keeps full data when downgrade fails and budgets proxy preparation', () => {
+  const events = [], failures = [];
+  const error = new Error('proxy build failed');
+  let shouldFail = true;
+  const partition = createWorldPartition({
+    cellSize: 10, loadRadius: 2, unloadRadius: 4, hlodRadius: 40,
+    cellFilter: cell => cell.key === '0,0' || cell.key === '1,0',
+    maxHlodBuildsPerStep: 1,
+    loadCell: cell => cell.key,
+    unloadCell(cell, data) { assert.equal(data, cell.key); events.push(['unload', cell.key]); },
+    createHLOD(cell) {
+      events.push(['prepare', cell.key]);
+      if (shouldFail && cell.key === '0,0') throw error;
+      return cell.key;
+    },
+    onCellError(cell, cause, stage) { failures.push([cell.key, cause, stage]); },
+  });
+  partition.step([10, 0, 5]);
+  assert.equal(partition.stats.loaded, 2);
+  partition.step([33, 0, 5]);
+  assert.equal(partition.stats.loaded, 2);
+  assert.equal(partition.getCellData(0, 0), '0,0');
+  assert.deepEqual(events, [['prepare', '0,0']]);
+  assert.deepEqual(failures, [['0,0', error, 'hlod']]);
+  const downgrade = partition.step([33, 0, 5]);
+  assert.equal(downgrade.hlodCreated, 1);
+  assert.equal(downgrade.unloaded, 1);
+  assert.deepEqual(events.slice(1), [['prepare', '1,0'], ['unload', '1,0']]);
+  assert.equal(partition.getCellState(0, 0), 'loaded');
+  assert.equal(partition.getCellState(1, 0), 'hlod');
+  shouldFail = false;
+  partition.step([33, 0, 5]);
+  assert.equal(partition.getCellState(0, 0), 'hlod');
+});
+
 test('Open-World: WorldPartition hysteresis + velocity lookahead + HLOD batching + Floating Origin Float64 preservation', () => {
   const events = [];
   const partition = createWorldPartition({

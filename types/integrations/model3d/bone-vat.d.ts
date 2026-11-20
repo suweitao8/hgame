@@ -112,6 +112,8 @@ export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3D
  * @property {(options?: BoneVatSpawnOptions) => number} spawn
  * @property {(index: number, x: number, y: number, z: number, rotY?: number) => boolean} setTransform
  * @property {(index: number, clipName: string, options?: { speed?: number, randomizePhase?: boolean, phase?: number }) => boolean} play
+ * @property {(index: number, clipName: string, time: number, speed?: number) => boolean} setPlayback Sample a named clip at an explicit time in seconds. Speed defaults to zero for an external clock.
+ * @property {(index: number, enabled: boolean) => boolean} setDistanceFallback Allow a standalone slot to draw past maxDistance while a replacement is unavailable. Frustum and occlusion culling still apply.
  * @property {(index: number, duration?: number) => boolean} hitFlash
  * @property {(index: number) => boolean} kill
  * @property {() => void} clear
@@ -401,6 +403,14 @@ export type BoneVatCrowd3D = {
         randomizePhase?: boolean;
         phase?: number;
     }) => boolean;
+    /**
+     * Sample a named clip at an explicit time in seconds. Speed defaults to zero for an external clock.
+     */
+    setPlayback: (index: number, clipName: string, time: number, speed?: number) => boolean;
+    /**
+     * Allow a standalone slot to draw past maxDistance while a replacement is unavailable. Frustum and occlusion culling still apply.
+     */
+    setDistanceFallback: (index: number, enabled: boolean) => boolean;
     hitFlash: (index: number, duration?: number) => boolean;
     kill: (index: number) => boolean;
     clear: () => void;
