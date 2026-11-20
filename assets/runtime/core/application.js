@@ -1,6 +1,7 @@
 import { createGameEngine } from '../platform/engine.js';
 import { defineProject, resolveFeatureGraph } from './config.js';
 import { SceneManager } from './scene.js';
+import { createFramePhases } from './internal/frame-phases.js';
 import { cleanupAll } from '../internal/cleanup.js';
 
 /** @type {import('./config.js').FeatureCatalog} */
@@ -100,6 +101,7 @@ const builtin = {
  * @property {number} renderAlpha Fixed-step interpolation factor, 0..1.
  * @property {import('../platform/input/manager.js').InputManager | null} input
  * @property {import('./scene.js').SceneManager} scenes
+ * @property {(phase: import('./internal/frame-phases.js').FramePhase, callback: import('./internal/frame-phases.js').FramePhaseCallback, options?: import('./internal/frame-phases.js').FramePhaseOptions) => () => boolean} onPhase Register a synchronous scheduler extension.
  * @property {(scale: number) => GameApplication} setTimeScale Global time scale (>= 0).
  * @property {(durationSeconds: number, options?: HitStopOptions) => GameApplication} hitStop
  * @property {() => GameApplication} clearHitStop
@@ -138,6 +140,9 @@ export function createGameApplication({
     paused = false, disposed = false, installed = false, installing = null;
   let baseTimeScale = 1, hitStopRemaining = 0, hitStopTimeScale = 0;
   let lastUnscaledDelta = 0, lastScaledDelta = 0;
+  let advancing = false, rendering = false;
+  let commandRenderTimer = null;
+  const framePhases = createFramePhases();
   const stepSize = project.tickHz > 0 ? 1 / project.tickHz : null;
   const requiresInstall = project.features.some(name =>
     ['physics2d', 'physics3d', 'animation2d', 'tilemap2d', 'pathfinding2d', 'model3d',
@@ -162,7 +167,7 @@ export function createGameApplication({
     get input() { return runtime.input ?? null; },
     scenes: null,
     setTimeScale, hitStop, clearHitStop,
-    installFeatures, step, start, stop, pause, resume, dispatch, dispose,
+    installFeatures, onPhase, step, start, stop, pause, resume, dispatch, dispose,
   };
   app.scenes = new SceneManager(app, scene => {
     if (services.physics2d) scene.physics = services.physics2d.createWorld();
@@ -256,11 +261,54 @@ export function createGameApplication({
     return installing;
   }
 
-  function render() {
+  /** @type {GameApplication['onPhase']} */
+  function onPhase(phase, callback, options) {
+    if (disposed) throw new Error('Application disposed');
+    return framePhases.on(phase, callback, options);
+  }
+
+  function render(deltaSeconds = 0) {
+    if (rendering || disposed) return;
+    if (stepSize === null) cancelScheduledFrame();
     const scene = app.scenes.current;
-    if (!scene) return;
-    renderer.render(scene, app);
-    stats.frames++;
+    const signal = scene?.activationSignal;
+    if (!signal) return;
+    rendering = true;
+    try {
+      if (!framePhases.run('beforeRender', app, scene, signal, deltaSeconds)) return;
+      renderer.render(scene, app);
+      stats.frames++;
+      framePhases.run('afterRender', app, scene, signal, deltaSeconds);
+    } finally { rendering = false; }
+  }
+
+  function cancelScheduledFrame() {
+    if (frameId !== null) cancelFrame(frameId);
+    if (commandRenderTimer !== null) clearTimeout(commandRenderTimer);
+    frameId = null;
+    commandRenderTimer = null;
+  }
+
+  function requestCommandRender() {
+    if (!rendering) {
+      if (!advancing) render();
+      return;
+    }
+    if (frameId !== null || commandRenderTimer !== null) return;
+    frameId = requestFrame(onCommandFrame) ?? null;
+    if (frameId === null) commandRenderTimer = setTimeout(onCommandFrame, 0);
+  }
+
+  function onCommandFrame() {
+    frameId = null;
+    commandRenderTimer = null;
+    if (!running || paused || disposed) return;
+    try { render(); }
+    catch (error) {
+      stop();
+      runtime.diagnostics?.reportError?.(error, { subsystem: 'hgame' });
+      throw error;
+    }
   }
 
   function setTimeScale(scale) {
@@ -306,11 +354,17 @@ export function createGameApplication({
 
   function advanceFrame(deltaSeconds) {
     if (disposed) throw new Error('Application disposed');
+    if (advancing || rendering) throw new Error('Cannot step while a frame is in progress');
     if (requiresInstall && !installed) throw new Error('Call await app.installFeatures() before stepping this project');
     if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) throw new RangeError('deltaSeconds must be >= 0');
-    const scene = app.scenes.current;
-    if (!scene) throw new Error('Choose a Scene first');
+    if (!app.scenes.current) throw new Error('Choose a Scene first');
     if (paused) return;
+    advancing = true;
+    try { advanceActiveFrame(deltaSeconds); }
+    finally { advancing = false; }
+  }
+
+  function advanceActiveFrame(deltaSeconds) {
     lastUnscaledDelta = deltaSeconds;
     const rawStep = Math.min(deltaSeconds, maxDelta);
     let scaledDelta;
@@ -336,10 +390,17 @@ export function createGameApplication({
       let steps = 0;
       while (accumulator + 1e-10 >= stepSize && steps < maxSubSteps) {
         const active = app.scenes.current;
-        active?._capturePreviousTransforms?.();
-        active?._run('fixedUpdate', stepSize, app);
-        if (disposed) return;
-        if (active?.active && app.scenes.current === active) active.physics?.step?.(stepSize);
+        const signal = active?.activationSignal;
+        if (signal) {
+          active._capturePreviousTransforms();
+          if (framePhases.run('beforeFixedUpdate', app, active, signal, stepSize)) {
+            active._run('fixedUpdate', stepSize, app);
+            if (!disposed && !signal.aborted && app.scenes.current === active) {
+              active.physics?.step?.(stepSize);
+              framePhases.run('afterPhysics', app, active, signal, stepSize);
+            }
+          }
+        }
         if (disposed) return;
         runtime.input?.endFrame?.();
         accumulator = Math.max(0, accumulator - stepSize);
@@ -353,11 +414,14 @@ export function createGameApplication({
       }
     }
     const current = app.scenes.current;
-    current?._run('update', scaledDelta, app);
-    if (disposed) return;
-    current?._run('lateUpdate', scaledDelta, app);
-    if (disposed) return;
-    render();
+    const signal = current?.activationSignal;
+    if (signal && framePhases.run('beforeUpdate', app, current, signal, scaledDelta)) {
+      current._run('update', scaledDelta, app);
+      if (framePhases.run('beforeLateUpdate', app, current, signal, scaledDelta)) {
+        current._run('lateUpdate', scaledDelta, app);
+      }
+    }
+    render(scaledDelta);
   }
 
   function scheduleFrame() {
@@ -400,7 +464,7 @@ export function createGameApplication({
       if (disposed || !running) return false;
       if (!paused) {
         if (stepSize !== null) scheduleFrame();
-        else render();
+        else requestCommandRender();
       }
       return true;
     } catch (error) {
@@ -413,8 +477,7 @@ export function createGameApplication({
     if (!running) return false;
     running = false;
     paused = false;
-    if (frameId !== null) cancelFrame(frameId);
-    frameId = null;
+    cancelScheduledFrame();
     previousTime = null;
     accumulator = 0;
     hitStopRemaining = 0;
@@ -427,8 +490,7 @@ export function createGameApplication({
   function pause() {
     if (!running || paused) return false;
     paused = true;
-    if (frameId !== null) cancelFrame(frameId);
-    frameId = null;
+    cancelScheduledFrame();
     previousTime = null;
     runtime.input?.reset?.();
     return true;
@@ -438,7 +500,7 @@ export function createGameApplication({
     paused = false;
     previousTime = null;
     if (stepSize !== null) scheduleFrame();
-    else render();
+    else requestCommandRender();
     return true;
   }
   function dispatch(command) {
@@ -446,7 +508,7 @@ export function createGameApplication({
     if (!command || typeof command.type !== 'string') throw new TypeError('Command needs type');
     if (!app.scenes.current) throw new Error('Choose a Scene before dispatch');
     app.scenes.current.onCommand(command, app);
-    if (stepSize === null && running && !paused) render();
+    if (stepSize === null && running && !paused) requestCommandRender();
   }
   function dispose() {
     if (disposed) return false;
@@ -454,6 +516,7 @@ export function createGameApplication({
     cleanupAll([
       () => stop(),
       () => app.scenes.dispose(),
+      () => framePhases.dispose(),
       () => offResize?.(),
       () => offFocus?.(),
       () => offVisibility?.(),

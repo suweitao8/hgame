@@ -68,12 +68,12 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 
 | 引擎 | 架构 / 25 | 性能设计 / 40 | 渲染 / 35 | 总分 / 100 | Δ |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| HGame | 21.7 | 35.0 | 30.0 | **86.7** | — |
-| Unity 6.6 URP Web | 22.5 | 34.0 | 28.8 | **85.3** | +1.4 |
-| PlayCanvas Engine 2.x | 20.9 | 31.0 | 29.2 | **81.1** | +5.6 |
-| Cocos Creator 3.8 Web | 20.0 | 29.2 | 26.1 | **75.3** | +11.4 |
+| HGame | 22.5 | 35.0 | 30.0 | **87.5** | — |
+| Unity 6.6 URP Web | 22.5 | 34.0 | 28.8 | **85.3** | +2.2 |
+| PlayCanvas Engine 2.x | 20.9 | 31.0 | 29.2 | **81.1** | +6.4 |
+| Cocos Creator 3.8 Web | 20.0 | 29.2 | 26.1 | **75.3** | +12.2 |
 
-- **Unity URP Web**。Unity 的调度契约高一个原始分，资源生命周期同为 9。Unity 通过 Addressables 管理资源引用。HGame 的关卡资源目录持有解码模型，最后一个场景释放后可按预算回收。HGame 的帧预算高一个原始分，GPU 提交和性能诊断同为 9。 [Unity Addressables](https://docs.unity3d.com/Packages/com.unity.addressables@2.7/manual/MemoryManagement.html) · [HGame 场景模型资源](guides/ASSET-CATALOG.md#scene-owned-decoded-models)
+- **Unity URP Web**。两者的架构同为 **22.5／25**。Unity 提供可定制的 Player Loop。HGame 在应用调度器内提供固定扩展点，并将异步工作绑定到一次场景激活。HGame 的帧预算高一个原始分，GPU 提交和性能诊断同为 9。 [Unity 调度顺序](https://docs.unity3d.com/6000.0/Documentation/Manual/execution-order.html) · [HGame 调度契约](guides/systems/01-core-lifecycle-tags.md#调度扩展与场景生命周期)
 - **PlayCanvas**。HGame 的性能设计高 **4.0** 加权分，2D 渲染高 **0.8**。两者的 3D 光照与输出评分相同。PlayCanvas 提供运行时光照贴图、环境光和 TAA 放大，HGame 使用离线探针与支持不透明刚体和 CPU 实例的 TAA。 [运行时光照贴图](https://developer.playcanvas.com/user-manual/graphics/lighting/runtime-lightmaps/) · [CameraFrame 时间域放大](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/#taa-upscaling) · [HGame 时间域抗锯齿](rendering/PIPELINE-3D.md#temporal-antialiasing)
 - **Cocos Creator Web**。HGame 在资源生命周期、CPU 仿真、GPU 提交、画质控制和诊断设计上得分更高。Cocos 的 R1 高 1 个原始分，值得参考的是动态图集和统一 2D 排序，尤其是文字、粒子和遮罩混排时如何维持批次。 [动态图集](https://docs.cocos.com/creator/3.8/manual/en/advanced-topics/dynamic-atlas.html) · [排序配置](https://docs.cocos.com/creator/3.8/manual/en/editor/project/) · [资源释放](https://docs.cocos.com/creator/3.8/manual/en/asset/release-manager.html)
 
@@ -83,10 +83,10 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 
 | 顺序 | 评分项 | HGame 当前 → 目标 | Unity / PlayCanvas / Cocos | 加权增量 | 扣分原因与具体改进 |
 | --- | --- | ---: | ---: | ---: | --- |
-| 1 | A1 调度生命周期 | 8 → 9 | 9 / 8 / 8 | +0.8 | 单一调度器已经管理固定步和插值。明确扩展的阶段注册顺序，统一跨场景任务取消以及退出和销毁回调的契约。 |
-| 2 | P1 CPU 仿真 | 8 → 9 | 8 / 7 / 7 | +1.0 | 固定步、确定性物理和密集群体数据已接入。为可延后的寻路和非关键 AI 更新引入分时预算，保留固定步确定性与背压报告。 |
-| 3 | R1 2D 渲染 | 8 → 9 | 9 / 7 / 9 | +0.8 | 主 2D 路径已有图集、精灵、粒子和 Bloom。明确精灵、文字、粒子和遮罩的排序与混合契约，减轻跨材质与裁剪切换造成的批次打断。 |
-| 4 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
+| 1 | P1 CPU 仿真 | 8 → 9 | 8 / 7 / 7 | +1.0 | 固定步、确定性物理和密集群体数据已接入。为可延后的寻路和非关键 AI 更新引入分时预算，保留固定步确定性与背压报告。 |
+| 2 | R1 2D 渲染 | 8 → 9 | 9 / 7 / 9 | +0.8 | 主 2D 路径已有图集、精灵、粒子和 Bloom。明确精灵、文字、粒子和遮罩的排序与混合契约，减轻跨材质与裁剪切换造成的批次打断。 |
+| 3 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
+| — | A1 调度生命周期 | 9 → 9 | 9 / 8 / 8 | +0.0 | 应用调度提供固定顺序的扩展点。场景激活在停用前发出取消信号，准备回滚和重入销毁沿用同一套退出契约。 |
 | — | A3 资源生命周期 | 9 → 9 | 9 / 8 / 8 | +0.0 | 关卡资源作用域和 3D 模型槽可持有共享解码模型。主请求可取消，空闲模型几何和纹理可按引用和预算回收。 |
 | — | P3 帧预算 | 9 → 9 | 8 / 8 / 7 | +0.0 | Three 自动画质同时接收耗时和内存压力。可回收空闲目标和已登记的缓存，并在内存有余量时恢复画质。 |
 | — | P4 性能诊断 | 9 → 9 | 9 / 8 / 7 | +0.0 | WebGL2D、Canvas2D、Pixi 和 Three 共用快照结构。绘制、上传、GPU 时间与目标估算按后端能力公开。 |
@@ -103,7 +103,7 @@ HGame 已能把任务拆成要求，以精确测试名和浏览器检查点生�
 
 ## HGame 复评记录
 
-当前复评 **86.7／100**，架构 **21.7／25**，性能设计 **35.0／40**，渲染 **30.0／35**。距离目标 **3.3 分**。
+当前复评 **87.5／100**，架构 **22.5／25**，性能设计 **35.0／40**，渲染 **30.0／35**。距离目标 **2.5 分**。
 
 | 阶段 | 构建目标与后端 | 评项 | 原分 | 新分 | 加权变化与工程依据 |
 | --- | --- | --- | ---: | ---: | --- |
@@ -120,5 +120,6 @@ HGame 已能把任务拆成要求，以精确测试名和浏览器检查点生�
 | 2D 渲染诊断 | Web · WebGL2D、Canvas2D、Pixi | P4 | 8 | 9 | **+0.8**。主 2D 后端提供同格式的帧与阶段报告。WebGL 记录实际绘制、上传载荷、目标估算与异步 GPU 采样。Pixi WebGPU 记录可观测的队列传输和提交，Canvas2D 保留 CPU 阶段和缓存估算。Canvas2D 的 GPU 计数与 Pixi WebGPU 的 GPU 时间按不可用报告。 [诊断口径](guides/AI-VERIFICATION.md#per-frame-render-diagnostics) · [专项测试](../tests/webgl2d-lighting-post.test.mjs) |
 | 帧与内存预算 | Web · Three WebGL2 | P3 | 8 | 9 | **+1.0**。普通绘制计入各视口的后处理目标、阴影贴图、烘焙探针与项目登记的缓存占用。自动模式先回收空闲资源，再按目标类型调整分辨率或特效，恢复前留出余量。预算按已知分配估算，覆盖 Three 路径。 [预算接口](rendering/PIPELINE-3D.md#target-and-residency-budget) · [专项测试](../tests/rendering-pipeline3d.test.mjs) |
 | 模型资源驻留 | Web · 资源目录与 Three 模型服务 | A3 | 8 | 9 | **+0.8**。关卡和模型槽共享解码结果，最后一个待加载的持有者离开时取消主请求，迟到的解码结果按引用清理。模型几何和纹理可按估算驻留量回收，生成项目可把同一份占用接入渲染预算。已开始的 glTF 内部解析和部分外部依赖加载可能继续完成。 [使用契约](guides/ASSET-CATALOG.md#scene-owned-decoded-models) · [专项测试](../tests/model3d-ownership.test.mjs) |
+| 阶段扩展与场景取消 | Web · 应用核心 | A1 | 8 | 9 | **+0.8**。固定更新、物理、逻辑和渲染的扩展按优先级及注册顺序执行。每次场景激活提供取消信号。候选回滚仅取消候选，重入销毁仍先停用组件再执行一次退出。可扩展位置由核心预先定义。 [调度与场景契约](guides/systems/01-core-lifecycle-tags.md#调度扩展与场景生命周期) · [专项测试](../tests/lifecycle-resilience.test.mjs) |
 
 后续评审新增一行，先更新证据，再重算总分。过去包含试玩或交付的评分使用其原始口径，趋势从本页首轮基线开始记录。

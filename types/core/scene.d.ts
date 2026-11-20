@@ -13,10 +13,15 @@ export class Scene {
     /** @type {TweenManager | null} */
     _tweens: TweenManager | null;
     _disposing: boolean;
+    _deactivating: boolean;
+    /** @type {AbortController | null} */
+    _activationController: AbortController | null;
     /** @type {Set<() => void>} */
     _disposeListeners: Set<() => void>;
     /** Lazily created per-scene tween manager. @returns {TweenManager} */
     get tweens(): TweenManager;
+    /** Aborted before the current activation disables its components or exits. @returns {AbortSignal | null} */
+    get activationSignal(): AbortSignal | null;
     /** Add a root entity. @template {Entity} T @param {T} entity @returns {T} */
     add<T extends Entity>(entity: T): T;
     /** Depth-first search by name. @param {string} name @returns {Entity | null} */
@@ -69,12 +74,22 @@ export class SceneManager {
     current: Scene | null;
     _disposing: boolean;
     _switching: boolean;
+    /** @type {Scene | null} */
+    _removing: Scene | null;
+    /** @type {Set<Scene>} */
+    _entered: Set<Scene>;
     /** @type {Set<() => void>} */
     _disposeListeners: Set<() => void>;
     /** Register a uniquely named scene. @template {Scene} T @param {T} scene @returns {T} */
     add<T extends Scene>(scene: T): T;
     /** @param {string} name @returns {Scene | null} */
     get(name: string): Scene | null;
+    /** @param {Scene} scene @param {unknown} data */
+    _enter(scene: Scene, data: unknown): void;
+    /** @param {Scene} scene */
+    _exit(scene: Scene): void;
+    /** @param {Scene} scene */
+    _leave(scene: Scene): void;
     /** Switch to a registered scene. @param {string} name @param {unknown} [data] Forwarded to `Scene#enter`. @returns {boolean} False if already current. */
     start(name: string, data?: unknown): boolean;
     /**

@@ -57,22 +57,22 @@ function captureTransformsOnRoots(roots) {
   }
 }
 
-/** @param {Component} component @param {Entity} entity @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @param {Scene} scene */
-function runComponentPhase(component, entity, phase, dt, app, scene) {
-  if (component._destroyed || !component._running || entity.scene !== scene || !scene.active) return;
+/** @param {Component} component @param {Entity} entity @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @param {Scene} scene @param {AbortController} activation */
+function runComponentPhase(component, entity, phase, dt, app, scene, activation) {
+  if (component._destroyed || !component._running || entity.scene !== scene || scene._activationController !== activation) return;
   if (!component._started) {
     component._started = true;
     component.start();
-    if (!component._running || entity.scene !== scene || !scene.active) return;
+    if (!component._running || entity.scene !== scene || scene._activationController !== activation) return;
   }
   const hook = component[phase];
   if (typeof hook === 'function' && hook !== PROTO_HOOKS[phase]) hook.call(component, dt, app);
 }
 
-/** @param {readonly Entity[]} roots @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @param {Scene} scene @param {Entity | null} [parent] @returns {void} */
-function runPhaseOnRoots(roots, phase, dt, app, scene, parent = null) {
+/** @param {readonly Entity[]} roots @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @param {Scene} scene @param {AbortController} activation @param {Entity | null} [parent] @returns {void} */
+function runPhaseOnRoots(roots, phase, dt, app, scene, activation, parent = null) {
   const len = roots.length;
-  if (len === 0 || !scene.active) return;
+  if (len === 0 || scene._activationController !== activation) return;
   const depth = walkDepth++;
   const buf = SCRATCH_WALK[depth] ?? (SCRATCH_WALK[depth] = []);
   let i = 0;
@@ -81,11 +81,12 @@ function runPhaseOnRoots(roots, phase, dt, app, scene, parent = null) {
     for (; i < len; i++) {
       const entity = buf[i];
       buf[i] = null;
-      if (!scene.active || entity.destroyed || entity.scene !== scene || entity.parent !== parent || !entity.activeInHierarchy) continue;
+      if (scene._activationController !== activation) break;
+      if (entity.destroyed || entity.scene !== scene || entity.parent !== parent || !entity.activeInHierarchy) continue;
       const comps = entity.components;
       const clen = comps.length;
       if (clen === 1) {
-        runComponentPhase(comps[0], entity, phase, dt, app, scene);
+        runComponentPhase(comps[0], entity, phase, dt, app, scene, activation);
       } else if (clen > 1) {
         const cdepth = compDepth++;
         const cbuf = SCRATCH_COMPS[cdepth] ?? (SCRATCH_COMPS[cdepth] = []);
@@ -95,15 +96,15 @@ function runPhaseOnRoots(roots, phase, dt, app, scene, parent = null) {
           for (; ci < clen; ci++) {
             const component = cbuf[ci];
             cbuf[ci] = null;
-            runComponentPhase(component, entity, phase, dt, app, scene);
+            runComponentPhase(component, entity, phase, dt, app, scene, activation);
           }
         } finally {
           while (ci < clen) cbuf[ci++] = null;
           compDepth--;
         }
       }
-      if (!entity.destroyed && entity.scene === scene && entity.children.length > 0 && scene.active) {
-        runPhaseOnRoots(entity.children, phase, dt, app, scene, entity);
+      if (!entity.destroyed && entity.scene === scene && entity.children.length > 0) {
+        runPhaseOnRoots(entity.children, phase, dt, app, scene, activation, entity);
       }
     }
   } finally {
@@ -128,12 +129,19 @@ export class Scene {
     /** @type {TweenManager | null} */
     this._tweens = null;
     this._disposing = false;
+    this._deactivating = false;
+    /** @type {AbortController | null} */
+    this._activationController = null;
     /** @type {Set<() => void>} */
     this._disposeListeners = new Set();
   }
   /** Lazily created per-scene tween manager. @returns {TweenManager} */
   get tweens() {
     return (this._tweens ??= new TweenManager());
+  }
+  /** Aborted before the current activation disables its components or exits. @returns {AbortSignal | null} */
+  get activationSignal() {
+    return this._activationController?.signal ?? null;
   }
   /** Add a root entity. @template {Entity} T @param {T} entity @returns {T} */
   add(entity) {
@@ -183,8 +191,27 @@ export class Scene {
   onCommand(_command, _app) {}
   /** @param {boolean} value @returns {void} */
   _setActive(value) {
-    if (this.active === value) return;
+    if (this.active === value && (value || !this._deactivating)) return;
     this.active = value;
+    if (!value) {
+      const previous = this._activationController;
+      this._activationController = null;
+      // A callback can dispose the app while this activation is leaving. The
+      // nested teardown drains components still marked running before exit.
+      const wasDeactivating = this._deactivating;
+      this._deactivating = true;
+      try {
+        previous?.abort();
+        const errors = [];
+        walk(this.objects, entity => {
+          if (entity.scene !== this || !entity.components.length) return;
+          try { entity._deactivate(); } catch (error) { errors.push(error); }
+        });
+        if (errors.length) throw new AggregateError(errors, 'Scene deactivation failed');
+      } finally { this._deactivating = wasDeactivating; }
+      return;
+    }
+    this._activationController = new AbortController();
     // Entity synchronizes its own descendants. Do not recursively synchronize
     // the same child twice for every ancestor level (quadratic in deep trees).
     for (const entity of [...this.objects]) {
@@ -198,16 +225,17 @@ export class Scene {
   }
   /** @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @returns {void} */
   _run(phase, dt, app) {
-    if (!this.active) return;
+    const activation = this._activationController;
+    if (!activation) return;
     if (this._tweens) {
       const fixedDriven = (app?.project?.tickHz ?? 0) > 0;
       if ((phase === 'fixedUpdate' && fixedDriven) || (phase === 'update' && !fixedDriven)) {
         this._tweens.update(dt);
       }
     }
-    if (!this.active || app?.disposed) return;
+    if (this._activationController !== activation || app?.disposed) return;
     this[phase]?.(dt, app);
-    runPhaseOnRoots(this.objects, phase, dt, app, this);
+    runPhaseOnRoots(this.objects, phase, dt, app, this, activation);
   }
   /**
    * Run a scene-owned cleanup after entities and physics are disposed.
@@ -258,6 +286,10 @@ export class SceneManager {
     this.current = null;
     this._disposing = false;
     this._switching = false;
+    /** @type {Scene | null} */
+    this._removing = null;
+    /** @type {Set<Scene>} */
+    this._entered = new Set();
     /** @type {Set<() => void>} */
     this._disposeListeners = new Set();
   }
@@ -282,6 +314,22 @@ export class SceneManager {
   }
   /** @param {string} name @returns {Scene | null} */
   get(name) { return this.registry.get(name) ?? null; }
+  /** @param {Scene} scene @param {unknown} data */
+  _enter(scene, data) {
+    this._entered.add(scene);
+    scene.enter(this.app, data);
+  }
+  /** @param {Scene} scene */
+  _exit(scene) {
+    if (this._entered.delete(scene)) scene.exit(this.app);
+  }
+  /** @param {Scene} scene */
+  _leave(scene) {
+    cleanupAll([
+      () => scene._setActive(false),
+      () => this._exit(scene),
+    ], 'Scene exit failed');
+  }
   /** Switch to a registered scene. @param {string} name @param {unknown} [data] Forwarded to `Scene#enter`. @returns {boolean} False if already current. */
   start(name, data) {
     if (this._disposing || this.app.disposed) throw new Error('Application disposed or disposing');
@@ -293,15 +341,26 @@ export class SceneManager {
     this._switching = true;
     try {
       if (old) {
-        old._setActive(false);
-        if (this.app.disposed || this.get(name) !== scene) return false;
-        old.exit(this.app);
+        try { this._leave(old); }
+        catch (error) {
+          if (this.current === old) this.current = null;
+          throw error;
+        }
         if (this.app.disposed || this.get(name) !== scene) return false;
       }
       this.current = scene;
-      scene._setActive(true);
-      if (this.app.disposed) return false;
-      scene.enter(this.app, data);
+      try {
+        scene._setActive(true);
+        if (this.app.disposed || this.current !== scene) return false;
+        this._enter(scene, data);
+      } catch (error) {
+        if (this.current === scene) {
+          try { this._leave(scene); }
+          catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Scene entry failed'); }
+          finally { if (this.current === scene) this.current = null; }
+        }
+        throw error;
+      }
       return this.current === scene;
     } finally { this._switching = false; }
   }
@@ -320,23 +379,19 @@ export class SceneManager {
     const old = this.current;
     if (old === next) return { changed: false, cleanupErrors: [] };
     const owned = () => !this.app.disposed && this.get(name) === next;
-    let attemptedEnter = false;
     this._switching = true;
     try {
       try {
         next._setActive(true);
         if (!owned()) return { changed: false, cleanupErrors: [] };
         if (canCommit && !canCommit()) throw new DOMException('Scene activation cancelled', 'AbortError');
-        attemptedEnter = true;
-        next.enter(this.app, data);
+        if (!owned()) return { changed: false, cleanupErrors: [] };
+        this._enter(next, data);
         if (owned() && canCommit && !canCommit()) throw new DOMException('Scene activation cancelled', 'AbortError');
       } catch (error) {
         if (owned()) {
           try {
-            cleanupAll([
-              () => next._setActive(false),
-              () => { if (attemptedEnter && owned()) next.exit(this.app); },
-            ], 'Candidate scene rollback failed');
+            this._leave(next);
           } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Prepared scene activation failed'); }
         }
         throw error;
@@ -346,7 +401,7 @@ export class SceneManager {
       const cleanupErrors = [];
       try { old?._setActive(false); } catch (error) { cleanupErrors.push(error); }
       if (old && owned() && this.registry.get(old.name) === old) {
-        try { old.exit(this.app); } catch (error) { cleanupErrors.push(error); }
+        try { this._exit(old); } catch (error) { cleanupErrors.push(error); }
       }
       return { changed: this.current === next, cleanupErrors };
     } finally { this._switching = false; }
@@ -361,13 +416,17 @@ export class SceneManager {
     this.registry.delete(name);
     if (wasCurrent) this.current = null;
     this._switching = true;
+    this._removing = scene;
     try {
       cleanupAll([
         () => scene._setActive(false),
-        () => { if (wasCurrent && !this.app.disposed) scene.exit(this.app); },
-        () => scene.dispose(),
+        () => this._exit(scene),
+        () => { if (scene.app === this.app) scene.dispose(); },
       ], 'Scene removal failed');
-    } finally { this._switching = false; }
+    } finally {
+      this._removing = null;
+      this._switching = false;
+    }
     return true;
   }
   /** @param {() => void} listener @returns {() => boolean} */
@@ -380,16 +439,17 @@ export class SceneManager {
   dispose() {
     if (this._disposing) return;
     this._disposing = true;
-    const current = this.current;
+    const scenes = [...this.registry.values()];
+    if (this._removing) scenes.push(this._removing);
     try {
       cleanupAll([
-        () => current?._setActive(false),
-        () => current?.exit(this.app),
-        ...[...this.registry.values()].map(scene => () => scene.dispose()),
+        ...[...this._entered].map(scene => () => this._leave(scene)),
+        ...scenes.map(scene => () => scene.dispose()),
         ...[...this._disposeListeners],
       ], 'Scene manager disposal failed');
     } finally {
       this.registry.clear();
+      this._entered.clear();
       this._disposeListeners.clear();
       this.current = null;
       this._disposing = false;

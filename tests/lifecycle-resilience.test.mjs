@@ -17,6 +17,199 @@ function scheduler() {
   };
 }
 
+test('frame extensions have ordered checkpoints and defer registrations until the next invocation', () => {
+  const calls = [];
+  class Play extends Scene {
+    fixedUpdate() { calls.push('fixed'); }
+    update() { calls.push('update'); }
+    lateUpdate() { calls.push('late'); }
+  }
+  const app = createGameApplication({ renderer: { render() { calls.push('render'); } } });
+  const scene = app.scenes.add(new Play('play'));
+  scene.physics = { step() { calls.push('physics'); } };
+  app.scenes.start('play');
+  const remove = app.onPhase('beforeFixedUpdate', () => calls.push('remove'), { order: 5 });
+  app.onPhase('beforeFixedUpdate', ({ app: owner, scene: current, signal, deltaSeconds }) => {
+    assert.equal(owner, app);
+    assert.equal(current, scene);
+    assert.equal(signal, scene.activationSignal);
+    assert.equal(deltaSeconds, 1 / 60);
+    calls.push('first');
+    if (remove()) app.onPhase('beforeFixedUpdate', () => calls.push('next'), { order: -5 });
+  }, { order: -4, signal: scene.activationSignal });
+  app.onPhase('beforeFixedUpdate', () => calls.push('second'), { order: -4 });
+  for (const phase of ['afterPhysics', 'beforeUpdate', 'beforeLateUpdate', 'beforeRender', 'afterRender']) {
+    app.onPhase(phase, () => calls.push(phase));
+  }
+  app.step(2 / 60);
+  assert.deepEqual(calls, [
+    'first', 'second', 'fixed', 'physics', 'afterPhysics',
+    'next', 'first', 'second', 'fixed', 'physics', 'afterPhysics',
+    'beforeUpdate', 'update', 'beforeLateUpdate', 'late', 'beforeRender', 'render', 'afterRender',
+  ]);
+  assert.equal(app.stats.ticks, 2);
+  app.dispose();
+});
+
+test('scene activation signals end before exit and prepared rollback preserves the current activation', () => {
+  const calls = [];
+  let candidateSignal;
+  class Candidate extends Scene {
+    enter() {
+      candidateSignal = this.activationSignal;
+      candidateSignal.addEventListener('abort', () => calls.push('candidate-abort'));
+    }
+    exit() { calls.push('candidate-exit'); }
+  }
+  class Playing extends Scene { exit() { calls.push('exit'); } }
+  const app = createGameApplication({ renderer: { render() {} } });
+  const scene = app.scenes.add(new Playing('play'));
+  const next = app.scenes.add(new Candidate('next'));
+  scene.add(new Entity()).addComponent(new class extends Component {
+    onDisable() { calls.push('disable'); }
+  }());
+  app.scenes.start(scene.name);
+  const firstSignal = scene.activationSignal;
+  firstSignal.addEventListener('abort', () => calls.push('abort'));
+  const remove = app.onPhase('beforeUpdate', () => calls.push('old-hook'), { signal: firstSignal });
+  let checks = 0;
+  assert.throws(() => app.scenes.activatePrepared(next.name, undefined, () => ++checks === 1), { name: 'AbortError' });
+  assert.equal(app.scenes.current, scene);
+  assert.equal(firstSignal.aborted, false);
+  assert.equal(candidateSignal.aborted, true);
+  assert.equal(next.activationSignal, null);
+  assert.deepEqual(calls, ['candidate-abort', 'candidate-exit']);
+  assert.equal(app.scenes.start(next.name), true);
+  assert.equal(firstSignal.aborted, true);
+  assert.equal(remove(), false);
+  assert.deepEqual(calls, ['candidate-abort', 'candidate-exit', 'abort', 'disable', 'exit']);
+  assert.equal(app.scenes.start(scene.name), true);
+  assert.notEqual(scene.activationSignal, firstSignal);
+  app.step(0);
+  assert.equal(calls.includes('old-hook'), false);
+  const resumedSignal = scene.activationSignal;
+  app.onPhase('beforeUpdate', () => {
+    app.scenes.start(next.name);
+    app.scenes.start(scene.name);
+  }, { signal: resumedSignal });
+  app.onPhase('beforeUpdate', () => calls.push('stale-phase'), { order: 1 });
+  app.step(0);
+  assert.equal(resumedSignal.aborted, true);
+  assert.equal(calls.includes('stale-phase'), false);
+  app.dispose();
+
+  const guarded = createGameApplication({ renderer: { render() {} } });
+  guarded.scenes.add(new Scene('old'));
+  let guardedEntries = 0;
+  guarded.scenes.add(new class extends Scene { enter() { guardedEntries++; } }('guarded'));
+  guarded.scenes.start('old');
+  assert.equal(guarded.scenes.activatePrepared('guarded', undefined, () => { guarded.dispose(); return true; }).changed, false);
+  assert.equal(guardedEntries, 0);
+});
+
+test('scene teardown calls exit once during reentrant disposal and rolls back a failed entry', () => {
+  let exits = 0;
+  class Leaving extends Scene { exit(app) { exits++; app.dispose(); } }
+  const app = createGameApplication({ renderer: { render() {} } });
+  app.scenes.add(new Leaving('first'));
+  app.scenes.add(new Scene('next'));
+  app.scenes.start('first');
+  assert.equal(app.scenes.start('next'), false);
+  assert.equal(exits, 1);
+  assert.equal(app.scenes.current, null);
+
+  let failedSignal;
+  let failedExits = 0;
+  class Failed extends Scene {
+    enter() { failedSignal = this.activationSignal; throw new Error('enter failed'); }
+    exit() { failedExits++; }
+  }
+  const retry = createGameApplication({ renderer: { render() {} } });
+  const failed = retry.scenes.add(new Failed('failed'));
+  retry.scenes.add(new Scene('healthy'));
+  assert.throws(() => retry.scenes.start('failed'), /enter failed/);
+  assert.equal(failed.active, false);
+  assert.equal(failedSignal.aborted, true);
+  assert.equal(failedExits, 1);
+  assert.equal(retry.scenes.current, null);
+  assert.equal(retry.scenes.start('healthy'), true);
+  retry.dispose();
+});
+
+test('command driven rendering uses the common phase sequence without nesting', () => {
+  const calls = [];
+  const clock = scheduler();
+  let value = 0;
+  class Menu extends Scene { onCommand() { calls.push('command'); value++; } }
+  const app = createGameApplication({ ...clock, project: { profile: 'ui', tickHz: 0 },
+    renderer: { render() { calls.push('render:' + value); } } });
+  app.scenes.add(new Menu('menu'));
+  app.scenes.start('menu');
+  app.onPhase('beforeRender', ({ deltaSeconds }) => {
+    assert.equal(deltaSeconds, 0);
+    calls.push('before');
+    assert.throws(() => app.step(0), /frame.*progress/i);
+  });
+  const remove = app.onPhase('afterRender', () => {
+    calls.push('after');
+    remove();
+    app.dispatch({ type: 'from-render' });
+    app.dispatch({ type: 'from-render' });
+  });
+  app.start();
+  assert.deepEqual(calls, ['before', 'render:0', 'after', 'command', 'command']);
+  assert.equal(clock.pending.size, 1);
+  clock.advance(16);
+  assert.deepEqual(calls.slice(-2), ['before', 'render:2']);
+  app.dispatch({ type: 'outer' });
+  assert.deepEqual(calls.slice(-3), ['command', 'before', 'render:3']);
+  assert.equal(clock.pending.size, 0);
+  app.dispose();
+});
+
+test('scene exit follows abort and all component disables even when deactivation disposes the app', () => {
+  const transitions = [
+    scenes => scenes.start('next'),
+    scenes => scenes.activatePrepared('next'),
+    scenes => scenes.remove('old'),
+  ];
+  for (const [transition, disposeAt] of transitions.flatMap(action => ['abort', 'disable'].map(phase => [action, phase]))) {
+    const calls = [];
+    class Leaving extends Scene { exit() { calls.push('exit'); } }
+    const app = createGameApplication({ renderer: { render() {}, dispose() { calls.push('renderer-dispose'); } } });
+    const scene = app.scenes.add(new Leaving('old'));
+    app.scenes.add(new Scene('next'));
+    for (const id of ['first', 'second']) {
+      scene.add(new Entity()).addComponent(new class extends Component {
+        onDisable() { calls.push(id + '-disable'); if (id === 'first' && disposeAt === 'disable') app.dispose(); }
+        onDestroy() { calls.push(id + '-destroy'); }
+      }());
+    }
+    scene.onDispose(() => calls.push('scene-cleanup'));
+    app.scenes.start('old');
+    scene.activationSignal.addEventListener('abort', () => { calls.push('abort'); if (disposeAt === 'abort') app.dispose(); });
+    transition(app.scenes);
+    assert.equal(app.disposed, true);
+    assert.deepEqual(calls, [
+      'abort', 'first-disable', 'second-disable', 'exit', 'first-destroy', 'second-destroy', 'scene-cleanup', 'renderer-dispose',
+    ]);
+  }
+});
+
+test('phase callbacks stop when an earlier abort listener blocks event propagation', () => {
+  const owner = new AbortController();
+  owner.signal.addEventListener('abort', event => event.stopImmediatePropagation());
+  const app = createGameApplication({ renderer: { render() {} } });
+  app.scenes.add(new Scene('play'));
+  app.scenes.start('play');
+  let calls = 0;
+  app.onPhase('beforeUpdate', () => calls++, { signal: owner.signal });
+  owner.abort();
+  app.step(0);
+  assert.equal(calls, 0);
+  app.dispose();
+});
+
 for (const checkpoint of ['before installation starts', 'during an awaited feature import']) {
   test(`disposing ${checkpoint} rejects installation without restoring services`, async () => {
     const app = createGameApplication({ project: { profile: '2d', features: ['scene', 'input', 'animation2d'] }, renderer: { render() {} } });

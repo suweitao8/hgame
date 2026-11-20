@@ -71,6 +71,7 @@
  * @property {number} renderAlpha Fixed-step interpolation factor, 0..1.
  * @property {import('../platform/input/manager.js').InputManager | null} input
  * @property {import('./scene.js').SceneManager} scenes
+ * @property {(phase: import('./internal/frame-phases.js').FramePhase, callback: import('./internal/frame-phases.js').FramePhaseCallback, options?: import('./internal/frame-phases.js').FramePhaseOptions) => () => boolean} onPhase Register a synchronous scheduler extension.
  * @property {(scale: number) => GameApplication} setTimeScale Global time scale (>= 0).
  * @property {(durationSeconds: number, options?: HitStopOptions) => GameApplication} hitStop
  * @property {() => GameApplication} clearHitStop
@@ -254,6 +255,10 @@ export type GameApplication = {
     renderAlpha: number;
     input: import("../platform/input/manager.js").InputManager | null;
     scenes: import("./scene.js").SceneManager;
+    /**
+     * Register a synchronous scheduler extension.
+     */
+    onPhase: (phase: import("./internal/frame-phases.js").FramePhase, callback: import("./internal/frame-phases.js").FramePhaseCallback, options?: import("./internal/frame-phases.js").FramePhaseOptions) => () => boolean;
     /**
      * Global time scale (>= 0).
      */
