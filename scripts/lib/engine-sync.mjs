@@ -127,6 +127,13 @@ function isPixi2dManagedProject(targetDir, projectMeta) {
   return false;
 }
 
+function shouldIncludeVendorThree(targetDir, recipe, gameConfig, pkg) {
+  if (recipe.profile !== '3d') return false;
+  if (fs.existsSync(path.join(targetDir, 'assets', 'vendor', 'three'))) return true;
+  if (gameConfig?.standalone === false && pkg?.dependencies?.three) return false;
+  return true;
+}
+
 /**
  * Builds the authoritative map of engine-managed files (`relPosixPath -> Buffer`) for a game recipe.
  */
@@ -135,6 +142,7 @@ export async function buildExpectedEngineFiles({
   recipe,
   projectEntry = 'src/main.js',
   includePixi2dScripts = false,
+  includeVendorThree = recipe.profile === '3d',
 }) {
   const expected = new Map();
   const runtimeDir = path.join(repoRoot, 'assets', 'runtime');
@@ -155,7 +163,7 @@ export async function buildExpectedEngineFiles({
     expected.set(rel, buf);
   }
 
-  if (recipe.profile === '3d') {
+  if (includeVendorThree) {
     for (const file of THREE_FILES) {
       const rel = toPosix(path.join('assets/vendor/three', file));
       expected.set(rel, await readFile(path.join(optionalThreeDir, file)));
@@ -216,15 +224,18 @@ export async function inspectProjectEngineSync({
 
   const projectMeta = await readJsonOptional(path.join(absDir, 'hgame.project.json'));
   const gameConfig = await readJsonOptional(path.join(absDir, 'game.config.json'));
+  const pkgJson = await readJsonOptional(path.join(absDir, 'package.json'));
   const prevSync = await readJsonOptional(path.join(absDir, ENGINE_SYNC_MANIFEST));
   const resolvedEntry = await resolveProjectEntry(absDir, projectEntry);
   const pixi2d = includePixi2dScripts ?? isPixi2dManagedProject(absDir, projectMeta);
+  const includeVendorThree = shouldIncludeVendorThree(absDir, parsedRecipe, gameConfig, pkgJson);
 
   const expected = await buildExpectedEngineFiles({
     repoRoot,
     recipe: parsedRecipe,
     projectEntry: resolvedEntry,
     includePixi2dScripts: pixi2d,
+    includeVendorThree,
   });
 
   // Collect actual files inside the 100%-owned vendor directories plus explicit managed files.
@@ -295,6 +306,7 @@ export async function inspectProjectEngineSync({
     profile: parsedRecipe.profile,
     physics: parsedRecipe.physics,
     pixi2d,
+    includeVendorThree,
     projectEntry: resolvedEntry,
     recordedEngineVersion: prevSync?.engineVersion ?? null,
     recordedEngineCommit: prevSync?.engineCommit ?? null,
@@ -381,7 +393,7 @@ export async function syncEngineFilesToProject({
       syncedAt: new Date().toISOString(),
       managedRoots: [
         'vendor/hgame',
-        ...(inspection.profile === '3d' ? ['assets/vendor/three'] : []),
+        ...(inspection.includeVendorThree ? ['assets/vendor/three'] : []),
         'docs/api/API-INDEX.json',
         ...ENGINE_MANAGED_SCRIPTS.map(s => `scripts/${s}`),
         ...(inspection.pixi2d ? ['scripts/install-pixi-build.mjs', PIXI_BUNDLER_PATH] : []),

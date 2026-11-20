@@ -135,6 +135,24 @@ test('sync-games classifies status, guards local edits, preserves game files, an
     const finalReport = JSON.parse(finalStatus.stdout);
     assert.equal(finalReport.upToDate, 5);
     assert.equal(finalReport.nonHGame, 1);
+
+    // Non-standalone 3D game using npm three skips copying assets/vendor/three/.
+    const npmThreeGame = path.join(gamesRoot, 'npm-three-3d');
+    await mkdir(npmThreeGame, { recursive: true });
+    await writeFile(path.join(npmThreeGame, 'engine.config.json'), JSON.stringify({
+      configVersion: 1, profile: '3d', renderer: 'threejs', physics: 'none', tickHz: 60, features: ['scene', 'input'],
+    }));
+    await writeFile(path.join(npmThreeGame, 'game.config.json'), JSON.stringify({
+      schemaVersion: 1, id: 'npm-three-3d', name: 'NPM3D', version: '0.1.0', entry: 'index.html', renderer: 'threejs', runtime: 'webasset-v1', standalone: false,
+    }));
+    await writeFile(path.join(npmThreeGame, 'package.json'), JSON.stringify({
+      name: 'npm-three-3d', dependencies: { three: '^0.187.0' },
+    }));
+    const syncNpmThree = runNode(syncGames, ['--root', gamesRoot, '--game', 'npm-three-3d', '--json']);
+    assert.equal(syncNpmThree.status, 0, syncNpmThree.stderr || syncNpmThree.stdout);
+    await assert.rejects(stat(path.join(npmThreeGame, 'assets', 'vendor', 'three')));
+    const npmThreeSync = JSON.parse(await readFile(path.join(npmThreeGame, '.hgame-sync.json'), 'utf8'));
+    assert.equal(npmThreeSync.managedRoots.includes('assets/vendor/three'), false);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
