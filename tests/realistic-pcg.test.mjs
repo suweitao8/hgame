@@ -366,13 +366,40 @@ test('assets/procedural Fable 5.2 bundle (13 materials, 11 meshes) validates, ne
   assert.equal(result.errors.length, 0);
   assert.equal(result.warnings.length, 0);
 
-  // Check CPU determinism across all 13 Fable 5.2 material graphs
+  // Check CPU determinism & seamless edge tiling across all 13 Fable 5.2 material graphs
+  const sz = 64;
   for (const mat of materials) {
-    const baked = pcg.evaluateMaterialGraphSync(mat, 32);
-    assert.equal(baked.albedoData.length, 32 * 32 * 4);
-    assert.equal(baked.normalData.length, 32 * 32 * 4);
-    assert.equal(baked.ormData.length, 32 * 32 * 4);
+    const baked = pcg.evaluateMaterialGraphSync(mat, sz);
+    assert.equal(baked.albedoData.length, sz * sz * 4);
+    assert.equal(baked.normalData.length, sz * sz * 4);
+    assert.equal(baked.ormData.length, sz * sz * 4);
     assert.ok(baked.stats.minRoughness >= 0.049 && baked.stats.maxRoughness <= 1.0);
+
+    // Compare border wrap delta against max interior row/column transition step on height (alpha)
+    let wrapX = 0;
+    let wrapY = 0;
+    let maxInnerStepX = 0;
+    let maxInnerStepY = 0;
+    for (let k = 0; k < sz; k++) {
+      wrapX += Math.abs(baked.albedoData[(k * sz + 0) * 4 + 3] - baked.albedoData[(k * sz + (sz - 1)) * 4 + 3]);
+      wrapY += Math.abs(baked.albedoData[(0 * sz + k) * 4 + 3] - baked.albedoData[((sz - 1) * sz + k) * 4 + 3]);
+    }
+    for (let x = 0; x < sz - 1; x++) {
+      let step = 0;
+      for (let y = 0; y < sz; y++) {
+        step += Math.abs(baked.albedoData[(y * sz + x + 1) * 4 + 3] - baked.albedoData[(y * sz + x) * 4 + 3]);
+      }
+      if (step > maxInnerStepX) maxInnerStepX = step;
+    }
+    for (let y = 0; y < sz - 1; y++) {
+      let step = 0;
+      for (let x = 0; x < sz; x++) {
+        step += Math.abs(baked.albedoData[((y + 1) * sz + x) * 4 + 3] - baked.albedoData[(y * sz + x) * 4 + 3]);
+      }
+      if (step > maxInnerStepY) maxInnerStepY = step;
+    }
+    assert.ok(wrapX <= maxInnerStepX * 1.35 + sz * 2, `${mat.id} should tile cleanly across U border`);
+    assert.ok(wrapY <= maxInnerStepY * 1.35 + sz * 2, `${mat.id} should tile cleanly across V border`);
   }
 
   const matIds = new Map(materials.map((m, idx) => [m.id, idx]));

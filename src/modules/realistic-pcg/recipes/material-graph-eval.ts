@@ -696,7 +696,8 @@ export function createMaterialBakeJob(
 
       case 'fabric_weave': {
         // Plain-weave warp/weft with linen slub irregularity from room-at-dawn/src/scene/materials.js
-        const threads = Math.max(4, Math.round(resolveNumber(args.threads, params, 48)));
+        let threads = Math.max(4, Math.round(resolveNumber(args.threads, params, 48)));
+        threads = (threads + 1) & ~1;
         const slub = resolveNumber(args.slub, params, 0.3);
         const out = curBuffers.out!;
 

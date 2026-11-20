@@ -186,6 +186,12 @@ try {
   if (Buffer.compare(shotWet, shotDesert) === 0) {
     throw new Error('setBiomeMode("desert_dust") did not change rendered pixels');
   }
+  await page.evaluate(() => window.__HGAME_LOOKDEV__.setBiomeMode('clean_indoor'));
+  await page.waitForTimeout(100);
+  const shotIndoor = await page.screenshot();
+  if (Buffer.compare(shotWet, shotIndoor) === 0 || Buffer.compare(shotDesert, shotIndoor) === 0) {
+    throw new Error('setBiomeMode("clean_indoor") did not produce a distinct surface response');
+  }
   await page.evaluate(() => window.__HGAME_LOOKDEV__.setBiomeMode('wet_moss'));
 
   // Hot-reload real wet_stone_brick material & verify pixel delta
@@ -217,12 +223,19 @@ try {
   console.log('LOW metrics:', JSON.stringify(lowMetrics));
   if (lowMetrics.estimatedTextureMB > 24) throw new Error(`LOW estimatedTextureMB (${lowMetrics.estimatedTextureMB}) > 24 MB`);
 
-  // Check GPU resource disposal
+  // Check GPU resource disposal on main page
   const remaining = await page.evaluate(() => window.__HGAME_LOOKDEV__.disposeAndVerify());
   console.log('After disposeAndVerify:', JSON.stringify(remaining));
   if (remaining.remainingGeometries !== 0 || remaining.remainingTextures !== 0) {
     throw new Error(`GPU leak after dispose: ${JSON.stringify(remaining)}`);
   }
+
+  // 3. Measure CPU bake baseline on HIGH (13 mats @ 512px) for CPU vs GPU comparison
+  await page.goto(`${baseDemoUrl}?bakeMode=cpu`, { waitUntil: 'load' });
+  await page.waitForFunction(() => Boolean(window.__HGAME_LOOKDEV__?.isReady()), { timeout: 60000 });
+  const cpuMetrics = await page.evaluate(() => window.__HGAME_LOOKDEV__.getMetrics());
+  console.log('CPU HIGH metrics (13 mats, 512px):', JSON.stringify(cpuMetrics));
+  await page.evaluate(() => window.__HGAME_LOOKDEV__.disposeAndVerify());
 
   if (errors.length > 0) throw new Error(`Browser errors encountered:\n${errors.join('\n')}`);
   console.log('ALL BROWSER LOOKDEV CHECKS PASSED!');
