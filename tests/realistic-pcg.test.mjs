@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as esbuild from 'esbuild';
+import * as THREE from '../assets/optional/three/three.module.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pcgDir = path.join(root, 'src', 'modules', 'realistic-pcg');
@@ -12,7 +13,7 @@ const pcgDir = path.join(root, 'src', 'modules', 'realistic-pcg');
 const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hgame-pcg-test-'));
 const bundlePath = path.join(tmpDir, 'pcg.mjs');
 
-await esbuild.build({
+esbuild.buildSync({
   entryPoints: [path.join(pcgDir, 'index.ts')],
   bundle: true,
   format: 'esm',
@@ -411,6 +412,12 @@ test('WebAsset procedural Fable 5.2 bundle (13 materials, 11 meshes) validates, 
   for (const mesh of meshes) {
     const out = pcg.evaluateMeshRecipe(mesh, ctx);
     assert.ok(out.triangleCount > 0, `${mesh.id} should have triangles`);
+    const audit = pcg.auditGeometry(out.geometry);
+    assert.equal(audit.valid, true, `${mesh.id} geometry audit failed: ${audit.issues.join('; ')}`);
+    assert.equal(audit.degenerateTriangles, 0);
+    assert.equal(audit.invalidNormals, 0);
+    assert.equal(audit.invertedWindingTriangles, 0);
+    assert.equal(audit.invalidUVs, 0);
     out.geometry.dispose();
   }
 
@@ -426,4 +433,111 @@ test('WebAsset procedural Fable 5.2 bundle (13 materials, 11 meshes) validates, 
   );
   closedCont.geometry.dispose();
   openCont.geometry.dispose();
+});
+
+test('ProceduralMeshBuilder fixes winding, recomputes metric UVs under non-uniform scale, and picks Uint16/Uint32', () => {
+  const b = new pcg.ProceduralMeshBuilder();
+  // Push clockwise vertices with +Z normal hint -> builder must swap winding to CCW
+  b.pushQuad(
+    { pos: [0, 0, 0], normal: [0, 0, 1], materialId: 0 },
+    { pos: [0, 1, 0], normal: [0, 0, 1], materialId: 0 },
+    { pos: [1, 1, 0], normal: [0, 0, 1], materialId: 0 },
+    { pos: [1, 0, 0], normal: [0, 0, 1], materialId: 0 }
+  );
+  // Zero-area degenerate triangle must be skipped
+  b.pushTriangle(
+    { pos: [0, 0, 0], materialId: 0 },
+    { pos: [1, 0, 0], materialId: 0 },
+    { pos: [2, 0, 0], materialId: 0 }
+  );
+
+  // Append a 1x1x1 BoxGeometry scaled non-uniformly (6 x 2 x 1) with metric UV recomputation
+  const srcBox = new THREE.BoxGeometry(1, 1, 1);
+  const mat = new THREE.Matrix4().compose(
+    new THREE.Vector3(3, 1, 0),
+    new THREE.Quaternion(),
+    new THREE.Vector3(6, 2, 1)
+  );
+  b.appendGeometry(srcBox, { matrix: mat, materialId: 1, edgeWear: 0.7, tileMeters: 1.0 });
+  srcBox.dispose();
+
+  const built = b.build();
+  const audit = pcg.auditGeometry(built.geometry);
+  assert.equal(audit.valid, true, audit.issues.join('; '));
+  assert.equal(audit.triangleCount, 14);
+  assert.ok(built.geometry.getIndex().array instanceof Uint16Array);
+
+  const uv = built.geometry.getAttribute('uv');
+  let maxU = 0;
+  for (let i = 0; i < uv.count; i++) maxU = Math.max(maxU, Math.abs(uv.getX(i)));
+  assert.ok(maxU >= 5.5, 'non-uniform scale x=6 should yield 6m metric UV span');
+
+  built.geometry.dispose();
+
+  // auditGeometry flags broken geometry accurately
+  const badGeo = new THREE.BufferGeometry();
+  badGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 1, 0, 1, 0, 0], 3));
+  badGeo.setAttribute('normal', new THREE.Float32BufferAttribute([0, 0, 1, 0, 0, 1, 0, 0, 1], 3));
+  badGeo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 0, 1, 1, 0], 2));
+  const badAudit = pcg.auditGeometry(badGeo);
+  assert.equal(badAudit.valid, false);
+  assert.equal(badAudit.invertedWindingTriangles, 1);
+  badGeo.dispose();
+});
+
+test('InstancedPropPool buckets prototypes, grows 2x cleanly, and preserves handles across Swap-and-Pop removal', async () => {
+  const loader = new pcg.ProceduralAssetLoader({ quality: 'LOW' });
+  await loader.loadFromRecipes([FIXTURE_BRICK_MAT, FIXTURE_WOOD_MAT], [FIXTURE_WALL_MESH]);
+  const mat = new pcg.createWorldPbrMaterial({ textureArray: loader.getTextureArray() });
+  const parent = new THREE.Group();
+  const pool = new pcg.InstancedPropPool({ loader, material: mat.material, parent });
+
+  const handles = [];
+  for (let i = 0; i < 12; i++) {
+    handles.push(
+      pool.spawn(
+        FIXTURE_WALL_MESH.id,
+        {
+          position: [i * 5, 0, 0],
+          rotation: [0, i * 0.25, 0],
+          tintJitter: 0.05,
+          wearBias: 0.3,
+          wetnessBias: 0.2,
+        },
+        { initialCapacity: 4 }
+      )
+    );
+  }
+  pool.flush();
+  let stats = pool.getStats();
+  assert.equal(stats.poolCount, 1);
+  assert.equal(stats.totalInstances, 12);
+
+  // Remove early elements (triggers swap-and-pop compaction), then update & verify remaining tail handle
+  pool.remove(handles[0]);
+  pool.remove(handles[2]);
+  pool.remove(handles[5]);
+  pool.updateTransform(handles[11], { position: [99, 1, -4], tintJitter: -0.1 });
+  pool.flush();
+
+  stats = pool.getStats();
+  assert.equal(stats.totalInstances, 9);
+  const instMesh = parent.children[0].children[0];
+  assert.equal(instMesh.count, 9);
+  const checkMat = new THREE.Matrix4();
+  let foundMoved = false;
+  for (let s = 0; s < instMesh.count; s++) {
+    instMesh.getMatrixAt(s, checkMat);
+    if (Math.abs(checkMat.elements[12] - 99) < 1e-4) foundMoved = true;
+  }
+  assert.equal(foundMoved, true);
+
+  // Separate material override or param variant creates a distinct bucket
+  pool.spawn(FIXTURE_WALL_MESH.id, { position: [0, 0, 10] }, { materialOverrides: { wall: FIXTURE_WOOD_MAT.id } });
+  pool.flush();
+  assert.equal(pool.getStats().poolCount, 2);
+
+  pool.dispose();
+  mat.dispose();
+  loader.dispose();
 });

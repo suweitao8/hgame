@@ -117,6 +117,8 @@ export interface MeshPartSpec {
   vertexMeta?: PartVertexMetaSpec;
 }
 
+export type MeshRenderMode = 'merge_chunk' | 'instanced_prop' | 'standalone';
+
 export interface MeshRecipe {
   format: 'hgame.mesh';
   version: 1;
@@ -124,6 +126,7 @@ export interface MeshRecipe {
   meta: {
     unit: 'meter';
     collider: 'auto_boxes' | 'trimesh' | 'none';
+    renderMode?: MeshRenderMode;
   };
   params?: ParamMap;
   materialSlots: Record<string, string>;

@@ -1,10 +1,5 @@
 import * as THREE from 'three';
-import {
-  buildBufferGeometryFromRaw,
-  computeMetricBoxUV,
-  createRawMeshData,
-  pushVertex,
-} from './metric-uv.js';
+import { ProceduralMeshBuilder, type VertexInput } from './mesh-builder.js';
 
 export interface VoxelChunkOptions {
   sizeX?: number;
@@ -171,7 +166,7 @@ export function createVoxelChunk(options: VoxelChunkOptions = {}): VoxelChunkDat
         lastGeometry.dispose();
         lastGeometry = null;
       }
-      const raw = createRawMeshData();
+      const builder = new ProceduralMeshBuilder();
 
       for (let y = 0; y < sizeY; y++) {
         for (let z = 0; z < sizeZ; z++) {
@@ -187,7 +182,12 @@ export function createVoxelChunk(options: VoxelChunkOptions = {}): VoxelChunkDat
               if (isSolid(x + dx, y + dy, z + dz)) continue; // Hidden face culling
 
               const aos: [number, number, number, number] = [0, 0, 0, 0];
-              const vIdxs: [number, number, number, number] = [0, 0, 0, 0];
+              const verts: [VertexInput, VertexInput, VertexInput, VertexInput] = [
+                null!,
+                null!,
+                null!,
+                null!,
+              ];
               const faceWet = dy > 0 ? wet : wet * 0.25;
 
               for (let c = 0; c < 4; c++) {
@@ -195,24 +195,27 @@ export function createVoxelChunk(options: VoxelChunkOptions = {}): VoxelChunkDat
                 const px = origin[0] + (x + corner[0]) * voxelSize;
                 const py = origin[1] + (y + corner[1]) * voxelSize;
                 const pz = origin[2] + (z + corner[2]) * voxelSize;
-                const [u, v] = computeMetricBoxUV(px, py, pz, dx, dy, dz);
                 const ao = computeCornerAO(x, y, z, face, corner);
                 aos[c] = ao;
-                vIdxs[c] = pushVertex(raw, px, py, pz, dx, dy, dz, u, v, ao, 0.05, faceWet, matId);
+                verts[c] = {
+                  pos: [px, py, pz],
+                  normal: face.dir,
+                  ao,
+                  edgeWear: 0.05,
+                  wetness: faceWet,
+                  materialId: matId,
+                };
               }
 
               // Flip quad diagonal when opposing AO sum breaks anisotropy symmetry
-              if (aos[0] + aos[2] > aos[1] + aos[3]) {
-                raw.indices.push(vIdxs[0], vIdxs[1], vIdxs[2], vIdxs[0], vIdxs[2], vIdxs[3]);
-              } else {
-                raw.indices.push(vIdxs[1], vIdxs[2], vIdxs[3], vIdxs[1], vIdxs[3], vIdxs[0]);
-              }
+              const flipDiagonal = aos[0] + aos[2] <= aos[1] + aos[3];
+              builder.pushQuad(verts[0], verts[1], verts[2], verts[3], { flipDiagonal });
             }
           }
         }
       }
 
-      lastGeometry = buildBufferGeometryFromRaw(raw);
+      lastGeometry = builder.build().geometry;
       return lastGeometry;
     },
 

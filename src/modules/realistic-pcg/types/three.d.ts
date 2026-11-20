@@ -77,6 +77,15 @@ declare module 'three' {
     copy(q: Quaternion): this;
   }
 
+  export class Matrix3 {
+    elements: number[];
+    setFromMatrix4(m: Matrix4): this;
+    determinant(): number;
+    invert(): this;
+    transpose(): this;
+    clone(): Matrix3;
+  }
+
   export class Matrix4 {
     elements: number[];
     compose(position: Vector3, quaternion: Quaternion, scale: Vector3): this;
@@ -132,6 +141,12 @@ declare module 'three' {
 
   export class Uint16BufferAttribute extends BufferAttribute {
     constructor(array: Uint16Array | number[], itemSize: number, normalized?: boolean);
+  }
+
+  export class InstancedBufferAttribute extends BufferAttribute {
+    constructor(array: Float32Array | number[], itemSize: number, normalized?: boolean);
+    setXYZW(index: number, x: number, y: number, z: number, w: number): this;
+    copyArray(array: ArrayLike<number>): this;
   }
 
   export class BufferGeometry {
@@ -273,6 +288,17 @@ declare module 'three' {
     geometry: BufferGeometry;
     material: Material | Material[];
     constructor(geometry?: BufferGeometry, material?: Material | Material[]);
+  }
+
+  export class InstancedMesh extends Mesh {
+    isInstancedMesh: boolean;
+    count: number;
+    instanceMatrix: InstancedBufferAttribute;
+    constructor(geometry: BufferGeometry, material: Material | Material[], count: number);
+    setMatrixAt(index: number, matrix: Matrix4): void;
+    getMatrixAt(index: number, matrix: Matrix4): void;
+    computeBoundingSphere(): void;
+    dispose(): void;
   }
 
   export class SkinnedMesh extends Mesh {

@@ -90,19 +90,26 @@ attribute float aMaterialId;
 varying float vPcgMatId;
 varying vec2 vPcgUv;
 varying vec3 vPcgWorldPos;
-varying vec3 vPcgWorldNormal;`
+varying vec3 vPcgWorldNormal;
+#ifdef USE_INSTANCING
+  attribute vec4 aInstanceMeta;
+  varying vec4 vPcgInstanceMeta;
+#endif`
       )
       .replace(
         '#include <uv_vertex>',
         `#include <uv_vertex>
 vPcgUv = uv;
-vPcgMatId = aMaterialId;`
+vPcgMatId = aMaterialId;
+#ifdef USE_INSTANCING
+  vPcgInstanceMeta = aInstanceMeta;
+#endif`
       )
       .replace(
         '#include <project_vertex>',
         `#include <project_vertex>
 vec4 pcgWorld = vec4( transformed, 1.0 );
-vec3 pcgWNormal = normal;
+vec3 pcgWNormal = objectNormal;
 #ifdef USE_INSTANCING
   pcgWorld = instanceMatrix * pcgWorld;
   pcgWNormal = mat3( instanceMatrix ) * pcgWNormal;
@@ -132,6 +139,9 @@ varying float vPcgMatId;
 varying vec2 vPcgUv;
 varying vec3 vPcgWorldPos;
 varying vec3 vPcgWorldNormal;
+#ifdef USE_INSTANCING
+  varying vec4 vPcgInstanceMeta;
+#endif
 
 float pcgHash21( vec2 p ) {
   p = fract( p * vec2( 123.34, 456.21 ) );
@@ -224,9 +234,18 @@ float pcgLocalWet = 0.0;
   pcgLocalWet = clamp( vColor.b, 0.0, 1.0 );
 #endif
 
+float pcgInstSeed = 0.0;
+#ifdef USE_INSTANCING
+  pcgAlbedo *= ( 1.0 + clamp( vPcgInstanceMeta.x, -0.35, 0.35 ) );
+  pcgEdgeWear = clamp( pcgEdgeWear + vPcgInstanceMeta.y * 0.4, 0.0, 1.0 );
+  pcgLocalWet = clamp( pcgLocalWet + vPcgInstanceMeta.z, 0.0, 1.0 );
+  pcgInstSeed = vPcgInstanceMeta.w;
+#endif
+
 // 1. Macro world-space variation (8m + 24m)
-float pcgMacro8 = pcgNoise2( vPcgWorldPos.xz * 0.125 );
-float pcgMacro24 = pcgNoise2( vPcgWorldPos.xz * 0.0416667 + vec2( 7.3, 19.1 ) );
+vec2 pcgMacroSeedOff = vec2( pcgInstSeed * 17.3, pcgInstSeed * 9.7 );
+float pcgMacro8 = pcgNoise2( vPcgWorldPos.xz * 0.125 + pcgMacroSeedOff );
+float pcgMacro24 = pcgNoise2( vPcgWorldPos.xz * 0.0416667 + vec2( 7.3, 19.1 ) + pcgMacroSeedOff );
 float pcgMacroVar = ( pcgMacro8 * 0.65 + pcgMacro24 * 0.35 ) * 2.0 - 1.0;
 pcgAlbedo *= ( 1.0 + pcgMacroVar * uMacroStrength );
 

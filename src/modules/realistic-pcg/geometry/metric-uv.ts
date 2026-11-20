@@ -274,12 +274,17 @@ export function buildBeveledBoxRaw(
 
 export function buildBufferGeometryFromRaw(raw: RawMeshData): THREE.BufferGeometry {
   const geom = new THREE.BufferGeometry();
+  const vCount = raw.positions.length / 3;
   geom.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(raw.positions), 3));
   geom.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(raw.normals), 3));
   geom.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(raw.uvs), 2));
   geom.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(raw.colors), 3));
   geom.setAttribute('aMaterialId', new THREE.Float32BufferAttribute(new Float32Array(raw.materialIds), 1));
-  geom.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(raw.indices), 1));
+  if (vCount <= 65535) {
+    geom.setIndex(new THREE.Uint16BufferAttribute(new Uint16Array(raw.indices), 1));
+  } else {
+    geom.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(raw.indices), 1));
+  }
   geom.computeBoundingBox();
   geom.computeBoundingSphere();
   return geom;

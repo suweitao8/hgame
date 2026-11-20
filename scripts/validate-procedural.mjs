@@ -135,6 +135,17 @@ try {
           });
         }
       }
+      const audit = pcg.auditGeometry(res.geometry);
+      if (!audit.valid) {
+        for (const msg of audit.issues) {
+          errors.push({
+            severity: 'error',
+            recipeId: id,
+            path: 'geometry',
+            message: msg,
+          });
+        }
+      }
       res.geometry.dispose();
     }
   }

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { getQualityPreset, type QualityTier } from '../core/quality-presets.js';
 import { extractMergedBoxes } from '../geometry/collider-exporter.js';
 import { buildBeveledBoxRaw, buildBufferGeometryFromRaw } from '../geometry/metric-uv.js';
+import { InstancedPropPool, type PropInstanceHandle } from '../geometry/instanced-prop-pool.js';
 import { createVoxelChunk, type VoxelChunkData } from '../geometry/voxel-chunk-mesher.js';
 import { createAtmospherePipeline, type AtmospherePipelineHandle } from '../lighting/atmosphere-pipeline.js';
 import type { LightingPresetName } from '../lighting/procedural-ibl.js';
@@ -28,7 +29,8 @@ export type CameraPresetName =
   | 'character'
   | 'industrial'
   | 'interior'
-  | 'plinths';
+  | 'plinths'
+  | 'yard';
 
 export interface LookDevMetrics {
   bakeTimeMs: number;
@@ -37,6 +39,8 @@ export interface LookDevMetrics {
   fps: number;
   drawCalls: number;
   staticDrawCalls: number;
+  instancedPools: number;
+  instancedProps: number;
   triangles: number;
   estimatedTextureMB: number;
   materialCount: number;
@@ -61,6 +65,11 @@ export interface HGameLookDevAPI {
   hotReloadMaterial(recipe: unknown): Promise<void>;
   hotReloadMesh(recipe: unknown): void;
   loadCharacterGlb(buffer: ArrayBuffer): Promise<void>;
+  stressTestInstancedPool(iterations?: number): {
+    iterations: number;
+    poolCount: number;
+    activeInstances: number;
+  };
   disposeAndVerify(): { remainingGeometries: number; remainingTextures: number };
 }
 
@@ -162,6 +171,7 @@ const CAMERA_PRESETS: Record<
   industrial: { pos: [-3.4, 2.9, -6.0], target: [-8.4, 1.35, -10.2] },
   interior: { pos: [3.2, 2.0, -7.6], target: [6.4, 0.9, -10.2] },
   plinths: { pos: [12.5, 4.8, 12.8], target: [6.8, 0.5, 6.2] },
+  yard: { pos: [-14.8, 6.0, 14.6], target: [-8.0, 1.5, 3.0] },
 };
 
 export interface LookDevSceneController {
@@ -423,25 +433,17 @@ export async function createLookDevScene(
     scene.add(terrainMesh);
   }
 
-  // 2. Main Guard Post mesh (1 DrawCall, hot-reloadable when present)
+  // 2. Main Guard Post merged into StaticShowcaseBatch to minimize DrawCalls
   function rebuildGuardPost(): void {
     if (guardPostMesh) {
       scene.remove(guardPostMesh);
       guardPostMesh = null;
     }
-    if (!loader.hasMesh('guard_post')) return;
-    const gpAsset = loader.instantiateMesh('guard_post');
-    guardPostMesh = new THREE.Mesh(gpAsset.geometry, worldMat.material);
-    guardPostMesh.name = 'GuardPostMain';
-    guardPostMesh.position.set(0, 0, -3.5);
-    guardPostMesh.castShadow = true;
-    guardPostMesh.receiveShadow = true;
-    scene.add(guardPostMesh);
   }
 
   // 3. Static Showcase Batch (1 DrawCall):
-  //    - 1m stone brick pillar + 4m beveled brick wall (metric UV comparison)
-  //    - Reskinned concrete guard_post (materialOverrides)
+  //    - Main guard_post + 1m stone brick pillar + 4m beveled brick wall
+  //    - Reskinned concrete guard_post + industrial dock + interior vignette
   //    - Calibration plinths (sphere + beveled cube per registered .hmat.json)
   function rebuildShowcase(): void {
     if (showcaseMesh) {
@@ -450,6 +452,11 @@ export async function createLookDevScene(
       showcaseMesh = null;
     }
     const pieces: MergedPiece[] = [];
+
+    if (loader.hasMesh('guard_post')) {
+      const gpAsset = loader.instantiateMesh('guard_post');
+      pieces.push({ geometry: gpAsset.geometry, pos: [0, 0, -3.5] });
+    }
 
     if (loader.hasMesh('beveled_wall')) {
       const pillarAsset = loader.instantiateMesh('beveled_wall', {
@@ -579,6 +586,132 @@ export async function createLookDevScene(
   rebuildShowcase();
   rebuildRocks();
 
+  // 4B. Track B InstancedPropPool — Saltline Yard 60-instance batch (4 DrawCalls total)
+  const propPool = new InstancedPropPool({
+    loader,
+    material: worldMat.material,
+    parent: scene,
+  });
+  const yardHandles: PropInstanceHandle[] = [];
+
+  function rebuildInstancedYard(): void {
+    for (const h of yardHandles) propPool.remove(h);
+    yardHandles.length = 0;
+
+    if (loader.hasMesh('shipping_container')) {
+      const containerSpots: Array<{ pos: [number, number, number]; rotY: number }> = [
+        // West dock double-stacked shipping containers
+        { pos: [-11.5, 0, 1.6], rotY: Math.PI * 0.5 },
+        { pos: [-11.5, 2.59, 1.6], rotY: Math.PI * 0.5 + 0.04 },
+        { pos: [-11.5, 0, 8.4], rotY: Math.PI * 0.5 - 0.03 },
+        { pos: [-11.5, 2.59, 8.4], rotY: Math.PI * 0.5 + 0.02 },
+        { pos: [-8.2, 0, 2.0], rotY: Math.PI * 0.5 + 0.05 },
+        { pos: [-8.2, 2.59, 2.0], rotY: Math.PI * 0.5 - 0.02 },
+        { pos: [-8.2, 0, 8.8], rotY: Math.PI * 0.5 },
+        // South-west & North dock containers
+        { pos: [-3.2, 0, 11.4], rotY: 0.03 },
+        { pos: [-3.2, 2.59, 11.4], rotY: -0.04 },
+        { pos: [-0.8, 0, -11.2], rotY: 0.06 },
+        { pos: [-0.8, 2.59, -11.2], rotY: -0.02 },
+        { pos: [2.8, 0, -11.4], rotY: Math.PI * 0.5 - 0.05 },
+      ];
+      for (let i = 0; i < containerSpots.length; i++) {
+        const s = containerSpots[i]!;
+        yardHandles.push(
+          propPool.spawn(
+            'shipping_container',
+            {
+              position: s.pos,
+              rotation: [0, s.rotY, 0],
+              tintJitter: ((i % 5) - 2) * 0.06,
+              wearBias: (i % 4) * 0.22,
+              wetnessBias: s.pos[1] < 0.1 ? 0.35 : -0.15,
+            },
+            { params: { doorOpen: false } }
+          )
+        );
+      }
+    }
+
+    if (loader.hasMesh('heavy_crate')) {
+      for (let i = 0; i < 20; i++) {
+        const row = Math.floor(i / 5);
+        const col = i % 5;
+        const stacked = i >= 15;
+        const x = stacked ? -5.8 - (i - 15) * 1.15 : -5.6 - col * 1.15;
+        const z = stacked ? 5.6 : 4.2 + row * 1.35;
+        const y = stacked ? 1.0 : 0.0;
+        yardHandles.push(
+          propPool.spawn(
+            'heavy_crate',
+            {
+              position: [x, y, z],
+              rotation: [0, ((i * 37) % 10) * 0.08 - 0.35, 0],
+              tintJitter: ((i % 7) - 3) * 0.045,
+              wearBias: ((i * 3) % 5) * 0.2,
+              wetnessBias: stacked ? -0.1 : 0.3,
+            },
+            { params: { size: 1.0 } }
+          )
+        );
+      }
+    }
+
+    if (loader.hasMesh('industrial_pillar')) {
+      const pillarCoords: Array<[number, number]> = [
+        [-13.0, -11.5], [-13.0, -5.0], [-13.0, 2.0], [-13.0, 9.5],
+        [-9.5, -13.0], [-3.5, -13.0], [3.5, -13.0], [9.5, -13.0],
+        [-9.5, 12.8], [-3.0, 12.8], [3.5, 12.8], [10.0, 12.8],
+        [12.6, -9.5], [12.6, -2.5], [12.6, 4.5], [12.6, 11.0],
+      ];
+      for (let i = 0; i < pillarCoords.length; i++) {
+        const [px, pz] = pillarCoords[i]!;
+        yardHandles.push(
+          propPool.spawn(
+            'industrial_pillar',
+            {
+              position: [px, 0, pz],
+              rotation: [0, (i % 4) * (Math.PI * 0.5), 0],
+              tintJitter: ((i % 3) - 1) * 0.07,
+              wearBias: (i % 5) * 0.18,
+              wetnessBias: 0.25,
+            },
+            { params: { height: 3.0 } }
+          )
+        );
+      }
+    }
+
+    if (loader.hasMesh('weathered_rock')) {
+      const rockCoords: Array<[number, number, number]> = [
+        [-6.2, 0, -1.2], [-6.8, 0, 1.2], [-5.5, 0, 9.8], [-10.2, 0, -4.5],
+        [11.8, 0, -12.2], [11.5, 0, 2.2], [11.8, 0, 11.8], [2.4, 0, 11.4],
+        [-12.4, 0, -12.4], [-1.5, 0, -12.6], [6.5, 0, 12.2], [-7.2, 0, 12.6],
+      ];
+      for (let i = 0; i < rockCoords.length; i++) {
+        const [rx, ry, rz] = rockCoords[i]!;
+        const sc = 0.72 + (i % 4) * 0.14;
+        yardHandles.push(
+          propPool.spawn(
+            'weathered_rock',
+            {
+              position: [rx, ry, rz],
+              rotation: [0, i * 0.65, 0],
+              scale: [sc, sc, sc],
+              tintJitter: ((i % 5) - 2) * 0.05,
+              wearBias: (i % 3) * 0.3,
+              wetnessBias: 0.35,
+            },
+            { castShadow: false }
+          )
+        );
+      }
+    }
+
+    propPool.flush();
+  }
+  rebuildInstancedYard();
+
   // 5. Dynamic Skeletal Character at guard post threshold / sun-shadow edge
   const normalizer: TripoNormalizerHandle = createTripoMaterialNormalizer();
   let actor: LoadedSkeletalActor = createNormalizedDummyActor(normalizer, {
@@ -606,6 +739,7 @@ export async function createLookDevScene(
     if (rockMesh) staticDrawCalls++;
     if (hotPreviewMesh) staticDrawCalls++;
 
+    const poolStats = propPool.getStats();
     return {
       bakeTimeMs: Math.round((tex?.bakeTimeMs ?? 0) * 10) / 10,
       maxBakeSliceMs: Math.round((tex?.maxSliceMs ?? 0) * 10) / 10,
@@ -613,6 +747,8 @@ export async function createLookDevScene(
       fps: Math.round(fpsSmooth * 10) / 10,
       drawCalls: renderer.info.render.calls,
       staticDrawCalls,
+      instancedPools: poolStats.poolCount,
+      instancedProps: poolStats.totalInstances,
       triangles: renderer.info.render.triangles,
       estimatedTextureMB: Math.round((tex?.estimatedMemoryMB ?? 0) * 100) / 100,
       materialCount: tex?.layers.size ?? 0,
@@ -790,6 +926,48 @@ export async function createLookDevScene(
       renderer.render(scene, camera);
     },
 
+    stressTestInstancedPool(iterations = 100) {
+      if (!loader.hasMesh('heavy_crate')) {
+        const s = propPool.getStats();
+        return { iterations: 0, poolCount: s.poolCount, activeInstances: s.totalInstances };
+      }
+      const handles: PropInstanceHandle[] = [];
+      for (let i = 0; i < iterations; i++) {
+        const h = propPool.spawn(
+          'heavy_crate',
+          {
+            position: [-6.0 - (i % 5) * 1.1, 2.0 + (i % 3) * 0.2, 6.0],
+            rotation: [0, i * 0.2, 0],
+            tintJitter: ((i % 5) - 2) * 0.05,
+            wearBias: 0.4,
+            wetnessBias: 0.2,
+          },
+          { params: { size: 1.0 } }
+        );
+        propPool.updateTransform(h, {
+          position: [-6.0 - (i % 5) * 1.1, 2.1, 6.2],
+          rotation: [0, i * 0.35, 0],
+        });
+        handles.push(h);
+        if (handles.length > 8) {
+          propPool.remove(handles.shift()!);
+        }
+        propPool.flush();
+      }
+      while (handles.length > 0) {
+        propPool.remove(handles.shift()!);
+      }
+      propPool.flush();
+      renderer.render(scene, camera);
+      const stats = propPool.getStats();
+      options.onMetricsUpdate?.(computeMetrics());
+      return {
+        iterations,
+        poolCount: stats.poolCount,
+        activeInstances: stats.totalInstances,
+      };
+    },
+
     disposeAndVerify(): { remainingGeometries: number; remainingTextures: number } {
       if (!disposed) {
         disposed = true;
@@ -833,6 +1011,7 @@ export async function createLookDevScene(
         scene.remove(actor.wrapper);
         actor.dispose();
 
+        propPool.dispose();
         worldMat.dispose();
         rockMat.dispose();
         atmosphere.dispose();

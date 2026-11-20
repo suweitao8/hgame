@@ -33,8 +33,8 @@ bakeModeSel.value = initialBakeMode;
 
 function formatMetrics(m: LookDevMetrics): string {
   return [
-    `FPS: ${m.fps} | DrawCalls: ${m.drawCalls} (Static: ${m.staticDrawCalls})`,
-    `Tris: ${m.triangles} | TexMem: ${m.estimatedTextureMB} MB`,
+    `FPS: ${m.fps} | DrawCalls: ${m.drawCalls} (Static: ${m.staticDrawCalls}, Pools: ${m.instancedPools})`,
+    `Props: ${m.instancedProps} | Tris: ${m.triangles} | Tex: ${m.estimatedTextureMB} MB`,
     `Bake: ${m.bakeTimeMs} ms [${m.bakeBackend.toUpperCase()}] (maxSlice ${m.maxBakeSliceMs} ms)`,
     `Mats: ${m.materialCount} | MeshCache: ${m.cachedMeshCount}`,
   ].join('\n');

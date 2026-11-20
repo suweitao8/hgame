@@ -357,6 +357,8 @@ export function validateMaterialRecipe(raw: unknown): ValidationIssue[] {
   return issues;
 }
 
+const VALID_RENDER_MODES = new Set(['merge_chunk', 'instanced_prop', 'standalone']);
+
 export function validateMeshRecipe(
   raw: unknown,
   knownMaterialIds?: Set<string>,
@@ -379,6 +381,14 @@ export function validateMeshRecipe(
   }
   if (!r.meta || r.meta.unit !== 'meter') {
     issues.push({ severity: 'error', recipeId: id, path: 'meta.unit', message: 'meta.unit must be "meter"' });
+  }
+  if (r.meta?.renderMode !== undefined && !VALID_RENDER_MODES.has(r.meta.renderMode)) {
+    issues.push({
+      severity: 'error',
+      recipeId: id,
+      path: 'meta.renderMode',
+      message: `Invalid renderMode "${String(r.meta.renderMode)}" (expected merge_chunk | instanced_prop | standalone)`,
+    });
   }
   if (!r.materialSlots || typeof r.materialSlots !== 'object') {
     issues.push({

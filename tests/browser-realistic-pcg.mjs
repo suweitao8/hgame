@@ -197,12 +197,22 @@ try {
   }
   if (highMetrics.drawCalls > 18) throw new Error(`drawCalls (${highMetrics.drawCalls}) > 18`);
   if (highMetrics.staticDrawCalls > 8) throw new Error(`staticDrawCalls (${highMetrics.staticDrawCalls}) > 8`);
+  if (hasWebAssetProc && (highMetrics.instancedPools !== 4 || highMetrics.instancedProps !== 60)) {
+    throw new Error(`Expected 4 instanced pools / 60 props, got ${highMetrics.instancedPools} / ${highMetrics.instancedProps}`);
+  }
   if (highMetrics.materialCount !== expectedMatCount) {
     throw new Error(`Expected ${expectedMatCount} materials, got ${highMetrics.materialCount}`);
   }
 
+  // Execute 100x spawn -> updateTransform -> remove dynamic build/demolish stress test
+  const stress = await page.evaluate(() => window.__HGAME_LOOKDEV__.stressTestInstancedPool(100));
+  console.log('InstancedPool 100x stress result:', JSON.stringify(stress));
+  if (hasWebAssetProc && stress.activeInstances !== 60) {
+    throw new Error(`Expected activeInstances=60 after 100x stress test, got ${stress.activeInstances}`);
+  }
+
   await mkdir(shotsDir, { recursive: true });
-  for (const preset of ['overview', 'brick_closeup', 'industrial', 'interior', 'plinths', 'puddle', 'character']) {
+  for (const preset of ['overview', 'yard', 'brick_closeup', 'industrial', 'interior', 'plinths', 'puddle', 'character']) {
     await page.evaluate((p) => window.__HGAME_LOOKDEV__.setCameraPreset(p), preset);
     await page.waitForTimeout(100);
     await page.screenshot({ path: path.join(shotsDir, `${preset}.png`) });

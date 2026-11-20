@@ -1,5 +1,5 @@
 // src/modules/realistic-pcg/lookdev/lookdev-scene.ts
-import * as THREE11 from "three";
+import * as THREE13 from "three";
 
 // src/modules/realistic-pcg/core/quality-presets.ts
 var REALISTIC_QUALITY_PRESETS = {
@@ -305,16 +305,491 @@ function buildBeveledBoxRaw(width, height, depth, bevel, materialId, edgeWear = 
 }
 function buildBufferGeometryFromRaw(raw) {
   const geom = new THREE.BufferGeometry();
+  const vCount = raw.positions.length / 3;
   geom.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(raw.positions), 3));
   geom.setAttribute("normal", new THREE.Float32BufferAttribute(new Float32Array(raw.normals), 3));
   geom.setAttribute("uv", new THREE.Float32BufferAttribute(new Float32Array(raw.uvs), 2));
   geom.setAttribute("color", new THREE.Float32BufferAttribute(new Float32Array(raw.colors), 3));
   geom.setAttribute("aMaterialId", new THREE.Float32BufferAttribute(new Float32Array(raw.materialIds), 1));
-  geom.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(raw.indices), 1));
+  if (vCount <= 65535) {
+    geom.setIndex(new THREE.Uint16BufferAttribute(new Uint16Array(raw.indices), 1));
+  } else {
+    geom.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(raw.indices), 1));
+  }
   geom.computeBoundingBox();
   geom.computeBoundingSphere();
   return geom;
 }
+
+// src/modules/realistic-pcg/geometry/instanced-prop-pool.ts
+import * as THREE2 from "three";
+function stableHashRecord(rec) {
+  if (!rec) return "";
+  const keys = Object.keys(rec).sort();
+  if (keys.length === 0) return "";
+  return keys.map((k) => `${k}=${JSON.stringify(rec[k])}`).join("&");
+}
+function makePoolKey(meshId, params2, materialOverrides) {
+  const p = stableHashRecord(params2);
+  const m = stableHashRecord(materialOverrides);
+  return `${meshId}|p:${p}|m:${m}`;
+}
+function normalizeInstanceData(data, seed) {
+  return {
+    position: [data.position[0], data.position[1], data.position[2]],
+    rotation: data.rotation ? [data.rotation[0], data.rotation[1], data.rotation[2]] : [0, 0, 0],
+    scale: data.scale ? [data.scale[0], data.scale[1], data.scale[2]] : [1, 1, 1],
+    tintJitter: Math.max(-0.35, Math.min(0.35, data.tintJitter ?? 0)),
+    wearBias: Math.max(0, Math.min(1, data.wearBias ?? 0)),
+    wetnessBias: Math.max(-0.5, Math.min(1, data.wetnessBias ?? 0)),
+    seed
+  };
+}
+var InstancedPropPool = class {
+  group;
+  loader;
+  material;
+  parent;
+  pools = /* @__PURE__ */ new Map();
+  nextInstanceId = 1;
+  tmpPos = new THREE2.Vector3();
+  tmpEuler = new THREE2.Euler();
+  tmpQuat = new THREE2.Quaternion();
+  tmpScale = new THREE2.Vector3();
+  tmpMat = new THREE2.Matrix4();
+  constructor(options) {
+    this.loader = options.loader;
+    this.material = options.material;
+    this.parent = options.parent;
+    this.group = new THREE2.Group();
+    this.group.name = "InstancedPropPoolGroup";
+    if (this.parent) {
+      this.parent.add(this.group);
+    }
+  }
+  createPool(poolKey, meshId, capacity, params2, materialOverrides, castShadow = true) {
+    const inst = this.loader.instantiateMesh(meshId, { params: params2, materialOverrides });
+    const protoGeo = inst.geometry.clone();
+    const metaArray = new Float32Array(capacity * 4);
+    const metaAttr = new THREE2.InstancedBufferAttribute(metaArray, 4);
+    protoGeo.setAttribute("aInstanceMeta", metaAttr);
+    const mesh = new THREE2.InstancedMesh(protoGeo, this.material, capacity);
+    mesh.name = `InstancedPool_${meshId}`;
+    mesh.count = 0;
+    mesh.castShadow = castShadow;
+    mesh.receiveShadow = true;
+    mesh.frustumCulled = false;
+    this.group.add(mesh);
+    const pool = {
+      poolKey,
+      meshId,
+      params: params2,
+      materialOverrides,
+      protoGeo,
+      triangleCountPerInstance: inst.triangleCount,
+      capacity,
+      activeCount: 0,
+      dirty: false,
+      mesh,
+      metaArray,
+      metaAttr,
+      slotById: /* @__PURE__ */ new Map(),
+      idBySlot: [],
+      dataById: /* @__PURE__ */ new Map()
+    };
+    this.pools.set(poolKey, pool);
+    return pool;
+  }
+  growPool(pool) {
+    const nextCapacity = Math.max(2, pool.capacity * 2);
+    const nextMetaArray = new Float32Array(nextCapacity * 4);
+    nextMetaArray.set(pool.metaArray);
+    const nextGeo = pool.protoGeo.clone();
+    const nextMetaAttr = new THREE2.InstancedBufferAttribute(nextMetaArray, 4);
+    nextGeo.setAttribute("aInstanceMeta", nextMetaAttr);
+    const nextMesh = new THREE2.InstancedMesh(nextGeo, this.material, nextCapacity);
+    nextMesh.name = pool.mesh.name;
+    nextMesh.castShadow = pool.mesh.castShadow;
+    nextMesh.receiveShadow = pool.mesh.receiveShadow;
+    nextMesh.frustumCulled = false;
+    for (let s = 0; s < pool.activeCount; s++) {
+      pool.mesh.getMatrixAt(s, this.tmpMat);
+      nextMesh.setMatrixAt(s, this.tmpMat);
+    }
+    nextMesh.count = pool.activeCount;
+    nextMesh.instanceMatrix.needsUpdate = true;
+    nextMetaAttr.needsUpdate = true;
+    this.group.remove(pool.mesh);
+    pool.protoGeo.dispose();
+    pool.mesh.dispose();
+    this.group.add(nextMesh);
+    pool.capacity = nextCapacity;
+    pool.protoGeo = nextGeo;
+    pool.mesh = nextMesh;
+    pool.metaArray = nextMetaArray;
+    pool.metaAttr = nextMetaAttr;
+    pool.dirty = true;
+  }
+  writeSlot(pool, slot, entry) {
+    this.tmpPos.set(entry.position[0], entry.position[1], entry.position[2]);
+    this.tmpEuler.set(entry.rotation[0], entry.rotation[1], entry.rotation[2]);
+    this.tmpQuat.setFromEuler(this.tmpEuler);
+    this.tmpScale.set(entry.scale[0], entry.scale[1], entry.scale[2]);
+    this.tmpMat.compose(this.tmpPos, this.tmpQuat, this.tmpScale);
+    pool.mesh.setMatrixAt(slot, this.tmpMat);
+    pool.metaAttr.setXYZW(
+      slot,
+      entry.tintJitter,
+      entry.wearBias,
+      entry.wetnessBias,
+      entry.seed
+    );
+    pool.dirty = true;
+  }
+  spawn(meshId, instance, options = {}) {
+    const poolKey = makePoolKey(meshId, options.params, options.materialOverrides);
+    let pool = this.pools.get(poolKey);
+    if (!pool) {
+      const cap = Math.max(4, options.initialCapacity ?? 32);
+      pool = this.createPool(
+        poolKey,
+        meshId,
+        cap,
+        options.params,
+        options.materialOverrides,
+        options.castShadow !== false
+      );
+    }
+    if (pool.activeCount >= pool.capacity) {
+      this.growPool(pool);
+    }
+    const instanceId = this.nextInstanceId++;
+    const seed = (instanceId * 2654435761 >>> 0) / 4294967296;
+    const entry = normalizeInstanceData(instance, seed);
+    const slot = pool.activeCount++;
+    pool.slotById.set(instanceId, slot);
+    pool.idBySlot[slot] = instanceId;
+    pool.dataById.set(instanceId, entry);
+    this.writeSlot(pool, slot, entry);
+    return { poolKey, instanceId };
+  }
+  updateTransform(handle, data) {
+    const pool = this.pools.get(handle.poolKey);
+    if (!pool) return;
+    const slot = pool.slotById.get(handle.instanceId);
+    const existing = pool.dataById.get(handle.instanceId);
+    if (slot === void 0 || !existing) return;
+    const updated = {
+      position: data.position ? [data.position[0], data.position[1], data.position[2]] : existing.position,
+      rotation: data.rotation ? [data.rotation[0], data.rotation[1], data.rotation[2]] : existing.rotation,
+      scale: data.scale ? [data.scale[0], data.scale[1], data.scale[2]] : existing.scale,
+      tintJitter: data.tintJitter !== void 0 ? Math.max(-0.35, Math.min(0.35, data.tintJitter)) : existing.tintJitter,
+      wearBias: data.wearBias !== void 0 ? Math.max(0, Math.min(1, data.wearBias)) : existing.wearBias,
+      wetnessBias: data.wetnessBias !== void 0 ? Math.max(-0.5, Math.min(1, data.wetnessBias)) : existing.wetnessBias,
+      seed: existing.seed
+    };
+    pool.dataById.set(handle.instanceId, updated);
+    this.writeSlot(pool, slot, updated);
+  }
+  remove(handle) {
+    const pool = this.pools.get(handle.poolKey);
+    if (!pool) return;
+    const slot = pool.slotById.get(handle.instanceId);
+    if (slot === void 0) return;
+    const lastSlot = pool.activeCount - 1;
+    if (slot !== lastSlot) {
+      const movedId = pool.idBySlot[lastSlot];
+      const movedData = pool.dataById.get(movedId);
+      pool.idBySlot[slot] = movedId;
+      pool.slotById.set(movedId, slot);
+      this.writeSlot(pool, slot, movedData);
+    }
+    pool.activeCount = lastSlot;
+    pool.idBySlot.length = lastSlot;
+    pool.slotById.delete(handle.instanceId);
+    pool.dataById.delete(handle.instanceId);
+    pool.dirty = true;
+  }
+  flush() {
+    for (const pool of this.pools.values()) {
+      if (!pool.dirty) continue;
+      pool.mesh.count = pool.activeCount;
+      pool.mesh.instanceMatrix.needsUpdate = true;
+      pool.metaAttr.needsUpdate = true;
+      pool.dirty = false;
+    }
+  }
+  getStats() {
+    let totalInstances = 0;
+    let totalTrianglesRendered = 0;
+    for (const pool of this.pools.values()) {
+      totalInstances += pool.activeCount;
+      totalTrianglesRendered += pool.activeCount * pool.triangleCountPerInstance;
+    }
+    return {
+      poolCount: this.pools.size,
+      totalInstances,
+      totalTrianglesRendered
+    };
+  }
+  dispose() {
+    for (const pool of this.pools.values()) {
+      this.group.remove(pool.mesh);
+      pool.protoGeo.dispose();
+      pool.mesh.dispose();
+      pool.slotById.clear();
+      pool.dataById.clear();
+    }
+    this.pools.clear();
+    if (this.parent) {
+      this.parent.remove(this.group);
+    }
+  }
+};
+
+// src/modules/realistic-pcg/geometry/mesh-builder.ts
+import * as THREE3 from "three";
+function computeFaceNormal(a, b, c) {
+  const ax = b[0] - a[0];
+  const ay = b[1] - a[1];
+  const az = b[2] - a[2];
+  const bx = c[0] - a[0];
+  const by = c[1] - a[1];
+  const bz = c[2] - a[2];
+  const cx = ay * bz - az * by;
+  const cy = az * bx - ax * bz;
+  const cz = ax * by - ay * bx;
+  const len = Math.hypot(cx, cy, cz);
+  const inv = len > 1e-8 ? 1 / len : 0;
+  return {
+    nx: inv > 0 ? cx * inv : 0,
+    ny: inv > 0 ? cy * inv : 1,
+    nz: inv > 0 ? cz * inv : 0,
+    cx,
+    cy,
+    cz,
+    len
+  };
+}
+var ProceduralMeshBuilder = class {
+  positions = [];
+  normals = [];
+  uvs = [];
+  colors = [];
+  materialIds = [];
+  indices = [];
+  get vertexCount() {
+    return this.positions.length / 3;
+  }
+  get triangleCount() {
+    return this.indices.length / 3;
+  }
+  reset() {
+    this.positions.length = 0;
+    this.normals.length = 0;
+    this.uvs.length = 0;
+    this.colors.length = 0;
+    this.materialIds.length = 0;
+    this.indices.length = 0;
+  }
+  pushSingleVertex(v, fallbackNormal, tileMeters) {
+    const idx = this.positions.length / 3;
+    const nrm = v.normal ?? fallbackNormal;
+    const nLen = Math.hypot(nrm[0], nrm[1], nrm[2]) || 1;
+    const nx = nrm[0] / nLen;
+    const ny = nrm[1] / nLen;
+    const nz = nrm[2] / nLen;
+    let u;
+    let tv;
+    if (v.uv) {
+      u = v.uv[0];
+      tv = v.uv[1];
+    } else {
+      const safeTile = Math.max(1e-3, tileMeters);
+      const [mu, mv] = computeMetricBoxUV(v.pos[0], v.pos[1], v.pos[2], nx, ny, nz);
+      u = mu / safeTile;
+      tv = mv / safeTile;
+    }
+    this.positions.push(v.pos[0], v.pos[1], v.pos[2]);
+    this.normals.push(nx, ny, nz);
+    this.uvs.push(u, tv);
+    this.colors.push(v.ao ?? 1, v.edgeWear ?? 0, v.wetness ?? 0);
+    this.materialIds.push(v.materialId);
+    return idx;
+  }
+  pushTriangle(a, b, c, tileMeters = 1) {
+    const face = computeFaceNormal(a.pos, b.pos, c.pos);
+    if (face.len < 1e-7) return;
+    const refN = a.normal ?? b.normal ?? c.normal;
+    let v1 = a;
+    let v2 = b;
+    let v3 = c;
+    let fallback = [face.nx, face.ny, face.nz];
+    if (refN) {
+      const dot = face.cx * refN[0] + face.cy * refN[1] + face.cz * refN[2];
+      if (dot < 0) {
+        v2 = c;
+        v3 = b;
+        fallback = [-face.nx, -face.ny, -face.nz];
+      }
+    }
+    const i0 = this.pushSingleVertex(v1, fallback, tileMeters);
+    const i1 = this.pushSingleVertex(v2, fallback, tileMeters);
+    const i2 = this.pushSingleVertex(v3, fallback, tileMeters);
+    this.indices.push(i0, i1, i2);
+  }
+  pushQuad(a, b, c, d, options = {}) {
+    const tileMeters = options.tileMeters ?? 1;
+    const face = computeFaceNormal(a.pos, b.pos, c.pos);
+    if (face.len < 1e-7) return;
+    const refN = a.normal ?? b.normal ?? c.normal ?? d.normal;
+    let va = a;
+    let vb = b;
+    let vc = c;
+    let vd = d;
+    let fallback = [face.nx, face.ny, face.nz];
+    if (refN) {
+      const dot = face.cx * refN[0] + face.cy * refN[1] + face.cz * refN[2];
+      if (dot < 0) {
+        vb = d;
+        vd = b;
+        fallback = [-face.nx, -face.ny, -face.nz];
+      }
+    }
+    const i0 = this.pushSingleVertex(va, fallback, tileMeters);
+    const i1 = this.pushSingleVertex(vb, fallback, tileMeters);
+    const i2 = this.pushSingleVertex(vc, fallback, tileMeters);
+    const i3 = this.pushSingleVertex(vd, fallback, tileMeters);
+    if (options.flipDiagonal) {
+      this.indices.push(i1, i2, i3, i1, i3, i0);
+    } else {
+      this.indices.push(i0, i1, i2, i0, i2, i3);
+    }
+  }
+  appendRaw(raw) {
+    const base = this.vertexCount;
+    for (let i = 0; i < raw.positions.length; i++) this.positions.push(raw.positions[i]);
+    for (let i = 0; i < raw.normals.length; i++) this.normals.push(raw.normals[i]);
+    for (let i = 0; i < raw.uvs.length; i++) this.uvs.push(raw.uvs[i]);
+    for (let i = 0; i < raw.colors.length; i++) this.colors.push(raw.colors[i]);
+    for (let i = 0; i < raw.materialIds.length; i++) this.materialIds.push(raw.materialIds[i]);
+    for (let i = 0; i < raw.indices.length; i++) this.indices.push(raw.indices[i] + base);
+  }
+  appendGeometry(source, options) {
+    const posAttr = source.getAttribute("position");
+    if (!posAttr) return;
+    const nrmAttr = source.getAttribute("normal");
+    const uvAttr = source.getAttribute("uv");
+    const colAttr = source.getAttribute("color");
+    const idxAttr = source.getIndex();
+    const m = options.matrix;
+    const e = m?.elements;
+    const tileMeters = Math.max(1e-3, options.tileMeters ?? 1);
+    const recomputeUV = options.recomputeMetricUV !== false;
+    let det = 1;
+    let nMat = null;
+    if (m) {
+      const m3 = new THREE3.Matrix3().setFromMatrix4(m);
+      det = m3.determinant();
+      nMat = m3.clone().invert().transpose();
+    }
+    const ne = nMat?.elements;
+    const baseVertex = this.vertexCount;
+    for (let i = 0; i < posAttr.count; i++) {
+      let px = posAttr.getX(i);
+      let py = posAttr.getY(i);
+      let pz = posAttr.getZ(i);
+      if (e) {
+        const tx = e[0] * px + e[4] * py + e[8] * pz + e[12];
+        const ty = e[1] * px + e[5] * py + e[9] * pz + e[13];
+        const tz = e[2] * px + e[6] * py + e[10] * pz + e[14];
+        px = tx;
+        py = ty;
+        pz = tz;
+      }
+      let nx = nrmAttr ? nrmAttr.getX(i) : 0;
+      let ny = nrmAttr ? nrmAttr.getY(i) : 1;
+      let nz = nrmAttr ? nrmAttr.getZ(i) : 0;
+      if (ne) {
+        const tnx = ne[0] * nx + ne[3] * ny + ne[6] * nz;
+        const tny = ne[1] * nx + ne[4] * ny + ne[7] * nz;
+        const tnz = ne[2] * nx + ne[5] * ny + ne[8] * nz;
+        nx = tnx;
+        ny = tny;
+        nz = tnz;
+      }
+      const nLen = Math.hypot(nx, ny, nz) || 1;
+      nx /= nLen;
+      ny /= nLen;
+      nz /= nLen;
+      let u;
+      let v;
+      if (recomputeUV || !uvAttr) {
+        const [mu, mv] = computeMetricBoxUV(px, py, pz, nx, ny, nz);
+        u = mu / tileMeters;
+        v = mv / tileMeters;
+      } else {
+        u = uvAttr.getX(i);
+        v = uvAttr.getY(i);
+      }
+      this.positions.push(px, py, pz);
+      this.normals.push(nx, ny, nz);
+      this.uvs.push(u, v);
+      this.colors.push(
+        colAttr ? colAttr.getX(i) : 1,
+        options.edgeWear !== void 0 ? options.edgeWear : colAttr ? colAttr.getY(i) : 0,
+        options.wetness !== void 0 ? options.wetness : colAttr ? colAttr.getZ(i) : 0
+      );
+      this.materialIds.push(options.materialId);
+    }
+    const flipWinding = det < 0;
+    const total = idxAttr ? idxAttr.count : posAttr.count;
+    for (let i = 0; i + 2 < total; i += 3) {
+      const a = baseVertex + (idxAttr ? idxAttr.array[i] ?? 0 : i);
+      const b = baseVertex + (idxAttr ? idxAttr.array[i + 1] ?? 0 : i + 1);
+      const c = baseVertex + (idxAttr ? idxAttr.array[i + 2] ?? 0 : i + 2);
+      if (flipWinding) {
+        this.indices.push(a, c, b);
+      } else {
+        this.indices.push(a, b, c);
+      }
+    }
+  }
+  build() {
+    const geometry = new THREE3.BufferGeometry();
+    const vCount = this.vertexCount;
+    const tCount = this.triangleCount;
+    const posArr = new Float32Array(this.positions);
+    const nrmArr = new Float32Array(this.normals);
+    const uvArr = new Float32Array(this.uvs);
+    const colArr = new Float32Array(this.colors);
+    const matArr = new Float32Array(this.materialIds);
+    geometry.setAttribute("position", new THREE3.Float32BufferAttribute(posArr, 3));
+    geometry.setAttribute("normal", new THREE3.Float32BufferAttribute(nrmArr, 3));
+    geometry.setAttribute("uv", new THREE3.Float32BufferAttribute(uvArr, 2));
+    geometry.setAttribute("color", new THREE3.Float32BufferAttribute(colArr, 3));
+    geometry.setAttribute("aMaterialId", new THREE3.Float32BufferAttribute(matArr, 1));
+    let indexBytes;
+    if (vCount <= 65535) {
+      const idxArr = new Uint16Array(this.indices);
+      geometry.setIndex(new THREE3.Uint16BufferAttribute(idxArr, 1));
+      indexBytes = idxArr.byteLength;
+    } else {
+      const idxArr = new Uint32Array(this.indices);
+      geometry.setIndex(new THREE3.Uint32BufferAttribute(idxArr, 1));
+      indexBytes = idxArr.byteLength;
+    }
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    const estimatedBytes = posArr.byteLength + nrmArr.byteLength + uvArr.byteLength + colArr.byteLength + matArr.byteLength + indexBytes;
+    return {
+      geometry,
+      vertexCount: vCount,
+      triangleCount: tCount,
+      estimatedBytes
+    };
+  }
+};
 
 // src/modules/realistic-pcg/geometry/voxel-chunk-mesher.ts
 var AO_CURVE = [1, 0.78, 0.58, 0.35];
@@ -423,7 +898,7 @@ function createVoxelChunk(options = {}) {
         lastGeometry.dispose();
         lastGeometry = null;
       }
-      const raw = createRawMeshData();
+      const builder = new ProceduralMeshBuilder();
       for (let y = 0; y < sizeY; y++) {
         for (let z = 0; z < sizeZ; z++) {
           for (let x = 0; x < sizeX; x++) {
@@ -436,28 +911,36 @@ function createVoxelChunk(options = {}) {
               const [dx, dy, dz] = face.dir;
               if (isSolid(x + dx, y + dy, z + dz)) continue;
               const aos = [0, 0, 0, 0];
-              const vIdxs = [0, 0, 0, 0];
+              const verts = [
+                null,
+                null,
+                null,
+                null
+              ];
               const faceWet = dy > 0 ? wet : wet * 0.25;
               for (let c = 0; c < 4; c++) {
                 const corner = face.corners[c];
                 const px = origin[0] + (x + corner[0]) * voxelSize;
                 const py = origin[1] + (y + corner[1]) * voxelSize;
                 const pz = origin[2] + (z + corner[2]) * voxelSize;
-                const [u, v] = computeMetricBoxUV(px, py, pz, dx, dy, dz);
                 const ao = computeCornerAO(x, y, z, face, corner);
                 aos[c] = ao;
-                vIdxs[c] = pushVertex(raw, px, py, pz, dx, dy, dz, u, v, ao, 0.05, faceWet, matId);
+                verts[c] = {
+                  pos: [px, py, pz],
+                  normal: face.dir,
+                  ao,
+                  edgeWear: 0.05,
+                  wetness: faceWet,
+                  materialId: matId
+                };
               }
-              if (aos[0] + aos[2] > aos[1] + aos[3]) {
-                raw.indices.push(vIdxs[0], vIdxs[1], vIdxs[2], vIdxs[0], vIdxs[2], vIdxs[3]);
-              } else {
-                raw.indices.push(vIdxs[1], vIdxs[2], vIdxs[3], vIdxs[1], vIdxs[3], vIdxs[0]);
-              }
+              const flipDiagonal = aos[0] + aos[2] <= aos[1] + aos[3];
+              builder.pushQuad(verts[0], verts[1], verts[2], verts[3], { flipDiagonal });
             }
           }
         }
       }
-      lastGeometry = buildBufferGeometryFromRaw(raw);
+      lastGeometry = builder.build().geometry;
       return lastGeometry;
     },
     dispose() {
@@ -470,10 +953,10 @@ function createVoxelChunk(options = {}) {
 }
 
 // src/modules/realistic-pcg/lighting/atmosphere-pipeline.ts
-import * as THREE3 from "three";
+import * as THREE5 from "three";
 
 // src/modules/realistic-pcg/lighting/procedural-ibl.ts
-import * as THREE2 from "three";
+import * as THREE4 from "three";
 var PROCEDURAL_LIGHTING_PRESETS = {
   OVERCAST_WET: {
     name: "OVERCAST_WET",
@@ -601,31 +1084,31 @@ void main() {
   gl_FragColor = vec4( max( skyCol, vec3( 0.0 ) ), 1.0 );
 }`;
 function normalizeDir(v) {
-  return new THREE2.Vector3(v[0], v[1], v[2]).normalize();
+  return new THREE4.Vector3(v[0], v[1], v[2]).normalize();
 }
 function createProceduralIBL(initialPreset = "OVERCAST_WET") {
   let currentPreset = PROCEDURAL_LIGHTING_PRESETS[initialPreset];
   const uniforms = {
-    uZenithColor: { value: new THREE2.Color(currentPreset.zenithColor) },
-    uHorizonColor: { value: new THREE2.Color(currentPreset.horizonColor) },
-    uGroundColor: { value: new THREE2.Color(currentPreset.groundColor) },
-    uSunColor: { value: new THREE2.Color(currentPreset.sunColor) },
+    uZenithColor: { value: new THREE4.Color(currentPreset.zenithColor) },
+    uHorizonColor: { value: new THREE4.Color(currentPreset.horizonColor) },
+    uGroundColor: { value: new THREE4.Color(currentPreset.groundColor) },
+    uSunColor: { value: new THREE4.Color(currentPreset.sunColor) },
     uSunDir: { value: normalizeDir(currentPreset.sunDirection) },
     uMieG: { value: currentPreset.mieG },
     uMieStrength: { value: currentPreset.mieStrength },
     uCloudDensity: { value: currentPreset.cloudDensity },
     uTime: { value: 0 }
   };
-  const skyGeo = new THREE2.SphereGeometry(240, 32, 20);
-  const skyMat = new THREE2.ShaderMaterial({
+  const skyGeo = new THREE4.SphereGeometry(240, 32, 20);
+  const skyMat = new THREE4.ShaderMaterial({
     uniforms,
     vertexShader: SKY_VERT,
     fragmentShader: SKY_FRAG,
-    side: THREE2.BackSide,
+    side: THREE4.BackSide,
     depthWrite: false,
     toneMapped: false
   });
-  const skyMesh = new THREE2.Mesh(skyGeo, skyMat);
+  const skyMesh = new THREE4.Mesh(skyGeo, skyMat);
   skyMesh.name = "ProceduralSkyDome";
   skyMesh.frustumCulled = false;
   skyMesh.renderOrder = -10;
@@ -635,11 +1118,11 @@ function createProceduralIBL(initialPreset = "OVERCAST_WET") {
   let iblSkyMesh = null;
   function bakeEnvironment(renderer, targetScene) {
     if (!pmremGen) {
-      pmremGen = new THREE2.PMREMGenerator(renderer);
+      pmremGen = new THREE4.PMREMGenerator(renderer);
     }
     if (!iblScene) {
-      iblScene = new THREE2.Scene();
-      iblSkyMesh = new THREE2.Mesh(skyGeo, skyMat);
+      iblScene = new THREE4.Scene();
+      iblSkyMesh = new THREE4.Mesh(skyGeo, skyMat);
       iblScene.add(iblSkyMesh);
     }
     if (envRenderTarget) {
@@ -697,12 +1180,12 @@ function createAtmospherePipeline(renderer, scene, options = {}) {
   let qualityTier = options.quality ?? "HIGH";
   const extent = options.sceneHalfExtent ?? 22;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE3.PCFSoftShadowMap;
-  renderer.toneMapping = THREE3.ACESFilmicToneMapping;
+  renderer.shadowMap.type = THREE5.PCFSoftShadowMap;
+  renderer.toneMapping = THREE5.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1;
   const ibl = createProceduralIBL(options.initialPreset ?? "OVERCAST_WET");
   scene.add(ibl.skyMesh);
-  const sunLight = new THREE3.DirectionalLight("#ffffff", 2);
+  const sunLight = new THREE5.DirectionalLight("#ffffff", 2);
   sunLight.castShadow = true;
   sunLight.shadow.bias = -4e-4;
   sunLight.shadow.normalBias = 0.025;
@@ -715,7 +1198,7 @@ function createAtmospherePipeline(renderer, scene, options = {}) {
   sunLight.shadow.camera.updateProjectionMatrix();
   scene.add(sunLight);
   scene.add(sunLight.target);
-  const hemiLight = new THREE3.HemisphereLight("#8d99a6", "#222624", 0.65);
+  const hemiLight = new THREE5.HemisphereLight("#8d99a6", "#222624", 0.65);
   scene.add(hemiLight);
   function applyShadowMapResolution(tier) {
     const preset = getQualityPreset(tier);
@@ -728,7 +1211,7 @@ function createAtmospherePipeline(renderer, scene, options = {}) {
   function applyPreset(name) {
     ibl.setPreset(name, renderer, scene);
     const p = ibl.getPreset();
-    const dir = new THREE3.Vector3(p.sunDirection[0], p.sunDirection[1], p.sunDirection[2]).normalize();
+    const dir = new THREE5.Vector3(p.sunDirection[0], p.sunDirection[1], p.sunDirection[2]).normalize();
     sunLight.position.copy(dir.multiplyScalar(36));
     sunLight.target.position.set(0, 0, 0);
     sunLight.color.set(p.sunColor);
@@ -736,7 +1219,7 @@ function createAtmospherePipeline(renderer, scene, options = {}) {
     hemiLight.color.set(p.horizonColor);
     hemiLight.groundColor.set(p.groundColor);
     hemiLight.intensity = p.hemiIntensity;
-    scene.fog = new THREE3.FogExp2(p.fogColor, p.fogDensity);
+    scene.fog = new THREE5.FogExp2(p.fogColor, p.fogDensity);
     renderer.toneMappingExposure = p.exposure;
   }
   applyShadowMapResolution(qualityTier);
@@ -771,7 +1254,7 @@ function createAtmospherePipeline(renderer, scene, options = {}) {
 }
 
 // src/modules/realistic-pcg/materials/world-pbr-shader.ts
-import * as THREE4 from "three";
+import * as THREE6 from "three";
 var MAX_MATERIAL_SLOTS = 16;
 function biomeModeToInt(mode) {
   if (mode === "desert_dust") return 1;
@@ -803,7 +1286,7 @@ function createWorldPbrMaterial(options) {
     uBiomeStrength: { value: options.biomeStrength ?? 1 },
     uTime: { value: 0 }
   };
-  const material = new THREE4.MeshStandardMaterial({
+  const material = new THREE6.MeshStandardMaterial({
     color: 16777215,
     roughness: 1,
     metalness: 1,
@@ -823,17 +1306,24 @@ attribute float aMaterialId;
 varying float vPcgMatId;
 varying vec2 vPcgUv;
 varying vec3 vPcgWorldPos;
-varying vec3 vPcgWorldNormal;`
+varying vec3 vPcgWorldNormal;
+#ifdef USE_INSTANCING
+  attribute vec4 aInstanceMeta;
+  varying vec4 vPcgInstanceMeta;
+#endif`
     ).replace(
       "#include <uv_vertex>",
       `#include <uv_vertex>
 vPcgUv = uv;
-vPcgMatId = aMaterialId;`
+vPcgMatId = aMaterialId;
+#ifdef USE_INSTANCING
+  vPcgInstanceMeta = aInstanceMeta;
+#endif`
     ).replace(
       "#include <project_vertex>",
       `#include <project_vertex>
 vec4 pcgWorld = vec4( transformed, 1.0 );
-vec3 pcgWNormal = normal;
+vec3 pcgWNormal = objectNormal;
 #ifdef USE_INSTANCING
   pcgWorld = instanceMatrix * pcgWorld;
   pcgWNormal = mat3( instanceMatrix ) * pcgWNormal;
@@ -861,6 +1351,9 @@ varying float vPcgMatId;
 varying vec2 vPcgUv;
 varying vec3 vPcgWorldPos;
 varying vec3 vPcgWorldNormal;
+#ifdef USE_INSTANCING
+  varying vec4 vPcgInstanceMeta;
+#endif
 
 float pcgHash21( vec2 p ) {
   p = fract( p * vec2( 123.34, 456.21 ) );
@@ -952,9 +1445,18 @@ float pcgLocalWet = 0.0;
   pcgLocalWet = clamp( vColor.b, 0.0, 1.0 );
 #endif
 
+float pcgInstSeed = 0.0;
+#ifdef USE_INSTANCING
+  pcgAlbedo *= ( 1.0 + clamp( vPcgInstanceMeta.x, -0.35, 0.35 ) );
+  pcgEdgeWear = clamp( pcgEdgeWear + vPcgInstanceMeta.y * 0.4, 0.0, 1.0 );
+  pcgLocalWet = clamp( pcgLocalWet + vPcgInstanceMeta.z, 0.0, 1.0 );
+  pcgInstSeed = vPcgInstanceMeta.w;
+#endif
+
 // 1. Macro world-space variation (8m + 24m)
-float pcgMacro8 = pcgNoise2( vPcgWorldPos.xz * 0.125 );
-float pcgMacro24 = pcgNoise2( vPcgWorldPos.xz * 0.0416667 + vec2( 7.3, 19.1 ) );
+vec2 pcgMacroSeedOff = vec2( pcgInstSeed * 17.3, pcgInstSeed * 9.7 );
+float pcgMacro8 = pcgNoise2( vPcgWorldPos.xz * 0.125 + pcgMacroSeedOff );
+float pcgMacro24 = pcgNoise2( vPcgWorldPos.xz * 0.0416667 + vec2( 7.3, 19.1 ) + pcgMacroSeedOff );
 float pcgMacroVar = ( pcgMacro8 * 0.65 + pcgMacro24 * 0.35 ) * 2.0 - 1.0;
 pcgAlbedo *= ( 1.0 + pcgMacroVar * uMacroStrength );
 
@@ -1076,7 +1578,7 @@ reflectedLight.indirectDiffuse *= pcgTotalAO;
 }
 
 // src/modules/realistic-pcg/materials/texture-array-baker.ts
-import * as THREE6 from "three";
+import * as THREE8 from "three";
 
 // src/modules/realistic-pcg/core/prng.ts
 function hash2i(ix, iy, seed) {
@@ -1831,6 +2333,7 @@ function validateMaterialRecipe(raw) {
   }
   return issues;
 }
+var VALID_RENDER_MODES = /* @__PURE__ */ new Set(["merge_chunk", "instanced_prop", "standalone"]);
 function validateMeshRecipe(raw, knownMaterialIds, knownMeshIds) {
   const issues = [];
   if (!raw || typeof raw !== "object") {
@@ -1849,6 +2352,14 @@ function validateMeshRecipe(raw, knownMaterialIds, knownMeshIds) {
   }
   if (!r.meta || r.meta.unit !== "meter") {
     issues.push({ severity: "error", recipeId: id, path: "meta.unit", message: 'meta.unit must be "meter"' });
+  }
+  if (r.meta?.renderMode !== void 0 && !VALID_RENDER_MODES.has(r.meta.renderMode)) {
+    issues.push({
+      severity: "error",
+      recipeId: id,
+      path: "meta.renderMode",
+      message: `Invalid renderMode "${String(r.meta.renderMode)}" (expected merge_chunk | instanced_prop | standalone)`
+    });
   }
   if (!r.materialSlots || typeof r.materialSlots !== "object") {
     issues.push({
@@ -3097,7 +3608,7 @@ function createMaterialBakeJob(recipe, size, paramOverrides) {
 }
 
 // src/modules/realistic-pcg/materials/gpu-material-baker.ts
-import * as THREE5 from "three";
+import * as THREE7 from "three";
 var GLSL_NOISE_LIB = (
   /* glsl */
   `
@@ -3361,10 +3872,10 @@ function sanitizeId(id) {
   return "n_" + id.replace(/[^A-Za-z0-9_]/g, "_").replace(/_+/g, "_").replace(/^_+/, "");
 }
 function createGpuMaterialBaker(renderer) {
-  const scene = new THREE5.Scene();
-  const camera = new THREE5.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  const quadGeo = new THREE5.PlaneGeometry(2, 2);
-  const quadMesh = new THREE5.Mesh(quadGeo);
+  const scene = new THREE7.Scene();
+  const camera = new THREE7.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const quadGeo = new THREE7.PlaneGeometry(2, 2);
+  const quadMesh = new THREE7.Mesh(quadGeo);
   quadMesh.frustumCulled = false;
   scene.add(quadMesh);
   let cachedSize = 0;
@@ -3375,18 +3886,18 @@ function createGpuMaterialBaker(renderer) {
     mrtRT?.dispose();
     outRT?.dispose();
     const opts = {
-      format: THREE5.RGBAFormat,
-      type: THREE5.UnsignedByteType,
-      wrapS: THREE5.RepeatWrapping,
-      wrapT: THREE5.RepeatWrapping,
-      minFilter: THREE5.LinearFilter,
-      magFilter: THREE5.LinearFilter,
+      format: THREE7.RGBAFormat,
+      type: THREE7.UnsignedByteType,
+      wrapS: THREE7.RepeatWrapping,
+      wrapT: THREE7.RepeatWrapping,
+      minFilter: THREE7.LinearFilter,
+      magFilter: THREE7.LinearFilter,
       depthBuffer: false,
       stencilBuffer: false,
       generateMipmaps: false
     };
-    mrtRT = new THREE5.WebGLRenderTarget(size, size, { ...opts, count: 3 });
-    outRT = new THREE5.WebGLRenderTarget(size, size, opts);
+    mrtRT = new THREE7.WebGLRenderTarget(size, size, { ...opts, count: 3 });
+    outRT = new THREE7.WebGLRenderTarget(size, size, opts);
     cachedSize = size;
   }
   function compileGraphBody(recipe, params2, size) {
@@ -3717,7 +4228,7 @@ function createGpuMaterialBaker(renderer) {
     };
   }
   const VERT = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`;
-  const sharedNormalMat = new THREE5.ShaderMaterial({
+  const sharedNormalMat = new THREE7.ShaderMaterial({
     vertexShader: VERT,
     depthTest: false,
     depthWrite: false,
@@ -3753,9 +4264,9 @@ void main() {
       const params2 = { ...recipe.params ?? {}, ...paramOverrides ?? {} };
       const compiled = compileGraphBody(recipe, params2, size);
       const prevRT = renderer.getRenderTarget();
-      const dagMat = new THREE5.ShaderMaterial({
+      const dagMat = new THREE7.ShaderMaterial({
         vertexShader: VERT,
-        glslVersion: THREE5.GLSL3,
+        glslVersion: THREE7.GLSL3,
         depthTest: false,
         depthWrite: false,
         fragmentShader: `${GLSL_NOISE_LIB}
@@ -3849,14 +4360,14 @@ void main() {
 
 // src/modules/realistic-pcg/materials/texture-array-baker.ts
 function createArrayTex(data, size, depth, colorSpace, anisotropy) {
-  const tex = new THREE6.DataArrayTexture(data, size, size, depth);
-  tex.format = THREE6.RGBAFormat;
-  tex.type = THREE6.UnsignedByteType;
+  const tex = new THREE8.DataArrayTexture(data, size, size, depth);
+  tex.format = THREE8.RGBAFormat;
+  tex.type = THREE8.UnsignedByteType;
   tex.colorSpace = colorSpace;
-  tex.wrapS = THREE6.RepeatWrapping;
-  tex.wrapT = THREE6.RepeatWrapping;
-  tex.minFilter = THREE6.LinearMipmapLinearFilter;
-  tex.magFilter = THREE6.LinearFilter;
+  tex.wrapS = THREE8.RepeatWrapping;
+  tex.wrapT = THREE8.RepeatWrapping;
+  tex.minFilter = THREE8.LinearMipmapLinearFilter;
+  tex.magFilter = THREE8.LinearFilter;
   tex.anisotropy = anisotropy;
   tex.generateMipmaps = true;
   tex.needsUpdate = true;
@@ -3866,7 +4377,11 @@ function nextFrameYield() {
   if (typeof MessageChannel === "function") {
     return new Promise((resolve) => {
       const ch = new MessageChannel();
-      ch.port1.onmessage = () => resolve();
+      ch.port1.onmessage = () => {
+        ch.port1.close();
+        ch.port2.close();
+        resolve();
+      };
       ch.port2.postMessage(null);
     });
   }
@@ -4004,9 +4519,9 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
   }
   const maxAniso = options.renderer?.capabilities?.getMaxAnisotropy?.() ?? preset.anisotropy;
   const aniso = Math.min(preset.anisotropy, maxAniso);
-  const albedoArray = createArrayTex(albedoAll, size, maxLayers, THREE6.SRGBColorSpace, aniso);
-  const normalArray = createArrayTex(normalAll, size, maxLayers, THREE6.NoColorSpace, 1);
-  const ormArray = createArrayTex(ormAll, size, maxLayers, THREE6.NoColorSpace, 1);
+  const albedoArray = createArrayTex(albedoAll, size, maxLayers, THREE8.SRGBColorSpace, aniso);
+  const normalArray = createArrayTex(normalAll, size, maxLayers, THREE8.NoColorSpace, 1);
+  const ormArray = createArrayTex(ormAll, size, maxLayers, THREE8.NoColorSpace, 1);
   const bakeTimeMs = performance.now() - startTime;
   const estimatedMemoryMB = totalBytes * 3 * (4 / 3) / (1024 * 1024);
   let nextSlot = recipes.length;
@@ -4081,7 +4596,7 @@ async function bakeMaterialArrayAsync(recipes, preset, options = {}) {
 }
 
 // src/modules/realistic-pcg/recipes/mesh-recipe-eval.ts
-import * as THREE7 from "three";
+import * as THREE9 from "three";
 
 // src/modules/realistic-pcg/geometry/primitive-ops.ts
 function opBeveledBox(args, params2, materialId, edgeWear, ao, wetness) {
@@ -4612,15 +5127,15 @@ function opPipeSegment(args, params2, materialId, edgeWear, ao, wetness) {
 
 // src/modules/realistic-pcg/recipes/mesh-recipe-eval.ts
 function applyTransformToRaw(raw, pos, rot, scale) {
-  const mat = new THREE7.Matrix4();
-  const q = new THREE7.Quaternion().setFromEuler(new THREE7.Euler(rot[0], rot[1], rot[2]));
-  mat.compose(new THREE7.Vector3(pos[0], pos[1], pos[2]), q, new THREE7.Vector3(scale[0], scale[1], scale[2]));
+  const mat = new THREE9.Matrix4();
+  const q = new THREE9.Quaternion().setFromEuler(new THREE9.Euler(rot[0], rot[1], rot[2]));
+  mat.compose(new THREE9.Vector3(pos[0], pos[1], pos[2]), q, new THREE9.Vector3(scale[0], scale[1], scale[2]));
   const e = mat.elements;
-  const v = new THREE7.Vector3();
-  const nMat = new THREE7.Matrix4().compose(
-    new THREE7.Vector3(0, 0, 0),
+  const v = new THREE9.Vector3();
+  const nMat = new THREE9.Matrix4().compose(
+    new THREE9.Vector3(0, 0, 0),
     q,
-    new THREE7.Vector3(1 / (scale[0] || 1), 1 / (scale[1] || 1), 1 / (scale[2] || 1))
+    new THREE9.Vector3(1 / (scale[0] || 1), 1 / (scale[1] || 1), 1 / (scale[2] || 1))
   );
   const ne = nMat.elements;
   for (let i = 0; i < raw.positions.length; i += 3) {
@@ -5032,11 +5547,11 @@ var ProceduralAssetLoader = class {
 };
 
 // src/modules/realistic-pcg/skeletal/skeletal-loader.ts
-import * as THREE9 from "three";
+import * as THREE11 from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 // src/modules/realistic-pcg/skeletal/dummy-humanoid.ts
-import * as THREE8 from "three";
+import * as THREE10 from "three";
 function mergeSkinnedParts(parts, bones) {
   const positions = [];
   const normals = [];
@@ -5046,11 +5561,11 @@ function mergeSkinnedParts(parts, bones) {
   const skinWeights = [];
   const indices = [];
   bones[0].updateMatrixWorld(true);
-  const tmpColor = new THREE8.Color();
-  const tmpVec = new THREE8.Vector3();
+  const tmpColor = new THREE10.Color();
+  const tmpVec = new THREE10.Vector3();
   for (const part of parts) {
     const bone = bones[part.boneIndex];
-    const boneWorldPos = new THREE8.Vector3();
+    const boneWorldPos = new THREE10.Vector3();
     boneWorldPos.setFromMatrixPosition(bone.matrixWorld);
     tmpColor.setHex(part.colorHex);
     const g = part.geom;
@@ -5083,65 +5598,65 @@ function mergeSkinnedParts(parts, bones) {
     }
     g.dispose();
   }
-  const out = new THREE8.BufferGeometry();
-  out.setAttribute("position", new THREE8.Float32BufferAttribute(new Float32Array(positions), 3));
-  out.setAttribute("normal", new THREE8.Float32BufferAttribute(new Float32Array(normals), 3));
-  out.setAttribute("uv", new THREE8.Float32BufferAttribute(new Float32Array(uvs), 2));
-  out.setAttribute("color", new THREE8.Float32BufferAttribute(new Float32Array(colors), 3));
-  out.setAttribute("skinIndex", new THREE8.Uint16BufferAttribute(new Uint16Array(skinIndices), 4));
-  out.setAttribute("skinWeight", new THREE8.Float32BufferAttribute(new Float32Array(skinWeights), 4));
-  out.setIndex(new THREE8.Uint32BufferAttribute(new Uint32Array(indices), 1));
+  const out = new THREE10.BufferGeometry();
+  out.setAttribute("position", new THREE10.Float32BufferAttribute(new Float32Array(positions), 3));
+  out.setAttribute("normal", new THREE10.Float32BufferAttribute(new Float32Array(normals), 3));
+  out.setAttribute("uv", new THREE10.Float32BufferAttribute(new Float32Array(uvs), 2));
+  out.setAttribute("color", new THREE10.Float32BufferAttribute(new Float32Array(colors), 3));
+  out.setAttribute("skinIndex", new THREE10.Uint16BufferAttribute(new Uint16Array(skinIndices), 4));
+  out.setAttribute("skinWeight", new THREE10.Float32BufferAttribute(new Float32Array(skinWeights), 4));
+  out.setIndex(new THREE10.Uint32BufferAttribute(new Uint32Array(indices), 1));
   out.computeBoundingBox();
   out.computeBoundingSphere();
   return out;
 }
 function createDummyHumanoid() {
-  const root = new THREE8.Group();
+  const root = new THREE10.Group();
   root.name = "DummyHumanoid";
-  const hips = new THREE8.Bone();
+  const hips = new THREE10.Bone();
   hips.name = "Hips";
   hips.position.set(0, 0.92, 0);
-  const spine = new THREE8.Bone();
+  const spine = new THREE10.Bone();
   spine.name = "Spine";
   spine.position.set(0, 0.14, 0);
   hips.add(spine);
-  const chest = new THREE8.Bone();
+  const chest = new THREE10.Bone();
   chest.name = "Chest";
   chest.position.set(0, 0.24, 0);
   spine.add(chest);
-  const head = new THREE8.Bone();
+  const head = new THREE10.Bone();
   head.name = "Head";
   head.position.set(0, 0.24, 0);
   chest.add(head);
-  const leftArm = new THREE8.Bone();
+  const leftArm = new THREE10.Bone();
   leftArm.name = "LeftArm";
   leftArm.position.set(-0.23, 0.16, 0);
   chest.add(leftArm);
-  const leftForearm = new THREE8.Bone();
+  const leftForearm = new THREE10.Bone();
   leftForearm.name = "LeftForearm";
   leftForearm.position.set(0, -0.27, 0);
   leftArm.add(leftForearm);
-  const rightArm = new THREE8.Bone();
+  const rightArm = new THREE10.Bone();
   rightArm.name = "RightArm";
   rightArm.position.set(0.23, 0.16, 0);
   chest.add(rightArm);
-  const rightForearm = new THREE8.Bone();
+  const rightForearm = new THREE10.Bone();
   rightForearm.name = "RightForearm";
   rightForearm.position.set(0, -0.27, 0);
   rightArm.add(rightForearm);
-  const leftThigh = new THREE8.Bone();
+  const leftThigh = new THREE10.Bone();
   leftThigh.name = "LeftThigh";
   leftThigh.position.set(-0.1, -0.04, 0);
   hips.add(leftThigh);
-  const leftShin = new THREE8.Bone();
+  const leftShin = new THREE10.Bone();
   leftShin.name = "LeftShin";
   leftShin.position.set(0, -0.44, 0);
   leftThigh.add(leftShin);
-  const rightThigh = new THREE8.Bone();
+  const rightThigh = new THREE10.Bone();
   rightThigh.name = "RightThigh";
   rightThigh.position.set(0.1, -0.04, 0);
   hips.add(rightThigh);
-  const rightShin = new THREE8.Bone();
+  const rightShin = new THREE10.Bone();
   rightShin.name = "RightShin";
   rightShin.position.set(0, -0.44, 0);
   rightThigh.add(rightShin);
@@ -5161,33 +5676,33 @@ function createDummyHumanoid() {
   ];
   root.add(hips);
   const bodyParts = [
-    { geom: new THREE8.BoxGeometry(0.28, 0.14, 0.18), boneIndex: 0, offset: [0, 0.02, 0], colorHex: 6044712 },
-    { geom: new THREE8.BoxGeometry(0.26, 0.24, 0.17), boneIndex: 1, offset: [0, 0.1, 0], colorHex: 3889218 },
-    { geom: new THREE8.BoxGeometry(0.34, 0.25, 0.2), boneIndex: 2, offset: [0, 0.06, 0], colorHex: 3889218 },
-    { geom: new THREE8.SphereGeometry(0.11, 14, 12), boneIndex: 3, offset: [0, 0.11, 0], colorHex: 12751733 },
-    { geom: new THREE8.CylinderGeometry(0.055, 0.048, 0.27, 10), boneIndex: 4, offset: [0, -0.135, 0], colorHex: 3889218 },
-    { geom: new THREE8.CylinderGeometry(0.045, 0.038, 0.25, 10), boneIndex: 5, offset: [0, -0.125, 0], colorHex: 6044712 },
-    { geom: new THREE8.CylinderGeometry(0.055, 0.048, 0.27, 10), boneIndex: 6, offset: [0, -0.135, 0], colorHex: 3889218 },
-    { geom: new THREE8.CylinderGeometry(0.045, 0.038, 0.25, 10), boneIndex: 7, offset: [0, -0.125, 0], colorHex: 6044712 },
-    { geom: new THREE8.CylinderGeometry(0.075, 0.062, 0.42, 10), boneIndex: 8, offset: [0, -0.21, 0], colorHex: 3889218 },
-    { geom: new THREE8.CylinderGeometry(0.058, 0.05, 0.38, 10), boneIndex: 9, offset: [0, -0.19, 0], colorHex: 6044712 },
-    { geom: new THREE8.BoxGeometry(0.1, 0.08, 0.22), boneIndex: 9, offset: [0, -0.4, 0.04], colorHex: 4533534 },
-    { geom: new THREE8.CylinderGeometry(0.075, 0.062, 0.42, 10), boneIndex: 10, offset: [0, -0.21, 0], colorHex: 3889218 },
-    { geom: new THREE8.CylinderGeometry(0.058, 0.05, 0.38, 10), boneIndex: 11, offset: [0, -0.19, 0], colorHex: 6044712 },
-    { geom: new THREE8.BoxGeometry(0.1, 0.08, 0.22), boneIndex: 11, offset: [0, -0.4, 0.04], colorHex: 4533534 }
+    { geom: new THREE10.BoxGeometry(0.28, 0.14, 0.18), boneIndex: 0, offset: [0, 0.02, 0], colorHex: 6044712 },
+    { geom: new THREE10.BoxGeometry(0.26, 0.24, 0.17), boneIndex: 1, offset: [0, 0.1, 0], colorHex: 3889218 },
+    { geom: new THREE10.BoxGeometry(0.34, 0.25, 0.2), boneIndex: 2, offset: [0, 0.06, 0], colorHex: 3889218 },
+    { geom: new THREE10.SphereGeometry(0.11, 14, 12), boneIndex: 3, offset: [0, 0.11, 0], colorHex: 12751733 },
+    { geom: new THREE10.CylinderGeometry(0.055, 0.048, 0.27, 10), boneIndex: 4, offset: [0, -0.135, 0], colorHex: 3889218 },
+    { geom: new THREE10.CylinderGeometry(0.045, 0.038, 0.25, 10), boneIndex: 5, offset: [0, -0.125, 0], colorHex: 6044712 },
+    { geom: new THREE10.CylinderGeometry(0.055, 0.048, 0.27, 10), boneIndex: 6, offset: [0, -0.135, 0], colorHex: 3889218 },
+    { geom: new THREE10.CylinderGeometry(0.045, 0.038, 0.25, 10), boneIndex: 7, offset: [0, -0.125, 0], colorHex: 6044712 },
+    { geom: new THREE10.CylinderGeometry(0.075, 0.062, 0.42, 10), boneIndex: 8, offset: [0, -0.21, 0], colorHex: 3889218 },
+    { geom: new THREE10.CylinderGeometry(0.058, 0.05, 0.38, 10), boneIndex: 9, offset: [0, -0.19, 0], colorHex: 6044712 },
+    { geom: new THREE10.BoxGeometry(0.1, 0.08, 0.22), boneIndex: 9, offset: [0, -0.4, 0.04], colorHex: 4533534 },
+    { geom: new THREE10.CylinderGeometry(0.075, 0.062, 0.42, 10), boneIndex: 10, offset: [0, -0.21, 0], colorHex: 3889218 },
+    { geom: new THREE10.CylinderGeometry(0.058, 0.05, 0.38, 10), boneIndex: 11, offset: [0, -0.19, 0], colorHex: 6044712 },
+    { geom: new THREE10.BoxGeometry(0.1, 0.08, 0.22), boneIndex: 11, offset: [0, -0.4, 0.04], colorHex: 4533534 }
   ];
   const armorParts = [
-    { geom: new THREE8.BoxGeometry(0.08, 0.06, 0.2), boneIndex: 0, offset: [0, 0.06, 0.01], colorHex: 9146519 },
-    { geom: new THREE8.BoxGeometry(0.18, 0.14, 0.22), boneIndex: 2, offset: [0, 0.09, 0], colorHex: 9146519 },
-    { geom: new THREE8.CylinderGeometry(0.125, 0.13, 0.11, 14), boneIndex: 3, offset: [0, 0.16, 0], colorHex: 9146519 }
+    { geom: new THREE10.BoxGeometry(0.08, 0.06, 0.2), boneIndex: 0, offset: [0, 0.06, 0.01], colorHex: 9146519 },
+    { geom: new THREE10.BoxGeometry(0.18, 0.14, 0.22), boneIndex: 2, offset: [0, 0.09, 0], colorHex: 9146519 },
+    { geom: new THREE10.CylinderGeometry(0.125, 0.13, 0.11, 14), boneIndex: 3, offset: [0, 0.16, 0], colorHex: 9146519 }
   ];
-  const bodyMat = new THREE8.MeshStandardMaterial({
+  const bodyMat = new THREE10.MeshStandardMaterial({
     color: 16777215,
     vertexColors: true,
     roughness: 0.28,
     metalness: 0.06
   });
-  const armorMat = new THREE8.MeshStandardMaterial({
+  const armorMat = new THREE10.MeshStandardMaterial({
     color: 16777215,
     vertexColors: true,
     roughness: 0.24,
@@ -5195,13 +5710,13 @@ function createDummyHumanoid() {
   });
   const bodyGeo = mergeSkinnedParts(bodyParts, bones);
   const armorGeo = mergeSkinnedParts(armorParts, bones);
-  const skeleton = new THREE8.Skeleton(bones);
-  const bodyMesh = new THREE8.SkinnedMesh(bodyGeo, bodyMat);
+  const skeleton = new THREE10.Skeleton(bones);
+  const bodyMesh = new THREE10.SkinnedMesh(bodyGeo, bodyMat);
   bodyMesh.name = "DummyBody";
   bodyMesh.castShadow = true;
   bodyMesh.receiveShadow = true;
   bodyMesh.bind(skeleton);
-  const armorMesh = new THREE8.SkinnedMesh(armorGeo, armorMat);
+  const armorMesh = new THREE10.SkinnedMesh(armorGeo, armorMat);
   armorMesh.name = "DummyArmor";
   armorMesh.castShadow = true;
   armorMesh.receiveShadow = true;
@@ -5209,12 +5724,12 @@ function createDummyHumanoid() {
   root.add(bodyMesh);
   root.add(armorMesh);
   const qIdentity = [0, 0, 0, 1];
-  const qChestUp = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(-0.04, 0, 0));
-  const qArmIdleL = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(0.06, 0, 0.08));
-  const qArmIdleR = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(-0.04, 0, -0.08));
-  const idleClip = new THREE8.AnimationClip("Idle", 2.4, [
-    new THREE8.VectorKeyframeTrack("Hips.position", [0, 1.2, 2.4], [0, 0.92, 0, 0, 0.938, 0, 0, 0.92, 0]),
-    new THREE8.QuaternionKeyframeTrack("Chest.quaternion", [0, 1.2, 2.4], [
+  const qChestUp = new THREE10.Quaternion().setFromEuler(new THREE10.Euler(-0.04, 0, 0));
+  const qArmIdleL = new THREE10.Quaternion().setFromEuler(new THREE10.Euler(0.06, 0, 0.08));
+  const qArmIdleR = new THREE10.Quaternion().setFromEuler(new THREE10.Euler(-0.04, 0, -0.08));
+  const idleClip = new THREE10.AnimationClip("Idle", 2.4, [
+    new THREE10.VectorKeyframeTrack("Hips.position", [0, 1.2, 2.4], [0, 0.92, 0, 0, 0.938, 0, 0, 0.92, 0]),
+    new THREE10.QuaternionKeyframeTrack("Chest.quaternion", [0, 1.2, 2.4], [
       ...qIdentity,
       qChestUp.x,
       qChestUp.y,
@@ -5222,7 +5737,7 @@ function createDummyHumanoid() {
       qChestUp.w,
       ...qIdentity
     ]),
-    new THREE8.QuaternionKeyframeTrack("LeftArm.quaternion", [0, 1.2, 2.4], [
+    new THREE10.QuaternionKeyframeTrack("LeftArm.quaternion", [0, 1.2, 2.4], [
       qArmIdleL.x,
       qArmIdleL.y,
       qArmIdleL.z,
@@ -5236,7 +5751,7 @@ function createDummyHumanoid() {
       qArmIdleL.z,
       qArmIdleL.w
     ]),
-    new THREE8.QuaternionKeyframeTrack("RightArm.quaternion", [0, 1.2, 2.4], [
+    new THREE10.QuaternionKeyframeTrack("RightArm.quaternion", [0, 1.2, 2.4], [
       qArmIdleR.x,
       qArmIdleR.y,
       qArmIdleR.z,
@@ -5251,11 +5766,11 @@ function createDummyHumanoid() {
       qArmIdleR.w
     ])
   ]);
-  const qFwd = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(0.35, 0, 0));
-  const qBwd = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(-0.35, 0, 0));
-  const qKnee = new THREE8.Quaternion().setFromEuler(new THREE8.Euler(0.45, 0, 0));
-  const walkClip = new THREE8.AnimationClip("Walk", 1.2, [
-    new THREE8.VectorKeyframeTrack("Hips.position", [0, 0.3, 0.6, 0.9, 1.2], [
+  const qFwd = new THREE10.Quaternion().setFromEuler(new THREE10.Euler(0.35, 0, 0));
+  const qBwd = new THREE10.Quaternion().setFromEuler(new THREE10.Euler(-0.35, 0, 0));
+  const qKnee = new THREE10.Quaternion().setFromEuler(new THREE10.Euler(0.45, 0, 0));
+  const walkClip = new THREE10.AnimationClip("Walk", 1.2, [
+    new THREE10.VectorKeyframeTrack("Hips.position", [0, 0.3, 0.6, 0.9, 1.2], [
       0,
       0.91,
       0,
@@ -5272,7 +5787,7 @@ function createDummyHumanoid() {
       0.91,
       0
     ]),
-    new THREE8.QuaternionKeyframeTrack("LeftThigh.quaternion", [0, 0.6, 1.2], [
+    new THREE10.QuaternionKeyframeTrack("LeftThigh.quaternion", [0, 0.6, 1.2], [
       qFwd.x,
       qFwd.y,
       qFwd.z,
@@ -5286,7 +5801,7 @@ function createDummyHumanoid() {
       qFwd.z,
       qFwd.w
     ]),
-    new THREE8.QuaternionKeyframeTrack("RightThigh.quaternion", [0, 0.6, 1.2], [
+    new THREE10.QuaternionKeyframeTrack("RightThigh.quaternion", [0, 0.6, 1.2], [
       qBwd.x,
       qBwd.y,
       qBwd.z,
@@ -5300,7 +5815,7 @@ function createDummyHumanoid() {
       qBwd.z,
       qBwd.w
     ]),
-    new THREE8.QuaternionKeyframeTrack("LeftShin.quaternion", [0, 0.3, 0.6, 1.2], [
+    new THREE10.QuaternionKeyframeTrack("LeftShin.quaternion", [0, 0.3, 0.6, 1.2], [
       ...qIdentity,
       qKnee.x,
       qKnee.y,
@@ -5309,7 +5824,7 @@ function createDummyHumanoid() {
       ...qIdentity,
       ...qIdentity
     ]),
-    new THREE8.QuaternionKeyframeTrack("LeftArm.quaternion", [0, 0.6, 1.2], [
+    new THREE10.QuaternionKeyframeTrack("LeftArm.quaternion", [0, 0.6, 1.2], [
       qBwd.x,
       qBwd.y,
       qBwd.z,
@@ -5323,7 +5838,7 @@ function createDummyHumanoid() {
       qBwd.z,
       qBwd.w
     ]),
-    new THREE8.QuaternionKeyframeTrack("RightArm.quaternion", [0, 0.6, 1.2], [
+    new THREE10.QuaternionKeyframeTrack("RightArm.quaternion", [0, 0.6, 1.2], [
       qFwd.x,
       qFwd.y,
       qFwd.z,
@@ -5370,14 +5885,14 @@ function disposeObjectResources(root) {
   });
 }
 function wrapLoadedScene(modelRoot, animations, normalizer, quality, targetHeightMeters) {
-  const wrapper = new THREE9.Group();
+  const wrapper = new THREE11.Group();
   wrapper.name = "SkeletalActorWrapper";
   wrapper.add(modelRoot);
   const audit = normalizer.applyToObject(modelRoot, {
     targetHeightMeters,
     quality
   });
-  const mixer = new THREE9.AnimationMixer(modelRoot);
+  const mixer = new THREE11.AnimationMixer(modelRoot);
   const actions = /* @__PURE__ */ new Map();
   for (const clip of animations) {
     actions.set(clip.name, mixer.clipAction(clip));
@@ -5443,7 +5958,7 @@ function createNormalizedDummyActor(normalizer, options = {}) {
 }
 
 // src/modules/realistic-pcg/skeletal/tripo-normalizer.ts
-import * as THREE10 from "three";
+import * as THREE12 from "three";
 var DEFAULT_TRIPO_CONFIG = {
   albedoSaturation: 0.85,
   albedoMinLuma: 0.05,
@@ -5533,17 +6048,17 @@ if ( uTripoNormEnabled > 0.5 ) {
       root.position.set(0, 0, 0);
       root.scale.set(1, 1, 1);
       root.updateMatrixWorld(true);
-      const box = new THREE10.Box3().setFromObject(root);
-      const size = new THREE10.Vector3();
-      const center = new THREE10.Vector3();
+      const box = new THREE12.Box3().setFromObject(root);
+      const size = new THREE12.Vector3();
+      const center = new THREE12.Vector3();
       box.getSize(size);
       box.getCenter(center);
       const rawHeight = size.y > 0.01 ? size.y : targetHeight;
       const scaleFactor = targetHeight / rawHeight;
       root.scale.set(scaleFactor, scaleFactor, scaleFactor);
       root.updateMatrixWorld(true);
-      const scaledBox = new THREE10.Box3().setFromObject(root);
-      const scaledCenter = new THREE10.Vector3();
+      const scaledBox = new THREE12.Box3().setFromObject(root);
+      const scaledCenter = new THREE12.Vector3();
       scaledBox.getCenter(scaledCenter);
       root.position.set(-scaledCenter.x, -scaledBox.min.y, -scaledCenter.z);
       root.updateMatrixWorld(true);
@@ -5668,13 +6183,13 @@ function mergeStaticGeometries(pieces) {
       g.dispose();
     }
   }
-  const out = new THREE11.BufferGeometry();
-  out.setAttribute("position", new THREE11.Float32BufferAttribute(new Float32Array(positions), 3));
-  out.setAttribute("normal", new THREE11.Float32BufferAttribute(new Float32Array(normals), 3));
-  out.setAttribute("uv", new THREE11.Float32BufferAttribute(new Float32Array(uvs), 2));
-  out.setAttribute("color", new THREE11.Float32BufferAttribute(new Float32Array(colors), 3));
-  out.setAttribute("aMaterialId", new THREE11.Float32BufferAttribute(new Float32Array(matIds), 1));
-  out.setIndex(new THREE11.Uint32BufferAttribute(new Uint32Array(indices), 1));
+  const out = new THREE13.BufferGeometry();
+  out.setAttribute("position", new THREE13.Float32BufferAttribute(new Float32Array(positions), 3));
+  out.setAttribute("normal", new THREE13.Float32BufferAttribute(new Float32Array(normals), 3));
+  out.setAttribute("uv", new THREE13.Float32BufferAttribute(new Float32Array(uvs), 2));
+  out.setAttribute("color", new THREE13.Float32BufferAttribute(new Float32Array(colors), 3));
+  out.setAttribute("aMaterialId", new THREE13.Float32BufferAttribute(new Float32Array(matIds), 1));
+  out.setIndex(new THREE13.Uint32BufferAttribute(new Uint32Array(indices), 1));
   out.computeBoundingBox();
   out.computeBoundingSphere();
   return out;
@@ -5686,7 +6201,8 @@ var CAMERA_PRESETS = {
   character: { pos: [2.6, 1.45, 2.9], target: [0.9, 1, 0.3] },
   industrial: { pos: [-3.4, 2.9, -6], target: [-8.4, 1.35, -10.2] },
   interior: { pos: [3.2, 2, -7.6], target: [6.4, 0.9, -10.2] },
-  plinths: { pos: [12.5, 4.8, 12.8], target: [6.8, 0.5, 6.2] }
+  plinths: { pos: [12.5, 4.8, 12.8], target: [6.8, 0.5, 6.2] },
+  yard: { pos: [-14.8, 6, 14.6], target: [-8, 1.5, 3] }
 };
 async function createLookDevScene(options) {
   const { canvas: canvas2 } = options;
@@ -5698,13 +6214,13 @@ async function createLookDevScene(options) {
   let disposed = false;
   let ready = false;
   let rafId = 0;
-  const renderer = new THREE11.WebGLRenderer({
+  const renderer = new THREE13.WebGLRenderer({
     canvas: canvas2,
     antialias: true,
     powerPreference: "high-performance",
     preserveDrawingBuffer: true
   });
-  renderer.outputColorSpace = THREE11.SRGBColorSpace;
+  renderer.outputColorSpace = THREE13.SRGBColorSpace;
   const applyRendererViewport = (w, h) => {
     const preset = getQualityPreset(qualityTier);
     const dpr = Math.min(window.devicePixelRatio || 1, preset.pixelRatioCap);
@@ -5713,11 +6229,11 @@ async function createLookDevScene(options) {
     camera.aspect = Math.max(1, w) / Math.max(1, h);
     camera.updateProjectionMatrix();
   };
-  const scene = new THREE11.Scene();
-  const camera = new THREE11.PerspectiveCamera(48, 16 / 9, 0.1, 400);
+  const scene = new THREE13.Scene();
+  const camera = new THREE13.PerspectiveCamera(48, 16 / 9, 0.1, 400);
   applyRendererViewport(canvas2.clientWidth || 1280, canvas2.clientHeight || 720);
-  const camTarget = new THREE11.Vector3(...CAMERA_PRESETS.overview.target);
-  const camOffset = new THREE11.Vector3(...CAMERA_PRESETS.overview.pos).sub(camTarget);
+  const camTarget = new THREE13.Vector3(...CAMERA_PRESETS.overview.target);
+  const camOffset = new THREE13.Vector3(...CAMERA_PRESETS.overview.pos).sub(camTarget);
   let camRadius = camOffset.length();
   let camTheta = Math.atan2(camOffset.x, camOffset.z);
   let camPhi = Math.acos(Math.max(-0.99, Math.min(0.99, camOffset.y / camRadius)));
@@ -5871,7 +6387,7 @@ async function createLookDevScene(options) {
       voxelChunks.push(chunk);
     }
     const mergedTerrain = mergeStaticGeometries(chunkPieces);
-    terrainMesh = new THREE11.Mesh(mergedTerrain, worldMat.material);
+    terrainMesh = new THREE13.Mesh(mergedTerrain, worldMat.material);
     terrainMesh.name = "VoxelTerrain32m";
     terrainMesh.receiveShadow = true;
     terrainMesh.castShadow = false;
@@ -5882,14 +6398,6 @@ async function createLookDevScene(options) {
       scene.remove(guardPostMesh);
       guardPostMesh = null;
     }
-    if (!loader.hasMesh("guard_post")) return;
-    const gpAsset = loader.instantiateMesh("guard_post");
-    guardPostMesh = new THREE11.Mesh(gpAsset.geometry, worldMat.material);
-    guardPostMesh.name = "GuardPostMain";
-    guardPostMesh.position.set(0, 0, -3.5);
-    guardPostMesh.castShadow = true;
-    guardPostMesh.receiveShadow = true;
-    scene.add(guardPostMesh);
   }
   function rebuildShowcase() {
     if (showcaseMesh) {
@@ -5898,6 +6406,10 @@ async function createLookDevScene(options) {
       showcaseMesh = null;
     }
     const pieces = [];
+    if (loader.hasMesh("guard_post")) {
+      const gpAsset = loader.instantiateMesh("guard_post");
+      pieces.push({ geometry: gpAsset.geometry, pos: [0, 0, -3.5] });
+    }
     if (loader.hasMesh("beveled_wall")) {
       const pillarAsset = loader.instantiateMesh("beveled_wall", {
         params: { width: 1, height: 3, thickness: 1, hasWindow: false }
@@ -5965,7 +6477,7 @@ async function createLookDevScene(options) {
       const cubeRaw = buildBeveledBoxRaw(0.75, 0.75, 0.75, 0.03, layerId, 0.85, 1, 0);
       const cubeGeo = buildBufferGeometryFromRaw(cubeRaw);
       pieces.push({ geometry: cubeGeo, pos: [px - 0.42, 0.375, pz], disposeSource: true });
-      const sphereGeo = new THREE11.SphereGeometry(0.38, 20, 14);
+      const sphereGeo = new THREE13.SphereGeometry(0.38, 20, 14);
       pieces.push({
         geometry: sphereGeo,
         pos: [px + 0.45, 0.42, pz],
@@ -5975,7 +6487,7 @@ async function createLookDevScene(options) {
     }
     if (pieces.length === 0) return;
     const merged = mergeStaticGeometries(pieces);
-    showcaseMesh = new THREE11.Mesh(merged, worldMat.material);
+    showcaseMesh = new THREE13.Mesh(merged, worldMat.material);
     showcaseMesh.name = "StaticShowcaseBatch";
     showcaseMesh.castShadow = true;
     showcaseMesh.receiveShadow = true;
@@ -5996,7 +6508,7 @@ async function createLookDevScene(options) {
       { geometry: rockB.geometry, pos: [-4.6, 0, 3.4], rotY: 1.7 },
       { geometry: rockC.geometry, pos: [4.2, 0, 1.5], rotY: -0.9 }
     ]);
-    rockMesh = new THREE11.Mesh(merged, rockMat.material);
+    rockMesh = new THREE13.Mesh(merged, rockMat.material);
     rockMesh.name = "TriplanarRocksBatch";
     rockMesh.castShadow = true;
     rockMesh.receiveShadow = true;
@@ -6006,6 +6518,145 @@ async function createLookDevScene(options) {
   rebuildGuardPost();
   rebuildShowcase();
   rebuildRocks();
+  const propPool = new InstancedPropPool({
+    loader,
+    material: worldMat.material,
+    parent: scene
+  });
+  const yardHandles = [];
+  function rebuildInstancedYard() {
+    for (const h of yardHandles) propPool.remove(h);
+    yardHandles.length = 0;
+    if (loader.hasMesh("shipping_container")) {
+      const containerSpots = [
+        // West dock double-stacked shipping containers
+        { pos: [-11.5, 0, 1.6], rotY: Math.PI * 0.5 },
+        { pos: [-11.5, 2.59, 1.6], rotY: Math.PI * 0.5 + 0.04 },
+        { pos: [-11.5, 0, 8.4], rotY: Math.PI * 0.5 - 0.03 },
+        { pos: [-11.5, 2.59, 8.4], rotY: Math.PI * 0.5 + 0.02 },
+        { pos: [-8.2, 0, 2], rotY: Math.PI * 0.5 + 0.05 },
+        { pos: [-8.2, 2.59, 2], rotY: Math.PI * 0.5 - 0.02 },
+        { pos: [-8.2, 0, 8.8], rotY: Math.PI * 0.5 },
+        // South-west & North dock containers
+        { pos: [-3.2, 0, 11.4], rotY: 0.03 },
+        { pos: [-3.2, 2.59, 11.4], rotY: -0.04 },
+        { pos: [-0.8, 0, -11.2], rotY: 0.06 },
+        { pos: [-0.8, 2.59, -11.2], rotY: -0.02 },
+        { pos: [2.8, 0, -11.4], rotY: Math.PI * 0.5 - 0.05 }
+      ];
+      for (let i = 0; i < containerSpots.length; i++) {
+        const s = containerSpots[i];
+        yardHandles.push(
+          propPool.spawn(
+            "shipping_container",
+            {
+              position: s.pos,
+              rotation: [0, s.rotY, 0],
+              tintJitter: (i % 5 - 2) * 0.06,
+              wearBias: i % 4 * 0.22,
+              wetnessBias: s.pos[1] < 0.1 ? 0.35 : -0.15
+            },
+            { params: { doorOpen: false } }
+          )
+        );
+      }
+    }
+    if (loader.hasMesh("heavy_crate")) {
+      for (let i = 0; i < 20; i++) {
+        const row = Math.floor(i / 5);
+        const col = i % 5;
+        const stacked = i >= 15;
+        const x = stacked ? -5.8 - (i - 15) * 1.15 : -5.6 - col * 1.15;
+        const z = stacked ? 5.6 : 4.2 + row * 1.35;
+        const y = stacked ? 1 : 0;
+        yardHandles.push(
+          propPool.spawn(
+            "heavy_crate",
+            {
+              position: [x, y, z],
+              rotation: [0, i * 37 % 10 * 0.08 - 0.35, 0],
+              tintJitter: (i % 7 - 3) * 0.045,
+              wearBias: i * 3 % 5 * 0.2,
+              wetnessBias: stacked ? -0.1 : 0.3
+            },
+            { params: { size: 1 } }
+          )
+        );
+      }
+    }
+    if (loader.hasMesh("industrial_pillar")) {
+      const pillarCoords = [
+        [-13, -11.5],
+        [-13, -5],
+        [-13, 2],
+        [-13, 9.5],
+        [-9.5, -13],
+        [-3.5, -13],
+        [3.5, -13],
+        [9.5, -13],
+        [-9.5, 12.8],
+        [-3, 12.8],
+        [3.5, 12.8],
+        [10, 12.8],
+        [12.6, -9.5],
+        [12.6, -2.5],
+        [12.6, 4.5],
+        [12.6, 11]
+      ];
+      for (let i = 0; i < pillarCoords.length; i++) {
+        const [px, pz] = pillarCoords[i];
+        yardHandles.push(
+          propPool.spawn(
+            "industrial_pillar",
+            {
+              position: [px, 0, pz],
+              rotation: [0, i % 4 * (Math.PI * 0.5), 0],
+              tintJitter: (i % 3 - 1) * 0.07,
+              wearBias: i % 5 * 0.18,
+              wetnessBias: 0.25
+            },
+            { params: { height: 3 } }
+          )
+        );
+      }
+    }
+    if (loader.hasMesh("weathered_rock")) {
+      const rockCoords = [
+        [-6.2, 0, -1.2],
+        [-6.8, 0, 1.2],
+        [-5.5, 0, 9.8],
+        [-10.2, 0, -4.5],
+        [11.8, 0, -12.2],
+        [11.5, 0, 2.2],
+        [11.8, 0, 11.8],
+        [2.4, 0, 11.4],
+        [-12.4, 0, -12.4],
+        [-1.5, 0, -12.6],
+        [6.5, 0, 12.2],
+        [-7.2, 0, 12.6]
+      ];
+      for (let i = 0; i < rockCoords.length; i++) {
+        const [rx, ry, rz] = rockCoords[i];
+        const sc = 0.72 + i % 4 * 0.14;
+        yardHandles.push(
+          propPool.spawn(
+            "weathered_rock",
+            {
+              position: [rx, ry, rz],
+              rotation: [0, i * 0.65, 0],
+              scale: [sc, sc, sc],
+              tintJitter: (i % 5 - 2) * 0.05,
+              wearBias: i % 3 * 0.3,
+              wetnessBias: 0.35
+            },
+            { castShadow: false }
+          )
+        );
+      }
+    }
+    propPool.flush();
+  }
+  rebuildInstancedYard();
   const normalizer = createTripoMaterialNormalizer();
   let actor = createNormalizedDummyActor(normalizer, {
     quality: qualityTier,
@@ -6028,6 +6679,7 @@ async function createLookDevScene(options) {
     if (showcaseMesh) staticDrawCalls++;
     if (rockMesh) staticDrawCalls++;
     if (hotPreviewMesh) staticDrawCalls++;
+    const poolStats = propPool.getStats();
     return {
       bakeTimeMs: Math.round((tex?.bakeTimeMs ?? 0) * 10) / 10,
       maxBakeSliceMs: Math.round((tex?.maxSliceMs ?? 0) * 10) / 10,
@@ -6035,6 +6687,8 @@ async function createLookDevScene(options) {
       fps: Math.round(fpsSmooth * 10) / 10,
       drawCalls: renderer.info.render.calls,
       staticDrawCalls,
+      instancedPools: poolStats.poolCount,
+      instancedProps: poolStats.totalInstances,
       triangles: renderer.info.render.triangles,
       estimatedTextureMB: Math.round((tex?.estimatedMemoryMB ?? 0) * 100) / 100,
       materialCount: tex?.layers.size ?? 0,
@@ -6071,7 +6725,7 @@ async function createLookDevScene(options) {
       const p = CAMERA_PRESETS[name];
       if (!p) throw new Error(`Unknown camera preset "${name}"`);
       camTarget.set(...p.target);
-      const off = new THREE11.Vector3(...p.pos).sub(camTarget);
+      const off = new THREE13.Vector3(...p.pos).sub(camTarget);
       camRadius = off.length();
       camTheta = Math.atan2(off.x, off.z);
       camPhi = Math.acos(Math.max(-0.99, Math.min(0.99, off.y / camRadius)));
@@ -6164,7 +6818,7 @@ async function createLookDevScene(options) {
           hotPreviewMesh = null;
         }
         const asset = loader.instantiateMesh(recipe.id);
-        hotPreviewMesh = new THREE11.Mesh(asset.geometry, worldMat.material);
+        hotPreviewMesh = new THREE13.Mesh(asset.geometry, worldMat.material);
         hotPreviewMesh.name = `HotPreview_${recipe.id}`;
         hotPreviewMesh.position.set(-1.5, 0, 6.2);
         hotPreviewMesh.castShadow = true;
@@ -6189,6 +6843,47 @@ async function createLookDevScene(options) {
         `GLB loaded: ${actor.audit.triangles} tris, ${actor.audit.boneCount} bones, maxTex ${actor.audit.maxTextureSize}px${warnText}`
       );
       renderer.render(scene, camera);
+    },
+    stressTestInstancedPool(iterations = 100) {
+      if (!loader.hasMesh("heavy_crate")) {
+        const s = propPool.getStats();
+        return { iterations: 0, poolCount: s.poolCount, activeInstances: s.totalInstances };
+      }
+      const handles = [];
+      for (let i = 0; i < iterations; i++) {
+        const h = propPool.spawn(
+          "heavy_crate",
+          {
+            position: [-6 - i % 5 * 1.1, 2 + i % 3 * 0.2, 6],
+            rotation: [0, i * 0.2, 0],
+            tintJitter: (i % 5 - 2) * 0.05,
+            wearBias: 0.4,
+            wetnessBias: 0.2
+          },
+          { params: { size: 1 } }
+        );
+        propPool.updateTransform(h, {
+          position: [-6 - i % 5 * 1.1, 2.1, 6.2],
+          rotation: [0, i * 0.35, 0]
+        });
+        handles.push(h);
+        if (handles.length > 8) {
+          propPool.remove(handles.shift());
+        }
+        propPool.flush();
+      }
+      while (handles.length > 0) {
+        propPool.remove(handles.shift());
+      }
+      propPool.flush();
+      renderer.render(scene, camera);
+      const stats = propPool.getStats();
+      options.onMetricsUpdate?.(computeMetrics());
+      return {
+        iterations,
+        poolCount: stats.poolCount,
+        activeInstances: stats.totalInstances
+      };
     },
     disposeAndVerify() {
       if (!disposed) {
@@ -6229,6 +6924,7 @@ async function createLookDevScene(options) {
         }
         scene.remove(actor.wrapper);
         actor.dispose();
+        propPool.dispose();
         worldMat.dispose();
         rockMat.dispose();
         atmosphere.dispose();
@@ -6285,8 +6981,8 @@ biomeSel.value = initialBiome;
 bakeModeSel.value = initialBakeMode;
 function formatMetrics(m) {
   return [
-    `FPS: ${m.fps} | DrawCalls: ${m.drawCalls} (Static: ${m.staticDrawCalls})`,
-    `Tris: ${m.triangles} | TexMem: ${m.estimatedTextureMB} MB`,
+    `FPS: ${m.fps} | DrawCalls: ${m.drawCalls} (Static: ${m.staticDrawCalls}, Pools: ${m.instancedPools})`,
+    `Props: ${m.instancedProps} | Tris: ${m.triangles} | Tex: ${m.estimatedTextureMB} MB`,
     `Bake: ${m.bakeTimeMs} ms [${m.bakeBackend.toUpperCase()}] (maxSlice ${m.maxBakeSliceMs} ms)`,
     `Mats: ${m.materialCount} | MeshCache: ${m.cachedMeshCount}`
   ].join("\n");
