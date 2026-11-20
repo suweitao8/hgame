@@ -60,7 +60,7 @@ HGame 基线为 `ead9005`，覆盖 Pixi 2D、可选 WebGL2D 与 Three 3D。Unity
 - **Cocos Creator 3.8 Web**。有组件生命周期、Asset Bundle 加载与释放、动态图集及运行时 Profiler。3.8.4 起提供可定制的 RenderGraph 管线，内置前向路径覆盖阴影、Bloom、FXAA 和适用配置下的 FSR。 [运行时 API](https://docs.cocos.com/creator/3.8/api/en/README) · [Asset Bundle](https://docs.cocos.com/creator/3.8/manual/en/asset/bundle.html) · [RenderGraph](https://docs.cocos.com/creator/3.8/manual/en/render-pipeline/overview.html) · [内置管线](https://docs.cocos.com/creator/3.8/manual/en/render-pipeline/use-builtin-pipeline.html) · [动态图集](https://docs.cocos.com/creator/3.8/manual/en/advanced-topics/dynamic-atlas.html)
 - **PlayCanvas Engine 2.x**。有 WebGL/WebGPU、实例化、批处理、PBR、IBL、聚簇灯光、运行时光照贴图和资源加载释放。CameraFrame 支持自定义效果和 TAA，MiniStats 提供帧时间与绘制统计。 [图形能力](https://developer.playcanvas.com/user-manual/graphics/) · [CameraFrame 扩展](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/custom-effects/) · [聚簇灯光](https://developer.playcanvas.com/user-manual/graphics/lighting/clustered-lighting/) · [资产加载与释放](https://developer.playcanvas.com/user-manual/assets/loading-unloading/) · [MiniStats](https://developer.playcanvas.com/user-manual/optimization/mini-stats/)
 
-Unreal Engine 5.9 的 Lumen、TSR 和阴影系统可作为渲染设计参照。Pixel Streaming 由远端主机执行引擎，浏览器接收画面流，因此 Unreal 使用单独的桌面技术口径。 [桌面渲染功能矩阵](https://dev.epicgames.com/documentation/unreal-engine/supported-features-by-rendering-path-for-desktop-with-unreal-engine) · [Pixel Streaming](https://dev.epicgames.com/documentation/unreal-engine/overview-of-pixel-streaming-in-unreal-engine)
+Unreal Engine 5.9 Preview 2 已提供实验性的浏览器本地 Wasm/WebGPU 构建，包含移动前向和延迟渲染路径，可作为单独的预览参照。Pixel Streaming 在远端执行。桌面 Lumen、TSR 和阴影系统作为设计参照，浏览器表保留固定的三个参照版本。 [UE 5.9 Web 发布说明](https://dev.epicgames.com/documentation/unreal-engine/unreal-engine-5-9-release-notes?lang=en-US#core-engine-and-programming) · [桌面渲染功能矩阵](https://dev.epicgames.com/documentation/unreal-engine/supported-features-by-rendering-path-for-desktop-with-unreal-engine) · [Pixel Streaming](https://dev.epicgames.com/documentation/unreal-engine/overview-of-pixel-streaming-in-unreal-engine)
 
 ## 当前商用对照
 
@@ -77,23 +77,28 @@ HGame 使用本页最新复评，参照引擎使用首轮分数。Δ 表示 HGam
 - **PlayCanvas**。HGame 的性能设计高 **5.0** 加权分，2D 渲染高 **1.6**。两者的 3D 光照与输出评分相同。PlayCanvas 提供运行时光照贴图、环境光和 TAA 放大，HGame 使用离线探针与支持不透明刚体和 CPU 实例的 TAA。 [运行时光照贴图](https://developer.playcanvas.com/user-manual/graphics/lighting/runtime-lightmaps/) · [CameraFrame 时间域放大](https://developer.playcanvas.com/user-manual/graphics/posteffects/cameraframe/#taa-upscaling) · [HGame 时间域抗锯齿](rendering/PIPELINE-3D.md#temporal-antialiasing)
 - **Cocos Creator Web**。两者 2D 渲染同为 **9／10**。Cocos 提供动态图集与渲染优先级。HGame 的原生队列和 Pixi 绘制组采用同一排序规则，合并相邻兼容的裁剪状态。HGame 在资源生命周期、CPU 仿真、GPU 提交、画质控制和诊断设计上得分更高。 [Cocos 动态图集](https://docs.cocos.com/creator/3.8/manual/en/advanced-topics/dynamic-atlas.html) · [HGame 绘制组](guides/PIXI2D-STARTER.md#ordered-draw-groups)
 
-## HGame 到 90 的改进顺序
+### 当前逐项评分与具体改进
 
-以下是 v1 下的一条改进路径。每项达到 9 分时，原权重合计恰为 **90.0**。HGame 和参照引擎的单项分以 10 分为满分。表中的增量只有能力实际接入且复评后才入账。
+单项满分 10。同行同分表示达到本项评分档位，各自的实现覆盖见下表和首轮商用参照依据。
 
-| 顺序 | 评分项 | HGame 当前 → 目标 | Unity / PlayCanvas / Cocos | 加权增量 | 扣分原因与具体改进 |
-| --- | --- | ---: | ---: | ---: | --- |
-| 1 | R4 几何与动画 | 8 → 9 | 8 / 8 / 7 | +0.7 | Meshopt、骨骼、Bone-VAT 及 HLOD 已有入口。明确普通动画、群体动画、远景代理之间的切换及资源回收，保留加载失败时的回退。 |
-| — | R1 2D 渲染 | 9 → 9 | 9 / 7 / 9 | +0.0 | 原生队列和 Pixi 绘制组共享排序。两条路径支持视口矩形裁剪和普通、加色混合，相邻兼容状态保持顺序并复用。 |
-| — | P1 CPU 仿真 | 9 → 9 | 8 / 7 / 7 | +0.0 | 固定步可按操作预算轮转处理可延后的 AI 和 2D、3D 寻路。队列有容量上限、积压和拒绝统计。 |
-| — | A1 调度生命周期 | 9 → 9 | 9 / 8 / 8 | +0.0 | 应用调度提供固定顺序的扩展点。场景激活在停用前发出取消信号，准备回滚和重入销毁沿用同一套退出契约。 |
-| — | A3 资源生命周期 | 9 → 9 | 9 / 8 / 8 | +0.0 | 关卡资源作用域和 3D 模型槽可持有共享解码模型。主请求可取消，空闲模型几何和纹理可按引用和预算回收。 |
-| — | P3 帧预算 | 9 → 9 | 8 / 8 / 7 | +0.0 | Three 自动画质同时接收耗时和内存压力。可回收空闲目标和已登记的缓存，并在内存有余量时恢复画质。 |
-| — | P4 性能诊断 | 9 → 9 | 9 / 8 / 7 | +0.0 | WebGL2D、Canvas2D、Pixi 和 Three 共用快照结构。绘制、上传、GPU 时间与目标估算按后端能力公开。 |
-| — | R3 画面输出 | 9 → 9 | 8 / 9 / 7 | +0.0 | TAA 复用不透明网格和 CPU 实例的上一帧姿态，并在遮挡变化或重建目标时放弃无效历史。 |
-| — | R2 3D 光照 | 9 → 9 | 8 / 9 / 7 | +0.0 | PBR 材质可直接使用离线 SH 探针。高档在覆盖内衰减 SSGI，低档可以单独使用烘焙项。 |
-| — | A2 渲染架构 | 9 → 9 | 9 / 9 / 8 | +0.0 | 内置和自定义全屏 Pass 通过同一入口检查纹理与输出，HDR 中间目标按视口和使用范围复用。 |
-| — | P2 GPU 提交 | 9 → 9 | 9 / 8 / 8 | +0.0 | 现有实例化、裁剪和增量上传已达到此路径的目标。 |
+| 评分项（权重） | HGame | Unity | PlayCanvas | Cocos | HGame 当前评价 | 具体改进 |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| A1 调度与生命周期（8） | 9 | 9 | 8 | 8 | 固定步、阶段排序、场景退出取消已有统一契约，扩展点由核心预定义。 | 对外提供单帧执行顺序与场景取消原因，便于 AI 定位是哪一个扩展或阶段影响帧序。 |
+| A2 渲染架构（9） | 9 | 9 | 9 | 8 | 全屏 Pass 已有输入输出校验和逐视口目标复用，跨阶段资源仍由固定管线编排。 | 从各 Pass 的读写声明计算排序与资源首末使用点，自动回收临时目标。参照 Unity URP Render Graph。 |
+| A3 资源生命周期（8） | 9 | 9 | 8 | 8 | 可共享解码模型、取消主请求并按驻留预算回收。部分 glTF 外部依赖仍可能在场景退出后继续加载。 | 将场景取消信号传给外置依赖请求，统一模型、纹理和音频的引用及预算统计。 |
+| P1 CPU 仿真（10） | 9 | 8 | 7 | 7 | 固定步和寻路已有操作预算，目前由主线程分时执行。 | 将可延后且只读的路径计算接入可选 Worker，由固定步按稳定顺序接收结果并保留主线程路径。 |
+| P2 GPU 提交（12） | 9 | 9 | 8 | 8 | 实例化、裁剪和局部上传已接入，HGame 主 3D 路径为 WebGL2。Unity WebGPU 具备计算、间接绘制和 GPU 蒙皮。 | 先让普通 3D 实例只上传变更范围，再通过可选 WebGPU 管线接入 GPU 裁剪与间接提交。 |
+| P3 帧预算（10） | 9 | 8 | 8 | 7 | Three 已按帧耗时和已知内存分配自动降档，2D 后端主要独立控制。 | 为 2D 接入同一预算数据，先回收空闲缓存，再分级调整效果、渲染分辨率和恢复阈值。 |
+| P4 性能诊断（8） | 9 | 9 | 8 | 7 | 后端共享报告格式，Canvas2D 无 GPU 计数，Pixi WebGPU GPU 时间目前报告为不可用。 | 在具备时间戳能力的 WebGPU 设备补逐 Pass 计时，并让所有后端明确区分实测、估算和不可用字段。 |
+| R1 2D 渲染（8） | 9 | 9 | 7 | 9 | 排序已统一，跨后端裁剪覆盖视口矩形，Pixi 共享图集有固定容量。Cocos 提供动态图集。 | 增加有容量上限的按需图集分页，统一精灵、文字和图块对矩形裁剪及透明度边界的处理。 |
+| R2 3D 光照（10） | 9 | 8 | 9 | 7 | 已有 PBR、聚簇灯光和烘焙间接光，当前每场景使用一份烘焙探针网格。PlayCanvas 另有运行时光照贴图。 | 按世界分块加载探针，在相邻区域平滑混合，并让低档继续使用廉价的烘焙光照。 |
+| R3 画面输出（10） | 9 | 8 | 9 | 7 | TAA 已处理刚体和 CPU 实例的运动。骨骼、VAT 与部分材质仍走相机重投影，PlayCanvas 已支持时间域上采样。 | 先补骨骼和 VAT 运动向量及遮挡失效，再让低分辨率渲染通过时间域上采样输出。 |
+| R4 几何、动画与远景（7） | 8 | 8 | 8 | 7 | Meshopt、普通骨骼动画、Bone-VAT 和 HLOD 均有入口。远景代理创建前会先卸载近景，切换期的所有权和失败回退仍需完善。 | 统一近景骨骼、中景 Bone-VAT、远景代理的切换契约。保留变换和播放进度，新表示就绪后释放旧表示，区分取消、失败和迟到结果并回收资源。 |
+
+### 改进优先级
+
+1. 完成 **R4 的 8 → 9**。目标表示准备失败时继续显示当前表示，跨距离阈值时有迟滞，退出场景和请求被替换时回收无主资源。入账 **+0.7** 后总分为 **90.0**。
+2. 继续改善渲染输出时，优先补 **R3 骨骼与 VAT 运动向量**，再做 **A2 Pass 资源调度**。前者减少运动角色的拖影，后者为后处理扩展、内存预算与后端迁移提供基础。
 
 ## AI 开发与任务验收
 
