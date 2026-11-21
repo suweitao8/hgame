@@ -1,10 +1,19 @@
-# HGame (AI-Native HTML5 Game Engine, v1.0.0)
+# HGame (AI-Native Universal Game Development Template & Production Kit, v1.0.0)
 
-HGame is a standalone, renderer-neutral, **zero-GUI-editor** HTML5 game runtime built for autonomous AI development (`Scene / Entity / Component / Prefab`, 2D Canvas/WebGL2, 3D Three.js, Command-Driven UI, Deterministic Rapier `0.21.0`, and optional Colyseus multiplayer).
+HGame is an opinionated, **AI-Native Universal HTML5 Game Development Template Kit** (**通用游戏开发模板套件**) built on a standalone, zero-GUI-editor 2D/3D/UI runtime. Unlike bare game engines that leave every project to reinvent menus, game loops, balance checks, visual cohesion, and sound feedback, HGame pre-defines and ships ready-to-use standards across **all 5 production pillars**:
+
+1. **UI (`kit/game-shell-dom.js`, `hgame-ui-ux`, `ui/*`)**: Anti-Bloat Zero-Prose HUD shell (title, edge HUD `<= 10%`, whole-card choices, pause/result, hidden debug) with 3D hover tilt, ghost-trail bars, and Red Dot tree.
+2. **Design / 策划 (`kit/blueprint.js`, `src/game.design.json`)**: Idea-to-Blueprint contract (`createBlueprintFromIdea`) with automatic Golden Triangle balance checks (`npm run blueprint:check`) and genre defaults (`action-2d`, `horde-2d`, `arena-3d`, `card-ui`).
+3. **Gameplay (`kit/game-session.js`, `assets/archetypes/`, `gameplay/*`)**: Unified run flow (`title -> playing -> choice -> paused -> result`), combat/reward/wave hooks, hitstop, versioned save persistence, and playable genre archetypes.
+4. **Art (`kit/art-themes.js`, `vfx/`, `scripts/process-*`)**: 6 unified cross-2D/3D/UI themes (`scifi`, `arcane`, `arcade`, `cyber`, `cozy`, `ink`), `ueFilmic` 3D lighting/sky presets, zero-GC VFX, and strict 2D/3D asset specs.
+5. **Audio (`kit/audio-director.js`, `platform/audio/*`)**: 21-event SFX matrix with 0-KB synth defaults, spam cooldowns, adaptive BGM mood/intensity transitions, and drop-in `.mp3` cue overrides.
+
+Provide a game idea -> generate/validate `game.design.json` -> scaffold an archetype -> focus purely on unique mechanics and content.
 
 ## AI Entry Points (Start Here)
 
-- **Zero-Blind-Scan API CLI**: `npm run api -- --map` | `npm run api -- --recipe <2d|horde|3d|ui|network>` | `npm run api -- <keyword>`
+- **Universal Template Spec**: [docs/guides/UNIVERSAL-GAME-TEMPLATE.md](docs/guides/UNIVERSAL-GAME-TEMPLATE.md) | [docs/guides/systems/25-universal-game-kit.md](docs/guides/systems/25-universal-game-kit.md)
+- **Zero-Blind-Scan API CLI**: `npm run api -- --map` | `npm run api -- --recipe <kit|2d|horde|3d|ui|network>` | `npm run api -- <keyword>`
 - **Workspace Rules & AI Runbook**: [AGENTS.md](AGENTS.md) | [assets/template/AGENTS.md](assets/template/AGENTS.md) | [.agents/skills/hgame/SKILL.md](.agents/skills/hgame/SKILL.md)
 - **System Cards Index**: [docs/guides/USER-AND-AGENT-GUIDE.md](docs/guides/USER-AND-AGENT-GUIDE.md)
 
@@ -12,9 +21,10 @@ HGame is a standalone, renderer-neutral, **zero-GUI-editor** HTML5 game runtime 
 
 ```text
 assets/
-  runtime/          # Canonical engine runtime (1.0.0)
+  runtime/          # Canonical runtime + 5-pillar template kit (`kit/`, `ui/`, `gameplay/`, `vfx/`, ...)
+  archetypes/       # Playable 5-pillar genre archetypes (action-2d / horde-2d / arena-3d / card-ui)
   template/         # Standalone generated project template
-  profiles/         # 2d / 2d-bare / 3d / 3d-bare / ui starters
+  profiles/         # Low-level 2d / 2d-bare / 3d / 3d-bare / pixi2d / ui starters
   optional/three/   # Bundled Three.js + MIT license (copied for 3D only)
 scripts/
   query-api.mjs     # npm run api (--map, --recipe, --module, <keyword>)
@@ -39,7 +49,12 @@ npm ci --prefix network
 npm run api -- --map
 npm run api -- --recipe 3d
 
-# Create a standalone game from the shared preset catalogue
+# Create a 5-pillar archetype game from an idea & theme (ready to play out of the box)
+node scripts/create-game.mjs "D:\Games\neon-rush" --archetype action-2d --theme cyber --name "霓虹突围"
+node scripts/create-game.mjs "D:\Games\card-quest" --archetype card-ui --theme arcane --name "秘术牌局"
+npm run blueprint:check -- "D:\Games\neon-rush\src\game.design.json"
+
+# Or create a standalone game from the lower-level preset catalogue
 node scripts/create-game.mjs "D:\Games\my-game" --preset 2d --name "Title"
 node scripts/create-game.mjs "D:\Games\my-horde" --preset horde --name "Horde"
 

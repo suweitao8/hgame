@@ -16,7 +16,7 @@ const FORBIDDEN_PHRASES = [
 
 const IGNORE_JSON_FILES = new Set([
   'story.json', 'level.json', 'materials.json', 'model-slots.json',
-  'game.config.json', 'engine.config.json', 'package.json', 'assets.manifest.json',
+  'game.config.json', 'engine.config.json', 'game.design.json', 'package.json', 'assets.manifest.json',
 ]);
 
 const VOID_TAGS = new Set([

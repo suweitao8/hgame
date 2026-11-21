@@ -16,6 +16,7 @@ import {
   fitDirectionalShadowFrustum,
 } from '../assets/runtime/integrations/sky3d.js';
 import {
+  createFullscreenShaderPass,
   createPostPipeline3D,
   inspectWebGLCapabilities,
   refineQualityWithContext,
@@ -235,6 +236,79 @@ test('custom HDR passes declare color and depth dependencies and chain owned tar
   assert.equal(draws[0].input, sceneTarget.texture);
   noDepth.dispose();
   assert.equal(disposedMaterials, 0);
+});
+
+test('fullscreen shader passes receive camera-matched depth inputs and preserve material state', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const world = new THREE.Scene();
+  const depthShader = createFullscreenShaderPass(THREE, {
+    id: 'depth-fog', sceneDepth: true,
+    fragment: 'vec4 shadeFullscreen(vec2 uv) { return vec4(hgameSceneLinearDepth(uv)); }',
+  });
+  const colorShader = createFullscreenShaderPass(THREE, {
+    id: 'copy', fragment: 'vec4 shadeFullscreen(vec2 uv) { return hgameSceneColor(uv); }',
+  });
+  const { material, inputs } = depthShader;
+  const uniforms = material.uniforms;
+  const view = inputs.depthView;
+  const projection = new THREE.Matrix4();
+  uniforms[view.inverseProjection].value = projection;
+  uniforms[view.clipDepthMode].value = -1;
+  uniforms[view.far].value = 9;
+  const originalColor = { isTexture: true };
+  uniforms[inputs.color].value = originalColor;
+
+  let target;
+  let worldTarget;
+  let worldProjection;
+  const bound = [];
+  let colorDraws = 0;
+  let fail = false;
+  renderer.setRenderTarget = next => { target = next; };
+  renderer.render = (scene, camera) => {
+    if (scene === world) {
+      worldTarget = target;
+      worldProjection = camera.projectionMatrixInverse.clone();
+    }
+    if (scene.children[0]?.material === material) {
+      assert.equal(uniforms[inputs.depth].value, worldTarget.depthTexture);
+      assert.ok(uniforms[view.inverseProjection].value.equals(worldProjection));
+      bound.push([uniforms[view.clipDepthMode].value, uniforms[view.far].value]);
+      if (fail) throw new Error('draw interrupted');
+    }
+    if (scene.children[0]?.material === colorShader.material) colorDraws++;
+  };
+  const make = () => createPostPipeline3D({ THREE, renderer, width: 64, height: 32,
+    preset: QUALITY3D_PRESETS.low, fxaa: false, sharpness: 0, temporalAA: true, passes: [depthShader, colorShader] });
+  const pipeline = make();
+  const perspective = new THREE.PerspectiveCamera(40, 2, 0.5, 68);
+  const ortho = new THREE.OrthographicCamera(-4, 4, 2, -2, 1, 30);
+  ortho.coordinateSystem = THREE.WebGPUCoordinateSystem;
+  ortho.updateProjectionMatrix();
+  pipeline.render(world, perspective, { dt: 0.016 });
+  pipeline.render(world, ortho, { dt: 0.016 });
+  assert.deepEqual(bound, [[0, 68], [1, 30]]);
+  assert.equal(uniforms[inputs.color].value, originalColor);
+  assert.equal(uniforms[inputs.depth].value, null);
+  assert.equal(uniforms[view.inverseProjection].value, projection);
+  assert.equal(uniforms[view.clipDepthMode].value, -1);
+  assert.equal(uniforms[view.far].value, 9);
+  assert.throws(() => pipeline.setPasses([{ ...depthShader, inputs: { ...inputs,
+    depthView: { ...view, far: inputs.color } } }]), /uniform/i);
+  fail = true;
+  assert.throws(() => pipeline.render(world, perspective), /draw interrupted/);
+  assert.equal(uniforms[view.inverseProjection].value, projection);
+  assert.equal(uniforms[view.far].value, 9);
+  pipeline.dispose();
+
+  renderer.capabilities.logarithmicDepthBuffer = true;
+  const noDepth = make();
+  noDepth.render(world, perspective);
+  assert.equal(bound.length, 3, 'missing sampleable depth skips the depth pass');
+  assert.equal(colorDraws, 3, 'the color-only pass still runs without depth');
+  noDepth.dispose();
+  depthShader.material.dispose();
+  colorShader.material.dispose();
 });
 
 test('3D passes reuse released HDR targets without reading their own output', () => {

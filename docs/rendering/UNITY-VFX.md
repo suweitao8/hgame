@@ -44,4 +44,4 @@ Unity Grid mode maps to `flipbook` on mesh and billboard layers. Frames run left
 
 Register `blast` with `vfx.setAtlas(texture, regions)`. A mesh with an unresolved atlas region can use its own registered texture with the mesh's UV orientation. The GPU paths blend adjacent frames when `blend` is enabled. Prewarmed mesh particles advance motion and frame age together, using up to 32 motion steps per particle at spawn. The importer currently maps linear lifetime playback. Unity's Speed and FPS modes, start-frame offsets, custom timing curves, sprite lists, and additional UV channels need further mapping. [Unity Texture Sheet Animation](https://docs.unity.com/en-us/engine/6000.6/manual/visual-effects/particle-systems/particle-system-modules/part-sys-tex-sheet-anim-module)
 
-Broader Unity material alignment includes texture slot and color-space conventions and a documented mapping for commonly used Shader Graph inputs.
+For fullscreen Shader Graph references, use the [GLSL3 authoring entry point](UNITY-SHADER-GRAPH.md). Unity material alignment also includes further texture slot and scene inputs for mesh and particle shaders.

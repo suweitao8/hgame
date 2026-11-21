@@ -7,6 +7,14 @@ void main() {
 }
 `;
 
+export const RECONSTRUCT_VIEW_POSITION_GLSL3 = `
+vec3 hgameViewPositionFromDepth(vec2 uv, float depth, mat4 inverseProjection, int clipDepthMode) {
+  float clipZ = clipDepthMode == 0 ? depth * 2.0 - 1.0 : depth;
+  vec4 view = inverseProjection * vec4(uv * 2.0 - 1.0, clipZ, 1.0);
+  return view.xyz / max(abs(view.w), 1e-8);
+}
+`;
+
 const SCENE_PROJECTION_GLSL3 = `
 uniform mat4 uInvProj;
 uniform mat4 uProj;
@@ -20,10 +28,10 @@ bool hasSceneGeometry(float depth) {
 }
 bool isOrthographicProjection() { return uProj[2].w == 0.0; }
 
+${RECONSTRUCT_VIEW_POSITION_GLSL3}
+
 vec3 reconstructViewPos(vec2 uv, float depth) {
-  float clipZ = uSceneDepthMode == 0 ? depth * 2.0 - 1.0 : depth;
-  vec4 view = uInvProj * vec4(uv * 2.0 - 1.0, clipZ, 1.0);
-  return view.xyz / max(abs(view.w), 1e-8);
+  return hgameViewPositionFromDepth(uv, depth, uInvProj, uSceneDepthMode);
 }
 
 vec3 lowerClipDistances(vec4 clip) {

@@ -35,8 +35,9 @@ Check which folder the current workspace is in before running commands:
 - **HGame Engine Source Repository**: contains `assets/runtime/VERSION` (`1.0.0`) and `scripts/create-game.mjs`.
   - Use this repo to generate new games, curate art/audio sheets, run headless verification (`snapshot.mjs` / `playtest.mjs`), build optional `network/` servers, or package external games (`npm run package:game -- <game-dir> --version <ver>`).
   - Never add game-specific rules or private assets here; edit `assets/runtime/` only when changing the engine itself (and follow [AGENTS.md](../../../AGENTS.md)).
-- **Generated Standalone Game Project**: contains `engine.config.json`, `game.config.json`, `src/main.js`, and `vendor/hgame/VERSION`.
-  - Keep all game logic, AI, levels, and save schemas in `src/` and `assets/`.
+- **Generated Standalone Game Project**: contains `engine.config.json`, `game.config.json`, `docs/design/{GDD,ART-AND-AUDIO,UI-UX,LEVEL}.md`, `src/main.js`, and `vendor/hgame/VERSION`.
+  - Keep all game logic, AI, levels, save schemas, and holistic design docs (`docs/design/` + `src/game.design.json`) in this project.
+  - **Doc-First, Test-After Iron Rule（改前先改文档 · 改后必测）**: Before changing gameplay, balance, art/audio, UI/UX, or level layout, update the corresponding `docs/design/*.md` (and `src/game.design.json` + `GDD.md` Change Log) **first**; after implementing, run `npm run check:design`, `npm test`, and `npm run accept` (`npm run accept:webasset` before user delivery) to verify doc, code, and runtime alignment.
   - Treat `vendor/hgame/` as a vendored runtime copy (do not treat ad-hoc edits there as an engine source change).
   - Run `npm test`, `npm run check` (`node --check src/main.js`), and `npm run release -- --version <ver>` directly inside the game folder.
   - Because `docs/api/API-INDEX.json`, `types/`, and `.agents/skills/` live in the **HGame engine root (`<hgame-repo>`)**, call them via `<hgame-repo>` when working inside a standalone game directory so commands never fail:

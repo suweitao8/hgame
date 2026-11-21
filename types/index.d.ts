@@ -779,6 +779,343 @@ export const HGame: Readonly<{
     Scene: typeof Scene;
     SceneManager: typeof SceneManager;
     PrefabRegistry: typeof PrefabRegistry;
+    STANDARD_ART_SPEC: Readonly<{
+        unitScale: "1 unit = 1 meter (3D), 1 px = logical design unit (2D)";
+        groundPivot: "bottom-center";
+        actor2dBackground: "#FFFFFF";
+        actor2dShadowFree: true;
+        character3dMaxVertices: 3000;
+        character3dHandPose: "semi-clenched-grip";
+        toneMapping: "ueFilmic";
+    }>;
+    ART_THEMES: Record<string, import("./kit/art-themes.js").ArtThemePreset>;
+    listArtThemes: typeof listArtThemes;
+    getArtTheme: typeof getArtTheme;
+    resolvePresentationPreset: typeof resolvePresentationPreset;
+    GAME_AUDIO_EVENTS: Readonly<{
+        ATTACK: "attack";
+        HIT: "hit";
+        CRIT: "crit";
+        KILL: "kill";
+        DASH: "dash";
+        HURT: "hurt";
+        PICKUP: "pickup";
+        LEVEL_UP: "levelup";
+        WAVE_START: "waveStart";
+        BOSS_SPAWN: "bossSpawn";
+        VICTORY: "victory";
+        DEFEAT: "defeat";
+        INTERACT: "interact";
+        UI_HOVER: "uiHover";
+        UI_PRESS: "uiPress";
+        UI_CONFIRM: "uiConfirm";
+        UI_CANCEL: "uiCancel";
+        UI_OPEN: "uiOpen";
+        UI_CLOSE: "uiClose";
+        UI_REWARD: "uiReward";
+        UI_ERROR: "uiError";
+    }>;
+    DEFAULT_AUDIO_MATRIX: Readonly<{
+        attack: Readonly<{
+            preset: "slash";
+            volume: 0.42;
+            pitchJitter: 0.08;
+            cooldownMs: 55;
+        }>;
+        hit: Readonly<{
+            preset: "hit";
+            volume: 0.38;
+            pitchJitter: 0.12;
+            cooldownMs: 45;
+        }>;
+        crit: Readonly<{
+            preset: "explosion";
+            volume: 0.48;
+            pitchJitter: 0.08;
+            cooldownMs: 90;
+        }>;
+        kill: Readonly<{
+            preset: "pickup";
+            volume: 0.36;
+            pitchJitter: 0.14;
+            cooldownMs: 55;
+        }>;
+        dash: Readonly<{
+            preset: "laser";
+            volume: 0.38;
+            pitchJitter: 0.06;
+            cooldownMs: 120;
+        }>;
+        hurt: Readonly<{
+            preset: "hurt";
+            volume: 0.56;
+            pitchJitter: 0.04;
+            cooldownMs: 140;
+        }>;
+        pickup: Readonly<{
+            preset: "pickup";
+            volume: 0.32;
+            pitchJitter: 0.15;
+            cooldownMs: 40;
+        }>;
+        levelup: Readonly<{
+            preset: "powerup";
+            volume: 0.58;
+            pitchJitter: 0.02;
+            cooldownMs: 250;
+        }>;
+        waveStart: Readonly<{
+            preset: "powerup";
+            volume: 0.45;
+            pitchJitter: 0.02;
+            cooldownMs: 300;
+        }>;
+        bossSpawn: Readonly<{
+            preset: "explosion";
+            volume: 0.65;
+            pitchJitter: 0.02;
+            cooldownMs: 500;
+        }>;
+        victory: Readonly<{
+            preset: "powerup";
+            volume: 0.64;
+            pitchJitter: 0;
+            cooldownMs: 300;
+        }>;
+        defeat: Readonly<{
+            preset: "hurt";
+            volume: 0.62;
+            pitchJitter: 0;
+            cooldownMs: 300;
+        }>;
+        interact: Readonly<{
+            preset: "click";
+            volume: 0.36;
+            pitchJitter: 0.04;
+            cooldownMs: 60;
+        }>;
+        uiHover: Readonly<{
+            preset: "click";
+            volume: 0.12;
+            pitchJitter: 0.05;
+            cooldownMs: 45;
+        }>;
+        uiPress: Readonly<{
+            preset: "click";
+            volume: 0.22;
+            pitchJitter: 0.04;
+            cooldownMs: 30;
+        }>;
+        uiConfirm: Readonly<{
+            preset: "pickup";
+            volume: 0.28;
+            pitchJitter: 0.03;
+            cooldownMs: 60;
+        }>;
+        uiCancel: Readonly<{
+            preset: "hit";
+            volume: 0.22;
+            pitchJitter: 0.03;
+            cooldownMs: 60;
+        }>;
+        uiOpen: Readonly<{
+            preset: "pickup";
+            volume: 0.24;
+            pitchJitter: 0.03;
+            cooldownMs: 80;
+        }>;
+        uiClose: Readonly<{
+            preset: "click";
+            volume: 0.2;
+            pitchJitter: 0.03;
+            cooldownMs: 80;
+        }>;
+        uiReward: Readonly<{
+            preset: "powerup";
+            volume: 0.34;
+            pitchJitter: 0.02;
+            cooldownMs: 120;
+        }>;
+        uiError: Readonly<{
+            preset: "hurt";
+            volume: 0.25;
+            pitchJitter: 0.02;
+            cooldownMs: 120;
+        }>;
+    }>;
+    AUDIO_PROFILES: Readonly<{
+        action: Readonly<{
+            bgmVolume: 0.36;
+            baseIntensity: 0.55;
+            combatIntensity: 0.78;
+        }>;
+        arcade: Readonly<{
+            bgmVolume: 0.38;
+            baseIntensity: 0.62;
+            combatIntensity: 0.85;
+        }>;
+        tactical: Readonly<{
+            bgmVolume: 0.3;
+            baseIntensity: 0.38;
+            combatIntensity: 0.65;
+        }>;
+        cozy: Readonly<{
+            bgmVolume: 0.32;
+            baseIntensity: 0.28;
+            combatIntensity: 0.48;
+        }>;
+    }>;
+    createAudioDirector: typeof createAudioDirector;
+    GENRE_ARCHETYPES: Readonly<{
+        'action-2d': Readonly<{
+            id: "action-2d";
+            perspective: "2d";
+            preset: "2d";
+            renderer: "webgl2d";
+            tickHz: 60;
+            defaultTheme: "scifi";
+            audioProfile: "action";
+            feel: Readonly<{
+                playerSpeed: 6.5;
+                playerRadius: 0.45;
+                dashSpeed: 16;
+                dashCooldownSec: 1.4;
+                hitStopMs: 36;
+                traumaMax: 0.55;
+            }>;
+            balance: Readonly<{
+                playerHp: 100;
+                gruntHp: 30;
+                gruntDamage: 12;
+                weaponDps: 28;
+                arenaSpan: 48;
+                waveDurationSec: 60;
+                maxUpgrades: 5;
+            }>;
+            ui: Readonly<{
+                hudMetrics: string[];
+                hudBars: string[];
+                maxTitleButtons: 1;
+                maxInGameButtons: 1;
+                maxResultButtons: 2;
+                cardChoices: 3;
+                hudMaxAreaRatio: 0.1;
+            }>;
+        }>;
+        'horde-2d': Readonly<{
+            id: "horde-2d";
+            perspective: "2d";
+            preset: "horde";
+            renderer: "webgl2d";
+            tickHz: 60;
+            defaultTheme: "cyber";
+            audioProfile: "arcade";
+            feel: Readonly<{
+                playerSpeed: 7.2;
+                playerRadius: 0.45;
+                dashSpeed: 18;
+                dashCooldownSec: 1.2;
+                hitStopMs: 24;
+                traumaMax: 0.5;
+            }>;
+            balance: Readonly<{
+                playerHp: 120;
+                gruntHp: 20;
+                gruntDamage: 10;
+                weaponDps: 36;
+                arenaSpan: 64;
+                waveDurationSec: 60;
+                maxUpgrades: 5;
+            }>;
+            ui: Readonly<{
+                hudMetrics: string[];
+                hudBars: string[];
+                maxTitleButtons: 1;
+                maxInGameButtons: 1;
+                maxResultButtons: 2;
+                cardChoices: 3;
+                hudMaxAreaRatio: 0.1;
+            }>;
+        }>;
+        'arena-3d': Readonly<{
+            id: "arena-3d";
+            perspective: "3d";
+            preset: "3d";
+            renderer: "threejs";
+            tickHz: 60;
+            defaultTheme: "arcane";
+            audioProfile: "action";
+            feel: Readonly<{
+                playerSpeed: 7;
+                playerRadius: 0.5;
+                dashSpeed: 16;
+                dashCooldownSec: 1.5;
+                hitStopMs: 42;
+                traumaMax: 0.6;
+            }>;
+            balance: Readonly<{
+                playerHp: 100;
+                gruntHp: 40;
+                gruntDamage: 15;
+                weaponDps: 32;
+                arenaSpan: 52;
+                waveDurationSec: 60;
+                maxUpgrades: 5;
+            }>;
+            ui: Readonly<{
+                hudMetrics: string[];
+                hudBars: string[];
+                maxTitleButtons: 1;
+                maxInGameButtons: 1;
+                maxResultButtons: 2;
+                cardChoices: 3;
+                hudMaxAreaRatio: 0.1;
+            }>;
+        }>;
+        'card-ui': Readonly<{
+            id: "card-ui";
+            perspective: "ui";
+            preset: "ui";
+            renderer: "dom";
+            tickHz: 0;
+            defaultTheme: "arcane";
+            audioProfile: "tactical";
+            feel: Readonly<{
+                playerSpeed: 0;
+                playerRadius: 0.5;
+                dashSpeed: 0;
+                dashCooldownSec: 0;
+                hitStopMs: 0;
+                traumaMax: 0.2;
+            }>;
+            balance: Readonly<{
+                playerHp: 40;
+                gruntHp: 18;
+                gruntDamage: 5;
+                weaponDps: 10;
+                arenaSpan: 0;
+                waveDurationSec: 120;
+                maxUpgrades: 5;
+            }>;
+            ui: Readonly<{
+                hudMetrics: string[];
+                hudBars: string[];
+                maxTitleButtons: 1;
+                maxInGameButtons: 1;
+                maxResultButtons: 2;
+                cardChoices: 3;
+                hudMaxAreaRatio: 0.1;
+            }>;
+        }>;
+    }>;
+    listGenreArchetypes: typeof listGenreArchetypes;
+    defineGameBlueprint: typeof defineGameBlueprint;
+    evaluateBlueprintBalance: typeof evaluateBlueprintBalance;
+    createBlueprintFromIdea: typeof createBlueprintFromIdea;
+    createGameSession: typeof createGameSession;
+    mountGameShell: typeof mountGameShell;
+    REQUIRED_DESIGN_DOCS: readonly string[];
+    renderGameDesignDocs: typeof renderGameDesignDocs;
 }>;
 import { createVersionedStore } from './platform/engine.js';
 import { createSeededRng } from './sim/index.js';
@@ -830,6 +1167,17 @@ import { packCrowdAnimStatus } from './vfx/index.js';
 import { unpackCrowdAnimStatus } from './vfx/index.js';
 import { createProceduralVfxAtlas } from './vfx/index.js';
 import { validateVfxRecipe } from './vfx/index.js';
+import { listArtThemes } from './kit/index.js';
+import { getArtTheme } from './kit/index.js';
+import { resolvePresentationPreset } from './kit/index.js';
+import { createAudioDirector } from './kit/index.js';
+import { listGenreArchetypes } from './kit/index.js';
+import { defineGameBlueprint } from './kit/index.js';
+import { evaluateBlueprintBalance } from './kit/index.js';
+import { createBlueprintFromIdea } from './kit/index.js';
+import { createGameSession } from './kit/index.js';
+import { mountGameShell } from './kit/index.js';
+import { renderGameDesignDocs } from './kit/index.js';
 export { defineProject, resolveFeatureGraph, PROJECT_PROFILES, OPTIONAL_FEATURES, DETERMINISTIC_PHYSICS_BACKENDS } from "./core/config.js";
 export { Scene, SceneManager } from "./core/scene.js";
 export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTagAncestors, createTagRegistry, GLOBAL_TAG_REGISTRY, createTagContainer, matchGameplayTags } from "./core/tags.js";
@@ -846,3 +1194,4 @@ export { createSeededRng, createStateChecksum, hashState, runScripted, createSim
 export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
 export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";
+export { STANDARD_ART_SPEC, ART_THEMES, listArtThemes, getArtTheme, resolvePresentationPreset, GAME_AUDIO_EVENTS, DEFAULT_AUDIO_MATRIX, AUDIO_PROFILES, createAudioDirector, GENRE_ARCHETYPES, listGenreArchetypes, defineGameBlueprint, evaluateBlueprintBalance, createBlueprintFromIdea, createGameSession, mountGameShell, REQUIRED_DESIGN_DOCS, renderGameDesignDocs } from "./kit/index.js";

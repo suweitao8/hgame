@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { lintFiles, collectFiles as collectUiFiles } from './check-ui-resolve.mjs';
 import { runAutoplayGate } from './check-autoplay.mjs';
+import { auditDesignDocs } from './check-design-docs.mjs';
 import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
 import { launchChromium, resolvePlaywright } from './lib/playwright-resolve.mjs';
 import { resolveWebAssetGame, verifyWebAssetSource } from './playtest.mjs';
@@ -161,7 +162,7 @@ export function computeSourceDigest(gameDir) {
       candidates.push([rootEntry.name, path.join(gameDir, rootEntry.name)]);
     }
   }
-  for (const sub of ['src', 'tests']) {
+  for (const sub of ['src', 'tests', 'docs/design']) {
     for (const abs of walkFiles(path.join(gameDir, sub))) {
       candidates.push([path.relative(gameDir, abs).replace(/\\/g, '/'), abs]);
     }
@@ -882,6 +883,17 @@ export async function runAcceptForProject(targetDir, opts) {
   gates.config = await runConfigGate(gameDir, opts, defineProject);
   gates.syntax = await runSyntaxGate(gameDir);
   gates.uiStatic = runUiStaticGate(gameDir);
+  if (existsSync(path.join(gameDir, 'docs', 'design')) || existsSync(path.join(gameDir, 'src', 'game.design.json')) || opts.strict) {
+    const docAudit = await auditDesignDocs(gameDir, { strict: opts.strict });
+    gates.designDocs = {
+      status: docAudit.ok ? 'passed' : 'failed',
+      docs: docAudit.docs,
+      errors: docAudit.errors,
+      warnings: docAudit.warnings,
+    };
+  } else {
+    gates.designDocs = { status: 'skipped', reason: 'No docs/design/ directory (run --strict to require)', errors: [] };
+  }
   gates.tests = await runTestsGate(gameDir, opts);
 
   const recipe = gates.config.recipe || { profile: '2d', renderer: 'canvas2d' };
@@ -938,6 +950,7 @@ export async function runAcceptForProject(targetDir, opts) {
       config: { status: gates.config.status, errors: gates.config.errors },
       syntax: gates.syntax,
       uiStatic: gates.uiStatic,
+      designDocs: gates.designDocs,
       tests: gates.tests,
       autoplay: gates.autoplay,
       visual: gates.visual,

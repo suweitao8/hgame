@@ -2,7 +2,8 @@
 
 1. `engine.config.json` is the authoritative runtime recipe. Load only the selected profile and declared optional features.
 2. The engine-managed runtime copy lives in `vendor/hgame/` (plus `assets/vendor/three/` for 3D, `docs/api/API-INDEX.json`, and core engine `scripts/*.mjs`), tracked via `.hgame-sync.json` and ignored by `.gitignore`. Do not edit those files directly inside a game project; update the HGame source repository and run `npm run sync:games -- --game <slug>` from HGame.
-3. Keep game rules, AI, authoritative state, content, renderer code, and save schemas inside this game project.
+3. Keep game rules, AI, authoritative state, content, renderer code, save schemas, and this game's holistic design docs (`docs/design/GDD.md`, `docs/design/ART-AND-AUDIO.md`, `docs/design/UI-UX.md`, `docs/design/LEVEL.md`, plus `src/game.design.json`) inside this game project.
+   - **Doc-First, Test-After Iron Rule（改前先改文档 · 改后必测）**: Never patch gameplay, balance, art/audio, UI/UX, or level layout piecemeal in code alone. Always update the matching `docs/design/*.md` section (and `src/game.design.json` + `GDD.md` Change Log) **first** so every change has a design basis, then implement, then run `npm run check:design`, `npm test`, and `npm run accept` (`npm run accept:webasset` before delivery).
 4. Keep Git focused on code, configs, tests, and `assets.manifest.json`. Heavy art/audio binaries under `assets/` and raw authoring files (`.psd`, `.blend`, `.fbx`, `assets/raw/`) are excluded by `.gitignore`; sync them through the unified content-addressed store via `npm run assets -- push|pull|status|verify` (configure `HGAME_ASSET_STORE` or `--store <dir>`). `npm run release` automatically resolves missing manifest assets from the unified store when present.
 5. The Application owns the only RAF and fixed-step scheduler. Do not create a second RAF or step physics from a renderer callback.
 6. When physics is enabled, use deterministic Rapier 0.21.0 for the selected dimension. Offline and online modes do not select different physics backends.
@@ -49,7 +50,8 @@ npm run accept:webasset
 npm run accept:autoplay
 node scripts/accept.mjs . --verify-fresh
 
-# Run project tests & quick static/syntax/import/UI checks
+# Run project tests, design-doc consistency, & quick static/syntax/import/UI checks
+npm run check:design
 npm test
 npm run check
 node scripts/task-check.mjs build/task.json

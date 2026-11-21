@@ -46,7 +46,7 @@ const GI_HISTORY_SETTINGS = ['giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxD
  * @typedef {object} PostHdrPass
  * @property {string} id Unique id in this chain.
  * @property {{uniforms: Record<string, {value: unknown}>}} material Fullscreen shader material that replaces all output pixels.
- * @property {{color: string, depth?: string}} inputs Texture uniforms for previous HDR color and optional original world depth.
+ * @property {{color: string, depth?: string, depthView?: {inverseProjection: string, clipDepthMode: string, far: string}}} inputs Uniform names for HDR color, optional world depth and its matching projection.
  * @property {boolean} [enabled=true] Disabled effects and effects requiring unavailable depth are skipped.
  */
 
@@ -62,14 +62,29 @@ function normalizeHdrPasses(passes) {
     const { material, inputs, enabled = true } = pass;
     const color = inputs?.color;
     const depth = inputs?.depth;
+    const depthView = inputs?.depthView;
     const uniforms = material?.uniforms ?? {};
-    const colorUniform = typeof color === 'string' && color && Object.hasOwn(uniforms, color) && uniforms[color];
-    const depthUniform = typeof depth === 'string' && depth && Object.hasOwn(uniforms, depth) && uniforms[depth];
-    if (typeof enabled !== 'boolean' || !colorUniform || !Object.hasOwn(colorUniform, 'value') ||
-        (depth !== undefined && (!depthUniform || !Object.hasOwn(depthUniform, 'value') || colorUniform === depthUniform))) {
-      throw new TypeError(`Invalid enabled flag or texture uniforms for HDR pass: ${id}`);
+    if (typeof enabled !== 'boolean' || (depthView !== undefined && (depth === undefined || !depthView))) {
+      throw new TypeError(`Invalid enabled flag or depth view for HDR pass: ${id}`);
     }
-    return Object.freeze({ id, material, inputs: Object.freeze({ color, depth }), enabled });
+    const bindings = [color];
+    if (depth !== undefined) bindings.push(depth);
+    if (depthView) bindings.push(depthView.inverseProjection, depthView.clipDepthMode, depthView.far);
+    const usedUniforms = new Set();
+    for (const name of bindings) {
+      const entry = typeof name === 'string' && name && Object.hasOwn(uniforms, name) && uniforms[name];
+      if (!entry || !Object.hasOwn(entry, 'value') || usedUniforms.has(entry)) {
+        throw new TypeError(`Invalid or overlapping input uniforms for HDR pass: ${id}`);
+      }
+      usedUniforms.add(entry);
+    }
+    const viewInputs = depthView ? Object.freeze({
+      inverseProjection: depthView.inverseProjection,
+      clipDepthMode: depthView.clipDepthMode,
+      far: depthView.far,
+    }) : undefined;
+    const normalizedInputs = viewInputs ? { color, depth, depthView: viewInputs } : { color, depth };
+    return Object.freeze({ id, material, inputs: Object.freeze(normalizedInputs), enabled });
   }));
 }
 
@@ -529,6 +544,7 @@ export function createPostPipeline3D(options = {}) {
   let mats = null;
   let activeDiagnostics = null;
   let sceneProjectionUniforms = null;
+  let customInverseProjection = null;
   let scratchCamToShadow = null;
   let scratchViewToWorld = null;
   let scratchSunView = null;
@@ -952,22 +968,41 @@ export function createPostPipeline3D(options = {}) {
     hdrTargets.trimColor(Math.min(2, Math.max(count, Number(state.temporalAA))));
   }
 
-  function runCustomPasses(stages, color, depth) {
+  function runCustomPasses(stages, color, depth, cameraFar) {
     let previousTarget = null;
     for (const { pass, contract } of stages) {
-      const colorUniform = pass.material.uniforms[pass.inputs.color];
-      const depthUniform = pass.inputs.depth ? pass.material.uniforms[pass.inputs.depth] : null;
+      const uniforms = pass.material.uniforms;
+      const depthView = pass.inputs.depthView;
+      const colorUniform = uniforms[pass.inputs.color];
+      const depthUniform = pass.inputs.depth ? uniforms[pass.inputs.depth] : null;
+      const inverseProjection = depthView ? uniforms[depthView.inverseProjection] : null;
+      const clipDepthMode = depthView ? uniforms[depthView.clipDepthMode] : null;
+      const far = depthView ? uniforms[depthView.far] : null;
       const previousColor = colorUniform.value;
       const previousDepth = depthUniform?.value;
+      const previousProjection = inverseProjection?.value;
+      const previousMode = clipDepthMode?.value;
+      const previousFar = far?.value;
       let target;
       colorUniform.value = color;
       if (depthUniform) depthUniform.value = depth;
+      if (depthView) {
+        customInverseProjection ??= new THREE.Matrix4();
+        inverseProjection.value = customInverseProjection.copy(sceneProjectionUniforms.uInvProj.value);
+        clipDepthMode.value = sceneProjectionUniforms.uSceneDepthMode.value;
+        far.value = cameraFar;
+      }
       try {
-        target = hdrTargets.acquire(bufferWidth, bufferHeight, false, pass.material.uniforms);
+        target = hdrTargets.acquire(bufferWidth, bufferHeight, false, uniforms);
         runPass(contract, pass.material, target);
       } finally {
         colorUniform.value = previousColor;
         if (depthUniform) depthUniform.value = previousDepth;
+        if (depthView) {
+          inverseProjection.value = previousProjection;
+          clipDepthMode.value = previousMode;
+          far.value = previousFar;
+        }
       }
       if (previousTarget) hdrTargets.release(previousTarget);
       previousTarget = target;
@@ -1230,12 +1265,14 @@ export function createPostPipeline3D(options = {}) {
     const useTemporal = Boolean(state.temporalAA && readSceneDepth && renderer.xr?.isPresenting !== true &&
       !renderer.capabilities?.reversedDepthBuffer && !camera.reversedDepth && !camera.isArrayCamera);
     let temporalFrame = useTemporal;
-    const needsProjection = useAo || wantsGiSsr || wantsContact || wantsVolumetric || useTemporal;
+    const needsProjection = useAo || wantsGiSsr || wantsContact || wantsVolumetric || useTemporal ||
+      activePasses.some(({ pass }) => pass.inputs.depthView);
     const needsDepth = needsProjection || customDepth;
     if (useTemporal) temporalAa ??= createWorldTemporalAA();
     else if (temporalAa?.targets.length) temporalAa.release();
 
     const previousDiagnostics = activeDiagnostics;
+    let worldCameraFar;
     activeDiagnostics = diagnostics;
     hdrTargets.beginFrame();
     try {
@@ -1257,6 +1294,7 @@ export function createPostPipeline3D(options = {}) {
           sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
           sceneProjectionUniforms.uProj.value.copy(camera.projectionMatrix);
           sceneProjectionUniforms.uSceneDepthMode.value = camera.reversedDepth ? 2 : Number(usesZeroToOneDepth(camera));
+          worldCameraFar = camera.far;
           // Orthographic views can include geometry behind the camera origin.
           sceneProjectionUniforms.uSceneDepthGuideOffset.value = camera.isOrthographicCamera
             ? Math.max(0, -(camera.near ?? 0)) : 0;
@@ -1396,7 +1434,7 @@ export function createPostPipeline3D(options = {}) {
       }
 
       if (activePasses.length) {
-        compU.tScene.value = runCustomPasses(activePasses, compU.tScene.value, sceneRT.depthTexture);
+        compU.tScene.value = runCustomPasses(activePasses, compU.tScene.value, sceneRT.depthTexture, worldCameraFar);
       }
 
       // 1c. GPU Eye Adaptation / Auto-Exposure pyramid

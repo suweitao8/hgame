@@ -15,6 +15,30 @@ export const PROJECT_PRESETS = Object.freeze({
   ui: { profile: 'ui', renderer: 'dom', title: 'Card / UI', features: ['audio', 'save'] },
 });
 
+export const ARCHETYPE_STARTERS = Object.freeze({
+  'action-2d': {
+    profile: '2d', renderer: 'webgl2d', tickHz: 60, features: ['audio', 'save'],
+    includeRuntime: ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
+      'integrations/webgl2d.js', 'vfx/index.js', 'platform/input/arcade.js', 'integrations/touch-controls.js', 'kit/index.js'],
+  },
+  'horde-2d': {
+    profile: '2d', renderer: 'webgl2d', tickHz: 60, features: ['audio', 'save'],
+    includeRuntime: ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
+      'integrations/webgl2d.js', 'world/swarm-ecs.js', 'vfx/index.js', 'platform/input/arcade.js', 'integrations/touch-controls.js', 'kit/index.js'],
+  },
+  'arena-3d': {
+    profile: '3d', renderer: 'threejs', tickHz: 60, physics: 'rapier3d', quality: 'auto', features: ['assets', 'audio', 'save', 'adaptiveQuality3d'],
+    includeRuntime: ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
+      'integrations/three.js', 'integrations/sky3d.js', 'world/terrain3d.js', 'vfx/index.js',
+      'platform/input/arcade.js', 'integrations/touch-controls.js', 'kit/index.js'],
+  },
+  'card-ui': {
+    profile: 'ui', renderer: 'dom', tickHz: 0, features: ['audio', 'save'],
+    includeRuntime: ['core/application.js', 'core/config.js', 'core/scene.js',
+      'integrations/dom.js', 'kit/index.js'],
+  },
+});
+
 export const PROFILE_FILES = Object.freeze({
   '2d': { html: null, demoData: [] },
   '3d': { html: '3d/index.html', demoData: ['level.json', 'materials.json', 'model-slots.json'] },

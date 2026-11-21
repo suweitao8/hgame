@@ -120,6 +120,8 @@ adapter.postPipeline.setPasses([
 
 Use an opaque fullscreen shader material that writes linear color across the output. The pipeline supplies `position` and `uv` attributes and restores the input uniforms after each draw. The standard chain alternates between two reusable pane-sized scratch targets. The game owns its materials. `enabled: false` skips an effect, as does a missing depth attachment when the effect requires depth. In forward fallback the engine skips the HDR chain.
 
+Use [`createFullscreenShaderPass`](UNITY-SHADER-GRAPH.md) for a GLSL3 authoring entry point with screen coordinates, chained HDR color, and world-depth helpers. Custom descriptors can also bind `inputs.depthView` with `inverseProjection`, `clipDepthMode`, and `far` uniform names alongside `inputs.depth`. The clip depth modes are `0` for `[-1, 1]`, `1` for `[0, 1]`, and `2` for reversed `[0, 1]`.
+
 ### Temporal antialiasing
 
 Set `post3d: { temporalAA: true }` on the Three adapter or call `adapter.postPipeline.setState({ temporalAA: true })`. Each view jitters the world camera and accumulates HDR color from depth-validated history. The resolve runs before the first-person layer, custom HDR effects, exposure, bloom and tone mapping.

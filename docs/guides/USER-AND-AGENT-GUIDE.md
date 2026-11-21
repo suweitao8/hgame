@@ -1,8 +1,8 @@
-# HGame 1.0.0 AI Agent Execution Manual
+# HGame 1.0.0 AI-Native Universal Game Template Manual
 
-> Pure AI-Native Contract: **Zero manual GUI editors**. Author all scenes, levels, balance tables, dialogue graphs, UI stacks, shaders, and audio parameters in code + declarative JSON, then verify via zero-dependency validators, `snapshot`, and `playtest`.
+> Pure AI-Native Contract: **Zero manual GUI editors**. HGame pre-defines and standardizes **UI, Design (策划), Gameplay, Art (美术), and Audio (音效)** via `vendor/hgame/kit/` + declarative JSON (`src/game.design.json`, `level.json`, `story.json`), then verifies via zero-dependency validators, `blueprint:check`, `check:ui`, `snapshot`, and `playtest`. See [UNIVERSAL-GAME-TEMPLATE.md](UNIVERSAL-GAME-TEMPLATE.md).
 
-Start with a playable HTML game in WebAsset. Play its core loop and use the result to prioritize gameplay and engine improvements. Evaluate the game and the AI workflow against the [repository review criteria](../../AGENTS.md#product-scope-reviews-and-priorities). Add a publishing target when a specific game has a concrete release request for it.
+Start with an archetype (`--archetype action-2d|horde-2d|arena-3d|card-ui --theme scifi|arcane|arcade|cyber|cozy|ink`) so all 5 pillars work on frame 1 in WebAsset. Play the core loop early and use the result to tune gameplay and content. Evaluate the game and AI workflow against the [repository review criteria](../../AGENTS.md#product-scope-reviews-and-priorities). Add a publishing target when a specific game has a concrete release request for it.
 
 ## 1. Lookup First (Zero Blind Scan)
 
@@ -107,6 +107,7 @@ The modular level renderer releases slot-owned cloned skeletons on level replace
 | 22 | Staged Encounters, Spawn Waves & Checkpoints (`EncounterComponent`) | [systems/22-encounters.md](systems/22-encounters.md) |
 | 23 | Prefab Placement, Spawn Points & Trigger Volumes (`mountLevel`) | [systems/23-level-assembly.md](systems/23-level-assembly.md) |
 | 24 | Level Preload, Scene Switching & Resource Ownership (`createLevelFlow`) | [systems/24-level-flow.md](systems/24-level-flow.md) |
+| 25 | **5-Pillar Universal Game Kit** (`blueprint`, `art-themes`, `audio-director`, `game-session`, `game-shell-dom`) | [systems/25-universal-game-kit.md](systems/25-universal-game-kit.md) |
 
 ---
 

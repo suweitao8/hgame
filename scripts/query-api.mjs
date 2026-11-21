@@ -20,7 +20,7 @@ function printUsage() {
   console.log('  npm run api -- --map                 Compact intent -> module capability router');
   console.log(standalone
     ? '  npm run api -- --recipe current      Show the source entry selected at project creation'
-    : '  npm run api -- --recipe <type>       Minimal runnable wiring for 2d|horde|3d|ui|network');
+    : '  npm run api -- --recipe <type>       Minimal runnable wiring for kit|2d|horde|3d|ui|network');
   console.log('  npm run api -- <keyword>             Search modules, exports, and summaries');
   console.log('  npm run api -- --module <name>       List exports in matching module(s)');
   console.log('  npm run api -- --list                List all indexed runtime modules');
@@ -28,6 +28,7 @@ function printUsage() {
 }
 
 const CAPABILITY_MAP = [
+  { need: '5-Pillar Universal Game Template (Design Blueprint, Art Theme, Audio Director, Session Loop, Anti-Bloat UI Shell)', module: 'kit/index.js (kit/blueprint.js, art-themes.js, audio-director.js, game-session.js, game-shell-dom.js)', keyApis: 'createBlueprintFromIdea, defineGameBlueprint, evaluateBlueprintBalance, getArtTheme, createAudioDirector, createGameSession, mountGameShell; npm run api -- --recipe kit' },
   { need: 'Default 2D PixiJS rendering, input and effects', module: 'generated project src/engine/*', keyApis: 'startPixiGame, Renderer2D, createDrawGroup, createSwarmLayer, ProceduralAtlas.registerSheet, createCatalogGameAtlas, JuiceSystem, InputAndAudio; npm run api -- --recipe 2d' },
   { need: 'Logical media IDs, scoped loading and release asset selection', module: 'platform/asset-catalog.js', keyApis: 'createAssetCatalog, openScope, loadGroup, projectPath, assets/catalog.json' },
   { need: 'Preload and switch levels with shared scene assets', module: 'world/level-flow.js', keyApis: 'createLevelFlow, prefetch, go, cancel, discard' },
@@ -60,6 +61,14 @@ const CAPABILITY_MAP = [
 ];
 
 const RECIPES = {
+  kit: `// Create from idea & archetype:
+// node scripts/create-game.mjs "<dir>" --archetype action-2d|horde-2d|arena-3d|card-ui --theme scifi|arcane|arcade|cyber|cozy|ink --name "Title"
+import { createBlueprintFromIdea, getArtTheme, createGameSession, mountGameShell } from '../vendor/hgame/kit/index.js';
+const blueprint = createBlueprintFromIdea({ id: 'my-game', title: '霓虹突围', genre: 'action-2d', theme: 'cyber' });
+const theme = getArtTheme(blueprint.art.theme);
+const session = createGameSession({ blueprint, app });
+const shell = mountGameShell({ root: document.body, session });
+// Call session.recordHit(), session.recordKill(), session.damagePlayer(), session.presentChoices(), session.update(dt), shell.sync().`,
   '2d': () => `// Create: ${recipeCreateCommand('2d')}\n// The generated src/bare.js is the empty PixiJS scene entry.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/bare.js'), 'utf8')}`,
   horde: () => `// Create: ${recipeCreateCommand('horde')}\n// Generated src/horde.js connects the HGame CPU swarm to PixiJS.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/horde.js'), 'utf8')}`,
   '3d': `// Create: ${recipeCreateCommand('3d')}

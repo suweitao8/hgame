@@ -5,7 +5,12 @@
 ## 工程目录
 
 - `src/main.js`：默认源码入口。Pixi 空白与群怪模板使用各自的入口，运行 `npm run api -- --recipe current` 可查看生成时选择的入口及当前代码。
-- `src/`：游戏规则、状态、AI、关卡与表现逻辑。
+- `docs/design/`：本游戏独立的整体设计文档集（**改前先改文档、改后必测**）：
+  - `GDD.md`：策划案总纲（核心循环、3C 手感、黄金三角数值、成长经济与变更记录）
+  - `ART-AND-AUDIO.md`：美术与音效设计文档（主题配色、光影、资产规范、VFX、BGM 与 SFX 事件映射）
+  - `UI-UX.md`：UI 与 UX 交互设计文档（界面流转、HUD 配额、输入映射与动效）
+  - `LEVEL.md`：关卡与地编设计文档（场地尺度、碰撞分离、出生/刷怪区拓扑与波次）
+- `src/`：游戏规则、状态、AI、关卡与表现逻辑（含可选策划蓝图 `src/game.design.json`）。
 - `vendor/hgame/`：内置 HGame 运行时和同版本的 TypeScript 声明，可直接从本目录导入。
 - `assets/vendor/three/`：仅 3D 工程拷贝的 Three.js 运行时文件。
 - `engine.config.json`：HGame Profile（`2d` / `3d` / `ui`）、渲染器、确定性物理后端与特性列表。
@@ -49,8 +54,10 @@ npm run assets -- verify
 日常修改代码后直接刷新 WebAsset 预览即可；提交前运行基础自检：
 
 ```powershell
+npm run check:design
 npm test
 npm run check
+npm run accept
 ```
 
 ## 一键精简发布打包（生成 `build/<id>_<version>` 与 `.zip`）

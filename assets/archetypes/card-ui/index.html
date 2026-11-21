@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111">
+  <title>卡牌冒险</title>
+  <style>
+    html, body {
+      margin: 0; width: 100%; height: 100%; overflow: hidden;
+      background: radial-gradient(circle at 50% 25%, #1f1733, #0c0a14 78%);
+      color: #f8fafc; font: 16px system-ui, -apple-system, sans-serif;
+      user-select: none; -webkit-user-select: none;
+    }
+    main {
+      height: 100dvh; display: grid; align-content: center; justify-items: center;
+      gap: 22px; perspective: 900px;
+    }
+    .arena-foe {
+      display: grid; justify-items: center; gap: 6px; padding: 14px 24px;
+      border-radius: 16px; border: 1px solid rgba(245, 158, 11, 0.38);
+      background: rgba(24, 18, 38, 0.85); min-width: 170px;
+    }
+    .arena-foe .glyph { font-size: 40px; line-height: 1; }
+    .arena-foe .foe-hp { font-size: 16px; font-weight: 800; color: #fda4af; }
+    .hand { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; padding: 0 16px; }
+    .hand .card {
+      width: 142px; height: 184px; padding: 14px;
+      border-radius: 14px; border: 1px solid rgba(245, 158, 11, 0.45);
+      background: linear-gradient(160deg, rgba(40, 28, 56, 0.92), rgba(20, 14, 30, 0.94));
+      color: #f8fafc; display: grid; place-items: center; align-content: center; gap: 6px;
+      cursor: pointer; touch-action: manipulation;
+      box-shadow: 0 12px 26px rgba(0, 0, 0, 0.35);
+    }
+    .hand .card .glyph { font-size: 30px; line-height: 1; }
+    .hand .card .name { font-size: 15px; font-weight: 800; }
+    .hand .card .pos { font-size: 13px; font-weight: 700; color: #86efac; }
+  </style>
+</head>
+<body>
+  <main id="game">
+    <div class="arena-foe" data-ui-surface>
+      <span class="glyph" aria-hidden="true">👹</span>
+      <span class="foe-hp" id="foe-hp">♥ 18</span>
+    </div>
+    <div class="hand" id="hand"></div>
+  </main>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

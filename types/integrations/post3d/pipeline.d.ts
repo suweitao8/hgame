@@ -272,11 +272,16 @@ export type PostHdrPass = {
         }>;
     };
     /**
-     * Texture uniforms for previous HDR color and optional original world depth.
+     * Uniform names for HDR color, optional world depth and its matching projection.
      */
     inputs: {
         color: string;
         depth?: string;
+        depthView?: {
+            inverseProjection: string;
+            clipDepthMode: string;
+            far: string;
+        };
     };
     /**
      * Disabled effects and effects requiring unavailable depth are skipped.
