@@ -679,7 +679,7 @@ export function buildSimplifiedLodGeometry(THREE, geometry, { gridResolution = 1
   return outGeom;
 }
 
-function makeInstancedStaticGeometry(THREE, srcGeom, singleBoneOnly, packedAttr) {
+function makeInstancedStaticGeometry(THREE, srcGeom, singleBoneOnly, packedAttr, yAttr = null) {
   const instGeo = new THREE.InstancedBufferGeometry();
   if (srcGeom.index) {
     instGeo.index = srcGeom.index;
@@ -734,6 +734,7 @@ function makeInstancedStaticGeometry(THREE, srcGeom, singleBoneOnly, packedAttr)
   instGeo.setAttribute('aBoneIndex', new THREE.BufferAttribute(boneIndices, 4));
   instGeo.setAttribute('aBoneWeight', new THREE.BufferAttribute(boneWeights, 4));
   instGeo.setAttribute('aCrowdPacked', packedAttr);
+  if (yAttr) instGeo.setAttribute('aCrowdY', yAttr);
   instGeo.instanceCount = 0;
   return instGeo;
 }
@@ -815,6 +816,7 @@ function patchBoneVatMaterial(material, {
       'attribute vec4 aBoneIndex;',
       'attribute vec4 aBoneWeight;',
       'attribute vec4 aCrowdPacked;',
+      'attribute float aCrowdY;',
       'uniform highp sampler2D uBoneVat;',
       'uniform int uVatHeight;',
       'uniform float uCrowdScale;',
@@ -880,7 +882,7 @@ function patchBoneVatMaterial(material, {
       '  float c = cos(rotY);',
       '  float s = sin(rotY);',
       '  vec3 scaled = spos * uCrowdScale;',
-      '  outPos = vec3(scaled.x * c + scaled.z * s + packedInst.x, scaled.y + uCrowdBaseY, scaled.z * c - scaled.x * s + packedInst.y);',
+      '  outPos = vec3(scaled.x * c + scaled.z * s + packedInst.x, scaled.y + uCrowdBaseY + aCrowdY, scaled.z * c - scaled.x * s + packedInst.y);',
       '  outNorm = normalize(vec3(snorm.x * c + snorm.z * s, snorm.y, snorm.z * c - snorm.x * s));',
       '}',
     ].join('\n');
@@ -958,6 +960,7 @@ function patchImpostorMaterial(material, {
 
     const header = [
       'attribute vec4 aCrowdPacked;',
+      'attribute float aCrowdY;',
       'uniform int uImpostorCols;',
       'uniform int uImpostorRows;',
       'uniform int uVatHeight;',
@@ -997,7 +1000,7 @@ function patchImpostorMaterial(material, {
           '  _impostorFacing = _toCamUv;',
           '  _impostorNormal = vec3(_toCamUv.x, max(0.001, length(_toCamUv)) * 0.25, _toCamUv.y);',
           '} else {',
-          '  vec3 _localOffset = _axisX * _impostorPacked.x + _axisY * uCrowdBaseY + _axisZ * _impostorPacked.y;',
+          '  vec3 _localOffset = _axisX * _impostorPacked.x + _axisY * (uCrowdBaseY + aCrowdY) + _axisZ * _impostorPacked.y;',
           '  vec3 _toEye = (cameraPosition - modelMatrix[3].xyz) - _localOffset;',
           '  float _upLength = length(_axisY);',
           '  vec3 _up = _upLength > 0.0 ? _axisY / _upLength : vec3(0.0, 1.0, 0.0);',
@@ -1043,7 +1046,7 @@ function patchImpostorMaterial(material, {
           '  vec2 _right = vec2(_fwd.y, -_fwd.x);',
           '  float _sx = position.x * uCrowdScale;',
           '  float _sy = position.y * uCrowdScale;',
-          '  transformed = vec3(_right.x * _sx + _impostorPacked.x, _sy + uCrowdBaseY, _right.y * _sx + _impostorPacked.y);',
+          '  transformed = vec3(_right.x * _sx + _impostorPacked.x, _sy + uCrowdBaseY + aCrowdY, _right.y * _sx + _impostorPacked.y);',
           '  vCrowdFlash = (_impostorPacked.w < 0.0 && _impostorStatus < 0.5) ? 4.0 : _impostorStatus;',
           '}',
         ].join('\n'),
@@ -1134,6 +1137,7 @@ function patchImpostorMaterial(material, {
  * @property {number} count Getter; live spawned count.
  * @property {() => string[]} getClipNames
  * @property {(options?: BoneVatSpawnOptions) => number} spawn
+ * @property {(index: number) => { x: number, y: number, z: number, rotationY: number } | null} getTransform
  * @property {(index: number, x: number, y: number, z: number, rotY?: number) => boolean} setTransform
  * @property {(index: number, clipName: string, options?: { speed?: number, randomizePhase?: boolean, phase?: number }) => boolean} play
  * @property {(index: number, clipName: string, time: number, speed?: number) => boolean} setPlayback Sample a named clip at an explicit time in seconds. Speed defaults to zero for an external clock.
@@ -1317,11 +1321,24 @@ export function createBoneVatCrowd3D(THREE, {
     return attr;
   });
   const packedUpdates = packedBuffers.map(() => createInstanceUpdateRanges(4));
+  const yBuffers = [
+    new Float32Array(capacity),
+    new Float32Array(capacity),
+    new Float32Array(capacity),
+  ];
+  const yAttrs = yBuffers.map((buf) => {
+    const attr = new THREE.InstancedBufferAttribute(buf, 1);
+    if (THREE.DynamicDrawUsage !== undefined) attr.setUsage?.(THREE.DynamicDrawUsage);
+    return attr;
+  });
+  const yUpdates = yBuffers.map(() => createInstanceUpdateRanges(1));
   const initializedRows = new Uint32Array(3);
+  const initializedYRows = new Uint32Array(3);
+  const yEverUsed = new Uint8Array(3);
   let packingIncomplete = false;
 
-  const instGeo0 = makeInstancedStaticGeometry(THREE, rawLod0Geom, false, packedAttrs[0]);
-  const instGeo1 = makeInstancedStaticGeometry(THREE, rawLod1Geom, true, packedAttrs[1]);
+  const instGeo0 = makeInstancedStaticGeometry(THREE, rawLod0Geom, false, packedAttrs[0], yAttrs[0]);
+  const instGeo1 = makeInstancedStaticGeometry(THREE, rawLod1Geom, true, packedAttrs[1], yAttrs[1]);
 
   const charH = Math.max(0.5, baked.bounds?.size?.y || 1.8);
   const charW = Math.max(0.4, Math.max(baked.bounds?.size?.x || 1.0, baked.bounds?.size?.z || 1.0));
@@ -1339,6 +1356,7 @@ export function createBoneVatCrowd3D(THREE, {
   instGeo2.setAttribute('uv', new THREE.BufferAttribute(quadUv, 2));
   instGeo2.setIndex([0, 1, 2, 0, 2, 3]);
   instGeo2.setAttribute('aCrowdPacked', packedAttrs[2]);
+  instGeo2.setAttribute('aCrowdY', yAttrs[2]);
   instGeo2.instanceCount = 0;
 
   const mesh0 = new THREE.Mesh(instGeo0, lod0Mat);
@@ -1383,6 +1401,7 @@ export function createBoneVatCrowd3D(THREE, {
     m.castShadow = idx < 2 ? Boolean(castShadow) : false;
     m.receiveShadow = Boolean(receiveShadow);
     m.visible = false;
+    m.userData = { ...(m.userData || {}), hgameTemporalMotion: 'bone-vat' };
   }
 
   const group = new THREE.Group();
@@ -1393,6 +1412,7 @@ export function createBoneVatCrowd3D(THREE, {
   // 0 is free, 1 uses maxDistance, and 2 is a retained LOD fallback.
   const activeFlags = new Uint8Array(capacity);
   const posX = new Float32Array(capacity);
+  const posY = new Float32Array(capacity);
   const posZ = new Float32Array(capacity);
   const rotY = new Float32Array(capacity);
   const clipIdx = new Uint16Array(capacity);
@@ -1536,6 +1556,7 @@ export function createBoneVatCrowd3D(THREE, {
 
   function spawn({
     x = 0,
+    y = 0,
     z = 0,
     rotationY = 0,
     clip = null,
@@ -1550,6 +1571,7 @@ export function createBoneVatCrowd3D(THREE, {
 
     activeFlags[id] = 1;
     posX[id] = x;
+    posY[id] = Number.isFinite(y) ? y : 0;
     posZ[id] = z;
     rotY[id] = rotationY;
     let cIndex = 0;
@@ -1565,12 +1587,18 @@ export function createBoneVatCrowd3D(THREE, {
     return id;
   }
 
-  function setTransform(index, x, _y, z, rY = 0) {
+  function setTransform(index, x, y, z, rY = 0) {
     if (index < 0 || index >= capacity || !activeFlags[index]) return false;
     posX[index] = x;
+    posY[index] = Number.isFinite(y) ? y : 0;
     posZ[index] = z;
     rotY[index] = rY;
     return true;
+  }
+
+  function getTransform(index) {
+    if (index < 0 || index >= capacity || !activeFlags[index]) return null;
+    return { x: posX[index], y: posY[index], z: posZ[index], rotationY: rotY[index] };
   }
 
   function play(index, clipName, { speed = 1, randomizePhase = false, phase = 0 } = {}) {
@@ -1643,12 +1671,23 @@ export function createBoneVatCrowd3D(THREE, {
 
   function beginCpuPacking() {
     // A throwing culler can leave the CPU buffers partially rewritten and unsubmitted.
-    if (packingIncomplete) initializedRows.fill(0);
+    if (packingIncomplete) {
+      initializedRows.fill(0);
+      initializedYRows.fill(0);
+    }
     packingIncomplete = true;
     for (const updates of packedUpdates) updates.reset();
+    for (const updates of yUpdates) updates.reset();
   }
 
-  function writePackedRow(bucket, row, x, z, yaw, framePos, flash, status = 0) {
+  function writePackedRow(bucket, row, x, z, yaw, framePos, flash, status = 0, y = 0) {
+    const yVal = Number.isFinite(y) ? y : 0;
+    const yBuf = yBuffers[bucket];
+    if (yVal !== 0) yEverUsed[bucket] = 1;
+    if (yEverUsed[bucket] && (row >= initializedYRows[bucket] || yBuf[row] !== yVal)) {
+      yBuf[row] = yVal;
+      yUpdates[bucket].add(row);
+    }
     const frame = framePos + 1;
     const packedW = Math.fround(status > 0 ? status * 16384 + frame : (flash > 0 ? -frame : frame));
     const buf = packedBuffers[bucket];
@@ -1675,6 +1714,10 @@ export function createBoneVatCrowd3D(THREE, {
         visibleCount += n;
         uploadedComponents += packedUpdates[k].submit(packedAttrs[k]);
         initializedRows[k] = Math.max(initializedRows[k], n);
+        if (yEverUsed[k]) {
+          uploadedComponents += yUpdates[k].submit(yAttrs[k]);
+          initializedYRows[k] = Math.max(initializedYRows[k], n);
+        }
       }
     }
     packingIncomplete = false;
@@ -1723,7 +1766,7 @@ export function createBoneVatCrowd3D(THREE, {
 
       const meta = clipList[clipIdx[id]] ?? clipList[0];
       const framePos = computeFramePos(meta, clipTime[id]);
-      writePackedRow(bucket, dstSlot, px, pz, rotY[id], framePos, flashTimer[id]);
+      writePackedRow(bucket, dstSlot, px, pz, rotY[id], framePos, flashTimer[id], 0, posY[id]);
     }
 
     return commitLodBuffers(lodCounts, activeCount);
@@ -1744,6 +1787,7 @@ export function createBoneVatCrowd3D(THREE, {
     const total = swarm.count;
     const sPosX = swarm.posX;
     const sPosZ = swarm.posY;
+    const sElev = swarm.elevation ?? swarm.posElevation ?? swarm.posHeight ?? null;
     const sRot = swarm.rot;
     const sClip = swarm.animClip;
     const sTime = swarm.animTime;
@@ -1838,7 +1882,7 @@ export function createBoneVatCrowd3D(THREE, {
               if (fOff > maxOff) fOff = maxOff;
               framePos += fOff;
             }
-            writePackedRow(singleBucket, dst, sPosX[id], sPosZ[id], sRot[id], framePos, sFlash[id], sStatus?.[id]);
+            writePackedRow(singleBucket, dst, sPosX[id], sPosZ[id], sRot[id], framePos, sFlash[id], sStatus?.[id], sElev ? sElev[id] : 0);
             rememberSwarmLod(id, singleBucket);
             dst++;
             id = cNext[id];
@@ -1878,7 +1922,7 @@ export function createBoneVatCrowd3D(THREE, {
                   if (fOff > maxOff) fOff = maxOff;
                   framePos += fOff;
                 }
-                writePackedRow(bucket, dstSlot, px, pz, sRot[id], framePos, sFlash[id], sStatus?.[id]);
+                writePackedRow(bucket, dstSlot, px, pz, sRot[id], framePos, sFlash[id], sStatus?.[id], sElev ? sElev[id] : 0);
               }
             }
             id = cNext[id];
@@ -1907,7 +1951,7 @@ export function createBoneVatCrowd3D(THREE, {
       const mappedName = clipNames?.[cid];
       const meta = (mappedName && clipByName.get(mappedName)) || clipList[cid % clipList.length] || clipList[0];
       const framePos = computeFramePos(meta, sTime[id]);
-      writePackedRow(bucket, dstSlot, px, pz, sRot[id], framePos, sFlash[id], sStatus?.[id]);
+      writePackedRow(bucket, dstSlot, px, pz, sRot[id], framePos, sFlash[id], sStatus?.[id], sElev ? sElev[id] : 0);
     }
 
     return commitLodBuffers(lodCounts, total);
@@ -1986,6 +2030,7 @@ export function createBoneVatCrowd3D(THREE, {
     get count() { return activeCount; },
     getClipNames: () => clipList.map(c => c.name),
     spawn,
+    getTransform,
     setTransform,
     play,
     setPlayback,

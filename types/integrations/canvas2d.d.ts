@@ -119,6 +119,11 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @property {(light: { x: number, y: number, radius?: number, color?: string | number, intensity?: number }) => boolean} addLight2D Append a dynamic 2D point light.
  * @property {(lights: Array<{ x: number, y: number, radius?: number, color?: string | number, intensity?: number }>) => number} setLights2D Replace active 2D point lights.
  * @property {() => void} clearLights2D Remove all 2D point lights.
+ * @property {(segment: { x1: number, y1: number, x2: number, y2: number }) => boolean} addOccluder2D Append a 2D shadow occluder segment.
+ * @property {(segments: Array<{ x1: number, y1: number, x2: number, y2: number }>) => number} setOccluders2D Replace active 2D shadow occluder segments.
+ * @property {() => void} clearOccluders2D Remove all 2D shadow occluder segments.
+ * @property {(opts?: { normalMap?: unknown, strength?: number }) => void} setNormalLighting2D Configure 2D normal-map lighting state.
+ * @property {() => import('./post2d.js').QUALITY2D_LIGHTING_PRESETS['high']} getQualityPolicy2D Read the active 2D lighting/post quality retention policy.
  * @property {(cfg: { bloomIntensity?: number, bloomThreshold?: number, vignette?: number, hitPulse?: number, chromatic?: number, saturation?: number, contrast?: number }) => void} setPost2D Configure 2D bloom/vignette/grading effects.
  * @property {() => { ambient: { r: number, g: number, b: number, intensity: number }, lightCount: number, post: object }} getLighting2DState Inspect current 2D lighting & post state.
  * @property {() => void} dispose Release buffers and caches.
@@ -257,11 +262,14 @@ export class Camera2D {
  * @property {number} [flash=0] Hit-flash intensity in [0, 1]; normally driven by Sprite2D#hitFlash.
  * @property {string} [flashColor='#ffffff'] Hit-flash colour.
  * @property {boolean | GroundShadowOptions} [groundShadow=false] Draw an elliptical ground shadow (true = defaults).
+ * @property {unknown | null} [normalMap=null] Optional tangent-space 2D normal texture for lit sprites.
+ * @property {number} [normalStrength=1] Normal-map modulation strength in [0, 2].
+ * @property {number} [roughness=0.8] Surface roughness hint in [0, 1].
  */
 /** Renderable 2D visual component drawn by the Canvas2D / WebGL2D adapters. */
 export class Sprite2D extends Component {
     /** @param {Sprite2DOptions} [options] */
-    constructor({ shape, width, height, color, text, font, z, layer, ySort, blendMode, clipRect, visible, opacity, flipX, flipY, image, sheet, frame, sourceRect, animation, customDraw, anchorX, anchorY, offsetX, offsetY, scaleX, scaleY, rotation, tint, flash, flashColor, groundShadow, }?: Sprite2DOptions | undefined);
+    constructor({ shape, width, height, color, text, font, z, layer, ySort, blendMode, clipRect, visible, opacity, flipX, flipY, image, sheet, frame, sourceRect, animation, customDraw, anchorX, anchorY, offsetX, offsetY, scaleX, scaleY, rotation, tint, flash, flashColor, groundShadow, normalMap, normalStrength, roughness, }?: Sprite2DOptions | undefined);
     shape: "text" | "rect" | "circle";
     width: number;
     height: number;
@@ -300,6 +308,9 @@ export class Sprite2D extends Component {
     flash: number;
     flashColor: string;
     groundShadow: boolean | GroundShadowOptions;
+    normalMap: unknown;
+    normalStrength: number;
+    roughness: number;
     _flashDuration: number;
     _flashRemaining: number;
     /** @param {number} value Rotation in radians. */
@@ -852,6 +863,39 @@ export type Renderer2DAdapter = {
      */
     clearLights2D: () => void;
     /**
+     * Append a 2D shadow occluder segment.
+     */
+    addOccluder2D: (segment: {
+        x1: number;
+        y1: number;
+        x2: number;
+        y2: number;
+    }) => boolean;
+    /**
+     * Replace active 2D shadow occluder segments.
+     */
+    setOccluders2D: (segments: Array<{
+        x1: number;
+        y1: number;
+        x2: number;
+        y2: number;
+    }>) => number;
+    /**
+     * Remove all 2D shadow occluder segments.
+     */
+    clearOccluders2D: () => void;
+    /**
+     * Configure 2D normal-map lighting state.
+     */
+    setNormalLighting2D: (opts?: {
+        normalMap?: unknown;
+        strength?: number;
+    }) => void;
+    /**
+     * Read the active 2D lighting/post quality retention policy.
+     */
+    getQualityPolicy2D: () => any["high"];
+    /**
      * Configure 2D bloom/vignette/grading effects.
      */
     setPost2D: (cfg: {
@@ -1084,6 +1128,18 @@ export type Sprite2DOptions = {
      * Draw an elliptical ground shadow (true = defaults).
      */
     groundShadow?: boolean | GroundShadowOptions | undefined;
+    /**
+     * Optional tangent-space 2D normal texture for lit sprites.
+     */
+    normalMap?: unknown | null;
+    /**
+     * Normal-map modulation strength in [0, 2].
+     */
+    normalStrength?: number | undefined;
+    /**
+     * Surface roughness hint in [0, 1].
+     */
+    roughness?: number | undefined;
 };
 export type SpriteCrowdBindSwarmOptions = {
     /**

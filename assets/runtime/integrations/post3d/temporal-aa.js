@@ -70,11 +70,11 @@ export function createTemporalAA(THREE, createTarget, createMaterial, createMoti
     motion?.release();
   }
 
-  function jitter(camera, width, height) {
-    if (targets.length !== 2 || targets[0].width !== width || targets[0].height !== height) {
+  function jitter(camera, width, height, targetWidth = width, targetHeight = height) {
+    if (targets.length !== 2 || targets[0].width !== targetWidth || targets[0].height !== targetHeight) {
       release();
-      targets.push(createTarget(width, height));
-      targets.push(createTarget(width, height));
+      targets.push(createTarget(targetWidth, targetHeight));
+      targets.push(createTarget(targetWidth, targetHeight));
     }
 
     originalProjection.copy(camera.projectionMatrix);
@@ -147,9 +147,19 @@ export function createTemporalAA(THREE, createTarget, createMaterial, createMoti
     return output.texture;
   }
 
-  return { targets, jitter, restore, resolve, reset, release, get motionTarget() { return motion?.target ?? null; }, dispose() {
-    release();
-    motion?.dispose();
-    material.dispose?.();
-  } };
+  return {
+    targets,
+    jitter,
+    restore,
+    resolve,
+    reset,
+    release,
+    getMotionClassificationStats: () => motion?.getClassificationStats?.() ?? null,
+    get motionTarget() { return motion?.target ?? null; },
+    dispose() {
+      release();
+      motion?.dispose();
+      material.dispose?.();
+    },
+  };
 }

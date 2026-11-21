@@ -6,6 +6,9 @@
  * @property {number} rotationY Yaw in radians.
  * @property {string} clip A looping clip shared by the skeletal model and the crowd.
  * @property {number} time Authoritative clip time in seconds.
+ * @property {string | null} [secondaryClip] Optional secondary composite blend clip preserved across LOD transitions.
+ * @property {number} [secondaryTime=0] Secondary clip time in seconds.
+ * @property {number} [blendWeight=0] Blend weight in [0, 1] for secondary composite clip.
  */
 
 /**
@@ -26,6 +29,9 @@
  * @property {number} [farDistance=80] Distance at which the proxy tier begins.
  * @property {number} [hysteresis=0.1] Fractional dead band on either side of each threshold, in [0, 1).
  * @property {AbortSignal} [signal] Scene activation or another owner lifetime.
+ * @property {object | null} [budget=null] Optional unified representation budget controller (`createRepresentationBudget3D`).
+ * @property {string | null} [budgetId=null] Identifier key inside the representation budget.
+ * @property {Partial<Record<ModelLodTier3D, number>> | null} [tierBytes=null] Optional per-tier estimated byte footprint.
  */
 
 /**
@@ -33,6 +39,7 @@
  * @property {ModelLodTier3D | null} tier Currently shown representation.
  * @property {ModelLodTier3D | null} pendingTier Tier preparing or awaiting the next update.
  * @property {unknown} error Latest transition failure, or null.
+ * @property {() => { clip: string, time: number, secondaryClip: string | null, secondaryTime: number, blendWeight: number } | null} getAnimationState Return latest composite animation handoff state.
  * @property {(distance: number, state: ModelLodState3D) => void} update Select a tier and apply the latest actor state.
  * @property {() => void} retry Allow another attempt on the next update after a failed transition.
  * @property {() => boolean} dispose Cancel pending work and release the shown representation. Leaves the shared crowd owned by the caller.
@@ -47,13 +54,15 @@ const TIERS = /** @type {const} */ (['near', 'crowd', 'far']);
  * @param {ModelLodOptions3D} options
  * @returns {ModelLod3D}
  */
-export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDistance = 80, hysteresis = 0.1, signal }) {
+export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDistance = 80, hysteresis = 0.1, signal, budget = null, budgetId = null, tierBytes = null }) {
   if (typeof near !== 'function' || typeof far !== 'function' || typeof crowd?.setPlayback !== 'function') {
     throw new TypeError('Model LOD requires near and far factories and a Bone-VAT crowd');
   }
   if (!(crowdDistance > 0 && farDistance > crowdDistance && Number.isFinite(farDistance) && hysteresis >= 0 && hysteresis < 1)) {
     throw new RangeError('Model LOD requires increasing finite distances and hysteresis in [0, 1)');
   }
+  const budgetKey = budgetId ?? Symbol('model-lod');
+  let lastAnimState = null;
 
   const thresholds = [crowdDistance, farDistance];
   const enter = thresholds.map(distance => distance * (1 + hysteresis));
@@ -138,8 +147,44 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     pending = null;
     const previous = current;
     current = { target: job.target, slot };
+    const tierName = TIERS[job.target];
+    budget?.allocate?.(budgetKey, {
+      tier: tierName,
+      bytes: Math.max(0, Number(tierBytes?.[tierName]) || 0),
+      slots: 1,
+    });
     previous?.slot.dispose();
     return true;
+  }
+
+  function mergeCompositeState(state) {
+    const hasCompositeInput = state.secondaryClip !== undefined || Number.isFinite(state.blendWeight);
+    const hasPriorComposite = lastAnimState && (lastAnimState.secondaryClip !== null || lastAnimState.blendWeight > 0);
+    if (!hasCompositeInput && !hasPriorComposite) {
+      lastAnimState = {
+        clip: state.clip,
+        time: state.time,
+        secondaryClip: null,
+        secondaryTime: 0,
+        blendWeight: 0,
+      };
+      return state;
+    }
+    const blendWeight = Number.isFinite(state.blendWeight)
+      ? Math.max(0, Math.min(1, state.blendWeight))
+      : (lastAnimState?.blendWeight ?? 0);
+    const secondaryClip = state.secondaryClip !== undefined ? state.secondaryClip : (lastAnimState?.secondaryClip ?? null);
+    const secondaryTime = state.secondaryTime !== undefined ? state.secondaryTime : (lastAnimState?.secondaryTime ?? 0);
+    lastAnimState = {
+      clip: state.clip,
+      time: state.time,
+      secondaryClip,
+      secondaryTime,
+      blendWeight,
+    };
+    return secondaryClip !== undefined && secondaryClip !== null
+      ? { ...state, secondaryClip, secondaryTime, blendWeight }
+      : { ...state, blendWeight };
   }
 
   function update(distance, state) {
@@ -147,6 +192,7 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     if (!Number.isFinite(distance) || distance < 0) throw new RangeError('Model LOD distance must be finite and nonnegative');
     updating = true;
     try {
+      const mergedState = mergeCompositeState(state);
       let target = desired;
       if (target < 0) {
         target = distance < crowdDistance ? 0 : distance < farDistance ? 1 : 2;
@@ -161,8 +207,8 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
       }
       if (disposed) return;
       if (!failure && !pending && current?.target !== target) prepare(target);
-      if (pending?.slot && activate(pending, state)) return;
-      current?.slot.sync(state);
+      if (pending?.slot && activate(pending, mergedState)) return;
+      current?.slot.sync(mergedState);
     } finally {
       updating = false;
     }
@@ -177,6 +223,7 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     try {
       cancelPending();
     } finally {
+      budget?.release?.(budgetKey);
       previous?.slot.dispose();
     }
     return true;
@@ -187,6 +234,7 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     get tier() { return current ? TIERS[current.target] : null; },
     get pendingTier() { return pending ? TIERS[pending.target] : null; },
     get error() { return failure?.error ?? null; },
+    getAnimationState: () => (lastAnimState ? { ...lastAnimState } : null),
     update,
     retry() { failure = null; },
     dispose,

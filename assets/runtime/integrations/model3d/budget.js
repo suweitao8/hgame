@@ -299,3 +299,142 @@ export function createAnimationBudgetAllocator({
   });
 }
 
+/**
+ * Unified 3D representation residency budget across near/skinned actors, Bone-VAT crowds,
+ * far impostors, full open-world cells, and HLOD proxies.
+ *
+ * @param {object} [options]
+ * @param {number} [options.maxBytes=67108864] Maximum total tracked GPU/representation byte budget.
+ * @param {number} [options.maxSlots=Infinity] Maximum active representation slot count.
+ */
+export function createRepresentationBudget3D({
+  maxBytes = 64 * 1024 * 1024,
+  maxSlots = Infinity,
+} = {}) {
+  const byteCap = Math.max(0, Number(maxBytes) || 0);
+  const slotCap = maxSlots === Infinity ? Infinity : Math.max(0, Math.floor(Number(maxSlots) || 0));
+  const items = new Map();
+  let totalBytes = 0;
+  let totalSlots = 0;
+  let tick = 0;
+  const evictions = [];
+
+  function recordEviction(entry, reason) {
+    evictions.push({ id: entry.id, tier: entry.tier, bytes: entry.bytes, slots: entry.slots, reason, tick });
+    if (evictions.length > 64) evictions.shift();
+  }
+
+  function removeEntry(entry) {
+    items.delete(entry.id);
+    totalBytes = Math.max(0, totalBytes - entry.bytes);
+    totalSlots = Math.max(0, totalSlots - entry.slots);
+  }
+
+  function release(id) {
+    const entry = items.get(id);
+    if (!entry) return false;
+    removeEntry(entry);
+    return true;
+  }
+
+  function touch(id) {
+    const entry = items.get(id);
+    if (!entry) return false;
+    entry.lastUsedTick = ++tick;
+    return true;
+  }
+
+  function pickEvictCandidate(excludeId = null) {
+    let best = null;
+    for (const candidate of items.values()) {
+      if (candidate.id === excludeId) continue;
+      if (!best || candidate.priority < best.priority ||
+          (candidate.priority === best.priority && candidate.lastUsedTick < best.lastUsedTick)) {
+        best = candidate;
+      }
+    }
+    return best;
+  }
+
+  function enforce(excludeId = null) {
+    const evicted = [];
+    while ((totalBytes > byteCap || totalSlots > slotCap) && items.size > (excludeId !== null && items.has(excludeId) ? 1 : 0)) {
+      const candidate = pickEvictCandidate(excludeId);
+      if (!candidate) break;
+      const reason = totalBytes > byteCap ? 'byte-budget' : 'slot-budget';
+      removeEntry(candidate);
+      recordEviction(candidate, reason);
+      evicted.push({ id: candidate.id, tier: candidate.tier, reason, bytes: candidate.bytes, slots: candidate.slots });
+      try {
+        candidate.onEvict?.(candidate.id, candidate);
+      } catch {
+        // Eviction hooks must not break budget accounting.
+      }
+    }
+    return evicted;
+  }
+
+  function allocate(id, {
+    tier = 'near',
+    bytes = 0,
+    slots = 1,
+    priority = 0,
+    onEvict = null,
+  } = {}) {
+    if (id === undefined || id === null) throw new TypeError('allocate requires a non-null representation id');
+    const normBytes = Math.max(0, Number(bytes) || 0);
+    const normSlots = Math.max(0, Math.floor(Number(slots) || 0));
+    const existing = items.get(id);
+    if (existing) removeEntry(existing);
+    const entry = {
+      id,
+      tier: String(tier || 'near'),
+      bytes: normBytes,
+      slots: normSlots,
+      priority: Number(priority) || 0,
+      onEvict: typeof onEvict === 'function' ? onEvict : null,
+      lastUsedTick: ++tick,
+    };
+    items.set(id, entry);
+    totalBytes += normBytes;
+    totalSlots += normSlots;
+    const evicted = enforce(id);
+    return { id, totalBytes, totalSlots, evicted };
+  }
+
+  function getStats() {
+    const byTier = Object.create(null);
+    for (const entry of items.values()) {
+      const bucket = byTier[entry.tier] ?? { count: 0, bytes: 0, slots: 0 };
+      bucket.count++;
+      bucket.bytes += entry.bytes;
+      bucket.slots += entry.slots;
+      byTier[entry.tier] = bucket;
+    }
+    return {
+      count: items.size,
+      totalBytes,
+      totalSlots,
+      maxBytes: byteCap,
+      maxSlots: slotCap,
+      byTier,
+      evictions: evictions.slice(),
+    };
+  }
+
+  function clear() {
+    items.clear();
+    totalBytes = 0;
+    totalSlots = 0;
+  }
+
+  return Object.freeze({
+    allocate,
+    release,
+    touch,
+    enforce,
+    getStats,
+    clear,
+  });
+}
+

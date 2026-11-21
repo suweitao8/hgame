@@ -67,6 +67,8 @@
  * @property {boolean} [temporalGiSsr=false] Reuse depth-validated GI and reflection history on half-float targets.
  * @property {boolean} [temporalAA=false] Jitter and resolve world color using depth-validated temporal history.
  * @property {boolean} [temporalMotion=true] Use object motion on supported WebGL2 HDR targets while temporalAA is active.
+ * @property {boolean} [temporalUpsampling=false] Enable temporal upsampling from internal renderScale world targets to full display TAA output.
+ * @property {number} [renderScale=1] Internal world resolution scale (0.25..1] when temporalUpsampling is active.
  * @property {number} [contactShadows] 0..1; default follows the quality preset (0.65 or 0).
  * @property {number} [contactShadowLength=0.32] World units.
  * @property {number} [contactShadowThickness=0.08] World units.
@@ -132,6 +134,8 @@
  * @property {boolean} temporalGiSsr
  * @property {boolean} temporalAA
  * @property {boolean} temporalMotion
+ * @property {boolean} temporalUpsampling
+ * @property {number} renderScale
  * @property {number} contactShadows
  * @property {number} contactShadowLength
  * @property {number} contactShadowThickness
@@ -412,6 +416,14 @@ export type PostPipelineSettings = {
      */
     temporalMotion?: boolean | undefined;
     /**
+     * Enable temporal upsampling from internal renderScale world targets to full display TAA output.
+     */
+    temporalUpsampling?: boolean | undefined;
+    /**
+     * Internal world resolution scale (0.25..1] when temporalUpsampling is active.
+     */
+    renderScale?: number | undefined;
+    /**
      * 0..1; default follows the quality preset (0.65 or 0).
      */
     contactShadows?: number | undefined;
@@ -551,6 +563,8 @@ export type PostPipelineState = {
     temporalGiSsr: boolean;
     temporalAA: boolean;
     temporalMotion: boolean;
+    temporalUpsampling: boolean;
+    renderScale: number;
     contactShadows: number;
     contactShadowLength: number;
     contactShadowThickness: number;

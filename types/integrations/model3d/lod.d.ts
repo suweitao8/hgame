@@ -5,7 +5,7 @@
  * @param {ModelLodOptions3D} options
  * @returns {ModelLod3D}
  */
-export function createModelLod3D({ near, crowd, far, crowdDistance, farDistance, hysteresis, signal }: ModelLodOptions3D): ModelLod3D;
+export function createModelLod3D({ near, crowd, far, crowdDistance, farDistance, hysteresis, signal, budget, budgetId, tierBytes }: ModelLodOptions3D): ModelLod3D;
 export type ModelLodState3D = {
     /**
      * Actor position in the representations' common coordinate space.
@@ -31,6 +31,18 @@ export type ModelLodState3D = {
      * Authoritative clip time in seconds.
      */
     time: number;
+    /**
+     * Optional secondary composite blend clip preserved across LOD transitions.
+     */
+    secondaryClip?: string | null | undefined;
+    /**
+     * Secondary clip time in seconds.
+     */
+    secondaryTime?: number | undefined;
+    /**
+     * Blend weight in [0, 1] for secondary composite clip.
+     */
+    blendWeight?: number | undefined;
 };
 export type ModelLodSlot3D = {
     /**
@@ -75,6 +87,18 @@ export type ModelLodOptions3D = {
      * Scene activation or another owner lifetime.
      */
     signal?: AbortSignal | undefined;
+    /**
+     * Optional unified representation budget controller (`createRepresentationBudget3D`).
+     */
+    budget?: object | null;
+    /**
+     * Identifier key inside the representation budget.
+     */
+    budgetId?: string | null | undefined;
+    /**
+     * Optional per-tier estimated byte footprint.
+     */
+    tierBytes?: Partial<Record<ModelLodTier3D, number>> | null | undefined;
 };
 export type ModelLod3D = {
     /**
@@ -89,6 +113,16 @@ export type ModelLod3D = {
      * Latest transition failure, or null.
      */
     error: unknown;
+    /**
+     * Return latest composite animation handoff state.
+     */
+    getAnimationState: () => {
+        clip: string;
+        time: number;
+        secondaryClip: string | null;
+        secondaryTime: number;
+        blendWeight: number;
+    } | null;
     /**
      * Select a tier and apply the latest actor state.
      */

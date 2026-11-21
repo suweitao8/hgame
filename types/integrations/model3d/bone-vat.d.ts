@@ -110,6 +110,7 @@ export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3D
  * @property {number} count Getter; live spawned count.
  * @property {() => string[]} getClipNames
  * @property {(options?: BoneVatSpawnOptions) => number} spawn
+ * @property {(index: number) => { x: number, y: number, z: number, rotationY: number } | null} getTransform
  * @property {(index: number, x: number, y: number, z: number, rotY?: number) => boolean} setTransform
  * @property {(index: number, clipName: string, options?: { speed?: number, randomizePhase?: boolean, phase?: number }) => boolean} play
  * @property {(index: number, clipName: string, time: number, speed?: number) => boolean} setPlayback Sample a named clip at an explicit time in seconds. Speed defaults to zero for an external clock.
@@ -397,6 +398,12 @@ export type BoneVatCrowd3D = {
     count: number;
     getClipNames: () => string[];
     spawn: (options?: BoneVatSpawnOptions) => number;
+    getTransform: (index: number) => {
+        x: number;
+        y: number;
+        z: number;
+        rotationY: number;
+    } | null;
     setTransform: (index: number, x: number, y: number, z: number, rotY?: number) => boolean;
     play: (index: number, clipName: string, options?: {
         speed?: number;

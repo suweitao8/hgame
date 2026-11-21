@@ -446,6 +446,7 @@ export function createWebGL2DAdapter({
     backend: 'webgl2',
   };
   const lighting2D = createLighting2DState();
+  if (qualityTier) lighting2D.setQuality(qualityTier);
   const postPass = createWebGL2DPostPass(gl);
   const diagnostics = diagnostics2d ? createRenderDiagnostics2D({ gl }) : null;
   const renderBudget = createRenderBudgetController(budgetOptions);
@@ -602,9 +603,11 @@ export function createWebGL2DAdapter({
     if (nextTier === null || nextTier === undefined) {
       qualityTier = null;
       qualityPreset = null;
+      lighting2D.setQuality('high');
     } else {
       qualityPreset = resolveQualityPreset(nextTier, '2d');
       qualityTier = nextTier;
+      lighting2D.setQuality(nextTier);
     }
     resize();
     return qualityPreset;
@@ -1703,6 +1706,11 @@ export function createWebGL2DAdapter({
     addLight2D: lighting2D.addLight,
     setLights2D: lighting2D.setLights,
     clearLights2D: lighting2D.clearLights,
+    addOccluder2D: lighting2D.addOccluder,
+    setOccluders2D: lighting2D.setOccluders,
+    clearOccluders2D: lighting2D.clearOccluders,
+    setNormalLighting2D: lighting2D.setNormalLighting,
+    getQualityPolicy2D: lighting2D.getQualityPolicy,
     setPost2D: lighting2D.setPost,
     getLighting2DState: lighting2D.snapshot,
     dispose() {

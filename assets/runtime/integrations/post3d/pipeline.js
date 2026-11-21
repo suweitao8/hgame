@@ -175,6 +175,8 @@ function compileHdrPasses(passes) {
  * @property {boolean} [temporalGiSsr=false] Reuse depth-validated GI and reflection history on half-float targets.
  * @property {boolean} [temporalAA=false] Jitter and resolve world color using depth-validated temporal history.
  * @property {boolean} [temporalMotion=true] Use object motion on supported WebGL2 HDR targets while temporalAA is active.
+ * @property {boolean} [temporalUpsampling=false] Enable temporal upsampling from internal renderScale world targets to full display TAA output.
+ * @property {number} [renderScale=1] Internal world resolution scale (0.25..1] when temporalUpsampling is active.
  * @property {number} [contactShadows] 0..1; default follows the quality preset (0.65 or 0).
  * @property {number} [contactShadowLength=0.32] World units.
  * @property {number} [contactShadowThickness=0.08] World units.
@@ -243,6 +245,8 @@ function compileHdrPasses(passes) {
  * @property {boolean} temporalGiSsr
  * @property {boolean} temporalAA
  * @property {boolean} temporalMotion
+ * @property {boolean} temporalUpsampling
+ * @property {number} renderScale
  * @property {number} contactShadows
  * @property {number} contactShadowLength
  * @property {number} contactShadowThickness
@@ -396,6 +400,8 @@ export function createPostPipeline3D(options = {}) {
     temporalGiSsr = false,
     temporalAA = false,
     temporalMotion = true,
+    temporalUpsampling = false,
+    renderScale = 1,
     giRadius = 2.4,
     ssrIntensity = 0.35,
     ssrMaxDist = 28.0,
@@ -477,6 +483,8 @@ export function createPostPipeline3D(options = {}) {
     temporalGiSsr: Boolean(temporalGiSsr),
     temporalAA: Boolean(temporalAA),
     temporalMotion: Boolean(temporalMotion),
+    temporalUpsampling: Boolean(temporalUpsampling),
+    renderScale: Number.isFinite(renderScale) ? Math.min(1, Math.max(0.25, renderScale)) : 1,
     giRadius,
     ssrIntensity,
     ssrMaxDist,
@@ -644,6 +652,16 @@ export function createPostPipeline3D(options = {}) {
     return depth;
   }
 
+  function getWorldRenderDimensions() {
+    const upsampling = Boolean(state.temporalAA && state.temporalUpsampling &&
+      Number.isFinite(state.renderScale) && state.renderScale > 0 && state.renderScale < 1);
+    return {
+      upsampling,
+      worldWidth: upsampling ? Math.max(1, Math.round(bufferWidth * state.renderScale)) : bufferWidth,
+      worldHeight: upsampling ? Math.max(1, Math.round(bufferHeight * state.renderScale)) : bufferHeight,
+    };
+  }
+
   function syncSceneTarget() {
     const requestedSamples = Math.min(Math.max(0, activePreset.msaaSamples ?? 0), capabilities.maxSamples);
     let msaa = requestedSamples;
@@ -655,13 +673,14 @@ export function createPostPipeline3D(options = {}) {
         msaa = sceneSampleCounts.reduce((best, count) => count <= requestedSamples ? Math.max(count, best) : best, 0);
       }
     }
+    const { worldWidth, worldHeight } = getWorldRenderDimensions();
     const sampleDepth = renderer.capabilities?.logarithmicDepthBuffer !== true;
-    if (sceneRT?.width === bufferWidth && sceneRT.height === bufferHeight &&
+    if (sceneRT?.width === worldWidth && sceneRT.height === worldHeight &&
         sceneRT.samples === msaa && Boolean(sceneRT.depthTexture) === sampleDepth) return;
 
-    const depthTexture = sampleDepth ? makeDepthTexture(bufferWidth, bufferHeight) : null;
+    const depthTexture = sampleDepth ? makeDepthTexture(worldWidth, worldHeight) : null;
 
-    const replacement = makeColorTarget(bufferWidth, bufferHeight, {
+    const replacement = makeColorTarget(worldWidth, worldHeight, {
       type: hdrType,
       samples: msaa,
       depthBuffer: true,
@@ -1185,9 +1204,23 @@ export function createPostPipeline3D(options = {}) {
       state.temporalMotion = Boolean(patch.temporalMotion);
       temporalAa?.release();
     }
+    const prevTemporalAA = state.temporalAA;
+    const prevTemporalUpsampling = state.temporalUpsampling;
+    const prevRenderScale = state.renderScale;
     if ('temporalAA' in patch) {
       state.temporalAA = Boolean(patch.temporalAA);
       if (!state.temporalAA && temporalAa?.targets.length) temporalAa.release();
+    }
+    if ('temporalUpsampling' in patch) {
+      state.temporalUpsampling = Boolean(patch.temporalUpsampling);
+    }
+    if ('renderScale' in patch && Number.isFinite(patch.renderScale)) {
+      state.renderScale = Math.min(1, Math.max(0.25, patch.renderScale));
+    }
+    if (state.temporalAA !== prevTemporalAA || state.temporalUpsampling !== prevTemporalUpsampling ||
+        state.renderScale !== prevRenderScale) {
+      if (supported && !disposed && !contextLost) syncSceneTarget();
+      resetTemporalHistory();
     }
     if (giHistoryRT && GI_HISTORY_SETTINGS.some(key => Number.isFinite(patch[key]) && patch[key] !== state[key])) {
       resetGiSsrHistory();
@@ -1409,7 +1442,8 @@ export function createPostPipeline3D(options = {}) {
       if (renderer.xr?.isPresenting !== false || renderer.autoClearColor !== true || renderer.autoClearDepth !== true) {
         renderer.clear(true, true, false);
       }
-      if (useTemporal) temporalAa.jitter(camera, bufferWidth, bufferHeight);
+      const { upsampling, worldWidth, worldHeight } = getWorldRenderDimensions();
+      if (useTemporal) temporalAa.jitter(camera, worldWidth, worldHeight, bufferWidth, bufferHeight);
       try {
         drawWithDiagnostics(renderer, diagnostics?.beginPass, 'world', sceneRT, world, camera);
         if (needsProjection) {
@@ -1537,7 +1571,9 @@ export function createPostPipeline3D(options = {}) {
       // First-person drawing needs an unmultisampled depth attachment and retained HDR color.
       const viewCompositeRT = separateViewModel ? hdrTargets.acquire(bufferWidth, bufferHeight, true) : null;
       if (temporalFrame) {
-        const prelightRT = prelightTemporal ? viewCompositeRT ?? hdrTargets.acquire(bufferWidth, bufferHeight, false) : null;
+        const prelightRT = prelightTemporal
+          ? (upsampling ? hdrTargets.acquire(worldWidth, worldHeight, false) : viewCompositeRT ?? hdrTargets.acquire(bufferWidth, bufferHeight, false))
+          : null;
         if (prelightRT) compositeWorldIntoViewTarget(compU, prelightRT);
         compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, sceneRT.depthTexture,
           sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass,
@@ -1740,6 +1776,19 @@ export function createPostPipeline3D(options = {}) {
       });
     },
     estimateTargetBytes,
+    getTemporalStats() {
+      const dims = getWorldRenderDimensions();
+      return {
+        active: Boolean(state.temporalAA && sceneRT?.depthTexture),
+        upsampling: dims.upsampling,
+        renderScale: state.renderScale,
+        internalWidth: sceneRT?.width ?? dims.worldWidth,
+        internalHeight: sceneRT?.height ?? dims.worldHeight,
+        displayWidth: bufferWidth,
+        displayHeight: bufferHeight,
+        motion: temporalAa?.getMotionClassificationStats?.() ?? null,
+      };
+    },
     get targets() {
       return {
         bufferWidth,

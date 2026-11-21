@@ -1,5 +1,56 @@
 /** Maximum simultaneous dynamic 2D point lights evaluated per pass. */
 export const MAX_2D_LIGHTS = 32;
+/** Maximum simultaneous 2D shadow occluder segments evaluated per pass. */
+export const MAX_2D_OCCLUDERS = 32;
+
+/**
+ * 2D lighting, shadow occlusion, sprite material/normal, and post-processing quality presets.
+ * Explicitly declares which effects are retained at `'low'`, `'medium'`, and `'high'` tiers.
+ */
+export const QUALITY2D_LIGHTING_PRESETS = Object.freeze({
+  low: Object.freeze({
+    tier: 'low',
+    maxLights: 8,
+    ambient: true,
+    pointLights: true,
+    occluderShadows: false,
+    softShadows: false,
+    normalMaps: false,
+    bloom: false,
+    colorGrading: false,
+    vignette: true,
+    hitPulse: true,
+    retainedEffects: Object.freeze(['ambient', 'pointLights<=8', 'vignette', 'hitPulse']),
+  }),
+  medium: Object.freeze({
+    tier: 'medium',
+    maxLights: 16,
+    ambient: true,
+    pointLights: true,
+    occluderShadows: true,
+    softShadows: false,
+    normalMaps: false,
+    bloom: true,
+    colorGrading: true,
+    vignette: true,
+    hitPulse: true,
+    retainedEffects: Object.freeze(['ambient', 'pointLights<=16', 'occluderShadows', 'bloom', 'colorGrading', 'vignette', 'hitPulse']),
+  }),
+  high: Object.freeze({
+    tier: 'high',
+    maxLights: 32,
+    ambient: true,
+    pointLights: true,
+    occluderShadows: true,
+    softShadows: true,
+    normalMaps: true,
+    bloom: true,
+    colorGrading: true,
+    vignette: true,
+    hitPulse: true,
+    retainedEffects: Object.freeze(['ambient', 'pointLights<=32', 'occluderShadows', 'softShadows', 'normalMaps', 'bloom', 'colorGrading', 'vignette', 'hitPulse']),
+  }),
+});
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -47,6 +98,15 @@ export function createLighting2DState() {
   const lightWorld = new Float32Array(MAX_2D_LIGHTS * 8);
   const lightUvPosRad = new Float32Array(MAX_2D_LIGHTS * 4);
   const lightUvColorInt = new Float32Array(MAX_2D_LIGHTS * 4);
+
+  // Packed 2D shadow occluders: [x1, y1, x2, y2] * MAX_2D_OCCLUDERS
+  let occluderCount = 0;
+  const occluderWorld = new Float32Array(MAX_2D_OCCLUDERS * 4);
+  const occluderUv = new Float32Array(MAX_2D_OCCLUDERS * 4);
+  let normalMapSource = null;
+  let normalStrength = 1.0;
+  let qualityTier = 'high';
+  let qualityPolicy = QUALITY2D_LIGHTING_PRESETS.high;
 
   const post = {
     bloomIntensity: 0,
@@ -99,26 +159,83 @@ export function createLighting2DState() {
     if (cfg.contrast !== undefined) post.contrast = clamp(Number.isFinite(cfg.contrast) ? cfg.contrast : 1, 0.2, 2);
   }
 
+  function clearOccluders() {
+    occluderCount = 0;
+  }
+
+  function addOccluder(segment) {
+    if (!segment || occluderCount >= MAX_2D_OCCLUDERS) return false;
+    const base = occluderCount * 4;
+    occluderWorld[base] = Number(segment.x1) || 0;
+    occluderWorld[base + 1] = Number(segment.y1) || 0;
+    occluderWorld[base + 2] = Number(segment.x2) || 0;
+    occluderWorld[base + 3] = Number(segment.y2) || 0;
+    occluderCount++;
+    return true;
+  }
+
+  function setOccluders(segments) {
+    occluderCount = 0;
+    if (!Array.isArray(segments)) return 0;
+    for (let i = 0; i < segments.length && occluderCount < MAX_2D_OCCLUDERS; i++) {
+      addOccluder(segments[i]);
+    }
+    return occluderCount;
+  }
+
+  function setNormalLighting({ normalMap = null, strength = 1.0 } = {}) {
+    normalMapSource = normalMap ?? null;
+    normalStrength = clamp(Number.isFinite(strength) ? strength : 1.0, 0, 2);
+  }
+
+  function setQuality(tier = 'high') {
+    const key = tier === 'ultra' ? 'high' : tier;
+    if (!key || !Object.hasOwn(QUALITY2D_LIGHTING_PRESETS, key)) {
+      qualityTier = 'high';
+      qualityPolicy = QUALITY2D_LIGHTING_PRESETS.high;
+    } else {
+      qualityTier = key;
+      qualityPolicy = QUALITY2D_LIGHTING_PRESETS[key];
+    }
+    return qualityPolicy;
+  }
+
   function hasLighting() {
     return (
-      lightCount > 0 ||
-      ambientIntensity < 0.999 ||
-      ambientRgb[0] < 0.999 ||
-      ambientRgb[1] < 0.999 ||
-      ambientRgb[2] < 0.999
+      (qualityPolicy.pointLights && lightCount > 0) ||
+      (qualityPolicy.ambient && (
+        ambientIntensity < 0.999 ||
+        ambientRgb[0] < 0.999 ||
+        ambientRgb[1] < 0.999 ||
+        ambientRgb[2] < 0.999
+      ))
     );
   }
 
   function hasActivePass() {
     if (hasLighting()) return true;
     return (
-      post.bloomIntensity > 0.001 ||
-      post.vignette > 0.001 ||
-      post.hitPulse > 0.001 ||
-      post.chromatic > 0.0001 ||
-      Math.abs(post.saturation - 1) > 0.005 ||
-      Math.abs(post.contrast - 1) > 0.005
+      (qualityPolicy.bloom && post.bloomIntensity > 0.001) ||
+      (qualityPolicy.vignette && post.vignette > 0.001) ||
+      (qualityPolicy.hitPulse && post.hitPulse > 0.001) ||
+      (qualityPolicy.colorGrading && (
+        post.chromatic > 0.0001 ||
+        Math.abs(post.saturation - 1) > 0.005 ||
+        Math.abs(post.contrast - 1) > 0.005
+      ))
     );
+  }
+
+  function projectWorldPointToUv(wx, wy, camX, camY, zoom, cos, sin, designW, designH, scale, x0, y0, vw, vh) {
+    const dx = wx - camX;
+    const dy = wy - camY;
+    const rx = dx * cos + dy * sin;
+    const ry = -dx * sin + dy * cos;
+    const vx = designW * 0.5 + rx * zoom;
+    const vy = designH * 0.5 + ry * zoom;
+    const cssX = x0 + vx * scale;
+    const cssY = y0 + vy * scale;
+    return [cssX / vw, 1 - cssY / vh];
   }
 
   function projectLightsToUv(cam, viewport, designW, designH) {
@@ -134,20 +251,17 @@ export function createLighting2DState() {
     const x0 = viewport.x || 0;
     const y0 = viewport.y || 0;
 
-    for (let i = 0; i < lightCount; i++) {
+    const effectiveLights = Math.min(lightCount, qualityPolicy.maxLights);
+    for (let i = 0; i < effectiveLights; i++) {
       const wIdx = i * 8;
-      const dx = lightWorld[wIdx] - camX;
-      const dy = lightWorld[wIdx + 1] - camY;
-      const rx = dx * cos + dy * sin;
-      const ry = -dx * sin + dy * cos;
-      const vx = designW * 0.5 + rx * zoom;
-      const vy = designH * 0.5 + ry * zoom;
-      const cssX = x0 + vx * scale;
-      const cssY = y0 + vy * scale;
+      const [u, v] = projectWorldPointToUv(
+        lightWorld[wIdx], lightWorld[wIdx + 1],
+        camX, camY, zoom, cos, sin, designW, designH, scale, x0, y0, vw, vh,
+      );
 
       const uIdx = i * 4;
-      lightUvPosRad[uIdx] = cssX / vw;
-      lightUvPosRad[uIdx + 1] = 1 - cssY / vh;
+      lightUvPosRad[uIdx] = u;
+      lightUvPosRad[uIdx + 1] = v;
       lightUvPosRad[uIdx + 2] = Math.max(1e-4, (lightWorld[wIdx + 2] * zoom * scale) / vw);
       lightUvPosRad[uIdx + 3] = Math.max(1e-4, (lightWorld[wIdx + 2] * zoom * scale) / vh);
 
@@ -156,20 +270,50 @@ export function createLighting2DState() {
       lightUvColorInt[uIdx + 2] = lightWorld[wIdx + 6];
       lightUvColorInt[uIdx + 3] = lightWorld[wIdx + 3];
     }
+
+    for (let i = 0; i < occluderCount; i++) {
+      const base = i * 4;
+      const [u1, v1] = projectWorldPointToUv(
+        occluderWorld[base], occluderWorld[base + 1],
+        camX, camY, zoom, cos, sin, designW, designH, scale, x0, y0, vw, vh,
+      );
+      const [u2, v2] = projectWorldPointToUv(
+        occluderWorld[base + 2], occluderWorld[base + 3],
+        camX, camY, zoom, cos, sin, designW, designH, scale, x0, y0, vw, vh,
+      );
+      occluderUv[base] = u1;
+      occluderUv[base + 1] = v1;
+      occluderUv[base + 2] = u2;
+      occluderUv[base + 3] = v2;
+    }
   }
 
   return Object.freeze({
     ambientRgb,
     get ambientIntensity() { return ambientIntensity; },
-    get lightCount() { return lightCount; },
+    get lightCount() { return Math.min(lightCount, qualityPolicy.maxLights); },
+    get rawLightCount() { return lightCount; },
+    get occluderCount() { return qualityPolicy.occluderShadows ? occluderCount : 0; },
+    get rawOccluderCount() { return occluderCount; },
+    get qualityTier() { return qualityTier; },
+    get normalMap() { return qualityPolicy.normalMaps ? normalMapSource : null; },
+    get normalStrength() { return normalStrength; },
     lightWorld,
     lightUvPosRad,
     lightUvColorInt,
+    occluderWorld,
+    occluderUv,
     post,
     setAmbientLight,
     addLight,
     setLights,
     clearLights,
+    addOccluder,
+    setOccluders,
+    clearOccluders,
+    setNormalLighting,
+    setQuality,
+    getQualityPolicy: () => qualityPolicy,
     setPost,
     hasLighting,
     hasActivePass,
@@ -177,7 +321,11 @@ export function createLighting2DState() {
     snapshot() {
       return {
         ambient: { r: ambientRgb[0], g: ambientRgb[1], b: ambientRgb[2], intensity: ambientIntensity },
-        lightCount,
+        lightCount: Math.min(lightCount, qualityPolicy.maxLights),
+        occluderCount: qualityPolicy.occluderShadows ? occluderCount : 0,
+        qualityTier,
+        qualityPolicy,
+        hasNormalMap: Boolean(qualityPolicy.normalMaps && normalMapSource),
         post: { ...post },
       };
     },
@@ -196,18 +344,20 @@ export function renderCanvas2DPostPass(ctx, width, height, cam, state, subX = 0,
     ctx.clip();
   }
 
+  const policy = state.getQualityPolicy?.() ?? QUALITY2D_LIGHTING_PRESETS.high;
+
   // Ambient darkening tint over rendered scene.
   const ambInt = state.ambientIntensity;
   const r = Math.round(state.ambientRgb[0] * 255);
   const g = Math.round(state.ambientRgb[1] * 255);
   const b = Math.round(state.ambientRgb[2] * 255);
-  if (ambInt < 0.999) {
+  if (policy.ambient && ambInt < 0.999) {
     ctx.fillStyle = `rgba(${Math.round(r * ambInt)},${Math.round(g * ambInt)},${Math.round(b * ambInt)},${(1 - ambInt).toFixed(3)})`;
     ctx.fillRect(subX, subY, subW, subH);
   }
 
-  // Additive radial point lights in world space.
-  if (state.lightCount > 0 && typeof ctx.createRadialGradient === 'function') {
+  // Additive radial point lights in world space (with optional occluder shadow wedges).
+  if (policy.pointLights && state.lightCount > 0 && typeof ctx.createRadialGradient === 'function') {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.translate(subX + subW * 0.5, subY + subH * 0.5);
@@ -226,22 +376,48 @@ export function renderCanvas2DPostPass(ctx, width, height, cam, state, subX = 0,
       const lr = Math.round(state.lightWorld[idx + 4] * 255);
       const lg = Math.round(state.lightWorld[idx + 5] * 255);
       const lb = Math.round(state.lightWorld[idx + 6] * 255);
+      ctx.save();
+      if (policy.occluderShadows && state.occluderCount > 0 && typeof ctx.lineTo === 'function' && typeof ctx.clip === 'function') {
+        ctx.beginPath();
+        ctx.rect(lx - rad, ly - rad, rad * 2, rad * 2);
+        for (let o = 0; o < state.occluderCount; o++) {
+          const ob = o * 4;
+          const x1 = state.occluderWorld[ob];
+          const y1 = state.occluderWorld[ob + 1];
+          const x2 = state.occluderWorld[ob + 2];
+          const y2 = state.occluderWorld[ob + 3];
+          const d1x = x1 - lx, d1y = y1 - ly;
+          const d2x = x2 - lx, d2y = y2 - ly;
+          const l1 = Math.hypot(d1x, d1y);
+          const l2 = Math.hypot(d2x, d2y);
+          if (l1 > 1e-4 && l2 > 1e-4 && (l1 <= rad || l2 <= rad)) {
+            const reach = rad * 2.5;
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.lineTo(x2 + (d2x / l2) * reach, y2 + (d2y / l2) * reach);
+            ctx.lineTo(x1 + (d1x / l1) * reach, y1 + (d1y / l1) * reach);
+            ctx.closePath();
+          }
+        }
+        ctx.clip('evenodd');
+      }
       const grad = ctx.createRadialGradient(lx, ly, 0, lx, ly, rad);
       grad.addColorStop(0, `rgba(${lr},${lg},${lb},${Math.min(1, lInt * 0.65).toFixed(3)})`);
       grad.addColorStop(0.55, `rgba(${lr},${lg},${lb},${(lInt * 0.22).toFixed(3)})`);
       grad.addColorStop(1, `rgba(${lr},${lg},${lb},0)`);
       ctx.fillStyle = grad;
       ctx.fillRect(lx - rad, ly - rad, rad * 2, rad * 2);
+      ctx.restore();
     }
     ctx.restore();
   }
 
   // Hit-pulse flash tint and vignette border.
-  if (state.post.hitPulse > 0.001) {
+  if (policy.hitPulse && state.post.hitPulse > 0.001) {
     ctx.fillStyle = `rgba(255,48,48,${(state.post.hitPulse * 0.35).toFixed(3)})`;
     ctx.fillRect(subX, subY, subW, subH);
   }
-  if (state.post.vignette > 0.001 && typeof ctx.createRadialGradient === 'function') {
+  if (policy.vignette && state.post.vignette > 0.001 && typeof ctx.createRadialGradient === 'function') {
     const cx = subX + subW * 0.5;
     const cy = subY + subH * 0.5;
     const outerR = Math.hypot(subW, subH) * 0.55;
@@ -297,16 +473,55 @@ const COMPOSITE_FS = `#version 300 es
 precision highp float;
 uniform sampler2D uScene;
 uniform sampler2D uBloom;
+uniform sampler2D uNormalMap;
 uniform vec4 uAmbient;
 uniform int uLightCount;
 uniform vec4 uLightsPosRad[${MAX_2D_LIGHTS}];
 uniform vec4 uLightsColorInt[${MAX_2D_LIGHTS}];
+uniform int uOccluderCount;
+uniform vec4 uOccludersUv[${MAX_2D_OCCLUDERS}];
+uniform int uShadowFlags; // bit0=occluderShadows, bit1=softShadows, bit2=normalMaps, bit3=colorGrading
+uniform float uNormalStrength;
 uniform vec4 uPost0; // bloomIntensity, vignette, hitPulse, chromatic
 uniform vec2 uPost1; // saturation, contrast
 in vec2 vUv;
 out vec4 fragColor;
+
+bool rayHitsSegment2D(vec2 a, vec2 b, vec2 c, vec2 d) {
+  vec2 ab = b - a;
+  vec2 cd = d - c;
+  float denom = ab.x * cd.y - ab.y * cd.x;
+  if (abs(denom) < 1e-6) return false;
+  vec2 ac = c - a;
+  float t = (ac.x * cd.y - ac.y * cd.x) / denom;
+  float u = (ac.x * ab.y - ac.y * ab.x) / denom;
+  return t > 0.002 && t < 0.998 && u >= 0.0 && u <= 1.0;
+}
+
+float evalLightShadow2D(vec2 uv, vec2 lightPos, int count, bool soft) {
+  if (count <= 0) return 1.0;
+  float lit = 1.0;
+  for (int o = 0; o < ${MAX_2D_OCCLUDERS}; o++) {
+    if (o >= count) break;
+    vec4 seg = uOccludersUv[o];
+    if (rayHitsSegment2D(uv, lightPos, seg.xy, seg.zw)) {
+      if (!soft) return 0.0;
+      lit -= 0.45;
+    }
+    if (soft) {
+      vec2 perp = vec2(-(lightPos.y - uv.y), lightPos.x - uv.x);
+      float len = max(length(perp), 1e-4);
+      vec2 jitter = (perp / len) * 0.004;
+      if (rayHitsSegment2D(uv, lightPos + jitter, seg.xy, seg.zw)) lit -= 0.275;
+      if (rayHitsSegment2D(uv, lightPos - jitter, seg.xy, seg.zw)) lit -= 0.275;
+    }
+    if (lit <= 0.0) return 0.0;
+  }
+  return clamp(lit, 0.0, 1.0);
+}
+
 void main() {
-  float chrom = uPost0.w;
+  float chrom = (uShadowFlags & 8) != 0 ? uPost0.w : 0.0;
   vec3 sceneCol;
   if (chrom > 0.00005) {
     vec2 dir = (vUv - 0.5) * chrom;
@@ -317,6 +532,15 @@ void main() {
     sceneCol = texture(uScene, vUv).rgb;
   }
 
+  vec3 surfNormal = vec3(0.0, 0.0, 1.0);
+  bool useNormal = (uShadowFlags & 4) != 0;
+  if (useNormal) {
+    vec3 sampledN = texture(uNormalMap, vUv).xyz * 2.0 - 1.0;
+    surfNormal = normalize(mix(vec3(0.0, 0.0, 1.0), sampledN, clamp(uNormalStrength, 0.0, 2.0)));
+  }
+
+  bool useShadows = (uShadowFlags & 1) != 0;
+  bool softShadows = (uShadowFlags & 2) != 0;
   vec3 lightAccum = uAmbient.rgb * uAmbient.a;
   for (int i = 0; i < ${MAX_2D_LIGHTS}; i++) {
     if (i >= uLightCount) break;
@@ -327,7 +551,13 @@ void main() {
     if (distSq < 1.0) {
       float falloff = 1.0 - distSq;
       falloff *= falloff;
-      lightAccum += ci.rgb * (ci.a * falloff);
+      float shadow = useShadows ? evalLightShadow2D(vUv, pr.xy, uOccluderCount, softShadows) : 1.0;
+      float ndotl = 1.0;
+      if (useNormal) {
+        vec3 lDir = normalize(vec3(pr.xy - vUv, 0.35));
+        ndotl = clamp(dot(surfNormal, lDir), 0.2, 1.25);
+      }
+      lightAccum += ci.rgb * (ci.a * falloff * shadow * ndotl);
     }
   }
 
@@ -337,9 +567,11 @@ void main() {
   }
 
   // Saturation and contrast grade.
-  float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
-  color = mix(vec3(luma), color, uPost1.x);
-  color = (color - 0.5) * uPost1.y + 0.5;
+  if ((uShadowFlags & 8) != 0) {
+    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    color = mix(vec3(luma), color, uPost1.x);
+    color = (color - 0.5) * uPost1.y + 0.5;
+  }
 
   // Hit-pulse edge/screen flash + vignette.
   color = mix(color, vec3(1.0, 0.16, 0.14), clamp(uPost0.z * 0.35, 0.0, 0.6));
@@ -431,6 +663,7 @@ export function createWebGL2DPostPass(gl) {
   let bloomA = null;
   let bloomB = null;
   let blackTex = null;
+  let flatNormalTex = null;
 
   function ensurePrograms() {
     if (compProg) return;
@@ -450,10 +683,15 @@ export function createWebGL2DPostPass(gl) {
     uComp = {
       scene: gl.getUniformLocation(compProg, 'uScene'),
       bloom: gl.getUniformLocation(compProg, 'uBloom'),
+      normalMap: gl.getUniformLocation(compProg, 'uNormalMap'),
       ambient: gl.getUniformLocation(compProg, 'uAmbient'),
       lightCount: gl.getUniformLocation(compProg, 'uLightCount'),
       lightsPosRad: gl.getUniformLocation(compProg, 'uLightsPosRad'),
       lightsColorInt: gl.getUniformLocation(compProg, 'uLightsColorInt'),
+      occluderCount: gl.getUniformLocation(compProg, 'uOccluderCount'),
+      occludersUv: gl.getUniformLocation(compProg, 'uOccludersUv'),
+      shadowFlags: gl.getUniformLocation(compProg, 'uShadowFlags'),
+      normalStrength: gl.getUniformLocation(compProg, 'uNormalStrength'),
       post0: gl.getUniformLocation(compProg, 'uPost0'),
       post1: gl.getUniformLocation(compProg, 'uPost1'),
     };
@@ -461,6 +699,9 @@ export function createWebGL2DPostPass(gl) {
     blackTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, blackTex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    flatNormalTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, flatNormalTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128, 128, 255, 255]));
   }
 
   function ensureTargets(w, h) {
@@ -502,8 +743,9 @@ export function createWebGL2DPostPass(gl) {
       gl.disable(gl.BLEND);
       gl.bindVertexArray(quadVao);
 
+      const policy = state.getQualityPolicy?.() ?? QUALITY2D_LIGHTING_PRESETS.high;
       let bloomTex = blackTex;
-      if (state.post.bloomIntensity > 0.001 && bloomA && bloomB) {
+      if (policy.bloom && state.post.bloomIntensity > 0.001 && bloomA && bloomB) {
         finish = report?.beginPass('bloom-extract', bloomA);
         // 1. Bright extract -> bloomA
         gl.bindFramebuffer(gl.FRAMEBUFFER, bloomA.fbo);
@@ -549,11 +791,31 @@ export function createWebGL2DPostPass(gl) {
       gl.bindTexture(gl.TEXTURE_2D, bloomTex);
       gl.uniform1i(uComp.bloom, 1);
 
-      gl.uniform4f(uComp.ambient, state.ambientRgb[0], state.ambientRgb[1], state.ambientRgb[2], state.ambientIntensity);
-      gl.uniform1i(uComp.lightCount, state.lightCount);
+      gl.uniform4f(uComp.ambient, state.ambientRgb[0], state.ambientRgb[1], state.ambientRgb[2], policy.ambient ? state.ambientIntensity : 1);
+      gl.uniform1i(uComp.lightCount, policy.pointLights ? state.lightCount : 0);
       gl.uniform4fv(uComp.lightsPosRad, state.lightUvPosRad);
       gl.uniform4fv(uComp.lightsColorInt, state.lightUvColorInt);
-      gl.uniform4f(uComp.post0, state.post.bloomIntensity, state.post.vignette, state.post.hitPulse, state.post.chromatic);
+      if (uComp.occluderCount) gl.uniform1i(uComp.occluderCount, state.occluderCount ?? 0);
+      if (uComp.occludersUv) gl.uniform4fv(uComp.occludersUv, state.occluderUv);
+      const shadowFlags =
+        (policy.occluderShadows && (state.occluderCount ?? 0) > 0 ? 1 : 0) |
+        (policy.softShadows ? 2 : 0) |
+        (policy.normalMaps && state.normalMap ? 4 : 0) |
+        (policy.colorGrading ? 8 : 0);
+      if (uComp.shadowFlags) gl.uniform1i(uComp.shadowFlags, shadowFlags);
+      if (uComp.normalStrength) gl.uniform1f(uComp.normalStrength, state.normalStrength ?? 1);
+      if (uComp.normalMap) {
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, flatNormalTex);
+        gl.uniform1i(uComp.normalMap, 2);
+      }
+      gl.uniform4f(
+        uComp.post0,
+        policy.bloom ? state.post.bloomIntensity : 0,
+        policy.vignette ? state.post.vignette : 0,
+        policy.hitPulse ? state.post.hitPulse : 0,
+        policy.colorGrading ? state.post.chromatic : 0,
+      );
       gl.uniform2f(uComp.post1, state.post.saturation, state.post.contrast);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -587,6 +849,8 @@ export function createWebGL2DPostPass(gl) {
     reclaimTargets();
     if (blackTex) gl.deleteTexture?.(blackTex);
     blackTex = null;
+    if (flatNormalTex) gl.deleteTexture?.(flatNormalTex);
+    flatNormalTex = null;
     if (quadVao) gl.deleteVertexArray?.(quadVao);
     quadVao = null;
     for (const p of [brightProg, blurProg, compProg]) {

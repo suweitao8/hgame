@@ -1447,3 +1447,171 @@ test('render graph schedules passes by read/write dependencies and aliases/recla
   assert.ok(plan.lifetimes && typeof plan.peakTargets === 'number');
   pipeline.dispose();
 });
+
+test('R2: streamed probe volume manager blends across adjacent cells and evicts LRU within residency budget', async () => {
+  const { createStreamedProbeVolumeManager3D } = await import('../assets/runtime/integrations/lighting3d.js');
+  const { renderer } = createProbeAdapter();
+  const hostScene = new THREE.Scene();
+  const manager = createStreamedProbeVolumeManager3D(THREE, renderer, {
+    maxCells: 2,
+    blendMargin: 4,
+    transitionSeconds: 0.5,
+    scene: hostScene,
+  });
+
+  const cellA = { ...bakedProbeData(), min: [0, -2, -6], max: [10, 6, 6], intensity: 0.8 };
+  const cellB = { ...bakedProbeData(), min: [10, -2, -6], max: [20, 6, 6], intensity: 0.6 };
+  const cellC = { ...bakedProbeData(), min: [20, -2, -6], max: [30, 6, 6], intensity: 1.0 };
+
+  const resA = manager.attachCell('0,0', cellA);
+  const resB = manager.attachCell('1,0', cellB);
+  assert.equal(resA.active, true);
+  assert.equal(resB.active, true);
+  assert.equal(manager.getStats().cellCount, 2);
+
+  // Fade in both A and B over 0.5s
+  manager.evaluateAt([10, 0, 0], 0.5);
+  const seam = manager.evaluateAt([10, 0, 0], 0);
+  assert.equal(seam.active.length, 2);
+  assert.ok(Math.abs(seam.active[0].weight - 0.5) < 1e-6);
+  assert.ok(Math.abs(seam.active[1].weight - 0.5) < 1e-6);
+
+  // Smooth crossing from inside A ([5,0,0]) through seam ([10,0,0]) into B ([15,0,0])
+  const deepA = manager.evaluateAt([4, 0, 0], 0);
+  assert.equal(deepA.active.length, 1);
+  assert.equal(deepA.active[0].key, '0,0');
+  const deepB = manager.evaluateAt([16, 0, 0], 0);
+  assert.equal(deepB.active.length, 1);
+  assert.equal(deepB.active[0].key, '1,0');
+
+  // Touching B then attaching C evicts LRU cell A and disposes its 3D texture
+  const disposed = [];
+  manager.getCell('0,0').light.texture.addEventListener('dispose', () => disposed.push('0,0'));
+  manager.touchCell('1,0');
+  const resC = manager.attachCell('2,0', cellC);
+  assert.equal(resC.evicted.length, 1);
+  assert.equal(resC.evicted[0].key, '0,0');
+  assert.deepEqual(disposed, ['0,0']);
+  assert.equal(manager.getStats().cellCount, 2);
+  assert.equal(manager.getStats().lastEvictionReason, 'cell-budget');
+
+  manager.dispose();
+  assert.equal(manager.getStats().cellCount, 0);
+});
+
+test('R3: temporal motion vectors support SkinnedMesh, GPU animation classification, explicit exclusions, and temporal upsampling', () => {
+  const { renderer } = createMockWebGL2Renderer();
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.z = 5;
+
+  // 1. SkinnedMesh with 2 bones
+  const skinGeo = new THREE.BufferGeometry();
+  skinGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3));
+  skinGeo.setAttribute('skinIndex', new THREE.BufferAttribute(new Uint16Array([0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]), 4));
+  skinGeo.setAttribute('skinWeight', new THREE.BufferAttribute(new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]), 4));
+  const skinMat = new THREE.MeshStandardMaterial();
+  const bones = [new THREE.Bone(), new THREE.Bone()];
+  bones[0].add(bones[1]);
+  const skeleton = new THREE.Skeleton(bones);
+  skeleton.boneMatrices = new Float32Array(32);
+  new THREE.Matrix4().identity().toArray(skeleton.boneMatrices, 0);
+  new THREE.Matrix4().makeTranslation(1, 0, 0).toArray(skeleton.boneMatrices, 16);
+  const skinnedMesh = new THREE.SkinnedMesh(skinGeo, skinMat);
+  skinnedMesh.bind(skeleton, new THREE.Matrix4().identity());
+
+  // 2. GPU-animated mesh (e.g. Bone-VAT style) + explicit exclusion
+  const vatGeo = new THREE.PlaneGeometry(1, 1);
+  const vatMat = new THREE.ShaderMaterial();
+  const vatMesh = new THREE.Mesh(vatGeo, vatMat);
+  vatMesh.userData.hgameTemporalMotion = 'bone-vat';
+
+  const customExcluded = new THREE.Mesh(vatGeo, new THREE.ShaderMaterial());
+  const explicitExcluded = new THREE.Mesh(vatGeo, new THREE.MeshStandardMaterial());
+  explicitExcluded.userData.hgameTemporalMotion = 'exclude';
+
+  world.add(skinnedMesh, vatMesh, customExcluded, explicitExcluded);
+
+  const pipeline = createPostPipeline3D({
+    THREE,
+    renderer,
+    width: 160,
+    height: 90,
+    preset: QUALITY3D_PRESETS.low,
+    temporalAA: true,
+    temporalUpsampling: true,
+    renderScale: 0.5,
+    fxaa: false,
+    sharpness: 0,
+  });
+
+  const statsPre = pipeline.getTemporalStats();
+  assert.equal(statsPre.upsampling, true);
+  assert.equal(statsPre.renderScale, 0.5);
+  assert.equal(statsPre.internalWidth, 80);
+  assert.equal(statsPre.internalHeight, 45);
+  assert.equal(statsPre.displayWidth, 160);
+  assert.equal(statsPre.displayHeight, 90);
+
+  let activePass;
+  let worldTarget = null;
+  let taaOutput = null;
+  const skinnedMotions = [];
+  const diagnostics = {
+    beginPass(name, output) {
+      activePass = name;
+      if (name === 'world') worldTarget = output;
+      if (name === 'temporal-aa') taaOutput = output;
+    },
+    recordTarget() {},
+  };
+  renderer.render = scene => {
+    if (scene === world) world.updateMatrixWorld();
+    if (activePass === 'temporal-motion') {
+      for (const mesh of scene.children) {
+        mesh.onBeforeRender();
+        const u = mesh.material.uniforms;
+        if (u.uReadPreviousBones.value) {
+          skinnedMotions.push({
+            hasPrevBones: Boolean(u.tPreviousBones.value),
+            prevBoneX: u.tPreviousBones.value?.image.data[28],
+            currBoneX: u.tCurrentBones.value?.image.data[28],
+            prevCount: u.uPreviousBoneCount.value,
+          });
+        }
+      }
+    }
+  };
+
+  // Frame 1 & Frame 2 with static bones -> 0 skinned motion draws
+  pipeline.render(world, camera, { dt: 1 / 60, diagnostics });
+  pipeline.render(world, camera, { dt: 1 / 60, diagnostics });
+  assert.equal(skinnedMotions.length, 0);
+  assert.equal(worldTarget.width, 80);
+  assert.equal(worldTarget.height, 45);
+  assert.equal(taaOutput.width, 160);
+  assert.equal(taaOutput.height, 90);
+
+  const motionClass = pipeline.getTemporalStats().motion;
+  assert.equal(motionClass.skinned, 1);
+  assert.equal(motionClass.gpuAnimated, 1);
+  assert.equal(motionClass.excluded, 2);
+
+  // Frame 3: move bone 1 from x=1 to x=2.5 -> emits skinned motion vector with prevBoneX=1, currBoneX=2.5
+  new THREE.Matrix4().makeTranslation(2.5, 0, 0).toArray(skeleton.boneMatrices, 16);
+  pipeline.render(world, camera, { dt: 1 / 60, diagnostics });
+  assert.equal(skinnedMotions.length, 1);
+  assert.equal(skinnedMotions[0].hasPrevBones, true);
+  assert.equal(skinnedMotions[0].prevBoneX, 1);
+  assert.equal(skinnedMotions[0].currBoneX, 2.5);
+  assert.equal(skinnedMotions[0].prevCount, 2);
+
+  // Toggle temporalUpsampling off -> internal world target restores to full 160x90 cleanly
+  pipeline.setState({ temporalUpsampling: false });
+  pipeline.render(world, camera, { dt: 1 / 60, diagnostics });
+  assert.equal(worldTarget.width, 160);
+  assert.equal(worldTarget.height, 90);
+  assert.equal(pipeline.getTemporalStats().upsampling, false);
+
+  pipeline.dispose();
+});

@@ -9,6 +9,11 @@
  * Never imports 'three' directly; callers pass { THREE } by dependency injection.
  */
 import { createFloatTextureUpdates } from './lighting3d/texture-updates.js';
+export {
+  createBakedProbeGrid,
+  getVisibleBakedProbeGrid,
+  createStreamedProbeVolumeManager3D,
+} from './lighting3d/baked-probe-grid.js';
 
 /**
  * @typedef {[number, number, number]} LightingRGB Linear RGB triple.

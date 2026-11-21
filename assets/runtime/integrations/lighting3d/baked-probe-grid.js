@@ -103,3 +103,241 @@ export function createBakedProbeGrid(THREE, renderer, /** @type {BakedIrradiance
   light.diffuseWeight = Math.min(1, intensity);
   return light;
 }
+
+/**
+ * @typedef {object} StreamedProbeManagerOptions
+ * @property {number} [maxCells=16] Maximum simultaneously resident probe cells.
+ * @property {number} [maxBytes=16777216] Maximum SH 3D texture byte budget across resident cells.
+ * @property {number} [blendMargin=4] Smooth spatial blend margin outside cell bounds (world units).
+ * @property {number} [transitionSeconds=0.5] Temporal fade-in duration when a probe cell attaches.
+ * @property {object | null} [scene=null] Optional Three.js scene/world that hosts attached probe lights.
+ */
+
+function readPositionTuple(pos) {
+  if (Array.isArray(pos) || ArrayBuffer.isView(pos)) {
+    return [Number(pos[0]) || 0, Number(pos[1]) || 0, Number(pos[2]) || 0];
+  }
+  if (pos && typeof pos === 'object') {
+    return [Number(pos.x) || 0, Number(pos.y) || 0, Number(pos.z) || 0];
+  }
+  return [0, 0, 0];
+}
+
+function boxExteriorDistance(box, px, py, pz) {
+  const minX = box?.min?.x ?? 0, minY = box?.min?.y ?? 0, minZ = box?.min?.z ?? 0;
+  const maxX = box?.max?.x ?? 0, maxY = box?.max?.y ?? 0, maxZ = box?.max?.z ?? 0;
+  const dx = px < minX ? minX - px : (px > maxX ? px - maxX : 0);
+  const dy = py < minY ? minY - py : (py > maxY ? py - maxY : 0);
+  const dz = pz < minZ ? minZ - pz : (pz > maxZ ? pz - maxZ : 0);
+  return Math.hypot(dx, dy, dz);
+}
+
+/**
+ * Multi-cell streamed 3D baked irradiance probe volume manager with LRU residency eviction,
+ * GPU texture cleanup, and smooth spatial + temporal cross-cell transition blending.
+ *
+ * @param {object} THREE Three.js namespace or compatible mock.
+ * @param {object | null} [renderer=null] WebGLRenderer-compatible object for capability validation.
+ * @param {StreamedProbeManagerOptions} [options]
+ */
+export function createStreamedProbeVolumeManager3D(THREE, renderer = null, options = {}) {
+  if (!THREE || typeof THREE !== 'object') {
+    throw new TypeError('createStreamedProbeVolumeManager3D requires a THREE namespace');
+  }
+  const maxCells = Math.max(1, Math.floor(options.maxCells ?? 16));
+  const maxBytes = Math.max(0, Number(options.maxBytes ?? 16 * 1024 * 1024));
+  const blendMargin = Math.max(0, Number(options.blendMargin ?? 4));
+  const transitionSeconds = Math.max(0, Number(options.transitionSeconds ?? 0.5));
+  const hostScene = options.scene ?? null;
+
+  const entries = new Map();
+  let totalBytes = 0;
+  let tick = 0;
+  let disposed = false;
+  let lastEvictionReason = null;
+  const evictions = [];
+
+  function disposeEntry(entry) {
+    entry.light.removeFromParent?.();
+    const tex = entry.texture ?? entry.light.texture;
+    entry.light.texture = null;
+    entry.texture = null;
+    tex?.dispose?.();
+  }
+
+  function evictOne(excludeKey, reason) {
+    let oldest = null;
+    for (const candidate of entries.values()) {
+      if (candidate.key === excludeKey) continue;
+      if (!oldest || candidate.lastUsedTick < oldest.lastUsedTick) oldest = candidate;
+    }
+    if (!oldest) return null;
+    entries.delete(oldest.key);
+    totalBytes = Math.max(0, totalBytes - oldest.bytes);
+    disposeEntry(oldest);
+    const record = { key: oldest.key, bytes: oldest.bytes, reason, tick };
+    lastEvictionReason = reason;
+    evictions.push(record);
+    if (evictions.length > 64) evictions.shift();
+    return record;
+  }
+
+  function enforceBudget(excludeKey = null) {
+    const removed = [];
+    while (entries.size > maxCells) {
+      const ev = evictOne(excludeKey, 'cell-budget');
+      if (!ev) break;
+      removed.push(ev);
+    }
+    while (totalBytes > maxBytes && entries.size > (excludeKey && entries.has(excludeKey) ? 1 : 0)) {
+      const ev = evictOne(excludeKey, 'byte-budget');
+      if (!ev) break;
+      removed.push(ev);
+    }
+    return removed;
+  }
+
+  function detachCell(cellKey) {
+    const key = String(cellKey);
+    const existing = entries.get(key);
+    if (!existing) return false;
+    entries.delete(key);
+    totalBytes = Math.max(0, totalBytes - existing.bytes);
+    disposeEntry(existing);
+    return true;
+  }
+
+  function attachCell(cellKey, data) {
+    if (disposed || data == null) return { key: String(cellKey), active: false, evicted: [] };
+    const key = String(cellKey);
+    const light = createBakedProbeGrid(THREE, renderer, data);
+    if (!light) return { key, active: false, evicted: [] };
+
+    if (entries.has(key)) detachCell(key);
+
+    const bytes = light.texture?.image?.data?.byteLength ?? 0;
+    const entry = {
+      key,
+      light,
+      texture: light.texture,
+      bytes,
+      baseIntensity: Math.max(0, Math.min(1, Number(data.intensity ?? 1))),
+      fade: transitionSeconds <= 0 ? 1 : 0,
+      spatialWeight: 0,
+      weight: 0,
+      lastUsedTick: ++tick,
+    };
+    light.diffuseWeight = entry.fade * entry.baseIntensity;
+
+    try {
+      hostScene?.add?.(light);
+    } catch (error) {
+      disposeEntry(entry);
+      throw error;
+    }
+
+    entries.set(key, entry);
+    totalBytes += bytes;
+    const evicted = enforceBudget(key);
+    return { key, active: true, bytes, evicted };
+  }
+
+  function touchCell(cellKey) {
+    const entry = entries.get(String(cellKey));
+    if (!entry) return false;
+    entry.lastUsedTick = ++tick;
+    return true;
+  }
+
+  function evaluateAt(position = [0, 0, 0], dt = 0) {
+    const [px, py, pz] = readPositionTuple(position);
+    const safeDt = Math.max(0, Number(dt) || 0);
+    const stepTick = ++tick;
+    let sumSpatial = 0;
+    const active = [];
+
+    for (const entry of entries.values()) {
+      const dOut = boxExteriorDistance(entry.light.boundingBox, px, py, pz);
+      let spatial = 0;
+      if (dOut <= 0) {
+        spatial = 1;
+      } else if (blendMargin > 0 && dOut < blendMargin) {
+        const t = 1 - dOut / blendMargin;
+        spatial = t * t * (3 - 2 * t);
+      }
+      entry.spatialWeight = spatial;
+      sumSpatial += spatial;
+      if (transitionSeconds <= 0) {
+        entry.fade = 1;
+      } else if (spatial > 0 && entry.fade < 1) {
+        entry.fade = Math.min(1, entry.fade + safeDt / transitionSeconds);
+      } else if (spatial === 0 && safeDt > 0 && entry.fade === 0) {
+        entry.fade = 0;
+      }
+      if (spatial > 0) entry.lastUsedTick = stepTick;
+    }
+
+    const norm = sumSpatial > 1 ? 1 / sumSpatial : 1;
+    let totalWeight = 0;
+    for (const entry of entries.values()) {
+      const w = entry.spatialWeight * norm * entry.fade;
+      entry.weight = w;
+      entry.light.diffuseWeight = Math.min(1, entry.baseIntensity * w);
+      totalWeight += w;
+      if (entry.spatialWeight > 0) {
+        active.push({
+          key: entry.key,
+          weight: w,
+          spatialWeight: entry.spatialWeight,
+          fade: entry.fade,
+          light: entry.light,
+        });
+      }
+    }
+    active.sort((a, b) => b.weight - a.weight);
+    return { position: [px, py, pz], active, totalWeight };
+  }
+
+  function getCell(cellKey) {
+    const entry = entries.get(String(cellKey));
+    if (!entry) return null;
+    return {
+      key: entry.key,
+      bytes: entry.bytes,
+      weight: entry.weight,
+      spatialWeight: entry.spatialWeight,
+      fade: entry.fade,
+      lastUsedTick: entry.lastUsedTick,
+      light: entry.light,
+    };
+  }
+
+  function getStats() {
+    return {
+      cellCount: entries.size,
+      totalBytes,
+      maxCells,
+      maxBytes,
+      evictedCount: evictions.length,
+      lastEvictionReason,
+      evictions: evictions.slice(),
+    };
+  }
+
+  function dispose() {
+    if (disposed) return false;
+    disposed = true;
+    for (const key of [...entries.keys()]) detachCell(key);
+    return true;
+  }
+
+  return {
+    attachCell,
+    detachCell,
+    touchCell,
+    evaluateAt,
+    getCell,
+    getStats,
+    dispose,
+  };
+}

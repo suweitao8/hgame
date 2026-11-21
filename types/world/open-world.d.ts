@@ -31,6 +31,8 @@
  * @property {((desc: WorldCellDescriptor) => unknown) | null} [createHLOD=null] Synchronously build a distant proxy before unloading full cell data. The returned value is passed to destroyHLOD.
  * @property {((desc: WorldCellDescriptor, hlodData: unknown) => void) | null} [destroyHLOD=null] Dispose a proxy built by createHLOD.
  * @property {((desc: WorldCellDescriptor, error: unknown, stage: 'load' | 'hlod') => void) | null} [onCellError=null] Observe a failed replacement. The current representation stays active and can be retried on a future step.
+ * @property {{ attachCell?: (key: string, data: unknown) => unknown, detachCell?: (key: string) => unknown, evaluateAt?: (position: Vec3Tuple, dt?: number) => unknown } | null} [probeManager=null] Optional streamed probe volume manager synchronized with cell load/unload/step transitions.
+ * @property {{ allocate?: (id: string, spec: { tier?: string, bytes?: number, slots?: number, priority?: number }) => unknown, release?: (id: string) => unknown } | null} [representationBudget=null] Optional unified representation budget accounting for full cells and HLOD proxies.
  */
 /**
  * @typedef {object} WorldPartitionStepSummary
@@ -313,6 +315,26 @@ export type WorldPartitionOptions = {
      * Observe a failed replacement. The current representation stays active and can be retried on a future step.
      */
     onCellError?: ((desc: WorldCellDescriptor, error: unknown, stage: "load" | "hlod") => void) | null | undefined;
+    /**
+     * Optional streamed probe volume manager synchronized with cell load/unload/step transitions.
+     */
+    probeManager?: {
+        attachCell?: (key: string, data: unknown) => unknown;
+        detachCell?: (key: string) => unknown;
+        evaluateAt?: (position: Vec3Tuple, dt?: number) => unknown;
+    } | null | undefined;
+    /**
+     * Optional unified representation budget accounting for full cells and HLOD proxies.
+     */
+    representationBudget?: {
+        allocate?: (id: string, spec: {
+            tier?: string;
+            bytes?: number;
+            slots?: number;
+            priority?: number;
+        }) => unknown;
+        release?: (id: string) => unknown;
+    } | null | undefined;
 };
 export type WorldPartitionStepSummary = {
     /**

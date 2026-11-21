@@ -6,9 +6,17 @@ export function createLighting2DState(): Readonly<{
     ambientRgb: Float32Array;
     readonly ambientIntensity: number;
     readonly lightCount: number;
+    readonly rawLightCount: number;
+    readonly occluderCount: number;
+    readonly rawOccluderCount: number;
+    readonly qualityTier: string;
+    readonly normalMap: any;
+    readonly normalStrength: number;
     lightWorld: Float32Array;
     lightUvPosRad: Float32Array;
     lightUvColorInt: Float32Array;
+    occluderWorld: Float32Array;
+    occluderUv: Float32Array;
     post: {
         bloomIntensity: number;
         bloomThreshold: number;
@@ -22,6 +30,41 @@ export function createLighting2DState(): Readonly<{
     addLight: (light: any) => boolean;
     setLights: (lights: any) => number;
     clearLights: () => void;
+    addOccluder: (segment: any) => boolean;
+    setOccluders: (segments: any) => number;
+    clearOccluders: () => void;
+    setNormalLighting: ({ normalMap, strength }?: {
+        normalMap?: null | undefined;
+        strength?: number | undefined;
+    }) => void;
+    setQuality: (tier?: string) => Readonly<{
+        tier: "high";
+        maxLights: 32;
+        ambient: true;
+        pointLights: true;
+        occluderShadows: true;
+        softShadows: true;
+        normalMaps: true;
+        bloom: true;
+        colorGrading: true;
+        vignette: true;
+        hitPulse: true;
+        retainedEffects: readonly string[];
+    }>;
+    getQualityPolicy: () => Readonly<{
+        tier: "high";
+        maxLights: 32;
+        ambient: true;
+        pointLights: true;
+        occluderShadows: true;
+        softShadows: true;
+        normalMaps: true;
+        bloom: true;
+        colorGrading: true;
+        vignette: true;
+        hitPulse: true;
+        retainedEffects: readonly string[];
+    }>;
     setPost: (cfg?: {}) => void;
     hasLighting: () => boolean;
     hasActivePass: () => boolean;
@@ -34,6 +77,23 @@ export function createLighting2DState(): Readonly<{
             intensity: number;
         };
         lightCount: number;
+        occluderCount: number;
+        qualityTier: string;
+        qualityPolicy: Readonly<{
+            tier: "high";
+            maxLights: 32;
+            ambient: true;
+            pointLights: true;
+            occluderShadows: true;
+            softShadows: true;
+            normalMaps: true;
+            bloom: true;
+            colorGrading: true;
+            vignette: true;
+            hitPulse: true;
+            retainedEffects: readonly string[];
+        }>;
+        hasNormalMap: boolean;
         post: {
             bloomIntensity: number;
             bloomThreshold: number;
@@ -75,3 +135,53 @@ export function createWebGL2DPostPass(gl: WebGL2RenderingContext): {
 };
 /** Maximum simultaneous dynamic 2D point lights evaluated per pass. */
 export const MAX_2D_LIGHTS: 32;
+/** Maximum simultaneous 2D shadow occluder segments evaluated per pass. */
+export const MAX_2D_OCCLUDERS: 32;
+/**
+ * 2D lighting, shadow occlusion, sprite material/normal, and post-processing quality presets.
+ * Explicitly declares which effects are retained at `'low'`, `'medium'`, and `'high'` tiers.
+ */
+export const QUALITY2D_LIGHTING_PRESETS: Readonly<{
+    low: Readonly<{
+        tier: "low";
+        maxLights: 8;
+        ambient: true;
+        pointLights: true;
+        occluderShadows: false;
+        softShadows: false;
+        normalMaps: false;
+        bloom: false;
+        colorGrading: false;
+        vignette: true;
+        hitPulse: true;
+        retainedEffects: readonly string[];
+    }>;
+    medium: Readonly<{
+        tier: "medium";
+        maxLights: 16;
+        ambient: true;
+        pointLights: true;
+        occluderShadows: true;
+        softShadows: false;
+        normalMaps: false;
+        bloom: true;
+        colorGrading: true;
+        vignette: true;
+        hitPulse: true;
+        retainedEffects: readonly string[];
+    }>;
+    high: Readonly<{
+        tier: "high";
+        maxLights: 32;
+        ambient: true;
+        pointLights: true;
+        occluderShadows: true;
+        softShadows: true;
+        normalMaps: true;
+        bloom: true;
+        colorGrading: true;
+        vignette: true;
+        hitPulse: true;
+        retainedEffects: readonly string[];
+    }>;
+}>;

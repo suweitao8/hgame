@@ -1102,15 +1102,17 @@ void main() {
     expectedZ = previousView.z;
   }
   if (any(lessThan(historyUv, vec2(0.0))) || any(greaterThanEqual(historyUv, vec2(1.0)))) return;
-  ivec2 historyPixel = ivec2(historyUv * vec2(size));
+  ivec2 historySize = textureSize(tPreviousDepth, 0);
+  ivec2 historyPixel = clamp(ivec2(historyUv * vec2(historySize)), ivec2(0), historySize - 1);
+  if (size != historySize) fragColor = texture(tCurrentColor, vUv);
   float previousDepth = texelFetch(tPreviousDepth, historyPixel, 0).r;
   bool previousSolid = hasSceneGeometry(previousDepth);
   vec3 history;
   if (motion.a > 0.5) {
-    if (!previousSolid || !gatherMovingHistory(historyUv, size, expectedZ, history)) return;
+    if (!previousSolid || !gatherMovingHistory(historyUv, historySize, expectedZ, history)) return;
   } else {
-    if (!previousSolid) previousDepth = nearbySolidDepth(tPreviousDepth, historyPixel, size);
-    if (!hasSceneGeometry(previousDepth) || !matchesPreviousDepth(historyPixel, size, previousDepth, expectedZ)) return;
+    if (!previousSolid) previousDepth = nearbySolidDepth(tPreviousDepth, historyPixel, historySize);
+    if (!hasSceneGeometry(previousDepth) || !matchesPreviousDepth(historyPixel, historySize, previousDepth, expectedZ)) return;
     history = texture(tPreviousColor, historyUv).rgb;
   }
 

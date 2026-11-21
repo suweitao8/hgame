@@ -802,3 +802,4 @@ export type LightingCameraLike = {
     } | undefined;
     matrixWorld?: object;
 };
+export { createBakedProbeGrid, getVisibleBakedProbeGrid, createStreamedProbeVolumeManager3D } from "./lighting3d/baked-probe-grid.js";

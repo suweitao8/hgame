@@ -73,6 +73,56 @@
  */
 export function createAnimationBudgetAllocator({ maxFullRateCount, maxHalfRateCount, maxQuarterRateCount, offscreenTickInterval, maxUpdateBudgetPerFrame, maxAccumulatedDt, priorityWeight, starvationWeight, distancePenalty, }?: AnimationBudgetAllocatorOptions | undefined): AnimationBudgetAllocator;
 /**
+ * Unified 3D representation residency budget across near/skinned actors, Bone-VAT crowds,
+ * far impostors, full open-world cells, and HLOD proxies.
+ *
+ * @param {object} [options]
+ * @param {number} [options.maxBytes=67108864] Maximum total tracked GPU/representation byte budget.
+ * @param {number} [options.maxSlots=Infinity] Maximum active representation slot count.
+ */
+export function createRepresentationBudget3D({ maxBytes, maxSlots, }?: {
+    maxBytes?: number | undefined;
+    maxSlots?: number | undefined;
+} | undefined): Readonly<{
+    allocate: (id: any, { tier, bytes, slots, priority, onEvict, }?: {
+        tier?: string | undefined;
+        bytes?: number | undefined;
+        slots?: number | undefined;
+        priority?: number | undefined;
+        onEvict?: null | undefined;
+    }) => {
+        id: any;
+        totalBytes: number;
+        totalSlots: number;
+        evicted: {
+            id: any;
+            tier: any;
+            reason: string;
+            bytes: any;
+            slots: any;
+        }[];
+    };
+    release: (id: any) => boolean;
+    touch: (id: any) => boolean;
+    enforce: (excludeId?: null) => {
+        id: any;
+        tier: any;
+        reason: string;
+        bytes: any;
+        slots: any;
+    }[];
+    getStats: () => {
+        count: number;
+        totalBytes: number;
+        totalSlots: number;
+        maxBytes: number;
+        maxSlots: number;
+        byTier: any;
+        evictions: any[];
+    };
+    clear: () => void;
+}>;
+/**
  * Vector-like position (world units).
  */
 export type AnimationBudgetPosition = {

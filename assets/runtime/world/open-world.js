@@ -67,6 +67,8 @@ function clampLen3(vx, vy, vz, maxLen) {
  * @property {((desc: WorldCellDescriptor) => unknown) | null} [createHLOD=null] Synchronously build a distant proxy before unloading full cell data. The returned value is passed to destroyHLOD.
  * @property {((desc: WorldCellDescriptor, hlodData: unknown) => void) | null} [destroyHLOD=null] Dispose a proxy built by createHLOD.
  * @property {((desc: WorldCellDescriptor, error: unknown, stage: 'load' | 'hlod') => void) | null} [onCellError=null] Observe a failed replacement. The current representation stays active and can be retried on a future step.
+ * @property {{ attachCell?: (key: string, data: unknown) => unknown, detachCell?: (key: string) => unknown, evaluateAt?: (position: Vec3Tuple, dt?: number) => unknown } | null} [probeManager=null] Optional streamed probe volume manager synchronized with cell load/unload/step transitions.
+ * @property {{ allocate?: (id: string, spec: { tier?: string, bytes?: number, slots?: number, priority?: number }) => unknown, release?: (id: string) => unknown } | null} [representationBudget=null] Optional unified representation budget accounting for full cells and HLOD proxies.
  */
 
 /**
@@ -141,6 +143,8 @@ export function createWorldPartition(options = {}) {
     createHLOD = null,
     destroyHLOD = null,
     onCellError = null,
+    probeManager = null,
+    representationBudget = null,
   } = options;
 
   if (!Number.isFinite(cellSize) || cellSize <= 0) {
@@ -265,6 +269,7 @@ export function createWorldPartition(options = {}) {
     const proxy = rec.hlodData;
     rec.hlodData = null;
     if (summary) summary.hlodDestroyed++;
+    representationBudget?.release?.(`${rec.desc.key}:hlod`);
     destroyHLOD?.(rec.desc, proxy);
   }
 
@@ -292,6 +297,10 @@ export function createWorldPartition(options = {}) {
       rec.load = null;
       rec.data = data;
       rec.state = 'loaded';
+      const probePayload = data && typeof data === 'object' ? (data.probeData ?? data.probeVolume ?? null) : null;
+      if (probePayload) probeManager?.attachCell?.(rec.desc.key, probePayload);
+      const cellBytes = data && typeof data === 'object' && Number.isFinite(data.budgetBytes) ? data.budgetBytes : 0;
+      representationBudget?.allocate?.(`${rec.desc.key}:full`, { tier: 'full', bytes: cellBytes, slots: 1 });
       if (immediateSummary) immediateSummary.loaded++;
       disposeHlod(rec, immediateSummary);
     }
@@ -324,6 +333,8 @@ export function createWorldPartition(options = {}) {
     }
     rec.hlodFailure = 0;
     rec.hlodData = proxy;
+    const hlodBytes = proxy && typeof proxy === 'object' && Number.isFinite(proxy.budgetBytes) ? proxy.budgetBytes : 0;
+    representationBudget?.allocate?.(`${rec.desc.key}:hlod`, { tier: 'hlod', bytes: hlodBytes, slots: 1 });
     summary.hlodCreated++;
     return true;
   }
@@ -338,6 +349,8 @@ export function createWorldPartition(options = {}) {
     controller?.abort();
     if (wasLoaded) {
       if (summary) summary.unloaded++;
+      representationBudget?.release?.(`${rec.desc.key}:full`);
+      probeManager?.detachCell?.(rec.desc.key);
       unloadCell?.(rec.desc, data);
     }
   }
@@ -351,7 +364,7 @@ export function createWorldPartition(options = {}) {
     }
   }
 
-  function stepInternal(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0], overrideBudget = null) {
+  function stepInternal(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0], overrideBudget = null, probeDt = 0) {
     const [vx, vy, vz] = readPos3(viewerPos);
     const [rawVx, rawVy, rawVz] = readPos3(viewerVel);
     const [lx, ly, lz] = clampLen3(
@@ -486,15 +499,18 @@ export function createWorldPartition(options = {}) {
     for (const rec of cells.values()) {
       if (rec.state === 'loading') summary.inFlight++;
     }
+    if (probeManager?.evaluateAt) {
+      probeManager.evaluateAt([vx, vy, vz], probeDt);
+    }
     return summary;
   }
 
-  function step(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0]) {
-    return stepInternal(viewerPos, viewerVel, null);
+  function step(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0], dt = 0) {
+    return stepInternal(viewerPos, viewerVel, null, dt);
   }
 
-  function forceFlush(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0]) {
-    return stepInternal(viewerPos, viewerVel, Infinity);
+  function forceFlush(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0], dt = 0) {
+    return stepInternal(viewerPos, viewerVel, Infinity, dt);
   }
 
   function getStats() {

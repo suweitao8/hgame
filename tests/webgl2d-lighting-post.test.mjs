@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { Scene, Entity, createRenderBudgetController } from '../assets/runtime/index.js';
 import { Sprite2D, createCanvas2DAdapter } from '../assets/runtime/integrations/canvas2d.js';
 import { createWebGL2DAdapter } from '../assets/runtime/integrations/webgl2d.js';
-import { createLighting2DState, MAX_2D_LIGHTS } from '../assets/runtime/integrations/post2d.js';
+import { createLighting2DState, MAX_2D_LIGHTS, MAX_2D_OCCLUDERS, QUALITY2D_LIGHTING_PRESETS } from '../assets/runtime/integrations/post2d.js';
 import { createRenderDiagnostics2D } from '../assets/runtime/integrations/render-diagnostics-2d.js';
 
 function createMockCanvas2D() {
@@ -302,4 +302,69 @@ test('P4: 2D diagnostics emit unified frame/pass draws, uploadBytes, targetBytes
   assert.equal(gpuSnap.measurementSources.draws, 'measured');
   assert.equal(gpuSnap.measurementSources.targetBytes, 'estimated');
   assert.equal(gpuSnap.passes[0].draws, 1);
+});
+
+test('R1: 2D lighting supports occluder shadows, Sprite2D material props, and explicit low/medium/high quality policies', () => {
+  assert.equal(MAX_2D_OCCLUDERS, 32);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.low.maxLights, 8);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.medium.maxLights, 16);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.high.maxLights, 32);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.low.occluderShadows, false);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.low.bloom, false);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.medium.occluderShadows, true);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.medium.normalMaps, false);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.high.softShadows, true);
+  assert.equal(QUALITY2D_LIGHTING_PRESETS.high.normalMaps, true);
+
+  const sprite = new Sprite2D({
+    width: 32,
+    height: 32,
+    normalMap: { width: 32, height: 32 },
+    normalStrength: 1.5,
+    roughness: 0.35,
+  });
+  assert.ok(sprite.normalMap);
+  assert.equal(sprite.normalStrength, 1.5);
+  assert.equal(sprite.roughness, 0.35);
+
+  const state = createLighting2DState();
+  for (let i = 0; i < MAX_2D_OCCLUDERS + 5; i++) {
+    state.addOccluder({ x1: i, y1: 0, x2: i + 10, y2: 20 });
+  }
+  assert.equal(state.snapshot().occluderCount, MAX_2D_OCCLUDERS);
+  state.clearOccluders();
+  assert.equal(state.snapshot().occluderCount, 0);
+
+  const { canvas } = createMockCanvas2D();
+  const c2d = createCanvas2DAdapter({ canvas, width: 640, height: 360 });
+  const wglFallback = createWebGL2DAdapter({ canvas, width: 640, height: 360, allowFallback: true });
+
+  for (const adapter of [c2d, wglFallback]) {
+    adapter.setAmbientLight('#182030', 0.5);
+    adapter.addLight2D({ x: 100, y: 100, radius: 220, intensity: 1.2, castShadow: true });
+    adapter.setOccluders2D([{ x1: 140, y1: 60, x2: 140, y2: 140 }]);
+    adapter.setNormalLighting2D({ enabled: true, strength: 1.25 });
+    adapter.setPost2D({ bloomIntensity: 0.6, vignette: 0.25 });
+
+    adapter.setQuality('low');
+    assert.deepEqual(adapter.getQualityPolicy2D(), QUALITY2D_LIGHTING_PRESETS.low);
+    assert.ok(adapter.getQualityPolicy2D().retainedEffects.includes('vignette'));
+
+    adapter.setQuality('medium');
+    assert.deepEqual(adapter.getQualityPolicy2D(), QUALITY2D_LIGHTING_PRESETS.medium);
+    assert.equal(adapter.getQualityPolicy2D().occluderShadows, true);
+    assert.equal(adapter.getQualityPolicy2D().normalMaps, false);
+
+    adapter.setQuality('high');
+    assert.deepEqual(adapter.getQualityPolicy2D(), QUALITY2D_LIGHTING_PRESETS.high);
+
+    const scene = new Scene('r1-scene');
+    const ent = scene.add(new Entity());
+    ent.addComponent(new Sprite2D({ width: 32, height: 32, roughness: 0.4 }));
+    adapter.render(scene);
+    assert.equal(adapter.getLighting2DState().occluderCount, 1);
+  }
+
+  c2d.dispose();
+  wglFallback.dispose();
 });

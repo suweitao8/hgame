@@ -857,3 +857,86 @@ test('SpriteCrowd2D zero-copy bindSwarm/bindGpuSwarm + WebGL2D 16-Byte compact i
   gpuSwarm.dispose();
   adapter.dispose();
 });
+
+test('R4: Bone-VAT preserves independent per-instance Y offsets, composite animation handoff, and unified representation budget', () => {
+  const { root, clips } = createProceduralSkinnedHero(THREE);
+  const vatData = bakeBoneVatData(THREE, { root, animations: clips, sampleFps: 15 });
+  const crowd = createBoneVatCrowd3D(THREE, { root, vatData, capacity: 4, lod1Distance: 20, lod2Distance: 50 });
+
+  assert.equal(crowd.lodMeshes[0].userData.hgameTemporalMotion, 'bone-vat');
+  assert.equal(crowd.lodMeshes[1].userData.hgameTemporalMotion, 'bone-vat');
+  assert.equal(crowd.lodMeshes[2].userData.hgameTemporalMotion, 'bone-vat');
+
+  const slotA = crowd.spawn({ x: 1, y: 2.5, z: 3, rotationY: 0.5, clip: 'walk', time: 0.2 });
+  const slotB = crowd.spawn({ x: 4, y: -1.25, z: 6, rotationY: 0.75, clip: 'walk', time: 0.3 });
+  assert.deepEqual(crowd.getTransform(slotA), { x: 1, y: 2.5, z: 3, rotationY: 0.5 });
+  assert.deepEqual(crowd.getTransform(slotB), { x: 4, y: -1.25, z: 6, rotationY: 0.75 });
+
+  const stats = crowd.update(0.05);
+  assert.equal(stats.visibleCount, 2);
+  const yAttr = crowd.lodMeshes[0].geometry.getAttribute('aCrowdY').array;
+  assert.equal(yAttr[0], 2.5);
+  assert.equal(yAttr[1], -1.25);
+
+  const lod0Shader = {
+    uniforms: {},
+    vertexShader: THREE.ShaderLib.standard.vertexShader,
+    fragmentShader: THREE.ShaderLib.standard.fragmentShader,
+  };
+  crowd.lodMeshes[0].material.onBeforeCompile(lod0Shader, null);
+  assert.ok(lod0Shader.vertexShader.includes('attribute float aCrowdY;'));
+  assert.ok(lod0Shader.vertexShader.includes('uCrowdBaseY + aCrowdY'));
+
+  // Composite animation handoff + unified representation budget across near <-> crowd <-> far
+  const budget = models.createRepresentationBudget3D({ maxBytes: 4096, maxSlots: 4 });
+  const nearStates = [];
+  const farStates = [];
+  const lod = models.createModelLod3D({
+    crowd,
+    crowdDistance: 10,
+    farDistance: 30,
+    hysteresis: 0,
+    budget,
+    budgetId: 'hero-1',
+    tierBytes: { near: 2048, crowd: 256, far: 128 },
+    near: () => ({
+      sync(st) { nearStates.push(st); },
+      dispose() {},
+    }),
+    far: () => ({
+      sync(st) { farStates.push(st); },
+      dispose() {},
+    }),
+  });
+
+  lod.update(5, {
+    x: 2, y: 3.75, z: 4, rotationY: 0.2,
+    clip: 'walk', time: 0.25, secondaryClip: 'attack', secondaryTime: 0.1, blendWeight: 0.65,
+  });
+  assert.equal(lod.tier, 'near');
+  assert.equal(budget.getStats().totalBytes, 2048);
+  assert.equal(nearStates[0].secondaryClip, 'attack');
+  assert.equal(nearStates[0].blendWeight, 0.65);
+
+  // Move to crowd tier (passes Y + keeps composite metadata) -> then back to near (restores composite blend)
+  lod.update(15, { x: 2, y: 4.5, z: 4, rotationY: 0.3, clip: 'walk', time: 0.4 });
+  assert.equal(lod.tier, 'crowd');
+  assert.equal(budget.getStats().byTier.crowd.bytes, 256);
+  assert.equal(lod.getAnimationState().secondaryClip, 'attack');
+  assert.equal(lod.getAnimationState().blendWeight, 0.65);
+
+  lod.update(5, { x: 2, y: 1.5, z: 4, rotationY: 0.1, clip: 'walk', time: 0.55 });
+  assert.equal(lod.tier, 'near');
+  assert.equal(nearStates[1].secondaryClip, 'attack');
+  assert.equal(nearStates[1].secondaryTime, 0.1);
+  assert.equal(nearStates[1].blendWeight, 0.65);
+
+  lod.update(40, { x: 2, y: 1.5, z: 4, rotationY: 0.1, clip: 'walk', time: 0.7 });
+  assert.equal(lod.tier, 'far');
+  assert.equal(farStates[0].secondaryClip, 'attack');
+  assert.equal(budget.getStats().byTier.far.bytes, 128);
+
+  lod.dispose();
+  assert.equal(budget.getStats().totalBytes, 0);
+  crowd.dispose();
+});

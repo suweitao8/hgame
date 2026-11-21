@@ -316,6 +316,9 @@ export class Camera2D {
  * @property {number} [flash=0] Hit-flash intensity in [0, 1]; normally driven by Sprite2D#hitFlash.
  * @property {string} [flashColor='#ffffff'] Hit-flash colour.
  * @property {boolean | GroundShadowOptions} [groundShadow=false] Draw an elliptical ground shadow (true = defaults).
+ * @property {unknown | null} [normalMap=null] Optional tangent-space 2D normal texture for lit sprites.
+ * @property {number} [normalStrength=1] Normal-map modulation strength in [0, 2].
+ * @property {number} [roughness=0.8] Surface roughness hint in [0, 1].
  */
 
 /** Renderable 2D visual component drawn by the Canvas2D / WebGL2D adapters. */
@@ -330,6 +333,7 @@ export class Sprite2D extends Component {
     anchorX = null, anchorY = null, offsetX = 0, offsetY = 0,
     scaleX = 1, scaleY = 1, rotation = 0, tint = null,
     flash = 0, flashColor = '#ffffff', groundShadow = false,
+    normalMap = null, normalStrength = 1, roughness = 0.8,
   } = {}) {
     super();
     this.shape = shape;
@@ -360,6 +364,9 @@ export class Sprite2D extends Component {
     this.flash = flash;
     this.flashColor = flashColor;
     this.groundShadow = groundShadow;
+    this.normalMap = normalMap;
+    this.normalStrength = normalStrength;
+    this.roughness = roughness;
     this._flashDuration = 0;
     this._flashRemaining = 0;
   }
@@ -878,6 +885,11 @@ export class SpriteCrowd2D extends Component {
  * @property {(light: { x: number, y: number, radius?: number, color?: string | number, intensity?: number }) => boolean} addLight2D Append a dynamic 2D point light.
  * @property {(lights: Array<{ x: number, y: number, radius?: number, color?: string | number, intensity?: number }>) => number} setLights2D Replace active 2D point lights.
  * @property {() => void} clearLights2D Remove all 2D point lights.
+ * @property {(segment: { x1: number, y1: number, x2: number, y2: number }) => boolean} addOccluder2D Append a 2D shadow occluder segment.
+ * @property {(segments: Array<{ x1: number, y1: number, x2: number, y2: number }>) => number} setOccluders2D Replace active 2D shadow occluder segments.
+ * @property {() => void} clearOccluders2D Remove all 2D shadow occluder segments.
+ * @property {(opts?: { normalMap?: unknown, strength?: number }) => void} setNormalLighting2D Configure 2D normal-map lighting state.
+ * @property {() => import('./post2d.js').QUALITY2D_LIGHTING_PRESETS['high']} getQualityPolicy2D Read the active 2D lighting/post quality retention policy.
  * @property {(cfg: { bloomIntensity?: number, bloomThreshold?: number, vignette?: number, hitPulse?: number, chromatic?: number, saturation?: number, contrast?: number }) => void} setPost2D Configure 2D bloom/vignette/grading effects.
  * @property {() => { ambient: { r: number, g: number, b: number, intensity: number }, lightCount: number, post: object }} getLighting2DState Inspect current 2D lighting & post state.
  * @property {() => void} dispose Release buffers and caches.
@@ -917,6 +929,7 @@ export function createCanvas2DAdapter({
   const ownedTintCanvases = new Set();
   const imageReleases = new Set();
   const lighting2D = createLighting2DState();
+  if (qualityTier) lighting2D.setQuality(qualityTier);
   const diagnostics = diagnostics2d ? createRenderDiagnostics2D({ ctx }) : null;
   const renderBudget = createRenderBudgetController(budgetOptions);
   let tintSeq = 0;
@@ -1055,9 +1068,11 @@ export function createCanvas2DAdapter({
     if (nextTier === null || nextTier === undefined) {
       qualityTier = null;
       qualityPreset = null;
+      lighting2D.setQuality('high');
     } else {
       qualityPreset = resolveQualityPreset(nextTier, '2d');
       qualityTier = nextTier;
+      lighting2D.setQuality(nextTier);
     }
     resize();
     return qualityPreset;
@@ -1591,6 +1606,11 @@ export function createCanvas2DAdapter({
     addLight2D: lighting2D.addLight,
     setLights2D: lighting2D.setLights,
     clearLights2D: lighting2D.clearLights,
+    addOccluder2D: lighting2D.addOccluder,
+    setOccluders2D: lighting2D.setOccluders,
+    clearOccluders2D: lighting2D.clearOccluders,
+    setNormalLighting2D: lighting2D.setNormalLighting,
+    getQualityPolicy2D: lighting2D.getQualityPolicy,
     setPost2D: lighting2D.setPost,
     getLighting2DState: lighting2D.snapshot,
     dispose() {

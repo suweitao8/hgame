@@ -31,3 +31,12 @@ const vfx = new SpriteCrowd2D({
 ```
 
 WebGL2D 保留排序结果，在混合或裁剪变化前提交已积累的实例。相邻数值相同的裁剪域共享状态。画面中间穿插其他状态时按原顺序分批绘制。 [Pixi 绘制组](../PIXI2D-STARTER.md#ordered-draw-groups)
+
+## 2D 光照遮挡、法线材质与质量分级降级（R1）
+
+`Sprite2D` 支持可选 `normalMap`、`normalStrength`（默认 `1`）与 `roughness`（默认 `0.8`）；`createCanvas2DAdapter` 与 `createWebGL2DAdapter` 统一暴露 `addOccluder2D`、`setOccluders2D`、`clearOccluders2D`（最多 `MAX_2D_OCCLUDERS = 32` 条线段遮挡阴影投射）、`setNormalLighting2D` 与 `getQualityPolicy2D`。通过 `setQuality('low' | 'medium' | 'high')` 显式应用 `QUALITY2D_LIGHTING_PRESETS` 保留策略：
+
+- `high`：全开 `32` 盏点光源、遮挡软阴影（`occluderShadows` + `softShadows`）、法线受光、Bloom、色彩分级、暗角与受击脉冲。
+- `medium`：上限 `16` 盏点光源、保留硬遮挡阴影与 Bloom/色彩分级，关闭软阴影与法线贴图。
+- `low`：上限 `8` 盏点光源，保留环境光、暗角与受击脉冲，关闭遮挡阴影、法线贴图、Bloom 与色彩分级，并同步通知 `retainedEffects` 清单。
+

@@ -23,6 +23,7 @@ import {
   createMegaLights3D,
   computeStochasticLightSample,
   createIrradianceProbeVolume3D,
+  createStreamedProbeVolumeManager3D,
 } from '../assets/runtime/integrations/lighting3d.js';
 import {
   createWorldAlignedMaterial,
@@ -737,4 +738,90 @@ test('P2: createInstancedBatch3D skips static uploads & uses dirty ranges, and c
   assert.equal(cpuRes.visibleCount, 1);
   assert.deepEqual([...cpuRes.visibleIndices], [0]);
   cpuFallback.dispose();
+});
+
+test('R2: createWorldPartition streams streamed probe volumes in/out with smooth transition weights', () => {
+  const renderer = {
+    capabilities: { isWebGL2: true },
+    getContext: () => ({ MAX_3D_TEXTURE_SIZE: 33075, getParameter: () => 2048 }),
+  };
+  const probeManager = createStreamedProbeVolumeManager3D(THREE, renderer, {
+    maxCells: 4,
+    blendMargin: 2,
+    transitionSeconds: 0.25,
+  });
+  const mkProbe = (min, max) => ({
+    schemaVersion: 1,
+    min,
+    max,
+    resolution: [2, 1, 2],
+    coefficients: new Array(108).fill(0.25),
+    intensity: 1,
+  });
+
+  const partition = createWorldPartition({
+    cellSize: 10,
+    loadRadius: 2,
+    unloadRadius: 4,
+    hlodRadius: 20,
+    cellFilter: c => (c.key === '0,0' || c.key === '1,0'),
+    probeManager,
+    loadCell: desc => ({
+      mesh: desc.key,
+      probeData: mkProbe([desc.min[0], -2, desc.min[2]], [desc.max[0], 6, desc.max[2]]),
+    }),
+  });
+
+  partition.step([5, 0, 5], [0, 0, 0], 0.125);
+  assert.equal(probeManager.getStats().cellCount, 1);
+  // Halfway faded in after 0.125s / 0.25s = 0.5
+  assert.ok(Math.abs(probeManager.getCell('0,0').fade - 0.5) < 1e-6);
+
+  partition.step([5, 0, 5], [0, 0, 0], 0.125);
+  assert.equal(probeManager.getCell('0,0').fade, 1);
+
+  // Move away beyond unloadRadius -> detaches cell probe cleanly
+  partition.step([45, 0, 5], [0, 0, 0], 0.1);
+  assert.equal(probeManager.getStats().cellCount, 0);
+  partition.clear();
+  probeManager.dispose();
+});
+
+test('R4: createRepresentationBudget3D enforces LRU/priority limits across LOD and WorldPartition HLOD', async () => {
+  const { createRepresentationBudget3D } = await import('../assets/runtime/integrations/model3d.js');
+  const evictedIds = [];
+  const budget = createRepresentationBudget3D({ maxBytes: 1000, maxSlots: 2 });
+
+  const partition = createWorldPartition({
+    cellSize: 10,
+    loadRadius: 2,
+    unloadRadius: 4,
+    hlodRadius: 25,
+    cellFilter: c => (c.key === '0,0' || c.key === '1,0'),
+    representationBudget: budget,
+    loadCell: desc => ({ key: desc.key, budgetBytes: 600 }),
+    createHLOD: desc => ({ key: desc.key, budgetBytes: 200 }),
+  });
+
+  // Load 0,0 full (600B, 1 slot) and build HLOD proxy for 1,0 (200B, 1 slot)
+  partition.step([5, 0, 5]);
+  assert.equal(budget.getStats().totalBytes, 800);
+  assert.equal(budget.getStats().totalSlots, 2);
+  assert.equal(budget.getStats().byTier.full.count, 1);
+  assert.equal(budget.getStats().byTier.hlod.count, 1);
+
+  // Allocating another low-priority representation triggers unified byte/slot budget eviction
+  const res = budget.allocate('extra-actor', {
+    tier: 'crowd',
+    bytes: 300,
+    slots: 1,
+    priority: 10,
+    onEvict: id => evictedIds.push(id),
+  });
+  assert.equal(res.evicted.length >= 1, true);
+  assert.ok(budget.getStats().totalBytes <= 1000);
+  assert.ok(budget.getStats().totalSlots <= 2);
+
+  partition.clear();
+  budget.clear();
 });
