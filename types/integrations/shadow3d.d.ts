@@ -59,10 +59,35 @@ export function computeCascadeSplits(near: number, far: number, cascades?: numbe
  * Multi-cascade directional shadow manager (2–4 cascades) with practical frustum splits,
  * bounding-sphere slice fitting, and world-space texel snapping to eliminate shadow shimmer.
  *
- * @param {object} THREE Three.js namespace or compatible mock.
+ * @param {any} THREE Three.js namespace or compatible mock.
  * @param {object} [options]
+ * @param {number} [options.cascades=3]
+ * @param {number} [options.maxFar=120]
+ * @param {number} [options.lambda=0.65]
+ * @param {number} [options.mapSize=1024]
+ * @param {number[]} [options.lightDirection]
+ * @param {number} [options.color=0xfff5e4]
+ * @param {number} [options.intensity=1.0]
+ * @param {number} [options.shadowBias=-0.0004]
+ * @param {number} [options.normalBias=0.02]
+ * @param {boolean} [options.pcss=false]
+ * @param {number} [options.lightSize=0.04]
+ * @param {any} [options.scene=null]
  */
-export function createCascadedShadowMap3D(THREE: object, { cascades, maxFar, lambda, mapSize, lightDirection, color, intensity, shadowBias, normalBias, pcss, lightSize, scene, }?: object): {
+export function createCascadedShadowMap3D(THREE: any, { cascades, maxFar, lambda, mapSize, lightDirection, color, intensity, shadowBias, normalBias, pcss, lightSize, scene, }?: {
+    cascades?: number | undefined;
+    maxFar?: number | undefined;
+    lambda?: number | undefined;
+    mapSize?: number | undefined;
+    lightDirection?: number[] | undefined;
+    color?: number | undefined;
+    intensity?: number | undefined;
+    shadowBias?: number | undefined;
+    normalBias?: number | undefined;
+    pcss?: boolean | undefined;
+    lightSize?: number | undefined;
+    scene?: any;
+} | undefined): {
     readonly cascades: number;
     readonly lights: any[];
     readonly splits: number[];
@@ -76,6 +101,33 @@ export function createCascadedShadowMap3D(THREE: object, { cascades, maxFar, lam
     setMapSize: (nextSize: any) => void;
     dispose: () => boolean;
 };
+/**
+ * Single-RenderTarget multi-light Shadow Atlas partitioning one `atlasSize^2` DepthTexture
+ * into `tileSize^2` tiles to render 2-16 local spot/point lights without FBO ping-pong stalls.
+ * @param {any} [THREE=null]
+ * @param {{ atlasSize?: number, tileSize?: number }} [options]
+ */
+export function createShadowAtlas3D(THREE?: any, { atlasSize, tileSize }?: {
+    atlasSize?: number;
+    tileSize?: number;
+} | undefined): Readonly<{
+    atlasTarget: any;
+    depthTexture: any;
+    allocateTile: (lightId: any) => any;
+    releaseTile: (lightId: any) => boolean;
+    getTileUvRect: (lightId: any) => any;
+    renderTile: (renderer: any, scene: any, lightCamera: any, lightId: any) => any;
+    getStats: () => Readonly<{
+        atlasSize: number;
+        tileSize: number;
+        cols: number;
+        capacity: number;
+        allocated: number;
+        renderedTiles: number;
+        hasDepthTexture: boolean;
+    }>;
+    dispose: () => void;
+}>;
 /**
  * Direction/point [x, y, z].
  */

@@ -371,12 +371,20 @@ export function createDecalSystem3D(THREE, {
     return true;
   }
 
+  function applyQualityProfile(profileOrTier) {
+    const modeHint = profileOrTier && typeof profileOrTier === 'object'
+      ? profileOrTier.decalMode ?? (profileOrTier.shadowsEnabled === false ? 'surface' : 'projected')
+      : (profileOrTier === 'mobile_low' || profileOrTier === 'low' ? 'surface' : 'projected');
+    return setMode(modeHint);
+  }
+
   return {
     get group() { return ownedGroup; },
     get projectedScene() { return projectedScene; },
     get mode() { return activeMode; },
     get capacity() { return capacity; },
     setMode,
+    applyQualityProfile,
     spawn,
     update,
     renderProjected,

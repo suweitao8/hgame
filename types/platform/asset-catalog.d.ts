@@ -96,6 +96,7 @@ export function createStreamingResidencyPolicy({ maxBytes, nearDistance, midDist
     };
     unregister: (id: any) => boolean;
     setPosition: (id: any, position: any) => boolean;
+    setGlobalMipBias: (bias?: number) => number;
     update: (viewerPos?: {
         x: number;
         y: number;
@@ -123,6 +124,30 @@ export function createStreamingResidencyPolicy({ maxBytes, nearDistance, midDist
         evictions: number;
     }>;
     dispose: () => void;
+}>;
+/**
+ * VRAM Anti-OOM Mip Guard that dynamically shifts streaming mip bias down (lowering texture VRAM
+ * by 4x-16x) when allocated device/texture bytes approach mobile WebView soft/hard thresholds.
+ */
+export function createVramMipGuard({ streamingPolicy, budgetBytes, softRatio, hardRatio, onMipBiasChange, }?: {
+    streamingPolicy?: null | undefined;
+    budgetBytes?: number | undefined;
+    softRatio?: number | undefined;
+    hardRatio?: number | undefined;
+    onMipBiasChange?: null | undefined;
+}): Readonly<{
+    step: (usedBytes: any, overrideBudget?: number) => {
+        mipBiasOffset: number;
+        state: string;
+        ratio: number;
+        changed: boolean;
+    };
+    getState: () => Readonly<{
+        mipBiasOffset: number;
+        state: string;
+        ratio: number;
+        budgetBytes: number;
+    }>;
 }>;
 /**
  * Bind an actual Three.js / Image texture object into `createStreamingResidencyPolicy`

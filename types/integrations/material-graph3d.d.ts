@@ -22,7 +22,7 @@ export function createSharedMaterialBlock3D(initialUniforms?: {}): {
  * @param {object} THREE Three.js namespace or compatible mock.
  * @param {object} [options]
  */
-export function createComposableMaterial3D(THREE: object, { color, roughness, metalness, clearcoat, clearcoatRoughness, emissive, emissiveIntensity, transparent, opacity, side, fresnel, dissolve, triplanar, specularAA, windSway, sharedBlock, vertexChunks, fragmentChunks, }?: object): any;
+export function createComposableMaterial3D(THREE: object, { color, roughness, metalness, clearcoat, clearcoatRoughness, emissive, emissiveIntensity, transparent, opacity, side, fresnel, dissolve, triplanar, specularAA, windSway, normalRmUnpack, wetness, interactRim, sharedBlock, vertexChunks, fragmentChunks, }?: object): any;
 /**
  * Shared O(1) Material Batch Registry synchronizing global uniforms (`uTime`, `uWindDir`,
  * `uFogDensity`) via WebGL2 UniformsGroup UBOs when `options.THREE` is provided, without

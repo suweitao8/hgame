@@ -216,8 +216,20 @@ export function computeCascadeSplits(near, far, cascades = 3, lambda = 0.65) {
  * Multi-cascade directional shadow manager (2–4 cascades) with practical frustum splits,
  * bounding-sphere slice fitting, and world-space texel snapping to eliminate shadow shimmer.
  *
- * @param {object} THREE Three.js namespace or compatible mock.
+ * @param {any} THREE Three.js namespace or compatible mock.
  * @param {object} [options]
+ * @param {number} [options.cascades=3]
+ * @param {number} [options.maxFar=120]
+ * @param {number} [options.lambda=0.65]
+ * @param {number} [options.mapSize=1024]
+ * @param {number[]} [options.lightDirection]
+ * @param {number} [options.color=0xfff5e4]
+ * @param {number} [options.intensity=1.0]
+ * @param {number} [options.shadowBias=-0.0004]
+ * @param {number} [options.normalBias=0.02]
+ * @param {boolean} [options.pcss=false]
+ * @param {number} [options.lightSize=0.04]
+ * @param {any} [options.scene=null]
  */
 export function createCascadedShadowMap3D(THREE, {
   cascades = 3,
@@ -492,4 +504,133 @@ export function createCascadedShadowMap3D(THREE, {
     setMapSize,
     dispose,
   };
+}
+
+/**
+ * Single-RenderTarget multi-light Shadow Atlas partitioning one `atlasSize^2` DepthTexture
+ * into `tileSize^2` tiles to render 2-16 local spot/point lights without FBO ping-pong stalls.
+ * @param {any} [THREE=null]
+ * @param {{ atlasSize?: number, tileSize?: number }} [options]
+ */
+export function createShadowAtlas3D(THREE = null, { atlasSize = 1024, tileSize = 256 } = {}) {
+  const size = Math.max(256, Math.floor(Number(atlasSize) || 1024));
+  const tile = Math.max(64, Math.min(size, Math.floor(Number(tileSize) || 256)));
+  const cols = Math.max(1, Math.floor(size / tile));
+  const capacity = cols * cols;
+  const slots = new Array(capacity).fill(null);
+  const byId = new Map();
+  let renderedTiles = 0;
+  const scratchPrevViewport = THREE?.Vector4 ? new THREE.Vector4() : null;
+
+  const depthTexture = THREE?.DepthTexture
+    ? new THREE.DepthTexture(size, size, THREE.UnsignedIntType)
+    : null;
+  if (depthTexture && THREE?.NearestFilter !== undefined) {
+    depthTexture.minFilter = THREE.NearestFilter;
+    depthTexture.magFilter = THREE.NearestFilter;
+  }
+  const atlasTarget = THREE?.WebGLRenderTarget
+    ? new THREE.WebGLRenderTarget(size, size, {
+        depthBuffer: true,
+        stencilBuffer: false,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+        generateMipmaps: false,
+        ...(depthTexture ? { depthTexture } : {}),
+      })
+    : null;
+
+  function allocateTile(lightId) {
+    const id = String(lightId);
+    if (byId.has(id)) return byId.get(id);
+    const freeIdx = slots.indexOf(null);
+    if (freeIdx < 0) return null;
+    const col = freeIdx % cols;
+    const row = Math.floor(freeIdx / cols);
+    const x = col * tile;
+    const y = row * tile;
+    const uScale = tile / size;
+    const rec = Object.freeze({
+      id,
+      index: freeIdx,
+      col,
+      row,
+      x,
+      y,
+      size: tile,
+      uvRect: Object.freeze([x / size, y / size, uScale, uScale]),
+    });
+    slots[freeIdx] = rec;
+    byId.set(id, rec);
+    return rec;
+  }
+
+  function releaseTile(lightId) {
+    const id = String(lightId);
+    const rec = byId.get(id);
+    if (!rec) return false;
+    slots[rec.index] = null;
+    byId.delete(id);
+    return true;
+  }
+
+  function getTileUvRect(lightId) {
+    return byId.get(String(lightId))?.uvRect ?? null;
+  }
+
+  function renderTile(renderer, scene, lightCamera, lightId) {
+    const rec = byId.get(String(lightId)) ?? allocateTile(lightId);
+    if (!rec || !renderer || !scene || !lightCamera) return null;
+
+    const prevTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
+    const prevScissorTest = typeof renderer.getScissorTest === 'function' ? renderer.getScissorTest() : false;
+    if (scratchPrevViewport) renderer.getViewport?.(scratchPrevViewport);
+    const prevAutoClear = renderer.autoClear;
+    try {
+      if (atlasTarget) renderer.setRenderTarget?.(atlasTarget);
+      renderer.setScissorTest?.(true);
+      renderer.setScissor?.(rec.x, rec.y, rec.size, rec.size);
+      renderer.setViewport?.(rec.x, rec.y, rec.size, rec.size);
+      renderer.autoClear = false;
+      renderer.clearDepth?.();
+      renderer.render?.(scene, lightCamera);
+      renderedTiles++;
+    } finally {
+      renderer.autoClear = prevAutoClear;
+      renderer.setScissorTest?.(prevScissorTest);
+      if (scratchPrevViewport) renderer.setViewport?.(scratchPrevViewport);
+      renderer.setRenderTarget?.(prevTarget ?? null);
+    }
+    return rec;
+  }
+
+  function getStats() {
+    return Object.freeze({
+      atlasSize: size,
+      tileSize: tile,
+      cols,
+      capacity,
+      allocated: byId.size,
+      renderedTiles,
+      hasDepthTexture: Boolean(depthTexture),
+    });
+  }
+
+  function dispose() {
+    atlasTarget?.dispose?.();
+    depthTexture?.dispose?.();
+    slots.fill(null);
+    byId.clear();
+  }
+
+  return Object.freeze({
+    atlasTarget,
+    depthTexture,
+    allocateTile,
+    releaseTile,
+    getTileUvRect,
+    renderTile,
+    getStats,
+    dispose,
+  });
 }

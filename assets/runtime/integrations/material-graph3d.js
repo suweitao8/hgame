@@ -65,6 +65,9 @@ export function createComposableMaterial3D(THREE, {
   triplanar = null,
   specularAA = false,
   windSway = null,
+  normalRmUnpack = null,
+  wetness = null,
+  interactRim = null,
   sharedBlock = null,
   vertexChunks = [],
   fragmentChunks = [],
@@ -98,7 +101,14 @@ export function createComposableMaterial3D(THREE, {
   const hasTriplanar = Boolean(triplanar);
   const hasSpecularAA = Boolean(specularAA);
   const hasWindSway = Boolean(windSway);
+  const hasNormalRm = Boolean(normalRmUnpack);
+  const hasWetness = Boolean(wetness);
+  const hasInteractRim = Boolean(interactRim);
   const windWeightMode = windSway?.weightMode === 'vertexColor' ? 'vertexColor' : 'height';
+
+  if (hasNormalRm) {
+    material.defines = { ...(material.defines || {}), USE_UV: '' };
+  }
 
   const features = [];
   if (hasFresnel) features.push('fresnel');
@@ -106,13 +116,27 @@ export function createComposableMaterial3D(THREE, {
   if (hasTriplanar) features.push('triplanar');
   if (hasSpecularAA) features.push('specularAA');
   if (hasWindSway) features.push(`wind:${windWeightMode}`);
+  if (hasNormalRm) features.push('normalRmUnpack');
+  if (hasWetness) features.push('wetness');
+  if (hasInteractRim) features.push('interactRim');
   if (sharedBlock) features.push('sharedBlock');
 
-  const cacheKey = `hgame-matgraph-v1:${usePhysical ? 'phys' : 'std'}:${features.join('+') || 'base'}:${vertexChunks.length}:${fragmentChunks.length}`;
+  const cacheKey = `hgame-matgraph-v2:${usePhysical ? 'phys' : 'std'}:${features.join('+') || 'base'}:${vertexChunks.length}:${fragmentChunks.length}`;
   material.customProgramCacheKey = () => cacheKey;
 
   const windDirRaw = Array.isArray(windSway?.direction) ? windSway.direction : [1, 0, 0.35];
   const windDirLen = Math.hypot(windDirRaw[0] ?? 1, windDirRaw[1] ?? 0, windDirRaw[2] ?? 0.35) || 1;
+  const nrmColorMap = normalRmUnpack?.colorMap ?? normalRmUnpack?.color ?? null;
+  const nrmMap = normalRmUnpack?.normalRmMap ?? normalRmUnpack?.normalRm ?? null;
+  const nrmScale = normalRmUnpack?.uvScale ?? [1, 1];
+  const nrmOff = normalRmUnpack?.uvOffset ?? [0, 0];
+  const initialWetness = typeof wetness === 'number'
+    ? wetness
+    : (Number.isFinite(wetness?.wetness) ? wetness.wetness : 0);
+  const initialHighlight = typeof interactRim === 'number'
+    ? interactRim
+    : (Number.isFinite(interactRim?.highlight) ? interactRim.highlight : 0);
+
   const featureUniforms = {
     uFresnelColor: { value: THREE.Color ? new THREE.Color(fresnel?.color ?? 0x66e0ff) : { r: 0.4, g: 0.88, b: 1 } },
     uFresnelPower: { value: Number.isFinite(fresnel?.power) ? fresnel.power : 3.0 },
@@ -142,6 +166,21 @@ export function createComposableMaterial3D(THREE, {
         ? new THREE.Vector2(Number.isFinite(windSway?.minY) ? windSway.minY : 0, Number.isFinite(windSway?.maxY) ? windSway.maxY : 1.5)
         : { x: Number.isFinite(windSway?.minY) ? windSway.minY : 0, y: Number.isFinite(windSway?.maxY) ? windSway.maxY : 1.5 },
     },
+    uNormalRmColorMap: { value: nrmColorMap },
+    uNormalRmMap: { value: nrmMap },
+    uHasNormalRmColor: { value: nrmColorMap ? 1.0 : 0.0 },
+    uHasNormalRmMap: { value: nrmMap ? 1.0 : 0.0 },
+    uNormalRmStrength: { value: Number.isFinite(normalRmUnpack?.normalStrength) ? normalRmUnpack.normalStrength : 1.0 },
+    uNormalRmUvST: {
+      value: THREE.Vector4
+        ? new THREE.Vector4(nrmScale[0] ?? 1, nrmScale[1] ?? 1, nrmOff[0] ?? 0, nrmOff[1] ?? 0)
+        : { x: nrmScale[0] ?? 1, y: nrmScale[1] ?? 1, z: nrmOff[0] ?? 0, w: nrmOff[1] ?? 0 },
+    },
+    uWetness: { value: Math.max(0, Math.min(1, initialWetness)) },
+    uInteractHighlight: { value: Math.max(0, Math.min(1, initialHighlight)) },
+    uInteractColor: { value: THREE.Color ? new THREE.Color(interactRim?.color ?? 0xffe082) : { r: 1, g: 0.88, b: 0.51 } },
+    uInteractPower: { value: Number.isFinite(interactRim?.power) ? interactRim.power : 2.6 },
+    uInteractStrength: { value: Number.isFinite(interactRim?.strength) ? interactRim.strength : 1.1 },
   };
 
   if (features.length > 0 || vertexChunks.length > 0 || fragmentChunks.length > 0) {
@@ -171,11 +210,44 @@ export function createComposableMaterial3D(THREE, {
         shader.uniforms.uWindDir = featureUniforms.uWindDir;
         shader.uniforms.uWindRange = featureUniforms.uWindRange;
       }
+      if (hasNormalRm) {
+        shader.uniforms.uNormalRmColorMap = featureUniforms.uNormalRmColorMap;
+        shader.uniforms.uNormalRmMap = featureUniforms.uNormalRmMap;
+        shader.uniforms.uHasNormalRmColor = featureUniforms.uHasNormalRmColor;
+        shader.uniforms.uHasNormalRmMap = featureUniforms.uHasNormalRmMap;
+        shader.uniforms.uNormalRmStrength = featureUniforms.uNormalRmStrength;
+        shader.uniforms.uNormalRmUvST = featureUniforms.uNormalRmUvST;
+      }
+      if (hasWetness) {
+        shader.uniforms.uWetness = sharedBlock?.uniforms?.uWetness ?? featureUniforms.uWetness;
+      }
+      if (hasInteractRim) {
+        shader.uniforms.uInteractHighlight = featureUniforms.uInteractHighlight;
+        shader.uniforms.uInteractColor = featureUniforms.uInteractColor;
+        shader.uniforms.uInteractPower = featureUniforms.uInteractPower;
+        shader.uniforms.uInteractStrength = featureUniforms.uInteractStrength;
+      }
 
       const vertDecls = [];
       const beginInjections = [];
       if (hasDissolve || hasTriplanar) {
         vertDecls.push('varying vec3 vHgameLocalPos;', 'varying vec3 vHgameWorldPos;');
+      }
+      if (hasNormalRm) {
+        vertDecls.push('varying vec2 vHgameUv;');
+        beginInjections.push('#ifdef USE_UV\n  vHgameUv = uv;\n#else\n  vHgameUv = vec2(0.0);\n#endif');
+      }
+      if (hasWetness) {
+        vertDecls.push('varying vec3 vHgameWorldNormal;');
+        beginInjections.push(
+          '{',
+          '  vec3 _wNorm = normal;',
+          '  #ifdef USE_INSTANCING',
+          '    _wNorm = mat3(instanceMatrix) * _wNorm;',
+          '  #endif',
+          '  vHgameWorldNormal = normalize(mat3(modelMatrix) * _wNorm);',
+          '}',
+        );
       }
       if (hasWindSway) {
         vertDecls.push(
@@ -221,9 +293,54 @@ export function createComposableMaterial3D(THREE, {
       if (hasFresnel) fragDecls.push('uniform vec3 uFresnelColor;\nuniform float uFresnelPower;\nuniform float uFresnelStrength;');
       if (hasDissolve) fragDecls.push('uniform float uDissolveThreshold;\nuniform float uDissolveEdgeWidth;\nuniform vec3 uDissolveEdgeColor;');
       if (hasTriplanar) fragDecls.push('uniform float uTriplanarScale;');
+      if (hasNormalRm) {
+        fragDecls.push(
+          'varying vec2 vHgameUv;',
+          'uniform sampler2D uNormalRmColorMap;',
+          'uniform sampler2D uNormalRmMap;',
+          'uniform float uHasNormalRmColor;',
+          'uniform float uHasNormalRmMap;',
+          'uniform float uNormalRmStrength;',
+          'uniform vec4 uNormalRmUvST;',
+        );
+      }
+      if (hasWetness) {
+        fragDecls.push('varying vec3 vHgameWorldNormal;\nuniform float uWetness;');
+      }
+      if (hasInteractRim) {
+        fragDecls.push('uniform float uInteractHighlight;\nuniform vec3 uInteractColor;\nuniform float uInteractPower;\nuniform float uInteractStrength;');
+      }
 
       if (fragDecls.length > 0) {
         shader.fragmentShader = fragDecls.join('\n') + '\n' + shader.fragmentShader;
+      }
+
+      if (hasNormalRm && shader.fragmentShader.includes('#include <map_fragment>')) {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <map_fragment>',
+          [
+            '#include <map_fragment>',
+            'vec2 _nrmUv = vHgameUv * uNormalRmUvST.xy + uNormalRmUvST.zw;',
+            'if (uHasNormalRmColor > 0.5) {',
+            '  diffuseColor *= texture2D(uNormalRmColorMap, _nrmUv);',
+            '}',
+            'vec4 _nrmPack = uHasNormalRmMap > 0.5 ? texture2D(uNormalRmMap, _nrmUv) : vec4(0.5, 0.5, 0.65, 0.0);',
+          ].join('\n'),
+        );
+      }
+
+      if (hasNormalRm && shader.fragmentShader.includes('#include <roughnessmap_fragment>')) {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <roughnessmap_fragment>',
+          '#include <roughnessmap_fragment>\nif (uHasNormalRmMap > 0.5) roughnessFactor = clamp(_nrmPack.b, 0.025, 1.0);',
+        );
+      }
+
+      if (hasNormalRm && shader.fragmentShader.includes('#include <metalnessmap_fragment>')) {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <metalnessmap_fragment>',
+          '#include <metalnessmap_fragment>\nif (uHasNormalRmMap > 0.5) metalnessFactor = clamp(_nrmPack.a, 0.0, 1.0);',
+        );
       }
 
       if (hasDissolve && shader.fragmentShader.includes('#include <color_fragment>')) {
@@ -239,29 +356,80 @@ export function createComposableMaterial3D(THREE, {
         shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', dissolveBody);
       }
 
-      if (hasSpecularAA && shader.fragmentShader.includes('#include <normal_fragment_maps>')) {
-        const specAaBody = [
-          '#include <normal_fragment_maps>',
-          '{',
-          '  vec3 _dNdx = dFdx(normal);',
-          '  vec3 _dNdy = dFdy(normal);',
-          '  float _varN = max(dot(_dNdx, _dNdx), dot(_dNdy, _dNdy));',
-          '  roughnessFactor = clamp(sqrt(roughnessFactor * roughnessFactor + min(0.25, _varN * 0.5)), 0.04, 1.0);',
-          '}',
-        ].join('\n');
-        shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', specAaBody);
+      if ((hasNormalRm || hasWetness || hasSpecularAA) && shader.fragmentShader.includes('#include <normal_fragment_maps>')) {
+        const normParts = ['#include <normal_fragment_maps>'];
+        if (hasNormalRm) {
+          normParts.push(
+            'if (uHasNormalRmMap > 0.5) {',
+            '  vec2 _nXY = _nrmPack.rg * 2.0 - 1.0;',
+            '  float _nZ = sqrt(max(0.0, 1.0 - dot(_nXY, _nXY)));',
+            '  vec3 _mapN = normalize(vec3(_nXY * uNormalRmStrength, _nZ));',
+            '  vec3 _dp1 = dFdx(-vViewPosition);',
+            '  vec3 _dp2 = dFdy(-vViewPosition);',
+            '  vec2 _duv1 = dFdx(_nrmUv);',
+            '  vec2 _duv2 = dFdy(_nrmUv);',
+            '  vec3 _dp2perp = cross(_dp2, normal);',
+            '  vec3 _dp1perp = cross(normal, _dp1);',
+            '  vec3 _T = _dp2perp * _duv1.x + _dp1perp * _duv2.x;',
+            '  vec3 _B = _dp2perp * _duv1.y + _dp1perp * _duv2.y;',
+            '  float _invmax = inversesqrt(max(dot(_T, _T), dot(_B, _B)) + 1e-8);',
+            '  mat3 _tbn = mat3(_T * _invmax, _B * _invmax, normal);',
+            '  normal = normalize(_tbn * _mapN);',
+            '}',
+          );
+        }
+        if (hasWetness) {
+          normParts.push(
+            'if (uWetness > 0.01) {',
+            '  float _upMask = smoothstep(0.55, 0.92, normalize(vHgameWorldNormal).y);',
+            '  float _wet = clamp(uWetness, 0.0, 1.0) * mix(0.45, 1.0, _upMask);',
+            '  diffuseColor.rgb *= mix(1.0, 0.72, _wet * (1.0 - metalnessFactor));',
+            '  roughnessFactor = mix(roughnessFactor, 0.10, _wet * _upMask);',
+            '  normal = normalize(mix(normal, nonPerturbedNormal, _wet * _upMask * 0.65));',
+            '}',
+          );
+        }
+        if (hasSpecularAA) {
+          normParts.push(
+            '{',
+            '  vec3 _dNdx = dFdx(normal);',
+            '  vec3 _dNdy = dFdy(normal);',
+            '  float _varN = max(dot(_dNdx, _dNdx), dot(_dNdy, _dNdy));',
+            '  roughnessFactor = clamp(sqrt(roughnessFactor * roughnessFactor + min(0.25, _varN * 0.5)), 0.04, 1.0);',
+            '}',
+          );
+        }
+        shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', normParts.join('\n'));
       }
 
-      if (hasFresnel && shader.fragmentShader.includes('#include <emissivemap_fragment>')) {
-        const fresnelBody = [
-          '#include <emissivemap_fragment>',
-          '{',
-          '  vec3 _viewDir = normalize(vViewPosition);',
-          '  float _fresnel = pow(clamp(1.0 - abs(dot(normalize(normal), _viewDir)), 0.0, 1.0), max(0.25, uFresnelPower));',
-          '  totalEmissiveRadiance += uFresnelColor * (_fresnel * uFresnelStrength);',
-          '}',
-        ].join('\n');
-        shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', fresnelBody);
+      if (hasNormalRm && shader.fragmentShader.includes('#include <aomap_fragment>')) {
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <aomap_fragment>',
+          '#include <aomap_fragment>\n{\n  float _microAO = mix(1.0, 0.88, roughnessFactor * roughnessFactor);\n  reflectedLight.indirectDiffuse *= _microAO;\n}',
+        );
+      }
+
+      if ((hasFresnel || hasInteractRim) && shader.fragmentShader.includes('#include <emissivemap_fragment>')) {
+        const emParts = ['#include <emissivemap_fragment>'];
+        if (hasFresnel) {
+          emParts.push(
+            '{',
+            '  vec3 _viewDir = normalize(vViewPosition);',
+            '  float _fresnel = pow(clamp(1.0 - abs(dot(normalize(normal), _viewDir)), 0.0, 1.0), max(0.25, uFresnelPower));',
+            '  totalEmissiveRadiance += uFresnelColor * (_fresnel * uFresnelStrength);',
+            '}',
+          );
+        }
+        if (hasInteractRim) {
+          emParts.push(
+            'if (uInteractHighlight > 0.001) {',
+            '  vec3 _iViewDir = normalize(vViewPosition);',
+            '  float _iRim = pow(clamp(1.0 - abs(dot(normalize(normal), _iViewDir)), 0.0, 1.0), max(0.25, uInteractPower));',
+            '  totalEmissiveRadiance += uInteractColor * (_iRim * uInteractStrength * uInteractHighlight);',
+            '}',
+          );
+        }
+        shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', emParts.join('\n'));
       }
 
       for (const chunk of fragmentChunks) {
@@ -285,6 +453,20 @@ export function createComposableMaterial3D(THREE, {
         featureUniforms.uWindTime.value = t;
       }
       return t;
+    },
+    setWetness(value) {
+      const w = Math.max(0, Math.min(1, Number(value) || 0));
+      if (sharedBlock?.set && sharedBlock.uniforms?.uWetness) {
+        sharedBlock.set('uWetness', w);
+      } else {
+        featureUniforms.uWetness.value = w;
+      }
+      return w;
+    },
+    setHighlight(value) {
+      const h = Math.max(0, Math.min(1, Number(value) || 0));
+      featureUniforms.uInteractHighlight.value = h;
+      return h;
     },
     setFeatureParam(name, value) {
       const u = featureUniforms[name];

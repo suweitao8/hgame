@@ -22,6 +22,7 @@ export function createDecalSystem3D(THREE: object, { maxDecals, fadeSeconds, pol
     readonly mode: string;
     readonly capacity: number;
     setMode: (nextMode: any) => string;
+    applyQualityProfile: (profileOrTier: any) => string;
     spawn: ({ position, normal, size, rotation, color, map, opacity, lifetime, fadeSeconds: slotFade, edgeSoftness, roughnessTint, }?: {
         position?: number[] | undefined;
         normal?: number[] | undefined;

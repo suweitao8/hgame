@@ -60,6 +60,19 @@ export function createGpuIndirectCuller3D({ webgpuDevice, gl, cpuCuller, maxInst
         visibleIndices: Uint32Array;
         indirectBuffer?: undefined;
     };
+    dispatchWebGpuCompute: ({ boundsData, instanceCount, frustumPlanes, indexCount, readback, }?: {
+        boundsData?: null | undefined;
+        instanceCount?: number | undefined;
+        frustumPlanes?: null | undefined;
+        indexCount?: number | undefined;
+        readback?: boolean | undefined;
+    }) => Promise<{
+        mode: string;
+        dispatched: number;
+        visibleCount: number;
+        visibleIndices: Uint32Array | null;
+        workgroups: number;
+    }>;
     getStats(): Readonly<{
         mode: string;
         dispatchedInstances: number;

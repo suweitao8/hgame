@@ -860,7 +860,145 @@ export function createAudioManager({
     return bgm;
   }
 
+  let indoorState = false;
+  let indoorLowPassHz = 650;
+  let indoorConvolver = null;
+  let indoorWetNode = null;
+  const lifecycleCleanups = [];
+
+  function ensureIndoorConvolver(reverbDecaySeconds = 0.4, targetWet = 0) {
+    const audioCtx = ctx.context;
+    const wetDest = ctx.busTarget ?? ctx.master;
+    if (!audioCtx || !ctx.reverbSend || !wetDest || indoorConvolver ||
+        typeof audioCtx.createConvolver !== 'function' || typeof audioCtx.createGain !== 'function') {
+      return;
+    }
+    indoorConvolver = audioCtx.createConvolver();
+    indoorConvolver.buffer = buildImpulseResponse(audioCtx, clamp(Number(reverbDecaySeconds) || 0.4, 0.05, 4));
+    indoorWetNode = audioCtx.createGain();
+    indoorWetNode.gain.value = targetWet;
+    ctx.reverbSend.connect(indoorConvolver);
+    indoorConvolver.connect(indoorWetNode);
+    indoorWetNode.connect(wetDest);
+  }
+
+  function setIndoor(indoor = false, {
+    lowPassHz = 650,
+    openLowPassHz = 18000,
+    transitionSeconds = 0.4,
+    reverbWet = 0.28,
+    reverbDecaySeconds = 0.4,
+  } = {}) {
+    indoorState = Boolean(indoor);
+    indoorLowPassHz = clamp(Number(lowPassHz) || 650, 80, 22000);
+    const openHz = clamp(Number(openLowPassHz) || 18000, 1000, 22000);
+    const targetHz = indoorState ? indoorLowPassHz : openHz;
+    const tSec = Math.max(0, Number(transitionSeconds) || 0.4);
+
+    buses.applySnapshot({
+      name: indoorState ? 'indoor' : 'outdoor',
+      transitionSeconds: tSec,
+      buses: {
+        ambience: { lowPassHz: targetHz },
+        ambient: { lowPassHz: targetHz },
+      },
+    });
+
+    const targetWet = indoorState ? clamp(Number(reverbWet) || 0.28, 0, 1) : 0;
+    if (indoorState) {
+      ensureIndoorConvolver(reverbDecaySeconds, targetWet);
+    }
+    if (indoorWetNode?.gain) {
+      indoorWetNode.gain.value = targetWet;
+    }
+    return indoorState;
+  }
+
+  async function unlockWithIndoor() {
+    const audioCtx = await ctx.unlock();
+    if (indoorState) {
+      ensureIndoorConvolver(0.4, 0.28);
+    }
+    return audioCtx;
+  }
+
+  function playSurfaceCue(surfaceType, kind = 'footstep', options = {}) {
+    const surf = String(surfaceType || 'concrete').toLowerCase();
+    const prefix = String(kind || 'footstep').toLowerCase();
+    const cueName = `${prefix}_${surf}`;
+    const opts = {
+      pitchJitter: 0.1,
+      gainJitter: 0.12,
+      ...options,
+    };
+    if (cues.has(cueName)) return playCue(cueName, opts);
+    if (cues.has(prefix)) return playCue(prefix, opts);
+    return Promise.resolve(null);
+  }
+
+  function bindLifecycle({
+    doc = globalThis.document ?? null,
+    win = globalThis.window ?? null,
+    miniGameHost = null,
+  } = {}) {
+    const onGesture = () => {
+      void buses.unlock().catch(() => {});
+    };
+    const onVisibility = () => {
+      if (!ctx.context) return;
+      if (doc?.hidden) {
+        void ctx.context.suspend?.().catch?.(() => {});
+      } else if (!ctx.muted) {
+        void ctx.context.resume?.().catch?.(() => {});
+      }
+    };
+    const onHide = () => {
+      if (ctx.context) void ctx.context.suspend?.().catch?.(() => {});
+    };
+    const onShow = () => {
+      if (ctx.context && !ctx.muted) void ctx.context.resume?.().catch?.(() => {});
+    };
+
+    if (win && typeof win.addEventListener === 'function') {
+      for (const ev of ['pointerdown', 'touchstart', 'keydown']) {
+        win.addEventListener(ev, onGesture, { passive: true });
+        lifecycleCleanups.push(() => win.removeEventListener(ev, onGesture));
+      }
+    }
+    if (doc && typeof doc.addEventListener === 'function') {
+      doc.addEventListener('visibilitychange', onVisibility);
+      lifecycleCleanups.push(() => doc.removeEventListener('visibilitychange', onVisibility));
+    }
+    if (miniGameHost && typeof miniGameHost.onHide === 'function') {
+      miniGameHost.onHide(onHide);
+      if (typeof miniGameHost.offHide === 'function') {
+        lifecycleCleanups.push(() => miniGameHost.offHide(onHide));
+      }
+    }
+    if (miniGameHost && typeof miniGameHost.onShow === 'function') {
+      miniGameHost.onShow(onShow);
+      if (typeof miniGameHost.offShow === 'function') {
+        lifecycleCleanups.push(() => miniGameHost.offShow(onShow));
+      }
+    }
+    return () => {
+      while (lifecycleCleanups.length > 0) {
+        const fn = lifecycleCleanups.pop();
+        try { fn?.(); } catch {}
+      }
+    };
+  }
+
   function dispose() {
+    while (lifecycleCleanups.length > 0) {
+      const fn = lifecycleCleanups.pop();
+      try { fn?.(); } catch {}
+    }
+    try { if (indoorConvolver) ctx.reverbSend?.disconnect?.(indoorConvolver); } catch {}
+    try { indoorWetNode?.disconnect?.(); } catch {}
+    try { indoorConvolver?.disconnect?.(); } catch {}
+    indoorConvolver = null;
+    indoorWetNode = null;
     for (const bgm of bgmInstances) bgm.dispose();
     bgmInstances.clear();
     for (const stream of [...activeStreams]) stream.stop();
@@ -887,7 +1025,11 @@ export function createAudioManager({
     get available() { return typeof AudioContextClass === 'function'; },
     get listener() { return { ...listenerState }; },
     get activeSnapshot() { return ctx.activeSnapshot ? ctx.activeSnapshot.name : null; },
-    unlock: ctx.unlock,
+    get isIndoor() { return indoorState; },
+    unlock: unlockWithIndoor,
+    setIndoor,
+    playSurfaceCue,
+    bindLifecycle,
     decode,
     play,
     playSynth,

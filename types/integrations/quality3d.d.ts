@@ -1,4 +1,10 @@
 /**
+ * Resolves either a platform profile (`mobile_low` | `mobile_high` | `pc_ultra`)
+ * or a base tier (`low` | `medium` | `high` | `ultra`).
+ * @param {'mobile_low' | 'mobile_high' | 'pc_ultra' | QualityPresetTier} [nameOrTier='mobile_high']
+ */
+export function resolveQuality3DProfile(nameOrTier?: QualityPresetTier | "mobile_low" | "mobile_high" | "pc_ultra" | undefined): any;
+/**
  * @param {QualityPresetTier} [tier='high']
  * @param {'2d'|'3d'} [dimension='3d']
  * @returns {Readonly<Quality3DPreset>|Readonly<Quality2DPreset>}
@@ -181,6 +187,139 @@ export function createPortraitDrsController({ width, height, dpr, maxDpr, minSca
 export const QUALITY_TIERS: readonly QualityTier[];
 /** @type {Readonly<Record<QualityPresetTier, Readonly<Quality3DPreset>>>} */
 export const QUALITY3D_PRESETS: Readonly<Record<QualityPresetTier, Readonly<Quality3DPreset>>>;
+/**
+ * Target-platform 3D realistic rendering profiles (`mobile_low`, `mobile_high`, `pc_ultra`)
+ * layered on top of `QUALITY3D_PRESETS` so `post3d` dead-pass pruning, CSM cascades,
+ * foliage Bayer dither, and decal projection mode scale cleanly across mobile & PC.
+ */
+export const QUALITY3D_PROFILES: Readonly<{
+    mobile_low: Readonly<{
+        profile: "mobile_low";
+        baseTier: "low";
+        shadowMapSize: 1024;
+        shadowsEnabled: true;
+        shadowCascades: 1;
+        maxDynamicLights: 4;
+        bloom: false;
+        ssao: false;
+        ssgi: false;
+        ssr: false;
+        contactShadows: false;
+        volumetricSteps: 0;
+        temporalAA: false;
+        fxaa: false;
+        foliageBayerDither: false;
+        decalMode: "surface";
+        /**
+         * Hard physical-pixel budget.
+         */
+        maxPixels: number;
+        /**
+         * Max device pixel ratio.
+         */
+        maxPixelRatio: number;
+        /**
+         * World units.
+         */
+        shadowDistance: number;
+        msaaSamples: number;
+        anisotropy: number;
+        sharpen: number;
+        /**
+         * World units.
+         */
+        drawDistance: number;
+        occlusionCulling: boolean;
+        animationLodScale: number;
+        particleScale: number;
+        megaLightsSamples: number;
+        maxClusteredLights: number;
+    }>;
+    mobile_high: Readonly<{
+        profile: "mobile_high";
+        baseTier: "medium";
+        shadowMapSize: 1024;
+        shadowsEnabled: true;
+        shadowCascades: 1;
+        maxDynamicLights: 8;
+        bloom: true;
+        ssao: false;
+        ssgi: false;
+        ssr: false;
+        contactShadows: false;
+        volumetricSteps: 0;
+        temporalAA: false;
+        fxaa: true;
+        foliageBayerDither: true;
+        decalMode: "projected";
+        /**
+         * Hard physical-pixel budget.
+         */
+        maxPixels: number;
+        /**
+         * Max device pixel ratio.
+         */
+        maxPixelRatio: number;
+        /**
+         * World units.
+         */
+        shadowDistance: number;
+        msaaSamples: number;
+        anisotropy: number;
+        sharpen: number;
+        /**
+         * World units.
+         */
+        drawDistance: number;
+        occlusionCulling: boolean;
+        animationLodScale: number;
+        particleScale: number;
+        megaLightsSamples: number;
+        maxClusteredLights: number;
+    }>;
+    pc_ultra: Readonly<{
+        profile: "pc_ultra";
+        baseTier: "ultra";
+        shadowMapSize: 2048;
+        shadowsEnabled: true;
+        shadowCascades: 3;
+        maxDynamicLights: 16;
+        bloom: true;
+        ssao: true;
+        ssgi: true;
+        ssr: true;
+        contactShadows: true;
+        volumetricSteps: 16;
+        temporalAA: true;
+        fxaa: true;
+        foliageBayerDither: true;
+        decalMode: "projected";
+        /**
+         * Hard physical-pixel budget.
+         */
+        maxPixels: number;
+        /**
+         * Max device pixel ratio.
+         */
+        maxPixelRatio: number;
+        /**
+         * World units.
+         */
+        shadowDistance: number;
+        msaaSamples: number;
+        anisotropy: number;
+        sharpen: number;
+        /**
+         * World units.
+         */
+        drawDistance: number;
+        occlusionCulling: boolean;
+        animationLodScale: number;
+        particleScale: number;
+        megaLightsSamples: number;
+        maxClusteredLights: number;
+    }>;
+}>;
 /** @type {Readonly<Record<QualityPresetTier, Readonly<Quality2DPreset>>>} */
 export const QUALITY2D_PRESETS: Readonly<Record<QualityPresetTier, Readonly<Quality2DPreset>>>;
 /** Portrait Bilibili Toy mobile-first 60fps balance preset capping fill-rate & shadow bandwidth. */

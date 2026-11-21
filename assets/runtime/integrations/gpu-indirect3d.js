@@ -155,7 +155,7 @@ export function createGpuIndirectCuller3D({
     });
     const indirectBuffer = webgpuDevice.createBuffer({
       size: indirectHeader.byteLength,
-      usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.INDIRECT | WEBGPU_BUFFER_USAGE.COPY_DST,
+      usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.INDIRECT | WEBGPU_BUFFER_USAGE.COPY_DST | WEBGPU_BUFFER_USAGE.COPY_SRC,
     });
     const bindGroup = webgpuDevice.createBindGroup?.({
       layout: pipeline.getBindGroupLayout(0),
@@ -355,6 +355,86 @@ export function createGpuIndirectCuller3D({
     };
   }
 
+  async function dispatchWebGpuCompute({
+    boundsData = null,
+    instanceCount = activeCount,
+    frustumPlanes = null,
+    indexCount = 36,
+    readback = false,
+  } = {}) {
+    if (disposed) throw new Error('GPU indirect culler is disposed');
+    if (frustumPlanes) setFrustumPlanes(frustumPlanes);
+    if (boundsData) setInstanceBoundsRange(boundsData, 0, instanceCount);
+    else if (instanceCount !== activeCount) setInstanceCount(instanceCount);
+
+    const workgroups = activeCount > 0 ? Math.ceil(activeCount / 64) : 0;
+    if (mode === 'webgpu-indirect' && gpuResources && typeof webgpuDevice.createCommandEncoder === 'function') {
+      const commandEncoder = webgpuDevice.createCommandEncoder();
+      execute({ commandEncoder, indexCount });
+
+      let readArgsBuf = null;
+      let readIdxBuf = null;
+      if (readback) {
+        readArgsBuf = webgpuDevice.createBuffer({
+          size: indirectHeader.byteLength,
+          usage: WEBGPU_BUFFER_USAGE.MAP_READ | WEBGPU_BUFFER_USAGE.COPY_DST,
+        });
+        commandEncoder.copyBufferToBuffer(gpuResources.indirectBuffer, 0, readArgsBuf, 0, indirectHeader.byteLength);
+        if (activeCount > 0) {
+          readIdxBuf = webgpuDevice.createBuffer({
+            size: activeCount * 4,
+            usage: WEBGPU_BUFFER_USAGE.MAP_READ | WEBGPU_BUFFER_USAGE.COPY_DST,
+          });
+          commandEncoder.copyBufferToBuffer(gpuResources.visibleBuffer, 0, readIdxBuf, 0, activeCount * 4);
+        }
+      }
+
+      webgpuDevice.queue.submit([commandEncoder.finish()]);
+
+      if (readback && readArgsBuf) {
+        await readArgsBuf.mapAsync(0x0001);
+        const argsView = new Uint32Array(readArgsBuf.getMappedRange());
+        const visibleCount = Math.min(activeCount, argsView[1] >>> 0);
+        readArgsBuf.unmap();
+        readArgsBuf.destroy();
+
+        let visibleOut = new Uint32Array(0);
+        if (readIdxBuf) {
+          await readIdxBuf.mapAsync(0x0001);
+          const idxView = new Uint32Array(readIdxBuf.getMappedRange());
+          visibleOut = new Uint32Array(idxView.subarray(0, visibleCount));
+          readIdxBuf.unmap();
+          readIdxBuf.destroy();
+        }
+        stats.visibleCount = visibleCount;
+        return {
+          mode,
+          dispatched: activeCount,
+          visibleCount,
+          visibleIndices: visibleOut,
+          workgroups,
+        };
+      }
+
+      return {
+        mode,
+        dispatched: activeCount,
+        visibleCount: stats.visibleCount,
+        visibleIndices: null,
+        workgroups,
+      };
+    }
+
+    const res = execute({ indexCount });
+    return {
+      mode,
+      dispatched: activeCount,
+      visibleCount: res.visibleCount,
+      visibleIndices: res.visibleIndices ?? null,
+      workgroups: 0,
+    };
+  }
+
   function dispose() {
     if (disposed) return false;
     disposed = true;
@@ -377,6 +457,7 @@ export function createGpuIndirectCuller3D({
     setInstanceCount,
     setFrustumPlanes,
     execute,
+    dispatchWebGpuCompute,
     getStats() { return Object.freeze({ ...stats }); },
     dispose,
   };

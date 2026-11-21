@@ -8,6 +8,89 @@ import {
 import { applyVfxDepthState, DEFAULT_VFX_DEPTH_TEST, getVfxDepthTestIndex, VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 import { VFX_FLIPBOOK_GLSL } from './vfx-flipbook.js';
 
+const TWO_PI = Math.PI * 2;
+
+function wrapAngle02Pi(rad) {
+  const r = Number(rad) || 0;
+  return ((r % TWO_PI) + TWO_PI) % TWO_PI;
+}
+
+function wrapAngleSignedPi(rad) {
+  let r = wrapAngle02Pi(rad);
+  if (r > Math.PI) r -= TWO_PI;
+  return r;
+}
+
+function pack2x12Pos(a, b, maxA, maxB) {
+  const qa = Math.max(0, Math.min(4095, Math.round((Math.max(0, Math.min(maxA, Number(a) || 0)) / maxA) * 4095)));
+  const qb = Math.max(0, Math.min(4095, Math.round((Math.max(0, Math.min(maxB, Number(b) || 0)) / maxB) * 4095)));
+  return qa * 4096 + qb;
+}
+
+function pack2x12Sym(a, b, absA, absB) {
+  const ca = Math.max(-absA, Math.min(absA, Number(a) || 0));
+  const cb = Math.max(-absB, Math.min(absB, Number(b) || 0));
+  const qa = Math.max(0, Math.min(4094, Math.round(((ca + absA) / (2 * absA)) * 4094)));
+  const qb = Math.max(0, Math.min(4094, Math.round(((cb + absB) / (2 * absB)) * 4094)));
+  return qa * 4096 + qb;
+}
+
+function pack2x12Mixed(a, b, maxA, absB) {
+  const qa = Math.max(0, Math.min(4095, Math.round((Math.max(0, Math.min(maxA, Number(a) || 0)) / maxA) * 4095)));
+  const cb = Math.max(-absB, Math.min(absB, Number(b) || 0));
+  const qb = Math.max(0, Math.min(4094, Math.round(((cb + absB) / (2 * absB)) * 4094)));
+  return qa * 4096 + qb;
+}
+
+function packUvPair(u, v) {
+  const qu = Math.max(0, Math.min(3840, Math.round(Math.max(0, Math.min(1, Number(u) || 0)) * 3840)));
+  const qv = Math.max(0, Math.min(3840, Math.round(Math.max(0, Math.min(1, Number(v) || 0)) * 3840)));
+  return qu * 4096 + qv;
+}
+
+function unpack2x12Pos(packed, maxA, maxB, out = [0, 0]) {
+  const v = Math.max(0, Math.min(16777215, Math.floor((Number(packed) || 0) + 0.5)));
+  const qa = Math.floor(v / 4096);
+  const qb = v - qa * 4096;
+  out[0] = (qa / 4095) * maxA;
+  out[1] = (qb / 4095) * maxB;
+  return out;
+}
+
+function unpack2x12Sym(packed, absA, absB, out = [0, 0]) {
+  const v = Math.max(0, Math.min(16777215, Math.floor((Number(packed) || 0) + 0.5)));
+  const qa = Math.floor(v / 4096);
+  const qb = v - qa * 4096;
+  out[0] = (qa / 4094) * (2 * absA) - absA;
+  out[1] = (qb / 4094) * (2 * absB) - absB;
+  return out;
+}
+
+function unpack2x12Mixed(packed, maxA, absB, out = [0, 0]) {
+  const v = Math.max(0, Math.min(16777215, Math.floor((Number(packed) || 0) + 0.5)));
+  const qa = Math.floor(v / 4096);
+  const qb = v - qa * 4096;
+  out[0] = (qa / 4095) * maxA;
+  out[1] = (qb / 4094) * (2 * absB) - absB;
+  return out;
+}
+
+function unpackUvPair(packed, out = [0, 0]) {
+  const v = Math.max(0, Math.min(16777215, Math.floor((Number(packed) || 0) + 0.5)));
+  const qu = Math.floor(v / 4096);
+  const qv = v - qu * 4096;
+  out[0] = Math.min(1, qu / 3840);
+  out[1] = Math.min(1, qv / 3840);
+  return out;
+}
+
+export {
+  unpack2x12Pos,
+  unpack2x12Sym,
+  unpack2x12Mixed,
+  unpackUvPair,
+};
+
 export const VFX_RENDER_MODE = Object.freeze({
   BILLBOARD: 0,
   HORIZONTAL: 1,
@@ -596,16 +679,12 @@ attribute vec3 position;
 attribute vec2 uv;
 attribute vec4 aAtlasP0; // x0, y0, z0, spawnTime
 attribute vec4 aAtlasP1; // vx, vy, vz, duration
-attribute vec4 aAtlasP2; // sizeStart, gravity, drag, curveRow
-attribute vec4 aAtlasP3; // rot0, angularVel, hdr, renderMode (0=billboard, 1=horizontal, 2=stretched, 4=vertical)
-attribute vec4 aAtlasP4; // u0, v0, u1, v1
-attribute vec4 aAtlasP5; // cols, rows, cycles, blendFlag
-attribute vec4 aAtlasP6; // noiseStrength, noiseFreq, stretchOrYScale, phase
-attribute vec4 aAtlasP7; // tintRgb24, orbitalY, centerOffX, centerOffZ
-attribute vec4 aAtlasP8; // accelX, accelZ, aspectY, packedFlags
-attribute vec4 aAtlasP9; // rotX0, rotY0, spinX, spinY
-attribute vec4 aAtlasP10; // pivotX, pivotY, stretchedVelScale, stretchedLengthScale
-attribute vec4 aAtlasP11; // packedCutoffCamFade, packedUvScaleOffX, emissionBoost, packedUvOffYAndDissolve
+attribute vec4 aAtlasP2; // sizeStart, gravity, drag, packedRowAndFlags
+attribute vec4 aAtlasP3; // packedRotZ, packedHdrEmission, packedPivot, packedStretchScales
+attribute vec4 aAtlasP4; // packedUv0, packedUv1, packedFlipbook, tintRgb24
+attribute vec4 aAtlasP5; // packedNoise, packedScaleY, orbitalY, packedPhaseSpaceFlags
+attribute vec4 aAtlasP6; // packedCenterOffXZ, packedAccelXZ, packedRotXY, packedSpinXY
+attribute vec4 aAtlasP7; // packedCutoffCamFade, packedUvScaleOffX, packedUvOffYAndDissolve, reserved
 
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
@@ -632,6 +711,34 @@ vec3 unpackRgb24(float v) {
   float g = floor(rem / 256.0);
   float b = rem - g * 256.0;
   return vec3(r, g, b) / 255.0;
+}
+
+vec2 unpack2x12Pos(float packed, float maxA, float maxB) {
+  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+  float qa = floor(v / 4096.0);
+  float qb = v - qa * 4096.0;
+  return vec2((qa / 4095.0) * maxA, (qb / 4095.0) * maxB);
+}
+
+vec2 unpack2x12Sym(float packed, float absA, float absB) {
+  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+  float qa = floor(v / 4096.0);
+  float qb = v - qa * 4096.0;
+  return vec2((qa / 4094.0) * (2.0 * absA) - absA, (qb / 4094.0) * (2.0 * absB) - absB);
+}
+
+vec2 unpack2x12Mixed(float packed, float maxA, float absB) {
+  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+  float qa = floor(v / 4096.0);
+  float qb = v - qa * 4096.0;
+  return vec2((qa / 4095.0) * maxA, (qb / 4094.0) * (2.0 * absB) - absB);
+}
+
+vec2 unpackUvPair(float packed) {
+  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+  float qu = floor(v / 4096.0);
+  float qv = v - qu * 4096.0;
+  return clamp(vec2(qu, qv) / 3840.0, 0.0, 1.0);
 }
 
 float sampleSizeCurve(float row, float t) {
@@ -683,7 +790,14 @@ mat3 euler3D(float rx, float ry, float rz) {
 void main() {
   float age = uTime - aAtlasP0.w;
   float dur = aAtlasP1.w;
-  float rawCurve = aAtlasP2.w;
+  float rowWord = floor(max(0.0, aAtlasP2.w) + 0.5);
+  float materialFlags = floor(rowWord / 1048576.0); rowWord -= materialFlags * 1048576.0;
+  float cullFlag = floor(rowWord / 262144.0); rowWord -= cullFlag * 262144.0;
+  float hasSizeSep = step(131071.5, rowWord); rowWord -= hasSizeSep * 131072.0;
+  float noiseDamp = step(65535.5, rowWord); rowWord -= noiseDamp * 65536.0;
+  float hasVelCurve = step(32767.5, rowWord); rowWord -= hasVelCurve * 32768.0;
+  float renderMode = floor(rowWord / 4096.0); rowWord -= renderMode * 4096.0;
+  float rawCurve = rowWord;
   bool isPersistent = rawCurve >= 1023.5;
   bool isLoopCurve = rawCurve >= 1023.5 && rawCurve < 2047.5;
   float curveRow = mod(rawCurve, 1024.0);
@@ -692,29 +806,47 @@ void main() {
     return;
   }
 
+  vec2 rotZPair = unpack2x12Mixed(aAtlasP3.x, 6.2831853, 64.0);
+  vec2 hdrEmPair = unpack2x12Pos(aAtlasP3.y, 35.0, 35.0);
+  vec2 pivotPair = unpack2x12Sym(aAtlasP3.z, 2.0, 2.0);
+  vec2 stretchScales = unpack2x12Pos(aAtlasP3.w, 15.0, 15.0);
+
+  vec2 uv0 = unpackUvPair(aAtlasP4.x);
+  vec2 uv1 = unpackUvPair(aAtlasP4.y);
+  float fbWord = floor(max(0.0, aAtlasP4.z) + 0.5);
+  float cyclesQ = floor(fbWord / 8192.0); fbWord -= cyclesQ * 8192.0;
+  float fbBlend = step(4095.5, fbWord); fbWord -= fbBlend * 4096.0;
+  float fbRows = floor(fbWord / 64.0) + 1.0;
+  float fbCols = mod(fbWord, 64.0) + 1.0;
+
+  vec2 noisePair = unpack2x12Pos(aAtlasP5.x, 35.0, 15.0);
+  vec2 scaleYPair = unpack2x12Pos(aAtlasP5.y, 15.0, 15.0);
+  float orbitalY = aAtlasP5.z;
+  float psWord = floor(max(0.0, aAtlasP5.w) + 0.5);
+  float scrollQ = floor(psWord / 262144.0); psWord -= scrollQ * 262144.0;
+  float windQ = floor(psWord / 8192.0); psWord -= windQ * 8192.0;
+  int slotIdx = int(floor(psWord / 256.0));
+  float phaseVal = (psWord - float(slotIdx) * 256.0) / 255.0;
+  float noiseScroll = scrollQ * 0.25;
+  float windMul = windQ * 0.25;
+
+  vec2 centerOffXZ = unpack2x12Sym(aAtlasP6.x, 64.0, 64.0);
+  vec2 accelXZ = unpack2x12Sym(aAtlasP6.y, 64.0, 64.0);
+  vec2 rotXY0 = unpack2x12Sym(aAtlasP6.z, 3.14159265, 3.14159265);
+  vec2 spinXY = unpack2x12Sym(aAtlasP6.w, 32.0, 32.0);
+
   float t = isLoopCurve ? fract(age / max(0.001, dur)) : (isPersistent ? 0.0 : age / dur);
   vLifeRatio = t;
   vUv = uv;
   vCurveRow = curveRow;
-  vHdr = aAtlasP3.z;
-  vUvRect = aAtlasP4;
-  vFlipbook = aAtlasP5;
-  vTint = unpackRgb24(aAtlasP7.x);
+  vHdr = hdrEmPair.x;
+  vUvRect = vec4(uv0, uv1);
+  vFlipbook = vec4(fbCols, fbRows, cyclesQ / 32.0, fbBlend);
+  vTint = unpackRgb24(aAtlasP4.w);
 
-  float fl = floor(max(0.0, aAtlasP8.w) + 0.5);
-  float cullFlag = floor(fl / 524288.0); fl -= cullFlag * 524288.0;
-  float scrollQ = floor(fl / 8192.0); fl -= scrollQ * 8192.0;
-  float windQ = floor(fl / 256.0); fl -= windQ * 256.0;
-  float hasSizeSep = step(127.5, fl); fl -= hasSizeSep * 128.0;
-  float noiseDamp = step(63.5, fl); fl -= noiseDamp * 64.0;
-  float hasVelCurve = step(31.5, fl); fl -= hasVelCurve * 32.0;
-  int slotIdx = int(fl + 0.5);
-  float noiseScroll = scrollQ * 0.25;
-  float windMul = windQ * 0.25;
-
-  vec3 cutCam = unpackRgb24(aAtlasP11.x);
-  vec3 uvS = unpackRgb24(aAtlasP11.y);
-  vec3 uvOD = unpackRgb24(aAtlasP11.w);
+  vec3 cutCam = unpackRgb24(aAtlasP7.x);
+  vec3 uvS = unpackRgb24(aAtlasP7.y);
+  vec3 uvOD = unpackRgb24(aAtlasP7.z);
   float alphaCutoff = cutCam.x;
   float camFadeNear = cutCam.y * 16.0;
   float camFadeFar = cutCam.z * 32.0;
@@ -723,9 +855,8 @@ void main() {
   float uvOffX = uvS.z;
   float uvOffY = uvOD.x;
   float dissolveStart = uvOD.y;
-  vMatParams = vec4(alphaCutoff, max(0.0, aAtlasP11.z), dissolveStart, cullFlag);
+  vMatParams = vec4(alphaCutoff, max(0.0, hdrEmPair.y), dissolveStart, cullFlag);
   vUvTransform = vec4(uvScaleX, uvScaleY, uvOffX, uvOffY);
-  float materialFlags = floor(uvOD.z * 255.0 + 0.5);
   vFadesAndTexture.yz = vec2(mod(materialFlags, 2.0), floor(materialFlags / 2.0));
 
   vec3 effDelta = vec3(0.0);
@@ -756,33 +887,31 @@ void main() {
       velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
     }
     vec3 gVec = (uIs2D > 0.5)
-      ? vec3(aAtlasP8.x, aAtlasP2.y, aAtlasP8.y) + uWind * windMul
-      : vec3(aAtlasP8.x, -aAtlasP2.y, aAtlasP8.y) + uWind * windMul;
+      ? vec3(accelXZ.x, aAtlasP2.y, accelXZ.y) + uWind * windMul
+      : vec3(accelXZ.x, -aAtlasP2.y, accelXZ.y) + uWind * windMul;
     worldPos = aAtlasP0.xyz + aAtlasP1.xyz * dispFactor + 0.5 * gVec * (age * age);
     curVel = aAtlasP1.xyz * velDecay + gVec * age;
 
-    float orb = aAtlasP7.y;
-    if (abs(orb) > 0.0001 && uIs2D < 0.5) {
-      vec2 cxz = aAtlasP0.xz - aAtlasP7.zw;
+    if (abs(orbitalY) > 0.0001 && uIs2D < 0.5) {
+      vec2 cxz = aAtlasP0.xz - centerOffXZ;
       vec2 rel = worldPos.xz - cxz;
-      float oa = orb * age;
+      float oa = orbitalY * age;
       float oc = cos(oa);
       float os = sin(oa);
       worldPos.xz = cxz + vec2(rel.x * oc - rel.y * os, rel.x * os + rel.y * oc);
       curVel.xz = vec2(curVel.x * oc - curVel.z * os, curVel.x * os + curVel.z * oc);
     }
 
-    float nStr = aAtlasP6.x;
+    float nStr = noisePair.x;
     if (nStr > 0.001) {
-      float nFreq = max(0.08, aAtlasP6.y);
-      float ph = aAtlasP6.w * 6.2831853 + noiseScroll * age * 1.7;
-      float ph0 = aAtlasP6.w * 6.2831853;
-      float travelSpd = length(aAtlasP1.xyz) + abs(aAtlasP7.y) * length(aAtlasP7.zw);
+      float nFreq = max(0.08, noisePair.y);
+      float ph = phaseVal * 6.2831853 + noiseScroll * age * 1.7;
+      float ph0 = phaseVal * 6.2831853;
+      float travelSpd = length(aAtlasP1.xyz) + abs(orbitalY) * length(centerOffXZ);
       float spatialRate = 1.0 + clamp((travelSpd - 2.2) * 0.25, 0.0, 5.5);
       float w1 = nFreq * 2.5 * spatialRate;
       float w2 = nFreq * 4.2 * spatialRate;
-      float rm = aAtlasP3.w;
-      float yScale = (rm > 1.5 && rm < 2.5) ? 1.0 : aAtlasP6.z;
+      float yScale = (renderMode > 1.5 && renderMode < 2.5) ? 1.0 : scaleYPair.x;
       vec3 disp1 = vec3(
         (sin(w1 * age + ph) - sin(ph0)) / w1,
         (sin(w1 * age * 1.13 + ph * 2.1) - sin(ph0 * 2.1)) / (w1 * 1.13),
@@ -804,11 +933,10 @@ void main() {
 
   float curSize = aAtlasP2.x * sampleSizeCurve(curveRow, t);
   float curSizeY = (hasSizeSep > 0.5) ? (aAtlasP2.x * sampleSizeYCurve(curveRow, t)) : curSize;
-  float aspectY = max(0.05, aAtlasP8.z);
-  float rot = aAtlasP3.x + aAtlasP3.y * age;
-  float renderMode = aAtlasP3.w;
-  bool hasRot3D = (abs(aAtlasP9.x) + abs(aAtlasP9.y) + abs(aAtlasP9.z) + abs(aAtlasP9.w)) > 0.001;
-  vec2 posLocal = position.xy - aAtlasP10.xy;
+  float aspectY = max(0.05, scaleYPair.y);
+  float rot = rotZPair.x + rotZPair.y * age;
+  bool hasRot3D = (abs(rotXY0.x) + abs(rotXY0.y) + abs(spinXY.x) + abs(spinXY.y)) > 0.001;
+  vec2 posLocal = position.xy - pivotPair;
 
   if (uIs2D > 0.5) {
     vFadesAndTexture.x = 1.0;
@@ -823,9 +951,9 @@ void main() {
         axisX = curVel.xy / spd;
         axisY = vec2(-axisX.y, axisX.x);
       }
-      lenScale = (aAtlasP10.z > 0.0001 || aAtlasP10.w > 0.0001)
-        ? (curSize * max(0.05, aAtlasP10.w) + spd * aAtlasP10.z * 0.015)
-        : (curSize * (1.0 + aAtlasP6.z * min(spd * 0.015, 4.0)));
+      lenScale = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
+        ? (curSize * max(0.05, stretchScales.y) + spd * stretchScales.x * 0.015)
+        : (curSize * (1.0 + scaleYPair.x * min(spd * 0.015, 4.0)));
     }
     vec2 p2 = worldPos.xy + axisX * (posLocal.x * lenScale) + axisY * (posLocal.y * curSizeY * aspectY);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(p2, worldPos.z, 1.0);
@@ -836,7 +964,7 @@ void main() {
       : 1.0;
 
     if (hasRot3D && (renderMode < 1.5 || renderMode > 3.5)) {
-      mat3 rotMat = euler3D(aAtlasP9.x + aAtlasP9.z * age, aAtlasP9.y + aAtlasP9.w * age, rot);
+      mat3 rotMat = euler3D(rotXY0.x + spinXY.x * age, rotXY0.y + spinXY.y * age, rot);
       vec3 localQ = vec3(posLocal.x * curSize, posLocal.y * curSizeY * aspectY, 0.0);
       if (renderMode > 0.5 && renderMode < 1.5) {
         localQ = vec3(posLocal.x * curSize, 0.0, posLocal.y * curSizeY * aspectY);
@@ -873,9 +1001,9 @@ void main() {
         vec3 viewVel = mat3(modelViewMatrix) * curVel;
         float spd = length(viewVel.xy);
         rightAxis = spd > 0.001 ? (viewVel.xy / spd) : vec2(cos(rot), sin(rot));
-        major = (aAtlasP10.z > 0.0001 || aAtlasP10.w > 0.0001)
-          ? (curSize * max(0.05, aAtlasP10.w) + min(spd * aAtlasP10.z, curSize * 8.0))
-          : (curSize * (1.0 + aAtlasP6.z * min(spd * 0.08, 4.5)));
+        major = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
+          ? (curSize * max(0.05, stretchScales.y) + min(spd * stretchScales.x, curSize * 8.0))
+          : (curSize * (1.0 + scaleYPair.x * min(spd * 0.08, 4.5)));
       } else {
         rightAxis = vec2(cos(rot), sin(rot));
       }
@@ -1158,7 +1286,6 @@ layout(location = 5) in vec4 aAtlasP4;
 layout(location = 6) in vec4 aAtlasP5;
 layout(location = 7) in vec4 aAtlasP6;
 layout(location = 8) in vec4 aAtlasP7;
-layout(location = 9) in vec4 aAtlasP8;
 
 uniform sampler2D uCurveLut;
 uniform float uTime;
@@ -1183,6 +1310,34 @@ vec3 unpackRgb24(float v) {
   float g = floor(rem / 256.0);
   float b = rem - g * 256.0;
   return vec3(r, g, b) / 255.0;
+}
+
+vec2 unpack2x12Pos(float packed, float maxA, float maxB) {
+  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+  float qa = floor(v / 4096.0);
+  float qb = v - qa * 4096.0;
+  return vec2((qa / 4095.0) * maxA, (qb / 4095.0) * maxB);
+}
+
+vec2 unpack2x12Sym(float packed, float absA, float absB) {
+  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+  float qa = floor(v / 4096.0);
+  float qb = v - qa * 4096.0;
+  return vec2((qa / 4094.0) * (2.0 * absA) - absA, (qb / 4094.0) * (2.0 * absB) - absB);
+}
+
+vec2 unpack2x12Mixed(float packed, float maxA, float absB) {
+  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+  float qa = floor(v / 4096.0);
+  float qb = v - qa * 4096.0;
+  return vec2((qa / 4095.0) * maxA, (qb / 4094.0) * (2.0 * absB) - absB);
+}
+
+vec2 unpackUvPair(float packed) {
+  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+  float qu = floor(v / 4096.0);
+  float qv = v - qu * 4096.0;
+  return clamp(vec2(qu, qv) / 3840.0, 0.0, 1.0);
 }
 
 float sampleSizeCurve(float row, float t) {
@@ -1223,7 +1378,14 @@ float sampleVelDispCurve(float row, float t) {
 void main() {
   float age = uTime - aAtlasP0.w;
   float dur = aAtlasP1.w;
-  float rawCurve = aAtlasP2.w;
+  float rowWord = floor(max(0.0, aAtlasP2.w) + 0.5);
+  float materialFlags = floor(rowWord / 1048576.0); rowWord -= materialFlags * 1048576.0;
+  float cullFlag = floor(rowWord / 262144.0); rowWord -= cullFlag * 262144.0;
+  float hasSizeSep = step(131071.5, rowWord); rowWord -= hasSizeSep * 131072.0;
+  float noiseDamp = step(65535.5, rowWord); rowWord -= noiseDamp * 65536.0;
+  float hasVelCurve = step(32767.5, rowWord); rowWord -= hasVelCurve * 32768.0;
+  float renderMode = floor(rowWord / 4096.0); rowWord -= renderMode * 4096.0;
+  float rawCurve = rowWord;
   bool isPersistent = rawCurve >= 1023.5;
   bool isLoopCurve = rawCurve >= 1023.5 && rawCurve < 2047.5;
   float curveRow = mod(rawCurve, 1024.0);
@@ -1231,28 +1393,41 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
+
+  vec2 rotZPair = unpack2x12Mixed(aAtlasP3.x, 6.2831853, 64.0);
+  vec2 hdrEmPair = unpack2x12Pos(aAtlasP3.y, 35.0, 35.0);
+  vec2 pivotPair = unpack2x12Sym(aAtlasP3.z, 2.0, 2.0);
+  vec2 stretchScales = unpack2x12Pos(aAtlasP3.w, 15.0, 15.0);
+
+  vec2 uv0 = unpackUvPair(aAtlasP4.x);
+  vec2 uv1 = unpackUvPair(aAtlasP4.y);
+  float fbWord = floor(max(0.0, aAtlasP4.z) + 0.5);
+  float cyclesQ = floor(fbWord / 8192.0); fbWord -= cyclesQ * 8192.0;
+  float fbBlend = step(4095.5, fbWord); fbWord -= fbBlend * 4096.0;
+  float fbRows = floor(fbWord / 64.0) + 1.0;
+  float fbCols = mod(fbWord, 64.0) + 1.0;
+
+  vec2 noisePair = unpack2x12Pos(aAtlasP5.x, 35.0, 15.0);
+  vec2 scaleYPair = unpack2x12Pos(aAtlasP5.y, 15.0, 15.0);
+  float psWord = floor(max(0.0, aAtlasP5.w) + 0.5);
+  float scrollQ = floor(psWord / 262144.0); psWord -= scrollQ * 262144.0;
+  float windQ = floor(psWord / 8192.0); psWord -= windQ * 8192.0;
+  int slotIdx = int(floor(psWord / 256.0));
+  float phaseVal = (psWord - float(slotIdx) * 256.0) / 255.0;
+  float noiseScroll = scrollQ * 0.25;
+  float windMul = windQ * 0.25;
+  vec2 accelXZ = unpack2x12Sym(aAtlasP6.y, 64.0, 64.0);
+
   float t = isLoopCurve ? fract(age / max(0.001, dur)) : (isPersistent ? 0.0 : age / dur);
   vLifeRatio = t;
   vUv = aQuadPos + 0.5;
   vCurveRow = curveRow;
-  vHdr = aAtlasP3.z;
-  vUvRect = aAtlasP4;
-  vFlipbook = aAtlasP5;
-  vTint = unpackRgb24(aAtlasP7.x);
+  vHdr = hdrEmPair.x;
+  vUvRect = vec4(uv0, uv1);
+  vFlipbook = vec4(fbCols, fbRows, cyclesQ / 32.0, fbBlend);
+  vTint = unpackRgb24(aAtlasP4.w);
 
-  float fl = floor(max(0.0, aAtlasP8.w) + 0.5);
-  float cullFlag = floor(fl / 524288.0); fl -= cullFlag * 524288.0;
-  float scrollQ = floor(fl / 8192.0); fl -= scrollQ * 8192.0;
-  float windQ = floor(fl / 256.0); fl -= windQ * 256.0;
-  float hasSizeSep = step(127.5, fl); fl -= hasSizeSep * 128.0;
-  float noiseDamp = step(63.5, fl); fl -= noiseDamp * 64.0;
-  float hasVelCurve = step(31.5, fl); fl -= hasVelCurve * 32.0;
-  int slotIdx = int(fl + 0.5);
-  float noiseScroll = scrollQ * 0.25;
-  float windMul = windQ * 0.25;
-
-  // WebGL2 2D uses the 3D orbital-motion slot for the cutoff.
-  vAlphaCutoff = aAtlasP7.y;
+  vAlphaCutoff = unpackRgb24(aAtlasP7.x).x;
 
   float k = aAtlasP2.z;
   vec2 worldPos;
@@ -1273,14 +1448,14 @@ void main() {
       dispFactor = (k > 0.001) ? ((1.0 - exp(-k * age)) / k) : age;
       velDecay = (k > 0.001) ? exp(-k * age) : 1.0;
     }
-    vec2 gVec = vec2(aAtlasP8.x, aAtlasP2.y) + uWind2D * windMul;
+    vec2 gVec = vec2(accelXZ.x, aAtlasP2.y) + uWind2D * windMul;
     worldPos = aAtlasP0.xy + aAtlasP1.xy * dispFactor + 0.5 * gVec * (age * age);
     curVel = aAtlasP1.xy * velDecay + gVec * age;
 
-    float nStr = aAtlasP6.x;
+    float nStr = noisePair.x;
     if (nStr > 0.001) {
-      float nFreq = max(0.05, aAtlasP6.y);
-      float ph = aAtlasP6.w * 6.2831853 + noiseScroll * age * 1.7;
+      float nFreq = max(0.05, noisePair.y);
+      float ph = phaseVal * 6.2831853 + noiseScroll * age * 1.7;
       float wt = age * nFreq * 3.14159265;
       float dampScale = (noiseDamp > 0.5) ? clamp(length(curVel) * 0.03, 0.15, 2.0) : 1.0;
       worldPos += vec2(sin(wt + ph) * cos(wt * 0.73 + ph), cos(wt * 1.17 + ph)) * (nStr * min(1.0, age * 1.5) * 12.0 * dampScale);
@@ -1292,22 +1467,25 @@ void main() {
 
   float curSize = aAtlasP2.x * sampleSizeCurve(curveRow, t);
   float curSizeY = (hasSizeSep > 0.5) ? (aAtlasP2.x * sampleSizeYCurve(curveRow, t)) : curSize;
-  float aspectY = max(0.05, aAtlasP8.z);
-  float rot = aAtlasP3.x + aAtlasP3.y * age;
+  float aspectY = max(0.05, scaleYPair.y);
+  float rot = rotZPair.x + rotZPair.y * age;
   vec2 axisX = vec2(cos(rot), sin(rot));
   vec2 axisY = vec2(-axisX.y, axisX.x);
   float lenScale = curSize;
-  if (aAtlasP3.w > 1.5 && aAtlasP3.w < 2.5) {
+  if (renderMode > 1.5 && renderMode < 2.5) {
     float spd = length(curVel);
     if (spd > 0.001) {
       axisX = curVel / spd;
       axisY = vec2(-axisX.y, axisX.x);
     }
-    lenScale = curSize * (1.0 + aAtlasP6.z * min(spd * 0.015, 4.0));
+    lenScale = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
+      ? (curSize * max(0.05, stretchScales.y) + spd * stretchScales.x * 0.015)
+      : (curSize * (1.0 + scaleYPair.x * min(spd * 0.015, 4.0)));
   }
 
-  float billH = (aAtlasP3.w < 0.5) ? (curSizeY * aspectY) : curSizeY;
-  vec2 p = worldPos + axisX * (aQuadPos.x * lenScale) + axisY * (aQuadPos.y * billH);
+  float billH = (renderMode < 0.5) ? (curSizeY * aspectY) : curSizeY;
+  vec2 posLocal = aQuadPos - pivotPair;
+  vec2 p = worldPos + axisX * (posLocal.x * lenScale) + axisY * (posLocal.y * billH);
   vec2 screenPx = (p - uCamPos) * uCamZoom + uViewSize * 0.5;
   vec2 ndc = vec2(
     (screenPx.x / max(1.0, uViewSize.x)) * 2.0 - 1.0,
@@ -1418,10 +1596,6 @@ function createAtlasChannel(capacity, blendMode = 'alpha') {
     p5: new Float32Array(capacity * 4),
     p6: new Float32Array(capacity * 4),
     p7: new Float32Array(capacity * 4),
-    p8: new Float32Array(capacity * 4),
-    p9: new Float32Array(capacity * 4),
-    p10: new Float32Array(capacity * 4),
-    p11: new Float32Array(capacity * 4),
     cursor: 0,
     slotCount: 0,
     latestDeath: -Infinity,
@@ -1448,7 +1622,8 @@ function createAtlasChannel(capacity, blendMode = 'alpha') {
 function atlasSlotDeath(ch, offset) {
   const duration = ch.p1[offset + 3];
   if (!(duration > 0)) return -Infinity;
-  return ch.p2[offset + 3] >= 1024 ? Infinity : ch.p0[offset + 3] + duration;
+  const rawCurve = Math.floor((ch.p2[offset + 3] || 0) + 0.5) % 4096;
+  return rawCurve >= 1024 ? Infinity : ch.p0[offset + 3] + duration;
 }
 
 function compileWebGL2Program(gl, vsSrc, fsSrc) {
@@ -1659,11 +1834,15 @@ export function createAtlasParticlePool({
   const scratchTint = new Float32Array(3);
   const scratchPos = new Float32Array(3);
 
+  let atlasFlipVOverride = null;
+
   function updateThreeAtlasUniforms(ch) {
     if (!ch.threeMat) return;
     ch.threeMat.uniforms.uAtlasTex.value = activeAtlasTex;
     ch.threeMat.uniforms.uHasAtlas.value = activeAtlasTex ? 1.0 : 0.0;
-    ch.threeMat.uniforms.uFlipV.value = activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0;
+    ch.threeMat.uniforms.uFlipV.value = atlasFlipVOverride !== null
+      ? (atlasFlipVOverride ? 1.0 : 0.0)
+      : (activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0);
   }
 
   function initThreeChannel(ch, depthTest = DEFAULT_VFX_DEPTH_TEST, depthWrite = false, opaque = false) {
@@ -1675,7 +1854,7 @@ export function createAtlasParticlePool({
     geo.attributes.uv = base.attributes.uv;
     geo.instanceCount = 0;
 
-    const arrays = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7, ch.p8, ch.p9, ch.p10, ch.p11];
+    const arrays = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
     const attrs = [];
     for (let i = 0; i < arrays.length; i++) {
       const attr = new THREE.InstancedBufferAttribute(arrays[i], 4);
@@ -1693,7 +1872,11 @@ export function createAtlasParticlePool({
       uCurveLut: { value: lut.texture },
       uAtlasTex: { value: activeAtlasTex },
       uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
-      uFlipV: { value: activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0 },
+      uFlipV: {
+        value: atlasFlipVOverride !== null
+          ? (atlasFlipVOverride ? 1.0 : 0.0)
+          : (activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0),
+      },
       uWind: windUniform,
       uEffectDeltas: { value: threeEffectVecs },
       ...(ch.distortion ? sceneColorUniforms : softDepthUniforms),
@@ -1799,7 +1982,7 @@ export function createAtlasParticlePool({
       gl.enableVertexAttribArray(0);
       gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-      const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7, ch.p8];
+      const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
       const vbos = [];
       for (let i = 0; i < dataArrs.length; i++) {
         const vbo = gl.createBuffer();
@@ -1823,14 +2006,19 @@ export function createAtlasParticlePool({
   }
 
   /**
-   * Binds a custom atlas texture/canvas and region UV dictionary `[u0, v0, u1, v1]`.
+   * Binds a custom atlas texture/canvas (including KTX2 CompressedTexture/WebP)
+   * and region UV dictionary `[u0, v0, u1, v1]`.
    * @param {object | null} textureOrCanvas
    * @param {Record<string, readonly number[]>} [newRegions]
+   * @param {{ flipV?: boolean | null }} [options]
    */
-  function setAtlas(textureOrCanvas, newRegions) {
-    if (textureOrCanvas && textureOrCanvas.isTexture) {
+  function setAtlas(textureOrCanvas, newRegions, options = {}) {
+    atlasFlipVOverride = typeof options?.flipV === 'boolean' ? options.flipV : null;
+    if (textureOrCanvas && (textureOrCanvas.isTexture || textureOrCanvas.isCompressedTexture)) {
       activeAtlasTex = textureOrCanvas;
-      activeAtlasCanvas = textureOrCanvas.image ?? null;
+      const img = textureOrCanvas.image ?? null;
+      const isDrawable = Boolean(img && typeof img === 'object' && ('width' in img) && ('height' in img) && !textureOrCanvas.isCompressedTexture);
+      activeAtlasCanvas = isDrawable && typeof img.data === 'undefined' ? img : null;
     } else {
       activeAtlasCanvas = textureOrCanvas;
       if (THREE && THREE.CanvasTexture && textureOrCanvas) {
@@ -1992,6 +2180,22 @@ export function createAtlasParticlePool({
       pz0 -= effectDeltas[slotIdx * 3 + 2];
     }
 
+    const nStr = opts.noiseStrength ?? 0;
+    const nYScale = renderMode === VFX_RENDER_MODE.STRETCHED
+      ? (opts.stretch ?? 0.8)
+      : renderMode === VFX_RENDER_MODE.VERTICAL
+        ? 1.0
+        : (nStr > 0.001 && opts.noiseYScale !== undefined ? opts.noiseYScale : 1.0);
+    const phaseVal = opts.phase !== undefined ? opts.phase : prng.nextFloat();
+
+    const hasVelCurve = Boolean(opts.hasVelCurve || opts.velCurve);
+    const hasSizeSep = Boolean(opts.hasSizeSep || opts.sizeYCurve);
+    const noiseDamp = Boolean(opts.noiseDamp);
+    const windQ = Math.round(Math.max(0, Math.min(7, Number(opts.windMul ?? 0))) * 4);
+    const scrollQ = Math.round(Math.max(0, Math.min(15, Number(opts.noiseScroll ?? 0))) * 4);
+    const cullFlag = opts.cullMode === 'back' ? 1 : opts.cullMode === 'front' ? 2 : 0;
+    const materialFlags = (opts.softParticles === false ? 1 : 0) + (opts.useTexture === false ? 2 : 0);
+
     ch.p0[i4] = px0;
     ch.p0[i4 + 1] = py0;
     ch.p0[i4 + 2] = pz0;
@@ -2005,67 +2209,39 @@ export function createAtlasParticlePool({
     ch.p2[i4] = opts.sizeStart ?? 1.0;
     ch.p2[i4 + 1] = opts.gravity ?? 0;
     ch.p2[i4 + 2] = opts.staticPos ? -1.0 : (opts.drag ?? 0);
-    ch.p2[i4 + 3] = packedRow;
+    ch.p2[i4 + 3] = packedRow
+      + (renderMode & 7) * 4096
+      + (hasVelCurve ? 32768 : 0)
+      + (noiseDamp ? 65536 : 0)
+      + (hasSizeSep ? 131072 : 0)
+      + cullFlag * 262144
+      + materialFlags * 1048576;
 
-    ch.p3[i4] = opts.rotation ?? 0;
-    ch.p3[i4 + 1] = opts.angularVel ?? 0;
-    ch.p3[i4 + 2] = opts.hdr ?? 1.0;
-    ch.p3[i4 + 3] = renderMode;
+    ch.p3[i4] = pack2x12Mixed(wrapAngle02Pi(opts.rotation ?? 0), opts.angularVel ?? 0, TWO_PI, 64);
+    ch.p3[i4 + 1] = pack2x12Pos(opts.hdr ?? 1.0, opts.emissionBoost ?? 0, 35, 35);
+    ch.p3[i4 + 2] = pack2x12Sym(opts.pivot?.[0] ?? 0, opts.pivot?.[1] ?? 0, 2, 2);
+    ch.p3[i4 + 3] = pack2x12Pos(opts.velocityScale ?? 0, opts.lengthScale ?? 0, 15, 15);
 
-    ch.p4[i4] = uv[0] ?? 0;
-    ch.p4[i4 + 1] = uv[1] ?? 0;
-    ch.p4[i4 + 2] = uv[2] ?? 1;
-    ch.p4[i4 + 3] = uv[3] ?? 1;
+    const fbCols = fb ? Math.max(1, Math.min(64, fb.cols | 0)) : 1;
+    const fbRows = fb ? Math.max(1, Math.min(64, fb.rows | 0)) : 1;
+    const fbBlend = fb && fb.blend !== false ? 1 : 0;
+    const fbCyclesQ = Math.max(1, Math.min(2047, Math.round((fb ? (fb.cycles ?? 1) : 1) * 32)));
+    ch.p4[i4] = packUvPair(uv[0] ?? 0, uv[1] ?? 0);
+    ch.p4[i4 + 1] = packUvPair(uv[2] ?? 1, uv[3] ?? 1);
+    ch.p4[i4 + 2] = (fbCols - 1) + (fbRows - 1) * 64 + fbBlend * 4096 + fbCyclesQ * 8192;
+    ch.p4[i4 + 3] = tintRgb24;
 
-    ch.p5[i4] = fb ? Math.max(1, fb.cols | 0) : 1;
-    ch.p5[i4 + 1] = fb ? Math.max(1, fb.rows | 0) : 1;
-    ch.p5[i4 + 2] = fb ? (fb.cycles ?? 1) : 1;
-    ch.p5[i4 + 3] = fb && fb.blend !== false ? 1.0 : 0.0;
+    const aspectY = opts.aspectY ?? ((renderMode === VFX_RENDER_MODE.BILLBOARD || renderMode === VFX_RENDER_MODE.VERTICAL) && nStr <= 0.001 ? (opts.stretch ?? 1.0) : 1.0);
+    const phaseByte = Math.max(0, Math.min(255, Math.round((((phaseVal % 1) + 1) % 1) * 255)));
+    ch.p5[i4] = pack2x12Pos(nStr, opts.noiseFreq ?? 0.5, 35, 15);
+    ch.p5[i4 + 1] = pack2x12Pos(nYScale, aspectY, 15, 15);
+    ch.p5[i4 + 2] = opts.orbitalY ?? 0;
+    ch.p5[i4 + 3] = phaseByte + slotIdx * 256 + windQ * 8192 + scrollQ * 262144;
 
-    const nStr = opts.noiseStrength ?? 0;
-    const nYScale = renderMode === VFX_RENDER_MODE.STRETCHED
-      ? (opts.stretch ?? 0.8)
-      : renderMode === VFX_RENDER_MODE.VERTICAL
-        ? 1.0
-        : (nStr > 0.001 && opts.noiseYScale !== undefined ? opts.noiseYScale : 1.0);
-    ch.p6[i4] = nStr;
-    ch.p6[i4 + 1] = opts.noiseFreq ?? 0.5;
-    ch.p6[i4 + 2] = nYScale;
-    ch.p6[i4 + 3] = opts.phase !== undefined ? opts.phase : prng.nextFloat();
-
-    ch.p7[i4] = tintRgb24;
-    ch.p7[i4 + 1] = mode === 'webgl2d' ? (opts.alphaCutoff ?? 0) : (opts.orbitalY ?? 0);
-    ch.p7[i4 + 2] = opts.centerOffX ?? 0;
-    ch.p7[i4 + 3] = opts.centerOffZ ?? 0;
-
-    const hasVelCurve = Boolean(opts.hasVelCurve || opts.velCurve);
-    const hasSizeSep = Boolean(opts.hasSizeSep || opts.sizeYCurve);
-    const noiseDamp = Boolean(opts.noiseDamp);
-    const windQ = Math.round(Math.max(0, Math.min(7, Number(opts.windMul ?? 0))) * 4);
-    const scrollQ = Math.round(Math.max(0, Math.min(15, Number(opts.noiseScroll ?? 0))) * 4);
-    const cullFlag = opts.cullMode === 'back' ? 1 : opts.cullMode === 'front' ? 2 : 0;
-    const packedFlags = slotIdx
-      + (hasVelCurve ? 32 : 0)
-      + (noiseDamp ? 64 : 0)
-      + (hasSizeSep ? 128 : 0)
-      + windQ * 256
-      + scrollQ * 8192
-      + cullFlag * 524288;
-
-    ch.p8[i4] = opts.accelX ?? 0;
-    ch.p8[i4 + 1] = opts.accelZ ?? 0;
-    ch.p8[i4 + 2] = opts.aspectY ?? ((renderMode === VFX_RENDER_MODE.BILLBOARD || renderMode === VFX_RENDER_MODE.VERTICAL) && nStr <= 0.001 ? (opts.stretch ?? 1.0) : 1.0);
-    ch.p8[i4 + 3] = packedFlags;
-
-    ch.p9[i4] = opts.rotX ?? 0;
-    ch.p9[i4 + 1] = opts.rotY ?? 0;
-    ch.p9[i4 + 2] = opts.spinX ?? 0;
-    ch.p9[i4 + 3] = opts.spinY ?? 0;
-
-    ch.p10[i4] = opts.pivot?.[0] ?? 0;
-    ch.p10[i4 + 1] = opts.pivot?.[1] ?? 0;
-    ch.p10[i4 + 2] = opts.velocityScale ?? 0;
-    ch.p10[i4 + 3] = opts.lengthScale ?? 0;
+    ch.p6[i4] = pack2x12Sym(opts.centerOffX ?? 0, opts.centerOffZ ?? 0, 64, 64);
+    ch.p6[i4 + 1] = pack2x12Sym(opts.accelX ?? 0, opts.accelZ ?? 0, 64, 64);
+    ch.p6[i4 + 2] = pack2x12Sym(wrapAngleSignedPi(opts.rotX ?? 0), wrapAngleSignedPi(opts.rotY ?? 0), Math.PI, Math.PI);
+    ch.p6[i4 + 3] = pack2x12Sym(opts.spinX ?? 0, opts.spinY ?? 0, 32, 32);
 
     const cutByte = Math.max(0, Math.min(255, Math.round((opts.alphaCutoff ?? 0) * 255)));
     const camNearByte = Math.max(0, Math.min(255, Math.round(((opts.cameraFade?.[0] ?? 0) / 16) * 255)));
@@ -2077,11 +2253,10 @@ export function createAtlasParticlePool({
     const disStartByte = opts.dissolve?.start !== undefined
       ? Math.max(1, Math.min(255, Math.round(opts.dissolve.start * 255)))
       : 0;
-    ch.p11[i4] = packRgb24(cutByte, camNearByte, camFarByte);
-    ch.p11[i4 + 1] = packRgb24(uvSxByte, uvSyByte, uvOxByte);
-    ch.p11[i4 + 2] = opts.emissionBoost ?? 0;
-    const materialFlags = (opts.softParticles === false ? 1 : 0) + (opts.useTexture === false ? 2 : 0);
-    ch.p11[i4 + 3] = packRgb24(uvOyByte, disStartByte, materialFlags);
+    ch.p7[i4] = packRgb24(cutByte, camNearByte, camFarByte);
+    ch.p7[i4 + 1] = packRgb24(uvSxByte, uvSyByte, uvOxByte);
+    ch.p7[i4 + 2] = packRgb24(uvOyByte, disStartByte, 0);
+    ch.p7[i4 + 3] = 0;
 
     ch.slotCount = Math.max(ch.slotCount, idx + 1);
     if (ch.threeMesh) {
@@ -2179,7 +2354,7 @@ export function createAtlasParticlePool({
     } else {
       submitRingBufferRanges(null, ch.dirtyStart, ch.dirtyCount, ch.capacity, 4, ch.lastDirtyRanges);
       if (gl && ch.glVbos) {
-        const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7, ch.p8];
+        const dataArrs = [ch.p0, ch.p1, ch.p2, ch.p3, ch.p4, ch.p5, ch.p6, ch.p7];
         for (let r = 0; r < ch.lastDirtyRanges.length; r++) {
           const range = ch.lastDirtyRanges[r];
           const byteOff = range.offset * 16;
@@ -2293,11 +2468,24 @@ export function createAtlasParticlePool({
       const count = Math.min(ch.totalEmitted, ch.capacity);
       if (count <= 0) continue;
       ctx.globalCompositeOperation = ch.blendMode === 'multiply' ? 'multiply' : (ch.additive ? 'lighter' : 'source-over');
+      const decRotZ = [0, 0];
+      const decHdr = [1, 0];
+      const decUv0 = [0, 0];
+      const decUv1 = [1, 1];
+      const decNoise = [0, 0.5];
+      const decScaleY = [1, 1];
+      const decAccel = [0, 0];
       for (let i = 0; i < count; i++) {
         const i4 = i * 4;
         const age = simTime - ch.p0[i4 + 3];
         const dur = ch.p1[i4 + 3];
-        const rawCurve = ch.p2[i4 + 3];
+        let rowWord = Math.floor(Math.max(0, ch.p2[i4 + 3]) + 0.5);
+        rowWord %= 1048576;
+        rowWord %= 262144;
+        const hasSizeSep = rowWord >= 131072; if (hasSizeSep) rowWord -= 131072;
+        const noiseDamp = rowWord >= 65536; if (noiseDamp) rowWord -= 65536;
+        const hasVelCurve = rowWord >= 32768; if (hasVelCurve) rowWord -= 32768;
+        const rawCurve = rowWord % 4096;
         const isPersistent = rawCurve >= 1023.5;
         const isLoopCurve = rawCurve >= 1023.5 && rawCurve < 2047.5;
         const curveRow = rawCurve % 1024;
@@ -2306,16 +2494,20 @@ export function createAtlasParticlePool({
         lut.sampleColor(curveRow, t, scratchRgba);
         if (scratchRgba[3] < 0.01) continue;
 
-        let fl = Math.floor(Math.max(0, ch.p8[i4 + 3]) + 0.5);
-        const scrollQ = Math.floor(fl / 8192); fl -= scrollQ * 8192;
-        const windQ = Math.floor(fl / 256); fl -= windQ * 256;
-        const hasSizeSep = fl >= 128; if (hasSizeSep) fl -= 128;
-        const noiseDamp = fl >= 64; if (noiseDamp) fl -= 64;
-        const hasVelCurve = fl >= 32; if (hasVelCurve) fl -= 32;
-        const slotIdx = fl | 0;
+        let psWord = Math.floor(Math.max(0, ch.p5[i4 + 3]) + 0.5);
+        const scrollQ = Math.floor(psWord / 262144); psWord -= scrollQ * 262144;
+        const windQ = Math.floor(psWord / 8192); psWord -= windQ * 8192;
+        const slotIdx = Math.floor(psWord / 256);
+        const phaseVal = (psWord - slotIdx * 256) / 255;
 
-        evalExt.accelX = ch.p8[i4];
-        evalExt.accelZ = ch.p8[i4 + 1];
+        unpack2x12Sym(ch.p6[i4 + 1], 64, 64, decAccel);
+        unpack2x12Pos(ch.p5[i4], 35, 15, decNoise);
+        unpack2x12Pos(ch.p5[i4 + 1], 15, 15, decScaleY);
+        unpack2x12Mixed(ch.p3[i4], TWO_PI, 64, decRotZ);
+        unpack2x12Pos(ch.p3[i4 + 1], 35, 35, decHdr);
+
+        evalExt.accelX = decAccel[0];
+        evalExt.accelZ = decAccel[1];
         evalExt.windMul = windQ * 0.25;
         evalExt.noiseScroll = scrollQ * 0.25;
         evalExt.noiseDamp = noiseDamp;
@@ -2335,42 +2527,47 @@ export function createAtlasParticlePool({
           ch.p0[i4], ch.p0[i4 + 1], ch.p0[i4 + 2],
           ch.p1[i4], ch.p1[i4 + 1], ch.p1[i4 + 2],
           ch.p2[i4 + 1], ch.p2[i4 + 2],
-          ch.p6[i4], ch.p6[i4 + 1], ch.p6[i4 + 3],
+          decNoise[0], decNoise[1], phaseVal,
           age, true, scratchPos,
-          0, 0, 0, ch.p6[i4 + 2], evalExt,
+          0, 0, 0, decScaleY[0], evalExt,
         );
 
         const sx = (scratchPos[0] - camX) * zoom + halfW;
         const sy = (scratchPos[1] - camY) * zoom + halfH;
         const sizeX = ch.p2[i4] * lut.sampleSize(curveRow, t) * zoom;
-        const sizeY = (hasSizeSep ? ch.p2[i4] * lut.sampleSizeY(curveRow, t) * zoom : sizeX) * Math.max(0.05, ch.p8[i4 + 2]);
+        const sizeY = (hasSizeSep ? ch.p2[i4] * lut.sampleSizeY(curveRow, t) * zoom : sizeX) * Math.max(0.05, decScaleY[1]);
         if (sizeX <= 0.5 && sizeY <= 0.5) continue;
 
         ctx.globalAlpha = Math.max(0, Math.min(1, scratchRgba[3]));
-        unpackRgb24Into(ch.p7[i4], scratchTint);
-        const r8 = (Math.min(1, scratchRgba[0] * scratchTint[0] * ch.p3[i4 + 2]) * 255) | 0;
-        const g8 = (Math.min(1, scratchRgba[1] * scratchTint[1] * ch.p3[i4 + 2]) * 255) | 0;
-        const b8 = (Math.min(1, scratchRgba[2] * scratchTint[2] * ch.p3[i4 + 2]) * 255) | 0;
+        unpackRgb24Into(ch.p4[i4 + 3], scratchTint);
+        const r8 = (Math.min(1, scratchRgba[0] * scratchTint[0] * decHdr[0]) * 255) | 0;
+        const g8 = (Math.min(1, scratchRgba[1] * scratchTint[1] * decHdr[0]) * 255) | 0;
+        const b8 = (Math.min(1, scratchRgba[2] * scratchTint[2] * decHdr[0]) * 255) | 0;
 
         if (activeAtlasCanvas && typeof ctx.drawImage === 'function') {
-          const cols = Math.max(1, ch.p5[i4] | 0);
-          const rows = Math.max(1, ch.p5[i4 + 1] | 0);
-          const cycles = Math.max(0.01, ch.p5[i4 + 2]);
+          let fbWord = Math.floor(Math.max(0, ch.p4[i4 + 2]) + 0.5);
+          const cyclesQ = Math.floor(fbWord / 8192); fbWord -= cyclesQ * 8192;
+          if (fbWord >= 4096) fbWord -= 4096;
+          const rows = Math.max(1, Math.floor(fbWord / 64) + 1);
+          const cols = Math.max(1, (fbWord % 64) + 1);
+          const cycles = Math.max(0.01, cyclesQ / 32);
           const total = cols * rows;
           const frame = total > 1 ? Math.min(total - 1, Math.floor(((t * cycles) % 1) * total)) : 0;
           const col = frame % cols;
           const row = (frame / cols) | 0;
           const aw = activeAtlasCanvas.width || 512;
           const ah = activeAtlasCanvas.height || 512;
-          const rx = ch.p4[i4] * aw;
-          const ry = ch.p4[i4 + 1] * ah;
-          const rw = (ch.p4[i4 + 2] - ch.p4[i4]) * aw;
-          const rh = (ch.p4[i4 + 3] - ch.p4[i4 + 1]) * ah;
+          unpackUvPair(ch.p4[i4], decUv0);
+          unpackUvPair(ch.p4[i4 + 1], decUv1);
+          const rx = decUv0[0] * aw;
+          const ry = decUv0[1] * ah;
+          const rw = (decUv1[0] - decUv0[0]) * aw;
+          const rh = (decUv1[1] - decUv0[1]) * ah;
           const cw = rw / cols;
           const chPx = rh / rows;
           ctx.save();
           ctx.translate(sx, sy);
-          ctx.rotate(ch.p3[i4] + ch.p3[i4 + 1] * age);
+          ctx.rotate(decRotZ[0] + decRotZ[1] * age);
           ctx.drawImage(
             activeAtlasCanvas,
             rx + col * cw, ry + row * chPx, cw, chPx,
@@ -2380,7 +2577,7 @@ export function createAtlasParticlePool({
         } else {
           ctx.fillStyle = `rgb(${r8},${g8},${b8})`;
           ctx.beginPath();
-          ctx.ellipse ? ctx.ellipse(sx, sy, sizeX * 0.5, sizeY * 0.5, ch.p3[i4] + ch.p3[i4 + 1] * age, 0, 6.2831853) : ctx.arc(sx, sy, sizeX * 0.5, 0, 6.2831853);
+          ctx.ellipse ? ctx.ellipse(sx, sy, sizeX * 0.5, sizeY * 0.5, decRotZ[0] + decRotZ[1] * age, 0, 6.2831853) : ctx.arc(sx, sy, sizeX * 0.5, 0, 6.2831853);
           ctx.fill();
         }
       }

@@ -1,4 +1,7 @@
-import { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming } from "./platform/asset-catalog.js";
+import { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming, createVramMipGuard } from "./platform/asset-catalog.js";
+import { createSkeleton2D } from "./animation/skeleton2d.js";
+import { createShadowAtlas3D } from "./integrations/shadow3d.js";
+import { createMrtOutlinePass3D } from "./integrations/post3d/mrt-outline.js";
 import { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
 import { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
 import { defineProject, resolveFeatureGraph } from "./core/config.js";
@@ -20,6 +23,11 @@ import { createNavMesh3D } from "./world/navmesh3d.js";
 import { fbmNoise2D, createHeightfieldTerrain3D } from "./world/terrain3d.js";
 import { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from "./world/open-world.js";
 import { extractTileMapObstacles, createFogOfWarWorld } from "./world/fog-of-war.js";
+import { createSurfaceFeedbackRouter } from "./world/surface-feedback.js";
+import { createAtmosphere3D } from "./world/atmosphere3d.js";
+import { resolveQuality3DProfile } from "./integrations/quality3d.js";
+import { createRealisticWater3D, createRealisticGlassMaterial3D } from "./integrations/water3d.js";
+import { createTwoMapWorldPbrMaterial } from "./integrations/pbr-material-library.js";
 import { damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
 import { createVfxSystem } from "./vfx/index.js";
 export const HGAME_VERSION: "1.0.0";
@@ -28,9 +36,12 @@ export { Entity } from "./core/entity.js";
 export { PrefabRegistry } from "./core/prefab.js";
 export { createGameApplication } from "./core/application.js";
 export { AnimationPlayer } from "./animation/player.js";
+export { createSkeleton2D } from "./animation/skeleton2d.js";
 export { SpriteSheet } from "./animation/spritesheet.js";
+export { createShadowAtlas3D } from "./integrations/shadow3d.js";
 export { createGpuSwarmWebGL2 } from "./world/gpu-swarm-webgl2.js";
 export { createNavMesh3D } from "./world/navmesh3d.js";
+export { createTwoMapWorldPbrMaterial } from "./integrations/pbr-material-library.js";
 export { createTraceRecorder } from "./integrations/trace.js";
 /** Public HGame facade. Physics providers stay lazy and load only when selected. */
 export const HGame: Readonly<{
@@ -380,6 +391,396 @@ export const HGame: Readonly<{
     }>;
     extractTileMapObstacles: typeof extractTileMapObstacles;
     createFogOfWarWorld: typeof createFogOfWarWorld;
+    SURFACE_TYPES: readonly string[];
+    DEFAULT_SURFACE_FEEDBACK_TABLE: Readonly<{
+        asphalt: Readonly<{
+            recipe: "impact_concrete";
+            particle: Readonly<{
+                shape: 2;
+                color: 4937059;
+                count: 8;
+                speedMin: 1.8;
+                speedMax: 5.2;
+                sizeStart: 0.28;
+                sizeEnd: 0.55;
+                durationMin: 0.22;
+                durationMax: 0.4;
+                gravity: 6;
+                drag: 3.5;
+                additive: false;
+            }>;
+            decalColor: 2042167;
+            decalSize: number[];
+            decalOpacity: 0.82;
+        }>;
+        concrete: Readonly<{
+            recipe: "impact_concrete";
+            particle: Readonly<{
+                shape: 2;
+                color: 10265519;
+                count: 10;
+                speedMin: 2;
+                speedMax: 5.8;
+                sizeStart: 0.3;
+                sizeEnd: 0.6;
+                durationMin: 0.25;
+                durationMax: 0.45;
+                gravity: 7.5;
+                drag: 3.5;
+                additive: false;
+            }>;
+            decalColor: 3621201;
+            decalSize: number[];
+            decalOpacity: 0.85;
+        }>;
+        tile: Readonly<{
+            recipe: "impact_concrete";
+            particle: Readonly<{
+                shape: 4;
+                color: 15067115;
+                count: 9;
+                speedMin: 2.5;
+                speedMax: 6.5;
+                sizeStart: 0.22;
+                sizeEnd: 0.04;
+                durationMin: 0.2;
+                durationMax: 0.36;
+                gravity: 11;
+                drag: 2.8;
+                additive: false;
+            }>;
+            decalColor: 4937059;
+            decalSize: number[];
+            decalOpacity: 0.8;
+        }>;
+        wood: Readonly<{
+            recipe: "impact_wood";
+            particle: Readonly<{
+                shape: 4;
+                color: 11817737;
+                count: 9;
+                speedMin: 2.2;
+                speedMax: 6;
+                sizeStart: 0.24;
+                sizeEnd: 0.05;
+                durationMin: 0.22;
+                durationMax: 0.38;
+                gravity: 10;
+                drag: 3;
+                additive: false;
+            }>;
+            decalColor: 4528643;
+            decalSize: number[];
+            decalOpacity: 0.82;
+        }>;
+        metal: Readonly<{
+            recipe: "impact_metal";
+            particle: Readonly<{
+                shape: 1;
+                color: 16765286;
+                count: 14;
+                speedMin: 4.5;
+                speedMax: 11.5;
+                sizeStart: 0.26;
+                sizeEnd: 0.03;
+                durationMin: 0.14;
+                durationMax: 0.28;
+                gravity: 12;
+                drag: 3.2;
+                stretch: 1.35;
+                additive: true;
+            }>;
+            decalColor: 1120295;
+            decalSize: number[];
+            decalOpacity: 0.85;
+        }>;
+        glass: Readonly<{
+            recipe: "impact_glass";
+            particle: Readonly<{
+                shape: 4;
+                color: 14742270;
+                count: 12;
+                speedMin: 3;
+                speedMax: 8.5;
+                sizeStart: 0.24;
+                sizeEnd: 0.04;
+                durationMin: 0.22;
+                durationMax: 0.4;
+                gravity: 12;
+                drag: 2.4;
+                additive: true;
+            }>;
+            decalColor: 13358561;
+            decalSize: number[];
+            decalOpacity: 0.72;
+        }>;
+        dirt: Readonly<{
+            recipe: "impact_dirt";
+            particle: Readonly<{
+                shape: 2;
+                color: 7877903;
+                count: 10;
+                speedMin: 1.8;
+                speedMax: 5;
+                sizeStart: 0.32;
+                sizeEnd: 0.65;
+                durationMin: 0.28;
+                durationMax: 0.5;
+                gravity: 8.5;
+                drag: 3.6;
+                additive: false;
+            }>;
+            decalColor: 3875604;
+            decalSize: number[];
+            decalOpacity: 0.78;
+        }>;
+        grass: Readonly<{
+            recipe: "impact_grass";
+            particle: Readonly<{
+                shape: 4;
+                color: 5078031;
+                count: 9;
+                speedMin: 2;
+                speedMax: 5.2;
+                sizeStart: 0.24;
+                sizeEnd: 0.06;
+                durationMin: 0.25;
+                durationMax: 0.45;
+                gravity: 9;
+                drag: 3.4;
+                additive: false;
+            }>;
+            decalColor: 3560212;
+            decalSize: number[];
+            decalOpacity: 0.65;
+        }>;
+        water: Readonly<{
+            recipe: "impact_water";
+            particle: Readonly<{
+                shape: 3;
+                color: 12248829;
+                count: 8;
+                speedMin: 1.5;
+                speedMax: 4.5;
+                sizeStart: 0.35;
+                sizeEnd: 0.85;
+                durationMin: 0.24;
+                durationMax: 0.42;
+                gravity: 8;
+                drag: 3.2;
+                additive: true;
+            }>;
+            decalColor: null;
+            decalSize: null;
+            decalOpacity: 0;
+        }>;
+        fabric: Readonly<{
+            recipe: "impact_fabric";
+            particle: Readonly<{
+                shape: 2;
+                color: 13751771;
+                count: 6;
+                speedMin: 1;
+                speedMax: 3;
+                sizeStart: 0.22;
+                sizeEnd: 0.42;
+                durationMin: 0.2;
+                durationMax: 0.36;
+                gravity: 2.5;
+                drag: 4.2;
+                additive: false;
+            }>;
+            decalColor: 2042167;
+            decalSize: number[];
+            decalOpacity: 0.55;
+        }>;
+    }>;
+    createSurfaceFeedbackRouter: typeof createSurfaceFeedbackRouter;
+    ATMOSPHERE_PRESETS_CN: Readonly<{
+        cn_cbd_day: Readonly<{
+            id: "cn_cbd_day";
+            skyPreset: "day";
+            sunColor: 16775406;
+            sunIntensity: 1.25;
+            sunDirection: readonly number[];
+            exposure: 1.05;
+            bloomStrength: 0.22;
+            contrast: 1.06;
+            saturation: 1.04;
+            vignette: 0.14;
+        }>;
+        cn_old_town_dusk: Readonly<{
+            id: "cn_old_town_dusk";
+            skyPreset: "goldenHour";
+            sunColor: 16755302;
+            sunIntensity: 1.1;
+            sunDirection: readonly number[];
+            exposure: 1.02;
+            bloomStrength: 0.34;
+            contrast: 1.08;
+            saturation: 1.12;
+            vignette: 0.22;
+            colorGain: readonly number[];
+        }>;
+        cn_horror_night: Readonly<{
+            id: "cn_horror_night";
+            skyPreset: "night";
+            sunColor: 8034754;
+            sunIntensity: 0.38;
+            sunDirection: readonly number[];
+            exposure: 0.92;
+            bloomStrength: 0.52;
+            contrast: 1.12;
+            saturation: 0.92;
+            vignette: 0.34;
+            colorLift: readonly number[];
+        }>;
+        cn_rural_morning: Readonly<{
+            id: "cn_rural_morning";
+            skyPreset: "day";
+            sunColor: 16772050;
+            sunIntensity: 0.95;
+            sunDirection: readonly number[];
+            exposure: 1;
+            bloomStrength: 0.28;
+            contrast: 1;
+            saturation: 1.05;
+            vignette: 0.16;
+        }>;
+    }>;
+    createAtmosphere3D: typeof createAtmosphere3D;
+    QUALITY3D_PROFILES: Readonly<{
+        mobile_low: Readonly<{
+            profile: "mobile_low";
+            baseTier: "low";
+            shadowMapSize: 1024;
+            shadowsEnabled: true;
+            shadowCascades: 1;
+            maxDynamicLights: 4;
+            bloom: false;
+            ssao: false;
+            ssgi: false;
+            ssr: false;
+            contactShadows: false;
+            volumetricSteps: 0;
+            temporalAA: false;
+            fxaa: false;
+            foliageBayerDither: false;
+            decalMode: "surface";
+            /**
+             * Hard physical-pixel budget.
+             */
+            maxPixels: number;
+            /**
+             * Max device pixel ratio.
+             */
+            maxPixelRatio: number;
+            /**
+             * World units.
+             */
+            shadowDistance: number;
+            msaaSamples: number;
+            anisotropy: number;
+            sharpen: number;
+            /**
+             * World units.
+             */
+            drawDistance: number;
+            occlusionCulling: boolean;
+            animationLodScale: number;
+            particleScale: number;
+            megaLightsSamples: number;
+            maxClusteredLights: number;
+        }>;
+        mobile_high: Readonly<{
+            profile: "mobile_high";
+            baseTier: "medium";
+            shadowMapSize: 1024;
+            shadowsEnabled: true;
+            shadowCascades: 1;
+            maxDynamicLights: 8;
+            bloom: true;
+            ssao: false;
+            ssgi: false;
+            ssr: false;
+            contactShadows: false;
+            volumetricSteps: 0;
+            temporalAA: false;
+            fxaa: true;
+            foliageBayerDither: true;
+            decalMode: "projected";
+            /**
+             * Hard physical-pixel budget.
+             */
+            maxPixels: number;
+            /**
+             * Max device pixel ratio.
+             */
+            maxPixelRatio: number;
+            /**
+             * World units.
+             */
+            shadowDistance: number;
+            msaaSamples: number;
+            anisotropy: number;
+            sharpen: number;
+            /**
+             * World units.
+             */
+            drawDistance: number;
+            occlusionCulling: boolean;
+            animationLodScale: number;
+            particleScale: number;
+            megaLightsSamples: number;
+            maxClusteredLights: number;
+        }>;
+        pc_ultra: Readonly<{
+            profile: "pc_ultra";
+            baseTier: "ultra";
+            shadowMapSize: 2048;
+            shadowsEnabled: true;
+            shadowCascades: 3;
+            maxDynamicLights: 16;
+            bloom: true;
+            ssao: true;
+            ssgi: true;
+            ssr: true;
+            contactShadows: true;
+            volumetricSteps: 16;
+            temporalAA: true;
+            fxaa: true;
+            foliageBayerDither: true;
+            decalMode: "projected";
+            /**
+             * Hard physical-pixel budget.
+             */
+            maxPixels: number;
+            /**
+             * Max device pixel ratio.
+             */
+            maxPixelRatio: number;
+            /**
+             * World units.
+             */
+            shadowDistance: number;
+            msaaSamples: number;
+            anisotropy: number;
+            sharpen: number;
+            /**
+             * World units.
+             */
+            drawDistance: number;
+            occlusionCulling: boolean;
+            animationLodScale: number;
+            particleScale: number;
+            megaLightsSamples: number;
+            maxClusteredLights: number;
+        }>;
+    }>;
+    resolveQuality3DProfile: typeof resolveQuality3DProfile;
+    createRealisticWater3D: typeof createRealisticWater3D;
+    createRealisticGlassMaterial3D: typeof createRealisticGlassMaterial3D;
+    createTwoMapWorldPbrMaterial: typeof createTwoMapWorldPbrMaterial;
     createStateMachine: typeof createStateMachine;
     BT_STATUS: Readonly<{
         SUCCESS: "success";
@@ -1157,11 +1558,16 @@ export const HGame: Readonly<{
     createAssetCatalog: typeof createAssetCatalog;
     createStreamingResidencyPolicy: typeof createStreamingResidencyPolicy;
     bindTextureMipStreaming: typeof bindTextureMipStreaming;
+    createVramMipGuard: typeof createVramMipGuard;
     createNetworkStateSync: typeof createNetworkStateSync;
     createSceneReplicator: typeof createSceneReplicator;
     createSpatialAoiFilter: typeof createSpatialAoiFilter;
     createSpringBoneChain3D: typeof createSpringBoneChain3D;
     createInertialBlend3D: typeof createInertialBlend3D;
+    createShadowAtlas3D: typeof createShadowAtlas3D;
+    MRT_OUTLINE_FRAGMENT_GLSL3: "\nuniform sampler2D tColor;\nuniform sampler2D tNormalId;\nuniform vec2 uTexelSize;\nuniform vec3 uOutlineColor;\nuniform float uOutlineThickness;\nuniform float uOutlineThreshold;\n\nin vec2 vUv;\nlayout(location = 0) out vec4 fragColor;\n\nvoid main() {\n  vec4 base = texture(tColor, vUv);\n  vec2 stepUv = uTexelSize * max(0.5, uOutlineThickness);\n\n  vec4 nTL = texture(tNormalId, vUv + vec2(-stepUv.x,  stepUv.y));\n  vec4 nTR = texture(tNormalId, vUv + vec2( stepUv.x,  stepUv.y));\n  vec4 nBL = texture(tNormalId, vUv + vec2(-stepUv.x, -stepUv.y));\n  vec4 nBR = texture(tNormalId, vUv + vec2( stepUv.x, -stepUv.y));\n\n  vec3 gx = (nTR.rgb + nBR.rgb) - (nTL.rgb + nBL.rgb);\n  vec3 gy = (nTL.rgb + nTR.rgb) - (nBL.rgb + nBR.rgb);\n  float normalEdge = length(gx) + length(gy);\n  float idEdge = abs(nTR.a - nBL.a) + abs(nTL.a - nBR.a);\n  float edge = clamp(smoothstep(uOutlineThreshold, uOutlineThreshold + 0.35, normalEdge + idEdge * 4.0), 0.0, 1.0);\n\n  fragColor = vec4(mix(base.rgb, uOutlineColor, edge * 0.88), base.a);\n}\n";
+    createMrtOutlinePass3D: typeof createMrtOutlinePass3D;
+    createSkeleton2D: typeof createSkeleton2D;
 }>;
 import { createVersionedStore } from './platform/engine.js';
 import { createSeededRng } from './sim/index.js';
@@ -1238,14 +1644,19 @@ export { defineProject, resolveFeatureGraph, PROJECT_PROFILES, OPTIONAL_FEATURES
 export { Scene, SceneManager } from "./core/scene.js";
 export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTagAncestors, createTagRegistry, GLOBAL_TAG_REGISTRY, createTagContainer, matchGameplayTags } from "./core/tags.js";
 export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, createAssetLoader, createSaveStore, createVersionedStore, createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews, createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm, createDiagnostics, createGameBridge, createGameHostBridge } from "./platform/engine.js";
-export { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming } from "./platform/asset-catalog.js";
+export { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming, createVramMipGuard } from "./platform/asset-catalog.js";
 export { EASING, TweenManager, LN2_CRIT, damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
+export { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from "./integrations/post3d/mrt-outline.js";
 export { TileMap, findGridPath, createGridPathWork, applyAutoTileRules } from "./world/tilemap.js";
 export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";
 export { SWARM_UNIT_FLAGS, ECS_SLOT_FLAGS, FlatSpatialHash2D, createFlatSpatialHash2D, FlowField2D, createFlowField2D, FlatCombatECS, createSwarmSimulation } from "./world/swarm-ecs.js";
 export { fbmNoise2D, createHeightfieldTerrain3D } from "./world/terrain3d.js";
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from "./world/open-world.js";
 export { FOG_FADE_TYPE, FOG_QUALITY, extractTileMapObstacles, createFogOfWarWorld } from "./world/fog-of-war.js";
+export { SURFACE_TYPES, DEFAULT_SURFACE_FEEDBACK_TABLE, createSurfaceFeedbackRouter } from "./world/surface-feedback.js";
+export { ATMOSPHERE_PRESETS_CN, createAtmosphere3D } from "./world/atmosphere3d.js";
+export { QUALITY3D_PROFILES, resolveQuality3DProfile } from "./integrations/quality3d.js";
+export { createRealisticWater3D, createRealisticGlassMaterial3D } from "./integrations/water3d.js";
 export { createStateMachine, BT_STATUS, sequence, selector, parallel, inverter, repeater, cooldown, condition, action, wait, createBehaviorTree } from "./ai/index.js";
 export { COLOR_LUT_PRESETS, createColorLutTexture3D } from "./integrations/post3d/color.js";
 export { KTX2_MAGIC, detectCompressedTextureSupport, parseKtx2Header, selectOptimalTextureVariant, createCompressedTextureFromMipData } from "./integrations/ktx2.js";

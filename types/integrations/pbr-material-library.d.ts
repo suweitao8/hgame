@@ -10,6 +10,18 @@ export function createWorldAlignedPbrMaterial(THREE: PbrThree, { color, normal, 
  * @returns {Promise<PbrLibrary>}
  */
 export function loadCuratedPbrLibrary({ THREE, catalogUrl, fetchJson, textureLoader, }?: PbrLibraryOptions): Promise<PbrLibrary>;
+/**
+ * Creates a 2-texture world-aligned PBR material (`color` + `normalRm`), optionally
+ * sampling a `TEXTURE_2D_ARRAY` (`DataArrayTexture`) with 4-layer splatmap blending
+ * and shared global `wetness`.
+ *
+ * `normalRm` packs OpenGL +Y tangent normal XY into `RG`, roughness into `B`, metallic into `A`.
+ *
+ * @param {PbrThree} THREE
+ * @param {Record<string, any>} [options]
+ * @returns {PbrMaterialLike}
+ */
+export function createTwoMapWorldPbrMaterial(THREE: PbrThree, { color, normalRm, splatMap, layerIndices, projection, tileSize, blendSharpness, normalStrength, wetness, sharedBlock, }?: Record<string, any> | undefined): PbrMaterialLike;
 export type PbrTextureLike = import("./world-aligned-material.js").WorldTextureLike;
 export type PbrMaterialLike = import("./world-aligned-material.js").WorldMaterialLike;
 export type PbrProjection = import("./world-aligned-material.js").WorldProjection;

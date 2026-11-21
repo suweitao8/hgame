@@ -19,7 +19,7 @@
  * @param {number} [options.colorTip=0x4ade80]
  * @param {number} [options.seed=1337]
  */
-export function createInstancedFoliage3D(THREE: any, { geometry, count, areaSize, minScale, maxScale, windAmp, windFreq, fadeNear, fadeFar, trampleRadius, colorBase, colorTip, seed, }?: {
+export function createInstancedFoliage3D(THREE: any, { geometry, count, areaSize, minScale, maxScale, windAmp, windFreq, fadeNear, fadeFar, bayerDither, map, alphaTest, atlasGrid, tileIndex, trampleRadius, colorBase, colorTip, seed, }?: {
     geometry?: any;
     count?: number | undefined;
     areaSize?: number | undefined;
@@ -58,10 +58,17 @@ export function createInstancedFoliage3D(THREE: any, { geometry, count, areaSize
         uFadeFar: {
             value: number;
         };
+        uBayerEnabled: {
+            value: number;
+        };
+        uAtlasRect: {
+            value: any;
+        };
     };
     count: number;
     update: (dt?: number, tramplerPos?: null) => void;
     setTrampler: (x: any, y?: number, z?: number) => void;
     setWind: (amp: any, freq: any) => void;
+    setBayerDither: (enabled?: boolean) => void;
     dispose: () => void;
 }>;

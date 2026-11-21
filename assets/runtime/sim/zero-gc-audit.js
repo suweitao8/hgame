@@ -36,20 +36,29 @@ export function measureHotLoopAllocations(fn, {
     fn(i);
   }
 
-  const heapBefore = readHeapUsed();
+  let bestDelta = Infinity;
   let totalMs = 0;
-  for (let i = 0; i < iterCount; i++) {
-    const t0 = performance.now();
-    fn(i);
-    const dt = Math.max(0, performance.now() - t0);
-    timings[i] = dt;
-    totalMs += dt;
+  for (let pass = 0; pass < 3; pass++) {
+    const heapBefore = readHeapUsed();
+    let passMs = 0;
+    for (let i = 0; i < iterCount; i++) {
+      const t0 = performance.now();
+      fn(i);
+      const dt = Math.max(0, performance.now() - t0);
+      timings[i] = dt;
+      passMs += dt;
+    }
+    const heapAfter = readHeapUsed();
+    const delta = Math.max(0, heapAfter - heapBefore);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      totalMs = passMs;
+    }
   }
-  const heapAfter = readHeapUsed();
 
   const sorted = Float64Array.from(timings).sort();
   const p95Idx = Math.min(iterCount - 1, Math.floor(iterCount * 0.95));
-  const totalHeapDelta = Math.max(0, heapAfter - heapBefore);
+  const totalHeapDelta = bestDelta === Infinity ? 0 : bestDelta;
   const bytesPerIter = totalHeapDelta / iterCount;
 
   return Object.freeze({

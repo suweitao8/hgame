@@ -31,6 +31,11 @@ export function createInstancedFoliage3D(THREE, {
   windFreq = 2.4,
   fadeNear = 18,
   fadeFar = 36,
+  bayerDither = true,
+  map = null,
+  alphaTest = 0.35,
+  atlasGrid = null,
+  tileIndex = 0,
   trampleRadius = 1.4,
   colorBase = 0x166534,
   colorTip = 0x4ade80,
@@ -49,11 +54,18 @@ export function createInstancedFoliage3D(THREE, {
   }
 
   const mat = new THREE.MeshStandardMaterial({
-    color: colorTip,
+    color: map ? 0xffffff : colorTip,
+    ...(map ? { map, alphaTest: Math.max(0.05, Number(alphaTest) || 0.35) } : {}),
     roughness: 0.75,
     metalness: 0.02,
     side: THREE.DoubleSide,
   });
+
+  const gridCols = Math.max(1, Number(atlasGrid?.[0]) || 1);
+  const gridRows = Math.max(1, Number(atlasGrid?.[1]) || 1);
+  const tIdx = Math.max(0, Math.min(gridCols * gridRows - 1, tileIndex | 0));
+  const tCol = tIdx % gridCols;
+  const tRow = (tIdx / gridCols) | 0;
 
   const uniforms = {
     uFoliageTime: { value: 0 },
@@ -63,9 +75,15 @@ export function createInstancedFoliage3D(THREE, {
     uTrampleRadius: { value: Math.max(0.1, Number(trampleRadius) || 1.4) },
     uFadeNear: { value: Math.max(1, Number(fadeNear) || 18) },
     uFadeFar: { value: Math.max((Number(fadeNear) || 18) + 1, Number(fadeFar) || 36) },
+    uBayerEnabled: { value: bayerDither === false ? 0.0 : 1.0 },
+    uAtlasRect: {
+      value: THREE.Vector4
+        ? new THREE.Vector4(tCol / gridCols, 1 - (tRow + 1) / gridRows, 1 / gridCols, 1 / gridRows)
+        : { x: tCol / gridCols, y: 1 - (tRow + 1) / gridRows, z: 1 / gridCols, w: 1 / gridRows },
+    },
   };
 
-  mat.customProgramCacheKey = () => 'hgame-foliage3d-v1';
+  mat.customProgramCacheKey = () => `hgame-foliage3d-v2:${gridCols}x${gridRows}:${map ? 'map' : 'solid'}`;
   mat.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = [
@@ -74,11 +92,13 @@ export function createInstancedFoliage3D(THREE, {
       'uniform float uWindFreq;',
       'uniform vec3 uTramplePos;',
       'uniform float uTrampleRadius;',
+      'uniform vec4 uAtlasRect;',
       'varying float vFoliageViewDist;',
     ].join('\n') + '\n' + shader.vertexShader.replace(
       '#include <begin_vertex>',
       [
         '#include <begin_vertex>',
+        '#ifdef USE_MAP\n  vMapUv = vMapUv * uAtlasRect.zw + uAtlasRect.xy;\n#endif',
         '{',
         '  vec4 _fwOrigin = vec4(0.0, 0.0, 0.0, 1.0);',
         '  #ifdef USE_INSTANCING',
@@ -109,12 +129,13 @@ export function createInstancedFoliage3D(THREE, {
     shader.fragmentShader = [
       'uniform float uFadeNear;',
       'uniform float uFadeFar;',
+      'uniform float uBayerEnabled;',
       'varying float vFoliageViewDist;',
     ].join('\n') + '\n' + shader.fragmentShader.replace(
       '#include <alphatest_fragment>',
       [
         '#include <alphatest_fragment>',
-        '{',
+        'if (uBayerEnabled > 0.5) {',
         '  float _fAlpha = 1.0 - clamp((vFoliageViewDist - uFadeNear) / max(0.01, uFadeFar - uFadeNear), 0.0, 1.0);',
         '  if (_fAlpha < 0.999) {',
         '    int _bx = int(mod(gl_FragCoord.x, 4.0));',
@@ -175,6 +196,10 @@ export function createInstancedFoliage3D(THREE, {
     if (Number.isFinite(freq)) uniforms.uWindFreq.value = freq;
   }
 
+  function setBayerDither(enabled = true) {
+    uniforms.uBayerEnabled.value = enabled ? 1.0 : 0.0;
+  }
+
   function update(dt = 0, tramplerPos = null) {
     const stepDt = Math.max(0, Number(dt) || 0);
     uniforms.uFoliageTime.value += stepDt;
@@ -200,6 +225,7 @@ export function createInstancedFoliage3D(THREE, {
     update,
     setTrampler,
     setWind,
+    setBayerDither,
     dispose,
   });
 }

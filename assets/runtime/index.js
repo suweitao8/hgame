@@ -28,11 +28,13 @@ export {
   createAssetCatalog,
   createStreamingResidencyPolicy,
   bindTextureMipStreaming,
+  createVramMipGuard,
 } from './platform/asset-catalog.js';
 import {
   createAssetCatalog,
   createStreamingResidencyPolicy,
   bindTextureMipStreaming,
+  createVramMipGuard,
 } from './platform/asset-catalog.js';
 export {
   EASING,
@@ -46,7 +48,13 @@ export {
   SpringDamper3D,
 } from './time/tween.js';
 export { AnimationPlayer } from './animation/player.js';
+export { createSkeleton2D } from './animation/skeleton2d.js';
 export { SpriteSheet } from './animation/spritesheet.js';
+export { createShadowAtlas3D } from './integrations/shadow3d.js';
+export { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
+import { createSkeleton2D } from './animation/skeleton2d.js';
+import { createShadowAtlas3D } from './integrations/shadow3d.js';
+import { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
 export { TileMap, findGridPath, createGridPathWork, applyAutoTileRules } from './world/tilemap.js';
 export { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
 export {
@@ -69,6 +77,26 @@ export {
   extractTileMapObstacles,
   createFogOfWarWorld,
 } from './world/fog-of-war.js';
+export {
+  SURFACE_TYPES,
+  DEFAULT_SURFACE_FEEDBACK_TABLE,
+  createSurfaceFeedbackRouter,
+} from './world/surface-feedback.js';
+export {
+  ATMOSPHERE_PRESETS_CN,
+  createAtmosphere3D,
+} from './world/atmosphere3d.js';
+export {
+  QUALITY3D_PROFILES,
+  resolveQuality3DProfile,
+} from './integrations/quality3d.js';
+export {
+  createRealisticWater3D,
+  createRealisticGlassMaterial3D,
+} from './integrations/water3d.js';
+export {
+  createTwoMapWorldPbrMaterial,
+} from './integrations/pbr-material-library.js';
 export {
   createStateMachine,
   BT_STATUS,
@@ -201,6 +229,26 @@ import {
   extractTileMapObstacles,
   createFogOfWarWorld,
 } from './world/fog-of-war.js';
+import {
+  SURFACE_TYPES,
+  DEFAULT_SURFACE_FEEDBACK_TABLE,
+  createSurfaceFeedbackRouter,
+} from './world/surface-feedback.js';
+import {
+  ATMOSPHERE_PRESETS_CN,
+  createAtmosphere3D,
+} from './world/atmosphere3d.js';
+import {
+  QUALITY3D_PROFILES,
+  resolveQuality3DProfile,
+} from './integrations/quality3d.js';
+import {
+  createRealisticWater3D,
+  createRealisticGlassMaterial3D,
+} from './integrations/water3d.js';
+import {
+  createTwoMapWorldPbrMaterial,
+} from './integrations/pbr-material-library.js';
 import {
   createStateMachine,
   BT_STATUS,
@@ -417,6 +465,16 @@ export const HGame = Object.freeze({
   FOG_QUALITY,
   extractTileMapObstacles,
   createFogOfWarWorld,
+  SURFACE_TYPES,
+  DEFAULT_SURFACE_FEEDBACK_TABLE,
+  createSurfaceFeedbackRouter,
+  ATMOSPHERE_PRESETS_CN,
+  createAtmosphere3D,
+  QUALITY3D_PROFILES,
+  resolveQuality3DProfile,
+  createRealisticWater3D,
+  createRealisticGlassMaterial3D,
+  createTwoMapWorldPbrMaterial,
   createStateMachine,
   BT_STATUS,
   sequence,
@@ -475,9 +533,14 @@ export const HGame = Object.freeze({
   createAssetCatalog,
   createStreamingResidencyPolicy,
   bindTextureMipStreaming,
+  createVramMipGuard,
   createNetworkStateSync,
   createSceneReplicator,
   createSpatialAoiFilter,
   createSpringBoneChain3D,
   createInertialBlend3D,
+  createShadowAtlas3D,
+  MRT_OUTLINE_FRAGMENT_GLSL3,
+  createMrtOutlinePass3D,
+  createSkeleton2D,
 });

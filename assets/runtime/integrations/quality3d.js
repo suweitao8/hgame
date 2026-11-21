@@ -142,6 +142,95 @@ export const QUALITY3D_PRESETS = Object.freeze({
   }),
 });
 
+/**
+ * Target-platform 3D realistic rendering profiles (`mobile_low`, `mobile_high`, `pc_ultra`)
+ * layered on top of `QUALITY3D_PRESETS` so `post3d` dead-pass pruning, CSM cascades,
+ * foliage Bayer dither, and decal projection mode scale cleanly across mobile & PC.
+ */
+export const QUALITY3D_PROFILES = Object.freeze({
+  mobile_low: Object.freeze({
+    ...QUALITY3D_PRESETS.low,
+    profile: 'mobile_low',
+    baseTier: 'low',
+    shadowMapSize: 1024,
+    shadowsEnabled: true,
+    shadowCascades: 1,
+    maxDynamicLights: 4,
+    bloom: false,
+    ssao: false,
+    ssgi: false,
+    ssr: false,
+    contactShadows: false,
+    volumetricSteps: 0,
+    temporalAA: false,
+    fxaa: false,
+    foliageBayerDither: false,
+    decalMode: 'surface',
+  }),
+  mobile_high: Object.freeze({
+    ...QUALITY3D_PRESETS.medium,
+    profile: 'mobile_high',
+    baseTier: 'medium',
+    shadowMapSize: 1024,
+    shadowsEnabled: true,
+    shadowCascades: 1,
+    maxDynamicLights: 8,
+    bloom: true,
+    ssao: false,
+    ssgi: false,
+    ssr: false,
+    contactShadows: false,
+    volumetricSteps: 0,
+    temporalAA: false,
+    fxaa: true,
+    foliageBayerDither: true,
+    decalMode: 'projected',
+  }),
+  pc_ultra: Object.freeze({
+    ...QUALITY3D_PRESETS.ultra,
+    profile: 'pc_ultra',
+    baseTier: 'ultra',
+    shadowMapSize: 2048,
+    shadowsEnabled: true,
+    shadowCascades: 3,
+    maxDynamicLights: 16,
+    bloom: true,
+    ssao: true,
+    ssgi: true,
+    ssr: true,
+    contactShadows: true,
+    volumetricSteps: 16,
+    temporalAA: true,
+    fxaa: true,
+    foliageBayerDither: true,
+    decalMode: 'projected',
+  }),
+});
+
+/**
+ * Resolves either a platform profile (`mobile_low` | `mobile_high` | `pc_ultra`)
+ * or a base tier (`low` | `medium` | `high` | `ultra`).
+ * @param {'mobile_low' | 'mobile_high' | 'pc_ultra' | QualityPresetTier} [nameOrTier='mobile_high']
+ */
+export function resolveQuality3DProfile(nameOrTier = 'mobile_high') {
+  if (Object.hasOwn(QUALITY3D_PROFILES, nameOrTier)) {
+    return QUALITY3D_PROFILES[nameOrTier];
+  }
+  if (Object.hasOwn(QUALITY3D_PRESETS, nameOrTier)) {
+    const base = QUALITY3D_PRESETS[nameOrTier];
+    return Object.freeze({
+      ...base,
+      profile: nameOrTier,
+      baseTier: nameOrTier,
+      shadowCascades: nameOrTier === 'low' ? 1 : nameOrTier === 'medium' ? 2 : 3,
+      temporalAA: nameOrTier === 'high' || nameOrTier === 'ultra',
+      foliageBayerDither: nameOrTier !== 'low',
+      decalMode: nameOrTier === 'low' ? 'surface' : 'projected',
+    });
+  }
+  throw new RangeError('Unsupported 3D quality profile or tier: ' + nameOrTier);
+}
+
 /** @type {Readonly<Record<QualityPresetTier, Readonly<Quality2DPreset>>>} */
 export const QUALITY2D_PRESETS = Object.freeze({
   low: Object.freeze({

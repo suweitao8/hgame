@@ -19,7 +19,7 @@ export function resolvePresentationPreset(themeId?: string | undefined, perspect
     quality: string;
     theme: string;
     sky: {
-        preset: "day" | "goldenHour" | "overcast" | "dusk" | "night";
+        preset: "day" | "goldenHour" | "night" | "overcast" | "dusk";
         environment: boolean;
     };
     chunkCells: number;

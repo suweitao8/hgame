@@ -1,7 +1,10 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
+
+const KTX2_MAGIC_BYTES = Buffer.from([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 const PNG_SIG = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -850,9 +853,73 @@ function writeSpriteAtlas(inputDir, output, maxSize) {
   return { image: target, metadata, width, height, count: sprites.length };
 }
 
+/**
+ * Pack raw RGBA8 pixels into a compliant KTX2 v2 container (80-byte header + 24-byte level index + mip0 payload).
+ */
+export function encodeKtx2Container({ width, height, data, vkFormat = 37 }) {
+  const w = Math.max(1, Math.floor(Number(width) || 0));
+  const h = Math.max(1, Math.floor(Number(height) || 0));
+  const raw = Buffer.isBuffer(data) ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  const expectedLen = w * h * 4;
+  if (raw.length < expectedLen) {
+    throw new RangeError(`encodeKtx2Container expected >= ${expectedLen} bytes, got ${raw.length}`);
+  }
+
+  const headerAndIndexBytes = 80 + 24;
+  const out = Buffer.alloc(headerAndIndexBytes + expectedLen);
+  KTX2_MAGIC_BYTES.copy(out, 0);
+  out.writeUInt32LE(vkFormat, 12);     // vkFormat (37 = R8G8B8A8_UNORM)
+  out.writeUInt32LE(1, 16);            // typeSize
+  out.writeUInt32LE(w, 20);            // pixelWidth
+  out.writeUInt32LE(h, 24);            // pixelHeight
+  out.writeUInt32LE(0, 28);            // pixelDepth
+  out.writeUInt32LE(0, 32);            // layerCount
+  out.writeUInt32LE(1, 36);            // faceCount
+  out.writeUInt32LE(1, 40);            // levelCount
+  out.writeUInt32LE(0, 44);            // supercompressionScheme (uncompressed)
+  // Bytes 48..79 are dfd/kvd/sgd offsets/lengths (left 0 when raw).
+  // Level 0 index entry (3 x uint64 little-endian: byteOffset, byteLength, uncompressedByteLength)
+  out.writeBigUInt64LE(BigInt(headerAndIndexBytes), 80);
+  out.writeBigUInt64LE(BigInt(expectedLen), 88);
+  out.writeBigUInt64LE(BigInt(expectedLen), 96);
+  raw.copy(out, headerAndIndexBytes, 0, expectedLen);
+  return out;
+}
+
+/**
+ * Offline PNG-to-KTX2 converter (uses KTX-Software `toktx` when present & `preferToktx: true`,
+ * falling back cleanly to pure-JS compliant KTX2 container encoding).
+ */
+export function convertPngToKtx2(inputPath, outputPath, { preferToktx = false } = {}) {
+  const pngBuf = fs.readFileSync(inputPath);
+  const decoded = decodePng(pngBuf);
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+  let encoder = 'built-in-ktx2';
+  if (preferToktx) {
+    try {
+      execFileSync('toktx', ['--t2', '--encode', 'uastc', outputPath, inputPath], { stdio: 'ignore' });
+      encoder = 'toktx';
+    } catch {
+      // Fallback to built-in pure-JS KTX2 container when KTX-Software CLI is absent
+    }
+  }
+  if (encoder === 'built-in-ktx2') {
+    const ktx2Buf = encodeKtx2Container({ width: decoded.width, height: decoded.height, data: decoded.data });
+    fs.writeFileSync(outputPath, ktx2Buf);
+  }
+  const stat = fs.statSync(outputPath);
+  return { outputPath, width: decoded.width, height: decoded.height, bytes: stat.size, encoder };
+}
+
 /** CLI helper for processing single, 2x2, or 3x3 generated artwork sheets. */
 export function runAssetCli(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  if (args.ktx2 !== undefined) {
+    const inFile = String(args.ktx2);
+    const outFile = String(args.out || inFile.replace(/\.png$/i, '.ktx2'));
+    return convertPngToKtx2(inFile, outFile, { preferToktx: Boolean(args['prefer-toktx']) });
+  }
   if (args['atlas-dir'] !== undefined || args['atlas-out'] !== undefined) {
     return writeSpriteAtlas(args['atlas-dir'], args['atlas-out'], Number(args['max-size'] ?? 2048));
   }

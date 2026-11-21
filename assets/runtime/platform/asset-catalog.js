@@ -358,6 +358,12 @@ export function createStreamingResidencyPolicy({
   let totalUpgrades = 0;
   let totalDowngrades = 0;
   let lastWithinBudget = true;
+  let globalMipBias = 0;
+
+  function setGlobalMipBias(bias = 0) {
+    globalMipBias = Math.max(0, Math.min(3, Math.floor(Number(bias) || 0)));
+    return globalMipBias;
+  }
 
   function computeEffectiveBytes(baseBytes, mipBias, evicted) {
     if (evicted) return 0;
@@ -417,7 +423,8 @@ export function createStreamingResidencyPolicy({
       const dz = entry.position.z - vz;
       const dist = Math.hypot(dx, dy, dz);
       entry.distance = dist;
-      const desiredMip = dist <= nearD ? 0 : dist <= midD ? 1 : dist <= farD ? 2 : 3;
+      const baseMip = dist <= nearD ? 0 : dist <= midD ? 1 : dist <= farD ? 2 : 3;
+      const desiredMip = Math.min(3, baseMip + globalMipBias);
       const prevMip = entry.mipBias;
       const wasEvicted = entry.evicted;
       entry.evicted = false;
@@ -536,11 +543,65 @@ export function createStreamingResidencyPolicy({
     register,
     unregister,
     setPosition,
+    setGlobalMipBias,
     update,
     getEntry,
     getStats,
     dispose,
   });
+}
+
+/**
+ * VRAM Anti-OOM Mip Guard that dynamically shifts streaming mip bias down (lowering texture VRAM
+ * by 4x-16x) when allocated device/texture bytes approach mobile WebView soft/hard thresholds.
+ */
+export function createVramMipGuard({
+  streamingPolicy = null,
+  budgetBytes = 128 * 1024 * 1024,
+  softRatio = 0.8,
+  hardRatio = 0.92,
+  onMipBiasChange = null,
+} = {}) {
+  const defaultBudget = Math.max(1024, Number(budgetBytes) || 128 * 1024 * 1024);
+  const soft = Math.max(0.1, Math.min(0.95, Number(softRatio) || 0.8));
+  const hard = Math.max(soft + 0.01, Math.min(1.0, Number(hardRatio) || 0.92));
+  let mipBiasOffset = 0;
+  let state = 'healthy';
+  let lastRatio = 0;
+
+  function step(usedBytes, overrideBudget = defaultBudget) {
+    const budget = Math.max(1024, Number(overrideBudget) || defaultBudget);
+    const ratio = Math.max(0, (Number(usedBytes) || 0) / budget);
+    lastRatio = ratio;
+
+    let nextOffset = mipBiasOffset;
+    let nextState = state;
+    if (ratio >= hard) {
+      nextOffset = 2;
+      nextState = 'hard-degrade';
+    } else if (ratio >= soft) {
+      nextOffset = Math.max(mipBiasOffset === 2 && ratio >= soft * 0.9 ? 2 : 1, 1);
+      nextState = 'soft-degrade';
+    } else if (ratio < soft * 0.85) {
+      nextOffset = 0;
+      nextState = 'healthy';
+    }
+
+    const changed = nextOffset !== mipBiasOffset || nextState !== state;
+    mipBiasOffset = nextOffset;
+    state = nextState;
+    if (changed) {
+      streamingPolicy?.setGlobalMipBias?.(mipBiasOffset);
+      onMipBiasChange?.({ mipBiasOffset, state, ratio });
+    }
+    return { mipBiasOffset, state, ratio, changed };
+  }
+
+  function getState() {
+    return Object.freeze({ mipBiasOffset, state, ratio: lastRatio, budgetBytes: defaultBudget });
+  }
+
+  return Object.freeze({ step, getState });
 }
 
 /**

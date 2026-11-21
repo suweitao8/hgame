@@ -100,7 +100,9 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         };
         readonly regions: Record<string, readonly number[]>;
         compileCurves: (colorCurveRaw: any, sizeCurveRaw: any, sizeYCurveRaw?: null, velocityCurveRaw?: null) => any;
-        setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined) => void;
+        setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined, options?: {
+            flipV?: boolean | null;
+        } | undefined) => void;
         setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
             near?: number | undefined;
             far?: number | undefined;
@@ -276,7 +278,9 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         reset: () => void;
         dispose: () => void;
     };
-    setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined) => void;
+    setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined, options?: {
+        flipV?: boolean | null;
+    } | undefined) => void;
     setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
         near?: number | undefined;
         far?: number | undefined;
