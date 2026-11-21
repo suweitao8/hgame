@@ -584,6 +584,7 @@ export function createThreeAdapter({
   camera.lookAt?.(...cameraTarget);
 
   const worlds = new WeakMap();
+  const disposedScenes = new WeakSet();
   const viewWorlds = new WeakMap();
   const irradianceGrids = new Map();
   let disposed = false;
@@ -624,6 +625,7 @@ export function createThreeAdapter({
             worldSuns.delete(world);
             worldCsm.delete(world);
             worlds.delete(scene);
+            disposedScenes.add(scene);
             if (worldSunLight === leadLight) worldSunLight = null;
             csm.dispose();
           };
@@ -1272,7 +1274,11 @@ export function createThreeAdapter({
       return markSunShadowDirty(light);
     },
     getCascadedShadowMap(scene) {
-      return (scene && worlds.has(scene)) ? (worldCsm.get(worlds.get(scene)) ?? null) : null;
+      if (!scene || disposed || disposedScenes.has(scene) || scene._disposing) return null;
+      if (!worlds.has(scene) && worldLighting?.sun?.cascades) {
+        getWorld(scene);
+      }
+      return worlds.has(scene) ? (worldCsm.get(worlds.get(scene)) ?? null) : null;
     },
     registerIndirectBatch(id, batch) {
       indirectBatches.set(String(id), batch);
