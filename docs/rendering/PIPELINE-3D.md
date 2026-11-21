@@ -152,6 +152,10 @@ Standalone releases include the pinned Three r187 KTX2 loader, Basis JS and WASM
 
 `createMegaLights3D` reuses the last light bins when the view transform, projection, light budget and light values stay unchanged. The viewport and stochastic sampling clock still advance. Rebuilding compares active light rows and the cluster windows occupied in either build. The bundled Three.js build uploads row-bounded ranges for sparse edits and falls back to a full upload for dense changes. Newly allocated GPU textures and renderers that missed a previous version receive the full data. Other injected Three builds use full uploads for changed textures. `mega.uploadStats` reports the current queued bytes, range count and mode for each texture. A renderer that needs a full refresh can submit more than the pending range estimate.
 
+### Dirty-range instancing and GPU indirect culling
+
+`createInstancedBatch3D` in `integrations/culling3d.js` skips instance buffer uploads on static frames (`lastUploadStats.skippedStatic === true`) and submits coalesced dirty ranges via `addUpdateRange` for sparse transform or color edits. For GPU-driven culling and indirect submission, `createGpuIndirectCuller3D` (`integrations/gpu-indirect3d.js`, re-exported from `culling3d.js`) selects `'webgpu-indirect'` (WGSL compute frustum culling + `drawIndexedIndirect`), `'webgl2-multidraw'` (`WEBGL_multi_draw`), or `'cpu-instanced'` fallback with explicit `fallbackReason` and `capabilities` inspection.
+
 ## World Materials, Models & Adapter Lifecycle
 
 For imported or hand-authored particle effects, see the [Unity particle material reference](UNITY-VFX.md).

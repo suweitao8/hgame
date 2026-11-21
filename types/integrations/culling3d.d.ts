@@ -499,3 +499,4 @@ export type InstancedBatch3D = {
     flush: (options?: InstancedBatchFlushOptions) => InstancedBatchFlushResult;
     dispose: () => void;
 };
+export { GPU_CULL_WGSL, createGpuIndirectCuller3D } from "./gpu-indirect3d.js";

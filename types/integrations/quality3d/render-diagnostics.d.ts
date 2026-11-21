@@ -19,12 +19,15 @@ export function createRenderDiagnostics3D(THREE: any, renderer: any): {
  * @property {(target: any, viewIndex: number) => RenderTargetUsage3D | null} [describeTarget]
  * @property {typeof beginWebGlUploadProbe} [beginUploads]
  * @property {(record: (target: any) => RenderTargetUsage3D | null) => (() => void) | null} [observeTargets]
+ * @property {(info: {drawCalls: number | null, draws: number | null, triangles: number | null, uploads: WebGlUploadTotals | null, uploadBytes: number | null, hasTargetBytes: boolean, gpuSupported: boolean}) => Record<string, 'measured' | 'estimated' | 'unavailable'> | null} [describeMeasurementSources]
+ * @property {() => {read: () => {calls: number | null, triangles: number | null}, stop: () => void} | null} [beginCanvasDraws]
+ * @property {() => {methods: string[], read: () => WebGlUploadTotals, stop: () => void} | null} [beginCanvasUploads]
  */
 /**
  * Shared opt-in recorder for frame and ordered view submissions.
  * @param {RenderDiagnosticsOptions} [options]
  */
-export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable, beginCounters, describeTarget, beginUploads, observeTargets }?: RenderDiagnosticsOptions | undefined): {
+export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable, beginCounters, describeTarget, beginUploads, observeTargets, describeMeasurementSources, beginCanvasDraws, beginCanvasUploads }?: RenderDiagnosticsOptions | undefined): {
     beginFrame: () => boolean;
     endFrame: (complete: any) => void;
     beginView: (index: any) => void;
@@ -133,5 +136,26 @@ export type RenderDiagnosticsOptions = {
     describeTarget?: ((target: any, viewIndex: number) => RenderTargetUsage3D | null) | undefined;
     beginUploads?: typeof beginWebGlUploadProbe | undefined;
     observeTargets?: ((record: (target: any) => RenderTargetUsage3D | null) => (() => void) | null) | undefined;
+    describeMeasurementSources?: ((info: {
+        drawCalls: number | null;
+        draws: number | null;
+        triangles: number | null;
+        uploads: WebGlUploadTotals | null;
+        uploadBytes: number | null;
+        hasTargetBytes: boolean;
+        gpuSupported: boolean;
+    }) => Record<string, "measured" | "estimated" | "unavailable"> | null) | undefined;
+    beginCanvasDraws?: (() => {
+        read: () => {
+            calls: number | null;
+            triangles: number | null;
+        };
+        stop: () => void;
+    } | null) | undefined;
+    beginCanvasUploads?: (() => {
+        methods: string[];
+        read: () => WebGlUploadTotals;
+        stop: () => void;
+    } | null) | undefined;
 };
 import { beginWebGlUploadProbe } from './upload-probe.js';

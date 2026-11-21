@@ -6,6 +6,7 @@ import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { createLighting2DState, renderCanvas2DPostPass } from './post2d.js';
 import { createRenderDiagnostics2D } from './render-diagnostics-2d.js';
 import { normalizeBlend2D, normalizeClipRect2D, sameClipRect2D } from './draw-order-2d.js';
+import { createRenderBudgetController } from './render-budget-2d.js';
 
 const SCRATCH_RGBA = [1, 1, 1, 1];
 
@@ -832,6 +833,7 @@ export class SpriteCrowd2D extends Component {
  * @property {boolean} [cull=true] Skip sprites outside the camera view.
  * @property {QualityPresetTier | null} [quality=null] Quality tier ('low' | 'medium' | 'high' | 'ultra'); null disables presets.
  * @property {((width: number, height: number) => BufferCanvas2D | null) | null} [createBufferCanvas=null] Factory for offscreen buffers (tint/shadow caches).
+ * @property {object} [budgetOptions] Optional options passed to `createRenderBudgetController`.
  */
 
 /**
@@ -869,6 +871,8 @@ export class SpriteCrowd2D extends Component {
  * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
  * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
  * @property {() => import('./render-diagnostics-2d.js').RenderDiagnosticsSnapshot2D | null} getRenderDiagnostics Latest opt-in render frame.
+ * @property {() => ReturnType<import('./render-budget-2d.js').createRenderBudgetController> extends { getBudgetSnapshot: () => infer S } ? S : unknown} getRenderBudget Current 2D resource budget snapshot.
+ * @property {(type?: import('./render-budget-2d.js').RenderResourceType2D | null, reason?: import('./render-budget-2d.js').RenderEvictionReason2D) => number} reclaimRenderResources Reclaim idle targets/caches by type or all.
  * @property {() => Viewport2D} getViewport Copy of the current viewport.
  * @property {(color?: string | number, intensity?: number) => void} setAmbientLight Configure global 2D ambient darkness/tint.
  * @property {(light: { x: number, y: number, radius?: number, color?: string | number, intensity?: number }) => boolean} addLight2D Append a dynamic 2D point light.
@@ -893,6 +897,7 @@ export function createCanvas2DAdapter({
   pixelRatio = globalThis.devicePixelRatio || 1,
   imageSmoothing = true, interpolate = false, cull = true,
   quality = null, createBufferCanvas = null, diagnostics2d = false,
+  budgetOptions = undefined,
 } = {}) {
   if (!canvas?.getContext) throw new TypeError('Canvas adapter needs a canvas');
   const ctx = canvas.getContext('2d', { alpha: false });
@@ -912,7 +917,10 @@ export function createCanvas2DAdapter({
   const ownedTintCanvases = new Set();
   const imageReleases = new Set();
   const lighting2D = createLighting2DState();
-  const diagnostics = diagnostics2d ? createRenderDiagnostics2D() : null;
+  const diagnostics = diagnostics2d ? createRenderDiagnostics2D({ ctx }) : null;
+  const renderBudget = createRenderBudgetController(budgetOptions);
+  let tintSeq = 0;
+  const tintIds = new WeakMap();
   const stats = { drawnSprites: 0, drawnCrowds: 0, culled: 0, sorted: false, postPassActive: false, backend: 'canvas2d' };
 
   const allocBuffer = createBufferCanvas ?? ((w, h) => {
@@ -927,6 +935,8 @@ export function createCanvas2DAdapter({
   });
 
   function dropTintCanvas(buffer) {
+    const resId = tintIds.get(buffer);
+    if (resId) renderBudget.unregister(resId);
     ownedTintCanvases.delete(buffer);
     buffer.width = 0;
     buffer.height = 0;
@@ -950,7 +960,11 @@ export function createCanvas2DAdapter({
       ? `${rect.x},${rect.y},${rect.width},${rect.height}|${fillColor}|${bw}x${bh}`
       : `full|${fillColor}|${bw}x${bh}`;
     const existing = perImage.get(key);
-    if (existing) return existing;
+    if (existing) {
+      const existingId = tintIds.get(existing);
+      if (existingId) renderBudget.touch(existingId);
+      return existing;
+    }
 
     const bufCanvas = allocBuffer(bw, bh);
     const bctx = bufCanvas?.getContext?.('2d') ?? null;
@@ -972,11 +986,25 @@ export function createCanvas2DAdapter({
     }
     perImage.set(key, bufCanvas);
     ownedTintCanvases.add(bufCanvas);
+    const resId = `canvas-tint:${++tintSeq}`;
+    tintIds.set(bufCanvas, resId);
+    renderBudget.registerResource({
+      id: resId,
+      type: 'scratchBuffers',
+      bytes: Math.max(0, bw * bh * 4),
+      reclaim: () => {
+        perImage.delete(key);
+        dropTintCanvas(bufCanvas);
+      },
+    });
     return bufCanvas;
   }
 
   function getShadowBuffer() {
-    if (shadowBuffer) return shadowBuffer;
+    if (shadowBuffer) {
+      renderBudget.touch('canvas-shadow-buffer');
+      return shadowBuffer;
+    }
     const bufCanvas = allocBuffer(64, 64);
     const bctx = bufCanvas?.getContext?.('2d') ?? null;
     if (!bufCanvas || !bctx) return null;
@@ -1519,7 +1547,14 @@ export function createCanvas2DAdapter({
   }
 
   function render(scene, app = null) {
-    if (!diagnostics?.beginFrame()) return renderFrame(scene, app);
+    const startMs = performance.now();
+    if (!diagnostics?.beginFrame()) {
+      try {
+        return renderFrame(scene, app);
+      } finally {
+        renderBudget.stepFrame({ frameTimeMs: performance.now() - startMs });
+      }
+    }
     let complete = false;
     try {
       renderFrame(scene, app, diagnostics);
@@ -1529,6 +1564,7 @@ export function createCanvas2DAdapter({
       diagnostics.recordTarget(shadowBuffer?.canvas);
       for (const canvas of ownedTintCanvases) diagnostics.recordTarget(canvas);
       diagnostics.endFrame(complete);
+      renderBudget.stepFrame({ frameTimeMs: performance.now() - startMs });
     }
   }
 
@@ -1547,6 +1583,9 @@ export function createCanvas2DAdapter({
     get qualityPreset() { return qualityPreset; },
     get stats() { return { ...stats }; },
     getRenderDiagnostics: () => diagnostics?.snapshot() ?? null,
+    getRenderBudget: () => renderBudget.getBudgetSnapshot(),
+    reclaimRenderResources: (type = null, reason = 'manual') =>
+      type ? renderBudget.reclaimByType(type, reason) : renderBudget.reclaimAll(reason),
     getViewport: () => ({ ...viewport }),
     setAmbientLight: lighting2D.setAmbientLight,
     addLight2D: lighting2D.addLight,

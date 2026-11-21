@@ -10,6 +10,7 @@
  */
 import { createInstanceUpdateRanges } from '../internal/instance-buffer-updates.js';
 import { syncCameraWorldMatrices, usesZeroToOneDepth } from './camera3d/matrices.js';
+export { GPU_CULL_WGSL, createGpuIndirectCuller3D } from './gpu-indirect3d.js';
 
 /**
  * @typedef {object} CullCameraLike Structural subset of THREE.Camera read by the cullers.
@@ -972,6 +973,12 @@ export function createInstancedBatch3D(THREE, {
   let lastColorArray = null;
   let packedCount = 0;
   let activeCount = 0;
+  let lastUploadStats = Object.freeze({
+    uploadedMatrixComponents: 0,
+    uploadedColorComponents: 0,
+    uploadedInstances: 0,
+    skippedStatic: false,
+  });
 
   function alloc({
     x = 0, y = 0, z = 0,
@@ -1118,8 +1125,14 @@ export function createInstancedBatch3D(THREE, {
       if (outCount < packedCount) packedSlots.fill(-1, outCount, packedCount);
       packedCount = outCount;
       mesh.count = outCount;
-      matrixUpdates.submit(matrixAttribute);
-      colorUpdates.submit(colorAttr);
+      const matComps = matrixUpdates.submit(matrixAttribute);
+      const colComps = colorUpdates.submit(colorAttr);
+      lastUploadStats = Object.freeze({
+        uploadedMatrixComponents: matComps,
+        uploadedColorComponents: colComps,
+        uploadedInstances: Math.max(Math.ceil(matComps / 16), Math.ceil(colComps / 3)),
+        skippedStatic: matComps === 0 && colComps === 0,
+      });
     }
 
     lastMatrixAttribute = matrixAttribute;
@@ -1142,6 +1155,8 @@ export function createInstancedBatch3D(THREE, {
     mesh,
     capacity,
     get count() { return activeCount; },
+    get lastUploadStats() { return lastUploadStats; },
+    getUploadStats() { return lastUploadStats; },
     alloc,
     setTransform,
     setRotation,

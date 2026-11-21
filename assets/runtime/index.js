@@ -74,7 +74,8 @@ export {
   createBehaviorTree,
 } from './ai/index.js';
 export { createTraceRecorder } from './integrations/trace.js';
-export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget } from './sim/index.js';
+export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner } from './sim/index.js';
+export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from './integrations/render-budget-2d.js';
 export { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 export {
   RED_DOT_STYLES,
@@ -137,7 +138,8 @@ import { PrefabRegistry } from './core/prefab.js';
 import { createTagContainer, createTagRegistry, GLOBAL_TAG_REGISTRY, matchGameplayTags } from './core/tags.js';
 import { createGameApplication } from './core/application.js';
 import { createTraceRecorder } from './integrations/trace.js';
-import { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget } from './sim/index.js';
+import { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner } from './sim/index.js';
+import { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from './integrations/render-budget-2d.js';
 import { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 import { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
 import {
@@ -286,6 +288,9 @@ export const HGame = Object.freeze({
   hashState,
   runScripted,
   createSimulationWorkBudget,
+  createSimWorkerRunner,
+  RENDER_RESOURCE_TYPES_2D,
+  createRenderBudgetController,
   createSpringArmRayProbe,
   cameraRelativeMove,
   defineInputContext,

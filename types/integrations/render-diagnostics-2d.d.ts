@@ -1,7 +1,8 @@
 /** @typedef {import('./quality3d/render-diagnostics.js').RenderDiagnosticsSnapshot3D} RenderDiagnosticsSnapshot2D */
 /** Internal recorder shared by the native 2D adapters and the Pixi profile. */
-export function createRenderDiagnostics2D({ gl, pixiRenderer }?: {
+export function createRenderDiagnostics2D({ gl, ctx, pixiRenderer }?: {
     gl?: null | undefined;
+    ctx?: null | undefined;
     pixiRenderer?: null | undefined;
 }): {
     beginFrame: () => boolean;

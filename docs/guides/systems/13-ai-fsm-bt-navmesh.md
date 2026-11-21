@@ -65,3 +65,7 @@ The sliced paths use the same traversal, snapping, corner rules, and path output
 - Reuse one compiled `createBehaviorTree(root)` across all enemies; allocate only per-agent `tree.createMemory()` (never rebuild BT nodes inside `update`).
 - Supply navigation obstacles from `level.json` colliders through `obstacles` or `nav.addObstacle(aabb)`.
 - `maxNodes` caps the cells visited by one search and defaults to unlimited. A blocked destination or an exhausted budget yields `null` when the search cannot reach the goal.
+
+## Worker / 主线程双路径仿真调度 (`createSimWorkerRunner`)
+- `createSimWorkerRunner({ workerFactory, workerUrl, workerCount, maxJobsPerTick, kernels, onCommit })` 支持在支持 Web Worker 的环境中通过 Worker 池异步执行寻路（`grid-path`）与批量内核（`registerKernel`），在无 Worker 环境下自动回退到主线程预算队列（`mode: 'main-thread'`）。
+- Worker 乱序完成的结果先进入 `staged` 暂存区，仅在调用 `flushTick(tickIndex)` 时按 `(submitTick ASC, priority DESC, id ASC)` 固定顺序确定性提交；`cancel(id)` / `AbortSignal` / `dispose()` 会向 Worker 发送取消信号、丢弃迟到结果并终止 Worker、释放负载引用。

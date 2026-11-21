@@ -12,6 +12,7 @@ import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { createLighting2DState, createWebGL2DPostPass } from './post2d.js';
 import { createRenderDiagnostics2D } from './render-diagnostics-2d.js';
 import { sameClipRect2D } from './draw-order-2d.js';
+import { createRenderBudgetController } from './render-budget-2d.js';
 
 export { Camera2D, Sprite2D, SpriteCrowd2D };
 
@@ -339,6 +340,7 @@ export function createWebGL2DAdapter({
   allowFallback = true,
   createBufferCanvas = null,
   diagnostics2d = false,
+  budgetOptions = undefined,
 } = {}) {
   if (!canvas?.getContext) throw new TypeError('WebGL2D adapter needs a canvas');
   if (!Number.isInteger(maxBatchInstances) || maxBatchInstances < 64 || maxBatchInstances > MAX_CAPACITY_CAP) {
@@ -368,6 +370,7 @@ export function createWebGL2DAdapter({
       quality,
       createBufferCanvas,
       diagnostics2d,
+      budgetOptions,
     });
   }
 
@@ -445,6 +448,7 @@ export function createWebGL2DAdapter({
   const lighting2D = createLighting2DState();
   const postPass = createWebGL2DPostPass(gl);
   const diagnostics = diagnostics2d ? createRenderDiagnostics2D({ gl }) : null;
+  const renderBudget = createRenderBudgetController(budgetOptions);
 
   const allocBuffer = createBufferCanvas ?? ((w, h) => {
     if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(w, h);
@@ -743,6 +747,7 @@ export function createWebGL2DAdapter({
     const entry = textCache.get(key);
     if (entry) {
       getTextureRecord(entry.canvas, smooth);
+      renderBudget.touch('text:' + key);
       textCache.delete(key);
       textCache.set(key, entry);
     }
@@ -755,11 +760,25 @@ export function createWebGL2DAdapter({
       const oldestKey = textCache.keys().next().value;
       const oldest = textCache.get(oldestKey);
       textCache.delete(oldestKey);
+      renderBudget.unregister('text:' + oldestKey);
       dropTexture(oldest.canvas, oldest.rec);
       oldest.canvas.width = 0;
       oldest.canvas.height = 0;
     }
     textCache.set(key, entry);
+    const texBytes = Math.max(0, (entry.canvas?.width ?? 0) * (entry.canvas?.height ?? 0) * 4);
+    renderBudget.registerResource({
+      id: 'text:' + key,
+      type: 'textCache',
+      bytes: texBytes,
+      reclaim: () => {
+        if (textCache.delete(key)) {
+          dropTexture(entry.canvas, entry.rec);
+          entry.canvas.width = 0;
+          entry.canvas.height = 0;
+        }
+      },
+    });
     return entry;
   }
 
@@ -1603,15 +1622,42 @@ export function createWebGL2DAdapter({
 
   function render(scene, app = null) {
     if (contextLost || disposed || !program) return;
-    if (!diagnostics?.beginFrame()) return renderFrame(scene, app);
+    const startMs = performance.now();
+    if (!diagnostics?.beginFrame()) {
+      try {
+        renderFrame(scene, app);
+        if (stats.postPassActive && postPass.supported) {
+          renderBudget.registerResource({
+            id: 'webgl2d:post-targets',
+            type: 'postTargets',
+            bytes: postPass.getTargetBytes?.() ?? 0,
+            reclaim: () => postPass.reclaimTargets?.() ?? 0,
+          });
+          renderBudget.touch('webgl2d:post-targets', postPass.getTargetBytes?.() ?? 0);
+        }
+        return;
+      } finally {
+        renderBudget.stepFrame({ frameTimeMs: performance.now() - startMs });
+      }
+    }
     let complete = false;
     try {
       renderFrame(scene, app, diagnostics);
+      if (stats.postPassActive && postPass.supported) {
+        renderBudget.registerResource({
+          id: 'webgl2d:post-targets',
+          type: 'postTargets',
+          bytes: postPass.getTargetBytes?.() ?? 0,
+          reclaim: () => postPass.reclaimTargets?.() ?? 0,
+        });
+        renderBudget.touch('webgl2d:post-targets', postPass.getTargetBytes?.() ?? 0);
+      }
       complete = true;
     } finally {
       diagnostics.beginView(-1);
       postPass.recordTargets?.(diagnostics);
       diagnostics.endFrame(complete);
+      renderBudget.stepFrame({ frameTimeMs: performance.now() - startMs });
     }
   }
 
@@ -1619,6 +1665,7 @@ export function createWebGL2DAdapter({
     event?.preventDefault?.();
     contextLost = true;
     diagnostics?.resetGpu(true);
+    renderBudget.reclaimAll('context-loss');
     destroyGlResources();
   };
   const onContextRestored = () => {
@@ -1648,6 +1695,9 @@ export function createWebGL2DAdapter({
     get qualityPreset() { return qualityPreset; },
     get stats() { return { ...stats }; },
     getRenderDiagnostics: () => diagnostics?.snapshot() ?? null,
+    getRenderBudget: () => renderBudget.getBudgetSnapshot(),
+    reclaimRenderResources: (type = null, reason = 'manual') =>
+      type ? renderBudget.reclaimByType(type, reason) : renderBudget.reclaimAll(reason),
     getViewport: () => ({ ...viewport }),
     setAmbientLight: lighting2D.setAmbientLight,
     addLight2D: lighting2D.addLight,

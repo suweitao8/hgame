@@ -414,6 +414,8 @@ export function createWebGL2DPostPass(gl) {
       supported: false,
       beginScene: () => false,
       endAndComposite: () => {},
+      reclaimTargets: () => 0,
+      getTargetBytes: () => 0,
       destroy: () => {},
     };
   }
@@ -560,7 +562,16 @@ export function createWebGL2DPostPass(gl) {
     } finally { finish?.(); }
   }
 
-  function destroy() {
+  function getTargetBytes() {
+    let bytes = 0;
+    for (const rt of [sceneRt, bloomA, bloomB]) {
+      if (rt) bytes += rt.w * rt.h * 4;
+    }
+    return bytes;
+  }
+
+  function reclaimTargets() {
+    const freed = getTargetBytes();
     for (const rt of [sceneRt, bloomA, bloomB]) {
       if (!rt) continue;
       gl.deleteFramebuffer?.(rt.fbo);
@@ -569,6 +580,11 @@ export function createWebGL2DPostPass(gl) {
     sceneRt = null;
     bloomA = null;
     bloomB = null;
+    return freed;
+  }
+
+  function destroy() {
+    reclaimTargets();
     if (blackTex) gl.deleteTexture?.(blackTex);
     blackTex = null;
     if (quadVao) gl.deleteVertexArray?.(quadVao);
@@ -591,6 +607,8 @@ export function createWebGL2DPostPass(gl) {
     },
     beginScene,
     endAndComposite,
+    reclaimTargets,
+    getTargetBytes,
     destroy,
   };
 }

@@ -317,3 +317,78 @@ test('createNavMesh3D avoids inflated obstacles, traverses stepped surfaces, and
   nav.addObstacle({ minX: 18, maxX: 19, minZ: 13, maxZ: 19 });
   assert.equal(nav.findPath({ x: 2, z: 4 }, { x: 16, z: 16 }, { maxSnapCells: 0 }), null);
 });
+
+test('createSimWorkerRunner executes on main-thread fallback and Worker pool with deterministic tick commits and cancellation cleanup', () => {
+  // 1. Main-thread fallback parity for grid-path
+  const mainCommits = [];
+  const mainRunner = Runtime.createSimWorkerRunner({
+    onCommit: entry => mainCommits.push(entry.id),
+  });
+  assert.equal(mainRunner.mode, 'main-thread');
+  const grid = Array.from({ length: 5 }, () => [0, 0, 0, 0, 0]);
+  grid[1][2] = 1;
+  grid[2][2] = 1;
+  const hLow = mainRunner.submit('grid-path', { tiles: grid, solid: [1], start: { x: 0, y: 2 }, goal: { x: 4, y: 2 } }, { tick: 1, priority: 1 });
+  const hHigh = mainRunner.submit('grid-path', { tiles: grid, solid: [1], start: { x: 0, y: 0 }, goal: { x: 4, y: 0 } }, { tick: 1, priority: 10 });
+  assert.equal(mainRunner.flushTick(0).length, 0);
+  const flushedMain = mainRunner.flushTick(1);
+  assert.deepEqual(flushedMain.map(r => r.id), [hHigh.id, hLow.id]);
+  assert.ok(Array.isArray(hLow.value) && hLow.value.length > 0);
+  assert.equal(hLow.state, 'completed');
+  mainRunner.dispose();
+
+  // 2. Worker path: out-of-order completion commits strictly in deterministic (submitTick, priority, id) order
+  const workers = [];
+  const commits = [];
+  const workerRunner = Runtime.createSimWorkerRunner({
+    workerCount: 2,
+    workerFactory(index) {
+      const w = {
+        index,
+        posted: [],
+        terminated: false,
+        listeners: [],
+        addEventListener(type, fn) { if (type === 'message') this.listeners.push(fn); },
+        removeEventListener(type, fn) { this.listeners = this.listeners.filter(f => f !== fn); },
+        postMessage(msg) { this.posted.push(msg); },
+        emit(data) { for (const fn of [...this.listeners]) fn({ data }); },
+        terminate() { this.terminated = true; },
+      };
+      workers.push(w);
+      return w;
+    },
+    onCommit: entry => commits.push({ id: entry.id, value: entry.value }),
+  });
+
+  assert.equal(workerRunner.mode, 'worker');
+  assert.equal(workerRunner.workerCount, 2);
+
+  const j1 = workerRunner.submit('batch-eval', { items: [1, 2] }, { tick: 2, priority: 1 });
+  const j2 = workerRunner.submit('batch-eval', { items: [3, 4] }, { tick: 2, priority: 5 });
+  const ac = new AbortController();
+  const j3 = workerRunner.submit('batch-eval', { items: [5, 6] }, { tick: 2, signal: ac.signal });
+
+  // Cancel j3 before worker responds; worker gets cancel message and late response is dropped
+  ac.abort();
+  assert.equal(j3.state, 'cancelled');
+  assert.ok(workers[0].posted.some(m => m.op === 'cancel' && m.id === j3.id));
+
+  // Deliver j1 before j2, plus late message for cancelled j3
+  workers[0].emit({ id: j1.id, ok: true, result: [2, 4] });
+  workers[1].emit({ id: j2.id, ok: true, result: [6, 8] });
+  workers[0].emit({ id: j3.id, ok: true, result: [10, 12] });
+
+  // Before tick 2, nothing commits
+  assert.equal(workerRunner.flushTick(1).length, 0);
+  // At tick 2, j2 (higher priority) commits before j1 deterministically
+  const committed = workerRunner.flushTick(2);
+  assert.deepEqual(committed.map(c => c.id), [j2.id, j1.id]);
+  assert.deepEqual(commits, [{ id: j2.id, value: [6, 8] }, { id: j1.id, value: [2, 4] }]);
+  const wStats = workerRunner.getStats();
+  assert.equal(wStats.committed, 2);
+  assert.equal(wStats.cancelled, 1);
+  assert.equal(wStats.droppedLate, 1);
+
+  workerRunner.dispose();
+  assert.equal(workers.every(w => w.terminated), true);
+});

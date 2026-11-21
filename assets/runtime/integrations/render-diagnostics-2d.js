@@ -132,10 +132,49 @@ function describeTarget(target, viewIndex, screenTarget) {
   return Object.freeze({ viewIndex, width, height, samples: 0, bytes: width * height * bytesPerPixel });
 }
 
+function beginCanvasDrawCounters(ctx) {
+  let calls = 0;
+  const stops = [];
+  for (const name of ['drawImage', 'fillRect', 'strokeRect', 'fill', 'stroke', 'fillText', 'strokeText']) {
+    const stop = observeMethod(ctx, name, () => { calls++; });
+    if (stop) stops.push(stop);
+  }
+  if (!stops.length) return null;
+  return {
+    read: () => ({ calls, triangles: null }),
+    stop() { for (const stop of stops) stop(); },
+  };
+}
+
+function beginCanvasUploadProbe(ctx) {
+  const totals = { bufferBytes: 0, textureBytes: 0, calls: 0, unmeasuredCalls: 0 };
+  const methods = [];
+  const stops = [];
+  const stopPut = observeMethod(ctx, 'putImageData', args => {
+    const img = args[0];
+    if (img && img.width > 0 && img.height > 0) {
+      totals.calls++;
+      totals.textureBytes += img.width * img.height * 4;
+    }
+  });
+  if (stopPut) { methods.push('putImageData'); stops.push(stopPut); }
+  const stopDraw = observeMethod(ctx, 'drawImage', args => {
+    const src = args[0];
+    const w = src?.width ?? src?.naturalWidth ?? 0;
+    const h = src?.height ?? src?.naturalHeight ?? 0;
+    if (w > 0 && h > 0) {
+      totals.calls++;
+      totals.textureBytes += w * h * 4;
+    }
+  });
+  if (stopDraw) { methods.push('drawImage'); stops.push(stopDraw); }
+  return stops.length ? { methods, read: () => ({ ...totals }), stop() { for (const stop of stops) stop(); } } : null;
+}
+
 /** @typedef {import('./quality3d/render-diagnostics.js').RenderDiagnosticsSnapshot3D} RenderDiagnosticsSnapshot2D */
 
 /** Internal recorder shared by the native 2D adapters and the Pixi profile. */
-export function createRenderDiagnostics2D({ gl = null, pixiRenderer = null } = {}) {
+export function createRenderDiagnostics2D({ gl = null, ctx = null, pixiRenderer = null } = {}) {
   const getContext = () => pixiRenderer?.gl ?? gl;
   let device;
   let deviceState;
@@ -147,14 +186,43 @@ export function createRenderDiagnostics2D({ gl = null, pixiRenderer = null } = {
       deviceState = state;
       current?.lost?.then(() => { state.lost = true; });
     }
-    return current ?? getContext();
+    return current ?? getContext() ?? ctx;
   }
   return createRenderDiagnostics({
     getContext, getIdentity,
     isUnavailable: () => deviceState?.lost === true,
-    beginCounters: context => context ? beginGlDrawCounters(context) : beginWebGpuDrawCounters(device),
-    beginUploads: context => context ? beginWebGlUploadProbe(context) : beginWebGpuUploads(pixiRenderer?.gpu?.device?.queue),
+    beginCounters: context => {
+      if (context) return beginGlDrawCounters(context);
+      if (device) return beginWebGpuDrawCounters(device);
+      return null;
+    },
+    beginCanvasDraws: () => (ctx ? beginCanvasDrawCounters(ctx) : null),
+    beginUploads: context => {
+      if (context) return beginWebGlUploadProbe(context);
+      if (pixiRenderer?.gpu?.device?.queue) return beginWebGpuUploads(pixiRenderer.gpu.device.queue);
+      return null;
+    },
+    beginCanvasUploads: () => (ctx ? beginCanvasUploadProbe(ctx) : null),
     describeTarget: (target, viewIndex) => describeTarget(target, viewIndex, pixiRenderer?.view?.renderTarget),
     observeTargets: record => observeMethod(pixiRenderer?.renderTarget, 'bind', (_args, target) => record(target)),
+    describeMeasurementSources: ({ draws, uploadBytes }) => {
+      if (!getContext() && !device && ctx) {
+        return {
+          gpuMs: 'unavailable',
+          draws: draws !== null ? 'measured' : 'unavailable',
+          triangles: 'unavailable',
+          uploadBytes: uploadBytes !== null ? 'estimated' : 'unavailable',
+          targetBytes: 'estimated',
+        };
+      }
+      if (device) {
+        const hasTimestamp = Boolean(device.features?.has?.('timestamp-query'));
+        return {
+          gpuMs: hasTimestamp ? 'measured' : 'unavailable',
+          triangles: 'unavailable',
+        };
+      }
+      return null;
+    },
   });
 }

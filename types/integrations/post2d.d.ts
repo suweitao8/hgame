@@ -58,6 +58,8 @@ export function createWebGL2DPostPass(gl: WebGL2RenderingContext): {
     supported: boolean;
     beginScene: () => boolean;
     endAndComposite: () => void;
+    reclaimTargets: () => number;
+    getTargetBytes: () => number;
     destroy: () => void;
     readonly sceneTarget?: undefined;
     recordTargets?: undefined;
@@ -67,6 +69,8 @@ export function createWebGL2DPostPass(gl: WebGL2RenderingContext): {
     recordTargets(report: any): void;
     beginScene: (w: any, h: any) => boolean;
     endAndComposite: (w: any, h: any, state: any, cam: any, viewport: any, designW: any, designH: any, report?: null) => void;
+    reclaimTargets: () => number;
+    getTargetBytes: () => number;
     destroy: () => void;
 };
 /** Maximum simultaneous dynamic 2D point lights evaluated per pass. */

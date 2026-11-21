@@ -77,6 +77,7 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @property {boolean} [cull=true] Skip sprites outside the camera view.
  * @property {QualityPresetTier | null} [quality=null] Quality tier ('low' | 'medium' | 'high' | 'ultra'); null disables presets.
  * @property {((width: number, height: number) => BufferCanvas2D | null) | null} [createBufferCanvas=null] Factory for offscreen buffers (tint/shadow caches).
+ * @property {object} [budgetOptions] Optional options passed to `createRenderBudgetController`.
  */
 /**
  * @typedef {object} Renderer2DStats
@@ -111,6 +112,8 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
  * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
  * @property {() => import('./render-diagnostics-2d.js').RenderDiagnosticsSnapshot2D | null} getRenderDiagnostics Latest opt-in render frame.
+ * @property {() => ReturnType<import('./render-budget-2d.js').createRenderBudgetController> extends { getBudgetSnapshot: () => infer S } ? S : unknown} getRenderBudget Current 2D resource budget snapshot.
+ * @property {(type?: import('./render-budget-2d.js').RenderResourceType2D | null, reason?: import('./render-budget-2d.js').RenderEvictionReason2D) => number} reclaimRenderResources Reclaim idle targets/caches by type or all.
  * @property {() => Viewport2D} getViewport Copy of the current viewport.
  * @property {(color?: string | number, intensity?: number) => void} setAmbientLight Configure global 2D ambient darkness/tint.
  * @property {(light: { x: number, y: number, radius?: number, color?: string | number, intensity?: number }) => boolean} addLight2D Append a dynamic 2D point light.
@@ -128,7 +131,7 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @param {Canvas2DAdapterOptions} options
  * @returns {Canvas2DAdapter}
  */
-export function createCanvas2DAdapter({ canvas, width, height, background, pixelRatio, imageSmoothing, interpolate, cull, quality, createBufferCanvas, diagnostics2d, }?: Canvas2DAdapterOptions): Canvas2DAdapter;
+export function createCanvas2DAdapter({ canvas, width, height, background, pixelRatio, imageSmoothing, interpolate, cull, quality, createBufferCanvas, diagnostics2d, budgetOptions, }?: Canvas2DAdapterOptions): Canvas2DAdapter;
 /** 2D camera supporting smooth follow, deadzones, bounds clamping, zoom, rotation and shake. */
 export class Camera2D {
     /** @param {Camera2DOptions} [options] */
@@ -690,6 +693,10 @@ export type Canvas2DAdapterOptions = {
      * Factory for offscreen buffers (tint/shadow caches).
      */
     createBufferCanvas?: ((width: number, height: number) => BufferCanvas2D | null) | null | undefined;
+    /**
+     * Optional options passed to `createRenderBudgetController`.
+     */
+    budgetOptions?: object;
 };
 export type Renderer2DStats = {
     /**
@@ -802,6 +809,16 @@ export type Renderer2DAdapter = {
      * Latest opt-in render frame.
      */
     getRenderDiagnostics: () => import("./render-diagnostics-2d.js").RenderDiagnosticsSnapshot2D | null;
+    /**
+     * Current 2D resource budget snapshot.
+     */
+    getRenderBudget: () => ReturnType<typeof createRenderBudgetController> extends {
+        getBudgetSnapshot: () => infer S;
+    } ? S : unknown;
+    /**
+     * Reclaim idle targets/caches by type or all.
+     */
+    reclaimRenderResources: (type?: import("./render-budget-2d.js").RenderResourceType2D | null, reason?: import("./render-budget-2d.js").RenderEvictionReason2D) => number;
     /**
      * Copy of the current viewport.
      */
@@ -1214,3 +1231,4 @@ export type SpriteCrowdSpawnOptions = {
     tint?: string | null | undefined;
 };
 import { Component } from '../core/component.js';
+import { createRenderBudgetController } from './render-budget-2d.js';

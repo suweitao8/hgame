@@ -76,6 +76,22 @@ export class Renderer2D {
       this.app.canvas.addEventListener('webglcontextlost', this.resetFrameDiagnostics);
       this.app.canvas.addEventListener('webglcontextrestored', this.resetFrameDiagnostics);
     }
+    const { createRenderBudgetController } = await loadRuntime('integrations/render-budget-2d.js');
+    this.renderBudget = createRenderBudgetController();
+    this.renderBudget.registerResource({
+      id: 'pixi:sprite-pool',
+      type: 'scratchBuffers',
+      bytes: 0,
+      reclaim: () => {
+        let freed = 0;
+        for (const sprite of this.spritePool) {
+          freed += 256;
+          sprite.destroy();
+        }
+        this.spritePool.length = 0;
+        return freed;
+      },
+    });
     this.app.ticker.stop();
     this.app.canvas.id = 'game';
     this.app.canvas.setAttribute('aria-label', '游戏画面');
@@ -376,12 +392,26 @@ export class Renderer2D {
       finish?.();
       finish = report?.beginPass('scene', null);
       this.app.renderer.render(this.app.stage);
-    } finally { finish?.(); }
+    } finally {
+      finish?.();
+      if (this.renderBudget) {
+        this.renderBudget.touch('pixi:sprite-pool', this.spritePool.length * 256);
+        this.renderBudget.stepFrame({ frameTimeMs: Number.isFinite(frameIntervalMs) ? frameIntervalMs : null });
+      }
+    }
+  }
+  getRenderBudget() {
+    return this.renderBudget?.getBudgetSnapshot() ?? null;
+  }
+  reclaimRenderResources(type = null, reason = 'manual') {
+    if (!this.renderBudget) return 0;
+    return type ? this.renderBudget.reclaimByType(type, reason) : this.renderBudget.reclaimAll(reason);
   }
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     try {
+      this.renderBudget?.reclaimAll('context-loss');
       if (this.resetFrameDiagnostics) {
         this.app.canvas.removeEventListener('webglcontextlost', this.resetFrameDiagnostics);
         this.app.canvas.removeEventListener('webglcontextrestored', this.resetFrameDiagnostics);

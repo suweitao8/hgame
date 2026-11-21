@@ -28,6 +28,11 @@ import {
   createWorldAlignedMaterial,
   createWorldMaterialPalette,
 } from '../assets/runtime/integrations/world-aligned-material.js';
+import {
+  createInstancedBatch3D,
+  createGpuIndirectCuller3D,
+  GPU_CULL_WGSL,
+} from '../assets/runtime/integrations/culling3d.js';
 
 function createMockRendererNS({ isWebGL2 = true } = {}) {
   const calls = [];
@@ -625,4 +630,111 @@ test('Open-World: WorldPartition hysteresis + velocity lookahead + HLOD batching
   palette.dispose();
   probes.dispose();
   partition.clear();
+});
+
+test('P2: createInstancedBatch3D skips static uploads & uses dirty ranges, and createGpuIndirectCuller3D handles WebGPU, WebGL2 multidraw, and CPU fallback', () => {
+  // 1. Ordinary 3D instanced batch static skip & sparse dirty range upload
+  const geom = new THREE.BoxGeometry(1, 1, 1);
+  const mat = new THREE.MeshBasicMaterial();
+  const batch = createInstancedBatch3D(THREE, { geometry: geom, material: mat, capacity: 16 });
+  const a = batch.alloc({ x: 0, y: 0, z: 0 });
+  const b = batch.alloc({ x: 5, y: 0, z: 0 });
+  const c = batch.alloc({ x: 10, y: 0, z: 0 });
+  batch.flush();
+  assert.equal(batch.lastUploadStats.skippedStatic, false);
+  assert.equal(batch.lastUploadStats.uploadedInstances, 3);
+
+  // Static frame -> zero uploads
+  batch.flush();
+  assert.equal(batch.lastUploadStats.skippedStatic, true);
+  assert.equal(batch.lastUploadStats.uploadedInstances, 0);
+
+  // Sparse single-instance update -> only 1 instance matrix uploaded
+  batch.setTransform(b, 6, 0, 0);
+  batch.flush();
+  assert.equal(batch.lastUploadStats.skippedStatic, false);
+  assert.equal(batch.lastUploadStats.uploadedInstances, 1);
+  batch.dispose();
+  geom.dispose();
+  mat.dispose();
+
+  // 2. WebGPU compute culling + indirect draw path
+  assert.ok(GPU_CULL_WGSL.includes('drawIndexedIndirect') || GPU_CULL_WGSL.includes('DrawIndexedIndirectArgs'));
+  const writes = [];
+  const computeDispatches = [];
+  const indirectDraws = [];
+  const mockDevice = {
+    createShaderModule: () => ({}),
+    createComputePipeline: () => ({ getBindGroupLayout: () => ({}) }),
+    createBuffer: desc => ({ desc, destroyed: false, destroy() { this.destroyed = true; } }),
+    createBindGroup: () => ({}),
+    queue: {
+      writeBuffer(buf, offset, data, dataOffset, size) {
+        writes.push({ usage: buf.desc.usage, offset, bytes: size ? size * 4 : data.byteLength });
+      },
+    },
+  };
+  const gpuCuller = createGpuIndirectCuller3D({ webgpuDevice: mockDevice, maxInstances: 64 });
+  assert.equal(gpuCuller.mode, 'webgpu-indirect');
+  assert.equal(gpuCuller.fallbackReason, null);
+  gpuCuller.setInstanceBounds(0, 0, 0, -5, 1);
+  gpuCuller.setInstanceBounds(1, 2, 0, -5, 1);
+  const planes = new Float32Array(24);
+  planes[2] = 1; planes[3] = 20; // simple z >= -20 plane
+  gpuCuller.setFrustumPlanes(planes);
+  const commandEncoder = {
+    beginComputePass: () => ({
+      setPipeline() {},
+      setBindGroup() {},
+      dispatchWorkgroups(n) { computeDispatches.push(n); },
+      end() {},
+    }),
+  };
+  const renderPassEncoder = {
+    drawIndexedIndirect(_buf, offset) { indirectDraws.push(offset); },
+  };
+  gpuCuller.execute({ commandEncoder, renderPassEncoder, indexCount: 36 });
+  assert.deepEqual(computeDispatches, [1]);
+  assert.deepEqual(indirectDraws, [0]);
+  assert.equal(gpuCuller.getStats().indirectDraws, 1);
+  // Static second execute skips bounds buffer write
+  writes.length = 0;
+  gpuCuller.execute({ commandEncoder, renderPassEncoder, indexCount: 36 });
+  assert.equal(gpuCuller.getStats().skippedStatic, true);
+  assert.equal(writes.length, 1); // only indirect header reset
+  gpuCuller.dispose();
+
+  // 3. WebGL2 WEBGL_multi_draw path
+  const multiCalls = [];
+  const gl = {
+    getExtension(name) {
+      if (name !== 'WEBGL_multi_draw') return null;
+      return {
+        multiDrawElementsInstancedWEBGL(...args) { multiCalls.push(args); },
+      };
+    },
+  };
+  const glCuller = createGpuIndirectCuller3D({ gl });
+  assert.equal(glCuller.mode, 'webgl2-multidraw');
+  assert.ok(glCuller.fallbackReason);
+  glCuller.execute({
+    counts: new Int32Array([36, 36]),
+    offsets: new Int32Array([0, 0]),
+    instanceCounts: new Int32Array([4, 2]),
+    drawCount: 2,
+  });
+  assert.equal(multiCalls.length, 1);
+  glCuller.dispose();
+
+  // 4. Explicit CPU instanced fallback
+  const cpuFallback = createGpuIndirectCuller3D();
+  assert.equal(cpuFallback.mode, 'cpu-instanced');
+  assert.match(cpuFallback.fallbackReason, /CPU instanced/i);
+  cpuFallback.setInstanceBounds(0, 0, 0, -5, 1);
+  cpuFallback.setInstanceBounds(1, 0, 0, -50, 1);
+  cpuFallback.setFrustumPlanes(planes);
+  const cpuRes = cpuFallback.execute();
+  assert.equal(cpuRes.visibleCount, 1);
+  assert.deepEqual([...cpuRes.visibleIndices], [0]);
+  cpuFallback.dispose();
 });

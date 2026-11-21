@@ -90,6 +90,9 @@ export function createRenderDiagnostics3D(THREE, renderer) {
  * @property {(target: any, viewIndex: number) => RenderTargetUsage3D | null} [describeTarget]
  * @property {typeof beginWebGlUploadProbe} [beginUploads]
  * @property {(record: (target: any) => RenderTargetUsage3D | null) => (() => void) | null} [observeTargets]
+ * @property {(info: {drawCalls: number | null, draws: number | null, triangles: number | null, uploads: WebGlUploadTotals | null, uploadBytes: number | null, hasTargetBytes: boolean, gpuSupported: boolean}) => Record<string, 'measured' | 'estimated' | 'unavailable'> | null} [describeMeasurementSources]
+ * @property {() => {read: () => {calls: number | null, triangles: number | null}, stop: () => void} | null} [beginCanvasDraws]
+ * @property {() => {methods: string[], read: () => WebGlUploadTotals, stop: () => void} | null} [beginCanvasUploads]
  */
 
 /**
@@ -97,7 +100,8 @@ export function createRenderDiagnostics3D(THREE, renderer) {
  * @param {RenderDiagnosticsOptions} [options]
  */
 export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable, beginCounters, describeTarget,
-  beginUploads = beginWebGlUploadProbe, observeTargets } = {}) {
+  beginUploads = beginWebGlUploadProbe, observeTargets, describeMeasurementSources,
+  beginCanvasDraws = null, beginCanvasUploads = null } = {}) {
   const gpuSamples = [];
   let timer;
   let sourceIdentity;
@@ -108,6 +112,21 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
   let nextGpuPass = 0;
   let gpuFrameSum = 0;
   let gpuFrameCount = 0;
+
+  function buildMeasurementMeta({ drawCalls, draws, triangles, uploads, uploadBytes, hasTargetBytes, gpuSupported }) {
+    const base = {
+      cpuMs: 'measured',
+      gpuMs: gpuSupported ? 'measured' : 'unavailable',
+      draws: (draws ?? drawCalls) !== null ? 'measured' : 'unavailable',
+      triangles: triangles !== null ? 'measured' : 'unavailable',
+      uploadBytes: uploads ? (uploads.unmeasuredCalls > 0 ? 'estimated' : 'measured') : (uploadBytes !== null ? 'estimated' : 'unavailable'),
+      targetBytes: hasTargetBytes ? 'estimated' : 'unavailable',
+    };
+    const overrides = describeMeasurementSources?.({ drawCalls, draws, triangles, uploads, uploadBytes, hasTargetBytes, gpuSupported });
+    const sources = Object.freeze(overrides ? { ...base, ...overrides } : base);
+    const estimatedFields = Object.freeze(Object.keys(sources).filter(key => sources[key] === 'estimated'));
+    return { sources, estimatedFields };
+  }
 
   function pollGpu() {
     timer?.poll((identity, ms, status) => {
@@ -142,14 +161,18 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
     if (timer === undefined) timer = createGpuFrameTimer(gl, { alternate: false });
     pollGpu();
     const counters = beginCounters?.(gl);
+    const canvasCounters = !counters ? beginCanvasDraws?.() : null;
     const id = ++frameId;
     const wholeFrame = id % 2 === 1;
     frame = {
-      id, counters, viewIndex: 0, passes: [], targets: new Map(),
-      started: performance.now(), startCounts: counters?.read(),
+      id, counters, canvasCounters, viewIndex: 0, passes: [], targets: new Map(),
+      started: performance.now(),
+      startCounts: counters?.read(),
+      startCanvasCounts: canvasCounters?.read(),
       gpuPass: timer && !wholeFrame ? nextGpuPass++ % Math.max(1, snapshot?.passes.length ?? 0) : -1,
       frameTimer: wholeFrame && timer?.begin({ frame: id, name: 'frame', viewIndex: null, passIndex: null }) ? timer : null,
       upload: beginUploads(gl),
+      canvasUpload: !gl ? beginCanvasUploads?.() : null,
       stopObservingTargets: observeTargets?.(recordTarget),
     };
     return true;
@@ -173,20 +196,56 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
   function beginPass(name, target) {
     const current = frame;
     if (!current) return null;
-    const { counters, viewIndex } = current;
+    const { counters, canvasCounters, viewIndex } = current;
     const index = current.passes.length;
     const description = recordTarget(target);
     const gpu = index === current.gpuPass && timer?.begin({ frame: current.id, name, viewIndex, passIndex: index }) ? timer : null;
     const start = performance.now();
     const before = counters?.read();
+    const beforeCanvas = canvasCounters?.read();
     const uploads = current.upload?.read();
+    const canvasUploads = current.canvasUpload?.read();
     return () => {
       if (frame !== current) return;
       gpu?.end();
       const after = counters?.read();
-      current.passes.push(Object.freeze({ name, viewIndex, target: description, cpuMs: performance.now() - start,
-        drawCalls: drawDelta(after, before), triangles: delta(after?.triangles ?? null, before?.triangles ?? null),
-        uploads: uploadDelta(current.upload?.read(), uploads) }));
+      const afterCanvas = canvasCounters?.read();
+      const passDrawCalls = drawDelta(after, before);
+      const passCanvasDraws = drawDelta(afterCanvas, beforeCanvas);
+      const passDraws = passDrawCalls ?? passCanvasDraws;
+      const passTris = delta(after?.triangles ?? null, before?.triangles ?? null);
+      const passUploads = uploadDelta(current.upload?.read(), uploads);
+      const passCanvasUploads = uploadDelta(current.canvasUpload?.read(), canvasUploads);
+      const passUploadBytes = passUploads
+        ? passUploads.bufferBytes + passUploads.textureBytes
+        : passCanvasUploads
+          ? passCanvasUploads.bufferBytes + passCanvasUploads.textureBytes
+          : null;
+      const passTargetBytes = description?.bytes ?? 0;
+      const meta = buildMeasurementMeta({
+        drawCalls: passDrawCalls,
+        draws: passDraws,
+        triangles: passTris,
+        uploads: passUploads,
+        uploadBytes: passUploadBytes,
+        hasTargetBytes: true,
+        gpuSupported: Boolean(gpu),
+      });
+      current.passes.push(Object.freeze({
+        name,
+        viewIndex,
+        target: description,
+        cpuMs: performance.now() - start,
+        gpuMs: null,
+        drawCalls: passDrawCalls,
+        draws: passDraws,
+        triangles: passTris,
+        uploads: passUploads,
+        uploadBytes: passUploadBytes,
+        targetBytes: passTargetBytes,
+        measurementSources: meta.sources,
+        estimatedFields: meta.estimatedFields,
+      }));
     };
   }
 
@@ -198,15 +257,42 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
       current.frameTimer?.end();
       const targets = [...current.targets.values()];
       const counts = current.counters?.read();
+      const canvasCounts = current.canvasCounters?.read();
+      const frameDrawCalls = drawDelta(counts, current.startCounts);
+      const frameCanvasDraws = drawDelta(canvasCounts, current.startCanvasCounts);
+      const frameDraws = frameDrawCalls ?? frameCanvasDraws;
+      const frameTris = delta(counts?.triangles ?? null, current.startCounts?.triangles ?? null);
+      const frameUploads = current.upload ? Object.freeze(current.upload.read()) : null;
+      const frameCanvasUploads = current.canvasUpload ? current.canvasUpload.read() : null;
+      const frameUploadBytes = frameUploads
+        ? frameUploads.bufferBytes + frameUploads.textureBytes
+        : frameCanvasUploads
+          ? frameCanvasUploads.bufferBytes + frameCanvasUploads.textureBytes
+          : null;
+      const frameTargetBytes = targets.reduce((total, target) => total + target.bytes, 0);
+      const meta = buildMeasurementMeta({
+        drawCalls: frameDrawCalls,
+        draws: frameDraws,
+        triangles: frameTris,
+        uploads: frameUploads,
+        uploadBytes: frameUploadBytes,
+        hasTargetBytes: true,
+        gpuSupported: Boolean(timer),
+      });
       snapshot = Object.freeze({
         frame: current.id, complete, cpuMs: performance.now() - current.started,
-        drawCalls: drawDelta(counts, current.startCounts),
-        triangles: delta(counts?.triangles ?? null, current.startCounts?.triangles ?? null),
-        estimatedTargetBytes: targets.reduce((total, target) => total + target.bytes, 0),
+        drawCalls: frameDrawCalls,
+        draws: frameDraws,
+        triangles: frameTris,
+        estimatedTargetBytes: frameTargetBytes,
+        targetBytes: frameTargetBytes,
         targets: Object.freeze(targets), passes: Object.freeze(current.passes),
-        uploads: current.upload ? Object.freeze(current.upload.read()) : null,
-        uploadMethods: Object.freeze(current.upload?.methods ?? []),
+        uploads: frameUploads,
+        uploadBytes: frameUploadBytes,
+        uploadMethods: Object.freeze(current.upload?.methods ?? current.canvasUpload?.methods ?? []),
         gpu: Object.freeze({ supported: Boolean(timer), samples: Object.freeze(gpuSamples.slice()) }),
+        measurementSources: meta.sources,
+        estimatedFields: meta.estimatedFields,
       });
     } finally {
       stopFrameObservations(current);
@@ -215,7 +301,9 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
 
   function stopFrameObservations(current) {
     current.upload?.stop();
+    current.canvasUpload?.stop();
     current.counters?.stop();
+    current.canvasCounters?.stop();
     current.stopObservingTargets?.();
   }
 

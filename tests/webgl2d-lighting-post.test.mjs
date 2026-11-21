@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Scene, Entity } from '../assets/runtime/index.js';
+import { Scene, Entity, createRenderBudgetController } from '../assets/runtime/index.js';
 import { Sprite2D, createCanvas2DAdapter } from '../assets/runtime/integrations/canvas2d.js';
 import { createWebGL2DAdapter } from '../assets/runtime/integrations/webgl2d.js';
 import { createLighting2DState, MAX_2D_LIGHTS } from '../assets/runtime/integrations/post2d.js';
@@ -219,4 +219,87 @@ test('Pixi diagnostics discard snapshots when the WebGPU device is lost or repla
   report.endFrame(true);
   pixiRenderer.gpu.device = {};
   assert.equal(report.snapshot(), null);
+});
+
+test('P3: 2D render budget reclaims idle resources by type with recorded trigger reasons across backends', () => {
+  const evicted = [];
+  const budget = createRenderBudgetController({ maxBytes: 1024, idleFrames: 3, frameBudgetMs: 16 });
+  budget.registerResource({ id: 'post:rt', type: 'postTargets', bytes: 600, priority: 1, reclaim: r => { evicted.push(['post:rt', r]); } });
+  budget.registerResource({ id: 'text:a', type: 'textCache', bytes: 600, priority: 0, reclaim: r => { evicted.push(['text:a', r]); } });
+
+  // Frame 1: touch post:rt so text:a is idle and evicted due to memory-budget (600 + 600 > 1024)
+  budget.stepFrame({ frameTimeMs: 8 });
+  budget.touch('post:rt');
+  budget.stepFrame({ frameTimeMs: 8 });
+  const snap1 = budget.getBudgetSnapshot();
+  assert.equal(snap1.evictions.length, 1);
+  assert.equal(snap1.evictions[0].resourceType, 'textCache');
+  assert.equal(snap1.evictions[0].reason, 'memory-budget');
+
+  // Advance 3 frames without touching post:rt -> idle-ttl eviction
+  budget.stepFrame();
+  budget.stepFrame();
+  budget.stepFrame();
+  const snap2 = budget.getBudgetSnapshot();
+  assert.equal(snap2.evictions.length, 2);
+  assert.equal(snap2.evictions[1].resourceType, 'postTargets');
+  assert.equal(snap2.evictions[1].reason, 'idle-ttl');
+  assert.equal(snap2.totalBytes, 0);
+
+  // Canvas2D adapter integrates render budget + exposes getRenderBudget/reclaimRenderResources
+  const { canvas } = createMockCanvas2D();
+  const adapter = createCanvas2DAdapter({
+    canvas,
+    width: 320,
+    height: 180,
+    diagnostics2d: true,
+    budgetOptions: { maxBytes: 4096, idleFrames: 2 },
+  });
+  const scene = new Scene('s');
+  const ent = scene.add(new Entity());
+  ent.addComponent(new Sprite2D({ width: 20, height: 20, color: '#ff0000' }));
+  adapter.render(scene);
+  const cBudget = adapter.getRenderBudget();
+  assert.ok(cBudget && cBudget.frame === 1);
+  assert.equal(typeof adapter.reclaimRenderResources, 'function');
+  adapter.dispose();
+});
+
+test('P4: 2D diagnostics emit unified frame/pass draws, uploadBytes, targetBytes and measurementSources', () => {
+  const { canvas } = createMockCanvas2D();
+  const adapter = createCanvas2DAdapter({ canvas, width: 320, height: 180, diagnostics2d: true });
+  const scene = new Scene('p4');
+  const ent = scene.add(new Entity());
+  ent.addComponent(new Sprite2D({ width: 24, height: 24, color: '#00ff88' }));
+  adapter.render(scene);
+  const snap = adapter.getRenderDiagnostics();
+  assert.ok(snap);
+  assert.ok(snap.draws > 0, 'Canvas2D reports measured draw count');
+  assert.equal(snap.measurementSources.draws, 'measured');
+  assert.equal(snap.measurementSources.gpuMs, 'unavailable');
+  assert.equal(snap.measurementSources.targetBytes, 'estimated');
+  assert.ok(snap.estimatedFields.includes('targetBytes'));
+  assert.ok(snap.passes.length >= 1);
+  assert.equal(snap.passes[0].measurementSources.draws, 'measured');
+  adapter.dispose();
+
+  // Pixi WebGPU with timestamp-query capability marks gpuMs measured vs unavailable without it
+  const gpuDevice = {
+    features: new Set(['timestamp-query']),
+    queue: { writeBuffer() {} },
+    createCommandEncoder: () => ({
+      beginRenderPass: () => ({ draw() {}, drawIndexed() {}, drawIndirect() {}, drawIndexedIndirect() {}, executeBundles() {}, end() {} }),
+    }),
+  };
+  const gpuReport = createRenderDiagnostics2D({ pixiRenderer: { gpu: { device: gpuDevice } } });
+  gpuReport.beginFrame();
+  const endPass = gpuReport.beginPass('scene', null);
+  gpuDevice.createCommandEncoder().beginRenderPass().draw();
+  endPass();
+  gpuReport.endFrame(true);
+  const gpuSnap = gpuReport.snapshot();
+  assert.equal(gpuSnap.measurementSources.gpuMs, 'measured');
+  assert.equal(gpuSnap.measurementSources.draws, 'measured');
+  assert.equal(gpuSnap.measurementSources.targetBytes, 'estimated');
+  assert.equal(gpuSnap.passes[0].draws, 1);
 });
