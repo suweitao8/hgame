@@ -1453,6 +1453,78 @@ export function createReflectionProbeManager3D(THREE, { maxProbes = 8, blendMarg
     return { primary, secondary, blendFactor, active };
   }
 
+  function injectBoxProjectedBlending(material) {
+    if (!material || typeof material !== 'object') return false;
+    if (material.userData?._hgameProbeInjected) return true;
+    if (!THREE?.Vector3) return false;
+    const uniforms = {
+      uProbeBoxEnabled: { value: 0 },
+      uProbeBlendWeight: { value: 0 },
+      uProbeMinA: { value: new THREE.Vector3(-10, -5, -10) },
+      uProbeMaxA: { value: new THREE.Vector3(10, 5, 10) },
+      uProbePosA: { value: new THREE.Vector3(0, 0, 0) },
+      uProbeMinB: { value: new THREE.Vector3(-10, -5, -10) },
+      uProbeMaxB: { value: new THREE.Vector3(10, 5, 10) },
+      uProbePosB: { value: new THREE.Vector3(0, 0, 0) },
+      uProbeIntensityA: { value: 1 },
+      uProbeIntensityB: { value: 1 },
+    };
+    material.userData = { ...(material.userData || {}), _hgameProbeInjected: true, _hgameProbeUniforms: uniforms };
+    const prevCompile = material.onBeforeCompile;
+    const prevKey = material.customProgramCacheKey;
+    material.customProgramCacheKey = () => {
+      const base = typeof prevKey === 'function' ? prevKey.call(material) : '';
+      return `${base}:hgame-rprobe-box`;
+    };
+    material.onBeforeCompile = (shader, renderer) => {
+      if (typeof prevCompile === 'function') prevCompile.call(material, shader, renderer);
+      Object.assign(shader.uniforms, uniforms);
+      if (shader.vertexShader.includes('#include <project_vertex>')) {
+        shader.vertexShader = 'varying vec3 vHgameProbeWorldPos;\n' + shader.vertexShader.replace(
+          '#include <project_vertex>',
+          '#include <project_vertex>\n{\n  vec4 _rpWp = vec4(transformed, 1.0);\n  #ifdef USE_INSTANCING\n    _rpWp = instanceMatrix * _rpWp;\n  #endif\n  vHgameProbeWorldPos = (modelMatrix * _rpWp).xyz;\n}',
+        );
+      }
+      if (shader.fragmentShader.includes('#include <lights_fragment_maps>')) {
+        const fragDecls = [
+          'varying vec3 vHgameProbeWorldPos;',
+          'uniform float uProbeBoxEnabled;',
+          'uniform float uProbeBlendWeight;',
+          'uniform vec3 uProbeMinA;',
+          'uniform vec3 uProbeMaxA;',
+          'uniform vec3 uProbePosA;',
+          'uniform vec3 uProbeMinB;',
+          'uniform vec3 uProbeMaxB;',
+          'uniform vec3 uProbePosB;',
+          'uniform float uProbeIntensityA;',
+          'uniform float uProbeIntensityB;',
+          'vec3 hgameBoxProjectDir(vec3 dir, vec3 wp, vec3 bmin, vec3 bmax, vec3 ppos) {',
+          '  vec3 invD = 1.0 / max(abs(dir), vec3(1e-5)) * sign(dir + vec3(1e-6));',
+          '  vec3 t0 = (bmax - wp) * invD;',
+          '  vec3 t1 = (bmin - wp) * invD;',
+          '  vec3 tmax = max(t0, t1);',
+          '  float hit = min(min(tmax.x, tmax.y), tmax.z);',
+          '  return normalize((wp + dir * hit) - ppos);',
+          '}',
+        ].join('\n');
+        const fragPatch = [
+          '#include <lights_fragment_maps>',
+          'if (uProbeBoxEnabled > 0.5) {',
+          '  vec3 _reflW = reflect(-geometryViewDir, geometryNormal);',
+          '  vec3 _dirA = hgameBoxProjectDir(_reflW, vHgameProbeWorldPos, uProbeMinA, uProbeMaxA, uProbePosA);',
+          '  vec3 _dirB = hgameBoxProjectDir(_reflW, vHgameProbeWorldPos, uProbeMinB, uProbeMaxB, uProbePosB);',
+          '  float _boxAlign = mix(max(0.0, dot(_dirA, _reflW)), max(0.0, dot(_dirB, _reflW)), uProbeBlendWeight);',
+          '  float _probeScale = mix(uProbeIntensityA, uProbeIntensityB, uProbeBlendWeight) * (0.75 + 0.25 * _boxAlign);',
+          '  radiance *= _probeScale;',
+          '}',
+        ].join('\n');
+        shader.fragmentShader = fragDecls + '\n' + shader.fragmentShader.replace('#include <lights_fragment_maps>', fragPatch);
+      }
+    };
+    material.needsUpdate = true;
+    return true;
+  }
+
   function applyToMaterial(material, evalResult) {
     if (!material || !evalResult?.primary) return false;
     const { primary, secondary, blendFactor } = evalResult;
@@ -1464,6 +1536,23 @@ export function createReflectionProbeManager3D(THREE, { maxProbes = 8, blendMarg
       : primary.intensity;
     if ('envMapIntensity' in material) {
       material.envMapIntensity = blendedIntensity;
+    }
+    if (typeof material.onBeforeCompile === 'function' || THREE?.Vector3) {
+      injectBoxProjectedBlending(material);
+      const u = material.userData?._hgameProbeUniforms;
+      if (u) {
+        u.uProbeBoxEnabled.value = primary.boxProjection ? 1 : 0;
+        u.uProbeBlendWeight.value = secondary ? blendFactor : 0;
+        u.uProbeMinA.value.set(primary.boxMin[0], primary.boxMin[1], primary.boxMin[2]);
+        u.uProbeMaxA.value.set(primary.boxMax[0], primary.boxMax[1], primary.boxMax[2]);
+        u.uProbePosA.value.set(primary.probePosition[0], primary.probePosition[1], primary.probePosition[2]);
+        u.uProbeIntensityA.value = primary.intensity;
+        const sb = secondary ?? primary;
+        u.uProbeMinB.value.set(sb.boxMin[0], sb.boxMin[1], sb.boxMin[2]);
+        u.uProbeMaxB.value.set(sb.boxMax[0], sb.boxMax[1], sb.boxMax[2]);
+        u.uProbePosB.value.set(sb.probePosition[0], sb.probePosition[1], sb.probePosition[2]);
+        u.uProbeIntensityB.value = sb.intensity;
+      }
     }
     material.userData = {
       ...(material.userData || {}),
@@ -1492,6 +1581,7 @@ export function createReflectionProbeManager3D(THREE, { maxProbes = 8, blendMarg
     addProbe,
     removeProbe,
     evaluateAt,
+    injectBoxProjectedBlending,
     applyToMaterial,
     getStats,
     dispose,

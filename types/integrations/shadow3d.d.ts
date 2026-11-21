@@ -71,6 +71,7 @@ export function createCascadedShadowMap3D(THREE: object, { cascades, maxFar, lam
         splits: number[];
         frustums: any[];
     };
+    applyToMaterial: (material: any) => any;
     setDirection: (nextDir: any) => void;
     setMapSize: (nextSize: any) => void;
     dispose: () => boolean;

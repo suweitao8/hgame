@@ -264,6 +264,34 @@ export function createCascadedShadowMap3D(THREE, {
   const scratchRight = new THREE.Vector3();
   const scratchUp = new THREE.Vector3();
   const scratchCenter = new THREE.Vector3();
+  const appliedCsmMaterials = new WeakSet();
+  const csmUniforms = {
+    uCsmCascadeCount: { value: cascadeCount },
+    uCsmSplits: { value: [latestSplits[1] ?? currentMaxFar, latestSplits[2] ?? currentMaxFar, latestSplits[3] ?? currentMaxFar, latestSplits[4] ?? currentMaxFar] },
+    uCsmShadowMatrix1: { value: THREE.Matrix4 ? new THREE.Matrix4() : null },
+    uCsmShadowMatrix2: { value: THREE.Matrix4 ? new THREE.Matrix4() : null },
+    uCsmShadowMatrix3: { value: THREE.Matrix4 ? new THREE.Matrix4() : null },
+    tCsmShadowMap1: { value: null },
+    tCsmShadowMap2: { value: null },
+    tCsmShadowMap3: { value: null },
+  };
+
+  function syncCascadeUniforms() {
+    csmUniforms.uCsmSplits.value = [
+      latestSplits[1] ?? currentMaxFar,
+      latestSplits[2] ?? currentMaxFar,
+      latestSplits[3] ?? currentMaxFar,
+      latestSplits[4] ?? currentMaxFar,
+    ];
+    for (let i = 1; i < Math.min(4, cascadeCount); i++) {
+      const s = lights[i]?.shadow;
+      if (s?.matrix && csmUniforms[`uCsmShadowMatrix${i}`]?.value?.copy) {
+        csmUniforms[`uCsmShadowMatrix${i}`].value.copy(s.matrix);
+      }
+      const tex = s?.map?.depthTexture ?? s?.map?.texture ?? null;
+      if (csmUniforms[`tCsmShadowMap${i}`]) csmUniforms[`tCsmShadowMap${i}`].value = tex;
+    }
+  }
 
   function update(camera) {
     if (disposed || !camera) return { splits: [...latestSplits], frustums: [] };
@@ -310,13 +338,81 @@ export function createCascadedShadowMap3D(THREE, {
       }, {
         sunDirection: dir,
         distance: Math.max(radius * 2, 40),
-        padding: 1,
+        padding: 1.08, // 8% overlap band across cascade split transitions
         snapToTexels: true,
         bias: shadowBias,
         normalBias,
       });
     }
+    syncCascadeUniforms();
     return { splits: [...latestSplits], frustums };
+  }
+
+  /**
+   * Inject multi-cascade shadow sampling onto a PBR material so far cascades (`1..N-1`)
+   * darken `lights[0]`'s single illumination cleanly without duplicating diffuse/specular lights.
+   */
+  function applyToMaterial(material) {
+    if (!material || typeof material !== 'object' || appliedCsmMaterials.has(material)) return material;
+    appliedCsmMaterials.add(material);
+    syncCascadeUniforms();
+    const prevCompile = material.onBeforeCompile;
+    const prevKey = material.customProgramCacheKey;
+    material.customProgramCacheKey = () => {
+      const base = typeof prevKey === 'function' ? prevKey.call(material) : '';
+      return `${base}:hgame-csm-${cascadeCount}`;
+    };
+    material.onBeforeCompile = (shader, renderer) => {
+      if (typeof prevCompile === 'function') prevCompile.call(material, shader, renderer);
+      Object.assign(shader.uniforms, csmUniforms);
+      if (shader.vertexShader.includes('#include <project_vertex>')) {
+        shader.vertexShader = 'varying vec3 vCsmWorldPos;\nvarying float vCsmViewZ;\n' +
+          shader.vertexShader.replace(
+            '#include <project_vertex>',
+            '#include <project_vertex>\n{\n  vec4 _csmWp = vec4(transformed, 1.0);\n  #ifdef USE_INSTANCING\n    _csmWp = instanceMatrix * _csmWp;\n  #endif\n  vCsmWorldPos = (modelMatrix * _csmWp).xyz;\n  vCsmViewZ = -mvPosition.z;\n}',
+          );
+      }
+      if (shader.fragmentShader.includes('#include <lights_fragment_end>')) {
+        const decls = [
+          'varying vec3 vCsmWorldPos;',
+          'varying float vCsmViewZ;',
+          'uniform int uCsmCascadeCount;',
+          'uniform float uCsmSplits[4];',
+          'uniform mat4 uCsmShadowMatrix1;',
+          'uniform mat4 uCsmShadowMatrix2;',
+          'uniform mat4 uCsmShadowMatrix3;',
+          'uniform sampler2D tCsmShadowMap1;',
+          'uniform sampler2D tCsmShadowMap2;',
+          'uniform sampler2D tCsmShadowMap3;',
+          'float hgameSampleCascadeShadow(sampler2D smap, mat4 mat, vec3 wp) {',
+          '  vec4 sc = mat * vec4(wp, 1.0);',
+          '  vec3 p = sc.xyz / max(sc.w, 0.0001);',
+          '  if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z <= 0.0 || p.z >= 1.0) return 1.0;',
+          '  float d = texture2D(smap, p.xy).r;',
+          '  return (p.z - 0.0025) > d ? 0.25 : 1.0;',
+          '}',
+        ].join('\n');
+        const body = [
+          '#include <lights_fragment_end>',
+          'if (uCsmCascadeCount > 1 && vCsmViewZ > uCsmSplits[0] * 0.92) {',
+          '  float _csmFactor = 1.0;',
+          '  if (vCsmViewZ <= uCsmSplits[1]) {',
+          '    _csmFactor = hgameSampleCascadeShadow(tCsmShadowMap1, uCsmShadowMatrix1, vCsmWorldPos);',
+          '  } else if (uCsmCascadeCount > 2 && vCsmViewZ <= uCsmSplits[2]) {',
+          '    _csmFactor = hgameSampleCascadeShadow(tCsmShadowMap2, uCsmShadowMatrix2, vCsmWorldPos);',
+          '  } else if (uCsmCascadeCount > 3 && vCsmViewZ <= uCsmSplits[3]) {',
+          '    _csmFactor = hgameSampleCascadeShadow(tCsmShadowMap3, uCsmShadowMatrix3, vCsmWorldPos);',
+          '  }',
+          '  reflectedLight.directDiffuse *= _csmFactor;',
+          '  reflectedLight.directSpecular *= _csmFactor;',
+          '}',
+        ].join('\n');
+        shader.fragmentShader = decls + '\n' +
+          shader.fragmentShader.replace('#include <lights_fragment_end>', body);
+      }
+    };
+    material.needsUpdate = true;
+    return material;
   }
 
   function setDirection(nextDir) {
@@ -358,6 +454,7 @@ export function createCascadedShadowMap3D(THREE, {
     get splits() { return [...latestSplits]; },
     get direction() { return [...dir]; },
     update,
+    applyToMaterial,
     setDirection,
     setMapSize,
     dispose,

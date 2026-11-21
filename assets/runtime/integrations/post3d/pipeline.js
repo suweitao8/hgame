@@ -544,6 +544,10 @@ export function createPostPipeline3D(options = {}) {
   let lumaMips = [];
   let adaptRT = [];
   let ldrRT = null;
+  let reactiveMaskRT = null;
+  let reactiveMaskMat = null;
+  let lastExecutedGraph = [];
+  let lastReactiveMeshCount = 0;
   let temporalAa = null;
   let bloomMips = [];
   let postCamera = null;
@@ -625,6 +629,7 @@ export function createPostPipeline3D(options = {}) {
     giSsrRT?.dispose?.();
     giHistoryRT?.dispose?.();
     ldrRT?.dispose?.();
+    reactiveMaskRT?.dispose?.();
     temporalAa?.release();
     disposeExposureTargets();
     hdrTargets.dispose();
@@ -641,6 +646,7 @@ export function createPostPipeline3D(options = {}) {
     lastIrradianceGrid = null;
     resetGiSsrHistory();
     ldrRT = null;
+    reactiveMaskRT = null;
     bloomMips = [];
   }
 
@@ -966,6 +972,45 @@ export function createPostPipeline3D(options = {}) {
   }
 
   initMaterials();
+
+  function renderReactiveMask(world, camera, worldWidth, worldHeight) {
+    lastReactiveMeshCount = 0;
+    if (!world || typeof world.traverse !== 'function' || !THREE.MeshBasicMaterial) {
+      return null;
+    }
+    const nonReactive = [];
+    let reactiveCount = 0;
+    world.traverse(obj => {
+      if (!obj?.isMesh || !obj.visible) return;
+      if (obj.userData?.hgameReactive === true) {
+        reactiveCount++;
+      } else {
+        nonReactive.push(obj);
+      }
+    });
+    lastReactiveMeshCount = reactiveCount;
+    if (reactiveCount === 0) return null;
+
+    reactiveMaskRT = syncColorTarget(reactiveMaskRT, true, worldWidth, worldHeight, THREE.UnsignedByteType);
+    if (!reactiveMaskMat) {
+      reactiveMaskMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: true, depthWrite: false });
+    }
+    const prevOverride = world.overrideMaterial;
+    const prevAutoClear = renderer.autoClear;
+    for (const m of nonReactive) m.visible = false;
+    try {
+      world.overrideMaterial = reactiveMaskMat;
+      renderer.setRenderTarget(reactiveMaskRT);
+      renderer.autoClear = true;
+      renderer.clear?.(true, true, false);
+      drawWithDiagnostics(renderer, activeDiagnostics?.beginPass, 'reactiveMask', reactiveMaskRT, world, camera);
+    } finally {
+      world.overrideMaterial = prevOverride;
+      for (const m of nonReactive) m.visible = true;
+      renderer.autoClear = prevAutoClear;
+    }
+    return reactiveMaskRT?.texture ?? null;
+  }
 
   function runPass(contract, material, target, viewport = null) {
     validateFullscreenPass(contract, material.uniforms, target);
@@ -1572,14 +1617,17 @@ export function createPostPipeline3D(options = {}) {
       // First-person drawing needs an unmultisampled depth attachment and retained HDR color.
       const viewCompositeRT = separateViewModel ? hdrTargets.acquire(bufferWidth, bufferHeight, true) : null;
       if (temporalFrame) {
+        const autoReactive = reactiveMask ? null : renderReactiveMask(world, camera, worldWidth, worldHeight);
         const prelightRT = prelightTemporal
           ? (upsampling ? hdrTargets.acquire(worldWidth, worldHeight, false) : viewCompositeRT ?? hdrTargets.acquire(bufferWidth, bufferHeight, false))
           : null;
         if (prelightRT) compositeWorldIntoViewTarget(compU, prelightRT);
         compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, sceneRT.depthTexture,
           sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass,
-          state.temporalMotion && !renderer.clippingPlanes?.length, sceneRT.samples > 0, reactiveMask);
+          state.temporalMotion && !renderer.clippingPlanes?.length, sceneRT.samples > 0, reactiveMask ?? autoReactive);
         if (prelightRT && prelightRT !== viewCompositeRT) hdrTargets.release(prelightRT);
+      } else {
+        lastReactiveMeshCount = 0;
       }
       if (hasViewModel) {
         if (separateViewModel) {
@@ -1698,16 +1746,41 @@ export function createPostPipeline3D(options = {}) {
       compU.uFade.value = state.fade;
       compU.uToneMapping.value = state.toneMapping;
       compU.uWriteLuma.value = useFinalFxaaPass ? 1 : 0;
-      runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, useFinalFxaaPass ? ldrRT : null, outputViewport);
 
-      // 4. FXAA + edge-attenuated unsharp mask + IGN dither
-      if (useFinalFxaaPass) {
-        mats.fxaaSharpen.uniforms.tDiffuse.value = ldrRT.texture;
-        mats.fxaaSharpen.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
-        mats.fxaaSharpen.uniforms.uSharpness.value = state.sharpness;
-        mats.fxaaSharpen.uniforms.uFxaaEnabled.value = useFxaa ? 1 : 0;
-        runPass(FULLSCREEN_PASSES.fxaaSharpen, mats.fxaaSharpen, null, outputViewport);
-      }
+      // Execute final post-composite stages directly via the compiled Render Graph executor
+      const execPasses = [
+        {
+          id: 'tone-mapping',
+          reads: ['hdrInput'],
+          writes: [useFinalFxaaPass ? 'ldrColor' : 'backbuffer'],
+          transientSpecs: useFinalFxaaPass ? { ldrColor: { width: bufferWidth, height: bufferHeight, format: 'rgba8' } } : {},
+          execute() {
+            runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, useFinalFxaaPass ? ldrRT : null, outputViewport);
+          },
+        },
+        ...(useFinalFxaaPass ? [{
+          id: 'fxaa-sharpen',
+          reads: ['ldrColor'],
+          writes: ['backbuffer'],
+          execute() {
+            mats.fxaaSharpen.uniforms.tDiffuse.value = ldrRT.texture;
+            mats.fxaaSharpen.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
+            mats.fxaaSharpen.uniforms.uSharpness.value = state.sharpness;
+            mats.fxaaSharpen.uniforms.uFxaaEnabled.value = useFxaa ? 1 : 0;
+            runPass(FULLSCREEN_PASSES.fxaaSharpen, mats.fxaaSharpen, null, outputViewport);
+          },
+        }] : []),
+      ];
+      const execGraph = compileRenderGraph(execPasses, {
+        externalInputs: ['hdrInput'],
+        externalOutputs: ['backbuffer'],
+        pruneDeadPasses: true,
+      });
+      const graphExecResult = executeRenderGraph(execGraph, {
+        acquire: (_spec, resource) => (resource === 'ldrColor' ? ldrRT : null),
+        release() {},
+      }, { externalTargets: { hdrInput: compU.tScene.value } });
+      lastExecutedGraph = [...(lastRenderGraphPlan?.order?.filter(id => id !== 'tone-mapping' && id !== 'fxaa-sharpen') ?? []), ...graphExecResult.executed];
     } catch (error) {
       resetTemporalHistory();
       throw error;
@@ -1745,6 +1818,8 @@ export function createPostPipeline3D(options = {}) {
     if (disposed) return false;
     disposed = true;
     disposeTargets();
+    reactiveMaskMat?.dispose?.();
+    reactiveMaskMat = null;
     temporalAa?.dispose();
     temporalAa = null;
     quadGeom?.dispose?.();
@@ -1776,6 +1851,9 @@ export function createPostPipeline3D(options = {}) {
         useFinalFxaaPass: Boolean(ldrRT && (state.fxaa || state.sharpness > 0.001)),
       });
     },
+    getLastExecutedGraph() {
+      return lastExecutedGraph.slice();
+    },
     estimateTargetBytes,
     getTemporalStats() {
       const dims = getWorldRenderDimensions();
@@ -1787,6 +1865,7 @@ export function createPostPipeline3D(options = {}) {
         internalHeight: sceneRT?.height ?? dims.worldHeight,
         displayWidth: bufferWidth,
         displayHeight: bufferHeight,
+        reactiveMeshCount: lastReactiveMeshCount,
         motion: temporalAa?.getMotionClassificationStats?.() ?? null,
       };
     },

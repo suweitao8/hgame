@@ -247,6 +247,7 @@ export function createReflectionProbeManager3D(THREE: object, { maxProbes, blend
             probePosition: any;
         }[];
     };
+    injectBoxProjectedBlending: (material: any) => boolean;
     applyToMaterial: (material: any, evalResult: any) => boolean;
     getStats: () => {
         count: number;
