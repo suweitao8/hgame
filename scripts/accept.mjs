@@ -7,6 +7,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { lintFiles, collectFiles as collectUiFiles } from './check-ui-resolve.mjs';
+import { runAutoplayGate } from './check-autoplay.mjs';
 import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
 import { launchChromium, resolvePlaywright } from './lib/playwright-resolve.mjs';
 import { resolveWebAssetGame, verifyWebAssetSource } from './playtest.mjs';
@@ -64,6 +65,9 @@ function parseArgs(argv) {
     webasset: false,
     skipWebasset: false,
     doctor: false,
+    requireAutoplay: false,
+    autoplayRuns: undefined,
+    autoplayIdleRuns: undefined,
     packageCheck: false,
     verifyFresh: false,
     examples: false,
@@ -89,6 +93,9 @@ function parseArgs(argv) {
     else if (a === '--webasset') opts.webasset = true;
     else if (a === '--skip-webasset') opts.skipWebasset = true;
     else if (a === '--doctor') opts.doctor = true;
+    else if (a === '--require-autoplay') opts.requireAutoplay = true;
+    else if (a === '--autoplay-runs') opts.autoplayRuns = numberOption(takeValue(i++, a), a, { integer: true, min: 1 });
+    else if (a === '--autoplay-idle-runs') opts.autoplayIdleRuns = numberOption(takeValue(i++, a), a, { integer: true, min: 0 });
     else if (a === '--package') opts.packageCheck = true;
     else if (a === '--verify-fresh') opts.verifyFresh = true;
     else if (a === '--examples') opts.examples = true;
@@ -598,6 +605,43 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript) {
   };
 }
 
+async function runAutoplayGateForAccept(gameDir, opts) {
+  const specPath = path.join(gameDir, 'tests', 'autoplay.mjs');
+  if (!existsSync(specPath)) {
+    if (opts.requireAutoplay) {
+      return {
+        status: 'failed',
+        errors: ['Missing tests/autoplay.mjs (--require-autoplay requires multi-seed clear-rate & difficulty verification)'],
+      };
+    }
+    return {
+      status: 'skipped',
+      reason: 'no tests/autoplay.mjs (add to verify multi-seed clear-rate & difficulty)',
+      errors: [],
+    };
+  }
+  try {
+    const res = await runAutoplayGate(gameDir, {
+      runs: opts.autoplayRuns,
+      idleRuns: opts.autoplayIdleRuns,
+    });
+    return {
+      status: res.ok ? 'passed' : 'failed',
+      spec: res.spec,
+      thresholds: res.thresholds,
+      bot: res.bot,
+      idle: res.idle,
+      skillDelta: res.skillDelta,
+      errors: res.reasons,
+    };
+  } catch (err) {
+    return {
+      status: 'failed',
+      errors: [err.message],
+    };
+  }
+}
+
 function runDoctorGate(gameDir, opts, meta, doctorScript) {
   if (!opts.doctor && !meta.hasDoctorHook) {
     return { status: 'skipped', reason: 'window.__HGAME_DOCTOR__ not present', errors: [] };
@@ -826,6 +870,7 @@ export async function runAcceptForProject(targetDir, opts) {
   const meta = detectProjectMeta(gameDir, recipe, opts);
 
   if (opts.quick) {
+    gates.autoplay = { status: 'skipped', reason: '--quick mode', errors: [] };
     gates.visual = { status: 'skipped', reason: '--quick mode', errors: [] };
     gates.playtest = { status: 'skipped', reason: '--quick mode', errors: [] };
     gates.doctor = { status: 'skipped', reason: '--quick mode', errors: [] };
@@ -833,6 +878,7 @@ export async function runAcceptForProject(targetDir, opts) {
     gates.package = { status: 'skipped', reason: '--quick mode', errors: [] };
     gates.taskManifest = { status: 'skipped', reason: '--quick mode', errors: [] };
   } else {
+    gates.autoplay = await runAutoplayGateForAccept(gameDir, opts);
     gates.visual = await runVisualGate(gameDir, opts, meta, snapshotScript, gameConfig);
     gates.playtest = runPlaytestGate(gameDir, opts, meta, playtestScript);
     gates.doctor = runDoctorGate(gameDir, opts, meta, doctorScript);
@@ -874,6 +920,7 @@ export async function runAcceptForProject(targetDir, opts) {
       syntax: gates.syntax,
       uiStatic: gates.uiStatic,
       tests: gates.tests,
+      autoplay: gates.autoplay,
       visual: gates.visual,
       playtest: gates.playtest,
       doctor: gates.doctor,

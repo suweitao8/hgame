@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const createGame = path.join(root, 'scripts', 'create-game.mjs');
 const acceptScript = path.join(root, 'scripts', 'accept.mjs');
+const checkAutoplayScript = path.join(root, 'scripts', 'check-autoplay.mjs');
 const taskCheckScript = path.join(root, 'scripts', 'task-check.mjs');
 
 function runNode(script, args, opts = {}) {
@@ -154,6 +155,100 @@ test('task-check supports ui check type alongside existing test and review check
     const failRes = runNode(taskCheckScript, ['task.json'], { cwd: tmp });
     assert.equal(failRes.status, 1, failRes.stdout + failRes.stderr);
     assert.equal(JSON.parse(failRes.stdout).status, 'failed');
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('check-autoplay validates clear rate, idle skill gap, non-finite telemetry, and task-check integration', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-autoplay-'));
+  try {
+    await mkdir(path.join(tmp, 'tests'), { recursive: true });
+
+    // Missing spec fails fail-closed.
+    const missing = runNode(checkAutoplayScript, [tmp, '--json']);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stdout, /missing/i);
+
+    const writeSpec = async body => {
+      await writeFile(path.join(tmp, 'tests', 'autoplay.mjs'), body);
+    };
+
+    // 1. Healthy game: skilled bot clears ~80% in ~15s, idle loses in ~4s -> passes.
+    await writeSpec(`
+      export const config = {
+        runs: 10,
+        idleRuns: 6,
+        minWinRate: 0.6,
+        maxWinRate: 1.0,
+        maxIdleWinRate: 0.1,
+        minSkillDelta: 0.3,
+        minAvgDurationSec: 5,
+      };
+      export function runSeed(seed, strategy) {
+        if (strategy === 'idle') return { outcome: 'defeat', durationSec: 4, kills: 0 };
+        return { outcome: seed % 5 === 0 ? 'defeat' : 'victory', durationSec: 15, kills: 12 };
+      }
+    `);
+    const passRes = runNode(checkAutoplayScript, [tmp, '--json']);
+    assert.equal(passRes.status, 0, passRes.stdout + passRes.stderr);
+    const passReport = JSON.parse(passRes.stdout);
+    assert.equal(passReport.ok, true);
+    assert.equal(passReport.bot.winRate, 0.8);
+    assert.equal(passReport.idle.winRate, 0);
+    assert.equal(passReport.skillDelta, 0.8);
+
+    // 2. Unwinnable / overtuned game: bot winRate below minWinRate -> fails.
+    await writeSpec(`
+      export const config = { runs: 8, idleRuns: 4, minWinRate: 0.6 };
+      export function runSeed(_seed, _strategy) {
+        return { outcome: 'defeat', durationSec: 12, kills: 1 };
+      }
+    `);
+    const tooHard = runNode(checkAutoplayScript, [tmp, '--json']);
+    assert.equal(tooHard.status, 1);
+    assert.match(tooHard.stdout, /below minWinRate/i);
+
+    // 3. Zero-difficulty AFK-clearable game: idle wins too often / no skillDelta -> fails.
+    await writeSpec(`
+      export const config = { runs: 8, idleRuns: 4, minWinRate: 0.6, maxIdleWinRate: 0.1, minSkillDelta: 0.25 };
+      export function runSeed(_seed, _strategy) {
+        return { outcome: 'victory', durationSec: 12, kills: 5 };
+      }
+    `);
+    const afkClear = runNode(checkAutoplayScript, [tmp, '--json']);
+    assert.equal(afkClear.status, 1);
+    assert.match(afkClear.stdout, /maxIdleWinRate|skillDelta/i);
+
+    // 4. NaN simulation telemetry -> fails.
+    await writeSpec(`
+      export const config = { runs: 6, idleRuns: 3, minWinRate: 0.5, minAvgDurationSec: 5 };
+      export function runSeed(_seed, strategy) {
+        if (strategy === 'idle') return { outcome: 'defeat', durationSec: 4, kills: 0 };
+        return { outcome: 'victory', durationSec: 12, kills: NaN };
+      }
+    `);
+    const nanSim = runNode(checkAutoplayScript, [tmp, '--json']);
+    assert.equal(nanSim.status, 1);
+    assert.match(nanSim.stdout, /NaN|Infinity|non-finite/i);
+
+    // 5. task-check { type: "autoplay" } integration passes on healthy spec & fails on broken spec.
+    await writeSpec(`
+      export const config = { runs: 6, idleRuns: 4, minWinRate: 0.6, maxIdleWinRate: 0.1, minSkillDelta: 0.3, minAvgDurationSec: 5 };
+      export function runSeed(_seed, strategy) {
+        return strategy === 'idle'
+          ? { outcome: 'defeat', durationSec: 4, kills: 0 }
+          : { outcome: 'victory', durationSec: 12, kills: 8 };
+      }
+    `);
+    await writeFile(path.join(tmp, 'task.json'), JSON.stringify({
+      schemaVersion: 1,
+      task: 'Verify autoplay clear rate & difficulty',
+      requirements: [{ id: 'autoplay-gate', expected: 'Bot clears >=60% while idle loses', checks: [{ type: 'autoplay', runs: 6, idleRuns: 4 }] }],
+    }));
+    const taskPass = runNode(taskCheckScript, ['task.json'], { cwd: tmp });
+    assert.equal(taskPass.status, 0, taskPass.stdout + taskPass.stderr);
+    assert.equal(JSON.parse(taskPass.stdout).status, 'passed');
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

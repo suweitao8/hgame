@@ -14,6 +14,7 @@ const playtest = fileURLToPath(new URL('./playtest.mjs', import.meta.url));
 const snapshotScript = fileURLToPath(new URL('./snapshot.mjs', import.meta.url));
 const doctorScript = fileURLToPath(new URL('./doctor-playability.mjs', import.meta.url));
 const acceptScript = fileURLToPath(new URL('./accept.mjs', import.meta.url));
+const autoplayScript = fileURLToPath(new URL('./check-autoplay.mjs', import.meta.url));
 const localCheckUi = fileURLToPath(new URL('./check-ui.mjs', import.meta.url));
 const skillCheckUi = fileURLToPath(new URL('../.agents/skills/hgame-ui-ux/scripts/check-ui.mjs', import.meta.url));
 const checkUiScript = existsSync(localCheckUi) ? localCheckUi : skillCheckUi;
@@ -140,11 +141,19 @@ function parseTask(value) {
             quick: Boolean(checkSpec.quick),
             strict: Boolean(checkSpec.strict),
             webasset: Boolean(checkSpec.webasset),
+            requireAutoplay: Boolean(checkSpec.requireAutoplay),
+          };
+        case 'autoplay':
+          return {
+            type,
+            spec: Object.hasOwn(checkSpec, 'spec') ? localModule(checkSpec.spec, `${key}: spec`) : 'tests/autoplay.mjs',
+            ...(Object.hasOwn(checkSpec, 'runs') ? { runs: Number(checkSpec.runs) } : {}),
+            ...(Object.hasOwn(checkSpec, 'idleRuns') ? { idleRuns: Number(checkSpec.idleRuns) } : {}),
           };
         case 'review':
           return { type, inspect: nonempty(inspect, `${key}: inspect`) };
         default:
-          throw new Error(`${key}: check type must be test, playtest, ui, snapshot, doctor, accept, or review`);
+          throw new Error(`${key}: check type must be test, playtest, ui, snapshot, doctor, accept, autoplay, or review`);
       }
     }) };
   });
@@ -230,7 +239,7 @@ async function runJsonTool(scriptPath, args, timeoutMs = timeout) {
   try {
     const report = record(JSON.parse(output), 'Tool report');
     const ok = exitCode === 0 && (report.ok === true || report.pass === true);
-    const detail = report.problems?.join('; ') || report.violations?.map(v => `${v.file}:${v.line} ${v.rule}`).slice(0, 3).join('; ') || undefined;
+    const detail = report.problems?.join('; ') || report.reasons?.join('; ') || report.violations?.map(v => `${v.file}:${v.line} ${v.rule}`).slice(0, 3).join('; ') || undefined;
     return { status: ok ? 'passed' : 'failed', message: ok ? undefined : (detail || 'Check failed'), report };
   } catch (error) {
     return { status: 'failed', message: `Invalid JSON output: ${error.message}` };
@@ -241,7 +250,7 @@ async function runToolChecks(requirements) {
   const toolResults = new Map();
   for (const item of requirements) {
     for (const check of item.checks) {
-      if (!['ui', 'snapshot', 'doctor', 'accept'].includes(check.type)) continue;
+      if (!['ui', 'snapshot', 'doctor', 'accept', 'autoplay'].includes(check.type)) continue;
       const cacheKey = JSON.stringify(check);
       if (toolResults.has(cacheKey)) continue;
       if (check.type === 'ui') {
@@ -250,11 +259,17 @@ async function runToolChecks(requirements) {
         toolResults.set(cacheKey, await runJsonTool(snapshotScript, check.args));
       } else if (check.type === 'doctor') {
         toolResults.set(cacheKey, await runJsonTool(doctorScript, ['.', '--ready', check.ready, '--json']));
+      } else if (check.type === 'autoplay') {
+        const args = ['.', '--spec', check.spec, '--json'];
+        if (Number.isInteger(check.runs) && check.runs > 0) args.push('--runs', String(check.runs));
+        if (Number.isInteger(check.idleRuns) && check.idleRuns >= 0) args.push('--idle-runs', String(check.idleRuns));
+        toolResults.set(cacheKey, await runJsonTool(autoplayScript, args, 180_000));
       } else if (check.type === 'accept') {
         const args = ['.', '--json'];
         if (check.quick) args.push('--quick');
         if (check.strict) args.push('--strict');
         if (check.webasset) args.push('--webasset');
+        if (check.requireAutoplay) args.push('--require-autoplay');
         toolResults.set(cacheKey, await runJsonTool(acceptScript, args, 240_000));
       }
     }
@@ -285,7 +300,7 @@ function evaluate(check, tests, browsers, tools) {
     const status = result.failures.length ? 'failed' : match.status;
     return { ...check, status, message: match.message };
   }
-  if (['ui', 'snapshot', 'doctor', 'accept'].includes(check.type)) {
+  if (['ui', 'snapshot', 'doctor', 'accept', 'autoplay'].includes(check.type)) {
     const res = tools.get(JSON.stringify(check));
     return { ...check, status: res?.status ?? 'pending', ...(res?.message ? { message: res.message } : {}) };
   }

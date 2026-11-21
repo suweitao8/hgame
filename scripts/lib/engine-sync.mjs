@@ -16,6 +16,7 @@ export const ENGINE_MANAGED_SCRIPTS = Object.freeze([
   'toy-preflight.mjs',
   'assets.mjs',
   'accept.mjs',
+  'check-autoplay.mjs',
   'check-design-docs.mjs',
   'check-ui-resolve.mjs',
   'doctor-playability.mjs',

@@ -339,7 +339,26 @@ async function runCli() {
         throw new Error(problem, { cause: error });
       }
     };
-    const context = { page, readState, checkpoint };
+    const uiAudits = [];
+    const auditUi = async (label = 'phase', options = {}) => {
+      const ui = await page.evaluate(collectPageUiAudit);
+      const allowDebug = options.allowDebug ?? /(?:^|&)debug=1(?:&|$)/.test(query.replace(/^\?/, ''));
+      const maxHudRatio = options.maxHudRatio ?? (profile === 'ui' ? 0.85 : 0.10);
+      const maxHudButtons = options.maxHudButtons ?? (profile === 'ui' ? 4 : 1);
+      const problems = [
+        ...evaluateUiAudit(ui, { allowDebug, maxHudRatio, maxHudButtons }),
+        ...evaluateLayoutAudit(ui),
+      ];
+      const entry = { label, ok: problems.length === 0, ui, problems };
+      uiAudits.push(entry);
+      if (problems.length > 0) {
+        const msg = `UI audit [${label}]: ${problems.join('; ')}`;
+        report.problems.push(msg);
+        throw new Error(msg);
+      }
+      return entry;
+    };
+    const context = { page, readState, checkpoint, auditUi };
 
     const measurementId = randomUUID();
     await page.evaluate(id => {
@@ -446,6 +465,7 @@ async function runCli() {
       frameStats,
       canvasStats,
       ...(uiAudit ? { uiAudit } : {}),
+      ...(uiAudits.length > 0 ? { uiAudits } : {}),
       stateBefore,
       stateAfter,
     });

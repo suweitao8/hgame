@@ -16,6 +16,7 @@ scripts/lib/
 scripts/accept.mjs
 scripts/assets.mjs
 scripts/bundle-pixi.mjs
+scripts/check-autoplay.mjs
 scripts/check-ui-resolve.mjs
 scripts/check-ui.mjs
 scripts/doctor-playability.mjs

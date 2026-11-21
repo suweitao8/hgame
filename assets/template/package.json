@@ -20,6 +20,7 @@
     "playtest": "node scripts/playtest.mjs . --check-ui --check-layout",
     "doctor": "node scripts/doctor-playability.mjs .",
     "accept": "node scripts/accept.mjs .",
+    "accept:autoplay": "node scripts/check-autoplay.mjs .",
     "accept:webasset": "node scripts/accept.mjs . --webasset",
     "check": "node scripts/accept.mjs . --quick",
     "test": "node --test tests/*.test.mjs"

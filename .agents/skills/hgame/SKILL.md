@@ -161,7 +161,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 ## Step 4: Preview & Verify
 
 - **Unified WebAsset Preview (Default for Dev, Playtesting & Browser QA)**:
-  - Ensure WebAsset is running (`http://127.0.0.1:4174/#games`), confirm the game appears in `http://127.0.0.1:4174/api/games`, and run the fail-closed acceptance gate (`npm run accept:webasset` inside the game or `npm run accept -- "<game-dir>" --webasset` from HGame) plus `node scripts/accept.mjs . --verify-fresh` before replying with the ready-to-play WebAsset URL.
+  - Ensure WebAsset is running (`http://127.0.0.1:4174/#games`), confirm the game appears in `http://127.0.0.1:4174/api/games`, and run the fail-closed acceptance gate (`npm run accept:webasset` inside the game or `npm run accept -- "<game-dir>" --webasset` from HGame, adding `--require-autoplay` once `tests/autoplay.mjs` is authored and calling `await auditUi(phase)` across start/play/upgrade/gameover/restart in `tests/acceptance.mjs`) plus `node scripts/accept.mjs . --verify-fresh` before replying with the ready-to-play WebAsset URL.
   - Do **not** run `npm start`, `npm run serve`, `python -m http.server`, or manual `scripts/preview.mjs` servers to host a game project on another port. (Only `npm run snapshot` / `npm run playtest` / `npm run accept` spawn an ephemeral internal loopback fixture automatically while running headless checks.)
 - Headless render snapshot, automated AI playtest & acceptance checks:
   ```powershell

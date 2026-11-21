@@ -40,12 +40,13 @@
 
 ## Commands Inside This Project
 
-For each development task, preserve the request and list observable acceptance criteria before editing. Link each criterion to an exact Node test, a real-input WebAsset playtest checkpoint, or a fresh visual review. Expand `tests/acceptance.mjs` to cover the game's core loop (start -> play -> objective/combat -> gameover -> restart -> save), then run `npm run accept` (`npm run accept:webasset` before user delivery) and inspect `build/acceptance/*.png`. `npm run check` (`accept.mjs . --quick`) is fast pre-browser hygiene and never replaces full `npm run accept`.
+For each development task, preserve the request and list observable acceptance criteria before editing. Link each criterion to an exact Node test, a real-input WebAsset playtest checkpoint, or a fresh visual review. Add `tests/autoplay.mjs` (multi-seed `bot` vs `idle` balance & clear-rate gate, verified via `npm run accept:autoplay` / `accept.mjs --require-autoplay`) and expand `tests/acceptance.mjs` using `await auditUi(phase)` across start/play/upgrade/gameover/restart/reload, then run `npm run accept` (`npm run accept:webasset` before user delivery) and inspect `build/acceptance/*.png`. `npm run check` (`accept.mjs . --quick`) is fast pre-browser hygiene and never replaces full `npm run accept`.
 
 ```powershell
 # Run full fail-closed acceptance gate (writes build/acceptance-report.json + desktop/mobile PNGs)
 npm run accept
 npm run accept:webasset
+npm run accept:autoplay
 node scripts/accept.mjs . --verify-fresh
 
 # Run project tests & quick static/syntax/import/UI checks

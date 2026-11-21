@@ -96,7 +96,42 @@ try {
   assert.equal(blankRes.status, 1, 'Blank canvas must fail acceptance');
   assert.equal(JSON.parse(blankRes.stdout).gates.visual.status, 'failed');
 
-  console.log(JSON.stringify({ negativeBrowserGates: 'all-caught', cases: ['nan-state', 'dead-input', 'mobile-clipped-button', 'blank-canvas'] }));
+  // 5. Missing tests/autoplay.mjs must fail when --require-autoplay is enforced.
+  await writeFile(path.join(negGame, 'src', 'main.js'), origMain);
+  const noAutoplayRes = runNode(
+    path.join(negGame, 'scripts', 'accept.mjs'),
+    ['.', '--require-autoplay', '--skip-webasset', '--json'],
+    { cwd: negGame },
+  );
+  assert.equal(noAutoplayRes.status, 1, 'Missing autoplay spec must fail acceptance under --require-autoplay');
+  assert.equal(JSON.parse(noAutoplayRes.stdout).gates.autoplay.status, 'failed');
+
+  // 6. Mid-game dynamic UI bloat/clip caught by context.auditUi('upgrade') inside tests/acceptance.mjs.
+  await writeFile(
+    path.join(negGame, 'tests', 'acceptance.mjs'),
+    [
+      'export async function run({ page, auditUi }) {',
+      '  await auditUi("playing");',
+      '  await page.evaluate(() => {',
+      '    const b = document.createElement("button");',
+      '    b.textContent = "溢出按钮";',
+      '    b.style.cssText = "position:fixed;right:-30px;top:16px;width:90px;height:36px;";',
+      '    document.body.appendChild(b);',
+      '  });',
+      '  await auditUi("upgrade");',
+      '}',
+    ].join('\n'),
+  );
+  const dynamicUiRes = runNode(path.join(negGame, 'scripts', 'accept.mjs'), ['.', '--skip-webasset', '--json'], { cwd: negGame });
+  assert.equal(dynamicUiRes.status, 1, 'Dynamic clipped button during scenario must fail playtest gate via auditUi');
+  const dynamicReport = JSON.parse(dynamicUiRes.stdout);
+  assert.equal(dynamicReport.gates.playtest.status, 'failed');
+  assert.match(JSON.stringify(dynamicReport.gates.playtest), /UI audit \[upgrade\].*clipped/i);
+
+  console.log(JSON.stringify({
+    negativeBrowserGates: 'all-caught',
+    cases: ['nan-state', 'dead-input', 'mobile-clipped-button', 'blank-canvas', 'missing-autoplay', 'dynamic-ui-audit'],
+  }));
 } finally {
   await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
 }
