@@ -305,7 +305,7 @@ test('P4: 2D diagnostics emit unified frame/pass draws, uploadBytes, targetBytes
 });
 
 test('R1: 2D lighting supports occluder shadows, Sprite2D material props, and explicit low/medium/high quality policies', () => {
-  assert.equal(MAX_2D_OCCLUDERS, 32);
+  assert.equal(MAX_2D_OCCLUDERS, 128);
   assert.equal(QUALITY2D_LIGHTING_PRESETS.low.maxLights, 8);
   assert.equal(QUALITY2D_LIGHTING_PRESETS.medium.maxLights, 16);
   assert.equal(QUALITY2D_LIGHTING_PRESETS.high.maxLights, 32);

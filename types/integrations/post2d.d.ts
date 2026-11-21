@@ -144,7 +144,7 @@ export function createWebGL2DPostPass(gl: WebGL2RenderingContext): {
 /** Maximum simultaneous dynamic 2D point lights evaluated per pass. */
 export const MAX_2D_LIGHTS: 32;
 /** Maximum simultaneous 2D shadow occluder segments evaluated per pass. */
-export const MAX_2D_OCCLUDERS: 32;
+export const MAX_2D_OCCLUDERS: 128;
 /**
  * 2D lighting, shadow occlusion, sprite material/normal, and post-processing quality presets.
  * Explicitly declares which effects are retained at `'low'`, `'medium'`, and `'high'` tiers.

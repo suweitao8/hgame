@@ -10,7 +10,7 @@ export { createPanelStack, applyAriaToElement } from './panel-stack.js';
 export { createVirtualList } from './virtual-list.js';
 export { createI18n } from './i18n.js';
 export { computeFlexLayout } from './flex-layout.js';
-export { createCanvasUiRenderer } from './canvas-widgets.js';
+export { createCanvasUiRenderer, renderSdfText } from './canvas-widgets.js';
 export {
   computeStaggerProgress,
   createUiSurfaceSpring,

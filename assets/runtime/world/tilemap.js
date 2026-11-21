@@ -398,3 +398,81 @@ function* searchGridPath(map, workspace, sx, sy, gx, gy, maxNodes, allowDiagonal
   }
   return [];
 }
+
+/**
+ * Resolve Auto-Tiling rule bitmasks across a `TileMap` so connected floor/wall/platform tiles
+ * automatically pick edge, corner, and inner fill variants without manual per-cell painting.
+ *
+ * Neighbor bits:
+ * - Cardinal (4-way): N=1, E=2, S=4, W=8
+ * - 8-way optional bits: NE=16, SE=32, SW=64, NW=128 (or fallback to `mask4` when no 8-way rule matches).
+ *
+ * @template T
+ * @param {TileMap<T>} tileMap
+ * @param {object} options
+ * @param {T | T[]} options.sourceTile Tile value(s) to evaluate and replace.
+ * @param {Record<number, T> | Map<number, T>} options.rules Bitmask-to-tile lookup table.
+ * @param {T} [options.defaultTile] Fallback tile ID when a mask has no entry in `rules`.
+ * @param {'4-way' | '8-way'} [options.mode='4-way']
+ * @param {boolean} [options.treatBorderAsMatched=true] Whether outside-map neighbors count as matching.
+ * @returns {number} Count of modified cells.
+ */
+export function applyAutoTileRules(tileMap, {
+  sourceTile,
+  rules,
+  defaultTile = undefined,
+  mode = '4-way',
+  treatBorderAsMatched = true,
+} = {}) {
+  if (!(tileMap instanceof TileMap)) throw new TypeError('applyAutoTileRules requires a TileMap instance');
+  if (!rules) throw new TypeError('applyAutoTileRules requires a rules map or object');
+  const sourceSet = new Set(Array.isArray(sourceTile) ? sourceTile : [sourceTile]);
+  const snapshot = tileMap.tiles.map(row => [...row]);
+  const w = tileMap.width;
+  const h = tileMap.height;
+  const use8 = mode === '8-way';
+  const lookup = rules instanceof Map
+    ? mask => (rules.has(mask) ? rules.get(mask) : undefined)
+    : mask => (Object.hasOwn(rules, mask) ? rules[mask] : undefined);
+
+  const isMatch = (x, y) => {
+    if (x < 0 || y < 0 || x >= w || y >= h) return Boolean(treatBorderAsMatched);
+    return sourceSet.has(snapshot[y][x]);
+  };
+
+  let changed = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const current = snapshot[y][x];
+      if (!sourceSet.has(current)) continue;
+      const n = isMatch(x, y - 1);
+      const e = isMatch(x + 1, y);
+      const s = isMatch(x, y + 1);
+      const wSide = isMatch(x - 1, y);
+      let mask4 = 0;
+      if (n) mask4 |= 1;
+      if (e) mask4 |= 2;
+      if (s) mask4 |= 4;
+      if (wSide) mask4 |= 8;
+
+      let resolved;
+      if (use8) {
+        let mask8 = mask4;
+        if (n && e && isMatch(x + 1, y - 1)) mask8 |= 16;
+        if (e && s && isMatch(x + 1, y + 1)) mask8 |= 32;
+        if (s && wSide && isMatch(x - 1, y + 1)) mask8 |= 64;
+        if (wSide && n && isMatch(x - 1, y - 1)) mask8 |= 128;
+        resolved = lookup(mask8);
+        if (resolved === undefined) resolved = lookup(mask4);
+      } else {
+        resolved = lookup(mask4);
+      }
+      if (resolved === undefined) resolved = defaultTile !== undefined ? defaultTile : current;
+      if (!Object.is(resolved, tileMap.get(x, y))) {
+        tileMap.set(x, y, resolved);
+        changed++;
+      }
+    }
+  }
+  return changed;
+}

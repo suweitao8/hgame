@@ -199,6 +199,9 @@ const FRAGMENT_SHADER_GLSL3 = `#version 300 es
 precision mediump float;
 
 uniform sampler2D uTex[${BATCH_TEXTURES}];
+uniform vec4 uSpriteFxParams; // outlineWidth, dissolve, waveAmp, waveFreq
+uniform vec4 uSpriteFxColor;  // outlineColor RGBA
+uniform float uSpriteFxTime;
 
 in vec2 vQuad;
 in vec2 vUv;
@@ -209,12 +212,12 @@ flat in vec4 vFlash;
 
 out vec4 fragColor;
 
-vec4 sampleSprite() {
+vec4 sampleSpriteAt(vec2 uv) {
   // GLSL ES 3.00 sampler arrays require constant indices.
-  if (vMode == -1.0) return texture(uTex[1], vUv);
-  if (vMode == -2.0) return texture(uTex[2], vUv);
-  if (vMode == -3.0) return texture(uTex[3], vUv);
-  return texture(uTex[0], vUv);
+  if (vMode == -1.0) return texture(uTex[1], uv);
+  if (vMode == -2.0) return texture(uTex[2], uv);
+  if (vMode == -3.0) return texture(uTex[3], uv);
+  return texture(uTex[0], uv);
 }
 
 void main() {
@@ -229,6 +232,10 @@ void main() {
   }
   if (vMode > 1.5 && vMode < 2.5) {
     // Solid rectangle (mode == 2)
+    if (uSpriteFxParams.y > 0.001) {
+      float dn = fract(sin(dot(floor(vQuad * 32.0), vec2(12.9898, 78.233))) * 43758.5453);
+      if (dn < uSpriteFxParams.y) discard;
+    }
     vec3 rgb = mix(vColor.rgb, vFlash.rgb, vFlash.a);
     fragColor = vec4(rgb, vColor.a);
     return;
@@ -242,13 +249,33 @@ void main() {
     return;
   }
   // Textured modes store the negated sampler slot.
-  vec4 tex = sampleSprite();
-  if (tex.a <= 0.001) discard;
+  vec2 fxUv = vUv;
+  if (uSpriteFxParams.z > 0.0001) {
+    fxUv.x += sin(fxUv.y * max(1.0, uSpriteFxParams.w) + uSpriteFxTime * 6.0) * uSpriteFxParams.z;
+  }
+  if (uSpriteFxParams.y > 0.001) {
+    float dn = fract(sin(dot(floor(fxUv * 64.0), vec2(12.9898, 78.233))) * 43758.5453);
+    if (dn < uSpriteFxParams.y) discard;
+  }
+  vec4 tex = sampleSpriteAt(fxUv);
+  if (tex.a <= 0.001) {
+    if (uSpriteFxParams.x > 0.0001) {
+      float o = uSpriteFxParams.x;
+      float nb = max(
+        max(sampleSpriteAt(fxUv + vec2(o, 0.0)).a, sampleSpriteAt(fxUv - vec2(o, 0.0)).a),
+        max(sampleSpriteAt(fxUv + vec2(0.0, o)).a, sampleSpriteAt(fxUv - vec2(0.0, o)).a)
+      );
+      if (nb > 0.15) {
+        fragColor = vec4(uSpriteFxColor.rgb, uSpriteFxColor.a * vColor.a);
+        return;
+      }
+    }
+    discard;
+  }
   vec3 rgb = mix(tex.rgb, vColor.rgb, vTintStrength);
   rgb = mix(rgb, vFlash.rgb, vFlash.a);
   fragColor = vec4(rgb, tex.a * vColor.a);
-}
-`;
+}`;
 
 function compileProgram(gl, vsSrc, fsSrc) {
   const compile = (type, src) => {
@@ -400,6 +427,14 @@ export function createWebGL2DAdapter({
   let whiteTex = null;
   let uViewXLoc = null;
   let uViewYLoc = null;
+  let uSpriteFxParamsLoc = null;
+  let uSpriteFxColorLoc = null;
+  let uSpriteFxTimeLoc = null;
+  let activeFxKey = 'none';
+  let lastUploadedFxKey = 'none';
+  const activeFxParams = [0, 0, 0, 0];
+  const activeFxColor = [1, 1, 1, 1];
+  let activeFxTime = 0;
 
   let compactProgram = null;
   let compactVao = null;
@@ -485,6 +520,9 @@ export function createWebGL2DAdapter({
     program = compileProgram(gl, vertexSource, FRAGMENT_SHADER_GLSL3);
     uViewXLoc = gl.getUniformLocation(program, 'uViewX');
     uViewYLoc = gl.getUniformLocation(program, 'uViewY');
+    uSpriteFxParamsLoc = gl.getUniformLocation(program, 'uSpriteFxParams');
+    uSpriteFxColorLoc = gl.getUniformLocation(program, 'uSpriteFxColor');
+    uSpriteFxTimeLoc = gl.getUniformLocation(program, 'uSpriteFxTime');
     gl.useProgram(program);
     for (let unit = 0; unit < BATCH_TEXTURES; unit++) {
       gl.uniform1i(gl.getUniformLocation(program, `uTex[${unit}]`), unit);
@@ -892,6 +930,12 @@ export function createWebGL2DAdapter({
       }
     }
     gl.activeTexture(gl.TEXTURE0);
+    if (activeFxKey !== lastUploadedFxKey) {
+      if (uSpriteFxParamsLoc) gl.uniform4f?.(uSpriteFxParamsLoc, activeFxParams[0], activeFxParams[1], activeFxParams[2], activeFxParams[3]);
+      if (uSpriteFxColorLoc) gl.uniform4f?.(uSpriteFxColorLoc, activeFxColor[0], activeFxColor[1], activeFxColor[2], activeFxColor[3]);
+      if (uSpriteFxTimeLoc) gl.uniform1f?.(uSpriteFxTimeLoc, activeFxTime);
+      lastUploadedFxKey = activeFxKey;
+    }
     if (instanceTexture) gl.drawArrays(gl.TRIANGLES, 0, 6 * instanceCount);
     else gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, instanceCount);
     stats.drawCalls++;
@@ -1019,8 +1063,36 @@ export function createWebGL2DAdapter({
     );
   }
 
+  function applySpriteShaderEffect(fx) {
+    if (!fx || typeof fx !== 'object') {
+      if (activeFxKey !== 'none') {
+        flushBatch();
+        activeFxKey = 'none';
+        activeFxParams[0] = 0; activeFxParams[1] = 0; activeFxParams[2] = 0; activeFxParams[3] = 0;
+        activeFxColor[0] = 1; activeFxColor[1] = 1; activeFxColor[2] = 1; activeFxColor[3] = 1;
+        activeFxTime = 0;
+      }
+      return;
+    }
+    const ow = Math.max(0, Number(fx.outlineWidth) || 0);
+    const dis = Math.max(0, Math.min(1, Number(fx.dissolve) || 0));
+    const wa = Math.max(0, Number(fx.waveAmp) || 0);
+    const wf = Math.max(0, Number(fx.waveFreq) || 0);
+    const wt = Number(fx.time) || 0;
+    const oc = fx.outlineColor ?? '#ffffff';
+    const key = `${ow.toFixed(4)}:${dis.toFixed(3)}:${wa.toFixed(4)}:${wf.toFixed(2)}:${oc}:${wt.toFixed(3)}`;
+    if (key !== activeFxKey) {
+      flushBatch();
+      activeFxKey = key;
+      activeFxParams[0] = ow; activeFxParams[1] = dis; activeFxParams[2] = wa; activeFxParams[3] = wf;
+      parseColorRgba(oc, activeFxColor);
+      activeFxTime = wt;
+    }
+  }
+
   function submitSprite(item, allowShadows, smooth) {
     const { entity, sprite } = item;
+    applySpriteShaderEffect(sprite.shaderEffect ?? null);
     const baseAlpha = Math.max(0, Math.min(1, sprite.opacity));
     const w = sprite.width;
     const h = sprite.height;

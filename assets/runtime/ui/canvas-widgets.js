@@ -1,9 +1,96 @@
 /**
- * Native Canvas UI Widget & HiDPI Crisp Text Renderer powered by `computeFlexLayout`.
- * Supports panels, buttons, HiDPI outlined labels, progress bars, sliders, and clipped scroll lists
- * with pointer hit-testing, hover/pressed state, scrolling, and keyboard focus navigation.
+ * Native Canvas UI Widget, SDF/HiDPI Crisp Text & TextInput Renderer powered by `computeFlexLayout`.
+ * Supports panels, buttons, SDF/outlined labels, text inputs, progress bars, sliders, and clipped
+ * scroll lists with pointer hit-testing, hover/pressed state, scrolling, and keyboard typing/focus.
  */
 import { computeFlexLayout } from './flex-layout.js';
+
+/**
+ * Render sharp multi-scale typography onto a Canvas2D context using an SDF glyph atlas when
+ * provided (`atlas: { image, glyphSize, scale, glyphs: Record<string, { x, y, w, h, advance }> }`),
+ * or supersampled HiDPI outlined vector text fallback otherwise.
+ *
+ * @param {any} ctx
+ * @param {string} text
+ * @param {number} x
+ * @param {number} y
+ * @param {object} [options]
+ * @param {number} [options.fontSize=14]
+ * @param {string} [options.color='#f8fafc']
+ * @param {string} [options.outlineColor='rgba(2, 6, 23, 0.85)']
+ * @param {number} [options.outlineWidth=2.5]
+ * @param {string | null} [options.shadowColor=null]
+ * @param {string} [options.fontFamily='system-ui, sans-serif']
+ * @param {string} [options.weight='600']
+ * @param {string} [options.align='left']
+ * @param {string} [options.baseline='middle']
+ * @param {number} [options.dpr=1]
+ * @param {any} [options.atlas=null]
+ */
+export function renderSdfText(ctx, text, x, y, {
+  fontSize = 14,
+  color = '#f8fafc',
+  outlineColor = 'rgba(2, 6, 23, 0.85)',
+  outlineWidth = 2.5,
+  shadowColor = null,
+  fontFamily = 'system-ui, sans-serif',
+  weight = '600',
+  align = 'left',
+  baseline = 'middle',
+  dpr = 1,
+  atlas = null,
+} = {}) {
+  if (!ctx || text == null) return false;
+  const str = String(text);
+
+  if (atlas && atlas.image && atlas.glyphs && typeof ctx.drawImage === 'function') {
+    const baseSize = Math.max(8, Number(atlas.glyphSize) || 32);
+    const scale = Math.max(0.1, (Number(fontSize) || 14) / baseSize);
+    let totalAdv = 0;
+    for (let i = 0; i < str.length; i++) {
+      const g = atlas.glyphs[str[i]];
+      totalAdv += g ? (g.advance ?? g.w) * scale : (Number(fontSize) || 14) * 0.5;
+    }
+    let penX = align === 'center' ? x - totalAdv * 0.5 : (align === 'right' ? x - totalAdv : x);
+    const topY = baseline === 'top' ? y : (baseline === 'bottom' ? y - fontSize : y - fontSize * 0.5);
+    ctx.save?.();
+    if (shadowColor && 'shadowColor' in ctx) {
+      ctx.shadowColor = shadowColor;
+      ctx.shadowBlur = Math.max(1, outlineWidth);
+    }
+    for (let i = 0; i < str.length; i++) {
+      const g = atlas.glyphs[str[i]];
+      if (!g) {
+        penX += (Number(fontSize) || 14) * 0.5;
+        continue;
+      }
+      ctx.drawImage(atlas.image, g.x, g.y, g.w, g.h, penX, topY, g.w * scale, g.h * scale);
+      penX += (g.advance ?? g.w) * scale;
+    }
+    ctx.restore?.();
+    return true;
+  }
+
+  const ratio = Math.max(1, Number(dpr) || 1);
+  ctx.save?.();
+  ctx.font = `${weight} ${Math.max(8, Math.round(fontSize * ratio) / ratio)}px ${fontFamily}`;
+  ctx.textAlign = align;
+  ctx.textBaseline = baseline;
+  if (shadowColor && 'shadowColor' in ctx) {
+    ctx.shadowColor = shadowColor;
+    ctx.shadowBlur = 3;
+  }
+  if (outlineWidth > 0 && typeof ctx.strokeText === 'function') {
+    ctx.lineWidth = outlineWidth;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = outlineColor;
+    ctx.strokeText(str, x, y);
+  }
+  ctx.fillStyle = color;
+  ctx.fillText?.(str, x, y);
+  ctx.restore?.();
+  return true;
+}
 
 /**
  * @param {object} [options]
@@ -45,28 +132,13 @@ export function createCanvasUiRenderer({
     }
   }
 
-  function drawCrispText(ctx, text, x, y, {
-    fontSize = 14,
-    color = '#f8fafc',
-    outlineColor = 'rgba(2, 6, 23, 0.85)',
-    outlineWidth = 2.5,
-    align = 'center',
-    baseline = 'middle',
-    weight = '600',
-  } = {}) {
-    if (!ctx || text == null) return;
-    const str = String(text);
-    ctx.font = `${weight} ${Math.max(8, Math.round(fontSize * deviceRatio) / deviceRatio)}px ${fontFamily}`;
-    ctx.textAlign = align;
-    ctx.textBaseline = baseline;
-    if (outlineWidth > 0 && typeof ctx.strokeText === 'function') {
-      ctx.lineWidth = outlineWidth;
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = outlineColor;
-      ctx.strokeText(str, x, y);
-    }
-    ctx.fillStyle = color;
-    ctx.fillText?.(str, x, y);
+  function drawCrispText(ctx, text, x, y, opts = {}) {
+    return renderSdfText(ctx, text, x, y, {
+      fontFamily,
+      dpr: deviceRatio,
+      align: 'center',
+      ...opts,
+    });
   }
 
   function renderNode(ctx, layoutNode, srcNode) {
@@ -132,6 +204,23 @@ export function createCanvasUiRenderer({
         ctx.fillStyle = isHovered || isPressed ? '#ffffff' : '#e2e8f0';
         ctx.fill?.();
       }
+    } else if (kind === 'textInput') {
+      drawRoundedRect(ctx, x, y, width, height, srcNode.radius ?? 6);
+      ctx.fillStyle = srcNode.bg ?? 'rgba(15, 23, 42, 0.94)';
+      ctx.fill?.();
+      ctx.lineWidth = isFocused ? 2 : 1;
+      ctx.strokeStyle = isFocused ? '#38bdf8' : (isHovered ? '#94a3b8' : (srcNode.borderColor ?? '#475569'));
+      ctx.stroke?.();
+      const rawVal = typeof srcNode.value === 'string' ? srcNode.value : '';
+      const hasVal = rawVal.length > 0;
+      const display = hasVal ? rawVal : (srcNode.placeholder ?? '');
+      drawCrispText(ctx, display + (isFocused ? '|' : ''), x + 10, y + height * 0.5, {
+        fontSize: srcNode.fontSize ?? 14,
+        color: hasVal ? (srcNode.color ?? '#f8fafc') : (srcNode.placeholderColor ?? '#64748b'),
+        align: 'left',
+        outlineWidth: 1.5,
+        atlas: srcNode.atlas ?? null,
+      });
     } else if (kind === 'scrollList') {
       const items = Array.isArray(srcNode.items) ? srcNode.items : [];
       const rowHeight = Math.max(18, Number(srcNode.rowHeight) || 28);
@@ -180,7 +269,7 @@ export function createCanvasUiRenderer({
     for (let i = hitNodes.length - 1; i >= 0; i--) {
       const entry = hitNodes[i];
       const { node, rect } = entry;
-      if (node.interactive === false && node.type !== 'button' && node.type !== 'slider' && node.type !== 'scrollList') {
+      if (node.interactive === false && node.type !== 'button' && node.type !== 'slider' && node.type !== 'scrollList' && node.type !== 'textInput') {
         continue;
       }
       if (px >= rect.x && px <= rect.x + rect.width && py >= rect.y && py <= rect.y + rect.height) {
@@ -239,6 +328,34 @@ export function createCanvasUiRenderer({
     return next;
   }
 
+  function keyDown(key) {
+    if (!widgetState.focusedId || typeof key !== 'string') return false;
+    const entry = hitNodes.find(h => h.id === widgetState.focusedId);
+    const node = entry?.node;
+    if (!node || node.type !== 'textInput') return false;
+    const cur = typeof node.value === 'string' ? node.value : '';
+    const maxLen = Number.isInteger(node.maxLength) && node.maxLength > 0 ? node.maxLength : 64;
+    if (key === 'Backspace') {
+      node.value = cur.slice(0, -1);
+      node.onChange?.(node.value, node);
+      return true;
+    }
+    if (key === 'Enter') {
+      node.onSubmit?.(cur, node);
+      return true;
+    }
+    if (key === 'Escape') {
+      widgetState.focusedId = null;
+      return true;
+    }
+    if (key.length === 1 && cur.length < maxLen) {
+      node.value = cur + key;
+      node.onChange?.(node.value, node);
+      return true;
+    }
+    return false;
+  }
+
   function getState() {
     return {
       hoveredId: widgetState.hoveredId,
@@ -255,6 +372,7 @@ export function createCanvasUiRenderer({
     pointerMove,
     pointerDown,
     pointerUp,
+    keyDown,
     scroll,
     getState,
   });

@@ -25,6 +25,31 @@ export function findGridPath<T = number>(map: TileMap<T>, start: TileCoord, goal
  */
 export function createGridPathWork<T = number>(map: TileMap<T>, start: TileCoord, goal: TileCoord, { maxNodes, allowDiagonal, preventCornerCutting, }?: FindGridPathOptions | undefined): Generator<undefined, TileCoord[], void>;
 /**
+ * Resolve Auto-Tiling rule bitmasks across a `TileMap` so connected floor/wall/platform tiles
+ * automatically pick edge, corner, and inner fill variants without manual per-cell painting.
+ *
+ * Neighbor bits:
+ * - Cardinal (4-way): N=1, E=2, S=4, W=8
+ * - 8-way optional bits: NE=16, SE=32, SW=64, NW=128 (or fallback to `mask4` when no 8-way rule matches).
+ *
+ * @template T
+ * @param {TileMap<T>} tileMap
+ * @param {object} options
+ * @param {T | T[]} options.sourceTile Tile value(s) to evaluate and replace.
+ * @param {Record<number, T> | Map<number, T>} options.rules Bitmask-to-tile lookup table.
+ * @param {T} [options.defaultTile] Fallback tile ID when a mask has no entry in `rules`.
+ * @param {'4-way' | '8-way'} [options.mode='4-way']
+ * @param {boolean} [options.treatBorderAsMatched=true] Whether outside-map neighbors count as matching.
+ * @returns {number} Count of modified cells.
+ */
+export function applyAutoTileRules<T>(tileMap: TileMap<T>, { sourceTile, rules, defaultTile, mode, treatBorderAsMatched, }?: {
+    sourceTile: T | T[];
+    rules: Record<number, T> | Map<number, T>;
+    defaultTile?: T | undefined;
+    mode?: "4-way" | "8-way" | undefined;
+    treatBorderAsMatched?: boolean | undefined;
+}): number;
+/**
  * @template [T=number]
  * @typedef {object} TileMapOptions
  * @property {T[][]} tiles Rectangular row-major grid (tiles[y][x]); rows are copied.

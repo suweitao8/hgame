@@ -47,7 +47,7 @@ export {
 } from './time/tween.js';
 export { AnimationPlayer } from './animation/player.js';
 export { SpriteSheet } from './animation/spritesheet.js';
-export { TileMap, findGridPath, createGridPathWork } from './world/tilemap.js';
+export { TileMap, findGridPath, createGridPathWork, applyAutoTileRules } from './world/tilemap.js';
 export { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
 export {
   SWARM_UNIT_FLAGS,
@@ -98,6 +98,7 @@ export {
   applyAriaToElement,
   computeFlexLayout,
   createCanvasUiRenderer,
+  renderSdfText,
   createVirtualList,
   createI18n,
   computeStaggerProgress,
@@ -221,6 +222,7 @@ import {
   applyAriaToElement,
   computeFlexLayout,
   createCanvasUiRenderer,
+  renderSdfText,
   createVirtualList,
   createI18n,
   computeStaggerProgress,
@@ -336,6 +338,7 @@ export const HGame = Object.freeze({
   applyAriaToElement,
   computeFlexLayout,
   createCanvasUiRenderer,
+  renderSdfText,
   createVirtualList,
   createI18n,
   computeStaggerProgress,

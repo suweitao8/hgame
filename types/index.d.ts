@@ -273,6 +273,7 @@ export const HGame: Readonly<{
     applyAriaToElement: typeof applyAriaToElement;
     computeFlexLayout: typeof computeFlexLayout;
     createCanvasUiRenderer: typeof createCanvasUiRenderer;
+    renderSdfText: typeof renderSdfText;
     createVirtualList: typeof createVirtualList;
     createI18n: typeof createI18n;
     computeStaggerProgress: typeof computeStaggerProgress;
@@ -1160,6 +1161,7 @@ import { createPanelStack } from './ui/index.js';
 import { applyAriaToElement } from './ui/index.js';
 import { computeFlexLayout } from './ui/index.js';
 import { createCanvasUiRenderer } from './ui/index.js';
+import { renderSdfText } from './ui/index.js';
 import { createVirtualList } from './ui/index.js';
 import { createI18n } from './ui/index.js';
 import { computeStaggerProgress } from './ui/index.js';
@@ -1206,7 +1208,7 @@ export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTag
 export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, createAssetLoader, createSaveStore, createVersionedStore, createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews, createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm, createDiagnostics, createGameBridge, createGameHostBridge } from "./platform/engine.js";
 export { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming } from "./platform/asset-catalog.js";
 export { EASING, TweenManager, LN2_CRIT, damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
-export { TileMap, findGridPath, createGridPathWork } from "./world/tilemap.js";
+export { TileMap, findGridPath, createGridPathWork, applyAutoTileRules } from "./world/tilemap.js";
 export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";
 export { SWARM_UNIT_FLAGS, ECS_SLOT_FLAGS, FlatSpatialHash2D, createFlatSpatialHash2D, FlowField2D, createFlowField2D, FlatCombatECS, createSwarmSimulation } from "./world/swarm-ecs.js";
 export { fbmNoise2D, createHeightfieldTerrain3D } from "./world/terrain3d.js";
@@ -1216,7 +1218,7 @@ export { createStateMachine, BT_STATUS, sequence, selector, parallel, inverter, 
 export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner } from "./sim/index.js";
 export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from "./integrations/render-budget-2d.js";
 export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
-export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
+export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, renderSdfText, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
 export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
 export { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";
