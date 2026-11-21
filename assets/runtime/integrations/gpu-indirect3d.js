@@ -63,26 +63,29 @@ const WEBGPU_BUFFER_USAGE = {
  * (`'webgpu-indirect' | 'webgl2-multidraw' | 'cpu-instanced'`) and dirty bounds range tracking.
  * @param {object} [options]
  * @param {any} [options.webgpuDevice=null] WebGPU GPUDevice supporting compute + indirect draw.
+ * @param {any} [options.device=null] Alias for `webgpuDevice`.
  * @param {any} [options.gl=null] WebGL2 context checked for `WEBGL_multi_draw`.
  * @param {{ testSphere?: (x: number, y: number, z: number, radius?: number) => boolean } | null} [options.cpuCuller=null]
  * @param {number} [options.maxInstances=65536]
  */
 export function createGpuIndirectCuller3D({
   webgpuDevice = null,
+  device = null,
   gl = null,
   cpuCuller = null,
   maxInstances = 65536,
 } = {}) {
+  const gpuDevice = webgpuDevice ?? device ?? null;
   if (!Number.isSafeInteger(maxInstances) || maxInstances < 1) {
     throw new RangeError('maxInstances must be a positive integer');
   }
 
   const hasWebGpuCompute = Boolean(
-    webgpuDevice &&
-    typeof webgpuDevice.createShaderModule === 'function' &&
-    typeof webgpuDevice.createComputePipeline === 'function' &&
-    typeof webgpuDevice.createBuffer === 'function' &&
-    typeof webgpuDevice.queue?.writeBuffer === 'function'
+    gpuDevice &&
+    typeof gpuDevice.createShaderModule === 'function' &&
+    typeof gpuDevice.createComputePipeline === 'function' &&
+    typeof gpuDevice.createBuffer === 'function' &&
+    typeof gpuDevice.queue?.writeBuffer === 'function'
   );
   const multiDrawExt = !hasWebGpuCompute && gl?.getExtension?.('WEBGL_multi_draw') || null;
   const hasMultiDraw = Boolean(
@@ -102,7 +105,7 @@ export function createGpuIndirectCuller3D({
     ? null
     : mode === 'webgl2-multidraw'
       ? 'No WebGPU device; using WebGL2 WEBGL_multi_draw batched submission'
-      : !webgpuDevice && !gl
+      : !gpuDevice && !gl
         ? 'No WebGPU or WebGL2 context supplied; using CPU instanced culling fallback'
         : 'WebGPU indirect & WEBGL_multi_draw unavailable; using CPU instanced culling fallback';
 
@@ -132,32 +135,37 @@ export function createGpuIndirectCuller3D({
     indirectDraws: 0,
     uploadedBytes: 0,
     skippedStatic: false,
+    readbackErrors: 0,
+    readbackSkipped: 0,
   };
 
   let gpuResources = null;
+  const stagingPool = [null, null];
+  let readbackSerial = 0;
+  let latestResult = null;
   if (mode === 'webgpu-indirect') {
-    const shaderModule = webgpuDevice.createShaderModule({ code: GPU_CULL_WGSL });
-    const pipeline = webgpuDevice.createComputePipeline({
+    const shaderModule = gpuDevice.createShaderModule({ code: GPU_CULL_WGSL });
+    const pipeline = gpuDevice.createComputePipeline({
       layout: 'auto',
       compute: { module: shaderModule, entryPoint: 'main' },
     });
-    const uniformBuffer = webgpuDevice.createBuffer({
+    const uniformBuffer = gpuDevice.createBuffer({
       size: frustumData.byteLength,
       usage: WEBGPU_BUFFER_USAGE.UNIFORM | WEBGPU_BUFFER_USAGE.COPY_DST,
     });
-    const boundsBuffer = webgpuDevice.createBuffer({
+    const boundsBuffer = gpuDevice.createBuffer({
       size: bounds.byteLength,
       usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.COPY_DST,
     });
-    const visibleBuffer = webgpuDevice.createBuffer({
+    const visibleBuffer = gpuDevice.createBuffer({
       size: maxInstances * 4,
       usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.COPY_SRC,
     });
-    const indirectBuffer = webgpuDevice.createBuffer({
+    const indirectBuffer = gpuDevice.createBuffer({
       size: indirectHeader.byteLength,
       usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.INDIRECT | WEBGPU_BUFFER_USAGE.COPY_DST | WEBGPU_BUFFER_USAGE.COPY_SRC,
     });
-    const bindGroup = webgpuDevice.createBindGroup?.({
+    const bindGroup = gpuDevice.createBindGroup?.({
       layout: pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: { buffer: uniformBuffer } },
@@ -272,7 +280,7 @@ export function createGpuIndirectCuller3D({
       if (dirtyMax >= dirtyMin) {
         const startByte = dirtyMin * 16;
         const elemCount = (dirtyMax - dirtyMin + 1) * 4;
-        webgpuDevice.queue.writeBuffer(gpuResources.boundsBuffer, startByte, bounds, dirtyMin * 4, elemCount);
+        gpuDevice.queue.writeBuffer(gpuResources.boundsBuffer, startByte, bounds, dirtyMin * 4, elemCount);
         stats.uploadedBytes += elemCount * 4;
         dirtyMin = Infinity;
         dirtyMax = -1;
@@ -282,7 +290,7 @@ export function createGpuIndirectCuller3D({
 
       if (frustumDirty || frustumU32[24] !== activeCount) {
         frustumU32[24] = activeCount;
-        webgpuDevice.queue.writeBuffer(gpuResources.uniformBuffer, 0, frustumData);
+        gpuDevice.queue.writeBuffer(gpuResources.uniformBuffer, 0, frustumData);
         stats.uploadedBytes += frustumData.byteLength;
         frustumDirty = false;
       }
@@ -292,7 +300,7 @@ export function createGpuIndirectCuller3D({
       indirectHeader[2] = firstIndex >>> 0;
       indirectI32[3] = baseVertex | 0;
       indirectHeader[4] = firstInstance >>> 0;
-      webgpuDevice.queue.writeBuffer(gpuResources.indirectBuffer, 0, indirectHeader);
+      gpuDevice.queue.writeBuffer(gpuResources.indirectBuffer, 0, indirectHeader);
       stats.uploadedBytes += indirectHeader.byteLength;
 
       if (activeCount > 0 && commandEncoder) {
@@ -368,20 +376,20 @@ export function createGpuIndirectCuller3D({
     else if (instanceCount !== activeCount) setInstanceCount(instanceCount);
 
     const workgroups = activeCount > 0 ? Math.ceil(activeCount / 64) : 0;
-    if (mode === 'webgpu-indirect' && gpuResources && typeof webgpuDevice.createCommandEncoder === 'function') {
-      const commandEncoder = webgpuDevice.createCommandEncoder();
+    if (mode === 'webgpu-indirect' && gpuResources && typeof gpuDevice.createCommandEncoder === 'function') {
+      const commandEncoder = gpuDevice.createCommandEncoder();
       execute({ commandEncoder, indexCount });
 
       let readArgsBuf = null;
       let readIdxBuf = null;
       if (readback) {
-        readArgsBuf = webgpuDevice.createBuffer({
+        readArgsBuf = gpuDevice.createBuffer({
           size: indirectHeader.byteLength,
           usage: WEBGPU_BUFFER_USAGE.MAP_READ | WEBGPU_BUFFER_USAGE.COPY_DST,
         });
         commandEncoder.copyBufferToBuffer(gpuResources.indirectBuffer, 0, readArgsBuf, 0, indirectHeader.byteLength);
         if (activeCount > 0) {
-          readIdxBuf = webgpuDevice.createBuffer({
+          readIdxBuf = gpuDevice.createBuffer({
             size: activeCount * 4,
             usage: WEBGPU_BUFFER_USAGE.MAP_READ | WEBGPU_BUFFER_USAGE.COPY_DST,
           });
@@ -389,7 +397,7 @@ export function createGpuIndirectCuller3D({
         }
       }
 
-      webgpuDevice.queue.submit([commandEncoder.finish()]);
+      gpuDevice.queue.submit([commandEncoder.finish()]);
 
       if (readback && readArgsBuf) {
         await readArgsBuf.mapAsync(0x0001);
@@ -435,9 +443,118 @@ export function createGpuIndirectCuller3D({
     };
   }
 
+  /**
+   * Non-blocking 2-slot double-buffered WebGPU compute dispatch + async `mapAsync` readback.
+   * Never blocks the main thread; latest completed result is exposed via `getLatestResult()`.
+   * @param {{ indexCount?: number }} [options]
+   * @returns {{ submitted: boolean, serial: number }}
+   */
+  function submitComputeReadback({ indexCount = 0 } = {}) {
+    if (disposed) throw new Error('GPU indirect culler is disposed');
+    if (mode !== 'webgpu-indirect' || !gpuResources || typeof gpuDevice.createCommandEncoder !== 'function') {
+      return { submitted: false, serial: readbackSerial };
+    }
+
+    let slotIdx = -1;
+    for (let i = 0; i < stagingPool.length; i++) {
+      if (!stagingPool[i] || !stagingPool[i].inFlight) {
+        slotIdx = i;
+        break;
+      }
+    }
+    if (slotIdx === -1) {
+      stats.readbackSkipped++;
+      return { submitted: false, serial: readbackSerial };
+    }
+
+    let slot = stagingPool[slotIdx];
+    if (!slot) {
+      slot = {
+        inFlight: false,
+        argsBuf: gpuDevice.createBuffer({
+          size: indirectHeader.byteLength,
+          usage: WEBGPU_BUFFER_USAGE.MAP_READ | WEBGPU_BUFFER_USAGE.COPY_DST,
+        }),
+        idxBuf: gpuDevice.createBuffer({
+          size: maxInstances * 4,
+          usage: WEBGPU_BUFFER_USAGE.MAP_READ | WEBGPU_BUFFER_USAGE.COPY_DST,
+        }),
+        outIndices: new Uint32Array(maxInstances),
+      };
+      stagingPool[slotIdx] = slot;
+    }
+
+    slot.inFlight = true;
+    const serial = ++readbackSerial;
+    const submittedCount = activeCount;
+    const commandEncoder = gpuDevice.createCommandEncoder();
+    execute({ commandEncoder, indexCount });
+    commandEncoder.copyBufferToBuffer(gpuResources.indirectBuffer, 0, slot.argsBuf, 0, indirectHeader.byteLength);
+    if (submittedCount > 0) {
+      commandEncoder.copyBufferToBuffer(gpuResources.visibleBuffer, 0, slot.idxBuf, 0, submittedCount * 4);
+    }
+    gpuDevice.queue.submit([commandEncoder.finish()]);
+
+    const mapJobs = [slot.argsBuf.mapAsync(0x0001)];
+    if (submittedCount > 0) mapJobs.push(slot.idxBuf.mapAsync(0x0001));
+
+    Promise.all(mapJobs).then(
+      () => {
+        try {
+          if (disposed) {
+            try { slot.argsBuf.unmap(); } catch {}
+            if (submittedCount > 0) try { slot.idxBuf.unmap(); } catch {}
+            return;
+          }
+          const argsView = new Uint32Array(slot.argsBuf.getMappedRange());
+          const visCount = Math.min(submittedCount, argsView[1] >>> 0);
+          slot.argsBuf.unmap();
+
+          if (submittedCount > 0) {
+            const idxView = new Uint32Array(slot.idxBuf.getMappedRange());
+            if (visCount > 0) {
+              slot.outIndices.set(idxView.subarray(0, visCount), 0);
+            }
+            slot.idxBuf.unmap();
+          }
+          const copied = new Uint32Array(slot.outIndices.subarray(0, visCount));
+          latestResult = {
+            serial,
+            instanceCount: submittedCount,
+            visibleCount: visCount,
+            visibleIndices: copied,
+          };
+          stats.visibleCount = visCount;
+        } finally {
+          slot.inFlight = false;
+        }
+      },
+      () => {
+        try { slot.argsBuf.unmap(); } catch {}
+        if (submittedCount > 0) try { slot.idxBuf.unmap(); } catch {}
+        slot.inFlight = false;
+        stats.readbackErrors++;
+      }
+    );
+
+    return { submitted: true, serial };
+  }
+
+  function getLatestResult() {
+    return latestResult;
+  }
+
   function dispose() {
     if (disposed) return false;
     disposed = true;
+    latestResult = null;
+    for (let i = 0; i < stagingPool.length; i++) {
+      const slot = stagingPool[i];
+      if (!slot) continue;
+      try { slot.argsBuf?.destroy?.(); } catch {}
+      try { slot.idxBuf?.destroy?.(); } catch {}
+      stagingPool[i] = null;
+    }
     gpuResources?.uniformBuffer?.destroy?.();
     gpuResources?.boundsBuffer?.destroy?.();
     gpuResources?.visibleBuffer?.destroy?.();
@@ -458,6 +575,8 @@ export function createGpuIndirectCuller3D({
     setFrustumPlanes,
     execute,
     dispatchWebGpuCompute,
+    submitComputeReadback,
+    getLatestResult,
     getStats() { return Object.freeze({ ...stats }); },
     dispose,
   };
@@ -497,7 +616,9 @@ export function createIndirectInstancedBatch3D(THREE, {
   let activeCount = 0;
   let visibleCount = 0;
   let cullCount = 0;
+  let gpuReadbacks = 0;
   let lastMode = 'cpu-instanced';
+  let lastSource = 'cpu-instanced';
 
   function setCount(count) {
     activeCount = Math.max(0, Math.min(cap, Math.floor(Number(count) || 0)));
@@ -525,6 +646,15 @@ export function createIndirectInstancedBatch3D(THREE, {
     return true;
   }
 
+  function compactFromIndices(dst, idxArr, count) {
+    for (let i = 0; i < count; i++) {
+      const srcOffset = idxArr[i] * 16;
+      const dstOffset = i * 16;
+      for (let k = 0; k < 16; k++) dst[dstOffset + k] = sourceMatrices[srcOffset + k];
+    }
+    return count;
+  }
+
   function cull(frustumPlanes, gpuIndirectCuller = null) {
     if (activeCount === 0) {
       visibleCount = 0;
@@ -533,6 +663,7 @@ export function createIndirectInstancedBatch3D(THREE, {
     }
     cullCount++;
     let vis = 0;
+    let compacted = false;
     const dst = instancedMesh.instanceMatrix?.array;
 
     if (gpuIndirectCuller) {
@@ -546,20 +677,36 @@ export function createIndirectInstancedBatch3D(THREE, {
         }
       }
       gpuIndirectCuller.setInstanceCount(activeCount);
-      const res = gpuIndirectCuller.execute();
-      lastMode = res.mode ?? gpuIndirectCuller.mode;
-      if (res.visibleIndices && dst) {
-        const idxArr = res.visibleIndices;
-        for (let i = 0; i < res.visibleCount; i++) {
-          const srcOffset = idxArr[i] * 16;
-          const dstOffset = i * 16;
-          for (let k = 0; k < 16; k++) dst[dstOffset + k] = sourceMatrices[srcOffset + k];
+
+      if (
+        gpuIndirectCuller.mode === 'webgpu-indirect' &&
+        typeof gpuIndirectCuller.submitComputeReadback === 'function'
+      ) {
+        lastMode = 'webgpu-indirect';
+        gpuIndirectCuller.submitComputeReadback();
+        const latest = gpuIndirectCuller.getLatestResult?.();
+        if (latest && latest.instanceCount === activeCount && dst) {
+          vis = compactFromIndices(dst, latest.visibleIndices, latest.visibleCount);
+          lastSource = 'gpu-readback';
+          gpuReadbacks++;
+          compacted = true;
+        } else {
+          lastSource = 'cpu-fallback';
         }
-        vis = res.visibleCount;
+      } else {
+        const res = gpuIndirectCuller.execute();
+        lastMode = res.mode ?? gpuIndirectCuller.mode;
+        if (res.visibleIndices && dst) {
+          vis = compactFromIndices(dst, res.visibleIndices, res.visibleCount);
+          lastSource = 'cpu-instanced';
+          compacted = true;
+        } else {
+          lastSource = 'host-planes';
+        }
       }
     }
 
-    if (vis === 0 && dst && frustumPlanes && frustumPlanes.length >= 24 && lastMode !== 'cpu-instanced') {
+    if (!compacted && dst && frustumPlanes && frustumPlanes.length >= 24) {
       // Compact instance matrices on host side matching GPU frustum planes for WebGL2 InstancedMesh
       for (let i = 0; i < activeCount; i++) {
         const b = i * 4;
@@ -619,6 +766,8 @@ export function createIndirectInstancedBatch3D(THREE, {
         culledOut: Math.max(0, activeCount - visibleCount),
         cullPasses: cullCount,
         mode: lastMode,
+        source: lastSource,
+        gpuReadbacks,
       });
     },
     dispose,

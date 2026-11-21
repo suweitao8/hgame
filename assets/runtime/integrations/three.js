@@ -199,7 +199,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {ThreeCamera | null} [viewCamera=null] Camera for the view-model overlay layer.
  * @property {ThreeSkyLike | null} [sky=null] Sky controller.
  * @property {ThreePostVolumesLike | null} [postVolumes=null] Post volume stack.
- * @property {boolean} [gpuIndirect=false] Enable GPU indirect culling.
+ * @property {boolean | 'auto' | object} [gpuIndirect='auto'] Enable GPU indirect culling ('auto' enables lazily when indirect batches are registered).
  * @property {boolean} [renderGraph=false] Enable scene-level RenderGraph DAG orchestration.
  * @property {boolean | { safeArea?: object, minScale?: number, maxScale?: number, vramBudgetBytes?: number, colorLut?: string, heightFog?: object } | null} [mobilePortrait=false] Turnkey mobile-portrait Bilibili Toy preset (DPR cap + DRS + VRAM guard + UBO batching + LUT/heightFog).
  */
@@ -254,6 +254,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {(id: string, batch: object) => void} registerIndirectBatch Register an indirect/instanced culling batch with the adapter.
  * @property {(id: string) => boolean} unregisterIndirectBatch Unregister an indirect culling batch.
  * @property {() => object} getGpuSubmitStats Inspect GPU indirect culling mode and submission counters.
+ * @property {() => { enabled: boolean, requested: boolean | 'auto' | object, mode: string, fallbackReason: string | null, pending: boolean }} getGpuCullingState Inspect GPU culling readiness and WebGPU upgrade state.
  * @property {(scene: object, cam?: ThreeCamera | null) => Promise<object>} warmupShaders Asynchronously pre-compile all materials in a scene to avoid first-frame PSO stutter.
  * @property {(target: object, cam?: ThreeCamera | null) => number} enqueueShaderWarmup Enqueue an object/material subtree for incremental warmup.
  * @property {(budgetMs?: number) => object} stepShaderWarmup Compile queued shaders incrementally within `budgetMs`.
@@ -307,7 +308,7 @@ export function createThreeAdapter({
   viewCamera = null,
   sky = null,
   postVolumes = null,
-  gpuIndirect = false,
+  gpuIndirect = 'auto',
   renderGraph = false,
   mobilePortrait = false,
 } = {}) {
@@ -373,14 +374,77 @@ export function createThreeAdapter({
     gl: renderer.getContext?.() ?? null,
   });
   const gpuIndirectOpts = typeof gpuIndirect === 'object' && gpuIndirect ? gpuIndirect : null;
-  const gpuIndirectCuller = gpuIndirect
-    ? createGpuIndirectCuller3D({
-        device: gpuIndirectOpts?.device ?? null,
-        gl: gpuIndirectOpts?.gl ?? renderer.getContext?.() ?? null,
-        maxInstances: gpuIndirectOpts?.maxInstances ?? 65536,
-      })
+  const createCullerWithDevice = (webgpuDevice = null) => createGpuIndirectCuller3D({
+    webgpuDevice,
+    gl: gpuIndirectOpts?.gl ?? renderer.getContext?.() ?? null,
+    maxInstances: gpuIndirectOpts?.maxInstances ?? 65536,
+  });
+  const explicitGpuDevice = gpuIndirectOpts?.webgpuDevice ?? gpuIndirectOpts?.device ?? null;
+  let gpuIndirectCuller = (gpuIndirect === true || gpuIndirectOpts)
+    ? createCullerWithDevice(explicitGpuDevice)
     : null;
+  let gpuUpgradePending = false;
+  let gpuUpgradeRequested = false;
+  let gpuAutoFallbackReason = gpuIndirect === false ? 'gpuIndirect disabled' : null;
   const indirectBatches = new Map();
+
+  function ensureAutoGpuCuller() {
+    if (disposed || gpuIndirect === false) return;
+    if (!gpuIndirectCuller) {
+      gpuIndirectCuller = createCullerWithDevice(explicitGpuDevice);
+    }
+    if (
+      gpuUpgradeRequested ||
+      explicitGpuDevice ||
+      gpuIndirectCuller.mode === 'webgpu-indirect'
+    ) {
+      return;
+    }
+    const gpuApi = globalThis.navigator?.gpu;
+    if (!gpuApi || typeof gpuApi.requestAdapter !== 'function') {
+      gpuAutoFallbackReason = gpuIndirectCuller.fallbackReason ?? 'WebGPU navigator.gpu unavailable';
+      return;
+    }
+    gpuUpgradeRequested = true;
+    gpuUpgradePending = true;
+    Promise.resolve()
+      .then(() => gpuApi.requestAdapter())
+      .then((gpuAdapter) => {
+        if (disposed) return null;
+        if (!gpuAdapter || typeof gpuAdapter.requestDevice !== 'function') {
+          gpuAutoFallbackReason = 'WebGPU adapter unavailable';
+          return null;
+        }
+        return gpuAdapter.requestDevice();
+      })
+      .then((gpuDevice) => {
+        if (!gpuDevice) return;
+        if (disposed) {
+          gpuDevice.destroy?.();
+          return;
+        }
+        const prevCuller = gpuIndirectCuller;
+        gpuIndirectCuller = createCullerWithDevice(gpuDevice);
+        gpuAutoFallbackReason = gpuIndirectCuller.fallbackReason;
+        prevCuller?.dispose?.();
+        gpuDevice.lost?.then?.((info) => {
+          if (disposed) return;
+          const lostReason = info?.message ? `WebGPU device lost: ${info.message}` : 'WebGPU device lost';
+          gpuAutoFallbackReason = lostReason;
+          const prev = gpuIndirectCuller;
+          gpuIndirectCuller = createCullerWithDevice(null);
+          prev?.dispose?.();
+        }).catch?.(() => {});
+      })
+      .catch((err) => {
+        if (!disposed) {
+          gpuAutoFallbackReason = err?.message || 'WebGPU device request failed';
+        }
+      })
+      .finally(() => {
+        gpuUpgradePending = false;
+      });
+  }
   const shaderWarmup = createShaderWarmupQueue3D(THREE, renderer);
 
   function markSunShadowDirty(light) {
@@ -1452,24 +1516,46 @@ export function createThreeAdapter({
     },
     registerIndirectBatch(id, batch) {
       indirectBatches.set(String(id), batch);
+      if (gpuIndirect !== false) {
+        ensureAutoGpuCuller();
+      }
     },
     unregisterIndirectBatch(id) {
       return indirectBatches.delete(String(id));
+    },
+    getGpuCullingState() {
+      if (!gpuIndirectCuller) {
+        return {
+          enabled: false,
+          requested: gpuIndirect,
+          mode: gpuIndirect === false ? 'disabled' : 'cpu-instanced',
+          fallbackReason: gpuIndirect === 'auto' ? 'no indirect batches registered' : 'gpuIndirect disabled',
+          pending: gpuUpgradePending,
+        };
+      }
+      return {
+        enabled: true,
+        requested: gpuIndirect,
+        mode: gpuIndirectCuller.mode,
+        fallbackReason: gpuAutoFallbackReason ?? gpuIndirectCuller.fallbackReason,
+        pending: gpuUpgradePending,
+      };
     },
     getGpuSubmitStats() {
       if (!gpuIndirectCuller) {
         return {
           enabled: false,
           mode: 'cpu-instanced',
-          fallbackReason: 'gpuIndirect disabled',
+          fallbackReason: gpuIndirect === 'auto' ? 'no indirect batches registered' : 'gpuIndirect disabled',
           batches: 0,
         };
       }
       return {
         enabled: true,
         mode: gpuIndirectCuller.mode,
-        fallbackReason: gpuIndirectCuller.fallbackReason,
+        fallbackReason: gpuAutoFallbackReason ?? gpuIndirectCuller.fallbackReason,
         batches: indirectBatches.size,
+        pending: gpuUpgradePending,
         ...gpuIndirectCuller.getStats(),
       };
     },

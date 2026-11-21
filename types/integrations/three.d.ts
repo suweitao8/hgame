@@ -121,7 +121,7 @@
  * @property {ThreeCamera | null} [viewCamera=null] Camera for the view-model overlay layer.
  * @property {ThreeSkyLike | null} [sky=null] Sky controller.
  * @property {ThreePostVolumesLike | null} [postVolumes=null] Post volume stack.
- * @property {boolean} [gpuIndirect=false] Enable GPU indirect culling.
+ * @property {boolean | 'auto' | object} [gpuIndirect='auto'] Enable GPU indirect culling ('auto' enables lazily when indirect batches are registered).
  * @property {boolean} [renderGraph=false] Enable scene-level RenderGraph DAG orchestration.
  * @property {boolean | { safeArea?: object, minScale?: number, maxScale?: number, vramBudgetBytes?: number, colorLut?: string, heightFog?: object } | null} [mobilePortrait=false] Turnkey mobile-portrait Bilibili Toy preset (DPR cap + DRS + VRAM guard + UBO batching + LUT/heightFog).
  */
@@ -172,6 +172,7 @@
  * @property {(id: string, batch: object) => void} registerIndirectBatch Register an indirect/instanced culling batch with the adapter.
  * @property {(id: string) => boolean} unregisterIndirectBatch Unregister an indirect culling batch.
  * @property {() => object} getGpuSubmitStats Inspect GPU indirect culling mode and submission counters.
+ * @property {() => { enabled: boolean, requested: boolean | 'auto' | object, mode: string, fallbackReason: string | null, pending: boolean }} getGpuCullingState Inspect GPU culling readiness and WebGPU upgrade state.
  * @property {(scene: object, cam?: ThreeCamera | null) => Promise<object>} warmupShaders Asynchronously pre-compile all materials in a scene to avoid first-frame PSO stutter.
  * @property {(target: object, cam?: ThreeCamera | null) => number} enqueueShaderWarmup Enqueue an object/material subtree for incremental warmup.
  * @property {(budgetMs?: number) => object} stepShaderWarmup Compile queued shaders incrementally within `budgetMs`.
@@ -550,9 +551,9 @@ export type ThreeAdapterOptions = {
      */
     postVolumes?: ThreePostVolumesLike | null | undefined;
     /**
-     * Enable GPU indirect culling.
+     * Enable GPU indirect culling ('auto' enables lazily when indirect batches are registered).
      */
-    gpuIndirect?: boolean | undefined;
+    gpuIndirect?: boolean | "auto" | object;
     /**
      * Enable scene-level RenderGraph DAG orchestration.
      */
@@ -683,6 +684,16 @@ export type ThreeAdapter = {
      * Inspect GPU indirect culling mode and submission counters.
      */
     getGpuSubmitStats: () => object;
+    /**
+     * Inspect GPU culling readiness and WebGPU upgrade state.
+     */
+    getGpuCullingState: () => {
+        enabled: boolean;
+        requested: boolean | "auto" | object;
+        mode: string;
+        fallbackReason: string | null;
+        pending: boolean;
+    };
     /**
      * Asynchronously pre-compile all materials in a scene to avoid first-frame PSO stutter.
      */

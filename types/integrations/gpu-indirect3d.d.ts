@@ -3,12 +3,14 @@
  * (`'webgpu-indirect' | 'webgl2-multidraw' | 'cpu-instanced'`) and dirty bounds range tracking.
  * @param {object} [options]
  * @param {any} [options.webgpuDevice=null] WebGPU GPUDevice supporting compute + indirect draw.
+ * @param {any} [options.device=null] Alias for `webgpuDevice`.
  * @param {any} [options.gl=null] WebGL2 context checked for `WEBGL_multi_draw`.
  * @param {{ testSphere?: (x: number, y: number, z: number, radius?: number) => boolean } | null} [options.cpuCuller=null]
  * @param {number} [options.maxInstances=65536]
  */
-export function createGpuIndirectCuller3D({ webgpuDevice, gl, cpuCuller, maxInstances, }?: {
+export function createGpuIndirectCuller3D({ webgpuDevice, device, gl, cpuCuller, maxInstances, }?: {
     webgpuDevice?: any;
+    device?: any;
     gl?: any;
     cpuCuller?: {
         testSphere?: (x: number, y: number, z: number, radius?: number) => boolean;
@@ -73,6 +75,13 @@ export function createGpuIndirectCuller3D({ webgpuDevice, gl, cpuCuller, maxInst
         visibleIndices: Uint32Array | null;
         workgroups: number;
     }>;
+    submitComputeReadback: ({ indexCount }?: {
+        indexCount?: number;
+    } | undefined) => {
+        submitted: boolean;
+        serial: number;
+    };
+    getLatestResult: () => any;
     getStats(): Readonly<{
         mode: string;
         dispatchedInstances: number;
@@ -80,6 +89,8 @@ export function createGpuIndirectCuller3D({ webgpuDevice, gl, cpuCuller, maxInst
         indirectDraws: number;
         uploadedBytes: number;
         skippedStatic: boolean;
+        readbackErrors: number;
+        readbackSkipped: number;
     }>;
     dispose: () => boolean;
 };
@@ -117,6 +128,8 @@ export function createIndirectInstancedBatch3D(THREE: object, { geometry, materi
         culledOut: number;
         cullPasses: number;
         mode: string;
+        source: string;
+        gpuReadbacks: number;
     }>;
     dispose: () => void;
 };
