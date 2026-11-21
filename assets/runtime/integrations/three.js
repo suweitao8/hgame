@@ -1,5 +1,13 @@
 import { Component } from '../core/component.js';
-import { createAdaptiveQualityController, resolveQualityPreset } from './quality3d.js';
+import {
+  createAdaptiveQualityController,
+  resolveQualityPreset,
+  MOBILE_PORTRAIT_PRESET,
+  resolvePortraitViewport,
+  createPortraitDrsController,
+} from './quality3d.js';
+import { createMaterialBatchRegistry3D } from './material-graph3d.js';
+import { createVramMipGuard } from '../platform/asset-catalog.js';
 import { createGpuFrameTimer } from './quality3d/gpu-timer.js';
 import { createRenderDiagnostics3D, createVramLedger3D, drawWithDiagnostics, estimateRenderTargetBytes } from './quality3d/render-diagnostics.js';
 import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.js';
@@ -191,6 +199,9 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {ThreeCamera | null} [viewCamera=null] Camera for the view-model overlay layer.
  * @property {ThreeSkyLike | null} [sky=null] Sky controller.
  * @property {ThreePostVolumesLike | null} [postVolumes=null] Post volume stack.
+ * @property {boolean} [gpuIndirect=false] Enable GPU indirect culling.
+ * @property {boolean} [renderGraph=false] Enable scene-level RenderGraph DAG orchestration.
+ * @property {boolean | { safeArea?: object, minScale?: number, maxScale?: number, vramBudgetBytes?: number, colorLut?: string, heightFog?: object } | null} [mobilePortrait=false] Turnkey mobile-portrait Bilibili Toy preset (DPR cap + DRS + VRAM guard + UBO batching + LUT/heightFog).
  */
 
 /**
@@ -298,15 +309,42 @@ export function createThreeAdapter({
   postVolumes = null,
   gpuIndirect = false,
   renderGraph = false,
+  mobilePortrait = false,
 } = {}) {
   if (!THREE?.Scene || !THREE?.PerspectiveCamera || !THREE?.WebGLRenderer) {
     throw new TypeError('A complete Three.js namespace is required');
   }
   if (!canvas) throw new TypeError('Three adapter requires a canvas');
 
+  const mpOpts = mobilePortrait && typeof mobilePortrait === 'object' ? mobilePortrait : {};
+  const mpEnabled = Boolean(mobilePortrait);
+  const portraitViewport = mpEnabled
+    ? resolvePortraitViewport({
+        width,
+        height,
+        dpr: pixelRatio,
+        maxDpr: MOBILE_PORTRAIT_PRESET.maxPixelRatio,
+        safeArea: mpOpts.safeArea,
+      })
+    : null;
+  let activePixelRatio = portraitViewport ? portraitViewport.pixelRatio : pixelRatio;
+
+  const effectivePost3d = post3d === false
+    ? false
+    : (mpEnabled
+        ? {
+            bloom: MOBILE_PORTRAIT_PRESET.bloom,
+            sharpness: MOBILE_PORTRAIT_PRESET.rcasSharpness,
+            fxaa: true,
+            colorLut: mpOpts.colorLut ?? MOBILE_PORTRAIT_PRESET.colorLut,
+            heightFog: mpOpts.heightFog ?? MOBILE_PORTRAIT_PRESET.heightFog,
+            ...(typeof post3d === 'object' && post3d ? post3d : {}),
+          }
+        : post3d);
+
   const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: !post3d,
+    antialias: !effectivePost3d,
     powerPreference: 'high-performance',
   });
   const renderDiagnostics = diagnostics3d ? createRenderDiagnostics3D(THREE, renderer) : null;
@@ -537,7 +575,7 @@ export function createThreeAdapter({
     return qualityController?.state?.tier ?? null;
   }
 
-  const postOptions = typeof post3d === 'object' && post3d ? { ...post3d } : {};
+  const postOptions = typeof effectivePost3d === 'object' && effectivePost3d ? { ...effectivePost3d } : {};
   function targetOptions(pipeline) {
     const state = pipeline.state;
     return [state.temporalAA, state.temporalMotion, state.temporalGiSsr, state.autoExposure,
@@ -551,7 +589,7 @@ export function createThreeAdapter({
       ...postOptions, preset, passes, width, height,
     });
   }
-  if (post3d) {
+  if (effectivePost3d) {
     const initialSize = planCanvasSize();
     postPipeline = createViewPostPipeline(initialSize.bufferWidth, initialSize.bufferHeight,
       qualityController?.state.preset ?? postOptions.preset);
@@ -723,8 +761,8 @@ export function createThreeAdapter({
   function planCanvasSize() {
     const w = Math.max(1, Math.floor(canvas.clientWidth || width));
     const h = Math.max(1, Math.floor(canvas.clientHeight || height));
-    if (qualityController) return qualityController.planViewport(w, h, pixelRatio, drawingBufferLimits);
-    const ratio = Math.max(1, Math.min(3, pixelRatio));
+    if (qualityController) return qualityController.planViewport(w, h, activePixelRatio, drawingBufferLimits);
+    const ratio = Math.max(1, Math.min(3, activePixelRatio));
     return { cssWidth: w, cssHeight: h, ...fitDrawingBuffer(w, h, ratio, drawingBufferLimits) };
   }
 
@@ -1314,10 +1352,47 @@ export function createThreeAdapter({
     try { recordRenderMemory(scene); } finally { measuringMemory = false; }
   }
 
+  const mobilePortraitState = mpEnabled
+    ? (() => {
+        const drs = createPortraitDrsController({
+          width,
+          height,
+          dpr: pixelRatio,
+          minScale: mpOpts.minScale ?? 0.72,
+          maxScale: mpOpts.maxScale ?? 1.0,
+        });
+        const vramGuard = createVramMipGuard({
+          budgetBytes: mpOpts.vramBudgetBytes ?? 96 * 1024 * 1024,
+        });
+        const batchRegistry = createMaterialBatchRegistry3D({
+          uTime: 0,
+          uFogDensity: (mpOpts.heightFog ?? MOBILE_PORTRAIT_PRESET.heightFog)?.density ?? 0.012,
+        }, { THREE });
+        function stepFrameBudget(frameMs = 16.67, vramBytes = 0) {
+          const drsRes = drs.sample(frameMs);
+          if (drsRes.changed) {
+            activePixelRatio = drsRes.pixelRatio;
+            resize();
+          }
+          const vramRes = vramGuard.step(vramBytes);
+          return { drs: drsRes, vram: vramRes };
+        }
+        return Object.freeze({
+          enabled: true,
+          viewport: portraitViewport,
+          drs,
+          vramGuard,
+          batchRegistry,
+          stepFrameBudget,
+        });
+      })()
+    : null;
+
   return {
     THREE,
     renderer,
     camera,
+    mobilePortrait: mobilePortraitState,
     get qualityController() { return qualityController; },
     get qualityPreset() { return qualityController?.state?.preset ?? null; },
     postPipeline,

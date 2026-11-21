@@ -605,6 +605,74 @@ export function createVramMipGuard({
 }
 
 /**
+ * Progressive 3-stage boot asset loader (`P0` splash-interactive <1.5s critical assets,
+ * `P1` background gameplay stage 1, `P2` deferred waves/late-stage assets).
+ * @param {{ p0?: string[], p1?: string[], p2?: string[], loadAsset?: (id: string) => Promise<any>, onStageComplete?: ((stage: 'p0'|'p1'|'p2', info: { durationMs: number, count: number }) => void)|null }} [options]
+ */
+export function createProgressiveBootLoader({
+  p0 = [],
+  p1 = [],
+  p2 = [],
+  loadAsset = async (id) => id,
+  onStageComplete = null,
+} = {}) {
+  let aborted = false;
+  let backgroundPromise = null;
+  const completedStages = [];
+  const timings = { p0Ms: 0, p1Ms: 0, p2Ms: 0 };
+
+  async function runStage(name, list) {
+    const t0 = performance.now();
+    const items = Array.isArray(list) ? list : [];
+    for (let i = 0; i < items.length; i++) {
+      if (aborted) return false;
+      await loadAsset(items[i]);
+    }
+    if (aborted) return false;
+    const durationMs = Number(Math.max(0, performance.now() - t0).toFixed(3));
+    timings[`${name}Ms`] = durationMs;
+    completedStages.push(name);
+    onStageComplete?.(name, { durationMs, count: items.length });
+    return true;
+  }
+
+  async function start() {
+    aborted = false;
+    completedStages.length = 0;
+    await runStage('p0', p0);
+    backgroundPromise = (async () => {
+      if (!aborted) await runStage('p1', p1);
+      if (!aborted) await runStage('p2', p2);
+    })();
+    return Object.freeze({
+      interactiveReady: !aborted,
+      p0Ms: timings.p0Ms,
+      p0Count: Array.isArray(p0) ? p0.length : 0,
+    });
+  }
+
+  async function whenAllReady() {
+    if (backgroundPromise) await backgroundPromise;
+    return Object.freeze({
+      aborted,
+      completedStages: [...completedStages],
+      timings: { ...timings },
+    });
+  }
+
+  function abort() {
+    aborted = true;
+  }
+
+  return Object.freeze({
+    start,
+    whenAllReady,
+    abort,
+    getState: () => Object.freeze({ aborted, completedStages: [...completedStages], timings: { ...timings } }),
+  });
+}
+
+/**
  * Bind an actual Three.js / Image texture object into `createStreamingResidencyPolicy`
  * so mip upgrades/downgrades automatically swap backing resolution/image sources and mark `needsUpdate`.
  */

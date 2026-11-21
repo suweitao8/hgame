@@ -150,6 +150,46 @@ export function createVramMipGuard({ streamingPolicy, budgetBytes, softRatio, ha
     }>;
 }>;
 /**
+ * Progressive 3-stage boot asset loader (`P0` splash-interactive <1.5s critical assets,
+ * `P1` background gameplay stage 1, `P2` deferred waves/late-stage assets).
+ * @param {{ p0?: string[], p1?: string[], p2?: string[], loadAsset?: (id: string) => Promise<any>, onStageComplete?: ((stage: 'p0'|'p1'|'p2', info: { durationMs: number, count: number }) => void)|null }} [options]
+ */
+export function createProgressiveBootLoader({ p0, p1, p2, loadAsset, onStageComplete, }?: {
+    p0?: string[];
+    p1?: string[];
+    p2?: string[];
+    loadAsset?: (id: string) => Promise<any>;
+    onStageComplete?: ((stage: "p0" | "p1" | "p2", info: {
+        durationMs: number;
+        count: number;
+    }) => void) | null;
+} | undefined): Readonly<{
+    start: () => Promise<Readonly<{
+        interactiveReady: true;
+        p0Ms: number;
+        p0Count: number;
+    }>>;
+    whenAllReady: () => Promise<Readonly<{
+        aborted: boolean;
+        completedStages: any[];
+        timings: {
+            p0Ms: number;
+            p1Ms: number;
+            p2Ms: number;
+        };
+    }>>;
+    abort: () => void;
+    getState: () => Readonly<{
+        aborted: boolean;
+        completedStages: any[];
+        timings: {
+            p0Ms: number;
+            p1Ms: number;
+            p2Ms: number;
+        };
+    }>;
+}>;
+/**
  * Bind an actual Three.js / Image texture object into `createStreamingResidencyPolicy`
  * so mip upgrades/downgrades automatically swap backing resolution/image sources and mark `needsUpdate`.
  */

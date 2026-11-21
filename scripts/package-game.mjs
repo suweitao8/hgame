@@ -1238,6 +1238,14 @@ export async function packageGameRelease({
     return { zipStats, toyPreflight: preflight && { ...preflight, target: targetDir } };
   });
 
+  const budgetReport = await analyzeBundleBudget(targetDir);
+  if (target === 'toy') {
+    await writeFile(
+      path.join(resolvedOutParent, `${releaseTag}.budget-report.json`),
+      JSON.stringify(budgetReport, null, 2) + '\n',
+    );
+  }
+
   return {
     mode: 'game',
     target,
@@ -1254,6 +1262,7 @@ export async function packageGameRelease({
     wasmSkipped: physicsDecision && !physicsDecision.bundle ? physicsDecision.reason : null,
     toySdkInjected,
     toyPreflight,
+    budgetReport,
     notes,
     minified: Boolean(esbuild),
     resolvedFromStore,
@@ -1262,6 +1271,60 @@ export async function packageGameRelease({
     outputDir: targetDir,
     zipPath,
     zipBytes: zipStats.compressedBytes,
+  };
+}
+
+/**
+ * Audit packaged directory byte distribution against the 50MB Bilibili Toy ceiling and estimate
+ * uncompressed texture savings achievable via KTX2 conversion.
+ * @param {string} rootDir
+ * @param {{ limitBytes?: number }} [options]
+ */
+export async function analyzeBundleBudget(rootDir, { limitBytes = 50 * 1024 * 1024 } = {}) {
+  const limit = Math.max(1024, Number(limitBytes) || 50 * 1024 * 1024);
+  const categories = { code: 0, textures: 0, models3d: 0, audio: 0, data: 0, other: 0 };
+  const fileSizes = [];
+  let ktx2PotentialSavingsBytes = 0;
+
+  async function walkDir(dir) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const ent of entries) {
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        await walkDir(full);
+      } else if (ent.isFile()) {
+        const st = await stat(full);
+        const bytes = st.size;
+        const rel = toPosixRel(path.relative(rootDir, full));
+        const ext = path.extname(ent.name).toLowerCase();
+        fileSizes.push({ path: rel, bytes });
+        if (['.js', '.mjs', '.wasm', '.css', '.html'].includes(ext)) categories.code += bytes;
+        else if (['.png', '.jpg', '.jpeg', '.webp', '.ktx2', '.dds'].includes(ext)) {
+          categories.textures += bytes;
+          if (['.png', '.jpg', '.jpeg'].includes(ext) && bytes > 32768) {
+            ktx2PotentialSavingsBytes += Math.round(bytes * 0.65);
+          }
+        } else if (['.glb', '.gltf', '.bin'].includes(ext)) categories.models3d += bytes;
+        else if (['.ogg', '.mp3', '.wav', '.m4a'].includes(ext)) categories.audio += bytes;
+        else if (['.json', '.yaml', '.txt'].includes(ext)) categories.data += bytes;
+        else categories.other += bytes;
+      }
+    }
+  }
+
+  await walkDir(rootDir);
+  fileSizes.sort((a, b) => b.bytes - a.bytes);
+  const totalBytes = fileSizes.reduce((s, f) => s + f.bytes, 0);
+  const utilizationPct = Number(((totalBytes / limit) * 100).toFixed(2));
+
+  return {
+    totalBytes,
+    limitBytes: limit,
+    utilizationPct,
+    withinLimit: totalBytes <= limit,
+    categories,
+    ktx2PotentialSavingsBytes,
+    topFiles: fileSizes.slice(0, 10),
   };
 }
 

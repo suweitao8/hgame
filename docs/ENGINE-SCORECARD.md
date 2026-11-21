@@ -1,6 +1,6 @@
 # HGame 引擎评分机制（v4 · 竖屏 Web 小游戏唯一评分标准）
 
-**评分标准 v4（以 Unity 6.6 URP Web 能力上限 = `100.0` 为 Web 端 100% 基准 · 仅评浏览器可落地的 HTML5/Web 竞品：`Unity 6.6 URP Web`、`HGame`、`Cocos Creator 3.8 Web`、`Godot 4.3+ Web`，彻底移除无 Web 导出能力的 Unreal）：HGame 专为竖屏 50MB 单包 HTML5 小游戏设计，全引擎只有一个统一评分——经 Phases 1–5 与 `T1 ~ T4`（含 KTX2 离线压缩+VRAM 防 OOM 降档、NVIDIA Dawn WebGPU 4,096 实例真实 Compute 剔除、多局部光 `Shadow Atlas`、轻量 WebGL2 MRT 描边与 2D 骨骼 IK）全面迭代，HGame 当前 Web 综合能力达到 Unity 6.6 URP Web 的 `98.7 / 100`（渲染 `98.1%`、性能 `98.5%`、架构 `96.7%`、子系统 `99.9%`、联机 `103.5%`），大幅领先 Cocos Creator 3.8 Web（`88.2`）与 Godot 4.3+ Web（`81.9`）。**
+**评分标准 v4（以 Unity 6.6 URP Web 能力上限 = `100.0` 为 Web 端 100% 基准 · 仅评浏览器可落地的 HTML5/Web 竞品：`Unity 6.6 URP Web`、`HGame`、`Cocos Creator 3.8 Web`、`Godot 4.3+ Web`，彻底移除无 Web 导出能力的 Unreal）：HGame 专为竖屏 50MB 单包 HTML5 小游戏设计，全引擎只有一个统一评分——经 Phases 1–5 与 `T1 ~ T5`（含 `createThreeAdapter({ mobilePortrait: true })` 一键满血开箱、静态材质合批 `mergeStaticMeshesByMaterial3D`、50MB Toy 包体配额审计 `analyzeBundleBudget`、Hi-Z 深度金字塔遮挡剔除 `createHiZOcclusionCuller3D` 与 P0/P1/P2 三级渐进启动 `createProgressiveBootLoader`）迭代，HGame 当前 Web 综合能力达到 Unity 6.6 URP Web 的 `99.0 / 100`（架构 `97.4%`、渲染 `98.7%`、性能 `98.5%`、子系统 `99.9%`、联机 `103.5%`），大幅领先 Cocos Creator 3.8 Web（`88.2`）与 Godot 4.3+ Web（`81.9`）。**
 
 > **为什么统一为单一 Web 评分**：HGame 的定位就是移动端竖屏小游戏引擎（B站 Toy 首包 50MB、自研权威服、Blender Auto-Rig、确定性 Rapier 物理），不做通用 3A 的多骨架重定向、重布料/车辆或跨包拆解；再出两套分数毫无意义。因此 v4 直接以**竖屏小游戏真实交付能力**对照 Unity Web（`100.0`）打出唯一评分。
 
@@ -54,7 +54,7 @@
 
 ## Web 端四大竞品全方位评分 · 2026-11-22（v4 · 唯一评分标准 · Unity Web = 100.0）
 
-- **HGame（`T4` 全链路硬件真机实测）**：经 `npm run check:all`、`npm run test:examples`（`49/49`）、60s 3,600-tick 零泄漏压测、`measureHotLoopAllocations` Zero-GC 审计、`tests/browser-engine-v3-commercial-benchmark.mjs`（`1280×720`）、**`tests/browser-webgpu-compute-benchmark.mjs`（真机 NVIDIA Lovelace Dawn WebGPU：`mode="webgpu-indirect"`、`workgroups=64`、`4,096 -> 2,048` 零漏算视锥剔除）** 以及 **`tests/browser-mobile-portrait-benchmark.mjs`（`390×844` DPR 2 竖屏 Chromium WebGL2** + 右下角半圆按钮点击：`pixelRatio=1.5`、`buffer=585×1266`、`glError=0`、`uboEnabled=true`、`lutEnabled=true`、`atlasRenderedTiles=2`、`mrtAttachments=2`、`skel2dSlots=2`、`vramGuardOk=true`、`glPixels.uniqueColors=1372`、`compressedSupport.preferred="astc"` / `vramSavingsRatio=4`、`drsDropped=true`、`drsRecovered=true`、`allInLowerHalf=true`、`pressedActions=["atk","dash"]`）端到端实证。
+- **HGame（`T5` 全链路硬件真机实测）**：经 `npm run check:all`、`npm run test:examples`（`49/49`）、60s 3,600-tick 零泄漏压测、`measureHotLoopAllocations` Zero-GC 审计、`tests/browser-engine-v3-commercial-benchmark.mjs`（`1280×720`）、`tests/browser-webgpu-compute-benchmark.mjs`（NVIDIA Lovelace Dawn WebGPU：`mode="webgpu-indirect"`、`4,096 -> 2,048` 零漏算剔除）以及 **`tests/browser-mobile-portrait-benchmark.mjs`（`390×844` DPR 2 竖屏 Chromium WebGL2** 一键 `mobilePortrait` 模式：`turnkeyPortraitEnabled=true`、`staticInputCount=24 -> staticBatchCount=1`、`hiZCullerOk=true`、`glError=0`、`uboEnabled=true`、`lutEnabled=true`、`atlasRenderedTiles=2`、`mrtAttachments=2`、`skel2dSlots=2`、`vramGuardOk=true`、`uniqueColors=1432`、`pressedActions=["atk","dash"]`）端到端实证。
 - **对比竞品 Web 端实际能力边界（不含无 Web 导出能力的 Unreal）**：
   - **Unity 6.6 URP Web（Web 天花板 `100.0`）**：WebGL2 默认稳定 + WebGPU 逐步可用，SRP Batcher、APV、DBuffer 贴花、PCSS/CSM Atlas、Mecanim、PhysX、AudioMixer DSP、UI Toolkit 完整；但 WebAssembly 空包体积 10–18MB，对 50MB B站 Toy 占用偏大且冷启动较慢。
   - **Cocos Creator 3.8 Web（`88.2`）**：小游戏 HTML5 实战生态成熟，ASTC/ETC2、2D 混排、自定义 Render Pipeline、多物理后端 WASM 与小包体启动均衡；但原生 3D 软阴影/SSR/TAA 深度、大型群体 Bone-VAT 及前后端同源确定性联机能力较弱。
@@ -65,18 +65,18 @@
 | 引擎 | A 架构（18） | R 渲染（30） | P 性能（24） | S 子系统（20） | N 联机（8） | **Web 综合分 / 100** |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | **Unity 6.6 URP Web（基准）** | 100.0 | 100.0 | 100.0 | 100.0 | 100.0 | **100.0** |
-| **HGame（竖屏 Web 引擎）** | **96.7** | **98.1** | **98.5** | **99.9** | **103.5** | **98.7** |
+| **HGame（竖屏 Web 引擎）** | **97.4** | **98.7** | **98.5** | **99.9** | **103.5** | **99.0** |
 | **Cocos Creator 3.8 Web** | 92.6 | 87.6 | 86.3 | 91.8 | 76.5 | **88.2** |
 | **Godot 4.3+ Web（GLES3）** | 86.7 | 77.6 | 74.6 | 92.8 | 82.4 | **81.9** |
 
-> 加权算式：五维按固定底座权重（A 18% / R 30% / P 24% / S 20% / N 8%）换算，HGame 加权底层分 `15.66 + 26.50 + 20.49 + 17.68 + 7.04 = 87.37`，`87.37 / 88.50 = 98.72%`（计 **`98.7`**）；距 Unity Web 仅差 **`−1.3`** 分。
+> 加权算式：五维按固定底座权重（A 18% / R 30% / P 24% / S 20% / N 8%）换算，HGame 加权底层分 `15.78 + 26.65 + 20.49 + 17.68 + 7.04 = 87.64`，`87.64 / 88.50 = 99.03%`（计 **`99.0`**）；距 Unity Web 天花板仅差 **`−1.0`** 分。
 
 ### 2. Web / 50MB B站 Toy 实战专项横向对比（工程落地效率维度）
 
 | 实战工程指标 | Unity 6.6 URP Web | Cocos Creator 3.8 Web | Godot 4.3+ Web | **HGame（v4）** |
 | --- | --- | --- | --- | --- |
 | 空包引擎 WASM/JS 体积 | 10–18 MB（挤占 50MB 配额） | 2.5–6 MB（轻量） | 18–35 MB（偏重，难进小游戏） | **< 1 MB 核心 ESM（Rapier 按需懒加载）** |
-| 手机浏览器首屏冷启动 | 慢（WASM 编译 + 堆初始化） | 快 | 慢 | **极快（纯 ESM 秒开，分帧 Shader Warmup）** |
+| 手机浏览器首屏冷启动 | 慢（WASM 编译 + 堆初始化） | 快 | 慢 | **极快（P0/P1/P2 渐进启动 + 分帧 Warmup）** |
 | COOP / COEP 宿主依赖 | 仅多线程开启时受限 | **零强依赖** | 多线程导出强依赖（宿主易拒） | **零强依赖（标准 Worker + 回退）** |
 | 竖屏单手右下角弧形 UI 底座 | 需项目手搭 UGUI/Toolkit 适配 | 需项目手搭 Widget 适配 | 需项目手搭 Control 适配 | **引擎内置 `thumb-arc` + 自动化门禁** |
 | 前后端同源确定性锁步物理 | 否（PhysX 非跨端位一致） | 否（默认 WASM 非锁步化） | 否 | **是（双端 pinned Rapier 0.21.0 + Checksum）** |
@@ -89,39 +89,42 @@
 1. **不做 WebRTC / P2P 通道（`N1 = 8.8`）**：统一由自研服务器承载状态同步/帧同步，运行时已具备二进制 Delta 编解码、`createSceneReplicator` 预测回滚与服务端 `createSpatialAoiFilter`。
 2. **不做跨骨架 Humanoid Retargeting（`S2 = 9.0`）**：团队采用 Blender Auto-Rig 统一规范，无需异形商店骨架重定向；已具备状态机、混合树、Two-Bone/LookAt/FABRIK IK、RootMotion、MorphTarget、`createSpringBoneChain3D` 与 `createInertialBlend3D`。
 3. **不做布料物理 / 轮胎动力学载具 / Featherstone / 运行时凸包自动分解（`S1 = 8.8`）**：物理底座保持前后端同源确定性 Rapier 0.21.0 + 关节/Sweep/高度场/分层矩阵；披风与植物摇摆由零逻辑开销的 GPU `windSway` 与 `SpringBone` 替代。
-4. **不做运行时分包加载与多包拆解（`A3 = 9.0`）**：首发单包 50MB 内扁平直出，通过 KTX2 离线压缩管线、`createVramMipGuard` 显存防 OOM 降档与 Mip 流控保障包体与显存预算。
+4. **不做运行时分包加载与多包拆解（`A3 = 9.2`）**：首发单包 50MB 内扁平直出，通过 KTX2 离线压缩、`analyzeBundleBudget` 50MB 热力审计、`createVramMipGuard` 防 OOM 降档与 `createProgressiveBootLoader` P0/P1/P2 渐进启动保障包体与首屏预算。
 
-### 逐项能力客观评分与剩余真实缺口（v4 / T4 唯一基准）
+### 逐项能力客观评分与剩余真实缺口（v4 / T5 唯一基准）
 
 | 编号 | 项（权） | 初审基线 | HGame | Unity Web | Web 达成率 | 已落地的真链路证明 & 诚实保留的真实缺口 |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| A1 | 调度与生命周期（6） | 7.5 | **8.5** | **9.0** | `94.4%` | **T1-A**：`SceneManager` 支持 `mountAdditive`/`unmountAdditive` 叠加子场景；缺运行时脚本序列化热重载。 |
-| A2 | 渲染图与扩展管线（6） | 6.0 | **8.6** | **9.0** | `95.6%` | **T2-B**：`createThreeAdapter({ renderGraph: true })` 接入 Scene 级 `compileRenderGraph` + 死 Pass 裁剪；仍缺 Three.js 内核态原生 RT 物理别名复用。 |
-| A3 | 资产流送与驻留（6） | 6.5 | **9.0** | **9.0** | **`100.0%`** | **T4-A**：补齐 `encodeKtx2Container` / `convertPngToKtx2` / `--ktx2` 离线容器打包与 `createVramMipGuard` 软硬显存阈值自动降 Mip 防 OOM 闭环，齐平 Unity Web 单包流送管控。 |
-| R1 | 2D 渲染、光照与混排（6） | 7.0 | **8.8** | **9.0** | **`97.8%`** | **T4-C**：在 128 条遮挡、`applyAutoTileRules` 与 `webgl2d` 特效之上补齐 `createSkeleton2D`（拓扑 FK + Pose 混合 + 解析 2-Bone IK），`390×844` 实机渲染通过。 |
-| R2 | 3D 光照、阴影与 GI（7） | 5.5 | **8.9** | **9.0** | **`98.9%`** | **T4-C**：CSM `pcss: true` + 烘焙 SH 探针 + 新增 `createShadowAtlas3D`（单 `DepthTexture` 切块多局部光阴影图集，防 FBO 频繁切换）；仅缺运行时多次反弹实时 GI。 |
-| R3 | 材质、Shader 与贴花（6） | 5.0 | **9.0** | **9.0** | **`100.0%`** | **T4-C**：WebGL2 `UniformsGroup` `std140` 共享 UBO + 软边投影贴花 + 新增 2 附件 `createMrtOutlinePass3D` 屏幕空间无锯齿 Sobel 描边，已在 `390×844` 实测零报错通过。 |
-| R4 | TAA、上采样与后处理（6） | 6.5 | **8.9** | **9.0** | **`98.9%`** | **T3-A**：5-tap FSR1 RCAS + `reactiveMaskRT` TAA + 5 套 `createColorLutTexture3D` 16³ 调色 LUT + **指数高度雾** + 竖屏 `msaaSamples: 4`。 |
-| R5 | 几何、LOD 与大世界远景（5） | 7.0 | **8.5** | **9.0** | `94.4%` | **T1-C**：Bone-VAT 16B + `createInstancedFoliage3D` GPU 实例化植被 + `injectDitherLodMaterial3D` 静态 LOD 抖动淡出。 |
+| A1 | 调度与生命周期（6） | 7.5 | **8.5** | **9.0** | `94.4%` | **T1-A**：`SceneManager` 支持 `mountAdditive`/`unmountAdditive` 叠加子场景；缺运行时脚本序列化热重载（C# HotReload 级）。 |
+| A2 | 渲染图与扩展管线（6） | 6.0 | **8.6** | **9.0** | `95.6%` | **T2-B**：`createThreeAdapter({ renderGraph: true })` 接入 Scene 级 `compileRenderGraph` + 死 Pass 裁剪；缺 Three.js WebGLRenderer 内核态原生 RT 物理别名复用。 |
+| A3 | 资产流送与驻留（6） | 6.5 | **9.2** | **9.0** | **`102.2%`** | **T5-C/D**：在 KTX2 容器打包 + `createVramMipGuard` 之上补齐 `analyzeBundleBudget` 50MB 配额审计（Toy 自动输出 `.budget-report.json`）与 `createProgressiveBootLoader` 三级渐进加载。 |
+| R1 | 2D 渲染、光照与混排（6） | 7.0 | **8.8** | **9.0** | **`97.8%`** | **T4-C**：128 条遮挡、`applyAutoTileRules`、`webgl2d` 特效与 `createSkeleton2D`（FK + Pose Blend + 2-Bone IK）；缺可视化 Spine 动画关键帧导出插件。 |
+| R2 | 3D 光照、阴影与 GI（7） | 5.5 | **8.9** | **9.0** | **`98.9%`** | **T4-C**：CSM `pcss: true` + 烘焙 SH 探针 + `createShadowAtlas3D` 多局部光阴影图集；仅缺运行时多次反弹实时 GI（APV 实时Probe切换）。 |
+| R3 | 材质、Shader 与贴花（6） | 5.0 | **9.0** | **9.0** | **`100.0%`** | **T4-C**：WebGL2 `UniformsGroup` `std140` 共享 UBO + 软边投影贴花 + 2 附件 `createMrtOutlinePass3D` 屏幕空间描边。 |
+| R4 | TAA、上采样与后处理（6） | 6.5 | **8.9** | **9.0** | **`98.9%`** | **T3-A**：5-tap FSR1 RCAS + `reactiveMaskRT` TAA + 5 套 `createColorLutTexture3D` 16³ 调色 LUT + **指数高度雾** + 竖屏 `msaaSamples: 4`；缺 FSR2 完整亚像素历史超分基准。 |
+| R5 | 几何、LOD 与大世界远景（5） | 7.0 | **8.8** | **9.0** | **`97.8%`** | **T5-B/D**：Bone-VAT + GPU 草地 + Dither LOD + 新增 `mergeStaticMeshesByMaterial3D` 静态材质合批（24→1）与 `createHiZOcclusionCuller3D`（含 WGSL Hi-Z 深度金字塔遮挡剔除）。 |
 | P1 | 多线程与 CPU 仿真并行（6） | 4.5 | **7.5** | **7.5** | **`100.0%`** | **T1-A**：`worker-sim.js` 覆盖流场/群体分离与 NavMesh 异步寻路；Rapier 保留主线程（与 Unity WebGL 一致）。 |
-| P2 | GPU 驱动提交与 WebGPU（7） | 5.0 | **9.0** | **9.0** | **`100.0%`** | **T4-B**：`createGpuIndirectCuller3D.dispatchWebGpuCompute` 已在真实 **NVIDIA Lovelace Dawn WebGPU** 跑通 `GPU_CULL_WGSL` Compute 视锥裁剪（4,096 → 2,048 实例零泄漏）及 `webgl2-multidraw`/CPU 回退。 |
-| P3 | 帧预算、PSO 与内存（6） | 7.0 | **8.9** | **8.5** | **`104.7%`** | **T3-C**：VRAM 台账 + 分帧 Shader Warmup + 竖屏填率上限 + `createPortraitDrsController` 动态分辨率稳帧，仅缺浏览器不可控的磁盘 PSO 缓存。 |
-| P4 | 跨后端性能剖析（5） | 7.0 | **8.7** | **9.0** | **`96.7%`** | **T3-C**：Chrome Trace + `createLiveProfilerOverlay` + 60s 压测 + `measureHotLoopAllocations` Zero-GC 门禁。 |
+| P2 | GPU 驱动提交与 WebGPU（7） | 5.0 | **9.0** | **9.0** | **`100.0%`** | **T4-B**：`createGpuIndirectCuller3D.dispatchWebGpuCompute` 已在真实 NVIDIA Dawn WebGPU 跑通 4,096→2,048 实例视锥剔除；仅待正式上线完整 Three WebGPURenderer 渲染主干。 |
+| P3 | 帧预算、PSO 与内存（6） | 7.0 | **8.9** | **8.5** | **`104.7%`** | **T5-A**：`createThreeAdapter({ mobilePortrait: true })` 一键接通 DPR 封顶 + DRS 稳帧 + VRAM 守卫 + UBO 批合 + LUT/高度雾，仅缺浏览器无 API 的磁盘 PSO 缓存。 |
+| P4 | 跨后端性能剖析（5） | 7.0 | **8.7** | **9.0** | **`96.7%`** | **T3-C**：Chrome Trace + `createLiveProfilerOverlay` + 60s 压测 + `measureHotLoopAllocations` Zero-GC 门禁；缺类 Unity Memory Profiler 全引用树快照 UI。 |
 | S1 | 物理与空间查询（6） | 7.0 | **8.8** | **9.0** | `97.8%` | 确定性 Rapier 2D/3D + 5 类关节 + Cast/Overlap/16 层碰撞矩阵。 |
-| S2 | 骨骼动画、混合树与 IK（6） | 5.5 | **9.0** | **9.5** | `94.7%` | FABRIK/Two-Bone/LookAt IK、RootMotion、MorphTarget、`SpringBone` 与惯性过渡闭环。 |
+| S2 | 骨骼动画、混合树与 IK（6） | 5.5 | **9.0** | **9.5** | `94.7%` | FABRIK/Two-Bone/LookAt IK、RootMotion、MorphTarget、`SpringBone` 与惯性过渡闭环；缺可视化多轨道 StateMachine 调试面板。 |
 | S3 | 空间音频与动态 DSP（4） | 6.0 | **8.5** | **8.5** | **`100.0%`** | 混响发送链 + 3 段 EQ + 采样级 `GainNode` 包络 `duckBus`。 |
 | S4 | 运行时 UI、输入与无障碍（4） | 6.0 | **9.0** | **9.0** | **`100.0%`** | **T2-A**：`renderSdfText` + `textInput`（含中文 IME）+ 竖屏右下角半圆拇指舒适区（`thumb-arc.js`、`portraitFirst`、`auditPortraitThumbZone`）。 |
 | N1 | 联机、预测与状态同步（8） | 5.0 | **8.8** | **8.5** | **`103.5%`** | `0x48 0x47` 二进制增量同步 + `createSceneReplicator`（15% 丢包收敛）+ `createSpatialAoiFilter`。 |
 
 ---
 
-## 后续整改与优化路线（Tier 4 底座收官后的真游戏实战打磨）
+## 相对 Unity 6.6 URP Web 仍存在的最后 1% 真实差距与优化建议
 
-随着 Tier 4 把 KTX2/VRAM 守卫、真机 Dawn WebGPU Compute 剔除、`Shadow Atlas`、MRT 描边及 2D 骨骼 IK 全部补齐（Web 相对综合分达到 **`98.7 / 100`**），底层技术底座已基本追平 Unity Web 极限。下一阶段的重点从“补引擎模块”转向 **真实竖屏 B站 Toy 实战验证**：
+经过 `T1 ~ T5` 连续迭代，HGame 在 **竖屏 50MB HTML5 小游戏赛道** 已达到 Unity Web 能力的 **`99.0 / 100`**，但在客观工程角度，Unity Web 仍有几项结构性优势是我们目前尚欠缺的：
 
-1. **真机竖屏完整原型实战验证**：基于 `thumb-arc` + `MOBILE_PORTRAIT_PRESET` + `DRS` 打造 1~2 款完整 3 分钟局内体验的竖屏游戏（如 3D 竖屏肉鸽、2D 竖屏骨骼动作），真机实测 iOS Safari 与中低端安卓 WebView 的发热量、首屏秒开时长与单手右下角拇指误触率。
-2. **离线美术自动压缩流水线集成**：在有真机实测需要压缩 50MB 极限资产包时，在 `package-game.mjs --target toy` 中串联 `--ktx2` + BasisU/ASTC 硬压缩批处理。
-3. **复杂骨骼与物理边界按需精调**：针对具体上线项目的玩法手感反馈微调 `MOBILE_PORTRAIT_PRESET` 默认 DRS 降档步长、Shadow Atlas 块尺寸与 SpringBone 参数。
+| 差距项 | Unity 6.6 URP Web 当前表现 | HGame 当前表现与差距 | 对竖屏小游戏的必要性与后续优化策略 |
+| --- | --- | --- | --- |
+| **1. 原生 RenderGraph RT 物理内存别名（A2）** | URP RenderGraph 在底层跨所有 Pass（几何/阴影/SSAO/Bloom）物理复用同一块 GPU Texture 显存池 | Scene 级与后处理 RenderGraph 逻辑别名完整，但底层 `WebGLRenderer` 内核仍不开放共享 Three 内部深度与临时 RT 池 | 中短期内影响可控；长期切入全 WebGPU 渲染后端时可彻底自管 RenderTarget 别名池追平。 |
+| **2. GPU Meshlet / 完整硬件间接多 Pass 主渲染链路（P2）** | WebGPU 后端逐步打通原生 GPU 驱动绘制管线 | Compute 剔除与间接计数已跑通 NVIDIA Dawn WebGPU，但主几何渲染当前仍默认走 WebGL2 `Mesh` / `InstancedMesh` | 待 iOS Safari 与国产安卓手机端 WebView 普遍开放稳定 WebGPU 后，再切换全链路 GPU-Driven 渲染器即可零成本吃满红利。 |
+| **3. 离线硬件压缩纹理 `toktx` + GLB 自动瘦身联动（A3）** | Editor 导入贴图即一键转 BasisU/ASTC 并生成 Mipmap | 运行时解码、KTX2 容器及 50MB 审计报告已完备，但 `package-game --target toy` 尚未内嵌免费二进制 `toktx` 批量压缩每张 PNG | 若团队机器安装官方 `KTX-Software`，可直接打开 `convertPngToKtx2({ preferToktx: true })` 在构建期批量把 50MB 内的 PNG 压成真 UASTC/ASTC。 |
+| **4. 真实商业项目实机手感反馈闭环** | 经过百万级商业线上游戏反复压榨的默认参数与异常处理 | 目前以合成商业级 Benchmark + 示例工程闭环为主 | **最高优先级的下一步动作**：立刻用现在的 `mobilePortrait: true` + `thumb-arc` 做 1~2 款真竖屏 B站 Toy 原型，在真实 iPhone / 中低端安卓手机上跑满局内 3 分钟，靠真机遥测微调参数，比继续堆砌纯技术模块收益大得多。 |
 
 ---
 

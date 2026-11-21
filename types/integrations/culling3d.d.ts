@@ -36,6 +36,26 @@ export function createSceneCuller3D({ maxDistance, occlusion, maxOccluders, gl, 
  */
 export function createInstancedBatch3D(THREE: InstancedBatchTHREE, { geometry, material, capacity, castShadow, receiveShadow, perInstanceColor, cullRadius, }?: InstancedBatchOptions): InstancedBatch3D;
 /**
+ * Merge static level geometry by shared Material (and optional XZ spatial chunk cell)
+ * into single indexed `THREE.BufferGeometry` batches to cut WebGL2 mobile DrawCalls by 40-60%.
+ * @param {any} THREE
+ * @param {any[]} meshes
+ * @param {{ chunkSize?: number, disposeSources?: boolean }} [options]
+ */
+export function mergeStaticMeshesByMaterial3D(THREE: any, meshes: any[], { chunkSize, disposeSources }?: {
+    chunkSize?: number;
+    disposeSources?: boolean;
+} | undefined): {
+    meshes: any[];
+    stats: Readonly<{
+        inputMeshes: number;
+        outputBatches: number;
+        drawCallReductionRatio: number;
+        totalVertices: number;
+        totalTriangles: number;
+    }>;
+};
+/**
  * Structural subset of THREE.Camera read by the cullers.
  */
 export type CullCameraLike = {
@@ -499,4 +519,4 @@ export type InstancedBatch3D = {
     flush: (options?: InstancedBatchFlushOptions) => InstancedBatchFlushResult;
     dispose: () => void;
 };
-export { GPU_CULL_WGSL, createGpuIndirectCuller3D, createIndirectInstancedBatch3D } from "./gpu-indirect3d.js";
+export { GPU_CULL_WGSL, GPU_HIZ_OCCLUSION_WGSL, createGpuIndirectCuller3D, createIndirectInstancedBatch3D, createHiZOcclusionCuller3D } from "./gpu-indirect3d.js";

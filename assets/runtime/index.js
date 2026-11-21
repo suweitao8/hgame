@@ -29,12 +29,14 @@ export {
   createStreamingResidencyPolicy,
   bindTextureMipStreaming,
   createVramMipGuard,
+  createProgressiveBootLoader,
 } from './platform/asset-catalog.js';
 import {
   createAssetCatalog,
   createStreamingResidencyPolicy,
   bindTextureMipStreaming,
   createVramMipGuard,
+  createProgressiveBootLoader,
 } from './platform/asset-catalog.js';
 export {
   EASING,
@@ -51,9 +53,19 @@ export { AnimationPlayer } from './animation/player.js';
 export { createSkeleton2D } from './animation/skeleton2d.js';
 export { SpriteSheet } from './animation/spritesheet.js';
 export { createShadowAtlas3D } from './integrations/shadow3d.js';
+export {
+  mergeStaticMeshesByMaterial3D,
+  GPU_HIZ_OCCLUSION_WGSL,
+  createHiZOcclusionCuller3D,
+} from './integrations/culling3d.js';
 export { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
 import { createSkeleton2D } from './animation/skeleton2d.js';
 import { createShadowAtlas3D } from './integrations/shadow3d.js';
+import {
+  mergeStaticMeshesByMaterial3D,
+  GPU_HIZ_OCCLUSION_WGSL,
+  createHiZOcclusionCuller3D,
+} from './integrations/culling3d.js';
 import { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
 export { TileMap, findGridPath, createGridPathWork, applyAutoTileRules } from './world/tilemap.js';
 export { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
@@ -534,12 +546,16 @@ export const HGame = Object.freeze({
   createStreamingResidencyPolicy,
   bindTextureMipStreaming,
   createVramMipGuard,
+  createProgressiveBootLoader,
   createNetworkStateSync,
   createSceneReplicator,
   createSpatialAoiFilter,
   createSpringBoneChain3D,
   createInertialBlend3D,
   createShadowAtlas3D,
+  mergeStaticMeshesByMaterial3D,
+  GPU_HIZ_OCCLUSION_WGSL,
+  createHiZOcclusionCuller3D,
   MRT_OUTLINE_FRAGMENT_GLSL3,
   createMrtOutlinePass3D,
   createSkeleton2D,

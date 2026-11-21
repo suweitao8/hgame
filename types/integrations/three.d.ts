@@ -121,6 +121,9 @@
  * @property {ThreeCamera | null} [viewCamera=null] Camera for the view-model overlay layer.
  * @property {ThreeSkyLike | null} [sky=null] Sky controller.
  * @property {ThreePostVolumesLike | null} [postVolumes=null] Post volume stack.
+ * @property {boolean} [gpuIndirect=false] Enable GPU indirect culling.
+ * @property {boolean} [renderGraph=false] Enable scene-level RenderGraph DAG orchestration.
+ * @property {boolean | { safeArea?: object, minScale?: number, maxScale?: number, vramBudgetBytes?: number, colorLut?: string, heightFog?: object } | null} [mobilePortrait=false] Turnkey mobile-portrait Bilibili Toy preset (DPR cap + DRS + VRAM guard + UBO batching + LUT/heightFog).
  */
 /**
  * @typedef {object} ThreeSplitView
@@ -197,7 +200,7 @@
  * @param {ThreeAdapterOptions} options
  * @returns {ThreeAdapter}
  */
-export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, limitCameraDrawDistance, background, worldLighting, quality3d, post3d, diagnostics3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, gpuIndirect, renderGraph, }?: ThreeAdapterOptions): ThreeAdapter;
+export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, limitCameraDrawDistance, background, worldLighting, quality3d, post3d, diagnostics3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, gpuIndirect, renderGraph, mobilePortrait, }?: ThreeAdapterOptions): ThreeAdapter;
 /**
  * @typedef {object} ThreeMeshComponentOptions
  * @property {'box' | 'sphere' | 'capsule' | 'cylinder' | 'plane'} [type='box'] Primitive shape.
@@ -546,6 +549,25 @@ export type ThreeAdapterOptions = {
      * Post volume stack.
      */
     postVolumes?: ThreePostVolumesLike | null | undefined;
+    /**
+     * Enable GPU indirect culling.
+     */
+    gpuIndirect?: boolean | undefined;
+    /**
+     * Enable scene-level RenderGraph DAG orchestration.
+     */
+    renderGraph?: boolean | undefined;
+    /**
+     * Turnkey mobile-portrait Bilibili Toy preset (DPR cap + DRS + VRAM guard + UBO batching + LUT/heightFog).
+     */
+    mobilePortrait?: boolean | {
+        safeArea?: object;
+        minScale?: number;
+        maxScale?: number;
+        vramBudgetBytes?: number;
+        colorLut?: string;
+        heightFog?: object;
+    } | null | undefined;
 };
 export type ThreeSplitView = {
     /**

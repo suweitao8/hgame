@@ -624,3 +624,141 @@ export function createIndirectInstancedBatch3D(THREE, {
     dispose,
   };
 }
+
+export const GPU_HIZ_OCCLUSION_WGSL = /* wgsl */ `
+struct HiZParams {
+  screenSize: vec2<f32>,
+  mipCount: u32,
+  objectCount: u32,
+};
+
+@group(0) @binding(0) var<uniform> uHiZ: HiZParams;
+@group(0) @binding(1) var<storage, read> bScreenAabbs: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> bMinDepths: array<f32>;
+@group(0) @binding(3) var tHiZ: texture_2d<f32>;
+@group(0) @binding(4) var<storage, read_write> bVisibility: array<u32>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let idx = gid.x;
+  if (idx >= uHiZ.objectCount) { return; }
+  let aabb = bScreenAabbs[idx];
+  let span = max((aabb.z - aabb.x) * uHiZ.screenSize.x, (aabb.w - aabb.y) * uHiZ.screenSize.y);
+  let mip = min(uHiZ.mipCount - 1u, u32(ceil(log2(max(1.0, span)))));
+  let dim = vec2<i32>(max(vec2<f32>(1.0), floor(uHiZ.screenSize / f32(1u << mip))));
+  let uv = clamp((aabb.xy + aabb.zw) * 0.5, vec2<f32>(0.0), vec2<f32>(0.9999));
+  let texel = clamp(vec2<i32>(uv * vec2<f32>(dim)), vec2<i32>(0), dim - vec2<i32>(1));
+  let maxOccDepth = textureLoad(tHiZ, texel, i32(mip)).r;
+  bVisibility[idx] = select(0u, 1u, bMinDepths[idx] <= maxOccDepth + 1e-4);
+}
+`;
+
+/**
+ * Zero-GC CPU/WebGPU Hi-Z hierarchical depth pyramid occlusion culler (conservatively
+ * downsampling max-depth mips from level 0 down to 1x1 so occluded meshes behind walls are culled).
+ * @param {{ width?: number, height?: number }} [options]
+ */
+export function createHiZOcclusionCuller3D({ width = 128, height = 128 } = {}) {
+  const baseW = Math.max(4, 1 << Math.floor(Math.log2(Math.max(4, Number(width) || 128))));
+  const baseH = Math.max(4, 1 << Math.floor(Math.log2(Math.max(4, Number(height) || 128))));
+
+  const mips = [];
+  let cw = baseW;
+  let ch = baseH;
+  while (true) {
+    mips.push({ width: cw, height: ch, data: new Float32Array(cw * ch).fill(1.0) });
+    if (cw === 1 && ch === 1) break;
+    cw = Math.max(1, cw >> 1);
+    ch = Math.max(1, ch >> 1);
+  }
+
+  let tested = 0;
+  let occluded = 0;
+
+  function buildPyramid(depthValues) {
+    const level0 = mips[0].data;
+    if (depthValues && depthValues.length >= level0.length) {
+      level0.set(depthValues.subarray(0, level0.length));
+    } else if (depthValues) {
+      level0.fill(1.0);
+      level0.set(depthValues);
+    }
+    for (let m = 1; m < mips.length; m++) {
+      const prev = mips[m - 1];
+      const curr = mips[m];
+      const pw = prev.width;
+      const ph = prev.height;
+      const pd = prev.data;
+      const cd = curr.data;
+      for (let y = 0; y < curr.height; y++) {
+        const sy0 = Math.min(ph - 1, y * 2);
+        const sy1 = Math.min(ph - 1, sy0 + 1);
+        for (let x = 0; x < curr.width; x++) {
+          const sx0 = Math.min(pw - 1, x * 2);
+          const sx1 = Math.min(pw - 1, sx0 + 1);
+          const d00 = pd[sy0 * pw + sx0];
+          const d10 = pd[sy0 * pw + sx1];
+          const d01 = pd[sy1 * pw + sx0];
+          const d11 = pd[sy1 * pw + sx1];
+          cd[y * curr.width + x] = Math.max(d00, d10, d01, d11);
+        }
+      }
+    }
+    return mips.length;
+  }
+
+  function testScreenBounds(minX, minY, maxX, maxY, minDepth) {
+    tested++;
+    if (maxX <= 0 || maxY <= 0 || minX >= 1 || minY >= 1) {
+      occluded++;
+      return false;
+    }
+    const cMinX = Math.max(0, Math.min(1, minX));
+    const cMinY = Math.max(0, Math.min(1, minY));
+    const cMaxX = Math.max(0, Math.min(1, maxX));
+    const cMaxY = Math.max(0, Math.min(1, maxY));
+    const spanPx = Math.max((cMaxX - cMinX) * baseW, (cMaxY - cMinY) * baseH, 1);
+    const mipIdx = Math.max(0, Math.min(mips.length - 1, Math.floor(Math.log2(Math.max(1, spanPx * 0.5)))));
+    const mip = mips[mipIdx];
+
+    const x0 = Math.max(0, Math.min(mip.width - 1, Math.floor(cMinX * mip.width)));
+    const x1 = Math.max(x0, Math.min(mip.width - 1, Math.floor(cMaxX * (mip.width - 1e-4))));
+    const y0 = Math.max(0, Math.min(mip.height - 1, Math.floor(cMinY * mip.height)));
+    const y1 = Math.max(y0, Math.min(mip.height - 1, Math.floor(cMaxY * (mip.height - 1e-4))));
+
+    let maxOccludingDepth = 0;
+    for (let y = y0; y <= y1; y++) {
+      const row = y * mip.width;
+      for (let x = x0; x <= x1; x++) {
+        const d = mip.data[row + x];
+        if (d > maxOccludingDepth) maxOccludingDepth = d;
+      }
+    }
+
+    const visible = minDepth <= maxOccludingDepth + 1e-4;
+    if (!visible) occluded++;
+    return visible;
+  }
+
+  function resetStats() {
+    tested = 0;
+    occluded = 0;
+  }
+
+  function getStats() {
+    return Object.freeze({
+      width: baseW,
+      height: baseH,
+      mipCount: mips.length,
+      tested,
+      occluded,
+    });
+  }
+
+  return Object.freeze({
+    buildPyramid,
+    testScreenBounds,
+    resetStats,
+    getStats,
+  });
+}

@@ -121,7 +121,28 @@ export function createIndirectInstancedBatch3D(THREE: object, { geometry, materi
     dispose: () => void;
 };
 /**
+ * Zero-GC CPU/WebGPU Hi-Z hierarchical depth pyramid occlusion culler (conservatively
+ * downsampling max-depth mips from level 0 down to 1x1 so occluded meshes behind walls are culled).
+ * @param {{ width?: number, height?: number }} [options]
+ */
+export function createHiZOcclusionCuller3D({ width, height }?: {
+    width?: number;
+    height?: number;
+} | undefined): Readonly<{
+    buildPyramid: (depthValues: any) => number;
+    testScreenBounds: (minX: any, minY: any, maxX: any, maxY: any, minDepth: any) => boolean;
+    resetStats: () => void;
+    getStats: () => Readonly<{
+        width: number;
+        height: number;
+        mipCount: number;
+        tested: number;
+        occluded: number;
+    }>;
+}>;
+/**
  * GPU-driven frustum culling and indirect draw submission for WebGPU and WebGL2 multi-draw,
  * with explicit capability detection and CPU instanced fallback declaration.
  */
 export const GPU_CULL_WGSL: "\nstruct FrustumUniforms {\n  planes: array<vec4<f32>, 6>,\n  instanceCount: u32,\n  _pad0: u32,\n  _pad1: u32,\n  _pad2: u32,\n};\n\nstruct DrawIndexedIndirectArgs {\n  indexCount: u32,\n  instanceCount: atomic<u32>,\n  firstIndex: u32,\n  baseVertex: i32,\n  firstInstance: u32,\n};\n\n@group(0) @binding(0) var<uniform> uFrustum: FrustumUniforms;\n@group(0) @binding(1) var<storage, read> bBounds: array<vec4<f32>>;\n@group(0) @binding(2) var<storage, read_write> bVisibleIndices: array<u32>;\n@group(0) @binding(3) var<storage, read_write> bDrawArgs: DrawIndexedIndirectArgs;\n\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n  let idx = gid.x;\n  if (idx >= uFrustum.instanceCount) {\n    return;\n  }\n  let sphere = bBounds[idx];\n  let radius = sphere.w;\n  if (radius <= 0.0) {\n    return;\n  }\n  for (var i: u32 = 0u; i < 6u; i = i + 1u) {\n    let p = uFrustum.planes[i];\n    if (dot(p.xyz, sphere.xyz) + p.w < -radius) {\n      return;\n    }\n  }\n  let outSlot = atomicAdd(&bDrawArgs.instanceCount, 1u);\n  bVisibleIndices[outSlot] = idx;\n}\n";
+export const GPU_HIZ_OCCLUSION_WGSL: "\nstruct HiZParams {\n  screenSize: vec2<f32>,\n  mipCount: u32,\n  objectCount: u32,\n};\n\n@group(0) @binding(0) var<uniform> uHiZ: HiZParams;\n@group(0) @binding(1) var<storage, read> bScreenAabbs: array<vec4<f32>>;\n@group(0) @binding(2) var<storage, read> bMinDepths: array<f32>;\n@group(0) @binding(3) var tHiZ: texture_2d<f32>;\n@group(0) @binding(4) var<storage, read_write> bVisibility: array<u32>;\n\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n  let idx = gid.x;\n  if (idx >= uHiZ.objectCount) { return; }\n  let aabb = bScreenAabbs[idx];\n  let span = max((aabb.z - aabb.x) * uHiZ.screenSize.x, (aabb.w - aabb.y) * uHiZ.screenSize.y);\n  let mip = min(uHiZ.mipCount - 1u, u32(ceil(log2(max(1.0, span)))));\n  let dim = vec2<i32>(max(vec2<f32>(1.0), floor(uHiZ.screenSize / f32(1u << mip))));\n  let uv = clamp((aabb.xy + aabb.zw) * 0.5, vec2<f32>(0.0), vec2<f32>(0.9999));\n  let texel = clamp(vec2<i32>(uv * vec2<f32>(dim)), vec2<i32>(0), dim - vec2<i32>(1));\n  let maxOccDepth = textureLoad(tHiZ, texel, i32(mip)).r;\n  bVisibility[idx] = select(0u, 1u, bMinDepths[idx] <= maxOccDepth + 1e-4);\n}\n";

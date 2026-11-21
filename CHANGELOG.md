@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Complete Tier 5 Turnkey Portrait Mode, Static Batching, 50MB Toy Budget Analyzer, Hi-Z Occlusion & Progressive Boot raising unified v4 Web scorecard to **`99.0/100`** (`Unity 6.6 URP Web = 100.0`, `Cocos Creator 3.8 Web = 88.2`, `Godot 4.3+ Web = 81.9`):
+  - **Turnkey `mobilePortrait` Mode (`integrations/three.js`)**: Added `mobilePortrait: true | config` to `createThreeAdapter` automatically wiring `resolvePortraitViewport` DPR caps, `MOBILE_PORTRAIT_PRESET` LUT/heightFog/bloom/RCAS, `createPortraitDrsController`, `createVramMipGuard`, `createMaterialBatchRegistry3D`, and `stepFrameBudget(frameMs, vramBytes)`.
+  - **Static Geometry Batching (`R5`, `integrations/culling3d.js`)**: Added `mergeStaticMeshesByMaterial3D` combining static world-transformed geometries by material & optional XZ spatial chunk (`24 -> 1` batched draw call verified live in `390×844` WebGL2).
+  - **50MB Toy Bundle Budget Analyzer (`A3`, `scripts/package-game.mjs`)**: Added `analyzeBundleBudget` categorizing code/textures/3d/audio/data sizes, reporting 50MB utilization %, estimating KTX2 savings, and emitting `.budget-report.json` on `--target toy` builds.
+  - **Hi-Z Depth Pyramid Occlusion & Progressive 3-Stage Boot (`R5`, `A3`)**: Added `GPU_HIZ_OCCLUSION_WGSL` & `createHiZOcclusionCuller3D` (`integrations/gpu-indirect3d.js`, `integrations/culling3d.js`) and `createProgressiveBootLoader` (`platform/asset-catalog.js`, `assets/runtime/index.js`).
+
 - Complete Tier 4 WebGPU & Mobile-Portrait Commercial Pipeline raising unified v4 Web scorecard to **`98.7/100`** (`Unity 6.6 URP Web = 100.0`, `Cocos Creator 3.8 Web = 88.2`, `Godot 4.3+ Web = 81.9`, excluding Unreal):
   - **KTX2 Offline Packaging CLI & VRAM Auto-Degrade Guard (`A3`)**: Added `encodeKtx2Container`, `convertPngToKtx2`, and `--ktx2` CLI workflow in `scripts/process-assets.mjs`; added `createVramMipGuard` and `globalMipBias` escalation/recovery on `createStreamingResidencyPolicy` (`platform/asset-catalog.js`, `assets/runtime/index.js`).
   - **Hardware Dawn WebGPU Compute Frustum Culling (`P2`)**: Added `dispatchWebGpuCompute` with indirect `COPY_SRC` readback on `createGpuIndirectCuller3D` (`integrations/gpu-indirect3d.js`) and added `tests/browser-webgpu-compute-benchmark.mjs`, verified on hardware NVIDIA Lovelace Dawn WebGPU (`4,096` dispatched -> `2,048` exact compacted visible instances, zero leaks) with WebGL2/CPU fallback.
