@@ -42,6 +42,13 @@
  * @property {(action: string) => boolean} consumeBuffered Consume the buffered press; true if one was pending.
  * @property {(axisName: string) => number} getAxis1D
  * @property {<T extends Vec2Like = Vec2Like>(axisName: string, out?: T) => T} getAxis2D
+ * @property {(contextName: string, actionName: string, keys: string | Iterable<string> | null) => string[]} rebindAction
+ * @property {(contextName: string, actionName: string) => { contextName: string, actionName: string, keys: string[], overridden: boolean } | null} getActionBinding
+ * @property {(contextName?: string | null) => void} resetBindings
+ * @property {() => { version: number, contexts: Record<string, Record<string, string[]>> }} exportBindings
+ * @property {(data: unknown) => number} importBindings
+ * @property {(storage?: { setItem(k: string, v: string): void } | null, key?: string) => boolean} saveBindings
+ * @property {(storage?: { getItem(k: string): string | null } | null, key?: string) => number | false} loadBindings
  * @property {() => void} reset
  */
 /**
@@ -138,5 +145,24 @@ export type InputActionRouter = {
     consumeBuffered: (action: string) => boolean;
     getAxis1D: (axisName: string) => number;
     getAxis2D: <T extends Vec2Like = Vec2Like>(axisName: string, out?: T) => T;
+    rebindAction: (contextName: string, actionName: string, keys: string | Iterable<string> | null) => string[];
+    getActionBinding: (contextName: string, actionName: string) => {
+        contextName: string;
+        actionName: string;
+        keys: string[];
+        overridden: boolean;
+    } | null;
+    resetBindings: (contextName?: string | null) => void;
+    exportBindings: () => {
+        version: number;
+        contexts: Record<string, Record<string, string[]>>;
+    };
+    importBindings: (data: unknown) => number;
+    saveBindings: (storage?: {
+        setItem(k: string, v: string): void;
+    } | null, key?: string) => boolean;
+    loadBindings: (storage?: {
+        getItem(k: string): string | null;
+    } | null, key?: string) => number | false;
     reset: () => void;
 };

@@ -47,7 +47,7 @@ export function createSaveStore({ gameId, schemaVersion, storage, prefix, }?: Sa
 export function createVersionedStore<T = unknown>({ store, gameId, storage, prefix, schemaVersion, migrations, checksum, salt, backupKeySuffix, autoPersistMigrated, }?: {
     store?: SaveStore | undefined;
     gameId?: string | undefined;
-    storage?: Pick<Storage, "length" | "key" | "getItem" | "setItem" | "removeItem"> | null | undefined;
+    storage?: Pick<Storage, "length" | "key" | "setItem" | "getItem" | "removeItem"> | null | undefined;
     prefix?: string | undefined;
     schemaVersion?: number | undefined;
     migrations?: Record<string | number, (data: unknown) => unknown> | undefined;
@@ -69,7 +69,7 @@ export type SaveStoreOptions = {
      * Backend (default: `localStorage`, falling back to in-memory when absent or unreadable).
      * A readable backend is retained when writes fail (for example, quota exhaustion).
      */
-    storage?: Pick<Storage, "length" | "key" | "getItem" | "setItem" | "removeItem"> | null | undefined;
+    storage?: Pick<Storage, "length" | "key" | "setItem" | "getItem" | "removeItem"> | null | undefined;
     /**
      * Namespace prefix.
      */

@@ -10,7 +10,7 @@ export { createPanelStack, applyAriaToElement } from './panel-stack.js';
 export { createVirtualList } from './virtual-list.js';
 export { createI18n } from './i18n.js';
 export { computeFlexLayout } from './flex-layout.js';
-export { createCanvasUiRenderer, renderSdfText } from './canvas-widgets.js';
+export { createCanvasUiRenderer, renderSdfText, layoutRichTextLines, createCanvasAriaBridge } from './canvas-widgets.js';
 export { createLiveProfilerOverlay } from './profiler-overlay.js';
 export {
   DEFAULT_THUMB_ARC_SPEC,

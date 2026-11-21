@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upgrade Canvas UI & input persistence (`assets/runtime/ui/canvas-widgets.js`, `assets/runtime/ui/index.js`, `assets/runtime/index.js`, `assets/runtime/platform/input/router.js`): added `layoutRichTextLines` + `richText` multi-span wrapping widget, clipped `scrollView` container with scroll-aware hit-testing, IME composition underline in `textInput`, `createCanvasAriaBridge` + `syncAriaTree` semantic DOM mirror, and `rebindAction` / `saveBindings` / `loadBindings` / `resetBindings` on `createInputActionRouter`, raising Scorecard v5.1 `S4` from `7.5` to `8.5` (total `82.8/100`).
+
 - Wire `createPhysicalRenderTargetPool3D` into `post3d/pipeline.js` (`assets/runtime/integrations/post3d/pipeline.js`, `assets/runtime/integrations/post3d/render-graph.js`): split AO and GI/SSR passes into lifetime-tracked transient stages (`aoRaw -> aoBlurX -> aoVol`, `giSsrRaw -> giSsrBlurX -> giSsr`), pool `bloomScratch` and `ldrColor` with `type`/`format` aware bucket keys, and expose `poolStats` on `lastFrameGraph` & `targets` (`reuses = 29` across 3 allocations in `390x844` Chromium WebGL2), raising Scorecard v5.1 `A2` from `8.5` to `9.0` (total `82.4/100`).
 
 - Add `defineMaterialVariants3D` (`assets/runtime/integrations/material-graph3d.js`, exported via `index.js`) supporting declarative boolean & enum keyword variant dictionaries, canonical key sorting, `defines`/`uniforms` merging, `customProgramCacheKey` shader program reuse, and batch `warmup(renderer, camera, combinations)`, raising Scorecard v5.1 `R3` from `7.5` to `8.5` (total `82.1/100`).

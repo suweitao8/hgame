@@ -856,7 +856,7 @@
       "name": "运行时 UI、输入与无障碍底座",
       "weight": 4,
       "scores": {
-        "hgame": 7.5,
+        "hgame": 8.5,
         "unity": 8,
         "cocos": 8.5,
         "godot": 8.5
@@ -867,7 +867,8 @@
         "proofFiles": [
           "assets/runtime/ui/canvas-widgets.js",
           "assets/runtime/ui/thumb-arc.js",
-          "assets/runtime/kit/game-shell-dom.js"
+          "assets/runtime/kit/game-shell-dom.js",
+          "assets/runtime/platform/input/router.js"
         ],
         "industrialChecklist": [
           {
@@ -882,18 +883,19 @@
           },
           {
             "point": "Canvas 原生声明式 Flexbox/Grid 布局与富文本混排引擎",
-            "met": false,
-            "proof": "缺失（复杂排版主要依赖 DOM Shell，CanvasWidgets 缺乏完整富文本排版）"
+            "met": true,
+            "proof": "assets/runtime/ui/canvas-widgets.js layoutRichTextLines/richText/scrollView"
           },
           {
             "point": "完整屏幕阅读器（ARIA）与动态按键重映射持久化",
-            "met": false,
-            "proof": "缺失（缺完整 ARIA 语义树与按键重映射持久化）"
+            "met": true,
+            "proof": "assets/runtime/ui/canvas-widgets.js createCanvasAriaBridge, assets/runtime/platform/input/router.js"
           }
         ],
-        "note": "具备 Canvas UI、SDF 文字、中文 IME、红点树及竖屏右下角半圆拇指舒适区（thumb-arc）。",
+        "note": "具备 Canvas richText 自动换行混排、scrollView 裁剪滚动、IME 组合下划线、createCanvasAriaBridge 语义镜像树及 InputActionRouter 动态重映射持久化。",
         "benchmarkFiles": [
-          "tests/browser-mobile-portrait-benchmark.mjs"
+          "tests/browser-mobile-portrait-benchmark.mjs",
+          "tests/browser-ui-s4.mjs"
         ]
       },
       "competitorNotes": {
@@ -901,7 +903,7 @@
         "cocos": "Widget 多分辨率适配、富文本、ScrollView 与小游戏键盘适配成熟。",
         "godot": "Control 锚点/容器布局体系非常完备，内置无障碍接口与主题系统成熟。"
       },
-      "gap": "缺少 Canvas 原生富文本混排、完整 ARIA 无障碍树及按键重映射持久化。"
+      "gap": "暂缺图文内联表情/复杂双向文字（BiDi）与屏幕阅读器实时焦点同步高阶特性"
     },
     {
       "id": "N1",

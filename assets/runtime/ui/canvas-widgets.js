@@ -92,6 +92,292 @@ export function renderSdfText(ctx, text, x, y, {
   return true;
 }
 
+function isWideOrCjkChar(ch) {
+  const code = ch.charCodeAt(0);
+  return (
+    (code >= 0x4e00 && code <= 0x9fff) ||
+    (code >= 0x3040 && code <= 0x30ff) ||
+    (code >= 0xac00 && code <= 0xd7af) ||
+    (code >= 0xff00 && code <= 0xffef) ||
+    (code >= 0x3000 && code <= 0x303f)
+  );
+}
+
+function measureStyledText(ctx, text, style) {
+  if (!text) return 0;
+  const fs = Math.max(8, Number(style.fontSize) || 14);
+  if (ctx && typeof ctx.measureText === 'function') {
+    ctx.font = `${style.italic ? 'italic ' : ''}${style.weight ?? '600'} ${fs}px ${style.fontFamily ?? 'system-ui, sans-serif'}`;
+    const m = ctx.measureText(text);
+    if (m && Number.isFinite(m.width)) return m.width;
+  }
+  let width = 0;
+  for (let i = 0; i < text.length; i++) {
+    width += isWideOrCjkChar(text[i]) ? fs : fs * 0.56;
+  }
+  return width;
+}
+
+function tokenizeRichSegment(str) {
+  const tokens = [];
+  let buf = '';
+  let inSpace = false;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
+    if (ch === '\n') {
+      if (buf) { tokens.push(buf); buf = ''; }
+      tokens.push('\n');
+      inSpace = false;
+      continue;
+    }
+    if (isWideOrCjkChar(ch)) {
+      if (buf) { tokens.push(buf); buf = ''; }
+      tokens.push(ch);
+      inSpace = false;
+      continue;
+    }
+    const isWs = ch === ' ' || ch === '\t';
+    if (isWs !== inSpace) {
+      if (buf) { tokens.push(buf); buf = ''; }
+      inSpace = isWs;
+    }
+    buf += ch;
+  }
+  if (buf) tokens.push(buf);
+  return tokens;
+}
+
+/**
+ * Lay out styled rich-text spans (`string | { text, color?, fontSize?, weight?, italic?, outlineColor?, outlineWidth?, underline? }`)
+ * into wrapped visual lines constrained by `maxWidth`, breaking on CJK character boundaries and ASCII word boundaries.
+ *
+ * @param {any} ctx
+ * @param {string | Array<string | { text?: string, color?: string, fontSize?: number, weight?: string | number, italic?: boolean, outlineColor?: string, outlineWidth?: number, underline?: boolean }>} spans
+ * @param {number} maxWidth
+ * @param {object} [defaultOpts]
+ * @returns {{ segments: { text: string, style: Record<string, any>, width: number, fontSize: number }[], width: number, height: number }[]}
+ */
+export function layoutRichTextLines(ctx, spans, maxWidth, defaultOpts = {}) {
+  const limitW = Math.max(8, Number(maxWidth) || 200);
+  const rawList = Array.isArray(spans) ? spans : [spans ?? ''];
+  const baseStyle = {
+    color: defaultOpts.color ?? '#f1f5f9',
+    fontSize: Math.max(8, Number(defaultOpts.fontSize) || 14),
+    weight: String(defaultOpts.weight ?? '600'),
+    italic: Boolean(defaultOpts.italic),
+    fontFamily: defaultOpts.fontFamily ?? 'system-ui, sans-serif',
+    outlineColor: defaultOpts.outlineColor ?? 'rgba(2, 6, 23, 0.85)',
+    outlineWidth: defaultOpts.outlineWidth ?? 1.5,
+    underline: Boolean(defaultOpts.underline),
+  };
+
+  /** @type {{ segments: { text: string, style: Record<string, any>, width: number, fontSize: number }[], width: number, height: number }[]} */
+  const lines = [];
+  let curSegs = [];
+  let curW = 0;
+  let curH = baseStyle.fontSize;
+
+  const flushLine = () => {
+    lines.push({ segments: curSegs, width: curW, height: curH });
+    curSegs = [];
+    curW = 0;
+    curH = baseStyle.fontSize;
+  };
+
+  const pushSegment = (text, style, segW) => {
+    const fs = style.fontSize;
+    curH = Math.max(curH, fs);
+    const prev = curSegs[curSegs.length - 1];
+    if (prev && prev.style === style) {
+      prev.text += text;
+      prev.width += segW;
+    } else {
+      curSegs.push({ text, style, width: segW, fontSize: fs });
+    }
+    curW += segW;
+  };
+
+  ctx?.save?.();
+  try {
+    for (const item of rawList) {
+      const span = typeof item === 'string' ? { text: item } : (item && typeof item === 'object' ? item : { text: '' });
+      const text = String(span.text ?? '');
+      if (!text) continue;
+      const style = {
+        ...baseStyle,
+        ...span,
+        fontSize: Math.max(8, Number(span.fontSize ?? baseStyle.fontSize) || baseStyle.fontSize),
+        weight: String(span.weight ?? baseStyle.weight),
+      };
+      const tokens = tokenizeRichSegment(text);
+      for (const tok of tokens) {
+        if (tok === '\n') {
+          flushLine();
+          continue;
+        }
+        const tokW = measureStyledText(ctx, tok, style);
+        const isWhitespace = /^\s+$/.test(tok);
+        if (curW > 0 && curW + tokW > limitW) {
+          flushLine();
+          if (isWhitespace) continue;
+        }
+        if (tokW > limitW && curW === 0 && tok.length > 1) {
+          let chunk = '';
+          let chunkW = 0;
+          for (let i = 0; i < tok.length; i++) {
+            const ch = tok[i];
+            const chW = measureStyledText(ctx, ch, style);
+            if (chunk && chunkW + chW > limitW) {
+              pushSegment(chunk, style, chunkW);
+              flushLine();
+              chunk = ch;
+              chunkW = chW;
+            } else {
+              chunk += ch;
+              chunkW += chW;
+            }
+          }
+          if (chunk) pushSegment(chunk, style, chunkW);
+        } else {
+          pushSegment(tok, style, tokW);
+        }
+      }
+    }
+    if (curSegs.length > 0 || lines.length === 0) {
+      flushLine();
+    }
+  } finally {
+    ctx?.restore?.();
+  }
+  return lines;
+}
+
+/**
+ * Create a visually-hidden semantic DOM ARIA mirror for a Canvas UI tree so screen
+ * readers and keyboard navigation can inspect and activate buttons, inputs, sliders,
+ * scroll regions, and rich-text/label nodes without shifting canvas layout.
+ *
+ * @param {any} container Host DOM element receiving the visually-hidden ARIA container.
+ * @returns {{ sync: (hitNodes: readonly any[], widgetState?: any) => number, getElementCount: () => number, getRoot: () => any, dispose: () => boolean }}
+ */
+export function createCanvasAriaBridge(container) {
+  const doc = container?.ownerDocument ?? (typeof globalThis.document !== 'undefined' ? globalThis.document : null);
+  let root = null;
+  let disposed = false;
+
+  if (doc && typeof doc.createElement === 'function') {
+    root = doc.createElement('div');
+    root.setAttribute('role', 'region');
+    root.setAttribute('aria-label', 'Canvas UI');
+    root.setAttribute('data-hgame-aria-bridge', 'true');
+    if (root.style) {
+      root.style.position = 'absolute';
+      root.style.width = '1px';
+      root.style.height = '1px';
+      root.style.overflow = 'hidden';
+      root.style.clip = 'rect(0, 0, 0, 0)';
+      root.style.clipPath = 'inset(50%)';
+      root.style.whiteSpace = 'nowrap';
+      root.style.border = '0';
+      root.style.margin = '0';
+      root.style.padding = '0';
+    }
+    container?.appendChild?.(root);
+  }
+
+  function clearChildren() {
+    if (!root) return;
+    if (Array.isArray(root.children) && typeof root.removeChild === 'function') {
+      while (root.firstChild) root.removeChild(root.firstChild);
+    } else if ('innerHTML' in root) {
+      root.innerHTML = '';
+    }
+  }
+
+  function sync(hitNodes = [], widgetState = null) {
+    if (disposed || !root || !doc) return 0;
+    clearChildren();
+    let count = 0;
+    for (let i = 0; i < hitNodes.length; i++) {
+      const entry = hitNodes[i];
+      const node = entry?.node;
+      if (!node || node.visible === false || node.ariaHidden === true) continue;
+      const kind = node.type ?? 'box';
+      if (kind !== 'button' && kind !== 'textInput' && kind !== 'slider' &&
+          kind !== 'scrollList' && kind !== 'scrollView' && kind !== 'richText' && kind !== 'label') {
+        continue;
+      }
+
+      const tag = kind === 'button' ? 'button' : 'div';
+      const el = doc.createElement(tag);
+      const id = entry.id ?? node.id ?? `node-${i}`;
+      el.setAttribute('data-node-id', String(id));
+
+      if (kind === 'button') {
+        if (tag === 'button') el.type = 'button';
+        el.setAttribute('role', 'button');
+        el.setAttribute('aria-label', String(node.ariaLabel ?? node.text ?? node.label ?? id));
+        el.tabIndex = 0;
+        el.textContent = String(node.text ?? node.label ?? id);
+        el.onclick = () => node.onClick?.(node);
+        el.onfocus = () => { if (widgetState) widgetState.focusedId = id; };
+      } else if (kind === 'textInput') {
+        el.setAttribute('role', 'textbox');
+        el.setAttribute('aria-label', String(node.ariaLabel ?? node.placeholder ?? id));
+        el.setAttribute('aria-valuetext', String(node.value ?? ''));
+        el.tabIndex = 0;
+        el.onfocus = () => { if (widgetState) widgetState.focusedId = id; };
+      } else if (kind === 'slider') {
+        el.setAttribute('role', 'slider');
+        el.setAttribute('aria-label', String(node.ariaLabel ?? node.label ?? id));
+        el.setAttribute('aria-valuemin', '0');
+        el.setAttribute('aria-valuemax', '1');
+        el.setAttribute('aria-valuenow', String(Math.max(0, Math.min(1, Number(node.value) || 0))));
+        el.tabIndex = 0;
+        el.onfocus = () => { if (widgetState) widgetState.focusedId = id; };
+      } else if (kind === 'scrollList' || kind === 'scrollView') {
+        el.setAttribute('role', 'region');
+        el.setAttribute('aria-label', String(node.ariaLabel ?? node.label ?? id));
+      } else if (kind === 'richText' || kind === 'label') {
+        el.setAttribute('role', 'text');
+        const textVal = Array.isArray(node.spans)
+          ? node.spans.map(s => (typeof s === 'string' ? s : (s?.text ?? ''))).join('')
+          : String(node.ariaLabel ?? node.text ?? node.label ?? '');
+        el.setAttribute('aria-label', textVal);
+        el.textContent = textVal;
+      }
+
+      root.appendChild(el);
+      count++;
+    }
+    return count;
+  }
+
+  function getElementCount() {
+    return root?.children?.length ?? root?.childNodes?.length ?? 0;
+  }
+
+  function getRoot() {
+    return root;
+  }
+
+  function dispose() {
+    if (disposed) return false;
+    disposed = true;
+    clearChildren();
+    root?.parentNode?.removeChild?.(root);
+    root = null;
+    return true;
+  }
+
+  return Object.freeze({
+    sync,
+    getElementCount,
+    getRoot,
+    dispose,
+  });
+}
+
 /**
  * @param {object} [options]
  * @param {string} [options.fontFamily='system-ui, sans-serif']
@@ -108,18 +394,66 @@ export function createCanvasUiRenderer({
     composingText: '',
     scrollOffsets: new Map(),
   };
-  /** @type {{ id: string, node: object, rect: { x: number, y: number, width: number, height: number } }[]} */
+  /** @type {{ id: string, node: object, rect: { x: number, y: number, width: number, height: number }, scrollParentId?: string | null, clipRect?: { x: number, y: number, width: number, height: number } | null }[]} */
   let hitNodes = [];
   let lastLayout = null;
+  let lastLayoutRenderCtx = null;
+  const scrollMeta = new Map();
+  let ownedAriaBridge = null;
+  let ownedAriaContainer = null;
   const deviceRatio = Math.max(1, Number(dpr) || 1);
 
-  function collectHitsAndNodes(layoutNode, srcNode, outList) {
+  function resolveScrollViews(layoutNode, srcNode) {
     if (!layoutNode || !srcNode) return;
-    outList.push({ id: srcNode.id ?? layoutNode.id ?? null, node: srcNode, rect: layoutNode });
+    const srcChildren = Array.isArray(srcNode.children) ? srcNode.children : [];
+    if (srcNode.type === 'scrollView' && srcChildren.length > 0) {
+      const svId = srcNode.id ?? layoutNode.id ?? null;
+      const expanded = computeFlexLayout(
+        { ...srcNode, width: layoutNode.width, height: 1e6 },
+        layoutNode.width,
+        1e6,
+        layoutNode.x,
+        layoutNode.y,
+      );
+      layoutNode.children = expanded.children;
+      let maxBottom = layoutNode.y;
+      for (const ch of layoutNode.children) {
+        maxBottom = Math.max(maxBottom, ch.y + ch.height);
+      }
+      const padBottom = typeof srcNode.padding === 'number'
+        ? Math.max(0, srcNode.padding)
+        : Math.max(0, Number(srcNode.padding?.bottom) || 0);
+      const contentHeight = Math.max(0, maxBottom - layoutNode.y + padBottom);
+      if (svId != null) {
+        scrollMeta.set(svId, { contentHeight, viewHeight: layoutNode.height });
+        const prev = widgetState.scrollOffsets.get(svId) ?? 0;
+        const maxScroll = Math.max(0, contentHeight - layoutNode.height);
+        if (prev > maxScroll) widgetState.scrollOffsets.set(svId, maxScroll);
+      }
+    }
+    const layChildren = Array.isArray(layoutNode.children) ? layoutNode.children : [];
+    for (let i = 0; i < layChildren.length && i < srcChildren.length; i++) {
+      resolveScrollViews(layChildren[i], srcChildren[i]);
+    }
+  }
+
+  function collectHitsAndNodes(layoutNode, srcNode, outList, activeScroll = null) {
+    if (!layoutNode || !srcNode) return;
+    const id = srcNode.id ?? layoutNode.id ?? null;
+    outList.push({
+      id,
+      node: srcNode,
+      rect: layoutNode,
+      scrollParentId: activeScroll?.id ?? null,
+      clipRect: activeScroll?.clipRect ?? null,
+    });
+    const nextScroll = srcNode.type === 'scrollView' && id != null
+      ? { id, clipRect: { x: layoutNode.x, y: layoutNode.y, width: layoutNode.width, height: layoutNode.height } }
+      : activeScroll;
     const srcChildren = Array.isArray(srcNode.children) ? srcNode.children : [];
     const layChildren = Array.isArray(layoutNode.children) ? layoutNode.children : [];
     for (let i = 0; i < layChildren.length && i < srcChildren.length; i++) {
-      collectHitsAndNodes(layChildren[i], srcChildren[i], outList);
+      collectHitsAndNodes(layChildren[i], srcChildren[i], outList, nextScroll);
     }
   }
 
@@ -224,6 +558,99 @@ export function createCanvasUiRenderer({
         outlineWidth: 1.5,
         atlas: srcNode.atlas ?? null,
       });
+      if (composing.length > 0 && ctx) {
+        const fs = srcNode.fontSize ?? 14;
+        const style = { fontSize: fs, weight: '600', fontFamily };
+        const prefixW = measureStyledText(ctx, rawVal, style);
+        const compW = measureStyledText(ctx, composing, style);
+        const uy = y + height * 0.5 + fs * 0.55;
+        ctx.save?.();
+        ctx.strokeStyle = srcNode.composingUnderlineColor ?? '#38bdf8';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath?.();
+        ctx.moveTo?.(x + 10 + prefixW, uy);
+        ctx.lineTo?.(x + 10 + prefixW + compW, uy);
+        ctx.stroke?.();
+        ctx.restore?.();
+      }
+    } else if (kind === 'richText') {
+      const padX = Number(srcNode.paddingX) || 2;
+      const fs = srcNode.fontSize ?? 14;
+      const lines = layoutRichTextLines(ctx, srcNode.spans ?? srcNode.text ?? srcNode.label ?? '', Math.max(8, width - padX * 2), {
+        fontSize: fs,
+        color: srcNode.color ?? '#f1f5f9',
+        weight: srcNode.weight ?? '600',
+        fontFamily: srcNode.fontFamily ?? fontFamily,
+        outlineColor: srcNode.outlineColor ?? 'rgba(2, 6, 23, 0.85)',
+        outlineWidth: srcNode.outlineWidth ?? 1.5,
+      });
+      const lineMult = Math.max(1.0, Number(srcNode.lineHeight) || 1.35);
+      const align = srcNode.textAlign ?? 'left';
+      let cursorY = y + 2;
+      for (const line of lines) {
+        const lh = line.height * lineMult;
+        if (cursorY > y + height) break;
+        let penX = align === 'center'
+          ? x + (width - line.width) * 0.5
+          : align === 'right'
+            ? x + width - padX - line.width
+            : x + padX;
+        const baselineY = cursorY + line.height * 0.5;
+        for (const seg of line.segments) {
+          renderSdfText(ctx, seg.text, penX, baselineY, {
+            fontSize: seg.style.fontSize,
+            color: seg.style.color,
+            outlineColor: seg.style.outlineColor,
+            outlineWidth: seg.style.outlineWidth,
+            fontFamily: seg.style.fontFamily,
+            weight: `${seg.style.italic ? 'italic ' : ''}${seg.style.weight}`,
+            align: 'left',
+            baseline: 'middle',
+            dpr: deviceRatio,
+          });
+          if (seg.style.underline && ctx) {
+            ctx.save?.();
+            ctx.strokeStyle = seg.style.color;
+            ctx.lineWidth = Math.max(1, seg.style.fontSize * 0.08);
+            ctx.beginPath?.();
+            ctx.moveTo?.(penX, baselineY + seg.style.fontSize * 0.48);
+            ctx.lineTo?.(penX + seg.width, baselineY + seg.style.fontSize * 0.48);
+            ctx.stroke?.();
+            ctx.restore?.();
+          }
+          penX += seg.width;
+        }
+        cursorY += lh;
+      }
+    } else if (kind === 'scrollView') {
+      const scrollY = widgetState.scrollOffsets.get(srcNode.id) ?? 0;
+      const srcChildren = Array.isArray(srcNode.children) ? srcNode.children : [];
+      const layChildren = Array.isArray(layoutNode.children) ? layoutNode.children : [];
+      ctx?.save?.();
+      ctx?.beginPath?.();
+      ctx?.rect?.(x, y, width, height);
+      ctx?.clip?.();
+      if (scrollY !== 0) ctx?.translate?.(0, -scrollY);
+      try {
+        for (let i = 0; i < layChildren.length && i < srcChildren.length; i++) {
+          const chRect = layChildren[i];
+          if (chRect.y + chRect.height - scrollY < y || chRect.y - scrollY > y + height) continue;
+          renderNode(ctx, chRect, srcChildren[i]);
+        }
+      } finally {
+        ctx?.restore?.();
+      }
+      const meta = scrollMeta.get(srcNode.id);
+      if (meta && meta.contentHeight > height + 1 && width > 8) {
+        const trackH = Math.max(12, height - 4);
+        const thumbH = Math.max(16, (height / meta.contentHeight) * trackH);
+        const maxScroll = Math.max(1, meta.contentHeight - height);
+        const thumbY = y + 2 + (scrollY / maxScroll) * (trackH - thumbH);
+        drawRoundedRect(ctx, x + width - 5, thumbY, 3, thumbH, 1.5);
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.55)';
+        ctx.fill?.();
+      }
+      return;
     } else if (kind === 'scrollList') {
       const items = Array.isArray(srcNode.items) ? srcNode.items : [];
       const rowHeight = Math.max(18, Number(srcNode.rowHeight) || 28);
@@ -256,13 +683,16 @@ export function createCanvasUiRenderer({
   }
 
   function layout(tree, width, height) {
+    scrollMeta.clear();
     lastLayout = computeFlexLayout(tree, width, height);
+    resolveScrollViews(lastLayout, tree);
     hitNodes = [];
     collectHitsAndNodes(lastLayout, tree, hitNodes);
     return lastLayout;
   }
 
   function render(ctx, tree, width, height) {
+    lastLayoutRenderCtx = ctx ?? lastLayoutRenderCtx;
     const resolved = layout(tree, width, height);
     if (ctx) renderNode(ctx, resolved, tree);
     return resolved;
@@ -271,11 +701,16 @@ export function createCanvasUiRenderer({
   function hitTest(px, py) {
     for (let i = hitNodes.length - 1; i >= 0; i--) {
       const entry = hitNodes[i];
-      const { node, rect } = entry;
-      if (node.interactive === false && node.type !== 'button' && node.type !== 'slider' && node.type !== 'scrollList' && node.type !== 'textInput') {
+      const { node, rect, scrollParentId, clipRect } = entry;
+      if (node.interactive === false && node.type !== 'button' && node.type !== 'slider' && node.type !== 'scrollList' && node.type !== 'scrollView' && node.type !== 'textInput') {
         continue;
       }
-      if (px >= rect.x && px <= rect.x + rect.width && py >= rect.y && py <= rect.y + rect.height) {
+      if (clipRect && (px < clipRect.x || px > clipRect.x + clipRect.width || py < clipRect.y || py > clipRect.y + clipRect.height)) {
+        continue;
+      }
+      const dy = scrollParentId ? (widgetState.scrollOffsets.get(scrollParentId) ?? 0) : 0;
+      const ry = rect.y - dy;
+      if (px >= rect.x && px <= rect.x + rect.width && py >= ry && py <= ry + rect.height) {
         return entry;
       }
     }
@@ -320,8 +755,25 @@ export function createCanvasUiRenderer({
   }
 
   function scroll(deltaY, px, py) {
-    const hit = hitTest(px, py);
-    if (!hit || hit.node?.type !== 'scrollList') return 0;
+    let hit = null;
+    for (let i = hitNodes.length - 1; i >= 0; i--) {
+      const entry = hitNodes[i];
+      if (entry.node?.type !== 'scrollList' && entry.node?.type !== 'scrollView') continue;
+      const { rect } = entry;
+      if (px >= rect.x && px <= rect.x + rect.width && py >= rect.y && py <= rect.y + rect.height) {
+        hit = entry;
+        break;
+      }
+    }
+    if (!hit) return 0;
+    if (hit.node.type === 'scrollView') {
+      const meta = scrollMeta.get(hit.id);
+      const maxScroll = Math.max(0, (meta?.contentHeight ?? 0) - hit.rect.height);
+      const prev = widgetState.scrollOffsets.get(hit.id) ?? 0;
+      const next = Math.max(0, Math.min(maxScroll, prev + (Number(deltaY) || 0)));
+      widgetState.scrollOffsets.set(hit.id, next);
+      return next;
+    }
     const items = Array.isArray(hit.node.items) ? hit.node.items : [];
     const rowH = Math.max(18, Number(hit.node.rowHeight) || 28);
     const maxScroll = Math.max(0, items.length * rowH - hit.rect.height);
@@ -388,6 +840,22 @@ export function createCanvasUiRenderer({
     };
   }
 
+  function syncAriaTree(container = ownedAriaContainer) {
+    if (!ownedAriaBridge || (container && container !== ownedAriaContainer)) {
+      ownedAriaBridge?.dispose?.();
+      ownedAriaContainer = container ?? null;
+      ownedAriaBridge = container ? createCanvasAriaBridge(container) : null;
+    }
+    return ownedAriaBridge ? ownedAriaBridge.sync(hitNodes, widgetState) : 0;
+  }
+
+  function dispose() {
+    ownedAriaBridge?.dispose?.();
+    ownedAriaBridge = null;
+    ownedAriaContainer = null;
+    scrollMeta.clear();
+  }
+
   return Object.freeze({
     layout,
     render,
@@ -399,6 +867,8 @@ export function createCanvasUiRenderer({
     compositionUpdate,
     compositionEnd,
     scroll,
+    syncAriaTree,
+    dispose,
     getState,
   });
 }

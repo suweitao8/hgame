@@ -306,6 +306,8 @@ export const HGame: Readonly<{
     computeFlexLayout: typeof computeFlexLayout;
     createCanvasUiRenderer: typeof createCanvasUiRenderer;
     renderSdfText: typeof renderSdfText;
+    layoutRichTextLines: typeof layoutRichTextLines;
+    createCanvasAriaBridge: typeof createCanvasAriaBridge;
     createLiveProfilerOverlay: typeof createLiveProfilerOverlay;
     DEFAULT_THUMB_ARC_SPEC: Readonly<{
         anchor: "bottom-right";
@@ -1625,6 +1627,8 @@ import { applyAriaToElement } from './ui/index.js';
 import { computeFlexLayout } from './ui/index.js';
 import { createCanvasUiRenderer } from './ui/index.js';
 import { renderSdfText } from './ui/index.js';
+import { layoutRichTextLines } from './ui/index.js';
+import { createCanvasAriaBridge } from './ui/index.js';
 import { createLiveProfilerOverlay } from './ui/index.js';
 import { computeThumbArcLayout } from './ui/index.js';
 import { isInThumbComfortZone } from './ui/index.js';
@@ -1698,7 +1702,7 @@ export { KTX2_MAGIC, detectCompressedTextureSupport, parseKtx2Header, selectOpti
 export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner, measureHotLoopAllocations } from "./sim/index.js";
 export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from "./integrations/render-budget-2d.js";
 export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
-export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, renderSdfText, createLiveProfilerOverlay, DEFAULT_THUMB_ARC_SPEC, computeThumbArcLayout, isInThumbComfortZone, createThumbArcHud, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
+export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, renderSdfText, layoutRichTextLines, createCanvasAriaBridge, createLiveProfilerOverlay, DEFAULT_THUMB_ARC_SPEC, computeThumbArcLayout, isInThumbComfortZone, createThumbArcHud, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
 export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
 export { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
 export { createBoneMap3D, retargetClip3D } from "./animation/retarget3d.js";

@@ -222,7 +222,7 @@ export type ToyBridgeOptions = {
     /**
      * Optional fallback storage used outside Bilibili Toy (`localStorage` by default).
      */
-    fallbackStorage?: Pick<Storage, "length" | "key" | "getItem" | "setItem" | "removeItem"> | null | undefined;
+    fallbackStorage?: Pick<Storage, "length" | "key" | "setItem" | "getItem" | "removeItem"> | null | undefined;
     /**
      * Namespace prefix for local fallback storage.
      */

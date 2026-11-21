@@ -48,6 +48,13 @@ import { MOUSE_BUTTON_MASK } from './contexts.js';
  * @property {(action: string) => boolean} consumeBuffered Consume the buffered press; true if one was pending.
  * @property {(axisName: string) => number} getAxis1D
  * @property {<T extends Vec2Like = Vec2Like>(axisName: string, out?: T) => T} getAxis2D
+ * @property {(contextName: string, actionName: string, keys: string | Iterable<string> | null) => string[]} rebindAction
+ * @property {(contextName: string, actionName: string) => { contextName: string, actionName: string, keys: string[], overridden: boolean } | null} getActionBinding
+ * @property {(contextName?: string | null) => void} resetBindings
+ * @property {() => { version: number, contexts: Record<string, Record<string, string[]>> }} exportBindings
+ * @property {(data: unknown) => number} importBindings
+ * @property {(storage?: { setItem(k: string, v: string): void } | null, key?: string) => boolean} saveBindings
+ * @property {(storage?: { getItem(k: string): string | null } | null, key?: string) => number | false} loadBindings
  * @property {() => void} reset
  */
 
@@ -82,6 +89,126 @@ export function createInputActionRouter({ input = null, readCode = null } = {}) 
   const seenAxes1DThisFrame = new Set();
   /** @type {Set<string>} */
   const seenAxes2DThisFrame = new Set();
+  /** @type {Map<string, Map<string, string[]>>} */
+  const keyOverrides = new Map();
+
+  function normalizeOverrideKeys(keys) {
+    if (typeof keys === 'string') {
+      const s = keys.trim();
+      return s ? [s] : [];
+    }
+    const list = [];
+    if (keys && typeof keys[Symbol.iterator] === 'function') {
+      for (const item of keys) {
+        if (typeof item === 'string') {
+          const s = item.trim();
+          if (s && !list.includes(s)) list.push(s);
+        }
+      }
+    }
+    return list;
+  }
+
+  function getEffectiveActionKeys(contextName, actionName, baseKeys) {
+    return keyOverrides.get(contextName)?.get(actionName) ?? baseKeys;
+  }
+
+  /** @param {string} contextName @param {string} actionName @param {string | Iterable<string> | null} keys @returns {string[]} */
+  function rebindAction(contextName, actionName, keys) {
+    if (typeof contextName !== 'string' || !contextName.trim() || typeof actionName !== 'string' || !actionName.trim()) {
+      throw new TypeError('rebindAction requires non-empty contextName and actionName');
+    }
+    if (keys === null) {
+      keyOverrides.get(contextName)?.delete(actionName);
+      if (keyOverrides.get(contextName)?.size === 0) keyOverrides.delete(contextName);
+      const entry = stack.find(item => item.context.name === contextName);
+      return [...(entry?.context.actions?.[actionName]?.keys ?? [])];
+    }
+    const normalized = normalizeOverrideKeys(keys);
+    let ctxMap = keyOverrides.get(contextName);
+    if (!ctxMap) {
+      ctxMap = new Map();
+      keyOverrides.set(contextName, ctxMap);
+    }
+    ctxMap.set(actionName, normalized);
+    return normalized.slice();
+  }
+
+  /** @param {string} contextName @param {string} actionName */
+  function getActionBinding(contextName, actionName) {
+    const ov = keyOverrides.get(contextName)?.get(actionName);
+    if (ov) {
+      return { contextName, actionName, keys: ov.slice(), overridden: true };
+    }
+    const entry = stack.find(item => item.context.name === contextName);
+    const base = entry?.context.actions?.[actionName];
+    if (!base) return null;
+    return { contextName, actionName, keys: [...base.keys], overridden: false };
+  }
+
+  /** @param {string | null} [contextName=null] */
+  function resetBindings(contextName = null) {
+    if (typeof contextName === 'string' && contextName.length > 0) {
+      keyOverrides.delete(contextName);
+    } else {
+      keyOverrides.clear();
+    }
+  }
+
+  function exportBindings() {
+    /** @type {Record<string, Record<string, string[]>>} */
+    const contexts = {};
+    for (const [ctxName, actMap] of keyOverrides.entries()) {
+      /** @type {Record<string, string[]>} */
+      const actions = {};
+      for (const [actionName, keys] of actMap.entries()) {
+        actions[actionName] = keys.slice();
+      }
+      contexts[ctxName] = actions;
+    }
+    return { version: 1, contexts };
+  }
+
+  /** @param {unknown} data @returns {number} */
+  function importBindings(data) {
+    if (!data || typeof data !== 'object') return 0;
+    const rawContexts = /** @type {any} */ (data).contexts;
+    if (!rawContexts || typeof rawContexts !== 'object') return 0;
+    keyOverrides.clear();
+    let count = 0;
+    for (const [ctxName, actObj] of Object.entries(rawContexts)) {
+      if (!actObj || typeof actObj !== 'object') continue;
+      for (const [actionName, rawKeys] of Object.entries(actObj)) {
+        if (typeof rawKeys === 'string' || Array.isArray(rawKeys)) {
+          rebindAction(ctxName, actionName, rawKeys);
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  function saveBindings(storage = typeof globalThis.localStorage !== 'undefined' ? globalThis.localStorage : null, key = 'hgame.input.bindings.v1') {
+    if (!storage || typeof storage.setItem !== 'function') return false;
+    try {
+      storage.setItem(key, JSON.stringify(exportBindings()));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function loadBindings(storage = typeof globalThis.localStorage !== 'undefined' ? globalThis.localStorage : null, key = 'hgame.input.bindings.v1') {
+    if (!storage || typeof storage.getItem !== 'function') return false;
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      return importBindings(parsed);
+    } catch {
+      return false;
+    }
+  }
 
   function sortStack() {
     stack.sort((a, b) => (b.priority - a.priority) || (b.order - a.order));
@@ -196,6 +323,7 @@ export function createInputActionRouter({ input = null, readCode = null } = {}) 
 
       // Actions
       for (const [actionName, binding] of Object.entries(ctx.actions)) {
+        const effectiveKeys = getEffectiveActionKeys(ctx.name, actionName, binding.keys);
         let chordSatisfied = true;
         for (let c = 0; c < binding.chord.length; c++) {
           if (!isKeyActive(binding.chord[c])) {
@@ -206,8 +334,8 @@ export function createInputActionRouter({ input = null, readCode = null } = {}) 
 
         let triggered = false;
         if (chordSatisfied) {
-          for (let k = 0; k < binding.keys.length; k++) {
-            const key = binding.keys[k];
+          for (let k = 0; k < effectiveKeys.length; k++) {
+            const key = effectiveKeys[k];
             if (isKeyActive(key)) {
               triggered = true;
               if (binding.consumeKeys) consumedKeys.add(key);
@@ -218,8 +346,8 @@ export function createInputActionRouter({ input = null, readCode = null } = {}) 
           triggered = true;
         }
         if (binding.consumeAlways) {
-          for (let k = 0; k < binding.keys.length; k++) {
-            consumedKeys.add(binding.keys[k]);
+          for (let k = 0; k < effectiveKeys.length; k++) {
+            consumedKeys.add(effectiveKeys[k]);
           }
         }
 
@@ -522,6 +650,13 @@ export function createInputActionRouter({ input = null, readCode = null } = {}) 
     consumeBuffered,
     getAxis1D,
     getAxis2D,
+    rebindAction,
+    getActionBinding,
+    resetBindings,
+    exportBindings,
+    importBindings,
+    saveBindings,
+    loadBindings,
     reset,
   });
 }
