@@ -93,6 +93,8 @@ export {
   formatRedDotBadge,
   createRedDotSystem,
   createPanelStack,
+  applyAriaToElement,
+  computeFlexLayout,
   createVirtualList,
   createI18n,
   computeStaggerProgress,
@@ -102,6 +104,8 @@ export {
   UI_UX_CUES,
   createUiDirector,
 } from './ui/index.js';
+export { createNetworkStateSync } from './lockstep/state-sync.js';
+import { createNetworkStateSync } from './lockstep/state-sync.js';
 export {
   VFX_EASING,
   VFX_RENDER_ORDERS,
@@ -209,6 +213,8 @@ import {
   formatRedDotBadge,
   createRedDotSystem,
   createPanelStack,
+  applyAriaToElement,
+  computeFlexLayout,
   createVirtualList,
   createI18n,
   computeStaggerProgress,
@@ -321,6 +327,8 @@ export const HGame = Object.freeze({
   formatRedDotBadge,
   createRedDotSystem,
   createPanelStack,
+  applyAriaToElement,
+  computeFlexLayout,
   createVirtualList,
   createI18n,
   computeStaggerProgress,
@@ -417,4 +425,5 @@ export const HGame = Object.freeze({
   renderGameDesignDocs,
   createAssetCatalog,
   createStreamingResidencyPolicy,
+  createNetworkStateSync,
 });

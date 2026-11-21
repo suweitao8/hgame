@@ -59,6 +59,8 @@
  * @property {number} [openLowPassHz=22000] Low-pass cutoff when unoccluded, Hz.
  * @property {((voice: AudioVoice) => void) | null} [onEnded=null]
  * @property {() => number} [random=Math.random] RNG returning 0..1 (for deterministic jitter).
+ * @property {{ vx?: number, vy?: number, vz?: number, x?: number, y?: number, z?: number } | null} [velocity=null]
+ * @property {number} [speedOfSound=343]
  */
 /**
  * @typedef {object} AudioVoice Handle to a playing sound.
@@ -147,7 +149,7 @@
  * @property {number} transitionSeconds
  */
 /**
- * @typedef {Partial<AudioListenerState>} AudioListenerUpdate
+ * @typedef {Partial<AudioListenerState> & { vx?: number, vy?: number, vz?: number }} AudioListenerUpdate
  */
 /**
  * @typedef {{ matrixWorld?: { elements: ArrayLike<number> }, x?: number, y?: number, z?: number, offsetX?: number, offsetY?: number }} AudioListenerCamera
@@ -180,7 +182,12 @@
  * @property {(options?: { transitionSeconds?: number }) => boolean} clearSnapshot
  * @property {(probe: OcclusionProbe | null | undefined) => void} setOcclusionProbe
  * @property {() => void} updateOcclusion Refresh occlusion of all active voices.
- * @property {(next?: AudioListenerUpdate) => AudioListenerState} setListener
+ * @property {((next?: AudioListenerUpdate) => AudioListenerState)} setListener
+ * @property {(vel?: { vx?: number, vy?: number, vz?: number, x?: number, y?: number, z?: number }) => { vx: number, vy: number, vz: number }} setListenerVelocity
+ * @property {(opts: { id: string, position?: AudioPosition3D | AudioPosition2D, radius?: number, decaySeconds?: number, wetGain?: number }) => { id: string, radius: number, decaySeconds: number, wetGain: number, currentWet: number }} createReverbZone
+ * @property {(id: string) => boolean} removeReverbZone
+ * @property {(pos?: AudioPosition3D | AudioPosition2D) => { activeZones: number, maxWetGain: number }} updateReverbZones
+ * @property {(url: string, opts?: { bus?: string, loop?: boolean, volume?: number, autoplay?: boolean }) => { url: string, bus: string, loop: boolean, readonly playing: boolean, readonly volume: number, play: () => Promise<void>, pause: () => void, setVolume: (v: number) => number, stop: () => void }} playStream
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
  */
@@ -376,6 +383,15 @@ export type AudioPlayOptions = {
      * RNG returning 0..1 (for deterministic jitter).
      */
     random?: (() => number) | undefined;
+    velocity?: {
+        vx?: number;
+        vy?: number;
+        vz?: number;
+        x?: number;
+        y?: number;
+        z?: number;
+    } | null | undefined;
+    speedOfSound?: number | undefined;
 };
 /**
  * Handle to a playing sound.
@@ -548,7 +564,11 @@ export type AudioSnapshot = {
     defaultLowPassHz: number | null;
     transitionSeconds: number;
 };
-export type AudioListenerUpdate = Partial<AudioListenerState>;
+export type AudioListenerUpdate = Partial<AudioListenerState> & {
+    vx?: number;
+    vy?: number;
+    vz?: number;
+};
 /**
  * A Three.js-style camera (`matrixWorld`) or a 2D camera (`x`, `y`, optional offsets in pixels).
  */
@@ -637,7 +657,53 @@ export type AudioManager = {
      * Refresh occlusion of all active voices.
      */
     updateOcclusion: () => void;
-    setListener: (next?: AudioListenerUpdate) => AudioListenerState;
+    setListener: ((next?: AudioListenerUpdate) => AudioListenerState);
+    setListenerVelocity: (vel?: {
+        vx?: number;
+        vy?: number;
+        vz?: number;
+        x?: number;
+        y?: number;
+        z?: number;
+    }) => {
+        vx: number;
+        vy: number;
+        vz: number;
+    };
+    createReverbZone: (opts: {
+        id: string;
+        position?: AudioPosition3D | AudioPosition2D;
+        radius?: number;
+        decaySeconds?: number;
+        wetGain?: number;
+    }) => {
+        id: string;
+        radius: number;
+        decaySeconds: number;
+        wetGain: number;
+        currentWet: number;
+    };
+    removeReverbZone: (id: string) => boolean;
+    updateReverbZones: (pos?: AudioPosition3D | AudioPosition2D) => {
+        activeZones: number;
+        maxWetGain: number;
+    };
+    playStream: (url: string, opts?: {
+        bus?: string;
+        loop?: boolean;
+        volume?: number;
+        autoplay?: boolean;
+    }) => {
+        url: string;
+        bus: string;
+        loop: boolean;
+        readonly playing: boolean;
+        readonly volume: number;
+        play: () => Promise<void>;
+        pause: () => void;
+        setVolume: (v: number) => number;
+        stop: () => void;
+    };
     updateListenerFromCamera: (camera: AudioListenerCamera | null | undefined) => AudioListenerState;
     /**
      * Stop everything and close the context.

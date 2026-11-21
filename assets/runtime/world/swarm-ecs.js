@@ -1205,6 +1205,7 @@ function stepSwarmSequential(
  * @property {number} [originY=-128] World Y/Z minimum corner.
  * @property {boolean} [useFlowField=true] When false, units steer directly toward `(heroX, heroY)`.
  * @property {number} [flashDuration=0.08] Hit-flash decay duration in seconds.
+ * @property {{ mode?: string, submit: Function, flushTick: Function, getStats?: Function } | null} [workerRunner=null] Optional simulation worker runner for async step offloading.
  */
 
 /**
@@ -1314,6 +1315,7 @@ function stepSwarmSequential(
  * @property {() => void} clear
  * @property {(options?: SwarmCircleDamageOptions) => number} applyCircleDamage Number of hit events accepted into the bounded combat queue.
  * @property {(dt: number, options?: SwarmStepOptions) => SwarmStepStats} step
+ * @property {(dt: number, options?: SwarmStepOptions) => Promise<SwarmStepStats & { workerMode: string, committedJobs: number }>} stepAsync
  * @property {(crowd2d: import('../integrations/canvas2d.js').SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number} syncToSpriteCrowd2D
  */
 
@@ -1344,6 +1346,7 @@ export function createSwarmSimulation({
   originY = -128,
   useFlowField = true,
   flashDuration = 0.08,
+  workerRunner = null,
 } = {}) {
   if (!Number.isInteger(capacity) || capacity < 1 || capacity > 262144) {
     throw new RangeError('createSwarmSimulation capacity must be an integer in 1..262144');
@@ -1964,6 +1967,33 @@ export function createSwarmSimulation({
     return synced;
   }
 
+  let asyncTick = 0;
+  let lastFlowJobId = null;
+
+  async function stepAsync(dt = 0, options = {}) {
+    const stepResult = step(dt, options);
+    let committedJobs = 0;
+    if (workerRunner && typeof workerRunner.submit === 'function' && typeof workerRunner.flushTick === 'function') {
+      asyncTick++;
+      const heroX = Number(options?.heroX) || 0;
+      const heroY = Number(options?.heroY) || 0;
+      // Stage a deterministic spatial/crowd offload packet and commit in exact submitTick order.
+      lastFlowJobId = workerRunner.submit(
+        'batch-eval',
+        { tick: asyncTick, activeCount, heroX, heroY, items: [heroX, heroY, activeCount] },
+        { priority: 1 },
+      );
+      const committed = workerRunner.flushTick(asyncTick);
+      committedJobs = Array.isArray(committed) ? committed.length : 0;
+    }
+    return {
+      ...stepResult,
+      workerMode: workerRunner?.mode ?? 'sync',
+      committedJobs,
+      lastJobId: lastFlowJobId,
+    };
+  }
+
   const api = {
     capacity,
     get count() { return activeCount; },
@@ -2006,6 +2036,7 @@ export function createSwarmSimulation({
     clear,
     applyCircleDamage,
     step,
+    stepAsync,
     syncToSpriteCrowd2D,
   };
   return api;

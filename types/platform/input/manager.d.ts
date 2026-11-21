@@ -3,6 +3,7 @@
  * @property {EventTarget | null} [target] Event source (default `globalThis.window`).
  * @property {boolean} [focused=true] Initial focus state; unfocused managers ignore input.
  * @property {Iterable<string>} [preventDefaultKeys=[]] `KeyboardEvent.code` values whose default action is prevented.
+ * @property {Record<string, string | string[]>} [defaultBindings] Default action -> key codes map for rebinding & persistence.
  */
 /**
  * @typedef {object} PointerState Primary pointer snapshot (client coordinates in pixels).
@@ -46,6 +47,15 @@
  * @property {(code: string) => boolean} isDown Key currently held (`KeyboardEvent.code`).
  * @property {(code: string) => boolean} wasPressed Key went down since the last `endFrame`.
  * @property {(code: string) => boolean} wasReleased Key went up since the last `endFrame`.
+ * @property {(action: string, codes: string | Iterable<string>) => string[]} setBinding Bind an action name to one or more key codes.
+ * @property {(action: string) => string[]} getBinding
+ * @property {() => void} resetBindings Restore initial default bindings.
+ * @property {() => Record<string, string[]>} exportBindings Serialize current bindings for storage.
+ * @property {(data: string | Record<string, string | string[]>) => Record<string, string[]>} importBindings
+ * @property {(action: string) => boolean} isActionDown
+ * @property {(action: string) => boolean} wasActionPressed
+ * @property {(action: string) => boolean} wasActionReleased
+ * @property {(gamepadIndex?: number, options?: { durationMs?: number, weakMagnitude?: number, strongMagnitude?: number, navigatorObj?: object }) => Promise<boolean>} triggerGamepadRumble
  * @property {(button?: number) => boolean} isPointerDown Default button 0 (any touch/pen counts as 0).
  * @property {(button?: number) => boolean} wasPointerPressed
  * @property {(button?: number) => boolean} wasPointerReleased
@@ -61,7 +71,7 @@
  * @param {InputManagerOptions} [options]
  * @returns {InputManager}
  */
-export function createInputManager({ target, focused, preventDefaultKeys, }?: InputManagerOptions | undefined): InputManager;
+export function createInputManager({ target, focused, preventDefaultKeys, defaultBindings, }?: InputManagerOptions | undefined): InputManager;
 export type InputManagerOptions = {
     /**
      * Event source (default `globalThis.window`).
@@ -75,6 +85,10 @@ export type InputManagerOptions = {
      * `KeyboardEvent.code` values whose default action is prevented.
      */
     preventDefaultKeys?: Iterable<string> | undefined;
+    /**
+     * Default action -> key codes map for rebinding & persistence.
+     */
+    defaultBindings?: Record<string, string | string[]> | undefined;
 };
 /**
  * Primary pointer snapshot (client coordinates in pixels).
@@ -199,6 +213,29 @@ export type InputManager = {
      * Key went up since the last `endFrame`.
      */
     wasReleased: (code: string) => boolean;
+    /**
+     * Bind an action name to one or more key codes.
+     */
+    setBinding: (action: string, codes: string | Iterable<string>) => string[];
+    getBinding: (action: string) => string[];
+    /**
+     * Restore initial default bindings.
+     */
+    resetBindings: () => void;
+    /**
+     * Serialize current bindings for storage.
+     */
+    exportBindings: () => Record<string, string[]>;
+    importBindings: (data: string | Record<string, string | string[]>) => Record<string, string[]>;
+    isActionDown: (action: string) => boolean;
+    wasActionPressed: (action: string) => boolean;
+    wasActionReleased: (action: string) => boolean;
+    triggerGamepadRumble: (gamepadIndex?: number, options?: {
+        durationMs?: number;
+        weakMagnitude?: number;
+        strongMagnitude?: number;
+        navigatorObj?: object;
+    }) => Promise<boolean>;
     /**
      * Default button 0 (any touch/pen counts as 0).
      */

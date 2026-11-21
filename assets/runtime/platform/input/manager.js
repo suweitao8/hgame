@@ -20,6 +20,7 @@ function pointerButtonMask(button) {
  * @property {EventTarget | null} [target] Event source (default `globalThis.window`).
  * @property {boolean} [focused=true] Initial focus state; unfocused managers ignore input.
  * @property {Iterable<string>} [preventDefaultKeys=[]] `KeyboardEvent.code` values whose default action is prevented.
+ * @property {Record<string, string | string[]>} [defaultBindings] Default action -> key codes map for rebinding & persistence.
  */
 
 /**
@@ -67,6 +68,15 @@ function pointerButtonMask(button) {
  * @property {(code: string) => boolean} isDown Key currently held (`KeyboardEvent.code`).
  * @property {(code: string) => boolean} wasPressed Key went down since the last `endFrame`.
  * @property {(code: string) => boolean} wasReleased Key went up since the last `endFrame`.
+ * @property {(action: string, codes: string | Iterable<string>) => string[]} setBinding Bind an action name to one or more key codes.
+ * @property {(action: string) => string[]} getBinding
+ * @property {() => void} resetBindings Restore initial default bindings.
+ * @property {() => Record<string, string[]>} exportBindings Serialize current bindings for storage.
+ * @property {(data: string | Record<string, string | string[]>) => Record<string, string[]>} importBindings
+ * @property {(action: string) => boolean} isActionDown
+ * @property {(action: string) => boolean} wasActionPressed
+ * @property {(action: string) => boolean} wasActionReleased
+ * @property {(gamepadIndex?: number, options?: { durationMs?: number, weakMagnitude?: number, strongMagnitude?: number, navigatorObj?: object }) => Promise<boolean>} triggerGamepadRumble
  * @property {(button?: number) => boolean} isPointerDown Default button 0 (any touch/pen counts as 0).
  * @property {(button?: number) => boolean} wasPointerPressed
  * @property {(button?: number) => boolean} wasPointerReleased
@@ -87,6 +97,7 @@ export function createInputManager({
   target = globalThis.window,
   focused = true,
   preventDefaultKeys = [],
+  defaultBindings = {},
 } = {}) {
   /** @type {import('../events.js').Emitter<InputEvents>} */
   const events = createEmitter();
@@ -94,6 +105,24 @@ export function createInputManager({
   const pressed = new Set();
   const released = new Set();
   const prevented = new Set(preventDefaultKeys);
+  const initialBindings = new Map();
+  const bindings = new Map();
+  function normalizeCodes(codes) {
+    if (typeof codes === 'string') return codes ? [codes] : [];
+    if (!codes || typeof codes[Symbol.iterator] !== 'function') return [];
+    const seen = new Set();
+    for (const c of codes) {
+      if (typeof c === 'string' && c) seen.add(c);
+    }
+    return [...seen];
+  }
+  if (defaultBindings && typeof defaultBindings === 'object') {
+    for (const [action, codes] of Object.entries(defaultBindings)) {
+      const list = normalizeCodes(codes);
+      initialBindings.set(action, list);
+      bindings.set(action, list.slice());
+    }
+  }
   /** @type {Map<number | 'mouse', TrackedPointer>} */
   const activePointers = new Map();
   /** @type {Set<number>} */
@@ -281,6 +310,67 @@ export function createInputManager({
     isDown: code => down.has(code),
     wasPressed: code => pressed.has(code),
     wasReleased: code => released.has(code),
+    setBinding(action, codes) {
+      if (typeof action !== 'string' || !action) throw new TypeError('Action name must be a non-empty string');
+      const list = normalizeCodes(codes);
+      bindings.set(action, list);
+      return list.slice();
+    },
+    getBinding(action) {
+      return (bindings.get(action) ?? []).slice();
+    },
+    resetBindings() {
+      bindings.clear();
+      for (const [action, list] of initialBindings) {
+        bindings.set(action, list.slice());
+      }
+    },
+    exportBindings() {
+      /** @type {Record<string, string[]>} */
+      const out = {};
+      for (const [action, list] of bindings) out[action] = list.slice();
+      return out;
+    },
+    importBindings(data) {
+      const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+      if (!parsed || typeof parsed !== 'object') throw new TypeError('importBindings requires an object or JSON string');
+      for (const [action, codes] of Object.entries(parsed)) {
+        if (typeof action === 'string' && action) bindings.set(action, normalizeCodes(codes));
+      }
+      const out = {};
+      for (const [action, list] of bindings) out[action] = list.slice();
+      return out;
+    },
+    isActionDown: action => (bindings.get(action) ?? []).some(code => down.has(code)),
+    wasActionPressed: action => (bindings.get(action) ?? []).some(code => pressed.has(code)),
+    wasActionReleased: action => (bindings.get(action) ?? []).some(code => released.has(code)),
+    async triggerGamepadRumble(gamepadIndex = 0, {
+      durationMs = 150,
+      weakMagnitude = 0.5,
+      strongMagnitude = 0.5,
+      navigatorObj = globalThis.navigator,
+    } = {}) {
+      const pads = typeof navigatorObj?.getGamepads === 'function' ? navigatorObj.getGamepads() : null;
+      const gp = pads ? pads[gamepadIndex] : null;
+      const duration = Math.max(0, Math.min(5000, Number(durationMs) || 0));
+      const weak = Math.max(0, Math.min(1, Number(weakMagnitude) || 0));
+      const strong = Math.max(0, Math.min(1, Number(strongMagnitude) || 0));
+      if (gp?.vibrationActuator && typeof gp.vibrationActuator.playEffect === 'function') {
+        await gp.vibrationActuator.playEffect('dual-rumble', {
+          startDelay: 0,
+          duration,
+          weakMagnitude: weak,
+          strongMagnitude: strong,
+        });
+        return true;
+      }
+      const pulse = gp?.hapticActuators?.[0]?.pulse;
+      if (typeof pulse === 'function') {
+        await pulse.call(gp.hapticActuators[0], Math.max(weak, strong), duration);
+        return true;
+      }
+      return false;
+    },
     isPointerDown,
     wasPointerPressed: (button = 0) => pointerPressedButtons.has(button),
     wasPointerReleased: (button = 0) => pointerReleasedButtons.has(button),

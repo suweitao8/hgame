@@ -31,6 +31,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {number} [originY=-128] World Y/Z minimum corner.
  * @property {boolean} [useFlowField=true] When false, units steer directly toward `(heroX, heroY)`.
  * @property {number} [flashDuration=0.08] Hit-flash decay duration in seconds.
+ * @property {{ mode?: string, submit: Function, flushTick: Function, getStats?: Function } | null} [workerRunner=null] Optional simulation worker runner for async step offloading.
  */
 /**
  * @typedef {object} SwarmSpawnOptions
@@ -133,6 +134,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {() => void} clear
  * @property {(options?: SwarmCircleDamageOptions) => number} applyCircleDamage Number of hit events accepted into the bounded combat queue.
  * @property {(dt: number, options?: SwarmStepOptions) => SwarmStepStats} step
+ * @property {(dt: number, options?: SwarmStepOptions) => Promise<SwarmStepStats & { workerMode: string, committedJobs: number }>} stepAsync
  * @property {(crowd2d: import('../integrations/canvas2d.js').SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number} syncToSpriteCrowd2D
  */
 /**
@@ -142,7 +144,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @param {SwarmSimulationOptions} [options]
  * @returns {SwarmSimulation}
  */
-export function createSwarmSimulation({ capacity, promoteRadius, demoteRadius, separationRadius, separationStrength, nearSeparationRadius, midSeparationRadius, maxNeighbors, flowInterval, ecsSlots, maxHitEvents, maxPatchesPerStep, gridCols, gridRows, cellSize, originX, originY, useFlowField, flashDuration, }?: SwarmSimulationOptions | undefined): SwarmSimulation;
+export function createSwarmSimulation({ capacity, promoteRadius, demoteRadius, separationRadius, separationStrength, nearSeparationRadius, midSeparationRadius, maxNeighbors, flowInterval, ecsSlots, maxHitEvents, maxPatchesPerStep, gridCols, gridRows, cellSize, originX, originY, useFlowField, flashDuration, workerRunner, }?: SwarmSimulationOptions | undefined): SwarmSimulation;
 /** Bit flags stored in `swarm.unitFlags[id]`. */
 export const SWARM_UNIT_FLAGS: Readonly<{
     NONE: 0;
@@ -521,6 +523,15 @@ export type SwarmSimulationOptions = {
      * Hit-flash decay duration in seconds.
      */
     flashDuration?: number | undefined;
+    /**
+     * Optional simulation worker runner for async step offloading.
+     */
+    workerRunner?: {
+        mode?: string;
+        submit: Function;
+        flushTick: Function;
+        getStats?: Function;
+    } | null | undefined;
 };
 export type SwarmSpawnOptions = {
     x?: number | undefined;
@@ -742,6 +753,10 @@ export type SwarmSimulation = {
      */
     applyCircleDamage: (options?: SwarmCircleDamageOptions) => number;
     step: (dt: number, options?: SwarmStepOptions) => SwarmStepStats;
+    stepAsync: (dt: number, options?: SwarmStepOptions) => Promise<SwarmStepStats & {
+        workerMode: string;
+        committedJobs: number;
+    }>;
     syncToSpriteCrowd2D: (crowd2d: import("../integrations/canvas2d.js").SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number;
 };
 export type FlatSpatialHashOptions = {

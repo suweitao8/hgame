@@ -98,6 +98,8 @@ export {
  * @property {number} [openLowPassHz=22000] Low-pass cutoff when unoccluded, Hz.
  * @property {((voice: AudioVoice) => void) | null} [onEnded=null]
  * @property {() => number} [random=Math.random] RNG returning 0..1 (for deterministic jitter).
+ * @property {{ vx?: number, vy?: number, vz?: number, x?: number, y?: number, z?: number } | null} [velocity=null]
+ * @property {number} [speedOfSound=343]
  */
 
 /**
@@ -195,7 +197,7 @@ export {
  */
 
 /**
- * @typedef {Partial<AudioListenerState>} AudioListenerUpdate
+ * @typedef {Partial<AudioListenerState> & { vx?: number, vy?: number, vz?: number }} AudioListenerUpdate
  */
 
 /**
@@ -230,7 +232,12 @@ export {
  * @property {(options?: { transitionSeconds?: number }) => boolean} clearSnapshot
  * @property {(probe: OcclusionProbe | null | undefined) => void} setOcclusionProbe
  * @property {() => void} updateOcclusion Refresh occlusion of all active voices.
- * @property {(next?: AudioListenerUpdate) => AudioListenerState} setListener
+ * @property {((next?: AudioListenerUpdate) => AudioListenerState)} setListener
+ * @property {(vel?: { vx?: number, vy?: number, vz?: number, x?: number, y?: number, z?: number }) => { vx: number, vy: number, vz: number }} setListenerVelocity
+ * @property {(opts: { id: string, position?: AudioPosition3D | AudioPosition2D, radius?: number, decaySeconds?: number, wetGain?: number }) => { id: string, radius: number, decaySeconds: number, wetGain: number, currentWet: number }} createReverbZone
+ * @property {(id: string) => boolean} removeReverbZone
+ * @property {(pos?: AudioPosition3D | AudioPosition2D) => { activeZones: number, maxWetGain: number }} updateReverbZones
+ * @property {(url: string, opts?: { bus?: string, loop?: boolean, volume?: number, autoplay?: boolean }) => { url: string, bus: string, loop: boolean, readonly playing: boolean, readonly volume: number, play: () => Promise<void>, pause: () => void, setVolume: (v: number) => number, stop: () => void }} playStream
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
  */
@@ -277,10 +284,15 @@ export function createAudioManager({
 
   const bufferAnalysisCache = new WeakMap();
   const cues = new Map();
+  const reverbZones = new Map();
+  const activeStreams = new Set();
   const listenerState = {
     x: 0,
     y: 0,
     z: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
     forwardX: 0,
     forwardY: 0,
     forwardZ: -1,
@@ -288,6 +300,29 @@ export function createAudioManager({
     upY: 1,
     upZ: 0,
   };
+
+  function computeDopplerRate(sourcePos, sourceVel, lPos, lVel, speedOfSound = 343) {
+    if (!sourcePos || !sourceVel) return 1;
+    const sx = Number(Array.isArray(sourcePos) ? sourcePos[0] : sourcePos.x) || 0;
+    const sy = Number(Array.isArray(sourcePos) ? sourcePos[1] : sourcePos.y) || 0;
+    const sz = Number(Array.isArray(sourcePos) ? sourcePos[2] : sourcePos.z) || 0;
+    const dx = sx - lPos.x;
+    const dy = sy - lPos.y;
+    const dz = sz - lPos.z;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist < 1e-5) return 1;
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const nz = dz / dist;
+    const svx = Number(sourceVel.vx ?? sourceVel.x ?? 0) || 0;
+    const svy = Number(sourceVel.vy ?? sourceVel.y ?? 0) || 0;
+    const svz = Number(sourceVel.vz ?? sourceVel.z ?? 0) || 0;
+    // Direction is listener -> source: positive v_source moves away, negative moves toward
+    const vSourceAway = svx * nx + svy * ny + svz * nz;
+    const vListenerToward = (lVel.vx || 0) * nx + (lVel.vy || 0) * ny + (lVel.vz || 0) * nz;
+    const c = Math.max(20, Number(speedOfSound) || 343);
+    return clamp((c + vListenerToward) / Math.max(1, c + vSourceAway), 0.5, 2.0);
+  }
 
   function getCachedAnalysis(buffer) {
     if (!buffer || typeof buffer !== 'object') return analyzeAudioBuffer(buffer);
@@ -338,6 +373,9 @@ export function createAudioManager({
     if (Number.isFinite(next.x)) listenerState.x = next.x;
     if (Number.isFinite(next.y)) listenerState.y = next.y;
     if (Number.isFinite(next.z)) listenerState.z = next.z;
+    if (Number.isFinite(next.vx)) listenerState.vx = next.vx;
+    if (Number.isFinite(next.vy)) listenerState.vy = next.vy;
+    if (Number.isFinite(next.vz)) listenerState.vz = next.vz;
     const hasForward = Number.isFinite(next.forwardX) || Number.isFinite(next.forwardY) || Number.isFinite(next.forwardZ);
     if (hasForward) {
       const [fx, fy, fz] = normalizeVec3(
@@ -364,7 +402,21 @@ export function createAudioManager({
     }
     if (ctx.context?.listener) applyListenerOrientation(ctx.context.listener, listenerState);
     if (ctx.occlusionProbe) updateOcclusion();
+    if (reverbZones.size > 0) updateReverbZones(listenerState);
     return { ...listenerState };
+  }
+
+  function setListenerVelocity(vel = {}) {
+    if (Array.isArray(vel)) {
+      if (Number.isFinite(vel[0])) listenerState.vx = vel[0];
+      if (Number.isFinite(vel[1])) listenerState.vy = vel[1];
+      if (Number.isFinite(vel[2])) listenerState.vz = vel[2];
+    } else if (vel && typeof vel === 'object') {
+      if (Number.isFinite(vel.vx ?? vel.x)) listenerState.vx = Number(vel.vx ?? vel.x);
+      if (Number.isFinite(vel.vy ?? vel.y)) listenerState.vy = Number(vel.vy ?? vel.y);
+      if (Number.isFinite(vel.vz ?? vel.z)) listenerState.vz = Number(vel.vz ?? vel.z);
+    }
+    return { vx: listenerState.vx, vy: listenerState.vy, vz: listenerState.vz };
   }
 
   function updateListenerFromCamera(camera) {
@@ -404,7 +456,184 @@ export function createAudioManager({
     return audioContext.decodeAudioData(arrayBuffer.slice(0));
   }
 
-  const play = (buffer, options) => playAudioBuffer(ctx, buffer, options);
+  const play = (buffer, options = {}) => {
+    const pos = options.position ?? options.position2D ?? null;
+    const doppler = (pos && options.velocity)
+      ? computeDopplerRate(pos, options.velocity, listenerState, listenerState, options.speedOfSound)
+      : 1;
+    const effectiveRate = clamp((Number(options.playbackRate) || 1) * doppler, 0.05, 4);
+    return playAudioBuffer(ctx, buffer, doppler !== 1 ? { ...options, playbackRate: effectiveRate } : options);
+  };
+
+  function buildImpulseResponse(audioCtx, decaySeconds) {
+    if (!audioCtx || typeof audioCtx.createBuffer !== 'function') return null;
+    const sr = audioCtx.sampleRate || 48000;
+    const length = Math.max(1, Math.floor(sr * Math.max(0.05, decaySeconds)));
+    const ir = audioCtx.createBuffer(2, length, sr);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = ir.getChannelData(ch);
+      for (let i = 0; i < length; i++) {
+        const t = i / length;
+        const env = Math.pow(1 - t, Math.max(0.5, decaySeconds * 1.4));
+        // Deterministic pseudo-noise scaled by exponential decay
+        const noise = Math.sin(i * 12.9898 + ch * 78.233) * 43758.5453;
+        data[i] = ((noise - Math.floor(noise)) * 2 - 1) * env * 0.5;
+      }
+    }
+    return ir;
+  }
+
+  function createReverbZone({
+    id,
+    position = { x: 0, y: 0, z: 0 },
+    radius = 20,
+    decaySeconds = 1.6,
+    wetGain = 0.35,
+  } = {}) {
+    if (typeof id !== 'string' || !id.trim()) throw new TypeError('Reverb zone requires a non-empty id');
+    const zoneRadius = Math.max(0.1, Number(radius) || 20);
+    const decay = clamp(Number(decaySeconds) || 1.6, 0.05, 10);
+    const maxWet = clamp(Number(wetGain) || 0.35, 0, 1);
+    const px = Number(Array.isArray(position) ? position[0] : position?.x) || 0;
+    const py = Number(Array.isArray(position) ? position[1] : position?.y) || 0;
+    const pz = Number(Array.isArray(position) ? position[2] : position?.z) || 0;
+
+    if (reverbZones.has(id)) removeReverbZone(id);
+    let convolver = null;
+    let wetNode = null;
+    const audioCtx = ctx.context;
+    const dest = (ctx.getBusNode ? ctx.getBusNode('spatial') : null) ?? ctx.master;
+    if (audioCtx && typeof audioCtx.createConvolver === 'function' && typeof audioCtx.createGain === 'function' && dest) {
+      convolver = audioCtx.createConvolver();
+      convolver.buffer = buildImpulseResponse(audioCtx, decay);
+      wetNode = audioCtx.createGain();
+      wetNode.gain.value = 0;
+      convolver.connect(wetNode);
+      wetNode.connect(dest);
+    }
+
+    const zone = {
+      id,
+      x: px,
+      y: py,
+      z: pz,
+      radius: zoneRadius,
+      decaySeconds: decay,
+      wetGain: maxWet,
+      currentWet: 0,
+      convolver,
+      wetNode,
+    };
+    reverbZones.set(id, zone);
+    updateReverbZones(listenerState);
+    return {
+      get id() { return zone.id; },
+      get radius() { return zone.radius; },
+      get decaySeconds() { return zone.decaySeconds; },
+      get wetGain() { return zone.wetGain; },
+      get currentWet() { return zone.currentWet; },
+    };
+  }
+
+  function removeReverbZone(id) {
+    const zone = reverbZones.get(id);
+    if (!zone) return false;
+    try { zone.wetNode?.disconnect?.(); } catch {}
+    try { zone.convolver?.disconnect?.(); } catch {}
+    reverbZones.delete(id);
+    return true;
+  }
+
+  function updateReverbZones(pos = listenerState) {
+    const lx = Number(Array.isArray(pos) ? pos[0] : pos?.x) || 0;
+    const ly = Number(Array.isArray(pos) ? pos[1] : pos?.y) || 0;
+    const lz = Number(Array.isArray(pos) ? pos[2] : pos?.z) || 0;
+    let activeZones = 0;
+    let maxWetGain = 0;
+    for (const zone of reverbZones.values()) {
+      const dist = Math.hypot(zone.x - lx, zone.y - ly, zone.z - lz);
+      const t = dist < zone.radius ? clamp(1 - dist / zone.radius, 0, 1) : 0;
+      const wet = t > 0 ? zone.wetGain * Math.pow(t, 1.5) : 0;
+      zone.currentWet = wet;
+      if (wet > 0) activeZones++;
+      if (wet > maxWetGain) maxWetGain = wet;
+      if (zone.wetNode?.gain) zone.wetNode.gain.value = wet;
+    }
+    return { activeZones, maxWetGain };
+  }
+
+  function playStream(url, { bus = 'music', loop = true, volume: streamVolume = 1, autoplay = true } = {}) {
+    if (typeof url !== 'string' || !url.trim()) throw new TypeError('playStream requires a valid url string');
+    let vol = clamp(Number(streamVolume) || 0, 0, 1.5);
+    let playing = false;
+    let disposed = false;
+    let audioEl = null;
+    let sourceNode = null;
+    let gainNode = null;
+
+    if (typeof globalThis.Audio === 'function') {
+      try {
+        audioEl = new globalThis.Audio(url);
+        audioEl.loop = Boolean(loop);
+        audioEl.crossOrigin = 'anonymous';
+        if (!ctx.context) void buses.unlock().catch(() => {});
+        const c = ctx.context;
+        const dest = (ctx.getBusNode ? ctx.getBusNode(bus) : null) ?? ctx.master;
+        if (c && typeof c.createMediaElementSource === 'function' && dest) {
+          sourceNode = c.createMediaElementSource(audioEl);
+          gainNode = c.createGain();
+          gainNode.gain.value = ctx.muted ? 0 : vol;
+          sourceNode.connect(gainNode);
+          gainNode.connect(dest);
+        } else {
+          audioEl.volume = ctx.muted ? 0 : clamp(vol, 0, 1);
+        }
+      } catch {
+        audioEl = null;
+      }
+    }
+
+    const handle = {
+      url,
+      bus,
+      loop: Boolean(loop),
+      get playing() { return playing && !disposed; },
+      get volume() { return vol; },
+      async play() {
+        if (disposed) return;
+        playing = true;
+        if (audioEl && typeof audioEl.play === 'function') {
+          try { await audioEl.play(); } catch {}
+        }
+      },
+      pause() {
+        if (disposed) return;
+        playing = false;
+        audioEl?.pause?.();
+      },
+      setVolume(nextVol) {
+        vol = clamp(Number(nextVol) || 0, 0, 1.5);
+        if (gainNode?.gain) gainNode.gain.value = ctx.muted ? 0 : vol;
+        else if (audioEl) audioEl.volume = ctx.muted ? 0 : clamp(vol, 0, 1);
+        return vol;
+      },
+      stop() {
+        if (disposed) return;
+        disposed = true;
+        playing = false;
+        activeStreams.delete(handle);
+        if (audioEl) {
+          try { audioEl.pause?.(); } catch {}
+          try { audioEl.src = ''; } catch {}
+        }
+        try { sourceNode?.disconnect?.(); } catch {}
+        try { gainNode?.disconnect?.(); } catch {}
+      },
+    };
+    activeStreams.add(handle);
+    if (autoplay) void handle.play();
+    return handle;
+  }
 
   function inspectCue(name) {
     const entry = cues.get(name);
@@ -533,6 +762,7 @@ export function createAudioManager({
       rolloffFactor: overrides.rolloffFactor ?? entry.rolloffFactor,
       panRange: overrides.panRange ?? entry.panRange,
       trimSilence: overrides.trimSilence ?? entry.trimSilence,
+      velocity: overrides.velocity ?? null,
       offset: v.analyzable && entry.trimSilence ? v.trimStart : null,
       duration: needsTrimmedDuration ? v.playDuration : null,
       tailFadeSec: v.tailFadeSec,
@@ -618,6 +848,9 @@ export function createAudioManager({
   function dispose() {
     for (const bgm of bgmInstances) bgm.dispose();
     bgmInstances.clear();
+    for (const stream of [...activeStreams]) stream.stop();
+    activeStreams.clear();
+    for (const id of [...reverbZones.keys()]) removeReverbZone(id);
     for (const source of [...ctx.activeSources]) source.stop();
     ctx.activeSources.clear();
     for (const cue of cues.values()) cue.activeHandles.clear();
@@ -659,6 +892,11 @@ export function createAudioManager({
     setOcclusionProbe,
     updateOcclusion,
     setListener,
+    setListenerVelocity,
+    createReverbZone,
+    removeReverbZone,
+    updateReverbZones,
+    playStream,
     updateListenerFromCamera,
     dispose,
   });

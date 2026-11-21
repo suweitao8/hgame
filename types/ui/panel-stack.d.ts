@@ -10,6 +10,7 @@
  * @property {boolean} [pinned=false] Survives clear() unless force=true.
  * @property {number} [transitionMs=160] Enter/exit transition duration in milliseconds.
  * @property {PanelMotion} [motion='pop'] Visual entrance motion style for DOM/3D binders.
+ * @property {string} [ariaLabel] Accessible label applied via `aria-label` when bound to DOM.
  * @property {(entry: PanelEntry) => void} [onEnter]
  * @property {(entry: PanelEntry) => void} [onExit]
  */
@@ -27,7 +28,19 @@
  * @property {number} easedAlpha Eased transition progress [0..1]
  * @property {number} transitionMs
  * @property {PanelMotion} motion
+ * @property {string | null} [ariaLabel]
  */
+/**
+ * Apply WAI-ARIA dialog/live-region attributes onto a DOM container safely.
+ * @param {HTMLElement | null | undefined} el
+ * @param {{ role?: string, modal?: boolean, label?: string | null, live?: 'off' | 'polite' | 'assertive' }} [opts]
+ */
+export function applyAriaToElement(el: HTMLElement | null | undefined, { role, modal, label, live }?: {
+    role?: string;
+    modal?: boolean;
+    label?: string | null;
+    live?: "off" | "polite" | "assertive";
+} | undefined): boolean;
 /**
  * @typedef {object} PanelStackOptions
  * @property {Record<string, PanelDefinition>} [panels] Initial panel definitions keyed by id.
@@ -91,6 +104,10 @@ export type PanelDefinition = {
      * Visual entrance motion style for DOM/3D binders.
      */
     motion?: PanelMotion | undefined;
+    /**
+     * Accessible label applied via `aria-label` when bound to DOM.
+     */
+    ariaLabel?: string | undefined;
     onEnter?: ((entry: PanelEntry) => void) | undefined;
     onExit?: ((entry: PanelEntry) => void) | undefined;
 };
@@ -113,6 +130,7 @@ export type PanelEntry = {
     easedAlpha: number;
     transitionMs: number;
     motion: PanelMotion;
+    ariaLabel?: string | null | undefined;
 };
 export type PanelStackOptions = {
     /**

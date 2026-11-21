@@ -11,6 +11,7 @@
  * @property {boolean} [pinned=false] Survives clear() unless force=true.
  * @property {number} [transitionMs=160] Enter/exit transition duration in milliseconds.
  * @property {PanelMotion} [motion='pop'] Visual entrance motion style for DOM/3D binders.
+ * @property {string} [ariaLabel] Accessible label applied via `aria-label` when bound to DOM.
  * @property {(entry: PanelEntry) => void} [onEnter]
  * @property {(entry: PanelEntry) => void} [onExit]
  */
@@ -29,7 +30,23 @@
  * @property {number} easedAlpha Eased transition progress [0..1]
  * @property {number} transitionMs
  * @property {PanelMotion} motion
+ * @property {string | null} [ariaLabel]
  */
+
+/**
+ * Apply WAI-ARIA dialog/live-region attributes onto a DOM container safely.
+ * @param {HTMLElement | null | undefined} el
+ * @param {{ role?: string, modal?: boolean, label?: string | null, live?: 'off' | 'polite' | 'assertive' }} [opts]
+ */
+export function applyAriaToElement(el, { role = 'dialog', modal = false, label = null, live = null } = {}) {
+  if (!el || typeof el.setAttribute !== 'function') return false;
+  if (role) el.setAttribute('role', role);
+  el.setAttribute('aria-modal', modal ? 'true' : 'false');
+  if (label) el.setAttribute('aria-label', String(label));
+  if (live) el.setAttribute('aria-live', live);
+  if (!el.hasAttribute?.('tabindex')) el.setAttribute('tabindex', '-1');
+  return true;
+}
 
 /**
  * @typedef {object} PanelStackOptions
@@ -69,6 +86,7 @@ export function createPanelStack(options = {}) {
       pinned: Boolean(def.pinned),
       transitionMs,
       motion,
+      ariaLabel: typeof def.ariaLabel === 'string' && def.ariaLabel.trim() ? def.ariaLabel.trim() : null,
       onEnter: typeof def.onEnter === 'function' ? def.onEnter : undefined,
       onExit: typeof def.onExit === 'function' ? def.onExit : undefined,
     };
@@ -298,6 +316,11 @@ export function createPanelStack(options = {}) {
         if (active && entry) {
           el.hidden = false;
           el.setAttribute('aria-hidden', 'false');
+          applyAriaToElement(el, {
+            role: 'dialog',
+            modal: entry.modal,
+            label: entry.ariaLabel ?? pid ?? 'dialog',
+          });
           el.setAttribute('data-panel-top', topEntry?.id === pid ? 'true' : 'false');
           el.setAttribute('data-panel-phase', entry.phase);
           el.setAttribute('data-panel-motion', entry.motion);

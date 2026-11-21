@@ -145,6 +145,7 @@ export function createWorldPartition(options = {}) {
     onCellError = null,
     probeManager = null,
     representationBudget = null,
+    workerRunner = null,
   } = options;
 
   if (!Number.isFinite(cellSize) || cellSize <= 0) {
@@ -505,8 +506,28 @@ export function createWorldPartition(options = {}) {
     return summary;
   }
 
+  let partitionWorkerTick = 0;
+
   function step(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0], dt = 0) {
     return stepInternal(viewerPos, viewerVel, null, dt);
+  }
+
+  function stepAsync(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0], dt = 0) {
+    const summary = stepInternal(viewerPos, viewerVel, null, dt);
+    let committedJobs = 0;
+    if (workerRunner && typeof workerRunner.submit === 'function' && typeof workerRunner.flushTick === 'function') {
+      partitionWorkerTick++;
+      const vx = Array.isArray(viewerPos) ? viewerPos[0] : viewerPos?.x ?? 0;
+      const vz = Array.isArray(viewerPos) ? (use2D ? viewerPos[1] : viewerPos[2] ?? viewerPos[1]) : (use2D ? viewerPos?.y : viewerPos?.z ?? viewerPos?.y) ?? 0;
+      workerRunner.submit('batch-eval', { tick: partitionWorkerTick, vx, vz, loaded: getLoadedCells().length }, { priority: 2 });
+      const committed = workerRunner.flushTick(partitionWorkerTick);
+      committedJobs = Array.isArray(committed) ? committed.length : 0;
+    }
+    return Promise.resolve({
+      ...summary,
+      workerMode: workerRunner?.mode ?? 'sync',
+      committedJobs,
+    });
   }
 
   function forceFlush(viewerPos = [0, 0, 0], viewerVel = [0, 0, 0], dt = 0) {
@@ -564,6 +585,7 @@ export function createWorldPartition(options = {}) {
     pinCell,
     unpinCell,
     step,
+    stepAsync,
     forceFlush,
     getCellState,
     getCellData,
