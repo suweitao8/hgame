@@ -120,6 +120,7 @@ The modular level renderer releases slot-owned cloned skeletons on level replace
 6. **Verification Commands**:
    - Task acceptance and completion audit: [AI Verification Loop](AI-VERIFICATION.md#task-acceptance)
    - Logic + types + API index + physics: `npm run check` (or `npm run check:all` when touching `network/`)
-   - Headless render PNG & state hook (`window.__hgameState`): `npm run snapshot -- <game-dir>`
+   - Anti-Bloat UI static check: `npm run check:ui -- --dir <game-dir>`
+   - Headless render PNG, UI footprint (`--check-ui`) & state hook (`window.__hgameState`): `npm run snapshot -- <game-dir> --check-ui`
    - Live input + FPS + pixel-change assertion: `npm run playtest -- <game-dir>`
    - Honesty: Never claim browser/device coverage unless Chromium/device checks actually executed.

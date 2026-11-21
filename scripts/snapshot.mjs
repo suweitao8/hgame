@@ -9,8 +9,9 @@
 //        [--threshold 0.01] [--query horde=3000] [--chrome <path>] [--ready "#game[data-engine-ready=true]"]
 //        [--visual-ready "#game:not([data-visual-loading])"]
 //        [--entry toy/<slug>/index.html]
+//        [--check-ui] [--max-hud-ratio 0.10] [--max-hud-buttons 1]
 //
-// Exit code 1 when: page errors, blank canvas, or baseline diff above threshold.
+// Exit code 1 when: page errors, blank canvas, baseline diff above threshold, or --check-ui fails.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
@@ -19,13 +20,14 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { writeSnapshotOutput } from './lib/snapshot-output.mjs';
+import { collectPageUiAudit, evaluateUiAudit } from './lib/snapshot-ui-audit.mjs';
 import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const argv = process.argv.slice(2);
 const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
 const flag = name => argv.includes(name);
-const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !['--update-baseline', '--freeze-time'].includes(argv[i - 1])));
+const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !['--update-baseline', '--freeze-time', '--check-ui'].includes(argv[i - 1])));
 if (!gameDir) { console.error('Usage: node scripts/snapshot.mjs <game-dir> [options] (see file header)'); process.exit(2); }
 
 const outPng = path.resolve(opt('--out', path.join(gameDir, 'build', 'snapshot.png')));
@@ -37,10 +39,11 @@ const entry = opt('--entry', '/');
 const query = opt('--query', '');
 const evalExpr = opt('--eval', '');
 const freeze = flag('--freeze-time') || argv.includes('--steps');
+const checkUi = flag('--check-ui');
 const stepsArg = opt('--steps', '');
 const stateHook = opt('--state-hook', '__hgameState');
 const FRAME_MS = 1000 / 60;
-let entryPath, waitMs, threshold, viewport, requestedSteps, keys;
+let entryPath, waitMs, threshold, viewport, requestedSteps, keys, maxHudRatio, maxHudButtons;
 try {
   const origin = 'http://127.0.0.1';
   const url = new URL(entry, origin);
@@ -49,6 +52,8 @@ try {
   waitMs = numberOption(opt('--wait', 800), '--wait');
   threshold = numberOption(opt('--threshold', 0.01), '--threshold', { max: 1 });
   viewport = viewportOption(opt('--viewport', '960x540'));
+  maxHudRatio = numberOption(opt('--max-hud-ratio', 0.10), '--max-hud-ratio', { max: 1 });
+  maxHudButtons = numberOption(opt('--max-hud-buttons', 1), '--max-hud-buttons', { integer: true });
   if (argv.includes('--steps')) requestedSteps = numberOption(stepsArg, '--steps', { integer: true });
   keys = opt('--keys', '').split(',').filter(Boolean).map(token => {
     const [key, ms] = token.split(':');
@@ -215,9 +220,15 @@ try {
     ? 'data:image/png;base64,' + readFileSync(baseline).toString('base64') : null;
   const { stats, diff } = await page.evaluate(analyze, { shot: 'data:image/png;base64,' + png.toString('base64'), base: baseB64 });
   const diagnostics = await page.evaluate(() => ({ canvasAttrs: Object.fromEntries([...document.querySelectorAll('canvas')].flatMap(c => [...c.attributes].filter(a => a.name.startsWith('data-')).map(a => [a.name, a.value]))) }));
+  const ui = await page.evaluate(collectPageUiAudit);
+  diagnostics.ui = ui;
   Object.assign(report, { frozenTime: freeze || undefined, png: outPng, sha256: createHash('sha256').update(png).digest('hex').slice(0, 16), stats, diagnostics });
   if (consoleErrors.length || httpErrors.length) report.problems.push('page errors');
   if (stats.nonBlankRatio < 0.001) report.problems.push('canvas is blank');
+  if (checkUi) {
+    const allowDebug = /(?:^|&)debug=1(?:&|$)/.test(query.replace(/^\?/, ''));
+    report.problems.push(...evaluateUiAudit(ui, { maxHudRatio, maxHudButtons, allowDebug }));
+  }
   if (baseline && !flag('--update-baseline') && !baseB64) report.problems.push(`baseline missing: ${baseline} (run with --update-baseline)`);
   if (diff) { report.baseline = { ...diff, threshold }; if (diff.diffRatio > threshold) report.problems.push(`render differs from baseline by ${(diff.diffRatio * 100).toFixed(2)}%`); }
   Object.assign(report, writeSnapshotOutput({ png, outputPath: outPng, baselinePath: baseline,

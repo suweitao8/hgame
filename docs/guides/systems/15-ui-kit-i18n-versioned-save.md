@@ -8,14 +8,20 @@
 ```js
 import { createPanelStack, createVirtualList, createI18n, createVersionedStore } from '../vendor/hgame/index.js';
 
-const stack = createPanelStack();
-stack.push({ id: 'shop', modal: true, exclusive: true, onCancel: () => stack.pop() });
-stack.handleCancel(); // closes top modal cleanly
+const stack = createPanelStack({
+  panels: {
+    shop: { modal: true, exclusive: true, closeOnCancel: true, closeOnBackdrop: true },
+  },
+});
+stack.push('shop');
+stack.handleCancel(); // closes top panel cleanly
 
-const list = createVirtualList({ totalCount: 10000, itemSize: 64, viewportSize: 480, columns: 4 });
-const win = list.computeRange(scrollTop); // { startIndex, endIndex, offsetBefore, totalHeight }
+const list = createVirtualList({ itemHeight: 64, viewportHeight: 480, columns: 4 });
+list.setCount(10000);
+list.scrollTo(scrollTop);
+const win = list.getVisibleRange(); // { startIndex, endIndex, offsetY, totalHeight, scrollTop }
 
-const i18n = createI18n({ locale: 'zh', fallbackLocale: 'en', messages: { zh: { hp: '生命 {v}' }, en: { hp: 'HP {v}' } } });
+const i18n = createI18n({ locale: 'zh', fallbackLocale: 'en', messages: { zh: { hp: '♥ {v}' }, en: { hp: 'HP {v}' } } });
 const label = i18n.t('hp', { v: 120 });
 
 const saves = createVersionedStore({
@@ -32,3 +38,4 @@ const res = saves.load('slot1', { hp: 100, gold: 0 }); // auto-migrates + recove
 - Save values follow JSON rules: dates become strings, undefined object fields disappear, and non-finite numbers become `null`. Checksums cover that stored representation. `save()` returns the original input. The initial migration load returns the migrator's result; subsequent loads read the persisted JSON representation. Cycles, BigInt, and top-level values omitted by JSON (such as `undefined`) throw before changing either save slot.
 - Always pass positive integer `schemaVersion` and pure `migrations[v]` functions (`v -> v + 1`) so legacy saves never crash.
 - UI projects (`tickHz: 0`) must subscribe/trigger render via `app.dispatch(...)` rather than polling DOM inside a RAF loop.
+- Anti-Bloat UI rules apply to all panels and localized labels: never use `PanelStack` for tutorial/rules/confirm modals, keep HUD labels to icon+number or `2–4` hanzi, and verify with `npm run check:ui -- --dir <game-dir>` + `npm run snapshot -- <game-dir> --check-ui`.

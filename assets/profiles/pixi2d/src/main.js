@@ -34,6 +34,9 @@ function setupArena({ app, renderer, Scene, Entity, Component }) {
     button.addEventListener('click', () => juice.spawnExplosions(Number(button.dataset.count)), { signal: buttons.signal });
   }
   hud.addEnemies.addEventListener('click', () => arena.addEnemies(10000), { signal: buttons.signal });
+  window.addEventListener('keydown', event => {
+    if (event.code === 'Backquote' && !event.repeat) hud.toggleDebug();
+  }, { signal: buttons.signal });
   const input = new InputAndAudio(renderer, hud, app.platform.audio, app.input);
   scene.onDispose(() => input.dispose());
   const controller = scene.add(new Entity({ name: 'arena' }));
