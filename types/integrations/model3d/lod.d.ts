@@ -6,6 +6,20 @@
  * @returns {ModelLod3D}
  */
 export function createModelLod3D({ near, crowd, far, crowdDistance, farDistance, hysteresis, signal, budget, budgetId, tierBytes, crossFadeSeconds }: ModelLodOptions3D): ModelLod3D;
+/**
+ * Inject screen-space 4x4 Bayer Dither LOD crossfade onto any static or skeletal Three.js PBR
+ * material so LOD switches dissolve smoothly instead of popping.
+ *
+ * @param {any} THREE Three.js namespace or compatible mock.
+ * @param {any} material Target Three.js Material.
+ * @param {object} [options]
+ * @param {number} [options.fade=1] Opacity threshold in [0, 1].
+ * @param {boolean} [options.invert=false] Invert Bayer pattern order for outgoing vs incoming LOD mesh.
+ */
+export function injectDitherLodMaterial3D(THREE: any, material: any, { fade, invert, }?: {
+    fade?: number | undefined;
+    invert?: boolean | undefined;
+} | undefined): boolean;
 export type ModelLodState3D = {
     /**
      * Actor position in the representations' common coordinate space.

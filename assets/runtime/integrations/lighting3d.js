@@ -1587,3 +1587,41 @@ export function createReflectionProbeManager3D(THREE, { maxProbes = 8, blendMarg
     dispose,
   };
 }
+
+/**
+ * Bind a Blender-baked lightmap texture (`uv1` / `lightMap`) and optional L2 spherical harmonics
+ * irradiance coefficients (`27` floats `[r0,g0,b0, ...]`) cleanly onto a Three.js PBR material.
+ *
+ * @param {any} material
+ * @param {any} lightmapTexture
+ * @param {object} [options]
+ * @param {number} [options.intensity=1]
+ * @param {number[] | Float32Array | null} [options.shCoefficients=null] Optional 27-float L2 SH irradiance array.
+ */
+export function applyBakedLightmap3D(material, lightmapTexture, {
+  intensity = 1,
+  shCoefficients = null,
+} = {}) {
+  if (!material || typeof material !== 'object') return false;
+  if ('lightMap' in material) material.lightMap = lightmapTexture ?? null;
+  if ('lightMapIntensity' in material) material.lightMapIntensity = Math.max(0, Number(intensity) || 1);
+
+  if (shCoefficients && shCoefficients.length >= 3) {
+    const c0 = [Number(shCoefficients[0]) || 0, Number(shCoefficients[1]) || 0, Number(shCoefficients[2]) || 0];
+    const uShDc = { value: c0 };
+    material.userData = { ...(material.userData || {}), hgameBakedShDc: uShDc };
+    const prevCompile = material.onBeforeCompile;
+    material.onBeforeCompile = (shader, renderer) => {
+      if (typeof prevCompile === 'function') prevCompile.call(material, shader, renderer);
+      shader.uniforms.uBakedShDc = uShDc;
+      if (shader.fragmentShader.includes('#include <lights_fragment_end>')) {
+        shader.fragmentShader = 'uniform vec3 uBakedShDc;\n' + shader.fragmentShader.replace(
+          '#include <lights_fragment_end>',
+          '#include <lights_fragment_end>\nreflectedLight.indirectDiffuse += diffuseColor.rgb * uBakedShDc * 0.282095;',
+        );
+      }
+    };
+  }
+  material.needsUpdate = true;
+  return true;
+}

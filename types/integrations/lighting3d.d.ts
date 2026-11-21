@@ -257,6 +257,20 @@ export function createReflectionProbeManager3D(THREE: object, { maxProbes, blend
     dispose: () => void;
 };
 /**
+ * Bind a Blender-baked lightmap texture (`uv1` / `lightMap`) and optional L2 spherical harmonics
+ * irradiance coefficients (`27` floats `[r0,g0,b0, ...]`) cleanly onto a Three.js PBR material.
+ *
+ * @param {any} material
+ * @param {any} lightmapTexture
+ * @param {object} [options]
+ * @param {number} [options.intensity=1]
+ * @param {number[] | Float32Array | null} [options.shCoefficients=null] Optional 27-float L2 SH irradiance array.
+ */
+export function applyBakedLightmap3D(material: any, lightmapTexture: any, { intensity, shCoefficients, }?: {
+    intensity?: number | undefined;
+    shCoefficients?: number[] | Float32Array | null | undefined;
+} | undefined): boolean;
+/**
  * Light candidate for CPU stochastic sampling.
  */
 export type StochasticLightCandidate = {

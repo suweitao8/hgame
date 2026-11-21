@@ -267,3 +267,69 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     dispose,
   };
 }
+
+/**
+ * Inject screen-space 4x4 Bayer Dither LOD crossfade onto any static or skeletal Three.js PBR
+ * material so LOD switches dissolve smoothly instead of popping.
+ *
+ * @param {any} THREE Three.js namespace or compatible mock.
+ * @param {any} material Target Three.js Material.
+ * @param {object} [options]
+ * @param {number} [options.fade=1] Opacity threshold in [0, 1].
+ * @param {boolean} [options.invert=false] Invert Bayer pattern order for outgoing vs incoming LOD mesh.
+ */
+export function injectDitherLodMaterial3D(THREE, material, {
+  fade = 1,
+  invert = false,
+} = {}) {
+  if (!material || typeof material !== 'object') return false;
+  if (material.userData?.hgameLodDither) {
+    material.userData.hgameLodDither.setLodDitherFade(fade, invert);
+    return true;
+  }
+
+  const uniforms = {
+    uLodDitherFade: { value: Math.max(0, Math.min(1, Number(fade) ?? 1)) },
+    uLodDitherInvert: { value: invert ? 1 : 0 },
+  };
+  const prevCompile = material.onBeforeCompile;
+  const prevKey = material.customProgramCacheKey;
+  material.customProgramCacheKey = () => {
+    const base = typeof prevKey === 'function' ? prevKey.call(material) : '';
+    return `${base}:hgame-dither-lod`;
+  };
+  material.onBeforeCompile = (shader, renderer) => {
+    if (typeof prevCompile === 'function') prevCompile.call(material, shader, renderer);
+    Object.assign(shader.uniforms, uniforms);
+    if (shader.fragmentShader.includes('#include <alphatest_fragment>')) {
+      shader.fragmentShader = [
+        'uniform float uLodDitherFade;',
+        'uniform float uLodDitherInvert;',
+      ].join('\n') + '\n' + shader.fragmentShader.replace(
+        '#include <alphatest_fragment>',
+        [
+          '#include <alphatest_fragment>',
+          'if (uLodDitherFade < 0.999) {',
+          '  int _lx = int(mod(gl_FragCoord.x, 4.0));',
+          '  int _ly = int(mod(gl_FragCoord.y, 4.0));',
+          '  float _lb = (float((_lx * 5 + _ly * 3) % 16) + 0.5) / 16.0;',
+          '  float _lVal = uLodDitherInvert > 0.5 ? (1.0 - _lb) : _lb;',
+          '  if (uLodDitherFade <= _lVal) discard;',
+          '}',
+        ].join('\n'),
+      );
+    }
+  };
+  material.userData = {
+    ...(material.userData || {}),
+    hgameLodDither: {
+      uniforms,
+      setLodDitherFade(nextFade, nextInvert = false) {
+        uniforms.uLodDitherFade.value = Math.max(0, Math.min(1, Number(nextFade) ?? 1));
+        uniforms.uLodDitherInvert.value = nextInvert ? 1 : 0;
+      },
+    },
+  };
+  material.needsUpdate = true;
+  return true;
+}

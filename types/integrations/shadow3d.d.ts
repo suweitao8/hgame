@@ -62,7 +62,7 @@ export function computeCascadeSplits(near: number, far: number, cascades?: numbe
  * @param {object} THREE Three.js namespace or compatible mock.
  * @param {object} [options]
  */
-export function createCascadedShadowMap3D(THREE: object, { cascades, maxFar, lambda, mapSize, lightDirection, color, intensity, shadowBias, normalBias, scene, }?: object): {
+export function createCascadedShadowMap3D(THREE: object, { cascades, maxFar, lambda, mapSize, lightDirection, color, intensity, shadowBias, normalBias, pcss, lightSize, scene, }?: object): {
     readonly cascades: number;
     readonly lights: any[];
     readonly splits: number[];

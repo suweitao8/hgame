@@ -229,12 +229,16 @@ export function createCascadedShadowMap3D(THREE, {
   intensity = 1.0,
   shadowBias = -0.0004,
   normalBias = 0.02,
+  pcss = false,
+  lightSize = 0.04,
   scene = null,
 } = {}) {
   if (!THREE?.DirectionalLight || !THREE?.Vector3) {
     throw new TypeError('createCascadedShadowMap3D requires THREE.DirectionalLight and THREE.Vector3');
   }
   const cascadeCount = Math.max(1, Math.min(4, Math.floor(cascades)));
+  const usePcss = Boolean(pcss);
+  const pcssLightSize = Math.max(0.002, Number(lightSize) || 0.04);
   let dir = normalizeShadowVec3(lightDirection, [0.46, 0.72, 0.52]);
   let currentMaxFar = Math.max(5, Number(maxFar) || 120);
   let currentLambda = Math.max(0, Math.min(1, Number(lambda) ?? 0.65));
@@ -360,7 +364,7 @@ export function createCascadedShadowMap3D(THREE, {
     const prevKey = material.customProgramCacheKey;
     material.customProgramCacheKey = () => {
       const base = typeof prevKey === 'function' ? prevKey.call(material) : '';
-      return `${base}:hgame-csm-${cascadeCount}`;
+      return `${base}:hgame-csm-${cascadeCount}${usePcss ? '-pcss' : ''}`;
     };
     material.onBeforeCompile = (shader, renderer) => {
       if (typeof prevCompile === 'function') prevCompile.call(material, shader, renderer);
@@ -373,6 +377,41 @@ export function createCascadedShadowMap3D(THREE, {
           );
       }
       if (shader.fragmentShader.includes('#include <lights_fragment_end>')) {
+        const sampleFn = usePcss
+          ? [
+              'float hgameSampleCascadeShadow(sampler2D smap, mat4 mat, vec3 wp) {',
+              '  vec4 sc = mat * vec4(wp, 1.0);',
+              '  vec3 p = sc.xyz / max(sc.w, 0.0001);',
+              '  if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z <= 0.0 || p.z >= 1.0) return 1.0;',
+              '  float blockerSum = 0.0; float blockers = 0.0;',
+              `  float searchR = ${pcssLightSize.toFixed(4)};`,
+              '  for (int i = 0; i < 4; i++) {',
+              '    vec2 off = vec2(i == 0 ? -1.0 : (i == 1 ? 1.0 : 0.0), i == 2 ? -1.0 : (i == 3 ? 1.0 : 0.0)) * searchR;',
+              '    float bd = texture2D(smap, clamp(p.xy + off, vec2(0.001), vec2(0.999))).r;',
+              '    if ((p.z - 0.0025) > bd) { blockerSum += bd; blockers += 1.0; }',
+              '  }',
+              '  if (blockers < 0.5) return 1.0;',
+              '  float avgBlocker = blockerSum / blockers;',
+              `  float penumbra = clamp((p.z - avgBlocker) / max(avgBlocker, 0.01), 0.0, 1.0) * ${pcssLightSize.toFixed(4)} * 0.35 + 0.0008;`,
+              '  float sum = 0.0;',
+              '  vec2 taps[4];',
+              '  taps[0] = vec2(-0.7, -0.7); taps[1] = vec2(0.7, -0.7); taps[2] = vec2(-0.7, 0.7); taps[3] = vec2(0.7, 0.7);',
+              '  for (int k = 0; k < 4; k++) {',
+              '    float d = texture2D(smap, clamp(p.xy + taps[k] * penumbra, vec2(0.001), vec2(0.999))).r;',
+              '    sum += (p.z - 0.0025) > d ? 0.25 : 1.0;',
+              '  }',
+              '  return sum * 0.25;',
+              '}',
+            ]
+          : [
+              'float hgameSampleCascadeShadow(sampler2D smap, mat4 mat, vec3 wp) {',
+              '  vec4 sc = mat * vec4(wp, 1.0);',
+              '  vec3 p = sc.xyz / max(sc.w, 0.0001);',
+              '  if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z <= 0.0 || p.z >= 1.0) return 1.0;',
+              '  float d = texture2D(smap, p.xy).r;',
+              '  return (p.z - 0.0025) > d ? 0.25 : 1.0;',
+              '}',
+            ];
         const decls = [
           'varying vec3 vCsmWorldPos;',
           'varying float vCsmViewZ;',
@@ -384,13 +423,7 @@ export function createCascadedShadowMap3D(THREE, {
           'uniform sampler2D tCsmShadowMap1;',
           'uniform sampler2D tCsmShadowMap2;',
           'uniform sampler2D tCsmShadowMap3;',
-          'float hgameSampleCascadeShadow(sampler2D smap, mat4 mat, vec3 wp) {',
-          '  vec4 sc = mat * vec4(wp, 1.0);',
-          '  vec3 p = sc.xyz / max(sc.w, 0.0001);',
-          '  if (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0 || p.z <= 0.0 || p.z >= 1.0) return 1.0;',
-          '  float d = texture2D(smap, p.xy).r;',
-          '  return (p.z - 0.0025) > d ? 0.25 : 1.0;',
-          '}',
+          ...sampleFn,
         ].join('\n');
         const body = [
           '#include <lights_fragment_end>',
