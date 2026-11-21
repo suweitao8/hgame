@@ -97,11 +97,48 @@ const DEFAULT_CUE_SYNTH = Object.freeze({
  */
 
 /**
+ * @typedef {object} UiBarOptions
+ * @property {number} [value=1] Initial normalized fill ratio [0..1].
+ * @property {number} [holdSec=0.28] Delay in seconds before the ghost trail catches up after damage.
+ * @property {number} [halfLife=0.09] Catch-up spring half-life in seconds.
+ */
+
+/**
+ * @typedef {object} UiBarState
+ * @property {string} id
+ * @property {number} value Primary fill ratio [0..1].
+ * @property {number} ghostValue Trailing/preview fill ratio [0..1].
+ * @property {-1 | 0 | 1} direction Last change direction.
+ * @property {number} holdRemaining Remaining ghost hold time in seconds.
+ * @property {boolean} settled
+ */
+
+/**
+ * @typedef {object} UiCooldownOptions
+ * @property {number} [remaining=0] Initial remaining cooldown in seconds.
+ * @property {number} [duration=1] Total cooldown duration in seconds.
+ * @property {boolean} [cueOnReady=true] Emit `confirm` cue when transitioning from active cooldown to ready.
+ */
+
+/**
+ * @typedef {object} UiCooldownState
+ * @property {string} id
+ * @property {number} remaining Remaining seconds.
+ * @property {number} duration Total seconds.
+ * @property {number} ratio Remaining fraction [0..1] (0 = ready, 1 = full cooldown).
+ * @property {boolean} ready True when remaining <= 0.
+ * @property {number} readyFlash Flash intensity [0..1] decaying after becoming ready.
+ * @property {boolean} settled
+ */
+
+/**
  * @typedef {object} UiDirectorOptions
  * @property {'title' | 'playing' | 'paused' | 'choice' | 'result'} [initialPhase='title']
  * @property {ReturnType<typeof createPanelStack>} [panelStack] Optional existing PanelStack to reuse.
  * @property {Record<string, import('./panel-stack.js').PanelDefinition>} [panels] Extra panel definitions.
  * @property {Record<string, UiMetricOptions | number>} [metrics] Initial HUD metrics to track.
+ * @property {Record<string, UiBarOptions | number>} [bars] Initial ghost-trail bars to track.
+ * @property {Record<string, UiCooldownOptions | number>} [cooldowns] Initial radial cooldown rings to track.
  * @property {{ available?: boolean, playSynth?: (preset: unknown, opts?: object) => unknown } | null} [audio=null] Optional HGame audio service.
  * @property {boolean} [hintEnabled=true] Show initial move/action hint until `notifyMoved()`.
  * @property {number} [hintFadeSec=0.5] Seconds to fade out hint after first movement.
@@ -149,6 +186,10 @@ export function createUiDirector(options = {}) {
 
   /** @type {Map<string, { spring: SpringDamper1D, snap: boolean, cueOnChange: boolean, state: UiMetricState }>} */
   const metrics = new Map();
+  /** @type {Map<string, { spring: SpringDamper1D, holdSec: number, state: UiBarState }>} */
+  const bars = new Map();
+  /** @type {Map<string, { cueOnReady: boolean, state: UiCooldownState }>} */
+  const cooldowns = new Map();
   const lastCueAt = new Map();
   const phaseListeners = new Set();
   const cueListeners = new Set();
@@ -292,6 +333,110 @@ export function createUiDirector(options = {}) {
     return metrics.get(id)?.state ?? null;
   }
 
+  function clamp01(v) {
+    return v <= 0 ? 0 : v >= 1 ? 1 : v;
+  }
+
+  function registerBar(id, barOptions = {}) {
+    if (!id || typeof id !== 'string') throw new TypeError('Bar id must be a non-empty string.');
+    const opts = typeof barOptions === 'number' ? { value: barOptions } : (barOptions ?? {});
+    const initial = clamp01(Number.isFinite(opts.value) ? opts.value : 1);
+    const holdSec = Number.isFinite(opts.holdSec) && opts.holdSec >= 0 ? opts.holdSec : 0.28;
+    const halfLife = Number.isFinite(opts.halfLife) && opts.halfLife > 0 ? opts.halfLife : 0.09;
+    const spring = new SpringDamper1D({ value: initial, target: initial, halfLife });
+    /** @type {UiBarState} */
+    const state = {
+      id,
+      value: initial,
+      ghostValue: initial,
+      direction: 0,
+      holdRemaining: 0,
+      settled: true,
+    };
+    bars.set(id, { spring, holdSec, state });
+    return state;
+  }
+
+  function setBar(id, ratio) {
+    if (!Number.isFinite(ratio)) return null;
+    const clamped = clamp01(ratio);
+    if (!bars.has(id)) {
+      return registerBar(id, { value: clamped });
+    }
+    const entry = bars.get(id);
+    const st = entry.state;
+    const prevTarget = entry.spring.target;
+    const delta = clamped - prevTarget;
+    if (Math.abs(delta) < 1e-5) return st;
+
+    if (delta < 0) {
+      // Damage: main value drops immediately; ghost holds briefly then catches down.
+      st.value = clamped;
+      st.direction = -1;
+      st.holdRemaining = entry.holdSec;
+      entry.spring.snap(Math.max(st.ghostValue, prevTarget));
+      entry.spring.setTarget(clamped);
+    } else {
+      // Heal: ghost jumps ahead as preview; main value catches up smoothly.
+      st.ghostValue = clamped;
+      st.direction = 1;
+      st.holdRemaining = 0;
+      entry.spring.snap(st.value);
+      entry.spring.setTarget(clamped);
+    }
+    st.settled = false;
+    return st;
+  }
+
+  function getBar(id) {
+    return bars.get(id)?.state ?? null;
+  }
+
+  function registerCooldown(id, cdOptions = {}) {
+    if (!id || typeof id !== 'string') throw new TypeError('Cooldown id must be a non-empty string.');
+    const opts = typeof cdOptions === 'number' ? { duration: cdOptions } : (cdOptions ?? {});
+    const duration = Number.isFinite(opts.duration) && opts.duration > 0 ? opts.duration : 1;
+    const remaining = Number.isFinite(opts.remaining) && opts.remaining > 0 ? Math.min(opts.remaining, duration) : 0;
+    /** @type {UiCooldownState} */
+    const state = {
+      id,
+      remaining,
+      duration,
+      ratio: remaining > 0 ? clamp01(remaining / duration) : 0,
+      ready: remaining <= 0,
+      readyFlash: 0,
+      settled: remaining <= 0,
+    };
+    cooldowns.set(id, { cueOnReady: opts.cueOnReady !== false, state });
+    return state;
+  }
+
+  function setCooldown(id, remaining, duration = null) {
+    const entry = cooldowns.get(id);
+    if (!entry) {
+      return registerCooldown(id, {
+        remaining: Math.max(0, Number(remaining) || 0),
+        duration: Number.isFinite(duration) && duration > 0 ? duration : Math.max(1, Number(remaining) || 1),
+      });
+    }
+    const st = entry.state;
+    const wasReady = st.ready;
+    if (Number.isFinite(duration) && duration > 0) st.duration = duration;
+    st.remaining = Number.isFinite(remaining) && remaining > 0 ? remaining : 0;
+    st.ratio = st.duration > 0 ? clamp01(st.remaining / st.duration) : 0;
+    st.ready = st.remaining <= 0;
+    if (!wasReady && st.ready) {
+      st.readyFlash = 1;
+      if (entry.cueOnReady) emitCue(UI_UX_CUES.CONFIRM, { id });
+    }
+    st.settled = st.ready && st.readyFlash === 0;
+    return st;
+  }
+
+  function getCooldown(id) {
+    return cooldowns.get(id)?.state ?? null;
+  }
+
   function notifyMoved() {
     if (!hintMoved) {
       hintMoved = true;
@@ -328,6 +473,44 @@ export function createUiDirector(options = {}) {
       if (!settled) activeAnimations = true;
     }
 
+    for (const entry of bars.values()) {
+      const st = entry.state;
+      if (st.holdRemaining > 0) {
+        st.holdRemaining = Math.max(0, st.holdRemaining - safeDt);
+        st.settled = false;
+        activeAnimations = true;
+      } else if (!entry.spring.isSettled(1e-3, 1e-3)) {
+        const nextVal = entry.spring.step(safeDt);
+        if (st.direction < 0) st.ghostValue = nextVal;
+        else st.value = nextVal;
+        st.settled = false;
+        activeAnimations = true;
+      } else {
+        st.value = entry.spring.target;
+        st.ghostValue = entry.spring.target;
+        st.direction = 0;
+        st.settled = true;
+      }
+    }
+
+    for (const entry of cooldowns.values()) {
+      const st = entry.state;
+      if (!st.ready && safeDt > 0) {
+        st.remaining = Math.max(0, st.remaining - safeDt);
+        st.ratio = st.duration > 0 ? clamp01(st.remaining / st.duration) : 0;
+        if (st.remaining <= 0) {
+          st.ready = true;
+          st.readyFlash = 1;
+          if (entry.cueOnReady) emitCue(UI_UX_CUES.CONFIRM, { id: st.id });
+        }
+      }
+      if (st.readyFlash > 0) {
+        st.readyFlash = Math.max(0, st.readyFlash - safeDt * 3.2);
+      }
+      st.settled = st.ready && st.readyFlash === 0;
+      if (!st.settled) activeAnimations = true;
+    }
+
     return {
       phase,
       paused: phase !== UI_PHASES.PLAYING,
@@ -341,6 +524,16 @@ export function createUiDirector(options = {}) {
   if (options.metrics && typeof options.metrics === 'object') {
     for (const [id, cfg] of Object.entries(options.metrics)) {
       registerMetric(id, cfg);
+    }
+  }
+  if (options.bars && typeof options.bars === 'object') {
+    for (const [id, cfg] of Object.entries(options.bars)) {
+      registerBar(id, cfg);
+    }
+  }
+  if (options.cooldowns && typeof options.cooldowns === 'object') {
+    for (const [id, cfg] of Object.entries(options.cooldowns)) {
+      registerCooldown(id, cfg);
     }
   }
   syncPanelsForPhase(initialPhase, null);
@@ -364,6 +557,14 @@ export function createUiDirector(options = {}) {
     pulseMetric,
     getMetric,
     getMetrics: () => Object.fromEntries(Array.from(metrics, ([k, v]) => [k, v.state])),
+    registerBar,
+    setBar,
+    getBar,
+    getBars: () => Object.fromEntries(Array.from(bars, ([k, v]) => [k, v.state])),
+    registerCooldown,
+    setCooldown,
+    getCooldown,
+    getCooldowns: () => Object.fromEntries(Array.from(cooldowns, ([k, v]) => [k, v.state])),
     notifyMoved,
     isHintVisible: () => hintEnabled && phase === UI_PHASES.PLAYING && hintAlpha > 0.01,
     getHintAlpha: () => (hintEnabled && phase === UI_PHASES.PLAYING ? hintAlpha : 0),
@@ -390,11 +591,22 @@ export function createUiDirector(options = {}) {
         displayValue: v.state.displayValue,
         pulse: v.state.pulse,
       }])),
+      bars: Object.fromEntries(Array.from(bars, ([k, v]) => [k, {
+        value: v.state.value,
+        ghostValue: v.state.ghostValue,
+      }])),
+      cooldowns: Object.fromEntries(Array.from(cooldowns, ([k, v]) => [k, {
+        remaining: v.state.remaining,
+        ratio: v.state.ratio,
+        ready: v.state.ready,
+      }])),
     }),
     dispose() {
       phaseListeners.clear();
       cueListeners.clear();
       metrics.clear();
+      bars.clear();
+      cooldowns.clear();
       lastCueAt.clear();
       panelStack.dispose();
     },

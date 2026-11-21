@@ -15,7 +15,8 @@ import {
   createPanelStack,
 } from '../assets/runtime/index.js';
 import { bindUiUxDOM, injectUiUxStyles } from '../assets/runtime/integrations/ui-ux-dom.js';
-import { createWorldHud3D, createSpatialPanel3D } from '../assets/runtime/integrations/ui-3d.js';
+import { createCanvasUiGroup } from '../assets/runtime/integrations/ui-2d.js';
+import { createWorldHud3D, createSpatialPanel3D, createSpatialUiGroup3D } from '../assets/runtime/integrations/ui-3d.js';
 import { lintFiles } from '../.agents/skills/hgame-ui-ux/scripts/check-ui.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -445,11 +446,240 @@ test('createWorldHud3D and createSpatialPanel3D support 3D world HUD projection 
   panel.dispose();
 });
 
-test('upgraded ui profile starter passes Anti-Bloat UI/UX lint checks', () => {
-  const uiDir = path.join(root, 'assets', 'profiles', 'ui');
-  const report = lintFiles([
-    { rel: 'index.html', content: readFileSync(path.join(uiDir, 'index.html'), 'utf8') },
-    { rel: 'src/main.js', content: readFileSync(path.join(uiDir, 'main.js'), 'utf8') },
-  ]);
-  assert.equal(report.pass, true, JSON.stringify(report.violations));
+test('upgraded ui, 3d, and pixi2d profile starters pass Anti-Bloat UI/UX lint checks', () => {
+  for (const profile of ['ui', '3d', 'pixi2d']) {
+    const dir = path.join(root, 'assets', 'profiles', profile);
+    const files = [{ rel: 'index.html', content: readFileSync(path.join(dir, 'index.html'), 'utf8') }];
+    if (profile === 'pixi2d') {
+      files.push({ rel: 'src/main.js', content: readFileSync(path.join(dir, 'src', 'main.js'), 'utf8') });
+      files.push({ rel: 'src/ui/HudController.js', content: readFileSync(path.join(dir, 'src', 'ui', 'HudController.js'), 'utf8') });
+    } else {
+      files.push({ rel: 'src/main.js', content: readFileSync(path.join(dir, 'main.js'), 'utf8') });
+    }
+    const report = lintFiles(files);
+    assert.equal(report.pass, true, `${profile}: ${JSON.stringify(report.violations)}`);
+  }
+});
+
+test('createUiDirector tracks ghost-trail bars and radial cooldown rings with ready cues', () => {
+  const cues = [];
+  const director = createUiDirector({
+    initialPhase: UI_PHASES.PLAYING,
+    bars: { hp: { value: 1, holdSec: 0.2, halfLife: 0.05 } },
+    cooldowns: { dash: { remaining: 0.3, duration: 0.6, cueOnReady: true } },
+    onCue: (c, d) => cues.push({ c, d }),
+  });
+
+  // Damage drops primary value immediately while ghost holds for 0.2s
+  director.setBar('hp', 0.4);
+  assert.equal(director.getBar('hp').value, 0.4);
+  assert.equal(director.getBar('hp').ghostValue, 1);
+  assert.equal(director.getBar('hp').direction, -1);
+
+  for (let i = 0; i < 2; i++) director.update(0.05); // 0.1s < 0.2s hold
+  assert.equal(director.getBar('hp').ghostValue, 1);
+
+  for (let i = 0; i < 12; i++) director.update(0.05); // after hold, ghost catches down
+  assert.ok(director.getBar('hp').ghostValue < 0.5);
+
+  // Cooldown counts down to ready and triggers readyFlash + confirm cue
+  director.setCooldown('dash', 0.3, 0.6);
+  assert.equal(director.getCooldown('dash').ready, false);
+  for (let i = 0; i < 8; i++) director.update(0.05);
+  assert.equal(director.getCooldown('dash').ready, true);
+  assert.ok(director.getCooldown('dash').readyFlash > 0);
+  assert.ok(cues.some((e) => e.c === UI_UX_CUES.CONFIRM && e.d?.id === 'dash'));
+  director.dispose();
+});
+
+test('bindUiUxDOM supports themes, bars, cooldowns, flyTo Bezier tokens, keyboard focus ring, and touch swipe', () => {
+  const doc = createMockDocument();
+  const cardA = doc.createElement('button');
+  cardA.className = 'card';
+  const cardB = doc.createElement('button');
+  cardB.className = 'card';
+  const barEl = doc.createElement('div');
+  barEl.setAttribute('data-ui-bar', 'hp');
+  const cdEl = doc.createElement('div');
+  cdEl.setAttribute('data-ui-cooldown', 'dash');
+  const metricEl = doc.createElement('span');
+  metricEl.setAttribute('data-ui-metric', 'coins');
+
+  let clickedB = 0;
+  cardB.dispatch = (t, ev) => {
+    if (t === 'click') clickedB++;
+    const orig = Object.getPrototypeOf(cardB);
+    void orig;
+  };
+  cardB.click = () => { clickedB++; };
+
+  doc.body.appendChild(barEl);
+  doc.body.appendChild(cdEl);
+  doc.body.appendChild(metricEl);
+  doc.body.appendChild(cardA);
+  doc.body.appendChild(cardB);
+
+  const director = createUiDirector({
+    initialPhase: UI_PHASES.CHOICE,
+    metrics: { coins: { value: 10, snap: true } },
+    bars: { hp: { value: 1 } },
+    cooldowns: { dash: { remaining: 0.5, duration: 1 } },
+  });
+
+  doc.elementFromPoint = (x) => (x > 250 ? cardB : cardA);
+  const uiUx = bindUiUxDOM({ root: doc.body, director, theme: 'scifi', autoRaf: false });
+
+  assert.equal(doc.body.getAttribute('data-ui-theme'), 'scifi');
+  director.setBar('hp', 0.5);
+  uiUx.step(0.05);
+  assert.equal(barEl.style.getPropertyValue('--hg-bar-value'), '0.5000');
+  assert.equal(cdEl.getAttribute('data-ui-cd-ready'), 'false');
+
+  // Keyboard navigation + Enter confirm
+  doc.defaultView.dispatch('keydown', { key: 'ArrowRight' });
+  assert.equal(uiUx.getFocusedElement(), cardA);
+  doc.defaultView.dispatch('keydown', { key: 'ArrowRight' });
+  assert.equal(uiUx.getFocusedElement(), cardB);
+  doc.defaultView.dispatch('keydown', { key: 'Enter' });
+  assert.equal(clickedB, 1);
+
+  // Touch swipe from cardA across to cardB triggers cardB click on release
+  doc.body.dispatch('pointerdown', { target: cardA, pointerType: 'touch', clientX: 150, clientY: 150 });
+  doc.body.dispatch('pointermove', { target: cardA, pointerType: 'touch', clientX: 280, clientY: 150 });
+  doc.defaultView.dispatch('pointerup', { pointerType: 'touch', clientX: 280, clientY: 150 });
+  assert.equal(clickedB, 2);
+
+  // Fly-to-HUD token arrives and increments coins metric
+  assert.equal(uiUx.flyTo({ from: cardA, to: metricEl, count: 2, duration: 0.2, metric: 'coins', delta: 5 }), 2);
+  for (let i = 0; i < 10; i++) uiUx.step(0.05);
+  assert.equal(metricEl.textContent, '20');
+
+  uiUx.dispose();
+  director.dispose();
+});
+
+test('createSpatialUiGroup3D picks frontmost occluded 3D panel and spreads fan neighbors', () => {
+  class MockVec3 {
+    constructor(x = 0, y = 0, z = 0) { this.x = x; this.y = y; this.z = z; }
+    set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; }
+    copy(v) { this.x = v.x; this.y = v.y; this.z = v.z; return this; }
+    sub(v) { this.x -= v.x; this.y -= v.y; this.z -= v.z; return this; }
+    applyMatrix4(m) {
+      if (m && Number.isFinite(m.offsetZ)) this.z -= m.offsetZ;
+      return this;
+    }
+  }
+  class MockMat4 {
+    constructor(offsetZ = 0) { this.offsetZ = offsetZ; }
+    copy(m) { this.offsetZ = m?.offsetZ ?? 0; return this; }
+    invert() { return this; }
+  }
+  const makeTransform = () => ({
+    position: { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; } },
+    rotation: { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; } },
+    scale: { x: 1, y: 1, z: 1, set(x, y, z) { this.x = x; this.y = y; this.z = z; } },
+  });
+  const MockTHREE = {
+    Vector3: MockVec3,
+    Matrix4: MockMat4,
+    DoubleSide: 2,
+    Group: class {
+      constructor() { Object.assign(this, makeTransform()); this.children = []; }
+      add(c) { this.children.push(c); }
+      remove(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); }
+      updateMatrixWorld() {}
+    },
+    PlaneGeometry: class { constructor(w, h) { this.w = w; this.h = h; } dispose() {} },
+    MeshBasicMaterial: class { constructor(o) { this.o = o; } dispose() {} },
+    Mesh: class {
+      constructor(geometry, material) {
+        Object.assign(this, makeTransform());
+        this.geometry = geometry;
+        this.material = material;
+        this.matrixWorld = new MockMat4(0);
+        this.children = [];
+      }
+      add(c) { this.children.push(c); }
+      remove(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); }
+    },
+  };
+  const mockRenderer = {
+    screenToRay(cx, cy, out) {
+      out.origin.x = (cx - 480) / 200;
+      out.origin.y = -(cy - 270) / 200;
+      out.origin.z = 5;
+      out.direction.x = 0; out.direction.y = 0; out.direction.z = -1;
+      return out;
+    },
+  };
+
+  let backClicks = 0;
+  let frontClicks = 0;
+  const back = createSpatialPanel3D({ THREE: MockTHREE, renderer: mockRenderer, width: 2, height: 1.5, onClick: () => backClicks++ });
+  const front = createSpatialPanel3D({ THREE: MockTHREE, renderer: mockRenderer, width: 2, height: 1.5, onClick: () => frontClicks++ });
+  back.mesh.matrixWorld.offsetZ = 0;
+  front.mesh.matrixWorld.offsetZ = 2; // closer to z=5 origin (distance 3 vs 5)
+
+  const previewMesh = { ...makeTransform() };
+  front.setPreviewObject(previewMesh, { spinSpeed: 2 });
+
+  const group = createSpatialUiGroup3D({ renderer: mockRenderer, panels: [back, front], layout: 'fan', fanSpacing: 1.2 });
+  group.handlePointerDown(480, 270);
+  const clicked = group.handlePointerUp(480, 270);
+  assert.equal(clicked, front);
+  assert.equal(frontClicks, 1);
+  assert.equal(backClicks, 0);
+  assert.equal(group.getHoveredIndex(), 1);
+
+  for (let i = 0; i < 15; i++) group.update(1 / 60);
+  assert.ok(previewMesh.rotation.y > 0);
+  // Neighbor card 0 spreads left when card 1 is hovered
+  assert.ok(back.object3d.position.x < -0.7);
+  group.dispose();
+});
+
+test('createCanvasUiGroup drives 2D in-canvas cards, touch swipe, Pixi sync, and Canvas2D draw', () => {
+  const selected = [];
+  const ui2d = createCanvasUiGroup({
+    items: [
+      { id: 'c1', x: 100, y: 200, width: 120, height: 160, glyph: '⚔', label: '狂暴' },
+      { id: 'c2', x: 260, y: 200, width: 120, height: 160, glyph: '🛡', label: '铁壁' },
+    ],
+    onSelect: (item) => selected.push(item.id),
+  });
+
+  ui2d.triggerEntrance();
+  for (let i = 0; i < 20; i++) ui2d.update(0.02);
+
+  ui2d.handlePointerDown(100, 200);
+  ui2d.handlePointerMove(260, 200); // touch swipe onto second card
+  const chosen = ui2d.handlePointerUp(260, 200);
+  assert.equal(chosen?.id, 'c2');
+  assert.deepEqual(selected, ['c2']);
+
+  // Sync Pixi containers cleanly without Pixi runtime import
+  const pixiNodes = [
+    { position: { x: 0, y: 0 }, scale: { x: 1, y: 1 }, skew: { set(x, y) { this.x = x; this.y = y; } }, rotation: 0, alpha: 1, visible: true },
+    { position: { x: 0, y: 0 }, scale: { x: 1, y: 1 }, skew: { set(x, y) { this.x = x; this.y = y; } }, rotation: 0, alpha: 1, visible: true },
+  ];
+  ui2d.update(0.02);
+  ui2d.syncPixi(pixiNodes);
+  assert.equal(pixiNodes[1].position.x, 260);
+  assert.ok(pixiNodes[1].scale.x >= 1);
+
+  // Draw Canvas2D cleanly
+  const ops = [];
+  const mockCtx = {
+    save: () => ops.push('save'),
+    restore: () => ops.push('restore'),
+    translate: () => {},
+    transform: () => {},
+    beginPath: () => {},
+    roundRect: () => {},
+    fill: () => {},
+    stroke: () => {},
+    fillText: (t) => ops.push(`text:${t}`),
+  };
+  ui2d.drawCanvas2D(mockCtx);
+  assert.ok(ops.includes('text:狂暴') && ops.includes('text:铁壁'));
 });

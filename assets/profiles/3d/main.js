@@ -13,6 +13,9 @@ const [
   { createWorldMaterialPalette },
   { createProceduralModelSlots },
   { createModularLevelRenderer },
+  { createUiDirector, UI_PHASES },
+  { bindUiUxDOM },
+  { createWorldHud3D },
   THREE,
 ] = await Promise.all([
   fetch('./game.config.json').then(r => r.json()),
@@ -30,6 +33,9 @@ const [
   import(base + '/integrations/world-aligned-material.js'),
   import(base + '/integrations/procedural-models.js'),
   import(base + '/integrations/modular-level.js'),
+  import(base + '/ui/ux-director.js'),
+  import(base + '/integrations/ui-ux-dom.js'),
+  import(base + '/integrations/ui-3d.js'),
   import('../assets/vendor/three/three.module.js'),
 ]);
 
@@ -132,7 +138,28 @@ async function startWorld() {
   levelView = createModularLevelRenderer({ THREE, models, parent: world, chunkCells: presentation.chunkCells });
   const mounted = await levelView.setLevel(levelConfig);
   if (!mounted.committed || app.disposed) return;
-  addPlayer(scene, levelView.level);
+  const hudRoot = document.querySelector('#hud');
+  const worldHudRoot = document.querySelector('#world-hud');
+  let uiDirector = null;
+  let uiUx = null;
+  let worldHud = null;
+  if (hudRoot && worldHudRoot) {
+    hudRoot.hidden = false;
+    uiDirector = createUiDirector({
+      initialPhase: UI_PHASES.PLAYING,
+      audio: app.platform.audio,
+      metrics: { energy: { value: 100, snap: false } },
+      bars: { hp: { value: 1 } },
+    });
+    uiUx = bindUiUxDOM({ root: hudRoot, director: uiDirector, autoRaf: false });
+    worldHud = createWorldHud3D({ renderer, container: worldHudRoot, maxItems: 8 });
+    scene.onDispose(() => {
+      worldHud?.dispose();
+      uiUx?.dispose();
+      uiDirector?.dispose();
+    });
+  }
+  addPlayer(scene, levelView.level, { uiDirector, uiUx, worldHud });
   function upgradeModels() {
     pendingUpgrade = null;
     if (app.disposed || app.scenes.current !== scene || !models.enableDeferredReplacements()) return;
@@ -159,7 +186,8 @@ async function startWorld() {
   if (deferredReplacements.length > 0 && project.tickHz === 0) pendingUpgrade = setTimeout(upgradeModels, 0);
 }
 
-function addPlayer(scene, compiled) {
+function addPlayer(scene, compiled, ui = {}) {
+  const { uiDirector, uiUx, worldHud } = ui;
   const actor = scene.add(new Entity({
     name: 'player',
     x: compiled.playerSpawn[0], y: compiled.playerSpawn[1],
@@ -184,6 +212,7 @@ function addPlayer(scene, compiled) {
     }
     actorBody = scene.physics.add(actor, { type: 'dynamic', gravityScale: 0, friction: 0 });
   }
+  const hudAnchors = [{ id: 'player', x: 0, y: 0, z: 0, text: '◆ 100' }];
   class Control extends Component {
     fixedUpdate(dt) {
       const input = this.scene.app.input;
@@ -198,6 +227,9 @@ function addPlayer(scene, compiled) {
           break;
         }
       }
+      if (Math.abs(dx) + Math.abs(dz) > 0.05) {
+        uiDirector?.notifyMoved();
+      }
       const len = Math.max(1, Math.hypot(dx, dz));
       if (actorBody) {
         let vx = dx / len * 4, vz = dz / len * 4;
@@ -209,7 +241,16 @@ function addPlayer(scene, compiled) {
         this.entity.z = Math.max(-3.5, Math.min(3.5, this.entity.z + dz / len * 4 * dt));
       }
     }
-    update(dt) { this.entity.rotationY += dt * 0.4; }
+    update(dt) {
+      this.entity.rotationY += dt * 0.4;
+      uiUx?.step(dt);
+      if (worldHud) {
+        hudAnchors[0].x = this.entity.x;
+        hudAnchors[0].y = this.entity.y + 1.25;
+        hudAnchors[0].z = this.entity.z;
+        worldHud.update(hudAnchors, dt);
+      }
+    }
   }
   actor.addComponent(new Control());
 }

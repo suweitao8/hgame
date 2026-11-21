@@ -16,11 +16,44 @@
  * @property {boolean} settled
  */
 /**
+ * @typedef {object} UiBarOptions
+ * @property {number} [value=1] Initial normalized fill ratio [0..1].
+ * @property {number} [holdSec=0.28] Delay in seconds before the ghost trail catches up after damage.
+ * @property {number} [halfLife=0.09] Catch-up spring half-life in seconds.
+ */
+/**
+ * @typedef {object} UiBarState
+ * @property {string} id
+ * @property {number} value Primary fill ratio [0..1].
+ * @property {number} ghostValue Trailing/preview fill ratio [0..1].
+ * @property {-1 | 0 | 1} direction Last change direction.
+ * @property {number} holdRemaining Remaining ghost hold time in seconds.
+ * @property {boolean} settled
+ */
+/**
+ * @typedef {object} UiCooldownOptions
+ * @property {number} [remaining=0] Initial remaining cooldown in seconds.
+ * @property {number} [duration=1] Total cooldown duration in seconds.
+ * @property {boolean} [cueOnReady=true] Emit `confirm` cue when transitioning from active cooldown to ready.
+ */
+/**
+ * @typedef {object} UiCooldownState
+ * @property {string} id
+ * @property {number} remaining Remaining seconds.
+ * @property {number} duration Total seconds.
+ * @property {number} ratio Remaining fraction [0..1] (0 = ready, 1 = full cooldown).
+ * @property {boolean} ready True when remaining <= 0.
+ * @property {number} readyFlash Flash intensity [0..1] decaying after becoming ready.
+ * @property {boolean} settled
+ */
+/**
  * @typedef {object} UiDirectorOptions
  * @property {'title' | 'playing' | 'paused' | 'choice' | 'result'} [initialPhase='title']
  * @property {ReturnType<typeof createPanelStack>} [panelStack] Optional existing PanelStack to reuse.
  * @property {Record<string, import('./panel-stack.js').PanelDefinition>} [panels] Extra panel definitions.
  * @property {Record<string, UiMetricOptions | number>} [metrics] Initial HUD metrics to track.
+ * @property {Record<string, UiBarOptions | number>} [bars] Initial ghost-trail bars to track.
+ * @property {Record<string, UiCooldownOptions | number>} [cooldowns] Initial radial cooldown rings to track.
  * @property {{ available?: boolean, playSynth?: (preset: unknown, opts?: object) => unknown } | null} [audio=null] Optional HGame audio service.
  * @property {boolean} [hintEnabled=true] Show initial move/action hint until `notifyMoved()`.
  * @property {number} [hintFadeSec=0.5] Seconds to fade out hint after first movement.
@@ -80,6 +113,18 @@ export function createUiDirector(options?: UiDirectorOptions | undefined): Reado
     getMetrics: () => {
         [k: string]: UiMetricState;
     };
+    registerBar: (id: any, barOptions?: {}) => UiBarState;
+    setBar: (id: any, ratio: any) => UiBarState | null;
+    getBar: (id: any) => UiBarState | null;
+    getBars: () => {
+        [k: string]: UiBarState;
+    };
+    registerCooldown: (id: any, cdOptions?: {}) => UiCooldownState;
+    setCooldown: (id: any, remaining: any, duration?: null) => UiCooldownState;
+    getCooldown: (id: any) => UiCooldownState | null;
+    getCooldowns: () => {
+        [k: string]: UiCooldownState;
+    };
     notifyMoved: () => void;
     isHintVisible: () => boolean;
     getHintAlpha: () => number;
@@ -105,6 +150,19 @@ export function createUiDirector(options?: UiDirectorOptions | undefined): Reado
                 value: number;
                 displayValue: number;
                 pulse: number;
+            };
+        };
+        bars: {
+            [k: string]: {
+                value: number;
+                ghostValue: number;
+            };
+        };
+        cooldowns: {
+            [k: string]: {
+                remaining: number;
+                ratio: number;
+                ready: boolean;
             };
         };
     };
@@ -173,6 +231,78 @@ export type UiMetricState = {
     lastDelta: number;
     settled: boolean;
 };
+export type UiBarOptions = {
+    /**
+     * Initial normalized fill ratio [0..1].
+     */
+    value?: number | undefined;
+    /**
+     * Delay in seconds before the ghost trail catches up after damage.
+     */
+    holdSec?: number | undefined;
+    /**
+     * Catch-up spring half-life in seconds.
+     */
+    halfLife?: number | undefined;
+};
+export type UiBarState = {
+    id: string;
+    /**
+     * Primary fill ratio [0..1].
+     */
+    value: number;
+    /**
+     * Trailing/preview fill ratio [0..1].
+     */
+    ghostValue: number;
+    /**
+     * Last change direction.
+     */
+    direction: -1 | 0 | 1;
+    /**
+     * Remaining ghost hold time in seconds.
+     */
+    holdRemaining: number;
+    settled: boolean;
+};
+export type UiCooldownOptions = {
+    /**
+     * Initial remaining cooldown in seconds.
+     */
+    remaining?: number | undefined;
+    /**
+     * Total cooldown duration in seconds.
+     */
+    duration?: number | undefined;
+    /**
+     * Emit `confirm` cue when transitioning from active cooldown to ready.
+     */
+    cueOnReady?: boolean | undefined;
+};
+export type UiCooldownState = {
+    id: string;
+    /**
+     * Remaining seconds.
+     */
+    remaining: number;
+    /**
+     * Total seconds.
+     */
+    duration: number;
+    /**
+     * Remaining fraction [0..1] (0 = ready, 1 = full cooldown).
+     */
+    ratio: number;
+    /**
+     * True when remaining <= 0.
+     */
+    ready: boolean;
+    /**
+     * Flash intensity [0..1] decaying after becoming ready.
+     */
+    readyFlash: number;
+    settled: boolean;
+};
 export type UiDirectorOptions = {
     initialPhase?: "playing" | "paused" | "title" | "choice" | "result" | undefined;
     /**
@@ -209,6 +339,14 @@ export type UiDirectorOptions = {
      * Initial HUD metrics to track.
      */
     metrics?: Record<string, number | UiMetricOptions> | undefined;
+    /**
+     * Initial ghost-trail bars to track.
+     */
+    bars?: Record<string, number | UiBarOptions> | undefined;
+    /**
+     * Initial radial cooldown rings to track.
+     */
+    cooldowns?: Record<string, number | UiCooldownOptions> | undefined;
     /**
      * Optional HGame audio service.
      */

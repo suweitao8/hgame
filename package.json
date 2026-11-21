@@ -66,7 +66,8 @@
     "build:realistic-pcg": "node scripts/build-realistic-pcg.mjs",
     "check:realistic-pcg": "node scripts/build-realistic-pcg.mjs --check",
     "validate:procedural": "node scripts/validate-procedural.mjs",
-    "test:browser:realistic-pcg": "node tests/browser-realistic-pcg.mjs"
+    "test:browser:realistic-pcg": "node tests/browser-realistic-pcg.mjs",
+    "test:browser:ui-ux": "node tests/browser-ui-ux.mjs"
   },
   "devDependencies": {
     "@dimforge/rapier2d-deterministic": "0.21.0",

@@ -1,4 +1,4 @@
-import { SpringDamper2D } from '../time/tween.js';
+import { SpringDamper1D, SpringDamper2D } from '../time/tween.js';
 import { createUiSurfaceSpring } from '../ui/ux-motion.js';
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -158,12 +158,27 @@ export function createWorldHud3D(options) {
   });
 }
 
+function bendPlaneGeometry(geometry, curveRadius) {
+  const posAttr = geometry?.attributes?.position;
+  if (!posAttr || typeof posAttr.getX !== 'function' || !(curveRadius > 0)) return;
+  for (let i = 0; i < posAttr.count; i++) {
+    const x = posAttr.getX(i);
+    const z = posAttr.getZ(i);
+    const angle = x / curveRadius;
+    posAttr.setX(i, Math.sin(angle) * curveRadius);
+    posAttr.setZ(i, z + (curveRadius - Math.cos(angle) * curveRadius));
+  }
+  posAttr.needsUpdate = true;
+  geometry.computeVertexNormals?.();
+}
+
 /**
  * @typedef {object} SpatialPanel3DOptions
  * @property {object} THREE Three.js namespace.
  * @property {{ screenToRay?: (clientX: number, clientY: number, out?: object | null, viewIndex?: number | null) => { origin: { x: number, y: number, z: number }, direction: { x: number, y: number, z: number } } }} [renderer] Three adapter (required for pointer ray picking).
  * @property {number} [width=1.6] World-space panel width.
  * @property {number} [height=1.0] World-space panel height.
+ * @property {number} [curveRadius=0] Optional cylindrical arc radius (> 0 bends the panel toward the viewer).
  * @property {number} [pixelWidth=512] Backing canvas width in pixels.
  * @property {number} [pixelHeight=320] Backing canvas height in pixels.
  * @property {number[]} [position=[0, 0, 0]] Base local position `[x, y, z]`.
@@ -179,8 +194,8 @@ export function createWorldHud3D(options) {
 
 /**
  * True 3D spatial interactive UI plane / card for Three.js scenes and viewWorlds.
- * Combines a dynamic `CanvasTexture` plane with spring-driven 3D tilt/hover/press motion
- * and zero-allocation ray-quad pointer hit testing via `renderer.screenToRay`.
+ * Combines a dynamic `CanvasTexture` plane (flat or curved arc) with spring-driven 3D tilt/hover/press motion,
+ * optional mounted 3D hologram preview object, and zero-allocation ray-quad pointer hit testing.
  *
  * @param {SpatialPanel3DOptions} options
  */
@@ -193,10 +208,11 @@ export function createSpatialPanel3D(options) {
   const renderer = options.renderer ?? null;
   const width = Number.isFinite(options.width) && options.width > 0 ? options.width : 1.6;
   const height = Number.isFinite(options.height) && options.height > 0 ? options.height : 1.0;
+  const curveRadius = Number.isFinite(options.curveRadius) && options.curveRadius > 0 ? options.curveRadius : 0;
   const pixelWidth = Math.max(32, (options.pixelWidth ?? 512) | 0);
   const pixelHeight = Math.max(32, (options.pixelHeight ?? 320) | 0);
-  const basePos = Array.isArray(options.position) ? options.position : [0, 0, 0];
-  const baseRot = Array.isArray(options.rotation) ? options.rotation : [0, 0, 0];
+  const basePos = Array.isArray(options.position) ? [...options.position] : [0, 0, 0];
+  const baseRot = Array.isArray(options.rotation) ? [...options.rotation] : [0, 0, 0];
   const hoverLift = Number.isFinite(options.hoverLift) ? options.hoverLift : 0.12;
   const idleFloatAmp = Number.isFinite(options.idleFloatAmp) ? options.idleFloatAmp : 0.025;
   const drawFn = typeof options.draw === 'function' ? options.draw : null;
@@ -217,7 +233,11 @@ export function createSpatialPanel3D(options) {
     }
   }
 
-  const geometry = new THREE.PlaneGeometry(width, height);
+  const geometry = curveRadius > 0
+    ? new THREE.PlaneGeometry(width, height, 16, 1)
+    : new THREE.PlaneGeometry(width, height);
+  if (curveRadius > 0) bendPlaneGeometry(geometry, curveRadius);
+
   const MaterialCtor = options.lit && THREE.MeshStandardMaterial
     ? THREE.MeshStandardMaterial
     : (THREE.MeshBasicMaterial ?? THREE.MeshStandardMaterial);
@@ -253,6 +273,22 @@ export function createSpatialPanel3D(options) {
   let dirty = true;
   let prevHovered = false;
   let pointerPressedInside = false;
+  let previewObject = null;
+  let previewSpinSpeed = 0.8;
+
+  function setHoveredState(hit) {
+    if (hit) {
+      spring.setHover(true, hit.nx, hit.ny);
+    } else {
+      spring.setHover(false);
+    }
+    const nextHovered = Boolean(hit);
+    if (prevHovered !== nextHovered) {
+      prevHovered = nextHovered;
+      dirty = true;
+      options.onHoverChange?.(prevHovered, panelApi);
+    }
+  }
 
   const panelApi = {
     object3d: root,
@@ -261,6 +297,21 @@ export function createSpatialPanel3D(options) {
     canvas,
     texture,
     markDirty() { dirty = true; },
+    setPreviewObject(obj3d, opts = {}) {
+      if (previewObject && previewObject !== obj3d) {
+        mesh.remove?.(previewObject);
+      }
+      previewObject = obj3d ?? null;
+      if (previewObject) {
+        const off = opts.offset ?? [0, 0.05, 0.14];
+        previewObject.position?.set?.(off[0] || 0, off[1] || 0, off[2] || 0);
+        if (Number.isFinite(opts.scale)) {
+          previewObject.scale?.set?.(opts.scale, opts.scale, opts.scale);
+        }
+        previewSpinSpeed = Number.isFinite(opts.spinSpeed) ? opts.spinSpeed : 0.8;
+        mesh.add?.(previewObject);
+      }
+    },
     setBaseTransform(pos, rot) {
       if (pos) {
         basePos[0] = pos[0] || 0;
@@ -300,20 +351,22 @@ export function createSpatialPanel3D(options) {
         ny: clamp(-hy / halfH, -1, 1),
       };
     },
+    applyRayHit(hit) {
+      setHoveredState(hit);
+    },
+    setPressed(active) {
+      pointerPressedInside = Boolean(active);
+      spring.setPressed(pointerPressedInside);
+      dirty = true;
+    },
+    triggerClick() {
+      options.onClick?.(panelApi);
+    },
     handlePointerMove(clientX, clientY, viewIndex = null) {
       if (!renderer?.screenToRay) return null;
       renderer.screenToRay(clientX, clientY, scratchRay, viewIndex);
       const hit = panelApi.intersectRay(scratchRay.origin, scratchRay.direction);
-      if (hit) {
-        spring.setHover(true, hit.nx, hit.ny);
-      } else {
-        spring.setHover(false);
-      }
-      if (prevHovered !== Boolean(hit)) {
-        prevHovered = Boolean(hit);
-        dirty = true;
-        options.onHoverChange?.(prevHovered, panelApi);
-      }
+      setHoveredState(hit);
       return hit;
     },
     handlePointerDown(clientX, clientY, viewIndex = null) {
@@ -339,11 +392,16 @@ export function createSpatialPanel3D(options) {
       return false;
     },
     update(dt) {
-      const st = spring.step(dt);
+      const safeDt = Number.isFinite(dt) && dt > 0 ? Math.min(dt, 0.1) : 0;
+      const st = spring.step(safeDt);
       const degToRad = Math.PI / 180;
       mesh.rotation?.set?.(st.tiltX * degToRad, st.tiltY * degToRad, 0);
       mesh.position?.set?.(0, st.floatOffset, st.lift - st.floatOffset);
       mesh.scale?.set?.(st.scale, st.scale, 1);
+
+      if (previewObject?.rotation && safeDt > 0) {
+        previewObject.rotation.y = (previewObject.rotation.y ?? 0) + safeDt * (prevHovered ? previewSpinSpeed * 2.2 : previewSpinSpeed);
+      }
 
       if (ctx && drawFn && (dirty || !st.settled)) {
         drawFn(ctx, pixelWidth, pixelHeight, st);
@@ -360,4 +418,155 @@ export function createSpatialPanel3D(options) {
   };
 
   return Object.freeze(panelApi);
+}
+
+/**
+ * @typedef {object} SpatialUiGroup3DOptions
+ * @property {{ screenToRay?: (clientX: number, clientY: number, out?: object | null, viewIndex?: number | null) => { origin: { x: number, y: number, z: number }, direction: { x: number, y: number, z: number } } }} renderer
+ * @property {ReturnType<typeof createSpatialPanel3D>[]} [panels=[]] Initial 3D panels.
+ * @property {'manual' | 'fan'} [layout='manual'] `'fan'` arranges panels along a Balatro/Slay-the-Spire 3D arc with neighbor parting.
+ * @property {number[]} [origin=[0, 0, 0]] Fan layout center `[x, y, z]`.
+ * @property {number} [fanSpacing=1.15] Horizontal distance between fanned cards.
+ * @property {number} [fanArcHeight=0.14] Vertical curve droop across the fan.
+ * @property {number} [fanAngleRad=0.11] Z-tilt step per card from center.
+ * @property {number} [neighborSpread=0.28] Horizontal push applied to neighbors of the hovered card.
+ * @property {number} [hoverZBoost=0.22] Forward Z offset for the hovered card in fan mode.
+ */
+
+/**
+ * Coordinates multiple `createSpatialPanel3D` objects with depth-sorted raycast picking
+ * (only the frontmost panel under the pointer reacts) and optional 3D fanned-deck layout.
+ *
+ * @param {SpatialUiGroup3DOptions} options
+ */
+export function createSpatialUiGroup3D(options) {
+  if (!options?.renderer || typeof options.renderer.screenToRay !== 'function') {
+    throw new TypeError('createSpatialUiGroup3D requires renderer.screenToRay');
+  }
+  const renderer = options.renderer;
+  const layout = options.layout === 'fan' ? 'fan' : 'manual';
+  const origin = Array.isArray(options.origin) ? options.origin : [0, 0, 0];
+  const fanSpacing = Number.isFinite(options.fanSpacing) ? options.fanSpacing : 1.15;
+  const fanArcHeight = Number.isFinite(options.fanArcHeight) ? options.fanArcHeight : 0.14;
+  const fanAngleRad = Number.isFinite(options.fanAngleRad) ? options.fanAngleRad : 0.11;
+  const neighborSpread = Number.isFinite(options.neighborSpread) ? options.neighborSpread : 0.28;
+  const hoverZBoost = Number.isFinite(options.hoverZBoost) ? options.hoverZBoost : 0.22;
+
+  const panels = [...(options.panels ?? [])];
+  const fanXSprings = panels.map(() => new SpringDamper1D({ halfLife: 0.08 }));
+  const fanZSprings = panels.map(() => new SpringDamper1D({ halfLife: 0.08 }));
+  const scratchRay = { origin: { x: 0, y: 0, z: 0 }, direction: { x: 0, y: 0, z: 1 } };
+
+  let hoveredIdx = -1;
+  let pressedIdx = -1;
+
+  function addPanel(panel) {
+    panels.push(panel);
+    fanXSprings.push(new SpringDamper1D({ halfLife: 0.08 }));
+    fanZSprings.push(new SpringDamper1D({ halfLife: 0.08 }));
+    return panel;
+  }
+
+  function removePanel(panel) {
+    const idx = panels.indexOf(panel);
+    if (idx < 0) return false;
+    panels.splice(idx, 1);
+    fanXSprings.splice(idx, 1);
+    fanZSprings.splice(idx, 1);
+    if (hoveredIdx === idx) hoveredIdx = -1;
+    else if (hoveredIdx > idx) hoveredIdx--;
+    if (pressedIdx === idx) pressedIdx = -1;
+    else if (pressedIdx > idx) pressedIdx--;
+    return true;
+  }
+
+  function pickFrontmost(clientX, clientY, viewIndex = null) {
+    renderer.screenToRay(clientX, clientY, scratchRay, viewIndex);
+    let bestIdx = -1;
+    let bestHit = null;
+    for (let i = 0; i < panels.length; i++) {
+      const p = panels[i];
+      if (p.object3d?.visible === false) continue;
+      const hit = p.intersectRay(scratchRay.origin, scratchRay.direction);
+      if (hit && (!bestHit || hit.distance < bestHit.distance)) {
+        bestHit = hit;
+        bestIdx = i;
+      }
+    }
+    return { index: bestIdx, hit: bestHit };
+  }
+
+  function handlePointerMove(clientX, clientY, viewIndex = null) {
+    const { index, hit } = pickFrontmost(clientX, clientY, viewIndex);
+    hoveredIdx = index;
+    for (let i = 0; i < panels.length; i++) {
+      panels[i].applyRayHit(i === index ? hit : null);
+    }
+    return index >= 0 ? { index, panel: panels[index], hit } : null;
+  }
+
+  function handlePointerDown(clientX, clientY, viewIndex = null) {
+    const res = handlePointerMove(clientX, clientY, viewIndex);
+    if (res) {
+      pressedIdx = res.index;
+      panels[res.index].setPressed(true);
+    }
+    return res;
+  }
+
+  function handlePointerUp(clientX, clientY, viewIndex = null) {
+    const wasPressed = pressedIdx;
+    pressedIdx = -1;
+    if (wasPressed >= 0 && panels[wasPressed]) {
+      panels[wasPressed].setPressed(false);
+    }
+    const res = handlePointerMove(clientX, clientY, viewIndex);
+    if (wasPressed >= 0 && res && res.index === wasPressed) {
+      panels[wasPressed].triggerClick();
+      return res.panel;
+    }
+    return null;
+  }
+
+  function update(dt) {
+    const safeDt = Number.isFinite(dt) && dt > 0 ? Math.min(dt, 0.1) : 0;
+    const count = panels.length;
+    const mid = (count - 1) * 0.5;
+    for (let i = 0; i < count; i++) {
+      if (layout === 'fan') {
+        const offset = i - mid;
+        let spread = 0;
+        if (hoveredIdx >= 0 && hoveredIdx !== i) {
+          spread = Math.sign(i - hoveredIdx) * neighborSpread / Math.max(1, Math.abs(i - hoveredIdx));
+        }
+        const targetX = origin[0] + offset * fanSpacing + spread;
+        const targetY = origin[1] - offset * offset * fanArcHeight * 0.35 + (i === hoveredIdx ? 0.12 : 0);
+        const targetZ = origin[2] + i * 0.015 + (i === hoveredIdx ? hoverZBoost : 0);
+        const x = fanXSprings[i].step(safeDt, targetX);
+        const z = fanZSprings[i].step(safeDt, targetZ);
+        const rotZ = i === hoveredIdx ? 0 : -offset * fanAngleRad;
+        panels[i].setBaseTransform([x, targetY, z], [0, 0, rotZ]);
+      }
+      panels[i].update(safeDt);
+    }
+  }
+
+  function dispose() {
+    for (const p of panels) p.dispose();
+    panels.length = 0;
+    fanXSprings.length = 0;
+    fanZSprings.length = 0;
+  }
+
+  return Object.freeze({
+    addPanel,
+    removePanel,
+    getPanels: () => panels.slice(),
+    getHoveredIndex: () => hoveredIdx,
+    handlePointerMove,
+    handlePointerDown,
+    handlePointerUp,
+    update,
+    dispose,
+  });
 }

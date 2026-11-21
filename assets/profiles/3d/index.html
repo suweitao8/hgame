@@ -7,6 +7,15 @@
   <link rel="icon" href="data:,">
   <title>新 3D 游戏</title>
   <link rel="stylesheet" href="./style.css">
+  <style>
+    [hidden]{display:none!important}
+    #hud{position:fixed;inset:0;pointer-events:none;font:600 14px system-ui;color:#e6f6ff}
+    #world-hud{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+    .hg-world-hud-item{padding:2px 8px;border-radius:999px;background:rgba(10,20,34,.78);border:1px solid rgba(56,189,248,.45);font-size:12px;white-space:nowrap}
+    .hud-edge{position:absolute;top:max(14px,env(safe-area-inset-top));left:16px;display:flex;align-items:center;gap:10px}
+    .hud-bar{width:112px;height:8px}
+    .hud-hint{position:absolute;left:50%;bottom:max(22px,env(safe-area-inset-bottom));transform:translateX(-50%);padding:4px 10px;border-radius:8px;background:rgba(12,24,38,.72);border:1px solid rgba(255,255,255,.16);font-size:12px;letter-spacing:1.5px}
+  </style>
   <script type="importmap">
     {"imports":{"three":"./assets/vendor/three/three.module.js"}}
   </script>
@@ -15,6 +24,14 @@
 </head>
 <body>
   <canvas id="game" aria-label="游戏画面"></canvas>
+  <div id="hud" data-ui-theme="scifi" hidden>
+    <div id="world-hud"></div>
+    <div class="hud-edge">
+      <div class="hud-bar" data-ui-bar="hp"></div>
+      <span>✦ <strong data-ui-metric="energy">100</strong></span>
+    </div>
+    <div class="hud-hint" data-ui-hint>WASD</div>
+  </div>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>

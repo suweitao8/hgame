@@ -1,6 +1,8 @@
 import { createDefaultGameAtlas } from './engine/ProceduralAtlas.js';
 import { startPixiGame } from './engine/startPixiGame.js';
 import { SpatialHash2D } from '../vendor/hgame/world/spatial2d.js';
+import { createUiDirector, UI_PHASES } from '../vendor/hgame/ui/ux-director.js';
+import { bindUiUxDOM } from '../vendor/hgame/integrations/ui-ux-dom.js';
 import { JuiceSystem } from './engine/JuiceSystem.js';
 import { InputAndAudio } from './engine/InputAndAudio.js';
 import { DemoArena } from './sim/demoArena.js';
@@ -26,7 +28,15 @@ async function createArenaAtlas() {
 function setupArena({ app, renderer, Scene, Entity, Component }) {
   const scene = app.scenes.add(new Scene('arena'));
   const arena = new DemoArena(new SpatialHash2D({ cellSize: 48 }));
-  const hud = new HudController(), juice = new JuiceSystem(renderer);
+  const uiDirector = createUiDirector({
+    initialPhase: UI_PHASES.PLAYING,
+    audio: app.platform.audio,
+    metrics: { kills: { value: 0, snap: true } },
+    bars: { hp: { value: 1 } },
+  });
+  const uiUx = bindUiUxDOM({ root: document.querySelector('#ui-layer'), director: uiDirector, autoRaf: false });
+  const hud = new HudController({ director: uiDirector, uiUx }), juice = new JuiceSystem(renderer);
+  scene.onDispose(() => hud.dispose());
   scene.onDispose(() => juice.dispose());
   const buttons = new AbortController();
   scene.onDispose(() => buttons.abort());
@@ -56,6 +66,8 @@ function setupArena({ app, renderer, Scene, Entity, Component }) {
     update(dt) {
       juice.update(dt); renderer.camera.targetX = arena.player.x; renderer.camera.targetY = arena.player.y; renderer.update(dt);
       const moving = Math.abs(controls.moveX ?? 0) + Math.abs(controls.moveY ?? 0) > 0;
+      if (moving) hud.notifyMoved();
+      hud.step(dt);
       const stride = moving ? Math.sin(arena.time * 11) : 0;
       renderer.syncEntity('player', { ...arena.player, tex: 'player_hero', rot: stride * 0.08, scaleX: 1 + stride * 0.04, scaleY: 1 - stride * 0.05 });
       renderer.syncEnemies(arena.enemies, arena.time);

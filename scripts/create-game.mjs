@@ -171,7 +171,9 @@ async function main() {
           ? ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
             'integrations/quality3d.js', 'integrations/draw-order-2d.js',
             ...(options.preset === 'horde' && !options.bare ? ['world/swarm-ecs.js'] : [])]
-          : options.recipe.profile === '3d' ? ['integrations/sky3d.js'] : [],
+          : options.recipe.profile === '3d'
+            ? (options.bare ? ['integrations/sky3d.js'] : ['integrations/sky3d.js', 'ui/ux-director.js', 'integrations/ui-ux-dom.js', 'integrations/ui-3d.js'])
+            : [],
         includeSource: [], assetMode: 'all',
       }, null, 2) + '\n');
       await mkdir(path.join(stage, 'assets'), { recursive: true });
