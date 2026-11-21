@@ -184,3 +184,182 @@ export function fitDirectionalShadowFrustum(THREE, light, bounds, {
   }
   return { left, right: rightBound, bottom, top, near: nearDist, far: farDist };
 }
+
+/**
+ * Compute camera-frustum cascade split depths using Practical Split Scheme
+ * (blending logarithmic near precision and uniform far coverage).
+ *
+ * @param {number} near Camera near plane (> 0).
+ * @param {number} far Maximum shadow range (> near).
+ * @param {number} [cascades=3] Number of cascades (1..4).
+ * @param {number} [lambda=0.65] Log/uniform blend factor in [0, 1].
+ * @returns {number[]} Array of `cascades + 1` split distances `[near, ..., far]`.
+ */
+export function computeCascadeSplits(near, far, cascades = 3, lambda = 0.65) {
+  const n = Math.max(1, Math.min(4, Math.floor(cascades)));
+  const zNear = Math.max(0.05, Number(near) || 0.1);
+  const zFar = Math.max(zNear + 1, Number(far) || 100);
+  const l = Math.max(0, Math.min(1, Number(lambda) ?? 0.65));
+  const splits = new Array(n + 1);
+  splits[0] = zNear;
+  for (let i = 1; i < n; i++) {
+    const p = i / n;
+    const logSplit = zNear * Math.pow(zFar / zNear, p);
+    const uniformSplit = zNear + (zFar - zNear) * p;
+    splits[i] = l * logSplit + (1 - l) * uniformSplit;
+  }
+  splits[n] = zFar;
+  return splits;
+}
+
+/**
+ * Multi-cascade directional shadow manager (2–4 cascades) with practical frustum splits,
+ * bounding-sphere slice fitting, and world-space texel snapping to eliminate shadow shimmer.
+ *
+ * @param {object} THREE Three.js namespace or compatible mock.
+ * @param {object} [options]
+ */
+export function createCascadedShadowMap3D(THREE, {
+  cascades = 3,
+  maxFar = 120,
+  lambda = 0.65,
+  mapSize = 1024,
+  lightDirection = [0.46, 0.72, 0.52],
+  color = 0xfff5e4,
+  intensity = 1.0,
+  shadowBias = -0.0004,
+  normalBias = 0.02,
+  scene = null,
+} = {}) {
+  if (!THREE?.DirectionalLight || !THREE?.Vector3) {
+    throw new TypeError('createCascadedShadowMap3D requires THREE.DirectionalLight and THREE.Vector3');
+  }
+  const cascadeCount = Math.max(1, Math.min(4, Math.floor(cascades)));
+  let dir = normalizeShadowVec3(lightDirection, [0.46, 0.72, 0.52]);
+  let currentMaxFar = Math.max(5, Number(maxFar) || 120);
+  let currentLambda = Math.max(0, Math.min(1, Number(lambda) ?? 0.65));
+  let currentMapSize = Math.max(64, Math.floor(mapSize) || 1024);
+  let disposed = false;
+
+  const lights = [];
+  for (let i = 0; i < cascadeCount; i++) {
+    const light = new THREE.DirectionalLight(color, i === 0 ? intensity : 0);
+    light.name = `hgame_csm_cascade_${i}`;
+    light.castShadow = true;
+    light.position.set?.(dir[0] * 50, dir[1] * 50, dir[2] * 50);
+    if (light.shadow?.mapSize?.set) light.shadow.mapSize.set(currentMapSize, currentMapSize);
+    if (light.shadow) {
+      light.shadow.bias = shadowBias;
+      if ('normalBias' in light.shadow) light.shadow.normalBias = normalBias;
+    }
+    if (scene) {
+      scene.add?.(light);
+      if (light.target) scene.add?.(light.target);
+    }
+    lights.push(light);
+  }
+
+  let latestSplits = computeCascadeSplits(0.1, currentMaxFar, cascadeCount, currentLambda);
+  const scratchForward = new THREE.Vector3();
+  const scratchRight = new THREE.Vector3();
+  const scratchUp = new THREE.Vector3();
+  const scratchCenter = new THREE.Vector3();
+
+  function update(camera) {
+    if (disposed || !camera) return { splits: [...latestSplits], frustums: [] };
+    const camNear = Math.max(0.05, Number(camera.near) || 0.1);
+    const camFar = Math.max(camNear + 1, Math.min(Number(camera.far) || currentMaxFar, currentMaxFar));
+    latestSplits = computeCascadeSplits(camNear, camFar, cascadeCount, currentLambda);
+
+    const fovRad = ((camera.fov ?? 60) * Math.PI) / 180;
+    const tanHalfFov = Math.tan(fovRad * 0.5);
+    const aspect = Math.max(0.1, Number(camera.aspect) || 16 / 9);
+    camera.updateMatrixWorld?.();
+
+    const m = camera.matrixWorld?.elements;
+    if (m) {
+      scratchRight.set(m[0], m[1], m[2]).normalize();
+      scratchUp.set(m[4], m[5], m[6]).normalize();
+      scratchForward.set(-m[8], -m[9], -m[10]).normalize();
+    } else {
+      scratchRight.set(1, 0, 0);
+      scratchUp.set(0, 1, 0);
+      scratchForward.set(0, 0, -1);
+    }
+    const camPos = camera.position ?? { x: 0, y: 0, z: 0 };
+    const frustums = new Array(cascadeCount);
+
+    for (let i = 0; i < cascadeCount; i++) {
+      const z0 = latestSplits[i];
+      const z1 = latestSplits[i + 1];
+      const sliceMid = (z0 + z1) * 0.5;
+      const farHalfH = z1 * tanHalfFov;
+      const farHalfW = farHalfH * aspect;
+      const dx = farHalfW;
+      const dy = farHalfH;
+      const dz = (z1 - z0) * 0.5;
+      const radius = Math.max(1, Math.hypot(dx, dy, dz));
+      scratchCenter.set(
+        (camPos.x ?? 0) + scratchForward.x * sliceMid,
+        (camPos.y ?? 0) + scratchForward.y * sliceMid,
+        (camPos.z ?? 0) + scratchForward.z * sliceMid,
+      );
+      frustums[i] = fitDirectionalShadowFrustum(THREE, lights[i], {
+        center: [scratchCenter.x, scratchCenter.y, scratchCenter.z],
+        radius,
+      }, {
+        sunDirection: dir,
+        distance: Math.max(radius * 2, 40),
+        padding: 1,
+        snapToTexels: true,
+        bias: shadowBias,
+        normalBias,
+      });
+    }
+    return { splits: [...latestSplits], frustums };
+  }
+
+  function setDirection(nextDir) {
+    dir = normalizeShadowVec3(nextDir, dir);
+    for (const light of lights) {
+      light.position.set?.(dir[0] * 50, dir[1] * 50, dir[2] * 50);
+    }
+  }
+
+  function setMapSize(nextSize) {
+    const s = Math.max(64, Math.floor(nextSize) || currentMapSize);
+    if (s === currentMapSize) return;
+    currentMapSize = s;
+    for (const light of lights) {
+      light.shadow?.mapSize?.set?.(s, s);
+      if (light.shadow?.map) {
+        light.shadow.map.dispose?.();
+        light.shadow.map = null;
+      }
+    }
+  }
+
+  function dispose() {
+    if (disposed) return false;
+    disposed = true;
+    for (const light of lights) {
+      light.removeFromParent?.();
+      light.target?.removeFromParent?.();
+      light.shadow?.map?.dispose?.();
+      light.dispose?.();
+    }
+    lights.length = 0;
+    return true;
+  }
+
+  return {
+    get cascades() { return cascadeCount; },
+    get lights() { return lights.slice(); },
+    get splits() { return [...latestSplits]; },
+    get direction() { return [...dir]; },
+    update,
+    setDirection,
+    setMapSize,
+    dispose,
+  };
+}

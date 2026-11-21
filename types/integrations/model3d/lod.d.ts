@@ -5,7 +5,7 @@
  * @param {ModelLodOptions3D} options
  * @returns {ModelLod3D}
  */
-export function createModelLod3D({ near, crowd, far, crowdDistance, farDistance, hysteresis, signal, budget, budgetId, tierBytes }: ModelLodOptions3D): ModelLod3D;
+export function createModelLod3D({ near, crowd, far, crowdDistance, farDistance, hysteresis, signal, budget, budgetId, tierBytes, crossFadeSeconds }: ModelLodOptions3D): ModelLod3D;
 export type ModelLodState3D = {
     /**
      * Actor position in the representations' common coordinate space.
@@ -99,6 +99,10 @@ export type ModelLodOptions3D = {
      * Optional per-tier estimated byte footprint.
      */
     tierBytes?: Partial<Record<ModelLodTier3D, number>> | null | undefined;
+    /**
+     * Optional smooth crossfade transition duration across LOD swaps.
+     */
+    crossFadeSeconds?: number | undefined;
 };
 export type ModelLod3D = {
     /**
@@ -123,6 +127,15 @@ export type ModelLod3D = {
         secondaryTime: number;
         blendWeight: number;
     } | null;
+    /**
+     * Return smooth LOD crossfade state.
+     */
+    getCrossFadeState: () => {
+        active: boolean;
+        alpha: number;
+        fromTier: ModelLodTier3D | null;
+        toTier: ModelLodTier3D | null;
+    };
     /**
      * Select a tier and apply the latest actor state.
      */

@@ -5,9 +5,14 @@
  * The Three.js namespace is injected by callers so non-3D projects load nothing.
  */
 
-import { fitDirectionalShadowFrustum, normalizeShadowVec3 } from './shadow3d.js';
+import {
+  fitDirectionalShadowFrustum,
+  normalizeShadowVec3,
+  computeCascadeSplits,
+  createCascadedShadowMap3D,
+} from './shadow3d.js';
 
-export { fitDirectionalShadowFrustum };
+export { fitDirectionalShadowFrustum, computeCascadeSplits, createCascadedShadowMap3D };
 
 /** @typedef {[number, number, number]} SkyVec3Tuple Direction/point [x, y, z]. */
 /** @typedef {SkyVec3Tuple|{ x: number, y: number, z: number }} SkyVec3Input */

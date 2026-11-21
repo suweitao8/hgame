@@ -45,6 +45,37 @@ export function fitDirectionalShadowFrustum(THREE: {
     Vector3: new (x?: number, y?: number, z?: number) => any;
 }, light: DirectionalLightLike, bounds: ShadowFitBounds, { sunDirection, distance, padding, snapToTexels, bias, normalBias, }?: ShadowFitOptions | undefined): ShadowFrustum;
 /**
+ * Compute camera-frustum cascade split depths using Practical Split Scheme
+ * (blending logarithmic near precision and uniform far coverage).
+ *
+ * @param {number} near Camera near plane (> 0).
+ * @param {number} far Maximum shadow range (> near).
+ * @param {number} [cascades=3] Number of cascades (1..4).
+ * @param {number} [lambda=0.65] Log/uniform blend factor in [0, 1].
+ * @returns {number[]} Array of `cascades + 1` split distances `[near, ..., far]`.
+ */
+export function computeCascadeSplits(near: number, far: number, cascades?: number | undefined, lambda?: number | undefined): number[];
+/**
+ * Multi-cascade directional shadow manager (2–4 cascades) with practical frustum splits,
+ * bounding-sphere slice fitting, and world-space texel snapping to eliminate shadow shimmer.
+ *
+ * @param {object} THREE Three.js namespace or compatible mock.
+ * @param {object} [options]
+ */
+export function createCascadedShadowMap3D(THREE: object, { cascades, maxFar, lambda, mapSize, lightDirection, color, intensity, shadowBias, normalBias, scene, }?: object): {
+    readonly cascades: number;
+    readonly lights: any[];
+    readonly splits: number[];
+    readonly direction: any[];
+    update: (camera: any) => {
+        splits: number[];
+        frustums: any[];
+    };
+    setDirection: (nextDir: any) => void;
+    setMapSize: (nextSize: any) => void;
+    dispose: () => boolean;
+};
+/**
  * Direction/point [x, y, z].
  */
 export type ShadowVec3Tuple = [number, number, number];

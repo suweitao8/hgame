@@ -1023,7 +1023,9 @@ uniform sampler2D tCurrentDepth;
 uniform sampler2D tPreviousColor;
 uniform sampler2D tPreviousDepth;
 uniform sampler2D tMotionVectors;
+uniform sampler2D tReactiveMask;
 uniform bool uHasMotionVectors;
+uniform bool uHasReactiveMask;
 uniform mat4 uPreviousProjection;
 uniform mat4 uPreviousInvProj;
 uniform mat4 uPreviousFromCurrentView;
@@ -1032,6 +1034,46 @@ uniform float uHistoryWeight;
 in vec2 vUv;
 out vec4 fragColor;
 ${SCENE_PROJECTION_GLSL3}
+
+vec3 rgbToYCoCg(vec3 c) {
+  return vec3(
+    c.r * 0.25 + c.g * 0.5 + c.b * 0.25,
+    c.r * 0.5 - c.b * 0.5,
+    -c.r * 0.25 + c.g * 0.5 - c.b * 0.25
+  );
+}
+
+vec3 yCoCgToRgb(vec3 ycc) {
+  float tmp = ycc.x - ycc.z;
+  return vec3(tmp + ycc.y, ycc.x + ycc.z, tmp - ycc.y);
+}
+
+vec3 sampleHistoryCatmullRom(sampler2D tex, vec2 uv) {
+  vec2 texSize = vec2(textureSize(tex, 0));
+  vec2 invTexSize = 1.0 / max(texSize, vec2(1.0));
+  vec2 samplePos = uv * texSize;
+  vec2 texPos1 = floor(samplePos - 0.5) + 0.5;
+  vec2 f = samplePos - texPos1;
+  vec2 f2 = f * f;
+  vec2 f3 = f2 * f;
+  vec2 w0 = f2 - 0.5 * (f3 + f);
+  vec2 w1 = 1.5 * f3 - 2.5 * f2 + 1.0;
+  vec2 w3 = 0.5 * (f3 - f2);
+  vec2 w2 = 1.0 - w0 - w1 - w3;
+  vec2 w12 = w1 + w2;
+  vec2 offset12 = w2 / max(w12, vec2(1e-5));
+  vec2 tc0 = clamp((texPos1 - 1.0) * invTexSize, invTexSize * 0.5, 1.0 - invTexSize * 0.5);
+  vec2 tc3 = clamp((texPos1 + 2.0) * invTexSize, invTexSize * 0.5, 1.0 - invTexSize * 0.5);
+  vec2 tc12 = clamp((texPos1 + offset12) * invTexSize, invTexSize * 0.5, 1.0 - invTexSize * 0.5);
+  vec3 result = vec3(0.0);
+  result += texture(tex, vec2(tc12.x, tc0.y)).rgb * (w12.x * w0.y);
+  result += texture(tex, vec2(tc0.x, tc12.y)).rgb * (w0.x * w12.y);
+  result += texture(tex, vec2(tc12.x, tc12.y)).rgb * (w12.x * w12.y);
+  result += texture(tex, vec2(tc3.x, tc12.y)).rgb * (w3.x * w12.y);
+  result += texture(tex, vec2(tc12.x, tc3.y)).rgb * (w12.x * w3.y);
+  float wSum = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+  return max(result / max(wSum, 1e-4), vec3(0.0));
+}
 
 const ivec2 CROSS_OFFSETS[8] = ivec2[8](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1),
                                        ivec2(-2, 0), ivec2(2, 0), ivec2(0, -2), ivec2(0, 2));
@@ -1113,19 +1155,34 @@ void main() {
   } else {
     if (!previousSolid) previousDepth = nearbySolidDepth(tPreviousDepth, historyPixel, historySize);
     if (!hasSceneGeometry(previousDepth) || !matchesPreviousDepth(historyPixel, historySize, previousDepth, expectedZ)) return;
-    history = texture(tPreviousColor, historyUv).rgb;
+    history = sampleHistoryCatmullRom(tPreviousColor, historyUv);
   }
 
-  vec3 low = current.rgb;
-  vec3 high = current.rgb;
+  vec3 curYcc = rgbToYCoCg(current.rgb);
+  vec3 m1 = curYcc;
+  vec3 m2 = curYcc * curYcc;
+  vec3 low = curYcc;
+  vec3 high = curYcc;
   for (int i = 0; i < 8; i++) {
-    vec3 value = texelFetch(tCurrentColor, clamp(pixel + CROSS_OFFSETS[i], ivec2(0), size - 1), 0).rgb;
+    vec3 value = rgbToYCoCg(texelFetch(tCurrentColor, clamp(pixel + CROSS_OFFSETS[i], ivec2(0), size - 1), 0).rgb);
+    m1 += value;
+    m2 += value * value;
     low = min(low, value);
     high = max(high, value);
   }
-  vec3 clipped = clamp(history, low, high);
+  m1 /= 9.0;
+  m2 /= 9.0;
+  vec3 sigma = sqrt(max(vec3(0.0), m2 - m1 * m1));
+  vec3 minC = max(low, m1 - 1.25 * sigma);
+  vec3 maxC = min(high, m1 + 1.25 * sigma);
+  vec3 histYcc = rgbToYCoCg(history);
+  vec3 clipped = yCoCgToRgb(clamp(histYcc, minC, maxC));
   float reactive = length(history - clipped) / max(0.025, length(current.rgb));
   float confidence = 1.0 - smoothstep(0.08, 0.6, reactive);
+  if (uHasReactiveMask) {
+    float maskVal = clamp(texture(tReactiveMask, vUv).r, 0.0, 1.0);
+    confidence *= (1.0 - maskVal * 0.9);
+  }
   // Geometry/background alternation can come from jittered silhouette coverage.
   // Limit its history so a moving edge cannot retain a strong trail.
   float weight = currentSolid && previousSolid ? uHistoryWeight : min(uHistoryWeight, 0.55);

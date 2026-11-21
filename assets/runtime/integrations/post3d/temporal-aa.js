@@ -27,7 +27,9 @@ export function createTemporalAA(THREE, createTarget, createMaterial, createMoti
     tPreviousColor: { value: null },
     tPreviousDepth: { value: null },
     tMotionVectors: { value: null },
+    tReactiveMask: { value: null },
     uHasMotionVectors: { value: false },
+    uHasReactiveMask: { value: false },
     uInvProj: { value: new THREE.Matrix4() },
     uPreviousInvProj: { value: new THREE.Matrix4() },
     uPreviousProjection: { value: new THREE.Matrix4() },
@@ -106,7 +108,7 @@ export function createTemporalAA(THREE, createTarget, createMaterial, createMoti
     return true;
   }
 
-  function resolve(world, camera, color, depth, depthMode, dt, runPass, trackMotion, multisampled) {
+  function resolve(world, camera, color, depth, depthMode, dt, runPass, trackMotion, multisampled, reactiveMask = null) {
     let historyWeight = 0;
     if (lastWorld === world && lastCamera === camera && lastDepthMode === depthMode && dt <= 0.125 &&
         uniforms.uPreviousProjection.value.equals(originalProjection)) {
@@ -129,6 +131,8 @@ export function createTemporalAA(THREE, createTarget, createMaterial, createMoti
     }
     uniforms.tMotionVectors.value = vectors;
     uniforms.uHasMotionVectors.value = Boolean(vectors);
+    uniforms.tReactiveMask.value = reactiveMask;
+    uniforms.uHasReactiveMask.value = Boolean(reactiveMask);
     uniforms.tCurrentColor.value = color;
     uniforms.tCurrentDepth.value = depth;
     uniforms.tPreviousColor.value = historyWeight ? history.texture : null;

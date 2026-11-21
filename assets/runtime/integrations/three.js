@@ -6,7 +6,8 @@ import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
 import { createBakedProbeGrid } from './lighting3d/baked-probe-grid.js';
-import { fitDirectionalShadowFrustum } from './shadow3d.js';
+import { fitDirectionalShadowFrustum, createCascadedShadowMap3D } from './shadow3d.js';
+import { createDecalSystem3D } from './decal3d.js';
 import { syncCameraWorldMatrices, usesZeroToOneDepth } from './camera3d/matrices.js';
 import { normalizeSplitViews, pickSplitView } from '../platform/input.js';
 import { cleanupAll } from '../internal/cleanup.js';
@@ -233,6 +234,8 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {(cam: ThreeCamera | null) => void} setViewCamera
  * @property {(light: object | null) => void} setSunLight
  * @property {(scene: object, data: import('./lighting3d/baked-probe-grid.js').BakedIrradianceProbeData | null) => ReturnType<typeof createBakedProbeGrid>} setIrradianceProbeGrid Install or clear the scene's baked diffuse lighting. Returns null when unsupported or cleared.
+ * @property {(scene: object, options?: object) => ReturnType<typeof createDecalSystem3D>} createDecalSystem Create and attach a pooled 3D decal system owned by the scene.
+ * @property {(scene: object) => ReturnType<typeof createCascadedShadowMap3D> | null} getCascadedShadowMap Return the cascaded shadow map controller for a scene if enabled.
  * @property {(scene?: object | null) => boolean} invalidateSunShadow Request a fresh sun shadow map for a scene or the active sun.
  * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
@@ -300,7 +303,9 @@ export function createThreeAdapter({
   let activeSunLight = sunLight;
   let worldSunLight = null;
   const worldSuns = new WeakMap();
+  const worldCsm = new WeakMap();
   const ownedSuns = new Map();
+  const ownedDecals = new Set();
   const appliedShadowExtents = new WeakMap();
   const cachedShadowLayers = new WeakMap();
   let activeViewCamera = viewCamera;
@@ -576,33 +581,63 @@ export function createThreeAdapter({
         world.add(new THREE.HemisphereLight(hemisphere.sky, hemisphere.ground, hemisphere.intensity));
       }
       if (sun && THREE.DirectionalLight) {
-        const light = new THREE.DirectionalLight(sun.color, sun.intensity);
-        light.position.set(...sun.position);
-        light.castShadow = Boolean(sun.shadow);
-        if (sun.shadow) {
-          const { extent, near, far, bias = 0, mapSize = 1024, autoUpdate = true } = sun.shadow;
-          Object.assign(light.shadow.camera, {
-            left: -extent, right: extent, top: extent, bottom: -extent, near, far,
+        if (sun.cascades) {
+          const cascadeCfg = typeof sun.cascades === 'object' ? sun.cascades : { cascades: sun.cascades };
+          const csm = createCascadedShadowMap3D(THREE, {
+            cascades: cascadeCfg.cascades ?? 3,
+            maxFar: cascadeCfg.maxFar ?? sun.shadow?.far ?? 120,
+            lambda: cascadeCfg.lambda ?? 0.65,
+            mapSize: cascadeCfg.mapSize ?? sun.shadow?.mapSize ?? 1024,
+            lightDirection: sun.position ?? [0.46, 0.72, 0.52],
+            color: sun.color ?? 0xfff5e4,
+            intensity: sun.intensity ?? 1.0,
+            shadowBias: sun.shadow?.bias ?? -0.0004,
+            normalBias: sun.shadow?.normalBias ?? 0.02,
+            scene: world,
           });
-          light.shadow.camera.updateProjectionMatrix?.();
-          light.shadow.mapSize.set(mapSize, mapSize);
-          light.shadow.bias = bias;
-          light.shadow.autoUpdate = autoUpdate !== false;
-          if (!light.shadow.autoUpdate) markSunShadowDirty(light);
+          worldCsm.set(world, csm);
+          const leadLight = csm.lights[0];
+          const release = () => {
+            if (!ownedSuns.delete(leadLight)) return;
+            offDispose?.();
+            worldSuns.delete(world);
+            worldCsm.delete(world);
+            worlds.delete(scene);
+            if (worldSunLight === leadLight) worldSunLight = null;
+            csm.dispose();
+          };
+          const offDispose = scene.onDispose?.(release);
+          ownedSuns.set(leadLight, release);
+          worldSuns.set(world, leadLight);
+        } else {
+          const light = new THREE.DirectionalLight(sun.color, sun.intensity);
+          light.position.set(...sun.position);
+          light.castShadow = Boolean(sun.shadow);
+          if (sun.shadow) {
+            const { extent, near, far, bias = 0, mapSize = 1024, autoUpdate = true } = sun.shadow;
+            Object.assign(light.shadow.camera, {
+              left: -extent, right: extent, top: extent, bottom: -extent, near, far,
+            });
+            light.shadow.camera.updateProjectionMatrix?.();
+            light.shadow.mapSize.set(mapSize, mapSize);
+            light.shadow.bias = bias;
+            light.shadow.autoUpdate = autoUpdate !== false;
+            if (!light.shadow.autoUpdate) markSunShadowDirty(light);
+          }
+          const release = () => {
+            if (!ownedSuns.delete(light)) return;
+            offDispose?.();
+            worldSuns.delete(world);
+            worlds.delete(scene);
+            if (worldSunLight === light) worldSunLight = null;
+            world.remove(light);
+            light.dispose?.();
+          };
+          const offDispose = scene.onDispose?.(release);
+          ownedSuns.set(light, release);
+          worldSuns.set(world, light);
+          world.add(light);
         }
-        const release = () => {
-          if (!ownedSuns.delete(light)) return;
-          offDispose?.();
-          worldSuns.delete(world);
-          worlds.delete(scene);
-          if (worldSunLight === light) worldSunLight = null;
-          world.remove(light);
-          light.dispose?.();
-        };
-        const offDispose = scene.onDispose?.(release);
-        ownedSuns.set(light, release);
-        worldSuns.set(world, light);
-        world.add(light);
       }
       worlds.set(scene, world);
     }
@@ -950,6 +985,7 @@ export function createThreeAdapter({
     const diagnostics = options.diagnostics;
     diagnostics?.beginView(options.viewIndex ?? 0);
     culler3d.beginFrame(camera);
+    worldCsm.get(world)?.update(camera);
     prepareSunShadows(world, camera);
     if (pipeline) {
       pipeline.render(world, camera, options);
@@ -1200,6 +1236,28 @@ export function createThreeAdapter({
       const light = scene ? worldSuns.get(worlds.get(scene)) : activeSunLight ?? worldSunLight;
       return markSunShadowDirty(light);
     },
+    getCascadedShadowMap(scene) {
+      return (scene && worlds.has(scene)) ? (worldCsm.get(worlds.get(scene)) ?? null) : null;
+    },
+    createDecalSystem(scene, options = {}) {
+      if (disposed || !scene || typeof scene !== 'object') {
+        throw new TypeError('createDecalSystem requires a valid HGame Scene');
+      }
+      const world = getWorld(scene);
+      const sys = createDecalSystem3D(THREE, options);
+      if (sys.group) world.add(sys.group);
+      const release = () => {
+        if (!ownedDecals.delete(release)) return;
+        off?.();
+        sys.dispose();
+      };
+      const off = scene.onDispose?.(release);
+      ownedDecals.add(release);
+      return {
+        ...sys,
+        dispose: release,
+      };
+    },
     fitShadowToPreset(sun = activeSunLight ?? worldSunLight, target = { x: 0, y: 0, z: 0 }, options = {}) {
       const light = sun ?? activeSunLight ?? worldSunLight;
       if (!light) return null;
@@ -1276,6 +1334,7 @@ export function createThreeAdapter({
       cleanupAll([
         ...Array.from(irradianceGrids.keys(), scene => () => clearIrradianceProbeGrid(scene)),
         ...ownedSuns.values(),
+        ...[...ownedDecals],
         () => gpuFrameTimer?.reset(),
         () => renderDiagnostics?.resetGpu(true),
         () => culler3d.dispose(),

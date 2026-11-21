@@ -17,7 +17,6 @@ export function createLightPool3D(THREE: LightPoolThree, parent: {
     add(object: object): unknown;
     remove?(object: object): unknown;
 }, { size, defaultDecay }?: LightPoolOptions | undefined): LightPool3D;
-export { fitDirectionalShadowFrustum };
 /** @typedef {[number, number, number]} SkyVec3Tuple Direction/point [x, y, z]. */
 /** @typedef {SkyVec3Tuple|{ x: number, y: number, z: number }} SkyVec3Input */
 /** @typedef {string|number|{ readonly isColor: boolean }} SkyColorInput CSS color string, 0xRRGGBB number, or a THREE.Color. */
@@ -495,3 +494,6 @@ export type LightPool3D = {
     dispose: () => boolean;
 };
 import { fitDirectionalShadowFrustum } from './shadow3d.js';
+import { computeCascadeSplits } from './shadow3d.js';
+import { createCascadedShadowMap3D } from './shadow3d.js';
+export { fitDirectionalShadowFrustum, computeCascadeSplits, createCascadedShadowMap3D };

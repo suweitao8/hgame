@@ -32,6 +32,7 @@
  * @property {object | null} [budget=null] Optional unified representation budget controller (`createRepresentationBudget3D`).
  * @property {string | null} [budgetId=null] Identifier key inside the representation budget.
  * @property {Partial<Record<ModelLodTier3D, number>> | null} [tierBytes=null] Optional per-tier estimated byte footprint.
+ * @property {number} [crossFadeSeconds=0] Optional smooth crossfade transition duration across LOD swaps.
  */
 
 /**
@@ -40,6 +41,7 @@
  * @property {ModelLodTier3D | null} pendingTier Tier preparing or awaiting the next update.
  * @property {unknown} error Latest transition failure, or null.
  * @property {() => { clip: string, time: number, secondaryClip: string | null, secondaryTime: number, blendWeight: number } | null} getAnimationState Return latest composite animation handoff state.
+ * @property {() => { active: boolean, alpha: number, fromTier: ModelLodTier3D | null, toTier: ModelLodTier3D | null }} getCrossFadeState Return smooth LOD crossfade state.
  * @property {(distance: number, state: ModelLodState3D) => void} update Select a tier and apply the latest actor state.
  * @property {() => void} retry Allow another attempt on the next update after a failed transition.
  * @property {() => boolean} dispose Cancel pending work and release the shown representation. Leaves the shared crowd owned by the caller.
@@ -54,7 +56,7 @@ const TIERS = /** @type {const} */ (['near', 'crowd', 'far']);
  * @param {ModelLodOptions3D} options
  * @returns {ModelLod3D}
  */
-export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDistance = 80, hysteresis = 0.1, signal, budget = null, budgetId = null, tierBytes = null }) {
+export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDistance = 80, hysteresis = 0.1, signal, budget = null, budgetId = null, tierBytes = null, crossFadeSeconds = 0 }) {
   if (typeof near !== 'function' || typeof far !== 'function' || typeof crowd?.setPlayback !== 'function') {
     throw new TypeError('Model LOD requires near and far factories and a Bone-VAT crowd');
   }
@@ -62,7 +64,10 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     throw new RangeError('Model LOD requires increasing finite distances and hysteresis in [0, 1)');
   }
   const budgetKey = budgetId ?? Symbol('model-lod');
+  const fadeDuration = Math.max(0, Number(crossFadeSeconds) || 0);
   let lastAnimState = null;
+  let lastUpdateMs = null;
+  const crossFade = { active: false, alpha: 1, elapsed: 0, fromTier: null, toTier: null };
 
   const thresholds = [crowdDistance, farDistance];
   const enter = thresholds.map(distance => distance * (1 + hysteresis));
@@ -148,6 +153,18 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     const previous = current;
     current = { target: job.target, slot };
     const tierName = TIERS[job.target];
+    if (previous && fadeDuration > 0 && previous.target !== job.target) {
+      crossFade.active = true;
+      crossFade.elapsed = 0;
+      crossFade.alpha = 0;
+      crossFade.fromTier = TIERS[previous.target];
+      crossFade.toTier = tierName;
+    } else {
+      crossFade.active = false;
+      crossFade.alpha = 1;
+      crossFade.fromTier = null;
+      crossFade.toTier = tierName;
+    }
     budget?.allocate?.(budgetKey, {
       tier: tierName,
       bytes: Math.max(0, Number(tierBytes?.[tierName]) || 0),
@@ -192,7 +209,16 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     if (!Number.isFinite(distance) || distance < 0) throw new RangeError('Model LOD distance must be finite and nonnegative');
     updating = true;
     try {
+      const nowMs = Date.now();
+      const dtSec = Number.isFinite(state?.dt) ? Math.max(0, state.dt) : (lastUpdateMs !== null ? Math.min(0.25, (nowMs - lastUpdateMs) / 1000) : 0);
+      lastUpdateMs = nowMs;
+      if (crossFade.active && fadeDuration > 0) {
+        crossFade.elapsed += dtSec;
+        crossFade.alpha = Math.min(1, crossFade.elapsed / fadeDuration);
+        if (crossFade.alpha >= 1) crossFade.active = false;
+      }
       const mergedState = mergeCompositeState(state);
+      const forwardState = crossFade.active ? { ...mergedState, crossFadeAlpha: crossFade.alpha } : mergedState;
       let target = desired;
       if (target < 0) {
         target = distance < crowdDistance ? 0 : distance < farDistance ? 1 : 2;
@@ -207,8 +233,8 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
       }
       if (disposed) return;
       if (!failure && !pending && current?.target !== target) prepare(target);
-      if (pending?.slot && activate(pending, mergedState)) return;
-      current?.slot.sync(mergedState);
+      if (pending?.slot && activate(pending, forwardState)) return;
+      current?.slot.sync(forwardState);
     } finally {
       updating = false;
     }
@@ -235,6 +261,7 @@ export function createModelLod3D({ near, crowd, far, crowdDistance = 25, farDist
     get pendingTier() { return pending ? TIERS[pending.target] : null; },
     get error() { return failure?.error ?? null; },
     getAnimationState: () => (lastAnimState ? { ...lastAnimState } : null),
+    getCrossFadeState: () => ({ active: crossFade.active, alpha: crossFade.alpha, fromTier: crossFade.fromTier, toTier: crossFade.toTier }),
     update,
     retry() { failure = null; },
     dispose,

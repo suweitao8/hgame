@@ -162,6 +162,8 @@
  * @property {(cam: ThreeCamera | null) => void} setViewCamera
  * @property {(light: object | null) => void} setSunLight
  * @property {(scene: object, data: import('./lighting3d/baked-probe-grid.js').BakedIrradianceProbeData | null) => ReturnType<typeof createBakedProbeGrid>} setIrradianceProbeGrid Install or clear the scene's baked diffuse lighting. Returns null when unsupported or cleared.
+ * @property {(scene: object, options?: object) => ReturnType<typeof createDecalSystem3D>} createDecalSystem Create and attach a pooled 3D decal system owned by the scene.
+ * @property {(scene: object) => ReturnType<typeof createCascadedShadowMap3D> | null} getCascadedShadowMap Return the cascaded shadow map controller for a scene if enabled.
  * @property {(scene?: object | null) => boolean} invalidateSunShadow Request a fresh sun shadow map for a scene or the active sun.
  * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
@@ -620,6 +622,14 @@ export type ThreeAdapter = {
      */
     setIrradianceProbeGrid: (scene: object, data: import("./lighting3d/baked-probe-grid.js").BakedIrradianceProbeData | null) => ReturnType<typeof createBakedProbeGrid>;
     /**
+     * Create and attach a pooled 3D decal system owned by the scene.
+     */
+    createDecalSystem: (scene: object, options?: object) => ReturnType<typeof createDecalSystem3D>;
+    /**
+     * Return the cascaded shadow map controller for a scene if enabled.
+     */
+    getCascadedShadowMap: (scene: object) => ReturnType<typeof createCascadedShadowMap3D> | null;
+    /**
      * Request a fresh sun shadow map for a scene or the active sun.
      */
     invalidateSunShadow: (scene?: object | null) => boolean;
@@ -693,3 +703,5 @@ import { createAdaptiveQualityController } from './quality3d.js';
 import { createPostPipeline3D } from './post3d.js';
 import { createSceneCuller3D } from './culling3d.js';
 import { createBakedProbeGrid } from './lighting3d/baked-probe-grid.js';
+import { createDecalSystem3D } from './decal3d.js';
+import { createCascadedShadowMap3D } from './shadow3d.js';

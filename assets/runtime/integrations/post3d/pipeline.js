@@ -1389,7 +1389,7 @@ export function createPostPipeline3D(options = {}) {
   }
 
   function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, irradianceGrid = null, dt = 0, outputViewport = null,
-    diagnostics = null } = {}) {
+    diagnostics = null, reactiveMask = null } = {}) {
     if (disposed || contextLost) return;
     const stepDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
     if (stepDt > 0) elapsed += stepDt;
@@ -1577,7 +1577,7 @@ export function createPostPipeline3D(options = {}) {
         if (prelightRT) compositeWorldIntoViewTarget(compU, prelightRT);
         compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, sceneRT.depthTexture,
           sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass,
-          state.temporalMotion && !renderer.clippingPlanes?.length, sceneRT.samples > 0);
+          state.temporalMotion && !renderer.clippingPlanes?.length, sceneRT.samples > 0, reactiveMask);
         if (prelightRT && prelightRT !== viewCompositeRT) hdrTargets.release(prelightRT);
       }
       if (hasViewModel) {

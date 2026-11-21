@@ -796,6 +796,7 @@ function patchBoneVatMaterial(material, {
   gpuSwarmTexUniform = { value: vatTexture },
   gpuSwarmWidthUniform = { value: 1 },
   gpuInstanceOffsetUniform = { value: 0 },
+  crossfadeUniform = { value: 1 },
 }) {
   const modeTag = singleBoneOnly ? 'lod1' : 'lod0';
   material.customProgramCacheKey = () => `hgame-bone-vat-v2:${modeTag}:${vatHeight}`;
@@ -807,6 +808,7 @@ function patchBoneVatMaterial(material, {
     shader.uniforms.uVatHeight = { value: vatHeight };
     shader.uniforms.uCrowdScale = scaleUniform;
     shader.uniforms.uCrowdBaseY = baseYUniform;
+    shader.uniforms.uCrowdCrossfade = crossfadeUniform;
     shader.uniforms.uUseGpuSwarm = useGpuSwarmUniform;
     shader.uniforms.uGpuSwarmTex = gpuSwarmTexUniform;
     shader.uniforms.uGpuSwarmWidth = gpuSwarmWidthUniform;
@@ -922,9 +924,27 @@ function patchBoneVatMaterial(material, {
       );
 
     if (shader.fragmentShader.includes('#include <color_fragment>')) {
-      shader.fragmentShader = 'varying float vCrowdFlash;\n' + shader.fragmentShader.replace(
-        '#include <color_fragment>',
+      const bayerDither = [
+        'varying float vCrowdFlash;',
+        'uniform float uCrowdCrossfade;',
+      ].join('\n');
+      const colorWithDither = [
         CROWD_STATUS_COLOR_GLSL,
+        'if (uCrowdCrossfade < 0.999) {',
+        '  int _bx = int(mod(gl_FragCoord.x, 4.0));',
+        '  int _by = int(mod(gl_FragCoord.y, 4.0));',
+        '  int _bi = _by * 4 + _bx;',
+        '  float _bt = 0.5;',
+        '  if (_bi == 0) _bt = 0.0625; else if (_bi == 2) _bt = 0.1875; else if (_bi == 8) _bt = 0.25; else if (_bi == 10) _bt = 0.375;',
+        '  else if (_bi == 1) _bt = 0.5625; else if (_bi == 3) _bt = 0.6875; else if (_bi == 9) _bt = 0.75; else if (_bi == 11) _bt = 0.875;',
+        '  else if (_bi == 4) _bt = 0.8125; else if (_bi == 6) _bt = 0.9375; else if (_bi == 12) _bt = 0.4375; else if (_bi == 14) _bt = 0.3125;',
+        '  else if (_bi == 5) _bt = 0.5; else if (_bi == 7) _bt = 0.625; else if (_bi == 13) _bt = 0.125; else if (_bi == 15) _bt = 0.99;',
+        '  if (uCrowdCrossfade < _bt) discard;',
+        '}',
+      ].join('\n');
+      shader.fragmentShader = bayerDither + '\n' + shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        colorWithDither,
       );
     }
   };
@@ -1253,6 +1273,7 @@ export function createBoneVatCrowd3D(THREE, {
 
   const scaleUniform = { value: Number.isFinite(scale) ? scale : 1 };
   const baseYUniform = { value: Number.isFinite(baseY) ? baseY : 0 };
+  const crossfadeUniform = { value: 1 };
   const useGpuSwarmUniform = { value: 0 };
   const gpuSwarmTexUniform = { value: vatTexture };
   const gpuSwarmWidthUniform = { value: 1 };
@@ -1271,6 +1292,7 @@ export function createBoneVatCrowd3D(THREE, {
     gpuSwarmTexUniform,
     gpuSwarmWidthUniform,
     gpuInstanceOffsetUniform: gpuOffsetUniforms[0],
+    crossfadeUniform,
   });
   const lod1Mat = patchBoneVatMaterial(makeBaseMat(), {
     vatTexture,
@@ -1282,6 +1304,7 @@ export function createBoneVatCrowd3D(THREE, {
     gpuSwarmTexUniform,
     gpuSwarmWidthUniform,
     gpuInstanceOffsetUniform: gpuOffsetUniforms[1],
+    crossfadeUniform,
   });
 
   const ownedImpostorTex = impostorTexture ? null : createProceduralImpostorTexture(
@@ -2039,6 +2062,10 @@ export function createBoneVatCrowd3D(THREE, {
     kill,
     clear,
     applyToMaterials,
+    setCrossfade(alpha) {
+      crossfadeUniform.value = Math.max(0, Math.min(1, Number.isFinite(alpha) ? alpha : 1));
+    },
+    get crossfade() { return crossfadeUniform.value; },
     update,
     syncFromSwarm,
     syncFromGpuSwarm,

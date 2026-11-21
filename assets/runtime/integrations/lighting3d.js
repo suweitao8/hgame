@@ -1350,3 +1350,150 @@ function makeFloatDataTexture(THREE, data, width, height) {
     dispose,
   };
 }
+
+/**
+ * Local Box-Projected Reflection Probe manager supporting priority sorting and smooth exterior
+ * distance blending between overlapping IBL volumes.
+ *
+ * @param {object} THREE Three.js namespace or compatible mock.
+ * @param {object} [options]
+ * @param {number} [options.maxProbes=8] Maximum resident local reflection probes.
+ * @param {number} [options.blendMargin=3] Exterior transition blend distance in world units.
+ */
+export function createReflectionProbeManager3D(THREE, { maxProbes = 8, blendMargin = 3 } = {}) {
+  const cap = Math.max(1, Math.floor(maxProbes) || 8);
+  const margin = Math.max(0, Number(blendMargin) || 0);
+  const probes = new Map();
+  let tick = 0;
+
+  function addProbe(id, {
+    position = [0, 0, 0],
+    min = [-10, -5, -10],
+    max = [10, 5, 10],
+    envMap = null,
+    intensity = 1,
+    boxProjection = true,
+    priority = 0,
+  } = {}) {
+    const key = String(id);
+    if (!probes.has(key) && probes.size >= cap) {
+      let oldest = null;
+      for (const p of probes.values()) {
+        if (!oldest || p.tick < oldest.tick) oldest = p;
+      }
+      if (oldest) probes.delete(oldest.id);
+    }
+    const pMin = [Number(min[0]) || 0, Number(min[1]) || 0, Number(min[2]) || 0];
+    const pMax = [Number(max[0]) || 0, Number(max[1]) || 0, Number(max[2]) || 0];
+    const pos = Array.isArray(position)
+      ? [Number(position[0]) || 0, Number(position[1]) || 0, Number(position[2]) || 0]
+      : [Number(position?.x) || 0, Number(position?.y) || 0, Number(position?.z) || 0];
+    const entry = {
+      id: key,
+      position: pos,
+      min: pMin,
+      max: pMax,
+      envMap,
+      intensity: Math.max(0, Number(intensity) || 0),
+      boxProjection: Boolean(boxProjection),
+      priority: Number(priority) || 0,
+      tick: ++tick,
+    };
+    probes.set(key, entry);
+    return entry;
+  }
+
+  function removeProbe(id) {
+    return probes.delete(String(id));
+  }
+
+  function evaluateAt(position = [0, 0, 0]) {
+    const px = Array.isArray(position) ? (Number(position[0]) || 0) : (Number(position?.x) || 0);
+    const py = Array.isArray(position) ? (Number(position[1]) || 0) : (Number(position?.y) || 0);
+    const pz = Array.isArray(position) ? (Number(position[2]) || 0) : (Number(position?.z) || 0);
+
+    const candidates = [];
+    for (const p of probes.values()) {
+      const dx = px < p.min[0] ? p.min[0] - px : (px > p.max[0] ? px - p.max[0] : 0);
+      const dy = py < p.min[1] ? p.min[1] - py : (py > p.max[1] ? py - p.max[1] : 0);
+      const dz = pz < p.min[2] ? p.min[2] - pz : (pz > p.max[2] ? pz - p.max[2] : 0);
+      const dOut = Math.hypot(dx, dy, dz);
+      let spatial = 0;
+      if (dOut <= 0) {
+        spatial = 1;
+      } else if (margin > 0 && dOut < margin) {
+        const t = 1 - dOut / margin;
+        spatial = t * t * (3 - 2 * t);
+      }
+      if (spatial > 0) {
+        p.tick = ++tick;
+        candidates.push({ entry: p, spatial, dOut });
+      }
+    }
+
+    candidates.sort((a, b) => (b.entry.priority - a.entry.priority) || (b.spatial - a.spatial) || (a.dOut - b.dOut));
+    const sumSpatial = candidates.reduce((s, c) => s + c.spatial, 0);
+    const norm = sumSpatial > 1 ? 1 / sumSpatial : 1;
+    const active = candidates.map(c => ({
+      id: c.entry.id,
+      weight: c.spatial * norm,
+      envMap: c.entry.envMap,
+      intensity: c.entry.intensity,
+      boxMin: c.entry.min,
+      boxMax: c.entry.max,
+      boxProjection: c.entry.boxProjection,
+      probePosition: c.entry.position,
+    }));
+
+    const primary = active[0] ?? null;
+    const secondary = active[1] ?? null;
+    const blendFactor = primary && secondary
+      ? secondary.weight / Math.max(1e-6, primary.weight + secondary.weight)
+      : 0;
+    return { primary, secondary, blendFactor, active };
+  }
+
+  function applyToMaterial(material, evalResult) {
+    if (!material || !evalResult?.primary) return false;
+    const { primary, secondary, blendFactor } = evalResult;
+    if ('envMap' in material && primary.envMap !== undefined) {
+      material.envMap = primary.envMap;
+    }
+    const blendedIntensity = secondary
+      ? primary.intensity * (1 - blendFactor) + secondary.intensity * blendFactor
+      : primary.intensity;
+    if ('envMapIntensity' in material) {
+      material.envMapIntensity = blendedIntensity;
+    }
+    material.userData = {
+      ...(material.userData || {}),
+      reflectionProbe: {
+        primaryId: primary.id,
+        secondaryId: secondary?.id ?? null,
+        blendFactor,
+        boxProjection: primary.boxProjection,
+        boxMin: primary.boxMin,
+        boxMax: primary.boxMax,
+      },
+    };
+    return true;
+  }
+
+  function getStats() {
+    return { count: probes.size, maxProbes: cap, blendMargin: margin };
+  }
+
+  function dispose() {
+    probes.clear();
+  }
+
+  return {
+    THREE,
+    addProbe,
+    removeProbe,
+    evaluateAt,
+    applyToMaterial,
+    getStats,
+    dispose,
+  };
+}

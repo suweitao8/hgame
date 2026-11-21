@@ -181,6 +181,81 @@
  * @returns {IrradianceProbeVolume3D}
  */ export function createIrradianceProbeVolume3D(THREE: LightingThreeLike | null | undefined, options?: IrradianceProbeVolume3DOptions | undefined): IrradianceProbeVolume3D;
 /**
+ * Local Box-Projected Reflection Probe manager supporting priority sorting and smooth exterior
+ * distance blending between overlapping IBL volumes.
+ *
+ * @param {object} THREE Three.js namespace or compatible mock.
+ * @param {object} [options]
+ * @param {number} [options.maxProbes=8] Maximum resident local reflection probes.
+ * @param {number} [options.blendMargin=3] Exterior transition blend distance in world units.
+ */
+export function createReflectionProbeManager3D(THREE: object, { maxProbes, blendMargin }?: {
+    maxProbes?: number | undefined;
+    blendMargin?: number | undefined;
+} | undefined): {
+    THREE: any;
+    addProbe: (id: any, { position, min, max, envMap, intensity, boxProjection, priority, }?: {
+        position?: number[] | undefined;
+        min?: number[] | undefined;
+        max?: number[] | undefined;
+        envMap?: null | undefined;
+        intensity?: number | undefined;
+        boxProjection?: boolean | undefined;
+        priority?: number | undefined;
+    }) => {
+        id: string;
+        position: number[];
+        min: number[];
+        max: number[];
+        envMap: null;
+        intensity: number;
+        boxProjection: boolean;
+        priority: number;
+        tick: number;
+    };
+    removeProbe: (id: any) => boolean;
+    evaluateAt: (position?: number[]) => {
+        primary: {
+            id: any;
+            weight: number;
+            envMap: any;
+            intensity: any;
+            boxMin: any;
+            boxMax: any;
+            boxProjection: any;
+            probePosition: any;
+        };
+        secondary: {
+            id: any;
+            weight: number;
+            envMap: any;
+            intensity: any;
+            boxMin: any;
+            boxMax: any;
+            boxProjection: any;
+            probePosition: any;
+        };
+        blendFactor: number;
+        active: {
+            id: any;
+            weight: number;
+            envMap: any;
+            intensity: any;
+            boxMin: any;
+            boxMax: any;
+            boxProjection: any;
+            probePosition: any;
+        }[];
+    };
+    applyToMaterial: (material: any, evalResult: any) => boolean;
+    getStats: () => {
+        count: number;
+        maxProbes: number;
+        blendMargin: number;
+    };
+    dispose: () => void;
+};
+/**
  * Light candidate for CPU stochastic sampling.
  */
 export type StochasticLightCandidate = {
