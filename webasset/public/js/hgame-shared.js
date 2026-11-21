@@ -635,6 +635,7 @@ export function create2MapPbrMaterial({
   tintHex = 0xffffff,
   opacity = 1,
   polygonOffset = false,
+  side,
 }) {
   const isOpaque = mode === 'opaque';
   const isDecal = mode === 'decal';
@@ -642,6 +643,9 @@ export function create2MapPbrMaterial({
 
   const maxAniso = Math.min(8, renderer?.capabilities?.getMaxAnisotropy?.() || 1);
   const wrap = isOpaque ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+  const repeatArr = Array.isArray(repeat)
+    ? [Math.max(0.25, Number(repeat[0]) || 1), Math.max(0.25, Number(repeat[1]) || 1)]
+    : [Math.max(0.25, Number(repeat) || 1), Math.max(0.25, Number(repeat) || 1)];
 
   const colorTex = new THREE.Texture(assets.colorImg);
   colorTex.colorSpace = THREE.SRGBColorSpace;
@@ -650,8 +654,11 @@ export function create2MapPbrMaterial({
   colorTex.anisotropy = maxAniso;
   colorTex.wrapS = wrap;
   colorTex.wrapT = wrap;
-  const rpt = isOpaque ? Math.max(0.25, Number(repeat) || 1) : 1;
-  colorTex.repeat.set(rpt, rpt);
+  if (isOpaque) {
+    colorTex.repeat.set(repeatArr[0], repeatArr[1]);
+  } else {
+    colorTex.repeat.set(1, 1);
+  }
   colorTex.needsUpdate = true;
 
   const normRmTex = new THREE.DataTexture(
@@ -676,7 +683,7 @@ export function create2MapPbrMaterial({
     color: tintHex,
     roughness: 1.0,
     metalness: 1.0,
-    side: isOpaque ? THREE.FrontSide : THREE.DoubleSide,
+    side: side ?? (isOpaque ? THREE.FrontSide : THREE.DoubleSide),
     transparent: isDecal,
     opacity: isDecal ? opacity : 1.0,
     depthWrite: !isDecal,

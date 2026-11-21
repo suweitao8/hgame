@@ -4,7 +4,6 @@ import {
   apiRequestJson,
   create2MapPbrMaterial,
   createThreeViewport,
-  disposeObject3D,
   draw2MapChannelCanvases,
   drawImageFittedToCanvas,
   fetchUnrealCatalog,
@@ -47,6 +46,7 @@ const mapNormalCanvas = document.querySelector('#hgame-decal-map-normal');
 const mapOrmCanvas = document.querySelector('#hgame-decal-map-orm');
 const mapRmLabel = document.querySelector('#hgame-decal-map-rm-label');
 const surfaceSelect = document.querySelector('#hgame-decal-surface');
+const placementSelect = document.querySelector('#hgame-decal-placement');
 const scaleInput = document.querySelector('#hgame-decal-scale');
 const scaleValEl = document.querySelector('#hgame-decal-scale-val');
 const rotInput = document.querySelector('#hgame-decal-rot');
@@ -74,6 +74,14 @@ const CN_LIBS = {
   },
 };
 
+const FLOOR_SIZE = 10;
+const SLAB_THICKNESS = 0.24;
+const WALL_HEIGHT = 4.8;
+const WALL_FRONT_Z = -3.2;
+const FLOOR_DECAL_Z = 0.6;
+const WALL_DECAL_Y = 2.2;
+const SURFACE_EPSILON = 0.008;
+
 let currentLib = 'cn_pbr';
 let cnDecals = [];
 let cnFoliage = [];
@@ -81,6 +89,8 @@ let unrealDecals = [];
 let baseMaterials = [];
 let activeId = '';
 let previewMode = 'surface';
+let currentPlacement = 'floor';
+let lastCameraKey = '';
 let viewport = null;
 let hdriEnv = null;
 let stageRoot = null;
@@ -92,6 +102,28 @@ let initialized = false;
 let loadToken = 0;
 let catalogLoaded = false;
 const baseSurfaceCache = new Map();
+
+function inferDecalPlacement(item, lib = currentLib) {
+  if (lib === 'cn_foliage') return 'floor';
+  if (!item) return 'floor';
+  if (lib === 'cn_pbr') {
+    if (item.category === 'leak' || /(?:^|_)wall(?:_|$)/i.test(item.id || '')) {
+      return 'wall';
+    }
+    return 'floor';
+  }
+  if (item.pack === 'Concrete_Decals' || /handprint/i.test(`${item.id || ''} ${item.name || ''}`)) {
+    return 'wall';
+  }
+  return 'floor';
+}
+
+function resolvePlacement(item) {
+  if (currentLib === 'cn_foliage') return 'floor';
+  const selected = placementSelect?.value || 'auto';
+  if (selected === 'floor' || selected === 'wall') return selected;
+  return inferDecalPlacement(item, currentLib);
+}
 
 function syncSliderLabels() {
   scaleValEl.textContent = `${Number(scaleInput.value).toFixed(2)}×`;
@@ -318,7 +350,17 @@ function ensureViewport() {
 function clearStage() {
   if (stageRoot && viewport) {
     viewport.scene.remove(stageRoot);
-    disposeObject3D(stageRoot);
+    stageRoot.traverse?.(node => {
+      node.geometry?.dispose?.();
+      const mats = Array.isArray(node.material) ? node.material : [node.material];
+      for (const mat of mats) {
+        if (!mat || mat.userData?.sharedBaseSurface) continue;
+        for (const val of Object.values(mat)) {
+          if (val?.isTexture) val.dispose?.();
+        }
+        mat.dispose?.();
+      }
+    });
   }
   stageRoot = null;
   decalMesh = null;
@@ -339,21 +381,25 @@ function findMaterialForSurface(surfaceKey) {
   return baseMaterials[0] || null;
 }
 
-function configureRepeatTexture(tex, colorSpace, repeat = 2) {
+function configureRepeatTexture(tex, colorSpace, repeatX = 4, repeatY = repeatX) {
   tex.colorSpace = colorSpace;
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(repeat, repeat);
+  tex.repeat.set(repeatX, repeatY);
   return tex;
 }
 
-async function getBaseSurfaceMaterial(surfaceKey, renderer) {
-  const key = SURFACE_FALLBACKS[surfaceKey] ? surfaceKey : 'concrete';
-  if (baseSurfaceCache.has(key)) {
-    return baseSurfaceCache.get(key);
+async function getBaseSurfaceMaterial(surfaceKey, renderer, role = 'floor') {
+  const requestedKey = SURFACE_FALLBACKS[surfaceKey] ? surfaceKey : 'concrete';
+  // Asphalt is road-only; give the vertical backdrop wall a realistic concrete finish.
+  const effectiveKey = role === 'wall' && requestedKey === 'asphalt' ? 'concrete' : requestedKey;
+  const cacheKey = `${effectiveKey}:${role}`;
+  if (baseSurfaceCache.has(cacheKey)) {
+    return baseSurfaceCache.get(cacheKey);
   }
 
-  const fb = SURFACE_FALLBACKS[key];
+  const repeatVec = role === 'wall' ? [5, 2.4] : [5, 5];
+  const fb = SURFACE_FALLBACKS[effectiveKey];
   if (fb.cnId) {
     try {
       const assets = await loadSingle2MapAssets('/assets/cn/materials', fb.cnId);
@@ -361,19 +407,21 @@ async function getBaseSurfaceMaterial(surfaceKey, renderer) {
         mode: 'opaque',
         assets,
         renderer,
-        repeat: 2,
+        repeat: repeatVec,
       });
-      baseSurfaceCache.set(key, built.material);
+      built.material.userData.sharedBaseSurface = true;
+      baseSurfaceCache.set(cacheKey, built.material);
       return built.material;
     } catch { /* fall through to unreal/fallback */ }
   }
 
-  const matInfo = findMaterialForSurface(key);
+  const matInfo = findMaterialForSurface(effectiveKey);
   const mat = new THREE.MeshStandardMaterial({
     color: matInfo ? 0xffffff : fb.color,
     roughness: matInfo ? 1.0 : fb.roughness,
     metalness: 0.04,
   });
+  mat.userData.sharedBaseSurface = true;
 
   if (matInfo?.color) {
     try {
@@ -382,10 +430,10 @@ async function getBaseSurfaceMaterial(surfaceKey, renderer) {
         matInfo.normal ? texLoader.loadAsync(matInfo.normal).catch(() => null) : Promise.resolve(null),
         matInfo.orm ? texLoader.loadAsync(matInfo.orm).catch(() => null) : Promise.resolve(null),
       ]);
-      mat.map = configureRepeatTexture(cTex, THREE.SRGBColorSpace, 2);
-      if (nTex) mat.normalMap = configureRepeatTexture(nTex, THREE.NoColorSpace, 2);
+      mat.map = configureRepeatTexture(cTex, THREE.SRGBColorSpace, repeatVec[0], repeatVec[1]);
+      if (nTex) mat.normalMap = configureRepeatTexture(nTex, THREE.NoColorSpace, repeatVec[0], repeatVec[1]);
       if (oTex) {
-        configureRepeatTexture(oTex, THREE.NoColorSpace, 2);
+        configureRepeatTexture(oTex, THREE.NoColorSpace, repeatVec[0], repeatVec[1]);
         mat.roughnessMap = oTex;
         mat.aoMap = oTex;
         mat.aoMapIntensity = 0.6;
@@ -397,7 +445,7 @@ async function getBaseSurfaceMaterial(surfaceKey, renderer) {
     }
   }
 
-  baseSurfaceCache.set(key, mat);
+  baseSurfaceCache.set(cacheKey, mat);
   return mat;
 }
 
@@ -418,7 +466,7 @@ function applyTransformToDecalMesh() {
     decalMesh.scale.set(sx, sy, sx);
     if (previewMode === 'surface') {
       decalMesh.rotation.set(0, -rotRad, 0);
-      decalMesh.position.set(0, 0.12 + 0.5 * 1.75 * sy, 0);
+      decalMesh.position.set(0, 0.5 * 1.75 * sy, FLOOR_DECAL_Z);
     } else {
       decalMesh.rotation.set(0, 0, -rotRad);
       decalMesh.position.set(0, 1.05, 0);
@@ -427,8 +475,13 @@ function applyTransformToDecalMesh() {
   }
   if (previewMode === 'surface') {
     decalMesh.scale.set(wScale * 1.15, hScale * 1.15, 1);
-    decalMesh.rotation.set(-Math.PI * 0.5, 0, -rotRad);
-    decalMesh.position.set(0, 0.126, 0);
+    if (currentPlacement === 'wall') {
+      decalMesh.rotation.set(0, 0, -rotRad);
+      decalMesh.position.set(0, WALL_DECAL_Y, WALL_FRONT_Z + SURFACE_EPSILON);
+    } else {
+      decalMesh.rotation.set(-Math.PI * 0.5, 0, -rotRad);
+      decalMesh.position.set(0, SURFACE_EPSILON, FLOOR_DECAL_Z);
+    }
   } else {
     decalMesh.scale.set(wScale * 1.15, hScale * 1.15, 1);
     decalMesh.rotation.set(0, 0, -rotRad);
@@ -443,6 +496,9 @@ function updateModeTabsUi() {
     tab.tabIndex = active ? 0 : -1;
   }
   surfaceSelect.disabled = previewMode !== 'surface';
+  if (placementSelect) {
+    placementSelect.disabled = previewMode !== 'surface' || currentLib === 'cn_foliage';
+  }
 }
 
 function updateLibTabsUi() {
@@ -476,28 +532,141 @@ function hasUsableRoughness(tex) {
   }
 }
 
-function configureSurfaceCamera(vp, group, baseMat) {
+function sanitizeDecalNormalTexture(normalTex, colorTex) {
+  if (!normalTex?.image) return { texture: null, status: 'none' };
+  const img = normalTex.image;
+  const w = img.naturalWidth || img.width || 0;
+  const h = img.naturalHeight || img.height || 0;
+  if (!w || !h) return { texture: normalTex, status: 'ok' };
+
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return { texture: normalTex, status: 'ok' };
+    ctx.drawImage(img, 0, 0, w, h);
+    const nImgData = ctx.getImageData(0, 0, w, h);
+    const nData = nImgData.data;
+
+    let alphaData = null;
+    const cImg = colorTex?.image;
+    if (cImg) {
+      const cCanvas = document.createElement('canvas');
+      cCanvas.width = w;
+      cCanvas.height = h;
+      const cCtx = cCanvas.getContext('2d', { willReadFrequently: true });
+      if (cCtx) {
+        cCtx.drawImage(cImg, 0, 0, w, h);
+        alphaData = cCtx.getImageData(0, 0, w, h).data;
+      }
+    }
+
+    const total = w * h;
+    let opaqueCount = 0;
+    let invalidOpaque = 0;
+    let invalidTotal = 0;
+    for (let i = 0; i < total; i++) {
+      const idx = i * 4;
+      const b = nData[idx + 2];
+      // Valid OpenGL/DirectX tangent-space normals always have Z >= 0 (B >= 128).
+      // Unreal placeholder/unbaked normal maps such as (0, 255, 0) encode B = 0 (Z = -1),
+      // which flips surface lighting black from the front and bright from behind.
+      const invalid = b < 120;
+      if (invalid) invalidTotal++;
+      const isOpaque = !alphaData || alphaData[idx + 3] > 20;
+      if (isOpaque) {
+        opaqueCount++;
+        if (invalid) invalidOpaque++;
+      }
+    }
+
+    if (invalidTotal === 0) {
+      return { texture: normalTex, status: 'ok' };
+    }
+
+    if (opaqueCount === 0 || invalidOpaque > opaqueCount * 0.5) {
+      normalTex.dispose();
+      return { texture: null, status: 'stripped' };
+    }
+
+    for (let i = 0; i < total; i++) {
+      const idx = i * 4;
+      if (nData[idx + 2] < 120) {
+        nData[idx] = 128;
+        nData[idx + 1] = 128;
+        nData[idx + 2] = 255;
+        nData[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(nImgData, 0, 0);
+    const cleanTex = new THREE.CanvasTexture(canvas);
+    cleanTex.colorSpace = THREE.NoColorSpace;
+    cleanTex.wrapS = THREE.ClampToEdgeWrapping;
+    cleanTex.wrapT = THREE.ClampToEdgeWrapping;
+    cleanTex.anisotropy = normalTex.anisotropy || 1;
+    cleanTex.needsUpdate = true;
+    normalTex.dispose();
+    return { texture: cleanTex, status: 'cleaned' };
+  } catch {
+    return { texture: normalTex, status: 'ok' };
+  }
+}
+
+function drawFlatNormalPreview(canvas) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const w = canvas.width || 128;
+  const h = canvas.height || 128;
+  ctx.fillStyle = '#8080ff';
+  ctx.fillRect(0, 0, w, h);
+}
+
+function configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera = false } = {}) {
+  const cameraKey = previewMode === 'surface'
+    ? `surface:${currentLib === 'cn_foliage' ? 'foliage' : currentPlacement}`
+    : 'flat';
+  const shouldMoveCamera = forceCamera || cameraKey !== lastCameraKey;
+  lastCameraKey = cameraKey;
+
   if (previewMode === 'surface') {
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.24, 3.4), baseMat);
-    slab.position.y = 0;
-    group.add(slab);
-    if (vp.gridHelper) vp.gridHelper.visible = true;
-    if (currentLib === 'cn_foliage') {
-      vp.camera.position.set(1.9, 2.35, 3.6);
-      vp.controls.target.set(0, 0.95, 0);
-    } else {
-      vp.camera.position.set(1.1, 2.35, 2.35);
-      vp.controls.target.set(0, 0.14, 0);
+    const floorMesh = new THREE.Mesh(new THREE.BoxGeometry(FLOOR_SIZE, SLAB_THICKNESS, FLOOR_SIZE), floorMat);
+    floorMesh.position.set(0, -SLAB_THICKNESS * 0.5, 0);
+    group.add(floorMesh);
+
+    const wallMesh = new THREE.Mesh(new THREE.BoxGeometry(FLOOR_SIZE, WALL_HEIGHT, SLAB_THICKNESS), wallMat || floorMat);
+    wallMesh.position.set(0, WALL_HEIGHT * 0.5, WALL_FRONT_Z - SLAB_THICKNESS * 0.5);
+    group.add(wallMesh);
+
+    if (vp.gridHelper) {
+      vp.gridHelper.visible = true;
+      vp.gridHelper.position.y = -SLAB_THICKNESS - 0.005;
+    }
+    if (shouldMoveCamera) {
+      if (currentLib === 'cn_foliage') {
+        vp.camera.position.set(2.0, 2.25, 4.1);
+        vp.controls.target.set(0, 0.95, FLOOR_DECAL_Z);
+      } else if (currentPlacement === 'wall') {
+        vp.camera.position.set(1.7, 2.35, 2.1);
+        vp.controls.target.set(0, 1.9, WALL_FRONT_Z);
+      } else {
+        vp.camera.position.set(1.5, 2.85, 3.65);
+        vp.controls.target.set(0, 0.25, FLOOR_DECAL_Z - 0.2);
+      }
+      vp.controls.update();
     }
   } else {
     if (vp.gridHelper) vp.gridHelper.visible = false;
-    vp.camera.position.set(0, 1.05, 2.9);
-    vp.controls.target.set(0, 1.05, 0);
+    if (shouldMoveCamera) {
+      vp.camera.position.set(0, 1.05, 2.9);
+      vp.controls.target.set(0, 1.05, 0);
+      vp.controls.update();
+    }
   }
-  vp.controls.update();
 }
 
-async function loadCurrentDecal() {
+async function loadCurrentDecal({ forceCamera = false } = {}) {
   const token = ++loadToken;
   const item = getCurrentDecal();
   const vp = ensureViewport();
@@ -513,11 +682,17 @@ async function loadCurrentDecal() {
     return;
   }
 
+  currentPlacement = resolvePlacement(item);
+  updateModeTabsUi();
   emptyEl.hidden = true;
   const isCnLib = currentLib === 'cn_pbr' || currentLib === 'cn_foliage';
   if (tintWrap) tintWrap.hidden = !(currentLib === 'cn_pbr' && item.tintableGrayscale);
   if (opacityInput) opacityInput.disabled = currentLib === 'cn_foliage';
   if (mapRmLabel) mapRmLabel.textContent = isCnLib ? 'RM' : 'ORM';
+
+  const placementLabel = currentLib === 'cn_foliage'
+    ? '地面立面'
+    : (currentPlacement === 'wall' ? '墙面' : '地面');
 
   if (isCnLib) {
     const cfg = CN_LIBS[currentLib];
@@ -529,9 +704,10 @@ async function loadCurrentDecal() {
     statusEl.textContent = `按需加载 ${item.id} (Color + Normal_RM)…`;
 
     try {
-      const [assets, baseMat] = await Promise.all([
+      const [assets, floorMat, wallMat] = await Promise.all([
         loadSingle2MapAssets(cfg.baseUrl, item.id),
-        previewMode === 'surface' ? getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer) : Promise.resolve(null),
+        previewMode === 'surface' ? getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer, 'floor') : Promise.resolve(null),
+        previewMode === 'surface' ? getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer, 'wall') : Promise.resolve(null),
       ]);
       if (token !== loadToken) return;
 
@@ -547,12 +723,13 @@ async function loadCurrentDecal() {
         tintHex,
         opacity,
         polygonOffset: currentLib === 'cn_pbr',
+        side: previewMode === 'surface' && currentLib !== 'cn_foliage' ? THREE.FrontSide : THREE.DoubleSide,
       });
       decalMaterial = built.material;
       decalTextures = [built.colorTex, built.normRmTex];
 
       const group = new THREE.Group();
-      configureSurfaceCamera(vp, group, baseMat);
+      configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera });
       if (currentLib === 'cn_foliage' && previewMode === 'surface') {
         const clump = new THREE.Group();
         const planeA = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
@@ -577,7 +754,7 @@ async function loadCurrentDecal() {
       const typeLabel = currentLib === 'cn_foliage' ? '2贴图植被卡片(alphaTest 0.5)' : '2贴图贴花(Transparent)';
       const tintStr = item.tintableGrayscale ? ' · 可染色灰度' : '';
       statusEl.textContent =
-        `${typeLabel} · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr} · ` +
+        `${typeLabel} · ${placementLabel} · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr} · ` +
         `${assets.loadMs.toFixed(0)}ms · ${item.sourcePath || item.category || ''}`;
 
       if (!viewEl.hidden) {
@@ -600,25 +777,30 @@ async function loadCurrentDecal() {
   statusEl.textContent = `正在加载 ${item.name}…`;
 
   try {
-    const [colorTex, normalTex, ormTex] = await Promise.all([
+    const [colorTex, rawNormalTex, ormTex] = await Promise.all([
       texLoader.loadAsync(item.color),
       item.normal ? texLoader.loadAsync(item.normal).catch(() => null) : Promise.resolve(null),
       item.orm ? texLoader.loadAsync(item.orm).catch(() => null) : Promise.resolve(null),
     ]);
     if (token !== loadToken) {
       colorTex.dispose();
-      normalTex?.dispose();
+      rawNormalTex?.dispose();
       ormTex?.dispose();
       return;
     }
 
     colorTex.colorSpace = THREE.SRGBColorSpace;
-    if (normalTex) normalTex.colorSpace = THREE.NoColorSpace;
+    if (rawNormalTex) rawNormalTex.colorSpace = THREE.NoColorSpace;
     if (ormTex) ormTex.colorSpace = THREE.NoColorSpace;
 
-    const baseMat = previewMode === 'surface'
-      ? await getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer)
-      : null;
+    const { texture: normalTex, status: normalStatus } = sanitizeDecalNormalTexture(rawNormalTex, colorTex);
+
+    const [floorMat, wallMat] = previewMode === 'surface'
+      ? await Promise.all([
+        getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer, 'floor'),
+        getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer, 'wall'),
+      ])
+      : [null, null];
     if (token !== loadToken) {
       colorTex.dispose();
       normalTex?.dispose();
@@ -649,11 +831,11 @@ async function loadCurrentDecal() {
       polygonOffset: true,
       polygonOffsetFactor: -4,
       polygonOffsetUnits: -4,
-      side: THREE.DoubleSide,
+      side: previewMode === 'surface' ? THREE.FrontSide : THREE.DoubleSide,
     });
 
     const group = new THREE.Group();
-    configureSurfaceCamera(vp, group, baseMat);
+    configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera });
     decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
     group.add(decalMesh);
 
@@ -662,17 +844,26 @@ async function loadCurrentDecal() {
     vp.scene.add(stageRoot);
 
     drawImageFittedToCanvas(mapColorCanvas, colorTex.image);
-    drawImageFittedToCanvas(mapNormalCanvas, normalTex?.image || colorTex.image);
+    if (normalTex?.image) {
+      drawImageFittedToCanvas(mapNormalCanvas, normalTex.image);
+    } else {
+      drawFlatNormalPreview(mapNormalCanvas);
+    }
     drawImageFittedToCanvas(mapOrmCanvas, ormTex?.image || colorTex.image);
     mapsRowEl.hidden = false;
 
     const dim = img ? `${img.width}×${img.height}` : '';
+    const normalLabel = normalStatus === 'stripped'
+      ? 'Normal(已忽略异常法线)'
+      : normalStatus === 'cleaned'
+        ? 'Normal(已修补边界)'
+        : (normalTex ? 'Normal' : null);
     const mapsLabel = [
       'Color+Alpha',
-      normalTex ? 'Normal' : null,
+      normalLabel,
       ormTex ? 'ORM' : null,
     ].filter(Boolean).join(' / ');
-    statusEl.textContent = `${item.category || 'PBR 贴花'}${dim ? ` · ${dim}` : ''} · ${mapsLabel}`;
+    statusEl.textContent = `${item.category || 'PBR 贴花'} · ${placementLabel}${dim ? ` · ${dim}` : ''} · ${mapsLabel}`;
 
     if (!viewEl.hidden) {
       vp.start();
@@ -691,7 +882,7 @@ async function switchDecalLib(libId) {
   const list = getActiveList();
   activeId = list[0]?.id || '';
   renderList();
-  await loadCurrentDecal();
+  await loadCurrentDecal({ forceCamera: true });
 }
 
 async function initDecalsView() {
@@ -726,13 +917,19 @@ async function initDecalsView() {
         if (nextMode === previewMode) return;
         previewMode = nextMode;
         updateModeTabsUi();
-        void loadCurrentDecal();
+        void loadCurrentDecal({ forceCamera: true });
       });
     }
 
     surfaceSelect.addEventListener('change', () => {
       if (previewMode === 'surface') {
         void loadCurrentDecal();
+      }
+    });
+
+    placementSelect?.addEventListener('change', () => {
+      if (previewMode === 'surface') {
+        void loadCurrentDecal({ forceCamera: true });
       }
     });
 
