@@ -79,8 +79,10 @@ const SLAB_THICKNESS = 0.24;
 const WALL_HEIGHT = 4.8;
 const WALL_FRONT_Z = -3.2;
 const FLOOR_DECAL_Z = 0.6;
-const WALL_DECAL_Y = 2.2;
+const WALL_DECAL_Y = 2.4;
 const SURFACE_EPSILON = 0.008;
+const BASE_DECAL_SIZE = 2.3;
+const BASE_FOLIAGE_SIZE = 1.9;
 
 let currentLib = 'cn_pbr';
 let cnDecals = [];
@@ -98,6 +100,7 @@ let decalMesh = null;
 let decalMaterial = null;
 let decalTextures = [];
 let decalAspect = 1;
+let decalContentScale = 1;
 let initialized = false;
 let loadToken = 0;
 let catalogLoaded = false;
@@ -449,32 +452,73 @@ async function getBaseSurfaceMaterial(surfaceKey, renderer, role = 'floor') {
   return mat;
 }
 
+function measureAlphaContentScale(img) {
+  if (!img) return 1;
+  try {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return 1;
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(img, 0, 0, size, size);
+    const data = ctx.getImageData(0, 0, size, size).data;
+    let minX = size;
+    let maxX = -1;
+    let minY = size;
+    let maxY = -1;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        if (data[(y * size + x) * 4 + 3] > 12) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < minX) return 1;
+    const spanX = (maxX - minX + 1) / size;
+    const spanY = (maxY - minY + 1) / size;
+    const visualFill = Math.max(0.45, Math.sqrt(spanX * spanY));
+    return Math.min(1.65, 1 / visualFill);
+  } catch {
+    return 1;
+  }
+}
+
 function applyTransformToDecalMesh() {
   if (!decalMesh || !decalMaterial) return;
-  const scale = Math.max(0.25, Math.min(3, Number(scaleInput.value) || 1));
+  const scale = Math.max(0.15, Math.min(5, Number(scaleInput.value) || 1));
   const rotRad = ((Number(rotInput.value) || 0) * Math.PI) / 180;
   const opacity = Math.max(0.05, Math.min(1, Number(opacityInput.value) || 1));
 
   if (currentLib !== 'cn_foliage') {
     decalMaterial.opacity = opacity;
   }
-  const wScale = decalAspect >= 1 ? scale : scale * decalAspect;
-  const hScale = decalAspect >= 1 ? scale / decalAspect : scale;
+
+  const aspectFactor = Math.sqrt(Math.max(0.25, Math.min(4.0, decalAspect)));
   if (currentLib === 'cn_foliage') {
-    const sx = wScale * 1.15;
-    const sy = hScale * 1.15;
+    const base = previewMode === 'surface' ? BASE_FOLIAGE_SIZE : 1.75;
+    const sx = base * scale * aspectFactor;
+    const sy = (base * scale) / aspectFactor;
     decalMesh.scale.set(sx, sy, sx);
     if (previewMode === 'surface') {
       decalMesh.rotation.set(0, -rotRad, 0);
-      decalMesh.position.set(0, 0.5 * 1.75 * sy, FLOOR_DECAL_Z);
+      decalMesh.position.set(0, 0.5 * sy, FLOOR_DECAL_Z);
     } else {
       decalMesh.rotation.set(0, 0, -rotRad);
       decalMesh.position.set(0, 1.05, 0);
     }
     return;
   }
+
   if (previewMode === 'surface') {
-    decalMesh.scale.set(wScale * 1.15, hScale * 1.15, 1);
+    const effective = BASE_DECAL_SIZE * decalContentScale * scale;
+    const wMeters = effective * aspectFactor;
+    const hMeters = effective / aspectFactor;
+    decalMesh.scale.set(wMeters, hMeters, 1);
     if (currentPlacement === 'wall') {
       decalMesh.rotation.set(0, 0, -rotRad);
       decalMesh.position.set(0, WALL_DECAL_Y, WALL_FRONT_Z + SURFACE_EPSILON);
@@ -483,7 +527,8 @@ function applyTransformToDecalMesh() {
       decalMesh.position.set(0, SURFACE_EPSILON, FLOOR_DECAL_Z);
     }
   } else {
-    decalMesh.scale.set(wScale * 1.15, hScale * 1.15, 1);
+    const flatBase = 1.75 * decalContentScale * scale;
+    decalMesh.scale.set(flatBase * aspectFactor, flatBase / aspectFactor, 1);
     decalMesh.rotation.set(0, 0, -rotRad);
     decalMesh.position.set(0, 1.05, 0);
   }
@@ -713,6 +758,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
 
       clearStage();
       decalAspect = Math.max(0.2, Math.min(4.0, Number(item.aspectRatio || (assets.normRm.width / Math.max(1, assets.normRm.height)))));
+      decalContentScale = currentLib === 'cn_foliage' ? 1 : measureAlphaContentScale(assets.colorImg);
       const tintHex = item.tintableGrayscale && tintSelect ? Number(tintSelect.value || 0x8b0c0c) : 0xffffff;
       const opacity = Math.max(0.05, Math.min(1, Number(opacityInput.value) || 1));
 
@@ -732,13 +778,13 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
       configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera });
       if (currentLib === 'cn_foliage' && previewMode === 'surface') {
         const clump = new THREE.Group();
-        const planeA = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
-        const planeB = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
+        const planeA = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), decalMaterial);
+        const planeB = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), decalMaterial);
         planeB.rotation.y = Math.PI * 0.5;
         clump.add(planeA, planeB);
         decalMesh = clump;
       } else {
-        decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
+        decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), decalMaterial);
       }
       group.add(decalMesh);
 
@@ -813,6 +859,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
 
     const img = colorTex.image;
     decalAspect = img && img.height > 0 ? Math.max(0.3, Math.min(3.5, img.width / img.height)) : 1;
+    decalContentScale = measureAlphaContentScale(img);
 
     const validOrm = ormTex && hasUsableRoughness(ormTex) ? ormTex : null;
     decalMaterial = new THREE.MeshStandardMaterial({
@@ -836,7 +883,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
 
     const group = new THREE.Group();
     configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera });
-    decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
+    decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), decalMaterial);
     group.add(decalMesh);
 
     stageRoot = group;
