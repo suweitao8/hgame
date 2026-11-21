@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Wire `createPhysicalRenderTargetPool3D` into `post3d/pipeline.js` (`assets/runtime/integrations/post3d/pipeline.js`, `assets/runtime/integrations/post3d/render-graph.js`): split AO and GI/SSR passes into lifetime-tracked transient stages (`aoRaw -> aoBlurX -> aoVol`, `giSsrRaw -> giSsrBlurX -> giSsr`), pool `bloomScratch` and `ldrColor` with `type`/`format` aware bucket keys, and expose `poolStats` on `lastFrameGraph` & `targets` (`reuses = 29` across 3 allocations in `390x844` Chromium WebGL2), raising Scorecard v5.1 `A2` from `8.5` to `9.0` (total `82.4/100`).
+
 - Add `defineMaterialVariants3D` (`assets/runtime/integrations/material-graph3d.js`, exported via `index.js`) supporting declarative boolean & enum keyword variant dictionaries, canonical key sorting, `defines`/`uniforms` merging, `customProgramCacheKey` shader program reuse, and batch `warmup(renderer, camera, combinations)`, raising Scorecard v5.1 `R3` from `7.5` to `8.5` (total `82.1/100`).
 
 - Unify `post3d/pipeline.js` and `createThreeAdapter` under a single `compileRenderGraph` + `executeRenderGraph` frame DAG with `renderGraph = true` default (`assets/runtime/integrations/post3d/pipeline.js`, `assets/runtime/integrations/three.js`): added `extraPasses` (`before` / `afterWorld`), `getMainTarget()`, and `getLastFrameGraph()` driving `shadow-csm -> world -> projected-decals -> post3d` with zero visual regression, raising Scorecard v5.1 `A2` from `7.0` to `8.5` (total `81.5/100`).

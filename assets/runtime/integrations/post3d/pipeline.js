@@ -26,7 +26,7 @@ import { createTemporalMotion } from './temporal-motion.js';
 import { getVisibleBakedProbeGrid } from '../lighting3d/baked-probe-grid.js';
 import { createHdrTargets } from './hdr-targets.js';
 import { FULLSCREEN_PASSES, validateFullscreenPass } from './pass-contracts.js';
-import { compileRenderGraph, executeRenderGraph } from './render-graph.js';
+import { compileRenderGraph, executeRenderGraph, createPhysicalRenderTargetPool3D } from './render-graph.js';
 
 const POST_STATE_SCALAR_KEYS = [
   'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
@@ -654,6 +654,7 @@ export function createPostPipeline3D(options = {}) {
   const usesByteColorTargets = hdrType === THREE.UnsignedByteType;
   const hdrTargets = createHdrTargets((width, height, depthBuffer) =>
     makeColorTarget(width, height, { type: hdrType, depthBuffer }));
+  const transientPool = supported ? createPhysicalRenderTargetPool3D(THREE, { maxIdleFrames: 4 }) : null;
   let sceneSampleCounts;
   let bloomStorage = chooseBloomStorage();
 
@@ -719,6 +720,7 @@ export function createPostPipeline3D(options = {}) {
     temporalAa?.release();
     disposeExposureTargets();
     hdrTargets.dispose();
+    transientPool?.dispose();
     for (const mip of bloomMips) {
       mip.down?.dispose?.();
       mip.up?.dispose?.();
@@ -815,7 +817,7 @@ export function createPostPipeline3D(options = {}) {
     syncSceneTarget();
     const hw = Math.max(1, bufferWidth >> 1);
     const hh = Math.max(1, bufferHeight >> 1);
-    const useAoVol = Boolean(sceneRT.depthTexture && (activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0));
+    const useAoVol = Boolean(!transientPool && sceneRT.depthTexture && (activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0));
     halfRT = syncColorTarget(halfRT, useAoVol, hw, hh, THREE.UnsignedByteType);
     aoBlurRT = syncColorTarget(aoBlurRT, useAoVol && !usesByteColorTargets, hw, hh, THREE.UnsignedByteType);
     syncBloomTargets(hw, hh);
@@ -839,14 +841,14 @@ export function createPostPipeline3D(options = {}) {
     const hw = Math.max(1, bufferWidth >> 1);
     const hh = Math.max(1, bufferHeight >> 1);
     const useGiSsr = Boolean(sceneRT.depthTexture && (ssgiEnabled() || ssrEnabled()));
-    giSsrRT = syncColorTarget(giSsrRT, useGiSsr, hw, hh, hdrType);
+    giSsrRT = syncColorTarget(giSsrRT, useGiSsr && !transientPool, hw, hh, hdrType);
     const useGiHistory = useGiSsr && state.temporalGiSsr && !usesByteColorTargets;
     if (giHistoryRT && (!useGiHistory || giHistoryRT.width !== hw || giHistoryRT.height !== hh)) {
       resetGiSsrHistory();
     }
     giHistoryRT = syncColorTarget(giHistoryRT, useGiHistory, hw, hh, hdrType);
     // AO and GI finish their blur before bloom writes the final upsample.
-    const useHalfScratch = useGiSsr || bloomMips.length > 1 || (usesByteColorTargets && Boolean(halfRT));
+    const useHalfScratch = !transientPool && (useGiSsr || bloomMips.length > 1 || (usesByteColorTargets && Boolean(halfRT)));
     // Reserve alpha when the preset can denoise GI/SSR, including while those effects fade out.
     const bloomOnly = bloomMips.length > 1 && !(sceneRT.depthTexture && (activePreset.ssgi || activePreset.ssr));
     halfScratchRT = syncColorTarget(halfScratchRT, useHalfScratch, hw, hh,
@@ -867,7 +869,7 @@ export function createPostPipeline3D(options = {}) {
       disposeExposureTargets();
     }
 
-    const useLdr = state.fxaa || state.sharpness > 0.001;
+    const useLdr = !transientPool && (state.fxaa || state.sharpness > 0.001);
     ldrRT = syncColorTarget(ldrRT, useLdr, bufferWidth, bufferHeight, THREE.UnsignedByteType);
   }
 
@@ -1053,6 +1055,9 @@ export function createPostPipeline3D(options = {}) {
         uTexelSize: { value: new THREE.Vector2(1 / bufferWidth, 1 / bufferHeight) },
         uSharpness: { value: state.sharpness },
         uFxaaEnabled: { value: state.fxaa ? 1 : 0 },
+      }),
+      giCopy: makeShader('precision highp float;\nin vec2 vUv;\nuniform sampler2D tInput;\nout vec4 fragColor;\nvoid main() {\n  fragColor = texture(tInput, vUv);\n}', {
+        tInput: { value: null },
       }),
     };
     mats.worldLighting = makeShader(COMPOSITE_FRAGMENT_GLSL3, mats.composite.uniforms, {
@@ -1303,6 +1308,7 @@ export function createPostPipeline3D(options = {}) {
       resetGiSsrHistory();
       temporalAa?.release();
       hdrTargets.dispose();
+      transientPool?.dispose();
     }
     bufferWidth = next.bufferWidth;
     bufferHeight = next.bufferHeight;
@@ -1441,7 +1447,9 @@ export function createPostPipeline3D(options = {}) {
           capabilities.maxTextureSize));
   }
 
-  function finishGiSsrBlur(world, camera, stepDt, useSsr) {
+  const framePoolTargets = new Set();
+
+  function finishGiSsrBlur(world, camera, stepDt, useSsr, blurXTarget, giSsrOutTarget) {
     const depthMode = sceneProjectionUniforms.uSceneDepthMode.value;
     let material = mats.blurRgba;
     if (giHistoryRT && giHistoryWorld === world && giHistoryCamera === camera &&
@@ -1460,15 +1468,21 @@ export function createPostPipeline3D(options = {}) {
         material = mats.blurGiHistory;
       }
     }
-    material.uniforms.tInput.value = halfScratchRT.texture;
+    material.uniforms.tInput.value = (blurXTarget ?? halfScratchRT).texture;
     material.uniforms.uAxis.value.set(0, 1);
-    runPass(material === mats.blurGiHistory ? FULLSCREEN_PASSES.giSsrTemporal : FULLSCREEN_PASSES.giSsrBlurY, material, giSsrRT);
+    const outTarget = giSsrOutTarget ?? giSsrRT;
+    runPass(material === mats.blurGiHistory ? FULLSCREEN_PASSES.giSsrTemporal : FULLSCREEN_PASSES.giSsrBlurY, material, outTarget);
 
-    const texture = giSsrRT.texture;
+    const texture = outTarget.texture;
     if (giHistoryRT) {
-      const previous = giHistoryRT;
-      giHistoryRT = giSsrRT;
-      giSsrRT = previous;
+      if (outTarget !== giSsrRT) {
+        mats.giCopy.uniforms.tInput.value = texture;
+        runPass({ name: 'gi-ssr-history-copy', reads: ['tInput'], writes: 'color' }, mats.giCopy, giHistoryRT);
+      } else {
+        const previous = giHistoryRT;
+        giHistoryRT = giSsrRT;
+        giSsrRT = previous;
+      }
       giHistoryView.copy(camera.matrixWorldInverse);
       giHistoryProjection.copy(sceneProjectionUniforms.uProj.value);
       giHistoryGuideOffset = sceneProjectionUniforms.uSceneDepthGuideOffset.value;
@@ -1499,7 +1513,7 @@ export function createPostPipeline3D(options = {}) {
   function reportTargets(sink) {
     if (!sink) return;
     for (const target of [sceneRT, halfRT, aoBlurRT, halfScratchRT, giSsrRT,
-      giHistoryRT, ldrRT, ...(temporalAa?.targets ?? []), temporalAa?.motionTarget]) {
+      giHistoryRT, ldrRT, ...framePoolTargets, ...(temporalAa?.targets ?? []), temporalAa?.motionTarget]) {
       if (target) sink.recordTarget(target);
     }
     for (const target of lumaMips) sink.recordTarget(target, true);
@@ -1586,17 +1600,16 @@ export function createPostPipeline3D(options = {}) {
     const hh = Math.max(1, bufferHeight >> 1);
     const readSceneDepth = Boolean(sceneRT.depthTexture);
     const hasSun = Boolean(sunLight?.position && sunLight.visible !== false);
-    const aoScratch = aoBlurRT ?? halfScratchRT;
-    const useAo = Boolean(readSceneDepth && activePreset.ssao && state.ssaoIntensity > 0 && halfRT && aoScratch);
+    const useAo = Boolean(readSceneDepth && activePreset.ssao && state.ssaoIntensity > 0);
     const useSsgi = readSceneDepth && ssgiEnabled();
     const useSsr = readSceneDepth && ssrEnabled();
-    const wantsGiSsr = Boolean((useSsgi || useSsr) && giSsrRT && halfScratchRT);
+    const wantsGiSsr = Boolean(useSsgi || useSsr);
     const wantsContact = readSceneDepth && hasSun && state.contactShadows > 0.001;
     const volSteps = activePreset.volumetricSteps ?? 0;
     const shadow = sunLight?.shadow;
     const wantsVolumetric = Boolean(readSceneDepth && hasSun && volSteps > 0.5 &&
       state.volumetricIntensity !== 0 && sunLight.castShadow !== false &&
-      renderer.shadowMap?.enabled !== false && shadow?.matrix && halfRT && aoScratch);
+      renderer.shadowMap?.enabled !== false && shadow?.matrix);
     const activePasses = customStages.length
       ? customStages.filter(({ pass }) => pass.enabled && (!pass.inputs.depth || readSceneDepth)) : customStages;
     const customDepth = activePasses.some(({ pass }) => pass.inputs.depth);
@@ -1615,11 +1628,12 @@ export function createPostPipeline3D(options = {}) {
       || viewScene.onBeforeRender !== THREE.Scene.prototype.onBeforeRender
       || viewScene.onAfterRender !== THREE.Scene.prototype.onAfterRender
     ));
-    const useGiSsr = Boolean(wantsGiSsr && giSsrRT && halfScratchRT);
+    const aoActive = Boolean(useAo || wantsVolumetric);
+    const useGiSsr = wantsGiSsr;
     const useAutoExposure = Boolean(state.autoExposure && lumaMips.length > 0 && adaptRT.length === 2);
     const useBloom = Boolean(activePreset.bloom && state.bloomStrength !== 0 && bloomMips.length > 0);
     const plannedFxaa = state.fxaa && (!useTemporal || hasViewModel);
-    const plannedFinalFxaaPass = Boolean(ldrRT && (plannedFxaa || state.sharpness > 0.001));
+    const plannedFinalFxaaPass = Boolean(plannedFxaa || state.sharpness > 0.001);
 
     const previousDiagnostics = activeDiagnostics;
     let worldCameraFar;
@@ -1642,6 +1656,8 @@ export function createPostPipeline3D(options = {}) {
     let bloomTexture = null;
 
     activeDiagnostics = diagnostics;
+    framePoolTargets.clear();
+    transientPool?.beginFrame();
     hdrTargets.beginFrame();
     try {
       const framePasses = [];
@@ -1735,8 +1751,9 @@ export function createPostPipeline3D(options = {}) {
         }
       });
 
-      if (useAo || wantsVolumetric) {
-        addStage('ao-volumetrics', () => {
+      if (aoActive) {
+        const aoSpec = { width: hw, height: hh, type: THREE.UnsignedByteType, format: THREE.RGBAFormat };
+        addStage('ao-volumetrics', ({ outputs }) => {
           if (useAo || useVolumetric) {
             const aoMaterial = useVolumetric && depthTexture?.compareFunction != null ? mats.aoVolCompare : mats.aoVol;
             const ao = aoMaterial.uniforms;
@@ -1753,21 +1770,39 @@ export function createPostPipeline3D(options = {}) {
               scratchViewToWorld.copy(camera.matrixWorldInverse).invert();
               scratchCamToShadow.multiplyMatrices(shadowMatrix, scratchViewToWorld);
             }
-            runPass(FULLSCREEN_PASSES.aoVolumetrics, aoMaterial, halfRT);
-
-            mats.blur.uniforms.tInput.value = halfRT.texture;
-            mats.blur.uniforms.uAxis.value.set(1, 0);
-            runPass(FULLSCREEN_PASSES.aoBlurX, mats.blur, aoScratch);
-
-            mats.blur.uniforms.tInput.value = aoScratch.texture;
-            mats.blur.uniforms.uAxis.value.set(0, 1);
-            runPass(FULLSCREEN_PASSES.aoBlurY, mats.blur, halfRT);
+            runPass(FULLSCREEN_PASSES.aoVolumetrics, aoMaterial, outputs.aoRaw);
           }
+        }, {
+          writes: ['aoRaw'],
+          transientSpecs: { aoRaw: aoSpec },
+        });
+        addStage('ao-blur-x', ({ inputs, outputs }) => {
+          if (useAo || useVolumetric) {
+            mats.blur.uniforms.tInput.value = inputs.aoRaw.texture;
+            mats.blur.uniforms.uAxis.value.set(1, 0);
+            runPass(FULLSCREEN_PASSES.aoBlurX, mats.blur, outputs.aoBlurX);
+          }
+        }, {
+          reads: ['aoRaw'],
+          writes: ['aoBlurX'],
+          transientSpecs: { aoBlurX: aoSpec },
+        });
+        addStage('ao-blur-y', ({ inputs, outputs }) => {
+          if (useAo || useVolumetric) {
+            mats.blur.uniforms.tInput.value = inputs.aoBlurX.texture;
+            mats.blur.uniforms.uAxis.value.set(0, 1);
+            runPass(FULLSCREEN_PASSES.aoBlurY, mats.blur, outputs.aoVol);
+          }
+        }, {
+          reads: ['aoBlurX'],
+          writes: ['aoVol'],
+          transientSpecs: { aoVol: aoSpec },
         });
       }
 
       if (useGiSsr) {
-        addStage('gi-ssr', () => {
+        const giSpec = { width: hw, height: hh, type: hdrType, format: THREE.RGBAFormat };
+        addStage('gi-ssr', ({ outputs }) => {
           const giU = mats.giSsr.uniforms;
           giU.tScene.value = sceneRT.texture;
           giU.tDepth.value = sceneRT.depthTexture;
@@ -1788,22 +1823,35 @@ export function createPostPipeline3D(options = {}) {
           giU.uSsrMaxDist.value = state.ssrMaxDist;
           giU.uSsrThickness.value = state.ssrThickness;
           giU.uTime.value = elapsed;
-          runPass(FULLSCREEN_PASSES.giSsr, mats.giSsr, giSsrRT);
-
-          mats.blurRgba.uniforms.tInput.value = giSsrRT.texture;
+          runPass(FULLSCREEN_PASSES.giSsr, mats.giSsr, outputs.giSsrRaw);
+        }, {
+          writes: ['giSsrRaw'],
+          transientSpecs: { giSsrRaw: giSpec },
+        });
+        addStage('gi-ssr-blur-x', ({ inputs, outputs }) => {
+          mats.blurRgba.uniforms.tInput.value = inputs.giSsrRaw.texture;
           mats.blurRgba.uniforms.uAxis.value.set(1, 0);
-          runPass(FULLSCREEN_PASSES.giSsrBlurX, mats.blurRgba, halfScratchRT);
-
-          giSsrTexture = finishGiSsrBlur(world, camera, stepDt, useSsr);
+          runPass(FULLSCREEN_PASSES.giSsrBlurX, mats.blurRgba, outputs.giSsrBlurX);
+        }, {
+          reads: ['giSsrRaw'],
+          writes: ['giSsrBlurX'],
+          transientSpecs: { giSsrBlurX: giSpec },
+        });
+        addStage('gi-ssr-blur-y', ({ inputs, outputs }) => {
+          giSsrTexture = finishGiSsrBlur(world, camera, stepDt, useSsr, inputs.giSsrBlurX, outputs.giSsr);
+        }, {
+          reads: ['giSsrBlurX'],
+          writes: ['giSsr'],
+          transientSpecs: { giSsr: giSpec },
         });
       }
 
-      addStage('composite-setup', () => {
+      addStage('composite-setup', ({ inputs }) => {
         compU = mats.composite.uniforms;
         compU.tScene.value = sceneRT.texture;
         compU.tDepth.value = needsDepth ? sceneRT.depthTexture : null;
-        compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
-        compU.tGiSsr.value = giSsrTexture;
+        compU.tAoVol.value = (useAo || useVolumetric) ? (inputs.aoVol?.texture ?? null) : null;
+        compU.tGiSsr.value = useGiSsr ? (inputs.giSsr?.texture ?? giSsrTexture) : null;
         compU.uUseAo.value = useAo ? 1 : 0;
         compU.uUseVolumetric.value = useVolumetric ? 1 : 0;
         compU.uUseGiSsr.value = useGiSsr ? 1 : 0;
@@ -1821,6 +1869,11 @@ export function createPostPipeline3D(options = {}) {
         // First-person drawing needs an unmultisampled depth attachment and retained HDR color.
         viewCompositeRT = separateViewModel ? hdrTargets.acquire(bufferWidth, bufferHeight, true) : null;
         if (!temporalFrame) lastReactiveMeshCount = 0;
+      }, {
+        reads: [
+          ...(aoActive ? ['aoVol'] : []),
+          ...(useGiSsr ? ['giSsr'] : []),
+        ],
       });
 
       if (useTemporal) {
@@ -1891,7 +1944,8 @@ export function createPostPipeline3D(options = {}) {
       }
 
       if (useBloom) {
-        addStage('bloom', () => {
+        const useBloomScratch = bloomMips.length > 1;
+        addStage('bloom', ({ outputs }) => {
           mats.prefilter.uniforms.tSource.value = compU.tScene.value;
           mats.prefilter.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
           mats.prefilter.uniforms.uThreshold.value = state.bloomThreshold;
@@ -1911,7 +1965,7 @@ export function createPostPipeline3D(options = {}) {
           let accumH = bloomMips[bloomMips.length - 1].h;
           for (let i = bloomMips.length - 2; i >= 0; i--) {
             const curr = bloomMips[i];
-            const target = i === 0 ? halfScratchRT : curr.up;
+            const target = i === 0 ? outputs.bloomScratch : curr.up;
             mats.upsample.uniforms.tLower.value = accumTex;
             mats.upsample.uniforms.tUpper.value = curr.down.texture;
             mats.upsample.uniforms.uTexelSize.value.set(1 / accumW, 1 / accumH);
@@ -1921,10 +1975,20 @@ export function createPostPipeline3D(options = {}) {
             accumH = curr.h;
           }
           bloomTexture = accumTex;
-        });
+        }, useBloomScratch ? {
+          writes: ['bloomScratch'],
+          transientSpecs: {
+            bloomScratch: {
+              width: hw,
+              height: hh,
+              type: bloomStorage.type,
+              ...(bloomStorage.format !== undefined ? { format: bloomStorage.format } : {}),
+            },
+          },
+        } : {});
       }
 
-      addStage('tone-mapping', () => {
+      addStage('tone-mapping', ({ outputs }) => {
         compU.tBloom.value = bloomTexture;
         compU.tAutoExposure.value = useAutoExposure ? adaptRT[adaptIndex].texture : null;
         compU.uUseBloom.value = useBloom ? 1 : 0;
@@ -1965,16 +2029,23 @@ export function createPostPipeline3D(options = {}) {
         compU.tColorLut.value = lutTexture ?? dummyWhiteLut;
         compU.uLutIntensity.value = lutTexture ? state.lutIntensity : 0;
         compU.uLutSize.value = state.lutSize;
-        runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, plannedFinalFxaaPass ? ldrRT : null, outputViewport);
+        runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, plannedFinalFxaaPass ? outputs.ldrColor : null, outputViewport);
       }, {
+        reads: [
+          ...(aoActive ? ['aoVol'] : []),
+          ...(useGiSsr ? ['giSsr'] : []),
+          ...(useBloom && bloomMips.length > 1 ? ['bloomScratch'] : []),
+        ],
         writes: plannedFinalFxaaPass ? ['ldrColor'] : ['backbuffer'],
-        transientSpecs: plannedFinalFxaaPass ? { ldrColor: { width: bufferWidth, height: bufferHeight, format: 'rgba8' } } : undefined,
+        transientSpecs: plannedFinalFxaaPass
+          ? { ldrColor: { width: bufferWidth, height: bufferHeight, type: THREE.UnsignedByteType, format: THREE.RGBAFormat } }
+          : undefined,
       });
 
       if (plannedFinalFxaaPass) {
-        addStage('fxaa-sharpen', () => {
+        addStage('fxaa-sharpen', ({ inputs }) => {
           const useFxaa = state.fxaa && (!temporalFrame || hasViewModel);
-          mats.fxaaSharpen.uniforms.tDiffuse.value = ldrRT.texture;
+          mats.fxaaSharpen.uniforms.tDiffuse.value = inputs.ldrColor.texture;
           mats.fxaaSharpen.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
           mats.fxaaSharpen.uniforms.uSharpness.value = state.sharpness;
           mats.fxaaSharpen.uniforms.uFxaaEnabled.value = useFxaa ? 1 : 0;
@@ -1989,10 +2060,24 @@ export function createPostPipeline3D(options = {}) {
         externalOutputs: ['backbuffer'],
         pruneDeadPasses: true,
       });
-      const graphExecResult = executeRenderGraph(frameGraph, {
-        acquire: (_spec, resource) => (resource === 'ldrColor' ? ldrRT : { token: resource }),
-        release() {},
-      }, {
+      const poolAdapter = transientPool
+        ? {
+            acquire(spec, resource, slot, pass) {
+              if (!spec) return { token: resource };
+              const rt = transientPool.acquire(spec, resource, slot, pass);
+              framePoolTargets.add(rt);
+              return rt;
+            },
+            release(target, resource, slot) {
+              if (!target || target.token) return;
+              transientPool.release(target, resource, slot);
+            },
+          }
+        : {
+            acquire: (_spec, resource) => ({ token: resource }),
+            release() {},
+          };
+      const graphExecResult = executeRenderGraph(frameGraph, poolAdapter, {
         state: { sceneRT, bufferWidth, bufferHeight },
       });
       lastExecutedGraph = graphExecResult.executed.slice();
@@ -2002,6 +2087,7 @@ export function createPostPipeline3D(options = {}) {
         executed: graphExecResult.executed,
         peakTargets: frameGraph.peakTargets,
         reusedCount: graphExecResult.reusedCount,
+        poolStats: transientPool?.getStats() ?? null,
       });
       lastRenderGraphPlan = buildFrameRenderGraphPlan({
         useAo,
@@ -2086,7 +2172,7 @@ export function createPostPipeline3D(options = {}) {
         stages: customStages,
         useAutoExposure: Boolean(state.autoExposure),
         useBloom: state.bloomStrength > 0.001,
-        useFinalFxaaPass: Boolean(ldrRT && (state.fxaa || state.sharpness > 0.001)),
+        useFinalFxaaPass: Boolean(supported && !contextLost && sceneRT && (state.fxaa || state.sharpness > 0.001)),
       });
     },
     getLastExecutedGraph() {
@@ -2120,12 +2206,13 @@ export function createPostPipeline3D(options = {}) {
         bufferWidth,
         bufferHeight,
         hasSceneRT: Boolean(sceneRT),
-        hasHalfRT: Boolean(halfRT),
-        hasGiSsrRT: Boolean(giSsrRT),
+        hasHalfRT: Boolean(halfRT || (transientPool && sceneRT?.depthTexture && (activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0))),
+        hasGiSsrRT: Boolean(giSsrRT || (transientPool && sceneRT?.depthTexture && (ssgiEnabled() || ssrEnabled()))),
         hasAutoExposureRT: Boolean(lumaMips.length > 0 && adaptRT.length === 2),
         bloomMipCount: bloomMips.length,
-        hasLdrRT: Boolean(ldrRT),
+        hasLdrRT: Boolean(ldrRT || (transientPool && supported && !contextLost && sceneRT && (state.fxaa || state.sharpness > 0.001))),
         hasTemporalAA: Boolean(temporalAa?.targets.length),
+        poolStats: transientPool?.getStats() ?? null,
       };
     },
     resize,

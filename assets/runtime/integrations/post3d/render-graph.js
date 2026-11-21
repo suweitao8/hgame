@@ -10,9 +10,10 @@ function specKey(spec) {
   const width = spec.width ?? 'full';
   const height = spec.height ?? 'full';
   const format = spec.format ?? 'rgba16f';
+  const type = spec.type ?? 'auto';
   const depth = Boolean(spec.depthBuffer);
   const samples = spec.samples ?? 0;
-  return `${width}x${height}:${format}:d${depth ? 1 : 0}:s${samples}`;
+  return `${width}x${height}:${format}:t${type}:d${depth ? 1 : 0}:s${samples}`;
 }
 
 function normalizeList(value, label) {
@@ -416,13 +417,17 @@ export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames =
     const samples = Math.max(0, Math.floor(Number(spec?.samples) || 0));
     let rt;
     if (THREE?.WebGLRenderTarget) {
-      rt = new THREE.WebGLRenderTarget(w, h, {
+      const rtOpts = {
         depthBuffer: depth,
         stencilBuffer: false,
         samples,
         minFilter: THREE.LinearFilter,
         magFilter: THREE.LinearFilter,
-      });
+        generateMipmaps: false,
+      };
+      if (spec?.type !== undefined) rtOpts.type = spec.type;
+      if (spec?.format !== undefined) rtOpts.format = spec.format;
+      rt = new THREE.WebGLRenderTarget(w, h, rtOpts);
     } else {
       rt = { width: w, height: h, depthBuffer: depth, samples, isRenderTarget: true, dispose() {} };
     }

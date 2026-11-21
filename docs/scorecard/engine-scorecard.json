@@ -122,13 +122,13 @@
       "name": "渲染图与扩展管线",
       "weight": 6,
       "scores": {
-        "hgame": 8.5,
+        "hgame": 9,
         "unity": 9,
         "cocos": 8,
         "godot": 5
       },
       "hgame": {
-        "evidence": "C3",
+        "evidence": "C4",
         "defaultPath": true,
         "proofFiles": [
           "assets/runtime/integrations/post3d/render-graph.js",
@@ -144,7 +144,7 @@
           {
             "point": "按资源寿命自动物理 RT 别名分配复用",
             "met": true,
-            "proof": "assets/runtime/integrations/post3d/render-graph.js createPhysicalRenderTargetPool3D"
+            "proof": "assets/runtime/integrations/post3d/render-graph.js createPhysicalRenderTargetPool3D, pipeline.js"
           },
           {
             "point": "自动剔除死 Pass（pruneDeadPasses）",
@@ -157,7 +157,7 @@
             "proof": "assets/runtime/integrations/post3d/pipeline.js, assets/runtime/integrations/three.js"
           }
         ],
-        "note": "createThreeAdapter 默认启用 renderGraph=true，并与 postPipeline.render 共享同一 compileRenderGraph/executeRenderGraph 单次编译执行链，统一调度 shadow-csm -> world -> projected-decals -> scene-setup -> ao-volumetrics -> gi-ssr -> composite-setup -> temporal-aa -> viewmodel -> custom-passes -> auto-exposure -> bloom -> tone-mapping -> fxaa-sharpen。",
+        "note": "createThreeAdapter 默认启用 renderGraph=true，与 postPipeline.render 共享单次 compileRenderGraph/executeRenderGraph 管线；并将 ao-volumetrics/ao-blur-x/y、gi-ssr/gi-ssr-blur-x/y、bloomScratch 与 ldrColor 全面接入 createPhysicalRenderTargetPool3D 按寿命自动物理别名复用。",
         "benchmarkFiles": [
           "tests/browser-mobile-portrait-benchmark.mjs",
           "tests/browser-engine-v3-commercial-benchmark.mjs"
@@ -168,7 +168,7 @@
         "cocos": "Cocos Creator 3.8 提供 Custom Render Pipeline（CRP）自定义渲染管线编排能力。",
         "godot": "Godot 4.3+ Web 强制退回 Compatibility/GLES3 后端，桌面端 Forward+ Compositor 与渲染图扩展不可用。"
       },
-      "gap": "pipeline 持久 RT 尚未全部交由物理别名池按寿命分配"
+      "gap": "sceneRT 与多级 bloomMip 仍为持久分配，尚未完全交由别名池统一管理"
     },
     {
       "id": "A3",
