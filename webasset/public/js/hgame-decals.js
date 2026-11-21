@@ -59,8 +59,24 @@ const statusEl = document.querySelector('#hgame-decal-status');
 
 const texLoader = new THREE.TextureLoader();
 
+const CN_LIBS = {
+  cn_pbr: {
+    baseUrl: '/assets/cn/pbr_decals',
+    tableUrl: '/assets/cn/pbr_decals/pbr_decals_table.json',
+    mode: 'decal',
+    label: '全部 2-Texture PBR 贴花',
+  },
+  cn_foliage: {
+    baseUrl: '/assets/cn/pbr_foliage',
+    tableUrl: '/assets/cn/pbr_foliage/pbr_foliage_table.json',
+    mode: 'foliage',
+    label: '全部 2-Texture PBR 植被卡片',
+  },
+};
+
 let currentLib = 'cn_pbr';
 let cnDecals = [];
+let cnFoliage = [];
 let unrealDecals = [];
 let baseMaterials = [];
 let activeId = '';
@@ -84,7 +100,9 @@ function syncSliderLabels() {
 }
 
 function getActiveList() {
-  return currentLib === 'cn_pbr' ? cnDecals : unrealDecals;
+  if (currentLib === 'cn_pbr') return cnDecals;
+  if (currentLib === 'cn_foliage') return cnFoliage;
+  return unrealDecals;
 }
 
 function getFilteredDecals() {
@@ -93,7 +111,7 @@ function getFilteredDecals() {
   const items = getActiveList();
 
   return items.filter(item => {
-    if (currentLib === 'cn_pbr') {
+    if (currentLib === 'cn_pbr' || currentLib === 'cn_foliage') {
       if (filter === 'tint:1' && !item.tintableGrayscale) return false;
       if (filter.startsWith('cat:') && (item.category || '') !== filter.slice(4)) return false;
       if (!query) return true;
@@ -124,7 +142,8 @@ function populatePackFilter() {
   packFilter.replaceChildren();
   const items = getActiveList();
 
-  if (currentLib === 'cn_pbr') {
+  if (currentLib === 'cn_pbr' || currentLib === 'cn_foliage') {
+    const cfg = CN_LIBS[currentLib];
     const cats = new Map();
     let tintCount = 0;
     for (const item of items) {
@@ -138,7 +157,7 @@ function populatePackFilter() {
       opt.textContent = text;
       packFilter.appendChild(opt);
     };
-    addOpt('all', `全部 2-Texture PBR 贴花 (${items.length})`);
+    addOpt('all', `${cfg.label} (${items.length})`);
     for (const [cat, count] of [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
       addOpt(`cat:${cat}`, `分类 · ${cat} (${count})`);
     }
@@ -186,7 +205,8 @@ function renderList() {
     return;
   }
 
-  if (currentLib === 'cn_pbr') {
+  if (currentLib === 'cn_pbr' || currentLib === 'cn_foliage') {
+    const baseUrl = CN_LIBS[currentLib].baseUrl;
     for (const item of filtered) {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -195,7 +215,7 @@ function renderList() {
 
       const thumb = document.createElement('img');
       thumb.className = 'hgame-item-thumb';
-      thumb.src = `/assets/cn/pbr_decals/${item.id}/color.png`;
+      thumb.src = `${baseUrl}/${item.id}/color.png`;
       thumb.alt = '';
       thumb.loading = 'lazy';
       btn.appendChild(thumb);
@@ -387,9 +407,24 @@ function applyTransformToDecalMesh() {
   const rotRad = ((Number(rotInput.value) || 0) * Math.PI) / 180;
   const opacity = Math.max(0.05, Math.min(1, Number(opacityInput.value) || 1));
 
-  decalMaterial.opacity = opacity;
+  if (currentLib !== 'cn_foliage') {
+    decalMaterial.opacity = opacity;
+  }
   const wScale = decalAspect >= 1 ? scale : scale * decalAspect;
   const hScale = decalAspect >= 1 ? scale / decalAspect : scale;
+  if (currentLib === 'cn_foliage') {
+    const sx = wScale * 1.15;
+    const sy = hScale * 1.15;
+    decalMesh.scale.set(sx, sy, sx);
+    if (previewMode === 'surface') {
+      decalMesh.rotation.set(0, -rotRad, 0);
+      decalMesh.position.set(0, 0.12 + 0.5 * 1.75 * sy, 0);
+    } else {
+      decalMesh.rotation.set(0, 0, -rotRad);
+      decalMesh.position.set(0, 1.05, 0);
+    }
+    return;
+  }
   if (previewMode === 'surface') {
     decalMesh.scale.set(wScale * 1.15, hScale * 1.15, 1);
     decalMesh.rotation.set(-Math.PI * 0.5, 0, -rotRad);
@@ -474,12 +509,15 @@ async function loadCurrentDecal() {
   }
 
   emptyEl.hidden = true;
+  const isCnLib = currentLib === 'cn_pbr' || currentLib === 'cn_foliage';
   if (tintWrap) tintWrap.hidden = !(currentLib === 'cn_pbr' && item.tintableGrayscale);
-  if (mapRmLabel) mapRmLabel.textContent = currentLib === 'cn_pbr' ? 'RM' : 'ORM';
+  if (opacityInput) opacityInput.disabled = currentLib === 'cn_foliage';
+  if (mapRmLabel) mapRmLabel.textContent = isCnLib ? 'RM' : 'ORM';
 
-  if (currentLib === 'cn_pbr') {
+  if (isCnLib) {
+    const cfg = CN_LIBS[currentLib];
     titleEl.textContent = `${item.id} (${item.width || 1024}×${item.height || 1024})`;
-    downloadEl.href = `/assets/cn/pbr_decals/${item.id}/color.png`;
+    downloadEl.href = `${cfg.baseUrl}/${item.id}/color.png`;
     downloadEl.download = `${item.id}_color.png`;
     downloadEl.textContent = '下载 Color PNG';
     downloadEl.hidden = false;
@@ -487,7 +525,7 @@ async function loadCurrentDecal() {
 
     try {
       const [assets, baseMat] = await Promise.all([
-        loadSingle2MapAssets('/assets/cn/pbr_decals', item.id),
+        loadSingle2MapAssets(cfg.baseUrl, item.id),
         previewMode === 'surface' ? getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer) : Promise.resolve(null),
       ]);
       if (token !== loadToken) return;
@@ -498,19 +536,28 @@ async function loadCurrentDecal() {
       const opacity = Math.max(0.05, Math.min(1, Number(opacityInput.value) || 1));
 
       const built = create2MapPbrMaterial({
-        mode: 'decal',
+        mode: cfg.mode,
         assets,
         renderer: vp.renderer,
         tintHex,
         opacity,
-        polygonOffset: true,
+        polygonOffset: currentLib === 'cn_pbr',
       });
       decalMaterial = built.material;
       decalTextures = [built.colorTex, built.normRmTex];
 
       const group = new THREE.Group();
       configureSurfaceCamera(vp, group, baseMat);
-      decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
+      if (currentLib === 'cn_foliage' && previewMode === 'surface') {
+        const clump = new THREE.Group();
+        const planeA = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
+        const planeB = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
+        planeB.rotation.y = Math.PI * 0.5;
+        clump.add(planeA, planeB);
+        decalMesh = clump;
+      } else {
+        decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
+      }
       group.add(decalMesh);
 
       stageRoot = group;
@@ -522,9 +569,10 @@ async function loadCurrentDecal() {
 
       const aspectStr = decalAspect !== 1 ? ` · 比例 ${item.aspectRatio}:1` : '';
       const physStr = item.physicalSizeMeters ? ` · ${item.physicalSizeMeters}m` : '';
+      const typeLabel = currentLib === 'cn_foliage' ? '2贴图植被卡片(alphaTest 0.5)' : '2贴图贴花(Transparent)';
       const tintStr = item.tintableGrayscale ? ' · 可染色灰度' : '';
       statusEl.textContent =
-        `2贴图贴花 (Color+Normal_RM OpenGL +Y) · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr} · ` +
+        `${typeLabel} · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr} · ` +
         `${assets.loadMs.toFixed(0)}ms · ${item.sourcePath || item.category || ''}`;
 
       if (!viewEl.hidden) {
@@ -632,7 +680,7 @@ async function loadCurrentDecal() {
 }
 
 async function switchDecalLib(libId) {
-  currentLib = libId === 'unreal' ? 'unreal' : 'cn_pbr';
+  currentLib = (libId === 'unreal' || libId === 'cn_foliage') ? libId : 'cn_pbr';
   updateLibTabsUi();
   populatePackFilter();
   const list = getActiveList();
@@ -706,12 +754,14 @@ async function initDecalsView() {
 
   if (!catalogLoaded) {
     try {
-      const [cnResp, unrealCatalog, curatedData] = await Promise.all([
+      const [cnResp, folResp, unrealCatalog, curatedData] = await Promise.all([
         fetch('/assets/cn/pbr_decals/pbr_decals_table.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
+        fetch('/assets/cn/pbr_foliage/pbr_foliage_table.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
         fetchUnrealCatalog().catch(() => ({ decals: [], materials: [] })),
         apiRequestJson('/api/hgame/materials/curated').catch(() => ({ materials: [] })),
       ]);
       cnDecals = Array.isArray(cnResp?.items) ? cnResp.items : [];
+      cnFoliage = Array.isArray(folResp?.items) ? folResp.items : [];
       unrealDecals = Array.isArray(unrealCatalog.decals) ? unrealCatalog.decals : [];
       const unrealMats = Array.isArray(unrealCatalog.materials) ? unrealCatalog.materials : [];
       const curatedMats = Array.isArray(curatedData?.materials) ? curatedData.materials : [];
@@ -719,6 +769,7 @@ async function initDecalsView() {
       catalogLoaded = true;
     } catch (error) {
       cnDecals = [];
+      cnFoliage = [];
       unrealDecals = [];
       baseMaterials = [];
       statusEl.textContent = error.message || '读取贴花目录失败';
