@@ -1,0 +1,10 @@
+{
+  "version": "4.1.0",
+  "note": "Layer P (L2 Nature / L3 PolyHaven / L3-CN Tripo / L4 Vehicles & Tools). M2 batch assets populate raw/models_* and ingest via npm run models:ingest.",
+  "items": [
+    { "id": "tree_camphor_01", "group": "l2_nature", "tier": "T3", "source": "ez_tree", "sourceFile": "models_nature/tree_camphor_01.glb", "targetHeight": 6.5, "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["tree", "camphor"], "textureMode": "array_override", "arrayMaterialMap": { "bark": "bark_camphor", "leaves": "leaves_broadleaf" } },
+    { "id": "rock_granite_01", "group": "l2_nature", "tier": "T3", "source": "seed_rock", "sourceFile": "models_nature/rock_granite_01.glb", "targetHeight": 1.6, "quadrants": ["Q4_RURAL"], "tags": ["rock", "boulder"], "textureMode": "array_override", "arrayMaterialMap": { "*": "nature_mountain_rock" } },
+    { "id": "prop_barrel_01", "group": "l3_prop", "tier": "T2", "source": "polyhaven", "polyhavenId": "Barrel_01", "targetHeight": 0.92, "quadrants": ["Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["barrel", "industrial"], "textureMode": "unique_pbr" },
+    { "id": "prop_lantern_01", "group": "l3_prop", "tier": "T1", "source": "polyhaven", "polyhavenId": "Lantern_01", "targetHeight": 0.36, "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["lantern", "prop"], "textureMode": "unique_pbr" }
+  ]
+}

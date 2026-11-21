@@ -1,0 +1,84 @@
+{
+  "version": "4.1.0",
+  "atlases": [
+    {
+      "id": "cn_shop_signs",
+      "description": "32块现代中国街区店招灯箱 (color + emissive)",
+      "pcSize": [2048, 1024],
+      "mobileSize": [1024, 512],
+      "cols": 8,
+      "rows": 4,
+      "maps": ["color", "emissive"],
+      "items": [
+        { "id": "sign_convenience", "text": "24H便利超市", "sub": "烟酒 · 饮料 · 日百", "bg": "#14539a", "fg": "#ffffff", "accent": "#f5b700" },
+        { "id": "sign_tobacco_tea", "text": "名烟名酒茶行", "sub": "礼品回收 · 茗茶", "bg": "#6d1b1b", "fg": "#f6d78a", "accent": "#d99b26" },
+        { "id": "sign_hardware", "text": "五金建材水暖", "sub": "电料 · 锁具 · 管件", "bg": "#1f4f82", "fg": "#ffffff", "accent": "#ff8800" },
+        { "id": "sign_fresh_market", "text": "邻里生鲜超市", "sub": "蔬菜 · 水果 · 肉禽蛋", "bg": "#1f7a3e", "fg": "#ffffff", "accent": "#f6c90e" },
+        { "id": "sign_pharmacy", "text": "百姓大药房", "sub": "医保定点 · 24小时", "bg": "#0f6e5c", "fg": "#ffffff", "accent": "#e53935" },
+        { "id": "sign_auto_repair", "text": "专业汽修补胎", "sub": "机油保养 · 搭电洗车", "bg": "#263238", "fg": "#ffca28", "accent": "#ef5350" },
+        { "id": "sign_shaxian", "text": "沙县小吃", "sub": "拌面 · 扁肉 · 蒸饺 · 炖罐", "bg": "#b71c1c", "fg": "#fff8e1", "accent": "#fbc02d" },
+        { "id": "sign_lanzhou", "text": "正宗兰州牛肉面", "sub": "现拉面条 · 炒面 · 盖饭", "bg": "#1b5e20", "fg": "#ffffff", "accent": "#ffd54f" },
+        { "id": "sign_breakfast", "text": "老街早点铺", "sub": "豆浆 · 油条 · 小笼包", "bg": "#bf360c", "fg": "#fff3e0", "accent": "#ffb300" },
+        { "id": "sign_barber", "text": "造型美发沙龙", "sub": "剪发 · 烫染 · 洗吹", "bg": "#212121", "fg": "#ffffff", "accent": "#e91e63" },
+        { "id": "sign_express_post", "text": "菜鸟快递驿站", "sub": "代收代寄 · 极速上门", "bg": "#0277bd", "fg": "#ffffff", "accent": "#ffab00" },
+        { "id": "sign_mahjong", "text": "舒心茶楼棋牌室", "sub": "自动麻将 · 空调包厢", "bg": "#3e2723", "fg": "#ffe082", "accent": "#66bb6a" },
+        { "id": "sign_foot_spa", "text": "金足阁足浴养生", "sub": "推拿 · 拔罐 · 刮痧", "bg": "#4a148c", "fg": "#ffe082", "accent": "#ab47bc" },
+        { "id": "sign_netcafe", "text": "极速电竞网咖", "sub": "千兆光纤 · 包夜特惠", "bg": "#0d1b2a", "fg": "#00e5ff", "accent": "#ff1744" },
+        { "id": "sign_agri_supply", "text": "惠农化肥农资站", "sub": "种子 · 农药 · 农膜", "bg": "#2e7d32", "fg": "#ffffff", "accent": "#fdd835" },
+        { "id": "sign_village_clinic", "text": "村卫生室", "sub": "常见病诊疗 · 医保报销", "bg": "#ffffff", "fg": "#00695c", "accent": "#d32f2f" },
+        { "id": "sign_milk_tea", "text": "鲜果茶饮铺", "sub": "现萃鲜茶 · 手工芋圆", "bg": "#e65100", "fg": "#fff8e1", "accent": "#ffcc80" },
+        { "id": "sign_bbq", "text": "老巷炭火烧烤", "sub": "夜宵 · 扎啤 · 炒海鲜", "bg": "#1a1a1a", "fg": "#ff7043", "accent": "#ffca28" },
+        { "id": "sign_laundry", "text": "洁净干洗店", "sub": "精洗羽绒 · 皮具护理", "bg": "#00838f", "fg": "#ffffff", "accent": "#b2ebf2" },
+        { "id": "sign_stationary", "text": "晨光文具打印", "sub": "彩印复印 · 办公用品", "bg": "#c62828", "fg": "#ffffff", "accent": "#ffd600" },
+        { "id": "sign_pet", "text": "萌宠医院洗澡", "sub": "疫苗 · 驱虫 · 美容", "bg": "#ef6c00", "fg": "#ffffff", "accent": "#fff59d" },
+        { "id": "sign_ebike", "text": "电动车专卖维修", "sub": "以旧换新 · 换电瓶", "bg": "#1565c0", "fg": "#ffffff", "accent": "#ffeb3b" },
+        { "id": "sign_key_lock", "text": "公安备案开锁", "sub": "配钥匙 · 换指纹锁", "bg": "#283593", "fg": "#ffffff", "accent": "#ff5252" },
+        { "id": "sign_real_estate", "text": "安居房产中介", "sub": "二手房 · 租售过户", "bg": "#ad1457", "fg": "#ffffff", "accent": "#f8bbd0" },
+        { "id": "sign_bakery", "text": "麦香烘焙坊", "sub": "现烤吐司 · 生日蛋糕", "bg": "#5d4037", "fg": "#ffecb3", "accent": "#ffab40" },
+        { "id": "sign_hotpot", "text": "重庆老火锅", "sub": "九宫格 · 毛肚鸭肠", "bg": "#880e4f", "fg": "#ffd54f", "accent": "#ff3d00" },
+        { "id": "sign_dumpling", "text": "东北水饺馆", "sub": "手工现包 · 酱骨头", "bg": "#b71c1c", "fg": "#ffffff", "accent": "#ffca28" },
+        { "id": "sign_clinic_dental", "text": "微笑口腔诊所", "sub": "洗牙 · 补牙 · 正畸", "bg": "#0288d1", "fg": "#ffffff", "accent": "#80deea" },
+        { "id": "sign_recycle", "text": "废旧物资回收", "sub": "家电 · 纸壳 · 废铁", "bg": "#33691e", "fg": "#ffffff", "accent": "#dce775" },
+        { "id": "sign_grain_oil", "text": "粮油副食批发", "sub": "东北大米 · 压榨菜油", "bg": "#f57f17", "fg": "#212121", "accent": "#b71c1c" },
+        { "id": "sign_mobile_repair", "text": "手机快修贴膜", "sub": "换屏换电池 · 办宽带", "bg": "#004d40", "fg": "#ffffff", "accent": "#00e676" },
+        { "id": "sign_tea_house", "text": "清风茶社", "sub": "大红袍 · 普洱 · 棋艺", "bg": "#2e3b2e", "fg": "#e8d5b7", "accent": "#c89f5d" }
+      ]
+    },
+    {
+      "id": "cn_municipal_signs",
+      "description": "国标蓝底路牌/交通禁令/小区单元牌/安全出口/消火栓/乡村红底标语",
+      "pcSize": [1024, 1024],
+      "mobileSize": [512, 512],
+      "cols": 4,
+      "rows": 4,
+      "maps": ["color"]
+    },
+    {
+      "id": "cn_road_markings",
+      "description": "斑马线/直行转向箭头/黄色禁停网格/停车位框/圆方铸铁井盖",
+      "pcSize": [1024, 1024],
+      "mobileSize": [512, 512],
+      "cols": 4,
+      "rows": 4,
+      "maps": ["color", "normal_rm"]
+    },
+    {
+      "id": "cn_weathering_vfx",
+      "description": "墙角水渍/墙皮脱落/楼道小广告/油污裂缝/弹孔焦痕/8阶段破坏裂纹/4x4粒子帧",
+      "pcSize": [1024, 1024],
+      "mobileSize": [512, 512],
+      "cols": 4,
+      "rows": 4,
+      "maps": ["color"]
+    },
+    {
+      "id": "cn_backdrop_windows",
+      "description": "远景写字楼与居民楼窗格阵列 (color + emissive)",
+      "pcSize": [512, 512],
+      "mobileSize": [512, 512],
+      "cols": 2,
+      "rows": 2,
+      "maps": ["color", "emissive"]
+    }
+  ]
+}

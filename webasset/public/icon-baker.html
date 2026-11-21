@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>WebAsset Isometric Icon Baker</title>
+  <script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/","three/examples/jsm/":"/vendor/three/examples/jsm/"}}</script>
+</head>
+<body style="margin:0;background:transparent;">
+  <canvas id="c" width="128" height="128"></canvas>
+  <script type="module">
+    import * as THREE from 'three';
+    import {
+      PbrTextureArrayLoader,
+      ensurePbrGeometryAttributes,
+      createWorldPbrMaterial,
+      loadHdriEnvironment,
+    } from './js/pbr-runtime.js';
+    import { SandboxModelLoader } from './js/sandbox-glb-loader.js';
+
+    const canvas = document.getElementById('c');
+    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(128, 128, false);
+    renderer.setPixelRatio(1);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.08;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearColor(0x000000, 0);
+
+    const scene = new THREE.Scene();
+    const sun = new THREE.DirectionalLight(0xfff4df, 2.3);
+    sun.position.set(3.2, 5.2, 2.8);
+    scene.add(sun);
+    scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x3b3529, 0.72));
+
+    const pbrLoader = new PbrTextureArrayLoader({ baseUrl: '/assets/pbr' });
+    const texArray = await pbrLoader.load({ renderer, resolution: 256 });
+    const registry = texArray.registry;
+    try {
+      await loadHdriEnvironment({ url: '/assets/pbr/hdri/sky_day.hdr', renderer, scene });
+    } catch { /* fallback to hemisphere */ }
+
+    const opaqueMat = createWorldPbrMaterial({ textureArrays: texArray, registry });
+    const cutoutMat = createWorldPbrMaterial({ textureArrays: texArray, registry, alphaCutout: true });
+    const transMat = createWorldPbrMaterial({ textureArrays: texArray, registry, translucent: true });
+    const modelLoader = new SandboxModelLoader({ manifestUrl: '/assets/models/model_manifest.json' });
+    const modelManifest = await modelLoader.loadManifest();
+
+    const isoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 40);
+    // Standard 45 deg yaw, 30 deg pitch isometric view
+    const yaw = Math.PI * 0.25;
+    const pitch = THREE.MathUtils.degToRad(30);
+    const camDist = 6.0;
+    const camDir = new THREE.Vector3(
+      Math.cos(pitch) * Math.sin(yaw),
+      Math.sin(pitch),
+      Math.cos(pitch) * Math.cos(yaw),
+    ).normalize();
+
+    function makeBlockMesh(def) {
+      const geo = new THREE.BoxGeometry(1, 1, 1);
+      const topSlot = def.top || def.slot;
+      const sideSlot = def.side || def.slot;
+      const botSlot = def.bottom || def.slot;
+      const topId = registry.resolveLayer(topSlot, def.id);
+      const sideId = registry.resolveLayer(sideSlot, def.id);
+      const botId = registry.resolveLayer(botSlot, def.id);
+      ensurePbrGeometryAttributes(geo, sideId, def.tint || [1, 1, 1], 1.0);
+      const nrm = geo.getAttribute('normal');
+      const matAttr = geo.getAttribute('aMaterialId');
+      for (let i = 0; i < nrm.count; i++) {
+        const ny = nrm.getY(i);
+        if (ny > 0.5) matAttr.setX(i, topId);
+        else if (ny < -0.5) matAttr.setX(i, botId);
+        else matAttr.setX(i, sideId);
+      }
+      matAttr.needsUpdate = true;
+      const meta = registry.getMeta(sideSlot) || registry.getMeta(topSlot);
+      const mat = meta?.blendMode === 'translucent' ? transMat.material : (meta?.alphaCutout ? cutoutMat.material : opaqueMat.material);
+      return { obj: new THREE.Mesh(geo, mat), disposeGeo: geo };
+    }
+
+    function fitOrthoCameraTo(obj) {
+      const box = new THREE.Box3().setFromObject(obj);
+      const center = new THREE.Vector3();
+      const size = new THREE.Vector3();
+      box.getCenter(center);
+      box.getSize(size);
+      const radius = Math.max(0.25, size.length() * 0.52);
+      isoCam.left = -radius;
+      isoCam.right = radius;
+      isoCam.top = radius;
+      isoCam.bottom = -radius;
+      isoCam.updateProjectionMatrix();
+      isoCam.position.copy(center).addScaledVector(camDir, camDist);
+      isoCam.lookAt(center);
+    }
+
+    window.renderAllIcons = async (blockDefs) => {
+      const out = [];
+      for (const def of blockDefs) {
+        const { obj, disposeGeo } = makeBlockMesh(def);
+        scene.add(obj);
+        fitOrthoCameraTo(obj);
+        renderer.clear();
+        renderer.render(scene, isoCam);
+        out.push({ id: def.id, name: def.name, kind: 'block', dataUrl: canvas.toDataURL('image/png') });
+        scene.remove(obj);
+        disposeGeo.dispose();
+      }
+
+      for (const m of (modelManifest.models || [])) {
+        const { root } = await modelLoader.instantiate(m.id, {
+          registry,
+          opaqueMat: opaqueMat.material,
+          cutoutMat: cutoutMat.material,
+        });
+        scene.add(root);
+        fitOrthoCameraTo(root);
+        renderer.clear();
+        renderer.render(scene, isoCam);
+        out.push({ id: m.id, name: m.name, kind: 'model', dataUrl: canvas.toDataURL('image/png') });
+        scene.remove(root);
+      }
+      return out;
+    };
+
+    window.__ICON_BAKER_READY__ = true;
+  </script>
+</body>
+</html>

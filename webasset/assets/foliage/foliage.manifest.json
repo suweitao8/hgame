@@ -1,0 +1,27 @@
+{
+  "version": "1.0.0",
+  "tileSize": 256,
+  "gridCols": 4,
+  "gridRows": 4,
+  "dilationIterations": 16,
+  "outputAtlas": "public/assets/pbr/foliage/foliage_albedo.webp",
+  "outputTable": "public/assets/pbr/foliage/foliage_table.json",
+  "slots": [
+    { "index": 0,  "slot": "grass_short",      "name": "短草丛",     "source": "ambientcg", "assetId": "Foliage001",   "anchor": "bottom", "mesh": "cross_quad", "heightScale": 0.65, "tint": [1.0, 1.0, 1.0] },
+    { "index": 1,  "slot": "grass_tall",       "name": "高草丛",     "source": "ambientcg", "assetId": "Foliage008",   "anchor": "bottom", "mesh": "star_quad",  "heightScale": 1.15, "tint": [0.95, 1.05, 0.92] },
+    { "index": 2,  "slot": "fern",             "name": "蕨类植物",   "source": "ambientcg", "assetId": "LeafSet019",   "anchor": "bottom", "mesh": "fern_quad",  "heightScale": 0.85, "tint": [0.85, 1.08, 0.78] },
+    { "index": 3,  "slot": "flower_poppy",     "name": "虞美人红花", "source": "ambientcg", "assetId": "FlowerSet001", "anchor": "bottom", "mesh": "cross_quad", "heightScale": 0.65, "petalTint": [0.96, 0.22, 0.18] },
+    { "index": 4,  "slot": "flower_dandelion", "name": "蒲公英黄花", "source": "ambientcg", "assetId": "FlowerSet001", "anchor": "bottom", "mesh": "cross_quad", "heightScale": 0.58, "petalTint": [1.0, 0.86, 0.16] },
+    { "index": 5,  "slot": "flower_bluebell",  "name": "风铃草蓝花", "source": "ambientcg", "assetId": "FlowerSet001", "anchor": "bottom", "mesh": "cross_quad", "heightScale": 0.62, "petalTint": [0.34, 0.56, 1.0] },
+    { "index": 6,  "slot": "mushroom_brown",   "name": "棕色蘑菇",   "source": "ambientcg", "assetId": "Foliage005",   "anchor": "bottom", "mesh": "cross_quad", "heightScale": 0.45, "shapeMode": "mushroom", "capColor": [138, 92, 58] },
+    { "index": 7,  "slot": "mushroom_red",     "name": "红伞蘑菇",   "source": "ambientcg", "assetId": "Foliage005",   "anchor": "bottom", "mesh": "cross_quad", "heightScale": 0.48, "shapeMode": "mushroom", "capColor": [196, 46, 38], "spots": true },
+    { "index": 8,  "slot": "bush_berry",       "name": "浆果灌木",   "source": "ambientcg", "assetId": "Foliage003",   "anchor": "bottom", "mesh": "star_quad",  "heightScale": 0.95, "berries": true },
+    { "index": 9,  "slot": "vine_hanging",     "name": "垂吊藤蔓",   "source": "ambientcg", "assetId": "LeafSet029",   "anchor": "top",    "mesh": "wall_quad",  "heightScale": 1.0,  "tint": [0.88, 1.0, 0.84] },
+    { "index": 10, "slot": "dead_bush",        "name": "枯萎灌木",   "source": "ambientcg", "assetId": "LeafSet030",   "anchor": "bottom", "mesh": "cross_quad", "heightScale": 0.72, "tint": [0.76, 0.56, 0.36] },
+    { "index": 11, "slot": "reed_sugar",       "name": "芦苇甘蔗",   "source": "ambientcg", "assetId": "Foliage006",   "anchor": "bottom", "mesh": "cross_quad", "heightScale": 1.35, "tint": [0.88, 1.06, 0.72] },
+    { "index": 12, "slot": "crop_wheat_0",     "name": "小麦-幼苗",  "source": "ambientcg", "assetId": "Foliage003",   "anchor": "bottom", "mesh": "hash_quad",  "heightScale": 0.38, "cropStage": 0 },
+    { "index": 13, "slot": "crop_wheat_1",     "name": "小麦-拔节",  "source": "ambientcg", "assetId": "Foliage003",   "anchor": "bottom", "mesh": "hash_quad",  "heightScale": 0.62, "cropStage": 1 },
+    { "index": 14, "slot": "crop_wheat_2",     "name": "小麦-抽穗",  "source": "ambientcg", "assetId": "Foliage003",   "anchor": "bottom", "mesh": "hash_quad",  "heightScale": 0.85, "cropStage": 2 },
+    { "index": 15, "slot": "crop_wheat_3",     "name": "小麦-成熟",  "source": "ambientcg", "assetId": "Foliage003",   "anchor": "bottom", "mesh": "hash_quad",  "heightScale": 0.96, "cropStage": 3 }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "version": "4.1.0",
+  "pcSize": 2048,
+  "mobileSize": 1024,
+  "gridCols": 4,
+  "gridRows": 4,
+  "alphaDilationPasses": 16,
+  "slots": [
+    { "index": 0, "id": "grass_short", "name": "短草丛", "kind": "grass", "rootAtTop": false },
+    { "index": 1, "id": "grass_tall", "name": "高荒草", "kind": "grass", "rootAtTop": false },
+    { "index": 2, "id": "weed_clump", "name": "路边杂草丛", "kind": "weed", "rootAtTop": false },
+    { "index": 3, "id": "wildflower_white", "name": "白野花", "kind": "flower", "petalColor": [242, 240, 232], "rootAtTop": false },
+    { "index": 4, "id": "wildflower_yellow", "name": "黄野花", "kind": "flower", "petalColor": [242, 205, 58], "rootAtTop": false },
+    { "index": 5, "id": "wildflower_purple", "name": "紫野花", "kind": "flower", "petalColor": [182, 132, 218], "rootAtTop": false },
+    { "index": 6, "id": "reed_clump", "name": "水岸芦苇", "kind": "reed", "rootAtTop": false },
+    { "index": 7, "id": "creeper_vine", "name": "爬山虎垂藤", "kind": "vine", "rootAtTop": true },
+    { "index": 8, "id": "crop_rice_stage0", "name": "水稻/小麦 1期秧苗", "kind": "crop", "stage": 0, "rootAtTop": false },
+    { "index": 9, "id": "crop_rice_stage1", "name": "水稻/小麦 2期分蘖", "kind": "crop", "stage": 1, "rootAtTop": false },
+    { "index": 10, "id": "crop_rice_stage2", "name": "水稻/小麦 3期抽穗", "kind": "crop", "stage": 2, "rootAtTop": false },
+    { "index": 11, "id": "crop_rice_stage3", "name": "水稻/小麦 4期金黄成熟", "kind": "crop", "stage": 3, "rootAtTop": false },
+    { "index": 12, "id": "veg_cabbage", "name": "大白菜苗", "kind": "veg", "variant": "cabbage", "rootAtTop": false },
+    { "index": 13, "id": "veg_scallion", "name": "大葱苗", "kind": "veg", "variant": "scallion", "rootAtTop": false },
+    { "index": 14, "id": "veg_tomato", "name": "番茄秧苗", "kind": "veg", "variant": "tomato", "rootAtTop": false },
+    { "index": 15, "id": "veg_radish", "name": "萝卜叶苗", "kind": "veg", "variant": "radish", "rootAtTop": false }
+  ]
+}

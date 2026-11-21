@@ -1,0 +1,94 @@
+{
+  "version": "5.0.0",
+  "scope": "3d_static_only",
+  "blenderMinVersion": "5.0",
+  "texturePipeline": {
+    "maps": ["color", "normal_rm"],
+    "aoBakeIntoAlbedoWeight": 0.35,
+    "aoBakeIntoMetalWeight": 0.15,
+    "ktx2": {
+      "color": { "codec": "etc1s", "qlevel": 160, "clevel": 2, "oetf": "srgb" },
+      "normal_rm": { "codec": "uastc", "uastcQuality": 2, "zcmp": 18, "oetf": "linear", "normalMode": false }
+    },
+    "webpFallback": { "colorQuality": 80, "normalRmQuality": 92 }
+  },
+  "globalRules": {
+    "maxGpuVertsHardCap": 65535,
+    "allowedAttributes": ["POSITION", "NORMAL", "TEXCOORD_0"],
+    "forbiddenAttributes": ["TANGENT", "JOINTS_0", "WEIGHTS_0", "TEXCOORD_1", "COLOR_0"],
+    "albedoSrgbClamp": [35, 230],
+    "nonMetalMinRoughness": 0.25,
+    "highToLowBakeTriggerRatio": 3.0,
+    "originToleranceMeters": 0.02
+  },
+  "lodPolicy": {
+    "storage": "single_glb_embedded",
+    "metric": "screen_height_ratio",
+    "hysteresis": 1.12,
+    "updateIntervalFrames": 4,
+    "cameraMoveTriggerMeters": 0.5,
+    "cameraRotTriggerDeg": 3.0,
+    "ditherFade": { "pc": true, "mobile": false, "durationSec": 0.2 },
+    "biasByQuality": { "high": 0.75, "medium": 1.0, "low": 1.5 }
+  },
+  "tiers": {
+    "T0": {
+      "maxTris": 1000,
+      "maxGpuVerts": 1300,
+      "maxSubmeshes": 3,
+      "maxFileKB": 35,
+      "textureMode": "array_override",
+      "texSize": { "master": 1024, "pc": 512, "mobile_ktx2": 512, "mobile_webp": 256 },
+      "lod": { "levels": ["beveled", "unbeveled_shell"], "thresholds": [0.18], "cull": 0.005 }
+    },
+    "T0_BACKDROP": {
+      "maxTris": 120,
+      "maxGpuVerts": 240,
+      "maxSubmeshes": 2,
+      "maxFileKB": 35,
+      "textureMode": "backdrop_atlas",
+      "texSize": { "master": 512, "pc": 512, "mobile_ktx2": 512, "mobile_webp": 256 },
+      "lod": { "levels": [1.0], "thresholds": [], "cull": 0.0 }
+    },
+    "T1": {
+      "maxTris": 300,
+      "maxGpuVerts": 400,
+      "maxSubmeshes": 1,
+      "maxFileKB": 50,
+      "textureMode": "unique_pbr",
+      "texSize": { "master": 512, "pc": 256, "mobile_ktx2": 256, "mobile_webp": 128 },
+      "lod": { "levels": [1.0], "thresholds": [], "cull": 0.012 }
+    },
+    "T2": {
+      "maxTris": 1500,
+      "maxGpuVerts": 2000,
+      "maxSubmeshes": 2,
+      "maxFileKB": 200,
+      "textureMode": "unique_pbr",
+      "texSize": { "master": 1024, "pc": 512, "mobile_ktx2": 512, "mobile_webp": 256 },
+      "lod": { "levels": [1.0, 0.35], "lod1MinTris": 800, "thresholds": [0.12], "cull": 0.010 }
+    },
+    "T3": {
+      "maxTris": 3000,
+      "maxGpuVerts": 3800,
+      "maxSubmeshes": 2,
+      "maxFileKB": 420,
+      "textureMode": "array_or_unique",
+      "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 512, "mobile_webp": 512 },
+      "lod": { "levels": [1.0, 0.35, "impostor_4tris"], "lod1MinTris": 1200, "thresholds": [0.16, 0.055], "cull": 0.006 }
+    },
+    "T4": {
+      "maxTris": 4500,
+      "maxGpuVerts": 5500,
+      "maxSubmeshes": 6,
+      "maxFileKB": 600,
+      "textureMode": "unique_pbr",
+      "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 1024, "mobile_webp": 512 },
+      "lod": { "levels": [1.0, 0.35, 0.12], "lod2MergeSubmeshes": true, "thresholds": [0.18, 0.06], "cull": 0.008 }
+    }
+  },
+  "sceneBudgets": {
+    "mobile": { "maxDrawCalls": 90, "maxVisibleTris": 200000, "maxVramMB": 100, "maxInitialPackMB": 10 },
+    "pc": { "maxDrawCalls": 250, "maxVisibleTris": 700000, "maxVramMB": 280, "maxInitialPackMB": 35 }
+  }
+}

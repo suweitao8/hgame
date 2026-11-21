@@ -1,0 +1,1160 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import {
+  inspectModel3D,
+  prepareAnimationClips,
+  stripNodeNamespace,
+} from '../runtime/hgame/integrations/model3d/helpers.js';
+import {
+  apiRequestJson,
+  createThreeViewport,
+  disposeObject3D,
+  fetchHGameAssets,
+  fetchUnrealCatalog,
+  formatBytes,
+  normalizeUnrealSceneMaterials,
+  onHGameAssetsChanged,
+  refreshHGameAssets,
+} from './hgame-shared.js';
+
+const ANIM_CATEGORY_ORDER = [
+  '待机站姿',
+  '步行与潜行',
+  '跑步与冲刺',
+  '跳跃与浮空',
+  '闪避翻滚与滑步',
+  '攀爬跑酷与游泳',
+  '太刀与武士刀',
+  '长剑与双刃',
+  '长枪重锤与镰刀',
+  '弓箭与枪械',
+  '法术与能量技',
+  '拳击泰拳与咏春',
+  '空手格斗招式',
+  '高速连击 (Lucy)',
+  '处决与暗杀',
+  '格挡与防御',
+  '受击与硬直',
+  '死亡与倒地起身',
+  '椅坐与吧台',
+  '席地盘坐与台沿坐',
+  '躺卧与睡眠',
+  '生活劳作与职业行为',
+  '拾取搬运与机关交互',
+  '载具驾驶与上下车',
+  '对话与社交情绪',
+  '双人互动',
+  '舞蹈与演唱',
+  '怪物移动与爬行',
+  '怪物攻击与受击',
+  '怪物待机与行为',
+  '其他动作',
+];
+
+const viewEl = document.querySelector('#animations-view');
+const searchInput = document.querySelector('#hgame-anim-search');
+const packFilterSelect = document.querySelector('#hgame-anim-pack-filter');
+const sourcePackFilterSelect = document.querySelector('#hgame-anim-source-pack-filter');
+const addButton = document.querySelector('#hgame-anim-add-button');
+const glbUploadInput = document.querySelector('#hgame-anim-glb-upload');
+const listEl = document.querySelector('#hgame-anim-list');
+const titleEl = document.querySelector('#hgame-anim-title');
+const charDialogBtn = document.querySelector('#hgame-anim-character-dialog-button');
+const deleteButton = document.querySelector('#hgame-anim-delete-button');
+
+// 3D stage controls
+const empty3d = document.querySelector('#hgame-anim-3d-empty');
+const stage3d = document.querySelector('#hgame-anim-3d-stage');
+const characterSelect = document.querySelector('#hgame-anim-character-select');
+const prevCharacterBtn = document.querySelector('#hgame-anim-prev-character-button');
+const nextCharacterBtn = document.querySelector('#hgame-anim-next-character-button');
+const play3dBtn = document.querySelector('#hgame-anim-play-button');
+const restart3dBtn = document.querySelector('#hgame-anim-restart-button');
+const scrub3dInput = document.querySelector('#hgame-anim-scrub');
+const speed3dSelect = document.querySelector('#hgame-anim-speed');
+const loop3dInput = document.querySelector('#hgame-anim-loop');
+const skeleton3dInput = document.querySelector('#hgame-anim-skeleton');
+const rootLock3dInput = document.querySelector('#hgame-anim-root-lock');
+const status3dEl = document.querySelector('#hgame-anim-3d-status');
+
+// Character picker dialog
+const characterDialog = document.querySelector('#hgame-character-picker-dialog');
+const charDialogCloseBtn = document.querySelector('#hgame-char-dialog-close');
+const charDialogSearchInput = document.querySelector('#hgame-char-dialog-search');
+const charDialogPackSelect = document.querySelector('#hgame-char-dialog-pack');
+const charDialogListEl = document.querySelector('#hgame-char-dialog-list');
+
+let initialized = false;
+let assetStore = { models: [] };
+let selfCharacters = [];
+let unrealCatalog = { available: false, characters: [], animations: [] };
+let active3dKind = '';
+let active3dId = '';
+let selectedCharacterId = '';
+const ANIM_PAGE_SIZE = 200;
+let animVisibleLimit = ANIM_PAGE_SIZE;
+
+async function fetchSelfCharacters() {
+  try {
+    const res = await fetch('/api/assets?category=characters:all&limit=120');
+    if (!res.ok) return [];
+    const data = await res.json();
+    const list = [];
+    for (const ch of data.items || []) {
+      const low = ch?.models?.low;
+      if (low?.url) {
+        list.push({
+          id: `webasset:${ch.id}:low`,
+          name: `${ch.name || ch.id}（低模）`,
+          assetName: low.name || ch.id,
+          pack: 'webasset',
+          packLabel: '自建角色',
+          url: low.url,
+          isWebAsset: true,
+        });
+      }
+    }
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+function getAllStageCharacters() {
+  return [...selfCharacters, ...(unrealCatalog.characters || [])];
+}
+
+// 3D playback state
+let viewport3d = null;
+let loaded3dRoot = null;
+let loadedStageKey = '';
+let loadedRestTransforms = new Map();
+let loadedStats = { boneCount: 0, meshCount: 0 };
+let skeletonHelper = null;
+let mixer = null;
+let rawClips = [];
+let activeUnrealAnimEntry = null;
+let activeAction = null;
+let activeClipIndex = 0;
+let playing3d = true;
+let load3dToken = 0;
+const gltfLoader3d = new GLTFLoader();
+const unrealClipCache = new Map();
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function getOrderedAnimCategories(anims) {
+  const counts = new Map();
+  for (const anim of anims) {
+    const cat = anim.category || '其他动作';
+    counts.set(cat, (counts.get(cat) || 0) + 1);
+  }
+  const ordered = [];
+  for (const cat of ANIM_CATEGORY_ORDER) {
+    if (counts.has(cat)) {
+      ordered.push({ category: cat, count: counts.get(cat) });
+      counts.delete(cat);
+    }
+  }
+  for (const [cat, count] of counts) {
+    ordered.push({ category: cat, count });
+  }
+  return ordered;
+}
+
+function getOrderedAnimPacks(anims) {
+  const counts = new Map();
+  for (const anim of anims) {
+    const pack = anim.pack || '其他动作包';
+    counts.set(pack, (counts.get(pack) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([pack, count]) => ({ pack, count }))
+    .sort((a, b) => a.pack.localeCompare(b.pack, 'en', { sensitivity: 'base' }));
+}
+
+function fillFilterSelect(selectEl, opts, fallback = 'all') {
+  if (!selectEl) return;
+  const prev = selectEl.value || fallback;
+  selectEl.replaceChildren();
+  for (const opt of opts) {
+    const el = document.createElement('option');
+    el.value = opt.value;
+    el.textContent = opt.label;
+    selectEl.append(el);
+  }
+  selectEl.value = opts.some(o => o.value === prev) ? prev : fallback;
+}
+
+function getCharacterPacks(chars) {
+  const packs = new Map();
+  for (const ch of chars) {
+    const current = packs.get(ch.pack) || { pack: ch.pack, label: ch.packLabel || ch.pack, items: [] };
+    current.items.push(ch);
+    packs.set(ch.pack, current);
+  }
+  return [...packs.values()];
+}
+
+function ensureSelectedCharacter(chars) {
+  if (!chars.some(c => c.id === selectedCharacterId)) {
+    const preferred = chars.find(c => c.id === 'PolygonAdventure__SK_Character_Human_Knight') || chars[0];
+    selectedCharacterId = preferred?.id || '';
+  }
+}
+
+function populateAnimControls() {
+  const unrealAnims = unrealCatalog.animations || [];
+  const stageChars = getAllStageCharacters();
+  const uploaded = assetStore.models || [];
+  ensureSelectedCharacter(stageChars);
+
+  fillFilterSelect(packFilterSelect, [
+    { value: 'all', label: `全部 3D 动作 (${unrealAnims.length + uploaded.length})` },
+    ...getOrderedAnimCategories(unrealAnims).map(c => ({
+      value: `cat:${c.category}`,
+      label: `${c.category} (${c.count})`,
+    })),
+    { value: 'uploaded', label: `已上传 GLB (${uploaded.length})` },
+  ]);
+
+  const animPacks = getOrderedAnimPacks(unrealAnims);
+  fillFilterSelect(sourcePackFilterSelect, [
+    { value: 'all', label: `全部动作包 (${animPacks.length}包 · ${unrealAnims.length})` },
+    ...animPacks.map(p => ({
+      value: `pack:${p.pack}`,
+      label: `${p.pack} (${p.count})`,
+    })),
+  ]);
+  if (sourcePackFilterSelect) {
+    sourcePackFilterSelect.disabled = packFilterSelect?.value === 'uploaded';
+  }
+
+  const packs = getCharacterPacks(stageChars);
+  if (characterSelect) {
+    characterSelect.replaceChildren();
+    if (stageChars.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '无可用角色模型';
+      characterSelect.append(opt);
+    } else {
+      for (const group of packs) {
+        const og = document.createElement('optgroup');
+        og.label = `${group.label} (${group.items.length})`;
+        for (const ch of group.items) {
+          const opt = document.createElement('option');
+          opt.value = ch.id;
+          opt.textContent = ch.name;
+          og.append(opt);
+        }
+        characterSelect.append(og);
+      }
+      characterSelect.value = selectedCharacterId;
+    }
+  }
+
+  if (charDialogBtn) {
+    charDialogBtn.disabled = stageChars.length === 0;
+  }
+  syncCharacterSwitchButtons();
+
+  if (charDialogPackSelect) {
+    const prevPack = charDialogPackSelect.value || 'all';
+    charDialogPackSelect.replaceChildren();
+    const allOpt = document.createElement('option');
+    allOpt.value = 'all';
+    allOpt.textContent = `全部角色包 (${stageChars.length})`;
+    charDialogPackSelect.append(allOpt);
+    for (const group of packs) {
+      const opt = document.createElement('option');
+      opt.value = group.pack;
+      opt.textContent = `${group.label} (${group.items.length})`;
+      charDialogPackSelect.append(opt);
+    }
+    charDialogPackSelect.value = packs.some(g => g.pack === prevPack) ? prevPack : 'all';
+  }
+}
+
+function renderCharacterDialogList() {
+  if (!charDialogListEl) return;
+  const stageChars = getAllStageCharacters();
+  const query = (charDialogSearchInput?.value || '').trim().toLowerCase();
+  const packFilter = charDialogPackSelect?.value || 'all';
+
+  const matches = stageChars.filter(ch => {
+    if (packFilter !== 'all' && ch.pack !== packFilter) return false;
+    if (!query) return true;
+    return [ch.name, ch.assetName, ch.packLabel, ch.genre, ch.pack]
+      .filter(Boolean)
+      .some(v => v.toLowerCase().includes(query));
+  });
+
+  charDialogListEl.replaceChildren();
+  if (!matches.length) {
+    const empty = document.createElement('p');
+    empty.className = 'hgame-list-empty';
+    empty.textContent = '没有匹配的角色';
+    charDialogListEl.append(empty);
+    return;
+  }
+
+  for (const ch of matches) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hgame-list-item hgame-picker-card';
+    btn.setAttribute('role', 'option');
+    const isCurrent = ch.id === selectedCharacterId;
+    btn.setAttribute('aria-selected', String(isCurrent));
+    btn.setAttribute('aria-current', String(isCurrent));
+    const subParts = [ch.packLabel || ch.pack];
+    if (ch.boneCount) subParts.push(`${ch.boneCount} 骨`);
+    btn.innerHTML = `
+      <span class="hgame-item-thumb hgame-item-thumb-badge">${ch.isWebAsset ? '自建' : 'UE'}</span>
+      <span class="hgame-item-copy">
+        <strong>${escapeHtml(ch.name)}</strong>
+        <small>${escapeHtml(subParts.join(' · '))}</small>
+      </span>
+    `;
+    btn.addEventListener('click', () => {
+      applySelectedCharacter(ch.id);
+      characterDialog?.close();
+    });
+    charDialogListEl.append(btn);
+  }
+}
+
+const PREFERRED_DEFAULT_ANIM_ID = 'WudangSword_Animset__MM_Run_Fwd';
+
+function syncCharacterSwitchButtons() {
+  const stageChars = getAllStageCharacters();
+  const disabled = active3dKind === 'uploaded' || stageChars.length <= 1;
+  if (prevCharacterBtn) prevCharacterBtn.disabled = disabled;
+  if (nextCharacterBtn) nextCharacterBtn.disabled = disabled;
+}
+
+function getOrderedStageCharacterIds() {
+  return getCharacterPacks(getAllStageCharacters()).flatMap(group => group.items.map(item => item.id));
+}
+
+function stepSelectedCharacter(delta) {
+  const ids = getOrderedStageCharacterIds();
+  if (ids.length <= 1) return;
+  const currentIdx = ids.indexOf(selectedCharacterId);
+  const baseIdx = currentIdx >= 0 ? currentIdx : 0;
+  const nextIdx = (baseIdx + delta + ids.length) % ids.length;
+  applySelectedCharacter(ids[nextIdx]);
+}
+
+function applySelectedCharacter(characterId) {
+  if (!characterId) return;
+  selectedCharacterId = characterId;
+  if (characterSelect) characterSelect.value = characterId;
+  if (active3dKind !== 'unreal' && (unrealCatalog.animations || []).length > 0) {
+    const preferred = unrealCatalog.animations.find(a => a.id === PREFERRED_DEFAULT_ANIM_ID)
+      || unrealCatalog.animations.find(a => a.id === 'MaleLocomotionSet__A_INP_Idle')
+      || unrealCatalog.animations[0];
+    active3dKind = 'unreal';
+    active3dId = preferred.id;
+    renderSidebarList();
+  }
+  void load3dAnimationAsset();
+}
+
+function openCharacterPickerDialog() {
+  if (!characterDialog) return;
+  renderCharacterDialogList();
+  if (!characterDialog.open) characterDialog.showModal();
+  const activeCard = charDialogListEl?.querySelector('[aria-current="true"]');
+  if (activeCard) activeCard.scrollIntoView({ block: 'nearest' });
+  charDialogSearchInput?.focus();
+}
+
+function resolveDefault3dSelection(unrealAnims, uploaded) {
+  if (active3dKind === 'unreal' && unrealAnims.some(a => a.id === active3dId)) return;
+  if (active3dKind === 'uploaded' && uploaded.some(u => u.id === active3dId)) return;
+  if (unrealAnims.length > 0) {
+    const preferred = unrealAnims.find(a => a.id === PREFERRED_DEFAULT_ANIM_ID)
+      || unrealAnims.find(a => a.id === 'MaleLocomotionSet__A_INP_Idle')
+      || unrealAnims[0];
+    active3dKind = 'unreal';
+    active3dId = preferred.id;
+  } else if (uploaded.length > 0) {
+    active3dKind = 'uploaded';
+    active3dId = uploaded[0].id;
+  } else {
+    active3dKind = '';
+    active3dId = '';
+  }
+}
+
+function resetAnimListLimitAndRender() {
+  animVisibleLimit = ANIM_PAGE_SIZE;
+  if (sourcePackFilterSelect) {
+    sourcePackFilterSelect.disabled = packFilterSelect?.value === 'uploaded';
+  }
+  renderSidebarList();
+}
+
+function renderSidebarList() {
+  const query = searchInput.value.trim().toLowerCase();
+  const filter = packFilterSelect?.value || 'all';
+  const packFilter = sourcePackFilterSelect?.value || 'all';
+  const unrealAnims = unrealCatalog.animations || [];
+  const uploaded = assetStore.models || [];
+  resolveDefault3dSelection(unrealAnims, uploaded);
+
+  const showUnreal = filter === 'all' || filter.startsWith('cat:');
+  const targetCategory = filter.startsWith('cat:') ? filter.slice('cat:'.length) : null;
+  const targetPack = packFilter.startsWith('pack:') ? packFilter.slice('pack:'.length) : null;
+  const showUploaded = !targetPack && (filter === 'all' || filter === 'uploaded');
+
+  const matchingUnreal = showUnreal
+    ? unrealAnims.filter(item => {
+        if (targetCategory && item.category !== targetCategory) return false;
+        if (targetPack && (item.pack || '其他动作包') !== targetPack) return false;
+        if (!query) return true;
+        return [item.name, item.assetName, item.category, item.pack]
+          .filter(Boolean)
+          .some(v => v.toLowerCase().includes(query));
+      })
+    : [];
+  const matchingUploaded = showUploaded
+    ? uploaded.filter(item => !query || item.name.toLowerCase().includes(query))
+    : [];
+
+  listEl.innerHTML = '';
+  if (matchingUnreal.length === 0 && matchingUploaded.length === 0) {
+    listEl.innerHTML = `<p class="hgame-list-empty">没有匹配的 3D 动作，可切换分类、动作包或点击「＋」上传 GLB。</p>`;
+    return;
+  }
+
+  if (matchingUnreal.length > 0) {
+    const heading = document.createElement('div');
+    heading.className = 'hgame-list-heading';
+    const headingLabel = [targetCategory || 'Unreal 动作库', targetPack].filter(Boolean).join(' · ');
+    heading.textContent = `${headingLabel} (${matchingUnreal.length})`;
+    listEl.append(heading);
+    const visibleUnreal = matchingUnreal.slice(0, animVisibleLimit);
+    const fragment = document.createDocumentFragment();
+    for (const item of visibleUnreal) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hgame-list-item';
+      btn.setAttribute('aria-current', active3dKind === 'unreal' && item.id === active3dId ? 'true' : 'false');
+      const durationLabel = item.duration ? `${Number(item.duration).toFixed(2)}s` : '';
+      btn.innerHTML = `
+        <span class="hgame-item-thumb hgame-item-thumb-badge">UE</span>
+        <span class="hgame-item-copy">
+          <strong>${escapeHtml(item.name)}</strong>
+          <small>${escapeHtml([item.pack, item.category, durationLabel].filter(Boolean).join(' · '))}</small>
+        </span>
+      `;
+      btn.addEventListener('click', () => {
+        active3dKind = 'unreal';
+        active3dId = item.id;
+        renderSidebarList();
+        void load3dAnimationAsset();
+      });
+      fragment.append(btn);
+    }
+    if (matchingUnreal.length > visibleUnreal.length) {
+      const remaining = matchingUnreal.length - visibleUnreal.length;
+      const nextStep = Math.min(ANIM_PAGE_SIZE, remaining);
+      const moreBtn = document.createElement('button');
+      moreBtn.type = 'button';
+      moreBtn.className = 'hgame-list-more';
+      moreBtn.textContent = `显示更多 (+${nextStep}，剩余 ${remaining})`;
+      moreBtn.addEventListener('click', () => {
+        animVisibleLimit += ANIM_PAGE_SIZE;
+        renderSidebarList();
+      });
+      fragment.append(moreBtn);
+    }
+    listEl.append(fragment);
+  }
+
+  if (matchingUploaded.length > 0) {
+    const heading = document.createElement('div');
+    heading.className = 'hgame-list-heading';
+    heading.textContent = `已上传 GLB (${matchingUploaded.length})`;
+    listEl.append(heading);
+    for (const item of matchingUploaded) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hgame-list-item';
+      btn.setAttribute('aria-current', active3dKind === 'uploaded' && item.id === active3dId ? 'true' : 'false');
+      btn.innerHTML = `
+        <span class="hgame-item-thumb hgame-item-thumb-badge">3D</span>
+        <span class="hgame-item-copy">
+          <strong>${escapeHtml(item.name)}</strong>
+          <small>${escapeHtml(formatBytes(item.bytes))}</small>
+        </span>
+      `;
+      btn.addEventListener('click', () => {
+        active3dKind = 'uploaded';
+        active3dId = item.id;
+        renderSidebarList();
+        void load3dAnimationAsset();
+      });
+      listEl.append(btn);
+    }
+  }
+}
+
+function ensureViewport3d() {
+  if (!viewport3d) {
+    viewport3d = createThreeViewport(stage3d, { background: 0x161c15, grid: true, shadows: true });
+  }
+  return viewport3d;
+}
+
+const LIMB_ALIGNMENT_CHAIN = {
+  upperarm_l: 'lowerarm_l',
+  lowerarm_l: 'hand_l',
+  upperarm_r: 'lowerarm_r',
+  lowerarm_r: 'hand_r',
+  thigh_l: 'calf_l',
+  calf_l: 'foot_l',
+  thigh_r: 'calf_r',
+  calf_r: 'foot_r',
+};
+
+const BONE_NAME_ALIASES = {
+  hips: 'pelvis',
+  spine: 'spine_01',
+  spine1: 'spine_02',
+  spine2: 'spine_03',
+  chest: 'spine_03',
+  upperchest: 'spine_03',
+  neck: 'neck_01',
+  head: 'head',
+  leftshoulder: 'clavicle_l',
+  leftarm: 'upperarm_l',
+  leftforearm: 'lowerarm_l',
+  lefthand: 'hand_l',
+  rightshoulder: 'clavicle_r',
+  rightarm: 'upperarm_r',
+  rightforearm: 'lowerarm_r',
+  righthand: 'hand_r',
+  leftupleg: 'thigh_l',
+  leftleg: 'calf_l',
+  leftfoot: 'foot_l',
+  lefttoebase: 'ball_l',
+  rightupleg: 'thigh_r',
+  rightleg: 'calf_r',
+  rightfoot: 'foot_r',
+  righttoebase: 'ball_r',
+};
+
+function canonicalBoneName(lower) {
+  return BONE_NAME_ALIASES[lower] || lower;
+}
+
+function mapNodesByLower(root) {
+  const byLower = new Map();
+  if (!root) return byLower;
+  const register = node => {
+    if (!node.name) return;
+    const lower = stripNodeNamespace(node.name).toLowerCase();
+    if (!byLower.has(lower)) byLower.set(lower, node);
+    const canon = canonicalBoneName(lower);
+    if (canon !== lower && !byLower.has(canon)) byLower.set(canon, node);
+  };
+  root.traverse(node => {
+    if (node.isBone || node.type === 'Bone') register(node);
+  });
+  root.traverse(register);
+  return byLower;
+}
+
+function captureNodeTransforms(root) {
+  const snapshot = new Map();
+  if (!root) return snapshot;
+  root.traverse(node => {
+    snapshot.set(node, {
+      position: node.position.clone(),
+      quaternion: node.quaternion.clone(),
+      scale: node.scale.clone(),
+    });
+  });
+  return snapshot;
+}
+
+function restoreNodeTransforms(root, snapshot) {
+  if (!root) return;
+  if (snapshot && snapshot.size > 0) {
+    for (const [node, saved] of snapshot) {
+      node.position.copy(saved.position);
+      node.quaternion.copy(saved.quaternion);
+      node.scale.copy(saved.scale);
+    }
+  }
+  root.traverse(node => {
+    if (node.isSkinnedMesh && node.skeleton) {
+      node.skeleton.pose();
+    }
+  });
+  root.updateMatrixWorld(true);
+}
+
+function resolveRetargetSourceBone(dstLower, srcMap) {
+  const canon = canonicalBoneName(dstLower);
+  if (canon === 'spine_03' && srcMap.has('spine_05')) return srcMap.get('spine_05');
+  if (canon === 'spine_02' && srcMap.has('spine_05') && srcMap.has('spine_03')) return srcMap.get('spine_03');
+  if (srcMap.has(canon)) return srcMap.get(canon);
+  if (srcMap.has(dstLower)) return srcMap.get(dstLower);
+  const fingerAlias = canon
+    .replace(/^indexfinger_/, 'index_')
+    .replace(/^finger_/, 'middle_');
+  if (srcMap.has(fingerAlias)) return srcMap.get(fingerAlias);
+  return null;
+}
+
+function retargetUnrealClips(animEntry, targetRoot, { stripRootMotion = false } = {}) {
+  if (!animEntry?.scene || !animEntry?.clips?.length || !targetRoot) return [];
+  const srcRoot = animEntry.scene;
+  const srcSnapshot = captureNodeTransforms(srcRoot);
+  restoreNodeTransforms(targetRoot, loadedRestTransforms);
+  srcRoot.updateMatrixWorld(true);
+
+  const srcMap = mapNodesByLower(srcRoot);
+  const dstMap = mapNodesByLower(targetRoot);
+
+  const srcRestWQ = new Map();
+  const srcRestWP = new Map();
+  for (const [, node] of srcMap) {
+    srcRestWQ.set(node, node.getWorldQuaternion(new THREE.Quaternion()));
+    srcRestWP.set(node, node.getWorldPosition(new THREE.Vector3()));
+  }
+
+  const dstOrdered = [];
+  targetRoot.traverse(node => dstOrdered.push(node));
+
+  const dstAlignedWQ = new Map();
+  const dstAlignDelta = new Map();
+  const vDst = new THREE.Vector3();
+  const vSrc = new THREE.Vector3();
+
+  for (const dstNode of dstOrdered) {
+    const lower = stripNodeNamespace(dstNode.name).toLowerCase();
+    const canon = canonicalBoneName(lower);
+    const restWQ = dstNode.getWorldQuaternion(new THREE.Quaternion());
+    const parentDelta = dstNode.parent
+      ? (dstAlignDelta.get(dstNode.parent) || new THREE.Quaternion())
+      : new THREE.Quaternion();
+    let curDelta = parentDelta.clone();
+
+    const childLower = LIMB_ALIGNMENT_CHAIN[canon];
+    const srcNode = resolveRetargetSourceBone(canon, srcMap);
+    const srcChild = childLower ? resolveRetargetSourceBone(childLower, srcMap) : null;
+    const dstChild = childLower ? dstMap.get(childLower) : null;
+    if (srcNode && srcChild && dstChild) {
+      dstNode.getWorldPosition(vDst);
+      dstChild.getWorldPosition(vSrc);
+      vDst.subVectors(vSrc, vDst).normalize().applyQuaternion(parentDelta);
+      vSrc.copy(srcRestWP.get(srcChild)).sub(srcRestWP.get(srcNode)).normalize();
+      if (vDst.lengthSq() > 0.5 && vSrc.lengthSq() > 0.5) {
+        const dot = Math.max(-1, Math.min(1, vDst.dot(vSrc)));
+        if (dot > -0.999) {
+          const rot = new THREE.Quaternion().setFromUnitVectors(vDst, vSrc);
+          curDelta = rot.multiply(curDelta);
+        }
+      }
+    }
+    dstAlignDelta.set(dstNode, curDelta);
+    dstAlignedWQ.set(dstNode, curDelta.clone().multiply(restWQ));
+  }
+
+  const mappedPairs = [];
+  for (const dstNode of dstOrdered) {
+    const lower = stripNodeNamespace(dstNode.name).toLowerCase();
+    const canon = canonicalBoneName(lower);
+    if (!dstNode.name || canon === 'root') continue;
+    const srcNode = resolveRetargetSourceBone(lower, srcMap);
+    if (!srcNode) continue;
+    const offsetQ = srcRestWQ.get(srcNode).clone().invert().multiply(dstAlignedWQ.get(dstNode));
+    mappedPairs.push({
+      dstNode,
+      srcNode,
+      offsetQ,
+      quats: [],
+      prevQ: null,
+    });
+  }
+
+  const dstPelvis = dstMap.get('pelvis');
+  const srcPelvis = srcMap.get('pelvis');
+  const hasPelvisPos = Boolean(dstPelvis && srcPelvis && dstPelvis.parent);
+  const dstPelvisRestWP = hasPelvisPos ? dstPelvis.getWorldPosition(new THREE.Vector3()) : new THREE.Vector3();
+  const srcPelvisRestWP = hasPelvisPos ? srcRestWP.get(srcPelvis).clone() : new THREE.Vector3();
+  const pelvisScale = hasPelvisPos ? (dstPelvisRestWP.y / Math.max(0.1, srcPelvisRestWP.y)) : 1;
+  if (hasPelvisPos) dstPelvis.parent.updateMatrixWorld(true);
+
+  const srcMixer = new THREE.AnimationMixer(srcRoot);
+  const outClips = [];
+  const tmpWQ = new THREE.Quaternion();
+  const tmpParentWQ = new THREE.Quaternion();
+  const tmpLocalQ = new THREE.Quaternion();
+  const tmpPos = new THREE.Vector3();
+
+  try {
+    for (const srcClip of animEntry.clips) {
+      const dur = Math.max(0.01, Number(srcClip.duration) || 0.01);
+      const sampleCount = Math.max(2, Math.min(240, Math.round(dur * 30) + 1));
+      const times = new Float32Array(sampleCount);
+      for (const pair of mappedPairs) {
+        pair.quats = new Float32Array(sampleCount * 4);
+        pair.prevQ = null;
+      }
+      const pelvisPositions = hasPelvisPos ? new Float32Array(sampleCount * 3) : null;
+
+      const srcAction = srcMixer.clipAction(srcClip);
+      srcAction.reset().play();
+
+      for (let i = 0; i < sampleCount; i++) {
+        const t = sampleCount > 1 ? (dur * i) / (sampleCount - 1) : 0;
+        times[i] = t;
+        srcMixer.setTime(t);
+        srcRoot.updateMatrixWorld(true);
+
+        const targetWQ = new Map();
+        for (const pair of mappedPairs) {
+          srcNodeWorldQuat(pair.srcNode, tmpWQ).multiply(pair.offsetQ);
+          targetWQ.set(pair.dstNode, tmpWQ.clone());
+          const parentWQ = pair.dstNode.parent
+            ? (targetWQ.get(pair.dstNode.parent) || pair.dstNode.parent.getWorldQuaternion(tmpParentWQ))
+            : tmpParentWQ.identity();
+          tmpLocalQ.copy(parentWQ).invert().multiply(tmpWQ).normalize();
+          if (pair.prevQ && tmpLocalQ.dot(pair.prevQ) < 0) {
+            tmpLocalQ.set(-tmpLocalQ.x, -tmpLocalQ.y, -tmpLocalQ.z, -tmpLocalQ.w);
+          }
+          pair.prevQ = pair.prevQ || new THREE.Quaternion();
+          pair.prevQ.copy(tmpLocalQ);
+          const off = i * 4;
+          pair.quats[off] = tmpLocalQ.x;
+          pair.quats[off + 1] = tmpLocalQ.y;
+          pair.quats[off + 2] = tmpLocalQ.z;
+          pair.quats[off + 3] = tmpLocalQ.w;
+        }
+
+        if (hasPelvisPos && pelvisPositions) {
+          srcPelvis.getWorldPosition(tmpPos).sub(srcPelvisRestWP).multiplyScalar(pelvisScale);
+          if (stripRootMotion) {
+            tmpPos.x = 0;
+            tmpPos.z = 0;
+          }
+          tmpPos.add(dstPelvisRestWP);
+          dstPelvis.parent.worldToLocal(tmpPos);
+          const poff = i * 3;
+          pelvisPositions[poff] = tmpPos.x;
+          pelvisPositions[poff + 1] = tmpPos.y;
+          pelvisPositions[poff + 2] = tmpPos.z;
+        }
+      }
+
+      srcMixer.stopAllAction();
+      const tracks = [];
+      if (hasPelvisPos && pelvisPositions) {
+        tracks.push(new THREE.VectorKeyframeTrack(`${dstPelvis.name}.position`, times, pelvisPositions));
+      }
+      for (const pair of mappedPairs) {
+        tracks.push(new THREE.QuaternionKeyframeTrack(`${pair.dstNode.name}.quaternion`, times, pair.quats));
+      }
+      outClips.push(new THREE.AnimationClip(srcClip.name || 'Clip', dur, tracks));
+    }
+  } finally {
+    restoreNodeTransforms(srcRoot, srcSnapshot);
+  }
+
+  return outClips;
+}
+
+function srcNodeWorldQuat(node, target) {
+  return node.getWorldQuaternion(target);
+}
+
+function clear3dScene() {
+  if (mixer) {
+    mixer.stopAllAction();
+    mixer = null;
+  }
+  activeAction = null;
+  rawClips = [];
+  activeUnrealAnimEntry = null;
+  loadedStageKey = '';
+  loadedRestTransforms = new Map();
+  loadedStats = { boneCount: 0, meshCount: 0 };
+  if (skeletonHelper) {
+    viewport3d?.scene.remove(skeletonHelper);
+    skeletonHelper.dispose?.();
+    skeletonHelper = null;
+  }
+  if (loaded3dRoot) {
+    viewport3d?.scene.remove(loaded3dRoot);
+    disposeObject3D(loaded3dRoot);
+    loaded3dRoot = null;
+  }
+}
+
+function tick3d(dt) {
+  if (mixer && playing3d) {
+    mixer.update(dt * Number(speed3dSelect.value || 1));
+    if (activeAction) {
+      const dur = Math.max(activeAction.getClip().duration, 0.0001);
+      scrub3dInput.value = ((activeAction.time % dur) / dur).toFixed(3);
+    }
+  }
+}
+
+function applyPreparedClip() {
+  const sourceClips = active3dKind === 'unreal'
+    ? (activeUnrealAnimEntry?.clips || [])
+    : rawClips;
+
+  if (!mixer || sourceClips.length === 0) {
+    activeAction = null;
+    scrub3dInput.value = '0';
+    return;
+  }
+
+  const prepared = active3dKind === 'unreal'
+    ? retargetUnrealClips(activeUnrealAnimEntry, loaded3dRoot, { stripRootMotion: rootLock3dInput.checked })
+    : prepareAnimationClips(THREE, sourceClips, {
+        stripNamespace: true,
+        stripRootMotion: rootLock3dInput.checked ? 'xz' : false,
+      });
+
+  if (prepared.length === 0) {
+    activeAction = null;
+    scrub3dInput.value = '0';
+    return;
+  }
+
+  mixer.stopAllAction();
+  restoreNodeTransforms(loaded3dRoot, loadedRestTransforms);
+  const idx = Math.min(Math.max(activeClipIndex, 0), prepared.length - 1);
+  activeClipIndex = idx;
+  activeAction = mixer.clipAction(prepared[idx]);
+  activeAction.setLoop(loop3dInput.checked ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
+  activeAction.clampWhenFinished = !loop3dInput.checked;
+  activeAction.reset().play();
+  play3dBtn.textContent = playing3d ? '暂停' : '播放';
+}
+
+async function fetchUnrealAnimEntry(animItem) {
+  if (unrealClipCache.has(animItem.url)) {
+    return unrealClipCache.get(animItem.url);
+  }
+  const gltf = await gltfLoader3d.loadAsync(animItem.url);
+  const clips = Array.isArray(gltf.animations) ? gltf.animations : [];
+  if (clips.length > 0 && clips[0]) {
+    clips[0].name = animItem.name || clips[0].name;
+  }
+  gltf.scene.updateMatrixWorld(true);
+  const entry = { scene: gltf.scene, clips };
+  unrealClipCache.set(animItem.url, entry);
+  return entry;
+}
+
+function findHeadBone(root) {
+  let found = null;
+  root.traverse(obj => {
+    if (found) return;
+    if (obj.isBone && stripNodeNamespace(obj.name).toLowerCase() === 'head') {
+      found = obj;
+    }
+  });
+  return found;
+}
+
+async function attachHeadGear(root, headAttachment, token) {
+  if (!headAttachment?.url) return false;
+  const headBone = findHeadBone(root);
+  if (!headBone) return false;
+  root.updateMatrixWorld(true);
+  const headWorldQuat = headBone.getWorldQuaternion(new THREE.Quaternion());
+  const headWorldPos = headBone.getWorldPosition(new THREE.Vector3());
+
+  const attGltf = await gltfLoader3d.loadAsync(headAttachment.url);
+  if (token !== load3dToken) {
+    disposeObject3D(attGltf.scene);
+    return false;
+  }
+  const attScene = attGltf.scene;
+  normalizeUnrealSceneMaterials(attScene);
+
+  const mount = new THREE.Group();
+  mount.name = 'HeadGearAttachment';
+  mount.quaternion.copy(headWorldQuat).invert();
+  if (headAttachment.groundPivot) {
+    attScene.position.set(0, -headWorldPos.y, 0);
+  }
+  mount.add(attScene);
+  headBone.add(mount);
+  return true;
+}
+
+async function mountCharacterRoot(url, stageKey, vp, token, headAttachment = null, { normalizeMaterials = true } = {}) {
+  const gltf = await gltfLoader3d.loadAsync(url);
+  if (token !== load3dToken) {
+    disposeObject3D(gltf.scene);
+    return null;
+  }
+  clear3dScene();
+  loaded3dRoot = gltf.scene;
+  if (normalizeMaterials && stageKey.startsWith('unreal:')) {
+    normalizeUnrealSceneMaterials(loaded3dRoot);
+  }
+  loadedStageKey = stageKey;
+  loadedRestTransforms = captureNodeTransforms(loaded3dRoot);
+  if (headAttachment) {
+    try {
+      await attachHeadGear(loaded3dRoot, headAttachment, token);
+      if (token !== load3dToken) return null;
+    } catch { /* ignore broken attachment */ }
+  }
+  vp.scene.add(loaded3dRoot);
+  vp.frameObject(loaded3dRoot);
+
+  const inspection = inspectModel3D(THREE, gltf);
+  loadedStats = { boneCount: inspection.boneNames.length, meshCount: inspection.meshCount };
+  if (inspection.boneNames.length > 0) {
+    skeletonHelper = new THREE.SkeletonHelper(loaded3dRoot);
+    skeletonHelper.visible = skeleton3dInput.checked;
+    vp.scene.add(skeletonHelper);
+  }
+  mixer = new THREE.AnimationMixer(loaded3dRoot);
+  return gltf;
+}
+
+async function load3dAnimationAsset() {
+  const unrealAnims = unrealCatalog.animations || [];
+  const stageChars = getAllStageCharacters();
+  const uploaded = assetStore.models || [];
+  resolveDefault3dSelection(unrealAnims, uploaded);
+
+  if (active3dKind === 'unreal') {
+    const animItem = unrealAnims.find(entry => entry.id === active3dId);
+    const charItem = stageChars.find(entry => entry.id === selectedCharacterId) || stageChars[0];
+    deleteButton.hidden = true;
+    if (characterSelect) characterSelect.disabled = stageChars.length === 0;
+    syncCharacterSwitchButtons();
+    if (!animItem || !charItem) {
+      clear3dScene();
+      titleEl.textContent = '3D 动画';
+      empty3d.hidden = false;
+      stage3d.hidden = true;
+      status3dEl.textContent = '需要至少一个角色模型和动画文件。';
+      return;
+    }
+
+    titleEl.textContent = `${charItem.name} × ${animItem.name}`;
+    empty3d.hidden = true;
+    stage3d.hidden = false;
+    const vp = ensureViewport3d();
+    const token = ++load3dToken;
+    const targetStageKey = `unreal:${charItem.id}`;
+    status3dEl.textContent = loadedStageKey === targetStageKey
+      ? `正在套用动作「${animItem.name}」...`
+      : `正在加载 ${charItem.name} 与动作「${animItem.name}」...`;
+
+    try {
+      const needsCharLoad = loadedStageKey !== targetStageKey || !loaded3dRoot || !mixer;
+      const [, animEntry] = await Promise.all([
+        needsCharLoad
+          ? mountCharacterRoot(charItem.url, targetStageKey, vp, token, charItem.headAttachment || null, {
+              normalizeMaterials: !charItem.isWebAsset,
+            })
+          : Promise.resolve(true),
+        fetchUnrealAnimEntry(animItem),
+      ]);
+      if (token !== load3dToken || !loaded3dRoot || !mixer) return;
+
+      activeUnrealAnimEntry = animEntry;
+      rawClips = animEntry.clips;
+      activeClipIndex = 0;
+      playing3d = true;
+      applyPreparedClip();
+      const dur = animEntry.clips[0]?.duration ? `${animEntry.clips[0].duration.toFixed(2)}s` : '';
+      const attNote = charItem.headAttachment?.name ? ` · ${charItem.headAttachment.name}` : '';
+      status3dEl.textContent = loadedStats.boneCount === 0
+        ? `${charItem.name} 未含骨骼，无法套用 Anim58 动作`
+        : `${charItem.packLabel || charItem.pack}${attNote} · ${animItem.category}${dur ? ` · ${dur}` : ''} · ${loadedStats.boneCount} 骨 · ${loadedStats.meshCount} 网格`;
+
+      if (!viewEl.hidden) {
+        vp.start(tick3d);
+        vp.resize();
+      }
+    } catch (error) {
+      if (token !== load3dToken) return;
+      status3dEl.textContent = error.message || 'Unreal 角色动作加载失败';
+    }
+    return;
+  }
+
+  const item = uploaded.find(entry => entry.id === active3dId);
+  if (characterSelect) characterSelect.disabled = true;
+  syncCharacterSwitchButtons();
+  deleteButton.hidden = !item;
+  if (!item) {
+    clear3dScene();
+    titleEl.textContent = '3D 动画';
+    empty3d.hidden = false;
+    stage3d.hidden = true;
+    status3dEl.textContent = '';
+    return;
+  }
+
+  titleEl.textContent = item.name;
+  empty3d.hidden = true;
+  stage3d.hidden = false;
+  const vp = ensureViewport3d();
+  const token = ++load3dToken;
+  status3dEl.textContent = '正在加载 GLB 动画...';
+
+  try {
+    const gltf = await mountCharacterRoot(item.url, `uploaded:${item.id}`, vp, token);
+    if (!gltf || token !== load3dToken) return;
+
+    rawClips = Array.isArray(gltf.animations) ? gltf.animations : [];
+    activeClipIndex = 0;
+    if (rawClips.length > 0) {
+      playing3d = true;
+      applyPreparedClip();
+      status3dEl.textContent = `${rawClips.length} 个动画片段 · ${loadedStats.boneCount} 根骨骼 · ${loadedStats.meshCount} 网格`;
+    } else {
+      mixer = null;
+      status3dEl.textContent = `未检测到动画片段（${loadedStats.boneCount} 根骨骼 · ${loadedStats.meshCount} 网格）`;
+    }
+
+    if (!viewEl.hidden) {
+      vp.start(tick3d);
+      vp.resize();
+    }
+  } catch (error) {
+    if (token !== load3dToken) return;
+    status3dEl.textContent = error.message || 'GLB 动画加载失败';
+  }
+}
+
+async function handleGlbUpload(file) {
+  if (!file) return;
+  status3dEl.textContent = `正在上传 ${file.name}...`;
+  try {
+    const query = new URLSearchParams({ name: file.name, kind: 'character' });
+    const data = await apiRequestJson(`/api/hgame/models?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
+    active3dKind = 'uploaded';
+    active3dId = data.item.id;
+    await refreshHGameAssets();
+    populateAnimControls();
+    renderSidebarList();
+    await load3dAnimationAsset();
+  } catch (error) {
+    status3dEl.textContent = error.message;
+  }
+}
+
+async function deleteActiveAsset() {
+  if (active3dKind !== 'uploaded' || !active3dId) return;
+  await apiRequestJson(`/api/hgame/models/${encodeURIComponent(active3dId)}`, { method: 'DELETE' });
+  active3dKind = '';
+  active3dId = '';
+  await refreshHGameAssets();
+  populateAnimControls();
+  renderSidebarList();
+  await load3dAnimationAsset();
+}
+
+async function initAnimationsView() {
+  if (!initialized) {
+    initialized = true;
+
+    searchInput.addEventListener('input', resetAnimListLimitAndRender);
+    packFilterSelect?.addEventListener('change', resetAnimListLimitAndRender);
+    sourcePackFilterSelect?.addEventListener('change', resetAnimListLimitAndRender);
+    addButton.addEventListener('click', () => glbUploadInput.click());
+    glbUploadInput.addEventListener('change', () => {
+      const file = glbUploadInput.files?.[0];
+      glbUploadInput.value = '';
+      void handleGlbUpload(file);
+    });
+    deleteButton.addEventListener('click', () => void deleteActiveAsset());
+
+    characterSelect?.addEventListener('change', () => applySelectedCharacter(characterSelect.value));
+    prevCharacterBtn?.addEventListener('click', () => stepSelectedCharacter(-1));
+    nextCharacterBtn?.addEventListener('click', () => stepSelectedCharacter(1));
+    charDialogBtn?.addEventListener('click', openCharacterPickerDialog);
+    charDialogCloseBtn?.addEventListener('click', () => characterDialog?.close());
+    charDialogSearchInput?.addEventListener('input', renderCharacterDialogList);
+    charDialogPackSelect?.addEventListener('change', renderCharacterDialogList);
+    characterDialog?.addEventListener('click', event => {
+      if (event.target === characterDialog) characterDialog.close();
+    });
+
+    play3dBtn.addEventListener('click', () => {
+      playing3d = !playing3d;
+      play3dBtn.textContent = playing3d ? '暂停' : '播放';
+    });
+    restart3dBtn.addEventListener('click', () => {
+      if (activeAction) {
+        activeAction.reset().play();
+        playing3d = true;
+        play3dBtn.textContent = '暂停';
+      }
+    });
+    scrub3dInput.addEventListener('input', () => {
+      if (!activeAction || !mixer) return;
+      playing3d = false;
+      play3dBtn.textContent = '播放';
+      const dur = Math.max(activeAction.getClip().duration, 0.0001);
+      activeAction.time = Number(scrub3dInput.value) * dur;
+      mixer.update(0);
+    });
+    loop3dInput.addEventListener('change', applyPreparedClip);
+    rootLock3dInput.addEventListener('change', applyPreparedClip);
+    skeleton3dInput.addEventListener('change', () => {
+      if (skeletonHelper) skeletonHelper.visible = skeleton3dInput.checked;
+    });
+
+    onHGameAssetsChanged(data => {
+      assetStore = data;
+      populateAnimControls();
+      renderSidebarList();
+    });
+  }
+
+  const [data, catalog, webassetChars] = await Promise.all([
+    fetchHGameAssets(),
+    fetchUnrealCatalog(),
+    fetchSelfCharacters(),
+  ]);
+  assetStore = data;
+  unrealCatalog = catalog;
+  selfCharacters = webassetChars;
+  populateAnimControls();
+  renderSidebarList();
+  await load3dAnimationAsset();
+}
+
+window.addEventListener('webasset:workspace-change', event => {
+  if (event.detail?.workspace === 'animations') {
+    void initAnimationsView();
+  } else {
+    viewport3d?.stop();
+  }
+});
+
+if (viewEl && !viewEl.hidden) {
+  void initAnimationsView();
+}

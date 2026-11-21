@@ -1,0 +1,7 @@
+raw/pbr_cache/
+raw/models_nature/
+raw/models_polyhaven/
+raw/models_tripo/
+built/dist/
+node_modules/
+*.tmp

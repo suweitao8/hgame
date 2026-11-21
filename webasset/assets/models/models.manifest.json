@@ -1,0 +1,144 @@
+{
+  "version": "1.0.0",
+  "outputRoot": "public/assets/models",
+  "manifestOut": "public/assets/models/model_manifest.json",
+  "defaults": {
+    "albedoClamp": [35, 230],
+    "nonMetalMinRoughness": 64,
+    "texelsPerMeter": 256
+  },
+  "models": [
+    {
+      "id": "prop_tree_oak",
+      "name": "橡树 (程序化树体)",
+      "category": "tree",
+      "generator": "tree_oak",
+      "targetHeight": 4.5,
+      "maxTris": 3500,
+      "generateLOD1": true,
+      "collider": "cylinder",
+      "arrayMaterialMap": { "bark": "bark_oak", "leaves": "leaves_oak" }
+    },
+    {
+      "id": "prop_tree_pine",
+      "name": "松树 (程序化树体)",
+      "category": "tree",
+      "generator": "tree_pine",
+      "targetHeight": 5.2,
+      "maxTris": 3500,
+      "generateLOD1": true,
+      "collider": "cylinder",
+      "arrayMaterialMap": { "bark": "bark_pine", "leaves": "leaves_pine" }
+    },
+    {
+      "id": "prop_boulder",
+      "name": "风化巨石",
+      "category": "rock",
+      "generator": "boulder",
+      "targetHeight": 1.35,
+      "maxTris": 1500,
+      "generateLOD1": true,
+      "collider": "box",
+      "arrayMaterialMap": { "stone": "stone" }
+    },
+    {
+      "id": "prop_chest",
+      "name": "储物宝箱 (铰链盖)",
+      "category": "prop_shared",
+      "generator": "chest",
+      "targetHeight": 0.88,
+      "maxTris": 1500,
+      "collider": "box",
+      "hinge": { "node": "chest_lid", "axis": "x", "openAngleDeg": -82 },
+      "arrayMaterialMap": { "wood": "planks_oak", "metal": "metal_iron" }
+    },
+    {
+      "id": "prop_door_oak",
+      "name": "橡木门 (铰链门扇)",
+      "category": "prop_shared",
+      "generator": "door_oak",
+      "targetHeight": 2.0,
+      "maxTris": 1500,
+      "collider": "box",
+      "hinge": { "node": "door_leaf", "axis": "y", "openAngleDeg": 90 },
+      "arrayMaterialMap": { "wood": "planks_oak", "frame": "planks_spruce", "metal": "metal_iron" }
+    },
+    {
+      "id": "prop_furnace",
+      "name": "石质熔炉 (自发光炉膛)",
+      "category": "prop_shared",
+      "generator": "furnace",
+      "targetHeight": 1.0,
+      "maxTris": 1500,
+      "collider": "box",
+      "emissiveNode": "furnace_core",
+      "arrayMaterialMap": { "body": "cobblestone", "dark": "deepslate", "core": "lava_crust" }
+    },
+    {
+      "id": "prop_workbench",
+      "name": "木工台",
+      "category": "prop_shared",
+      "generator": "workbench",
+      "targetHeight": 1.0,
+      "maxTris": 1200,
+      "collider": "box",
+      "arrayMaterialMap": { "top": "crate_wood", "side": "planks_oak", "trim": "metal_iron" }
+    },
+    {
+      "id": "prop_torch",
+      "name": "壁挂/立式火把",
+      "category": "prop_shared",
+      "generator": "torch",
+      "targetHeight": 0.72,
+      "maxTris": 800,
+      "collider": "none",
+      "emissiveNode": "torch_head",
+      "arrayMaterialMap": { "handle": "bark_oak", "head": "lava_crust" }
+    },
+    {
+      "id": "prop_lantern",
+      "name": "CC0 金属提灯 (Poly Haven)",
+      "category": "prop_unique",
+      "polyhavenId": "Lantern_01",
+      "targetHeight": 0.36,
+      "maxTris": 3500,
+      "collider": "box"
+    },
+    {
+      "id": "prop_barrel",
+      "name": "CC0 铁油桶 (Poly Haven)",
+      "category": "prop_unique",
+      "polyhavenId": "Barrel_01",
+      "targetHeight": 0.92,
+      "maxTris": 3500,
+      "collider": "cylinder"
+    },
+    {
+      "id": "prop_cheese_box",
+      "name": "CC0 木储物箱 (Poly Haven)",
+      "category": "prop_unique",
+      "polyhavenId": "CheeseBox_01",
+      "targetHeight": 0.42,
+      "maxTris": 2500,
+      "collider": "box"
+    },
+    {
+      "id": "char_cat_knight",
+      "name": "猫骑士角色 (低模 PBR 校准)",
+      "category": "character",
+      "sourceFile": "assets/characters/cat-knight/models/low-87fd94a9-d7d1-44bf-ba3d-851c821d005d.glb",
+      "targetHeight": 1.8,
+      "maxTris": 18000,
+      "collider": "capsule"
+    },
+    {
+      "id": "char_chouju",
+      "name": "臭橘角色 (低模 PBR 校准)",
+      "category": "character",
+      "sourceFile": "assets/characters/chouju/models/low-86e6bc4d-ec5d-4743-a188-6c4121e2f758.glb",
+      "targetHeight": 1.7,
+      "maxTris": 18000,
+      "collider": "capsule"
+    }
+  ]
+}

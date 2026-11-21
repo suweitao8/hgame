@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10130f">
+  <title>角色资产 · WebAsset</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./css/site.css">
+  <script type="importmap">{"imports":{"three":"/vendor/three/build/three.module.js","three/addons/":"/vendor/three/examples/jsm/","three/examples/jsm/":"/vendor/three/examples/jsm/"}}</script>
+  <script type="module" src="./js/site.js"></script>
+  <script type="module" src="./js/games.js"></script>
+  <script type="module" src="./js/hgame-models.js"></script>
+  <script type="module" src="./js/hgame-animations.js"></script>
+  <script type="module" src="./js/hgame-vfx.js"></script>
+  <script type="module" src="./js/hgame-materials.js"></script>
+  <script type="module" src="./js/hgame-decals.js"></script>
+  <script type="module" src="./js/hgame-audio.js"></script>
+  <script type="module" src="./js/hgame-tests.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="WebAsset 角色资产库">
+      <span class="brand-mark">W</span>
+      <span>WEB ASSET<small>角色与 HGame 资产库</small></span>
+    </a>
+    <nav class="main-nav" aria-label="工作区" role="tablist">
+      <button type="button" class="nav-tab" id="nav-characters" data-workspace="characters" role="tab" aria-controls="assets-view" aria-selected="true" tabindex="0">角色</button>
+      <button type="button" class="nav-tab" id="nav-games" data-workspace="games" role="tab" aria-controls="games-view" aria-selected="false" tabindex="-1">游戏</button>
+      <button type="button" class="nav-tab" id="nav-models" data-workspace="models" role="tab" aria-controls="models-view" aria-selected="false" tabindex="-1">模型</button>
+      <button type="button" class="nav-tab" id="nav-animations" data-workspace="animations" role="tab" aria-controls="animations-view" aria-selected="false" tabindex="-1">动画</button>
+      <button type="button" class="nav-tab" id="nav-vfx" data-workspace="vfx" role="tab" aria-controls="vfx-view" aria-selected="false" tabindex="-1">特效</button>
+      <button type="button" class="nav-tab" id="nav-materials" data-workspace="materials" role="tab" aria-controls="materials-view" aria-selected="false" tabindex="-1">材质</button>
+      <button type="button" class="nav-tab" id="nav-decals" data-workspace="decals" role="tab" aria-controls="decals-view" aria-selected="false" tabindex="-1">贴花</button>
+      <button type="button" class="nav-tab" id="nav-audio" data-workspace="audio" role="tab" aria-controls="audio-view" aria-selected="false" tabindex="-1">音效</button>
+      <button type="button" class="nav-tab" id="nav-tests" data-workspace="tests" role="tab" aria-controls="tests-view" aria-selected="false" tabindex="-1">测试</button>
+    </nav>
+    <div class="header-status"><span class="status-dot"></span> 本机资产服务</div>
+  </header>
+<main id="assets-view" class="workspace-layout assets-layout">
+    <aside class="workspace-sidebar asset-sidebar" aria-label="角色列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="character-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="character-search" type="search" placeholder="搜索角色 / 别名" autocomplete="off">
+        </label>
+        <button id="character-create-button" class="character-create-button" type="button" aria-label="新增角色" title="新增角色">
+          <span aria-hidden="true">＋</span>
+        </button>
+      </div>
+      <nav id="character-list" class="asset-character-list" aria-label="选择角色"></nav>
+    </aside>
+
+    <section class="asset-panel" aria-label="角色图片库">
+      <div class="asset-content">
+        <div class="asset-image-columns">
+          <section class="asset-reference-section" aria-labelledby="asset-reference-heading">
+            <div class="asset-section-heading">
+              <h2 id="asset-reference-heading">参考图</h2>
+              <span id="asset-reference-count" class="asset-section-count"></span>
+            </div>
+            <div id="asset-results" class="asset-results asset-character-gallery" aria-live="polite"></div>
+          </section>
+          <section class="asset-ai-section" aria-labelledby="asset-ai-heading">
+            <div class="asset-section-heading">
+              <h2 id="asset-ai-heading">AI 生成图</h2>
+              <div class="asset-ai-heading-actions">
+                <time id="character-image-generated-at" class="asset-ai-generated-at" hidden></time>
+                <button id="character-image-generate-button" class="asset-ai-generate-button" type="button" title="使用 Codex 内置 imagegen，根据当前角色参考图生成四栏六视图">✦ AI 生图</button>
+              </div>
+            </div>
+            <div class="character-mode-tabs" role="tablist" aria-label="生图形态">
+              <button type="button" class="character-mode-tab" role="tab" data-mode="default" aria-selected="true" aria-controls="asset-ai-results" tabindex="0">影视</button>
+              <button type="button" class="character-mode-tab" role="tab" data-mode="humanoid" aria-selected="false" aria-controls="asset-ai-results" tabindex="-1">模型</button>
+            </div>
+            <div id="asset-ai-results" class="asset-ai-results" aria-live="polite" role="tabpanel"></div>
+          </section>
+        </div>
+        <div class="asset-details-columns">
+          <section class="asset-settings-section" aria-labelledby="asset-settings-heading">
+            <div class="asset-section-heading">
+              <h2 id="asset-settings-heading">角色设定</h2>
+            </div>
+            <div id="asset-settings" class="asset-settings-grid"></div>
+          </section>
+          <section id="asset-model-section" class="asset-model-section" aria-labelledby="asset-model-heading">
+            <div class="asset-section-heading asset-model-heading">
+              <h2 id="asset-model-heading">3D 模型</h2>
+              <div class="asset-model-toolbar">
+                <a id="asset-model-filename" class="asset-model-filename" hidden download></a>
+                <button id="asset-model-upload-button" type="button" class="asset-model-action">上传 GLB</button>
+                <input id="asset-model-upload" type="file" accept=".glb,model/gltf-binary" hidden>
+              </div>
+            </div>
+            <div class="character-mode-tabs asset-model-tabs" role="tablist" aria-label="3D 模型视图">
+              <button class="asset-model-tab character-mode-tab" type="button" role="tab" data-model-view="high" aria-selected="true" aria-controls="asset-model-panel" tabindex="0">高模</button>
+              <button class="asset-model-tab character-mode-tab" type="button" role="tab" data-model-view="low" aria-selected="false" aria-controls="asset-model-panel" tabindex="-1">低模</button>
+              <button class="asset-model-tab character-mode-tab" type="button" role="tab" data-model-view="uv" aria-selected="false" aria-controls="asset-model-panel" tabindex="-1">UV</button>
+            </div>
+            <div id="asset-model-panel" class="asset-model-panel" role="tabpanel" aria-live="polite">
+              <div id="asset-model-empty" class="asset-model-empty">暂无高模。上传 GLB 后可旋转查看模型。</div>
+              <div id="asset-model-stage" class="asset-model-stage" hidden></div>
+              <canvas id="asset-model-uv-canvas" class="asset-model-uv-canvas" width="960" height="600" hidden></canvas>
+            </div>
+            <div class="asset-model-controls">
+              <span id="asset-model-status" role="status" aria-live="polite"></span>
+              <label id="asset-model-uv-source-controls" hidden>UV 来源 <select id="asset-model-uv-source"></select></label>
+              <label id="asset-model-uv-controls" hidden>查看网格 <select id="asset-model-uv-mesh"></select></label>
+              <button id="asset-model-run" class="asset-model-action" type="button" hidden disabled>播放 Run</button>
+            </div>
+          </section>
+        </div>
+        <div id="asset-empty" class="asset-empty" hidden>正在读取角色图片…</div>
+      </div>
+      <div id="asset-toast" class="asset-toast" role="status" aria-live="polite" hidden></div>
+    </section>
+    <dialog id="character-create-dialog" class="character-create-dialog" aria-labelledby="character-create-title">
+      <form id="character-create-form" class="character-create-form">
+        <div class="character-create-heading">
+          <span class="sidebar-eyebrow">CHARACTER LIBRARY</span>
+          <h2 id="character-create-title">新增角色</h2>
+          <p>创建后会加入公共角色库，可以继续添加参考图。</p>
+        </div>
+        <label class="character-form-field">
+          <span>名字 <i>必填</i></span>
+          <input name="name" type="text" maxlength="64" required placeholder="例如：猫咪骑士">
+        </label>
+        <p id="character-create-error" class="character-create-error" role="alert" hidden></p>
+        <div class="character-create-actions">
+          <button class="character-create-cancel" type="button" data-close-character-dialog>取消</button>
+          <button class="character-create-submit" type="submit">创建角色</button>
+        </div>
+      </form>
+    </dialog>
+  </main>
+  <main id="games-view" class="workspace-layout games-layout" aria-label="网页游戏库" hidden>
+    <aside class="workspace-sidebar game-sidebar" aria-label="游戏列表">
+      <label class="character-search game-search" for="game-search">
+        <span class="game-search-label">搜索</span>
+        <input id="game-search" type="search" placeholder="游戏名称" autocomplete="off">
+      </label>
+      <nav id="game-list" class="game-list" aria-label="已添加的游戏"></nav>
+      <p id="game-status" class="game-status" role="status" aria-live="polite"></p>
+    </aside>
+    <section class="preview-panel game-preview-panel" aria-label="游戏预览">
+      <div class="game-frame-wrap">
+        <iframe id="game-preview" title="HTML 游戏预览" sandbox="allow-scripts allow-pointer-lock allow-downloads" allow="fullscreen; gamepad" referrerpolicy="no-referrer" hidden></iframe>
+      </div>
+    </section>
+  </main>
+
+  <main id="models-view" class="workspace-layout hgame-layout" aria-label="HGame 静态 GLB 母库" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="模型列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="hgame-model-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="hgame-model-search" type="search" placeholder="搜索静态 GLB 模型" autocomplete="off">
+        </label>
+        <button id="hgame-model-upload-button" class="character-create-button" type="button" aria-label="上传静态模型" hidden>
+          <span aria-hidden="true">＋</span>
+        </button>
+        <input id="hgame-model-upload" type="file" accept=".glb" hidden>
+      </div>
+      <div class="hgame-filter-row">
+        <label class="hgame-field hgame-field-full"><span>分类</span>
+          <select id="hgame-model-pack-filter">
+            <option value="all">全部静态 GLB</option>
+          </select>
+        </label>
+      </div>
+      <nav id="hgame-model-list" class="hgame-asset-list" aria-label="选择模型"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="模型预览">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="hgame-model-title">静态 GLB 模型</h2>
+          <a id="hgame-model-download" class="asset-model-filename" hidden download></a>
+        </div>
+        <div class="hgame-stage-actions">
+          <div class="character-mode-tabs" role="tablist" aria-label="模型视图">
+            <button type="button" class="character-mode-tab hgame-model-tab" role="tab" data-hgame-model-view="3d" aria-selected="true" tabindex="0">3D 预览</button>
+            <button type="button" class="character-mode-tab hgame-model-tab" role="tab" data-hgame-model-view="uv" aria-selected="false" tabindex="-1">UV</button>
+          </div>
+          <button id="hgame-model-delete-button" type="button" class="hgame-danger-button" hidden>删除</button>
+        </div>
+      </div>
+      <div class="hgame-viewport">
+        <div id="hgame-model-empty" class="hgame-empty" hidden>暂无静态 GLB 模型。</div>
+        <div id="hgame-model-stage" class="hgame-stage-canvas"></div>
+        <canvas id="hgame-model-uv-canvas" class="hgame-uv-canvas" width="960" height="600" hidden></canvas>
+      </div>
+      <div class="hgame-controls hgame-controls-wrap">
+        <span id="hgame-model-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+        <div class="hgame-control-group" id="hgame-model-param-controls" hidden></div>
+        <div class="hgame-control-group" id="hgame-model-uv-controls" hidden>
+          <label class="hgame-field"><span>查看网格</span><select id="hgame-model-uv-mesh"></select></label>
+        </div>
+        <div class="hgame-control-group">
+          <label class="hgame-check"><input id="hgame-model-wireframe" type="checkbox"><span>线框</span></label>
+          <label class="hgame-check"><input id="hgame-model-grid" type="checkbox" checked><span>地面网格</span></label>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <main id="animations-view" class="workspace-layout hgame-layout" aria-label="HGame 3D 动画库" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="动画列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="hgame-anim-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="hgame-anim-search" type="search" placeholder="搜索 3D 动作" autocomplete="off">
+        </label>
+        <button id="hgame-anim-add-button" class="character-create-button" type="button" aria-label="上传 3D 动画 GLB" title="上传含骨骼动画的 GLB 模型">
+          <span aria-hidden="true">＋</span>
+        </button>
+        <input id="hgame-anim-glb-upload" type="file" accept=".glb,model/gltf-binary" hidden>
+      </div>
+      <div class="hgame-filter-row hgame-filter-stack" id="hgame-anim-filter-row">
+        <label class="hgame-field hgame-field-full"><span>分类</span>
+          <select id="hgame-anim-pack-filter">
+            <option value="all">全部 3D 动作</option>
+          </select>
+        </label>
+        <label class="hgame-field hgame-field-full"><span>动作包</span>
+          <select id="hgame-anim-source-pack-filter">
+            <option value="all">全部动作包</option>
+          </select>
+        </label>
+      </div>
+      <nav id="hgame-anim-list" class="hgame-asset-list" aria-label="选择动作"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="3D 动画预览">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="hgame-anim-title">3D 动画</h2>
+        </div>
+        <div class="hgame-stage-actions">
+          <button id="hgame-anim-character-dialog-button" type="button" class="asset-model-action">切换角色</button>
+          <button id="hgame-anim-delete-button" type="button" class="hgame-danger-button" hidden>删除</button>
+        </div>
+      </div>
+
+      <div id="hgame-anim-3d-pane" class="hgame-subpane">
+        <div class="hgame-viewport">
+          <div id="hgame-anim-3d-empty" class="hgame-empty">暂无 3D 动画模型。点击左侧「＋」上传含动画片段的 GLB。</div>
+          <div id="hgame-anim-3d-stage" class="hgame-stage-canvas" hidden></div>
+        </div>
+        <div class="hgame-controls hgame-controls-wrap">
+          <div class="hgame-control-group">
+            <div class="hgame-character-switcher">
+              <label class="hgame-field"><span>角色模型</span><select id="hgame-anim-character-select"></select></label>
+              <button id="hgame-anim-prev-character-button" type="button" class="hgame-icon-button" aria-label="上一个角色模型" title="上一个角色模型">↑</button>
+              <button id="hgame-anim-next-character-button" type="button" class="hgame-icon-button" aria-label="下一个角色模型" title="下一个角色模型">↓</button>
+            </div>
+            <button id="hgame-anim-play-button" type="button" class="asset-model-action">暂停</button>
+            <button id="hgame-anim-restart-button" type="button" class="asset-model-action">重播</button>
+          </div>
+          <div class="hgame-control-group">
+            <label class="hgame-field"><span>进度</span><input id="hgame-anim-scrub" type="range" min="0" max="1" step="0.005" value="0"></label>
+            <label class="hgame-field"><span>倍速</span>
+              <select id="hgame-anim-speed">
+                <option value="0.25">0.25x</option>
+                <option value="0.5">0.5x</option>
+                <option value="1" selected>1.0x</option>
+                <option value="1.5">1.5x</option>
+                <option value="2">2.0x</option>
+              </select>
+            </label>
+            <label class="hgame-check"><input id="hgame-anim-loop" type="checkbox" checked><span>循环</span></label>
+            <label class="hgame-check"><input id="hgame-anim-skeleton" type="checkbox"><span>骨骼</span></label>
+            <label class="hgame-check"><input id="hgame-anim-root-lock" type="checkbox"><span>锁定位移</span></label>
+          </div>
+          <span id="hgame-anim-3d-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+    </section>
+    <dialog id="hgame-character-picker-dialog" class="character-create-dialog hgame-picker-dialog" aria-labelledby="hgame-character-dialog-title">
+      <div class="hgame-picker-shell">
+        <div class="hgame-picker-header">
+          <h2 id="hgame-character-dialog-title">切换角色</h2>
+          <button id="hgame-char-dialog-close" type="button" class="hgame-picker-close" aria-label="关闭" title="关闭">×</button>
+        </div>
+        <div class="hgame-picker-filters">
+          <label class="character-search" for="hgame-char-dialog-search">
+            <span aria-hidden="true">⌕</span>
+            <input id="hgame-char-dialog-search" type="search" placeholder="搜索角色名 / 资源包" autocomplete="off">
+          </label>
+          <label class="hgame-field"><span>资源包</span>
+            <select id="hgame-char-dialog-pack">
+              <option value="all">全部角色包</option>
+            </select>
+          </label>
+        </div>
+        <div id="hgame-char-dialog-list" class="hgame-picker-grid" role="listbox" aria-label="选择角色"></div>
+      </div>
+    </dialog>
+  </main>
+
+  <main id="vfx-view" class="workspace-layout hgame-layout" aria-label="Unity 特效资源库" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="特效列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="hgame-vfx-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="hgame-vfx-search" type="search" placeholder="搜索特效 / 资源包" autocomplete="off">
+        </label>
+      </div>
+      <div class="hgame-filter-row hgame-filter-stack">
+        <label class="hgame-field hgame-field-full"><span>类型</span>
+          <select id="hgame-vfx-kind-filter">
+            <option value="all">全部资源</option>
+            <option value="system">Unity 特效系统</option>
+            <option value="mesh">3D 特效网格</option>
+            <option value="texture">贴图与序列帧</option>
+          </select>
+        </label>
+        <label class="hgame-field hgame-field-full"><span>分类</span>
+          <select id="hgame-vfx-type-filter">
+            <option value="all">全部特效</option>
+          </select>
+        </label>
+      </div>
+      <nav id="hgame-vfx-list" class="hgame-asset-list" aria-label="选择特效"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="特效预览">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="hgame-vfx-title">特效</h2>
+          <a id="hgame-vfx-download" class="asset-model-filename" hidden download></a>
+        </div>
+        <div class="hgame-stage-actions">
+          <div id="hgame-vfx-mode-tabs" class="character-mode-tabs" role="tablist" aria-label="特效渲染模式" hidden>
+            <button type="button" class="character-mode-tab hgame-vfx-mode-tab" role="tab" data-hgame-vfx-mode="source" aria-selected="true" tabindex="0">Unity 还原</button>
+            <button type="button" class="character-mode-tab hgame-vfx-mode-tab" role="tab" data-hgame-vfx-mode="hgame" aria-selected="false" tabindex="-1">HGame 运行时</button>
+          </div>
+          <button id="hgame-vfx-copy-code" type="button" class="asset-model-action" hidden>复制 HGame 代码</button>
+        </div>
+      </div>
+      <div class="hgame-viewport">
+        <div id="hgame-vfx-empty" class="hgame-empty" hidden>暂无特效资源。</div>
+        <div id="hgame-vfx-stage" class="hgame-stage-canvas"></div>
+      </div>
+      <div class="hgame-controls hgame-controls-wrap">
+        <div class="hgame-control-group">
+          <button id="hgame-vfx-play-button" type="button" class="asset-model-action">暂停</button>
+          <button id="hgame-vfx-replay-button" type="button" class="asset-model-action">重播</button>
+          <label class="hgame-field" id="hgame-vfx-plane-mode-wrap" hidden><span>形态</span>
+            <select id="hgame-vfx-plane-mode">
+              <option value="auto">自动识别</option>
+              <option value="billboard">朝向相机</option>
+              <option value="ground">贴地水平</option>
+              <option value="emitter">粒子喷射</option>
+            </select>
+          </label>
+          <label class="hgame-field" id="hgame-vfx-grid-wrap"><span>序列帧</span>
+            <select id="hgame-vfx-grid">
+              <option value="auto">自动识别</option>
+              <option value="1x1">单帧 1×1</option>
+              <option value="2x2">2×2 序列帧</option>
+              <option value="3x3">3×3 序列帧</option>
+              <option value="4x1">4×1 序列帧</option>
+              <option value="4x4">4×4 序列帧</option>
+              <option value="5x5">5×5 序列帧</option>
+              <option value="8x4">8×4 序列帧</option>
+              <option value="8x8">8×8 序列帧</option>
+            </select>
+          </label>
+          <label class="hgame-field" id="hgame-vfx-fps-wrap"><span>帧率</span><input id="hgame-vfx-fps" type="number" min="1" max="60" value="12"></label>
+          <label class="hgame-field" id="hgame-vfx-blend-wrap"><span>混合</span>
+            <select id="hgame-vfx-blend">
+              <option value="additive">叠加发光</option>
+              <option value="normal">标准透明</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>色调</span><input id="hgame-vfx-color" type="color" value="#ffffff"></label>
+          <label class="hgame-check"><input id="hgame-vfx-spin" type="checkbox"><span>缓慢旋转</span></label>
+        </div>
+        <span id="hgame-vfx-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+  </main>
+
+  <main id="materials-view" class="workspace-layout hgame-layout" aria-label="HGame CC0 PBR 材质库" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="材质列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="hgame-material-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="hgame-material-search" type="search" placeholder="搜索 PBR 槽位 / 来源" autocomplete="off">
+        </label>
+      </div>
+      <div class="hgame-filter-row">
+        <label class="hgame-field hgame-field-full"><span>筛选</span>
+          <select id="hgame-material-source-filter">
+            <option value="all">全部 CC0 PBR 材质</option>
+          </select>
+        </label>
+      </div>
+      <nav id="hgame-material-list" class="hgame-asset-list" aria-label="选择材质"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="材质预览">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="hgame-material-title">CC0 PBR 材质</h2>
+          <a id="hgame-material-download" class="asset-model-filename" hidden></a>
+        </div>
+      </div>
+      <div class="hgame-viewport">
+        <div id="hgame-material-empty" class="hgame-empty" hidden>暂无 PBR 材质。</div>
+        <div id="hgame-material-stage" class="hgame-stage-canvas"></div>
+      </div>
+      <div id="hgame-material-maps" class="hgame-material-maps" hidden>
+        <div class="hgame-map-slot"><span>Albedo</span><canvas id="hgame-map-color" width="128" height="128" aria-label="Albedo 通道预览"></canvas></div>
+        <div class="hgame-map-slot"><span>Normal</span><canvas id="hgame-map-normal" width="128" height="128" aria-label="Normal 通道预览"></canvas></div>
+        <div class="hgame-map-slot"><span>RM</span><canvas id="hgame-map-rm" width="128" height="128" aria-label="RM 通道预览"></canvas></div>
+      </div>
+      <div class="hgame-controls hgame-controls-wrap">
+        <div class="hgame-control-group">
+          <label class="hgame-field"><span>几何体</span>
+            <select id="hgame-material-mesh-shape">
+              <option value="combo">标定组合</option>
+              <option value="sphere">球体</option>
+              <option value="cube">立方体</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>平铺倍率</span><input id="hgame-material-tile" type="range" min="0.25" max="4" step="0.05" value="1"><output id="hgame-material-tile-val">1.00</output></label>
+          <label class="hgame-field"><span>贴图档位</span>
+            <select id="hgame-material-bakemode">
+              <option value="auto">自动 (标准 512)</option>
+              <option value="512">512 px (PC/KTX2)</option>
+              <option value="256">256 px (移动兜底)</option>
+              <option value="128">128 px (Mip L1)</option>
+              <option value="64">64 px (4×Mip)</option>
+            </select>
+          </label>
+        </div>
+        <span id="hgame-material-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+  </main>
+
+  <main id="decals-view" class="workspace-layout hgame-layout" aria-label="Unreal 贴花库" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="贴花列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="hgame-decal-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="hgame-decal-search" type="search" placeholder="搜索贴花 / 分类" autocomplete="off">
+        </label>
+      </div>
+      <div class="hgame-filter-row">
+        <label class="hgame-field hgame-field-full"><span>分类</span>
+          <select id="hgame-decal-pack-filter">
+            <option value="all">全部贴花</option>
+          </select>
+        </label>
+      </div>
+      <nav id="hgame-decal-list" class="hgame-asset-list" aria-label="选择贴花"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="贴花预览">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="hgame-decal-title">贴花预览</h2>
+          <a id="hgame-decal-download" class="asset-model-filename" hidden download></a>
+        </div>
+        <div class="hgame-stage-actions">
+          <div class="character-mode-tabs" role="tablist" aria-label="显示模式">
+            <button type="button" class="character-mode-tab hgame-decal-mode-tab" role="tab" data-decal-mode="surface" aria-selected="true" tabindex="0">3D 贴附</button>
+            <button type="button" class="character-mode-tab hgame-decal-mode-tab" role="tab" data-decal-mode="flat" aria-selected="false" tabindex="-1">平面贴图</button>
+          </div>
+        </div>
+      </div>
+      <div class="hgame-viewport">
+        <div id="hgame-decal-empty" class="hgame-empty" hidden>暂无贴花资产。</div>
+        <div id="hgame-decal-stage" class="hgame-stage-canvas"></div>
+      </div>
+      <div id="hgame-decal-maps" class="hgame-material-maps" hidden>
+        <div class="hgame-map-slot"><span>Color</span><img id="hgame-decal-map-color" alt="Color 贴图"></div>
+        <div class="hgame-map-slot"><span>Normal</span><img id="hgame-decal-map-normal" alt="Normal 贴图"></div>
+        <div class="hgame-map-slot"><span>ORM</span><img id="hgame-decal-map-orm" alt="ORM 贴图"></div>
+      </div>
+      <div class="hgame-controls hgame-controls-wrap">
+        <div class="hgame-control-group">
+          <label class="hgame-field"><span>底面</span>
+            <select id="hgame-decal-surface">
+              <option value="concrete">混凝土墙面</option>
+              <option value="asphalt">柏油路面</option>
+              <option value="brick">砖石墙面</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>缩放</span><input id="hgame-decal-scale" type="range" min="0.4" max="2.4" step="0.05" value="1.3"><output id="hgame-decal-scale-val">1.30</output></label>
+          <label class="hgame-field"><span>旋转</span><input id="hgame-decal-rot" type="range" min="-180" max="180" step="5" value="0"><output id="hgame-decal-rot-val">0°</output></label>
+          <label class="hgame-field"><span>透明</span><input id="hgame-decal-opacity" type="range" min="0.1" max="1" step="0.05" value="1"><output id="hgame-decal-opacity-val">1.00</output></label>
+        </div>
+        <span id="hgame-decal-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+  </main>
+
+  <main id="audio-view" class="workspace-layout hgame-layout" aria-label="HGame 音效与音乐" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="音效列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="hgame-audio-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="hgame-audio-search" type="search" placeholder="搜索音效 / BGM" autocomplete="off">
+        </label>
+        <button id="hgame-audio-upload-button" class="character-create-button" type="button" aria-label="上传音频文件" title="上传 MP3 / WAV / OGG 音频">
+          <span aria-hidden="true">＋</span>
+        </button>
+        <input id="hgame-audio-upload" type="file" accept=".mp3,.wav,.ogg,.flac,.opus,audio/*" hidden>
+      </div>
+      <nav id="hgame-audio-list" class="hgame-asset-list" aria-label="选择音效"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="音效预览">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="hgame-audio-title">音效预览</h2>
+          <a id="hgame-audio-download" class="asset-model-filename" hidden download></a>
+        </div>
+        <div class="hgame-stage-actions">
+          <button id="hgame-audio-delete-button" type="button" class="hgame-danger-button" hidden>删除</button>
+        </div>
+      </div>
+      <div class="hgame-viewport hgame-audio-viewport">
+        <div id="hgame-audio-empty" class="hgame-empty" hidden>暂无音频资产。</div>
+        <canvas id="hgame-audio-wave-canvas" width="960" height="320" class="hgame-wave-canvas"></canvas>
+        <div id="hgame-audio-metrics" class="hgame-audio-metrics"></div>
+      </div>
+      <div class="hgame-controls hgame-controls-wrap">
+        <div class="hgame-control-group">
+          <button id="hgame-audio-play-button" type="button" class="asset-model-action">播放</button>
+          <button id="hgame-audio-stop-button" type="button" class="asset-model-action">停止</button>
+          <label class="hgame-field"><span>音量</span><input id="hgame-audio-volume" type="range" min="0" max="1" step="0.05" value="0.8"><output id="hgame-audio-volume-val">0.80</output></label>
+          <label class="hgame-check" id="hgame-audio-loop-wrap"><input id="hgame-audio-loop" type="checkbox"><span>循环(去静音)</span></label>
+        </div>
+        <span id="hgame-audio-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+  </main>
+
+  <main id="tests-view" class="workspace-layout hgame-layout" aria-label="3D 场景测试" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="测试场景列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="hgame-test-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="hgame-test-search" type="search" placeholder="搜索测试场景" autocomplete="off">
+        </label>
+      </div>
+      <nav id="hgame-test-list" class="hgame-asset-list" aria-label="选择测试场景"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="测试场景视口">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="hgame-test-title">MC 城市街区测试</h2>
+        </div>
+        <div class="hgame-stage-actions">
+          <div class="character-mode-tabs" role="tablist" aria-label="相机模式">
+            <button type="button" class="character-mode-tab hgame-test-cam-tab" role="tab" data-test-cam="orbit" aria-selected="true" tabindex="0">轨道视角</button>
+            <button type="button" class="character-mode-tab hgame-test-cam-tab" role="tab" data-test-cam="walk" aria-selected="false" tabindex="-1">街区漫游</button>
+          </div>
+          <button id="hgame-test-reset-cam" type="button" class="asset-model-action" title="重置相机到当前机位">重置视角</button>
+        </div>
+      </div>
+      <div class="hgame-viewport">
+        <div id="hgame-test-stage" class="hgame-stage-canvas" tabindex="0" aria-label="3D 测试场景画布，轨道模式下拖拽旋转，漫游模式下可用 WASD 移动"></div>
+      </div>
+      <div class="hgame-controls hgame-controls-wrap">
+        <div class="hgame-control-group">
+          <label class="hgame-field"><span>机位</span>
+            <select id="hgame-test-viewpoint">
+              <option value="overview">街区全景</option>
+              <option value="crosswalk">十字路口</option>
+              <option value="shopfront">商铺与二楼楼梯</option>
+              <option value="rooftop">公寓天台</option>
+              <option value="yard">集装箱院落</option>
+              <option value="park">公园公交站</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>光照</span>
+            <select id="hgame-test-lighting">
+              <option value="cn_cbd_day">CBD 晴昼 (cn_cbd_day)</option>
+              <option value="cn_old_town_dusk">老城暮色 (cn_old_town_dusk)</option>
+              <option value="cn_horror_night">巷夜怪谈 (cn_horror_night)</option>
+              <option value="cn_rural_morning">乡村晨雾 (cn_rural_morning)</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>画质</span>
+            <select id="hgame-test-quality">
+              <option value="HIGH" selected>PC/KTX2 档 (512px)</option>
+              <option value="ORIGINAL">高精档 (512px·8×Aniso)</option>
+              <option value="LOW">移动兜底 (256px)</option>
+              <option value="LOWEST">极简省电 (无阴影)</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>LOD</span>
+            <select id="hgame-test-lod">
+              <option value="auto">自动距离</option>
+              <option value="0">LOD0 近景</option>
+              <option value="1">LOD1 中景</option>
+              <option value="2">LOD2 远景</option>
+            </select>
+          </label>
+          <label class="hgame-check"><input id="hgame-test-wireframe" type="checkbox"><span>线框</span></label>
+          <label class="hgame-check"><input id="hgame-test-colliders" type="checkbox"><span>碰撞盒</span></label>
+        </div>
+        <span id="hgame-test-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+      </div>
+      <div id="hgame-test-hotbar" class="hgame-test-hotbar" hidden aria-label="2D 物品图标图集预览"></div>
+    </section>
+  </main>
+</body>
+</html>

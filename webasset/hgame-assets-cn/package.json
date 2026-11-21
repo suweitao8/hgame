@@ -1,0 +1,23 @@
+{
+  "name": "hgame-assets-cn",
+  "version": "4.1.0",
+  "private": true,
+  "type": "module",
+  "description": "hgame 引擎级现代中国城乡 3D 静态资产与写实 2 贴图 PBR 母库 (Final Spec v4.1 · Blender 5.x)",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "pbr:fetch": "node tools/fetch-pbr.mjs",
+    "pbr:bake": "node tools/bake-pbr-slots.mjs",
+    "decals:bake": "node tools/bake-cn-signage.mjs",
+    "foliage:bake": "node tools/bake-foliage.mjs",
+    "l1:gen": "node tools/run-blender.mjs blender/gen_l1_architecture.py && node tools/run-blender.mjs blender/gen_l1_roads.py",
+    "ph:fetch-models": "node tools/fetch-polyhaven-models.mjs",
+    "models:ingest": "node tools/ingest-glb.mjs",
+    "assets:audit": "node tools/audit-assets.mjs",
+    "catalog:build": "node tools/build-catalog.mjs",
+    "game:pack": "node tools/pack-for-game.mjs",
+    "m1:build": "npm run pbr:fetch && npm run pbr:bake && npm run decals:bake && npm run foliage:bake && npm run l1:gen && npm run models:ingest && npm run assets:audit && npm run catalog:build"
+  }
+}

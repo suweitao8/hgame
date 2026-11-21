@@ -1,0 +1,105 @@
+{
+  "version": "4.1.0",
+  "groups": [
+    {
+      "group": "l1_arch",
+      "items": [
+        { "id": "bldg_wall_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["wall", "exterior", "grid_2m"], "materialSlots": { "slot_main": "cn_exterior_tile_white", "slot_inner": "cn_plaster_white" }, "sockets": [{ "name": "mount_sign", "pos": [0, 2.5, -0.12] }] },
+        { "id": "bldg_wall_4m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["wall", "exterior", "grid_4m"], "materialSlots": { "slot_main": "cn_exterior_tile_white", "slot_inner": "cn_plaster_white" } },
+        { "id": "bldg_wall_window_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["wall", "window", "exterior", "grid_2m"], "materialSlots": { "slot_main": "cn_exterior_tile_white", "slot_inner": "cn_plaster_white", "slot_trim": "metal_aluminum" }, "sockets": [{ "name": "mount_ac_unit", "pos": [0, 0.4, -0.12] }, { "name": "mount_security_grille", "pos": [0, 1.65, -0.11] }] },
+        { "id": "bldg_wall_curtain_4m", "tier": "T0", "quadrants": ["Q1_CBD"], "tags": ["wall", "curtain_glass", "exterior", "grid_4m"], "materialSlots": { "slot_trim": "metal_aluminum", "slot_glass": "facade_curtain_glass" } },
+        { "id": "bldg_wall_door_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["wall", "door_opening", "grid_2m"], "materialSlots": { "slot_main": "cn_exterior_tile_white", "slot_inner": "cn_plaster_white", "slot_trim": "metal_aluminum" }, "sockets": [{ "name": "mount_door", "pos": [-0.45, 0.0, 0.0] }] },
+        { "id": "bldg_wall_shutter_4m", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q3_INDUSTRIAL"], "tags": ["wall", "shopfront", "grid_4m"], "materialSlots": { "slot_main": "cn_washed_stone", "slot_inner": "cn_plaster_white", "slot_trim": "metal_painted_steel" }, "sockets": [{ "name": "mount_shutter", "pos": [0, 2.4, 0.0] }, { "name": "mount_shop_sign", "pos": [0, 2.75, -0.15] }] },
+        { "id": "bldg_corner_pillar", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["pillar", "corner"], "materialSlots": { "slot_main": "concrete_fair_faced" } },
+        { "id": "bldg_floor_belt_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["trim", "belt", "grid_2m"], "materialSlots": { "slot_main": "concrete_fair_faced" } },
+        { "id": "bldg_interior_wall_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["wall", "interior", "grid_2m"], "materialSlots": { "slot_main": "cn_hallway_green_dado" } },
+        { "id": "bldg_interior_door_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["wall", "interior", "door_opening", "grid_2m"], "materialSlots": { "slot_main": "cn_hallway_green_dado", "slot_trim": "wood_solid_door" }, "sockets": [{ "name": "mount_door", "pos": [-0.45, 0.0, 0.0] }] },
+        { "id": "bldg_floor_slab_2x2", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["floor", "slab", "grid_2m"], "materialSlots": { "slot_main": "tile_polished_800", "slot_bottom": "cn_plaster_white" } },
+        { "id": "bldg_floor_slab_4x4", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["floor", "slab", "grid_4m"], "materialSlots": { "slot_main": "floor_terrazzo_old", "slot_bottom": "cn_plaster_white" } },
+        { "id": "bldg_ceiling_2x2", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["ceiling", "grid_2m"], "materialSlots": { "slot_main": "ceiling_gypsum" } },
+        { "id": "bldg_ceiling_4x4", "tier": "T0", "quadrants": ["Q1_CBD", "Q3_INDUSTRIAL"], "tags": ["ceiling", "grid_4m"], "materialSlots": { "slot_main": "ceiling_mineral_wool" } },
+        { "id": "bldg_skirting_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["trim", "interior", "grid_2m"], "materialSlots": { "slot_main": "tile_antislip" } },
+        { "id": "bldg_stairs_double_3m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["stairs", "interior", "floor_3m"], "materialSlots": { "slot_main": "floor_terrazzo_old", "slot_trim": "metal_painted_steel" } },
+        { "id": "bldg_balcony_railing_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["railing", "balcony", "grid_2m"], "materialSlots": { "slot_main": "metal_painted_steel", "slot_trim": "glass_clear" } },
+        { "id": "bldg_roof_flat_4x4", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["roof", "flat", "grid_4m"], "materialSlots": { "slot_main": "road_concrete_aged", "slot_trim": "cn_exterior_tile_white" } },
+        { "id": "bldg_roof_pitched_ridge_4m", "tier": "T0", "quadrants": ["Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["roof", "pitched", "ridge", "grid_4m"], "materialSlots": { "slot_main": "cn_corrugated_blue", "slot_trim": "metal_painted_steel" } },
+        { "id": "bldg_roof_pitched_slope_4m", "tier": "T0", "quadrants": ["Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["roof", "pitched", "slope", "grid_4m"], "materialSlots": { "slot_main": "cn_corrugated_red", "slot_trim": "metal_galvanized" } },
+        { "id": "bldg_roof_pitched_gable_4m", "tier": "T0", "quadrants": ["Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["roof", "gable", "grid_4m"], "materialSlots": { "slot_main": "rural_red_brick" } },
+        { "id": "bldg_rural_brick_fence_2m", "tier": "T0", "quadrants": ["Q4_RURAL", "Q2_OLDTOWN"], "tags": ["fence", "rural", "grid_2m"], "materialSlots": { "slot_main": "rural_red_brick", "slot_trim": "concrete_fair_faced" } },
+        { "id": "bldg_rural_fence_pillar", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["fence", "pillar", "rural"], "materialSlots": { "slot_main": "rural_red_brick", "slot_trim": "concrete_fair_faced" } },
+        { "id": "bldg_site_hoarding_2m", "tier": "T0", "quadrants": ["Q1_CBD", "Q3_INDUSTRIAL"], "tags": ["fence", "construction", "grid_2m"], "materialSlots": { "slot_main": "cn_corrugated_blue", "slot_trim": "metal_painted_steel" } },
+        { "id": "bldg_greenhouse_arch_4m", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["greenhouse", "rural", "grid_4m"], "materialSlots": { "slot_trim": "metal_galvanized", "slot_film": "cn_greenhouse_film" } },
+        { "id": "bldg_greenhouse_end_4m", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["greenhouse", "rural", "grid_4m"], "materialSlots": { "slot_trim": "metal_galvanized", "slot_film": "cn_greenhouse_film" } },
+        { "id": "bldg_sign_bracket_2m", "tier": "T0", "quadrants": ["Q2_OLDTOWN"], "tags": ["sign_frame", "shopfront", "grid_2m"], "materialSlots": { "slot_main": "metal_painted_steel" } },
+        { "id": "bldg_canopy_awning_2m", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["canopy", "awning", "grid_2m"], "materialSlots": { "slot_main": "cn_corrugated_blue", "slot_trim": "metal_painted_steel" } },
+
+        { "id": "door_cn_security", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["door", "pivot", "security"], "materialSlots": { "slot_main": "cn_security_door_red", "slot_trim": "metal_stainless_brushed" }, "pivots": [{ "name": "pivot_door", "axis": "y", "rangeDeg": [0, 100] }] },
+        { "id": "door_interior_wood", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["door", "pivot", "interior"], "materialSlots": { "slot_main": "wood_solid_door", "slot_trim": "metal_stainless_brushed" }, "pivots": [{ "name": "pivot_door", "axis": "y", "rangeDeg": [0, 100] }] },
+        { "id": "door_unit_glass_double", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["door", "pivot", "glass"], "materialSlots": { "slot_trim": "metal_stainless_brushed", "slot_glass": "glass_clear" }, "pivots": [{ "name": "pivot_door_left", "axis": "y", "rangeDeg": [-95, 0] }, { "name": "pivot_door_right", "axis": "y", "rangeDeg": [0, 95] }] },
+        { "id": "door_shop_shutter", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q3_INDUSTRIAL"], "tags": ["door", "shutter", "sliding"], "materialSlots": { "slot_main": "cn_shutter_door", "slot_trim": "metal_galvanized" }, "pivots": [{ "name": "pivot_shutter", "axis": "slide_y", "rangeMeters": [0, 2.2] }] },
+        { "id": "window_aluminum_sliding", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["window", "sliding"], "materialSlots": { "slot_trim": "metal_aluminum", "slot_glass": "glass_clear" }, "pivots": [{ "name": "pivot_sash_left", "axis": "slide_x", "rangeMeters": [0, 0.55] }] },
+        { "id": "window_casement", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q4_RURAL"], "tags": ["window", "pivot"], "materialSlots": { "slot_trim": "metal_aluminum", "slot_glass": "glass_clear" }, "pivots": [{ "name": "pivot_casement", "axis": "y", "rangeDeg": [0, 85] }] },
+        { "id": "window_security_grille", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["window", "security_grille"], "materialSlots": { "slot_main": "metal_stainless_brushed" } },
+        { "id": "door_rural_iron_double", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["door", "gate", "rural", "pivot"], "materialSlots": { "slot_main": "metal_painted_steel", "slot_trim": "metal_rust_heavy" }, "pivots": [{ "name": "pivot_gate_left", "axis": "y", "rangeDeg": [-105, 0] }, { "name": "pivot_gate_right", "axis": "y", "rangeDeg": [0, 105] }] },
+        { "id": "door_elevator_double", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["door", "elevator", "sliding"], "materialSlots": { "slot_main": "metal_stainless_brushed" }, "pivots": [{ "name": "pivot_elev_left", "axis": "slide_x", "rangeMeters": [-0.55, 0] }, { "name": "pivot_elev_right", "axis": "slide_x", "rangeMeters": [0, 0.55] }] },
+        { "id": "barrier_garage_boom", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN", "Q3_INDUSTRIAL"], "tags": ["barrier", "garage", "pivot"], "materialSlots": { "slot_main": "metal_painted_steel", "slot_trim": "cn_luminous_diffuser" }, "pivots": [{ "name": "pivot_boom", "axis": "z", "rangeDeg": [0, 82] }] }
+      ]
+    },
+    {
+      "group": "l1_road",
+      "items": [
+        { "id": "road_urban_2lane_straight", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["road", "urban", "grid_10m"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_sidewalk": "sidewalk_permeable_grey", "slot_tactile": "cn_tactile_strip" } },
+        { "id": "road_urban_2lane_turn", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["road", "urban", "turn", "grid_10m"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_sidewalk": "sidewalk_permeable_grey", "slot_tactile": "cn_tactile_dot" } },
+        { "id": "road_urban_2lane_t", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["road", "urban", "t_junction", "grid_10m"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_sidewalk": "sidewalk_permeable_grey", "slot_tactile": "cn_tactile_dot" } },
+        { "id": "road_urban_2lane_cross", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["road", "urban", "cross", "grid_10m"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_sidewalk": "sidewalk_permeable_grey", "slot_tactile": "cn_tactile_dot" } },
+        { "id": "road_urban_2lane_crosswalk", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["road", "urban", "crosswalk", "grid_10m"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_sidewalk": "sidewalk_permeable_grey", "slot_curb": "curb_granite" } },
+        { "id": "road_urban_2lane_ramp", "tier": "T0", "quadrants": ["Q1_CBD", "Q3_INDUSTRIAL"], "tags": ["road", "urban", "ramp", "grid_10m"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_sidewalk": "curb_granite" } },
+        { "id": "road_urban_2lane_deadend", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q3_INDUSTRIAL"], "tags": ["road", "urban", "deadend", "grid_10m"], "materialSlots": { "slot_road": "road_asphalt_cracked", "slot_sidewalk": "sidewalk_permeable_grey", "slot_curb": "curb_granite" } },
+        { "id": "road_urban_roundabout", "tier": "T0", "quadrants": ["Q1_CBD"], "tags": ["road", "urban", "roundabout"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_sidewalk": "plaza_stone_slab", "slot_curb": "curb_granite" } },
+        { "id": "road_urban_4lane_straight", "tier": "T0", "quadrants": ["Q1_CBD"], "tags": ["road", "urban", "4lane"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_sidewalk": "sidewalk_permeable_red", "slot_tactile": "cn_tactile_strip" } },
+        { "id": "road_viaduct_deck_10m", "tier": "T0", "quadrants": ["Q1_CBD", "Q3_INDUSTRIAL"], "tags": ["road", "viaduct", "deck"], "materialSlots": { "slot_road": "road_asphalt_new", "slot_trim": "concrete_fair_faced" } },
+        { "id": "road_viaduct_pier", "tier": "T0", "quadrants": ["Q1_CBD", "Q3_INDUSTRIAL"], "tags": ["road", "viaduct", "pier"], "materialSlots": { "slot_main": "concrete_fair_faced" } },
+        { "id": "road_garage_ramp", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["road", "garage", "ramp"], "materialSlots": { "slot_road": "garage_epoxy_green", "slot_trim": "concrete_fair_faced" } },
+        { "id": "road_rural_concrete_straight", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["road", "rural", "4m"], "materialSlots": { "slot_road": "road_concrete_aged", "slot_shoulder": "nature_soil_dirt" } },
+        { "id": "road_rural_concrete_turn", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["road", "rural", "turn", "4m"], "materialSlots": { "slot_road": "road_concrete_aged", "slot_shoulder": "nature_soil_dirt" } },
+        { "id": "road_rural_concrete_cross", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["road", "rural", "cross", "4m"], "materialSlots": { "slot_road": "road_concrete_aged", "slot_shoulder": "nature_soil_dirt" } },
+        { "id": "road_rural_dirt_transition", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["road", "rural", "dirt", "4m"], "materialSlots": { "slot_road": "road_concrete_aged", "slot_shoulder": "nature_mud_road" } },
+        { "id": "road_rural_bridge", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["road", "rural", "bridge", "4m"], "materialSlots": { "slot_road": "road_concrete_aged", "slot_trim": "concrete_fair_faced" } }
+      ]
+    },
+    {
+      "group": "l1_wire",
+      "items": [
+        { "id": "wire_catenary_4m", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["wire", "overhead"], "materialSlots": { "slot_main": "metal_cast_iron" } },
+        { "id": "wire_catenary_8m", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["wire", "overhead"], "materialSlots": { "slot_main": "metal_cast_iron" } },
+        { "id": "wire_catenary_12m", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["wire", "overhead"], "materialSlots": { "slot_main": "metal_cast_iron" } },
+        { "id": "pipe_pvc_downspout_3m", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["pipe", "exterior"], "materialSlots": { "slot_main": "cn_plaster_white" } }
+      ]
+    },
+    {
+      "group": "l1_backdrop",
+      "items": [
+        { "id": "backdrop_cbd_tower_a", "tier": "T0_BACKDROP", "quadrants": ["Q1_CBD"], "tags": ["backdrop", "skyline", "cbd"], "materialSlots": { "slot_main": "backdrop_windows_modern" } },
+        { "id": "backdrop_cbd_tower_b", "tier": "T0_BACKDROP", "quadrants": ["Q1_CBD"], "tags": ["backdrop", "skyline", "cbd"], "materialSlots": { "slot_main": "backdrop_windows_modern" } },
+        { "id": "backdrop_cbd_tower_c", "tier": "T0_BACKDROP", "quadrants": ["Q1_CBD"], "tags": ["backdrop", "skyline", "cbd"], "materialSlots": { "slot_main": "backdrop_windows_modern" } },
+        { "id": "backdrop_oldtown_block_a", "tier": "T0_BACKDROP", "quadrants": ["Q2_OLDTOWN"], "tags": ["backdrop", "skyline", "oldtown"], "materialSlots": { "slot_main": "backdrop_windows_oldtown" } },
+        { "id": "backdrop_oldtown_block_b", "tier": "T0_BACKDROP", "quadrants": ["Q2_OLDTOWN"], "tags": ["backdrop", "skyline", "oldtown"], "materialSlots": { "slot_main": "backdrop_windows_oldtown" } },
+        { "id": "backdrop_rural_hills_ring", "tier": "T0_BACKDROP", "quadrants": ["Q4_RURAL"], "tags": ["backdrop", "hills", "rural"], "materialSlots": { "slot_main": "nature_mountain_rock" } }
+      ]
+    },
+    {
+      "group": "l1_base",
+      "items": [
+        { "id": "base_retail_shelf", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["furniture", "shop", "shelf"], "materialSlots": { "slot_main": "metal_painted_steel", "slot_trim": "wood_floor_light" } },
+        { "id": "base_shop_counter", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["furniture", "shop", "counter"], "materialSlots": { "slot_main": "wood_floor_dark", "slot_trim": "facade_dry_hung_stone" } },
+        { "id": "base_workbench", "tier": "T0", "quadrants": ["Q3_INDUSTRIAL", "Q4_RURAL"], "tags": ["furniture", "workbench"], "materialSlots": { "slot_main": "wood_preservative", "slot_trim": "metal_cast_iron" } },
+        { "id": "base_rural_stove", "tier": "T0", "quadrants": ["Q4_RURAL"], "tags": ["furniture", "rural", "stove"], "materialSlots": { "slot_main": "rural_red_brick", "slot_trim": "metal_cast_iron" } },
+        { "id": "base_concrete_planter", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["street", "planter"], "materialSlots": { "slot_main": "curb_granite", "slot_soil": "nature_soil_dirt" } },
+        { "id": "base_stone_bollard_bench", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["street", "bench", "bollard"], "materialSlots": { "slot_main": "curb_granite", "slot_trim": "wood_preservative" } },
+        { "id": "base_bus_shelter_frame", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["street", "bus_stop"], "materialSlots": { "slot_main": "metal_stainless_brushed", "slot_glass": "glass_clear", "slot_sign": "cn_luminous_diffuser" } },
+        { "id": "base_parcel_locker", "tier": "T0", "quadrants": ["Q1_CBD", "Q2_OLDTOWN"], "tags": ["street", "parcel_locker"], "materialSlots": { "slot_main": "metal_painted_steel", "slot_trim": "cn_luminous_diffuser" } },
+        { "id": "base_community_board", "tier": "T0", "quadrants": ["Q2_OLDTOWN", "Q4_RURAL"], "tags": ["street", "notice_board"], "materialSlots": { "slot_main": "metal_painted_steel", "slot_glass": "glass_clear", "slot_trim": "cn_plaster_white" } }
+      ]
+    }
+  ]
+}
