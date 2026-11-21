@@ -97,6 +97,7 @@ export async function playAudioBuffer(ctx, buffer, {
   occludedLowPassHz = 550,
   occludedGainScale = 0.45,
   openLowPassHz = 22000,
+  reverbSend = null,
   onEnded = null,
   random = Math.random,
 } = {}) {
@@ -220,6 +221,7 @@ export async function playAudioBuffer(ctx, buffer, {
   let pannerNode = null;
   let stereoNode = null;
   let distanceAppliedNatively = false;
+  let finalVoiceNode = postGainNode;
 
   if (spatial.kind === '3d' && typeof audioContext.createPanner === 'function') {
     pannerNode = audioContext.createPanner();
@@ -232,14 +234,27 @@ export async function playAudioBuffer(ctx, buffer, {
     applyAudioParamOrMethod(pannerNode, spatial.pos3.x, spatial.pos3.y, spatial.pos3.z);
     postGainNode.connect(pannerNode);
     pannerNode.connect(targetBus);
+    finalVoiceNode = pannerNode;
     distanceAppliedNatively = true;
   } else if (spatial.kind !== 'none' && typeof audioContext.createStereoPanner === 'function') {
     stereoNode = audioContext.createStereoPanner();
     if (stereoNode.pan && 'value' in stereoNode.pan) stereoNode.pan.value = spatial.pan;
     postGainNode.connect(stereoNode);
     stereoNode.connect(targetBus);
+    finalVoiceNode = stereoNode;
   } else {
     postGainNode.connect(targetBus);
+  }
+
+  // Route real audio signal into the shared wet reverb send bus
+  const defaultSend = (busName === 'ui' || busName === 'music') ? 0 : 1;
+  const sendAmount = reverbSend !== null ? clamp(Number(reverbSend) || 0, 0, 1.5) : defaultSend;
+  let reverbSendNode = null;
+  if (sendAmount > 0 && ctx.reverbSend && typeof audioContext.createGain === 'function') {
+    reverbSendNode = audioContext.createGain();
+    if (reverbSendNode.gain && 'value' in reverbSendNode.gain) reverbSendNode.gain.value = sendAmount;
+    finalVoiceNode.connect(reverbSendNode);
+    reverbSendNode.connect(ctx.reverbSend);
   }
 
   const effectiveGain = clamp(
@@ -315,6 +330,12 @@ export async function playAudioBuffer(ctx, buffer, {
     get distanceGain() { return spatial.distanceGain; },
     get occlusion() { return currentOcclusion; },
     get lowPassHz() { return getOcclusionCutoffHz(); },
+    get reverbSendGain() { return reverbSendNode ? (reverbSendNode.gain?.value ?? sendAmount) : 0; },
+    setReverbSend(amount) {
+      const v = clamp(Number(amount) || 0, 0, 1.5);
+      if (reverbSendNode?.gain) reverbSendNode.gain.value = v;
+      return handle;
+    },
     setPosition(nextPos) {
       spatial = computeSpatialMetrics(nextPos, spatialOpts, ctx.listenerState);
       if (pannerNode && spatial.pos3) {
@@ -373,6 +394,7 @@ export async function playAudioBuffer(ctx, buffer, {
   };
   source.addEventListener?.('ended', () => {
     ctx.activeSources.delete(handle);
+    try { reverbSendNode?.disconnect?.(); } catch {}
     if (typeof onEnded === 'function') onEnded(handle);
   }, { once: true });
   ctx.activeSources.add(handle);

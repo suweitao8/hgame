@@ -134,7 +134,7 @@ export function createFlowField2D(options?: FlowFieldOptions | undefined): FlowF
  * @property {() => void} clear
  * @property {(options?: SwarmCircleDamageOptions) => number} applyCircleDamage Number of hit events accepted into the bounded combat queue.
  * @property {(dt: number, options?: SwarmStepOptions) => SwarmStepStats} step
- * @property {(dt: number, options?: SwarmStepOptions) => Promise<SwarmStepStats & { workerMode: string, committedJobs: number }>} stepAsync
+ * @property {(dt: number, options?: SwarmStepOptions) => Promise<SwarmStepStats & { workerMode: string, flowOffloaded: boolean, sepOffloaded: boolean, committedJobs: number }>} stepAsync
  * @property {(crowd2d: import('../integrations/canvas2d.js').SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number} syncToSpriteCrowd2D
  */
 /**
@@ -755,6 +755,8 @@ export type SwarmSimulation = {
     step: (dt: number, options?: SwarmStepOptions) => SwarmStepStats;
     stepAsync: (dt: number, options?: SwarmStepOptions) => Promise<SwarmStepStats & {
         workerMode: string;
+        flowOffloaded: boolean;
+        sepOffloaded: boolean;
         committedJobs: number;
     }>;
     syncToSpriteCrowd2D: (crowd2d: import("../integrations/canvas2d.js").SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number;

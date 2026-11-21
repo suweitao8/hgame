@@ -19,6 +19,8 @@ export function createAudioBusController(ctx) {
 
   const busVolumes = { ...DEFAULT_BUS_VOLUMES };
   const busNodes = new Map();
+  const busEqNodes = new Map();
+  const busEqConfigs = Object.create(null);
   const busFilters = new Map();
   const busFilterFreqs = Object.create(null);
   const snapshots = new Map();
@@ -64,24 +66,89 @@ export function createAudioBusController(ctx) {
     }
   }
 
+  function createEqTriplet(audioContext) {
+    const low = audioContext.createBiquadFilter();
+    low.type = 'lowshelf';
+    if (low.frequency && 'value' in low.frequency) low.frequency.value = 120;
+    if (low.gain && 'value' in low.gain) low.gain.value = 0;
+
+    const mid = audioContext.createBiquadFilter();
+    mid.type = 'peaking';
+    if (mid.frequency && 'value' in mid.frequency) mid.frequency.value = 1000;
+    if (mid.Q && 'value' in mid.Q) mid.Q.value = 1;
+    if (mid.gain && 'value' in mid.gain) mid.gain.value = 0;
+
+    const high = audioContext.createBiquadFilter();
+    high.type = 'highshelf';
+    if (high.frequency && 'value' in high.frequency) high.frequency.value = 8000;
+    if (high.gain && 'value' in high.gain) high.gain.value = 0;
+
+    low.connect(mid);
+    mid.connect(high);
+    return { low, mid, high };
+  }
+
   function createBusChain(name) {
     const mix = resolveBusMix(name);
     busFilterFreqs[name] = mix.lowPassHz;
+    if (!busEqConfigs[name]) {
+      busEqConfigs[name] = { lowGainDb: 0, midGainDb: 0, highGainDb: 0, lowFreq: 120, midFreq: 1000, highFreq: 8000 };
+    }
     const node = ctx.context.createGain();
     node.gain.value = mix.volume;
     if (typeof ctx.context.createBiquadFilter === 'function') {
+      const eq = createEqTriplet(ctx.context);
+      const eqCfg = busEqConfigs[name];
+      if (eq.low.frequency) eq.low.frequency.value = eqCfg.lowFreq;
+      if (eq.low.gain) eq.low.gain.value = eqCfg.lowGainDb;
+      if (eq.mid.frequency) eq.mid.frequency.value = eqCfg.midFreq;
+      if (eq.mid.gain) eq.mid.gain.value = eqCfg.midGainDb;
+      if (eq.high.frequency) eq.high.frequency.value = eqCfg.highFreq;
+      if (eq.high.gain) eq.high.gain.value = eqCfg.highGainDb;
+
       const filter = ctx.context.createBiquadFilter();
       filter.type = 'lowpass';
       if (filter.frequency && 'value' in filter.frequency) filter.frequency.value = mix.lowPassHz;
       if (filter.Q && 'value' in filter.Q) filter.Q.value = 0.707;
-      node.connect(filter);
+      node.connect(eq.low);
+      eq.high.connect(filter);
       filter.connect(ctx.busTarget);
+      busEqNodes.set(name, eq);
       busFilters.set(name, filter);
     } else {
       node.connect(ctx.busTarget);
     }
     busNodes.set(name, node);
     return node;
+  }
+
+  function setBusEq(busName, cfg = {}) {
+    if (typeof busName !== 'string' || !busName) throw new TypeError('busName must be a non-empty string');
+    const prev = busEqConfigs[busName] ?? { lowGainDb: 0, midGainDb: 0, highGainDb: 0, lowFreq: 120, midFreq: 1000, highFreq: 8000 };
+    const next = {
+      lowGainDb: cfg.lowGainDb !== undefined ? clamp(Number(cfg.lowGainDb) || 0, -24, 24) : prev.lowGainDb,
+      midGainDb: cfg.midGainDb !== undefined ? clamp(Number(cfg.midGainDb) || 0, -24, 24) : prev.midGainDb,
+      highGainDb: cfg.highGainDb !== undefined ? clamp(Number(cfg.highGainDb) || 0, -24, 24) : prev.highGainDb,
+      lowFreq: cfg.lowFreq !== undefined ? clamp(Number(cfg.lowFreq) || 120, 20, 1000) : prev.lowFreq,
+      midFreq: cfg.midFreq !== undefined ? clamp(Number(cfg.midFreq) || 1000, 150, 8000) : prev.midFreq,
+      highFreq: cfg.highFreq !== undefined ? clamp(Number(cfg.highFreq) || 8000, 1500, 20000) : prev.highFreq,
+    };
+    busEqConfigs[busName] = next;
+    const eq = busEqNodes.get(busName);
+    if (eq) {
+      if (eq.low.frequency) eq.low.frequency.value = next.lowFreq;
+      if (eq.low.gain) eq.low.gain.value = next.lowGainDb;
+      if (eq.mid.frequency) eq.mid.frequency.value = next.midFreq;
+      if (eq.mid.gain) eq.mid.gain.value = next.midGainDb;
+      if (eq.high.frequency) eq.high.frequency.value = next.highFreq;
+      if (eq.high.gain) eq.high.gain.value = next.highGainDb;
+    }
+    return { ...next };
+  }
+
+  function getBusEq(busName) {
+    const cfg = busEqConfigs[busName];
+    return cfg ? { ...cfg } : { lowGainDb: 0, midGainDb: 0, highGainDb: 0, lowFreq: 120, midFreq: 1000, highFreq: 8000 };
   }
 
   function ensureContext() {
@@ -105,6 +172,9 @@ export function createAudioBusController(ctx) {
     } else {
       ctx.busTarget = ctx.master;
     }
+
+    ctx.reverbSend = audioContext.createGain();
+    ctx.reverbSend.gain.value = 1;
 
     for (const name of Object.keys(busVolumes)) {
       createBusChain(name);
@@ -239,8 +309,10 @@ export function createAudioBusController(ctx) {
     for (const timer of duckTimers.values()) clearTimeout(timer);
     duckTimers.clear();
     busNodes.clear();
+    busEqNodes.clear();
     busFilters.clear();
     snapshots.clear();
+    ctx.reverbSend = null;
     ctx.activeSnapshot = null;
   }
 
@@ -251,6 +323,8 @@ export function createAudioBusController(ctx) {
     setMuted,
     setBusVolume,
     getBusVolume,
+    setBusEq,
+    getBusEq,
     registerSnapshot,
     applySnapshot,
     clearSnapshot,

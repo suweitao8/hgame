@@ -1,5 +1,151 @@
 import { TileMap, findGridPath } from '../world/tilemap.js';
 
+function computeFlowFieldKernel(payload) {
+  const cols = Math.max(1, payload.cols | 0);
+  const rows = Math.max(1, payload.rows | 0);
+  const total = cols * rows;
+  const cost = payload.cost instanceof Uint8Array ? payload.cost : new Uint8Array(payload.cost || total);
+  const goalX = Math.max(0, Math.min(cols - 1, payload.goalX | 0));
+  const goalY = Math.max(0, Math.min(rows - 1, payload.goalY | 0));
+
+  const dist = new Int32Array(total).fill(-1);
+  const queue = new Int32Array(total);
+  let qh = 0;
+  let qt = 0;
+  const startIdx = goalY * cols + goalX;
+  dist[startIdx] = 0;
+  queue[qt++] = startIdx;
+
+  while (qh < qt) {
+    const idx = queue[qh++];
+    const x = idx % cols;
+    const y = (idx / cols) | 0;
+    const nextDist = dist[idx] + 1;
+
+    if (x > 0) {
+      const n = idx - 1;
+      if (cost[n] !== 255 && dist[n] === -1) { dist[n] = nextDist; queue[qt++] = n; }
+    }
+    if (x + 1 < cols) {
+      const n = idx + 1;
+      if (cost[n] !== 255 && dist[n] === -1) { dist[n] = nextDist; queue[qt++] = n; }
+    }
+    if (y > 0) {
+      const n = idx - cols;
+      if (cost[n] !== 255 && dist[n] === -1) { dist[n] = nextDist; queue[qt++] = n; }
+    }
+    if (y + 1 < rows) {
+      const n = idx + cols;
+      if (cost[n] !== 255 && dist[n] === -1) { dist[n] = nextDist; queue[qt++] = n; }
+    }
+  }
+
+  const dirX = new Float32Array(total);
+  const dirY = new Float32Array(total);
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const idx = y * cols + x;
+      const d0 = dist[idx];
+      if (d0 <= 0) continue;
+      let bestIdx = -1;
+      let bestDist = d0;
+      for (let oy = -1; oy <= 1; oy++) {
+        const ny = y + oy;
+        if (ny < 0 || ny >= rows) continue;
+        for (let ox = -1; ox <= 1; ox++) {
+          if (ox === 0 && oy === 0) continue;
+          const nx = x + ox;
+          if (nx < 0 || nx >= cols) continue;
+          const n = ny * cols + nx;
+          const nd = dist[n];
+          if (nd >= 0 && nd < bestDist) {
+            bestDist = nd;
+            bestIdx = n;
+          }
+        }
+      }
+      if (bestIdx >= 0) {
+        const bx = (bestIdx % cols) - x;
+        const by = ((bestIdx / cols) | 0) - y;
+        const inv = 1 / Math.hypot(bx, by);
+        dirX[idx] = bx * inv;
+        dirY[idx] = by * inv;
+      }
+    }
+  }
+  return { dirX, dirY };
+}
+
+function computeSwarmSeparateKernel(payload) {
+  const count = Math.max(0, payload.count | 0);
+  const posX = payload.posX;
+  const posY = payload.posY;
+  const activeIds = payload.activeIds;
+  const sepRadius = Number(payload.sepRadius) || 0.9;
+  const sepStrength = Number(payload.sepStrength) || 2.5;
+  const maxNeighbors = Math.max(1, payload.maxNeighbors | 0);
+  const cols = Math.max(1, payload.gridCols | 0);
+  const rows = Math.max(1, payload.gridRows | 0);
+  const invCell = 1 / (Number(payload.cellSize) || 2);
+  const ox = Number(payload.originX) || 0;
+  const oy = Number(payload.originY) || 0;
+  const capacity = Math.max(posX?.length ?? 0, count);
+
+  const head = new Int32Array(cols * rows).fill(-1);
+  const next = new Int32Array(capacity).fill(-1);
+  for (let a = 0; a < count; a++) {
+    const id = activeIds[a];
+    const cx = Math.max(0, Math.min(cols - 1, ((posX[id] - ox) * invCell) | 0));
+    const cy = Math.max(0, Math.min(rows - 1, ((posY[id] - oy) * invCell) | 0));
+    const cell = cy * cols + cx;
+    next[id] = head[cell];
+    head[cell] = id;
+  }
+
+  const sepX = new Float32Array(capacity);
+  const sepY = new Float32Array(capacity);
+  const sepSq = sepRadius * sepRadius;
+  const invSepR = 1 / sepRadius;
+
+  for (let a = 0; a < count; a++) {
+    const id = activeIds[a];
+    const px = posX[id];
+    const py = posY[id];
+    const cx = Math.max(0, Math.min(cols - 1, ((px - ox) * invCell) | 0));
+    const cy = Math.max(0, Math.min(rows - 1, ((py - oy) * invCell) | 0));
+    let sx = 0;
+    let sy = 0;
+    let checked = 0;
+
+    for (let dy = -1; dy <= 1 && checked < maxNeighbors; dy++) {
+      const ny = cy + dy;
+      if (ny < 0 || ny >= rows) continue;
+      for (let dx = -1; dx <= 1 && checked < maxNeighbors; dx++) {
+        const nx = cx + dx;
+        if (nx < 0 || nx >= cols) continue;
+        let other = head[ny * cols + nx];
+        while (other !== -1 && checked < maxNeighbors) {
+          if (other !== id) {
+            checked++;
+            const ddx = px - posX[other];
+            const ddy = py - posY[other];
+            const dSq = ddx * ddx + ddy * ddy;
+            if (dSq > 1e-6 && dSq < sepSq) {
+              const w = 1 / Math.sqrt(dSq) - invSepR;
+              sx += ddx * w;
+              sy += ddy * w;
+            }
+          }
+          other = next[other];
+        }
+      }
+    }
+    sepX[id] = sx;
+    sepY[id] = sy;
+  }
+  return { sepX, sepY };
+}
+
 function runBuiltInKernel(type, payload) {
   if (type === 'grid-path') {
     const map = new TileMap({
@@ -9,6 +155,12 @@ function runBuiltInKernel(type, payload) {
       tileHeight: payload.tileHeight ?? 1,
     });
     return findGridPath(map, payload.start, payload.goal, payload.options);
+  }
+  if (type === 'flow-field') {
+    return computeFlowFieldKernel(payload);
+  }
+  if (type === 'swarm-separate') {
+    return computeSwarmSeparateKernel(payload);
   }
   if (type === 'navmesh-step' || type === 'batch-eval') {
     if (Array.isArray(payload?.items)) {

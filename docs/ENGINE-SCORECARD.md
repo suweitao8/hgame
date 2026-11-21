@@ -1,35 +1,20 @@
-# HGame 引擎评分机制（v2 · 全栈对照与防虚高标准）
+# HGame 引擎评分机制（v3 · 真实端到端闭环标准）
 
-**评分标准 v2（5 大维度 / 17 项能力 · 总分 100）：当前 HGame（v2 达标迭代 `17ea707` 实测）得分 `87.9 / 100`，与 Unity 6.6 URP Web `87.5 / 100` 持平并小幅领先（+0.4），领先 Godot 4.7.2 Web `76.7 / 100`（+11.2）。**（基线 `65950a6` 曾为 `67.0 / 100`。）
+**评分标准 v3（5 大维度 / 17 项能力 · 总分 100）：严格挤出水分与“空壳挂载”后的当前 HGame 基线实得分 `60.7 / 100`，对照 Unity 6.6（6000.6.10f1）URP Web `88.5 / 100`（真实差距 −27.8）。**
 
-本页评估 HGame **浏览器可运行游戏引擎底座**的工程深度与生态完整性，不再仅局限于“是否有某个独立工具函数或单元测试”。v1 标准（11 项，已归档至文末）曾因覆盖面过窄与缺少封顶约束而在 `8d3d6b9` 给出过 **100.0 / 100** 的乐观满分；v2 将标准拉回真实商业 Web 引擎坐标系，重点面向 **Unity 6.6（6000.6.10f1）URP Web** 与 **Godot 4.7.2 Web** 做横向对标与缺陷曝光。
+> 注：此前在 `17ea707` 给出过 `87.9 / 100` 的复评分数，但经逐行代码审计发现多项“写了模块/能编译但主路径仍在空转或用原型充数”的严重虚高（如 `P1 stepAsync` 主线程照跑、`S3 ConvolverNode` 无 Voice 输入、贴花仅平面 Quad、CSM 为 3 盏全亮度光叠加、`N1` 用 JSON diff）。v3 设立**第四条反虚高铁律**彻底杜绝账面自嗨。
 
 > 编辑器可视化 GUI、发行商渠道 SDK、商店资产市场不在引擎运行时得分内（编辑器故意由 AI 声明式工作流替代），但**运行时直接支撑游戏开发的 5 大技术底座**全部纳入评分：架构与资产（18）、图形渲染（30）、性能与硬件（24）、核心运行时子系统（20）、多人与确定性网络（8）。
 
 ---
 
-## 为什么 v2 取代 v1（v1 的 4 大盲区复盘）
+## v3 评分防虚高四大铁律（Hard Caps）
 
-1. **子系统覆盖不全**：v1 只看调度、渲染与帧诊断 11 项，完全漏评**物理约束与查询深度**（关节/Ragdoll/Sweep）、**骨骼动画系统**（Blend Tree/IK/Root Motion）、**音频 DSP 管线**（混响/滤波器/多普勒/长音频流式解码）、**Shader 材质组合生态**（Node/Surface Graph、Decal 贴花、SRP-Batcher 等效合批）以及**联网状态同步/预测协调**。
-2. **“独立 Helper + 单元测试通过” ≠ “默认主渲染/运行路径已打通”**：例如 v1 中 `gpu-indirect3d.js` 虽实现 WGSL/MultiDraw 剔除接口，但尚未接入默认 `createThreeAdapter` 主绘制；`render-graph.js` 仅串联自定义 HDR Pass，内置阴影/AO/Bloom 仍由 `pipeline.js` 硬编码调度；`worker-sim.js` 尚未接入默认 Rapier 物理或 `SwarmSimulation`。
-3. **缺少真机实测门禁与性能下限封顶**：v1 多数高级项仅靠 Node.js Mock 断言通过（未测量浏览器真实 WebGL2/WebGPU 帧时间 P95/P99、PSO 着色器首次编译卡顿、峰值显存/VRAM 驻留与渲染画面截图对比）。
-4. **对 Unity / Godot 判定不对称**：v1 把 Unity WebGL/WebGPU 多项成熟能力标为 `?` 扣分，却对 HGame 的新写单测直接给满格 `✓`。v2 要求**同口径、同严度**评判。
-
----
-
-## v2 评分规则与防虚高约束（Hard Caps）
-
-1. **5 大维度与权重（总计 100 分）**：
-   - **A · 架构与资产底座（18 分）**：`A1` 调度与生命周期（6）、`A2` 渲染图与可扩展管线（6）、`A3` 资产流送、压缩与驻留治理（6）
-   - **R · 图形渲染与视觉管线（30 分）**：`R1` 2D 渲染、光照与混排（6）、`R2` 3D 光照、阴影与 GI（7）、`R3` 材质、Shader 组合与粒子/贴花（6）、`R4` 时间域抗锯齿、上采样与后处理（6）、`R5` 几何、LOD 与大世界远景（5）
-   - **P · 性能架构与硬件利用（24 分）**：`P1` 多线程与 CPU 仿真并行（6）、`P2` GPU 驱动提交与 WebGPU 能力（7）、`P3` 帧预算、PSO 暖机与内存治理（6）、`P4` 跨后端真机性能剖析与诊断（5）
-   - **S · 核心运行时子系统（20 分）**：`S1` 物理、关节与空间查询（6）、`S2` 骨骼动画、混合树与 IK（6）、`S3` 空间音频与动态 DSP 混音（4）、`S4` 运行时 UI、输入与无障碍底座（4）
-   - **N · 联机与确定性底座（8 分）**：`N1` 联机传输、预测回滚与状态同步底座（8）
-2. **三项防虚高封顶铁律（违反任一条即触发硬封顶）**：
-   - **未接默认管线封顶 `<= 7 分`**：能力仅存在于独立工具模块、未接入 `Application` / `createThreeAdapter` / `createPostPipeline3D` / 默认 Profile 主循环并默认可用时，该项最高 `7 / 10`。
-   - **仅 Mock 单测、缺浏览器真机实测封顶 `<= 8 分`**：无真机 WebGL2/WebGPU 像素对比、真实 GPU 时间或真机基准数据支撑时，最高 `8 / 10`（只有经真实 WebGPU/WebGL2 浏览器闭环验证的成熟管线才可进入 `9–10`）。
-   - **关键子能力结构性缺失封顶**：若某项内的核心工业特性明显缺失（例如动画系统无 2D 混合树/IK/状态机、物理缺少关节/Sweep 投射、音频缺动态环境混响与流式 Ogg/Opus、3D 缺少 Shader/Material 统一抽象与贴花/SSAO-WebGPU 并行提交），最高不超过对应档位（见单表判定）。
-3. **计分公式**：`加权分 = 单项分 × 权重 ÷ 10`；`总分 = 17 项加权分之和`；`对 Unity 差距贡献 = (Unity 单项分 − HGame 单项分) × 权重 ÷ 10`（正值表示 HGame 落后的权重分）。
+在 v2 的三项铁律之外，v3 新增最关键的第四条**端到端真链路铁律**：
+1. **未接默认管线封顶 `<= 7 分`**：能力仅在独立 Helper 中，未进入 `Application` / `createThreeAdapter` / `createPostPipeline3D` / 默认 Profile 主路径，最高 `7 / 10`。
+2. **仅 Node Mock 缺真机/高规模实证封顶 `<= 8 分`**：只有 `320×180` 最小冒烟测试、未经过复杂负载（千级实例/曲面接缝/真 WebGL2/Web Audio）验证，最高 `8 / 10`。
+3. **关键工业特性缺失封顶**：缺核心能力（如深度重建投影贴花、骨骼缩放重定向/FABRIK、二进制增量包）不可按同档给分。
+4. **“空壳挂载 / 假异步 / 无真实信号输入”零加分铁律**：创建了节点但无上游输入（如 `ConvolverNode` 没有 Voice Send）、`stepAsync` 仍主线程跑完算法、只触发距离回调但未切换实际纹理资源等情形，**按未实现计分，严禁加分**。
 
 ### 0–10 分分档说明
 
@@ -67,50 +52,49 @@
 
 ---
 
-## 当前主流引擎深度对照 · 2026-11-22（v2 口径 · 真机验证后）
+## 当前主流引擎深度对照 · 2026-11-22（v3 去水分客观基线）
 
-- **HGame**：评估基准 `17ea707`（Phases A–E 合并完结），逐模块审查 [assets/runtime/](../assets/runtime/)（Canvas2D / WebGL2D / Pixi / Three WebGL2 / Rapier 0.21.0 / `network/`），并由 [tests/browser-engine-v2-benchmark.mjs](../tests/browser-engine-v2-benchmark.mjs) 在真实无头 Chromium（ANGLE SwiftShader WebGL2）实测验证：3D 24 帧 `P50 = 0.60 ms / P95 = 1.40 ms`、`avgDrawCalls = 10`、`shaderWarmup` 编 10/10 无卡顿、`WEBGL_multi_draw` 启用、`216` 条 Chrome Trace 事件、`glError = 0`、`glPixels3d = 208` 种采样色；2D WebGL2 12 帧 `P50 = 0.10 ms / P95 = 0.10 ms`、4 边多边形遮挡阴影、`glPixels2d = 600` 种采样色、`glError = 0`。
-- **Unity 6.6（6000.6.10f1）URP Web**：以官方 WebGL 2（默认）及 WebGPU 可选生产后端、SRP Batcher、APV、STP/TAA、Shader Graph、Physics/PhysX、Mecanim Animator、AudioMixer/DSP、Netcode for GameObjects/Entities + Input System 为据。
-- **Godot 4.7.2 Web**：以 Wasm + WebGL 2 Compatibility 导出为主基准（注明 Multithreading 跨源隔离与 Compatibility 特性限制），评估 SceneTree、MultiMesh、LightmapGI、AnimationTree、AudioEffect、ENet/WebRTC MultiplayerSynchronizer。
+- **HGame**：评估基准 `29a67c8`（v3 基线审计），逐模块检查真实信号链路、线程边界、着色器数学与二进制负载。
+- **Unity 6.6（6000.6.10f1）URP Web**：以官方 WebGL 2（默认）及 WebGPU 生产后端、SRP Batcher、APV、DBuffer Decals、CSM + Shadow Atlas、Mecanim（含 Humanoid Retargeting）、PhysX、AudioMixer DSP、UI Toolkit + TextMeshPro + Netcode 为据。
 
 | 引擎 | A 架构 / 18 | R 渲染 / 30 | P 性能 / 24 | S 子系统 / 20 | N 联机 / 8 | 真实分 / 100 | 相对 Unity 6.6 差距 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **HGame** (`17ea707`) | **16.2** | **27.0** | **20.3** | **18.0** | **6.4** | **87.9** | **+0.4** |
-| **Unity 6.6 URP Web** | 16.2 | 27.0 | 19.9 | 18.0 | 6.4 | **87.5** | 基准（0.0） |
-| **Godot 4.7.2 Web** | 13.2 | 23.3 | 16.8 | 17.0 | 6.4 | **76.7** | **−10.8** |
-| *HGame 基线（`65950a6` 归档）* | *13.8* | *21.5* | *15.5* | *11.4* | *4.8* | *67.0* | *−20.5* |
+| **HGame**（`29a67c8` v3 基线） | **12.0** | **18.4** | **14.3** | **12.0** | **4.0** | **60.7** | **−27.8** |
+| **Unity 6.6 URP Web** | **16.2** | **27.0** | **20.8** | **17.7** | **6.8** | **88.5** | 基准（0.0） |
 
-### 逐项能力对比与实证依据
+### 逐项能力客观评分与真实缺口清单（v3 审计）
 
-| 编号 | 项（权） | HGame | Unity 6.6 | Godot 4.7.2 | 相对 Unity | HGame 现况证据与测试闭环 | Unity 6.6 对比说明 |
-| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
-| A1 | 调度与生命周期（6） | **9** | **9** | **8** | 0.0 | [application.js](../assets/runtime/core/application.js) 固定步、phase hooks、异常归因、场景取消与预算切片完整，并在 Chromium 多管线连续渲染零泄漏验证。 | 与 Unity PlayerLoop / 生命周期控制处于同档。 |
-| A2 | 渲染图与扩展管线（6） | **9** | **9** | **6** | 0.0 | [render-graph.js](../assets/runtime/integrations/post3d/render-graph.js) 支持 `pruneDeadPasses` 反向可达死 Pass 自动剔除（`culledPasses`）与瞬态目标复用，已默认接入 [pipeline.js](../assets/runtime/integrations/post3d/pipeline.js)。 | 与 Unity URP Render Graph 死 Pass 剔除及资源别名对齐。 |
-| A3 | 资产流送、压缩与驻留（6） | **9** | **9** | **8** | 0.0 | [asset-catalog.js](../assets/runtime/platform/asset-catalog.js) 集成 KTX2/Meshopt、请求取消传播与 `createStreamingResidencyPolicy`（按视距/优先级自动 Mip 升降级及预算淘汰）。 | 与 Unity Addressables 渐进流送与显存守恒策略对齐。 |
-| R1 | 2D 渲染、光照与混排（6） | **9** | **9** | **9** | 0.0 | [post2d.js](../assets/runtime/integrations/post2d.js)、[canvas2d.js](../assets/runtime/integrations/canvas2d.js) 与 [webgl2d.js](../assets/runtime/integrations/webgl2d.js) 支持多光源、法线、画质策略与任意开/闭多边形阴影遮挡（`addPolygonOccluder2D`），Chromium WebGL2 像素实测通过。 | 与 Unity URP 2D Renderer + ShadowCaster2D 同档。 |
-| R2 | 3D 光照、阴影与 GI（7） | **9** | **9** | **7** | 0.0 | [shadow3d.js](../assets/runtime/integrations/shadow3d.js) `createCascadedShadowMap3D`（2–4 级实用划分+世界 texel 对齐，接入 `three.js` `sun.cascades`）、[lighting3d.js](../assets/runtime/integrations/lighting3d.js) `createReflectionProbeManager3D` 盒投影混合 + Clustered 光源与流送 SH 探针，Chromium WebGL2 验证 3 级 CSM。 | 与 Unity URP 4 级稳定 CSM + APV + Reflection Probes 同档。 |
-| R3 | 材质、Shader 与特效/贴花（6） | **9** | **9** | **8** | 0.0 | [decal3d.js](../assets/runtime/integrations/decal3d.js) 接入 `three.js` `createDecalSystem`；[material-graph3d.js](../assets/runtime/integrations/material-graph3d.js) 提供 `createSharedMaterialBlock3D` / `createComposableMaterial3D`（Fresnel / Dissolve / Triplanar / SpecularAA / Clearcoat），全 Shader 在 Chromium GLSL3 零报错编译渲染。 | 轻量 Web 端与 Unity Shader Graph + Decal Feature 能力对齐。 |
-| R4 | TAA、上采样与后处理（6） | **9** | **9** | **7** | 0.0 | [post3d/shaders.js](../assets/runtime/integrations/post3d/shaders.js) 与 [temporal-aa.js](../assets/runtime/integrations/post3d/temporal-aa.js) 实现 YCoCg 3×3 方差裁剪、5-tap Catmull-Rom 历史采样与 `tReactiveMask` 防重影接入 [pipeline.js](../assets/runtime/integrations/post3d/pipeline.js)，Chromium HDR + TAA 实测无异常。 | 与 Unity URP TAA / 反应式防拖影处于同等生产级。 |
-| R5 | 几何、LOD 与大世界远景（5） | **9** | **9** | **8** | 0.0 | [model3d/lod.js](../assets/runtime/integrations/model3d/lod.js) `crossFadeSeconds` 过渡与 [bone-vat.js](../assets/runtime/integrations/model3d/bone-vat.js) 屏幕空间 Bayer 4×4 Dither 淡入淡出配合 HLOD / 浮动原点 / 地形系统。 | 与 Unity LOD Crossfade + 大场景分块同档；Bone-VAT 群体密度更优。 |
-| P1 | 多线程与 CPU 仿真并行（6） | **8** | **8** | **7** | 0.0 | [worker-sim.js](../assets/runtime/sim/worker-sim.js) 已接入 [swarm-ecs.js](../assets/runtime/world/swarm-ecs.js)（`stepAsync`）与 [open-world.js](../assets/runtime/world/open-world.js)（确定性 `flushTick` 提交）；单线程 Rapier WASM 步进仍走主线程故诚实封顶 `8`。 | 与 Unity Web 主流单线程 WASM + 可选 Worker 同档。 |
-| P2 | GPU 驱动提交与 WebGPU 能力（7） | **8** | **9** | **7** | +0.7 | [gpu-indirect3d.js](../assets/runtime/integrations/gpu-indirect3d.js) 已默认接入 [three.js](../assets/runtime/integrations/three.js)（`gpuIndirect` + `registerIndirectBatch` + `getGpuSubmitStats`），Chromium 实测自动启用 `webgl2-multidraw`；因 CI 尚无默认 `WebGPURenderer` 真实算力跑分，诚实记 `8`。 | Unity 6.6 WebGPU Compute Indirect 仍高 1 档，待后续 WebGPU CI 闭环追平。 |
-| P3 | 帧预算、PSO 暖机与内存治理（6） | **9** | **8** | **7** | −0.6 | [shader-warmup.js](../assets/runtime/integrations/quality3d/shader-warmup.js) 按帧耗时预算切片预编着色器并接入 [three.js](../assets/runtime/integrations/three.js)（Chromium 实测 10/10 材质预暖 0 失败），叠加分类型 2D/3D 显存预算主动回收。 | 优于 Unity Web 默认着色器首帧即时编译卡顿控制。 |
-| P4 | 跨后端性能剖析与诊断（5） | **9** | **8** | **7** | −0.5 | [render-diagnostics.js](../assets/runtime/integrations/quality3d/render-diagnostics.js) 与 2D/3D 适配器统一暴露 `getRenderFrameStats`（P50/P95/P99/Max）与 `exportRenderChromeTrace()`（标准 Chrome Trace `ph:'X'`），已在 Chromium 采集真实基线（216 事件）。 | 纯无头 CI Trace 与零配置对比比 Unity Web Profiler 更自动化。 |
-| S1 | 物理、关节与空间查询（6） | **9** | **9** | **8** | 0.0 | [rapier-world.js](../assets/runtime/physics/rapier-world.js) 补齐 16 层碰撞矩阵、摩擦/弹性合并规则、5 类约束关节（`fixed`/`revolute`/`prismatic`/`spherical`/`spring` 含限位/马达）、`castShape`、`queryOverlap` 与骨骼 `createRagdoll`，经 Rapier 2D/3D WASM 双端验证。 | 与 Unity PhysX / Physics2D 关节及空间查询能力持平。 |
-| S2 | 骨骼动画、混合树与 IK（6） | **9** | **9** | **9** | 0.0 | [animator3d.js](../assets/runtime/animation/animator3d.js) 新增 `createAvatarMask`、`createBlendTree1D`/`2D`、多层 `createAnimator3D`（过渡/ExitTime/事件/IK Hook）、`solveTwoBoneIK`/`solveLookAtIK` 并接入 [Model3DComponent](../assets/runtime/integrations/model3d/provider.js)。 | 与 Unity Mecanim 核心运行时树与 IK 处于同档。 |
-| S3 | 空间音频与动态 DSP 混音（4） | **9** | **9** | **8** | 0.0 | [audio.js](../assets/runtime/platform/audio.js) 具备多总线、限幅器、HRTF、单音低通遮挡、`createReverbZone`（卷积脉冲响应空间混合）、相对速度多普勒频移及 `playStream` 流式音轨，Chromium Web Audio 实测通过。 | 与 Unity AudioMixer + ReverbZone + Doppler 同档。 |
-| S4 | 运行时 UI、输入与无障碍（4） | **9** | **9** | **9** | 0.0 | 新增 [flex-layout.js](../assets/runtime/ui/flex-layout.js)（`computeFlexLayout` 行列对齐/伸缩）、[input/manager.js](../assets/runtime/platform/input/manager.js) 动态按键重映射 JSON 持久化与 `triggerGamepadRumble`，及 [panel-stack.js](../assets/runtime/ui/panel-stack.js) WAI-ARIA 无障碍注入，Chromium 实测通过。 | 与 Unity UI Toolkit Flexbox + Input Rebinding 同档。 |
-| N1 | 联机、预测回滚与状态同步（8） | **8** | **8** | **8** | 0.0 | [state-sync.js](../assets/runtime/lockstep/state-sync.js) 实现量化字段增量压缩（`encodeDelta`/`decodeDelta`）、客户端预测与权威纠偏回放（`reconcileServerState`）、抖动内插缓冲与时间回溯，结合 `network/` 与锁步/回滚调度达标 `8`。 | 与 Unity Netcode / Godot MultiplayerSynchronizer 核心同步处于同档。 |
+| 编号 | 项（权） | HGame | Unity 6.6 | 加权差距 | 客观扣分原因与必须解决的硬伤 |
+| --- | --- | ---: | ---: | ---: | --- |
+| A1 | 调度与生命周期（6） | **7.5** | **9.0** | −0.90 | 固定步/phase hooks/取消语义扎实；缺异步叠加场景流式加载、资产序列化热重载。 |
+| A2 | 渲染图与扩展管线（6） | **6.0** | **9.0** | −1.80 | `compileRenderGraph` 仅输出计划，`pipeline.js` 主渲染路径仍为硬编码控制流，未通过 `executeRenderGraph` 驱动实际 Pass。 |
+| A3 | 资产流送与驻留（6） | **6.5** | **9.0** | −1.50 | KTX2/Meshopt/取消链路扎实；但 `createStreamingResidencyPolicy` 仅计算距离并调回调，未绑定实际纹理/Mip 资源切换。 |
+| R1 | 2D 渲染、光照与混排（6） | **7.0** | **9.0** | −1.20 | 多后端+点光+多边形线段拆解实用；但遮挡线段硬上限 32 条，缺 2D 骨骼蒙皮/规则瓦片/自定义精灵 Shader 管线。 |
+| R2 | 3D 光照、阴影与 GI（7） | **5.5** | **9.0** | −2.45 | `createCascadedShadowMap3D` 创建了 3 盏全亮度 `DirectionalLight`（3×过曝叠加且无级联接缝过渡）；反射探针仅单选 `envMap`，无 Shader 双探针盒投影混合。 |
+| R3 | 材质、Shader 与贴花（6） | **5.0** | **9.0** | −2.40 | `decal3d.js` 仅平面 Quad + `polygonOffset`，遇到曲面/台阶穿模；`material-graph3d.js` 仅 4 个开关拼接，无 SRP Batcher 合批。 |
+| R4 | TAA、上采样与后处理（6） | **6.5** | **9.0** | −1.50 | 虽接入 `tReactiveMask`，但 `pipeline.js` 尚未渲染生成真实 Reactive 透明/粒子掩码纹理，且未在 1080p 高频几何下压测重影。 |
+| R5 | 几何、LOD 与大世界远景（5） | **7.0** | **9.0** | −1.00 | Bone-VAT 16B 群体是强项；但静态网格缺运行时简化/Dither 实际驱动，无 PVS 与植被批绘系统。 |
+| P1 | 多线程与 CPU 并行（6） | **4.5** | **7.5** | −1.80 | **`stepAsync()` 仍在主线程同步跑完整个 `step()`**，只向 Worker 投递一个 3 字段演示包；Rapier 与寻路仍在主线程。 |
+| P2 | GPU 驱动提交与 WebGPU（7） | **5.0** | **9.0** | −2.80 | 实际场景渲染仍走 Three.js WebGL2 CPU 绘制；GPU Indirect 仅注册空回调未接管真实 `InstancedMesh` 矩阵压缩绘制，`batches=0`。 |
+| P3 | 帧预算、PSO 与内存（6） | **7.0** | **8.5** | −0.90 | `shaderWarmup` 与 2D/3D 预算控制器真实有效；缺 IndexedDB 着色器持久化缓存与真实显存硬观测。 |
+| P4 | 跨后端性能剖析（5） | **7.0** | **9.0** | −1.00 | Chrome Trace 导出与 P50/P95 统计真实可用；缺可视化实时 Profiler、GC 分配采样与真 GPU 硬件压测基线。 |
+| S1 | 物理与空间查询（6） | **7.0** | **9.0** | −1.20 | 确定性 Rapier 2D/3D + 关节/Cast/Overlap/分层矩阵扎实；缺布料、载具、Featherstone 关节链、凹面拆分与调试线框。 |
+| S2 | 骨骼动画、混合树与 IK（6） | **5.5** | **9.5** | −2.40 | 仅有基础 FSM/1D2D BlendTree/Two-Bone IK，缺多骨骼链 `FABRIK` + Pole Vector、Root Motion 提取、BlendShape 驱动与真实蒙皮模型实测。 |
+| S3 | 空间音频与动态 DSP（4） | **6.0** | **8.5** | −1.00 | **严重空壳：`createReverbZone` 的 `ConvolverNode` 没有连接任何 Voice 输入（混响无声）**，缺少 3 段参数均衡器 EQ。 |
+| S4 | 运行时 UI、输入与无障碍（4） | **6.0** | **9.0** | −1.20 | 仅有 `computeFlexLayout` 算法，缺少真正基于 Flexbox 计算并渲染/点击命中的 Canvas 原生控件（按钮/进度条/滚动列表）与清晰轮廓字效。 |
+| N1 | 联机、预测与状态同步（8） | **5.0** | **8.5** | −2.80 | **`state-sync.js` 使用 `JSON.stringify` 做对比**，未做二进制字节包编解码、未接入 `Scene/Entity` 复制与模拟丢包/乱序弱网测试。 |
 
 ---
 
-## 达标复盘与未来演进方向（87.9 -> 95+）
+## v3 商业级对齐演进计划（消除空壳 → 对齐真实能力）
 
-通过 Phases A–E 五阶段连续攻坚，HGame 已消除基准 `65950a6` 中的全部 P0/P1 结构性短板（17 项核心能力均已接入默认主适配器且经 Chromium WebGL2 + Rapier WASM 实测验证），加权真实分由 `67.0` 提升至 **`87.9 / 100`**，正式达到并与 **Unity 6.6 URP Web（`87.5 / 100`）** 处于同等生产水平。
-
-后续若继续向 `95+` 推进，可聚焦两项高价值深化：
-1. **P2 WebGPU CI 闭环（`8 -> 9+`）**：接入真实支持 Dawn/WebGPU 的无头浏览器环境，对 `THREE.WebGPURenderer` + WGSL Compute Indirect 剔除开展端到端像素与 GPU Timestamp 压测。
-2. **P1 Rapier WASM Worker 默认卸载与 N1 弱网压测（`8 -> 9+`）**：在支持 `SharedArrayBuffer` 的跨源隔离宿主环境下提供零拷贝 Worker 物理/群体步进，并补充丢包/乱序/高延迟链路对抗基准。
+按严酷审计暴露的核心缺口分 6 个阶段逐项啃下硬骨头（仅真实打通端到端链路才允许上调评分）：
+1. **Phase 1（S3 / P1）**：打通 `voice -> reverbSend -> ConvolverNode -> busTarget` 真实音频混响链 + 3 段参数 EQ；`worker-sim.js` 实现真实 `'flow-field'` 与 `'swarm-separate'` 核并在 `stepAsync` 跳过主线程重复计算。
+2. **Phase 2（N1）**：实现真二进制 Delta 编解码（`Uint8Array` + 量化定点数 + Bitmask）与 `createSceneReplicator` 实机 15% 丢包/抖动测试。
+3. **Phase 3（R3 / R2 / R4 / A2）**：实现深度重建屏幕空间 OBB 投影贴花；修复 3 盏 CSM 光源叠加过曝并增加双探针 Shader 盒投影混合；实现真实 `reactiveMaskTarget` Pass 与 `executeRenderGraph` 驱动后处理。
+4. **Phase 4（P2 / S2 / S4 / A3）**：实现 `createIndirectInstancedBatch3D` 真实 GPU 视锥裁剪矩阵压缩；实现 `solveFabrikIK` + Root Motion + MorphTarget 驱动；实现原生 `createCanvasUiRenderer` 控件渲染与点击命中；实现纹理 Mip 真实切换绑定。
+5. **Phase 5（1280×720 商业级真机基准）**：构建包含真 `SkinnedMesh`、`2000` 间接裁剪实例、曲面深度投影贴花、Reactive TAA、真实 Audio 图与丢包联机的 Chromium WebGL2 验收套件。
+6. **Phase 6（二次客观复评）**：依据真实代码与 `1280×720` Chromium 实测数据重新给出严格不注水的 v3 最终评分（保留对 Unity 仍有差距的诚实扣分项）。
 
 ### HGame 相比 Unity Web 的真实优势（不妄自菲薄）
 

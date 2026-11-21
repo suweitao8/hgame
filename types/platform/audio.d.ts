@@ -176,6 +176,8 @@
  * @property {(muted: boolean) => boolean} setMuted
  * @property {(bus: string, value: number) => number} setBusVolume Gain 0..1.5; returns the clamped value.
  * @property {(bus: string) => number} getBusVolume
+ * @property {(bus: string, cfg?: { lowGainDb?: number, midGainDb?: number, highGainDb?: number, lowFreq?: number, midFreq?: number, highFreq?: number }) => { lowGainDb: number, midGainDb: number, highGainDb: number, lowFreq: number, midFreq: number, highFreq: number }} setBusEq
+ * @property {(bus: string) => { lowGainDb: number, midGainDb: number, highGainDb: number, lowFreq: number, midFreq: number, highFreq: number }} getBusEq
  * @property {(bus: string, factor?: number, durationMs?: number) => boolean} duckBus Temporarily scale a bus (factor 0..1, default 0.55; milliseconds, default 250).
  * @property {(name: string, config?: AudioSnapshotConfig) => AudioSnapshot} registerSnapshot
  * @property {(nameOrConfig: string | AudioSnapshotConfig, options?: { transitionSeconds?: number | null }) => string} applySnapshot Returns the snapshot name.
@@ -184,9 +186,10 @@
  * @property {() => void} updateOcclusion Refresh occlusion of all active voices.
  * @property {((next?: AudioListenerUpdate) => AudioListenerState)} setListener
  * @property {(vel?: { vx?: number, vy?: number, vz?: number, x?: number, y?: number, z?: number }) => { vx: number, vy: number, vz: number }} setListenerVelocity
- * @property {(opts: { id: string, position?: AudioPosition3D | AudioPosition2D, radius?: number, decaySeconds?: number, wetGain?: number }) => { id: string, radius: number, decaySeconds: number, wetGain: number, currentWet: number }} createReverbZone
+ * @property {(opts: { id: string, position?: AudioPosition3D | AudioPosition2D, radius?: number, decaySeconds?: number, wetGain?: number }) => { id: string, radius: number, decaySeconds: number, wetGain: number, currentWet: number, wired: boolean }} createReverbZone
  * @property {(id: string) => boolean} removeReverbZone
  * @property {(pos?: AudioPosition3D | AudioPosition2D) => { activeZones: number, maxWetGain: number }} updateReverbZones
+ * @property {() => { unlocked: boolean, hasReverbSend: boolean, zoneCount: number, wiredZones: number }} getDspState
  * @property {(url: string, opts?: { bus?: string, loop?: boolean, volume?: number, autoplay?: boolean }) => { url: string, bus: string, loop: boolean, readonly playing: boolean, readonly volume: number, play: () => Promise<void>, pause: () => void, setVolume: (v: number) => number, stop: () => void }} playStream
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
@@ -638,6 +641,29 @@ export type AudioManager = {
      */
     setBusVolume: (bus: string, value: number) => number;
     getBusVolume: (bus: string) => number;
+    setBusEq: (bus: string, cfg?: {
+        lowGainDb?: number;
+        midGainDb?: number;
+        highGainDb?: number;
+        lowFreq?: number;
+        midFreq?: number;
+        highFreq?: number;
+    }) => {
+        lowGainDb: number;
+        midGainDb: number;
+        highGainDb: number;
+        lowFreq: number;
+        midFreq: number;
+        highFreq: number;
+    };
+    getBusEq: (bus: string) => {
+        lowGainDb: number;
+        midGainDb: number;
+        highGainDb: number;
+        lowFreq: number;
+        midFreq: number;
+        highFreq: number;
+    };
     /**
      * Temporarily scale a bus (factor 0..1, default 0.55; milliseconds, default 250).
      */
@@ -682,11 +708,18 @@ export type AudioManager = {
         decaySeconds: number;
         wetGain: number;
         currentWet: number;
+        wired: boolean;
     };
     removeReverbZone: (id: string) => boolean;
     updateReverbZones: (pos?: AudioPosition3D | AudioPosition2D) => {
         activeZones: number;
         maxWetGain: number;
+    };
+    getDspState: () => {
+        unlocked: boolean;
+        hasReverbSend: boolean;
+        zoneCount: number;
+        wiredZones: number;
     };
     playStream: (url: string, opts?: {
         bus?: string;

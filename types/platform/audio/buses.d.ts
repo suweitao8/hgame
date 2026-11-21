@@ -10,6 +10,15 @@ export function createAudioBusController(ctx: object): {
     setMuted: (value: any) => any;
     setBusVolume: (busName: any, value: any) => number;
     getBusVolume: (busName: any) => number;
+    setBusEq: (busName: any, cfg?: {}) => {
+        lowGainDb: any;
+        midGainDb: any;
+        highGainDb: any;
+        lowFreq: any;
+        midFreq: any;
+        highFreq: any;
+    };
+    getBusEq: (busName: any) => any;
     registerSnapshot: (name: any, config?: {}) => {
         name: string;
         buses: any;

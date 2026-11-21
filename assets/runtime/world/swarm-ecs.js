@@ -994,7 +994,7 @@ function stepSwarmSequential(
   needSep, separationRadius, separationStrength, sepSq, invSepRadius, maxNeighbors, maxProbes, tickCount,
   ox, oy, invCell, cols, rows, hashHead, hashNext,
   ffHas, ffCost, ffDirX, ffDirY,
-  ecs, indexMovedUnit,
+  ecs, indexMovedUnit, usePrecomputedSep = false,
 ) {
   let promotedThisStep = 0;
   const tickPhase = tickCount & 3;
@@ -1096,7 +1096,10 @@ function stepSwarmSequential(
       let spd = speed[id];
 
       if (distFocusSq < midSepSq) {
-        if (needSep) {
+        if (usePrecomputedSep) {
+          pushX = sepX[id];
+          pushY = sepY[id];
+        } else if (needSep) {
           if (distFocusSq < nearSepSq || (id & 3) === tickPhase) {
             let checked = 0;
             let probes = 0;
@@ -1315,7 +1318,7 @@ function stepSwarmSequential(
  * @property {() => void} clear
  * @property {(options?: SwarmCircleDamageOptions) => number} applyCircleDamage Number of hit events accepted into the bounded combat queue.
  * @property {(dt: number, options?: SwarmStepOptions) => SwarmStepStats} step
- * @property {(dt: number, options?: SwarmStepOptions) => Promise<SwarmStepStats & { workerMode: string, committedJobs: number }>} stepAsync
+ * @property {(dt: number, options?: SwarmStepOptions) => Promise<SwarmStepStats & { workerMode: string, flowOffloaded: boolean, sepOffloaded: boolean, committedJobs: number }>} stepAsync
  * @property {(crowd2d: import('../integrations/canvas2d.js').SpriteCrowd2D, options?: SwarmSyncCrowd2DOptions) => number} syncToSpriteCrowd2D
  */
 
@@ -1791,12 +1794,21 @@ export function createSwarmSimulation({
     return applied;
   }
 
-  function step(dt = 0, { heroX = 0, heroY = 0, focusX = heroX, focusY = heroY, prepareRenderChunks = false, onUnitKilled = null } = {}) {
+  function step(dt = 0, {
+    heroX = 0,
+    heroY = 0,
+    focusX = heroX,
+    focusY = heroY,
+    prepareRenderChunks = false,
+    onUnitKilled = null,
+    _skipFlowField = false,
+    _usePrecomputedSep = false,
+  } = {}) {
     const dtSec = Number.isFinite(dt) && dt > 0 ? dt : 0;
     const fx = Number.isFinite(focusX) ? focusX : heroX;
     const fy = Number.isFinite(focusY) ? focusY : heroY;
 
-    if (useFlowField) {
+    if (useFlowField && !_skipFlowField) {
       flowAccum += dtSec;
       if (!hasFlow || flowInterval <= 0 || flowAccum >= flowInterval) {
         flowAccum = 0;
@@ -1850,7 +1862,7 @@ export function createSwarmSimulation({
         needSep, separationRadius, separationStrength, sepSq, invSepRadius, maxNeighbors, maxNeighbors * 2, tickCount,
         ox, oy, invCell, cols, rows, hashHead, hashNext,
         useFlowField && flowField._hasComputed, flowField.cost, flowField.dirX, flowField.dirY,
-        ecs, collectRenderChunks ? indexUnitInChunk : null,
+        ecs, collectRenderChunks ? indexUnitInChunk : null, _usePrecomputedSep,
       );
     } finally {
       // Include partially written chunks in the next reset if movement failed.
@@ -1971,24 +1983,116 @@ export function createSwarmSimulation({
   let lastFlowJobId = null;
 
   async function stepAsync(dt = 0, options = {}) {
-    const stepResult = step(dt, options);
+    let flowOffloaded = false;
+    let sepOffloaded = false;
     let committedJobs = 0;
+    const heroX = Number(options?.heroX) || 0;
+    const heroY = Number(options?.heroY) || 0;
+
     if (workerRunner && typeof workerRunner.submit === 'function' && typeof workerRunner.flushTick === 'function') {
       asyncTick++;
-      const heroX = Number(options?.heroX) || 0;
-      const heroY = Number(options?.heroY) || 0;
-      // Stage a deterministic spatial/crowd offload packet and commit in exact submitTick order.
-      lastFlowJobId = workerRunner.submit(
-        'batch-eval',
-        { tick: asyncTick, activeCount, heroX, heroY, items: [heroX, heroY, activeCount] },
-        { priority: 1 },
-      );
-      const committed = workerRunner.flushTick(asyncTick);
-      committedJobs = Array.isArray(committed) ? committed.length : 0;
+      const dtSec = Number.isFinite(dt) && dt > 0 ? dt : 0;
+      const submittedHandles = [];
+
+      // Offload flow-field BFS gradient computation if stale
+      if (useFlowField) {
+        flowAccum += dtSec;
+        const goalX = Math.max(0, Math.min(flowField.cols - 1, Math.floor((heroX - flowField.originX) * flowField.invCellSize)));
+        const goalY = Math.max(0, Math.min(flowField.rows - 1, Math.floor((heroY - flowField.originY) * flowField.invCellSize)));
+        let changed = !hasFlow || flowInterval <= 0 || !flowField._hasComputed ||
+          flowField._computeVersion !== flowVersion || goalX !== flowGoalX || goalY !== flowGoalY;
+        if (!changed) {
+          for (let i = 0; i < flowField.cost.length; i++) {
+            if (flowField.cost[i] !== flowCostSnapshot[i]) { changed = true; break; }
+          }
+        }
+        if (changed && (hasFlow === false || flowInterval <= 0 || flowAccum >= flowInterval)) {
+          flowAccum = 0;
+          const costCopy = new Uint8Array(flowField.cost);
+          const h = workerRunner.submit('flow-field', {
+            cols: flowField.cols,
+            rows: flowField.rows,
+            cost: costCopy,
+            goalX,
+            goalY,
+          }, { tick: asyncTick, priority: 2 });
+          if (h) {
+            lastFlowJobId = h;
+            submittedHandles.push({ kind: 'flow', h, goalX, goalY });
+          }
+        }
+      }
+
+      // Offload spatial neighbor separation kernel when separation is enabled and units are active
+      if (activeCount > 0 && separationRadius > 0 && maxNeighbors > 0 && separationStrength > 0) {
+        const idsCopy = activeIds.slice(0, activeCount);
+        const pxCopy = posX.slice(0, capacity);
+        const pyCopy = posY.slice(0, capacity);
+        const h = workerRunner.submit('swarm-separate', {
+          count: activeCount,
+          activeIds: idsCopy,
+          posX: pxCopy,
+          posY: pyCopy,
+          sepRadius: separationRadius,
+          sepStrength: separationStrength,
+          maxNeighbors,
+          gridCols: spatialHash.cols,
+          gridRows: spatialHash.rows,
+          cellSize: spatialHash.cellSize,
+          originX: spatialHash.originX,
+          originY: spatialHash.originY,
+        }, { tick: asyncTick, priority: 1 });
+        if (h) submittedHandles.push({ kind: 'sep', h });
+      }
+
+      if (submittedHandles.length > 0) {
+        const committed = [];
+        const firstBatch = workerRunner.flushTick(asyncTick);
+        if (Array.isArray(firstBatch)) committed.push(...firstBatch);
+        // For true async workers, await completion across bounded microtask/macrotask ticks
+        if (workerRunner.mode === 'worker' && committed.length < submittedHandles.length) {
+          for (let waitIter = 0; waitIter < 120 && committed.length < submittedHandles.length; waitIter++) {
+            await new Promise(resolve => setTimeout(resolve, 1));
+            const nextBatch = workerRunner.flushTick(asyncTick);
+            if (Array.isArray(nextBatch)) committed.push(...nextBatch);
+          }
+        }
+        committedJobs = committed.length;
+        for (const rec of committed) {
+          if (rec.status !== 'completed' || !rec.value) continue;
+          if (rec.type === 'flow-field' && rec.value.dirX && rec.value.dirY) {
+            flowField.dirX.set(rec.value.dirX);
+            flowField.dirY.set(rec.value.dirY);
+            flowField._hasComputed = true;
+            flowField._computeVersion++;
+            flowCostSnapshot.set(flowField.cost);
+            const flowMeta = submittedHandles.find(item => item.kind === 'flow');
+            if (flowMeta) {
+              flowGoalX = flowMeta.goalX;
+              flowGoalY = flowMeta.goalY;
+            }
+            flowVersion = flowField._computeVersion;
+            hasFlow = true;
+            flowOffloaded = true;
+          } else if (rec.type === 'swarm-separate' && rec.value.sepX && rec.value.sepY) {
+            sepX.set(rec.value.sepX.subarray(0, capacity));
+            sepY.set(rec.value.sepY.subarray(0, capacity));
+            sepOffloaded = true;
+          }
+        }
+      }
     }
+
+    const stepResult = step(dt, {
+      ...options,
+      _skipFlowField: flowOffloaded,
+      _usePrecomputedSep: sepOffloaded,
+    });
     return {
       ...stepResult,
       workerMode: workerRunner?.mode ?? 'sync',
+      flowOffloaded,
+      sepOffloaded,
       committedJobs,
       lastJobId: lastFlowJobId,
     };

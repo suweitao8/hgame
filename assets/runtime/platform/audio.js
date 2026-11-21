@@ -226,6 +226,8 @@ export {
  * @property {(muted: boolean) => boolean} setMuted
  * @property {(bus: string, value: number) => number} setBusVolume Gain 0..1.5; returns the clamped value.
  * @property {(bus: string) => number} getBusVolume
+ * @property {(bus: string, cfg?: { lowGainDb?: number, midGainDb?: number, highGainDb?: number, lowFreq?: number, midFreq?: number, highFreq?: number }) => { lowGainDb: number, midGainDb: number, highGainDb: number, lowFreq: number, midFreq: number, highFreq: number }} setBusEq
+ * @property {(bus: string) => { lowGainDb: number, midGainDb: number, highGainDb: number, lowFreq: number, midFreq: number, highFreq: number }} getBusEq
  * @property {(bus: string, factor?: number, durationMs?: number) => boolean} duckBus Temporarily scale a bus (factor 0..1, default 0.55; milliseconds, default 250).
  * @property {(name: string, config?: AudioSnapshotConfig) => AudioSnapshot} registerSnapshot
  * @property {(nameOrConfig: string | AudioSnapshotConfig, options?: { transitionSeconds?: number | null }) => string} applySnapshot Returns the snapshot name.
@@ -234,9 +236,10 @@ export {
  * @property {() => void} updateOcclusion Refresh occlusion of all active voices.
  * @property {((next?: AudioListenerUpdate) => AudioListenerState)} setListener
  * @property {(vel?: { vx?: number, vy?: number, vz?: number, x?: number, y?: number, z?: number }) => { vx: number, vy: number, vz: number }} setListenerVelocity
- * @property {(opts: { id: string, position?: AudioPosition3D | AudioPosition2D, radius?: number, decaySeconds?: number, wetGain?: number }) => { id: string, radius: number, decaySeconds: number, wetGain: number, currentWet: number }} createReverbZone
+ * @property {(opts: { id: string, position?: AudioPosition3D | AudioPosition2D, radius?: number, decaySeconds?: number, wetGain?: number }) => { id: string, radius: number, decaySeconds: number, wetGain: number, currentWet: number, wired: boolean }} createReverbZone
  * @property {(id: string) => boolean} removeReverbZone
  * @property {(pos?: AudioPosition3D | AudioPosition2D) => { activeZones: number, maxWetGain: number }} updateReverbZones
+ * @property {() => { unlocked: boolean, hasReverbSend: boolean, zoneCount: number, wiredZones: number }} getDspState
  * @property {(url: string, opts?: { bus?: string, loop?: boolean, volume?: number, autoplay?: boolean }) => { url: string, bus: string, loop: boolean, readonly playing: boolean, readonly volume: number, play: () => Promise<void>, pause: () => void, setVolume: (v: number) => number, stop: () => void }} playStream
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
@@ -349,6 +352,7 @@ export function createAudioManager({
     keyCooldowns: new Map(),
     activeSnapshot: null,
     occlusionProbe: null,
+    reverbSend: null,
     listenerState,
     getCachedAnalysis,
     getBusNode: null,
@@ -357,7 +361,11 @@ export function createAudioManager({
 
   const buses = createAudioBusController(ctx);
   ctx.getBusNode = buses.getBusNode;
-  ctx.unlock = buses.unlock;
+  ctx.unlock = async () => {
+    const c = await buses.unlock();
+    for (const zone of reverbZones.values()) wireReverbZoneNodes(zone);
+    return c;
+  };
 
   function setOcclusionProbe(fn) {
     ctx.occlusionProbe = typeof fn === 'function' ? fn : null;
@@ -483,6 +491,23 @@ export function createAudioManager({
     return ir;
   }
 
+  function wireReverbZoneNodes(zone) {
+    if (!zone || zone.convolver) return;
+    const audioCtx = ctx.context;
+    const wetDest = ctx.busTarget ?? ctx.master;
+    if (audioCtx && ctx.reverbSend && wetDest && typeof audioCtx.createConvolver === 'function' && typeof audioCtx.createGain === 'function') {
+      const convolver = audioCtx.createConvolver();
+      convolver.buffer = buildImpulseResponse(audioCtx, zone.decaySeconds);
+      const wetNode = audioCtx.createGain();
+      wetNode.gain.value = zone.currentWet;
+      ctx.reverbSend.connect(convolver);
+      convolver.connect(wetNode);
+      wetNode.connect(wetDest);
+      zone.convolver = convolver;
+      zone.wetNode = wetNode;
+    }
+  }
+
   function createReverbZone({
     id,
     position = { x: 0, y: 0, z: 0 },
@@ -499,19 +524,6 @@ export function createAudioManager({
     const pz = Number(Array.isArray(position) ? position[2] : position?.z) || 0;
 
     if (reverbZones.has(id)) removeReverbZone(id);
-    let convolver = null;
-    let wetNode = null;
-    const audioCtx = ctx.context;
-    const dest = (ctx.getBusNode ? ctx.getBusNode('spatial') : null) ?? ctx.master;
-    if (audioCtx && typeof audioCtx.createConvolver === 'function' && typeof audioCtx.createGain === 'function' && dest) {
-      convolver = audioCtx.createConvolver();
-      convolver.buffer = buildImpulseResponse(audioCtx, decay);
-      wetNode = audioCtx.createGain();
-      wetNode.gain.value = 0;
-      convolver.connect(wetNode);
-      wetNode.connect(dest);
-    }
-
     const zone = {
       id,
       x: px,
@@ -521,23 +533,26 @@ export function createAudioManager({
       decaySeconds: decay,
       wetGain: maxWet,
       currentWet: 0,
-      convolver,
-      wetNode,
+      convolver: null,
+      wetNode: null,
     };
     reverbZones.set(id, zone);
     updateReverbZones(listenerState);
+    wireReverbZoneNodes(zone);
     return {
       get id() { return zone.id; },
       get radius() { return zone.radius; },
       get decaySeconds() { return zone.decaySeconds; },
       get wetGain() { return zone.wetGain; },
       get currentWet() { return zone.currentWet; },
+      get wired() { return Boolean(zone.convolver && zone.wetNode); },
     };
   }
 
   function removeReverbZone(id) {
     const zone = reverbZones.get(id);
     if (!zone) return false;
+    try { if (zone.convolver) ctx.reverbSend?.disconnect?.(zone.convolver); } catch {}
     try { zone.wetNode?.disconnect?.(); } catch {}
     try { zone.convolver?.disconnect?.(); } catch {}
     reverbZones.delete(id);
@@ -872,7 +887,7 @@ export function createAudioManager({
     get available() { return typeof AudioContextClass === 'function'; },
     get listener() { return { ...listenerState }; },
     get activeSnapshot() { return ctx.activeSnapshot ? ctx.activeSnapshot.name : null; },
-    unlock: buses.unlock,
+    unlock: ctx.unlock,
     decode,
     play,
     playSynth,
@@ -885,6 +900,8 @@ export function createAudioManager({
     setMuted: buses.setMuted,
     setBusVolume: buses.setBusVolume,
     getBusVolume: buses.getBusVolume,
+    setBusEq: buses.setBusEq,
+    getBusEq: buses.getBusEq,
     duckBus: buses.duckBus,
     registerSnapshot: buses.registerSnapshot,
     applySnapshot: buses.applySnapshot,
@@ -896,6 +913,16 @@ export function createAudioManager({
     createReverbZone,
     removeReverbZone,
     updateReverbZones,
+    getDspState() {
+      let wiredZones = 0;
+      for (const z of reverbZones.values()) if (z.convolver && z.wetNode) wiredZones++;
+      return Object.freeze({
+        unlocked: Boolean(ctx.context),
+        hasReverbSend: Boolean(ctx.reverbSend),
+        zoneCount: reverbZones.size,
+        wiredZones,
+      });
+    },
     playStream,
     updateListenerFromCamera,
     dispose,
