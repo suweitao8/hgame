@@ -392,6 +392,57 @@ export function createNavMesh3D(options) {
     return guardNavigationWork(work, () => revision === current);
   }
 
+  let asyncTick = 1;
+  async function findPathAsync(start, goal, pathOpts = {}) {
+    const workerRunner = pathOpts.workerRunner;
+    if (!workerRunner || typeof workerRunner.submit !== 'function' || typeof workerRunner.flushTick !== 'function') {
+      return findPath(start, goal, pathOpts);
+    }
+    const maxNodes = pathNodeLimit(pathOpts);
+    if (maxNodes === 0) return null;
+    const tick = Number.isInteger(pathOpts.tick) ? pathOpts.tick : asyncTick++;
+    const jobHandle = workerRunner.submit('navmesh-path', {
+      cols,
+      rows,
+      minX,
+      maxX,
+      minZ,
+      maxZ,
+      cellSize,
+      stepHeight,
+      walkable: walkable.slice(),
+      heights: heights.slice(),
+      sx: start.x,
+      sz: start.z,
+      gx: goal.x,
+      gz: goal.z,
+      maxNodes: Number.isFinite(maxNodes) ? maxNodes : null,
+      maxSnap: Number.isInteger(pathOpts.maxSnapCells) ? pathOpts.maxSnapCells : 6,
+      smooth: pathOpts.smooth !== false,
+    }, { tick, priority: pathOpts.priority ?? 0, signal: pathOpts.signal ?? null });
+    if (!jobHandle) return findPath(start, goal, pathOpts);
+
+    let committed = workerRunner.flushTick(tick) || [];
+    let match = committed.find(r => r.id === jobHandle.id) ?? null;
+    if (workerRunner.mode === 'worker' && !match) {
+      for (let w = 0; w < 120 && !match; w++) {
+        await new Promise(resolve => setTimeout(resolve, 1));
+        committed = workerRunner.flushTick(tick) || [];
+        match = committed.find(r => r.id === jobHandle.id) ?? null;
+      }
+    }
+    if (!match || match.status !== 'completed' || !match.value) {
+      return findPath(start, goal, pathOpts);
+    }
+    if (!match.value.found) return null;
+    const arr = match.value.waypoints;
+    const out = [];
+    for (let i = 0; i + 2 < arr.length; i += 3) {
+      out.push({ x: arr[i], y: arr[i + 1], z: arr[i + 2] });
+    }
+    return out;
+  }
+
   return Object.freeze({
     cols,
     rows,
@@ -403,6 +454,7 @@ export function createNavMesh3D(options) {
     clearObstacles,
     isWalkable,
     findPath,
+    findPathAsync,
     createPathWork,
     sampleSurfaceHeight: (x, z) => {
       const cx = worldToCellX(x);

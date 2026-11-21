@@ -72,6 +72,8 @@ export class SceneManager {
     registry: Map<string, Scene>;
     /** @type {Scene | null} */
     current: Scene | null;
+    /** @type {Scene[]} */
+    overlays: Scene[];
     _disposing: boolean;
     _switching: boolean;
     /** @type {Scene | null} */
@@ -104,6 +106,23 @@ export class SceneManager {
         changed: boolean;
         cleanupErrors: unknown[];
     };
+    /** Get an active additive overlay scene by name. @param {string} name @returns {Scene | null} */
+    getAdditive(name: string): Scene | null;
+    /**
+     * Mount a registered scene additively on top of `this.current` without leaving the primary scene.
+     * Ideal for persistent HUD overlays, shop panels, or stacked sub-levels.
+     * @param {string} name
+     * @param {unknown} [data]
+     * @returns {boolean} True if mounted (false if already mounted additively or is current).
+     */
+    mountAdditive(name: string, data?: unknown): boolean;
+    /**
+     * Unmount and exit an active additive overlay scene without disturbing `this.current`.
+     * @param {string} name
+     * @param {unknown} [reason='additive-unmount']
+     * @returns {boolean}
+     */
+    unmountAdditive(name: string, reason?: unknown): boolean;
     /** Remove and dispose an owned scene. @param {string} name @returns {boolean} */
     remove(name: string): boolean;
     /** @param {() => void} listener @returns {() => boolean} */

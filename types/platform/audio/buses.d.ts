@@ -31,6 +31,7 @@ export function createAudioBusController(ctx: object): {
     clearSnapshot: ({ transitionSeconds }?: {
         transitionSeconds?: number | undefined;
     }) => boolean;
-    duckBus: (busName: any, factor?: number, durationMs?: number) => boolean;
+    duckBus: (busName: any, factorOrOpts?: number, durationMs?: number) => boolean;
+    getDuckingState: () => {};
     dispose: () => void;
 };

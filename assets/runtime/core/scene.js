@@ -292,6 +292,8 @@ export class SceneManager {
     this.registry = new Map();
     /** @type {Scene | null} */
     this.current = null;
+    /** @type {Scene[]} */
+    this.overlays = [];
     this._disposing = false;
     this._switching = false;
     /** @type {Scene | null} */
@@ -423,12 +425,58 @@ export class SceneManager {
       return { changed: this.current === next, cleanupErrors };
     } finally { this._switching = false; }
   }
+  /** Get an active additive overlay scene by name. @param {string} name @returns {Scene | null} */
+  getAdditive(name) {
+    return this.overlays.find(s => s.name === name) ?? null;
+  }
+  /**
+   * Mount a registered scene additively on top of `this.current` without leaving the primary scene.
+   * Ideal for persistent HUD overlays, shop panels, or stacked sub-levels.
+   * @param {string} name
+   * @param {unknown} [data]
+   * @returns {boolean} True if mounted (false if already mounted additively or is current).
+   */
+  mountAdditive(name, data) {
+    if (this._disposing || this.app.disposed) throw new Error('Application disposed or disposing');
+    if (this._switching) throw new Error('A prepared scene switch is in progress');
+    const scene = this.get(name);
+    if (!scene) throw new Error('Unknown Scene: ' + name);
+    if (scene === this.current || this.overlays.includes(scene)) return false;
+    this.overlays.push(scene);
+    try {
+      scene._setActive(true);
+      if (this.app.disposed || !this.overlays.includes(scene)) return false;
+      this._enter(scene, data);
+    } catch (error) {
+      const idx = this.overlays.indexOf(scene);
+      if (idx >= 0) this.overlays.splice(idx, 1);
+      try { this._leave(scene, error); }
+      catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Additive scene mount failed'); }
+      throw error;
+    }
+    return this.overlays.includes(scene);
+  }
+  /**
+   * Unmount and exit an active additive overlay scene without disturbing `this.current`.
+   * @param {string} name
+   * @param {unknown} [reason='additive-unmount']
+   * @returns {boolean}
+   */
+  unmountAdditive(name, reason = 'additive-unmount') {
+    const idx = this.overlays.findIndex(s => s.name === name);
+    if (idx < 0) return false;
+    const [scene] = this.overlays.splice(idx, 1);
+    this._leave(scene, reason);
+    return true;
+  }
   /** Remove and dispose an owned scene. @param {string} name @returns {boolean} */
   remove(name) {
     if (this._disposing || this.app.disposed) return false;
     if (this._switching) throw new Error('A prepared scene switch is in progress');
     const scene = this.get(name);
     if (!scene) return false;
+    const overlayIdx = this.overlays.indexOf(scene);
+    if (overlayIdx >= 0) this.overlays.splice(overlayIdx, 1);
     const wasCurrent = this.current === scene;
     this.registry.delete(name);
     if (wasCurrent) this.current = null;
@@ -466,6 +514,7 @@ export class SceneManager {
       ], 'Scene manager disposal failed');
     } finally {
       this.registry.clear();
+      this.overlays.length = 0;
       this._entered.clear();
       this._disposeListeners.clear();
       this.current = null;

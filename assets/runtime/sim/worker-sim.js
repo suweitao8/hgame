@@ -1,4 +1,80 @@
 import { TileMap, findGridPath } from '../world/tilemap.js';
+import { createNavPathWork } from '../world/internal/navmesh3d-work.js';
+
+const NAV_DX = [1, -1, 0, 0, 1, 1, -1, -1];
+const NAV_DZ = [0, 0, 1, -1, 1, -1, 1, -1];
+const NAV_COST = [1, 1, 1, 1, Math.SQRT2, Math.SQRT2, Math.SQRT2, Math.SQRT2];
+
+function computeNavMeshPathKernel(payload) {
+  const cols = Math.max(1, payload.cols | 0);
+  const rows = Math.max(1, payload.rows | 0);
+  const cellSize = Number(payload.cellSize) > 0 ? Number(payload.cellSize) : 1;
+  const stepHeight = Number(payload.stepHeight) >= 0 ? Number(payload.stepHeight) : 0.6;
+  const minX = Number(payload.minX) || 0;
+  const maxX = Number(payload.maxX) || cols * cellSize;
+  const minZ = Number(payload.minZ) || 0;
+  const maxZ = Number(payload.maxZ) || rows * cellSize;
+  const walkable = payload.walkable instanceof Uint8Array ? payload.walkable : new Uint8Array(payload.walkable || cols * rows);
+  const heights = payload.heights instanceof Float32Array ? payload.heights : new Float32Array(payload.heights || cols * rows);
+
+  const isCellWalkable = (cx, cz) => cx >= 0 && cx < cols && cz >= 0 && cz < rows && walkable[cz * cols + cx] === 1;
+  const canTraverse = (ax, az, bx, bz) => {
+    if (!isCellWalkable(bx, bz)) return false;
+    const hA = heights[az * cols + ax];
+    const hB = heights[bz * cols + bx];
+    if (Math.abs(hB - hA) > stepHeight) return false;
+    if (bx !== ax && bz !== az) {
+      if (!isCellWalkable(bx, az) || !isCellWalkable(ax, bz)) return false;
+    }
+    return true;
+  };
+  const worldToCellX = x => Math.max(0, Math.min(cols - 1, Math.floor((x - minX) / cellSize)));
+  const worldToCellZ = z => Math.max(0, Math.min(rows - 1, Math.floor((z - minZ) / cellSize)));
+  const grid = {
+    cols,
+    rows,
+    heights,
+    canTraverse,
+    isCellWalkable,
+    isWalkable: (x, z) => x >= minX && x <= maxX && z >= minZ && z <= maxZ && isCellWalkable(worldToCellX(x), worldToCellZ(z)),
+    worldToCellX,
+    worldToCellZ,
+    cellCenterX: cx => {
+      const left = minX + cx * cellSize;
+      return left + Math.min(cellSize, Math.max(0, maxX - left)) * 0.5;
+    },
+    cellCenterZ: cz => {
+      const top = minZ + cz * cellSize;
+      return top + Math.min(cellSize, Math.max(0, maxZ - top)) * 0.5;
+    },
+    dx: NAV_DX,
+    dz: NAV_DZ,
+    stepCost: NAV_COST,
+  };
+
+  const gen = createNavPathWork(grid, {
+    sx: Number(payload.sx) || 0,
+    sz: Number(payload.sz) || 0,
+    gx: Number(payload.gx) || 0,
+    gz: Number(payload.gz) || 0,
+    maxNodes: payload.maxNodes === null || payload.maxNodes === undefined ? Infinity : Number(payload.maxNodes),
+    maxSnap: Number.isInteger(payload.maxSnap) ? payload.maxSnap : 6,
+    smooth: payload.smooth !== false,
+  });
+  let step = gen.next();
+  while (!step.done) step = gen.next();
+  const points = step.value;
+  if (!Array.isArray(points)) {
+    return { found: false, waypoints: new Float32Array(0) };
+  }
+  const packed = new Float32Array(points.length * 3);
+  for (let i = 0; i < points.length; i++) {
+    packed[i * 3] = points[i].x;
+    packed[i * 3 + 1] = points[i].y;
+    packed[i * 3 + 2] = points[i].z;
+  }
+  return { found: true, waypoints: packed };
+}
 
 function computeFlowFieldKernel(payload) {
   const cols = Math.max(1, payload.cols | 0);
@@ -161,6 +237,9 @@ function runBuiltInKernel(type, payload) {
   }
   if (type === 'swarm-separate') {
     return computeSwarmSeparateKernel(payload);
+  }
+  if (type === 'navmesh-path') {
+    return computeNavMeshPathKernel(payload);
   }
   if (type === 'navmesh-step' || type === 'batch-eval') {
     if (Array.isArray(payload?.items)) {

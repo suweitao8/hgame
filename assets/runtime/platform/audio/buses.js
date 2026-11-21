@@ -25,6 +25,7 @@ export function createAudioBusController(ctx) {
   const busFilterFreqs = Object.create(null);
   const snapshots = new Map();
   const duckTimers = new Map();
+  const duckStates = new Map();
 
   function resolveBusMix(busName) {
     const userVol = busVolumes[busName] ?? 1;
@@ -284,30 +285,78 @@ export function createAudioBusController(ctx) {
     return true;
   }
 
-  function duckBus(busName, factor = 0.55, durationMs = 250) {
+  function duckBus(busName, factorOrOpts = 0.55, durationMs = 250) {
     if (typeof busName !== 'string' || !busName) return false;
     const prevTimer = duckTimers.get(busName);
     if (prevTimer) clearTimeout(prevTimer);
     const node = getBusNode(busName);
     if (!node || !ctx.context) return false;
+
+    const opts = factorOrOpts && typeof factorOrOpts === 'object'
+      ? {
+          targetGain: clamp(Number(factorOrOpts.targetGain ?? 0.3), 0, 1),
+          attackSec: Math.max(0.002, Number(factorOrOpts.attackSec ?? 0.04) || 0.04),
+          holdSec: Math.max(0.01, Number(factorOrOpts.holdSec ?? 0.25) || 0.25),
+          releaseSec: Math.max(0.01, Number(factorOrOpts.releaseSec ?? 0.4) || 0.4),
+        }
+      : {
+          targetGain: clamp(Number(factorOrOpts) || 0, 0, 1),
+          attackSec: 0.012,
+          holdSec: Math.max(0.01, (Number(durationMs) || 250) / 1000),
+          releaseSec: 0.08,
+        };
+
     const base = resolveBusMix(busName).volume;
-    const target = base * clamp(Number(factor) || 0, 0, 1);
-    setGainTarget(node.gain, target, ctx.context.currentTime || 0, 0.012);
-    const ms = Math.max(10, Number(durationMs) || 250);
+    const target = base * opts.targetGain;
+    const now = ctx.context.currentTime || 0;
+    const holdEnd = now + opts.attackSec + opts.holdSec;
+    const releaseEnd = holdEnd + opts.releaseSec;
+    const param = node.gain;
+
+    if (
+      param &&
+      typeof param.setValueAtTime === 'function' &&
+      typeof param.linearRampToValueAtTime === 'function'
+    ) {
+      param.cancelScheduledValues?.(now);
+      param.setValueAtTime(param.value ?? base, now);
+      param.linearRampToValueAtTime(target, now + opts.attackSec);
+      param.setValueAtTime(target, holdEnd);
+      param.linearRampToValueAtTime(base, releaseEnd);
+    } else {
+      setGainTarget(param, target, now, opts.attackSec);
+    }
+
+    duckStates.set(busName, { targetGain: opts.targetGain, targetVolume: target, untilTimeSec: releaseEnd });
+    const ms = Math.ceil((opts.attackSec + opts.holdSec + opts.releaseSec) * 1000);
     const timer = setTimeout(() => {
       duckTimers.delete(busName);
+      duckStates.delete(busName);
       if (ctx.context) {
         const liveNode = busNodes.get(busName);
-        if (liveNode) setGainTarget(liveNode.gain, resolveBusMix(busName).volume, ctx.context.currentTime || 0, 0.08);
+        if (liveNode) setGainTarget(liveNode.gain, resolveBusMix(busName).volume, ctx.context.currentTime || 0, 0.02);
       }
     }, ms);
+    timer?.unref?.();
     duckTimers.set(busName, timer);
     return true;
+  }
+
+  function getDuckingState() {
+    const out = {};
+    const now = ctx.context?.currentTime ?? 0;
+    for (const [bus, st] of duckStates.entries()) {
+      if (now <= st.untilTimeSec || duckTimers.has(bus)) {
+        out[bus] = { targetGain: st.targetGain, targetVolume: st.targetVolume };
+      }
+    }
+    return out;
   }
 
   function dispose() {
     for (const timer of duckTimers.values()) clearTimeout(timer);
     duckTimers.clear();
+    duckStates.clear();
     busNodes.clear();
     busEqNodes.clear();
     busFilters.clear();
@@ -329,6 +378,7 @@ export function createAudioBusController(ctx) {
     applySnapshot,
     clearSnapshot,
     duckBus,
+    getDuckingState,
     dispose,
   };
 }

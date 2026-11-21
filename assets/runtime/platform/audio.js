@@ -921,6 +921,7 @@ export function createAudioManager({
         hasReverbSend: Boolean(ctx.reverbSend),
         zoneCount: reverbZones.size,
         wiredZones,
+        ducking: buses.getDuckingState(),
       });
     },
     playStream,

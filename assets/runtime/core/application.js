@@ -316,6 +316,13 @@ export function createGameApplication({
     try {
       if (!framePhases.run('beforeRender', app, scene, signal, deltaSeconds)) return;
       runTrackedPhase('render', scene.name, () => renderer.render(scene, app));
+      const overlays = app.scenes.overlays;
+      for (let i = 0; i < overlays.length; i++) {
+        const ov = overlays[i];
+        if (!ov?.activationSignal?.aborted) {
+          runTrackedPhase('render', ov.name, () => renderer.render(ov, app));
+        }
+      }
       stats.frames++;
       framePhases.run('afterRender', app, scene, signal, deltaSeconds);
     } finally { rendering = false; }
@@ -440,6 +447,16 @@ export function createGameApplication({
             }
           }
         }
+        const fixedOverlays = app.scenes.overlays;
+        for (let oi = 0; oi < fixedOverlays.length && !disposed; oi++) {
+          const ov = fixedOverlays[oi];
+          if (!ov?.activationSignal || ov.activationSignal.aborted) continue;
+          ov._capturePreviousTransforms();
+          runTrackedPhase('fixedUpdate', ov.name, () => ov._run('fixedUpdate', stepSize, app));
+          if (!disposed && !ov.activationSignal.aborted) {
+            runTrackedPhase('physics', ov.name, () => ov.physics?.step?.(stepSize));
+          }
+        }
         if (disposed) return;
         runTrackedPhase('input', active?.name ?? null, () => runtime.input?.endFrame?.());
         accumulator = Math.max(0, accumulator - stepSize);
@@ -456,8 +473,21 @@ export function createGameApplication({
     const signal = current?.activationSignal;
     if (signal && framePhases.run('beforeUpdate', app, current, signal, scaledDelta)) {
       runTrackedPhase('update', current.name, () => current._run('update', scaledDelta, app));
+      const overlays = app.scenes.overlays;
+      for (let oi = 0; oi < overlays.length; oi++) {
+        const ov = overlays[oi];
+        if (ov?.activationSignal && !ov.activationSignal.aborted) {
+          runTrackedPhase('update', ov.name, () => ov._run('update', scaledDelta, app));
+        }
+      }
       if (framePhases.run('beforeLateUpdate', app, current, signal, scaledDelta)) {
         runTrackedPhase('lateUpdate', current.name, () => current._run('lateUpdate', scaledDelta, app));
+        for (let oi = 0; oi < overlays.length; oi++) {
+          const ov = overlays[oi];
+          if (ov?.activationSignal && !ov.activationSignal.aborted) {
+            runTrackedPhase('lateUpdate', ov.name, () => ov._run('lateUpdate', scaledDelta, app));
+          }
+        }
       }
     }
     render(scaledDelta);

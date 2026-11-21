@@ -15,6 +15,11 @@ export function createNavMesh3D(options: NavMesh3DOptions): Readonly<{
     clearObstacles: () => void;
     isWalkable: (x: any, z: any) => boolean;
     findPath: (start: NavEndpoint, goal: NavEndpoint, pathOpts?: NavPathOptions | undefined) => Vec3Point[] | null;
+    findPathAsync: (start: any, goal: any, pathOpts?: {}) => Promise<{
+        x: any;
+        y: any;
+        z: any;
+    }[] | null>;
     createPathWork: (start: NavEndpoint, goal: NavEndpoint, pathOpts?: NavPathOptions | undefined) => Generator<undefined, Vec3Point[] | null, void>;
     sampleSurfaceHeight: (x: any, z: any) => number;
 }>;
