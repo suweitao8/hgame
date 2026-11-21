@@ -16,6 +16,52 @@ const mix = (a, b, t) => a + (b - a) * t;
 const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const linearToSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * (c ** (1 / 2.4)) - 0.055);
 
+async function resizeBufferNoPremultiply(buf, srcW, srcH, ch, dstW, dstH, kernel = sharp.kernel.lanczos3) {
+  if (srcW === dstW && srcH === dstH) {
+    return Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+  }
+  if (ch !== 4) {
+    return sharp(buf, { raw: { width: srcW, height: srcH, channels: ch } })
+      .resize(dstW, dstH, { kernel, fit: 'fill' })
+      .raw()
+      .toBuffer();
+  }
+  // Split RGB and A before resizing so libvips never premultiplies packed channels (e.g., Normal_RM where A=Metallic=0)
+  const pxCount = srcW * srcH;
+  const rgb = Buffer.allocUnsafe(pxCount * 3);
+  const alpha = Buffer.allocUnsafe(pxCount);
+  for (let p = 0, r3 = 0, r4 = 0; p < pxCount; p++, r3 += 3, r4 += 4) {
+    rgb[r3] = buf[r4];
+    rgb[r3 + 1] = buf[r4 + 1];
+    rgb[r3 + 2] = buf[r4 + 2];
+    alpha[p] = buf[r4 + 3];
+  }
+  const [outRgb, outAlpha] = await Promise.all([
+    sharp(rgb, { raw: { width: srcW, height: srcH, channels: 3 } })
+      .resize(dstW, dstH, { kernel, fit: 'fill' })
+      .raw()
+      .toBuffer(),
+    sharp(alpha, { raw: { width: srcW, height: srcH, channels: 1 } })
+      .resize(dstW, dstH, { kernel, fit: 'fill' })
+      .raw()
+      .toBuffer(),
+  ]);
+  const outCount = dstW * dstH;
+  const out = Buffer.allocUnsafe(outCount * 4);
+  for (let p = 0, r3 = 0, r4 = 0; p < outCount; p++, r3 += 3, r4 += 4) {
+    out[r4] = outRgb[r3];
+    out[r4 + 1] = outRgb[r3 + 1];
+    out[r4 + 2] = outRgb[r3 + 2];
+    out[r4 + 3] = outAlpha[p];
+  }
+  return out;
+}
+
+async function resizeStraightRgba(filePath, targetW, targetH) {
+  const { data, info } = await sharp(filePath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return resizeBufferNoPremultiply(data, info.width, info.height, 4, targetW, targetH, sharp.kernel.lanczos3);
+}
+
 async function resizeToroidal(filePath, size, { grayscale = false } = {}) {
   let pipeline = sharp(filePath);
   if (grayscale) pipeline = pipeline.removeAlpha().grayscale().toColorspace('srgb');
@@ -45,8 +91,8 @@ async function resizeToroidal(filePath, size, { grayscale = false } = {}) {
   const outW = size + outPadX * 2;
   const outH = size + outPadY * 2;
 
-  const { data } = await sharp(padded, { raw: { width: pw, height: ph, channels: ch } })
-    .resize(outW, outH, { kernel: sharp.kernel.lanczos3, fit: 'fill' })
+  const resizedPadded = await resizeBufferNoPremultiply(padded, pw, ph, ch, outW, outH, sharp.kernel.lanczos3);
+  const { data } = await sharp(resizedPadded, { raw: { width: outW, height: outH, channels: ch } })
     .extract({ left: outPadX, top: outPadY, width: size, height: size })
     .raw()
     .toBuffer({ resolveWithObject: true });
@@ -472,8 +518,8 @@ async function main() {
       const oy = row * resSize;
       const slotDir = path.join(BUILT_MATERIALS, entry.slot);
       const [cTile, nTile] = await Promise.all([
-        sharp(path.join(slotDir, 'color.png')).resize(resSize, resSize, { kernel: sharp.kernel.lanczos3 }).ensureAlpha().raw().toBuffer(),
-        sharp(path.join(slotDir, 'normal_rm.png')).resize(resSize, resSize, { kernel: sharp.kernel.lanczos3 }).ensureAlpha().raw().toBuffer(),
+        resizeStraightRgba(path.join(slotDir, 'color.png'), resSize, resSize),
+        resizeStraightRgba(path.join(slotDir, 'normal_rm.png'), resSize, resSize),
       ]);
       for (let y = 0; y < resSize; y++) {
         const srcRow = y * resSize * 4;
@@ -483,8 +529,8 @@ async function main() {
       }
     }
     await Promise.all([
-      sharp(albAtlas, { raw: { width: w, height: h, channels: 4 } }).webp({ quality: spec.texturePipeline?.webpFallback?.colorQuality ?? 80 }).toFile(path.join(resDir, 'albedo_array.webp')),
-      sharp(nrmAtlas, { raw: { width: w, height: h, channels: 4 } }).webp({ quality: spec.texturePipeline?.webpFallback?.normalRmQuality ?? 92 }).toFile(path.join(resDir, 'normal_rm_array.webp')),
+      sharp(albAtlas, { raw: { width: w, height: h, channels: 4 } }).webp({ quality: spec.texturePipeline?.webpFallback?.colorQuality ?? 80, exact: true }).toFile(path.join(resDir, 'albedo_array.webp')),
+      sharp(nrmAtlas, { raw: { width: w, height: h, channels: 4 } }).webp({ quality: spec.texturePipeline?.webpFallback?.normalRmQuality ?? 92, exact: true }).toFile(path.join(resDir, 'normal_rm_array.webp')),
     ]);
   }
 

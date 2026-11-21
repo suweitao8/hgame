@@ -73,6 +73,7 @@ let texArray = null;
 let cnCatalog = null;
 let glbCache = new Map();
 let worldMat = null;
+let cutoutMat = null;
 let glassMat = null;
 let backdropMat = null;
 let shopSignMat = null;
@@ -450,7 +451,11 @@ function buildMaterialGridScene(group) {
     const z = (row - (Math.ceil(slots.length / cols) - 1) * 0.5) * spacing;
     const raw = buildBeveledBoxRaw(1.5, 1.5, 1.5, 0, entry.layer);
     const geo = buildBufferGeometryFromRaw(raw);
-    const mat = entry.blendMode === 'translucent' ? glassMat.material : worldMat.material;
+    const mat = entry.blendMode === 'translucent'
+      ? glassMat.material
+      : entry.alphaCutout
+        ? cutoutMat.material
+        : worldMat.material;
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x, 0.75, z);
     mesh.castShadow = true;
@@ -535,10 +540,19 @@ async function rebuildActiveScene() {
   if (token !== buildSeq) return;
 
   if (worldMat) worldMat.dispose();
+  if (cutoutMat) cutoutMat.dispose();
   if (glassMat) glassMat.dispose();
   worldMat = createWorldPbrMaterial({
     textureArrays: texArray,
     registry: texArray.registry,
+    fastShader: preset.fastShader,
+    disableMicroDetail: preset.disableMicroDetail,
+    lightingRig,
+  });
+  cutoutMat = createWorldPbrMaterial({
+    textureArrays: texArray,
+    registry: texArray.registry,
+    alphaCutout: true,
     fastShader: preset.fastShader,
     disableMicroDetail: preset.disableMicroDetail,
     lightingRig,
@@ -644,6 +658,7 @@ function init() {
   wireframeInput?.addEventListener('change', () => {
     const w = Boolean(wireframeInput.checked);
     if (worldMat) worldMat.material.wireframe = w;
+    if (cutoutMat) cutoutMat.material.wireframe = w;
     if (glassMat) glassMat.material.wireframe = w;
   });
   collidersInput?.addEventListener('change', () => {

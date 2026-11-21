@@ -61,6 +61,39 @@ function encodeKtx2(toktxBin, pngPath, ktxPath, isNormalRm, spec) {
   }
 }
 
+async function resizeStraightRgba(filePath, targetSize) {
+  const { data, info } = await sharp(filePath).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  if (info.width === targetSize && info.height === targetSize) return data;
+  const pxCount = info.width * info.height;
+  const rgb = Buffer.allocUnsafe(pxCount * 3);
+  const alpha = Buffer.allocUnsafe(pxCount);
+  for (let p = 0, r3 = 0, r4 = 0; p < pxCount; p++, r3 += 3, r4 += 4) {
+    rgb[r3] = data[r4];
+    rgb[r3 + 1] = data[r4 + 1];
+    rgb[r3 + 2] = data[r4 + 2];
+    alpha[p] = data[r4 + 3];
+  }
+  const [outRgb, outAlpha] = await Promise.all([
+    sharp(rgb, { raw: { width: info.width, height: info.height, channels: 3 } })
+      .resize(targetSize, targetSize, { kernel: sharp.kernel.lanczos3, fit: 'fill' })
+      .raw()
+      .toBuffer(),
+    sharp(alpha, { raw: { width: info.width, height: info.height, channels: 1 } })
+      .resize(targetSize, targetSize, { kernel: sharp.kernel.lanczos3, fit: 'fill' })
+      .raw()
+      .toBuffer(),
+  ]);
+  const outCount = targetSize * targetSize;
+  const out = Buffer.allocUnsafe(outCount * 4);
+  for (let p = 0, r3 = 0, r4 = 0; p < outCount; p++, r3 += 3, r4 += 4) {
+    out[r4] = outRgb[r3];
+    out[r4 + 1] = outRgb[r3 + 1];
+    out[r4 + 2] = outRgb[r3 + 2];
+    out[r4 + 3] = outAlpha[p];
+  }
+  return out;
+}
+
 async function packAtlasGrid(slots, keyFile, tileSize, gridCols, outPng) {
   const rows = Math.max(1, Math.ceil(slots.length / gridCols));
   const w = gridCols * tileSize;
@@ -70,7 +103,7 @@ async function packAtlasGrid(slots, keyFile, tileSize, gridCols, outPng) {
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
     const src = path.join(BUILT_DIR, 'materials', slot, keyFile);
-    const tile = await sharp(src).resize(tileSize, tileSize, { kernel: sharp.kernel.lanczos3 }).ensureAlpha().raw().toBuffer();
+    const tile = await resizeStraightRgba(src, tileSize);
     const col = i % gridCols;
     const row = Math.floor(i / gridCols);
     const ox = col * tileSize;
@@ -151,8 +184,8 @@ async function main() {
     codecUsed = 'ktx2+webp';
   }
   if (opts.webpFallback || !toktx) {
-    await sharp(colorPng).webp({ quality: spec.texturePipeline.webpFallback.colorQuality ?? 80 }).toFile(path.join(opts.outDir, 'pbr', 'albedo_array.webp'));
-    await sharp(nrmPng).webp({ quality: spec.texturePipeline.webpFallback.normalRmQuality ?? 92 }).toFile(path.join(opts.outDir, 'pbr', 'normal_rm_array.webp'));
+    await sharp(colorPng).webp({ quality: spec.texturePipeline.webpFallback.colorQuality ?? 80, exact: true }).toFile(path.join(opts.outDir, 'pbr', 'albedo_array.webp'));
+    await sharp(nrmPng).webp({ quality: spec.texturePipeline.webpFallback.normalRmQuality ?? 92, exact: true }).toFile(path.join(opts.outDir, 'pbr', 'normal_rm_array.webp'));
   }
   await rm(colorPng, { force: true });
   await rm(nrmPng, { force: true });

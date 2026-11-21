@@ -150,49 +150,61 @@ function selectAutoResolution(availableResolutions, gameResolution = 512) {
   return isTouchSmall || lowMem ? Math.min(256, gameTier) : gameTier;
 }
 
-function createSliceSurface(size) {
-  if (typeof OffscreenCanvas === 'function') {
-    const canvas = new OffscreenCanvas(size, size);
-    const ctx = canvas.getContext('2d');
-    if (ctx) return { canvas, ctx };
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  return { canvas, ctx };
-}
-
-function uploadAtlasSlicesToTexture2DArray(
+async function uploadAtlasSlicesToTexture2DArray(
   gl,
   bitmap,
   { srcTileSize, tileSize, gridCols, layerCount, internalFormat, uploadFormat = gl.RGBA, maxAnisotropy, anisoExt },
 ) {
-  const glTex = gl.createTexture();
-  if (!glTex) throw new Error('Failed to create WebGL2 TEXTURE_2D_ARRAY');
-
   const mipLevels = Math.floor(Math.log2(tileSize)) + 1;
-  const { canvas: sliceCanvas, ctx } = createSliceSurface(tileSize);
   const srcSize = srcTileSize || tileSize;
 
+  const sliceOpts = {
+    premultiplyAlpha: 'none',
+    colorSpaceConversion: 'none',
+    imageOrientation: 'flipY',
+  };
+  if (srcSize !== tileSize) {
+    sliceOpts.resizeWidth = tileSize;
+    sliceOpts.resizeHeight = tileSize;
+    sliceOpts.resizeQuality = 'high';
+  }
+
+  // Decode all straight-alpha flipped tiles before touching shared WebGL2 state
+  const slices = new Array(layerCount);
+  const batchSize = 16;
+  for (let start = 0; start < layerCount; start += batchSize) {
+    const end = Math.min(layerCount, start + batchSize);
+    const slicePromises = [];
+    for (let layer = start; layer < end; layer++) {
+      const col = layer % gridCols;
+      const row = Math.floor(layer / gridCols);
+      slicePromises.push(createImageBitmap(bitmap, col * srcSize, row * srcSize, srcSize, srcSize, sliceOpts));
+    }
+    const decoded = await Promise.all(slicePromises);
+    for (let idx = 0; idx < decoded.length; idx++) {
+      slices[start + idx] = decoded[idx];
+    }
+  }
+
+  const glTex = gl.createTexture();
+  if (!glTex) {
+    for (const s of slices) s?.close?.();
+    throw new Error('Failed to create WebGL2 TEXTURE_2D_ARRAY');
+  }
+
+  const prevFlipY = gl.getParameter(gl.UNPACK_FLIP_Y_WEBGL);
+  const prevPremult = gl.getParameter(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL);
+  const prevCsc = gl.getParameter(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL);
+
+  // Preserve straight alpha (Normal_RM stores Metallic in A=0..255; Canvas2D premultiplication zeroes RGB when A=0)
   gl.bindTexture(gl.TEXTURE_2D_ARRAY, glTex);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
   gl.texStorage3D(gl.TEXTURE_2D_ARRAY, mipLevels, internalFormat, tileSize, tileSize, layerCount);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
 
   for (let layer = 0; layer < layerCount; layer++) {
-    const col = layer % gridCols;
-    const row = Math.floor(layer / gridCols);
-    const sx = col * srcSize;
-    const sy = row * srcSize;
-    ctx.clearRect(0, 0, tileSize, tileSize);
-    ctx.save();
-    ctx.imageSmoothingEnabled = srcSize !== tileSize;
-    if (ctx.imageSmoothingEnabled) ctx.imageSmoothingQuality = 'high';
-    // Flip Y per tile so OpenGL UV (v=0 bottom, v=1 top) aligns with +Y tangent normals
-    ctx.translate(0, tileSize);
-    ctx.scale(1, -1);
-    ctx.drawImage(bitmap, sx, sy, srcSize, srcSize, 0, 0, tileSize, tileSize);
-    ctx.restore();
+    const sliceBmp = slices[layer];
     gl.texSubImage3D(
       gl.TEXTURE_2D_ARRAY,
       0,
@@ -204,9 +216,14 @@ function uploadAtlasSlicesToTexture2DArray(
       1,
       uploadFormat,
       gl.UNSIGNED_BYTE,
-      sliceCanvas,
+      sliceBmp,
     );
+    sliceBmp.close?.();
   }
+
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, prevFlipY);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, prevPremult);
+  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, prevCsc);
 
   gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
   gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
@@ -229,7 +246,10 @@ async function fetchImageBitmap(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to load PBR atlas ${url}: HTTP ${res.status}`);
   const blob = await res.blob();
-  return createImageBitmap(blob);
+  return createImageBitmap(blob, {
+    premultiplyAlpha: 'none',
+    colorSpaceConversion: 'none',
+  });
 }
 
 export class PbrTextureArrayLoader {
@@ -291,26 +311,28 @@ export class PbrTextureArrayLoader {
       ? Math.min(8, Number(gl.getParameter(anisoExt.MAX_TEXTURE_MAX_ANISOTROPY_EXT)) || 1)
       : 1;
 
-    const alb = uploadAtlasSlicesToTexture2DArray(gl, albedoBmp, {
-      srcTileSize,
-      tileSize,
-      gridCols,
-      layerCount,
-      internalFormat: gl.SRGB8_ALPHA8,
-      uploadFormat: gl.RGBA,
-      maxAnisotropy: maxAniso,
-      anisoExt,
-    });
-    const nrmRm = uploadAtlasSlicesToTexture2DArray(gl, normalRmBmp, {
-      srcTileSize,
-      tileSize,
-      gridCols,
-      layerCount,
-      internalFormat: gl.RGBA8,
-      uploadFormat: gl.RGBA,
-      maxAnisotropy: maxAniso,
-      anisoExt,
-    });
+    const [alb, nrmRm] = await Promise.all([
+      uploadAtlasSlicesToTexture2DArray(gl, albedoBmp, {
+        srcTileSize,
+        tileSize,
+        gridCols,
+        layerCount,
+        internalFormat: gl.SRGB8_ALPHA8,
+        uploadFormat: gl.RGBA,
+        maxAnisotropy: maxAniso,
+        anisoExt,
+      }),
+      uploadAtlasSlicesToTexture2DArray(gl, normalRmBmp, {
+        srcTileSize,
+        tileSize,
+        gridCols,
+        layerCount,
+        internalFormat: gl.RGBA8,
+        uploadFormat: gl.RGBA,
+        maxAnisotropy: maxAniso,
+        anisoExt,
+      }),
+    ]);
 
     renderer.resetState?.();
 
@@ -336,43 +358,71 @@ export class PbrTextureArrayLoader {
       estimatedMemoryMB,
       drawLayerToCanvas(canvas, channel, layerIdx) {
         if (!canvas) return;
-        const bmp = channel === 'albedo' ? albedoBmp : normalRmBmp;
-        if (!bmp) return;
-        const col = layerIdx % gridCols;
-        const row = Math.floor(layerIdx / gridCols);
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(
-          bmp,
-          col * srcTileSize,
-          row * srcTileSize,
-          srcTileSize,
-          srcTileSize,
-          0,
-          0,
-          canvas.width,
-          canvas.height,
-        );
-        if (channel === 'normal' || channel === 'rm') {
-          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+        if (channel === 'albedo') {
+          if (!albedoBmp) return;
+          const col = layerIdx % gridCols;
+          const row = Math.floor(layerIdx / gridCols);
+          ctx.drawImage(
+            albedoBmp,
+            col * srcTileSize,
+            row * srcTileSize,
+            srcTileSize,
+            srcTileSize,
+            0,
+            0,
+            canvas.width,
+            canvas.height,
+          );
+          return;
+        }
+
+        if ((channel === 'normal' || channel === 'rm') && nrmRm?.glTex) {
+          // Read straight-alpha RGBA8 layer directly from WebGL2 so A=0 (non-metal) never zeroes RGB
+          const prevReadFbo = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+          const fbo = gl.createFramebuffer();
+          const raw = new Uint8Array(tileSize * tileSize * 4);
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fbo);
+          gl.framebufferTextureLayer(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, nrmRm.glTex, 0, layerIdx);
+          gl.readPixels(0, 0, tileSize, tileSize, gl.RGBA, gl.UNSIGNED_BYTE, raw);
+          gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prevReadFbo);
+          gl.deleteFramebuffer(fbo);
+
+          const tmpCanvas = document.createElement('canvas');
+          tmpCanvas.width = tileSize;
+          tmpCanvas.height = tileSize;
+          const tmpCtx = tmpCanvas.getContext('2d');
+          if (!tmpCtx) return;
+          const img = tmpCtx.createImageData(tileSize, tileSize);
           const d = img.data;
-          for (let i = 0; i < d.length; i += 4) {
-            if (channel === 'normal') {
-              const nx = d[i] / 127.5 - 1;
-              const ny = d[i + 1] / 127.5 - 1;
-              const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
-              d[i + 2] = Math.round(((nz + 1) * 0.5) * 255);
-              d[i + 3] = 255;
-            } else {
-              // Show Roughness (B) and Metallic (A) as R=Rough, G=Metal, B=0
-              d[i] = d[i + 2];
-              d[i + 1] = d[i + 3];
-              d[i + 2] = 0;
-              d[i + 3] = 255;
+          const rowBytes = tileSize * 4;
+          for (let y = 0; y < tileSize; y++) {
+            const srcOff = (tileSize - 1 - y) * rowBytes;
+            const dstOff = y * rowBytes;
+            for (let x = 0; x < rowBytes; x += 4) {
+              const s = srcOff + x;
+              const t = dstOff + x;
+              if (channel === 'normal') {
+                const nx = raw[s] / 127.5 - 1;
+                const ny = raw[s + 1] / 127.5 - 1;
+                const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+                d[t] = raw[s];
+                d[t + 1] = raw[s + 1];
+                d[t + 2] = Math.round(((nz + 1) * 0.5) * 255);
+                d[t + 3] = 255;
+              } else {
+                d[t] = raw[s + 2];
+                d[t + 1] = raw[s + 3];
+                d[t + 2] = 0;
+                d[t + 3] = 255;
+              }
             }
           }
-          ctx.putImageData(img, 0, 0);
+          tmpCtx.putImageData(img, 0, 0);
+          ctx.drawImage(tmpCanvas, 0, 0, canvas.width, canvas.height);
         }
       },
       dispose() {
