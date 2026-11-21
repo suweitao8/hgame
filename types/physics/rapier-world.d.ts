@@ -239,6 +239,14 @@ export type RapierBodyOptions = {
      */
     restitution?: number | undefined;
     /**
+     * Friction combine rule across colliding shapes.
+     */
+    frictionCombine?: "max" | "average" | "min" | "multiply" | undefined;
+    /**
+     * Restitution combine rule across colliding shapes.
+     */
+    restitutionCombine?: "max" | "average" | "min" | "multiply" | undefined;
+    /**
      * Collider density (>= 0).
      */
     density?: number | undefined;
@@ -250,6 +258,10 @@ export type RapierBodyOptions = {
      * Membership bitmask (16-bit), used when `collisionGroups` is absent.
      */
     layer?: number | undefined;
+    /**
+     * Logical collision layer index `0..15` synced with `setLayerCollision` matrix.
+     */
+    layerIndex?: number | undefined;
     /**
      * Filter bitmask (16-bit), used when `collisionGroups` is absent.
      */
@@ -686,6 +698,48 @@ export type RapierPhysicsWorld = {
      */
     castRay: (origin: RapierVectorInput, direction: RapierVectorInput, maxDistance?: number, options?: RapierRayOptions) => RapierRayHit | null;
     /**
+     * Sweeps a shape (ball/cuboid/capsule) and returns the first hit.
+     */
+    castShape: (options?: RapierShapeCastOptions) => RapierShapeCastHit | null;
+    /**
+     * Queries all bodies overlapping a shape volume.
+     */
+    queryOverlap: (options?: RapierOverlapOptions) => RapierOverlapHit[];
+    /**
+     * Connects two rigid bodies with an impulse joint.
+     */
+    addJoint: (a: RapierEntityLike | RapierBodyRecord, b: RapierEntityLike | RapierBodyRecord, options?: RapierJointOptions) => RapierJointRecord;
+    /**
+     * Removes a joint created by `addJoint`.
+     */
+    removeJoint: (jointOrHandle: RapierJointRecord | number) => boolean;
+    /**
+     * Configures motor force/position/velocity on a revolute or prismatic joint.
+     */
+    setJointMotor: (jointOrHandle: RapierJointRecord | number, motor?: RapierJointMotorOptions) => boolean;
+    /**
+     * Enables or disables mutual collisions between layers `0..15`.
+     */
+    setLayerCollision: (layerA: number, layerB: number, enabled: boolean) => void;
+    /**
+     * Reads layer-pair collision state.
+     */
+    getLayerCollision: (layerA: number, layerB: number) => boolean;
+    /**
+     * Reads 16-bit collision filter bitmask for layer `0..15`.
+     */
+    getLayerMask: (layer: number) => number;
+    /**
+     * Moves a body to logical layer `0..15` using the layer matrix.
+     */
+    setBodyLayer: (target: RapierEntityLike | RapierBodyRecord, layerIndex: number) => boolean;
+    /**
+     * Builds an articulated ragdoll chain bound to entity/bone transforms.
+     */
+    createRagdoll: (links: RapierRagdollLink[], options?: {
+        active?: boolean;
+    }) => RapierRagdollInstance;
+    /**
      * Advances exactly one fixed step (dt seconds must equal `fixedDt`); returns the new tick.
      */
     step: (dt?: number) => number;
@@ -710,3 +764,146 @@ export type RapierPhysicsWorld = {
  * Constructor of a {@link RapierPhysicsWorld}.
  */
 export type RapierPhysicsWorldConstructor = new (options?: RapierPhysicsWorldOptions) => RapierPhysicsWorld;
+export type RapierJointMotorOptions = {
+    /**
+     * Target angle (revolute) or offset (prismatic).
+     */
+    targetPosition?: number | undefined;
+    /**
+     * Target angular or linear speed.
+     */
+    targetVelocity?: number | undefined;
+    /**
+     * Spring stiffness.
+     */
+    stiffness?: number | undefined;
+    /**
+     * Motor damping.
+     */
+    damping?: number | undefined;
+    /**
+     * Maximum motor impulse/torque.
+     */
+    maxForce?: number | undefined;
+};
+export type RapierJointOptions = {
+    /**
+     * Joint constraint type.
+     */
+    type?: "fixed" | "revolute" | "prismatic" | "spherical" | "spring" | undefined;
+    /**
+     * Local anchor on body A.
+     */
+    anchor1?: RapierVectorInput | undefined;
+    /**
+     * Local anchor on body B.
+     */
+    anchor2?: RapierVectorInput | undefined;
+    /**
+     * Local frame rotation on body A (fixed joint).
+     */
+    frame1?: RapierRotationInput | undefined;
+    /**
+     * Local frame rotation on body B (fixed joint).
+     */
+    frame2?: RapierRotationInput | undefined;
+    /**
+     * Hinge/slide axis (default Z in 3D, X in 2D).
+     */
+    axis?: RapierVectorInput | undefined;
+    /**
+     * Angular/linear min/max limits where supported.
+     */
+    limits?: readonly [number, number] | undefined;
+    /**
+     * Spring rest length.
+     */
+    restLength?: number | undefined;
+    /**
+     * Spring stiffness.
+     */
+    stiffness?: number | undefined;
+    /**
+     * Spring damping.
+     */
+    damping?: number | undefined;
+    /**
+     * Wake connected dynamic bodies.
+     */
+    wakeUp?: boolean | undefined;
+    /**
+     * Initial joint motor configuration.
+     */
+    motor?: RapierJointMotorOptions | undefined;
+};
+export type RapierJointRecord = {
+    id: number;
+    handle: number;
+    type: string;
+    bodyA: RapierBodyRecord;
+    bodyB: RapierBodyRecord;
+    joint: RapierNativeObject;
+    setLimits: (min: number, max: number) => boolean;
+    setMotor: (motor?: RapierJointMotorOptions) => boolean;
+    dispose: () => boolean;
+};
+export type RapierShapeCastOptions = {
+    /**
+     * Query volume shape.
+     */
+    shape?: "ball" | "capsule" | "cuboid" | undefined;
+    radius?: number | undefined;
+    halfHeight?: number | undefined;
+    width?: number | undefined;
+    height?: number | undefined;
+    depth?: number | undefined;
+    origin?: RapierVectorInput | undefined;
+    rotation?: RapierRotationInput | undefined;
+    direction?: RapierVectorInput | undefined;
+    maxToi?: number | undefined;
+    targetDistance?: number | undefined;
+    stopAtPenetration?: boolean | undefined;
+    filterFlags?: number | undefined;
+    filterGroups?: number | undefined;
+    filterPredicate?: ((collider: RapierNativeObject) => boolean) | undefined;
+};
+export type RapierShapeCastHit = {
+    timeOfImpact: number;
+    point: RapierVec2 | RapierVec3;
+    normal: RapierVec2 | RapierVec3;
+    collider: RapierNativeObject;
+    body: RapierBodyRecord | null;
+};
+export type RapierOverlapOptions = {
+    shape?: "ball" | "capsule" | "cuboid" | undefined;
+    radius?: number | undefined;
+    halfHeight?: number | undefined;
+    width?: number | undefined;
+    height?: number | undefined;
+    depth?: number | undefined;
+    origin?: RapierVectorInput | undefined;
+    rotation?: RapierRotationInput | undefined;
+    filterFlags?: number | undefined;
+    filterGroups?: number | undefined;
+    filterPredicate?: ((collider: RapierNativeObject) => boolean) | undefined;
+};
+export type RapierOverlapHit = {
+    collider: RapierNativeObject;
+    colliderHandle: number;
+    body: RapierBodyRecord | null;
+    entity: RapierEntityLike | null;
+};
+export type RapierRagdollLink = {
+    entity: RapierEntityLike;
+    bodyOptions?: RapierBodyOptions | undefined;
+    parentIndex?: number | undefined;
+    joint?: RapierJointOptions | undefined;
+    boneName?: string | undefined;
+};
+export type RapierRagdollInstance = {
+    bodies: RapierBodyRecord[];
+    joints: RapierJointRecord[];
+    syncToBones: (boneResolver: Map<string, object> | Record<string, object> | ((boneName: string, index: number) => object | null)) => number;
+    setActive: (enabled: boolean) => void;
+    dispose: () => boolean;
+};

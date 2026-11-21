@@ -3,7 +3,7 @@
  * @param {'2d'|'3d'} [dimension='3d']
  * @returns {Readonly<Quality3DPreset>|Readonly<Quality2DPreset>}
  */
-export function resolveQualityPreset(tier?: QualityPresetTier | undefined, dimension?: "3d" | "2d" | undefined): Readonly<Quality3DPreset> | Readonly<Quality2DPreset>;
+export function resolveQualityPreset(tier?: QualityPresetTier | undefined, dimension?: "2d" | "3d" | undefined): Readonly<Quality3DPreset> | Readonly<Quality2DPreset>;
 /**
  * Pure, conservative hint selection. Does not allocate a probing WebGL context.
  * @param {QualityDeviceHints} [hints]

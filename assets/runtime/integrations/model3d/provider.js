@@ -1,6 +1,7 @@
 /** GLTF / skinned-model provider. */
 
 import { cleanupAll } from '../../internal/cleanup.js';
+import { createAnimator3D } from '../../animation/animator3d.js';
 
 /**
  * Options for {@link createModel3DProvider}.
@@ -152,6 +153,8 @@ import { cleanupAll } from '../../internal/cleanup.js';
  *   clearNotifies(clipName?: string | null): boolean,
  *   findBone(boneName: string): import('./helpers.js').Model3DObject | null,
  *   attachToBone(boneName: string, child: import('./helpers.js').Model3DObject, options?: Model3DAttachOptions): Model3DAttachment,
+ *   attachAnimator(config?: object): ReturnType<typeof import('../../animation/animator3d.js').createAnimator3D>,
+ *   readonly animator: ReturnType<typeof import('../../animation/animator3d.js').createAnimator3D> | null,
  *   play(name: string, options?: Model3DPlayOptions): boolean,
  *   playOverlay(name: string, options?: Model3DOverlayOptions): boolean,
  *   stopOverlay(fadeOut?: number): boolean,
@@ -605,6 +608,7 @@ export function createModel3DProvider({
         this._overlayOnComplete = null;
         this._overlayFadeOut = 0.15;
         this._notifies = new Map();
+        this._animator = null;
         this._notifyNextId = 1;
         this._defaultOnNotify = typeof onNotify === 'function' ? onNotify : null;
         this._budgetManaged = false;
@@ -660,6 +664,24 @@ export function createModel3DProvider({
 
       getClipNames() {
         return clipList.map(c => c?.name).filter(Boolean);
+      }
+
+      attachAnimator(config = {}) {
+        if (!this.mixer) {
+          throw new Error('attachAnimator requires a Rigged model with animations/mixer');
+        }
+        this._animator?.dispose?.();
+        this._animator = createAnimator3D({
+          THREE,
+          mixer: this.mixer,
+          clips: clipList,
+          ...config,
+        });
+        return this._animator;
+      }
+
+      get animator() {
+        return this._animator;
       }
 
       addNotify(clipName, {
@@ -816,6 +838,10 @@ export function createModel3DProvider({
 
       _stepMixerWithNotifies(stepDt) {
         if (!this.mixer || !(stepDt > 0)) return;
+        if (this._animator) {
+          this._animator.update(stepDt);
+          return;
+        }
         // Most animated characters have no notifies for their active clips.
         // Cursors must still advance so notifies added later keep correct time.
         const hasActiveNotifies = (this._currentClipName && this._notifies.has(this._currentClipName)) ||
@@ -1151,6 +1177,8 @@ export function createModel3DProvider({
             this._pendingFinish = null;
             this._overlayAction = null;
             this._overlayOnComplete = null;
+            this._animator?.dispose?.();
+            this._animator = null;
             for (const { bone, child } of this._attachments ?? []) bone.remove?.(child);
             if (this._attachments) this._attachments.length = 0;
             if (this._finishedListener) {

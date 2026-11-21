@@ -401,6 +401,8 @@ export type Model3DComponent = import("../../core/component.js").Component & {
     clearNotifies(clipName?: string | null): boolean;
     findBone(boneName: string): import("./helpers.js").Model3DObject | null;
     attachToBone(boneName: string, child: import("./helpers.js").Model3DObject, options?: Model3DAttachOptions): Model3DAttachment;
+    attachAnimator(config?: object): ReturnType<typeof import("../../animation/animator3d.js").createAnimator3D>;
+    readonly animator: ReturnType<typeof import("../../animation/animator3d.js").createAnimator3D> | null;
     play(name: string, options?: Model3DPlayOptions): boolean;
     playOverlay(name: string, options?: Model3DOverlayOptions): boolean;
     stopOverlay(fadeOut?: number): boolean;

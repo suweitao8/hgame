@@ -248,7 +248,7 @@ export type WorldPartitionOptions = {
     /**
      * '2d' partitions X/Y; '3d' partitions X/Z (or X/Y/Z with verticalCells).
      */
-    dimension?: "3d" | "2d" | undefined;
+    dimension?: "2d" | "3d" | undefined;
     /**
      * Also partition the Y axis in 3d mode.
      */

@@ -90,9 +90,12 @@ import { Entity } from '../core/entity.js';
  * @property {boolean} [sensor=false] Sensor (trigger) collider.
  * @property {number} [friction=0.5] Friction coefficient (>= 0).
  * @property {number} [restitution=0] Restitution 0..1.
+ * @property {'average'|'min'|'multiply'|'max'} [frictionCombine] Friction combine rule across colliding shapes.
+ * @property {'average'|'min'|'multiply'|'max'} [restitutionCombine] Restitution combine rule across colliding shapes.
  * @property {number} [density] Collider density (>= 0).
  * @property {number} [collisionGroups] Packed Rapier collision groups (32-bit).
  * @property {number} [layer=1] Membership bitmask (16-bit), used when `collisionGroups` is absent.
+ * @property {number} [layerIndex] Logical collision layer index `0..15` synced with `setLayerCollision` matrix.
  * @property {number} [mask=0xffff] Filter bitmask (16-bit), used when `collisionGroups` is absent.
  */
 
@@ -245,6 +248,16 @@ import { Entity } from '../core/entity.js';
  * @property {(target: RapierEntityLike | RapierBodyRecord, options?: RapierCharacterControllerOptions) => RapierCharacterController} createCharacterController Creates a kinematic character controller.
  * @property {(a: RapierEntityLike | RapierBodyRecord, b: RapierEntityLike | RapierBodyRecord) => boolean} overlaps True when the two bodies intersect or touch.
  * @property {(origin: RapierVectorInput, direction: RapierVectorInput, maxDistance?: number, options?: RapierRayOptions) => RapierRayHit | null} castRay Casts a ray (maxDistance in world units, default 1000).
+ * @property {(options?: RapierShapeCastOptions) => RapierShapeCastHit | null} castShape Sweeps a shape (ball/cuboid/capsule) and returns the first hit.
+ * @property {(options?: RapierOverlapOptions) => RapierOverlapHit[]} queryOverlap Queries all bodies overlapping a shape volume.
+ * @property {(a: RapierEntityLike | RapierBodyRecord, b: RapierEntityLike | RapierBodyRecord, options?: RapierJointOptions) => RapierJointRecord} addJoint Connects two rigid bodies with an impulse joint.
+ * @property {(jointOrHandle: RapierJointRecord | number) => boolean} removeJoint Removes a joint created by `addJoint`.
+ * @property {(jointOrHandle: RapierJointRecord | number, motor?: RapierJointMotorOptions) => boolean} setJointMotor Configures motor force/position/velocity on a revolute or prismatic joint.
+ * @property {(layerA: number, layerB: number, enabled: boolean) => void} setLayerCollision Enables or disables mutual collisions between layers `0..15`.
+ * @property {(layerA: number, layerB: number) => boolean} getLayerCollision Reads layer-pair collision state.
+ * @property {(layer: number) => number} getLayerMask Reads 16-bit collision filter bitmask for layer `0..15`.
+ * @property {(target: RapierEntityLike | RapierBodyRecord, layerIndex: number) => boolean} setBodyLayer Moves a body to logical layer `0..15` using the layer matrix.
+ * @property {(links: RapierRagdollLink[], options?: { active?: boolean }) => RapierRagdollInstance} createRagdoll Builds an articulated ragdoll chain bound to entity/bone transforms.
  * @property {(dt?: number) => number} step Advances exactly one fixed step (dt seconds must equal `fixedDt`); returns the new tick.
  * @property {() => RapierSnapshot} takeSnapshot Captures a restorable snapshot.
  * @property {(snapshot: RapierSnapshot) => RapierPhysicsWorld} restoreSnapshot Restores a snapshot; returns the world.
@@ -255,6 +268,113 @@ import { Entity } from '../core/entity.js';
 /**
  * Constructor of a {@link RapierPhysicsWorld}.
  * @typedef {new (options?: RapierPhysicsWorldOptions) => RapierPhysicsWorld} RapierPhysicsWorldConstructor
+ */
+
+/**
+ * @typedef {object} RapierJointMotorOptions
+ * @property {number} [targetPosition] Target angle (revolute) or offset (prismatic).
+ * @property {number} [targetVelocity] Target angular or linear speed.
+ * @property {number} [stiffness=0] Spring stiffness.
+ * @property {number} [damping=1] Motor damping.
+ * @property {number} [maxForce] Maximum motor impulse/torque.
+ */
+
+/**
+ * @typedef {object} RapierJointOptions
+ * @property {'fixed'|'revolute'|'prismatic'|'spherical'|'spring'} [type='revolute'] Joint constraint type.
+ * @property {RapierVectorInput} [anchor1] Local anchor on body A.
+ * @property {RapierVectorInput} [anchor2] Local anchor on body B.
+ * @property {RapierRotationInput} [frame1=0] Local frame rotation on body A (fixed joint).
+ * @property {RapierRotationInput} [frame2=0] Local frame rotation on body B (fixed joint).
+ * @property {RapierVectorInput} [axis] Hinge/slide axis (default Z in 3D, X in 2D).
+ * @property {readonly [number, number]} [limits] Angular/linear min/max limits where supported.
+ * @property {number} [restLength=1] Spring rest length.
+ * @property {number} [stiffness=100] Spring stiffness.
+ * @property {number} [damping=5] Spring damping.
+ * @property {boolean} [wakeUp=true] Wake connected dynamic bodies.
+ * @property {RapierJointMotorOptions} [motor] Initial joint motor configuration.
+ */
+
+/**
+ * @typedef {object} RapierJointRecord
+ * @property {number} id
+ * @property {number} handle
+ * @property {string} type
+ * @property {RapierBodyRecord} bodyA
+ * @property {RapierBodyRecord} bodyB
+ * @property {RapierNativeObject} joint
+ * @property {(min: number, max: number) => boolean} setLimits
+ * @property {(motor?: RapierJointMotorOptions) => boolean} setMotor
+ * @property {() => boolean} dispose
+ */
+
+/**
+ * @typedef {object} RapierShapeCastOptions
+ * @property {'ball'|'cuboid'|'capsule'} [shape='ball'] Query volume shape.
+ * @property {number} [radius=0.5]
+ * @property {number} [halfHeight=0.5]
+ * @property {number} [width=1]
+ * @property {number} [height=1]
+ * @property {number} [depth=1]
+ * @property {RapierVectorInput} [origin]
+ * @property {RapierRotationInput} [rotation=0]
+ * @property {RapierVectorInput} [direction]
+ * @property {number} [maxToi=100]
+ * @property {number} [targetDistance=0]
+ * @property {boolean} [stopAtPenetration=true]
+ * @property {number} [filterFlags]
+ * @property {number} [filterGroups]
+ * @property {(collider: RapierNativeObject) => boolean} [filterPredicate]
+ */
+
+/**
+ * @typedef {object} RapierShapeCastHit
+ * @property {number} timeOfImpact
+ * @property {RapierVec2 | RapierVec3} point
+ * @property {RapierVec2 | RapierVec3} normal
+ * @property {RapierNativeObject} collider
+ * @property {RapierBodyRecord | null} body
+ */
+
+/**
+ * @typedef {object} RapierOverlapOptions
+ * @property {'ball'|'cuboid'|'capsule'} [shape='ball']
+ * @property {number} [radius=0.5]
+ * @property {number} [halfHeight=0.5]
+ * @property {number} [width=1]
+ * @property {number} [height=1]
+ * @property {number} [depth=1]
+ * @property {RapierVectorInput} [origin]
+ * @property {RapierRotationInput} [rotation=0]
+ * @property {number} [filterFlags]
+ * @property {number} [filterGroups]
+ * @property {(collider: RapierNativeObject) => boolean} [filterPredicate]
+ */
+
+/**
+ * @typedef {object} RapierOverlapHit
+ * @property {RapierNativeObject} collider
+ * @property {number} colliderHandle
+ * @property {RapierBodyRecord | null} body
+ * @property {RapierEntityLike | null} entity
+ */
+
+/**
+ * @typedef {object} RapierRagdollLink
+ * @property {RapierEntityLike} entity
+ * @property {RapierBodyOptions} [bodyOptions]
+ * @property {number} [parentIndex=-1]
+ * @property {RapierJointOptions} [joint]
+ * @property {string} [boneName]
+ */
+
+/**
+ * @typedef {object} RapierRagdollInstance
+ * @property {RapierBodyRecord[]} bodies
+ * @property {RapierJointRecord[]} joints
+ * @property {(boneResolver: Map<string, object> | Record<string, object> | ((boneName: string, index: number) => object | null)) => number} syncToBones
+ * @property {(enabled: boolean) => void} setActive
+ * @property {() => boolean} dispose
  */
 
 const ENGINE_VERSION = '0.21.0';
@@ -382,7 +502,39 @@ function createRigidBodyDescriptor(RAPIER, type, position, rotation, dimension, 
   return desc;
 }
 
-function createColliderDescriptor(RAPIER, dimension, entity, options) {
+function resolveCombineRule(RAPIER, rule) {
+  if (rule == null || !RAPIER.CoefficientCombineRule) return null;
+  if (typeof rule === 'number') return rule;
+  const key = String(rule).toLowerCase();
+  if (key === 'average') return RAPIER.CoefficientCombineRule.Average;
+  if (key === 'min') return RAPIER.CoefficientCombineRule.Min;
+  if (key === 'multiply') return RAPIER.CoefficientCombineRule.Multiply;
+  if (key === 'max') return RAPIER.CoefficientCombineRule.Max;
+  throw new TypeError(`Unsupported Rapier combine rule: ${rule}`);
+}
+
+function createQueryShape(RAPIER, dimension, options = {}) {
+  const shape = options.shape ?? 'ball';
+  if (shape === 'ball') {
+    const radius = Math.max(0.001, finite(options.radius, 'radius', 0.5));
+    return new RAPIER.Ball(radius);
+  }
+  if (shape === 'capsule') {
+    const radius = Math.max(0.001, finite(options.radius, 'radius', 0.35));
+    const halfHeight = Math.max(0, finite(options.halfHeight, 'halfHeight', 0.5));
+    return new RAPIER.Capsule(halfHeight, radius);
+  }
+  if (shape === 'cuboid') {
+    const hw = Math.max(0.001, finite(options.width, 'width', 1) / 2);
+    const hh = Math.max(0.001, finite(options.height, 'height', 1) / 2);
+    if (dimension === 2) return new RAPIER.Cuboid(hw, hh);
+    const hd = Math.max(0.001, finite(options.depth, 'depth', 1) / 2);
+    return new RAPIER.Cuboid(hw, hh, hd);
+  }
+  throw new Error(`Unsupported Rapier${dimension}D query shape: ${shape}`);
+}
+
+function createColliderDescriptor(RAPIER, dimension, entity, options, layerMasks = null) {
   const shape = options.shape ?? 'cuboid';
   const width = Math.max(0.001, finite(options.width, 'width', entity.width || 1));
   const height = Math.max(0.001, finite(options.height, 'height', entity.height || 1));
@@ -410,10 +562,22 @@ function createColliderDescriptor(RAPIER, dimension, entity, options) {
   descriptor.setSensor(Boolean(options.sensor));
   descriptor.setFriction(Math.max(0, finite(options.friction, 'friction', 0.5)));
   descriptor.setRestitution(Math.max(0, Math.min(1, finite(options.restitution, 'restitution', 0))));
+  const frictionRule = resolveCombineRule(RAPIER, options.frictionCombine);
+  if (frictionRule !== null) descriptor.setFrictionCombineRule?.(frictionRule);
+  const restitutionRule = resolveCombineRule(RAPIER, options.restitutionCombine);
+  if (restitutionRule !== null) descriptor.setRestitutionCombineRule?.(restitutionRule);
   descriptor.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
   if (options.density !== undefined) descriptor.setDensity(Math.max(0, finite(options.density, 'density', 1)));
   if (options.collisionGroups !== undefined) descriptor.setCollisionGroups(options.collisionGroups >>> 0);
-  else if (options.layer !== undefined || options.mask !== undefined) {
+  else if (options.layerIndex !== undefined) {
+    const idx = Math.floor(options.layerIndex);
+    if (!Number.isInteger(idx) || idx < 0 || idx > 15) {
+      throw new RangeError('Rapier layerIndex must be an integer in 0..15');
+    }
+    const membership = (1 << idx) & 0xffff;
+    const filter = (options.mask ?? (layerMasks ? layerMasks[idx] : 0xffff)) & 0xffff;
+    descriptor.setCollisionGroups(((membership << 16) | filter) >>> 0);
+  } else if (options.layer !== undefined || options.mask !== undefined) {
     const membership = (options.layer ?? 1) & 0xffff;
     const filter = (options.mask ?? 0xffff) & 0xffff;
     descriptor.setCollisionGroups(((membership << 16) | filter) >>> 0);
@@ -455,7 +619,10 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       this._byEntity = new Map();
       this._byColliderHandle = new Map();
       this._characterControllers = new Set();
+      this._joints = new Map();
+      this._layerMasks = new Uint16Array(16).fill(0xffff);
       this._nextId = 1;
+      this._nextJointId = 1;
       this._tick = 0;
       this._checksums = [];
       this._disposed = false;
@@ -519,10 +686,11 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       const rigidBody = this.world.createRigidBody(descriptor);
       if (options.gravityScale !== undefined) rigidBody.setGravityScale(finite(options.gravityScale, 'gravityScale', 1), true);
       if (options.ccd) rigidBody.enableCcd(true);
-      const collider = this.world.createCollider(createColliderDescriptor(RAPIER, dimension, entity, options), rigidBody);
+      const collider = this.world.createCollider(createColliderDescriptor(RAPIER, dimension, entity, options, this._layerMasks), rigidBody);
       const record = this._attachBodyMethods({
         id: this._nextId++, entity, type, rigidBody, collider,
         bodyHandle: rigidBody.handle, colliderHandle: collider.handle,
+        layerIndex: options.layerIndex !== undefined ? Math.floor(options.layerIndex) : null,
         syncRotation: options.syncRotation !== false,
         lockRotations: Boolean(options.lockRotations),
         enabledRotations: dimension === 3 && Array.isArray(options.enabledRotations)
@@ -590,6 +758,11 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       if (!record) return false;
       for (const ctrl of [...this._characterControllers]) {
         if (ctrl.body === record) ctrl.dispose();
+      }
+      for (const jointRec of [...this._joints.values()]) {
+        if (jointRec.bodyA === record || jointRec.bodyB === record) {
+          this.removeJoint(jointRec);
+        }
       }
       this.world.removeRigidBody(record.rigidBody);
       this._byEntity.delete(record.entity);
@@ -803,6 +976,297 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       };
     }
 
+    setLayerCollision(layerA, layerB, enabled) {
+      this._assertAlive();
+      if (!Number.isInteger(layerA) || layerA < 0 || layerA > 15 ||
+          !Number.isInteger(layerB) || layerB < 0 || layerB > 15) {
+        throw new RangeError('Collision layers must be integers in 0..15');
+      }
+      if (enabled) {
+        this._layerMasks[layerA] |= (1 << layerB);
+        this._layerMasks[layerB] |= (1 << layerA);
+      } else {
+        this._layerMasks[layerA] &= ~(1 << layerB);
+        this._layerMasks[layerB] &= ~(1 << layerA);
+      }
+      for (const rec of this.bodies) {
+        if (rec.layerIndex === layerA || rec.layerIndex === layerB) {
+          const membership = (1 << rec.layerIndex) & 0xffff;
+          const filter = this._layerMasks[rec.layerIndex] & 0xffff;
+          rec.collider.setCollisionGroups(((membership << 16) | filter) >>> 0);
+        }
+      }
+    }
+
+    getLayerCollision(layerA, layerB) {
+      if (!Number.isInteger(layerA) || layerA < 0 || layerA > 15 ||
+          !Number.isInteger(layerB) || layerB < 0 || layerB > 15) {
+        throw new RangeError('Collision layers must be integers in 0..15');
+      }
+      return Boolean((this._layerMasks[layerA] >> layerB) & 1);
+    }
+
+    getLayerMask(layer) {
+      if (!Number.isInteger(layer) || layer < 0 || layer > 15) {
+        throw new RangeError('Collision layer must be an integer in 0..15');
+      }
+      return this._layerMasks[layer] & 0xffff;
+    }
+
+    setBodyLayer(target, layerIndex) {
+      this._assertAlive();
+      if (!Number.isInteger(layerIndex) || layerIndex < 0 || layerIndex > 15) {
+        throw new RangeError('Collision layer must be an integer in 0..15');
+      }
+      const record = this.get(target);
+      if (!record) return false;
+      record.layerIndex = layerIndex;
+      const membership = (1 << layerIndex) & 0xffff;
+      const filter = this._layerMasks[layerIndex] & 0xffff;
+      record.collider.setCollisionGroups(((membership << 16) | filter) >>> 0);
+      return true;
+    }
+
+    addJoint(targetA, targetB, options = {}) {
+      this._assertAlive();
+      const bodyA = this.get(targetA);
+      const bodyB = this.get(targetB);
+      if (!bodyA || !bodyB) throw new Error('Both bodies must exist in this Rapier world');
+      const type = options.type ?? 'revolute';
+      const anchor1 = vector(options.anchor1, dimension);
+      const anchor2 = vector(options.anchor2, dimension);
+      let jointData;
+      const defaultRot = dimension === 3 ? { x: 0, y: 0, z: 0, w: 1 } : 0;
+      if (type === 'fixed') {
+        const f1 = normalizeRotationInput(options.frame1 ?? defaultRot, dimension);
+        const f2 = normalizeRotationInput(options.frame2 ?? defaultRot, dimension);
+        jointData = RAPIER.JointData.fixed(anchor1, f1, anchor2, f2);
+      } else if (type === 'revolute') {
+        if (dimension === 2) {
+          jointData = RAPIER.JointData.revolute(anchor1, anchor2);
+        } else {
+          const rawAxis = vector(options.axis ?? { x: 0, y: 0, z: 1 }, 3);
+          const len = Math.hypot(rawAxis.x, rawAxis.y, rawAxis.z) || 1;
+          jointData = RAPIER.JointData.revolute(anchor1, anchor2, {
+            x: rawAxis.x / len, y: rawAxis.y / len, z: rawAxis.z / len,
+          });
+        }
+      } else if (type === 'prismatic') {
+        const rawAxis = vector(options.axis ?? (dimension === 2 ? { x: 1, y: 0 } : { x: 1, y: 0, z: 0 }), dimension);
+        const len = Math.hypot(rawAxis.x, rawAxis.y, dimension === 3 ? rawAxis.z : 0) || 1;
+        const axis = dimension === 2
+          ? { x: rawAxis.x / len, y: rawAxis.y / len }
+          : { x: rawAxis.x / len, y: rawAxis.y / len, z: rawAxis.z / len };
+        jointData = RAPIER.JointData.prismatic(anchor1, anchor2, axis);
+      } else if (type === 'spherical') {
+        jointData = dimension === 3
+          ? RAPIER.JointData.spherical(anchor1, anchor2)
+          : RAPIER.JointData.revolute(anchor1, anchor2);
+      } else if (type === 'spring') {
+        const restLength = Math.max(0, finite(options.restLength, 'restLength', 1));
+        const stiffness = Math.max(0, finite(options.stiffness, 'stiffness', 100));
+        const damping = Math.max(0, finite(options.damping, 'damping', 5));
+        jointData = RAPIER.JointData.spring(restLength, stiffness, damping, anchor1, anchor2);
+      } else {
+        throw new Error(`Unsupported Rapier joint type: ${type}`);
+      }
+
+      const joint = this.world.createImpulseJoint(jointData, bodyA.rigidBody, bodyB.rigidBody, options.wakeUp !== false);
+      if (Array.isArray(options.limits) && options.limits.length === 2 && typeof joint.setLimits === 'function') {
+        joint.setLimits(finite(options.limits[0], 'limits[0]', 0), finite(options.limits[1], 'limits[1]', 0));
+      }
+      const record = {
+        id: this._nextJointId++,
+        handle: joint.handle,
+        type,
+        bodyA,
+        bodyB,
+        joint,
+        setLimits: (min, max) => {
+          if (typeof joint.setLimits !== 'function' || this._disposed || !this._joints.has(joint.handle)) return false;
+          joint.setLimits(finite(min, 'min', 0), finite(max, 'max', 0));
+          return true;
+        },
+        setMotor: motor => this.setJointMotor(joint.handle, motor),
+        dispose: () => this.removeJoint(joint.handle),
+      };
+      this._joints.set(joint.handle, record);
+      if (options.motor) this.setJointMotor(record, options.motor);
+      return record;
+    }
+
+    removeJoint(jointOrHandle) {
+      this._assertAlive();
+      const handle = typeof jointOrHandle === 'number' ? jointOrHandle : jointOrHandle?.handle;
+      const record = this._joints.get(handle);
+      if (!record) return false;
+      this._joints.delete(handle);
+      this.world.removeImpulseJoint(record.joint, true);
+      return true;
+    }
+
+    setJointMotor(jointOrHandle, motor = {}) {
+      this._assertAlive();
+      const handle = typeof jointOrHandle === 'number' ? jointOrHandle : jointOrHandle?.handle;
+      const record = this._joints.get(handle);
+      if (!record) return false;
+      const { joint } = record;
+      if (motor.maxForce !== undefined && typeof joint.setMotorMaxForce === 'function') {
+        joint.setMotorMaxForce(Math.max(0, finite(motor.maxForce, 'maxForce', 0)));
+      }
+      const stiffness = finite(motor.stiffness, 'stiffness', 0);
+      const damping = finite(motor.damping, 'damping', 1);
+      if (motor.targetPosition !== undefined && typeof joint.configureMotorPosition === 'function') {
+        joint.configureMotorPosition(finite(motor.targetPosition, 'targetPosition', 0), stiffness, damping);
+        return true;
+      }
+      if (motor.targetVelocity !== undefined && typeof joint.configureMotorVelocity === 'function') {
+        joint.configureMotorVelocity(finite(motor.targetVelocity, 'targetVelocity', 0), damping);
+        return true;
+      }
+      if (motor.targetPosition !== undefined && motor.targetVelocity !== undefined && typeof joint.configureMotor === 'function') {
+        joint.configureMotor(motor.targetPosition, motor.targetVelocity, stiffness, damping);
+        return true;
+      }
+      return false;
+    }
+
+    castShape(options = {}) {
+      this._assertAlive();
+      const maxToi = finite(options.maxToi, 'maxToi', 100);
+      if (maxToi < 0) throw new RangeError('maxToi must be >= 0');
+      const pos = vector(options.origin, dimension);
+      const rot = normalizeRotationInput(options.rotation ?? (dimension === 3 ? { x: 0, y: 0, z: 0, w: 1 } : 0), dimension);
+      const rawDir = vector(options.direction ?? (dimension === 2 ? { x: 1, y: 0 } : { x: 0, y: 0, z: 1 }), dimension);
+      const lenSq = rawDir.x ** 2 + rawDir.y ** 2 + (dimension === 3 ? rawDir.z ** 2 : 0);
+      if (lenSq <= 1e-16) return null;
+      const invLen = 1 / Math.sqrt(lenSq);
+      const dir = dimension === 2
+        ? { x: rawDir.x * invLen, y: rawDir.y * invLen }
+        : { x: rawDir.x * invLen, y: rawDir.y * invLen, z: rawDir.z * invLen };
+      const queryShape = createQueryShape(RAPIER, dimension, options);
+      const hit = this.world.castShape(
+        pos, rot, dir, queryShape,
+        finite(options.targetDistance, 'targetDistance', 0),
+        maxToi,
+        options.stopAtPenetration !== false,
+        options.filterFlags,
+        options.filterGroups,
+        undefined,
+        undefined,
+        options.filterPredicate,
+      );
+      if (!hit) return null;
+      const toi = hit.timeOfImpact ?? hit.time_of_impact ?? hit.toi ?? 0;
+      const point = hit.witness1
+        ? { x: hit.witness1.x, y: hit.witness1.y, ...(dimension === 3 ? { z: hit.witness1.z } : {}) }
+        : (dimension === 2
+          ? { x: pos.x + dir.x * toi, y: pos.y + dir.y * toi }
+          : { x: pos.x + dir.x * toi, y: pos.y + dir.y * toi, z: pos.z + dir.z * toi });
+      const normal = hit.normal1
+        ? { x: hit.normal1.x, y: hit.normal1.y, ...(dimension === 3 ? { z: hit.normal1.z } : {}) }
+        : null;
+      return {
+        timeOfImpact: toi,
+        point,
+        normal,
+        collider: hit.collider,
+        body: this._byColliderHandle.get(hit.collider.handle) ?? null,
+      };
+    }
+
+    queryOverlap(options = {}) {
+      this._assertAlive();
+      const pos = vector(options.origin, dimension);
+      const rot = normalizeRotationInput(options.rotation ?? (dimension === 3 ? { x: 0, y: 0, z: 0, w: 1 } : 0), dimension);
+      const queryShape = createQueryShape(RAPIER, dimension, options);
+      const hits = [];
+      this.world.intersectionsWithShape(
+        pos, rot, queryShape,
+        collider => {
+          const body = this._byColliderHandle.get(collider.handle) ?? null;
+          hits.push({
+            collider,
+            colliderHandle: collider.handle,
+            body,
+            entity: body?.entity ?? null,
+          });
+          return true;
+        },
+        options.filterFlags,
+        options.filterGroups,
+        undefined,
+        undefined,
+        options.filterPredicate,
+      );
+      return hits;
+    }
+
+    createRagdoll(links, { active = true } = {}) {
+      this._assertAlive();
+      if (!Array.isArray(links) || links.length === 0) {
+        throw new TypeError('createRagdoll requires a non-empty array of link definitions');
+      }
+      const createdBodies = [];
+      const createdJoints = [];
+      let isActive = Boolean(active);
+      for (let i = 0; i < links.length; i++) {
+        const link = links[i];
+        const body = this.get(link.entity) ?? this.add(link.entity, {
+          type: isActive ? 'dynamic' : 'kinematicPosition',
+          ...(link.bodyOptions || {}),
+        });
+        createdBodies.push({ body, boneName: link.boneName ?? link.entity.name ?? null, link });
+      }
+      for (let i = 0; i < links.length; i++) {
+        const link = links[i];
+        const pIdx = link.parentIndex ?? -1;
+        if (pIdx >= 0 && pIdx < createdBodies.length && pIdx !== i) {
+          const jSpec = link.joint ?? { type: dimension === 3 ? 'spherical' : 'revolute' };
+          createdJoints.push(this.addJoint(createdBodies[pIdx].body, createdBodies[i].body, jSpec));
+        }
+      }
+      return {
+        bodies: createdBodies.map(entry => entry.body),
+        joints: createdJoints,
+        syncToBones: boneResolver => {
+          let updated = 0;
+          for (let i = 0; i < createdBodies.length; i++) {
+            const { body, boneName } = createdBodies[i];
+            const bone = typeof boneResolver === 'function'
+              ? boneResolver(boneName, i)
+              : (boneResolver instanceof Map ? boneResolver.get(boneName) : boneResolver?.[boneName]);
+            if (!bone) continue;
+            const pos = body.rigidBody.translation();
+            const rot = body.rigidBody.rotation();
+            if (bone.position?.set) bone.position.set(pos.x, pos.y, dimension === 3 ? pos.z : 0);
+            if (dimension === 3 && bone.quaternion?.set) {
+              bone.quaternion.set(rot.x, rot.y, rot.z, rot.w);
+            } else if (dimension === 2 && bone.rotation) {
+              bone.rotation.z = rot;
+            }
+            updated++;
+          }
+          return updated;
+        },
+        setActive: enabled => {
+          isActive = Boolean(enabled);
+          const dynamicType = RAPIER.RigidBodyType?.Dynamic;
+          const kinematicType = RAPIER.RigidBodyType?.KinematicPositionBased;
+          if (dynamicType === undefined || kinematicType === undefined) return;
+          for (const { body } of createdBodies) {
+            body.rigidBody.setBodyType?.(isActive ? dynamicType : kinematicType, true);
+          }
+        },
+        dispose: () => {
+          if (this._disposed) return false;
+          for (const j of createdJoints) this.removeJoint(j);
+          for (const { body } of createdBodies) this.remove(body);
+          return true;
+        },
+      };
+    }
+
     step(dt = this.fixedDt) {
       this._assertAlive();
       if (!Number.isFinite(dt) || Math.abs(dt - this.fixedDt) > 1e-9) {
@@ -888,6 +1352,7 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       this.bodies = records;
       this._byEntity = oldByEntity;
       this._byColliderHandle = new Map(records.map(record => [record.colliderHandle, record]));
+      this._joints.clear();
       this._nextId = snapshot.nextId;
       this._tick = snapshot.tick;
       this._checksums.length = 0;
@@ -914,6 +1379,7 @@ export function createRapierPhysicsWorldClass(RAPIER, dimension) {
       if (this._disposed) return false;
       for (const ctrl of [...this._characterControllers]) ctrl._detachNative(this.world);
       this._characterControllers.clear();
+      this._joints.clear();
       this._disposed = true;
       this.eventQueue.free();
       this.world.free();

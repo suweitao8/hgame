@@ -16,3 +16,11 @@ export {
   buildSimplifiedLodGeometry,
   createBoneVatCrowd3D,
 } from './model3d/bone-vat.js';
+export {
+  createAvatarMask,
+  createBlendTree1D,
+  createBlendTree2D,
+  createAnimator3D,
+  solveTwoBoneIK,
+  solveLookAtIK,
+} from '../animation/animator3d.js';

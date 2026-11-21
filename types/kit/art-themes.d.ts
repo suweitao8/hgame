@@ -15,7 +15,7 @@ export function getArtTheme(themeId?: string | undefined): ArtThemePreset;
  * @param {'2d' | '3d' | 'ui'} [perspective='2d']
  * @param {string} [quality='auto']
  */
-export function resolvePresentationPreset(themeId?: string | undefined, perspective?: "3d" | "2d" | "ui" | undefined, quality?: string | undefined): {
+export function resolvePresentationPreset(themeId?: string | undefined, perspective?: "2d" | "3d" | "ui" | undefined, quality?: string | undefined): {
     quality: string;
     theme: string;
     sky: {
