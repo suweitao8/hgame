@@ -480,9 +480,9 @@ export function disposeObjectResources(roots, released = new WeakSet(), retained
  * @param {AbortSignal} [signal] Shared request cancellation.
  * @returns {Promise<unknown>} Loader result.
  */
-export function loadWithLoader(loader, resolvedUrl, signal) {
+export function loadWithLoader(loader, resolvedUrl, signal, options = undefined) {
   if (signal && typeof loader.loadWithSignal === 'function') {
-    return Promise.resolve(loader.loadWithSignal(resolvedUrl, signal));
+    return Promise.resolve(loader.loadWithSignal(resolvedUrl, signal, options));
   }
   if (typeof loader.loadAsync === 'function') {
     return Promise.resolve(loader.loadAsync(resolvedUrl));

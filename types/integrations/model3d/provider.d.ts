@@ -427,11 +427,19 @@ export type Model3DProvider = {
         resolvedUrl?: string;
     }) => Promise<Model3DLease>;
     /**
-     * Estimated owned geometry and texture bytes and an idle eviction hook.
+     * Estimated owned geometry and texture bytes, idle eviction hook, and cancellation/residency stats.
      */
     residency: {
         readBytes: () => number;
         trimIdle: (excessBytes: number) => void;
+        getStats: () => {
+            residentBytes: number;
+            idleModels: number;
+            activeLoads: number;
+            abortedRequests: number;
+            abortedDependencies: number;
+            disposedLateResources: number;
+        };
     };
     /**
      * Loads and prepares animation clips from a file.

@@ -25,6 +25,14 @@
  */
 
 /**
+ * @typedef {object} SceneCancellationRecord
+ * @property {string} scene
+ * @property {string | null} phase
+ * @property {string} reason
+ * @property {number} abortedAt
+ */
+
+/**
  * @typedef {object} DiagnosticsSnapshot
  * @property {string} gameId
  * @property {number} fps Frames per second over the sample window.
@@ -35,12 +43,15 @@
  * @property {number} frameCount Frames in the window.
  * @property {number} errorCount Total reported errors.
  * @property {ErrorReport | null} lastError
+ * @property {ErrorReport | null} lastPhaseError
+ * @property {readonly SceneCancellationRecord[]} sceneCancellations
  */
 
 /**
  * @typedef {object} Diagnostics
  * @property {(timestampMs: number, startWindow?: boolean) => void} recordFrame Record a `requestAnimationFrame` timestamp (milliseconds). Pass true to start a fresh timing window after an interruption.
  * @property {(error: unknown, context?: Record<string, unknown>) => ErrorReport} reportError
+ * @property {(record: { scene: string, phase?: string | null, reason?: unknown, abortedAt?: number }) => SceneCancellationRecord | null} recordSceneCancellation
  * @property {(event: DiagnosticEvent) => boolean} recordEvent Append a gameplay event. Returns false when disabled or disposed.
  * @property {() => {dropped: number, events: Readonly<DiagnosticEvent>[]}} readEvents Read the retained events in their emission order.
  * @property {() => Readonly<DiagnosticsSnapshot>} snapshot
@@ -67,6 +78,10 @@ export function createDiagnostics({
   let errors = 0;
   /** @type {ErrorReport | null} */
   let lastError = null;
+  /** @type {ErrorReport | null} */
+  let lastPhaseError = null;
+  /** @type {SceneCancellationRecord[]} */
+  const sceneCancellations = [];
   let disposed = false;
   /** @type {Readonly<DiagnosticEvent>[]} */
   const events = [];
@@ -104,17 +119,34 @@ export function createDiagnostics({
   }
 
   function reportError(error, context = {}) {
+    const normalizedContext = context && typeof context === 'object' ? { ...context } : {};
     const detail = {
       gameId,
       message: String(error?.message || error || 'Unknown error'),
       stack: typeof error?.stack === 'string' ? error.stack.slice(0, 4000) : '',
-      context,
+      context: normalizedContext,
       timestamp: Date.now(),
     };
     errors++;
     lastError = detail;
+    if (typeof normalizedContext.phase === 'string' && normalizedContext.phase) {
+      lastPhaseError = detail;
+    }
     onReport(detail);
     return detail;
+  }
+
+  function recordSceneCancellation({ scene, phase = null, reason = null, abortedAt = Date.now() } = {}) {
+    if (disposed || typeof scene !== 'string' || !scene) return null;
+    const record = Object.freeze({
+      scene,
+      phase: typeof phase === 'string' && phase ? phase : null,
+      reason: String(reason?.message ?? reason ?? 'Scene deactivated'),
+      abortedAt: Number.isFinite(abortedAt) ? abortedAt : Date.now(),
+    });
+    sceneCancellations.push(record);
+    if (sceneCancellations.length > 32) sceneCancellations.shift();
+    return record;
   }
 
   const onError = event => reportError(event.error || event.message, { source: event.filename, line: event.lineno, column: event.colno });
@@ -141,7 +173,8 @@ export function createDiagnostics({
     const max = deltas.length ? deltas[deltas.length - 1] : 0;
     const longFrames = deltas.filter(d => d > 50).length;
     return Object.freeze({ gameId, fps, frameTimeMs, frameTimeP95Ms: p95, frameTimeMaxMs: max, longFrames,
-      frameCount: frames.length, errorCount: errors, lastError });
+      frameCount: frames.length, errorCount: errors, lastError, lastPhaseError,
+      sceneCancellations: Object.freeze(sceneCancellations.slice()) });
   }
 
   function dispose() {
@@ -156,5 +189,5 @@ export function createDiagnostics({
     return true;
   }
 
-  return Object.freeze({ recordFrame, reportError, recordEvent, readEvents, snapshot, dispose });
+  return Object.freeze({ recordFrame, reportError, recordSceneCancellation, recordEvent, readEvents, snapshot, dispose });
 }

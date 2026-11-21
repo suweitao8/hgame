@@ -9,6 +9,7 @@ import { createAssetLoader } from '../assets/runtime/platform/assets.js';
 import { PrefabRegistry } from '../assets/runtime/core/prefab.js';
 import { createLevelFlow } from '../assets/runtime/world/level-flow.js';
 import { createProceduralModelSlots } from '../assets/runtime/integrations/procedural-models.js';
+import { createStarterModelLoader } from '../assets/profiles/3d/model-loader.js';
 
 function monitor(resource) {
   let calls = 0;
@@ -429,4 +430,92 @@ test('a bone texture shared across owned skeletons and a material is disposed on
   await provider.dispose();
   assert.equal(count(), 1);
   assert.deepEqual(skeletons.map(skeleton => skeleton.boneTexture), [null, null]);
+});
+
+test('glTF dependency cancellation aborts external fetches, disposes late resources, and unifies catalog residency stats', async () => {
+  const fetchCalls = [];
+  let depDeferred;
+  const lateGeometry = new THREE.BoxGeometry();
+  const lateTexture = new THREE.DataTexture(new Uint8Array(64), 4, 4, THREE.RGBAFormat);
+  const lateMaterial = new THREE.MeshBasicMaterial({ map: lateTexture });
+  const lateGeoDisposals = monitor(lateGeometry);
+  const lateTexDisposals = monitor(lateTexture);
+  const lateMatDisposals = monitor(lateMaterial);
+
+  class FakeGLTFLoader {
+    setMeshoptDecoder() { return this; }
+    setKTX2Loader() { return this; }
+    async parseAsync(_data, baseUrl) {
+      // Simulate glTF fetching an external .bin dependency via globalThis.fetch
+      await globalThis.fetch(baseUrl + 'scene.bin');
+      return { scene: new THREE.Mesh(lateGeometry, lateMaterial) };
+    }
+  }
+
+  const starterLoader = createStarterModelLoader(null, {
+    GLTFLoaderCtor: FakeGLTFLoader,
+    fetchImpl(url, init) {
+      fetchCalls.push({ url, signal: init?.signal });
+      if (String(url).endsWith('hero.gltf')) {
+        return Promise.resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(16) });
+      }
+      depDeferred = Promise.withResolvers();
+      return depDeferred.promise;
+    },
+  });
+
+  const provider = createModel3DProvider({ THREE, loader: starterLoader });
+  const abortController = new AbortController();
+  const pending = provider.acquire('hero.gltf', { signal: abortController.signal });
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+
+  // Wait until external dependency fetch starts
+  for (let i = 0; i < 20 && fetchCalls.length < 2; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(fetchCalls.length, 2);
+  assert.equal(fetchCalls[1].signal.aborted, false);
+
+  abortController.abort(new DOMException('Scene left', 'AbortError'));
+  await rejected;
+  assert.equal(fetchCalls[1].signal.aborted, true, 'external dependency fetch receives abort signal');
+
+  // Even if the dependency promise resolves late instead of rejecting, late GPU resources are disposed
+  depDeferred.resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(lateGeoDisposals(), 1);
+  assert.equal(lateTexDisposals(), 1);
+  assert.equal(lateMatDisposals(), 1);
+
+  const modelStats = provider.residency.getStats();
+  assert.ok(modelStats.abortedRequests >= 1);
+  assert.ok(modelStats.abortedDependencies >= 1);
+  assert.ok(modelStats.disposedLateResources >= 3);
+
+  // Unified catalog residency stats across models, images, and audio
+  const loader = {
+    resolve: p => 'http://127.0.0.1/assets/' + p,
+    image: async () => ({ width: 8, height: 8, close() {} }),
+    arrayBuffer: async () => new ArrayBuffer(128),
+  };
+  const catalog = createAssetCatalog({
+    schemaVersion: 1,
+    assets: {
+      sprite: { kind: 'image', path: 'hero.png' },
+      sfx: { kind: 'audio', path: 'hit.ogg' },
+    },
+  }, { loader, modelProvider: provider });
+  const scope = catalog.openScope();
+  await Promise.all([scope.load('sprite'), scope.load('sfx')]);
+  const unified = catalog.getResidencyStats();
+  assert.equal(unified.imageBytes, 8 * 8 * 4);
+  assert.equal(unified.audioBytes, 128);
+  assert.equal(unified.totalBytes, unified.modelBytes + 256 + 128);
+  assert.ok(unified.abortedDependencies >= 1);
+  assert.ok(unified.disposedLateResources >= 3);
+  scope.dispose();
+  catalog.dispose();
+  await starterLoader.dispose();
+  await provider.dispose();
 });

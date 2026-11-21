@@ -8,3 +8,4 @@ export { computeWhiteBalanceRGB, evaluateFilmicCurveChannel, evaluateFilmicCurve
 export { createPostProcessVolumeStack } from './post3d/volumes.js';
 export { createPostPipeline3D } from './post3d/pipeline.js';
 export { createFullscreenShaderPass } from './post3d/fullscreen-shader.js';
+export { compileRenderGraph, executeRenderGraph } from './post3d/render-graph.js';

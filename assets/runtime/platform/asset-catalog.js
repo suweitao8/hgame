@@ -5,7 +5,7 @@ import { releaseScopedImage, retainScopedImage } from '../internal/scoped-image.
 /** @typedef {{kind: AssetKind, path: string, files?: readonly string[]}} AssetCatalogEntry */
 /** @typedef {{schemaVersion: 1, assets: Record<string, AssetCatalogEntry>, groups?: Record<string, readonly string[]>}} AssetCatalogDefinition */
 /** @typedef {{kind: AssetKind, path: string, files: readonly string[]}} AssetDescriptor */
-/** @typedef {{key: string, refs: number, controller: AbortController, promise: Promise<unknown>, ready: boolean, value: unknown, image: boolean, releaseValue: (() => void) | null}} Acquisition */
+/** @typedef {{key: string, entryKind?: AssetKind, refs: number, controller: AbortController, promise: Promise<unknown>, ready: boolean, value: unknown, image: boolean, releaseValue: (() => void) | null}} Acquisition */
 /** @typedef {{acquire: (path: string, options: {signal: AbortSignal, resolvedUrl: string}) => Promise<{asset: unknown, release: () => void}>}} CatalogModelProvider */
 /**
  * @typedef {object} AssetScope
@@ -102,6 +102,8 @@ export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentL
   const queue = new Map();
   let running = 0;
   let disposed = false;
+  let abortedRequests = 0;
+  let disposedLateResources = 0;
 
   /** @param {string} id @returns {AssetDescriptor} */
   function get(id) {
@@ -179,6 +181,7 @@ export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentL
     if (record.refs !== 0) return;
     if (acquired.get(record.key) === record) acquired.delete(record.key);
     const reason = aborted();
+    if (!record.ready) abortedRequests++;
     record.controller.abort(reason);
     const queued = queue.get(record);
     if (queued) {
@@ -192,12 +195,16 @@ export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentL
   function makeAcquisition(key, entry) {
     const controller = new AbortController();
     /** @type {Acquisition} */
-    const record = { key, refs: 0, controller, promise: Promise.resolve(), ready: false, value: undefined, image: entry.kind === 'image', releaseValue: null };
+    const record = { key, entryKind: entry.kind, refs: 0, controller, promise: Promise.resolve(), ready: false, value: undefined, image: entry.kind === 'image', releaseValue: null };
     record.promise = schedule(record, entry).then(result => {
       record.ready = true;
       record.value = result;
       if (record.image) retainScopedImage(result);
-      if (record.refs === 0) { close(record); throw aborted(); }
+      if (record.refs === 0) {
+        disposedLateResources++;
+        close(record);
+        throw aborted();
+      }
       return result;
     }, error => {
       if (acquired.get(key) === record) acquired.delete(key);
@@ -207,8 +214,55 @@ export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentL
     return record;
   }
 
+  function estimateAssetValueBytes(kind, value) {
+    if (!value) return 0;
+    if (kind === 'image') {
+      const w = value.width ?? value.naturalWidth ?? value.videoWidth ?? 0;
+      const h = value.height ?? value.naturalHeight ?? value.videoHeight ?? 0;
+      return w > 0 && h > 0 ? w * h * 4 : 0;
+    }
+    if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return value.byteLength;
+    if (typeof value === 'string') return value.length * 2;
+    if (typeof value?.size === 'number') return value.size;
+    return 0;
+  }
+
+  function getResidencyStats() {
+    let imageBytes = 0;
+    let audioBytes = 0;
+    let bytesBytes = 0;
+    let otherBytes = 0;
+    let activeAcquisitions = 0;
+    for (const record of acquired.values()) {
+      if (!record.ready) continue;
+      activeAcquisitions++;
+      const kind = record.entryKind ?? record.key.split(':', 1)[0];
+      const bytes = estimateAssetValueBytes(kind, record.value);
+      if (kind === 'image') imageBytes += bytes;
+      else if (kind === 'audio') audioBytes += bytes;
+      else if (kind === 'bytes') bytesBytes += bytes;
+      else if (kind !== 'model') otherBytes += bytes;
+    }
+    const modelStats = modelProvider?.residency?.getStats?.() ?? null;
+    const modelBytes = modelStats?.residentBytes ?? modelProvider?.residency?.readBytes?.() ?? 0;
+    return Object.freeze({
+      modelBytes,
+      imageBytes,
+      audioBytes,
+      bytesBytes,
+      otherBytes,
+      totalBytes: modelBytes + imageBytes + audioBytes + bytesBytes + otherBytes,
+      activeAcquisitions,
+      queuedLoads: queue.size,
+      runningLoads: running,
+      abortedRequests: abortedRequests + (modelStats?.abortedRequests ?? 0),
+      abortedDependencies: modelStats?.abortedDependencies ?? 0,
+      disposedLateResources: disposedLateResources + (modelStats?.disposedLateResources ?? 0),
+    });
+  }
+
   return {
-    definition, get,
+    definition, get, getResidencyStats,
     /** @param {string} id @returns {string} */
     url(id) { return loader.resolve(get(id).path); },
     /** @param {string} id @returns {string} */

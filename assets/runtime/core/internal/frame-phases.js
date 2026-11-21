@@ -55,7 +55,14 @@ export function createFramePhases() {
         entry.remove();
         continue;
       }
-      entry.callback(context);
+      if (app._runTrackedPhase) {
+        app._runTrackedPhase(`phaseHook:${phase}`, scene?.name ?? null, () => entry.callback(context), {
+          hookPhase: phase,
+          hookOrder: entry.order,
+        });
+      } else {
+        entry.callback(context);
+      }
       if (signal.aborted || app.scenes.current !== scene || app.disposed) return false;
     }
     return true;

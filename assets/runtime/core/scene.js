@@ -189,8 +189,8 @@ export class Scene {
   lateUpdate(_dt, _app) {}
   /** @param {GameCommand} _command @param {import('./application.js').GameApplication} _app @returns {void} */
   onCommand(_command, _app) {}
-  /** @param {boolean} value @returns {void} */
-  _setActive(value) {
+  /** @param {boolean} value @param {unknown} [reason] @returns {void} */
+  _setActive(value, reason = undefined) {
     if (this.active === value && (value || !this._deactivating)) return;
     this.active = value;
     if (!value) {
@@ -201,7 +201,15 @@ export class Scene {
       const wasDeactivating = this._deactivating;
       this._deactivating = true;
       try {
-        previous?.abort();
+        if (previous) {
+          const abortReason = reason instanceof Error ? reason : reason !== undefined ? new DOMException(String(reason), 'AbortError') : undefined;
+          previous.abort(abortReason);
+          this.app?.platform?.diagnostics?.recordSceneCancellation?.({
+            scene: this.name,
+            phase: this.app?.activePhase ?? null,
+            reason: abortReason ?? reason ?? 'Scene deactivated',
+          });
+        }
         const errors = [];
         walk(this.objects, entity => {
           if (entity.scene !== this || !entity.components.length) return;
@@ -317,16 +325,25 @@ export class SceneManager {
   /** @param {Scene} scene @param {unknown} data */
   _enter(scene, data) {
     this._entered.add(scene);
-    scene.enter(this.app, data);
+    if (this.app._runTrackedPhase) {
+      this.app._runTrackedPhase('sceneEnter', scene.name, () => scene.enter(this.app, data));
+    } else {
+      scene.enter(this.app, data);
+    }
   }
   /** @param {Scene} scene */
   _exit(scene) {
-    if (this._entered.delete(scene)) scene.exit(this.app);
+    if (!this._entered.delete(scene)) return;
+    if (this.app._runTrackedPhase) {
+      this.app._runTrackedPhase('sceneExit', scene.name, () => scene.exit(this.app));
+    } else {
+      scene.exit(this.app);
+    }
   }
-  /** @param {Scene} scene */
-  _leave(scene) {
+  /** @param {Scene} scene @param {unknown} [reason] */
+  _leave(scene, reason = 'scene-leave') {
     cleanupAll([
-      () => scene._setActive(false),
+      () => scene._setActive(false, reason),
       () => this._exit(scene),
     ], 'Scene exit failed');
   }
@@ -341,7 +358,7 @@ export class SceneManager {
     this._switching = true;
     try {
       if (old) {
-        try { this._leave(old); }
+        try { this._leave(old, `scene-switch:${name}`); }
         catch (error) {
           if (this.current === old) this.current = null;
           throw error;
@@ -355,7 +372,7 @@ export class SceneManager {
         this._enter(scene, data);
       } catch (error) {
         if (this.current === scene) {
-          try { this._leave(scene); }
+          try { this._leave(scene, error); }
           catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Scene entry failed'); }
           finally { if (this.current === scene) this.current = null; }
         }
@@ -391,7 +408,7 @@ export class SceneManager {
       } catch (error) {
         if (owned()) {
           try {
-            this._leave(next);
+            this._leave(next, error);
           } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Prepared scene activation failed'); }
         }
         throw error;
@@ -399,7 +416,7 @@ export class SceneManager {
       if (!owned()) return { changed: false, cleanupErrors: [] };
       this.current = next;
       const cleanupErrors = [];
-      try { old?._setActive(false); } catch (error) { cleanupErrors.push(error); }
+      try { old?._setActive(false, `scene-switch:${name}`); } catch (error) { cleanupErrors.push(error); }
       if (old && owned() && this.registry.get(old.name) === old) {
         try { this._exit(old); } catch (error) { cleanupErrors.push(error); }
       }
@@ -419,7 +436,7 @@ export class SceneManager {
     this._removing = scene;
     try {
       cleanupAll([
-        () => scene._setActive(false),
+        () => scene._setActive(false, `scene-remove:${name}`),
         () => this._exit(scene),
         () => { if (scene.app === this.app) scene.dispose(); },
       ], 'Scene removal failed');
@@ -443,7 +460,7 @@ export class SceneManager {
     if (this._removing) scenes.push(this._removing);
     try {
       cleanupAll([
-        ...[...this._entered].map(scene => () => this._leave(scene)),
+        ...[...this._entered].map(scene => () => this._leave(scene, 'scene-dispose')),
         ...scenes.map(scene => () => scene.dispose()),
         ...[...this._disposeListeners],
       ], 'Scene manager disposal failed');

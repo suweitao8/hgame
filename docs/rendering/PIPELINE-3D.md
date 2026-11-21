@@ -107,6 +107,8 @@ The world draw supplies HDR color and optional sampleable depth. The pipeline re
 
 Each view owns its HDR intermediates. A stage releases a scratch target after its last reader, allowing another stage with matching dimensions and attachment requirements to reuse it. For example, TAA consumes the world-lighting intermediate before the custom HDR chain can write over it. Consecutive custom stages retain the preceding color until the next draw completes. The pool also checks auxiliary shader uniforms before reusing a target in a custom pass. The first-person layer keeps a separate depth attachment when required. Unused intermediates are disposed after the frame. Resize, context loss and view removal release the affected targets. Exposure, GI and TAA history are owned by their stages and retain their explicit reset rules.
 
+Dependency-ordered scheduling is exposed via `compileRenderGraph` / `executeRenderGraph` in `integrations/post3d.js` and `pipeline.getRenderGraphPlan()`. Passes declare `reads`, `optionalReads`, `writes`, and `transientSpecs`; the compiler derives topological execution order, `[firstWrite, lastRead]` transient lifetimes, slot aliasing, and automatic last-use target reclamation.
+
 ### Custom HDR effects
 
 Configure `post3d.passes` or replace the chain through `adapter.postPipeline.setPasses(passes)`. Effects run in array order. Each descriptor names its previous-color texture uniform and, optionally, its original world-depth texture uniform. The chain runs after the first-person layer and before exposure metering, bloom and tone mapping. Built-in lighting that has yet to be composited remains in the subsequent HDR composite.

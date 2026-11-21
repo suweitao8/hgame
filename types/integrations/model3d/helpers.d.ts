@@ -94,7 +94,7 @@ export function disposeObjectResources(roots: Iterable<Model3DObject>, released?
  * @param {AbortSignal} [signal] Shared request cancellation.
  * @returns {Promise<unknown>} Loader result.
  */
-export function loadWithLoader(loader: Model3DLoader, resolvedUrl: string, signal?: AbortSignal | undefined): Promise<unknown>;
+export function loadWithLoader(loader: Model3DLoader, resolvedUrl: string, signal?: AbortSignal | undefined, options?: undefined): Promise<unknown>;
 /**
  * Minimal structural view of a Three.js Object3D (or Mesh/Bone/SkinnedMesh) used by the model3d helpers.
  * Additional Three.js members are reachable through the index signature.

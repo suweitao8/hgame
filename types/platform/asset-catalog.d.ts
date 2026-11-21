@@ -25,6 +25,20 @@ export function createAssetCatalog(data: AssetCatalogDefinition, { loader, model
         groups: Readonly<Record<string, readonly string[]>>;
     }>;
     get: (id: string) => AssetDescriptor;
+    getResidencyStats: () => Readonly<{
+        modelBytes: any;
+        imageBytes: number;
+        audioBytes: number;
+        bytesBytes: number;
+        otherBytes: number;
+        totalBytes: any;
+        activeAcquisitions: number;
+        queuedLoads: number;
+        runningLoads: number;
+        abortedRequests: any;
+        abortedDependencies: any;
+        disposedLateResources: any;
+    }>;
     /** @param {string} id @returns {string} */
     url(id: string): string;
     /** @param {string} id @returns {string} */
@@ -51,6 +65,7 @@ export type AssetDescriptor = {
 };
 export type Acquisition = {
     key: string;
+    entryKind?: AssetKind;
     refs: number;
     controller: AbortController;
     promise: Promise<unknown>;

@@ -22,6 +22,13 @@
  * @property {Record<string, string | number | boolean | null>} [details] Optional JSON-safe scalar fields.
  */
 /**
+ * @typedef {object} SceneCancellationRecord
+ * @property {string} scene
+ * @property {string | null} phase
+ * @property {string} reason
+ * @property {number} abortedAt
+ */
+/**
  * @typedef {object} DiagnosticsSnapshot
  * @property {string} gameId
  * @property {number} fps Frames per second over the sample window.
@@ -32,11 +39,14 @@
  * @property {number} frameCount Frames in the window.
  * @property {number} errorCount Total reported errors.
  * @property {ErrorReport | null} lastError
+ * @property {ErrorReport | null} lastPhaseError
+ * @property {readonly SceneCancellationRecord[]} sceneCancellations
  */
 /**
  * @typedef {object} Diagnostics
  * @property {(timestampMs: number, startWindow?: boolean) => void} recordFrame Record a `requestAnimationFrame` timestamp (milliseconds). Pass true to start a fresh timing window after an interruption.
  * @property {(error: unknown, context?: Record<string, unknown>) => ErrorReport} reportError
+ * @property {(record: { scene: string, phase?: string | null, reason?: unknown, abortedAt?: number }) => SceneCancellationRecord | null} recordSceneCancellation
  * @property {(event: DiagnosticEvent) => boolean} recordEvent Append a gameplay event. Returns false when disabled or disposed.
  * @property {() => {dropped: number, events: Readonly<DiagnosticEvent>[]}} readEvents Read the retained events in their emission order.
  * @property {() => Readonly<DiagnosticsSnapshot>} snapshot
@@ -101,6 +111,12 @@ export type DiagnosticEvent = {
      */
     details?: Record<string, string | number | boolean | null> | undefined;
 };
+export type SceneCancellationRecord = {
+    scene: string;
+    phase: string | null;
+    reason: string;
+    abortedAt: number;
+};
 export type DiagnosticsSnapshot = {
     gameId: string;
     /**
@@ -132,6 +148,8 @@ export type DiagnosticsSnapshot = {
      */
     errorCount: number;
     lastError: ErrorReport | null;
+    lastPhaseError: ErrorReport | null;
+    sceneCancellations: readonly SceneCancellationRecord[];
 };
 export type Diagnostics = {
     /**
@@ -139,6 +157,12 @@ export type Diagnostics = {
      */
     recordFrame: (timestampMs: number, startWindow?: boolean) => void;
     reportError: (error: unknown, context?: Record<string, unknown>) => ErrorReport;
+    recordSceneCancellation: (record: {
+        scene: string;
+        phase?: string | null;
+        reason?: unknown;
+        abortedAt?: number;
+    }) => SceneCancellationRecord | null;
     /**
      * Append a gameplay event. Returns false when disabled or disposed.
      */

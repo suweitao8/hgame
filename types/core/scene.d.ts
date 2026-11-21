@@ -44,8 +44,8 @@ export class Scene {
     lateUpdate(_dt: number, _app: import("./application.js").GameApplication): void;
     /** @param {GameCommand} _command @param {import('./application.js').GameApplication} _app @returns {void} */
     onCommand(_command: GameCommand, _app: import("./application.js").GameApplication): void;
-    /** @param {boolean} value @returns {void} */
-    _setActive(value: boolean): void;
+    /** @param {boolean} value @param {unknown} [reason] @returns {void} */
+    _setActive(value: boolean, reason?: unknown): void;
     /** @returns {void} */
     _capturePreviousTransforms(): void;
     /** @param {'fixedUpdate' | 'update' | 'lateUpdate'} phase @param {number} dt @param {import('./application.js').GameApplication} app @returns {void} */
@@ -88,8 +88,8 @@ export class SceneManager {
     _enter(scene: Scene, data: unknown): void;
     /** @param {Scene} scene */
     _exit(scene: Scene): void;
-    /** @param {Scene} scene */
-    _leave(scene: Scene): void;
+    /** @param {Scene} scene @param {unknown} [reason] */
+    _leave(scene: Scene, reason?: unknown): void;
     /** Switch to a registered scene. @param {string} name @param {unknown} [data] Forwarded to `Scene#enter`. @returns {boolean} False if already current. */
     start(name: string, data?: unknown): boolean;
     /**

@@ -542,3 +542,50 @@ test('disposal inside tween onUpdate cancels completion and following tweens', (
   assert.doesNotThrow(() => app.step(1 / 60));
   assert.deepEqual(calls, ['update']);
 });
+
+test('diagnostics attribute mid-phase exceptions and scene cancellation reasons accurately', () => {
+  const cases = [
+    { label: 'fixedUpdate', setup: app => app.scenes.add(new class extends Scene { fixedUpdate() { throw new Error('fixed-boom'); } }('s')), run: app => app.step(1 / 60), phase: 'fixedUpdate' },
+    { label: 'update', setup: app => app.scenes.add(new class extends Scene { update() { throw new Error('update-boom'); } }('s')), run: app => app.step(1 / 60), phase: 'update' },
+    { label: 'render', setup: app => app.scenes.add(new Scene('s')), run: app => app.step(1 / 60), phase: 'render', renderThrows: true },
+    { label: 'phaseHook', setup: app => { app.scenes.add(new Scene('s')); app.onPhase('beforeUpdate', () => { throw new Error('hook-boom'); }); }, run: app => app.step(1 / 60), phase: 'phaseHook:beforeUpdate' },
+    { label: 'sceneEnter', setup: app => app.scenes.add(new class extends Scene { enter() { throw new Error('enter-boom'); } }('s2')), run: app => app.scenes.start('s2'), phase: 'sceneEnter', startFirst: false },
+  ];
+
+  for (const tc of cases) {
+    const app = createGameApplication({
+      renderer: { render() { if (tc.renderThrows) throw new Error('render-boom'); } },
+    });
+    if (tc.startFirst === false) {
+      app.scenes.add(new Scene('s'));
+      app.scenes.start('s');
+    }
+    tc.setup(app);
+    if (tc.startFirst !== false) app.scenes.start('s');
+    assert.throws(() => tc.run(app), /boom/);
+    assert.equal(app.activePhase, 'idle');
+    const snap = app.platform.diagnostics.snapshot();
+    assert.equal(snap.errorCount, 1);
+    assert.equal(snap.lastPhaseError?.context.phase, tc.phase);
+    assert.equal(snap.lastPhaseError?.context.scene, tc.startFirst === false ? 's2' : 's');
+    app.dispose();
+    assert.equal(app.dispose(), false);
+  }
+
+  // Verify scene cancellation reasons are propagated to AbortSignal and diagnostics
+  const app2 = createGameApplication({ renderer: { render() {} } });
+  const a = app2.scenes.add(new Scene('alpha'));
+  const b = app2.scenes.add(new Scene('beta'));
+  app2.scenes.start('alpha');
+  let abortReason = null;
+  const alphaSignal = a.activationSignal;
+  alphaSignal.addEventListener('abort', () => { abortReason = alphaSignal.reason; });
+  app2.scenes.start('beta');
+  assert.match(String(abortReason?.message ?? abortReason), /scene-switch:beta/);
+  assert.throws(() => app2.scenes.activatePrepared('alpha', undefined, () => false), { name: 'AbortError' });
+  const snap2 = app2.platform.diagnostics.snapshot();
+  assert.ok(snap2.sceneCancellations.some(c => c.scene === 'alpha' && /scene-switch:beta/.test(c.reason)));
+  assert.ok(snap2.sceneCancellations.some(c => c.scene === 'alpha' && /cancelled/i.test(c.reason)));
+  app2.dispose();
+  assert.equal(b.active, false);
+});

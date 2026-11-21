@@ -26,6 +26,7 @@ import { createTemporalMotion } from './temporal-motion.js';
 import { getVisibleBakedProbeGrid } from '../lighting3d/baked-probe-grid.js';
 import { createHdrTargets } from './hdr-targets.js';
 import { FULLSCREEN_PASSES, validateFullscreenPass } from './pass-contracts.js';
+import { compileRenderGraph, executeRenderGraph } from './render-graph.js';
 
 const POST_STATE_SCALAR_KEYS = [
   'exposure', 'bloomStrength', 'bloomThreshold', 'bloomSoftKnee',
@@ -960,55 +961,177 @@ export function createPostPipeline3D(options = {}) {
     drawWithDiagnostics(renderer, activeDiagnostics?.beginPass, contract.name, target, postScene, postCamera);
   }
 
+  let lastRenderGraphPlan = null;
+
+  function buildFrameRenderGraphPlan({
+    useAo = false,
+    useVolumetric = false,
+    useGiSsr = false,
+    useTemporalAA = false,
+    hasViewModel = false,
+    stages = customStages,
+    useAutoExposure = false,
+    useBloom = false,
+    useFinalFxaaPass = false,
+  } = {}) {
+    const passes = [];
+    const worldColor = 'sceneColor';
+    let currentColor = worldColor;
+
+    if (useAo || useVolumetric) {
+      passes.push(
+        { id: 'ao-volumetrics', reads: ['sceneDepth'], optionalReads: ['sunShadow'], writes: ['aoRaw'], transientSpecs: { aoRaw: { width: 'half', height: 'half', format: 'rg16f' } } },
+        { id: 'ao-volumetrics-blur-x', reads: ['aoRaw'], writes: ['aoBlurX'], transientSpecs: { aoBlurX: { width: 'half', height: 'half', format: 'rg16f' } } },
+        { id: 'ao-volumetrics-blur-y', reads: ['aoBlurX'], writes: ['aoVol'], transientSpecs: { aoVol: { width: 'half', height: 'half', format: 'rg16f' } } },
+      );
+    }
+    if (useGiSsr) {
+      passes.push(
+        { id: 'gi-ssr', reads: [currentColor, 'sceneDepth'], writes: ['giSsrRaw'], transientSpecs: { giSsrRaw: { width: 'half', height: 'half', format: 'rgba16f' } } },
+        { id: 'gi-ssr-blur-x', reads: ['giSsrRaw'], writes: ['giSsrBlurX'], transientSpecs: { giSsrBlurX: { width: 'half', height: 'half', format: 'rgba16f' } } },
+        { id: 'gi-ssr-blur-y', reads: ['giSsrBlurX'], optionalReads: ['sceneDepth', 'prevGiHistory'], writes: ['giSsr'], transientSpecs: { giSsr: { width: 'half', height: 'half', format: 'rgba16f' } } },
+      );
+    }
+    if (useTemporalAA) {
+      passes.push({
+        id: 'temporal-aa',
+        reads: [currentColor, 'sceneDepth'],
+        optionalReads: ['prevTemporalColor', 'prevTemporalDepth', 'motionVectors'],
+        writes: ['taaColor'],
+        transientSpecs: { taaColor: { width: bufferWidth, height: bufferHeight, format: 'rgba16f' } },
+      });
+      currentColor = 'taaColor';
+    }
+    if (hasViewModel && (useAo || useVolumetric || useGiSsr)) {
+      passes.push({
+        id: 'world-lighting',
+        reads: [currentColor],
+        optionalReads: ['sceneDepth', ...(useAo || useVolumetric ? ['aoVol'] : []), ...(useGiSsr ? ['giSsr'] : [])],
+        writes: ['litWorldColor'],
+        transientSpecs: { litWorldColor: { width: bufferWidth, height: bufferHeight, format: 'rgba16f', depthBuffer: true } },
+      });
+      currentColor = 'litWorldColor';
+    }
+    for (let i = 0; i < stages.length; i++) {
+      const stage = stages[i];
+      const outName = `customColor:${stage.pass.id}`;
+      const reads = [currentColor];
+      if (stage.pass.inputs.depth) reads.push('sceneDepth');
+      passes.push({
+        id: stage.contract.name,
+        reads,
+        writes: [outName],
+        transientSpecs: { [outName]: { width: bufferWidth, height: bufferHeight, format: 'rgba16f' } },
+      });
+      currentColor = outName;
+    }
+    if (useAutoExposure) {
+      passes.push(
+        { id: 'luminance', reads: [currentColor], writes: ['lumaMip'], transientSpecs: { lumaMip: { width: 'pyramid', height: 'pyramid', format: 'r16f' } } },
+        { id: 'eye-adaptation', reads: ['lumaMip', 'prevAdapt'], writes: ['adaptedExposure'], transientSpecs: { adaptedExposure: { width: 1, height: 1, format: 'r16f' } } },
+      );
+    }
+    if (useBloom) {
+      passes.push(
+        { id: 'bloom-prefilter', reads: [currentColor], writes: ['bloomMip'], transientSpecs: { bloomMip: { width: 'half', height: 'half', format: 'rgba16f' } } },
+        { id: 'bloom-upsample', reads: ['bloomMip'], writes: ['bloomTex'], transientSpecs: { bloomTex: { width: 'half', height: 'half', format: 'rgba16f' } } },
+      );
+    }
+    const toneOptional = ['sceneDepth'];
+    if (useAo || useVolumetric) toneOptional.push('aoVol');
+    if (useGiSsr) toneOptional.push('giSsr');
+    if (useBloom) toneOptional.push('bloomTex');
+    if (useAutoExposure) toneOptional.push('adaptedExposure');
+    passes.push({
+      id: 'tone-mapping',
+      reads: [currentColor],
+      optionalReads: toneOptional,
+      writes: [useFinalFxaaPass ? 'ldrColor' : 'backbuffer'],
+      transientSpecs: useFinalFxaaPass ? { ldrColor: { width: bufferWidth, height: bufferHeight, format: 'rgba8' } } : {},
+    });
+    if (useFinalFxaaPass) {
+      passes.push({
+        id: 'fxaa-sharpen',
+        reads: ['ldrColor'],
+        writes: ['backbuffer'],
+      });
+    }
+    return compileRenderGraph(passes, {
+      externalInputs: ['sceneColor', 'sceneDepth', 'sunShadow', 'prevAdapt', 'prevGiHistory', 'prevTemporalColor', 'prevTemporalDepth', 'motionVectors'],
+      externalOutputs: ['backbuffer'],
+    });
+  }
+
   function setPasses(passes) {
     if (disposed || passes === customPasses) return;
     customPasses = normalizeHdrPasses(passes);
     customStages = compileHdrPasses(customPasses);
     const count = customPasses.filter(pass => pass.enabled && (!pass.inputs.depth || sceneRT?.depthTexture)).length;
     hdrTargets.trimColor(Math.min(2, Math.max(count, Number(state.temporalAA))));
+    lastRenderGraphPlan = null;
   }
 
   function runCustomPasses(stages, color, depth, cameraFar) {
-    let previousTarget = null;
-    for (const { pass, contract } of stages) {
-      const uniforms = pass.material.uniforms;
-      const depthView = pass.inputs.depthView;
-      const colorUniform = uniforms[pass.inputs.color];
-      const depthUniform = pass.inputs.depth ? uniforms[pass.inputs.depth] : null;
-      const inverseProjection = depthView ? uniforms[depthView.inverseProjection] : null;
-      const clipDepthMode = depthView ? uniforms[depthView.clipDepthMode] : null;
-      const far = depthView ? uniforms[depthView.far] : null;
-      const previousColor = colorUniform.value;
-      const previousDepth = depthUniform?.value;
-      const previousProjection = inverseProjection?.value;
-      const previousMode = clipDepthMode?.value;
-      const previousFar = far?.value;
-      let target;
-      colorUniform.value = color;
-      if (depthUniform) depthUniform.value = depth;
-      if (depthView) {
-        customInverseProjection ??= new THREE.Matrix4();
-        inverseProjection.value = customInverseProjection.copy(sceneProjectionUniforms.uInvProj.value);
-        clipDepthMode.value = sceneProjectionUniforms.uSceneDepthMode.value;
-        far.value = cameraFar;
-      }
-      try {
-        target = hdrTargets.acquire(bufferWidth, bufferHeight, false, uniforms);
-        runPass(contract, pass.material, target);
-      } finally {
-        colorUniform.value = previousColor;
-        if (depthUniform) depthUniform.value = previousDepth;
-        if (depthView) {
-          inverseProjection.value = previousProjection;
-          clipDepthMode.value = previousMode;
-          far.value = previousFar;
-        }
-      }
-      if (previousTarget) hdrTargets.release(previousTarget);
-      previousTarget = target;
-      color = target.texture;
-    }
-    return color;
+    if (!stages.length) return color;
+    let currentColor = color;
+    let currentTarget = null;
+    const graphPasses = stages.map(({ pass, contract }, index) => {
+      const inputRes = index === 0 ? 'sceneColor' : `customOut:${index - 1}`;
+      const outputRes = `customOut:${index}`;
+      return {
+        id: contract.name,
+        reads: pass.inputs.depth ? [inputRes, 'sceneDepth'] : [inputRes],
+        writes: [outputRes],
+        transientSpecs: { [outputRes]: { width: bufferWidth, height: bufferHeight, format: 'rgba16f' } },
+        meta: { uniforms: pass.material.uniforms },
+        execute({ outputs }) {
+          const uniforms = pass.material.uniforms;
+          const depthView = pass.inputs.depthView;
+          const colorUniform = uniforms[pass.inputs.color];
+          const depthUniform = pass.inputs.depth ? uniforms[pass.inputs.depth] : null;
+          const inverseProjection = depthView ? uniforms[depthView.inverseProjection] : null;
+          const clipDepthMode = depthView ? uniforms[depthView.clipDepthMode] : null;
+          const far = depthView ? uniforms[depthView.far] : null;
+          const previousColor = colorUniform.value;
+          const previousDepth = depthUniform?.value;
+          const previousProjection = inverseProjection?.value;
+          const previousMode = clipDepthMode?.value;
+          const previousFar = far?.value;
+          const target = outputs[outputRes];
+          colorUniform.value = currentColor;
+          if (depthUniform) depthUniform.value = depth;
+          if (depthView) {
+            customInverseProjection ??= new THREE.Matrix4();
+            inverseProjection.value = customInverseProjection.copy(sceneProjectionUniforms.uInvProj.value);
+            clipDepthMode.value = sceneProjectionUniforms.uSceneDepthMode.value;
+            far.value = cameraFar;
+          }
+          try {
+            runPass(contract, pass.material, target);
+            currentTarget = target;
+            currentColor = target.texture;
+          } finally {
+            colorUniform.value = previousColor;
+            if (depthUniform) depthUniform.value = previousDepth;
+            if (depthView) {
+              inverseProjection.value = previousProjection;
+              clipDepthMode.value = previousMode;
+              far.value = previousFar;
+            }
+          }
+        },
+      };
+    });
+    const customGraph = compileRenderGraph(graphPasses, {
+      externalInputs: ['sceneColor', 'sceneDepth'],
+    });
+    executeRenderGraph(customGraph, {
+      acquire: (_spec, _res, _slot, pass) => hdrTargets.acquire(bufferWidth, bufferHeight, false, pass?.meta?.uniforms),
+      release: target => {
+        if (target !== currentTarget) hdrTargets.release(target);
+      },
+    }, { externalTargets: { sceneColor: color, sceneDepth: depth } });
+    return currentColor;
   }
 
   function setBufferDimensions(w, h) {
@@ -1504,6 +1627,17 @@ export function createPostPipeline3D(options = {}) {
       // 3. Composite HDR + contact shadows + GI/SSR + grading + UE Filmic/ACES/AgX tone mapping
       const useFxaa = state.fxaa && (!temporalFrame || hasViewModel);
       const useFinalFxaaPass = Boolean(ldrRT && (useFxaa || state.sharpness > 0.001));
+      lastRenderGraphPlan = buildFrameRenderGraphPlan({
+        useAo,
+        useVolumetric,
+        useGiSsr,
+        useTemporalAA: temporalFrame,
+        hasViewModel,
+        stages: activePasses,
+        useAutoExposure,
+        useBloom,
+        useFinalFxaaPass,
+      });
       compU.tBloom.value = bloomTexture;
       compU.tAutoExposure.value = useAutoExposure ? adaptRT[adaptIndex].texture : null;
       compU.uUseBloom.value = useBloom ? 1 : 0;
@@ -1593,6 +1727,18 @@ export function createPostPipeline3D(options = {}) {
     get preset() { return activePreset; },
     get state() { return { ...state }; },
     get passes() { return customPasses; },
+    getRenderGraphPlan() {
+      return lastRenderGraphPlan ?? buildFrameRenderGraphPlan({
+        useAo: state.ssaoIntensity > 0.001,
+        useVolumetric: state.volumetricIntensity > 0.001,
+        useGiSsr: state.giIntensity > 0.001 || state.ssrIntensity > 0.001,
+        useTemporalAA: Boolean(state.temporalAA),
+        stages: customStages,
+        useAutoExposure: Boolean(state.autoExposure),
+        useBloom: state.bloomStrength > 0.001,
+        useFinalFxaaPass: Boolean(ldrRT && (state.fxaa || state.sharpness > 0.001)),
+      });
+    },
     estimateTargetBytes,
     get targets() {
       return {

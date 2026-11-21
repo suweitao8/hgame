@@ -99,6 +99,8 @@ const builtin = {
  * @property {number} unscaledDeltaSeconds Seconds of the last step before scaling.
  * @property {number} deltaSeconds Scaled seconds of the last step.
  * @property {number} renderAlpha Fixed-step interpolation factor, 0..1.
+ * @property {string} activePhase Currently executing scheduler or lifecycle phase.
+ * @property {string | null} activeScene Scene name associated with the active phase.
  * @property {import('../platform/input/manager.js').InputManager | null} input
  * @property {import('./scene.js').SceneManager} scenes
  * @property {(phase: import('./internal/frame-phases.js').FramePhase, callback: import('./internal/frame-phases.js').FramePhaseCallback, options?: import('./internal/frame-phases.js').FramePhaseOptions) => () => boolean} onPhase Register a synchronous scheduler extension.
@@ -141,6 +143,10 @@ export function createGameApplication({
   let baseTimeScale = 1, hitStopRemaining = 0, hitStopTimeScale = 0;
   let lastUnscaledDelta = 0, lastScaledDelta = 0;
   let advancing = false, rendering = false;
+  let activePhase = 'idle';
+  /** @type {string | null} */
+  let activeScene = null;
+  const reportedErrors = new WeakSet();
   let commandRenderTimer = null;
   const framePhases = createFramePhases();
   const stepSize = project.tickHz > 0 ? 1 / project.tickHz : null;
@@ -148,6 +154,36 @@ export function createGameApplication({
     ['physics2d', 'physics3d', 'animation2d', 'tilemap2d', 'pathfinding2d', 'model3d',
       'adaptiveQuality3d'].includes(name));
   const stats = { frames: 0, ticks: 0, droppedTicks: 0 };
+
+  function reportPhaseError(error, phase, sceneName, extra = null) {
+    if (error && typeof error === 'object') {
+      if (reportedErrors.has(error)) return;
+      reportedErrors.add(error);
+    }
+    runtime.diagnostics?.reportError?.(error, {
+      subsystem: 'hgame',
+      phase,
+      scene: sceneName ?? null,
+      ...(extra ?? {}),
+    });
+  }
+
+  function runTrackedPhase(phase, sceneName, fn, extra = null) {
+    const prevPhase = activePhase;
+    const prevScene = activeScene;
+    activePhase = phase;
+    activeScene = sceneName ?? app.scenes?.current?.name ?? null;
+    try {
+      return fn();
+    } catch (error) {
+      reportPhaseError(error, phase, activeScene, extra);
+      throw error;
+    } finally {
+      activePhase = prevPhase;
+      activeScene = prevScene;
+    }
+  }
+
   /** @type {GameApplication} */
   const app = {
     project, platform: runtime, renderer, services,
@@ -160,12 +196,15 @@ export function createGameApplication({
     get timeScale() { return hitStopRemaining > 0 ? hitStopTimeScale : baseTimeScale; },
     get unscaledDeltaSeconds() { return lastUnscaledDelta; },
     get deltaSeconds() { return lastScaledDelta; },
+    get activePhase() { return activePhase; },
+    get activeScene() { return activeScene; },
     get renderAlpha() {
       if (stepSize === null) return 1;
       return Math.max(0, Math.min(1, accumulator / stepSize));
     },
     get input() { return runtime.input ?? null; },
     scenes: null,
+    _runTrackedPhase: runTrackedPhase,
     setTimeScale, hitStop, clearHitStop,
     installFeatures, onPhase, step, start, stop, pause, resume, dispatch, dispose,
   };
@@ -276,7 +315,7 @@ export function createGameApplication({
     rendering = true;
     try {
       if (!framePhases.run('beforeRender', app, scene, signal, deltaSeconds)) return;
-      renderer.render(scene, app);
+      runTrackedPhase('render', scene.name, () => renderer.render(scene, app));
       stats.frames++;
       framePhases.run('afterRender', app, scene, signal, deltaSeconds);
     } finally { rendering = false; }
@@ -306,7 +345,7 @@ export function createGameApplication({
     try { render(); }
     catch (error) {
       stop();
-      runtime.diagnostics?.reportError?.(error, { subsystem: 'hgame' });
+      reportPhaseError(error, activePhase || 'render', activeScene);
       throw error;
     }
   }
@@ -394,15 +433,15 @@ export function createGameApplication({
         if (signal) {
           active._capturePreviousTransforms();
           if (framePhases.run('beforeFixedUpdate', app, active, signal, stepSize)) {
-            active._run('fixedUpdate', stepSize, app);
+            runTrackedPhase('fixedUpdate', active.name, () => active._run('fixedUpdate', stepSize, app));
             if (!disposed && !signal.aborted && app.scenes.current === active) {
-              active.physics?.step?.(stepSize);
+              runTrackedPhase('physics', active.name, () => active.physics?.step?.(stepSize));
               framePhases.run('afterPhysics', app, active, signal, stepSize);
             }
           }
         }
         if (disposed) return;
-        runtime.input?.endFrame?.();
+        runTrackedPhase('input', active?.name ?? null, () => runtime.input?.endFrame?.());
         accumulator = Math.max(0, accumulator - stepSize);
         stats.ticks++;
         steps++;
@@ -416,9 +455,9 @@ export function createGameApplication({
     const current = app.scenes.current;
     const signal = current?.activationSignal;
     if (signal && framePhases.run('beforeUpdate', app, current, signal, scaledDelta)) {
-      current._run('update', scaledDelta, app);
+      runTrackedPhase('update', current.name, () => current._run('update', scaledDelta, app));
       if (framePhases.run('beforeLateUpdate', app, current, signal, scaledDelta)) {
-        current._run('lateUpdate', scaledDelta, app);
+        runTrackedPhase('lateUpdate', current.name, () => current._run('lateUpdate', scaledDelta, app));
       }
     }
     render(scaledDelta);
@@ -447,7 +486,7 @@ export function createGameApplication({
       }
     } catch (error) {
       stop();
-      runtime.diagnostics?.reportError?.(error, { subsystem: 'hgame' });
+      reportPhaseError(error, activePhase || 'frame', activeScene);
       throw error;
     }
     scheduleFrame();
@@ -507,39 +546,41 @@ export function createGameApplication({
     if (disposed) throw new Error('Application disposed');
     if (!command || typeof command.type !== 'string') throw new TypeError('Command needs type');
     if (!app.scenes.current) throw new Error('Choose a Scene before dispatch');
-    app.scenes.current.onCommand(command, app);
+    runTrackedPhase('command', app.scenes.current.name, () => app.scenes.current.onCommand(command, app), { commandType: command.type });
     if (stepSize === null && running && !paused) requestCommandRender();
   }
   function dispose() {
     if (disposed) return false;
     disposed = true;
-    cleanupAll([
-      () => stop(),
-      () => app.scenes.dispose(),
-      () => framePhases.dispose(),
-      () => offResize?.(),
-      () => offFocus?.(),
-      () => offVisibility?.(),
-      () => cleanupAll(Object.entries(services).reverse().map(([key, service]) => () => {
-        try {
-          if (service !== app.scenes && service !== runtime.input && service !== runtime.audio &&
-              service !== runtime.assets && service !== runtime.save && service !== runtime.diagnostics) {
-            const pending = service?.dispose?.();
-            if (typeof pending?.then === 'function') {
-              void Promise.resolve(pending).catch(error => {
-                if (runtime.diagnostics?.reportError) {
-                  runtime.diagnostics.reportError(error, { subsystem: 'hgame', operation: 'dispose', service: key });
-                } else {
-                  console.error('Feature disposal failed:', key, error);
-                }
-              }).catch(error => console.error('Feature disposal error reporting failed:', key, error));
+    runTrackedPhase('dispose', app.scenes.current?.name ?? null, () => {
+      cleanupAll([
+        () => stop(),
+        () => app.scenes.dispose(),
+        () => framePhases.dispose(),
+        () => offResize?.(),
+        () => offFocus?.(),
+        () => offVisibility?.(),
+        () => cleanupAll(Object.entries(services).reverse().map(([key, service]) => () => {
+          try {
+            if (service !== app.scenes && service !== runtime.input && service !== runtime.audio &&
+                service !== runtime.assets && service !== runtime.save && service !== runtime.diagnostics) {
+              const pending = service?.dispose?.();
+              if (typeof pending?.then === 'function') {
+                void Promise.resolve(pending).catch(error => {
+                  if (runtime.diagnostics?.reportError) {
+                    runtime.diagnostics.reportError(error, { subsystem: 'hgame', operation: 'dispose', phase: 'dispose', service: key });
+                  } else {
+                    console.error('Feature disposal failed:', key, error);
+                  }
+                }).catch(error => console.error('Feature disposal error reporting failed:', key, error));
+              }
             }
-          }
-        } finally { delete services[key]; }
-      }), 'Feature disposal failed'),
-      () => renderer.dispose?.(),
-      () => { if (ownsPlatform) runtime.dispose?.(); },
-    ], 'Application disposal failed');
+          } finally { delete services[key]; }
+        }), 'Feature disposal failed'),
+        () => renderer.dispose?.(),
+        () => { if (ownsPlatform) runtime.dispose?.(); },
+      ], 'Application disposal failed');
+    });
     return true;
   }
   return app;

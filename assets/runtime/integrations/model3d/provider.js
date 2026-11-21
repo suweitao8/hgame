@@ -166,7 +166,7 @@ import { cleanupAll } from '../../internal/cleanup.js';
  * @property {import('./helpers.js').Model3DThree} THREE The Three.js namespace passed in.
  * @property {(url: string) => Promise<Model3DAssetEntry>} load Loads (and caches) a GLTF by relative path.
  * @property {(url: string, options?: {signal?: AbortSignal, resolvedUrl?: string}) => Promise<Model3DLease>} acquire Hold a model until the lease is released. A signal cancels the pending acquisition. A catalog may supply its resolved asset URL.
- * @property {{readBytes: () => number, trimIdle: (excessBytes: number) => void}} residency Estimated owned geometry and texture bytes and an idle eviction hook.
+ * @property {{readBytes: () => number, trimIdle: (excessBytes: number) => void, getStats: () => {residentBytes: number, idleModels: number, activeLoads: number, abortedRequests: number, abortedDependencies: number, disposedLateResources: number}}} residency Estimated owned geometry and texture bytes, idle eviction hook, and cancellation/residency stats.
  * @property {(url: string, options?: Model3DLoadClipsOptions) => Promise<import('./helpers.js').Model3DClip[]>} loadClips Loads and prepares animation clips from a file.
  * @property {(urlOrKey: string, options: Model3DRegisterAssetOptions) => Model3DAssetEntry} registerAsset Registers an in-memory asset.
  * @property {(urlOrKey: string) => Promise<Model3DInstance>} instantiate Loads and clones an asset.
@@ -223,6 +223,9 @@ export function createModel3DProvider({
   const disposalErrors = [];
   let residentBytes = null;
   let disposed = false;
+  let abortedRequests = 0;
+  let abortedDependencies = 0;
+  let disposedLateResources = 0;
 
   function ensureActive() {
     if (disposed) throw new Error('Model3D provider has been disposed');
@@ -286,14 +289,19 @@ export function createModel3DProvider({
     const controller = new AbortController();
     record = { asset: null, roots: [], controller, request: null, refs: 0, pinned };
     const { signal } = controller;
+    signal.addEventListener('abort', () => { abortedRequests++; }, { once: true });
     const request = Promise.resolve().then(() => {
       signal.throwIfAborted();
       ensureActive();
-      return loadWithLoader(getLoader(), resolved, signal);
+      return loadWithLoader(getLoader(), resolved, signal, {
+        onDependencyAbort: () => { abortedDependencies++; },
+      });
     }).then(gltf => {
       const roots = Array.isArray(gltf?.scenes) ? gltf.scenes.filter(Boolean) : [];
       if (gltf?.scene && !roots.includes(gltf.scene)) roots.push(gltf.scene);
       if (signal.aborted) {
+        const lateResources = collectObjectResources(roots);
+        disposedLateResources += lateResources.size;
         try { releaseRoots(roots); }
         catch (error) {
           if (!disposed) throw error;
@@ -1198,11 +1206,23 @@ export function createModel3DProvider({
     return createAnimationBudgetAllocator(options);
   }
 
+  function getResidencyStats() {
+    const loaderStats = activeLoader?.getStats?.();
+    return Object.freeze({
+      residentBytes: disposed ? 0 : readBytes(),
+      idleModels: idle.size,
+      activeLoads: pendingLoads.size,
+      abortedRequests: Math.max(abortedRequests, loaderStats?.abortedRequests ?? 0),
+      abortedDependencies: Math.max(abortedDependencies, loaderStats?.abortedDependencies ?? 0),
+      disposedLateResources: disposedLateResources + (loaderStats?.disposedLateResources ?? 0),
+    });
+  }
+
   return {
     THREE,
     load,
     acquire,
-    residency: { readBytes, trimIdle },
+    residency: { readBytes, trimIdle, getStats: getResidencyStats },
     loadClips,
     registerAsset,
     instantiate,

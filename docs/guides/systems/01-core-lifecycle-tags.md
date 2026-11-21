@@ -56,6 +56,8 @@ class Battle extends Scene {
 
 普通切换先退出旧场景，再进入新场景。普通进入失败时，新场景停用并清空当前场景，可重新选择场景。`activatePrepared` 在候选进入成功后才停用旧场景，候选回滚仅取消自己的信号。通过 `app.scenes.remove(name)` 移除已注册场景。每次管理器调用 `enter` 后，对应的 `exit` 最多执行一次，即使回调触发了重入销毁。实体和物理销毁后执行 `scene.onDispose` 注册的清理，顺序与注册相反。
 
+阶段异常归因与取消传播：调度器实时追踪 `app.activePhase`（`fixedUpdate`、`physics`、`input`、`update`、`lateUpdate`、`render`、`phaseHook:<name>`、`sceneEnter`、`sceneExit`、`command`、`dispose`）与 `app.activeScene`，任一阶段异常会携带 `phase` 与 `scene` 上下文记入 `diagnostics.snapshot().lastPhaseError` 并保证状态复位；场景切换、移除、销毁与候选回滚会把明确的取消原因写入 `activationSignal.reason` 并记入 `diagnostics.snapshot().sceneCancellations`。
+
 ## 易错点
 - `tickHz: 0` 的应用按需渲染。`app.start()`、`app.dispatch()` 和 `app.step()` 可触发绘制。空闲时无需调度帧。
 

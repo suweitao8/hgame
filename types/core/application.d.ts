@@ -69,6 +69,8 @@
  * @property {number} unscaledDeltaSeconds Seconds of the last step before scaling.
  * @property {number} deltaSeconds Scaled seconds of the last step.
  * @property {number} renderAlpha Fixed-step interpolation factor, 0..1.
+ * @property {string} activePhase Currently executing scheduler or lifecycle phase.
+ * @property {string | null} activeScene Scene name associated with the active phase.
  * @property {import('../platform/input/manager.js').InputManager | null} input
  * @property {import('./scene.js').SceneManager} scenes
  * @property {(phase: import('./internal/frame-phases.js').FramePhase, callback: import('./internal/frame-phases.js').FramePhaseCallback, options?: import('./internal/frame-phases.js').FramePhaseOptions) => () => boolean} onPhase Register a synchronous scheduler extension.
@@ -253,6 +255,14 @@ export type GameApplication = {
      * Fixed-step interpolation factor, 0..1.
      */
     renderAlpha: number;
+    /**
+     * Currently executing scheduler or lifecycle phase.
+     */
+    activePhase: string;
+    /**
+     * Scene name associated with the active phase.
+     */
+    activeScene: string | null;
     input: import("../platform/input/manager.js").InputManager | null;
     scenes: import("./scene.js").SceneManager;
     /**

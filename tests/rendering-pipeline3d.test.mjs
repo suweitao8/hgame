@@ -16,8 +16,10 @@ import {
   fitDirectionalShadowFrustum,
 } from '../assets/runtime/integrations/sky3d.js';
 import {
+  compileRenderGraph,
   createFullscreenShaderPass,
   createPostPipeline3D,
+  executeRenderGraph,
   inspectWebGLCapabilities,
   refineQualityWithContext,
 } from '../assets/runtime/integrations/post3d.js';
@@ -1342,4 +1344,106 @@ test('Three adapter fitShadowToPreset fits directional shadow camera from qualit
   assert.equal(sun.shadow.camera.right, frustumHigh.right);
 
   adapter.dispose();
+});
+
+test('render graph schedules passes by read/write dependencies and aliases/reclaims transient targets', () => {
+  const executed = [];
+  const graph = compileRenderGraph([
+    {
+      id: 'tone-mapping',
+      reads: ['bloomOut', 'aoOut'],
+      writes: ['backbuffer'],
+      execute: () => executed.push('tone-mapping'),
+    },
+    {
+      id: 'bloom-blur',
+      reads: ['bloomPre'],
+      writes: ['bloomOut'],
+      transientSpecs: { bloomOut: { width: 'half', height: 'half', format: 'rgba16f' } },
+      execute: () => executed.push('bloom-blur'),
+    },
+    {
+      id: 'ao-blur',
+      reads: ['aoRaw'],
+      writes: ['aoOut'],
+      transientSpecs: { aoOut: { width: 'half', height: 'half', format: 'rgba16f' } },
+      execute: () => executed.push('ao-blur'),
+    },
+    {
+      id: 'bloom-prefilter',
+      reads: ['sceneColor'],
+      writes: ['bloomPre'],
+      transientSpecs: { bloomPre: { width: 'half', height: 'half', format: 'rgba16f' } },
+      execute: () => executed.push('bloom-prefilter'),
+    },
+    {
+      id: 'ao-pass',
+      reads: ['sceneDepth'],
+      writes: ['aoRaw'],
+      transientSpecs: { aoRaw: { width: 'half', height: 'half', format: 'rgba16f' } },
+      execute: () => executed.push('ao-pass'),
+    },
+  ], {
+    externalInputs: ['sceneColor', 'sceneDepth'],
+    externalOutputs: ['backbuffer'],
+  });
+
+  // Topological order puts producers strictly before consumers
+  assert.ok(graph.order.indexOf('bloom-prefilter') < graph.order.indexOf('bloom-blur'));
+  assert.ok(graph.order.indexOf('ao-pass') < graph.order.indexOf('ao-blur'));
+  assert.ok(graph.order.indexOf('bloom-blur') < graph.order.indexOf('tone-mapping'));
+  assert.ok(graph.order.indexOf('ao-blur') < graph.order.indexOf('tone-mapping'));
+
+  // Transient aliasing reduces 4 logical half-res targets down to <= 3 physical slots
+  assert.ok(graph.peakTargets <= 3, `Expected aliasing peakTargets <= 3, got ${graph.peakTargets}`);
+  assert.ok(graph.reclaimedAt['tone-mapping'].length >= 2);
+
+  // Execute against a pool and verify reuse & last-use release
+  let nextTargetId = 0;
+  const free = [];
+  const allocated = [];
+  const pool = {
+    acquire(spec) {
+      const reused = free.pop();
+      if (reused) return reused;
+      const t = { id: ++nextTargetId, spec, releasedCount: 0 };
+      allocated.push(t);
+      return t;
+    },
+    release(target) {
+      target.releasedCount++;
+      free.push(target);
+    },
+  };
+  const summary = executeRenderGraph(graph, pool, { externalTargets: { sceneColor: 'hdr', sceneDepth: 'depth' } });
+  assert.deepEqual(summary.executed, graph.order);
+  assert.equal(allocated.length, graph.peakTargets);
+  assert.ok(summary.reusedCount >= 1);
+  assert.equal(free.length, allocated.length);
+
+  // Cycle and missing producer detection
+  assert.throws(() => compileRenderGraph([
+    { id: 'a', reads: ['b'], writes: ['a'] },
+    { id: 'b', reads: ['a'], writes: ['b'] },
+  ]), /cycle/i);
+  assert.throws(() => compileRenderGraph([
+    { id: 'consumer', reads: ['missingTex'], writes: ['backbuffer'] },
+  ], { externalOutputs: ['backbuffer'] }), /missing input/i);
+
+  // Pipeline exposes compiled render graph plan reflecting active stages
+  const pipeline = createPostPipeline3D({
+    THREE,
+    renderer: {
+      getSize: () => ({ width: 640, height: 360 }),
+      getPixelRatio: () => 1,
+      getContext: () => null,
+      capabilities: { isWebGL2: false },
+      render() {},
+    },
+    qualityPreset: 'high',
+  });
+  const plan = pipeline.getRenderGraphPlan();
+  assert.ok(plan.order.includes('tone-mapping'));
+  assert.ok(plan.lifetimes && typeof plan.peakTargets === 'number');
+  pipeline.dispose();
 });

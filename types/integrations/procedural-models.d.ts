@@ -100,6 +100,20 @@ export type ProceduralModelOptions = {
             groups: Readonly<Record<string, readonly string[]>>;
         }>;
         get: (id: string) => AssetDescriptor;
+        getResidencyStats: () => Readonly<{
+            modelBytes: any;
+            imageBytes: number;
+            audioBytes: number;
+            bytesBytes: number;
+            otherBytes: number;
+            totalBytes: any;
+            activeAcquisitions: number;
+            queuedLoads: number;
+            runningLoads: number;
+            abortedRequests: any;
+            abortedDependencies: any;
+            disposedLateResources: any;
+        }>;
         url(id: string): string;
         projectPath(id: string): string;
         openScope(): AssetScope;
