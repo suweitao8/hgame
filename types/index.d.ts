@@ -9,6 +9,7 @@ import { createPhysicalRenderTargetPool3D } from "./integrations/post3d/render-g
 import { captureResourceSnapshot, diffResourceSnapshots } from "./integrations/quality3d/render-diagnostics.js";
 import { createMrtOutlinePass3D } from "./integrations/post3d/mrt-outline.js";
 import { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
+import { createWebRtcDataChannelTransport } from "./lockstep/webrtc-transport.js";
 import { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
 import { createBoneMap3D, retargetClip3D } from "./animation/retarget3d.js";
 import { defineProject, resolveFeatureGraph } from "./core/config.js";
@@ -54,6 +55,7 @@ export { createNavMesh3D } from "./world/navmesh3d.js";
 export { createTwoMapWorldPbrMaterial } from "./integrations/pbr-material-library.js";
 export { defineMaterialVariants3D } from "./integrations/material-graph3d.js";
 export { createTraceRecorder } from "./integrations/trace.js";
+export { createWebRtcDataChannelTransport } from "./lockstep/webrtc-transport.js";
 /** Public HGame facade. Physics providers stay lazy and load only when selected. */
 export const HGame: Readonly<{
     name: "HGame";
@@ -1579,6 +1581,7 @@ export const HGame: Readonly<{
     createNetworkStateSync: typeof createNetworkStateSync;
     createSceneReplicator: typeof createSceneReplicator;
     createSpatialAoiFilter: typeof createSpatialAoiFilter;
+    createWebRtcDataChannelTransport: typeof createWebRtcDataChannelTransport;
     createSpringBoneChain3D: typeof createSpringBoneChain3D;
     createInertialBlend3D: typeof createInertialBlend3D;
     createBoneMap3D: typeof createBoneMap3D;

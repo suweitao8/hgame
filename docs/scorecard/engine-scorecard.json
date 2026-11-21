@@ -911,7 +911,7 @@
       "name": "联机传输、预测回滚与状态同步",
       "weight": 8,
       "scores": {
-        "hgame": 8,
+        "hgame": 9,
         "unity": 7,
         "cocos": 3.5,
         "godot": 6.5
@@ -921,6 +921,7 @@
         "defaultPath": true,
         "proofFiles": [
           "assets/runtime/lockstep/state-sync.js",
+          "assets/runtime/lockstep/webrtc-transport.js",
           "network/"
         ],
         "industrialChecklist": [
@@ -941,11 +942,11 @@
           },
           {
             "point": "WebRTC DataChannel 不可靠传输通道支持",
-            "met": false,
-            "proof": "缺失（当前传输层基于 WebSocket，未内置 P2P/WebRTC 通道）"
+            "met": true,
+            "proof": "assets/runtime/lockstep/webrtc-transport.js, network/packages/client/src/webrtc-transport.ts"
           }
         ],
-        "note": "0x48 0x47 二进制 Delta 同步、createSceneReplicator 回滚预测与服务端 AOI 过滤已在 15% 丢包模拟中收敛。",
+        "note": "0x48 0x47 二进制 Delta 同步、createSceneReplicator 回滚预测、服务端 AOI 过滤，以及 WebRTC DataChannel 双通道（ordered:false/maxRetransmits:0 不可靠低延迟 + ordered:true 可靠控制 + WebSocket 透明降级）已全量闭环。",
         "benchmarkFiles": [
           "tests/browser-engine-v3-commercial-benchmark.mjs"
         ]
@@ -955,7 +956,7 @@
         "cocos": "引擎本体不内置状态同步/预测回滚与服务端权威框架，需外部集成。",
         "godot": "MultiplayerAPI + MultiplayerSynchronizer 开箱可用，Web 端同样受限于 WebSocket。"
       },
-      "gap": "不支持 WebRTC DataChannel 不可靠传输通道。"
+      "gap": "WebRTC DataChannel 传输适配器已提供双通道与信令抽象，服务端需按部署环境配置 TURN 中继以覆盖对称 NAT"
     }
   ],
   "measurements": {

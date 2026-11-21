@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add WebRTC DataChannel dual-channel unreliable/reliable transport adapter (`assets/runtime/lockstep/webrtc-transport.js`, exported via `assets/runtime/index.js`; typed client implementation `network/packages/client/src/webrtc-transport.ts`, exported via `network/packages/client/src/index.ts`) supporting `{ ordered: false, maxRetransmits: 0 }` low-latency snapshot channel, `{ ordered: true }` control channel, offer/answer/ICE signaling, and transparent WebSocket `fallbackSend` degradation, raising Scorecard v5.1 `N1` from `8.0` to `9.0` (total `84.0/100`).
+
 - Upgrade `createLightmapBaker3D` (`assets/runtime/integrations/lightmap-bake3d.js`): added point (6-face cubemap perspective shadow) and spot light direct baking (`lights`), coarse `16x16` surfel 1-bounce diffuse indirect GI (`bounces`, `bounceIntensity`, `bounceSurfels`, verified red-floor color bleeding `bleedR=0.276 > bleedB=0` on shadowed white wall in Chromium WebGL2), and multi-pass ping-pong seam dilation (`dilationPasses=4`), raising Scorecard v5.1 `R2` from `8.5` to `9.0` (total `83.2/100`).
 
 - Upgrade Canvas UI & input persistence (`assets/runtime/ui/canvas-widgets.js`, `assets/runtime/ui/index.js`, `assets/runtime/index.js`, `assets/runtime/platform/input/router.js`): added `layoutRichTextLines` + `richText` multi-span wrapping widget, clipped `scrollView` container with scroll-aware hit-testing, IME composition underline in `textInput`, `createCanvasAriaBridge` + `syncAriaTree` semantic DOM mirror, and `rebindAction` / `saveBindings` / `loadBindings` / `resetBindings` on `createInputActionRouter`, raising Scorecard v5.1 `S4` from `7.5` to `8.5` (total `82.8/100`).

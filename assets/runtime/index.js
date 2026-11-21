@@ -187,7 +187,9 @@ export {
   createUiDirector,
 } from './ui/index.js';
 export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from './lockstep/state-sync.js';
+export { createWebRtcDataChannelTransport } from './lockstep/webrtc-transport.js';
 import { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from './lockstep/state-sync.js';
+import { createWebRtcDataChannelTransport } from './lockstep/webrtc-transport.js';
 export { createSpringBoneChain3D, createInertialBlend3D } from './animation/animator3d.js';
 import { createSpringBoneChain3D, createInertialBlend3D } from './animation/animator3d.js';
 export { createBoneMap3D, retargetClip3D } from './animation/retarget3d.js';
@@ -587,6 +589,7 @@ export const HGame = Object.freeze({
   createNetworkStateSync,
   createSceneReplicator,
   createSpatialAoiFilter,
+  createWebRtcDataChannelTransport,
   createSpringBoneChain3D,
   createInertialBlend3D,
   createBoneMap3D,
