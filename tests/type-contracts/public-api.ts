@@ -1,7 +1,7 @@
 import { Component, Entity, Scene, HGame, createGameApplication, createStateMachine, createVersionedStore,
   action, condition, createBehaviorTree, sequence, parallel, wait, BT_STATUS, createVfxSystem,
   createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, createFloatingTextPool,
-  createScreenFeedbackPass, createPanelStack } from '../../types/index.js';
+  createScreenFeedbackPass, createPanelStack, createUiDirector, createUiSurfaceSpring, createUiMotionGroup } from '../../types/index.js';
 import type { GameApplication } from '../../types/core/application.js';
 import { createStateMachine as createMachineByPath } from '../../types/ai/fsm.js';
 
@@ -118,3 +118,9 @@ const panels = createPanelStack();
 panels.push('shop', { coins: 10 }, { modal: true });
 panels.replace('pause', { paused: true });
 panels.toggle('inventory', ['sword']);
+const director = createUiDirector({ initialPhase: 'title', metrics: { score: { value: 0 } } });
+director.startGame();
+const spring = createUiSurfaceSpring({ maxTiltDeg: 10 });
+spring.setHover(true, 0.5, -0.5);
+const motionGroup = createUiMotionGroup({ count: 3 });
+motionGroup.moveFocus(1);

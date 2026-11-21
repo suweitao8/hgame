@@ -52,6 +52,7 @@ const CAPABILITY_MAP = [
   { need: 'Data-driven prefab placement, spawn points and trigger volumes', module: 'world/level.js, world/trigger-volumes.js', keyApis: 'mountLevel, createTriggerVolumes, spawnBatch, updateEntityTriggers' },
   { need: 'Zero-GC VFX, telegraphs, damage numbers', module: 'vfx/index.js', keyApis: 'createVfxSystem, emitHitImpact, slashArc, lightningBolt, spawnTelegraph, popupNumber, screenPulse, CROWD_STATUS' },
   { need: 'UI PanelStack, VirtualList, i18n, RedDot', module: 'ui/index.js, integrations/red-dot-dom.js', keyApis: 'createPanelStack, createVirtualList, createI18n, createRedDotSystem, bindRedDotDOM' },
+  { need: 'Universal UI/UX motion, 3D tilt hover, phase director & 3D spatial UI', module: 'ui/ux-director.js, ui/ux-motion.js, integrations/ui-ux-dom.js, integrations/ui-3d.js', keyApis: 'createUiDirector, createUiSurfaceSpring, createUiMotionGroup, bindUiUxDOM, createWorldHud3D, createSpatialPanel3D' },
   { need: '0-KB SFX & adaptive BGM + 3D spatial', module: 'platform/audio.js, audio/synth.js, audio/bgm-synth.js', keyApis: 'audio.playSynth(10 presets), audio.createBgm(6 moods, setIntensity), registerCue, updateListenerFromCamera' },
   { need: 'Touch, arcade P1/P2, split-screen', module: 'platform/input.js, integrations/touch-controls.js', keyApis: 'app.input.pointers, HGame.createArcadeControls, createTouchControls, HGame.computeSplitScreenViews' },
   { need: 'Rapier 2D/3D, sim RNG/checksum, Saves', module: 'physics/*, sim/*, platform/storage.js', keyApis: 'scene.physics.add, createSeededRng, hashState, createSaveStore, createVersionedStore' },
@@ -99,7 +100,9 @@ window.addEventListener('pagehide', event => { if (!event.persisted) app.dispose
 import { defineProject } from '../vendor/hgame/core/config.js';
 import { createGameApplication } from '../vendor/hgame/core/application.js';
 import { Scene } from '../vendor/hgame/core/scene.js';
-import { createPanelStack, createI18n } from '../vendor/hgame/ui/index.js';
+import { createUiDirector, UI_PHASES } from '../vendor/hgame/ui/ux-director.js';
+import { bindUiUxDOM } from '../vendor/hgame/integrations/ui-ux-dom.js';
+import { createI18n } from '../vendor/hgame/ui/index.js';
 import { createVersionedStore } from '../vendor/hgame/platform/storage.js';
 
 const engineConfig = await fetch('./engine.config.json').then(r => r.json()); // tickHz is 0 (command-driven)
@@ -107,13 +110,14 @@ const project = defineProject(engineConfig);
 const app = createGameApplication({ project, gameId: 'card-ui', gameVersion: '1.0.0', renderer: { render() {} } });
 await app.installFeatures();
 app.scenes.add(new Scene('ui'));
-const panels = createPanelStack();
+const director = createUiDirector({ initialPhase: UI_PHASES.PLAYING, audio: app.platform.audio, metrics: { draws: { value: 0, snap: true } } });
+const uiUx = bindUiUxDOM({ root: document.body, director, audio: app.platform.audio });
 const i18n = createI18n({ locale: 'zh', messages: { zh: { play: '开始' }, en: { play: 'Play' } } });
 const saves = createVersionedStore({ gameId: 'card-ui', schemaVersion: 1 });
 app.scenes.start('ui');
-app.start(); // renders once; dispatch updates via app.dispatch(...), never run an idle 60Hz loop
-window.__hgameState = () => ({ topPanel: panels.top()?.id ?? null, locale: i18n.getLocale() });
-window.addEventListener('pagehide', () => { panels.dispose(); app.dispose(); }, { once: true });`,
+app.start(); // renders once; dispatch updates via app.dispatch(...), springs sleep when settled
+window.__hgameState = () => ({ ui: director.snapshot(), locale: i18n.getLocale() });
+window.addEventListener('pagehide', () => { uiUx.dispose(); director.dispose(); app.dispose(); }, { once: true });`,
   network: `// Client connects to workspace network/ (@hgame/network-client). Use StateSyncRoom or LockstepRoom.
 // Run server checks from engine root: npm run check:all
 import { hashState } from '../vendor/hgame/index.js';

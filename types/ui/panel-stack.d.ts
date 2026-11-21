@@ -1,4 +1,7 @@
 /**
+ * @typedef {'pop' | 'fade' | 'slide-up' | 'slide-down' | 'none'} PanelMotion
+ */
+/**
  * @typedef {object} PanelDefinition
  * @property {boolean} [modal=false] Blocks pointer/back events from reaching panels underneath.
  * @property {boolean} [closeOnCancel=true] Whether handleCancel() / Escape pops this panel.
@@ -6,6 +9,7 @@
  * @property {boolean} [exclusive=false] Pops all existing non-pinned panels before pushing this one.
  * @property {boolean} [pinned=false] Survives clear() unless force=true.
  * @property {number} [transitionMs=160] Enter/exit transition duration in milliseconds.
+ * @property {PanelMotion} [motion='pop'] Visual entrance motion style for DOM/3D binders.
  * @property {(entry: PanelEntry) => void} [onEnter]
  * @property {(entry: PanelEntry) => void} [onExit]
  */
@@ -20,7 +24,9 @@
  * @property {boolean} pinned
  * @property {'entering' | 'open' | 'exiting'} phase
  * @property {number} alpha Transition progress [0..1]
+ * @property {number} easedAlpha Eased transition progress [0..1]
  * @property {number} transitionMs
+ * @property {PanelMotion} motion
  */
 /**
  * @typedef {object} PanelStackOptions
@@ -55,6 +61,7 @@ export function createPanelStack(options?: PanelStackOptions | undefined): Reado
     } | undefined) => () => void;
     dispose: () => void;
 }>;
+export type PanelMotion = "pop" | "fade" | "slide-up" | "slide-down" | "none";
 export type PanelDefinition = {
     /**
      * Blocks pointer/back events from reaching panels underneath.
@@ -80,6 +87,10 @@ export type PanelDefinition = {
      * Enter/exit transition duration in milliseconds.
      */
     transitionMs?: number | undefined;
+    /**
+     * Visual entrance motion style for DOM/3D binders.
+     */
+    motion?: PanelMotion | undefined;
     onEnter?: ((entry: PanelEntry) => void) | undefined;
     onExit?: ((entry: PanelEntry) => void) | undefined;
 };
@@ -96,7 +107,12 @@ export type PanelEntry = {
      * Transition progress [0..1]
      */
     alpha: number;
+    /**
+     * Eased transition progress [0..1]
+     */
+    easedAlpha: number;
     transitionMs: number;
+    motion: PanelMotion;
 };
 export type PanelStackOptions = {
     /**

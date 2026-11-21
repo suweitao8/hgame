@@ -6,15 +6,26 @@
   <meta name="theme-color" content="#111">
   <title>HTML 游戏</title>
   <style>
-    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#111720; color:#eee; font:16px system-ui; user-select:none; -webkit-user-select:none; }
-    main { height:100dvh; display:grid; align-content:center; justify-items:center; gap:16px; }
-    button { border:1px solid #789b99; border-radius:8px; background:#233d41; color:#eafff7; padding:12px 22px; cursor:pointer; touch-action:manipulation; }
+    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:radial-gradient(circle at 50% 30%, #1a2636, #0d131c 75%); color:#eee; font:16px system-ui; user-select:none; -webkit-user-select:none; }
+    main { height:100dvh; display:grid; align-content:center; justify-items:center; gap:20px; perspective:900px; }
+    .readout { font-size:28px; font-weight:700; letter-spacing:0.5px; color:#d8f5ee; }
+    .card {
+      width:180px; height:240px; padding:16px; border:1px solid rgba(130, 212, 198, 0.45);
+      border-radius:16px; background:linear-gradient(155deg, #1f3942 0%, #14232d 100%);
+      color:#eafff7; font:700 18px system-ui; cursor:pointer; touch-action:manipulation;
+      display:grid; place-items:center; gap:10px;
+      box-shadow:0 12px 26px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+    }
+    .card .glyph { font-size:44px; line-height:1; }
   </style>
 </head>
 <body>
   <main>
-    <div aria-live="polite">×<strong id="count">0</strong></div>
-    <button id="draw" type="button" disabled>抽取</button>
+    <div class="readout" aria-live="polite">×<strong id="count" data-ui-metric="draws">0</strong></div>
+    <button id="draw" class="card" type="button" data-ui-tilt="12" data-ui-float="4" disabled>
+      <span class="glyph" aria-hidden="true">✦</span>
+      <span>抽取</span>
+    </button>
   </main>
   <script type="module" src="./src/main.js"></script>
 </body>

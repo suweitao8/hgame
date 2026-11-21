@@ -1,4 +1,8 @@
 /**
+ * @typedef {'pop' | 'fade' | 'slide-up' | 'slide-down' | 'none'} PanelMotion
+ */
+
+/**
  * @typedef {object} PanelDefinition
  * @property {boolean} [modal=false] Blocks pointer/back events from reaching panels underneath.
  * @property {boolean} [closeOnCancel=true] Whether handleCancel() / Escape pops this panel.
@@ -6,6 +10,7 @@
  * @property {boolean} [exclusive=false] Pops all existing non-pinned panels before pushing this one.
  * @property {boolean} [pinned=false] Survives clear() unless force=true.
  * @property {number} [transitionMs=160] Enter/exit transition duration in milliseconds.
+ * @property {PanelMotion} [motion='pop'] Visual entrance motion style for DOM/3D binders.
  * @property {(entry: PanelEntry) => void} [onEnter]
  * @property {(entry: PanelEntry) => void} [onExit]
  */
@@ -21,7 +26,9 @@
  * @property {boolean} pinned
  * @property {'entering' | 'open' | 'exiting'} phase
  * @property {number} alpha Transition progress [0..1]
+ * @property {number} easedAlpha Eased transition progress [0..1]
  * @property {number} transitionMs
+ * @property {PanelMotion} motion
  */
 
 /**
@@ -46,9 +53,14 @@ export function createPanelStack(options = {}) {
   if (typeof options.onChange === 'function') listeners.add(options.onChange);
 
   let domCleanup = null;
+  let domSync = null;
+
+  const easeOutCubic = (t) => 1 - (1 - t) ** 3;
+  const VALID_MOTIONS = new Set(['pop', 'fade', 'slide-up', 'slide-down', 'none']);
 
   function normalizeDef(def = {}) {
     const transitionMs = Number.isFinite(def.transitionMs) && def.transitionMs >= 0 ? def.transitionMs : 160;
+    const motion = VALID_MOTIONS.has(def.motion) ? def.motion : 'pop';
     return {
       modal: Boolean(def.modal),
       closeOnCancel: def.closeOnCancel !== false,
@@ -56,6 +68,7 @@ export function createPanelStack(options = {}) {
       exclusive: Boolean(def.exclusive),
       pinned: Boolean(def.pinned),
       transitionMs,
+      motion,
       onEnter: typeof def.onEnter === 'function' ? def.onEnter : undefined,
       onExit: typeof def.onExit === 'function' ? def.onExit : undefined,
     };
@@ -91,6 +104,7 @@ export function createPanelStack(options = {}) {
       exiting.push(entry);
     } else {
       entry.alpha = 0;
+      entry.easedAlpha = 0;
     }
     def?.onExit?.(entry);
   }
@@ -114,8 +128,12 @@ export function createPanelStack(options = {}) {
       if (existingIdx >= 0) {
         const [existing] = stack.splice(existingIdx, 1);
         existing.payload = payload;
+        existing.motion = def.motion;
         existing.phase = existing.transitionMs === 0 ? 'open' : 'entering';
-        if (existing.transitionMs === 0) existing.alpha = 1;
+        if (existing.transitionMs === 0) {
+          existing.alpha = 1;
+          existing.easedAlpha = 1;
+        }
         stack.push(existing);
         def.onEnter?.(existing);
         notify();
@@ -123,6 +141,7 @@ export function createPanelStack(options = {}) {
       }
     }
 
+    const immediate = def.transitionMs === 0;
     /** @type {PanelEntry} */
     const entry = {
       id,
@@ -132,9 +151,11 @@ export function createPanelStack(options = {}) {
       closeOnBackdrop: def.closeOnBackdrop,
       exclusive: def.exclusive,
       pinned: def.pinned,
-      phase: def.transitionMs === 0 ? 'open' : 'entering',
-      alpha: def.transitionMs === 0 ? 1 : 0,
+      phase: immediate ? 'open' : 'entering',
+      alpha: immediate ? 1 : 0,
+      easedAlpha: immediate ? 1 : 0,
       transitionMs: def.transitionMs,
+      motion: def.motion,
     };
     stack.push(entry);
     def.onEnter?.(entry);
@@ -207,18 +228,23 @@ export function createPanelStack(options = {}) {
   function update(dt) {
     const ms = Number.isFinite(dt) && dt > 0 ? dt * 1000 : 0;
     if (ms <= 0) return;
+    let changed = false;
     for (let i = 0; i < stack.length; i++) {
       const e = stack[i];
       if (e.phase === 'entering') {
         e.alpha = e.transitionMs > 0 ? Math.min(1, e.alpha + ms / e.transitionMs) : 1;
+        e.easedAlpha = easeOutCubic(e.alpha);
         if (e.alpha >= 1) e.phase = 'open';
+        changed = true;
       }
     }
     for (let i = exiting.length - 1; i >= 0; i--) {
       const e = exiting[i];
       e.alpha = e.transitionMs > 0 ? Math.max(0, e.alpha - ms / e.transitionMs) : 0;
+      e.easedAlpha = easeOutCubic(e.alpha);
       if (e.alpha <= 0) exiting.splice(i, 1);
     }
+    if (changed && domSync) domSync();
   }
 
   function isOpen(id) {
@@ -269,18 +295,25 @@ export function createPanelStack(options = {}) {
         const idx = stack.findIndex((e) => e.id === pid);
         const active = idx >= 0;
         const entry = active ? stack[idx] : null;
-        if (active) {
+        if (active && entry) {
           el.hidden = false;
           el.setAttribute('aria-hidden', 'false');
           el.setAttribute('data-panel-top', topEntry?.id === pid ? 'true' : 'false');
-          if (el.style) el.style.zIndex = String(100 + idx * 10);
-          if (entry && el.style && entry.transitionMs > 0) {
-            el.style.opacity = String(entry.phase === 'entering' ? Math.max(0.01, entry.alpha) : 1);
+          el.setAttribute('data-panel-phase', entry.phase);
+          el.setAttribute('data-panel-motion', entry.motion);
+          if (el.style) {
+            el.style.zIndex = String(100 + idx * 10);
+            const t = entry.phase === 'entering' ? Math.max(0.01, entry.easedAlpha) : 1;
+            el.style.setProperty?.('--hgame-panel-t', String(t));
+            if (entry.transitionMs > 0) {
+              el.style.opacity = String(t);
+            }
           }
         } else {
           el.hidden = true;
           el.setAttribute('aria-hidden', 'true');
           el.setAttribute('data-panel-top', 'false');
+          el.setAttribute('data-panel-phase', 'closed');
         }
       }
       const backdrop = rootEl.querySelector('[data-panel-backdrop]');
@@ -290,6 +323,7 @@ export function createPanelStack(options = {}) {
         backdrop.setAttribute('aria-hidden', showModal ? 'false' : 'true');
       }
     };
+    domSync = syncDom;
 
     const onClick = (ev) => {
       const target = ev?.target;
@@ -325,6 +359,7 @@ export function createPanelStack(options = {}) {
       rootEl.removeEventListener?.('click', onClick);
       win?.removeEventListener?.('keydown', onKeyDown);
       domCleanup = null;
+      domSync = null;
     };
     return domCleanup;
   }

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a universal cross-game UI & UX runtime system: spring-driven 3D hover tilt, specular glare, press squash, idle float, and staggered card reveal (`ui/ux-motion.js`: `createUiSurfaceSpring`, `createUiMotionGroup`, `computeStaggerProgress`), a cross-profile phase/metric/hint/cue director (`ui/ux-director.js`: `createUiDirector`), `panel-stack.js` `motion` and `easedAlpha` support, an on-demand sleeping DOM UX binder (`integrations/ui-ux-dom.js`: `bindUiUxDOM`), and 3D world HUD / raycasted spatial 3D UI cards (`integrations/ui-3d.js`: `createWorldHud3D`, `createSpatialPanel3D`). Upgraded the `ui` starter profile to showcase the tactile floating card UX.
+
+- Add a text-authored fullscreen HDR shader pass with Unity-style screen coordinates, chained linear color, and view-matched raw, eye and normalized depth. Document Shader Graph inputs and texture color-space mapping.
+
 - Play Unity grid texture sheets on Three mesh particles. Mesh and atlas particles share frame selection and interpolation, including single-row atlas regions and prewarmed mesh lifetime.
 
 - Carry Unity material depth comparisons and explicit depth-write settings into Three mesh and instanced particle draws. Batch opaque atlas cutouts by render state, preserve white default textures, and honor each atlas material's soft-particle toggle. Idle batches submit zero instances.

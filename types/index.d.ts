@@ -265,6 +265,29 @@ export const HGame: Readonly<{
     createPanelStack: typeof createPanelStack;
     createVirtualList: typeof createVirtualList;
     createI18n: typeof createI18n;
+    computeStaggerProgress: typeof computeStaggerProgress;
+    createUiSurfaceSpring: typeof createUiSurfaceSpring;
+    createUiMotionGroup: typeof createUiMotionGroup;
+    UI_PHASES: Readonly<{
+        TITLE: "title";
+        PLAYING: "playing";
+        PAUSED: "paused";
+        CHOICE: "choice";
+        RESULT: "result";
+    }>;
+    UI_UX_CUES: Readonly<{
+        HOVER: "hover";
+        PRESS: "press";
+        CONFIRM: "confirm";
+        CANCEL: "cancel";
+        OPEN: "open";
+        CLOSE: "close";
+        REWARD: "reward";
+        ERROR: "error";
+        METRIC_UP: "metricUp";
+        METRIC_DOWN: "metricDown";
+    }>;
+    createUiDirector: typeof createUiDirector;
     createTagRegistry: typeof createTagRegistry;
     createTagContainer: typeof createTagContainer;
     matchGameplayTags: typeof matchGameplayTags;
@@ -780,6 +803,10 @@ import { createRedDotSystem } from './ui/index.js';
 import { createPanelStack } from './ui/index.js';
 import { createVirtualList } from './ui/index.js';
 import { createI18n } from './ui/index.js';
+import { computeStaggerProgress } from './ui/index.js';
+import { createUiSurfaceSpring } from './ui/index.js';
+import { createUiMotionGroup } from './ui/index.js';
+import { createUiDirector } from './ui/index.js';
 import { createStateMachine } from './ai/index.js';
 import { sequence } from './ai/index.js';
 import { selector } from './ai/index.js';
@@ -817,5 +844,5 @@ export { FOG_FADE_TYPE, FOG_QUALITY, extractTileMapObstacles, createFogOfWarWorl
 export { createStateMachine, BT_STATUS, sequence, selector, parallel, inverter, repeater, cooldown, condition, action, wait, createBehaviorTree } from "./ai/index.js";
 export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget } from "./sim/index.js";
 export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
-export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, createVirtualList, createI18n } from "./ui/index.js";
+export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";

@@ -86,6 +86,12 @@ export {
   createPanelStack,
   createVirtualList,
   createI18n,
+  computeStaggerProgress,
+  createUiSurfaceSpring,
+  createUiMotionGroup,
+  UI_PHASES,
+  UI_UX_CUES,
+  createUiDirector,
 } from './ui/index.js';
 export {
   VFX_EASING,
@@ -195,6 +201,12 @@ import {
   createPanelStack,
   createVirtualList,
   createI18n,
+  computeStaggerProgress,
+  createUiSurfaceSpring,
+  createUiMotionGroup,
+  UI_PHASES,
+  UI_UX_CUES,
+  createUiDirector,
 } from './ui/index.js';
 import {
   VFX_SHAPE,
@@ -258,6 +270,12 @@ export const HGame = Object.freeze({
   createPanelStack,
   createVirtualList,
   createI18n,
+  computeStaggerProgress,
+  createUiSurfaceSpring,
+  createUiMotionGroup,
+  UI_PHASES,
+  UI_UX_CUES,
+  createUiDirector,
   createTagRegistry,
   createTagContainer,
   matchGameplayTags,
