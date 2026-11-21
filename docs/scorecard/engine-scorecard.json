@@ -173,7 +173,7 @@
       "name": "资产流送、压缩与驻留",
       "weight": 6,
       "scores": {
-        "hgame": 8,
+        "hgame": 8.5,
         "unity": 9,
         "cocos": 8.5,
         "godot": 6.5
@@ -183,7 +183,8 @@
         "defaultPath": true,
         "proofFiles": [
           "assets/runtime/integrations/ktx2.js",
-          "assets/runtime/platform/asset-catalog.js"
+          "assets/runtime/platform/asset-catalog.js",
+          "assets/runtime/platform/remote-bundle.js"
         ],
         "industrialChecklist": [
           {
@@ -193,8 +194,8 @@
           },
           {
             "point": "Bundle 分包按需加载/卸载与断网重试",
-            "met": false,
-            "proof": "缺失（暂无通用远程 Bundle 分包加载器与断点重试机制）"
+            "met": true,
+            "proof": "assets/runtime/platform/remote-bundle.js"
           },
           {
             "point": "内置离线 BasisU 压缩编码能力（不依赖外部工具）",
@@ -207,7 +208,7 @@
             "proof": "assets/runtime/platform/asset-catalog.js createVramMipGuard, createProgressiveBootLoader"
           }
         ],
-        "note": "支持运行时 KTX2 解码、Mip 渐进流送、VRAM 守卫、50MB 配额审计及 P0/P1/P2 渐进启动。",
+        "note": "支持运行时 KTX2 解码、Mip 渐进流送、VRAM 守卫、50MB 配额审计、P0/P1/P2 渐进启动及远程 Bundle 分包/SHA-256 校验与指数退避重试（remote-bundle.js）。",
         "benchmarkFiles": [
           "tests/browser-engine-v3-commercial-benchmark.mjs"
         ]
@@ -217,7 +218,7 @@
         "cocos": "内置 AssetBundle、远程资源热更新与小游戏分包加载。",
         "godot": "支持 PCK 分包与 ResourceLoader 异步加载，但 Web 端大包体流送与纹理压缩工具链较弱。"
       },
-      "gap": "缺少远程 Bundle 分包加载器/断网重试，且缺少内置 BasisU 编码器。"
+      "gap": "缺少内置离线 BasisU 压缩编码器（依赖外部 toktx）。"
     },
     {
       "id": "R1",

@@ -31,6 +31,10 @@ export {
   createVramMipGuard,
   createProgressiveBootLoader,
 } from './platform/asset-catalog.js';
+export {
+  createRemoteBundleLoader,
+  toCatalogLoader,
+} from './platform/remote-bundle.js';
 import {
   createAssetCatalog,
   createStreamingResidencyPolicy,
@@ -38,6 +42,10 @@ import {
   createVramMipGuard,
   createProgressiveBootLoader,
 } from './platform/asset-catalog.js';
+import {
+  createRemoteBundleLoader,
+  toCatalogLoader,
+} from './platform/remote-bundle.js';
 export {
   EASING,
   TweenManager,
@@ -561,6 +569,8 @@ export const HGame = Object.freeze({
   bindTextureMipStreaming,
   createVramMipGuard,
   createProgressiveBootLoader,
+  createRemoteBundleLoader,
+  toCatalogLoader,
   createNetworkStateSync,
   createSceneReplicator,
   createSpatialAoiFilter,

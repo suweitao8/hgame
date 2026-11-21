@@ -1,4 +1,5 @@
 import { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming, createVramMipGuard, createProgressiveBootLoader } from "./platform/asset-catalog.js";
+import { createRemoteBundleLoader, toCatalogLoader } from "./platform/remote-bundle.js";
 import { createSkeleton2D } from "./animation/skeleton2d.js";
 import { createWorkerPhysicsWorld } from "./physics/worker-physics.js";
 import { createShadowAtlas3D } from "./integrations/shadow3d.js";
@@ -1568,6 +1569,8 @@ export const HGame: Readonly<{
     bindTextureMipStreaming: typeof bindTextureMipStreaming;
     createVramMipGuard: typeof createVramMipGuard;
     createProgressiveBootLoader: typeof createProgressiveBootLoader;
+    createRemoteBundleLoader: typeof createRemoteBundleLoader;
+    toCatalogLoader: typeof toCatalogLoader;
     createNetworkStateSync: typeof createNetworkStateSync;
     createSceneReplicator: typeof createSceneReplicator;
     createSpatialAoiFilter: typeof createSpatialAoiFilter;
@@ -1670,6 +1673,7 @@ export { Scene, SceneManager, createHotReloadController } from "./core/scene.js"
 export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTagAncestors, createTagRegistry, GLOBAL_TAG_REGISTRY, createTagContainer, matchGameplayTags } from "./core/tags.js";
 export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, createAssetLoader, createSaveStore, createVersionedStore, createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews, createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm, createDiagnostics, createGameBridge, createGameHostBridge } from "./platform/engine.js";
 export { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming, createVramMipGuard, createProgressiveBootLoader } from "./platform/asset-catalog.js";
+export { createRemoteBundleLoader, toCatalogLoader } from "./platform/remote-bundle.js";
 export { EASING, TweenManager, LN2_CRIT, damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
 export { generateLightmapUV3D, createLightmapBaker3D } from "./integrations/lightmap-bake3d.js";
 export { mergeStaticMeshesByMaterial3D, GPU_HIZ_OCCLUSION_WGSL, createHiZOcclusionCuller3D, dispatchWebGpuHiZOcclusion, quantizeBufferGeometry3D } from "./integrations/culling3d.js";
