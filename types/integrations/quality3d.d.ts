@@ -51,6 +51,36 @@ export function resolvePortraitViewport({ width, height, dpr, maxDpr, safeArea, 
         left: number;
     }>;
 }>;
+/**
+ * Zero-GC Dynamic Resolution Scaling (DRS) loop controller tuned for mobile portrait
+ * Bilibili Toy viewports, smoothing backing-store scale down during heavy particles/battles
+ * and stepping smoothly back up once frame times recover.
+ */
+export function createPortraitDrsController({ width, height, dpr, maxDpr, minScale, maxScale, targetFrameMs, degradeThresholdMs, recoverThresholdMs, stepDown, stepUp, windowFrames, }?: {
+    width?: number | undefined;
+    height?: number | undefined;
+    dpr?: number | undefined;
+    maxDpr?: 2 | undefined;
+    minScale?: number | undefined;
+    maxScale?: number | undefined;
+    targetFrameMs?: number | undefined;
+    degradeThresholdMs?: number | undefined;
+    recoverThresholdMs?: number | undefined;
+    stepDown?: number | undefined;
+    stepUp?: number | undefined;
+    windowFrames?: number | undefined;
+}): Readonly<{
+    sample: (frameMs: any, out?: null) => {};
+    getState: () => Readonly<{
+        scale: number;
+        pixelRatio: number;
+        bufferWidth: number;
+        bufferHeight: number;
+        avgFrameMs: number;
+        minScale: number;
+        maxScale: number;
+    }>;
+}>;
 /** @typedef {'low'|'medium'|'high'} QualityTier */
 /** @typedef {QualityTier|'ultra'} QualityPresetTier Tier names accepted by preset tables. */
 /** @typedef {'auto'|QualityTier} QualityMode */
@@ -161,8 +191,15 @@ export const MOBILE_PORTRAIT_PRESET: Readonly<{
     targetFps: 60;
     shadowMapSize: 512;
     pcss: false;
+    msaaSamples: 4;
     bloom: true;
     rcasSharpness: 0.45;
+    colorLut: "vibrant";
+    heightFog: Readonly<{
+        density: 0.012;
+        baseHeight: 0;
+        falloff: 0.22;
+    }>;
 }>;
 export { createShaderWarmupQueue3D } from "./quality3d/shader-warmup.js";
 export type QualityTier = "low" | "medium" | "high";

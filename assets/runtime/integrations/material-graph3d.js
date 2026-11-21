@@ -301,14 +301,60 @@ export function createComposableMaterial3D(THREE, {
   return material;
 }
 
+function resolveGlslStd140Type(val) {
+  if (typeof val === 'number') return 'float';
+  if (val && typeof val === 'object') {
+    if (Number.isFinite(val.w)) return 'vec4';
+    if (Number.isFinite(val.z) || Number.isFinite(val.b)) return 'vec3';
+    if (Number.isFinite(val.y)) return 'vec2';
+  }
+  return 'float';
+}
+
 /**
  * Shared O(1) Material Batch Registry synchronizing global uniforms (`uTime`, `uWindDir`,
- * `uFogDensity`) across registered Three.js materials without per-material scene traversal.
+ * `uFogDensity`) via WebGL2 UniformsGroup UBOs when `options.THREE` is provided, without
+ * per-material scene traversal.
  * @param {Record<string, any>} [initialSharedUniforms]
+ * @param {object} [options]
+ * @param {object|null} [options.THREE]
+ * @param {string} [options.groupName='HGamePerFrameUBO']
  */
-export function createMaterialBatchRegistry3D(initialSharedUniforms = { uTime: 0, uFogDensity: 0 }) {
+export function createMaterialBatchRegistry3D(
+  initialSharedUniforms = { uTime: 0, uFogDensity: 0 },
+  options = {},
+) {
+  const { THREE = null, groupName = 'HGamePerFrameUBO' } = options || {};
   const sharedBlock = createSharedMaterialBlock3D(initialSharedUniforms);
   const materials = new Set();
+
+  let uboGroup = null;
+  const uboUniforms = new Map();
+  const fieldDecls = [];
+  if (THREE?.UniformsGroup && THREE?.Uniform) {
+    uboGroup = new THREE.UniformsGroup();
+    if (typeof uboGroup.setName === 'function') uboGroup.setName(groupName);
+    else uboGroup.name = groupName;
+    for (const [k, v] of Object.entries(initialSharedUniforms || {})) {
+      const uniform = new THREE.Uniform(v);
+      uboGroup.add(uniform);
+      uboUniforms.set(k, uniform);
+      fieldDecls.push(`  ${resolveGlslStd140Type(v)} ${k};`);
+    }
+  }
+
+  const uboBlockHeader = fieldDecls.length > 0
+    ? `#if __VERSION__ >= 300\nlayout(std140) uniform ${groupName} {\n${fieldDecls.join('\n')}\n};\n#endif\n`
+    : '';
+
+  function syncUboValue(name, value) {
+    if (!uboGroup) return;
+    const u = uboUniforms.get(name);
+    if (u) {
+      if (u.value?.copy && value && typeof value === 'object') u.value.copy(value);
+      else u.value = value;
+    }
+  }
 
   function register(material) {
     if (!material || typeof material !== 'object') return false;
@@ -320,24 +366,52 @@ export function createMaterialBatchRegistry3D(initialSharedUniforms = { uTime: 0
         }
       }
     }
+    if (uboGroup && fieldDecls.length > 0) {
+      const prevGroups = Array.isArray(material.uniformsGroups) ? material.uniformsGroups : [];
+      if (!prevGroups.includes(uboGroup)) {
+        material.uniformsGroups = [...prevGroups, uboGroup];
+      }
+      if (!material.userData?.hgameUboPatched) {
+        const prevCompile = typeof material.onBeforeCompile === 'function' ? material.onBeforeCompile : null;
+        const prevCacheKey = typeof material.customProgramCacheKey === 'function' ? material.customProgramCacheKey : null;
+        material.onBeforeCompile = (shader, renderer) => {
+          prevCompile?.call(material, shader, renderer);
+          if (shader.vertexShader && !shader.vertexShader.includes(groupName)) {
+            shader.vertexShader = uboBlockHeader + shader.vertexShader;
+          }
+          if (shader.fragmentShader && !shader.fragmentShader.includes(groupName)) {
+            shader.fragmentShader = uboBlockHeader + shader.fragmentShader;
+          }
+        };
+        material.customProgramCacheKey = () => `${prevCacheKey ? prevCacheKey.call(material) : ''}|ubo:${groupName}`;
+        material.userData = { ...(material.userData || {}), hgameUboPatched: true };
+        material.needsUpdate = true;
+      }
+    }
     return true;
   }
 
   function unregister(material) {
+    if (uboGroup && Array.isArray(material?.uniformsGroups)) {
+      material.uniformsGroups = material.uniformsGroups.filter(g => g !== uboGroup);
+    }
     return materials.delete(material);
   }
 
   function setGlobal(name, value) {
     sharedBlock.set(name, value);
+    syncUboValue(name, value);
     return value;
   }
 
   function updateFrame(dt = 0, overrides = null) {
-    const curTime = Number(sharedBlock.get('uTime')) || 0;
-    sharedBlock.set('uTime', curTime + Math.max(0, Number(dt) || 0));
+    const nextTime = (Number(sharedBlock.get('uTime')) || 0) + Math.max(0, Number(dt) || 0);
+    sharedBlock.set('uTime', nextTime);
+    syncUboValue('uTime', nextTime);
     if (overrides && typeof overrides === 'object') {
       for (const [k, v] of Object.entries(overrides)) {
         sharedBlock.set(k, v);
+        syncUboValue(k, v);
       }
     }
     return sharedBlock.version;
@@ -348,11 +422,14 @@ export function createMaterialBatchRegistry3D(initialSharedUniforms = { uTime: 0
       registeredCount: materials.size,
       version: sharedBlock.version,
       uniformKeys: Object.keys(sharedBlock.uniforms),
+      uboEnabled: Boolean(uboGroup),
+      uboGroupName: uboGroup ? groupName : null,
     });
   }
 
   return Object.freeze({
     sharedBlock,
+    uboGroup,
     register,
     unregister,
     setGlobal,

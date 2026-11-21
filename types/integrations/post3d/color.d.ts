@@ -68,7 +68,16 @@ export function evaluateFilmicCurveRGB(rgb: ArrayLike<number>, params?: FilmicCu
  * @returns {number} New exposure multiplier.
  */
 export function stepEyeAdaptation(currentExposure: number, avgLuminance: number, { keyValue, minExposure, maxExposure, adaptSpeedUp, adaptSpeedDown, exposureCompensation, }?: EyeAdaptationParams | undefined, dt?: number | undefined): number;
+/**
+ * Generate a baked 2D strip 3D LUT (`size^2 x size`, RGBA8) for low-cost mobile color grading.
+ * @param {object|null} [THREE]
+ * @param {string|((r: number, g: number, b: number) => [number, number, number])} [presetOrFn='cinematic']
+ * @param {number} [size=16]
+ */
+export function createColorLutTexture3D(THREE?: object | null, presetOrFn?: string | ((r: number, g: number, b: number) => [number, number, number]) | undefined, size?: number | undefined): any;
 export const D65_PLANCKIAN_REF: RGBTuple;
+/** Supported built-in 3D color-grading LUT preset names. */
+export const COLOR_LUT_PRESETS: readonly string[];
 /**
  * Linear RGB triple.
  */

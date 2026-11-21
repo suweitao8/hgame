@@ -15,7 +15,7 @@ import {
   FXAA_SHARPEN_FRAGMENT_GLSL3,
 } from './shaders.js';
 import { createFullscreenTriangle, inspectWebGLCapabilities, readSceneSampleCounts } from './capabilities.js';
-import { computeWhiteBalanceRGB } from './color.js';
+import { computeWhiteBalanceRGB, createColorLutTexture3D } from './color.js';
 import { QUALITY3D_PRESETS } from '../quality3d.js';
 import { readWorldPosition } from '../shadow3d/transform.js';
 import { syncCameraWorldMatrices, usesZeroToOneDepth } from '../camera3d/matrices.js';
@@ -38,6 +38,7 @@ const POST_STATE_SCALAR_KEYS = [
   'filmSlope', 'filmToe', 'filmShoulder', 'filmBlackClip', 'filmWhiteClip',
   'sharpness', 'vignette', 'saturation', 'damage', 'lowHealth',
   'focus', 'flash', 'fade',
+  'heightFogDensity', 'heightFogBase', 'heightFogFalloff', 'lutIntensity',
 ];
 const GI_HISTORY_SETTINGS = ['giIntensity', 'giRadius', 'ssrIntensity', 'ssrMaxDist', 'ssrThickness'];
 
@@ -433,6 +434,8 @@ export function createPostPipeline3D(options = {}) {
     vignette = 0.18,
     saturation = 1.05,
     fxaa,
+    heightFog = null,
+    colorLut = null,
   } = options;
   if (!THREE || !renderer) {
     throw new TypeError('createPostPipeline3D requires THREE and renderer');
@@ -526,7 +529,87 @@ export function createPostPipeline3D(options = {}) {
     liftVec: THREE.Vector3 ? new THREE.Vector3(...colorLift) : null,
     gammaVec: THREE.Vector3 ? new THREE.Vector3(...colorGamma) : null,
     gainVec: THREE.Vector3 ? new THREE.Vector3(...colorGain) : null,
+    heightFogDensity: 0,
+    heightFogBase: 0,
+    heightFogFalloff: 0.25,
+    heightFogColor: THREE.Vector3 ? new THREE.Vector3(0.53, 0.64, 0.77) : null,
+    lutIntensity: 0,
+    lutSize: 16,
+    lutPreset: null,
   };
+
+  let lutTexture = null;
+  let ownedLutTexture = null;
+  let dummyWhiteLut = THREE.DataTexture
+    ? new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat, THREE.UnsignedByteType)
+    : null;
+  if (dummyWhiteLut) dummyWhiteLut.needsUpdate = true;
+
+  function applyHeightFogConfig(cfg) {
+    if (!cfg || typeof cfg !== 'object') {
+      if (cfg === false) state.heightFogDensity = 0;
+      return;
+    }
+    if (Number.isFinite(cfg.density)) state.heightFogDensity = Math.max(0, cfg.density);
+    if (Number.isFinite(cfg.baseHeight)) state.heightFogBase = cfg.baseHeight;
+    if (Number.isFinite(cfg.falloff)) state.heightFogFalloff = Math.max(0.001, cfg.falloff);
+    if (cfg.color !== undefined && state.heightFogColor) {
+      if (typeof cfg.color === 'number' && THREE.Color) {
+        const tmp = new THREE.Color(cfg.color);
+        state.heightFogColor.set(tmp.r, tmp.g, tmp.b);
+      } else if (Array.isArray(cfg.color) && cfg.color.length >= 3) {
+        state.heightFogColor.set(cfg.color[0], cfg.color[1], cfg.color[2]);
+      } else if (cfg.color && typeof cfg.color === 'object' && Number.isFinite(cfg.color.r)) {
+        state.heightFogColor.set(cfg.color.r, cfg.color.g, cfg.color.b);
+      }
+    }
+  }
+
+  function applyColorLutConfig(cfg) {
+    if (cfg === false || cfg === null) {
+      if (ownedLutTexture) { ownedLutTexture.dispose?.(); ownedLutTexture = null; }
+      lutTexture = null;
+      state.lutIntensity = 0;
+      state.lutPreset = null;
+      return;
+    }
+    if (typeof cfg === 'string') {
+      if (ownedLutTexture) { ownedLutTexture.dispose?.(); ownedLutTexture = null; }
+      const tex = createColorLutTexture3D(THREE, cfg, 16);
+      if (tex?.isDataTexture !== false) {
+        ownedLutTexture = tex;
+        lutTexture = tex;
+      }
+      state.lutSize = tex?.userData?.hgameLutSize ?? tex?.size ?? 16;
+      state.lutPreset = cfg;
+      state.lutIntensity = 1.0;
+      return;
+    }
+    if (cfg && typeof cfg === 'object') {
+      if (cfg.texture) {
+        if (ownedLutTexture) { ownedLutTexture.dispose?.(); ownedLutTexture = null; }
+        lutTexture = cfg.texture;
+        state.lutSize = cfg.size ?? cfg.texture?.userData?.hgameLutSize ?? 16;
+        state.lutPreset = cfg.texture?.userData?.preset ?? 'custom';
+        state.lutIntensity = Number.isFinite(cfg.intensity) ? cfg.intensity : 1.0;
+      } else if (cfg.preset) {
+        if (ownedLutTexture) { ownedLutTexture.dispose?.(); ownedLutTexture = null; }
+        const tex = createColorLutTexture3D(THREE, cfg.preset, cfg.size ?? 16);
+        if (tex?.isDataTexture !== false) {
+          ownedLutTexture = tex;
+          lutTexture = tex;
+        }
+        state.lutSize = tex?.userData?.hgameLutSize ?? tex?.size ?? 16;
+        state.lutPreset = cfg.preset;
+        state.lutIntensity = Number.isFinite(cfg.intensity) ? cfg.intensity : 1.0;
+      } else if (Number.isFinite(cfg.intensity)) {
+        state.lutIntensity = cfg.intensity;
+      }
+    }
+  }
+
+  applyHeightFogConfig(heightFog);
+  applyColorLutConfig(colorLut);
 
   let sceneRT = null;
   let halfRT = null;
@@ -560,6 +643,8 @@ export function createPostPipeline3D(options = {}) {
   let customInverseProjection = null;
   let scratchCamToShadow = null;
   let scratchViewToWorld = null;
+  let scratchCamWorld = THREE.Vector3 ? new THREE.Vector3() : null;
+  let scratchInvView = THREE.Matrix4 ? new THREE.Matrix4() : null;
   let scratchSunView = null;
   let scratchSunTarget = null;
   const hdrType = capabilities.halfFloatRenderable && THREE.HalfFloatType
@@ -952,6 +1037,15 @@ export function createPostPipeline3D(options = {}) {
         uTime: { value: 0 },
         uToneMapping: { value: state.toneMapping },
         uWriteLuma: { value: 0 },
+        uHeightFogDensity: { value: state.heightFogDensity },
+        uHeightFogColor: { value: state.heightFogColor },
+        uHeightFogBase: { value: state.heightFogBase },
+        uHeightFogFalloff: { value: state.heightFogFalloff },
+        uCamWorldPos: { value: scratchCamWorld },
+        uInvViewMat: { value: scratchInvView },
+        tColorLut: { value: lutTexture ?? dummyWhiteLut },
+        uLutIntensity: { value: state.lutIntensity },
+        uLutSize: { value: state.lutSize },
       }, { ...exposureDefines, ...giDepthDefines }),
       fxaaSharpen: makeShader(FXAA_SHARPEN_FRAGMENT_GLSL3, {
         tDiffuse: { value: null },
@@ -1305,6 +1399,8 @@ export function createPostPipeline3D(options = {}) {
       computeWhiteBalanceRGB(state.whiteTemp, state.whiteTint, whiteBalanceRgb);
       state.whiteBalanceVec?.set(whiteBalanceRgb[0], whiteBalanceRgb[1], whiteBalanceRgb[2]);
     }
+    if ('heightFog' in patch) applyHeightFogConfig(patch.heightFog);
+    if ('colorLut' in patch) applyColorLutConfig(patch.colorLut);
 
     syncOptionalTargets();
   }
@@ -1468,6 +1564,7 @@ export function createPostPipeline3D(options = {}) {
       !renderer.capabilities?.reversedDepthBuffer && !camera.reversedDepth && !camera.isArrayCamera);
     let temporalFrame = useTemporal;
     const needsProjection = useAo || wantsGiSsr || wantsContact || wantsVolumetric || useTemporal ||
+      (readSceneDepth && state.heightFogDensity > 0.0001) ||
       activePasses.some(({ pass }) => pass.inputs.depthView);
     const needsDepth = needsProjection || customDepth;
     if (useTemporal) temporalAa ??= createWorldTemporalAA();
@@ -1746,6 +1843,23 @@ export function createPostPipeline3D(options = {}) {
       compU.uFade.value = state.fade;
       compU.uToneMapping.value = state.toneMapping;
       compU.uWriteLuma.value = useFinalFxaaPass ? 1 : 0;
+      compU.uHeightFogDensity.value = readSceneDepth ? state.heightFogDensity : 0;
+      compU.uHeightFogBase.value = state.heightFogBase;
+      compU.uHeightFogFalloff.value = state.heightFogFalloff;
+      if (state.heightFogColor && compU.uHeightFogColor.value?.copy) {
+        compU.uHeightFogColor.value.copy(state.heightFogColor);
+      }
+      if (scratchCamWorld && camera?.position && compU.uCamWorldPos.value?.set) {
+        scratchCamWorld.set(camera.position.x ?? 0, camera.position.y ?? 0, camera.position.z ?? 0);
+        compU.uCamWorldPos.value.copy(scratchCamWorld);
+      }
+      if (scratchInvView && camera?.matrixWorld && compU.uInvViewMat.value?.copy) {
+        scratchInvView.copy(camera.matrixWorld);
+        compU.uInvViewMat.value.copy(scratchInvView);
+      }
+      compU.tColorLut.value = lutTexture ?? dummyWhiteLut;
+      compU.uLutIntensity.value = lutTexture ? state.lutIntensity : 0;
+      compU.uLutSize.value = state.lutSize;
 
       // Execute final post-composite stages directly via the compiled Render Graph executor
       const execPasses = [
@@ -1818,6 +1932,11 @@ export function createPostPipeline3D(options = {}) {
     if (disposed) return false;
     disposed = true;
     disposeTargets();
+    ownedLutTexture?.dispose?.();
+    ownedLutTexture = null;
+    lutTexture = null;
+    dummyWhiteLut?.dispose?.();
+    dummyWhiteLut = null;
     reactiveMaskMat?.dispose?.();
     reactiveMaskMat = null;
     temporalAa?.dispose();

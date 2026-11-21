@@ -177,3 +177,120 @@ export function stepEyeAdaptation(currentExposure, avgLuminance, {
   return cur + (target - cur) * alpha;
 }
 
+/** Supported built-in 3D color-grading LUT preset names. */
+export const COLOR_LUT_PRESETS = Object.freeze(['neutral', 'cinematic', 'vibrant', 'cool-scifi', 'warm-sunset']);
+
+function evaluateLutPresetColor(preset, r, g, b) {
+  if (preset === 'neutral') return [r, g, b];
+  const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  if (preset === 'cinematic') {
+    const cr = r * r * (3 - 2 * r) * 0.22 + r * 0.78;
+    const cg = g * g * (3 - 2 * g) * 0.16 + g * 0.84;
+    const cb = b * b * (3 - 2 * b) * 0.14 + b * 0.86;
+    const coolShadow = Math.max(0, 1 - luma * 1.8) * 0.045;
+    const warmHi = Math.max(0, luma - 0.55) * 0.06;
+    return [
+      clampRange(cr - coolShadow * 0.5 + warmHi, 0, 1),
+      clampRange(cg + coolShadow * 0.2 + warmHi * 0.45, 0, 1),
+      clampRange(cb + coolShadow - warmHi * 0.5, 0, 1),
+    ];
+  }
+  if (preset === 'vibrant') {
+    const sat = 1.24;
+    const vr = clampRange(luma + (r - luma) * sat, 0, 1);
+    const vg = clampRange(luma + (g - luma) * sat, 0, 1);
+    const vb = clampRange(luma + (b - luma) * sat, 0, 1);
+    return [
+      clampRange(vr * 0.92 + vr * vr * (3 - 2 * vr) * 0.08, 0, 1),
+      clampRange(vg * 0.92 + vg * vg * (3 - 2 * vg) * 0.08, 0, 1),
+      clampRange(vb * 0.92 + vb * vb * (3 - 2 * vb) * 0.08, 0, 1),
+    ];
+  }
+  if (preset === 'cool-scifi') {
+    return [
+      clampRange(r * 0.90 + Math.max(0, luma - 0.75) * 0.05, 0, 1),
+      clampRange(g * 0.99 + Math.max(0, 1 - luma) * 0.025, 0, 1),
+      clampRange(b * 1.07 + 0.03, 0, 1),
+    ];
+  }
+  if (preset === 'warm-sunset') {
+    return [
+      clampRange(r * 1.08 + 0.025, 0, 1),
+      clampRange(g * 1.01 + luma * 0.015, 0, 1),
+      clampRange(b * 0.88 - Math.max(0, luma - 0.4) * 0.03, 0, 1),
+    ];
+  }
+  return [r, g, b];
+}
+
+/**
+ * Generate a baked 2D strip 3D LUT (`size^2 x size`, RGBA8) for low-cost mobile color grading.
+ * @param {object|null} [THREE]
+ * @param {string|((r: number, g: number, b: number) => [number, number, number])} [presetOrFn='cinematic']
+ * @param {number} [size=16]
+ */
+export function createColorLutTexture3D(THREE = null, presetOrFn = 'cinematic', size = 16) {
+  const s = Math.max(4, Math.min(32, Math.floor(Number(size) || 16)));
+  const width = s * s;
+  const height = s;
+  const data = new Uint8Array(width * height * 4);
+  const customFn = typeof presetOrFn === 'function' ? presetOrFn : null;
+  const presetName = typeof presetOrFn === 'string' && COLOR_LUT_PRESETS.includes(presetOrFn)
+    ? presetOrFn
+    : 'cinematic';
+  const invMax = 1 / (s - 1);
+
+  for (let b = 0; b < s; b++) {
+    const fb = b * invMax;
+    for (let g = 0; g < s; g++) {
+      const fg = g * invMax;
+      for (let r = 0; r < s; r++) {
+        const fr = r * invMax;
+        const [or, og, ob] = customFn ? customFn(fr, fg, fb) : evaluateLutPresetColor(presetName, fr, fg, fb);
+        const x = b * s + r;
+        const idx = (g * width + x) * 4;
+        data[idx] = Math.round(clampRange(or, 0, 1) * 255);
+        data[idx + 1] = Math.round(clampRange(og, 0, 1) * 255);
+        data[idx + 2] = Math.round(clampRange(ob, 0, 1) * 255);
+        data[idx + 3] = 255;
+      }
+    }
+  }
+
+  if (THREE?.DataTexture) {
+    const tex = new THREE.DataTexture(
+      data,
+      width,
+      height,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType
+    );
+    if (THREE.LinearFilter !== undefined) {
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+    }
+    if (THREE.ClampToEdgeWrapping !== undefined) {
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+    }
+    tex.generateMipmaps = false;
+    tex.flipY = false;
+    tex.needsUpdate = true;
+    tex.userData = {
+      ...(tex.userData || {}),
+      hgameLutSize: s,
+      preset: customFn ? 'custom' : presetName,
+    };
+    return tex;
+  }
+
+  return Object.freeze({
+    data,
+    width,
+    height,
+    size: s,
+    preset: customFn ? 'custom' : presetName,
+    isDataTexture: false,
+  });
+}
+

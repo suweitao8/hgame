@@ -42,11 +42,13 @@ const HARNESS_HTML = `<!doctype html>
       computeThumbArcLayout,
       isInThumbComfortZone,
       createThumbArcHud,
+      createColorLutTexture3D,
+      detectCompressedTextureSupport,
     } from '/assets/runtime/index.js';
     import { createThreeAdapter } from '/assets/runtime/integrations/three.js';
     import { createInstancedFoliage3D } from '/assets/runtime/integrations/foliage3d.js';
     import { createMaterialBatchRegistry3D, createComposableMaterial3D } from '/assets/runtime/integrations/material-graph3d.js';
-    import { MOBILE_PORTRAIT_PRESET, resolvePortraitViewport } from '/assets/runtime/integrations/quality3d.js';
+    import { MOBILE_PORTRAIT_PRESET, resolvePortraitViewport, createPortraitDrsController } from '/assets/runtime/integrations/quality3d.js';
     import { createDecalSystem3D } from '/assets/runtime/integrations/decal3d.js';
 
     function sampleGlPixels(gl, w, h) {
@@ -83,6 +85,8 @@ const HARNESS_HTML = `<!doctype html>
       cam.lookAt(0, 0.8, -3.5);
       cam.updateMatrixWorld();
 
+      const lutTex = createColorLutTexture3D(THREE, MOBILE_PORTRAIT_PRESET.colorLut, 16);
+
       const adapter = createThreeAdapter({
         THREE,
         canvas: c3d,
@@ -94,6 +98,8 @@ const HARNESS_HTML = `<!doctype html>
           bloom: MOBILE_PORTRAIT_PRESET.bloom,
           sharpness: MOBILE_PORTRAIT_PRESET.rcasSharpness,
           fxaa: true,
+          colorLut: { texture: lutTex, intensity: 0.85, size: 16 },
+          heightFog: { density: 0.012, color: 0x1e293b, baseHeight: 0, falloff: 0.25 },
         },
         worldLighting: {
           ambient: { color: 0x334155, intensity: 0.7 },
@@ -114,7 +120,7 @@ const HARNESS_HTML = `<!doctype html>
       const scene = new Scene('mobile-portrait-3d');
       const csm = adapter.getCascadedShadowMap(scene);
 
-      const batchRegistry = createMaterialBatchRegistry3D({ uTime: 0, uFogDensity: 0.012 });
+      const batchRegistry = createMaterialBatchRegistry3D({ uTime: 0, uFogDensity: 0.012 }, { THREE });
       const heroMat = createComposableMaterial3D(THREE, {
         color: 0x38bdf8,
         sharedBlock: batchRegistry.sharedBlock,
@@ -184,6 +190,20 @@ const HARNESS_HTML = `<!doctype html>
       const executedGraph = adapter.getExecutedRenderGraph();
       const vram = adapter.measureVram(scene);
       const batchStats = batchRegistry.getStats();
+      const compressedSupport = detectCompressedTextureSupport(gl);
+
+      const drs = createPortraitDrsController({ width: 390, height: 844, dpr: 2, windowFrames: 8 });
+      let drsDropped = false;
+      let drsRecovered = false;
+      for (let i = 0; i < 16; i++) {
+        const res = drs.sample(24.0);
+        if (res.changed && res.scale < 1.0) drsDropped = true;
+      }
+      const drsDegradedScale = drs.getState().scale;
+      for (let i = 0; i < 32; i++) {
+        const res = drs.sample(11.0);
+        if (res.changed && res.scale > drsDegradedScale) drsRecovered = true;
+      }
 
       // Portrait Bottom-Right Semi-Arc Thumb HUD overlay
       const c2d = document.getElementById('c2d');
@@ -240,6 +260,11 @@ const HARNESS_HTML = `<!doctype html>
         projDecalsRendered,
         decalActive: decalStats.active,
         batchRegisteredMaterials: batchStats.registeredCount,
+        uboEnabled: batchStats.uboEnabled,
+        lutEnabled: Boolean(lutTex && lutTex.isDataTexture),
+        compressedSupport,
+        drsDropped,
+        drsRecovered,
         allInLowerHalf,
         directAllInLowerHalf: directLayout.allInLowerHalf,
         minBtnSize,
@@ -300,6 +325,11 @@ try {
   assert.equal(m.projDecalsRendered, 1, 'Projected soft-edge decal must render');
   assert.equal(m.decalActive, 1, 'Active decal count must be 1');
   assert.equal(m.batchRegisteredMaterials, 2, 'Material batch registry must track 2 materials');
+  assert.equal(m.uboEnabled, true, 'WebGL2 UniformsGroup UBO batching must be active');
+  assert.equal(m.lutEnabled, true, '3D strip Color LUT DataTexture must be bound');
+  assert.ok(m.compressedSupport && typeof m.compressedSupport.preferred === 'string' && m.compressedSupport.preferred.length > 0, 'Compressed texture probing must report preferred format');
+  assert.equal(m.drsDropped, true, 'Portrait DRS controller must scale down under overload');
+  assert.equal(m.drsRecovered, true, 'Portrait DRS controller must recover under healthy frame times');
   assert.equal(m.portraitVp.orientation, 'portrait');
   assert.equal(m.allInLowerHalf, true, 'All thumb-arc buttons must lie in cy >= 0.52 * viewportHeight');
   assert.equal(m.directAllInLowerHalf, true);

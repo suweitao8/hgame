@@ -84,7 +84,15 @@ export {
   createBehaviorTree,
 } from './ai/index.js';
 export { createTraceRecorder } from './integrations/trace.js';
-export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner } from './sim/index.js';
+export { COLOR_LUT_PRESETS, createColorLutTexture3D } from './integrations/post3d/color.js';
+export {
+  KTX2_MAGIC,
+  detectCompressedTextureSupport,
+  parseKtx2Header,
+  selectOptimalTextureVariant,
+  createCompressedTextureFromMipData,
+} from './integrations/ktx2.js';
+export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner, measureHotLoopAllocations } from './sim/index.js';
 export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from './integrations/render-budget-2d.js';
 export { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 export {
@@ -161,7 +169,15 @@ import { PrefabRegistry } from './core/prefab.js';
 import { createTagContainer, createTagRegistry, GLOBAL_TAG_REGISTRY, matchGameplayTags } from './core/tags.js';
 import { createGameApplication } from './core/application.js';
 import { createTraceRecorder } from './integrations/trace.js';
-import { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner } from './sim/index.js';
+import { COLOR_LUT_PRESETS, createColorLutTexture3D } from './integrations/post3d/color.js';
+import {
+  KTX2_MAGIC,
+  detectCompressedTextureSupport,
+  parseKtx2Header,
+  selectOptimalTextureVariant,
+  createCompressedTextureFromMipData,
+} from './integrations/ktx2.js';
+import { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner, measureHotLoopAllocations } from './sim/index.js';
 import { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from './integrations/render-budget-2d.js';
 import { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 import { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
@@ -315,12 +331,20 @@ export const HGame = Object.freeze({
   createApplication: createGameApplication,
   createVersionedStore,
   createTraceRecorder,
+  COLOR_LUT_PRESETS,
+  createColorLutTexture3D,
+  KTX2_MAGIC,
+  detectCompressedTextureSupport,
+  parseKtx2Header,
+  selectOptimalTextureVariant,
+  createCompressedTextureFromMipData,
   createSeededRng,
   createStateChecksum,
   hashState,
   runScripted,
   createSimulationWorkBudget,
   createSimWorkerRunner,
+  measureHotLoopAllocations,
   RENDER_RESOURCE_TYPES_2D,
   createRenderBudgetController,
   createSpringArmRayProbe,

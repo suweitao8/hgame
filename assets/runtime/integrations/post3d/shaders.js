@@ -779,6 +779,15 @@ uniform float uFade;
 uniform float uTime;
 uniform int uToneMapping;
 uniform float uWriteLuma;
+uniform float uHeightFogDensity;
+uniform vec3 uHeightFogColor;
+uniform float uHeightFogBase;
+uniform float uHeightFogFalloff;
+uniform vec3 uCamWorldPos;
+uniform mat4 uInvViewMat;
+uniform sampler2D tColorLut;
+uniform float uLutIntensity;
+uniform float uLutSize;
 
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
@@ -945,6 +954,21 @@ vec3 applyWorldLighting(vec3 hdr) {
   return hdr;
 }
 
+vec3 sampleStripLut(sampler2D lutTex, vec3 col, float lutSize) {
+  float width = lutSize * lutSize;
+  float slice = clamp(col.b, 0.0, 1.0) * (lutSize - 1.0);
+  float s0 = floor(slice);
+  float s1 = min(lutSize - 1.0, s0 + 1.0);
+  float f = slice - s0;
+  float halfW = 0.5 / width;
+  float halfH = 0.5 / lutSize;
+  float rOff = halfW + clamp(col.r, 0.0, 1.0) * ((lutSize - 1.0) / width);
+  float v = halfH + clamp(col.g, 0.0, 1.0) * ((lutSize - 1.0) / lutSize);
+  vec3 c0 = texture(lutTex, vec2(s0 / lutSize + rOff, v)).rgb;
+  vec3 c1 = texture(lutTex, vec2(s1 / lutSize + rOff, v)).rgb;
+  return mix(c0, c1, f);
+}
+
 void main() {
 #ifdef HGAME_WORLD_LIGHTING_ONLY
   vec4 sceneColor = texture(tScene, vUv);
@@ -962,6 +986,18 @@ void main() {
     hdr = max(vec3(0.0), texture(tScene, vUv).rgb);
   }
   hdr = applyWorldLighting(hdr);
+
+  if (uHeightFogDensity > 0.0001) {
+    float fogDepth = texture(tDepth, vUv).r;
+    if (hasSceneGeometry(fogDepth)) {
+      vec3 vp = reconstructViewPos(vUv, fogDepth);
+      vec3 wp = (uInvViewMat * vec4(vp, 1.0)).xyz;
+      float dist = length(vp);
+      float hFactor = exp(-max(0.0, wp.y - uHeightFogBase) * max(0.001, uHeightFogFalloff));
+      float fogAmt = clamp(1.0 - exp(-dist * uHeightFogDensity * hFactor), 0.0, 0.92);
+      hdr = mix(hdr, uHeightFogColor, fogAmt);
+    }
+  }
 
   if (uUseBloom > 0.5) {
     hdr += texture(tBloom, vUv).rgb * uBloomStrength;
@@ -994,6 +1030,11 @@ void main() {
   float gray = dot(mapped, vec3(0.2126, 0.7152, 0.0722));
   float sat = uSaturation * (1.0 - clamp(uLowHealth, 0.0, 1.0) * 0.55);
   mapped = clamp(mix(vec3(gray), mapped, sat), 0.0, 1.0);
+
+  if (uLutIntensity > 0.001 && uLutSize >= 2.0) {
+    vec3 lutCol = sampleStripLut(tColorLut, clamp(mapped, 0.0, 1.0), uLutSize);
+    mapped = mix(mapped, lutCol, clamp(uLutIntensity, 0.0, 1.0));
+  }
 
   float distSq = dot(centered, centered);
   float vig = 1.0 - distSq * (uVignette + uFocus * 0.22 + uLowHealth * 0.25);

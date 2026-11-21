@@ -25,16 +25,24 @@ export function createSharedMaterialBlock3D(initialUniforms?: {}): {
 export function createComposableMaterial3D(THREE: object, { color, roughness, metalness, clearcoat, clearcoatRoughness, emissive, emissiveIntensity, transparent, opacity, side, fresnel, dissolve, triplanar, specularAA, windSway, sharedBlock, vertexChunks, fragmentChunks, }?: object): any;
 /**
  * Shared O(1) Material Batch Registry synchronizing global uniforms (`uTime`, `uWindDir`,
- * `uFogDensity`) across registered Three.js materials without per-material scene traversal.
+ * `uFogDensity`) via WebGL2 UniformsGroup UBOs when `options.THREE` is provided, without
+ * per-material scene traversal.
  * @param {Record<string, any>} [initialSharedUniforms]
+ * @param {object} [options]
+ * @param {object|null} [options.THREE]
+ * @param {string} [options.groupName='HGamePerFrameUBO']
  */
-export function createMaterialBatchRegistry3D(initialSharedUniforms?: Record<string, any> | undefined): Readonly<{
+export function createMaterialBatchRegistry3D(initialSharedUniforms?: Record<string, any> | undefined, options?: {
+    THREE?: object | null;
+    groupName?: string | undefined;
+} | undefined): Readonly<{
     sharedBlock: {
         readonly version: number;
         readonly uniforms: any;
         set: (name: any, value: any) => void;
         get: (name: any) => any;
     };
+    uboGroup: any;
     register: (material: any) => boolean;
     unregister: (material: any) => boolean;
     setGlobal: (name: any, value: any) => any;
@@ -43,5 +51,7 @@ export function createMaterialBatchRegistry3D(initialSharedUniforms?: Record<str
         registeredCount: number;
         version: number;
         uniformKeys: string[];
+        uboEnabled: boolean;
+        uboGroupName: string | null;
     }>;
 }>;

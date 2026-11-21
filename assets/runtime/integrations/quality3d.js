@@ -508,8 +508,11 @@ export const MOBILE_PORTRAIT_PRESET = Object.freeze({
   targetFps: 60,
   shadowMapSize: 512,
   pcss: false,
+  msaaSamples: 4,
   bloom: true,
   rcasSharpness: 0.45,
+  colorLut: 'vibrant',
+  heightFog: Object.freeze({ density: 0.012, baseHeight: 0, falloff: 0.22 }),
 });
 
 /**
@@ -551,6 +554,107 @@ export function resolvePortraitViewport({
       bottom: Math.max(0, Number(safeArea.bottom) || 0),
       left: Math.max(0, Number(safeArea.left) || 0),
     }),
+  });
+}
+
+/**
+ * Zero-GC Dynamic Resolution Scaling (DRS) loop controller tuned for mobile portrait
+ * Bilibili Toy viewports, smoothing backing-store scale down during heavy particles/battles
+ * and stepping smoothly back up once frame times recover.
+ */
+export function createPortraitDrsController({
+  width = 390,
+  height = 844,
+  dpr = 2,
+  maxDpr = MOBILE_PORTRAIT_PRESET.maxPixelRatio,
+  minScale = 0.72,
+  maxScale = 1.0,
+  targetFrameMs = 16.67,
+  degradeThresholdMs = 20.0,
+  recoverThresholdMs = 13.5,
+  stepDown = 0.08,
+  stepUp = 0.04,
+  windowFrames = 16,
+} = {}) {
+  const winLen = Math.max(2, Math.floor(Number(windowFrames) || 16));
+  const ring = new Float32Array(winLen);
+  const lo = Math.max(0.5, Math.min(1, Number(minScale) || 0.72));
+  const hi = Math.max(lo, Math.min(1, Number(maxScale) || 1.0));
+  const baseVp = resolvePortraitViewport({ width, height, dpr, maxDpr });
+
+  let cursor = 0;
+  let count = 0;
+  let sumMs = 0;
+  let renderScale = hi;
+  let avgFrameMs = targetFrameMs;
+  let bufferWidth = baseVp.bufferWidth;
+  let bufferHeight = baseVp.bufferHeight;
+  let pixelRatio = baseVp.pixelRatio;
+
+  function recomputeDimensions() {
+    const plan = fitDrawingBuffer(baseVp.cssWidth, baseVp.cssHeight, baseVp.pixelRatio * renderScale, {
+      maxPixels: MOBILE_PORTRAIT_PRESET.maxPixels,
+      minWidth: 1,
+      minHeight: 1,
+    });
+    pixelRatio = plan.pixelRatio;
+    bufferWidth = plan.bufferWidth;
+    bufferHeight = plan.bufferHeight;
+  }
+
+  function sample(frameMs, out = null) {
+    const ms = Number.isFinite(frameMs) && frameMs > 0 ? frameMs : targetFrameMs;
+    if (count < winLen) {
+      ring[cursor] = ms;
+      sumMs += ms;
+      count++;
+    } else {
+      sumMs -= ring[cursor];
+      ring[cursor] = ms;
+      sumMs += ms;
+    }
+    cursor = (cursor + 1) % winLen;
+
+    let changed = false;
+    if (cursor === 0 && count === winLen) {
+      avgFrameMs = sumMs / winLen;
+      const prevScale = renderScale;
+      if (avgFrameMs > degradeThresholdMs && renderScale > lo) {
+        renderScale = Math.max(lo, Number((renderScale - stepDown).toFixed(4)));
+      } else if (avgFrameMs < recoverThresholdMs && renderScale < hi) {
+        renderScale = Math.min(hi, Number((renderScale + stepUp).toFixed(4)));
+      }
+      if (renderScale !== prevScale) {
+        recomputeDimensions();
+        changed = true;
+      }
+    }
+
+    const res = out && typeof out === 'object' ? out : {};
+    res.scale = renderScale;
+    res.pixelRatio = pixelRatio;
+    res.bufferWidth = bufferWidth;
+    res.bufferHeight = bufferHeight;
+    res.avgFrameMs = avgFrameMs;
+    res.changed = changed;
+    return res;
+  }
+
+  function getState() {
+    return Object.freeze({
+      scale: renderScale,
+      pixelRatio,
+      bufferWidth,
+      bufferHeight,
+      avgFrameMs,
+      minScale: lo,
+      maxScale: hi,
+    });
+  }
+
+  return Object.freeze({
+    sample,
+    getState,
   });
 }
 
