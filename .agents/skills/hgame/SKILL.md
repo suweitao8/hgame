@@ -92,8 +92,10 @@ node scripts/create-game.mjs "<game-dir>" --profile ui --with audio,save --name 
    - **2D Concept / Sprite Generation**: Always use the active LLM/Agent host's built-in image generation tool (e.g., Codex `imagegen`, Antigravity `image-generator`), **never** local ComfyUI txt2img/Z-Image/Flux (slow and lower quality).
    - **Local ComfyUI (`TRELLIS.2-4B GGUF Q4_K_M`) is 3D-only**: Machine paths (`model3d.rootDir`, `comfyUiUrl`, `comfyUiDir`, `blenderPath`) live in gitignored `.hgame.local.json` or `HGAME_MODEL3D_*` env vars. Start ComfyUI with `--reserve-vram 4.8`.
    - Default `generate` runs fast 12GB single-view (`euler` 12 steps, `max_num_tokens=20480`, `1024_cascade` + 2K PBR) followed by Blender `normalize`, high/low `remesh-bake` (`--preset low`, `targetQuads=1750`, **≤ 3,000 vertices** regardless of NPC/player role), and automatic 21-bone humanoid rigging + looping `Run` animation (`--rig-run` enabled by default for `--low-out`, opt out via `--no-rig`).
+   - **Frozen Standard Character Cleanup & Publish Pipeline (`character-pack`)**: Whenever normalizing raw AI/Hunyuan/multiview character high-poly GLBs into WebAsset, run `character-pack` (pre-remesh hole fill + whisker spike relaxation -> clean `16k`-quad 2K High + clean `<=3,000`-vert 1K rigged `Run` Low -> fail-closed `assertCleanTopology` gate `looseVerts=0, looseEdges=0, boundaryEdges=0, spatialIslands=1` -> atomic `/api/character-models` upload):
    ```powershell
    npm run process:model3d -- doctor
+   npm run process:model3d -- character-pack --from-webasset --character-id <slug> --upload --qa-dir ".tmp/qa-<slug>"
    npm run process:model3d -- generate --input front.png --out high.glb --quality high --normalize --origin ground --target-height 1.0 --remesh --low-out low.glb --preset low
    npm run process:model3d -- remesh-bake --input norm.glb --out low.glb --preset low --rig-run
    npm run process:model3d -- rig-run --input low.glb --out low_run.glb --qa-dir qa_run

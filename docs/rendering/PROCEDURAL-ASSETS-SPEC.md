@@ -38,7 +38,11 @@ All procedural `.hmesh.json` recipes must declare `meta.renderMode`:
 
 ### Topology & Collision Gates
 - Every procedural geometry must pass [auditGeometry](../../src/modules/realistic-pcg/geometry/geometry-audit.ts): `0` degenerate triangles (`area >= 1e-7`), normalized vertex normals (`|n| - 1 < 0.02`), `0` inverted-winding triangles, finite UVs.
-- Every AI-generated / remeshed GLB (`process-model3d.mjs` + `blender-model3d.py`) must pass pre- and post-decimation `repair_mesh_topology`: weld spatial duplicates, **fill open holes before decimation/voxelization**, relax thin whisker spikes (`--prune-whiskers` / proxy pass), and **prune all post-decimation loose vertices, wire edges, and floating debris islands** (`looseVerts === 0`, `looseEdges === 0`, `tinyIslands === 0`).
+- **Canonical AI Character Pipeline (`character-pack`)**: Every AI-generated / Hunyuan / Trellis high-poly character model must go through the single locked flow:
+  `npm run process:model3d -- character-pack --input <raw_high.glb> [--character-id <slug> --upload --qa-dir <qa>]` (or `--from-webasset --character-id <slug> --upload`).
+  1. `preRemesh`: Spatial vertex weld (`1e-4`), open-hole fill (`holes_fill`), loose vertex/edge cleanup, and thin-whisker/needle spike relaxation;
+  2. Clean High Master (`--preset high`, `16,000` quads, `2048px` PBR) + Clean Game Low (`--preset low`, `1,750` quads, `<= 3,000` vertices, `1024px` PBR, auto humanoid + tail/cape `Run` rig);
+  3. Post-voxel & post-remesh zero-debris gate (`assertCleanTopology`): fails closed unless **both** High & Low achieve `looseVerts === 0`, `looseEdges === 0`, `boundaryEdges === 0`, `nonManifoldEdges === 0`, `zeroAreaFaces === 0`, `spatialIslands === 1`, and `tinyIslands === 0`.
 - Never feed high-detail render geometry directly to Rapier colliders; declare `meta.collider: "auto_boxes"` or use greedy voxel AABB merging (`collider-exporter.ts`).
 
 ---

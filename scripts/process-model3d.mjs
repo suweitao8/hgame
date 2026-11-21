@@ -1098,6 +1098,7 @@ function printUsage() {
     '  inspect <mesh.glb> [--out-dir <dir>]           Inspect bounds/UVs/tris and optionally render 4/6 views',
     '  normalize <mesh.glb> --out <out.glb> [opts]    Rotate (--rx/--ry/--rz), apply transforms, ground/scale/decimate',
     '  remesh-bake --input <glb> --out <glb> [opts]   QuadRemesher + AutoUnwrap + Cycles PBR (--preset low|high, --rig-run)',
+    '  character-pack --input <glb>|--from-webasset    Standardize raw AI character -> clean High + rigged Low (+ --upload WebAsset)',
     '  rig-run --input <glb> --out <out.glb> [opts]   Auto-rig humanoid character + embed looping Run animation QA',
     '  assemble-pbr --mesh <glb> --base-color <png> --roughness <png> [--normal <png>] --out <glb>',
     '  qa <mesh.glb> --out-dir <dir>                  Render multi-view QA images and print mesh/texture diagnostics',
@@ -1607,6 +1608,125 @@ function saveGlbsFromEntry(entry, saveGlbNodeId) {
   return Array.isArray(items) ? items : [];
 }
 
+/**
+ * Enforce zero-debris watertight topology on character outputs before completion or WebAsset upload.
+ */
+export function assertCleanTopology(stats, label = 'mesh', maxVertices = null) {
+  const audit = stats?.topologyAudit;
+  if (!audit) {
+    throw new Error(`${label} missing topologyAudit report`);
+  }
+  const issues = [];
+  if ((audit.looseVerts ?? 0) > 0) issues.push(`looseVerts=${audit.looseVerts}`);
+  if ((audit.looseEdges ?? 0) > 0) issues.push(`looseEdges=${audit.looseEdges}`);
+  if ((audit.boundaryEdges ?? 0) > 0) issues.push(`boundaryEdges=${audit.boundaryEdges}`);
+  if ((audit.nonManifoldEdges ?? 0) > 0) issues.push(`nonManifoldEdges=${audit.nonManifoldEdges}`);
+  if ((audit.zeroAreaFaces ?? 0) > 0) issues.push(`zeroAreaFaces=${audit.zeroAreaFaces}`);
+  if ((audit.spatialIslands ?? 0) !== 1) issues.push(`spatialIslands=${audit.spatialIslands}`);
+  if ((audit.tinyIslands ?? 0) > 0) issues.push(`tinyIslands=${audit.tinyIslands}`);
+  if (maxVertices !== null && typeof stats.vertices === 'number' && stats.vertices > maxVertices) {
+    issues.push(`vertices=${stats.vertices} > budget ${maxVertices}`);
+  }
+  if (issues.length > 0) {
+    throw new Error(`${label} failed clean topology gate: ${issues.join(', ')}`);
+  }
+  return true;
+}
+
+export function buildCharacterPackPlans(inputPath, outDir, flags = {}) {
+  const slug = String(flags['character-id'] || flags.slug || path.basename(inputPath, path.extname(inputPath)))
+    .replace(/[^A-Za-z0-9_-]/g, '_');
+  const absDir = assertAsciiPath(path.resolve(outDir), 'Character pack out-dir');
+  const uvSolver = String(flags['uv-solver'] ?? flags.uvSolver ?? 'smart');
+  const samples = String(flags.samples ?? 12);
+  const qaRoot = (flags['qa-dir'] || flags.qaDir)
+    ? assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'Character pack qa-dir')
+    : '';
+
+  const highOut = path.join(absDir, `${slug}_clean_high.glb`);
+  const lowOut = path.join(absDir, `${slug}_clean_low_run.glb`);
+  const highFlags = {
+    preset: 'high',
+    'uv-solver': uvSolver,
+    samples,
+    ...(qaRoot ? { 'qa-dir': path.join(qaRoot, 'high'), views: flags.views || '4', size: flags.size || '512' } : {}),
+  };
+  const lowFlags = {
+    preset: 'low',
+    'uv-solver': uvSolver,
+    samples,
+    'rig-run': flags['no-rig'] ? false : true,
+    ...(qaRoot ? { 'qa-dir': path.join(qaRoot, 'low'), views: flags.views || '4', size: flags.size || '512' } : {}),
+  };
+  return {
+    slug,
+    highOut,
+    lowOut,
+    highArgs: buildBlenderRemeshBakeArgs(inputPath, highOut, highFlags),
+    lowArgs: buildBlenderRemeshBakeArgs(inputPath, lowOut, lowFlags),
+  };
+}
+
+async function cmdCharacterPack(config, flags) {
+  const webassetUrl = String(flags['webasset-url'] || 'http://127.0.0.1:4174').replace(/\/+$/, '');
+  const characterId = String(flags['character-id'] || flags.characterId || '').trim();
+  const outDir = path.resolve(flags['out-dir'] || flags.outDir || path.join(process.cwd(), '.tmp', 'character-pack', characterId || 'asset'));
+  await mkdir(outDir, { recursive: true });
+
+  let inputPath = flags.input ? path.resolve(String(flags.input)) : '';
+  if (!inputPath && flags['from-webasset']) {
+    if (!characterId) throw new Error('character-pack --from-webasset requires --character-id <id>');
+    const res = await fetch(`${webassetUrl}/api/assets?q=${encodeURIComponent(characterId)}`);
+    if (!res.ok) throw new Error(`WebAsset lookup failed (${res.status}) for "${characterId}"`);
+    const data = await res.json();
+    const item = (data.items || []).find((x) => x.id === characterId) || data.items?.[0];
+    const highModelUrl = item?.models?.high?.url;
+    if (!highModelUrl) throw new Error(`Character "${characterId}" has no models.high in WebAsset`);
+    const dl = await fetch(`${webassetUrl}${highModelUrl}`);
+    if (!dl.ok) throw new Error(`Failed downloading raw high GLB (${dl.status})`);
+    inputPath = path.join(outDir, `${characterId}_raw_high.glb`);
+    await writeFile(inputPath, new Uint8Array(await dl.arrayBuffer()));
+  }
+  if (!inputPath) {
+    throw new Error('character-pack requires --input <raw_high.glb> or (--from-webasset --character-id <id>)');
+  }
+
+  const plans = buildCharacterPackPlans(inputPath, outDir, flags);
+  const highSummary = runBlenderHelper(config, plans.highArgs);
+  assertCleanTopology(highSummary?.stats, 'clean_high');
+
+  const lowSummary = runBlenderHelper(config, plans.lowArgs);
+  const lowPreset = resolveLowPolyPreset('low');
+  assertCleanTopology(lowSummary?.stats, 'clean_low', lowPreset.maxVertices);
+
+  let uploaded = null;
+  if (flags.upload) {
+    if (!characterId) throw new Error('character-pack --upload requires --character-id <id>');
+    const uploadOne = async (mode, name, filePath) => {
+      const bytes = await readFile(filePath);
+      const url = `${webassetUrl}/api/character-models?characterId=${encodeURIComponent(characterId)}&mode=${mode}&name=${encodeURIComponent(name)}`;
+      const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes });
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(`WebAsset upload (${mode}) failed: ${JSON.stringify(json)}`);
+      return json;
+    };
+    const highName = `${plans.slug}_clean_high.glb`;
+    const lowName = flags['no-rig'] ? `${plans.slug}_clean_low.glb` : `${plans.slug}_clean_low_run.glb`;
+    uploaded = {
+      high: await uploadOne('high', highName, plans.highOut),
+      low: await uploadOne('low', lowName, plans.lowOut),
+    };
+  }
+
+  console.log(JSON.stringify({
+    command: 'character-pack',
+    input: inputPath,
+    high: { output: plans.highOut, stats: highSummary?.stats, repair: highSummary?.repair },
+    low: { output: plans.lowOut, stats: lowSummary?.stats, repair: lowSummary?.repair, rig: lowSummary?.rig },
+    uploaded,
+  }, null, 2));
+}
+
 async function main() {
   const { command, positional, flags } = parseProcessModel3dArgs(process.argv.slice(2));
   if (!command || command === 'help' || flags.help) {
@@ -1657,6 +1777,11 @@ async function main() {
     if (!input || !out) throw new Error('Usage: node scripts/process-model3d.mjs remesh-bake --input <mesh.glb> --out <out.glb> [options]');
     const summary = runBlenderHelper(config, buildBlenderRemeshBakeArgs(input, out, flags));
     console.log(JSON.stringify(summary, null, 2));
+    return;
+  }
+
+  if (command === 'character-pack') {
+    await cmdCharacterPack(config, flags);
     return;
   }
 

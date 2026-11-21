@@ -7,7 +7,9 @@ import { spawnSync } from 'node:child_process';
 
 import {
   assertAsciiPath,
+  assertCleanTopology,
   buildBlenderNormalizeArgs,
+  buildCharacterPackPlans,
   buildTrellis2Prompt,
   buildUltratexPrompt,
   convertComfyUiWorkflowToApi,
@@ -580,4 +582,48 @@ test('buildBlenderNormalizeArgs forwards topology repair and whisker pruning fla
 
   const rawArgs = buildBlenderNormalizeArgs('high.glb', 'raw.glb', { 'no-repair': true });
   assert.ok(rawArgs.includes('--no-repair'));
+});
+
+test('assertCleanTopology enforces watertight zero-debris gate and buildCharacterPackPlans pins standard flow', () => {
+  const cleanStats = {
+    vertices: 1794,
+    topologyAudit: {
+      looseVerts: 0,
+      looseEdges: 0,
+      boundaryEdges: 0,
+      nonManifoldEdges: 0,
+      zeroAreaFaces: 0,
+      spatialIslands: 1,
+      tinyIslands: 0,
+    },
+  };
+  assert.equal(assertCleanTopology(cleanStats, 'clean_low', 3000), true);
+
+  assert.throws(
+    () => assertCleanTopology({ ...cleanStats, vertices: 3100 }, 'clean_low', 3000),
+    /vertices=3100 > budget 3000/
+  );
+  assert.throws(
+    () => assertCleanTopology({
+      vertices: 1000,
+      topologyAudit: { ...cleanStats.topologyAudit, looseEdges: 2, spatialIslands: 4 },
+    }, 'dirty_low'),
+    /looseEdges=2, spatialIslands=4/
+  );
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-charpack-'));
+  try {
+    const plans = buildCharacterPackPlans(path.join(tmpDir, 'raw_high.glb'), tmpDir, {
+      'character-id': 'chouju',
+      'qa-dir': path.join(tmpDir, 'qa'),
+    });
+    assert.ok(plans.highArgs.includes('remesh-bake'));
+    assert.equal(plans.highArgs[plans.highArgs.indexOf('--target-quads') + 1], '16000');
+    assert.equal(plans.highArgs[plans.highArgs.indexOf('--uv-solver') + 1], 'smart');
+    assert.equal(plans.lowArgs[plans.lowArgs.indexOf('--target-quads') + 1], '1750');
+    assert.ok(plans.lowArgs.includes('--rig-run'));
+    assert.ok(plans.lowArgs.some((a) => a.endsWith('low')));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
