@@ -197,7 +197,7 @@
  * @param {ThreeAdapterOptions} options
  * @returns {ThreeAdapter}
  */
-export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, limitCameraDrawDistance, background, worldLighting, quality3d, post3d, diagnostics3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, gpuIndirect, }?: ThreeAdapterOptions): ThreeAdapter;
+export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, limitCameraDrawDistance, background, worldLighting, quality3d, post3d, diagnostics3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, gpuIndirect, renderGraph, }?: ThreeAdapterOptions): ThreeAdapter;
 /**
  * @typedef {object} ThreeMeshComponentOptions
  * @property {'box' | 'sphere' | 'capsule' | 'cylinder' | 'plane'} [type='box'] Primitive shape.

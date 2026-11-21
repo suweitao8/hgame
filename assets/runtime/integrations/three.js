@@ -4,6 +4,7 @@ import { createGpuFrameTimer } from './quality3d/gpu-timer.js';
 import { createRenderDiagnostics3D, createVramLedger3D, drawWithDiagnostics, estimateRenderTargetBytes } from './quality3d/render-diagnostics.js';
 import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
+import { compileRenderGraph, executeRenderGraph } from './post3d/render-graph.js';
 import { createSceneCuller3D, createGpuIndirectCuller3D } from './culling3d.js';
 import { createShaderWarmupQueue3D } from './quality3d/shader-warmup.js';
 import { createBakedProbeGrid } from './lighting3d/baked-probe-grid.js';
@@ -296,6 +297,7 @@ export function createThreeAdapter({
   sky = null,
   postVolumes = null,
   gpuIndirect = false,
+  renderGraph = false,
 } = {}) {
   if (!THREE?.Scene || !THREE?.PerspectiveCamera || !THREE?.WebGLRenderer) {
     throw new TypeError('A complete Three.js namespace is required');
@@ -315,8 +317,11 @@ export function createThreeAdapter({
   let worldSunLight = null;
   const worldSuns = new WeakMap();
   const worldCsm = new WeakMap();
+  const worldProjectedDecals = new WeakMap();
   const ownedSuns = new Map();
   const ownedDecals = new Set();
+  const useSceneRenderGraph = Boolean(renderGraph);
+  let lastSceneRenderGraph = null;
   const appliedShadowExtents = new WeakMap();
   const cachedShadowLayers = new WeakMap();
   let activeViewCamera = viewCamera;
@@ -1022,6 +1027,91 @@ export function createThreeAdapter({
         }
       }
     }
+    if (useSceneRenderGraph) {
+      const hasShadowPass = Boolean(worldCsm.has(world) || options.sunLight || renderer.shadowMap?.enabled);
+      const projList = worldProjectedDecals.get(world);
+      const hasProjDecalPass = Boolean(projList?.some(s => (s.getStats?.().active ?? s.getStats?.().activeCount ?? s.activeCount ?? 0) > 0));
+      const directPasses = () => {
+        if (pipeline) {
+          pipeline.render(world, camera, options);
+          return;
+        }
+        const { viewScene, viewCamera } = options;
+        if (viewScene && viewCamera) {
+          const prevAutoClear = renderer.autoClear;
+          const gl = renderer.getContext?.();
+          try {
+            drawWithDiagnostics(renderer, diagnostics?.beginPass, 'forward', null, world, camera);
+            renderer.autoClear = false;
+            renderer.clearDepth?.();
+            gl?.depthRange?.(0, 0.05);
+            drawWithDiagnostics(renderer, diagnostics?.beginPass, 'viewmodel', null, viewScene, viewCamera);
+          } finally {
+            gl?.depthRange?.(0, 1);
+            renderer.autoClear = prevAutoClear;
+          }
+          return;
+        }
+        drawWithDiagnostics(renderer, diagnostics?.beginPass, 'forward', null, world, camera);
+      };
+
+      const compiled = compileRenderGraph([
+        {
+          id: 'shadow-csm',
+          reads: [],
+          writes: ['shadowMaps'],
+          execute() {
+            worldCsm.get(world)?.update(camera);
+            prepareSunShadows(world, camera);
+          },
+        },
+        {
+          id: 'opaque-scene',
+          reads: hasShadowPass ? ['shadowMaps'] : [],
+          writes: ['sceneColor', 'sceneDepth'],
+          transientSpecs: { sceneColor: { kind: 'color' }, sceneDepth: { kind: 'depth' } },
+          execute() {
+            directPasses();
+          },
+        },
+        {
+          id: 'projected-decals',
+          reads: ['sceneDepth'],
+          writes: ['decalColor'],
+          transientSpecs: { decalColor: { kind: 'color' } },
+          execute() {
+            if (!projList) return;
+            for (const sys of projList) {
+              if (typeof sys?.renderProjected === 'function' && pipeline?.getMainTarget?.()?.depthTexture) {
+                const sz = pipeline.getMainTarget();
+                sys.renderProjected(renderer, camera, sz.depthTexture, sz.width, sz.height);
+              }
+            }
+          },
+        },
+        {
+          id: 'post-composite',
+          reads: ['sceneColor', ...(hasProjDecalPass ? ['decalColor'] : [])],
+          writes: ['backbuffer'],
+          execute() {},
+        },
+      ], { externalOutputs: ['backbuffer'], pruneDeadPasses: true });
+
+      const execRes = executeRenderGraph(compiled, {
+        acquire: (_spec, resource) => ({ resource, aliased: true }),
+        release() {},
+      }, { externalTargets: { backbuffer: null } });
+
+      lastSceneRenderGraph = Object.freeze({
+        compiledOrder: compiled.order,
+        culled: compiled.culledPasses,
+        executed: execRes.executed,
+        peakTargets: compiled.peakTargets,
+        reusedCount: execRes.reusedCount,
+      });
+      return;
+    }
+
     worldCsm.get(world)?.update(camera);
     prepareSunShadows(world, camera);
     if (pipeline) {
@@ -1282,6 +1372,9 @@ export function createThreeAdapter({
       }
       return worlds.has(scene) ? (worldCsm.get(worlds.get(scene)) ?? null) : null;
     },
+    getExecutedRenderGraph() {
+      return lastSceneRenderGraph;
+    },
     registerIndirectBatch(id, batch) {
       indirectBatches.set(String(id), batch);
     },
@@ -1341,8 +1434,18 @@ export function createThreeAdapter({
       const world = getWorld(scene);
       const sys = createDecalSystem3D(THREE, options);
       if (sys.group) world.add(sys.group);
+      let projBucket = null;
+      if (options.mode === 'projected') {
+        projBucket = worldProjectedDecals.get(world) ?? [];
+        projBucket.push(sys);
+        worldProjectedDecals.set(world, projBucket);
+      }
       const release = () => {
         if (!ownedDecals.delete(release)) return;
+        if (projBucket) {
+          const idx = projBucket.indexOf(sys);
+          if (idx >= 0) projBucket.splice(idx, 1);
+        }
         off?.();
         sys.dispose();
       };
