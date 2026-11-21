@@ -1,5 +1,6 @@
 import { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming, createVramMipGuard, createProgressiveBootLoader } from "./platform/asset-catalog.js";
 import { createSkeleton2D } from "./animation/skeleton2d.js";
+import { createWorkerPhysicsWorld } from "./physics/worker-physics.js";
 import { createShadowAtlas3D } from "./integrations/shadow3d.js";
 import { mergeStaticMeshesByMaterial3D, quantizeBufferGeometry3D } from "./integrations/culling3d.js";
 import { createPhysicalRenderTargetPool3D } from "./integrations/post3d/render-graph.js";
@@ -40,6 +41,7 @@ export { PrefabRegistry } from "./core/prefab.js";
 export { createGameApplication } from "./core/application.js";
 export { AnimationPlayer } from "./animation/player.js";
 export { createSkeleton2D } from "./animation/skeleton2d.js";
+export { createWorkerPhysicsWorld } from "./physics/worker-physics.js";
 export { SpriteSheet } from "./animation/spritesheet.js";
 export { createShadowAtlas3D } from "./integrations/shadow3d.js";
 export { createPhysicalRenderTargetPool3D } from "./integrations/post3d/render-graph.js";
@@ -1582,6 +1584,7 @@ export const HGame: Readonly<{
     diffResourceSnapshots: typeof diffResourceSnapshots;
     createHotReloadController: typeof createHotReloadController;
     createSkeleton2D: typeof createSkeleton2D;
+    createWorkerPhysicsWorld: typeof createWorkerPhysicsWorld;
 }>;
 import { createVersionedStore } from './platform/engine.js';
 import { createSeededRng } from './sim/index.js';

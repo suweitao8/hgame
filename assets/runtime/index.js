@@ -51,6 +51,7 @@ export {
 } from './time/tween.js';
 export { AnimationPlayer } from './animation/player.js';
 export { createSkeleton2D } from './animation/skeleton2d.js';
+export { createWorkerPhysicsWorld } from './physics/worker-physics.js';
 export { SpriteSheet } from './animation/spritesheet.js';
 export { createShadowAtlas3D } from './integrations/shadow3d.js';
 export {
@@ -64,6 +65,7 @@ export { createPhysicalRenderTargetPool3D } from './integrations/post3d/render-g
 export { captureResourceSnapshot, diffResourceSnapshots } from './integrations/quality3d/render-diagnostics.js';
 export { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
 import { createSkeleton2D } from './animation/skeleton2d.js';
+import { createWorkerPhysicsWorld } from './physics/worker-physics.js';
 import { createShadowAtlas3D } from './integrations/shadow3d.js';
 import {
   mergeStaticMeshesByMaterial3D,
@@ -573,4 +575,5 @@ export const HGame = Object.freeze({
   diffResourceSnapshots,
   createHotReloadController,
   createSkeleton2D,
+  createWorkerPhysicsWorld,
 });

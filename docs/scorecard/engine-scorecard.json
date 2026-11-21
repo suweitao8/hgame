@@ -491,7 +491,7 @@
       "name": "多线程与 CPU 仿真并行",
       "weight": 6,
       "scores": {
-        "hgame": 7,
+        "hgame": 8,
         "unity": 5.5,
         "cocos": 5,
         "godot": 6
@@ -501,7 +501,8 @@
         "defaultPath": true,
         "proofFiles": [
           "assets/runtime/sim/worker-sim.js",
-          "assets/runtime/world/swarm-ecs.js"
+          "assets/runtime/world/swarm-ecs.js",
+          "assets/runtime/physics/worker-physics.js"
         ],
         "industrialChecklist": [
           {
@@ -511,8 +512,8 @@
           },
           {
             "point": "Rapier 步进在 Worker 中运行（带非隔离回退）",
-            "met": false,
-            "proof": "缺失（当前 Rapier 仍在主线程步进）"
+            "met": true,
+            "proof": "assets/runtime/physics/worker-physics.js"
           },
           {
             "point": "骨骼姿态更新原生多线程并行",
@@ -520,15 +521,17 @@
             "proof": "缺失（animator3d.js 在主线程计算）"
           }
         ],
-        "note": "worker-sim.js 在无 COOP/COEP 强依赖下异步卸载流场/群体分离与 NavMesh 寻路，但 Rapier 物理与骨骼仍在主线程。",
-        "benchmarkFiles": []
+        "note": "worker-sim.js 异步卸载流场/NavMesh 寻路，worker-physics.js 在无 COOP/COEP 依赖下实现 Rapier Worker 步进与确定性 inline 回退。",
+        "benchmarkFiles": [
+          "tests/browser-worker-physics.mjs"
+        ]
       },
       "competitorNotes": {
         "unity": "WebGL 导出默认 C# 单线程，开启 Wasm Threads 强依赖 COOP/COEP 宿主隔离头。",
         "cocos": "物理与动画主流程以主线程执行为主，Worker 并行需项目层自行封装。",
         "godot": "Godot 4.3+ 新增单线程 Web 导出（避开 COOP/COEP），多线程仍强依赖 SharedArrayBuffer。"
       },
-      "gap": "Rapier 物理步进与骨骼姿态更新仍在主线程执行，尚未完成 Worker 异步化。"
+      "gap": "骨骼姿态更新仍在主线程执行。"
     },
     {
       "id": "P2",

@@ -94,7 +94,7 @@ The modular level renderer releases slot-owned cloned skeletons on level replace
 | 09 | Touch-First, Arcade P1 (`WASD+JKL UIO`) / P2 (`Arrows+123456`) & Split-Screen | [systems/09-touch-arcade-splitscreen.md](systems/09-touch-arcade-splitscreen.md) |
 | 10 | Commercial Red Dot Tree (Trie + DAG + DOM Binder) | [systems/10-red-dot.md](systems/10-red-dot.md) |
 | 11 | 2D Art Slicing, Spatial `HRTF` Audio & Multi-Variant Cues | [systems/11-art-audio-pipeline.md](systems/11-art-audio-pipeline.md) |
-| 12 | Deterministic Rapier 2D/3D, `createTraceRecorder` & Multiplayer | [systems/12-physics-trace-network.md](systems/12-physics-trace-network.md) |
+| 12 | Deterministic Rapier 2D/3D, `createWorkerPhysicsWorld`, `createTraceRecorder` & Multiplayer | [systems/12-physics-trace-network.md](systems/12-physics-trace-network.md) |
 | 13 | AI Decision Kernel (`createStateMachine` HFSM, `createBehaviorTree`, `createNavMesh3D`) | [systems/13-ai-fsm-bt-navmesh.md](systems/13-ai-fsm-bt-navmesh.md) |
 | 14 | 2D Atmospheric Lighting/Bloom (`post2d`), 3D Terrain (`terrain3d`) & 17 Props | [systems/14-post2d-terrain3d-props.md](systems/14-post2d-terrain3d-props.md) |
 | 15 | Commercial UI Kit (`PanelStack`, `VirtualList`, `i18n`) & `createVersionedStore` | [systems/15-ui-kit-i18n-versioned-save.md](systems/15-ui-kit-i18n-versioned-save.md) |

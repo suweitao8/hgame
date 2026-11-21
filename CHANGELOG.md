@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add deterministic Rapier Worker physics (`assets/runtime/physics/physics-worker-kernel.js`, `assets/runtime/physics/physics-worker.js`, `assets/runtime/physics/worker-physics.js`, exported as `createWorkerPhysicsWorld`) with non-COOP/COEP inline fallback and snapshot interpolation, raising Scorecard v5.1 `P1` from `7.0` to `8.0` (total `78.6/100`).
+
 - Upgrade Scorecard to v5.1 capability-only scoring (`docs/scorecard/engine-scorecard.json`, `scripts/score-engines.mjs`, `docs/ENGINE-SCORECARD.md`, local `tests/engine-scorecard.test.mjs`): removed mobile real-device, live-launch, and delivery maturity metrics in favor of `C0–C4` capability maturity caps and verifiable `industrialChecklist` bounds (`Unity 6.x URP Web = 80.0`, `HGame 1.0.0 = 78.0`, `Cocos Creator 3.8 Web = 71.3`, `Godot 4.3+ Web = 64.6`).
 
 - Introduce Scorecard v5 evidence-driven absolute 4-engine scoring (`docs/scorecard/engine-scorecard.json`, `scripts/score-engines.mjs`, `tests/engine-scorecard.test.mjs`, `docs/ENGINE-SCORECARD.md`), deprecating the v4 relative `100.7/100` headline score in favor of hard evidence caps (`E0–E4`), proof-file checks, anti-drift tests, and a separate delivery maturity reference score (`Unity 6.x URP Web = 80.0`, `HGame 1.0.0 = 74.0`, `Cocos Creator 3.8 Web = 71.3`, `Godot 4.3+ Web = 64.6`; delivery `83.5 / 41.5 / 77.8 / 72.0`).
