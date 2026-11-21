@@ -381,16 +381,21 @@
 
   <main id="materials-view" class="workspace-layout hgame-layout" aria-label="HGame CC0 PBR 材质库" hidden>
     <aside class="workspace-sidebar hgame-sidebar" aria-label="材质列表">
+      <div class="character-mode-tabs" role="tablist" aria-label="材质库分类">
+        <button type="button" class="character-mode-tab hgame-mat-lib-tab" role="tab" data-mat-lib="materials" aria-selected="true" tabindex="0">通用材质</button>
+        <button type="button" class="character-mode-tab hgame-mat-lib-tab" role="tab" data-mat-lib="pbr_decals" aria-selected="false" tabindex="-1">贴花</button>
+        <button type="button" class="character-mode-tab hgame-mat-lib-tab" role="tab" data-mat-lib="pbr_foliage" aria-selected="false" tabindex="-1">植被</button>
+      </div>
       <div class="asset-sidebar-tools">
         <label class="character-search" for="hgame-material-search">
           <span aria-hidden="true">⌕</span>
-          <input id="hgame-material-search" type="search" placeholder="搜索 PBR 槽位 / 来源" autocomplete="off">
+          <input id="hgame-material-search" type="search" placeholder="搜索材质 / 分类 / 来源" autocomplete="off">
         </label>
       </div>
       <div class="hgame-filter-row">
         <label class="hgame-field hgame-field-full"><span>筛选</span>
           <select id="hgame-material-source-filter">
-            <option value="all">全部 CC0 PBR 材质</option>
+            <option value="all">全部材质</option>
           </select>
         </label>
       </div>
@@ -414,7 +419,7 @@
       </div>
       <div class="hgame-controls hgame-controls-wrap">
         <div class="hgame-control-group">
-          <label class="hgame-field"><span>几何体</span>
+          <label class="hgame-field" id="hgame-material-shape-wrap"><span>几何体</span>
             <select id="hgame-material-mesh-shape">
               <option value="combo">标定组合</option>
               <option value="sphere">球体</option>
@@ -422,13 +427,17 @@
             </select>
           </label>
           <label class="hgame-field"><span>平铺倍率</span><input id="hgame-material-tile" type="range" min="0.25" max="4" step="0.05" value="1"><output id="hgame-material-tile-val">1.00</output></label>
-          <label class="hgame-field"><span>贴图档位</span>
+          <label class="hgame-field" id="hgame-material-bakemode-wrap"><span>贴图档位</span>
             <select id="hgame-material-bakemode">
-              <option value="auto">自动 (标准 512)</option>
-              <option value="512">512 px (PC/KTX2)</option>
-              <option value="256">256 px (移动兜底)</option>
-              <option value="128">128 px (Mip L1)</option>
-              <option value="64">64 px (4×Mip)</option>
+              <option value="1024">1024 px (母档直读)</option>
+            </select>
+          </label>
+          <label class="hgame-field" id="hgame-material-tint-wrap" hidden><span>血迹染色</span>
+            <select id="hgame-material-tint">
+              <option value="0xffffff">原灰度</option>
+              <option value="0x8b0c0c" selected>暗红血浆</option>
+              <option value="0xea580c">橙色果汁</option>
+              <option value="0x22c55e">绿色果汁</option>
             </select>
           </label>
         </div>

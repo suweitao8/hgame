@@ -1,20 +1,53 @@
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
-const ROOT = fileURLToPath(new URL('../', import.meta.url));
-const SPEC_PATH = path.join(ROOT, 'manifests', 'asset_spec.json');
-const MANIFEST_PATH = path.join(ROOT, 'manifests', 'materials.manifest.json');
-const RAW_PBR_CACHE = path.join(ROOT, 'raw', 'pbr_cache');
-const RAW_MANUAL_DIR = path.join(ROOT, 'raw', 'cn_textures_manual');
-const BUILT_MATERIALS = path.join(ROOT, 'built', 'materials');
+const CN_ROOT = fileURLToPath(new URL('../', import.meta.url));
+const REPO_ROOT = path.resolve(CN_ROOT, '..', '..');
+const MANIFESTS_DIR = path.join(CN_ROOT, 'manifests');
+const SPEC_PATH = path.join(MANIFESTS_DIR, 'asset_spec.json');
+const MATERIALS_MANIFEST_PATH = path.join(MANIFESTS_DIR, 'materials.manifest.json');
+const DECALS_MANIFEST_PATH = path.join(MANIFESTS_DIR, 'decals.manifest.json');
+const FOLIAGE_MANIFEST_PATH = path.join(MANIFESTS_DIR, 'foliage.manifest.json');
+
+const RAW_PBR_CACHE = path.join(CN_ROOT, 'raw', 'pbr_cache');
+const RAW_MANUAL_DIR = path.join(CN_ROOT, 'raw', 'cn_textures_manual');
+
+const BUILT_MATERIALS = path.join(CN_ROOT, 'built', 'materials');
+const BUILT_PBR_DECALS = path.join(CN_ROOT, 'built', 'pbr_decals');
+const BUILT_PBR_FOLIAGE = path.join(CN_ROOT, 'built', 'pbr_foliage');
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const mix = (a, b, t) => a + (b - a) * t;
 const srgbToLinear = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const linearToSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * (c ** (1 / 2.4)) - 0.055);
+const isPow2 = (n) => n > 0 && (n & (n - 1)) === 0;
+
+function parseArgs(argv) {
+  let vaultDir = '';
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--vault' && argv[i + 1]) vaultDir = path.resolve(argv[++i]);
+  }
+  return { vaultDir };
+}
+
+async function resolveVaultDir(explicit) {
+  if (explicit) return explicit;
+  if (process.env.HGAME_VAULT_DIR?.trim()) return path.resolve(process.env.HGAME_VAULT_DIR.trim());
+  const localCfgPath = path.join(REPO_ROOT, '.hgame.local.json');
+  if (existsSync(localCfgPath)) {
+    const cfg = JSON.parse(await readFile(localCfgPath, 'utf8'));
+    if (typeof cfg?.vaultCacheDir === 'string' && cfg.vaultCacheDir.trim()) {
+      return path.resolve(cfg.vaultCacheDir.trim());
+    }
+    if (typeof cfg?.fabLibraryDir === 'string' && cfg.fabLibraryDir.trim()) {
+      return path.dirname(path.resolve(cfg.fabLibraryDir.trim()));
+    }
+  }
+  throw new Error('Missing VaultCache directory. Pass --vault <dir> or set HGAME_VAULT_DIR.');
+}
 
 async function resizeBufferNoPremultiply(buf, srcW, srcH, ch, dstW, dstH, kernel = sharp.kernel.lanczos3) {
   if (srcW === dstW && srcH === dstH) {
@@ -26,7 +59,6 @@ async function resizeBufferNoPremultiply(buf, srcW, srcH, ch, dstW, dstH, kernel
       .raw()
       .toBuffer();
   }
-  // Split RGB and A before resizing so libvips never premultiplies packed channels (e.g., Normal_RM where A=Metallic=0)
   const pxCount = srcW * srcH;
   const rgb = Buffer.allocUnsafe(pxCount * 3);
   const alpha = Buffer.allocUnsafe(pxCount);
@@ -62,125 +94,70 @@ async function resizeStraightRgba(filePath, targetW, targetH) {
   return resizeBufferNoPremultiply(data, info.width, info.height, 4, targetW, targetH, sharp.kernel.lanczos3);
 }
 
-async function resizeToroidal(filePath, size, { grayscale = false } = {}) {
-  let pipeline = sharp(filePath);
-  if (grayscale) pipeline = pipeline.removeAlpha().grayscale().toColorspace('srgb');
-  pipeline = pipeline.ensureAlpha();
-  const { data: src, info } = await pipeline.raw().toBuffer({ resolveWithObject: true });
-  const w = info.width;
-  const h = info.height;
-  const ch = info.channels;
-  const padX = Math.min(32, Math.max(8, Math.round(w / 32)));
-  const padY = Math.min(32, Math.max(8, Math.round(h / 32)));
-  const pw = w + padX * 2;
-  const ph = h + padY * 2;
-  const padded = Buffer.allocUnsafe(pw * ph * ch);
-
-  for (let y = 0; y < ph; y++) {
-    const sy = ((y - padY) % h + h) % h;
-    for (let x = 0; x < pw; x++) {
-      const sx = ((x - padX) % w + w) % w;
-      const si = (sy * w + sx) * ch;
-      const di = (y * pw + x) * ch;
-      for (let c = 0; c < ch; c++) padded[di + c] = src[si + c];
-    }
+async function loadRawRgb(filePath, targetW, targetH, tileToSquare = false) {
+  const { data, info } = await sharp(filePath).removeAlpha().toColorspace('srgb').raw().toBuffer({ resolveWithObject: true });
+  if (info.width === targetW && info.height === targetH) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   }
-
-  const outPadX = Math.round((padX * size) / w);
-  const outPadY = Math.round((padY * size) / h);
-  const outW = size + outPadX * 2;
-  const outH = size + outPadY * 2;
-
-  const resizedPadded = await resizeBufferNoPremultiply(padded, pw, ph, ch, outW, outH, sharp.kernel.lanczos3);
-  const { data } = await sharp(resizedPadded, { raw: { width: outW, height: outH, channels: ch } })
-    .extract({ left: outPadX, top: outPadY, width: size, height: size })
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  if (grayscale) {
-    const out = new Uint8Array(size * size);
-    for (let p = 0; p < size * size; p++) out[p] = data[p * ch];
+  if (tileToSquare) {
+    const out = new Uint8Array(targetW * targetH * 3);
+    for (let y = 0; y < targetH; y++) {
+      const sy = y % info.height;
+      for (let x = 0; x < targetW; x++) {
+        const sx = x % info.width;
+        const si = (sy * info.width + sx) * 3;
+        const di = (y * targetW + x) * 3;
+        out[di] = data[si];
+        out[di + 1] = data[si + 1];
+        out[di + 2] = data[si + 2];
+      }
+    }
     return out;
   }
-  return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  const resized = await resizeBufferNoPremultiply(data, info.width, info.height, 3, targetW, targetH);
+  return new Uint8Array(resized.buffer, resized.byteOffset, resized.byteLength);
 }
 
-function equalizePeriodicLighting(albedo, size, strength = 0.68) {
-  const n = size * size;
-  const lum = new Float32Array(n);
-  let meanLum = 0;
-  for (let i = 0; i < n; i++) {
-    const p = i * 4;
-    const l = 0.2126 * albedo[p] + 0.7152 * albedo[p + 1] + 0.0722 * albedo[p + 2];
-    lum[i] = l;
-    meanLum += l;
+async function loadRawGray(filePath, targetW, targetH, tileToSquare = false) {
+  const { data, info } = await sharp(filePath).removeAlpha().grayscale().raw().toBuffer({ resolveWithObject: true });
+  if (info.width === targetW && info.height === targetH) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   }
-  meanLum /= Math.max(1, n);
-  if (meanLum < 12) return;
-
-  const r = Math.max(8, Math.floor(size / 5));
-  const diam = r * 2 + 1;
-  const tmp = new Float32Array(n);
-  const blur = new Float32Array(n);
-
-  const passH = (src, dst) => {
-    for (let y = 0; y < size; y++) {
-      let acc = 0;
-      const row = y * size;
-      for (let k = -r; k <= r; k++) acc += src[row + ((k + size) % size)];
-      for (let x = 0; x < size; x++) {
-        dst[row + x] = acc / diam;
-        acc += src[row + ((x + r + 1) % size)] - src[row + ((x - r + size) % size)];
+  if (tileToSquare) {
+    const out = new Uint8Array(targetW * targetH);
+    for (let y = 0; y < targetH; y++) {
+      const sy = y % info.height;
+      for (let x = 0; x < targetW; x++) {
+        const sx = x % info.width;
+        out[y * targetW + x] = data[sy * info.width + sx];
       }
     }
-  };
-  const passV = (src, dst) => {
-    for (let x = 0; x < size; x++) {
-      let acc = 0;
-      for (let k = -r; k <= r; k++) acc += src[((k + size) % size) * size + x];
-      for (let y = 0; y < size; y++) {
-        dst[y * size + x] = acc / diam;
-        acc += src[((y + r + 1) % size) * size + x] - src[((y - r + size) % size) * size + x];
-      }
-    }
-  };
-
-  passH(lum, tmp);
-  passV(tmp, blur);
-  passH(blur, tmp);
-  passV(tmp, blur);
-
-  for (let i = 0; i < n; i++) {
-    const local = Math.max(8, blur[i]);
-    const ratio = Math.max(0.74, Math.min(1.34, meanLum / local));
-    const gain = 1 + (ratio - 1) * strength;
-    const p = i * 4;
-    albedo[p] = Math.min(255, Math.max(0, Math.round(albedo[p] * gain)));
-    albedo[p + 1] = Math.min(255, Math.max(0, Math.round(albedo[p + 1] * gain)));
-    albedo[p + 2] = Math.min(255, Math.max(0, Math.round(albedo[p + 2] * gain)));
+    return out;
   }
+  const resized = await resizeBufferNoPremultiply(data, info.width, info.height, 1, targetW, targetH);
+  return new Uint8Array(resized.buffer, resized.byteOffset, resized.byteLength);
 }
 
-function dilateAlphaEdges(rgba, size, iterations = 16) {
+function dilateAlphaEdges(rgba, width, height, iterations = 16) {
   let src = new Uint8Array(rgba);
   let dst = new Uint8Array(rgba);
   const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
-  const filled = new Uint8Array(size * size);
-  for (let i = 0; i < filled.length; i++) filled[i] = src[i * 4 + 3] >= 128 ? 1 : 0;
+  const filled = new Uint8Array(width * height);
+  for (let i = 0; i < filled.length; i++) filled[i] = src[i * 4 + 3] >= 32 ? 1 : 0;
   for (let pass = 0; pass < iterations; pass++) {
     dst.set(src);
     const nextFilled = new Uint8Array(filled);
     let changed = false;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const idx = y * size + x;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = y * width + x;
         if (filled[idx]) continue;
         let r = 0, g = 0, b = 0, cnt = 0;
         for (const [dx, dy] of dirs) {
           const nx = x + dx;
           const ny = y + dy;
-          if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
-          const nIdx = ny * size + nx;
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const nIdx = ny * width + nx;
           if (!filled[nIdx]) continue;
           const p = nIdx * 4;
           r += src[p];
@@ -220,7 +197,6 @@ function createMissingLayer(size) {
       color[i + 2] = isMagenta ? 255 : 20;
       color[i + 3] = 255;
 
-      // Normal_RM flat: R=128, G=128, B=215 (roughness), A=0 (metallic)
       normalRm[i] = 128;
       normalRm[i + 1] = 128;
       normalRm[i + 2] = 215;
@@ -230,203 +206,308 @@ function createMissingLayer(size) {
   return { color, normalRm };
 }
 
-async function bakeStandardSlot(entry, size, spec) {
-  const srcDir =
-    entry.source === 'manual'
-      ? path.join(RAW_MANUAL_DIR, entry.assetId)
-      : path.join(RAW_PBR_CACHE, entry.slot);
-  const metaPath = path.join(srcDir, 'meta.json');
-  if (!existsSync(metaPath)) {
-    throw new Error(`Missing raw meta for "${entry.slot}" at ${metaPath}. Run npm run pbr:fetch first.`);
+async function discoverSourceMaps(vaultRoot, sourcePath) {
+  const full = path.join(vaultRoot, sourcePath);
+  if (!existsSync(full)) {
+    throw new Error(`Missing source asset directory: ${sourcePath}`);
   }
-  const meta = JSON.parse(await readFile(metaPath, 'utf8'));
-  const files = meta.files || {};
-
-  const color = await resizeToroidal(path.join(srcDir, files.albedo), size, { grayscale: false });
-  if ((entry.tiling === 'stochastic' || entry.slot.startsWith('bark_')) && !entry.alphaCutout && entry.blendMode !== 'translucent') {
-    equalizePeriodicLighting(color, size, entry.slot.startsWith('bark_') ? 0.78 : 0.72);
-  }
-  if (entry.alphaCutout && files.opacity) {
-    const op = await resizeToroidal(path.join(srcDir, files.opacity), size, { grayscale: true });
-    for (let p = 0; p < size * size; p++) color[p * 4 + 3] = op[p];
-  } else if (entry.blendMode === 'translucent') {
-    const alphaByte = Math.round(clamp01(entry.opacity ?? 0.35) * 255);
-    for (let p = 0; p < size * size; p++) {
-      if (color[p * 4 + 3] === 255) color[p * 4 + 3] = alphaByte;
+  const files = [];
+  const walk = async (dir) => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const fp = path.join(dir, e.name);
+      if (e.isDirectory()) await walk(fp);
+      else files.push(fp);
     }
-  } else {
-    for (let p = 0; p < size * size; p++) color[p * 4 + 3] = 255;
+  };
+  await walk(full);
+
+  const maps = {};
+  for (const fp of files) {
+    const base = path.basename(fp);
+    if (base.toLowerCase() === 'thumbnail.jpeg' || !/\.(jpg|jpeg|png)$/i.test(base)) continue;
+    if (/_(BaseColor|Color)\./i.test(base)) maps.albedo = fp;
+    else if (/_(NormalGL|Normal)\./i.test(base)) maps.normal = fp;
+    else if (/_Roughness\./i.test(base)) maps.rough = fp;
+    else if (/_Metalness\./i.test(base)) maps.metal = fp;
+    else if (/_(AmbientOcclusion|AO)\./i.test(base)) maps.ao = fp;
+    else if (/_Opacity\./i.test(base)) maps.opacity = fp;
   }
-
-  let normal = null;
-  if (files.normal) {
-    normal = await resizeToroidal(path.join(srcDir, files.normal), size, { grayscale: false });
+  if (!maps.albedo) {
+    throw new Error(`Missing albedo/BaseColor/Color map in ${sourcePath}`);
   }
+  const meta = await sharp(maps.albedo).metadata();
+  return {
+    maps,
+    nativeWidth: meta.width || 1024,
+    nativeHeight: meta.height || 1024,
+  };
+}
 
-  let aoMap = null;
-  let roughMap = null;
-  let metalMap = null;
-  if (files.arm) {
-    const arm = await resizeToroidal(path.join(srcDir, files.arm), size, { grayscale: false });
-    aoMap = new Uint8Array(size * size);
-    roughMap = new Uint8Array(size * size);
-    metalMap = new Uint8Array(size * size);
-    for (let p = 0; p < size * size; p++) {
-      aoMap[p] = arm[p * 4];
-      roughMap[p] = arm[p * 4 + 1];
-      metalMap[p] = arm[p * 4 + 2];
-    }
-  } else {
-    aoMap = files.ao ? await resizeToroidal(path.join(srcDir, files.ao), size, { grayscale: true }) : null;
-    roughMap = files.rough ? await resizeToroidal(path.join(srcDir, files.rough), size, { grayscale: true }) : null;
-    metalMap = files.metal ? await resizeToroidal(path.join(srcDir, files.metal), size, { grayscale: true }) : null;
-  }
+async function bakePbrAsset({
+  vaultRoot,
+  entry,
+  targetW,
+  targetH,
+  tileToSquare = false,
+  keepOpacity = false,
+  aoWeight = 0.25,
+}) {
+  const { maps } = await discoverSourceMaps(vaultRoot, entry.sourcePath);
+  const nPix = targetW * targetH;
 
-  const aoAlbedoWeight = spec.texturePipeline?.aoBakeIntoAlbedoWeight ?? 0.35;
-  const aoMetalWeight = spec.texturePipeline?.aoBakeIntoMetalWeight ?? 0.15;
-  const minNonMetalRoughByte = Math.round((spec.globalRules?.nonMetalMinRoughness ?? 0.25) * 255);
+  const albedoRgb = await loadRawRgb(maps.albedo, targetW, targetH, tileToSquare);
+  const aoMap = maps.ao ? await loadRawGray(maps.ao, targetW, targetH, tileToSquare) : null;
+  const normalRgb = maps.normal ? await loadRawRgb(maps.normal, targetW, targetH, tileToSquare) : null;
+  const roughMap = maps.rough ? await loadRawGray(maps.rough, targetW, targetH, tileToSquare) : null;
+  const metalMap = maps.metal ? await loadRawGray(maps.metal, targetW, targetH, tileToSquare) : null;
+  const opacityMap = keepOpacity && maps.opacity ? await loadRawGray(maps.opacity, targetW, targetH, tileToSquare) : null;
 
-  const normalRm = new Uint8Array(size * size * 4);
-  for (let p = 0; p < size * size; p++) {
-    const i = p * 4;
-    const metallic = metalMap ? metalMap[p] / 255 : 0.0;
+  const color = new Uint8Array(nPix * 4);
+  const normalRm = new Uint8Array(nPix * 4);
+  const defaultRoughByte = Math.round(clamp01(entry.defaultRoughness ?? 0.75) * 255);
+  const defaultMetalByte = entry.surfaceType === 'metal' ? 210 : 0;
+
+  for (let p = 0; p < nPix; p++) {
+    const i3 = p * 3;
+    const i4 = p * 4;
     const ao = aoMap ? aoMap[p] / 255 : 1.0;
-    const weight = mix(aoAlbedoWeight, aoMetalWeight, metallic);
-    const aoFactor = mix(1.0, ao, weight);
+    const aoFactor = mix(1.0, ao, aoWeight);
 
-    // 35% AO micro-bake into albedo in linear space
-    for (let c = 0; c < 3; c++) {
-      const lin = srgbToLinear(color[i + c] / 255) * aoFactor;
-      color[i + c] = Math.round(clamp01(linearToSrgb(lin)) * 255);
+    let rLin = srgbToLinear(albedoRgb[i3] / 255) * aoFactor;
+    let gLin = srgbToLinear(albedoRgb[i3 + 1] / 255) * aoFactor;
+    let bLin = srgbToLinear(albedoRgb[i3 + 2] / 255) * aoFactor;
+
+    if (entry.tintableGrayscale) {
+      const lum = 0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin;
+      // Lift blood/stain contrast into [0.18..1.0] grayscale so runtime color tinting stays clean
+      const boosted = clamp01(Math.sqrt(clamp01(lum)) * 1.15);
+      rLin = boosted;
+      gLin = boosted;
+      bLin = boosted;
     }
 
-    // Normal XY (OpenGL +Y) normalized
-    let nx = 0, ny = 0;
-    if (normal) {
-      let rx = normal[i] / 127.5 - 1;
-      let ry = normal[i + 1] / 127.5 - 1;
-      let rz = normal[i + 2] / 127.5 - 1;
+    color[i4] = Math.round(clamp01(linearToSrgb(rLin)) * 255);
+    color[i4 + 1] = Math.round(clamp01(linearToSrgb(gLin)) * 255);
+    color[i4 + 2] = Math.round(clamp01(linearToSrgb(bLin)) * 255);
+    color[i4 + 3] = opacityMap ? opacityMap[p] : 255;
+
+    // Normal: both ambientCG NormalGL and FabLibrary Normal are OpenGL (+Y); normalize XY
+    let nx = 0;
+    let ny = 0;
+    if (normalRgb) {
+      const rx = normalRgb[i3] / 127.5 - 1;
+      const ry = normalRgb[i3 + 1] / 127.5 - 1;
+      const rz = normalRgb[i3 + 2] / 127.5 - 1;
       const len = Math.hypot(rx, ry, rz);
       if (len > 1e-4) {
         nx = rx / len;
         ny = ry / len;
       }
     }
-    normalRm[i] = Math.round(clamp01((nx + 1) * 0.5) * 255);
-    normalRm[i + 1] = Math.round(clamp01((ny + 1) * 0.5) * 255);
-
-    const rawRough = roughMap ? roughMap[p] : 215;
-    const isMetal = metallic >= 0.5;
-    const minRough = isMetal ? 10 : entry.blendMode === 'translucent' ? 10 : minNonMetalRoughByte;
-    normalRm[i + 2] = Math.max(minRough, rawRough);
-    normalRm[i + 3] = Math.round(clamp01(metallic) * 255);
+    normalRm[i4] = Math.round(clamp01((nx + 1) * 0.5) * 255);
+    normalRm[i4 + 1] = Math.round(clamp01((ny + 1) * 0.5) * 255);
+    normalRm[i4 + 2] = roughMap ? roughMap[p] : defaultRoughByte;
+    normalRm[i4 + 3] = metalMap ? metalMap[p] : defaultMetalByte;
   }
 
-  if (entry.alphaCutout) {
-    dilateAlphaEdges(color, size, 16);
+  if (keepOpacity && opacityMap) {
+    dilateAlphaEdges(color, targetW, targetH, 16);
   }
 
-  return { color, normalRm, meta };
+  return { color, normalRm, width: targetW, height: targetH };
 }
 
-function buildHallwayGreenDado(baseBufs, entry, size) {
+function buildProceduralDerivedSlot(entry, baseBufs, size) {
+  const nPix = size * size;
   const color = new Uint8Array(baseBufs.color);
   const normalRm = new Uint8Array(baseBufs.normalRm);
-  const dadoRatio = entry.dadoRatio ?? 0.45;
-  const stripeRatio = entry.stripeRatio ?? 0.02;
-  const [gr, gg, gb] = entry.dadoColor || [52, 92, 68];
 
-  const stripeTopY = Math.round(size * (1 - dadoRatio - stripeRatio));
-  const dadoTopY = Math.round(size * (1 - dadoRatio));
-
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = (y * size + x) * 4;
-      if (y >= dadoTopY) {
-        // Bottom 45%: semi-gloss Chinese hallway green oil paint over plaster texture
-        const lum = (0.299 * color[i] + 0.587 * color[i + 1] + 0.114 * color[i + 2]) / 255;
-        const texVar = 0.88 + lum * 0.16;
-        color[i] = Math.min(255, Math.round(gr * texVar));
-        color[i + 1] = Math.min(255, Math.round(gg * texVar));
-        color[i + 2] = Math.min(255, Math.round(gb * texVar));
-        normalRm[i + 2] = Math.max(96, Math.round(normalRm[i + 2] * 0.55));
-      } else if (y >= stripeTopY) {
-        // 2% dark green waist stripe + subtle crevice normal
-        color[i] = Math.round(gr * 0.58);
-        color[i + 1] = Math.round(gg * 0.58);
-        color[i + 2] = Math.round(gb * 0.58);
-        normalRm[i + 1] = y < (stripeTopY + dadoTopY) / 2 ? 156 : 100;
-        normalRm[i + 2] = 110;
+  if (entry.id === 'cn_corrugated_blue' || entry.id === 'cn_corrugated_red') {
+    const targetRgb = entry.id === 'cn_corrugated_blue' ? [34, 92, 174] : [162, 48, 42];
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const lum = (0.299 * color[i] + 0.587 * color[i + 1] + 0.114 * color[i + 2]) / 255;
+      const shade = 0.65 + lum * 0.55;
+      color[i] = Math.min(255, Math.round(targetRgb[0] * shade));
+      color[i + 1] = Math.min(255, Math.round(targetRgb[1] * shade));
+      color[i + 2] = Math.min(255, Math.round(targetRgb[2] * shade));
+      normalRm[i + 2] = Math.max(96, Math.min(148, Math.round(normalRm[i + 2] * 0.7 + 36)));
+      normalRm[i + 3] = 140;
+    }
+  } else if (entry.id === 'cn_epoxy_green') {
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const lum = (0.299 * color[i] + 0.587 * color[i + 1] + 0.114 * color[i + 2]) / 255;
+      const shade = 0.72 + lum * 0.42;
+      color[i] = Math.min(255, Math.round(36 * shade));
+      color[i + 1] = Math.min(255, Math.round(112 * shade));
+      color[i + 2] = Math.min(255, Math.round(74 * shade));
+      normalRm[i + 2] = Math.max(72, Math.min(115, Math.round(normalRm[i + 2] * 0.45)));
+      normalRm[i + 3] = 0;
+    }
+  } else if (entry.id === 'cn_hallway_wainscot') {
+    const dadoTopY = Math.round(size * 0.55);
+    const stripeTopY = Math.round(size * 0.53);
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4;
+        if (y >= dadoTopY) {
+          const lum = (0.299 * color[i] + 0.587 * color[i + 1] + 0.114 * color[i + 2]) / 255;
+          const texVar = 0.85 + lum * 0.18;
+          color[i] = Math.min(255, Math.round(52 * texVar));
+          color[i + 1] = Math.min(255, Math.round(92 * texVar));
+          color[i + 2] = Math.min(255, Math.round(68 * texVar));
+          normalRm[i + 2] = Math.max(96, Math.round(normalRm[i + 2] * 0.55));
+        } else if (y >= stripeTopY) {
+          color[i] = 30;
+          color[i + 1] = 54;
+          color[i + 2] = 40;
+          normalRm[i + 1] = y < (stripeTopY + dadoTopY) / 2 ? 156 : 100;
+          normalRm[i + 2] = 110;
+        }
       }
     }
+  } else if (entry.id === 'cn_tactile_yellow') {
+    for (let y = 0; y < size; y++) {
+      const gy = (y / size * 4) % 1;
+      for (let x = 0; x < size; x++) {
+        const gx = (x / size * 4) % 1;
+        const i = (y * size + x) * 4;
+        const grout = gx < 0.03 || gx > 0.97 || gy < 0.03 || gy > 0.97;
+        const ribPhase = (gx * 6) % 1;
+        const onRib = !grout && gy > 0.08 && gy < 0.92 && ribPhase > 0.25 && ribPhase < 0.75;
+        const lum = (0.299 * color[i] + 0.587 * color[i + 1] + 0.114 * color[i + 2]) / 255;
+        const grain = 0.86 + lum * 0.22;
+        const base = grout ? [115, 92, 34] : onRib ? [212, 162, 32] : [192, 144, 28];
+        color[i] = Math.min(255, Math.round(base[0] * grain));
+        color[i + 1] = Math.min(255, Math.round(base[1] * grain));
+        color[i + 2] = Math.min(255, Math.round(base[2] * grain));
+        let nx = 0;
+        if (onRib) {
+          nx = Math.sin(((ribPhase - 0.25) / 0.5 - 0.5) * Math.PI) * 0.55;
+        }
+        normalRm[i] = Math.round(clamp01((nx + 1) * 0.5) * 255);
+        normalRm[i + 1] = 128;
+        normalRm[i + 2] = grout ? 232 : 182;
+        normalRm[i + 3] = 0;
+      }
+    }
+  } else {
+    throw new Error(`Unknown procedural slot "${entry.id}"`);
   }
-  return {
-    color,
-    normalRm,
-    meta: { source: 'composite', assetId: 'cn_hallway_green_dado', license: 'CC0' },
-  };
-}
 
-async function writeSlotOutputs(slotName, color, normalRm, size) {
-  const dir = path.join(BUILT_MATERIALS, slotName);
-  await mkdir(dir, { recursive: true });
-  await Promise.all([
-    sharp(color, { raw: { width: size, height: size, channels: 4 } }).png({ compressionLevel: 9 }).toFile(path.join(dir, 'color.png')),
-    sharp(normalRm, { raw: { width: size, height: size, channels: 4 } }).png({ compressionLevel: 9 }).toFile(path.join(dir, 'normal_rm.png')),
-  ]);
+  return { color, normalRm, width: size, height: size };
 }
 
 function validateMaterialRule(entry, spec) {
   const rules = spec.materialRules || {};
   const blendMode = entry.blendMode || (entry.alphaCutout ? 'cutout' : 'opaque');
   if (rules.forbidAlphaCutout !== false && (entry.alphaCutout || blendMode === 'cutout')) {
-    throw new Error(
-      `Material "${entry.slot}" uses alphaCutout/cutout, which is forbidden for universal seamless level-building PBR materials.`,
-    );
+    throw new Error(`Material "${entry.id}" uses forbidden alphaCutout/cutout.`);
   }
   if (blendMode === 'translucent') {
-    const isGlass = entry.materialKind === 'glass' || /glass/i.test(entry.slot || '');
+    const isGlass = entry.surfaceType === 'glass' || /glass/i.test(entry.id || '');
     if (rules.translucentOnlyForGlass !== false && !isGlass) {
-      throw new Error(
-        `Material "${entry.slot}" uses blendMode="translucent", which is only allowed for glass materials.`,
-      );
+      throw new Error(`Material "${entry.id}" uses translucent outside glass.`);
     }
   } else if (blendMode !== 'opaque') {
-    throw new Error(`Material "${entry.slot}" has unsupported blendMode "${blendMode}".`);
+    throw new Error(`Material "${entry.id}" has unsupported blendMode "${blendMode}".`);
   }
 }
 
-async function cleanStaleSlotDirs(activeSlots) {
-  const reserved = new Set(['512', '256', 'hdri', ...activeSlots]);
-  const entries = await readdir(BUILT_MATERIALS, { withFileTypes: true });
-  for (const e of entries) {
-    if (e.isDirectory() && !reserved.has(e.name)) {
-      await rm(path.join(BUILT_MATERIALS, e.name), { recursive: true, force: true });
+async function cleanDirExcept(rootDir, keepSet) {
+  await mkdir(rootDir, { recursive: true });
+  for (const e of await readdir(rootDir, { withFileTypes: true })) {
+    if (e.isDirectory() && !keepSet.has(e.name)) {
+      await rm(path.join(rootDir, e.name), { recursive: true, force: true });
     }
   }
+}
+
+async function writeUnpremultipliedPair(outDir, color, normalRm, width, height) {
+  await mkdir(outDir, { recursive: true });
+  await Promise.all([
+    sharp(color, { raw: { width, height, channels: 4 } }).png({ compressionLevel: 9 }).toFile(path.join(outDir, 'color.png')),
+    sharp(normalRm, { raw: { width, height, channels: 4 } }).png({ compressionLevel: 9 }).toFile(path.join(outDir, 'normal_rm.png')),
+  ]);
+}
+
+async function verifyBakedCollection(label, baseDir, items, { requireSquare1024 = false } = {}) {
+  let zeroAlphaZeroRgb = 0;
+  let checkedZeroAlpha = 0;
+  for (const item of items) {
+    const id = item.id || item.slot;
+    const colPath = path.join(baseDir, id, 'color.png');
+    const nrmPath = path.join(baseDir, id, 'normal_rm.png');
+    if (!existsSync(colPath) || !existsSync(nrmPath)) {
+      throw new Error(`[verify:${label}] Missing output PNG for "${id}"`);
+    }
+    const [cs, ns] = await Promise.all([stat(colPath), stat(nrmPath)]);
+    if (cs.size <= 0 || ns.size <= 0) {
+      throw new Error(`[verify:${label}] Empty output PNG for "${id}"`);
+    }
+    const [cMeta, nRaw] = await Promise.all([
+      sharp(colPath).metadata(),
+      sharp(nrmPath).raw().toBuffer({ resolveWithObject: true }),
+    ]);
+    const w = nRaw.info.width;
+    const h = nRaw.info.height;
+    if (cMeta.width !== w || cMeta.height !== h) {
+      throw new Error(`[verify:${label}] Dimension mismatch for "${id}": color ${cMeta.width}x${cMeta.height} vs normal_rm ${w}x${h}`);
+    }
+    if (!isPow2(w) || !isPow2(h)) {
+      throw new Error(`[verify:${label}] Non-pow2 dimension for "${id}": ${w}x${h}`);
+    }
+    if (requireSquare1024 && (w !== 1024 || h !== 1024)) {
+      throw new Error(`[verify:${label}] Expected 1024x1024 for material "${id}", got ${w}x${h}`);
+    }
+    const d = nRaw.data;
+    for (let p = 0; p < w * h; p += 17) {
+      const i = p * 4;
+      if (d[i + 3] === 0) {
+        checkedZeroAlpha++;
+        if (d[i] === 0 && d[i + 1] === 0 && d[i + 2] === 0) {
+          zeroAlphaZeroRgb++;
+        }
+      }
+    }
+  }
+  if (zeroAlphaZeroRgb > 0) {
+    throw new Error(`[verify:${label}] Found ${zeroAlphaZeroRgb} pixels with A=0 & RGB=(0,0,0) in normal_rm.png!`);
+  }
+  return { count: items.length, checkedZeroAlpha, zeroAlphaZeroRgb };
 }
 
 async function main() {
+  const { vaultDir } = parseArgs(process.argv.slice(2));
+  const vaultRoot = await resolveVaultDir(vaultDir);
   const spec = JSON.parse(await readFile(SPEC_PATH, 'utf8'));
-  const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8'));
+  const matManifest = JSON.parse(await readFile(MATERIALS_MANIFEST_PATH, 'utf8'));
+  const decalManifest = JSON.parse(await readFile(DECALS_MANIFEST_PATH, 'utf8'));
+  const foliageManifest = JSON.parse(await readFile(FOLIAGE_MANIFEST_PATH, 'utf8'));
   const masterSize = spec.tiers?.T0?.texSize?.master || 1024;
 
-  await mkdir(BUILT_MATERIALS, { recursive: true });
-  for (const entry of manifest.materials || []) {
+  // 1. Bake 90 Universal Opaque Materials (+ layer 0 __missing__)
+  for (const entry of matManifest.materials || []) {
     validateMaterialRule(entry, spec);
   }
-  await cleanStaleSlotDirs((manifest.materials || []).map((m) => m.slot).concat(['__missing__']));
+  await cleanDirExcept(
+    BUILT_MATERIALS,
+    new Set(['512', '256', 'hdri', '__missing__', ...(matManifest.materials || []).map((m) => m.id)]),
+  );
 
-  // Layer 0: __missing__ checkerboard
   const missing = createMissingLayer(masterSize);
-  await writeSlotOutputs('__missing__', missing.color, missing.normalRm, masterSize);
+  await writeUnpremultipliedPair(path.join(BUILT_MATERIALS, '__missing__'), missing.color, missing.normalRm, masterSize, masterSize);
 
   const tableEntries = [
     {
+      id: '__missing__',
       slot: '__missing__',
       layer: 0,
       category: '0_builtin',
+      surfaceType: 'concrete',
       tiling: 'grid',
+      scanSizeMeters: 1.0,
       uvScale: 1.0,
       blendMode: 'opaque',
       opacity: 1.0,
@@ -436,94 +517,102 @@ async function main() {
       emissiveStrength: 0,
       source: 'builtin',
       assetId: '__missing__',
+      width: masterSize,
+      height: masterSize,
     },
   ];
-  const licenses = [];
+
   const bakedCache = new Map();
-
-  // First pass: non-composite slots
   let layerIdx = 1;
-  for (const entry of manifest.materials) {
+  for (const entry of matManifest.materials || []) {
     const thisLayer = layerIdx++;
-    if (entry.source === 'composite') {
-      continue;
-    }
-    const { color, normalRm, meta } = await bakeStandardSlot(entry, masterSize, spec);
-    bakedCache.set(entry.slot, { color, normalRm });
-    await writeSlotOutputs(entry.slot, color, normalRm, masterSize);
+    if (entry.sourcePath?.startsWith('procedural/')) continue;
+    const baked = await bakePbrAsset({
+      vaultRoot,
+      entry,
+      targetW: masterSize,
+      targetH: masterSize,
+      tileToSquare: Boolean(entry.tileToSquare),
+      keepOpacity: false,
+      aoWeight: 0.25,
+    });
+    bakedCache.set(entry.id, baked);
+    await writeUnpremultipliedPair(path.join(BUILT_MATERIALS, entry.id), baked.color, baked.normalRm, masterSize, masterSize);
     tableEntries.push({
-      slot: entry.slot,
+      id: entry.id,
+      slot: entry.id,
       layer: thisLayer,
       category: entry.category,
-      tiling: entry.tiling || 'grid',
+      surfaceType: entry.surfaceType,
+      sourcePath: entry.sourcePath,
+      tiling: entry.surfaceType === 'dirt' || entry.surfaceType === 'grass' || entry.surfaceType === 'asphalt' ? 'stochastic' : 'grid',
+      scanSizeMeters: entry.scanSizeMeters,
       uvScale: entry.uvScale ?? 1.0,
-      blendMode: entry.blendMode || (entry.alphaCutout ? 'cutout' : 'opaque'),
-      opacity: entry.opacity ?? 1.0,
-      tintable: Boolean(entry.tintable),
-      alphaCutout: Boolean(entry.alphaCutout),
-      emissiveColor: entry.emissiveColor || [0, 0, 0],
-      emissiveStrength: entry.emissiveStrength || 0,
-      source: entry.source,
-      assetId: entry.assetId,
-    });
-    licenses.push({
-      slot: entry.slot,
-      source: meta.source || entry.source,
-      assetId: meta.assetId || entry.assetId,
-      license: meta.license || 'CC0',
-      sourceUrl: meta.sourceUrl || '',
-    });
-  }
-
-  // Second pass: composite slots (preserve original manifest layer order!)
-  layerIdx = 1;
-  for (const entry of manifest.materials) {
-    const thisLayer = layerIdx++;
-    if (entry.source !== 'composite') continue;
-    const base = bakedCache.get(entry.base);
-    if (!base) throw new Error(`Composite slot "${entry.slot}" missing base "${entry.base}"`);
-    const { color, normalRm, meta } = buildHallwayGreenDado(base, entry, masterSize);
-    await writeSlotOutputs(entry.slot, color, normalRm, masterSize);
-    tableEntries.push({
-      slot: entry.slot,
-      layer: thisLayer,
-      category: entry.category,
-      tiling: entry.tiling || 'grid',
-      uvScale: entry.uvScale ?? 1.0,
-      blendMode: entry.blendMode || 'opaque',
-      opacity: entry.opacity ?? 1.0,
-      tintable: Boolean(entry.tintable),
+      blendMode: 'opaque',
+      opacity: 1.0,
+      tintable: false,
       alphaCutout: false,
       emissiveColor: [0, 0, 0],
       emissiveStrength: 0,
-      source: 'composite',
-      assetId: entry.compositeType,
+      hasMetalness: Boolean(entry.hasMetalness || entry.surfaceType === 'metal'),
+      source: entry.sourcePath.startsWith('ambientcg/') ? 'ambientcg' : 'fablibrary',
+      assetId: path.basename(entry.sourcePath),
+      width: masterSize,
+      height: masterSize,
     });
-    licenses.push({ slot: entry.slot, ...meta });
   }
 
+  layerIdx = 1;
+  for (const entry of matManifest.materials || []) {
+    const thisLayer = layerIdx++;
+    if (!entry.sourcePath?.startsWith('procedural/')) continue;
+    const base = bakedCache.get(entry.derivedFrom);
+    if (!base) throw new Error(`Procedural slot "${entry.id}" missing derivedFrom "${entry.derivedFrom}"`);
+    const baked = buildProceduralDerivedSlot(entry, base, masterSize);
+    await writeUnpremultipliedPair(path.join(BUILT_MATERIALS, entry.id), baked.color, baked.normalRm, masterSize, masterSize);
+    tableEntries.push({
+      id: entry.id,
+      slot: entry.id,
+      layer: thisLayer,
+      category: entry.category,
+      surfaceType: entry.surfaceType,
+      sourcePath: entry.sourcePath,
+      derivedFrom: entry.derivedFrom,
+      tiling: 'grid',
+      scanSizeMeters: entry.scanSizeMeters,
+      uvScale: entry.uvScale ?? 1.0,
+      blendMode: 'opaque',
+      opacity: 1.0,
+      tintable: false,
+      alphaCutout: false,
+      emissiveColor: [0, 0, 0],
+      emissiveStrength: 0,
+      hasMetalness: entry.surfaceType === 'metal',
+      source: 'procedural',
+      assetId: entry.id,
+      width: masterSize,
+      height: masterSize,
+    });
+  }
   tableEntries.sort((a, b) => a.layer - b.layer);
 
-  // Copy HDRIs and water_normal
+  // Copy HDRIs & water_normal if cached
   const hdriOutDir = path.join(BUILT_MATERIALS, 'hdri');
   await mkdir(hdriOutDir, { recursive: true });
   const hdriList = [];
-  for (const h of manifest.hdri || []) {
+  for (const h of matManifest.hdri || []) {
+    const dst = path.join(hdriOutDir, `${h.slot}.hdr`);
     const srcHdr = path.join(RAW_PBR_CACHE, '_hdri', `${h.slot}.hdr`);
-    if (existsSync(srcHdr)) {
-      await copyFile(srcHdr, path.join(hdriOutDir, `${h.slot}.hdr`));
-      hdriList.push({ slot: h.slot, path: `hdri/${h.slot}.hdr`, assetId: h.assetId, license: 'CC0' });
-    }
+    if (existsSync(srcHdr)) await copyFile(srcHdr, dst);
+    if (existsSync(dst)) hdriList.push({ slot: h.slot, path: `hdri/${h.slot}.hdr`, assetId: h.assetId, license: 'CC0' });
   }
-
   const waterSrc = path.join(RAW_MANUAL_DIR, 'water_normal.png');
-  if (existsSync(waterSrc)) {
-    await copyFile(waterSrc, path.join(BUILT_MATERIALS, 'water_normal.png'));
-  }
+  if (existsSync(waterSrc)) await copyFile(waterSrc, path.join(BUILT_MATERIALS, 'water_normal.png'));
 
   const materialTable = {
-    version: manifest.version,
+    version: '5.0.0',
     pipeline: '2-map-pbr',
+    normalConvention: 'OpenGL (+Y)',
     maps: ['color', 'normal_rm'],
     masterResolution: masterSize,
     resolutions: [512, 256],
@@ -535,7 +624,7 @@ async function main() {
     materials: tableEntries,
   };
 
-  // Also pack 512px & 256px 2-map grid atlases for WebGL2 TEXTURE_2D_ARRAY runtime preview
+  // Also pack 512px & 256px 2-map grid atlases for #tests and game bundling (91 <= 128)
   const gridCols = 8;
   const rows = Math.max(1, Math.ceil(tableEntries.length / gridCols));
   for (const resSize of [512, 256]) {
@@ -550,7 +639,7 @@ async function main() {
       const row = Math.floor(entry.layer / gridCols);
       const ox = col * resSize;
       const oy = row * resSize;
-      const slotDir = path.join(BUILT_MATERIALS, entry.slot);
+      const slotDir = path.join(BUILT_MATERIALS, entry.id);
       const [cTile, nTile] = await Promise.all([
         resizeStraightRgba(path.join(slotDir, 'color.png'), resSize, resSize),
         resizeStraightRgba(path.join(slotDir, 'normal_rm.png'), resSize, resSize),
@@ -567,10 +656,93 @@ async function main() {
       sharp(nrmAtlas, { raw: { width: w, height: h, channels: 4 } }).webp({ quality: spec.texturePipeline?.webpFallback?.normalRmQuality ?? 92, exact: true }).toFile(path.join(resDir, 'normal_rm_array.webp')),
     ]);
   }
-
   await writeFile(path.join(BUILT_MATERIALS, 'material_table.json'), JSON.stringify(materialTable, null, 2));
-  await writeFile(path.join(BUILT_MATERIALS, 'LICENSES.json'), JSON.stringify({ generatedAt: new Date().toISOString(), items: licenses }, null, 2));
-  console.log(`[pbr:bake] Baked ${tableEntries.length} layers (1024x1024 color.png + normal_rm.png), ${hdriList.length} HDRIs`);
+
+  // 2. Bake 36 PBR Decals (preserve native aspect ratio & power-of-2 dimensions)
+  const pbrDecals = decalManifest.pbrDecals || [];
+  await cleanDirExcept(BUILT_PBR_DECALS, new Set(pbrDecals.map((d) => d.id)));
+  const decalTableEntries = [];
+  for (const entry of pbrDecals) {
+    const { nativeWidth, nativeHeight } = await discoverSourceMaps(vaultRoot, entry.sourcePath);
+    const baked = await bakePbrAsset({
+      vaultRoot,
+      entry,
+      targetW: nativeWidth,
+      targetH: nativeHeight,
+      tileToSquare: false,
+      keepOpacity: true,
+      aoWeight: 0.25,
+    });
+    await writeUnpremultipliedPair(path.join(BUILT_PBR_DECALS, entry.id), baked.color, baked.normalRm, baked.width, baked.height);
+    decalTableEntries.push({
+      id: entry.id,
+      slot: entry.id,
+      category: entry.category,
+      sourcePath: entry.sourcePath,
+      width: baked.width,
+      height: baked.height,
+      aspectRatio: Number((baked.width / baked.height).toFixed(4)),
+      physicalSizeMeters: entry.scanSizeMeters,
+      scanSizeMeters: entry.scanSizeMeters,
+      uvScale: entry.uvScale ?? 1.0,
+      tintableGrayscale: Boolean(entry.tintableGrayscale),
+      missingNormal: Boolean(entry.missingNormal),
+      missingRoughness: Boolean(entry.missingRoughness),
+      defaultRoughness: entry.defaultRoughness ?? null,
+    });
+  }
+  await writeFile(
+    path.join(BUILT_PBR_DECALS, 'pbr_decals_table.json'),
+    JSON.stringify({ version: '5.0.0', normalConvention: 'OpenGL (+Y)', count: decalTableEntries.length, items: decalTableEntries }, null, 2),
+  );
+
+  // 3. Bake 20 PBR Foliage Sets (preserve native aspect ratio & power-of-2 dimensions)
+  const pbrFoliage = foliageManifest.pbrFoliage || [];
+  await cleanDirExcept(BUILT_PBR_FOLIAGE, new Set(pbrFoliage.map((f) => f.id)));
+  const foliageTableEntries = [];
+  for (const entry of pbrFoliage) {
+    const { nativeWidth, nativeHeight } = await discoverSourceMaps(vaultRoot, entry.sourcePath);
+    const baked = await bakePbrAsset({
+      vaultRoot,
+      entry,
+      targetW: nativeWidth,
+      targetH: nativeHeight,
+      tileToSquare: false,
+      keepOpacity: true,
+      aoWeight: 0.25,
+    });
+    await writeUnpremultipliedPair(path.join(BUILT_PBR_FOLIAGE, entry.id), baked.color, baked.normalRm, baked.width, baked.height);
+    foliageTableEntries.push({
+      id: entry.id,
+      slot: entry.id,
+      category: entry.category,
+      sourcePath: entry.sourcePath,
+      width: baked.width,
+      height: baked.height,
+      aspectRatio: Number((baked.width / baked.height).toFixed(4)),
+      physicalSizeMeters: entry.scanSizeMeters,
+      scanSizeMeters: entry.scanSizeMeters,
+      missingNormal: Boolean(entry.missingNormal),
+      missingRoughness: Boolean(entry.missingRoughness),
+    });
+  }
+  await writeFile(
+    path.join(BUILT_PBR_FOLIAGE, 'pbr_foliage_table.json'),
+    JSON.stringify({ version: '5.0.0', normalConvention: 'OpenGL (+Y)', count: foliageTableEntries.length, items: foliageTableEntries }, null, 2),
+  );
+
+  // 4. Verify all outputs & A=0 straight-alpha integrity
+  const [vMat, vDec, vFol] = await Promise.all([
+    verifyBakedCollection('materials', BUILT_MATERIALS, tableEntries, { requireSquare1024: true }),
+    verifyBakedCollection('pbr_decals', BUILT_PBR_DECALS, decalTableEntries, { requireSquare1024: false }),
+    verifyBakedCollection('pbr_foliage', BUILT_PBR_FOLIAGE, foliageTableEntries, { requireSquare1024: false }),
+  ]);
+
+  console.log('=== v5.0 2-Texture PBR Bake & Verification Report ===');
+  console.log(`Normal Convention: OpenGL (+Y) [empirical 228/233 FabLibrary + ambientCG NormalGL]`);
+  console.log(`Universal Materials : ${vMat.count - 1} + __missing__ (${vMat.count} layers, 1024x1024, A=0 checked: ${vMat.checkedZeroAlpha}, zeroedRGB: ${vMat.zeroAlphaZeroRgb}) [PASS]`);
+  console.log(`PBR Decals          : ${vDec.count} sets (native aspect ratio, A=0 checked: ${vDec.checkedZeroAlpha}, zeroedRGB: ${vDec.zeroAlphaZeroRgb}) [PASS]`);
+  console.log(`PBR Foliage         : ${vFol.count} sets (native aspect ratio, A=0 checked: ${vFol.checkedZeroAlpha}, zeroedRGB: ${vFol.zeroAlphaZeroRgb}) [PASS]`);
 }
 
 main().catch((err) => {
