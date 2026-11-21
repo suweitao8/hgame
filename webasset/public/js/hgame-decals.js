@@ -482,8 +482,13 @@ function configureSurfaceCamera(vp, group, baseMat) {
     slab.position.y = 0;
     group.add(slab);
     if (vp.gridHelper) vp.gridHelper.visible = true;
-    vp.camera.position.set(1.1, 2.35, 2.35);
-    vp.controls.target.set(0, 0.14, 0);
+    if (currentLib === 'cn_foliage') {
+      vp.camera.position.set(1.9, 2.35, 3.6);
+      vp.controls.target.set(0, 0.95, 0);
+    } else {
+      vp.camera.position.set(1.1, 2.35, 2.35);
+      vp.controls.target.set(0, 0.14, 0);
+    }
   } else {
     if (vp.gridHelper) vp.gridHelper.visible = false;
     vp.camera.position.set(0, 1.05, 2.9);
