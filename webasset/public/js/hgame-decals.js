@@ -1,9 +1,15 @@
 import * as THREE from 'three';
+import { loadHdriEnvironment } from './realistic-pcg.js';
 import {
   apiRequestJson,
+  create2MapPbrMaterial,
   createThreeViewport,
   disposeObject3D,
+  draw2MapChannelCanvases,
+  drawImageFittedToCanvas,
   fetchUnrealCatalog,
+  loadHtmlImage,
+  loadSingle2MapAssets,
 } from './hgame-shared.js';
 
 const DECAL_PACK_ORDER = [
@@ -14,9 +20,9 @@ const DECAL_PACK_ORDER = [
 ];
 
 const SURFACE_FALLBACKS = {
-  concrete: { color: 0x4b504a, roughness: 0.88 },
-  asphalt: { color: 0x262928, roughness: 0.92 },
-  brick: { color: 0x62463a, roughness: 0.86 },
+  concrete: { color: 0x4b504a, roughness: 0.88, cnId: 'concrete_road_01' },
+  asphalt: { color: 0x262928, roughness: 0.92, cnId: 'asphalt_road_01' },
+  brick: { color: 0x62463a, roughness: 0.86, cnId: 'brick_red_cn' },
 };
 
 const SURFACE_PATTERNS = {
@@ -26,6 +32,7 @@ const SURFACE_PATTERNS = {
 };
 
 const viewEl = document.querySelector('#decals-view');
+const libTabs = Array.from(document.querySelectorAll('.hgame-decal-lib-tab'));
 const searchInput = document.querySelector('#hgame-decal-search');
 const packFilter = document.querySelector('#hgame-decal-pack-filter');
 const listEl = document.querySelector('#hgame-decal-list');
@@ -35,9 +42,10 @@ const modeTabs = Array.from(document.querySelectorAll('.hgame-decal-mode-tab'));
 const emptyEl = document.querySelector('#hgame-decal-empty');
 const stageEl = document.querySelector('#hgame-decal-stage');
 const mapsRowEl = document.querySelector('#hgame-decal-maps');
-const mapColorImg = document.querySelector('#hgame-decal-map-color');
-const mapNormalImg = document.querySelector('#hgame-decal-map-normal');
-const mapOrmImg = document.querySelector('#hgame-decal-map-orm');
+const mapColorCanvas = document.querySelector('#hgame-decal-map-color');
+const mapNormalCanvas = document.querySelector('#hgame-decal-map-normal');
+const mapOrmCanvas = document.querySelector('#hgame-decal-map-orm');
+const mapRmLabel = document.querySelector('#hgame-decal-map-rm-label');
 const surfaceSelect = document.querySelector('#hgame-decal-surface');
 const scaleInput = document.querySelector('#hgame-decal-scale');
 const scaleValEl = document.querySelector('#hgame-decal-scale-val');
@@ -45,15 +53,20 @@ const rotInput = document.querySelector('#hgame-decal-rot');
 const rotValEl = document.querySelector('#hgame-decal-rot-val');
 const opacityInput = document.querySelector('#hgame-decal-opacity');
 const opacityValEl = document.querySelector('#hgame-decal-opacity-val');
+const tintWrap = document.querySelector('#hgame-decal-tint-wrap');
+const tintSelect = document.querySelector('#hgame-decal-tint');
 const statusEl = document.querySelector('#hgame-decal-status');
 
 const texLoader = new THREE.TextureLoader();
 
-let decals = [];
+let currentLib = 'cn_pbr';
+let cnDecals = [];
+let unrealDecals = [];
 let baseMaterials = [];
 let activeId = '';
 let previewMode = 'surface';
 let viewport = null;
+let hdriEnv = null;
 let stageRoot = null;
 let decalMesh = null;
 let decalMaterial = null;
@@ -61,7 +74,8 @@ let decalTextures = [];
 let decalAspect = 1;
 let initialized = false;
 let loadToken = 0;
-let baseSurfaceCache = new Map();
+let catalogLoaded = false;
+const baseSurfaceCache = new Map();
 
 function syncSliderLabels() {
   scaleValEl.textContent = `${Number(scaleInput.value).toFixed(2)}×`;
@@ -69,12 +83,26 @@ function syncSliderLabels() {
   opacityValEl.textContent = Number(opacityInput.value).toFixed(2);
 }
 
+function getActiveList() {
+  return currentLib === 'cn_pbr' ? cnDecals : unrealDecals;
+}
+
 function getFilteredDecals() {
   const query = searchInput.value.trim().toLowerCase();
-  const pack = packFilter.value || 'all';
-  return decals.filter(item => {
+  const filter = packFilter.value || 'all';
+  const items = getActiveList();
+
+  return items.filter(item => {
+    if (currentLib === 'cn_pbr') {
+      if (filter === 'tint:1' && !item.tintableGrayscale) return false;
+      if (filter.startsWith('cat:') && (item.category || '') !== filter.slice(4)) return false;
+      if (!query) return true;
+      return (item.id || '').toLowerCase().includes(query)
+        || (item.category || '').toLowerCase().includes(query)
+        || (item.sourcePath || '').toLowerCase().includes(query);
+    }
     const itemPack = item.packLabel || item.pack || '其他贴花';
-    if (pack !== 'all' && itemPack !== pack) return false;
+    if (filter !== 'all' && itemPack !== filter) return false;
     if (!query) return true;
     return (item.name || '').toLowerCase().includes(query)
       || (item.assetName || '').toLowerCase().includes(query)
@@ -87,20 +115,49 @@ function getCurrentDecal() {
   const filtered = getFilteredDecals();
   const found = filtered.find(item => item.id === activeId);
   if (found) return found;
-  return filtered[0] || decals.find(item => item.id === activeId) || decals[0] || null;
+  const list = getActiveList();
+  return filtered[0] || list.find(item => item.id === activeId) || list[0] || null;
 }
 
 function populatePackFilter() {
+  const prev = packFilter.value || 'all';
+  packFilter.replaceChildren();
+  const items = getActiveList();
+
+  if (currentLib === 'cn_pbr') {
+    const cats = new Map();
+    let tintCount = 0;
+    for (const item of items) {
+      const cat = item.category || 'other';
+      cats.set(cat, (cats.get(cat) || 0) + 1);
+      if (item.tintableGrayscale) tintCount += 1;
+    }
+    const addOpt = (value, text) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = text;
+      packFilter.appendChild(opt);
+    };
+    addOpt('all', `全部 2-Texture PBR 贴花 (${items.length})`);
+    for (const [cat, count] of [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      addOpt(`cat:${cat}`, `分类 · ${cat} (${count})`);
+    }
+    if (tintCount > 0) {
+      addOpt('tint:1', `可染色血迹/污渍 (${tintCount})`);
+    }
+    const valid = [...packFilter.options].some(o => o.value === prev);
+    packFilter.value = valid ? prev : 'all';
+    return;
+  }
+
   const counts = new Map();
-  for (const item of decals) {
+  for (const item of items) {
     const label = item.packLabel || item.pack || '其他贴花';
     counts.set(label, (counts.get(label) || 0) + 1);
   }
-  const prev = packFilter.value || 'all';
-  packFilter.replaceChildren();
   const allOpt = document.createElement('option');
   allOpt.value = 'all';
-  allOpt.textContent = `全部合集 (${decals.length})`;
+  allOpt.textContent = `全部合集 (${items.length})`;
   packFilter.appendChild(allOpt);
   const ordered = [
     ...DECAL_PACK_ORDER.filter(label => counts.has(label)),
@@ -124,8 +181,44 @@ function renderList() {
   if (filtered.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'hgame-list-empty';
-    empty.textContent = decals.length === 0 ? '暂无 Unreal 贴花资产' : '没有匹配的贴花';
+    empty.textContent = getActiveList().length === 0 ? '暂无贴花资产' : '没有匹配的贴花';
     listEl.appendChild(empty);
+    return;
+  }
+
+  if (currentLib === 'cn_pbr') {
+    for (const item of filtered) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hgame-list-item';
+      if (item.id === activeId) btn.setAttribute('aria-current', 'true');
+
+      const thumb = document.createElement('img');
+      thumb.className = 'hgame-item-thumb';
+      thumb.src = `/assets/cn/pbr_decals/${item.id}/color.png`;
+      thumb.alt = '';
+      thumb.loading = 'lazy';
+      btn.appendChild(thumb);
+
+      const copy = document.createElement('span');
+      copy.className = 'hgame-item-copy';
+      const strong = document.createElement('strong');
+      strong.textContent = item.id;
+      const small = document.createElement('small');
+      const dim = `${item.width || 1024}×${item.height || 1024}`;
+      small.textContent = [item.category, dim, item.tintableGrayscale ? '可染色' : '']
+        .filter(Boolean)
+        .join(' · ');
+      copy.append(strong, small);
+
+      btn.appendChild(copy);
+      btn.addEventListener('click', () => {
+        activeId = item.id;
+        renderList();
+        void loadCurrentDecal();
+      });
+      listEl.appendChild(btn);
+    }
     return;
   }
 
@@ -191,6 +284,13 @@ function ensureViewport() {
     viewport.camera.position.set(1.1, 2.35, 2.35);
     viewport.controls.target.set(0, 0.14, 0);
     viewport.controls.update();
+    loadHdriEnvironment({
+      url: '/assets/cn/materials/hdri/cn_day_clear.hdr',
+      renderer: viewport.renderer,
+      scene: viewport.scene,
+    }).then(env => {
+      hdriEnv = env;
+    }).catch(() => { /* non-fatal */ });
   }
   return viewport;
 }
@@ -227,13 +327,27 @@ function configureRepeatTexture(tex, colorSpace, repeat = 2) {
   return tex;
 }
 
-async function getBaseSurfaceMaterial(surfaceKey) {
+async function getBaseSurfaceMaterial(surfaceKey, renderer) {
   const key = SURFACE_FALLBACKS[surfaceKey] ? surfaceKey : 'concrete';
   if (baseSurfaceCache.has(key)) {
     return baseSurfaceCache.get(key);
   }
 
   const fb = SURFACE_FALLBACKS[key];
+  if (fb.cnId) {
+    try {
+      const assets = await loadSingle2MapAssets('/assets/cn/materials', fb.cnId);
+      const built = create2MapPbrMaterial({
+        mode: 'opaque',
+        assets,
+        renderer,
+        repeat: 2,
+      });
+      baseSurfaceCache.set(key, built.material);
+      return built.material;
+    } catch { /* fall through to unreal/fallback */ }
+  }
+
   const matInfo = findMaterialForSurface(key);
   const mat = new THREE.MeshStandardMaterial({
     color: matInfo ? 0xffffff : fb.color,
@@ -274,26 +388,17 @@ function applyTransformToDecalMesh() {
   const opacity = Math.max(0.05, Math.min(1, Number(opacityInput.value) || 1));
 
   decalMaterial.opacity = opacity;
+  const wScale = decalAspect >= 1 ? scale : scale * decalAspect;
+  const hScale = decalAspect >= 1 ? scale / decalAspect : scale;
   if (previewMode === 'surface') {
-    decalMesh.scale.set(scale * decalAspect, scale, 1);
+    decalMesh.scale.set(wScale * 1.15, hScale * 1.15, 1);
     decalMesh.rotation.set(-Math.PI * 0.5, 0, -rotRad);
     decalMesh.position.set(0, 0.126, 0);
   } else {
-    decalMesh.scale.set(scale * decalAspect, scale, 1);
+    decalMesh.scale.set(wScale * 1.15, hScale * 1.15, 1);
     decalMesh.rotation.set(0, 0, -rotRad);
     decalMesh.position.set(0, 1.05, 0);
   }
-}
-
-function updateMapThumbnails(item) {
-  if (!item) {
-    mapsRowEl.hidden = true;
-    return;
-  }
-  mapColorImg.src = item.color || '';
-  mapNormalImg.src = item.normal || item.color || '';
-  mapOrmImg.src = item.orm || item.color || '';
-  mapsRowEl.hidden = false;
 }
 
 function updateModeTabsUi() {
@@ -303,6 +408,14 @@ function updateModeTabsUi() {
     tab.tabIndex = active ? 0 : -1;
   }
   surfaceSelect.disabled = previewMode !== 'surface';
+}
+
+function updateLibTabsUi() {
+  for (const tab of libTabs) {
+    const active = tab.dataset.decalLib === currentLib;
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  }
 }
 
 function hasUsableRoughness(tex) {
@@ -328,6 +441,22 @@ function hasUsableRoughness(tex) {
   }
 }
 
+function configureSurfaceCamera(vp, group, baseMat) {
+  if (previewMode === 'surface') {
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.24, 3.4), baseMat);
+    slab.position.y = 0;
+    group.add(slab);
+    if (vp.gridHelper) vp.gridHelper.visible = true;
+    vp.camera.position.set(1.1, 2.35, 2.35);
+    vp.controls.target.set(0, 0.14, 0);
+  } else {
+    if (vp.gridHelper) vp.gridHelper.visible = false;
+    vp.camera.position.set(0, 1.05, 2.9);
+    vp.controls.target.set(0, 1.05, 0);
+  }
+  vp.controls.update();
+}
+
 async function loadCurrentDecal() {
   const token = ++loadToken;
   const item = getCurrentDecal();
@@ -338,17 +467,83 @@ async function loadCurrentDecal() {
     titleEl.textContent = '贴花预览';
     downloadEl.hidden = true;
     mapsRowEl.hidden = true;
+    if (tintWrap) tintWrap.hidden = true;
     emptyEl.hidden = false;
     statusEl.textContent = '暂无可用贴花';
     return;
   }
 
   emptyEl.hidden = true;
+  if (tintWrap) tintWrap.hidden = !(currentLib === 'cn_pbr' && item.tintableGrayscale);
+  if (mapRmLabel) mapRmLabel.textContent = currentLib === 'cn_pbr' ? 'RM' : 'ORM';
+
+  if (currentLib === 'cn_pbr') {
+    titleEl.textContent = `${item.id} (${item.width || 1024}×${item.height || 1024})`;
+    downloadEl.href = `/assets/cn/pbr_decals/${item.id}/color.png`;
+    downloadEl.download = `${item.id}_color.png`;
+    downloadEl.textContent = '下载 Color PNG';
+    downloadEl.hidden = false;
+    statusEl.textContent = `按需加载 ${item.id} (Color + Normal_RM)…`;
+
+    try {
+      const [assets, baseMat] = await Promise.all([
+        loadSingle2MapAssets('/assets/cn/pbr_decals', item.id),
+        previewMode === 'surface' ? getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer) : Promise.resolve(null),
+      ]);
+      if (token !== loadToken) return;
+
+      clearStage();
+      decalAspect = Math.max(0.2, Math.min(4.0, Number(item.aspectRatio || (assets.normRm.width / Math.max(1, assets.normRm.height)))));
+      const tintHex = item.tintableGrayscale && tintSelect ? Number(tintSelect.value || 0x8b0c0c) : 0xffffff;
+      const opacity = Math.max(0.05, Math.min(1, Number(opacityInput.value) || 1));
+
+      const built = create2MapPbrMaterial({
+        mode: 'decal',
+        assets,
+        renderer: vp.renderer,
+        tintHex,
+        opacity,
+        polygonOffset: true,
+      });
+      decalMaterial = built.material;
+      decalTextures = [built.colorTex, built.normRmTex];
+
+      const group = new THREE.Group();
+      configureSurfaceCamera(vp, group, baseMat);
+      decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
+      group.add(decalMesh);
+
+      stageRoot = group;
+      applyTransformToDecalMesh();
+      vp.scene.add(stageRoot);
+
+      draw2MapChannelCanvases(mapColorCanvas, mapNormalCanvas, mapOrmCanvas, assets);
+      mapsRowEl.hidden = false;
+
+      const aspectStr = decalAspect !== 1 ? ` · 比例 ${item.aspectRatio}:1` : '';
+      const physStr = item.physicalSizeMeters ? ` · ${item.physicalSizeMeters}m` : '';
+      const tintStr = item.tintableGrayscale ? ' · 可染色灰度' : '';
+      statusEl.textContent =
+        `2贴图贴花 (Color+Normal_RM OpenGL +Y) · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr} · ` +
+        `${assets.loadMs.toFixed(0)}ms · ${item.sourcePath || item.category || ''}`;
+
+      if (!viewEl.hidden) {
+        vp.start();
+        vp.resize();
+      }
+    } catch (error) {
+      if (token !== loadToken) return;
+      statusEl.textContent = error.message || '贴花贴图加载失败';
+    }
+    return;
+  }
+
+  // Legacy Unreal decal path
   titleEl.textContent = `${item.name}${item.packLabel ? ` · ${item.packLabel}` : ''}`;
   downloadEl.href = item.color;
   downloadEl.download = `${item.id}_color.png`;
+  downloadEl.textContent = '下载 Color PNG';
   downloadEl.hidden = false;
-  updateMapThumbnails(item);
   statusEl.textContent = `正在加载 ${item.name}…`;
 
   try {
@@ -369,7 +564,7 @@ async function loadCurrentDecal() {
     if (ormTex) ormTex.colorSpace = THREE.NoColorSpace;
 
     const baseMat = previewMode === 'surface'
-      ? await getBaseSurfaceMaterial(surfaceSelect.value)
+      ? await getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer)
       : null;
     if (token !== loadToken) {
       colorTex.dispose();
@@ -405,28 +600,18 @@ async function loadCurrentDecal() {
     });
 
     const group = new THREE.Group();
-    if (previewMode === 'surface') {
-      const slabGeo = new THREE.BoxGeometry(3.4, 0.24, 3.4);
-      const slab = new THREE.Mesh(slabGeo, baseMat);
-      slab.position.y = 0;
-      group.add(slab);
-      if (vp.gridHelper) vp.gridHelper.visible = true;
-      vp.camera.position.set(1.1, 2.35, 2.35);
-      vp.controls.target.set(0, 0.14, 0);
-    } else {
-      if (vp.gridHelper) vp.gridHelper.visible = false;
-      vp.camera.position.set(0, 1.05, 2.9);
-      vp.controls.target.set(0, 1.05, 0);
-    }
-    vp.controls.update();
-
-    const decalGeo = new THREE.PlaneGeometry(1.75, 1.75);
-    decalMesh = new THREE.Mesh(decalGeo, decalMaterial);
+    configureSurfaceCamera(vp, group, baseMat);
+    decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.75, 1.75), decalMaterial);
     group.add(decalMesh);
 
     stageRoot = group;
     applyTransformToDecalMesh();
     vp.scene.add(stageRoot);
+
+    drawImageFittedToCanvas(mapColorCanvas, colorTex.image);
+    drawImageFittedToCanvas(mapNormalCanvas, normalTex?.image || colorTex.image);
+    drawImageFittedToCanvas(mapOrmCanvas, ormTex?.image || colorTex.image);
+    mapsRowEl.hidden = false;
 
     const dim = img ? `${img.width}×${img.height}` : '';
     const mapsLabel = [
@@ -446,11 +631,31 @@ async function loadCurrentDecal() {
   }
 }
 
+async function switchDecalLib(libId) {
+  currentLib = libId === 'unreal' ? 'unreal' : 'cn_pbr';
+  updateLibTabsUi();
+  populatePackFilter();
+  const list = getActiveList();
+  activeId = list[0]?.id || '';
+  renderList();
+  await loadCurrentDecal();
+}
+
 async function initDecalsView() {
   if (!initialized) {
     initialized = true;
     syncSliderLabels();
     updateModeTabsUi();
+    updateLibTabsUi();
+
+    for (const tab of libTabs) {
+      tab.addEventListener('click', () => {
+        const nextLib = tab.dataset.decalLib;
+        if (nextLib && nextLib !== currentLib) {
+          void switchDecalLib(nextLib);
+        }
+      });
+    }
 
     searchInput.addEventListener('input', renderList);
     packFilter.addEventListener('change', () => {
@@ -485,6 +690,12 @@ async function initDecalsView() {
     scaleInput.addEventListener('input', onTransformInput);
     rotInput.addEventListener('input', onTransformInput);
     opacityInput.addEventListener('input', onTransformInput);
+    tintSelect?.addEventListener('change', () => {
+      const item = getCurrentDecal();
+      if (currentLib === 'cn_pbr' && item?.tintableGrayscale && decalMaterial) {
+        decalMaterial.color.setHex(Number(tintSelect.value || 0x8b0c0c));
+      }
+    });
   }
 
   const vp = ensureViewport();
@@ -493,24 +704,36 @@ async function initDecalsView() {
     vp.start();
   }
 
-  try {
-    const [unrealCatalog, curatedData] = await Promise.all([
-      fetchUnrealCatalog(),
-      apiRequestJson('/api/hgame/materials/curated').catch(() => ({ materials: [] })),
-    ]);
-    decals = Array.isArray(unrealCatalog.decals) ? unrealCatalog.decals : [];
-    const unrealMats = Array.isArray(unrealCatalog.materials) ? unrealCatalog.materials : [];
-    const curatedMats = Array.isArray(curatedData?.materials) ? curatedData.materials : [];
-    baseMaterials = [...unrealMats, ...curatedMats];
-  } catch (error) {
-    decals = [];
-    baseMaterials = [];
-    statusEl.textContent = error.message || '读取贴花目录失败';
+  if (!catalogLoaded) {
+    try {
+      const [cnResp, unrealCatalog, curatedData] = await Promise.all([
+        fetch('/assets/cn/pbr_decals/pbr_decals_table.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
+        fetchUnrealCatalog().catch(() => ({ decals: [], materials: [] })),
+        apiRequestJson('/api/hgame/materials/curated').catch(() => ({ materials: [] })),
+      ]);
+      cnDecals = Array.isArray(cnResp?.items) ? cnResp.items : [];
+      unrealDecals = Array.isArray(unrealCatalog.decals) ? unrealCatalog.decals : [];
+      const unrealMats = Array.isArray(unrealCatalog.materials) ? unrealCatalog.materials : [];
+      const curatedMats = Array.isArray(curatedData?.materials) ? curatedData.materials : [];
+      baseMaterials = [...unrealMats, ...curatedMats];
+      catalogLoaded = true;
+    } catch (error) {
+      cnDecals = [];
+      unrealDecals = [];
+      baseMaterials = [];
+      statusEl.textContent = error.message || '读取贴花目录失败';
+    }
+  }
+
+  if (!cnDecals.length && unrealDecals.length) {
+    currentLib = 'unreal';
+    updateLibTabsUi();
   }
 
   populatePackFilter();
-  if (!activeId && decals.length > 0) {
-    activeId = decals[0].id;
+  const list = getActiveList();
+  if (!list.some(item => item.id === activeId)) {
+    activeId = list[0]?.id || '';
   }
   renderList();
   await loadCurrentDecal();
@@ -523,3 +746,7 @@ window.addEventListener('webasset:workspace-change', event => {
     viewport?.stop();
   }
 });
+
+if (viewEl && !viewEl.hidden) {
+  void initDecalsView();
+}

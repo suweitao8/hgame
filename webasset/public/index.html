@@ -383,7 +383,6 @@
     <aside class="workspace-sidebar hgame-sidebar" aria-label="材质列表">
       <div class="character-mode-tabs" role="tablist" aria-label="材质库分类">
         <button type="button" class="character-mode-tab hgame-mat-lib-tab" role="tab" data-mat-lib="materials" aria-selected="true" tabindex="0">通用材质</button>
-        <button type="button" class="character-mode-tab hgame-mat-lib-tab" role="tab" data-mat-lib="pbr_decals" aria-selected="false" tabindex="-1">贴花</button>
         <button type="button" class="character-mode-tab hgame-mat-lib-tab" role="tab" data-mat-lib="pbr_foliage" aria-selected="false" tabindex="-1">植被</button>
       </div>
       <div class="asset-sidebar-tools">
@@ -432,22 +431,18 @@
               <option value="1024">1024 px (母档直读)</option>
             </select>
           </label>
-          <label class="hgame-field" id="hgame-material-tint-wrap" hidden><span>血迹染色</span>
-            <select id="hgame-material-tint">
-              <option value="0xffffff">原灰度</option>
-              <option value="0x8b0c0c" selected>暗红血浆</option>
-              <option value="0xea580c">橙色果汁</option>
-              <option value="0x22c55e">绿色果汁</option>
-            </select>
-          </label>
         </div>
         <span id="hgame-material-status" class="hgame-status-text" role="status" aria-live="polite"></span>
       </div>
     </section>
   </main>
 
-  <main id="decals-view" class="workspace-layout hgame-layout" aria-label="Unreal 贴花库" hidden>
+  <main id="decals-view" class="workspace-layout hgame-layout" aria-label="HGame PBR 贴花库" hidden>
     <aside class="workspace-sidebar hgame-sidebar" aria-label="贴花列表">
+      <div class="character-mode-tabs" role="tablist" aria-label="贴花库来源">
+        <button type="button" class="character-mode-tab hgame-decal-lib-tab" role="tab" data-decal-lib="cn_pbr" aria-selected="true" tabindex="0">精选 PBR (2贴图)</button>
+        <button type="button" class="character-mode-tab hgame-decal-lib-tab" role="tab" data-decal-lib="unreal" aria-selected="false" tabindex="-1">Unreal 贴花库</button>
+      </div>
       <div class="asset-sidebar-tools">
         <label class="character-search" for="hgame-decal-search">
           <span aria-hidden="true">⌕</span>
@@ -481,9 +476,9 @@
         <div id="hgame-decal-stage" class="hgame-stage-canvas"></div>
       </div>
       <div id="hgame-decal-maps" class="hgame-material-maps" hidden>
-        <div class="hgame-map-slot"><span>Color</span><img id="hgame-decal-map-color" alt="Color 贴图"></div>
-        <div class="hgame-map-slot"><span>Normal</span><img id="hgame-decal-map-normal" alt="Normal 贴图"></div>
-        <div class="hgame-map-slot"><span>ORM</span><img id="hgame-decal-map-orm" alt="ORM 贴图"></div>
+        <div class="hgame-map-slot"><span>Color</span><canvas id="hgame-decal-map-color" width="128" height="128" aria-label="Color 贴图"></canvas></div>
+        <div class="hgame-map-slot"><span>Normal</span><canvas id="hgame-decal-map-normal" width="128" height="128" aria-label="Normal 贴图"></canvas></div>
+        <div class="hgame-map-slot"><span id="hgame-decal-map-rm-label">RM</span><canvas id="hgame-decal-map-orm" width="128" height="128" aria-label="RM / ORM 贴图"></canvas></div>
       </div>
       <div class="hgame-controls hgame-controls-wrap">
         <div class="hgame-control-group">
@@ -497,6 +492,14 @@
           <label class="hgame-field"><span>缩放</span><input id="hgame-decal-scale" type="range" min="0.4" max="2.4" step="0.05" value="1.3"><output id="hgame-decal-scale-val">1.30</output></label>
           <label class="hgame-field"><span>旋转</span><input id="hgame-decal-rot" type="range" min="-180" max="180" step="5" value="0"><output id="hgame-decal-rot-val">0°</output></label>
           <label class="hgame-field"><span>透明</span><input id="hgame-decal-opacity" type="range" min="0.1" max="1" step="0.05" value="1"><output id="hgame-decal-opacity-val">1.00</output></label>
+          <label class="hgame-field" id="hgame-decal-tint-wrap" hidden><span>血迹染色</span>
+            <select id="hgame-decal-tint">
+              <option value="0xffffff">原灰度</option>
+              <option value="0x8b0c0c" selected>暗红血浆</option>
+              <option value="0xea580c">橙色果汁</option>
+              <option value="0x22c55e">绿色果汁</option>
+            </select>
+          </label>
         </div>
         <span id="hgame-decal-status" class="hgame-status-text" role="status" aria-live="polite"></span>
       </div>

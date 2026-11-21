@@ -431,3 +431,312 @@ export function splitGeometryByTransparent(geometry, transparentIds) {
     transparent: buildSub(transIdx),
   };
 }
+
+let sharedDecodeGl = null;
+let sharedDecodeFbo = null;
+const single2MapCache = new Map();
+const MAX_2MAP_CACHE = 16;
+
+function ensureDecodeGl() {
+  if (sharedDecodeGl) return sharedDecodeGl;
+  const canvas = document.createElement('canvas');
+  canvas.width = 4;
+  canvas.height = 4;
+  const gl = canvas.getContext('webgl2', { premultipliedAlpha: false, preserveDrawingBuffer: false });
+  if (!gl) {
+    throw new Error('需要 WebGL2 以无损读取非预乘 normal_rm.png');
+  }
+  sharedDecodeFbo = gl.createFramebuffer();
+  sharedDecodeGl = gl;
+  return sharedDecodeGl;
+}
+
+/**
+ * Decode a PNG into top-down straight RGBA bytes without Canvas2D premultiplication
+ * so A=0 non-metal pixels preserve intact RGB normal and roughness values.
+ */
+export async function decodeStraightRgba(url) {
+  const resp = await fetch(url, { cache: 'no-cache' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${url}`);
+  const blob = await resp.blob();
+  const bmp = await createImageBitmap(blob, {
+    premultiplyAlpha: 'none',
+    colorSpaceConversion: 'none',
+  });
+  const width = bmp.width;
+  const height = bmp.height;
+  try {
+    const gl = ensureDecodeGl();
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, bmp);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, sharedDecodeFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    const data = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, null, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.deleteTexture(tex);
+    return { width, height, data };
+  } finally {
+    bmp.close?.();
+  }
+}
+
+export async function loadHtmlImage(url) {
+  const resp = await fetch(url, { cache: 'no-cache' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${url}`);
+  const blob = await resp.blob();
+  const objUrl = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error(`图像解码失败: ${url}`));
+      img.src = objUrl;
+    });
+    return img;
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
+export async function loadSingle2MapAssets(baseUrl, id) {
+  const key = `${baseUrl}/${id}`;
+  if (single2MapCache.has(key)) {
+    const cached = single2MapCache.get(key);
+    single2MapCache.delete(key);
+    single2MapCache.set(key, cached);
+    return cached;
+  }
+  const t0 = performance.now();
+  const [colorImg, normRm] = await Promise.all([
+    loadHtmlImage(`${key}/color.png`),
+    decodeStraightRgba(`${key}/normal_rm.png`),
+  ]);
+  const result = { colorImg, normRm, loadMs: performance.now() - t0 };
+  single2MapCache.set(key, result);
+  while (single2MapCache.size > MAX_2MAP_CACHE) {
+    const oldest = single2MapCache.keys().next().value;
+    single2MapCache.delete(oldest);
+  }
+  return result;
+}
+
+function fitPreviewRect(width, height, boxSize = 128) {
+  const aspect = Math.max(0.05, width / Math.max(1, height));
+  const drawW = aspect >= 1 ? boxSize : Math.max(1, Math.round(boxSize * aspect));
+  const drawH = aspect >= 1 ? Math.max(1, Math.round(boxSize / aspect)) : boxSize;
+  return {
+    drawW,
+    drawH,
+    offX: Math.floor((boxSize - drawW) / 2),
+    offY: Math.floor((boxSize - drawH) / 2),
+  };
+}
+
+function fillCheckerboard(ctx, size) {
+  const step = 8;
+  for (let y = 0; y < size; y += step) {
+    for (let x = 0; x < size; x += step) {
+      const even = ((x / step) + (y / step)) % 2 === 0;
+      ctx.fillStyle = even ? '#212922' : '#181f19';
+      ctx.fillRect(x, y, step, step);
+    }
+  }
+}
+
+export function drawImageFittedToCanvas(canvas, img) {
+  if (!canvas || !img) return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const w = canvas.width || 128;
+  const h = canvas.height || 128;
+  ctx.clearRect(0, 0, w, h);
+  fillCheckerboard(ctx, w);
+  const rect = fitPreviewRect(img.naturalWidth || img.width || 1, img.naturalHeight || img.height || 1, w);
+  ctx.drawImage(img, rect.offX, rect.offY, rect.drawW, rect.drawH);
+}
+
+/**
+ * Draw Color, OpenGL (+Y) Normal (Z reconstructed), and RM (R=Roughness, G=Metallic)
+ * into 2D preview canvases directly from straight-alpha decoded bytes.
+ */
+export function draw2MapChannelCanvases(colorCanvas, normalCanvas, rmCanvas, assets) {
+  const { width, height, data } = assets.normRm;
+  const rect = fitPreviewRect(width, height, 128);
+
+  if (colorCanvas) {
+    const ctx = colorCanvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, 128, 128);
+      fillCheckerboard(ctx, 128);
+      ctx.drawImage(assets.colorImg, rect.offX, rect.offY, rect.drawW, rect.drawH);
+    }
+  }
+
+  const paintPacked = (canvas, mode) => {
+    const ctx = canvas?.getContext('2d');
+    if (!ctx) return;
+    const out = ctx.createImageData(128, 128);
+    const dst = out.data;
+    for (let py = 0; py < 128; py++) {
+      for (let px = 0; px < 128; px++) {
+        const dstIdx = (py * 128 + px) * 4;
+        if (px < rect.offX || px >= rect.offX + rect.drawW || py < rect.offY || py >= rect.offY + rect.drawH) {
+          dst[dstIdx] = 21;
+          dst[dstIdx + 1] = 27;
+          dst[dstIdx + 2] = 20;
+          dst[dstIdx + 3] = 255;
+          continue;
+        }
+        const sx = Math.min(width - 1, Math.floor(((px - rect.offX) / rect.drawW) * width));
+        const sy = Math.min(height - 1, Math.floor(((py - rect.offY) / rect.drawH) * height));
+        const srcIdx = (sy * width + sx) * 4;
+        if (mode === 'normal') {
+          const r = data[srcIdx];
+          const g = data[srcIdx + 1];
+          const nx = (r / 255) * 2 - 1;
+          const ny = (g / 255) * 2 - 1;
+          const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+          dst[dstIdx] = r;
+          dst[dstIdx + 1] = g;
+          dst[dstIdx + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+          dst[dstIdx + 3] = 255;
+        } else {
+          dst[dstIdx] = data[srcIdx + 2];     // Roughness
+          dst[dstIdx + 1] = data[srcIdx + 3]; // Metallic
+          dst[dstIdx + 2] = 0;
+          dst[dstIdx + 3] = 255;
+        }
+      }
+    }
+    ctx.putImageData(out, 0, 0);
+  };
+
+  if (normalCanvas) paintPacked(normalCanvas, 'normal');
+  if (rmCanvas) paintPacked(rmCanvas, 'rm');
+}
+
+/**
+ * Create a MeshStandardMaterial unpacking HGame v5.0 2-Texture PBR maps
+ * (sRGB color + straight Linear normal_rm with OpenGL +Y tangent normal, B=Roughness, A=Metallic).
+ */
+export function create2MapPbrMaterial({
+  mode = 'opaque',
+  assets,
+  renderer,
+  repeat = 1,
+  tintHex = 0xffffff,
+  opacity = 1,
+  polygonOffset = false,
+}) {
+  const isOpaque = mode === 'opaque';
+  const isDecal = mode === 'decal';
+  const isFoliage = mode === 'foliage';
+
+  const maxAniso = Math.min(8, renderer?.capabilities?.getMaxAnisotropy?.() || 1);
+  const wrap = isOpaque ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+
+  const colorTex = new THREE.Texture(assets.colorImg);
+  colorTex.colorSpace = THREE.SRGBColorSpace;
+  colorTex.premultiplyAlpha = false;
+  colorTex.flipY = true;
+  colorTex.anisotropy = maxAniso;
+  colorTex.wrapS = wrap;
+  colorTex.wrapT = wrap;
+  const rpt = isOpaque ? Math.max(0.25, Number(repeat) || 1) : 1;
+  colorTex.repeat.set(rpt, rpt);
+  colorTex.needsUpdate = true;
+
+  const normRmTex = new THREE.DataTexture(
+    assets.normRm.data,
+    assets.normRm.width,
+    assets.normRm.height,
+    THREE.RGBAFormat,
+  );
+  normRmTex.colorSpace = THREE.NoColorSpace;
+  normRmTex.premultiplyAlpha = false;
+  normRmTex.flipY = true;
+  normRmTex.generateMipmaps = true;
+  normRmTex.minFilter = THREE.LinearMipmapLinearFilter;
+  normRmTex.magFilter = THREE.LinearFilter;
+  normRmTex.anisotropy = maxAniso;
+  normRmTex.wrapS = wrap;
+  normRmTex.wrapT = wrap;
+  normRmTex.needsUpdate = true;
+
+  const material = new THREE.MeshStandardMaterial({
+    map: colorTex,
+    color: tintHex,
+    roughness: 1.0,
+    metalness: 1.0,
+    side: isOpaque ? THREE.FrontSide : THREE.DoubleSide,
+    transparent: isDecal,
+    opacity: isDecal ? opacity : 1.0,
+    depthWrite: !isDecal,
+    alphaTest: isFoliage ? 0.5 : (isDecal ? 0.01 : 0.0),
+    polygonOffset,
+    polygonOffsetFactor: polygonOffset ? -4 : 0,
+    polygonOffsetUnits: polygonOffset ? -4 : 0,
+    envMapIntensity: 1.0,
+  });
+
+  material.customProgramCacheKey = () => `hgame-single-2map-${mode}`;
+  material.onBeforeCompile = shader => {
+    shader.uniforms.uNormalRmMap = { value: normRmTex };
+    shader.uniforms.uNormalStrength = { value: 1.0 };
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+uniform sampler2D uNormalRmMap;
+uniform float uNormalStrength;
+
+mat3 hgameCotangentFrame(vec3 eyePos, vec3 surfNorm, vec2 uv) {
+  vec3 q0 = dFdx(eyePos.xyz);
+  vec3 q1 = dFdy(eyePos.xyz);
+  vec2 st0 = dFdx(uv.st);
+  vec2 st1 = dFdy(uv.st);
+  vec3 N = surfNorm;
+  vec3 q1perp = cross(q1, N);
+  vec3 q0perp = cross(N, q0);
+  vec3 T = q1perp * st0.x + q0perp * st1.x;
+  vec3 B = q1perp * st0.y + q0perp * st1.y;
+  float det = max(dot(T, T), dot(B, B));
+  float scale = (det == 0.0) ? 0.0 : inversesqrt(det);
+  return mat3(T * scale, B * scale, N);
+}`,
+      )
+      .replace(
+        '#include <map_fragment>',
+        `#include <map_fragment>
+vec4 hgNrmRmSample = texture2D(uNormalRmMap, vMapUv);`,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        'float roughnessFactor = clamp(hgNrmRmSample.b, 0.04, 1.0);',
+      )
+      .replace(
+        '#include <metalnessmap_fragment>',
+        'float metalnessFactor = clamp(hgNrmRmSample.a, 0.0, 1.0);',
+      )
+      .replace(
+        '#include <normal_fragment_maps>',
+        `#include <normal_fragment_maps>
+vec2 hgNxy = hgNrmRmSample.rg * 2.0 - 1.0;
+float hgNz = sqrt(max(0.0, 1.0 - dot(hgNxy, hgNxy)));
+vec3 hgMapN = vec3(hgNxy * uNormalStrength, hgNz);
+mat3 hgTbn = hgameCotangentFrame(-vViewPosition, normal, vMapUv);
+normal = normalize(hgTbn * hgMapN);`,
+      );
+  };
+
+  return { material, colorTex, normRmTex };
+}
