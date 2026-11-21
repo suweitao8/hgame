@@ -1,17 +1,945 @@
 {
-  "version": "4.1.0",
-  "resolutions": [1024, 512, 256],
+  "version": "5.0.0",
+  "resolutions": [
+    1024,
+    512,
+    256
+  ],
   "gameResolution": 512,
   "gridCols": 8,
+  "normalConvention": "OpenGL (+Y)",
   "hdri": [
-    { "slot": "cn_day_clear", "source": "polyhaven", "assetId": "kloofendal_48d_partly_cloudy_puresky" },
-    { "slot": "cn_overcast_haze", "source": "polyhaven", "assetId": "cloudy_vondelpark" },
-    { "slot": "cn_night_city", "source": "polyhaven", "assetId": "cobblestone_street_night" }
+    {
+      "slot": "cn_day_clear",
+      "source": "polyhaven",
+      "assetId": "kloofendal_48d_partly_cloudy_puresky"
+    },
+    {
+      "slot": "cn_overcast_haze",
+      "source": "polyhaven",
+      "assetId": "cloudy_vondelpark"
+    },
+    {
+      "slot": "cn_night_city",
+      "source": "polyhaven",
+      "assetId": "cobblestone_street_night"
+    }
   ],
   "waterNormal": {
     "slot": "water_normal",
     "source": "manual",
     "size": 512
   },
-  "materials": []
+  "materials": [
+    {
+      "id": "asphalt_fresh",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Asphalt_Fresh-d656c99c",
+      "surfaceType": "asphalt",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "asphalt_road_01",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Asphalt_Road-673d4ee4",
+      "surfaceType": "asphalt",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "asphalt_road_02",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Asphalt-eb97ec51",
+      "surfaceType": "asphalt",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_pavement",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Concrete_Pavement-95544273",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_road_01",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Concrete_Road-03c95d86",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "granite_paving_slabs",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Granite_Paving_Slabs-d60b7f69",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "paving_stone_01",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Paving_Stone-00b5c4c6",
+      "surfaceType": "tile",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "paving_stone_02",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Paving_Stone-5fabf08f",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "shale_paving_slabs",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Shale_Paving_Slabs-b4c5d7b5",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "stone_pavement",
+      "category": "1_road_ground",
+      "sourcePath": "FabLibrary/Stone_Pavement-4b22725d",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "sidewalk_tiles_01",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Sidewalk_Tiles-129dc017",
+      "surfaceType": "tile",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "sidewalk_tiles_dirty",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Dirty_Sidewalk_Tiles-56e29fef",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "square_paving_tiles",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Square_Paving_Tiles-e0076fa5",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "terrazzo_old",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Old_Terrazzo_Tiles-ac944688",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "ceramic_floor_beige",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Beige_Ceramic_Floor-c68b2c3f",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "stone_tile_black",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Black_Stone_Tile-9945c238",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "ceramic_tiles_checkered",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Checkered_Ceramic_Tiles-92cb6dad",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "ceramic_tiles_white",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Clean_White_Tiles-dcacef7c",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "ceramic_tile_old",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Old_Ceramic_Tile-441dd131",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "ceramic_tiles_patterned",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Patterned_Ceramic_Tiles-ee5dc131",
+      "surfaceType": "tile",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "ceramic_tiles_red",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Red_Ceramic_Tiles-09dab907",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "tokyo_wall_tiles",
+      "category": "2_tile_paving",
+      "sourcePath": "FabLibrary/Tokyo_Wall_Tiles-aa2b5025",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "brick_facade",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Brick_Facade-0300d8e5",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "brick_mud",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Brick_Mud-77db8506",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "brick_wall_01",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Brick_Wall-c2061c4a",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "brick_wall_02",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Brick_Wall-d146cec9",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "red_brick_facade",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Red_Brick_Facade-fdb328fe",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "red_brick_wall_01",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Red_Brick_Wall-05659426",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "red_brick_wall_02",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Red_Brick_Wall-140bebb4",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "cinder_blocks_wall",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Cinder_Blocks_Wall-e39a89dd",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_block_wall_01",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Concrete_Block_Wall-16e14f07",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_block_wall_02",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Concrete_Block_Wall-3365c78b",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "stone_wall_01",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Stone_Wall-590fa9e2",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "stone_wall_02",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Stone_Wall-77a952e0",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "roof_tiles_01",
+      "category": "3_masonry_brick",
+      "sourcePath": "FabLibrary/Roof_Tiles-0ab43fa3",
+      "surfaceType": "tile",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_wall_01",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Concrete___Wall-537a0cd0",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_wall_02",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Concrete_Wall-5fc74d73",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_wall_03",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Concrete_Wall-7e0c39bd",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_wall_damaged",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Damaged_Concrete_Wall-1c0dbf8b",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_floor_dusty",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Dusty_Concrete_Floor-52ca2331",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "concrete_wall_precast",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Precast_Concrete_Wall-55ea2ef8",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "plaster_construction",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Construction_Plaster-7c6374de",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "plaster_cracked",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Cracked_Wall_Plaster-24afd982",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "plaster_old",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Old_Plaster_Wall-1297b8b6",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "plaster_painted",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Painted_Plaster-c698e997",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "plaster_wall",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Plaster_Wall-bfc33074",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "stucco_wall",
+      "category": "4_concrete_plaster",
+      "sourcePath": "FabLibrary/Stucco_Wall-411c1e30",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "marble_tiles",
+      "category": "5_interior_stone",
+      "sourcePath": "FabLibrary/Marble_Tiles-cfaa9d77",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "marble_tiles_rect",
+      "category": "5_interior_stone",
+      "sourcePath": "FabLibrary/Rectangular_Marble_Tiles-aa74e60d",
+      "surfaceType": "tile",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "marble_raw",
+      "category": "5_interior_stone",
+      "sourcePath": "FabLibrary/Raw_Marble_Stone-31c6cc6b",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "marble_travertine",
+      "category": "5_interior_stone",
+      "sourcePath": "FabLibrary/Travertine_Marble-e2b83a19",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "marble_white_ziarat",
+      "category": "5_interior_stone",
+      "sourcePath": "FabLibrary/Ziarat_White_Marble-3a50ef74",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_brushed_stainless",
+      "category": "6_metal",
+      "sourcePath": "ambientcg/Metal009",
+      "surfaceType": "metal",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_chrome_silver",
+      "category": "6_metal",
+      "sourcePath": "ambientcg/Metal049A",
+      "surfaceType": "metal",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_matte_grey",
+      "category": "6_metal",
+      "sourcePath": "ambientcg/Metal032",
+      "surfaceType": "metal",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_frosted_fine",
+      "category": "6_metal",
+      "sourcePath": "ambientcg/Metal034",
+      "surfaceType": "metal",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_scratched_steel",
+      "category": "6_metal",
+      "sourcePath": "ambientcg/Metal038",
+      "surfaceType": "metal",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_cast_iron_dark",
+      "category": "6_metal",
+      "sourcePath": "ambientcg/Metal046B",
+      "surfaceType": "metal",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_corrugated_01",
+      "category": "6_metal",
+      "sourcePath": "FabLibrary/Corrugated_Metal_Sheet-109b6f59",
+      "surfaceType": "metal",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_corrugated_02",
+      "category": "6_metal",
+      "sourcePath": "FabLibrary/Corrugated_Metal_Sheet-bb589248",
+      "surfaceType": "metal",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_painted_sheet",
+      "category": "6_metal",
+      "sourcePath": "FabLibrary/Painted_Metal_Sheet-0d9c3130",
+      "surfaceType": "metal",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_painted_door",
+      "category": "6_metal",
+      "sourcePath": "FabLibrary/Painted_Metal_Door-c9661075",
+      "surfaceType": "metal",
+      "scanSizeMeters": [
+        2,
+        1
+      ],
+      "uvScale": 0.5,
+      "tileToSquare": true,
+      "hasMetalness": false,
+      "resolution": "1024x512"
+    },
+    {
+      "id": "metal_corrugated_rust",
+      "category": "6_metal",
+      "sourcePath": "FabLibrary/Rusty_Corrugated_Metal-8def5dc1",
+      "surfaceType": "metal",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "metal_rusty_sheet",
+      "category": "6_metal",
+      "sourcePath": "FabLibrary/Rusty_Metal_Sheet-04d29657",
+      "surfaceType": "metal",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "wood_flaked_planks",
+      "category": "7_wood",
+      "sourcePath": "FabLibrary/Flaked_Wood_Planks-882a246b",
+      "surfaceType": "wood",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "wood_floor_old_01",
+      "category": "7_wood",
+      "sourcePath": "FabLibrary/Old_Wooden_Floor-01d89ade",
+      "surfaceType": "wood",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "wood_floor_old_02",
+      "category": "7_wood",
+      "sourcePath": "FabLibrary/Old_Wooden_Floor-6e60ce42",
+      "surfaceType": "wood",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "wood_floor_01",
+      "category": "7_wood",
+      "sourcePath": "FabLibrary/Wooden_Floor-a516fdd3",
+      "surfaceType": "wood",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "wood_floor_02",
+      "category": "7_wood",
+      "sourcePath": "FabLibrary/Wooden_Floor-dd4e55c7",
+      "surfaceType": "wood",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "wood_planks_01",
+      "category": "7_wood",
+      "sourcePath": "FabLibrary/Wood_Planks-2f3201b4",
+      "surfaceType": "wood",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "wood_planks_02",
+      "category": "7_wood",
+      "sourcePath": "FabLibrary/Wooden_Planks-277e2b85",
+      "surfaceType": "wood",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "fabric_cotton_white",
+      "category": "8_fabric_leather",
+      "sourcePath": "FabLibrary/Fabric_Clothes_Cotton_Plain_Weave_White-5b36dee7",
+      "surfaceType": "fabric",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "fabric_furniture_01",
+      "category": "8_fabric_leather",
+      "sourcePath": "FabLibrary/Furniture_Fabric-1208f247",
+      "surfaceType": "fabric",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "fabric_furniture_02",
+      "category": "8_fabric_leather",
+      "sourcePath": "FabLibrary/Furniture_Fabric-2ad48ece",
+      "surfaceType": "fabric",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "fabric_jute_weave",
+      "category": "8_fabric_leather",
+      "sourcePath": "FabLibrary/Fabric_Generic_Jute_Plain_Weave-60b9ca37",
+      "surfaceType": "fabric",
+      "scanSizeMeters": 0.25,
+      "uvScale": 4,
+      "ignoreOpacity": true,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "leather_01",
+      "category": "8_fabric_leather",
+      "sourcePath": "FabLibrary/Leather-948ae2b8",
+      "surfaceType": "fabric",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "leather_02",
+      "category": "8_fabric_leather",
+      "sourcePath": "FabLibrary/Leather-afd2cf16",
+      "surfaceType": "fabric",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "nature_grass_cut",
+      "category": "9_nature_terrain",
+      "sourcePath": "FabLibrary/Grass_Cut-25b144b3",
+      "surfaceType": "grass",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "nature_grass_wild",
+      "category": "9_nature_terrain",
+      "sourcePath": "FabLibrary/Wild_Grass-459a98c9",
+      "surfaceType": "grass",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "nature_soil",
+      "category": "9_nature_terrain",
+      "sourcePath": "FabLibrary/Soil-8ef38f43",
+      "surfaceType": "dirt",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "nature_mud_ground",
+      "category": "9_nature_terrain",
+      "sourcePath": "FabLibrary/Mud_Ground-2926f16d",
+      "surfaceType": "dirt",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "nature_desert_sand",
+      "category": "9_nature_terrain",
+      "sourcePath": "FabLibrary/Desert_Sand-f0fd5765",
+      "surfaceType": "dirt",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "nature_ground_gravel",
+      "category": "9_nature_terrain",
+      "sourcePath": "FabLibrary/Ground_Gravel-5b295907",
+      "surfaceType": "dirt",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "nature_granite_rock",
+      "category": "9_nature_terrain",
+      "sourcePath": "FabLibrary/Granite_Rock-67d78d30",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "nature_tree_bark",
+      "category": "9_nature_terrain",
+      "sourcePath": "FabLibrary/Tree_Bark-c61dd941",
+      "surfaceType": "wood",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "cn_corrugated_blue",
+      "category": "10_cn_procedural",
+      "sourcePath": "procedural/metal_corrugated_01",
+      "derivedFrom": "metal_corrugated_01",
+      "surfaceType": "metal",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "cn_corrugated_red",
+      "category": "10_cn_procedural",
+      "sourcePath": "procedural/metal_corrugated_01",
+      "derivedFrom": "metal_corrugated_01",
+      "surfaceType": "metal",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "cn_epoxy_green",
+      "category": "10_cn_procedural",
+      "sourcePath": "procedural/concrete_floor_dusty",
+      "derivedFrom": "concrete_floor_dusty",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "cn_hallway_wainscot",
+      "category": "10_cn_procedural",
+      "sourcePath": "procedural/plaster_wall",
+      "derivedFrom": "plaster_wall",
+      "surfaceType": "concrete",
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "cn_tactile_yellow",
+      "category": "10_cn_procedural",
+      "sourcePath": "procedural/square_paving_tiles",
+      "derivedFrom": "square_paving_tiles",
+      "surfaceType": "tile",
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    }
+  ]
 }
