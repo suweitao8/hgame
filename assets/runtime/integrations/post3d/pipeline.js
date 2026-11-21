@@ -1078,6 +1078,7 @@ export function createPostPipeline3D(options = {}) {
     return compileRenderGraph(passes, {
       externalInputs: ['sceneColor', 'sceneDepth', 'sunShadow', 'prevAdapt', 'prevGiHistory', 'prevTemporalColor', 'prevTemporalDepth', 'motionVectors'],
       externalOutputs: ['backbuffer'],
+      pruneDeadPasses: true,
     });
   }
 

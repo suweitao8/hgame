@@ -37,18 +37,20 @@ function normalizeList(value, label) {
  *   writes?: readonly string[],
  *   transientSpecs?: Record<string, object>,
  *   enabled?: boolean,
+ *   sideEffect?: boolean,
  *   execute?: (ctx: object) => void,
  *   meta?: unknown,
  * }[]} passes
- * @param {{ externalInputs?: Iterable<string>, externalOutputs?: Iterable<string> }} [options]
+ * @param {{ externalInputs?: Iterable<string>, externalOutputs?: Iterable<string>, pruneDeadPasses?: boolean }} [options]
  */
-export function compileRenderGraph(passes, { externalInputs = [], externalOutputs = [] } = {}) {
+export function compileRenderGraph(passes, { externalInputs = [], externalOutputs = [], pruneDeadPasses = false } = {}) {
   if (!Array.isArray(passes)) throw new TypeError('compileRenderGraph requires an array of passes');
   const extIn = new Set(externalInputs);
   const extOut = new Set(externalOutputs);
 
   const seenIds = new Set();
-  const activePasses = [];
+  let activePasses = [];
+  const culledPasses = [];
   for (let i = 0; i < passes.length; i++) {
     const raw = passes[i];
     const id = typeof raw?.id === 'string' ? raw.id.trim() : '';
@@ -63,9 +65,54 @@ export function compileRenderGraph(passes, { externalInputs = [], externalOutput
       optionalReads: Object.freeze(normalizeList(raw.optionalReads, `${id}.optionalReads`)),
       writes: Object.freeze(normalizeList(raw.writes, `${id}.writes`)),
       transientSpecs: raw.transientSpecs && typeof raw.transientSpecs === 'object' ? { ...raw.transientSpecs } : {},
+      sideEffect: Boolean(raw.sideEffect),
       execute: typeof raw.execute === 'function' ? raw.execute : null,
       meta: raw.meta ?? null,
     });
+  }
+
+  // Optional dead-pass elimination: keep passes backward-reachable from externalOutputs or sideEffect.
+  if (pruneDeadPasses && extOut.size > 0 && activePasses.length > 0) {
+    const initialWriters = new Map();
+    for (let i = 0; i < activePasses.length; i++) {
+      for (const res of activePasses[i].writes) {
+        let list = initialWriters.get(res);
+        if (!list) { list = []; initialWriters.set(res, list); }
+        list.push(i);
+      }
+    }
+    const live = new Set();
+    const walk = [];
+    for (let i = 0; i < activePasses.length; i++) {
+      const p = activePasses[i];
+      if (p.sideEffect || p.writes.some(w => extOut.has(w))) {
+        live.add(i);
+        walk.push(i);
+      }
+    }
+    while (walk.length > 0) {
+      const idx = walk.pop();
+      const p = activePasses[idx];
+      for (const res of [...p.reads, ...p.optionalReads]) {
+        const writers = initialWriters.get(res);
+        if (!writers?.length) continue;
+        let producer = writers[0];
+        for (const w of writers) if (w < idx) producer = w;
+        if (!live.has(producer)) {
+          live.add(producer);
+          walk.push(producer);
+        }
+      }
+    }
+    const kept = [];
+    for (let i = 0; i < activePasses.length; i++) {
+      if (live.has(i)) {
+        kept.push({ ...activePasses[i], regIndex: kept.length });
+      } else {
+        culledPasses.push(activePasses[i].id);
+      }
+    }
+    activePasses = kept;
   }
 
   // Map each resource to its producer pass index in activePasses (or serial writers).
@@ -249,6 +296,7 @@ export function compileRenderGraph(passes, { externalInputs = [], externalOutput
   return Object.freeze({
     passes: Object.freeze(orderedPasses),
     order: Object.freeze(orderedPasses.map(p => p.id)),
+    culledPasses: Object.freeze(culledPasses),
     edges: Object.freeze(edges),
     lifetimes: Object.freeze(frozenLifetimes),
     resourceToSlot: Object.freeze(Object.fromEntries(resourceToSlot)),

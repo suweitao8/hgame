@@ -499,3 +499,5 @@ export function createAdaptiveQualityController({
     setMode, sampleFrame, sampleMemory, planViewport, resetMeasurements, resetMemoryMeasurements,
   });
 }
+
+export { createShaderWarmupQueue3D } from './quality3d/shader-warmup.js';

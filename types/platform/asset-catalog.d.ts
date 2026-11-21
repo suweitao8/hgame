@@ -12,12 +12,19 @@ export function listCatalogFiles(data: AssetCatalogDefinition): string[];
 /**
  * Load assets by logical ID and deduplicate downloads/decodes across active scopes.
  * @param {AssetCatalogDefinition} data
- * @param {{loader: import('./assets.js').AssetLoader, modelProvider?: CatalogModelProvider, maxConcurrentLoads?: number}} options Queue distinct downloads and decodes together across scopes (default 6). With a model provider, model entries acquire decoded assets.
+ * @param {{loader: import('./assets.js').AssetLoader, modelProvider?: CatalogModelProvider, maxConcurrentLoads?: number, streamingPolicy?: { getStats?: () => { residentBytes?: number, withinBudget?: boolean, evictions?: number } } | null}} options Queue distinct downloads and decodes together across scopes (default 6). With a model provider, model entries acquire decoded assets.
  */
-export function createAssetCatalog(data: AssetCatalogDefinition, { loader, modelProvider, maxConcurrentLoads }: {
+export function createAssetCatalog(data: AssetCatalogDefinition, { loader, modelProvider, maxConcurrentLoads, streamingPolicy }: {
     loader: import("./assets.js").AssetLoader;
     modelProvider?: CatalogModelProvider;
     maxConcurrentLoads?: number;
+    streamingPolicy?: {
+        getStats?: () => {
+            residentBytes?: number;
+            withinBudget?: boolean;
+            evictions?: number;
+        };
+    } | null;
 }): {
     definition: Readonly<{
         schemaVersion: 1;
@@ -32,6 +39,9 @@ export function createAssetCatalog(data: AssetCatalogDefinition, { loader, model
         bytesBytes: number;
         otherBytes: number;
         totalBytes: any;
+        streamingBytes: number;
+        streamingWithinBudget: boolean;
+        streamingEvictions: number;
         activeAcquisitions: number;
         queuedLoads: number;
         runningLoads: number;
@@ -47,6 +57,73 @@ export function createAssetCatalog(data: AssetCatalogDefinition, { loader, model
     openScope(): AssetScope;
     dispose(): void;
 };
+/**
+ * Distance- and budget-driven mip/bundle streaming residency policy.
+ * Upgrades nearby assets to mip bias 0, downgrades distant assets (mip 1..3),
+ * and evicts lowest-priority / farthest assets when exceeding `maxBytes`.
+ */
+export function createStreamingResidencyPolicy({ maxBytes, nearDistance, midDistance, farDistance, }?: {
+    maxBytes?: number | undefined;
+    nearDistance?: number | undefined;
+    midDistance?: number | undefined;
+    farDistance?: number | undefined;
+}): Readonly<{
+    register: (id: any, { position, baseBytes, priority, onMipChange, onEvict, }?: {
+        position?: {
+            x: number;
+            y: number;
+            z: number;
+        } | undefined;
+        baseBytes?: number | undefined;
+        priority?: number | undefined;
+        onMipChange?: null | undefined;
+        onEvict?: null | undefined;
+    }) => {
+        id: string;
+        position: {
+            x: number;
+            y: number;
+            z: number;
+        };
+        baseBytes: number;
+        priority: number;
+        mipBias: number;
+        evicted: boolean;
+        distance: number;
+        residentBytes: number;
+        onMipChange: null;
+        onEvict: null;
+    };
+    unregister: (id: any) => boolean;
+    setPosition: (id: any, position: any) => boolean;
+    update: (viewerPos?: {
+        x: number;
+        y: number;
+        z: number;
+    }) => {
+        residentBytes: number;
+        maxBytes: number;
+        withinBudget: boolean;
+        activeCount: number;
+        evictedCount: number;
+        upgrades: number;
+        downgrades: number;
+        evictions: number;
+    };
+    getEntry: (id: any) => any;
+    getStats: () => Readonly<{
+        maxBytes: number;
+        residentBytes: number;
+        withinBudget: boolean;
+        totalEntries: number;
+        activeCount: number;
+        evictedCount: number;
+        upgrades: number;
+        downgrades: number;
+        evictions: number;
+    }>;
+    dispose: () => void;
+}>;
 export type AssetKind = "image" | "json" | "text" | "bytes" | "blob" | "audio" | "model" | "url";
 export type AssetCatalogEntry = {
     kind: AssetKind;

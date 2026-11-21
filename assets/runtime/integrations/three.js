@@ -4,7 +4,8 @@ import { createGpuFrameTimer } from './quality3d/gpu-timer.js';
 import { createRenderDiagnostics3D, drawWithDiagnostics, estimateRenderTargetBytes } from './quality3d/render-diagnostics.js';
 import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
-import { createSceneCuller3D } from './culling3d.js';
+import { createSceneCuller3D, createGpuIndirectCuller3D } from './culling3d.js';
+import { createShaderWarmupQueue3D } from './quality3d/shader-warmup.js';
 import { createBakedProbeGrid } from './lighting3d/baked-probe-grid.js';
 import { fitDirectionalShadowFrustum, createCascadedShadowMap3D } from './shadow3d.js';
 import { createDecalSystem3D } from './decal3d.js';
@@ -236,6 +237,13 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {(scene: object, data: import('./lighting3d/baked-probe-grid.js').BakedIrradianceProbeData | null) => ReturnType<typeof createBakedProbeGrid>} setIrradianceProbeGrid Install or clear the scene's baked diffuse lighting. Returns null when unsupported or cleared.
  * @property {(scene: object, options?: object) => ReturnType<typeof createDecalSystem3D>} createDecalSystem Create and attach a pooled 3D decal system owned by the scene.
  * @property {(scene: object) => ReturnType<typeof createCascadedShadowMap3D> | null} getCascadedShadowMap Return the cascaded shadow map controller for a scene if enabled.
+ * @property {(id: string, batch: object) => void} registerIndirectBatch Register an indirect/instanced culling batch with the adapter.
+ * @property {(id: string) => boolean} unregisterIndirectBatch Unregister an indirect culling batch.
+ * @property {() => object} getGpuSubmitStats Inspect GPU indirect culling mode and submission counters.
+ * @property {(scene: object, cam?: ThreeCamera | null) => Promise<object>} warmupShaders Asynchronously pre-compile all materials in a scene to avoid first-frame PSO stutter.
+ * @property {(target: object, cam?: ThreeCamera | null) => number} enqueueShaderWarmup Enqueue an object/material subtree for incremental warmup.
+ * @property {(budgetMs?: number) => object} stepShaderWarmup Compile queued shaders incrementally within `budgetMs`.
+ * @property {() => object} getShaderWarmupStats Inspect shader warmup queue statistics.
  * @property {(scene?: object | null) => boolean} invalidateSunShadow Request a fresh sun shadow map for a scene or the active sun.
  * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
@@ -285,6 +293,7 @@ export function createThreeAdapter({
   viewCamera = null,
   sky = null,
   postVolumes = null,
+  gpuIndirect = false,
 } = {}) {
   if (!THREE?.Scene || !THREE?.PerspectiveCamera || !THREE?.WebGLRenderer) {
     throw new TypeError('A complete Three.js namespace is required');
@@ -318,6 +327,16 @@ export function createThreeAdapter({
     occlusion: true,
     gl: renderer.getContext?.() ?? null,
   });
+  const gpuIndirectOpts = typeof gpuIndirect === 'object' && gpuIndirect ? gpuIndirect : null;
+  const gpuIndirectCuller = gpuIndirect
+    ? createGpuIndirectCuller3D({
+        device: gpuIndirectOpts?.device ?? null,
+        gl: gpuIndirectOpts?.gl ?? renderer.getContext?.() ?? null,
+        maxInstances: gpuIndirectOpts?.maxInstances ?? 65536,
+      })
+    : null;
+  const indirectBatches = new Map();
+  const shaderWarmup = createShaderWarmupQueue3D(THREE, renderer);
 
   function markSunShadowDirty(light) {
     if (!light?.shadow) return false;
@@ -985,6 +1004,18 @@ export function createThreeAdapter({
     const diagnostics = options.diagnostics;
     diagnostics?.beginView(options.viewIndex ?? 0);
     culler3d.beginFrame(camera);
+    if (gpuIndirectCuller && culler3d.frustum?.planes) {
+      gpuIndirectCuller.setFrustumPlanes(culler3d.frustum.planes);
+      for (const batch of indirectBatches.values()) {
+        if (typeof batch?.cull === 'function') {
+          batch.cull(culler3d.frustum.planes, gpuIndirectCuller);
+        } else if (batch?.bounds && Number.isFinite(batch.count)) {
+          gpuIndirectCuller.setInstanceCount(batch.count);
+          gpuIndirectCuller.setInstanceBounds(0, batch.count, batch.bounds);
+          batch.lastResult = gpuIndirectCuller.execute(batch.executeOptions);
+        }
+      }
+    }
     worldCsm.get(world)?.update(camera);
     prepareSunShadows(world, camera);
     if (pipeline) {
@@ -1239,6 +1270,45 @@ export function createThreeAdapter({
     getCascadedShadowMap(scene) {
       return (scene && worlds.has(scene)) ? (worldCsm.get(worlds.get(scene)) ?? null) : null;
     },
+    registerIndirectBatch(id, batch) {
+      indirectBatches.set(String(id), batch);
+    },
+    unregisterIndirectBatch(id) {
+      return indirectBatches.delete(String(id));
+    },
+    getGpuSubmitStats() {
+      if (!gpuIndirectCuller) {
+        return {
+          enabled: false,
+          mode: 'cpu-instanced',
+          fallbackReason: 'gpuIndirect disabled',
+          batches: 0,
+        };
+      }
+      return {
+        enabled: true,
+        mode: gpuIndirectCuller.mode,
+        fallbackReason: gpuIndirectCuller.fallbackReason,
+        batches: indirectBatches.size,
+        ...gpuIndirectCuller.getStats(),
+      };
+    },
+    enqueueShaderWarmup(target, customCam = null) {
+      return shaderWarmup.enqueue(target, customCam ?? camera);
+    },
+    stepShaderWarmup(budgetMs = 4) {
+      return shaderWarmup.step(budgetMs);
+    },
+    getShaderWarmupStats() {
+      return shaderWarmup.getStats();
+    },
+    async warmupShaders(scene, customCam = null) {
+      const targetCam = customCam ?? camera;
+      const world = scene ? getWorld(scene) : null;
+      if (world) shaderWarmup.enqueue(world, targetCam);
+      if (scene && viewWorlds.has(scene)) shaderWarmup.enqueue(viewWorlds.get(scene), targetCam);
+      return shaderWarmup.warmupAll(targetCam);
+    },
     createDecalSystem(scene, options = {}) {
       if (disposed || !scene || typeof scene !== 'object') {
         throw new TypeError('createDecalSystem requires a valid HGame Scene');
@@ -1337,6 +1407,9 @@ export function createThreeAdapter({
         ...[...ownedDecals],
         () => gpuFrameTimer?.reset(),
         () => renderDiagnostics?.resetGpu(true),
+        () => gpuIndirectCuller?.dispose?.(),
+        () => indirectBatches.clear(),
+        () => shaderWarmup.dispose(),
         () => culler3d.dispose(),
         () => removeObsoleteViewPipelines(null),
         () => postPipeline?.dispose?.(),

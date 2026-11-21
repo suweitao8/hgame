@@ -107,6 +107,9 @@ export type ProceduralModelOptions = {
             bytesBytes: number;
             otherBytes: number;
             totalBytes: any;
+            streamingBytes: number;
+            streamingWithinBudget: boolean;
+            streamingEvictions: number;
             activeAcquisitions: number;
             queuedLoads: number;
             runningLoads: number;

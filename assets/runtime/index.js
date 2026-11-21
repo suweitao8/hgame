@@ -25,6 +25,14 @@ export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_P
   createDiagnostics,
   createGameBridge, createGameHostBridge } from './platform/engine.js';
 export {
+  createAssetCatalog,
+  createStreamingResidencyPolicy,
+} from './platform/asset-catalog.js';
+import {
+  createAssetCatalog,
+  createStreamingResidencyPolicy,
+} from './platform/asset-catalog.js';
+export {
   EASING,
   TweenManager,
   LN2_CRIT,
@@ -407,4 +415,6 @@ export const HGame = Object.freeze({
   mountGameShell,
   REQUIRED_DESIGN_DOCS,
   renderGameDesignDocs,
+  createAssetCatalog,
+  createStreamingResidencyPolicy,
 });

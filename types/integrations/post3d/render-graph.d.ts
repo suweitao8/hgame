@@ -7,10 +7,11 @@
  *   writes?: readonly string[],
  *   transientSpecs?: Record<string, object>,
  *   enabled?: boolean,
+ *   sideEffect?: boolean,
  *   execute?: (ctx: object) => void,
  *   meta?: unknown,
  * }[]} passes
- * @param {{ externalInputs?: Iterable<string>, externalOutputs?: Iterable<string> }} [options]
+ * @param {{ externalInputs?: Iterable<string>, externalOutputs?: Iterable<string>, pruneDeadPasses?: boolean }} [options]
  */
 export function compileRenderGraph(passes: readonly {
     id: string;
@@ -19,14 +20,17 @@ export function compileRenderGraph(passes: readonly {
     writes?: readonly string[];
     transientSpecs?: Record<string, object>;
     enabled?: boolean;
+    sideEffect?: boolean;
     execute?: (ctx: object) => void;
     meta?: unknown;
-}[], { externalInputs, externalOutputs }?: {
+}[], { externalInputs, externalOutputs, pruneDeadPasses }?: {
     externalInputs?: Iterable<string>;
     externalOutputs?: Iterable<string>;
+    pruneDeadPasses?: boolean;
 } | undefined): Readonly<{
     passes: any;
     order: any;
+    culledPasses: readonly any[];
     edges: readonly any[];
     lifetimes: any;
     resourceToSlot: Readonly<{

@@ -117,6 +117,7 @@ export const QUALITY_TIERS: readonly QualityTier[];
 export const QUALITY3D_PRESETS: Readonly<Record<QualityPresetTier, Readonly<Quality3DPreset>>>;
 /** @type {Readonly<Record<QualityPresetTier, Readonly<Quality2DPreset>>>} */
 export const QUALITY2D_PRESETS: Readonly<Record<QualityPresetTier, Readonly<Quality2DPreset>>>;
+export { createShaderWarmupQueue3D } from "./quality3d/shader-warmup.js";
 export type QualityTier = "low" | "medium" | "high";
 /**
  * Tier names accepted by preset tables.

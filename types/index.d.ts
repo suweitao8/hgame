@@ -1,3 +1,4 @@
+import { createAssetCatalog, createStreamingResidencyPolicy } from "./platform/asset-catalog.js";
 import { defineProject, resolveFeatureGraph } from "./core/config.js";
 import { Component } from "./core/component.js";
 import { Entity } from "./core/entity.js";
@@ -1120,6 +1121,8 @@ export const HGame: Readonly<{
     mountGameShell: typeof mountGameShell;
     REQUIRED_DESIGN_DOCS: readonly string[];
     renderGameDesignDocs: typeof renderGameDesignDocs;
+    createAssetCatalog: typeof createAssetCatalog;
+    createStreamingResidencyPolicy: typeof createStreamingResidencyPolicy;
 }>;
 import { createVersionedStore } from './platform/engine.js';
 import { createSeededRng } from './sim/index.js';
@@ -1187,6 +1190,7 @@ export { defineProject, resolveFeatureGraph, PROJECT_PROFILES, OPTIONAL_FEATURES
 export { Scene, SceneManager } from "./core/scene.js";
 export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTagAncestors, createTagRegistry, GLOBAL_TAG_REGISTRY, createTagContainer, matchGameplayTags } from "./core/tags.js";
 export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, createAssetLoader, createSaveStore, createVersionedStore, createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews, createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm, createDiagnostics, createGameBridge, createGameHostBridge } from "./platform/engine.js";
+export { createAssetCatalog, createStreamingResidencyPolicy } from "./platform/asset-catalog.js";
 export { EASING, TweenManager, LN2_CRIT, damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
 export { TileMap, findGridPath, createGridPathWork } from "./world/tilemap.js";
 export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";

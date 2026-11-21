@@ -87,9 +87,9 @@ function waitForAsset(promise, signal, waiters) {
 /**
  * Load assets by logical ID and deduplicate downloads/decodes across active scopes.
  * @param {AssetCatalogDefinition} data
- * @param {{loader: import('./assets.js').AssetLoader, modelProvider?: CatalogModelProvider, maxConcurrentLoads?: number}} options Queue distinct downloads and decodes together across scopes (default 6). With a model provider, model entries acquire decoded assets.
+ * @param {{loader: import('./assets.js').AssetLoader, modelProvider?: CatalogModelProvider, maxConcurrentLoads?: number, streamingPolicy?: { getStats?: () => { residentBytes?: number, withinBudget?: boolean, evictions?: number } } | null}} options Queue distinct downloads and decodes together across scopes (default 6). With a model provider, model entries acquire decoded assets.
  */
-export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentLoads = 6 }) {
+export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentLoads = 6, streamingPolicy = null }) {
   if (!Number.isSafeInteger(maxConcurrentLoads) || maxConcurrentLoads < 1) {
     throw new RangeError('Asset catalog maxConcurrentLoads must be a positive integer');
   }
@@ -245,6 +245,7 @@ export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentL
     }
     const modelStats = modelProvider?.residency?.getStats?.() ?? null;
     const modelBytes = modelStats?.residentBytes ?? modelProvider?.residency?.readBytes?.() ?? 0;
+    const streamingStats = streamingPolicy?.getStats?.() ?? null;
     return Object.freeze({
       modelBytes,
       imageBytes,
@@ -252,6 +253,9 @@ export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentL
       bytesBytes,
       otherBytes,
       totalBytes: modelBytes + imageBytes + audioBytes + bytesBytes + otherBytes,
+      streamingBytes: streamingStats?.residentBytes ?? 0,
+      streamingWithinBudget: streamingStats?.withinBudget ?? true,
+      streamingEvictions: streamingStats?.evictions ?? 0,
       activeAcquisitions,
       queuedLoads: queue.size,
       runningLoads: running,
@@ -331,4 +335,210 @@ export function createAssetCatalog(data, { loader, modelProvider, maxConcurrentL
       cleanupAll([...scopes].map(scope => () => scope.dispose()), 'Asset catalog disposal failed');
     },
   };
+}
+
+/**
+ * Distance- and budget-driven mip/bundle streaming residency policy.
+ * Upgrades nearby assets to mip bias 0, downgrades distant assets (mip 1..3),
+ * and evicts lowest-priority / farthest assets when exceeding `maxBytes`.
+ */
+export function createStreamingResidencyPolicy({
+  maxBytes = 64 * 1024 * 1024,
+  nearDistance = 20,
+  midDistance = 50,
+  farDistance = 100,
+} = {}) {
+  const budgetBytes = Math.max(1024, Number(maxBytes) || 64 * 1024 * 1024);
+  const nearD = Math.max(0.1, Number(nearDistance) || 20);
+  const midD = Math.max(nearD, Number(midDistance) || 50);
+  const farD = Math.max(midD, Number(farDistance) || 100);
+  const entries = new Map();
+  let residentBytes = 0;
+  let totalEvictions = 0;
+  let totalUpgrades = 0;
+  let totalDowngrades = 0;
+  let lastWithinBudget = true;
+
+  function computeEffectiveBytes(baseBytes, mipBias, evicted) {
+    if (evicted) return 0;
+    return Math.max(1, Math.round(baseBytes / (1 << (mipBias * 2))));
+  }
+
+  function register(id, {
+    position = { x: 0, y: 0, z: 0 },
+    baseBytes = 1024 * 1024,
+    priority = 0,
+    onMipChange = null,
+    onEvict = null,
+  } = {}) {
+    if (!id) throw new Error('Streaming entry id is required');
+    const entry = {
+      id: String(id),
+      position: { x: Number(position.x) || 0, y: Number(position.y) || 0, z: Number(position.z) || 0 },
+      baseBytes: Math.max(1, Math.round(Number(baseBytes) || 1)),
+      priority: Number(priority) || 0,
+      mipBias: 3,
+      evicted: false,
+      distance: Infinity,
+      residentBytes: 0,
+      onMipChange: typeof onMipChange === 'function' ? onMipChange : null,
+      onEvict: typeof onEvict === 'function' ? onEvict : null,
+    };
+    entry.residentBytes = computeEffectiveBytes(entry.baseBytes, entry.mipBias, false);
+    entries.set(entry.id, entry);
+    return entry;
+  }
+
+  function unregister(id) {
+    return entries.delete(String(id));
+  }
+
+  function setPosition(id, position) {
+    const entry = entries.get(String(id));
+    if (!entry || !position) return false;
+    entry.position.x = Number(position.x) || 0;
+    entry.position.y = Number(position.y) || 0;
+    entry.position.z = Number(position.z) || 0;
+    return true;
+  }
+
+  function update(viewerPos = { x: 0, y: 0, z: 0 }) {
+    const vx = Number(viewerPos?.x) || 0;
+    const vy = Number(viewerPos?.y) || 0;
+    const vz = Number(viewerPos?.z) || 0;
+    let upgrades = 0;
+    let downgrades = 0;
+    let evictions = 0;
+    const ordered = [];
+
+    for (const entry of entries.values()) {
+      const dx = entry.position.x - vx;
+      const dy = entry.position.y - vy;
+      const dz = entry.position.z - vz;
+      const dist = Math.hypot(dx, dy, dz);
+      entry.distance = dist;
+      const desiredMip = dist <= nearD ? 0 : dist <= midD ? 1 : dist <= farD ? 2 : 3;
+      const prevMip = entry.mipBias;
+      const wasEvicted = entry.evicted;
+      entry.evicted = false;
+      entry.mipBias = desiredMip;
+      if (!wasEvicted && desiredMip < prevMip) upgrades++;
+      else if (!wasEvicted && desiredMip > prevMip) downgrades++;
+      entry.residentBytes = computeEffectiveBytes(entry.baseBytes, desiredMip, false);
+      ordered.push({ entry, prevMip, wasEvicted });
+    }
+
+    // Sort descending eviction order: lowest priority first, then farthest distance
+    ordered.sort((a, b) => {
+      if (a.entry.priority !== b.entry.priority) return a.entry.priority - b.entry.priority;
+      return b.entry.distance - a.entry.distance;
+    });
+
+    let total = ordered.reduce((sum, item) => sum + item.entry.residentBytes, 0);
+    // 1. Downgrade lower-priority / distant assets before touching near high-priority hero assets
+    for (let i = 0; i < ordered.length && total > budgetBytes; i++) {
+      const item = ordered[i];
+      if (item.entry.priority > 0 && item.entry.distance <= nearD) continue;
+      if (item.entry.mipBias < 3) {
+        const nextBytes = computeEffectiveBytes(item.entry.baseBytes, 3, false);
+        total -= item.entry.residentBytes - nextBytes;
+        item.entry.mipBias = 3;
+        item.entry.residentBytes = nextBytes;
+        if (item.entry.mipBias > item.prevMip) downgrades++;
+      }
+    }
+    // 2. Evict lowest-priority / farthest assets while preserving near hero assets if possible
+    for (let i = 0; i < ordered.length && total > budgetBytes; i++) {
+      const item = ordered[i];
+      if (item.entry.priority > 0 && item.entry.distance <= nearD) continue;
+      if (!item.entry.evicted) {
+        total -= item.entry.residentBytes;
+        item.entry.evicted = true;
+        item.entry.residentBytes = 0;
+        evictions++;
+      }
+    }
+    // 3. Fallback: if still over budget, downgrade/evict remaining entries in order
+    for (let i = 0; i < ordered.length && total > budgetBytes; i++) {
+      const item = ordered[i];
+      if (item.entry.evicted) continue;
+      if (item.entry.mipBias < 3) {
+        const nextBytes = computeEffectiveBytes(item.entry.baseBytes, 3, false);
+        total -= item.entry.residentBytes - nextBytes;
+        item.entry.mipBias = 3;
+        item.entry.residentBytes = nextBytes;
+        if (item.entry.mipBias > item.prevMip) downgrades++;
+      }
+      if (total > budgetBytes) {
+        total -= item.entry.residentBytes;
+        item.entry.evicted = true;
+        item.entry.residentBytes = 0;
+        evictions++;
+      }
+    }
+
+    for (const item of ordered) {
+      if (item.entry.evicted && !item.wasEvicted) {
+        item.entry.onEvict?.(item.entry);
+      } else if (!item.entry.evicted && (item.entry.mipBias !== item.prevMip || item.wasEvicted)) {
+        item.entry.onMipChange?.(item.entry.mipBias, item.prevMip, item.entry);
+      }
+    }
+
+    residentBytes = total;
+    lastWithinBudget = residentBytes <= budgetBytes;
+    totalUpgrades += upgrades;
+    totalDowngrades += downgrades;
+    totalEvictions += evictions;
+
+    return {
+      residentBytes,
+      maxBytes: budgetBytes,
+      withinBudget: lastWithinBudget,
+      activeCount: ordered.filter((item) => !item.entry.evicted).length,
+      evictedCount: ordered.filter((item) => item.entry.evicted).length,
+      upgrades,
+      downgrades,
+      evictions,
+    };
+  }
+
+  function getEntry(id) {
+    return entries.get(String(id)) ?? null;
+  }
+
+  function getStats() {
+    let activeCount = 0;
+    let evictedCount = 0;
+    for (const entry of entries.values()) {
+      if (entry.evicted) evictedCount++;
+      else activeCount++;
+    }
+    return Object.freeze({
+      maxBytes: budgetBytes,
+      residentBytes,
+      withinBudget: lastWithinBudget,
+      totalEntries: entries.size,
+      activeCount,
+      evictedCount,
+      upgrades: totalUpgrades,
+      downgrades: totalDowngrades,
+      evictions: totalEvictions,
+    });
+  }
+
+  function dispose() {
+    entries.clear();
+    residentBytes = 0;
+  }
+
+  return Object.freeze({
+    register,
+    unregister,
+    setPosition,
+    update,
+    getEntry,
+    getStats,
+    dispose,
+  });
 }

@@ -164,6 +164,13 @@
  * @property {(scene: object, data: import('./lighting3d/baked-probe-grid.js').BakedIrradianceProbeData | null) => ReturnType<typeof createBakedProbeGrid>} setIrradianceProbeGrid Install or clear the scene's baked diffuse lighting. Returns null when unsupported or cleared.
  * @property {(scene: object, options?: object) => ReturnType<typeof createDecalSystem3D>} createDecalSystem Create and attach a pooled 3D decal system owned by the scene.
  * @property {(scene: object) => ReturnType<typeof createCascadedShadowMap3D> | null} getCascadedShadowMap Return the cascaded shadow map controller for a scene if enabled.
+ * @property {(id: string, batch: object) => void} registerIndirectBatch Register an indirect/instanced culling batch with the adapter.
+ * @property {(id: string) => boolean} unregisterIndirectBatch Unregister an indirect culling batch.
+ * @property {() => object} getGpuSubmitStats Inspect GPU indirect culling mode and submission counters.
+ * @property {(scene: object, cam?: ThreeCamera | null) => Promise<object>} warmupShaders Asynchronously pre-compile all materials in a scene to avoid first-frame PSO stutter.
+ * @property {(target: object, cam?: ThreeCamera | null) => number} enqueueShaderWarmup Enqueue an object/material subtree for incremental warmup.
+ * @property {(budgetMs?: number) => object} stepShaderWarmup Compile queued shaders incrementally within `budgetMs`.
+ * @property {() => object} getShaderWarmupStats Inspect shader warmup queue statistics.
  * @property {(scene?: object | null) => boolean} invalidateSunShadow Request a fresh sun shadow map for a scene or the active sun.
  * @property {(sun?: import('./sky3d.js').DirectionalLightLike | null, target?: import('./sky3d.js').SkyVec3Input, options?: import('./sky3d.js').ShadowFitOptions & { shadowDistance?: number, radius?: number }) => import('./sky3d.js').ShadowFrustum | null} fitShadowToPreset
  * @property {(nextSky: ThreeSkyLike | null | undefined) => void} setSky
@@ -188,7 +195,7 @@
  * @param {ThreeAdapterOptions} options
  * @returns {ThreeAdapter}
  */
-export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, limitCameraDrawDistance, background, worldLighting, quality3d, post3d, diagnostics3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, }?: ThreeAdapterOptions): ThreeAdapter;
+export function createThreeAdapter({ THREE, canvas, width, height, pixelRatio, cameraFov, cameraPosition, cameraTarget, near, far, limitCameraDrawDistance, background, worldLighting, quality3d, post3d, diagnostics3d, shadows, toneMapping, exposure, sunLight, viewCamera, sky, postVolumes, gpuIndirect, }?: ThreeAdapterOptions): ThreeAdapter;
 /**
  * @typedef {object} ThreeMeshComponentOptions
  * @property {'box' | 'sphere' | 'capsule' | 'cylinder' | 'plane'} [type='box'] Primitive shape.
@@ -629,6 +636,34 @@ export type ThreeAdapter = {
      * Return the cascaded shadow map controller for a scene if enabled.
      */
     getCascadedShadowMap: (scene: object) => ReturnType<typeof createCascadedShadowMap3D> | null;
+    /**
+     * Register an indirect/instanced culling batch with the adapter.
+     */
+    registerIndirectBatch: (id: string, batch: object) => void;
+    /**
+     * Unregister an indirect culling batch.
+     */
+    unregisterIndirectBatch: (id: string) => boolean;
+    /**
+     * Inspect GPU indirect culling mode and submission counters.
+     */
+    getGpuSubmitStats: () => object;
+    /**
+     * Asynchronously pre-compile all materials in a scene to avoid first-frame PSO stutter.
+     */
+    warmupShaders: (scene: object, cam?: ThreeCamera | null) => Promise<object>;
+    /**
+     * Enqueue an object/material subtree for incremental warmup.
+     */
+    enqueueShaderWarmup: (target: object, cam?: ThreeCamera | null) => number;
+    /**
+     * Compile queued shaders incrementally within `budgetMs`.
+     */
+    stepShaderWarmup: (budgetMs?: number) => object;
+    /**
+     * Inspect shader warmup queue statistics.
+     */
+    getShaderWarmupStats: () => object;
     /**
      * Request a fresh sun shadow map for a scene or the active sun.
      */

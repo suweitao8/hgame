@@ -425,6 +425,7 @@ export function createFrustumCuller3D({ maxDistance = Infinity } = {}) {
   return {
     get maxDistance() { return distLimit; },
     get hasPlanes() { return hasPlanes; },
+    get planes() { return planes; },
     get cameraPosition() { return { x: camX, y: camY, z: camZ }; },
     setMaxDistance,
     setFromProjectionMatrix,
