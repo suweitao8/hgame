@@ -2,6 +2,7 @@ import { createGpuFrameTimer } from './gpu-timer.js';
 import { beginWebGlUploadProbe } from './upload-probe.js';
 
 const MAX_GPU_SAMPLES = 32;
+const MAX_FRAME_HISTORY = 256;
 
 /** @typedef {{viewIndex: number, width: number, height: number, samples: number, bytes: number}} RenderTargetUsage3D */
 /** @typedef {import('./upload-probe.js').WebGlUploadTotals} WebGlUploadTotals */
@@ -103,6 +104,7 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
   beginUploads = beginWebGlUploadProbe, observeTargets, describeMeasurementSources,
   beginCanvasDraws = null, beginCanvasUploads = null } = {}) {
   const gpuSamples = [];
+  const frameHistory = [];
   let timer;
   let sourceIdentity;
   let frame = null;
@@ -236,6 +238,7 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
         viewIndex,
         target: description,
         cpuMs: performance.now() - start,
+        startedAtMs: start,
         gpuMs: null,
         drawCalls: passDrawCalls,
         draws: passDraws,
@@ -279,8 +282,9 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
         hasTargetBytes: true,
         gpuSupported: Boolean(timer),
       });
+      const frameCpuMs = performance.now() - current.started;
       snapshot = Object.freeze({
-        frame: current.id, complete, cpuMs: performance.now() - current.started,
+        frame: current.id, complete, cpuMs: frameCpuMs,
         drawCalls: frameDrawCalls,
         draws: frameDraws,
         triangles: frameTris,
@@ -294,6 +298,25 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
         measurementSources: meta.sources,
         estimatedFields: meta.estimatedFields,
       });
+      frameHistory.push({
+        frame: current.id,
+        complete,
+        startUs: Math.round(current.started * 1000),
+        durUs: Math.max(1, Math.round(frameCpuMs * 1000)),
+        cpuMs: frameCpuMs,
+        draws: frameDraws ?? 0,
+        drawCalls: frameDrawCalls ?? 0,
+        uploadBytes: frameUploadBytes ?? 0,
+        passes: current.passes.map(p => ({
+          name: p.name,
+          viewIndex: p.viewIndex,
+          startUs: Math.round((p.startedAtMs ?? current.started) * 1000),
+          durUs: Math.max(1, Math.round((p.cpuMs || 0) * 1000)),
+          draws: p.draws ?? p.drawCalls ?? 0,
+          targetBytes: p.targetBytes ?? 0,
+        })),
+      });
+      if (frameHistory.length > MAX_FRAME_HISTORY) frameHistory.shift();
     } finally {
       stopFrameObservations(current);
     }
@@ -332,8 +355,71 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
     return snapshot;
   }
 
+  function getFrameStats() {
+    const count = frameHistory.length;
+    if (count === 0) {
+      return Object.freeze({
+        count: 0,
+        p50Ms: 0,
+        p95Ms: 0,
+        p99Ms: 0,
+        maxMs: 0,
+        avgMs: 0,
+        avgDrawCalls: 0,
+        avgUploadBytes: 0,
+      });
+    }
+    const sorted = frameHistory.map(f => f.cpuMs).sort((a, b) => a - b);
+    const pct = p => sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))];
+    let sumMs = 0, sumDraws = 0, sumBytes = 0;
+    for (const f of frameHistory) {
+      sumMs += f.cpuMs;
+      sumDraws += f.draws;
+      sumBytes += f.uploadBytes;
+    }
+    return Object.freeze({
+      count,
+      p50Ms: pct(0.5),
+      p95Ms: pct(0.95),
+      p99Ms: pct(0.99),
+      maxMs: sorted[sorted.length - 1],
+      avgMs: sumMs / count,
+      avgDrawCalls: sumDraws / count,
+      avgUploadBytes: sumBytes / count,
+    });
+  }
+
+  function exportChromeTrace() {
+    const traceEvents = [];
+    for (const f of frameHistory) {
+      traceEvents.push({
+        name: `frame#${f.frame}`,
+        cat: 'render',
+        ph: 'X',
+        ts: f.startUs,
+        dur: f.durUs,
+        pid: 1,
+        tid: 0,
+        args: { draws: f.draws, uploadBytes: f.uploadBytes, complete: f.complete },
+      });
+      for (const p of f.passes) {
+        traceEvents.push({
+          name: p.name,
+          cat: 'render.pass',
+          ph: 'X',
+          ts: p.startUs,
+          dur: p.durUs,
+          pid: 1,
+          tid: 1 + (Number(p.viewIndex) || 0),
+          args: { draws: p.draws, targetBytes: p.targetBytes },
+        });
+      }
+    }
+    return { traceEvents, displayTimeUnit: 'ms' };
+  }
+
   return { beginFrame, endFrame, beginView, beginPass, recordTarget, consumeGpuFrameMs, resetGpu,
-    snapshot: readSnapshot };
+    getFrameStats, exportChromeTrace, snapshot: readSnapshot };
 }
 
 export function drawWithDiagnostics(renderer, onPass, name, target, scene, camera) {

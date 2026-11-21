@@ -8,6 +8,48 @@ export function createRenderDiagnostics3D(THREE: any, renderer: any): {
     recordTarget: (target: any) => any;
     consumeGpuFrameMs: () => number | null;
     resetGpu: (forContextChange?: boolean) => void;
+    getFrameStats: () => Readonly<{
+        count: number;
+        p50Ms: any;
+        p95Ms: any;
+        p99Ms: any;
+        maxMs: any;
+        avgMs: number;
+        avgDrawCalls: number;
+        avgUploadBytes: number;
+    }>;
+    exportChromeTrace: () => {
+        traceEvents: ({
+            name: string;
+            cat: string;
+            ph: string;
+            ts: any;
+            dur: any;
+            pid: number;
+            tid: number;
+            args: {
+                draws: any;
+                uploadBytes: any;
+                complete: any;
+                targetBytes?: undefined;
+            };
+        } | {
+            name: any;
+            cat: string;
+            ph: string;
+            ts: any;
+            dur: any;
+            pid: number;
+            tid: number;
+            args: {
+                draws: any;
+                targetBytes: any;
+                uploadBytes?: undefined;
+                complete?: undefined;
+            };
+        })[];
+        displayTimeUnit: string;
+    };
     snapshot: () => RenderDiagnosticsSnapshot3D | null;
 };
 /**
@@ -35,6 +77,48 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
     recordTarget: (target: any) => any;
     consumeGpuFrameMs: () => number | null;
     resetGpu: (forContextChange?: boolean) => void;
+    getFrameStats: () => Readonly<{
+        count: number;
+        p50Ms: any;
+        p95Ms: any;
+        p99Ms: any;
+        maxMs: any;
+        avgMs: number;
+        avgDrawCalls: number;
+        avgUploadBytes: number;
+    }>;
+    exportChromeTrace: () => {
+        traceEvents: ({
+            name: string;
+            cat: string;
+            ph: string;
+            ts: any;
+            dur: any;
+            pid: number;
+            tid: number;
+            args: {
+                draws: any;
+                uploadBytes: any;
+                complete: any;
+                targetBytes?: undefined;
+            };
+        } | {
+            name: any;
+            cat: string;
+            ph: string;
+            ts: any;
+            dur: any;
+            pid: number;
+            tid: number;
+            args: {
+                draws: any;
+                targetBytes: any;
+                uploadBytes?: undefined;
+                complete?: undefined;
+            };
+        })[];
+        displayTimeUnit: string;
+    };
     snapshot: () => RenderDiagnosticsSnapshot3D | null;
 };
 export function drawWithDiagnostics(renderer: any, onPass: any, name: any, target: any, scene: any, camera: any): void;

@@ -153,6 +153,8 @@
  * @property {ReturnType<typeof createSceneCuller3D>} culler3d
  * @property {boolean} contextLost
  * @property {() => import('./quality3d/render-diagnostics.js').RenderDiagnosticsSnapshot3D | null} getRenderDiagnostics Latest frame when diagnostics are enabled.
+ * @property {() => object | null} getRenderFrameStats Frame timing percentiles (`p50Ms`, `p95Ms`, `p99Ms`) when diagnostics are enabled.
+ * @property {() => { traceEvents: object[], displayTimeUnit: string }} exportRenderChromeTrace Export Chrome Trace JSON events.
  * @property {(scene: object) => ThreeObject3D} getWorld
  * @property {(scene: object) => ThreeObject3D} getViewWorld
  * @property {(scene: object, object: object) => void} add
@@ -616,6 +618,17 @@ export type ThreeAdapter = {
      * Latest frame when diagnostics are enabled.
      */
     getRenderDiagnostics: () => import("./quality3d/render-diagnostics.js").RenderDiagnosticsSnapshot3D | null;
+    /**
+     * Frame timing percentiles (`p50Ms`, `p95Ms`, `p99Ms`) when diagnostics are enabled.
+     */
+    getRenderFrameStats: () => object | null;
+    /**
+     * Export Chrome Trace JSON events.
+     */
+    exportRenderChromeTrace: () => {
+        traceEvents: object[];
+        displayTimeUnit: string;
+    };
     getWorld: (scene: object) => ThreeObject3D;
     getViewWorld: (scene: object) => ThreeObject3D;
     add: (scene: object, object: object) => void;

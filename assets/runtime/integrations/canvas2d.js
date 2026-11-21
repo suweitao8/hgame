@@ -878,6 +878,8 @@ export class SpriteCrowd2D extends Component {
  * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
  * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
  * @property {() => import('./render-diagnostics-2d.js').RenderDiagnosticsSnapshot2D | null} getRenderDiagnostics Latest opt-in render frame.
+ * @property {() => object | null} [getRenderFrameStats] Frame timing percentiles (`p50Ms`, `p95Ms`, `p99Ms`) when diagnostics are enabled.
+ * @property {() => { traceEvents: object[], displayTimeUnit: string }} [exportRenderChromeTrace] Export Chrome Trace JSON events.
  * @property {() => ReturnType<import('./render-budget-2d.js').createRenderBudgetController> extends { getBudgetSnapshot: () => infer S } ? S : unknown} getRenderBudget Current 2D resource budget snapshot.
  * @property {(type?: import('./render-budget-2d.js').RenderResourceType2D | null, reason?: import('./render-budget-2d.js').RenderEvictionReason2D) => number} reclaimRenderResources Reclaim idle targets/caches by type or all.
  * @property {() => Viewport2D} getViewport Copy of the current viewport.
@@ -887,6 +889,8 @@ export class SpriteCrowd2D extends Component {
  * @property {() => void} clearLights2D Remove all 2D point lights.
  * @property {(segment: { x1: number, y1: number, x2: number, y2: number }) => boolean} addOccluder2D Append a 2D shadow occluder segment.
  * @property {(segments: Array<{ x1: number, y1: number, x2: number, y2: number }>) => number} setOccluders2D Replace active 2D shadow occluder segments.
+ * @property {(points: Array<[number, number] | { x: number, y: number }>, options?: { closed?: boolean }) => number} addPolygonOccluder2D Decompose a polygon into 2D shadow occluder segments.
+ * @property {(polygons: Array<Array<[number, number] | { x: number, y: number }> | { points: Array<[number, number] | { x: number, y: number }>, closed?: boolean }>, options?: { closed?: boolean }) => number} setPolygonOccluders2D Replace active polygon occluders.
  * @property {() => void} clearOccluders2D Remove all 2D shadow occluder segments.
  * @property {(opts?: { normalMap?: unknown, strength?: number }) => void} setNormalLighting2D Configure 2D normal-map lighting state.
  * @property {() => import('./post2d.js').QUALITY2D_LIGHTING_PRESETS['high']} getQualityPolicy2D Read the active 2D lighting/post quality retention policy.
@@ -1598,6 +1602,8 @@ export function createCanvas2DAdapter({
     get qualityPreset() { return qualityPreset; },
     get stats() { return { ...stats }; },
     getRenderDiagnostics: () => diagnostics?.snapshot() ?? null,
+    getRenderFrameStats: () => diagnostics?.getFrameStats?.() ?? null,
+    exportRenderChromeTrace: () => diagnostics?.exportChromeTrace?.() ?? { traceEvents: [], displayTimeUnit: 'ms' },
     getRenderBudget: () => renderBudget.getBudgetSnapshot(),
     reclaimRenderResources: (type = null, reason = 'manual') =>
       type ? renderBudget.reclaimByType(type, reason) : renderBudget.reclaimAll(reason),
@@ -1608,6 +1614,8 @@ export function createCanvas2DAdapter({
     clearLights2D: lighting2D.clearLights,
     addOccluder2D: lighting2D.addOccluder,
     setOccluders2D: lighting2D.setOccluders,
+    addPolygonOccluder2D: lighting2D.addPolygonOccluder,
+    setPolygonOccluders2D: lighting2D.setPolygonOccluders,
     clearOccluders2D: lighting2D.clearOccluders,
     setNormalLighting2D: lighting2D.setNormalLighting,
     getQualityPolicy2D: lighting2D.getQualityPolicy,

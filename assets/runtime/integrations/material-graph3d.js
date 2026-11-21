@@ -175,9 +175,9 @@ export function createComposableMaterial3D(THREE, {
         shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', dissolveBody);
       }
 
-      if (hasSpecularAA && shader.fragmentShader.includes('#include <roughnessmap_fragment>')) {
+      if (hasSpecularAA && shader.fragmentShader.includes('#include <normal_fragment_maps>')) {
         const specAaBody = [
-          '#include <roughnessmap_fragment>',
+          '#include <normal_fragment_maps>',
           '{',
           '  vec3 _dNdx = dFdx(normal);',
           '  vec3 _dNdy = dFdy(normal);',
@@ -185,7 +185,7 @@ export function createComposableMaterial3D(THREE, {
           '  roughnessFactor = clamp(sqrt(roughnessFactor * roughnessFactor + min(0.25, _varN * 0.5)), 0.04, 1.0);',
           '}',
         ].join('\n');
-        shader.fragmentShader = shader.fragmentShader.replace('#include <roughnessmap_fragment>', specAaBody);
+        shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', specAaBody);
       }
 
       if (hasFresnel && shader.fragmentShader.includes('#include <emissivemap_fragment>')) {

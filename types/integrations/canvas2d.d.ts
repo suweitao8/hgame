@@ -112,6 +112,8 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @property {Quality2DPreset | null} qualityPreset Active preset (getter).
  * @property {Renderer2DStats} stats Copy of last-frame statistics (getter).
  * @property {() => import('./render-diagnostics-2d.js').RenderDiagnosticsSnapshot2D | null} getRenderDiagnostics Latest opt-in render frame.
+ * @property {() => object | null} [getRenderFrameStats] Frame timing percentiles (`p50Ms`, `p95Ms`, `p99Ms`) when diagnostics are enabled.
+ * @property {() => { traceEvents: object[], displayTimeUnit: string }} [exportRenderChromeTrace] Export Chrome Trace JSON events.
  * @property {() => ReturnType<import('./render-budget-2d.js').createRenderBudgetController> extends { getBudgetSnapshot: () => infer S } ? S : unknown} getRenderBudget Current 2D resource budget snapshot.
  * @property {(type?: import('./render-budget-2d.js').RenderResourceType2D | null, reason?: import('./render-budget-2d.js').RenderEvictionReason2D) => number} reclaimRenderResources Reclaim idle targets/caches by type or all.
  * @property {() => Viewport2D} getViewport Copy of the current viewport.
@@ -121,6 +123,8 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @property {() => void} clearLights2D Remove all 2D point lights.
  * @property {(segment: { x1: number, y1: number, x2: number, y2: number }) => boolean} addOccluder2D Append a 2D shadow occluder segment.
  * @property {(segments: Array<{ x1: number, y1: number, x2: number, y2: number }>) => number} setOccluders2D Replace active 2D shadow occluder segments.
+ * @property {(points: Array<[number, number] | { x: number, y: number }>, options?: { closed?: boolean }) => number} addPolygonOccluder2D Decompose a polygon into 2D shadow occluder segments.
+ * @property {(polygons: Array<Array<[number, number] | { x: number, y: number }> | { points: Array<[number, number] | { x: number, y: number }>, closed?: boolean }>, options?: { closed?: boolean }) => number} setPolygonOccluders2D Replace active polygon occluders.
  * @property {() => void} clearOccluders2D Remove all 2D shadow occluder segments.
  * @property {(opts?: { normalMap?: unknown, strength?: number }) => void} setNormalLighting2D Configure 2D normal-map lighting state.
  * @property {() => import('./post2d.js').QUALITY2D_LIGHTING_PRESETS['high']} getQualityPolicy2D Read the active 2D lighting/post quality retention policy.
@@ -821,6 +825,17 @@ export type Renderer2DAdapter = {
      */
     getRenderDiagnostics: () => import("./render-diagnostics-2d.js").RenderDiagnosticsSnapshot2D | null;
     /**
+     * Frame timing percentiles (`p50Ms`, `p95Ms`, `p99Ms`) when diagnostics are enabled.
+     */
+    getRenderFrameStats?: (() => object | null) | undefined;
+    /**
+     * Export Chrome Trace JSON events.
+     */
+    exportRenderChromeTrace?: (() => {
+        traceEvents: object[];
+        displayTimeUnit: string;
+    }) | undefined;
+    /**
      * Current 2D resource budget snapshot.
      */
     getRenderBudget: () => ReturnType<typeof createRenderBudgetController> extends {
@@ -880,6 +895,30 @@ export type Renderer2DAdapter = {
         x2: number;
         y2: number;
     }>) => number;
+    /**
+     * Decompose a polygon into 2D shadow occluder segments.
+     */
+    addPolygonOccluder2D: (points: Array<[number, number] | {
+        x: number;
+        y: number;
+    }>, options?: {
+        closed?: boolean;
+    }) => number;
+    /**
+     * Replace active polygon occluders.
+     */
+    setPolygonOccluders2D: (polygons: Array<Array<[number, number] | {
+        x: number;
+        y: number;
+    }> | {
+        points: Array<[number, number] | {
+            x: number;
+            y: number;
+        }>;
+        closed?: boolean;
+    }>, options?: {
+        closed?: boolean;
+    }) => number;
     /**
      * Remove all 2D shadow occluder segments.
      */

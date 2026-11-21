@@ -32,6 +32,12 @@ export function createLighting2DState(): Readonly<{
     clearLights: () => void;
     addOccluder: (segment: any) => boolean;
     setOccluders: (segments: any) => number;
+    addPolygonOccluder: (points: any, { closed }?: {
+        closed?: boolean | undefined;
+    }) => number;
+    setPolygonOccluders: (polygons: any, { closed }?: {
+        closed?: boolean | undefined;
+    }) => number;
     clearOccluders: () => void;
     setNormalLighting: ({ normalMap, strength }?: {
         normalMap?: null | undefined;
@@ -105,6 +111,8 @@ export function createLighting2DState(): Readonly<{
         };
     };
 }>;
+export function addPolygonOccluder(state: any, points: any, options?: {}): any;
+export function setPolygonOccluders(state: any, polygons: any, options?: {}): any;
 /**
  * Canvas2D atmospheric lighting and screen-space fallback pass.
  */

@@ -1698,6 +1698,8 @@ export function createWebGL2DAdapter({
     get qualityPreset() { return qualityPreset; },
     get stats() { return { ...stats }; },
     getRenderDiagnostics: () => diagnostics?.snapshot() ?? null,
+    getRenderFrameStats: () => diagnostics?.getFrameStats?.() ?? null,
+    exportRenderChromeTrace: () => diagnostics?.exportChromeTrace?.() ?? { traceEvents: [], displayTimeUnit: 'ms' },
     getRenderBudget: () => renderBudget.getBudgetSnapshot(),
     reclaimRenderResources: (type = null, reason = 'manual') =>
       type ? renderBudget.reclaimByType(type, reason) : renderBudget.reclaimAll(reason),
@@ -1708,6 +1710,8 @@ export function createWebGL2DAdapter({
     clearLights2D: lighting2D.clearLights,
     addOccluder2D: lighting2D.addOccluder,
     setOccluders2D: lighting2D.setOccluders,
+    addPolygonOccluder2D: lighting2D.addPolygonOccluder,
+    setPolygonOccluders2D: lighting2D.setPolygonOccluders,
     clearOccluders2D: lighting2D.clearOccluders,
     setNormalLighting2D: lighting2D.setNormalLighting,
     getQualityPolicy2D: lighting2D.getQualityPolicy,

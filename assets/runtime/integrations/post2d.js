@@ -183,6 +183,37 @@ export function createLighting2DState() {
     return occluderCount;
   }
 
+  function addPolygonOccluder(points, { closed = true } = {}) {
+    if (!Array.isArray(points) || points.length < 2) return 0;
+    let added = 0;
+    const n = points.length;
+    const edgeCount = closed && n >= 3 ? n : n - 1;
+    for (let i = 0; i < edgeCount && occluderCount < MAX_2D_OCCLUDERS; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % n];
+      const x1 = Array.isArray(a) ? Number(a[0]) || 0 : Number(a?.x) || 0;
+      const y1 = Array.isArray(a) ? Number(a[1]) || 0 : Number(a?.y) || 0;
+      const x2 = Array.isArray(b) ? Number(b[0]) || 0 : Number(b?.x) || 0;
+      const y2 = Array.isArray(b) ? Number(b[1]) || 0 : Number(b?.y) || 0;
+      if (Math.hypot(x2 - x1, y2 - y1) > 1e-6 && addOccluder({ x1, y1, x2, y2 })) {
+        added++;
+      }
+    }
+    return added;
+  }
+
+  function setPolygonOccluders(polygons, { closed = true } = {}) {
+    occluderCount = 0;
+    if (!Array.isArray(polygons)) return 0;
+    for (let i = 0; i < polygons.length && occluderCount < MAX_2D_OCCLUDERS; i++) {
+      const poly = polygons[i];
+      const pts = Array.isArray(poly) ? poly : poly?.points;
+      const isClosed = Array.isArray(poly) ? closed : (poly?.closed ?? closed);
+      addPolygonOccluder(pts, { closed: isClosed });
+    }
+    return occluderCount;
+  }
+
   function setNormalLighting({ normalMap = null, strength = 1.0 } = {}) {
     normalMapSource = normalMap ?? null;
     normalStrength = clamp(Number.isFinite(strength) ? strength : 1.0, 0, 2);
@@ -310,6 +341,8 @@ export function createLighting2DState() {
     clearLights,
     addOccluder,
     setOccluders,
+    addPolygonOccluder,
+    setPolygonOccluders,
     clearOccluders,
     setNormalLighting,
     setQuality,
@@ -330,6 +363,14 @@ export function createLighting2DState() {
       };
     },
   });
+}
+
+export function addPolygonOccluder(state, points, options = {}) {
+  return state?.addPolygonOccluder?.(points, options) ?? 0;
+}
+
+export function setPolygonOccluders(state, polygons, options = {}) {
+  return state?.setPolygonOccluders?.(polygons, options) ?? 0;
 }
 
 /**

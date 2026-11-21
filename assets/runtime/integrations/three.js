@@ -226,6 +226,8 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {ReturnType<typeof createSceneCuller3D>} culler3d
  * @property {boolean} contextLost
  * @property {() => import('./quality3d/render-diagnostics.js').RenderDiagnosticsSnapshot3D | null} getRenderDiagnostics Latest frame when diagnostics are enabled.
+ * @property {() => object | null} getRenderFrameStats Frame timing percentiles (`p50Ms`, `p95Ms`, `p99Ms`) when diagnostics are enabled.
+ * @property {() => { traceEvents: object[], displayTimeUnit: string }} exportRenderChromeTrace Export Chrome Trace JSON events.
  * @property {(scene: object) => ThreeObject3D} getWorld
  * @property {(scene: object) => ThreeObject3D} getViewWorld
  * @property {(scene: object, object: object) => void} add
@@ -1228,6 +1230,8 @@ export function createThreeAdapter({
     culler3d,
     get contextLost() { return contextLost; },
     getRenderDiagnostics: () => renderDiagnostics?.snapshot() ?? null,
+    getRenderFrameStats: () => renderDiagnostics?.getFrameStats?.() ?? null,
+    exportRenderChromeTrace: () => renderDiagnostics?.exportChromeTrace?.() ?? { traceEvents: [], displayTimeUnit: 'ms' },
     getWorld,
     getViewWorld,
     add(scene, object) {
