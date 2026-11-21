@@ -209,10 +209,18 @@ function selectMaterial(slot) {
   renderList();
   const entry = matSummaries.find(m => m.slot === selectedId);
   if (!entry || !texArray) {
-    titleEl.textContent = 'CC0 PBR 材质';
+    titleEl.textContent = '通用地编 PBR 材质';
     if (downloadEl) downloadEl.hidden = true;
     mapsPanelEl.hidden = true;
     emptyEl.hidden = false;
+    if (meshGroup && viewport) {
+      viewport.scene.remove(meshGroup);
+      disposeObject3D(meshGroup);
+      meshGroup = null;
+    }
+    if (statusEl && texArray && matSummaries.length === 0) {
+      statusEl.textContent = '暂无通用 PBR 材质（通用地面/墙面无缝材质；除玻璃外无透明通道）';
+    }
     return;
   }
 

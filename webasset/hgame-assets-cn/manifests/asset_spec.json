@@ -12,6 +12,14 @@
     },
     "webpFallback": { "colorQuality": 80, "normalRmQuality": 92 }
   },
+  "materialRules": {
+    "purpose": "universal_level_building_seamless_pbr",
+    "requireSeamlessTiling": true,
+    "forbidAlphaCutout": true,
+    "allowedBlendModes": ["opaque", "translucent"],
+    "translucentOnlyForGlass": true,
+    "requireOpaqueAlphaForNonGlass": true
+  },
   "globalRules": {
     "maxGpuVertsHardCap": 65535,
     "allowedAttributes": ["POSITION", "NORMAL", "TEXCOORD_0"],

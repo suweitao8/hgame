@@ -51,8 +51,8 @@ const TEST_SCENES = [
   },
   {
     id: 'cn_material_grid',
-    name: '76层 2贴图 PBR 材质阵',
-    subtitle: 'Color(sRGB+35%AO) + Normal_RM(Nx,Ny,R,M) 全槽位实时同屏对比',
+    name: '通用 2贴图 PBR 材质阵',
+    subtitle: 'Color(sRGB+35%AO) + Normal_RM(Nx,Ny,R,M) 通用地编无缝材质同屏对比',
     viewpoints: {
       overview: { label: '阵列全景', pos: [0, 15, 22], target: [0, 0.5, 0], walkPos: [0, 1.7, 12], walkYaw: Math.PI },
     },

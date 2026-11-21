@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
@@ -376,12 +376,46 @@ async function writeSlotOutputs(slotName, color, normalRm, size) {
   ]);
 }
 
+function validateMaterialRule(entry, spec) {
+  const rules = spec.materialRules || {};
+  const blendMode = entry.blendMode || (entry.alphaCutout ? 'cutout' : 'opaque');
+  if (rules.forbidAlphaCutout !== false && (entry.alphaCutout || blendMode === 'cutout')) {
+    throw new Error(
+      `Material "${entry.slot}" uses alphaCutout/cutout, which is forbidden for universal seamless level-building PBR materials.`,
+    );
+  }
+  if (blendMode === 'translucent') {
+    const isGlass = entry.materialKind === 'glass' || /glass/i.test(entry.slot || '');
+    if (rules.translucentOnlyForGlass !== false && !isGlass) {
+      throw new Error(
+        `Material "${entry.slot}" uses blendMode="translucent", which is only allowed for glass materials.`,
+      );
+    }
+  } else if (blendMode !== 'opaque') {
+    throw new Error(`Material "${entry.slot}" has unsupported blendMode "${blendMode}".`);
+  }
+}
+
+async function cleanStaleSlotDirs(activeSlots) {
+  const reserved = new Set(['512', '256', 'hdri', ...activeSlots]);
+  const entries = await readdir(BUILT_MATERIALS, { withFileTypes: true });
+  for (const e of entries) {
+    if (e.isDirectory() && !reserved.has(e.name)) {
+      await rm(path.join(BUILT_MATERIALS, e.name), { recursive: true, force: true });
+    }
+  }
+}
+
 async function main() {
   const spec = JSON.parse(await readFile(SPEC_PATH, 'utf8'));
   const manifest = JSON.parse(await readFile(MANIFEST_PATH, 'utf8'));
   const masterSize = spec.tiers?.T0?.texSize?.master || 1024;
 
   await mkdir(BUILT_MATERIALS, { recursive: true });
+  for (const entry of manifest.materials || []) {
+    validateMaterialRule(entry, spec);
+  }
+  await cleanStaleSlotDirs((manifest.materials || []).map((m) => m.slot).concat(['__missing__']));
 
   // Layer 0: __missing__ checkerboard
   const missing = createMissingLayer(masterSize);
