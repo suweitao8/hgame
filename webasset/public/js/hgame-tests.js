@@ -439,7 +439,7 @@ async function buildCnCityRuralScene(group, colGroup, token) {
 }
 
 function buildMaterialGridScene(group) {
-  const slots = texArray.registry.listSlots({ includeMissing: true });
+  const slots = texArray.registry.listSlots({ includeMissing: false });
   const cols = 9;
   const spacing = 2.2;
   animatedPivots = [];
