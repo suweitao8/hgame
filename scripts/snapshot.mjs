@@ -231,7 +231,8 @@ try {
   if (!allowBlank && stats.nonBlankRatio < 0.001) report.problems.push('canvas is blank');
   if (checkUi) {
     const allowDebug = /(?:^|&)debug=1(?:&|$)/.test(query.replace(/^\?/, ''));
-    report.problems.push(...evaluateUiAudit(ui, { maxHudRatio, maxHudButtons, allowDebug }));
+    const maxHudTextChars = maxHudRatio > 0.2 ? 280 : 140;
+    report.problems.push(...evaluateUiAudit(ui, { maxHudRatio, maxHudButtons, allowDebug, maxHudTextChars }));
   }
   if (checkLayout) {
     report.problems.push(...evaluateLayoutAudit(ui));

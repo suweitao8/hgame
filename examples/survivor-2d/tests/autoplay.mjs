@@ -8,12 +8,16 @@ export default {
   name: 'survivor-2d storm extraction clear-rate & difficulty check',
   runs: 20,
   idleRuns: 10,
+  randomRuns: 6,
+  deterministic: true,
   tickHz: 60,
   maxSeconds: 60,
   minWinRate: 0.40,
   maxWinRate: 1.0,
   maxIdleWinRate: 0.0,
+  maxRandomWinRate: 0.25,
   minSkillDelta: 0.40,
+  minBotOverRandomDelta: 0.30,
   minAvgDurationSec: 5,
   maxTimeoutRate: 0.10,
   minKillsAvg: 5,
@@ -29,6 +33,19 @@ export default {
           input.x = 0;
           input.y = 0;
           input.choice = -1;
+          sim.step(dt, input);
+          return;
+        }
+        if (strategy === 'random') {
+          const h = (Math.imul(tick ^ (seed * 7919), 2654435761) >>> 0);
+          if (sim.state.pending) {
+            input.choice = h % sim.state.pending.length;
+          } else {
+            const ang = (h % 360) * (Math.PI / 180);
+            input.x = Math.cos(ang);
+            input.y = Math.sin(ang);
+            input.choice = -1;
+          }
           sim.step(dt, input);
           return;
         }

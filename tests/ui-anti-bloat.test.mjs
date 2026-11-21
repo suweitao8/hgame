@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { collectFiles, lintFiles } from '../.agents/skills/hgame-ui-ux/scripts/check-ui.mjs';
-import { computeUnionArea, evaluateUiAudit } from '../scripts/lib/snapshot-ui-audit.mjs';
+import { computeUnionArea, evaluateLayoutAudit, evaluateUiAudit } from '../scripts/lib/snapshot-ui-audit.mjs';
 import { createI18n, createPanelStack, createVirtualList } from '../assets/runtime/ui/index.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -234,6 +234,30 @@ test('evaluateUiAudit enforces HUD area, button quota, modal bypass, and debug g
     evaluateUiAudit({ hudAreaRatio: 0.04, visibleButtons: 0, debugVisible: true, modalActive: false }, { allowDebug: true }),
     [],
   );
+
+  const runtimeBloat = evaluateUiAudit({
+    hudAreaRatio: 0.05,
+    visibleButtons: 1,
+    debugVisible: false,
+    modalActive: false,
+    visibleTextChars: 180,
+    proseViolations: ['<p> "按 WASD 移动"'],
+    overlongButtons: [{ label: '这是一句超长按钮文案用来测防臃肿', length: 19, max: 18 }],
+  });
+  assert.equal(runtimeBloat.length, 3);
+
+  const layoutIssues = evaluateLayoutAudit({
+    layout: {
+      overflowX: 0,
+      overflowY: 0,
+      clippedButtons: [],
+      overlappingButtons: [],
+      clippedPanels: [{ label: '#stats', rect: { left: 290, top: 8, right: 375, bottom: 26 } }],
+      overlappingHudElements: [['i', '#stats']],
+      clippedTouchControls: [{ label: 'spin', rect: { left: 320, top: 720, right: 390, bottom: 790 } }],
+    },
+  });
+  assert.equal(layoutIssues.length, 3);
 });
 
 test('documented 15-ui-kit snippet APIs execute cleanly', () => {

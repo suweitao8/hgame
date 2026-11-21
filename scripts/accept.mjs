@@ -75,6 +75,7 @@ function parseArgs(argv) {
     allowIdMismatch: false,
     viewport: '960x540',
     mobileViewport: '360x800',
+    skipMobilePlaytest: false,
     ready: '',
     chrome: '',
     out: '',
@@ -103,6 +104,7 @@ function parseArgs(argv) {
     else if (a === '--allow-id-mismatch') opts.allowIdMismatch = true;
     else if (a === '--viewport') opts.viewport = takeValue(i++, a);
     else if (a === '--mobile-viewport') opts.mobileViewport = takeValue(i++, a);
+    else if (a === '--skip-mobile-playtest') opts.skipMobilePlaytest = true;
     else if (a === '--ready') opts.ready = takeValue(i++, a);
     else if (a === '--chrome') opts.chrome = takeValue(i++, a);
     else if (a === '--out') opts.out = takeValue(i++, a);
@@ -567,11 +569,11 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript) {
   const allowBlank = meta.isBare && !opts.strict;
   const allowStatic = meta.isUi || (meta.isBare && !opts.strict);
 
-  const args = [
+  const buildArgs = viewport => [
     gameDir,
     '--selector', meta.selector,
     '--ready', meta.ready,
-    '--viewport', opts.viewport,
+    '--viewport', viewport,
     '--check-ui',
     '--check-layout',
     ...(allowBlank ? ['--allow-blank'] : []),
@@ -580,7 +582,7 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript) {
     ...(scenario ? ['--scenario', scenario] : ['--duration', '1600']),
   ];
 
-  const { exitCode, report } = runJsonSubprocess(playtestScript, args, { cwd: gameDir, timeoutMs: 150_000 });
+  const { exitCode, report } = runJsonSubprocess(playtestScript, buildArgs(opts.viewport), { cwd: gameDir, timeoutMs: 150_000 });
   const errors = [];
   if (exitCode !== 0 || report.ok !== true) {
     errors.push(...(report.problems?.length ? report.problems : [`playtest failed (${exitCode})`]));
@@ -592,12 +594,29 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript) {
     errors.push('strict mode requires window.__hgameState() telemetry');
   }
 
+  let mobileReport = null;
+  const runMobile = Boolean(scenario) && !opts.skipMobilePlaytest && opts.mobileViewport && opts.mobileViewport !== opts.viewport;
+  if (runMobile) {
+    const mobileRes = runJsonSubprocess(playtestScript, buildArgs(opts.mobileViewport), { cwd: gameDir, timeoutMs: 150_000 });
+    mobileReport = mobileRes.report;
+    if (mobileRes.exitCode !== 0 || mobileRes.report?.ok !== true) {
+      const probs = mobileRes.report?.problems?.length ? mobileRes.report.problems : [`mobile playtest failed (${mobileRes.exitCode})`];
+      for (const p of probs) errors.push(`[${opts.mobileViewport}] ${p}`);
+    }
+  }
+
   return {
     status: errors.length === 0 ? 'passed' : 'failed',
     scenario: scenario ? path.relative(gameDir, scenario).replace(/\\/g, '/') : null,
+    viewports: runMobile ? [opts.viewport, opts.mobileViewport] : [opts.viewport],
     visualChanged: report.visualChanged ?? null,
     stateChanged: report.stateChanged ?? null,
     checkpoints: report.checkpoints ?? null,
+    uiAudits: report.uiAudits ?? null,
+    ...(mobileReport ? {
+      mobileCheckpoints: mobileReport.checkpoints ?? null,
+      mobileUiAudits: mobileReport.uiAudits ?? null,
+    } : {}),
     frameStats: report.frameStats ?? null,
     consoleErrors: report.consoleErrors ?? [],
     httpErrors: report.httpErrors ?? [],

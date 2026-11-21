@@ -249,6 +249,63 @@ test('check-autoplay validates clear rate, idle skill gap, non-finite telemetry,
     const taskPass = runNode(taskCheckScript, ['task.json'], { cwd: tmp });
     assert.equal(taskPass.status, 0, taskPass.stdout + taskPass.stderr);
     assert.equal(JSON.parse(taskPass.stdout).status, 'passed');
+
+    // 6. Three-tier bot vs random vs idle skill progression + determinism check.
+    await writeSpec(`
+      export const config = {
+        runs: 6,
+        idleRuns: 4,
+        randomRuns: 4,
+        deterministic: true,
+        minWinRate: 0.6,
+        maxIdleWinRate: 0.1,
+        maxRandomWinRate: 0.3,
+        minSkillDelta: 0.4,
+        minBotOverRandomDelta: 0.3,
+        minAvgDurationSec: 5,
+        maxAvgDurationSec: 30,
+      };
+      export function runSeed(seed, strategy) {
+        if (strategy === 'idle') return { outcome: 'defeat', durationSec: 4, kills: 0 };
+        if (strategy === 'random') return { outcome: seed === 1 ? 'victory' : 'defeat', durationSec: 8, kills: 2 };
+        return { outcome: 'victory', durationSec: 14, kills: 12, score: 100 };
+      }
+    `);
+    const tierOk = runNode(checkAutoplayScript, [tmp, '--json']);
+    assert.equal(tierOk.status, 0, tierOk.stdout + tierOk.stderr);
+    const tierReport = JSON.parse(tierOk.stdout);
+    assert.equal(tierReport.deterministic, true);
+    assert.equal(tierReport.bot.p50DurationSec, 14);
+    assert.equal(tierReport.random.winRate, 0.25);
+
+    // Random clearing too easily violates maxRandomWinRate / minBotOverRandomDelta.
+    await writeSpec(`
+      export const config = {
+        runs: 6, idleRuns: 4, randomRuns: 4,
+        minWinRate: 0.6, maxIdleWinRate: 0.1, maxRandomWinRate: 0.25, minBotOverRandomDelta: 0.3,
+      };
+      export function runSeed(_seed, strategy) {
+        if (strategy === 'idle') return { outcome: 'defeat', durationSec: 4, kills: 0 };
+        return { outcome: 'victory', durationSec: 12, kills: 10 };
+      }
+    `);
+    const randomEasy = runNode(checkAutoplayScript, [tmp, '--json']);
+    assert.equal(randomEasy.status, 1);
+    assert.match(randomEasy.stdout, /maxRandomWinRate|bot-over-random/i);
+
+    // Non-deterministic Math.random() simulation fails deterministic check.
+    await writeSpec(`
+      export const config = { runs: 4, idleRuns: 2, deterministic: true, minWinRate: 0.5, minAvgDurationSec: 5 };
+      let counter = 0;
+      export function runSeed(seed, strategy) {
+        if (strategy === 'idle') return { outcome: 'defeat', durationSec: 4, kills: 0 };
+        counter++;
+        return { outcome: 'victory', durationSec: 12, kills: 10 + counter };
+      }
+    `);
+    const nonDet = runNode(checkAutoplayScript, [tmp, '--json']);
+    assert.equal(nonDet.status, 1);
+    assert.match(nonDet.stdout, /determinism check failed/i);
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

@@ -5,12 +5,16 @@ export default {
   name: 'arena-3d clear-rate & difficulty check',
   runs: 20,
   idleRuns: 10,
+  randomRuns: 6,
+  deterministic: true,
   tickHz: 60,
   maxSeconds: 180,
   minWinRate: 0.40,
   maxWinRate: 1.0,
   maxIdleWinRate: 0.10,
+  maxRandomWinRate: 0.25,
   minSkillDelta: 0.35,
+  minBotOverRandomDelta: 0.30,
   minAvgDurationSec: 10,
   maxTimeoutRate: 0.15,
   minKillsAvg: 1,
@@ -27,6 +31,16 @@ export default {
           input.mz = 0;
           input.jump = false;
           input.attack = false;
+          sim.step(dt, input);
+          return;
+        }
+        if (strategy === 'random') {
+          const h = (Math.imul(tick ^ (seed * 7919), 2654435761) >>> 0);
+          const ang = (h % 360) * (Math.PI / 180);
+          input.mx = Math.cos(ang);
+          input.mz = Math.sin(ang);
+          input.jump = (h & 31) === 0;
+          input.attack = (h & 7) === 0;
           sim.step(dt, input);
           return;
         }

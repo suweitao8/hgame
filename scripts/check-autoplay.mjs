@@ -60,6 +60,9 @@ function summarizeGroup(results) {
     if (r.nonFinite) nonFiniteCount++;
   }
 
+  const durs = results.map(r => (Number.isFinite(r.durationSec) ? r.durationSec : 0)).sort((a, b) => a - b);
+  const p50DurationSec = durs.length > 0 ? durs[Math.floor((durs.length - 1) * 0.5)] : 0;
+
   return {
     runs: n,
     wins,
@@ -69,6 +72,7 @@ function summarizeGroup(results) {
     defeatRate: +(defeats / n).toFixed(4),
     timeoutRate: +(timeouts / n).toFixed(4),
     avgDurationSec: +(sumDur / n).toFixed(2),
+    p50DurationSec: +p50DurationSec.toFixed(2),
     minDurationSec: +(minDur === Infinity ? 0 : minDur).toFixed(2),
     maxDurationSec: +maxDur.toFixed(2),
     avgScore: +(sumScore / n).toFixed(2),
@@ -174,10 +178,24 @@ export async function runAutoplayGate(gameDir, opts = {}) {
   const botRunsCount = opts.runs ?? spec.runs ?? 20;
   const skipIdle = Boolean(spec.skipIdle) || (opts.idleRuns ?? spec.idleRuns ?? 10) <= 0;
   const idleRunsCount = skipIdle ? 0 : (opts.idleRuns ?? spec.idleRuns ?? 10);
+  const randomRunsCount = Math.max(0, opts.randomRuns ?? spec.randomRuns ?? 0);
+  const checkDeterminism = Boolean(opts.checkDeterminism ?? spec.deterministic);
 
   const botResults = [];
   for (let s = 1; s <= botRunsCount; s++) {
     botResults.push(await runSingleSeed(spec, s, 'bot'));
+  }
+
+  let determinismOk = null;
+  if (checkDeterminism && botRunsCount >= 1) {
+    const first = botResults[0];
+    const replay = await runSingleSeed(spec, 1, 'bot');
+    determinismOk =
+      first.outcome === replay.outcome &&
+      Math.abs(first.durationSec - replay.durationSec) < 0.001 &&
+      Math.abs(first.score - replay.score) < 0.001 &&
+      first.kills === replay.kills &&
+      first.level === replay.level;
   }
 
   const idleResults = [];
@@ -185,23 +203,39 @@ export async function runAutoplayGate(gameDir, opts = {}) {
     idleResults.push(await runSingleSeed(spec, s, 'idle'));
   }
 
+  const randomResults = [];
+  for (let s = 1; s <= randomRunsCount; s++) {
+    randomResults.push(await runSingleSeed(spec, s, 'random'));
+  }
+
   const bot = summarizeGroup(botResults);
   const idle = skipIdle ? null : summarizeGroup(idleResults);
+  const random = randomRunsCount > 0 ? summarizeGroup(randomResults) : null;
   const skillDelta = idle ? +(bot.winRate - idle.winRate).toFixed(4) : null;
+  const botOverRandomDelta = random ? +(bot.winRate - random.winRate).toFixed(4) : null;
 
   const minWinRate = spec.minWinRate ?? 0.30;
   const maxWinRate = spec.maxWinRate ?? 1.0;
   const maxIdleWinRate = spec.maxIdleWinRate ?? 0.15;
+  const maxRandomWinRate = spec.maxRandomWinRate ?? 0.45;
   const minSkillDelta = spec.minSkillDelta ?? (idle ? 0.20 : 0);
+  const minBotOverRandomDelta = spec.minBotOverRandomDelta ?? (random ? 0.15 : 0);
   const minAvgDurationSec = spec.minAvgDurationSec ?? 3;
+  const maxAvgDurationSec = spec.maxAvgDurationSec ?? Infinity;
   const maxTimeoutRate = spec.maxTimeoutRate ?? 0.15;
 
   const reasons = [];
+  if (determinismOk === false) {
+    reasons.push('Determinism check failed: seed #1 replay diverged between identical bot runs (suspected Math.random() or non-deterministic order)');
+  }
   if (bot.nonFiniteCount > 0) {
     reasons.push(`Bot simulation produced NaN/Infinity in ${bot.nonFiniteCount} run(s)`);
   }
   if (idle && idle.nonFiniteCount > 0) {
     reasons.push(`Idle simulation produced NaN/Infinity in ${idle.nonFiniteCount} run(s)`);
+  }
+  if (random && random.nonFiniteCount > 0) {
+    reasons.push(`Random simulation produced NaN/Infinity in ${random.nonFiniteCount} run(s)`);
   }
   if (bot.winRate < minWinRate) {
     reasons.push(`Bot clear rate ${(bot.winRate * 100).toFixed(1)}% below minWinRate ${(minWinRate * 100).toFixed(1)}% (game too hard or unbeatable)`);
@@ -212,6 +246,9 @@ export async function runAutoplayGate(gameDir, opts = {}) {
   if (bot.avgDurationSec < minAvgDurationSec) {
     reasons.push(`Bot avg run duration ${bot.avgDurationSec}s below minimum ${minAvgDurationSec}s (suspected instant-death tuning)`);
   }
+  if (Number.isFinite(maxAvgDurationSec) && bot.avgDurationSec > maxAvgDurationSec) {
+    reasons.push(`Bot avg run duration ${bot.avgDurationSec}s exceeds maximum ${maxAvgDurationSec}s (pacing too slow or stalled)`);
+  }
   if (bot.timeoutRate > maxTimeoutRate) {
     reasons.push(`Bot timeout rate ${(bot.timeoutRate * 100).toFixed(1)}% exceeds ${(maxTimeoutRate * 100).toFixed(1)}% (softlock or pacing stall)`);
   }
@@ -221,36 +258,61 @@ export async function runAutoplayGate(gameDir, opts = {}) {
   if (idle && skillDelta < minSkillDelta) {
     reasons.push(`Skill delta ${(skillDelta * 100).toFixed(1)}% (bot ${(bot.winRate * 100).toFixed(1)}% - idle ${(idle.winRate * 100).toFixed(1)}%) below ${(minSkillDelta * 100).toFixed(1)}%`);
   }
+  if (random && random.winRate > maxRandomWinRate) {
+    reasons.push(`Random-input clear rate ${(random.winRate * 100).toFixed(1)}% exceeds maxRandomWinRate ${(maxRandomWinRate * 100).toFixed(1)}% (button-mashing clears too easily)`);
+  }
+  if (random && botOverRandomDelta < minBotOverRandomDelta) {
+    reasons.push(`Bot-over-random delta ${(botOverRandomDelta * 100).toFixed(1)}% (bot ${(bot.winRate * 100).toFixed(1)}% - random ${(random.winRate * 100).toFixed(1)}%) below ${(minBotOverRandomDelta * 100).toFixed(1)}%`);
+  }
   if (spec.minKillsAvg !== undefined && bot.avgKills < spec.minKillsAvg) {
     reasons.push(`Bot avg kills ${bot.avgKills} below minKillsAvg ${spec.minKillsAvg}`);
+  }
+  if (spec.minScoreAvg !== undefined && bot.avgScore < spec.minScoreAvg) {
+    reasons.push(`Bot avg score ${bot.avgScore} below minScoreAvg ${spec.minScoreAvg}`);
   }
 
   return {
     ok: reasons.length === 0,
     spec: path.relative(absDir, specPath).replace(/\\/g, '/'),
     name: spec.name ?? path.basename(absDir),
+    deterministic: determinismOk,
     thresholds: {
       minWinRate,
       maxWinRate,
       maxIdleWinRate: idle ? maxIdleWinRate : null,
       minSkillDelta: idle ? minSkillDelta : null,
+      maxRandomWinRate: random ? maxRandomWinRate : null,
+      minBotOverRandomDelta: random ? minBotOverRandomDelta : null,
       minAvgDurationSec,
+      maxAvgDurationSec: Number.isFinite(maxAvgDurationSec) ? maxAvgDurationSec : null,
       maxTimeoutRate,
     },
     bot,
     idle,
+    ...(random ? { random, botOverRandomDelta } : {}),
     skillDelta,
     reasons,
   };
 }
 
 function parseArgs(argv) {
-  const opts = { gameDir: '.', specPath: '', runs: undefined, idleRuns: undefined, json: false, help: false };
+  const opts = {
+    gameDir: '.',
+    specPath: '',
+    runs: undefined,
+    idleRuns: undefined,
+    randomRuns: undefined,
+    checkDeterminism: undefined,
+    json: false,
+    help: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--spec') opts.specPath = argv[++i] ?? '';
     else if (a === '--runs') opts.runs = Math.max(1, parseInt(argv[++i] ?? '20', 10) || 20);
     else if (a === '--idle-runs') opts.idleRuns = Math.max(0, parseInt(argv[++i] ?? '10', 10) || 0);
+    else if (a === '--random-runs') opts.randomRuns = Math.max(0, parseInt(argv[++i] ?? '0', 10) || 0);
+    else if (a === '--check-determinism') opts.checkDeterminism = true;
     else if (a === '--json') opts.json = true;
     else if (a === '--help' || a === '-h') opts.help = true;
     else if (!a.startsWith('-')) opts.gameDir = a;
@@ -262,7 +324,7 @@ function parseArgs(argv) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
-    console.log('Usage: node scripts/check-autoplay.mjs [game-dir] [--spec tests/autoplay.mjs] [--runs N] [--idle-runs N] [--json]');
+    console.log('Usage: node scripts/check-autoplay.mjs [game-dir] [--spec tests/autoplay.mjs] [--runs N] [--idle-runs N] [--random-runs N] [--check-determinism] [--json]');
     return;
   }
   const report = await runAutoplayGate(opts.gameDir, opts);
@@ -274,6 +336,9 @@ async function main() {
     console.log(`  Bot (${report.bot.runs} runs): winRate=${(report.bot.winRate * 100).toFixed(1)}% avgDur=${report.bot.avgDurationSec}s avgKills=${report.bot.avgKills} timeouts=${report.bot.timeouts}`);
     if (report.idle) {
       console.log(`  Idle (${report.idle.runs} runs): winRate=${(report.idle.winRate * 100).toFixed(1)}% avgDur=${report.idle.avgDurationSec}s skillDelta=${(report.skillDelta * 100).toFixed(1)}%`);
+    }
+    if (report.random) {
+      console.log(`  Random (${report.random.runs} runs): winRate=${(report.random.winRate * 100).toFixed(1)}% avgDur=${report.random.avgDurationSec}s botOverRandom=${(report.botOverRandomDelta * 100).toFixed(1)}%`);
     }
     for (const r of report.reasons) console.log(`  -> ${r}`);
   }

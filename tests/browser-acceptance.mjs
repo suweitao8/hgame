@@ -128,9 +128,31 @@ try {
   assert.equal(dynamicReport.gates.playtest.status, 'failed');
   assert.match(JSON.stringify(dynamicReport.gates.playtest), /UI audit \[upgrade\].*clipped/i);
 
+  // 7. Mobile-only (360x800) HUD/button overflow during gameplay caught even when desktop (960x540) is clean.
+  await writeFile(
+    path.join(negGame, 'tests', 'acceptance.mjs'),
+    [
+      'export async function run({ page, auditUi }) {',
+      '  await auditUi("playing");',
+      '  await page.evaluate(() => {',
+      '    const b = document.createElement("button");',
+      '    b.textContent = "窄屏溢出";',
+      '    b.style.cssText = "position:fixed;left:340px;top:16px;width:90px;height:36px;";',
+      '    document.body.appendChild(b);',
+      '  });',
+      '  await auditUi("upgrade");',
+      '}',
+    ].join('\n'),
+  );
+  const mobileDynamicRes = runNode(path.join(negGame, 'scripts', 'accept.mjs'), ['.', '--skip-webasset', '--json'], { cwd: negGame });
+  assert.equal(mobileDynamicRes.status, 1, 'Mobile-only clipped button during scenario must fail dual-viewport playtest');
+  const mobileDynamicReport = JSON.parse(mobileDynamicRes.stdout);
+  assert.equal(mobileDynamicReport.gates.playtest.status, 'failed');
+  assert.match(JSON.stringify(mobileDynamicReport.gates.playtest), /360x800.*UI audit \[upgrade\].*clipped/i);
+
   console.log(JSON.stringify({
     negativeBrowserGates: 'all-caught',
-    cases: ['nan-state', 'dead-input', 'mobile-clipped-button', 'blank-canvas', 'missing-autoplay', 'dynamic-ui-audit'],
+    cases: ['nan-state', 'dead-input', 'mobile-clipped-button', 'blank-canvas', 'missing-autoplay', 'dynamic-ui-audit', 'mobile-only-dynamic-ui-audit'],
   }));
 } finally {
   await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });

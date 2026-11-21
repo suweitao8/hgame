@@ -174,6 +174,10 @@ export function collectPageUiAudit() {
   }
 
   const uiRects = [];
+  const hudLeaves = [];
+  const clippedPanels = [];
+  const proseViolations = [];
+  const PROSE_PATTERN = /操作说明|玩法介绍|规则说明|游戏说明|How to play|Powered by/i;
   let visibleTextChars = 0;
   const allElements = document.body ? document.body.querySelectorAll('*') : [];
   for (const el of allElements) {
@@ -199,31 +203,71 @@ export function collectPageUiAudit() {
 
     if (painted) pushClamped(uiRects, rect);
 
+    let directText = '';
     for (const child of el.childNodes) {
       if (child.nodeType !== 3) continue;
       const trimmed = child.nodeValue ? child.nodeValue.trim() : '';
       if (!trimmed) continue;
+      directText += (directText ? ' ' : '') + trimmed;
       visibleTextChars += trimmed.length;
       const range = document.createRange();
       range.selectNodeContents(child);
       for (const tr of range.getClientRects()) pushClamped(uiRects, tr);
+    }
+
+    if ((el.tagName === 'P' || el.tagName === 'FOOTER') && (el.textContent || '').trim().length > 0) {
+      proseViolations.push(`<${el.tagName.toLowerCase()}> "${(el.textContent || '').trim().slice(0, 28)}"`);
+    } else if (directText && PROSE_PATTERN.test(directText)) {
+      proseViolations.push(`copy "${directText.slice(0, 28)}"`);
+    }
+
+    const isFullscreenLayer = rect.width >= vw * 0.9 && rect.height >= vh * 0.5;
+    const isButtonOrInsideButton = el.tagName === 'BUTTON' || el.getAttribute('role') === 'button' || Boolean(el.closest('button, [role="button"]'));
+    const hasOverflowParent = (() => {
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const pst = getComputedStyle(p);
+        if (pst.overflow !== 'visible' || pst.overflowX !== 'visible' || pst.overflowY !== 'visible') return true;
+      }
+      return false;
+    })();
+    if (!isButtonOrInsideButton && !isFullscreenLayer && (directText || (painted && el.children.length === 0))) {
+      const tagLabel = el.id ? `#${el.id}` : (directText ? directText.slice(0, 18) : el.tagName.toLowerCase());
+      hudLeaves.push({ el, label: tagLabel, rect });
+      if (!hasOverflowParent && (rect.left < -2 || rect.top < -2 || rect.right > vw + 2 || rect.bottom > vh + 2)) {
+        clippedPanels.push({
+          label: tagLabel,
+          rect: {
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+            right: Math.round(rect.right),
+            bottom: Math.round(rect.bottom),
+          },
+        });
+      }
     }
   }
 
   const visibleButtonLabels = [];
   const visibleButtonRects = [];
   const clippedButtons = [];
+  const overlongButtons = [];
   for (const btn of document.querySelectorAll('button, [role="button"]')) {
     if (btn.closest(TOUCH_SELECTOR) || btn.closest(DEBUG_SELECTOR)) continue;
     if (!isVisible(btn)) continue;
     const rect = btn.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
-    const label = (btn.innerText || btn.textContent || btn.getAttribute('aria-label') || '').trim().slice(0, 24);
-    visibleButtonLabels.push(label);
-    visibleButtonRects.push({ label, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height });
+    const label = (btn.innerText || btn.textContent || btn.getAttribute('aria-label') || '').trim().slice(0, 48);
+    const compactLen = label.replace(/\s+/g, ' ').trim().length;
+    const isCard = btn.classList.contains('card') || Boolean(btn.closest('#levelup, .levelup, #choices, [data-cards]'));
+    const maxLen = isCard ? 28 : 18;
+    if (compactLen > maxLen) {
+      overlongButtons.push({ label: label.slice(0, 28), length: compactLen, max: maxLen });
+    }
+    visibleButtonLabels.push(label.slice(0, 24));
+    visibleButtonRects.push({ el: btn, label: label.slice(0, 24), left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height });
     if (rect.left < -2 || rect.top < -2 || rect.right > vw + 2 || rect.bottom > vh + 2 || rect.width < 16 || rect.height < 16) {
       clippedButtons.push({
-        label,
+        label: label.slice(0, 24),
         rect: {
           left: Math.round(rect.left),
           top: Math.round(rect.top),
@@ -236,6 +280,22 @@ export function collectPageUiAudit() {
     }
   }
 
+  const clippedTouchControls = [];
+  for (const root of document.querySelectorAll(TOUCH_SELECTOR)) {
+    if (!isVisible(root)) continue;
+    for (const ctrl of root.querySelectorAll('button, [role="button"], canvas, .hgame-touch-stick, .hgame-touch-btn')) {
+      if (!isVisible(ctrl)) continue;
+      const r = ctrl.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      if (r.left < -2 || r.top < -2 || r.right > vw + 2 || r.bottom > vh + 2) {
+        clippedTouchControls.push({
+          label: (ctrl.getAttribute('aria-label') || ctrl.textContent || ctrl.className || 'touch').toString().trim().slice(0, 20),
+          rect: { left: Math.round(r.left), top: Math.round(r.top), right: Math.round(r.right), bottom: Math.round(r.bottom) },
+        });
+      }
+    }
+  }
+
   const overlappingButtons = [];
   for (let i = 0; i < visibleButtonRects.length; i++) {
     for (let j = i + 1; j < visibleButtonRects.length; j++) {
@@ -245,6 +305,25 @@ export function collectPageUiAudit() {
       const iy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
       if (ix > 4 && iy > 4) {
         overlappingButtons.push([a.label || `#${i}`, b.label || `#${j}`]);
+      }
+    }
+  }
+
+  const overlappingHudElements = [];
+  if (!modalActive) {
+    for (let i = 0; i < hudLeaves.length; i++) {
+      for (let j = i + 1; j < hudLeaves.length; j++) {
+        const a = hudLeaves[i];
+        const b = hudLeaves[j];
+        if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+        const ix = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left);
+        const iy = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top);
+        if (ix > 8 && iy > 8) {
+          const minArea = Math.max(1, Math.min(a.rect.width * a.rect.height, b.rect.width * b.rect.height));
+          if ((ix * iy) / minArea > 0.25) {
+            overlappingHudElements.push([a.label, b.label]);
+          }
+        }
       }
     }
   }
@@ -262,11 +341,16 @@ export function collectPageUiAudit() {
     visibleTextChars,
     debugVisible,
     modalActive,
+    proseViolations: proseViolations.slice(0, 6),
+    overlongButtons: overlongButtons.slice(0, 6),
     layout: {
       overflowX,
       overflowY,
       clippedButtons,
       overlappingButtons,
+      clippedPanels: clippedPanels.slice(0, 6),
+      overlappingHudElements: overlappingHudElements.slice(0, 6),
+      clippedTouchControls: clippedTouchControls.slice(0, 6),
     },
   };
 }
@@ -274,10 +358,10 @@ export function collectPageUiAudit() {
 /**
  * Evaluates a collected page UI audit against Anti-Bloat budgets.
  * @param {ReturnType<typeof collectPageUiAudit> | null | undefined} audit
- * @param {{ maxHudRatio?: number, maxHudButtons?: number, allowDebug?: boolean }} [options]
+ * @param {{ maxHudRatio?: number, maxHudButtons?: number, allowDebug?: boolean, maxHudTextChars?: number }} [options]
  * @returns {string[]}
  */
-export function evaluateUiAudit(audit, { maxHudRatio = 0.10, maxHudButtons = 1, allowDebug = false } = {}) {
+export function evaluateUiAudit(audit, { maxHudRatio = 0.10, maxHudButtons = 1, allowDebug = false, maxHudTextChars = 140 } = {}) {
   const problems = [];
   if (!audit) return problems;
   if (!allowDebug && audit.debugVisible) {
@@ -289,11 +373,20 @@ export function evaluateUiAudit(audit, { maxHudRatio = 0.10, maxHudButtons = 1, 
   if (!audit.modalActive && audit.visibleButtons > maxHudButtons) {
     problems.push(`visible HUD buttons ${audit.visibleButtons} exceed ${maxHudButtons}`);
   }
+  if (Array.isArray(audit.proseViolations) && audit.proseViolations.length > 0) {
+    problems.push(`prohibited runtime prose/tag visible: ${audit.proseViolations.join(', ')}`);
+  }
+  if (Array.isArray(audit.overlongButtons) && audit.overlongButtons.length > 0) {
+    problems.push(`overlong button label(s): ${audit.overlongButtons.map(b => `${b.label} (${b.length}>${b.max})`).join(', ')}`);
+  }
+  if (!audit.modalActive && Number.isFinite(audit.visibleTextChars) && audit.visibleTextChars > maxHudTextChars) {
+    problems.push(`visible HUD text ${audit.visibleTextChars} chars exceeds ${maxHudTextChars}`);
+  }
   return problems;
 }
 
 /**
- * Evaluates viewport overflow, offscreen/undersized buttons, and overlapping interactive buttons.
+ * Evaluates viewport overflow, offscreen/undersized buttons, and overlapping interactive buttons or HUD panels.
  * @param {ReturnType<typeof collectPageUiAudit> | null | undefined} audit
  * @param {{ maxOverflow?: number }} [options]
  * @returns {string[]}
@@ -315,6 +408,18 @@ export function evaluateLayoutAudit(audit, { maxOverflow = 2 } = {}) {
   if (Array.isArray(layout.overlappingButtons) && layout.overlappingButtons.length > 0) {
     const pairs = layout.overlappingButtons.map(([a, b]) => `${a} vs ${b}`).join(', ');
     problems.push(`overlapping visible buttons: ${pairs}`);
+  }
+  if (Array.isArray(layout.clippedPanels) && layout.clippedPanels.length > 0) {
+    const names = layout.clippedPanels.map(p => p.label || JSON.stringify(p.rect)).join(', ');
+    problems.push(`clipped visible HUD panel(s): ${names}`);
+  }
+  if (Array.isArray(layout.overlappingHudElements) && layout.overlappingHudElements.length > 0) {
+    const pairs = layout.overlappingHudElements.map(([a, b]) => `${a} vs ${b}`).join(', ');
+    problems.push(`overlapping visible HUD element(s): ${pairs}`);
+  }
+  if (Array.isArray(layout.clippedTouchControls) && layout.clippedTouchControls.length > 0) {
+    const names = layout.clippedTouchControls.map(t => t.label || JSON.stringify(t.rect)).join(', ');
+    problems.push(`clipped visible touch control(s): ${names}`);
   }
   return problems;
 }

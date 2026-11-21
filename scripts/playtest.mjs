@@ -345,8 +345,9 @@ async function runCli() {
       const allowDebug = options.allowDebug ?? /(?:^|&)debug=1(?:&|$)/.test(query.replace(/^\?/, ''));
       const maxHudRatio = options.maxHudRatio ?? (profile === 'ui' ? 0.85 : 0.10);
       const maxHudButtons = options.maxHudButtons ?? (profile === 'ui' ? 4 : 1);
+      const maxHudTextChars = options.maxHudTextChars ?? (profile === 'ui' ? 280 : 140);
       const problems = [
-        ...evaluateUiAudit(ui, { allowDebug, maxHudRatio, maxHudButtons }),
+        ...evaluateUiAudit(ui, { allowDebug, maxHudRatio, maxHudButtons, maxHudTextChars }),
         ...evaluateLayoutAudit(ui),
       ];
       const entry = { label, ok: problems.length === 0, ui, problems };
@@ -447,7 +448,7 @@ async function runCli() {
       const allowDebug = /(?:^|&)debug=1(?:&|$)/.test(query.replace(/^\?/, ''));
       report.problems.push(...evaluateUiAudit(uiAudit, {
         allowDebug,
-        ...(profile === 'ui' ? { maxHudRatio: 0.85, maxHudButtons: 4 } : {}),
+        ...(profile === 'ui' ? { maxHudRatio: 0.85, maxHudButtons: 4, maxHudTextChars: 280 } : { maxHudTextChars: 140 }),
       }));
     }
     if (checkLayout && uiAudit) {
