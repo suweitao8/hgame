@@ -149,3 +149,62 @@ export function extractRootMotion(rootBone: any, prevState?: {
  * @param {number} [alpha=1] Smoothing/lerp factor toward `targetWeights`.
  */
 export function blendMorphTargets(root: object, targetWeights: Record<string | number, number>, alpha?: number | undefined): number;
+/**
+ * Presentation-layer Verlet SpringBone chain for Blender Auto-Rig secondary motion
+ * (hair, capes, ribbons, tails). Purely visual — zero Rapier physics overhead and
+ * never perturbs deterministic lockstep simulation.
+ *
+ * @param {object} options
+ * @param {object[]} options.bones Ordered bone chain `[root, child1, ...]`.
+ * @param {number} [options.stiffness=24] Rest-pose spring stiffness (1/s^2).
+ * @param {number} [options.drag=0.25] Velocity damping factor in `[0, 0.99]`.
+ * @param {[number, number, number] | { x: number, y: number, z: number }} [options.gravity=[0, -9.8, 0]]
+ * @param {[number, number, number] | { x: number, y: number, z: number }} [options.wind=[0, 0, 0]]
+ * @param {Array<object>} [options.colliders=[]] Spherical colliders `{ center|position, radius }`.
+ * @param {number} [options.boneLength=0.25] Fallback length for the leaf bone.
+ * @param {number} [options.tipRadius=0.04] Bone collision sphere padding radius.
+ */
+export function createSpringBoneChain3D({ bones, stiffness, drag, gravity, wind, colliders, boneLength, tipRadius, }?: {
+    bones: object[];
+    stiffness?: number | undefined;
+    drag?: number | undefined;
+    gravity?: [number, number, number] | {
+        x: number;
+        y: number;
+        z: number;
+    } | undefined;
+    wind?: [number, number, number] | {
+        x: number;
+        y: number;
+        z: number;
+    } | undefined;
+    colliders?: any[] | undefined;
+    boneLength?: number | undefined;
+    tipRadius?: number | undefined;
+}): Readonly<{
+    readonly boneCount: number;
+    setWind(vec: any): void;
+    setColliders(list: any): void;
+    getTipPositions(): {
+        x: any;
+        y: any;
+        z: any;
+    }[];
+    update: (dt?: number) => number;
+    reset: () => void;
+}>;
+/**
+ * Lightweight exponential inertialization blender for smooth pose/clip transitions
+ * without running two full skeletal evaluators concurrently.
+ * @param {object} [options]
+ * @param {number} [options.halfLife=0.12] Decay half-life in seconds.
+ */
+export function createInertialBlend3D({ halfLife }?: {
+    halfLife?: number | undefined;
+} | undefined): Readonly<{
+    capture: (bones: any, prevPoses: any) => number;
+    apply: (bones: any, dt?: number) => boolean;
+    reset: () => void;
+    readonly active: boolean;
+    readonly weight: number;
+}>;

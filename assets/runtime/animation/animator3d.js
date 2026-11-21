@@ -1001,3 +1001,360 @@ export function blendMorphTargets(root, targetWeights, alpha = 1) {
   else applyMesh(root);
   return updated;
 }
+
+function readColliderCenter(col, out) {
+  if (!col) return out;
+  if (col.center) return readVec3(col.center, out);
+  if (col.position) return readVec3(col.position, out);
+  if (col.matrixWorld?.elements) {
+    const e = col.matrixWorld.elements;
+    out.x = e[12]; out.y = e[13]; out.z = e[14];
+    return out;
+  }
+  out.x = 0; out.y = 0; out.z = 0;
+  return out;
+}
+
+/**
+ * Presentation-layer Verlet SpringBone chain for Blender Auto-Rig secondary motion
+ * (hair, capes, ribbons, tails). Purely visual — zero Rapier physics overhead and
+ * never perturbs deterministic lockstep simulation.
+ *
+ * @param {object} options
+ * @param {object[]} options.bones Ordered bone chain `[root, child1, ...]`.
+ * @param {number} [options.stiffness=24] Rest-pose spring stiffness (1/s^2).
+ * @param {number} [options.drag=0.25] Velocity damping factor in `[0, 0.99]`.
+ * @param {[number, number, number] | { x: number, y: number, z: number }} [options.gravity=[0, -9.8, 0]]
+ * @param {[number, number, number] | { x: number, y: number, z: number }} [options.wind=[0, 0, 0]]
+ * @param {Array<object>} [options.colliders=[]] Spherical colliders `{ center|position, radius }`.
+ * @param {number} [options.boneLength=0.25] Fallback length for the leaf bone.
+ * @param {number} [options.tipRadius=0.04] Bone collision sphere padding radius.
+ */
+export function createSpringBoneChain3D({
+  bones = [],
+  stiffness = 24,
+  drag = 0.25,
+  gravity = [0, -9.8, 0],
+  wind = [0, 0, 0],
+  colliders = [],
+  boneLength = 0.25,
+  tipRadius = 0.04,
+} = {}) {
+  const chain = Array.isArray(bones) ? bones.filter(Boolean) : [];
+  const n = chain.length;
+  const gravVec = readVec3(gravity);
+  const windVec = readVec3(wind);
+  let activeColliders = Array.isArray(colliders) ? [...colliders] : [];
+
+  const segLengths = new Float64Array(n);
+  const initLocalQuats = new Array(n);
+  const localAxes = new Array(n);
+  const currTips = new Array(n);
+  const prevTips = new Array(n);
+
+  if (n > 0) chain[0].updateMatrixWorld?.(true);
+
+  const tmpHead = { x: 0, y: 0, z: 0 };
+  const tmpNext = { x: 0, y: 0, z: 0 };
+  const tmpWorldQ = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpInvWorldQ = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpParentQ = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpParentInvQ = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpRestWorldQ = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpRestWorldDir = { x: 0, y: 0, z: 0 };
+  const tmpDeltaQ = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpTargetWorldQ = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpLocalQ = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpColCenter = { x: 0, y: 0, z: 0 };
+
+  for (let i = 0; i < n; i++) {
+    const bone = chain[i];
+    const q = bone.quaternion ?? { x: 0, y: 0, z: 0, w: 1 };
+    initLocalQuats[i] = { x: q.x ?? 0, y: q.y ?? 0, z: q.z ?? 0, w: q.w ?? 1 };
+    getWorldPositionFallback(bone, tmpHead);
+    getWorldQuatFallback(bone, tmpWorldQ);
+    quatConjugate(tmpWorldQ, tmpInvWorldQ);
+
+    let dx = 0, dy = 1, dz = 0;
+    let len = Math.max(0.02, Number(boneLength) || 0.25);
+    if (i < n - 1) {
+      getWorldPositionFallback(chain[i + 1], tmpNext);
+      const wx = tmpNext.x - tmpHead.x;
+      const wy = tmpNext.y - tmpHead.y;
+      const wz = tmpNext.z - tmpHead.z;
+      const wLen = Math.hypot(wx, wy, wz);
+      if (wLen > 1e-5) {
+        len = wLen;
+        dx = wx / wLen; dy = wy / wLen; dz = wz / wLen;
+      }
+    } else if (i > 0) {
+      dx = currTips[i - 1].x - tmpHead.x;
+      dy = currTips[i - 1].y - tmpHead.y;
+      dz = currTips[i - 1].z - tmpHead.z;
+      const pLen = Math.hypot(dx, dy, dz);
+      if (pLen > 1e-5) {
+        dx /= pLen; dy /= pLen; dz /= pLen;
+      } else {
+        dx = 0; dy = 1; dz = 0;
+      }
+    } else {
+      rotateVecByQuat(0, 1, 0, tmpWorldQ, tmpNext);
+      dx = tmpNext.x; dy = tmpNext.y; dz = tmpNext.z;
+    }
+
+    segLengths[i] = len;
+    const localAxis = rotateVecByQuat(dx, dy, dz, tmpInvWorldQ, { x: 0, y: 1, z: 0 });
+    const axisLen = Math.hypot(localAxis.x, localAxis.y, localAxis.z) || 1;
+    localAxis.x /= axisLen; localAxis.y /= axisLen; localAxis.z /= axisLen;
+    localAxes[i] = localAxis;
+
+    const tip = {
+      x: tmpHead.x + dx * len,
+      y: tmpHead.y + dy * len,
+      z: tmpHead.z + dz * len,
+    };
+    currTips[i] = tip;
+    prevTips[i] = { ...tip };
+  }
+
+  function reset() {
+    if (n === 0) return;
+    for (let i = 0; i < n; i++) {
+      const q = initLocalQuats[i];
+      if (chain[i].quaternion?.set) chain[i].quaternion.set(q.x, q.y, q.z, q.w);
+      else if (chain[i].quaternion) Object.assign(chain[i].quaternion, q);
+    }
+    chain[0].updateMatrixWorld?.(true);
+    for (let i = 0; i < n; i++) {
+      getWorldPositionFallback(chain[i], tmpHead);
+      getWorldQuatFallback(chain[i], tmpWorldQ);
+      rotateVecByQuat(localAxes[i].x, localAxes[i].y, localAxes[i].z, tmpWorldQ, tmpNext);
+      const tip = {
+        x: tmpHead.x + tmpNext.x * segLengths[i],
+        y: tmpHead.y + tmpNext.y * segLengths[i],
+        z: tmpHead.z + tmpNext.z * segLengths[i],
+      };
+      currTips[i] = tip;
+      prevTips[i] = { ...tip };
+    }
+  }
+
+  function update(dt = 1 / 60) {
+    if (n === 0) return 0;
+    const stepDt = clamp(Number(dt) || 0, 0, 0.05);
+    if (stepDt <= 0) return n;
+    const dtSq = stepDt * stepDt;
+    const damping = 1 - clamp(Number(drag) || 0, 0, 0.99);
+    const stiff = Math.max(0, Number(stiffness) || 0);
+    const pad = Math.max(0, Number(tipRadius) || 0);
+
+    chain[0].updateMatrixWorld?.(true);
+    for (let i = 0; i < n; i++) {
+      const bone = chain[i];
+      if (bone.parent) {
+        getWorldQuatFallback(bone.parent, tmpParentQ);
+      } else {
+        tmpParentQ.x = 0; tmpParentQ.y = 0; tmpParentQ.z = 0; tmpParentQ.w = 1;
+      }
+      quatMul(tmpParentQ, initLocalQuats[i], tmpRestWorldQ);
+      rotateVecByQuat(localAxes[i].x, localAxes[i].y, localAxes[i].z, tmpRestWorldQ, tmpRestWorldDir);
+      getWorldPositionFallback(bone, tmpHead);
+
+      const len = segLengths[i];
+      const curr = currTips[i];
+      const prev = prevTips[i];
+      const restTipX = tmpHead.x + tmpRestWorldDir.x * len;
+      const restTipY = tmpHead.y + tmpRestWorldDir.y * len;
+      const restTipZ = tmpHead.z + tmpRestWorldDir.z * len;
+
+      const vx = (curr.x - prev.x) * damping;
+      const vy = (curr.y - prev.y) * damping;
+      const vz = (curr.z - prev.z) * damping;
+
+      const fx = (restTipX - curr.x) * stiff + gravVec.x + windVec.x;
+      const fy = (restTipY - curr.y) * stiff + gravVec.y + windVec.y;
+      const fz = (restTipZ - curr.z) * stiff + gravVec.z + windVec.z;
+
+      let nx = curr.x + vx + fx * dtSq;
+      let ny = curr.y + vy + fy * dtSq;
+      let nz = curr.z + vz + fz * dtSq;
+
+      let dx = nx - tmpHead.x;
+      let dy = ny - tmpHead.y;
+      let dz = nz - tmpHead.z;
+      let dist = Math.hypot(dx, dy, dz) || 1;
+      nx = tmpHead.x + (dx / dist) * len;
+      ny = tmpHead.y + (dy / dist) * len;
+      nz = tmpHead.z + (dz / dist) * len;
+
+      for (let c = 0; c < activeColliders.length; c++) {
+        const col = activeColliders[c];
+        const colRadius = Number(col?.radius) || 0;
+        if (colRadius <= 0) continue;
+        readColliderCenter(col, tmpColCenter);
+        const cx = nx - tmpColCenter.x;
+        const cy = ny - tmpColCenter.y;
+        const cz = nz - tmpColCenter.z;
+        const cd = Math.hypot(cx, cy, cz);
+        const minDist = colRadius + pad;
+        if (cd < minDist) {
+          const inv = cd > 1e-6 ? (1 / cd) : 0;
+          const pushX = cd > 1e-6 ? cx * inv : 0;
+          const pushY = cd > 1e-6 ? cy * inv : 1;
+          const pushZ = cd > 1e-6 ? cz * inv : 0;
+          nx = tmpColCenter.x + pushX * minDist;
+          ny = tmpColCenter.y + pushY * minDist;
+          nz = tmpColCenter.z + pushZ * minDist;
+
+          dx = nx - tmpHead.x;
+          dy = ny - tmpHead.y;
+          dz = nz - tmpHead.z;
+          dist = Math.hypot(dx, dy, dz) || 1;
+          nx = tmpHead.x + (dx / dist) * len;
+          ny = tmpHead.y + (dy / dist) * len;
+          nz = tmpHead.z + (dz / dist) * len;
+        }
+      }
+
+      prev.x = curr.x; prev.y = curr.y; prev.z = curr.z;
+      curr.x = nx; curr.y = ny; curr.z = nz;
+
+      dx = (nx - tmpHead.x) / len;
+      dy = (ny - tmpHead.y) / len;
+      dz = (nz - tmpHead.z) / len;
+      quatFromUnitVectors(tmpRestWorldDir.x, tmpRestWorldDir.y, tmpRestWorldDir.z, dx, dy, dz, tmpDeltaQ);
+      quatMul(tmpDeltaQ, tmpRestWorldQ, tmpTargetWorldQ);
+      quatConjugate(tmpParentQ, tmpParentInvQ);
+      quatMul(tmpParentInvQ, tmpTargetWorldQ, tmpLocalQ);
+      quatNormalize(tmpLocalQ);
+
+      if (bone.quaternion?.set) bone.quaternion.set(tmpLocalQ.x, tmpLocalQ.y, tmpLocalQ.z, tmpLocalQ.w);
+      else if (bone.quaternion) Object.assign(bone.quaternion, tmpLocalQ);
+      bone.updateMatrixWorld?.(true);
+    }
+    return n;
+  }
+
+  return Object.freeze({
+    get boneCount() { return n; },
+    setWind(vec) {
+      readVec3(vec, windVec);
+    },
+    setColliders(list) {
+      activeColliders = Array.isArray(list) ? [...list] : [];
+    },
+    getTipPositions() {
+      return currTips.map(t => ({ x: t.x, y: t.y, z: t.z }));
+    },
+    update,
+    reset,
+  });
+}
+
+/**
+ * Lightweight exponential inertialization blender for smooth pose/clip transitions
+ * without running two full skeletal evaluators concurrently.
+ * @param {object} [options]
+ * @param {number} [options.halfLife=0.12] Decay half-life in seconds.
+ */
+export function createInertialBlend3D({ halfLife = 0.12 } = {}) {
+  const decayHalfLife = Math.max(0.005, Number(halfLife) || 0.12);
+  const residuals = [];
+  let elapsed = 0;
+  let active = false;
+  let currentWeight = 0;
+
+  const tmpQuat = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpConj = { x: 0, y: 0, z: 0, w: 1 };
+  const tmpBlendQ = { x: 0, y: 0, z: 0, w: 1 };
+  const IDENTITY_Q = { x: 0, y: 0, z: 0, w: 1 };
+
+  function capture(bones, prevPoses) {
+    residuals.length = 0;
+    if (!Array.isArray(bones) || !Array.isArray(prevPoses)) {
+      active = false;
+      currentWeight = 0;
+      return 0;
+    }
+    const count = Math.min(bones.length, prevPoses.length);
+    for (let i = 0; i < count; i++) {
+      const bone = bones[i];
+      const prev = prevPoses[i];
+      if (!bone || !prev) continue;
+      const curPos = bone.position ?? { x: 0, y: 0, z: 0 };
+      const prevPos = prev.position ?? curPos;
+      const dx = (prevPos.x ?? 0) - (curPos.x ?? 0);
+      const dy = (prevPos.y ?? 0) - (curPos.y ?? 0);
+      const dz = (prevPos.z ?? 0) - (curPos.z ?? 0);
+
+      const cq = bone.quaternion ?? IDENTITY_Q;
+      const pq = prev.quaternion ?? cq;
+      tmpQuat.x = cq.x ?? 0; tmpQuat.y = cq.y ?? 0; tmpQuat.z = cq.z ?? 0; tmpQuat.w = cq.w ?? 1;
+      quatConjugate(tmpQuat, tmpConj);
+      const dq = quatMul(
+        { x: pq.x ?? 0, y: pq.y ?? 0, z: pq.z ?? 0, w: pq.w ?? 1 },
+        tmpConj,
+        { x: 0, y: 0, z: 0, w: 1 },
+      );
+      quatNormalize(dq);
+      if (dq.w < 0) {
+        dq.x = -dq.x; dq.y = -dq.y; dq.z = -dq.z; dq.w = -dq.w;
+      }
+      residuals.push({ index: i, dx, dy, dz, dq });
+    }
+    elapsed = 0;
+    active = residuals.length > 0;
+    currentWeight = active ? 1 : 0;
+    return residuals.length;
+  }
+
+  function apply(bones, dt = 1 / 60) {
+    if (!active || !Array.isArray(bones)) return false;
+    elapsed += Math.max(0, Number(dt) || 0);
+    currentWeight = Math.pow(0.5, elapsed / decayHalfLife);
+    if (currentWeight <= 1e-4) {
+      active = false;
+      currentWeight = 0;
+      return false;
+    }
+    for (let i = 0; i < residuals.length; i++) {
+      const r = residuals[i];
+      const bone = bones[r.index];
+      if (!bone) continue;
+      if (bone.position) {
+        bone.position.x = (bone.position.x ?? 0) + r.dx * currentWeight;
+        bone.position.y = (bone.position.y ?? 0) + r.dy * currentWeight;
+        bone.position.z = (bone.position.z ?? 0) + r.dz * currentWeight;
+      }
+      if (bone.quaternion) {
+        quatSlerp(IDENTITY_Q, r.dq, currentWeight, tmpBlendQ);
+        const cq = {
+          x: bone.quaternion.x ?? 0,
+          y: bone.quaternion.y ?? 0,
+          z: bone.quaternion.z ?? 0,
+          w: bone.quaternion.w ?? 1,
+        };
+        const res = quatMul(tmpBlendQ, cq, tmpQuat);
+        quatNormalize(res);
+        if (bone.quaternion.set) bone.quaternion.set(res.x, res.y, res.z, res.w);
+        else Object.assign(bone.quaternion, res);
+      }
+    }
+    return true;
+  }
+
+  function reset() {
+    residuals.length = 0;
+    elapsed = 0;
+    active = false;
+    currentWeight = 0;
+  }
+
+  return Object.freeze({
+    capture,
+    apply,
+    reset,
+    get active() { return active; },
+    get weight() { return currentWeight; },
+  });
+}

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add commercial HTML5 / Bilibili-Toy-aligned runtime upgrades and calibrated v3 scorecard (`74.7/100` general vs Unity 6.6 URP Web `88.5/100`; **`77.5/100`** calibrated for self-hosted server + Blender Auto-Rig + deterministic Rapier + 50MB single-bundle scope excluding platform SDKs/subpackaging/WebRTC/heavy cloth/vehicles):
+  - **Presentation Secondary Motion & Pose Transitions (`S2`)**: Added `createSpringBoneChain3D` (Verlet spring chain for hair/capes/tails with spherical collider pushout, zero Rapier overhead) and `createInertialBlend3D` (exponential half-life residual pose decay) in `animation/animator3d.js` + `assets/runtime/index.js`.
+  - **GPU Vertex Wind Sway (`R3`)**: Added optional `windSway` module (`height` or `vertexColor` weights, `sharedBlock.uniforms.uTime` sync, `setWindTime()`) to `createComposableMaterial3D` in `integrations/material-graph3d.js`, verified compiled in Chromium WebGL2 (`warmupCompiled=6`, `glError=0`).
+  - **Server-Side Spatial AOI Interest Culling (`N1`)**: Added `createSpatialAoiFilter` (enter/exit radius hysteresis tracking per viewer before binary delta encoding) in `lockstep/state-sync.js` + `assets/runtime/index.js`.
+
 - Reset HGame Engine scorecard to strict v3 end-to-end standards (`60.7/100` vs Unity 6.6 URP Web `88.5/100`) and complete Phases 1–5 commercial alignment upgrades raising verified score to **`73.6/100`** (`−14.9` honest gap remaining), verified in headless Chromium WebGL2 (`1280×720`, `tests/browser-engine-v3-commercial-benchmark.mjs`) and `npm run check:all` (`452` core tests + `network/`):
   - **Audio DSP & Real Worker Offload (`S3`, `P1`)**: Wired `voice -> reverbSendGain -> ctx.reverbSend -> ConvolverNode -> busTarget` (including deferred zone wiring on `unlock()`) and 3-band parametric EQ (`setBusEq`/`getBusEq`/`getDspState`) in `platform/audio/`; implemented `'flow-field'` and `'swarm-separate'` worker compute kernels (`sim/worker-sim.js`) with non-duplicating `stepAsync()` offloading in `world/swarm-ecs.js`.
   - **Binary State Sync & Scene Replication (`N1`)**: Replaced `JSON.stringify` diffing with recursive `valuesEqual`, compact `0x48 0x47` quantized varint/bitmask packet codec (`encodeDeltaBinary`/`decodeDeltaBinary`), and `createSceneReplicator` (`lockstep/state-sync.js`) converging with zero error under 15% packet loss + jitter.

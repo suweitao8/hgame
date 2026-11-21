@@ -208,3 +208,31 @@ export function createSceneReplicator({ scene, stateSync, transport, role, field
     }>;
     dispose: () => void;
 }>;
+/**
+ * Server-side Spatial Area-of-Interest (AOI) interest filter with enter/leave hysteresis
+ * for per-viewer bandwidth culling before binary delta replication.
+ *
+ * @param {object} [options]
+ * @param {number} [options.radius=30] Enter radius around `viewerPos`.
+ * @param {number} [options.hysteresis=4] Extra exit margin preventing boundary flicker.
+ * @param {string[]} [options.positionFields=['x', 'z']] Coordinate property names inspected on entity records.
+ */
+export function createSpatialAoiFilter({ radius, hysteresis, positionFields, }?: {
+    radius?: number | undefined;
+    hysteresis?: number | undefined;
+    positionFields?: string[] | undefined;
+} | undefined): Readonly<{
+    filterForViewer: (viewerId: any, viewerPos: any, fullState: any) => {
+        visibleState: {};
+        enteredIds: string[];
+        leftIds: any[];
+        stats: {
+            total: number;
+            visible: number;
+            culled: number;
+        };
+    };
+    clearViewer: (viewerId: any) => boolean;
+    reset: () => void;
+    readonly viewerCount: number;
+}>;

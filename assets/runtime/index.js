@@ -107,8 +107,10 @@ export {
   UI_UX_CUES,
   createUiDirector,
 } from './ui/index.js';
-export { createNetworkStateSync, createSceneReplicator } from './lockstep/state-sync.js';
-import { createNetworkStateSync, createSceneReplicator } from './lockstep/state-sync.js';
+export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from './lockstep/state-sync.js';
+import { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from './lockstep/state-sync.js';
+export { createSpringBoneChain3D, createInertialBlend3D } from './animation/animator3d.js';
+import { createSpringBoneChain3D, createInertialBlend3D } from './animation/animator3d.js';
 export {
   VFX_EASING,
   VFX_RENDER_ORDERS,
@@ -433,4 +435,7 @@ export const HGame = Object.freeze({
   bindTextureMipStreaming,
   createNetworkStateSync,
   createSceneReplicator,
+  createSpatialAoiFilter,
+  createSpringBoneChain3D,
+  createInertialBlend3D,
 });

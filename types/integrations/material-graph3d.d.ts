@@ -16,10 +16,10 @@ export function createSharedMaterialBlock3D(initialUniforms?: {}): {
 };
 /**
  * Build a declarative PBR material combining standard/physical base properties
- * with deterministic shader modules (`fresnel`, `dissolve`, `triplanar`, `specularAA`)
+ * with deterministic shader modules (`fresnel`, `dissolve`, `triplanar`, `specularAA`, `windSway`)
  * and optional `sharedBlock` uniforms.
  *
  * @param {object} THREE Three.js namespace or compatible mock.
  * @param {object} [options]
  */
-export function createComposableMaterial3D(THREE: object, { color, roughness, metalness, clearcoat, clearcoatRoughness, emissive, emissiveIntensity, transparent, opacity, side, fresnel, dissolve, triplanar, specularAA, sharedBlock, vertexChunks, fragmentChunks, }?: object): any;
+export function createComposableMaterial3D(THREE: object, { color, roughness, metalness, clearcoat, clearcoatRoughness, emissive, emissiveIntensity, transparent, opacity, side, fresnel, dissolve, triplanar, specularAA, windSway, sharedBlock, vertexChunks, fragmentChunks, }?: object): any;

@@ -645,3 +645,103 @@ export function createSceneReplicator({
     dispose,
   });
 }
+
+/**
+ * Server-side Spatial Area-of-Interest (AOI) interest filter with enter/leave hysteresis
+ * for per-viewer bandwidth culling before binary delta replication.
+ *
+ * @param {object} [options]
+ * @param {number} [options.radius=30] Enter radius around `viewerPos`.
+ * @param {number} [options.hysteresis=4] Extra exit margin preventing boundary flicker.
+ * @param {string[]} [options.positionFields=['x', 'z']] Coordinate property names inspected on entity records.
+ */
+export function createSpatialAoiFilter({
+  radius = 30,
+  hysteresis = 4,
+  positionFields = ['x', 'z'],
+} = {}) {
+  const enterRadius = Math.max(0.1, Number(radius) || 30);
+  const exitRadius = enterRadius + Math.max(0, Number(hysteresis) || 0);
+  const enterSq = enterRadius * enterRadius;
+  const exitSq = exitRadius * exitRadius;
+  const axes = Array.isArray(positionFields) && positionFields.length > 0 ? positionFields : ['x', 'z'];
+  const viewerSets = new Map();
+
+  function readCoord(obj, axis, idx) {
+    if (!obj || typeof obj !== 'object') return 0;
+    if (Array.isArray(obj) || ArrayBuffer.isView(obj)) return Number(obj[idx]) || 0;
+    if (axis in obj) return Number(obj[axis]) || 0;
+    if (obj.position && typeof obj.position === 'object' && axis in obj.position) {
+      return Number(obj.position[axis]) || 0;
+    }
+    return 0;
+  }
+
+  function filterForViewer(viewerId, viewerPos, fullState) {
+    const vid = String(viewerId ?? 'default');
+    let activeSet = viewerSets.get(vid);
+    if (!activeSet) {
+      activeSet = new Set();
+      viewerSets.set(vid, activeSet);
+    }
+
+    const visibleState = {};
+    const enteredIds = [];
+    const leftIds = [];
+    const entries = fullState && typeof fullState === 'object' ? Object.entries(fullState) : [];
+    const nextSet = new Set();
+
+    for (let i = 0; i < entries.length; i++) {
+      const [id, entity] = entries[i];
+      if (!entity || typeof entity !== 'object') continue;
+      let distSq = 0;
+      for (let a = 0; a < axes.length; a++) {
+        const axis = axes[a];
+        const dv = readCoord(entity, axis, a) - readCoord(viewerPos, axis, a);
+        distSq += dv * dv;
+      }
+      const wasVisible = activeSet.has(id);
+      const keep = wasVisible ? distSq <= exitSq : distSq <= enterSq;
+      if (keep) {
+        visibleState[id] = entity;
+        nextSet.add(id);
+        if (!wasVisible) enteredIds.push(id);
+      } else if (wasVisible) {
+        leftIds.push(id);
+      }
+    }
+
+    for (const prevId of activeSet) {
+      if (!nextSet.has(prevId) && !leftIds.includes(prevId)) {
+        leftIds.push(prevId);
+      }
+    }
+    viewerSets.set(vid, nextSet);
+
+    return {
+      visibleState,
+      enteredIds,
+      leftIds,
+      stats: {
+        total: entries.length,
+        visible: nextSet.size,
+        culled: Math.max(0, entries.length - nextSet.size),
+      },
+    };
+  }
+
+  function clearViewer(viewerId) {
+    return viewerSets.delete(String(viewerId ?? 'default'));
+  }
+
+  function reset() {
+    viewerSets.clear();
+  }
+
+  return Object.freeze({
+    filterForViewer,
+    clearViewer,
+    reset,
+    get viewerCount() { return viewerSets.size; },
+  });
+}

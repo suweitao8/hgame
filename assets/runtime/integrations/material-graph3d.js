@@ -43,7 +43,7 @@ export function createSharedMaterialBlock3D(initialUniforms = {}) {
 
 /**
  * Build a declarative PBR material combining standard/physical base properties
- * with deterministic shader modules (`fresnel`, `dissolve`, `triplanar`, `specularAA`)
+ * with deterministic shader modules (`fresnel`, `dissolve`, `triplanar`, `specularAA`, `windSway`)
  * and optional `sharedBlock` uniforms.
  *
  * @param {object} THREE Three.js namespace or compatible mock.
@@ -64,6 +64,7 @@ export function createComposableMaterial3D(THREE, {
   dissolve = null,
   triplanar = null,
   specularAA = false,
+  windSway = null,
   sharedBlock = null,
   vertexChunks = [],
   fragmentChunks = [],
@@ -96,17 +97,22 @@ export function createComposableMaterial3D(THREE, {
   const hasDissolve = Boolean(dissolve);
   const hasTriplanar = Boolean(triplanar);
   const hasSpecularAA = Boolean(specularAA);
+  const hasWindSway = Boolean(windSway);
+  const windWeightMode = windSway?.weightMode === 'vertexColor' ? 'vertexColor' : 'height';
 
   const features = [];
   if (hasFresnel) features.push('fresnel');
   if (hasDissolve) features.push('dissolve');
   if (hasTriplanar) features.push('triplanar');
   if (hasSpecularAA) features.push('specularAA');
+  if (hasWindSway) features.push(`wind:${windWeightMode}`);
   if (sharedBlock) features.push('sharedBlock');
 
   const cacheKey = `hgame-matgraph-v1:${usePhysical ? 'phys' : 'std'}:${features.join('+') || 'base'}:${vertexChunks.length}:${fragmentChunks.length}`;
   material.customProgramCacheKey = () => cacheKey;
 
+  const windDirRaw = Array.isArray(windSway?.direction) ? windSway.direction : [1, 0, 0.35];
+  const windDirLen = Math.hypot(windDirRaw[0] ?? 1, windDirRaw[1] ?? 0, windDirRaw[2] ?? 0.35) || 1;
   const featureUniforms = {
     uFresnelColor: { value: THREE.Color ? new THREE.Color(fresnel?.color ?? 0x66e0ff) : { r: 0.4, g: 0.88, b: 1 } },
     uFresnelPower: { value: Number.isFinite(fresnel?.power) ? fresnel.power : 3.0 },
@@ -115,6 +121,27 @@ export function createComposableMaterial3D(THREE, {
     uDissolveEdgeWidth: { value: Number.isFinite(dissolve?.edgeWidth) ? dissolve.edgeWidth : 0.08 },
     uDissolveEdgeColor: { value: THREE.Color ? new THREE.Color(dissolve?.edgeColor ?? 0xff6b2b) : { r: 1, g: 0.42, b: 0.17 } },
     uTriplanarScale: { value: Number.isFinite(triplanar?.scale) ? triplanar.scale : 0.25 },
+    uWindTime: { value: Number.isFinite(windSway?.time) ? windSway.time : 0.0 },
+    uWindAmp: { value: Number.isFinite(windSway?.amplitude) ? windSway.amplitude : 0.12 },
+    uWindFreq: { value: Number.isFinite(windSway?.frequency) ? windSway.frequency : 2.2 },
+    uWindDir: {
+      value: THREE.Vector3
+        ? new THREE.Vector3(
+            (windDirRaw[0] ?? 1) / windDirLen,
+            (windDirRaw[1] ?? 0) / windDirLen,
+            (windDirRaw[2] ?? 0.35) / windDirLen,
+          )
+        : {
+            x: (windDirRaw[0] ?? 1) / windDirLen,
+            y: (windDirRaw[1] ?? 0) / windDirLen,
+            z: (windDirRaw[2] ?? 0.35) / windDirLen,
+          },
+    },
+    uWindRange: {
+      value: THREE.Vector2
+        ? new THREE.Vector2(Number.isFinite(windSway?.minY) ? windSway.minY : 0, Number.isFinite(windSway?.maxY) ? windSway.maxY : 1.5)
+        : { x: Number.isFinite(windSway?.minY) ? windSway.minY : 0, y: Number.isFinite(windSway?.maxY) ? windSway.maxY : 1.5 },
+    },
   };
 
   if (features.length > 0 || vertexChunks.length > 0 || fragmentChunks.length > 0) {
@@ -137,13 +164,50 @@ export function createComposableMaterial3D(THREE, {
       if (hasTriplanar) {
         shader.uniforms.uTriplanarScale = featureUniforms.uTriplanarScale;
       }
+      if (hasWindSway) {
+        shader.uniforms.uWindTime = sharedBlock?.uniforms?.uTime ?? featureUniforms.uWindTime;
+        shader.uniforms.uWindAmp = featureUniforms.uWindAmp;
+        shader.uniforms.uWindFreq = featureUniforms.uWindFreq;
+        shader.uniforms.uWindDir = featureUniforms.uWindDir;
+        shader.uniforms.uWindRange = featureUniforms.uWindRange;
+      }
 
+      const vertDecls = [];
+      const beginInjections = [];
       if (hasDissolve || hasTriplanar) {
-        shader.vertexShader = 'varying vec3 vHgameLocalPos;\nvarying vec3 vHgameWorldPos;\n' +
-          shader.vertexShader.replace(
-            '#include <begin_vertex>',
-            '#include <begin_vertex>\nvHgameLocalPos = position;\nvHgameWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
-          );
+        vertDecls.push('varying vec3 vHgameLocalPos;', 'varying vec3 vHgameWorldPos;');
+      }
+      if (hasWindSway) {
+        vertDecls.push(
+          'uniform float uWindTime;',
+          'uniform float uWindAmp;',
+          'uniform float uWindFreq;',
+          'uniform vec3 uWindDir;',
+          'uniform vec2 uWindRange;',
+        );
+        const weightExpr = windWeightMode === 'vertexColor'
+          ? '#ifdef USE_COLOR\n  float _wWeight = clamp(color.r, 0.0, 1.0);\n#else\n  float _wWeight = clamp((transformed.y - uWindRange.x) / max(0.001, uWindRange.y - uWindRange.x), 0.0, 1.0);\n#endif'
+          : 'float _wWeight = clamp((transformed.y - uWindRange.x) / max(0.001, uWindRange.y - uWindRange.x), 0.0, 1.0);';
+        beginInjections.push(
+          '{',
+          weightExpr,
+          '  float _wPhase = uWindTime * uWindFreq + dot(modelMatrix[3].xyz, vec3(1.7, 0.5, 2.3)) + transformed.x * 1.5 + transformed.z * 1.2;',
+          '  float _wSway = sin(_wPhase) + 0.35 * sin(_wPhase * 2.13 + 0.9);',
+          '  transformed += uWindDir * (_wSway * uWindAmp * _wWeight * _wWeight);',
+          '}',
+        );
+      }
+      if (hasDissolve || hasTriplanar) {
+        beginInjections.push(
+          'vHgameLocalPos = position;',
+          'vHgameWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;',
+        );
+      }
+      if (vertDecls.length > 0 && shader.vertexShader.includes('#include <begin_vertex>')) {
+        shader.vertexShader = vertDecls.join('\n') + '\n' + shader.vertexShader.replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\n' + beginInjections.join('\n'),
+        );
       }
 
       for (const chunk of vertexChunks) {
@@ -208,10 +272,20 @@ export function createComposableMaterial3D(THREE, {
     };
   }
 
+  material.userData.hgameUniforms = featureUniforms;
   material.userData.hgameMaterialGraph = {
     features,
     cacheKey,
     uniforms: featureUniforms,
+    setWindTime(timeSeconds) {
+      const t = Number.isFinite(timeSeconds) ? timeSeconds : 0;
+      if (sharedBlock?.set && sharedBlock.uniforms?.uTime) {
+        sharedBlock.set('uTime', t);
+      } else {
+        featureUniforms.uWindTime.value = t;
+      }
+      return t;
+    },
     setFeatureParam(name, value) {
       const u = featureUniforms[name];
       if (!u) return false;

@@ -48,11 +48,15 @@ const HARNESS_HTML = `<!doctype html>
       createCanvasUiRenderer,
       createNetworkStateSync,
       createSceneReplicator,
+      createSpringBoneChain3D,
+      createInertialBlend3D,
+      createSpatialAoiFilter,
     } from '/assets/runtime/index.js';
     import { createThreeAdapter } from '/assets/runtime/integrations/three.js';
     import { createReflectionProbeManager3D } from '/assets/runtime/integrations/lighting3d.js';
     import { createIndirectInstancedBatch3D } from '/assets/runtime/integrations/culling3d.js';
     import { createDecalSystem3D } from '/assets/runtime/integrations/decal3d.js';
+    import { createComposableMaterial3D } from '/assets/runtime/integrations/material-graph3d.js';
     import { solveFabrikIK, blendMorphTargets } from '/assets/runtime/animation/animator3d.js';
 
     function createSkinnedMorphArm() {
@@ -158,13 +162,30 @@ const HARNESS_HTML = `<!doctype html>
       vfxMesh.userData.hgameReactive = true;
       adapter.add(scene, vfxMesh);
 
-      // SkinnedMesh + FABRIK + MorphTarget blend
+      // SkinnedMesh + FABRIK + MorphTarget + SpringBone + InertialBlend
       const arm = createSkinnedMorphArm();
       arm.mesh.position.set(-2.6, 1.2, -3.5);
       csm.applyToMaterial(arm.mat);
       adapter.add(scene, arm.mesh);
       solveFabrikIK(arm.bones, [-1.5, 2.2, -2.8], { iterations: 12, poleTarget: [-2.6, 2.0, -1.5] });
       blendMorphTargets(arm.mesh, { flex: 0.85 }, 1);
+      const spring = createSpringBoneChain3D({
+        bones: arm.bones,
+        stiffness: 20,
+        wind: [6, 0, 2],
+        colliders: [{ center: [-2.6, 1.5, -3.5], radius: 0.35 }],
+      });
+      const inertial = createInertialBlend3D({ halfLife: 0.08 });
+      inertial.capture(arm.bones, arm.bones.map(b => ({ position: { x: b.position.x, y: b.position.y, z: b.position.z }, quaternion: { x: 0, y: 0, z: 0, w: 1 } })));
+
+      // GPU windSway banner mesh compiled & rendered via WebGL2
+      const windMat = createComposableMaterial3D(THREE, {
+        color: 0x22d3ee,
+        windSway: { amplitude: 0.18, frequency: 2.5, direction: [1, 0, 0.3], minY: -1, maxY: 1 },
+      });
+      const banner = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 2.0, 2, 8), windMat);
+      banner.position.set(4.0, 1.2, -4.0);
+      adapter.add(scene, banner);
 
       // 2,000-instance frustum-compacted indirect batch (1000 in front, 1000 behind camera)
       const rockGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
@@ -200,6 +221,9 @@ const HARNESS_HTML = `<!doctype html>
       for (let i = 0; i < 16; i++) {
         vfxMesh.position.x = 2.8 + Math.sin(i * 0.2) * 0.5;
         sphere.rotation.y += 0.04;
+        windMat.userData.hgameMaterialGraph.setWindTime(i * 0.05);
+        spring.update(1 / 60);
+        inertial.apply(arm.bones, 1 / 60);
         adapter.render(scene);
       }
       const gl3d = adapter.renderer.getContext();
@@ -265,6 +289,11 @@ const HARNESS_HTML = `<!doctype html>
         cRep.stepClient(t * 20 + 120);
       }
 
+      const aoiFilter = createSpatialAoiFilter({ radius: 15, hysteresis: 3 });
+      const roomSnapshot = {};
+      for (let i = 0; i < 50; i++) roomSnapshot['mob_' + i] = { x: i * 3, z: 0 };
+      const aoiResult = aoiFilter.filterForViewer('p1', { x: 0, z: 0 }, roomSnapshot);
+
       const out = {
         glError,
         csmIntensities: csm.lights.map(l => l.intensity),
@@ -287,6 +316,8 @@ const HARNESS_HTML = `<!doctype html>
         uiNonBlack,
         uiButtonClicks: buttonClicks,
         netDeltaErr: Number(Math.abs(cEnt.x - hEnt.x).toFixed(3)),
+        aoiCulled: aoiResult.stats.culled,
+        springBones: spring.boneCount,
       };
 
       decals.dispose();
@@ -295,6 +326,8 @@ const HARNESS_HTML = `<!doctype html>
       batch.dispose();
       rockGeo.dispose();
       rockMat.dispose();
+      banner.geometry.dispose();
+      windMat.dispose();
       arm.geo.dispose();
       arm.mat.dispose();
       sphereMat.dispose();
@@ -363,6 +396,8 @@ try {
   assert.equal(m.reverbZoneWired, true);
   assert.ok(m.uiNonBlack > 100 && m.uiButtonClicks === 1, 'Canvas UI widgets must render & handle clicks');
   assert.ok(m.netDeltaErr < 1.0, 'Binary net replicator must stay within 1 unit over 15% loss');
+  assert.ok(m.aoiCulled > 30, 'Spatial AOI must cull distant entities cleanly');
+  assert.equal(m.springBones, 3, 'SpringBone chain must run across 3 bones');
 
   console.log(JSON.stringify({ status: 'PASS', resolution: '1280x720', metrics: m }, null, 2));
 } finally {

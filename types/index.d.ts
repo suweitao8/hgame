@@ -1,5 +1,6 @@
 import { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming } from "./platform/asset-catalog.js";
-import { createNetworkStateSync, createSceneReplicator } from "./lockstep/state-sync.js";
+import { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
+import { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
 import { defineProject, resolveFeatureGraph } from "./core/config.js";
 import { Component } from "./core/component.js";
 import { Entity } from "./core/entity.js";
@@ -1130,6 +1131,9 @@ export const HGame: Readonly<{
     bindTextureMipStreaming: typeof bindTextureMipStreaming;
     createNetworkStateSync: typeof createNetworkStateSync;
     createSceneReplicator: typeof createSceneReplicator;
+    createSpatialAoiFilter: typeof createSpatialAoiFilter;
+    createSpringBoneChain3D: typeof createSpringBoneChain3D;
+    createInertialBlend3D: typeof createInertialBlend3D;
 }>;
 import { createVersionedStore } from './platform/engine.js';
 import { createSeededRng } from './sim/index.js';
@@ -1213,6 +1217,7 @@ export { createSeededRng, createStateChecksum, hashState, runScripted, createSim
 export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from "./integrations/render-budget-2d.js";
 export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
 export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
-export { createNetworkStateSync, createSceneReplicator } from "./lockstep/state-sync.js";
+export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
+export { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";
 export { STANDARD_ART_SPEC, ART_THEMES, listArtThemes, getArtTheme, resolvePresentationPreset, GAME_AUDIO_EVENTS, DEFAULT_AUDIO_MATRIX, AUDIO_PROFILES, createAudioDirector, GENRE_ARCHETYPES, listGenreArchetypes, defineGameBlueprint, evaluateBlueprintBalance, createBlueprintFromIdea, createGameSession, mountGameShell, REQUIRED_DESIGN_DOCS, renderGameDesignDocs } from "./kit/index.js";
