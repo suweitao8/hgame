@@ -4,8 +4,10 @@ import {
   ConfirmedFrameQueue,
   LockstepInputFlags,
   decodeConfirmedFrame,
+  decodeLockstepCheckpoint,
   decodeLockstepInput,
   encodeConfirmedFrame,
+  encodeLockstepCheckpoint,
   encodeLockstepInput,
 } from '../dist/index.js';
 
@@ -88,4 +90,40 @@ test('confirmed frame queue buffers reordering and drains only contiguous ticks'
   assert.equal(queue.expectedNetTick, 3);
   assert.equal(queue.push(frame(2)), false);
   assert.throws(() => queue.push({ ...frame(3), matchTag: 8 }), /another match/);
+
+  queue.resetCursor(100);
+  assert.equal(queue.expectedNetTick, 100);
+  assert.equal(queue.push(frame(100)), true);
+  assert.equal(queue.takeNext().netTick, 100);
+});
+
+test('lockstep checkpoint HGCP round-trips stateHash and payload, and OFFLINE flag is server-frame only', () => {
+  const payload = new Uint8Array([10, 20, 30, 40]);
+  const encoded = encodeLockstepCheckpoint({
+    matchTag: 0xdeadbeef,
+    netTick: 300,
+    stateHash: 0x12345678,
+    payload,
+  });
+  const decoded = decodeLockstepCheckpoint(encoded);
+  assert.equal(decoded.matchTag, 0xdeadbeef);
+  assert.equal(decoded.netTick, 300);
+  assert.equal(decoded.stateHash, 0x12345678);
+  assert.deepEqual([...decoded.payload], [10, 20, 30, 40]);
+
+  assert.throws(() => encodeLockstepInput({
+    matchTag: 1,
+    sequence: 1,
+    targetNetTick: 1,
+    flags: LockstepInputFlags.OFFLINE,
+    payload: new Uint8Array(),
+  }), /Unknown lockstep input flags/);
+
+  const serverFrame = encodeConfirmedFrame({
+    matchTag: 1,
+    netTick: 5,
+    inputs: [{ slot: 0, sequence: 0, flags: LockstepInputFlags.NO_OP | LockstepInputFlags.OFFLINE, payload: new Uint8Array() }],
+  });
+  const decodedFrame = decodeConfirmedFrame(serverFrame);
+  assert.equal(decodedFrame.inputs[0].flags, LockstepInputFlags.NO_OP | LockstepInputFlags.OFFLINE);
 });

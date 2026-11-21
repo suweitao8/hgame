@@ -15,6 +15,7 @@
  * @property {number} netTick Network tick this logic tick belongs to.
  * @property {number} substep 0..stepsPerFrame-1 within the network tick.
  * @property {number} stepsPerFrame `logicHz / netHz`.
+ * @property {boolean} isFastForward True during fast-forward catch-up replay.
  */
 
 /**
@@ -22,6 +23,7 @@
  * @property {number} logicTick Logic ticks completed.
  * @property {number} netTick
  * @property {number} substep
+ * @property {boolean} isFastForward
  */
 
 /**
@@ -34,15 +36,25 @@
  * @property {() => boolean} [isEnded] Return true to stop scheduling.
  * @property {number} [instantButtonMask=0] Buttons cleared on non-first substeps (31-bit mask).
  * @property {number} [startBufferFrames=2] Network frames buffered before starting (1..16).
- * @property {number} [maxBufferFrames=32] Max pending network frames (>= startBufferFrames, <= 512).
+ * @property {number} [maxBufferFrames=32] Max pending live network frames (>= startBufferFrames, <= 512).
+ * @property {number} [maxReplayBufferFrames=4096] Max buffered frames allowed during replay catch-up (>= maxBufferFrames, <= 65536).
  * @property {number} [maxStepsPerUpdate=4] Logic ticks per `advanceElapsedMs` call (1..32).
  * @property {number} [maxExtraStepsPerUpdate=1] Extra catch-up ticks per call (0..16).
  * @property {boolean} [adaptiveCatchup=false] Scale catch-up with buffered excess.
  */
 
 /**
+ * @typedef {object} FastForwardResult
+ * @property {number} netFramesCompleted
+ * @property {number} logicTicksCompleted
+ */
+
+/**
  * @typedef {object} ConfirmedFrameScheduler
- * @property {(frame: ConfirmedFrame) => boolean} enqueue Queue a confirmed frame; false when ignored; invalid input makes the scheduler fatal.
+ * @property {(frame: ConfirmedFrame, options?: { replay?: boolean }) => boolean} enqueue Queue a confirmed frame; false when ignored; invalid input makes the scheduler fatal.
+ * @property {(frames: readonly ConfirmedFrame[]) => number} enqueueReplay Batch-queue replay frames using `maxReplayBufferFrames` capacity.
+ * @property {(maxFrames?: number) => FastForwardResult} fastForward Drain contiguous buffered frames immediately for reconnect catch-up.
+ * @property {(checkpoint: { netTick: number, logicTick?: number }) => void} restoreCheckpoint Rebase scheduler cursor after restoring a world state snapshot.
  * @property {(elapsedMs: number) => number} advanceElapsedMs Advance by display time in milliseconds; returns logic ticks completed.
  * @property {boolean} started
  * @property {boolean} stalled Waiting for a network frame.
@@ -76,6 +88,7 @@ export function createConfirmedFrameScheduler({
   instantButtonMask = 0,
   startBufferFrames = 2,
   maxBufferFrames = 32,
+  maxReplayBufferFrames = 4096,
   maxStepsPerUpdate = 4,
   maxExtraStepsPerUpdate = 1,
   adaptiveCatchup = false,
@@ -100,6 +113,7 @@ export function createConfirmedFrameScheduler({
   for (const [name, value, min, max] of [
     ['startBufferFrames', startBufferFrames, 1, 16],
     ['maxBufferFrames', maxBufferFrames, startBufferFrames, 512],
+    ['maxReplayBufferFrames', maxReplayBufferFrames, maxBufferFrames, 65536],
     ['maxStepsPerUpdate', maxStepsPerUpdate, 1, 32],
     ['maxExtraStepsPerUpdate', maxExtraStepsPerUpdate, 0, 16],
   ]) {
@@ -140,21 +154,117 @@ export function createConfirmedFrameScheduler({
         (typeof value === 'number' && Number.isSafeInteger(value)));
     });
   }
-  /** @param {ConfirmedFrame} frame @returns {boolean} */
-  function enqueue(frame) {
+  /**
+   * @param {ConfirmedFrame} frame
+   * @param {{ replay?: boolean }} [options]
+   * @returns {boolean}
+   */
+  function enqueue(frame, options = {}) {
     if (fatal || isEnded()) return false;
     if (!frame || !Number.isSafeInteger(frame.netTick) || frame.netTick <= 0) {
       return failClosed();
     }
     const next = expected();
     if (frame.netTick < next || pending.has(frame.netTick)) return false;
-    if (frame.netTick >= next + maxBufferFrames || pending.size >= maxBufferFrames) {
+    const cap = options?.replay ? maxReplayBufferFrames : maxBufferFrames;
+    if (frame.netTick >= next + cap || pending.size >= cap) {
       return failClosed();
     }
     if (!validateInputs(frame.inputs)) return failClosed();
     pending.set(frame.netTick, structuredClone(frame.inputs));
     maxBufferedFramesSeen = Math.max(maxBufferedFramesSeen, pending.size);
     return true;
+  }
+  /** @param {readonly ConfirmedFrame[]} frames @returns {number} */
+  function enqueueReplay(frames) {
+    if (!Array.isArray(frames)) throw new TypeError('frames must be an array');
+    let accepted = 0;
+    for (const frame of frames) {
+      if (enqueue(frame, { replay: true })) accepted++;
+      if (fatal || isEnded()) break;
+    }
+    return accepted;
+  }
+  /** @param {boolean} isFastForward @returns {boolean} */
+  function stepNextLogicTick(isFastForward) {
+    const netTick = expected();
+    const sealed = pending.get(netTick);
+    if (!sealed) {
+      if (!isFastForward) {
+        if (!stalled) stallEvents++;
+        stalled = true;
+      }
+      accumulatorMs = 0;
+      return false;
+    }
+    const substep = logicTick % stepsPerFrame;
+    const inputs = structuredClone(sealed);
+    if (substep !== 0 && instantButtonMask) {
+      for (const input of inputs) {
+        input.buttons = input.buttons & ~instantButtonMask;
+      }
+    }
+    const targetLogicTick = logicTick + 1;
+    // Do not commit a tick that the game simulation rejected or threw on.
+    try {
+      simulate(inputs, { logicTick: targetLogicTick, netTick, substep, stepsPerFrame, isFastForward });
+    } catch (error) {
+      fatal = true;
+      accumulatorMs = 0;
+      throw error;
+    }
+    logicTick = targetLogicTick;
+    stalled = false;
+    if (logicTick % stepsPerFrame === 0) pending.delete(netTick);
+    // Immediately after the real Tick: never delay hash calculation until
+    // after a multi-tick catch-up and accidentally hash the wrong state.
+    try {
+      onTick({ logicTick, netTick, substep, isFastForward });
+    } catch (error) {
+      fatal = true;
+      accumulatorMs = 0;
+      throw error;
+    }
+    return true;
+  }
+  /** @param {number} [maxFrames=Infinity] @returns {FastForwardResult} */
+  function fastForward(maxFrames = Infinity) {
+    if (fatal || isEnded()) return { netFramesCompleted: 0, logicTicksCompleted: 0 };
+    if (maxFrames !== Infinity && (!Number.isInteger(maxFrames) || maxFrames < 0)) {
+      throw new RangeError('maxFrames must be a nonnegative integer or Infinity');
+    }
+    let logicTicksCompleted = 0;
+    let netFramesCompleted = 0;
+    while (netFramesCompleted < maxFrames && !isEnded()) {
+      const beforeNetTick = expected();
+      if (!pending.has(beforeNetTick)) break;
+      started = true;
+      if (!stepNextLogicTick(true)) break;
+      logicTicksCompleted++;
+      catchupSteps++;
+      if (expected() > beforeNetTick) netFramesCompleted++;
+    }
+    accumulatorMs = 0;
+    return { netFramesCompleted, logicTicksCompleted };
+  }
+  /** @param {{ netTick: number, logicTick?: number }} checkpoint */
+  function restoreCheckpoint(checkpoint) {
+    if (fatal) throw new Error('Cannot restore checkpoint on a fatal scheduler');
+    if (!checkpoint || !Number.isSafeInteger(checkpoint.netTick) || checkpoint.netTick < 0) {
+      throw new RangeError('checkpoint.netTick must be a nonnegative safe integer');
+    }
+    const expectedLogicTick = checkpoint.netTick * stepsPerFrame;
+    const targetLogicTick = checkpoint.logicTick ?? expectedLogicTick;
+    if (!Number.isSafeInteger(targetLogicTick) || targetLogicTick !== expectedLogicTick) {
+      throw new RangeError('checkpoint.logicTick must equal checkpoint.netTick * stepsPerFrame');
+    }
+    logicTick = targetLogicTick;
+    for (const tick of pending.keys()) {
+      if (tick <= checkpoint.netTick) pending.delete(tick);
+    }
+    started = checkpoint.netTick > 0 || hasStartFrames();
+    stalled = false;
+    accumulatorMs = 0;
   }
   /** @param {number} elapsedMs @returns {number} */
   function advanceElapsedMs(elapsedMs) {
@@ -181,32 +291,8 @@ export function createConfirmedFrameScheduler({
     while ((accumulatorMs + 1e-9 >= tickMs || recoveryBudget > 0) &&
       completed < maxStepsPerUpdate) {
       if (isEnded()) { accumulatorMs = 0; break; }
-      const netTick = expected();
-      const sealed = pending.get(netTick);
-      if (!sealed) {
-        if (!stalled) stallEvents++;
-        stalled = true;
-        accumulatorMs = 0;
-        break;
-      }
       const recovery = accumulatorMs + 1e-9 < tickMs;
-      const substep = logicTick % stepsPerFrame;
-      const inputs = structuredClone(sealed);
-      if (substep !== 0 && instantButtonMask) {
-        for (const input of inputs) {
-          input.buttons = input.buttons & ~instantButtonMask;
-        }
-      }
-      const targetLogicTick = logicTick + 1;
-      // Do not commit a tick that the game simulation rejected or threw on.
-      try {
-        simulate(inputs, { logicTick: targetLogicTick, netTick, substep, stepsPerFrame });
-      } catch (error) {
-        fatal = true;
-        accumulatorMs = 0;
-        throw error;
-      }
-      logicTick = targetLogicTick;
+      if (!stepNextLogicTick(false)) break;
       completed++;
       if (recovery) {
         recoveryBudget--;
@@ -214,23 +300,15 @@ export function createConfirmedFrameScheduler({
       } else {
         accumulatorMs = Math.max(0, accumulatorMs - tickMs);
       }
-      stalled = false;
-      if (logicTick % stepsPerFrame === 0) pending.delete(netTick);
-      // Immediately after the real Tick: never delay hash calculation until
-      // after a multi-tick catch-up and accidentally hash the wrong state.
-      try {
-        onTick({ logicTick, netTick, substep });
-      } catch (error) {
-        fatal = true;
-        accumulatorMs = 0;
-        throw error;
-      }
       if (isEnded()) { accumulatorMs = 0; break; }
     }
     return completed;
   }
   return {
     enqueue,
+    enqueueReplay,
+    fastForward,
+    restoreCheckpoint,
     advanceElapsedMs,
     get started() { return started; },
     get stalled() { return stalled; },

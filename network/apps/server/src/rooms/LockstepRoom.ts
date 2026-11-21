@@ -6,6 +6,7 @@ import {
   LOCKSTEP_MAX_INPUT_BYTES,
   LOCKSTEP_MAX_PLAYERS,
   LockstepInputFlags,
+  decodeLockstepCheckpoint,
   decodeLockstepInput,
   encodeConfirmedFrame,
   type ConfirmedPlayerInput,
@@ -48,20 +49,41 @@ type DeferredSync = {
   timer: ReturnType<Room['clock']['setTimeout']>;
 };
 
+export interface LockstepWelcomePayload {
+  matchTag: number;
+  slot: number;
+  netHz: number;
+  currentNetTick: number;
+  lastInputSequence: number;
+  oldestAvailableTick: number | null;
+  trustedCheckpointTick: number | null;
+  reconnected: boolean;
+}
+
 /**
- * Confirmed-input relay with optional anti-stall deadline synthesis and
- * bounded frame history replay for reconnect recovery.
+ * Commercial-grade confirmed-input relay with:
+ * - Immediate `NO_OP | OFFLINE` synthesis for disconnected slots (zero stall for online peers)
+ * - `lockstep:welcome` state/sequence recovery for both warm and cold reconnects
+ * - Dual-track recovery: bounded `frameHistory` replay + consensus-verified `HGCP` checkpoints
+ * - RTT ping/pong and first-desync tracking
  */
 export class LockstepRoom extends Room {
   state = new LockstepRoomState();
+  private netHz = 20;
   private reconnectSeconds = 0;
   private maxFutureFrames = 32;
   private maxFramesPerTick = 4;
   private frameDeadlineTicks = 0;
   private waitingTicksOnCurrentFrame = 0;
   private maxHistoryFrames = 600;
+  private maxHistoryBytes = 16 * 1024 * 1024;
+  private currentHistoryBytes = 0;
+  private checkpointIntervalFrames = 0;
   private inputLimiter = new TokenBucketRateLimiter(64, 120);
   private syncLimiter = new TokenBucketRateLimiter(4, 8);
+  private trustedCheckpoint: { netTick: number; stateHash: number; packetBytes: Uint8Array } | null = null;
+  private pendingCheckpointRequest: { netTick: number; stateHash: number; requesterSessionId: string } | null = null;
+  private firstDesync: { netTick: number; reports: Array<{ slot: number; hash: number }> } | null = null;
   private readonly deferredSyncs = new Map<string, DeferredSync>();
   private readonly pending = new Map<number, Map<number, ConfirmedPlayerInput>>();
   private readonly lastSequence = new Map<string, number>();
@@ -76,6 +98,7 @@ export class LockstepRoom extends Room {
     this.maxFramesPerTick = Number(options.maxFramesPerTick ?? 4);
     this.frameDeadlineTicks = Number(options.frameDeadlineTicks ?? 0);
     this.maxHistoryFrames = Number(options.maxHistoryFrames ?? 600);
+    this.checkpointIntervalFrames = Number(options.checkpointIntervalFrames ?? 0);
     if (!Number.isInteger(this.maxFutureFrames) || this.maxFutureFrames < 2 || this.maxFutureFrames > 512) {
       throw new RangeError('maxFutureFrames must be an integer from 2 to 512');
     }
@@ -85,8 +108,11 @@ export class LockstepRoom extends Room {
     if (!Number.isInteger(this.frameDeadlineTicks) || this.frameDeadlineTicks < 0 || this.frameDeadlineTicks > 600) {
       throw new RangeError('frameDeadlineTicks must be an integer from 0 to 600');
     }
-    if (!Number.isInteger(this.maxHistoryFrames) || this.maxHistoryFrames < 16 || this.maxHistoryFrames > 3600) {
-      throw new RangeError('maxHistoryFrames must be an integer from 16 to 3600');
+    if (!Number.isInteger(this.maxHistoryFrames) || this.maxHistoryFrames < 16 || this.maxHistoryFrames > 36000) {
+      throw new RangeError('maxHistoryFrames must be an integer from 16 to 36000');
+    }
+    if (!Number.isInteger(this.checkpointIntervalFrames) || this.checkpointIntervalFrames < 0 || this.checkpointIntervalFrames > 3600) {
+      throw new RangeError('checkpointIntervalFrames must be an integer from 0 to 3600');
     }
 
     this.state.gameId = typeof options.gameId === 'string' ? options.gameId : 'network-lab';
@@ -94,6 +120,7 @@ export class LockstepRoom extends Room {
     this.patchRate = 50;
     const netHz = Number(options.netHz ?? 20);
     if (!Number.isInteger(netHz) || netHz < 1 || netHz > 60) throw new RangeError('netHz must be an integer from 1 to 60');
+    this.netHz = netHz;
 
     const maxInputsPerSecond = validateRateLimit(
       options.maxInputsPerSecond,
@@ -110,8 +137,12 @@ export class LockstepRoom extends Room {
     this.syncLimiter = new TokenBucketRateLimiter(4, Math.max(8, Math.ceil(2 * maxLiveFramesPerSecond / framesPerPage)));
 
     this.onMessageBytes('lockstep:input', (client, bytes: unknown) => this.receiveInput(client, bytes));
+    this.onMessageBytes('lockstep:checkpoint-upload', (client, bytes: unknown) => this.receiveCheckpointUpload(client, bytes));
     this.onMessage('lockstep:hash', (client, payload: unknown) => this.receiveHash(client, payload));
     this.onMessage('lockstep:sync', (client, payload: unknown) => this.handleSyncRequest(client, payload));
+    this.onMessage('lockstep:snapshot', (client) => this.handleSnapshotRequest(client));
+    this.onMessage('lockstep:hello', (client) => this.sendWelcome(client, false));
+    this.onMessage('lockstep:ping', (client, payload: unknown) => this.handlePing(client, payload));
     this.setFixedTimestep(() => this.sealAvailableFrames(), netHz);
   }
 
@@ -120,6 +151,7 @@ export class LockstepRoom extends Room {
     player.slot = allocateSlot(this.state.players.values(), this.maxClients);
     player.connected = true;
     this.state.players.set(client.sessionId, player);
+    this.sendWelcome(client, false);
   }
 
   onDrop(client: Client): void {
@@ -135,11 +167,49 @@ export class LockstepRoom extends Room {
   onReconnect(client: Client): void {
     const player = this.state.players.get(client.sessionId);
     if (player) player.connected = true;
+    this.sendWelcome(client, true);
   }
 
   onLeave(client: Client): void {
     const player = this.state.players.get(client.sessionId);
     if (player) this.removeSlot(client.sessionId, player.slot);
+  }
+
+  getFirstDesync(): { netTick: number; reports: Array<{ slot: number; hash: number }> } | null {
+    return this.firstDesync
+      ? { netTick: this.firstDesync.netTick, reports: this.firstDesync.reports.map((r) => ({ ...r })) }
+      : null;
+  }
+
+  exportFrameHistory(): Uint8Array[] {
+    return Array.from(this.frameHistory.values(), (bytes) => new Uint8Array(bytes));
+  }
+
+  private sendWelcome(client: Client, reconnected: boolean): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || typeof client.send !== 'function') return;
+    const payload: LockstepWelcomePayload = {
+      matchTag: this.state.matchTag,
+      slot: player.slot,
+      netHz: this.netHz,
+      currentNetTick: this.state.netTick,
+      lastInputSequence: this.lastSequence.get(client.sessionId) ?? 0,
+      oldestAvailableTick: this.frameHistory.keys().next().value ?? null,
+      trustedCheckpointTick: this.trustedCheckpoint?.netTick ?? null,
+      reconnected,
+    };
+    client.send('lockstep:welcome', payload);
+  }
+
+  private handlePing(client: Client, payload: unknown): void {
+    const clientTimeMs = typeof payload === 'object' && payload !== null && 'clientTimeMs' in payload
+      ? Number((payload as { clientTimeMs: unknown }).clientTimeMs)
+      : Date.now();
+    client.send('lockstep:pong', {
+      clientTimeMs: Number.isFinite(clientTimeMs) ? clientTimeMs : Date.now(),
+      serverTick: this.state.netTick,
+      serverTimeMs: Date.now(),
+    });
   }
 
   private receiveInput(client: Client, raw: unknown): void {
@@ -199,7 +269,7 @@ export class LockstepRoom extends Room {
     const activePlayers = Array.from(this.state.players.values())
       .filter(player => this.reconnectSeconds > 0 || player.connected)
       .sort((a, b) => a.slot - b.slot);
-    if (activePlayers.length === 0) {
+    if (activePlayers.length === 0 || activePlayers.every((player) => !player.connected)) {
       this.waitingTicksOnCurrentFrame = 0;
       return;
     }
@@ -210,26 +280,48 @@ export class LockstepRoom extends Room {
       let frameInputs = this.pending.get(nextTick);
       const missingPlayers = activePlayers.filter((player) => !frameInputs?.has(player.slot));
       if (missingPlayers.length > 0) {
-        if (count === 0) {
-          this.waitingTicksOnCurrentFrame++;
-          if (this.frameDeadlineTicks > 0 && this.waitingTicksOnCurrentFrame >= this.frameDeadlineTicks) {
-            if (!frameInputs) {
-              frameInputs = new Map();
-              this.pending.set(nextTick, frameInputs);
-            }
-            for (const missing of missingPlayers) {
-              frameInputs.set(missing.slot, {
-                slot: missing.slot,
-                sequence: 0,
-                flags: LockstepInputFlags.NO_OP,
-                payload: new Uint8Array(0),
-              });
+        const offlineMissing = missingPlayers.filter((player) => !player.connected);
+        const onlineMissing = missingPlayers.filter((player) => player.connected);
+
+        if (onlineMissing.length > 0) {
+          if (count === 0) {
+            this.waitingTicksOnCurrentFrame++;
+            if (this.frameDeadlineTicks > 0 && this.waitingTicksOnCurrentFrame >= this.frameDeadlineTicks) {
+              if (!frameInputs) {
+                frameInputs = new Map();
+                this.pending.set(nextTick, frameInputs);
+              }
+              for (const missing of onlineMissing) {
+                frameInputs.set(missing.slot, {
+                  slot: missing.slot,
+                  sequence: 0,
+                  flags: LockstepInputFlags.NO_OP,
+                  payload: new Uint8Array(0),
+                });
+              }
+            } else {
+              return;
             }
           } else {
             return;
           }
-        } else {
-          return;
+        }
+
+        // Only synthesize NO_OP|OFFLINE once the frame is actually ready to seal
+        // so a reconnecting player can still submit live inputs for pending ticks.
+        if (offlineMissing.length > 0) {
+          if (!frameInputs) {
+            frameInputs = new Map();
+            this.pending.set(nextTick, frameInputs);
+          }
+          for (const missing of offlineMissing) {
+            frameInputs.set(missing.slot, {
+              slot: missing.slot,
+              sequence: 0,
+              flags: LockstepInputFlags.NO_OP | LockstepInputFlags.OFFLINE,
+              payload: new Uint8Array(0),
+            });
+          }
         }
       }
 
@@ -237,9 +329,13 @@ export class LockstepRoom extends Room {
       const inputs = activePlayers.map((player) => frameInputs!.get(player.slot)!);
       const bytes = encodeConfirmedFrame({ matchTag: this.state.matchTag, netTick: nextTick, inputs });
       this.frameHistory.set(nextTick, bytes);
-      while (this.frameHistory.size > this.maxHistoryFrames) {
+      this.currentHistoryBytes += bytes.byteLength;
+      while (this.frameHistory.size > this.maxHistoryFrames ||
+          (this.currentHistoryBytes > this.maxHistoryBytes && this.frameHistory.size > 16)) {
         const oldest = this.frameHistory.keys().next().value;
         if (oldest === undefined) break;
+        const removed = this.frameHistory.get(oldest);
+        if (removed) this.currentHistoryBytes -= removed.byteLength;
         this.frameHistory.delete(oldest);
       }
 
@@ -293,6 +389,21 @@ export class LockstepRoom extends Room {
     }
     if (!this.frameHistory.has(fromNetTick)) {
       const oldestAvailableTick = this.frameHistory.keys().next().value ?? null;
+      const cp = this.trustedCheckpoint;
+      const checkpointCoversTail = cp !== null
+        && cp.netTick >= fromNetTick
+        && (cp.netTick >= this.state.netTick || this.frameHistory.has(cp.netTick + 1));
+      if (checkpointCoversTail) {
+        client.send('lockstep:sync-status', {
+          ok: false,
+          fromNetTick,
+          reason: 'use_checkpoint',
+          checkpointTick: cp.netTick,
+          oldestAvailableTick,
+          currentNetTick: this.state.netTick,
+        });
+        return;
+      }
       client.send('lockstep:sync-status', {
         ok: false,
         fromNetTick,
@@ -335,6 +446,38 @@ export class LockstepRoom extends Room {
     });
   }
 
+  private handleSnapshotRequest(client: Client): void {
+    if (!this.state.players.get(client.sessionId)?.connected) return;
+    if (!this.trustedCheckpoint) {
+      client.send('lockstep:snapshot-status', { ok: false, reason: 'no_checkpoint' });
+      return;
+    }
+    client.sendBytes('lockstep:snapshot', this.trustedCheckpoint.packetBytes);
+  }
+
+  private receiveCheckpointUpload(client: Client, raw: unknown): void {
+    if (!(raw instanceof Uint8Array)) return;
+    const req = this.pendingCheckpointRequest;
+    if (!req || req.requesterSessionId !== client.sessionId) return;
+    let decoded;
+    try {
+      decoded = decodeLockstepCheckpoint(raw);
+    } catch {
+      return;
+    }
+    if (decoded.matchTag !== this.state.matchTag ||
+        decoded.netTick !== req.netTick ||
+        decoded.stateHash !== req.stateHash) {
+      return;
+    }
+    this.trustedCheckpoint = {
+      netTick: decoded.netTick,
+      stateHash: decoded.stateHash,
+      packetBytes: new Uint8Array(raw),
+    };
+    this.pendingCheckpointRequest = null;
+  }
+
   private clearDeferredSync(sessionId: string): void {
     this.deferredSyncs.get(sessionId)?.timer.clear();
     this.deferredSyncs.delete(sessionId);
@@ -349,18 +492,41 @@ export class LockstepRoom extends Room {
         (candidate.hash as number) < 0 || (candidate.hash as number) > 0xffff_ffff) return;
 
     const netTick = candidate.netTick as number;
+    const hash = candidate.hash as number;
     let reports = this.hashReports.get(netTick);
     if (!reports) {
       reports = new Map();
       this.hashReports.set(netTick, reports);
     }
-    reports.set(player.slot, candidate.hash as number);
+    reports.set(player.slot, hash);
     if (reports.size > 1 && new Set(reports.values()).size > 1) {
+      const formatted = Array.from(reports.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([slot, reportedHash]) => ({ slot, hash: reportedHash }));
+      if (!this.firstDesync || netTick < this.firstDesync.netTick) {
+        this.firstDesync = { netTick, reports: formatted };
+      }
       this.broadcast('lockstep:peer-desync', {
         netTick,
-        reports: Array.from(reports.entries()).sort((a, b) => a[0] - b[0]).map(([slot, hash]) => ({ slot, hash })),
+        reports: formatted,
         authoritative: false,
       });
+    } else if (this.checkpointIntervalFrames > 0 &&
+        netTick % this.checkpointIntervalFrames === 0 &&
+        netTick > (this.trustedCheckpoint?.netTick ?? 0) &&
+        this.pendingCheckpointRequest?.netTick !== netTick) {
+      const connectedSlots = Array.from(this.state.players.values())
+        .filter((p) => p.connected)
+        .map((p) => p.slot);
+      const consensusCount = connectedSlots.length <= 1 ? 1 : Math.min(connectedSlots.length, 2);
+      let matching = 0;
+      for (const slot of connectedSlots) {
+        if (reports.get(slot) === hash) matching++;
+      }
+      if (matching >= consensusCount && new Set(reports.values()).size === 1) {
+        this.pendingCheckpointRequest = { netTick, stateHash: hash, requesterSessionId: client.sessionId };
+        client.send('lockstep:request-checkpoint', { netTick, stateHash: hash });
+      }
     }
     while (this.hashReports.size > 120) {
       const oldest = this.hashReports.keys().next().value;

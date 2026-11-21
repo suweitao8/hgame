@@ -146,3 +146,38 @@ test('terminal simulation never advances an extra substep after the winning Tick
   assert.equal(s.enqueue(frame(6)), false);
   assert.equal(s.fatal, false, 'normal terminal is not a DESYNC or fatal error');
 });
+
+test('enqueueReplay, fastForward, and restoreCheckpoint recover long reconnect gaps without fatal overflow', () => {
+  const sfxPlayed = [];
+  let worldPos = 0;
+  const { scheduler: s } = fixture({
+    maxBufferFrames: 8,
+    maxReplayBufferFrames: 256,
+    simulate(inputs, ctx) {
+      worldPos += inputs[0].move;
+      if (!ctx.isFastForward && (inputs[0].buttons & 1)) sfxPlayed.push(ctx.logicTick);
+    },
+  });
+
+  // Queue 30 replay frames (> maxBufferFrames=8) without failing closed
+  const replay = [];
+  for (let t = 1; t <= 30; t++) replay.push(frame(t, 1));
+  assert.equal(s.enqueueReplay(replay), 30);
+  assert.equal(s.fatal, false);
+
+  const ff = s.fastForward();
+  assert.equal(ff.netFramesCompleted, 30);
+  assert.equal(ff.logicTicksCompleted, 60);
+  assert.equal(worldPos, 60);
+  assert.deepEqual(sfxPlayed, [], 'fast-forward ticks mark isFastForward=true so transient SFX skip');
+
+  // Checkpoint restore rebases logicTick and expectedNetTick for evicted-history recovery
+  s.restoreCheckpoint({ netTick: 100 });
+  assert.equal(s.expectedNetTick, 101);
+  assert.equal(s.logicTick, 200);
+  assert.equal(s.enqueue(frame(101, 1)), true);
+  assert.equal(s.enqueue(frame(102, 0)), true);
+  s.advanceElapsedMs(50);
+  assert.equal(s.logicTick, 201);
+  assert.deepEqual(sfxPlayed, [201]);
+});

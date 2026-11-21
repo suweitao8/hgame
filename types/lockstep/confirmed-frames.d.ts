@@ -13,12 +13,14 @@
  * @property {number} netTick Network tick this logic tick belongs to.
  * @property {number} substep 0..stepsPerFrame-1 within the network tick.
  * @property {number} stepsPerFrame `logicHz / netHz`.
+ * @property {boolean} isFastForward True during fast-forward catch-up replay.
  */
 /**
  * @typedef {object} LockstepTickInfo
  * @property {number} logicTick Logic ticks completed.
  * @property {number} netTick
  * @property {number} substep
+ * @property {boolean} isFastForward
  */
 /**
  * @typedef {object} ConfirmedFrameSchedulerOptions
@@ -30,14 +32,23 @@
  * @property {() => boolean} [isEnded] Return true to stop scheduling.
  * @property {number} [instantButtonMask=0] Buttons cleared on non-first substeps (31-bit mask).
  * @property {number} [startBufferFrames=2] Network frames buffered before starting (1..16).
- * @property {number} [maxBufferFrames=32] Max pending network frames (>= startBufferFrames, <= 512).
+ * @property {number} [maxBufferFrames=32] Max pending live network frames (>= startBufferFrames, <= 512).
+ * @property {number} [maxReplayBufferFrames=4096] Max buffered frames allowed during replay catch-up (>= maxBufferFrames, <= 65536).
  * @property {number} [maxStepsPerUpdate=4] Logic ticks per `advanceElapsedMs` call (1..32).
  * @property {number} [maxExtraStepsPerUpdate=1] Extra catch-up ticks per call (0..16).
  * @property {boolean} [adaptiveCatchup=false] Scale catch-up with buffered excess.
  */
 /**
+ * @typedef {object} FastForwardResult
+ * @property {number} netFramesCompleted
+ * @property {number} logicTicksCompleted
+ */
+/**
  * @typedef {object} ConfirmedFrameScheduler
- * @property {(frame: ConfirmedFrame) => boolean} enqueue Queue a confirmed frame; false when ignored; invalid input makes the scheduler fatal.
+ * @property {(frame: ConfirmedFrame, options?: { replay?: boolean }) => boolean} enqueue Queue a confirmed frame; false when ignored; invalid input makes the scheduler fatal.
+ * @property {(frames: readonly ConfirmedFrame[]) => number} enqueueReplay Batch-queue replay frames using `maxReplayBufferFrames` capacity.
+ * @property {(maxFrames?: number) => FastForwardResult} fastForward Drain contiguous buffered frames immediately for reconnect catch-up.
+ * @property {(checkpoint: { netTick: number, logicTick?: number }) => void} restoreCheckpoint Rebase scheduler cursor after restoring a world state snapshot.
  * @property {(elapsedMs: number) => number} advanceElapsedMs Advance by display time in milliseconds; returns logic ticks completed.
  * @property {boolean} started
  * @property {boolean} stalled Waiting for a network frame.
@@ -60,7 +71,7 @@
  * @param {ConfirmedFrameSchedulerOptions} options
  * @returns {ConfirmedFrameScheduler}
  */
-export function createConfirmedFrameScheduler({ netHz, logicHz, playerIds, simulate, onTick, isEnded, instantButtonMask, startBufferFrames, maxBufferFrames, maxStepsPerUpdate, maxExtraStepsPerUpdate, adaptiveCatchup, }?: ConfirmedFrameSchedulerOptions): ConfirmedFrameScheduler;
+export function createConfirmedFrameScheduler({ netHz, logicHz, playerIds, simulate, onTick, isEnded, instantButtonMask, startBufferFrames, maxBufferFrames, maxReplayBufferFrames, maxStepsPerUpdate, maxExtraStepsPerUpdate, adaptiveCatchup, }?: ConfirmedFrameSchedulerOptions): ConfirmedFrameScheduler;
 /**
  * One player's canonical input: flat safe-integer / boolean fields, `buttons` is a 31-bit mask.
  */
@@ -98,6 +109,10 @@ export type LockstepStepInfo = {
      * `logicHz / netHz`.
      */
     stepsPerFrame: number;
+    /**
+     * True during fast-forward catch-up replay.
+     */
+    isFastForward: boolean;
 };
 export type LockstepTickInfo = {
     /**
@@ -106,6 +121,7 @@ export type LockstepTickInfo = {
     logicTick: number;
     netTick: number;
     substep: number;
+    isFastForward: boolean;
 };
 export type ConfirmedFrameSchedulerOptions = {
     /**
@@ -141,9 +157,13 @@ export type ConfirmedFrameSchedulerOptions = {
      */
     startBufferFrames?: number | undefined;
     /**
-     * Max pending network frames (>= startBufferFrames, <= 512).
+     * Max pending live network frames (>= startBufferFrames, <= 512).
      */
     maxBufferFrames?: number | undefined;
+    /**
+     * Max buffered frames allowed during replay catch-up (>= maxBufferFrames, <= 65536).
+     */
+    maxReplayBufferFrames?: number | undefined;
     /**
      * Logic ticks per `advanceElapsedMs` call (1..32).
      */
@@ -157,11 +177,32 @@ export type ConfirmedFrameSchedulerOptions = {
      */
     adaptiveCatchup?: boolean | undefined;
 };
+export type FastForwardResult = {
+    netFramesCompleted: number;
+    logicTicksCompleted: number;
+};
 export type ConfirmedFrameScheduler = {
     /**
      * Queue a confirmed frame; false when ignored; invalid input makes the scheduler fatal.
      */
-    enqueue: (frame: ConfirmedFrame) => boolean;
+    enqueue: (frame: ConfirmedFrame, options?: {
+        replay?: boolean;
+    }) => boolean;
+    /**
+     * Batch-queue replay frames using `maxReplayBufferFrames` capacity.
+     */
+    enqueueReplay: (frames: readonly ConfirmedFrame[]) => number;
+    /**
+     * Drain contiguous buffered frames immediately for reconnect catch-up.
+     */
+    fastForward: (maxFrames?: number) => FastForwardResult;
+    /**
+     * Rebase scheduler cursor after restoring a world state snapshot.
+     */
+    restoreCheckpoint: (checkpoint: {
+        netTick: number;
+        logicTick?: number;
+    }) => void;
     /**
      * Advance by display time in milliseconds; returns logic ticks completed.
      */

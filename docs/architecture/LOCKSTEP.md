@@ -1,81 +1,128 @@
-# Optional Confirmed-Frame Scheduling
+# Commercial Lockstep Architecture (Confirmed & Rollback)
 
 HGame's default `Component.fixedUpdate(dt)` is a local fixed-step loop. It is not, by itself, deterministic networking. It may call floating-point math, browser APIs, random sources, or renderer objects, and therefore cannot prove that different devices will execute the same game state.
 
-The optional `assets/runtime/lockstep/confirmed-frames.js` module schedules already-confirmed input frames. It does not provide WebSocket transport, packet authentication, room management, deterministic game rules, rollback, snapshots, or matchmaking.
+HGame provides two optional deterministic lockstep schedulers under `assets/runtime/lockstep/`, paired with the commercial relay and dual-track reconnect infrastructure in `network/`:
 
-## Authority model
+1. **Confirmed-Frame Lockstep (`lockstep/confirmed-frames.js`)**: `createConfirmedFrameScheduler` — deterministic confirmed-frame scheduling with `netHz`/`logicHz` substeps, `enqueueReplay` + `fastForward` silent catch-up (`isFastForward`), and `restoreCheckpoint` snapshot recovery. Ideal for RTS, MOBA, tower defense, and co-op arena games.
+2. **Prediction & Rollback Lockstep (`lockstep/rollback-frames.js`)**: `createRollbackFrameScheduler` — GGPO-style input prediction, preallocated circular snapshot slot ring (`saveState` / `loadState`), misprediction rollback & silent resimulation (`isResimulating`), ordered `onConfirmedTick` hashing, bounded speculative window, and time-scale pacing (`recommendTimeScale`). Ideal for 1v1 fighting and ultra-low-latency twitch PvP.
+
+## Authority & Dual-Track Reconnect Model
 
 ```text
-Server: validate input -> seal complete ordered network frames
-                                  |
-                                  v
-Client: buffer contiguous confirmed frames
-                                  |
-                                  v
-                 one authoritative game World
-                                  |
-                     read-only state snapshot
-                                  |
-                       Canvas / Three.js view
+Server (LockstepRoom):
+  validate HGIN input (matchTag, sequence, targetNetTick)
+    -> seal complete HGFR frame (immediate NO_OP|OFFLINE for disconnected slots)
+    -> retain bounded frameHistory (up to 36,000 frames / 16 MiB)
+    -> collect consensus hashes -> request & store trusted HGCP checkpoint
+
+Client (HGameLockstepChannel + Scheduler):
+  Warm / Cold Reconnect -> lockstep:hello / lockstep:welcome
+    -> sync lastInputSequence & serverTick
+    -> if missed ticks are in frameHistory:
+         paged lockstep:sync -> enqueueReplay() -> fastForward() (isFastForward=true)
+    -> if missed ticks were evicted (reason: 'use_checkpoint'):
+         fetch binary HGCP lockstep:snapshot -> restore world state + restoreCheckpoint()
+         -> paged lockstep:sync from (checkpointTick + 1) -> fastForward()
+    -> live input via sendLiveInput() (AdaptiveInputLeadController via lockstep:ping/pong)
 ```
 
-Only the confirmed-frame scheduler may advance the authoritative World in a lockstep project. Do not let the ordinary `fixedUpdate` path mutate the same authoritative state. Rendering and interpolation are read-only.
+### Offline Slots Without Stalling Online Peers
 
-## Minimal usage
+When `reconnectSeconds > 0` and a player disconnects (`player.connected === false`):
+- As long as at least one player remains connected, `LockstepRoom` **immediately** seals `{ flags: NO_OP | OFFLINE }` for disconnected slots without waiting `frameDeadlineTicks`. Online players experience zero slowdown.
+- If **all** players disconnect simultaneously, frame sealing pauses safely until a peer reconnects.
+
+### Cold & Warm Reconnect Sequence Resumption
+
+- `LockstepRoom` emits `lockstep:welcome` on `onJoin`, `onReconnect`, and in response to `lockstep:hello` (e.g., `new HGameLockstepChannel(..., { requestWelcomeOnStart: true })`).
+- `HGameLockstepChannel` automatically adopts `welcome.lastInputSequence` and `welcome.currentNetTick` so a freshly reloaded browser tab or restarted client never hits stale `sequence` or out-of-window `targetNetTick` rejections when resuming live play via `sendLiveInput()` / `recommendTargetNetTick()`.
+
+## Minimal Usage: Confirmed Lockstep + Reconnect + Checkpoint
 
 ```js
 import { createConfirmedFrameScheduler }
   from './vendor/hgame/lockstep/confirmed-frames.js';
 
 const scheduler = createConfirmedFrameScheduler({
-  netHz: 10,
-  logicHz: 20,
+  netHz: 20,
+  logicHz: 40,
   playerIds: [0, 1],
   instantButtonMask: 1,
-  simulate(inputs, { logicTick }) {
-    world.tick(inputs); // game-owned deterministic simulation
+  maxReplayBufferFrames: 4096,
+  simulate(inputs, { logicTick, isFastForward }) {
+    world.tick(inputs);
+    if (!isFastForward) playVisualAndAudioEvents(world);
     if (world.logicTick !== logicTick) throw new Error('Tick mismatch');
   },
-  onTick({ logicTick }) {
-    if (logicTick % 20 === 0) recordHash(logicTick, world.computeHash());
-    updateReadOnlySnapshot(world.getSnapshot());
+  onTick({ logicTick, netTick, substep, isFastForward }) {
+    if (substep === 1 && netTick % 20 === 0) {
+      const hash = world.computeHash();
+      checkpoints.set(netTick, world.serialize());
+      if (!isFastForward) channel.reportHash(netTick, hash);
+    }
+    if (!isFastForward) updateReadOnlySnapshot(world.getSnapshot());
   },
   isEnded: () => world.ended,
 });
 
-// Enqueue only after the game-specific network decoder has validated the frame.
-scheduler.enqueue({
-  netTick: 1,
-  inputs: [
-    { pid: 0, buttons: 1, moveByte: 4 },
-    { pid: 1, buttons: 0, moveByte: 0 },
-  ],
+// Wire HGameLockstepChannel for cold/warm reconnect & HGCP checkpoint recovery
+channel.setCheckpointProvider(({ netTick }) => checkpoints.get(netTick) ?? null);
+channel.onCheckpoint((cp) => {
+  world.deserialize(cp.payload);
+  scheduler.restoreCheckpoint({ netTick: cp.netTick });
 });
-
-// Call from an existing display update; this only schedules confirmed frames.
-scheduler.advanceElapsedMs(displayDeltaMs);
+channel.onFrame((frame) => {
+  scheduler.enqueue(decodeFrame(frame), { replay: true });
+  if (channel.isCatchingUp) scheduler.fastForward();
+});
 ```
 
-## Scheduler guarantees
+## Minimal Usage: Prediction & Rollback Lockstep
 
-- Network and logic rates must have an integer ratio within the supported range.
-- Player IDs must be unique and ordered; accepted inputs are copied before buffering.
-- Startup waits for a contiguous confirmation buffer.
-- Missing frames stall authority; the scheduler does not invent no-op input or skip gaps.
-- Catch-up and buffer sizes are bounded. Invalid future frames fail closed. Opt-in adaptive catch-up pacing (`adaptiveCatchup` and `maxExtraStepsPerUpdate`) may drain queued frames faster when latency spikes, defaulting to strict pacing when `adaptiveCatchup: false`.
-- Instant button bits can be consumed on the first logic substep only.
-- Each completed logic tick invokes `onTick`; a terminal World stops further catch-up.
+```js
+import { createRollbackFrameScheduler }
+  from './vendor/hgame/lockstep/rollback-frames.js';
 
-These are scheduler guarantees, not end-to-end multiplayer guarantees. Games still own packet validation, room identity, match tags, sequences, binary schema, seeded RNG, stable entity ordering, canonical state/hash, replay integrity, disconnect policy, and server trust.
+const maxRollbackFrames = 8;
+const ring = Array.from({ length: maxRollbackFrames + 1 }, () => new Uint8Array(STATE_BYTES));
 
-## Required verification for a real lockstep game
+const rollback = createRollbackFrameScheduler({
+  netHz: 20,
+  logicHz: 60,
+  playerIds: [0, 1],
+  instantButtonMask: 1,
+  maxRollbackFrames,
+  saveState(slotIndex) { world.writeSnapshot(ring[slotIndex]); },
+  loadState(slotIndex) { world.readSnapshot(ring[slotIndex]); },
+  simulate(inputs, { isResimulating }) {
+    world.step(inputs);
+    if (!isResimulating) emitTransientSfxAndVfx(world);
+  },
+  onConfirmedTick({ netTick, slotIndex }) {
+    channel.reportHash(netTick, hashSnapshotBytes(ring[slotIndex]));
+  },
+});
+```
+
+## Scheduler Guarantees
+
+- Network and logic rates must have an integer ratio within `1..240 Hz`.
+- Player IDs must be unique and ordered; accepted inputs are cloned before buffering.
+- Startup waits for a contiguous confirmation buffer in confirmed mode.
+- Missing live frames stall confirmed authority; `fastForward()` drains contiguous buffered replay frames silently (`isFastForward: true`) without tripping live `maxBufferFrames` limits.
+- Rollback mode bounds speculation strictly to `confirmedNetTick + maxRollbackFrames` and clears `instantButtonMask` on default input prediction and non-first substeps.
+- A terminal World (`isEnded() === true`) stops further stepping cleanly.
+
+These are scheduler and transport guarantees, not complete game guarantees. Games still own binary input encoding, fixed-point / integer math, seeded RNG (`DeterministicRng` / `createSeededRng`), stable entity iteration order, canonical state serialization & hashing (`hashInt32State`), disconnect AI policy, and server-side anti-cheat validation (such as shadow simulation).
+
+## Required Verification for a Real Lockstep Game
 
 1. Repeat a seeded input trace for at least 10,000 ticks and compare every authoritative state hash.
 2. Compare 30/60/144 Hz display cadences while consuming identical confirmed frames.
 3. Test missing, duplicate, late, reordered, malformed, and out-of-range frames.
-4. Verify identical replay across separate processes and target browsers.
-5. Compare Windows and real browser/WebAssembly execution; do not infer ARM parity from desktop emulation.
-6. Store the original sealed input bytes and verify replay integrity independently of client-reported hashes.
+4. Test both short outages (history replay + immediate `NO_OP | OFFLINE` slot synthesis) and long evicted outages (`HGCP` consensus checkpoint + tail frame catch-up) with cold reconnects.
+5. Verify identical replay across separate processes and target browsers (and compare Windows vs real browser/WASM execution).
+6. Store the original sealed `HGFR` input bytes (`LockstepRoom.exportFrameHistory()`) and verify replay integrity independently of client-reported hashes.
 
-For ordinary single-player games, keep the normal Application fixed tick and do not import the lockstep module.
+For ordinary single-player games, keep the normal Application fixed tick and do not import the lockstep modules.

@@ -2,15 +2,29 @@ export const LOCKSTEP_PROTOCOL_VERSION = 1;
 export const LOCKSTEP_INPUT_HEADER_BYTES = 20;
 export const LOCKSTEP_FRAME_HEADER_BYTES = 16;
 export const LOCKSTEP_FRAME_ENTRY_HEADER_BYTES = 8;
+export const LOCKSTEP_CHECKPOINT_HEADER_BYTES = 24;
 export const LOCKSTEP_MAX_INPUT_BYTES = 256;
+export const LOCKSTEP_MAX_CHECKPOINT_BYTES = 512 * 1024;
 export const LOCKSTEP_MAX_PLAYERS = 32;
 
 const INPUT_MAGIC = [0x48, 0x47, 0x49, 0x4e] as const; // HGIN
 const FRAME_MAGIC = [0x48, 0x47, 0x46, 0x52] as const; // HGFR
+const CHECKPOINT_MAGIC = [0x48, 0x47, 0x43, 0x50] as const; // HGCP
 
 export enum LockstepInputFlags {
   NONE = 0,
   NO_OP = 1,
+  OFFLINE = 2,
+}
+
+const VALID_CLIENT_INPUT_FLAGS = LockstepInputFlags.NO_OP;
+const VALID_CONFIRMED_FRAME_FLAGS = LockstepInputFlags.NO_OP | LockstepInputFlags.OFFLINE;
+
+export interface LockstepCheckpointPacket {
+  matchTag: number;
+  netTick: number;
+  stateHash: number;
+  payload: Uint8Array;
 }
 
 export interface LockstepInputPacket {
@@ -66,7 +80,7 @@ export function encodeLockstepInput(packet: LockstepInputPacket): Uint8Array {
   const payload = copyPayload(packet.payload);
   const flags = packet.flags ?? LockstepInputFlags.NONE;
   assertUInt(flags, 8, 'flags');
-  if ((flags & ~LockstepInputFlags.NO_OP) !== 0) throw new RangeError('Unknown lockstep input flags');
+  if ((flags & ~VALID_CLIENT_INPUT_FLAGS) !== 0) throw new RangeError('Unknown lockstep input flags');
   if ((flags & LockstepInputFlags.NO_OP) !== 0 && payload.byteLength !== 0) {
     throw new RangeError('No-op inputs must have an empty payload');
   }
@@ -90,7 +104,7 @@ export function decodeLockstepInput(bytes: Uint8Array): LockstepInputPacket {
   const version = view.getUint8(4);
   if (version !== LOCKSTEP_PROTOCOL_VERSION) throw new Error(`Unsupported lockstep protocol version: ${version}`);
   const flags = view.getUint8(5);
-  if ((flags & ~LockstepInputFlags.NO_OP) !== 0) throw new Error('Unknown lockstep input flags');
+  if ((flags & ~VALID_CLIENT_INPUT_FLAGS) !== 0) throw new Error('Unknown lockstep input flags');
   const payloadLength = view.getUint16(6, true);
   if (payloadLength > LOCKSTEP_MAX_INPUT_BYTES || bytes.byteLength !== LOCKSTEP_INPUT_HEADER_BYTES + payloadLength) {
     throw new RangeError('Invalid lockstep input payload length');
@@ -124,7 +138,7 @@ export function encodeConfirmedFrame(frame: ConfirmedLockstepFrame): Uint8Array 
     assertUInt(input.slot, 8, 'slot');
     assertUInt(input.sequence, 32, 'sequence');
     assertUInt(input.flags, 8, 'flags');
-    if ((input.flags & ~LockstepInputFlags.NO_OP) !== 0) throw new RangeError('Unknown lockstep input flags');
+    if ((input.flags & ~VALID_CONFIRMED_FRAME_FLAGS) !== 0) throw new RangeError('Unknown lockstep input flags');
     const payload = copyPayload(input.payload);
     if ((input.flags & LockstepInputFlags.NO_OP) !== 0 && payload.byteLength !== 0) {
       throw new RangeError('No-op inputs must have an empty payload');
@@ -182,7 +196,7 @@ export function decodeConfirmedFrame(bytes: Uint8Array): ConfirmedLockstepFrame 
     const payloadLength = view.getUint16(offset + 2, true);
     const sequence = view.getUint32(offset + 4, true);
     if (slot <= previousSlot) throw new RangeError('Confirmed frame inputs must be unique and sorted by slot');
-    if ((flags & ~LockstepInputFlags.NO_OP) !== 0) throw new Error('Unknown confirmed-frame input flags');
+    if ((flags & ~VALID_CONFIRMED_FRAME_FLAGS) !== 0) throw new Error('Unknown confirmed-frame input flags');
     if (payloadLength > LOCKSTEP_MAX_INPUT_BYTES) throw new RangeError('Input payload exceeds the protocol limit');
     if ((flags & LockstepInputFlags.NO_OP) !== 0 && payloadLength !== 0) throw new RangeError('No-op inputs must have an empty payload');
     const payloadStart = offset + LOCKSTEP_FRAME_ENTRY_HEADER_BYTES;
@@ -196,6 +210,52 @@ export function decodeConfirmedFrame(bytes: Uint8Array): ConfirmedLockstepFrame 
   return { matchTag, netTick, inputs };
 }
 
+export function encodeLockstepCheckpoint(checkpoint: LockstepCheckpointPacket): Uint8Array {
+  assertUInt(checkpoint.matchTag, 32, 'matchTag', 1);
+  assertUInt(checkpoint.netTick, 32, 'netTick', 1);
+  assertUInt(checkpoint.stateHash, 32, 'stateHash', 0);
+  if (!(checkpoint.payload instanceof Uint8Array)) throw new TypeError('Checkpoint payload must be a Uint8Array');
+  if (checkpoint.payload.byteLength > LOCKSTEP_MAX_CHECKPOINT_BYTES) {
+    throw new RangeError('Checkpoint payload exceeds the protocol limit');
+  }
+
+  const bytes = new Uint8Array(LOCKSTEP_CHECKPOINT_HEADER_BYTES + checkpoint.payload.byteLength);
+  const view = new DataView(bytes.buffer);
+  CHECKPOINT_MAGIC.forEach((value, index) => view.setUint8(index, value));
+  view.setUint8(4, LOCKSTEP_PROTOCOL_VERSION);
+  view.setUint8(5, 0);
+  view.setUint16(6, 0, true);
+  view.setUint32(8, checkpoint.matchTag, true);
+  view.setUint32(12, checkpoint.netTick, true);
+  view.setUint32(16, checkpoint.stateHash, true);
+  view.setUint32(20, checkpoint.payload.byteLength, true);
+  bytes.set(checkpoint.payload, LOCKSTEP_CHECKPOINT_HEADER_BYTES);
+  return bytes;
+}
+
+export function decodeLockstepCheckpoint(bytes: Uint8Array): LockstepCheckpointPacket {
+  const view = viewOf(bytes, LOCKSTEP_CHECKPOINT_HEADER_BYTES);
+  assertMagic(view, CHECKPOINT_MAGIC);
+  const version = view.getUint8(4);
+  if (version !== LOCKSTEP_PROTOCOL_VERSION) throw new Error(`Unsupported lockstep protocol version: ${version}`);
+  if (view.getUint8(5) !== 0) throw new Error('Unknown checkpoint flags');
+  const matchTag = view.getUint32(8, true);
+  const netTick = view.getUint32(12, true);
+  const stateHash = view.getUint32(16, true);
+  const payloadLength = view.getUint32(20, true);
+  assertUInt(matchTag, 32, 'matchTag', 1);
+  assertUInt(netTick, 32, 'netTick', 1);
+  if (payloadLength > LOCKSTEP_MAX_CHECKPOINT_BYTES || bytes.byteLength !== LOCKSTEP_CHECKPOINT_HEADER_BYTES + payloadLength) {
+    throw new RangeError('Invalid lockstep checkpoint payload length');
+  }
+  return {
+    matchTag,
+    netTick,
+    stateHash,
+    payload: new Uint8Array(bytes.subarray(LOCKSTEP_CHECKPOINT_HEADER_BYTES)),
+  };
+}
+
 export class ConfirmedFrameQueue {
   private readonly pending = new Map<number, ConfirmedLockstepFrame>();
   private nextNetTick: number;
@@ -207,10 +267,18 @@ export class ConfirmedFrameQueue {
   ) {
     assertUInt(matchTag, 32, 'matchTag', 1);
     assertUInt(firstNetTick, 32, 'firstNetTick', 1);
-    if (!Number.isInteger(maxBufferedFrames) || maxBufferedFrames < 1 || maxBufferedFrames > 512) {
-      throw new RangeError('maxBufferedFrames must be an integer from 1 to 512');
+    if (!Number.isInteger(maxBufferedFrames) || maxBufferedFrames < 1 || maxBufferedFrames > 4096) {
+      throw new RangeError('maxBufferedFrames must be an integer from 1 to 4096');
     }
     this.nextNetTick = firstNetTick;
+  }
+
+  resetCursor(nextNetTick: number): void {
+    assertUInt(nextNetTick, 32, 'nextNetTick', 1);
+    this.nextNetTick = nextNetTick;
+    for (const tick of this.pending.keys()) {
+      if (tick < nextNetTick) this.pending.delete(tick);
+    }
   }
 
   push(frame: ConfirmedLockstepFrame): boolean {
