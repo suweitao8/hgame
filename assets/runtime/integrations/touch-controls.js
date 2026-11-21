@@ -1,4 +1,5 @@
 import { computeSplitScreenViews } from '../platform/input.js';
+import { computeThumbArcLayout } from '../ui/thumb-arc.js';
 
 const STYLE_ATTR = 'data-hgame-touch-controls';
 const DEFAULT_BUTTON_DIAMETER = 52;
@@ -50,9 +51,13 @@ const TOUCH_STYLESHEET = `
   left: 0;
   bottom: 0;
   width: 48%;
-  height: 68%;
+  height: 48%;
   pointer-events: auto;
   touch-action: none;
+}
+.hgame-touch-root[data-button-layout="portrait-arc"] .hgame-joy-zone {
+  width: 46%;
+  height: 46%;
 }
 .hgame-joy-base {
   position: absolute;
@@ -237,7 +242,7 @@ function injectStylesheet(documentRef) {
 }
 
 /** @typedef {'touch-only' | 'always' | 'hidden'} TouchControlsMode */
-/** @typedef {'arc' | 'grid'} TouchButtonLayout */
+/** @typedef {'arc' | 'grid' | 'portrait-arc'} TouchButtonLayout */
 
 /**
  * One action button binding of a player controller (from createArcadeControls).
@@ -328,8 +333,8 @@ export function createTouchControls({
   if (joystick !== 'floating' && joystick !== 'fixed' && joystick !== false) {
     throw new RangeError('Touch controls joystick must be "floating", "fixed", or false');
   }
-  if (buttonLayout !== 'arc' && buttonLayout !== 'grid') {
-    throw new RangeError('Touch controls buttonLayout must be "arc" or "grid"');
+  if (buttonLayout !== 'arc' && buttonLayout !== 'grid' && buttonLayout !== 'portrait-arc') {
+    throw new RangeError('Touch controls buttonLayout must be "arc", "grid", or "portrait-arc"');
   }
   if (!Number.isFinite(joystickRadius) || joystickRadius < 16 || joystickRadius > 240) {
     throw new RangeError('joystickRadius must be in 16..240');
@@ -582,8 +587,35 @@ export function createTouchControls({
   }
 
   function applyButtonPositions() {
-    const table = currentLayout === 'grid' ? GRID_COORDS : ARC_COORDS;
     root.setAttribute('data-button-layout', currentLayout);
+    if (currentLayout === 'portrait-arc') {
+      const w = windowRef?.innerWidth || container.clientWidth || 390;
+      const h = windowRef?.innerHeight || container.clientHeight || 844;
+      for (const pane of panes) {
+        if (pane.buttonList.length === 0) continue;
+        const placed = computeThumbArcLayout({
+          viewportWidth: w,
+          viewportHeight: h,
+          items: pane.buttonList.map((btn, idx) => ({
+            id: btn.binding.slot,
+            primary: btn.binding.slot === 'j' || idx === 0,
+            size: btn.binding.slot === 'j' ? 66 : (btn.binding.isExtra ? 48 : 54),
+          })),
+        });
+        for (let i = 0; i < pane.buttonList.length && i < placed.items.length; i++) {
+          const btn = pane.buttonList[i];
+          const p = placed.items[i];
+          const right = Math.max(8, Math.round(w - (p.cx + p.radius)));
+          const bottom = Math.max(8, Math.round(h - (p.cy + p.radius)));
+          setElementStyle(btn.btnEl, 'right', `${right}px`);
+          setElementStyle(btn.btnEl, 'bottom', `${bottom}px`);
+          setElementStyle(btn.btnEl, 'width', `${p.size}px`);
+          setElementStyle(btn.btnEl, 'height', `${p.size}px`);
+        }
+      }
+      return;
+    }
+    const table = currentLayout === 'grid' ? GRID_COORDS : ARC_COORDS;
     for (const pane of panes) {
       for (const btn of pane.buttonList) {
         const spec = table[btn.binding.slot] ?? { right: 8, bottom: 8, size: DEFAULT_BUTTON_DIAMETER };
@@ -614,6 +646,7 @@ export function createTouchControls({
       setElementStyle(pane.paneEl, 'height', `${(v.height * 100).toFixed(4)}%`);
       pane.paneEl.setAttribute('data-compact', panes.length > 1 ? 'true' : 'false');
     }
+    if (currentLayout === 'portrait-arc') applyButtonPositions();
   }
 
   function releaseAll() {
@@ -676,8 +709,8 @@ export function createTouchControls({
       syncVisibility();
     },
     setButtonLayout(nextLayout) {
-      if (nextLayout !== 'arc' && nextLayout !== 'grid') {
-        throw new RangeError('Touch controls buttonLayout must be "arc" or "grid"');
+      if (nextLayout !== 'arc' && nextLayout !== 'grid' && nextLayout !== 'portrait-arc') {
+        throw new RangeError('Touch controls buttonLayout must be "arc", "grid", or "portrait-arc"');
       }
       currentLayout = nextLayout;
       applyButtonPositions();

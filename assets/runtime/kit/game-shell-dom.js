@@ -264,6 +264,24 @@ const SHELL_CSS = `
 #hud:has(#hg-title:not([hidden]), #levelup:not([hidden]), #gameover:not([hidden])) :is(.hg-edge-tl, .hg-edge-tr, .bars, #readout, #pause, [data-ui-hint]) {
   visibility: hidden;
 }
+@media (orientation: portrait), (max-width: 600px) {
+  #hud[data-portrait-thumb="true"] .hg-edge-tr {
+    top: auto;
+    bottom: max(18px, calc(env(safe-area-inset-bottom) + 14px));
+    right: max(16px, calc(env(safe-area-inset-right) + 12px));
+  }
+  #hud[data-portrait-thumb="true"] .hg-overlay {
+    align-content: end;
+    justify-items: end;
+    padding: 20px max(18px, calc(env(safe-area-inset-right) + 14px)) max(28px, calc(env(safe-area-inset-bottom) + 22px)) 20px;
+  }
+  #hud[data-portrait-thumb="true"] .hg-hero-frame,
+  #hud[data-portrait-thumb="true"] .hg-cards,
+  #hud[data-portrait-thumb="true"] .hg-actions {
+    max-width: min(92vw, 380px);
+    justify-content: flex-end;
+  }
+}
 `;
 
 function injectShellStyles(doc) {
@@ -297,6 +315,7 @@ function el(doc, tag, attrs = {}, text = null) {
  * @property {string[]} [metrics]
  * @property {string[]} [bars]
  * @property {string} [hintKeys='WASD · J']
+ * @property {boolean} [portraitFirst=true] Anchor clickable shell controls into the bottom-right thumb arc on portrait screens.
  */
 
 /**
@@ -328,7 +347,13 @@ export function mountGameShell(options) {
 
   injectShellStyles(doc);
 
-  const hud = el(doc, 'div', { id: 'hud', 'aria-live': 'polite', 'data-ui-theme': theme.uiTheme });
+  const portraitFirst = options.portraitFirst !== false;
+  const hud = el(doc, 'div', {
+    id: 'hud',
+    'aria-live': 'polite',
+    'data-ui-theme': theme.uiTheme,
+    ...(portraitFirst ? { 'data-portrait-thumb': 'true' } : {}),
+  });
 
   // Edge HUD (Top-Left glass frame + bars + metrics, Top-Right <= 1 pause button)
   const edgeTl = el(doc, 'div', { className: 'hg-edge-tl' });

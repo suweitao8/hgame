@@ -105,6 +105,7 @@ export function createCanvasUiRenderer({
     hoveredId: null,
     pressedId: null,
     focusedId: null,
+    composingText: '',
     scrollOffsets: new Map(),
   };
   /** @type {{ id: string, node: object, rect: { x: number, y: number, width: number, height: number } }[]} */
@@ -212,8 +213,10 @@ export function createCanvasUiRenderer({
       ctx.strokeStyle = isFocused ? '#38bdf8' : (isHovered ? '#94a3b8' : (srcNode.borderColor ?? '#475569'));
       ctx.stroke?.();
       const rawVal = typeof srcNode.value === 'string' ? srcNode.value : '';
-      const hasVal = rawVal.length > 0;
-      const display = hasVal ? rawVal : (srcNode.placeholder ?? '');
+      const composing = isFocused && widgetState.composingText ? widgetState.composingText : '';
+      const combined = rawVal + composing;
+      const hasVal = combined.length > 0;
+      const display = hasVal ? combined : (srcNode.placeholder ?? '');
       drawCrispText(ctx, display + (isFocused ? '|' : ''), x + 10, y + height * 0.5, {
         fontSize: srcNode.fontSize ?? 14,
         color: hasVal ? (srcNode.color ?? '#f8fafc') : (srcNode.placeholderColor ?? '#64748b'),
@@ -356,11 +359,31 @@ export function createCanvasUiRenderer({
     return false;
   }
 
+  function compositionUpdate(text) {
+    if (!widgetState.focusedId) return false;
+    widgetState.composingText = typeof text === 'string' ? text : '';
+    return true;
+  }
+
+  function compositionEnd(text) {
+    widgetState.composingText = '';
+    if (!widgetState.focusedId || typeof text !== 'string' || !text) return false;
+    const entry = hitNodes.find(h => h.id === widgetState.focusedId);
+    const node = entry?.node;
+    if (!node || node.type !== 'textInput') return false;
+    const cur = typeof node.value === 'string' ? node.value : '';
+    const maxLen = Number.isInteger(node.maxLength) && node.maxLength > 0 ? node.maxLength : 64;
+    node.value = (cur + text).slice(0, maxLen);
+    node.onChange?.(node.value, node);
+    return true;
+  }
+
   function getState() {
     return {
       hoveredId: widgetState.hoveredId,
       pressedId: widgetState.pressedId,
       focusedId: widgetState.focusedId,
+      composingText: widgetState.composingText,
       hitCount: hitNodes.length,
     };
   }
@@ -373,6 +396,8 @@ export function createCanvasUiRenderer({
     pointerDown,
     pointerUp,
     keyDown,
+    compositionUpdate,
+    compositionEnd,
     scroll,
     getState,
   });

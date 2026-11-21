@@ -859,6 +859,38 @@ function runDemo(opts) {
   if (!demoPass) process.exit(1);
 }
 
+/**
+ * Audit runtime clickable button bounds in a mobile portrait viewport to enforce the
+ * Bottom-Right Thumb-Arc Comfort Zone rule (avoid clickable controls in the top half).
+ *
+ * @param {Array<{ id?: string, selector?: string, y: number, height: number, x?: number, width?: number }>} buttons
+ * @param {number} viewportHeight
+ * @param {number} [minCenterRatio=0.5]
+ */
+export function auditPortraitThumbZone(buttons = [], viewportHeight = 844, minCenterRatio = 0.5) {
+  const vh = Math.max(1, Number(viewportHeight) || 844);
+  const threshold = vh * minCenterRatio;
+  const violations = [];
+  for (const btn of Array.isArray(buttons) ? buttons : []) {
+    if (!btn || !Number.isFinite(btn.y) || !Number.isFinite(btn.height)) continue;
+    const centerY = btn.y + btn.height * 0.5;
+    if (centerY < threshold) {
+      violations.push({
+        rule: 'portrait-upper-half-button',
+        id: btn.id ?? btn.selector ?? 'button',
+        centerY: Number(centerY.toFixed(1)),
+        thresholdY: Number(threshold.toFixed(1)),
+      });
+    }
+  }
+  return {
+    pass: violations.length === 0,
+    checked: Array.isArray(buttons) ? buttons.length : 0,
+    thresholdY: threshold,
+    violations,
+  };
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2));
   if (args.demo) {

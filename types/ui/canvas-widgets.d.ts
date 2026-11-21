@@ -67,11 +67,14 @@ export function createCanvasUiRenderer({ fontFamily, dpr, }?: {
     } | null;
     pointerUp: (px: any, py: any) => string | null;
     keyDown: (key: any) => boolean;
+    compositionUpdate: (text: any) => boolean;
+    compositionEnd: (text: any) => boolean;
     scroll: (deltaY: any, px: any, py: any) => number;
     getState: () => {
         hoveredId: null;
         pressedId: null;
         focusedId: null;
+        composingText: string;
         hitCount: number;
     };
 }>;

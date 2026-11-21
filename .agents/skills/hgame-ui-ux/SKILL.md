@@ -39,6 +39,10 @@ npm run snapshot -- <game-dir> --check-ui
 4. **做减法检查（默认删光再加回）**
    - 生成任何 UI 前先自检：**删掉这段文字、这个角标或这个按钮，核心玩法还能不能跑通？能跑通就一律不准写。**
    - **严禁私自编造未被要求的状态角标、提醒标签、角色外号或台词**（例如 `"今晚自耗"`、`"不可干预"`、`"自动消耗"`、`"次日生效"`、`"点击装备"` 等胶囊，以及角色外号 `.role-pill`、无意义 `quote` 独白框、`"第 N 天 · 突发事件"` 眉标）。
+5. **移动端竖屏优先 & 右下角半圆拇指舒适区（Portrait & Bottom-Right Thumb-Arc）**
+   - **全面竖屏设计**：所有新游默认面向手机端 B站 Toy 竖屏单手/双手舒适持握体验设计（PC 端 Web 仅用于测试与开发）。
+   - **交互重心下沉至右下角弧形半圆舒适区**：核心技能、主行动按钮、暂停/设置触发键、首屏开始与结算重开区，必须优先布局在以**屏幕右下角为圆心的 1/4 ~ 半圆弧形热区**（`centerY >= 0.5 * viewportHeight`，推荐使用引擎内置 `computeThumbArcLayout`、`createThumbArcHud`、`createTouchControls({ buttonLayout: 'portrait-arc' })` 与 `mountGameShell({ portraitFirst: true })`）。
+   - **上半屏禁放高难触及按钮**：尽可能不把任何可点击按钮放在屏幕上半区（顶部边缘仅用于只读血条/分数展示，且 `pointer-events: none`），通过 `auditPortraitThumbZone` 自检验证零越界。
 
 ## 3. Conditional Rules（仅当玩法确实需要卡牌 / 商店 / 编队 / 抉择弹窗时）
 

@@ -7,6 +7,7 @@
  * @property {string[]} [metrics]
  * @property {string[]} [bars]
  * @property {string} [hintKeys='WASD · J']
+ * @property {boolean} [portraitFirst=true] Anchor clickable shell controls into the bottom-right thumb arc on portrait screens.
  */
 /**
  * @typedef {object} GameShellHandle
@@ -34,6 +35,10 @@ export type GameShellOptions = {
     metrics?: string[] | undefined;
     bars?: string[] | undefined;
     hintKeys?: string | undefined;
+    /**
+     * Anchor clickable shell controls into the bottom-right thumb arc on portrait screens.
+     */
+    portraitFirst?: boolean | undefined;
 };
 export type GameShellHandle = {
     hud: HTMLElement;

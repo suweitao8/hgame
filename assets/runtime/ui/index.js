@@ -13,6 +13,12 @@ export { computeFlexLayout } from './flex-layout.js';
 export { createCanvasUiRenderer, renderSdfText } from './canvas-widgets.js';
 export { createLiveProfilerOverlay } from './profiler-overlay.js';
 export {
+  DEFAULT_THUMB_ARC_SPEC,
+  computeThumbArcLayout,
+  isInThumbComfortZone,
+  createThumbArcHud,
+} from './thumb-arc.js';
+export {
   computeStaggerProgress,
   createUiSurfaceSpring,
   createUiMotionGroup,
