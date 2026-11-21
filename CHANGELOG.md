@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Introduce Scorecard v5 evidence-driven absolute 4-engine scoring (`docs/scorecard/engine-scorecard.json`, `scripts/score-engines.mjs`, `tests/engine-scorecard.test.mjs`, `docs/ENGINE-SCORECARD.md`), deprecating the v4 relative `100.7/100` headline score in favor of hard evidence caps (`E0–E4`), proof-file checks, anti-drift tests, and a separate delivery maturity reference score (`Unity 6.x URP Web = 80.0`, `HGame 1.0.0 = 74.0`, `Cocos Creator 3.8 Web = 71.3`, `Godot 4.3+ Web = 64.6`; delivery `83.5 / 41.5 / 77.8 / 72.0`).
+
 - Complete Tier 6 Scene Hot-Reload, Physical RT Aliasing Pool, Real MRT Contour Draw, Vertex Quantization, 2-Stage Dawn WebGPU Hi-Z Culling & Resource Leak Diff raising unified v4 Web scorecard to **`100.7/100`** (surpassing `Unity 6.6 URP Web = 100.0` by `+0.7`; `Cocos Creator 3.8 Web = 88.2`, `Godot 4.3+ Web = 81.9`):
   - **Runtime Hot-Reload & Atomic Rollback (`A1`, `core/scene.js`)**: Added `SceneManager.hotReload` and `createHotReloadController` preserving live state (`captureState`/`restoreState`) across scene factory swaps and atomically rolling back to the live scene on replacement errors.
   - **Physical RenderTarget Transient Aliasing Pool (`A2`, `integrations/post3d/render-graph.js`)**: Added `createPhysicalRenderTargetPool3D` reusing `WebGLRenderTarget` allocations across non-overlapping RenderGraph lifetimes (`allocations=2, reuses=2, estimatedSavedBytes=5,266,560` verified in `390×844` Chromium WebGL2).

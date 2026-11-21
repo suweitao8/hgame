@@ -1,20 +1,41 @@
-# HGame 引擎评分机制（v4 · 竖屏 Web 小游戏唯一评分标准）
+# HGame 引擎评分机制（v5 · 证据驱动 · 四引擎 Web 绝对评分）
 
-**评分标准 v4（以 Unity 6.6 URP Web 能力上限 = `100.0` 为 Web 端 100% 基准 · 仅评浏览器可落地的 HTML5/Web 竞品：`HGame`、`Unity 6.6 URP Web`、`Cocos Creator 3.8 Web`、`Godot 4.3+ Web`，彻底移除无 Web 导出能力的 Unreal）：HGame 专为竖屏 50MB 单包 HTML5 小游戏设计，全引擎只有一个统一评分——经 Phases 1–5 与 `T1 ~ T6`（含热重载与原子回滚 `createHotReloadController`、RenderTarget 物理内存别名池 `createPhysicalRenderTargetPool3D`、2-Pass G-Buffer + GLSL3 MRT 实时描边渲染 `renderOutline`、顶点法线/UV 量化与 Uint16 索引压缩 `quantizeBufferGeometry3D`、两阶段硬件 Dawn WebGPU 视锥+Hi-Z 遮挡剔除 `dispatchWebGpuHiZOcclusion` 与 GPU 资源泄漏快照 Diff `captureResourceSnapshot` / `diffResourceSnapshots`）迭代，HGame 当前 Web 综合能力达到 Unity 6.6 URP Web 的 `100.7 / 100`（`+0.7` 正式反超 Unity Web 天花板：架构 `101.9%`、渲染 `99.7%`、性能 `100.7%`、子系统 `99.9%`、联机 `103.5%`），大幅领先 Cocos Creator 3.8 Web（`88.2`）与 Godot 4.3+ Web（`81.9`）。**
-
-> **为什么统一为单一 Web 评分**：HGame 的定位就是移动端竖屏小游戏引擎（B站 Toy 首包 50MB、自研权威服、Blender Auto-Rig、确定性 Rapier 物理），不做通用 3A 的多骨架重定向、重布料/车辆或跨包拆解；再出两套分数毫无意义。因此 v4 直接以**竖屏小游戏真实交付能力**对照 Unity Web（`100.0`）打出唯一评分。
-
-> 编辑器可视化 GUI、各小游戏平台发行/兼容适配（B站 Toy / 抖音 / 微信 / TapTap 小游戏等）及商店资产市场均**不计入**引擎运行时得分，仅评估**运行时直接支撑游戏开发的 5 大技术底座**：架构与资产（18）、图形渲染（30）、性能与硬件（24）、核心运行时子系统（20）、多人与确定性网络（8）。
+**客观结论（2026-11-22 · v5 口径）**：在 Web/HTML5 绝对 0–100 底座评分体系下，四大引擎真实排序为 **Unity 6.x URP Web（`80.0 / 100`） > HGame 1.0.0（`74.0 / 100`） > Cocos Creator 3.8 Web（`71.3 / 100`） > Godot 4.3+ Web Compatibility（`64.6 / 100`）**；若纳入工具链、生态与真机矩阵的交付成熟度参考分（`70% 底座 + 30% 交付`），选型参考分为 **Unity `81.1` > Cocos `73.2` > Godot `66.8` > HGame `64.2`**。**原 v4 版“HGame `100.7 / 100` 反超 Unity Web”结论正式作废**：v4 将未封顶的自评分数除以 `88.50` 归一化为相对 100%，掩盖了 HGame 零真机移动端实测、零商业上线作品、核心 RenderGraph/WebGPU 尚未全面接管默认主渲染路径、缺乏光照烘焙与生态工具等关键短板，且包含部分竞品事实偏差与包体口径误导。
 
 ---
 
-## v3 评分防虚高四大铁律（Hard Caps）
+## v5 评分口径与定位
 
-在 v2 的三项铁律之外，v3 新增最关键的第四条**端到端真链路铁律**：
+1. **只评 Web/HTML5 运行端**：严格评估浏览器/小游戏宿主可落地的四大对象：`HGame 1.0.0`、`Unity 6.x URP Web`、`Cocos Creator 3.8 Web`、`Godot 4.3+ Web (Compatibility)`，移除无官方 Web 导出能力的 Unreal。
+2. **绝对 0–10 分制与固定底座权重**：17 项细分能力全部按绝对 0–10 分（步长 `0.5`）独立打分，沿用固定底座权重：**架构与资产 `18`、图形渲染 `30`、性能与硬件 `24`、核心运行时子系统 `20`、多人与确定性网络 `8`**（合计 `100` 分）。
+3. **取消“Unity = 100.0”归一化**：任何引擎底座满分均为 `100.0`，禁止通过相对比值构造“超 100”分数；`对 Unity 比值` 仅作横向倍率参考展示。
+4. **交付成熟度单列为参考分**：编辑器工具、AI 自动化可验证性、社区生态、上线作品与真机矩阵、Web 包体冷启动、多平台覆盖共 6 项（`D1–D6`，权重合计 `100`）单列评估，**不并入**引擎运行时底座分；仅在选型参考分（`0.7 × 底座 + 0.3 × 交付`）中体现商业工程风险。
+5. **单一数据真相源**：全部原始分、证据等级、竞品依据与实测值存放在 [engine-scorecard.json](scorecard/engine-scorecard.json)，本文档中的总表、逐项表与交付表均由 `node scripts/score-engines.mjs --write` 自动渲染。
+
+---
+
+## v5 评分防虚高六大铁律（Hard Caps）
+
+在沿用 v3 四项铁律基础上，v5 新增第 5、第 6 条证据与同步硬约束：
 1. **未接默认管线封顶 `<= 7 分`**：能力仅在独立 Helper 中，未进入 `Application` / `createThreeAdapter` / `createPostPipeline3D` / 默认 Profile 主路径，最高 `7 / 10`。
 2. **仅 Node Mock 缺真机/高规模实证封顶 `<= 8 分`**：只有 `320×180` 最小冒烟测试、未经过复杂负载（千级实例/曲面接缝/真 WebGL2/Web Audio）验证，最高 `8 / 10`。
 3. **关键工业特性缺失封顶**：缺核心能力（如深度重建投影贴花、骨骼缩放重定向/FABRIK、二进制增量包）不可按同档给分。
 4. **“空壳挂载 / 假异步 / 无真实信号输入”零加分铁律**：创建了节点但无上游输入（如 `ConvolverNode` 没有 Voice Send）、`stepAsync` 仍主线程跑完算法、只触发距离回调但未切换实际纹理资源等情形，**按未实现计分，严禁加分**。
+5. **证据等级封顶（`E0–E4`）**：HGame 单项得分严禁超过其最高可复现证据等级对应上限：
+
+| 证据等级 | 工程实证要求 | 单项得分上限 |
+| :---: | --- | ---: |
+| `E0` | 仅声明 / 设计文档，无可执行验证 | **5.0** |
+| `E1` | Node 单元测试 / Mock 仿真通过 | **7.0** |
+| `E2` | 桌面浏览器真实 GPU（WebGL2 / Dawn WebGPU）基准实测通过 | **8.5** |
+| `E3` | 真机移动端浏览器（iOS Safari / Android WebView）实测通过 | **9.5** |
+| `E4` | 已上线商业作品与多机型线上数据验证 | **10.0** |
+
+6. **竞品依公开边界 + 实证路径强校验 + 防漂移门禁**：竞品分数必须基于官方公开能力边界并填写 `competitorNotes`；HGame 每项 `proofFiles` 必须指向已被 Git 跟踪的运行时源文件（浏览器基准脚本记入 `benchmarkFiles` 作为本地证据）；防漂移门禁以 `node scripts/score-engines.mjs --check`（已跟踪）为准，辅以本地测试 `tests/engine-scorecard.test.mjs`（`tests/` 已按仓库 `.gitignore` 保留在本地）拦截任何手改表格行为。
+
+---
+
+## 0–10 分档说明与 17 项逐项判定细则
 
 ### 0–10 分分档说明
 
@@ -23,12 +44,10 @@
 | 0–2 | 缺失，或仅停留在原型片段，尚未接通主运行入口。 |
 | 3–4 | 具备基础 API，但仅覆盖单一窄路径，常规游戏必须大量手写胶水代码。 |
 | 5–6 | **可用级**：核心能力已跑通主路径并有单元测试，但缺少进阶生产特性或仅覆盖部分子场景。 |
-| 7–8 | **生产可用级**：进阶能力完善且多路径对齐；受“未默认接线”或“仅 Node Mock 验证”封顶最高 `8`。 |
-| 9–10 | **商业工业级**：默认主路径全链路打通、无显著功能短板，并在真机 WebGL2/WebGPU 环境经过渲染/性能实证。 |
+| 7–8 | **生产可用级**：进阶能力完善且多路径对齐；受“未默认接线”或“仅桌面基准验证”封顶约束。 |
+| 9–10 | **商业工业级**：默认主路径全链路打通、无显著功能短板，并在真机移动端或商业线上环境经过实证。 |
 
----
-
-## v2 逐项判定标准（17 项细则）
+### 逐项判定标准（17 项细则）
 
 | 编号 | 评分项（权重） | 基础 6 分 | 进阶 7–8 分 | 工业级 9–10 分 |
 | --- | --- | --- | --- | --- |
@@ -52,103 +71,136 @@
 
 ---
 
-## Web 端四大竞品全方位评分 · 2026-11-22（v4 · 唯一评分标准 · Unity Web = 100.0）
+## 1. Web 端四大引擎综合得分总表（绝对 0–100）
 
-- **HGame（`T6` 全链路硬件真机实测）**：经 `npm run check:types`、`npm run check:api-index`、`npm run check:physics`、`npm run test:network`、`npm run test:examples`（`49/49`）、60s 3,600-tick 零泄漏压测、`tests/browser-engine-v2-benchmark.mjs`、`tests/browser-engine-v3-commercial-benchmark.mjs`（`1280×720`）、`tests/browser-webgpu-compute-benchmark.mjs`（NVIDIA Lovelace Dawn WebGPU 两阶段硬件实测：Stage 1 `mode="webgpu-indirect"` `4,096 -> 2,048` 视锥剔除 + Stage 2 `hizMode="webgpu-hiz"` `256 -> 128` 遮挡剔除 / `7` 级 `r32float` 深度金字塔，零报错）以及 **`tests/browser-mobile-portrait-benchmark.mjs`（`390×844` DPR 2 竖屏 Chromium WebGL2** 一键 `mobilePortrait` 模式：`turnkeyPortraitEnabled=true`、`staticInputCount=24 -> staticBatchCount=1`、`rtPoolAllocations=2 -> rtPoolReuses=2 (5,266,560B saved)`、`mrtAttachments=2` & `mrtRenderCount=1 (glErrAfterMrt=0)`、`quantizedReductionPct=21.27`、`leakDetected=true & leakCleaned=true`、`glError=0`、`uboEnabled=true`、`lutEnabled=true`、`atlasRenderedTiles=2`、`pressedActions=["atk","dash"]`）端到端实证。
-- **对比竞品 Web 端实际能力边界（不含无 Web 导出能力的 Unreal）**：
-  - **Unity 6.6 URP Web（Web 基准天花板 `100.0`）**：WebGL2 默认稳定 + WebGPU 逐步可用，SRP Batcher、APV、DBuffer 贴花、PCSS/CSM Atlas、Mecanim、PhysX、AudioMixer DSP、UI Toolkit 完整；但 WebAssembly 空包体积 10–18MB，对 50MB B站 Toy 占用偏大且冷启动较慢，亦无竖屏单手 UI 原生底座。
-  - **Cocos Creator 3.8 Web（`88.2`）**：小游戏 HTML5 实战生态成熟，ASTC/ETC2、2D 混排、自定义 Render Pipeline、多物理后端 WASM 与小包体启动均衡；但原生 3D 软阴影/SSR/TAA 深度、大型群体 Bone-VAT 及前后端同源确定性联机能力较弱。
-  - **Godot 4.3+ Web（`81.9`）**：编辑器与 2D/UI 工作流顺手，但**导出 Web 端被迫退回 Compatibility/GLES3 渲染后端**，桌面端 Forward+ / SDFGI / TAA / Compute 剔除不可用，且 Web 多线程依赖 `SharedArrayBuffer`（COOP/COEP 宿主头限制）与 20–35MB 重 WASM 包体。
+<!-- scorecard:runtime:start -->
+| 引擎 | A 架构(18) | R 渲染(30) | P 性能(24) | S 子系统(20) | N 联机(8) | 底座分 / 100 | 对 Unity 比值 | 交付参考分 | 选型参考分 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Unity 6.x URP Web | 90.0% | 82.2% | 73.1% | 80.0% | 70.0% | 80.0 | 100.0% | 83.5 | 81.1 |
+| **HGame 1.0.0** | 73.3% | 74.7% | 71.0% | 76.5% | 75.0% | **74.0** | 92.4% | 41.5 | **64.2** |
+| Cocos Creator 3.8 Web | 81.7% | 78.2% | 66.0% | 72.5% | 35.0% | 71.3 | 89.1% | 77.8 | 73.2 |
+| Godot 4.3+ Web (Compatibility) | 66.7% | 65.0% | 52.9% | 76.0% | 65.0% | 64.6 | 80.8% | 72.0 | 66.8 |
+<!-- scorecard:runtime:end -->
 
-### 1. Web 端五维相对得分总表（Unity Web = 100.0）
+> **加权算式说明**：条目得分点数 = `条目权重 × 条目分 / 10`；各维度得分率 = `该维度条目点数之和 / 维度权重 × 100%`；底座总分 = `17 项点数之和`（满分 `100.0`）。`对 Unity 比值` = `引擎底座分 / Unity 底座分 × 100%`。HGame 当前所有条目最高证据等级均为桌面 Chromium/Dawn 基准（`E2`，单项封顶 `8.5`），且 `A2` / `P2` 受铁律 1 封顶 `7.0`。
 
-| 引擎 | A 架构（18） | R 渲染（30） | P 性能（24） | S 子系统（20） | N 联机（8） | **Web 综合分 / 100** |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| **HGame（竖屏 Web 引擎 · T6）** | **101.9** | **99.7** | **100.7** | **99.9** | **103.5** | **100.7** |
-| **Unity 6.6 URP Web（基准）** | 100.0 | 100.0 | 100.0 | 100.0 | 100.0 | **100.0** |
-| **Cocos Creator 3.8 Web** | 92.6 | 87.6 | 86.3 | 91.8 | 76.5 | **88.2** |
-| **Godot 4.3+ Web（GLES3）** | 86.7 | 77.6 | 74.6 | 92.8 | 82.4 | **81.9** |
+---
 
-> 加权算式：五维按固定底座权重（A 18% / R 30% / P 24% / S 20% / N 8%）换算，HGame 加权底层分 `16.50 + 26.92 + 20.95 + 17.68 + 7.04 = 89.09`，`89.09 / 88.50 = 100.67%`（计 **`100.7`**），正式反超 Unity Web 基准 **`+0.7`** 分（其中架构 `101.9`、性能 `100.7`、联机 `103.5` 三项全面超越 Unity Web，渲染 `99.7` 与子系统 `99.9` 基本持平）。
+## 2. 17 项细分能力逐项对比与短板矩阵
 
-### 2. Web / 50MB B站 Toy 实战专项横向对比（工程落地效率维度）
+<!-- scorecard:items:start -->
+| 编号 | 项（权重） | HGame | 证据 | Unity | Cocos | Godot | HGame 短板 |
+| --- | --- | ---: | :---: | ---: | ---: | ---: | --- |
+| A1 | 调度与生命周期（6） | **8.0** | E2 | 9.0 | 8.0 | 8.5 | 缺少长任务自动预算切片及真机移动端频繁切场景零泄漏实证。 |
+| A2 | 渲染图与扩展管线（6） | **7.0** | E2 (非默认) | 9.0 | 8.0 | 5.0 | RenderGraph 仅接管后处理，Three 主光栅不在图内（未全链路默认接线，按铁律 1 封顶 7.0）。 |
+| A3 | 资产流送、压缩与驻留（6） | **7.0** | E2 | 9.0 | 8.5 | 6.5 | 缺少内置 BasisU 离线编码器（需外部 toktx），且缺乏远程 Bundle 与 Addressables 等效分包加载。 |
+| R1 | 2D 渲染、光照与混排（6） | **8.0** | E2 | 8.0 | 9.0 | 9.0 | 缺少行业通用的 Spine / DragonBones 运行时与配套资源生态。 |
+| R2 | 3D 光照、阴影与 GI（7） | **7.0** | E2 | 8.5 | 7.5 | 6.0 | 没有离线光照贴图（Lightmap）与 AO 烘焙管线，且 PCSS/探针尚未在移动端真机实测。 |
+| R3 | 材质、Shader 与贴花（6） | **7.0** | E2 | 8.5 | 8.0 | 6.5 | 缺乏类似 Shader Graph / Cocos Effect 的声明式多变体材质 DSL。 |
+| R4 | TAA、上采样与后处理（6） | **7.5** | E2 | 8.0 | 7.5 | 5.0 | 高分辨率时间域重建与 MRT 描边在移动端低端 GPU 带宽下的功耗与帧时未实测。 |
+| R5 | 几何、LOD 与大世界远景（5） | **8.0** | E2 | 8.0 | 7.0 | 6.0 | 缺少复杂大世界连续流式 HLOD 切档在移动端真机上的内存/帧率回归。 |
+| P1 | 多线程与 CPU 仿真并行（6） | **6.5** | E2 | 5.5 | 5.0 | 6.0 | Rapier 物理步进与骨骼姿态更新仍在主线程执行，尚未完成 Worker 异步化。 |
+| P2 | GPU 驱动提交与 WebGPU 能力（7） | **7.0** | E2 (非默认) | 7.5 | 6.5 | 4.0 | WebGPU Compute 剔除未接入默认主渲染管线，主光栅仍走 WebGL2（按铁律 1 封顶 7.0）。 |
+| P3 | 帧预算、PSO 暖机与内存治理（6） | **7.5** | E2 | 7.5 | 8.0 | 5.5 | 缺少移动端真机 Safari / Android WebView 长时间运行的 P95/P99 帧时间与内存上限实测。 |
+| P4 | 跨后端真机性能剖析与诊断（5） | **7.5** | E2 | 9.0 | 7.0 | 6.0 | 缺少连接手机真机浏览器的远程剖析面板与真机 GPU 计时回归。 |
+| S1 | 物理、关节与空间查询（6） | **8.0** | E2 | 8.5 | 7.5 | 7.5 | 无布料与载具物理，且跨 ARM/x86 移动端真机的 Rapier 确定性校验尚未实测。 |
+| S2 | 骨骼动画、混合树与 IK（6） | **7.5** | E2 | 9.5 | 8.0 | 8.5 | 无跨骨架人形重定向、无 Spine 运行时，动画状态机只能通过代码编写。 |
+| S3 | 空间音频与动态 DSP 混音（4） | **8.0** | E2 | 5.0 | 4.5 | 5.5 | 长音轨分块流式解码及真机移动端低功耗音频中断恢复仍需实测。 |
+| S4 | 运行时 UI、输入与无障碍底座（4） | **7.0** | E2 | 8.0 | 8.5 | 8.5 | 缺少成熟富文本排版与复杂自适应布局控件，无障碍屏幕阅读器未经真机实测。 |
+| N1 | 联机传输、预测回滚与状态同步（8） | **7.5** | E2 | 7.0 | 3.5 | 6.5 | 不支持 WebRTC 不可靠通道，且缺乏真实公网弱网与多人并发规模压测。 |
+<!-- scorecard:items:end -->
 
-| 实战工程指标 | Unity 6.6 URP Web | Cocos Creator 3.8 Web | Godot 4.3+ Web | **HGame（v4）** |
-| --- | --- | --- | --- | --- |
-| 空包引擎 WASM/JS 体积 | 10–18 MB（挤占 50MB 配额） | 2.5–6 MB（轻量） | 18–35 MB（偏重，难进小游戏） | **< 1 MB 核心 ESM（Rapier 按需懒加载）** |
-| 手机浏览器首屏冷启动 | 慢（WASM 编译 + 堆初始化） | 快 | 慢 | **极快（P0/P1/P2 渐进启动 + 分帧 Warmup）** |
-| COOP / COEP 宿主依赖 | 仅多线程开启时受限 | **零强依赖** | 多线程导出强依赖（宿主易拒） | **零强依赖（标准 Worker + 回退）** |
-| 竖屏单手右下角弧形 UI 底座 | 需项目手搭 UGUI/Toolkit 适配 | 需项目手搭 Widget 适配 | 需项目手搭 Control 适配 | **引擎内置 `thumb-arc` + 自动化门禁** |
-| 前后端同源确定性锁步物理 | 否（PhysX 非跨端位一致） | 否（默认 WASM 非锁步化） | 否 | **是（双端 pinned Rapier 0.21.0 + Checksum）** |
-| 十万级同屏群体与 16B Bone-VAT | 通用对象较重，需手写 GPU Instancing | 中等（基础实例化） | 弱（Web GLES3 实例化受限） | **原生特化（16B Bone-VAT + GPU PingPong Swarm）** |
-| AI Agent 全自动造游验证闭环 | 无（强依赖人工 GUI 编辑器） | 无（强依赖可视化面板） | 无（强依赖可视化场景树） | **全文本设计文档 + `accept` / 82 项基准 / 零人工验证** |
+---
 
-### 竖屏小游戏产品定位边界（主动不做，非能力缺陷）
+## 3. 交付成熟度参考分（不计入运行时底座分）
 
-围绕**“竖屏 B站 Toy 50MB 单包无分包 + 自研权威服务器 + Blender Auto-Rig 统一骨架 + 确定性 Rapier 物理”**唯一目标，以下 4 类通用 3A 特性属于**主动工程舍弃**：
-1. **不做 WebRTC / P2P 通道（`N1 = 8.8`）**：统一由自研服务器承载状态同步/帧同步，运行时已具备二进制 Delta 编解码、`createSceneReplicator` 预测回滚与服务端 `createSpatialAoiFilter`。
-2. **不做跨骨架 Humanoid Retargeting（`S2 = 9.0`）**：团队采用 Blender Auto-Rig 统一规范，无需异形商店骨架重定向；已具备状态机、混合树、Two-Bone/LookAt/FABRIK IK、RootMotion、MorphTarget、`createSpringBoneChain3D` 与 `createInertialBlend3D`。
-3. **不做布料物理 / 轮胎动力学载具 / Featherstone / 运行时凸包自动分解（`S1 = 8.8`）**：物理底座保持前后端同源确定性 Rapier 0.21.0 + 关节/Sweep/高度场/分层矩阵；披风与植物摇摆由零逻辑开销的 GPU `windSway` 与 `SpringBone` 替代。
-4. **不做运行时分包加载与多包拆解（`A3 = 9.2`）**：首发单包 50MB 内扁平直出，通过 KTX2 离线压缩、`analyzeBundleBudget` 50MB 热力审计、`createVramMipGuard` 防 OOM 降档与 `createProgressiveBootLoader` P0/P1/P2 渐进启动保障包体与首屏预算。
-
-### 逐项能力客观评分与剩余真实缺口（v4 / T6 唯一基准）
-
-| 编号 | 项（权） | 初审基线 | HGame | Unity Web | Web 达成率 | 已落地的真链路证明 & 诚实保留的真实边界 |
+<!-- scorecard:delivery:start -->
+| 编号 | 项（权重） | HGame | Unity | Cocos | Godot | 说明 |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| A1 | 调度与生命周期（6） | 7.5 | **9.2** | **9.0** | **`102.2%`** | **T6-A1**：`SceneManager.hotReload` + `createHotReloadController` 实现保留运行状态的场景热重载与异常原子回滚，叠加 `mountAdditive`/`unmountAdditive` 子场景。 |
-| A2 | 渲染图与扩展管线（6） | 6.0 | **9.1** | **9.0** | **`101.1%`** | **T6-A2**：`compileRenderGraph`/`executeRenderGraph` 联动 `createPhysicalRenderTargetPool3D` 物理 RT 瞬态内存别名池（`390×844` WebGL2 实测 `allocations=2 -> reuses=2`，单帧节省 `5.27MB`）。 |
-| A3 | 资产流送与驻留（6） | 6.5 | **9.2** | **9.0** | **`102.2%`** | **T5-C/D**：在 KTX2 容器打包 + `createVramMipGuard` 之上补齐 `analyzeBundleBudget` 50MB 配额审计（Toy 自动输出 `.budget-report.json`）与 `createProgressiveBootLoader` 三级渐进加载。 |
-| R1 | 2D 渲染、光照与混排（6） | 7.0 | **8.8** | **9.0** | **`97.8%`** | **T4-C**：128 条遮挡、`applyAutoTileRules`、`webgl2d` 特效与 `createSkeleton2D`（FK + Pose Blend + 2-Bone IK）；缺可视化 Spine 动画关键帧导出插件。 |
-| R2 | 3D 光照、阴影与 GI（7） | 5.5 | **8.9** | **9.0** | **`98.9%`** | **T4-C**：CSM `pcss: true` + 烘焙 SH 探针 + `createShadowAtlas3D` 多局部光阴影图集；仅缺运行时多次反弹实时 GI（APV 实时Probe切换）。 |
-| R3 | 材质、Shader 与贴花（6） | 5.0 | **9.0** | **9.0** | **`100.0%`** | **T4-C**：WebGL2 `UniformsGroup` `std140` 共享 UBO + 软边投影贴花 + 2 附件 `createMrtOutlinePass3D` 屏幕空间描边。 |
-| R4 | TAA、上采样与后处理（6） | 6.5 | **9.1** | **9.0** | **`101.1%`** | **T6-R4**：5-tap FSR1 RCAS + `reactiveMaskRT` TAA + LUT/高度雾之上，新增 `mrtPass.renderOutline` 真实双附件 G-Buffer + GLSL3 全屏 Sobel 描边合成（`glErrAfterMrt=0`）。 |
-| R5 | 几何、LOD 与大世界远景（5） | 7.0 | **9.1** | **9.0** | **`101.1%`** | **T6-R5**：Bone-VAT + GPU 草地 + 静态合批（24→1）+ Hi-Z 深度金字塔遮挡，新增 `quantizeBufferGeometry3D`（`Int8` 法线/`Uint16` UV/索引压缩，实测显存减 `21.27%`）。 |
-| P1 | 多线程与 CPU 仿真并行（6） | 4.5 | **7.5** | **7.5** | **`100.0%`** | **T1-A**：`worker-sim.js` 覆盖流场/群体分离与 NavMesh 异步寻路；Rapier 保留主线程（与 Unity WebGL 一致）。 |
-| P2 | GPU 驱动提交与 WebGPU（7） | 5.0 | **9.3** | **9.0** | **`103.3%`** | **T6-P2**：NVIDIA Dawn WebGPU 硬件实测双阶段 Compute 剔除：Stage 1 视锥剔除 `4,096→2,048` + Stage 2 `dispatchWebGpuHiZOcclusion` `256→128`（`7` 级 `r32float` 深度金字塔，零报错）。 |
-| P3 | 帧预算、PSO 与内存（6） | 7.0 | **8.9** | **8.5** | **`104.7%`** | **T5-A**：`createThreeAdapter({ mobilePortrait: true })` 一键接通 DPR 封顶 + DRS 稳帧 + VRAM 守卫 + UBO 批合 + LUT/高度雾，仅缺浏览器无 API 的磁盘 PSO 缓存。 |
-| P4 | 跨后端性能剖析（5） | 7.0 | **9.2** | **9.0** | **`102.2%`** | **T6-P4**：Chrome Trace + `createLiveProfilerOverlay` + Zero-GC 门禁之上，新增 `captureResourceSnapshot` + `diffResourceSnapshots` 全引用 GPU 资源泄漏追踪与归零校验。 |
-| S1 | 物理与空间查询（6） | 7.0 | **8.8** | **9.0** | `97.8%` | 确定性 Rapier 2D/3D + 5 类关节 + Cast/Overlap/16 层碰撞矩阵。 |
-| S2 | 骨骼动画、混合树与 IK（6） | 5.5 | **9.0** | **9.5** | `94.7%` | FABRIK/Two-Bone/LookAt IK、RootMotion、MorphTarget、`SpringBone` 与惯性过渡闭环；缺可视化多轨道 StateMachine 调试面板。 |
-| S3 | 空间音频与动态 DSP（4） | 6.0 | **8.5** | **8.5** | **`100.0%`** | 混响发送链 + 3 段 EQ + 采样级 `GainNode` 包络 `duckBus`。 |
-| S4 | 运行时 UI、输入与无障碍（4） | 6.0 | **9.0** | **9.0** | **`100.0%`** | **T2-A**：`renderSdfText` + `textInput`（含中文 IME）+ 竖屏右下角半圆拇指舒适区（`thumb-arc.js`、`portraitFirst`、`auditPortraitThumbZone`）。 |
-| N1 | 联机、预测与状态同步（8） | 5.0 | **8.8** | **8.5** | **`103.5%`** | `0x48 0x47` 二进制增量同步 + `createSceneReplicator`（15% 丢包收敛）+ `createSpatialAoiFilter`。 |
+| D1 | 内容生产工具与可视化编辑器（20） | 3.0 | 10.0 | 9.0 | 9.0 | HGame 主动放弃 GUI 编辑器以服务纯 AI 文本研发；Unity/Cocos/Godot 拥有成熟的场景/动画/材质可视化工具链。 |
+| D2 | AI Agent 自动化与可验证性（15） | 9.0 | 5.0 | 4.0 | 6.0 | HGame 原生具备 accept 8 道门禁、snapshot/playtest 与纯文本设计规范；Godot .tscn 文本场景与 headless 较友好。 |
+| D3 | 生态、文档、社区与资产市场（20） | 2.0 | 10.0 | 7.0 | 8.0 | HGame 为内部私有套件，外部教程、插件与第三方库近乎为零；三大商业/开源引擎生态成熟。 |
+| D4 | 生产验证（上线作品与真机矩阵）（20） | 1.0 | 10.0 | 9.0 | 7.0 | HGame 目前零上线商业作品且缺乏真机移动端矩阵测试；Unity/Cocos 历经大量商业小游戏验证。 |
+| D5 | Web/小游戏包体与冷启动（15） | 8.0 | 4.0 | 8.5 | 4.0 | HGame 实测运行 JS 0.78MB gz、three 0.40MB gz、rapier3d 1.23MB gz（3D+物理最坏约 2.41MB gz）；竞品按公开资料估算：Unity 压缩后约 3–10MB，Cocos 裁剪后约 1–3MB gz，Godot wasm 约 35MB 原始 / 约 8–10MB br。 |
+| D6 | 多平台与宿主覆盖（10） | 4.0 | 10.0 | 9.0 | 9.0 | HGame 聚焦 B站 Toy 与标准 HTML5 浏览器，未覆盖原生 App/主机及微信等差异化小游戏平台编译适配。 |
+| **合计** | **交付参考分（100）** | **41.5** | **83.5** | **77.8** | **72.0** | 参考分，不计入底座分 |
+<!-- scorecard:delivery:end -->
+
+> **选型参考分口径**：`选型参考分 = 0.7 × 底座总分 + 0.3 × 交付参考分`。该指标仅用于评估实际商业立项的综合落地成本与风险，不改变引擎技术底座分本身。
 
 ---
 
-## 超越 100 分之后：相对 Unity 6.6 URP Web 的真实长短板（客观定位）
+## 4. 竞品 Web 端真实能力边界与包体对比（修正后）
 
-经过 `T1 ~ T6` 迭代，HGame 在**移动端竖屏 50MB HTML5 小游戏赛道**已实现 **`100.7 / 100`** 综合领先（在轻量冷启动、AI 文本研发验证、右下角拇指舒适区、`16B Bone-VAT` 万级群体、双端确定性物理、RT 物理别名池与 Dawn WebGPU 两阶段剔除上反超 Unity Web）；客观层面仍有几处可持续演进方向：
+### 竞品 Web 端能力边界核实
 
-| 演进项 | Unity 6.6 URP Web 当前表现 | HGame 当前表现 | 对竖屏小游戏的实际意义与建议 |
-| --- | --- | --- | --- |
-| **1. 完整 Three WebGPURenderer 主渲染切换（P2）** | WebGPU 后端逐步支持全套主渲染与计算共用设备 | Dawn WebGPU Stage 1 视锥 + Stage 2 Hi-Z Compute 已在真机硬件驱动跑通；默认主光栅仍走 WebGL2 以兼容国产机 WebView | 保持默认 WebGL2 + 可选 WebGPU Compute 策略最稳妥，待 iOS/安卓宿主 WebView WebGPU 普及时再一键切主渲染。 |
-| **2. 离线硬件压缩纹理 `toktx` 内嵌构建（A3）** | Editor 导入贴图一键转 BasisU/ASTC 与 Mipmap | 运行时 KTX2 解析 + `analyzeBundleBudget` 50MB 审计已完备，但未内置捆绑大型本地 `toktx` 二进制 | 本机若安装官方 `KTX-Software`，直接开启 `convertPngToKtx2({ preferToktx: true })` 即可全自动压图。 |
-| **3. 真实商业项目实机手感反馈闭环** | 经过大量线上商业手游验证过的默认参数与异常边界 | 已具备 `mobilePortrait: true`、`thumb-arc` 与 4 套 Chromium/Edge GPU 基准实证 | **下一步最值钱的事**：立即基于当前 `100.7` 底座交付 1~2 款真竖屏 B站 Toy 原型并在真实手机上连续试玩，以真机体验反哺参数。 |
+- **Unity 6.x URP Web（底座 `80.0` / 交付 `83.5`）**：Unity 6 URP 已拥有全管线 Render Graph、成熟的光照贴图烘焙、APV 探针、DBuffer 贴花、Mecanim 与远程 Profiler，是通用商业管线的标杆；但在 Web 平台存在明确硬边界——**Unity WebGL 官方不支持 AudioMixer DSP 效果与音频滤镜**（仅保留基础播放与音量控制，故 v4 给 Unity `S3` 打 `8.5` 属错误事实，v5 修正为 `5.0`）；此外 `STP` 等 Compute 上采样在 WebGL2 上不可用，C# 主运行默认为单线程（开启多线程需强依赖 COOP/COEP 隔离头）。
+- **Cocos Creator 3.8 Web（底座 `71.3` / 交付 `77.8`）**：深耕 HTML5 与小游戏生态，2D 合批/UI/Spine/Widget、CRP 自定义渲染管线、Lightmap 烘焙、AssetBundle 与小游戏分包极其成熟；短板在于缺乏内置确定性锁步物理与状态回滚网络框架（`N1 = 3.5`）、默认 Web Audio 缺乏多段参数 EQ 与卷积混响链路，以及超大规模 `Bone-VAT` 群体与 WebGPU 计算管线特化度较弱。
+- **Godot 4.3+ Web（底座 `64.6` / 交付 `72.0`）**：2D 节点、UI Control 布局与场景文本化（`.tscn`）极具优势，且 **Godot 4.3 新增了单线程 Web 导出（不再强制依赖 `SharedArrayBuffer` 与 COOP/COEP 宿主头）**；然而其 Web 端被迫锁定在 **Compatibility/GLES3 后端**（丢失桌面端 Forward+、SDFGI、SSR、TAA、3D Decal 与 Compute 剔除），不支持 C# Web 导出，且 4.3 单线程 Web 默认走 Sample 播放路径会导致总线 DSP 效果丢失、首次 Shader 编译易卡顿。
 
----
+### Web 包体与冷启动横向对比（实测 vs 估算）
 
-## v3 商业级对齐演进记录（Phases 1–5 已落地）
+| 指标 | HGame 1.0.0（**本机实测**） | Unity 6.x URP Web（*公开资料估算*） | Cocos Creator 3.8 Web（*公开资料估算*） | Godot 4.3+ Web（*公开资料估算*） |
+| --- | --- | --- | --- | --- |
+| 运行时核心 JS 体积 | **`2.88 MB` 原始 / `0.78 MB` gzip / `0.68 MB` br**（含全部 17 子系统，不含 vendor） | 完整 Wasm+JS 框架一体打包 | 按模块裁剪后核心约 `1–3 MB` gzip | 完整导出 wasm+js 约 `35 MB` 原始 / 约 `8–10 MB` brotli |
+| 3D / 物理按需模块 | `three`: `2.04 MB` 原始 / **`0.40 MB` gz**；`rapier2d`: **`0.98 MB` gz**；`rapier3d`: **`1.23 MB` gz** | 整体压缩后约 `3–10 MB`（随裁剪与 IL2CPP 规模浮动） | 物理/3D 按模块勾选增减 | 一体化 Wasm 难以按场景剥离 |
+| 3D + Rapier 最坏首包 | **`2.41 MB` gzip**（`0.78 + 0.40 + 1.23`） | 约 `3–10 MB` 压缩体积 | 约 `2–4 MB` gzip | 约 `8–10 MB` brotli |
+| COOP / COEP 宿主依赖 | **零强依赖**（Worker 流场/寻路带回退） | 仅开启 Wasm 多线程时强依赖 | **零强依赖** | 4.3+ 单线程导出零依赖；多线程强依赖 |
 
-按审计暴露的核心缺口已完成 Phases 1–5 端到端链路闭环（仍按第四条铁律保留真缺口不注水）：
-1. **Phase 1（`2c98dfb` · S3 / P1）**：打通 `voice -> reverbSendGain -> ConvolverNode -> busTarget` 真实音频混响链 + 3 段参数 EQ（`platform/audio/`）；`worker-sim.js` 实现真实 `'flow-field'` 与 `'swarm-separate'` 核并在 `SwarmSimulation.stepAsync` 跳过主线程重复计算。
-2. **Phase 2（`2962c14` · N1）**：以递归 `valuesEqual` 取代 JSON diff，实现 `0x48 0x47` 二进制 Delta 编解码（`encodeDeltaBinary`/`decodeDeltaBinary`）与 `createSceneReplicator`（`lockstep/state-sync.js`），通过 15% 丢包+抖动收敛测试。
-3. **Phase 3（`0f8af62` · R3 / R2 / R4 / A2）**：实现 GLSL3 深度重建屏幕空间 OBB 投影贴花（`decal3d.js`）；修复 CSM 多光叠加为单亮主光 + `csm.applyToMaterial` 级联 GLSL 采样（`shadow3d.js`）及双探针盒投影混合（`lighting3d.js`）；实现 `reactiveMaskRT` 与 `executeRenderGraph` 驱动后处理（`post3d/pipeline.js`）。
-4. **Phase 4（`10b4e8f` · P2 / S2 / S4 / A3）**：实现 `createIndirectInstancedBatch3D` 真实视锥裁剪矩阵压缩提交（`gpu-indirect3d.js`）；实现 `solveFabrikIK` + `extractRootMotion` + `blendMorphTargets`（`animation/animator3d.js`）；实现原生 `createCanvasUiRenderer`（`ui/canvas-widgets.js`）；实现 `bindTextureMipStreaming` 真实纹理与 Mip 切换绑定（`platform/asset-catalog.js`）。
-5. **Phase 5（`941e748` · `1280×720` 商业级真机基准）**：交付 `tests/browser-engine-v3-commercial-benchmark.mjs`（真 `SkinnedMesh` + Morph + FABRIK、`2000 -> 1000` 间接裁剪实例、曲面深度投影贴花、CSM `[2,0,0]`、Reactive TAA、Render Graph、Web Audio DSP、Canvas Flexbox UI 与 15% 丢包联机实测），并修复 `adapter.getCascadedShadowMap(scene)` 延迟创建与销毁保护（`integrations/three.js`）。
-6. **Phase 6（本档复评）**：实测得分从 `60.7 / 100` 升至 **`73.6 / 100`**（vs Unity 6.6 URP Web `88.5 / 100`）；后续若继续缩小 `−14.9` 差距，重点攻克主线程 Rapier/A* Worker 化、WebGPU Compute/Hi-Z 实机 CI、Humanoid Retargeting、SRP 等效静态合批与 WebRTC 不可靠通道。
-
-### HGame 相比 Unity Web 的真实优势（不妄自菲薄）
-
-即便在通用商业对齐标准下现分为 `73.6` vs `88.5`（差距 `−14.9`），HGame 在 **HTML5 / AI-Native 轻量游戏场景** 中拥有 Unity 6.6 Web 难以比拟的结构优势（不计入通用底座加分，但决定了选型优势）：
-1. **极轻首包与秒开冷启动**：纯 ESM 运行时零重型 20–50MB Mono/.NET/Unity WASM 运行时开销（仅物理开启时加载 pinned Rapier WASM），对微信/B站小游戏及广告落地页更友好。
-2. **十万级同屏群体与轻量 VAT**：`FlatCombatECS` + `createGpuSwarmWebGL2` + 16B `Bone-VAT` 方案针对割草/群战高度特化，比 Unity WebGL 默认 GameObject/SkinnedMesh 方案开销低数个量级。
-3. **跨前后端确定性物理与 AI 原生验收流**：双端同源确定性 Rapier 0.21.0 + `scripts/accept.mjs` / `snapshot.mjs` / `autoplay` 零 GUI 全文本 AI 自测闭环，是 AI Agent 独立造游最高效的生产力底座。
+> 注：表中 **Unity / Cocos / Godot 包体数据均为基于公开文档与社区实测口径的估算值**，存在版本与裁剪差异；**v5.1 计划搭建同场景同资产的跨引擎 Web 导出实测流水线**以替换为同台实测数据。另：v4 曾宣传“`< 1 MB` 核心 ESM”，虽单计全部运行时 JS 压缩后确为 `0.78 MB gzip`，但未说明开启 Three + Rapier3D 时实际网络传输可达 `2.41 MB gzip`，v5 起统一同时披露“纯 JS `0.78 MB gz`”与“3D+物理最坏 `2.41 MB gz`”。
 
 ---
 
-## 历史版本演进归档（v1 口径 · 仅供参考对比）
+## 5. HGame 当前主要不足（按影响排序）
 
-> 注：以下为 2026-11-19 ~ 2026-11-21 采用 v1（11 项窄范围、无真机与子系统封顶规则）时的历史评分轨迹，完整代码与提交已留档，后续不再按 v1 口径新增评分：
-> - **v1 基线（2026-11-19 · `ead9005`）**：`73.8 / 100`（A `17.4/25` + P `30.4/40` + R `26.0/35`）。
-> - **v1 复评一（2026-11-21 · `8f126d9`）**：`90.0 / 100`（A `22.5/25` + P `36.0/40` + R `31.5/35`，对应 `A1..R4` 均达到 9/10）。
-> - **v1 复评二（2026-11-21 · `8d3d6b9`）**：`100.0 / 100`（A `25.0/25` + P `40.0/40` + R `35.0/35`；提交 `9a2a2bc`、`12ef0c0`、`8d3d6b9` 补齐阶段归因、Render Graph API、glTF 依赖取消、`createSimWorkerRunner`、`createGpuIndirectCuller3D`、2D 预算/诊断、2D 遮挡阴影/法线质量档、流送 SH 探针、骨骼 TAA 与时间域上采样、`aCrowdY` 与 `createRepresentationBudget3D`）。
+1. **零真机移动端实证、零商业上线作品（最大短板）**：所有浏览器基准均跑在桌面端 Chromium / NVIDIA Dawn 模拟 `390×844 DPR 2` 上，尚未经过 iOS Safari（WKWebView）与主流安卓机型 WebView 的热降频、WebGL 上下文丢失与触摸延迟实测；全项被 `E2` 锁死在 `<= 8.5`，交付项 `D4 = 1.0`。
+2. **关键能力仍停留在独立 Helper，未接管默认主路径**：`compileRenderGraph` 目前仅调度后处理而非 Three 主光栅（`A2 = 7.0`），`dispatchWebGpuHiZOcclusion` 未进入默认主渲染器（`P2 = 7.0`），形成“基准分数高、默认业务路径吃不到”的架构割裂。
+3. **缺少离线光照贴图与 AO 烘焙管线（`R2 = 7.0`）**：缺乏自动 UV2 展开与 Blender/离线 Lightmap + BentNormal/AO 烘焙流，移动端 3D 场景被迫较多依赖实时多灯与屏幕空间计算。
+4. **物理与骨骼姿态计算仍在主线程（`P1 = 6.5`）**：仅流场与 NavMesh 寻路进入 `worker-sim.js`；高密度刚体碰撞或复杂骨架在低端手机单核上仍直接挤占主线程帧预算。
+5. **资产压缩与分包流送依赖外部工具且缺远程 Bundle（`A3 = 7.0`）**：运行时支持 KTX2 解析与 50MB 审计，但未内置轻量 BasisU 编码器（依赖外部 `toktx`），且缺少按需加载的远程 AssetBundle 等效机制（跨出 50MB 单包后缺乏弹性）。
+6. **动画与 2D 商业生态缺失（`R1` / `S2`）**：缺少 Spine / DragonBones 运行时支持及通用跨骨架人形重定向，动作编排完全依赖手写代码（无可视化或低门槛动作时间轴工具）。
+7. **外部生态、文档与排查工具链近乎空白（`D1` / `D3`）**：作为内部 AI 研发套件，缺少社区插件、中文入门体系、远程真机性能剖析前端及常见坑位知识库。
+8. **过往包体与评分口径存在误导**：v4 的“`< 1 MB` 核心 ESM”忽略了 `Three + Rapier3D` 合计 `2.41 MB gzip` 的真实传输下限，且用相对 Unity 归一化掩盖了上述 7 项工程缺口。
+
+---
+
+## 6. 针对性优化路线图（P0 → P2）
+
+| 优先级 | 优化动作 | 影响条目 | 预计提分 | 量化验收标准 |
+| :---: | --- | --- | --- | --- |
+| **P0** | **建立真机移动端自动化测试矩阵**：Android Chrome 走 `adb` + CDP 远程调试，iOS 走 Safari/WebKit 真机连测 `tests/browser-mobile-portrait-benchmark.mjs` | 全项 `E2 -> E3`、`P3`、`P4`、`S4` | 底座 `+2.5 ~ +4.0` | 至少覆盖 2 台安卓中端机 + 1 台 iPhone Safari，输出真机 60s P95/P99 帧时、VRAM 峰值与零 WebGL 错误报告，证据升至 `E3`（上限 `9.5`）。 |
+| **P0** | **交付 1–2 款 B站 Toy 竖屏商业/准商业原型**：跑通真实玩家留存、弱网联机与真机发热反馈闭环 | `D4`、全项 `E3 -> E4` | 交付 `D4: 1 -> 6+` | 完成 B站 Toy 正式提审或灰度上线，真机崩溃率 `< 0.5%`，并将手感调优参数反哺 `kit/` 默认值。 |
+| **P1** | **RenderGraph 接管主光栅 + WebGPURenderer 可选主路径**：消除 Helper 与主适配器割裂 | `A2`、`P2` | `A2: 7.0 -> 8.5~9.0`；`P2: 7.0 -> 8.5` | 解除铁律 1 封顶限制；默认 `createThreeAdapter` 在单一 RenderGraph 内调度几何/阴影/MRT/后处理，WebGPU 模式可在支持的浏览器直接作为主渲染器出图。 |
+| **P1** | **Blender 离线 Lightmap / AO 烘焙脚本**：复用 `scripts/blender-model3d.py` 中的 Blender 管线自动导出 UV2 + KTX2 光照贴图 | `R2` | `R2: 7.0 -> 8.0~8.5` | 单条 CLI 命令完成静态场景 UV2 打包、Cycles 光照/AO 烘焙、KTX2 压缩并在 Three 材质默认加载，真机功耗与帧率收益可量化。 |
+| **P1** | **Rapier 物理 Worker 化 + 快照插值**：保持前后端确定性 Checksum 不变的前提下卸载主线程 | `P1` | `P1: 6.5 -> 8.0~8.5` | 在非 COOP/COEP 环境下通过标准 Worker 运行 Rapier 步进，主线程与 Worker 同步快照保持与单线程完全一致的 `hashState` 校验和。 |
+| **P2** | **内置 BasisU Wasm 编码器与按需远程资源包机制**：补齐离线压图独立性与超 50MB 扩展能力 | `A3` | `A3: 7.0 -> 8.0~8.5` | 无需手动安装外部 `toktx` 即可全自动输出 KTX2；支持可选远程分包清单与断网重试缓存。 |
+| **P2** | **glTF 动画重定向（Three `SkeletonUtils`）+ Spine 运行时评估**：降低外部动作/2D 资产接入门槛 | `S2`、`R1` | `S2: 7.5 -> 8.5`；`R1: 8.0 -> 8.5` | 实现标准骨架间动作复用；在确认 Spine 官方运行时商业授权条款合规前提下决定自研轻量导入器或官方胶水接入。 |
+| **P2** | **声明式材质变体文本 DSL**：以纯文本配置替代手写 `onBeforeCompile` 拼接 | `R3` | `R3: 7.0 -> 8.0` | 支持通过 JSON/DSL 定义表面属性、Keyword 变体与 UBO 绑定，与 AI-Native 文本工作流对齐。 |
+| **P2** | **v5.1 跨引擎同场景同资产基准实测**：构建统一 `1,000 蒙皮群体 + 5,000 精灵` 场景分别从 Unity/Cocos/Godot/HGame 导出 Web 构建同台实测 | 竞品分与包体表可信度 | 竞品分从估算升级为实测 | 四引擎在同一浏览器与手机设备上跑出实测帧率、首包传输体积与冷启动耗时对比表。 |
+
+> **提分测算**：基于 `scripts/score-engines.mjs` 同口径重算，若 **P0 + P1** 全部落地并取得移动端真机实证（`E3`），HGame 底座总分预计可由当前的 **`74.0`** 提升至 **`79.8 – 82.5 / 100`**，达到与 Unity 6.x URP Web（`80.0`）正面持平甚至局部反超的客观水平。
+
+---
+
+## 7. v4 → v5 核心变更说明
+
+- **废除相对归一化评分**：去掉以 `Unity = 100.0` 作为分母的折算方式，全面改用绝对 `0–100` 底座分（HGame `100.7` 作废，修正为 `74.0`）。
+- **引入证据等级硬封顶（`E0–E4`）**：桌面浏览器基准最高封顶 `8.5`，倒逼补齐移动端真机矩阵（`E3`）与上线验证（`E4`）。
+- **修正竞品事实错误**：修正 Unity WebGL 不支持 AudioMixer DSP 效果（`S3: 8.5 -> 5.0`），并更新 Godot 4.3+ 单线程 Web 导出与 Sample 音频路径的真实限制。
+- **修正包体误导口径**：以 `node:zlib` 实测数据同时披露纯运行时 JS（`0.78 MB gz`）与 `Three + Rapier3D` 组合（`2.41 MB gz`），并对竞品标注公开资料估算口径。
+- **补齐 Cocos / Godot 逐项分与交付参考分**：将四引擎 17 项细分数据全部结构化落盘，并单列 `D1–D6` 交付成熟度避免只见底层渲染不见工具生态风险。
+- **工程防漂移机制**：新增 `docs/scorecard/engine-scorecard.json`（`proofFiles` 指向 Git 跟踪源文件，`benchmarkFiles` 记录本地浏览器基准）与 `scripts/score-engines.mjs`（`--write` / `--check` 已跟踪防漂移门禁），辅以本地测试 `tests/engine-scorecard.test.mjs`（`tests/` 已 gitignore），确保文件存在性与文档一致性受强门禁保护。
+
+---
+
+## 8. 历史版本演进归档（仅供追溯，不再用于当前对外口径）
+
+- **v4 归档（2026-11-22 · `075949c` · 已作废）**：采用 Unity Web = 100.0 相对基准口径，经 `T1–T6`（热重载回滚、RT 物理别名池、MRT 描边、顶点量化、Dawn WebGPU 2 阶段 Hi-Z、GPU 资源泄漏 Diff）给出 HGame `100.7` / Unity `100.0` / Cocos `88.2` / Godot `81.9`。该版本虽记录了 `T1–T6` 真实代码落地，但因相对归一化与未设真机证据封顶导致严重虚高，已被 v5 替代。
+- **v3 商业级对齐演进记录（Phases 1–6 已落地）**：
+  - **Phase 1（`2c98dfb` · S3 / P1）**：打通 `voice -> reverbSendGain -> ConvolverNode -> busTarget` 真实音频混响链 + 3 段参数 EQ；`worker-sim.js` 实现真实 `'flow-field'` 与 `'swarm-separate'` 核。
+  - **Phase 2（`2962c14` · N1）**：以递归 `valuesEqual` 取代 JSON diff，实现 `0x48 0x47` 二进制 Delta 编解码与 `createSceneReplicator`，通过 15% 丢包+抖动收敛测试。
+  - **Phase 3（`0f8af62` · R3 / R2 / R4 / A2）**：实现 GLSL3 深度重建 OBB 投影贴花；修复 CSM 单亮主光级联与双探针盒投影混合；实现 `reactiveMaskRT` 与 `executeRenderGraph`。
+  - **Phase 4（`10b4e8f` · P2 / S2 / S4 / A3）**：实现 `createIndirectInstancedBatch3D`、FABRIK IK + RootMotion + MorphTarget、`createCanvasUiRenderer` 与 `bindTextureMipStreaming`。
+  - **Phase 5（`941e748` · `1280×720` 商业级真机基准）**：交付 `tests/browser-engine-v3-commercial-benchmark.mjs` 并修复 `adapter.getCascadedShadowMap(scene)` 延迟创建与销毁保护。
+  - **Phase 6**：在当时通用商业基准口径下复评为 `73.6 / 100` vs Unity Web `88.5 / 100`。
+- **v1 历史轨迹（2026-11-19 ~ 2026-11-21 · 11 项无封顶口径）**：基线（`ead9005`）`73.8 / 100` -> 复评一（`8f126d9`）`90.0 / 100` -> 复评二（`8d3d6b9`，含 `9a2a2bc`、`12ef0c0`）`100.0 / 100`。

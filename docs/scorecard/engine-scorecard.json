@@ -1,0 +1,655 @@
+{
+  "version": "v5",
+  "date": "2026-11-22",
+  "engines": [
+    {
+      "id": "hgame",
+      "name": "HGame 1.0.0"
+    },
+    {
+      "id": "unity",
+      "name": "Unity 6.x URP Web"
+    },
+    {
+      "id": "cocos",
+      "name": "Cocos Creator 3.8 Web"
+    },
+    {
+      "id": "godot",
+      "name": "Godot 4.3+ Web (Compatibility)"
+    }
+  ],
+  "evidenceLevels": {
+    "E0": {
+      "label": "仅声明/文档",
+      "cap": 5
+    },
+    "E1": {
+      "label": "Node 单元测试/Mock",
+      "cap": 7
+    },
+    "E2": {
+      "label": "桌面浏览器真 GPU 基准",
+      "cap": 8.5
+    },
+    "E3": {
+      "label": "真机移动端浏览器/WebView 实测",
+      "cap": 9.5
+    },
+    "E4": {
+      "label": "已上线商业作品验证",
+      "cap": 10
+    }
+  },
+  "dimensions": [
+    {
+      "id": "A",
+      "name": "架构与资产",
+      "weight": 18
+    },
+    {
+      "id": "R",
+      "name": "图形渲染",
+      "weight": 30
+    },
+    {
+      "id": "P",
+      "name": "性能与硬件",
+      "weight": 24
+    },
+    {
+      "id": "S",
+      "name": "核心运行时子系统",
+      "weight": 20
+    },
+    {
+      "id": "N",
+      "name": "多人与确定性网络",
+      "weight": 8
+    }
+  ],
+  "items": [
+    {
+      "id": "A1",
+      "dimension": "A",
+      "name": "调度与生命周期",
+      "weight": 6,
+      "scores": {
+        "hgame": 8,
+        "unity": 9,
+        "cocos": 8,
+        "godot": 8.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/core/scene.js"
+        ],
+        "note": "已实现固定步插值、mountAdditive/unmountAdditive 子场景及 SceneManager.hotReload 原子回滚控制，并在桌面 Chromium 完成 60s 压测。",
+        "benchmarkFiles": [
+          "tests/browser-engine-v3-commercial-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "PlayerLoop 可扩展阶段完整，场景异步加载/卸载与生命周期成熟。",
+        "cocos": "Director 调度与场景/节点生命周期稳定，支持常驻节点与优先级排序。",
+        "godot": "SceneTree 节点树与暂停模式直观完备，但 Web 端长任务切片需自行控制。"
+      },
+      "gap": "缺少长任务自动预算切片及真机移动端频繁切场景零泄漏实证。"
+    },
+    {
+      "id": "A2",
+      "dimension": "A",
+      "name": "渲染图与扩展管线",
+      "weight": 6,
+      "scores": {
+        "hgame": 7,
+        "unity": 9,
+        "cocos": 8,
+        "godot": 5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": false,
+        "proofFiles": [
+          "assets/runtime/integrations/post3d/render-graph.js"
+        ],
+        "note": "compileRenderGraph/executeRenderGraph 与物理 RT 别名池已落地，但目前仅驱动后处理链路，Three 主光栅 Pass 尚未纳入同一 RenderGraph 编译器。",
+        "benchmarkFiles": [
+          "tests/browser-mobile-portrait-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "Unity 6 URP 默认启用全管线 Render Graph，统一管理几何、阴影、后处理与 RT 别名。",
+        "cocos": "Cocos Creator 3.8 提供 Custom Render Pipeline（CRP）自定义渲染管线编排能力。",
+        "godot": "Godot 4.3+ Web 强制退回 Compatibility/GLES3 后端，桌面端 Forward+ Compositor 与渲染图扩展不可用。"
+      },
+      "gap": "RenderGraph 仅接管后处理，Three 主光栅不在图内（未全链路默认接线，按铁律 1 封顶 7.0）。"
+    },
+    {
+      "id": "A3",
+      "dimension": "A",
+      "name": "资产流送、压缩与驻留",
+      "weight": 6,
+      "scores": {
+        "hgame": 7,
+        "unity": 9,
+        "cocos": 8.5,
+        "godot": 6.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/platform/asset-catalog.js"
+        ],
+        "note": "支持运行时 KTX2 解码、Mip 流送绑定、VRAM 守卫、50MB 配额审计及 P0/P1/P2 渐进启动，定位单包直出。",
+        "benchmarkFiles": [
+          "tests/browser-engine-v3-commercial-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "Addressables + AssetBundle 支持远程分包、引用计数与 BasisU/ASTC 管线化压缩。",
+        "cocos": "内置 AssetBundle、远程资源热更新与微信/抖音/小游戏成熟分包加载。",
+        "godot": "支持 PCK 分包与 ResourceLoader 异步加载，但 Web 端大包体流送与纹理压缩工具链较弱。"
+      },
+      "gap": "缺少内置 BasisU 离线编码器（需外部 toktx），且缺乏远程 Bundle 与 Addressables 等效分包加载。"
+    },
+    {
+      "id": "R1",
+      "dimension": "R",
+      "name": "2D 渲染、光照与混排",
+      "weight": 6,
+      "scores": {
+        "hgame": 8,
+        "unity": 8,
+        "cocos": 9,
+        "godot": 9
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/integrations/canvas2d.js",
+          "assets/runtime/animation/skeleton2d.js"
+        ],
+        "note": "具备 Canvas2D/WebGL2D 多后端、AutoTile、128 条 2D 遮挡阴影与自研 Skeleton2D（FK + 2-Bone IK）。",
+        "benchmarkFiles": [
+          "tests/browser-mobile-portrait-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "URP 2D Renderer 支持 2D 灯光阴影与图集，但多后端轻量性及 UI 混排略逊。",
+        "cocos": "2D 合批、富文本混排、Sprite/TileMap 与 Spine/DragonBones 生态在 H5 领域成熟度极高。",
+        "godot": "原生 2D 节点、TileMap 与 2D 光照/骨骼体系完整且 Web Compatibility 端可用。"
+      },
+      "gap": "缺少行业通用的 Spine / DragonBones 运行时与配套资源生态。"
+    },
+    {
+      "id": "R2",
+      "dimension": "R",
+      "name": "3D 光照、阴影与 GI",
+      "weight": 7,
+      "scores": {
+        "hgame": 7,
+        "unity": 8.5,
+        "cocos": 7.5,
+        "godot": 6
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/integrations/shadow3d.js",
+          "assets/runtime/integrations/lighting3d.js"
+        ],
+        "note": "已打通单亮主光 CSM（含 PCSS 选项）、多局部光 Shadow Atlas 及双探针 SH 盒投影混合，并在桌面浏览器验证。",
+        "benchmarkFiles": [
+          "tests/browser-engine-v3-commercial-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "URP 支持级联软阴影、多光源聚簇前向、APV 探针体积及完整的离线光照贴图烘焙。",
+        "cocos": "支持 CSM、反射探针及离线 Lightmap 烘焙，实时 GI 能力相对基础。",
+        "godot": "Compatibility/GLES3 后端下实时 SDFGI 与 VoxelGI 不可用，仅保留基础阴影与烘焙 Lightmap。"
+      },
+      "gap": "没有离线光照贴图（Lightmap）与 AO 烘焙管线，且 PCSS/探针尚未在移动端真机实测。"
+    },
+    {
+      "id": "R3",
+      "dimension": "R",
+      "name": "材质、Shader 与贴花",
+      "weight": 6,
+      "scores": {
+        "hgame": 7,
+        "unity": 8.5,
+        "cocos": 8,
+        "godot": 6.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/integrations/decal3d.js",
+          "assets/runtime/integrations/three.js"
+        ],
+        "note": "支持 WebGL2 std140 UBO 批合、GLSL3 深度重建 OBB 投影贴花及表面 Shader 注入。",
+        "benchmarkFiles": [
+          "tests/browser-engine-v3-commercial-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "URP Shader Graph + SRP Batcher + DBuffer/ScreenSpace 贴花形成完整多变体工业管线。",
+        "cocos": "拥有声明式 Effect 材质系统与多 Pass 变体编译，贴花需自定义或扩展。",
+        "godot": "Compatibility/GLES3 渲染器不支持 3D Decal 节点，自定义着色器变体规模受 GLSL3 限制。"
+      },
+      "gap": "缺乏类似 Shader Graph / Cocos Effect 的声明式多变体材质 DSL。"
+    },
+    {
+      "id": "R4",
+      "dimension": "R",
+      "name": "TAA、上采样与后处理",
+      "weight": 6,
+      "scores": {
+        "hgame": 7.5,
+        "unity": 8,
+        "cocos": 7.5,
+        "godot": 5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/integrations/post3d/mrt-outline.js"
+        ],
+        "note": "具备 5-tap FSR1 RCAS 锐化、reactiveMaskRT TAA、LUT/高度雾及 2 附件 GLSL3 MRT 描边合成，桌面零 GL 报错。",
+        "benchmarkFiles": [
+          "tests/browser-mobile-portrait-benchmark.mjs",
+          "tests/browser-engine-v3-commercial-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "URP 完整后处理栈与 TAA 可用，但 STP 等空间时间上采样依赖 Compute，WebGL2 不可用。",
+        "cocos": "Cocos Creator 3.8 支持 TAA、FSR1 上采样、HBAO 与常见后处理链路。",
+        "godot": "Compatibility/GLES3 渲染器禁用 TAA、SSR、SSAO 与 FSR2，后处理能力大幅降级。"
+      },
+      "gap": "高分辨率时间域重建与 MRT 描边在移动端低端 GPU 带宽下的功耗与帧时未实测。"
+    },
+    {
+      "id": "R5",
+      "dimension": "R",
+      "name": "几何、LOD 与大世界远景",
+      "weight": 5,
+      "scores": {
+        "hgame": 8,
+        "unity": 8,
+        "cocos": 7,
+        "godot": 6
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/integrations/culling3d.js",
+          "assets/runtime/integrations/model3d.js"
+        ],
+        "note": "提供 16B Bone-VAT 万级群体、静态合批（24->1）、Int8/Uint16 顶点量化（实测省 21.27%）、Hi-Z 与浮动原点。",
+        "benchmarkFiles": [
+          "tests/browser-mobile-portrait-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "LODGroup、Static/GPU Instancing 成熟，但大型群体动画常需 DOTS/手写 VAT。",
+        "cocos": "支持 LOD 与烘焙骨骼 GPU 实例化，大世界 HLOD 与群体裁剪管线相对较弱。",
+        "godot": "Compatibility 端支持基础 MultiMesh 与 HLOD 裁剪，缺少内置 Bone-VAT 与大规模群体特化。"
+      },
+      "gap": "缺少复杂大世界连续流式 HLOD 切档在移动端真机上的内存/帧率回归。"
+    },
+    {
+      "id": "P1",
+      "dimension": "P",
+      "name": "多线程与 CPU 仿真并行",
+      "weight": 6,
+      "scores": {
+        "hgame": 6.5,
+        "unity": 5.5,
+        "cocos": 5,
+        "godot": 6
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/sim/worker-sim.js",
+          "assets/runtime/world/swarm-ecs.js"
+        ],
+        "note": "worker-sim.js 在无 COOP/COEP 强依赖下异步卸载流场/群体分离与 NavMesh 寻路，但物理与骨骼仍在主线程。"
+      },
+      "competitorNotes": {
+        "unity": "WebGL 导出默认 C# 单线程，开启 Wasm Threads 强依赖 COOP/COEP 宿主隔离头。",
+        "cocos": "物理与动画主流程以主线程执行为主，Worker 并行需项目层自行封装。",
+        "godot": "Godot 4.3+ 新增单线程 Web 导出（避开 COOP/COEP），多线程仍强依赖 SharedArrayBuffer。"
+      },
+      "gap": "Rapier 物理步进与骨骼姿态更新仍在主线程执行，尚未完成 Worker 异步化。"
+    },
+    {
+      "id": "P2",
+      "dimension": "P",
+      "name": "GPU 驱动提交与 WebGPU 能力",
+      "weight": 7,
+      "scores": {
+        "hgame": 7,
+        "unity": 7.5,
+        "cocos": 6.5,
+        "godot": 4
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": false,
+        "proofFiles": [
+          "assets/runtime/integrations/gpu-indirect3d.js"
+        ],
+        "note": "Dawn WebGPU 两阶段视锥+Hi-Z Compute 剔除已硬件跑通，但仍属独立 Helper，默认主渲染器为 WebGL2。",
+        "benchmarkFiles": [
+          "tests/browser-webgpu-compute-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "Unity 6.x URP 支持实验/渐进式 WebGPU 后端，支持计算着色器与部分间接绘制。",
+        "cocos": "支持 WebGL2 Instancing 与 GFX 多后端抽象，WebGPU 能力尚在逐步完善中。",
+        "godot": "Web 端 Compatibility/GLES3 彻底不支持 Compute Shader 与间接 GPU 剔除。"
+      },
+      "gap": "WebGPU Compute 剔除未接入默认主渲染管线，主光栅仍走 WebGL2（按铁律 1 封顶 7.0）。"
+    },
+    {
+      "id": "P3",
+      "dimension": "P",
+      "name": "帧预算、PSO 暖机与内存治理",
+      "weight": 6,
+      "scores": {
+        "hgame": 7.5,
+        "unity": 7.5,
+        "cocos": 8,
+        "godot": 5.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/integrations/three.js"
+        ],
+        "note": "mobilePortrait 模式一键接通 DPR 封顶、DRS 动态分辨率、VRAM 守卫与分帧 Warmup，桌面基准已验证。",
+        "benchmarkFiles": [
+          "tests/browser-mobile-portrait-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "URP 支持动态分辨率与质量档，但 Wasm 堆内存上限与首次 Shader 编译易造成卡顿。",
+        "cocos": "移动端小游戏内存控制、合批与 Shader 预编译暖机在长期商业实践中较成熟。",
+        "godot": "Compatibility Web 导出在首次遇见材质变体时易发生明显着色器编译卡顿。"
+      },
+      "gap": "缺少移动端真机 Safari / Android WebView 长时间运行的 P95/P99 帧时间与内存上限实测。"
+    },
+    {
+      "id": "P4",
+      "dimension": "P",
+      "name": "跨后端真机性能剖析与诊断",
+      "weight": 5,
+      "scores": {
+        "hgame": 7.5,
+        "unity": 9,
+        "cocos": 7,
+        "godot": 6
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/integrations/quality3d/render-diagnostics.js"
+        ],
+        "note": "具备 Chrome Trace、LiveProfilerOverlay、Zero-GC 门禁及 GPU 资源快照 Diff 泄漏检测。",
+        "benchmarkFiles": [
+          "tests/browser-mobile-portrait-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "Unity Profiler 可直接远程连接 Web 构建进行深度的 CPU/内存/渲染剖析。",
+        "cocos": "具备实时统计面板与 Chrome DevTools 协同调试能力，深度内存追踪一般。",
+        "godot": "自带基础 Monitor 与 Profiler，Web 端远程真机帧剖析能力受限。"
+      },
+      "gap": "缺少连接手机真机浏览器的远程剖析面板与真机 GPU 计时回归。"
+    },
+    {
+      "id": "S1",
+      "dimension": "S",
+      "name": "物理、关节与空间查询",
+      "weight": 6,
+      "scores": {
+        "hgame": 8,
+        "unity": 8.5,
+        "cocos": 7.5,
+        "godot": 7.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/physics/rapier-world.js",
+          "assets/runtime/physics/rapier3d.js"
+        ],
+        "note": "前后端同源 pinned Rapier 0.21.0 2D/3D 确定性刚体、5 类关节、Sweep/Overlap 与 16 层碰撞矩阵。"
+      },
+      "competitorNotes": {
+        "unity": "PhysX 关节、布料、车轮与空间查询完整，但不保证跨架构确定性位一致。",
+        "cocos": "支持 PhysX/Bullet/Cannon 多物理后端切换，功能齐全但非跨端确定性设计。",
+        "godot": "Godot Physics/Jolt（Web 端多为内置物理）空间查询完备，缺乏确定性同步定位。"
+      },
+      "gap": "无布料与载具物理，且跨 ARM/x86 移动端真机的 Rapier 确定性校验尚未实测。"
+    },
+    {
+      "id": "S2",
+      "dimension": "S",
+      "name": "骨骼动画、混合树与 IK",
+      "weight": 6,
+      "scores": {
+        "hgame": 7.5,
+        "unity": 9.5,
+        "cocos": 8,
+        "godot": 8.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/animation/animator3d.js"
+        ],
+        "note": "支持状态机、混合树、Two-Bone/LookAt/FABRIK IK、RootMotion、MorphTarget、SpringBone 与惯性过渡。",
+        "benchmarkFiles": [
+          "tests/browser-engine-v3-commercial-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "Mecanim 具备可视化状态机、2D Blend Tree、Avatar 人形重定向与完整 IK 生态。",
+        "cocos": "Marionette 动画图系统提供可视化状态机、混合与骨骼挂点能力。",
+        "godot": "AnimationTree 支持状态机、BlendSpace2D 与 SkeletonIK3D，编辑器编排效率高。"
+      },
+      "gap": "无跨骨架人形重定向、无 Spine 运行时，动画状态机只能通过代码编写。"
+    },
+    {
+      "id": "S3",
+      "dimension": "S",
+      "name": "空间音频与动态 DSP 混音",
+      "weight": 4,
+      "scores": {
+        "hgame": 8,
+        "unity": 5,
+        "cocos": 4.5,
+        "godot": 5.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/platform/audio.js"
+        ],
+        "note": "原生 Web Audio 真实混响发送链（ConvolverNode）、3 段参数 EQ、采样级 duckBus 包络与 0-KB 合成器。",
+        "benchmarkFiles": [
+          "tests/browser-engine-v3-commercial-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "Unity WebGL 官方限制不支持 AudioMixer DSP 效果与音频滤镜，仅保留基础播放与音量控制。",
+        "cocos": "Web 端以基础 AudioSource 播放与音量淡入为主，缺乏内置多段 EQ 与混响 DSP 链。",
+        "godot": "Godot 4.3 单线程 Web 默认走 Audio Sample 播放路径，AudioBus 总线实时 DSP 效果会丢失。"
+      },
+      "gap": "长音轨分块流式解码及真机移动端低功耗音频中断恢复仍需实测。"
+    },
+    {
+      "id": "S4",
+      "dimension": "S",
+      "name": "运行时 UI、输入与无障碍底座",
+      "weight": 4,
+      "scores": {
+        "hgame": 7,
+        "unity": 8,
+        "cocos": 8.5,
+        "godot": 8.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/ui/canvas-widgets.js",
+          "assets/runtime/ui/thumb-arc.js",
+          "assets/runtime/kit/game-shell-dom.js"
+        ],
+        "note": "具备 Canvas UI、SDF 文字、中文 IME、红点树及竖屏右下角半圆拇指舒适区（thumb-arc）。"
+      },
+      "competitorNotes": {
+        "unity": "UGUI 与 UI Toolkit（Flexbox）成熟，但移动端竖屏输入法与包体协同需项目层适配。",
+        "cocos": "Widget 多分辨率适配、富文本、ScrollView 与小游戏键盘适配经受海量线上验证。",
+        "godot": "Control 锚点/容器布局体系非常完备，内置无障碍接口与主题系统成熟。"
+      },
+      "gap": "缺少成熟富文本排版与复杂自适应布局控件，无障碍屏幕阅读器未经真机实测。"
+    },
+    {
+      "id": "N1",
+      "dimension": "N",
+      "name": "联机传输、预测回滚与状态同步",
+      "weight": 8,
+      "scores": {
+        "hgame": 7.5,
+        "unity": 7,
+        "cocos": 3.5,
+        "godot": 6.5
+      },
+      "hgame": {
+        "evidence": "E2",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/lockstep/state-sync.js",
+          "network/"
+        ],
+        "note": "0x48 0x47 二进制 Delta 同步、createSceneReplicator 回滚预测与服务端 AOI 过滤已在 15% 丢包模拟中收敛。",
+        "benchmarkFiles": [
+          "tests/browser-engine-v3-commercial-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "Netcode for GameObjects/Entities 方案完善，但 Web 端只能走 WebSocket 传输层。",
+        "cocos": "引擎本体不内置状态同步/预测回滚与服务端权威框架，需外部集成。",
+        "godot": "MultiplayerAPI + MultiplayerSynchronizer 开箱可用，Web 端同样受限于 WebSocket。"
+      },
+      "gap": "不支持 WebRTC 不可靠通道，且缺乏真实公网弱网与多人并发规模压测。"
+    }
+  ],
+  "delivery": {
+    "weightNote": "参考分，不计入底座分",
+    "items": [
+      {
+        "id": "D1",
+        "name": "内容生产工具与可视化编辑器",
+        "weight": 20,
+        "scores": {
+          "hgame": 3,
+          "unity": 10,
+          "cocos": 9,
+          "godot": 9
+        },
+        "note": "HGame 主动放弃 GUI 编辑器以服务纯 AI 文本研发；Unity/Cocos/Godot 拥有成熟的场景/动画/材质可视化工具链。"
+      },
+      {
+        "id": "D2",
+        "name": "AI Agent 自动化与可验证性",
+        "weight": 15,
+        "scores": {
+          "hgame": 9,
+          "unity": 5,
+          "cocos": 4,
+          "godot": 6
+        },
+        "note": "HGame 原生具备 accept 8 道门禁、snapshot/playtest 与纯文本设计规范；Godot .tscn 文本场景与 headless 较友好。"
+      },
+      {
+        "id": "D3",
+        "name": "生态、文档、社区与资产市场",
+        "weight": 20,
+        "scores": {
+          "hgame": 2,
+          "unity": 10,
+          "cocos": 7,
+          "godot": 8
+        },
+        "note": "HGame 为内部私有套件，外部教程、插件与第三方库近乎为零；三大商业/开源引擎生态成熟。"
+      },
+      {
+        "id": "D4",
+        "name": "生产验证（上线作品与真机矩阵）",
+        "weight": 20,
+        "scores": {
+          "hgame": 1,
+          "unity": 10,
+          "cocos": 9,
+          "godot": 7
+        },
+        "note": "HGame 目前零上线商业作品且缺乏真机移动端矩阵测试；Unity/Cocos 历经大量商业小游戏验证。"
+      },
+      {
+        "id": "D5",
+        "name": "Web/小游戏包体与冷启动",
+        "weight": 15,
+        "scores": {
+          "hgame": 8,
+          "unity": 4,
+          "cocos": 8.5,
+          "godot": 4
+        },
+        "note": "HGame 实测运行 JS 0.78MB gz、three 0.40MB gz、rapier3d 1.23MB gz（3D+物理最坏约 2.41MB gz）；竞品按公开资料估算：Unity 压缩后约 3–10MB，Cocos 裁剪后约 1–3MB gz，Godot wasm 约 35MB 原始 / 约 8–10MB br。"
+      },
+      {
+        "id": "D6",
+        "name": "多平台与宿主覆盖",
+        "weight": 10,
+        "scores": {
+          "hgame": 4,
+          "unity": 10,
+          "cocos": 9,
+          "godot": 9
+        },
+        "note": "HGame 聚焦 B站 Toy 与标准 HTML5 浏览器，未覆盖原生 App/主机及微信等差异化小游戏平台编译适配。"
+      }
+    ]
+  },
+  "selectionMix": {
+    "runtime": 0.7,
+    "delivery": 0.3
+  },
+  "measurements": {
+    "runtimeJsGzipMB": 0.78,
+    "rapier3dGzipMB": 1.23,
+    "rapier2dGzipMB": 0.98,
+    "threeGzipMB": 0.4,
+    "worst3dPhysicsGzipMB": 2.41
+  }
+}
