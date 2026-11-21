@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upgrade Scorecard to v5.1 capability-only scoring (`docs/scorecard/engine-scorecard.json`, `scripts/score-engines.mjs`, `docs/ENGINE-SCORECARD.md`, local `tests/engine-scorecard.test.mjs`): removed mobile real-device, live-launch, and delivery maturity metrics in favor of `C0–C4` capability maturity caps and verifiable `industrialChecklist` bounds (`Unity 6.x URP Web = 80.0`, `HGame 1.0.0 = 78.0`, `Cocos Creator 3.8 Web = 71.3`, `Godot 4.3+ Web = 64.6`).
+
 - Introduce Scorecard v5 evidence-driven absolute 4-engine scoring (`docs/scorecard/engine-scorecard.json`, `scripts/score-engines.mjs`, `tests/engine-scorecard.test.mjs`, `docs/ENGINE-SCORECARD.md`), deprecating the v4 relative `100.7/100` headline score in favor of hard evidence caps (`E0–E4`), proof-file checks, anti-drift tests, and a separate delivery maturity reference score (`Unity 6.x URP Web = 80.0`, `HGame 1.0.0 = 74.0`, `Cocos Creator 3.8 Web = 71.3`, `Godot 4.3+ Web = 64.6`; delivery `83.5 / 41.5 / 77.8 / 72.0`).
 
 - Complete Tier 6 Scene Hot-Reload, Physical RT Aliasing Pool, Real MRT Contour Draw, Vertex Quantization, 2-Stage Dawn WebGPU Hi-Z Culling & Resource Leak Diff raising unified v4 Web scorecard to **`100.7/100`** (surpassing `Unity 6.6 URP Web = 100.0` by `+0.7`; `Cocos Creator 3.8 Web = 88.2`, `Godot 4.3+ Web = 81.9`):

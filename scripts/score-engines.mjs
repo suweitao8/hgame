@@ -19,8 +19,7 @@ const REQUIRED_ENGINES = ['hgame', 'unity', 'cocos', 'godot'];
 
 const SECTION_MARKERS = {
   runtime: ['<!-- scorecard:runtime:start -->', '<!-- scorecard:runtime:end -->'],
-  items: ['<!-- scorecard:items:start -->', '<!-- scorecard:items:end -->'],
-  delivery: ['<!-- scorecard:delivery:start -->', '<!-- scorecard:delivery:end -->']
+  items: ['<!-- scorecard:items:start -->', '<!-- scorecard:items:end -->']
 };
 
 export function normalizeNewlines(text) {
@@ -118,10 +117,10 @@ export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
     } else {
       const ev = evidenceLevels[hg.evidence];
       if (!ev || typeof ev.cap !== 'number') {
-        errors.push(`Runtime item "${label}" has unknown evidence level "${hg.evidence}".`);
+        errors.push(`Runtime item "${label}" has unknown capability level "${hg.evidence}".`);
       } else if (typeof hScore === 'number' && hScore > ev.cap) {
         errors.push(
-          `Runtime item "${label}" HGame score ${hScore} exceeds evidence level "${hg.evidence}" cap ${ev.cap}.`
+          `Runtime item "${label}" HGame score ${hScore} exceeds capability level "${hg.evidence}" cap ${ev.cap}.`
         );
       }
 
@@ -131,6 +130,47 @@ export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
         errors.push(
           `Runtime item "${label}" HGame score ${hScore} violates Hard Cap #1 (defaultPath=false caps score at 7).`
         );
+      }
+
+      const checklist = hg.industrialChecklist;
+      if (!Array.isArray(checklist) || checklist.length < 3 || checklist.length > 5) {
+        errors.push(`Runtime item "${label}" hgame.industrialChecklist must contain 3 to 5 entries.`);
+      } else {
+        let metCount = 0;
+        for (let i = 0; i < checklist.length; i++) {
+          const entry = checklist[i];
+          if (!isNonEmptyString(entry?.point)) {
+            errors.push(`Runtime item "${label}" industrialChecklist[${i}].point must be non-empty.`);
+          }
+          if (typeof entry?.met !== 'boolean') {
+            errors.push(`Runtime item "${label}" industrialChecklist[${i}].met must be boolean.`);
+          } else if (entry.met) {
+            metCount += 1;
+          }
+          if (!isNonEmptyString(entry?.proof)) {
+            errors.push(`Runtime item "${label}" industrialChecklist[${i}].proof must be non-empty.`);
+          }
+        }
+
+        if (hg.evidence === 'C4' && metCount !== checklist.length) {
+          errors.push(
+            `Runtime item "${label}" capability level C4 requires all ${checklist.length} checklist items met, got ${metCount}.`
+          );
+        }
+        if (hg.evidence === 'C3' && metCount < 1) {
+          errors.push(
+            `Runtime item "${label}" capability level C3 requires at least 1 checklist item met, got ${metCount}.`
+          );
+        }
+
+        if (typeof hg.defaultPath === 'boolean' && typeof hScore === 'number') {
+          const maxAllowed = hg.defaultPath ? 8 + (2 * metCount) / checklist.length : 7;
+          if (hScore > maxAllowed + 1e-9) {
+            errors.push(
+              `Runtime item "${label}" HGame score ${hScore} exceeds industrialChecklist maxAllowed ${maxAllowed.toFixed(2)} (${metCount}/${checklist.length} met).`
+            );
+          }
+        }
       }
 
       if (!Array.isArray(hg.proofFiles) || hg.proofFiles.length === 0) {
@@ -174,40 +214,6 @@ export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
     errors.push(`Total runtime items weight sum must equal 100, got ${runtimeWeightSum}.`);
   }
 
-  const deliveryItems = Array.isArray(data?.delivery?.items) ? data.delivery.items : [];
-  if (deliveryItems.length === 0) {
-    errors.push('Delivery items list must not be empty.');
-  }
-  let deliveryWeightSum = 0;
-  for (const dItem of deliveryItems) {
-    const label = dItem?.id || '<unknown>';
-    if (!isNonEmptyString(dItem?.id) || !isNonEmptyString(dItem?.name)) {
-      errors.push(`Delivery item "${label}" must have non-empty id and name.`);
-    }
-    if (typeof dItem?.weight !== 'number' || dItem.weight <= 0) {
-      errors.push(`Delivery item "${label}" weight must be a positive number.`);
-    }
-    deliveryWeightSum += Number(dItem?.weight) || 0;
-    for (const engId of REQUIRED_ENGINES) {
-      const score = dItem?.scores?.[engId];
-      if (!isHalfStepScore(score)) {
-        errors.push(`Delivery item "${label}" score for "${engId}" must be a 0.5 step in [0, 10], got ${score}.`);
-      }
-    }
-    if (!isNonEmptyString(dItem?.note)) {
-      errors.push(`Delivery item "${label}" note must be non-empty.`);
-    }
-  }
-  if (deliveryWeightSum !== 100) {
-    errors.push(`Total delivery items weight sum must equal 100, got ${deliveryWeightSum}.`);
-  }
-
-  const mixR = data?.selectionMix?.runtime;
-  const mixD = data?.selectionMix?.delivery;
-  if (typeof mixR !== 'number' || typeof mixD !== 'number' || Math.abs(mixR + mixD - 1) > 1e-6) {
-    errors.push(`selectionMix.runtime + selectionMix.delivery must equal 1.`);
-  }
-
   return errors;
 }
 
@@ -219,9 +225,6 @@ export function computeScores(data) {
   const engines = data.engines;
   const dimensions = data.dimensions;
   const items = data.items;
-  const deliveryItems = data.delivery.items;
-  const mixRuntime = data.selectionMix.runtime;
-  const mixDelivery = data.selectionMix.delivery;
 
   const byEngine = {};
 
@@ -236,16 +239,8 @@ export function computeScores(data) {
     for (const item of items) {
       const pts = (item.weight * item.scores[id]) / 10;
       runtimeTotalRaw += pts;
-      dimStats[item.dimension].points += pts;
     }
 
-    for (const dim of dimensions) {
-      const st = dimStats[dim.id];
-      st.points = round1(st.points);
-      st.pct = round1((st.points / st.weight) * 100);
-    }
-
-    // Recompute exact raw pct for display consistency
     for (const dim of dimensions) {
       let rawPts = 0;
       for (const item of items) {
@@ -258,23 +253,12 @@ export function computeScores(data) {
       dimStats[dim.id].pct = round1((rawPts / dim.weight) * 100);
     }
 
-    let deliveryTotalRaw = 0;
-    for (const dItem of deliveryItems) {
-      deliveryTotalRaw += (dItem.weight * dItem.scores[id]) / 10;
-    }
-
-    const selectionTotalRaw = runtimeTotalRaw * mixRuntime + deliveryTotalRaw * mixDelivery;
-
     byEngine[id] = {
       id,
       name: engine.name,
       dimensions: dimStats,
       runtimeTotalRaw,
       runtimeTotal: round1(runtimeTotalRaw),
-      deliveryTotalRaw,
-      deliveryTotal: round1(deliveryTotalRaw),
-      selectionTotalRaw,
-      selectionTotal: round1(selectionTotalRaw),
       vsUnityPct: 0
     };
   }
@@ -302,10 +286,9 @@ function fmt1(num) {
 }
 
 export function renderSections(data, computed = computeScores(data)) {
-  // 1. Runtime summary table
   const runtimeRows = [
-    '| 引擎 | A 架构(18) | R 渲染(30) | P 性能(24) | S 子系统(20) | N 联机(8) | 底座分 / 100 | 对 Unity 比值 | 交付参考分 | 选型参考分 |',
-    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'
+    '| 引擎 | A 架构(18) | R 渲染(30) | P 性能(24) | S 子系统(20) | N 联机(8) | 能力总分 / 100 | 对 Unity 比值 |',
+    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'
   ];
 
   for (const row of computed.ranked) {
@@ -313,44 +296,30 @@ export function renderSections(data, computed = computeScores(data)) {
     const b = (text) => (isHgame ? `**${text}**` : text);
     const d = row.dimensions;
     runtimeRows.push(
-      `| ${b(row.name)} | ${fmt1(d.A.pct)}% | ${fmt1(d.R.pct)}% | ${fmt1(d.P.pct)}% | ${fmt1(d.S.pct)}% | ${fmt1(d.N.pct)}% | ${b(fmt1(row.runtimeTotal))} | ${fmt1(row.vsUnityPct)}% | ${fmt1(row.deliveryTotal)} | ${b(fmt1(row.selectionTotal))} |`
+      `| ${b(row.name)} | ${fmt1(d.A.pct)}% | ${fmt1(d.R.pct)}% | ${fmt1(d.P.pct)}% | ${fmt1(d.S.pct)}% | ${fmt1(d.N.pct)}% | ${b(fmt1(row.runtimeTotal))} | ${fmt1(row.vsUnityPct)}% |`
     );
   }
 
-  // 2. Per-item breakdown table
   const itemRows = [
-    '| 编号 | 项（权重） | HGame | 证据 | Unity | Cocos | Godot | HGame 短板 |',
+    '| 编号 | 项（权重） | HGame | 成熟度（清单） | Unity | Cocos | Godot | HGame 短板 |',
     '| --- | --- | ---: | :---: | ---: | ---: | ---: | --- |'
   ];
 
   for (const item of data.items) {
     const hScore = fmt1(item.scores.hgame);
-    const evTag = item.hgame.defaultPath ? item.hgame.evidence : `${item.hgame.evidence} (非默认)`;
+    const checklist = item.hgame.industrialChecklist || [];
+    const metCount = checklist.filter((c) => c.met).length;
+    const tag = item.hgame.defaultPath
+      ? `${item.hgame.evidence} (${metCount}/${checklist.length})`
+      : `${item.hgame.evidence} (非默认·${metCount}/${checklist.length})`;
     itemRows.push(
-      `| ${item.id} | ${item.name}（${item.weight}） | **${hScore}** | ${evTag} | ${fmt1(item.scores.unity)} | ${fmt1(item.scores.cocos)} | ${fmt1(item.scores.godot)} | ${item.gap} |`
+      `| ${item.id} | ${item.name}（${item.weight}） | **${hScore}** | ${tag} | ${fmt1(item.scores.unity)} | ${fmt1(item.scores.cocos)} | ${fmt1(item.scores.godot)} | ${item.gap} |`
     );
   }
-
-  // 3. Delivery maturity table
-  const deliveryRows = [
-    '| 编号 | 项（权重） | HGame | Unity | Cocos | Godot | 说明 |',
-    '| --- | --- | ---: | ---: | ---: | ---: | --- |'
-  ];
-
-  for (const dItem of data.delivery.items) {
-    deliveryRows.push(
-      `| ${dItem.id} | ${dItem.name}（${dItem.weight}） | ${fmt1(dItem.scores.hgame)} | ${fmt1(dItem.scores.unity)} | ${fmt1(dItem.scores.cocos)} | ${fmt1(dItem.scores.godot)} | ${dItem.note} |`
-    );
-  }
-
-  deliveryRows.push(
-    `| **合计** | **交付参考分（100）** | **${fmt1(computed.byEngine.hgame.deliveryTotal)}** | **${fmt1(computed.byEngine.unity.deliveryTotal)}** | **${fmt1(computed.byEngine.cocos.deliveryTotal)}** | **${fmt1(computed.byEngine.godot.deliveryTotal)}** | ${data.delivery.weightNote} |`
-  );
 
   return {
     runtime: runtimeRows.join('\n'),
-    items: itemRows.join('\n'),
-    delivery: deliveryRows.join('\n')
+    items: itemRows.join('\n')
   };
 }
 
@@ -418,7 +387,7 @@ function runCli() {
   console.log(`HGame Engine Scorecard (${data.version} · ${data.date})`);
   for (const row of computed.ranked) {
     console.log(
-      `  ${row.name.padEnd(32)} Base=${fmt1(row.runtimeTotal)}/100 (vsUnity=${fmt1(row.vsUnityPct)}%) | Delivery=${fmt1(row.deliveryTotal)} | Selection=${fmt1(row.selectionTotal)}`
+      `  ${row.name.padEnd(32)} Score=${fmt1(row.runtimeTotal)}/100 (vsUnity=${fmt1(row.vsUnityPct)}%)`
     );
   }
 }
