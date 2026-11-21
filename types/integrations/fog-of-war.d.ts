@@ -39,3 +39,37 @@ export function createFogOfWarThreeOverlay(fowWorld: any, { THREE, scene, height
     sync: (dt?: number) => void;
     dispose: () => void;
 };
+/**
+ * Binds Three.js world/PBR materials directly to the LoL-style cool slate-black
+ * Fog of War shader (`smoothstep(0.30, 0.95, live * borderMask)` + unified out-of-bounds darkness)
+ * so terrain, walls, and props receive crisp GPU fog shading without an alpha plane.
+ */
+export function createFogOfWarMaterialBinder(THREE: any, { fogColor, transitionMin, transitionMax, borderFadeStart, borderFadeEnd, worldPosVar, }?: {
+    fogColor?: number[] | undefined;
+    transitionMin?: number | undefined;
+    transitionMax?: number | undefined;
+    borderFadeStart?: number | undefined;
+    borderFadeEnd?: number | undefined;
+    worldPosVar?: string | undefined;
+}): {
+    uniforms: {
+        uFogEnabled: {
+            value: number;
+        };
+        uFogTex: {
+            value: any;
+        };
+        uFogBounds: {
+            value: any;
+        };
+        uFogColor: {
+            value: any;
+        };
+    };
+    applyToMaterial: (mat: any, { worldPosVar: posVar }?: {
+        worldPosVar?: string | undefined;
+    }) => any;
+    bind: (fogTexture: any, bounds: any) => boolean;
+    clear: () => void;
+    dispose: () => void;
+};

@@ -11,10 +11,36 @@ export const FOG_FADE_TYPE = Object.freeze({
 });
 
 export const FOG_QUALITY = Object.freeze({
-  LOW: 48,
-  MEDIUM: 96,
-  HIGH: 180,
+  LOW: 64,
+  MEDIUM: 128,
+  HIGH: 256,
   ULTRA: 360,
+});
+
+/**
+ * Canonical LoL-inspired top-down Fog of War tuning defaults:
+ * binary visible/unseen fog (no explored memory), 256x256 smoothed grid,
+ * 23.25m sight radius, cool slate-black shroud, and 0.30 transition edge hiding.
+ */
+export const TOPDOWN_FOG_DEFAULTS = Object.freeze({
+  plane: 'xz',
+  resolution: 256,
+  useMemory: false,
+  exploredAlpha: 0,
+  fadeInSpeed: 12.0,
+  fadeOutSpeed: 6.5,
+  blurPasses: 2,
+  sightExtra: 0.35,
+  edgeSoften: 0.65,
+  viewRadius: 23.25,
+  softenDistance: 4.0,
+  unobscuredRadius: 2.5,
+  unobscuredSoften: 1.0,
+  rayCount: 256,
+  visibilityThreshold: 0.30,
+  transitionRange: Object.freeze([0.30, 0.95]),
+  fogColor: Object.freeze([0.22, 0.26, 0.36]),
+  minimapFogRgba: Object.freeze([8, 12, 22, 188]),
 });
 
 const DEG_TO_RAD = Math.PI / 180;
@@ -245,25 +271,25 @@ export function extractTileMapObstacles(tileMap, isOpaque = (tile) => Boolean(ti
 export function createFogOfWarWorld({
   plane = 'xy',
   bounds = { minX: -480, minY: -270, maxX: 480, maxY: 270 },
-  resolutionX = 128,
-  resolutionY = 128,
+  resolutionX = 256,
+  resolutionY = 256,
   fadeType = FOG_FADE_TYPE.SMOOTHSTEP,
   fadePower = 1.5,
   blendMode = 'max',
-  useMemory = true,
+  useMemory = false,
   exploredAlpha = 0.35,
   useRegrow = false,
   regrowSpeed = 0.08,
   regrowFloor = 0.25,
-  fadeInSpeed = 8.0,
-  fadeOutSpeed = 4.0,
+  fadeInSpeed = 12.0,
+  fadeOutSpeed = 6.5,
   initialExploration = 0,
-  blurPasses = 1,
+  blurPasses = 2,
   worldBoundsSoften = 0,
-  sightExtra = 0.02,
-  edgeSoften = 0.15,
+  sightExtra = 0.35,
+  edgeSoften = 0.65,
   hidersUseGrid = false,
-  maxRaysPerRevealer = 768,
+  maxRaysPerRevealer = 384,
   maxRevealersPerFrame = 0,
 } = {}) {
   const isXZ = plane === 'xz';
@@ -524,12 +550,12 @@ export function createFogOfWarWorld({
       y: isXZ ? (opts.z ?? opts.y ?? 0) : (opts.y ?? 0),
       z: isXZ ? (opts.y ?? 0) : (opts.z ?? 0),
       yaw: opts.yaw ?? opts.angleRad ?? 0,
-      viewRadius: Math.max(0, opts.viewRadius ?? 120),
-      softenDistance: Math.max(0, opts.softenDistance ?? 28),
+      viewRadius: Math.max(0, opts.viewRadius ?? (isXZ ? TOPDOWN_FOG_DEFAULTS.viewRadius : 120)),
+      softenDistance: Math.max(0, opts.softenDistance ?? (isXZ ? TOPDOWN_FOG_DEFAULTS.softenDistance : 28)),
       viewAngleDeg: Math.max(1, Math.min(360, opts.viewAngleDeg ?? 360)),
       innerSoftenAngleDeg: Math.max(0, Math.min(60, opts.innerSoftenAngleDeg ?? 5)),
-      unobscuredRadius: opts.unobscuredRadius ?? 0,
-      unobscuredSoften: Math.max(0, opts.unobscuredSoften ?? 0),
+      unobscuredRadius: opts.unobscuredRadius ?? (isXZ ? TOPDOWN_FOG_DEFAULTS.unobscuredRadius : 0),
+      unobscuredSoften: Math.max(0, opts.unobscuredSoften ?? (isXZ ? TOPDOWN_FOG_DEFAULTS.unobscuredSoften : 0)),
       visionHeight: opts.visionHeight ?? 0,
       visionHeightSoften: Math.max(0, opts.visionHeightSoften ?? 0),
       opacity: clamp01(opts.opacity ?? 1),
@@ -787,6 +813,14 @@ export function createFogOfWarWorld({
     return top + (bot - top) * ty;
   }
 
+  function sampleGridVisibility(x, yOrZ) {
+    return sampleGridArray(liveVisibility, x, yOrZ);
+  }
+
+  function sampleVisualVisibility(x, yOrZ, zOrHeight = 0) {
+    return Math.min(sampleVisibility(x, yOrZ, zOrHeight), sampleGridArray(liveVisibility, x, yOrZ));
+  }
+
   function sampleExploration(x, yOrZ) {
     return sampleGridArray(exploredMemory, x, yOrZ);
   }
@@ -803,7 +837,7 @@ export function createFogOfWarWorld({
       y: isXZ ? (opts.z ?? opts.y ?? 0) : (opts.y ?? 0),
       z: isXZ ? (opts.y ?? 0) : (opts.z ?? 0),
       samplePoints: Array.isArray(opts.samplePoints) ? opts.samplePoints : null,
-      threshold: opts.threshold ?? 0.35,
+      threshold: opts.threshold ?? TOPDOWN_FOG_DEFAULTS.visibilityThreshold,
       permanentlyReveal: Boolean(opts.permanentlyReveal),
       revealedOnce: false,
       visible: false,
@@ -988,11 +1022,11 @@ export function createFogOfWarWorld({
           const sx = h.x + (sp.dx ?? sp.x ?? 0);
           const sy = h.y + (isXZ ? (sp.dz ?? sp.dy ?? sp.z ?? sp.y ?? 0) : (sp.dy ?? sp.y ?? 0));
           const sz = h.z + (isXZ ? (sp.dy ?? sp.y ?? 0) : (sp.dz ?? sp.z ?? 0));
-          const v = hidersUseGrid ? sampleGridArray(liveVisibility, sx, sy) : sampleVisibility(sx, sy, sz);
+          const v = hidersUseGrid ? sampleGridArray(liveVisibility, sx, sy) : sampleVisualVisibility(sx, sy, sz);
           if (v > maxVis) maxVis = v;
         }
       } else {
-        maxVis = hidersUseGrid ? sampleGridArray(liveVisibility, h.x, h.y) : sampleVisibility(h.x, h.y, h.z);
+        maxVis = hidersUseGrid ? sampleGridArray(liveVisibility, h.x, h.y) : sampleVisualVisibility(h.x, h.y, h.z);
       }
 
       h.visibility = maxVis;
@@ -1010,9 +1044,9 @@ export function createFogOfWarWorld({
    * explored-shroud, and live-visible cells without allocating.
    */
   function writeMinimapRgba(outRgba, {
-    unexploredRgba = [10, 14, 24, 240],
-    exploredRgba = [24, 34, 54, 160],
-    visibleRgba = [74, 222, 128, 35],
+    unexploredRgba = [8, 12, 22, 188],
+    exploredRgba = [8, 12, 22, 188],
+    visibleRgba = [0, 0, 0, 0],
   } = {}) {
     for (let i = 0; i < cellCount; i++) {
       const live = liveVisibility[i];
@@ -1088,6 +1122,8 @@ export function createFogOfWarWorld({
     isHiderVisible,
     getHiderState,
     sampleVisibility,
+    sampleGridVisibility,
+    sampleVisualVisibility,
     sampleExploration,
     sampleDisplay,
     update,

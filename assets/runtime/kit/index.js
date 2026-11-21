@@ -1,5 +1,6 @@
 export {
   STANDARD_ART_SPEC,
+  TOPDOWN_LIGHTING_PRESET,
   ART_THEMES,
   listArtThemes,
   getArtTheme,

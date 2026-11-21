@@ -3,6 +3,23 @@ import { damp, dampAngle, SpringDamper1D, SpringDamper3D } from '../time/tween.j
 const HALF_PI_CLAMP = Math.PI * 0.495;
 const DEG_TO_RAD = Math.PI / 180;
 
+/**
+ * Canonical LoL/Arena top-down follow camera preset:
+ * 42 deg vertical FOV, 25m height / 17.5m Z offset (~55 deg downward pitch, 30.5m arm).
+ */
+export const TOPDOWN_CAMERA_PRESET = Object.freeze({
+  fov: 42,
+  height: 25.0,
+  zOffset: 17.5,
+  armLength: 30.5,
+  minArmLength: 12,
+  lookY: 0.5,
+  lookZOffset: -0.4,
+  pitch: -55 * DEG_TO_RAD,
+  yaw: 0,
+  lagHalfLife: 0.1,
+});
+
 function readVec3(src, fallback = { x: 0, y: 0, z: 0 }) {
   if (!src || typeof src !== 'object') return { ...fallback };
   return {
@@ -532,15 +549,15 @@ export function createCameraRig3D({
       ...firstPerson,
     },
     topDown: {
-      armLength: 14,
-      minArmLength: 2,
-      targetOffset: { x: 0, y: 0, z: 0 },
+      armLength: TOPDOWN_CAMERA_PRESET.armLength,
+      minArmLength: TOPDOWN_CAMERA_PRESET.minArmLength,
+      targetOffset: { x: 0, y: TOPDOWN_CAMERA_PRESET.lookY, z: 0 },
       socketOffset: { x: 0, y: 0, z: 0 },
-      yaw: 0,
-      pitch: -60 * DEG_TO_RAD,
+      yaw: TOPDOWN_CAMERA_PRESET.yaw,
+      pitch: TOPDOWN_CAMERA_PRESET.pitch,
       minPitch: -89 * DEG_TO_RAD,
       maxPitch: -15 * DEG_TO_RAD,
-      lagHalfLife: 0.1,
+      lagHalfLife: TOPDOWN_CAMERA_PRESET.lagHalfLife,
       ...topDown,
     },
   };

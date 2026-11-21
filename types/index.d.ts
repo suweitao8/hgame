@@ -399,10 +399,30 @@ export const HGame: Readonly<{
         EXPONENTIAL: "exponential";
     }>;
     FOG_QUALITY: Readonly<{
-        LOW: 48;
-        MEDIUM: 96;
-        HIGH: 180;
+        LOW: 64;
+        MEDIUM: 128;
+        HIGH: 256;
         ULTRA: 360;
+    }>;
+    TOPDOWN_FOG_DEFAULTS: Readonly<{
+        plane: "xz";
+        resolution: 256;
+        useMemory: false;
+        exploredAlpha: 0;
+        fadeInSpeed: 12;
+        fadeOutSpeed: 6.5;
+        blurPasses: 2;
+        sightExtra: 0.35;
+        edgeSoften: 0.65;
+        viewRadius: 23.25;
+        softenDistance: 4;
+        unobscuredRadius: 2.5;
+        unobscuredSoften: 1;
+        rayCount: 256;
+        visibilityThreshold: 0.3;
+        transitionRange: readonly number[];
+        fogColor: readonly number[];
+        minimapFogRgba: readonly number[];
     }>;
     extractTileMapObstacles: typeof extractTileMapObstacles;
     createFogOfWarWorld: typeof createFogOfWarWorld;
@@ -1243,6 +1263,48 @@ export const HGame: Readonly<{
         character3dHandPose: "semi-clenched-grip";
         toneMapping: "ueFilmic";
     }>;
+    TOPDOWN_LIGHTING_PRESET: Readonly<{
+        cameraFov: 42;
+        cameraPosition: readonly number[];
+        cameraTarget: readonly number[];
+        background: "#0c111b";
+        hemisphere: Readonly<{
+            sky: "#b6d0f2";
+            ground: "#171f2e";
+            intensity: 0.38;
+        }>;
+        sun: Readonly<{
+            color: "#fff5e6";
+            intensity: 2.45;
+            position: readonly number[];
+            shadow: Readonly<{
+                extent: 32;
+                near: 1;
+                far: 105;
+                mapSize: 1024;
+                bias: -0.00025;
+                normalBias: 0.035;
+                adaptiveExtent: true;
+            }>;
+        }>;
+        fill: Readonly<{
+            color: "#6d8ec4";
+            intensity: 0.24;
+            position: readonly number[];
+        }>;
+    }>;
+    TOPDOWN_CAMERA_PRESET: Readonly<{
+        fov: 42;
+        height: 25;
+        zOffset: 17.5;
+        armLength: 30.5;
+        minArmLength: 12;
+        lookY: 0.5;
+        lookZOffset: -0.4;
+        pitch: number;
+        yaw: 0;
+        lagHalfLife: 0.1;
+    }>;
     ART_THEMES: Record<string, import("./kit/art-themes.js").ArtThemePreset>;
     listArtThemes: typeof listArtThemes;
     getArtTheme: typeof getArtTheme;
@@ -1694,7 +1756,7 @@ export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";
 export { SWARM_UNIT_FLAGS, ECS_SLOT_FLAGS, FlatSpatialHash2D, createFlatSpatialHash2D, FlowField2D, createFlowField2D, FlatCombatECS, createSwarmSimulation } from "./world/swarm-ecs.js";
 export { fbmNoise2D, createHeightfieldTerrain3D } from "./world/terrain3d.js";
 export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } from "./world/open-world.js";
-export { FOG_FADE_TYPE, FOG_QUALITY, extractTileMapObstacles, createFogOfWarWorld } from "./world/fog-of-war.js";
+export { FOG_FADE_TYPE, FOG_QUALITY, TOPDOWN_FOG_DEFAULTS, extractTileMapObstacles, createFogOfWarWorld } from "./world/fog-of-war.js";
 export { SURFACE_TYPES, DEFAULT_SURFACE_FEEDBACK_TABLE, createSurfaceFeedbackRouter } from "./world/surface-feedback.js";
 export { ATMOSPHERE_PRESETS_CN, createAtmosphere3D } from "./world/atmosphere3d.js";
 export { QUALITY3D_PROFILES, resolveQuality3DProfile } from "./integrations/quality3d.js";
@@ -1704,10 +1766,10 @@ export { COLOR_LUT_PRESETS, createColorLutTexture3D } from "./integrations/post3
 export { KTX2_MAGIC, detectCompressedTextureSupport, parseKtx2Header, selectOptimalTextureVariant, createCompressedTextureFromMipData } from "./integrations/ktx2.js";
 export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner, measureHotLoopAllocations } from "./sim/index.js";
 export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from "./integrations/render-budget-2d.js";
-export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
+export { TOPDOWN_CAMERA_PRESET, createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
 export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, renderSdfText, layoutRichTextLines, createCanvasAriaBridge, createLiveProfilerOverlay, DEFAULT_THUMB_ARC_SPEC, computeThumbArcLayout, isInThumbComfortZone, createThumbArcHud, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
 export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
 export { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
 export { createBoneMap3D, retargetClip3D } from "./animation/retarget3d.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";
-export { STANDARD_ART_SPEC, ART_THEMES, listArtThemes, getArtTheme, resolvePresentationPreset, GAME_AUDIO_EVENTS, DEFAULT_AUDIO_MATRIX, AUDIO_PROFILES, createAudioDirector, GENRE_ARCHETYPES, listGenreArchetypes, defineGameBlueprint, evaluateBlueprintBalance, createBlueprintFromIdea, createGameSession, mountGameShell, REQUIRED_DESIGN_DOCS, renderGameDesignDocs } from "./kit/index.js";
+export { STANDARD_ART_SPEC, TOPDOWN_LIGHTING_PRESET, ART_THEMES, listArtThemes, getArtTheme, resolvePresentationPreset, GAME_AUDIO_EVENTS, DEFAULT_AUDIO_MATRIX, AUDIO_PROFILES, createAudioDirector, GENRE_ARCHETYPES, listGenreArchetypes, defineGameBlueprint, evaluateBlueprintBalance, createBlueprintFromIdea, createGameSession, mountGameShell, REQUIRED_DESIGN_DOCS, renderGameDesignDocs } from "./kit/index.js";

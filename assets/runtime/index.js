@@ -106,6 +106,7 @@ export { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } fr
 export {
   FOG_FADE_TYPE,
   FOG_QUALITY,
+  TOPDOWN_FOG_DEFAULTS,
   extractTileMapObstacles,
   createFogOfWarWorld,
 } from './world/fog-of-war.js';
@@ -157,7 +158,7 @@ export {
 } from './integrations/ktx2.js';
 export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner, measureHotLoopAllocations } from './sim/index.js';
 export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from './integrations/render-budget-2d.js';
-export { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
+export { TOPDOWN_CAMERA_PRESET, createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 export {
   RED_DOT_STYLES,
   normalizeRedDotPath,
@@ -248,7 +249,7 @@ import {
 } from './integrations/ktx2.js';
 import { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner, measureHotLoopAllocations } from './sim/index.js';
 import { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from './integrations/render-budget-2d.js';
-import { createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
+import { TOPDOWN_CAMERA_PRESET, createSpringArmRayProbe, cameraRelativeMove } from './integrations/camera3d.js';
 import { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
 import {
   SWARM_UNIT_FLAGS,
@@ -267,6 +268,7 @@ import { createWorldPartition, createHLODProxyGroup3D, createFloatingOrigin } fr
 import {
   FOG_FADE_TYPE,
   FOG_QUALITY,
+  TOPDOWN_FOG_DEFAULTS,
   extractTileMapObstacles,
   createFogOfWarWorld,
 } from './world/fog-of-war.js';
@@ -376,6 +378,7 @@ import {
 } from './vfx/index.js';
 export {
   STANDARD_ART_SPEC,
+  TOPDOWN_LIGHTING_PRESET,
   ART_THEMES,
   listArtThemes,
   getArtTheme,
@@ -396,6 +399,7 @@ export {
 } from './kit/index.js';
 import {
   STANDARD_ART_SPEC,
+  TOPDOWN_LIGHTING_PRESET,
   ART_THEMES,
   listArtThemes,
   getArtTheme,
@@ -511,6 +515,7 @@ export const HGame = Object.freeze({
   createFloatingOrigin,
   FOG_FADE_TYPE,
   FOG_QUALITY,
+  TOPDOWN_FOG_DEFAULTS,
   extractTileMapObstacles,
   createFogOfWarWorld,
   SURFACE_TYPES,
@@ -562,6 +567,8 @@ export const HGame = Object.freeze({
   SceneManager,
   PrefabRegistry,
   STANDARD_ART_SPEC,
+  TOPDOWN_LIGHTING_PRESET,
+  TOPDOWN_CAMERA_PRESET,
   ART_THEMES,
   listArtThemes,
   getArtTheme,

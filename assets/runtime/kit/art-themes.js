@@ -14,6 +14,26 @@ export const STANDARD_ART_SPEC = Object.freeze({
 });
 
 /**
+ * Canonical LoL-inspired top-down lighting & shadow preset:
+ * top-left overhead sun `[-24, 44, -18]` casting cool deep slate shadows bottom-right,
+ * low olive-free ground bounce, and subtle opposite cool fill.
+ */
+export const TOPDOWN_LIGHTING_PRESET = Object.freeze({
+  cameraFov: 42,
+  cameraPosition: Object.freeze([0, 25.0, 17.5]),
+  cameraTarget: Object.freeze([0, 0.5, -0.4]),
+  background: '#0c111b',
+  hemisphere: Object.freeze({ sky: '#b6d0f2', ground: '#171f2e', intensity: 0.38 }),
+  sun: Object.freeze({
+    color: '#fff5e6',
+    intensity: 2.45,
+    position: Object.freeze([-24, 44, -18]),
+    shadow: Object.freeze({ extent: 32, near: 1, far: 105, mapSize: 1024, bias: -0.00025, normalBias: 0.035, adaptiveExtent: true }),
+  }),
+  fill: Object.freeze({ color: '#6d8ec4', intensity: 0.24, position: Object.freeze([22, 18, 16]) }),
+});
+
+/**
  * @typedef {object} ArtThemePreset
  * @property {string} id
  * @property {'scifi' | 'arcane' | 'arcade' | 'cyber'} uiTheme
@@ -260,13 +280,47 @@ export function getArtTheme(themeId = 'scifi') {
 }
 
 /**
- * Build a ready-to-use `presentation.json` object for 2D or 3D starters from an art theme.
+ * Build a ready-to-use `presentation.json` object for 2D, 3D, or top-down starters from an art theme.
  * @param {string} [themeId='scifi']
- * @param {'2d' | '3d' | 'ui'} [perspective='2d']
+ * @param {'2d' | '3d' | 'topdown' | 'ui'} [perspective='2d']
  * @param {string} [quality='auto']
  */
 export function resolvePresentationPreset(themeId = 'scifi', perspective = '2d', quality = 'auto') {
   const theme = getArtTheme(themeId);
+  if (perspective === 'topdown') {
+    return {
+      quality,
+      theme: theme.id,
+      sky: null,
+      chunkCells: 16,
+      startupModelSlots: [],
+      renderer: {
+        cameraFov: TOPDOWN_LIGHTING_PRESET.cameraFov,
+        cameraPosition: [...TOPDOWN_LIGHTING_PRESET.cameraPosition],
+        cameraTarget: [...TOPDOWN_LIGHTING_PRESET.cameraTarget],
+        limitCameraDrawDistance: true,
+        background: TOPDOWN_LIGHTING_PRESET.background,
+        toneMapping: theme.presentation3d.toneMapping,
+        exposure: theme.presentation3d.exposure,
+        shadows: true,
+        worldLighting: {
+          fog: { near: 62, far: 152 },
+          hemisphere: { ...TOPDOWN_LIGHTING_PRESET.hemisphere },
+          sun: {
+            color: TOPDOWN_LIGHTING_PRESET.sun.color,
+            intensity: TOPDOWN_LIGHTING_PRESET.sun.intensity,
+            position: [...TOPDOWN_LIGHTING_PRESET.sun.position],
+            shadow: { ...TOPDOWN_LIGHTING_PRESET.sun.shadow },
+          },
+          fill: {
+            color: TOPDOWN_LIGHTING_PRESET.fill.color,
+            intensity: TOPDOWN_LIGHTING_PRESET.fill.intensity,
+            position: [...TOPDOWN_LIGHTING_PRESET.fill.position],
+          },
+        },
+      },
+    };
+  }
   if (perspective === '3d') {
     return {
       quality,
@@ -288,8 +342,8 @@ export function resolvePresentationPreset(themeId = 'scifi', perspective = '2d',
           sun: {
             color: theme.presentation3d.sun.color,
             intensity: theme.presentation3d.sun.intensity,
-            position: [7, 13, 9],
-            shadow: { extent: 13, near: 0.5, far: 45, mapSize: 1024, bias: -0.0002, adaptiveExtent: true },
+            position: [-12, 22, -9],
+            shadow: { extent: 13, near: 0.5, far: 45, mapSize: 1024, bias: -0.00025, normalBias: 0.035, adaptiveExtent: true },
           },
         },
       },

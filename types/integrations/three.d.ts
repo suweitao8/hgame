@@ -94,7 +94,8 @@
  * @property {{color?: number | string, near: number, far: number}} [fog]
  * @property {{sky: number | string, ground: number | string, intensity: number}} [hemisphere]
  * @property {{color: number | string, intensity: number, position: [number, number, number],
- *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, adaptiveExtent?: boolean, autoUpdate?: boolean}}} [sun] Set shadow.autoUpdate to false to cache static shadows.
+ *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, normalBias?: number, adaptiveExtent?: boolean, autoUpdate?: boolean}}} [sun] Set shadow.autoUpdate to false to cache static shadows.
+ * @property {{color: number | string, intensity: number, position: [number, number, number]}} [fill] Optional opposite-side fill directional light (no shadows).
  */
 /**
  * @typedef {object} ThreeAdapterOptions
@@ -443,9 +444,18 @@ export type ThreeWorldLighting = {
             far: number;
             mapSize?: number;
             bias?: number;
+            normalBias?: number;
             adaptiveExtent?: boolean;
             autoUpdate?: boolean;
         };
+    } | undefined;
+    /**
+     * Optional opposite-side fill directional light (no shadows).
+     */
+    fill?: {
+        color: number | string;
+        intensity: number;
+        position: [number, number, number];
     } | undefined;
 };
 export type ThreeAdapterOptions = {

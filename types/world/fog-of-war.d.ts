@@ -76,6 +76,8 @@ export function createFogOfWarWorld({ plane, bounds, resolutionX, resolutionY, f
         revealedOnce: any;
     } | null;
     sampleVisibility: (x: number, yOrZ: number, zOrHeight?: number | undefined) => number;
+    sampleGridVisibility: (x: any, yOrZ: any) => any;
+    sampleVisualVisibility: (x: any, yOrZ: any, zOrHeight?: number) => number;
     sampleExploration: (x: any, yOrZ: any) => any;
     sampleDisplay: (x: any, yOrZ: any) => any;
     update: (dt?: number) => void;
@@ -112,8 +114,33 @@ export const FOG_FADE_TYPE: Readonly<{
     EXPONENTIAL: "exponential";
 }>;
 export const FOG_QUALITY: Readonly<{
-    LOW: 48;
-    MEDIUM: 96;
-    HIGH: 180;
+    LOW: 64;
+    MEDIUM: 128;
+    HIGH: 256;
     ULTRA: 360;
+}>;
+/**
+ * Canonical LoL-inspired top-down Fog of War tuning defaults:
+ * binary visible/unseen fog (no explored memory), 256x256 smoothed grid,
+ * 23.25m sight radius, cool slate-black shroud, and 0.30 transition edge hiding.
+ */
+export const TOPDOWN_FOG_DEFAULTS: Readonly<{
+    plane: "xz";
+    resolution: 256;
+    useMemory: false;
+    exploredAlpha: 0;
+    fadeInSpeed: 12;
+    fadeOutSpeed: 6.5;
+    blurPasses: 2;
+    sightExtra: 0.35;
+    edgeSoften: 0.65;
+    viewRadius: 23.25;
+    softenDistance: 4;
+    unobscuredRadius: 2.5;
+    unobscuredSoften: 1;
+    rayCount: 256;
+    visibilityThreshold: 0.3;
+    transitionRange: readonly number[];
+    fogColor: readonly number[];
+    minimapFogRgba: readonly number[];
 }>;

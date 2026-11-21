@@ -306,8 +306,11 @@ void main() {
   float expVis = samp.g;
 
   float mist = valueNoise(vWorldXZ * 0.14 + uFogScroll * uTime);
-  float shroud = clamp(1.0 - max(liveVis, expVis * 0.65), 0.0, 1.0);
-  float unexplored = clamp(1.0 - expVis, 0.0, 1.0);
+  float visMask = smoothstep(0.30, 0.95, liveVis);
+  float shroud = expVis > 0.001
+    ? clamp(1.0 - max(visMask, expVis * 0.65), 0.0, 1.0)
+    : (1.0 - visMask);
+  float unexplored = expVis > 0.001 ? clamp(1.0 - expVis, 0.0, 1.0) : 1.0;
 
   if (uDitherSize > 0.5) {
     vec2 cell = floor(gl_FragCoord.xy / uDitherSize);
@@ -317,7 +320,7 @@ void main() {
 
   vec4 col = mix(uExploredColor, uUnexploredColor, unexplored);
   col.rgb += (mist - 0.5) * uNoiseAmount * shroud;
-  float alpha = col.a * shroud * (1.0 - liveVis);
+  float alpha = col.a * shroud * (1.0 - visMask);
   if (alpha < 0.01) discard;
   gl_FragColor = vec4(col.rgb, alpha);
 }
@@ -331,10 +334,10 @@ export function createFogOfWarThreeOverlay(fowWorld, {
   THREE,
   scene,
   heightY = 0.15,
-  unexploredColor = [0.03, 0.05, 0.09, 0.94],
-  exploredColor = [0.06, 0.09, 0.16, 0.58],
-  fogScroll = [0.25, 0.15],
-  noiseAmount = 0.07,
+  unexploredColor = [0.04, 0.05, 0.09, 0.72],
+  exploredColor = [0.04, 0.05, 0.09, 0.72],
+  fogScroll = [0, 0],
+  noiseAmount = 0,
   ditherSize = 0,
   renderOrder = 25,
 } = {}) {
@@ -415,6 +418,114 @@ export function createFogOfWarThreeOverlay(fowWorld, {
     texture: fogTex,
     material: mat,
     sync,
+    dispose,
+  };
+}
+
+/**
+ * Binds Three.js world/PBR materials directly to the LoL-style cool slate-black
+ * Fog of War shader (`smoothstep(0.30, 0.95, live * borderMask)` + unified out-of-bounds darkness)
+ * so terrain, walls, and props receive crisp GPU fog shading without an alpha plane.
+ */
+export function createFogOfWarMaterialBinder(THREE, {
+  fogColor = [0.22, 0.26, 0.36],
+  transitionMin = 0.30,
+  transitionMax = 0.95,
+  borderFadeStart = 0.55,
+  borderFadeEnd = 0.95,
+  worldPosVar = 'vWorldAlignedPosition',
+} = {}) {
+  if (!THREE || !THREE.DataTexture || !THREE.Vector4 || !THREE.Vector3) {
+    throw new TypeError('createFogOfWarMaterialBinder requires THREE with DataTexture, Vector3, Vector4');
+  }
+  const dummyFogData = new Uint8Array([255, 255, 255, 255]);
+  const dummyFogTex = new THREE.DataTexture(dummyFogData, 1, 1, THREE.RGBAFormat);
+  dummyFogTex.needsUpdate = true;
+  const uniforms = {
+    uFogEnabled: { value: 0 },
+    uFogTex: { value: dummyFogTex },
+    uFogBounds: { value: new THREE.Vector4(-50, -50, 0.01, 0.01) },
+    uFogColor: { value: new THREE.Vector3(fogColor[0] ?? 0.22, fogColor[1] ?? 0.26, fogColor[2] ?? 0.36) },
+  };
+  const minT = Number(transitionMin).toFixed(3);
+  const maxT = Number(transitionMax).toFixed(3);
+  const bStart = Number(borderFadeStart).toFixed(3);
+  const bEnd = Number(borderFadeEnd).toFixed(3);
+
+  function applyToMaterial(mat, { worldPosVar: posVar = worldPosVar } = {}) {
+    if (!mat || typeof mat.onBeforeCompile !== 'function') return mat;
+    mat.userData ??= {};
+    if (mat.userData.fogOfWarBound) return mat;
+    const prevCompile = mat.onBeforeCompile;
+    const prevKey = typeof mat.customProgramCacheKey === 'function' ? mat.customProgramCacheKey.bind(mat) : () => '';
+    mat.customProgramCacheKey = () => {
+      const base = prevKey();
+      return base ? `${base}:hgame-fow:${posVar}` : `hgame-fow:${posVar}`;
+    };
+    mat.onBeforeCompile = (shader, renderer) => {
+      prevCompile.call(mat, shader, renderer);
+      shader.uniforms.uFogEnabled = uniforms.uFogEnabled;
+      shader.uniforms.uFogTex = uniforms.uFogTex;
+      shader.uniforms.uFogBounds = uniforms.uFogBounds;
+      shader.uniforms.uFogColor = uniforms.uFogColor;
+      const marker = shader.fragmentShader.includes('#include <premultiplied_alpha_fragment>')
+        ? '#include <premultiplied_alpha_fragment>'
+        : '#include <tonemapping_fragment>';
+      if (shader.fragmentShader.includes(marker)) {
+        shader.fragmentShader = `
+          uniform float uFogEnabled;
+          uniform sampler2D uFogTex;
+          uniform vec4 uFogBounds;
+          uniform vec3 uFogColor;
+        ` + shader.fragmentShader.replace(marker, `
+          if (uFogEnabled > 0.5) {
+            vec2 rawFowUv = (${posVar}.xz - uFogBounds.xy) * uFogBounds.zw;
+            vec2 fowUv = clamp(rawFowUv, 0.0, 1.0);
+            vec4 fowS = texture2D(uFogTex, fowUv);
+            float fowLive = fowS.r;
+            vec2 outsideUv = max(vec2(0.0) - rawFowUv, rawFowUv - vec2(1.0));
+            vec2 outsideMeters = max(vec2(0.0), outsideUv / max(uFogBounds.zw, vec2(1e-5)));
+            float outsideDist = max(outsideMeters.x, outsideMeters.y);
+            float borderMask = 1.0 - smoothstep(${bStart}, ${bEnd}, outsideDist);
+            float fowVis = smoothstep(${minT}, ${maxT}, clamp(fowLive * borderMask, 0.0, 1.0));
+            gl_FragColor.rgb *= mix(uFogColor, vec3(1.0), fowVis);
+          }
+        ` + marker);
+      }
+    };
+    mat.userData.fogOfWarBound = true;
+    mat.needsUpdate = true;
+    return mat;
+  }
+
+  function bind(fogTexture, bounds) {
+    if (!fogTexture || !bounds) return false;
+    uniforms.uFogEnabled.value = 1;
+    uniforms.uFogTex.value = fogTexture;
+    uniforms.uFogBounds.value.set(
+      bounds.minX,
+      bounds.minY,
+      1 / Math.max(0.001, bounds.width),
+      1 / Math.max(0.001, bounds.height)
+    );
+    return true;
+  }
+
+  function clear() {
+    uniforms.uFogEnabled.value = 0;
+    uniforms.uFogTex.value = dummyFogTex;
+  }
+
+  function dispose() {
+    clear();
+    dummyFogTex.dispose();
+  }
+
+  return {
+    uniforms,
+    applyToMaterial,
+    bind,
+    clear,
     dispose,
   };
 }

@@ -10,12 +10,62 @@ export function listArtThemes(): string[];
  */
 export function getArtTheme(themeId?: string | undefined): ArtThemePreset;
 /**
- * Build a ready-to-use `presentation.json` object for 2D or 3D starters from an art theme.
+ * Build a ready-to-use `presentation.json` object for 2D, 3D, or top-down starters from an art theme.
  * @param {string} [themeId='scifi']
- * @param {'2d' | '3d' | 'ui'} [perspective='2d']
+ * @param {'2d' | '3d' | 'topdown' | 'ui'} [perspective='2d']
  * @param {string} [quality='auto']
  */
-export function resolvePresentationPreset(themeId?: string | undefined, perspective?: "2d" | "3d" | "ui" | undefined, quality?: string | undefined): {
+export function resolvePresentationPreset(themeId?: string | undefined, perspective?: "2d" | "3d" | "ui" | "topdown" | undefined, quality?: string | undefined): {
+    quality: string;
+    theme: string;
+    sky: null;
+    chunkCells: number;
+    startupModelSlots: never[];
+    renderer: {
+        cameraFov: 42;
+        cameraPosition: number[];
+        cameraTarget: number[];
+        limitCameraDrawDistance: boolean;
+        background: "#0c111b";
+        toneMapping: "ueFilmic";
+        exposure: number;
+        shadows: boolean;
+        worldLighting: {
+            fog: {
+                near: number;
+                far: number;
+            };
+            hemisphere: {
+                sky: "#b6d0f2";
+                ground: "#171f2e";
+                intensity: 0.38;
+            };
+            sun: {
+                color: "#fff5e6";
+                intensity: 2.45;
+                position: number[];
+                shadow: {
+                    extent: 32;
+                    near: 1;
+                    far: 105;
+                    mapSize: 1024;
+                    bias: -0.00025;
+                    normalBias: 0.035;
+                    adaptiveExtent: true;
+                };
+            };
+            fill: {
+                color: "#6d8ec4";
+                intensity: 0.24;
+                position: number[];
+            };
+        };
+    };
+    backend?: undefined;
+    background?: undefined;
+    lighting2d?: undefined;
+    palette?: undefined;
+} | {
     quality: string;
     theme: string;
     sky: {
@@ -52,10 +102,13 @@ export function resolvePresentationPreset(themeId?: string | undefined, perspect
                     far: number;
                     mapSize: number;
                     bias: number;
+                    normalBias: number;
                     adaptiveExtent: boolean;
                 };
             };
+            fill?: undefined;
         };
+        cameraFov?: undefined;
     };
     backend?: undefined;
     background?: undefined;
@@ -101,6 +154,41 @@ export const STANDARD_ART_SPEC: Readonly<{
     character3dMaxVertices: 3000;
     character3dHandPose: "semi-clenched-grip";
     toneMapping: "ueFilmic";
+}>;
+/**
+ * Canonical LoL-inspired top-down lighting & shadow preset:
+ * top-left overhead sun `[-24, 44, -18]` casting cool deep slate shadows bottom-right,
+ * low olive-free ground bounce, and subtle opposite cool fill.
+ */
+export const TOPDOWN_LIGHTING_PRESET: Readonly<{
+    cameraFov: 42;
+    cameraPosition: readonly number[];
+    cameraTarget: readonly number[];
+    background: "#0c111b";
+    hemisphere: Readonly<{
+        sky: "#b6d0f2";
+        ground: "#171f2e";
+        intensity: 0.38;
+    }>;
+    sun: Readonly<{
+        color: "#fff5e6";
+        intensity: 2.45;
+        position: readonly number[];
+        shadow: Readonly<{
+            extent: 32;
+            near: 1;
+            far: 105;
+            mapSize: 1024;
+            bias: -0.00025;
+            normalBias: 0.035;
+            adaptiveExtent: true;
+        }>;
+    }>;
+    fill: Readonly<{
+        color: "#6d8ec4";
+        intensity: 0.24;
+        position: readonly number[];
+    }>;
 }>;
 /**
  * @typedef {object} ArtThemePreset

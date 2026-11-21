@@ -224,6 +224,22 @@ export function cameraRelativeMove(inputX: number, inputY: number, yaw: number, 
  */
 export function createBoxCollisionTest(boxes: readonly BoxObstacleLike[], { inflateByProbe }?: BoxCollisionTestOptions | undefined): SpringArmCollisionTest;
 /**
+ * Canonical LoL/Arena top-down follow camera preset:
+ * 42 deg vertical FOV, 25m height / 17.5m Z offset (~55 deg downward pitch, 30.5m arm).
+ */
+export const TOPDOWN_CAMERA_PRESET: Readonly<{
+    fov: 42;
+    height: 25;
+    zOffset: 17.5;
+    armLength: 30.5;
+    minArmLength: 12;
+    lookY: 0.5;
+    lookZOffset: -0.4;
+    pitch: number;
+    yaw: 0;
+    lagHalfLife: 0.1;
+}>;
+/**
  * Plain or Three.js-like vector.
  */
 export type CameraVec3 = {

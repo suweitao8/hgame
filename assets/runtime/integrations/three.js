@@ -171,7 +171,8 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {{color?: number | string, near: number, far: number}} [fog]
  * @property {{sky: number | string, ground: number | string, intensity: number}} [hemisphere]
  * @property {{color: number | string, intensity: number, position: [number, number, number],
- *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, adaptiveExtent?: boolean, autoUpdate?: boolean}}} [sun] Set shadow.autoUpdate to false to cache static shadows.
+ *   shadow?: {extent: number, near: number, far: number, mapSize?: number, bias?: number, normalBias?: number, adaptiveExtent?: boolean, autoUpdate?: boolean}}} [sun] Set shadow.autoUpdate to false to cache static shadows.
+ * @property {{color: number | string, intensity: number, position: [number, number, number]}} [fill] Optional opposite-side fill directional light (no shadows).
  */
 
 /**
@@ -704,10 +705,15 @@ export function createThreeAdapter({
     if (!worlds.has(scene)) {
       const world = new THREE.Scene();
       if (THREE.Color && 'background' in world) world.background = new THREE.Color(background);
-      const { fog, hemisphere, sun } = worldLighting ?? {};
+      const { fog, hemisphere, sun, fill } = worldLighting ?? {};
       if (fog && THREE.Fog) world.fog = new THREE.Fog(fog.color ?? background, fog.near, fog.far);
       if (hemisphere && THREE.HemisphereLight) {
         world.add(new THREE.HemisphereLight(hemisphere.sky, hemisphere.ground, hemisphere.intensity));
+      }
+      if (fill && THREE.DirectionalLight) {
+        const fillLight = new THREE.DirectionalLight(fill.color ?? '#6d8ec4', fill.intensity ?? 0.24);
+        if (Array.isArray(fill.position)) fillLight.position.set(...fill.position);
+        world.add(fillLight);
       }
       if (sun && THREE.DirectionalLight) {
         if (sun.cascades) {
@@ -746,13 +752,14 @@ export function createThreeAdapter({
           light.position.set(...sun.position);
           light.castShadow = Boolean(sun.shadow);
           if (sun.shadow) {
-            const { extent, near, far, bias = 0, mapSize = 1024, autoUpdate = true } = sun.shadow;
+            const { extent, near, far, bias = 0, normalBias, mapSize = 1024, autoUpdate = true } = sun.shadow;
             Object.assign(light.shadow.camera, {
               left: -extent, right: extent, top: extent, bottom: -extent, near, far,
             });
             light.shadow.camera.updateProjectionMatrix?.();
             light.shadow.mapSize.set(mapSize, mapSize);
             light.shadow.bias = bias;
+            if (Number.isFinite(normalBias)) light.shadow.normalBias = normalBias;
             light.shadow.autoUpdate = autoUpdate !== false;
             if (!light.shadow.autoUpdate) markSunShadowDirty(light);
           }
