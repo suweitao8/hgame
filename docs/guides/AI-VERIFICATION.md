@@ -2,6 +2,23 @@
 
 How an agent develops against the user's task, runs checks, and decides whether the requested outcome is ready.
 
+## Automated Acceptance Gate (`scripts/accept.mjs`)
+
+Every generated game project (`npm run accept` / `npm run accept:webasset`) and HGame example (`npm run accept:examples`) includes a unified fail-closed acceptance runner synced into `scripts/accept.mjs`.
+
+1. **Gates enforced in full mode (`node scripts/accept.mjs <dir>`):**
+   - `config`: validates `engine.config.json` (`defineProject`), `game.config.json` WebAsset strict allowlist (`schemaVersion`, `id`, `name`, `version`, `entry`, `renderer`, `runtime`, `standalone`, `id === folderName`), zero CDN URLs, and valid local HTML script/CSS targets.
+   - `syntax`: runs `node --check` across every `.js`/`.mjs` file under `src/`, `tests/`, and root, and verifies all static relative ESM imports in `src/` resolve on disk.
+   - `uiStatic`: runs Anti-Bloat UI lint (`check-ui.mjs`).
+   - `tests`: runs `node --test tests/*.test.mjs` with a zero-skip policy (`--allow-skips` to opt out).
+   - `visual`: captures `build/acceptance/desktop.png` (`960x540`) and `build/acceptance/mobile.png` (`360x800`) via `snapshot.mjs --check-ui --check-layout`, enforcing zero console/HTTP errors, non-blank/non-monochrome frames (except untouched `--bare` scaffolds), HUD budgets, zero viewport overflow, and zero clipped/overlapping buttons.
+   - `playtest`: executes `tests/acceptance.mjs` (or default input probes) via `playtest.mjs --check-ui --check-layout`, asserting interactive responsiveness, frame telemetry, zero non-finite (`NaN`/`Infinity`) numbers in `window.__hgameState()`, and no premature `disposed`.
+   - `doctor`: runs `doctor-playability.mjs` when `window.__HGAME_DOCTOR__` is wired (or required via `--doctor`).
+   - `webasset`: checks `127.0.0.1:4174/api/games`, `verifyWebAssetSource`, and live isolated boot at `127.0.0.1:4175/local-games/<id>/<entry>` (mandatory when `--webasset` is passed).
+   - `package` (when `--package` is passed): runs `package-game.mjs` and boots the packaged output via `snapshot.mjs`.
+   - `taskManifest`: executes `task-check.mjs` if `tests/acceptance.json` or `build/task.json` exists.
+2. **Freshness proof (`--verify-fresh`):** Full acceptance writes `build/acceptance-report.json` stamped with `sourceDigest` (SHA-256 over configs, HTML/CSS, `src/**/*`, and `tests/**/*`). `node scripts/accept.mjs . --verify-fresh` fails if any source/test/config file changed since the last passing full run or if screenshots are missing. `--quick` (`npm run check`) skips browser gates and always records `accepted: false`.
+
 ## Task acceptance
 
 1. **Preserve the request.** Before editing, write the task and an observable expected result for each explicit behavior, deliverable and constraint. Note any assumptions. For a bug, reproduce the original failure. For gameplay, cover entry, the requested interaction, and the resulting state. Include restart, persistence, touch or failure paths when the request affects them.

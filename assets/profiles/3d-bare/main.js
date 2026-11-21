@@ -62,7 +62,12 @@ if (app.disposed) throw new Error('Application disposed during sky initializatio
 app.scenes.start('world');
 app.start();
 viewCanvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ scene: app.scenes.current?.name ?? null });
+window.__hgameState = () => ({
+  scene: app.scenes.current?.name ?? null,
+  tick: app.stats.ticks,
+  running: app.running,
+  disposed: app.disposed,
+});
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;
   window.removeEventListener('pagehide', onPageHide);

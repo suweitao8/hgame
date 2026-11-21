@@ -22,6 +22,7 @@
 
 | Capability | Import path from `src/main.js` | Key entry points |
 |---|---|---|
+| **5-Pillar Universal Game Kit (Design, Art, Audio, Session, UI Shell)** | `../vendor/hgame/kit/index.js` | `createBlueprintFromIdea`, `defineGameBlueprint`, `evaluateBlueprintBalance`, `getArtTheme`, `resolvePresentationPreset`, `createAudioDirector`, `createGameSession`, `mountGameShell` |
 | Core, Scene, Tags, Tween, Red Dot, Arcade Input | `../vendor/hgame/index.js` | `HGame.defineProject`, `createApplication`, `Scene`, `Entity`, `HGame.createSwarmSimulation`, `HGame.createGpuSwarmWebGL2`, `HGame.createArcadeControls`, `HGame.computeSplitScreenViews`, `HGame.createRedDotSystem`, `HGame.createFloatingOrigin`, `HGame.createWorldPartition` |
 | 2D Canvas & Crowd (`10,000+`) | `../vendor/hgame/integrations/canvas2d.js` | `createCanvas2DAdapter`, `Camera2D`, `Sprite2D` (`groundShadow`, `hitFlash`), `SpriteCrowd2D` (`bindSwarm`, `bindGpuSwarm`) |
 | 2D WebGL2 GPU Instanced (auto Canvas2D fallback) | `../vendor/hgame/integrations/webgl2d.js`, `post2d.js` | `createWebGL2DAdapter`, `setAmbientLight`, `addLight2D`, `setLights2D`, `setPost2D` (Bloom/vignette/hitPulse), `Sprite2D`, `SpriteCrowd2D` |
@@ -39,25 +40,31 @@
 
 ## Commands Inside This Project
 
-For each development task, preserve the request and list observable acceptance criteria before editing. Link each criterion to an exact Node test, a real-input WebAsset playtest checkpoint, or a fresh visual review. Run the task checker from this project, inspect any pending or failed items, fix what you can and rerun. Before reporting completion, compare the evidence with the original request and run `npm test` and `npm run check`.
+For each development task, preserve the request and list observable acceptance criteria before editing. Link each criterion to an exact Node test, a real-input WebAsset playtest checkpoint, or a fresh visual review. Expand `tests/acceptance.mjs` to cover the game's core loop (start -> play -> objective/combat -> gameover -> restart -> save), then run `npm run accept` (`npm run accept:webasset` before user delivery) and inspect `build/acceptance/*.png`. `npm run check` (`accept.mjs . --quick`) is fast pre-browser hygiene and never replaces full `npm run accept`.
 
 ```powershell
-# Run project tests & syntax checks
+# Run full fail-closed acceptance gate (writes build/acceptance-report.json + desktop/mobile PNGs)
+npm run accept
+npm run accept:webasset
+node scripts/accept.mjs . --verify-fresh
+
+# Run project tests & quick static/syntax/import/UI checks
 npm test
 npm run check
-node "<hgame-repo>/scripts/task-check.mjs" build/task.json
+node scripts/task-check.mjs build/task.json
 
 # Query the API for this game's bundled runtime and open its starter entry:
 npm run api -- --map
 npm run api -- --recipe current
 npm run api -- --module level-flow --json
-# Engine-wide tools still run from the HGame repository:
-node "<hgame-repo>/scripts/snapshot.mjs" . --check-ui
-node "<hgame-repo>/scripts/playtest.mjs" . --duration 2000 --actions "d:300,w:300,j:150"
+# Individual verification tools (synced into scripts/):
+npm run snapshot
+npm run playtest
+npm run check:ui
+npm run doctor
 node "<hgame-repo>/.agents/skills/hgame-balance-sim/scripts/sim-balance.mjs" --config <balance.json>
 node "<hgame-repo>/.agents/skills/hgame-level-architect/scripts/check-level.mjs" --level <level.json>
 node "<hgame-repo>/.agents/skills/hgame-narrative-branch/scripts/check-story-graph.mjs" --story <story.json>
-node "<hgame-repo>/.agents/skills/hgame-ui-ux/scripts/check-ui.mjs" --dir .
 
 # Unified preview & playtest via WebAsset (never open via file:// or start a separate per-game server)
 # Lobby:   http://127.0.0.1:4174/#games

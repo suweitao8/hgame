@@ -11,14 +11,16 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { unlink, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createFrameTelemetry, summarizeFrameTelemetry } from './lib/performance-stats.mjs';
-import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
+import { numberOption } from './lib/cli-numbers.mjs';
+import { viewportOption } from './lib/cli-numbers.mjs';
+import { launchChromium, resolvePlaywright } from './lib/playwright-resolve.mjs';
+import { collectPageUiAudit, evaluateLayoutAudit, evaluateUiAudit } from './lib/snapshot-ui-audit.mjs';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
+const previewScript = fileURLToPath(new URL('./preview.mjs', import.meta.url));
 
 /**
  * Parse a comma-separated input script like `"d:350,space:120,wait:200,click"`.
@@ -54,21 +56,6 @@ export function summarizeFrameDeltas(frameDeltasMs) {
   const collector = createFrameTelemetry(Math.max(1, values.length));
   for (const value of values) collector.record(value);
   return summarizeFrameTelemetry(collector.snapshot());
-}
-
-function findChrome(explicitPath) {
-  if (explicitPath) return explicitPath;
-  if (process.env.HGAME_CHROME && existsSync(process.env.HGAME_CHROME)) return process.env.HGAME_CHROME;
-  const candidates = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  ];
-  return candidates.find(existsSync) ?? null;
 }
 
 async function freePort() {
@@ -191,6 +178,9 @@ async function runCli() {
   }
   const query = opt('--query', '');
   const allowStatic = flag('--allow-static') || profile === 'ui';
+  const allowBlank = flag('--allow-blank');
+  const checkUi = flag('--check-ui');
+  const checkLayout = flag('--check-layout');
   const usePointer = !flag('--no-pointer');
   const actionsRaw = opt('--actions', profile === 'ui' ? 'click,wait:250' : 'd:320,w:260,j:160,a:260,space:160,wait:250');
   let actions;
@@ -208,10 +198,10 @@ async function runCli() {
     process.exit(2);
   }
 
-  const exe = findChrome(opt('--chrome', ''));
+  const chromePath = opt('--chrome', '');
   let playwrightMod;
   try {
-    playwrightMod = createRequire(import.meta.url)('playwright-core');
+    playwrightMod = resolvePlaywright(import.meta.url, { cwd: resolvedDir ?? process.cwd() });
   } catch (err) {
     console.log(JSON.stringify({ ok: false, problems: ['playwright-core not installed: ' + err.message] }, null, 2));
     process.exit(1);
@@ -238,7 +228,7 @@ async function runCli() {
     } else {
       const port = await freePort();
       url = new URL(`http://127.0.0.1:${port}/`);
-      server = spawn(process.execPath, [path.join(root, 'scripts', 'preview.mjs'), resolvedDir, '--port', String(port)], {
+      server = spawn(process.execPath, [previewScript, resolvedDir, '--port', String(port)], {
         windowsHide: true, stdio: 'ignore',
       });
       let spawnError;
@@ -253,9 +243,8 @@ async function runCli() {
     if (query) url.search = query;
     report.url = url.href;
 
-    browser = await chromium.launch({
-      headless: true,
-      ...(exe ? { executablePath: exe } : {}),
+    browser = await launchChromium(chromium, {
+      executablePath: chromePath,
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl'],
     });
     const page = await browser.newPage({ viewport: { width: vw, height: vh }, deviceScaleFactor: 1 });
@@ -310,8 +299,25 @@ async function runCli() {
     const beforeHash = createHash('sha256').update(shotBefore).digest('hex').slice(0, 16);
     const readState = async () => {
       try {
-        return await page.evaluate(async n => typeof window[n] === 'function'
-          ? JSON.parse(JSON.stringify(await window[n]() ?? null)) : null, stateHook);
+        const res = await page.evaluate(async n => {
+          if (typeof window[n] !== 'function') return { present: false, value: null, nonFinite: [] };
+          const raw = await window[n]();
+          const nonFinite = [];
+          const scan = (val, p, seen) => {
+            if (typeof val === 'number') { if (!Number.isFinite(val)) nonFinite.push(p || 'root'); return; }
+            if (!val || typeof val !== 'object' || seen.has(val)) return;
+            seen.add(val);
+            if (Array.isArray(val)) { for (let i = 0; i < val.length; i++) scan(val[i], `${p}[${i}]`, seen); }
+            else { for (const [k, v] of Object.entries(val)) scan(v, p ? `${p}.${k}` : k, seen); }
+          };
+          scan(raw, '', new Set());
+          return { present: true, value: JSON.parse(JSON.stringify(raw ?? null)), nonFinite };
+        }, stateHook);
+        if (res.nonFinite?.length) {
+          const msg = `state hook ${stateHook} contains non-finite numbers: ${res.nonFinite.slice(0, 5).join(', ')}`;
+          if (!report.problems.includes(msg)) report.problems.push(msg);
+        }
+        return res.value;
       } catch (error) {
         report.problems.push(`state hook ${stateHook} failed: ${error.message}`);
         return null;
@@ -382,6 +388,7 @@ async function runCli() {
     const shotAfter = await captureBuf();
     const afterHash = createHash('sha256').update(shotAfter).digest('hex').slice(0, 16);
     const stateAfter = await readState();
+    const uiAudit = (checkUi || checkLayout) ? await page.evaluate(collectPageUiAudit) : null;
     if (traceHook) {
       try {
         report.trace = await page.evaluate(async name => {
@@ -411,9 +418,22 @@ async function runCli() {
     const visualChanged = beforeHash !== afterHash;
     const stateChanged = stateBefore !== null && JSON.stringify(stateBefore) !== JSON.stringify(stateAfter);
 
-    if (canvasStats.nonBlankRatio < 0.001) report.problems.push('canvas appears blank');
+    if (!allowBlank && canvasStats.nonBlankRatio < 0.001) report.problems.push('canvas appears blank');
     if (!allowStatic && !visualChanged && !stateChanged) report.problems.push('game frame & state remained completely static after scripted input');
+    if (stateAfter && typeof stateAfter === 'object' && stateAfter.disposed === true) {
+      report.problems.push('application was disposed unexpectedly during playtest');
+    }
     if (frameStats.longFrames > maxLongFrames) report.problems.push(`too many long frames (>50ms): ${frameStats.longFrames}`);
+    if (checkUi && uiAudit) {
+      const allowDebug = /(?:^|&)debug=1(?:&|$)/.test(query.replace(/^\?/, ''));
+      report.problems.push(...evaluateUiAudit(uiAudit, {
+        allowDebug,
+        ...(profile === 'ui' ? { maxHudRatio: 0.85, maxHudButtons: 4 } : {}),
+      }));
+    }
+    if (checkLayout && uiAudit) {
+      report.problems.push(...evaluateLayoutAudit(uiAudit));
+    }
 
     Object.assign(report, {
       browserVersion: browser.version(),
@@ -425,6 +445,7 @@ async function runCli() {
       actualDurationMs: +actualDurationMs.toFixed(2),
       frameStats,
       canvasStats,
+      ...(uiAudit ? { uiAudit } : {}),
       stateBefore,
       stateAfter,
     });

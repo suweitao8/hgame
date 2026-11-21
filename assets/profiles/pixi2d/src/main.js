@@ -83,7 +83,18 @@ function setupArena({ app, renderer, Scene, Entity, Component }) {
   return {
     scene: 'arena',
     visibility: { resetInput: () => input.reset(), onVisibility: () => { fpsFrames = 0; fpsSince = performance.now(); } },
-    state: () => ({ enemies: arena.enemies.length, effects: juice.effects.length, particles: juice.visibleParticles, activeParticles: juice.active, fps, kills: arena.kills }),
+    state: () => ({
+      tick: app.stats.ticks,
+      running: app.running,
+      disposed: app.disposed,
+      player: { x: +arena.player.x.toFixed(2), y: +arena.player.y.toFixed(2) },
+      enemies: arena.enemies.length,
+      effects: juice.effects.length,
+      particles: juice.visibleParticles,
+      activeParticles: juice.active,
+      fps,
+      kills: arena.kills,
+    }),
   };
 }
 

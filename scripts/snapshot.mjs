@@ -14,20 +14,21 @@
 // Exit code 1 when: page errors, blank canvas, baseline diff above threshold, or --check-ui fails.
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
-import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { writeSnapshotOutput } from './lib/snapshot-output.mjs';
-import { collectPageUiAudit, evaluateUiAudit } from './lib/snapshot-ui-audit.mjs';
+import { collectPageUiAudit, evaluateLayoutAudit, evaluateUiAudit } from './lib/snapshot-ui-audit.mjs';
 import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
+import { launchChromium, resolvePlaywright } from './lib/playwright-resolve.mjs';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
+const previewScript = fileURLToPath(new URL('./preview.mjs', import.meta.url));
 const argv = process.argv.slice(2);
 const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
 const flag = name => argv.includes(name);
-const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !['--update-baseline', '--freeze-time', '--check-ui'].includes(argv[i - 1])));
+const booleanFlags = new Set(['--update-baseline', '--freeze-time', '--check-ui', '--check-layout', '--allow-blank']);
+const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !booleanFlags.has(argv[i - 1])));
 if (!gameDir) { console.error('Usage: node scripts/snapshot.mjs <game-dir> [options] (see file header)'); process.exit(2); }
 
 const outPng = path.resolve(opt('--out', path.join(gameDir, 'build', 'snapshot.png')));
@@ -40,6 +41,8 @@ const query = opt('--query', '');
 const evalExpr = opt('--eval', '');
 const freeze = flag('--freeze-time') || argv.includes('--steps');
 const checkUi = flag('--check-ui');
+const checkLayout = flag('--check-layout');
+const allowBlank = flag('--allow-blank');
 const stepsArg = opt('--steps', '');
 const stateHook = opt('--state-hook', '__hgameState');
 const FRAME_MS = 1000 / 60;
@@ -65,16 +68,6 @@ try {
 }
 const { width: vw, height: vh } = viewport;
 
-function findSystemChrome() {
-  const c = [
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-    '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-  ];
-  return c.find(existsSync);
-}
 async function freePort() {
   const s = createServer();
   await new Promise(r => s.listen(0, '127.0.0.1', r));
@@ -144,21 +137,15 @@ const freezeClock = (frameMs) => {
     return now;
   };
 };
-const { chromium } = createRequire(import.meta.url)('playwright-core');
+const { chromium } = resolvePlaywright(import.meta.url, { cwd: path.resolve(gameDir) });
 async function launchBrowser() {
-  const settings = { headless: true, args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'] };
-  const executablePath = opt('--chrome', process.env.HGAME_CHROME);
-  if (executablePath) return chromium.launch({ ...settings, executablePath });
-  try {
-    return await chromium.launch(settings);
-  } catch (error) {
-    const fallback = findSystemChrome();
-    if (!fallback || !error.message.includes("Executable doesn't exist at ")) throw error;
-    return chromium.launch({ ...settings, executablePath: fallback });
-  }
+  return launchChromium(chromium, {
+    executablePath: opt('--chrome', ''),
+    args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'],
+  });
 }
 const port = await freePort();
-const server = spawn(process.execPath, [path.join(root, 'scripts', 'preview.mjs'), path.resolve(gameDir), '--port', String(port)],
+const server = spawn(process.execPath, [previewScript, path.resolve(gameDir), '--port', String(port)],
   { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let browser;
 const report = { ok: true, problems: [], consoleErrors: [], httpErrors: [] };
@@ -202,8 +189,25 @@ try {
     try { report.eval = await page.evaluate(async src => JSON.parse(JSON.stringify(await (0, eval)(src) ?? null)), evalExpr); }
     catch (e) { report.problems.push('eval failed: ' + String(e.message || e).split('\n')[0]); }
   }
-  const st = await page.evaluate(async n => typeof window[n] === 'function' ? { v: JSON.parse(JSON.stringify(await window[n]() ?? null)) } : null, stateHook).catch(e => ({ err: String(e.message || e) }));
-  if (st?.err) report.problems.push('state hook failed: ' + st.err); else if (st) report.state = st.v;
+  const st = await page.evaluate(async n => {
+    if (typeof window[n] !== 'function') return null;
+    const raw = await window[n]();
+    const bad = [];
+    const scan = (val, p, seen) => {
+      if (typeof val === 'number') { if (!Number.isFinite(val)) bad.push(p || 'root'); return; }
+      if (!val || typeof val !== 'object' || seen.has(val)) return;
+      seen.add(val);
+      if (Array.isArray(val)) { for (let i = 0; i < val.length; i++) scan(val[i], `${p}[${i}]`, seen); }
+      else { for (const [k, v] of Object.entries(val)) scan(v, p ? `${p}.${k}` : k, seen); }
+    };
+    scan(raw, '', new Set());
+    return { v: JSON.parse(JSON.stringify(raw ?? null)), nonFinite: bad };
+  }, stateHook).catch(e => ({ err: String(e.message || e) }));
+  if (st?.err) report.problems.push('state hook failed: ' + st.err);
+  else if (st) {
+    report.state = st.v;
+    if (st.nonFinite?.length) report.problems.push('state hook contains non-finite numbers: ' + st.nonFinite.slice(0, 5).join(', '));
+  }
   const target = page.locator(selector);
   let png;
   if (freeze) {
@@ -224,10 +228,13 @@ try {
   diagnostics.ui = ui;
   Object.assign(report, { frozenTime: freeze || undefined, png: outPng, sha256: createHash('sha256').update(png).digest('hex').slice(0, 16), stats, diagnostics });
   if (consoleErrors.length || httpErrors.length) report.problems.push('page errors');
-  if (stats.nonBlankRatio < 0.001) report.problems.push('canvas is blank');
+  if (!allowBlank && stats.nonBlankRatio < 0.001) report.problems.push('canvas is blank');
   if (checkUi) {
     const allowDebug = /(?:^|&)debug=1(?:&|$)/.test(query.replace(/^\?/, ''));
     report.problems.push(...evaluateUiAudit(ui, { maxHudRatio, maxHudButtons, allowDebug }));
+  }
+  if (checkLayout) {
+    report.problems.push(...evaluateLayoutAudit(ui));
   }
   if (baseline && !flag('--update-baseline') && !baseB64) report.problems.push(`baseline missing: ${baseline} (run with --update-baseline)`);
   if (diff) { report.baseline = { ...diff, threshold }; if (diff.diffRatio > threshold) report.problems.push(`render differs from baseline by ${(diff.diffRatio * 100).toFixed(2)}%`); }

@@ -12,12 +12,21 @@ vendor/hgame/
 assets/vendor/
 docs/api/
 docs/hgame/
+scripts/lib/
+scripts/accept.mjs
 scripts/assets.mjs
 scripts/bundle-pixi.mjs
+scripts/check-ui-resolve.mjs
+scripts/check-ui.mjs
+scripts/doctor-playability.mjs
 scripts/install-pixi-build.mjs
 scripts/package-game.mjs
+scripts/playtest.mjs
+scripts/preview.mjs
 scripts/project-profiles.mjs
 scripts/query-api.mjs
+scripts/snapshot.mjs
+scripts/task-check.mjs
 scripts/toy-preflight.mjs
 
 # OS / editor noise

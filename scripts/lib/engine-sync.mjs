@@ -15,6 +15,28 @@ export const ENGINE_MANAGED_SCRIPTS = Object.freeze([
   'project-profiles.mjs',
   'toy-preflight.mjs',
   'assets.mjs',
+  'accept.mjs',
+  'check-design-docs.mjs',
+  'check-ui-resolve.mjs',
+  'doctor-playability.mjs',
+  'playtest.mjs',
+  'preview.mjs',
+  'snapshot.mjs',
+  'task-check.mjs',
+]);
+
+export const ENGINE_MANAGED_SCRIPT_LIBS = Object.freeze([
+  'cli-numbers.mjs',
+  'performance-stats.mjs',
+  'playwright-resolve.mjs',
+  'snapshot-output.mjs',
+  'snapshot-ui-audit.mjs',
+]);
+
+export const ENGINE_MANAGED_SCRIPT_FILES = Object.freeze([
+  ...ENGINE_MANAGED_SCRIPTS.map(s => ({ dest: `scripts/${s}`, src: `scripts/${s}` })),
+  { dest: 'scripts/check-ui.mjs', src: '.agents/skills/hgame-ui-ux/scripts/check-ui.mjs' },
+  ...ENGINE_MANAGED_SCRIPT_LIBS.map(lib => ({ dest: `scripts/lib/${lib}`, src: `scripts/lib/${lib}` })),
 ]);
 
 export const ENGINE_MANAGED_DOCS = Object.freeze([
@@ -190,9 +212,10 @@ export async function buildExpectedEngineFiles({
     }
   }
 
-  for (const script of ENGINE_MANAGED_SCRIPTS) {
-    expected.set(`scripts/${script}`, await readFile(path.join(scriptsDir, script)));
+  for (const entry of ENGINE_MANAGED_SCRIPT_FILES) {
+    expected.set(entry.dest, await readFile(path.join(repoRoot, entry.src)));
   }
+  void scriptsDir;
 
   if (includePixi2dScripts) {
     const pixiDir = path.join(repoRoot, 'assets', 'profiles', 'pixi2d');
@@ -267,14 +290,14 @@ export async function inspectProjectEngineSync({
 
   // Collect actual files inside the 100%-owned vendor directories plus explicit managed files.
   const actual = new Map();
-  for (const ownedDir of ['vendor/hgame', 'assets/vendor/three']) {
+  for (const ownedDir of ['vendor/hgame', 'assets/vendor/three', 'scripts/lib']) {
     const found = await collectFilesMap(path.join(absDir, ownedDir), ownedDir);
     for (const [rel, buf] of found) actual.set(rel, buf);
   }
   const explicitPaths = new Set([
     'docs/api/API-INDEX.json',
     ...ENGINE_MANAGED_DOCS.map(d => d.dest),
-    ...ENGINE_MANAGED_SCRIPTS.map(s => `scripts/${s}`),
+    ...ENGINE_MANAGED_SCRIPT_FILES.filter(e => !e.dest.startsWith('scripts/lib/')).map(e => e.dest),
     ...(pixi2d ? ['scripts/install-pixi-build.mjs', PIXI_BUNDLER_PATH] : []),
   ]);
   for (const rel of explicitPaths) {
@@ -402,8 +425,8 @@ export async function syncEngineFilesToProject({
       await writeFile(dest, inspection.expected.get(rel));
     }
 
-    // Prune empty subdirectories left inside vendor/hgame or assets/vendor/three
-    for (const ownedDir of ['vendor/hgame', 'assets/vendor/three']) {
+    // Prune empty subdirectories left inside vendor/hgame, assets/vendor/three, or scripts/lib
+    for (const ownedDir of ['vendor/hgame', 'assets/vendor/three', 'scripts/lib']) {
       await pruneEmptyDirs(path.join(inspection.projectDir, ownedDir));
     }
 
@@ -424,7 +447,8 @@ export async function syncEngineFilesToProject({
         ...(inspection.includeVendorThree ? ['assets/vendor/three'] : []),
         'docs/api/API-INDEX.json',
         'docs/hgame',
-        ...ENGINE_MANAGED_SCRIPTS.map(s => `scripts/${s}`),
+        'scripts/lib',
+        ...ENGINE_MANAGED_SCRIPT_FILES.filter(e => !e.dest.startsWith('scripts/lib/')).map(e => e.dest),
         ...(inspection.pixi2d ? ['scripts/install-pixi-build.mjs', PIXI_BUNDLER_PATH] : []),
       ],
       files: fileHashes,
@@ -490,7 +514,7 @@ async function syncProjectAgentsRulesBanner(projectDir, meta) {
   const banner = [
     HGAME_RULES_BEGIN,
     `> **HGame 规范与设计同步（自动维护 · ${meta.engineVersion} @ ${commitLabel}）**：禁止直接修改此区块、\`vendor/hgame/\` 与 \`docs/hgame/\`。每次开发与设计调整前，请先查阅随引擎同步的最新权威规范：[docs/hgame/AGENTS.md](docs/hgame/AGENTS.md)（项目规范/模块速查）、[docs/hgame/UI-UX-STANDARD.md](docs/hgame/UI-UX-STANDARD.md)（极简反臃肿 UI 规范）、[docs/hgame/USER-AND-AGENT-GUIDE.md](docs/hgame/USER-AND-AGENT-GUIDE.md)（系统卡片 01..16）。`,
-    `> **核心红线**：**Minimalist Anti-Bloat UI**（Zero-Prose / 按钮预算 / No Modals / Subtract-First，校验 \`check-ui.mjs\` + \`snapshot.mjs --check-ui\`）、**WebAsset 统一托管与 AI 自验**（\`game.config.json\` 严格白名单，禁止自启开发服务器或让用户动手操作）、**Direct \`main\` 单对话开发与阶段提交**。`,
+    `> **核心红线**：**Minimalist Anti-Bloat UI**（Zero-Prose / 按钮预算 / No Modals / Subtract-First，校验 \`check-ui.mjs\` + \`snapshot.mjs --check-ui\`）、**强制验收自测闭环**（交付前必须跑通 \`node scripts/accept.mjs . --webasset\` 并产出最新 \`build/acceptance-report.json\`，禁止未经实机验收直接通过）、**WebAsset 统一托管与 AI 自验**（\`game.config.json\` 严格白名单，禁止自启开发服务器或让用户动手操作）、**Direct \`main\` 单对话开发与阶段提交**。`,
     HGAME_RULES_END,
   ].join(eol);
 

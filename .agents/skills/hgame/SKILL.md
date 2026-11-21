@@ -7,13 +7,13 @@ description: >-
   HGame repository or building/packaging an HGame project.
 ---
 
-# HGame 1.0.0 Agent Runbook
+# HGame 1.0.0 Universal Game Template Runbook
 
-Use this skill as the primary execution manual whenever a user asks to create, extend, optimize, debug, or package a game with **HGame 1.0.0**.
+Use this skill whenever a user provides a game idea or asks to create, extend, optimize, debug, or package a game with **HGame 1.0.0** (the 5-pillar Universal Game Development Template across **UI, Design, Gameplay, Art, and Audio**).
 
 > **AI-Native Zero-GUI-Editor & Zero-Blind-Scan Rules**:
-> 1. **纯 AI 研发 · 拒绝手工可视化编辑器**：HGame 是完全面向 AI 编写的 HTML5 引擎，严禁在项目或工具链中制作人工可视化场景/关卡/材质编辑器；一律采用声明式 JSON + 引擎运行时 API + Headless 自动化核验闭环。
-> 2. **零盲扫 API 速查**：查询任何引擎 API、场景接线或参数签名时，**必须优先运行 `npm run api -- --map` / `npm run api -- --recipe <2d|horde|3d|ui|network>` / `npm run api -- <keyword>`**（或 `--module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。
+> 1. **纯 AI 研发 · 拒绝手工可视化编辑器**：HGame 是面向 AI 的通用游戏开发模板与运行时，严禁在项目或工具链中制作人工可视化场景/关卡/材质编辑器；一律采用 `game.design.json` 蓝图 + `kit/` 五大通用标准件 + 运行时 API + Headless 自动化核验闭环。
+> 2. **零盲扫 API 速查**：查询任何能力、模板接线或参数签名时，**必须优先运行 `npm run api -- --map` / `npm run api -- --recipe <kit|2d|horde|3d|ui|network>` / `npm run api -- <keyword>`**（或 `--module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。
 
 ## Sub-Skill Routing Table (子技能路由表)
 
@@ -48,21 +48,25 @@ Check which folder the current workspace is in before running commands:
 
 ---
 
-## Step 1: Generate a New Project (Engine Repo)
+## Step 1: Generate a New Project from Idea / Archetype (Engine Repo)
 
 From the HGame engine root (after `npm ci`):
 
 ```powershell
-# 2D Canvas game
-node scripts/create-game.mjs "<game-dir>" --profile 2d --with audio,save --name "Game Title"
+# Preferred: 5-Pillar Archetype Starter (writes src/game.design.json + complete Title/HUD/Choice/Result/Audio/Art/Save loop)
+node scripts/create-game.mjs "<game-dir>" --archetype action-2d --theme cyber --name "霓虹突围"
+node scripts/create-game.mjs "<game-dir>" --archetype horde-2d --theme scifi --name "星海割草"
+node scripts/create-game.mjs "<game-dir>" --archetype arena-3d --theme arcane --name "秘境试炼"
+node scripts/create-game.mjs "<game-dir>" --archetype card-ui --theme arcane --name "秘术牌局"
 
-# 2D High-Density Survivor / Bullet-Hell (5,000-10,000+ sprites, WebGL2 + auto Canvas2D fallback)
-node scripts/create-game.mjs "<game-dir>" --profile 2d --renderer webgl2d --with audio,save --name "Horde Game"
+# Or supply a custom 5-pillar design blueprint directly:
+npm run blueprint:check -- --init --id my-game --title "标题" --genre action-2d --theme cozy --out my.design.json
+node scripts/create-game.mjs "<game-dir>" --design my.design.json
 
-# 3D Three.js game with adaptive quality and deterministic physics
-node scripts/create-game.mjs "<game-dir>" --profile 3d --quality auto --with physics3d,model3d,audio,save --name "3D Game"
-
-# UI / Card / Narrative game (tickHz: 0, no idle 60 Hz RAF)
+# Low-level renderer presets (when building custom architecture from scratch):
+# 2D Canvas/Pixi, Horde, 3D Three.js, UI
+node scripts/create-game.mjs "<game-dir>" --preset 2d --with audio,save --name "Game Title"
+node scripts/create-game.mjs "<game-dir>" --preset 3d --quality auto --with physics3d,model3d,audio,save --name "3D Game"
 node scripts/create-game.mjs "<game-dir>" --profile ui --with audio,save --name "Card Game"
 ```
 
@@ -117,6 +121,7 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 
 | Need | Exact Runtime Path | Key Exports & Conventions |
 |---|---|---|
+| **5-Pillar Universal Kit (Design, Art, Audio, Session, UI Shell)** | `kit/index.js` (`kit/*`) | `createBlueprintFromIdea`, `defineGameBlueprint`, `evaluateBlueprintBalance`, `getArtTheme`, `resolvePresentationPreset`, `createAudioDirector`, `createGameSession`, `mountGameShell` |
 | **Core Loop & Tags** | `index.js`, `core/*` | `HGame.defineProject`, `createApplication`, `Scene`, `Entity` (`addTag`, `matchesTags`, `scene.queryTags`), `app.renderAlpha`, `app.hitStop`, `app.setTimeScale` |
 | **Motion & Feel** | `time/tween.js` | `scene.tweens` (`idle`, `run`, `attackLunge`, `dieKnockback`), `EASING`, `damp`, `dampAngle`, `SpringDamper1D/2D/3D` |
 | **2D Sprites, Lighting & Post** | `integrations/canvas2d.js`, `webgl2d.js`, `post2d.js`, `animation/*`, `world/tilemap.js` | `Camera2D`, `Sprite2D` (`groundShadow`, `hitFlash`), `setAmbientLight`, `addLight2D`/`setLights2D`, `setPost2D` (Bloom/vignette/hitPulse), `SpriteSheet.fromGrid`, `AnimationPlayer`, `TileMap`, `findGridPath` |
@@ -156,12 +161,14 @@ Read `engine.config.json` and `game.config.json` first. Import modules from `../
 ## Step 4: Preview & Verify
 
 - **Unified WebAsset Preview (Default for Dev, Playtesting & Browser QA)**:
-  - Ensure WebAsset is running (`http://127.0.0.1:4174/#games`), confirm the game appears in `http://127.0.0.1:4174/api/games`, and verify its isolated runtime URL (`http://127.0.0.1:4175/local-games/<game-slug>/<entry>`) loads cleanly in headless Chromium before replying with the ready-to-play WebAsset URL.
-  - Do **not** run `npm start`, `npm run serve`, `python -m http.server`, or manual `scripts/preview.mjs` servers to host a game project on another port. (Only `npm run snapshot` / `npm run playtest` spawn an ephemeral internal loopback fixture automatically while running headless checks.)
-- Headless render snapshot & automated AI playtest checks:
+  - Ensure WebAsset is running (`http://127.0.0.1:4174/#games`), confirm the game appears in `http://127.0.0.1:4174/api/games`, and run the fail-closed acceptance gate (`npm run accept:webasset` inside the game or `npm run accept -- "<game-dir>" --webasset` from HGame) plus `node scripts/accept.mjs . --verify-fresh` before replying with the ready-to-play WebAsset URL.
+  - Do **not** run `npm start`, `npm run serve`, `python -m http.server`, or manual `scripts/preview.mjs` servers to host a game project on another port. (Only `npm run snapshot` / `npm run playtest` / `npm run accept` spawn an ephemeral internal loopback fixture automatically while running headless checks.)
+- Headless render snapshot, automated AI playtest & acceptance checks:
   ```powershell
-  npm run snapshot -- "<game-dir>"
-  npm run playtest -- "<game-dir>"
+  npm run accept -- "<game-dir>" --webasset
+  npm run accept -- "<game-dir>" --verify-fresh
+  npm run snapshot -- "<game-dir>" --check-ui --check-layout
+  npm run playtest -- "<game-dir>" --check-ui --check-layout
   ```
 - In a standalone game project:
   ```powershell

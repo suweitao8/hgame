@@ -27,7 +27,12 @@ const scene = app.scenes.add(new Scene('main'));
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ scene: app.scenes.current?.name ?? null });
+window.__hgameState = () => ({
+  scene: app.scenes.current?.name ?? null,
+  tick: app.stats.ticks,
+  running: app.running,
+  disposed: app.disposed,
+});
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;
   window.removeEventListener('pagehide', onPageHide);

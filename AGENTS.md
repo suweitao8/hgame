@@ -40,6 +40,7 @@ HGame is a standalone, renderer-neutral HTML5 game runtime. This repository is t
 
 ## Verification
 
+- **Mandatory Self-Testing & Acceptance Gate (`npm run accept`)**: No game or feature may be marked complete without running real acceptance tests (`node scripts/accept.mjs . --webasset` inside a game project, or `npm run accept -- <game-dir> --webasset` from HGame). `accept.mjs` enforces fail-closed checks across 8 gates (`config` WebAsset allowlist & asset refs, `syntax` all `src/`/`tests/` + relative imports, `uiStatic` Anti-Bloat lint, `tests` zero-skip unit tests, `visual` 960×540 + 360×800 screenshots + UI/layout overflow/clipping/overlap, `playtest` real-input `tests/acceptance.mjs` scenario + non-finite/disposed state health, `doctor` 4 vital signs when wired, `webasset` live 4174/4175 runtime verification, optional `--package` release boot, and `tests/acceptance.json`/`build/task.json`). It stamps `build/acceptance-report.json` with `sourceDigest`; `--verify-fresh` rejects stale reports after any source edit.
 - Task acceptance: translate each requested outcome into a named criterion before implementation. Use `npm run task:check -- <task.json>` for task-specific Node tests and WebAsset checkpoints, and review any visual or experiential criteria using fresh evidence. Re-run affected checks after fixes, then audit the original task against the results. See [AI-VERIFICATION.md](docs/guides/AI-VERIFICATION.md).
 - Runtime tests: `npm test`.
 - Vendored physics parity: `npm run check:physics`.

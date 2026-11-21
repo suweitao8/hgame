@@ -58,7 +58,14 @@ drawBtn.addEventListener('click', () => {
   app.dispatch({ type: 'draw' });
 });
 drawBtn.disabled = false;
-window.__hgameState = () => ({ draws: state.draws, ui: director.snapshot() });
+document.querySelector('main').dataset.engineReady = 'true';
+window.__hgameState = () => ({
+  scene: app.scenes.current?.name ?? null,
+  draws: state.draws,
+  running: app.running,
+  disposed: app.disposed,
+  ui: director.snapshot(),
+});
 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;

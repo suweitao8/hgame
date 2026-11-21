@@ -56,6 +56,13 @@ actor.addComponent(new Move());
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';
+window.__hgameState = () => ({
+  scene: app.scenes.current?.name ?? null,
+  tick: app.stats.ticks,
+  running: app.running,
+  disposed: app.disposed,
+  player: { x: +actor.x.toFixed(2), y: +actor.y.toFixed(2) },
+});
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;
   window.removeEventListener('pagehide', onPageHide);

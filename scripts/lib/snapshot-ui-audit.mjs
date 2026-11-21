@@ -211,6 +211,8 @@ export function collectPageUiAudit() {
   }
 
   const visibleButtonLabels = [];
+  const visibleButtonRects = [];
+  const clippedButtons = [];
   for (const btn of document.querySelectorAll('button, [role="button"]')) {
     if (btn.closest(TOUCH_SELECTOR) || btn.closest(DEBUG_SELECTOR)) continue;
     if (!isVisible(btn)) continue;
@@ -218,7 +220,38 @@ export function collectPageUiAudit() {
     if (rect.width <= 0 || rect.height <= 0) continue;
     const label = (btn.innerText || btn.textContent || btn.getAttribute('aria-label') || '').trim().slice(0, 24);
     visibleButtonLabels.push(label);
+    visibleButtonRects.push({ label, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height });
+    if (rect.left < -2 || rect.top < -2 || rect.right > vw + 2 || rect.bottom > vh + 2 || rect.width < 16 || rect.height < 16) {
+      clippedButtons.push({
+        label,
+        rect: {
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          right: Math.round(rect.right),
+          bottom: Math.round(rect.bottom),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+      });
+    }
   }
+
+  const overlappingButtons = [];
+  for (let i = 0; i < visibleButtonRects.length; i++) {
+    for (let j = i + 1; j < visibleButtonRects.length; j++) {
+      const a = visibleButtonRects[i];
+      const b = visibleButtonRects[j];
+      const ix = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const iy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (ix > 4 && iy > 4) {
+        overlappingButtons.push([a.label || `#${i}`, b.label || `#${j}`]);
+      }
+    }
+  }
+
+  const docEl = document.documentElement;
+  const overflowX = Math.max(0, Math.round((docEl?.scrollWidth || vw) - vw));
+  const overflowY = Math.max(0, Math.round((docEl?.scrollHeight || vh) - vh));
 
   const unionArea = unionRectsArea(uiRects);
   return {
@@ -229,6 +262,12 @@ export function collectPageUiAudit() {
     visibleTextChars,
     debugVisible,
     modalActive,
+    layout: {
+      overflowX,
+      overflowY,
+      clippedButtons,
+      overlappingButtons,
+    },
   };
 }
 
@@ -249,6 +288,33 @@ export function evaluateUiAudit(audit, { maxHudRatio = 0.10, maxHudButtons = 1, 
   }
   if (!audit.modalActive && audit.visibleButtons > maxHudButtons) {
     problems.push(`visible HUD buttons ${audit.visibleButtons} exceed ${maxHudButtons}`);
+  }
+  return problems;
+}
+
+/**
+ * Evaluates viewport overflow, offscreen/undersized buttons, and overlapping interactive buttons.
+ * @param {ReturnType<typeof collectPageUiAudit> | null | undefined} audit
+ * @param {{ maxOverflow?: number }} [options]
+ * @returns {string[]}
+ */
+export function evaluateLayoutAudit(audit, { maxOverflow = 2 } = {}) {
+  const problems = [];
+  const layout = audit?.layout;
+  if (!layout) return problems;
+  if (layout.overflowX > maxOverflow) {
+    problems.push(`horizontal layout overflow ${layout.overflowX}px exceeds ${maxOverflow}px`);
+  }
+  if (layout.overflowY > maxOverflow) {
+    problems.push(`vertical layout overflow ${layout.overflowY}px exceeds ${maxOverflow}px`);
+  }
+  if (Array.isArray(layout.clippedButtons) && layout.clippedButtons.length > 0) {
+    const names = layout.clippedButtons.map(b => b.label || JSON.stringify(b.rect)).join(', ');
+    problems.push(`clipped or undersized visible button(s): ${names}`);
+  }
+  if (Array.isArray(layout.overlappingButtons) && layout.overlappingButtons.length > 0) {
+    const pairs = layout.overlappingButtons.map(([a, b]) => `${a} vs ${b}`).join(', ');
+    problems.push(`overlapping visible buttons: ${pairs}`);
   }
   return problems;
 }

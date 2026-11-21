@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { run } from 'node:test';
@@ -10,6 +11,12 @@ import { resolveWebAssetGame, verifyWebAssetSource } from './playtest.mjs';
 
 const exec = promisify(execFile);
 const playtest = fileURLToPath(new URL('./playtest.mjs', import.meta.url));
+const snapshotScript = fileURLToPath(new URL('./snapshot.mjs', import.meta.url));
+const doctorScript = fileURLToPath(new URL('./doctor-playability.mjs', import.meta.url));
+const acceptScript = fileURLToPath(new URL('./accept.mjs', import.meta.url));
+const localCheckUi = fileURLToPath(new URL('./check-ui.mjs', import.meta.url));
+const skillCheckUi = fileURLToPath(new URL('../.agents/skills/hgame-ui-ux/scripts/check-ui.mjs', import.meta.url));
+const checkUiScript = existsSync(localCheckUi) ? localCheckUi : skillCheckUi;
 const timeout = 120_000;
 const browserOptions = {
   selector: '--selector', query: '--query', viewport: '--viewport',
@@ -43,7 +50,7 @@ function localModule(value, label) {
 function parsePlaytest(value, id) {
   const spec = record(value, `playtests.${id}`);
   for (const key of Object.keys(spec)) {
-    if (!['scenario', 'ready', 'allowStatic', 'timeoutMs'].includes(key) && !Object.hasOwn(browserOptions, key)) {
+    if (!['scenario', 'ready', 'allowStatic', 'checkUi', 'checkLayout', 'timeoutMs'].includes(key) && !Object.hasOwn(browserOptions, key)) {
       throw new Error(`${id}: unknown option ${key}`);
     }
   }
@@ -59,13 +66,36 @@ function parsePlaytest(value, id) {
       args.push(flag, optionText(value, `${id}: ${option}`));
     }
   }
-  if (Object.hasOwn(spec, 'allowStatic') && typeof spec.allowStatic !== 'boolean') throw new Error(`${id}: allowStatic must be boolean`);
-  if (spec.allowStatic) args.push('--allow-static');
+  for (const [boolOpt, flag] of [['allowStatic', '--allow-static'], ['checkUi', '--check-ui'], ['checkLayout', '--check-layout']]) {
+    if (Object.hasOwn(spec, boolOpt) && typeof spec[boolOpt] !== 'boolean') throw new Error(`${id}: ${boolOpt} must be boolean`);
+    if (spec[boolOpt]) args.push(flag);
+  }
   const timeoutMs = Object.hasOwn(spec, 'timeoutMs') ? spec.timeoutMs : timeout;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
     throw new Error(`${id}: timeoutMs must be a positive timer interval in milliseconds`);
   }
   return { scenario, args, timeoutMs };
+}
+
+function parseSnapshotCheck(entry, key) {
+  const args = ['.'];
+  if (Object.hasOwn(entry, 'viewport')) args.push('--viewport', optionText(entry.viewport, `${key}: viewport`));
+  if (Object.hasOwn(entry, 'ready')) args.push('--ready', optionText(entry.ready, `${key}: ready`));
+  if (Object.hasOwn(entry, 'selector')) args.push('--selector', optionText(entry.selector, `${key}: selector`));
+  if (Object.hasOwn(entry, 'keys')) args.push('--keys', optionText(entry.keys, `${key}: keys`));
+  if (Object.hasOwn(entry, 'query')) args.push('--query', optionText(entry.query, `${key}: query`));
+  if (Object.hasOwn(entry, 'out')) args.push('--out', optionText(entry.out, `${key}: out`));
+  if (Object.hasOwn(entry, 'steps')) {
+    if (!Number.isSafeInteger(entry.steps) || entry.steps < 1) throw new Error(`${key}: steps must be a positive integer`);
+    args.push('--steps', String(entry.steps));
+  }
+  if (Object.hasOwn(entry, 'wait')) {
+    if (!Number.isSafeInteger(entry.wait) || entry.wait < 0) throw new Error(`${key}: wait must be a nonnegative integer`);
+    args.push('--wait', String(entry.wait));
+  }
+  if (entry.checkUi !== false) args.push('--check-ui');
+  if (entry.checkLayout) args.push('--check-layout');
+  return { type: 'snapshot', args };
 }
 
 function parseTask(value) {
@@ -84,7 +114,8 @@ function parseTask(value) {
     ids.add(key);
     if (!Array.isArray(checks) || !checks.length) throw new Error(`${key}: checks must be a nonempty array`);
     return { id: key, expected: nonempty(expected, `${key}: expected`), checks: checks.map(entry => {
-      const { type, file, name, run: browserRun, checkpoint, inspect } = record(entry, `${key}: check`);
+      const checkSpec = record(entry, `${key}: check`);
+      const { type, file, name, run: browserRun, checkpoint, inspect } = checkSpec;
       switch (type) {
         case 'test':
           return { type, file: localModule(file, `${key}: file`), name: nonempty(name, `${key}: name`) };
@@ -94,10 +125,26 @@ function parseTask(value) {
           if (!browserRuns.has(runId)) browserRuns.set(runId, parsePlaytest(playtests[runId], runId));
           return { type, run: runId, checkpoint: nonempty(checkpoint, `${key}: checkpoint`) };
         }
+        case 'ui':
+          return { type };
+        case 'snapshot':
+          return parseSnapshotCheck(checkSpec, key);
+        case 'doctor':
+          return {
+            type,
+            ready: Object.hasOwn(checkSpec, 'ready') ? optionText(checkSpec.ready, `${key}: ready`) : '#game[data-engine-ready=true]',
+          };
+        case 'accept':
+          return {
+            type,
+            quick: Boolean(checkSpec.quick),
+            strict: Boolean(checkSpec.strict),
+            webasset: Boolean(checkSpec.webasset),
+          };
         case 'review':
           return { type, inspect: nonempty(inspect, `${key}: inspect`) };
         default:
-          throw new Error(`${key}: check type must be test, playtest, or review`);
+          throw new Error(`${key}: check type must be test, playtest, ui, snapshot, doctor, accept, or review`);
       }
     }) };
   });
@@ -166,6 +213,55 @@ async function runBrowser(spec) {
   }
 }
 
+async function runJsonTool(scriptPath, args, timeoutMs = timeout) {
+  let exitCode = 0;
+  let output;
+  try {
+    ({ stdout: output } = await exec(process.execPath, [scriptPath, ...args], {
+      timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, windowsHide: true,
+    }));
+  } catch (error) {
+    if (error.code !== 1 || !error.stdout) {
+      return { status: 'failed', message: error.stderr?.trim() || error.message };
+    }
+    exitCode = error.code;
+    output = error.stdout;
+  }
+  try {
+    const report = record(JSON.parse(output), 'Tool report');
+    const ok = exitCode === 0 && (report.ok === true || report.pass === true);
+    const detail = report.problems?.join('; ') || report.violations?.map(v => `${v.file}:${v.line} ${v.rule}`).slice(0, 3).join('; ') || undefined;
+    return { status: ok ? 'passed' : 'failed', message: ok ? undefined : (detail || 'Check failed'), report };
+  } catch (error) {
+    return { status: 'failed', message: `Invalid JSON output: ${error.message}` };
+  }
+}
+
+async function runToolChecks(requirements) {
+  const toolResults = new Map();
+  for (const item of requirements) {
+    for (const check of item.checks) {
+      if (!['ui', 'snapshot', 'doctor', 'accept'].includes(check.type)) continue;
+      const cacheKey = JSON.stringify(check);
+      if (toolResults.has(cacheKey)) continue;
+      if (check.type === 'ui') {
+        toolResults.set(cacheKey, await runJsonTool(checkUiScript, ['--dir', '.']));
+      } else if (check.type === 'snapshot') {
+        toolResults.set(cacheKey, await runJsonTool(snapshotScript, check.args));
+      } else if (check.type === 'doctor') {
+        toolResults.set(cacheKey, await runJsonTool(doctorScript, ['.', '--ready', check.ready, '--json']));
+      } else if (check.type === 'accept') {
+        const args = ['.', '--json'];
+        if (check.quick) args.push('--quick');
+        if (check.strict) args.push('--strict');
+        if (check.webasset) args.push('--webasset');
+        toolResults.set(cacheKey, await runJsonTool(acceptScript, args, 240_000));
+      }
+    }
+  }
+  return toolResults;
+}
+
 function matchNamed(items, name) {
   const matches = items.filter(item => item.name === name);
   if (matches.length !== 1) {
@@ -180,7 +276,7 @@ function summarize(items) {
   return 'passed';
 }
 
-function evaluate(check, tests, browsers) {
+function evaluate(check, tests, browsers, tools) {
   if (check.type === 'review') return { ...check, status: 'review-required' };
   if (check.type === 'test') {
     const result = tests.get(check.file);
@@ -188,6 +284,10 @@ function evaluate(check, tests, browsers) {
     const match = matchNamed(result.events, check.name);
     const status = result.failures.length ? 'failed' : match.status;
     return { ...check, status, message: match.message };
+  }
+  if (['ui', 'snapshot', 'doctor', 'accept'].includes(check.type)) {
+    const res = tools.get(JSON.stringify(check));
+    return { ...check, status: res?.status ?? 'pending', ...(res?.message ? { message: res.message } : {}) };
   }
   const result = browsers.get(check.run);
   if (result.unavailable) return { ...check, status: 'pending', message: result.unavailable };
@@ -212,8 +312,9 @@ async function main(argv) {
   const tests = await runTests(files);
   const browsers = new Map();
   for (const [id, spec] of task.browserRuns) browsers.set(id, await runBrowser(spec));
+  const tools = await runToolChecks(task.requirements);
   const requirements = task.requirements.map(item => {
-    const checks = item.checks.map(check => evaluate(check, tests, browsers));
+    const checks = item.checks.map(check => evaluate(check, tests, browsers, tools));
     return { ...item, checks, status: summarize(checks) };
   });
   const status = summarize(requirements);

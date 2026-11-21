@@ -194,6 +194,13 @@ function addPlayer(scene, compiled, ui = {}) {
     z: compiled.playerSpawn[2],
     width: 1.2, height: 1.4, depth: 1.2,
   }));
+  window.__hgameState = () => ({
+    scene: app.scenes.current?.name ?? null,
+    tick: app.stats.ticks,
+    running: app.running,
+    disposed: app.disposed,
+    player: { x: +actor.x.toFixed(2), y: +actor.y.toFixed(2), z: +actor.z.toFixed(2) },
+  });
   actor.addComponent(createThreeMeshComponent(THREE, {
     type: 'box', color: 0x44d0ae, size: 1.2,
   }));
