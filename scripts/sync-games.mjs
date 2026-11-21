@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +7,9 @@ import {
   getEngineMetadata,
   inspectProjectEngineSync,
   resolveGamesRoot,
+  resolveWebAssetDir,
   syncEngineFilesToProject,
+  syncWebAssetRuntime,
 } from './lib/engine-sync.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -176,6 +179,19 @@ export async function runSyncCli(argv = process.argv.slice(2)) {
   }
 
   const managed = results.filter(r => r.managed);
+  let webAssetSync = null;
+  let skillsSynced = false;
+  if (opts.mode === 'all' && !opts.dryRun && !opts.root) {
+    const webAssetDir = await resolveWebAssetDir(repoRoot);
+    if (webAssetDir) {
+      webAssetSync = await syncWebAssetRuntime({ repoRoot, webAssetDir, dryRun: false });
+    }
+    const skillsRun = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'sync-skills.mjs')], {
+      cwd: repoRoot, encoding: 'utf8', windowsHide: true,
+    });
+    skillsSynced = skillsRun.status === 0;
+  }
+
   const summary = {
     engineVersion: metadata.engineVersion,
     engineCommit: metadata.engineCommit,
@@ -190,6 +206,8 @@ export async function runSyncCli(argv = process.argv.slice(2)) {
     legacyUntracked: managed.filter(r => r.status === 'legacy-untracked').length,
     localEdits: managed.filter(r => r.status === 'local-edits').length,
     nonHGame: results.filter(r => !r.managed).length,
+    webAssetSync,
+    skillsSynced,
     errors,
     projects: results,
   };
@@ -204,6 +222,12 @@ export async function runSyncCli(argv = process.argv.slice(2)) {
       `Summary: ${summary.managed} managed (${summary.upToDate} up-to-date, ${summary.outdated} outdated, ` +
       `${summary.legacyUntracked} legacy-untracked, ${summary.localEdits} local-edits), ${summary.nonHGame} skipped.`,
     );
+    if (webAssetSync?.destDir) {
+      console.log(`WebAsset runtime: +${webAssetSync.added} ~${webAssetSync.updated} -${webAssetSync.removed} (${webAssetSync.destDir})`);
+    }
+    if (skillsSynced) {
+      console.log('Skills: synced global skill junctions via scripts/sync-skills.mjs');
+    }
     if (errors.length > 0) {
       for (const e of errors) console.error(`Error (${e.name}): ${e.error}`);
     }

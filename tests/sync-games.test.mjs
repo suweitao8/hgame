@@ -27,6 +27,9 @@ test('create-game generates .hgame-sync.json, isolates engine files in .gitignor
     assert.ok(manifest.files['vendor/hgame/index.js']);
     assert.ok(manifest.files['scripts/package-game.mjs']);
     assert.ok(manifest.files['docs/api/API-INDEX.json']);
+    assert.ok(manifest.files['docs/hgame/AGENTS.md']);
+    assert.ok(manifest.files['docs/hgame/UI-UX-STANDARD.md']);
+    assert.ok(manifest.files['docs/hgame/USER-AND-AGENT-GUIDE.md']);
 
     const gitStatus = spawnSync('git', ['status', '--short', '--untracked-files=all'], { cwd: game, encoding: 'utf8' });
     assert.equal(gitStatus.status, 0, gitStatus.stderr);
@@ -35,6 +38,7 @@ test('create-game generates .hgame-sync.json, isolates engine files in .gitignor
     assert.doesNotMatch(gitStatus.stdout, /vendor\/hgame/);
     assert.doesNotMatch(gitStatus.stdout, /scripts\/package-game\.mjs/);
     assert.doesNotMatch(gitStatus.stdout, /docs\/api/);
+    assert.doesNotMatch(gitStatus.stdout, /docs\/hgame/);
 
     const status = runNode(syncGames, ['--status', '--strict', '--root', tmp, '--json']);
     assert.equal(status.status, 0, status.stderr || status.stdout);
@@ -71,6 +75,7 @@ test('sync-games classifies status, guards local edits, preserves game files, an
     // Custom game files & custom script that sync must preserve.
     await writeFile(path.join(gOutdated, 'src', 'custom-logic.js'), 'export const keepMe = 42;\n');
     await writeFile(path.join(gOutdated, 'scripts', 'custom-audit.mjs'), 'console.log("keep");\n');
+    await writeFile(path.join(gOutdated, 'AGENTS.md'), '# Custom Game Rules\n\nKeep my project rule.\n');
 
     // Simulate outdated game (manifest matches stale disk state via fake old file hash / missing runtime file).
     await writeFile(path.join(gOutdated, 'vendor', 'hgame', 'stale-removed.js'), 'old\n');
@@ -119,6 +124,10 @@ test('sync-games classifies status, guards local edits, preserves game files, an
     assert.ok((await stat(path.join(gOutdated, 'vendor', 'hgame', 'vendor', 'rapier3d', 'rapier3d.wasm'))).isFile());
     assert.equal(await readFile(path.join(gOutdated, 'src', 'custom-logic.js'), 'utf8'), 'export const keepMe = 42;\n');
     assert.equal(await readFile(path.join(gOutdated, 'scripts', 'custom-audit.mjs'), 'utf8'), 'console.log("keep");\n');
+    const outdatedAgents = await readFile(path.join(gOutdated, 'AGENTS.md'), 'utf8');
+    assert.match(outdatedAgents, /<!-- HGAME:RULES:BEGIN -->/);
+    assert.match(outdatedAgents, /Keep my project rule\./);
+    assert.ok((await stat(path.join(gOutdated, 'docs', 'hgame', 'UI-UX-STANDARD.md'))).isFile());
     assert.ok((await stat(path.join(gLegacy, '.hgame-sync.json'))).isFile());
 
     // Force-sync edited game + --all syncs remaining cleanly.

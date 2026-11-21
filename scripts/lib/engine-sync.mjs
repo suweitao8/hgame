@@ -17,6 +17,15 @@ export const ENGINE_MANAGED_SCRIPTS = Object.freeze([
   'assets.mjs',
 ]);
 
+export const ENGINE_MANAGED_DOCS = Object.freeze([
+  { dest: 'docs/hgame/AGENTS.md', src: 'assets/template/AGENTS.md' },
+  { dest: 'docs/hgame/UI-UX-STANDARD.md', src: '.agents/skills/hgame-ui-ux/SKILL.md' },
+  { dest: 'docs/hgame/USER-AND-AGENT-GUIDE.md', src: 'docs/guides/USER-AND-AGENT-GUIDE.md' },
+]);
+
+const HGAME_RULES_BEGIN = '<!-- HGAME:RULES:BEGIN -->';
+const HGAME_RULES_END = '<!-- HGAME:RULES:END -->';
+
 const PIXI2D_PRESETS = new Set(['2d', 'pixi2d', 'horde']);
 
 function toPosix(rel) {
@@ -78,12 +87,23 @@ export async function getEngineMetadata(repoRoot) {
   if (fs.existsSync(path.join(repoRoot, '.git'))) {
     const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repoRoot, encoding: 'utf8', windowsHide: true });
     if (head.status === 0) engineCommit = head.stdout.trim();
-    const status = spawnSync('git', ['status', '--porcelain', '--', 'assets/runtime', 'types', 'assets/optional/three', 'scripts', 'docs/api/API-INDEX.json'], {
+    const status = spawnSync('git', ['status', '--porcelain', '--', 'assets/runtime', 'types', 'assets/optional/three', 'scripts', 'docs/api/API-INDEX.json', 'assets/template/AGENTS.md', '.agents/skills/hgame-ui-ux/SKILL.md', 'docs/guides/USER-AND-AGENT-GUIDE.md'], {
       cwd: repoRoot, encoding: 'utf8', windowsHide: true,
     });
     if (status.status === 0) engineDirty = status.stdout.trim().length > 0;
   }
   return { engineVersion, engineCommit, engineDirty };
+}
+
+/**
+ * Resolves the external WebAsset directory from env var or `.hgame.local.json`.
+ * @param {string} repoRoot
+ */
+export async function resolveWebAssetDir(repoRoot) {
+  if (process.env.WEBASSET_DIR) return path.resolve(process.env.WEBASSET_DIR);
+  const localCfg = await readJsonOptional(path.join(repoRoot, '.hgame.local.json'));
+  if (localCfg?.webAssetDir) return path.resolve(repoRoot, localCfg.webAssetDir);
+  return null;
 }
 
 /**
@@ -183,6 +203,13 @@ export async function buildExpectedEngineFiles({
   const apiIndexRaw = JSON.parse(await readFile(path.join(repoRoot, 'docs', 'api', 'API-INDEX.json'), 'utf8'));
   expected.set('docs/api/API-INDEX.json', Buffer.from(JSON.stringify({ ...apiIndexRaw, projectEntry }) + '\n'));
 
+  for (const doc of ENGINE_MANAGED_DOCS) {
+    const absDoc = path.join(repoRoot, doc.src);
+    if (await exists(absDoc)) {
+      expected.set(doc.dest, await readFile(absDoc));
+    }
+  }
+
   return expected;
 }
 
@@ -246,6 +273,7 @@ export async function inspectProjectEngineSync({
   }
   const explicitPaths = new Set([
     'docs/api/API-INDEX.json',
+    ...ENGINE_MANAGED_DOCS.map(d => d.dest),
     ...ENGINE_MANAGED_SCRIPTS.map(s => `scripts/${s}`),
     ...(pixi2d ? ['scripts/install-pixi-build.mjs', PIXI_BUNDLER_PATH] : []),
   ]);
@@ -395,6 +423,7 @@ export async function syncEngineFilesToProject({
         'vendor/hgame',
         ...(inspection.includeVendorThree ? ['assets/vendor/three'] : []),
         'docs/api/API-INDEX.json',
+        'docs/hgame',
         ...ENGINE_MANAGED_SCRIPTS.map(s => `scripts/${s}`),
         ...(inspection.pixi2d ? ['scripts/install-pixi-build.mjs', PIXI_BUNDLER_PATH] : []),
       ],
@@ -404,6 +433,7 @@ export async function syncEngineFilesToProject({
       path.join(inspection.projectDir, ENGINE_SYNC_MANIFEST),
       JSON.stringify(syncManifest, null, 2) + '\n',
     );
+    await syncProjectAgentsRulesBanner(inspection.projectDir, meta);
 
     if (rebuildPixi && inspection.pixi2d && (inspection.added.length > 0 || inspection.updated.length > 0 || inspection.removed.length > 0)) {
       const hasEsbuild = await exists(path.join(inspection.projectDir, 'node_modules', 'esbuild', 'package.json'));
@@ -422,6 +452,21 @@ export async function syncEngineFilesToProject({
         pixiRebuildSkippedReason = !hasEsbuild ? 'missing node_modules/esbuild' : 'missing index.source.html or installer';
       }
     }
+
+    if (rebuildPixi && (inspection.added.length > 0 || inspection.updated.length > 0 || inspection.removed.length > 0)) {
+      const pkg = await readJsonOptional(path.join(inspection.projectDir, 'package.json'));
+      const hasBridge = await exists(path.join(inspection.projectDir, 'src', 'hgame-bridge.js'));
+      const hasEsbuild = await exists(path.join(inspection.projectDir, 'node_modules', 'esbuild', 'package.json'));
+      if (pkg?.scripts?.['build:3d'] && hasBridge && hasEsbuild) {
+        const build3d = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build:3d'], {
+          cwd: inspection.projectDir, encoding: 'utf8', windowsHide: true, shell: process.platform === 'win32',
+        });
+        if (build3d.error) throw build3d.error;
+        if (build3d.status !== 0) {
+          throw new Error(`3D bundle rebuild failed in ${inspection.name}: ${build3d.stderr || build3d.stdout}`);
+        }
+      }
+    }
   }
 
   return {
@@ -434,6 +479,76 @@ export async function syncEngineFilesToProject({
     pixiRebuilt,
     pixiRebuildSkippedReason,
   };
+}
+
+async function syncProjectAgentsRulesBanner(projectDir, meta) {
+  const agentsPath = path.join(projectDir, 'AGENTS.md');
+  if (!(await exists(agentsPath))) return false;
+  const current = await readFile(agentsPath, 'utf8');
+  const eol = current.includes('\r\n') ? '\r\n' : '\n';
+  const commitLabel = meta.engineCommit ? meta.engineCommit.slice(0, 7) : 'local';
+  const banner = [
+    HGAME_RULES_BEGIN,
+    `> **HGame 规范与设计同步（自动维护 · ${meta.engineVersion} @ ${commitLabel}）**：禁止直接修改此区块、\`vendor/hgame/\` 与 \`docs/hgame/\`。每次开发与设计调整前，请先查阅随引擎同步的最新权威规范：[docs/hgame/AGENTS.md](docs/hgame/AGENTS.md)（项目规范/模块速查）、[docs/hgame/UI-UX-STANDARD.md](docs/hgame/UI-UX-STANDARD.md)（极简反臃肿 UI 规范）、[docs/hgame/USER-AND-AGENT-GUIDE.md](docs/hgame/USER-AND-AGENT-GUIDE.md)（系统卡片 01..16）。`,
+    `> **核心红线**：**Minimalist Anti-Bloat UI**（Zero-Prose / 按钮预算 / No Modals / Subtract-First，校验 \`check-ui.mjs\` + \`snapshot.mjs --check-ui\`）、**WebAsset 统一托管与 AI 自验**（\`game.config.json\` 严格白名单，禁止自启开发服务器或让用户动手操作）、**Direct \`main\` 单对话开发与阶段提交**。`,
+    HGAME_RULES_END,
+  ].join(eol);
+
+  const startIdx = current.indexOf(HGAME_RULES_BEGIN);
+  const endIdx = current.indexOf(HGAME_RULES_END);
+  let next;
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    const before = current.slice(0, startIdx);
+    const after = current.slice(endIdx + HGAME_RULES_END.length);
+    next = before + banner + after;
+  } else {
+    next = banner + eol + eol + current;
+  }
+  if (next === current) return false;
+  await writeFile(agentsPath, next);
+  return true;
+}
+
+/**
+ * Mirrors `assets/runtime/` into `<webAssetDir>/public/runtime/hgame/` when configured.
+ */
+export async function syncWebAssetRuntime({ repoRoot, webAssetDir, dryRun = false }) {
+  if (!webAssetDir) return { synced: false, reason: 'no webAssetDir configured' };
+  const destDir = path.join(webAssetDir, 'public', 'runtime', 'hgame');
+  if (!(await exists(destDir))) return { synced: false, reason: `missing ${destDir}` };
+
+  const expected = await collectFilesMap(path.join(repoRoot, 'assets', 'runtime'), '');
+  const actual = await collectFilesMap(destDir, '');
+  let added = 0;
+  let updated = 0;
+  let removed = 0;
+
+  for (const [rel, buf] of expected) {
+    const cur = actual.get(rel);
+    if (!cur) {
+      added += 1;
+      if (!dryRun) {
+        const dest = path.join(destDir, rel);
+        await mkdir(path.dirname(dest), { recursive: true });
+        await writeFile(dest, buf);
+      }
+    } else if (sha256(cur) !== sha256(buf)) {
+      updated += 1;
+      if (!dryRun) {
+        await writeFile(path.join(destDir, rel), buf);
+      }
+    }
+  }
+  for (const rel of actual.keys()) {
+    if (!expected.has(rel)) {
+      removed += 1;
+      if (!dryRun) {
+        await rm(path.join(destDir, rel), { force: true });
+      }
+    }
+  }
+  if (!dryRun && removed > 0) await pruneEmptyDirs(destDir);
+  return { synced: !dryRun && (added + updated + removed > 0), destDir, added, updated, removed };
 }
 
 async function pruneEmptyDirs(dir) {

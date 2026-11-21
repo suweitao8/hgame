@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+# Auto-sync HGame runtime, norms, design docs, skills, and WebAsset runtime after engine commits.
+if [ "${HGAME_SKIP_POST_COMMIT_SYNC:-0}" = "1" ]; then
+  exit 0
+fi
+
+CHANGED=$(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null || true)
+if [ -z "$CHANGED" ]; then
+  exit 0
+fi
+
+if printf '%s\n' "$CHANGED" | grep -qE '^(assets/runtime/|assets/optional/three/|assets/template/AGENTS\.md|scripts/|types/|docs/api/API-INDEX\.json|docs/guides/USER-AND-AGENT-GUIDE\.md|\.agents/skills/)'; then
+  echo "[hgame:post-commit] 检测到引擎运行时/规范/技能变更，自动同步所有下游项目..."
+  node scripts/sync-games.mjs --all || echo "[hgame:post-commit] 警告：部分项目同步失败，请手动运行 npm run sync:games -- --all 检查。" >&2
+fi
