@@ -11,6 +11,7 @@ export { createVirtualList } from './virtual-list.js';
 export { createI18n } from './i18n.js';
 export { computeFlexLayout } from './flex-layout.js';
 export { createCanvasUiRenderer, renderSdfText } from './canvas-widgets.js';
+export { createLiveProfilerOverlay } from './profiler-overlay.js';
 export {
   computeStaggerProgress,
   createUiSurfaceSpring,

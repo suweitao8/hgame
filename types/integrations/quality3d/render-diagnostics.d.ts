@@ -122,6 +122,49 @@ export function createRenderDiagnostics({ getContext, getIdentity, isUnavailable
     snapshot: () => RenderDiagnosticsSnapshot3D | null;
 };
 export function drawWithDiagnostics(renderer: any, onPass: any, name: any, target: any, scene: any, camera: any): void;
+/**
+ * WebGL VRAM footprint ledger scanning active Three.js scenes and render targets to prevent
+ * mobile/web browser OOM crashes in single-bundle HTML5 builds.
+ *
+ * @param {any} THREE Three.js namespace or compatible mock.
+ * @param {object} [options]
+ * @param {number} [options.softLimitMB=192]
+ * @param {number} [options.hardLimitMB=256]
+ * @param {((report: object) => void) | null} [options.onPressure=null]
+ */
+export function createVramLedger3D(THREE: any, { softLimitMB, hardLimitMB, onPressure, }?: {
+    softLimitMB?: number | undefined;
+    hardLimitMB?: number | undefined;
+    onPressure?: ((report: object) => void) | null | undefined;
+} | undefined): Readonly<{
+    scan: ({ roots, textures, geometries, targets }?: {
+        roots?: never[] | undefined;
+        textures?: never[] | undefined;
+        geometries?: never[] | undefined;
+        targets?: never[] | undefined;
+    }) => Readonly<{
+        textureCount: 0;
+        geometryCount: 0;
+        targetCount: 0;
+        textureBytes: 0;
+        geometryBytes: 0;
+        targetBytes: 0;
+        totalBytes: 0;
+        totalMB: 0;
+        pressure: "ok";
+    }>;
+    getLastReport(): Readonly<{
+        textureCount: 0;
+        geometryCount: 0;
+        targetCount: 0;
+        textureBytes: 0;
+        geometryBytes: 0;
+        targetBytes: 0;
+        totalBytes: 0;
+        totalMB: 0;
+        pressure: "ok";
+    }>;
+}>;
 export type RenderTargetUsage3D = {
     viewIndex: number;
     width: number;

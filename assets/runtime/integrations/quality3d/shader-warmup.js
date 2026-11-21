@@ -172,6 +172,7 @@ export function createShaderWarmupQueue3D(THREE, renderer, {
     enqueue,
     enqueueMaterials,
     step,
+    stepWarmupBudget: step,
     warmupAll,
     getStats,
     clear,

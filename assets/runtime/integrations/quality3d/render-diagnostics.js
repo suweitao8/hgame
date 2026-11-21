@@ -434,3 +434,120 @@ export function drawWithDiagnostics(renderer, onPass, name, target, scene, camer
     stop?.();
   }
 }
+
+const TEX_SLOTS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'lightMap', 'bumpMap', 'displacementMap', 'alphaMap', 'envMap'];
+
+function estimateTextureBytes(THREE, texture) {
+  if (!texture) return 0;
+  const img = texture.image;
+  const w = Number(img?.width || img?.videoWidth || texture.width) || 0;
+  const h = Number(img?.height || img?.videoHeight || texture.height) || 0;
+  if (!(w > 0 && h > 0)) return 0;
+  const bpp = textureBytesPerPixel(THREE, texture);
+  const mipScale = texture.generateMipmaps === false ? 1 : 1.3334;
+  return Math.ceil(w * h * bpp * mipScale);
+}
+
+function estimateGeometryBytes(geometry) {
+  if (!geometry) return 0;
+  let bytes = 0;
+  if (geometry.attributes && typeof geometry.attributes === 'object') {
+    for (const attr of Object.values(geometry.attributes)) {
+      const byteLen = attr?.array?.byteLength;
+      if (Number.isFinite(byteLen)) bytes += byteLen;
+    }
+  }
+  const indexBytes = geometry.index?.array?.byteLength;
+  if (Number.isFinite(indexBytes)) bytes += indexBytes;
+  return bytes;
+}
+
+/**
+ * WebGL VRAM footprint ledger scanning active Three.js scenes and render targets to prevent
+ * mobile/web browser OOM crashes in single-bundle HTML5 builds.
+ *
+ * @param {any} THREE Three.js namespace or compatible mock.
+ * @param {object} [options]
+ * @param {number} [options.softLimitMB=192]
+ * @param {number} [options.hardLimitMB=256]
+ * @param {((report: object) => void) | null} [options.onPressure=null]
+ */
+export function createVramLedger3D(THREE, {
+  softLimitMB = 192,
+  hardLimitMB = 256,
+  onPressure = null,
+} = {}) {
+  const softBytes = Math.max(1, Number(softLimitMB) || 192) * 1024 * 1024;
+  const hardBytes = Math.max(softBytes, (Number(hardLimitMB) || 256) * 1024 * 1024);
+  let lastReport = Object.freeze({
+    textureCount: 0,
+    geometryCount: 0,
+    targetCount: 0,
+    textureBytes: 0,
+    geometryBytes: 0,
+    targetBytes: 0,
+    totalBytes: 0,
+    totalMB: 0,
+    pressure: 'ok',
+  });
+
+  function scan({ roots = [], textures = [], geometries = [], targets = [] } = {}) {
+    const seenGeo = new Set();
+    const seenTex = new Set();
+    const seenTargets = new Set();
+
+    const addTex = t => { if (t && typeof t === 'object') seenTex.add(t); };
+    const addGeo = g => { if (g && typeof g === 'object') seenGeo.add(g); };
+    const scanMat = mat => {
+      if (!mat) return;
+      if (Array.isArray(mat)) { for (const m of mat) scanMat(m); return; }
+      for (const slot of TEX_SLOTS) addTex(mat[slot]);
+    };
+
+    for (const root of Array.isArray(roots) ? roots : [roots]) {
+      if (!root) continue;
+      if (typeof root.traverse === 'function') {
+        root.traverse(node => {
+          if (node?.geometry) addGeo(node.geometry);
+          if (node?.material) scanMat(node.material);
+        });
+      } else {
+        if (root.geometry) addGeo(root.geometry);
+        if (root.material) scanMat(root.material);
+      }
+    }
+    for (const t of textures) addTex(t);
+    for (const g of geometries) addGeo(g);
+    for (const rt of targets) if (rt && typeof rt === 'object') seenTargets.add(rt);
+
+    let textureBytes = 0;
+    let geometryBytes = 0;
+    let targetBytes = 0;
+    for (const t of seenTex) textureBytes += estimateTextureBytes(THREE, t);
+    for (const g of seenGeo) geometryBytes += estimateGeometryBytes(g);
+    for (const rt of seenTargets) targetBytes += estimateRenderTargetBytes(THREE, rt);
+
+    const totalBytes = textureBytes + geometryBytes + targetBytes;
+    const pressure = totalBytes >= hardBytes ? 'hard' : (totalBytes >= softBytes ? 'soft' : 'ok');
+    lastReport = Object.freeze({
+      textureCount: seenTex.size,
+      geometryCount: seenGeo.size,
+      targetCount: seenTargets.size,
+      textureBytes,
+      geometryBytes,
+      targetBytes,
+      totalBytes,
+      totalMB: Number((totalBytes / (1024 * 1024)).toFixed(3)),
+      pressure,
+    });
+    if (pressure !== 'ok' && typeof onPressure === 'function') {
+      onPressure(lastReport);
+    }
+    return lastReport;
+  }
+
+  return Object.freeze({
+    scan,
+    getLastReport() { return lastReport; },
+  });
+}

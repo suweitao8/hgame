@@ -46,6 +46,7 @@ const HARNESS_HTML = `<!doctype html>
       createSeededRng,
       createAudioManager,
       createCanvasUiRenderer,
+      createLiveProfilerOverlay,
       createNetworkStateSync,
       createSceneReplicator,
       createSpringBoneChain3D,
@@ -57,6 +58,8 @@ const HARNESS_HTML = `<!doctype html>
     import { createIndirectInstancedBatch3D } from '/assets/runtime/integrations/culling3d.js';
     import { createDecalSystem3D } from '/assets/runtime/integrations/decal3d.js';
     import { createComposableMaterial3D } from '/assets/runtime/integrations/material-graph3d.js';
+    import { createInstancedFoliage3D } from '/assets/runtime/integrations/foliage3d.js';
+    import { injectDitherLodMaterial3D } from '/assets/runtime/integrations/model3d/lod.js';
     import { solveFabrikIK, blendMorphTargets } from '/assets/runtime/animation/animator3d.js';
 
     function createSkinnedMorphArm() {
@@ -129,7 +132,7 @@ const HARNESS_HTML = `<!doctype html>
             color: 0xfff3d6,
             intensity: 2.0,
             position: [12, 22, 10],
-            cascades: { cascades: 3, maxFar: 90, mapSize: 512 },
+            cascades: { cascades: 3, maxFar: 90, mapSize: 512, pcss: true, lightSize: 0.04 },
           },
         },
       });
@@ -187,6 +190,15 @@ const HARNESS_HTML = `<!doctype html>
       banner.position.set(4.0, 1.2, -4.0);
       adapter.add(scene, banner);
 
+      // GPU instanced foliage field + static dither LOD crossfade material
+      const foliage = createInstancedFoliage3D(THREE, { count: 400, areaSize: 18 });
+      adapter.add(scene, foliage.mesh);
+      const lodMat = new THREE.MeshStandardMaterial({ color: 0xf59e0b, roughness: 0.5 });
+      injectDitherLodMaterial3D(THREE, lodMat, { fade: 0.72, invert: false });
+      const lodBox = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), lodMat);
+      lodBox.position.set(-4.2, 0.8, -5.0);
+      adapter.add(scene, lodBox);
+
       // 2,000-instance frustum-compacted indirect batch (1000 in front, 1000 behind camera)
       const rockGeo = new THREE.BoxGeometry(0.45, 0.45, 0.45);
       const rockMat = new THREE.MeshStandardMaterial({ color: 0x10b981, roughness: 0.6 });
@@ -218,14 +230,18 @@ const HARNESS_HTML = `<!doctype html>
 
       // Warmup + render 16 frames at 1280x720
       const warmup = await adapter.warmupShaders(scene, cam);
+      const profiler = createLiveProfilerOverlay({ width: 160, height: 64, maxSamples: 20 });
       for (let i = 0; i < 16; i++) {
         vfxMesh.position.x = 2.8 + Math.sin(i * 0.2) * 0.5;
         sphere.rotation.y += 0.04;
         windMat.userData.hgameMaterialGraph.setWindTime(i * 0.05);
+        foliage.update(1 / 60, [vfxMesh.position.x, 0, vfxMesh.position.z]);
         spring.update(1 / 60);
         inertial.apply(arm.bones, 1 / 60);
         adapter.render(scene);
+        profiler.recordSample({ frameMs: 1.5, drawCalls: 16, vramMB: 12.0 });
       }
+      const vramReport = adapter.measureVram(scene);
       const gl3d = adapter.renderer.getContext();
       const glPixels3d = sampleGlPixels(gl3d, 1280, 720);
       const glError = gl3d.getError();
@@ -240,6 +256,7 @@ const HARNESS_HTML = `<!doctype html>
       await audio.unlock();
       const zone = audio.createReverbZone({ id: 'arena', position: [0, 0, 0], radius: 40, wetGain: 0.4 });
       audio.setBusEq('sfx', { lowGainDb: 3.5, midGainDb: 0, highGainDb: 4.5 });
+      audio.duckBus('bgm', { targetGain: 0.3, attackSec: 0.04, holdSec: 0.2, releaseSec: 0.3 });
       audio.playSynth('laser', { volume: 0.1 });
       const dspState = audio.getDspState();
 
@@ -248,16 +265,22 @@ const HARNESS_HTML = `<!doctype html>
       const ctx2d = cui.getContext('2d');
       const ui = createCanvasUiRenderer({ dpr: 1 });
       let buttonClicks = 0;
+      const inputNode = { id: 'tagInput', type: 'textInput', height: 28, placeholder: 'TAG', value: '' };
       ui.render(ctx2d, {
-        id: 'hud', type: 'panel', direction: 'column', padding: 12, gap: 10,
+        id: 'hud', type: 'panel', direction: 'column', padding: 10, gap: 8,
         children: [
-          { id: 'hdr', type: 'label', height: 24, text: 'COMMERCIAL BENCH' },
-          { id: 'act', type: 'button', height: 42, text: 'DEPLOY', onClick: () => buttonClicks++ },
-          { id: 'hp', type: 'progress', height: 14, value: 0.72 },
+          { id: 'hdr', type: 'label', height: 22, text: 'COMMERCIAL BENCH' },
+          { id: 'act', type: 'button', height: 36, text: 'DEPLOY', onClick: () => buttonClicks++ },
+          inputNode,
+          { id: 'hp', type: 'progress', height: 12, value: 0.72 },
         ],
       }, 320, 200);
-      ui.pointerDown(160, 67);
-      ui.pointerUp(160, 67);
+      ui.pointerDown(160, 52);
+      ui.pointerUp(160, 52);
+      ui.pointerDown(160, 92);
+      ui.keyDown('O');
+      ui.keyDown('K');
+      profiler.render(ctx2d, 10, 130);
       const uiImg = ctx2d.getImageData(0, 0, 320, 200).data;
       let uiNonBlack = 0;
       for (let i = 0; i < uiImg.length; i += 16) if (uiImg[i] > 10 || uiImg[i + 1] > 10 || uiImg[i + 2] > 10) uiNonBlack++;
@@ -313,8 +336,13 @@ const HARNESS_HTML = `<!doctype html>
         glPixels3d,
         dspWiredZones: dspState.wiredZones,
         reverbZoneWired: zone.wired,
+        duckingActive: Boolean(dspState.ducking?.bgm),
         uiNonBlack,
         uiButtonClicks: buttonClicks,
+        textInputValue: inputNode.value,
+        foliageCount: foliage.count,
+        vramBytes: vramReport.totalBytes,
+        profilerSamples: profiler.getStats().samples,
         netDeltaErr: Number(Math.abs(cEnt.x - hEnt.x).toFixed(3)),
         aoiCulled: aoiResult.stats.culled,
         springBones: spring.boneCount,
@@ -324,6 +352,9 @@ const HARNESS_HTML = `<!doctype html>
       prePassRT.dispose();
       decalOutRT.dispose();
       batch.dispose();
+      foliage.dispose();
+      lodBox.geometry.dispose();
+      lodMat.dispose();
       rockGeo.dispose();
       rockMat.dispose();
       banner.geometry.dispose();
@@ -398,6 +429,11 @@ try {
   assert.ok(m.netDeltaErr < 1.0, 'Binary net replicator must stay within 1 unit over 15% loss');
   assert.ok(m.aoiCulled > 30, 'Spatial AOI must cull distant entities cleanly');
   assert.equal(m.springBones, 3, 'SpringBone chain must run across 3 bones');
+  assert.equal(m.foliageCount, 400, 'Instanced foliage field must populate 400 blades');
+  assert.ok(m.vramBytes > 0, 'VRAM ledger must account active scene GPU bytes');
+  assert.equal(m.duckingActive, true, 'Web Audio duckBus must report active bgm ducking');
+  assert.equal(m.textInputValue, 'OK', 'Canvas textInput widget must accept focus and typing');
+  assert.equal(m.profilerSamples, 16, 'Live profiler overlay must record frame samples');
 
   console.log(JSON.stringify({ status: 'PASS', resolution: '1280x720', metrics: m }, null, 2));
 } finally {

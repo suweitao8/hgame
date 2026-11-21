@@ -19,6 +19,13 @@ export function createShaderWarmupQueue3D(THREE: object, renderer: object, { bud
         elapsedMs: number;
         done: boolean;
     };
+    stepWarmupBudget: (budgetMs?: number) => {
+        compiled: number;
+        failed: number;
+        remaining: number;
+        elapsedMs: number;
+        done: boolean;
+    };
     warmupAll: (camera?: null) => Promise<{
         queued: number;
         compiled: number;

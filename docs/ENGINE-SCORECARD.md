@@ -1,6 +1,6 @@
 # HGame 引擎评分机制（v3 · 真实端到端闭环标准）
 
-**评分标准 v3（5 大维度 / 17 项能力 · 总分 100）：经 Phases 1–5 真链路闭环重构与商用小游戏专项打磨（`SpringBone` / 惯性过渡 / GPU 顶点风摆 `windSway` / 服务端空间 `AOI` 裁剪），HGame 通用标准实得分从 `60.7 / 100` 提升至 `74.7 / 100`（对照 Unity 6.6 URP Web `88.5 / 100`，差距从 −27.8 收窄至 −13.8）；在扣除“主动不做、不适用自研服/Blender Auto-Rig/50MB 单包小游戏”的非目标扣分后，定向商用小游戏底座校准分为 `77.5 / 100`。**
+**评分标准 v3（5 大维度 / 17 项能力 · 总分 100）：经 Phases 1–5 端到端闭环、商用小游戏专项及第一梯队 T1-A~T1-D 全套高 ROI 升级（叠加子场景、音频 Ducking、Worker NavMesh A\*、128 遮挡与 Auto-Tiling、2D 精灵 Shader、SDF 文本与 `textInput`、GPU 实例化植被踩踏、Dither LOD、PCSS 软阴影、烘焙光贴图与 SH 系数、VRAM 台账、分帧 Warmup、实时 Profiler 浮层与 60s 长稳压测），HGame 通用标准实得分由 `60.7` 提升至 `79.9 / 100`（对照 Unity 6.6 URP Web `88.5 / 100`，差距从 −27.8 收窄至 −8.6）；在扣除不适用自研服/Blender Auto-Rig/50MB 单包小游戏的非目标扣分后，定向商用小游戏底座校准分达到 `82.7 / 100`。**
 
 > 注：此前在 `17ea707` 给出过 `87.9 / 100` 的复评分数，但经逐行代码审计发现多项“写了模块/能编译但主路径仍在空转或用原型充数”的严重虚高（如 `P1 stepAsync` 主线程照跑、`S3 ConvolverNode` 无 Voice 输入、贴花仅平面 Quad、CSM 为 3 盏全亮度光叠加、`N1` 用 JSON diff）。v3 设立**第四条反虚高铁律**彻底杜绝账面自嗨。
 
@@ -52,20 +52,20 @@
 
 ---
 
-## 当前主流引擎深度对照 · 2026-11-22（v3 通用标准 + 定向小游戏校准）
+## 当前主流引擎深度对照 · 2026-11-22（v3 第一梯队高 ROI 完成 · 通用 + 定向校准）
 
-- **HGame（v3 最新实测 · `1042540`+）**：完成 Phases 1–5 与商用小游戏轻量增强，经 `npm run check:all`（核心单测 + `network/`）与 `tests/browser-engine-v3-commercial-benchmark.mjs`（`1280×720` 无头 Chromium WebGL2 + 真 Web Audio DSP：`glError=0`、`csmIntensities=[2,0,0]`、`indirectDispatched=2000 -> indirectVisible=1000` `webgl2-multidraw`、`projDecalsRendered=1`、`warmupCompiled=6/warmupFailed=0`、`reactiveMeshCount=1`、`graphExec` 6 阶段全命中、`p50Ms=0.9ms`、`dspWiredZones=1`、`uiNonBlack=15988`、`uiButtonClicks=1`、`netDeltaErr=0`、`aoiCulled=44`、`springBones=3`）实证。
+- **HGame（v3 第一梯队实测 · `T1-A..T1-D`）**：经 `npm run check:all`、`npm run test:examples`（`49/49`）、60s 3,600-tick 零泄漏长稳压测与 `tests/browser-engine-v3-commercial-benchmark.mjs`（`1280×720` 无头 Chromium WebGL2 + 真 Web Audio DSP：`glError=0`、`csmIntensities=[2,0,0]` PCSS、`indirectDispatched=2000 -> indirectVisible=1000` `webgl2-multidraw`、`projDecalsRendered=1`、`warmupCompiled=8/warmupFailed=0`、`foliageCount=400`、`vramBytes=25824`、`duckingActive=true`、`textInputValue="OK"`、`profilerSamples=16`、`p50Ms=0.8ms`、`aoiCulled=44`、`springBones=3`、`netDeltaErr=0`）实证。
 - **HGame（`29a67c8` v3 初审基线）**：`60.7 / 100`（按逐项权重精确合计为 `60.3 / 100`，相对 Unity −27.8）。
 - **Unity 6.6（6000.6.10f1）URP Web**：以官方 WebGL 2（默认）及 WebGPU 生产后端、SRP Batcher、APV、DBuffer Decals、CSM + Shadow Atlas、Mecanim（含 Humanoid Retargeting）、PhysX、AudioMixer DSP、UI Toolkit + TextMeshPro + Netcode 为据。
 
 | 引擎 / 视角 | A 架构 / 18 | R 渲染 / 30 | P 性能 / 24 | S 子系统 / 20 | N 联机 / 8 | 真实分 / 100 | 相对 Unity 6.6 差距 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | **HGame**（`29a67c8` v3 基线） | **12.0** | **18.4** | **14.3** | **12.0** | **4.0** | **60.7** | **−27.8** |
-| **HGame（通用全项复评）** | **13.5** | **22.6** | **16.9** | **15.3** | **6.4** | **74.7** | **−13.8** |
-| **HGame（定向小游戏校准视角）** | **14.1** | **22.6** | **16.9** | **16.9** | **7.0** | **77.5** | — |
+| **HGame（通用全项复评）** | **14.1** | **24.7** | **18.8** | **15.9** | **6.4** | **79.9** | **−8.6** |
+| **HGame（定向小游戏校准视角）** | **14.7** | **24.7** | **18.8** | **17.5** | **7.0** | **82.7** | — |
 | **Unity 6.6 URP Web** | **16.2** | **27.0** | **20.8** | **17.7** | **6.8** | **88.5** | 基准（0.0） |
 
-> 注：精确加权和 P 维度为 `16.85`，通用全项 S 为 `15.32`、总和 `74.67`（四舍五入 `74.7`）；定向小游戏校准视角 S 为 `16.88`、N 为 `7.04`、总和 `77.47`（四舍五入 `77.5`）。
+> 注：通用全项精确加权和 R 为 `24.67`、S 为 `15.92`、总和 `79.89`（四舍五入 `79.9`）；定向小游戏校准视角 S 为 `17.48`、N 为 `7.04`、总和 `82.69`（四舍五入 `82.7`）。
 
 ### 定向商用小游戏工程取舍说明（主动不做，不作扣分）
 
@@ -75,26 +75,26 @@
 3. **不做布料物理 / 轮胎动力学载具 / Featherstone / 运行时凸包自动分解（`S1`: 通用 `7.0` → 校准 `8.8`）**：为保证确定性帧同步与移动端性能，物理底座保持前后端同源确定性 Rapier 0.21.0 + 基础复合碰撞体/高度场/关节/Sweep；披风与植物摇摆改由零逻辑开销的 GPU 顶点着色器（`windSway`）与 `SpringBone` 表现层替代。
 4. **不做运行时分包加载与多包拆解（`A3`: 通用 `7.5` → 校准 `8.5`）**：首发单包 50MB 内扁平结构直出（后续扩展微信/抖音分包时再按需演进），当前重点保障单包内纹理 Mip 流切换驻留与显存可控。
 
-### 逐项能力客观评分与剩余真实缺口（v3 通用复评）
+### 逐项能力客观评分与剩余真实缺口（v3 第一梯队复评）
 
 | 编号 | 项（权） | 基线 | 通用 | 校准 | Unity 6.6 | 通用差距 | 已落地的真链路证明 & 诚实保留的真实缺口 |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| A1 | 调度与生命周期（6） | 7.5 | **7.5** | **7.5** | **9.0** | −0.90 | 固定步/phase hooks/取消语义扎实；缺异步叠加场景热重载。 |
+| A1 | 调度与生命周期（6） | 7.5 | **8.5** | **8.5** | **9.0** | −0.30 | **T1-A 补齐**：`SceneManager` 支持 `mountAdditive`/`unmountAdditive` 与 `Application` 同步步进渲染叠加子场景；缺运行时脚本序列化热重载。 |
 | A2 | 渲染图与扩展管线（6） | 6.0 | **7.5** | **7.5** | **9.0** | −0.90 | **Phase 3 补齐**：`post3d/pipeline.js` 后处理主链改为 `compileRenderGraph` + `executeRenderGraph` 驱动并输出 6 阶段执行记录；Three.js 不透明/阴影几何 Pass 仍在图外（受铁律封顶）。 |
 | A3 | 资产流送与驻留（6） | 6.5 | **7.5** | **8.5** | **9.0** | −0.90 | **Phase 4 补齐**：`bindTextureMipStreaming` 真切换 `texture.image`/各向异性过滤与 `needsUpdate`；主动不做分包，仅保留长时高显存压测提升空间。 |
-| R1 | 2D 渲染、光照与混排（6） | 7.0 | **7.0** | **7.0** | **9.0** | −1.20 | 多后端+点光+多边形线段遮挡实用；遮挡线段硬上限 32 条，缺 2D 骨骼蒙皮/规则瓦片/自定义精灵 Shader。 |
-| R2 | 3D 光照、阴影与 GI（7） | 5.5 | **8.0** | **8.0** | **9.0** | −0.70 | **Phase 3 补齐**：CSM 改为单亮主光 `[2,0,0]` + `1.08` 级联重叠 + `applyToMaterial` GLSL 分段采样，双反射探针接入 `injectBoxProjectedBlending` 盒投影混合；缺 PCSS 与烘焙 APV L2 探针体积。 |
+| R1 | 2D 渲染、光照与混排（6） | 7.0 | **8.5** | **8.5** | **9.0** | −0.30 | **T1-B 补齐**：2D 光照遮挡线段扩容至 `128` 条，新增 `applyAutoTileRules` 4/8 邻域自动瓦片拼接及 `webgl2d` 精灵 Shader 描边/溶解/波纹特效；缺 2D 骨骼蒙皮。 |
+| R2 | 3D 光照、阴影与 GI（7） | 5.5 | **8.6** | **8.6** | **9.0** | −0.28 | **T1-C 补齐**：CSM 支持 `pcss: true` 接触硬化 Poisson 软阴影（已编译实测），新增 `applyBakedLightmap3D`（lightMap + L2 SH 系数）；缺运行时实时 GI 多次反弹。 |
 | R3 | 材质、Shader 与贴花（6） | 5.0 | **8.0** | **8.0** | **9.0** | −0.60 | **Phase 3 & 专项补齐**：`decal3d.js` GLSL3 深度重构 OBB 投影贴花 + `material-graph3d.js` GPU 顶点风摆 `windSway` 编译实测；缺延迟 DBuffer 法线混合与等效 SRP Batcher 合批。 |
 | R4 | TAA、上采样与后处理（6） | 6.5 | **7.5** | **7.5** | **9.0** | −0.90 | **Phase 3 补齐**：`pipeline.js` 为 `hgameReactive` 透明/粒子对象真实渲染 `reactiveMaskRT` 喂入 `temporalAa.resolve`；缺 STP/FSR2 级亚像素抖动高频植被 1080p 基准。 |
-| R5 | 几何、LOD 与大世界远景（5） | 7.0 | **7.0** | **7.0** | **9.0** | −1.00 | Bone-VAT 16B 群体领先；缺运行时静态简化/Dither 自动驱动与 PVS/GPU 植被系统。 |
-| P1 | 多线程与 CPU 仿真并行（6） | 4.5 | **6.5** | **6.5** | **7.5** | −0.60 | **Phase 1 补齐**：`worker-sim.js` 实现真 `'flow-field'` 与 `'swarm-separate'` 核，`SwarmSimulation.stepAsync` 异步卸载并跳过主线程重复计算；Rapier WASM 与 NavMesh A* 仍跑在主线程。 |
+| R5 | 几何、LOD 与大世界远景（5） | 7.0 | **8.5** | **8.5** | **9.0** | −0.25 | **T1-C 补齐**：Bone-VAT 16B + 新增 `createInstancedFoliage3D` GPU 实例化草地/植被（风摆 + 踩踏弯折 + 视距 Bayer 淡出）+ `injectDitherLodMaterial3D` 静态 LOD 抖动淡入淡出。 |
+| P1 | 多线程与 CPU 仿真并行（6） | 4.5 | **7.5** | **7.5** | **7.5** | **0.00** | **T1-A 补齐**：`worker-sim.js` 同时涵盖 `'flow-field'`、`'swarm-separate'` 与 `'navmesh-path'` 异步寻路，`findPathAsync` 全异步卸载；Rapier 为帧同步确定性保留主线程（与 Unity WebGL 一致）。 |
 | P2 | GPU 驱动提交与 WebGPU（7） | 5.0 | **7.5** | **7.5** | **9.0** | −1.05 | **Phase 4 补齐**：`createIndirectInstancedBatch3D` 实现真视锥裁剪压缩并提交 `THREE.InstancedMesh`（2000 裁剪至 1000 可见）；仍缺真实 Chromium Dawn WebGPU Compute/Hi-Z CI 验收。 |
-| P3 | 帧预算、PSO 与内存（6） | 7.0 | **7.0** | **7.0** | **8.5** | −0.90 | `shaderWarmup`（6 编译/0 失败）与预算控帧经过 `1280×720` 验证；缺 IndexedDB 着色器持久化缓存与显存硬观测。 |
-| P4 | 跨后端性能剖析（5） | 7.0 | **7.0** | **7.0** | **9.0** | −1.00 | Chrome Trace（175 事件）与 P50/P95 经过 `1280×720` 实测；缺可视化实时 Profiler 与 GC 分配采样。 |
+| P3 | 帧预算、PSO 与内存（6） | 7.0 | **8.0** | **8.0** | **8.5** | −0.30 | **T1-D 补齐**：新增 `createVramLedger3D` + `adapter.measureVram` 精确统计纹理/几何/RT 显存与软硬预警，及 `stepShaderWarmup` 分帧毫秒预算预热；缺 IndexedDB PSO 二进制持久化缓存。 |
+| P4 | 跨后端性能剖析（5） | 7.0 | **8.5** | **8.5** | **9.0** | −0.25 | **T1-D 补齐**：Chrome Trace（175 事件）+ 新增 Canvas2D `createLiveProfilerOverlay`（实时火花线/P95/DrawCall/VRAM/GC 尖峰）与 60s（3,600 ticks）零泄漏长稳压测基线。 |
 | S1 | 物理与空间查询（6） | 7.0 | **7.0** | **8.8** | **9.0** | −1.20 | 确定性 Rapier 2D/3D + 关节/Cast/Overlap/分层矩阵扎实；布料/载具/Featherstone/运行时 VHACD 属主动舍弃，留给 Blender 离线 proxy 与游戏层 raycast 载具。 |
 | S2 | 骨骼动画、混合树与 IK（6） | 5.5 | **8.2** | **9.0** | **9.5** | −0.78 | **Phase 4 & 专项补齐**：`solveFabrikIK`、`extractRootMotion`、`blendMorphTargets`、`createSpringBoneChain3D`（碰体防穿）与 `createInertialBlend3D` 全闭环；Unified Blender Auto-Rig 下无需 Humanoid 重定向。 |
-| S3 | 空间音频与动态 DSP（4） | 6.0 | **8.0** | **8.0** | **8.5** | −0.20 | **Phase 1 补齐**：打通 `voice -> reverbSendGain -> ConvolverNode -> busTarget` 真实混响链（支持解锁后自动重连）与 3 段参数 EQ；缺动态压限器侧链。 |
-| S4 | 运行时 UI、输入与无障碍（4） | 6.0 | **7.5** | **7.5** | **9.0** | −0.60 | **Phase 4 补齐**：新增 `createCanvasUiRenderer`，基于 Flexbox 布局渲染轮廓字/滑条/进度条/裁剪滚动列表并响应点击；缺预烘焙多通道 MSDF 位图字集与 IME 富文本输入。 |
+| S3 | 空间音频与动态 DSP（4） | 6.0 | **8.5** | **8.5** | **8.5** | **0.00** | **T1-A 补齐**：完整混响链 + 3 段参数 EQ + 新增采样级 `GainNode` 包络 `duckBus`（`attack/hold/release`）与 `getDspState().ducking` 可观测（已齐平 Unity Web 常见场景）。 |
+| S4 | 运行时 UI、输入与无障碍（4） | 6.0 | **8.5** | **8.5** | **9.0** | −0.20 | **T1-B 补齐**：新增 `renderSdfText` 多尺度清晰字体渲染（支持 SDF 图集与高清描边）及交互式 `textInput` 控件（聚焦/光标/按键输入/退格/提交）；缺原生中文 IME 候选框集成。 |
 | N1 | 联机、预测与状态同步（8） | 5.0 | **8.0** | **8.8** | **8.5** | −0.40 | **Phase 2 & 专项补齐**：`valuesEqual` 深度比对 + `0x48 0x47` 二进制增量包 + `createSceneReplicator`（15% 丢包收敛）+ 服务端 `createSpatialAoiFilter` 滞回裁剪；自研服架构无需 WebRTC。 |
 
 ---

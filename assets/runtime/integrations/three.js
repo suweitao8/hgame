@@ -1,7 +1,7 @@
 import { Component } from '../core/component.js';
 import { createAdaptiveQualityController, resolveQualityPreset } from './quality3d.js';
 import { createGpuFrameTimer } from './quality3d/gpu-timer.js';
-import { createRenderDiagnostics3D, drawWithDiagnostics, estimateRenderTargetBytes } from './quality3d/render-diagnostics.js';
+import { createRenderDiagnostics3D, createVramLedger3D, drawWithDiagnostics, estimateRenderTargetBytes } from './quality3d/render-diagnostics.js';
 import { fitDrawingBuffer, readDrawingBufferLimits } from './quality3d/viewport.js';
 import { createPostPipeline3D, inspectWebGLCapabilities } from './post3d.js';
 import { createSceneCuller3D, createGpuIndirectCuller3D } from './culling3d.js';
@@ -615,6 +615,8 @@ export function createThreeAdapter({
             intensity: sun.intensity ?? 1.0,
             shadowBias: sun.shadow?.bias ?? -0.0004,
             normalBias: sun.shadow?.normalBias ?? 0.02,
+            pcss: Boolean(cascadeCfg.pcss),
+            lightSize: cascadeCfg.lightSize ?? 0.04,
             scene: world,
           });
           worldCsm.set(world, csm);
@@ -1311,6 +1313,19 @@ export function createThreeAdapter({
     },
     getShaderWarmupStats() {
       return shaderWarmup.getStats();
+    },
+    measureVram(scene = null, options = {}) {
+      const ledger = createVramLedger3D(THREE, options);
+      const roots = scene && worlds.has(scene) ? [worlds.get(scene)] : [];
+      if (scene && viewWorlds.has(scene)) roots.push(viewWorlds.get(scene));
+      const targets = [];
+      if (scene && worlds.has(scene)) {
+        const csm = worldCsm.get(worlds.get(scene));
+        if (csm?.lights) {
+          for (const l of csm.lights) if (l?.shadow?.map) targets.push(l.shadow.map);
+        }
+      }
+      return ledger.scan({ roots, targets });
     },
     async warmupShaders(scene, customCam = null) {
       const targetCam = customCam ?? camera;
