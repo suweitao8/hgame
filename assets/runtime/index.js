@@ -130,6 +130,9 @@ export {
   createTwoMapWorldPbrMaterial,
 } from './integrations/pbr-material-library.js';
 export {
+  defineMaterialVariants3D,
+} from './integrations/material-graph3d.js';
+export {
   createStateMachine,
   BT_STATUS,
   sequence,
@@ -283,6 +286,9 @@ import {
 import {
   createTwoMapWorldPbrMaterial,
 } from './integrations/pbr-material-library.js';
+import {
+  defineMaterialVariants3D,
+} from './integrations/material-graph3d.js';
 import {
   createStateMachine,
   BT_STATUS,
@@ -509,6 +515,7 @@ export const HGame = Object.freeze({
   createRealisticWater3D,
   createRealisticGlassMaterial3D,
   createTwoMapWorldPbrMaterial,
+  defineMaterialVariants3D,
   createStateMachine,
   BT_STATUS,
   sequence,

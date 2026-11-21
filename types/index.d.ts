@@ -35,6 +35,7 @@ import { createAtmosphere3D } from "./world/atmosphere3d.js";
 import { resolveQuality3DProfile } from "./integrations/quality3d.js";
 import { createRealisticWater3D, createRealisticGlassMaterial3D } from "./integrations/water3d.js";
 import { createTwoMapWorldPbrMaterial } from "./integrations/pbr-material-library.js";
+import { defineMaterialVariants3D } from "./integrations/material-graph3d.js";
 import { damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
 import { createVfxSystem } from "./vfx/index.js";
 export const HGAME_VERSION: "1.0.0";
@@ -51,6 +52,7 @@ export { createPhysicalRenderTargetPool3D } from "./integrations/post3d/render-g
 export { createGpuSwarmWebGL2 } from "./world/gpu-swarm-webgl2.js";
 export { createNavMesh3D } from "./world/navmesh3d.js";
 export { createTwoMapWorldPbrMaterial } from "./integrations/pbr-material-library.js";
+export { defineMaterialVariants3D } from "./integrations/material-graph3d.js";
 export { createTraceRecorder } from "./integrations/trace.js";
 /** Public HGame facade. Physics providers stay lazy and load only when selected. */
 export const HGame: Readonly<{
@@ -790,6 +792,7 @@ export const HGame: Readonly<{
     createRealisticWater3D: typeof createRealisticWater3D;
     createRealisticGlassMaterial3D: typeof createRealisticGlassMaterial3D;
     createTwoMapWorldPbrMaterial: typeof createTwoMapWorldPbrMaterial;
+    defineMaterialVariants3D: typeof defineMaterialVariants3D;
     createStateMachine: typeof createStateMachine;
     BT_STATUS: Readonly<{
         SUCCESS: "success";

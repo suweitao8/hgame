@@ -19,10 +19,10 @@ export function createSharedMaterialBlock3D(initialUniforms?: {}): {
  * with deterministic shader modules (`fresnel`, `dissolve`, `triplanar`, `specularAA`, `windSway`)
  * and optional `sharedBlock` uniforms.
  *
- * @param {object} THREE Three.js namespace or compatible mock.
- * @param {object} [options]
+ * @param {any} THREE Three.js namespace or compatible mock.
+ * @param {Record<string, any>} [options]
  */
-export function createComposableMaterial3D(THREE: object, { color, roughness, metalness, clearcoat, clearcoatRoughness, emissive, emissiveIntensity, transparent, opacity, side, fresnel, dissolve, triplanar, specularAA, windSway, normalRmUnpack, wetness, interactRim, sharedBlock, vertexChunks, fragmentChunks, }?: object): any;
+export function createComposableMaterial3D(THREE: any, { color, roughness, metalness, clearcoat, clearcoatRoughness, emissive, emissiveIntensity, transparent, opacity, side, fresnel, dissolve, triplanar, specularAA, windSway, normalRmUnpack, wetness, interactRim, sharedBlock, vertexChunks, fragmentChunks, }?: Record<string, any> | undefined): any;
 /**
  * Shared O(1) Material Batch Registry synchronizing global uniforms (`uTime`, `uWindDir`,
  * `uFogDensity`) via WebGL2 UniformsGroup UBOs when `options.THREE` is provided, without
@@ -55,3 +55,36 @@ export function createMaterialBatchRegistry3D(initialSharedUniforms?: Record<str
         uboGroupName: string | null;
     }>;
 }>;
+/**
+ * Define a declarative keyword-driven 3D material variant pipeline with canonical cache keys,
+ * `defines`/`uniforms` merging, `customProgramCacheKey` reuse, and batch shader warmup.
+ *
+ * @param {any} THREE Three.js namespace or compatible mock.
+ * @param {object} [options]
+ * @param {Record<string, any>} [options.base={}] Base options passed to {@link createComposableMaterial3D}.
+ * @param {Record<string, Record<string, any>>} [options.keywords={}] Boolean or enum keyword definitions.
+ * @param {Record<string, any> | null} [options.uniforms=null] Shared variant uniforms merged onto created materials.
+ * @param {ReturnType<typeof createSharedMaterialBlock3D> | null} [options.sharedBlock=null] Optional shared uniform block.
+ * @returns {{ getKey: (activeKeywords?: Record<string, boolean | string | number | null | undefined>) => string, get: (activeKeywords?: Record<string, boolean | string | number | null | undefined>) => any, warmup: (renderer: any, camera: any, combinations?: Array<Record<string, boolean | string | number | null | undefined>> | null) => { compiled: number, keys: string[] }, list: () => string[], dispose: () => void, readonly size: number }}
+ */
+export function defineMaterialVariants3D(THREE: any, { base, keywords, uniforms, sharedBlock, }?: {
+    base?: Record<string, any> | undefined;
+    keywords?: Record<string, Record<string, any>> | undefined;
+    uniforms?: Record<string, any> | null | undefined;
+    sharedBlock?: {
+        readonly version: number;
+        readonly uniforms: any;
+        set: (name: any, value: any) => void;
+        get: (name: any) => any;
+    } | null | undefined;
+} | undefined): {
+    getKey: (activeKeywords?: Record<string, boolean | string | number | null | undefined>) => string;
+    get: (activeKeywords?: Record<string, boolean | string | number | null | undefined>) => any;
+    warmup: (renderer: any, camera: any, combinations?: Array<Record<string, boolean | string | number | null | undefined>> | null) => {
+        compiled: number;
+        keys: string[];
+    };
+    list: () => string[];
+    dispose: () => void;
+    readonly size: number;
+};

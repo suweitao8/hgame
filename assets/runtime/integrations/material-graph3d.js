@@ -46,8 +46,8 @@ export function createSharedMaterialBlock3D(initialUniforms = {}) {
  * with deterministic shader modules (`fresnel`, `dissolve`, `triplanar`, `specularAA`, `windSway`)
  * and optional `sharedBlock` uniforms.
  *
- * @param {object} THREE Three.js namespace or compatible mock.
- * @param {object} [options]
+ * @param {any} THREE Three.js namespace or compatible mock.
+ * @param {Record<string, any>} [options]
  */
 export function createComposableMaterial3D(THREE, {
   color = 0xffffff,
@@ -617,5 +617,212 @@ export function createMaterialBatchRegistry3D(
     setGlobal,
     updateFrame,
     getStats,
+  });
+}
+
+function normalizeUniformEntry(val) {
+  if (val && typeof val === 'object' && Object.prototype.hasOwnProperty.call(val, 'value')) {
+    return val;
+  }
+  return { value: val };
+}
+
+/**
+ * Define a declarative keyword-driven 3D material variant pipeline with canonical cache keys,
+ * `defines`/`uniforms` merging, `customProgramCacheKey` reuse, and batch shader warmup.
+ *
+ * @param {any} THREE Three.js namespace or compatible mock.
+ * @param {object} [options]
+ * @param {Record<string, any>} [options.base={}] Base options passed to {@link createComposableMaterial3D}.
+ * @param {Record<string, Record<string, any>>} [options.keywords={}] Boolean or enum keyword definitions.
+ * @param {Record<string, any> | null} [options.uniforms=null] Shared variant uniforms merged onto created materials.
+ * @param {ReturnType<typeof createSharedMaterialBlock3D> | null} [options.sharedBlock=null] Optional shared uniform block.
+ * @returns {{ getKey: (activeKeywords?: Record<string, boolean | string | number | null | undefined>) => string, get: (activeKeywords?: Record<string, boolean | string | number | null | undefined>) => any, warmup: (renderer: any, camera: any, combinations?: Array<Record<string, boolean | string | number | null | undefined>> | null) => { compiled: number, keys: string[] }, list: () => string[], dispose: () => void, readonly size: number }}
+ */
+export function defineMaterialVariants3D(THREE, {
+  base = {},
+  keywords = {},
+  uniforms = null,
+  sharedBlock = null,
+} = {}) {
+  if (!THREE?.MeshStandardMaterial) {
+    throw new TypeError('defineMaterialVariants3D requires THREE.MeshStandardMaterial');
+  }
+
+  const cache = new Map();
+  let disposed = false;
+
+  function resolveEntries(activeKeywords = {}) {
+    if (!activeKeywords || typeof activeKeywords !== 'object') return [];
+    const active = [];
+    for (const [k, kwDef] of Object.entries(keywords || {})) {
+      if (!kwDef || typeof kwDef !== 'object') continue;
+      const rawVal = activeKeywords[k];
+      if (rawVal === false || rawVal === null || rawVal === undefined || rawVal === '') continue;
+      if (typeof rawVal === 'string' || typeof rawVal === 'number') {
+        const enumKey = String(rawVal);
+        if (Object.prototype.hasOwnProperty.call(kwDef, enumKey) &&
+            kwDef[enumKey] && typeof kwDef[enumKey] === 'object') {
+          active.push({ sortKey: k, label: `${k}=${enumKey}`, patch: kwDef[enumKey] });
+          continue;
+        }
+        if (typeof rawVal === 'number' && rawVal !== 0) {
+          active.push({ sortKey: k, label: k, patch: kwDef });
+        }
+        continue;
+      }
+      if (rawVal === true) {
+        active.push({ sortKey: k, label: k, patch: kwDef });
+      }
+    }
+    active.sort((a, b) => (a.sortKey < b.sortKey ? -1 : a.sortKey > b.sortKey ? 1 : 0));
+    return active;
+  }
+
+  function getKey(activeKeywords = {}) {
+    const entries = resolveEntries(activeKeywords);
+    return entries.length > 0 ? entries.map(e => e.label).join('|') : 'default';
+  }
+
+  function get(activeKeywords = {}) {
+    if (disposed) {
+      throw new Error('MaterialVariantRegistry has been disposed');
+    }
+    const entries = resolveEntries(activeKeywords);
+    const canonicalKey = entries.length > 0 ? entries.map(e => e.label).join('|') : 'default';
+    const existing = cache.get(canonicalKey);
+    if (existing) return existing;
+
+    const patches = [base || {}, ...entries.map(e => e.patch)];
+    const merged = { sharedBlock };
+    const mergedDefines = {};
+    const mergedUniforms = {};
+    const vertexChunks = [];
+    const fragmentChunks = [];
+
+    if (uniforms && typeof uniforms === 'object') {
+      for (const [uName, uVal] of Object.entries(uniforms)) {
+        mergedUniforms[uName] = normalizeUniformEntry(uVal);
+      }
+    }
+
+    for (const patch of patches) {
+      if (!patch || typeof patch !== 'object') continue;
+      for (const [prop, val] of Object.entries(patch)) {
+        if (prop === 'defines' && val && typeof val === 'object') {
+          Object.assign(mergedDefines, val);
+        } else if (prop === 'uniforms' && val && typeof val === 'object') {
+          for (const [uName, uVal] of Object.entries(val)) {
+            mergedUniforms[uName] = normalizeUniformEntry(uVal);
+          }
+        } else if (prop === 'vertexChunks' && Array.isArray(val)) {
+          vertexChunks.push(...val);
+        } else if (prop === 'fragmentChunks' && Array.isArray(val)) {
+          fragmentChunks.push(...val);
+        } else {
+          merged[prop] = val;
+        }
+      }
+    }
+    if (vertexChunks.length > 0) merged.vertexChunks = vertexChunks;
+    if (fragmentChunks.length > 0) merged.fragmentChunks = fragmentChunks;
+
+    const material = createComposableMaterial3D(THREE, merged);
+
+    if (Object.keys(mergedDefines).length > 0) {
+      material.defines = { ...(material.defines || {}), ...mergedDefines };
+    }
+    if (Object.keys(mergedUniforms).length > 0) {
+      const prevCompile = typeof material.onBeforeCompile === 'function' ? material.onBeforeCompile : null;
+      material.onBeforeCompile = (shader, renderer) => {
+        prevCompile?.call(material, shader, renderer);
+        if (shader?.uniforms) {
+          for (const [uName, uObj] of Object.entries(mergedUniforms)) {
+            if (!(uName in shader.uniforms)) {
+              shader.uniforms[uName] = uObj;
+            }
+          }
+        }
+      };
+      material.userData.hgameVariantUniforms = mergedUniforms;
+    }
+
+    const prevKeyFn = typeof material.customProgramCacheKey === 'function' ? material.customProgramCacheKey : null;
+    const baseKey = prevKeyFn ? prevKeyFn.call(material) : 'base';
+    const fullCacheKey = `${baseKey}|var:${canonicalKey}`;
+    material.customProgramCacheKey = () => fullCacheKey;
+    material.userData.hgameVariantKey = canonicalKey;
+    if (material.userData.hgameMaterialGraph) {
+      material.userData.hgameMaterialGraph.variantKey = canonicalKey;
+      material.userData.hgameMaterialGraph.cacheKey = fullCacheKey;
+    }
+
+    cache.set(canonicalKey, material);
+    return material;
+  }
+
+  function warmup(renderer, camera, combinations = null) {
+    if (disposed) return { compiled: 0, keys: [] };
+    const seen = new Set();
+    const keys = [];
+    const matsToCompile = [];
+
+    if (Array.isArray(combinations)) {
+      for (const combo of combinations) {
+        const key = getKey(combo);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        keys.push(key);
+        matsToCompile.push(get(combo));
+      }
+    } else {
+      for (const [key, mat] of cache.entries()) {
+        seen.add(key);
+        keys.push(key);
+        matsToCompile.push(mat);
+      }
+    }
+
+    if (matsToCompile.length > 0 && renderer?.compile) {
+      const tempScene = THREE.Scene ? new THREE.Scene() : { add() {}, children: [] };
+      const geom = THREE.BoxGeometry ? new THREE.BoxGeometry(1, 1, 1) : null;
+      try {
+        for (const mat of matsToCompile) {
+          if (THREE.Mesh && geom) {
+            const mesh = new THREE.Mesh(geom, mat);
+            tempScene.add?.(mesh);
+          } else {
+            tempScene.children?.push?.({ material: mat });
+          }
+        }
+        renderer.compile(tempScene, camera);
+      } finally {
+        geom?.dispose?.();
+      }
+    }
+
+    return { compiled: keys.length, keys };
+  }
+
+  function list() {
+    return [...cache.keys()];
+  }
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    for (const mat of cache.values()) {
+      mat?.dispose?.();
+    }
+    cache.clear();
+  }
+
+  return Object.freeze({
+    getKey,
+    get,
+    warmup,
+    list,
+    dispose,
+    get size() { return cache.size; },
   });
 }

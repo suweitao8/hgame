@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `defineMaterialVariants3D` (`assets/runtime/integrations/material-graph3d.js`, exported via `index.js`) supporting declarative boolean & enum keyword variant dictionaries, canonical key sorting, `defines`/`uniforms` merging, `customProgramCacheKey` shader program reuse, and batch `warmup(renderer, camera, combinations)`, raising Scorecard v5.1 `R3` from `7.5` to `8.5` (total `82.1/100`).
+
 - Unify `post3d/pipeline.js` and `createThreeAdapter` under a single `compileRenderGraph` + `executeRenderGraph` frame DAG with `renderGraph = true` default (`assets/runtime/integrations/post3d/pipeline.js`, `assets/runtime/integrations/three.js`): added `extraPasses` (`before` / `afterWorld`), `getMainTarget()`, and `getLastFrameGraph()` driving `shadow-csm -> world -> projected-decals -> post3d` with zero visual regression, raising Scorecard v5.1 `A2` from `7.0` to `8.5` (total `81.5/100`).
 
 - Default `createThreeAdapter` `gpuIndirect` option to `'auto'` (`assets/runtime/integrations/three.js`, `assets/runtime/integrations/gpu-indirect3d.js`): lazy initialization with zero overhead when no indirect batches are registered, fixed `device`/`webgpuDevice` forwarding, added `getGpuCullingState()`, and implemented non-blocking 2-slot double-buffered WebGPU compute readback compaction in `createIndirectInstancedBatch3D` (`source: 'gpu-readback'`), raising Scorecard v5.1 `P2` from `7.0` to `8.0` (total `80.6/100`).

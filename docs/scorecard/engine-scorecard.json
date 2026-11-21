@@ -338,7 +338,7 @@
       "name": "材质、Shader 与贴花",
       "weight": 6,
       "scores": {
-        "hgame": 7.5,
+        "hgame": 8.5,
         "unity": 8.5,
         "cocos": 8,
         "godot": 6.5
@@ -354,8 +354,8 @@
         "industrialChecklist": [
           {
             "point": "声明式多变体统一材质管线（Keyword 变体与 ProgramCacheKey）",
-            "met": false,
-            "proof": "缺失（material-graph3d.js 仅提供单次注入，缺 Keyword 变体字典与 CacheKey 复用）"
+            "met": true,
+            "proof": "assets/runtime/integrations/material-graph3d.js defineMaterialVariants3D"
           },
           {
             "point": "std140 UBO 常量缓冲合批与表面 Shader 注入",
@@ -373,7 +373,7 @@
             "proof": "assets/runtime/integrations/decal3d.js"
           }
         ],
-        "note": "支持 WebGL2 std140 UBO 批合、GLSL3 深度重建 OBB 投影贴花、高度/体积雾及表面 Shader 注入。",
+        "note": "支持 defineMaterialVariants3D 声明式 Keyword 多变体与 customProgramCacheKey 复用/预热、WebGL2 std140 UBO 批合、GLSL3 深度重建 OBB 投影贴花与高度/体积雾。",
         "benchmarkFiles": [
           "tests/browser-engine-v3-commercial-benchmark.mjs"
         ]
@@ -383,7 +383,7 @@
         "cocos": "拥有声明式 Effect 材质系统与多 Pass 变体编译，贴花需自定义或扩展。",
         "godot": "Compatibility/GLES3 渲染器不支持 3D Decal 节点，自定义着色器变体规模受 GLSL3 限制。"
       },
-      "gap": "缺乏声明式 Keyword 多变体材质管线与 ProgramCacheKey 自动复用。"
+      "gap": "WebGL2 侧为按需编译与 ProgramCacheKey 复用，尚无离线 Shader 变体预剥离管线"
     },
     {
       "id": "R4",
