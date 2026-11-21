@@ -78,11 +78,18 @@ export function createMrtOutlinePass3D(THREE = null, {
     uOutlineThreshold: { value: Number(threshold) || 0.22 },
   };
 
-  const material = THREE?.ShaderMaterial
-    ? new THREE.ShaderMaterial({
+  const MatCtor = THREE?.RawShaderMaterial || THREE?.ShaderMaterial;
+  const fragSrc = THREE?.RawShaderMaterial
+    ? `precision highp float;\n${MRT_OUTLINE_FRAGMENT_GLSL3}`
+    : MRT_OUTLINE_FRAGMENT_GLSL3;
+  const vertSrc = THREE?.RawShaderMaterial
+    ? 'precision highp float;\nin vec3 position;\nin vec2 uv;\nout vec2 vUv;\nvoid main() {\n  vUv = uv;\n  gl_Position = vec4(position.xy, 0.0, 1.0);\n}\n'
+    : 'out vec2 vUv;\nvoid main() {\n  vUv = uv;\n  gl_Position = vec4(position.xy, 0.0, 1.0);\n}\n';
+  const material = MatCtor
+    ? new MatCtor({
         glslVersion: THREE.GLSL3,
-        vertexShader: 'out vec2 vUv;\nvoid main() {\n  vUv = uv;\n  gl_Position = vec4(position.xy, 0.0, 1.0);\n}\n',
-        fragmentShader: MRT_OUTLINE_FRAGMENT_GLSL3,
+        vertexShader: vertSrc,
+        fragmentShader: fragSrc,
         uniforms,
         depthTest: false,
         depthWrite: false,
@@ -111,6 +118,80 @@ export function createMrtOutlinePass3D(THREE = null, {
     else { uniforms.uTexelSize.value.x = 1 / w; uniforms.uTexelSize.value.y = 1 / h; }
   }
 
+  let renderCount = 0;
+  const quadScene = THREE?.Scene && THREE?.Mesh && THREE?.PlaneGeometry && material
+    ? (() => {
+        const s = new THREE.Scene();
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material);
+        mesh.frustumCulled = false;
+        s.add(mesh);
+        return { scene: s, mesh };
+      })()
+    : null;
+  const quadCam = THREE?.OrthographicCamera ? new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) : null;
+  const gbufferMaterial = THREE?.ShaderMaterial
+    ? new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        vertexShader: [
+          'out vec3 vViewNormal;',
+          'void main() {',
+          '  vec3 n = normal;',
+          '  vec4 mvPos = vec4(position, 1.0);',
+          '  #ifdef USE_INSTANCING',
+          '    mvPos = instanceMatrix * mvPos;',
+          '    n = mat3(instanceMatrix) * n;',
+          '  #endif',
+          '  vViewNormal = normalize(normalMatrix * n);',
+          '  gl_Position = projectionMatrix * modelViewMatrix * mvPos;',
+          '}',
+        ].join('\n'),
+        fragmentShader: [
+          'layout(location = 0) out vec4 gColor;',
+          'layout(location = 1) out vec4 gNormalId;',
+          'in vec3 vViewNormal;',
+          'void main() {',
+          '  vec3 encN = normalize(vViewNormal) * 0.5 + 0.5;',
+          '  gColor = vec4(encN, 1.0);',
+          '  gNormalId = vec4(encN, 1.0);',
+          '}',
+        ].join('\n'),
+      })
+    : null;
+
+  /**
+   * Render scene into the 2-attachment MRT target and composite Sobel edges to `outputTarget`.
+   * @param {any} renderer
+   * @param {any} scene
+   * @param {any} camera
+   * @param {any} [outputTarget=null]
+   */
+  function renderOutline(renderer, scene, camera, outputTarget = null) {
+    if (!renderer || !scene || !camera || !mrtTarget || !quadScene || !quadCam) return false;
+    const prevTarget = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
+    const hasOverrideProp = 'overrideMaterial' in scene;
+    const prevOverride = scene.overrideMaterial ?? null;
+    try {
+      if (gbufferMaterial) scene.overrideMaterial = gbufferMaterial;
+      renderer.setRenderTarget?.(mrtTarget);
+      renderer.clear?.(true, true, false);
+      renderer.render?.(scene, camera);
+
+      if (hasOverrideProp) scene.overrideMaterial = prevOverride;
+      else scene.overrideMaterial = null;
+
+      uniforms.tColor.value = mrtTarget.textures?.[0] ?? mrtTarget.texture ?? null;
+      uniforms.tNormalId.value = mrtTarget.textures?.[1] ?? mrtTarget.textures?.[0] ?? mrtTarget.texture ?? null;
+      renderer.setRenderTarget?.(outputTarget ?? null);
+      renderer.render?.(quadScene.scene, quadCam);
+      renderCount++;
+      return true;
+    } finally {
+      if (hasOverrideProp) scene.overrideMaterial = prevOverride;
+      else scene.overrideMaterial = null;
+      renderer.setRenderTarget?.(prevTarget ?? null);
+    }
+  }
+
   function getStats() {
     return Object.freeze({
       width: w,
@@ -119,12 +200,15 @@ export function createMrtOutlinePass3D(THREE = null, {
       thickness: uniforms.uOutlineThickness.value,
       threshold: uniforms.uOutlineThreshold.value,
       hasShaderMaterial: Boolean(material),
+      renderCount,
     });
   }
 
   function dispose() {
+    quadScene?.mesh?.geometry?.dispose?.();
     mrtTarget?.dispose?.();
     material?.dispose?.();
+    gbufferMaterial?.dispose?.();
   }
 
   return Object.freeze({
@@ -133,6 +217,7 @@ export function createMrtOutlinePass3D(THREE = null, {
     uniforms,
     setOutline,
     resize,
+    renderOutline,
     getStats,
     dispose,
   });

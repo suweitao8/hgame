@@ -165,6 +165,44 @@ export function createVramLedger3D(THREE: any, { softLimitMB, hardLimitMB, onPre
         pressure: "ok";
     }>;
 }>;
+/**
+ * Capture a reference-keyed snapshot of all active geometries, materials, textures, and
+ * render targets so frame/transition memory leaks can be diffed unambiguously.
+ * @param {any} worldOrScene
+ * @param {{ label?: string, extraTargets?: any[], THREE?: any }} [options]
+ */
+export function captureResourceSnapshot(worldOrScene?: any, { label, extraTargets, THREE }?: {
+    label?: string;
+    extraTargets?: any[];
+    THREE?: any;
+} | undefined): Readonly<{
+    label: string;
+    count: number;
+    totalBytes: number;
+    entries: Map<any, any>;
+}>;
+/**
+ * Diff two `captureResourceSnapshot` objects to identify leaked allocations vs cleanly released resources.
+ * @param {{ count: number, totalBytes: number, entries: Map<string, any> }} before
+ * @param {{ count: number, totalBytes: number, entries: Map<string, any> }} after
+ */
+export function diffResourceSnapshots(before: {
+    count: number;
+    totalBytes: number;
+    entries: Map<string, any>;
+}, after: {
+    count: number;
+    totalBytes: number;
+    entries: Map<string, any>;
+}): Readonly<{
+    hasLeak: boolean;
+    leakedCount: number;
+    releasedCount: number;
+    retainedCount: number;
+    deltaBytes: number;
+    leaked: any[];
+    released: any[];
+}>;
 export type RenderTargetUsage3D = {
     viewIndex: number;
     width: number;

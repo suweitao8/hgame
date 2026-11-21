@@ -392,3 +392,114 @@ export function executeRenderGraph(graph, pool, { externalTargets = {}, state = 
     peakTargets: graph.peakTargets,
   });
 }
+
+/**
+ * Physical GPU RenderTarget aliasing pool compatible with `executeRenderGraph`, reusing
+ * idle `THREE.WebGLRenderTarget` instances across non-overlapping pass lifetimes to match
+ * Unity URP's transient memory aliasing.
+ * @param {any} [THREE=null]
+ * @param {{ maxIdleFrames?: number }} [options]
+ */
+export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames = 4 } = {}) {
+  const freeBuckets = new Map();
+  const targetMeta = new WeakMap();
+  let allocations = 0;
+  let reuses = 0;
+  let activeCount = 0;
+  let peakTargets = 0;
+  let savedBytes = 0;
+
+  function allocateTarget(spec, key) {
+    const w = Math.max(1, Math.floor(Number(spec?.width) || 390));
+    const h = Math.max(1, Math.floor(Number(spec?.height) || 844));
+    const depth = Boolean(spec?.depthBuffer);
+    const samples = Math.max(0, Math.floor(Number(spec?.samples) || 0));
+    let rt;
+    if (THREE?.WebGLRenderTarget) {
+      rt = new THREE.WebGLRenderTarget(w, h, {
+        depthBuffer: depth,
+        stencilBuffer: false,
+        samples,
+        minFilter: THREE.LinearFilter,
+        magFilter: THREE.LinearFilter,
+      });
+    } else {
+      rt = { width: w, height: h, depthBuffer: depth, samples, isRenderTarget: true, dispose() {} };
+    }
+    allocations++;
+    targetMeta.set(rt, { key, bytes: w * h * 8 * (1 + samples) });
+    return rt;
+  }
+
+  function acquire(spec, resource) {
+    const key = specKey(spec);
+    const bucket = freeBuckets.get(key);
+    let rt;
+    if (bucket && bucket.length > 0) {
+      rt = bucket.pop().target;
+      reuses++;
+      savedBytes += targetMeta.get(rt)?.bytes ?? 0;
+    } else {
+      rt = allocateTarget(spec, key);
+    }
+    activeCount++;
+    if (activeCount > peakTargets) peakTargets = activeCount;
+    return rt;
+  }
+
+  function release(target) {
+    if (!target || typeof target !== 'object') return;
+    const meta = targetMeta.get(target);
+    if (!meta) return;
+    activeCount = Math.max(0, activeCount - 1);
+    let bucket = freeBuckets.get(meta.key);
+    if (!bucket) {
+      bucket = [];
+      freeBuckets.set(meta.key, bucket);
+    }
+    bucket.push({ target, idleFrames: 0 });
+  }
+
+  function beginFrame() {
+    for (const [key, bucket] of freeBuckets.entries()) {
+      for (let i = bucket.length - 1; i >= 0; i--) {
+        bucket[i].idleFrames++;
+        if (bucket[i].idleFrames > maxIdleFrames) {
+          bucket[i].target.dispose?.();
+          bucket.splice(i, 1);
+        }
+      }
+      if (bucket.length === 0) freeBuckets.delete(key);
+    }
+  }
+
+  function getStats() {
+    let freeCount = 0;
+    for (const bucket of freeBuckets.values()) freeCount += bucket.length;
+    return Object.freeze({
+      allocations,
+      reuses,
+      savedAllocations: reuses,
+      estimatedSavedBytes: savedBytes,
+      activeCount,
+      freeCount,
+      peakTargets,
+    });
+  }
+
+  function dispose() {
+    for (const bucket of freeBuckets.values()) {
+      for (const entry of bucket) entry.target.dispose?.();
+    }
+    freeBuckets.clear();
+    activeCount = 0;
+  }
+
+  return Object.freeze({
+    acquire,
+    release,
+    beginFrame,
+    getStats,
+    dispose,
+  });
+}

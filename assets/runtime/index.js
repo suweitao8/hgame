@@ -3,7 +3,7 @@ export { defineProject, resolveFeatureGraph, PROJECT_PROFILES, OPTIONAL_FEATURES
   DETERMINISTIC_PHYSICS_BACKENDS } from './core/config.js';
 export { Component } from './core/component.js';
 export { Entity } from './core/entity.js';
-export { Scene, SceneManager } from './core/scene.js';
+export { Scene, SceneManager, createHotReloadController } from './core/scene.js';
 export { PrefabRegistry } from './core/prefab.js';
 export {
   normalizeGameplayTag,
@@ -57,7 +57,11 @@ export {
   mergeStaticMeshesByMaterial3D,
   GPU_HIZ_OCCLUSION_WGSL,
   createHiZOcclusionCuller3D,
+  dispatchWebGpuHiZOcclusion,
+  quantizeBufferGeometry3D,
 } from './integrations/culling3d.js';
+export { createPhysicalRenderTargetPool3D } from './integrations/post3d/render-graph.js';
+export { captureResourceSnapshot, diffResourceSnapshots } from './integrations/quality3d/render-diagnostics.js';
 export { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
 import { createSkeleton2D } from './animation/skeleton2d.js';
 import { createShadowAtlas3D } from './integrations/shadow3d.js';
@@ -65,7 +69,11 @@ import {
   mergeStaticMeshesByMaterial3D,
   GPU_HIZ_OCCLUSION_WGSL,
   createHiZOcclusionCuller3D,
+  dispatchWebGpuHiZOcclusion,
+  quantizeBufferGeometry3D,
 } from './integrations/culling3d.js';
+import { createPhysicalRenderTargetPool3D } from './integrations/post3d/render-graph.js';
+import { captureResourceSnapshot, diffResourceSnapshots } from './integrations/quality3d/render-diagnostics.js';
 import { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
 export { TileMap, findGridPath, createGridPathWork, applyAutoTileRules } from './world/tilemap.js';
 export { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
@@ -204,7 +212,7 @@ export {
 import { defineProject, resolveFeatureGraph } from './core/config.js';
 import { Component } from './core/component.js';
 import { Entity } from './core/entity.js';
-import { Scene, SceneManager } from './core/scene.js';
+import { Scene, SceneManager, createHotReloadController } from './core/scene.js';
 import { PrefabRegistry } from './core/prefab.js';
 import { createTagContainer, createTagRegistry, GLOBAL_TAG_REGISTRY, matchGameplayTags } from './core/tags.js';
 import { createGameApplication } from './core/application.js';
@@ -556,7 +564,13 @@ export const HGame = Object.freeze({
   mergeStaticMeshesByMaterial3D,
   GPU_HIZ_OCCLUSION_WGSL,
   createHiZOcclusionCuller3D,
+  dispatchWebGpuHiZOcclusion,
+  quantizeBufferGeometry3D,
   MRT_OUTLINE_FRAGMENT_GLSL3,
   createMrtOutlinePass3D,
+  createPhysicalRenderTargetPool3D,
+  captureResourceSnapshot,
+  diffResourceSnapshots,
+  createHotReloadController,
   createSkeleton2D,
 });

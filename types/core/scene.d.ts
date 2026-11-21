@@ -1,3 +1,20 @@
+/**
+ * Create a lightweight runtime hot-reload coordinator bound to a {@link SceneManager}
+ * for instant state-preserving scene swaps & error rollback during iterative development.
+ * @param {SceneManager} sceneManager
+ */
+export function createHotReloadController(sceneManager: SceneManager): Readonly<{
+    reload: (name: any, nextFactory: any, options?: {}) => {
+        ok: boolean;
+        scene: Scene;
+        durationMs: number;
+        rolledBack: boolean;
+    };
+    getStats: () => Readonly<{
+        reloadCount: number;
+        lastDurationMs: number;
+    }>;
+}>;
 /** Logic Scene. The Renderer and physics are per-project optional services. */
 export class Scene {
     /** @param {string} name Unique scene name. */
@@ -86,6 +103,23 @@ export class SceneManager {
     add<T extends Scene>(scene: T): T;
     /** @param {string} name @returns {Scene | null} */
     get(name: string): Scene | null;
+    /**
+     * Swap out a registered Scene in place while preserving gameplay state, atomically rolling
+     * back to the previous scene if the replacement factory or restore throws.
+     * @param {string} name
+     * @param {(prevScene: Scene | null, savedState: any) => Scene} nextFactory
+     * @param {{ captureState?: (scene: Scene) => any, restoreState?: (scene: Scene, state: any) => void, rollbackOnError?: boolean }} [options]
+     */
+    hotReload(name: string, nextFactory: (prevScene: Scene | null, savedState: any) => Scene, { captureState, restoreState, rollbackOnError }?: {
+        captureState?: (scene: Scene) => any;
+        restoreState?: (scene: Scene, state: any) => void;
+        rollbackOnError?: boolean;
+    } | undefined): {
+        ok: boolean;
+        scene: Scene;
+        durationMs: number;
+        rolledBack: boolean;
+    };
     /** @param {Scene} scene @param {unknown} data */
     _enter(scene: Scene, data: unknown): void;
     /** @param {Scene} scene */

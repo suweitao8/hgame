@@ -39,6 +39,7 @@ export function createMrtOutlinePass3D(THREE?: any, { width, height, outlineColo
         threshold?: number;
     } | undefined) => void;
     resize: (nextW: any, nextH: any) => void;
+    renderOutline: (renderer: any, scene: any, camera: any, outputTarget?: any) => boolean;
     getStats: () => Readonly<{
         width: number;
         height: number;
@@ -46,6 +47,7 @@ export function createMrtOutlinePass3D(THREE?: any, { width, height, outlineColo
         thickness: number;
         threshold: number;
         hasShaderMaterial: boolean;
+        renderCount: number;
     }>;
     dispose: () => void;
 }>;

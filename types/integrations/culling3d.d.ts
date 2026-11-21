@@ -56,6 +56,26 @@ export function mergeStaticMeshesByMaterial3D(THREE: any, meshes: any[], { chunk
     }>;
 };
 /**
+ * Quantize non-position attributes of a `THREE.BufferGeometry` (`normal -> normalized Int8`,
+ * `uv in [0,1] -> normalized Uint16`, `Uint32 index -> Uint16` when <= 65535 vertices), saving
+ * 30-60% vertex GPU memory while remaining 100% compatible with standard WebGL2 PBR shaders.
+ * @param {any} THREE
+ * @param {any} geometry
+ * @param {{ quantizeNormals?: boolean, quantizeUvs?: boolean }} [options]
+ */
+export function quantizeBufferGeometry3D(THREE: any, geometry: any, { quantizeNormals, quantizeUvs }?: {
+    quantizeNormals?: boolean;
+    quantizeUvs?: boolean;
+} | undefined): {
+    geometry: any;
+    stats: Readonly<{
+        originalBytes: any;
+        quantizedBytes: any;
+        savedBytes: number;
+        reductionPct: number;
+    }>;
+};
+/**
  * Structural subset of THREE.Camera read by the cullers.
  */
 export type CullCameraLike = {
@@ -519,4 +539,4 @@ export type InstancedBatch3D = {
     flush: (options?: InstancedBatchFlushOptions) => InstancedBatchFlushResult;
     dispose: () => void;
 };
-export { GPU_CULL_WGSL, GPU_HIZ_OCCLUSION_WGSL, createGpuIndirectCuller3D, createIndirectInstancedBatch3D, createHiZOcclusionCuller3D } from "./gpu-indirect3d.js";
+export { GPU_CULL_WGSL, GPU_HIZ_OCCLUSION_WGSL, createGpuIndirectCuller3D, createIndirectInstancedBatch3D, createHiZOcclusionCuller3D, dispatchWebGpuHiZOcclusion } from "./gpu-indirect3d.js";

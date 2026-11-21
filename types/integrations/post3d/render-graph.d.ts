@@ -63,3 +63,27 @@ export function executeRenderGraph(graph: ReturnType<typeof compileRenderGraph>,
     reclaimedCount: number;
     peakTargets: number;
 }>;
+/**
+ * Physical GPU RenderTarget aliasing pool compatible with `executeRenderGraph`, reusing
+ * idle `THREE.WebGLRenderTarget` instances across non-overlapping pass lifetimes to match
+ * Unity URP's transient memory aliasing.
+ * @param {any} [THREE=null]
+ * @param {{ maxIdleFrames?: number }} [options]
+ */
+export function createPhysicalRenderTargetPool3D(THREE?: any, { maxIdleFrames }?: {
+    maxIdleFrames?: number;
+} | undefined): Readonly<{
+    acquire: (spec: any, resource: any) => any;
+    release: (target: any) => void;
+    beginFrame: () => void;
+    getStats: () => Readonly<{
+        allocations: number;
+        reuses: number;
+        savedAllocations: number;
+        estimatedSavedBytes: number;
+        activeCount: number;
+        freeCount: number;
+        peakTargets: number;
+    }>;
+    dispose: () => void;
+}>;

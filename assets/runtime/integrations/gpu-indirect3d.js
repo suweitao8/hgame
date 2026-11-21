@@ -644,11 +644,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (idx >= uHiZ.objectCount) { return; }
   let aabb = bScreenAabbs[idx];
   let span = max((aabb.z - aabb.x) * uHiZ.screenSize.x, (aabb.w - aabb.y) * uHiZ.screenSize.y);
-  let mip = min(uHiZ.mipCount - 1u, u32(ceil(log2(max(1.0, span)))));
+  let mip = min(uHiZ.mipCount - 1u, u32(ceil(log2(max(1.0, span * 0.5)))));
   let dim = vec2<i32>(max(vec2<f32>(1.0), floor(uHiZ.screenSize / f32(1u << mip))));
-  let uv = clamp((aabb.xy + aabb.zw) * 0.5, vec2<f32>(0.0), vec2<f32>(0.9999));
-  let texel = clamp(vec2<i32>(uv * vec2<f32>(dim)), vec2<i32>(0), dim - vec2<i32>(1));
-  let maxOccDepth = textureLoad(tHiZ, texel, i32(mip)).r;
+  let fdim = vec2<f32>(dim);
+  let t0 = clamp(vec2<i32>(floor(aabb.xy * fdim)), vec2<i32>(0), dim - vec2<i32>(1));
+  let t1 = clamp(vec2<i32>(floor((aabb.zw - vec2<f32>(1e-4)) * fdim)), t0, dim - vec2<i32>(1));
+  let d00 = textureLoad(tHiZ, t0, i32(mip)).r;
+  let d10 = textureLoad(tHiZ, vec2<i32>(t1.x, t0.y), i32(mip)).r;
+  let d01 = textureLoad(tHiZ, vec2<i32>(t0.x, t1.y), i32(mip)).r;
+  let d11 = textureLoad(tHiZ, t1, i32(mip)).r;
+  let maxOccDepth = max(max(d00, d10), max(d01, d11));
   bVisibility[idx] = select(0u, 1u, bMinDepths[idx] <= maxOccDepth + 1e-4);
 }
 `;
@@ -760,5 +765,178 @@ export function createHiZOcclusionCuller3D({ width = 128, height = 128 } = {}) {
     testScreenBounds,
     resetStats,
     getStats,
+    getMipLevels: () => mips.map(m => ({ width: m.width, height: m.height, data: m.data })),
   });
+}
+
+/**
+ * Hardware WebGPU Compute Stage 2 Hi-Z Occlusion Culler: uploads a full `r32float` depth pyramid
+ * to `GPUTexture`, dispatches `GPU_HIZ_OCCLUSION_WGSL` across `objectCount` screen AABBs, and
+ * optionally reads back per-object visibility bits (`1` = visible, `0` = occluded behind walls).
+ * @param {{
+ *   webgpuDevice?: any,
+ *   screenAabbs: Float32Array,
+ *   minDepths: Float32Array,
+ *   hizDepthData: Float32Array,
+ *   width?: number,
+ *   height?: number,
+ *   objectCount: number,
+ *   readback?: boolean,
+ * }} options
+ */
+export async function dispatchWebGpuHiZOcclusion({
+  webgpuDevice = null,
+  screenAabbs,
+  minDepths,
+  hizDepthData,
+  width = 64,
+  height = 64,
+  objectCount = 0,
+  readback = false,
+} = {}) {
+  const count = Math.max(0, Math.floor(Number(objectCount) || 0));
+  const culler = createHiZOcclusionCuller3D({ width, height });
+  culler.buildPyramid(hizDepthData);
+  const mipLevels = culler.getMipLevels();
+
+  if (!webgpuDevice || typeof webgpuDevice.createComputePipeline !== 'function' || count === 0) {
+    const visibility = new Uint32Array(count);
+    let visibleCount = 0;
+    for (let i = 0; i < count; i++) {
+      const b = i * 4;
+      const vis = culler.testScreenBounds(screenAabbs[b], screenAabbs[b + 1], screenAabbs[b + 2], screenAabbs[b + 3], minDepths[i]);
+      visibility[i] = vis ? 1 : 0;
+      if (vis) visibleCount++;
+    }
+    return {
+      mode: 'cpu-hiz',
+      dispatched: count,
+      visibleCount,
+      occludedCount: count - visibleCount,
+      mipCount: mipLevels.length,
+      visibility,
+    };
+  }
+
+  const baseW = mipLevels[0].width;
+  const baseH = mipLevels[0].height;
+  // GPUTextureUsage: TEXTURE_BINDING (0x04) | COPY_DST (0x02) = 0x06
+  const hizTexture = webgpuDevice.createTexture({
+    size: [baseW, baseH, 1],
+    mipLevelCount: mipLevels.length,
+    format: 'r32float',
+    usage: 0x06,
+  });
+
+  for (let m = 0; m < mipLevels.length; m++) {
+    const mip = mipLevels[m];
+    const rowBytes = mip.width * 4;
+    const paddedRowBytes = Math.ceil(rowBytes / 256) * 256;
+    let uploadBuf = mip.data;
+    if (paddedRowBytes !== rowBytes) {
+      const padded = new Uint8Array(paddedRowBytes * mip.height);
+      const srcBytes = new Uint8Array(mip.data.buffer, mip.data.byteOffset, mip.data.byteLength);
+      for (let y = 0; y < mip.height; y++) {
+        padded.set(srcBytes.subarray(y * rowBytes, (y + 1) * rowBytes), y * paddedRowBytes);
+      }
+      uploadBuf = padded;
+    }
+    webgpuDevice.queue.writeTexture(
+      { texture: hizTexture, mipLevel: m },
+      uploadBuf,
+      { bytesPerRow: paddedRowBytes, rowsPerImage: mip.height },
+      [mip.width, mip.height, 1],
+    );
+  }
+
+  const uniformData = new ArrayBuffer(16);
+  const uniformF32 = new Float32Array(uniformData);
+  const uniformU32 = new Uint32Array(uniformData);
+  uniformF32[0] = baseW;
+  uniformF32[1] = baseH;
+  uniformU32[2] = mipLevels.length;
+  uniformU32[3] = count;
+
+  const uniformBuf = webgpuDevice.createBuffer({
+    size: 16,
+    usage: WEBGPU_BUFFER_USAGE.UNIFORM | WEBGPU_BUFFER_USAGE.COPY_DST,
+  });
+  webgpuDevice.queue.writeBuffer(uniformBuf, 0, uniformData);
+
+  const aabbByteLen = Math.max(16, count * 16);
+  const aabbBuf = webgpuDevice.createBuffer({
+    size: aabbByteLen,
+    usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.COPY_DST,
+  });
+  webgpuDevice.queue.writeBuffer(aabbBuf, 0, screenAabbs, 0, count * 4);
+
+  const depthByteLen = Math.max(16, count * 4);
+  const depthBuf = webgpuDevice.createBuffer({
+    size: depthByteLen,
+    usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.COPY_DST,
+  });
+  webgpuDevice.queue.writeBuffer(depthBuf, 0, minDepths, 0, count);
+
+  const visBuf = webgpuDevice.createBuffer({
+    size: depthByteLen,
+    usage: WEBGPU_BUFFER_USAGE.STORAGE | WEBGPU_BUFFER_USAGE.COPY_SRC,
+  });
+
+  const shaderModule = webgpuDevice.createShaderModule({ code: GPU_HIZ_OCCLUSION_WGSL });
+  const pipeline = webgpuDevice.createComputePipeline({
+    layout: 'auto',
+    compute: { module: shaderModule, entryPoint: 'main' },
+  });
+  const bindGroup = webgpuDevice.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: uniformBuf } },
+      { binding: 1, resource: { buffer: aabbBuf } },
+      { binding: 2, resource: { buffer: depthBuf } },
+      { binding: 3, resource: hizTexture.createView() },
+      { binding: 4, resource: { buffer: visBuf } },
+    ],
+  });
+
+  const encoder = webgpuDevice.createCommandEncoder();
+  const cpass = encoder.beginComputePass();
+  cpass.setPipeline(pipeline);
+  cpass.setBindGroup(0, bindGroup);
+  cpass.dispatchWorkgroups(Math.ceil(count / 64));
+  cpass.end();
+
+  let readBuf = null;
+  if (readback) {
+    readBuf = webgpuDevice.createBuffer({
+      size: depthByteLen,
+      usage: WEBGPU_BUFFER_USAGE.MAP_READ | WEBGPU_BUFFER_USAGE.COPY_DST,
+    });
+    encoder.copyBufferToBuffer(visBuf, 0, readBuf, 0, count * 4);
+  }
+  webgpuDevice.queue.submit([encoder.finish()]);
+
+  let visibility = null;
+  let visibleCount = 0;
+  if (readback && readBuf) {
+    await readBuf.mapAsync(0x0001);
+    visibility = new Uint32Array(new Uint32Array(readBuf.getMappedRange()).subarray(0, count));
+    for (let i = 0; i < count; i++) if (visibility[i] > 0) visibleCount++;
+    readBuf.unmap();
+    readBuf.destroy();
+  }
+
+  uniformBuf.destroy();
+  aabbBuf.destroy();
+  depthBuf.destroy();
+  visBuf.destroy();
+  hizTexture.destroy();
+
+  return {
+    mode: 'webgpu-hiz',
+    dispatched: count,
+    visibleCount,
+    occludedCount: readback ? count - visibleCount : 0,
+    mipCount: mipLevels.length,
+    visibility,
+  };
 }

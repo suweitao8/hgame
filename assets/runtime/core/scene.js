@@ -324,6 +324,78 @@ export class SceneManager {
   }
   /** @param {string} name @returns {Scene | null} */
   get(name) { return this.registry.get(name) ?? null; }
+  /**
+   * Swap out a registered Scene in place while preserving gameplay state, atomically rolling
+   * back to the previous scene if the replacement factory or restore throws.
+   * @param {string} name
+   * @param {(prevScene: Scene | null, savedState: any) => Scene} nextFactory
+   * @param {{ captureState?: (scene: Scene) => any, restoreState?: (scene: Scene, state: any) => void, rollbackOnError?: boolean }} [options]
+   */
+  hotReload(name, nextFactory, { captureState, restoreState, rollbackOnError = true } = {}) {
+    if (this._disposing || this.app.disposed) throw new Error('Application disposed or disposing');
+    if (typeof nextFactory !== 'function') throw new TypeError('hotReload requires nextFactory function');
+    const t0 = performance.now();
+    const prevScene = this.get(name);
+    const wasCurrent = Boolean(prevScene && this.current === prevScene);
+    const savedState = prevScene
+      ? (typeof captureState === 'function' ? captureState(prevScene) : prevScene.serializeState?.())
+      : undefined;
+
+    let nextScene = null;
+    try {
+      nextScene = nextFactory(prevScene, savedState);
+      if (!(nextScene instanceof Scene) || nextScene.name !== name) {
+        throw new TypeError(`hotReload factory must return a Scene named "${name}"`);
+      }
+      if (prevScene) {
+        if (wasCurrent) {
+          this._leave(prevScene, `hot-reload:${name}`);
+          this.current = null;
+        }
+        this.registry.delete(name);
+        prevScene.dispose();
+      }
+      this.add(nextScene);
+      if (wasCurrent) {
+        this.start(name);
+      }
+      if (savedState !== undefined) {
+        if (typeof restoreState === 'function') restoreState(nextScene, savedState);
+        else nextScene.restoreState?.(savedState);
+      }
+      const durationMs = Number(Math.max(0, performance.now() - t0).toFixed(3));
+      return { ok: true, scene: nextScene, durationMs, rolledBack: false };
+    } catch (error) {
+      if (nextScene && nextScene !== prevScene) {
+        try {
+          if (this.current === nextScene) {
+            this._leave(nextScene, 'hot-reload-rollback');
+            this.current = null;
+          }
+          if (this.registry.get(name) === nextScene) this.registry.delete(name);
+          nextScene.dispose();
+        } catch { /* ignore secondary cleanup error during rollback */ }
+      }
+      if (rollbackOnError && prevScene) {
+        const recovered = new Scene(name);
+        if (typeof prevScene.enter === 'function' && prevScene !== recovered) {
+          recovered.enter = prevScene.enter;
+          recovered.exit = prevScene.exit;
+          recovered.restoreState = prevScene.restoreState;
+          recovered.serializeState = prevScene.serializeState;
+        }
+        try {
+          if (!this.registry.has(name)) this.add(recovered);
+          if (wasCurrent) this.start(name);
+          if (savedState !== undefined) {
+            if (typeof restoreState === 'function') restoreState(recovered, savedState);
+            else recovered.restoreState?.(savedState);
+          }
+        } catch { /* fallback best-effort */ }
+      }
+      throw error;
+    }
+  }
   /** @param {Scene} scene @param {unknown} data */
   _enter(scene, data) {
     this._entered.add(scene);
@@ -521,4 +593,27 @@ export class SceneManager {
       this._disposing = false;
     }
   }
+}
+
+/**
+ * Create a lightweight runtime hot-reload coordinator bound to a {@link SceneManager}
+ * for instant state-preserving scene swaps & error rollback during iterative development.
+ * @param {SceneManager} sceneManager
+ */
+export function createHotReloadController(sceneManager) {
+  if (!sceneManager || typeof sceneManager.hotReload !== 'function') {
+    throw new TypeError('createHotReloadController requires a SceneManager');
+  }
+  let reloadCount = 0;
+  let lastDurationMs = 0;
+  function reload(name, nextFactory, options = {}) {
+    const res = sceneManager.hotReload(name, nextFactory, options);
+    reloadCount++;
+    lastDurationMs = res.durationMs;
+    return res;
+  }
+  function getStats() {
+    return Object.freeze({ reloadCount, lastDurationMs });
+  }
+  return Object.freeze({ reload, getStats });
 }

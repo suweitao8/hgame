@@ -551,3 +551,118 @@ export function createVramLedger3D(THREE, {
     getLastReport() { return lastReport; },
   });
 }
+
+let snapshotResourceNextUid = 1;
+const snapshotWeakIds = new WeakMap();
+function resolveResourceKey(obj) {
+  if (obj.uuid) return String(obj.uuid);
+  if (obj.id !== undefined && obj.id !== null) return String(obj.id);
+  let uid = snapshotWeakIds.get(obj);
+  if (!uid) {
+    uid = `res_${snapshotResourceNextUid++}`;
+    snapshotWeakIds.set(obj, uid);
+  }
+  return uid;
+}
+
+/**
+ * Capture a reference-keyed snapshot of all active geometries, materials, textures, and
+ * render targets so frame/transition memory leaks can be diffed unambiguously.
+ * @param {any} worldOrScene
+ * @param {{ label?: string, extraTargets?: any[], THREE?: any }} [options]
+ */
+export function captureResourceSnapshot(worldOrScene = null, { label = 'snapshot', extraTargets = [], THREE = null } = {}) {
+  const entries = new Map();
+  const addEntry = (kind, obj, ownerPath) => {
+    if (!obj || typeof obj !== 'object') return;
+    const key = `${kind}:${resolveResourceKey(obj)}`;
+    if (entries.has(key)) return;
+    let bytes = 0;
+    if (kind === 'geometry') {
+      const attrs = obj.attributes ? Object.values(obj.attributes) : [];
+      for (const a of attrs) bytes += a?.array?.byteLength ?? 0;
+      bytes += obj.index?.array?.byteLength ?? 0;
+    } else if (kind === 'texture') {
+      const w = obj.image?.width ?? 256;
+      const h = obj.image?.height ?? 256;
+      bytes = w * h * 4;
+    } else if (kind === 'renderTarget') {
+      bytes = THREE ? estimateRenderTargetBytes(THREE, obj) : ((obj.width || 0) * (obj.height || 0) * 8);
+    }
+    entries.set(key, Object.freeze({ key, kind, bytes, ownerPath }));
+  };
+
+  const scanMat = (mat, path) => {
+    if (!mat) return;
+    if (Array.isArray(mat)) {
+      for (let i = 0; i < mat.length; i++) scanMat(mat[i], path);
+      return;
+    }
+    addEntry('material', mat, path);
+    for (let i = 0; i < TEX_SLOTS.length; i++) {
+      const slot = TEX_SLOTS[i];
+      if (mat[slot]) addEntry('texture', mat[slot], `${path}.${slot}`);
+    }
+  };
+
+  if (worldOrScene) {
+    const visit = (node, idx = 0) => {
+      const ownerPath = node?.name || `node_${idx}`;
+      if (node?.geometry) addEntry('geometry', node.geometry, ownerPath);
+      if (node?.material) scanMat(node.material, ownerPath);
+    };
+    if (typeof worldOrScene.traverse === 'function') {
+      let idx = 0;
+      worldOrScene.traverse(n => visit(n, idx++));
+    } else {
+      visit(worldOrScene, 0);
+    }
+  }
+  if (Array.isArray(extraTargets)) {
+    for (let i = 0; i < extraTargets.length; i++) {
+      addEntry('renderTarget', extraTargets[i], `target_${i}`);
+    }
+  }
+
+  let totalBytes = 0;
+  for (const e of entries.values()) totalBytes += e.bytes;
+
+  return Object.freeze({
+    label: String(label || 'snapshot'),
+    count: entries.size,
+    totalBytes,
+    entries,
+  });
+}
+
+/**
+ * Diff two `captureResourceSnapshot` objects to identify leaked allocations vs cleanly released resources.
+ * @param {{ count: number, totalBytes: number, entries: Map<string, any> }} before
+ * @param {{ count: number, totalBytes: number, entries: Map<string, any> }} after
+ */
+export function diffResourceSnapshots(before, after) {
+  const bMap = before?.entries instanceof Map ? before.entries : new Map();
+  const aMap = after?.entries instanceof Map ? after.entries : new Map();
+  const leaked = [];
+  const released = [];
+  const retained = [];
+
+  for (const [k, entry] of aMap.entries()) {
+    if (bMap.has(k)) retained.push(entry);
+    else leaked.push(entry);
+  }
+  for (const [k, entry] of bMap.entries()) {
+    if (!aMap.has(k)) released.push(entry);
+  }
+
+  const deltaBytes = (after?.totalBytes ?? 0) - (before?.totalBytes ?? 0);
+  return Object.freeze({
+    hasLeak: leaked.length > 0,
+    leakedCount: leaked.length,
+    releasedCount: released.length,
+    retainedCount: retained.length,
+    deltaBytes,
+    leaked,
+    released,
+  });
+}
