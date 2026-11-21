@@ -10,7 +10,7 @@ const ENTRY_OVERRIDES = {
   // the current 3D bundle. The maintained runtime entry is 3d.html.
   'firework-html5': ['3d.html', ...ENTRIES],
 };
-const FOLDERS = new Set(['src', 'assets', 'audio', 'levels', 'game_art', 'data', 'dist', 'node_modules', 'assets-private']);
+const FOLDERS = new Set(['src', 'assets', 'audio', 'levels', 'game_art', 'data', 'dist', 'node_modules']);
 const EXTENSIONS = new Set([
   '.html', '.htm', '.js', '.mjs', '.css', '.json', '.map',
   '.png', '.jpg', '.jpeg', '.webp', '.avif', '.gif', '.ico', '.svg',
@@ -84,7 +84,6 @@ function allowedFile(segments) {
   if (segments.length === 1) return !/^(?:config|source|project)(?:\.|-)/i.test(base);
   if (!FOLDERS.has(base)) return false;
   if (base === 'node_modules' && segments[1] !== 'three') return false;
-  if (base === 'assets-private' && segments[1] !== 'polygon') return false;
   return true;
 }
 

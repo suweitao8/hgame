@@ -12,7 +12,6 @@ import {
   fetchHGameAssets,
   fetchUnrealCatalog,
   formatBytes,
-  normalizeUnrealSceneMaterials,
   onHGameAssetsChanged,
   refreshHGameAssets,
 } from './hgame-shared.js';
@@ -87,7 +86,7 @@ const charDialogListEl = document.querySelector('#hgame-char-dialog-list');
 let initialized = false;
 let assetStore = { models: [] };
 let selfCharacters = [];
-let unrealCatalog = { available: false, characters: [], animations: [] };
+let unrealCatalog = { available: false, animations: [] };
 let active3dKind = '';
 let active3dId = '';
 let selectedCharacterId = '';
@@ -121,7 +120,7 @@ async function fetchSelfCharacters() {
 }
 
 function getAllStageCharacters() {
-  return [...selfCharacters, ...(unrealCatalog.characters || [])];
+  return selfCharacters;
 }
 
 // 3D playback state
@@ -204,7 +203,7 @@ function getCharacterPacks(chars) {
 
 function ensureSelectedCharacter(chars) {
   if (!chars.some(c => c.id === selectedCharacterId)) {
-    const preferred = chars.find(c => c.id === 'PolygonAdventure__SK_Character_Human_Knight') || chars[0];
+    const preferred = chars.find(c => c.id === 'webasset:chouju:low') || chars[0];
     selectedCharacterId = preferred?.id || '';
   }
 }
@@ -316,7 +315,7 @@ function renderCharacterDialogList() {
     const subParts = [ch.packLabel || ch.pack];
     if (ch.boneCount) subParts.push(`${ch.boneCount} 骨`);
     btn.innerHTML = `
-      <span class="hgame-item-thumb hgame-item-thumb-badge">${ch.isWebAsset ? '自建' : 'UE'}</span>
+      <span class="hgame-item-thumb hgame-item-thumb-badge">自建</span>
       <span class="hgame-item-copy">
         <strong>${escapeHtml(ch.name)}</strong>
         <small>${escapeHtml(subParts.join(' · '))}</small>
@@ -863,45 +862,7 @@ async function fetchUnrealAnimEntry(animItem) {
   return entry;
 }
 
-function findHeadBone(root) {
-  let found = null;
-  root.traverse(obj => {
-    if (found) return;
-    if (obj.isBone && stripNodeNamespace(obj.name).toLowerCase() === 'head') {
-      found = obj;
-    }
-  });
-  return found;
-}
-
-async function attachHeadGear(root, headAttachment, token) {
-  if (!headAttachment?.url) return false;
-  const headBone = findHeadBone(root);
-  if (!headBone) return false;
-  root.updateMatrixWorld(true);
-  const headWorldQuat = headBone.getWorldQuaternion(new THREE.Quaternion());
-  const headWorldPos = headBone.getWorldPosition(new THREE.Vector3());
-
-  const attGltf = await gltfLoader3d.loadAsync(headAttachment.url);
-  if (token !== load3dToken) {
-    disposeObject3D(attGltf.scene);
-    return false;
-  }
-  const attScene = attGltf.scene;
-  normalizeUnrealSceneMaterials(attScene);
-
-  const mount = new THREE.Group();
-  mount.name = 'HeadGearAttachment';
-  mount.quaternion.copy(headWorldQuat).invert();
-  if (headAttachment.groundPivot) {
-    attScene.position.set(0, -headWorldPos.y, 0);
-  }
-  mount.add(attScene);
-  headBone.add(mount);
-  return true;
-}
-
-async function mountCharacterRoot(url, stageKey, vp, token, headAttachment = null, { normalizeMaterials = true } = {}) {
+async function mountCharacterRoot(url, stageKey, vp, token) {
   const gltf = await gltfLoader3d.loadAsync(url);
   if (token !== load3dToken) {
     disposeObject3D(gltf.scene);
@@ -909,17 +870,8 @@ async function mountCharacterRoot(url, stageKey, vp, token, headAttachment = nul
   }
   clear3dScene();
   loaded3dRoot = gltf.scene;
-  if (normalizeMaterials && stageKey.startsWith('unreal:')) {
-    normalizeUnrealSceneMaterials(loaded3dRoot);
-  }
   loadedStageKey = stageKey;
   loadedRestTransforms = captureNodeTransforms(loaded3dRoot);
-  if (headAttachment) {
-    try {
-      await attachHeadGear(loaded3dRoot, headAttachment, token);
-      if (token !== load3dToken) return null;
-    } catch { /* ignore broken attachment */ }
-  }
   vp.scene.add(loaded3dRoot);
   vp.frameObject(loaded3dRoot);
 
@@ -951,7 +903,9 @@ async function load3dAnimationAsset() {
       titleEl.textContent = '3D 动画';
       empty3d.hidden = false;
       stage3d.hidden = true;
-      status3dEl.textContent = '需要至少一个角色模型和动画文件。';
+      status3dEl.textContent = stageChars.length === 0
+        ? '暂无可用自建低模角色（请先在角色库完成低模绑定）。'
+        : '需要至少一个自建角色低模和动画文件。';
       return;
     }
 
@@ -960,7 +914,7 @@ async function load3dAnimationAsset() {
     stage3d.hidden = false;
     const vp = ensureViewport3d();
     const token = ++load3dToken;
-    const targetStageKey = `unreal:${charItem.id}`;
+    const targetStageKey = `char:${charItem.id}`;
     status3dEl.textContent = loadedStageKey === targetStageKey
       ? `正在套用动作「${animItem.name}」...`
       : `正在加载 ${charItem.name} 与动作「${animItem.name}」...`;
@@ -969,9 +923,7 @@ async function load3dAnimationAsset() {
       const needsCharLoad = loadedStageKey !== targetStageKey || !loaded3dRoot || !mixer;
       const [, animEntry] = await Promise.all([
         needsCharLoad
-          ? mountCharacterRoot(charItem.url, targetStageKey, vp, token, charItem.headAttachment || null, {
-              normalizeMaterials: !charItem.isWebAsset,
-            })
+          ? mountCharacterRoot(charItem.url, targetStageKey, vp, token)
           : Promise.resolve(true),
         fetchUnrealAnimEntry(animItem),
       ]);
@@ -983,10 +935,9 @@ async function load3dAnimationAsset() {
       playing3d = true;
       applyPreparedClip();
       const dur = animEntry.clips[0]?.duration ? `${animEntry.clips[0].duration.toFixed(2)}s` : '';
-      const attNote = charItem.headAttachment?.name ? ` · ${charItem.headAttachment.name}` : '';
       status3dEl.textContent = loadedStats.boneCount === 0
-        ? `${charItem.name} 未含骨骼，无法套用 Anim58 动作`
-        : `${charItem.packLabel || charItem.pack}${attNote} · ${animItem.category}${dur ? ` · ${dur}` : ''} · ${loadedStats.boneCount} 骨 · ${loadedStats.meshCount} 网格`;
+        ? `${charItem.name} 未含骨骼，无法套用动作`
+        : `${charItem.packLabel || charItem.pack} · ${animItem.category}${dur ? ` · ${dur}` : ''} · ${loadedStats.boneCount} 骨 · ${loadedStats.meshCount} 网格`;
 
       if (!viewEl.hidden) {
         vp.start(tick3d);
@@ -994,7 +945,7 @@ async function load3dAnimationAsset() {
       }
     } catch (error) {
       if (token !== load3dToken) return;
-      status3dEl.textContent = error.message || 'Unreal 角色动作加载失败';
+      status3dEl.textContent = error.message || '角色动作加载失败';
     }
     return;
   }

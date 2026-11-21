@@ -256,14 +256,6 @@ export function createGamePreviewServer({
       });
     } else if (pathname.startsWith('/local-games/')) {
       await localGames.serve(request, response);
-    } else if (pathname.startsWith('/assets-private/polygon/')) {
-      // Firework's already-built Three.js runtime requests Polygon models
-      // from the origin root. Keep its source unchanged; map this legacy path
-      // to the matching local HTML project within the preview-only origin.
-      await localGames.serve({
-        method: request.method,
-        url: '/local-games/firework-html5' + request.url,
-      }, response);
     } else if ((request.url || '').split('?')[0].startsWith('/games-files/')) {
       await handleGameFiles(request, response, () => {
         response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

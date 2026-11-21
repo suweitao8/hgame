@@ -416,7 +416,7 @@ export function createHGameAssetHandler({
           sendJson(response, 200, {
             available: true,
             generatedAt: catalog.generatedAt || null,
-            characters: Array.isArray(catalog.characters) ? catalog.characters : [],
+            characters: [],
             animations: Array.isArray(catalog.animations) ? catalog.animations : [],
             staticModels: [],
             vfxSystems: Array.isArray(catalog.vfxSystems) ? catalog.vfxSystems : [],
@@ -678,7 +678,7 @@ export function createHGameAssetHandler({
         await serveExportedFile(
           getUnrealRoot(),
           '/files/hgame-unreal/',
-          /^(characters|attachments|animations|vfx_meshes|vfx_textures|decals|audio)\/[A-Za-z0-9_.\-]+\.(glb|wav|png|webp|jpg|jpeg|mp3|ogg)$/i,
+          /^(animations|vfx_meshes|vfx_textures|decals|audio)\/[A-Za-z0-9_.\-]+\.(glb|wav|png|webp|jpg|jpeg|mp3|ogg)$/i,
         );
         return;
       }
