@@ -54,13 +54,14 @@ $env:HGAME_NETWORK_URL = 'http://127.0.0.1:2568'
 npm run test:e2e
 ```
 
-## Three sync modes
+## Four sync modes
 
 | Mode | Mechanism | Room in the local lab |
 |---|---|---|
 | A — State Sync | Colyseus server-owned Schema state; clients submit commands | `lab_state_sync` |
 | B — Predicted Sync | Colyseus 0.18 `defineInput` / `setFixedTimestep`; client `room.input()` / `Predict` | `lab_predicted` |
 | C — Confirmed Lockstep | Versioned binary input packets; server seals only complete frames | `lab_lockstep` |
+| D — Authoritative AOI + Delta | `AuthorityArenaRoom` (`AoiDeltaPlanner` + `encodeTransformDelta` + `LagCompensationHistory`); client `HGameSnapshotChannel` + `ClientPredictionController` | `lab_arena` |
 
 The lab's counter and linear-motion rules are test fixtures, not reusable game rules. Real games own their state schemas, validation, simulation, AI, win conditions and persistence.
 

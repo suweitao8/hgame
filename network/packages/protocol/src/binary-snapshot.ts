@@ -137,7 +137,7 @@ function normalizeEntity(entity: TransformSnapshotEntity): EncodedSnapshotEntity
   };
 }
 
-function assertPacketHeader(bytes: Uint8Array, minBytes: number, expectedKind: number): DataView {
+function validateTransformPacketHeader(bytes: Uint8Array, minBytes: number): { view: DataView; kind: number } {
   if (!(bytes instanceof Uint8Array)) {
     throw new TypeError('Packet must be a Uint8Array');
   }
@@ -153,10 +153,32 @@ function assertPacketHeader(bytes: Uint8Array, minBytes: number, expectedKind: n
     throw new RangeError(`Unsupported binary snapshot version: ${version}`);
   }
   const kind = view.getUint8(3);
+  return { view, kind };
+}
+
+function assertPacketHeader(bytes: Uint8Array, minBytes: number, expectedKind: number): DataView {
+  const { view, kind } = validateTransformPacketHeader(bytes, minBytes);
   if (kind !== expectedKind) {
     throw new Error(`Unexpected binary snapshot kind: ${kind}`);
   }
   return view;
+}
+
+export function peekTransformPacketKind(bytes: Uint8Array): 'snapshot' | 'delta' {
+  const { kind } = validateTransformPacketHeader(bytes, BINARY_SNAPSHOT_HEADER_BYTES);
+  if (kind === KIND_SNAPSHOT) return 'snapshot';
+  if (kind === KIND_DELTA) return 'delta';
+  throw new Error(`Unexpected binary snapshot kind: ${kind}`);
+}
+
+export function decodeTransformPacket(
+  bytes: Uint8Array,
+  baseEntities: readonly TransformSnapshotEntity[] = [],
+): DecodedTransformSnapshot | DecodedTransformDelta {
+  const kind = peekTransformPacketKind(bytes);
+  return kind === 'snapshot'
+    ? decodeTransformSnapshot(bytes)
+    : decodeTransformDelta(bytes, baseEntities);
 }
 
 export function encodeTransformSnapshot(input: TransformSnapshotInput): Uint8Array {

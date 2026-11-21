@@ -7,6 +7,8 @@ import {
   decodeTransformSnapshot,
   encodeTransformDelta,
   decodeTransformDelta,
+  peekTransformPacketKind,
+  decodeTransformPacket,
 } from '../dist/index.js';
 
 test('binary transform snapshot encodes compactly and round-trips quantized coordinates & wrapped yaw', () => {
@@ -108,4 +110,28 @@ test('malformed or truncated binary snapshot packets fail closed', () => {
   assert.throws(() => decodeTransformSnapshot(badMagic), /magic/i);
 
   assert.throws(() => decodeTransformDelta(valid), /kind/i);
+});
+
+test('decodeTransformPacket dispatches both full snapshots and delta updates', () => {
+  const base = [{ id: 1, x: 10, y: 20, z: 0, yaw: 0.2, flags: 1 }];
+  const snapBytes = encodeTransformSnapshot({ tick: 10, entities: base });
+  const deltaBytes = encodeTransformDelta({
+    tick: 11,
+    baseTick: 10,
+    prevEntities: base,
+    nextEntities: [{ id: 1, x: 11, y: 20, z: 0, yaw: 0.4, flags: 3 }],
+  });
+
+  assert.equal(peekTransformPacketKind(snapBytes), 'snapshot');
+  assert.equal(peekTransformPacketKind(deltaBytes), 'delta');
+
+  const decodedSnap = decodeTransformPacket(snapBytes);
+  assert.equal(decodedSnap.kind, 'snapshot');
+  assert.equal(decodedSnap.tick, 10);
+
+  const decodedDelta = decodeTransformPacket(deltaBytes, decodedSnap.entities);
+  assert.equal(decodedDelta.kind, 'delta');
+  assert.equal(decodedDelta.tick, 11);
+  assert.equal(decodedDelta.entities[0].flags, 3);
+  assert.ok(Math.abs(decodedDelta.entities[0].x - 11) <= 0.001);
 });

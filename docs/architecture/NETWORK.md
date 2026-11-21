@@ -6,11 +6,11 @@ The optional `network/` workspace provides shared browser/client/server multipla
 
 | Package | Responsibility |
 |---|---|
-| `packages/protocol` | Versioned binary wire format (lockstep frames & quantized `encodeTransformSnapshot`/`encodeTransformDelta`), validation, deterministic integer helpers, confirmed-frame queue |
-| `packages/simulation` | Shared movement step (`applyLinearMotionInput`), server-side `LagCompensationHistory` (bounded snapshot ring buffer, `sampleAt`, `verifyHit2D`), `InterestGrid2D` spatial AOI with enter/exit hysteresis, and Priority × Starvation `ReplicationPriorityScheduler` |
-| `packages/client` | Colyseus client lifecycle, reconnect-token storage, `SnapshotInterpolationBuffer`, `AdaptiveInputLeadController`, and `HGameLockstepChannel` reconnect sync (`requestSync`, `onSyncStatus`, `autoSyncOnReconnect`) |
-| `apps/server` | Colyseus server factory, local conformance rooms, per-session `TokenBucketRateLimiter` flood protection, and optional lockstep anti-stall/history replay |
-| `apps/network-lab` | Browser harness for state sync, prediction, and confirmed frames |
+| `packages/protocol` | Versioned binary wire format (lockstep frames & quantized `encodeTransformSnapshot`/`encodeTransformDelta`/`decodeTransformPacket`), validation, deterministic integer helpers, confirmed-frame queue |
+| `packages/simulation` | Shared movement steps (`applyLinearMotionInput`, `stepArenaMotion2D`), server-side `LagCompensationHistory` (bounded snapshot ring buffer, `sampleAt`, `verifyHit2D`), `InterestGrid2D` spatial AOI with enter/exit hysteresis, Priority × Starvation `ReplicationPriorityScheduler`, and stateful `AoiDeltaPlanner` |
+| `packages/client` | Colyseus client lifecycle, reconnect-token storage, `SnapshotInterpolationBuffer`, `AdaptiveInputLeadController`, `HGameSnapshotChannel`, `ClientPredictionController`, and `HGameLockstepChannel` reconnect sync (`requestSync`, `onSyncStatus`, `autoSyncOnReconnect`) |
+| `apps/server` | Colyseus server factory, local conformance rooms (`StateSyncRoom`, `PredictedRoom`, `LockstepRoom`, `AuthorityArenaRoom`), per-session `TokenBucketRateLimiter` flood protection, and optional lockstep anti-stall/history replay |
+| `apps/network-lab` | Browser harness for state sync, prediction, confirmed frames, and AOI binary delta arena sync |
 
 ## Synchronization modes
 
@@ -19,6 +19,7 @@ The optional `network/` workspace provides shared browser/client/server multipla
 | A — State sync | Server-owned Colyseus Schema state | Clients submit commands; each game defines authoritative state and validation |
 | B — Predicted sync | Colyseus input prediction | Client and server import the same game-owned step function |
 | C — Confirmed lockstep | Versioned binary input frames | Server broadcasts only complete frames in stable slot order |
+| D — Authoritative AOI + binary delta | `AuthorityArenaRoom` + `AoiDeltaPlanner` + `HGameSnapshotChannel` + `ClientPredictionController` | Server filters per-observer AOI with bandwidth budgeting, emits binary snapshots/deltas & lag-compensated hit checks, and supports spectator AOI rebinding |
 
 The lab's counter and linear-motion logic are conformance fixtures, not reusable game rules.
 

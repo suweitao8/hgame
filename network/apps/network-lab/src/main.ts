@@ -1,9 +1,20 @@
-import { HGameLockstepChannel, HGameNetworkClient, type HGameRoomConnection } from '@hgame/network-client';
+import {
+  ClientPredictionController,
+  HGameLockstepChannel,
+  HGameNetworkClient,
+  HGameSnapshotChannel,
+  type HGameRoomConnection,
+} from '@hgame/network-client';
 import { LockstepInputFlags } from '@hgame/network-protocol';
-import { applyLinearMotionInput } from '@hgame/network-simulation';
+import {
+  applyLinearMotionInput,
+  createArenaMotionState,
+  stepArenaMotion2D,
+  type ArenaMotionState,
+} from '@hgame/network-simulation';
 import './style.css';
 
-type Mode = 'state' | 'predicted' | 'lockstep';
+type Mode = 'state' | 'predicted' | 'lockstep' | 'arena';
 type PlayerView = { slot: number; x?: number; y?: number; connected: boolean };
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -26,11 +37,15 @@ let lockstepTimer: number | null = null;
 let renderFrame = 0;
 let axisX = 0;
 let axisY = 0;
+let dashQueued = false;
 let nextLockstepTick = 1;
 let predictedRoom: any = null;
 let prediction: any = null;
 let predictionInput: any = null;
 let localPredictionAttached = false;
+let arenaSnapshots: HGameSnapshotChannel | null = null;
+let arenaPredictor: ClientPredictionController<ArenaMotionState, { moveX: number; moveY: number; dashPressed: boolean }> | null = null;
+let arenaSelfEntityId = 0;
 let currentPlayers: PlayerView[] = [];
 
 function log(message: string): void {
@@ -51,10 +66,12 @@ function selectMode(next: Mode): void {
   $('state-controls').classList.toggle('hidden', next !== 'state');
   $('prediction-controls').classList.toggle('hidden', next !== 'predicted');
   $('lockstep-controls').classList.toggle('hidden', next !== 'lockstep');
+  $('arena-controls').classList.toggle('hidden', next !== 'arena');
   const copy = {
     state: ['A · 权威状态同步', '服务端维护状态，客户端只提交命令并接收权威 Schema 更新。'],
     predicted: ['B · 客户端预测同步', 'Colyseus 0.18 原生输入缓冲、预测、确认与回滚；服务端运行共享步进函数。'],
     lockstep: ['C · 确认帧同步', '客户端提交带序号和目标帧的二进制输入；服务器收齐当前玩家输入后才封帧。'],
+    arena: ['D · 权威 AOI 增量（大逃杀底座）', '服务端按 AOI 与优先级调度下发二进制 Delta；客户端本地预测+远端插值。'],
   } as const;
   modeTitle.textContent = copy[next][0];
   modeDescription.textContent = copy[next][1];
@@ -91,6 +108,11 @@ function stopLocalLoops(): void {
   lockstepTimer = null;
   lockstep?.dispose();
   lockstep = null;
+  arenaSnapshots?.dispose();
+  arenaSnapshots = null;
+  arenaPredictor = null;
+  arenaSelfEntityId = 0;
+  dashQueued = false;
   prediction = null;
   predictionInput = null;
   predictedRoom = null;
@@ -256,6 +278,89 @@ async function connectLockstep(): Promise<void> {
   log(`已加入确认帧房间 ${conn.roomId}，slot=${player.slot}，matchTag=${matchTag}。`);
 }
 
+async function connectArena(): Promise<void> {
+  const conn = await network().joinOrCreate({
+    gameId: 'network-lab',
+    roomName: 'lab_arena',
+    roomOptions: { tickHz: 30, aoiEnterRadius: 480, reconnectSeconds: 0 },
+    resume: false,
+  });
+  connection = conn;
+
+  const motionConfig = {
+    speed: 220,
+    dashSpeed: 620,
+    dashDuration: 0.14,
+    dashCooldown: 0.7,
+    radius: 14,
+    bounds: { minX: -1200, minY: -1200, maxX: 1200, maxY: 1200 },
+  };
+  const step = (state: ArenaMotionState, input: { moveX: number; moveY: number; dashPressed: boolean }, dt: number) => {
+    stepArenaMotion2D(state, input, dt, motionConfig);
+  };
+
+  arenaSnapshots = new HGameSnapshotChannel(conn, { interpolationDelayMs: 80 });
+  arenaSnapshots.onSnapshot((info) => {
+    $('arena-tick').textContent = String(info.tick);
+    $('arena-entities').textContent = String(info.entities.length);
+    $('arena-packet-kind').textContent = info.kind;
+  });
+
+  conn.onMessage('arena:self', (ack: any) => {
+    arenaSelfEntityId = ack.entityId;
+    const authState: ArenaMotionState = {
+      x: ack.x,
+      y: ack.y,
+      yaw: ack.yaw,
+      dashTimer: ack.dashTimer,
+      dashCooldown: ack.dashCooldown,
+      dashDirX: ack.dashDirX,
+      dashDirY: ack.dashDirY,
+    };
+    if (!arenaPredictor) {
+      arenaPredictor = new ClientPredictionController({
+        initialState: authState,
+        cloneState: (s) => ({ ...s }),
+      });
+    } else {
+      arenaPredictor.reconcile(ack.ackSeq, authState, step);
+    }
+  });
+
+  let accumulator = 0;
+  let lastTime = performance.now();
+  const fixedDt = 1 / 30;
+  const frame = (now: number) => {
+    if (connection !== conn) return;
+    const dt = Math.min(0.1, Math.max(0, (now - lastTime) / 1000));
+    lastTime = now;
+
+    if (arenaPredictor) {
+      accumulator += dt;
+      while (accumulator >= fixedDt) {
+        const input = { moveX: axisX, moveY: axisY, dashPressed: dashQueued };
+        dashQueued = false;
+        const seq = arenaPredictor.predict(input, fixedDt, step);
+        conn.send('arena:input', { seq, ...input });
+        accumulator -= fixedDt;
+      }
+      const smoothed = arenaPredictor.decayVisualOffset(dt, 60);
+      const sampled = arenaSnapshots?.sample(now) ?? new Map();
+      const views: PlayerView[] = [{ slot: arenaSelfEntityId, x: smoothed.x, y: smoothed.y, connected: true }];
+      for (const [id, pose] of sampled) {
+        if (id === arenaSelfEntityId) continue;
+        views.push({ slot: id, x: pose.x, y: pose.y, connected: true });
+      }
+      currentPlayers = views;
+      drawPlayers(currentPlayers);
+    }
+
+    renderFrame = requestAnimationFrame(frame);
+  };
+  renderFrame = requestAnimationFrame(frame);
+  log(`已加入权威 AOI 房间 ${conn.roomId}，启用本地预测 + 二进制 Delta 增量同步。`);
+}
+
 connectButton.addEventListener('click', async () => {
   connectButton.disabled = true;
   try {
@@ -265,7 +370,8 @@ connectButton.addEventListener('click', async () => {
     setStatus('连接中…', 'offline');
     if (mode === 'state') await connectState();
     else if (mode === 'predicted') await connectPredicted();
-    else await connectLockstep();
+    else if (mode === 'lockstep') await connectLockstep();
+    else await connectArena();
     setStatus('已连接', 'online');
     $('room-id').textContent = connection?.roomId ?? '—';
     disconnectButton.disabled = false;
@@ -294,6 +400,7 @@ window.addEventListener('keydown', (event) => {
   if (event.code === 'KeyS' || event.code === 'ArrowDown') axisY = 1;
   if (event.code === 'KeyA' || event.code === 'ArrowLeft') axisX = -1;
   if (event.code === 'KeyD' || event.code === 'ArrowRight') axisX = 1;
+  if (event.code === 'Space' && !event.repeat) dashQueued = true;
 });
 window.addEventListener('keyup', (event) => {
   if ((event.code === 'KeyW' || event.code === 'ArrowUp') && axisY === -1) axisY = 0;

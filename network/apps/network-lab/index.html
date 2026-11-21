@@ -27,6 +27,7 @@
         <button class="mode-tab active" data-mode="state">A · 权威状态</button>
         <button class="mode-tab" data-mode="predicted">B · 客户端预测</button>
         <button class="mode-tab" data-mode="lockstep">C · 确认帧同步</button>
+        <button class="mode-tab" data-mode="arena">D · 权威 AOI 增量</button>
       </nav>
 
       <section class="workspace">
@@ -55,6 +56,13 @@
             <div class="metric"><span>本地槽位</span><strong id="lockstep-slot">—</strong></div>
             <div class="metric"><span>帧缓冲</span><strong id="frame-buffer">0</strong></div>
             <p class="hint">每 50ms 发送一条带目标帧号的输入；服务器必须收齐当前所有玩家输入才会封帧。</p>
+          </div>
+
+          <div id="arena-controls" class="mode-controls hidden">
+            <div class="metric"><span>服务端 Tick</span><strong id="arena-tick">—</strong></div>
+            <div class="metric"><span>AOI 可见实体</span><strong id="arena-entities">0</strong></div>
+            <div class="metric"><span>最近包类型</span><strong id="arena-packet-kind">—</strong></div>
+            <p class="hint">WASD 移动，Space 冲刺；本地即时预测并结合服务端二进制 AOI Delta 增量同步与远端插值。</p>
           </div>
         </div>
 
