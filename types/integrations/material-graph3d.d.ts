@@ -23,3 +23,25 @@ export function createSharedMaterialBlock3D(initialUniforms?: {}): {
  * @param {object} [options]
  */
 export function createComposableMaterial3D(THREE: object, { color, roughness, metalness, clearcoat, clearcoatRoughness, emissive, emissiveIntensity, transparent, opacity, side, fresnel, dissolve, triplanar, specularAA, windSway, sharedBlock, vertexChunks, fragmentChunks, }?: object): any;
+/**
+ * Shared O(1) Material Batch Registry synchronizing global uniforms (`uTime`, `uWindDir`,
+ * `uFogDensity`) across registered Three.js materials without per-material scene traversal.
+ * @param {Record<string, any>} [initialSharedUniforms]
+ */
+export function createMaterialBatchRegistry3D(initialSharedUniforms?: Record<string, any> | undefined): Readonly<{
+    sharedBlock: {
+        readonly version: number;
+        readonly uniforms: any;
+        set: (name: any, value: any) => void;
+        get: (name: any) => any;
+    };
+    register: (material: any) => boolean;
+    unregister: (material: any) => boolean;
+    setGlobal: (name: any, value: any) => any;
+    updateFrame: (dt?: number, overrides?: null) => number;
+    getStats: () => Readonly<{
+        registeredCount: number;
+        version: number;
+        uniformKeys: string[];
+    }>;
+}>;

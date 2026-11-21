@@ -1269,13 +1269,18 @@ void main() {
   }
 
   if (uSharpness > 0.001) {
-    float edgeAtten = 1.0 - smoothstep(0.06, 0.32, range);
-    if (edgeAtten > 0.0) {
-      vec3 blur = 0.25 * (north.rgb + south.rgb + east.rgb + west.rgb);
-      vec3 localMin = min(center.rgb, min(min(north.rgb, south.rgb), min(east.rgb, west.rgb)));
-      vec3 localMax = max(center.rgb, max(max(north.rgb, south.rgb), max(east.rgb, west.rgb)));
-      rgb = clamp(rgb + (center.rgb - blur) * (uSharpness * edgeAtten), localMin, localMax);
-    }
+    // AMD FSR1 RCAS-style 5-tap contrast-adaptive sharpening with anti-ringing clamp
+    float rcasMin4 = min(min(lN, lS), min(lE, lW));
+    float rcasMax4 = max(max(lN, lS), max(lE, lW));
+    float hitMin = min(rcasMin4, lC) / max(4.0 * rcasMax4, 1e-4);
+    float hitMax = (1.0 - max(rcasMax4, lC)) / max(4.0 * (1.0 - rcasMin4), 1e-4);
+    float peakLobe = clamp(max(hitMin, hitMax), 0.0, 1.0);
+    float nz = 1.0 - 0.25 * clamp(abs(0.25 * (lN + lS + lE + lW) - lC) / max(range, 1e-3), 0.0, 1.0);
+    float rcasW = -0.18 * clamp(uSharpness, 0.0, 1.0) * peakLobe * nz;
+    vec3 localMin = min(center.rgb, min(min(north.rgb, south.rgb), min(east.rgb, west.rgb)));
+    vec3 localMax = max(center.rgb, max(max(north.rgb, south.rgb), max(east.rgb, west.rgb)));
+    vec3 rcasRgb = (rcasW * (north.rgb + south.rgb + east.rgb + west.rgb) + rgb) / max(1.0 + 4.0 * rcasW, 0.28);
+    rgb = clamp(rcasRgb, localMin, localMax);
   }
 
   fragColor = vec4(ditherDisplayColor(rgb), 1.0);

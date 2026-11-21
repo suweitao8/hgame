@@ -22,7 +22,7 @@ export function createDecalSystem3D(THREE: object, { maxDecals, fadeSeconds, pol
     readonly mode: string;
     readonly capacity: number;
     setMode: (nextMode: any) => string;
-    spawn: ({ position, normal, size, rotation, color, map, opacity, lifetime, fadeSeconds: slotFade, }?: {
+    spawn: ({ position, normal, size, rotation, color, map, opacity, lifetime, fadeSeconds: slotFade, edgeSoftness, roughnessTint, }?: {
         position?: number[] | undefined;
         normal?: number[] | undefined;
         size?: number[] | undefined;
@@ -32,6 +32,8 @@ export function createDecalSystem3D(THREE: object, { maxDecals, fadeSeconds, pol
         opacity?: number | undefined;
         lifetime?: number | undefined;
         fadeSeconds?: number | undefined;
+        edgeSoftness?: number | undefined;
+        roughnessTint?: number | undefined;
     }) => {
         id: any;
         mesh: any;

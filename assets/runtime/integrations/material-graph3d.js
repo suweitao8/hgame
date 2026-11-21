@@ -300,3 +300,63 @@ export function createComposableMaterial3D(THREE, {
   material.needsUpdate = true;
   return material;
 }
+
+/**
+ * Shared O(1) Material Batch Registry synchronizing global uniforms (`uTime`, `uWindDir`,
+ * `uFogDensity`) across registered Three.js materials without per-material scene traversal.
+ * @param {Record<string, any>} [initialSharedUniforms]
+ */
+export function createMaterialBatchRegistry3D(initialSharedUniforms = { uTime: 0, uFogDensity: 0 }) {
+  const sharedBlock = createSharedMaterialBlock3D(initialSharedUniforms);
+  const materials = new Set();
+
+  function register(material) {
+    if (!material || typeof material !== 'object') return false;
+    materials.add(material);
+    if (material.userData?.hgameUniforms) {
+      for (const [k, u] of Object.entries(sharedBlock.uniforms)) {
+        if (k in material.userData.hgameUniforms) {
+          material.userData.hgameUniforms[k] = u;
+        }
+      }
+    }
+    return true;
+  }
+
+  function unregister(material) {
+    return materials.delete(material);
+  }
+
+  function setGlobal(name, value) {
+    sharedBlock.set(name, value);
+    return value;
+  }
+
+  function updateFrame(dt = 0, overrides = null) {
+    const curTime = Number(sharedBlock.get('uTime')) || 0;
+    sharedBlock.set('uTime', curTime + Math.max(0, Number(dt) || 0));
+    if (overrides && typeof overrides === 'object') {
+      for (const [k, v] of Object.entries(overrides)) {
+        sharedBlock.set(k, v);
+      }
+    }
+    return sharedBlock.version;
+  }
+
+  function getStats() {
+    return Object.freeze({
+      registeredCount: materials.size,
+      version: sharedBlock.version,
+      uniformKeys: Object.keys(sharedBlock.uniforms),
+    });
+  }
+
+  return Object.freeze({
+    sharedBlock,
+    register,
+    unregister,
+    setGlobal,
+    updateFrame,
+    getStats,
+  });
+}

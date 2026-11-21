@@ -500,4 +500,58 @@ export function createAdaptiveQualityController({
   });
 }
 
+/** Portrait Bilibili Toy mobile-first 60fps balance preset capping fill-rate & shadow bandwidth. */
+export const MOBILE_PORTRAIT_PRESET = Object.freeze({
+  tier: 'medium',
+  maxPixelRatio: 2,
+  maxPixels: 390 * 844 * 2.25,
+  targetFps: 60,
+  shadowMapSize: 512,
+  pcss: false,
+  bloom: true,
+  rcasSharpness: 0.45,
+});
+
+/**
+ * Resolve fill-rate-capped backing-store dimensions and safe-area-aware thumb UI bounds for
+ * mobile portrait H5 viewports (e.g. 390x844 @ DPR 2 or 3).
+ *
+ * @param {object} [options]
+ * @param {number} [options.width=390]
+ * @param {number} [options.height=844]
+ * @param {number} [options.dpr=2]
+ * @param {number} [options.maxDpr=2]
+ * @param {{ top?: number, right?: number, bottom?: number, left?: number }} [options.safeArea]
+ */
+export function resolvePortraitViewport({
+  width = 390,
+  height = 844,
+  dpr = 2,
+  maxDpr = MOBILE_PORTRAIT_PRESET.maxPixelRatio,
+  safeArea = {},
+} = {}) {
+  const cssW = Math.max(180, Math.floor(Number(width) || 390));
+  const cssH = Math.max(240, Math.floor(Number(height) || 844));
+  const effDpr = Math.max(1, Math.min(Number(maxDpr) || 2, Number(dpr) || 1));
+  const plan = fitDrawingBuffer(cssW, cssH, effDpr, {
+    maxPixels: MOBILE_PORTRAIT_PRESET.maxPixels,
+    minWidth: 1,
+    minHeight: 1,
+  });
+  return Object.freeze({
+    cssWidth: cssW,
+    cssHeight: cssH,
+    pixelRatio: plan.pixelRatio,
+    bufferWidth: plan.bufferWidth,
+    bufferHeight: plan.bufferHeight,
+    orientation: cssH >= cssW ? 'portrait' : 'landscape',
+    safeArea: Object.freeze({
+      top: Math.max(0, Number(safeArea.top) || 0),
+      right: Math.max(0, Number(safeArea.right) || 0),
+      bottom: Math.max(0, Number(safeArea.bottom) || 0),
+      left: Math.max(0, Number(safeArea.left) || 0),
+    }),
+  });
+}
+
 export { createShaderWarmupQueue3D } from './quality3d/shader-warmup.js';

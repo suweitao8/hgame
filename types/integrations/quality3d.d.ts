@@ -15,6 +15,42 @@ export function chooseInitial3dQuality({ mobile, rendererName, memoryGB, }?: Qua
  * @returns {Readonly<AdaptiveQualityController>}
  */
 export function createAdaptiveQualityController({ mode, device, minScale, maxScale, minPixelRatio, maxPixelRatio, settleMs, settleAfterChangeMs, sampleFrames, degradeFrameMs, recoverFrameMs, memoryBudgetBytes, onChange, }?: AdaptiveQualityOptions | undefined): Readonly<AdaptiveQualityController>;
+/**
+ * Resolve fill-rate-capped backing-store dimensions and safe-area-aware thumb UI bounds for
+ * mobile portrait H5 viewports (e.g. 390x844 @ DPR 2 or 3).
+ *
+ * @param {object} [options]
+ * @param {number} [options.width=390]
+ * @param {number} [options.height=844]
+ * @param {number} [options.dpr=2]
+ * @param {number} [options.maxDpr=2]
+ * @param {{ top?: number, right?: number, bottom?: number, left?: number }} [options.safeArea]
+ */
+export function resolvePortraitViewport({ width, height, dpr, maxDpr, safeArea, }?: {
+    width?: number | undefined;
+    height?: number | undefined;
+    dpr?: number | undefined;
+    maxDpr?: number | undefined;
+    safeArea?: {
+        top?: number;
+        right?: number;
+        bottom?: number;
+        left?: number;
+    } | undefined;
+} | undefined): Readonly<{
+    cssWidth: number;
+    cssHeight: number;
+    pixelRatio: number;
+    bufferWidth: number;
+    bufferHeight: number;
+    orientation: "portrait" | "landscape";
+    safeArea: Readonly<{
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    }>;
+}>;
 /** @typedef {'low'|'medium'|'high'} QualityTier */
 /** @typedef {QualityTier|'ultra'} QualityPresetTier Tier names accepted by preset tables. */
 /** @typedef {'auto'|QualityTier} QualityMode */
@@ -117,6 +153,17 @@ export const QUALITY_TIERS: readonly QualityTier[];
 export const QUALITY3D_PRESETS: Readonly<Record<QualityPresetTier, Readonly<Quality3DPreset>>>;
 /** @type {Readonly<Record<QualityPresetTier, Readonly<Quality2DPreset>>>} */
 export const QUALITY2D_PRESETS: Readonly<Record<QualityPresetTier, Readonly<Quality2DPreset>>>;
+/** Portrait Bilibili Toy mobile-first 60fps balance preset capping fill-rate & shadow bandwidth. */
+export const MOBILE_PORTRAIT_PRESET: Readonly<{
+    tier: "medium";
+    maxPixelRatio: 2;
+    maxPixels: number;
+    targetFps: 60;
+    shadowMapSize: 512;
+    pcss: false;
+    bloom: true;
+    rcasSharpness: 0.45;
+}>;
 export { createShaderWarmupQueue3D } from "./quality3d/shader-warmup.js";
 export type QualityTier = "low" | "medium" | "high";
 /**

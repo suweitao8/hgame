@@ -25,6 +25,8 @@ uniform mat4 uInvModel;
 uniform vec2 uResolution;
 uniform vec3 uColor;
 uniform float uOpacity;
+uniform float uEdgeSoftness;
+uniform float uRoughnessTint;
 in vec3 vDecalWorldPos;
 out vec4 fragColor;
 
@@ -39,13 +41,15 @@ void main() {
   vec3 localPos = (uInvModel * worldPos).xyz;
   if (any(greaterThan(abs(localPos), vec3(0.5)))) discard;
   vec2 decalUv = localPos.xy + 0.5;
-  float edgeFadeZ = smoothstep(0.5, 0.32, abs(localPos.z));
-  float edgeFadeX = smoothstep(0.5, 0.42, abs(localPos.x));
-  float edgeFadeY = smoothstep(0.5, 0.42, abs(localPos.y));
+  float s = clamp(uEdgeSoftness, 0.01, 0.48);
+  float edgeFadeZ = smoothstep(0.5, 0.5 - s, abs(localPos.z));
+  float edgeFadeX = smoothstep(0.5, 0.5 - s * 0.75, abs(localPos.x));
+  float edgeFadeY = smoothstep(0.5, 0.5 - s * 0.75, abs(localPos.y));
   vec4 tex = uHasMap > 0.5 ? texture(tMap, decalUv) : vec4(1.0);
   float alpha = clamp(uOpacity * tex.a * edgeFadeZ * edgeFadeX * edgeFadeY, 0.0, 1.0);
   if (alpha <= 0.004) discard;
-  fragColor = vec4(uColor * tex.rgb, alpha);
+  vec3 litRgb = mix(uColor * tex.rgb, uColor * tex.rgb * 0.85, clamp(uRoughnessTint, 0.0, 1.0));
+  fragColor = vec4(litRgb, alpha);
 }
 `;
 
@@ -137,6 +141,8 @@ export function createDecalSystem3D(THREE, {
           uResolution: { value: sharedRes },
           uColor: { value: THREE.Color ? new THREE.Color(0xffffff) : { r: 1, g: 1, b: 1 } },
           uOpacity: { value: 1 },
+          uEdgeSoftness: { value: 0.25 },
+          uRoughnessTint: { value: 0 },
         },
       });
       projMesh = new THREE.Mesh(unitBox, projMat);
@@ -198,6 +204,8 @@ export function createDecalSystem3D(THREE, {
     opacity = 1,
     lifetime = 15,
     fadeSeconds: slotFade = defaultFade,
+    edgeSoftness = 0.25,
+    roughnessTint = 0,
   } = {}) {
     if (disposed) return null;
     let slot = null;
@@ -253,6 +261,8 @@ export function createDecalSystem3D(THREE, {
       slot.projMat.uniforms.uColor.value?.set?.(color);
       slot.projMat.uniforms.tMap.value = map ?? null;
       slot.projMat.uniforms.uHasMap.value = map ? 1 : 0;
+      slot.projMat.uniforms.uEdgeSoftness.value = Math.max(0.01, Math.min(0.48, Number(edgeSoftness) || 0.25));
+      slot.projMat.uniforms.uRoughnessTint.value = Math.max(0, Math.min(1, Number(roughnessTint) || 0));
     }
 
     slot.material.color?.set?.(color);
