@@ -2,6 +2,7 @@ import { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStrea
 import { createSkeleton2D } from "./animation/skeleton2d.js";
 import { createWorkerPhysicsWorld } from "./physics/worker-physics.js";
 import { createShadowAtlas3D } from "./integrations/shadow3d.js";
+import { generateLightmapUV3D, createLightmapBaker3D } from "./integrations/lightmap-bake3d.js";
 import { mergeStaticMeshesByMaterial3D, quantizeBufferGeometry3D } from "./integrations/culling3d.js";
 import { createPhysicalRenderTargetPool3D } from "./integrations/post3d/render-graph.js";
 import { captureResourceSnapshot, diffResourceSnapshots } from "./integrations/quality3d/render-diagnostics.js";
@@ -1572,6 +1573,8 @@ export const HGame: Readonly<{
     createSpringBoneChain3D: typeof createSpringBoneChain3D;
     createInertialBlend3D: typeof createInertialBlend3D;
     createShadowAtlas3D: typeof createShadowAtlas3D;
+    generateLightmapUV3D: typeof generateLightmapUV3D;
+    createLightmapBaker3D: typeof createLightmapBaker3D;
     mergeStaticMeshesByMaterial3D: typeof mergeStaticMeshesByMaterial3D;
     GPU_HIZ_OCCLUSION_WGSL: "\nstruct HiZParams {\n  screenSize: vec2<f32>,\n  mipCount: u32,\n  objectCount: u32,\n};\n\n@group(0) @binding(0) var<uniform> uHiZ: HiZParams;\n@group(0) @binding(1) var<storage, read> bScreenAabbs: array<vec4<f32>>;\n@group(0) @binding(2) var<storage, read> bMinDepths: array<f32>;\n@group(0) @binding(3) var tHiZ: texture_2d<f32>;\n@group(0) @binding(4) var<storage, read_write> bVisibility: array<u32>;\n\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n  let idx = gid.x;\n  if (idx >= uHiZ.objectCount) { return; }\n  let aabb = bScreenAabbs[idx];\n  let span = max((aabb.z - aabb.x) * uHiZ.screenSize.x, (aabb.w - aabb.y) * uHiZ.screenSize.y);\n  let mip = min(uHiZ.mipCount - 1u, u32(ceil(log2(max(1.0, span * 0.5)))));\n  let dim = vec2<i32>(max(vec2<f32>(1.0), floor(uHiZ.screenSize / f32(1u << mip))));\n  let fdim = vec2<f32>(dim);\n  let t0 = clamp(vec2<i32>(floor(aabb.xy * fdim)), vec2<i32>(0), dim - vec2<i32>(1));\n  let t1 = clamp(vec2<i32>(floor((aabb.zw - vec2<f32>(1e-4)) * fdim)), t0, dim - vec2<i32>(1));\n  let d00 = textureLoad(tHiZ, t0, i32(mip)).r;\n  let d10 = textureLoad(tHiZ, vec2<i32>(t1.x, t0.y), i32(mip)).r;\n  let d01 = textureLoad(tHiZ, vec2<i32>(t0.x, t1.y), i32(mip)).r;\n  let d11 = textureLoad(tHiZ, t1, i32(mip)).r;\n  let maxOccDepth = max(max(d00, d10), max(d01, d11));\n  bVisibility[idx] = select(0u, 1u, bMinDepths[idx] <= maxOccDepth + 1e-4);\n}\n";
     createHiZOcclusionCuller3D: typeof createHiZOcclusionCuller3D;
@@ -1665,6 +1668,7 @@ export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTag
 export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, createAssetLoader, createSaveStore, createVersionedStore, createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews, createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm, createDiagnostics, createGameBridge, createGameHostBridge } from "./platform/engine.js";
 export { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming, createVramMipGuard, createProgressiveBootLoader } from "./platform/asset-catalog.js";
 export { EASING, TweenManager, LN2_CRIT, damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
+export { generateLightmapUV3D, createLightmapBaker3D } from "./integrations/lightmap-bake3d.js";
 export { mergeStaticMeshesByMaterial3D, GPU_HIZ_OCCLUSION_WGSL, createHiZOcclusionCuller3D, dispatchWebGpuHiZOcclusion, quantizeBufferGeometry3D } from "./integrations/culling3d.js";
 export { captureResourceSnapshot, diffResourceSnapshots } from "./integrations/quality3d/render-diagnostics.js";
 export { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from "./integrations/post3d/mrt-outline.js";

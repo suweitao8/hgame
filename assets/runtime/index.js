@@ -54,6 +54,7 @@ export { createSkeleton2D } from './animation/skeleton2d.js';
 export { createWorkerPhysicsWorld } from './physics/worker-physics.js';
 export { SpriteSheet } from './animation/spritesheet.js';
 export { createShadowAtlas3D } from './integrations/shadow3d.js';
+export { generateLightmapUV3D, createLightmapBaker3D } from './integrations/lightmap-bake3d.js';
 export {
   mergeStaticMeshesByMaterial3D,
   GPU_HIZ_OCCLUSION_WGSL,
@@ -67,6 +68,7 @@ export { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integratio
 import { createSkeleton2D } from './animation/skeleton2d.js';
 import { createWorkerPhysicsWorld } from './physics/worker-physics.js';
 import { createShadowAtlas3D } from './integrations/shadow3d.js';
+import { generateLightmapUV3D, createLightmapBaker3D } from './integrations/lightmap-bake3d.js';
 import {
   mergeStaticMeshesByMaterial3D,
   GPU_HIZ_OCCLUSION_WGSL,
@@ -563,6 +565,8 @@ export const HGame = Object.freeze({
   createSpringBoneChain3D,
   createInertialBlend3D,
   createShadowAtlas3D,
+  generateLightmapUV3D,
+  createLightmapBaker3D,
   mergeStaticMeshesByMaterial3D,
   GPU_HIZ_OCCLUSION_WGSL,
   createHiZOcclusionCuller3D,

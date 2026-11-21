@@ -14,6 +14,10 @@ export {
   getVisibleBakedProbeGrid,
   createStreamedProbeVolumeManager3D,
 } from './lighting3d/baked-probe-grid.js';
+export {
+  generateLightmapUV3D,
+  createLightmapBaker3D,
+} from './lightmap-bake3d.js';
 
 /**
  * @typedef {[number, number, number]} LightingRGB Linear RGB triple.
@@ -1603,7 +1607,12 @@ export function applyBakedLightmap3D(material, lightmapTexture, {
   shCoefficients = null,
 } = {}) {
   if (!material || typeof material !== 'object') return false;
-  if ('lightMap' in material) material.lightMap = lightmapTexture ?? null;
+  if ('lightMap' in material) {
+    if (lightmapTexture && typeof lightmapTexture === 'object' && 'channel' in lightmapTexture) {
+      lightmapTexture.channel = 1;
+    }
+    material.lightMap = lightmapTexture ?? null;
+  }
   if ('lightMapIntensity' in material) material.lightMapIntensity = Math.max(0, Number(intensity) || 1);
 
   if (shCoefficients && shCoefficients.length >= 3) {

@@ -279,18 +279,19 @@
       "name": "3D 光照、阴影与 GI",
       "weight": 7,
       "scores": {
-        "hgame": 7.5,
+        "hgame": 8.5,
         "unity": 8.5,
         "cocos": 7.5,
         "godot": 6
       },
       "hgame": {
-        "evidence": "C3",
+        "evidence": "C4",
         "defaultPath": true,
         "proofFiles": [
           "assets/runtime/integrations/shadow3d.js",
           "assets/runtime/integrations/lighting3d.js",
-          "assets/runtime/integrations/post3d/pipeline.js"
+          "assets/runtime/integrations/post3d/pipeline.js",
+          "assets/runtime/integrations/lightmap-bake3d.js"
         ],
         "industrialChecklist": [
           {
@@ -305,8 +306,8 @@
           },
           {
             "point": "离线/预计算光照贴图（Lightmap UV2）与 AO 烘焙管线",
-            "met": false,
-            "proof": "缺失（仅有 applyBakedLightmap3D 挂载接口，缺内置 UV2 展开与 GPU 烘焙器）"
+            "met": true,
+            "proof": "assets/runtime/integrations/lightmap-bake3d.js"
           },
           {
             "point": "WebGL2 浏览器像素基准实测通过",
@@ -314,9 +315,10 @@
             "proof": "assets/runtime/integrations/shadow3d.js, lighting3d.js"
           }
         ],
-        "note": "已打通单亮主光 CSM（含 PCSS 选项）、多局部光 Shadow Atlas、双探针 SH 盒投影混合及实时 SSGI/SSR。",
+        "note": "已打通 CSM/PCSS、Shadow Atlas、双探针 SH 混合、实时 SSGI/SSR，以及内置 UV2 展开与 WebGL2 GPU 渐进式软阴影+AO 烘焙管线。",
         "benchmarkFiles": [
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/browser-lightmap-bake.mjs"
         ]
       },
       "competitorNotes": {
@@ -324,7 +326,7 @@
         "cocos": "支持 CSM、反射探针及离线 Lightmap 烘焙，实时 GI 能力相对基础。",
         "godot": "Compatibility/GLES3 后端下实时 SDFGI 与 VoxelGI 不可用，仅保留基础阴影与烘焙 Lightmap。"
       },
-      "gap": "缺少内置 Lightmap UV2 展开与渐进式 GPU 光照/AO 烘焙管线。"
+      "gap": "暂缺多反弹离线路径追踪级全局光能传递（当前为直接软阴影 + 半球 AO + 实时 SSGI）。"
     },
     {
       "id": "R3",

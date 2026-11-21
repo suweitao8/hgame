@@ -893,3 +893,4 @@ export type LightingCameraLike = {
     matrixWorld?: object;
 };
 export { createBakedProbeGrid, getVisibleBakedProbeGrid, createStreamedProbeVolumeManager3D } from "./lighting3d/baked-probe-grid.js";
+export { generateLightmapUV3D, createLightmapBaker3D } from "./lightmap-bake3d.js";
