@@ -747,7 +747,7 @@
       "name": "骨骼动画、混合树与 IK",
       "weight": 6,
       "scores": {
-        "hgame": 7.5,
+        "hgame": 8,
         "unity": 9.5,
         "cocos": 8,
         "godot": 8.5
@@ -756,7 +756,8 @@
         "evidence": "C3",
         "defaultPath": true,
         "proofFiles": [
-          "assets/runtime/animation/animator3d.js"
+          "assets/runtime/animation/animator3d.js",
+          "assets/runtime/animation/retarget3d.js"
         ],
         "industrialChecklist": [
           {
@@ -771,8 +772,8 @@
           },
           {
             "point": "跨骨架骨骼动画重定向（Retargeting）",
-            "met": false,
-            "proof": "缺失（暂无跨骨架命名映射与 Rest Pose 差值重定向器）"
+            "met": true,
+            "proof": "assets/runtime/animation/retarget3d.js"
           },
           {
             "point": "通用可视化/声明式多轨道状态机资产管线",
@@ -780,7 +781,7 @@
             "proof": "缺失（状态机仅支持代码构建）"
           }
         ],
-        "note": "支持状态机、1D/2D 混合树、Two-Bone/LookAt/FABRIK IK、RootMotion、MorphTarget、SpringBone 与惯性过渡。",
+        "note": "支持状态机、1D/2D 混合树、Two-Bone/LookAt/FABRIK IK、RootMotion、MorphTarget、SpringBone、惯性过渡及跨骨架动画重定向（retarget3d.js）。",
         "benchmarkFiles": [
           "tests/browser-engine-v3-commercial-benchmark.mjs"
         ]
@@ -790,7 +791,7 @@
         "cocos": "Marionette 动画图系统提供可视化状态机、混合与骨骼挂点能力。",
         "godot": "AnimationTree 支持状态机、BlendSpace2D 与 SkeletonIK3D，编排效率高。"
       },
-      "gap": "缺少跨骨架骨骼动画重定向（Retargeting）能力。"
+      "gap": "缺少可视化或声明式多轨道状态机资产管线（状态机需代码编排）。"
     },
     {
       "id": "S3",

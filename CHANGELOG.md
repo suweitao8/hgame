@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add cross-skeleton 3D animation retargeting (`assets/runtime/animation/retarget3d.js`: `createBoneMap3D`, `retargetClip3D`, exported via `index.js`) with rest-pose world delta rotation transfer and proportional hip translation scaling, raising Scorecard v5.1 `S2` from `7.5` to `8.0` (total `79.6/100`).
+
 - Add `generateLightmapUV3D` (`uv1` chart packing) and WebGL2 GPU progressive sun + hemispherical AO `createLightmapBaker3D` (`assets/runtime/integrations/lightmap-bake3d.js`, re-exported from `lighting3d.js` & `index.js`) with `uv1` `channel = 1` binding in `applyBakedLightmap3D`, raising Scorecard v5.1 `R2` from `7.5` to `8.5` (total `79.3/100`).
 
 - Add deterministic Rapier Worker physics (`assets/runtime/physics/physics-worker-kernel.js`, `assets/runtime/physics/physics-worker.js`, `assets/runtime/physics/worker-physics.js`, exported as `createWorkerPhysicsWorld`) with non-COOP/COEP inline fallback and snapshot interpolation, raising Scorecard v5.1 `P1` from `7.0` to `8.0` (total `78.6/100`).

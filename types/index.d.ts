@@ -9,6 +9,7 @@ import { captureResourceSnapshot, diffResourceSnapshots } from "./integrations/q
 import { createMrtOutlinePass3D } from "./integrations/post3d/mrt-outline.js";
 import { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
 import { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
+import { createBoneMap3D, retargetClip3D } from "./animation/retarget3d.js";
 import { defineProject, resolveFeatureGraph } from "./core/config.js";
 import { Component } from "./core/component.js";
 import { Entity } from "./core/entity.js";
@@ -1572,6 +1573,8 @@ export const HGame: Readonly<{
     createSpatialAoiFilter: typeof createSpatialAoiFilter;
     createSpringBoneChain3D: typeof createSpringBoneChain3D;
     createInertialBlend3D: typeof createInertialBlend3D;
+    createBoneMap3D: typeof createBoneMap3D;
+    retargetClip3D: typeof retargetClip3D;
     createShadowAtlas3D: typeof createShadowAtlas3D;
     generateLightmapUV3D: typeof generateLightmapUV3D;
     createLightmapBaker3D: typeof createLightmapBaker3D;
@@ -1691,5 +1694,6 @@ export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/came
 export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, renderSdfText, createLiveProfilerOverlay, DEFAULT_THUMB_ARC_SPEC, computeThumbArcLayout, isInThumbComfortZone, createThumbArcHud, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
 export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
 export { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
+export { createBoneMap3D, retargetClip3D } from "./animation/retarget3d.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";
 export { STANDARD_ART_SPEC, ART_THEMES, listArtThemes, getArtTheme, resolvePresentationPreset, GAME_AUDIO_EVENTS, DEFAULT_AUDIO_MATRIX, AUDIO_PROFILES, createAudioDirector, GENRE_ARCHETYPES, listGenreArchetypes, defineGameBlueprint, evaluateBlueprintBalance, createBlueprintFromIdea, createGameSession, mountGameShell, REQUIRED_DESIGN_DOCS, renderGameDesignDocs } from "./kit/index.js";

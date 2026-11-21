@@ -47,8 +47,8 @@ export type FlexLayoutNode = {
         bottom?: number;
         left?: number;
     } | undefined;
-    alignItems?: "start" | "stretch" | "end" | "center" | undefined;
-    justifyContent?: "start" | "end" | "center" | "space-between" | "space-around" | undefined;
+    alignItems?: "center" | "start" | "stretch" | "end" | undefined;
+    justifyContent?: "center" | "start" | "end" | "space-between" | "space-around" | undefined;
     flexGrow?: number | undefined;
     flexShrink?: number | undefined;
     width?: string | number | undefined;

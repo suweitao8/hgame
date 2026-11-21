@@ -177,6 +177,8 @@ export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter }
 import { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from './lockstep/state-sync.js';
 export { createSpringBoneChain3D, createInertialBlend3D } from './animation/animator3d.js';
 import { createSpringBoneChain3D, createInertialBlend3D } from './animation/animator3d.js';
+export { createBoneMap3D, retargetClip3D } from './animation/retarget3d.js';
+import { createBoneMap3D, retargetClip3D } from './animation/retarget3d.js';
 export {
   VFX_EASING,
   VFX_RENDER_ORDERS,
@@ -564,6 +566,8 @@ export const HGame = Object.freeze({
   createSpatialAoiFilter,
   createSpringBoneChain3D,
   createInertialBlend3D,
+  createBoneMap3D,
+  retargetClip3D,
   createShadowAtlas3D,
   generateLightmapUV3D,
   createLightmapBaker3D,
