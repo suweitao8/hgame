@@ -25,6 +25,7 @@ export function createGpuIndirectCuller3D({ webgpuDevice, gl, cpuCuller, maxInst
     readonly wgslSource: string;
     readonly instanceCount: number;
     setInstanceBounds: (index: any, x: any, y: any, z: any, radius?: number) => boolean;
+    setInstanceBoundsRange: (boundsArray: any, startIndex?: number, count?: number) => boolean;
     setInstanceCount: (count: any) => void;
     setFrustumPlanes: (planes: any) => boolean;
     execute: ({ commandEncoder, renderPassEncoder, indexCount, firstIndex, baseVertex, firstInstance, glMode, indicesType, counts, offsets, instanceCounts, drawCount, }?: {
@@ -68,6 +69,43 @@ export function createGpuIndirectCuller3D({ webgpuDevice, gl, cpuCuller, maxInst
         skippedStatic: boolean;
     }>;
     dispose: () => boolean;
+};
+/**
+ * Real GPU-indirect & MultiDraw compacted InstancedMesh wrapper.
+ * Culls per-instance bounding spheres through `gpuIndirectCuller`, compacts surviving
+ * transform matrices contiguously into `InstancedMesh.instanceMatrix`, and sets `.count`.
+ * @param {object} THREE
+ * @param {object} options
+ * @param {object} options.geometry
+ * @param {object} options.material
+ * @param {number} [options.capacity=1024]
+ * @param {boolean} [options.castShadow=false]
+ * @param {boolean} [options.receiveShadow=false]
+ */
+export function createIndirectInstancedBatch3D(THREE: object, { geometry, material, capacity, castShadow, receiveShadow, }?: {
+    geometry: object;
+    material: object;
+    capacity?: number | undefined;
+    castShadow?: boolean | undefined;
+    receiveShadow?: boolean | undefined;
+}): {
+    readonly mesh: any;
+    readonly capacity: number;
+    readonly count: number;
+    readonly visibleCount: number;
+    setCount: (count: any) => number;
+    setInstanceMatrix: (index: any, matrixOrElements: any) => boolean;
+    setInstanceBounds: (index: any, x: any, y: any, z: any, radius?: number) => boolean;
+    cull: (frustumPlanes: any, gpuIndirectCuller?: null) => number;
+    getStats(): Readonly<{
+        capacity: number;
+        activeCount: number;
+        visibleCount: number;
+        culledOut: number;
+        cullPasses: number;
+        mode: string;
+    }>;
+    dispose: () => void;
 };
 /**
  * GPU-driven frustum culling and indirect draw submission for WebGPU and WebGL2 multi-draw,

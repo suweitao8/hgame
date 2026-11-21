@@ -10,7 +10,7 @@
  */
 import { createInstanceUpdateRanges } from '../internal/instance-buffer-updates.js';
 import { syncCameraWorldMatrices, usesZeroToOneDepth } from './camera3d/matrices.js';
-export { GPU_CULL_WGSL, createGpuIndirectCuller3D } from './gpu-indirect3d.js';
+export { GPU_CULL_WGSL, createGpuIndirectCuller3D, createIndirectInstancedBatch3D } from './gpu-indirect3d.js';
 
 /**
  * @typedef {object} CullCameraLike Structural subset of THREE.Camera read by the cullers.

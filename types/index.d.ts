@@ -1,4 +1,4 @@
-import { createAssetCatalog, createStreamingResidencyPolicy } from "./platform/asset-catalog.js";
+import { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming } from "./platform/asset-catalog.js";
 import { createNetworkStateSync, createSceneReplicator } from "./lockstep/state-sync.js";
 import { defineProject, resolveFeatureGraph } from "./core/config.js";
 import { Component } from "./core/component.js";
@@ -271,6 +271,7 @@ export const HGame: Readonly<{
     createPanelStack: typeof createPanelStack;
     applyAriaToElement: typeof applyAriaToElement;
     computeFlexLayout: typeof computeFlexLayout;
+    createCanvasUiRenderer: typeof createCanvasUiRenderer;
     createVirtualList: typeof createVirtualList;
     createI18n: typeof createI18n;
     computeStaggerProgress: typeof computeStaggerProgress;
@@ -1126,6 +1127,7 @@ export const HGame: Readonly<{
     renderGameDesignDocs: typeof renderGameDesignDocs;
     createAssetCatalog: typeof createAssetCatalog;
     createStreamingResidencyPolicy: typeof createStreamingResidencyPolicy;
+    bindTextureMipStreaming: typeof bindTextureMipStreaming;
     createNetworkStateSync: typeof createNetworkStateSync;
     createSceneReplicator: typeof createSceneReplicator;
 }>;
@@ -1153,6 +1155,7 @@ import { createRedDotSystem } from './ui/index.js';
 import { createPanelStack } from './ui/index.js';
 import { applyAriaToElement } from './ui/index.js';
 import { computeFlexLayout } from './ui/index.js';
+import { createCanvasUiRenderer } from './ui/index.js';
 import { createVirtualList } from './ui/index.js';
 import { createI18n } from './ui/index.js';
 import { computeStaggerProgress } from './ui/index.js';
@@ -1197,7 +1200,7 @@ export { defineProject, resolveFeatureGraph, PROJECT_PROFILES, OPTIONAL_FEATURES
 export { Scene, SceneManager } from "./core/scene.js";
 export { normalizeGameplayTag, isValidGameplayTag, tagMatchesHierarchy, splitTagAncestors, createTagRegistry, GLOBAL_TAG_REGISTRY, createTagContainer, matchGameplayTags } from "./core/tags.js";
 export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_PROTOCOL_VERSION, createAssetLoader, createSaveStore, createVersionedStore, createInputManager, defineInputContext, createInputActionRouter, ARCADE_SLOTS, PLAYER_KEYMAPS, createArcadeControls, computeSplitScreenViews, createAudioManager, analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm, createDiagnostics, createGameBridge, createGameHostBridge } from "./platform/engine.js";
-export { createAssetCatalog, createStreamingResidencyPolicy } from "./platform/asset-catalog.js";
+export { createAssetCatalog, createStreamingResidencyPolicy, bindTextureMipStreaming } from "./platform/asset-catalog.js";
 export { EASING, TweenManager, LN2_CRIT, damp, dampAngle, stepSpring1D, SpringDamper1D, SpringDamper2D, SpringDamper3D } from "./time/tween.js";
 export { TileMap, findGridPath, createGridPathWork } from "./world/tilemap.js";
 export { ObjectPool, SpatialHash2D } from "./world/spatial2d.js";
@@ -1209,7 +1212,7 @@ export { createStateMachine, BT_STATUS, sequence, selector, parallel, inverter, 
 export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner } from "./sim/index.js";
 export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from "./integrations/render-budget-2d.js";
 export { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
-export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
+export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
 export { createNetworkStateSync, createSceneReplicator } from "./lockstep/state-sync.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";
 export { STANDARD_ART_SPEC, ART_THEMES, listArtThemes, getArtTheme, resolvePresentationPreset, GAME_AUDIO_EVENTS, DEFAULT_AUDIO_MATRIX, AUDIO_PROFILES, createAudioDirector, GENRE_ARCHETYPES, listGenreArchetypes, defineGameBlueprint, evaluateBlueprintBalance, createBlueprintFromIdea, createGameSession, mountGameShell, REQUIRED_DESIGN_DOCS, renderGameDesignDocs } from "./kit/index.js";

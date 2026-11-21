@@ -781,3 +781,223 @@ export function createAnimator3D({
     },
   };
 }
+
+/**
+ * Multi-bone FABRIK (Forward And Backward Reaching Inverse Kinematics) solver with optional
+ * pole target plane alignment and blend weight. Updates local bone quaternions in-place.
+ * @param {object[]} bones Array of >= 3 Transform/Bone nodes `[root, ..., endEffector]`.
+ * @param {{ x: number, y: number, z: number } | [number, number, number]} targetPos
+ * @param {object} [options]
+ * @param {number} [options.iterations=10]
+ * @param {number} [options.tolerance=0.001]
+ * @param {{ x: number, y: number, z: number } | [number, number, number] | null} [options.poleTarget=null]
+ * @param {number} [options.weight=1]
+ */
+export function solveFabrikIK(bones, targetPos, {
+  iterations = 10,
+  tolerance = 0.001,
+  poleTarget = null,
+  weight = 1,
+} = {}) {
+  if (!Array.isArray(bones) || bones.length < 3) return false;
+  const w = clamp(Number.isFinite(weight) ? weight : 1, 0, 1);
+  if (w <= 0) return true;
+
+  const n = bones.length;
+  const pts = Array.from({ length: n }, () => ({ x: 0, y: 0, z: 0 }));
+  const lengths = new Array(n - 1);
+  const origDirs = new Array(n - 1);
+  const origLocalQuats = new Array(n - 1);
+
+  bones[0].updateMatrixWorld?.(true);
+  for (let i = 0; i < n; i++) {
+    getWorldPositionFallback(bones[i], pts[i]);
+  }
+  let totalLen = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const dx = pts[i + 1].x - pts[i].x;
+    const dy = pts[i + 1].y - pts[i].y;
+    const dz = pts[i + 1].z - pts[i].z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len <= 1e-6) return false;
+    lengths[i] = len;
+    totalLen += len;
+    origDirs[i] = { x: dx / len, y: dy / len, z: dz / len };
+    origLocalQuats[i] = { ...bones[i].quaternion };
+  }
+
+  const tgt = { x: 0, y: 0, z: 0 };
+  readVec3(targetPos, tgt);
+  const rootOrig = { ...pts[0] };
+  const toTgtX = tgt.x - rootOrig.x;
+  const toTgtY = tgt.y - rootOrig.y;
+  const toTgtZ = tgt.z - rootOrig.z;
+  const tgtDist = Math.hypot(toTgtX, toTgtY, toTgtZ);
+
+  if (tgtDist >= totalLen) {
+    // Straight stretch toward unreachable target
+    const inv = tgtDist > 1e-6 ? 1 / tgtDist : 1;
+    for (let i = 0; i < n - 1; i++) {
+      pts[i + 1].x = pts[i].x + toTgtX * inv * lengths[i];
+      pts[i + 1].y = pts[i].y + toTgtY * inv * lengths[i];
+      pts[i + 1].z = pts[i].z + toTgtZ * inv * lengths[i];
+    }
+  } else {
+    const maxIters = Math.max(1, Math.floor(Number(iterations) || 10));
+    const tolSq = Math.max(1e-8, Number(tolerance) || 0.001) ** 2;
+    for (let it = 0; it < maxIters; it++) {
+      const endErrSq = (pts[n - 1].x - tgt.x) ** 2 + (pts[n - 1].y - tgt.y) ** 2 + (pts[n - 1].z - tgt.z) ** 2;
+      if (endErrSq <= tolSq) break;
+
+      // Forward pass (end -> root)
+      pts[n - 1].x = tgt.x;
+      pts[n - 1].y = tgt.y;
+      pts[n - 1].z = tgt.z;
+      for (let i = n - 2; i >= 0; i--) {
+        const dx = pts[i].x - pts[i + 1].x;
+        const dy = pts[i].y - pts[i + 1].y;
+        const dz = pts[i].z - pts[i + 1].z;
+        const d = Math.hypot(dx, dy, dz) || 1;
+        const scale = lengths[i] / d;
+        pts[i].x = pts[i + 1].x + dx * scale;
+        pts[i].y = pts[i + 1].y + dy * scale;
+        pts[i].z = pts[i + 1].z + dz * scale;
+      }
+
+      // Backward pass (root -> end)
+      pts[0].x = rootOrig.x;
+      pts[0].y = rootOrig.y;
+      pts[0].z = rootOrig.z;
+      for (let i = 0; i < n - 1; i++) {
+        const dx = pts[i + 1].x - pts[i].x;
+        const dy = pts[i + 1].y - pts[i].y;
+        const dz = pts[i + 1].z - pts[i].z;
+        const d = Math.hypot(dx, dy, dz) || 1;
+        const scale = lengths[i] / d;
+        pts[i + 1].x = pts[i].x + dx * scale;
+        pts[i + 1].y = pts[i].y + dy * scale;
+        pts[i + 1].z = pts[i].z + dz * scale;
+      }
+    }
+  }
+
+  // Optional pole vector projection for intermediate joints
+  if (poleTarget) {
+    const pole = { x: 0, y: 0, z: 0 };
+    readVec3(poleTarget, pole);
+    const axisX = pts[n - 1].x - pts[0].x;
+    const axisY = pts[n - 1].y - pts[0].y;
+    const axisZ = pts[n - 1].z - pts[0].z;
+    const axisLen = Math.hypot(axisX, axisY, axisZ);
+    if (axisLen > 1e-5) {
+      const ax = axisX / axisLen, ay = axisY / axisLen, az = axisZ / axisLen;
+      for (let i = 1; i < n - 1; i++) {
+        const proj = (pts[i].x - pts[0].x) * ax + (pts[i].y - pts[0].y) * ay + (pts[i].z - pts[0].z) * az;
+        const onAxisX = pts[0].x + ax * proj;
+        const onAxisY = pts[0].y + ay * proj;
+        const onAxisZ = pts[0].z + az * proj;
+        const radius = Math.hypot(pts[i].x - onAxisX, pts[i].y - onAxisY, pts[i].z - onAxisZ);
+        if (radius > 1e-4) {
+          const pProj = (pole.x - pts[0].x) * ax + (pole.y - pts[0].y) * ay + (pole.z - pts[0].z) * az;
+          const pOnAxisX = pts[0].x + ax * pProj;
+          const pOnAxisY = pts[0].y + ay * pProj;
+          const pOnAxisZ = pts[0].z + az * pProj;
+          const px = pole.x - pOnAxisX, py = pole.y - pOnAxisY, pz = pole.z - pOnAxisZ;
+          const pLen = Math.hypot(px, py, pz);
+          if (pLen > 1e-5) {
+            pts[i].x = onAxisX + (px / pLen) * radius;
+            pts[i].y = onAxisY + (py / pLen) * radius;
+            pts[i].z = onAxisZ + (pz / pLen) * radius;
+          }
+        }
+      }
+    }
+  }
+
+  // Convert solved world segment directions into local quaternions sequentially
+  for (let i = 0; i < n - 1; i++) {
+    bones[i].updateMatrixWorld?.(true);
+    const curNext = { x: 0, y: 0, z: 0 };
+    const curStart = { x: 0, y: 0, z: 0 };
+    getWorldPositionFallback(bones[i], curStart);
+    getWorldPositionFallback(bones[i + 1], curNext);
+    const cdx = curNext.x - curStart.x, cdy = curNext.y - curStart.y, cdz = curNext.z - curStart.z;
+    const cLen = Math.hypot(cdx, cdy, cdz) || 1;
+    const tdx = pts[i + 1].x - pts[i].x, tdy = pts[i + 1].y - pts[i].y, tdz = pts[i + 1].z - pts[i].z;
+    const tLen = Math.hypot(tdx, tdy, tdz) || 1;
+
+    const deltaW = quatFromUnitVectors(cdx / cLen, cdy / cLen, cdz / cLen, tdx / tLen, tdy / tLen, tdz / tLen, { x: 0, y: 0, z: 0, w: 1 });
+    const parentW = bones[i].parent ? getWorldQuatFallback(bones[i].parent, { x: 0, y: 0, z: 0, w: 1 }) : { x: 0, y: 0, z: 0, w: 1 };
+    const invParentW = quatConjugate(parentW, { x: 0, y: 0, z: 0, w: 1 });
+    const boneW = getWorldQuatFallback(bones[i], { x: 0, y: 0, z: 0, w: 1 });
+    const targetW = quatMul(deltaW, boneW, { x: 0, y: 0, z: 0, w: 1 });
+    const targetLocal = quatMul(invParentW, targetW, { x: 0, y: 0, z: 0, w: 1 });
+    const finalLocal = w < 1 ? quatSlerp(origLocalQuats[i], targetLocal, w, { x: 0, y: 0, z: 0, w: 1 }) : targetLocal;
+    bones[i].quaternion.set?.(finalLocal.x, finalLocal.y, finalLocal.z, finalLocal.w);
+    if (!bones[i].quaternion.set) Object.assign(bones[i].quaternion, finalLocal);
+    bones[i].updateMatrixWorld?.(true);
+  }
+  return true;
+}
+
+/**
+ * Extract incremental root motion displacement `(dx, dy, dz, dyaw)` from a root bone
+ * relative to `prevState` and update `prevState` in-place.
+ */
+export function extractRootMotion(rootBone, prevState = { x: 0, y: 0, z: 0, yaw: 0, initialized: false }) {
+  if (!rootBone?.position) return { dx: 0, dy: 0, dz: 0, dyaw: 0 };
+  const x = Number(rootBone.position.x) || 0;
+  const y = Number(rootBone.position.y) || 0;
+  const z = Number(rootBone.position.z) || 0;
+  const q = rootBone.quaternion;
+  const yaw = q
+    ? Math.atan2(2 * ((q.w || 1) * (q.y || 0) + (q.x || 0) * (q.z || 0)), 1 - 2 * ((q.y || 0) ** 2 + (q.z || 0) ** 2))
+    : 0;
+  if (!prevState.initialized) {
+    prevState.x = x;
+    prevState.y = y;
+    prevState.z = z;
+    prevState.yaw = yaw;
+    prevState.initialized = true;
+    return { dx: 0, dy: 0, dz: 0, dyaw: 0 };
+  }
+  const dx = x - prevState.x;
+  const dy = y - prevState.y;
+  const dz = z - prevState.z;
+  let dyaw = yaw - prevState.yaw;
+  while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+  while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+  prevState.x = x;
+  prevState.y = y;
+  prevState.z = z;
+  prevState.yaw = yaw;
+  return { dx, dy, dz, dyaw };
+}
+
+/**
+ * Smoothly blend BlendShape / MorphTarget influences on a Three.js Mesh or skinned model root.
+ * @param {object} root
+ * @param {Record<string | number, number>} targetWeights Named or indexed morph target weights in [0, 1].
+ * @param {number} [alpha=1] Smoothing/lerp factor toward `targetWeights`.
+ */
+export function blendMorphTargets(root, targetWeights, alpha = 1) {
+  if (!root || !targetWeights || typeof targetWeights !== 'object') return 0;
+  const t = clamp(Number.isFinite(alpha) ? alpha : 1, 0, 1);
+  let updated = 0;
+  const applyMesh = mesh => {
+    const influences = mesh?.morphTargetInfluences;
+    if (!Array.isArray(influences)) return;
+    const dict = mesh.morphTargetDictionary;
+    for (const [key, rawWeight] of Object.entries(targetWeights)) {
+      const targetW = clamp(Number(rawWeight) || 0, 0, 1);
+      const idx = dict && Object.hasOwn(dict, key) ? dict[key] : Number(key);
+      if (Number.isInteger(idx) && idx >= 0 && idx < influences.length) {
+        influences[idx] = influences[idx] + (targetW - influences[idx]) * t;
+        updated++;
+      }
+    }
+  };
+  if (typeof root.traverse === 'function') root.traverse(applyMesh);
+  else applyMesh(root);
+  return updated;
+}

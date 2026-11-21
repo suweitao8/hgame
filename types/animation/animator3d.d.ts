@@ -101,3 +101,51 @@ export function createAnimator3D({ mixer, clips, states, transitions, initialSta
     update: (dt?: number) => void;
     dispose(): void;
 };
+/**
+ * Multi-bone FABRIK (Forward And Backward Reaching Inverse Kinematics) solver with optional
+ * pole target plane alignment and blend weight. Updates local bone quaternions in-place.
+ * @param {object[]} bones Array of >= 3 Transform/Bone nodes `[root, ..., endEffector]`.
+ * @param {{ x: number, y: number, z: number } | [number, number, number]} targetPos
+ * @param {object} [options]
+ * @param {number} [options.iterations=10]
+ * @param {number} [options.tolerance=0.001]
+ * @param {{ x: number, y: number, z: number } | [number, number, number] | null} [options.poleTarget=null]
+ * @param {number} [options.weight=1]
+ */
+export function solveFabrikIK(bones: object[], targetPos: {
+    x: number;
+    y: number;
+    z: number;
+} | [number, number, number], { iterations, tolerance, poleTarget, weight, }?: {
+    iterations?: number | undefined;
+    tolerance?: number | undefined;
+    poleTarget?: [number, number, number] | {
+        x: number;
+        y: number;
+        z: number;
+    } | null | undefined;
+    weight?: number | undefined;
+} | undefined): boolean;
+/**
+ * Extract incremental root motion displacement `(dx, dy, dz, dyaw)` from a root bone
+ * relative to `prevState` and update `prevState` in-place.
+ */
+export function extractRootMotion(rootBone: any, prevState?: {
+    x: number;
+    y: number;
+    z: number;
+    yaw: number;
+    initialized: boolean;
+}): {
+    dx: number;
+    dy: number;
+    dz: number;
+    dyaw: number;
+};
+/**
+ * Smoothly blend BlendShape / MorphTarget influences on a Three.js Mesh or skinned model root.
+ * @param {object} root
+ * @param {Record<string | number, number>} targetWeights Named or indexed morph target weights in [0, 1].
+ * @param {number} [alpha=1] Smoothing/lerp factor toward `targetWeights`.
+ */
+export function blendMorphTargets(root: object, targetWeights: Record<string | number, number>, alpha?: number | undefined): number;

@@ -196,6 +196,17 @@ export function createGpuIndirectCuller3D({
     return true;
   }
 
+  function setInstanceBoundsRange(boundsArray, startIndex = 0, count = Math.floor((boundsArray?.length ?? 0) / 4)) {
+    const start = Math.max(0, startIndex | 0);
+    const n = Math.max(0, Math.min(maxInstances - start, count | 0));
+    if (n === 0 || !boundsArray) return false;
+    bounds.set(boundsArray.subarray(0, n * 4), start * 4);
+    if (start + n > activeCount) activeCount = start + n;
+    markDirty(start);
+    markDirty(start + n - 1);
+    return true;
+  }
+
   function setInstanceCount(count) {
     if (!Number.isInteger(count) || count < 0 || count > maxInstances) {
       throw new RangeError(`Instance count ${count} out of bounds [0, ${maxInstances}]`);
@@ -362,10 +373,173 @@ export function createGpuIndirectCuller3D({
     get wgslSource() { return GPU_CULL_WGSL; },
     get instanceCount() { return activeCount; },
     setInstanceBounds,
+    setInstanceBoundsRange,
     setInstanceCount,
     setFrustumPlanes,
     execute,
     getStats() { return Object.freeze({ ...stats }); },
+    dispose,
+  };
+}
+
+/**
+ * Real GPU-indirect & MultiDraw compacted InstancedMesh wrapper.
+ * Culls per-instance bounding spheres through `gpuIndirectCuller`, compacts surviving
+ * transform matrices contiguously into `InstancedMesh.instanceMatrix`, and sets `.count`.
+ * @param {object} THREE
+ * @param {object} options
+ * @param {object} options.geometry
+ * @param {object} options.material
+ * @param {number} [options.capacity=1024]
+ * @param {boolean} [options.castShadow=false]
+ * @param {boolean} [options.receiveShadow=false]
+ */
+export function createIndirectInstancedBatch3D(THREE, {
+  geometry,
+  material,
+  capacity = 1024,
+  castShadow = false,
+  receiveShadow = false,
+} = {}) {
+  if (!THREE?.InstancedMesh || !geometry || !material) {
+    throw new TypeError('createIndirectInstancedBatch3D requires THREE.InstancedMesh, geometry, and material');
+  }
+  const cap = Math.max(1, Math.floor(Number(capacity) || 1024));
+  const instancedMesh = new THREE.InstancedMesh(geometry, material, cap);
+  instancedMesh.frustumCulled = false; // We perform per-instance frustum compaction directly
+  instancedMesh.castShadow = Boolean(castShadow);
+  instancedMesh.receiveShadow = Boolean(receiveShadow);
+  instancedMesh.count = 0;
+
+  const sourceMatrices = new Float32Array(cap * 16);
+  const bounds = new Float32Array(cap * 4);
+  let activeCount = 0;
+  let visibleCount = 0;
+  let cullCount = 0;
+  let lastMode = 'cpu-instanced';
+
+  function setCount(count) {
+    activeCount = Math.max(0, Math.min(cap, Math.floor(Number(count) || 0)));
+    return activeCount;
+  }
+
+  function setInstanceMatrix(index, matrixOrElements) {
+    if (index < 0 || index >= cap) return false;
+    const elems = matrixOrElements?.elements ?? matrixOrElements;
+    if (!elems || elems.length < 16) return false;
+    const base = index * 16;
+    for (let i = 0; i < 16; i++) sourceMatrices[base + i] = elems[i];
+    if (index >= activeCount) activeCount = index + 1;
+    return true;
+  }
+
+  function setInstanceBounds(index, x, y, z, radius = 1) {
+    if (index < 0 || index >= cap) return false;
+    const base = index * 4;
+    bounds[base] = Number(x) || 0;
+    bounds[base + 1] = Number(y) || 0;
+    bounds[base + 2] = Number(z) || 0;
+    bounds[base + 3] = Math.max(0.001, Number(radius) || 1);
+    if (index >= activeCount) activeCount = index + 1;
+    return true;
+  }
+
+  function cull(frustumPlanes, gpuIndirectCuller = null) {
+    if (activeCount === 0) {
+      visibleCount = 0;
+      instancedMesh.count = 0;
+      return 0;
+    }
+    cullCount++;
+    let vis = 0;
+    const dst = instancedMesh.instanceMatrix?.array;
+
+    if (gpuIndirectCuller) {
+      if (frustumPlanes) gpuIndirectCuller.setFrustumPlanes(frustumPlanes);
+      if (typeof gpuIndirectCuller.setInstanceBoundsRange === 'function') {
+        gpuIndirectCuller.setInstanceBoundsRange(bounds, 0, activeCount);
+      } else {
+        for (let i = 0; i < activeCount; i++) {
+          const b = i * 4;
+          gpuIndirectCuller.setInstanceBounds(i, bounds[b], bounds[b + 1], bounds[b + 2], bounds[b + 3]);
+        }
+      }
+      gpuIndirectCuller.setInstanceCount(activeCount);
+      const res = gpuIndirectCuller.execute();
+      lastMode = res.mode ?? gpuIndirectCuller.mode;
+      if (res.visibleIndices && dst) {
+        const idxArr = res.visibleIndices;
+        for (let i = 0; i < res.visibleCount; i++) {
+          const srcOffset = idxArr[i] * 16;
+          const dstOffset = i * 16;
+          for (let k = 0; k < 16; k++) dst[dstOffset + k] = sourceMatrices[srcOffset + k];
+        }
+        vis = res.visibleCount;
+      }
+    }
+
+    if (vis === 0 && dst && frustumPlanes && frustumPlanes.length >= 24 && lastMode !== 'cpu-instanced') {
+      // Compact instance matrices on host side matching GPU frustum planes for WebGL2 InstancedMesh
+      for (let i = 0; i < activeCount; i++) {
+        const b = i * 4;
+        const x = bounds[b];
+        const y = bounds[b + 1];
+        const z = bounds[b + 2];
+        const r = bounds[b + 3];
+        let inside = true;
+        for (let p = 0; p < 24; p += 4) {
+          if (frustumPlanes[p] * x + frustumPlanes[p + 1] * y + frustumPlanes[p + 2] * z + frustumPlanes[p + 3] < -r) {
+            inside = false;
+            break;
+          }
+        }
+        if (inside) {
+          const srcOffset = i * 16;
+          const dstOffset = vis * 16;
+          for (let k = 0; k < 16; k++) dst[dstOffset + k] = sourceMatrices[srcOffset + k];
+          vis++;
+        }
+      }
+    }
+
+    visibleCount = vis;
+    instancedMesh.count = vis;
+    if (instancedMesh.instanceMatrix) {
+      if (typeof instancedMesh.instanceMatrix.clearUpdateRanges === 'function') {
+        instancedMesh.instanceMatrix.clearUpdateRanges();
+      }
+      if (vis > 0 && typeof instancedMesh.instanceMatrix.addUpdateRange === 'function') {
+        instancedMesh.instanceMatrix.addUpdateRange(0, vis * 16);
+      }
+      instancedMesh.instanceMatrix.needsUpdate = true;
+    }
+    return vis;
+  }
+
+  function dispose() {
+    instancedMesh.removeFromParent?.();
+    instancedMesh.dispose?.();
+  }
+
+  return {
+    get mesh() { return instancedMesh; },
+    get capacity() { return cap; },
+    get count() { return activeCount; },
+    get visibleCount() { return visibleCount; },
+    setCount,
+    setInstanceMatrix,
+    setInstanceBounds,
+    cull,
+    getStats() {
+      return Object.freeze({
+        capacity: cap,
+        activeCount,
+        visibleCount,
+        culledOut: Math.max(0, activeCount - visibleCount),
+        cullPasses: cullCount,
+        mode: lastMode,
+      });
+    },
     dispose,
   };
 }

@@ -27,10 +27,12 @@ export { createGameEngine, PLATFORM_VERSION, GAME_ENGINE_PROTOCOL, GAME_ENGINE_P
 export {
   createAssetCatalog,
   createStreamingResidencyPolicy,
+  bindTextureMipStreaming,
 } from './platform/asset-catalog.js';
 import {
   createAssetCatalog,
   createStreamingResidencyPolicy,
+  bindTextureMipStreaming,
 } from './platform/asset-catalog.js';
 export {
   EASING,
@@ -95,6 +97,7 @@ export {
   createPanelStack,
   applyAriaToElement,
   computeFlexLayout,
+  createCanvasUiRenderer,
   createVirtualList,
   createI18n,
   computeStaggerProgress,
@@ -215,6 +218,7 @@ import {
   createPanelStack,
   applyAriaToElement,
   computeFlexLayout,
+  createCanvasUiRenderer,
   createVirtualList,
   createI18n,
   computeStaggerProgress,
@@ -329,6 +333,7 @@ export const HGame = Object.freeze({
   createPanelStack,
   applyAriaToElement,
   computeFlexLayout,
+  createCanvasUiRenderer,
   createVirtualList,
   createI18n,
   computeStaggerProgress,
@@ -425,6 +430,7 @@ export const HGame = Object.freeze({
   renderGameDesignDocs,
   createAssetCatalog,
   createStreamingResidencyPolicy,
+  bindTextureMipStreaming,
   createNetworkStateSync,
   createSceneReplicator,
 });

@@ -542,3 +542,59 @@ export function createStreamingResidencyPolicy({
     dispose,
   });
 }
+
+/**
+ * Bind an actual Three.js / Image texture object into `createStreamingResidencyPolicy`
+ * so mip upgrades/downgrades automatically swap backing resolution/image sources and mark `needsUpdate`.
+ */
+export function bindTextureMipStreaming(policy, id, texture, {
+  position = { x: 0, y: 0, z: 0 },
+  baseBytes = 4 * 1024 * 1024,
+  priority = 0,
+  mipSources = [],
+  anisotropies = [16, 8, 4, 1],
+  onSwap = null,
+} = {}) {
+  if (!policy || typeof policy.register !== 'function' || !texture || typeof texture !== 'object') {
+    throw new TypeError('bindTextureMipStreaming requires a residency policy and target texture');
+  }
+  let swaps = 0;
+  let lastAppliedMip = -1;
+  let evictedCount = 0;
+
+  const entry = policy.register(id, {
+    position,
+    baseBytes,
+    priority,
+    onMipChange(nextMip) {
+      const src = mipSources[nextMip] ?? mipSources[mipSources.length - 1] ?? null;
+      if (src !== null && src !== undefined && texture.image !== src) {
+        texture.image = src;
+      }
+      if ('anisotropy' in texture && anisotropies[nextMip] !== undefined) {
+        texture.anisotropy = anisotropies[nextMip];
+      }
+      if (texture.userData) texture.userData.streamingMipBias = nextMip;
+      else texture.userData = { streamingMipBias: nextMip };
+      texture.needsUpdate = true;
+      lastAppliedMip = nextMip;
+      swaps++;
+      onSwap?.(nextMip, texture);
+    },
+    onEvict() {
+      evictedCount++;
+      texture.image = mipSources[mipSources.length - 1] ?? null;
+      if ('anisotropy' in texture) texture.anisotropy = 1;
+      texture.needsUpdate = true;
+      texture.dispose?.();
+    },
+  });
+
+  return Object.freeze({
+    entry,
+    get swaps() { return swaps; },
+    get lastAppliedMip() { return lastAppliedMip; },
+    get evictedCount() { return evictedCount; },
+    unbind() { return policy.unregister(id); },
+  });
+}

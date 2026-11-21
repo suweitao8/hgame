@@ -124,6 +124,28 @@ export function createStreamingResidencyPolicy({ maxBytes, nearDistance, midDist
     }>;
     dispose: () => void;
 }>;
+/**
+ * Bind an actual Three.js / Image texture object into `createStreamingResidencyPolicy`
+ * so mip upgrades/downgrades automatically swap backing resolution/image sources and mark `needsUpdate`.
+ */
+export function bindTextureMipStreaming(policy: any, id: any, texture: any, { position, baseBytes, priority, mipSources, anisotropies, onSwap, }?: {
+    position?: {
+        x: number;
+        y: number;
+        z: number;
+    } | undefined;
+    baseBytes?: number | undefined;
+    priority?: number | undefined;
+    mipSources?: never[] | undefined;
+    anisotropies?: number[] | undefined;
+    onSwap?: null | undefined;
+}): Readonly<{
+    entry: any;
+    readonly swaps: number;
+    readonly lastAppliedMip: number;
+    readonly evictedCount: number;
+    unbind(): any;
+}>;
 export type AssetKind = "image" | "json" | "text" | "bytes" | "blob" | "audio" | "model" | "url";
 export type AssetCatalogEntry = {
     kind: AssetKind;
