@@ -1,21 +1,45 @@
 /**
  * Authoritative multiplayer state synchronization helpers:
- *  - Quantized component/entity delta compression & decompression
+ *  - Quantized component/entity delta compression (object delta + compact binary Uint8Array codec)
  *  - Client-side prediction history & server authoritative reconciliation
  *  - Snapshot jitter buffer interpolation & historical lag-compensation rewind
+ *  - Scene/Entity binary replicator binding directly to HGame Scene & transport channels
  */
 
 function isPlainObject(v) {
   return Boolean(v) && typeof v === 'object' && !Array.isArray(v);
 }
 
+function valuesEqual(a, b) {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!valuesEqual(a[i], b[i])) return false;
+    return true;
+  }
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const ka = Object.keys(a);
+    const kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    for (let i = 0; i < ka.length; i++) {
+      const k = ka[i];
+      if (!Object.hasOwn(b, k) || !valuesEqual(a[k], b[k])) return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+function isRotationKey(key) {
+  const k = key.toLowerCase();
+  return k === 'rot' || k === 'yaw' || k === 'pitch' || k === 'roll' || k.includes('angle') || k.includes('rotation');
+}
+
 function quantizeValue(key, value, quantizePos, quantizeRot) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return value;
-  const k = key.toLowerCase();
-  if (k === 'rot' || k === 'yaw' || k === 'pitch' || k === 'roll' || k.includes('angle') || k.includes('rotation')) {
-    return Math.round(value * quantizeRot) / quantizeRot;
-  }
-  return Math.round(value * quantizePos) / quantizePos;
+  const scale = isRotationKey(key) ? quantizeRot : quantizePos;
+  return Math.round(value * scale) / scale;
 }
 
 function quantizeEntity(entity, quantizePos, quantizeRot) {
@@ -63,8 +87,97 @@ function interpolateEntity(a, b, alpha) {
   return out;
 }
 
+// Binary Wire Format Constants
+const MAGIC_0 = 0x48; // 'H'
+const MAGIC_1 = 0x47; // 'G'
+const WIRE_VERSION = 1;
+const VAL_TAG_POS_I32 = 0; // Zigzag varint fixed-point using qPos
+const VAL_TAG_ROT_I32 = 1; // Zigzag varint fixed-point using qRot
+const VAL_TAG_F64 = 2;     // Full IEEE754 float64
+const VAL_TAG_BOOL = 3;
+const VAL_TAG_STRING = 4;
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+class ByteWriter {
+  constructor(initial = 256) {
+    this.buf = new Uint8Array(initial);
+    this.view = new DataView(this.buf.buffer);
+    this.pos = 0;
+  }
+  ensure(n) {
+    if (this.pos + n <= this.buf.length) return;
+    let cap = this.buf.length;
+    while (cap < this.pos + n) cap *= 2;
+    const next = new Uint8Array(cap);
+    next.set(this.buf.subarray(0, this.pos));
+    this.buf = next;
+    this.view = new DataView(this.buf.buffer);
+  }
+  u8(v) { this.ensure(1); this.buf[this.pos++] = v & 0xff; }
+  u16(v) { this.ensure(2); this.view.setUint16(this.pos, v >>> 0, true); this.pos += 2; }
+  u32(v) { this.ensure(4); this.view.setUint32(this.pos, v >>> 0, true); this.pos += 4; }
+  f64(v) { this.ensure(8); this.view.setFloat64(this.pos, v, true); this.pos += 8; }
+  varUint(v) {
+    let n = v >>> 0;
+    while (n >= 0x80) {
+      this.u8((n & 0x7f) | 0x80);
+      n >>>= 7;
+    }
+    this.u8(n);
+  }
+  varInt(v) {
+    // ZigZag 32-bit signed encoding
+    const zz = ((v << 1) ^ (v >> 31)) >>> 0;
+    this.varUint(zz);
+  }
+  str(s) {
+    const bytes = textEncoder.encode(String(s));
+    this.varUint(bytes.length);
+    this.ensure(bytes.length);
+    this.buf.set(bytes, this.pos);
+    this.pos += bytes.length;
+  }
+  finish() {
+    return this.buf.slice(0, this.pos);
+  }
+}
+
+class ByteReader {
+  constructor(bytes) {
+    this.buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    this.view = new DataView(this.buf.buffer, this.buf.byteOffset, this.buf.byteLength);
+    this.pos = 0;
+  }
+  u8() { return this.buf[this.pos++]; }
+  u16() { const v = this.view.getUint16(this.pos, true); this.pos += 2; return v; }
+  u32() { const v = this.view.getUint32(this.pos, true); this.pos += 4; return v; }
+  f64() { const v = this.view.getFloat64(this.pos, true); this.pos += 8; return v; }
+  varUint() {
+    let res = 0;
+    let shift = 0;
+    while (this.pos < this.buf.length) {
+      const b = this.buf[this.pos++];
+      res |= (b & 0x7f) << shift;
+      if ((b & 0x80) === 0) return res >>> 0;
+      shift += 7;
+    }
+    throw new Error('Truncated binary delta varint');
+  }
+  varInt() {
+    const zz = this.varUint();
+    return (zz >>> 1) ^ -(zz & 1);
+  }
+  str() {
+    const len = this.varUint();
+    const slice = this.buf.subarray(this.pos, this.pos + len);
+    this.pos += len;
+    return textDecoder.decode(slice);
+  }
+}
+
 /**
- * Create a network state synchronization controller for delta compression,
+ * Create a network state synchronization controller for delta compression (object + binary Uint8Array),
  * client prediction + server reconciliation, snapshot interpolation, and lag-compensation rewind.
  * @param {object} [options]
  * @param {number} [options.quantizePos=100] Position/scalar quantization precision (100 = 0.01 units).
@@ -116,7 +229,7 @@ export function createNetworkStateSync({
       let mask = 0;
       for (let i = 0; i < keys.length; i++) {
         const k = keys[i];
-        if (JSON.stringify(prevQuant[k]) !== JSON.stringify(nextEnt[k])) {
+        if (!valuesEqual(prevQuant[k], nextEnt[k])) {
           if (i < 31) mask |= (1 << i);
           changedKeys.push(k);
           changedValues.push(nextEnt[k]);
@@ -156,6 +269,123 @@ export function createNetworkStateSync({
       }
     }
     return out;
+  }
+
+  /**
+   * Encode snapshot delta into a compact binary `Uint8Array` frame with quantized varint values.
+   * @param {Record<string, Record<string, unknown>>} prevSnapshot
+   * @param {Record<string, Record<string, unknown>>} nextSnapshot
+   * @param {{ tick?: number, timestampMs?: number, isKeyframe?: boolean }} [meta]
+   * @returns {Uint8Array}
+   */
+  function encodeDeltaBinary(prevSnapshot = {}, nextSnapshot = {}, { tick = 0, timestampMs = 0, isKeyframe = false } = {}) {
+    const delta = isKeyframe ? encodeDelta({}, nextSnapshot) : encodeDelta(prevSnapshot, nextSnapshot);
+    const w = new ByteWriter(256);
+    w.u8(MAGIC_0);
+    w.u8(MAGIC_1);
+    w.u8(WIRE_VERSION);
+    w.u8(isKeyframe ? 1 : 0);
+    w.u32(tick);
+    w.f64(Number(timestampMs) || 0);
+
+    w.u16(delta.removed.length);
+    for (const id of delta.removed) w.str(id);
+
+    const changedEntries = Object.entries(delta.changed);
+    w.u16(changedEntries.length);
+    for (const [id, patch] of changedEntries) {
+      w.str(id);
+      const keys = patch.keys;
+      const values = patch.values;
+      w.varUint(keys.length);
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i];
+        const v = values[i];
+        w.str(k);
+        if (typeof v === 'number' && Number.isFinite(v)) {
+          const isRot = isRotationKey(k);
+          const scale = isRot ? qRot : qPos;
+          const quantizedInt = Math.round(v * scale);
+          if (Math.abs(quantizedInt) <= 0x3fffffff) {
+            w.u8(isRot ? VAL_TAG_ROT_I32 : VAL_TAG_POS_I32);
+            w.varInt(quantizedInt);
+          } else {
+            w.u8(VAL_TAG_F64);
+            w.f64(v);
+          }
+        } else if (typeof v === 'boolean') {
+          w.u8(VAL_TAG_BOOL);
+          w.u8(v ? 1 : 0);
+        } else {
+          w.u8(VAL_TAG_STRING);
+          w.str(v ?? '');
+        }
+      }
+    }
+    return w.finish();
+  }
+
+  /**
+   * Decode a binary `Uint8Array` frame produced by `encodeDeltaBinary` atop `baseSnapshot`.
+   * @param {Record<string, Record<string, unknown>>} baseSnapshot
+   * @param {Uint8Array} bytes
+   */
+  function decodeDeltaBinary(baseSnapshot = {}, bytes) {
+    const r = new ByteReader(bytes);
+    const m0 = r.u8();
+    const m1 = r.u8();
+    if (m0 !== MAGIC_0 || m1 !== MAGIC_1) {
+      throw new Error('Invalid HGame binary delta packet magic');
+    }
+    const version = r.u8();
+    if (version !== WIRE_VERSION) {
+      throw new Error(`Unsupported binary delta packet version: ${version}`);
+    }
+    const flags = r.u8();
+    const isKeyframe = (flags & 1) !== 0;
+    const tick = r.u32();
+    const timestampMs = r.f64();
+
+    const state = isKeyframe ? {} : cloneSnapshot(baseSnapshot);
+    const removedCount = r.u16();
+    const removed = [];
+    for (let i = 0; i < removedCount; i++) {
+      const id = r.str();
+      removed.push(id);
+      delete state[id];
+    }
+
+    const changedCount = r.u16();
+    for (let e = 0; e < changedCount; e++) {
+      const id = r.str();
+      const target = isPlainObject(state[id]) ? { ...state[id] } : {};
+      const fieldCount = r.varUint();
+      for (let f = 0; f < fieldCount; f++) {
+        const k = r.str();
+        const tag = r.u8();
+        if (tag === VAL_TAG_POS_I32) {
+          target[k] = r.varInt() / qPos;
+        } else if (tag === VAL_TAG_ROT_I32) {
+          target[k] = r.varInt() / qRot;
+        } else if (tag === VAL_TAG_F64) {
+          target[k] = r.f64();
+        } else if (tag === VAL_TAG_BOOL) {
+          target[k] = r.u8() !== 0;
+        } else {
+          target[k] = r.str();
+        }
+      }
+      state[id] = target;
+    }
+
+    return {
+      tick,
+      timestampMs,
+      isKeyframe,
+      state,
+      removed,
+      changedCount: changedCount + removedCount,
+    };
   }
 
   function pushLocalInput(tick, input, predictedState = null) {
@@ -260,6 +490,8 @@ export function createNetworkStateSync({
   return Object.freeze({
     encodeDelta,
     decodeDelta,
+    encodeDeltaBinary,
+    decodeDeltaBinary,
     pushLocalInput,
     reconcileServerState,
     pushServerSnapshot,
@@ -267,5 +499,149 @@ export function createNetworkStateSync({
     getHistoricalState,
     getStats,
     clear,
+  });
+}
+
+/**
+ * Bind an HGame Scene & transport channel into automatic binary delta replication,
+ * snapshot interpolation for remote entities, and local prediction reconciliation.
+ * @param {object} options
+ * @param {import('../core/scene.js').Scene} options.scene
+ * @param {ReturnType<typeof createNetworkStateSync>} [options.stateSync]
+ * @param {{ send: (bytes: Uint8Array) => void, onMessage?: (fn: (bytes: Uint8Array) => void) => (() => void) | void }} options.transport
+ * @param {'host' | 'client'} [options.role='client']
+ * @param {string[]} [options.fields=['x', 'y', 'z', 'rotationY']]
+ * @param {string | null} [options.localEntityId=null]
+ * @param {((state: Record<string, unknown>, input: unknown, tick: number) => Record<string, unknown>) | null} [options.replayFn=null]
+ * @param {((info: { tick: number, timestampMs: number, state: Record<string, unknown> }) => void) | null} [options.onReconcile=null]
+ */
+export function createSceneReplicator({
+  scene,
+  stateSync = createNetworkStateSync(),
+  transport,
+  role = 'client',
+  fields = ['x', 'y', 'z', 'rotationY'],
+  localEntityId = null,
+  replayFn = null,
+  onReconcile = null,
+} = {}) {
+  if (!scene || !Array.isArray(scene.objects)) throw new TypeError('createSceneReplicator requires a valid HGame Scene');
+  if (!transport || typeof transport.send !== 'function') throw new TypeError('createSceneReplicator requires a transport with send()');
+
+  let baseSnapshot = {};
+  let latestReceivedTick = -1;
+  let lastBytesSent = 0;
+  let totalBytesSent = 0;
+  let totalBytesReceived = 0;
+  let packetsSent = 0;
+  let packetsReceived = 0;
+  let packetsDroppedOutOfOrder = 0;
+
+  function captureSceneSnapshot() {
+    /** @type {Record<string, Record<string, unknown>>} */
+    const snap = {};
+    for (const ent of scene.objects) {
+      if (!ent || ent.destroyed) continue;
+      const key = ent.name || String(ent.id ?? '');
+      if (!key) continue;
+      const record = {};
+      for (const f of fields) {
+        if (f in ent) record[f] = ent[f];
+      }
+      snap[key] = record;
+    }
+    return snap;
+  }
+
+  function applyStateToScene(state, skipLocalId = null) {
+    if (!state || typeof state !== 'object') return 0;
+    let updated = 0;
+    for (const [key, patch] of Object.entries(state)) {
+      if (skipLocalId && key === skipLocalId) continue;
+      const ent = scene.find(key);
+      if (!ent || !patch || typeof patch !== 'object') continue;
+      for (const f of fields) {
+        if (f in patch && typeof patch[f] === 'number' && Number.isFinite(patch[f])) {
+          ent[f] = patch[f];
+        }
+      }
+      updated++;
+    }
+    return updated;
+  }
+
+  function sendSnapshot(tick, timestampMs, { isKeyframe = false } = {}) {
+    if (role !== 'host') return null;
+    const current = captureSceneSnapshot();
+    const bytes = stateSync.encodeDeltaBinary(baseSnapshot, current, {
+      tick,
+      timestampMs,
+      isKeyframe: isKeyframe || packetsSent === 0,
+    });
+    baseSnapshot = current;
+    lastBytesSent = bytes.byteLength;
+    totalBytesSent += lastBytesSent;
+    packetsSent++;
+    transport.send(bytes);
+    return bytes;
+  }
+
+  function receivePacket(bytes) {
+    if (!(bytes instanceof Uint8Array)) return null;
+    totalBytesReceived += bytes.byteLength;
+    packetsReceived++;
+    const decoded = stateSync.decodeDeltaBinary(baseSnapshot, bytes);
+    stateSync.pushServerSnapshot(decoded.timestampMs, decoded.state);
+    if (decoded.tick >= latestReceivedTick || decoded.isKeyframe) {
+      latestReceivedTick = decoded.tick;
+      baseSnapshot = decoded.state;
+      if (localEntityId) {
+        const recon = stateSync.reconcileServerState(decoded.tick, decoded.state, replayFn);
+        applyStateToScene({ [localEntityId]: recon.state[localEntityId] }, null);
+        onReconcile?.({ tick: decoded.tick, timestampMs: decoded.timestampMs, state: recon.state });
+      }
+    } else {
+      packetsDroppedOutOfOrder++;
+    }
+    return decoded;
+  }
+
+  const unsubTransport = typeof transport.onMessage === 'function'
+    ? transport.onMessage(msg => {
+      if (role === 'client') receivePacket(msg);
+    })
+    : null;
+
+  function stepClient(renderTimeMs) {
+    const interpolated = stateSync.sampleInterpolated(renderTimeMs);
+    if (!interpolated) return 0;
+    return applyStateToScene(interpolated, localEntityId);
+  }
+
+  function dispose() {
+    if (typeof unsubTransport === 'function') unsubTransport();
+  }
+
+  return Object.freeze({
+    role,
+    stateSync,
+    captureSceneSnapshot,
+    sendSnapshot,
+    receivePacket,
+    stepClient,
+    getStats() {
+      return Object.freeze({
+        role,
+        packetsSent,
+        packetsReceived,
+        packetsDroppedOutOfOrder,
+        lastBytesSent,
+        totalBytesSent,
+        totalBytesReceived,
+        latestReceivedTick,
+        ...stateSync.getStats(),
+      });
+    },
+    dispose,
   });
 }

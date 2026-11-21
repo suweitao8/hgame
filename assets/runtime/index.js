@@ -104,8 +104,8 @@ export {
   UI_UX_CUES,
   createUiDirector,
 } from './ui/index.js';
-export { createNetworkStateSync } from './lockstep/state-sync.js';
-import { createNetworkStateSync } from './lockstep/state-sync.js';
+export { createNetworkStateSync, createSceneReplicator } from './lockstep/state-sync.js';
+import { createNetworkStateSync, createSceneReplicator } from './lockstep/state-sync.js';
 export {
   VFX_EASING,
   VFX_RENDER_ORDERS,
@@ -426,4 +426,5 @@ export const HGame = Object.freeze({
   createAssetCatalog,
   createStreamingResidencyPolicy,
   createNetworkStateSync,
+  createSceneReplicator,
 });
