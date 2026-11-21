@@ -75,7 +75,7 @@
 <!-- scorecard:runtime:start -->
 | 引擎 | A 架构(18) | R 渲染(30) | P 性能(24) | S 子系统(20) | N 联机(8) | 能力总分 / 100 | 对 Unity 比值 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| **HGame 1.0.0** | 80.0% | 81.0% | 80.0% | 81.5% | 80.0% | **80.6** | 100.8% |
+| **HGame 1.0.0** | 85.0% | 81.0% | 80.0% | 81.5% | 80.0% | **81.5** | 101.9% |
 | Unity 6.x URP Web | 90.0% | 82.2% | 73.1% | 80.0% | 70.0% | 80.0 | 100.0% |
 | Cocos Creator 3.8 Web | 81.7% | 78.2% | 66.0% | 72.5% | 35.0% | 71.3 | 89.1% |
 | Godot 4.3+ Web (Compatibility) | 66.7% | 65.0% | 52.9% | 76.0% | 65.0% | 64.6 | 80.8% |
@@ -91,7 +91,7 @@
 | 编号 | 项（权重） | HGame | 成熟度（清单） | Unity | Cocos | Godot | HGame 短板 |
 | --- | --- | ---: | :---: | ---: | ---: | ---: | --- |
 | A1 | 调度与生命周期（6） | **8.5** | C3 (2/3) | 9.0 | 8.0 | 8.5 | 缺少 Application 级热点/长任务自动预算切片不丢帧机制。 |
-| A2 | 渲染图与扩展管线（6） | **7.0** | C1 (非默认·2/4) | 9.0 | 8.0 | 5.0 | RenderGraph 默认未接管 Three 主光栅（defaultPath=false，按铁律 1 封顶 7.0）。 |
+| A2 | 渲染图与扩展管线（6） | **8.5** | C3 (4/4) | 9.0 | 8.0 | 5.0 | pipeline 持久 RT 尚未全部交由物理别名池按寿命分配 |
 | A3 | 资产流送、压缩与驻留（6） | **8.5** | C3 (3/4) | 9.0 | 8.5 | 6.5 | 缺少内置离线 BasisU 压缩编码器（依赖外部 toktx）。 |
 | R1 | 2D 渲染、光照与混排（6） | **8.0** | C3 (3/4) | 8.0 | 9.0 | 9.0 | 缺少行业通用的 Spine / DragonBones 运行时支持。 |
 | R2 | 3D 光照、阴影与 GI（7） | **8.5** | C4 (4/4) | 8.5 | 7.5 | 6.0 | 暂缺多反弹离线路径追踪级全局光能传递（当前为直接软阴影 + 半球 AO + 实时 SSGI）。 |
@@ -151,7 +151,7 @@
 | **已完成（阶段 1）** | **Rapier 物理 Worker 化 + 快照插值**：保持前后端确定性 Checksum 不变的前提下卸载主线程 | `P1` | `P1: 7.0 -> 8.0` | 在非 COOP/COEP 环境下通过标准 Worker 运行 Rapier 步进，inline/Worker/原生三方 `stateChecksum` 完全一致，主线程每帧耗时 `< 2ms`。 |
 | **已完成（阶段 2）** | **Lightmap UV2 展开 + GPU 渐进式光照/AO 烘焙管线**：补齐预计算静态光照 | `R2` | `R2: 7.5 -> 8.5` | 纯 JS 自动生成无重叠 `uv1`（利用率 `> 0.3`），WebGL2 渐进烘焙在 `< 5s` 内产生正确软阴影与交界 AO 遮蔽。 |
 | **已完成（阶段 5）** | **WebGPU Compute 剔除默认接线（`gpuIndirect='auto'`）**：修复参数对齐并实现非阻塞双缓冲读回压缩 | `P2` | `P2: 7.0 -> 8.0` | 解除铁律 1 封顶；支持 WebGPU 时默认适配器异步升级 `'webgpu-indirect'` 并实际消费 GPU 剔除索引（一帧延迟非阻塞），无 batch 时零开销。 |
-| **P1** | **RenderGraph 统一主光栅**：`renderGraph` 默认 `true` 并把 `shadow-csm`、pipeline passes、`projected-decals` 纳入同一编译图 | `A2` | `A2: 7.0 -> 8.5` | 解除铁律 1 封顶；单一 `compileRenderGraph` 驱动几何/阴影/后处理并复用 `PhysicalRenderTargetPool3D`，所有视觉回归测试零退化。 |
+| **已完成（阶段 6）** | **RenderGraph 统一主光栅**：`renderGraph` 默认 `true` 并把 `shadow-csm`、pipeline passes、`projected-decals` 纳入同一编译图 | `A2` | `A2: 7.0 -> 8.5` | 解除铁律 1 封顶；单一 `compileRenderGraph` 驱动几何/阴影/贴花/后处理并复用 `PhysicalRenderTargetPool3D`，所有视觉回归与浏览器基准零退化。 |
 | **已完成（阶段 3）** | **骨骼动画跨骨架重定向（`retarget3d.js`）**：alias 自动映射 + rest pose 差值 + hips 高度缩放 | `S2` | `S2: 7.5 -> 8.0` | 不同比例与命名骨架重定向后末端骨骼世界方向误差 `< 1e-3 rad`。 |
 | **已完成（阶段 4）** | **远程资源包加载器（`remote-bundle.js`）**：拓扑依赖、SHA-256 校验、指数退避重试与 Cache Storage 缓存 | `A3` | `A3: 8.0 -> 8.5` | 与 `createAssetCatalog` 适配，覆盖重试、取消、完整性校验与依赖顺序测试。 |
 | **P2** | **声明式材质变体 Keyword 字典（`defineMaterialVariants3D`）**：`customProgramCacheKey` 复用 + Warmup | `R3` | `R3: 7.5 -> 8.5` | 同组 Keyword 复用同一材质与着色器程序，配合 `ShaderWarmupQueue3D` 预热。 |

@@ -122,7 +122,7 @@
  * @property {ThreeSkyLike | null} [sky=null] Sky controller.
  * @property {ThreePostVolumesLike | null} [postVolumes=null] Post volume stack.
  * @property {boolean | 'auto' | object} [gpuIndirect='auto'] Enable GPU indirect culling ('auto' enables lazily when indirect batches are registered).
- * @property {boolean} [renderGraph=false] Enable scene-level RenderGraph DAG orchestration.
+ * @property {boolean} [renderGraph=true] Enable scene-level RenderGraph DAG orchestration.
  * @property {boolean | { safeArea?: object, minScale?: number, maxScale?: number, vramBudgetBytes?: number, colorLut?: string, heightFog?: object } | null} [mobilePortrait=false] Turnkey mobile-portrait Bilibili Toy preset (DPR cap + DRS + VRAM guard + UBO batching + LUT/heightFog).
  */
 /**

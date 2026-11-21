@@ -630,6 +630,7 @@ export function createPostPipeline3D(options = {}) {
   let reactiveMaskRT = null;
   let reactiveMaskMat = null;
   let lastExecutedGraph = [];
+  let lastFrameGraph = null;
   let lastReactiveMeshCount = 0;
   let temporalAa = null;
   let bloomMips = [];
@@ -1530,13 +1531,52 @@ export function createPostPipeline3D(options = {}) {
     compU.uContactShadows.value = 0;
   }
 
+  /**
+   * Render one frame through the unified RenderGraph DAG.
+   * @param {object} world
+   * @param {object} camera
+   * @param {{ viewScene?: object | null, viewCamera?: object | null, sunLight?: object | null, irradianceGrid?: object | null, dt?: number, outputViewport?: object | null, diagnostics?: object | null, reactiveMask?: object | null, extraPasses?: { before?: Array<{ id: string, reads?: string[], writes?: string[], execute: Function }>, afterWorld?: Array<{ id: string, reads?: string[], writes?: string[], execute: Function }> } | null }} [options]
+   */
   function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, irradianceGrid = null, dt = 0, outputViewport = null,
-    diagnostics = null, reactiveMask = null } = {}) {
+    diagnostics = null, reactiveMask = null, extraPasses = null } = {}) {
     if (disposed || contextLost) return;
     const stepDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
     if (stepDt > 0) elapsed += stepDt;
     if (!supported || !sceneRT) {
-      renderForwardWithViewmodel(world, camera, viewScene, viewCamera, diagnostics);
+      if (extraPasses) {
+        const forwardPasses = [];
+        let fwdPrev = null;
+        for (const pass of extraPasses.before ?? []) {
+          const outTok = `_fwd_${forwardPasses.length}`;
+          forwardPasses.push({
+            id: pass.id,
+            reads: fwdPrev ? [fwdPrev] : [],
+            writes: [outTok, ...(pass.writes ?? [])],
+            sideEffect: true,
+            execute: (ctx) => pass.execute?.(ctx),
+          });
+          fwdPrev = outTok;
+        }
+        forwardPasses.push({
+          id: 'forward',
+          reads: fwdPrev ? [fwdPrev] : [],
+          writes: ['backbuffer'],
+          sideEffect: true,
+          execute: () => renderForwardWithViewmodel(world, camera, viewScene, viewCamera, diagnostics),
+        });
+        const fwdGraph = compileRenderGraph(forwardPasses, { externalOutputs: ['backbuffer'], pruneDeadPasses: true });
+        const fwdRes = executeRenderGraph(fwdGraph, { acquire: (_s, res) => ({ token: res }), release() {} }, { state: { sceneRT: null, bufferWidth, bufferHeight } });
+        lastExecutedGraph = fwdRes.executed.slice();
+        lastFrameGraph = Object.freeze({
+          compiledOrder: fwdGraph.order,
+          culled: fwdGraph.culledPasses,
+          executed: fwdRes.executed,
+          peakTargets: fwdGraph.peakTargets,
+          reusedCount: fwdRes.reusedCount,
+        });
+      } else {
+        renderForwardWithViewmodel(world, camera, viewScene, viewCamera, diagnostics);
+      }
       return;
     }
     const gl = renderer.getContext?.();
@@ -1570,245 +1610,399 @@ export function createPostPipeline3D(options = {}) {
     if (useTemporal) temporalAa ??= createWorldTemporalAA();
     else if (temporalAa?.targets.length) temporalAa.release();
 
+    const hasViewModel = Boolean(viewScene && viewCamera && (
+      viewScene.children?.length !== 0 || viewScene.background
+      || viewScene.onBeforeRender !== THREE.Scene.prototype.onBeforeRender
+      || viewScene.onAfterRender !== THREE.Scene.prototype.onAfterRender
+    ));
+    const useGiSsr = Boolean(wantsGiSsr && giSsrRT && halfScratchRT);
+    const useAutoExposure = Boolean(state.autoExposure && lumaMips.length > 0 && adaptRT.length === 2);
+    const useBloom = Boolean(activePreset.bloom && state.bloomStrength !== 0 && bloomMips.length > 0);
+    const plannedFxaa = state.fxaa && (!useTemporal || hasViewModel);
+    const plannedFinalFxaaPass = Boolean(ldrRT && (plannedFxaa || state.sharpness > 0.001));
+
     const previousDiagnostics = activeDiagnostics;
     let worldCameraFar;
+    let upsampling = false;
+    let worldWidth = bufferWidth;
+    let worldHeight = bufferHeight;
+    let visibleGrid = null;
+    let hasSunDir = false;
+    let depthTexture = null;
+    let sunShadowTex = null;
+    let shadowMatrix = null;
+    let useVolumetric = false;
+    let useContactShadows = false;
+    let giSsrTexture = null;
+    let compU = mats.composite.uniforms;
+    let worldLightingEnabled = false;
+    let separateViewModel = false;
+    let prelightTemporal = false;
+    let viewCompositeRT = null;
+    let bloomTexture = null;
+
     activeDiagnostics = diagnostics;
     hdrTargets.beginFrame();
     try {
-      // Retain the attachments for volume changes. Only resolve/store depth if this frame reads it.
-      sceneRT.resolveDepthBuffer = needsDepth;
-      sceneRT.storeMultisampledDepthBuffer = needsDepth;
-      renderer.setRenderTarget(sceneRT);
-      renderer.autoClear = true;
-      // Three clears both attachments during ordinary scene rendering. XR and
-      // renderers with different clear settings still need an explicit clear.
-      if (renderer.xr?.isPresenting !== false || renderer.autoClearColor !== true || renderer.autoClearDepth !== true) {
-        renderer.clear(true, true, false);
-      }
-      const { upsampling, worldWidth, worldHeight } = getWorldRenderDimensions();
-      if (useTemporal) temporalAa.jitter(camera, worldWidth, worldHeight, bufferWidth, bufferHeight);
-      try {
-        drawWithDiagnostics(renderer, diagnostics?.beginPass, 'world', sceneRT, world, camera);
-        if (needsProjection) {
-          syncCameraWorldMatrices(camera);
-          sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
-          sceneProjectionUniforms.uProj.value.copy(camera.projectionMatrix);
-          sceneProjectionUniforms.uSceneDepthMode.value = camera.reversedDepth ? 2 : Number(usesZeroToOneDepth(camera));
-          worldCameraFar = camera.far;
-          // Orthographic views can include geometry behind the camera origin.
-          sceneProjectionUniforms.uSceneDepthGuideOffset.value = camera.isOrthographicCamera
-            ? Math.max(0, -(camera.near ?? 0)) : 0;
+      const framePasses = [];
+      let prevToken = null;
+      let tokSeq = 0;
+      const addStage = (id, execute, extra = {}) => {
+        const outTok = `_stage_${tokSeq++}`;
+        const reads = prevToken ? [prevToken, ...(extra.reads ?? [])] : (extra.reads ?? []);
+        const writes = [outTok, ...(extra.writes ?? [])];
+        framePasses.push({
+          id,
+          reads,
+          writes,
+          ...(extra.transientSpecs ? { transientSpecs: extra.transientSpecs } : {}),
+          sideEffect: true,
+          execute,
+        });
+        prevToken = outTok;
+      };
+
+      if (Array.isArray(extraPasses?.before)) {
+        for (const p of extraPasses.before) {
+          addStage(p.id, ctx => p.execute?.(ctx), { writes: p.writes ?? [] });
         }
-      } finally {
-        if (useTemporal) temporalFrame = temporalAa.restore(camera);
-      }
-      const visibleGrid = getVisibleBakedProbeGrid(irradianceGrid, world, camera);
-      if (visibleGrid !== lastIrradianceGrid) {
-        resetTemporalHistory();
-        lastIrradianceGrid = visibleGrid;
-      }
-      let hasSunDir = false;
-      if (wantsContact || wantsVolumetric) {
-        readWorldPosition(sunLight, scratchSunView).sub(readWorldPosition(sunLight.target, scratchSunTarget));
-        const lengthSq = scratchSunView.lengthSq();
-        hasSunDir = Number.isFinite(lengthSq) && lengthSq > 0;
-        if (hasSunDir) scratchSunView.transformDirection(camera.matrixWorldInverse);
-        if (sunLight.color && state.sunColor) state.sunColor.copy(sunLight.color);
       }
 
-      // 1. Half-res SSAO + Volumetric sun shafts + separable bilateral blur
-      const depthTexture = shadow?.map?.depthTexture;
-      const sunShadowTex = depthTexture ?? shadow?.map?.texture;
-      const shadowMatrix = shadow?.matrix;
-      // Three can allocate the sun's shadow texture during the world draw.
-      const useVolumetric = Boolean(wantsVolumetric && hasSunDir && sunShadowTex && shadowMatrix);
-      const useContactShadows = wantsContact && hasSunDir;
-
-      renderer.autoClear = false;
-      if (useAo || useVolumetric) {
-        const aoMaterial = useVolumetric && depthTexture?.compareFunction != null ? mats.aoVolCompare : mats.aoVol;
-        const ao = aoMaterial.uniforms;
-        ao.tDepth.value = sceneRT.depthTexture;
-        ao.uResolution.value.set(hw, hh);
-        ao.uSsaoEnabled.value = useAo ? 1 : 0;
-        ao.uSsaoRadius.value = state.ssaoRadius;
-        ao.uSsaoBias.value = state.ssaoBias;
-        ao.uVolumetricSteps.value = useVolumetric ? volSteps : 0;
-        ao.uTime.value = elapsed;
-        ao.tSunShadow.value = useVolumetric ? sunShadowTex : null;
-        ao.uShadowDepthSign.value = shadow?.camera?.reversedDepth ? -1 : 1;
-        if (useVolumetric) {
-          scratchViewToWorld.copy(camera.matrixWorldInverse).invert();
-          scratchCamToShadow.multiplyMatrices(shadowMatrix, scratchViewToWorld);
+      addStage('world', () => {
+        // Retain the attachments for volume changes. Only resolve/store depth if this frame reads it.
+        sceneRT.resolveDepthBuffer = needsDepth;
+        sceneRT.storeMultisampledDepthBuffer = needsDepth;
+        renderer.setRenderTarget(sceneRT);
+        renderer.autoClear = true;
+        // Three clears both attachments during ordinary scene rendering. XR and
+        // renderers with different clear settings still need an explicit clear.
+        if (renderer.xr?.isPresenting !== false || renderer.autoClearColor !== true || renderer.autoClearDepth !== true) {
+          renderer.clear(true, true, false);
         }
-        runPass(FULLSCREEN_PASSES.aoVolumetrics, aoMaterial, halfRT);
+        const dims = getWorldRenderDimensions();
+        upsampling = dims.upsampling;
+        worldWidth = dims.worldWidth;
+        worldHeight = dims.worldHeight;
+        if (useTemporal) temporalAa.jitter(camera, worldWidth, worldHeight, bufferWidth, bufferHeight);
+        try {
+          drawWithDiagnostics(renderer, diagnostics?.beginPass, 'world', sceneRT, world, camera);
+          if (needsProjection) {
+            syncCameraWorldMatrices(camera);
+            sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
+            sceneProjectionUniforms.uProj.value.copy(camera.projectionMatrix);
+            sceneProjectionUniforms.uSceneDepthMode.value = camera.reversedDepth ? 2 : Number(usesZeroToOneDepth(camera));
+            worldCameraFar = camera.far;
+            // Orthographic views can include geometry behind the camera origin.
+            sceneProjectionUniforms.uSceneDepthGuideOffset.value = camera.isOrthographicCamera
+              ? Math.max(0, -(camera.near ?? 0)) : 0;
+          }
+        } finally {
+          if (useTemporal) temporalFrame = temporalAa.restore(camera);
+        }
+      });
 
-        mats.blur.uniforms.tInput.value = halfRT.texture;
-        mats.blur.uniforms.uAxis.value.set(1, 0);
-        runPass(FULLSCREEN_PASSES.aoBlurX, mats.blur, aoScratch);
-
-        mats.blur.uniforms.tInput.value = aoScratch.texture;
-        mats.blur.uniforms.uAxis.value.set(0, 1);
-        runPass(FULLSCREEN_PASSES.aoBlurY, mats.blur, halfRT);
+      if (Array.isArray(extraPasses?.afterWorld)) {
+        for (const p of extraPasses.afterWorld) {
+          addStage(p.id, ctx => p.execute?.(ctx), { writes: p.writes ?? [] });
+        }
       }
 
-      // 1b. Half-res HDR SSGI + SSR bounce reflections + depth-guided bilateral denoise
-      const useGiSsr = Boolean(wantsGiSsr && giSsrRT && halfScratchRT);
-      let giSsrTexture = null;
+      addStage('scene-setup', () => {
+        visibleGrid = getVisibleBakedProbeGrid(irradianceGrid, world, camera);
+        if (visibleGrid !== lastIrradianceGrid) {
+          resetTemporalHistory();
+          lastIrradianceGrid = visibleGrid;
+        }
+        hasSunDir = false;
+        if (wantsContact || wantsVolumetric) {
+          readWorldPosition(sunLight, scratchSunView).sub(readWorldPosition(sunLight.target, scratchSunTarget));
+          const lengthSq = scratchSunView.lengthSq();
+          hasSunDir = Number.isFinite(lengthSq) && lengthSq > 0;
+          if (hasSunDir) scratchSunView.transformDirection(camera.matrixWorldInverse);
+          if (sunLight.color && state.sunColor) state.sunColor.copy(sunLight.color);
+        }
+
+        // 1. Half-res SSAO + Volumetric sun shafts + separable bilateral blur
+        depthTexture = shadow?.map?.depthTexture;
+        sunShadowTex = depthTexture ?? shadow?.map?.texture;
+        shadowMatrix = shadow?.matrix;
+        // Three can allocate the sun's shadow texture during the world draw.
+        useVolumetric = Boolean(wantsVolumetric && hasSunDir && sunShadowTex && shadowMatrix);
+        useContactShadows = wantsContact && hasSunDir;
+        renderer.autoClear = false;
+        if (!useGiSsr && giHistoryRT) {
+          resetGiSsrHistory();
+        }
+      });
+
+      if (useAo || wantsVolumetric) {
+        addStage('ao-volumetrics', () => {
+          if (useAo || useVolumetric) {
+            const aoMaterial = useVolumetric && depthTexture?.compareFunction != null ? mats.aoVolCompare : mats.aoVol;
+            const ao = aoMaterial.uniforms;
+            ao.tDepth.value = sceneRT.depthTexture;
+            ao.uResolution.value.set(hw, hh);
+            ao.uSsaoEnabled.value = useAo ? 1 : 0;
+            ao.uSsaoRadius.value = state.ssaoRadius;
+            ao.uSsaoBias.value = state.ssaoBias;
+            ao.uVolumetricSteps.value = useVolumetric ? volSteps : 0;
+            ao.uTime.value = elapsed;
+            ao.tSunShadow.value = useVolumetric ? sunShadowTex : null;
+            ao.uShadowDepthSign.value = shadow?.camera?.reversedDepth ? -1 : 1;
+            if (useVolumetric) {
+              scratchViewToWorld.copy(camera.matrixWorldInverse).invert();
+              scratchCamToShadow.multiplyMatrices(shadowMatrix, scratchViewToWorld);
+            }
+            runPass(FULLSCREEN_PASSES.aoVolumetrics, aoMaterial, halfRT);
+
+            mats.blur.uniforms.tInput.value = halfRT.texture;
+            mats.blur.uniforms.uAxis.value.set(1, 0);
+            runPass(FULLSCREEN_PASSES.aoBlurX, mats.blur, aoScratch);
+
+            mats.blur.uniforms.tInput.value = aoScratch.texture;
+            mats.blur.uniforms.uAxis.value.set(0, 1);
+            runPass(FULLSCREEN_PASSES.aoBlurY, mats.blur, halfRT);
+          }
+        });
+      }
+
       if (useGiSsr) {
-        const giU = mats.giSsr.uniforms;
-        giU.tScene.value = sceneRT.texture;
-        giU.tDepth.value = sceneRT.depthTexture;
-        giU.uResolution.value.set(hw, hh);
-        giU.uSsgiEnabled.value = useSsgi ? 1 : 0;
-        giU.uSsrEnabled.value = useSsr ? 1 : 0;
-        giU.uGiRadius.value = state.giRadius;
-        giU.uGiIntensity.value = state.giIntensity;
-        giU.uIrradianceWeight.value = useSsgi ? visibleGrid?.diffuseWeight ?? 0 : 0;
-        if (giU.uIrradianceWeight.value > 0) {
-          const { min, max } = visibleGrid.boundingBox;
-          giU.uIrradianceGridMin.value.copy(min);
-          giU.uIrradianceGridMax.value.copy(max);
-          giU.uIrradianceGridResolution.value.copy(visibleGrid.resolution);
-          giU.uIrradianceViewToWorld.value.copy(camera.matrixWorldInverse).invert();
-        }
-        giU.uSsrIntensity.value = state.ssrIntensity;
-        giU.uSsrMaxDist.value = state.ssrMaxDist;
-        giU.uSsrThickness.value = state.ssrThickness;
-        giU.uTime.value = elapsed;
-        runPass(FULLSCREEN_PASSES.giSsr, mats.giSsr, giSsrRT);
+        addStage('gi-ssr', () => {
+          const giU = mats.giSsr.uniforms;
+          giU.tScene.value = sceneRT.texture;
+          giU.tDepth.value = sceneRT.depthTexture;
+          giU.uResolution.value.set(hw, hh);
+          giU.uSsgiEnabled.value = useSsgi ? 1 : 0;
+          giU.uSsrEnabled.value = useSsr ? 1 : 0;
+          giU.uGiRadius.value = state.giRadius;
+          giU.uGiIntensity.value = state.giIntensity;
+          giU.uIrradianceWeight.value = useSsgi ? visibleGrid?.diffuseWeight ?? 0 : 0;
+          if (giU.uIrradianceWeight.value > 0) {
+            const { min, max } = visibleGrid.boundingBox;
+            giU.uIrradianceGridMin.value.copy(min);
+            giU.uIrradianceGridMax.value.copy(max);
+            giU.uIrradianceGridResolution.value.copy(visibleGrid.resolution);
+            giU.uIrradianceViewToWorld.value.copy(camera.matrixWorldInverse).invert();
+          }
+          giU.uSsrIntensity.value = state.ssrIntensity;
+          giU.uSsrMaxDist.value = state.ssrMaxDist;
+          giU.uSsrThickness.value = state.ssrThickness;
+          giU.uTime.value = elapsed;
+          runPass(FULLSCREEN_PASSES.giSsr, mats.giSsr, giSsrRT);
 
-        mats.blurRgba.uniforms.tInput.value = giSsrRT.texture;
-        mats.blurRgba.uniforms.uAxis.value.set(1, 0);
-        runPass(FULLSCREEN_PASSES.giSsrBlurX, mats.blurRgba, halfScratchRT);
+          mats.blurRgba.uniforms.tInput.value = giSsrRT.texture;
+          mats.blurRgba.uniforms.uAxis.value.set(1, 0);
+          runPass(FULLSCREEN_PASSES.giSsrBlurX, mats.blurRgba, halfScratchRT);
 
-        giSsrTexture = finishGiSsrBlur(world, camera, stepDt, useSsr);
-      } else if (giHistoryRT) {
-        resetGiSsrHistory();
+          giSsrTexture = finishGiSsrBlur(world, camera, stepDt, useSsr);
+        });
       }
 
-      const compU = mats.composite.uniforms;
-      compU.tScene.value = sceneRT.texture;
-      compU.tDepth.value = needsDepth ? sceneRT.depthTexture : null;
-      compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
-      compU.tGiSsr.value = giSsrTexture;
-      compU.uUseAo.value = useAo ? 1 : 0;
-      compU.uUseVolumetric.value = useVolumetric ? 1 : 0;
-      compU.uUseGiSsr.value = useGiSsr ? 1 : 0;
-      compU.uHasSunDir.value = hasSunDir ? 1 : 0;
-      compU.uContactShadows.value = useContactShadows ? state.contactShadows : 0;
-      compU.uContactShadowLength.value = state.contactShadowLength;
-      compU.uContactShadowThickness.value = state.contactShadowThickness;
-      compU.uSsaoIntensity.value = state.ssaoIntensity;
-      compU.uVolumetricIntensity.value = state.volumetricIntensity;
-      compU.uTime.value = elapsed;
+      addStage('composite-setup', () => {
+        compU = mats.composite.uniforms;
+        compU.tScene.value = sceneRT.texture;
+        compU.tDepth.value = needsDepth ? sceneRT.depthTexture : null;
+        compU.tAoVol.value = (useAo || useVolumetric) ? halfRT.texture : null;
+        compU.tGiSsr.value = giSsrTexture;
+        compU.uUseAo.value = useAo ? 1 : 0;
+        compU.uUseVolumetric.value = useVolumetric ? 1 : 0;
+        compU.uUseGiSsr.value = useGiSsr ? 1 : 0;
+        compU.uHasSunDir.value = hasSunDir ? 1 : 0;
+        compU.uContactShadows.value = useContactShadows ? state.contactShadows : 0;
+        compU.uContactShadowLength.value = state.contactShadowLength;
+        compU.uContactShadowThickness.value = state.contactShadowThickness;
+        compU.uSsaoIntensity.value = state.ssaoIntensity;
+        compU.uVolumetricIntensity.value = state.volumetricIntensity;
+        compU.uTime.value = elapsed;
 
-      const hasViewModel = Boolean(viewScene && viewCamera && (
-        viewScene.children?.length !== 0 || viewScene.background
-        || viewScene.onBeforeRender !== THREE.Scene.prototype.onBeforeRender
-        || viewScene.onAfterRender !== THREE.Scene.prototype.onAfterRender
-      ));
-      const worldLightingEnabled = useAo || useVolumetric || useGiSsr || useContactShadows;
-      const separateViewModel = hasViewModel && (sceneRT.samples > 0 || worldLightingEnabled || customDepth || temporalFrame);
-      const prelightTemporal = temporalFrame && worldLightingEnabled;
-      // First-person drawing needs an unmultisampled depth attachment and retained HDR color.
-      const viewCompositeRT = separateViewModel ? hdrTargets.acquire(bufferWidth, bufferHeight, true) : null;
-      if (temporalFrame) {
-        const autoReactive = reactiveMask ? null : renderReactiveMask(world, camera, worldWidth, worldHeight);
-        const prelightRT = prelightTemporal
-          ? (upsampling ? hdrTargets.acquire(worldWidth, worldHeight, false) : viewCompositeRT ?? hdrTargets.acquire(bufferWidth, bufferHeight, false))
-          : null;
-        if (prelightRT) compositeWorldIntoViewTarget(compU, prelightRT);
-        compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, sceneRT.depthTexture,
-          sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass,
-          state.temporalMotion && !renderer.clippingPlanes?.length, sceneRT.samples > 0, reactiveMask ?? autoReactive);
-        if (prelightRT && prelightRT !== viewCompositeRT) hdrTargets.release(prelightRT);
-      } else {
-        lastReactiveMeshCount = 0;
+        worldLightingEnabled = useAo || useVolumetric || useGiSsr || useContactShadows;
+        separateViewModel = hasViewModel && (sceneRT.samples > 0 || worldLightingEnabled || customDepth || temporalFrame);
+        prelightTemporal = temporalFrame && worldLightingEnabled;
+        // First-person drawing needs an unmultisampled depth attachment and retained HDR color.
+        viewCompositeRT = separateViewModel ? hdrTargets.acquire(bufferWidth, bufferHeight, true) : null;
+        if (!temporalFrame) lastReactiveMeshCount = 0;
+      });
+
+      if (useTemporal) {
+        addStage('temporal-aa', () => {
+          if (temporalFrame) {
+            const autoReactive = reactiveMask ? null : renderReactiveMask(world, camera, worldWidth, worldHeight);
+            const prelightRT = prelightTemporal
+              ? (upsampling ? hdrTargets.acquire(worldWidth, worldHeight, false) : viewCompositeRT ?? hdrTargets.acquire(bufferWidth, bufferHeight, false))
+              : null;
+            if (prelightRT) compositeWorldIntoViewTarget(compU, prelightRT);
+            compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, sceneRT.depthTexture,
+              sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass,
+              state.temporalMotion && !renderer.clippingPlanes?.length, sceneRT.samples > 0, reactiveMask ?? autoReactive);
+            if (prelightRT && prelightRT !== viewCompositeRT) hdrTargets.release(prelightRT);
+          } else {
+            lastReactiveMeshCount = 0;
+          }
+        });
       }
+
       if (hasViewModel) {
-        if (separateViewModel) {
-          // Finish the world lighting before clearing depth for the first-person layer.
-          compositeWorldIntoViewTarget(compU, viewCompositeRT);
-        }
-        if (typeof renderer.clearDepth === 'function') renderer.clearDepth();
-        else renderer.clear?.(false, true, false);
-        gl?.depthRange?.(0, 0.05);
-        drawWithDiagnostics(renderer, diagnostics?.beginPass, 'viewmodel', separateViewModel ? viewCompositeRT : sceneRT, viewScene, viewCamera);
-        gl?.depthRange?.(0, 1);
+        addStage('viewmodel', () => {
+          if (separateViewModel) {
+            // Finish the world lighting before clearing depth for the first-person layer.
+            compositeWorldIntoViewTarget(compU, viewCompositeRT);
+          }
+          if (typeof renderer.clearDepth === 'function') renderer.clearDepth();
+          else renderer.clear?.(false, true, false);
+          gl?.depthRange?.(0, 0.05);
+          drawWithDiagnostics(renderer, diagnostics?.beginPass, 'viewmodel', separateViewModel ? viewCompositeRT : sceneRT, viewScene, viewCamera);
+          gl?.depthRange?.(0, 1);
+        });
       }
 
       if (activePasses.length) {
-        compU.tScene.value = runCustomPasses(activePasses, compU.tScene.value, sceneRT.depthTexture, worldCameraFar);
+        addStage('custom-passes', () => {
+          compU.tScene.value = runCustomPasses(activePasses, compU.tScene.value, sceneRT.depthTexture, worldCameraFar);
+        });
       }
 
-      // 1c. GPU Eye Adaptation / Auto-Exposure pyramid
-      const useAutoExposure = Boolean(state.autoExposure && lumaMips.length > 0 && adaptRT.length === 2);
       if (useAutoExposure) {
-        mats.lumaExtract.uniforms.tScene.value = compU.tScene.value;
-        runPass(FULLSCREEN_PASSES.luminance, mats.lumaExtract, lumaMips[0]);
-        for (let i = 1; i < lumaMips.length; i++) {
-          mats.lumaDown.uniforms.tSource.value = lumaMips[i - 1].texture;
-          runPass(FULLSCREEN_PASSES.luminanceDown, mats.lumaDown, lumaMips[i]);
-        }
-        const prevAdapt = adaptRT[adaptIndex];
-        const nextAdapt = adaptRT[adaptIndex ^ 1];
-        const adaptU = mats.eyeAdapt.uniforms;
-        adaptU.tLogLuma.value = lumaMips[lumaMips.length - 1].texture;
-        adaptU.tPrevAdapt.value = prevAdapt.texture;
-        adaptU.uDt.value = stepDt > 0 ? stepDt : 1 / 60;
-        adaptU.uKeyValue.value = state.keyValue;
-        adaptU.uExposureComp.value = state.exposureCompensation;
-        adaptU.uMinExposure.value = state.minExposure;
-        adaptU.uMaxExposure.value = state.maxExposure;
-        adaptU.uAdaptSpeedUp.value = state.adaptSpeedUp;
-        adaptU.uAdaptSpeedDown.value = state.adaptSpeedDown;
-        adaptU.uResetAdapt.value = adaptNeedsReset ? 1 : 0;
-        runPass(FULLSCREEN_PASSES.eyeAdaptation, mats.eyeAdapt, nextAdapt);
-        // Keep the encoding range of the history texture across settings changes.
-        if (usesByteColorTargets) adaptU.uStoredExposureRange.value.set(adaptU.uMinExposure.value, adaptU.uMaxExposure.value);
-        adaptIndex ^= 1;
-        adaptNeedsReset = false;
+        addStage('auto-exposure', () => {
+          mats.lumaExtract.uniforms.tScene.value = compU.tScene.value;
+          runPass(FULLSCREEN_PASSES.luminance, mats.lumaExtract, lumaMips[0]);
+          for (let i = 1; i < lumaMips.length; i++) {
+            mats.lumaDown.uniforms.tSource.value = lumaMips[i - 1].texture;
+            runPass(FULLSCREEN_PASSES.luminanceDown, mats.lumaDown, lumaMips[i]);
+          }
+          const prevAdapt = adaptRT[adaptIndex];
+          const nextAdapt = adaptRT[adaptIndex ^ 1];
+          const adaptU = mats.eyeAdapt.uniforms;
+          adaptU.tLogLuma.value = lumaMips[lumaMips.length - 1].texture;
+          adaptU.tPrevAdapt.value = prevAdapt.texture;
+          adaptU.uDt.value = stepDt > 0 ? stepDt : 1 / 60;
+          adaptU.uKeyValue.value = state.keyValue;
+          adaptU.uExposureComp.value = state.exposureCompensation;
+          adaptU.uMinExposure.value = state.minExposure;
+          adaptU.uMaxExposure.value = state.maxExposure;
+          adaptU.uAdaptSpeedUp.value = state.adaptSpeedUp;
+          adaptU.uAdaptSpeedDown.value = state.adaptSpeedDown;
+          adaptU.uResetAdapt.value = adaptNeedsReset ? 1 : 0;
+          runPass(FULLSCREEN_PASSES.eyeAdaptation, mats.eyeAdapt, nextAdapt);
+          // Keep the encoding range of the history texture across settings changes.
+          if (usesByteColorTargets) adaptU.uStoredExposureRange.value.set(adaptU.uMinExposure.value, adaptU.uMaxExposure.value);
+          adaptIndex ^= 1;
+          adaptNeedsReset = false;
+        });
       }
 
-      // 2. Multi-mip Karis-average Bloom pyramid
-      const useBloom = Boolean(activePreset.bloom && state.bloomStrength !== 0 && bloomMips.length > 0);
-      let bloomTexture = null;
       if (useBloom) {
-        mats.prefilter.uniforms.tSource.value = compU.tScene.value;
-        mats.prefilter.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
-        mats.prefilter.uniforms.uThreshold.value = state.bloomThreshold;
-        mats.prefilter.uniforms.uSoftKnee.value = state.bloomSoftKnee;
-        runPass(FULLSCREEN_PASSES.bloomPrefilter, mats.prefilter, bloomMips[0].down);
+        addStage('bloom', () => {
+          mats.prefilter.uniforms.tSource.value = compU.tScene.value;
+          mats.prefilter.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
+          mats.prefilter.uniforms.uThreshold.value = state.bloomThreshold;
+          mats.prefilter.uniforms.uSoftKnee.value = state.bloomSoftKnee;
+          runPass(FULLSCREEN_PASSES.bloomPrefilter, mats.prefilter, bloomMips[0].down);
 
-        for (let i = 1; i < bloomMips.length; i++) {
-          const prev = bloomMips[i - 1];
-          const curr = bloomMips[i];
-          mats.downsample.uniforms.tSource.value = prev.down.texture;
-          mats.downsample.uniforms.uTexelSize.value.set(1 / prev.w, 1 / prev.h);
-          runPass(FULLSCREEN_PASSES.bloomDown, mats.downsample, curr.down);
-        }
+          for (let i = 1; i < bloomMips.length; i++) {
+            const prev = bloomMips[i - 1];
+            const curr = bloomMips[i];
+            mats.downsample.uniforms.tSource.value = prev.down.texture;
+            mats.downsample.uniforms.uTexelSize.value.set(1 / prev.w, 1 / prev.h);
+            runPass(FULLSCREEN_PASSES.bloomDown, mats.downsample, curr.down);
+          }
 
-        let accumTex = bloomMips[bloomMips.length - 1].down.texture;
-        let accumW = bloomMips[bloomMips.length - 1].w;
-        let accumH = bloomMips[bloomMips.length - 1].h;
-        for (let i = bloomMips.length - 2; i >= 0; i--) {
-          const curr = bloomMips[i];
-          const target = i === 0 ? halfScratchRT : curr.up;
-          mats.upsample.uniforms.tLower.value = accumTex;
-          mats.upsample.uniforms.tUpper.value = curr.down.texture;
-          mats.upsample.uniforms.uTexelSize.value.set(1 / accumW, 1 / accumH);
-          runPass(FULLSCREEN_PASSES.bloomUp, mats.upsample, target);
-          accumTex = target.texture;
-          accumW = curr.w;
-          accumH = curr.h;
-        }
-        bloomTexture = accumTex;
+          let accumTex = bloomMips[bloomMips.length - 1].down.texture;
+          let accumW = bloomMips[bloomMips.length - 1].w;
+          let accumH = bloomMips[bloomMips.length - 1].h;
+          for (let i = bloomMips.length - 2; i >= 0; i--) {
+            const curr = bloomMips[i];
+            const target = i === 0 ? halfScratchRT : curr.up;
+            mats.upsample.uniforms.tLower.value = accumTex;
+            mats.upsample.uniforms.tUpper.value = curr.down.texture;
+            mats.upsample.uniforms.uTexelSize.value.set(1 / accumW, 1 / accumH);
+            runPass(FULLSCREEN_PASSES.bloomUp, mats.upsample, target);
+            accumTex = target.texture;
+            accumW = curr.w;
+            accumH = curr.h;
+          }
+          bloomTexture = accumTex;
+        });
       }
 
-      // 3. Composite HDR + contact shadows + GI/SSR + grading + UE Filmic/ACES/AgX tone mapping
-      const useFxaa = state.fxaa && (!temporalFrame || hasViewModel);
-      const useFinalFxaaPass = Boolean(ldrRT && (useFxaa || state.sharpness > 0.001));
+      addStage('tone-mapping', () => {
+        compU.tBloom.value = bloomTexture;
+        compU.tAutoExposure.value = useAutoExposure ? adaptRT[adaptIndex].texture : null;
+        compU.uUseBloom.value = useBloom ? 1 : 0;
+        compU.uUseAutoExposure.value = useAutoExposure ? 1 : 0;
+        compU.uBloomStrength.value = state.bloomStrength;
+        compU.uExposure.value = state.exposure;
+        compU.uContrast.value = state.contrast;
+        compU.uSaturation.value = state.saturation;
+        compU.uChromaticAberration.value = state.chromaticAberration;
+        compU.uFilmGrain.value = state.filmGrain;
+        compU.uFilmSlope.value = state.filmSlope;
+        compU.uFilmToe.value = state.filmToe;
+        compU.uFilmShoulder.value = state.filmShoulder;
+        compU.uFilmBlackClip.value = state.filmBlackClip;
+        compU.uFilmWhiteClip.value = state.filmWhiteClip;
+        compU.uVignette.value = state.vignette;
+        compU.uDamage.value = state.damage;
+        compU.uLowHealth.value = state.lowHealth;
+        compU.uFocus.value = state.focus;
+        compU.uFlash.value = state.flash;
+        compU.uFade.value = state.fade;
+        compU.uToneMapping.value = state.toneMapping;
+        compU.uWriteLuma.value = plannedFinalFxaaPass ? 1 : 0;
+        compU.uHeightFogDensity.value = readSceneDepth ? state.heightFogDensity : 0;
+        compU.uHeightFogBase.value = state.heightFogBase;
+        compU.uHeightFogFalloff.value = state.heightFogFalloff;
+        if (state.heightFogColor && compU.uHeightFogColor.value?.copy) {
+          compU.uHeightFogColor.value.copy(state.heightFogColor);
+        }
+        if (scratchCamWorld && camera?.position && compU.uCamWorldPos.value?.set) {
+          scratchCamWorld.set(camera.position.x ?? 0, camera.position.y ?? 0, camera.position.z ?? 0);
+          compU.uCamWorldPos.value.copy(scratchCamWorld);
+        }
+        if (scratchInvView && camera?.matrixWorld && compU.uInvViewMat.value?.copy) {
+          scratchInvView.copy(camera.matrixWorld);
+          compU.uInvViewMat.value.copy(scratchInvView);
+        }
+        compU.tColorLut.value = lutTexture ?? dummyWhiteLut;
+        compU.uLutIntensity.value = lutTexture ? state.lutIntensity : 0;
+        compU.uLutSize.value = state.lutSize;
+        runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, plannedFinalFxaaPass ? ldrRT : null, outputViewport);
+      }, {
+        writes: plannedFinalFxaaPass ? ['ldrColor'] : ['backbuffer'],
+        transientSpecs: plannedFinalFxaaPass ? { ldrColor: { width: bufferWidth, height: bufferHeight, format: 'rgba8' } } : undefined,
+      });
+
+      if (plannedFinalFxaaPass) {
+        addStage('fxaa-sharpen', () => {
+          const useFxaa = state.fxaa && (!temporalFrame || hasViewModel);
+          mats.fxaaSharpen.uniforms.tDiffuse.value = ldrRT.texture;
+          mats.fxaaSharpen.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
+          mats.fxaaSharpen.uniforms.uSharpness.value = state.sharpness;
+          mats.fxaaSharpen.uniforms.uFxaaEnabled.value = useFxaa ? 1 : 0;
+          runPass(FULLSCREEN_PASSES.fxaaSharpen, mats.fxaaSharpen, null, outputViewport);
+        }, {
+          reads: ['ldrColor'],
+          writes: ['backbuffer'],
+        });
+      }
+
+      const frameGraph = compileRenderGraph(framePasses, {
+        externalOutputs: ['backbuffer'],
+        pruneDeadPasses: true,
+      });
+      const graphExecResult = executeRenderGraph(frameGraph, {
+        acquire: (_spec, resource) => (resource === 'ldrColor' ? ldrRT : { token: resource }),
+        release() {},
+      }, {
+        state: { sceneRT, bufferWidth, bufferHeight },
+      });
+      lastExecutedGraph = graphExecResult.executed.slice();
+      lastFrameGraph = Object.freeze({
+        compiledOrder: frameGraph.order,
+        culled: frameGraph.culledPasses,
+        executed: graphExecResult.executed,
+        peakTargets: frameGraph.peakTargets,
+        reusedCount: graphExecResult.reusedCount,
+      });
       lastRenderGraphPlan = buildFrameRenderGraphPlan({
         useAo,
         useVolumetric,
@@ -1818,83 +2012,8 @@ export function createPostPipeline3D(options = {}) {
         stages: activePasses,
         useAutoExposure,
         useBloom,
-        useFinalFxaaPass,
+        useFinalFxaaPass: plannedFinalFxaaPass,
       });
-      compU.tBloom.value = bloomTexture;
-      compU.tAutoExposure.value = useAutoExposure ? adaptRT[adaptIndex].texture : null;
-      compU.uUseBloom.value = useBloom ? 1 : 0;
-      compU.uUseAutoExposure.value = useAutoExposure ? 1 : 0;
-      compU.uBloomStrength.value = state.bloomStrength;
-      compU.uExposure.value = state.exposure;
-      compU.uContrast.value = state.contrast;
-      compU.uSaturation.value = state.saturation;
-      compU.uChromaticAberration.value = state.chromaticAberration;
-      compU.uFilmGrain.value = state.filmGrain;
-      compU.uFilmSlope.value = state.filmSlope;
-      compU.uFilmToe.value = state.filmToe;
-      compU.uFilmShoulder.value = state.filmShoulder;
-      compU.uFilmBlackClip.value = state.filmBlackClip;
-      compU.uFilmWhiteClip.value = state.filmWhiteClip;
-      compU.uVignette.value = state.vignette;
-      compU.uDamage.value = state.damage;
-      compU.uLowHealth.value = state.lowHealth;
-      compU.uFocus.value = state.focus;
-      compU.uFlash.value = state.flash;
-      compU.uFade.value = state.fade;
-      compU.uToneMapping.value = state.toneMapping;
-      compU.uWriteLuma.value = useFinalFxaaPass ? 1 : 0;
-      compU.uHeightFogDensity.value = readSceneDepth ? state.heightFogDensity : 0;
-      compU.uHeightFogBase.value = state.heightFogBase;
-      compU.uHeightFogFalloff.value = state.heightFogFalloff;
-      if (state.heightFogColor && compU.uHeightFogColor.value?.copy) {
-        compU.uHeightFogColor.value.copy(state.heightFogColor);
-      }
-      if (scratchCamWorld && camera?.position && compU.uCamWorldPos.value?.set) {
-        scratchCamWorld.set(camera.position.x ?? 0, camera.position.y ?? 0, camera.position.z ?? 0);
-        compU.uCamWorldPos.value.copy(scratchCamWorld);
-      }
-      if (scratchInvView && camera?.matrixWorld && compU.uInvViewMat.value?.copy) {
-        scratchInvView.copy(camera.matrixWorld);
-        compU.uInvViewMat.value.copy(scratchInvView);
-      }
-      compU.tColorLut.value = lutTexture ?? dummyWhiteLut;
-      compU.uLutIntensity.value = lutTexture ? state.lutIntensity : 0;
-      compU.uLutSize.value = state.lutSize;
-
-      // Execute final post-composite stages directly via the compiled Render Graph executor
-      const execPasses = [
-        {
-          id: 'tone-mapping',
-          reads: ['hdrInput'],
-          writes: [useFinalFxaaPass ? 'ldrColor' : 'backbuffer'],
-          transientSpecs: useFinalFxaaPass ? { ldrColor: { width: bufferWidth, height: bufferHeight, format: 'rgba8' } } : {},
-          execute() {
-            runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, useFinalFxaaPass ? ldrRT : null, outputViewport);
-          },
-        },
-        ...(useFinalFxaaPass ? [{
-          id: 'fxaa-sharpen',
-          reads: ['ldrColor'],
-          writes: ['backbuffer'],
-          execute() {
-            mats.fxaaSharpen.uniforms.tDiffuse.value = ldrRT.texture;
-            mats.fxaaSharpen.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
-            mats.fxaaSharpen.uniforms.uSharpness.value = state.sharpness;
-            mats.fxaaSharpen.uniforms.uFxaaEnabled.value = useFxaa ? 1 : 0;
-            runPass(FULLSCREEN_PASSES.fxaaSharpen, mats.fxaaSharpen, null, outputViewport);
-          },
-        }] : []),
-      ];
-      const execGraph = compileRenderGraph(execPasses, {
-        externalInputs: ['hdrInput'],
-        externalOutputs: ['backbuffer'],
-        pruneDeadPasses: true,
-      });
-      const graphExecResult = executeRenderGraph(execGraph, {
-        acquire: (_spec, resource) => (resource === 'ldrColor' ? ldrRT : null),
-        release() {},
-      }, { externalTargets: { hdrInput: compU.tScene.value } });
-      lastExecutedGraph = [...(lastRenderGraphPlan?.order?.filter(id => id !== 'tone-mapping' && id !== 'fxaa-sharpen') ?? []), ...graphExecResult.executed];
     } catch (error) {
       resetTemporalHistory();
       throw error;
@@ -1972,6 +2091,14 @@ export function createPostPipeline3D(options = {}) {
     },
     getLastExecutedGraph() {
       return lastExecutedGraph.slice();
+    },
+    getLastFrameGraph() {
+      return lastFrameGraph;
+    },
+    getMainTarget() {
+      return sceneRT
+        ? { depthTexture: sceneRT.depthTexture, texture: sceneRT.texture, width: sceneRT.width, height: sceneRT.height, target: sceneRT }
+        : null;
     },
     estimateTargetBytes,
     getTemporalStats() {

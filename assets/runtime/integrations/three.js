@@ -200,7 +200,7 @@ function buildPrimitiveGeometry(THREE, { type, size, radius, height }) {
  * @property {ThreeSkyLike | null} [sky=null] Sky controller.
  * @property {ThreePostVolumesLike | null} [postVolumes=null] Post volume stack.
  * @property {boolean | 'auto' | object} [gpuIndirect='auto'] Enable GPU indirect culling ('auto' enables lazily when indirect batches are registered).
- * @property {boolean} [renderGraph=false] Enable scene-level RenderGraph DAG orchestration.
+ * @property {boolean} [renderGraph=true] Enable scene-level RenderGraph DAG orchestration.
  * @property {boolean | { safeArea?: object, minScale?: number, maxScale?: number, vramBudgetBytes?: number, colorLut?: string, heightFog?: object } | null} [mobilePortrait=false] Turnkey mobile-portrait Bilibili Toy preset (DPR cap + DRS + VRAM guard + UBO batching + LUT/heightFog).
  */
 
@@ -309,7 +309,7 @@ export function createThreeAdapter({
   sky = null,
   postVolumes = null,
   gpuIndirect = 'auto',
-  renderGraph = false,
+  renderGraph = true,
   mobilePortrait = false,
 } = {}) {
   if (!THREE?.Scene || !THREE?.PerspectiveCamera || !THREE?.WebGLRenderer) {
@@ -1133,11 +1133,48 @@ export function createThreeAdapter({
       const hasShadowPass = Boolean(worldCsm.has(world) || options.sunLight || renderer.shadowMap?.enabled);
       const projList = worldProjectedDecals.get(world);
       const hasProjDecalPass = Boolean(projList?.some(s => (s.getStats?.().active ?? s.getStats?.().activeCount ?? s.activeCount ?? 0) > 0));
+      if (pipeline) {
+        const before = hasShadowPass ? [{
+          id: 'shadow-csm',
+          reads: [],
+          writes: ['shadowMaps'],
+          execute() {
+            worldCsm.get(world)?.update(camera);
+            prepareSunShadows(world, camera);
+          },
+        }] : [];
+        const afterWorld = hasProjDecalPass ? [{
+          id: 'projected-decals',
+          reads: ['sceneDepth'],
+          writes: ['decalColor'],
+          execute(ctx) {
+            if (!projList) return;
+            const mainTarget = ctx?.state?.sceneRT ?? pipeline.getMainTarget?.();
+            if (!mainTarget?.depthTexture) return;
+            const w = mainTarget.width ?? ctx?.state?.bufferWidth ?? 1;
+            const h = mainTarget.height ?? ctx?.state?.bufferHeight ?? 1;
+            for (const sys of projList) {
+              if (typeof sys?.renderProjected === 'function') {
+                sys.renderProjected(renderer, camera, mainTarget.depthTexture, w, h);
+              }
+            }
+          },
+        }] : [];
+        pipeline.render(world, camera, {
+          ...options,
+          extraPasses: { before, afterWorld },
+        });
+        lastSceneRenderGraph = pipeline.getLastFrameGraph?.() ?? Object.freeze({
+          compiledOrder: pipeline.getLastExecutedGraph?.() ?? [],
+          culled: [],
+          executed: pipeline.getLastExecutedGraph?.() ?? [],
+          peakTargets: 0,
+          reusedCount: 0,
+        });
+        return;
+      }
+
       const directPasses = () => {
-        if (pipeline) {
-          pipeline.render(world, camera, options);
-          return;
-        }
         const { viewScene, viewCamera } = options;
         if (viewScene && viewCamera) {
           const prevAutoClear = renderer.autoClear;
