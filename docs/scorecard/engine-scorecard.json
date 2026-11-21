@@ -283,7 +283,7 @@
       "name": "3D 光照、阴影与 GI",
       "weight": 7,
       "scores": {
-        "hgame": 8.5,
+        "hgame": 9,
         "unity": 8.5,
         "cocos": 7.5,
         "godot": 6
@@ -316,10 +316,10 @@
           {
             "point": "WebGL2 浏览器像素基准实测通过",
             "met": true,
-            "proof": "assets/runtime/integrations/shadow3d.js, lighting3d.js"
+            "proof": "assets/runtime/integrations/shadow3d.js, lighting3d.js, lightmap-bake3d.js"
           }
         ],
-        "note": "已打通 CSM/PCSS、Shadow Atlas、双探针 SH 混合、实时 SSGI/SSR，以及内置 UV2 展开与 WebGL2 GPU 渐进式软阴影+AO 烘焙管线。",
+        "note": "已打通 CSM/PCSS、Shadow Atlas、双探针 SH 混合、实时 SSGI/SSR，以及内置 UV2 展开与 WebGL2 GPU 太阳/点光/聚光+半球 AO+1-bounce 漫反射间接光溢色+多轮接缝膨胀 Lightmap 烘焙管线。",
         "benchmarkFiles": [
           "tests/browser-engine-v3-commercial-benchmark.mjs",
           "tests/browser-lightmap-bake.mjs"
@@ -330,7 +330,7 @@
         "cocos": "支持 CSM、反射探针及离线 Lightmap 烘焙，实时 GI 能力相对基础。",
         "godot": "Compatibility/GLES3 后端下实时 SDFGI 与 VoxelGI 不可用，仅保留基础阴影与烘焙 Lightmap。"
       },
-      "gap": "暂缺多反弹离线路径追踪级全局光能传递（当前为直接软阴影 + 半球 AO + 实时 SSGI）。"
+      "gap": "当前为 1-bounce 漫反射间接光烘焙，暂缺多反弹路径追踪与实时动态光照贴图混合"
     },
     {
       "id": "R3",

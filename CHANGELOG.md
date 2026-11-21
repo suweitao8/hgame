@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Upgrade `createLightmapBaker3D` (`assets/runtime/integrations/lightmap-bake3d.js`): added point (6-face cubemap perspective shadow) and spot light direct baking (`lights`), coarse `16x16` surfel 1-bounce diffuse indirect GI (`bounces`, `bounceIntensity`, `bounceSurfels`, verified red-floor color bleeding `bleedR=0.276 > bleedB=0` on shadowed white wall in Chromium WebGL2), and multi-pass ping-pong seam dilation (`dilationPasses=4`), raising Scorecard v5.1 `R2` from `8.5` to `9.0` (total `83.2/100`).
+
 - Upgrade Canvas UI & input persistence (`assets/runtime/ui/canvas-widgets.js`, `assets/runtime/ui/index.js`, `assets/runtime/index.js`, `assets/runtime/platform/input/router.js`): added `layoutRichTextLines` + `richText` multi-span wrapping widget, clipped `scrollView` container with scroll-aware hit-testing, IME composition underline in `textInput`, `createCanvasAriaBridge` + `syncAriaTree` semantic DOM mirror, and `rebindAction` / `saveBindings` / `loadBindings` / `resetBindings` on `createInputActionRouter`, raising Scorecard v5.1 `S4` from `7.5` to `8.5` (total `82.8/100`).
 
 - Wire `createPhysicalRenderTargetPool3D` into `post3d/pipeline.js` (`assets/runtime/integrations/post3d/pipeline.js`, `assets/runtime/integrations/post3d/render-graph.js`): split AO and GI/SSR passes into lifetime-tracked transient stages (`aoRaw -> aoBlurX -> aoVol`, `giSsrRaw -> giSsrBlurX -> giSsr`), pool `bloomScratch` and `ldrColor` with `type`/`format` aware bucket keys, and expose `poolStats` on `lastFrameGraph` & `targets` (`reuses = 29` across 3 allocations in `390x844` Chromium WebGL2), raising Scorecard v5.1 `A2` from `8.5` to `9.0` (total `82.4/100`).

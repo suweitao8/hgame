@@ -36,7 +36,7 @@ export function createLightmapBaker3D(THREE: any, renderer: any, { resolution, s
     shadowResolution?: number;
     padding?: number;
 } | undefined): {
-    bake: ({ meshes, sun, ambient, samples, aoSamples, aoDistance, }?: {
+    bake: ({ meshes, sun, ambient, lights, samples, aoSamples, aoDistance, bounces, bounceIntensity, bounceSurfels, dilationPasses, }?: {
         meshes?: any;
         sun?: {
             direction?: any;
@@ -48,14 +48,33 @@ export function createLightmapBaker3D(THREE: any, renderer: any, { resolution, s
             color?: any;
             intensity?: number;
         };
+        lights?: Array<{
+            type?: "point" | "spot";
+            position?: any;
+            color?: any;
+            intensity?: number;
+            distance?: number;
+            decay?: number;
+            direction?: any;
+            angle?: number;
+            penumbra?: number;
+            castShadow?: boolean;
+        }>;
         samples?: number;
         aoSamples?: number;
         aoDistance?: number;
+        bounces?: number;
+        bounceIntensity?: number;
+        bounceSurfels?: number;
+        dilationPasses?: number;
     } | undefined) => {
         texture: any;
         renderTarget: any;
         stats: {
             samples: number;
+            lights: number;
+            bounceSurfels: number;
+            dilationPasses: number;
             texels: number;
             ms: number;
         };

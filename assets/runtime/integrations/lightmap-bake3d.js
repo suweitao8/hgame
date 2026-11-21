@@ -427,6 +427,28 @@ export function createLightmapBaker3D(THREE, renderer, {
   const worldPosRT = new THREE.WebGLRenderTarget(res, res, targetOpts);
   const worldNormalRT = new THREE.WebGLRenderTarget(res, res, targetOpts);
   const accumRT = new THREE.WebGLRenderTarget(res, res, targetOpts);
+  const dilateScratchRT = new THREE.WebGLRenderTarget(res, res, targetOpts);
+  const dilatePongRT = new THREE.WebGLRenderTarget(res, res, targetOpts);
+  const albedoRT = new THREE.WebGLRenderTarget(res, res, {
+    type: THREE.UnsignedByteType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    depthBuffer: false,
+    stencilBuffer: false,
+  });
+  const SURFEL_GRID = 16;
+  const surfelTargetOpts = {
+    type: hdrType,
+    format: THREE.RGBAFormat,
+    minFilter: THREE.NearestFilter,
+    magFilter: THREE.NearestFilter,
+    depthBuffer: false,
+    stencilBuffer: false,
+  };
+  const surfelPosRT = new THREE.WebGLRenderTarget(SURFEL_GRID, SURFEL_GRID, surfelTargetOpts);
+  const surfelNormalRT = new THREE.WebGLRenderTarget(SURFEL_GRID, SURFEL_GRID, surfelTargetOpts);
+  const surfelFluxRT = new THREE.WebGLRenderTarget(SURFEL_GRID, SURFEL_GRID, surfelTargetOpts);
   const shadowRT = new THREE.WebGLRenderTarget(shadowRes, shadowRes, {
     type: hdrType,
     format: THREE.RGBAFormat,
@@ -449,6 +471,7 @@ export function createLightmapBaker3D(THREE, renderer, {
   const quadGeo = new THREE.PlaneGeometry(2, 2);
   const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   const orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+  const perspCam = THREE.PerspectiveCamera ? new THREE.PerspectiveCamera(90, 1, 0.1, 100) : null;
   const lightViewProj = new THREE.Matrix4();
 
   const gbufPosMat = new THREE.RawShaderMaterial({
@@ -615,34 +638,262 @@ export function createLightmapBaker3D(THREE, renderer, {
       uniform sampler2D tAccum;
       uniform sampler2D tMask;
       uniform vec2 uTexelSize;
+      uniform float uEncodeOutput;
       void main() {
         float valid = texture2D(tMask, vUv).a;
         vec3 col = texture2D(tAccum, vUv).rgb;
+        float outValid = valid >= 0.5 ? 1.0 : 0.0;
         if (valid < 0.5) {
           vec3 sum = vec3(0.0);
           float count = 0.0;
-          for (int dy = -2; dy <= 2; dy++) {
-            for (int dx = -2; dx <= 2; dx++) {
-              vec2 suv = vUv + vec2(float(dx), float(dy)) * uTexelSize;
+          for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+              if (dx == 0 && dy == 0) continue;
+              vec2 suv = clamp(vUv + vec2(float(dx), float(dy)) * uTexelSize, vec2(0.0), vec2(1.0));
               if (texture2D(tMask, suv).a >= 0.5) {
                 sum += texture2D(tAccum, suv).rgb;
                 count += 1.0;
               }
             }
           }
-          if (count > 0.0) col = sum / count;
+          if (count > 0.0) {
+            col = sum / count;
+            outValid = 1.0;
+          }
         }
-        gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+        if (uEncodeOutput > 0.5) {
+          gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+        } else {
+          gl_FragColor = vec4(max(col, vec3(0.0)), outValid);
+        }
       }
     `,
     uniforms: {
       tAccum: { value: accumRT.texture },
       tMask: { value: worldNormalRT.texture },
       uTexelSize: { value: new THREE.Vector2(1 / res, 1 / res) },
+      uEncodeOutput: { value: 0.0 },
     },
     depthTest: false,
     depthWrite: false,
     blending: THREE.NoBlending,
+  });
+
+  const gbufAlbedoMat = new THREE.RawShaderMaterial({
+    vertexShader: `
+      attribute vec3 position;
+      attribute vec2 uv1;
+      varying vec2 vUv1;
+      void main() {
+        vUv1 = uv1;
+        gl_Position = vec4(uv1 * 2.0 - 1.0, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      uniform vec3 uAlbedo;
+      void main() {
+        gl_FragColor = vec4(clamp(uAlbedo, 0.0, 1.0), 1.0);
+      }
+    `,
+    uniforms: { uAlbedo: { value: new THREE.Vector3(0.8, 0.8, 0.8) } },
+    side: THREE.DoubleSide,
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.NoBlending,
+  });
+
+  const pointSpotAccumMat = new THREE.RawShaderMaterial({
+    vertexShader: `
+      attribute vec3 position;
+      attribute vec2 uv;
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D tWorldPos;
+      uniform sampler2D tWorldNormal;
+      uniform sampler2D tShadowDepth;
+      uniform mat4 uLightViewProj;
+      uniform vec3 uLightPos;
+      uniform vec3 uLightColor;
+      uniform float uLightRange;
+      uniform float uDecay;
+      uniform vec3 uSpotDir;
+      uniform float uSpotCosOuter;
+      uniform float uSpotCosInner;
+      uniform float uIsSpot;
+      uniform float uCastShadow;
+      uniform float uNormalBias;
+      uniform float uDepthBias;
+      void main() {
+        vec4 wp = texture2D(tWorldPos, vUv);
+        vec4 wn = texture2D(tWorldNormal, vUv);
+        if (wn.a < 0.5) discard;
+        vec3 N = normalize(wn.xyz);
+        vec3 toLight = uLightPos - wp.xyz;
+        float dist = length(toLight);
+        if (uLightRange > 0.0 && dist > uLightRange) discard;
+        vec3 L = toLight / max(dist, 1e-4);
+        float ndotl = max(dot(N, L), 0.0);
+        if (ndotl <= 0.0001) discard;
+
+        float spotFactor = 1.0;
+        if (uIsSpot > 0.5) {
+          float cosTheta = dot(-L, normalize(uSpotDir));
+          spotFactor = smoothstep(uSpotCosOuter, max(uSpotCosInner, uSpotCosOuter + 1e-4), cosTheta);
+          if (spotFactor <= 0.0) discard;
+        }
+
+        float rangeWin = uLightRange > 0.0 ? clamp(1.0 - pow(dist / uLightRange, 4.0), 0.0, 1.0) : 1.0;
+        float denom = max(0.25, pow(max(dist, 0.5), max(0.5, uDecay)));
+        float atten = (rangeWin * rangeWin) / denom;
+
+        vec3 biasedPos = wp.xyz + N * uNormalBias;
+        vec4 clip = uLightViewProj * vec4(biasedPos, 1.0);
+        if (clip.w <= 0.0001) discard;
+        vec3 ndc = clip.xyz / clip.w;
+        vec2 suv = ndc.xy * 0.5 + 0.5;
+        float sDepth = ndc.z * 0.5 + 0.5;
+        if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0 || sDepth < 0.0 || sDepth > 1.0) discard;
+
+        float vis = 1.0;
+        if (uCastShadow > 0.5) {
+          float blocker = texture2D(tShadowDepth, suv).r;
+          if (sDepth - blocker > uDepthBias) vis = 0.0;
+        }
+        gl_FragColor = vec4(uLightColor * (ndotl * atten * spotFactor * vis), 1.0);
+      }
+    `,
+    uniforms: {
+      tWorldPos: { value: worldPosRT.texture },
+      tWorldNormal: { value: worldNormalRT.texture },
+      tShadowDepth: { value: shadowRT.texture },
+      uLightViewProj: { value: lightViewProj },
+      uLightPos: { value: new THREE.Vector3() },
+      uLightColor: { value: new THREE.Vector3(1, 1, 1) },
+      uLightRange: { value: 12.0 },
+      uDecay: { value: 2.0 },
+      uSpotDir: { value: new THREE.Vector3(0, -1, 0) },
+      uSpotCosOuter: { value: 0.7 },
+      uSpotCosInner: { value: 0.9 },
+      uIsSpot: { value: 0.0 },
+      uCastShadow: { value: 1.0 },
+      uNormalBias: { value: 0.02 },
+      uDepthBias: { value: 0.004 },
+    },
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneFactor,
+  });
+
+  const surfelFluxMat = new THREE.RawShaderMaterial({
+    vertexShader: `
+      attribute vec3 position;
+      attribute vec2 uv;
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D tSourceA;
+      uniform sampler2D tSourceB;
+      uniform float uMode;
+      void main() {
+        if (uMode < 0.5) {
+          gl_FragColor = texture2D(tSourceA, vUv);
+        } else {
+          vec4 alb = texture2D(tSourceA, vUv);
+          vec4 rad = texture2D(tSourceB, vUv);
+          gl_FragColor = vec4(alb.rgb * rad.rgb, alb.a);
+        }
+      }
+    `,
+    uniforms: {
+      tSourceA: { value: worldPosRT.texture },
+      tSourceB: { value: accumRT.texture },
+      uMode: { value: 0.0 },
+    },
+    depthTest: false,
+    depthWrite: false,
+    blending: THREE.NoBlending,
+  });
+
+  const MAX_BOUNCE_BATCH = 16;
+  const surfelPosBatch = Array.from({ length: MAX_BOUNCE_BATCH }, () => new THREE.Vector4(0, 0, 0, 0));
+  const surfelNormBatch = Array.from({ length: MAX_BOUNCE_BATCH }, () => new THREE.Vector4(0, 1, 0, 0));
+  const surfelFluxBatch = Array.from({ length: MAX_BOUNCE_BATCH }, () => new THREE.Vector4(0, 0, 0, 0));
+  const bounceMat = new THREE.RawShaderMaterial({
+    vertexShader: `
+      attribute vec3 position;
+      attribute vec2 uv;
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D tWorldPos;
+      uniform sampler2D tWorldNormal;
+      uniform vec4 uSurfelPos[16];
+      uniform vec4 uSurfelNormal[16];
+      uniform vec4 uSurfelFlux[16];
+      uniform int uSurfelCount;
+      void main() {
+        vec4 wp = texture2D(tWorldPos, vUv);
+        vec4 wn = texture2D(tWorldNormal, vUv);
+        if (wn.a < 0.5) discard;
+        vec3 P = wp.xyz;
+        vec3 N = normalize(wn.xyz);
+        vec3 indirect = vec3(0.0);
+        for (int i = 0; i < 16; i++) {
+          if (i >= uSurfelCount) break;
+          vec3 toS = uSurfelPos[i].xyz - P;
+          float d2 = dot(toS, toS);
+          if (d2 < 0.02) continue;
+          float d = sqrt(d2);
+          vec3 L = toS / d;
+          float cosRecv = max(dot(N, L), 0.0);
+          float cosEmit = max(dot(uSurfelNormal[i].xyz, -L), 0.0);
+          float area = uSurfelPos[i].w;
+          float weight = uSurfelNormal[i].w;
+          float ff = (cosRecv * cosEmit * area) / (3.14159265 * (d2 + max(0.05, area)));
+          indirect += uSurfelFlux[i].rgb * (ff * weight);
+        }
+        gl_FragColor = vec4(indirect, 1.0);
+      }
+    `,
+    uniforms: {
+      tWorldPos: { value: worldPosRT.texture },
+      tWorldNormal: { value: worldNormalRT.texture },
+      uSurfelPos: { value: surfelPosBatch },
+      uSurfelNormal: { value: surfelNormBatch },
+      uSurfelFlux: { value: surfelFluxBatch },
+      uSurfelCount: { value: 0 },
+    },
+    depthTest: false,
+    depthWrite: false,
+    transparent: true,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneFactor,
   });
 
   const gbufScene = new THREE.Scene();
@@ -654,6 +905,27 @@ export function createLightmapBaker3D(THREE, renderer, {
   quadScene.add(quadMesh);
 
   let disposed = false;
+
+  function renderShadowWithCamera(meshList, cam) {
+    const prevClearColor = renderer.getClearColor ? renderer.getClearColor(new THREE.Color()) : null;
+    const prevClearAlpha = renderer.getClearAlpha ? renderer.getClearAlpha() : 1;
+    renderer.setRenderTarget(shadowRT);
+    renderer.setClearColor?.(0xffffff, 1);
+    renderer.clear(true, true, false);
+    const proxies = [];
+    for (const m of meshList) {
+      const proxy = new THREE.Mesh(m.geometry, depthMat);
+      proxy.frustumCulled = false;
+      proxy.matrixAutoUpdate = false;
+      proxy.matrix.copy(m.matrixWorld);
+      proxy.matrixWorld.copy(m.matrixWorld);
+      depthScene.add(proxy);
+      proxies.push(proxy);
+    }
+    renderer.render(depthScene, cam);
+    for (const p of proxies) depthScene.remove(p);
+    if (prevClearColor) renderer.setClearColor?.(prevClearColor, prevClearAlpha);
+  }
 
   function renderDepthFromDir(meshList, dirVec, center, radius) {
     const dist = radius * 2.5;
@@ -673,45 +945,67 @@ export function createLightmapBaker3D(THREE, renderer, {
     orthoCam.updateMatrixWorld(true);
     orthoCam.updateProjectionMatrix();
     lightViewProj.multiplyMatrices(orthoCam.projectionMatrix, orthoCam.matrixWorldInverse);
+    renderShadowWithCamera(meshList, orthoCam);
+  }
 
-    const prevClearColor = renderer.getClearColor ? renderer.getClearColor(new THREE.Color()) : null;
-    const prevClearAlpha = renderer.getClearAlpha ? renderer.getClearAlpha() : 1;
-    renderer.setRenderTarget(shadowRT);
-    renderer.setClearColor?.(0xffffff, 1);
-    renderer.clear(true, true, false);
-    const proxies = [];
-    for (const m of meshList) {
-      const proxy = new THREE.Mesh(m.geometry, depthMat);
-      proxy.frustumCulled = false;
-      proxy.matrixAutoUpdate = false;
-      proxy.matrix.copy(m.matrixWorld);
-      proxy.matrixWorld.copy(m.matrixWorld);
-      depthScene.add(proxy);
-      proxies.push(proxy);
+  const _perspTarget = new THREE.Vector3();
+  const _perspDir = new THREE.Vector3();
+  function renderDepthFromPerspective(meshList, origin, dirVec, fovDeg, near, far) {
+    if (!perspCam) return;
+    _perspDir.copy(dirVec).normalize();
+    perspCam.fov = fovDeg;
+    perspCam.aspect = 1;
+    perspCam.near = Math.max(0.02, near);
+    perspCam.far = Math.max(perspCam.near + 0.5, far);
+    perspCam.position.copy(origin);
+    if (Math.abs(_perspDir.y) > 0.92) {
+      perspCam.up.set(0, 0, _perspDir.y > 0 ? -1 : 1);
+    } else {
+      perspCam.up.set(0, 1, 0);
     }
-    renderer.render(depthScene, orthoCam);
-    for (const p of proxies) depthScene.remove(p);
-    if (prevClearColor) renderer.setClearColor?.(prevClearColor, prevClearAlpha);
+    _perspTarget.copy(origin).add(_perspDir);
+    perspCam.lookAt(_perspTarget);
+    perspCam.updateMatrixWorld(true);
+    perspCam.updateProjectionMatrix();
+    lightViewProj.multiplyMatrices(perspCam.projectionMatrix, perspCam.matrixWorldInverse);
+    renderShadowWithCamera(meshList, perspCam);
+  }
+
+  function toVec3Coords(v, fallback = [0, 0, 0]) {
+    if (Array.isArray(v)) return [Number(v[0]) || 0, Number(v[1]) || 0, Number(v[2]) || 0];
+    if (v && typeof v === 'object') return [Number(v.x) || 0, Number(v.y) || 0, Number(v.z) || 0];
+    return fallback;
   }
 
   /**
-   * Bake sun shadows and hemispherical AO into a lightmap texture.
+   * Bake sun shadows, point/spot direct lights, cosine-weighted hemispherical AO,
+   * 1-bounce diffuse indirect GI, and multi-pass seam dilation into a lightmap texture.
    * @param {{
    *   meshes?: any,
    *   sun?: { direction?: any, color?: any, intensity?: number, softness?: number },
    *   ambient?: { color?: any, intensity?: number },
+   *   lights?: Array<{ type?: 'point' | 'spot', position?: any, color?: any, intensity?: number, distance?: number, decay?: number, direction?: any, angle?: number, penumbra?: number, castShadow?: boolean }>,
    *   samples?: number,
    *   aoSamples?: number,
    *   aoDistance?: number,
+   *   bounces?: number,
+   *   bounceIntensity?: number,
+   *   bounceSurfels?: number,
+   *   dilationPasses?: number,
    * }} [options]
    */
   function bake({
     meshes,
     sun = {},
     ambient = { color: [0.25, 0.28, 0.35], intensity: 1.0 },
+    lights = [],
     samples = 64,
     aoSamples = 64,
     aoDistance = 2.5,
+    bounces = 1,
+    bounceIntensity = 0.65,
+    bounceSurfels = 128,
+    dilationPasses = 4,
   } = {}) {
     if (disposed) throw new Error('LightmapBaker3D is disposed');
     const tStart = performance.now();
@@ -767,6 +1061,7 @@ export function createLightmapBaker3D(THREE, renderer, {
     const prevClearColor = renderer.getClearColor ? renderer.getClearColor(new THREE.Color()) : null;
     const prevClearAlpha = renderer.getClearAlpha ? renderer.getClearAlpha() : 1;
 
+    let usedSurfels = 0;
     try {
       renderer.toneMapping = THREE.NoToneMapping;
       renderer.autoClear = false;
@@ -793,6 +1088,14 @@ export function createLightmapBaker3D(THREE, renderer, {
       renderGbuf(worldNormalRT, gbufNormalMat, (m) => {
         normMat3.getNormalMatrix(m.matrixWorld);
         gbufNormalMat.uniforms.uNormalMatrix.value.copy(normMat3);
+      });
+      renderGbuf(albedoRT, gbufAlbedoMat, (m) => {
+        const c = m.material?.color;
+        if (c && Number.isFinite(c.r)) {
+          gbufAlbedoMat.uniforms.uAlbedo.value.set(c.r, c.g, c.b);
+        } else {
+          gbufAlbedoMat.uniforms.uAlbedo.value.set(0.8, 0.8, 0.8);
+        }
       });
 
       // Clear accumulation target
@@ -881,12 +1184,167 @@ export function createLightmapBaker3D(THREE, renderer, {
         }
       }
 
-      // 4. Seam dilation + RGBA8 encode
+      // 3b. Point & Spot direct light passes
+      const lightList = Array.isArray(lights) ? lights : [];
+      const pointFaces = [
+        [1, 0, 0], [-1, 0, 0],
+        [0, 1, 0], [0, -1, 0],
+        [0, 0, 1], [0, 0, -1],
+      ];
+      const lightPosVec = new THREE.Vector3();
+      const lightDirVec = new THREE.Vector3();
+      for (const lgt of lightList) {
+        if (!lgt || typeof lgt !== 'object') continue;
+        const lType = lgt.type === 'spot' ? 'spot' : 'point';
+        const lInt = Number.isFinite(lgt.intensity) ? lgt.intensity : 1.0;
+        if (lInt <= 0) continue;
+        const [lx, ly, lz] = toVec3Coords(lgt.position, [0, 2, 0]);
+        lightPosVec.set(lx, ly, lz);
+        const lColor = new THREE.Color(lgt.color ?? 0xffffff);
+        const lRange = Number.isFinite(lgt.distance) && lgt.distance > 0 ? lgt.distance : Math.max(8, radius * 2.5);
+        const lDecay = Number.isFinite(lgt.decay) ? lgt.decay : 2.0;
+        const castShadow = lgt.castShadow !== false;
+
+        pointSpotAccumMat.uniforms.uLightPos.value.copy(lightPosVec);
+        pointSpotAccumMat.uniforms.uLightColor.value.set(lColor.r * lInt, lColor.g * lInt, lColor.b * lInt);
+        pointSpotAccumMat.uniforms.uLightRange.value = lRange;
+        pointSpotAccumMat.uniforms.uDecay.value = lDecay;
+        pointSpotAccumMat.uniforms.uCastShadow.value = castShadow ? 1.0 : 0.0;
+        pointSpotAccumMat.uniforms.uNormalBias.value = radius * 0.006;
+        pointSpotAccumMat.uniforms.uDepthBias.value = 0.004;
+
+        if (lType === 'spot') {
+          const [dx, dy, dz] = toVec3Coords(lgt.direction, [0, -1, 0]);
+          lightDirVec.set(dx, dy, dz);
+          if (lightDirVec.lengthSq() < 1e-6) lightDirVec.set(0, -1, 0);
+          lightDirVec.normalize();
+          const angle = Math.max(0.05, Math.min(Math.PI * 0.48, Number(lgt.angle) || 0.6));
+          const penumbra = Math.max(0, Math.min(1, Number(lgt.penumbra) || 0.2));
+          const outerCos = Math.cos(angle);
+          const innerCos = Math.cos(angle * (1 - penumbra));
+          pointSpotAccumMat.uniforms.uIsSpot.value = 1.0;
+          pointSpotAccumMat.uniforms.uSpotDir.value.copy(lightDirVec);
+          pointSpotAccumMat.uniforms.uSpotCosOuter.value = outerCos;
+          pointSpotAccumMat.uniforms.uSpotCosInner.value = innerCos;
+          renderDepthFromPerspective(meshList, lightPosVec, lightDirVec, (angle * 2 * 180) / Math.PI, 0.05, lRange * 1.25);
+          quadMesh.material = pointSpotAccumMat;
+          renderer.setRenderTarget(accumRT);
+          renderer.render(quadScene, quadCam);
+        } else {
+          pointSpotAccumMat.uniforms.uIsSpot.value = 0.0;
+          for (const [fx, fy, fz] of pointFaces) {
+            lightDirVec.set(fx, fy, fz);
+            renderDepthFromPerspective(meshList, lightPosVec, lightDirVec, 90.5, 0.05, lRange * 1.25);
+            quadMesh.material = pointSpotAccumMat;
+            renderer.setRenderTarget(accumRT);
+            renderer.render(quadScene, quadCam);
+          }
+        }
+      }
+
+      // 3c. Optional 1-bounce diffuse indirect GI via coarse UV1 surfels
+      const bounceCount = Math.max(0, Math.floor(Number(bounces) || 0));
+      const bounceWeight = Number.isFinite(bounceIntensity) ? Math.max(0, bounceIntensity) : 0.65;
+      const maxBounceSurfels = Math.max(0, Math.floor(Number(bounceSurfels) || 0));
+      const canReadFloatSurfels = hasFloatExt && typeof renderer.readRenderTargetPixels === 'function';
+      if (bounceCount > 0 && bounceWeight > 0 && maxBounceSurfels > 0 && canReadFloatSurfels) {
+        quadMesh.material = surfelFluxMat;
+        surfelFluxMat.uniforms.tSourceA.value = worldPosRT.texture;
+        surfelFluxMat.uniforms.uMode.value = 0.0;
+        renderer.setRenderTarget(surfelPosRT);
+        renderer.clear(true, false, false);
+        renderer.render(quadScene, quadCam);
+
+        surfelFluxMat.uniforms.tSourceA.value = worldNormalRT.texture;
+        surfelFluxMat.uniforms.uMode.value = 0.0;
+        renderer.setRenderTarget(surfelNormalRT);
+        renderer.clear(true, false, false);
+        renderer.render(quadScene, quadCam);
+
+        surfelFluxMat.uniforms.tSourceA.value = albedoRT.texture;
+        surfelFluxMat.uniforms.tSourceB.value = accumRT.texture;
+        surfelFluxMat.uniforms.uMode.value = 1.0;
+        renderer.setRenderTarget(surfelFluxRT);
+        renderer.clear(true, false, false);
+        renderer.render(quadScene, quadCam);
+
+        const cellCount = SURFEL_GRID * SURFEL_GRID;
+        const posBuf = new Float32Array(cellCount * 4);
+        const normBuf = new Float32Array(cellCount * 4);
+        const fluxBuf = new Float32Array(cellCount * 4);
+        renderer.readRenderTargetPixels(surfelPosRT, 0, 0, SURFEL_GRID, SURFEL_GRID, posBuf);
+        renderer.readRenderTargetPixels(surfelNormalRT, 0, 0, SURFEL_GRID, SURFEL_GRID, normBuf);
+        renderer.readRenderTargetPixels(surfelFluxRT, 0, 0, SURFEL_GRID, SURFEL_GRID, fluxBuf);
+
+        const validSurfels = [];
+        for (let i = 0; i < cellCount; i++) {
+          const b = i * 4;
+          if (!(normBuf[b + 3] >= 0.5)) continue;
+          const fr = Math.max(0, fluxBuf[b]);
+          const fg = Math.max(0, fluxBuf[b + 1]);
+          const fb = Math.max(0, fluxBuf[b + 2]);
+          const energy = fr + fg + fb;
+          if (energy <= 1e-4) continue;
+          validSurfels.push({
+            px: posBuf[b], py: posBuf[b + 1], pz: posBuf[b + 2],
+            nx: normBuf[b], ny: normBuf[b + 1], nz: normBuf[b + 2],
+            fr, fg, fb, energy,
+          });
+        }
+        validSurfels.sort((a, b) => b.energy - a.energy);
+        const selected = validSurfels.slice(0, maxBounceSurfels);
+        usedSurfels = selected.length;
+        if (usedSurfels > 0) {
+          const boxArea = 2 * (size.x * size.y + size.y * size.z + size.x * size.z);
+          const areaWeight = Math.max(0.05, Math.min(2.5, (boxArea * 0.45) / usedSurfels));
+          quadMesh.material = bounceMat;
+          renderer.setRenderTarget(accumRT);
+          for (let start = 0; start < usedSurfels; start += MAX_BOUNCE_BATCH) {
+            const count = Math.min(MAX_BOUNCE_BATCH, usedSurfels - start);
+            for (let k = 0; k < count; k++) {
+              const s = selected[start + k];
+              surfelPosBatch[k].set(s.px, s.py, s.pz, areaWeight);
+              surfelNormBatch[k].set(s.nx, s.ny, s.nz, bounceWeight);
+              surfelFluxBatch[k].set(s.fr, s.fg, s.fb, 1.0);
+            }
+            bounceMat.uniforms.uSurfelCount.value = count;
+            renderer.render(quadScene, quadCam);
+          }
+        }
+      }
+
+      // 4. Multi-pass seam dilation + RGBA8 encode
+      const dilateCount = Math.max(1, Math.min(12, Math.floor(Number(dilationPasses) || 4)));
       quadMesh.material = dilateMat;
-      renderer.setRenderTarget(outputRT);
-      renderer.setClearColor?.(0x000000, 1);
-      renderer.clear(true, false, false);
-      renderer.render(quadScene, quadCam);
+      if (dilateCount === 1) {
+        dilateMat.uniforms.tAccum.value = accumRT.texture;
+        dilateMat.uniforms.tMask.value = worldNormalRT.texture;
+        dilateMat.uniforms.uEncodeOutput.value = 1.0;
+        renderer.setRenderTarget(outputRT);
+        renderer.setClearColor?.(0x000000, 1);
+        renderer.clear(true, false, false);
+        renderer.render(quadScene, quadCam);
+      } else {
+        let prevRT = accumRT;
+        for (let p = 0; p < dilateCount - 1; p++) {
+          const nextRT = p % 2 === 0 ? dilateScratchRT : dilatePongRT;
+          dilateMat.uniforms.tAccum.value = prevRT.texture;
+          dilateMat.uniforms.tMask.value = p === 0 ? worldNormalRT.texture : prevRT.texture;
+          dilateMat.uniforms.uEncodeOutput.value = 0.0;
+          renderer.setRenderTarget(nextRT);
+          renderer.setClearColor?.(0x000000, 0);
+          renderer.clear(true, false, false);
+          renderer.render(quadScene, quadCam);
+          prevRT = nextRT;
+        }
+        dilateMat.uniforms.tAccum.value = prevRT.texture;
+        dilateMat.uniforms.tMask.value = prevRT.texture;
+        dilateMat.uniforms.uEncodeOutput.value = 1.0;
+        renderer.setRenderTarget(outputRT);
+        renderer.setClearColor?.(0x000000, 1);
+        renderer.clear(true, false, false);
+        renderer.render(quadScene, quadCam);
+      }
     } finally {
       renderer.setRenderTarget(prevTarget);
       renderer.autoClear = prevAutoClear;
@@ -899,6 +1357,9 @@ export function createLightmapBaker3D(THREE, renderer, {
       renderTarget: outputRT,
       stats: {
         samples: Math.max(0, Math.floor(samples)) + Math.max(0, Math.floor(aoSamples)),
+        lights: Array.isArray(lights) ? lights.length : 0,
+        bounceSurfels: usedSurfels,
+        dilationPasses: Math.max(1, Math.min(12, Math.floor(Number(dilationPasses) || 4))),
         texels: res * res,
         ms: performance.now() - tStart,
       },
@@ -918,13 +1379,23 @@ export function createLightmapBaker3D(THREE, renderer, {
     worldPosRT.dispose();
     worldNormalRT.dispose();
     accumRT.dispose();
+    dilateScratchRT.dispose();
+    dilatePongRT.dispose();
+    albedoRT.dispose();
+    surfelPosRT.dispose();
+    surfelNormalRT.dispose();
+    surfelFluxRT.dispose();
     shadowRT.dispose();
     outputRT.dispose();
     quadGeo.dispose();
     gbufPosMat.dispose();
     gbufNormalMat.dispose();
+    gbufAlbedoMat.dispose();
     depthMat.dispose();
     accumSampleMat.dispose();
+    pointSpotAccumMat.dispose();
+    surfelFluxMat.dispose();
+    bounceMat.dispose();
     dilateMat.dispose();
     return true;
   }
