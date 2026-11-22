@@ -438,3 +438,164 @@ export function createRepresentationBudget3D({
   });
 }
 
+/**
+ * Default per-LOD animation update rates (Hz) for staggered skeletal updates (URO).
+ * @type {Readonly<{ 0: number, 1: number, 2: number, 3: number }>}
+ */
+export const DEFAULT_LOD_ANIMATION_RATES = Object.freeze({
+  0: 24,
+  1: 12,
+  2: 6,
+  3: 6,
+});
+
+/**
+ * @typedef {object} LodAnimationSchedulerOptions
+ * @property {Record<number, number>} [rates] Per-LOD update rates in Hz (defaults to 24 / 12 / 6 / 6 Hz).
+ * @property {number} [maxAccumulatedDt=2.0] Cap (seconds) on accumulated per-target delta time.
+ */
+
+/**
+ * @typedef {object} LodAnimationStats
+ * @property {number} total Registered targets evaluated.
+ * @property {number} updated Targets stepped this frame.
+ * @property {number} skipped Targets skipped this frame (accumulating dt).
+ * @property {[number, number, number, number]} byLod Count of targets per LOD tier `[L0, L1, L2, L3]`.
+ */
+
+/**
+ * Schedules staggered LOD-tiered animation updates (`24 / 12 / 6 / 6 Hz` by default)
+ * so mid/far skeletal characters cut CPU animation cost without simultaneous frame spikes.
+ * @param {LodAnimationSchedulerOptions} [options] Scheduler options.
+ */
+export function createLodAnimationScheduler({
+  rates = DEFAULT_LOD_ANIMATION_RATES,
+  maxAccumulatedDt = 2.0,
+} = {}) {
+  const normRates = {
+    0: Math.max(1, Number(rates?.[0]) || DEFAULT_LOD_ANIMATION_RATES[0]),
+    1: Math.max(1, Number(rates?.[1]) || DEFAULT_LOD_ANIMATION_RATES[1]),
+    2: Math.max(1, Number(rates?.[2]) || DEFAULT_LOD_ANIMATION_RATES[2]),
+    3: Math.max(1, Number(rates?.[3]) || DEFAULT_LOD_ANIMATION_RATES[3]),
+  };
+  const maxAccum = Math.max(0.05, Number(maxAccumulatedDt) || 2.0);
+  const GOLDEN_CONJ = 0.61803398875;
+  let nextSlot = 0;
+  /** @type {Map<unknown, any>} */
+  const entries = new Map();
+
+  function normalizeLod(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(3, Math.floor(n)));
+  }
+
+  function stepEntry(entry, dt) {
+    if (entry.onStep) {
+      entry.onStep(dt, entry.target);
+    } else if (typeof entry.target?.update === 'function') {
+      entry.target.update(dt);
+    } else if (typeof entry.target === 'function') {
+      entry.target(dt);
+    }
+    entry.accumDt = 0;
+  }
+
+  function register(target, { lod = 0, getLod = null, onStep = null } = {}) {
+    if (!target) throw new TypeError('register requires a mixer or animation target');
+    const existing = entries.get(target);
+    if (existing) {
+      existing.lod = normalizeLod(lod);
+      if (typeof getLod === 'function') existing.getLod = getLod;
+      if (typeof onStep === 'function') existing.onStep = onStep;
+      return existing;
+    }
+    const slot = nextSlot++;
+    const initLod = normalizeLod(lod);
+    const interval = 1 / normRates[initLod];
+    const phaseFrac = (slot * GOLDEN_CONJ) % 1;
+    const entry = {
+      target,
+      slot,
+      lod: initLod,
+      phaseFrac,
+      getLod: typeof getLod === 'function' ? getLod : null,
+      onStep: typeof onStep === 'function' ? onStep : null,
+      accumDt: 0,
+      phaseAccum: phaseFrac * interval,
+    };
+    entries.set(target, entry);
+    return entry;
+  }
+
+  function unregister(target) {
+    return entries.delete(target);
+  }
+
+  function setLod(target, lod) {
+    const entry = entries.get(target);
+    if (!entry) return false;
+    entry.lod = normalizeLod(lod);
+    return true;
+  }
+
+  function clear() {
+    entries.clear();
+  }
+
+  function flush() {
+    for (const entry of entries.values()) {
+      stepEntry(entry, entry.accumDt);
+    }
+  }
+
+  function update(dt = 0) {
+    const delta = Number.isFinite(dt) && dt > 0 ? dt : 0;
+    let total = 0;
+    let updated = 0;
+    let skipped = 0;
+    /** @type {[number, number, number, number]} */
+    const byLod = [0, 0, 0, 0];
+
+    for (const [target, entry] of entries.entries()) {
+      if (target?._destroyed || target?.entity?.destroyed) {
+        entries.delete(target);
+        continue;
+      }
+      total++;
+      const lod = entry.getLod ? normalizeLod(entry.getLod(target)) : entry.lod;
+      entry.lod = lod;
+      byLod[lod]++;
+
+      const interval = 1 / normRates[lod];
+      entry.accumDt = Math.min(maxAccum, entry.accumDt + delta);
+      entry.phaseAccum += delta;
+
+      if (entry.phaseAccum + 1e-9 >= interval) {
+        stepEntry(entry, entry.accumDt);
+        entry.phaseAccum = entry.phaseAccum - Math.floor(entry.phaseAccum / interval) * interval;
+        updated++;
+      } else {
+        skipped++;
+      }
+    }
+
+    return { total, updated, skipped, byLod };
+  }
+
+  function getRates() {
+    return Object.freeze({ ...normRates });
+  }
+
+  return Object.freeze({
+    get size() { return entries.size; },
+    register,
+    unregister,
+    setLod,
+    update,
+    flush,
+    clear,
+    getRates,
+  });
+}
+

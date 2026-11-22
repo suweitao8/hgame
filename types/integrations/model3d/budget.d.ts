@@ -123,6 +123,57 @@ export function createRepresentationBudget3D({ maxBytes, maxSlots, }?: {
     clear: () => void;
 }>;
 /**
+ * @typedef {object} LodAnimationSchedulerOptions
+ * @property {Record<number, number>} [rates] Per-LOD update rates in Hz (defaults to 24 / 12 / 6 / 6 Hz).
+ * @property {number} [maxAccumulatedDt=2.0] Cap (seconds) on accumulated per-target delta time.
+ */
+/**
+ * @typedef {object} LodAnimationStats
+ * @property {number} total Registered targets evaluated.
+ * @property {number} updated Targets stepped this frame.
+ * @property {number} skipped Targets skipped this frame (accumulating dt).
+ * @property {[number, number, number, number]} byLod Count of targets per LOD tier `[L0, L1, L2, L3]`.
+ */
+/**
+ * Schedules staggered LOD-tiered animation updates (`24 / 12 / 6 / 6 Hz` by default)
+ * so mid/far skeletal characters cut CPU animation cost without simultaneous frame spikes.
+ * @param {LodAnimationSchedulerOptions} [options] Scheduler options.
+ */
+export function createLodAnimationScheduler({ rates, maxAccumulatedDt, }?: LodAnimationSchedulerOptions | undefined): Readonly<{
+    readonly size: number;
+    register: (target: any, { lod, getLod, onStep }?: {
+        lod?: number | undefined;
+        getLod?: null | undefined;
+        onStep?: null | undefined;
+    }) => any;
+    unregister: (target: any) => boolean;
+    setLod: (target: any, lod: any) => boolean;
+    update: (dt?: number) => {
+        total: number;
+        updated: number;
+        skipped: number;
+        byLod: [number, number, number, number];
+    };
+    flush: () => void;
+    clear: () => void;
+    getRates: () => Readonly<{
+        0: number;
+        1: number;
+        2: number;
+        3: number;
+    }>;
+}>;
+/**
+ * Default per-LOD animation update rates (Hz) for staggered skeletal updates (URO).
+ * @type {Readonly<{ 0: number, 1: number, 2: number, 3: number }>}
+ */
+export const DEFAULT_LOD_ANIMATION_RATES: Readonly<{
+    0: number;
+    1: number;
+    2: number;
+    3: number;
+}>;
+/**
  * Vector-like position (world units).
  */
 export type AnimationBudgetPosition = {
@@ -305,4 +356,32 @@ export type AnimationBudgetAllocator = {
      * Unregisters everything.
      */
     clear: () => void;
+};
+export type LodAnimationSchedulerOptions = {
+    /**
+     * Per-LOD update rates in Hz (defaults to 24 / 12 / 6 / 6 Hz).
+     */
+    rates?: Record<number, number> | undefined;
+    /**
+     * Cap (seconds) on accumulated per-target delta time.
+     */
+    maxAccumulatedDt?: number | undefined;
+};
+export type LodAnimationStats = {
+    /**
+     * Registered targets evaluated.
+     */
+    total: number;
+    /**
+     * Targets stepped this frame.
+     */
+    updated: number;
+    /**
+     * Targets skipped this frame (accumulating dt).
+     */
+    skipped: number;
+    /**
+     * Count of targets per LOD tier `[L0, L1, L2, L3]`.
+     */
+    byLod: [number, number, number, number];
 };

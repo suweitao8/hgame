@@ -2,10 +2,20 @@
  * Model3D public entry. Implementation lives in ./model3d/*.js.
  */
 
-export { cloneObject3DWithSkins, inspectModel3D, prepareAnimationClips } from './model3d/helpers.js';
+export {
+  applyCharacterLodMaterialPolicy,
+  cloneObject3DWithSkins,
+  inspectModel3D,
+  prepareAnimationClips,
+} from './model3d/helpers.js';
 export { createModel3DProvider } from './model3d/provider.js';
 export { createModelLod3D, injectDitherLodMaterial3D } from './model3d/lod.js';
-export { createAnimationBudgetAllocator, createRepresentationBudget3D } from './model3d/budget.js';
+export {
+  createAnimationBudgetAllocator,
+  createLodAnimationScheduler,
+  createRepresentationBudget3D,
+  DEFAULT_LOD_ANIMATION_RATES,
+} from './model3d/budget.js';
 export { createInstancedCrowd3D } from './model3d/crowd.js';
 export {
   T5_CROWD_BUCKET_LIMITS,

@@ -11,6 +11,7 @@ import {
   PbrTextureArrayLoader,
 } from './realistic-pcg.js';
 import { apiRequestJson, createSidebarSquareCard, disposeObject3D } from './hgame-shared.js';
+import { createLodAnimationScheduler, DEFAULT_LOD_ANIMATION_RATES } from '/runtime/hgame/integrations/model3d.js';
 import { createPostPipeline3D, loadStripLutTexture } from '/runtime/hgame/integrations/post3d.js';
 import { createUnifiedLightingRig } from './unified-lighting.js';
 import { createUnrealCameraRig } from './unreal-fly-controls.js';
@@ -122,6 +123,7 @@ let activeViewpoints = {};
 let activeExhibits = [];
 let activeAnimatedPivots = [];
 let activeMixers = [];
+const lodAnimScheduler = createLodAnimationScheduler();
 let activeLodPool = null;
 let activeModelRoots = [];
 let activeImpostors = [];
@@ -561,8 +563,10 @@ function summarizeVisibleModelLod(sampleRoot, allRoots, lodVal) {
       }
     });
   }
+  const effLod = lodVal === '1' ? 1 : lodVal === '2' ? 2 : lodVal === '3' ? 3 : 0;
+  const hz = DEFAULT_LOD_ANIMATION_RATES[effLod] ?? 24;
   const tag = lodVal && lodVal !== 'auto' ? `LOD${lodVal}` : 'LOD0';
-  const metrics = [`${sampleTris || sumTris} Tris`, texDesc, maxW !== null ? `${maxW}w` : ''].filter(Boolean);
+  const metrics = [`${sampleTris || sumTris} Tris`, texDesc, maxW !== null ? `${maxW}w` : '', `${hz}Hz`].filter(Boolean);
   return `${tag}: ${metrics.join(' / ')}`;
 }
 
@@ -661,6 +665,7 @@ async function rebuildActiveScene() {
   activeExhibits = [];
   activeAnimatedPivots = [];
   activeMixers = [];
+  lodAnimScheduler.clear();
   activeLodPool = null;
   activeModelRoots = [];
   activeImpostors = [];
@@ -744,6 +749,11 @@ async function rebuildActiveScene() {
   activeExhibits = result.exhibits || [];
   activeAnimatedPivots = result.animatedPivots || [];
   activeMixers = result.mixers || [];
+  lodAnimScheduler.clear();
+  const readSelectedLodTier = () => (lodSelect?.value === '1' ? 1 : lodSelect?.value === '2' ? 2 : lodSelect?.value === '3' ? 3 : 0);
+  for (const m of activeMixers) {
+    lodAnimScheduler.register(m, { getLod: readSelectedLodTier });
+  }
   activeLodPool = result.lodPool || null;
   activeModelRoots = result.modelRoots || [];
   activeImpostors = result.impostors || [];
@@ -822,9 +832,7 @@ function tick(now) {
     else if (p.mode === 'slide_y') node.position.y = wave * p.amp;
   }
 
-  for (const m of activeMixers) {
-    m.update(dt);
-  }
+  lodAnimScheduler.update(dt);
 
   cameraRig?.update(dt);
   updateActiveImpostors();
@@ -868,6 +876,7 @@ function init() {
     const lodVal = lodSelect.value || 'auto';
     if (activeModelRoots.length) {
       for (const root of activeModelRoots) applyForcedLodToModel(root, lodVal);
+      lodAnimScheduler.flush();
       updateActiveImpostors();
       if (renderer && scene && camera) renderer.render(scene, camera);
       updateStatusBar();

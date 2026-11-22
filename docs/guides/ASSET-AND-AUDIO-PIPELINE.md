@@ -159,6 +159,7 @@ node scripts/verify-character-lods.mjs <low.glb>
   - **LOD 1（`1,800–3,000` 面，默认 `2,400`，`4w`）**：经拓扑防护 + `CUSTOM_NORMAL` 平滑法线传递 + 重展大块 UV（头脸面积权重 `1.9×`）后，从 LOD 0 烘焙单张 `256×256` sRGB `Color × mix(1.0, AO, 0.45)`（无 Normal/ORM，开启 Mipmap，运行时采用轻量 `MeshLambertMaterial`）。
   - **LOD 2（`1,000–1,400` / `128px` 或小动物 `600–900` / `64px`，严格 `2w`）**：同上流程但**严格限制 2 骨骼权重**、**关闭 Mipmap**（`generateMipmaps = false` + `LinearFilter`），并写入 `"singleColorOnly": true`、`"colorSize": 64|128`、`"atlasCompatible": true` 供 Mega Atlas 合批。
   - **LOD 3（`2 Tris` 公告牌，`Run-Only` 极省规范）**：默认**只烘焙 1 条 `Run` 动作**（`8×8` `1024×1024`、`18°` 俯仰角、对齐主场景晴昼日光 + `Standard` 单次 Linear→sRGB、单帧独立 `6px` Alpha 扩边）；运行时**凡处于移动/活跃状态一律播放 `Run` 循环，凡静止/待机一律锁定使用 `Run` 第 0 帧**，采用 Unlit `MeshBasicMaterial`（`toneMapped: true`、`alphaTest: 0.45`）确保与 LOD 0 亮度一致且零黑边。
+  - **LOD 分级错帧骨骼更新（URO）**：运行时通过 `createLodAnimationScheduler`（`DEFAULT_LOD_ANIMATION_RATES`）按 **`LOD 0: 24Hz` / `LOD 1: 12Hz` / `LOD 2: 6Hz` / `LOD 3: 6Hz`** 黄金比例错帧更新 `AnimationMixer`，中远景角色可削减 75%–88% CPU 骨骼更新开销且无同帧卡顿尖峰。
 - **固定双路径自动绑定规范（`--rig-engine auto`）**：
   - **高大成人角色（`z_arm_rel >= 0.685`）**：自动走 Blender **Auto-Rig Pro**（Smart + Pseudo-Voxels + Unreal 23-bone glTF）并对齐姿态后重定向 Anim58 `Run`。
   - **小动物 / 短手 Q 版角色（`z_arm_rel < 0.685`）**：自动走原生 **23(+3) 根 UE 骨链**，并应用已定型规则：
