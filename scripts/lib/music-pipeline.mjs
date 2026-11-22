@@ -619,8 +619,9 @@ export function evaluateMusicGate(bgmTracks, stingerTracks) {
 
 /**
  * Processes `audio_ai_staging/universal/**` and `audio_ai_staging/games/<slug>/**`
- * with SHA-1 incremental caching (`.music_cache.json`), writes `cue_table.json`,
- * `music_table.json`, `music-ai-index.json`, and `music_report.json`.
+ * with SHA-1 incremental caching (`.music_cache.json`), writes standalone
+ * `music_table.json`, `music-ai-index.json`, and `music_report.json`
+ * (never polluting SFX `cue_table.json` or `streams_table.json`).
  */
 export async function processMusicLibrary({
   musicStagingRoot = resolveDefaultMusicStagingRoot(),
@@ -792,33 +793,7 @@ export async function processMusicLibrary({
     );
   }
 
-  // 1. Update cue_table.json (preserving existing SFX cues)
-  const cueTablePath = path.join(outDir, 'cue_table.json');
-  let existingCueTable = {
-    version: '1.0.0',
-    format: 'mp3',
-    preloadRule: 'buffer_only_sfx_under_4s',
-    cueCount: 0,
-    surfaceCueCount: 0,
-    surfaceCoverage: {},
-    streamTracksExcluded: 0,
-    cues: [],
-  };
-  if (existsSync(cueTablePath)) {
-    existingCueTable = JSON.parse(await fs.readFile(cueTablePath, 'utf8'));
-  }
-  const preservedSfxCues = (existingCueTable.cues || []).filter(
-    (c) => !String(c.cueName || '').startsWith('bgm.') && !String(c.cueName || '').startsWith('stinger.'),
-  );
-  const mergedCues = [...preservedSfxCues, ...allTracks];
-  const updatedCueTable = {
-    ...existingCueTable,
-    cueCount: mergedCues.length,
-    musicCueCount: allTracks.length,
-    cues: mergedCues,
-  };
-
-  // 2. Write standalone music_table.json
+  // 1. Write standalone music_table.json (BGM & Stinger strictly separated from SFX cue_table.json)
   const totalBytes = allTracks.reduce((sum, t) => sum + (Number(t.encodedBytes) || 0), 0);
   const musicTablePath = path.join(outDir, 'music_table.json');
   const musicTable = {
@@ -836,7 +811,7 @@ export async function processMusicLibrary({
     tracks: allTracks,
   };
 
-  // 3. Write AI retrieval index built/audio/music-ai-index.json
+  // 2. Write AI retrieval index built/audio/music-ai-index.json
   const aiIndexPath = path.join(outDir, 'music-ai-index.json');
   const aiIndex = {
     version: MUSIC_PIPELINE_VERSION,
@@ -857,7 +832,6 @@ export async function processMusicLibrary({
   };
 
   await Promise.all([
-    fs.writeFile(cueTablePath, JSON.stringify(updatedCueTable, null, 2)),
     fs.writeFile(musicTablePath, JSON.stringify(musicTable, null, 2)),
     fs.writeFile(aiIndexPath, JSON.stringify(aiIndex, null, 2)),
     fs.writeFile(cachePath, JSON.stringify({ version: MUSIC_PIPELINE_VERSION, entries: nextCacheEntries }, null, 2)),

@@ -1102,7 +1102,7 @@ async function initAudioView() {
     const rawMusic = Array.isArray(musicRes.tracks)
       ? musicRes.tracks
       : [...(Array.isArray(musicRes.bgm) ? musicRes.bgm : []), ...(Array.isArray(musicRes.stingers) ? musicRes.stingers : [])];
-    musicEntries = rawMusic.length > 0 ? rawMusic : cueEntries.filter((c) => isMusicCueEntry(c));
+    musicEntries = rawMusic;
     streamEntries = Array.isArray(streamRes.streams) ? streamRes.streams : [];
     fullEntries = Array.isArray(fullRes.items) ? fullRes.items : [];
     spreadAnomalyCues = new Set((reportRes?.cueSpreadAlerts || []).map((a) => a.cueName));
