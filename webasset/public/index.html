@@ -543,15 +543,27 @@
 
   <main id="audio-view" class="workspace-layout hgame-layout" aria-label="HGame 音效与音乐" hidden>
     <aside class="workspace-sidebar hgame-sidebar" aria-label="音效列表">
+      <div class="character-mode-tabs" role="tablist" aria-label="音频视图模式">
+        <button type="button" class="character-mode-tab hgame-audio-lib-tab" role="tab" data-audio-lib="cues" aria-selected="true" tabindex="0">Cue 分组</button>
+        <button type="button" class="character-mode-tab hgame-audio-lib-tab" role="tab" data-audio-lib="streams" aria-selected="false" tabindex="-1">流式音轨</button>
+        <button type="button" class="character-mode-tab hgame-audio-lib-tab" role="tab" data-audio-lib="full" aria-selected="false" tabindex="-1">全量 / 上传</button>
+      </div>
       <div class="asset-sidebar-tools">
         <label class="character-search" for="hgame-audio-search">
           <span aria-hidden="true">⌕</span>
-          <input id="hgame-audio-search" type="search" placeholder="搜索音效 / BGM" autocomplete="off">
+          <input id="hgame-audio-search" type="search" placeholder="搜索 Cue / 音效 / 流式音轨" autocomplete="off">
         </label>
         <button id="hgame-audio-upload-button" class="character-create-button" type="button" aria-label="上传音频文件" title="上传 MP3 / WAV / OGG 音频">
           <span aria-hidden="true">＋</span>
         </button>
         <input id="hgame-audio-upload" type="file" accept=".mp3,.wav,.ogg,.flac,.opus,audio/*" hidden>
+      </div>
+      <div class="hgame-filter-row">
+        <label class="hgame-field hgame-field-full"><span>筛选</span>
+          <select id="hgame-audio-filter">
+            <option value="all">全部音频</option>
+          </select>
+        </label>
       </div>
       <nav id="hgame-audio-list" class="hgame-asset-list" aria-label="选择音效"></nav>
     </aside>
@@ -656,10 +668,11 @@
           </label>
           <label class="hgame-field"><span>LOD</span>
             <select id="hgame-test-lod">
-              <option value="auto">自动距离</option>
+              <option value="auto">默认 / 自动距离</option>
               <option value="0">LOD0 近景</option>
               <option value="1">LOD1 中景</option>
               <option value="2">LOD2 远景</option>
+              <option value="3">LOD3 紧包片</option>
             </select>
           </label>
           <label class="hgame-field"><span>调色分类</span>

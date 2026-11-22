@@ -503,6 +503,9 @@ function updateStatusBar() {
   if (activeLodPool) {
     const lc = lastLodSummary.lodCounts;
     parts.push(`LOD桶[L0:${lc[0]}/L1:${lc[1]}/L2:${lc[2]}]`);
+  } else if (activeModelRoots.length) {
+    const lv = lodSelect?.value;
+    parts.push(`整体LOD: ${lv && lv !== 'auto' ? `LOD${lv}` : 'LOD0 (默认)'}`);
   }
   parts.push(`2贴图PBR ${texArray.tileSize}px (${texArray.layerCount}层)`);
   if (lutSelect && lutSelect.value && lutSelect.value !== 'none') {
@@ -598,6 +601,8 @@ async function rebuildActiveScene() {
     result = await buildCharacterShowcaseScene({
       group: sceneGroup,
       gltfLoader,
+      lodMode: lodSelect?.value || 'auto',
+      wireframe: wire,
       token,
       getToken: () => buildSeq,
     });
@@ -749,10 +754,12 @@ function init() {
     const lodVal = lodSelect.value || 'auto';
     if (activeModelRoots.length) {
       for (const root of activeModelRoots) applyForcedLodToModel(root, lodVal);
+      if (renderer && scene && camera) renderer.render(scene, camera);
       updateStatusBar();
     } else if (activeLodPool && camera) {
       const res = activeLodPool.update(camera, { forcedLod: lodVal, force: true });
       if (res) lastLodSummary = res;
+      if (renderer && scene && camera) renderer.render(scene, camera);
       updateStatusBar();
     }
   });
@@ -761,6 +768,15 @@ function init() {
     if (worldMat) worldMat.material.wireframe = w;
     if (cutoutMat) cutoutMat.material.wireframe = w;
     if (glassMat) glassMat.material.wireframe = w;
+    for (const root of activeModelRoots) {
+      root.traverse((n) => {
+        if (!n.isMesh || !n.material) return;
+        const mats = Array.isArray(n.material) ? n.material : [n.material];
+        for (const m of mats) {
+          if (m && 'wireframe' in m) m.wireframe = w;
+        }
+      });
+    }
   });
   collidersInput?.addEventListener('change', () => {
     if (colliderGroup) colliderGroup.visible = Boolean(collidersInput.checked);

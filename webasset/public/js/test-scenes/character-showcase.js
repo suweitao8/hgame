@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import {
   fitCharacterToIdentityScale,
-  hideSecondaryLodNodes,
   resolveCharacterScaleSpec,
 } from '../hgame-shared.js';
+import { applyForcedLodToModel } from './model-showcase.js';
 import {
   createPlaqueMesh,
   createSectionBannerMesh,
@@ -19,13 +19,15 @@ const MAX_SAFE_GLB_BYTES = 15 * 1024 * 1024;
 export async function buildCharacterShowcaseScene({
   group,
   gltfLoader,
+  lodMode = 'auto',
+  wireframe = false,
   token,
   getToken,
 } = {}) {
   const res = await fetch('/api/assets?category=characters:all&limit=120', { cache: 'no-cache' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const payload = await res.json();
-  if (token !== getToken()) return { exhibits: [], viewpoints: {}, mixers: [], summaryText: '', dispose: () => {} };
+  if (token !== getToken()) return { exhibits: [], viewpoints: {}, mixers: [], modelRoots: [], summaryText: '', dispose: () => {} };
 
   const allChars = Array.isArray(payload.items) ? payload.items : [];
   const chars = allChars.filter(c => c?.models?.low?.url || c?.models?.high?.url || c?.assets?.[0]?.url);
@@ -59,6 +61,7 @@ export async function buildCharacterShowcaseScene({
 
   const exhibits = [];
   const mixers = [];
+  const modelRoots = [];
   let loaded3dCount = 0;
 
   // Prefer low-poly GLB; allow high-poly only if compact (<= 15MB) to avoid OOM across many characters.
@@ -94,20 +97,26 @@ export async function buildCharacterShowcaseScene({
       try {
         const gltf = await gltfLoader.loadAsync(chosenModel.url);
         if (token !== getToken()) return;
-        const root = hideSecondaryLodNodes(gltf.scene);
+        const root = gltf.scene;
         root.traverse(n => {
-          if (n.isMesh && n.visible) {
+          if (n.isMesh) {
             n.castShadow = true;
             n.receiveShadow = true;
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            for (const m of mats) {
+              if (m && 'wireframe' in m) m.wireframe = Boolean(wireframe);
+            }
             hitMeshes.push(n);
           }
         });
+        applyForcedLodToModel(root, lodMode);
         const fitted = fitCharacterToIdentityScale(root, { ...ch, height: charSpec.height }, {
           groundY: 0.14,
           centerXZ: true,
         });
         fittedHeight = fitted.height;
         bay.add(root);
+        modelRoots.push(root);
         loaded3dCount += 1;
 
         if (Array.isArray(gltf.animations) && gltf.animations.length > 0) {
@@ -206,6 +215,7 @@ export async function buildCharacterShowcaseScene({
     exhibits,
     viewpoints,
     mixers,
+    modelRoots,
     summaryText: `${chars.length} 个角色 (${loaded3dCount} 个 3D 低模)`,
     dispose() {
       for (const m of mixers) m.stopAllAction();

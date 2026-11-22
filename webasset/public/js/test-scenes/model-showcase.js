@@ -10,16 +10,37 @@ import {
 
 const MAX_ROW_WIDTH = 56;
 
+export function detectMeshLodLevel(node) {
+  if (typeof node?.userData?.lodLevel === 'number' && Number.isFinite(node.userData.lodLevel)) {
+    return node.userData.lodLevel;
+  }
+  const n = String(node?.name || '');
+  const m = /_lod([0-4])$/i.exec(n);
+  return m ? Number(m[1]) : 0;
+}
+
 export function applyForcedLodToModel(root, lodMode = 'auto') {
-  const target = lodMode === '1' ? 1 : lodMode === '2' ? 2 : 0;
+  const target = lodMode === '1' ? 1 : lodMode === '2' ? 2 : lodMode === '3' ? 3 : 0;
+  const meshes = [];
+  const presentLevels = new Set();
   root.traverse(c => {
     if (!c.isMesh) return;
-    const n = c.name || '';
-    const lvl = (n === 'mesh_lod1' || n.endsWith('_lod1')) ? 1
-      : (n === 'mesh_lod2' || n.endsWith('_lod2')) ? 2
-        : 0;
-    c.visible = lvl === target;
+    const lvl = detectMeshLodLevel(c);
+    meshes.push([c, lvl]);
+    presentLevels.add(lvl);
   });
+  let effectiveTarget = target;
+  if (!presentLevels.has(effectiveTarget)) {
+    let best = 0;
+    for (const lvl of presentLevels) {
+      if (lvl <= target && lvl > best) best = lvl;
+    }
+    effectiveTarget = presentLevels.has(best) ? best : ([...presentLevels][0] ?? 0);
+  }
+  for (const [c, lvl] of meshes) {
+    c.visible = lvl === effectiveTarget;
+  }
+  return effectiveTarget;
 }
 
 export async function buildModelShowcaseScene({

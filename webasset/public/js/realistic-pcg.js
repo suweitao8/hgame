@@ -291,8 +291,8 @@ export class BucketedInstancedLodPool {
         }
 
         let targetLod = 0;
-        if (forcedLod === '0' || forcedLod === '1' || forcedLod === '2') {
-          targetLod = Number(forcedLod);
+        if (forcedLod === '0' || forcedLod === '1' || forcedLod === '2' || forcedLod === '3') {
+          targetLod = Math.min(2, Number(forcedLod));
         } else {
           const dist = Math.max(0.5, camera.position.distanceTo(inst.center));
           const ratio = (inst.radius / (dist * tanHalfFov)) / Math.max(0.25, lodBias);
