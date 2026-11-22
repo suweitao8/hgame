@@ -5,7 +5,7 @@ import {
   submitRingBufferRanges,
   unpackRgb24Into,
 } from './vfx-core.js';
-import { evaluateSizeCurve } from './vfx-atlas-particles.js';
+import { evaluateColorCurve, evaluateSizeCurve } from './vfx-atlas-particles.js';
 import {
   VFX_COMMON_GLSL,
   VFX_UBER_LUT_GLSL,
@@ -261,7 +261,7 @@ void main() {
     : vec2(mix(0.76, 0.24, spanT), position.y + 0.5);
   vec3 c0 = unpackRgb24(aSegMeta.x);
   vec3 c1 = unpackRgb24(aSegExtra.x);
-  vColor = mix(c0, c1, smoothstep(0.04, 0.32, spanT));
+  vColor = mix(c0, c1, u);
   vAlpha = mix(aSegMeta.z, aSegMeta.w, u);
   vHdr = aSegExtra.w;
   vUvRect = aSegUvRect;
@@ -367,7 +367,7 @@ void main() {
       vec2(vUv.x, 1.0 - vUv.y),
       0.0,
       false,
-      vec4(vfxSrgbToLinear3(vColor), vAlpha),
+      vec4(vColor, vAlpha),
       effCustom1,
       uTime,
       vViewDirView,
@@ -513,6 +513,9 @@ export function createTrailsSystem({
   const trailCount = new Int32Array(trailCap);
   const trailColor = new Float32Array(trailCap);
   const trailEndColor = new Float32Array(trailCap);
+  const trailColorCurves = new Array(trailCap).fill(null);
+  const trailLifeMul = new Float32Array(trailCap * 4);
+  trailLifeMul.fill(1);
   const trailWidth = new Float32Array(trailCap);
   const trailWidthScale = new Float32Array(trailCap);
   const trailEndWidthScale = new Float32Array(trailCap);
@@ -540,6 +543,10 @@ export function createTrailsSystem({
   let simTime = 0;
   let disposed = false;
   const scratchRgb = new Float32Array(3);
+  const scratchBaseRgb = new Float32Array(3);
+  const scratchEndRgb = new Float32Array(3);
+  const scratchCurve0 = new Float32Array(4);
+  const scratchCurve1 = new Float32Array(4);
 
   let slashMesh = null;
   let slashAttrs = null;
@@ -800,6 +807,14 @@ export function createTrailsSystem({
     const segBase = trackId * segsPerTrail;
     const rgb = trailColor[trackId];
     const endRgb = trailEndColor[trackId];
+    unpackRgb24Into(rgb, scratchBaseRgb);
+    unpackRgb24Into(endRgb, scratchEndRgb);
+    const cCurve = trailColorCurves[trackId];
+    const lmBase = trackId * 4;
+    const lifeR = trailLifeMul[lmBase];
+    const lifeG = trailLifeMul[lmBase + 1];
+    const lifeB = trailLifeMul[lmBase + 2];
+    const lifeA = trailLifeMul[lmBase + 3];
     const w = trailWidth[trackId] * trailWidthScale[trackId];
     const endScale = trailEndWidthScale[trackId];
     const hdr = trailHdr[trackId];
@@ -851,12 +866,9 @@ export function createTrailsSystem({
       const pA = (trackId * trailNodes + idxA) * 3;
       const pB = (trackId * trailNodes + idxB) * 3;
 
-      const t0 = life > 0
-        ? Math.min(1, Math.max(0, (simTime - trailPointTimes[trackId * trailNodes + idxA]) / life))
-        : s / Math.max(1, count - 1);
-      const t1 = life > 0
-        ? Math.min(1, Math.max(0, (simTime - trailPointTimes[trackId * trailNodes + idxB]) / life))
-        : (s + 1) / Math.max(1, count - 1);
+      const invSegs = 1 / Math.max(1, count - 1);
+      const t0 = s * invSegs;
+      const t1 = (s + 1) * invSegs;
 
       const ax = trailPoints[pA];
       const ay = trailPoints[pA + 1];
@@ -927,24 +939,56 @@ export function createTrailsSystem({
       dstCustom1[i4 + 2] = c1z;
       dstCustom1[i4 + 3] = c1w;
 
-      dstMeta[i4] = rgb;
       dstMeta[i4 + 1] = w;
-      const op = trailOpacity[trackId];
-      if (isNormal) {
-        const evalNormalAlpha = (t) => (
-          t <= 0.06 ? (0.35 + 0.65 * (t / 0.06))
-            : t <= 0.86 ? 1.0
-            : Math.max(0, (1.0 - t) / 0.14)
+      const op = trailOpacity[trackId] * lifeA;
+      if (cCurve) {
+        evaluateColorCurve(cCurve, t0, scratchCurve0);
+        evaluateColorCurve(cCurve, t1, scratchCurve1);
+        dstMeta[i4] = packRgb24(
+          Math.round(scratchBaseRgb[0] * scratchCurve0[0] * lifeR * 255),
+          Math.round(scratchBaseRgb[1] * scratchCurve0[1] * lifeG * 255),
+          Math.round(scratchBaseRgb[2] * scratchCurve0[2] * lifeB * 255),
         );
-        dstMeta[i4 + 2] = evalNormalAlpha(t0) * op;
-        dstMeta[i4 + 3] = evalNormalAlpha(t1) * op;
+        dstExtra[i4] = packRgb24(
+          Math.round(scratchBaseRgb[0] * scratchCurve1[0] * lifeR * 255),
+          Math.round(scratchBaseRgb[1] * scratchCurve1[1] * lifeG * 255),
+          Math.round(scratchBaseRgb[2] * scratchCurve1[2] * lifeB * 255),
+        );
+        dstMeta[i4 + 2] = Math.max(0, Math.min(1, scratchCurve0[3] * op));
+        dstMeta[i4 + 3] = Math.max(0, Math.min(1, scratchCurve1[3] * op));
       } else {
-        dstMeta[i4 + 2] = Math.max(0, 1 - t0 * t0) * op;
-        dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1) * op;
+        const smooth = (x) => {
+          const sv = Math.max(0, Math.min(1, (x - 0.04) / 0.28));
+          return sv * sv * (3 - 2 * sv);
+        };
+        const s0 = smooth(t0);
+        const s1 = smooth(t1);
+        dstMeta[i4] = packRgb24(
+          Math.round((scratchBaseRgb[0] + (scratchEndRgb[0] - scratchBaseRgb[0]) * s0) * lifeR * 255),
+          Math.round((scratchBaseRgb[1] + (scratchEndRgb[1] - scratchBaseRgb[1]) * s0) * lifeG * 255),
+          Math.round((scratchBaseRgb[2] + (scratchEndRgb[2] - scratchBaseRgb[2]) * s0) * lifeB * 255),
+        );
+        dstExtra[i4] = packRgb24(
+          Math.round((scratchBaseRgb[0] + (scratchEndRgb[0] - scratchBaseRgb[0]) * s1) * lifeR * 255),
+          Math.round((scratchBaseRgb[1] + (scratchEndRgb[1] - scratchBaseRgb[1]) * s1) * lifeG * 255),
+          Math.round((scratchBaseRgb[2] + (scratchEndRgb[2] - scratchBaseRgb[2]) * s1) * lifeB * 255),
+        );
+        if (isNormal) {
+          const evalNormalAlpha = (t) => (
+            t <= 0.06 ? (0.35 + 0.65 * (t / 0.06))
+              : t <= 0.86 ? 1.0
+              : Math.max(0, (1.0 - t) / 0.14)
+          );
+          dstMeta[i4 + 2] = evalNormalAlpha(t0) * op;
+          dstMeta[i4 + 3] = evalNormalAlpha(t1) * op;
+        } else {
+          const headFade = (t) => Math.min(1, t / 0.08);
+          dstMeta[i4 + 2] = Math.max(0, 1 - t0 * t0) * headFade(t0) * op;
+          dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1) * headFade(t1) * op;
+        }
       }
 
       const wCurve = trailWidthCurves[trackId];
-      dstExtra[i4] = endRgb;
       dstExtra[i4 + 1] = wCurve ? evaluateSizeCurve(wCurve, t0) : (1 + (endScale - 1) * t0);
       dstExtra[i4 + 2] = wCurve ? evaluateSizeCurve(wCurve, t1) : (1 + (endScale - 1) * t1);
       dstExtra[i4 + 3] = hdr;
@@ -1032,11 +1076,16 @@ export function createTrailsSystem({
     trailWidthScale[id] = 1;
     trailEndWidthScale[id] = 0;
     trailWidthCurves[id] = null;
+    trailColorCurves[id] = null;
     trailOpacity[id] = 1;
     trailLifetime[id] = 0;
     trailIsNormal[id] = 0;
     trailMatRow[id] = -1;
     const uvBase = id * 4;
+    trailLifeMul[uvBase] = 1;
+    trailLifeMul[uvBase + 1] = 1;
+    trailLifeMul[uvBase + 2] = 1;
+    trailLifeMul[uvBase + 3] = 1;
     trailUvRect[uvBase] = 0;
     trailUvRect[uvBase + 1] = 0;
     trailUvRect[uvBase + 2] = 0;
@@ -1057,6 +1106,7 @@ export function createTrailsSystem({
       trailWidth[id] = wStart;
       trailEndWidthScale[id] = wStart > 0.0001 ? Math.max(0, wEnd / wStart) : 0;
       trailWidthCurves[id] = Array.isArray(colorOrOpts.widthCurve) && colorOrOpts.widthCurve.length > 0 ? colorOrOpts.widthCurve : null;
+      trailColorCurves[id] = Array.isArray(colorOrOpts.colorCurve) && colorOrOpts.colorCurve.length >= 2 ? colorOrOpts.colorCurve : null;
       trailHdr[id] = colorOrOpts.hdr ?? 1.0;
       trailOpacity[id] = Math.max(0, Math.min(1, colorOrOpts.alpha ?? 1.0));
       trailLifetime[id] = Math.max(0, colorOrOpts.lifetime ?? 0);
@@ -1095,6 +1145,15 @@ export function createTrailsSystem({
   function setTrailWidthScale(trackId, scale = 1) {
     if (trackId < 0 || trackId >= trailCap || !trailActive[trackId]) return;
     trailWidthScale[trackId] = Math.max(0, scale);
+  }
+
+  function setTrailLifeMod(trackId, r = 1, g = 1, b = 1, a = 1) {
+    if (trackId < 0 || trackId >= trailCap || !trailActive[trackId]) return;
+    const lm = trackId * 4;
+    trailLifeMul[lm] = r;
+    trailLifeMul[lm + 1] = g;
+    trailLifeMul[lm + 2] = b;
+    trailLifeMul[lm + 3] = a;
   }
 
   function pushTrailPoint(trackId, x, y, z = 0, timeOverride = undefined) {
@@ -1296,6 +1355,7 @@ export function createTrailsSystem({
     setTrailPoints,
     setAtlasRegions,
     setTrailWidthScale,
+    setTrailLifeMod,
     allocTrail,
     pushTrailPoint,
     updateTrailHead,

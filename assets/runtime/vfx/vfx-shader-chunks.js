@@ -995,7 +995,7 @@ void vfxExecuteVertexShell(vec3 rawPos, vec3 rawNormal, vec2 rawUv0, vec2 rawUv2
       axisY = yLen > 0.001 ? (axisY / yLen) : vec3(0.0, 1.0, 0.0);
       vec3 axisZ = cross(axisX, axisY);
       float major = aInstScale.y * max(0.05, aInstRot.w) + spd * aInstScale.w;
-      vec2 p2 = vec2(quadLocal.x * major, quadLocal.y * aInstScale.x);
+      vec2 p2 = vec2((quadLocal.x - 0.5) * major, quadLocal.y * aInstScale.x);
       worldPos = aInstPos.xyz + axisX * p2.x + axisY * p2.y + axisZ * scaled2D.z;
       worldNormal = camDir;
     } else {
@@ -1050,7 +1050,9 @@ vec3 vfxEvalUberVertexOffset(
   vec4 detRect = vfxReadMatTexel(matLut, rowIdx, 3.0);
   vec4 detST = vfxReadMatTexel(matLut, rowIdx, 4.0);
   vec4 pan0 = vfxReadMatTexel(matLut, rowIdx, 15.0);
-  vec2 detUv = fract(uv0 * detST.xy + detST.zw + pan0.zw * timeSec);
+  vec2 uUv0 = vec2(uv0.x, 1.0 - uv0.y);
+  vec2 detUvU = fract(uUv0 * detST.xy + detST.zw + pan0.zw * timeSec);
+  vec2 detUv = vec2(detUvU.x, 1.0 - detUvU.y);
   vec2 mapped = vec2(mix(detRect.x, detRect.z, detUv.x), mix(detRect.y, detRect.w, detUv.y));
   if (flipV > 0.5) mapped.y = 1.0 - mapped.y;
   vec4 nSample = texture2D(atlasTex, mapped);
@@ -1144,10 +1146,13 @@ vec4 vfxEvalUberFragment(
   bool clampOvU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_U.toFixed(1)});
   bool clampOvV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_V.toFixed(1)});
 
+  vec2 uUv0 = vec2(uv0.x, 1.0 - uv0.y);
+  vec2 uUvB = vec2(uvBlend.x, 1.0 - uvBlend.y);
+
   vec4 detailSample = vec4(1.0);
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)})) {
-    vec2 detUv = uv0 * detailST.xy + detailST.zw + pan0.zw * timeSec;
-    detailSample = vfxSampleAtlasRectWrapped(atlasTex, detailRect, detUv, flipV, clampDetU, clampDetV);
+    vec2 detUvU = uUv0 * detailST.xy + detailST.zw + pan0.zw * timeSec;
+    detailSample = vfxSampleAtlasRectWrapped(atlasTex, detailRect, vec2(detUvU.x, 1.0 - detUvU.y), flipV, clampDetU, clampDetV);
     if (vfxHasFlag(flags, ${UBER_FLAG_DETAIL_SRGB.toFixed(1)})) {
       detailSample.rgb = vfxSrgbToLinear3(detailSample.rgb);
     }
@@ -1155,22 +1160,23 @@ vec4 vfxEvalUberFragment(
 
   float distortAmt = vfxChannelPickerClamped(detailSample, detDistChan) * params0.z;
   vec2 uvOff = vfxHasFlag(flags, ${UBER_FLAG_USE_UV_OFFSET.toFixed(1)}) ? custom1.zw : vec2(0.0);
-  vec2 mainUv = (uv0 + uvOff + vec2(distortAmt)) * mainST.xy + mainST.zw + pan0.xy * timeSec;
+  vec2 mainUvU = (uUv0 + uvOff + vec2(distortAmt)) * mainST.xy + mainST.zw + pan0.xy * timeSec;
   vec4 mainTex = vec4(1.0);
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)})) {
-    mainTex = vfxSampleAtlasRectWrapped(atlasTex, mainRect, mainUv, flipV, clampMainU, clampMainV);
+    mainTex = vfxSampleAtlasRectWrapped(atlasTex, mainRect, vec2(mainUvU.x, 1.0 - mainUvU.y), flipV, clampMainU, clampMainV);
     if (hasFlipBlend) {
-      vec2 mainUvB = (uvBlend + uvOff + vec2(distortAmt)) * mainST.xy + mainST.zw + pan0.xy * timeSec;
-      vec4 mainTexB = vfxSampleAtlasRectWrapped(atlasTex, mainRect, mainUvB, flipV, clampMainU, clampMainV);
+      vec2 mainUvBU = (uUvB + uvOff + vec2(distortAmt)) * mainST.xy + mainST.zw + pan0.xy * timeSec;
+      vec4 mainTexB = vfxSampleAtlasRectWrapped(atlasTex, mainRect, vec2(mainUvBU.x, 1.0 - mainUvBU.y), flipV, clampMainU, clampMainV);
       mainTex = mix(mainTex, mainTexB, flipBlend);
     }
     if (vfxHasFlag(flags, ${UBER_FLAG_MAIN_SRGB.toFixed(1)})) {
       mainTex.rgb = vfxSrgbToLinear3(mainTex.rgb);
     }
   } else if (!vfxHasFlag(flags, ${UBER_FLAG_USE_ALPHA_OVERRIDE.toFixed(1)})) {
-    // Unity Default-Particle (soft radial Gaussian disc) when _MainTex is Default-Particle / null
+    // Unity Default-Particle (steep radial Gaussian disc) when _MainTex is Default-Particle / null
     vec2 dp = (uv0 - vec2(0.5)) * 2.0;
-    float radialA = pow(clamp(1.0 - dot(dp, dp), 0.0, 1.0), 2.2);
+    float r2 = dot(dp, dp);
+    float radialA = r2 >= 1.0 ? 0.0 : exp(-r2 * 6.5) * (1.0 - r2);
     mainTex = vec4(vec3(radialA), radialA);
   }
 
@@ -1212,11 +1218,11 @@ vec4 vfxEvalUberFragment(
 
   float alphaOv = 1.0;
   if (vfxHasFlag(flags, ${UBER_FLAG_USE_ALPHA_OVERRIDE.toFixed(1)}) && hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_ALPHA_OV.toFixed(1)})) {
-    vec2 ovUv = uv0 * alphaOvST.xy + alphaOvST.zw + pan1.xy * timeSec;
-    vec4 ovSample = vfxSampleAtlasRectWrapped(atlasTex, alphaOvRect, ovUv, flipV, clampOvU, clampOvV);
+    vec2 ovUvU = uUv0 * alphaOvST.xy + alphaOvST.zw + pan1.xy * timeSec;
+    vec4 ovSample = vfxSampleAtlasRectWrapped(atlasTex, alphaOvRect, vec2(ovUvU.x, 1.0 - ovUvU.y), flipV, clampOvU, clampOvV);
     if (hasFlipBlend) {
-      vec2 ovUvB = uvBlend * alphaOvST.xy + alphaOvST.zw + pan1.xy * timeSec;
-      vec4 ovSampleB = vfxSampleAtlasRectWrapped(atlasTex, alphaOvRect, ovUvB, flipV, clampOvU, clampOvV);
+      vec2 ovUvBU = uUvB * alphaOvST.xy + alphaOvST.zw + pan1.xy * timeSec;
+      vec4 ovSampleB = vfxSampleAtlasRectWrapped(atlasTex, alphaOvRect, vec2(ovUvBU.x, 1.0 - ovUvBU.y), flipV, clampOvU, clampOvV);
       ovSample = mix(ovSample, ovSampleB, flipBlend);
     }
     alphaOv = vfxChannelPickerAdd(ovSample, alphaOvChan);

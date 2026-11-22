@@ -1135,9 +1135,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     }
     if (renderMode === 'mesh') {
       const [qx, qy, qz, qw] = alignRot;
-      const rhsQx = -qx;
+      const rhsQx = qx;
       const rhsQy = -qy;
-      const rhsQz = qz;
+      const rhsQz = -qz;
       const rhsQw = qw;
       const trEulerX = Math.atan2(2 * (rhsQw * rhsQx + rhsQy * rhsQz), 1 - 2 * (rhsQx * rhsQx + rhsQy * rhsQy));
       if (Math.abs(trEulerX) > 0.02) {
@@ -1674,6 +1674,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const colLifeMode = Number((colLifeBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
       let trailAlpha = 1;
       let trailTint;
+      let lifeColorCurve;
       const toHex = (c) => '#' + [c[0], c[1], c[2]].map((v) => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0')).join('');
       if (colLifeMode === 0 || colLifeMode === 2) {
         const mMin = colLifeBlock.match(/minColor:\s*\{([^}]+)\}/);
@@ -1697,8 +1698,12 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       } else {
         const clStops = parseGradientStops(colLifeBlock);
         if (clStops && clStops.length > 0) {
-          const avgA = clStops.reduce((s, k) => s + k[1][3], 0) / clStops.length;
-          trailAlpha = Number(avgA.toFixed(3));
+          if (clStops.length >= 2) {
+            lifeColorCurve = clStops;
+          } else {
+            const avgA = clStops.reduce((s, k) => s + k[1][3], 0) / clStops.length;
+            trailAlpha = Number(avgA.toFixed(3));
+          }
         }
       }
       const wBlock = trailMod.match(/widthOverTrail:[\s\S]*?(?=colorOverTrail:|$)/)?.[0] || '';
@@ -1709,6 +1714,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const cotMode = Number((cotBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 1);
       let startRgb = maxCol;
       let endRgb = maxCol;
+      let trailColorCurve;
       if (cotMode === 0 || cotMode === 2) {
         const mMax = cotBlock.match(/maxColor:\s*\{([^}]+)\}/);
         startRgb = mMax ? parseColorObject(mMax[1], true) : maxCol;
@@ -1721,6 +1727,10 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           }
         }
       } else {
+        const cotStops = parseGradientStops(cotBlock);
+        if (cotStops && cotStops.length >= 2) {
+          trailColorCurve = cotStops;
+        }
         const maxGrad = cotBlock.match(/maxGradient:[\s\S]*?(?=minGradient:|$)/)?.[0] || cotBlock;
         const numC = Math.min(8, Number((maxGrad.match(/m_NumColorKeys:\s*(\d+)/) || [])[1] ?? 2));
         const keyCols = [];
@@ -1762,6 +1772,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         endWidth: 0,
         endWidthScale,
         ...(wCurve && wCurve.length >= 2 ? { widthCurve: wCurve } : {}),
+        ...(trailColorCurve ? { colorCurve: trailColorCurve } : {}),
+        ...(lifeColorCurve ? { lifeColorCurve } : {}),
         ...(trailAlpha !== 1 ? { alpha: trailAlpha } : {}),
         ...(trailTint ? { tint: trailTint } : {}),
         inheritColor,

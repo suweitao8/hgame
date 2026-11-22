@@ -1,5 +1,5 @@
 import { createVisualPrng, packRgb24 } from './vfx-core.js';
-import { evaluateAtlasParticlePosition, evaluateSizeCurve } from './vfx-atlas-particles.js';
+import { evaluateAtlasParticlePosition, evaluateColorCurve, evaluateSizeCurve } from './vfx-atlas-particles.js';
 import { VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 import { SHURIKEN_QUALITY_TIERS } from './vfx-shuriken-kernel.js';
 
@@ -160,6 +160,7 @@ export function createEffectPlayer({
   const scratchTintB = [1, 1, 1];
   const scratchTintOut = [1, 1, 1];
   const scratchTrailMult = [1, 1, 1];
+  const scratchTrailLife = new Float32Array(4);
   let collisionResolver = /** @type {((x:number,y:number,z:number,vx:number,vy:number,vz:number)=>{hit:boolean,y?:number,nx?:number,ny?:number,nz?:number}|null) | null} */ (null);
 
   function readMagnitude(val, fallback = 0) {
@@ -232,6 +233,7 @@ export function createEffectPlayer({
       noiseStrength: 0, noiseYScale: 1, noiseFreq: 0.5, phase: 0,
       orbitalX: 0, orbitalY: 0, orbitalZ: 0, centerOffX: 0, centerOffY: 0, centerOffZ: 0,
       sizeCurve: null, sizeAffectsWidth: true,
+      lifeColorCurve: null,
       trackedSlot: -1,
     });
   }
@@ -507,9 +509,10 @@ export function createEffectPlayer({
       }
     }
     if (!slot) return;
+    const hasColorCurve = Array.isArray(trailCfg.colorCurve) && trailCfg.colorCurve.length >= 2;
     let baseColor;
     if (trailCfg.inheritColor) {
-      if (trailCfg.color !== undefined) {
+      if (!hasColorCurve && trailCfg.color !== undefined) {
         parseColorRgb01(trailCfg.color, scratchTrailMult);
         baseColor = packRgb24(
           Math.round(tintRgb[0] * scratchTrailMult[0] * 255),
@@ -520,9 +523,23 @@ export function createEffectPlayer({
         baseColor = packRgb24(Math.round(tintRgb[0] * 255), Math.round(tintRgb[1] * 255), Math.round(tintRgb[2] * 255));
       }
     } else {
-      baseColor = parseColorNumber(trailCfg.color, 0xff9f43);
+      baseColor = hasColorCurve ? 0xffffff : parseColorNumber(trailCfg.color, 0xff9f43);
     }
-    let endColor = trailCfg.endColor !== undefined ? parseColorNumber(trailCfg.endColor, baseColor) : baseColor;
+    let endColor;
+    if (trailCfg.endColor !== undefined) {
+      if (trailCfg.inheritColor) {
+        parseColorRgb01(trailCfg.endColor, scratchTrailMult);
+        endColor = packRgb24(
+          Math.round(tintRgb[0] * scratchTrailMult[0] * 255),
+          Math.round(tintRgb[1] * scratchTrailMult[1] * 255),
+          Math.round(tintRgb[2] * scratchTrailMult[2] * 255),
+        );
+      } else {
+        endColor = parseColorNumber(trailCfg.endColor, baseColor);
+      }
+    } else {
+      endColor = baseColor;
+    }
     if (trailCfg.tint) {
       sampleStartColor(trailCfg.tint, scratchTrailMult);
       const sr = ((baseColor >> 16) & 255) * scratchTrailMult[0];
@@ -551,6 +568,7 @@ export function createEffectPlayer({
     const tid = trails.allocTrail({
       color: baseColor,
       endColor,
+      colorCurve: hasColorCurve ? trailCfg.colorCurve : null,
       width,
       endWidth,
       widthCurve: trailCfg.widthCurve || null,
@@ -592,10 +610,15 @@ export function createEffectPlayer({
     slot.centerOffZ = centerOffZ;
     slot.sizeCurve = sizeAffectsWidth && Array.isArray(sizeCurve) ? sizeCurve : null;
     slot.sizeAffectsWidth = sizeAffectsWidth;
+    slot.lifeColorCurve = Array.isArray(trailCfg.lifeColorCurve) && trailCfg.lifeColorCurve.length >= 2 ? trailCfg.lifeColorCurve : null;
     slot.trackedSlot = trackedSlot;
 
     if (slot.sizeCurve && typeof trails.setTrailWidthScale === 'function') {
       trails.setTrailWidthScale(tid, evaluateSizeCurve(slot.sizeCurve, Math.min(1, initialAge / Math.max(0.01, particleDur))));
+    }
+    if (slot.lifeColorCurve && typeof trails.setTrailLifeMod === 'function') {
+      evaluateColorCurve(slot.lifeColorCurve, Math.min(1, initialAge / Math.max(0.01, particleDur)), scratchTrailLife);
+      trails.setTrailLifeMod(tid, scratchTrailLife[0], scratchTrailLife[1], scratchTrailLife[2], scratchTrailLife[3]);
     }
     if (initialAge > 0.005) {
       const nowT = typeof trails.getTime === 'function' ? trails.getTime() : 0;
@@ -1903,6 +1926,10 @@ export function createEffectPlayer({
         }
         if (tf.sizeCurve && typeof trails.setTrailWidthScale === 'function') {
           trails.setTrailWidthScale(tf.trailId, evaluateSizeCurve(tf.sizeCurve, Math.min(1, tf.age / Math.max(0.01, tf.duration))));
+        }
+        if (tf.lifeColorCurve && typeof trails.setTrailLifeMod === 'function') {
+          evaluateColorCurve(tf.lifeColorCurve, Math.min(1, tf.age / Math.max(0.01, tf.duration)), scratchTrailLife);
+          trails.setTrailLifeMod(tf.trailId, scratchTrailLife[0], scratchTrailLife[1], scratchTrailLife[2], scratchTrailLife[3]);
         }
         let px;
         let py;

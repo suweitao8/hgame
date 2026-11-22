@@ -986,9 +986,11 @@ void main() {
     vec2 axisY = vec2(-s, c);
     float lenScale = curSize;
     if (renderMode > 1.5 && renderMode < 2.5) {
+      vec2 dirVel2 = length(curVel.xy) > 0.0001 ? curVel.xy : aAtlasP1.xy;
+      float dirLen2 = length(dirVel2);
       float spd = length(curVel.xy);
-      if (spd > 0.001) {
-        axisX = curVel.xy / spd;
+      if (dirLen2 > 0.0001) {
+        axisX = dirVel2 / dirLen2;
         axisY = vec2(-axisX.y, axisX.x);
       }
       lenScale = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
@@ -1052,9 +1054,11 @@ void main() {
       float major = curSize;
       float billH = (renderMode < 0.5) ? (curSizeY * aspectY) : curSizeY;
       if (renderMode > 1.5 && renderMode < 2.5) {
-        vec3 viewVel = mat3(modelViewMatrix) * curVel;
-        float spd = length(viewVel.xy);
-        rightAxis = spd > 0.001 ? (viewVel.xy / spd) : vec2(cos(rot), sin(rot));
+        vec3 dirVel = length(curVel) > 0.0001 ? curVel : aAtlasP1.xyz;
+        vec3 viewVel = mat3(modelViewMatrix) * dirVel;
+        float dirLen = length(viewVel.xy);
+        float spd = length((mat3(modelViewMatrix) * curVel).xy);
+        rightAxis = dirLen > 0.0001 ? (viewVel.xy / dirLen) : vec2(cos(rot), sin(rot));
         float lenBase = (hasSizeSep > 0.5 || abs(aspectY - 1.0) > 0.001) ? (curSizeY * aspectY) : curSize;
         major = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
           ? (lenBase * max(0.05, stretchScales.y) + min(spd * stretchScales.x, lenBase * 8.0))
@@ -1065,7 +1069,8 @@ void main() {
       }
       vec2 upAxis = vec2(-rightAxis.y, rightAxis.x);
       float minBill = (renderMode < 0.5 && curSize > 0.001) ? abs(mvCenter.z) * 0.0042 : 0.0;
-      mvCenter.xy += rightAxis * (posLocal.x * max(major, minBill)) + upAxis * (posLocal.y * max(billH, minBill));
+      float stretchX = (renderMode > 1.5 && renderMode < 2.5) ? (posLocal.x - 0.5) : posLocal.x;
+      mvCenter.xy += rightAxis * (stretchX * max(major, minBill)) + upAxis * (posLocal.y * max(billH, minBill));
       mvCenter.z += offLocal.z * curSize;
       vViewDirView = -mvCenter.xyz;
       gl_Position = projectionMatrix * mvCenter;

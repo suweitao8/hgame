@@ -1817,6 +1817,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         setTrailPoints: (trackId: any, px: any, py: any, pz: any, indices: any, startIdx: any, endIdx: any) => void;
         setAtlasRegions: (regions: Record<string, readonly number[]> | null) => void;
         setTrailWidthScale: (trackId: any, scale?: number) => void;
+        setTrailLifeMod: (trackId: any, r?: number, g?: number, b?: number, a?: number) => void;
         allocTrail: (colorOrOpts?: number | object, width?: number | undefined) => number;
         pushTrailPoint: (trackId: any, x: any, y: any, z?: number, timeOverride?: undefined) => void;
         updateTrailHead: (trackId: any, x: any, y: any, z?: number, timeOverride?: undefined) => void;
