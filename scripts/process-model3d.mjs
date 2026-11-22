@@ -1269,6 +1269,8 @@ export function buildBlenderRemeshBakeArgs(inputPath, outPath, flags = {}) {
     args.push('--target-height', String(flags['target-height'] ?? flags.targetHeight));
   }
   if (flags['anim-glb'] || flags.animGlb) args.push('--anim-glb', String(flags['anim-glb'] || flags.animGlb));
+  const rigEngine = flags['rig-engine'] ?? flags.rigEngine ?? ((flags['rig-run'] || flags.rigRun) ? 'auto' : '');
+  if (rigEngine) args.push('--rig-engine', String(rigEngine));
   if (flags['qa-dir'] || flags.qaDir) {
     args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
   }
@@ -1285,14 +1287,14 @@ export function buildBlenderRigRunArgs(inputPath, outPath, flags = {}) {
     '--input', assertAsciiPath(path.resolve(inputPath), 'Input model'),
     '--out', assertAsciiPath(path.resolve(outPath), 'Output model'),
     '--action-name', String(flags['action-name'] ?? flags.actionName ?? 'Run'),
+    '--rig-engine', String(flags['rig-engine'] ?? flags.rigEngine ?? 'auto'),
   ];
   if (flags['anim-glb'] || flags.animGlb) args.push('--anim-glb', String(flags['anim-glb'] || flags.animGlb));
-  if (flags['rig-engine'] || flags.rigEngine) args.push('--rig-engine', String(flags['rig-engine'] || flags.rigEngine));
-  const lod1Tris = flags['no-lod1'] ? 0 : (flags['lod1-tris'] ?? flags.lod1Tris ?? 0);
+  const lod1Tris = flags['no-lod1'] ? 0 : (flags['lod1-tris'] ?? flags.lod1Tris ?? T5_LOD1_TARGET_TRIS);
   if (Number(lod1Tris) > 0) args.push('--lod1-tris', String(lod1Tris));
-  const lod2Tris = flags['no-lod2'] ? 0 : (flags['lod2-tris'] ?? flags.lod2Tris ?? 0);
+  const lod2Tris = flags['no-lod2'] ? 0 : (flags['lod2-tris'] ?? flags.lod2Tris ?? T5_LOD2_TARGET_TRIS);
   if (Number(lod2Tris) > 0) args.push('--lod2-tris', String(lod2Tris));
-  if (!flags['no-lod3'] && Boolean(flags['lod3-tight'] ?? flags.lod3Tight)) args.push('--lod3-tight');
+  if (!flags['no-lod3'] && Boolean(flags['lod3-tight'] ?? flags.lod3Tight ?? true)) args.push('--lod3-tight');
   if (flags['qa-dir'] || flags.qaDir) {
     args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
   }

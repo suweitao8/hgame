@@ -137,19 +137,32 @@ HGame connects to a local ComfyUI (`Trellis2-GGUF` + `UltraTex LowVRAM GGUF`) an
 
 **标准固定命令**：
 ```bash
-# 1. 一条命令出全套（ComfyUI 生模 -> 归一化 -> 高模 + 统一 T5 低模 LOD0+LOD1+LOD2+UV+贴图+23(+3)绑定+Run）：
+# 1. 对 WebAsset 已有高模生成/刷新统一 T5 低模并上传（自动内嵌 LOD0..LOD3 + 双路径自动绑定 + Anim58 Run）：
+node scripts/process-model3d.mjs character-pack --from-webasset --character-id <id> --low-only --upload --qa-dir .tmp/qa-<id>
+
+# 2. 从图片一条命令出全套（ComfyUI 生模 -> 归一化 -> 高模 + 统一 T5 低模 LOD0..LOD3 + UV + 贴图 + 23(+3) 绑定 + Run）：
 node scripts/process-model3d.mjs generate --input <front.png> --out <char_high.glb> \
   --quality high --normalize --origin ground --target-height 1.0 \
   --remesh --low-out <char_low.glb> --preset low
 
-# 2. 对已有高模直接烘焙统一 T5 角色（自动内嵌 LOD0(4w)+LOD1(2w)+LOD2(1w)+可选LOD3 + 23(+3) 绑定）：
+# 3. 对已有高模直接烘焙统一 T5 角色（自动内嵌 LOD0(4w)+LOD1(2w)+LOD2(1w)+紧包LOD3 + 23(+3) 绑定）：
 node scripts/process-model3d.mjs remesh-bake --input <norm_high.glb> --out <low.glb> --preset low --rig-run
 
-# 3. 对已有低模单独补充自动绑定 + 默认 Run 动画：
+# 4. 对已有低模单独重绑定 / 补动画（默认自动附带 --rig-engine auto、--lod1-tris 1600、--lod2-tris 350、--lod3-tight）：
 node scripts/process-model3d.mjs rig-run --input <low.glb> --out <low_run.glb> --qa-dir <qa_run_dir>
 ```
 
+- **固定双路径自动绑定规范（`--rig-engine auto`）**：
+  - **高大成人角色（`z_arm_rel >= 0.685`）**：自动走 Blender **Auto-Rig Pro**（Smart + Pseudo-Voxels + Unreal 23-bone glTF）并对齐姿态后重定向 Anim58 `Run`。
+  - **小动物 / 短手 Q 版角色（`z_arm_rel < 0.685`）**：自动走原生 **23(+3) 根 UE 骨链**，并应用已定型规则：
+    1. **圆润体型脊柱居中**：放宽躯干 Y 过滤至 `0.26 * H`，取 `15%/85%` 分位中点并将 `y_torso` 约束在髋部 `±0.05 * H` 内，避免脊柱前偏贴腹。
+    2. **焊接代理权重迁移**：先在无缝焊接代理上做 `ARMATURE_AUTO` 再传回 UV 分裂网格，消除接缝撕裂。
+    3. **骨盆起伏与短肢摆幅增强**：骨盆竖直起伏缩放保底 `>= 0.36 * (H / 1.75)`；按躯干宽厚比 `w_mid / H` 给上臂/前臂/手施加外展清肚偏移；对 `upperarm_l/r`、`thigh_l/r`、`calf_l/r` 相对帧均值施加 `1.18x` 摆幅增强。
+    4. **斗篷/尾巴独立次级摆动**：检测到身后配饰时生成 `cape_01-03`（父骨骼 `spine_03`）或 `tail_01-03`（父骨骼 `pelvis`），权重严格隔离，不与四肢互抢权重。
+  - **Anim58 `Run` 强制要求**：标准角色资产统一通过 `.hgame.local.json` 的 `model3d.runAnimGlb`（即 `WudangSword_Animset__MM_Run_Fwd.glb`）重定向真实跑步动作，**严禁对正式角色传递 `--anim-glb procedural`**（`procedural` 仅作离线无动作源兜底）。
+- **低模绑定 QA 核验清单**：
+  - 检查 `--qa-dir` 输出的 `f06/`、`f18/` 多视角图：四肢摆幅饱满、短手不穿腹、脊柱居中、斗篷/尾巴随动自然。
+  - 核验 GLB 内嵌 4 级 LOD（`LOD0 <= 6,000` [硬上限 `8,000`]、`LOD1 ~1,600`、`LOD2 ~350`、`LOD3` 6–8 面紧包片）完整，随后执行 `npm run assets:db -- sync` 同步资产库。
 - ⚠️ **避坑固定规则**：
   - ComfyUI 必须带 `--reserve-vram 4.8` 启动（可写入本地 ComfyUI 启动脚本或 CLI 参数），勿跑 `pipeline_type="512"` 的纹理 GGUF（会产生彩色噪点）。
   - AI 概念图不使用 `--multiview`（非严格正交会导致额头凸起/耳朵撕裂），也不再默认跑 8–10 分钟的 UltraTex 重绘。
-  - 自动绑定使用 UE/Anim58 命名的 23 根主骨骼；检测到身后斗篷或尾巴时，会额外生成 `cape_01-03`（父骨骼 `spine_03`）或 `tail_01-03`（父骨骼 `pelvis`）。这些区域的权重只分配给对应骨链，不再被腿或手臂骨骼拉伸。斗篷和尾巴的轻微摆动会烘焙进默认 `Run`；套用 Anim58 动作时，它们会刚性跟随父骨骼。
