@@ -10,8 +10,10 @@ import {
   draw2MapChannelCanvases,
   drawImageFittedToCanvas,
   fetchUnrealCatalog,
+  getDefaultDecalHsvMatch,
   loadHtmlImage,
   loadSingle2MapAssets,
+  sampleImageHsvStats,
 } from './hgame-shared.js';
 import {
   captureNodeTransforms,
@@ -61,6 +63,11 @@ const rotInput = document.querySelector('#hgame-decal-rot');
 const rotValEl = document.querySelector('#hgame-decal-rot-val');
 const opacityInput = document.querySelector('#hgame-decal-opacity');
 const opacityValEl = document.querySelector('#hgame-decal-opacity-val');
+const hsvMatchToggleWrap = document.querySelector('#hgame-decal-hsv-toggle-wrap');
+const hsvMatchInput = document.querySelector('#hgame-decal-hsv-match');
+const hsvWrap = document.querySelector('#hgame-decal-hsv-wrap');
+const hsvAmountInput = document.querySelector('#hgame-decal-hsv-amount');
+const hsvValEl = document.querySelector('#hgame-decal-hsv-val');
 const tintWrap = document.querySelector('#hgame-decal-tint-wrap');
 const tintSelect = document.querySelector('#hgame-decal-tint');
 const statusEl = document.querySelector('#hgame-decal-status');
@@ -107,6 +114,10 @@ let hdriEnv = null;
 let stageRoot = null;
 let decalMesh = null;
 let decalMaterial = null;
+let decalBuilt = null;
+let decalSourceHsvStats = null;
+let lastHsvCategoryKey = '';
+let hsvUserOverride = false;
 let decalTextures = [];
 let decalAspect = 1;
 let decalContentScale = 1;
@@ -115,6 +126,7 @@ let initialized = false;
 let loadToken = 0;
 let catalogLoaded = false;
 const baseSurfaceCache = new Map();
+const baseSurfaceStatsCache = new Map();
 
 let refCharacters = [];
 let idleAnimCandidates = [];
@@ -152,6 +164,10 @@ function syncSliderLabels() {
   scaleValEl.textContent = `${Number(scaleInput.value).toFixed(2)}×`;
   rotValEl.textContent = `${Math.round(Number(rotInput.value) || 0)}°`;
   opacityValEl.textContent = Number(opacityInput.value).toFixed(2);
+  if (hsvValEl && hsvAmountInput) {
+    const pct = Math.round((Number(hsvAmountInput.value) || 0) * 100);
+    hsvValEl.textContent = `${pct}%`;
+  }
 }
 
 function getActiveList() {
@@ -388,6 +404,8 @@ function clearStage() {
   stageRoot = null;
   decalMesh = null;
   decalMaterial = null;
+  decalBuilt = null;
+  decalSourceHsvStats = null;
   for (const tex of decalTextures) {
     tex?.dispose?.();
   }
@@ -434,6 +452,7 @@ async function getBaseSurfaceMaterial(surfaceKey, renderer, role = 'floor') {
       });
       built.material.userData.sharedBaseSurface = true;
       baseSurfaceCache.set(cacheKey, built.material);
+      baseSurfaceStatsCache.set(cacheKey, sampleImageHsvStats(assets.colorImg));
       return built.material;
     } catch { /* fall through to unreal/fallback */ }
   }
@@ -923,6 +942,47 @@ function configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera = fa
   }
 }
 
+function getActiveBaseStatsKey() {
+  const requested = SURFACE_FALLBACKS[surfaceSelect?.value] ? surfaceSelect.value : 'concrete';
+  const role = currentPlacement === 'wall' ? 'wall' : 'floor';
+  const effective = role === 'wall' && requested === 'asphalt' ? 'concrete' : requested;
+  return `${effective}:${role}`;
+}
+
+function syncHsvMatchDefaults(item) {
+  const isCnLib = currentLib === 'cn_pbr' || currentLib === 'cn_foliage';
+  const showHsv = isCnLib && previewMode === 'surface';
+  if (hsvMatchToggleWrap) hsvMatchToggleWrap.hidden = !showHsv;
+  if (hsvWrap) hsvWrap.hidden = !showHsv;
+  if (!showHsv || !hsvMatchInput || !hsvAmountInput) return;
+
+  const catKey = `${currentLib}:${item?.category || ''}`;
+  if (catKey !== lastHsvCategoryKey) {
+    lastHsvCategoryKey = catKey;
+    hsvUserOverride = false;
+  }
+  if (!hsvUserOverride) {
+    const def = getDefaultDecalHsvMatch(item, currentLib);
+    hsvMatchInput.checked = Boolean(def.enabled);
+    hsvAmountInput.value = String(def.amount);
+  }
+  hsvAmountInput.disabled = !hsvMatchInput.checked;
+  syncSliderLabels();
+}
+
+function applyHsvMatchToActiveDecal() {
+  if (!decalBuilt || !decalSourceHsvStats) return;
+  const enabled = Boolean(hsvMatchInput?.checked) && previewMode === 'surface';
+  const strength = enabled ? Math.max(0, Math.min(1, Number(hsvAmountInput?.value || 0))) : 0;
+  const targetStats = baseSurfaceStatsCache.get(getActiveBaseStatsKey()) || null;
+  decalBuilt.setHsvMatch({
+    targetStats,
+    sourceStats: decalSourceHsvStats,
+    strength,
+    creviceProtect: true,
+  });
+}
+
 async function loadCurrentDecal({ forceCamera = false } = {}) {
   const token = ++loadToken;
   const item = getCurrentDecal();
@@ -944,6 +1004,8 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
   emptyEl.hidden = true;
   const isCnLib = currentLib === 'cn_pbr' || currentLib === 'cn_foliage';
   if (tintWrap) tintWrap.hidden = !(currentLib === 'cn_pbr' && item.tintableGrayscale);
+  if (hsvMatchToggleWrap) hsvMatchToggleWrap.hidden = true;
+  if (hsvWrap) hsvWrap.hidden = true;
   if (opacityInput) opacityInput.disabled = currentLib === 'cn_foliage';
   if (mapRmLabel) mapRmLabel.textContent = isCnLib ? 'RM' : 'ORM';
 
@@ -985,8 +1047,12 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
         polygonOffset: isCnLib,
         side: previewMode === 'surface' ? THREE.FrontSide : THREE.DoubleSide,
       });
+      decalBuilt = built;
       decalMaterial = built.material;
       decalTextures = [built.colorTex, built.normRmTex];
+      decalSourceHsvStats = sampleImageHsvStats(assets.colorImg, { skipDarkCrevices: true });
+      syncHsvMatchDefaults(item);
+      applyHsvMatchToActiveDecal();
 
       const group = new THREE.Group();
       configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera });
@@ -1007,8 +1073,12 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
       const refStr = previewMode === 'surface' && refCharRoot?.visible && refCharHeight
         ? ` · 参考角色 ${refCharHeight.toFixed(2)}m`
         : '';
+      const hsvPct = hsvMatchInput?.checked && previewMode === 'surface'
+        ? Math.round((Number(hsvAmountInput?.value) || 0) * 100)
+        : 0;
+      const hsvStr = hsvPct > 0 ? ` · 底色融合 ${hsvPct}%` : '';
       statusEl.textContent =
-        `${typeLabel} · ${placementLabel} · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr}${refStr} · ` +
+        `${typeLabel} · ${placementLabel} · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr}${hsvStr}${refStr} · ` +
         `${assets.loadMs.toFixed(0)}ms · ${item.sourcePath || item.category || ''}`;
 
       startViewport(vp);
@@ -1208,6 +1278,24 @@ async function initDecalsView() {
       if (currentLib === 'cn_pbr' && item?.tintableGrayscale && decalMaterial) {
         decalMaterial.color.setHex(Number(tintSelect.value || 0x8b0c0c));
       }
+    });
+    hsvMatchInput?.addEventListener('change', () => {
+      hsvUserOverride = true;
+      if (hsvMatchInput.checked && Number(hsvAmountInput?.value || 0) <= 0.01 && hsvAmountInput) {
+        hsvAmountInput.value = '0.75';
+      }
+      if (hsvAmountInput) hsvAmountInput.disabled = !hsvMatchInput.checked;
+      syncSliderLabels();
+      applyHsvMatchToActiveDecal();
+    });
+    hsvAmountInput?.addEventListener('input', () => {
+      hsvUserOverride = true;
+      if (hsvMatchInput && !hsvMatchInput.checked && Number(hsvAmountInput.value) > 0) {
+        hsvMatchInput.checked = true;
+        hsvAmountInput.disabled = false;
+      }
+      syncSliderLabels();
+      applyHsvMatchToActiveDecal();
     });
   }
 

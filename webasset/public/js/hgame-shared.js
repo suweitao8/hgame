@@ -694,10 +694,15 @@ export function create2MapPbrMaterial({
     envMapIntensity: 1.0,
   });
 
+  const uHsvMatchTarget = new THREE.Vector4(0, 0, 0.5, 0);
+  const uHsvMatchSource = new THREE.Vector4(0, 0, 0.5, 1);
+
   material.customProgramCacheKey = () => `hgame-single-2map-${mode}`;
   material.onBeforeCompile = shader => {
     shader.uniforms.uNormalRmMap = { value: normRmTex };
     shader.uniforms.uNormalStrength = { value: 1.0 };
+    shader.uniforms.uHsvMatchTarget = { value: uHsvMatchTarget };
+    shader.uniforms.uHsvMatchSource = { value: uHsvMatchSource };
 
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -705,6 +710,23 @@ export function create2MapPbrMaterial({
         `#include <common>
 uniform sampler2D uNormalRmMap;
 uniform float uNormalStrength;
+uniform vec4 uHsvMatchTarget;
+uniform vec4 uHsvMatchSource;
+
+vec3 hgRgb2Hsv(vec3 c) {
+  vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+  vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+  vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+  float d = q.x - min(q.w, q.y);
+  float e = 1.0e-5;
+  return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+
+vec3 hgHsv2Rgb(vec3 c) {
+  vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
 
 mat3 hgameCotangentFrame(vec3 eyePos, vec3 surfNorm, vec2 uv) {
   vec3 q0 = dFdx(eyePos.xyz);
@@ -724,7 +746,22 @@ mat3 hgameCotangentFrame(vec3 eyePos, vec3 surfNorm, vec2 uv) {
       .replace(
         '#include <map_fragment>',
         `#include <map_fragment>
-vec4 hgNrmRmSample = texture2D(uNormalRmMap, vMapUv);`,
+vec4 hgNrmRmSample = texture2D(uNormalRmMap, vMapUv);
+if (uHsvMatchTarget.w > 0.001) {
+  vec3 hgSrgb = pow(max(diffuseColor.rgb, vec3(0.0001)), vec3(1.0 / 2.2));
+  vec3 hgHsv = hgRgb2Hsv(hgSrgb);
+  float relLuma = hgHsv.z / max(uHsvMatchSource.z, 0.08);
+  float creviceW = mix(1.0, mix(0.22, 1.0, smoothstep(0.10, 0.58, relLuma)), step(0.5, uHsvMatchSource.w));
+  float amt = clamp(uHsvMatchTarget.w, 0.0, 1.0) * creviceW;
+  float dh = fract(uHsvMatchTarget.x - hgHsv.x + 0.5) - 0.5;
+  float targetSatGate = smoothstep(0.015, 0.12, uHsvMatchTarget.y);
+  float nextH = fract(hgHsv.x + dh * amt * mix(0.35, 1.0, targetSatGate));
+  float nextS = clamp(hgHsv.y + (uHsvMatchTarget.y - uHsvMatchSource.y) * amt, 0.0, 1.0);
+  float vRatio = clamp(uHsvMatchTarget.z / max(uHsvMatchSource.z, 0.06), 0.45, 1.85);
+  float nextV = clamp(hgHsv.z * mix(1.0, vRatio, amt), 0.0, 1.0);
+  vec3 hgAdjSrgb = hgHsv2Rgb(vec3(nextH, nextS, nextV));
+  diffuseColor.rgb = pow(max(hgAdjSrgb, vec3(0.0001)), vec3(2.2));
+}`,
       )
       .replace(
         '#include <roughnessmap_fragment>',
@@ -745,7 +782,106 @@ normal = normalize(hgTbn * hgMapN);`,
       );
   };
 
-  return { material, colorTex, normRmTex };
+  return {
+    material,
+    colorTex,
+    normRmTex,
+    setHsvMatch({ targetStats = null, sourceStats = null, strength = 0, creviceProtect = true } = {}) {
+      if (!targetStats || !sourceStats || strength <= 0) {
+        uHsvMatchTarget.w = 0;
+        return;
+      }
+      uHsvMatchTarget.set(targetStats.h, targetStats.s, targetStats.v, Math.max(0, Math.min(1, Number(strength) || 0)));
+      uHsvMatchSource.set(sourceStats.h, sourceStats.s, sourceStats.v, creviceProtect ? 1 : 0);
+    },
+  };
+}
+
+function rgbToHsv01(r, g, b) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d > 1e-5) {
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    else if (max === g) h = ((b - r) / d + 2) / 6;
+    else h = ((r - g) / d + 4) / 6;
+  }
+  const s = max <= 1e-5 ? 0 : d / max;
+  return { h, s, v: max };
+}
+
+/**
+ * Sample representative sRGB HSV statistics from an image.
+ * When skipDarkCrevices is true (for crack/stain decals), prioritizes the upper-brightness
+ * substrate/apron pixels so dark crack interiors do not skew the overall value.
+ */
+export function sampleImageHsvStats(img, { skipDarkCrevices = false } = {}) {
+  const fallback = { h: 0, s: 0, v: 0.5 };
+  if (!img) return fallback;
+  try {
+    const size = 32;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return fallback;
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(img, 0, 0, size, size);
+    const data = ctx.getImageData(0, 0, size, size).data;
+
+    const samples = [];
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3];
+      if (a <= 24) continue;
+      const hsv = rgbToHsv01(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255);
+      samples.push({ ...hsv, w: a / 255 });
+    }
+    if (!samples.length) return fallback;
+
+    let chosen = samples;
+    if (skipDarkCrevices && samples.length >= 12) {
+      const sorted = [...samples].sort((a, b) => a.v - b.v);
+      const start = Math.floor(sorted.length * 0.45);
+      const end = Math.max(start + 1, Math.floor(sorted.length * 0.92));
+      chosen = sorted.slice(start, end);
+    }
+
+    let sumW = 0;
+    let sumS = 0;
+    let sumV = 0;
+    let sumCos = 0;
+    let sumSin = 0;
+    let sumHueW = 0;
+    for (const p of chosen) {
+      sumW += p.w;
+      sumS += p.s * p.w;
+      sumV += p.v * p.w;
+      const hw = p.w * (0.04 + p.s);
+      const ang = p.h * Math.PI * 2;
+      sumCos += Math.cos(ang) * hw;
+      sumSin += Math.sin(ang) * hw;
+      sumHueW += hw;
+    }
+    if (sumW <= 0) return fallback;
+    let meanH = Math.atan2(sumSin, sumCos) / (Math.PI * 2);
+    if (meanH < 0) meanH += 1;
+    return {
+      h: sumHueW > 0 ? meanH : 0,
+      s: sumS / sumW,
+      v: sumV / sumW,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function getDefaultDecalHsvMatch(item, lib = 'cn_pbr') {
+  if (!item || lib === 'cn_foliage' || lib === 'unreal') return { enabled: false, amount: 0 };
+  const cat = item.category || '';
+  if (cat === 'crack') return { enabled: true, amount: 0.75 };
+  if (cat === 'stain' || cat === 'leak') return { enabled: true, amount: 0.4 };
+  return { enabled: false, amount: 0 };
 }
 
 /**

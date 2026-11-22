@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import { analyzeWallDecalPlacement, create2MapPbrMaterial, loadSingle2MapAssets } from '../hgame-shared.js';
+import {
+  analyzeWallDecalPlacement,
+  create2MapPbrMaterial,
+  getDefaultDecalHsvMatch,
+  loadSingle2MapAssets,
+  sampleImageHsvStats,
+} from '../hgame-shared.js';
 import { buildBeveledBoxRaw, buildBufferGeometryFromRaw } from '../realistic-pcg.js';
 import {
   createPlaqueMesh,
@@ -38,6 +44,18 @@ export async function buildDecalFoliageShowcaseScene({
   const asphaltLayer = reg.getLayer('asphalt_road_01');
   const wallLayer = reg.getLayer('concrete_wall_02');
   const soilLayer = reg.getLayer('nature_soil');
+
+  const [concreteMatAssets, asphaltMatAssets, wallMatAssets] = await Promise.all([
+    loadSingle2MapAssets('/assets/cn/materials', 'concrete_road_01').catch(() => null),
+    loadSingle2MapAssets('/assets/cn/materials', 'asphalt_road_01').catch(() => null),
+    loadSingle2MapAssets('/assets/cn/materials', 'concrete_wall_02').catch(() => null),
+  ]);
+  if (token !== getToken()) return { exhibits: [], viewpoints: {}, summaryText: '', dispose: () => {} };
+  const baseSurfaceStats = {
+    concrete: concreteMatAssets ? sampleImageHsvStats(concreteMatAssets.colorImg) : null,
+    asphalt: asphaltMatAssets ? sampleImageHsvStats(asphaltMatAssets.colorImg) : null,
+    wall: wallMatAssets ? sampleImageHsvStats(wallMatAssets.colorImg) : null,
+  };
 
   const disposables = [];
   const exhibits = [];
@@ -145,6 +163,14 @@ export async function buildDecalFoliageShowcaseScene({
           opacity: 1.0,
           polygonOffset: true,
         });
+        const defHsv = getDefaultDecalHsvMatch(item, 'cn_pbr');
+        if (defHsv.enabled && defHsv.amount > 0) {
+          const targetStats = wallMode
+            ? baseSurfaceStats.wall
+            : (baseLayer === asphaltLayer ? baseSurfaceStats.asphalt : baseSurfaceStats.concrete);
+          const sourceStats = sampleImageHsvStats(assets.colorImg, { skipDarkCrevices: true });
+          built.setHsvMatch({ targetStats, sourceStats, strength: defHsv.amount, creviceProtect: true });
+        }
         disposables.push(built.material, built.colorTex, built.normRmTex);
 
         const imgW = assets.colorImg?.naturalWidth || 1;
