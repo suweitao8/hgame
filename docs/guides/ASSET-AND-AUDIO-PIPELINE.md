@@ -123,8 +123,8 @@ HGame connects to a local ComfyUI (`Trellis2-GGUF` + `UltraTex LowVRAM GGUF`) an
 
 | 档位 | `--preset` | 目标四边面 (`--target-quads`) | LOD0 预算上限（4 权重） | LOD1 / LOD2 减面与降权重 | 贴图尺寸 | 适用范围 |
 |---|---|---:|---|---|---:|---|
-| **T5 全角色统一标准（含绑定 + `Run`）** | `low`（兼容 `t5` / `npc` / `general`） | 2,800 四边面 | **推荐 ≤ 6,000 面 / ≤ 7,500 顶点** | **LOD1**: `~1,600` 面（1,500–1,800，2 权重）<br>**LOD2**: `~350` 面（300–450，1 权重刚性）<br>**LOD3/4**: 6–8 面紧包片 + 运行时点精灵 | 1024×1024 PBR | 全部人形/类人形角色（主角、NPC、十万同屏群集） |
-| **T5 复杂配饰硬上限** | `complex`（兼容 `hero`） | 3,800 四边面 | **硬上限 ≤ 8,000 面 / ≤ 10,000 顶点** | 同上（LOD1 ~1,600 面 / 2 权重，LOD2 ~350 面 / 1 权重） | 1024×1024 PBR | 披风/盔甲等复杂配饰角色 |
+| **T5 全角色统一标准（含绑定 + `Run`）** | `low`（兼容 `t5` / `npc` / `general`） | 2,800 四边面 | **推荐 ≤ 6,000 面 / ≤ 7,500 顶点** | **LOD1**: `1,800–3,000`（默认 `2,400` 面，4w，重展大块 UV + 单张 `256×256` sRGB `Color×AO`）<br>**LOD2**: `1,000–1,400` / `128px`（细节人形）或 `600–900` / `64px`（简模小动物，严格 `2w`，禁 Mipmap + `LinearFilter`）<br>**LOD3/4**: `2 Tris` 公告牌（仅烘 `Run` 序列帧，`18°` 俯仰 + `6px` 扩边，静止锁第 0 帧）+ 点精灵 | 1024×1024 PBR（LOD0） | 全部人形/类人形/小动物角色 |
+| **T5 复杂配饰硬上限** | `complex`（兼容 `hero`） | 3,800 四边面 | **硬上限 ≤ 8,000 面 / ≤ 10,000 顶点** | 同上（LOD1 ~2,400 面 / 4w / `256px` 单 Color，LOD2 600–1,400 面 / `2w` / `64–128px` 单 Color） | 1024×1024 PBR（LOD0） | 披风/盔甲等复杂配饰角色 |
 | **高模烘焙母版** | `high` | 16,000 四边面 | ≤ 65,535 顶点（16 位索引红线） | — | 2048×2048 PBR | 展示预览 / 法线与颜色烘焙源 |
 
 **实测耗时明细（RTX 4070 12GB，带 `--reserve-vram 4.8`，2026-11-18「丑橘」实测全套 `335.6s` + 自动绑定动画 `~3s` ≈ 5 分 39 秒）**：
@@ -148,10 +148,17 @@ node scripts/process-model3d.mjs generate --input <front.png> --out <char_high.g
 # 3. 对已有高模直接烘焙统一 T5 角色（自动内嵌 LOD0(4w)+LOD1(2w)+LOD2(1w)+紧包LOD3 + 23(+3) 绑定）：
 node scripts/process-model3d.mjs remesh-bake --input <norm_high.glb> --out <low.glb> --preset low --rig-run
 
-# 4. 对已有低模单独重绑定 / 补动画（默认自动附带 --rig-engine auto、--lod1-tris 1600、--lod2-tris 350、--lod3-tight）：
+# 4. 对已有低模单独重绑定 / 补动画（默认自动附带 --rig-engine auto、--lod1-tris 2400、--lod2-tris 1200[小动物自动750/64px]、--lod3-tight）：
 node scripts/process-model3d.mjs rig-run --input <low.glb> --out <low_run.glb> --qa-dir <qa_run_dir>
+
+# 5. 对已构建角色 GLB 执行 LOD 0~3 自动化资产质检门禁：
+node scripts/verify-character-lods.mjs <low.glb>
 ```
 
+- **固定 LOD 1~3 重构与 `LOD 3 Run-Only` 规范**：
+  - **LOD 1（`1,800–3,000` 面，默认 `2,400`，`4w`）**：经拓扑防护 + `CUSTOM_NORMAL` 平滑法线传递 + 重展大块 UV（头脸面积权重 `1.9×`）后，从 LOD 0 烘焙单张 `256×256` sRGB `Color × mix(1.0, AO, 0.45)`（无 Normal/ORM，开启 Mipmap，运行时采用轻量 `MeshLambertMaterial`）。
+  - **LOD 2（`1,000–1,400` / `128px` 或小动物 `600–900` / `64px`，严格 `2w`）**：同上流程但**严格限制 2 骨骼权重**、**关闭 Mipmap**（`generateMipmaps = false` + `LinearFilter`），并写入 `"singleColorOnly": true`、`"colorSize": 64|128`、`"atlasCompatible": true` 供 Mega Atlas 合批。
+  - **LOD 3（`2 Tris` 公告牌，`Run-Only` 极省规范）**：默认**只烘焙 1 条 `Run` 动作**（`8×8` `1024×1024`、`18°` 俯仰角、对齐主场景晴昼日光 + `Standard` 单次 Linear→sRGB、单帧独立 `6px` Alpha 扩边）；运行时**凡处于移动/活跃状态一律播放 `Run` 循环，凡静止/待机一律锁定使用 `Run` 第 0 帧**，采用 Unlit `MeshBasicMaterial`（`toneMapped: true`、`alphaTest: 0.45`）确保与 LOD 0 亮度一致且零黑边。
 - **固定双路径自动绑定规范（`--rig-engine auto`）**：
   - **高大成人角色（`z_arm_rel >= 0.685`）**：自动走 Blender **Auto-Rig Pro**（Smart + Pseudo-Voxels + Unreal 23-bone glTF）并对齐姿态后重定向 Anim58 `Run`。
   - **小动物 / 短手 Q 版角色（`z_arm_rel < 0.685`）**：自动走原生 **23(+3) 根 UE 骨链**，并应用已定型规则：
@@ -162,7 +169,7 @@ node scripts/process-model3d.mjs rig-run --input <low.glb> --out <low_run.glb> -
   - **Anim58 `Run` 强制要求**：标准角色资产统一通过 `.hgame.local.json` 的 `model3d.runAnimGlb`（即 `WudangSword_Animset__MM_Run_Fwd.glb`）重定向真实跑步动作，**严禁对正式角色传递 `--anim-glb procedural`**（`procedural` 仅作离线无动作源兜底）。
 - **低模绑定 QA 核验清单**：
   - 检查 `--qa-dir` 输出的 `f06/`、`f18/` 多视角图：四肢摆幅饱满、短手不穿腹、脊柱居中、斗篷/尾巴随动自然。
-  - 核验 GLB 内嵌 4 级 LOD（`LOD0 <= 6,000` [硬上限 `8,000`]、`LOD1 ~1,600`、`LOD2 ~350`、`LOD3` 6–8 面紧包片）完整，随后执行 `npm run assets:db -- sync` 同步资产库。
+  - 执行 `node scripts/verify-character-lods.mjs <low.glb>` 确认 LOD 0~3 面数、单 Color 贴图、2w/4w 权重与 `2 Tris` LOD3 全绿，随后执行 `npm run assets:db -- sync` 同步资产库。
 - ⚠️ **避坑固定规则**：
   - ComfyUI 必须带 `--reserve-vram 4.8` 启动（可写入本地 ComfyUI 启动脚本或 CLI 参数），勿跑 `pipeline_type="512"` 的纹理 GGUF（会产生彩色噪点）。
   - AI 概念图不使用 `--multiview`（非严格正交会导致额头凸起/耳朵撕裂），也不再默认跑 8–10 分钟的 UltraTex 重绘。
