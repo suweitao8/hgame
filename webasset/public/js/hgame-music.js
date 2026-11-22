@@ -1,25 +1,17 @@
-import {
-  analyzeAudioBuffer,
-  createAudioManager,
-} from '../runtime/hgame/platform/audio.js';
-import { createSidebarSquareCard } from './hgame-shared.js';
+import { createAudioManager } from '../runtime/hgame/platform/audio.js';
 
 const viewEl = document.querySelector('#music-view');
 const searchInput = document.querySelector('#hgame-music-search');
-const scopeFilterEl = document.querySelector('#hgame-music-scope-filter');
-const categoryFilterEl = document.querySelector('#hgame-music-category-filter');
+const filterSelect = document.querySelector('#hgame-music-filter');
 const listEl = document.querySelector('#hgame-music-list');
 const titleEl = document.querySelector('#hgame-music-title');
 const downloadEl = document.querySelector('#hgame-music-download');
-const refToneBtn = document.querySelector('#hgame-music-ref-tone-button');
-const quickBarEl = document.querySelector('#hgame-music-quick-bar');
 const emptyEl = document.querySelector('#hgame-music-empty');
 const waveCanvas = document.querySelector('#hgame-music-wave-canvas');
 const metricsEl = document.querySelector('#hgame-music-metrics');
 const seekInput = document.querySelector('#hgame-music-seek');
 const timeOut = document.querySelector('#hgame-music-time');
 const playBtn = document.querySelector('#hgame-music-play-button');
-const pauseBtn = document.querySelector('#hgame-music-pause-button');
 const stopBtn = document.querySelector('#hgame-music-stop-button');
 const seamBtn = document.querySelector('#hgame-music-seam-button');
 const volumeInput = document.querySelector('#hgame-music-volume');
@@ -29,12 +21,10 @@ const statusEl = document.querySelector('#hgame-music-status');
 
 let initialized = false;
 let musicEntries = [];
-let scopeFilter = 'all';
-let categoryFilter = 'all';
 let activeTrackId = '';
 let audioMgr = null;
 let activeStingerVoice = null;
-let stingerMeta = null; // { startedAtMs, offsetSec, durationSec }
+let stingerMeta = null;
 const decodedCache = new Map();
 const registeredCues = new Set();
 let currentWaveformSamples = null;
@@ -54,11 +44,17 @@ function isBgmTrack(track) {
   return track?.kind === 'bgm' || String(track?.cueName || '').startsWith('bgm.');
 }
 
+function shortTrackTitle(track) {
+  const cue = String(track?.cueName || '');
+  const short = cue.replace(/^(?:bgm|stinger)\.(?:universal\.)?/, '');
+  return track?.scope && track.scope !== 'universal'
+    ? `${track.scope.replace(/^game:/, '')} · ${short.replace(/^[^.]+\./, '')}`
+    : short;
+}
+
 function formatClock(sec) {
   const s = Math.max(0, Math.floor(Number(sec) || 0));
-  const mm = String(Math.floor(s / 60)).padStart(2, '0');
-  const ss = String(s % 60).padStart(2, '0');
-  return `${mm}:${ss}`;
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
 function computeTrackAnomaly(track) {
@@ -78,108 +74,60 @@ function computeTrackAnomaly(track) {
   return false;
 }
 
+function populateFilterOptions() {
+  if (!filterSelect) return;
+  const prev = filterSelect.value || 'all';
+  filterSelect.replaceChildren();
+  const addOpt = (val, text) => {
+    const o = document.createElement('option');
+    o.value = val;
+    o.textContent = text;
+    filterSelect.append(o);
+  };
+
+  addOpt('all', `全部 (${musicEntries.length})`);
+  const bgmCount = musicEntries.filter((t) => isBgmTrack(t)).length;
+  const stingerCount = musicEntries.length - bgmCount;
+  if (bgmCount > 0) addOpt('kind:bgm', `BGM (${bgmCount})`);
+  if (stingerCount > 0) addOpt('kind:stinger', `短效 (${stingerCount})`);
+
+  const cats = new Map();
+  for (const t of musicEntries) {
+    if (!isBgmTrack(t)) continue;
+    const cat = t.category || 'bgm';
+    cats.set(cat, (cats.get(cat) || 0) + 1);
+  }
+  for (const [cat, cnt] of [...cats.entries()].sort((a, b) => b[1] - a[1])) {
+    addOpt(`cat:${cat}`, `${cat} (${cnt})`);
+  }
+
+  const scopes = [...new Set(musicEntries.map((t) => t.scope || 'universal'))].filter((s) => s !== 'universal');
+  for (const s of scopes.sort()) {
+    const cnt = musicEntries.filter((t) => t.scope === s).length;
+    addOpt(`scope:${s}`, `${s} (${cnt})`);
+  }
+
+  const hasPrev = [...filterSelect.options].some((o) => o.value === prev);
+  filterSelect.value = hasPrev ? prev : 'all';
+}
+
 function getFilteredTracks() {
   const query = (searchInput?.value || '').trim().toLowerCase();
+  const fval = filterSelect?.value || 'all';
   return musicEntries.filter((track) => {
-    const scope = track.scope || 'universal';
-    const category = track.category || (isBgmTrack(track) ? 'bgm' : 'stinger');
-    if (scopeFilter !== 'all' && scope !== scopeFilter) return false;
-    if (categoryFilter !== 'all' && category !== categoryFilter) return false;
+    if (fval === 'kind:bgm' && !isBgmTrack(track)) return false;
+    if (fval === 'kind:stinger' && isBgmTrack(track)) return false;
+    if (fval.startsWith('cat:') && (track.category || 'bgm') !== fval.slice(4)) return false;
+    if (fval.startsWith('scope:') && (track.scope || 'universal') !== fval.slice(6)) return false;
     if (!query) return true;
     return String(track.cueName || '').toLowerCase().includes(query)
-      || scope.toLowerCase().includes(query)
-      || category.toLowerCase().includes(query)
-      || String(track.sourceFile || '').toLowerCase().includes(query);
+      || String(track.category || '').toLowerCase().includes(query);
   });
 }
 
 function getSelectedTrack() {
   const list = getFilteredTracks();
   return list.find((t) => t.cueName === activeTrackId) || list[0] || null;
-}
-
-function populateFilters() {
-  const scopes = [...new Set(musicEntries.map((t) => t.scope || 'universal'))].sort();
-  const categories = [...new Set(musicEntries.map((t) => t.category || (isBgmTrack(t) ? 'bgm' : 'stinger')))].sort();
-  if (scopeFilter !== 'all' && !scopes.includes(scopeFilter)) scopeFilter = 'all';
-  if (categoryFilter !== 'all' && !categories.includes(categoryFilter)) categoryFilter = 'all';
-
-  if (scopeFilterEl) {
-    scopeFilterEl.replaceChildren();
-    const addOpt = (val, text) => {
-      const opt = document.createElement('option');
-      opt.value = val;
-      opt.textContent = text;
-      scopeFilterEl.append(opt);
-    };
-    addOpt('all', `全部 (${musicEntries.length})`);
-    for (const s of scopes) {
-      addOpt(s, s === 'universal' ? '通用母库 (universal)' : s);
-    }
-    scopeFilterEl.value = scopeFilter;
-  }
-
-  if (categoryFilterEl) {
-    categoryFilterEl.replaceChildren();
-    const addOpt = (val, text) => {
-      const opt = document.createElement('option');
-      opt.value = val;
-      opt.textContent = text;
-      categoryFilterEl.append(opt);
-    };
-    addOpt('all', '全部类别');
-    for (const cat of categories) {
-      addOpt(cat, cat === 'bgm' ? 'BGM (循环配乐)' : (cat === 'stinger' ? 'Stinger (短乐句)' : cat));
-    }
-    categoryFilterEl.value = categoryFilter;
-  }
-}
-
-function renderQuickBar() {
-  if (!quickBarEl) return;
-  quickBarEl.replaceChildren();
-  const bgmList = musicEntries.filter((t) => isBgmTrack(t));
-  const stingerList = musicEntries.filter((t) => !isBgmTrack(t));
-  const activeBgmId = audioMgr?.getBgmState?.().cueId || null;
-
-  if (bgmList.length > 0) {
-    const label = document.createElement('span');
-    label.textContent = '600ms 切歌:';
-    quickBarEl.append(label);
-    for (const bgm of bgmList.slice(0, 6)) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-audio-music-pill';
-      btn.textContent = bgm.cueName.replace(/^bgm\./, '');
-      btn.setAttribute('aria-pressed', String(activeBgmId === bgm.cueName));
-      btn.addEventListener('click', () => {
-        activeTrackId = bgm.cueName;
-        renderList();
-        void selectCurrentTrack();
-        void playBgmCrossfade(bgm);
-      });
-      quickBarEl.append(btn);
-    }
-  }
-
-  if (stingerList.length > 0) {
-    const label = document.createElement('span');
-    label.textContent = '叠加闪避(-6dB):';
-    quickBarEl.append(label);
-    for (const st of stingerList.slice(0, 6)) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-audio-music-pill';
-      btn.textContent = st.cueName.replace(/^stinger\./, '');
-      btn.addEventListener('click', () => {
-        activeTrackId = st.cueName;
-        renderList();
-        void selectCurrentTrack();
-        void playStingerOverlay(st);
-      });
-      quickBarEl.append(btn);
-    }
-  }
 }
 
 function renderList() {
@@ -189,7 +137,7 @@ function renderList() {
   if (list.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'hgame-list-empty';
-    empty.textContent = musicEntries.length === 0 ? '暂无音乐资产。' : '没有匹配的音乐。';
+    empty.textContent = musicEntries.length === 0 ? '暂无音乐。' : '无匹配曲目。';
     listEl.append(empty);
     return;
   }
@@ -199,83 +147,61 @@ function renderList() {
   }
 
   for (const track of list) {
-    const selected = track.cueName === activeTrackId;
     const isBgm = isBgmTrack(track);
-    const { button } = createSidebarSquareCard({
-      name: track.cueName,
-      badge: isBgm ? 'BGM' : 'Stinger',
-      active: selected,
-      onClick: () => {
-        activeTrackId = track.cueName;
-        renderList();
-        void selectCurrentTrack();
-      },
-    });
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hgame-list-item hgame-music-row';
+    btn.setAttribute('aria-current', String(track.cueName === activeTrackId));
+    if (computeTrackAnomaly(track)) {
+      btn.dataset.loudnessAnomaly = 'true';
+    }
 
-    const origNum = Number(track.originalDurationSec ?? track.durationSec ?? track.duration);
-    const cleanNum = Number(track.durationSec ?? track.duration);
-    const durRange = Number.isFinite(origNum) && Number.isFinite(cleanNum)
-      ? `${origNum.toFixed(1)}s → ${cleanNum.toFixed(1)}s`
-      : '--';
+    const main = document.createElement('div');
+    main.className = 'hgame-music-row-main';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'hgame-music-row-name';
+    nameEl.textContent = shortTrackTitle(track);
+    nameEl.title = track.cueName;
+
+    const durNum = Number(track.durationSec ?? track.duration ?? 0);
     const lufsNum = Number(track.measuredLufs ?? track.measuredDb);
-    const lufsTxt = Number.isFinite(lufsNum) ? `${lufsNum.toFixed(1)} LUFS` : '--';
-    const pkTxt = Number.isFinite(track.peakDb) ? `${Number(track.peakDb).toFixed(1)} dB` : '--';
-    const kbTxt = Number.isFinite(track.sizeKb)
-      ? `${Math.round(track.sizeKb)} KB`
-      : (track.encodedBytes ? `${Math.round(track.encodedBytes / 1024)} KB` : '--');
+    const parts = [formatClock(durNum)];
+    if (track.bpm) parts.push(`${track.bpm} BPM`);
+    else if (Number.isFinite(lufsNum)) parts.push(`${lufsNum.toFixed(1)} LUFS`);
+    if (track.stingerOver15sWarning) parts.push('>15s');
 
-    const metaSpan = document.createElement('span');
-    metaSpan.className = 'hgame-audio-loud-meta';
-    metaSpan.textContent = `${durRange} · ${lufsTxt} / ${pkTxt} / ${kbTxt}`;
+    const subEl = document.createElement('span');
+    subEl.className = 'hgame-music-row-sub';
+    subEl.textContent = parts.join(' · ');
 
-    const row = document.createElement('div');
-    row.className = 'hgame-audio-bgm-row';
+    main.append(nameEl, subEl);
 
-    const playSwitchBtn = document.createElement('button');
-    playSwitchBtn.type = 'button';
-    playSwitchBtn.className = 'hgame-audio-seam-btn';
-    playSwitchBtn.textContent = isBgm ? '播放/切歌' : '播放/闪避';
-    playSwitchBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
+    const tag = document.createElement('span');
+    tag.className = 'hgame-music-row-tag';
+    tag.textContent = isBgm ? 'BGM' : '短效';
+
+    btn.append(main, tag);
+    btn.addEventListener('click', () => {
       activeTrackId = track.cueName;
       renderList();
       void selectCurrentTrack();
-      if (isBgm) void playBgmCrossfade(track);
-      else void playStingerOverlay(track);
     });
-    row.append(playSwitchBtn);
-
-    if (isBgm) {
-      const cardSeamBtn = document.createElement('button');
-      cardSeamBtn.type = 'button';
-      cardSeamBtn.className = 'hgame-audio-seam-btn';
-      cardSeamBtn.textContent = '测结尾循环';
-      cardSeamBtn.title = '跳至结尾前 4.0 秒播放，验证尾部空白已清干净与循环过渡';
-      cardSeamBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        activeTrackId = track.cueName;
-        renderList();
-        void selectCurrentTrack();
-        void playBgmSeamTest(track);
-      });
-      row.append(cardSeamBtn);
-    }
-
-    if (computeTrackAnomaly(track)) {
-      button.dataset.loudnessAnomaly = 'true';
-    }
-    button.append(metaSpan, row);
-    listEl.append(button);
+    btn.addEventListener('dblclick', () => {
+      activeTrackId = track.cueName;
+      renderList();
+      void selectCurrentTrack().then(() => playOrToggleSelected());
+    });
+    listEl.append(btn);
   }
 }
 
-function drawWaveform(samples, { durationSec = 0, trimStart = 0, trimEnd = 0, playheadSec = null } = {}) {
+function drawWaveform(samples, { durationSec = 0, playheadSec = null } = {}) {
   if (!waveCanvas) return;
   const ctx = waveCanvas.getContext('2d');
   const w = waveCanvas.width;
   const h = waveCanvas.height;
   ctx.clearRect(0, 0, w, h);
-
   ctx.fillStyle = '#131812';
   ctx.fillRect(0, 0, w, h);
 
@@ -288,14 +214,6 @@ function drawWaveform(samples, { durationSec = 0, trimStart = 0, trimEnd = 0, pl
   ctx.stroke();
 
   if (samples && samples.length > 0) {
-    if (durationSec > 0 && trimEnd > trimStart) {
-      const startX = (trimStart / durationSec) * w;
-      const endX = (trimEnd / durationSec) * w;
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.12)';
-      if (startX > 1) ctx.fillRect(0, 0, startX, h);
-      if (endX < w - 1) ctx.fillRect(endX, 0, w - endX, h);
-    }
-
     const step = Math.max(1, Math.floor(samples.length / w));
     ctx.fillStyle = '#d5e4b4';
     for (let x = 0; x < w; x++) {
@@ -327,9 +245,9 @@ function drawWaveform(samples, { durationSec = 0, trimStart = 0, trimEnd = 0, pl
 function renderMetrics(items) {
   if (!metricsEl) return;
   metricsEl.replaceChildren();
-  for (const [k, v] of items) {
+  for (const label of items) {
     const span = document.createElement('span');
-    span.textContent = `${k} ${v}`;
+    span.textContent = label;
     metricsEl.append(span);
   }
 }
@@ -349,7 +267,7 @@ async function decodeCachedUrl(url) {
 function getCurrentPlaybackTiming() {
   const track = getSelectedTrack();
   const bgmState = audioMgr?.getBgmState?.();
-  if (stingerMeta && stingerMeta.durationSec > 0) {
+  if (stingerMeta && stingerMeta.durationSec > 0 && (!track || !isBgmTrack(track))) {
     const elapsed = (performance.now() - stingerMeta.startedAtMs) / 1000;
     const cur = stingerMeta.offsetSec + elapsed;
     if (cur < stingerMeta.durationSec) {
@@ -357,7 +275,7 @@ function getCurrentPlaybackTiming() {
     }
     stingerMeta = null;
   }
-  if (bgmState && bgmState.state !== 'idle' && bgmState.bufferDuration > 0) {
+  if (bgmState && bgmState.state !== 'idle' && bgmState.bufferDuration > 0 && track?.cueName === bgmState.cueId) {
     const dur = bgmState.loopEnd > 0 ? bgmState.loopEnd : bgmState.bufferDuration;
     return {
       current: bgmState.currentTimeSec || 0,
@@ -370,11 +288,21 @@ function getCurrentPlaybackTiming() {
   return { current: 0, duration: fallbackDur, active: false };
 }
 
-function updatePauseButtonLabel() {
-  if (!pauseBtn) return;
+function syncPlayButtonLabel() {
+  if (!playBtn) return;
+  const track = getSelectedTrack();
   const bgmState = audioMgr?.getBgmState?.();
-  pauseBtn.textContent = bgmState?.state === 'paused' ? '继续' : '暂停';
-  pauseBtn.disabled = !bgmState || bgmState.state === 'idle';
+  if (track && isBgmTrack(track) && bgmState?.cueId === track.cueName) {
+    if (bgmState.state === 'playing') {
+      playBtn.textContent = '暂停';
+      return;
+    }
+    if (bgmState.state === 'paused') {
+      playBtn.textContent = '继续';
+      return;
+    }
+  }
+  playBtn.textContent = '播放';
 }
 
 function syncSeekBar() {
@@ -388,15 +316,12 @@ function syncSeekBar() {
     timeOut.textContent = `${formatClock(current)} / ${formatClock(duration)}`;
   }
   if (currentWaveformSamples && currentWaveformDur > 0) {
-    const track = getSelectedTrack();
     drawWaveform(currentWaveformSamples, {
       durationSec: currentWaveformDur,
-      trimStart: Number(track?.trimStartSec) || 0,
-      trimEnd: Number(track?.trimEndSec) || currentWaveformDur,
       playheadSec: active || current > 0 ? current : null,
     });
   }
-  updatePauseButtonLabel();
+  syncPlayButtonLabel();
   if (!active && seekTimer) {
     clearInterval(seekTimer);
     seekTimer = null;
@@ -425,35 +350,22 @@ function stopPlayback({ keepBgm = false } = {}) {
     seekTimer = null;
   }
   syncSeekBar();
-  renderQuickBar();
 }
 
 async function ensureTrackWaveform(track, token) {
   if (!track?.url) return;
-  const cached = decodedCache.get(track.url);
-  if (cached) {
-    if (token !== loadToken) return;
-    currentWaveformSamples = cached.getChannelData(0);
-    currentWaveformDur = cached.duration;
-    drawWaveform(currentWaveformSamples, {
-      durationSec: cached.duration,
-      trimStart: Number(track.trimStartSec) || 0,
-      trimEnd: Number(track.trimEndSec) || cached.duration,
-    });
-    return;
-  }
   try {
     const buf = await decodeCachedUrl(track.url);
     if (token !== loadToken) return;
     currentWaveformSamples = buf.getChannelData(0);
     currentWaveformDur = buf.duration;
+    const { current, active } = getCurrentPlaybackTiming();
     drawWaveform(currentWaveformSamples, {
       durationSec: buf.duration,
-      trimStart: Number(track.trimStartSec) || 0,
-      trimEnd: Number(track.trimEndSec) || buf.duration,
+      playheadSec: active || current > 0 ? current : null,
     });
   } catch {
-    // Ignore waveform decode errors before explicit play
+    // Ignore transient decode error when unmounted
   }
 }
 
@@ -464,8 +376,9 @@ async function selectCurrentTrack() {
     if (waveCanvas) waveCanvas.hidden = true;
     metricsEl?.replaceChildren();
     if (downloadEl) downloadEl.hidden = true;
-    if (titleEl) titleEl.textContent = '音乐库';
-    if (statusEl) statusEl.textContent = '暂无音乐资产（投放至 audio_ai_staging 后运行 --only-music）';
+    if (titleEl) titleEl.textContent = '音乐';
+    if (statusEl) statusEl.textContent = '';
+    syncPlayButtonLabel();
     return;
   }
 
@@ -480,46 +393,30 @@ async function selectCurrentTrack() {
       downloadEl.hidden = false;
       downloadEl.href = track.url;
       downloadEl.download = `${track.cueName}.mp3`;
-      downloadEl.textContent = `下载 ${track.cueName}.mp3`;
+      downloadEl.textContent = '下载 MP3';
     } else {
       downloadEl.hidden = true;
     }
   }
 
-  const lufs = Number(track.measuredLufs ?? track.measuredDb);
-  const pk = Number(track.peakDb);
-  const origDur = Number(track.originalDurationSec ?? track.durationSec ?? track.duration ?? 0);
   const dur = Number(track.durationSec ?? track.duration ?? 0);
-  const kb = Number(track.sizeKb) || (track.encodedBytes ? track.encodedBytes / 1024 : 0);
-
-  if (isBgm) {
-    renderMetrics([
-      ['加载策略', `流式循环 BGM (${track.scope || 'universal'} · ${track.category || 'bgm'})`],
-      ['原时长 → 去空白后', `${origDur.toFixed(1)}s → ${dur.toFixed(1)}s (去首${Number(track.trimmedLeadSec || 0).toFixed(2)}s / 去尾${Number(track.trimmedTailSec || 0).toFixed(2)}s)`],
-      ['响度 / 峰值 / 体积', `${Number.isFinite(lufs) ? `${lufs.toFixed(1)} LUFS` : '--'} / ${Number.isFinite(pk) ? `${pk.toFixed(1)} dBTP` : '--'} / ${kb.toFixed(1)} KB`],
-      ['BPM / MP3裁剪', `${track.bpm ? `${track.bpm} BPM` : '无 BPM'} · ${Number(track.trimStartSec || 0).toFixed(3)}s~${Number(track.trimEndSec || dur).toFixed(3)}s`],
-    ]);
-    if (statusEl) statusEl.textContent = `BGM 「${track.cueName}」就绪 · 点「播放/切歌」或「测结尾循环」`;
-  } else {
-    renderMetrics([
-      ['加载策略', `Stinger 短乐句 (ui_voice · 自动闪避 BGM -6 dB · ${track.scope || 'universal'})`],
-      ['原时长 → 去空白后', `${origDur.toFixed(1)}s → ${dur.toFixed(1)}s (去首${Number(track.trimmedLeadSec || 0).toFixed(2)}s / 去尾${Number(track.trimmedTailSec || 0).toFixed(2)}s)`],
-      ['响度 / 峰值 / 体积', `${Number.isFinite(lufs) ? `${lufs.toFixed(1)} LUFS` : '--'} / ${Number.isFinite(pk) ? `${pk.toFixed(1)} dBTP` : '--'} / ${kb.toFixed(1)} KB`],
-      ['MP3 编码', `44.1 kHz Stereo 96k · 尾部静音 ${Number(track.tailSilenceSec || 0).toFixed(2)}s`],
-    ]);
-    if (statusEl) statusEl.textContent = `Stinger 「${track.cueName}」就绪 · 点「播放/闪避」可与当前 BGM 叠加测试`;
-  }
+  const lufs = Number(track.measuredLufs ?? track.measuredDb);
+  const mb = (Number(track.sizeKb) || (track.encodedBytes ? track.encodedBytes / 1024 : 0)) / 1024;
+  const chips = [`时长 ${dur.toFixed(1)}s`];
+  if (Number.isFinite(lufs)) chips.push(`${lufs.toFixed(1)} LUFS`);
+  if (track.bpm) chips.push(`${track.bpm} BPM`);
+  if (mb > 0) chips.push(`${mb.toFixed(2)} MB`);
+  renderMetrics(chips);
+  if (statusEl) statusEl.textContent = '';
 
   currentWaveformSamples = null;
   currentWaveformDur = dur;
   drawWaveform(null, { durationSec: dur });
-  if (decodedCache.has(track.url)) {
-    await ensureTrackWaveform(track, token);
-  }
   syncSeekBar();
+  void ensureTrackWaveform(track, token);
 }
 
-async function playBgmCrossfade(track, { forceRestart = false, startAtSec = null } = {}) {
+async function playBgmTrack(track, { forceRestart = false, startAtSec = null } = {}) {
   if (!track) return;
   const mgr = getAudioManager();
   await mgr.unlock();
@@ -527,41 +424,24 @@ async function playBgmCrossfade(track, { forceRestart = false, startAtSec = null
   stopPlayback({ keepBgm: true });
   try {
     const loop = loopInput ? loopInput.checked : true;
-    const res = await mgr.playBgm(track, {
+    await mgr.playBgm(track, {
       fadeMs: startAtSec !== null ? 120 : 600,
       forceRestart,
       loop,
       startAtSec,
     });
-    renderQuickBar();
-    void ensureTrackWaveform(track, loadToken);
     startSeekTicker();
     if (statusEl) {
-      if (res?.ignored) {
-        statusEl.textContent = `BGM「${track.cueName}」已在播放（防重入忽略）`;
-      } else if (startAtSec !== null) {
-        statusEl.textContent = `从 ${formatClock(startAtSec)} 播放 BGM：${track.cueName}`;
-      } else {
-        statusEl.textContent = `正在播放 BGM（600ms 淡入切换）：${track.cueName} · ${Number(track.measuredLufs ?? track.measuredDb ?? -19).toFixed(1)} LUFS`;
-      }
+      statusEl.textContent = startAtSec !== null
+        ? `从 ${formatClock(startAtSec)} 播放`
+        : '';
     }
   } catch (err) {
-    if (statusEl) statusEl.textContent = err?.message || 'BGM 播放失败';
+    if (statusEl) statusEl.textContent = err?.message || '播放失败';
   }
 }
 
-async function playBgmSeamTest(track) {
-  if (!track) return;
-  const trimStart = Number(track.trimStartSec) || 0.026;
-  const loopEnd = Number(track.trimEndSec) || Number(track.durationSec) || Number(track.duration) || 48;
-  const startAtSec = Math.max(trimStart, loopEnd - 4.0);
-  await playBgmCrossfade(track, { forceRestart: true, startAtSec });
-  if (statusEl) {
-    statusEl.textContent = `测结尾循环（结尾前 4.0s 起播）：${track.cueName} · 5 秒内可听尾接首过渡`;
-  }
-}
-
-async function playStingerOverlay(track, offsetSec = 0) {
+async function playStingerTrack(track, offsetSec = 0) {
   if (!track?.url) return;
   const mgr = getAudioManager();
   await mgr.unlock();
@@ -597,11 +477,38 @@ async function playStingerOverlay(track, offsetSec = 0) {
     offsetSec: clamped,
     durationSec: dur,
   };
-  void ensureTrackWaveform(track, loadToken);
   startSeekTicker();
-  if (statusEl) {
-    statusEl.textContent = `叠加 Stinger：${track.cueName}（bgmBus 已自动压低 -6 dB，播完后 400ms 恢复）`;
+  if (statusEl) statusEl.textContent = '';
+}
+
+async function playOrToggleSelected() {
+  const track = getSelectedTrack();
+  if (!track) return;
+  if (isBgmTrack(track)) {
+    const mgr = getAudioManager();
+    const state = mgr.getBgmState();
+    if (state.cueId === track.cueName && state.state === 'playing') {
+      mgr.pauseBgm();
+      syncSeekBar();
+      return;
+    }
+    if (state.cueId === track.cueName && state.state === 'paused') {
+      await mgr.resumeBgm();
+      startSeekTicker();
+      return;
+    }
+    await playBgmTrack(track);
+    return;
   }
+  await playStingerTrack(track);
+}
+
+async function playBgmSeamTest(track) {
+  if (!track || !isBgmTrack(track)) return;
+  const trimStart = Number(track.trimStartSec) || 0.026;
+  const loopEnd = Number(track.trimEndSec) || Number(track.durationSec) || Number(track.duration) || 48;
+  const startAtSec = Math.max(trimStart, loopEnd - 4.0);
+  await playBgmTrack(track, { forceRestart: true, startAtSec });
 }
 
 async function seekToSeconds(targetSec) {
@@ -615,64 +522,14 @@ async function seekToSeconds(targetSec) {
     const bgmState = mgr.getBgmState();
     if (bgmState.cueId === track.cueName && bgmState.state !== 'idle') {
       await mgr.seekBgm(targetSec);
-      void ensureTrackWaveform(track, loadToken);
       startSeekTicker();
-      if (statusEl) statusEl.textContent = `已跳转至 ${formatClock(targetSec)}：${track.cueName}`;
     } else {
-      await playBgmCrossfade(track, { forceRestart: true, startAtSec: targetSec });
+      await playBgmTrack(track, { forceRestart: true, startAtSec: targetSec });
     }
     return;
   }
 
-  await playStingerOverlay(track, targetSec);
-}
-
-async function playReferencePinkNoise() {
-  const mgr = getAudioManager();
-  const audioCtx = await mgr.unlock();
-  mgr.setVolume(Number(volumeInput?.value) || 0.8);
-  stopPlayback();
-
-  const sr = audioCtx.sampleRate || 44100;
-  const nSamples = sr;
-  const buf = audioCtx.createBuffer(1, nSamples, sr);
-  const ch = buf.getChannelData(0);
-
-  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-  let s = 0x13572468;
-  let sumSq = 0;
-  for (let i = 0; i < nSamples; i++) {
-    s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
-    const white = ((s >>> 0) / 2147483648) - 1;
-    b0 = 0.99886 * b0 + white * 0.0555179;
-    b1 = 0.99332 * b1 + white * 0.0750759;
-    b2 = 0.96900 * b2 + white * 0.1538520;
-    b3 = 0.86650 * b3 + white * 0.3104856;
-    b4 = 0.55000 * b4 + white * 0.5329522;
-    b5 = -0.7616 * b5 - white * 0.0168980;
-    const pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
-    b6 = white * 0.115926;
-    ch[i] = pink;
-    sumSq += pink * pink;
-  }
-
-  const targetRms = Math.pow(10, -16.0 / 20);
-  const curRms = Math.sqrt(sumSq / nSamples) || 1e-4;
-  const gain = targetRms / curRms;
-  const fadeSamples = Math.round(sr * 0.015);
-  for (let i = 0; i < nSamples; i++) {
-    let env = 1;
-    if (i < fadeSamples) env = i / fadeSamples;
-    else if (i >= nSamples - fadeSamples) env = (nSamples - 1 - i) / fadeSamples;
-    ch[i] = Math.max(-0.95, Math.min(0.95, ch[i] * gain * env));
-  }
-
-  currentWaveformSamples = ch;
-  currentWaveformDur = 1.0;
-  const analysis = analyzeAudioBuffer(buf);
-  drawWaveform(ch, { durationSec: 1.0, trimStart: analysis.trimStart, trimEnd: analysis.trimEnd });
-  activeStingerVoice = await mgr.play(buf, { bus: 'ui_voice', volume: 1, loop: false, trimSilence: false });
-  if (statusEl) statusEl.textContent = '正在播放：1s -16.0 dBFS 校准粉噪基准音 (uiVoiceBus)';
+  await playStingerTrack(track, targetSec);
 }
 
 function syncVolumeOutput() {
@@ -685,46 +542,20 @@ async function initMusicView() {
   if (!initialized) {
     initialized = true;
     searchInput?.addEventListener('input', renderList);
-    scopeFilterEl?.addEventListener('change', () => {
-      scopeFilter = scopeFilterEl.value || 'all';
-      renderList();
-      void selectCurrentTrack();
-    });
-    categoryFilterEl?.addEventListener('change', () => {
-      categoryFilter = categoryFilterEl.value || 'all';
+    filterSelect?.addEventListener('change', () => {
       renderList();
       void selectCurrentTrack();
     });
     playBtn?.addEventListener('click', () => {
-      const track = getSelectedTrack();
-      if (!track) return;
-      if (isBgmTrack(track)) void playBgmCrossfade(track);
-      else void playStingerOverlay(track);
-    });
-    pauseBtn?.addEventListener('click', () => {
-      const mgr = getAudioManager();
-      const state = mgr.getBgmState();
-      if (state.state === 'playing') {
-        mgr.pauseBgm();
-        syncSeekBar();
-        if (statusEl) statusEl.textContent = `已暂停：${state.cueId}`;
-      } else if (state.state === 'paused') {
-        void mgr.resumeBgm().then(() => {
-          startSeekTicker();
-          if (statusEl) statusEl.textContent = `继续播放：${state.cueId}`;
-        });
-      }
+      void playOrToggleSelected();
     });
     stopBtn?.addEventListener('click', () => {
       stopPlayback();
-      if (statusEl) statusEl.textContent = '已停止播放';
+      if (statusEl) statusEl.textContent = '';
     });
     seamBtn?.addEventListener('click', () => {
       const track = getSelectedTrack();
-      if (track && isBgmTrack(track)) void playBgmSeamTest(track);
-    });
-    refToneBtn?.addEventListener('click', () => {
-      void playReferencePinkNoise();
+      if (track) void playBgmSeamTest(track);
     });
     volumeInput?.addEventListener('input', () => {
       syncVolumeOutput();
@@ -763,11 +594,10 @@ async function initMusicView() {
       ? table.tracks
       : [...(Array.isArray(table.bgm) ? table.bgm : []), ...(Array.isArray(table.stingers) ? table.stingers : [])];
   } catch (err) {
-    if (statusEl) statusEl.textContent = err?.message || '读取 music_table.json 失败';
+    if (statusEl) statusEl.textContent = err?.message || '加载失败';
   }
 
-  populateFilters();
-  renderQuickBar();
+  populateFilterOptions();
   renderList();
   await selectCurrentTrack();
 }
