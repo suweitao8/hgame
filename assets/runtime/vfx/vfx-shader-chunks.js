@@ -1203,7 +1203,7 @@ vec4 vfxEvalUberFragment(
       mulFactor = vfxDesaturate(detMulRgb, params0.y);
     }
     float addFactor = (hasDetailTex && vfxHasFlag(flags, ${UBER_FLAG_USE_ADDITIVE.toFixed(1)}))
-      ? dot(detailSample.rgb * detAddChan.rgb, vec3(1.0)) + detailSample.a * detAddChan.a
+      ? dot(detailSample.rgb * detAddChan.rgb, vec3(0.2126729, 0.7151522, 0.0721750))
       : 0.0;
     baseCol = satMain * mulFactor + vec3(addFactor);
   }

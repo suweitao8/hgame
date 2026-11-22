@@ -971,6 +971,15 @@ void main() {
       float fPos = vfxFlipbookFramePosition(t, fbG, vFlipbook.z);
       vtxUv0 = vfxFlipbookFrameUv(floor(fPos), uv0TopDown, fbG);
     }
+    if (vUvRect.z > vUvRect.x + 1e-4 && vUvRect.w > vUvRect.y + 1e-4) {
+      vec4 lutMainRectV = vfxReadMatTexel(uMaterialLut, aAtlasP7.w, 1.0);
+      if (lutMainRectV.z > lutMainRectV.x + 1e-4 && lutMainRectV.w > lutMainRectV.y + 1e-4) {
+        vec2 rectSpanV = lutMainRectV.zw - lutMainRectV.xy;
+        vec2 subMinV = clamp((vUvRect.xy - lutMainRectV.xy) / rectSpanV, 0.0, 1.0);
+        vec2 subMaxV = clamp((vUvRect.zw - lutMainRectV.xy) / rectSpanV, 0.0, 1.0);
+        vtxUv0 = mix(subMinV, subMaxV, vtxUv0);
+      }
+    }
     offLocal = vfxEvalUberVertexOffset(
       uMaterialLut, uAtlasTex, uHasAtlas, uFlipV, aAtlasP7.w,
       vtxUv0, offLocal, vec3(0.0, 0.0, 1.0), aCustom2.x, uTime
@@ -1185,6 +1194,16 @@ void main() {
         uvBlend = vfxFlipbookFrameUv(f1, topDownUv, grid);
         flipBlend = fract(framePos);
         hasFlipBlend = true;
+      }
+    }
+    if (vUvRect.z > vUvRect.x + 1e-4 && vUvRect.w > vUvRect.y + 1e-4) {
+      vec4 lutMainRect = vfxReadMatTexel(uMaterialLut, vUberMatRow, 1.0);
+      if (lutMainRect.z > lutMainRect.x + 1e-4 && lutMainRect.w > lutMainRect.y + 1e-4) {
+        vec2 rectSpan = lutMainRect.zw - lutMainRect.xy;
+        vec2 subMin = clamp((vUvRect.xy - lutMainRect.xy) / rectSpan, 0.0, 1.0);
+        vec2 subMax = clamp((vUvRect.zw - lutMainRect.xy) / rectSpan, 0.0, 1.0);
+        uv0 = mix(subMin, subMax, uv0);
+        uvBlend = mix(subMin, subMax, uvBlend);
       }
     }
     vec4 vCol = vec4(curveCol.rgb * vTint * max(0.0, vHdr), curveCol.a * vFadesAndTexture.x);

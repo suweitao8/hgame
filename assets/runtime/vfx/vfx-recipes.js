@@ -1053,27 +1053,56 @@ export function createEffectPlayer({
   function resolveFlipbookAndUv(layer) {
     const fb = layer.flipbook;
     const uvRect = Array.isArray(layer.uvRect) && layer.uvRect.length >= 4 ? layer.uvRect : undefined;
-    if (!fb || !fb.rows || fb.rows <= 1) {
+    if (!fb) {
       return { flipbook: fb, uvRect };
     }
+    const cols = Math.max(1, fb.cols | 0);
+    const rows = Math.max(1, fb.rows | 0);
     const mode = fb.rowMode || 'grid';
-    if (mode !== 'random' && fb.rowIndex === undefined) {
+    const hasRowSelect = rows > 1 && (mode === 'random' || fb.rowIndex !== undefined);
+    const isStaticFrame = fb.cycles !== undefined && fb.cycles <= 0;
+    if (!hasRowSelect && !isStaticFrame) {
       return { flipbook: fb, uvRect };
     }
     const regKey = fb.region || layer.sprite;
     const baseUv = uvRect ?? (regKey ? atlasParticles?.regions?.[regKey] : null) ?? [0, 0, 1, 1];
-    const rows = Math.max(1, fb.rows | 0);
-    const rowIdx = fb.rowIndex !== undefined
-      ? Math.max(0, Math.min(rows - 1, fb.rowIndex | 0))
-      : Math.floor(prng.nextFloat() * rows);
-    const vSpan = (baseUv[3] - baseUv[1]) / rows;
-    scratchRowUv[0] = baseUv[0];
-    scratchRowUv[1] = baseUv[1] + vSpan * rowIdx;
-    scratchRowUv[2] = baseUv[2];
-    scratchRowUv[3] = baseUv[1] + vSpan * (rowIdx + 1);
-    scratchRowFb.cols = fb.cols ?? 1;
-    scratchRowFb.rows = 1;
-    scratchRowFb.cycles = fb.cycles ?? 1;
+    let u0 = baseUv[0];
+    let v0 = baseUv[1];
+    let u1 = baseUv[2];
+    let v1 = baseUv[3];
+    let outCols = cols;
+    let outRows = rows;
+    if (hasRowSelect) {
+      const rowIdx = fb.rowIndex !== undefined
+        ? Math.max(0, Math.min(rows - 1, fb.rowIndex | 0))
+        : Math.floor(prng.nextFloat() * rows);
+      const vSpan = (v1 - v0) / rows;
+      v0 = baseUv[1] + vSpan * rowIdx;
+      v1 = baseUv[1] + vSpan * (rowIdx + 1);
+      outRows = 1;
+    }
+    if (isStaticFrame && (outCols > 1 || outRows > 1)) {
+      const sf = Math.max(0, Math.min(0.9999, readRange(fb.startFrame, 0, 0, prng)));
+      const totalCells = outCols * outRows;
+      const cellIdx = Math.min(totalCells - 1, Math.floor(sf * totalCells));
+      const colIdx = cellIdx % outCols;
+      const rowIdx = Math.floor(cellIdx / outCols);
+      const uSpan = (u1 - u0) / outCols;
+      const vSpan = (v1 - v0) / outRows;
+      u0 = u0 + uSpan * colIdx;
+      u1 = u0 + uSpan;
+      v0 = v0 + vSpan * rowIdx;
+      v1 = v0 + vSpan;
+      outCols = 1;
+      outRows = 1;
+    }
+    scratchRowUv[0] = u0;
+    scratchRowUv[1] = v0;
+    scratchRowUv[2] = u1;
+    scratchRowUv[3] = v1;
+    scratchRowFb.cols = outCols;
+    scratchRowFb.rows = outRows;
+    scratchRowFb.cycles = isStaticFrame ? 1 : (fb.cycles ?? 1);
     scratchRowFb.blend = fb.blend;
     scratchRowFb.region = regKey || '';
     return { flipbook: scratchRowFb, uvRect: scratchRowUv };

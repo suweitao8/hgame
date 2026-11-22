@@ -1534,7 +1534,14 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     if (sheetMode === 0 && /enabled:\s*1/.test(uvMod)) {
       const cols = Number((uvMod.match(/tilesX:\s*(\d+)/) || [])[1] ?? 1);
       const rows = Number((uvMod.match(/tilesY:\s*(\d+)/) || [])[1] ?? 1);
-      const cycles = Number((uvMod.match(/cycles:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+      const rawCycles = Number((uvMod.match(/cycles:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+      const fotBlock = extractModSubBlock(uvMod, 'frameOverTime');
+      const fotState = Number((fotBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 1);
+      const fotScalar = readMinMaxScalar(uvMod, 'frameOverTime', 1);
+      const isStaticFrame = fotState === 0 && (Array.isArray(fotScalar) ? Math.abs(fotScalar[1]) < 1e-4 : Math.abs(fotScalar) < 1e-4);
+      const cycles = isStaticFrame ? 0 : rawCycles;
+      const startFrame = readMinMaxScalar(uvMod, 'startFrame', 0);
+      const hasStartFrame = Array.isArray(startFrame) ? (Math.abs(startFrame[0]) > 1e-4 || Math.abs(startFrame[1]) > 1e-4) : Math.abs(startFrame) > 1e-4;
       const legacyRandomRow = /\brandomRow:\s*1\b/.test(uvMod);
       const rowModeNum = Number(uvMod.match(/\browMode:\s*(\d+)/)?.[1] ?? Number(legacyRandomRow));
       const rowIndexNum = Number((uvMod.match(/rowIndex:\s*(\d+)/) || [])[1] ?? 0);
@@ -1550,6 +1557,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           cols,
           rows,
           cycles,
+          ...(hasStartFrame ? { startFrame } : {}),
           blend: mainMat?.flipbookBlend ?? true,
           ...row,
         };
