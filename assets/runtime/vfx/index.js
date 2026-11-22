@@ -83,6 +83,33 @@ import {
   validateVfxRecipe,
   createEffectPlayer,
 } from './vfx-recipes.js';
+import {
+  VFX_V2_LUT_WIDTH,
+  VFX_V2_LUT_ROWS,
+  VFX_GRADIENT_LUT_NAMES,
+  VFX_COLOR_MODES,
+  VFX_MASTER_VERTEX_GLSL,
+  VFX_MASTER_FRAGMENT_GLSL,
+  buildVfxGradientLutBytes,
+  createVfxGradientLutTexture,
+  createVfxV2DefaultTextures,
+  createVfxV2MeshGeometries,
+  getVfxMasterDefines,
+  createVfxMasterMaterial,
+} from './vfx-v2-shader.js';
+import {
+  VFX_V2_SCHEMA_VERSION,
+  VFX_CURVE_LUT_SAMPLES,
+  VFX_V2_BENCHMARK_PRESETS,
+  compileCurveLut16,
+  sampleCurveLut16,
+  validateVfxPresetV2,
+  compileVfxPresetV2,
+} from './vfx-v2-presets.js';
+import {
+  VFX_QUALITY_TIERS,
+  createVfxV2Runtime,
+} from './vfx-v2.js';
 
 export {
   VFX_EASING,
@@ -150,6 +177,27 @@ export {
   createMeshVfxPool,
   validateVfxRecipe,
   createEffectPlayer,
+  VFX_V2_SCHEMA_VERSION,
+  VFX_CURVE_LUT_SAMPLES,
+  VFX_V2_LUT_WIDTH,
+  VFX_V2_LUT_ROWS,
+  VFX_GRADIENT_LUT_NAMES,
+  VFX_COLOR_MODES,
+  VFX_QUALITY_TIERS,
+  VFX_V2_BENCHMARK_PRESETS,
+  VFX_MASTER_VERTEX_GLSL,
+  VFX_MASTER_FRAGMENT_GLSL,
+  buildVfxGradientLutBytes,
+  createVfxGradientLutTexture,
+  createVfxV2DefaultTextures,
+  createVfxV2MeshGeometries,
+  getVfxMasterDefines,
+  createVfxMasterMaterial,
+  compileCurveLut16,
+  sampleCurveLut16,
+  validateVfxPresetV2,
+  compileVfxPresetV2,
+  createVfxV2Runtime,
 };
 
 export const VFX_PRESETS = Object.freeze({
@@ -351,6 +399,14 @@ export function createVfxSystem({
     is2D,
     prng,
   });
+  const v2 = createVfxV2Runtime({
+    mode: resolvedMode,
+    THREE,
+    scene,
+    trails,
+    shake,
+    prng,
+  });
 
   const updateOut = { visualDt: 0, cameraOffset: shake.offset };
   const burstScratch = {
@@ -507,6 +563,7 @@ export function createVfxSystem({
     const visualDt = hitstop.step(rawDt);
     shake.update(rawDt);
     effects.update(visualDt);
+    v2.update(visualDt, cameraPos);
     particles.update(visualDt);
     atlasParticles.update(visualDt);
     meshVfx.update(visualDt);
@@ -548,6 +605,7 @@ export function createVfxSystem({
     hitstop.reset();
     shake.reset();
     effects.reset();
+    v2.reset();
     particles.reset();
     atlasParticles.reset();
     meshVfx.reset();
@@ -559,6 +617,7 @@ export function createVfxSystem({
 
   function dispose() {
     effects.dispose();
+    v2.dispose();
     particles.dispose();
     atlasParticles.dispose();
     meshVfx.dispose();
@@ -577,12 +636,16 @@ export function createVfxSystem({
     atlasParticles,
     meshVfx,
     effects,
+    v2,
     trails,
     telegraphs,
     floatingText,
     screenFeedback,
     setAtlas: atlasParticles.setAtlas,
-    setDepthTexture: atlasParticles.setDepthTexture,
+    setDepthTexture(tex, opts) {
+      atlasParticles.setDepthTexture(tex, opts);
+      v2.setDepthTexture(tex, opts);
+    },
     setSceneTexture(tex, opts) {
       atlasParticles.setSceneTexture(tex, opts);
       meshVfx.setSceneTexture(tex, opts);
@@ -593,10 +656,23 @@ export function createVfxSystem({
     },
     setCollisionResolver: effects.setCollisionResolver,
     setTrailTexture: trails.setTrailTexture,
-    registerMesh: meshVfx.registerMesh,
+    registerMesh(kind, geometry) {
+      meshVfx.registerMesh(kind, geometry);
+      v2.registerMesh(kind, geometry);
+    },
     registerEffect: effects.registerEffect,
     playEffect: effects.playEffect,
     stopAllEffects: effects.stopAll,
+    registerPresetV2: v2.registerPresetV2,
+    validatePresetV2: v2.validatePresetV2,
+    listPresetsV2: v2.listPresetsV2,
+    playV2: v2.playV2,
+    stopV2: v2.stopV2,
+    setQualityTier: v2.setQualityTier,
+    getQualityTier: v2.getQualityTier,
+    setV2GroundConfig: v2.setGroundConfig,
+    setV2LutRowOverride: v2.setLutRowOverride,
+    setV2EventHandler: v2.setEventHandler,
     emitHitImpact,
     burstParticles,
     slashArc: trails.slashArc,
@@ -622,6 +698,7 @@ export function createVfxSystem({
         atlasParticles: atlasParticles.getStats(),
         meshVfx: meshVfx.getStats(),
         effects: effects.getStats(),
+        v2: v2.getStats(),
         trails: trails.getStats(),
         telegraphs: telegraphs.getStats(),
         floatingText: floatingText.getStats(),

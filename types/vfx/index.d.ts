@@ -182,6 +182,54 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             totalPlayed: number;
         };
     };
+    v2: {
+        registerPresetV2: (preset: any) => Readonly<{
+            schemaVersion: 2;
+            id: any;
+            name: any;
+            category: any;
+            duration: number;
+            loop: boolean;
+            boundsRadius: number;
+            emitters: any;
+        }>;
+        getPresetV2: (id: any) => any;
+        listPresetsV2: () => any[];
+        validatePresetV2: typeof validateVfxPresetV2;
+        playV2: (presetOrId: any, { x, y, z, lutOverride }?: {
+            x?: number | undefined;
+            y?: number | undefined;
+            z?: number | undefined;
+            lutOverride?: null | undefined;
+        }) => number;
+        stopV2: (uid: any) => boolean;
+        setQualityTier: (nextTier: any) => void;
+        getQualityTier: () => string;
+        setDepthTexture: (tex: any, opts?: {}) => void;
+        setGroundConfig: ({ enabled, groundY }?: {
+            enabled?: boolean | undefined;
+            groundY?: null | undefined;
+        }) => void;
+        setLutRowOverride: (rowOrNull: any) => void;
+        setEventHandler: (fn: any) => void;
+        registerMesh: (kind: any, geometry: any) => void;
+        getVfxMasterDefines: (matCfg: any) => Record<string, number>;
+        update: (dt?: number, cameraPos?: null) => void;
+        reset: () => void;
+        dispose: () => void;
+        getStats: () => {
+            qualityTier: string;
+            registeredPresets: number;
+            activeInstances: number;
+            activeEmitters: number;
+            activeParticles: number;
+            activeDrawCalls: number;
+            shaderVariants: any[];
+            totalSpawned: number;
+            totalRecycled: number;
+            nanCount: number;
+        };
+    };
     trails: {
         slashArc: (opts?: {}) => void;
         lightningBolt: (opts?: {}) => void;
@@ -281,21 +329,42 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined, options?: {
         flipV?: boolean | null;
     } | undefined) => void;
-    setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
-        near?: number | undefined;
-        far?: number | undefined;
-        width?: number | undefined;
-        height?: number | undefined;
-        softFade?: number | undefined;
-    }) => void;
+    setDepthTexture(tex: any, opts: any): void;
     setSceneTexture(tex: any, opts: any): void;
     setWind(wx?: number, wy?: number, wz?: number): void;
     setCollisionResolver: (fn: any) => void;
     setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
-    registerMesh: (id: string, geometryOrObject3D: object) => boolean;
+    registerMesh(kind: any, geometry: any): void;
     registerEffect: (recipe: object) => object;
     playEffect: (recipeOrId: string | object, options?: object) => object | null;
     stopAllEffects: () => void;
+    registerPresetV2: (preset: any) => Readonly<{
+        schemaVersion: 2;
+        id: any;
+        name: any;
+        category: any;
+        duration: number;
+        loop: boolean;
+        boundsRadius: number;
+        emitters: any;
+    }>;
+    validatePresetV2: typeof validateVfxPresetV2;
+    listPresetsV2: () => any[];
+    playV2: (presetOrId: any, { x, y, z, lutOverride }?: {
+        x?: number | undefined;
+        y?: number | undefined;
+        z?: number | undefined;
+        lutOverride?: null | undefined;
+    }) => number;
+    stopV2: (uid: any) => boolean;
+    setQualityTier: (nextTier: any) => void;
+    getQualityTier: () => string;
+    setV2GroundConfig: ({ enabled, groundY }?: {
+        enabled?: boolean | undefined;
+        groundY?: null | undefined;
+    }) => void;
+    setV2LutRowOverride: (rowOrNull: any) => void;
+    setV2EventHandler: (fn: any) => void;
     emitHitImpact: ({ x, y, z, damage, isCrit, isHeal, isMiss, dirX, dirY, dirZ, element, numberPreset, spamGroup, follow, combination, hitstopSec, shakeIntensity, }?: {
         x?: number | undefined;
         y?: number | undefined;
@@ -392,6 +461,18 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             registeredCount: number;
             activeEffects: number;
             totalPlayed: number;
+        };
+        v2: {
+            qualityTier: string;
+            registeredPresets: number;
+            activeInstances: number;
+            activeEmitters: number;
+            activeParticles: number;
+            activeDrawCalls: number;
+            shaderVariants: any[];
+            totalSpawned: number;
+            totalRecycled: number;
+            nanCount: number;
         };
         trails: {
             slashCap: number;
@@ -492,6 +573,7 @@ export const VFX_PRESETS: Readonly<{
         additive: true;
     }>;
 }>;
+import { validateVfxPresetV2 } from './vfx-v2-presets.js';
 import { VFX_EASING } from './vfx-core.js';
 import { VFX_RENDER_ORDERS } from './vfx-core.js';
 import { createVisualPrng } from './vfx-core.js';
@@ -557,4 +639,24 @@ import { VFX_MESH_FRAGMENT_GLSL } from './vfx-mesh.js';
 import { createMeshVfxPool } from './vfx-mesh.js';
 import { validateVfxRecipe } from './vfx-recipes.js';
 import { createEffectPlayer } from './vfx-recipes.js';
-export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_DISTORTION_FS, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, createMeshVfxPool, validateVfxRecipe, createEffectPlayer };
+import { VFX_V2_SCHEMA_VERSION } from './vfx-v2-presets.js';
+import { VFX_CURVE_LUT_SAMPLES } from './vfx-v2-presets.js';
+import { VFX_V2_LUT_WIDTH } from './vfx-v2-shader.js';
+import { VFX_V2_LUT_ROWS } from './vfx-v2-shader.js';
+import { VFX_GRADIENT_LUT_NAMES } from './vfx-v2-shader.js';
+import { VFX_COLOR_MODES } from './vfx-v2-shader.js';
+import { VFX_QUALITY_TIERS } from './vfx-v2.js';
+import { VFX_V2_BENCHMARK_PRESETS } from './vfx-v2-presets.js';
+import { VFX_MASTER_VERTEX_GLSL } from './vfx-v2-shader.js';
+import { VFX_MASTER_FRAGMENT_GLSL } from './vfx-v2-shader.js';
+import { buildVfxGradientLutBytes } from './vfx-v2-shader.js';
+import { createVfxGradientLutTexture } from './vfx-v2-shader.js';
+import { createVfxV2DefaultTextures } from './vfx-v2-shader.js';
+import { createVfxV2MeshGeometries } from './vfx-v2-shader.js';
+import { getVfxMasterDefines } from './vfx-v2-shader.js';
+import { createVfxMasterMaterial } from './vfx-v2-shader.js';
+import { compileCurveLut16 } from './vfx-v2-presets.js';
+import { sampleCurveLut16 } from './vfx-v2-presets.js';
+import { compileVfxPresetV2 } from './vfx-v2-presets.js';
+import { createVfxV2Runtime } from './vfx-v2.js';
+export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_DISTORTION_FS, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, createMeshVfxPool, validateVfxRecipe, createEffectPlayer, VFX_V2_SCHEMA_VERSION, VFX_CURVE_LUT_SAMPLES, VFX_V2_LUT_WIDTH, VFX_V2_LUT_ROWS, VFX_GRADIENT_LUT_NAMES, VFX_COLOR_MODES, VFX_QUALITY_TIERS, VFX_V2_BENCHMARK_PRESETS, VFX_MASTER_VERTEX_GLSL, VFX_MASTER_FRAGMENT_GLSL, buildVfxGradientLutBytes, createVfxGradientLutTexture, createVfxV2DefaultTextures, createVfxV2MeshGeometries, getVfxMasterDefines, createVfxMasterMaterial, compileCurveLut16, sampleCurveLut16, validateVfxPresetV2, compileVfxPresetV2, createVfxV2Runtime };

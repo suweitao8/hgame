@@ -184,12 +184,16 @@ export function createThreeViewport(container, { background = 0x161c15, grid = t
   controls.target.set(0, 0.8, 0);
   controls.update();
 
+  let customRender = null;
+  let onResizeCallback = null;
+
   function resize() {
     const width = Math.max(1, container.clientWidth || 640);
     const height = Math.max(1, container.clientHeight || 420);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+    onResizeCallback?.(width, height);
   }
   resize();
 
@@ -206,19 +210,31 @@ export function createThreeViewport(container, { background = 0x161c15, grid = t
   }
 
   let rafId = 0;
+  let timerId = 0;
   let running = false;
   let lastTime = performance.now();
   let onTick = null;
 
   function frame(now) {
     if (!running) return;
-    rafId = requestAnimationFrame(frame);
+    const t0 = performance.now();
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
-    if (document.hidden || !inView) return;
-    onTick?.(dt, now / 1000);
-    controls.update();
-    renderer.render(scene, camera);
+    if (!document.hidden && inView) {
+      onTick?.(dt, now / 1000);
+      controls.update();
+      if (customRender) customRender(dt);
+      else renderer.render(scene, camera);
+    }
+    if (!running) return;
+    if (performance.now() - t0 > 80) {
+      timerId = setTimeout(() => {
+        timerId = 0;
+        if (running) rafId = requestAnimationFrame(frame);
+      }, 16);
+    } else {
+      rafId = requestAnimationFrame(frame);
+    }
   }
 
   return {
@@ -229,6 +245,12 @@ export function createThreeViewport(container, { background = 0x161c15, grid = t
     controls,
     gridHelper,
     resize,
+    setRenderOverride(fn) {
+      customRender = typeof fn === 'function' ? fn : null;
+    },
+    setOnResize(fn) {
+      onResizeCallback = typeof fn === 'function' ? fn : null;
+    },
     frameObject(object) {
       const bounds = new THREE.Box3().setFromObject(object);
       const center = bounds.isEmpty() ? new THREE.Vector3(0, 0.5, 0) : bounds.getCenter(new THREE.Vector3());
@@ -252,7 +274,9 @@ export function createThreeViewport(container, { background = 0x161c15, grid = t
     },
     stop() {
       running = false;
+      if (timerId) clearTimeout(timerId);
       if (rafId) cancelAnimationFrame(rafId);
+      timerId = 0;
       rafId = 0;
     },
     dispose() {
@@ -991,6 +1015,17 @@ export function createSidebarSquareCard({
   return { button: btn, thumbBox, imgEl, fallbackEl, label };
 }
 
+export function hideSecondaryLodNodes(root) {
+  root?.traverse?.((c) => {
+    const n = String(c.name || '');
+    const lvl = Number(c.userData?.lodLevel ?? 0);
+    if ((c.isMesh || c.isSkinnedMesh) && (lvl > 0 || /_lod[1-4]$/i.test(n))) {
+      c.visible = false;
+    }
+  });
+  return root;
+}
+
 const glbThumbCache = new Map();
 const glbThumbQueue = [];
 let glbThumbRunning = false;
@@ -1042,12 +1077,9 @@ async function drainGlbThumbQueue() {
         const ctx = await ensureGlbThumbContext();
         const gltf = await ctx.loader.loadAsync(url);
         const root = gltf.scene;
-        // Hide LOD1/LOD2 sub-meshes for clean LOD0 thumb
+        // Hide LOD1..LOD4 sub-meshes for clean LOD0 thumb
+        hideSecondaryLodNodes(root);
         root.traverse(c => {
-          const n = c.name || '';
-          if (n === 'mesh_lod1' || n.endsWith('_lod1') || n === 'mesh_lod2' || n.endsWith('_lod2')) {
-            c.visible = false;
-          }
           if (c.isMesh && (!c.material || Array.isArray(c.material) && !c.material.length)) {
             c.material = new THREE.MeshStandardMaterial({ color: 0xb6c2ad, roughness: 0.65, metalness: 0.15 });
           }

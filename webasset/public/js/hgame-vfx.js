@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createVfxSystem, VFX_SHAPE } from '/runtime/hgame/vfx/index.js';
+import { createPostPipeline3D } from '/runtime/hgame/integrations/post3d.js';
+import {
+  VFX_V2_BENCHMARK_PRESETS,
+  createVfxSystem,
+  VFX_SHAPE,
+} from '/runtime/hgame/vfx/index.js';
 import {
   createSidebarSquareCard,
   createThreeViewport,
@@ -10,6 +15,7 @@ import {
 } from './hgame-shared.js';
 
 const VFX_CATEGORY_ORDER = [
+  'v2 标杆预设',
   '火焰爆破',
   '火焰与爆破',
   '刀光轨迹',
@@ -46,6 +52,11 @@ const blendWrap = document.querySelector('#hgame-vfx-blend-wrap');
 const blendSelect = document.querySelector('#hgame-vfx-blend');
 const colorInput = document.querySelector('#hgame-vfx-color');
 const spinInput = document.querySelector('#hgame-vfx-spin');
+const groundToggle = document.querySelector('#hgame-vfx-ground-toggle');
+const bloomToggle = document.querySelector('#hgame-vfx-bloom-toggle');
+const speedSelect = document.querySelector('#hgame-vfx-speed');
+const qualitySelect = document.querySelector('#hgame-vfx-quality');
+const lutSelect = document.querySelector('#hgame-vfx-lut-mode');
 const statusEl = document.querySelector('#hgame-vfx-status');
 
 const gltfLoader = new GLTFLoader();
@@ -80,9 +91,21 @@ const simMeshCache = new Map();
 let hgameVfx = null;
 let hgameFireTimer = 0;
 let hgameMeshPreview = null;
+let statusUpdateAcc = 0;
+let lastV2StatusText = '';
+let postPipeline = null;
+let groundPlaneMesh = null;
+let decalMarkerGroup = null;
+const decalMarkers = [];
 
 function getAllItems() {
+  const benchItems = VFX_V2_BENCHMARK_PRESETS.map(item => ({
+    ...item,
+    kind: 'system',
+    sourceType: 'hgame-v2',
+  }));
   return [
+    ...benchItems,
     ...vfxSystems.map(item => ({ ...item, kind: 'system' })),
     ...vfxMeshes.map(item => ({ ...item, kind: 'mesh' })),
     ...vfxTextures.map(item => ({ ...item, kind: 'texture' })),
@@ -246,7 +269,7 @@ function renderList() {
     for (const item of groupItems) {
       const selected = item.kind === activeSelection.kind && item.id === activeSelection.id;
       const badge = item.kind === 'system'
-        ? (item.sourceType === 'niagara' ? 'NS' : 'VFX')
+        ? (item.schemaVersion === 2 ? 'V2' : item.sourceType === 'niagara' ? 'NS' : 'VFX')
         : (item.kind === 'mesh' ? '3D' : 'TEX');
       const { button } = createSidebarSquareCard({
         name: item.name || item.id,
@@ -266,12 +289,125 @@ function renderList() {
   }
 }
 
+function ensureGroundAndDecals(vp) {
+  if (!groundPlaneMesh) {
+    const geo = new THREE.CircleGeometry(7.5, 48);
+    geo.rotateX(-Math.PI * 0.5);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0x1a201b,
+      roughness: 0.92,
+      metalness: 0.05,
+    });
+    groundPlaneMesh = new THREE.Mesh(geo, mat);
+    groundPlaneMesh.position.y = -0.005;
+    vp.scene.add(groundPlaneMesh);
+  }
+  if (!decalMarkerGroup) {
+    decalMarkerGroup = new THREE.Group();
+    decalMarkerGroup.name = 'hgame_vfx_decal_markers';
+    vp.scene.add(decalMarkerGroup);
+  }
+  const showGround = groundToggle ? groundToggle.checked : true;
+  vp.gridHelper.visible = showGround;
+  groundPlaneMesh.visible = showGround;
+  decalMarkerGroup.visible = showGround;
+}
+
+function spawnDecalMarker({ decalId = '', x = 0, z = 0, scale = [1, 1] } = {}) {
+  if (!decalMarkerGroup || (groundToggle && !groundToggle.checked)) return;
+  const isBlood = /blood|drop/i.test(decalId);
+  const lutVal = Number(lutSelect?.value ?? -1);
+  let hex = 0x2a241f;
+  if (isBlood) {
+    hex = lutVal === 4 ? 0xe86e0c : lutVal === 5 ? 0x5ab818 : 0x7a0a10;
+  }
+  const rad = Math.max(0.18, Math.min(1.6, Number(scale?.[0] ?? 0.6) * 0.5));
+  const geo = new THREE.RingGeometry(isBlood ? 0.02 : rad * 0.55, rad, 24);
+  geo.rotateX(-Math.PI * 0.5);
+  const mat = new THREE.MeshBasicMaterial({
+    color: hex,
+    transparent: true,
+    opacity: 0.75,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, 0.012 + decalMarkers.length * 0.0005, z);
+  decalMarkerGroup.add(mesh);
+  decalMarkers.push({ mesh, age: 0, dur: 3.5 });
+  if (decalMarkers.length > 24) {
+    const old = decalMarkers.shift();
+    decalMarkerGroup.remove(old.mesh);
+    old.mesh.geometry.dispose();
+    old.mesh.material.dispose();
+  }
+}
+
+function clearDecalMarkers() {
+  while (decalMarkers.length > 0) {
+    const m = decalMarkers.pop();
+    decalMarkerGroup?.remove(m.mesh);
+    m.mesh.geometry.dispose();
+    m.mesh.material.dispose();
+  }
+}
+
+function syncPostPipeline(vp) {
+  const wantBloom = bloomToggle ? bloomToggle.checked : true;
+  if (!wantBloom) {
+    vp.setRenderOverride(null);
+    return;
+  }
+  if (!postPipeline) {
+    try {
+      postPipeline = createPostPipeline3D({
+        THREE,
+        renderer: vp.renderer,
+        width: vp.renderer.domElement.width || 640,
+        height: vp.renderer.domElement.height || 420,
+        preset: {
+          bloom: true,
+          ssao: false,
+          volumetricSteps: 0,
+          giIntensity: 0,
+          ssrIntensity: 0,
+          contactShadows: false,
+          fxaa: false,
+        },
+        toneMapping: 'aces',
+        exposure: 1.05,
+        bloomStrength: 0.52,
+        bloomThreshold: 0.82,
+        bloomSoftKnee: 0.5,
+        ssaoIntensity: 0,
+        volumetricIntensity: 0,
+        giIntensity: 0,
+        ssrIntensity: 0,
+        vignette: 0.08,
+      });
+    } catch {
+      postPipeline = null;
+    }
+  }
+  if (postPipeline?.supported) {
+    vp.setRenderOverride((dt) => {
+      postPipeline.render(vp.scene, vp.camera, { dt });
+    });
+  } else {
+    vp.setRenderOverride(null);
+  }
+}
+
 function ensureViewport() {
   if (!viewport) {
     viewport = createThreeViewport(vfxStage, { background: 0x0f140f, grid: true, shadows: false });
     viewport.camera.position.set(3.2, 2.5, 4.2);
     viewport.controls.target.set(0, 0.7, 0);
     viewport.controls.update();
+    viewport.setOnResize((w, h) => {
+      postPipeline?.resize?.(w, h);
+    });
+    ensureGroundAndDecals(viewport);
+    syncPostPipeline(viewport);
   }
   return viewport;
 }
@@ -305,8 +441,14 @@ function disposeSimulation() {
   hgameFireTimer = 0;
 }
 
-function clearStageRoot() {
-  disposeSimulation();
+function clearStageRoot({ keepVfxSystem = false } = {}) {
+  if (keepVfxSystem && hgameVfx) {
+    hgameVfx.reset();
+    hgameFireTimer = 0;
+  } else {
+    disposeSimulation();
+  }
+  clearDecalMarkers();
   if (stageRoot && viewport) {
     viewport.scene.remove(stageRoot);
     disposeObject3D(stageRoot);
@@ -400,8 +542,9 @@ function applyAppearanceToStage() {
 function syncControlsVisibility(item) {
   const isTexture = item?.kind === 'texture';
   const isSystem = item?.kind === 'system';
+  const isV2 = item?.schemaVersion === 2;
   const isEmitterTex = isTexture && activeTextureMode === 'emitter';
-  if (modeTabsWrap) modeTabsWrap.hidden = !isSystem;
+  if (modeTabsWrap) modeTabsWrap.hidden = !isSystem || isV2;
   if (copyCodeBtn) copyCodeBtn.hidden = !isSystem;
   if (planeModeWrap) planeModeWrap.hidden = !isTexture;
   gridWrap.hidden = !isTexture || isEmitterTex;
@@ -986,9 +1129,21 @@ function triggerHGamePreset(item) {
   });
 }
 
+function playSelectedV2(item) {
+  if (!hgameVfx || !item) return;
+  const ySpawn = item.id === 'vfx_bench_explosion' ? 0.55 : item.id === 'vfx_bench_slash_shield' ? 0.85 : 0.95;
+  hgameVfx.playV2(item.id, { x: 0, y: ySpawn, z: 0 });
+}
+
 function replayActiveVfx() {
   const item = getCurrentItem();
   if (!item) return;
+  if (item.kind === 'system' && item.schemaVersion === 2) {
+    clearDecalMarkers();
+    playSelectedV2(item);
+    hgameFireTimer = 0;
+    return;
+  }
   if (item.kind === 'system' && activeRenderMode === 'hgame') {
     triggerHGamePreset(item);
     hgameFireTimer = 0;
@@ -1007,6 +1162,16 @@ function replayActiveVfx() {
 }
 
 function buildHGameSnippet(item) {
+  if (item?.schemaVersion === 2) {
+    return [
+      `// HGame VFX v2 预设: ${item.name || item.id}`,
+      `import { createVfxSystem } from '../vendor/hgame/index.js';`,
+      ``,
+      `const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE });`,
+      `vfx.setQualityTier('${qualitySelect?.value || 'high'}');`,
+      `vfx.playV2('${item.id}', { x: 0, y: 0.8, z: 0 });`,
+    ].join('\n');
+  }
   const p = item?.hgamePreset || {};
   const colorLit = `0x${(p.color || '#fb923c').replace('#', '')}`;
   const shapeKey = Object.keys(VFX_SHAPE).find(k => VFX_SHAPE[k] === (p.shapeId ?? 0)) || 'GLOW_ORB';
@@ -1036,17 +1201,52 @@ function buildHGameSnippet(item) {
   return lines.join('\n');
 }
 
-function tickVfx(dt) {
+function tickVfx(rawDt) {
   const item = getCurrentItem();
   if (!item || !stageRoot || !isPlaying) return;
 
+  const speedMult = Math.max(0.1, Number(speedSelect?.value || 1));
+  const dt = rawDt * speedMult;
   simElapsed += dt;
+
+  for (let i = decalMarkers.length - 1; i >= 0; i--) {
+    const m = decalMarkers[i];
+    m.age += dt;
+    if (m.age >= m.dur) {
+      decalMarkerGroup?.remove(m.mesh);
+      m.mesh.geometry.dispose();
+      m.mesh.material.dispose();
+      decalMarkers.splice(i, 1);
+    } else {
+      m.mesh.material.opacity = 0.75 * (1 - m.age / m.dur);
+    }
+  }
 
   if (spinInput.checked) {
     stageRoot.rotation.y += dt * 0.65;
   }
 
   if (item.kind === 'system') {
+    if (item.schemaVersion === 2 && hgameVfx) {
+      hgameVfx.update(dt, viewport?.camera?.position);
+      const interval = Math.max(0.9, (item.duration || 1.6) + 0.45);
+      hgameFireTimer += dt;
+      if (hgameFireTimer >= interval) {
+        hgameFireTimer = 0;
+        playSelectedV2(item);
+      }
+      const st = hgameVfx.getStats().v2;
+      statusUpdateAcc += rawDt;
+      if (st && statusUpdateAcc >= 0.2) {
+        statusUpdateAcc = 0;
+        const nextTxt = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier} · 倍速 ${speedMult}x`;
+        if (nextTxt !== lastV2StatusText) {
+          lastV2StatusText = nextTxt;
+          statusEl.textContent = nextTxt;
+        }
+      }
+      return;
+    }
     if (activeRenderMode === 'hgame' && hgameVfx) {
       hgameVfx.update(dt);
       const interval = Math.max(0.45, Math.min(1.5, (item.duration || 0.7) * 0.85));
@@ -1140,12 +1340,44 @@ async function loadCurrentVfx() {
 
   try {
     if (item.kind === 'system') {
-      clearStageRoot();
+      const keepV2 = item.schemaVersion === 2 && Boolean(hgameVfx);
+      clearStageRoot({ keepVfxSystem: keepV2 });
       stageRoot = new THREE.Group();
       stageRoot.position.y = item.category === '法阵光环' ? 0.03 : 0.85;
       vp.scene.add(stageRoot);
 
-      if (activeRenderMode === 'hgame') {
+      if (item.schemaVersion === 2) {
+        if (!hgameVfx) {
+          hgameVfx = createVfxSystem({
+            mode: '3d',
+            sceneOrAdapter: vp.scene,
+            THREE,
+            maxParticles: 4096,
+            maxFloatingGlyphs: 128,
+          });
+        }
+        hgameVfx.setQualityTier(qualitySelect?.value || 'high');
+        hgameVfx.setV2GroundConfig({ enabled: groundToggle ? groundToggle.checked : true, groundY: 0 });
+        const lutVal = Number(lutSelect?.value ?? -1);
+        hgameVfx.setV2LutRowOverride(lutVal >= 0 ? lutVal : null);
+        hgameVfx.setV2EventHandler((type, payload) => {
+          if (type === 'spawnDecal') {
+            spawnDecalMarker(payload);
+          } else if (type === 'subEmitter' && payload?.kind === 'decal_drop') {
+            spawnDecalMarker({ decalId: 'blood_drop', x: payload.x, z: payload.z, scale: [0.35, 0.35] });
+          }
+        });
+        hgameFireTimer = 0;
+        playSelectedV2(item);
+        hgameVfx.update(0.016, vp.camera.position);
+        vp.camera.position.set(3.4, 2.35, 4.2);
+        vp.controls.target.set(0, 0.75, 0);
+        vp.controls.update();
+        const st = hgameVfx.getStats().v2;
+        lastV2StatusText = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier}`;
+        statusUpdateAcc = 0;
+        statusEl.textContent = lastV2StatusText;
+      } else if (activeRenderMode === 'hgame') {
         hgameVfx = createVfxSystem({
           mode: '3d',
           sceneOrAdapter: vp.scene,
@@ -1390,6 +1622,48 @@ async function initVfxView() {
       else applyAppearanceToStage();
     });
     colorInput.addEventListener('input', applyAppearanceToStage);
+    groundToggle?.addEventListener('change', () => {
+      if (viewport) ensureGroundAndDecals(viewport);
+      hgameVfx?.setV2GroundConfig({ enabled: groundToggle.checked, groundY: 0 });
+      if (!groundToggle.checked) clearDecalMarkers();
+    });
+    bloomToggle?.addEventListener('change', () => {
+      if (viewport) syncPostPipeline(viewport);
+    });
+    qualitySelect?.addEventListener('change', () => {
+      hgameVfx?.setQualityTier(qualitySelect.value);
+      const item = getCurrentItem();
+      if (item?.schemaVersion === 2) {
+        clearDecalMarkers();
+        playSelectedV2(item);
+        hgameVfx?.update?.(0.016, viewport?.camera?.position);
+        hgameFireTimer = 0;
+        const st = hgameVfx?.getStats()?.v2;
+        if (st) {
+          lastV2StatusText = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier} · 倍速 ${speedSelect?.value || 1}x`;
+          statusUpdateAcc = 0;
+          statusEl.textContent = lastV2StatusText;
+        }
+      }
+    });
+    speedSelect?.addEventListener('change', () => {
+      const st = hgameVfx?.getStats()?.v2;
+      if (st && getCurrentItem()?.schemaVersion === 2) {
+        lastV2StatusText = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier} · 倍速 ${speedSelect.value}x`;
+        statusUpdateAcc = 0;
+        statusEl.textContent = lastV2StatusText;
+      }
+    });
+    lutSelect?.addEventListener('change', () => {
+      const val = Number(lutSelect.value);
+      hgameVfx?.setV2LutRowOverride(val >= 0 ? val : null);
+      const item = getCurrentItem();
+      if (item?.schemaVersion === 2) {
+        clearDecalMarkers();
+        playSelectedV2(item);
+        hgameFireTimer = 0;
+      }
+    });
   }
 
   const vp = ensureViewport();

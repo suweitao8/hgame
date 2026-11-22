@@ -72,7 +72,6 @@ export {
 } from './integrations/culling3d.js';
 export { createPhysicalRenderTargetPool3D } from './integrations/post3d/render-graph.js';
 export { captureResourceSnapshot, diffResourceSnapshots } from './integrations/quality3d/render-diagnostics.js';
-export { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
 import { createSkeleton2D } from './animation/skeleton2d.js';
 import { createWorkerPhysicsWorld } from './physics/worker-physics.js';
 import { createShadowAtlas3D } from './integrations/shadow3d.js';
@@ -86,7 +85,6 @@ import {
 } from './integrations/culling3d.js';
 import { createPhysicalRenderTargetPool3D } from './integrations/post3d/render-graph.js';
 import { captureResourceSnapshot, diffResourceSnapshots } from './integrations/quality3d/render-diagnostics.js';
-import { MRT_OUTLINE_FRAGMENT_GLSL3, createMrtOutlinePass3D } from './integrations/post3d/mrt-outline.js';
 export { TileMap, findGridPath, createGridPathWork, applyAutoTileRules } from './world/tilemap.js';
 export { ObjectPool, SpatialHash2D } from './world/spatial2d.js';
 export {
@@ -231,6 +229,15 @@ export {
   createMeshVfxPool,
   validateVfxRecipe,
   createEffectPlayer,
+  VFX_V2_SCHEMA_VERSION,
+  VFX_COLOR_MODES,
+  VFX_QUALITY_TIERS,
+  VFX_V2_BENCHMARK_PRESETS,
+  validateVfxPresetV2,
+  compileVfxPresetV2,
+  compileCurveLut16,
+  sampleCurveLut16,
+  createVfxV2Runtime,
 } from './vfx/index.js';
 
 import { defineProject, resolveFeatureGraph } from './core/config.js';
@@ -377,6 +384,15 @@ import {
   PROCEDURAL_VFX_ATLAS_REGIONS,
   createProceduralVfxAtlas,
   validateVfxRecipe,
+  VFX_V2_SCHEMA_VERSION,
+  VFX_COLOR_MODES,
+  VFX_QUALITY_TIERS,
+  VFX_V2_BENCHMARK_PRESETS,
+  validateVfxPresetV2,
+  compileVfxPresetV2,
+  compileCurveLut16,
+  sampleCurveLut16,
+  createVfxV2Runtime,
 } from './vfx/index.js';
 export {
   STANDARD_ART_SPEC,
@@ -563,6 +579,15 @@ export const HGame = Object.freeze({
   PROCEDURAL_VFX_ATLAS_REGIONS,
   createProceduralVfxAtlas,
   validateVfxRecipe,
+  VFX_V2_SCHEMA_VERSION,
+  VFX_COLOR_MODES,
+  VFX_QUALITY_TIERS,
+  VFX_V2_BENCHMARK_PRESETS,
+  validateVfxPresetV2,
+  compileVfxPresetV2,
+  compileCurveLut16,
+  sampleCurveLut16,
+  createVfxV2Runtime,
   Component,
   Entity,
   Scene,
@@ -612,8 +637,6 @@ export const HGame = Object.freeze({
   createHiZOcclusionCuller3D,
   dispatchWebGpuHiZOcclusion,
   quantizeBufferGeometry3D,
-  MRT_OUTLINE_FRAGMENT_GLSL3,
-  createMrtOutlinePass3D,
   createPhysicalRenderTargetPool3D,
   captureResourceSnapshot,
   diffResourceSnapshots,

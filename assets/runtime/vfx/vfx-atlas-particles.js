@@ -713,29 +713,29 @@ vec3 unpackRgb24(float v) {
   return vec3(r, g, b) / 255.0;
 }
 
-vec2 unpack2x12Pos(float packed, float maxA, float maxB) {
-  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+vec2 unpack2x12Pos(float packedVal, float maxA, float maxB) {
+  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4095.0) * maxA, (qb / 4095.0) * maxB);
 }
 
-vec2 unpack2x12Sym(float packed, float absA, float absB) {
-  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+vec2 unpack2x12Sym(float packedVal, float absA, float absB) {
+  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4094.0) * (2.0 * absA) - absA, (qb / 4094.0) * (2.0 * absB) - absB);
 }
 
-vec2 unpack2x12Mixed(float packed, float maxA, float absB) {
-  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+vec2 unpack2x12Mixed(float packedVal, float maxA, float absB) {
+  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4095.0) * maxA, (qb / 4094.0) * (2.0 * absB) - absB);
 }
 
-vec2 unpackUvPair(float packed) {
-  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+vec2 unpackUvPair(float packedVal) {
+  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
   float qu = floor(v / 4096.0);
   float qv = v - qu * 4096.0;
   return clamp(vec2(qu, qv) / 3840.0, 0.0, 1.0);
@@ -1312,29 +1312,29 @@ vec3 unpackRgb24(float v) {
   return vec3(r, g, b) / 255.0;
 }
 
-vec2 unpack2x12Pos(float packed, float maxA, float maxB) {
-  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+vec2 unpack2x12Pos(float packedVal, float maxA, float maxB) {
+  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4095.0) * maxA, (qb / 4095.0) * maxB);
 }
 
-vec2 unpack2x12Sym(float packed, float absA, float absB) {
-  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+vec2 unpack2x12Sym(float packedVal, float absA, float absB) {
+  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4094.0) * (2.0 * absA) - absA, (qb / 4094.0) * (2.0 * absB) - absB);
 }
 
-vec2 unpack2x12Mixed(float packed, float maxA, float absB) {
-  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+vec2 unpack2x12Mixed(float packedVal, float maxA, float absB) {
+  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4095.0) * maxA, (qb / 4094.0) * (2.0 * absB) - absB);
 }
 
-vec2 unpackUvPair(float packed) {
-  float v = floor(clamp(packed, 0.0, 16777215.0) + 0.5);
+vec2 unpackUvPair(float packedVal) {
+  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
   float qu = floor(v / 4096.0);
   float qv = v - qu * 4096.0;
   return clamp(vec2(qu, qv) / 3840.0, 0.0, 1.0);
