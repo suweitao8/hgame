@@ -1132,121 +1132,148 @@ def cmd_remesh_bake(args):
     for ca in list(low.data.color_attributes):
         low.data.color_attributes.remove(ca)
 
-    def _build_decimated_lod(src_obj, rig_obj, lod_name, target_tris, max_weights):
-        tris_src = sum(max(1, len(p.vertices) - 2) for p in src_obj.data.polygons)
-        if target_tris <= 0 or tris_src <= target_tris:
-            return None
-        dup = src_obj.copy()
-        dup.data = src_obj.data.copy()
-        dup.name = lod_name
-        bpy.context.collection.objects.link(dup)
-        dup.parent = rig_obj
-        for m in dup.modifiers:
-            if m.type == "ARMATURE":
-                m.object = rig_obj
-        dec = dup.modifiers.new(f"{lod_name}_Decimate", "DECIMATE")
-        dec.decimate_type = "COLLAPSE"
-        dec.ratio = max(0.04, min(1.0, float(target_tris) / float(tris_src)))
-        dec.use_collapse_triangulate = True
-        bpy.ops.object.select_all(action="DESELECT")
-        dup.select_set(True)
-        bpy.context.view_layer.objects.active = dup
-        bpy.ops.object.modifier_apply(modifier=dec.name)
-        if max_weights and max_weights > 0 and len(dup.vertex_groups) > 0:
-            bpy.ops.object.vertex_group_limit_total(limit=int(max_weights))
-            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
-        return dup
+def _build_decimated_lod(src_obj, rig_obj, lod_name, target_tris, max_weights):
+    tris_src = sum(max(1, len(p.vertices) - 2) for p in src_obj.data.polygons)
+    if target_tris <= 0 or tris_src <= target_tris:
+        return None
+    dup = src_obj.copy()
+    dup.data = src_obj.data.copy()
+    dup.name = lod_name
+    bpy.context.collection.objects.link(dup)
+    dup.parent = rig_obj
+    for m in dup.modifiers:
+        if m.type == "ARMATURE":
+            m.object = rig_obj
+    dec = dup.modifiers.new(f"{lod_name}_Decimate", "DECIMATE")
+    dec.decimate_type = "COLLAPSE"
+    dec.ratio = max(0.04, min(1.0, float(target_tris) / float(tris_src)))
+    dec.use_collapse_triangulate = True
+    bpy.ops.object.select_all(action="DESELECT")
+    dup.select_set(True)
+    bpy.context.view_layer.objects.active = dup
+    bpy.ops.object.modifier_apply(modifier=dec.name)
+    if max_weights and max_weights > 0 and len(dup.vertex_groups) > 0:
+        bpy.ops.object.vertex_group_limit_total(limit=int(max_weights))
+        bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+    return dup
 
-    def _build_tight_lod3_impostor(src_obj, rig_obj):
-        import bmesh
-        from mathutils import Vector
-        xs = [v.co.x for v in src_obj.data.vertices]
-        ys = [v.co.y for v in src_obj.data.vertices]
-        zs = [v.co.z for v in src_obj.data.vertices]
-        if not xs:
-            return None
-        half_w = max(0.18, (max(xs) - min(xs)) * 0.52)
-        cx = (max(xs) + min(xs)) * 0.5
-        cy = (max(ys) + min(ys)) * 0.5
-        z0 = min(zs)
-        h = max(0.5, max(zs) - z0)
-        # 8-vertex / 6-triangle beveled octagon silhouette hull (cuts 40-60% transparent overdraw)
-        ring = [
-            (cx - half_w * 0.55, cy, z0),
-            (cx + half_w * 0.55, cy, z0),
-            (cx + half_w, cy, z0 + h * 0.25),
-            (cx + half_w, cy, z0 + h * 0.72),
-            (cx + half_w * 0.48, cy, z0 + h),
-            (cx - half_w * 0.48, cy, z0 + h),
-            (cx - half_w, cy, z0 + h * 0.72),
-            (cx - half_w, cy, z0 + h * 0.25),
-        ]
-        mesh_d = bpy.data.meshes.new("mesh_lod3_data")
-        bm = bmesh.new()
-        uv_layer = bm.loops.layers.uv.new("UVMap")
-        verts = [bm.verts.new(Vector(p)) for p in ring]
-        face = bm.faces.new(verts)
-        for loop in face.loops:
-            co = loop.vert.co
-            u = (co.x - (cx - half_w)) / max(2.0 * half_w, 1e-4)
-            v = (co.z - z0) / max(h, 1e-4)
-            loop[uv_layer].uv = (max(0.0, min(1.0, u)), max(0.0, min(1.0, v)))
-        bmesh.ops.triangulate(bm, faces=[face])
-        bm.to_mesh(mesh_d)
-        bm.free()
-        obj3 = bpy.data.objects.new("mesh_lod3", mesh_d)
-        bpy.context.collection.objects.link(obj3)
-        obj3.parent = rig_obj
-        if len(src_obj.data.materials) > 0:
-            obj3.data.materials.append(src_obj.data.materials[0])
-        obj3["lodLevel"] = 3
-        obj3.hide_render = True
-        return obj3
 
-    rig_info = None
+def _build_tight_lod3_impostor(src_obj, rig_obj):
+    import bmesh
+    from mathutils import Vector
+    xs = [v.co.x for v in src_obj.data.vertices]
+    ys = [v.co.y for v in src_obj.data.vertices]
+    zs = [v.co.z for v in src_obj.data.vertices]
+    if not xs:
+        return None
+    half_w = max(0.18, (max(xs) - min(xs)) * 0.52)
+    cx = (max(xs) + min(xs)) * 0.5
+    cy = (max(ys) + min(ys)) * 0.5
+    z0 = min(zs)
+    h = max(0.5, max(zs) - z0)
+    # 8-vertex / 6-triangle beveled octagon silhouette hull (cuts 40-60% transparent overdraw)
+    ring = [
+        (cx - half_w * 0.55, cy, z0),
+        (cx + half_w * 0.55, cy, z0),
+        (cx + half_w, cy, z0 + h * 0.25),
+        (cx + half_w, cy, z0 + h * 0.72),
+        (cx + half_w * 0.48, cy, z0 + h),
+        (cx - half_w * 0.48, cy, z0 + h),
+        (cx - half_w, cy, z0 + h * 0.72),
+        (cx - half_w, cy, z0 + h * 0.25),
+    ]
+    mesh_d = bpy.data.meshes.new("mesh_lod3_data")
+    bm = bmesh.new()
+    uv_layer = bm.loops.layers.uv.new("UVMap")
+    verts = [bm.verts.new(Vector(p)) for p in ring]
+    face = bm.faces.new(verts)
+    for loop in face.loops:
+        co = loop.vert.co
+        u = (co.x - (cx - half_w)) / max(2.0 * half_w, 1e-4)
+        v = (co.z - z0) / max(h, 1e-4)
+        loop[uv_layer].uv = (max(0.0, min(1.0, u)), max(0.0, min(1.0, v)))
+    bmesh.ops.triangulate(bm, faces=[face])
+    bm.to_mesh(mesh_d)
+    bm.free()
+    obj3 = bpy.data.objects.new("mesh_lod3", mesh_d)
+    bpy.context.collection.objects.link(obj3)
+    obj3.parent = rig_obj
+    if len(src_obj.data.materials) > 0:
+        obj3.data.materials.append(src_obj.data.materials[0])
+    obj3["lodLevel"] = 3
+    obj3.hide_render = True
+    return obj3
+
+
+def _export_rigged_with_lods(low_obj, out_path, action_name="Run", anim_glb="", lod1_tris=0, lod2_tris=0, lod3_tight=False):
+    rig, rig_info = build_and_bind_run_rig(low_obj, action_name=action_name, anim_glb=anim_glb)
+    low_obj.name = "mesh_lod0"
+    low_obj["lodLevel"] = 0
+    export_objs = [rig, low_obj]
     lod1_obj = None
     lod2_obj = None
     lod3_obj = None
+    if lod1_tris > 0:
+        lod1_obj = _build_decimated_lod(low_obj, rig, "mesh_lod1", lod1_tris, 2)
+        if lod1_obj is not None:
+            lod1_obj["lodLevel"] = 1
+            lod1_obj.hide_render = True
+            export_objs.append(lod1_obj)
+    if lod2_tris > 0:
+        src_for_lod2 = lod1_obj if lod1_obj is not None else low_obj
+        lod2_obj = _build_decimated_lod(src_for_lod2, rig, "mesh_lod2", lod2_tris, 1)
+        if lod2_obj is not None:
+            lod2_obj["lodLevel"] = 2
+            lod2_obj.hide_render = True
+            export_objs.append(lod2_obj)
+    if lod3_tight:
+        lod3_obj = _build_tight_lod3_impostor(low_obj, rig)
+        if lod3_obj is not None:
+            export_objs.append(lod3_obj)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    for eo in export_objs:
+        eo.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.context.scene.frame_set(0)
+    bpy.ops.export_scene.gltf(
+        filepath=out_path,
+        export_format="GLB",
+        use_selection=True,
+        export_apply=False,
+        export_animations=True,
+        export_skins=True,
+        export_def_bones=True,
+        export_tangents=False,
+    )
+    return {
+        "rig": rig,
+        "rig_info": rig_info,
+        "lod1_stats": collect_stats([lod1_obj]) if lod1_obj is not None else None,
+        "lod2_stats": collect_stats([lod2_obj]) if lod2_obj is not None else None,
+        "lod3_stats": collect_stats([lod3_obj]) if lod3_obj is not None else None,
+    }
+
+    rig_info = None
+    lod1_stats = None
+    lod2_stats = None
+    lod3_stats = None
     lod1_tris = int(getattr(args, "lod1_tris", 0) or 0)
     lod2_tris = int(getattr(args, "lod2_tris", 0) or 0)
     if getattr(args, "rig_run", False):
-        rig, rig_info = build_and_bind_run_rig(low)
-        low.name = "mesh_lod0"
-        low["lodLevel"] = 0
-        export_objs = [rig, low]
-        if lod1_tris > 0:
-            lod1_obj = _build_decimated_lod(low, rig, "mesh_lod1", lod1_tris, 2)
-            if lod1_obj is not None:
-                lod1_obj["lodLevel"] = 1
-                lod1_obj.hide_render = True
-                export_objs.append(lod1_obj)
-        if lod2_tris > 0:
-            src_for_lod2 = lod1_obj if lod1_obj is not None else low
-            lod2_obj = _build_decimated_lod(src_for_lod2, rig, "mesh_lod2", lod2_tris, 1)
-            if lod2_obj is not None:
-                lod2_obj["lodLevel"] = 2
-                lod2_obj.hide_render = True
-                export_objs.append(lod2_obj)
-        if getattr(args, "lod3_tight", False):
-            lod3_obj = _build_tight_lod3_impostor(low, rig)
-            if lod3_obj is not None:
-                export_objs.append(lod3_obj)
-
-        bpy.ops.object.select_all(action="DESELECT")
-        for eo in export_objs:
-            eo.select_set(True)
-        bpy.context.view_layer.objects.active = rig
-        bpy.context.scene.frame_set(0)
-        bpy.ops.export_scene.gltf(
-            filepath=args.out,
-            export_format="GLB",
-            use_selection=True,
-            export_apply=False,
-            export_animations=True,
-            export_skins=True,
-            export_def_bones=True,
-            export_tangents=False,
+        exp = _export_rigged_with_lods(
+            low,
+            args.out,
+            action_name="Run",
+            anim_glb=getattr(args, "anim_glb", ""),
+            lod1_tris=lod1_tris,
+            lod2_tris=lod2_tris,
+            lod3_tight=bool(getattr(args, "lod3_tight", False)),
         )
+        rig_info = exp["rig_info"]
+        lod1_stats = exp["lod1_stats"]
+        lod2_stats = exp["lod2_stats"]
+        lod3_stats = exp["lod3_stats"]
     else:
         bpy.ops.object.select_all(action="DESELECT")
         low.select_set(True)
@@ -1259,9 +1286,6 @@ def cmd_remesh_bake(args):
         )
 
     stats = collect_stats([low])
-    lod1_stats = collect_stats([lod1_obj]) if lod1_obj is not None else None
-    lod2_stats = collect_stats([lod2_obj]) if lod2_obj is not None else None
-    lod3_stats = collect_stats([lod3_obj]) if lod3_obj is not None else None
     result = {
         "input": os.path.abspath(args.input),
         "output": os.path.abspath(args.out),
@@ -1308,76 +1332,133 @@ def detect_humanoid_landmarks(obj):
     z_max = float(co[:, 2].max())
     H = max(z_max - z_min, 0.1)
 
-    # Torso half-width near waist (ignore wide cape/tail behind Y > +0.18*H)
-    waist_mask = (co[:, 2] >= z_min + 0.34 * H) & (co[:, 2] <= z_min + 0.46 * H) & (co[:, 1] <= 0.16 * H)
-    w_mid = float(np.percentile(np.abs(co[waist_mask, 0]), 90)) if np.any(waist_mask) else 0.16 * H
-    w_mid = max(0.11 * H, min(w_mid, 0.24 * H))
+    # Scan horizontal span across 42%..86% height to find true T-pose arm band (covers both chibi 50-67% & human 72-80%)
+    span_slices = []
+    for zt in np.linspace(z_min + 0.42 * H, z_min + 0.86 * H, 45):
+        sl = co[np.abs(co[:, 2] - float(zt)) <= 0.018 * H]
+        if len(sl) >= 4:
+            span_slices.append((float(zt), float(np.percentile(np.abs(sl[:, 0]), 98))))
 
-    # Detect outer arm span vertices above waist
-    arm_cand = co[(co[:, 2] >= z_min + 0.38 * H) & (co[:, 2] <= z_min + 0.72 * H) & (np.abs(co[:, 0]) > max(w_mid * 1.38, 0.23 * H))]
+    z_arm_seed = z_min + 0.56 * H
+    if span_slices:
+        max_span = max(s for _, s in span_slices)
+        thresh = max(0.28 * H, 0.82 * max_span)
+        qual = [(zt, sp) for zt, sp in span_slices if sp >= thresh]
+        if qual:
+            clusters = [[qual[0]]]
+            for item in qual[1:]:
+                if item[0] - clusters[-1][-1][0] <= 0.045 * H:
+                    clusters[-1].append(item)
+                else:
+                    clusters.append([item])
+            best_cluster = max(clusters, key=lambda cl: (max(s for _, s in cl), cl[-1][0]))
+            wsum = sum(s for _, s in best_cluster) or 1.0
+            z_arm_seed = sum(z * s for z, s in best_cluster) / wsum
+
+    # Detect outer arm span vertices around the main T-pose arm cluster
+    arm_cand = co[(np.abs(co[:, 2] - z_arm_seed) <= 0.085 * H) & (np.abs(co[:, 0]) > 0.22 * H)]
     if len(arm_cand) >= 6:
         z_arm_mid = float(np.median(arm_cand[:, 2]))
         x_tip = float(np.percentile(np.abs(arm_cand[:, 0]), 98))
     else:
-        z_arm_mid = z_min + 0.54 * H
+        z_arm_mid = z_arm_seed
         x_tip = float(np.percentile(np.abs(co[:, 0]), 98))
+
+    z_arm_rel = (z_arm_mid - z_min) / H
+    is_tall_humanoid = z_arm_rel >= 0.685
+
+    # Core torso half-width measured below shoulder/arm level (exclude rear cape/tail)
+    waist_lo = max(z_min + 0.26 * H, z_arm_mid - 0.26 * H)
+    waist_hi = max(waist_lo + 0.06 * H, z_arm_mid - 0.05 * H)
+    waist_mask = (co[:, 2] >= waist_lo) & (co[:, 2] <= waist_hi) & (co[:, 1] <= 0.16 * H)
+    w_mid = float(np.percentile(np.abs(co[waist_mask, 0]), 85)) if np.any(waist_mask) else 0.15 * H
+    w_mid = max(0.095 * H, min(w_mid, 0.175 * H if is_tall_humanoid else 0.23 * H))
     x_tip = max(x_tip, w_mid + 0.15 * H)
 
-    x_sh = max(w_mid * 1.02, 0.135 * H)
-    if x_tip - x_sh < 0.08 * H:
-        x_tip = x_sh + 0.08 * H
+    x_sh = min(max(w_mid * 1.04, 0.125 * H), x_tip * 0.50)
+    if is_tall_humanoid:
+        x_sh = min(x_sh, 0.165 * H)
+    if x_tip - x_sh < 0.10 * H:
+        x_tip = x_sh + 0.10 * H
     x_elb = x_sh + 0.44 * (x_tip - x_sh)
     x_hand = x_sh + 0.84 * (x_tip - x_sh)
 
     def arm_pt(abs_x, sign_x):
-        band = co[(np.abs(co[:, 0] - sign_x * abs_x) <= 0.055 * H) & (np.abs(co[:, 2] - z_arm_mid) <= 0.14 * H)]
+        band = co[(np.abs(co[:, 0] - sign_x * abs_x) <= 0.05 * H) & (np.abs(co[:, 2] - z_arm_mid) <= 0.085 * H)]
         if len(band) >= 3:
-            return Vector((sign_x * abs_x, float(np.median(band[:, 1])), float(np.median(band[:, 2]))))
+            zb = max(z_arm_mid - 0.055 * H, min(z_arm_mid + 0.055 * H, float(np.median(band[:, 2]))))
+            return Vector((sign_x * abs_x, float(np.median(band[:, 1])), zb))
         return Vector((sign_x * abs_x, 0.0, z_arm_mid))
 
-    # Measure crotch & legs from front/mid lower body (exclude trailing cape/tail Y > +0.12*H)
-    lower_mid = co[(co[:, 2] >= z_min + 0.12 * H) & (co[:, 2] <= z_arm_mid - 0.04 * H) & (co[:, 1] <= 0.12 * H)]
-    z_crotch = z_min + 0.28 * H
-    for frac in np.linspace(0.45, 0.14, 24):
+    # Measure crotch & legs from front/mid lower body (exclude trailing cape/tail Y > +0.14*H)
+    crotch_top_frac = min(0.54, max(0.32, z_arm_rel - 0.16))
+    lower_mid = co[(co[:, 2] >= z_min + 0.10 * H) & (co[:, 2] <= z_arm_mid - 0.06 * H) & (co[:, 1] <= 0.14 * H)]
+    z_crotch = z_min + (0.45 if is_tall_humanoid else 0.28) * H
+    crotch_found = False
+    for frac in np.linspace(crotch_top_frac, 0.14, 28):
         zt = z_min + float(frac) * H
         center_gap = lower_mid[(np.abs(lower_mid[:, 2] - zt) <= 0.02 * H) & (np.abs(lower_mid[:, 0]) <= 0.025 * H)]
         if len(center_gap) == 0:
             z_crotch = zt
+            crotch_found = True
             break
-    z_hip = min(z_crotch + 0.045 * H, z_arm_mid - 0.10 * H)
+
+    if is_tall_humanoid:
+        # Proportional humanoids (even wearing skirts/coats/fused trousers) keep hip pivot at 45-51% stature
+        z_hip_est = z_min + min(0.505, max(0.455, 0.625 * z_arm_rel)) * H
+        crotch_rel = (z_crotch - z_min) / H
+        if crotch_found and 0.41 <= crotch_rel <= 0.52:
+            z_hip = min(0.51 * H + z_min, max(0.45 * H + z_min, z_crotch + 0.03 * H))
+        else:
+            z_hip = z_hip_est
+    else:
+        z_hip = min(z_crotch + 0.045 * H, z_arm_mid - 0.10 * H)
+
     z_ankle = z_min + 0.055 * H
     z_knee = z_ankle + 0.52 * max(z_hip - z_ankle, 0.1 * H)
 
-    leg_band = co[(co[:, 2] >= z_ankle) & (co[:, 2] <= z_crotch) & (co[:, 1] <= 0.12 * H) & (np.abs(co[:, 0]) >= 0.025 * H)]
+    leg_band_top = min(z_crotch, z_min + 0.36 * H) if is_tall_humanoid else z_crotch
+    leg_band = co[(co[:, 2] >= z_ankle) & (co[:, 2] <= leg_band_top) & (co[:, 1] <= 0.14 * H) & (np.abs(co[:, 0]) >= 0.025 * H)]
     if len(leg_band) >= 6:
         lx = float(np.median(np.abs(leg_band[:, 0])))
         ly = float(np.median(leg_band[:, 1]))
     else:
-        lx, ly = 0.095 * H, 0.0
-    foot_band = co[(co[:, 2] <= z_ankle + 0.02 * H) & (co[:, 1] <= 0.14 * H)]
+        lx, ly = 0.095 * H, (float(np.median(lower_mid[:, 1])) if len(lower_mid) >= 4 else 0.0)
+    if is_tall_humanoid:
+        lx = max(0.065 * H, min(lx, 0.135 * H))
+    foot_band = co[(co[:, 2] <= z_ankle + 0.025 * H) & (co[:, 1] <= 0.14 * H)]
     y_toe = float(np.percentile(foot_band[:, 1], 5)) if len(foot_band) >= 4 else ly - 0.10 * H
 
-    torso_top = co[(np.abs(co[:, 0]) <= w_mid * 0.7) & (co[:, 2] >= z_hip) & (co[:, 2] <= z_arm_mid) & (co[:, 1] <= 0.14 * H)]
+    torso_top = co[(np.abs(co[:, 0]) <= w_mid * 0.75) & (co[:, 2] >= z_hip) & (co[:, 2] <= z_arm_mid) & (co[:, 1] <= 0.14 * H)]
     y_torso = float(np.median(torso_top[:, 1])) if len(torso_top) >= 4 else 0.0
 
     z_spine = z_hip + 0.24 * max(z_arm_mid - z_hip, 0.1 * H)
     z_spine2 = z_hip + 0.52 * max(z_arm_mid - z_hip, 0.1 * H)
-    z_chest = max(z_arm_mid - 0.01 * H, z_spine2 + 0.03 * H)
+    z_chest = max(z_arm_mid - 0.015 * H, z_spine2 + 0.03 * H)
 
-    # Locate anatomical neck/collar pinch between upper chest and crown
+    # Locate anatomical neck/collar pinch between upper chest and crown (proportional head size adapts to humanoid vs chibi)
+    neck_scan_lo = z_arm_mid + 0.025 * H
+    neck_scan_hi = min(z_max - (0.095 * H if is_tall_humanoid else 0.16 * H), z_arm_mid + 0.18 * H)
     neck_cand = []
-    for zt in np.linspace(z_arm_mid + 0.02 * H, min(z_max - 0.16 * H, z_arm_mid + 0.16 * H), 16):
-        sl = co[(np.abs(co[:, 2] - float(zt)) <= 0.018 * H) & (np.abs(co[:, 1] - y_torso) <= 0.18 * H)]
-        if len(sl) >= 4:
-            neck_cand.append((float(np.percentile(np.abs(sl[:, 0]), 92)), float(zt)))
+    if neck_scan_hi > neck_scan_lo + 0.01 * H:
+        for zt in np.linspace(neck_scan_lo, neck_scan_hi, 18):
+            sl = co[
+                (np.abs(co[:, 2] - float(zt)) <= 0.016 * H)
+                & (np.abs(co[:, 1] - y_torso) <= 0.16 * H)
+                & (np.abs(co[:, 0]) <= x_sh * 1.15)
+            ]
+            if len(sl) >= 4:
+                neck_cand.append((float(np.percentile(np.abs(sl[:, 0]), 90)), float(zt)))
     if neck_cand:
         neck_cand.sort(key=lambda item: item[0])
         z_neck = neck_cand[0][1]
     else:
-        z_neck = min(z_arm_mid + 0.065 * H, z_max - 0.22 * H)
-    z_neck = max(z_arm_mid + 0.025 * H, min(z_neck, z_max - 0.18 * H))
-    z_head_base = min(z_neck + 0.045 * H, z_max - 0.12 * H)
-    z_head_end = z_max - 0.04 * H
+        z_neck = z_arm_mid + (0.08 * H if is_tall_humanoid else 0.065 * H)
+    z_neck_min = z_arm_mid + (0.055 * H if is_tall_humanoid else 0.025 * H)
+    z_neck_max = z_max - (0.105 * H if is_tall_humanoid else 0.175 * H)
+    z_neck = max(z_neck_min, min(z_neck, max(z_neck_min, z_neck_max)))
+    z_head_base = min(z_neck + 0.038 * H, z_max - (0.065 * H if is_tall_humanoid else 0.115 * H))
+    z_head_end = z_max - 0.035 * H
 
     # Trailing cape/tail detection for rigid weight locking behind torso
     leg_back_y = float(np.percentile(leg_band[:, 1], 92)) if len(leg_band) >= 6 else y_torso + 0.07 * H
@@ -1390,8 +1471,29 @@ def detect_humanoid_landmarks(obj):
         leg_core_back_y = leg_back_y
     app_back_y = min(leg_back_y, leg_core_back_y)
     torso_pts = co[(co[:, 2] >= z_hip) & (co[:, 2] <= z_arm_mid) & (np.abs(co[:, 0]) <= x_sh * 0.7)]
-    torso_back_y = float(np.percentile(torso_pts[:, 1], 75)) if len(torso_pts) >= 8 else app_back_y
-    app_back = {"legs": app_back_y, "torso": max(app_back_y, torso_back_y), "z_hip": z_hip}
+    torso_pct = 90 if is_tall_humanoid else 75
+    torso_back_y = float(np.percentile(torso_pts[:, 1], torso_pct)) if len(torso_pts) >= 8 else app_back_y
+    app_back = {
+        "legs": app_back_y,
+        "torso": max(app_back_y, torso_back_y),
+        "z_hip": z_hip,
+        "tall": is_tall_humanoid,
+        "margin": 0.065 * H if is_tall_humanoid else 0.03 * H,
+    }
+
+    # Detect closed skirt/long-coat garment band (distinguished from narrow touching trousers)
+    skirt_band = None
+    if is_tall_humanoid:
+        closed_zs = []
+        for zt in np.linspace(z_min + 0.14 * H, z_hip - 0.01 * H, 28):
+            sl = co[(np.abs(co[:, 2] - float(zt)) <= 0.014 * H) & (co[:, 1] <= torso_back_y + 0.03 * H)]
+            mid_cnt = int(np.sum(np.abs(sl[:, 0]) <= 0.025 * H))
+            if len(sl) >= 8 and mid_cnt >= 4:
+                half_w = float(np.percentile(np.abs(sl[:, 0]), 92))
+                if float(zt) <= z_min + 0.25 * H or half_w >= max(0.145 * H, lx * 1.38):
+                    closed_zs.append(float(zt))
+        if len(closed_zs) >= 3 and (max(closed_zs) - min(closed_zs)) >= 0.05 * H:
+            skirt_band = (min(closed_zs) - 0.015 * H, z_hip + 0.02 * H)
 
     # UE5 / Anim58-compatible 23-bone Mannequin hierarchy (works natively with Anim58 animations & embedded Run clip)
     # root is strictly anchored at world origin (0, 0, 0) as pelvis's parent regardless of vertex weights.
@@ -1431,8 +1533,12 @@ def detect_humanoid_landmarks(obj):
         "z_arm": z_arm_mid,
         "z_chest": z_chest,
         "z_neck": z_neck,
+        "z_head_base": z_head_base,
         "z_hip": z_hip,
         "x_sh": x_sh,
+        "lx": lx,
+        "is_tall_humanoid": is_tall_humanoid,
+        "skirt_band": skirt_band,
         "leg_back_y": leg_back_y,
         "app_back": app_back,
         "appendage": appendage,
@@ -1444,16 +1550,17 @@ def detect_humanoid_landmarks(obj):
 def _appendage_alpha(co, H, z_arm, z_neck, x_sh, back, kind):
     """Per-vertex membership [0..1] of the trailing cape/tail region behind the legs and torso."""
     import numpy as np
-    base = np.where(co[:, 2] < back["z_hip"], back["legs"], back["torso"]) + 0.03 * H
+    margin = float(back.get("margin", 0.03 * H))
+    base = np.where(co[:, 2] < back["z_hip"], back["legs"], back["torso"]) + margin
     alpha = np.clip((co[:, 1] - base) / (0.05 * H), 0.0, 1.0)
+    x_gate = np.clip((x_sh * 0.95 - np.abs(co[:, 0])) / max(0.12 * x_sh, 1e-4), 0.0, 1.0)
     lower = co[:, 2] <= z_arm - 0.02 * H
     if kind == "cape":
         upper = (co[:, 2] > z_arm - 0.02 * H) & (co[:, 2] <= z_neck - 0.01 * H)
-        x_gate = np.clip((x_sh * 0.95 - np.abs(co[:, 0])) / max(0.12 * x_sh, 1e-4), 0.0, 1.0)
-        return np.where(lower, alpha, np.where(upper, alpha * x_gate, 0.0))
-    # Tails emerge near the pelvis: never pull upper back vertices into the tail chain
+        return np.where(lower | upper, alpha * x_gate, 0.0)
+    # Tails emerge near the pelvis: never pull upper back vertices or arms into the tail chain
     tail_top = back["z_hip"] + 0.4 * (z_arm - back["z_hip"])
-    return np.where(lower & (co[:, 2] <= tail_top), alpha, 0.0)
+    return np.where(lower & (co[:, 2] <= tail_top), alpha * x_gate, 0.0)
 
 
 def _detect_back_appendage(co, H, z_hip, z_arm, z_neck, x_sh, back, segments=3):
@@ -1461,8 +1568,15 @@ def _detect_back_appendage(co, H, z_hip, z_arm, z_neck, x_sh, back, segments=3):
     import numpy as np
     from mathutils import Vector
 
-    base = np.where(co[:, 2] < back["z_hip"], back["legs"], back["torso"]) + 0.03 * H
-    low_alpha = np.clip((co[:, 1] - base) / (0.05 * H), 0.0, 1.0) * (co[:, 2] <= z_arm - 0.02 * H)
+    margin = float(back.get("margin", 0.03 * H))
+    if back.get("tall"):
+        # Tall humanoids only detect true capes/tails protruding behind torso back or upper back (avoids lower-leg skirts)
+        base = max(back["legs"], back["torso"]) + margin
+    else:
+        base = np.where(co[:, 2] < back["z_hip"], back["legs"], back["torso"]) + margin
+    x_gate = np.clip((x_sh * 0.95 - np.abs(co[:, 0])) / max(0.12 * x_sh, 1e-4), 0.0, 1.0)
+    z_lo_gate = (co[:, 2] >= back["z_hip"] + 0.02 * H) if back.get("tall") else True
+    low_alpha = np.clip((co[:, 1] - base) / (0.05 * H), 0.0, 1.0) * (co[:, 2] <= z_arm - 0.02 * H) * x_gate * z_lo_gate
     low_pts = co[low_alpha >= 0.5]
     if len(low_pts) < 24:
         return None
@@ -1470,7 +1584,7 @@ def _detect_back_appendage(co, H, z_hip, z_arm, z_neck, x_sh, back, segments=3):
     leg_pts = low_pts[low_pts[:, 2] < z_hip + 0.1 * H]
     spread = float(np.percentile(leg_pts[:, 0], 95) - np.percentile(leg_pts[:, 0], 5)) if len(leg_pts) >= 8 else 0.0
     kind = "cape" if spread >= 0.9 * x_sh else "tail"
-    if kind == "cape":
+    if kind == "cape" and not back.get("tall"):
         back = dict(back, torso=back["legs"])
     alpha = _appendage_alpha(co, H, z_arm, z_neck, x_sh, back, kind)
     pts = co[alpha >= 0.5]
@@ -1875,10 +1989,19 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
             vg_chest.add([idx], moved * t_c, "ADD")
             vg_spine.add([idx], moved * (1.0 - t_c), "ADD")
 
-    # Ramp head/snout/face weights above the neck collar cleanly toward 100% head to prevent muzzle distortion
+    # Ramp head/snout/face weights above the neck collar cleanly toward 100% head, strictly gated away from arms/shoulders
     z_neck_lo = lm["z_neck"] - 0.005 * H
     z_neck_span = 0.03 * H
-    head_mask = p_co[:, 2] >= z_neck_lo
+    arm_check_names = arm_group_names | {"clavicle_l", "clavicle_r"}
+    arm_check_idxs = {vg.index for vg in p_vgroups if vg.name in arm_check_names}
+    arm_w_arr = np.zeros(len(proxy.data.vertices), dtype=np.float64)
+    for vi, v in enumerate(proxy.data.vertices):
+        arm_w_arr[vi] = sum(g.weight for g in v.groups if g.group in arm_check_idxs)
+
+    head_x_collar = max(lm["x_sh"] * 0.88, 0.11 * H)
+    head_x_crown = max(lm["x_sh"] * 1.35, 0.22 * H)
+    head_x_cap = np.where(p_co[:, 2] < lm["z_head_base"] + 0.03 * H, head_x_collar, head_x_crown)
+    head_mask = (p_co[:, 2] >= z_neck_lo) & (np.abs(p_co[:, 0]) <= head_x_cap) & (arm_w_arr < 0.15)
     head_idx = np.nonzero(head_mask)[0]
     if len(head_idx) > 0:
         for idx in head_idx.tolist():
@@ -1896,13 +2019,64 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
                     pass
             vg_head.add([idx], alpha, "ADD")
 
-    # Soft-blend trailing cape/tail vertices below shoulder toward spine_01/pelvis without sharp discontinuity
-    back_y_start = lm["leg_back_y"] + 0.03 * H
+    # Stabilize closed skirt/long-coat garments on tall humanoids so stride swing does not split the midline
+    vg_hips = p_vgroups.get("pelvis") or p_vgroups.new(name="pelvis")
+    if lm.get("skirt_band") is not None:
+        sk_lo, sk_hi = lm["skirt_band"]
+        vg_tl = p_vgroups.get("thigh_l")
+        vg_tr = p_vgroups.get("thigh_r")
+        vg_cl = p_vgroups.get("calf_l")
+        vg_cr = p_vgroups.get("calf_r")
+        lx_ref = max(lm.get("lx", 0.09 * H) * 1.05, 0.09 * H)
+        sk_mask = (p_co[:, 2] >= sk_lo) & (p_co[:, 2] <= sk_hi) & (np.abs(p_co[:, 0]) <= lm["x_sh"] * 1.15)
+        for idx in np.nonzero(sk_mask)[0].tolist():
+            px = float(p_co[idx, 0])
+            pz = float(p_co[idx, 2])
+            mid_b = max(0.0, min(1.0, 1.0 - abs(px) / lx_ref))
+            top_t = max(0.0, min(1.0, (pz - sk_lo) / max(sk_hi - sk_lo, 0.05 * H)))
+            pelvis_target = min(0.80, 0.22 + 0.36 * top_t + 0.24 * mid_b)
+
+            def _get_w(vg):
+                if vg is None:
+                    return 0.0
+                try:
+                    return vg.weight(idx)
+                except RuntimeError:
+                    return 0.0
+
+            w_p = _get_w(vg_hips)
+            w_tl, w_tr = _get_w(vg_tl), _get_w(vg_tr)
+            w_cl, w_cr = _get_w(vg_cl), _get_w(vg_cr)
+            # Soften left/right leg shear across x=0 inside closed skirt/coat band
+            if mid_b > 0.02 and (w_tl + w_tr) > 1e-4:
+                cross = 0.45 * mid_b
+                avg_t = 0.5 * (w_tl + w_tr)
+                w_tl = w_tl * (1.0 - cross) + avg_t * cross
+                w_tr = w_tr * (1.0 - cross) + avg_t * cross
+                if vg_tl:
+                    vg_tl.add([idx], w_tl, "REPLACE")
+                if vg_tr:
+                    vg_tr.add([idx], w_tr, "REPLACE")
+            leg_tot = w_tl + w_tr + w_cl + w_cr
+            if pelvis_target > w_p and leg_tot > 1e-4:
+                give = min(leg_tot, pelvis_target - w_p)
+                scale = (leg_tot - give) / leg_tot
+                for vg, w in ((vg_tl, w_tl), (vg_tr, w_tr), (vg_cl, w_cl), (vg_cr, w_cr)):
+                    if vg and w > 1e-4:
+                        vg.add([idx], w * scale, "REPLACE")
+                vg_hips.add([idx], give, "ADD")
+
+    # Soft-blend genuine trailing back protrusion toward spine_01/pelvis without clobbering human backs or arms
+    back_ref = max(lm["leg_back_y"], lm["app_back"]["torso"]) if lm.get("is_tall_humanoid") else lm["leg_back_y"]
+    back_y_start = back_ref + float(lm["app_back"].get("margin", 0.03 * H))
     back_y_span = 0.05 * H
-    mask_back = (p_co[:, 2] <= lm["z_arm"] - 0.02 * H) & (p_co[:, 1] > back_y_start)
+    mask_back = (
+        (p_co[:, 2] <= lm["z_arm"] - 0.02 * H)
+        & (p_co[:, 1] > back_y_start)
+        & (np.abs(p_co[:, 0]) <= lm["x_sh"] * 0.95)
+    )
     back_idx = np.nonzero(mask_back)[0]
     if len(back_idx) > 0:
-        vg_hips = p_vgroups.get("pelvis") or p_vgroups.new(name="pelvis")
         for idx in back_idx.tolist():
             alpha = max(0.0, min(1.0, (float(p_co[idx, 1]) - back_y_start) / back_y_span))
             for vg in p_vgroups:
@@ -1954,8 +2128,8 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
                 except RuntimeError:
                     pass
 
-    # Re-lock rigid head sphere/muzzle after smoothing so face features stay crisp
-    strict_head_idx = np.nonzero(p_co[:, 2] >= z_neck_lo + z_neck_span)[0]
+    # Re-lock rigid head sphere/muzzle after smoothing so face features stay crisp (arms still excluded)
+    strict_head_idx = np.nonzero(head_mask & (p_co[:, 2] >= z_neck_lo + z_neck_span))[0]
     for idx in strict_head_idx.tolist():
         for vg in p_vgroups:
             if vg.name != "head":
@@ -2134,36 +2308,49 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
 
 
 def cmd_rig_run(args):
+    import re
     clear_scene()
     import_model(args.input)
     imported = get_mesh_objects()
     if not imported:
         raise RuntimeError(f"No mesh objects found in {args.input}")
-    obj = imported[0] if len(imported) == 1 else ensure_single_mesh("RiggedCharacter")
+
+    # When re-rigging an already-packed multi-LOD GLB, keep only LOD0 base mesh and drop old LOD1..3/rigs
+    lod0_objs = [o for o in imported if re.search(r"mesh_lod0", o.name, re.I)]
+    if lod0_objs:
+        primary_list = lod0_objs
+    else:
+        primary_list = [o for o in imported if not re.search(r"(?:_lod|mesh_lod)[1-4]", o.name, re.I)]
+    for o in list(imported):
+        if o not in primary_list:
+            bpy.data.objects.remove(o, do_unlink=True)
+    for o in list(bpy.data.objects):
+        if o.type == "ARMATURE":
+            bpy.data.objects.remove(o, do_unlink=True)
+    bpy.context.view_layer.update()
+
+    obj = primary_list[0] if len(primary_list) == 1 else ensure_single_mesh("RiggedCharacter")
     for mod in list(obj.modifiers):
         if mod.type == "ARMATURE":
             obj.modifiers.remove(mod)
+    for vg in list(obj.vertex_groups):
+        obj.vertex_groups.remove(vg)
     obj.parent = None
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
 
-    rig, rig_info = build_and_bind_run_rig(obj, action_name=args.action_name, anim_glb=getattr(args, "anim_glb", ""))
-    bpy.ops.object.select_all(action="DESELECT")
-    rig.select_set(True)
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = rig
-    bpy.context.scene.frame_set(0)
-    bpy.ops.export_scene.gltf(
-        filepath=args.out,
-        export_format="GLB",
-        use_selection=True,
-        export_apply=False,
-        export_animations=True,
-        export_skins=True,
-        export_def_bones=True,
+    exp = _export_rigged_with_lods(
+        obj,
+        args.out,
+        action_name=args.action_name,
+        anim_glb=getattr(args, "anim_glb", ""),
+        lod1_tris=int(getattr(args, "lod1_tris", 0) or 0),
+        lod2_tris=int(getattr(args, "lod2_tris", 0) or 0),
+        lod3_tight=bool(getattr(args, "lod3_tight", False)),
     )
+    rig_info = exp["rig_info"]
 
     stats = collect_stats([obj])
     rendered = []
@@ -2181,6 +2368,9 @@ def cmd_rig_run(args):
         "output": os.path.abspath(args.out),
         "rig": rig_info,
         "stats": stats,
+        "lod1Stats": exp["lod1_stats"],
+        "lod2Stats": exp["lod2_stats"],
+        "lod3Stats": exp["lod3_stats"],
         "rendered": rendered,
     }, ensure_ascii=True))
 
@@ -2314,6 +2504,9 @@ def main():
     p_rig.add_argument("--out", required=True)
     p_rig.add_argument("--action-name", default="Run")
     p_rig.add_argument("--anim-glb", default="")
+    p_rig.add_argument("--lod1-tris", type=int, default=0)
+    p_rig.add_argument("--lod2-tris", type=int, default=0)
+    p_rig.add_argument("--lod3-tight", action="store_true", default=False)
     p_rig.add_argument("--qa-dir", default="")
     p_rig.add_argument("--size", type=int, default=512)
     p_rig.add_argument("--engine", default="BLENDER_EEVEE")
