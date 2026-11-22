@@ -493,6 +493,79 @@ function renderSceneList() {
   }
 }
 
+function summarizeVisibleModelLod(sampleRoot, allRoots, lodVal) {
+  const roots = allRoots?.length ? allRoots : [];
+  let inspectRoot = roots[0] || null;
+  if (sampleRoot && roots.length) {
+    const matched = roots.find((r) => {
+      let cur = r;
+      while (cur) {
+        if (cur === sampleRoot) return true;
+        cur = cur.parent;
+      }
+      return false;
+    });
+    if (matched) inspectRoot = matched;
+  }
+  let sumTris = 0;
+  for (const r of roots) {
+    r.traverse((n) => {
+      if (!n.isMesh || !n.visible) return;
+      const g = n.geometry;
+      sumTris += g?.index ? Math.floor(g.index.count / 3) : Math.floor((g?.attributes?.position?.count || 0) / 3);
+    });
+  }
+  let sampleTris = 0;
+  let texDesc = '';
+  let maxW = null;
+  if (inspectRoot) {
+    inspectRoot.traverse((n) => {
+      if (!n.isMesh || !n.visible) return;
+      const g = n.geometry;
+      sampleTris += g?.index ? Math.floor(g.index.count / 3) : Math.floor((g?.attributes?.position?.count || 0) / 3);
+      const mat = Array.isArray(n.material) ? n.material[0] : n.material;
+      const map = mat?.map;
+      const px = Number(n.userData?.colorSize) || map?.image?.width || 0;
+      const lvl = Number(n.userData?.lodLevel);
+      if (!texDesc) {
+        if (lvl === 3 || n.userData?.impostorCols >= 1) {
+          texDesc = px ? `Impostor ${px}px` : 'Impostor';
+        } else if (n.userData?.singleColorOnly || (mat?.isMeshLambertMaterial && map && !mat?.normalMap && !mat?.roughnessMap)) {
+          texDesc = px ? `1×Color ${px}px` : '1×Color';
+        } else if (map) {
+          texDesc = px ? `PBR ${px}px` : 'PBR';
+        }
+      }
+      if (maxW === null) {
+        if (Number.isFinite(Number(n.userData?.maxWeights))) {
+          maxW = Number(n.userData.maxWeights);
+        } else if (lvl === 3 || !n.isSkinnedMesh) {
+          maxW = 0;
+        } else {
+          const sw = g?.attributes?.skinWeight;
+          if (sw) {
+            let best = 0;
+            const stride = Math.min(4, sw.itemSize || 4);
+            const arr = sw.array;
+            for (let i = 0; i < arr.length; i += stride) {
+              let nz = 0;
+              for (let k = 0; k < stride; k++) {
+                if (arr[i + k] > 1e-5) nz++;
+              }
+              if (nz > best) best = nz;
+              if (best >= 4) break;
+            }
+            maxW = best;
+          }
+        }
+      }
+    });
+  }
+  const tag = lodVal && lodVal !== 'auto' ? `LOD${lodVal}` : 'LOD0';
+  const metrics = [`${sampleTris || sumTris} Tris`, texDesc, maxW !== null ? `${maxW}w` : ''].filter(Boolean);
+  return `${tag}: ${metrics.join(' / ')}`;
+}
+
 function updateStatusBar() {
   if (!renderer || !statusEl || !texArray) return;
   const info = renderer.info.render;
@@ -506,7 +579,7 @@ function updateStatusBar() {
     parts.push(`LOD桶[L0:${lc[0]}/L1:${lc[1]}/L2:${lc[2]}]`);
   } else if (activeModelRoots.length) {
     const lv = lodSelect?.value;
-    parts.push(`整体LOD: ${lv && lv !== 'auto' ? `LOD${lv}` : 'LOD0 (默认)'}`);
+    parts.push(summarizeVisibleModelLod(selectedExhibit?.object, activeModelRoots, lv));
   }
   parts.push(`2贴图PBR ${texArray.tileSize}px (${texArray.layerCount}层)`);
   if (lutSelect && lutSelect.value && lutSelect.value !== 'none') {

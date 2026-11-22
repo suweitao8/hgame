@@ -507,3 +507,78 @@ export function loadWithLoader(loader, resolvedUrl, signal, options = undefined)
   return Promise.reject(new TypeError('GLTF loader must implement loadAsync(url) or load(url, onLoad, onProgress, onError)'));
 }
 
+/**
+ * Applies the HGame LOD 1/2/3 material & texture policy to a loaded character hierarchy.
+ * - LOD 1: single sRGB Color texture with mipmaps on lightweight MeshLambertMaterial (no Normal/ORM).
+ * - LOD 2: single sRGB Color texture with generateMipmaps=false + LinearFilter on MeshLambertMaterial.
+ * - LOD 3: Unlit MeshBasicMaterial with toneMapped=true, alphaTest=0.45, and sRGB mipmapped atlas.
+ * @param {Model3DObject} root Loaded character root.
+ * @param {Model3DThree} THREE Three.js namespace.
+ * @param {{ wireframe?: boolean }} [options] Optional overrides.
+ */
+export function applyCharacterLodMaterialPolicy(root, THREE, { wireframe = false } = {}) {
+  if (!root?.traverse || !THREE) return;
+  const MeshLambert = /** @type {any} */ (THREE.MeshLambertMaterial);
+  const MeshBasic = /** @type {any} */ (THREE.MeshBasicMaterial);
+  const SRGB = /** @type {any} */ (THREE.SRGBColorSpace);
+  const LinearFilter = /** @type {any} */ (THREE.LinearFilter);
+  const LinearMipmapLinearFilter = /** @type {any} */ (THREE.LinearMipmapLinearFilter);
+  const DoubleSide = /** @type {any} */ (THREE.DoubleSide);
+
+  root.traverse((node) => {
+    if (!node?.isMesh) return;
+    let lvl = Number(node.userData?.lodLevel);
+    if (!Number.isFinite(lvl)) {
+      const m = /_lod([0-4])$/i.exec(String(node.name || ''));
+      lvl = m ? Number(m[1]) : 0;
+    }
+    const srcMat = Array.isArray(node.material) ? node.material[0] : node.material;
+    const map = srcMat?.map || null;
+
+    if (lvl === 1 && MeshLambert) {
+      if (map) {
+        if (SRGB) map.colorSpace = SRGB;
+        map.generateMipmaps = true;
+        if (LinearMipmapLinearFilter) map.minFilter = LinearMipmapLinearFilter;
+        if (LinearFilter) map.magFilter = LinearFilter;
+        map.needsUpdate = true;
+      }
+      node.material = new MeshLambert({
+        color: 0xffffff,
+        map,
+        side: srcMat?.side,
+        wireframe: Boolean(wireframe),
+      });
+    } else if (lvl === 2 && MeshLambert) {
+      if (map) {
+        if (SRGB) map.colorSpace = SRGB;
+        map.generateMipmaps = false;
+        if (LinearFilter) {
+          map.minFilter = LinearFilter;
+          map.magFilter = LinearFilter;
+        }
+        map.needsUpdate = true;
+      }
+      node.material = new MeshLambert({
+        color: 0xffffff,
+        map,
+        side: srcMat?.side,
+        wireframe: Boolean(wireframe),
+      });
+    } else if (lvl === 3 && MeshBasic && map) {
+      if (SRGB) map.colorSpace = SRGB;
+      map.generateMipmaps = true;
+      map.needsUpdate = true;
+      node.material = new MeshBasic({
+        color: 0xffffff,
+        map,
+        alphaTest: 0.45,
+        transparent: false,
+        toneMapped: true,
+        side: DoubleSide ?? srcMat?.side,
+        wireframe: Boolean(wireframe),
+      });
+    }
+  });
+}
+

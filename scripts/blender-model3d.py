@@ -1151,33 +1151,523 @@ def cmd_remesh_bake(args):
     for ca in list(low.data.color_attributes):
         low.data.color_attributes.remove(ca)
 
-def _build_decimated_lod(src_obj, rig_obj, lod_name, target_tris, max_weights):
+def _dilate_tile_rgba(tile_rgba, radius=6):
+    """Expand opaque edge RGB outward into transparent texels without touching Alpha (strictly per-tile)."""
+    import numpy as np
+
+    out = tile_rgba.copy()
+    opaque = out[..., 3] > 0.02
+    if not np.any(opaque) or np.all(opaque):
+        return out
+    h, w = opaque.shape
+    for _ in range(max(1, int(radius))):
+        if np.all(opaque):
+            break
+        acc_rgb = np.zeros((h, w, 3), dtype=np.float32)
+        acc_cnt = np.zeros((h, w), dtype=np.float32)
+        rgb_src = np.where(opaque[..., None], out[..., :3], 0.0)
+        msk_src = opaque.astype(np.float32)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy == 0 and dx == 0:
+                    continue
+                sy0 = max(0, -dy)
+                sy1 = h - max(0, dy)
+                sx0 = max(0, -dx)
+                sx1 = w - max(0, dx)
+                ty0 = max(0, dy)
+                ty1 = h - max(0, -dy)
+                tx0 = max(0, dx)
+                tx1 = w - max(0, -dx)
+                acc_rgb[ty0:ty1, tx0:tx1] += rgb_src[sy0:sy1, sx0:sx1]
+                acc_cnt[ty0:ty1, tx0:tx1] += msk_src[sy0:sy1, sx0:sx1]
+        frontier = (~opaque) & (acc_cnt > 0.0)
+        if not np.any(frontier):
+            break
+        out[frontier, :3] = acc_rgb[frontier] / acc_cnt[frontier, None]
+        opaque[frontier] = True
+    return out
+
+
+def _srgb_hex_to_linear(hex_val):
+    r = ((hex_val >> 16) & 0xFF) / 255.0
+    g = ((hex_val >> 8) & 0xFF) / 255.0
+    b = (hex_val & 0xFF) / 255.0
+    def _to_lin(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    return (_to_lin(r), _to_lin(g), _to_lin(b), 1.0)
+
+
+def _extract_src_albedo_socket(src_mat):
+    """Find Base Color input socket on a material's Principled BSDF."""
+    if not src_mat or not src_mat.use_nodes:
+        return None, None
+    nt = src_mat.node_tree
+    bsdf = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
+    output = next((n for n in nt.nodes if n.type == "OUTPUT_MATERIAL"), None)
+    return bsdf, output
+
+
+def _build_reauthored_lod(
+    src_obj,
+    rig_obj,
+    lod_name,
+    target_tris,
+    max_weights,
+    color_size=256,
+    is_lod2=False,
+    lm=None,
+):
+    """Build a clean low-poly LOD with transferred smooth normals, re-packed large UV blocks,
+    strictly clamped bone weights, and a single baked Color x AO texture."""
+    import bmesh
+    import mathutils
+    import numpy as np
+
     tris_src = sum(max(1, len(p.vertices) - 2) for p in src_obj.data.polygons)
-    if target_tris <= 0 or tris_src <= target_tris:
+    if target_tris <= 0 or tris_src <= 0:
         return None
-    dup = src_obj.copy()
-    dup.data = src_obj.data.copy()
-    dup.name = lod_name
-    bpy.context.collection.objects.link(dup)
-    dup.parent = rig_obj
-    for m in dup.modifiers:
-        if m.type == "ARMATURE":
-            m.object = rig_obj
-    dec = dup.modifiers.new(f"{lod_name}_Decimate", "DECIMATE")
-    dec.decimate_type = "COLLAPSE"
-    dec.ratio = max(0.04, min(1.0, float(target_tris) / float(tris_src)))
-    dec.use_collapse_triangulate = True
-    bpy.ops.object.select_all(action="DESELECT")
-    dup.select_set(True)
-    bpy.context.view_layer.objects.active = dup
-    bpy.ops.object.modifier_apply(modifier=dec.name)
-    if max_weights and max_weights > 0 and len(dup.vertex_groups) > 0:
+
+    scn = bpy.context.scene
+    orig_pose_pos = rig_obj.data.pose_position if rig_obj and rig_obj.data else None
+    orig_frame = scn.frame_current
+    orig_engine = scn.render.engine
+    orig_samples = scn.cycles.samples
+    orig_bake_s2a = scn.render.bake.use_selected_to_active
+    orig_bake_cage = scn.render.bake.use_cage
+    orig_bake_ext = scn.render.bake.cage_extrusion
+    orig_bake_ray = scn.render.bake.max_ray_distance
+    orig_bake_margin = scn.render.bake.margin
+    orig_bake_mtype = scn.render.bake.margin_type
+    orig_bake_clear = scn.render.bake.use_clear
+    orig_hide_r = {o: o.hide_render for o in bpy.data.objects}
+
+    lod_obj = None
+    src_bake = None
+    temp_mats = []
+    temp_imgs = []
+
+    try:
+        if rig_obj and rig_obj.data:
+            rig_obj.data.pose_position = "REST"
+        scn.frame_set(0)
+        bpy.context.view_layer.update()
+
+        zs = [v.co.z for v in src_obj.data.vertices]
+        z_min = float(min(zs)) if zs else 0.0
+        z_max = float(max(zs)) if zs else 1.0
+        H = max(z_max - z_min, 0.1)
+        z_neck = float(lm["z_neck"]) if (lm and "z_neck" in lm) else (z_min + 0.72 * H)
+        z_head_base = float(lm["z_head_base"]) if (lm and "z_head_base" in lm) else (z_min + 0.80 * H)
+
+        # Duplicate clean geometry copy without Armature modifier for rest-pose decimation & bake
+        lod_obj = src_obj.copy()
+        lod_obj.data = src_obj.data.copy()
+        lod_obj.name = lod_name
+        lod_obj.parent = None
+        lod_obj.matrix_world = src_obj.matrix_world.copy()
+        for m in list(lod_obj.modifiers):
+            lod_obj.modifiers.remove(m)
+        bpy.context.collection.objects.link(lod_obj)
+
+        # Step 1: Pre-process open edges & weld seams
+        bpy.ops.object.select_all(action="DESELECT")
+        lod_obj.select_set(True)
+        bpy.context.view_layer.objects.active = lod_obj
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.remove_doubles(threshold=1e-4)
+        bpy.ops.mesh.delete_loose()
+        bpy.ops.mesh.dissolve_degenerate(threshold=1e-6)
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+        bm_chk = bmesh.new()
+        bm_chk.from_mesh(lod_obj.data)
+        boundary_edges = sum(1 for e in bm_chk.edges if e.is_boundary)
+        bm_chk.free()
+        if boundary_edges > 0:
+            sol = lod_obj.modifiers.new("_LodSolidify", "SOLIDIFY")
+            sol.thickness = max(0.002, 0.004 * H)
+            sol.offset = 0.0
+            sol.use_even_offset = True
+            bpy.ops.object.modifier_apply(modifier=sol.name)
+
+        # Protect head/face and main limb joints during Collapse Decimate
+        for vg in list(lod_obj.vertex_groups):
+            lod_obj.vertex_groups.remove(vg)
+        vg_prot = lod_obj.vertex_groups.new(name="_LodProtect")
+        z_hip = float(lm["z_hip"]) if (lm and "z_hip" in lm) else (z_min + 0.44 * H)
+        z_arm = float(lm["z_arm"]) if (lm and "z_arm" in lm) else (z_min + 0.68 * H)
+        for v in lod_obj.data.vertices:
+            vz = float(v.co.z)
+            if vz >= z_neck:
+                w_p = 1.0
+            elif abs(vz - z_arm) <= 0.06 * H or abs(vz - z_hip) <= 0.06 * H or vz <= z_min + 0.12 * H:
+                w_p = 0.65
+            else:
+                w_p = 0.25
+            vg_prot.add([v.index], w_p, "REPLACE")
+
+        # Step 2: Clean Decimate with seam protection + tiny-island cleanup + smooth normal transfer
+        tris_cur = sum(max(1, len(p.vertices) - 2) for p in lod_obj.data.polygons)
+        if tris_cur > target_tris:
+            dec = lod_obj.modifiers.new(f"{lod_name}_Decimate", "DECIMATE")
+            dec.decimate_type = "COLLAPSE"
+            dec.ratio = max(0.02, min(1.0, float(target_tris) / float(tris_cur)))
+            dec.use_collapse_triangulate = True
+            dec.delimit = {"SEAM"}
+            dec.vertex_group = vg_prot.name
+            dec.vertex_group_factor = 0.45
+            bpy.ops.object.modifier_apply(modifier=dec.name)
+        if vg_prot.name in lod_obj.vertex_groups:
+            lod_obj.vertex_groups.remove(lod_obj.vertex_groups[vg_prot.name])
+
+        # Prune tiny disconnected debris islands (<= 12 faces) while preserving main mesh
+        bm_clean = bmesh.new()
+        bm_clean.from_mesh(lod_obj.data)
+        bm_clean.faces.ensure_lookup_table()
+        seen = set()
+        islands = []
+        for f in bm_clean.faces:
+            if f.index in seen:
+                continue
+            stack = [f]
+            comp = []
+            seen.add(f.index)
+            while stack:
+                cf = stack.pop()
+                comp.append(cf)
+                for e in cf.edges:
+                    for nf in e.link_faces:
+                        if nf.index not in seen:
+                            seen.add(nf.index)
+                            stack.append(nf)
+            islands.append(comp)
+        if len(islands) > 1:
+            max_sz = max(len(c) for c in islands)
+            drop_faces = [f for c in islands if len(c) <= 12 and len(c) < max_sz for f in c]
+            if drop_faces:
+                bmesh.ops.delete(bm_clean, geom=drop_faces, context="FACES")
+        loose_verts = [v for v in bm_clean.verts if not v.link_faces]
+        if loose_verts:
+            bmesh.ops.delete(bm_clean, geom=loose_verts, context="VERTS")
+        bm_clean.to_mesh(lod_obj.data)
+        bm_clean.free()
+
+        # Triangulate cleanly & transfer smooth normals from LOD0
+        if any(len(p.vertices) > 3 for p in lod_obj.data.polygons):
+            tri_m = lod_obj.modifiers.new("_LodTri", "TRIANGULATE")
+            bpy.ops.object.modifier_apply(modifier=tri_m.name)
+        for p in lod_obj.data.polygons:
+            p.use_smooth = True
+
+        dt_n = lod_obj.modifiers.new("_LodTransferNormals", "DATA_TRANSFER")
+        dt_n.object = src_obj
+        dt_n.use_loop_data = True
+        dt_n.data_types_loops = {"CUSTOM_NORMAL"}
+        dt_n.loop_mapping = "POLYINTERP_NEAREST"
+        bpy.ops.object.modifier_apply(modifier=dt_n.name)
+
+        # Step 3: Fresh minimal large-block UV unwrap with 1.9x head/face priority
+        while len(lod_obj.data.uv_layers) > 0:
+            lod_obj.data.uv_layers.remove(lod_obj.data.uv_layers[-1])
+        uv_layer = lod_obj.data.uv_layers.new(name="UVMap")
+        uv_layer.active = True
+        uv_layer.active_render = True
+
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.select_all(action="SELECT")
+        bpy.ops.uv.smart_project(
+            angle_limit=math.radians(66.0),
+            island_margin=(0.025 if color_size >= 256 else 0.04),
+            area_weight=0.0,
+            correct_aspect=True,
+            scale_to_bounds=True,
+        )
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+        # Scale UV islands belonging to head/face (z >= z_head_base) by 1.9x before packing
+        bm_uv = bmesh.new()
+        bm_uv.from_mesh(lod_obj.data)
+        bm_uv.faces.ensure_lookup_table()
+        bm_uv_lay = bm_uv.loops.layers.uv.active
+        if bm_uv_lay is not None:
+            # Build UV island adjacency by shared quantized UV coordinates + shared verts
+            face_uv_islands = []
+            visited_f = set()
+            vert_to_faces = {}
+            for f in bm_uv.faces:
+                for v in f.verts:
+                    vert_to_faces.setdefault(v.index, []).append(f)
+            for f in bm_uv.faces:
+                if f.index in visited_f:
+                    continue
+                stack = [f]
+                visited_f.add(f.index)
+                comp = []
+                while stack:
+                    cf = stack.pop()
+                    comp.append(cf)
+                    uv_by_v = {l.vert.index: (round(l[bm_uv_lay].uv.x, 4), round(l[bm_uv_lay].uv.y, 4)) for l in cf.loops}
+                    for v in cf.verts:
+                        for nf in vert_to_faces.get(v.index, ()):
+                            if nf.index in visited_f:
+                                continue
+                            shared_uv = any(
+                                (round(nl[bm_uv_lay].uv.x, 4), round(nl[bm_uv_lay].uv.y, 4)) == uv_by_v.get(nl.vert.index)
+                                for nl in nf.loops
+                                if nl.vert.index in uv_by_v
+                            )
+                            if shared_uv:
+                                visited_f.add(nf.index)
+                                stack.append(nf)
+                face_uv_islands.append(comp)
+            for comp in face_uv_islands:
+                avg_z = sum(f.calc_center_median().z for f in comp) / max(1, len(comp))
+                if avg_z >= z_head_base:
+                    loops = [l for f in comp for l in f.loops]
+                    cu = sum(l[bm_uv_lay].uv.x for l in loops) / max(1, len(loops))
+                    cv = sum(l[bm_uv_lay].uv.y for l in loops) / max(1, len(loops))
+                    for l in loops:
+                        l[bm_uv_lay].uv.x = cu + (l[bm_uv_lay].uv.x - cu) * 1.9
+                        l[bm_uv_lay].uv.y = cv + (l[bm_uv_lay].uv.y - cv) * 1.9
+            bm_uv.to_mesh(lod_obj.data)
+        bm_uv.free()
+
+        pad_px = 3.0 if color_size >= 256 else 2.5
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.uv.select_all(action="SELECT")
+        bpy.ops.uv.pack_islands(margin=pad_px / float(color_size), rotate=True)
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+        # Step 4: Bone weight transfer from LOD0 + strict limit & normalize
+        for vg in list(lod_obj.vertex_groups):
+            lod_obj.vertex_groups.remove(vg)
+        for src_vg in src_obj.vertex_groups:
+            lod_obj.vertex_groups.new(name=src_vg.name)
+
+        dt_w = lod_obj.modifiers.new("_LodTransferWeights", "DATA_TRANSFER")
+        dt_w.object = src_obj
+        dt_w.use_vert_data = True
+        dt_w.data_types_verts = {"VGROUP_WEIGHTS"}
+        dt_w.vert_mapping = "POLYINTERP_NEAREST"
+        dt_w.layers_vgroup_select_src = "ALL"
+        dt_w.layers_vgroup_select_dst = "NAME"
+        bpy.ops.object.modifier_apply(modifier=dt_w.name)
+
         bpy.ops.object.vertex_group_limit_total(limit=int(max_weights))
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
-    return dup
+
+        # Strict per-vertex verification & repair (1 <= non_zero <= max_weights, sum == 1.0)
+        vg_by_idx = {vg.index: vg for vg in lod_obj.vertex_groups}
+        fallback_vg = (
+            lod_obj.vertex_groups.get("pelvis")
+            or lod_obj.vertex_groups.get("spine_01")
+            or (lod_obj.vertex_groups[0] if len(lod_obj.vertex_groups) > 0 else None)
+        )
+        weighted_pts = []
+        weighted_grps = []
+        unweighted_verts = []
+        for v in lod_obj.data.vertices:
+            entries = [(g.group, float(g.weight)) for g in v.groups if g.weight > 1e-6 and g.group in vg_by_idx]
+            entries.sort(key=lambda x: x[1], reverse=True)
+            if not entries:
+                unweighted_verts.append(v)
+                continue
+            kept = entries[: int(max_weights)]
+            drop = entries[int(max_weights) :]
+            for gi, _ in drop:
+                vg_by_idx[gi].remove([v.index])
+            tot_w = sum(w for _, w in kept)
+            if tot_w <= 1e-6:
+                unweighted_verts.append(v)
+                continue
+            for gi, w in kept:
+                vg_by_idx[gi].add([v.index], w / tot_w, "REPLACE")
+            weighted_pts.append((v.co.x, v.co.y, v.co.z))
+            weighted_grps.append([(gi, w / tot_w) for gi, w in kept])
+        if unweighted_verts:
+            if weighted_pts:
+                w_arr = np.asarray(weighted_pts, dtype=np.float64)
+                for v in unweighted_verts:
+                    d2 = np.sum((w_arr - np.array([v.co.x, v.co.y, v.co.z])) ** 2, axis=1)
+                    best_i = int(np.argmin(d2))
+                    for gi, w in weighted_grps[best_i]:
+                        vg_by_idx[gi].add([v.index], w, "REPLACE")
+            elif fallback_vg is not None:
+                fallback_vg.add([v.index for v in unweighted_verts], 1.0, "REPLACE")
+
+        # Step 5: High-to-Low Cycles Bake (BaseColor via Emit + AO) -> Color x AO single texture
+        src_bake = src_obj.copy()
+        src_bake.data = src_obj.data.copy()
+        src_bake.name = f"_{lod_name}_BakeSrc"
+        src_bake.parent = None
+        src_bake.matrix_world = src_obj.matrix_world.copy()
+        for m in list(src_bake.modifiers):
+            src_bake.modifiers.remove(m)
+        bpy.context.collection.objects.link(src_bake)
+
+        for o in bpy.data.objects:
+            if o.type in ("MESH", "LIGHT") and o not in (src_bake, lod_obj):
+                o.hide_render = True
+        src_bake.hide_render = False
+        src_bake.hide_viewport = False
+        lod_obj.hide_render = False
+        lod_obj.hide_viewport = False
+
+        # Clone src_bake materials so original src_obj materials remain untouched
+        src_bake_mats = []
+        for sm in src_bake.data.materials:
+            if sm is None:
+                continue
+            sm_cp = sm.copy()
+            temp_mats.append(sm_cp)
+            src_bake_mats.append(sm_cp)
+        src_bake.data.materials.clear()
+        for sm_cp in src_bake_mats:
+            src_bake.data.materials.append(sm_cp)
+
+        bake_mat = bpy.data.materials.new(f"_{lod_name}_BakeDst")
+        bake_mat.use_nodes = True
+        temp_mats.append(bake_mat)
+        tex_node = bake_mat.node_tree.nodes.new("ShaderNodeTexImage")
+        bake_mat.node_tree.nodes.active = tex_node
+        lod_obj.data.materials.clear()
+        lod_obj.data.materials.append(bake_mat)
+
+        scn.render.engine = "CYCLES"
+        scn.cycles.samples = 16
+        bake = scn.render.bake
+        bake.use_selected_to_active = True
+        bake.use_cage = False
+        bake.cage_extrusion = max(0.03, 0.045 * H)
+        bake.max_ray_distance = max(0.08, 0.14 * H)
+        bake.margin = max(4, int(round(color_size * 0.03)))
+        bake.margin_type = "EXTEND"
+        bake.use_clear = True
+
+        # 5a. Rewire src_bake materials temporarily to emit pure BaseColor (metallic-safe albedo)
+        albedo_img = bpy.data.images.new(f"_{lod_name}_AlbedoTmp", width=color_size, height=color_size, alpha=False)
+        albedo_img.colorspace_settings.name = "sRGB"
+        temp_imgs.append(albedo_img)
+        for sm_cp in src_bake_mats:
+            bsdf_s, out_s = _extract_src_albedo_socket(sm_cp)
+            if bsdf_s is not None and out_s is not None:
+                nt_s = sm_cp.node_tree
+                em_s = nt_s.nodes.new("ShaderNodeEmission")
+                for lk in list(out_s.inputs["Surface"].links):
+                    nt_s.links.remove(lk)
+                bc_inp = bsdf_s.inputs["Base Color"]
+                if bc_inp.is_linked:
+                    nt_s.links.new(bc_inp.links[0].from_socket, em_s.inputs["Color"])
+                else:
+                    em_s.inputs["Color"].default_value = bc_inp.default_value
+                nt_s.links.new(em_s.outputs["Emission"], out_s.inputs["Surface"])
+
+        tex_node.image = albedo_img
+        bpy.ops.object.select_all(action="DESELECT")
+        src_bake.select_set(True)
+        lod_obj.select_set(True)
+        bpy.context.view_layer.objects.active = lod_obj
+        bpy.ops.object.bake(type="EMIT", margin_type="EXTEND")
+
+        # 5b. Bake AO from src_bake -> lod_obj
+        ao_img = bpy.data.images.new(f"_{lod_name}_AoTmp", width=color_size, height=color_size, alpha=False)
+        ao_img.colorspace_settings.name = "Non-Color"
+        temp_imgs.append(ao_img)
+        tex_node.image = ao_img
+        bpy.ops.object.select_all(action="DESELECT")
+        src_bake.select_set(True)
+        lod_obj.select_set(True)
+        bpy.context.view_layer.objects.active = lod_obj
+        bpy.ops.object.bake(type="AO", margin_type="EXTEND")
+
+        # 5c. Composite Color x mix(1.0, AO, 0.45) in linear space -> sRGB packed image
+        alb_px = np.empty(color_size * color_size * 4, dtype=np.float32)
+        albedo_img.pixels.foreach_get(alb_px)
+        alb_px = alb_px.reshape((-1, 4))
+        ao_px = np.empty(color_size * color_size * 4, dtype=np.float32)
+        ao_img.pixels.foreach_get(ao_px)
+        ao_px = ao_px.reshape((-1, 4))
+
+        comp_px = np.ones((color_size * color_size, 4), dtype=np.float32)
+        comp_px[:, :3] = np.clip(alb_px[:, :3] * (0.55 + 0.45 * ao_px[:, :3]), 0.0, 1.0)
+
+        out_img = bpy.data.images.new(f"{lod_name}_Color", width=color_size, height=color_size, alpha=False)
+        out_img.colorspace_settings.name = "sRGB"
+        out_img.pixels.foreach_set(comp_px.ravel().tolist())
+        out_img.pack()
+
+        # Assign clean single-BaseColor material (zero Normal/ORM/Emissive, metallic=0, roughness=1)
+        out_mat = bpy.data.materials.new(f"{lod_name}_ColorOnly")
+        out_mat.use_nodes = True
+        nt_o = out_mat.node_tree
+        nt_o.nodes.clear()
+        n_out = nt_o.nodes.new("ShaderNodeOutputMaterial")
+        n_bsdf = nt_o.nodes.new("ShaderNodeBsdfPrincipled")
+        n_bsdf.inputs["Metallic"].default_value = 0.0
+        n_bsdf.inputs["Roughness"].default_value = 1.0
+        if "Specular IOR Level" in n_bsdf.inputs:
+            n_bsdf.inputs["Specular IOR Level"].default_value = 0.0
+        n_uv = nt_o.nodes.new("ShaderNodeUVMap")
+        n_uv.uv_map = "UVMap"
+        n_tex = nt_o.nodes.new("ShaderNodeTexImage")
+        n_tex.image = out_img
+        nt_o.links.new(n_uv.outputs["UV"], n_tex.inputs["Vector"])
+        nt_o.links.new(n_tex.outputs["Color"], n_bsdf.inputs["Base Color"])
+        nt_o.links.new(n_bsdf.outputs["BSDF"], n_out.inputs["Surface"])
+
+        lod_obj.data.materials.clear()
+        lod_obj.data.materials.append(out_mat)
+        while len(lod_obj.data.uv_layers) > 1:
+            lod_obj.data.uv_layers.remove(lod_obj.data.uv_layers[-1])
+        for ca in list(lod_obj.data.color_attributes):
+            lod_obj.data.color_attributes.remove(ca)
+
+        lod_obj.parent = rig_obj
+        if rig_obj is not None:
+            am = lod_obj.modifiers.new("Armature", "ARMATURE")
+            am.object = rig_obj
+            am.use_deform_preserve_volume = False
+
+        lod_obj["lodLevel"] = 2 if is_lod2 else 1
+        lod_obj["singleColorOnly"] = True
+        lod_obj["colorSize"] = int(color_size)
+        lod_obj["maxWeights"] = int(max_weights)
+        if is_lod2:
+            lod_obj["atlasCompatible"] = True
+        return lod_obj
+    finally:
+        for o, hr in orig_hide_r.items():
+            if o.name in bpy.data.objects:
+                o.hide_render = hr
+        if src_bake is not None and src_bake.name in bpy.data.objects:
+            bpy.data.objects.remove(src_bake, do_unlink=True)
+        for tm in temp_mats:
+            if tm.name in bpy.data.materials and tm.users == 0:
+                bpy.data.materials.remove(tm, do_unlink=True)
+        for ti in temp_imgs:
+            if ti.name in bpy.data.images and ti.users == 0:
+                bpy.data.images.remove(ti, do_unlink=True)
+        scn.render.engine = orig_engine
+        scn.cycles.samples = orig_samples
+        scn.render.bake.use_selected_to_active = orig_bake_s2a
+        scn.render.bake.use_cage = orig_bake_cage
+        scn.render.bake.cage_extrusion = orig_bake_ext
+        scn.render.bake.max_ray_distance = orig_bake_ray
+        scn.render.bake.margin = orig_bake_margin
+        scn.render.bake.margin_type = orig_bake_mtype
+        scn.render.bake.use_clear = orig_bake_clear
+        if rig_obj and rig_obj.data and orig_pose_pos is not None:
+            rig_obj.data.pose_position = orig_pose_pos
+        scn.frame_set(orig_frame)
+        bpy.context.view_layer.update()
 
 
-def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8, cell_px=128):
+def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8, cell_px=128, elev_deg=18.0):
     import math
     import tempfile
     import bmesh
@@ -1222,17 +1712,22 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     cy = 0.0
     z0 = float(pts[:, 2].min())
     z1 = float(pts[:, 2].max())
+    elev_rad = math.radians(float(elev_deg))
     max_proj = 0.18
+    max_depth = 0.18
     for c in range(eff_cols):
         a = (c / float(eff_cols)) * (2.0 * math.pi)
         proj = np.abs((pts[:, 0] - cx) * math.cos(a) + (pts[:, 1] - cy) * math.sin(a))
+        dep = np.abs((pts[:, 0] - cx) * math.sin(a) - (pts[:, 1] - cy) * math.cos(a))
         max_proj = max(max_proj, float(proj.max()))
+        max_depth = max(max_depth, float(dep.max()))
     half_w = max(0.18, max_proj * 1.06)
-    z_pad_bot = 0.01
-    h = max(0.5, (z1 - (z0 - z_pad_bot)) * 1.04)
+    z_pad_bot = 0.015
+    h_raw = max(0.5, z1 - (z0 - z_pad_bot))
+    h = max(0.5, (h_raw * math.cos(elev_rad) + 2.0 * max_depth * math.sin(elev_rad)) * 1.04)
     z0_box = z0 - z_pad_bot
 
-    # Bake 8-azimuth x N-frame RGBA Impostor sprite sheet in EEVEE
+    # Bake 8-azimuth x N-frame RGBA Impostor sprite sheet in EEVEE matching studio lights (no ACES baked in)
     orig_hide_r = {o: o.hide_render for o in bpy.data.objects}
     orig_hide_vp = {o: o.hide_viewport for o in bpy.data.objects}
     orig_engine = scn.render.engine
@@ -1244,6 +1739,9 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     orig_cmode = scn.render.image_settings.color_mode
     orig_cdepth = scn.render.image_settings.color_depth
     orig_vt = scn.view_settings.view_transform
+    orig_look = scn.view_settings.look
+    orig_exp = scn.view_settings.exposure
+    orig_gam = scn.view_settings.gamma
     orig_world = scn.world
     orig_cam = scn.camera
     orig_taa = getattr(scn.eevee, "taa_render_samples", None)
@@ -1252,14 +1750,43 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     tile_w = max(48, min(192, int(round(cell_px * (2.0 * half_w) / h))))
     atlas = np.zeros((eff_rows * cell_px, eff_cols * cell_px, 4), dtype=np.float32)
 
+    # Hemisphere world shader matching Three.js HemisphereLight(0xf4f8ff, 0x3b4837)
     imp_world = bpy.data.worlds.new("_ImpostorWorld")
-    imp_world.use_nodes = False
-    imp_world.color = (0.88, 0.88, 0.88)
+    imp_world.use_nodes = True
+    w_nt = imp_world.node_tree
+    w_nt.nodes.clear()
+    w_out = w_nt.nodes.new("ShaderNodeOutputWorld")
+    w_bg = w_nt.nodes.new("ShaderNodeBackground")
+    w_bg.inputs["Strength"].default_value = 1.35
+    w_geom = w_nt.nodes.new("ShaderNodeNewGeometry")
+    w_sep = w_nt.nodes.new("ShaderNodeSeparateXYZ")
+    w_map = w_nt.nodes.new("ShaderNodeMapRange")
+    w_map.inputs["From Min"].default_value = -1.0
+    w_map.inputs["From Max"].default_value = 1.0
+    w_map.inputs["To Min"].default_value = 0.0
+    w_map.inputs["To Max"].default_value = 1.0
+    w_mix = w_nt.nodes.new("ShaderNodeMix")
+    w_mix.data_type = "RGBA"
+    w_mix.inputs[6].default_value = _srgb_hex_to_linear(0x3B4837)
+    w_mix.inputs[7].default_value = _srgb_hex_to_linear(0xF4F8FF)
+    w_nt.links.new(w_geom.outputs["Normal"], w_sep.inputs["Vector"])
+    w_nt.links.new(w_sep.outputs["Z"], w_map.inputs["Value"])
+    w_nt.links.new(w_map.outputs["Result"], w_mix.inputs[0])
+    w_nt.links.new(w_mix.outputs[2], w_bg.inputs["Color"])
+    w_nt.links.new(w_bg.outputs["Background"], w_out.inputs["Surface"])
 
-    imp_light_data = bpy.data.lights.new("_ImpostorSun", "SUN")
-    imp_light_data.energy = 1.25
-    imp_light_obj = bpy.data.objects.new("_ImpostorSun", imp_light_data)
-    bpy.context.collection.objects.link(imp_light_obj)
+    # Key + Fill Suns matching Three.js studio key (0xfff6e5) + fill (0x9fc2ff) + HDRI sky fill
+    imp_key_data = bpy.data.lights.new("_ImpostorKeySun", "SUN")
+    imp_key_data.color = _srgb_hex_to_linear(0xFFF6E5)[:3]
+    imp_key_data.energy = 2.65
+    imp_key_obj = bpy.data.objects.new("_ImpostorKeySun", imp_key_data)
+    bpy.context.collection.objects.link(imp_key_obj)
+
+    imp_fill_data = bpy.data.lights.new("_ImpostorFillSun", "SUN")
+    imp_fill_data.color = _srgb_hex_to_linear(0x9FC2FF)[:3]
+    imp_fill_data.energy = 1.15
+    imp_fill_obj = bpy.data.objects.new("_ImpostorFillSun", imp_fill_data)
+    bpy.context.collection.objects.link(imp_fill_obj)
 
     imp_cam_data = bpy.data.cameras.new("_ImpostorCam")
     imp_cam_data.type = "ORTHO"
@@ -1272,7 +1799,7 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
 
     try:
         for o in bpy.data.objects:
-            if o.type in ("MESH", "LIGHT") and o not in (src_obj, imp_light_obj):
+            if o.type in ("MESH", "LIGHT") and o not in (src_obj, imp_key_obj, imp_fill_obj):
                 o.hide_render = True
         src_obj.hide_render = False
         src_obj.hide_viewport = False
@@ -1283,7 +1810,11 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
         if orig_taa is not None:
             scn.eevee.taa_render_samples = 4
         scn.render.film_transparent = True
+        # Standard linear->sRGB only; ACES ToneMapping runs once in Three.js main pass
         scn.view_settings.view_transform = "Standard"
+        scn.view_settings.look = "None"
+        scn.view_settings.exposure = 0.0
+        scn.view_settings.gamma = 1.0
         scn.render.resolution_x = tile_w
         scn.render.resolution_y = tile_h
         scn.render.resolution_percentage = 100
@@ -1291,7 +1822,7 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
         scn.render.image_settings.color_mode = "RGBA"
         scn.render.image_settings.color_depth = "8"
 
-        target_pt = Vector((cx, cy, z0_box + h * 0.5))
+        target_pt = Vector((cx, cy, z0_box + h_raw * 0.5))
         with tempfile.TemporaryDirectory() as tmp_dir:
             cell_png = os.path.join(tmp_dir, "cell.png")
             for r, fr in enumerate(frames):
@@ -1300,13 +1831,21 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
                 y_dst = (eff_rows - 1 - r) * cell_px
                 for c in range(eff_cols):
                     ang = (c / float(eff_cols)) * (2.0 * math.pi)
-                    cam_dir = Vector((math.sin(ang), -math.cos(ang), 0.0))
+                    cam_dir = Vector((
+                        math.sin(ang) * math.cos(elev_rad),
+                        -math.cos(ang) * math.cos(elev_rad),
+                        math.sin(elev_rad),
+                    )).normalized()
                     imp_cam_obj.location = target_pt + cam_dir * 6.0
                     imp_cam_obj.rotation_euler = (-cam_dir).to_track_quat("-Z", "Y").to_euler()
 
-                    l_ang = ang + 0.42
-                    l_dir = Vector((-math.sin(l_ang), math.cos(l_ang), -0.55)).normalized()
-                    imp_light_obj.rotation_euler = l_dir.to_track_quat("-Z", "Y").to_euler()
+                    k_ang = ang + 0.52
+                    k_dir = Vector((-math.sin(k_ang), math.cos(k_ang), -0.78)).normalized()
+                    imp_key_obj.rotation_euler = k_dir.to_track_quat("-Z", "Y").to_euler()
+
+                    f_ang = ang - 2.35
+                    f_dir = Vector((-math.sin(f_ang), math.cos(f_ang), -0.45)).normalized()
+                    imp_fill_obj.rotation_euler = f_dir.to_track_quat("-Z", "Y").to_euler()
 
                     scn.render.filepath = cell_png
                     bpy.ops.render.render(write_still=True)
@@ -1317,7 +1856,8 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
                     tile_px = np.empty(cell_px * cell_px * 4, dtype=np.float32)
                     tmp_img.pixels.foreach_get(tile_px)
                     bpy.data.images.remove(tmp_img, do_unlink=True)
-                    atlas[y_dst : y_dst + cell_px, c * cell_px : (c + 1) * cell_px, :] = tile_px.reshape((cell_px, cell_px, 4))
+                    dilated = _dilate_tile_rgba(tile_px.reshape((cell_px, cell_px, 4)), radius=6)
+                    atlas[y_dst : y_dst + cell_px, c * cell_px : (c + 1) * cell_px, :] = dilated
     finally:
         for o, hr in orig_hide_r.items():
             if o.name in bpy.data.objects:
@@ -1336,17 +1876,21 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
         scn.render.image_settings.color_mode = orig_cmode
         scn.render.image_settings.color_depth = orig_cdepth
         scn.view_settings.view_transform = orig_vt
+        scn.view_settings.look = orig_look
+        scn.view_settings.exposure = orig_exp
+        scn.view_settings.gamma = orig_gam
         scn.world = orig_world
         scn.camera = orig_cam
         if orig_taa is not None:
             scn.eevee.taa_render_samples = orig_taa
-        for o in (imp_cam_obj, imp_light_obj):
+        for o in (imp_cam_obj, imp_key_obj, imp_fill_obj):
             if o.name in bpy.data.objects:
                 bpy.data.objects.remove(o, do_unlink=True)
         if imp_cam_data.name in bpy.data.cameras:
             bpy.data.cameras.remove(imp_cam_data, do_unlink=True)
-        if imp_light_data.name in bpy.data.lights:
-            bpy.data.lights.remove(imp_light_data, do_unlink=True)
+        for ld in (imp_key_data, imp_fill_data):
+            if ld.name in bpy.data.lights:
+                bpy.data.lights.remove(ld, do_unlink=True)
         if imp_world.name in bpy.data.worlds:
             bpy.data.worlds.remove(imp_world, do_unlink=True)
 
@@ -1381,27 +1925,21 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     nt.links.new(n_gt.outputs["Value"], n_bsdf.inputs["Alpha"])
     nt.links.new(n_bsdf.outputs["BSDF"], n_out.inputs["Surface"])
 
-    # 8-vertex / 6-triangle beveled octagon silhouette hull (cuts 40-60% transparent overdraw)
-    ring = [
-        (-half_w * 0.55, 0.0, z0_box),
-        (half_w * 0.55, 0.0, z0_box),
-        (half_w, 0.0, z0_box + h * 0.25),
-        (half_w, 0.0, z0_box + h * 0.72),
-        (half_w * 0.48, 0.0, z0_box + h),
-        (-half_w * 0.48, 0.0, z0_box + h),
-        (-half_w, 0.0, z0_box + h * 0.72),
-        (-half_w, 0.0, z0_box + h * 0.25),
+    # Clean 4-vertex / 2-triangle quad billboard with exact [0, 1] UV
+    quad_pts = [
+        (-half_w, 0.0, z0_box),
+        (half_w, 0.0, z0_box),
+        (half_w, 0.0, z0_box + h),
+        (-half_w, 0.0, z0_box + h),
     ]
+    quad_uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
     mesh_d = bpy.data.meshes.new("mesh_lod3_data")
     bm = bmesh.new()
     uv_layer = bm.loops.layers.uv.new("UVMap")
-    verts = [bm.verts.new(Vector(p)) for p in ring]
+    verts = [bm.verts.new(Vector(p)) for p in quad_pts]
     face = bm.faces.new(verts)
-    for loop in face.loops:
-        co = loop.vert.co
-        u = (co.x + half_w) / max(2.0 * half_w, 1e-4)
-        v = (co.z - z0_box) / max(h, 1e-4)
-        loop[uv_layer].uv = (max(0.0, min(1.0, u)), max(0.0, min(1.0, v)))
+    for loop, uv in zip(face.loops, quad_uvs):
+        loop[uv_layer].uv = uv
     bmesh.ops.triangulate(bm, faces=[face])
     bm.to_mesh(mesh_d)
     bm.free()
@@ -1413,6 +1951,7 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     obj3["lodLevel"] = 3
     obj3["impostorCols"] = eff_cols
     obj3["impostorRows"] = eff_rows
+    obj3["impostorElevDeg"] = int(round(float(elev_deg)))
     obj3["impostorWidth"] = round(2.0 * half_w, 4)
     obj3["impostorHeight"] = round(h, 4)
     obj3.hide_render = True
@@ -1754,21 +2293,27 @@ def _rig_and_export_arp(
             if keep_act:
                 keep_act.name = action_name
 
-        # Generate LOD1/LOD2/LOD3 skinned to the ARP rig prior to GE glTF bake/export
+        # Generate re-authored LOD1/LOD2 (clean low-poly + large-block UV + Color*AO) & LOD3 impostor
         lod1_obj = None
         lod2_obj = None
         lod3_obj = None
         export_objs = [rig, low_obj]
+        is_tall_char = bool(lm and lm.get("is_tall_humanoid", True))
         if lod1_tris > 0:
-            lod1_obj = _build_decimated_lod(low_obj, rig, "mesh_lod1", lod1_tris, 2)
+            lod1_obj = _build_reauthored_lod(
+                low_obj, rig, "mesh_lod1", lod1_tris, 4, color_size=256, is_lod2=False, lm=lm
+            )
             if lod1_obj is not None:
-                lod1_obj["lodLevel"] = 1
+                lod1_obj.hide_render = True
                 export_objs.append(lod1_obj)
         if lod2_tris > 0:
-            src_for_lod2 = lod1_obj if lod1_obj is not None else low_obj
-            lod2_obj = _build_decimated_lod(src_for_lod2, rig, "mesh_lod2", lod2_tris, 1)
+            eff_lod2_tris = lod2_tris if (is_tall_char or lod2_tris != 1200) else 750
+            lod2_color_size = 128 if is_tall_char else 64
+            lod2_obj = _build_reauthored_lod(
+                low_obj, rig, "mesh_lod2", eff_lod2_tris, 2, color_size=lod2_color_size, is_lod2=True, lm=lm
+            )
             if lod2_obj is not None:
-                lod2_obj["lodLevel"] = 2
+                lod2_obj.hide_render = True
                 export_objs.append(lod2_obj)
         if lod3_tight:
             lod3_obj = _build_tight_lod3_impostor(low_obj, rig, anim_range=ret_frames)
@@ -1850,17 +2395,21 @@ def _export_rigged_with_lods(
     lod1_obj = None
     lod2_obj = None
     lod3_obj = None
+    is_tall_char = bool(lm and lm.get("is_tall_humanoid", True))
     if lod1_tris > 0:
-        lod1_obj = _build_decimated_lod(low_obj, rig, "mesh_lod1", lod1_tris, 2)
+        lod1_obj = _build_reauthored_lod(
+            low_obj, rig, "mesh_lod1", lod1_tris, 4, color_size=256, is_lod2=False, lm=lm
+        )
         if lod1_obj is not None:
-            lod1_obj["lodLevel"] = 1
             lod1_obj.hide_render = True
             export_objs.append(lod1_obj)
     if lod2_tris > 0:
-        src_for_lod2 = lod1_obj if lod1_obj is not None else low_obj
-        lod2_obj = _build_decimated_lod(src_for_lod2, rig, "mesh_lod2", lod2_tris, 1)
+        eff_lod2_tris = lod2_tris if (is_tall_char or lod2_tris != 1200) else 750
+        lod2_color_size = 128 if is_tall_char else 64
+        lod2_obj = _build_reauthored_lod(
+            low_obj, rig, "mesh_lod2", eff_lod2_tris, 2, color_size=lod2_color_size, is_lod2=True, lm=lm
+        )
         if lod2_obj is not None:
-            lod2_obj["lodLevel"] = 2
             lod2_obj.hide_render = True
             export_objs.append(lod2_obj)
     if lod3_tight:

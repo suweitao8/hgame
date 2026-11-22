@@ -122,9 +122,33 @@ export async function buildCharacterShowcaseScene({
           }
           n.castShadow = true;
           n.receiveShadow = true;
-          const mats = Array.isArray(n.material) ? n.material : [n.material];
-          for (const m of mats) {
-            if (m && 'wireframe' in m) m.wireframe = Boolean(wireframe);
+          const srcMat = Array.isArray(n.material) ? n.material[0] : n.material;
+          if (lvl === 1 || lvl === 2) {
+            const colorMap = srcMat?.map || null;
+            if (colorMap) {
+              colorMap.colorSpace = THREE.SRGBColorSpace;
+              if (lvl === 2) {
+                colorMap.generateMipmaps = false;
+                colorMap.minFilter = THREE.LinearFilter;
+                colorMap.magFilter = THREE.LinearFilter;
+              } else {
+                colorMap.generateMipmaps = true;
+                colorMap.minFilter = THREE.LinearMipmapLinearFilter;
+                colorMap.magFilter = THREE.LinearFilter;
+              }
+              colorMap.needsUpdate = true;
+            }
+            n.material = new THREE.MeshLambertMaterial({
+              color: 0xffffff,
+              map: colorMap,
+              side: srcMat?.side ?? THREE.FrontSide,
+              wireframe: Boolean(wireframe),
+            });
+          } else {
+            const mats = Array.isArray(n.material) ? n.material : [n.material];
+            for (const m of mats) {
+              if (m && 'wireframe' in m) m.wireframe = Boolean(wireframe);
+            }
           }
           hitMeshes.push(n);
         });
@@ -136,20 +160,25 @@ export async function buildCharacterShowcaseScene({
           let impMat;
           if (srcMat?.map && n.userData?.impostorCols >= 1) {
             const atlasTex = srcMat.map.clone();
+            atlasTex.colorSpace = THREE.SRGBColorSpace;
+            atlasTex.generateMipmaps = true;
+            atlasTex.minFilter = THREE.LinearMipmapLinearFilter;
+            atlasTex.magFilter = THREE.LinearFilter;
             atlasTex.needsUpdate = true;
             atlasTex.repeat.set(1 / cols, 1 / rows);
             atlasTex.offset.set(0, 0);
-            // Unlit Impostor sprite lookup (zero directional darkening, zero emissiveMap UV watermark)
+            // Unlit Impostor sprite lookup (single ACES toneMapping in main pass, 6px edge-dilated atlas)
             impMat = new THREE.MeshBasicMaterial({
               color: 0xffffff,
               map: atlasTex,
               alphaTest: 0.45,
               transparent: false,
+              toneMapped: true,
               side: THREE.DoubleSide,
               wireframe: Boolean(wireframe),
             });
           } else {
-            impMat = srcMat ? srcMat.clone() : new THREE.MeshBasicMaterial({ color: 0xffffff });
+            impMat = srcMat ? srcMat.clone() : new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: true });
             if ('wireframe' in impMat) impMat.wireframe = Boolean(wireframe);
           }
           impMat.needsUpdate = true;

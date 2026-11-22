@@ -30,8 +30,8 @@ export const DEFAULT_ULTRATEX_WORKFLOW_REL = 'user/default/workflows/PixelArtist
  * - high:       High-poly bake master (16k quads, <= 65,535 16-bit index hard cap)
  */
 export const GLOBAL_MAX_GPU_VERTICES = 65535;
-export const T5_LOD1_TARGET_TRIS = 1600;
-export const T5_LOD2_TARGET_TRIS = 350;
+export const T5_LOD1_TARGET_TRIS = 2400;
+export const T5_LOD2_TARGET_TRIS = 1200;
 
 export const CHARACTER_POLY_PRESETS = Object.freeze({
   low: Object.freeze({

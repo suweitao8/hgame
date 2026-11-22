@@ -97,6 +97,18 @@ export function disposeObjectResources(roots: Iterable<Model3DObject>, released?
  */
 export function loadWithLoader(loader: Model3DLoader, resolvedUrl: string, signal?: AbortSignal | undefined, options?: undefined): Promise<unknown>;
 /**
+ * Applies the HGame LOD 1/2/3 material & texture policy to a loaded character hierarchy.
+ * - LOD 1: single sRGB Color texture with mipmaps on lightweight MeshLambertMaterial (no Normal/ORM).
+ * - LOD 2: single sRGB Color texture with generateMipmaps=false + LinearFilter on MeshLambertMaterial.
+ * - LOD 3: Unlit MeshBasicMaterial with toneMapped=true, alphaTest=0.45, and sRGB mipmapped atlas.
+ * @param {Model3DObject} root Loaded character root.
+ * @param {Model3DThree} THREE Three.js namespace.
+ * @param {{ wireframe?: boolean }} [options] Optional overrides.
+ */
+export function applyCharacterLodMaterialPolicy(root: Model3DObject, THREE: Model3DThree, { wireframe }?: {
+    wireframe?: boolean;
+} | undefined): void;
+/**
  * Minimal structural view of a Three.js Object3D (or Mesh/Bone/SkinnedMesh) used by the model3d helpers.
  * Additional Three.js members are reachable through the index signature.
  * @typedef {object} Model3DObject
