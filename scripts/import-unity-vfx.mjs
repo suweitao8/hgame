@@ -82,6 +82,25 @@ function readMinMaxScalar(block, fieldName, fallback = 0) {
   const maxVal = parsedMax !== null ? parsedMax : fallback;
   const parsedMin = numOrInf(sub[1].match(/\bminScalar:\s*(Infinity|-Infinity|[-\d.eE+]+)/));
   const minVal = parsedMin !== null ? parsedMin : maxVal;
+  if (mode === 2) {
+    const maxCurveBlk = sub[1].match(/maxCurve:[\s\S]*?(?=minCurve:|$)/)?.[0] || '';
+    const minCurveBlk = sub[1].match(/minCurve:[\s\S]*$/)?.[0] || '';
+    const readCurveMean = (blk) => {
+      const vals = [...blk.matchAll(/\bvalue:\s*([-\d.eE+]+)/g)].map((m) => Number(m[1]));
+      if (vals.length === 0) return null;
+      return vals.reduce((s, v) => s + v, 0) / vals.length;
+    };
+    const meanMax = readCurveMean(maxCurveBlk);
+    const meanMin = readCurveMean(minCurveBlk);
+    const a = (meanMax !== null ? meanMax : 1) * maxVal;
+    const b = (meanMin !== null ? meanMin : (meanMax !== null ? meanMax : 1)) * maxVal;
+    if (Math.abs(a - b) > 1e-4) {
+      const lo = Math.min(a, b);
+      const hi = Math.max(a, b);
+      return [Number(lo.toFixed(4)), Number(hi.toFixed(4))];
+    }
+    return Number(a.toFixed(4));
+  }
   if (mode === 3 && minVal !== maxVal) {
     const lo = Math.min(minVal, maxVal);
     const hi = Math.max(minVal, maxVal);
@@ -1725,6 +1744,10 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       }
       const wMax = typeof wScalar === 'number' ? wScalar : wScalar[1];
       const baseSizeMax = typeof size === 'number' ? size : size[1];
+      const texScaleM = trailMod.match(/textureScale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+)\}/);
+      const texScaleX = texScaleM ? Number(texScaleM[1]) : 1;
+      const texScaleY = texScaleM ? Number(texScaleM[2]) : 1;
+      const hasTexScale = Math.abs(texScaleX - 1) > 1e-4 || Math.abs(texScaleY - 1) > 1e-4;
       layer.trail = {
         mode: trailMode === 1 ? 'ribbon' : 'particles',
         lifetime: tLife,
@@ -1732,6 +1755,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         blend: trailMat?.blend || 'alpha',
         ...(trailMat?.spriteKey ? { sprite: trailMat.spriteKey } : {}),
         ...(trailMat?.uberMat ? { uberMat: trailMat.uberMat } : {}),
+        ...(hasTexScale ? { textureScale: [Number(texScaleX.toFixed(4)), Number(texScaleY.toFixed(4))] } : {}),
         width: Number((baseSizeMax * wMax).toFixed(3)),
         widthOverTrail: wScalar,
         sizeAffectsWidth: sizeAffW,

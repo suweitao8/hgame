@@ -460,6 +460,32 @@ export function createEffectPlayer({
     return compiled;
   }
 
+  const scratchTrailCustom1 = [0, 0, 0, 0];
+
+  function sampleCustomDataComponent(comp, prngRef, t) {
+    if (comp === undefined || comp === null) return 0;
+    if (typeof comp === 'number') return Number.isFinite(comp) ? comp : 0;
+    if (Array.isArray(comp)) return readRange(comp, 0, 0, prngRef);
+    if (typeof comp === 'object' && comp.mode === 'curve') {
+      const sc = Number.isFinite(comp.scalar) ? comp.scalar : 1;
+      const val = Array.isArray(comp.curve) && comp.curve.length > 0 ? evaluateSizeCurve(comp.curve, t) : 1;
+      return val * sc;
+    }
+    return 0;
+  }
+
+  function sampleCustomDataVec4(vecCfg, prngRef, t = 0, out = scratchTrailCustom1) {
+    if (!vecCfg || typeof vecCfg !== 'object') {
+      out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0;
+      return null;
+    }
+    out[0] = sampleCustomDataComponent(vecCfg.x, prngRef, t);
+    out[1] = sampleCustomDataComponent(vecCfg.y, prngRef, t);
+    out[2] = sampleCustomDataComponent(vecCfg.z, prngRef, t);
+    out[3] = sampleCustomDataComponent(vecCfg.w, prngRef, t);
+    return out;
+  }
+
   function allocTrailFollower(
     x0, y0, z0,
     vx, vy, vz,
@@ -470,6 +496,7 @@ export function createEffectPlayer({
     sizeStart = 1, sizeCurve = null,
     trackedSlot = -1,
     orbitalX = 0, orbitalZ = 0, centerOffY = 0,
+    custom1 = null,
   ) {
     if (!trails || typeof trails.allocTrail !== 'function') return;
     let slot = null;
@@ -534,6 +561,8 @@ export function createEffectPlayer({
       sprite: trailCfg.sprite,
       uvRect: trailCfg.uvRect ?? (trailCfg.sprite && atlasParticles?.regions?.[trailCfg.sprite]) ?? null,
       uberMat: trailCfg.uberMat ?? null,
+      textureScale: trailCfg.textureScale ?? null,
+      custom1,
     });
     if (tid < 0) return;
 
@@ -1350,6 +1379,7 @@ export function createEffectPlayer({
         scratchTintOut[1] * (c0 ? (c0[1] ?? 1) : 1),
         scratchTintOut[2] * (c0 ? (c0[2] ?? 1) : 1),
       ];
+      const sampledCustom1 = sampleCustomDataVec4(layer.customData?.custom1, prng, Math.min(1, clampedInitAge / Math.max(0.01, dur)));
       if (layer.trail.mode === 'ribbon' && ls) {
         if (!ls.ribbonOpts) {
           ls.ribbonOpts = {
@@ -1362,6 +1392,8 @@ export function createEffectPlayer({
             sprite: layer.trail.sprite ?? null,
             uvRect: layer.trail.uvRect ?? (layer.trail.sprite && atlasParticles?.regions?.[layer.trail.sprite]) ?? null,
             uberMat: layer.trail.uberMat ?? null,
+            textureScale: layer.trail.textureScale ?? null,
+            custom1: sampledCustom1 ? [...sampledCustom1] : null,
             lifetime: 0,
             alpha: layer.trail.alpha ?? 1.0,
           };
@@ -1385,6 +1417,7 @@ export function createEffectPlayer({
           sizeStart, layer.sizeCurve,
           trackedSlot,
           orbitalX, orbitalZ, centerOffY,
+          sampledCustom1,
         );
       }
     }

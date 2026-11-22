@@ -221,6 +221,9 @@ attribute vec4 aSegMeta; // rgb24, width, alpha0, alpha1
 attribute vec4 aSegExtra; // endRgb24, widthScale0, widthScale1, hdr
 attribute vec4 aSegUvRect; // u0, v0, u1, v1 (atlas UV override, z<=x means use uTrailUvRect)
 attribute float aSegMatRow;
+attribute vec4 aSegTanA; // tanAx, tanAy, tanAz, texScaleX
+attribute vec4 aSegTanB; // tanBx, tanBy, tanBz, texScaleY
+attribute vec4 aSegCustom1;
 
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
@@ -232,6 +235,7 @@ varying float vAlpha;
 varying float vHdr;
 varying vec4 vUvRect;
 varying float vUberMatRow;
+varying vec4 vCustom1;
 varying vec3 vNormalView;
 varying vec3 vViewDirView;
 
@@ -252,7 +256,9 @@ void main() {
 
   float u = clamp(position.x + 0.5, 0.0, 1.0);
   float spanT = mix(aSegA.w, aSegB.w, u);
-  vUv = aSegMatRow > -0.5 ? vec2(1.0 - spanT, position.y + 0.5) : vec2(mix(0.76, 0.24, spanT), position.y + 0.5);
+  vUv = aSegMatRow > -0.5
+    ? vec2((1.0 - spanT) * aSegTanA.w, (position.y + 0.5) * aSegTanB.w)
+    : vec2(mix(0.76, 0.24, spanT), position.y + 0.5);
   vec3 c0 = unpackRgb24(aSegMeta.x);
   vec3 c1 = unpackRgb24(aSegExtra.x);
   vColor = mix(c0, c1, smoothstep(0.04, 0.32, spanT));
@@ -260,6 +266,7 @@ void main() {
   vHdr = aSegExtra.w;
   vUvRect = aSegUvRect;
   vUberMatRow = aSegMatRow;
+  vCustom1 = aSegCustom1;
 
   vec3 a = aSegA.xyz;
   vec3 b = aSegB.xyz;
@@ -269,11 +276,15 @@ void main() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
-  float wScale = mix(aSegExtra.y, aSegExtra.z, u);
   if (uIs2D > 0.5) {
-    vec3 dir = seg / len;
-    vec3 side = vec3(-dir.y, dir.x, 0.0);
-    vec3 worldPos = mix(a, b, u) + side * (position.y * w * wScale);
+    vec2 dir2 = seg.xy / len;
+    vec2 tA = length(aSegTanA.xy) > 0.0001 ? normalize(aSegTanA.xy) : dir2;
+    vec2 tB = length(aSegTanB.xy) > 0.0001 ? normalize(aSegTanB.xy) : dir2;
+    vec2 sideA = vec2(-tA.y, tA.x);
+    vec2 sideB = vec2(-tB.y, tB.x);
+    vec3 pA = a + vec3(sideA * (position.y * w * aSegExtra.y), 0.0);
+    vec3 pB = b + vec3(sideB * (position.y * w * aSegExtra.z), 0.0);
+    vec3 worldPos = mix(pA, pB, u);
     vNormalView = vec3(0.0, 0.0, 1.0);
     vViewDirView = vec3(0.0, 0.0, 1.0);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
@@ -282,13 +293,20 @@ void main() {
     vec4 mvB = modelViewMatrix * vec4(b, 1.0);
     vec2 vdir = mvB.xy - mvA.xy;
     float vlen = length(vdir);
-    vec2 vside = vlen > 0.0001 ? (vec2(-vdir.y, vdir.x) / vlen) : vec2(1.0, 0.0);
-    vec4 mvPos = mix(mvA, mvB, u);
-    float worldW = w * wScale;
+    vec2 fallbackSide = vlen > 0.0001 ? (vec2(-vdir.y, vdir.x) / vlen) : vec2(1.0, 0.0);
+    vec2 vtA = (mat3(modelViewMatrix) * aSegTanA.xyz).xy;
+    vec2 vtB = (mat3(modelViewMatrix) * aSegTanB.xyz).xy;
+    float ltA = length(vtA);
+    float ltB = length(vtB);
+    vec2 vsideA = ltA > 0.0001 ? (vec2(-vtA.y, vtA.x) / ltA) : fallbackSide;
+    vec2 vsideB = ltB > 0.0001 ? (vec2(-vtB.y, vtB.x) / ltB) : fallbackSide;
     float tipKeep = smoothstep(0.001, 0.012, w);
-    float minScreenW = abs(mvPos.z) * 0.0038 * max(0.16, 1.0 - spanT * 0.84) * tipKeep;
-    vec2 vfwd = vlen > 0.0001 ? (vdir / vlen) : vec2(0.0);
-    mvPos.xy += vfwd * ((u - 0.5) * min(worldW * 0.25, vlen * 0.2)) + vside * (position.y * max(worldW, minScreenW));
+    float wA = max(w * aSegExtra.y, abs(mvA.z) * 0.0038 * max(0.16, 1.0 - aSegA.w * 0.84) * tipKeep);
+    float wB = max(w * aSegExtra.z, abs(mvB.z) * 0.0038 * max(0.16, 1.0 - aSegB.w * 0.84) * tipKeep);
+    vec2 edgeA = mvA.xy + vsideA * (position.y * wA);
+    vec2 edgeB = mvB.xy + vsideB * (position.y * wB);
+    vec4 mvPos = mix(mvA, mvB, u);
+    mvPos.xy = mix(edgeA, edgeB, u);
     vNormalView = vec3(0.0, 0.0, 1.0);
     vViewDirView = -mvPos.xyz;
     gl_Position = projectionMatrix * mvPos;
@@ -328,6 +346,7 @@ varying float vAlpha;
 varying float vHdr;
 varying vec4 vUvRect;
 varying float vUberMatRow;
+varying vec4 vCustom1;
 varying vec3 vNormalView;
 varying vec3 vViewDirView;
 
@@ -337,6 +356,7 @@ ${VFX_UBER_FRAGMENT_GLSL}
 
 void main() {
   if (vUberMatRow > -0.5) {
+    vec4 effCustom1 = (abs(vCustom1.x) + abs(vCustom1.y) + abs(vCustom1.z) + abs(vCustom1.w) > 0.0001) ? vCustom1 : uCustom1;
     vec4 uRes = vfxEvalUberFragment(
       uMaterialLut,
       uAtlasTex,
@@ -347,8 +367,8 @@ void main() {
       vec2(vUv.x, 1.0 - vUv.y),
       0.0,
       false,
-      vec4(vColor, vAlpha),
-      uCustom1,
+      vec4(vfxSrgbToLinear3(vColor), vAlpha),
+      effCustom1,
       uTime,
       vViewDirView,
       vNormalView,
@@ -474,6 +494,9 @@ export function createTrailsSystem({
   const segUv = new Float32Array(totalRibbonSegs * 4);
   const segMatRow = new Float32Array(totalRibbonSegs);
   segMatRow.fill(-1);
+  const segTanA = new Float32Array(totalRibbonSegs * 4);
+  const segTanB = new Float32Array(totalRibbonSegs * 4);
+  const segCustom1 = new Float32Array(totalRibbonSegs * 4);
   const segA_N = new Float32Array(totalRibbonSegs * 4);
   const segB_N = new Float32Array(totalRibbonSegs * 4);
   const segMeta_N = new Float32Array(totalRibbonSegs * 4);
@@ -481,6 +504,9 @@ export function createTrailsSystem({
   const segUv_N = new Float32Array(totalRibbonSegs * 4);
   const segMatRow_N = new Float32Array(totalRibbonSegs);
   segMatRow_N.fill(-1);
+  const segTanA_N = new Float32Array(totalRibbonSegs * 4);
+  const segTanB_N = new Float32Array(totalRibbonSegs * 4);
+  const segCustom1_N = new Float32Array(totalRibbonSegs * 4);
   const trailPoints = new Float32Array(trailCap * trailNodes * 3);
   const trailPointTimes = new Float32Array(trailCap * trailNodes);
   const trailHead = new Int32Array(trailCap);
@@ -495,6 +521,8 @@ export function createTrailsSystem({
   const trailOpacity = new Float32Array(trailCap);
   const trailLifetime = new Float32Array(trailCap);
   const trailUvRect = new Float32Array(trailCap * 4);
+  const trailTexScale = new Float32Array(trailCap * 2);
+  const trailCustom1 = new Float32Array(trailCap * 4);
   const trailIsNormal = new Uint8Array(trailCap);
   const trailMatRow = new Float32Array(trailCap);
   trailMatRow.fill(-1);
@@ -596,12 +624,18 @@ export function createTrailsSystem({
     const ra3 = new THREE.InstancedBufferAttribute(segExtra, 4);
     const ra4 = new THREE.InstancedBufferAttribute(segUv, 4);
     const ra5 = new THREE.InstancedBufferAttribute(segMatRow, 1);
+    const ra6 = new THREE.InstancedBufferAttribute(segTanA, 4);
+    const ra7 = new THREE.InstancedBufferAttribute(segTanB, 4);
+    const ra8 = new THREE.InstancedBufferAttribute(segCustom1, 4);
     rGeo.setAttribute('aSegA', ra0);
     rGeo.setAttribute('aSegB', ra1);
     rGeo.setAttribute('aSegMeta', ra2);
     rGeo.setAttribute('aSegExtra', ra3);
     rGeo.setAttribute('aSegUvRect', ra4);
     rGeo.setAttribute('aSegMatRow', ra5);
+    rGeo.setAttribute('aSegTanA', ra6);
+    rGeo.setAttribute('aSegTanB', ra7);
+    rGeo.setAttribute('aSegCustom1', ra8);
     ribbonMat = new MatCtor({
       vertexShader: RIBBON_VERTEX_GLSL,
       fragmentShader: RIBBON_FRAGMENT_GLSL,
@@ -638,7 +672,7 @@ export function createTrailsSystem({
     ribbonMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     ribbonMesh.name = 'HGameVfxRibbonTrails';
     scene.add(ribbonMesh);
-    ribbonAttrs = [ra0, ra1, ra2, ra3, ra4, ra5];
+    ribbonAttrs = [ra0, ra1, ra2, ra3, ra4, ra5, ra6, ra7, ra8];
 
     // 3b. Alpha-blended RibbonTrailPool
     const rGeoN = new THREE.InstancedBufferGeometry();
@@ -651,12 +685,18 @@ export function createTrailsSystem({
     const rn3 = new THREE.InstancedBufferAttribute(segExtra_N, 4);
     const rn4 = new THREE.InstancedBufferAttribute(segUv_N, 4);
     const rn5 = new THREE.InstancedBufferAttribute(segMatRow_N, 1);
+    const rn6 = new THREE.InstancedBufferAttribute(segTanA_N, 4);
+    const rn7 = new THREE.InstancedBufferAttribute(segTanB_N, 4);
+    const rn8 = new THREE.InstancedBufferAttribute(segCustom1_N, 4);
     rGeoN.setAttribute('aSegA', rn0);
     rGeoN.setAttribute('aSegB', rn1);
     rGeoN.setAttribute('aSegMeta', rn2);
     rGeoN.setAttribute('aSegExtra', rn3);
     rGeoN.setAttribute('aSegUvRect', rn4);
     rGeoN.setAttribute('aSegMatRow', rn5);
+    rGeoN.setAttribute('aSegTanA', rn6);
+    rGeoN.setAttribute('aSegTanB', rn7);
+    rGeoN.setAttribute('aSegCustom1', rn8);
     ribbonNormalMat = new MatCtor({
       vertexShader: RIBBON_VERTEX_GLSL,
       fragmentShader: RIBBON_FRAGMENT_GLSL,
@@ -693,7 +733,7 @@ export function createTrailsSystem({
     ribbonNormalMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     ribbonNormalMesh.name = 'HGameVfxRibbonTrailsNormal';
     scene.add(ribbonNormalMesh);
-    ribbonNormalAttrs = [rn0, rn1, rn2, rn3, rn4, rn5];
+    ribbonNormalAttrs = [rn0, rn1, rn2, rn3, rn4, rn5, rn6, rn7, rn8];
   }
 
   function slashArc(opts = {}) {
@@ -772,6 +812,9 @@ export function createTrailsSystem({
     const dstExtra = isNormal ? segExtra_N : segExtra;
     const dstUv = isNormal ? segUv_N : segUv;
     const dstMatRow = isNormal ? segMatRow_N : segMatRow;
+    const dstTanA = isNormal ? segTanA_N : segTanA;
+    const dstTanB = isNormal ? segTanB_N : segTanB;
+    const dstCustom1 = isNormal ? segCustom1_N : segCustom1;
     const otherMeta = isNormal ? segMeta : segMeta_N;
     const dstAttrs = isNormal ? ribbonNormalAttrs : ribbonAttrs;
     const otherAttrs = isNormal ? ribbonAttrs : ribbonNormalAttrs;
@@ -780,6 +823,14 @@ export function createTrailsSystem({
     const uv1 = trailUvRect[uvBase + 1];
     const uv2 = trailUvRect[uvBase + 2];
     const uv3 = trailUvRect[uvBase + 3];
+    const tsBase = trackId * 2;
+    const tsX = trailTexScale[tsBase] || 1;
+    const tsY = trailTexScale[tsBase + 1] || 1;
+    const c1Base = trackId * 4;
+    const c1x = trailCustom1[c1Base];
+    const c1y = trailCustom1[c1Base + 1];
+    const c1z = trailCustom1[c1Base + 2];
+    const c1w = trailCustom1[c1Base + 3];
 
     for (let s = 0; s < segsPerTrail; s++) {
       const segIdx = segBase + s;
@@ -807,14 +858,74 @@ export function createTrailsSystem({
         ? Math.min(1, Math.max(0, (simTime - trailPointTimes[trackId * trailNodes + idxB]) / life))
         : (s + 1) / Math.max(1, count - 1);
 
-      dstA[i4] = trailPoints[pA];
-      dstA[i4 + 1] = trailPoints[pA + 1];
-      dstA[i4 + 2] = trailPoints[pA + 2];
+      const ax = trailPoints[pA];
+      const ay = trailPoints[pA + 1];
+      const az = trailPoints[pA + 2];
+      const bx = trailPoints[pB];
+      const by = trailPoints[pB + 1];
+      const bz = trailPoints[pB + 2];
+
+      dstA[i4] = ax;
+      dstA[i4 + 1] = ay;
+      dstA[i4 + 2] = az;
       dstA[i4 + 3] = t0;
-      dstB[i4] = trailPoints[pB];
-      dstB[i4 + 1] = trailPoints[pB + 1];
-      dstB[i4 + 2] = trailPoints[pB + 2];
+      dstB[i4] = bx;
+      dstB[i4 + 1] = by;
+      dstB[i4 + 2] = bz;
       dstB[i4 + 3] = t1;
+
+      const segDx = bx - ax;
+      const segDy = by - ay;
+      const segDz = bz - az;
+
+      let tAx = segDx;
+      let tAy = segDy;
+      let tAz = segDz;
+      if (s > 0) {
+        const idxPrev = (trailHead[trackId] - s + trailNodes * 2) % trailNodes;
+        const pPrev = (trackId * trailNodes + idxPrev) * 3;
+        tAx = bx - trailPoints[pPrev];
+        tAy = by - trailPoints[pPrev + 1];
+        tAz = bz - trailPoints[pPrev + 2];
+      }
+      const lenA = Math.hypot(tAx, tAy, tAz);
+      if (lenA > 1e-6) {
+        tAx /= lenA; tAy /= lenA; tAz /= lenA;
+      } else {
+        const segLen = Math.hypot(segDx, segDy, segDz) || 1;
+        tAx = segDx / segLen; tAy = segDy / segLen; tAz = segDz / segLen;
+      }
+
+      let tBx = segDx;
+      let tBy = segDy;
+      let tBz = segDz;
+      if (s + 1 < count - 1) {
+        const idxNext = (trailHead[trackId] - 3 - s + trailNodes * 2) % trailNodes;
+        const pNext = (trackId * trailNodes + idxNext) * 3;
+        tBx = trailPoints[pNext] - ax;
+        tBy = trailPoints[pNext + 1] - ay;
+        tBz = trailPoints[pNext + 2] - az;
+      }
+      const lenB = Math.hypot(tBx, tBy, tBz);
+      if (lenB > 1e-6) {
+        tBx /= lenB; tBy /= lenB; tBz /= lenB;
+      } else {
+        const segLen = Math.hypot(segDx, segDy, segDz) || 1;
+        tBx = segDx / segLen; tBy = segDy / segLen; tBz = segDz / segLen;
+      }
+
+      dstTanA[i4] = tAx;
+      dstTanA[i4 + 1] = tAy;
+      dstTanA[i4 + 2] = tAz;
+      dstTanA[i4 + 3] = tsX;
+      dstTanB[i4] = tBx;
+      dstTanB[i4 + 1] = tBy;
+      dstTanB[i4 + 2] = tBz;
+      dstTanB[i4 + 3] = tsY;
+      dstCustom1[i4] = c1x;
+      dstCustom1[i4 + 1] = c1y;
+      dstCustom1[i4 + 2] = c1z;
+      dstCustom1[i4 + 3] = c1w;
 
       dstMeta[i4] = rgb;
       dstMeta[i4 + 1] = w;
@@ -930,6 +1041,13 @@ export function createTrailsSystem({
     trailUvRect[uvBase + 1] = 0;
     trailUvRect[uvBase + 2] = 0;
     trailUvRect[uvBase + 3] = 0;
+    const tsBase = id * 2;
+    trailTexScale[tsBase] = 1;
+    trailTexScale[tsBase + 1] = 1;
+    trailCustom1[uvBase] = 0;
+    trailCustom1[uvBase + 1] = 0;
+    trailCustom1[uvBase + 2] = 0;
+    trailCustom1[uvBase + 3] = 0;
     if (typeof colorOrOpts === 'object' && colorOrOpts !== null) {
       const startRgb = packRgb24(colorOrOpts.color ?? 0x38bdf8);
       const wStart = colorOrOpts.width ?? width;
@@ -945,6 +1063,16 @@ export function createTrailsSystem({
       trailIsNormal[id] = colorOrOpts.blend === 'alpha' ? 1 : 0;
       if (colorOrOpts.uberMat) {
         trailMatRow[id] = registerUberMaterial(colorOrOpts.uberMat);
+      }
+      if (Array.isArray(colorOrOpts.textureScale)) {
+        trailTexScale[tsBase] = Number(colorOrOpts.textureScale[0] ?? 1) || 1;
+        trailTexScale[tsBase + 1] = Number(colorOrOpts.textureScale[1] ?? 1) || 1;
+      }
+      if (Array.isArray(colorOrOpts.custom1)) {
+        trailCustom1[uvBase] = Number(colorOrOpts.custom1[0] ?? 0) || 0;
+        trailCustom1[uvBase + 1] = Number(colorOrOpts.custom1[1] ?? 0) || 0;
+        trailCustom1[uvBase + 2] = Number(colorOrOpts.custom1[2] ?? 0) || 0;
+        trailCustom1[uvBase + 3] = Number(colorOrOpts.custom1[3] ?? 0) || 0;
       }
       const rect = colorOrOpts.uvRect || (colorOrOpts.sprite && atlasRegionMap?.[colorOrOpts.sprite]);
       if (rect) {
