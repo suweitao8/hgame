@@ -5,6 +5,7 @@ import { mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import sharp from 'sharp';
 import { openAssetDb, resolveDefaultDbPath } from './asset-db.mjs';
 import { buildCharacterSheetPrompt } from './character-image-prompt.mjs';
 import { researchCharacterOnline } from './character-research.mjs';
@@ -53,6 +54,34 @@ function toAssetUrl(relativePath) {
 
 function toModelUrl(relativePath) {
   return '/files/models/' + relativePath.split('/').map(encodeURIComponent).join('/');
+}
+
+const AVATAR_MAX_SIZE = 256;
+
+export function computeFilmAvatarCropRect(width, height) {
+  const w = Math.max(1, Math.floor(Number(width) || 1));
+  const h = Math.max(1, Math.floor(Number(height) || 1));
+  const cellW = Math.max(1, Math.floor(w / 4));
+  const cellH = Math.max(1, Math.floor(h / 2));
+  const cellSize = Math.max(1, Math.min(cellW, cellH));
+  // Offset slightly from top-left outer border (2%) and keep 92% width/height so
+  // slightly shifted cell divider lines on the right/bottom edges are excluded.
+  if (cellSize < 32) {
+    return { left: 0, top: 0, width: cellSize, height: cellSize };
+  }
+  const offset = Math.floor(cellSize * 0.02);
+  const size = Math.max(1, Math.min(cellSize - offset, Math.floor(cellSize * 0.92)));
+  return {
+    left: offset,
+    top: offset,
+    width: size,
+    height: size,
+  };
+}
+
+function findFilmGeneratedAsset(generatedAssets) {
+  return (Array.isArray(generatedAssets) ? generatedAssets : [])
+    .findLast(asset => asset?.mode !== 'humanoid');
 }
 
 function safeModelName(value) {
@@ -396,6 +425,7 @@ export function createAssetHandler({
   let mutationQueue = Promise.resolve();
   const generationJobs = new Map();
   let activeGenerationJobId = null;
+  const avatarCache = new Map();
 
   function getDb() {
     if (assetDb) return assetDb;
@@ -968,6 +998,11 @@ export function createAssetHandler({
             } catch { /* missing 3D files should not break the character list */ }
           }
 
+          const filmAsset = findFilmGeneratedAsset(generatedAssets);
+          const avatarUrl = filmAsset
+            ? `/api/character-avatar?characterId=${encodeURIComponent(entry.id)}&v=${encodeURIComponent(filmAsset.name)}`
+            : '';
+
           characters.push({
             id: entry.id,
             name: entry.name,
@@ -982,6 +1017,7 @@ export function createAssetHandler({
             assets,
             generatedAssets,
             models,
+            ...(avatarUrl ? { avatarUrl } : {}),
           });
         }
 
@@ -1045,6 +1081,64 @@ export function createAssetHandler({
       const stream = createReadStream(targetReal);
       stream.on('error', () => response.destroy());
       stream.pipe(response);
+    } catch {
+      response.writeHead(404);
+      response.end('Not Found');
+    }
+  }
+
+  async function serveCharacterAvatar(request, response, characterIdValue) {
+    const characterId = safeCharacterId(characterIdValue);
+    if (!characterId) {
+      sendJson(response, 400, { error: 'BAD_CHARACTER', message: '角色编号不合法。' });
+      return;
+    }
+
+    const { characters, allowedFiles } = await getIndex();
+    const character = characters.find(entry => entry.id === characterId);
+    const filmAsset = findFilmGeneratedAsset(character?.generatedAssets);
+    const file = filmAsset ? allowedFiles.get(filmAsset.path) : null;
+    if (!character || !file || file.kind !== 'image') {
+      response.writeHead(404);
+      response.end('Not Found');
+      return;
+    }
+
+    try {
+      const [rootReal, targetReal] = await Promise.all([realpath(root), realpath(file.path)]);
+      const info = await stat(targetReal);
+      if (!isInside(rootReal, targetReal) || !info.isFile()) {
+        response.writeHead(404);
+        response.end('Not Found');
+        return;
+      }
+
+      const cacheKey = `${targetReal}:${info.mtimeMs}:${info.size}`;
+      let buffer = avatarCache.get(cacheKey);
+      if (!buffer) {
+        const meta = await sharp(targetReal).metadata();
+        const crop = computeFilmAvatarCropRect(meta.width, meta.height);
+        const targetSize = Math.min(AVATAR_MAX_SIZE, crop.width);
+        buffer = await sharp(targetReal)
+          .extract(crop)
+          .resize(targetSize, targetSize, { kernel: sharp.kernel.lanczos3 })
+          .png({ compressionLevel: 6 })
+          .toBuffer();
+        if (avatarCache.size >= 128) avatarCache.delete(avatarCache.keys().next().value);
+        avatarCache.set(cacheKey, buffer);
+      }
+
+      response.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Content-Length': buffer.length,
+        'Cache-Control': 'private, max-age=3600',
+        'X-Content-Type-Options': 'nosniff',
+      });
+      if (request.method === 'HEAD') {
+        response.end();
+        return;
+      }
+      response.end(buffer);
     } catch {
       response.writeHead(404);
       response.end('Not Found');
@@ -1158,6 +1252,16 @@ export function createAssetHandler({
         const [status, message] = errors[code] || [500, '新增角色失败。'];
         sendJson(response, status, { error: code, message });
       }
+      return;
+    }
+
+    if (url.pathname === '/api/character-avatar') {
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        response.writeHead(405, { Allow: 'GET, HEAD, OPTIONS' });
+        response.end('Method Not Allowed');
+        return;
+      }
+      await serveCharacterAvatar(request, response, url.searchParams.get('characterId'));
       return;
     }
 

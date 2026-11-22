@@ -240,7 +240,7 @@ function renderCharacterList() {
   }
 
   for (const character of filteredCharacters) {
-    const thumbUrl = character.assets?.[0]?.url || character.generatedAssets?.[0]?.url || '';
+    const thumbUrl = character.avatarUrl || character.assets?.[0]?.url || character.generatedAssets?.[0]?.url || '';
     const { button } = createSidebarSquareCard({
       name: character.name,
       thumbUrl,
