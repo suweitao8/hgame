@@ -19,6 +19,25 @@ def clear_scene():
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
+def clear_scene_keep_addons():
+    """Reset objects and orphan datablocks without unloading enabled Blender extensions (e.g. Auto-Rig Pro)."""
+    for o in list(bpy.data.objects):
+        bpy.data.objects.remove(o, do_unlink=True)
+    for col in (
+        bpy.data.meshes,
+        bpy.data.armatures,
+        bpy.data.actions,
+        bpy.data.materials,
+        bpy.data.textures,
+        bpy.data.images,
+        bpy.data.lights,
+        bpy.data.cameras,
+    ):
+        for item in list(col):
+            if item.users == 0:
+                col.remove(item, do_unlink=True)
+
+
 def import_model(filepath):
     ext = os.path.splitext(filepath)[1].lower()
     if ext in (".glb", ".gltf"):
@@ -832,7 +851,7 @@ def cmd_remesh_bake(args):
     work_dir = args.work_dir or os.path.join(out_dir, f"{os.path.splitext(os.path.basename(args.out))[0]}_maps")
     os.makedirs(work_dir, exist_ok=True)
 
-    clear_scene()
+    clear_scene_keep_addons()
     import_model(args.input)
     high = ensure_single_mesh("HighPolySrc")
     normalize_scene_bounds([high], float(getattr(args, "target_height", 0.0) or 0.0), getattr(args, "origin", "keep"))
@@ -1205,7 +1224,344 @@ def _build_tight_lod3_impostor(src_obj, rig_obj):
     return obj3
 
 
-def _export_rigged_with_lods(low_obj, out_path, action_name="Run", anim_glb="", lod1_tris=0, lod2_tris=0, lod3_tight=False):
+def _has_arp_addon():
+    try:
+        scn = bpy.context.scene
+        if not hasattr(scn, "arp_body_name"):
+            return False
+        from bl_ext.blender_org.auto_rig_pro_master.src import auto_rig_smart, auto_rig_prefs  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _view3d_override():
+    win = getattr(bpy.context, "window", None)
+    screen = getattr(win, "screen", None) if win else None
+    area = next((a for a in screen.areas if a.type == "VIEW_3D"), None) if screen else None
+    region = next((r for r in area.regions if r.type == "WINDOW"), None) if area else None
+    if area and region:
+        return bpy.context.temp_override(area=area, region=region)
+    if area:
+        return bpy.context.temp_override(area=area)
+    return bpy.context.temp_override()
+
+
+def _rig_and_export_arp(
+    low_obj,
+    out_path,
+    lm,
+    action_name="Run",
+    anim_glb="",
+    lod1_tris=0,
+    lod2_tris=0,
+    lod3_tight=False,
+):
+    from bl_ext.blender_org.auto_rig_pro_master.src import auto_rig as _arp_core, auto_rig_smart, auto_rig_prefs
+
+    arp_errors = []
+    if bpy.app.background and hasattr(_arp_core, "display_popup_message"):
+        def _headless_popup(msg, header="Info", icon_type="INFO"):
+            print(f"[ARP headless {icon_type}] {header}: {msg}")
+            if str(icon_type).upper() == "ERROR":
+                arp_errors.append(f"{header}: {msg}")
+        _arp_core.display_popup_message = _headless_popup
+
+    H = lm["height"]
+    z0 = lm["z_min"]
+    z_arm = lm["z_arm"]
+    z_hip = lm["z_hip"]
+    z_neck = lm["z_neck"]
+    x_sh = lm["x_sh"]
+    x_tip = max((b[2].x for b in lm["bones"] if b[0] == "hand_l"), default=0.38 * H)
+
+    scn = bpy.context.scene
+    low_obj.name = "mesh_lod0"
+    low_obj["lodLevel"] = 0
+    bpy.ops.object.select_all(action="DESELECT")
+    low_obj.select_set(True)
+    bpy.context.view_layer.objects.active = low_obj
+    bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+    scn.arp_body_name = low_obj.name
+    scn.arp_smart_type = "BODY"
+    scn.arp_smart_sym = True
+    scn.arp_fingers_enable = False
+    scn.arp_fingers_to_detect = 0
+    scn.arp_smart_spine_count = 4
+    scn.arp_smart_neck_count = 1
+    scn.arp_smart_twist_count = 0
+    scn.arp_smart_overwrite = True
+
+    import numpy as np
+    co = lm["co_world"]
+    hand_x = max(0.84 * x_tip, x_sh + 0.14 * H)
+    # Sample bare outer wrist band (+X) to hit actual wrist Z/Y even with wide hanging sleeves
+    wrist_pts = co[(co[:, 0] >= 0.72 * x_tip) & (co[:, 0] <= 0.90 * x_tip) & (co[:, 2] >= z_arm - 0.10 * H) & (co[:, 2] <= z_arm + 0.14 * H)]
+    if len(wrist_pts) < 3:
+        wrist_pts = co[(co[:, 0] >= 0.65 * x_tip) & (co[:, 2] >= z_arm - 0.12 * H) & (co[:, 2] <= z_arm + 0.16 * H)]
+    hand_y = float(np.median(wrist_pts[:, 1])) if len(wrist_pts) >= 3 else 0.0
+    hand_z = float(np.median(wrist_pts[:, 2])) if len(wrist_pts) >= 3 else z_arm
+    if len(wrist_pts) >= 3:
+        hand_x = float(np.median(wrist_pts[:, 0]))
+
+    sh_x = min(max(x_sh, 0.12 * H), 0.17 * H)
+    sh_pts = co[(np.abs(co[:, 0] - sh_x) <= 0.045 * H) & (co[:, 2] >= z_arm - 0.06 * H) & (co[:, 2] <= z_arm + 0.12 * H)]
+    sh_y = float(np.median(sh_pts[:, 1])) if len(sh_pts) >= 3 else hand_y
+    sh_z = float(np.percentile(sh_pts[:, 2], 65)) if len(sh_pts) >= 3 else z_arm
+
+    foot_x = max(0.065 * H, lm.get("lx", 0.09 * H))
+    foot_pts = co[(np.abs(co[:, 0] - foot_x) <= 0.045 * H) & (co[:, 2] <= z0 + 0.08 * H) & (co[:, 1] <= 0.12 * H)]
+    foot_y = float(np.median(foot_pts[:, 1])) if len(foot_pts) >= 3 else sh_y
+
+    def _cleanup_arp_state():
+        for obj in list(bpy.data.objects):
+            if obj == low_obj:
+                continue
+            bpy.data.objects.remove(obj, do_unlink=True)
+
+    def _run_smart_detect(target_obj, f_x, f_y):
+        arp_errors.clear()
+        scn.arp_body_name = target_obj.name
+        scn.arp_smart_type = "BODY"
+        scn.arp_smart_sym = True
+        scn.arp_fingers_enable = False
+        scn.arp_fingers_to_detect = 0
+        scn.arp_smart_spine_count = 4
+        scn.arp_smart_neck_count = 1
+        scn.arp_smart_twist_count = 0
+        scn.arp_smart_overwrite = True
+
+        for mname, loc in (
+            ("root", (0.0, sh_y, z_hip)),
+            ("neck", (0.0, sh_y, max(z_arm + 0.055 * H, min(z_neck, z0 + 0.85 * H)))),
+            ("chin", (0.0, sh_y - 0.05 * H, min(z0 + 0.89 * H, max(z_arm + 0.095 * H, z_neck + 0.035 * H)))),
+            ("shoulder", (sh_x, sh_y, sh_z)),
+            ("hand", (hand_x, hand_y, hand_z)),
+            ("foot", (f_x, f_y, z0 + 0.055 * H)),
+        ):
+            auto_rig_smart._add_marker(mname, True)
+            m_obj = bpy.data.objects.get(f"{mname}_loc")
+            if m_obj:
+                m_obj.location = loc
+
+        bpy.context.view_layer.update()
+        bpy.ops.id.go_detect()
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+    with _view3d_override():
+        _run_smart_detect(low_obj, foot_x, foot_y)
+
+        # If wide lower gown/coat blocks ARP Smart foot raycasts, detect skeleton on trimmed leg-silhouette proxy first
+        if arp_errors and any("feet" in e.lower() or "foot" in e.lower() or "ankle" in e.lower() for e in arp_errors):
+            print("Retrying ARP Smart detection using gown-trimmed leg proxy...")
+            import bmesh as _bmesh
+            _cleanup_arp_state()
+            proxy_data = low_obj.data.copy()
+            bm_p = _bmesh.new()
+            bm_p.from_mesh(proxy_data)
+            del_verts = [
+                v for v in bm_p.verts
+                if v.co.z < z_hip and abs(v.co.x) > 0.14 * H
+            ]
+            if del_verts:
+                _bmesh.ops.delete(bm_p, geom=del_verts, context="VERTS")
+            # Ensure solid ankle/foot boxes exist on detect_proxy so floor-length gown gaps never miss foot rays
+            for sx in (1.0, -1.0):
+                _bmesh.ops.create_cube(
+                    bm_p,
+                    size=1.0,
+                    matrix=mathutils.Matrix.Translation((sx * 0.09 * H, sh_y - 0.02 * H, z0 + 0.04 * H))
+                    @ mathutils.Matrix.Diagonal((0.06 * H, 0.16 * H, 0.08 * H, 1.0)),
+                )
+            bm_p.to_mesh(proxy_data)
+            bm_p.free()
+            detect_proxy = bpy.data.objects.new("_arp_detect_proxy", proxy_data)
+            bpy.context.scene.collection.objects.link(detect_proxy)
+
+            _run_smart_detect(detect_proxy, 0.09 * H, sh_y)
+            if detect_proxy.name in bpy.data.objects:
+                bpy.data.objects.remove(detect_proxy, do_unlink=True)
+            low_obj.hide_viewport = False
+            low_obj.hide_select = False
+            low_obj.hide_set(False)
+            scn.arp_body_name = low_obj.name
+
+        if arp_errors:
+            raise RuntimeError("Auto-Rig Pro Smart detection failed: " + "; ".join(arp_errors))
+
+        rig = next((o for o in bpy.data.objects if o.type == "ARMATURE"), None)
+        if rig is None:
+            raise RuntimeError("Auto-Rig Pro did not generate an armature")
+
+        bpy.ops.object.select_all(action="DESELECT")
+        rig.select_set(True)
+        bpy.context.view_layer.objects.active = rig
+        bpy.ops.arp.match_to_rig()
+
+        bpy.ops.object.mode_set(mode="OBJECT")
+        low_obj.hide_viewport = False
+        low_obj.hide_select = False
+        low_obj.hide_set(False)
+        bpy.ops.object.select_all(action="DESELECT")
+        low_obj.select_set(True)
+        bpy.context.view_layer.objects.active = low_obj
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+        scn.arp_bind_engine = "PSEUDO_VOXELS"
+        scn.arp_bind_scale_fix = False
+        prefs = auto_rig_prefs.get_prefs()
+        prefs.remove_existing_arm_mods = True
+        prefs.remove_existing_vgroups = True
+        bpy.ops.object.select_all(action="DESELECT")
+        low_obj.select_set(True)
+        rig.select_set(True)
+        bpy.context.view_layer.objects.active = rig
+        bpy.ops.arp.bind_to_rig()
+        nz = sum(1 for v in low_obj.data.vertices if sum(g.weight for g in v.groups) > 1e-4)
+        if nz < max(1, int(len(low_obj.data.vertices) * 0.5)):
+            print(f"ARP bind produced only {nz}/{len(low_obj.data.vertices)} weighted verts; retrying with arp_bind_scale_fix=True...")
+            scn.arp_bind_scale_fix = True
+            bpy.ops.object.select_all(action="DESELECT")
+            low_obj.select_set(True)
+            rig.select_set(True)
+            bpy.context.view_layer.objects.active = rig
+            bpy.ops.arp.bind_to_rig()
+            nz = sum(1 for v in low_obj.data.vertices if sum(g.weight for g in v.groups) > 1e-4)
+        if arp_errors:
+            raise RuntimeError("Auto-Rig Pro bind failed: " + "; ".join(arp_errors))
+        if nz == 0:
+            raise RuntimeError("Auto-Rig Pro bind produced zero weighted vertices on mesh_lod0")
+
+        resolved_anim_glb = anim_glb
+        if resolved_anim_glb == "":
+            resolved_anim_glb = DEFAULT_ANIM58_RUN_GLB if os.path.exists(DEFAULT_ANIM58_RUN_GLB) else ""
+
+        ret_frames = [0, 0]
+        if resolved_anim_glb and os.path.exists(resolved_anim_glb):
+            before = set(bpy.data.objects)
+            bpy.ops.import_scene.gltf(filepath=resolved_anim_glb)
+            new_objs = [o for o in bpy.data.objects if o not in before]
+            src_arm = next((o for o in new_objs if o.type == "ARMATURE"), None)
+            if src_arm and src_arm.animation_data and src_arm.animation_data.action:
+                src_act = src_arm.animation_data.action
+                f_end = max(2, int(round(float(src_act.frame_range[1]))))
+                ret_frames = [0, f_end]
+                scn.source_rig = src_arm.name
+                scn.target_rig = rig.name
+                scn.source_action = src_act.name
+                scn.arp_retarget_in_place = True
+                bpy.ops.object.select_all(action="DESELECT")
+                rig.select_set(True)
+                bpy.context.view_layer.objects.active = rig
+                bpy.ops.arp.auto_scale()
+                bpy.ops.arp.build_bones_list()
+                bpy.ops.arp.import_config_preset(preset_name="unreal_mannequin_remap")
+                bpy.ops.arp.retarget(frame_start=0, frame_end=f_end)
+
+            for o in new_objs:
+                if o.name in bpy.data.objects:
+                    bpy.data.objects.remove(o, do_unlink=True)
+
+            keep_act = rig.animation_data.action if rig.animation_data else None
+            for act in list(bpy.data.actions):
+                if act != keep_act:
+                    bpy.data.actions.remove(act, do_unlink=True)
+            if keep_act:
+                keep_act.name = action_name
+
+        # Generate LOD1/LOD2/LOD3 skinned to the ARP rig prior to GE glTF bake/export
+        lod1_obj = None
+        lod2_obj = None
+        lod3_obj = None
+        export_objs = [rig, low_obj]
+        if lod1_tris > 0:
+            lod1_obj = _build_decimated_lod(low_obj, rig, "mesh_lod1", lod1_tris, 2)
+            if lod1_obj is not None:
+                lod1_obj["lodLevel"] = 1
+                export_objs.append(lod1_obj)
+        if lod2_tris > 0:
+            src_for_lod2 = lod1_obj if lod1_obj is not None else low_obj
+            lod2_obj = _build_decimated_lod(src_for_lod2, rig, "mesh_lod2", lod2_tris, 1)
+            if lod2_obj is not None:
+                lod2_obj["lodLevel"] = 2
+                export_objs.append(lod2_obj)
+        if lod3_tight:
+            lod3_obj = _build_tight_lod3_impostor(low_obj, rig)
+            if lod3_obj is not None:
+                vg_r = lod3_obj.vertex_groups.new(name="root")
+                vg_r.add(list(range(len(lod3_obj.data.vertices))), 1.0, "REPLACE")
+                am = lod3_obj.modifiers.new("Armature", "ARMATURE")
+                am.object = rig
+                export_objs.append(lod3_obj)
+
+        scn.arp_export_rig_type = "HUMANOID"
+        scn.arp_engine_type = "UNREAL"
+        scn.arp_rename_for_ue = True
+        scn.arp_mannequin_axes = True
+        scn.arp_export_twist = False
+        scn.arp_ue_ik = False
+        scn.arp_ge_master_traj = True
+        scn.arp_units_x100 = False
+        scn.arp_bake_anim = bool(rig.animation_data and rig.animation_data.action)
+        scn.arp_bake_only_active = True
+        scn.arp_export_act_name = "NONE"
+        scn.arp_ge_sel_only = True
+        scn.arp_ge_gltf_format = "GLB"
+        scn.arp_ge_gltf_export_image_format = "AUTO"
+
+        bpy.ops.object.select_all(action="DESELECT")
+        for eo in export_objs:
+            eo.select_set(True)
+        bpy.context.view_layer.objects.active = rig
+        bpy.ops.arp.arp_export_gltf_panel(filepath=os.path.abspath(out_path))
+
+    return {
+        "rig": rig,
+        "rig_info": {
+            "engine": "auto_rig_pro",
+            "bindEngine": scn.arp_bind_engine,
+            "bones": 23,
+            "action": action_name,
+            "frames": ret_frames,
+            "fps": int(scn.render.fps),
+        },
+        "lod1_stats": collect_stats([lod1_obj]) if lod1_obj is not None else None,
+        "lod2_stats": collect_stats([lod2_obj]) if lod2_obj is not None else None,
+        "lod3_stats": collect_stats([lod3_obj]) if lod3_obj is not None else None,
+    }
+
+
+def _export_rigged_with_lods(
+    low_obj,
+    out_path,
+    action_name="Run",
+    anim_glb="",
+    lod1_tris=0,
+    lod2_tris=0,
+    lod3_tight=False,
+    rig_engine="auto",
+):
+    lm = detect_humanoid_landmarks(low_obj)
+    arp_ready = _has_arp_addon()
+    if rig_engine == "arp" and not arp_ready:
+        raise RuntimeError("Requested --rig-engine arp, but Auto-Rig Pro extension is not loaded in Blender")
+    use_arp = (rig_engine == "arp") or (rig_engine == "auto" and lm["is_tall_humanoid"] and arp_ready)
+    if use_arp:
+        return _rig_and_export_arp(
+            low_obj,
+            out_path,
+            lm,
+            action_name=action_name,
+            anim_glb=anim_glb,
+            lod1_tris=lod1_tris,
+            lod2_tris=lod2_tris,
+            lod3_tight=lod3_tight,
+        )
+
     rig, rig_info = build_and_bind_run_rig(low_obj, action_name=action_name, anim_glb=anim_glb)
     low_obj.name = "mesh_lod0"
     low_obj["lodLevel"] = 0
@@ -1269,6 +1625,7 @@ def _export_rigged_with_lods(low_obj, out_path, action_name="Run", anim_glb="", 
             lod1_tris=lod1_tris,
             lod2_tris=lod2_tris,
             lod3_tight=bool(getattr(args, "lod3_tight", False)),
+            rig_engine=getattr(args, "rig_engine", "auto"),
         )
         rig_info = exp["rig_info"]
         lod1_stats = exp["lod1_stats"]
@@ -1418,14 +1775,21 @@ def detect_humanoid_landmarks(obj):
     z_knee = z_ankle + 0.52 * max(z_hip - z_ankle, 0.1 * H)
 
     leg_band_top = min(z_crotch, z_min + 0.36 * H) if is_tall_humanoid else z_crotch
-    leg_band = co[(co[:, 2] >= z_ankle) & (co[:, 2] <= leg_band_top) & (co[:, 1] <= 0.14 * H) & (np.abs(co[:, 0]) >= 0.025 * H)]
+    leg_x_hi = 0.155 * H if is_tall_humanoid else 1e6
+    leg_band = co[
+        (co[:, 2] >= z_ankle)
+        & (co[:, 2] <= leg_band_top)
+        & (co[:, 1] <= 0.14 * H)
+        & (np.abs(co[:, 0]) >= 0.025 * H)
+        & (np.abs(co[:, 0]) <= leg_x_hi)
+    ]
     if len(leg_band) >= 6:
         lx = float(np.median(np.abs(leg_band[:, 0])))
         ly = float(np.median(leg_band[:, 1]))
     else:
         lx, ly = 0.095 * H, (float(np.median(lower_mid[:, 1])) if len(lower_mid) >= 4 else 0.0)
     if is_tall_humanoid:
-        lx = max(0.065 * H, min(lx, 0.135 * H))
+        lx = max(0.065 * H, min(lx, 0.125 * H))
     foot_band = co[(co[:, 2] <= z_ankle + 0.025 * H) & (co[:, 1] <= 0.14 * H)]
     y_toe = float(np.percentile(foot_band[:, 1], 5)) if len(foot_band) >= 4 else ly - 0.10 * H
 
@@ -2309,7 +2673,7 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
 
 def cmd_rig_run(args):
     import re
-    clear_scene()
+    clear_scene_keep_addons()
     import_model(args.input)
     imported = get_mesh_objects()
     if not imported:
@@ -2349,6 +2713,7 @@ def cmd_rig_run(args):
         lod1_tris=int(getattr(args, "lod1_tris", 0) or 0),
         lod2_tris=int(getattr(args, "lod2_tris", 0) or 0),
         lod3_tight=bool(getattr(args, "lod3_tight", False)),
+        rig_engine=getattr(args, "rig_engine", "auto"),
     )
     rig_info = exp["rig_info"]
 
@@ -2486,6 +2851,7 @@ def main():
     p_rb.add_argument("--smooth-head-ratio", type=float, default=0.0)
     p_rb.add_argument("--no-weld-high", action="store_true")
     p_rb.add_argument("--rig-run", action="store_true", default=False)
+    p_rb.add_argument("--rig-engine", default="auto", choices=["auto", "arp", "native"])
     p_rb.add_argument("--lod1-tris", type=int, default=0)
     p_rb.add_argument("--lod2-tris", type=int, default=0)
     p_rb.add_argument("--lod3-tight", action="store_true", default=False)
@@ -2504,6 +2870,7 @@ def main():
     p_rig.add_argument("--out", required=True)
     p_rig.add_argument("--action-name", default="Run")
     p_rig.add_argument("--anim-glb", default="")
+    p_rig.add_argument("--rig-engine", default="auto", choices=["auto", "arp", "native"])
     p_rig.add_argument("--lod1-tris", type=int, default=0)
     p_rig.add_argument("--lod2-tris", type=int, default=0)
     p_rig.add_argument("--lod3-tight", action="store_true", default=False)
