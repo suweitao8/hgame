@@ -1013,12 +1013,16 @@ async function copyComfyOutputFile(config, item, destPath) {
   return destPath;
 }
 
-function runBlenderHelper(config, args) {
+export function buildBlenderLaunchArgs(args = []) {
   assertAsciiPath(blenderHelperPath, 'Blender helper script');
   const needsAddons = args[0] === 'rig-run' || args[0] === 'remesh-bake';
-  const fullArgs = needsAddons
+  return needsAddons
     ? ['--background', '-P', blenderHelperPath, '--', ...args]
     : ['--background', '--factory-startup', '-P', blenderHelperPath, '--', ...args];
+}
+
+function runBlenderHelper(config, args) {
+  const fullArgs = buildBlenderLaunchArgs(args);
   const env = config.runAnimGlb && !process.env.HGAME_MODEL3D_RUN_ANIM_GLB
     ? { ...process.env, HGAME_MODEL3D_RUN_ANIM_GLB: config.runAnimGlb }
     : process.env;

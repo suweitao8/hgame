@@ -161,7 +161,7 @@ node scripts/verify-character-lods.mjs <low.glb>
   - **LOD 3（`2 Tris` 公告牌，`Run-Only` 极省规范）**：默认**只烘焙 1 条 `Run` 动作**（`8×8` `1024×1024`、`18°` 俯仰角、对齐主场景晴昼日光 + `Standard` 单次 Linear→sRGB、单帧独立 `6px` Alpha 扩边）；运行时**凡处于移动/活跃状态一律播放 `Run` 循环，凡静止/待机一律锁定使用 `Run` 第 0 帧**，采用 Unlit `MeshBasicMaterial`（`toneMapped: true`、`alphaTest: 0.45`）确保与 LOD 0 亮度一致且零黑边。
   - **LOD 分级错帧骨骼更新（URO）**：运行时通过 `createLodAnimationScheduler`（`DEFAULT_LOD_ANIMATION_RATES`）按 **`LOD 0: 24Hz` / `LOD 1: 12Hz` / `LOD 2: 6Hz` / `LOD 3: 6Hz`** 黄金比例错帧更新 `AnimationMixer`，中远景角色可削减 75%–88% CPU 骨骼更新开销且无同帧卡顿尖峰。
 - **固定双路径自动绑定规范（`--rig-engine auto`）**：
-  - **高大成人角色（`z_arm_rel >= 0.685`）**：自动走 Blender **Auto-Rig Pro**（Smart + Pseudo-Voxels + Unreal 23-bone glTF）并对齐姿态后重定向 Anim58 `Run`。
+  - **高大成人角色（`z_arm_rel >= 0.685`）**：自动走 Blender **Auto-Rig Pro**（Smart + Pseudo-Voxels + Unreal 23-bone glTF）并对齐姿态后重定向 Anim58 `Run`。**严禁在 `rig-run` / `remesh-bake` 调用 Blender 时传入 `--factory-startup`**（由 `buildBlenderLaunchArgs` 强制守卫，确保 Auto-Rig Pro 与 Auto Unwrap 正常加载）。
   - **小动物 / 短手 Q 版角色（`z_arm_rel < 0.685`）**：自动走原生 **23(+3) 根 UE 骨链**，并应用已定型规则：
     1. **圆润体型脊柱居中**：放宽躯干 Y 过滤至 `0.26 * H`，取 `15%/85%` 分位中点并将 `y_torso` 约束在髋部 `±0.05 * H` 内，避免脊柱前偏贴腹。
     2. **焊接代理权重迁移**：先在无缝焊接代理上做 `ARMATURE_AUTO` 再传回 UV 分裂网格，消除接缝撕裂。
@@ -169,6 +169,7 @@ node scripts/verify-character-lods.mjs <low.glb>
     4. **斗篷/尾巴独立次级摆动**：检测到身后配饰时生成 `cape_01-03`（父骨骼 `spine_03`）或 `tail_01-03`（父骨骼 `pelvis`），权重严格隔离，不与四肢互抢权重。
   - **Anim58 `Run` 强制要求**：标准角色资产统一通过 `.hgame.local.json` 的 `model3d.runAnimGlb`（即 `WudangSword_Animset__MM_Run_Fwd.glb`）重定向真实跑步动作，**严禁对正式角色传递 `--anim-glb procedural`**（`procedural` 仅作离线无动作源兜底）。
 - **低模绑定 QA 核验清单**：
+  - 核验输出 JSON：高大成人角色（`z_arm_rel >= 0.685`）必须确认 `rig.engine === "auto_rig_pro"` 且 `rig.bindEngine === "PSEUDO_VOXELS"`。
   - 检查 `--qa-dir` 输出的 `f06/`、`f18/` 多视角图：四肢摆幅饱满、短手不穿腹、脊柱居中、斗篷/尾巴随动自然。
   - 执行 `node scripts/verify-character-lods.mjs <low.glb>` 确认 LOD 0~3 面数、单 Color 贴图、2w/4w 权重与 `2 Tris` LOD3 全绿，随后执行 `npm run assets:db -- sync` 同步资产库。
 - ⚠️ **避坑固定规则**：
