@@ -12,6 +12,7 @@ import { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter }
 import { createWebRtcDataChannelTransport } from "./lockstep/webrtc-transport.js";
 import { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
 import { createBoneMap3D, retargetClip3D } from "./animation/retarget3d.js";
+import { createUpperLowerMasks } from "./animation/animator3d.js";
 import { defineProject, resolveFeatureGraph } from "./core/config.js";
 import { Component } from "./core/component.js";
 import { Entity } from "./core/entity.js";
@@ -414,11 +415,17 @@ export const HGame: Readonly<{
         blurPasses: 2;
         sightExtra: 0.35;
         edgeSoften: 0.65;
+        revealerSources: readonly string[];
         viewRadius: 23.25;
         softenDistance: 4;
         unobscuredRadius: 2.5;
         unobscuredSoften: 1;
         rayCount: 256;
+        wardViewRadius: 14;
+        wardSoftenDistance: 3;
+        wardUnobscuredRadius: 1.5;
+        wardUnobscuredSoften: 0.6;
+        wardRayCount: 160;
         visibilityThreshold: 0.3;
         transitionRange: readonly number[];
         fogColor: readonly number[];
@@ -1648,6 +1655,7 @@ export const HGame: Readonly<{
     createInertialBlend3D: typeof createInertialBlend3D;
     createBoneMap3D: typeof createBoneMap3D;
     retargetClip3D: typeof retargetClip3D;
+    createUpperLowerMasks: typeof createUpperLowerMasks;
     createShadowAtlas3D: typeof createShadowAtlas3D;
     generateLightmapUV3D: typeof generateLightmapUV3D;
     createLightmapBaker3D: typeof createLightmapBaker3D;
@@ -1769,7 +1777,7 @@ export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from "./integr
 export { TOPDOWN_CAMERA_PRESET, createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
 export { RED_DOT_STYLES, normalizeRedDotPath, splitRedDotAncestors, computeCommercialDayKey, formatRedDotBadge, createRedDotSystem, createPanelStack, applyAriaToElement, computeFlexLayout, createCanvasUiRenderer, renderSdfText, layoutRichTextLines, createCanvasAriaBridge, createLiveProfilerOverlay, DEFAULT_THUMB_ARC_SPEC, computeThumbArcLayout, isInThumbComfortZone, createThumbArcHud, createVirtualList, createI18n, computeStaggerProgress, createUiSurfaceSpring, createUiMotionGroup, UI_PHASES, UI_UX_CUES, createUiDirector } from "./ui/index.js";
 export { createNetworkStateSync, createSceneReplicator, createSpatialAoiFilter } from "./lockstep/state-sync.js";
-export { createSpringBoneChain3D, createInertialBlend3D } from "./animation/animator3d.js";
+export { createSpringBoneChain3D, createInertialBlend3D, createUpperLowerMasks } from "./animation/animator3d.js";
 export { createBoneMap3D, retargetClip3D } from "./animation/retarget3d.js";
 export { VFX_EASING, VFX_RENDER_ORDERS, VFX_SHAPE, TELEGRAPH_SHAPE, CROWD_STATUS, VFX_PRESETS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, extractGlyphIndices, createFloatingTextPool, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, packCrowdAnimStatus, unpackCrowdAnimStatus, createScreenFeedbackPass, createVfxSystem, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, createProceduralVfxAtlas, createAtlasParticlePool, createMeshVfxPool, validateVfxRecipe, createEffectPlayer } from "./vfx/index.js";
 export { STANDARD_ART_SPEC, TOPDOWN_LIGHTING_PRESET, ART_THEMES, listArtThemes, getArtTheme, resolvePresentationPreset, GAME_AUDIO_EVENTS, DEFAULT_AUDIO_MATRIX, AUDIO_PROFILES, createAudioDirector, GENRE_ARCHETYPES, listGenreArchetypes, defineGameBlueprint, evaluateBlueprintBalance, createBlueprintFromIdea, createGameSession, mountGameShell, REQUIRED_DESIGN_DOCS, renderGameDesignDocs } from "./kit/index.js";

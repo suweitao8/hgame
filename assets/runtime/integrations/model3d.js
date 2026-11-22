@@ -18,6 +18,7 @@ export {
 } from './model3d/bone-vat.js';
 export {
   createAvatarMask,
+  createUpperLowerMasks,
   createBlendTree1D,
   createBlendTree2D,
   createAnimator3D,

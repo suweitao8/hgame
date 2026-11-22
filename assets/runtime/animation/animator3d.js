@@ -238,6 +238,137 @@ export function createAvatarMask(spec = {}) {
   });
 }
 
+const DEFAULT_SPINE_CANDIDATES = [
+  'spine',
+  'spine0',
+  'spine1',
+  'spine01',
+  'upperbody',
+  'torso',
+  'abdomen',
+  'waist',
+  'chest',
+];
+
+function normalizeSpineToken(name) {
+  if (typeof name !== 'string') return '';
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:mixamorig:|mixamorig|bip001|bip01|def-|def_|org-|mch-|valvebiped)/i, '')
+    .replace(/[\s_:\-.]+/g, '');
+}
+
+function collectTreeNodes(rootOrSkeleton) {
+  const nodes = [];
+  if (!rootOrSkeleton) return nodes;
+  const seen = new Set();
+  const visit = (node) => {
+    if (!node || seen.has(node)) return;
+    seen.add(node);
+    nodes.push(node);
+    if (Array.isArray(node.children)) {
+      for (const ch of node.children) visit(ch);
+    }
+  };
+  if (Array.isArray(rootOrSkeleton.bones)) {
+    for (const b of rootOrSkeleton.bones) visit(b);
+  }
+  if (Array.isArray(rootOrSkeleton.skeleton?.bones)) {
+    for (const b of rootOrSkeleton.skeleton.bones) visit(b);
+  }
+  if (typeof rootOrSkeleton.traverse === 'function') {
+    rootOrSkeleton.traverse((node) => {
+      if (node && !seen.has(node)) {
+        seen.add(node);
+        nodes.push(node);
+      }
+    });
+  } else {
+    visit(rootOrSkeleton);
+  }
+  return nodes;
+}
+
+/**
+ * Convenience helper splitting a 3D character rig into complementary upper-body and lower-body
+ * `AvatarMask` layers (so upper-body attack/aim clips and lower-body locomotion clips blend
+ * with zero overlapping tracks).
+ *
+ * @param {any} rootOrSkeleton Character root Object3D, SkinnedMesh, or Skeleton.
+ * @param {object} [options]
+ * @param {string | object | null} [options.spineBone=null] Explicit split bone object or bone name; auto-detects Spine/Chest when omitted.
+ * @param {readonly string[]} [options.spineNames] Custom ordered candidate names for spine auto-detection.
+ * @param {boolean} [options.includeSpineInUpper=true] Include the split spine bone itself in the upper-body mask.
+ * @returns {{ upperMask: ReturnType<typeof createAvatarMask>, lowerMask: ReturnType<typeof createAvatarMask>, spineBone: any, spineName: string | null, upperBones: readonly string[] }}
+ */
+export function createUpperLowerMasks(rootOrSkeleton, {
+  spineBone = null,
+  spineNames = DEFAULT_SPINE_CANDIDATES,
+  includeSpineInUpper = true,
+} = {}) {
+  let resolvedSpine = null;
+
+  if (spineBone && typeof spineBone === 'object') {
+    resolvedSpine = spineBone;
+  } else {
+    const nodes = collectTreeNodes(rootOrSkeleton);
+    if (typeof spineBone === 'string' && spineBone.trim()) {
+      const want = spineBone.trim();
+      const wantLower = want.toLowerCase();
+      resolvedSpine =
+        nodes.find(n => n?.name === want) ??
+        nodes.find(n => typeof n?.name === 'string' && n.name.toLowerCase() === wantLower) ??
+        null;
+    } else {
+      const normalizedCandidates = (Array.isArray(spineNames) && spineNames.length > 0 ? spineNames : DEFAULT_SPINE_CANDIDATES)
+        .map(normalizeSpineToken)
+        .filter(Boolean);
+      for (const candidate of normalizedCandidates) {
+        const match = nodes.find(n => normalizeSpineToken(n?.name) === candidate);
+        if (match) {
+          resolvedSpine = match;
+          break;
+        }
+      }
+    }
+  }
+
+  const upperBones = [];
+  const seenUpper = new Set();
+  if (resolvedSpine) {
+    const pushBone = (node) => {
+      if (!node) return;
+      if (node === resolvedSpine && includeSpineInUpper === false) return;
+      if (typeof node.name === 'string' && node.name && !seenUpper.has(node.name)) {
+        seenUpper.add(node.name);
+        upperBones.push(node.name);
+      }
+    };
+    if (typeof resolvedSpine.traverse === 'function') {
+      resolvedSpine.traverse(pushBone);
+    } else {
+      const walk = (n) => {
+        pushBone(n);
+        if (Array.isArray(n?.children)) {
+          for (const ch of n.children) walk(ch);
+        }
+      };
+      walk(resolvedSpine);
+    }
+  }
+
+  const upperMask = createAvatarMask({ bones: upperBones });
+  const lowerMask = createAvatarMask({ exclude: upperBones });
+  return Object.freeze({
+    upperMask,
+    lowerMask,
+    spineBone: resolvedSpine,
+    spineName: resolvedSpine?.name ?? null,
+    upperBones: Object.freeze(upperBones),
+  });
+}
+
 /**
  * 1D parameter-driven animation blend tree (piecewise linear interpolation across sorted thresholds).
  * @param {Array<{ clip: string, threshold: number, speed?: number }>} entries

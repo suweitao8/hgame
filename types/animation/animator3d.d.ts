@@ -18,6 +18,29 @@ export function createAvatarMask(spec?: {
     readonly size: number;
 }>;
 /**
+ * Convenience helper splitting a 3D character rig into complementary upper-body and lower-body
+ * `AvatarMask` layers (so upper-body attack/aim clips and lower-body locomotion clips blend
+ * with zero overlapping tracks).
+ *
+ * @param {any} rootOrSkeleton Character root Object3D, SkinnedMesh, or Skeleton.
+ * @param {object} [options]
+ * @param {string | object | null} [options.spineBone=null] Explicit split bone object or bone name; auto-detects Spine/Chest when omitted.
+ * @param {readonly string[]} [options.spineNames] Custom ordered candidate names for spine auto-detection.
+ * @param {boolean} [options.includeSpineInUpper=true] Include the split spine bone itself in the upper-body mask.
+ * @returns {{ upperMask: ReturnType<typeof createAvatarMask>, lowerMask: ReturnType<typeof createAvatarMask>, spineBone: any, spineName: string | null, upperBones: readonly string[] }}
+ */
+export function createUpperLowerMasks(rootOrSkeleton: any, { spineBone, spineNames, includeSpineInUpper, }?: {
+    spineBone?: string | object | null;
+    spineNames?: readonly string[] | undefined;
+    includeSpineInUpper?: boolean | undefined;
+} | undefined): {
+    upperMask: ReturnType<typeof createAvatarMask>;
+    lowerMask: ReturnType<typeof createAvatarMask>;
+    spineBone: any;
+    spineName: string | null;
+    upperBones: readonly string[];
+};
+/**
  * 1D parameter-driven animation blend tree (piecewise linear interpolation across sorted thresholds).
  * @param {Array<{ clip: string, threshold: number, speed?: number }>} entries
  */

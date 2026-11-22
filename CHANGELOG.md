@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `createUpperLowerMasks` helper (`assets/runtime/animation/animator3d.js`, exported via `integrations/model3d.js` & `index.js`) to split character skeletons automatically (Mixamo/UE/Blender/generic Spine detection or explicit `spineBone`) into non-overlapping `upperMask` / `lowerMask` for 2-layer locomotion + upper-body action playback.
+
 - Standardize LoL-style character/ward-only Fog of War in HGame (`assets/runtime/world/fog-of-war.js`, `docs/guides/USER-AND-AGENT-GUIDE.md`): extended `TOPDOWN_FOG_DEFAULTS` with `revealerSources: ['character', 'ward']` and ward sight defaults (`14m` radius, `3m` soften, `160` rays), added `addWard(opts)` helper on `createFogOfWarWorld`, and documented fixed `256×256` resolution, character/ward-only vision (weapons/projectiles do not scout fog), and clean top-down presentation without fake shadow discs or overhead nameplates.
 
 - Optimize HGame Fog of War for multi-unit / teammate shared vision and large maps (`assets/runtime/world/fog-of-war.js`, `assets/runtime/integrations/fog-of-war.js`): added texel-snapped sliding camera window (`setWindowCenter`, `setBounds`, live `bounds`, synced automatically in `createFogOfWarThreeOverlay`), off-window revealer raster skip while preserving analytical `sampleVisualVisibility` for off-screen teammates, and dirty-AABB `applySeparableBlur` + `displayVisibility` updates when `!useMemory`.
