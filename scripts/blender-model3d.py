@@ -1296,7 +1296,8 @@ def _build_reauthored_lod(
         # Protect head/face and main limb joints during Collapse Decimate
         for vg in list(lod_obj.vertex_groups):
             lod_obj.vertex_groups.remove(vg)
-        vg_prot = lod_obj.vertex_groups.new(name="_LodProtect")
+        prot_name = "_LodProtect"
+        vg_prot = lod_obj.vertex_groups.new(name=prot_name)
         z_hip = float(lm["z_hip"]) if (lm and "z_hip" in lm) else (z_min + 0.44 * H)
         z_arm = float(lm["z_arm"]) if (lm and "z_arm" in lm) else (z_min + 0.68 * H)
         for v in lod_obj.data.vertices:
@@ -1317,11 +1318,11 @@ def _build_reauthored_lod(
             dec.ratio = max(0.02, min(1.0, float(target_tris) / float(tris_cur)))
             dec.use_collapse_triangulate = True
             dec.delimit = {"SEAM"}
-            dec.vertex_group = vg_prot.name
+            dec.vertex_group = prot_name
             dec.vertex_group_factor = 0.45
             bpy.ops.object.modifier_apply(modifier=dec.name)
-        if vg_prot.name in lod_obj.vertex_groups:
-            lod_obj.vertex_groups.remove(lod_obj.vertex_groups[vg_prot.name])
+        if prot_name in lod_obj.vertex_groups:
+            lod_obj.vertex_groups.remove(lod_obj.vertex_groups[prot_name])
 
         # Prune tiny disconnected debris islands (<= 12 faces) while preserving main mesh
         bm_clean = bmesh.new()
