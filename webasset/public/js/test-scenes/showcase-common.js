@@ -10,8 +10,8 @@ export const MATERIAL_SLOT_ALIASES = Object.freeze({
   curb_granite: 'granite_paving_slabs',
   sidewalk_permeable_grey: 'sidewalk_tiles_01',
   sidewalk_permeable_red: 'ceramic_tiles_red',
-  cn_tactile_dot: 'cn_tactile_yellow',
-  cn_tactile_strip: 'cn_tactile_yellow',
+  cn_tactile_dot: 'square_paving_tiles',
+  cn_tactile_strip: 'square_paving_tiles',
   // Tile & Paving
   tile_polished_800: 'marble_tiles',
   tile_antislip: 'square_paving_tiles',

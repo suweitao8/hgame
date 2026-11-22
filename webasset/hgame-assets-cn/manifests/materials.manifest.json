@@ -918,28 +918,6 @@
       "uvScale": 0.5,
       "hasMetalness": false,
       "resolution": "1024x1024"
-    },
-    {
-      "id": "cn_hallway_wainscot",
-      "category": "10_cn_procedural",
-      "sourcePath": "procedural/plaster_wall",
-      "derivedFrom": "plaster_wall",
-      "surfaceType": "concrete",
-      "scanSizeMeters": 2,
-      "uvScale": 0.5,
-      "hasMetalness": false,
-      "resolution": "1024x1024"
-    },
-    {
-      "id": "cn_tactile_yellow",
-      "category": "10_cn_procedural",
-      "sourcePath": "procedural/square_paving_tiles",
-      "derivedFrom": "square_paving_tiles",
-      "surfaceType": "tile",
-      "scanSizeMeters": 1,
-      "uvScale": 1,
-      "hasMetalness": false,
-      "resolution": "1024x1024"
     }
   ]
 }

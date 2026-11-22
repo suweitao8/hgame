@@ -345,53 +345,6 @@ function buildProceduralDerivedSlot(entry, baseBufs, size) {
       normalRm[i + 2] = Math.max(72, Math.min(115, Math.round(normalRm[i + 2] * 0.45)));
       normalRm[i + 3] = 0;
     }
-  } else if (entry.id === 'cn_hallway_wainscot') {
-    const dadoTopY = Math.round(size * 0.55);
-    const stripeTopY = Math.round(size * 0.53);
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const i = (y * size + x) * 4;
-        if (y >= dadoTopY) {
-          const lum = (0.299 * color[i] + 0.587 * color[i + 1] + 0.114 * color[i + 2]) / 255;
-          const texVar = 0.85 + lum * 0.18;
-          color[i] = Math.min(255, Math.round(52 * texVar));
-          color[i + 1] = Math.min(255, Math.round(92 * texVar));
-          color[i + 2] = Math.min(255, Math.round(68 * texVar));
-          normalRm[i + 2] = Math.max(96, Math.round(normalRm[i + 2] * 0.55));
-        } else if (y >= stripeTopY) {
-          color[i] = 30;
-          color[i + 1] = 54;
-          color[i + 2] = 40;
-          normalRm[i + 1] = y < (stripeTopY + dadoTopY) / 2 ? 156 : 100;
-          normalRm[i + 2] = 110;
-        }
-      }
-    }
-  } else if (entry.id === 'cn_tactile_yellow') {
-    for (let y = 0; y < size; y++) {
-      const gy = (y / size * 4) % 1;
-      for (let x = 0; x < size; x++) {
-        const gx = (x / size * 4) % 1;
-        const i = (y * size + x) * 4;
-        const grout = gx < 0.03 || gx > 0.97 || gy < 0.03 || gy > 0.97;
-        const ribPhase = (gx * 6) % 1;
-        const onRib = !grout && gy > 0.08 && gy < 0.92 && ribPhase > 0.25 && ribPhase < 0.75;
-        const lum = (0.299 * color[i] + 0.587 * color[i + 1] + 0.114 * color[i + 2]) / 255;
-        const grain = 0.86 + lum * 0.22;
-        const base = grout ? [115, 92, 34] : onRib ? [212, 162, 32] : [192, 144, 28];
-        color[i] = Math.min(255, Math.round(base[0] * grain));
-        color[i + 1] = Math.min(255, Math.round(base[1] * grain));
-        color[i + 2] = Math.min(255, Math.round(base[2] * grain));
-        let nx = 0;
-        if (onRib) {
-          nx = Math.sin(((ribPhase - 0.25) / 0.5 - 0.5) * Math.PI) * 0.55;
-        }
-        normalRm[i] = Math.round(clamp01((nx + 1) * 0.5) * 255);
-        normalRm[i + 1] = 128;
-        normalRm[i + 2] = grout ? 232 : 182;
-        normalRm[i + 3] = 0;
-      }
-    }
   } else {
     throw new Error(`Unknown procedural slot "${entry.id}"`);
   }

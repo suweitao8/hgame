@@ -54,7 +54,7 @@ const TEST_SCENES = [
   {
     id: 'cn_material_showcase',
     name: '全量 PBR 材质展馆',
-    subtitle: '90+ 通用无缝材质按分类走廊陈列 · 立方体/球体/2.6m地坪同屏对比',
+    subtitle: '全量通用无缝材质按分类走廊陈列 · 立方体/球体/2.6m地坪同屏对比',
     assetKind: 'materials',
   },
   {

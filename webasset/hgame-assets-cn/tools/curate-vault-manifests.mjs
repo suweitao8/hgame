@@ -193,11 +193,10 @@ const MATERIAL_PICKS = [
   { id: 'nature_granite_rock', category: '9_nature_terrain', source: 'fab', dir: 'Granite_Rock-67d78d30', surfaceType: 'concrete' },
   { id: 'nature_tree_bark', category: '9_nature_terrain', source: 'fab', dir: 'Tree_Bark-c61dd941', surfaceType: 'wood' },
 
-  // 10. Procedural CN Derived Slots (4)
+  // 10. Procedural CN Derived Slots (3)
   { id: 'cn_corrugated_blue', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'metal_corrugated_01', surfaceType: 'metal', scanSizeMeters: 2, uvScale: 0.5 },
   { id: 'cn_corrugated_red', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'metal_corrugated_01', surfaceType: 'metal', scanSizeMeters: 2, uvScale: 0.5 },
   { id: 'cn_epoxy_green', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'concrete_floor_dusty', surfaceType: 'concrete', scanSizeMeters: 2, uvScale: 0.5 },
-  { id: 'cn_tactile_yellow', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'square_paving_tiles', surfaceType: 'tile', scanSizeMeters: 1, uvScale: 1.0 },
 ];
 
 const DECAL_PICKS = [
