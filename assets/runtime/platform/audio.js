@@ -9,6 +9,9 @@ import { createAudioBusController } from './audio/buses.js';
 import { playAudioBuffer } from './audio/voice.js';
 import {
   SYNTH_PRESETS,
+  SYNTH_BASE_ATTENUATION_DB,
+  SYNTH_HARSH_WAVE_ATTENUATION_DB,
+  getSynthCalibrationGain,
   synthesizeSfxPcm,
   playSynthPresetOnContext,
   createSynthSfx,
@@ -24,6 +27,9 @@ export {
   analyzeAudioBuffer,
   normalizeVariantSet,
   SYNTH_PRESETS,
+  SYNTH_BASE_ATTENUATION_DB,
+  SYNTH_HARSH_WAVE_ATTENUATION_DB,
+  getSynthCalibrationGain,
   synthesizeSfxPcm,
   createSynthSfx,
   BGM_MOODS,
@@ -76,6 +82,7 @@ export {
  * @property {number} [playbackRate=1] 0.05..4.
  * @property {number} [pitchJitter=0] Random playback-rate variation (ratio, 0..1).
  * @property {number} [gainJitter=0] Random gain reduction (ratio, 0..1).
+ * @property {number} [gainJitterDb=0] Symmetric random gain jitter (+/- dB).
  * @property {number} [cooldownMs=0] Minimum interval between plays of the same `key` / buffer, milliseconds.
  * @property {string | null} [key=null] Cooldown key.
  * @property {string | null} [bus=null] Bus name (default `'spatial'` when positioned, else `'sfx'`).
@@ -126,10 +133,14 @@ export {
  * @property {readonly AudioBuffer[]} variants 1-4 decoded buffers.
  * @property {string | null} [bus=null]
  * @property {number} [volume=1]
- * @property {number} [pitchJitter=0.02]
- * @property {number} [gainJitter=0.04]
- * @property {number} [cooldownMs=0] Milliseconds.
- * @property {number} [maxConcurrent=4] Max simultaneous voices of this cue.
+ * @property {number} [gainDb=0] Post-normalization hot-patch gain offset, dB.
+ * @property {number} [pitchJitter=0.04]
+ * @property {number} [gainJitter=0]
+ * @property {number} [gainJitterDb=0.8] Micro-randomization in dB (+/-).
+ * @property {number} [cooldownMs=45] Milliseconds.
+ * @property {number} [maxVoices=4] Max simultaneous voices of this cue.
+ * @property {number} [maxConcurrent=4] Alias of maxVoices.
+ * @property {boolean} [ducking=false] Smoothly duck bgm and ambience buses by -5 dB on play.
  * @property {boolean} [hrtf=true]
  * @property {number} [refDistance=3]
  * @property {number} [maxDistance=400]
@@ -696,14 +707,26 @@ export function createAudioManager({
         });
       }
     }
+    const bus = cfg.bus ?? null;
+    const isUiVoice = bus === 'ui_voice' || bus === 'ui';
+    const maxVoices = Math.max(1, Number(cfg.maxVoices ?? cfg.maxConcurrent) || 4);
+    const defaultCooldown = cfg.cooldownMs !== undefined ? Math.max(0, Number(cfg.cooldownMs) || 0) : 45;
+    const defaultPitchJitter = cfg.pitchJitter !== undefined ? Math.max(0, Number(cfg.pitchJitter) || 0) : (isUiVoice ? 0 : 0.04);
+    const defaultGainJitterDb = cfg.gainJitterDb !== undefined
+      ? Math.max(0, Number(cfg.gainJitterDb) || 0)
+      : (cfg.gainJitter !== undefined ? 0 : (isUiVoice ? 0.4 : 0.8));
     cues.set(name, {
       name,
-      bus: cfg.bus ?? null,
+      bus,
       volume: cfg.volume ?? 1,
-      pitchJitter: cfg.pitchJitter ?? 0.02,
-      gainJitter: cfg.gainJitter ?? 0.04,
-      cooldownMs: cfg.cooldownMs ?? 0,
-      maxConcurrent: Math.max(1, Number(cfg.maxConcurrent) || 4),
+      gainDb: Number(cfg.gainDb) || 0,
+      pitchJitter: defaultPitchJitter,
+      gainJitter: cfg.gainJitter ?? 0,
+      gainJitterDb: defaultGainJitterDb,
+      cooldownMs: defaultCooldown,
+      maxVoices,
+      maxConcurrent: maxVoices,
+      ducking: Boolean(cfg.ducking),
       hrtf: cfg.hrtf !== false,
       refDistance: cfg.refDistance ?? 3,
       maxDistance: cfg.maxDistance ?? 400,
@@ -739,18 +762,23 @@ export function createAudioManager({
 
     const cooldownMs = overrides.cooldownMs ?? entry.cooldownMs;
     const cooldownKey = overrides.key ?? `cue:${name}`;
+    const maxVoices = Math.max(1, Number(overrides.maxVoices ?? entry.maxVoices ?? entry.maxConcurrent) || 4);
 
-    if (cooldownMs <= 0) {
-      while (entry.activeHandles.size >= entry.maxConcurrent) {
-        const oldest = entry.activeHandles.values().next().value;
-        if (!oldest) break;
-        entry.activeHandles.delete(oldest);
-        oldest.stop({ fadeOutMs: 8 });
-      }
+    if (cooldownMs > 0) {
+      const prevTime = ctx.keyCooldowns.get(cooldownKey) ?? -Infinity;
+      if (now() - prevTime < cooldownMs) return null;
+    }
+
+    while (entry.activeHandles.size >= maxVoices) {
+      const oldest = entry.activeHandles.values().next().value;
+      if (!oldest) break;
+      entry.activeHandles.delete(oldest);
+      oldest.stop({ fadeOutMs: 8 });
     }
 
     const v = entry.normalized.variants[chosenIndex];
-    const requestedVol = (overrides.volume ?? entry.volume) * v.gainScale;
+    const cueGainLinear = Math.pow(10, ((entry.gainDb || 0) + (Number(overrides.gainDb) || 0)) / 20);
+    const requestedVol = (overrides.volume ?? entry.volume) * cueGainLinear * v.gainScale;
     const prevLast = entry.lastVariant;
     entry.lastVariant = chosenIndex;
     const needsTrimmedDuration = v.analyzable && entry.trimSilence
@@ -758,13 +786,15 @@ export function createAudioManager({
       && (v.tailFadeSec > 0 || v.playDuration < v.duration - 1e-4);
 
     let handleRef = null;
+    const resolvedBus = overrides.bus ?? entry.bus ?? ((overrides.position || overrides.position2D) ? 'spatial' : 'combat');
     const handle = await play(v.buffer, {
-      bus: overrides.bus ?? entry.bus ?? ((overrides.position || overrides.position2D) ? 'spatial' : 'sfx'),
+      bus: resolvedBus,
       volume: requestedVol,
       loop: overrides.loop ?? false,
       playbackRate: overrides.playbackRate ?? 1,
       pitchJitter: overrides.pitchJitter ?? entry.pitchJitter,
       gainJitter: overrides.gainJitter ?? entry.gainJitter,
+      gainJitterDb: overrides.gainJitterDb ?? entry.gainJitterDb,
       cooldownMs,
       key: cooldownKey,
       pan: overrides.pan ?? null,
@@ -794,6 +824,14 @@ export function createAudioManager({
       return null;
     }
 
+    if (overrides.ducking ?? entry.ducking) {
+      const duckTarget = Math.pow(10, -5 / 20);
+      const duckOpts = { targetGain: duckTarget, attackSec: 0.05, holdSec: 0.4, releaseSec: 0.25 };
+      buses.duckBus('bgm', duckOpts);
+      buses.duckBus('ambience', duckOpts);
+      if (buses.getBusVolume('music') !== undefined) buses.duckBus('music', duckOpts);
+    }
+
     handleRef = handle;
     handle.variant = chosenIndex;
     const origStop = handle.stop;
@@ -801,7 +839,7 @@ export function createAudioManager({
       entry.activeHandles.delete(handle);
       return origStop(stopOpts);
     };
-    while (entry.activeHandles.size >= entry.maxConcurrent) {
+    while (entry.activeHandles.size >= maxVoices) {
       const oldest = entry.activeHandles.values().next().value;
       if (!oldest) break;
       oldest.stop({ fadeOutMs: 8 });
@@ -826,7 +864,11 @@ export function createAudioManager({
       buses.unlock().catch(() => {});
     }
     const c = ctx.context;
-    const busName = options.bus || 'sfx';
+    const presetName = typeof presetOrConfig === 'string'
+      ? presetOrConfig
+      : (presetOrConfig?.preset || '');
+    const defaultBus = /^(click|pickup|powerup|jump|coin|ui)/i.test(presetName) ? 'ui_voice' : 'combat';
+    const busName = options.bus || defaultBus;
     const dest = ctx.getBusNode ? ctx.getBusNode(busName) : ctx.master;
     let voice = null, ended = false;
     voice = playSynthPresetOnContext(c, dest, presetOrConfig, {

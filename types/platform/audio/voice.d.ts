@@ -37,7 +37,7 @@ export function computeSpatialMetrics(posArg: unknown, opts: object, listenerSta
  * @param {AudioBuffer} buffer
  * @param {object} [options]
  */
-export function playAudioBuffer(ctx: object, buffer: AudioBuffer, { volume: soundVolume, loop, playbackRate, pitchJitter, gainJitter, cooldownMs, key, bus, pan, position, position2D, hrtf, distanceModel, refDistance, maxDistance, rolloffFactor, panRange, trimSilence, offset, duration, tailFadeSec, occlusion, occludedLowPassHz, occludedGainScale, openLowPassHz, reverbSend, onEnded, random, }?: object): Promise<{
+export function playAudioBuffer(ctx: object, buffer: AudioBuffer, { volume: soundVolume, loop, playbackRate, pitchJitter, gainJitter, gainJitterDb, cooldownMs, key, bus, pan, position, position2D, hrtf, distanceModel, refDistance, maxDistance, rolloffFactor, panRange, trimSilence, offset, duration, tailFadeSec, occlusion, occludedLowPassHz, occludedGainScale, openLowPassHz, reverbSend, onEnded, random, }?: object): Promise<{
     loop: boolean;
     playbackRate: number;
     bus: any;

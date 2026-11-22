@@ -37,6 +37,7 @@
  * @property {number} [playbackRate=1] 0.05..4.
  * @property {number} [pitchJitter=0] Random playback-rate variation (ratio, 0..1).
  * @property {number} [gainJitter=0] Random gain reduction (ratio, 0..1).
+ * @property {number} [gainJitterDb=0] Symmetric random gain jitter (+/- dB).
  * @property {number} [cooldownMs=0] Minimum interval between plays of the same `key` / buffer, milliseconds.
  * @property {string | null} [key=null] Cooldown key.
  * @property {string | null} [bus=null] Bus name (default `'spatial'` when positioned, else `'sfx'`).
@@ -85,10 +86,14 @@
  * @property {readonly AudioBuffer[]} variants 1-4 decoded buffers.
  * @property {string | null} [bus=null]
  * @property {number} [volume=1]
- * @property {number} [pitchJitter=0.02]
- * @property {number} [gainJitter=0.04]
- * @property {number} [cooldownMs=0] Milliseconds.
- * @property {number} [maxConcurrent=4] Max simultaneous voices of this cue.
+ * @property {number} [gainDb=0] Post-normalization hot-patch gain offset, dB.
+ * @property {number} [pitchJitter=0.04]
+ * @property {number} [gainJitter=0]
+ * @property {number} [gainJitterDb=0.8] Micro-randomization in dB (+/-).
+ * @property {number} [cooldownMs=45] Milliseconds.
+ * @property {number} [maxVoices=4] Max simultaneous voices of this cue.
+ * @property {number} [maxConcurrent=4] Alias of maxVoices.
+ * @property {boolean} [ducking=false] Smoothly duck bgm and ambience buses by -5 dB on play.
  * @property {boolean} [hrtf=true]
  * @property {number} [refDistance=3]
  * @property {number} [maxDistance=400]
@@ -308,6 +313,10 @@ export type AudioPlayOptions = {
      */
     gainJitter?: number | undefined;
     /**
+     * Symmetric random gain jitter (+/- dB).
+     */
+    gainJitterDb?: number | undefined;
+    /**
      * Minimum interval between plays of the same `key` / buffer, milliseconds.
      */
     cooldownMs?: number | undefined;
@@ -469,8 +478,16 @@ export type AudioCueConfig = {
     variants: readonly AudioBuffer[];
     bus?: string | null | undefined;
     volume?: number | undefined;
+    /**
+     * Post-normalization hot-patch gain offset, dB.
+     */
+    gainDb?: number | undefined;
     pitchJitter?: number | undefined;
     gainJitter?: number | undefined;
+    /**
+     * Micro-randomization in dB (+/-).
+     */
+    gainJitterDb?: number | undefined;
     /**
      * Milliseconds.
      */
@@ -478,7 +495,15 @@ export type AudioCueConfig = {
     /**
      * Max simultaneous voices of this cue.
      */
+    maxVoices?: number | undefined;
+    /**
+     * Alias of maxVoices.
+     */
     maxConcurrent?: number | undefined;
+    /**
+     * Smoothly duck bgm and ambience buses by -5 dB on play.
+     */
+    ducking?: boolean | undefined;
     hrtf?: boolean | undefined;
     refDistance?: number | undefined;
     maxDistance?: number | undefined;
@@ -791,10 +816,13 @@ export type SynthVoice = {
 import { analyzeAudioBuffer } from './audio/analysis.js';
 import { normalizeVariantSet } from './audio/variants.js';
 import { SYNTH_PRESETS } from './audio/synth.js';
+import { SYNTH_BASE_ATTENUATION_DB } from './audio/synth.js';
+import { SYNTH_HARSH_WAVE_ATTENUATION_DB } from './audio/synth.js';
+import { getSynthCalibrationGain } from './audio/synth.js';
 import { synthesizeSfxPcm } from './audio/synth.js';
 import { createSynthSfx } from './audio/synth.js';
 import { BGM_MOODS } from './audio/bgm-synth.js';
 import { midiToHz } from './audio/bgm-synth.js';
 import { generateBgmStep } from './audio/bgm-synth.js';
 import { createProceduralBgm } from './audio/bgm-synth.js';
-export { analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm };
+export { analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, SYNTH_BASE_ATTENUATION_DB, SYNTH_HARSH_WAVE_ATTENUATION_DB, getSynthCalibrationGain, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm };

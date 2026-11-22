@@ -5,6 +5,13 @@ import { pathToFileURL } from 'node:url';
 import { analyzeAudioBuffer } from '../assets/runtime/platform/audio.js';
 import {
   SURFACE_TYPES_10,
+  AUDIO_LOUDNESS_TIERS,
+  SILENCE_TRIM_FILTER,
+  classifyAudioLoudnessTier,
+  computeVariantLoudnessOffsetDb,
+  computeSafeShortGainDb,
+  measureAudioFileVolume,
+  normalizeAndEncodeAudioFile,
   extractSemanticCueKey,
   parseWavPcmSamples,
   computeSpectralCentroidHz,
@@ -16,6 +23,13 @@ import {
 
 export {
   SURFACE_TYPES_10,
+  AUDIO_LOUDNESS_TIERS,
+  SILENCE_TRIM_FILTER,
+  classifyAudioLoudnessTier,
+  computeVariantLoudnessOffsetDb,
+  computeSafeShortGainDb,
+  measureAudioFileVolume,
+  normalizeAndEncodeAudioFile,
   extractSemanticCueKey,
   parseWavPcmSamples,
   computeSpectralCentroidHz,

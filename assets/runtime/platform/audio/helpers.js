@@ -15,12 +15,16 @@
 /** @typedef {{ x: number, y: number } | readonly number[]} AudioPosition2D 2D point as `{x,y}` or `[x,y]` (pixels / world units). */
 /** @typedef {[number, number, number]} Vec3Tuple */
 
-/** Default bus gains (0..1.5). @type {Readonly<Record<string, number>>} */
+/** Default 5-bus + compatibility bus gains (0..1.5). @type {Readonly<Record<string, number>>} */
 export const DEFAULT_BUS_VOLUMES = Object.freeze({
-  sfx: 1,
-  spatial: 1,
-  music: 0.75,
-  ambience: 0.7,
+  bgm: 0.85,
+  ambience: 0.75,
+  combat: 1.0,
+  foley: 0.85,
+  ui_voice: 1.0,
+  sfx: 1.0,
+  spatial: 1.0,
+  music: 0.85,
 });
 
 /** @param {number} value @param {number} min @param {number} max @returns {number} */

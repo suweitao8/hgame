@@ -50,7 +50,7 @@ export function setGainTarget(gainParam: AudioParam | {
 /** @typedef {{ x: number, y: number, z?: number } | readonly number[]} AudioPosition3D World-space point as `{x,y,z}` or `[x,y,z]`. */
 /** @typedef {{ x: number, y: number } | readonly number[]} AudioPosition2D 2D point as `{x,y}` or `[x,y]` (pixels / world units). */
 /** @typedef {[number, number, number]} Vec3Tuple */
-/** Default bus gains (0..1.5). @type {Readonly<Record<string, number>>} */
+/** Default 5-bus + compatibility bus gains (0..1.5). @type {Readonly<Record<string, number>>} */
 export const DEFAULT_BUS_VOLUMES: Readonly<Record<string, number>>;
 /**
  * Listener pose in world units.

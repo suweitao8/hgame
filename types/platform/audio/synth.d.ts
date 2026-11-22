@@ -1,15 +1,25 @@
+/**
+ * Returns the output calibration multiplier for a procedural synth waveform.
+ * @param {string} [wave='sine']
+ * @param {{ rawUncalibrated?: boolean }} [options]
+ * @returns {number}
+ */
+export function getSynthCalibrationGain(wave?: string | undefined, options?: {
+    rawUncalibrated?: boolean;
+} | undefined): number;
 export function resolveSynthPreset(presetOrConfig: any): any;
 /**
  * Pure CPU PCM synthesis for deterministic testing or offline AudioBuffer creation.
  * @param {string|object} presetOrConfig
- * @param {{ sampleRate?: number, pitchFactor?: number, volume?: number, seed?: number }} [options]
+ * @param {{ sampleRate?: number, pitchFactor?: number, volume?: number, seed?: number, rawUncalibrated?: boolean }} [options]
  * @returns {Float32Array}
  */
-export function synthesizeSfxPcm(presetOrConfig: string | object, { sampleRate, pitchFactor, volume, seed, }?: {
+export function synthesizeSfxPcm(presetOrConfig: string | object, { sampleRate, pitchFactor, volume, seed, rawUncalibrated, }?: {
     sampleRate?: number;
     pitchFactor?: number;
     volume?: number;
     seed?: number;
+    rawUncalibrated?: boolean;
 } | undefined): Float32Array;
 /**
  * Plays a procedural SFX preset on an active WebAudio context and destination node.
@@ -178,6 +188,12 @@ export function createSynthSfx({ AudioContextClass, context, destination, volume
     setMuted: (nextMuted: any) => void;
     dispose: () => void;
 }>;
+/** Baseline -14 dB attenuation so procedural synth aligns with -16 LUFS mastered MP3s. */
+export const SYNTH_BASE_ATTENUATION_DB: -14;
+/** Extra -3 dB attenuation for harmonically dense square / sawtooth waveforms. */
+export const SYNTH_HARSH_WAVE_ATTENUATION_DB: -3;
+export const SYNTH_BASE_ATTENUATION_LINEAR: number;
+export const SYNTH_HARSH_WAVE_FACTOR: number;
 /**
  * Built-in procedural sound presets.
  */

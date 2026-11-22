@@ -1360,6 +1360,25 @@ button { color: inherit; }
   text-align: center;
   color: inherit;
 }
+.hgame-audio-loud-meta {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.25;
+  color: #8f9e8c;
+  text-align: center;
+}
+.hgame-list-item[data-loudness-anomaly="true"] {
+  border-color: rgba(250, 204, 21, 0.72);
+  background: rgba(250, 204, 21, 0.11);
+}
+.hgame-list-item[data-loudness-anomaly="true"] .hgame-audio-loud-meta {
+  color: #fde047;
+  font-weight: 600;
+}
 .hgame-picker-grid .hgame-picker-card {
   flex-direction: row;
   align-items: center;

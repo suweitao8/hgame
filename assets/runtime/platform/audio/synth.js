@@ -2,6 +2,25 @@
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
+/** Baseline -14 dB attenuation so procedural synth aligns with -16 LUFS mastered MP3s. */
+export const SYNTH_BASE_ATTENUATION_DB = -14;
+/** Extra -3 dB attenuation for harmonically dense square / sawtooth waveforms. */
+export const SYNTH_HARSH_WAVE_ATTENUATION_DB = -3;
+export const SYNTH_BASE_ATTENUATION_LINEAR = Math.pow(10, SYNTH_BASE_ATTENUATION_DB / 20);
+export const SYNTH_HARSH_WAVE_FACTOR = Math.pow(10, SYNTH_HARSH_WAVE_ATTENUATION_DB / 20);
+
+/**
+ * Returns the output calibration multiplier for a procedural synth waveform.
+ * @param {string} [wave='sine']
+ * @param {{ rawUncalibrated?: boolean }} [options]
+ * @returns {number}
+ */
+export function getSynthCalibrationGain(wave = 'sine', options = {}) {
+  if (options?.rawUncalibrated) return 1;
+  const harsh = wave === 'square' || wave === 'sawtooth';
+  return SYNTH_BASE_ATTENUATION_LINEAR * (harsh ? SYNTH_HARSH_WAVE_FACTOR : 1);
+}
+
 /**
  * Built-in procedural sound presets.
  */
@@ -158,7 +177,7 @@ function sampleWave(wave, phase) {
 /**
  * Pure CPU PCM synthesis for deterministic testing or offline AudioBuffer creation.
  * @param {string|object} presetOrConfig
- * @param {{ sampleRate?: number, pitchFactor?: number, volume?: number, seed?: number }} [options]
+ * @param {{ sampleRate?: number, pitchFactor?: number, volume?: number, seed?: number, rawUncalibrated?: boolean }} [options]
  * @returns {Float32Array}
  */
 export function synthesizeSfxPcm(presetOrConfig, {
@@ -166,6 +185,7 @@ export function synthesizeSfxPcm(presetOrConfig, {
   pitchFactor = 1,
   volume = 1,
   seed = 0x13579bdf,
+  rawUncalibrated = false,
 } = {}) {
   const cfg = resolveSynthPreset(presetOrConfig);
   const sr = Math.max(8000, sampleRate | 0);
@@ -174,7 +194,8 @@ export function synthesizeSfxPcm(presetOrConfig, {
   const out = new Float32Array(len);
 
   const pitch = clamp(pitchFactor, 0.25, 4);
-  const gain = clamp((cfg.gain ?? 0.5) * volume, 0, 2);
+  const calibGain = getSynthCalibrationGain(cfg.wave, { rawUncalibrated });
+  const gain = clamp((cfg.gain ?? 0.5) * volume * calibGain, 0, 2);
   const noiseMix = clamp(cfg.noiseMix ?? 0, 0, 1);
   const oscMix = 1 - noiseMix * 0.6;
   const attackSamples = Math.max(1, Math.round(sr * (cfg.attack ?? 0.002)));
@@ -242,7 +263,8 @@ export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, 
 
   const now = audioCtx.currentTime || 0;
   const endTime = now + dur;
-  const peakGain = clamp((cfg.gain ?? 0.5) * gainFactor, 0.001, 1.5);
+  const calibGain = getSynthCalibrationGain(cfg.wave, options);
+  const peakGain = clamp((cfg.gain ?? 0.5) * gainFactor * calibGain, 0.0005, 1.5);
 
   const envGain = audioCtx.createGain();
   envGain.gain.setValueAtTime(0.0001, now);

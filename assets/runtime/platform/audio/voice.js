@@ -77,6 +77,7 @@ export async function playAudioBuffer(ctx, buffer, {
   playbackRate = 1,
   pitchJitter = 0,
   gainJitter = 0,
+  gainJitterDb = 0,
   cooldownMs = 0,
   key = null,
   bus = null,
@@ -141,8 +142,12 @@ export async function playAudioBuffer(ctx, buffer, {
   const audioContext = await ctx.unlock();
   if (!ctx.context || !ctx.master || !evictForSlot()) return null;
 
+  const busName = bus ?? ((position || position2D) ? 'spatial' : 'sfx');
+  const isUiDirect = busName === 'ui_voice' || busName === 'ui';
   const spatialOpts = { pan, position, position2D, refDistance, maxDistance, rolloffFactor, panRange };
-  let spatial = computeSpatialMetrics(null, spatialOpts, ctx.listenerState);
+  let spatial = isUiDirect
+    ? { kind: 'none', pan: 0, distanceGain: 1 }
+    : computeSpatialMetrics(null, spatialOpts, ctx.listenerState);
 
   const source = audioContext.createBufferSource();
   const gain = audioContext.createGain();
@@ -156,8 +161,12 @@ export async function playAudioBuffer(ctx, buffer, {
     : baseRate;
   source.playbackRate.value = rate;
 
+  const gJitterDb = Math.max(0, Number(gainJitterDb) || 0);
+  const dbScale = gJitterDb > 0 ? Math.pow(10, ((random() * 2 - 1) * gJitterDb) / 20) : 1;
   const gJitter = Math.max(0, Number(gainJitter) || 0);
-  let currentBaseVolume = clamp(Number(soundVolume) || 0, 0, 2) * (gJitter > 0 ? (1 - random() * gJitter) : 1);
+  let currentBaseVolume = clamp(Number(soundVolume) || 0, 0, 2)
+    * dbScale
+    * (gJitter > 0 && gJitterDb <= 0 ? (1 - random() * gJitter) : 1);
 
   const minCutoffHz = clamp(Number(occludedLowPassHz) || 550, 60, 22000);
   const maxCutoffHz = clamp(Math.max(minCutoffHz, Number(openLowPassHz) || 22000), 60, 22000);
@@ -189,7 +198,6 @@ export async function playAudioBuffer(ctx, buffer, {
     currentOcclusion = evaluateProbeOcclusion();
   }
 
-  const busName = bus ?? ((position || position2D) ? 'spatial' : 'sfx');
   const targetBus = ctx.getBusNode(busName);
 
   let occlusionNode = null;
@@ -247,7 +255,7 @@ export async function playAudioBuffer(ctx, buffer, {
   }
 
   // Route real audio signal into the shared wet reverb send bus
-  const defaultSend = (busName === 'ui' || busName === 'music') ? 0 : 1;
+  const defaultSend = (busName === 'ui_voice' || busName === 'ui' || busName === 'music' || busName === 'bgm') ? 0 : 1;
   const sendAmount = reverbSend !== null ? clamp(Number(reverbSend) || 0, 0, 1.5) : defaultSend;
   let reverbSendNode = null;
   if (sendAmount > 0 && ctx.reverbSend && typeof audioContext.createGain === 'function') {

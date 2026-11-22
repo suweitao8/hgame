@@ -20,6 +20,7 @@ const uploadInput = document.querySelector('#hgame-audio-upload');
 const listEl = document.querySelector('#hgame-audio-list');
 const titleEl = document.querySelector('#hgame-audio-title');
 const downloadEl = document.querySelector('#hgame-audio-download');
+const refToneBtn = document.querySelector('#hgame-audio-ref-tone-button');
 const deleteBtn = document.querySelector('#hgame-audio-delete-button');
 const emptyEl = document.querySelector('#hgame-audio-empty');
 const waveCanvas = document.querySelector('#hgame-audio-wave-canvas');
@@ -37,6 +38,7 @@ let cueEntries = [];
 let streamEntries = [];
 let fullEntries = [];
 let uploadedAudio = [];
+let spreadAnomalyCues = new Set();
 let activeSelection = { type: 'cue', id: '' };
 let audioMgr = null;
 let activeVoice = null;
@@ -167,6 +169,52 @@ function getSelectedEntry() {
     || null;
 }
 
+function shortTierLabel(rawTier) {
+  if (!rawTier) return 'sfx';
+  return String(rawTier).replace(/^sfx_/, '');
+}
+
+function computeAudioLoudnessSummary(entry) {
+  const item = entry.item || {};
+  const tierRaw = item.loudnessTier || (entry.preload === 'stream' ? 'bgm' : 'sfx_combat_light');
+  const tier = shortTierLabel(tierRaw);
+
+  let rmsDb = Number.isFinite(item.measuredDb) ? Number(item.measuredDb) : null;
+  if (rmsDb === null && entry.type === 'cue' && Array.isArray(item.variants) && item.variants.length > 0) {
+    const dbs = item.variants.map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
+    if (dbs.length) rmsDb = dbs.reduce((a, b) => a + b, 0) / dbs.length;
+  }
+  if (rmsDb === null && Number.isFinite(item.rms) && item.rms > 0) {
+    rmsDb = 20 * Math.log10(item.rms);
+  }
+
+  let peakDb = Number.isFinite(item.peakDb) ? Number(item.peakDb) : null;
+  if (peakDb === null && entry.type === 'cue' && Array.isArray(item.variants) && item.variants.length > 0) {
+    const pks = item.variants.map((v) => v.peakDb).filter((x) => Number.isFinite(x));
+    if (pks.length) peakDb = Math.max(...pks);
+  }
+  if (peakDb === null && Number.isFinite(item.peak) && item.peak > 0) {
+    peakDb = 20 * Math.log10(item.peak);
+  }
+
+  let anomaly = Boolean(item.clippingAlert || item.hitBoostCap || (peakDb !== null && peakDb > -0.5));
+  if (entry.type === 'cue') {
+    if (spreadAnomalyCues.has(entry.name)) anomaly = true;
+    const dbs = (item.variants || []).map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
+    if (dbs.length >= 2 && Math.max(...dbs) - Math.min(...dbs) > 2.5) anomaly = true;
+  }
+
+  const rmsTxt = rmsDb !== null ? `${rmsDb.toFixed(1)}dB` : '--';
+  const pkTxt = peakDb !== null ? `PK ${peakDb.toFixed(1)}` : 'PK --';
+  return {
+    text: `${tier} · ${rmsTxt} / ${pkTxt}`,
+    anomaly,
+    tier: tierRaw,
+    rmsDb,
+    peakDb,
+  };
+}
+
 function renderList() {
   const entries = getFilteredList();
   listEl.replaceChildren();
@@ -186,6 +234,7 @@ function renderList() {
   const visible = entries.slice(0, MAX_RENDER);
   for (const entry of visible) {
     const selected = entry.type === activeSelection.type && entry.id === activeSelection.id;
+    const loud = computeAudioLoudnessSummary(entry);
     const { button } = createSidebarSquareCard({
       name: entry.type === 'cue'
         ? `${entry.name} (${entry.item?.variants?.length || 1}变体)`
@@ -199,6 +248,13 @@ function renderList() {
         void selectCurrentAudio();
       },
     });
+    const metaSpan = document.createElement('span');
+    metaSpan.className = 'hgame-audio-loud-meta';
+    metaSpan.textContent = loud.text;
+    button.append(metaSpan);
+    if (loud.anomaly) {
+      button.dataset.loudnessAnomaly = 'true';
+    }
     listEl.append(button);
   }
   if (entries.length > MAX_RENDER) {
@@ -344,7 +400,10 @@ async function selectCurrentAudio() {
       if (token !== loadToken) return;
       const mgr = getAudioManager();
       if (!registeredCues.has(entry.name)) {
-        mgr.registerCue(entry.name, bufs, { bus: 'sfx' });
+        mgr.registerCue(entry.name, bufs, {
+          bus: entry.item.bus || 'combat',
+          gainDb: Number(entry.item.gainDb) || 0,
+        });
         registeredCues.add(entry.name);
       }
       currentDecoded = bufs[0] || null;
@@ -353,10 +412,11 @@ async function selectCurrentAudio() {
         drawPcmWaveform(currentDecoded.getChannelData(0), { durationSec: currentDecoded.duration, analysis: currentAnalysis });
       }
       const srcCnt = entry.item.totalSourceVariants || variants.length;
+      const loud = computeAudioLoudnessSummary(entry);
       renderMetrics([
-        ['加载策略', '内存 SFX (preload: buffer · registerCue)'],
+        ['加载策略', `内存 SFX · 总线 ${entry.item.bus || 'combat'} (${loud.tier})`],
+        ['响度 / 峰值', loud.text],
         ['变体抽样', `${variants.length} 精选 / ${srcCnt} 源变体`],
-        ['编码', 'MP3 44.1 kHz Mono · 64 kbps · -14 LUFS'],
         ['首变体频谱质心', `${variants[0]?.spectralCentroidHz || 0} Hz`],
       ]);
       statusEl.textContent = `Cue 「${entry.name}」就绪（${variants.length} 变体）· 点击「播放」自动防重复随机试听`;
@@ -396,7 +456,7 @@ async function startPlayback() {
 
   if (entry.preload === 'stream') {
     activeStream = mgr.playStream(entry.url, {
-      bus: 'music',
+      bus: entry.item?.bus || 'bgm',
       loop: loopInput.checked,
       volume: 1,
       autoplay: true,
@@ -409,7 +469,10 @@ async function startPlayback() {
     const variants = entry.item.variants || [];
     const bufs = await Promise.all(variants.map((v) => decodeCachedUrl(v.url)));
     if (!registeredCues.has(entry.name)) {
-      mgr.registerCue(entry.name, bufs, { bus: 'sfx' });
+      mgr.registerCue(entry.name, bufs, {
+        bus: entry.item.bus || 'combat',
+        gainDb: Number(entry.item.gainDb) || 0,
+      });
       registeredCues.add(entry.name);
     }
     const voice = await mgr.playCue(entry.name, { loop: loopInput.checked, volume: 1 });
@@ -437,6 +500,53 @@ async function startPlayback() {
     });
     statusEl.textContent = loopInput.checked ? '正在循环播放（已裁剪首尾静音）' : '正在播放音频';
   }
+}
+
+async function playReferencePinkNoise() {
+  const mgr = getAudioManager();
+  const audioCtx = await mgr.unlock();
+  mgr.setVolume(Number(volumeInput.value) || 0.8);
+  stopPlayback();
+
+  const sr = audioCtx.sampleRate || 44100;
+  const nSamples = sr; // 1.0s
+  const buf = audioCtx.createBuffer(1, nSamples, sr);
+  const ch = buf.getChannelData(0);
+
+  // Deterministic Voss-McCartney / Paul Kellet pink noise filter
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+  let s = 0x13572468;
+  let sumSq = 0;
+  for (let i = 0; i < nSamples; i++) {
+    s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+    const white = ((s >>> 0) / 2147483648) - 1;
+    b0 = 0.99886 * b0 + white * 0.0555179;
+    b1 = 0.99332 * b1 + white * 0.0750759;
+    b2 = 0.96900 * b2 + white * 0.1538520;
+    b3 = 0.86650 * b3 + white * 0.3104856;
+    b4 = 0.55000 * b4 + white * 0.5329522;
+    b5 = -0.7616 * b5 - white * 0.0168980;
+    const pink = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+    b6 = white * 0.115926;
+    ch[i] = pink;
+    sumSq += pink * pink;
+  }
+
+  // Normalize exact RMS = -16.0 dBFS with smooth 15ms edges
+  const targetRms = Math.pow(10, -16.0 / 20);
+  const curRms = Math.sqrt(sumSq / nSamples) || 1e-4;
+  const gain = targetRms / curRms;
+  const fadeSamples = Math.round(sr * 0.015);
+  for (let i = 0; i < nSamples; i++) {
+    let env = 1;
+    if (i < fadeSamples) env = i / fadeSamples;
+    else if (i >= nSamples - fadeSamples) env = (nSamples - 1 - i) / fadeSamples;
+    ch[i] = Math.max(-0.95, Math.min(0.95, ch[i] * gain * env));
+  }
+
+  drawPcmWaveform(ch, { durationSec: 1.0, analysis: analyzeAudioBuffer(buf) });
+  activeVoice = await mgr.play(buf, { bus: 'ui_voice', volume: 1, loop: false, trimSilence: false });
+  statusEl.textContent = '正在播放：1s -16.0 dBFS 校准粉噪基准音 (uiVoiceBus)';
 }
 
 async function handleAudioUpload(file) {
@@ -499,6 +609,9 @@ async function initAudioView() {
     playBtn.addEventListener('click', () => {
       void startPlayback();
     });
+    refToneBtn?.addEventListener('click', () => {
+      void playReferencePinkNoise();
+    });
     stopBtn.addEventListener('click', () => {
       stopPlayback();
       statusEl.textContent = '已停止播放';
@@ -521,16 +634,18 @@ async function initAudioView() {
 
   syncOutputs();
   try {
-    const [data, cueRes, streamRes, fullRes] = await Promise.all([
+    const [data, cueRes, streamRes, fullRes, reportRes] = await Promise.all([
       fetchHGameAssets(),
       fetch('/assets/cn/audio/cue_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { cues: [] })).catch(() => ({ cues: [] })),
       fetch('/assets/cn/audio/streams_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { streams: [] })).catch(() => ({ streams: [] })),
       fetch('/assets/cn/audio/audio_library_full.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })),
+      fetch('/assets/cn/audio/audio_loudness_report.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]);
     uploadedAudio = Array.isArray(data.audio) ? data.audio : [];
     cueEntries = Array.isArray(cueRes.cues) ? cueRes.cues : [];
     streamEntries = Array.isArray(streamRes.streams) ? streamRes.streams : [];
     fullEntries = Array.isArray(fullRes.items) ? fullRes.items : [];
+    spreadAnomalyCues = new Set((reportRes?.cueSpreadAlerts || []).map((a) => a.cueName));
   } catch (error) {
     statusEl.textContent = error.message || '读取音频列表失败';
   }

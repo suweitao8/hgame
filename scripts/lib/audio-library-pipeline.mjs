@@ -18,6 +18,244 @@ export const SURFACE_TYPES_10 = Object.freeze([
   'fabric',
 ]);
 
+export const SILENCE_TRIM_FILTER =
+  'silenceremove=start_periods=1:start_threshold=-50dB:detection=peak,areverse,silenceremove=start_periods=1:start_threshold=-50dB:detection=peak,areverse';
+
+/** 6-tier semantic loudness specification anchored to -16 LUFS / -1.0 dBTP. */
+export const AUDIO_LOUDNESS_TIERS = Object.freeze({
+  sfx_combat_heavy: Object.freeze({
+    id: 'sfx_combat_heavy',
+    bus: 'combat',
+    targetDb: -14.0,
+    ceilingDb: -1.0,
+    mode: 'short_rms_limiter',
+    shortMaxSec: 1.5,
+  }),
+  ui_voice: Object.freeze({
+    id: 'ui_voice',
+    bus: 'ui_voice',
+    targetDb: -16.0,
+    ceilingDb: -1.5,
+    mode: 'hybrid',
+    shortMaxSec: 1.5,
+  }),
+  sfx_combat_light: Object.freeze({
+    id: 'sfx_combat_light',
+    bus: 'combat',
+    targetDb: -17.0,
+    ceilingDb: -2.0,
+    mode: 'short_rms_limiter',
+    shortMaxSec: 1.5,
+  }),
+  bgm: Object.freeze({
+    id: 'bgm',
+    bus: 'bgm',
+    targetDb: -19.0,
+    ceilingDb: -1.5,
+    mode: 'loudnorm',
+    shortMaxSec: 0,
+  }),
+  sfx_foley: Object.freeze({
+    id: 'sfx_foley',
+    bus: 'foley',
+    targetDb: -22.0,
+    ceilingDb: -4.0,
+    mode: 'hybrid',
+    shortMaxSec: 1.5,
+  }),
+  ambience: Object.freeze({
+    id: 'ambience',
+    bus: 'ambience',
+    targetDb: -26.0,
+    ceilingDb: -6.0,
+    mode: 'loudnorm',
+    shortMaxSec: 0,
+  }),
+});
+
+/**
+ * Maps an Anim58 pack/relDir/filename into one of the 6 semantic loudness tiers
+ * following the documented ordered precedence rules.
+ */
+export function classifyAudioLoudnessTier(input, { duration = 0, overrides = null } = {}) {
+  const item = typeof input === 'string'
+    ? { pack: '', relDir: '', name: input, relWav: input, duration }
+    : (input || {});
+  const dur = Number(item.duration ?? duration) || 0;
+  const pack = String(item.pack || '');
+  const relDir = String(item.relDir || '');
+  const name = String(item.name || '');
+  const relPath = String(item.relWav || `${pack}/${relDir}/${name}`).replaceAll('\\', '/');
+  const lower = relPath.toLowerCase();
+
+  if (typeof overrides === 'function') {
+    const custom = overrides(item, relPath);
+    if (custom && AUDIO_LOUDNESS_TIERS[custom]) return AUDIO_LOUDNESS_TIERS[custom];
+  } else if (overrides && typeof overrides === 'object') {
+    const direct = overrides[item.id] || overrides[relPath] || overrides[name];
+    if (direct && AUDIO_LOUDNESS_TIERS[direct]) return AUDIO_LOUDNESS_TIERS[direct];
+  }
+
+  // 1. Heavy combat: GunSoundPack/Guns/** or Explosion/Grenade/Thunder/Fireworks
+  if (
+    /gunsoundpack\/guns\b/i.test(lower)
+    || /(?:^|[^a-z])(explosion|grenade|thunder|firework)/i.test(lower)
+    || pack === 'FireworksWithSounds'
+  ) {
+    return AUDIO_LOUDNESS_TIERS.sfx_combat_heavy;
+  }
+
+  // 2. GunSoundPack/BonusSounds/**
+  if (/gunsoundpack\/bonussounds\b/i.test(lower)) {
+    if (/(headshot|killingspree|frenzy|rampage|dominating|multikill|announcer)/i.test(lower)) {
+      return AUDIO_LOUDNESS_TIERS.ui_voice;
+    }
+    if (/(foley|door|engine|reload|shell|casing|click)/i.test(lower)) {
+      return AUDIO_LOUDNESS_TIERS.sfx_foley;
+    }
+    if (/(bird|cicada|cricket|wind|rain|amb)/i.test(lower)) {
+      return AUDIO_LOUDNESS_TIERS.ambience;
+    }
+    return AUDIO_LOUDNESS_TIERS.ui_voice;
+  }
+
+  // 3. Melee / Sword / Futuristic / RPGSkill / Zombie
+  if (
+    pack === 'Zombie_Sound_Effects_Bundle'
+    || /zombie_sound_effects_bundle/i.test(lower)
+  ) {
+    if (dur >= 4.0 || /(survival_?amb|ambient|atmosphere|loop)/i.test(lower)) {
+      return AUDIO_LOUDNESS_TIERS.ambience;
+    }
+    return AUDIO_LOUDNESS_TIERS.sfx_combat_light;
+  }
+  if (
+    ['MeleeWeaponsSoundEffectsPack1', 'SwordPackUE', 'Futuristic_Impacts', 'RPGSkillSound'].includes(pack)
+    || /(?:meleeweapons|swordpackue|futuristic_impacts|rpgskillsound)/i.test(lower)
+  ) {
+    return AUDIO_LOUDNESS_TIERS.sfx_combat_light;
+  }
+
+  // 4. SoundPackRPGGames
+  if (pack === 'SoundPackRPGGames' || /soundpackrpggames/i.test(lower)) {
+    if (/voices(?:cue|wav)?/i.test(lower)) return AUDIO_LOUDNESS_TIERS.ui_voice;
+    if (/(footsteps|crafting)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.sfx_foley;
+    if (/(attacks|magic)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.sfx_combat_light;
+    if (/actions/i.test(lower)) {
+      if (/(scream|grunt|hurt|pain|level|quest|ui|voice|laugh|roar)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.ui_voice;
+      if (/(attack|hit|slash|bash|shoot|cast|strike|punch|kick)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.sfx_combat_light;
+      return AUDIO_LOUDNESS_TIERS.sfx_foley;
+    }
+    return AUDIO_LOUDNESS_TIERS.sfx_foley;
+  }
+
+  // 5. Rewards / UI / Human Vocal Bonus (except Break_Jar / Break_Wood)
+  if (
+    pack === 'RewardsLootsAudioPack'
+    || /rewardslootsaudiopack/i.test(lower)
+  ) {
+    if (/(break_?jar|break_?wood)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.sfx_combat_light;
+    return AUDIO_LOUDNESS_TIERS.ui_voice;
+  }
+  if (
+    /survival_sfx\/user_interface/i.test(lower)
+    || /footstepssoundpack\/bonus_human_vocal_sounds/i.test(lower)
+  ) {
+    return AUDIO_LOUDNESS_TIERS.ui_voice;
+  }
+
+  // 6. Foley packs
+  if (
+    ['FootstepsSoundPack', 'Doorssfx', 'Coin_And_Gem_SFX', 'Survival_SFX', 'V10_German'].includes(pack)
+    || /(?:footstepssoundpack|doorssfx|coin_and_gem_sfx|survival_sfx|v10_german)/i.test(lower)
+  ) {
+    return AUDIO_LOUDNESS_TIERS.sfx_foley;
+  }
+
+  // 7. MegaBundleSoundPack & HorrorSoundPack2
+  if (
+    ['MegaBundleSoundPack', 'HorrorSoundPack2'].includes(pack)
+    || /(?:megabundlesoundpack|horrorsoundpack)/i.test(lower)
+  ) {
+    if (/(darkambient|ambient|atmosphere|drone|wind|rain)/i.test(lower) && !/(mystick|chase|bgm)/i.test(lower)) {
+      return AUDIO_LOUDNESS_TIERS.ambience;
+    }
+    if (/(mystick|soundtrack|chase|bgm|music)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.bgm;
+    if (dur > 0 && dur < 2.5) return AUDIO_LOUDNESS_TIERS.sfx_combat_light;
+    return AUDIO_LOUDNESS_TIERS.ambience;
+  }
+
+  // 8. Vefects Water
+  if (pack === 'Vefects_Water' || /vefects[/_]water/i.test(lower)) {
+    return dur > 0 && dur < 2.0 ? AUDIO_LOUDNESS_TIERS.sfx_foley : AUDIO_LOUDNESS_TIERS.ambience;
+  }
+
+  // Generic fallbacks
+  if (/(bgm|music|soundtrack)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.bgm;
+  if (/(ambient|ambience|wind|rain|waterfall)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.ambience;
+  if (/(ui|voice|announcer|vocal|click)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.ui_voice;
+  if (/(heavy|blast|boom|cannon)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.sfx_combat_heavy;
+  if (/(slash|sword|hit|impact|punch|kick|stab|parry)/i.test(lower)) return AUDIO_LOUDNESS_TIERS.sfx_combat_light;
+  return AUDIO_LOUDNESS_TIERS.sfx_foley;
+}
+
+/**
+ * Computes intensity & distance relative loudness offset in dB:
+ *   light/small/soft/quiet/tiny -> -3.0 dB
+ *   heavy/big/large/extreme/crit -> +2.0 dB
+ *   far/distant/dist -> -4.0 dB
+ */
+export function computeVariantLoudnessOffsetDb(nameOrPath, overrides = null) {
+  const str = String(nameOrPath || '');
+  if (typeof overrides === 'function') {
+    const v = overrides(str);
+    if (Number.isFinite(v)) return Number(v);
+  } else if (overrides && typeof overrides === 'object' && Number.isFinite(overrides[str])) {
+    return Number(overrides[str]);
+  }
+  let offset = 0;
+  if (/(?:^|[^a-z])(light|small|soft|quiet|tiny)(?:[^a-z]|$)/i.test(str)) offset -= 3.0;
+  if (/(?:^|[^a-z])(heavy|big|large|extreme|crit)(?:[^a-z]|$)/i.test(str)) offset += 2.0;
+  if (/(?:^|[^a-z])(far|distant|dist)(?:[^a-z]|$)/i.test(str)) offset -= 4.0;
+  return offset;
+}
+
+/**
+ * Computes clamped gain ([-24, +18] dB) and max 4 dB peak overshoot protection for short SFX.
+ */
+export function computeSafeShortGainDb({
+  targetDb,
+  variantOffsetDb = 0,
+  meanVolumeDb,
+  maxVolumeDb,
+  ceilingDb,
+}) {
+  const desiredDb = Number(targetDb) + (Number(variantOffsetDb) || 0);
+  const meanDb = Number.isFinite(meanVolumeDb) ? Number(meanVolumeDb) : desiredDb;
+  const maxDb = Number.isFinite(maxVolumeDb) ? Number(maxVolumeDb) : -3.0;
+  const ceilDb = Number.isFinite(ceilingDb) ? Number(ceilingDb) : -1.0;
+
+  const rawGainDb = desiredDb - meanDb;
+  let gainDb = clamp(rawGainDb, -24.0, 18.0);
+  const hitBoostCap = rawGainDb > 18.0;
+  let peakClamped = false;
+
+  const maxAllowedPeakDb = ceilDb + 4.0;
+  if (maxDb + gainDb > maxAllowedPeakDb) {
+    gainDb = clamp(maxAllowedPeakDb - maxDb, -24.0, 18.0);
+    peakClamped = true;
+  }
+
+  return {
+    rawGainDb: Number(rawGainDb.toFixed(2)),
+    gainDb: Number(gainDb.toFixed(2)),
+    projectedPeakDb: Number((maxDb + gainDb).toFixed(2)),
+    ceilingLinear: Number(Math.pow(10, ceilDb / 20).toFixed(6)),
+    hitBoostCap,
+    peakClamped,
+  };
+}
+
 const EXTENDED_FOOTSTEP_RE = /(?:^|[_/\\-])(cowboy|retro|robotic|mech|sci[_-]?fi)(?:[_/\\-]|$)/i;
 
 function clamp(v, lo, hi) {
@@ -328,6 +566,222 @@ export function selectQuantileVariants(candidates, { minKeep = 3, maxKeep = 4 } 
   return { selected, rejected, quantileIndices: indices };
 }
 
+function parseVolumeDetectStderr(stderr = '') {
+  const meanMatches = [...String(stderr).matchAll(/mean_volume:\s*(-?[\d.inf]+)\s*dB/gi)];
+  const maxMatches = [...String(stderr).matchAll(/max_volume:\s*(-?[\d.inf]+)\s*dB/gi)];
+  const nMatches = [...String(stderr).matchAll(/n_samples:\s*(\d+)/gi)];
+  const srMatch = String(stderr).match(/(\d+)\s*Hz,\s*(mono|stereo|\d+\s*channels)/i);
+
+  const meanRaw = meanMatches.length ? meanMatches[meanMatches.length - 1][1] : null;
+  const maxRaw = maxMatches.length ? maxMatches[maxMatches.length - 1][1] : null;
+  const nSamples = nMatches.length ? Number(nMatches[nMatches.length - 1][1]) : 0;
+  const sampleRate = srMatch ? Number(srMatch[1]) : 44100;
+  const channels = srMatch ? (/stereo/i.test(srMatch[2]) ? 2 : 1) : 1;
+
+  const parseDb = (v) => {
+    if (!v) return null;
+    if (/inf/i.test(v)) return -91.0;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const trimmedDuration = nSamples > 0 && sampleRate > 0 ? nSamples / (sampleRate * channels) : 0;
+  return {
+    meanDb: parseDb(meanRaw),
+    maxDb: parseDb(maxRaw),
+    nSamples,
+    trimmedDuration,
+  };
+}
+
+function parseLoudnormJsonStderr(stderr = '') {
+  const text = String(stderr || '');
+  const idx = text.lastIndexOf('{');
+  const end = text.lastIndexOf('}');
+  if (idx < 0 || end <= idx) return null;
+  try {
+    const obj = JSON.parse(text.slice(idx, end + 1));
+    if (!obj || obj.input_i === '-inf' || !Number.isFinite(Number(obj.input_i))) return null;
+    return {
+      inputI: Number(obj.input_i),
+      inputTp: Number(obj.input_tp),
+      inputLra: Number(obj.input_lra),
+      inputThresh: Number(obj.input_thresh),
+      targetOffset: Number(obj.target_offset),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function measureAudioFileVolume(ffmpegBin, filePath, preFilter = '') {
+  const af = ['aformat=sample_fmts=fltp', preFilter, 'volumedetect'].filter(Boolean).join(',');
+  const res = await runFfmpegAsync(ffmpegBin, ['-hide_banner', '-nostats', '-i', filePath, '-af', af, '-f', 'null', '-']);
+  return parseVolumeDetectStderr(res.stderr);
+}
+
+/**
+ * Runs Pass-1 measurement + Pass-2 rendering + post-encode peak/RMS audit on one audio file
+ * according to the 6-tier loudness spec.
+ */
+export async function normalizeAndEncodeAudioFile({
+  srcAbs,
+  outAbs,
+  item,
+  duration = 0,
+  ffmpegBin = 'ffmpeg',
+  overrides = null,
+} = {}) {
+  const tier = classifyAudioLoudnessTier(item, { duration, overrides: overrides?.tierOverrides });
+  const variantOffsetDb = computeVariantLoudnessOffsetDb(`${item?.relDir || ''}/${item?.name || path.basename(srcAbs)}`, overrides?.offsetOverrides);
+  const ctxText = `${item?.pack || ''}/${item?.relDir || ''}/${item?.name || ''}`;
+  const isHeavySubBass = tier.id === 'bgm' || tier.id === 'ambience' || (tier.id === 'sfx_combat_heavy' && /(explosion|grenade|thunder|firework|cannon)/i.test(ctxText));
+  const hpHz = isHeavySubBass ? 30 : 80;
+  const hpFilter = `highpass=f=${hpHz}`;
+
+  const isLongAlways = tier.mode === 'loudnorm';
+  const rawPass1 = await measureAudioFileVolume(ffmpegBin, srcAbs, '');
+
+  // Pre-trim prefix/suffix silence for non-music/ambience
+  let useTrim = !isLongAlways;
+  let trimmedStats = useTrim ? await measureAudioFileVolume(ffmpegBin, srcAbs, `${SILENCE_TRIM_FILTER},${hpFilter}`) : rawPass1;
+  if (useTrim && (trimmedStats.meanDb === null || trimmedStats.trimmedDuration < 0.02)) {
+    useTrim = false;
+    trimmedStats = await measureAudioFileVolume(ffmpegBin, srcAbs, hpFilter);
+  }
+
+  const effectiveDur = trimmedStats.trimmedDuration > 0 ? trimmedStats.trimmedDuration : (duration || 0.5);
+  const useLoudnorm = isLongAlways || effectiveDur >= (tier.shortMaxSec || 1.5);
+  const isStreamOut = (tier.id === 'bgm' || tier.id === 'ambience' || effectiveDur >= 4.0) && (duration >= 4.0 || isLongAlways);
+  const outChannels = isStreamOut ? 2 : 1;
+  const outLayout = isStreamOut ? 'stereo' : 'mono';
+  const outBitrate = isStreamOut ? '96k' : '64k';
+  const fmtPrefix = `aresample=44100,aformat=sample_fmts=fltp:channel_layouts=${outLayout}`;
+
+  await fs.mkdir(path.dirname(outAbs), { recursive: true });
+
+  let algorithm = useLoudnorm ? 'loudnorm_2pass' : 'active_rms_limiter';
+  let gainInfo = { rawGainDb: 0, gainDb: 0, hitBoostCap: false, peakClamped: false };
+  // Reserve pre-MP3 headroom (-1.3 dB for 64k mono, -0.8 dB for 96k stereo) so libmp3lame MDCT quantization stays <= ceilingDb
+  let mp3SafeCeilingDb = tier.ceilingDb - (isStreamOut ? 0.8 : 1.3);
+  let mp3SafeCeilingLinear = Number(Math.pow(10, mp3SafeCeilingDb / 20).toFixed(6));
+
+  const renderShortOnce = async (gainDb, ceilLin) => {
+    const renderFilter = [
+      fmtPrefix,
+      useTrim ? SILENCE_TRIM_FILTER : '',
+      hpFilter,
+      `volume=${gainDb.toFixed(2)}dB`,
+      `alimiter=limit=${ceilLin}:attack=2:release=50:level=disabled`,
+    ].filter(Boolean).join(',');
+    let enc = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', srcAbs, '-af', renderFilter, '-c:a', 'libmp3lame', '-b:a', outBitrate, outAbs]);
+    if (enc.code !== 0) {
+      const fbFilter = `${fmtPrefix},${hpFilter},volume=${gainDb.toFixed(2)}dB,alimiter=limit=${ceilLin}:attack=2:release=50:level=disabled`;
+      enc = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', srcAbs, '-af', fbFilter, '-c:a', 'libmp3lame', '-b:a', outBitrate, outAbs]);
+      if (enc.code !== 0) throw new Error(`ffmpeg short encode failed for ${srcAbs}: ${enc.stderr}`);
+    }
+  };
+
+  if (useLoudnorm) {
+    const targetI = clamp(tier.targetDb + variantOffsetDb, -36, -5);
+    const p1Filter = [fmtPrefix, useTrim ? SILENCE_TRIM_FILTER : '', hpFilter, `loudnorm=I=${targetI.toFixed(1)}:TP=${mp3SafeCeilingDb.toFixed(1)}:LRA=11:print_format=json`].filter(Boolean).join(',');
+    const p1 = await runFfmpegAsync(ffmpegBin, ['-hide_banner', '-nostats', '-i', srcAbs, '-af', p1Filter, '-f', 'null', '-']);
+    const ln = parseLoudnormJsonStderr(p1.stderr);
+    let p2Filter;
+    if (ln) {
+      p2Filter = [
+        fmtPrefix,
+        useTrim ? SILENCE_TRIM_FILTER : '',
+        hpFilter,
+        `loudnorm=I=${targetI.toFixed(1)}:TP=${mp3SafeCeilingDb.toFixed(1)}:LRA=11:measured_I=${ln.inputI.toFixed(2)}:measured_TP=${ln.inputTp.toFixed(2)}:measured_LRA=${ln.inputLra.toFixed(2)}:measured_thresh=${ln.inputThresh.toFixed(2)}:offset=${ln.targetOffset.toFixed(2)}:linear=true`,
+      ].filter(Boolean).join(',');
+      gainInfo.gainDb = Number((targetI - ln.inputI).toFixed(2));
+    } else {
+      algorithm = 'active_rms_limiter';
+      gainInfo = computeSafeShortGainDb({
+        targetDb: tier.targetDb,
+        variantOffsetDb,
+        meanVolumeDb: trimmedStats.meanDb,
+        maxVolumeDb: trimmedStats.maxDb,
+        ceilingDb: mp3SafeCeilingDb,
+      });
+      p2Filter = [
+        fmtPrefix,
+        useTrim ? SILENCE_TRIM_FILTER : '',
+        hpFilter,
+        `volume=${gainInfo.gainDb.toFixed(2)}dB`,
+        `alimiter=limit=${mp3SafeCeilingLinear}:attack=2:release=50:level=disabled`,
+      ].filter(Boolean).join(',');
+    }
+    let enc = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', srcAbs, '-af', p2Filter, '-c:a', 'libmp3lame', '-b:a', outBitrate, outAbs]);
+    if (enc.code !== 0) {
+      enc = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', srcAbs, '-ac', String(outChannels), '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', outBitrate, outAbs]);
+      if (enc.code !== 0) throw new Error(`ffmpeg encode failed for ${srcAbs}: ${enc.stderr}`);
+    }
+  } else {
+    gainInfo = computeSafeShortGainDb({
+      targetDb: tier.targetDb,
+      variantOffsetDb,
+      meanVolumeDb: trimmedStats.meanDb,
+      maxVolumeDb: trimmedStats.maxDb,
+      ceilingDb: tier.ceilingDb,
+    });
+    await renderShortOnce(gainInfo.gainDb, mp3SafeCeilingLinear);
+  }
+
+  // Post-encode verification (strip MP3 encoder padding cleanly for Active RMS, or read EBU R128 LUFS for long tracks)
+  let postStats = await measureAudioFileVolume(ffmpegBin, outAbs, isLongAlways ? '' : SILENCE_TRIM_FILTER);
+  for (let retry = 0; retry < 3 && postStats.maxDb !== null && postStats.maxDb > Math.min(tier.ceilingDb, -0.6); retry++) {
+    const overshoot = postStats.maxDb - tier.ceilingDb;
+    mp3SafeCeilingDb -= overshoot + 0.8 + retry * 0.4;
+    mp3SafeCeilingLinear = Number(Math.pow(10, mp3SafeCeilingDb / 20).toFixed(6));
+    const stepCut = Math.max(0.8, overshoot + 0.8);
+    const trimBackFilter = `${fmtPrefix},volume=-${stepCut.toFixed(2)}dB,alimiter=limit=${mp3SafeCeilingLinear}:attack=2:release=50:level=disabled`;
+    const bakPath = `${outAbs}.tmp.mp3`;
+    const re = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', outAbs, '-af', trimBackFilter, '-c:a', 'libmp3lame', '-b:a', outBitrate, bakPath]);
+    if (re.code === 0) {
+      await fs.rename(bakPath, outAbs);
+    } else {
+      await fs.rm(bakPath, { force: true }).catch(() => {});
+      break;
+    }
+    postStats = await measureAudioFileVolume(ffmpegBin, outAbs, isLongAlways ? '' : SILENCE_TRIM_FILTER);
+  }
+  let measuredDb = postStats.meanDb ?? (tier.targetDb + variantOffsetDb);
+  let peakDb = postStats.maxDb ?? tier.ceilingDb;
+  if (algorithm === 'loudnorm_2pass') {
+    const lnCheck = await runFfmpegAsync(ffmpegBin, [
+      '-hide_banner', '-nostats', '-i', outAbs,
+      '-af', `aformat=sample_fmts=fltp,loudnorm=I=${(tier.targetDb + variantOffsetDb).toFixed(1)}:TP=${tier.ceilingDb.toFixed(1)}:LRA=11:print_format=json`,
+      '-f', 'null', '-',
+    ]);
+    const postLn = parseLoudnormJsonStderr(lnCheck.stderr);
+    if (postLn) {
+      measuredDb = postLn.inputI;
+      if (Number.isFinite(postStats.maxDb)) peakDb = postStats.maxDb;
+    }
+  }
+
+  return {
+    loudnessTier: tier.id,
+    bus: tier.bus,
+    targetDb: Number((tier.targetDb + variantOffsetDb).toFixed(2)),
+    ceilingDb: tier.ceilingDb,
+    variantOffsetDb,
+    algorithm,
+    highpassHz: hpHz,
+    silenceTrimmed: useTrim,
+    rawBeforeDb: rawPass1.meanDb,
+    rawBeforePeakDb: rawPass1.maxDb,
+    trimmedBeforeDb: trimmedStats.meanDb,
+    measuredDb: Number(measuredDb.toFixed(2)),
+    peakDb: Number(peakDb.toFixed(2)),
+    appliedGainDb: Number(gainInfo.gainDb.toFixed(2)),
+    hitBoostCap: Boolean(gainInfo.hitBoostCap),
+    peakClamped: Boolean(gainInfo.peakClamped),
+    clippingAlert: peakDb > -0.5,
+  };
+}
+
 function runFfmpegAsync(ffmpegBin, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -420,6 +874,15 @@ export function buildSurfaceTypeCueMap(sfxCues, allSfxItems) {
   const surfaceCues = [];
   const coverage = { step: {}, impact: {} };
 
+  const avgField = (arr, field) => {
+    const nums = arr.map((x) => x[field]).filter((v) => Number.isFinite(v));
+    return nums.length ? Number((nums.reduce((a, b) => a + b, 0) / nums.length).toFixed(2)) : null;
+  };
+  const maxField = (arr, field) => {
+    const nums = arr.map((x) => x[field]).filter((v) => Number.isFinite(v));
+    return nums.length ? Number(Math.max(...nums).toFixed(2)) : null;
+  };
+
   for (const surface of SURFACE_TYPES_10) {
     const stepVars = pickVariants(nonExtSfx, stepRules[surface], true);
     coverage.step[surface] = stepVars.length;
@@ -428,7 +891,12 @@ export function buildSurfaceTypeCueMap(sfxCues, allSfxItems) {
         cueName: `step_${surface}`,
         category: 'footstep_surface',
         surfaceType: surface,
-        bus: 'sfx',
+        bus: 'foley',
+        loudnessTier: 'sfx_foley',
+        measuredDb: avgField(stepVars, 'measuredDb'),
+        peakDb: maxField(stepVars, 'peakDb'),
+        appliedGainDb: avgField(stepVars, 'appliedGainDb') ?? 0,
+        gainDb: 0,
         preload: 'buffer',
         variants: stepVars.map((v) => ({
           id: v.id,
@@ -437,6 +905,9 @@ export function buildSurfaceTypeCueMap(sfxCues, allSfxItems) {
           duration: v.duration,
           activeDuration: v.activeDuration,
           peak: v.peak,
+          measuredDb: v.measuredDb ?? null,
+          peakDb: v.peakDb ?? null,
+          appliedGainDb: v.appliedGainDb ?? 0,
           spectralCentroidHz: v.spectralCentroidHz,
         })),
       });
@@ -449,7 +920,12 @@ export function buildSurfaceTypeCueMap(sfxCues, allSfxItems) {
         cueName: `impact_${surface}`,
         category: 'impact_surface',
         surfaceType: surface,
-        bus: 'sfx',
+        bus: 'combat',
+        loudnessTier: 'sfx_combat_light',
+        measuredDb: avgField(impVars, 'measuredDb'),
+        peakDb: maxField(impVars, 'peakDb'),
+        appliedGainDb: avgField(impVars, 'appliedGainDb') ?? 0,
+        gainDb: 0,
         preload: 'buffer',
         variants: impVars.map((v) => ({
           id: v.id,
@@ -458,6 +934,9 @@ export function buildSurfaceTypeCueMap(sfxCues, allSfxItems) {
           duration: v.duration,
           activeDuration: v.activeDuration,
           peak: v.peak,
+          measuredDb: v.measuredDb ?? null,
+          peakDb: v.peakDb ?? null,
+          appliedGainDb: v.appliedGainDb ?? 0,
           spectralCentroidHz: v.spectralCentroidHz,
         })),
       });
@@ -586,33 +1065,46 @@ export async function processAudioLibraryBatch({
       if (!existingStat || existingStat.size < 128) needEncode = true;
     }
 
+    let loudAudit = null;
+    if (!needEncode) {
+      const tier = classifyAudioLoudnessTier(item, { duration: realDuration });
+      const variantOffsetDb = computeVariantLoudnessOffsetDb(`${item.relDir || ''}/${item.name}`);
+      const postStats = await measureAudioFileVolume(ffmpegBin, outAbs, tier.mode === 'loudnorm' ? '' : SILENCE_TRIM_FILTER);
+      const measuredDb = postStats.meanDb ?? (tier.targetDb + variantOffsetDb);
+      const peakDb = postStats.maxDb ?? tier.ceilingDb;
+      if (peakDb > -0.5) {
+        needEncode = true;
+      } else {
+        loudAudit = {
+          loudnessTier: tier.id,
+          bus: tier.bus,
+          targetDb: Number((tier.targetDb + variantOffsetDb).toFixed(2)),
+          ceilingDb: tier.ceilingDb,
+          variantOffsetDb,
+          algorithm: realDuration >= 1.5 || tier.mode === 'loudnorm' ? 'loudnorm_2pass' : 'active_rms_limiter',
+          rawBeforeDb: features.rms > 0 ? Number((20 * Math.log10(features.rms)).toFixed(2)) : null,
+          rawBeforePeakDb: features.peak > 0 ? Number((20 * Math.log10(features.peak)).toFixed(2)) : null,
+          measuredDb: Number(measuredDb.toFixed(2)),
+          peakDb: Number(peakDb.toFixed(2)),
+          appliedGainDb: Number(((measuredDb - (features.rms > 0 ? 20 * Math.log10(features.rms) : measuredDb))).toFixed(2)),
+          hitBoostCap: false,
+          peakClamped: false,
+          clippingAlert: false,
+        };
+      }
+    }
     if (needEncode) {
-      const primaryArgs = isStream
-        ? [
-          '-y', '-v', 'error', '-i', srcAbs,
-          '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
-          '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '96k',
+      try {
+        loudAudit = await normalizeAndEncodeAudioFile({
+          srcAbs,
           outAbs,
-        ]
-        : [
-          '-y', '-v', 'error', '-i', srcAbs,
-          '-af', 'silenceremove=start_periods=1:start_threshold=-50dB:detection=peak,areverse,silenceremove=start_periods=1:start_threshold=-50dB:detection=peak,areverse,highpass=f=80,loudnorm=I=-14:TP=-1.5:LRA=11',
-          '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '64k',
-          outAbs,
-        ];
-      let enc = await runFfmpegAsync(ffmpegBin, primaryArgs);
-      let okSize = existsSync(outAbs) ? (await fs.stat(outAbs)).size : 0;
-      if (enc.code !== 0 || okSize < 160) {
-        // Fallback without aggressive silence trim on ultra-short/quiet pulses
-        const fallbackArgs = isStream
-          ? ['-y', '-v', 'error', '-i', srcAbs, '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '96k', outAbs]
-          : ['-y', '-v', 'error', '-i', srcAbs, '-af', 'highpass=f=80,loudnorm=I=-14:TP=-1.5:LRA=11', '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '64k', outAbs];
-        enc = await runFfmpegAsync(ffmpegBin, fallbackArgs);
-        okSize = existsSync(outAbs) ? (await fs.stat(outAbs)).size : 0;
-        if (enc.code !== 0 || okSize < 64) {
-          trackErrors.push({ id: item.id, err: enc.stderr.slice(0, 200) });
-          return;
-        }
+          item,
+          duration: realDuration,
+          ffmpegBin,
+        });
+      } catch (err) {
+        trackErrors.push({ id: item.id, err: String(err?.message || err).slice(0, 200) });
+        return;
       }
     }
 
@@ -637,6 +1129,17 @@ export async function processAudioLibraryBatch({
       peak: Number((features.peak || 0).toFixed(4)),
       rms: Number((features.rms || 0).toFixed(4)),
       spectralCentroidHz: features.spectralCentroidHz || 0,
+      loudnessTier: loudAudit.loudnessTier,
+      bus: loudAudit.bus,
+      targetDb: loudAudit.targetDb,
+      measuredDb: loudAudit.measuredDb,
+      peakDb: loudAudit.peakDb,
+      appliedGainDb: loudAudit.appliedGainDb,
+      hitBoostCap: loudAudit.hitBoostCap,
+      peakClamped: loudAudit.peakClamped,
+      clippingAlert: loudAudit.clippingAlert,
+      rawBeforeDb: loudAudit.rawBeforeDb,
+      rawBeforePeakDb: loudAudit.rawBeforePeakDb,
       rawBytes: rawStat.size,
       encodedBytes: outStat.size,
       relOut,
@@ -667,11 +1170,19 @@ export async function processAudioLibraryBatch({
   for (const [cueName, group] of cueGroups.entries()) {
     const { selected } = selectQuantileVariants(group, { minKeep: Math.min(3, group.length), maxKeep: 4 });
     if (!selected.length) continue;
+    const meanNums = selected.map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
+    const peakNums = selected.map((v) => v.peakDb).filter((x) => Number.isFinite(x));
+    const gainNums = selected.map((v) => v.appliedGainDb).filter((x) => Number.isFinite(x));
     runtimeCues.push({
       cueName,
       pack: group[0].pack,
       category: group[0].isExtendedFootstep ? 'footstep_extended' : 'sfx',
-      bus: 'sfx',
+      bus: selected[0].bus || 'combat',
+      loudnessTier: selected[0].loudnessTier || 'sfx_combat_light',
+      measuredDb: meanNums.length ? Number((meanNums.reduce((a, b) => a + b, 0) / meanNums.length).toFixed(2)) : null,
+      peakDb: peakNums.length ? Number(Math.max(...peakNums).toFixed(2)) : null,
+      appliedGainDb: gainNums.length ? Number((gainNums.reduce((a, b) => a + b, 0) / gainNums.length).toFixed(2)) : 0,
+      gainDb: 0,
       preload: 'buffer',
       totalSourceVariants: group.length,
       variants: selected.map((v) => ({
@@ -681,6 +1192,9 @@ export async function processAudioLibraryBatch({
         duration: v.duration,
         activeDuration: v.activeDuration,
         peak: v.peak,
+        measuredDb: v.measuredDb ?? null,
+        peakDb: v.peakDb ?? null,
+        appliedGainDb: v.appliedGainDb ?? 0,
         spectralCentroidHz: v.spectralCentroidHz,
       })),
     });
@@ -690,6 +1204,37 @@ export async function processAudioLibraryBatch({
   // Guarantee 10 surfaceType step_<surface> and impact_<surface> cues
   const { surfaceCues, coverage } = buildSurfaceTypeCueMap(runtimeCues, sfxItems);
   const allRuntimeCues = [...surfaceCues, ...runtimeCues];
+
+  // Auto-audit loudness gates
+  const clippingAlerts = validProcessed
+    .filter((it) => Number(it.peakDb) > -0.5)
+    .map((it) => ({ id: it.id, pack: it.pack, tier: it.loudnessTier, peakDb: it.peakDb, measuredDb: it.measuredDb }));
+  const boostCapWarnings = validProcessed
+    .filter((it) => it.hitBoostCap)
+    .map((it) => ({ id: it.id, pack: it.pack, tier: it.loudnessTier, rawBeforeDb: it.rawBeforeDb, appliedGainDb: it.appliedGainDb, measuredDb: it.measuredDb }));
+  const cueSpreadAlerts = [];
+  for (const cue of allRuntimeCues) {
+    const vals = cue.variants.map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
+    if (vals.length >= 2) {
+      const spreadDb = Number((Math.max(...vals) - Math.min(...vals)).toFixed(2));
+      if (spreadDb > 2.5) {
+        cueSpreadAlerts.push({ cueName: cue.cueName, pack: cue.pack, tier: cue.loudnessTier, spreadDb, variantDbs: vals });
+      }
+    }
+  }
+  const loudnessReport = {
+    version: '1.0.0',
+    anchorLufs: -16.0,
+    anchorCeilingDb: -1.0,
+    generatedAt: new Date().toISOString(),
+    totalTracksAudited: validProcessed.length,
+    clippingAlertCount: clippingAlerts.length,
+    boostCapWarningCount: boostCapWarnings.length,
+    cueSpreadAlertCount: cueSpreadAlerts.length,
+    clippingAlerts,
+    boostCapWarnings,
+    cueSpreadAlerts,
+  };
 
   const packSummary = [...packStats.values()]
     .map((p) => ({
@@ -735,6 +1280,12 @@ export async function processAudioLibraryBatch({
       bitrateKbps: 96,
       channels: 2,
       preload: 'stream',
+      bus: s.bus || 'bgm',
+      loudnessTier: s.loudnessTier || 'bgm',
+      measuredDb: s.measuredDb ?? null,
+      peakDb: s.peakDb ?? null,
+      appliedGainDb: s.appliedGainDb ?? 0,
+      gainDb: 0,
       encodedBytes: s.encodedBytes,
       path: s.relOut,
       url: s.url,
@@ -775,7 +1326,12 @@ export async function processAudioLibraryBatch({
     fs.writeFile(path.join(outDir, 'cue_table.json'), JSON.stringify(cueTable, null, 2)),
     fs.writeFile(path.join(outDir, 'streams_table.json'), JSON.stringify(streamsTable, null, 2)),
     fs.writeFile(path.join(outDir, 'audio_library_full.json'), JSON.stringify(fullLibrary, null, 2)),
+    fs.writeFile(path.join(outDir, 'audio_loudness_report.json'), JSON.stringify(loudnessReport, null, 2)),
   ]);
+
+  if (clippingAlerts.length > 0) {
+    throw new Error(`Audio loudness audit blocked: ${clippingAlerts.length} track(s) exceeded -0.5 dBTP ceiling (e.g. ${clippingAlerts[0].id} peak=${clippingAlerts[0].peakDb} dBTP)`);
+  }
 
   return {
     outDir,
@@ -783,6 +1339,12 @@ export async function processAudioLibraryBatch({
     sourceStats: fullLibrary.sourceStats,
     packs: packSummary,
     surfaceCoverage: coverage,
+    loudnessSummary: {
+      totalTracksAudited: loudnessReport.totalTracksAudited,
+      clippingAlertCount: loudnessReport.clippingAlertCount,
+      boostCapWarningCount: loudnessReport.boostCapWarningCount,
+      cueSpreadAlertCount: loudnessReport.cueSpreadAlertCount,
+    },
     trackErrors,
   };
 }

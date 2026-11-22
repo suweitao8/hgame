@@ -159,19 +159,21 @@ export function createAudioBusController(ctx) {
     ctx.context = audioContext;
     ctx.master = audioContext.createGain();
     ctx.master.gain.value = ctx.muted ? 0 : ctx.currentVolume;
-    ctx.master.connect(audioContext.destination);
+    ctx.busTarget = ctx.master;
 
     if (compressor !== false && typeof audioContext.createDynamicsCompressor === 'function') {
       const comp = audioContext.createDynamicsCompressor();
-      if (comp.threshold && 'value' in comp.threshold) comp.threshold.value = -10;
-      if (comp.knee && 'value' in comp.knee) comp.knee.value = 6;
-      if (comp.ratio && 'value' in comp.ratio) comp.ratio.value = 6;
+      if (comp.threshold && 'value' in comp.threshold) comp.threshold.value = -2.0;
+      if (comp.knee && 'value' in comp.knee) comp.knee.value = 4;
+      if (comp.ratio && 'value' in comp.ratio) comp.ratio.value = 12;
       if (comp.attack && 'value' in comp.attack) comp.attack.value = 0.002;
-      if (comp.release && 'value' in comp.release) comp.release.value = 0.14;
-      comp.connect(ctx.master);
-      ctx.busTarget = comp;
+      if (comp.release && 'value' in comp.release) comp.release.value = 0.10;
+      ctx.master.connect(comp);
+      comp.connect(audioContext.destination);
+      ctx.masterLimiter = comp;
     } else {
-      ctx.busTarget = ctx.master;
+      ctx.master.connect(audioContext.destination);
+      ctx.masterLimiter = null;
     }
 
     ctx.reverbSend = audioContext.createGain();
