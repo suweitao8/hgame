@@ -133,18 +133,25 @@ export async function buildCharacterShowcaseScene({
           const cols = Math.max(1, Number(n.userData?.impostorCols || 0) | 0);
           const rows = Math.max(1, Number(n.userData?.impostorRows || 0) | 0);
           const srcMat = Array.isArray(n.material) ? n.material[0] : n.material;
-          let impMat = srcMat ? srcMat.clone() : new THREE.MeshStandardMaterial({ color: 0xffffff });
+          let impMat;
           if (srcMat?.map && n.userData?.impostorCols >= 1) {
             const atlasTex = srcMat.map.clone();
             atlasTex.needsUpdate = true;
             atlasTex.repeat.set(1 / cols, 1 / rows);
             atlasTex.offset.set(0, 0);
-            impMat.map = atlasTex;
-            impMat.alphaTest = 0.45;
-            impMat.transparent = false;
-            impMat.side = THREE.DoubleSide;
+            // Unlit Impostor sprite lookup (zero directional darkening, zero emissiveMap UV watermark)
+            impMat = new THREE.MeshBasicMaterial({
+              color: 0xffffff,
+              map: atlasTex,
+              alphaTest: 0.45,
+              transparent: false,
+              side: THREE.DoubleSide,
+              wireframe: Boolean(wireframe),
+            });
+          } else {
+            impMat = srcMat ? srcMat.clone() : new THREE.MeshBasicMaterial({ color: 0xffffff });
+            if ('wireframe' in impMat) impMat.wireframe = Boolean(wireframe);
           }
-          if ('wireframe' in impMat) impMat.wireframe = Boolean(wireframe);
           impMat.needsUpdate = true;
 
           let impNode = n;

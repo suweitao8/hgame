@@ -1254,10 +1254,10 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
 
     imp_world = bpy.data.worlds.new("_ImpostorWorld")
     imp_world.use_nodes = False
-    imp_world.color = (0.72, 0.72, 0.72)
+    imp_world.color = (0.88, 0.88, 0.88)
 
     imp_light_data = bpy.data.lights.new("_ImpostorSun", "SUN")
-    imp_light_data.energy = 1.9
+    imp_light_data.energy = 1.25
     imp_light_obj = bpy.data.objects.new("_ImpostorSun", imp_light_data)
     bpy.context.collection.objects.link(imp_light_obj)
 
@@ -1370,8 +1370,6 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     n_bsdf.inputs["Roughness"].default_value = 0.92
     if "Specular IOR Level" in n_bsdf.inputs:
         n_bsdf.inputs["Specular IOR Level"].default_value = 0.0
-    if "Emission Strength" in n_bsdf.inputs:
-        n_bsdf.inputs["Emission Strength"].default_value = 0.22
     n_tex = nt.nodes.new("ShaderNodeTexImage")
     n_tex.image = atlas_img
     n_tex.extension = "CLIP"
@@ -1379,8 +1377,6 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     n_gt.operation = "GREATER_THAN"
     n_gt.inputs[1].default_value = 0.45
     nt.links.new(n_tex.outputs["Color"], n_bsdf.inputs["Base Color"])
-    if "Emission Color" in n_bsdf.inputs:
-        nt.links.new(n_tex.outputs["Color"], n_bsdf.inputs["Emission Color"])
     nt.links.new(n_tex.outputs["Alpha"], n_gt.inputs[0])
     nt.links.new(n_gt.outputs["Value"], n_bsdf.inputs["Alpha"])
     nt.links.new(n_bsdf.outputs["BSDF"], n_out.inputs["Surface"])
