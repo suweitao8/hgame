@@ -31,16 +31,12 @@ const volumeInput = document.querySelector('#hgame-audio-volume');
 const volumeVal = document.querySelector('#hgame-audio-volume-val');
 const loopInput = document.querySelector('#hgame-audio-loop');
 const statusEl = document.querySelector('#hgame-audio-status');
-const musicBarEl = document.querySelector('#hgame-audio-music-bar');
 const seekInput = document.querySelector('#hgame-audio-seek');
 const timeOut = document.querySelector('#hgame-audio-time');
 
 let initialized = false;
-let currentLib = 'cues'; // 'cues' | 'music' | 'streams' | 'full'
+let currentLib = 'cues'; // 'cues' | 'streams' | 'full'
 let cueEntries = [];
-let musicEntries = [];
-let musicScopeFilter = 'all';
-let musicCategoryFilter = 'all';
 let streamEntries = [];
 let fullEntries = [];
 let uploadedAudio = [];
@@ -79,25 +75,6 @@ function isMusicCueEntry(c) {
 }
 
 function buildActiveList() {
-  if (currentLib === 'music') {
-    return musicEntries.map((c) => {
-      const isBgm = c.kind === 'bgm' || String(c.cueName || '').startsWith('bgm.');
-      return {
-        type: 'cue',
-        id: c.cueName,
-        name: c.cueName,
-        scope: c.scope || 'universal',
-        kind: isBgm ? 'bgm' : 'stinger',
-        pack: c.scope === 'universal' ? '通用母库' : (c.scope || 'Music'),
-        category: c.category || (isBgm ? 'bgm' : 'stinger'),
-        preload: isBgm ? 'stream' : 'buffer',
-        badge: isBgm ? 'BGM' : 'Stinger',
-        url: c.url || c.variants?.[0]?.url || '',
-        fileName: `${c.cueName}.mp3`,
-        item: c,
-      };
-    });
-  }
   if (currentLib === 'cues') {
     return cueEntries
       .filter((c) => !isMusicCueEntry(c))
@@ -187,16 +164,11 @@ function getFilteredList() {
   const query = searchInput.value.trim().toLowerCase();
   const fval = filterSelect?.value || 'all';
   return buildActiveList().filter((entry) => {
-    if (currentLib === 'music') {
-      if (musicScopeFilter !== 'all' && entry.scope !== musicScopeFilter) return false;
-      if (musicCategoryFilter !== 'all' && entry.category !== musicCategoryFilter) return false;
-    }
     if (fval === 'surface' && entry.category !== 'footstep_surface' && entry.category !== 'impact_surface') return false;
     if (fval.startsWith('pack:') && entry.pack !== fval.slice(5)) return false;
     if (!query) return true;
     return entry.name.toLowerCase().includes(query)
       || entry.id.toLowerCase().includes(query)
-      || (entry.scope || '').toLowerCase().includes(query)
       || (entry.pack || '').toLowerCase().includes(query)
       || (entry.category || '').toLowerCase().includes(query);
   });
@@ -238,13 +210,6 @@ function computeAudioLoudnessSummary(entry) {
   }
 
   let anomaly = Boolean(item.clippingAlert || item.hitBoostCap || (peakDb !== null && peakDb > -0.5));
-  if (entry.kind === 'bgm' || entry.category === 'bgm' || String(entry.name || '').startsWith('bgm.')) {
-    if (item.lufsWarn || (rmsDb !== null && Math.abs(rmsDb - (-19.0)) > 1.5)) anomaly = true;
-    if (item.trimGuardTriggered || (Number.isFinite(item.tailSilenceSec) && item.tailSilenceSec > 0.3)) anomaly = true;
-  }
-  if (entry.kind === 'stinger' && (item.stingerOver15sWarning || (Number.isFinite(item.tailSilenceSec) && item.tailSilenceSec > 0.3))) {
-    anomaly = true;
-  }
   if (entry.type === 'cue') {
     if (spreadAnomalyCues.has(entry.name)) anomaly = true;
     const dbs = (item.variants || []).map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
@@ -282,77 +247,23 @@ function renderList() {
   for (const entry of visible) {
     const selected = entry.type === activeSelection.type && entry.id === activeSelection.id;
     const loud = computeAudioLoudnessSummary(entry);
-    const isMusicEntry = currentLib === 'music';
-    const isBgmEntry = entry.kind === 'bgm' || entry.preload === 'stream';
     const { button } = createSidebarSquareCard({
-      name: entry.type === 'cue' && !isMusicCueEntry(entry.item)
+      name: entry.type === 'cue'
         ? `${entry.name} (${entry.item?.variants?.length || 1}变体)`
         : entry.name,
       badge: entry.badge,
       active: selected,
       onClick: () => {
-        if (!isMusicEntry) stopPlayback();
+        stopPlayback();
         activeSelection = { type: entry.type, id: entry.id };
         renderList();
         void selectCurrentAudio();
       },
     });
-    if (isMusicEntry) {
-      const it = entry.item || {};
-      const origNum = Number(it.originalDurationSec ?? it.durationSec ?? it.duration);
-      const cleanNum = Number(it.durationSec ?? it.duration);
-      const durRange = Number.isFinite(origNum) && Number.isFinite(cleanNum)
-        ? `${origNum.toFixed(1)}s → ${cleanNum.toFixed(1)}s`
-        : '--';
-      const lufsVal = Number.isFinite(it.measuredLufs ?? it.measuredDb) ? `${Number(it.measuredLufs ?? it.measuredDb).toFixed(1)} LUFS` : '--';
-      const pkVal = Number.isFinite(it.peakDb) ? `${Number(it.peakDb).toFixed(1)} dB` : '--';
-      const kbVal = Number.isFinite(it.sizeKb)
-        ? `${Math.round(it.sizeKb)} KB`
-        : (it.encodedBytes ? `${Math.round(it.encodedBytes / 1024)} KB` : '--');
-
-      const metaSpan = document.createElement('span');
-      metaSpan.className = 'hgame-audio-loud-meta';
-      metaSpan.textContent = `${durRange} · ${lufsVal} / ${pkVal} / ${kbVal}`;
-
-      const row = document.createElement('div');
-      row.className = 'hgame-audio-bgm-row';
-
-      const playSwitchBtn = document.createElement('button');
-      playSwitchBtn.type = 'button';
-      playSwitchBtn.className = 'hgame-audio-seam-btn';
-      playSwitchBtn.textContent = isBgmEntry ? '播放/切歌' : '播放/闪避';
-      playSwitchBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        activeSelection = { type: entry.type, id: entry.id };
-        renderList();
-        void selectCurrentAudio();
-        if (isBgmEntry) void playBgmCrossfade(entry.item);
-        else void playStingerOverlay(entry.item);
-      });
-      row.append(playSwitchBtn);
-
-      if (isBgmEntry) {
-        const seamBtn = document.createElement('button');
-        seamBtn.type = 'button';
-        seamBtn.className = 'hgame-audio-seam-btn';
-        seamBtn.textContent = '测结尾循环';
-        seamBtn.title = '跳至结尾前 4.0 秒播放，验证尾部空白已清干净与循环过渡';
-        seamBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          activeSelection = { type: entry.type, id: entry.id };
-          renderList();
-          void selectCurrentAudio();
-          void playBgmSeamTest(entry.item);
-        });
-        row.append(seamBtn);
-      }
-      button.append(metaSpan, row);
-    } else {
-      const metaSpan = document.createElement('span');
-      metaSpan.className = 'hgame-audio-loud-meta';
-      metaSpan.textContent = loud.text;
-      button.append(metaSpan);
-    }
+    const metaSpan = document.createElement('span');
+    metaSpan.className = 'hgame-audio-loud-meta';
+    metaSpan.textContent = loud.text;
+    button.append(metaSpan);
     if (loud.anomaly) {
       button.dataset.loudnessAnomaly = 'true';
     }
@@ -375,11 +286,6 @@ function formatClock(sec) {
 
 function getCurrentPlaybackTiming() {
   const entry = getSelectedEntry();
-  const bgmState = audioMgr?.getBgmState?.();
-  if (bgmState && bgmState.state !== 'idle' && bgmState.bufferDuration > 0) {
-    const dur = bgmState.loopEnd > 0 ? bgmState.loopEnd : bgmState.bufferDuration;
-    return { current: bgmState.currentTimeSec || 0, duration: dur, active: bgmState.state === 'playing' };
-  }
   if (activeStream && (activeStream.playing || activeStream.duration > 0)) {
     const dur = activeStream.duration || Number(entry?.item?.durationSec ?? entry?.item?.duration) || 0;
     return { current: activeStream.currentTime || 0, duration: dur, active: activeStream.playing };
@@ -426,21 +332,6 @@ async function seekToSeconds(targetSec) {
   await mgr.unlock();
   mgr.setVolume(Number(volumeInput.value) || 0.8);
 
-  const isBgm = entry.kind === 'bgm' || String(entry.name || '').startsWith('bgm.');
-  if (isBgm) {
-    const bgmState = mgr.getBgmState();
-    if (bgmState.cueId === entry.id && bgmState.state !== 'idle') {
-      await mgr.seekBgm(targetSec);
-    } else {
-      stopPlayback({ keepBgm: true });
-      await mgr.playBgm(entry.item, { fadeMs: 120, forceRestart: true, loop: true, startAtSec: targetSec });
-      renderMusicVerifyBar();
-    }
-    startSeekTicker();
-    statusEl.textContent = `已跳转至 ${formatClock(targetSec)}：${entry.name}`;
-    return;
-  }
-
   if (activeStream) {
     activeStream.seek(targetSec);
     startSeekTicker();
@@ -451,7 +342,7 @@ async function seekToSeconds(targetSec) {
   if (entry.preload === 'stream') {
     stopPlayback();
     activeStream = mgr.playStream(entry.url, {
-      bus: entry.item?.bus || 'bgm',
+      bus: entry.item?.bus || 'sfx',
       loop: loopInput.checked,
       volume: 1,
       autoplay: true,
@@ -468,13 +359,11 @@ async function seekToSeconds(targetSec) {
   if (currentDecoded) {
     const dur = currentDecoded.duration || 0;
     const clamped = Math.max(0, Math.min(Math.max(0, dur - 0.05), targetSec));
-    const isStinger = entry.kind === 'stinger' || String(entry.name || '').startsWith('stinger.');
-    stopPlayback({ keepBgm: isStinger });
+    stopPlayback();
     activeVoice = await mgr.play(currentDecoded, {
-      bus: isStinger ? 'ui_voice' : (entry.item?.bus || 'combat'),
-      ducking: isStinger,
+      bus: entry.item?.bus || 'combat',
       volume: 1,
-      loop: isStinger ? false : loopInput.checked,
+      loop: loopInput.checked,
       offset: clamped,
       trimSilence: false,
     });
@@ -482,7 +371,7 @@ async function seekToSeconds(targetSec) {
       startedAtMs: performance.now(),
       offsetSec: clamped,
       durationSec: dur,
-      loop: isStinger ? false : loopInput.checked,
+      loop: loopInput.checked,
     };
     startSeekTicker();
     statusEl.textContent = `已跳转至 ${formatClock(clamped)}：${entry.name}`;
@@ -493,7 +382,7 @@ function syncOutputs() {
   volumeVal.textContent = Number(volumeInput.value || 0.8).toFixed(2);
 }
 
-function stopPlayback({ keepBgm = false } = {}) {
+function stopPlayback() {
   try {
     activeVoice?.stop?.({ fadeOutMs: 12 });
   } catch { /* ignore */ }
@@ -503,182 +392,11 @@ function stopPlayback({ keepBgm = false } = {}) {
     activeStream?.stop?.();
   } catch { /* ignore */ }
   activeStream = null;
-  if (!keepBgm) {
-    try {
-      audioMgr?.stopBgm?.({ fadeMs: 120 });
-    } catch { /* ignore */ }
-  }
   if (seekTimer) {
     clearInterval(seekTimer);
     seekTimer = null;
   }
   syncSeekBar();
-  renderMusicVerifyBar();
-}
-
-function renderMusicVerifyBar() {
-  if (!musicBarEl) return;
-  if (currentLib !== 'music') {
-    musicBarEl.hidden = true;
-    musicBarEl.replaceChildren();
-    return;
-  }
-  musicBarEl.hidden = false;
-  musicBarEl.replaceChildren();
-
-  const scopes = [...new Set(musicEntries.map((c) => c.scope || 'universal'))].sort();
-  const categories = [...new Set(musicEntries.map((c) => c.category || (c.kind === 'stinger' ? 'stinger' : 'bgm')))].sort();
-  if (musicScopeFilter !== 'all' && !scopes.includes(musicScopeFilter)) musicScopeFilter = 'all';
-  if (musicCategoryFilter !== 'all' && !categories.includes(musicCategoryFilter)) musicCategoryFilter = 'all';
-
-  const makeSelectFilter = (id, labelText, currentVal, options, onChange) => {
-    const label = document.createElement('label');
-    label.className = 'hgame-field';
-    const span = document.createElement('span');
-    span.textContent = labelText;
-    const sel = document.createElement('select');
-    sel.id = id;
-    for (const [val, text] of options) {
-      const opt = document.createElement('option');
-      opt.value = val;
-      opt.textContent = text;
-      sel.append(opt);
-    }
-    sel.value = currentVal;
-    sel.addEventListener('change', () => onChange(sel.value));
-    label.append(span, sel);
-    return label;
-  };
-
-  const scopeOptions = [
-    ['all', `全部 (${musicEntries.length})`],
-    ...scopes.map((s) => [s, s === 'universal' ? '通用母库 (universal)' : s]),
-  ];
-  const categoryOptions = [
-    ['all', '全部类别'],
-    ...categories.map((cat) => [cat, cat]),
-  ];
-
-  musicBarEl.append(
-    makeSelectFilter('hgame-audio-scope-filter', 'Scope', musicScopeFilter, scopeOptions, (v) => {
-      musicScopeFilter = v;
-      renderList();
-      void selectCurrentAudio();
-    }),
-    makeSelectFilter('hgame-audio-category-filter', 'Category', musicCategoryFilter, categoryOptions, (v) => {
-      musicCategoryFilter = v;
-      renderList();
-      void selectCurrentAudio();
-    }),
-  );
-
-  const bgmList = musicEntries.filter((c) => c.kind === 'bgm' || String(c.cueName || '').startsWith('bgm.'));
-  const stingerList = musicEntries.filter((c) => c.kind === 'stinger' || String(c.cueName || '').startsWith('stinger.'));
-  const activeBgmId = audioMgr?.getBgmState?.().cueId || null;
-
-  if (bgmList.length > 0) {
-    const bgmLabel = document.createElement('span');
-    bgmLabel.textContent = '600ms 切歌:';
-    musicBarEl.append(bgmLabel);
-    for (const bgm of bgmList.slice(0, 4)) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-audio-music-pill';
-      btn.textContent = bgm.cueName.replace(/^bgm\./, '');
-      btn.setAttribute('aria-pressed', String(activeBgmId === bgm.cueName));
-      btn.addEventListener('click', () => {
-        void playBgmCrossfade(bgm);
-      });
-      musicBarEl.append(btn);
-    }
-  }
-
-  if (stingerList.length > 0) {
-    const stLabel = document.createElement('span');
-    stLabel.textContent = '叠加闪避(-6dB):';
-    musicBarEl.append(stLabel);
-    for (const st of stingerList.slice(0, 4)) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-audio-music-pill';
-      btn.textContent = st.cueName.replace(/^stinger\./, '');
-      btn.addEventListener('click', () => {
-        void playStingerOverlay(st);
-      });
-      musicBarEl.append(btn);
-    }
-  }
-}
-
-async function playBgmCrossfade(bgmItem) {
-  if (!bgmItem) return;
-  const mgr = getAudioManager();
-  await mgr.unlock();
-  mgr.setVolume(Number(volumeInput.value) || 0.8);
-  stopPlayback({ keepBgm: true });
-  try {
-    const res = await mgr.playBgm(bgmItem, { fadeMs: 600, loop: true });
-    renderMusicVerifyBar();
-    startSeekTicker();
-    if (res?.ignored) {
-      statusEl.textContent = `BGM「${bgmItem.cueName}」已在播放（防重入忽略）`;
-    } else {
-      statusEl.textContent = `正在播放 BGM（600ms 淡入切换）：${bgmItem.cueName} · ${(bgmItem.measuredLufs ?? bgmItem.measuredDb ?? -19).toFixed(1)} LUFS`;
-    }
-  } catch (err) {
-    statusEl.textContent = err?.message || 'BGM 播放失败';
-  }
-}
-
-async function playBgmSeamTest(bgmItem) {
-  if (!bgmItem) return;
-  const mgr = getAudioManager();
-  await mgr.unlock();
-  mgr.setVolume(Number(volumeInput.value) || 0.8);
-  stopPlayback({ keepBgm: true });
-  const trimStart = Number(bgmItem.trimStartSec) || 0.026;
-  const loopEnd = Number(bgmItem.trimEndSec) || Number(bgmItem.durationSec) || Number(bgmItem.duration) || 48;
-  const startAtSec = Math.max(trimStart, loopEnd - 4.0);
-  try {
-    await mgr.playBgm(bgmItem, {
-      fadeMs: 120,
-      forceRestart: true,
-      loop: true,
-      startAtSec,
-    });
-    renderMusicVerifyBar();
-    startSeekTicker();
-    statusEl.textContent = `测接缝（结尾前 4.0s 起播）：${bgmItem.cueName} · 5 秒内可听尾接首循环点`;
-  } catch (err) {
-    statusEl.textContent = err?.message || '测接缝播放失败';
-  }
-}
-
-async function playStingerOverlay(stingerItem) {
-  if (!stingerItem) return;
-  const mgr = getAudioManager();
-  await mgr.unlock();
-  mgr.setVolume(Number(volumeInput.value) || 0.8);
-  const url = stingerItem.url || stingerItem.variants?.[0]?.url;
-  if (!url) return;
-  const buf = await decodeCachedUrl(url);
-  if (!registeredCues.has(stingerItem.cueName)) {
-    mgr.registerCue(stingerItem.cueName, [buf], {
-      bus: stingerItem.bus || 'ui_voice',
-      gainDb: Number(stingerItem.gainDb) || 0,
-      ducking: stingerItem.ducking !== false,
-    });
-    registeredCues.add(stingerItem.cueName);
-  }
-  activeVoice = await mgr.playCue(stingerItem.cueName, { loop: false, volume: 1, ducking: true });
-  voicePlaybackMeta = {
-    startedAtMs: performance.now(),
-    offsetSec: 0,
-    durationSec: buf?.duration || Number(stingerItem.durationSec) || 0,
-    loop: false,
-  };
-  startSeekTicker();
-  statusEl.textContent = `叠加 Stinger：${stingerItem.cueName}（bgmBus 已压低 -6 dB，播完后 400ms 恢复）`;
 }
 
 function drawPcmWaveform(samples, { durationSec = 0, analysis = null } = {}) {
@@ -780,28 +498,13 @@ async function selectCurrentAudio() {
     currentAnalysis = null;
     drawPcmWaveform(null);
     const s = entry.item;
-    if (entry.kind === 'bgm' || String(entry.name || '').startsWith('bgm.')) {
-      const lufs = Number(s.measuredLufs ?? s.measuredDb);
-      const pk = Number(s.peakDb);
-      const origDur = Number(s.originalDurationSec ?? s.durationSec ?? 0);
-      const dur = Number(s.durationSec ?? s.duration ?? 0);
-      const kb = Number(s.sizeKb) || (s.encodedBytes ? s.encodedBytes / 1024 : 0);
-      renderMetrics([
-        ['加载策略', `流式循环 BGM (${s.scope || 'universal'} · ${s.category || 'bgm'})`],
-        ['原时长 → 去空白后', `${origDur.toFixed(1)}s → ${dur.toFixed(1)}s (去首${Number(s.trimmedLeadSec || 0).toFixed(2)}s / 去尾${Number(s.trimmedTailSec || 0).toFixed(2)}s)`],
-        ['响度 / 峰值 / 体积', `${Number.isFinite(lufs) ? `${lufs.toFixed(1)} LUFS` : '--'} / ${Number.isFinite(pk) ? `${pk.toFixed(1)} dBTP` : '--'} / ${kb.toFixed(1)} KB`],
-        ['BPM / MP3裁剪', `${s.bpm ? `${s.bpm} BPM` : '无 BPM'} · ${Number(s.trimStartSec || 0).toFixed(3)}s~${Number(s.trimEndSec || dur).toFixed(3)}s`],
-      ]);
-      statusEl.textContent = `BGM 「${entry.name}」就绪 · 点「播放/切歌」或「测结尾循环」`;
-    } else {
-      renderMetrics([
-        ['加载策略', '流式长音轨 (preload: stream · 不进首包)'],
-        ['时长', `${Number(s.duration || 0).toFixed(2)} s`],
-        ['编码', `MP3 44.1 kHz Stereo · ${s.bitrateKbps || 96} kbps`],
-        ['体积', formatBytes(s.encodedBytes || 0)],
-      ]);
-      statusEl.textContent = `${entry.pack} · 流式按需加载就绪（点击「播放」发起流式拉取）`;
-    }
+    renderMetrics([
+      ['加载策略', '流式长音轨 (preload: stream · 不进首包)'],
+      ['时长', `${Number(s.duration || 0).toFixed(2)} s`],
+      ['编码', `MP3 44.1 kHz Stereo · ${s.bitrateKbps || 96} kbps`],
+      ['体积', formatBytes(s.encodedBytes || 0)],
+    ]);
+    statusEl.textContent = `${entry.pack} · 流式按需加载就绪（点击「播放」发起流式拉取）`;
     syncSeekBar();
     return;
   }
@@ -871,28 +574,17 @@ async function startPlayback() {
   const vol = Number(volumeInput.value) || 0.8;
   mgr.setVolume(vol);
 
-  const isStinger = entry.kind === 'stinger' || String(entry.name || '').startsWith('stinger.');
-  if (entry.kind === 'bgm' || String(entry.name || '').startsWith('bgm.')) {
-    await playBgmCrossfade(entry.item);
-    return;
-  }
-
-  stopPlayback({ keepBgm: isStinger });
+  stopPlayback();
 
   if (entry.preload === 'stream') {
     activeStream = mgr.playStream(entry.url, {
-      bus: entry.item?.bus || 'bgm',
+      bus: entry.item?.bus || 'sfx',
       loop: loopInput.checked,
       volume: 1,
       autoplay: true,
     });
     startSeekTicker();
     statusEl.textContent = `正在流式播放：${entry.name} (MP3 Stereo 96 kbps)`;
-    return;
-  }
-
-  if (isStinger) {
-    await playStingerOverlay(entry.item);
     return;
   }
 
@@ -915,6 +607,13 @@ async function startPlayback() {
         durationSec: pickedBuf.duration,
         analysis: analyzeAudioBuffer(pickedBuf),
       });
+      voicePlaybackMeta = {
+        startedAtMs: performance.now(),
+        offsetSec: 0,
+        durationSec: pickedBuf.duration,
+        loop: loopInput.checked,
+      };
+      startSeekTicker();
     }
     statusEl.textContent = `正在防重复随机试听：${entry.name} · 变体 #${vIdx + 1}/${variants.length} (${variants[vIdx]?.spectralCentroidHz || 0} Hz)`;
     return;
@@ -929,6 +628,13 @@ async function startPlayback() {
       loop: loopInput.checked,
       trimSilence: loopInput.checked,
     });
+    voicePlaybackMeta = {
+      startedAtMs: performance.now(),
+      offsetSec: 0,
+      durationSec: currentDecoded.duration,
+      loop: loopInput.checked,
+    };
+    startSeekTicker();
     statusEl.textContent = loopInput.checked ? '正在循环播放（已裁剪首尾静音）' : '正在播放音频';
   }
 }
@@ -1026,7 +732,6 @@ async function initAudioView() {
         updateLibTabsUi();
         populateFilterOptions();
         renderList();
-        renderMusicVerifyBar();
         void selectCurrentAudio();
       });
     }
@@ -1089,20 +794,15 @@ async function initAudioView() {
 
   syncOutputs();
   try {
-    const [data, cueRes, musicRes, streamRes, fullRes, reportRes] = await Promise.all([
+    const [data, cueRes, streamRes, fullRes, reportRes] = await Promise.all([
       fetchHGameAssets(),
       fetch('/assets/cn/audio/cue_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { cues: [] })).catch(() => ({ cues: [] })),
-      fetch('/assets/cn/audio/music_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { tracks: [] })).catch(() => ({ tracks: [] })),
       fetch('/assets/cn/audio/streams_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { streams: [] })).catch(() => ({ streams: [] })),
       fetch('/assets/cn/audio/audio_library_full.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })),
       fetch('/assets/cn/audio/audio_loudness_report.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]);
     uploadedAudio = Array.isArray(data.audio) ? data.audio : [];
     cueEntries = Array.isArray(cueRes.cues) ? cueRes.cues : [];
-    const rawMusic = Array.isArray(musicRes.tracks)
-      ? musicRes.tracks
-      : [...(Array.isArray(musicRes.bgm) ? musicRes.bgm : []), ...(Array.isArray(musicRes.stingers) ? musicRes.stingers : [])];
-    musicEntries = rawMusic;
     streamEntries = Array.isArray(streamRes.streams) ? streamRes.streams : [];
     fullEntries = Array.isArray(fullRes.items) ? fullRes.items : [];
     spreadAnomalyCues = new Set((reportRes?.cueSpreadAlerts || []).map((a) => a.cueName));
@@ -1112,7 +812,6 @@ async function initAudioView() {
   updateLibTabsUi();
   populateFilterOptions();
   renderList();
-  renderMusicVerifyBar();
   await selectCurrentAudio();
 }
 

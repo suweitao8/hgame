@@ -11,6 +11,7 @@ const WORKSPACE_VIEWS = {
   materials: document.querySelector('#materials-view'),
   decals: document.querySelector('#decals-view'),
   audio: document.querySelector('#audio-view'),
+  music: document.querySelector('#music-view'),
   tests: document.querySelector('#tests-view'),
 };
 const navButtons = [...document.querySelectorAll('[data-workspace]')];

@@ -16,6 +16,7 @@
   <script type="module" src="./js/hgame-materials.js"></script>
   <script type="module" src="./js/hgame-decals.js"></script>
   <script type="module" src="./js/hgame-audio.js"></script>
+  <script type="module" src="./js/hgame-music.js"></script>
   <script type="module" src="./js/hgame-tests.js"></script>
 </head>
 <body>
@@ -33,6 +34,7 @@
       <button type="button" class="nav-tab" id="nav-materials" data-workspace="materials" role="tab" aria-controls="materials-view" aria-selected="false" tabindex="-1">材质</button>
       <button type="button" class="nav-tab" id="nav-decals" data-workspace="decals" role="tab" aria-controls="decals-view" aria-selected="false" tabindex="-1">贴花</button>
       <button type="button" class="nav-tab" id="nav-audio" data-workspace="audio" role="tab" aria-controls="audio-view" aria-selected="false" tabindex="-1">音效</button>
+      <button type="button" class="nav-tab" id="nav-music" data-workspace="music" role="tab" aria-controls="music-view" aria-selected="false" tabindex="-1">音乐</button>
       <button type="button" class="nav-tab" id="nav-tests" data-workspace="tests" role="tab" aria-controls="tests-view" aria-selected="false" tabindex="-1">测试</button>
     </nav>
     <div class="header-status"><span class="status-dot"></span> 本机资产服务</div>
@@ -533,11 +535,10 @@
     </section>
   </main>
 
-  <main id="audio-view" class="workspace-layout hgame-layout" aria-label="HGame 音效与音乐" hidden>
+  <main id="audio-view" class="workspace-layout hgame-layout" aria-label="HGame 音效" hidden>
     <aside class="workspace-sidebar hgame-sidebar" aria-label="音效列表">
       <div class="character-mode-tabs" role="tablist" aria-label="音频视图模式">
         <button type="button" class="character-mode-tab hgame-audio-lib-tab" role="tab" data-audio-lib="cues" aria-selected="true" tabindex="0">Cue 分组</button>
-        <button type="button" class="character-mode-tab hgame-audio-lib-tab" role="tab" data-audio-lib="music" aria-selected="false" tabindex="-1">音乐库</button>
         <button type="button" class="character-mode-tab hgame-audio-lib-tab" role="tab" data-audio-lib="streams" aria-selected="false" tabindex="-1">流式音轨</button>
         <button type="button" class="character-mode-tab hgame-audio-lib-tab" role="tab" data-audio-lib="full" aria-selected="false" tabindex="-1">全量 / 上传</button>
       </div>
@@ -571,7 +572,6 @@
           <button id="hgame-audio-delete-button" type="button" class="hgame-danger-button" hidden>删除</button>
         </div>
       </div>
-      <div id="hgame-audio-music-bar" class="hgame-audio-music-bar" hidden></div>
       <div class="hgame-viewport hgame-audio-viewport">
         <div id="hgame-audio-empty" class="hgame-empty" hidden>暂无音频资产。</div>
         <canvas id="hgame-audio-wave-canvas" width="960" height="320" class="hgame-wave-canvas"></canvas>
@@ -589,6 +589,62 @@
           <label class="hgame-check" id="hgame-audio-loop-wrap"><input id="hgame-audio-loop" type="checkbox"><span>循环(去静音)</span></label>
         </div>
         <span id="hgame-audio-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+      </div>
+    </section>
+  </main>
+
+  <main id="music-view" class="workspace-layout hgame-layout" aria-label="HGame 音乐库" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="音乐列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="hgame-music-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="hgame-music-search" type="search" placeholder="搜索 Cue ID / BGM / Stinger" autocomplete="off">
+        </label>
+      </div>
+      <div class="hgame-filter-row">
+        <label class="hgame-field"><span>Scope</span>
+          <select id="hgame-music-scope-filter">
+            <option value="all">全部 Scope</option>
+          </select>
+        </label>
+        <label class="hgame-field"><span>Category</span>
+          <select id="hgame-music-category-filter">
+            <option value="all">全部类别</option>
+          </select>
+        </label>
+      </div>
+      <nav id="hgame-music-list" class="hgame-asset-list" aria-label="选择音乐"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="音乐验听">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="hgame-music-title">音乐库</h2>
+          <a id="hgame-music-download" class="asset-model-filename" hidden download></a>
+        </div>
+        <div class="hgame-stage-actions">
+          <button id="hgame-music-ref-tone-button" type="button" class="asset-model-action">-16dB 参考基准音</button>
+        </div>
+      </div>
+      <div id="hgame-music-quick-bar" class="hgame-audio-music-bar"></div>
+      <div class="hgame-viewport hgame-audio-viewport">
+        <div id="hgame-music-empty" class="hgame-empty" hidden>暂无音乐资产（投放至 audio_ai_staging 后运行 --only-music）。</div>
+        <canvas id="hgame-music-wave-canvas" width="960" height="320" class="hgame-wave-canvas"></canvas>
+        <div id="hgame-music-metrics" class="hgame-audio-metrics"></div>
+      </div>
+      <div class="hgame-controls hgame-controls-wrap">
+        <div class="hgame-audio-seek-row">
+          <input id="hgame-music-seek" type="range" min="0" max="100" step="0.1" value="0" aria-label="音乐播放进度跳转">
+          <output id="hgame-music-time">00:00 / 00:00</output>
+        </div>
+        <div class="hgame-control-group">
+          <button id="hgame-music-play-button" type="button" class="asset-model-action">播放/切歌</button>
+          <button id="hgame-music-pause-button" type="button" class="asset-model-action">暂停</button>
+          <button id="hgame-music-stop-button" type="button" class="asset-model-action">停止</button>
+          <button id="hgame-music-seam-button" type="button" class="asset-model-action">测结尾循环</button>
+          <label class="hgame-field"><span>音量</span><input id="hgame-music-volume" type="range" min="0" max="1" step="0.05" value="0.8"><output id="hgame-music-volume-val">0.80</output></label>
+          <label class="hgame-check"><input id="hgame-music-loop" type="checkbox" checked><span>无缝循环</span></label>
+        </div>
+        <span id="hgame-music-status" class="hgame-status-text" role="status" aria-live="polite"></span>
       </div>
     </section>
   </main>
