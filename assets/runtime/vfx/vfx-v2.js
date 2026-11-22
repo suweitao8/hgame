@@ -211,6 +211,7 @@ export function createVfxV2Runtime({
   let gradientLutTex = null;
   let defaultTextures = null;
   let defaultMeshes = null;
+  const registeredTextures = new Map();
   const registeredMeshes = new Map();
   const pooledPointLights = [];
 
@@ -235,6 +236,9 @@ export function createVfxV2Runtime({
   function resolveTexture(ref) {
     if (!ref) return null;
     if (typeof ref === 'object' && ref.isTexture) return ref;
+    if (typeof ref === 'string' && registeredTextures.has(ref)) {
+      return registeredTextures.get(ref);
+    }
     return defaultTextures?.resolve(ref) ?? null;
   }
 
@@ -879,8 +883,37 @@ export function createVfxV2Runtime({
     }
   }
 
+  function registerTexture(key, texture) {
+    if (typeof key !== 'string' || !key || !texture) return;
+    registeredTextures.set(key, texture);
+    for (const pool of emitterPools.values()) {
+      const matCfg = pool.emitter.material;
+      if (pool.material && (matCfg.mainTex === key || matCfg.noiseTex === key)) {
+        if (matCfg.mainTex === key && pool.material.uniforms?.uMainTex) {
+          pool.material.uniforms.uMainTex.value = texture;
+        }
+        if (matCfg.noiseTex === key && pool.material.uniforms?.uNoiseTex) {
+          pool.material.uniforms.uNoiseTex.value = texture;
+        }
+      }
+    }
+  }
+
   function registerMesh(kind, geometry) {
-    if (typeof kind === 'string' && geometry) registeredMeshes.set(kind, geometry);
+    if (typeof kind === 'string' && geometry) {
+      registeredMeshes.set(kind, geometry);
+      if (is3D) {
+        for (const pool of emitterPools.values()) {
+          if (pool.instancedMesh && pool.emitter.renderer === 'mesh' && pool.emitter.material.meshKind === kind) {
+            const oldGeo = pool.instancedMesh.geometry;
+            const nextGeo = geometry.clone();
+            if (pool.customAttr) nextGeo.setAttribute('aCustom', pool.customAttr);
+            pool.instancedMesh.geometry = nextGeo;
+            oldGeo?.dispose?.();
+          }
+        }
+      }
+    }
   }
 
   function reset() {
@@ -960,6 +993,7 @@ export function createVfxV2Runtime({
     setGroundConfig,
     setLutRowOverride,
     setEventHandler: (fn) => { eventHandler = typeof fn === 'function' ? fn : null; },
+    registerTexture,
     registerMesh,
     getVfxMasterDefines: (matCfg) => getVfxMasterDefines(matCfg, qualityTier),
     update,

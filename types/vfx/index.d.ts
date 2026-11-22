@@ -212,6 +212,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         }) => void;
         setLutRowOverride: (rowOrNull: any) => void;
         setEventHandler: (fn: any) => void;
+        registerTexture: (key: any, texture: any) => void;
         registerMesh: (kind: any, geometry: any) => void;
         getVfxMasterDefines: (matCfg: any) => Record<string, number>;
         update: (dt?: number, cameraPos?: null) => void;
@@ -334,6 +335,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     setWind(wx?: number, wy?: number, wz?: number): void;
     setCollisionResolver: (fn: any) => void;
     setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
+    registerTexture: (key: any, texture: any) => void;
     registerMesh(kind: any, geometry: any): void;
     registerEffect: (recipe: object) => object;
     playEffect: (recipeOrId: string | object, options?: object) => object | null;

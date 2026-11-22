@@ -656,6 +656,7 @@ export function createVfxSystem({
     },
     setCollisionResolver: effects.setCollisionResolver,
     setTrailTexture: trails.setTrailTexture,
+    registerTexture: v2.registerTexture,
     registerMesh(kind, geometry) {
       meshVfx.registerMesh(kind, geometry);
       v2.registerMesh(kind, geometry);

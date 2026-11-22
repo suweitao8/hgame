@@ -40,11 +40,18 @@ export function createVfxV2MeshGeometries(THREE: object): {
 export function getVfxMasterDefines(materialCfg?: object, qualityTier?: "high" | "low" | "med" | undefined): Record<string, number>;
 /**
  * Instantiates a configured Three.js ShaderMaterial using VFX Master Shader v2.
- * @param {object} THREE
- * @param {object} materialCfg
- * @param {object} [options]
+ * @param {any} THREE
+ * @param {Record<string, any>} [materialCfg]
+ * @param {{ qualityTier?: 'high' | 'med' | 'low', mainTex?: any, noiseTex?: any, gradientLut?: any, depthTex?: any, avgLifetime?: number }} [options]
  */
-export function createVfxMasterMaterial(THREE: object, materialCfg?: object, { qualityTier, mainTex, noiseTex, gradientLut, depthTex, avgLifetime, }?: object): {
+export function createVfxMasterMaterial(THREE: any, materialCfg?: Record<string, any> | undefined, { qualityTier, mainTex, noiseTex, gradientLut, depthTex, avgLifetime, }?: {
+    qualityTier?: "high" | "med" | "low";
+    mainTex?: any;
+    noiseTex?: any;
+    gradientLut?: any;
+    depthTex?: any;
+    avgLifetime?: number;
+} | undefined): {
     material: any;
     defines: Record<string, number>;
     variantKey: string;

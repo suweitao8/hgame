@@ -16,6 +16,9 @@ import {
 
 const VFX_CATEGORY_ORDER = [
   'v2 标杆预设',
+  '战斗与爆破',
+  '全材质受击',
+  '环境与交互',
   '火焰爆破',
   '火焰与爆破',
   '刀光轨迹',
@@ -64,8 +67,14 @@ const texLoader = new THREE.TextureLoader();
 
 let initialized = false;
 let vfxSystems = [];
+let goldenVfxPresets = [];
 let vfxMeshes = [];
+let bakedVfxMeshes = [];
 let vfxTextures = [];
+let bakedVfxTextures = [];
+const v2TexCache = new Map();
+const v2GeoCache = new Map();
+const v2MeshUrlById = new Map();
 let activeSelection = { kind: '', id: '' };
 let activeRenderMode = 'source'; // 'source' | 'hgame'
 let viewport = null;
@@ -99,16 +108,43 @@ let decalMarkerGroup = null;
 const decalMarkers = [];
 
 function getAllItems() {
-  const benchItems = VFX_V2_BENCHMARK_PRESETS.map(item => ({
-    ...item,
-    kind: 'system',
-    sourceType: 'hgame-v2',
-  }));
+  const v2Map = new Map();
+  for (const item of VFX_V2_BENCHMARK_PRESETS) {
+    v2Map.set(item.id, { ...item, kind: 'system', sourceType: 'hgame-v2' });
+  }
+  for (const entry of goldenVfxPresets) {
+    const presetObj = entry.preset || entry;
+    if (!presetObj?.id) continue;
+    v2Map.set(presetObj.id, {
+      ...presetObj,
+      benchmark: Boolean(entry.benchmark ?? presetObj.benchmark),
+      surfaceType: entry.surfaceType ?? presetObj.surfaceType ?? null,
+      presetUrl: entry.url || null,
+      kind: 'system',
+      sourceType: 'hgame-v2',
+    });
+  }
+  const meshSeen = new Set();
+  const mergedMeshes = [];
+  for (const item of [...vfxMeshes, ...bakedVfxMeshes]) {
+    const key = item.id || item.name;
+    if (meshSeen.has(key)) continue;
+    meshSeen.add(key);
+    mergedMeshes.push({ ...item, kind: 'mesh' });
+  }
+  const texSeen = new Set();
+  const mergedTextures = [];
+  for (const item of [...vfxTextures, ...bakedVfxTextures]) {
+    const key = item.id || item.name;
+    if (texSeen.has(key)) continue;
+    texSeen.add(key);
+    mergedTextures.push({ ...item, kind: 'texture' });
+  }
   return [
-    ...benchItems,
+    ...v2Map.values(),
     ...vfxSystems.map(item => ({ ...item, kind: 'system' })),
-    ...vfxMeshes.map(item => ({ ...item, kind: 'mesh' })),
-    ...vfxTextures.map(item => ({ ...item, kind: 'texture' })),
+    ...mergedMeshes,
+    ...mergedTextures,
   ];
 }
 
@@ -1129,9 +1165,91 @@ function triggerHGamePreset(item) {
   });
 }
 
+async function loadV2Texture(key, { repeat = false, linearData = false } = {}) {
+  if (!key || typeof key !== 'string' || key.startsWith('builtin:')) return null;
+  const cacheKey = `${key}|r=${repeat ? 1 : 0}|l=${linearData ? 1 : 0}`;
+  if (v2TexCache.has(cacheKey)) return v2TexCache.get(cacheKey);
+  const url = key.startsWith('/') ? key : `/assets/cn/${key}`;
+  try {
+    const tex = await texLoader.loadAsync(url);
+    tex.premultiplyAlpha = false;
+    tex.flipY = true;
+    tex.wrapS = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+    tex.wrapT = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+    tex.colorSpace = linearData ? THREE.NoColorSpace : THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    v2TexCache.set(cacheKey, tex);
+    return tex;
+  } catch {
+    return null;
+  }
+}
+
+async function loadV2MeshGeometry(kind) {
+  if (!kind || typeof kind !== 'string') return null;
+  if (v2GeoCache.has(kind)) return v2GeoCache.get(kind);
+  const url = v2MeshUrlById.get(kind)
+    || (kind.startsWith('glass_piece_') ? `/assets/cn/vfx_meshes/glass/${kind}.glb` : `/assets/cn/vfx_meshes/${kind}.glb`);
+  try {
+    const gltf = await gltfLoader.loadAsync(url);
+    let foundGeo = null;
+    gltf.scene.traverse((ch) => {
+      if (!foundGeo && ch.isMesh && ch.geometry) {
+        foundGeo = ch.geometry.clone();
+      }
+    });
+    disposeObject3D(gltf.scene);
+    if (foundGeo) {
+      v2GeoCache.set(kind, foundGeo);
+    }
+    return foundGeo;
+  } catch {
+    return null;
+  }
+}
+
+async function ensureV2PresetResources(preset, vfxSys) {
+  if (!preset || !vfxSys) return;
+  vfxSys.registerPresetV2(preset);
+  const tasks = [];
+  for (const em of (preset.emitters || [])) {
+    if (em.renderer === 'event') continue;
+    const mat = em.material || {};
+    if (mat.mainTex && !mat.mainTex.startsWith('builtin:')) {
+      const isData = mat.mainTex.includes('vfx_noise/') || mat.mainTex.includes('blood_') || Number(mat.lutRow) >= 0;
+      const isScroll = Boolean(mat.uvScroll && (mat.uvScroll[0] !== 0 || mat.uvScroll[1] !== 0));
+      tasks.push(loadV2Texture(mat.mainTex, { repeat: isScroll, linearData: isData }).then((t) => {
+        if (t) vfxSys.registerTexture(mat.mainTex, t);
+      }));
+    }
+    if (mat.noiseTex && !mat.noiseTex.startsWith('builtin:')) {
+      tasks.push(loadV2Texture(mat.noiseTex, { repeat: true, linearData: true }).then((t) => {
+        if (t) vfxSys.registerTexture(mat.noiseTex, t);
+      }));
+    }
+    if (em.renderer === 'mesh' && mat.meshKind && !['quad', 'shard', 'arc', 'ring', 'sphere'].includes(mat.meshKind)) {
+      tasks.push(loadV2MeshGeometry(mat.meshKind).then((geo) => {
+        if (geo) vfxSys.registerMesh(mat.meshKind, geo);
+      }));
+    }
+  }
+  await Promise.all(tasks);
+}
+
+function getV2SpawnY(item) {
+  if (!item) return 0.9;
+  if (item.id === 'vfx_bench_explosion' || item.id === 'vfx_c4_demolition' || item.id === 'vfx_molotov_burst') return 0.55;
+  if (item.id === 'vfx_falling_leaves' || item.id === 'vfx_rain_splashes') return 2.1;
+  if (/(campfire|torch|portal|aura|water_fountain|waterfall|shockwave|tornado|lightning_strike)/.test(item.id || '')) return 0.12;
+  if (item.category === '全材质受击' || item.surfaceType) return 0.35;
+  if (item.id === 'vfx_bench_slash_shield') return 0.85;
+  return 0.9;
+}
+
 function playSelectedV2(item) {
   if (!hgameVfx || !item) return;
-  const ySpawn = item.id === 'vfx_bench_explosion' ? 0.55 : item.id === 'vfx_bench_slash_shield' ? 0.85 : 0.95;
+  hgameVfx.registerPresetV2(item);
+  const ySpawn = getV2SpawnY(item);
   hgameVfx.playV2(item.id, { x: 0, y: ySpawn, z: 0 });
 }
 
@@ -1141,7 +1259,14 @@ function replayActiveVfx() {
   if (item.kind === 'system' && item.schemaVersion === 2) {
     clearDecalMarkers();
     playSelectedV2(item);
+    hgameVfx?.update?.(0.016, viewport?.camera?.position);
     hgameFireTimer = 0;
+    const st = hgameVfx?.getStats()?.v2;
+    if (st) {
+      lastV2StatusText = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier} · 倍速 ${speedSelect?.value || 1}x`;
+      statusUpdateAcc = 0;
+      statusEl.textContent = lastV2StatusText;
+    }
     return;
   }
   if (item.kind === 'system' && activeRenderMode === 'hgame') {
@@ -1368,6 +1493,8 @@ async function loadCurrentVfx() {
           }
         });
         hgameFireTimer = 0;
+        await ensureV2PresetResources(item, hgameVfx);
+        if (token !== loadToken) return;
         playSelectedV2(item);
         hgameVfx.update(0.016, vp.camera.position);
         vp.camera.position.set(3.4, 2.35, 4.2);
@@ -1672,14 +1799,50 @@ async function initVfxView() {
     vp.start(tickVfx);
   }
   try {
-    const unrealCatalog = await fetchUnrealCatalog();
+    const fetchOptionalJson = async (url) => {
+      try {
+        const res = await fetch(url, { cache: 'no-cache' });
+        return res.ok ? await res.json() : null;
+      } catch {
+        return null;
+      }
+    };
+    const [unrealCatalog, presetsData, meshesData, texData, noiseData] = await Promise.all([
+      fetchUnrealCatalog(),
+      fetchOptionalJson('/assets/cn/vfx_presets/vfx_presets_table.json'),
+      fetchOptionalJson('/assets/cn/vfx_meshes/vfx_meshes_table.json'),
+      fetchOptionalJson('/assets/cn/vfx/textures/vfx_textures_table.json'),
+      fetchOptionalJson('/assets/cn/shader_maps/vfx_noise/vfx_noise_table.json'),
+    ]);
     vfxSystems = Array.isArray(unrealCatalog.vfxSystems) ? unrealCatalog.vfxSystems : [];
     vfxMeshes = Array.isArray(unrealCatalog.vfxMeshes) ? unrealCatalog.vfxMeshes : [];
     vfxTextures = Array.isArray(unrealCatalog.vfxTextures) ? unrealCatalog.vfxTextures : [];
+    goldenVfxPresets = Array.isArray(presetsData?.items) ? presetsData.items : [];
+    bakedVfxMeshes = Array.isArray(meshesData?.items) ? meshesData.items.map((m) => ({
+      ...m,
+      category: '3D 特效网格',
+    })) : [];
+    v2MeshUrlById.clear();
+    for (const m of bakedVfxMeshes) {
+      if (m.id && m.url) v2MeshUrlById.set(m.id, m.url);
+    }
+    const rawTexItems = [
+      ...(Array.isArray(texData?.items) ? texData.items : []),
+      ...(Array.isArray(noiseData?.items) ? noiseData.items : []),
+    ];
+    bakedVfxTextures = rawTexItems.map((t) => ({
+      ...t,
+      columns: t.cols || 1,
+      rows: t.rows || 1,
+      category: t.role ? 'VFX 噪声与通道贴图' : '粒子与序列帧贴图',
+    }));
   } catch (error) {
     vfxSystems = [];
+    goldenVfxPresets = [];
     vfxMeshes = [];
+    bakedVfxMeshes = [];
     vfxTextures = [];
+    bakedVfxTextures = [];
     statusEl.textContent = error.message || '读取特效目录失败';
   }
 

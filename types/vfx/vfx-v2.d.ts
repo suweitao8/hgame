@@ -44,6 +44,7 @@ export function createVfxV2Runtime({ mode, THREE, scene, trails, shake, prng, ma
     }) => void;
     setLutRowOverride: (rowOrNull: any) => void;
     setEventHandler: (fn: any) => void;
+    registerTexture: (key: any, texture: any) => void;
     registerMesh: (kind: any, geometry: any) => void;
     getVfxMasterDefines: (matCfg: any) => Record<string, number>;
     update: (dt?: number, cameraPos?: null) => void;

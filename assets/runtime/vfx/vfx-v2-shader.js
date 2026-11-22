@@ -591,9 +591,9 @@ void main() {
 
 /**
  * Instantiates a configured Three.js ShaderMaterial using VFX Master Shader v2.
- * @param {object} THREE
- * @param {object} materialCfg
- * @param {object} [options]
+ * @param {any} THREE
+ * @param {Record<string, any>} [materialCfg]
+ * @param {{ qualityTier?: 'high' | 'med' | 'low', mainTex?: any, noiseTex?: any, gradientLut?: any, depthTex?: any, avgLifetime?: number }} [options]
  */
 export function createVfxMasterMaterial(THREE, materialCfg = {}, {
   qualityTier = 'high',
