@@ -19,7 +19,7 @@ export function detectMeshLodLevel(node) {
   return m ? Number(m[1]) : 0;
 }
 
-export const MODEL_LOD_DISTANCES = Object.freeze([38, 65, 100]);
+export const MODEL_LOD_DISTANCES = Object.freeze([20, 40, 80]);
 export const MODEL_LOD_HYSTERESIS = 2.0;
 
 export function resolveDistanceLodLevel(
@@ -30,7 +30,7 @@ export function resolveDistanceLodLevel(
 ) {
   const d = Number(distance);
   if (!Number.isFinite(d) || d < 0) return 0;
-  const [d1 = 38, d2 = 65, d3 = 100] = thresholds;
+  const [d1 = 20, d2 = 40, d3 = 80] = thresholds;
   const bounds = [d1, d2, d3];
   if (prevLod === null || prevLod === undefined || !Number.isFinite(Number(prevLod))) {
     if (d < d1) return 0;
