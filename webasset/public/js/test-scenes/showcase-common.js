@@ -25,7 +25,7 @@ export const MATERIAL_SLOT_ALIASES = Object.freeze({
   // Concrete & Plaster
   concrete_fair_faced: 'concrete_wall_precast',
   cn_plaster_white: 'plaster_wall',
-  cn_hallway_green_dado: 'cn_hallway_wainscot',
+  cn_hallway_green_dado: 'plaster_wall',
   ceiling_gypsum: 'plaster_painted',
   ceiling_mineral_wool: 'stucco_wall',
   // Interior Stone
