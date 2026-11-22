@@ -42,6 +42,7 @@ function buildGuidIndex(dir, rootDir, map = new Map()) {
         const alphaIsTransparency = /alphaIsTransparency:\s*1/.test(txt);
         const wrapU = Number((txt.match(/^\s*wrapU:\s*(-?\d+)/m) || [])[1] ?? 0) === 1;
         const wrapV = Number((txt.match(/^\s*wrapV:\s*(-?\d+)/m) || [])[1] ?? 0) === 1;
+        const srgb = Number((txt.match(/^\s*sRGBTexture:\s*(\d+)/m) || [])[1] ?? 1) === 1;
         const globalScale = Number((txt.match(/^\s*globalScale:\s*([-\d.eE+]+)/m) || [])[1] ?? 1);
         map.set(g[1], {
           relPath: path.relative(rootDir, assetPath).replace(/\\/g, '/'),
@@ -50,6 +51,7 @@ function buildGuidIndex(dir, rootDir, map = new Map()) {
           alphaIsTransparency,
           wrapU,
           wrapV,
+          srgb,
           globalScale: Number.isFinite(globalScale) && globalScale > 0 ? globalScale : 1,
         });
       }
@@ -286,16 +288,18 @@ function inspectMaterial(matInfo, guidMap, deps) {
     ];
     let spriteKey = null;
     let clamp = [0, 0];
+    let srgb = true;
     if (guid && guidMap.has(guid)) {
       const tex = guidMap.get(guid);
       deps.textures.set(tex.relPath, tex);
       clamp = [tex.wrapU ? 1 : 0, tex.wrapV ? 1 : 0];
+      srgb = tex.srgb !== false;
       spriteKey = path.basename(tex.relPath, path.extname(tex.relPath))
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '');
     }
-    return { guid, spriteKey, st, blk, clamp };
+    return { guid, spriteKey, st, blk, clamp, srgb };
   };
 
   let shaderKind = 'legacy';
@@ -369,12 +373,14 @@ function inspectMaterial(matInfo, guidMap, deps) {
         doubleSided: cullNum === 0,
         mainTexKey: sMain?.spriteKey || null,
         mainClamp: sMain?.clamp || [0, 0],
+        mainSrgb: sMain?.srgb ?? true,
         mainTexST: sMain?.st || [1, 1, 0, 0],
         mainTexPanning: readVec4Prop('_MainTexturePanning', [0, 0, 0, 0]).slice(0, 2),
         mainTextureChannel: readVec4Prop('_MainTextureChannel', [1, 1, 1, 0]),
         mainAlphaChannel: readVec4Prop('_MainAlphaChannel', [0, 0, 0, 1]),
         detailNoiseKey: sDet?.spriteKey || null,
         detailClamp: sDet?.clamp || [0, 0],
+        detailSrgb: sDet?.srgb ?? true,
         detailNoiseST: sDet?.st || [1, 1, 0, 0],
         detailNoisePanning: readVec4Prop('_DetailNoisePanning', [0, 0, 0, 0]).slice(0, 2),
         detailDistortionChannel: readVec4Prop('_DetailDistortionChannel', [0, 0, 0, 0]),
@@ -384,6 +390,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
         detailVertexOffsetChannel: readVec4Prop('_DetailVertexOffsetChannel', [0, 0, 0, 0]),
         alphaOverrideKey: sAlphaOv?.spriteKey || null,
         alphaOvClamp: sAlphaOv?.clamp || [0, 0],
+        alphaOvSrgb: sAlphaOv?.srgb ?? true,
         alphaOverrideST: sAlphaOv?.st || [1, 1, 0, 0],
         alphaOverridePanning: readVec4Prop('_AlphaOverridePanning', [0, 0, 0, 0]).slice(0, 2),
         alphaOverrideChannel: readVec4Prop('_AlphaOverrideChannel', [1, 0, 0, 0]),
@@ -450,10 +457,12 @@ function inspectMaterial(matInfo, guidMap, deps) {
         keywords,
         doubleSided: cullNum === 0,
         distortionTextureKey: sDist?.spriteKey || null,
+        mainClamp: sDist?.clamp || [0, 0],
         distortionTextureST: sDist?.st || [1, 1, 0, 0],
         distortionPanning: readVec4Prop('_Distortion_Panning', [0, 0, 0, 0]).slice(0, 2),
         distortionStrength: readFloatProp('_Distortion_Strength', 0.05),
         alphaTextureKey: sAlpha?.spriteKey || null,
+        alphaOvClamp: sAlpha?.clamp || [0, 0],
         alphaTextureST: sAlpha?.st || [1, 1, 0, 0],
         alphaPanning: readVec4Prop('_Alpha_Panning', [0, 0, 0, 0]).slice(0, 2),
         alphaChannelPicker: readVec4Prop('_Alpha_Channel_Picker', [1, 0, 0, 0]),
@@ -506,6 +515,8 @@ function inspectMaterial(matInfo, guidMap, deps) {
       keywords,
       doubleSided: cullNum === 0,
       baseColorMapKey: sBase?.spriteKey || null,
+      mainClamp: sBase?.clamp || [0, 0],
+      mainSrgb: sBase?.srgb ?? true,
       baseColorMapST: sBase?.st || [1, 1, 0, 0],
       baseColorMapPanning: readVec4Prop('_Base_Map_Panning', readVec4Prop('_Base_Color_Panning', [0, 0, 0, 0])).slice(0, 2),
       baseColorTint: readVec4Prop('_BaseColorTint', [1, 1, 1, 1]),
@@ -526,6 +537,8 @@ function inspectMaterial(matInfo, guidMap, deps) {
       intensity: readFloatProp('_Intensity', 1),
       selfIlluminationIntensity: readFloatProp('_Self_Ilumination_Intensity', 0),
       detailMapKey: sDet?.spriteKey || null,
+      detailClamp: sDet?.clamp || [0, 0],
+      detailSrgb: sDet?.srgb ?? false,
       detailMapST: sDet?.st || [1, 1, 0, 0],
       detailMapPanning: readVec4Prop('_Detail_Map_Panning', [0, 0, 0, 0]).slice(0, 2),
       detailDistortionChannel: readVec4Prop('_Detail_Distortion_Channel', [0, 0, 0, 0]),
@@ -1089,7 +1102,13 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const trailMat = matGuids[1] ? inspectMaterial(guidMap.get(matGuids[1]), guidMap, deps) : null;
 
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
-    const renderMode = psrDisabled ? 'none' : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : rmNum === 2 ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
+    const renderAlign = Number((psr.match(/^\s*m_RenderAlignment:\s*(\d+)/m) || [])[1] ?? 0);
+    const alignRot = isSubChild ? computeHierarchyTransform(trBody).rot : worldTr.rot;
+    const localNormal = quatRotateVec(alignRot, [0, 0, 1]);
+    const isLocalHorizontal = rmNum === 0 && renderAlign === 2 && Math.abs(localNormal[1]) > 0.7;
+    const renderMode = psrDisabled
+      ? 'none'
+      : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : (rmNum === 2 || isLocalHorizontal) ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
     const pivM = psr.match(/m_Pivot:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
     const pivot = pivM && (Math.abs(Number(pivM[1])) > 0.005 || Math.abs(Number(pivM[2])) > 0.005 || Math.abs(Number(pivM[3])) > 0.005)
       ? [Number(Number(pivM[1]).toFixed(3)), Number(Number(pivM[2]).toFixed(3)), toRhsZ(Number(Number(pivM[3]).toFixed(3)))]
@@ -1690,6 +1709,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         lifetimeMode: trailMode === 1 ? 'seconds' : 'fraction',
         blend: trailMat?.blend || 'alpha',
         ...(trailMat?.spriteKey ? { sprite: trailMat.spriteKey } : {}),
+        ...(trailMat?.uberMat ? { uberMat: trailMat.uberMat } : {}),
         width: Number((baseSizeMax * wMax).toFixed(3)),
         widthOverTrail: wScalar,
         sizeAffectsWidth: sizeAffW,

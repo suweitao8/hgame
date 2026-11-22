@@ -1073,6 +1073,9 @@ void main() {
 `;
 
 export const ATLAS_PARTICLE_FRAGMENT_GLSL = /* glsl */ `
+#ifdef GL_OES_standard_derivatives
+#extension GL_OES_standard_derivatives : enable
+#endif
 precision highp float;
 
 uniform sampler2D uCurveLut;
@@ -1086,6 +1089,7 @@ uniform float uHasSoftDepth;
 uniform float uSoftFade;
 uniform float uIsMultiply;
 uniform float uIsPremultiply;
+uniform float uIsAdditive;
 uniform vec2 uInvViewport;
 uniform vec2 uCamNearFar;
 
@@ -1227,7 +1231,7 @@ void main() {
     vec3 outRgb = uRes.rgb;
     float outA = uRes.a;
     float uPeak = max(outRgb.r, max(outRgb.g, outRgb.b));
-    if (uPeak > 1.0 && outA > 0.0 && outA < 1.0) {
+    if (uIsAdditive > 0.5 && uPeak > 1.0 && outA > 0.0 && outA < 1.0) {
       float boost = min(uPeak, 1.0 / outA);
       outRgb /= boost;
       outA *= boost;
@@ -1312,9 +1316,9 @@ void main() {
     return;
   }
 
-  // Preserve HDR hue and intensity on fixed-point RGBA8 framebuffers before hardware clamp.
+  // Preserve HDR hue and intensity on additive passes while keeping alpha opacity accurate on Alpha blend.
   float peak = max(rgb.r, max(rgb.g, rgb.b));
-  if (peak > 1.0 && alpha > 0.0 && alpha < 1.0) {
+  if (uIsAdditive > 0.5 && peak > 1.0 && alpha > 0.0 && alpha < 1.0) {
     float boost = min(peak, 1.0 / alpha);
     rgb /= boost;
     alpha *= boost;
@@ -1325,6 +1329,9 @@ void main() {
 `;
 
 export const ATLAS_PARTICLE_DISTORTION_FS = /* glsl */ `
+#ifdef GL_OES_standard_derivatives
+#extension GL_OES_standard_derivatives : enable
+#endif
 precision highp float;
 
 uniform sampler2D uCurveLut;
@@ -2084,6 +2091,7 @@ export function createAtlasParticlePool({
       uIs2D: { value: is2D ? 1.0 : 0.0 },
       uIsMultiply: { value: ch.blendMode === 'multiply' && THREE.CustomBlending ? 1.0 : 0.0 },
       uIsPremultiply: { value: ch.blendMode === 'premultiply' && THREE.CustomBlending ? 1.0 : 0.0 },
+      uIsAdditive: { value: ch.additive ? 1.0 : 0.0 },
       uCurveLut: { value: lut.texture },
       uMaterialLut: { value: uberLut ? uberLut.texture : null },
       uAtlasTex: { value: activeAtlasTex },

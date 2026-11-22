@@ -246,7 +246,7 @@ void main() {
   vec4 mvPos = viewMatrix * vec4(worldPos, 1.0);
 
   vNormalWs = worldNrm;
-  vViewDirWs = normalize(cameraPosition - worldPos);
+  vViewDirWs = cameraPosition - worldPos;
   vNormalView = normalize((viewMatrix * vec4(worldNrm, 0.0)).xyz);
   vViewDirView = normalize(-mvPos.xyz);
   gl_Position = projectionMatrix * mvPos;
@@ -267,6 +267,7 @@ uniform float uHasSoftDepth;
 uniform float uTime;
 uniform float uIsMultiply;
 uniform float uIsPremultiply;
+uniform float uIsAdditive;
 uniform float uOpaque;
 uniform vec2 uInvViewport;
 uniform vec2 uCamNearFar;
@@ -354,7 +355,7 @@ void main() {
   vec3 outRgb = res.rgb;
   float outA = res.a;
   float peak = max(outRgb.r, max(outRgb.g, outRgb.b));
-  if (peak > 1.0 && outA > 0.0 && outA < 1.0) {
+  if (uIsAdditive > 0.5 && peak > 1.0 && outA > 0.0 && outA < 1.0) {
     float boost = min(peak, 1.0 / outA);
     outRgb /= boost;
     outA *= boost;
@@ -783,6 +784,7 @@ export function createMeshVfxPool({
       uTime: { value: simTime },
       uIsMultiply: { value: isMultiply ? 1.0 : 0.0 },
       uIsPremultiply: { value: isPremul ? 1.0 : 0.0 },
+      uIsAdditive: { value: blendMode === 'additive' ? 1.0 : 0.0 },
       uOpaque: { value: opaque ? 1.0 : 0.0 },
       uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(invViewW, invViewH) : { set() {} } },
       uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(softNear, softFar) : { set() {} } },
@@ -817,6 +819,7 @@ export function createMeshVfxPool({
       uniforms,
       transparent: !opaque,
       side: cullMode === 'front' ? THREE.BackSide : cullMode === 'back' ? THREE.FrontSide : THREE.DoubleSide,
+      extensions: { derivatives: true },
       ...blendCfg,
     });
     applyVfxDepthState(mat, THREE, depthTest, depthWrite);

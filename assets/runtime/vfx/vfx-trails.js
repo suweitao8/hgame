@@ -6,7 +6,12 @@ import {
   unpackRgb24Into,
 } from './vfx-core.js';
 import { evaluateSizeCurve } from './vfx-atlas-particles.js';
-import { VFX_COMMON_GLSL } from './vfx-shader-chunks.js';
+import {
+  VFX_COMMON_GLSL,
+  VFX_UBER_LUT_GLSL,
+  VFX_UBER_FRAGMENT_GLSL,
+  createUberMaterialLut,
+} from './vfx-shader-chunks.js';
 
 export const SLASH_VERTEX_GLSL = /* glsl */ `
 precision highp float;
@@ -215,6 +220,7 @@ attribute vec4 aSegB;    // x1, y1, z1, t1
 attribute vec4 aSegMeta; // rgb24, width, alpha0, alpha1
 attribute vec4 aSegExtra; // endRgb24, widthScale0, widthScale1, hdr
 attribute vec4 aSegUvRect; // u0, v0, u1, v1 (atlas UV override, z<=x means use uTrailUvRect)
+attribute float aSegMatRow;
 
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;
@@ -225,6 +231,9 @@ varying vec3 vColor;
 varying float vAlpha;
 varying float vHdr;
 varying vec4 vUvRect;
+varying float vUberMatRow;
+varying vec3 vNormalView;
+varying vec3 vViewDirView;
 
 vec3 unpackRgb24(float v) {
   float r = floor(v / 65536.0);
@@ -250,6 +259,7 @@ void main() {
   vAlpha = mix(aSegMeta.z, aSegMeta.w, u);
   vHdr = aSegExtra.w;
   vUvRect = aSegUvRect;
+  vUberMatRow = aSegMatRow;
 
   vec3 a = aSegA.xyz;
   vec3 b = aSegB.xyz;
@@ -264,6 +274,8 @@ void main() {
     vec3 dir = seg / len;
     vec3 side = vec3(-dir.y, dir.x, 0.0);
     vec3 worldPos = mix(a, b, u) + side * (position.y * w * wScale);
+    vNormalView = vec3(0.0, 0.0, 1.0);
+    vViewDirView = vec3(0.0, 0.0, 1.0);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(worldPos, 1.0);
   } else {
     vec4 mvA = modelViewMatrix * vec4(a, 1.0);
@@ -276,21 +288,34 @@ void main() {
     float tipKeep = smoothstep(0.001, 0.012, w);
     float minScreenW = abs(mvPos.z) * 0.0038 * max(0.16, 1.0 - spanT * 0.84) * tipKeep;
     mvPos.xy += vside * (position.y * max(worldW, minScreenW));
+    vNormalView = vec3(0.0, 0.0, 1.0);
+    vViewDirView = -mvPos.xyz;
     gl_Position = projectionMatrix * mvPos;
   }
 }
 `;
 
 export const RIBBON_FRAGMENT_GLSL = /* glsl */ `
+#ifdef GL_OES_standard_derivatives
+#extension GL_OES_standard_derivatives : enable
+#endif
 precision highp float;
 
 uniform sampler2D uTrailTex;
+uniform sampler2D uMaterialLut;
+uniform sampler2D uAtlasTex;
+uniform float uTime;
+uniform float uHasAtlas;
+uniform float uFlipV;
 uniform float uHasTrailTex;
 uniform float uTrailFlipV;
 uniform vec4 uTrailUvRect;
 uniform sampler2D uSoftDepthTex;
 uniform float uHasSoftDepth;
 uniform float uSoftFade;
+uniform float uIsMultiply;
+uniform float uIsPremultiply;
+uniform float uIsAdditive;
 uniform vec2 uInvViewport;
 uniform vec2 uCamNearFar;
 uniform vec4 uCustom1;
@@ -301,10 +326,57 @@ varying vec3 vColor;
 varying float vAlpha;
 varying float vHdr;
 varying vec4 vUvRect;
+varying float vUberMatRow;
+varying vec3 vNormalView;
+varying vec3 vViewDirView;
 
 ${VFX_COMMON_GLSL}
+${VFX_UBER_LUT_GLSL}
+${VFX_UBER_FRAGMENT_GLSL}
 
 void main() {
+  if (vUberMatRow > -0.5) {
+    vec4 uRes = vfxEvalUberFragment(
+      uMaterialLut,
+      uAtlasTex,
+      uHasAtlas,
+      uFlipV,
+      vUberMatRow,
+      vec2(vUv.x, 1.0 - vUv.y),
+      vec2(vUv.x, 1.0 - vUv.y),
+      0.0,
+      false,
+      vec4(vColor, vAlpha),
+      uCustom1,
+      uTime,
+      vViewDirView,
+      vNormalView,
+      gl_FrontFacing,
+      uSoftDepthTex,
+      uHasSoftDepth,
+      gl_FragCoord.xy,
+      uInvViewport,
+      uCamNearFar
+    );
+    if (uIsMultiply > 0.5) {
+      gl_FragColor = vec4(mix(vec3(1.0), uRes.rgb, clamp(uRes.a, 0.0, 1.0)), 1.0);
+      return;
+    }
+    if (uIsPremultiply > 0.5) {
+      gl_FragColor = vec4(uRes.rgb * max(0.0, vHdr), uRes.a);
+      return;
+    }
+    vec3 outRgb = uRes.rgb * max(0.0, vHdr);
+    float outA = uRes.a;
+    float peak = max(outRgb.r, max(outRgb.g, outRgb.b));
+    if (uIsAdditive > 0.5 && peak > 1.0 && outA > 0.0 && outA < 1.0) {
+      float boost = min(peak, 1.0 / outA);
+      outRgb /= boost;
+      outA *= boost;
+    }
+    gl_FragColor = vec4(outRgb, outA);
+    return;
+  }
   float alpha = vAlpha;
   vec3 col = vColor;
   vec4 uvRect = (vUvRect.z > vUvRect.x && vUvRect.w > vUvRect.y) ? vUvRect : uTrailUvRect;
@@ -399,11 +471,15 @@ export function createTrailsSystem({
   const segMeta = new Float32Array(totalRibbonSegs * 4);
   const segExtra = new Float32Array(totalRibbonSegs * 4);
   const segUv = new Float32Array(totalRibbonSegs * 4);
+  const segMatRow = new Float32Array(totalRibbonSegs);
+  segMatRow.fill(-1);
   const segA_N = new Float32Array(totalRibbonSegs * 4);
   const segB_N = new Float32Array(totalRibbonSegs * 4);
   const segMeta_N = new Float32Array(totalRibbonSegs * 4);
   const segExtra_N = new Float32Array(totalRibbonSegs * 4);
   const segUv_N = new Float32Array(totalRibbonSegs * 4);
+  const segMatRow_N = new Float32Array(totalRibbonSegs);
+  segMatRow_N.fill(-1);
   const trailPoints = new Float32Array(trailCap * trailNodes * 3);
   const trailPointTimes = new Float32Array(trailCap * trailNodes);
   const trailHead = new Int32Array(trailCap);
@@ -419,8 +495,15 @@ export function createTrailsSystem({
   const trailLifetime = new Float32Array(trailCap);
   const trailUvRect = new Float32Array(trailCap * 4);
   const trailIsNormal = new Uint8Array(trailCap);
+  const trailMatRow = new Float32Array(trailCap);
+  trailMatRow.fill(-1);
   const trailActive = new Uint8Array(trailCap);
   let atlasRegionMap = atlasRegions || null;
+  let activeAtlasTex = null;
+  let atlasFlipVOverride = null;
+  const uberLut = (THREE && THREE.DataTexture) ? createUberMaterialLut(THREE) : null;
+  const registeredUberMats = [];
+  const timeUniform = { value: 0 };
   const freeTrailStack = new Int32Array(trailCap);
   let freeTrailTop = trailCap;
   for (let i = 0; i < trailCap; i++) freeTrailStack[i] = trailCap - 1 - i;
@@ -511,16 +594,23 @@ export function createTrailsSystem({
     const ra2 = new THREE.InstancedBufferAttribute(segMeta, 4);
     const ra3 = new THREE.InstancedBufferAttribute(segExtra, 4);
     const ra4 = new THREE.InstancedBufferAttribute(segUv, 4);
+    const ra5 = new THREE.InstancedBufferAttribute(segMatRow, 1);
     rGeo.setAttribute('aSegA', ra0);
     rGeo.setAttribute('aSegB', ra1);
     rGeo.setAttribute('aSegMeta', ra2);
     rGeo.setAttribute('aSegExtra', ra3);
     rGeo.setAttribute('aSegUvRect', ra4);
+    rGeo.setAttribute('aSegMatRow', ra5);
     ribbonMat = new MatCtor({
       vertexShader: RIBBON_VERTEX_GLSL,
       fragmentShader: RIBBON_FRAGMENT_GLSL,
       uniforms: {
+        uTime: timeUniform,
         uIs2D: { value: is2D ? 1.0 : 0.0 },
+        uMaterialLut: { value: uberLut ? uberLut.texture : null },
+        uAtlasTex: { value: activeAtlasTex },
+        uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
+        uFlipV: { value: 0.0 },
         uTrailTex: { value: null },
         uHasTrailTex: { value: 0.0 },
         uTrailFlipV: { value: 0.0 },
@@ -528,6 +618,9 @@ export function createTrailsSystem({
         uSoftDepthTex: { value: null },
         uHasSoftDepth: { value: 0.0 },
         uSoftFade: { value: 0.45 },
+        uIsMultiply: { value: 0.0 },
+        uIsPremultiply: { value: 0.0 },
+        uIsAdditive: { value: 1.0 },
         uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
         uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
         uCustom1: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
@@ -544,7 +637,7 @@ export function createTrailsSystem({
     ribbonMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     ribbonMesh.name = 'HGameVfxRibbonTrails';
     scene.add(ribbonMesh);
-    ribbonAttrs = [ra0, ra1, ra2, ra3, ra4];
+    ribbonAttrs = [ra0, ra1, ra2, ra3, ra4, ra5];
 
     // 3b. Alpha-blended RibbonTrailPool
     const rGeoN = new THREE.InstancedBufferGeometry();
@@ -556,16 +649,23 @@ export function createTrailsSystem({
     const rn2 = new THREE.InstancedBufferAttribute(segMeta_N, 4);
     const rn3 = new THREE.InstancedBufferAttribute(segExtra_N, 4);
     const rn4 = new THREE.InstancedBufferAttribute(segUv_N, 4);
+    const rn5 = new THREE.InstancedBufferAttribute(segMatRow_N, 1);
     rGeoN.setAttribute('aSegA', rn0);
     rGeoN.setAttribute('aSegB', rn1);
     rGeoN.setAttribute('aSegMeta', rn2);
     rGeoN.setAttribute('aSegExtra', rn3);
     rGeoN.setAttribute('aSegUvRect', rn4);
+    rGeoN.setAttribute('aSegMatRow', rn5);
     ribbonNormalMat = new MatCtor({
       vertexShader: RIBBON_VERTEX_GLSL,
       fragmentShader: RIBBON_FRAGMENT_GLSL,
       uniforms: {
+        uTime: timeUniform,
         uIs2D: { value: is2D ? 1.0 : 0.0 },
+        uMaterialLut: { value: uberLut ? uberLut.texture : null },
+        uAtlasTex: { value: activeAtlasTex },
+        uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
+        uFlipV: { value: 0.0 },
         uTrailTex: { value: null },
         uHasTrailTex: { value: 0.0 },
         uTrailFlipV: { value: 0.0 },
@@ -573,6 +673,9 @@ export function createTrailsSystem({
         uSoftDepthTex: { value: null },
         uHasSoftDepth: { value: 0.0 },
         uSoftFade: { value: 0.45 },
+        uIsMultiply: { value: 0.0 },
+        uIsPremultiply: { value: 0.0 },
+        uIsAdditive: { value: 0.0 },
         uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
         uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
         uCustom1: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
@@ -589,7 +692,7 @@ export function createTrailsSystem({
     ribbonNormalMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     ribbonNormalMesh.name = 'HGameVfxRibbonTrailsNormal';
     scene.add(ribbonNormalMesh);
-    ribbonNormalAttrs = [rn0, rn1, rn2, rn3, rn4];
+    ribbonNormalAttrs = [rn0, rn1, rn2, rn3, rn4, rn5];
   }
 
   function slashArc(opts = {}) {
@@ -661,11 +764,13 @@ export function createTrailsSystem({
     const hdr = trailHdr[trackId];
 
     const isNormal = trailIsNormal[trackId] === 1;
+    const matRow = trailMatRow[trackId];
     const dstA = isNormal ? segA_N : segA;
     const dstB = isNormal ? segB_N : segB;
     const dstMeta = isNormal ? segMeta_N : segMeta;
     const dstExtra = isNormal ? segExtra_N : segExtra;
     const dstUv = isNormal ? segUv_N : segUv;
+    const dstMatRow = isNormal ? segMatRow_N : segMatRow;
     const otherMeta = isNormal ? segMeta : segMeta_N;
     const dstAttrs = isNormal ? ribbonNormalAttrs : ribbonAttrs;
     const otherAttrs = isNormal ? ribbonAttrs : ribbonNormalAttrs;
@@ -685,8 +790,10 @@ export function createTrailsSystem({
         dstMeta[i4 + 1] = 0;
         dstMeta[i4 + 2] = 0;
         dstMeta[i4 + 3] = 0;
+        dstMatRow[segIdx] = -1;
         continue;
       }
+      dstMatRow[segIdx] = matRow;
       const idxA = (trailHead[trackId] - 1 - s + trailNodes * 2) % trailNodes;
       const idxB = (trailHead[trackId] - 2 - s + trailNodes * 2) % trailNodes;
       const pA = (trackId * trailNodes + idxA) * 3;
@@ -737,11 +844,42 @@ export function createTrailsSystem({
 
     if (dstAttrs) {
       for (let i = 0; i < dstAttrs.length; i++) {
-        submitRingBufferRanges(dstAttrs[i], segBase, segsPerTrail, totalRibbonSegs, 4);
+        submitRingBufferRanges(dstAttrs[i], segBase, segsPerTrail, totalRibbonSegs, i === 5 ? 1 : 4);
       }
     }
     if (otherAttrs) {
       submitRingBufferRanges(otherAttrs[2], segBase, segsPerTrail, totalRibbonSegs, 4);
+    }
+  }
+
+  function registerUberMaterial(matSpec) {
+    if (!uberLut || !matSpec) return -1;
+    const key = matSpec.key || JSON.stringify(matSpec);
+    const idx = uberLut.allocateRow(key, matSpec, atlasRegionMap);
+    registeredUberMats.push({ key, matSpec });
+    return idx;
+  }
+
+  function setAtlas(texture, regions = null, opts = {}) {
+    activeAtlasTex = texture || null;
+    if (regions) atlasRegionMap = regions;
+    if (opts && opts.flipV !== undefined) {
+      atlasFlipVOverride = Boolean(opts.flipV);
+    }
+    const flipVal = atlasFlipVOverride !== null
+      ? (atlasFlipVOverride ? 1.0 : 0.0)
+      : (activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0);
+    for (const mat of [ribbonMat, ribbonNormalMat]) {
+      if (!mat) continue;
+      mat.uniforms.uAtlasTex.value = activeAtlasTex;
+      mat.uniforms.uHasAtlas.value = activeAtlasTex ? 1.0 : 0.0;
+      mat.uniforms.uFlipV.value = flipVal;
+    }
+    if (uberLut && atlasRegionMap) {
+      for (let i = 0; i < registeredUberMats.length; i++) {
+        const entry = registeredUberMats[i];
+        uberLut.allocateRow(entry.key, entry.matSpec, atlasRegionMap);
+      }
     }
   }
 
@@ -785,6 +923,7 @@ export function createTrailsSystem({
     trailOpacity[id] = 1;
     trailLifetime[id] = 0;
     trailIsNormal[id] = 0;
+    trailMatRow[id] = -1;
     const uvBase = id * 4;
     trailUvRect[uvBase] = 0;
     trailUvRect[uvBase + 1] = 0;
@@ -803,6 +942,9 @@ export function createTrailsSystem({
       trailOpacity[id] = Math.max(0, Math.min(1, colorOrOpts.alpha ?? 1.0));
       trailLifetime[id] = Math.max(0, colorOrOpts.lifetime ?? 0);
       trailIsNormal[id] = colorOrOpts.blend === 'alpha' ? 1 : 0;
+      if (colorOrOpts.uberMat) {
+        trailMatRow[id] = registerUberMaterial(colorOrOpts.uberMat);
+      }
       const rect = colorOrOpts.uvRect || (colorOrOpts.sprite && atlasRegionMap?.[colorOrOpts.sprite]);
       if (rect) {
         trailUvRect[uvBase] = rect[0] ?? 0;
@@ -910,6 +1052,7 @@ export function createTrailsSystem({
 
   function update(visualDt) {
     simTime += Math.max(0, visualDt);
+    timeUniform.value = simTime;
     flushDirty();
     if (slashMat) slashMat.uniforms.uTime.value = simTime;
     if (boltMat) boltMat.uniforms.uTime.value = simTime;
@@ -984,10 +1127,19 @@ export function createTrailsSystem({
     }
     segMeta.fill(0);
     segMeta_N.fill(0);
+    segMatRow.fill(-1);
+    segMatRow_N.fill(-1);
+    trailMatRow.fill(-1);
     slashP1.fill(0);
     boltP1.fill(0);
-    if (ribbonAttrs) submitRingBufferRanges(ribbonAttrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
-    if (ribbonNormalAttrs) submitRingBufferRanges(ribbonNormalAttrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
+    if (ribbonAttrs) {
+      submitRingBufferRanges(ribbonAttrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
+      submitRingBufferRanges(ribbonAttrs[5], 0, totalRibbonSegs, totalRibbonSegs, 1);
+    }
+    if (ribbonNormalAttrs) {
+      submitRingBufferRanges(ribbonNormalAttrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
+      submitRingBufferRanges(ribbonNormalAttrs[5], 0, totalRibbonSegs, totalRibbonSegs, 1);
+    }
     if (slashAttrs) submitRingBufferRanges(slashAttrs[1], 0, slashCap, slashCap, 4);
     if (boltAttrs) submitRingBufferRanges(boltAttrs[1], 0, boltCap, boltCap, 4);
   }
@@ -1002,11 +1154,14 @@ export function createTrailsSystem({
         m.material?.dispose?.();
       }
     }
+    uberLut?.dispose?.();
   }
 
   return {
     slashArc,
     lightningBolt,
+    setAtlas,
+    registerUberMaterial,
     setTrailTexture,
     setDepthTexture,
     setTrailPoints,

@@ -1735,6 +1735,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     trails: {
         slashArc: (opts?: {}) => void;
         lightningBolt: (opts?: {}) => void;
+        setAtlas: (texture: any, regions?: null, opts?: {}) => void;
+        registerUberMaterial: (matSpec: any) => any;
         setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
         setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
             near?: number | undefined;
@@ -1845,6 +1847,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     hasActiveWarp: () => boolean;
     setWarpMeshesVisible: (visible: any) => void;
     hasActiveDistortion: () => boolean;
+    prepareDistortionBeforeWorld: () => void;
+    renderDistortionPass: (renderer: any, targetScene: any, camera: any) => void;
     renderWithDistortion: (renderer: any, targetScene: any, camera: any) => void;
     setWind(wx?: number, wy?: number, wz?: number): void;
     setCollisionResolver: (fn: any) => void;

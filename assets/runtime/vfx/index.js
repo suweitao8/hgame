@@ -633,49 +633,49 @@ export function createVfxSystem({
   let distCopyH = 0;
   let distCopyVec = null;
   let distSizeVec = null;
+  let distSceneCopyRT = null;
+  let distCopyScene = null;
+  let distCopyCam = null;
+  let distCopyQuad = null;
+  let distCopyMat = null;
   const distObjects = [];
 
   function hasActiveDistortion() {
     return Boolean(atlasParticles.hasActiveDistortion?.() || meshVfx.hasActiveDistortion?.() || shurikenKernel.hasActiveWarp());
   }
 
-  function renderWithDistortion(renderer, targetScene, camera) {
-    if (!renderer || !targetScene || !camera) return;
-    if (!hasActiveDistortion() || !THREE?.FramebufferTexture || !THREE?.Vector2) {
-      atlasParticles.setSceneTexture(null);
-      meshVfx.setSceneTexture(null);
-      shurikenKernel.setSceneTexture(null);
-      renderer.render(targetScene, camera);
-      return;
-    }
-
-    if (!distSizeVec) distSizeVec = new THREE.Vector2();
-    if (!distCopyVec) distCopyVec = new THREE.Vector2(0, 0);
-    renderer.getDrawingBufferSize(distSizeVec);
-    const w = Math.max(1, distSizeVec.x | 0);
-    const h = Math.max(1, distSizeVec.y | 0);
-    if (!distCopyTex || distCopyW !== w || distCopyH !== h) {
-      distCopyTex?.dispose?.();
-      distCopyTex = new THREE.FramebufferTexture(w, h);
-      distCopyW = w;
-      distCopyH = h;
-    }
-
+  function prepareDistortionBeforeWorld() {
     atlasParticles.setSceneTexture(null);
     meshVfx.setSceneTexture(null);
     shurikenKernel.setSceneTexture(null);
     shurikenKernel.setWarpMeshesVisible(false);
-    renderer.render(targetScene, camera);
-    const threeRev = Number.parseInt(THREE?.REVISION || '0', 10);
-    if (!threeRev || threeRev >= 165) {
-      renderer.copyFramebufferToTexture(distCopyTex, distCopyVec);
-    } else {
-      renderer.copyFramebufferToTexture(distCopyVec, distCopyTex);
-    }
+  }
 
-    atlasParticles.setSceneTexture(distCopyTex, { width: w, height: h });
-    meshVfx.setSceneTexture(distCopyTex, { width: w, height: h });
-    shurikenKernel.setSceneTexture(distCopyTex, { width: w, height: h });
+  function ensureDistortionCopyBlit() {
+    if (distCopyScene || !THREE?.Scene || !THREE?.PlaneGeometry) return Boolean(distCopyScene);
+    const MatCtor = THREE.RawShaderMaterial || THREE.ShaderMaterial;
+    if (!MatCtor) return false;
+    distCopyScene = new THREE.Scene();
+    distCopyCam = THREE.OrthographicCamera ? new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1) : null;
+    const geo = new THREE.PlaneGeometry(2, 2);
+    distCopyMat = new MatCtor({
+      vertexShader: 'attribute vec3 position; attribute vec2 uv; varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: 'precision highp float; uniform sampler2D uTex; varying vec2 vUv; void main() { gl_FragColor = texture2D(uTex, vUv); }',
+      uniforms: { uTex: { value: null } },
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.NoBlending,
+    });
+    distCopyQuad = new THREE.Mesh(geo, distCopyMat);
+    distCopyQuad.frustumCulled = false;
+    distCopyScene.add(distCopyQuad);
+    return true;
+  }
+
+  function renderDistortionObjects(renderer, targetScene, camera, sceneTex, w, h) {
+    atlasParticles.setSceneTexture(sceneTex, { width: w, height: h });
+    meshVfx.setSceneTexture(sceneTex, { width: w, height: h });
+    shurikenKernel.setSceneTexture(sceneTex, { width: w, height: h });
     shurikenKernel.setWarpMeshesVisible(true);
 
     distObjects.length = 0;
@@ -701,6 +701,92 @@ export function createVfxSystem({
     }
   }
 
+  function renderDistortionPass(renderer, targetScene, camera) {
+    if (!renderer || !targetScene || !camera || !hasActiveDistortion() || !THREE?.Vector2) {
+      return;
+    }
+    const currentRT = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
+    if (currentRT && THREE.WebGLRenderTarget && ensureDistortionCopyBlit() && distCopyCam) {
+      const w = Math.max(1, currentRT.width | 0);
+      const h = Math.max(1, currentRT.height | 0);
+      const texType = currentRT.texture?.type ?? THREE.HalfFloatType ?? THREE.UnsignedByteType;
+      if (!distSceneCopyRT || distSceneCopyRT.width !== w || distSceneCopyRT.height !== h || distSceneCopyRT.texture?.type !== texType) {
+        distSceneCopyRT?.dispose?.();
+        distSceneCopyRT = new THREE.WebGLRenderTarget(w, h, {
+          type: texType,
+          format: THREE.RGBAFormat,
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          depthBuffer: false,
+          stencilBuffer: false,
+        });
+      }
+      const prevAutoClear = renderer.autoClear;
+      distCopyMat.uniforms.uTex.value = currentRT.texture;
+      renderer.setRenderTarget(distSceneCopyRT);
+      renderer.autoClear = true;
+      renderer.render(distCopyScene, distCopyCam);
+      distCopyMat.uniforms.uTex.value = null;
+      renderer.setRenderTarget(currentRT);
+      renderer.autoClear = prevAutoClear;
+      renderDistortionObjects(renderer, targetScene, camera, distSceneCopyRT.texture, w, h);
+      prepareDistortionBeforeWorld();
+      return;
+    }
+
+    if (!THREE?.FramebufferTexture) return;
+    if (!distSizeVec) distSizeVec = new THREE.Vector2();
+    if (!distCopyVec) distCopyVec = new THREE.Vector2(0, 0);
+    renderer.getDrawingBufferSize(distSizeVec);
+    const w = Math.max(1, distSizeVec.x | 0);
+    const h = Math.max(1, distSizeVec.y | 0);
+    if (!distCopyTex || distCopyW !== w || distCopyH !== h) {
+      distCopyTex?.dispose?.();
+      distCopyTex = new THREE.FramebufferTexture(w, h);
+      distCopyW = w;
+      distCopyH = h;
+    }
+    const threeRev = Number.parseInt(THREE?.REVISION || '0', 10);
+    if (!threeRev || threeRev >= 165) {
+      renderer.copyFramebufferToTexture(distCopyTex, distCopyVec);
+    } else {
+      renderer.copyFramebufferToTexture(distCopyVec, distCopyTex);
+    }
+    renderDistortionObjects(renderer, targetScene, camera, distCopyTex, w, h);
+    prepareDistortionBeforeWorld();
+  }
+
+  function renderWithDistortion(renderer, targetScene, camera) {
+    if (!renderer || !targetScene || !camera) return;
+    prepareDistortionBeforeWorld();
+    if (!hasActiveDistortion() || !THREE?.FramebufferTexture || !THREE?.Vector2) {
+      renderer.render(targetScene, camera);
+      return;
+    }
+
+    if (!distSizeVec) distSizeVec = new THREE.Vector2();
+    if (!distCopyVec) distCopyVec = new THREE.Vector2(0, 0);
+    renderer.getDrawingBufferSize(distSizeVec);
+    const w = Math.max(1, distSizeVec.x | 0);
+    const h = Math.max(1, distSizeVec.y | 0);
+    if (!distCopyTex || distCopyW !== w || distCopyH !== h) {
+      distCopyTex?.dispose?.();
+      distCopyTex = new THREE.FramebufferTexture(w, h);
+      distCopyW = w;
+      distCopyH = h;
+    }
+
+    renderer.render(targetScene, camera);
+    const threeRev = Number.parseInt(THREE?.REVISION || '0', 10);
+    if (!threeRev || threeRev >= 165) {
+      renderer.copyFramebufferToTexture(distCopyTex, distCopyVec);
+    } else {
+      renderer.copyFramebufferToTexture(distCopyVec, distCopyTex);
+    }
+
+    renderDistortionObjects(renderer, targetScene, camera, distCopyTex, w, h);
+  }
+
   function dispose() {
     effects.dispose();
     shurikenKernel.dispose();
@@ -713,6 +799,14 @@ export function createVfxSystem({
     screenFeedback.dispose();
     distCopyTex?.dispose?.();
     distCopyTex = null;
+    distSceneCopyRT?.dispose?.();
+    distSceneCopyRT = null;
+    distCopyQuad?.geometry?.dispose?.();
+    distCopyMat?.dispose?.();
+    distCopyScene = null;
+    distCopyCam = null;
+    distCopyQuad = null;
+    distCopyMat = null;
   }
 
   return {
@@ -732,7 +826,11 @@ export function createVfxSystem({
     setAtlas(tex, regions, opts) {
       atlasParticles.setAtlas(tex, regions, opts);
       meshVfx.setAtlas?.(tex, regions, opts);
-      if (regions) trails.setAtlasRegions?.(regions);
+      if (typeof trails.setAtlas === 'function') {
+        trails.setAtlas(tex, regions, opts);
+      } else if (regions) {
+        trails.setAtlasRegions?.(regions);
+      }
     },
     setDepthTexture(tex, opts) {
       atlasParticles.setDepthTexture(tex, opts);
@@ -755,6 +853,8 @@ export function createVfxSystem({
     hasActiveWarp: shurikenKernel.hasActiveWarp,
     setWarpMeshesVisible: shurikenKernel.setWarpMeshesVisible,
     hasActiveDistortion,
+    prepareDistortionBeforeWorld,
+    renderDistortionPass,
     renderWithDistortion,
     setWind(wx = 0, wy = 0, wz = 0) {
       atlasParticles.setWind(wx, wy, wz);

@@ -532,6 +532,7 @@ export function createEffectPlayer({
       blend: trailCfg.blend || 'additive',
       sprite: trailCfg.sprite,
       uvRect: trailCfg.uvRect ?? (trailCfg.sprite && atlasParticles?.regions?.[trailCfg.sprite]) ?? null,
+      uberMat: trailCfg.uberMat ?? null,
     });
     if (tid < 0) return;
 
@@ -1345,6 +1346,7 @@ export function createEffectPlayer({
             blend: layer.trail.blend ?? 'additive',
             sprite: layer.trail.sprite ?? null,
             uvRect: layer.trail.uvRect ?? (layer.trail.sprite && atlasParticles?.regions?.[layer.trail.sprite]) ?? null,
+            uberMat: layer.trail.uberMat ?? null,
             lifetime: 0,
             alpha: layer.trail.alpha ?? 1.0,
           };
