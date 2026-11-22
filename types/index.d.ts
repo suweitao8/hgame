@@ -20,7 +20,7 @@ import { PrefabRegistry } from "./core/prefab.js";
 import { createTagContainer, createTagRegistry, matchGameplayTags } from "./core/tags.js";
 import { createGameApplication } from "./core/application.js";
 import { createTraceRecorder } from "./integrations/trace.js";
-import { createColorLutTexture3D } from "./integrations/post3d/color.js";
+import { createColorLutTexture3D, configureStripLutTexture, loadStripLutTexture } from "./integrations/post3d/color.js";
 import { detectCompressedTextureSupport, parseKtx2Header, selectOptimalTextureVariant, createCompressedTextureFromMipData } from "./integrations/ktx2.js";
 import { createRenderBudgetController } from "./integrations/render-budget-2d.js";
 import { createSpringArmRayProbe, cameraRelativeMove } from "./integrations/camera3d.js";
@@ -71,6 +71,8 @@ export const HGame: Readonly<{
     createTraceRecorder: typeof createTraceRecorder;
     COLOR_LUT_PRESETS: readonly string[];
     createColorLutTexture3D: typeof createColorLutTexture3D;
+    configureStripLutTexture: typeof configureStripLutTexture;
+    loadStripLutTexture: typeof loadStripLutTexture;
     KTX2_MAGIC: Uint8Array;
     detectCompressedTextureSupport: typeof detectCompressedTextureSupport;
     parseKtx2Header: typeof parseKtx2Header;
@@ -2482,7 +2484,7 @@ export { ATMOSPHERE_PRESETS_CN, createAtmosphere3D } from "./world/atmosphere3d.
 export { QUALITY3D_PROFILES, resolveQuality3DProfile } from "./integrations/quality3d.js";
 export { createRealisticWater3D, createRealisticGlassMaterial3D } from "./integrations/water3d.js";
 export { createStateMachine, BT_STATUS, sequence, selector, parallel, inverter, repeater, cooldown, condition, action, wait, createBehaviorTree } from "./ai/index.js";
-export { COLOR_LUT_PRESETS, createColorLutTexture3D } from "./integrations/post3d/color.js";
+export { COLOR_LUT_PRESETS, createColorLutTexture3D, configureStripLutTexture, loadStripLutTexture } from "./integrations/post3d/color.js";
 export { KTX2_MAGIC, detectCompressedTextureSupport, parseKtx2Header, selectOptimalTextureVariant, createCompressedTextureFromMipData } from "./integrations/ktx2.js";
 export { createSeededRng, createStateChecksum, hashState, runScripted, createSimulationWorkBudget, createSimWorkerRunner, measureHotLoopAllocations } from "./sim/index.js";
 export { RENDER_RESOURCE_TYPES_2D, createRenderBudgetController } from "./integrations/render-budget-2d.js";

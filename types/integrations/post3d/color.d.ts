@@ -75,6 +75,29 @@ export function stepEyeAdaptation(currentExposure: number, avgLuminance: number,
  * @param {number} [size=16]
  */
 export function createColorLutTexture3D(THREE?: object | null, presetOrFn?: string | ((r: number, g: number, b: number) => [number, number, number]) | undefined, size?: number | undefined): any;
+/**
+ * Configure any loaded 256x16 strip LUT texture (`size^2 x size`) for lossless WebGL2 sampling:
+ * LinearFilter, no mipmaps, ClampToEdgeWrapping, NoColorSpace, and flipY=false.
+ * @param {object} tex Three.js Texture instance.
+ * @param {object|null} [THREE]
+ * @param {{ size?: number, srgbInput?: boolean, preset?: string }} [options]
+ */
+export function configureStripLutTexture(tex: object, THREE?: object | null, { size, srgbInput, preset }?: {
+    size?: number;
+    srgbInput?: boolean;
+    preset?: string;
+} | undefined): any;
+/**
+ * Async load a lossless 256x16 PNG strip LUT (e.g. AmplifyLUTPack) with strict WebGL2 flags.
+ * @param {object} THREE
+ * @param {string} url
+ * @param {{ size?: number, srgbInput?: boolean, preset?: string }} [options]
+ */
+export function loadStripLutTexture(THREE: object, url: string, { size, srgbInput, preset }?: {
+    size?: number;
+    srgbInput?: boolean;
+    preset?: string;
+} | undefined): Promise<any>;
 export const D65_PLANCKIAN_REF: RGBTuple;
 /** Supported built-in 3D color-grading LUT preset names. */
 export const COLOR_LUT_PRESETS: readonly string[];

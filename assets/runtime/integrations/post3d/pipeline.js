@@ -535,6 +535,7 @@ export function createPostPipeline3D(options = {}) {
     heightFogColor: THREE.Vector3 ? new THREE.Vector3(0.53, 0.64, 0.77) : null,
     lutIntensity: 0,
     lutSize: 16,
+    lutSrgb: false,
     lutPreset: null,
   };
 
@@ -570,6 +571,7 @@ export function createPostPipeline3D(options = {}) {
       if (ownedLutTexture) { ownedLutTexture.dispose?.(); ownedLutTexture = null; }
       lutTexture = null;
       state.lutIntensity = 0;
+      state.lutSrgb = false;
       state.lutPreset = null;
       return;
     }
@@ -581,6 +583,7 @@ export function createPostPipeline3D(options = {}) {
         lutTexture = tex;
       }
       state.lutSize = tex?.userData?.hgameLutSize ?? tex?.size ?? 16;
+      state.lutSrgb = false;
       state.lutPreset = cfg;
       state.lutIntensity = 1.0;
       return;
@@ -590,6 +593,7 @@ export function createPostPipeline3D(options = {}) {
         if (ownedLutTexture) { ownedLutTexture.dispose?.(); ownedLutTexture = null; }
         lutTexture = cfg.texture;
         state.lutSize = cfg.size ?? cfg.texture?.userData?.hgameLutSize ?? 16;
+        state.lutSrgb = Boolean(cfg.srgbInput ?? cfg.texture?.userData?.hgameLutSrgb);
         state.lutPreset = cfg.texture?.userData?.preset ?? 'custom';
         state.lutIntensity = Number.isFinite(cfg.intensity) ? cfg.intensity : 1.0;
       } else if (cfg.preset) {
@@ -600,6 +604,7 @@ export function createPostPipeline3D(options = {}) {
           lutTexture = tex;
         }
         state.lutSize = tex?.userData?.hgameLutSize ?? tex?.size ?? 16;
+        state.lutSrgb = false;
         state.lutPreset = cfg.preset;
         state.lutIntensity = Number.isFinite(cfg.intensity) ? cfg.intensity : 1.0;
       } else if (Number.isFinite(cfg.intensity)) {
@@ -1049,6 +1054,7 @@ export function createPostPipeline3D(options = {}) {
         tColorLut: { value: lutTexture ?? dummyWhiteLut },
         uLutIntensity: { value: state.lutIntensity },
         uLutSize: { value: state.lutSize },
+        uLutSrgb: { value: state.lutSrgb ? 1.0 : 0.0 },
       }, { ...exposureDefines, ...giDepthDefines }),
       fxaaSharpen: makeShader(FXAA_SHARPEN_FRAGMENT_GLSL3, {
         tDiffuse: { value: null },
@@ -2029,6 +2035,7 @@ export function createPostPipeline3D(options = {}) {
         compU.tColorLut.value = lutTexture ?? dummyWhiteLut;
         compU.uLutIntensity.value = lutTexture ? state.lutIntensity : 0;
         compU.uLutSize.value = state.lutSize;
+        if (compU.uLutSrgb) compU.uLutSrgb.value = state.lutSrgb ? 1.0 : 0.0;
         runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, plannedFinalFxaaPass ? outputs.ldrColor : null, outputViewport);
       }, {
         reads: [

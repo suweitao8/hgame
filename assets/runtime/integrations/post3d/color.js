@@ -294,3 +294,52 @@ export function createColorLutTexture3D(THREE = null, presetOrFn = 'cinematic', 
   });
 }
 
+/**
+ * Configure any loaded 256x16 strip LUT texture (`size^2 x size`) for lossless WebGL2 sampling:
+ * LinearFilter, no mipmaps, ClampToEdgeWrapping, NoColorSpace, and flipY=false.
+ * @param {object} tex Three.js Texture instance.
+ * @param {object|null} [THREE]
+ * @param {{ size?: number, srgbInput?: boolean, preset?: string }} [options]
+ */
+export function configureStripLutTexture(tex, THREE = null, { size = 16, srgbInput = true, preset = 'custom' } = {}) {
+  if (!tex || typeof tex !== 'object') return tex;
+  const s = Math.max(4, Math.min(32, Math.floor(Number(size) || 16)));
+  if (THREE?.LinearFilter !== undefined) {
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+  }
+  if (THREE?.ClampToEdgeWrapping !== undefined) {
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+  }
+  if (THREE?.NoColorSpace !== undefined) {
+    tex.colorSpace = THREE.NoColorSpace;
+  }
+  tex.generateMipmaps = false;
+  tex.flipY = false;
+  tex.userData = {
+    ...(tex.userData || {}),
+    hgameLutSize: s,
+    hgameLutSrgb: Boolean(srgbInput),
+    preset,
+  };
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Async load a lossless 256x16 PNG strip LUT (e.g. AmplifyLUTPack) with strict WebGL2 flags.
+ * @param {object} THREE
+ * @param {string} url
+ * @param {{ size?: number, srgbInput?: boolean, preset?: string }} [options]
+ */
+export async function loadStripLutTexture(THREE, url, { size = 16, srgbInput = true, preset = 'custom' } = {}) {
+  if (!THREE?.TextureLoader || typeof url !== 'string' || !url) {
+    throw new Error('loadStripLutTexture requires THREE.TextureLoader and a valid URL.');
+  }
+  const loader = new THREE.TextureLoader();
+  const tex = await loader.loadAsync(url);
+  return configureStripLutTexture(tex, THREE, { size, srgbInput, preset });
+}
+
+

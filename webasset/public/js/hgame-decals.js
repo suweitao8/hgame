@@ -10,7 +10,6 @@ import {
   disposeObject3D,
   draw2MapChannelCanvases,
   drawImageFittedToCanvas,
-  fetchUnrealCatalog,
   fitCharacterToIdentityScale,
   getDefaultDecalHsvMatch,
   loadHtmlImage,
@@ -28,6 +27,16 @@ const DECAL_PACK_ORDER = [
   '街道与路面 Road',
   '血迹贴花 Blood',
 ];
+
+const SOURCE_PACK_LABELS = {
+  Quixel_CN: 'Quixel CN 街景贴花',
+  UWC_Bullet_Holes: 'UWC 多材质弹孔与斩击',
+  RealisticBloodDecals: '写实喷溅血迹',
+  VOL3_Blood: 'VOL3 血迹/血泊/手脚印',
+  Concrete_Decals: 'Concrete 水泥弹孔与剥落',
+  Crater_Decals: 'Crater 弹坑/焦痕/余烬',
+  VOL2_StreetsRoads: 'Road 路面破损/补丁/胎痕',
+};
 
 const SURFACE_FALLBACKS = {
   concrete: { color: 0x4b504a, roughness: 0.88, cnId: 'concrete_road_01' },
@@ -143,8 +152,14 @@ let refCharLoadToken = 0;
 function inferDecalPlacement(item, lib = currentLib) {
   if (lib === 'cn_foliage') return 'floor';
   if (!item) return 'floor';
+  if (item.placement === 'wall' || item.placement === 'floor') return item.placement;
   if (lib === 'cn_pbr') {
-    if (item.category === 'leak' || /(?:^|_)wall(?:_|$)/i.test(item.id || '')) {
+    if (
+      item.category === 'leak'
+      || item.category === 'bullet_concrete'
+      || item.category === 'damage_concrete'
+      || /(?:^|_)wall(?:_|$)|handprint|drip/i.test(item.id || '')
+    ) {
       return 'wall';
     }
     return 'floor';
@@ -186,10 +201,13 @@ function getFilteredDecals() {
   return items.filter(item => {
     if (currentLib === 'cn_pbr' || currentLib === 'cn_foliage') {
       if (filter === 'tint:1' && !item.tintableGrayscale) return false;
+      if (filter.startsWith('pack:') && (item.sourcePack || '') !== filter.slice(5)) return false;
       if (filter.startsWith('cat:') && (item.category || '') !== filter.slice(4)) return false;
       if (!query) return true;
       return (item.id || '').toLowerCase().includes(query)
         || (item.category || '').toLowerCase().includes(query)
+        || (item.sourcePack || '').toLowerCase().includes(query)
+        || (item.surfaceType || '').toLowerCase().includes(query)
         || (item.sourcePath || '').toLowerCase().includes(query);
     }
     const itemPack = item.packLabel || item.pack || '其他贴花';
@@ -217,9 +235,12 @@ function populatePackFilter() {
 
   if (currentLib === 'cn_pbr' || currentLib === 'cn_foliage') {
     const cfg = CN_LIBS[currentLib];
+    const packs = new Map();
     const cats = new Map();
     let tintCount = 0;
     for (const item of items) {
+      const sp = item.sourcePack || '';
+      if (sp) packs.set(sp, (packs.get(sp) || 0) + 1);
       const cat = item.category || 'other';
       cats.set(cat, (cats.get(cat) || 0) + 1);
       if (item.tintableGrayscale) tintCount += 1;
@@ -231,11 +252,15 @@ function populatePackFilter() {
       packFilter.appendChild(opt);
     };
     addOpt('all', `${cfg.label} (${items.length})`);
+    if (tintCount > 0) {
+      addOpt('tint:1', `可染色血迹/果汁 (${tintCount})`);
+    }
+    for (const [sp, count] of packs.entries()) {
+      const spLabel = SOURCE_PACK_LABELS[sp] || sp;
+      addOpt(`pack:${sp}`, `来源 · ${spLabel} (${count})`);
+    }
     for (const [cat, count] of [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
       addOpt(`cat:${cat}`, `分类 · ${cat} (${count})`);
-    }
-    if (tintCount > 0) {
-      addOpt('tint:1', `可染色血迹/污渍 (${tintCount})`);
     }
     const valid = [...packFilter.options].some(o => o.value === prev);
     packFilter.value = valid ? prev : 'all';
@@ -521,9 +546,22 @@ function applyTransformToDecalMesh() {
   }
 
   if (previewMode === 'surface') {
-    const effective = BASE_DECAL_SIZE * decalContentScale * scale;
-    let wMeters = effective * aspectFactor;
-    let hMeters = effective / aspectFactor;
+    const item = getCurrentDecal();
+    const phys = item?.physicalSizeMeters;
+    let wMeters;
+    let hMeters;
+    if (Array.isArray(phys) && phys.length >= 2 && Number(phys[0]) > 0 && Number(phys[1]) > 0) {
+      wMeters = Number(phys[0]) * scale;
+      hMeters = Number(phys[1]) * scale;
+    } else if (Number.isFinite(Number(phys)) && Number(phys) > 0) {
+      const p = Number(phys) * scale;
+      wMeters = p * aspectFactor;
+      hMeters = p / aspectFactor;
+    } else {
+      const effective = BASE_DECAL_SIZE * decalContentScale * scale;
+      wMeters = effective * aspectFactor;
+      hMeters = effective / aspectFactor;
+    }
     if (currentPlacement === 'wall') {
       let centerY = WALL_DECAL_Y;
       if (wallDecalLayout.anchor === 'full') {
@@ -1036,8 +1074,11 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
       mapsRowEl.hidden = false;
 
       const aspectStr = decalAspect !== 1 ? ` · 比例 ${item.aspectRatio}:1` : '';
-      const physStr = item.physicalSizeMeters ? ` · ${item.physicalSizeMeters}m` : '';
-      const typeLabel = currentLib === 'cn_foliage' ? '2贴图植被卡片(alphaTest 0.5)' : '2贴图贴花(Transparent)';
+      const phys = item.physicalSizeMeters;
+      const physStr = Array.isArray(phys)
+        ? ` · 物理 ${phys[0]}×${phys[1]}m`
+        : (phys ? ` · 物理 ${phys}m` : '');
+      const typeLabel = currentLib === 'cn_foliage' ? '2贴图植被卡片(alphaTest 0.5)' : 'v5.0 2贴图(OpenGL +Y)';
       const tintStr = item.tintableGrayscale ? ' · 可染色灰度' : '';
       const refStr = previewMode === 'surface' && refCharRoot?.visible && refCharHeight
         ? ` · 参考角色 ${refCharHeight.toFixed(2)}m`
@@ -1048,7 +1089,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
       const hsvStr = hsvPct > 0 ? ` · 底色融合 ${hsvPct}%` : '';
       statusEl.textContent =
         `${typeLabel} · ${placementLabel} · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr}${hsvStr}${refStr} · ` +
-        `${assets.loadMs.toFixed(0)}ms · ${item.sourcePath || item.category || ''}`;
+        `${assets.loadMs.toFixed(0)}ms · ${item.sourcePack || item.sourcePath || item.category || ''}`;
 
       startViewport(vp);
     } catch (error) {
@@ -1273,39 +1314,19 @@ async function initDecalsView() {
 
   if (!catalogLoaded) {
     try {
-      const [cnResp, folResp, unrealCatalog, curatedData, chars] = await Promise.all([
+      const [cnResp, folResp, curatedData, chars] = await Promise.all([
         fetch('/assets/cn/pbr_decals/pbr_decals_table.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
         fetch('/assets/cn/pbr_foliage/pbr_foliage_table.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
-        fetchUnrealCatalog().catch(() => ({ decals: [], materials: [], animations: [] })),
         apiRequestJson('/api/hgame/materials/curated').catch(() => ({ materials: [] })),
         fetchSelfCharactersForRef(),
       ]);
       cnDecals = Array.isArray(cnResp?.items) ? cnResp.items : [];
       cnFoliage = Array.isArray(folResp?.items) ? folResp.items : [];
-      unrealDecals = Array.isArray(unrealCatalog.decals) ? unrealCatalog.decals : [];
-      const unrealMats = Array.isArray(unrealCatalog.materials) ? unrealCatalog.materials : [];
+      unrealDecals = [];
       const curatedMats = Array.isArray(curatedData?.materials) ? curatedData.materials : [];
-      baseMaterials = [...unrealMats, ...curatedMats];
+      baseMaterials = [...curatedMats];
       refCharacters = chars;
-      const allAnims = Array.isArray(unrealCatalog.animations) ? unrealCatalog.animations : [];
-      const preferredIdleIds = [
-        'Dialogue_mocap__MM_Idle',
-        'Female_Animations__Anim_Idle_01',
-        'MC_Idles_Pack__am_ArmsCrossed_Idle_01',
-        'NPCsBundle__A_IdleBreak1',
-      ];
-      const byId = new Map(allAnims.map(a => [a.id, a]));
-      const picked = [];
-      for (const id of preferredIdleIds) {
-        if (byId.has(id)) picked.push(byId.get(id));
-      }
-      for (const a of allAnims) {
-        if (a.category === '待机站姿' && !picked.includes(a)) {
-          picked.push(a);
-          if (picked.length >= 8) break;
-        }
-      }
-      idleAnimCandidates = picked;
+      idleAnimCandidates = [];
       populateRefCharSelect();
       catalogLoaded = true;
     } catch (error) {

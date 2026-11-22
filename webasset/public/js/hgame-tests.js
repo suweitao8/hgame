@@ -11,6 +11,7 @@ import {
   PbrTextureArrayLoader,
 } from './realistic-pcg.js';
 import { apiRequestJson, createSidebarSquareCard, disposeObject3D } from './hgame-shared.js';
+import { createPostPipeline3D, loadStripLutTexture } from '/runtime/hgame/integrations/post3d.js';
 import { createUnifiedLightingRig } from './unified-lighting.js';
 import { createUnrealCameraRig } from './unreal-fly-controls.js';
 import { buildCharacterShowcaseScene } from './test-scenes/character-showcase.js';
@@ -33,6 +34,10 @@ const qualitySelect = document.querySelector('#hgame-test-quality');
 const lodSelect = document.querySelector('#hgame-test-lod');
 const wireframeInput = document.querySelector('#hgame-test-wireframe');
 const collidersInput = document.querySelector('#hgame-test-colliders');
+const lutCatSelect = document.querySelector('#hgame-test-lut-cat');
+const lutSelect = document.querySelector('#hgame-test-lut');
+const lutIntensityInput = document.querySelector('#hgame-test-lut-intensity');
+const lutValEl = document.querySelector('#hgame-test-lut-val');
 const statusEl = document.querySelector('#hgame-test-status');
 
 const flyHudEl = document.querySelector('#hgame-test-fly-hud');
@@ -124,6 +129,10 @@ let activeSummaryText = '';
 let selectedExhibit = null;
 let lastLodSummary = { lodCounts: [0, 0, 0], culled: 0 };
 const liveSceneThumbs = new Map();
+let postPipeline = null;
+let lutTable = null;
+const lutTexCache = new Map();
+let lutLoadToken = 0;
 
 const lightingRig = createUnifiedLightingRig();
 
@@ -136,6 +145,7 @@ function resizeStage() {
   const cw = Math.max(1, stageEl.clientWidth);
   const ch = Math.max(1, stageEl.clientHeight);
   renderer.setSize(cw, ch, false);
+  postPipeline?.resize(cw, ch);
   camera.aspect = cw / ch;
   camera.updateProjectionMatrix();
 }
@@ -251,6 +261,141 @@ function ensureRenderer() {
   }
 }
 
+async function ensureLutTable() {
+  if (lutTable) return lutTable;
+  try {
+    const res = await fetch('/assets/cn/luts/luts_table.json', { cache: 'no-cache' });
+    lutTable = res.ok ? await res.json() : { categories: [], presets: [], items: [] };
+  } catch {
+    lutTable = { categories: [], presets: [], items: [] };
+  }
+  populateLutCategorySelect();
+  populateLutSelect();
+  return lutTable;
+}
+
+function populateLutCategorySelect() {
+  if (!lutCatSelect || !lutTable) return;
+  const prev = lutCatSelect.value || 'presets';
+  lutCatSelect.replaceChildren();
+  const addOpt = (value, label) => {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = label;
+    lutCatSelect.append(opt);
+  };
+  const presets = Array.isArray(lutTable.presets) ? lutTable.presets : [];
+  const items = Array.isArray(lutTable.items) ? lutTable.items : [];
+  addOpt('presets', `中文场景预设 (${presets.length})`);
+  addOpt('all', `全部 AmplifyLUT (${items.length})`);
+  for (const cat of (lutTable.categories || [])) {
+    addOpt(`cat:${cat.name}`, `${cat.name} (${cat.count})`);
+  }
+  const hasPrev = [...lutCatSelect.options].some((o) => o.value === prev);
+  lutCatSelect.value = hasPrev ? prev : 'presets';
+}
+
+function populateLutSelect() {
+  if (!lutSelect || !lutTable) return;
+  const prev = lutSelect.value || 'none';
+  const filter = lutCatSelect?.value || 'presets';
+  lutSelect.replaceChildren();
+  const noneOpt = document.createElement('option');
+  noneOpt.value = 'none';
+  noneOpt.textContent = '无 LUT (原色)';
+  lutSelect.append(noneOpt);
+
+  if (filter === 'presets') {
+    for (const p of (lutTable.presets || [])) {
+      const opt = document.createElement('option');
+      opt.value = `preset:${p.id}`;
+      opt.textContent = p.label;
+      lutSelect.append(opt);
+    }
+  } else {
+    const catName = filter.startsWith('cat:') ? filter.slice(4) : null;
+    for (const item of (lutTable.items || [])) {
+      if (catName && item.category !== catName) continue;
+      const opt = document.createElement('option');
+      opt.value = item.id;
+      opt.textContent = catName ? item.name : `[${item.category}] ${item.name}`;
+      lutSelect.append(opt);
+    }
+  }
+  const hasPrev = [...lutSelect.options].some((o) => o.value === prev);
+  lutSelect.value = hasPrev ? prev : 'none';
+}
+
+function ensurePostPipeline() {
+  if (postPipeline || !renderer) return postPipeline;
+  const cw = Math.max(1, stageEl?.clientWidth || renderer.domElement.width || 960);
+  const ch = Math.max(1, stageEl?.clientHeight || renderer.domElement.height || 560);
+  postPipeline = createPostPipeline3D({
+    THREE,
+    renderer,
+    width: cw,
+    height: ch,
+    preset: 'cinematic',
+    toneMapping: 'aces',
+    bloom: false,
+    ssao: false,
+    autoExposure: false,
+    fxaa: false,
+    vignette: 0.04,
+  });
+  return postPipeline;
+}
+
+async function applySelectedLut() {
+  const token = ++lutLoadToken;
+  const rawVal = lutSelect?.value || 'none';
+  const intensity = Math.max(0, Math.min(1, Number(lutIntensityInput?.value ?? 0.85) || 0));
+  if (lutValEl) lutValEl.textContent = `${Math.round(intensity * 100)}%`;
+
+  if (rawVal === 'none') {
+    postPipeline?.setState?.({ colorLut: null });
+    updateStatusBar();
+    return;
+  }
+
+  const table = await ensureLutTable();
+  let lutItem = null;
+  let presetIntensity = null;
+  if (rawVal.startsWith('preset:')) {
+    const pId = rawVal.slice(7);
+    const p = (table.presets || []).find((x) => x.id === pId);
+    if (p) {
+      lutItem = (table.items || []).find((x) => x.id === p.lutId) || null;
+      presetIntensity = p.intensity;
+    }
+  } else {
+    lutItem = (table.items || []).find((x) => x.id === rawVal) || null;
+  }
+  if (!lutItem) return;
+
+  if (presetIntensity !== null && lutIntensityInput && !lutIntensityInput.dataset.userEdited) {
+    lutIntensityInput.value = String(presetIntensity);
+    if (lutValEl) lutValEl.textContent = `${Math.round(presetIntensity * 100)}%`;
+  }
+  const activeIntensity = Math.max(0, Math.min(1, Number(lutIntensityInput?.value ?? intensity) || 0));
+
+  let tex = lutTexCache.get(lutItem.id);
+  if (!tex) {
+    tex = await loadStripLutTexture(THREE, `/assets/cn/luts/${lutItem.path}`, {
+      size: 16,
+      srgbInput: true,
+      preset: lutItem.id,
+    });
+    lutTexCache.set(lutItem.id, tex);
+  }
+  if (token !== lutLoadToken) return;
+  const pipe = ensurePostPipeline();
+  pipe?.setState?.({
+    colorLut: { texture: tex, intensity: activeIntensity, size: 16, srgbInput: true },
+  });
+  updateStatusBar();
+}
+
 async function syncHdri(presetName) {
   const preset = CHINESE_LIGHTING_PRESETS[presetName] || CHINESE_LIGHTING_PRESETS.cn_cbd_day;
   if (activeHdriUrl === preset.hdri) return;
@@ -360,6 +505,11 @@ function updateStatusBar() {
     parts.push(`LOD桶[L0:${lc[0]}/L1:${lc[1]}/L2:${lc[2]}]`);
   }
   parts.push(`2贴图PBR ${texArray.tileSize}px (${texArray.layerCount}层)`);
+  if (lutSelect && lutSelect.value && lutSelect.value !== 'none') {
+    const optText = lutSelect.options[lutSelect.selectedIndex]?.textContent || lutSelect.value;
+    const pct = Math.round((Number(lutIntensityInput?.value ?? 0.85) || 0) * 100);
+    parts.push(`LUT: ${optText} (${pct}%)`);
+  }
   statusEl.textContent = parts.filter(Boolean).join(' · ');
 }
 
@@ -567,7 +717,11 @@ function tick(now) {
     if (res) lastLodSummary = res;
   }
 
-  renderer?.render(scene, camera);
+  if (lutSelect && lutSelect.value !== 'none' && postPipeline?.supported) {
+    postPipeline.render(scene, camera, dt);
+  } else {
+    renderer?.render(scene, camera);
+  }
 }
 
 function openSelectedInWorkspace() {
@@ -611,6 +765,22 @@ function init() {
   collidersInput?.addEventListener('change', () => {
     if (colliderGroup) colliderGroup.visible = Boolean(collidersInput.checked);
   });
+  lutCatSelect?.addEventListener('change', () => {
+    populateLutSelect();
+    void applySelectedLut();
+  });
+  lutSelect?.addEventListener('change', () => {
+    if (lutIntensityInput) delete lutIntensityInput.dataset.userEdited;
+    void applySelectedLut();
+  });
+  lutIntensityInput?.addEventListener('input', () => {
+    lutIntensityInput.dataset.userEdited = '1';
+    const v = Math.max(0, Math.min(1, Number(lutIntensityInput.value) || 0));
+    if (lutValEl) lutValEl.textContent = `${Math.round(v * 100)}%`;
+    postPipeline?.setState?.({ colorLut: { intensity: v } });
+    updateStatusBar();
+  });
+  void ensureLutTable();
 
   for (const tab of camTabs) {
     tab.addEventListener('click', () => {

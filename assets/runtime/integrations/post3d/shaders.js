@@ -788,6 +788,7 @@ uniform mat4 uInvViewMat;
 uniform sampler2D tColorLut;
 uniform float uLutIntensity;
 uniform float uLutSize;
+uniform float uLutSrgb;
 
 in vec2 vUv;
 layout(location = 0) out vec4 fragColor;
@@ -922,6 +923,12 @@ vec3 linearToSrgb(vec3 c) {
   return mix(lo, hi, step(vec3(0.0031308), c));
 }
 
+vec3 srgbToLinear(vec3 c) {
+  vec3 lo = c / 12.92;
+  vec3 hi = pow(max((c + 0.055) / 1.055, vec3(0.0)), vec3(2.4));
+  return mix(lo, hi, step(vec3(0.04045), c));
+}
+
 vec3 applyWorldLighting(vec3 hdr) {
   float lumaHdr = dot(hdr, vec3(0.2126, 0.7152, 0.0722));
   bool useAoVol = uUseAo > 0.5 || uUseVolumetric > 0.5;
@@ -1032,8 +1039,14 @@ void main() {
   mapped = clamp(mix(vec3(gray), mapped, sat), 0.0, 1.0);
 
   if (uLutIntensity > 0.001 && uLutSize >= 2.0) {
-    vec3 lutCol = sampleStripLut(tColorLut, clamp(mapped, 0.0, 1.0), uLutSize);
-    mapped = mix(mapped, lutCol, clamp(uLutIntensity, 0.0, 1.0));
+    if (uLutSrgb > 0.5) {
+      vec3 srgbIn = linearToSrgb(clamp(mapped, 0.0, 1.0));
+      vec3 lutSrgb = sampleStripLut(tColorLut, srgbIn, uLutSize);
+      mapped = mix(mapped, srgbToLinear(clamp(lutSrgb, 0.0, 1.0)), clamp(uLutIntensity, 0.0, 1.0));
+    } else {
+      vec3 lutCol = sampleStripLut(tColorLut, clamp(mapped, 0.0, 1.0), uLutSize);
+      mapped = mix(mapped, lutCol, clamp(uLutIntensity, 0.0, 1.0));
+    }
   }
 
   float distSq = dot(centered, centered);

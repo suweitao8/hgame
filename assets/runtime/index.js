@@ -146,7 +146,7 @@ export {
   createBehaviorTree,
 } from './ai/index.js';
 export { createTraceRecorder } from './integrations/trace.js';
-export { COLOR_LUT_PRESETS, createColorLutTexture3D } from './integrations/post3d/color.js';
+export { COLOR_LUT_PRESETS, createColorLutTexture3D, configureStripLutTexture, loadStripLutTexture } from './integrations/post3d/color.js';
 export {
   KTX2_MAGIC,
   detectCompressedTextureSupport,
@@ -248,7 +248,7 @@ import { PrefabRegistry } from './core/prefab.js';
 import { createTagContainer, createTagRegistry, GLOBAL_TAG_REGISTRY, matchGameplayTags } from './core/tags.js';
 import { createGameApplication } from './core/application.js';
 import { createTraceRecorder } from './integrations/trace.js';
-import { COLOR_LUT_PRESETS, createColorLutTexture3D } from './integrations/post3d/color.js';
+import { COLOR_LUT_PRESETS, createColorLutTexture3D, configureStripLutTexture, loadStripLutTexture } from './integrations/post3d/color.js';
 import {
   KTX2_MAGIC,
   detectCompressedTextureSupport,
@@ -449,6 +449,8 @@ export const HGame = Object.freeze({
   createTraceRecorder,
   COLOR_LUT_PRESETS,
   createColorLutTexture3D,
+  configureStripLutTexture,
+  loadStripLutTexture,
   KTX2_MAGIC,
   detectCompressedTextureSupport,
   parseKtx2Header,
