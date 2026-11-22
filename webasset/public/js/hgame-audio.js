@@ -4,6 +4,7 @@ import {
 } from '../runtime/hgame/platform/audio.js';
 import {
   apiRequestJson,
+  createSidebarSquareCard,
   fetchHGameAssets,
   fetchUnrealCatalog,
   formatBytes,
@@ -120,31 +121,18 @@ function renderList() {
 
     for (const entry of group) {
       const selected = entry.type === activeSelection.type && entry.id === activeSelection.id;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-list-item';
-      btn.setAttribute('aria-current', selected ? 'true' : 'false');
-
-      const badge = document.createElement('span');
-      badge.className = 'hgame-item-thumb hgame-item-thumb-badge';
-      badge.textContent = entry.category === '音乐 BGM' ? 'BGM' : 'WAV';
-
-      const copy = document.createElement('span');
-      copy.className = 'hgame-item-copy';
-      const strong = document.createElement('strong');
-      strong.textContent = entry.name;
-      const small = document.createElement('small');
-      small.textContent = entry.sub;
-      copy.append(strong, small);
-
-      btn.append(badge, copy);
-      btn.addEventListener('click', () => {
-        stopPlayback();
-        activeSelection = { type: entry.type, id: entry.id };
-        renderList();
-        void selectCurrentAudio();
+      const { button } = createSidebarSquareCard({
+        name: entry.name,
+        badge: entry.category === '音乐 BGM' ? 'BGM' : 'WAV',
+        active: selected,
+        onClick: () => {
+          stopPlayback();
+          activeSelection = { type: entry.type, id: entry.id };
+          renderList();
+          void selectCurrentAudio();
+        },
       });
-      listEl.append(btn);
+      listEl.append(button);
     }
   }
 }

@@ -11,6 +11,7 @@ import {
 } from './hgame-retarget.js';
 import {
   apiRequestJson,
+  createSidebarSquareCard,
   createThreeViewport,
   disposeObject3D,
   fetchAnim23Catalog,
@@ -450,30 +451,20 @@ function renderSidebarList() {
     const visibleUnreal = matchingUnreal.slice(0, animVisibleLimit);
     const fragment = document.createDocumentFragment();
     for (const item of visibleUnreal) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-list-item';
-      btn.setAttribute('aria-current', active3dKind === 'unreal' && item.id === active3dId ? 'true' : 'false');
-      const durationLabel = item.duration ? `${Number(item.duration).toFixed(2)}s` : '';
-      const badges = [];
-      if (item.clipType === 'pose') badges.push('[Pose]');
-      else if (item.motionType) badges.push(`[${item.motionType}]`);
-      const badgeLabel = badges.join(' ');
       const thumbLabel = item.rig === 'humanoid_23' ? '23' : 'UE';
-      btn.innerHTML = `
-        <span class="hgame-item-thumb hgame-item-thumb-badge">${thumbLabel}</span>
-        <span class="hgame-item-copy">
-          <strong>${escapeHtml(item.name)}</strong>
-          <small>${escapeHtml([badgeLabel, item.pack, item.category, durationLabel].filter(Boolean).join(' · '))}</small>
-        </span>
-      `;
-      btn.addEventListener('click', () => {
-        active3dKind = 'unreal';
-        active3dId = item.id;
-        renderSidebarList();
-        void load3dAnimationAsset();
+      const { button } = createSidebarSquareCard({
+        name: item.name,
+        thumbUrl: item.thumb || item.thumbnail || '',
+        badge: thumbLabel,
+        active: active3dKind === 'unreal' && item.id === active3dId,
+        onClick: () => {
+          active3dKind = 'unreal';
+          active3dId = item.id;
+          renderSidebarList();
+          void load3dAnimationAsset();
+        },
       });
-      fragment.append(btn);
+      fragment.append(button);
     }
     if (matchingUnreal.length > visibleUnreal.length) {
       const remaining = matchingUnreal.length - visibleUnreal.length;
@@ -497,24 +488,18 @@ function renderSidebarList() {
     heading.textContent = `已上传 GLB (${matchingUploaded.length})`;
     listEl.append(heading);
     for (const item of matchingUploaded) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-list-item';
-      btn.setAttribute('aria-current', active3dKind === 'uploaded' && item.id === active3dId ? 'true' : 'false');
-      btn.innerHTML = `
-        <span class="hgame-item-thumb hgame-item-thumb-badge">3D</span>
-        <span class="hgame-item-copy">
-          <strong>${escapeHtml(item.name)}</strong>
-          <small>${escapeHtml(formatBytes(item.bytes))}</small>
-        </span>
-      `;
-      btn.addEventListener('click', () => {
-        active3dKind = 'uploaded';
-        active3dId = item.id;
-        renderSidebarList();
-        void load3dAnimationAsset();
+      const { button } = createSidebarSquareCard({
+        name: item.name,
+        badge: '3D',
+        active: active3dKind === 'uploaded' && item.id === active3dId,
+        onClick: () => {
+          active3dKind = 'uploaded';
+          active3dId = item.id;
+          renderSidebarList();
+          void load3dAnimationAsset();
+        },
       });
-      listEl.append(btn);
+      listEl.append(button);
     }
   }
 }

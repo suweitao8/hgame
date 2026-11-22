@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createVfxSystem, VFX_SHAPE } from '/runtime/hgame/vfx/index.js';
 import {
+  createSidebarSquareCard,
   createThreeViewport,
   disposeObject3D,
   fetchUnityCatalog,
@@ -245,52 +246,23 @@ function renderList() {
 
     for (const item of groupItems) {
       const selected = item.kind === activeSelection.kind && item.id === activeSelection.id;
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-list-item';
-      btn.setAttribute('aria-current', selected ? 'true' : 'false');
-
-      if (item.kind === 'texture') {
-        const img = document.createElement('img');
-        img.className = 'hgame-item-thumb';
-        img.src = item.url;
-        img.alt = '';
-        btn.append(img);
-      } else {
-        const badge = document.createElement('span');
-        badge.className = 'hgame-item-thumb hgame-item-thumb-badge';
-        if (item.kind === 'system') {
-          badge.textContent = item.sourceType === 'unity' ? 'U3D' : 'VFX';
-          badge.style.color = item.hgamePreset?.color || '#d5e4b4';
-        } else {
-          badge.textContent = '3D';
-        }
-        btn.append(badge);
-      }
-
-      const copy = document.createElement('span');
-      copy.className = 'hgame-item-copy';
-      const strong = document.createElement('strong');
-      strong.textContent = item.name || item.id;
-      const small = document.createElement('small');
-      if (item.kind === 'system') {
-        const tag = item.sourceType === 'unity' ? 'Unity' : 'VFX';
-        small.textContent = `${tag} · ${item.emitterCount || item.emitters?.length || 1} 发射器 · ${item.pack}`;
-      } else if (item.kind === 'mesh') {
-        small.textContent = `3D 网格 · ${formatBytes(item.bytes) || 'GLB'}`;
-      } else {
-        small.textContent = `贴图 · ${formatBytes(item.bytes) || 'PNG'}`;
-      }
-      copy.append(strong, small);
-
-      btn.append(copy);
-      btn.addEventListener('click', () => {
-        activeSelection = { kind: item.kind, id: item.id };
-        applyItemDefaults(item);
-        renderList();
-        void loadCurrentVfx();
+      const badge = item.kind === 'system'
+        ? (item.sourceType === 'unity' ? 'U3D' : 'VFX')
+        : (item.kind === 'mesh' ? '3D' : 'TEX');
+      const { button } = createSidebarSquareCard({
+        name: item.name || item.id,
+        thumbUrl: item.kind === 'texture' ? item.url : (item.thumbnail || ''),
+        badge,
+        accentColor: item.kind === 'system' ? (item.hgamePreset?.color || '#d5e4b4') : '',
+        active: selected,
+        onClick: () => {
+          activeSelection = { kind: item.kind, id: item.id };
+          applyItemDefaults(item);
+          renderList();
+          void loadCurrentVfx();
+        },
       });
-      listEl.append(btn);
+      listEl.append(button);
     }
   }
 }

@@ -3,15 +3,17 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import {
   createWorldPbrMaterial,
-  ensurePbrGeometryAttributes,
   loadHdriEnvironment,
   PbrTextureArrayLoader,
 } from './realistic-pcg.js';
+import { applyCatalogMaterialToObject } from './test-scenes/showcase-common.js';
 import {
   apiRequestJson,
+  createSidebarSquareCard,
   createThreeViewport,
   disposeObject3D,
   drawUvWireframe,
+  requestGlbSquareThumb,
 } from './hgame-shared.js';
 
 const viewEl = document.querySelector('#models-view');
@@ -134,72 +136,33 @@ function renderList() {
   }
 
   for (const item of items) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'hgame-list-item';
-    btn.setAttribute('aria-current', item.id === selectedId ? 'true' : 'false');
-    const copy = document.createElement('span');
-    copy.className = 'hgame-item-copy';
-    const strong = document.createElement('strong');
-    strong.textContent = item.id;
-    const small = document.createElement('small');
-    const lod0 = item.lods?.[0] || {};
-    small.textContent = `${item.tier} · ${lod0.tris || 0} tris · ${lod0.fileKB || 0} KB`;
-    copy.append(strong, small);
-    btn.append(copy);
-    btn.addEventListener('click', () => selectModel(item.id));
-    listEl.append(btn);
+    const relPath = item.path || item.lods?.[0]?.path || '';
+    const { button, thumbBox, fallbackEl } = createSidebarSquareCard({
+      name: item.id,
+      badge: item.tier || 'GLB',
+      active: item.id === selectedId,
+      onClick: () => selectModel(item.id),
+    });
+    if (relPath) {
+      requestGlbSquareThumb(`/assets/cn/${relPath}`, thumbBox, fallbackEl);
+    }
+    listEl.append(button);
   }
 }
 
 function bindArrayMaterials(root, entry) {
-  const registry = texArray.registry;
   const fallbackSlot = Object.values(entry.materialSlots || {})[0] || '__missing__';
   const wire = Boolean(wireframeInput?.checked);
-  worldMat.material.wireframe = wire;
-  if (glassMat) glassMat.material.wireframe = wire;
+  applyCatalogMaterialToObject(root, fallbackSlot, {
+    texArray,
+    worldMat,
+    glassMat,
+    wireframe: wire,
+  });
 
   const uvTargets = [];
   root.traverse(obj => {
     if (!obj.isMesh) return;
-    obj.castShadow = true;
-    obj.receiveShadow = true;
-    const srcMats = Array.isArray(obj.material) ? obj.material : [obj.material];
-    const primarySlot = srcMats[0]?.userData?.pbrSlot || fallbackSlot;
-    const primaryLayer = registry.getLayer(primarySlot);
-    ensurePbrGeometryAttributes(obj.geometry, primaryLayer, [1, 1, 1], 1.0);
-
-    if (Array.isArray(obj.material) && obj.geometry.groups?.length) {
-      const idAttr = obj.geometry.getAttribute('aMaterialId');
-      const idxAttr = obj.geometry.getIndex();
-      let hasGlass = false;
-      obj.material = obj.geometry.groups.map(grp => {
-        const m = srcMats[grp.materialIndex];
-        const slot = m?.userData?.pbrSlot || fallbackSlot;
-        const lid = registry.getLayer(slot);
-        const lmeta = registry.getMeta(slot);
-        const end = grp.start + grp.count;
-        for (let i = grp.start; i < end; i++) {
-          const vi = idxAttr ? idxAttr.getX(i) : i;
-          idAttr.setX(vi, lid);
-        }
-        if (lmeta.blendMode === 'translucent' && glassMat) {
-          hasGlass = true;
-          return glassMat.material;
-        }
-        return worldMat.material;
-      });
-      idAttr.needsUpdate = true;
-      if (hasGlass) obj.renderOrder = 2;
-    } else {
-      const lmeta = registry.getMeta(primarySlot);
-      if (lmeta.blendMode === 'translucent' && glassMat) {
-        obj.material = glassMat.material;
-        obj.renderOrder = 2;
-      } else {
-        obj.material = worldMat.material;
-      }
-    }
     uvTargets.push({ name: obj.name || entry.id, geometry: obj.geometry, material: worldMat.material });
   });
   return uvTargets;

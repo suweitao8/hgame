@@ -1,5 +1,6 @@
 import { filterGames } from './game-search.mjs';
 import { createGameHostBridge } from '../runtime/hgame/platform/engine.js';
+import { createSidebarSquareCard } from './hgame-shared.js';
 
 const WORKSPACE_VIEWS = {
   characters: document.querySelector('#assets-view'),
@@ -93,19 +94,14 @@ function renderList() {
     return;
   }
   for (const game of visibleGames) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'game-item';
-    button.setAttribute('aria-current', String(game.id === activeGameId));
-    const copy = document.createElement('span');
-    copy.className = 'game-item-copy';
-    const name = document.createElement('strong');
-    name.textContent = game.name;
-    copy.append(name);
-    const dot = document.createElement('span');
-    dot.className = 'item-active-dot';
-    button.append(copy, dot);
-    button.addEventListener('click', () => openGame(game.id));
+    const { button } = createSidebarSquareCard({
+      name: game.name,
+      thumbUrl: game.thumbnail || game.icon || '',
+      badge: game.name.slice(0, 2),
+      active: game.id === activeGameId,
+      className: 'game-item',
+      onClick: () => openGame(game.id),
+    });
     gameList.append(button);
   }
 }

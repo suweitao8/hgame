@@ -956,3 +956,173 @@ export function analyzeWallDecalPlacement(img, aspect = 1) {
     return fallback;
   }
 }
+
+/**
+ * Create a unified 2-column square sidebar card with ONLY a 1:1 preview box and a single name.
+ */
+export function createSidebarSquareCard({
+  name = '',
+  thumbUrl = '',
+  badge = '',
+  accentColor = '',
+  active = false,
+  className = 'hgame-list-item',
+  onClick = null,
+} = {}) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = className;
+  btn.title = name;
+  btn.setAttribute('aria-current', active ? 'true' : 'false');
+
+  const thumbBox = document.createElement('span');
+  thumbBox.className = 'sidebar-card-thumb';
+
+  let imgEl = null;
+  let fallbackEl = null;
+
+  if (thumbUrl) {
+    imgEl = document.createElement('img');
+    imgEl.src = thumbUrl;
+    imgEl.alt = '';
+    imgEl.loading = 'lazy';
+    imgEl.decoding = 'async';
+    thumbBox.append(imgEl);
+  }
+
+  if (!thumbUrl || badge) {
+    fallbackEl = document.createElement('span');
+    fallbackEl.className = 'sidebar-card-badge';
+    fallbackEl.textContent = badge || (name ? name.slice(0, 2).toUpperCase() : '?');
+    if (accentColor) fallbackEl.style.color = accentColor;
+    if (thumbUrl) fallbackEl.hidden = true;
+    thumbBox.append(fallbackEl);
+  }
+
+  if (imgEl && fallbackEl) {
+    imgEl.addEventListener('error', () => {
+      imgEl.hidden = true;
+      fallbackEl.hidden = false;
+    });
+    imgEl.addEventListener('load', () => {
+      imgEl.hidden = false;
+      fallbackEl.hidden = true;
+    });
+  }
+
+  const label = document.createElement('strong');
+  label.className = 'sidebar-card-name';
+  label.textContent = name;
+
+  btn.append(thumbBox, label);
+  if (onClick) btn.addEventListener('click', onClick);
+  return { button: btn, thumbBox, imgEl, fallbackEl, label };
+}
+
+const glbThumbCache = new Map();
+const glbThumbQueue = [];
+let glbThumbRunning = false;
+let glbThumbContext = null;
+
+async function ensureGlbThumbContext() {
+  if (glbThumbContext) return glbThumbContext;
+  const [{ GLTFLoader }, { MeshoptDecoder }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'),
+    import('three/addons/libs/meshopt_decoder.module.js'),
+  ]);
+  const loader = new GLTFLoader();
+  loader.setMeshoptDecoder(MeshoptDecoder);
+  const renderer = new THREE.WebGLRenderer({ alpha: false, antialias: true, preserveDrawingBuffer: true });
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  renderer.setPixelRatio(1);
+  renderer.setSize(128, 128, false);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x161c15);
+  scene.add(new THREE.HemisphereLight(0xf4f8ff, 0x3b4837, 1.9));
+  const key = new THREE.DirectionalLight(0xfff6e5, 2.4);
+  key.position.set(4, 7, 5);
+  scene.add(key);
+  const fill = new THREE.DirectionalLight(0x9fc2ff, 0.85);
+  fill.position.set(-4, 3, -4);
+  scene.add(fill);
+
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.05, 400);
+  glbThumbContext = { loader, renderer, scene, camera };
+  return glbThumbContext;
+}
+
+async function drainGlbThumbQueue() {
+  if (glbThumbRunning) return;
+  glbThumbRunning = true;
+  try {
+    while (glbThumbQueue.length > 0) {
+      const task = glbThumbQueue.shift();
+      if (!task) continue;
+      const { url, onDone } = task;
+      if (glbThumbCache.has(url)) {
+        onDone(glbThumbCache.get(url));
+        continue;
+      }
+      try {
+        const ctx = await ensureGlbThumbContext();
+        const gltf = await ctx.loader.loadAsync(url);
+        const root = gltf.scene;
+        // Hide LOD1/LOD2 sub-meshes for clean LOD0 thumb
+        root.traverse(c => {
+          const n = c.name || '';
+          if (n === 'mesh_lod1' || n.endsWith('_lod1') || n === 'mesh_lod2' || n.endsWith('_lod2')) {
+            c.visible = false;
+          }
+          if (c.isMesh && (!c.material || Array.isArray(c.material) && !c.material.length)) {
+            c.material = new THREE.MeshStandardMaterial({ color: 0xb6c2ad, roughness: 0.65, metalness: 0.15 });
+          }
+        });
+        ctx.scene.add(root);
+        const box = new THREE.Box3().setFromObject(root);
+        const center = box.isEmpty() ? new THREE.Vector3(0, 0.5, 0) : box.getCenter(new THREE.Vector3());
+        const size = Math.max(box.isEmpty() ? 1 : box.getSize(new THREE.Vector3()).length(), 0.25);
+        ctx.camera.near = Math.max(size / 2000, 0.01);
+        ctx.camera.far = Math.max(size * 40, 80);
+        ctx.camera.updateProjectionMatrix();
+        ctx.camera.position.copy(center).add(new THREE.Vector3(size * 0.78, size * 0.45, size * 0.98));
+        ctx.camera.lookAt(center);
+        ctx.renderer.render(ctx.scene, ctx.camera);
+        const dataUrl = ctx.renderer.domElement.toDataURL('image/png');
+        ctx.scene.remove(root);
+        disposeObject3D(root);
+        glbThumbCache.set(url, dataUrl);
+        onDone(dataUrl);
+      } catch {
+        glbThumbCache.set(url, '');
+      }
+      await new Promise(r => setTimeout(r, 8));
+    }
+  } finally {
+    glbThumbRunning = false;
+  }
+}
+
+export function requestGlbSquareThumb(url, thumbBox, fallbackEl) {
+  if (!url || !thumbBox) return;
+  const applyUrl = (dataUrl) => {
+    if (!dataUrl || !thumbBox.isConnected) return;
+    let img = thumbBox.querySelector('img');
+    if (!img) {
+      img = document.createElement('img');
+      img.alt = '';
+      thumbBox.prepend(img);
+    }
+    img.src = dataUrl;
+    img.hidden = false;
+    if (fallbackEl) fallbackEl.hidden = true;
+  };
+  if (glbThumbCache.has(url)) {
+    applyUrl(glbThumbCache.get(url));
+    return;
+  }
+  glbThumbQueue.push({ url, onDone: applyUrl });
+  void drainGlbThumbQueue();
+}

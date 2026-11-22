@@ -10,9 +10,10 @@ import {
   loadHdriEnvironment,
   PbrTextureArrayLoader,
 } from './realistic-pcg.js';
-import { apiRequestJson, disposeObject3D } from './hgame-shared.js';
+import { apiRequestJson, createSidebarSquareCard, disposeObject3D } from './hgame-shared.js';
 import { createUnifiedLightingRig } from './unified-lighting.js';
 import { createUnrealCameraRig } from './unreal-fly-controls.js';
+import { buildCharacterShowcaseScene } from './test-scenes/character-showcase.js';
 import { buildMaterialShowcaseScene } from './test-scenes/material-showcase.js';
 import { applyForcedLodToModel, buildModelShowcaseScene } from './test-scenes/model-showcase.js';
 import { buildDecalFoliageShowcaseScene } from './test-scenes/decal-foliage-showcase.js';
@@ -52,27 +53,33 @@ const texLoader = new THREE.TextureLoader();
 
 const TEST_SCENES = [
   {
+    id: 'cn_character_showcase',
+    name: '预览-角色',
+    thumb: '/previews/test_character.png',
+    assetKind: 'characters',
+  },
+  {
     id: 'cn_material_showcase',
-    name: '全量 PBR 材质展馆',
-    subtitle: '全量通用无缝材质按分类走廊陈列 · 立方体/球体/2.6m地坪同屏对比',
+    name: '预览-材质',
+    thumb: '/previews/test_material.png',
     assetKind: 'materials',
   },
   {
     id: 'cn_model_showcase',
-    name: '静态 GLB 模型展馆',
-    subtitle: '74 个建筑/道路/街具/线缆/天际线模型 · LOD 与包围盒检视',
+    name: '预览-模型',
+    thumb: '/previews/test_model.png',
     assetKind: 'models',
   },
   {
     id: 'cn_decal_foliage_showcase',
-    name: '贴花与植被展区',
-    subtitle: '34 个地面/墙面 PBR 贴花 + 20 个贴地植物贴花',
+    name: '预览-贴花',
+    thumb: '/previews/test_decal.png',
     assetKind: 'decals',
   },
   {
     id: 'cn_city_rural_showcase',
-    name: '中国城乡双轨综合场景',
-    subtitle: 'Track A 地表 + L1 静态 GLB 合批 + 铰链门窗 + 4 套中式光照',
+    name: '预览-场景',
+    thumb: '/previews/test_city.png',
     assetKind: 'composite',
   },
 ];
@@ -109,12 +116,14 @@ let buildSeq = 0;
 let activeViewpoints = {};
 let activeExhibits = [];
 let activeAnimatedPivots = [];
+let activeMixers = [];
 let activeLodPool = null;
 let activeModelRoots = [];
 let activeSceneDispose = null;
 let activeSummaryText = '';
 let selectedExhibit = null;
 let lastLodSummary = { lodCounts: [0, 0, 0], culled: 0 };
+const liveSceneThumbs = new Map();
 
 const lightingRig = createUnifiedLightingRig();
 
@@ -322,25 +331,19 @@ function renderSceneList() {
   const q = (searchInput?.value || '').trim().toLowerCase();
   listEl.replaceChildren();
   for (const item of TEST_SCENES) {
-    if (q && !item.name.toLowerCase().includes(q) && !item.subtitle.toLowerCase().includes(q)) continue;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'hgame-list-item';
-    btn.setAttribute('aria-current', item.id === activeSceneId ? 'true' : 'false');
-    const copy = document.createElement('span');
-    copy.className = 'hgame-item-copy';
-    const strong = document.createElement('strong');
-    strong.textContent = item.name;
-    const small = document.createElement('small');
-    small.textContent = item.subtitle;
-    copy.append(strong, small);
-    btn.append(copy);
-    btn.addEventListener('click', () => {
-      activeSceneId = item.id;
-      renderSceneList();
-      rebuildActiveScene();
+    if (q && !item.name.toLowerCase().includes(q) && !item.id.toLowerCase().includes(q)) continue;
+    const { button } = createSidebarSquareCard({
+      name: item.name,
+      thumbUrl: liveSceneThumbs.get(item.id) || item.thumb,
+      badge: item.name.replace(/^预览[- ]?/, ''),
+      active: item.id === activeSceneId,
+      onClick: () => {
+        activeSceneId = item.id;
+        renderSceneList();
+        void rebuildActiveScene();
+      },
     });
-    listEl.append(btn);
+    listEl.append(button);
   }
 }
 
@@ -430,6 +433,7 @@ async function rebuildActiveScene() {
 
   activeExhibits = [];
   activeAnimatedPivots = [];
+  activeMixers = [];
   activeLodPool = null;
   activeModelRoots = [];
   activeSummaryText = '';
@@ -440,7 +444,14 @@ async function rebuildActiveScene() {
   if (titleEl && def) titleEl.textContent = def.name;
 
   let result;
-  if (activeSceneId === 'cn_material_showcase') {
+  if (activeSceneId === 'cn_character_showcase') {
+    result = await buildCharacterShowcaseScene({
+      group: sceneGroup,
+      gltfLoader,
+      token,
+      getToken: () => buildSeq,
+    });
+  } else if (activeSceneId === 'cn_material_showcase') {
     result = buildMaterialShowcaseScene({
       group: sceneGroup,
       texArray,
@@ -502,6 +513,7 @@ async function rebuildActiveScene() {
 
   activeExhibits = result.exhibits || [];
   activeAnimatedPivots = result.animatedPivots || [];
+  activeMixers = result.mixers || [];
   activeLodPool = result.lodPool || null;
   activeModelRoots = result.modelRoots || [];
   activeSceneDispose = result.dispose || null;
@@ -540,6 +552,10 @@ function tick(now) {
     if (p.mode === 'rot_y') node.rotation.y = wave * p.amp;
     else if (p.mode === 'rot_z') node.rotation.z = wave * p.amp;
     else if (p.mode === 'slide_y') node.position.y = wave * p.amp;
+  }
+
+  for (const m of activeMixers) {
+    m.update(dt);
   }
 
   cameraRig?.update(dt);

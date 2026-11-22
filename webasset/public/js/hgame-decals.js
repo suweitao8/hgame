@@ -5,6 +5,7 @@ import {
   analyzeWallDecalPlacement,
   apiRequestJson,
   create2MapPbrMaterial,
+  createSidebarSquareCard,
   createThreeViewport,
   disposeObject3D,
   draw2MapChannelCanvases,
@@ -279,36 +280,18 @@ function renderList() {
   if (currentLib === 'cn_pbr' || currentLib === 'cn_foliage') {
     const baseUrl = CN_LIBS[currentLib].baseUrl;
     for (const item of filtered) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-list-item';
-      if (item.id === activeId) btn.setAttribute('aria-current', 'true');
-
-      const thumb = document.createElement('img');
-      thumb.className = 'hgame-item-thumb';
-      thumb.src = `${baseUrl}/${item.id}/color.png`;
-      thumb.alt = '';
-      thumb.loading = 'lazy';
-      btn.appendChild(thumb);
-
-      const copy = document.createElement('span');
-      copy.className = 'hgame-item-copy';
-      const strong = document.createElement('strong');
-      strong.textContent = item.id;
-      const small = document.createElement('small');
-      const dim = `${item.width || 1024}×${item.height || 1024}`;
-      small.textContent = [item.category, dim, item.tintableGrayscale ? '可染色' : '']
-        .filter(Boolean)
-        .join(' · ');
-      copy.append(strong, small);
-
-      btn.appendChild(copy);
-      btn.addEventListener('click', () => {
-        activeId = item.id;
-        renderList();
-        void loadCurrentDecal();
+      const { button } = createSidebarSquareCard({
+        name: item.id,
+        thumbUrl: `${baseUrl}/${item.id}/color.png`,
+        badge: item.category || 'DECAL',
+        active: item.id === activeId,
+        onClick: () => {
+          activeId = item.id;
+          renderList();
+          void loadCurrentDecal();
+        },
       });
-      listEl.appendChild(btn);
+      listEl.appendChild(button);
     }
     return;
   }
@@ -332,36 +315,19 @@ function renderList() {
     listEl.appendChild(groupHeading);
 
     for (const item of groups.get(pack)) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'hgame-list-item';
-      if (item.id === activeId) btn.setAttribute('aria-current', 'true');
-
       const thumbSrc = item.thumbnail || item.color || '';
-      if (thumbSrc) {
-        const img = document.createElement('img');
-        img.className = 'hgame-item-thumb';
-        img.src = thumbSrc;
-        img.alt = '';
-        img.loading = 'lazy';
-        btn.appendChild(img);
-      }
-
-      const copy = document.createElement('span');
-      copy.className = 'hgame-item-copy';
-      const strong = document.createElement('strong');
-      strong.textContent = item.name || item.id;
-      const small = document.createElement('small');
-      small.textContent = item.category ? `${item.category} · RGBA PBR` : 'RGBA PBR 贴花';
-      copy.append(strong, small);
-
-      btn.appendChild(copy);
-      btn.addEventListener('click', () => {
-        activeId = item.id;
-        renderList();
-        void loadCurrentDecal();
+      const { button } = createSidebarSquareCard({
+        name: item.name || item.id,
+        thumbUrl: thumbSrc,
+        badge: item.category || 'UE',
+        active: item.id === activeId,
+        onClick: () => {
+          activeId = item.id;
+          renderList();
+          void loadCurrentDecal();
+        },
       });
-      listEl.appendChild(btn);
+      listEl.appendChild(button);
     }
   }
 }

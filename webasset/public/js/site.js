@@ -1,4 +1,5 @@
 import { CharacterModelViewer } from './model-viewer.js';
+import { createSidebarSquareCard } from './hgame-shared.js';
 
 const ASSET_API = '';
 const assetsView = document.querySelector('#assets-view');
@@ -239,20 +240,16 @@ function renderCharacterList() {
   }
 
   for (const character of filteredCharacters) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'asset-character-item';
+    const thumbUrl = character.assets?.[0]?.url || character.generatedAssets?.[0]?.url || '';
+    const { button } = createSidebarSquareCard({
+      name: character.name,
+      thumbUrl,
+      badge: character.name.slice(0, 2),
+      active: character.id === activeCharacterId,
+      className: 'asset-character-item',
+      onClick: () => selectCharacter(character.id),
+    });
     button.dataset.character = character.id;
-    button.setAttribute('aria-current', String(character.id === activeCharacterId));
-
-    const name = document.createElement('span');
-    name.className = 'asset-character-item-name';
-    name.textContent = character.name;
-    const count = document.createElement('span');
-    count.className = 'asset-character-item-count';
-    count.textContent = String((character.assets || []).length);
-    button.append(name, count);
-    button.addEventListener('click', () => selectCharacter(character.id));
     characterList.append(button);
   }
 }
@@ -817,5 +814,12 @@ function renderCharacterSettings(character) {
   }
 }
 
+
+window.addEventListener('webasset:open-asset', event => {
+  const { workspace, id } = event.detail || {};
+  if (workspace !== 'characters' || !id) return;
+  activeCharacterId = id;
+  if (characterLibraryLoaded) selectCharacter(id);
+});
 
 void loadCharacters();

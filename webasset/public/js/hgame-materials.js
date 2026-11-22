@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { loadHdriEnvironment } from './realistic-pcg.js';
 import {
   create2MapPbrMaterial,
+  createSidebarSquareCard,
   createThreeViewport,
   disposeObject3D,
   draw2MapChannelCanvases,
@@ -133,22 +134,14 @@ function renderList() {
   }
 
   for (const item of items) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'hgame-list-item';
-    btn.setAttribute('aria-current', item.id === selectedId ? 'true' : 'false');
-    const copy = document.createElement('span');
-    copy.className = 'hgame-item-copy';
-    const strong = document.createElement('strong');
-    strong.textContent = item.id;
-    const small = document.createElement('small');
-    small.textContent = [item.surfaceType, item.category, `${item.width || 1024}×${item.height || 1024}`]
-      .filter(Boolean)
-      .join(' · ');
-    copy.append(strong, small);
-    btn.append(copy);
-    btn.addEventListener('click', () => selectMaterial(item.id));
-    listEl.append(btn);
+    const { button } = createSidebarSquareCard({
+      name: item.id,
+      thumbUrl: `${BASE_URL}/${item.id}/color.png`,
+      badge: item.surfaceType || 'PBR',
+      active: item.id === selectedId,
+      onClick: () => selectMaterial(item.id),
+    });
+    listEl.append(button);
   }
 }
 
