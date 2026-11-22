@@ -66,6 +66,7 @@ export function createBgmController(ctx: object, buses: object): {
     resumeBgm: ({ fromLifecycle }?: {
         fromLifecycle?: boolean | undefined;
     }) => Promise<boolean>;
+    seekBgm: (positionSec: any) => Promise<number | null>;
     setBgmVolume: (value: any) => any;
     getBgmVolume: () => number;
     getBgmState: () => {
@@ -75,6 +76,7 @@ export function createBgmController(ctx: object, buses: object): {
         loopStart: any;
         loopEnd: any;
         bufferDuration: any;
+        currentTimeSec: any;
         pausedPositionSec: any;
         activeBufferCount: number;
         fadingCount: number;

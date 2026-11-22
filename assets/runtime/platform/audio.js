@@ -260,9 +260,10 @@ export {
  * @property {(options?: { fadeMs?: number }) => boolean} stopBgm
  * @property {() => boolean} pauseBgm
  * @property {() => Promise<boolean>} resumeBgm
+ * @property {(positionSec: number) => Promise<number | null>} seekBgm
  * @property {(value: number) => number} setBgmVolume
  * @property {() => number} getBgmVolume
- * @property {() => { state: string, cueId: string | null, loop: boolean, loopStart: number, loopEnd: number, bufferDuration: number, pausedPositionSec: number, activeBufferCount: number, fadingCount: number, registeredCueCount: number }} getBgmState
+ * @property {() => { state: string, cueId: string | null, loop: boolean, loopStart: number, loopEnd: number, bufferDuration: number, currentTimeSec: number, pausedPositionSec: number, activeBufferCount: number, fadingCount: number, registeredCueCount: number }} getBgmState
  * @property {() => void} onHide
  * @property {() => void} onShow
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
@@ -656,6 +657,15 @@ export function createAudioManager({
       loop: Boolean(loop),
       get playing() { return playing && !disposed; },
       get volume() { return vol; },
+      get currentTime() { return audioEl ? (Number(audioEl.currentTime) || 0) : 0; },
+      get duration() { return audioEl && Number.isFinite(audioEl.duration) ? audioEl.duration : 0; },
+      seek(sec) {
+        if (disposed || !audioEl) return 0;
+        const dur = Number.isFinite(audioEl.duration) && audioEl.duration > 0 ? audioEl.duration : Infinity;
+        const next = clamp(Number(sec) || 0, 0, dur);
+        audioEl.currentTime = next;
+        return next;
+      },
       async play() {
         if (disposed) return;
         playing = true;
@@ -1167,6 +1177,7 @@ export function createAudioManager({
     stopBgm: bgmPlayer.stopBgm,
     pauseBgm: bgmPlayer.pauseBgm,
     resumeBgm: bgmPlayer.resumeBgm,
+    seekBgm: bgmPlayer.seekBgm,
     setBgmVolume: bgmPlayer.setBgmVolume,
     getBgmVolume: bgmPlayer.getBgmVolume,
     getBgmState: bgmPlayer.getBgmState,

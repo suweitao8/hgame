@@ -203,9 +203,10 @@
  * @property {(options?: { fadeMs?: number }) => boolean} stopBgm
  * @property {() => boolean} pauseBgm
  * @property {() => Promise<boolean>} resumeBgm
+ * @property {(positionSec: number) => Promise<number | null>} seekBgm
  * @property {(value: number) => number} setBgmVolume
  * @property {() => number} getBgmVolume
- * @property {() => { state: string, cueId: string | null, loop: boolean, loopStart: number, loopEnd: number, bufferDuration: number, pausedPositionSec: number, activeBufferCount: number, fadingCount: number, registeredCueCount: number }} getBgmState
+ * @property {() => { state: string, cueId: string | null, loop: boolean, loopStart: number, loopEnd: number, bufferDuration: number, currentTimeSec: number, pausedPositionSec: number, activeBufferCount: number, fadingCount: number, registeredCueCount: number }} getBgmState
  * @property {() => void} onHide
  * @property {() => void} onShow
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
@@ -804,6 +805,7 @@ export type AudioManager = {
     }) => boolean;
     pauseBgm: () => boolean;
     resumeBgm: () => Promise<boolean>;
+    seekBgm: (positionSec: number) => Promise<number | null>;
     setBgmVolume: (value: number) => number;
     getBgmVolume: () => number;
     getBgmState: () => {
@@ -813,6 +815,7 @@ export type AudioManager = {
         loopStart: number;
         loopEnd: number;
         bufferDuration: number;
+        currentTimeSec: number;
         pausedPositionSec: number;
         activeBufferCount: number;
         fadingCount: number;

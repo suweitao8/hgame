@@ -321,16 +321,53 @@ export function createBgmController(ctx, buses) {
     return true;
   }
 
+  function computeTrackCurrentTimeSec(track) {
+    if (!track) return 0;
+    if (track.state !== 'playing') return track.pausedPositionSec || 0;
+    const audioCtx = ctx.context;
+    const nowTime = Number.isFinite(audioCtx?.currentTime) ? audioCtx.currentTime : track.startedAtCtxTime;
+    const elapsed = Math.max(0, nowTime - track.startedAtCtxTime);
+    const loopLen = Math.max(0.05, track.loopEnd - track.loopStart);
+    return track.loop
+      ? track.loopStart + ((track.offsetAtStart - track.loopStart + elapsed) % loopLen)
+      : Math.min(track.loopEnd, track.offsetAtStart + elapsed);
+  }
+
+  function startTrackSource(audioCtx, track, offsetSec) {
+    const source = audioCtx.createBufferSource();
+    source.buffer = track.buffer;
+    source.loop = track.loop;
+    if (track.loop) {
+      source.loopStart = track.loopStart;
+      source.loopEnd = track.loopEnd;
+    }
+    source.connect(track.gainNode);
+
+    const nowTime = Number.isFinite(audioCtx.currentTime) ? audioCtx.currentTime : 0;
+    const clampedOffset = clamp(
+      Number(offsetSec) || 0,
+      track.loopStart,
+      Math.max(track.loopStart, track.loopEnd - 0.02),
+    );
+    source.start(nowTime, clampedOffset);
+
+    source.addEventListener?.('ended', () => {
+      if (track === currentTrack && track.source === source && track.state === 'playing' && !track.loop) {
+        finalizeTrack(track);
+        currentTrack = null;
+      }
+    }, { once: true });
+
+    track.source = source;
+    track.startedAtCtxTime = nowTime;
+    track.offsetAtStart = clampedOffset;
+    track.pausedPositionSec = clampedOffset;
+    return clampedOffset;
+  }
+
   function pauseBgm({ fromLifecycle = false } = {}) {
     if (!currentTrack || currentTrack.state !== 'playing') return false;
-    const audioCtx = ctx.context;
-    const nowTime = Number.isFinite(audioCtx?.currentTime) ? audioCtx.currentTime : currentTrack.startedAtCtxTime;
-    const elapsed = Math.max(0, nowTime - currentTrack.startedAtCtxTime);
-    const loopLen = Math.max(0.05, currentTrack.loopEnd - currentTrack.loopStart);
-    currentTrack.pausedPositionSec = currentTrack.loop
-      ? currentTrack.loopStart + ((currentTrack.offsetAtStart - currentTrack.loopStart + elapsed) % loopLen)
-      : Math.min(currentTrack.loopEnd, currentTrack.offsetAtStart + elapsed);
-
+    currentTrack.pausedPositionSec = computeTrackCurrentTimeSec(currentTrack);
     try { currentTrack.source?.stop?.(); } catch {}
     try { currentTrack.source?.disconnect?.(); } catch {}
     currentTrack.source = null;
@@ -347,36 +384,29 @@ export function createBgmController(ctx, buses) {
     const audioCtx = await ctx.unlock();
     if (!currentTrack || currentTrack.state !== 'paused' || !currentTrack.buffer || disposed) return false;
 
-    const source = audioCtx.createBufferSource();
-    source.buffer = currentTrack.buffer;
-    source.loop = currentTrack.loop;
-    if (currentTrack.loop) {
-      source.loopStart = currentTrack.loopStart;
-      source.loopEnd = currentTrack.loopEnd;
-    }
-    source.connect(currentTrack.gainNode);
-
-    const nowTime = Number.isFinite(audioCtx.currentTime) ? audioCtx.currentTime : 0;
-    const resumeOffset = clamp(
-      currentTrack.pausedPositionSec,
-      currentTrack.loopStart,
-      Math.max(currentTrack.loopStart, currentTrack.loopEnd - 0.05),
-    );
-    source.start(nowTime, resumeOffset);
-
-    const track = currentTrack;
-    source.addEventListener?.('ended', () => {
-      if (track === currentTrack && track.state === 'playing' && !track.loop) {
-        finalizeTrack(track);
-        currentTrack = null;
-      }
-    }, { once: true });
-
-    currentTrack.source = source;
-    currentTrack.startedAtCtxTime = nowTime;
-    currentTrack.offsetAtStart = resumeOffset;
+    startTrackSource(audioCtx, currentTrack, currentTrack.pausedPositionSec);
     currentTrack.state = 'playing';
     return true;
+  }
+
+  async function seekBgm(positionSec) {
+    if (!currentTrack || !currentTrack.buffer || disposed) return null;
+    const clamped = clamp(
+      Number(positionSec) || 0,
+      currentTrack.loopStart,
+      Math.max(currentTrack.loopStart, currentTrack.loopEnd - 0.02),
+    );
+    currentTrack.pausedPositionSec = clamped;
+    if (currentTrack.state !== 'playing') return clamped;
+
+    const audioCtx = await ctx.unlock();
+    if (!currentTrack || !currentTrack.buffer || disposed) return null;
+    const oldSrc = currentTrack.source;
+    currentTrack.source = null;
+    try { oldSrc?.stop?.(); } catch {}
+    try { oldSrc?.disconnect?.(); } catch {}
+    startTrackSource(audioCtx, currentTrack, clamped);
+    return clamped;
   }
 
   function setBgmVolume(value) {
@@ -400,6 +430,7 @@ export function createBgmController(ctx, buses) {
       loopStart: currentTrack?.loopStart ?? 0,
       loopEnd: currentTrack?.loopEnd ?? 0,
       bufferDuration: currentTrack?.buffer?.duration ?? 0,
+      currentTimeSec: computeTrackCurrentTimeSec(currentTrack),
       pausedPositionSec: currentTrack?.pausedPositionSec ?? 0,
       activeBufferCount,
       fadingCount: fadingTracks.size,
@@ -428,6 +459,7 @@ export function createBgmController(ctx, buses) {
     stopBgm,
     pauseBgm,
     resumeBgm,
+    seekBgm,
     setBgmVolume,
     getBgmVolume,
     getBgmState,

@@ -32,6 +32,8 @@ const volumeVal = document.querySelector('#hgame-audio-volume-val');
 const loopInput = document.querySelector('#hgame-audio-loop');
 const statusEl = document.querySelector('#hgame-audio-status');
 const musicBarEl = document.querySelector('#hgame-audio-music-bar');
+const seekInput = document.querySelector('#hgame-audio-seek');
+const timeOut = document.querySelector('#hgame-audio-time');
 
 let initialized = false;
 let currentLib = 'cues'; // 'cues' | 'music' | 'streams' | 'full'
@@ -52,6 +54,9 @@ const registeredCues = new Set();
 let currentDecoded = null;
 let currentAnalysis = null;
 let loadToken = 0;
+let isSeeking = false;
+let seekTimer = null;
+let voicePlaybackMeta = null; // { startedAtMs, offsetSec, durationSec, loop }
 
 function getAudioManager() {
   if (!audioMgr) {
@@ -361,6 +366,129 @@ function renderList() {
   }
 }
 
+function formatClock(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  const mm = String(Math.floor(s / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${mm}:${ss}`;
+}
+
+function getCurrentPlaybackTiming() {
+  const entry = getSelectedEntry();
+  const bgmState = audioMgr?.getBgmState?.();
+  if (bgmState && bgmState.state !== 'idle' && bgmState.bufferDuration > 0) {
+    const dur = bgmState.loopEnd > 0 ? bgmState.loopEnd : bgmState.bufferDuration;
+    return { current: bgmState.currentTimeSec || 0, duration: dur, active: bgmState.state === 'playing' };
+  }
+  if (activeStream && (activeStream.playing || activeStream.duration > 0)) {
+    const dur = activeStream.duration || Number(entry?.item?.durationSec ?? entry?.item?.duration) || 0;
+    return { current: activeStream.currentTime || 0, duration: dur, active: activeStream.playing };
+  }
+  if (voicePlaybackMeta && voicePlaybackMeta.durationSec > 0) {
+    const elapsed = (performance.now() - voicePlaybackMeta.startedAtMs) / 1000;
+    const raw = voicePlaybackMeta.offsetSec + elapsed;
+    const dur = voicePlaybackMeta.durationSec;
+    const cur = voicePlaybackMeta.loop ? (raw % dur) : Math.min(dur, raw);
+    const active = voicePlaybackMeta.loop || raw < dur;
+    if (!active) voicePlaybackMeta = null;
+    return { current: cur, duration: dur, active };
+  }
+  const fallbackDur = Number(currentDecoded?.duration ?? entry?.item?.durationSec ?? entry?.item?.duration) || 0;
+  return { current: 0, duration: fallbackDur, active: false };
+}
+
+function syncSeekBar() {
+  if (!seekInput || !timeOut) return;
+  const { current, duration, active } = getCurrentPlaybackTiming();
+  const maxVal = duration > 0 ? duration : 100;
+  seekInput.max = String(maxVal);
+  seekInput.disabled = !(duration > 0);
+  if (!isSeeking) {
+    seekInput.value = String(Math.min(maxVal, Math.max(0, current)));
+    timeOut.textContent = `${formatClock(current)} / ${formatClock(duration)}`;
+  }
+  if (!active && seekTimer) {
+    clearInterval(seekTimer);
+    seekTimer = null;
+  }
+}
+
+function startSeekTicker() {
+  syncSeekBar();
+  if (seekTimer) return;
+  seekTimer = setInterval(syncSeekBar, 150);
+}
+
+async function seekToSeconds(targetSec) {
+  const entry = getSelectedEntry();
+  if (!entry) return;
+  const mgr = getAudioManager();
+  await mgr.unlock();
+  mgr.setVolume(Number(volumeInput.value) || 0.8);
+
+  const isBgm = entry.kind === 'bgm' || String(entry.name || '').startsWith('bgm.');
+  if (isBgm) {
+    const bgmState = mgr.getBgmState();
+    if (bgmState.cueId === entry.id && bgmState.state !== 'idle') {
+      await mgr.seekBgm(targetSec);
+    } else {
+      stopPlayback({ keepBgm: true });
+      await mgr.playBgm(entry.item, { fadeMs: 120, forceRestart: true, loop: true, startAtSec: targetSec });
+      renderMusicVerifyBar();
+    }
+    startSeekTicker();
+    statusEl.textContent = `已跳转至 ${formatClock(targetSec)}：${entry.name}`;
+    return;
+  }
+
+  if (activeStream) {
+    activeStream.seek(targetSec);
+    startSeekTicker();
+    statusEl.textContent = `已跳转至 ${formatClock(targetSec)}：${entry.name}`;
+    return;
+  }
+
+  if (entry.preload === 'stream') {
+    stopPlayback();
+    activeStream = mgr.playStream(entry.url, {
+      bus: entry.item?.bus || 'bgm',
+      loop: loopInput.checked,
+      volume: 1,
+      autoplay: true,
+    });
+    activeStream.seek(targetSec);
+    startSeekTicker();
+    statusEl.textContent = `已跳转至 ${formatClock(targetSec)}：${entry.name}`;
+    return;
+  }
+
+  if (!currentDecoded && entry.url) {
+    currentDecoded = await decodeCachedUrl(entry.url);
+  }
+  if (currentDecoded) {
+    const dur = currentDecoded.duration || 0;
+    const clamped = Math.max(0, Math.min(Math.max(0, dur - 0.05), targetSec));
+    const isStinger = entry.kind === 'stinger' || String(entry.name || '').startsWith('stinger.');
+    stopPlayback({ keepBgm: isStinger });
+    activeVoice = await mgr.play(currentDecoded, {
+      bus: isStinger ? 'ui_voice' : (entry.item?.bus || 'combat'),
+      ducking: isStinger,
+      volume: 1,
+      loop: isStinger ? false : loopInput.checked,
+      offset: clamped,
+      trimSilence: false,
+    });
+    voicePlaybackMeta = {
+      startedAtMs: performance.now(),
+      offsetSec: clamped,
+      durationSec: dur,
+      loop: isStinger ? false : loopInput.checked,
+    };
+    startSeekTicker();
+    statusEl.textContent = `已跳转至 ${formatClock(clamped)}：${entry.name}`;
+  }
+}
+
 function syncOutputs() {
   volumeVal.textContent = Number(volumeInput.value || 0.8).toFixed(2);
 }
@@ -370,6 +498,7 @@ function stopPlayback({ keepBgm = false } = {}) {
     activeVoice?.stop?.({ fadeOutMs: 12 });
   } catch { /* ignore */ }
   activeVoice = null;
+  voicePlaybackMeta = null;
   try {
     activeStream?.stop?.();
   } catch { /* ignore */ }
@@ -379,6 +508,11 @@ function stopPlayback({ keepBgm = false } = {}) {
       audioMgr?.stopBgm?.({ fadeMs: 120 });
     } catch { /* ignore */ }
   }
+  if (seekTimer) {
+    clearInterval(seekTimer);
+    seekTimer = null;
+  }
+  syncSeekBar();
   renderMusicVerifyBar();
 }
 
@@ -485,6 +619,7 @@ async function playBgmCrossfade(bgmItem) {
   try {
     const res = await mgr.playBgm(bgmItem, { fadeMs: 600, loop: true });
     renderMusicVerifyBar();
+    startSeekTicker();
     if (res?.ignored) {
       statusEl.textContent = `BGM「${bgmItem.cueName}」已在播放（防重入忽略）`;
     } else {
@@ -512,6 +647,7 @@ async function playBgmSeamTest(bgmItem) {
       startAtSec,
     });
     renderMusicVerifyBar();
+    startSeekTicker();
     statusEl.textContent = `测接缝（结尾前 4.0s 起播）：${bgmItem.cueName} · 5 秒内可听尾接首循环点`;
   } catch (err) {
     statusEl.textContent = err?.message || '测接缝播放失败';
@@ -535,6 +671,13 @@ async function playStingerOverlay(stingerItem) {
     registeredCues.add(stingerItem.cueName);
   }
   activeVoice = await mgr.playCue(stingerItem.cueName, { loop: false, volume: 1, ducking: true });
+  voicePlaybackMeta = {
+    startedAtMs: performance.now(),
+    offsetSec: 0,
+    durationSec: buf?.duration || Number(stingerItem.durationSec) || 0,
+    loop: false,
+  };
+  startSeekTicker();
   statusEl.textContent = `叠加 Stinger：${stingerItem.cueName}（bgmBus 已压低 -6 dB，播完后 400ms 恢复）`;
 }
 
@@ -659,6 +802,7 @@ async function selectCurrentAudio() {
       ]);
       statusEl.textContent = `${entry.pack} · 流式按需加载就绪（点击「播放」发起流式拉取）`;
     }
+    syncSeekBar();
     return;
   }
 
@@ -693,6 +837,7 @@ async function selectCurrentAudio() {
         ['首变体频谱质心', `${variants[0]?.spectralCentroidHz || 0} Hz`],
       ]);
       statusEl.textContent = `Cue 「${entry.name}」就绪（${variants.length} 变体）· 点击「播放」自动防重复随机试听`;
+      syncSeekBar();
       return;
     }
 
@@ -708,6 +853,7 @@ async function selectCurrentAudio() {
       ['峰值 / RMS', `${currentAnalysis.peak.toFixed(2)} / ${currentAnalysis.rms.toFixed(3)}`],
     ]);
     statusEl.textContent = `${entry.pack} · 静音裁剪 ${currentAnalysis.trimStart.toFixed(3)}s ~ ${currentAnalysis.trimEnd.toFixed(3)}s`;
+    syncSeekBar();
   } catch (error) {
     if (token !== loadToken) return;
     currentDecoded = null;
@@ -740,6 +886,7 @@ async function startPlayback() {
       volume: 1,
       autoplay: true,
     });
+    startSeekTicker();
     statusEl.textContent = `正在流式播放：${entry.name} (MP3 Stereo 96 kbps)`;
     return;
   }
@@ -907,6 +1054,29 @@ async function initAudioView() {
     volumeInput.addEventListener('input', () => {
       syncOutputs();
       audioMgr?.setVolume(Number(volumeInput.value) || 0.8);
+    });
+    if (seekInput) {
+      seekInput.addEventListener('pointerdown', () => { isSeeking = true; });
+      seekInput.addEventListener('input', () => {
+        isSeeking = true;
+        if (timeOut) {
+          timeOut.textContent = `${formatClock(Number(seekInput.value) || 0)} / ${formatClock(Number(seekInput.max) || 0)}`;
+        }
+      });
+      seekInput.addEventListener('change', () => {
+        const target = Number(seekInput.value) || 0;
+        isSeeking = false;
+        void seekToSeconds(target);
+      });
+      seekInput.addEventListener('pointerup', () => { isSeeking = false; });
+    }
+    waveCanvas?.addEventListener('click', (ev) => {
+      const { duration } = getCurrentPlaybackTiming();
+      if (!(duration > 0)) return;
+      const rect = waveCanvas.getBoundingClientRect();
+      if (!(rect.width > 0)) return;
+      const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+      void seekToSeconds(ratio * duration);
     });
     onHGameAssetsChanged((data) => {
       uploadedAudio = Array.isArray(data.audio) ? data.audio : [];

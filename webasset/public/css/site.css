@@ -1436,6 +1436,26 @@ button { color: inherit; }
   background: rgba(213, 228, 180, 0.16);
   color: #edf1e6;
 }
+.hgame-audio-seek-row {
+  flex: 1 1 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 240px;
+}
+.hgame-audio-seek-row input[type="range"] {
+  flex: 1;
+  min-width: 140px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.hgame-audio-seek-row output {
+  min-width: 88px;
+  text-align: right;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .hgame-picker-grid .hgame-picker-card {
   flex-direction: row;
   align-items: center;
