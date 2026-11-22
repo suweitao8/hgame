@@ -61,8 +61,13 @@ export function createProceduralVfxAtlas(THREE?: object | null): {
  * @param {number} [orbitalY=0]
  * @param {number} [centerOffX=0]
  * @param {number} [centerOffZ=0]
+ * @param {number} [noiseYScale=1]
+ * @param {object | null} [ext=null]
+ * @param {number} [orbitalX=0]
+ * @param {number} [orbitalZ=0]
+ * @param {number} [centerOffY=0]
  */
-export function evaluateAtlasParticlePosition(x0: number, y0: number, z0: number, vx: number, vy: number, vz: number, gravity: number, drag: number, noiseStrength: number, noiseFreq: number, phase: number, age: number, is2D: boolean, outPos: Float32Array | number[], orbitalY?: number | undefined, centerOffX?: number | undefined, centerOffZ?: number | undefined, noiseYScale?: number, ext?: null): number[] | Float32Array;
+export function evaluateAtlasParticlePosition(x0: number, y0: number, z0: number, vx: number, vy: number, vz: number, gravity: number, drag: number, noiseStrength: number, noiseFreq: number, phase: number, age: number, is2D: boolean, outPos: Float32Array | number[], orbitalY?: number | undefined, centerOffX?: number | undefined, centerOffZ?: number | undefined, noiseYScale?: number | undefined, ext?: object | null, orbitalX?: number | undefined, orbitalZ?: number | undefined, centerOffY?: number | undefined): number[] | Float32Array;
 /**
  * Textured, flipbook, and curve-driven zero-GC GPU particle pool supporting
  * billboard, horizontal ground, and velocity-stretched modes across 3D/WebGL2/Canvas2D/Headless.

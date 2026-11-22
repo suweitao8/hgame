@@ -902,7 +902,73 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
                 min?: undefined;
                 max?: undefined;
             } | null;
+            orbitalX: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
             orbitalY: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            orbitalZ: {
                 kind: string;
                 lut: Float32Array;
                 lutMin?: undefined;
@@ -1668,8 +1734,11 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
                 fx: Float32Array;
                 fy: Float32Array;
                 fz: Float32Array;
+                orbitalX: Float32Array;
                 orbitalY: Float32Array;
+                orbitalZ: Float32Array;
                 centerX: Float32Array;
+                centerY: Float32Array;
                 centerZ: Float32Array;
                 noiseStr: Float32Array;
                 noiseFreq: Float32Array;

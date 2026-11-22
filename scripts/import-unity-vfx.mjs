@@ -1104,11 +1104,29 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
     const renderAlign = Number((psr.match(/^\s*m_RenderAlignment:\s*(\d+)/m) || [])[1] ?? 0);
     const alignRot = isSubChild ? computeHierarchyTransform(trBody).rot : worldTr.rot;
-    const localNormal = quatRotateVec(alignRot, [0, 0, 1]);
+    const rxScalar = typeof rotX === 'number' ? rotX : 0;
+    const localNormal = quatRotateVec(alignRot, [0, -Math.sin(rxScalar), Math.cos(rxScalar)]);
     const isLocalHorizontal = rmNum === 0 && renderAlign === 2 && Math.abs(localNormal[1]) > 0.7;
     const renderMode = psrDisabled
       ? 'none'
       : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : (rmNum === 2 || isLocalHorizontal) ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
+    let effectiveRotX = rotX;
+    if (isLocalHorizontal && typeof rotX === 'number' && Math.abs(Math.abs(rxScalar) - Math.PI * 0.5) < 0.25) {
+      effectiveRotX = 0;
+    }
+    if (renderMode === 'mesh') {
+      const [qx, qy, qz, qw] = alignRot;
+      const rhsQx = -qx;
+      const rhsQy = -qy;
+      const rhsQz = qz;
+      const rhsQw = qw;
+      const trEulerX = Math.atan2(2 * (rhsQw * rhsQx + rhsQy * rhsQz), 1 - 2 * (rhsQx * rhsQx + rhsQy * rhsQy));
+      if (Math.abs(trEulerX) > 0.02) {
+        effectiveRotX = Array.isArray(effectiveRotX)
+          ? [Number((effectiveRotX[0] + trEulerX).toFixed(4)), Number((effectiveRotX[1] + trEulerX).toFixed(4))]
+          : Number(((effectiveRotX || 0) + trEulerX).toFixed(4));
+      }
+    }
     const pivM = psr.match(/m_Pivot:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
     const pivot = pivM && (Math.abs(Number(pivM[1])) > 0.005 || Math.abs(Number(pivM[2])) > 0.005 || Math.abs(Number(pivM[3])) > 0.005)
       ? [Number(Number(pivM[1]).toFixed(3)), Number(Number(pivM[2]).toFixed(3)), toRhsZ(Number(Number(pivM[3]).toFixed(3)))]
@@ -1206,7 +1224,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       size: scaledSize,
       ...(aspectY !== undefined ? { aspectY } : {}),
       rotation: rot,
-      ...(isNonZeroVal(rotX) ? { rotX } : {}),
+      ...(isNonZeroVal(effectiveRotX) ? { rotX: effectiveRotX } : {}),
       ...(isNonZeroVal(rotY) ? { rotY } : {}),
       ...(Math.abs(netGravity) > 0.001 ? { gravity: Number(netGravity.toFixed(3)) } : {}),
       ...(forceVec ? { force: forceVec } : {}),
@@ -1404,7 +1422,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const vx = rx.val;
       const vy = ry.val;
       const vz = negateValueOrRange(rz.val);
+      const orbX = mulV(readMinMaxScalar(velMod, 'orbitalX', 0));
       const orbY = mulV(readMinMaxScalar(velMod, 'orbitalY', 0));
+      const orbZ = mulV(readMinMaxScalar(velMod, 'orbitalZ', 0));
       const oox = readMinMaxScalar(velMod, 'orbitalOffsetX', 0);
       const ooy = readMinMaxScalar(velMod, 'orbitalOffsetY', 0);
       const ooz = negateValueOrRange(readMinMaxScalar(velMod, 'orbitalOffsetZ', 0));
@@ -1414,7 +1434,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       if (isNonZero(vx) || isNonZero(vy) || isNonZero(vz)) {
         velObj.linear = [vx, vy, vz];
       }
+      if (isNonZero(orbX)) velObj.orbitalX = orbX;
       if (isNonZero(orbY)) velObj.orbitalY = orbY;
+      if (isNonZero(orbZ)) velObj.orbitalZ = orbZ;
       if (isNonZero(oox) || isNonZero(ooy) || isNonZero(ooz)) {
         velObj.orbitalOffset = [oox, ooy, ooz];
       }

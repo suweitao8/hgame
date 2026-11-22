@@ -252,7 +252,7 @@ void main() {
 
   float u = clamp(position.x + 0.5, 0.0, 1.0);
   float spanT = mix(aSegA.w, aSegB.w, u);
-  vUv = vec2(mix(0.76, 0.24, spanT), position.y + 0.5);
+  vUv = aSegMatRow > -0.5 ? vec2(1.0 - spanT, position.y + 0.5) : vec2(mix(0.76, 0.24, spanT), position.y + 0.5);
   vec3 c0 = unpackRgb24(aSegMeta.x);
   vec3 c1 = unpackRgb24(aSegExtra.x);
   vColor = mix(c0, c1, smoothstep(0.04, 0.32, spanT));
@@ -287,7 +287,8 @@ void main() {
     float worldW = w * wScale;
     float tipKeep = smoothstep(0.001, 0.012, w);
     float minScreenW = abs(mvPos.z) * 0.0038 * max(0.16, 1.0 - spanT * 0.84) * tipKeep;
-    mvPos.xy += vside * (position.y * max(worldW, minScreenW));
+    vec2 vfwd = vlen > 0.0001 ? (vdir / vlen) : vec2(0.0);
+    mvPos.xy += vfwd * ((u - 0.5) * min(worldW * 0.25, vlen * 0.2)) + vside * (position.y * max(worldW, minScreenW));
     vNormalView = vec3(0.0, 0.0, 1.0);
     vViewDirView = -mvPos.xyz;
     gl_Position = projectionMatrix * mvPos;

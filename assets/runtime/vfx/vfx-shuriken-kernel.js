@@ -146,7 +146,9 @@ export function compileShurikenLayer(layer, {
   const velY = layer.velocity?.linear?.[1] !== undefined ? compileMinMaxCurve(layer.velocity.linear[1], 0) : null;
   const velZ = layer.velocity?.linear?.[2] !== undefined ? compileMinMaxCurve(layer.velocity.linear[2], 0) : null;
   const velCurve = layer.velCurve ? compileMinMaxCurve(layer.velCurve, 1.0) : null;
+  const orbitalX = compileMinMaxCurve(layer.velocity?.orbitalX ?? 0, 0);
   const orbitalY = compileMinMaxCurve(layer.velocity?.orbitalY ?? 0, 0);
+  const orbitalZ = compileMinMaxCurve(layer.velocity?.orbitalZ ?? 0, 0);
   const radialVel = compileMinMaxCurve(layer.velocity?.radial ?? 0, 0);
 
   const forceX = Array.isArray(layer.force) ? compileMinMaxCurve(layer.force[0], 0) : null;
@@ -265,7 +267,9 @@ export function compileShurikenLayer(layer, {
     velY,
     velZ,
     velCurve,
+    orbitalX,
     orbitalY,
+    orbitalZ,
     radialVel,
     forceX,
     forceY,
@@ -318,8 +322,11 @@ export function compileShurikenLayer(layer, {
       fx: new Float32Array(capacity),
       fy: new Float32Array(capacity),
       fz: new Float32Array(capacity),
+      orbitalX: new Float32Array(capacity),
       orbitalY: new Float32Array(capacity),
+      orbitalZ: new Float32Array(capacity),
       centerX: new Float32Array(capacity),
+      centerY: new Float32Array(capacity),
       centerZ: new Float32Array(capacity),
       noiseStr: new Float32Array(capacity),
       noiseFreq: new Float32Array(capacity),
@@ -525,8 +532,11 @@ export function createShurikenKernel({
     soa.fx[idx] = (cl.forceX ? readRangeFromCompiled(cl.forceX, prng) : 0) * cl.simSpeed * cl.simSpeed;
     soa.fy[idx] = (cl.forceY ? readRangeFromCompiled(cl.forceY, prng) : 0) * cl.simSpeed * cl.simSpeed;
     soa.fz[idx] = (cl.forceZ ? readRangeFromCompiled(cl.forceZ, prng) : 0) * cl.simSpeed * cl.simSpeed;
+    soa.orbitalX[idx] = readRangeFromCompiled(cl.orbitalX, prng) * cl.simSpeed;
     soa.orbitalY[idx] = readRangeFromCompiled(cl.orbitalY, prng) * cl.simSpeed;
+    soa.orbitalZ[idx] = readRangeFromCompiled(cl.orbitalZ, prng) * cl.simSpeed;
     soa.centerX[idx] = opts.centerX ?? opts.x ?? 0;
+    soa.centerY[idx] = opts.centerY ?? opts.y ?? 0;
     soa.centerZ[idx] = opts.centerZ ?? opts.z ?? 0;
     soa.noiseStr[idx] = opts.noiseStrength ?? 0;
     soa.noiseFreq[idx] = opts.noiseFreq ?? 0.5;
@@ -595,6 +605,14 @@ export function createShurikenKernel({
 
       const t = Math.max(0, Math.min(1, soa.age[i] / soa.life[i]));
 
+      const vScale = cl.velCurve ? evaluateMinMaxCurve(cl.velCurve, t, soa.randSize[i]) : 1.0;
+      const addVx = cl.velX ? evaluateMinMaxCurve(cl.velX, t, soa.randSize[i]) : 0;
+      const addVy = cl.velY ? evaluateMinMaxCurve(cl.velY, t, soa.randSize[i]) : 0;
+      const addVz = cl.velZ ? evaluateMinMaxCurve(cl.velZ, t, soa.randSize[i]) : 0;
+      let effVx = soa.vx[i] * vScale + addVx;
+      let effVy = soa.vy[i] * vScale + addVy;
+      let effVz = soa.vz[i] * vScale + addVz;
+
       if (dt > 0) {
         const drag = soa.drag[i];
         if (drag > 0.001) {
@@ -638,14 +656,13 @@ export function createShurikenKernel({
           }
         }
 
-        const vScale = cl.velCurve ? evaluateMinMaxCurve(cl.velCurve, t, soa.randSize[i]) : 1.0;
-        const addVx = cl.velX ? evaluateMinMaxCurve(cl.velX, t, soa.randSize[i]) : 0;
-        const addVy = cl.velY ? evaluateMinMaxCurve(cl.velY, t, soa.randSize[i]) : 0;
-        const addVz = cl.velZ ? evaluateMinMaxCurve(cl.velZ, t, soa.randSize[i]) : 0;
+        effVx = soa.vx[i] * vScale + addVx;
+        effVy = soa.vy[i] * vScale + addVy;
+        effVz = soa.vz[i] * vScale + addVz;
 
-        soa.px[i] += (soa.vx[i] * vScale + addVx) * dt;
-        soa.py[i] += (soa.vy[i] * vScale + addVy) * dt;
-        soa.pz[i] += (soa.vz[i] * vScale + addVz) * dt;
+        soa.px[i] += effVx * dt;
+        soa.py[i] += effVy * dt;
+        soa.pz[i] += effVz * dt;
 
         const nStr = soa.noiseStr[i];
         if (nStr > 0.001) {
@@ -656,13 +673,37 @@ export function createShurikenKernel({
           soa.pz[i] += Math.sin(ph * 0.87 + 2.4) * nStr * dt;
         }
 
-        if (Math.abs(soa.orbitalY[i]) > 0.0001) {
-          const oa = soa.orbitalY[i] * dt;
-          const oc = Math.cos(oa), os = Math.sin(oa);
-          const rx = soa.px[i] - soa.centerX[i];
-          const rz = soa.pz[i] - soa.centerZ[i];
-          soa.px[i] = soa.centerX[i] + rx * oc - rz * os;
-          soa.pz[i] = soa.centerZ[i] + rx * os + rz * oc;
+        const ox = soa.orbitalX[i];
+        const oy = soa.orbitalY[i];
+        const oz = soa.orbitalZ[i];
+        if (Math.abs(ox) > 0.0001 || Math.abs(oy) > 0.0001 || Math.abs(oz) > 0.0001) {
+          let rx = soa.px[i] - soa.centerX[i];
+          let ry = soa.py[i] - soa.centerY[i];
+          let rz = soa.pz[i] - soa.centerZ[i];
+          if (Math.abs(ox) > 0.0001) {
+            const ax = ox * dt;
+            const c = Math.cos(ax), s = Math.sin(ax);
+            const ny = ry * c - rz * s;
+            const nz = ry * s + rz * c;
+            ry = ny; rz = nz;
+          }
+          if (Math.abs(oy) > 0.0001) {
+            const ay = oy * dt;
+            const c = Math.cos(ay), s = Math.sin(ay);
+            const nx = rx * c - rz * s;
+            const nz = rx * s + rz * c;
+            rx = nx; rz = nz;
+          }
+          if (Math.abs(oz) > 0.0001) {
+            const az = oz * dt;
+            const c = Math.cos(az), s = Math.sin(az);
+            const nx = rx * c - ry * s;
+            const ny = rx * s + ry * c;
+            rx = nx; ry = ny;
+          }
+          soa.px[i] = soa.centerX[i] + rx;
+          soa.py[i] = soa.centerY[i] + ry;
+          soa.pz[i] = soa.centerZ[i] + rz;
         }
 
         const rvx = cl.rotCurveX ? evaluateMinMaxCurve(cl.rotCurveX, t, soa.randRot[i]) : soa.spinX[i];
@@ -673,7 +714,7 @@ export function createShurikenKernel({
         soa.rotZ[i] += rvz * dt;
 
         if (cl.rotBySpeed) {
-          const spd = Math.hypot(soa.vx[i], soa.vy[i], soa.vz[i]);
+          const spd = Math.hypot(effVx, effVy, effVz);
           const rbs = cl.rotBySpeed;
           const uSpd = Math.max(0, Math.min(1, (spd - rbs.rangeMin) / Math.max(1e-5, rbs.rangeMax - rbs.rangeMin)));
           if (rbs.separateAxes) {
@@ -733,9 +774,9 @@ export function createShurikenKernel({
         arr.instScale[dst + 2] = scZ;
         arr.instScale[dst + 3] = cl.renderMode === 'mesh' ? (cl.alignToVelocity ? 1 : 0) : cl.velocityScale;
 
-        arr.instVel[dst] = soa.vx[i];
-        arr.instVel[dst + 1] = soa.vy[i];
-        arr.instVel[dst + 2] = soa.vz[i];
+        arr.instVel[dst] = effVx;
+        arr.instVel[dst + 1] = effVy;
+        arr.instVel[dst + 2] = effVz;
         arr.instVel[dst + 3] = 0;
 
         evaluateMinMaxGradient(cl.colorOverLifetime, t, soa.randColor[i], scratchColorLife);

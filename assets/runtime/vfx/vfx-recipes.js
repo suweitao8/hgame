@@ -230,7 +230,7 @@ export function createEffectPlayer({
       vx: 0, vy: 0, vz: 0,
       gravity: 0, drag: 0,
       noiseStrength: 0, noiseYScale: 1, noiseFreq: 0.5, phase: 0,
-      orbitalY: 0, centerOffX: 0, centerOffZ: 0,
+      orbitalX: 0, orbitalY: 0, orbitalZ: 0, centerOffX: 0, centerOffY: 0, centerOffZ: 0,
       sizeCurve: null, sizeAffectsWidth: true,
       trackedSlot: -1,
     });
@@ -469,6 +469,7 @@ export function createEffectPlayer({
     orbitalY = 0, centerOffX = 0, centerOffZ = 0,
     sizeStart = 1, sizeCurve = null,
     trackedSlot = -1,
+    orbitalX = 0, orbitalZ = 0, centerOffY = 0,
   ) {
     if (!trails || typeof trails.allocTrail !== 'function') return;
     let slot = null;
@@ -554,8 +555,11 @@ export function createEffectPlayer({
     slot.noiseYScale = noiseYScale;
     slot.noiseFreq = noiseFreq;
     slot.phase = phase;
+    slot.orbitalX = orbitalX;
     slot.orbitalY = orbitalY;
+    slot.orbitalZ = orbitalZ;
     slot.centerOffX = centerOffX;
+    slot.centerOffY = centerOffY;
     slot.centerOffZ = centerOffZ;
     slot.sizeCurve = sizeAffectsWidth && Array.isArray(sizeCurve) ? sizeCurve : null;
     slot.sizeAffectsWidth = sizeAffectsWidth;
@@ -568,13 +572,14 @@ export function createEffectPlayer({
       const nowT = typeof trails.getTime === 'function' ? trails.getTime() : 0;
       const tStart = Math.max(0, initialAge - trailLifetime);
       const maxNodes = typeof trails.getStats === 'function' ? (trails.getStats().trailNodes ?? 8) : 8;
-      const samples = Math.max(6, Math.min(12, maxNodes - 2));
+      const samples = Math.max(6, maxNodes - 2);
       for (let s = 0; s <= samples; s++) {
         const a = tStart + ((initialAge - tStart) * s) / samples;
         evaluateAtlasParticlePosition(
           x0, y0, z0, vx, vy, vz, gravity, drag,
           noiseStrength, noiseFreq, phase, a, is2D, scratchPos,
           orbitalY, centerOffX, centerOffZ, noiseYScale,
+          null, orbitalX, orbitalZ, centerOffY,
         );
         trails.pushTrailPoint(tid, scratchPos[0], scratchPos[1], scratchPos[2], nowT - (initialAge - a));
       }
@@ -994,6 +999,10 @@ export function createEffectPlayer({
     scratchVel[2] *= simSpd;
 
     const sizeStart = readRange(layer.size, 0.5, 0.5, prng) * scale;
+    const sizeYStart = layer.sizeY !== undefined ? (readRange(layer.sizeY, 0.5, 0.5, prng) * scale) : sizeStart;
+    const resolvedAspectY = layer.sizeY !== undefined
+      ? (sizeYStart / Math.max(1e-4, sizeStart))
+      : layer.aspectY;
     const rot0 = readRange(layer.rotation, 0, 0, prng);
     const angVel = readRange(layer.angularVel, 0, 0, prng) * simSpd;
     const rotX0 = readRange(layer.rotX, 0, 0, prng);
@@ -1022,12 +1031,18 @@ export function createEffectPlayer({
     const noiseDamp = Boolean(layer.noise?.damping);
     const phase = prng.nextFloat();
 
+    const rawOrbX = layer.velocity?.orbitalX ?? layer.velocity?.orbital?.[0] ?? 0;
     const rawOrbY = layer.velocity?.orbitalY ?? layer.velocity?.orbital?.[1] ?? 0;
+    const rawOrbZ = layer.velocity?.orbitalZ ?? layer.velocity?.orbital?.[2] ?? 0;
+    const orbitalX = readRange(rawOrbX, 0, 0, prng) * simSpd;
     const orbitalY = readRange(rawOrbY, 0, 0, prng) * simSpd;
+    const orbitalZ = readRange(rawOrbZ, 0, 0, prng) * simSpd;
     const orbOff = layer.velocity?.orbitalOffset;
     const orbPivotX = orbOff ? (scratchPos[0] + readRange(orbOff[0], 0, 0, prng) * scale) : slot.x;
+    const orbPivotY = orbOff ? (scratchPos[1] + readRange(orbOff[1], 0, 0, prng) * scale) : slot.y;
     const orbPivotZ = orbOff ? (scratchPos[2] + readRange(orbOff[2], 0, 0, prng) * scale) : slot.z;
     const centerOffX = scratchPos[0] - orbPivotX;
+    const centerOffY = scratchPos[1] - orbPivotY;
     const centerOffZ = scratchPos[2] - orbPivotZ;
 
     sampleStartColor(layer.startColor, scratchTintOut);
@@ -1251,7 +1266,7 @@ export function createEffectPlayer({
           curveCycle: (layer.curveCycle ?? 0) / simSpd,
           curveRow: layer._curveRow,
           hasVelCurve: Boolean(layer.velCurve),
-          hasSizeSep: Boolean(layer.sizeYCurve),
+          hasSizeSep: Boolean(layer.sizeYCurve || layer.sizeY !== undefined),
           rotation: rot0,
           angularVel: angVel,
           rotX: rotX0,
@@ -1289,8 +1304,8 @@ export function createEffectPlayer({
           uberMat: layer.uberMat,
           space: isLocalSpace ? 'local' : 'world',
           effectSlotIdx: isLocalSpace ? slot.localSlotIdx : 0,
-          aspectY: layer.aspectY,
-          stretch: layer.aspectY ?? layer.stretch ?? (layer.renderMode === 'vertical' || layer.renderMode === 'billboard' ? 1.0 : 0.8),
+          aspectY: resolvedAspectY,
+          stretch: resolvedAspectY ?? layer.stretch ?? (layer.renderMode === 'vertical' || layer.renderMode === 'billboard' ? 1.0 : 0.8),
           phase,
         })
       : -1;
@@ -1357,7 +1372,7 @@ export function createEffectPlayer({
           x0: scratchPos[0], y0: scratchPos[1], z0: scratchPos[2],
           vx: scratchVel[0], vy: scratchVel[1], vz: scratchVel[2],
           gravity, drag, noiseStrength, noiseYScale, noiseFreq, phase,
-          orbitalY, centerOffX, centerOffZ, trackedSlot,
+          orbitalX, orbitalY, orbitalZ, centerOffX, centerOffY, centerOffZ, trackedSlot,
         });
         if (ls.ribbonPts.length > 16) ls.ribbonPts.shift();
       } else {
@@ -1369,6 +1384,7 @@ export function createEffectPlayer({
           orbitalY, centerOffX, centerOffZ,
           sizeStart, layer.sizeCurve,
           trackedSlot,
+          orbitalX, orbitalZ, centerOffY,
         );
       }
     }
@@ -1841,7 +1857,7 @@ export function createEffectPlayer({
 
     if (trails) {
       const maxNodes = typeof trails.getStats === 'function' ? (trails.getStats().trailNodes ?? 8) : 8;
-      const segDiv = Math.max(6, Math.min(12, maxNodes - 2));
+      const segDiv = Math.max(6, maxNodes - 2);
       for (let i = 0; i < MAX_TRAIL_FOLLOWERS; i++) {
         const tf = trailFollowers[i];
         if (!tf.active) continue;
@@ -1858,12 +1874,44 @@ export function createEffectPlayer({
         let px;
         let py;
         let pz;
+        const stepDt = Math.max(0.008, tf.trailLifetime / segDiv);
+        const nowT = typeof trails.getTime === 'function' ? trails.getTime() : 0;
+        let sub = 0;
         if (tf.trackedSlot >= 0 && trackedParticles[tf.trackedSlot]?.active) {
           const tp = trackedParticles[tf.trackedSlot];
           px = tp.x;
           py = tp.y;
           pz = tp.z;
+          tf.sampleAccum += dt;
+          if (tf.sampleAccum >= stepDt || (tf.pushedPoints <= 1 && tf.age >= 0.012) || typeof trails.updateTrailHead !== 'function') {
+            tf.sampleAccum = tf.sampleAccum >= stepDt ? (tf.sampleAccum % stepDt) : 0;
+            trails.pushTrailPoint(tf.trailId, px, py, pz, nowT);
+            tf.pushedPoints += 1;
+          } else {
+            trails.updateTrailHead(tf.trailId, px, py, pz, nowT);
+          }
         } else {
+          const angSpd = Math.hypot(tf.orbitalX || 0, tf.orbitalY || 0, tf.orbitalZ || 0);
+          const maxArcDt = angSpd > 0.5 ? (0.16 / angSpd) : stepDt;
+          const effStepDt = Math.max(0.006, Math.min(stepDt, maxArcDt));
+          tf.sampleAccum += dt;
+          while (tf.sampleAccum >= effStepDt && sub < 12) {
+            tf.sampleAccum -= effStepDt;
+            const sampleAge = Math.max(0, tf.age - tf.sampleAccum);
+            evaluateAtlasParticlePosition(
+              tf.x0, tf.y0, tf.z0,
+              tf.vx, tf.vy, tf.vz,
+              tf.gravity, tf.drag,
+              tf.noiseStrength, tf.noiseFreq, tf.phase,
+              sampleAge, is2D, scratchPos,
+              tf.orbitalY, tf.centerOffX, tf.centerOffZ,
+              tf.noiseYScale, null, tf.orbitalX, tf.orbitalZ, tf.centerOffY,
+            );
+            trails.pushTrailPoint(tf.trailId, scratchPos[0], scratchPos[1], scratchPos[2], nowT - tf.sampleAccum);
+            tf.pushedPoints += 1;
+            sub += 1;
+          }
+          if (tf.sampleAccum >= effStepDt) tf.sampleAccum %= effStepDt;
           evaluateAtlasParticlePosition(
             tf.x0, tf.y0, tf.z0,
             tf.vx, tf.vy, tf.vz,
@@ -1871,20 +1919,17 @@ export function createEffectPlayer({
             tf.noiseStrength, tf.noiseFreq, tf.phase,
             tf.age, is2D, scratchPos,
             tf.orbitalY, tf.centerOffX, tf.centerOffZ,
-            tf.noiseYScale,
+            tf.noiseYScale, null, tf.orbitalX, tf.orbitalZ, tf.centerOffY,
           );
           px = scratchPos[0];
           py = scratchPos[1];
           pz = scratchPos[2];
-        }
-        const stepDt = Math.max(0.012, tf.trailLifetime / segDiv);
-        tf.sampleAccum += dt;
-        if (tf.sampleAccum >= stepDt || (tf.pushedPoints <= 1 && tf.age >= 0.012) || typeof trails.updateTrailHead !== 'function') {
-          tf.sampleAccum = tf.sampleAccum >= stepDt ? (tf.sampleAccum % stepDt) : 0;
-          trails.pushTrailPoint(tf.trailId, px, py, pz);
-          tf.pushedPoints += 1;
-        } else {
-          trails.updateTrailHead(tf.trailId, px, py, pz);
+          if ((sub === 0 && tf.pushedPoints <= 1 && tf.age >= 0.012) || typeof trails.updateTrailHead !== 'function') {
+            trails.pushTrailPoint(tf.trailId, px, py, pz, nowT);
+            tf.pushedPoints += 1;
+          } else {
+            trails.updateTrailHead(tf.trailId, px, py, pz, nowT);
+          }
         }
       }
 
@@ -1919,6 +1964,7 @@ export function createEffectPlayer({
                       rp.gravity, rp.drag, rp.noiseStrength, rp.noiseFreq, rp.phase,
                       rp.age, is2D, scratchPos,
                       rp.orbitalY, rp.centerOffX, rp.centerOffZ, rp.noiseYScale,
+                      null, rp.orbitalX, rp.orbitalZ, rp.centerOffY,
                     );
                     trails.pushTrailPoint(ls.ribbonTrailId, scratchPos[0], scratchPos[1], scratchPos[2]);
                   }

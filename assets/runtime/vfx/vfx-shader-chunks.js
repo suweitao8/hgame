@@ -994,8 +994,8 @@ void vfxExecuteVertexShell(vec3 rawPos, vec3 rawNormal, vec2 rawUv0, vec2 rawUv2
       float yLen = length(axisY);
       axisY = yLen > 0.001 ? (axisY / yLen) : vec3(0.0, 1.0, 0.0);
       vec3 axisZ = cross(axisX, axisY);
-      float major = aInstScale.x * max(0.05, aInstRot.w) + spd * aInstScale.w;
-      vec2 p2 = vec2(quadLocal.x * major, quadLocal.y * aInstScale.y);
+      float major = aInstScale.y * max(0.05, aInstRot.w) + spd * aInstScale.w;
+      vec2 p2 = vec2(quadLocal.x * major, quadLocal.y * aInstScale.x);
       worldPos = aInstPos.xyz + axisX * p2.x + axisY * p2.y + axisZ * scaled2D.z;
       worldNormal = camDir;
     } else {

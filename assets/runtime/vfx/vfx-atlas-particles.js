@@ -1050,18 +1050,20 @@ void main() {
       vec4 mvCenter = mvPosCheck;
       vec2 rightAxis;
       float major = curSize;
+      float billH = (renderMode < 0.5) ? (curSizeY * aspectY) : curSizeY;
       if (renderMode > 1.5 && renderMode < 2.5) {
         vec3 viewVel = mat3(modelViewMatrix) * curVel;
         float spd = length(viewVel.xy);
         rightAxis = spd > 0.001 ? (viewVel.xy / spd) : vec2(cos(rot), sin(rot));
+        float lenBase = (hasSizeSep > 0.5 || abs(aspectY - 1.0) > 0.001) ? (curSizeY * aspectY) : curSize;
         major = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
-          ? (curSize * max(0.05, stretchScales.y) + min(spd * stretchScales.x, curSize * 8.0))
-          : (curSize * (1.0 + scaleYPair.x * min(spd * 0.08, 4.5)));
+          ? (lenBase * max(0.05, stretchScales.y) + min(spd * stretchScales.x, lenBase * 8.0))
+          : (lenBase * (1.0 + scaleYPair.x * min(spd * 0.08, 4.5)));
+        billH = curSize;
       } else {
         rightAxis = vec2(cos(rot), sin(rot));
       }
       vec2 upAxis = vec2(-rightAxis.y, rightAxis.x);
-      float billH = (renderMode < 0.5) ? (curSizeY * aspectY) : curSizeY;
       float minBill = (renderMode < 0.5 && curSize > 0.001) ? abs(mvCenter.z) * 0.0042 : 0.0;
       mvCenter.xy += rightAxis * (posLocal.x * max(major, minBill)) + upAxis * (posLocal.y * max(billH, minBill));
       mvCenter.z += offLocal.z * curSize;
@@ -1871,6 +1873,11 @@ function compileWebGL2Program(gl, vsSrc, fsSrc) {
  * @param {number} [orbitalY=0]
  * @param {number} [centerOffX=0]
  * @param {number} [centerOffZ=0]
+ * @param {number} [noiseYScale=1]
+ * @param {object | null} [ext=null]
+ * @param {number} [orbitalX=0]
+ * @param {number} [orbitalZ=0]
+ * @param {number} [centerOffY=0]
  */
 export function evaluateAtlasParticlePosition(
   x0, y0, z0,
@@ -1881,6 +1888,7 @@ export function evaluateAtlasParticlePosition(
   orbitalY = 0, centerOffX = 0, centerOffZ = 0,
   noiseYScale = 1,
   ext = null,
+  orbitalX = 0, orbitalZ = 0, centerOffY = 0,
 ) {
   const hasVelCurve = Boolean(ext && ext.hasVelCurve);
   const disp = hasVelCurve
@@ -1896,16 +1904,43 @@ export function evaluateAtlasParticlePosition(
   let px = x0 + vx * disp + 0.5 * ax * age * age;
   let py = y0 + vy * disp + 0.5 * ay * age * age;
   let pz = z0 + vz * disp + 0.5 * az * age * age;
-  if (!is2D && Math.abs(orbitalY) > 0.0001) {
+  const effOrbX = ext?.orbitalX ?? orbitalX;
+  const effOrbY = ext?.orbitalY ?? orbitalY;
+  const effOrbZ = ext?.orbitalZ ?? orbitalZ;
+  const effOffY = ext?.centerOffY ?? centerOffY;
+  if (!is2D && (Math.abs(effOrbX) > 0.0001 || Math.abs(effOrbY) > 0.0001 || Math.abs(effOrbZ) > 0.0001)) {
     const cx = x0 - centerOffX;
     const cz = z0 - centerOffZ;
-    const rx = px - cx;
-    const rz = pz - cz;
-    const oa = orbitalY * age;
-    const oc = Math.cos(oa);
-    const os = Math.sin(oa);
-    px = cx + rx * oc - rz * os;
-    pz = cz + rx * os + rz * oc;
+    if (Math.abs(effOrbX) <= 0.0001 && Math.abs(effOrbZ) <= 0.0001) {
+      const rx = px - cx;
+      const rz = pz - cz;
+      const oa = effOrbY * age;
+      const oc = Math.cos(oa);
+      const os = Math.sin(oa);
+      px = cx + rx * oc - rz * os;
+      pz = cz + rx * os + rz * oc;
+    } else {
+      const cy = y0 - effOffY;
+      const rx = px - cx;
+      const ry = py - cy;
+      const rz = pz - cz;
+      const omega = Math.hypot(effOrbX, effOrbY, effOrbZ);
+      const invOmega = 1 / omega;
+      const kx = effOrbX * invOmega;
+      const ky = effOrbY * invOmega;
+      const kz = effOrbZ * invOmega;
+      const theta = omega * age;
+      const cosT = Math.cos(theta);
+      const sinT = Math.sin(theta);
+      const kDotR = kx * rx + ky * ry + kz * rz;
+      const crX = ky * rz - kz * ry;
+      const crY = kz * rx - kx * rz;
+      const crZ = kx * ry - ky * rx;
+      const oneMinusCos = 1 - cosT;
+      px = cx + rx * cosT + crX * sinT + kx * kDotR * oneMinusCos;
+      py = cy + ry * cosT + crY * sinT + ky * kDotR * oneMinusCos;
+      pz = cz + rz * cosT + crZ * sinT + kz * kDotR * oneMinusCos;
+    }
   }
   if (noiseStrength > 0.001) {
     const nf = Math.max(0.08, noiseFreq);
