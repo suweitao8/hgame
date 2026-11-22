@@ -1048,29 +1048,36 @@ void main() {
       vNormalView = mat3(modelViewMatrix) * cross(camRight, upW);
       vViewDirView = -mvQuad.xyz;
       gl_Position = projectionMatrix * mvQuad;
+    } else if (renderMode > 1.5 && renderMode < 2.5) {
+      vec4 mvCenter = mvPosCheck;
+      vec3 dirVel3 = length(curVel) > 0.0001 ? curVel : aAtlasP1.xyz;
+      vec3 viewAxis = mat3(modelViewMatrix) * dirVel3;
+      float vLen3 = length(viewAxis);
+      vec3 axis3 = vLen3 > 0.0001 ? (viewAxis / vLen3) : vec3(0.0, 1.0, 0.0);
+      float mvLen = length(mvCenter.xyz);
+      vec3 toCam = mvLen > 0.0001 ? (-mvCenter.xyz / mvLen) : vec3(0.0, 0.0, 1.0);
+      vec3 side3 = cross(toCam, axis3);
+      float sideLen = length(side3);
+      side3 = sideLen > 0.0001 ? (side3 / sideLen) : (abs(axis3.y) < 0.99 ? normalize(cross(axis3, vec3(0.0, 1.0, 0.0))) : vec3(1.0, 0.0, 0.0));
+      float spd = length(curVel);
+      float lenBase = (hasSizeSep > 0.5 || abs(aspectY - 1.0) > 0.001) ? (curSizeY * aspectY) : curSize;
+      float major = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
+        ? (lenBase * max(0.05, stretchScales.y) + min(spd * stretchScales.x, lenBase * 8.0))
+        : (lenBase * (1.0 + scaleYPair.x * min(spd * 0.08, 4.5)));
+      float billH = curSize;
+      float stretchX = posLocal.x - 0.5;
+      mvCenter.xyz += axis3 * (stretchX * major) + side3 * (posLocal.y * billH) + toCam * (offLocal.z * curSize);
+      vViewDirView = -mvCenter.xyz;
+      vNormalView = toCam;
+      gl_Position = projectionMatrix * mvCenter;
     } else {
       vec4 mvCenter = mvPosCheck;
-      vec2 rightAxis;
       float major = curSize;
       float billH = (renderMode < 0.5) ? (curSizeY * aspectY) : curSizeY;
-      if (renderMode > 1.5 && renderMode < 2.5) {
-        vec3 dirVel = length(curVel) > 0.0001 ? curVel : aAtlasP1.xyz;
-        vec3 viewVel = mat3(modelViewMatrix) * dirVel;
-        float dirLen = length(viewVel.xy);
-        float spd = length((mat3(modelViewMatrix) * curVel).xy);
-        rightAxis = dirLen > 0.0001 ? (viewVel.xy / dirLen) : vec2(cos(rot), sin(rot));
-        float lenBase = (hasSizeSep > 0.5 || abs(aspectY - 1.0) > 0.001) ? (curSizeY * aspectY) : curSize;
-        major = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
-          ? (lenBase * max(0.05, stretchScales.y) + min(spd * stretchScales.x, lenBase * 8.0))
-          : (lenBase * (1.0 + scaleYPair.x * min(spd * 0.08, 4.5)));
-        billH = curSize;
-      } else {
-        rightAxis = vec2(cos(rot), sin(rot));
-      }
+      vec2 rightAxis = vec2(cos(rot), sin(rot));
       vec2 upAxis = vec2(-rightAxis.y, rightAxis.x);
       float minBill = (renderMode < 0.5 && curSize > 0.001) ? abs(mvCenter.z) * 0.0042 : 0.0;
-      float stretchX = (renderMode > 1.5 && renderMode < 2.5) ? (posLocal.x - 0.5) : posLocal.x;
-      mvCenter.xy += rightAxis * (stretchX * max(major, minBill)) + upAxis * (posLocal.y * max(billH, minBill));
+      mvCenter.xy += rightAxis * (posLocal.x * max(major, minBill)) + upAxis * (posLocal.y * max(billH, minBill));
       mvCenter.z += offLocal.z * curSize;
       vViewDirView = -mvCenter.xyz;
       gl_Position = projectionMatrix * mvCenter;

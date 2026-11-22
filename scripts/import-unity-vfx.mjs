@@ -69,22 +69,23 @@ function extractSection(body, name) {
 }
 
 function readMinMaxScalar(block, fieldName, fallback = 0) {
-  const sub = block.match(new RegExp(`(?:^|\\n) {4}${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n {4}[A-Za-z_]|$)`));
+  const sub = block.match(new RegExp(`(?:^|\\n)( {2,4})${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n\\1[A-Za-z_]|$)`));
   if (!sub) return fallback;
-  const mode = Number((sub[1].match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
+  const subBody = sub[2];
+  const mode = Number((subBody.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
   const numOrInf = (m) => {
     if (!m) return null;
     if (m[1] === 'Infinity') return Infinity;
     if (m[1] === '-Infinity') return -Infinity;
     return Number(m[1]);
   };
-  const parsedMax = numOrInf(sub[1].match(/\bscalar:\s*(Infinity|-Infinity|[-\d.eE+]+)/));
+  const parsedMax = numOrInf(subBody.match(/\bscalar:\s*(Infinity|-Infinity|[-\d.eE+]+)/));
   const maxVal = parsedMax !== null ? parsedMax : fallback;
-  const parsedMin = numOrInf(sub[1].match(/\bminScalar:\s*(Infinity|-Infinity|[-\d.eE+]+)/));
+  const parsedMin = numOrInf(subBody.match(/\bminScalar:\s*(Infinity|-Infinity|[-\d.eE+]+)/));
   const minVal = parsedMin !== null ? parsedMin : maxVal;
   if (mode === 2) {
-    const maxCurveBlk = sub[1].match(/maxCurve:[\s\S]*?(?=minCurve:|$)/)?.[0] || '';
-    const minCurveBlk = sub[1].match(/minCurve:[\s\S]*$/)?.[0] || '';
+    const maxCurveBlk = subBody.match(/maxCurve:[\s\S]*?(?=minCurve:|$)/)?.[0] || '';
+    const minCurveBlk = subBody.match(/minCurve:[\s\S]*$/)?.[0] || '';
     const readCurveMean = (blk) => {
       const vals = [...blk.matchAll(/\bvalue:\s*([-\d.eE+]+)/g)].map((m) => Number(m[1]));
       if (vals.length === 0) return null;
@@ -1045,7 +1046,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const dur = Number((ps.match(/^\s*lengthInSec:\s*([-\d.eE+]+)/m) || [])[1] ?? 2);
     const simSpeed = Number((ps.match(/^\s*simulationSpeed:\s*([-\d.eE+]+)/m) || [])[1] ?? 1);
     const isLocalSpace = /^\s*moveWithTransform:\s*1\b/m.test(ps);
-    const delay = readMinMaxScalar(ps, 'startDelay', 0);
+    const rawDelay = readMinMaxScalar(ps, 'startDelay', 0);
+    const delay = Array.isArray(rawDelay) ? Number(((rawDelay[0] + rawDelay[1]) * 0.5).toFixed(4)) : Number(rawDelay || 0);
+    const maxDelay = Array.isArray(rawDelay) ? rawDelay[1] : delay;
 
     const initMod = extractSection(ps, 'InitialModule');
     const maxParticles = Number((initMod.match(/^\s*maxNumParticles:\s*(\d+)/m) || [])[1] ?? 1000);
@@ -1075,7 +1078,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const gravScalar = readMinMaxScalar(initMod, 'gravityModifier', 0);
 
     const maxLife = Array.isArray(life) ? life[1] : life;
-    maxDuration = Math.max(maxDuration, isLoop ? dur : ((Number(delay) + maxLife) / Math.max(0.05, simSpeed)));
+    maxDuration = Math.max(maxDuration, isLoop ? dur : ((maxDelay + maxLife) / Math.max(0.05, simSpeed)));
 
     const scBlock = initMod.match(/(?:^|\n) {4}startColor:[^\n]*\n[\s\S]*?(?=\n {4}[a-zA-Z]|$)/)?.[0] || '';
     const scMode = Number((scBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
@@ -1121,15 +1124,17 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
     const renderAlign = Number((psr.match(/^\s*m_RenderAlignment:\s*(\d+)/m) || [])[1] ?? 0);
     const alignRot = isSubChild ? computeHierarchyTransform(trBody).rot : worldTr.rot;
-    const rxScalar = typeof rotX === 'number' ? rotX : 0;
+    const rxScalar = Array.isArray(rotX) ? (rotX[0] + rotX[1]) * 0.5 : (typeof rotX === 'number' ? rotX : 0);
     const localNormal = quatRotateVec(alignRot, [0, -Math.sin(rxScalar), Math.cos(rxScalar)]);
     const isLocalHorizontal = rmNum === 0 && renderAlign === 2 && Math.abs(localNormal[1]) > 0.7;
     const renderMode = psrDisabled
       ? 'none'
       : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : (rmNum === 2 || isLocalHorizontal) ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
     let effectiveRotX = rotX;
-    if (isLocalHorizontal && typeof rotX === 'number' && Math.abs(Math.abs(rxScalar) - Math.PI * 0.5) < 0.25) {
+    let effectiveRotY = rotY;
+    if (isLocalHorizontal && Math.abs(Math.abs(rxScalar) - Math.PI * 0.5) < 0.25) {
       effectiveRotX = 0;
+      effectiveRotY = 0;
     }
     if (renderMode === 'mesh') {
       const [qx, qy, qz, qw] = alignRot;
@@ -1244,7 +1249,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(aspectY !== undefined ? { aspectY } : {}),
       rotation: rot,
       ...(isNonZeroVal(effectiveRotX) ? { rotX: effectiveRotX } : {}),
-      ...(isNonZeroVal(rotY) ? { rotY } : {}),
+      ...(isNonZeroVal(effectiveRotY) ? { rotY: effectiveRotY } : {}),
       ...(Math.abs(netGravity) > 0.001 ? { gravity: Number(netGravity.toFixed(3)) } : {}),
       ...(forceVec ? { force: forceVec } : {}),
       ...(windMul > 0.001 ? { windMul: Number(windMul.toFixed(3)) } : {}),
@@ -1434,13 +1439,29 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           curve: ck.map(([t, kv]) => [t, Number(((kv * scale) / peak).toFixed(3))]),
         };
       };
+      const isWorldVel = /inWorldSpace:\s*1\b/.test(velMod);
       const rx = readAxisOrCurve('x');
       const ry = readAxisOrCurve('y');
       const rz = readAxisOrCurve('z');
       const rRad = readAxisOrCurve('radial');
-      const vx = rx.val;
-      const vy = ry.val;
-      const vz = negateValueOrRange(rz.val);
+      let vx = rx.val;
+      let vy = ry.val;
+      let vzRaw = rz.val;
+      if (!isWorldVel && !isSubChild && Math.abs(worldTr.rot[3]) < 0.9999) {
+        const loOf = (v) => (Array.isArray(v) ? v[0] : v);
+        const hiOf = (v) => (Array.isArray(v) ? v[1] : v);
+        const [lx, ly, lz] = quatRotateVec(worldTr.rot, [loOf(vx), loOf(vy), loOf(vzRaw)]);
+        const [hx, hy, hz] = quatRotateVec(worldTr.rot, [hiOf(vx), hiOf(vy), hiOf(vzRaw)]);
+        const packAxis = (a, b) => {
+          const ra = Number(a.toFixed(4));
+          const rb = Number(b.toFixed(4));
+          return Math.abs(ra - rb) > 1e-4 ? [Math.min(ra, rb), Math.max(ra, rb)] : ra;
+        };
+        vx = packAxis(lx, hx);
+        vy = packAxis(ly, hy);
+        vzRaw = packAxis(lz, hz);
+      }
+      const vz = negateValueOrRange(vzRaw);
       const orbX = mulV(readMinMaxScalar(velMod, 'orbitalX', 0));
       const orbY = mulV(readMinMaxScalar(velMod, 'orbitalY', 0));
       const orbZ = mulV(readMinMaxScalar(velMod, 'orbitalZ', 0));

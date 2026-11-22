@@ -1151,8 +1151,9 @@ vec4 vfxEvalUberFragment(
   vec2 uUv0 = vec2(uv0.x, 1.0 - uv0.y);
   vec2 uUvB = vec2(uvBlend.x, 1.0 - uvBlend.y);
 
+  bool hasDetailTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)});
   vec4 detailSample = vec4(1.0);
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)})) {
+  if (hasDetailTex) {
     vec2 detUvU = uUv0 * detailST.xy + detailST.zw + pan0.zw * timeSec;
     detailSample = vfxSampleAtlasRectWrapped(atlasTex, detailRect, vec2(detUvU.x, 1.0 - detUvU.y), flipV, clampDetU, clampDetV);
     if (vfxHasFlag(flags, ${UBER_FLAG_DETAIL_SRGB.toFixed(1)})) {
@@ -1160,7 +1161,7 @@ vec4 vfxEvalUberFragment(
     }
   }
 
-  float distortAmt = vfxChannelPickerClamped(detailSample, detDistChan) * params0.z;
+  float distortAmt = hasDetailTex ? (vfxChannelPickerClamped(detailSample, detDistChan) * params0.z) : 0.0;
   vec2 uvOff = vfxHasFlag(flags, ${UBER_FLAG_USE_UV_OFFSET.toFixed(1)}) ? custom1.zw : vec2(0.0);
   vec2 mainUvU = (uUv0 + uvOff + vec2(distortAmt)) * mainST.xy + mainST.zw + pan0.xy * timeSec;
   vec4 mainTex = vec4(1.0);
@@ -1197,11 +1198,11 @@ vec4 vfxEvalUberFragment(
     );
   } else {
     vec3 mulFactor = vec3(1.0);
-    if (vfxHasFlag(flags, ${UBER_FLAG_USE_MULTIPLY.toFixed(1)})) {
+    if (hasDetailTex && vfxHasFlag(flags, ${UBER_FLAG_USE_MULTIPLY.toFixed(1)})) {
       vec3 detMulRgb = vfxChannelPicker(detailSample, detMulChan).rgb;
       mulFactor = vfxDesaturate(detMulRgb, params0.y);
     }
-    float addFactor = vfxHasFlag(flags, ${UBER_FLAG_USE_ADDITIVE.toFixed(1)})
+    float addFactor = (hasDetailTex && vfxHasFlag(flags, ${UBER_FLAG_USE_ADDITIVE.toFixed(1)}))
       ? dot(detailSample.rgb * detAddChan.rgb, vec3(1.0)) + detailSample.a * detAddChan.a
       : 0.0;
     baseCol = satMain * mulFactor + vec3(addFactor);
@@ -1210,7 +1211,7 @@ vec4 vfxEvalUberFragment(
   vec3 litCol = baseCol * vColor.rgb * max(0.0, custom1.x + 1.0);
 
   float erosion = 1.0;
-  if (!vfxHasFlag(flags, ${UBER_FLAG_DISABLE_EROSION.toFixed(1)})) {
+  if (hasDetailTex && !vfxHasFlag(flags, ${UBER_FLAG_DISABLE_EROSION.toFixed(1)})) {
     float eInput = custom1.y - 1.0;
     float edge1 = mix(dissParams.x, dissParams.y, eInput);
     float edge2 = edge1 - dissParams.x;
