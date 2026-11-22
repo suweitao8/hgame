@@ -5,7 +5,6 @@ import {
   createSidebarSquareCard,
   createThreeViewport,
   disposeObject3D,
-  fetchUnityCatalog,
   fetchUnrealCatalog,
   normalizeUnrealSceneMaterials,
 } from './hgame-shared.js';
@@ -247,7 +246,7 @@ function renderList() {
     for (const item of groupItems) {
       const selected = item.kind === activeSelection.kind && item.id === activeSelection.id;
       const badge = item.kind === 'system'
-        ? (item.sourceType === 'unity' ? 'U3D' : 'VFX')
+        ? (item.sourceType === 'niagara' ? 'NS' : 'VFX')
         : (item.kind === 'mesh' ? '3D' : 'TEX');
       const { button } = createSidebarSquareCard({
         name: item.name || item.id,
@@ -366,7 +365,7 @@ async function loadTextureCached(url) {
   return tex;
 }
 
-async function loadUnityMeshCached(url) {
+async function loadVfxMeshCached(url) {
   if (!url) return null;
   if (simMeshCache.has(url)) return simMeshCache.get(url);
   const gltf = await gltfLoader.loadAsync(url);
@@ -550,7 +549,7 @@ function sampleShapeSpawn(shape) {
   return { pos, dir };
 }
 
-function spawnUnityParticle(em) {
+function spawnVfxParticle(em) {
   const slot = em.pool.find(p => !p.alive);
   if (!slot) return;
   const cfg = em.cfg;
@@ -601,7 +600,7 @@ function resetEmitterTimers(em) {
   }));
 }
 
-async function buildUnitySimulation(emitters, targetRoot) {
+async function buildVfxSimulation(emitters, targetRoot) {
   for (const cfg of emitters) {
     const group = new THREE.Group();
     if (cfg.transform) {
@@ -639,7 +638,7 @@ async function buildUnitySimulation(emitters, targetRoot) {
     let meshTemplate = null;
     if (rd.mode === 4 && rd.meshKind === 'glb' && rd.meshUrl) {
       try {
-        meshTemplate = await loadUnityMeshCached(rd.meshUrl);
+        meshTemplate = await loadVfxMeshCached(rd.meshUrl);
       } catch {
         meshTemplate = null;
       }
@@ -748,7 +747,7 @@ function stepEmitterEmission(em, dt) {
     const maxCycles = b.cycles || 1;
     while (b.fired < maxCycles && localT >= b.nextTime - 1e-5) {
       const count = Math.round(randRange(b.minCount || 0, b.maxCount || 0));
-      for (let i = 0; i < count; i++) spawnUnityParticle(em);
+      for (let i = 0; i < count; i++) spawnVfxParticle(em);
       b.fired += 1;
       b.nextTime += Math.max(0.01, b.interval || 0.01);
     }
@@ -760,7 +759,7 @@ function stepEmitterEmission(em, dt) {
     em.spawnAcc += sampleMinMaxCurve(cfg.rateOverTime, Math.min(1, cycleT / dur), 0.5) * dt;
     while (em.spawnAcc >= 1) {
       em.spawnAcc -= 1;
-      spawnUnityParticle(em);
+      spawnVfxParticle(em);
     }
   }
 }
@@ -779,7 +778,7 @@ const _colGrad = new THREE.Color();
 const _colWork = new THREE.Color();
 const _eulerZ = new THREE.Euler(0, 0, 0, 'XYZ');
 
-function tickUnityEmitters(dt, item) {
+function tickVfxEmitters(dt, item) {
   const userTint = new THREE.Color(colorInput.value || '#ffffff');
   const useTintOverride = colorInput.value && colorInput.value.toLowerCase() !== '#ffffff';
   const simLooping = Boolean(item?.loop);
@@ -843,7 +842,7 @@ function tickUnityEmitters(dt, item) {
       }
       p.mesh.position.copy(p.pos);
 
-      // Rotation over lifetime (Unity Z rotation around emitter Z)
+      // Rotation over lifetime (local Z spin around emitter Z)
       if (cfg.rotationOverLifetime?.z) {
         const rotRate = sampleMinMaxCurve(cfg.rotationOverLifetime.z, t, p.rotRand);
         p.rotZ += rotRate * dt;
@@ -935,7 +934,7 @@ function tickUnityEmitters(dt, item) {
         resetEmitterTimers(em);
         stepEmitterEmission(em, 0);
       }
-      tickUnityEmitters(0.016, item);
+      tickVfxEmitters(0.016, item);
     }
   }
 }
@@ -1004,7 +1003,7 @@ function replayActiveVfx() {
     stepEmitterEmission(em, 0);
   }
   simLoopCooldown = 0;
-  tickUnityEmitters(0.016, item);
+  tickVfxEmitters(0.016, item);
 }
 
 function buildHGameSnippet(item) {
@@ -1012,7 +1011,7 @@ function buildHGameSnippet(item) {
   const colorLit = `0x${(p.color || '#fb923c').replace('#', '')}`;
   const shapeKey = Object.keys(VFX_SHAPE).find(k => VFX_SHAPE[k] === (p.shapeId ?? 0)) || 'GLOW_ORB';
   const lines = [
-    `// 来源 Unity Epic Toon FX: ${item.assetName || item.id}`,
+    `// 来源 Unreal VFX: ${item.assetName || item.id}`,
     `import { createVfxSystem, VFX_SHAPE } from '../vendor/hgame/index.js';`,
     ``,
     `const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE });`,
@@ -1060,14 +1059,14 @@ function tickVfx(dt) {
         hgameMeshPreview.rotation.y += dt * 1.1;
       }
     } else {
-      tickUnityEmitters(dt, item);
+      tickVfxEmitters(dt, item);
     }
     return;
   }
 
   if (item.kind === 'texture') {
     if (activeTextureMode === 'emitter') {
-      tickUnityEmitters(dt, item);
+      tickVfxEmitters(dt, item);
       return;
     }
     if (activeTexturePlane) {
@@ -1155,7 +1154,7 @@ async function loadCurrentVfx() {
           maxFloatingGlyphs: 128,
         });
         if (item.hgamePreset?.meshUrl) {
-          const tpl = await loadUnityMeshCached(item.hgamePreset.meshUrl);
+          const tpl = await loadVfxMeshCached(item.hgamePreset.meshUrl);
           if (token !== loadToken) return;
           hgameMeshPreview = tpl.clone();
           hgameMeshPreview.position.y = item.category === '法阵光环' ? 0.04 : 0.9;
@@ -1181,7 +1180,7 @@ async function loadCurrentVfx() {
         vp.controls.update();
         statusEl.textContent = `HGame 原生还原 (${item.hgamePreset?.recipe || 'burst'}) · 映射自 ${item.assetName}`;
       } else {
-        await buildUnitySimulation(item.emitters || [], stageRoot);
+        await buildVfxSimulation(item.emitters || [], stageRoot);
         if (token !== loadToken) {
           clearStageRoot();
           return;
@@ -1194,10 +1193,10 @@ async function loadCurrentVfx() {
           vp.controls.target.set(0, 0.85, 0);
         }
         vp.controls.update();
-        tickUnityEmitters(0.04, item);
+        tickVfxEmitters(0.04, item);
         const meshCnt = (item.emitters || []).filter(e => e.renderer?.mode === 4).length;
         const texCnt = new Set((item.emitters || []).map(e => e.renderer?.textureUrl).filter(Boolean)).size;
-        statusEl.textContent = `Unity Epic Toon FX · ${item.emitterCount || 0} 发射器 · ${meshCnt} 网格/面片层 · ${texCnt} 贴图`;
+        statusEl.textContent = `Unreal VFX · ${item.emitterCount || 0} 发射器 · ${meshCnt} 网格/面片层 · ${texCnt} 贴图`;
       }
     } else if (item.kind === 'mesh') {
       const gltf = await gltfLoader.loadAsync(item.url);
@@ -1221,7 +1220,7 @@ async function loadCurrentVfx() {
       vp.scene.add(stageRoot);
       applyAppearanceToStage();
       vp.frameObject(stageRoot);
-      statusEl.textContent = `Unity 3D 特效网格 · ${meshCount} 网格 · ${formatBytes(item.bytes)}`;
+      statusEl.textContent = `Unreal 3D 特效网格 · ${meshCount} 网格 · ${formatBytes(item.bytes)}`;
     } else {
       const tex = await texLoader.loadAsync(item.url);
       if (token !== loadToken) {
@@ -1243,7 +1242,7 @@ async function loadCurrentVfx() {
       vp.scene.add(stageRoot);
 
       if (mode === 'emitter') {
-        await buildUnitySimulation([{
+        await buildVfxSimulation([{
           name: item.name,
           transform: { position: [0, 0.5, 0], quaternion: [0.70711, 0, 0, 0.70711], scale: [1, 1, 1] },
           duration: 1.0,
@@ -1399,22 +1398,10 @@ async function initVfxView() {
     vp.start(tickVfx);
   }
   try {
-    const [unityCatalog, unrealCatalog] = await Promise.all([
-      fetchUnityCatalog(),
-      fetchUnrealCatalog(),
-    ]);
-    vfxSystems = [
-      ...(Array.isArray(unityCatalog.vfxSystems) ? unityCatalog.vfxSystems : []),
-      ...(Array.isArray(unrealCatalog.vfxSystems) ? unrealCatalog.vfxSystems : []),
-    ];
-    vfxMeshes = [
-      ...(Array.isArray(unityCatalog.vfxMeshes) ? unityCatalog.vfxMeshes : []),
-      ...(Array.isArray(unrealCatalog.vfxMeshes) ? unrealCatalog.vfxMeshes : []),
-    ];
-    vfxTextures = [
-      ...(Array.isArray(unityCatalog.vfxTextures) ? unityCatalog.vfxTextures : []),
-      ...(Array.isArray(unrealCatalog.vfxTextures) ? unrealCatalog.vfxTextures : []),
-    ];
+    const unrealCatalog = await fetchUnrealCatalog();
+    vfxSystems = Array.isArray(unrealCatalog.vfxSystems) ? unrealCatalog.vfxSystems : [];
+    vfxMeshes = Array.isArray(unrealCatalog.vfxMeshes) ? unrealCatalog.vfxMeshes : [];
+    vfxTextures = Array.isArray(unrealCatalog.vfxTextures) ? unrealCatalog.vfxTextures : [];
   } catch (error) {
     vfxSystems = [];
     vfxMeshes = [];

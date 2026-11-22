@@ -177,7 +177,6 @@ export function createHGameAssetHandler({
   dbPath = null,
   materialLibraryRoot = null,
   unrealExportRoot = null,
-  unityExportRoot = null,
   anim23Root = null,
 } = {}) {
   const root = path.resolve(hgameAssetRoot);
@@ -216,10 +215,6 @@ export function createHGameAssetHandler({
 
   function getUnrealRoot() {
     return resolveExportRoot(unrealExportRoot, 'HGAME_UNREAL_EXPORT_ROOT', 'D:\\UnrealWorkspace\\Anim58\\Saved\\WebAssetExport');
-  }
-
-  function getUnityRoot() {
-    return resolveExportRoot(unityExportRoot, 'HGAME_UNITY_EXPORT_ROOT', 'D:\\UnityWorkspace\\AssetTest\\Saved\\WebAssetExport');
   }
 
   function getAnim23Root() {
@@ -376,32 +371,6 @@ export function createHGameAssetHandler({
           error: 'PROCEDURAL_ASSETS_DISABLED',
           message: '程序化 .hmat/.hmesh 已按 Phase 0 彻底移除，请使用 hgame-assets-cn 静态母库。',
         });
-        return;
-      }
-
-      if (pathname === '/api/hgame/unity/catalog' && request.method === 'GET') {
-        const unityRoot = getUnityRoot();
-        if (!unityRoot) {
-          sendJson(response, 200, { available: false, vfxSystems: [], vfxMeshes: [], vfxTextures: [] });
-          return;
-        }
-        const catalogPath = path.join(unityRoot, 'catalog.json');
-        if (!existsSync(catalogPath)) {
-          sendJson(response, 200, { available: false, vfxSystems: [], vfxMeshes: [], vfxTextures: [] });
-          return;
-        }
-        try {
-          const catalog = JSON.parse(await readFile(catalogPath, 'utf8'));
-          sendJson(response, 200, {
-            available: true,
-            sourceEngine: 'unity',
-            vfxSystems: Array.isArray(catalog.vfxSystems) ? catalog.vfxSystems : [],
-            vfxMeshes: Array.isArray(catalog.vfxMeshes) ? catalog.vfxMeshes : [],
-            vfxTextures: Array.isArray(catalog.vfxTextures) ? catalog.vfxTextures : [],
-          });
-        } catch {
-          sendJson(response, 200, { available: false, vfxSystems: [], vfxMeshes: [], vfxTextures: [] });
-        }
         return;
       }
 
@@ -716,15 +685,6 @@ export function createHGameAssetHandler({
           getUnrealRoot(),
           '/files/hgame-unreal/',
           /^(animations|vfx_meshes|vfx_textures|decals|audio)\/[A-Za-z0-9_.\-]+\.(glb|wav|png|webp|jpg|jpeg|mp3|ogg)$/i,
-        );
-        return;
-      }
-
-      if (pathname.startsWith('/files/hgame-unity/')) {
-        await serveExportedFile(
-          getUnityRoot(),
-          '/files/hgame-unity/',
-          /^(meshes|textures)\/[A-Za-z0-9_.\-]+\.(glb|png|webp|jpg|jpeg)$/i,
         );
         return;
       }

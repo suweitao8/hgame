@@ -6,8 +6,6 @@ let cachedUnrealCatalog = null;
 let pendingUnrealCatalog = null;
 let cachedAnim23Catalog = null;
 let pendingAnim23Catalog = null;
-let cachedUnityCatalog = null;
-let pendingUnityCatalog = null;
 const assetListeners = new Set();
 
 export async function fetchHGameAssets(force = false) {
@@ -74,32 +72,6 @@ export async function fetchAnim23Catalog(force = false) {
     }
   })();
   return pendingAnim23Catalog;
-}
-
-export async function fetchUnityCatalog(force = false) {
-  if (!force && cachedUnityCatalog) return cachedUnityCatalog;
-  if (!force && pendingUnityCatalog) return pendingUnityCatalog;
-  pendingUnityCatalog = (async () => {
-    const empty = { available: false, vfxSystems: [], vfxMeshes: [], vfxTextures: [] };
-    try {
-      const response = await fetch('/api/hgame/unity/catalog');
-      const data = await response.json().catch(() => empty);
-      if (!response.ok) return empty;
-      cachedUnityCatalog = {
-        available: Boolean(data.available),
-        sourceEngine: data.sourceEngine || 'unity',
-        vfxSystems: Array.isArray(data.vfxSystems) ? data.vfxSystems : [],
-        vfxMeshes: Array.isArray(data.vfxMeshes) ? data.vfxMeshes : [],
-        vfxTextures: Array.isArray(data.vfxTextures) ? data.vfxTextures : [],
-      };
-      return cachedUnityCatalog;
-    } catch {
-      return empty;
-    } finally {
-      pendingUnityCatalog = null;
-    }
-  })();
-  return pendingUnityCatalog;
 }
 
 export function onHGameAssetsChanged(listener) {

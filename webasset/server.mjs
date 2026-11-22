@@ -77,7 +77,6 @@ export function createWebAssetServer({
   backupDir = null,
   materialLibraryRoot = null,
   unrealExportRoot = null,
-  unityExportRoot = null,
   anim23Root = null,
   htmlGamesRoot = DEFAULT_HTML_GAMES_ROOT,
   ...assetOptions
@@ -104,7 +103,6 @@ export function createWebAssetServer({
     assetDb,
     materialLibraryRoot,
     unrealExportRoot,
-    unityExportRoot,
     anim23Root,
   });
   mkdirSync(path.join(gamesRoot, 'files'), { recursive: true });
@@ -208,8 +206,7 @@ export function createWebAssetServer({
       pathname.startsWith('/files/procedural/') ||
       pathname.startsWith('/files/hgame-materials/') ||
       pathname.startsWith('/files/hgame-anim23/') ||
-      pathname.startsWith('/files/hgame-unreal/') ||
-      pathname.startsWith('/files/hgame-unity/')
+      pathname.startsWith('/files/hgame-unreal/')
     ) {
       await handleHGameAssets(request, response);
     } else if (pathname.startsWith('/api/') || pathname.startsWith('/files/images/') || pathname.startsWith('/files/models/')) {

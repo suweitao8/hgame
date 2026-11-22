@@ -22,7 +22,6 @@ export const ART_SCAN_ROOTS = Object.freeze([
   { rel: 'public/assets/pbr', domain: 'pbr' },
   { rel: 'public/assets/models', domain: 'model' },
   { rel: 'public/assets/ui', domain: 'ui' },
-  { rel: 'public/assets/vfx', domain: 'vfx' },
   { rel: 'hgame-assets-cn/built', domain: 'hgame-cn' },
   { rel: 'hgame-assets-cn/raw', domain: 'hgame-cn' },
 ]);
