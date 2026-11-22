@@ -593,7 +593,7 @@ function parseVolumeDetectStderr(stderr = '') {
   };
 }
 
-function parseLoudnormJsonStderr(stderr = '') {
+export function parseLoudnormJsonStderr(stderr = '') {
   const text = String(stderr || '');
   const idx = text.lastIndexOf('{');
   const end = text.lastIndexOf('}');
@@ -782,7 +782,7 @@ export async function normalizeAndEncodeAudioFile({
   };
 }
 
-function runFfmpegAsync(ffmpegBin, args) {
+export function runFfmpegAsync(ffmpegBin, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const outChunks = [];
@@ -800,7 +800,7 @@ function runFfmpegAsync(ffmpegBin, args) {
   });
 }
 
-async function runPool(items, concurrency, fn) {
+export async function runPool(items, concurrency, fn) {
   let cursor = 0;
   const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, async () => {
     while (cursor < items.length) {

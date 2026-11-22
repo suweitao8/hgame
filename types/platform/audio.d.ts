@@ -196,6 +196,15 @@
  * @property {(pos?: AudioPosition3D | AudioPosition2D) => { activeZones: number, maxWetGain: number }} updateReverbZones
  * @property {() => { unlocked: boolean, hasReverbSend: boolean, zoneCount: number, wiredZones: number }} getDspState
  * @property {(url: string, opts?: { bus?: string, loop?: boolean, volume?: number, autoplay?: boolean }) => { url: string, bus: string, loop: boolean, readonly playing: boolean, readonly volume: number, play: () => Promise<void>, pause: () => void, setVolume: (v: number) => number, stop: () => void }} playStream
+ * @property {(cueId: string, config?: object) => object} registerBgmCue
+ * @property {(tableOrUrl: string | object, options?: { fetchImpl?: typeof fetch }) => Promise<{ bgmRegistered: number, totalCues: number, table: unknown }>} loadCueTable
+ * @property {(cueIdOrSpec: string | object, options?: { fadeMs?: number, forceRestart?: boolean, loop?: boolean, volume?: number, startAtSec?: number | null, fetchImpl?: typeof fetch }) => Promise<object | null>} playBgm
+ * @property {(options?: { fadeMs?: number }) => boolean} stopBgm
+ * @property {() => boolean} pauseBgm
+ * @property {() => Promise<boolean>} resumeBgm
+ * @property {(value: number) => number} setBgmVolume
+ * @property {() => number} getBgmVolume
+ * @property {() => { state: string, cueId: string | null, loop: boolean, loopStart: number, loopEnd: number, bufferDuration: number, pausedPositionSec: number, activeBufferCount: number, fadingCount: number, registeredCueCount: number }} getBgmState
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
  */
@@ -761,6 +770,41 @@ export type AudioManager = {
         pause: () => void;
         setVolume: (v: number) => number;
         stop: () => void;
+    };
+    registerBgmCue: (cueId: string, config?: object) => object;
+    loadCueTable: (tableOrUrl: string | object, options?: {
+        fetchImpl?: typeof fetch;
+    }) => Promise<{
+        bgmRegistered: number;
+        totalCues: number;
+        table: unknown;
+    }>;
+    playBgm: (cueIdOrSpec: string | object, options?: {
+        fadeMs?: number;
+        forceRestart?: boolean;
+        loop?: boolean;
+        volume?: number;
+        startAtSec?: number | null;
+        fetchImpl?: typeof fetch;
+    }) => Promise<object | null>;
+    stopBgm: (options?: {
+        fadeMs?: number;
+    }) => boolean;
+    pauseBgm: () => boolean;
+    resumeBgm: () => Promise<boolean>;
+    setBgmVolume: (value: number) => number;
+    getBgmVolume: () => number;
+    getBgmState: () => {
+        state: string;
+        cueId: string | null;
+        loop: boolean;
+        loopStart: number;
+        loopEnd: number;
+        bufferDuration: number;
+        pausedPositionSec: number;
+        activeBufferCount: number;
+        fadingCount: number;
+        registeredCueCount: number;
     };
     updateListenerFromCamera: (camera: AudioListenerCamera | null | undefined) => AudioListenerState;
     /**

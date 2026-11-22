@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add offline AI Music & Stinger pipeline (`scripts/lib/music-pipeline.mjs`, `scripts/process-audio.mjs --only-music`, staging `webasset/hgame-assets-cn/raw/audio_ai_staging/{bgm,stinger}`) with BPM 4-bar alignment, FFmpeg tail-to-head equal-power `hsin` loop building, 2-pass EBU R128 (`-19.0 LUFS` BGM / `-16.0 LUFS` Stinger, `96k` stereo MP3), `ffprobe` encoder-delay metadata, `music_report.json` gate, plus runtime streaming BGM manager (`assets/runtime/platform/audio/bgm-player.js`, `assets/runtime/platform/audio.js`: `playBgm`, `stopBgm`, `pauseBgm`, `resumeBgm`, `setBgmVolume`, `getBgmVolume`, `getBgmState`, `loadCueTable`, `registerBgmCue`, `-6 dB` Stinger auto-ducking, and lifecycle pause/resume) and minimalist WebAsset `音乐库` verification tab (`webasset/public/js/hgame-audio.js`).
+
 - Add `createUpperLowerMasks` helper (`assets/runtime/animation/animator3d.js`, exported via `integrations/model3d.js` & `index.js`) to split character skeletons automatically (Mixamo/UE/Blender/generic Spine detection or explicit `spineBone`) into non-overlapping `upperMask` / `lowerMask` for 2-layer locomotion + upper-body action playback.
 
 - Standardize LoL-style character/ward-only Fog of War in HGame (`assets/runtime/world/fog-of-war.js`, `docs/guides/USER-AND-AGENT-GUIDE.md`): extended `TOPDOWN_FOG_DEFAULTS` with `revealerSources: ['character', 'ward']` and ward sight defaults (`14m` radius, `3m` soften, `160` rays), added `addWard(opts)` helper on `createFogOfWarWorld`, and documented fixed `256×256` resolution, character/ward-only vision (weapons/projectiles do not scout fog), and clean top-down presentation without fake shadow discs or overhead nameplates.

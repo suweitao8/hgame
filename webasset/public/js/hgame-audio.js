@@ -31,6 +31,7 @@ const volumeInput = document.querySelector('#hgame-audio-volume');
 const volumeVal = document.querySelector('#hgame-audio-volume-val');
 const loopInput = document.querySelector('#hgame-audio-loop');
 const statusEl = document.querySelector('#hgame-audio-status');
+const musicBarEl = document.querySelector('#hgame-audio-music-bar');
 
 let initialized = false;
 let currentLib = 'cues'; // 'cues' | 'streams' | 'full'
@@ -64,20 +65,45 @@ function updateLibTabsUi() {
   }
 }
 
+function isMusicCueEntry(c) {
+  const name = String(c?.cueName || c?.id || '');
+  return c?.category === 'bgm' || c?.category === 'stinger' || name.startsWith('bgm.') || name.startsWith('stinger.');
+}
+
 function buildActiveList() {
+  if (currentLib === 'music') {
+    const musicCues = cueEntries.filter((c) => isMusicCueEntry(c));
+    return musicCues.map((c) => {
+      const isBgm = c.category === 'bgm' || String(c.cueName || '').startsWith('bgm.');
+      return {
+        type: 'cue',
+        id: c.cueName,
+        name: c.cueName,
+        pack: isBgm ? 'BGM' : 'Stinger',
+        category: isBgm ? 'bgm' : 'stinger',
+        preload: isBgm ? 'stream' : 'buffer',
+        badge: isBgm ? 'BGM 循环' : 'Stinger',
+        url: c.url || c.variants?.[0]?.url || '',
+        fileName: `${c.cueName}.mp3`,
+        item: c,
+      };
+    });
+  }
   if (currentLib === 'cues') {
-    return cueEntries.map((c) => ({
-      type: 'cue',
-      id: c.cueName,
-      name: c.cueName,
-      pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
-      category: c.category || 'sfx',
-      preload: 'buffer',
-      badge: '内存 SFX',
-      url: c.variants?.[0]?.url || '',
-      fileName: `${c.cueName}.mp3`,
-      item: c,
-    }));
+    return cueEntries
+      .filter((c) => !isMusicCueEntry(c))
+      .map((c) => ({
+        type: 'cue',
+        id: c.cueName,
+        name: c.cueName,
+        pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
+        category: c.category || 'sfx',
+        preload: 'buffer',
+        badge: '内存 SFX',
+        url: c.variants?.[0]?.url || '',
+        fileName: `${c.cueName}.mp3`,
+        item: c,
+      }));
   }
   if (currentLib === 'streams') {
     return streamEntries.map((s) => ({
@@ -198,6 +224,9 @@ function computeAudioLoudnessSummary(entry) {
   }
 
   let anomaly = Boolean(item.clippingAlert || item.hitBoostCap || (peakDb !== null && peakDb > -0.5));
+  if (entry.category === 'bgm' && rmsDb !== null && Math.abs(rmsDb - (-19.0)) > 1.5) {
+    anomaly = true;
+  }
   if (entry.type === 'cue') {
     if (spreadAnomalyCues.has(entry.name)) anomaly = true;
     const dbs = (item.variants || []).map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
@@ -235,23 +264,53 @@ function renderList() {
   for (const entry of visible) {
     const selected = entry.type === activeSelection.type && entry.id === activeSelection.id;
     const loud = computeAudioLoudnessSummary(entry);
+    const isBgmEntry = entry.category === 'bgm';
     const { button } = createSidebarSquareCard({
-      name: entry.type === 'cue'
+      name: entry.type === 'cue' && !isMusicCueEntry(entry.item)
         ? `${entry.name} (${entry.item?.variants?.length || 1}变体)`
         : entry.name,
       badge: entry.badge,
       active: selected,
       onClick: () => {
-        stopPlayback();
+        if (!isBgmEntry) stopPlayback();
         activeSelection = { type: entry.type, id: entry.id };
         renderList();
         void selectCurrentAudio();
       },
     });
-    const metaSpan = document.createElement('span');
-    metaSpan.className = 'hgame-audio-loud-meta';
-    metaSpan.textContent = loud.text;
-    button.append(metaSpan);
+    if (isBgmEntry) {
+      const it = entry.item || {};
+      const lufsVal = Number.isFinite(it.measuredLufs ?? it.measuredDb) ? `${Number(it.measuredLufs ?? it.measuredDb).toFixed(1)} LUFS` : '--';
+      const pkVal = Number.isFinite(it.peakDb) ? `${Number(it.peakDb).toFixed(1)} dB` : '--';
+      const durVal = Number.isFinite(it.durationSec ?? it.duration) ? `${Number(it.durationSec ?? it.duration).toFixed(1)}s` : '--';
+      const kbVal = Number.isFinite(it.sizeKb)
+        ? `${Math.round(it.sizeKb)} KB`
+        : (it.encodedBytes ? `${Math.round(it.encodedBytes / 1024)} KB` : '--');
+      const row = document.createElement('div');
+      row.className = 'hgame-audio-bgm-row';
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'hgame-audio-loud-meta';
+      metaSpan.textContent = `${lufsVal} / ${pkVal} / ${durVal} / ${kbVal}`;
+      const seamBtn = document.createElement('button');
+      seamBtn.type = 'button';
+      seamBtn.className = 'hgame-audio-seam-btn';
+      seamBtn.textContent = '测接缝';
+      seamBtn.title = '跳至结尾前 4.0 秒，5 秒内验听无缝循环接缝';
+      seamBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        activeSelection = { type: entry.type, id: entry.id };
+        renderList();
+        void selectCurrentAudio();
+        void playBgmSeamTest(entry.item);
+      });
+      row.append(metaSpan, seamBtn);
+      button.append(row);
+    } else {
+      const metaSpan = document.createElement('span');
+      metaSpan.className = 'hgame-audio-loud-meta';
+      metaSpan.textContent = loud.text;
+      button.append(metaSpan);
+    }
     if (loud.anomaly) {
       button.dataset.loudnessAnomaly = 'true';
     }
@@ -269,7 +328,7 @@ function syncOutputs() {
   volumeVal.textContent = Number(volumeInput.value || 0.8).toFixed(2);
 }
 
-function stopPlayback() {
+function stopPlayback({ keepBgm = false } = {}) {
   try {
     activeVoice?.stop?.({ fadeOutMs: 12 });
   } catch { /* ignore */ }
@@ -278,6 +337,127 @@ function stopPlayback() {
     activeStream?.stop?.();
   } catch { /* ignore */ }
   activeStream = null;
+  if (!keepBgm) {
+    try {
+      audioMgr?.stopBgm?.({ fadeMs: 120 });
+    } catch { /* ignore */ }
+  }
+  renderMusicVerifyBar();
+}
+
+function renderMusicVerifyBar() {
+  if (!musicBarEl) return;
+  if (currentLib !== 'music') {
+    musicBarEl.hidden = true;
+    musicBarEl.replaceChildren();
+    return;
+  }
+  const bgmList = cueEntries.filter((c) => c.category === 'bgm' || String(c.cueName || '').startsWith('bgm.'));
+  const stingerList = cueEntries.filter((c) => c.category === 'stinger' || String(c.cueName || '').startsWith('stinger.'));
+  musicBarEl.hidden = false;
+  musicBarEl.replaceChildren();
+
+  const activeBgmId = audioMgr?.getBgmState?.().cueId || null;
+
+  const bgmLabel = document.createElement('span');
+  bgmLabel.textContent = '600ms 交叉切歌:';
+  musicBarEl.append(bgmLabel);
+
+  if (bgmList.length === 0) {
+    const none = document.createElement('span');
+    none.textContent = '暂无 BGM（投放至 audio_ai_staging/bgm 后运行 --only-music）';
+    musicBarEl.append(none);
+  } else {
+    for (const bgm of bgmList.slice(0, 6)) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hgame-audio-music-pill';
+      btn.textContent = bgm.cueName.replace(/^bgm\./, '');
+      btn.setAttribute('aria-pressed', String(activeBgmId === bgm.cueName));
+      btn.addEventListener('click', () => {
+        void playBgmCrossfade(bgm);
+      });
+      musicBarEl.append(btn);
+    }
+  }
+
+  if (stingerList.length > 0) {
+    const stLabel = document.createElement('span');
+    stLabel.textContent = '叠加 Stinger (-6dB 闪避):';
+    musicBarEl.append(stLabel);
+    for (const st of stingerList.slice(0, 6)) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hgame-audio-music-pill';
+      btn.textContent = st.cueName.replace(/^stinger\./, '');
+      btn.addEventListener('click', () => {
+        void playStingerOverlay(st);
+      });
+      musicBarEl.append(btn);
+    }
+  }
+}
+
+async function playBgmCrossfade(bgmItem) {
+  if (!bgmItem) return;
+  const mgr = getAudioManager();
+  await mgr.unlock();
+  mgr.setVolume(Number(volumeInput.value) || 0.8);
+  stopPlayback({ keepBgm: true });
+  try {
+    const res = await mgr.playBgm(bgmItem, { fadeMs: 600, loop: true });
+    renderMusicVerifyBar();
+    if (res?.ignored) {
+      statusEl.textContent = `BGM「${bgmItem.cueName}」已在播放（防重入忽略）`;
+    } else {
+      statusEl.textContent = `正在播放 BGM（600ms 淡入切换）：${bgmItem.cueName} · ${(bgmItem.measuredLufs ?? bgmItem.measuredDb ?? -19).toFixed(1)} LUFS`;
+    }
+  } catch (err) {
+    statusEl.textContent = err?.message || 'BGM 播放失败';
+  }
+}
+
+async function playBgmSeamTest(bgmItem) {
+  if (!bgmItem) return;
+  const mgr = getAudioManager();
+  await mgr.unlock();
+  mgr.setVolume(Number(volumeInput.value) || 0.8);
+  stopPlayback({ keepBgm: true });
+  const trimStart = Number(bgmItem.trimStartSec) || 0.026;
+  const loopEnd = Number(bgmItem.trimEndSec) || Number(bgmItem.durationSec) || Number(bgmItem.duration) || 48;
+  const startAtSec = Math.max(trimStart, loopEnd - 4.0);
+  try {
+    await mgr.playBgm(bgmItem, {
+      fadeMs: 120,
+      forceRestart: true,
+      loop: true,
+      startAtSec,
+    });
+    renderMusicVerifyBar();
+    statusEl.textContent = `测接缝（结尾前 4.0s 起播）：${bgmItem.cueName} · 5 秒内可听尾接首循环点`;
+  } catch (err) {
+    statusEl.textContent = err?.message || '测接缝播放失败';
+  }
+}
+
+async function playStingerOverlay(stingerItem) {
+  if (!stingerItem) return;
+  const mgr = getAudioManager();
+  await mgr.unlock();
+  mgr.setVolume(Number(volumeInput.value) || 0.8);
+  const url = stingerItem.url || stingerItem.variants?.[0]?.url;
+  if (!url) return;
+  const buf = await decodeCachedUrl(url);
+  if (!registeredCues.has(stingerItem.cueName)) {
+    mgr.registerCue(stingerItem.cueName, [buf], {
+      bus: stingerItem.bus || 'ui_voice',
+      gainDb: Number(stingerItem.gainDb) || 0,
+      ducking: stingerItem.ducking !== false,
+    });
+    registeredCues.add(stingerItem.cueName);
+  }
+  activeVoice = await mgr.playCue(stingerItem.cueName, { loop: false, volume: 1, ducking: true });
+  statusEl.textContent = `叠加 Stinger：${stingerItem.cueName}（bgmBus 已压低 -6 dB，播完后 400ms 恢复）`;
 }
 
 function drawPcmWaveform(samples, { durationSec = 0, analysis = null } = {}) {
@@ -379,13 +559,27 @@ async function selectCurrentAudio() {
     currentAnalysis = null;
     drawPcmWaveform(null);
     const s = entry.item;
-    renderMetrics([
-      ['加载策略', '流式长音轨 (preload: stream · 不进首包)'],
-      ['时长', `${Number(s.duration || 0).toFixed(2)} s`],
-      ['编码', `MP3 44.1 kHz Stereo · ${s.bitrateKbps || 96} kbps`],
-      ['体积', formatBytes(s.encodedBytes || 0)],
-    ]);
-    statusEl.textContent = `${entry.pack} · 流式按需加载就绪（点击「播放」发起流式拉取）`;
+    if (entry.category === 'bgm') {
+      const lufs = Number(s.measuredLufs ?? s.measuredDb);
+      const pk = Number(s.peakDb);
+      const dur = Number(s.durationSec ?? s.duration ?? 0);
+      const kb = Number(s.sizeKb) || (s.encodedBytes ? s.encodedBytes / 1024 : 0);
+      renderMetrics([
+        ['加载策略', '流式循环 BGM (preload: stream · 零卡顿接缝)'],
+        ['响度 / 峰值', `${Number.isFinite(lufs) ? `${lufs.toFixed(1)} LUFS` : '--'} / ${Number.isFinite(pk) ? `${pk.toFixed(1)} dBTP` : '--'}`],
+        ['时长 / BPM', `${dur.toFixed(2)} s · ${s.bpm ? `${s.bpm} BPM` : '无 BPM'}`],
+        ['体积 / 裁剪', `${kb.toFixed(1)} KB · ${Number(s.trimStartSec || 0).toFixed(3)}s~${Number(s.trimEndSec || dur).toFixed(3)}s`],
+      ]);
+      statusEl.textContent = `BGM 「${entry.name}」就绪 · 点「播放」切歌，点「测接缝」5 秒验听循环点`;
+    } else {
+      renderMetrics([
+        ['加载策略', '流式长音轨 (preload: stream · 不进首包)'],
+        ['时长', `${Number(s.duration || 0).toFixed(2)} s`],
+        ['编码', `MP3 44.1 kHz Stereo · ${s.bitrateKbps || 96} kbps`],
+        ['体积', formatBytes(s.encodedBytes || 0)],
+      ]);
+      statusEl.textContent = `${entry.pack} · 流式按需加载就绪（点击「播放」发起流式拉取）`;
+    }
     return;
   }
 
@@ -452,7 +646,13 @@ async function startPlayback() {
   const vol = Number(volumeInput.value) || 0.8;
   mgr.setVolume(vol);
 
-  stopPlayback();
+  const isStinger = entry.category === 'stinger';
+  if (entry.category === 'bgm') {
+    await playBgmCrossfade(entry.item);
+    return;
+  }
+
+  stopPlayback({ keepBgm: isStinger });
 
   if (entry.preload === 'stream') {
     activeStream = mgr.playStream(entry.url, {
@@ -462,6 +662,11 @@ async function startPlayback() {
       autoplay: true,
     });
     statusEl.textContent = `正在流式播放：${entry.name} (MP3 Stereo 96 kbps)`;
+    return;
+  }
+
+  if (isStinger) {
+    await playStingerOverlay(entry.item);
     return;
   }
 
@@ -595,6 +800,7 @@ async function initAudioView() {
         updateLibTabsUi();
         populateFilterOptions();
         renderList();
+        renderMusicVerifyBar();
         void selectCurrentAudio();
       });
     }
@@ -652,6 +858,7 @@ async function initAudioView() {
   updateLibTabsUi();
   populateFilterOptions();
   renderList();
+  renderMusicVerifyBar();
   await selectCurrentAudio();
 }
 

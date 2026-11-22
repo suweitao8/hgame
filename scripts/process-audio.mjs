@@ -20,6 +20,16 @@ import {
   buildSurfaceTypeCueMap,
   processAudioLibraryBatch,
 } from './lib/audio-library-pipeline.mjs';
+import {
+  resolveDefaultMusicStagingRoot,
+  parseBgmFilenameMeta,
+  computeBgmLoopTiming,
+  probeAudioMetadata,
+  processBgmTrack,
+  processStingerTrack,
+  evaluateMusicGate,
+  processMusicLibrary,
+} from './lib/music-pipeline.mjs';
 
 export {
   SURFACE_TYPES_10,
@@ -37,6 +47,14 @@ export {
   selectQuantileVariants,
   buildSurfaceTypeCueMap,
   processAudioLibraryBatch,
+  resolveDefaultMusicStagingRoot,
+  parseBgmFilenameMeta,
+  computeBgmLoopTiming,
+  probeAudioMetadata,
+  processBgmTrack,
+  processStingerTrack,
+  evaluateMusicGate,
+  processMusicLibrary,
 };
 
 function clamp(value, min, max) {
@@ -349,17 +367,37 @@ function parseArgs(argv) {
 
 export async function runAudioCli(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  if (args['only-music']) {
+    return processMusicLibrary({
+      ...(args['music-staging'] ? { musicStagingRoot: path.resolve(String(args['music-staging'])) } : {}),
+      ...(args['out-dir'] ? { outDir: path.resolve(String(args['out-dir'])) } : {}),
+      ...(args['base-url'] ? { baseUrl: String(args['base-url']) } : {}),
+      ...(args.concurrency ? { concurrency: Number(args.concurrency) } : {}),
+    });
+  }
   if (args.batch) {
-    return processAudioLibraryBatch({
+    const batchRes = await processAudioLibraryBatch({
       ...(args.staging ? { stagingRoot: path.resolve(String(args.staging)) } : {}),
       ...(args['v10-wavs'] ? { v10WavsDir: path.resolve(String(args['v10-wavs'])) } : {}),
       ...(args['out-dir'] ? { outDir: path.resolve(String(args['out-dir'])) } : {}),
       ...(args.concurrency ? { concurrency: Number(args.concurrency) } : {}),
       force: Boolean(args.force),
     });
+    const musicRoot = args['music-staging']
+      ? path.resolve(String(args['music-staging']))
+      : resolveDefaultMusicStagingRoot();
+    if (fs.existsSync(musicRoot)) {
+      batchRes.music = await processMusicLibrary({
+        musicStagingRoot: musicRoot,
+        ...(args['out-dir'] ? { outDir: path.resolve(String(args['out-dir'])) } : {}),
+        ...(args['base-url'] ? { baseUrl: String(args['base-url']) } : {}),
+        ...(args.concurrency ? { concurrency: Number(args.concurrency) } : {}),
+      });
+    }
+    return batchRes;
   }
   if (!args.cue || !args.inputs || !args['out-dir']) {
-    throw new Error('Usage: node scripts/process-audio.mjs --cue <name> --inputs a.mp3,b.mp3,c.mp3,d.mp3 --out-dir <dir> [--bgm] | --batch');
+    throw new Error('Usage: node scripts/process-audio.mjs --cue <name> --inputs a.mp3,b.mp3,c.mp3,d.mp3 --out-dir <dir> [--bgm] | --batch | --only-music');
   }
   const inputs = String(args.inputs).split(',').map(s => s.trim()).filter(Boolean);
   return processCueFiles({

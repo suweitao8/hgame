@@ -7,6 +7,7 @@ import { analyzeAudioBuffer } from './audio/analysis.js';
 import { normalizeVariantSet } from './audio/variants.js';
 import { createAudioBusController } from './audio/buses.js';
 import { playAudioBuffer } from './audio/voice.js';
+import { createBgmController } from './audio/bgm-player.js';
 import {
   SYNTH_PRESETS,
   SYNTH_BASE_ATTENUATION_DB,
@@ -252,6 +253,15 @@ export {
  * @property {(pos?: AudioPosition3D | AudioPosition2D) => { activeZones: number, maxWetGain: number }} updateReverbZones
  * @property {() => { unlocked: boolean, hasReverbSend: boolean, zoneCount: number, wiredZones: number }} getDspState
  * @property {(url: string, opts?: { bus?: string, loop?: boolean, volume?: number, autoplay?: boolean }) => { url: string, bus: string, loop: boolean, readonly playing: boolean, readonly volume: number, play: () => Promise<void>, pause: () => void, setVolume: (v: number) => number, stop: () => void }} playStream
+ * @property {(cueId: string, config?: object) => object} registerBgmCue
+ * @property {(tableOrUrl: string | object, options?: { fetchImpl?: typeof fetch }) => Promise<{ bgmRegistered: number, totalCues: number, table: unknown }>} loadCueTable
+ * @property {(cueIdOrSpec: string | object, options?: { fadeMs?: number, forceRestart?: boolean, loop?: boolean, volume?: number, startAtSec?: number | null, fetchImpl?: typeof fetch }) => Promise<object | null>} playBgm
+ * @property {(options?: { fadeMs?: number }) => boolean} stopBgm
+ * @property {() => boolean} pauseBgm
+ * @property {() => Promise<boolean>} resumeBgm
+ * @property {(value: number) => number} setBgmVolume
+ * @property {() => number} getBgmVolume
+ * @property {() => { state: string, cueId: string | null, loop: boolean, loopStart: number, loopEnd: number, bufferDuration: number, pausedPositionSec: number, activeBufferCount: number, fadingCount: number, registeredCueCount: number }} getBgmState
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
  */
@@ -377,6 +387,7 @@ export function createAudioManager({
     for (const zone of reverbZones.values()) wireReverbZoneNodes(zone);
     return c;
   };
+  const bgmPlayer = createBgmController(ctx, buses);
 
   function setOcclusionProbe(fn) {
     ctx.occlusionProbe = typeof fn === 'function' ? fn : null;
@@ -475,13 +486,30 @@ export function createAudioManager({
     return audioContext.decodeAudioData(arrayBuffer.slice(0));
   }
 
-  const play = (buffer, options = {}) => {
+  function triggerBgmDuck(holdSec = 0.4) {
+    const duckTarget = Math.pow(10, -6 / 20);
+    const duckOpts = {
+      targetGain: duckTarget,
+      attackSec: 0.05,
+      holdSec: Math.max(0.15, Number(holdSec) || 0.4),
+      releaseSec: 0.4,
+    };
+    buses.duckBus('bgm', duckOpts);
+    buses.duckBus('ambience', duckOpts);
+    if (buses.getBusVolume('music') !== undefined) buses.duckBus('music', duckOpts);
+  }
+
+  const play = async (buffer, options = {}) => {
     const pos = options.position ?? options.position2D ?? null;
     const doppler = (pos && options.velocity)
       ? computeDopplerRate(pos, options.velocity, listenerState, listenerState, options.speedOfSound)
       : 1;
     const effectiveRate = clamp((Number(options.playbackRate) || 1) * doppler, 0.05, 4);
-    return playAudioBuffer(ctx, buffer, doppler !== 1 ? { ...options, playbackRate: effectiveRate } : options);
+    const handle = await playAudioBuffer(ctx, buffer, doppler !== 1 ? { ...options, playbackRate: effectiveRate } : options);
+    if (handle && options.ducking) {
+      triggerBgmDuck(options.duration ?? buffer?.duration ?? 0.4);
+    }
+    return handle;
   };
 
   function buildImpulseResponse(audioCtx, decaySeconds) {
@@ -726,7 +754,7 @@ export function createAudioManager({
       cooldownMs: defaultCooldown,
       maxVoices,
       maxConcurrent: maxVoices,
-      ducking: Boolean(cfg.ducking),
+      ducking: cfg.ducking !== undefined ? Boolean(cfg.ducking) : /^stinger\./i.test(name),
       hrtf: cfg.hrtf !== false,
       refDistance: cfg.refDistance ?? 3,
       maxDistance: cfg.maxDistance ?? 400,
@@ -825,11 +853,8 @@ export function createAudioManager({
     }
 
     if (overrides.ducking ?? entry.ducking) {
-      const duckTarget = Math.pow(10, -5 / 20);
-      const duckOpts = { targetGain: duckTarget, attackSec: 0.05, holdSec: 0.4, releaseSec: 0.25 };
-      buses.duckBus('bgm', duckOpts);
-      buses.duckBus('ambience', duckOpts);
-      if (buses.getBusVolume('music') !== undefined) buses.duckBus('music', duckOpts);
+      const stingerDur = needsTrimmedDuration ? v.playDuration : (v.duration || 0.4);
+      triggerBgmDuck(stingerDur);
     }
 
     handleRef = handle;
@@ -978,6 +1003,10 @@ export function createAudioManager({
     return Promise.resolve(null);
   }
 
+  const boundLifecycleDocs = new WeakSet();
+  const boundLifecycleWins = new WeakSet();
+  const boundLifecycleHosts = new WeakSet();
+
   function bindLifecycle({
     doc = globalThis.document ?? null,
     win = globalThis.window ?? null,
@@ -987,37 +1016,51 @@ export function createAudioManager({
       void buses.unlock().catch(() => {});
     };
     const onVisibility = () => {
-      if (!ctx.context) return;
       if (doc?.hidden) {
-        void ctx.context.suspend?.().catch?.(() => {});
+        bgmPlayer.pauseBgm({ fromLifecycle: true });
+        if (ctx.context) void ctx.context.suspend?.().catch?.(() => {});
       } else if (!ctx.muted) {
-        void ctx.context.resume?.().catch?.(() => {});
+        if (ctx.context) void ctx.context.resume?.().catch?.(() => {});
+        void bgmPlayer.resumeBgm({ fromLifecycle: true }).catch(() => {});
       }
     };
     const onHide = () => {
+      bgmPlayer.pauseBgm({ fromLifecycle: true });
       if (ctx.context) void ctx.context.suspend?.().catch?.(() => {});
     };
     const onShow = () => {
-      if (ctx.context && !ctx.muted) void ctx.context.resume?.().catch?.(() => {});
+      if (!ctx.muted) {
+        if (ctx.context) void ctx.context.resume?.().catch?.(() => {});
+        void bgmPlayer.resumeBgm({ fromLifecycle: true }).catch(() => {});
+      }
     };
 
-    if (win && typeof win.addEventListener === 'function') {
+    if (win && typeof win.addEventListener === 'function' && !boundLifecycleWins.has(win)) {
+      boundLifecycleWins.add(win);
       for (const ev of ['pointerdown', 'touchstart', 'keydown']) {
         win.addEventListener(ev, onGesture, { passive: true });
         lifecycleCleanups.push(() => win.removeEventListener(ev, onGesture));
       }
     }
-    if (doc && typeof doc.addEventListener === 'function') {
+    if (doc && typeof doc.addEventListener === 'function' && !boundLifecycleDocs.has(doc)) {
+      boundLifecycleDocs.add(doc);
       doc.addEventListener('visibilitychange', onVisibility);
       lifecycleCleanups.push(() => doc.removeEventListener('visibilitychange', onVisibility));
     }
-    if (miniGameHost && typeof miniGameHost.onHide === 'function') {
+    if (miniGameHost && typeof miniGameHost.onHide === 'function' && !boundLifecycleHosts.has(miniGameHost)) {
+      boundLifecycleHosts.add(miniGameHost);
       miniGameHost.onHide(onHide);
       if (typeof miniGameHost.offHide === 'function') {
         lifecycleCleanups.push(() => miniGameHost.offHide(onHide));
       }
-    }
-    if (miniGameHost && typeof miniGameHost.onShow === 'function') {
+      if (typeof miniGameHost.onShow === 'function') {
+        miniGameHost.onShow(onShow);
+        if (typeof miniGameHost.offShow === 'function') {
+          lifecycleCleanups.push(() => miniGameHost.offShow(onShow));
+        }
+      }
+    } else if (miniGameHost && typeof miniGameHost.onShow === 'function' && !boundLifecycleHosts.has(miniGameHost)) {
+      boundLifecycleHosts.add(miniGameHost);
       miniGameHost.onShow(onShow);
       if (typeof miniGameHost.offShow === 'function') {
         lifecycleCleanups.push(() => miniGameHost.offShow(onShow));
@@ -1031,6 +1074,10 @@ export function createAudioManager({
     };
   }
 
+  if (typeof globalThis.document?.addEventListener === 'function' || typeof globalThis.window?.addEventListener === 'function') {
+    bindLifecycle({ doc: globalThis.document ?? null, win: globalThis.window ?? null });
+  }
+
   function dispose() {
     while (lifecycleCleanups.length > 0) {
       const fn = lifecycleCleanups.pop();
@@ -1041,6 +1088,7 @@ export function createAudioManager({
     try { indoorConvolver?.disconnect?.(); } catch {}
     indoorConvolver = null;
     indoorWetNode = null;
+    bgmPlayer.dispose();
     for (const bgm of bgmInstances) bgm.dispose();
     bgmInstances.clear();
     for (const stream of [...activeStreams]) stream.stop();
@@ -1109,6 +1157,15 @@ export function createAudioManager({
       });
     },
     playStream,
+    registerBgmCue: bgmPlayer.registerBgmCue,
+    loadCueTable: bgmPlayer.loadCueTable,
+    playBgm: bgmPlayer.playBgm,
+    stopBgm: bgmPlayer.stopBgm,
+    pauseBgm: bgmPlayer.pauseBgm,
+    resumeBgm: bgmPlayer.resumeBgm,
+    setBgmVolume: bgmPlayer.setBgmVolume,
+    getBgmVolume: bgmPlayer.getBgmVolume,
+    getBgmState: bgmPlayer.getBgmState,
     updateListenerFromCamera,
     dispose,
   });
