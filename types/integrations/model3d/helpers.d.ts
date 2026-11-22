@@ -52,7 +52,8 @@ export function buildLockstepNodeMap(source: Model3DObject, target: Model3DObjec
  * @param {Model3DObject} source Object to clone.
  * @returns {Model3DObject} Cloned hierarchy.
  */
-export function cloneObject3DWithSkins(THREE: Model3DThree, source: Model3DObject): Model3DObject;
+export function hideSecondaryLodMeshes(root: any): Model3DObject;
+export function cloneObject3DWithSkins(THREE: any, source: any): any;
 /**
  * Computes world-space bounds for an object hierarchy.
  * @param {Model3DThree} THREE Three.js namespace (uses `Box3` / `Vector3`).

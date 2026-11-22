@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { hideSecondaryLodNodes } from './hgame-shared.js';
 
 // GLB files are served only from the local catalogued model endpoint.
 // The viewer never creates a placeholder mesh or fabricates animation clips.
@@ -95,6 +96,7 @@ export class CharacterModelViewer {
     const fillLight = new THREE.DirectionalLight(0x99bbfa, 1.1);
     fillLight.position.set(-5, 3, -4);
     scene.add(fillLight);
+    hideSecondaryLodNodes(this.gltf.scene);
     scene.add(this.gltf.scene);
 
     const bounds = new THREE.Box3().setFromObject(this.gltf.scene);

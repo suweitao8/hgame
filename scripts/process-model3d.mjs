@@ -1262,6 +1262,12 @@ export function buildBlenderRemeshBakeArgs(inputPath, outPath, flags = {}) {
   if (Number(lod2Tris) > 0) args.push('--lod2-tris', String(lod2Tris));
   const lod3Tight = !flags['no-lod3'] && Boolean(flags['lod3-tight'] ?? flags.lod3Tight ?? preset?.lod3Tight);
   if (lod3Tight) args.push('--lod3-tight');
+  const maxTris = flags['max-tris'] ?? flags.maxTris ?? preset?.maxTris ?? 0;
+  if (Number(maxTris) > 0) args.push('--max-tris', String(maxTris));
+  if (flags.origin) args.push('--origin', String(flags.origin));
+  if (flags['target-height'] !== undefined || flags.targetHeight !== undefined) {
+    args.push('--target-height', String(flags['target-height'] ?? flags.targetHeight));
+  }
   if (flags['anim-glb'] || flags.animGlb) args.push('--anim-glb', String(flags['anim-glb'] || flags.animGlb));
   if (flags['qa-dir'] || flags.qaDir) {
     args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
@@ -1693,22 +1699,31 @@ export function buildCharacterPackPlans(inputPath, outDir, flags = {}) {
 
   const highOut = path.join(absDir, `${slug}_clean_high.glb`);
   const lowOut = path.join(absDir, `${slug}_clean_low_run.glb`);
+  const normFlags = {
+    ...(flags.origin ? { origin: flags.origin } : { origin: 'ground' }),
+    ...(flags['target-height'] !== undefined || flags.targetHeight !== undefined
+      ? { 'target-height': flags['target-height'] ?? flags.targetHeight }
+      : {}),
+  };
   const highFlags = {
     preset: 'high',
     'uv-solver': uvSolver,
     samples,
+    ...normFlags,
     ...(qaRoot ? { 'qa-dir': path.join(qaRoot, 'high'), views: flags.views || '4', size: flags.size || '512' } : {}),
   };
   const lowFlags = {
     preset: lowPresetName,
     'uv-solver': uvSolver,
     samples,
+    ...normFlags,
     'rig-run': flags['no-rig'] ? false : true,
     ...(qaRoot ? { 'qa-dir': path.join(qaRoot, 'low'), views: flags.views || '4', size: flags.size || '512' } : {}),
   };
   return {
     slug,
     lowPresetName,
+    lowOnly: Boolean(flags['low-only'] || flags.lowOnly),
     highOut,
     lowOut,
     highArgs: buildBlenderRemeshBakeArgs(inputPath, highOut, highFlags),
@@ -1741,8 +1756,11 @@ async function cmdCharacterPack(config, flags) {
   }
 
   const plans = buildCharacterPackPlans(inputPath, outDir, flags);
-  const highSummary = runBlenderHelper(config, plans.highArgs);
-  assertCleanTopology(highSummary?.stats, 'clean_high');
+  let highSummary = null;
+  if (!plans.lowOnly) {
+    highSummary = runBlenderHelper(config, plans.highArgs);
+    assertCleanTopology(highSummary?.stats, 'clean_high');
+  }
 
   const lowSummary = runBlenderHelper(config, plans.lowArgs);
   const lowPreset = resolveLowPolyPreset(plans.lowPresetName);
@@ -1775,7 +1793,7 @@ async function cmdCharacterPack(config, flags) {
     const highName = `${plans.slug}_clean_high.glb`;
     const lowName = flags['no-rig'] ? `${plans.slug}_clean_low.glb` : `${plans.slug}_clean_low_run.glb`;
     uploaded = {
-      high: await uploadOne('high', highName, plans.highOut),
+      ...(plans.lowOnly ? {} : { high: await uploadOne('high', highName, plans.highOut) }),
       low: await uploadOne('low', lowName, plans.lowOut),
     };
   }
@@ -1783,8 +1801,16 @@ async function cmdCharacterPack(config, flags) {
   console.log(JSON.stringify({
     command: 'character-pack',
     input: inputPath,
-    high: { output: plans.highOut, stats: highSummary?.stats, repair: highSummary?.repair },
-    low: { output: plans.lowOut, stats: lowSummary?.stats, repair: lowSummary?.repair, rig: lowSummary?.rig },
+    ...(plans.lowOnly ? {} : { high: { output: plans.highOut, stats: highSummary?.stats, repair: highSummary?.repair } }),
+    low: {
+      output: plans.lowOut,
+      stats: lowSummary?.stats,
+      lod1Stats: lowSummary?.lod1Stats,
+      lod2Stats: lowSummary?.lod2Stats,
+      lod3Stats: lowSummary?.lod3Stats,
+      repair: lowSummary?.repair,
+      rig: lowSummary?.rig,
+    },
     uploaded,
   }, null, 2));
 }

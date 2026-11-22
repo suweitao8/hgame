@@ -1511,9 +1511,18 @@ export function createBoneVatCrowd3D(THREE, {
   }
 
   let baseMesh = null;
+  let embeddedLod1Geom = null;
+  let embeddedLod2Geom = null;
+  let embeddedLod3Geom = null;
   if (sourceRoot?.traverse) {
     sourceRoot.traverse((node) => {
-      if (!baseMesh && (node.isSkinnedMesh || node.isMesh)) baseMesh = node;
+      if (!(node.isSkinnedMesh || node.isMesh)) return;
+      const nName = String(node.name || '').toLowerCase();
+      const lvl = Number(node.userData?.lodLevel ?? (nName.endsWith('_lod1') ? 1 : (nName.endsWith('_lod2') ? 2 : (nName.endsWith('_lod3') ? 3 : 0))));
+      if (lvl === 1) { if (!embeddedLod1Geom) embeddedLod1Geom = node.geometry; return; }
+      if (lvl === 2) { if (!embeddedLod2Geom) embeddedLod2Geom = node.geometry; return; }
+      if (lvl === 3) { if (!embeddedLod3Geom) embeddedLod3Geom = node.geometry; return; }
+      if (!baseMesh) baseMesh = node;
     });
   }
   const rawLod0Geom = lod0Geometry ?? baseMesh?.geometry;
@@ -1563,10 +1572,11 @@ export function createBoneVatCrowd3D(THREE, {
     }
   }
 
-  const rawLod1Geom = lod1Geometry ?? buildSimplifiedLodGeometry(THREE, rawLod0Geom);
+  const rawLod1Geom = lod1Geometry ?? embeddedLod1Geom ?? buildSimplifiedLodGeometry(THREE, rawLod0Geom);
   const rawLod2Geom = is5Lod
-    ? (lod2Geometry ?? buildSimplifiedLodGeometry(THREE, rawLod0Geom, { gridResolution: 6 }))
+    ? (lod2Geometry ?? embeddedLod2Geom ?? buildSimplifiedLodGeometry(THREE, rawLod0Geom, { gridResolution: 6 }))
     : null;
+  const resolvedLod3Geom = lod3Geometry ?? embeddedLod3Geom ?? null;
 
   const scaleUniform = { value: Number.isFinite(scale) ? scale : 1 };
   const baseYUniform = { value: Number.isFinite(baseY) ? baseY : 0 };
@@ -1738,7 +1748,15 @@ export function createBoneVatCrowd3D(THREE, {
   let instGeo4 = null;
   if (is5Lod) {
     instGeo2 = makeInstancedStaticGeometry(THREE, rawLod2Geom, 1, packedAttrs[2], yAttrs[2]);
-    instGeo3 = lod3Geometry ? makeInstancedStaticGeometry(THREE, lod3Geometry, 1, packedAttrs[3], yAttrs[3]) : buildTightImpostorGeometry(THREE, { width: charW, height: charH });
+    if (resolvedLod3Geom?.attributes?.position) {
+      instGeo3 = new THREE.InstancedBufferGeometry();
+      if (resolvedLod3Geom.index) instGeo3.index = resolvedLod3Geom.index;
+      instGeo3.setAttribute('position', resolvedLod3Geom.attributes.position);
+      if (resolvedLod3Geom.attributes.normal) instGeo3.setAttribute('normal', resolvedLod3Geom.attributes.normal);
+      if (resolvedLod3Geom.attributes.uv) instGeo3.setAttribute('uv', resolvedLod3Geom.attributes.uv);
+    } else {
+      instGeo3 = buildTightImpostorGeometry(THREE, { width: charW, height: charH });
+    }
     instGeo3.setAttribute('aCrowdPacked', packedAttrs[3]);
     instGeo3.setAttribute('aCrowdY', yAttrs[3]);
     instGeo3.instanceCount = 0;

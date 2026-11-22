@@ -215,6 +215,17 @@ export function buildLockstepNodeMap(source, target, map = new Map()) {
  * @param {Model3DObject} source Object to clone.
  * @returns {Model3DObject} Cloned hierarchy.
  */
+export function hideSecondaryLodMeshes(root) {
+  root?.traverse?.((node) => {
+    const n = String(node.name || '');
+    const lvl = Number(node.userData?.lodLevel ?? 0);
+    if ((node.isMesh || node.isSkinnedMesh) && (lvl > 0 || /_lod[1-4]$/i.test(n))) {
+      node.visible = false;
+    }
+  });
+  return root;
+}
+
 export function cloneObject3DWithSkins(THREE, source) {
   if (!THREE || !source || typeof source.clone !== 'function') {
     throw new TypeError('cloneObject3DWithSkins requires THREE and a cloneable Object3D');
@@ -243,6 +254,7 @@ export function cloneObject3DWithSkins(THREE, source) {
       };
     }
   }
+  hideSecondaryLodMeshes(clonedRoot);
   return clonedRoot;
 }
 

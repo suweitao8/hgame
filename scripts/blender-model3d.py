@@ -287,21 +287,32 @@ def repair_mesh_topology(
             for v, target_co in updates:
                 v.co = v.co.lerp(target_co, 0.85)
 
-    # Close missing faces / open holes before decimation or voxel remesh
+    # Close missing faces / open holes AND strip non-manifold fin/pinch faces cleanly
     if fill_holes and len(bm.edges) > 0 and max_hole_sides > 0:
-        for _ in range(2):
+        for _ in range(24):
             bm.edges.ensure_lookup_table()
+            bm.faces.ensure_lookup_table()
+            nm_edges = [e for e in bm.edges if len(e.link_faces) > 2]
+            if nm_edges:
+                del_faces = list({f for e in nm_edges for f in e.link_faces})
+                bmesh.ops.delete(bm, geom=del_faces, context="FACES")
+                strip_loose_and_degenerate()
+                continue
             b_edges = [e for e in bm.edges if len(e.link_faces) == 1]
             if not b_edges:
                 break
             res = bmesh.ops.holes_fill(bm, edges=b_edges, sides=max_hole_sides)
             new_faces = res.get("faces", []) if isinstance(res, dict) else []
-            if not new_faces:
-                break
-            stats["filledHoles"] += len(new_faces)
-            ngons = [f for f in new_faces if f.is_valid and len(f.verts) > 4]
-            if ngons:
-                bmesh.ops.triangulate(bm, faces=ngons)
+            if new_faces:
+                stats["filledHoles"] += len(new_faces)
+                ngons = [f for f in new_faces if f.is_valid and len(f.verts) > 4]
+                if ngons:
+                    bmesh.ops.triangulate(bm, faces=ngons)
+                continue
+            # Fallback when a boundary loop is blocked by an existing diagonal chord: collapse shortest edge
+            short_bd = min(b_edges, key=lambda e: e.calc_length())
+            bmesh.ops.collapse(bm, edges=[short_bd])
+            strip_loose_and_degenerate()
 
     # Prune disconnected floating debris (whisker droplets / stray artifacts)
     bm.faces.ensure_lookup_table()
@@ -426,6 +437,33 @@ def cmd_inspect(args):
     print("HGAME_MODEL3D_JSON:" + json.dumps(stats, ensure_ascii=True))
 
 
+def normalize_scene_bounds(mesh_objs, target_height=0.0, origin="keep"):
+    """Scale uniformly to target_height (if > 0) and align scene origin cleanly."""
+    if target_height and target_height > 0:
+        bounds = compute_bounds(mesh_objs)
+        cur_height = bounds["size"][2]
+        if cur_height > 1e-6:
+            factor = target_height / cur_height
+            for obj in get_root_objects():
+                obj.scale = (obj.scale.x * factor, obj.scale.y * factor, obj.scale.z * factor)
+            bpy.context.view_layer.update()
+            apply_all_transforms(bpy.context.scene.objects)
+
+    if origin in ("ground", "center"):
+        bounds = compute_bounds(mesh_objs)
+        bmin = bounds["min"]
+        bmax = bounds["max"]
+        dx = -(bmin[0] + bmax[0]) * 0.5
+        dy = -(bmin[1] + bmax[1]) * 0.5
+        dz = -bmin[2] if origin == "ground" else -(bmin[2] + bmax[2]) * 0.5
+        for obj in get_root_objects():
+            obj.location.x += dx
+            obj.location.y += dy
+            obj.location.z += dz
+        bpy.context.view_layer.update()
+        apply_all_transforms(bpy.context.scene.objects)
+
+
 def cmd_normalize(args):
     clear_scene()
     import_model(args.input)
@@ -448,31 +486,7 @@ def cmd_normalize(args):
         bpy.context.view_layer.update()
     apply_all_transforms(bpy.context.scene.objects)
 
-    # Optional uniform height scaling.
-    if args.target_height and args.target_height > 0:
-        bounds = compute_bounds(mesh_objs)
-        cur_height = bounds["size"][2]
-        if cur_height > 1e-6:
-            factor = args.target_height / cur_height
-            for obj in get_root_objects():
-                obj.scale = (obj.scale.x * factor, obj.scale.y * factor, obj.scale.z * factor)
-            bpy.context.view_layer.update()
-            apply_all_transforms(bpy.context.scene.objects)
-
-    # Origin alignment: ground (XY centered, min_z=0), center (XYZ centered), or keep.
-    if args.origin in ("ground", "center"):
-        bounds = compute_bounds(mesh_objs)
-        bmin = bounds["min"]
-        bmax = bounds["max"]
-        dx = -(bmin[0] + bmax[0]) * 0.5
-        dy = -(bmin[1] + bmax[1]) * 0.5
-        dz = -bmin[2] if args.origin == "ground" else -(bmin[2] + bmax[2]) * 0.5
-        for obj in get_root_objects():
-            obj.location.x += dx
-            obj.location.y += dy
-            obj.location.z += dz
-        bpy.context.view_layer.update()
-        apply_all_transforms(bpy.context.scene.objects)
+    normalize_scene_bounds(mesh_objs, float(args.target_height or 0.0), args.origin)
 
     pre_repair_logs = []
     if not getattr(args, "no_repair", False):
@@ -821,6 +835,7 @@ def cmd_remesh_bake(args):
     clear_scene()
     import_model(args.input)
     high = ensure_single_mesh("HighPolySrc")
+    normalize_scene_bounds([high], float(getattr(args, "target_height", 0.0) or 0.0), getattr(args, "origin", "keep"))
 
     # Build a clean watertight proxy mesh via Voxel Remesh for xremesh.exe
     bpy.ops.object.select_all(action="DESELECT")
@@ -887,23 +902,46 @@ def cmd_remesh_bake(args):
     low.select_set(True)
     bpy.context.view_layer.objects.active = low
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    if any(len(poly.vertices) > 3 for poly in low.data.polygons):
+        tri_pre = low.modifiers.new("PreRepairTri", "TRIANGULATE")
+        bpy.ops.object.modifier_apply(modifier=tri_pre.name)
     post_low_repair = repair_mesh_topology(
         low,
         weld_dist=1e-5,
         fill_holes=True,
-        max_hole_sides=16,
+        max_hole_sides=64,
         prune_whisker_spikes=False,
         min_island_faces=24,
         min_island_ratio=0.01,
         keep_largest_only=True,
     )
+    max_tris_cap = int(getattr(args, "max_tris", 0) or 0)
+    if max_tris_cap > 0:
+        cur_low_tris = sum(max(1, len(p.vertices) - 2) for p in low.data.polygons)
+        if cur_low_tris > max_tris_cap:
+            dec_cap = low.modifiers.new("CapMaxTris", "DECIMATE")
+            dec_cap.decimate_type = "COLLAPSE"
+            dec_cap.ratio = max(0.25, min(1.0, float(max(max_tris_cap - 60, 100)) / float(cur_low_tris)))
+            dec_cap.use_collapse_triangulate = True
+            bpy.ops.object.select_all(action="DESELECT")
+            low.select_set(True)
+            bpy.context.view_layer.objects.active = low
+            bpy.ops.object.modifier_apply(modifier=dec_cap.name)
+            post_low_repair = repair_mesh_topology(
+                low,
+                weld_dist=1e-5,
+                fill_holes=True,
+                max_hole_sides=64,
+                prune_whisker_spikes=False,
+                min_island_faces=24,
+                min_island_ratio=0.01,
+                keep_largest_only=True,
+            )
     run_uv_unwrap(low, solver=args.uv_solver)
     for p in low.data.polygons:
         p.use_smooth = True
 
     if args.clean_uv_out:
-        tri = low.modifiers.new("PreTri", "TRIANGULATE")
-        bpy.ops.object.modifier_apply(modifier=tri.name)
         attach_dummy_uv_material(low)
         clean_dir = os.path.dirname(os.path.abspath(args.clean_uv_out))
         if clean_dir:
@@ -912,7 +950,7 @@ def cmd_remesh_bake(args):
         low.select_set(True)
         bpy.ops.export_scene.gltf(filepath=args.clean_uv_out, export_format="GLB", use_selection=True, export_apply=True)
 
-    if low.modifiers.get("PreTri") is None and any(len(poly.vertices) > 3 for poly in low.data.polygons):
+    if any(len(poly.vertices) > 3 for poly in low.data.polygons):
         tri = low.modifiers.new("FinalTri", "TRIANGULATE")
         bpy.ops.object.select_all(action="DESELECT")
         low.select_set(True)
@@ -1143,7 +1181,7 @@ def cmd_remesh_bake(args):
             (cx - half_w, cy, z0 + h * 0.72),
             (cx - half_w, cy, z0 + h * 0.25),
         ]
-        mesh_d = bpy.data.meshes.new("Character_LOD3_Mesh")
+        mesh_d = bpy.data.meshes.new("mesh_lod3_data")
         bm = bmesh.new()
         uv_layer = bm.loops.layers.uv.new("UVMap")
         verts = [bm.verts.new(Vector(p)) for p in ring]
@@ -1156,11 +1194,13 @@ def cmd_remesh_bake(args):
         bmesh.ops.triangulate(bm, faces=[face])
         bm.to_mesh(mesh_d)
         bm.free()
-        obj3 = bpy.data.objects.new("Character_LOD3", mesh_d)
+        obj3 = bpy.data.objects.new("mesh_lod3", mesh_d)
         bpy.context.collection.objects.link(obj3)
         obj3.parent = rig_obj
         if len(src_obj.data.materials) > 0:
             obj3.data.materials.append(src_obj.data.materials[0])
+        obj3["lodLevel"] = 3
+        obj3.hide_render = True
         return obj3
 
     rig_info = None
@@ -1171,16 +1211,21 @@ def cmd_remesh_bake(args):
     lod2_tris = int(getattr(args, "lod2_tris", 0) or 0)
     if getattr(args, "rig_run", False):
         rig, rig_info = build_and_bind_run_rig(low)
-        low.name = "Character_LOD0"
+        low.name = "mesh_lod0"
+        low["lodLevel"] = 0
         export_objs = [rig, low]
         if lod1_tris > 0:
-            lod1_obj = _build_decimated_lod(low, rig, "Character_LOD1", lod1_tris, 2)
+            lod1_obj = _build_decimated_lod(low, rig, "mesh_lod1", lod1_tris, 2)
             if lod1_obj is not None:
+                lod1_obj["lodLevel"] = 1
+                lod1_obj.hide_render = True
                 export_objs.append(lod1_obj)
         if lod2_tris > 0:
             src_for_lod2 = lod1_obj if lod1_obj is not None else low
-            lod2_obj = _build_decimated_lod(src_for_lod2, rig, "Character_LOD2", lod2_tris, 1)
+            lod2_obj = _build_decimated_lod(src_for_lod2, rig, "mesh_lod2", lod2_tris, 1)
             if lod2_obj is not None:
+                lod2_obj["lodLevel"] = 2
+                lod2_obj.hide_render = True
                 export_objs.append(lod2_obj)
         if getattr(args, "lod3_tight", False):
             lod3_obj = _build_tight_lod3_impostor(low, rig)
@@ -2254,6 +2299,9 @@ def main():
     p_rb.add_argument("--lod1-tris", type=int, default=0)
     p_rb.add_argument("--lod2-tris", type=int, default=0)
     p_rb.add_argument("--lod3-tight", action="store_true", default=False)
+    p_rb.add_argument("--max-tris", type=int, default=0)
+    p_rb.add_argument("--origin", default="keep", choices=["ground", "center", "keep"])
+    p_rb.add_argument("--target-height", type=float, default=0.0)
     p_rb.add_argument("--anim-glb", default="")
     p_rb.add_argument("--qa-dir", default="")
     p_rb.add_argument("--views", default="4", choices=["4", "6"])

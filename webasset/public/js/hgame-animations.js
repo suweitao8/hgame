@@ -13,6 +13,7 @@ import {
   apiRequestJson,
   createSidebarSquareCard,
   createThreeViewport,
+  hideSecondaryLodNodes,
   disposeObject3D,
   fetchAnim23Catalog,
   fetchHGameAssets,
@@ -604,7 +605,7 @@ async function mountCharacterRoot(url, stageKey, vp, token) {
     return null;
   }
   clear3dScene();
-  loaded3dRoot = gltf.scene;
+  loaded3dRoot = hideSecondaryLodNodes(gltf.scene);
   loadedStageKey = stageKey;
   loadedRestTransforms = captureNodeTransforms(loaded3dRoot);
   vp.scene.add(loaded3dRoot);

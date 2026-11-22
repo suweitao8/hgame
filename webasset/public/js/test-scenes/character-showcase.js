@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   fitCharacterToIdentityScale,
+  hideSecondaryLodNodes,
   resolveCharacterScaleSpec,
 } from '../hgame-shared.js';
 import {
@@ -93,9 +94,9 @@ export async function buildCharacterShowcaseScene({
       try {
         const gltf = await gltfLoader.loadAsync(chosenModel.url);
         if (token !== getToken()) return;
-        const root = gltf.scene;
+        const root = hideSecondaryLodNodes(gltf.scene);
         root.traverse(n => {
-          if (n.isMesh) {
+          if (n.isMesh && n.visible) {
             n.castShadow = true;
             n.receiveShadow = true;
             hitMeshes.push(n);
