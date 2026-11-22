@@ -19,16 +19,58 @@ export function detectMeshLodLevel(node) {
   return m ? Number(m[1]) : 0;
 }
 
-export function applyForcedLodToModel(root, lodMode = 'auto') {
-  const target = lodMode === '1' ? 1 : lodMode === '2' ? 2 : lodMode === '3' ? 3 : 0;
+export const MODEL_LOD_DISTANCES = Object.freeze([8, 16, 26]);
+export const MODEL_LOD_HYSTERESIS = 0.8;
+
+export function resolveDistanceLodLevel(
+  distance,
+  prevLod = null,
+  thresholds = MODEL_LOD_DISTANCES,
+  hysteresis = MODEL_LOD_HYSTERESIS,
+) {
+  const d = Number(distance);
+  if (!Number.isFinite(d) || d < 0) return 0;
+  const [d1 = 8, d2 = 16, d3 = 26] = thresholds;
+  const bounds = [d1, d2, d3];
+  if (prevLod === null || prevLod === undefined || !Number.isFinite(Number(prevLod))) {
+    if (d < d1) return 0;
+    if (d < d2) return 1;
+    if (d < d3) return 2;
+    return 3;
+  }
+  let lvl = Math.max(0, Math.min(3, Math.round(Number(prevLod))));
+  while (lvl < 3 && d >= bounds[lvl] + hysteresis) lvl += 1;
+  while (lvl > 0 && d < bounds[lvl - 1] - hysteresis) lvl -= 1;
+  return lvl;
+}
+
+function getLodMeshCache(root, forceRefresh = false) {
+  const childrenLen = root?.children?.length ?? 0;
+  const cached = root?.userData?.__lodMeshCache;
+  if (cached && !forceRefresh && cached.childrenLen === childrenLen) {
+    return cached;
+  }
   const meshes = [];
   const presentLevels = new Set();
-  root.traverse(c => {
+  root.traverse((c) => {
     if (!c.isMesh) return;
     const lvl = detectMeshLodLevel(c);
     meshes.push([c, lvl]);
     presentLevels.add(lvl);
   });
+  const entry = { meshes, presentLevels, childrenLen };
+  if (root?.userData) root.userData.__lodMeshCache = entry;
+  return entry;
+}
+
+export function applyForcedLodToModel(root, lodMode = 'auto') {
+  const forceRefresh = lodMode === 'force-refresh';
+  const numMode = typeof lodMode === 'number' ? lodMode : Number(lodMode);
+  const target = (lodMode === '1' || numMode === 1) ? 1
+    : (lodMode === '2' || numMode === 2) ? 2
+      : (lodMode === '3' || numMode === 3) ? 3
+        : 0;
+  const { meshes, presentLevels } = getLodMeshCache(root, forceRefresh);
   let effectiveTarget = target;
   if (!presentLevels.has(effectiveTarget)) {
     let best = 0;
@@ -40,6 +82,7 @@ export function applyForcedLodToModel(root, lodMode = 'auto') {
   for (const [c, lvl] of meshes) {
     c.visible = lvl === effectiveTarget;
   }
+  if (root?.userData) root.userData.activeLodLevel = effectiveTarget;
   return effectiveTarget;
 }
 

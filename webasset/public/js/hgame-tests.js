@@ -17,7 +17,7 @@ import { createUnifiedLightingRig } from './unified-lighting.js';
 import { createUnrealCameraRig } from './unreal-fly-controls.js';
 import { buildCharacterShowcaseScene } from './test-scenes/character-showcase.js';
 import { buildMaterialShowcaseScene } from './test-scenes/material-showcase.js';
-import { applyForcedLodToModel, buildModelShowcaseScene } from './test-scenes/model-showcase.js';
+import { applyForcedLodToModel, buildModelShowcaseScene, resolveDistanceLodLevel } from './test-scenes/model-showcase.js';
 import { buildDecalFoliageShowcaseScene } from './test-scenes/decal-foliage-showcase.js';
 import { buildCityRuralShowcaseScene } from './test-scenes/city-rural-showcase.js';
 
@@ -497,6 +497,14 @@ function renderSceneList() {
 
 function summarizeVisibleModelLod(sampleRoot, allRoots, lodVal) {
   const roots = allRoots?.length ? allRoots : [];
+  if (!lodVal || lodVal === 'auto') {
+    const counts = [0, 0, 0, 0];
+    for (const r of roots) {
+      const lvl = Math.max(0, Math.min(3, Number(r?.userData?.activeLodLevel ?? 0) | 0));
+      counts[lvl] += 1;
+    }
+    return `自动LOD[L0:${counts[0]}/L1:${counts[1]}/L2:${counts[2]}/L3:${counts[3]}]`;
+  }
   let inspectRoot = roots[0] || null;
   if (sampleRoot && roots.length) {
     const matched = roots.find((r) => {
@@ -750,9 +758,15 @@ async function rebuildActiveScene() {
   activeAnimatedPivots = result.animatedPivots || [];
   activeMixers = result.mixers || [];
   lodAnimScheduler.clear();
-  const readSelectedLodTier = () => (lodSelect?.value === '1' ? 1 : lodSelect?.value === '2' ? 2 : lodSelect?.value === '3' ? 3 : 0);
   for (const m of activeMixers) {
-    lodAnimScheduler.register(m, { getLod: readSelectedLodTier });
+    lodAnimScheduler.register(m, {
+      getLod: () => {
+        const v = lodSelect?.value || 'auto';
+        if (v !== 'auto') return v === '1' ? 1 : v === '2' ? 2 : v === '3' ? 3 : 0;
+        const lvl = m.getRoot?.()?.userData?.activeLodLevel;
+        return Number.isFinite(lvl) ? lvl : 0;
+      },
+    });
   }
   activeLodPool = result.lodPool || null;
   activeModelRoots = result.modelRoots || [];
@@ -768,6 +782,11 @@ async function rebuildActiveScene() {
   }
   cameraRig.setExhibits(activeExhibits);
 
+  if (activeModelRoots.length) {
+    scene.updateMatrixWorld(true);
+    updateActiveModelAutoLod({ force: true });
+    lodAnimScheduler.flush();
+  }
   if (activeLodPool) {
     const qName = qualitySelect?.value || 'HIGH';
     const lodBias = qName === 'LOW' || qName === 'LOWEST' ? 1.5 : qName === 'ORIGINAL' ? 0.75 : 1.0;
@@ -780,10 +799,33 @@ async function rebuildActiveScene() {
   updateStatusBar();
 }
 
+const _lodRootPos = new THREE.Vector3();
+const _lodCamPos = new THREE.Vector3();
 const _impWorldPos = new THREE.Vector3();
 const _impCamLocal = new THREE.Vector3();
 const _impInvQuat = new THREE.Quaternion();
 const _impDirVec = new THREE.Vector3();
+
+function updateActiveModelAutoLod({ force = false } = {}) {
+  if (!activeModelRoots.length || !camera || (lodSelect?.value || 'auto') !== 'auto') return false;
+  const qName = qualitySelect?.value || 'HIGH';
+  const lodBias = qName === 'LOW' || qName === 'LOWEST' ? 1.5 : qName === 'ORIGINAL' ? 0.75 : 1.0;
+  camera.updateMatrixWorld();
+  camera.getWorldPosition(_lodCamPos);
+  let changed = false;
+  for (const root of activeModelRoots) {
+    if (force) root.updateMatrixWorld(true);
+    root.getWorldPosition(_lodRootPos);
+    const dist = _lodCamPos.distanceTo(_lodRootPos) * lodBias;
+    const prev = force ? null : root.userData?.activeLodLevel;
+    const next = resolveDistanceLodLevel(dist, prev);
+    if (force || next !== root.userData?.activeLodLevel) {
+      applyForcedLodToModel(root, next);
+      changed = true;
+    }
+  }
+  return changed;
+}
 
 function updateActiveImpostors() {
   if (!camera || activeImpostors.length === 0) return;
@@ -844,6 +886,8 @@ function tick(now) {
   lodAnimScheduler.update(dt);
 
   cameraRig?.update(dt);
+  const modelLodChanged = updateActiveModelAutoLod();
+  if (modelLodChanged) lodAnimScheduler.flush();
   updateActiveImpostors();
 
   if (activeLodPool && camera) {
@@ -858,6 +902,7 @@ function tick(now) {
   } else {
     renderer?.render(scene, camera);
   }
+  if (modelLodChanged) updateStatusBar();
 }
 
 function openSelectedInWorkspace() {
@@ -884,7 +929,12 @@ function init() {
   lodSelect?.addEventListener('change', () => {
     const lodVal = lodSelect.value || 'auto';
     if (activeModelRoots.length) {
-      for (const root of activeModelRoots) applyForcedLodToModel(root, lodVal);
+      if (lodVal === 'auto') {
+        if (scene) scene.updateMatrixWorld(true);
+        updateActiveModelAutoLod({ force: true });
+      } else {
+        for (const root of activeModelRoots) applyForcedLodToModel(root, lodVal);
+      }
       lodAnimScheduler.flush();
       updateActiveImpostors();
       if (renderer && scene && camera) renderer.render(scene, camera);
