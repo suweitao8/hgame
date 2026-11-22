@@ -59,18 +59,9 @@ function formatClock(sec) {
 
 function computeTrackAnomaly(track) {
   const peakDb = Number.isFinite(track?.peakDb) ? Number(track.peakDb) : null;
-  const lufs = Number.isFinite(track?.measuredLufs ?? track?.measuredDb)
-    ? Number(track.measuredLufs ?? track.measuredDb)
-    : null;
   if (track?.clippingAlert || (peakDb !== null && peakDb > -0.5)) return true;
   if (Number.isFinite(track?.tailSilenceSec) && Number(track.tailSilenceSec) > 0.3) return true;
-  if (track?.trimGuardTriggered || track?.lufsWarn) return true;
-  if (isBgmTrack(track)) {
-    if (lufs !== null && Math.abs(lufs - (-19.0)) > 1.5) return true;
-  } else {
-    if (track?.stingerOver15sWarning) return true;
-    if (lufs !== null && Math.abs(lufs - (-16.0)) > 1.8) return true;
-  }
+  if (track?.lufsWarn) return true;
   return false;
 }
 
