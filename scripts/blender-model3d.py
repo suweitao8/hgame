@@ -1247,6 +1247,64 @@ def _view3d_override():
     return bpy.context.temp_override()
 
 
+def _align_arp_retarget_rest_pose(src_arm, tar_arm):
+    """Align A-pose source arms (e.g. UE5 Mannequin) onto ARP T-pose target via Redefine Rest Pose (preserve=True)."""
+    pairs = (
+        ("upperarm_l", "lowerarm_l", "c_arm_fk.l", "c_forearm_fk.l"),
+        ("lowerarm_l", "hand_l", "c_forearm_fk.l", "c_hand_fk.l"),
+        ("upperarm_r", "lowerarm_r", "c_arm_fk.r", "c_forearm_fk.r"),
+        ("lowerarm_r", "hand_r", "c_forearm_fk.r", "c_hand_fk.r"),
+    )
+    src_act = src_arm.animation_data.action if src_arm.animation_data else None
+    src_slot = getattr(src_arm.animation_data, "action_slot", None) if src_arm.animation_data else None
+    if src_arm.animation_data:
+        src_arm.animation_data.action = None
+    for pb in src_arm.pose.bones:
+        pb.location = (0.0, 0.0, 0.0)
+        pb.rotation_mode = "QUATERNION"
+        pb.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+    for pb in tar_arm.pose.bones:
+        pb.location = (0.0, 0.0, 0.0)
+        if pb.rotation_mode == "QUATERNION":
+            pb.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        else:
+            pb.rotation_euler = (0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+
+    for src_b, src_ch, dst_b, dst_ch in pairs:
+        if src_b not in src_arm.pose.bones or src_ch not in src_arm.pose.bones:
+            continue
+        if dst_b not in tar_arm.pose.bones or dst_ch not in tar_arm.pose.bones:
+            continue
+        pb_s = src_arm.pose.bones[src_b]
+        pb_sc = src_arm.pose.bones[src_ch]
+        pb_d = tar_arm.pose.bones[dst_b]
+        pb_dc = tar_arm.pose.bones[dst_ch]
+        vs = ((src_arm.matrix_world @ pb_sc.head) - (src_arm.matrix_world @ pb_s.head)).normalized()
+        vd = ((tar_arm.matrix_world @ pb_dc.head) - (tar_arm.matrix_world @ pb_d.head)).normalized()
+        if vs.length > 0.5 and vd.length > 0.5 and vs.dot(vd) > -0.999:
+            q_world = vs.rotation_difference(vd)
+            m_w = q_world.to_matrix().to_4x4() @ (src_arm.matrix_world @ pb_s.matrix)
+            pb_s.matrix = src_arm.matrix_world.inverted() @ m_w
+            bpy.context.view_layer.update()
+
+    scn = bpy.context.scene
+    mat_basis = {}
+    for b in src_arm.pose.bones:
+        mat_basis[b.name] = [b.location.copy(), b.rotation_mode, b.rotation_euler.copy(), b.rotation_quaternion.copy()]
+    scn["rest_transf_offset"] = mat_basis
+    src_arm["remap_redefine_preserve"] = True
+    if src_act and src_arm.animation_data:
+        src_arm.animation_data.action = src_act
+        if src_slot and hasattr(src_arm.animation_data, "action_slot"):
+            try:
+                src_arm.animation_data.action_slot = src_slot
+            except Exception:
+                pass
+
+
 def _rig_and_export_arp(
     low_obj,
     out_path,
@@ -1408,11 +1466,12 @@ def _rig_and_export_arp(
         bpy.context.view_layer.objects.active = low_obj
         bpy.ops.object.mode_set(mode="EDIT")
         bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.remove_doubles(threshold=1e-4)
         bpy.ops.mesh.normals_make_consistent(inside=False)
         bpy.ops.object.mode_set(mode="OBJECT")
 
         scn.arp_bind_engine = "PSEUDO_VOXELS"
-        scn.arp_bind_scale_fix = False
+        scn.arp_bind_scale_fix = True
         prefs = auto_rig_prefs.get_prefs()
         prefs.remove_existing_arm_mods = True
         prefs.remove_existing_vgroups = True
@@ -1423,7 +1482,30 @@ def _rig_and_export_arp(
         bpy.ops.arp.bind_to_rig()
         nz = sum(1 for v in low_obj.data.vertices if sum(g.weight for g in v.groups) > 1e-4)
         if nz < max(1, int(len(low_obj.data.vertices) * 0.5)):
-            print(f"ARP bind produced only {nz}/{len(low_obj.data.vertices)} weighted verts; retrying with arp_bind_scale_fix=True...")
+            print(f"ARP PSEUDO_VOXELS bind produced {nz}/{len(low_obj.data.vertices)} weighted verts; retrying with VOXEL remesh...")
+            for m in list(low_obj.modifiers):
+                if m.type == "ARMATURE":
+                    low_obj.modifiers.remove(m)
+            for vg in list(low_obj.vertex_groups):
+                low_obj.vertex_groups.remove(vg)
+            scn.arp_bind_engine = "PSEUDO_VOXELS"
+            scn.arp_pseudo_voxels_type = "2"
+            scn.arp_bind_scale_fix = True
+            bpy.ops.object.select_all(action="DESELECT")
+            low_obj.select_set(True)
+            rig.select_set(True)
+            bpy.context.view_layer.objects.active = rig
+            bpy.ops.arp.bind_to_rig()
+            scn.arp_pseudo_voxels_type = "1"
+            nz = sum(1 for v in low_obj.data.vertices if sum(g.weight for g in v.groups) > 1e-4)
+        if nz < max(1, int(len(low_obj.data.vertices) * 0.5)):
+            print(f"ARP PSEUDO_VOXELS bind still {nz}/{len(low_obj.data.vertices)}; retrying with HEAT_MAP...")
+            for m in list(low_obj.modifiers):
+                if m.type == "ARMATURE":
+                    low_obj.modifiers.remove(m)
+            for vg in list(low_obj.vertex_groups):
+                low_obj.vertex_groups.remove(vg)
+            scn.arp_bind_engine = "HEAT_MAP"
             scn.arp_bind_scale_fix = True
             bpy.ops.object.select_all(action="DESELECT")
             low_obj.select_set(True)
@@ -1460,8 +1542,12 @@ def _rig_and_export_arp(
                 bpy.ops.arp.auto_scale()
                 bpy.ops.arp.build_bones_list()
                 bpy.ops.arp.import_config_preset(preset_name="unreal_mannequin_remap")
+                _align_arp_retarget_rest_pose(src_arm, rig)
                 bpy.ops.arp.retarget(frame_start=0, frame_end=f_end)
 
+            for k in ("rest_transf_offset",):
+                if k in scn.keys():
+                    del scn[k]
             for o in new_objs:
                 if o.name in bpy.data.objects:
                     bpy.data.objects.remove(o, do_unlink=True)
