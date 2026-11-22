@@ -1094,33 +1094,98 @@ def cmd_remesh_bake(args):
     for ca in list(low.data.color_attributes):
         low.data.color_attributes.remove(ca)
 
+    def _build_decimated_lod(src_obj, rig_obj, lod_name, target_tris, max_weights):
+        tris_src = sum(max(1, len(p.vertices) - 2) for p in src_obj.data.polygons)
+        if target_tris <= 0 or tris_src <= target_tris:
+            return None
+        dup = src_obj.copy()
+        dup.data = src_obj.data.copy()
+        dup.name = lod_name
+        bpy.context.collection.objects.link(dup)
+        dup.parent = rig_obj
+        for m in dup.modifiers:
+            if m.type == "ARMATURE":
+                m.object = rig_obj
+        dec = dup.modifiers.new(f"{lod_name}_Decimate", "DECIMATE")
+        dec.decimate_type = "COLLAPSE"
+        dec.ratio = max(0.04, min(1.0, float(target_tris) / float(tris_src)))
+        dec.use_collapse_triangulate = True
+        bpy.ops.object.select_all(action="DESELECT")
+        dup.select_set(True)
+        bpy.context.view_layer.objects.active = dup
+        bpy.ops.object.modifier_apply(modifier=dec.name)
+        if max_weights and max_weights > 0 and len(dup.vertex_groups) > 0:
+            bpy.ops.object.vertex_group_limit_total(limit=int(max_weights))
+            bpy.ops.object.vertex_group_normalize_all(lock_active=False)
+        return dup
+
+    def _build_tight_lod3_impostor(src_obj, rig_obj):
+        import bmesh
+        from mathutils import Vector
+        xs = [v.co.x for v in src_obj.data.vertices]
+        ys = [v.co.y for v in src_obj.data.vertices]
+        zs = [v.co.z for v in src_obj.data.vertices]
+        if not xs:
+            return None
+        half_w = max(0.18, (max(xs) - min(xs)) * 0.52)
+        cx = (max(xs) + min(xs)) * 0.5
+        cy = (max(ys) + min(ys)) * 0.5
+        z0 = min(zs)
+        h = max(0.5, max(zs) - z0)
+        # 8-vertex / 6-triangle beveled octagon silhouette hull (cuts 40-60% transparent overdraw)
+        ring = [
+            (cx - half_w * 0.55, cy, z0),
+            (cx + half_w * 0.55, cy, z0),
+            (cx + half_w, cy, z0 + h * 0.25),
+            (cx + half_w, cy, z0 + h * 0.72),
+            (cx + half_w * 0.48, cy, z0 + h),
+            (cx - half_w * 0.48, cy, z0 + h),
+            (cx - half_w, cy, z0 + h * 0.72),
+            (cx - half_w, cy, z0 + h * 0.25),
+        ]
+        mesh_d = bpy.data.meshes.new("Character_LOD3_Mesh")
+        bm = bmesh.new()
+        uv_layer = bm.loops.layers.uv.new("UVMap")
+        verts = [bm.verts.new(Vector(p)) for p in ring]
+        face = bm.faces.new(verts)
+        for loop in face.loops:
+            co = loop.vert.co
+            u = (co.x - (cx - half_w)) / max(2.0 * half_w, 1e-4)
+            v = (co.z - z0) / max(h, 1e-4)
+            loop[uv_layer].uv = (max(0.0, min(1.0, u)), max(0.0, min(1.0, v)))
+        bmesh.ops.triangulate(bm, faces=[face])
+        bm.to_mesh(mesh_d)
+        bm.free()
+        obj3 = bpy.data.objects.new("Character_LOD3", mesh_d)
+        bpy.context.collection.objects.link(obj3)
+        obj3.parent = rig_obj
+        if len(src_obj.data.materials) > 0:
+            obj3.data.materials.append(src_obj.data.materials[0])
+        return obj3
+
     rig_info = None
     lod1_obj = None
+    lod2_obj = None
+    lod3_obj = None
     lod1_tris = int(getattr(args, "lod1_tris", 0) or 0)
+    lod2_tris = int(getattr(args, "lod2_tris", 0) or 0)
     if getattr(args, "rig_run", False):
         rig, rig_info = build_and_bind_run_rig(low)
         low.name = "Character_LOD0"
         export_objs = [rig, low]
         if lod1_tris > 0:
-            tris_lod0 = sum(max(1, len(p.vertices) - 2) for p in low.data.polygons)
-            if tris_lod0 > lod1_tris:
-                lod1_obj = low.copy()
-                lod1_obj.data = low.data.copy()
-                lod1_obj.name = "Character_LOD1"
-                bpy.context.collection.objects.link(lod1_obj)
-                lod1_obj.parent = rig
-                for m in lod1_obj.modifiers:
-                    if m.type == "ARMATURE":
-                        m.object = rig
-                dec = lod1_obj.modifiers.new("T5_LOD1_Decimate", "DECIMATE")
-                dec.decimate_type = "COLLAPSE"
-                dec.ratio = max(0.1, min(1.0, float(lod1_tris) / float(tris_lod0)))
-                dec.use_collapse_triangulate = True
-                bpy.ops.object.select_all(action="DESELECT")
-                lod1_obj.select_set(True)
-                bpy.context.view_layer.objects.active = lod1_obj
-                bpy.ops.object.modifier_apply(modifier=dec.name)
+            lod1_obj = _build_decimated_lod(low, rig, "Character_LOD1", lod1_tris, 2)
+            if lod1_obj is not None:
                 export_objs.append(lod1_obj)
+        if lod2_tris > 0:
+            src_for_lod2 = lod1_obj if lod1_obj is not None else low
+            lod2_obj = _build_decimated_lod(src_for_lod2, rig, "Character_LOD2", lod2_tris, 1)
+            if lod2_obj is not None:
+                export_objs.append(lod2_obj)
+        if getattr(args, "lod3_tight", False):
+            lod3_obj = _build_tight_lod3_impostor(low, rig)
+            if lod3_obj is not None:
+                export_objs.append(lod3_obj)
 
         bpy.ops.object.select_all(action="DESELECT")
         for eo in export_objs:
@@ -1150,6 +1215,8 @@ def cmd_remesh_bake(args):
 
     stats = collect_stats([low])
     lod1_stats = collect_stats([lod1_obj]) if lod1_obj is not None else None
+    lod2_stats = collect_stats([lod2_obj]) if lod2_obj is not None else None
+    lod3_stats = collect_stats([lod3_obj]) if lod3_obj is not None else None
     result = {
         "input": os.path.abspath(args.input),
         "output": os.path.abspath(args.out),
@@ -1162,6 +1229,8 @@ def cmd_remesh_bake(args):
         },
         "stats": stats,
         "lod1Stats": lod1_stats,
+        "lod2Stats": lod2_stats,
+        "lod3Stats": lod3_stats,
     }
     if args.qa_dir:
         result["rendered"] = render_views(
@@ -2183,6 +2252,8 @@ def main():
     p_rb.add_argument("--no-weld-high", action="store_true")
     p_rb.add_argument("--rig-run", action="store_true", default=False)
     p_rb.add_argument("--lod1-tris", type=int, default=0)
+    p_rb.add_argument("--lod2-tris", type=int, default=0)
+    p_rb.add_argument("--lod3-tight", action="store_true", default=False)
     p_rb.add_argument("--anim-glb", default="")
     p_rb.add_argument("--qa-dir", default="")
     p_rb.add_argument("--views", default="4", choices=["4", "6"])

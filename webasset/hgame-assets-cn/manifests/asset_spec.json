@@ -1,6 +1,6 @@
 {
-  "version": "5.0.0",
-  "scope": "3d_static_and_t5_characters",
+  "version": "5.1.0",
+  "scope": "3d_static_and_unified_t5_characters",
   "blenderMinVersion": "5.0",
   "texturePipeline": {
     "maps": ["color", "normal_rm"],
@@ -94,25 +94,29 @@
       "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 1024, "mobile_webp": 512 },
       "lod": { "levels": [1.0, 0.35, 0.12], "lod2MergeSubmeshes": true, "thresholds": [0.18, 0.06], "cull": 0.008 }
     },
-    "T5_NPC": {
-      "maxTris": 6000,
-      "maxGpuVerts": 7500,
+    "T5": {
+      "recommendedMaxTris": 6000,
+      "recommendedMaxGpuVerts": 7500,
+      "maxTris": 8000,
+      "maxGpuVerts": 10000,
       "maxSubmeshes": 1,
       "texelDensityPxPerMeter": 512,
       "rig": "humanoid_23_plus_3",
       "textureMode": "unique_pbr",
       "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 1024, "mobile_webp": 512 },
-      "lod": { "levels": [1.0, 0.35, "bone_vat_impostor"], "lod1TargetTris": 2200, "thresholds": [0.12] }
-    },
-    "T5_HERO": {
-      "maxTris": 9000,
-      "maxGpuVerts": 11000,
-      "maxSubmeshes": 1,
-      "texelDensityPxPerMeter": 512,
-      "rig": "humanoid_23_plus_3",
-      "textureMode": "unique_pbr",
-      "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 1024, "mobile_webp": 512 },
-      "lod": { "levels": [1.0, 0.35, "bone_vat_impostor"], "lod1TargetTris": 2200, "thresholds": [0.12] }
+      "crowdBucketLimits": {
+        "pc": [15, 80, 1200, 12000, null],
+        "mobile": [6, 35, 500, 4000, null]
+      },
+      "lod": {
+        "levels": ["lod0_4w", "lod1_2w", "lod2_1w_rigid", "lod3_tight6_impostor", "lod4_point_sprite"],
+        "lod0": { "maxTris": 6000, "hardMaxTris": 8000, "maxGpuVerts": 7500, "hardMaxGpuVerts": 10000, "maxBoneWeights": 4, "minScreenRatio": 0.16, "pbr": true, "castShadow": true },
+        "lod1": { "targetTris": 1600, "minTris": 1500, "maxTris": 1800, "maxBoneWeights": 2, "minScreenRatio": 0.07, "pbr": true, "castShadow": true },
+        "lod2": { "targetTris": 350, "minTris": 300, "maxTris": 450, "maxBoneWeights": 1, "disableInterpolation": true, "disableNormalRm": true, "fakeShadowDisc": true, "minScreenRatio": 0.025, "pbr": false, "castShadow": false },
+        "lod3": { "targetTris": 8, "minTris": 6, "maxTris": 8, "tightMesh": true, "maxBoneWeights": 0, "directions": 8, "fps": 12, "clips": ["idle", "run", "attack", "death"], "mipmapsRequired": true, "minScreenRatio": 0.012 },
+        "lod4": { "runtimeOnly": true, "primitive": "GL_POINTS", "fallbackBillboardTris": 2, "maxBoneWeights": 0, "reuseLod3Mipmap": true, "disableDiscard": true, "maxScreenRatio": 0.012 },
+        "thresholds": [0.16, 0.07, 0.025, 0.012]
+      }
     }
   },
   "sceneBudgets": {

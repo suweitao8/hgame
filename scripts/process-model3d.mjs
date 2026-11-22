@@ -24,18 +24,46 @@ export const DEFAULT_TRELLIS2_HQ_WORKFLOW_REL = 'user/default/workflows/Trellis2
 export const DEFAULT_ULTRATEX_WORKFLOW_REL = 'user/default/workflows/PixelArtistry/PixelArtistry_UltraTex_03_LowVRAM_GGUF.json';
 
 /**
- * T5 Skeletal Character Poly & LOD Budgets (per HGame 3D Model & LOD Spec):
- * - low / npc:  LOD0 <= 6,000 tris / <= 7,500 GPU vertices (via targetQuads = 2800), LOD1 ~2,200 tris
- * - hero:       LOD0 <= 9,000 tris / <= 11,000 GPU vertices (via targetQuads = 4200), LOD1 ~2,200 tris
+ * Unified T5 Skeletal Character Poly & 5-LOD Budgets (single asset standard, dynamic runtime tiers):
+ * - low / t5:   LOD0 <= 6,000 tris / <= 7,500 GPU vertices (4 weights), LOD1 ~1,600 tris (2w), LOD2 ~350 tris (1w rigid)
+ * - complex:    Hard ceiling <= 8,000 tris / <= 10,000 GPU vertices for intricate accessories (alias: hero)
  * - high:       High-poly bake master (16k quads, <= 65,535 16-bit index hard cap)
  */
 export const GLOBAL_MAX_GPU_VERTICES = 65535;
-export const T5_LOD1_TARGET_TRIS = 2200;
+export const T5_LOD1_TARGET_TRIS = 1600;
+export const T5_LOD2_TARGET_TRIS = 350;
 
 export const CHARACTER_POLY_PRESETS = Object.freeze({
-  low: Object.freeze({ targetQuads: 2800, maxTris: 6000, maxVertices: 7500, lod1TargetTris: 2200, textureSize: 1024, normalStrength: 0.25 }),
-  hero: Object.freeze({ targetQuads: 4200, maxTris: 9000, maxVertices: 11000, lod1TargetTris: 2200, textureSize: 1024, normalStrength: 0.25 }),
-  high: Object.freeze({ targetQuads: 16000, maxTris: 36000, maxVertices: 65535, lod1TargetTris: 0, textureSize: 2048, normalStrength: 0.28 }),
+  low: Object.freeze({
+    targetQuads: 2800,
+    maxTris: 6000,
+    maxVertices: 7500,
+    lod1TargetTris: T5_LOD1_TARGET_TRIS,
+    lod2TargetTris: T5_LOD2_TARGET_TRIS,
+    lod3Tight: true,
+    textureSize: 1024,
+    normalStrength: 0.25,
+  }),
+  complex: Object.freeze({
+    targetQuads: 3800,
+    maxTris: 8000,
+    maxVertices: 10000,
+    lod1TargetTris: T5_LOD1_TARGET_TRIS,
+    lod2TargetTris: T5_LOD2_TARGET_TRIS,
+    lod3Tight: true,
+    textureSize: 1024,
+    normalStrength: 0.25,
+  }),
+  high: Object.freeze({
+    targetQuads: 16000,
+    maxTris: 36000,
+    maxVertices: 65535,
+    lod1TargetTris: 0,
+    lod2TargetTris: 0,
+    lod3Tight: false,
+    textureSize: 2048,
+    normalStrength: 0.28,
+  }),
 });
 
 export function resolveLowPolyPreset(name = 'low') {
@@ -43,13 +71,13 @@ export function resolveLowPolyPreset(name = 'low') {
   if (key === 'high' || key === 'hq') {
     return { name: 'high', ...CHARACTER_POLY_PRESETS.high };
   }
-  if (['hero', 'player', 'protagonist', 'boss'].includes(key)) {
-    return { name: 'hero', ...CHARACTER_POLY_PRESETS.hero };
+  if (['complex', 'hero', 'player', 'protagonist', 'boss'].includes(key)) {
+    return { name: 'complex', ...CHARACTER_POLY_PRESETS.complex };
   }
-  if (['low', 'npc', 'character', 'general', 'mob', 'standard'].includes(key)) {
+  if (['t5', 'low', 'npc', 'character', 'general', 'mob', 'standard', 'unified'].includes(key)) {
     return { name: 'low', ...CHARACTER_POLY_PRESETS.low };
   }
-  throw new RangeError(`Unknown character poly preset "${name}"; expected low|npc|hero|high`);
+  throw new RangeError(`Unknown character poly preset "${name}"; expected t5|low|complex|high`);
 }
 
 export const SKIP_UI_NODE_TYPES = new Set([
@@ -1230,6 +1258,10 @@ export function buildBlenderRemeshBakeArgs(inputPath, outPath, flags = {}) {
   if (flags['rig-run'] || flags.rigRun) args.push('--rig-run');
   const lod1Tris = flags['no-lod1'] ? 0 : (flags['lod1-tris'] ?? flags.lod1Tris ?? preset?.lod1TargetTris ?? 0);
   if (Number(lod1Tris) > 0) args.push('--lod1-tris', String(lod1Tris));
+  const lod2Tris = flags['no-lod2'] ? 0 : (flags['lod2-tris'] ?? flags.lod2Tris ?? preset?.lod2TargetTris ?? 0);
+  if (Number(lod2Tris) > 0) args.push('--lod2-tris', String(lod2Tris));
+  const lod3Tight = !flags['no-lod3'] && Boolean(flags['lod3-tight'] ?? flags.lod3Tight ?? preset?.lod3Tight);
+  if (lod3Tight) args.push('--lod3-tight');
   if (flags['anim-glb'] || flags.animGlb) args.push('--anim-glb', String(flags['anim-glb'] || flags.animGlb));
   if (flags['qa-dir'] || flags.qaDir) {
     args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
@@ -1715,6 +1747,19 @@ async function cmdCharacterPack(config, flags) {
   const lowSummary = runBlenderHelper(config, plans.lowArgs);
   const lowPreset = resolveLowPolyPreset(plans.lowPresetName);
   assertCleanTopology(lowSummary?.stats, 'clean_low', lowPreset.maxVertices, lowPreset.maxTris);
+  for (const [label, subStats, maxT] of [
+    ['clean_low_lod1', lowSummary?.lod1Stats, 1800],
+    ['clean_low_lod2', lowSummary?.lod2Stats, 450],
+    ['clean_low_lod3', lowSummary?.lod3Stats, 8],
+  ]) {
+    if (!subStats) continue;
+    if (typeof subStats.vertices === 'number' && subStats.vertices > GLOBAL_MAX_GPU_VERTICES) {
+      throw new Error(`${label} exceeded 16-bit index vertex cap (${subStats.vertices} > ${GLOBAL_MAX_GPU_VERTICES})`);
+    }
+    if (typeof subStats.triangles === 'number' && subStats.triangles > maxT) {
+      throw new Error(`${label} exceeded triangle budget (${subStats.triangles} > ${maxT})`);
+    }
+  }
 
   let uploaded = null;
   if (flags.upload) {

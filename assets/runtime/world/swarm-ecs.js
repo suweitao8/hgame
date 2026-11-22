@@ -1370,6 +1370,8 @@ export function createSwarmSimulation({
   const animTime = new Float32Array(capacity);
   const flash = new Float32Array(capacity);
   const statusCode = new Uint8Array(capacity);
+  const priority = new Uint8Array(capacity);
+  const minLod = new Uint8Array(capacity);
   const sepX = new Float32Array(capacity);
   const sepY = new Float32Array(capacity);
   const slotGeneration = new Uint32Array(capacity);
@@ -1602,11 +1604,13 @@ export function createSwarmSimulation({
     hp: initHp = 100,
     clipId = 0,
     animTime: t0 = 0,
+    priority: prio = 0,
+    minLod: minL = 0,
   } = {}) {
-    return spawnUnit(x, y, r, spd, sc, initHp, clipId, t0);
+    return spawnUnit(x, y, r, spd, sc, initHp, clipId, t0, prio, minL);
   }
 
-  function spawnUnit(x, y, r, spd, sc, initHp, clipId, t0) {
+  function spawnUnit(x, y, r, spd, sc, initHp, clipId, t0, prio = 0, minL = 0) {
     if (freeTop <= 0) return -1;
     const id = freeStack[--freeTop];
     const slot = activeCount++;
@@ -1625,6 +1629,8 @@ export function createSwarmSimulation({
     animTime[id] = t0;
     flash[id] = 0;
     statusCode[id] = 0;
+    priority[id] = Math.max(0, Math.min(255, prio | 0));
+    minLod[id] = Math.max(0, Math.min(4, minL | 0));
     sepX[id] = 0;
     sepY[id] = 0;
     chunksDirty = true;
@@ -1641,6 +1647,8 @@ export function createSwarmSimulation({
     hp: initHp = 100,
     clipId = 0,
     scale: sc = 1,
+    priority: prio = 0,
+    minLod: minL = 0,
     seed = null,
   } = {}) {
     let s = (seed ?? ((Date.now() ^ 0x5f3759df) >>> 0)) >>> 0;
@@ -1661,7 +1669,7 @@ export function createSwarmSimulation({
       const px = centerX + Math.cos(ang) * dist;
       const py = centerY + Math.sin(ang) * dist;
       const yaw = Math.atan2(centerX - px, centerY - py);
-      const id = spawnUnit(px, py, yaw, spd, sc, initHp, clipId, nextRand() * 2.0);
+      const id = spawnUnit(px, py, yaw, spd, sc, initHp, clipId, nextRand() * 2.0, prio, minL);
       if (id < 0) break;
       spawned++;
     }
@@ -2112,6 +2120,8 @@ export function createSwarmSimulation({
     animTime,
     flash,
     statusCode,
+    priority,
+    minLod,
     sepX,
     sepY,
     cellDensity,

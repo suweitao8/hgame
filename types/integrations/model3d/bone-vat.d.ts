@@ -1,4 +1,36 @@
 /**
+ * Packs `[yaw(10b), animId(4b), animSeed(10b), flags(8b)]` into a single 32-bit uint
+ * matching `CrowdInstance16B` (`pos Float32x3 + packed Uint32`).
+ * @param {number} yawRad Yaw in radians `[0, 2π)`.
+ * @param {number} [animId=0] Animation index `0..15`.
+ * @param {number} [animSeed=0] Normalized phase seed in `[0, 1)` or integer `0..1023`.
+ * @param {number} [flags=0] Status/faction/tint byte `0..255`.
+ * @returns {number} Unsigned 32-bit integer.
+ */
+export function packCrowdInstanceBitfield(yawRad: number, animId?: number | undefined, animSeed?: number | undefined, flags?: number | undefined): number;
+/**
+ * Decodes a 32-bit `CrowdInstance16B` packed field back into its components.
+ * @param {number} packedUint32
+ * @returns {{ yawRad: number, animId: number, animSeed: number, flags: number }}
+ */
+export function unpackCrowdInstanceBitfield(packedUint32: number): {
+    yawRad: number;
+    animId: number;
+    animSeed: number;
+    flags: number;
+};
+/**
+ * Builds a tight 8-vertex / 6-triangle beveled octagon Impostor polygon (`LOD3`)
+ * cutting 40–60% transparent overdraw compared to a 2-triangle rectangle quad.
+ * @param {import('./helpers.js').Model3DThree} THREE
+ * @param {{ width?: number, height?: number }} [options]
+ * @returns {object}
+ */
+export function buildTightImpostorGeometry(THREE: import("./helpers.js").Model3DThree, { width, height }?: {
+    width?: number;
+    height?: number;
+} | undefined): object;
+/**
  * Encodes a finite JS number to IEEE-754 binary16 (uint16), clamping large finite values
  * to `+/-65504` (`0x7bff` / `0xfbff`) to avoid overflowing to Infinity in Bone-VAT texels.
  * @param {number} value
@@ -131,7 +163,26 @@ export function buildSimplifiedLodGeometry(THREE: import("./helpers.js").Model3D
  * @param {BoneVatCrowd3DOptions} [options]
  * @returns {BoneVatCrowd3D}
  */
-export function createBoneVatCrowd3D(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, vatData, lod0Geometry, lod1Geometry, material, impostorTexture, impostorCols, impostorRows, capacity, sampleFps, lod1Distance, lod2Distance, lodHysteresis, maxDistance, cullRadius, baseY, scale, castShadow, receiveShadow, }?: BoneVatCrowd3DOptions | undefined): BoneVatCrowd3D;
+export function createBoneVatCrowd3D(THREE: import("./helpers.js").Model3DThree, { asset, root, animations, vatData, lod0Geometry, lod1Geometry, lod2Geometry, lod3Geometry, material, impostorTexture, impostorCols, impostorRows, capacity, sampleFps, lodMode, qualityTier, bucketLimits, screenThresholds, lod1Distance, lod2Distance, lodHysteresis, maxDistance, cullRadius, baseY, scale, castShadow, receiveShadow, lod4PointFallbackBillboard, mobileMacroBatch, }?: BoneVatCrowd3DOptions | undefined): BoneVatCrowd3D;
+/**
+ * T5 Unified Crowd Bucket Hard Caps (per HGame 3D Model & 100k Crowd Spec).
+ * Instances overflowing a full high-detail bucket cascade down into the next LOD bucket.
+ */
+export const T5_CROWD_BUCKET_LIMITS: Readonly<{
+    pc: readonly number[];
+    mobile: readonly number[];
+}>;
+/**
+ * T5 Screen Height Ratio LOD thresholds (`projectedBoundingSphereHeightPx / viewportHeightPx`)
+ * with 1.12x upward hysteresis.
+ */
+export const T5_LOD_SCREEN_THRESHOLDS: Readonly<{
+    lod1: 0.16;
+    lod2: 0.07;
+    lod3: 0.025;
+    lod4: 0.012;
+    hysteresis: 1.12;
+}>;
 export type BoneVatClipMeta = {
     name: string;
     startFrame: number;

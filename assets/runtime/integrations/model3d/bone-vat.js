@@ -13,6 +13,117 @@ const HVAT_MAGIC = 0x54415648; // "HVAT" LE
 const HVAT_VERSION = 1;
 const HVAT_HEADER_BYTES = 32;
 const IDENTITY_TRANSFORM = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const TWO_PI = Math.PI * 2;
+
+/**
+ * T5 Unified Crowd Bucket Hard Caps (per HGame 3D Model & 100k Crowd Spec).
+ * Instances overflowing a full high-detail bucket cascade down into the next LOD bucket.
+ */
+export const T5_CROWD_BUCKET_LIMITS = Object.freeze({
+  pc: Object.freeze([15, 80, 1200, 12000, Infinity]),
+  mobile: Object.freeze([6, 35, 500, 4000, Infinity]),
+});
+
+/**
+ * T5 Screen Height Ratio LOD thresholds (`projectedBoundingSphereHeightPx / viewportHeightPx`)
+ * with 1.12x upward hysteresis.
+ */
+export const T5_LOD_SCREEN_THRESHOLDS = Object.freeze({
+  lod1: 0.16,
+  lod2: 0.07,
+  lod3: 0.025,
+  lod4: 0.012,
+  hysteresis: 1.12,
+});
+
+/**
+ * Packs `[yaw(10b), animId(4b), animSeed(10b), flags(8b)]` into a single 32-bit uint
+ * matching `CrowdInstance16B` (`pos Float32x3 + packed Uint32`).
+ * @param {number} yawRad Yaw in radians `[0, 2π)`.
+ * @param {number} [animId=0] Animation index `0..15`.
+ * @param {number} [animSeed=0] Normalized phase seed in `[0, 1)` or integer `0..1023`.
+ * @param {number} [flags=0] Status/faction/tint byte `0..255`.
+ * @returns {number} Unsigned 32-bit integer.
+ */
+export function packCrowdInstanceBitfield(yawRad, animId = 0, animSeed = 0, flags = 0) {
+  const normYaw = (((yawRad % TWO_PI) + TWO_PI) % TWO_PI) / TWO_PI;
+  const qYaw = Math.min(1023, Math.max(0, Math.round(normYaw * 1024))) & 0x3ff;
+  const qAnim = (animId | 0) & 0x0f;
+  const seedRaw = animSeed > 0 && animSeed < 1 ? Math.round(animSeed * 1023) : animSeed;
+  const qSeed = Math.min(1023, Math.max(0, seedRaw | 0)) & 0x3ff;
+  const qFlags = (flags | 0) & 0xff;
+  return ((qYaw) | (qAnim << 10) | (qSeed << 14) | (qFlags << 24)) >>> 0;
+}
+
+/**
+ * Decodes a 32-bit `CrowdInstance16B` packed field back into its components.
+ * @param {number} packedUint32
+ * @returns {{ yawRad: number, animId: number, animSeed: number, flags: number }}
+ */
+export function unpackCrowdInstanceBitfield(packedUint32) {
+  const u = packedUint32 >>> 0;
+  const qYaw = u & 0x3ff;
+  const animId = (u >>> 10) & 0x0f;
+  const qSeed = (u >>> 14) & 0x3ff;
+  const flags = (u >>> 24) & 0xff;
+  return {
+    yawRad: (qYaw / 1024) * TWO_PI,
+    animId,
+    animSeed: qSeed / 1023,
+    flags,
+  };
+}
+
+/**
+ * Builds a tight 8-vertex / 6-triangle beveled octagon Impostor polygon (`LOD3`)
+ * cutting 40–60% transparent overdraw compared to a 2-triangle rectangle quad.
+ * @param {import('./helpers.js').Model3DThree} THREE
+ * @param {{ width?: number, height?: number }} [options]
+ * @returns {object}
+ */
+export function buildTightImpostorGeometry(THREE, { width = 1.0, height = 1.8 } = {}) {
+  const hw = Math.max(0.2, width * 0.52);
+  const h = Math.max(0.4, height);
+  // 8-vertex silhouette fan -> 6 triangles (0..12, strictly inside T5 LOD3 6-8 tris spec)
+  const ring = [
+    [-hw * 0.55, 0],
+    [hw * 0.55, 0],
+    [hw, h * 0.25],
+    [hw, h * 0.72],
+    [hw * 0.48, h],
+    [-hw * 0.48, h],
+    [-hw, h * 0.72],
+    [-hw, h * 0.25],
+  ];
+  const pos = new Float32Array(ring.length * 3);
+  const norm = new Float32Array(ring.length * 3);
+  const uv = new Float32Array(ring.length * 2);
+  const invW = 1 / (2 * hw);
+  const invH = 1 / h;
+  for (let i = 0; i < ring.length; i++) {
+    const [rx, ry] = ring[i];
+    pos[i * 3] = rx;
+    pos[i * 3 + 1] = ry;
+    pos[i * 3 + 2] = 0;
+    norm[i * 3 + 2] = 1;
+    uv[i * 2] = (rx + hw) * invW;
+    uv[i * 2 + 1] = ry * invH;
+  }
+  const indices = [
+    0, 1, 2,
+    0, 2, 3,
+    0, 3, 4,
+    0, 4, 5,
+    0, 5, 6,
+    0, 6, 7,
+  ];
+  const geom = new THREE.InstancedBufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geom.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
+  geom.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geom.setIndex(indices);
+  return geom;
+}
 const CROWD_STATUS_COLOR_GLSL = [
   '#include <color_fragment>',
   'if (vCrowdFlash > 0.5) {',
@@ -679,7 +790,10 @@ export function buildSimplifiedLodGeometry(THREE, geometry, { gridResolution = 1
   return outGeom;
 }
 
-function makeInstancedStaticGeometry(THREE, srcGeom, singleBoneOnly, packedAttr, yAttr = null) {
+function makeInstancedStaticGeometry(THREE, srcGeom, weightLimitOrSingleBone, packedAttr, yAttr = null) {
+  const maxWeights = typeof weightLimitOrSingleBone === 'number'
+    ? Math.max(1, Math.min(4, weightLimitOrSingleBone | 0))
+    : (weightLimitOrSingleBone ? 1 : 4);
   const instGeo = new THREE.InstancedBufferGeometry();
   if (srcGeom.index) {
     instGeo.index = srcGeom.index;
@@ -711,9 +825,33 @@ function makeInstancedStaticGeometry(THREE, srcGeom, singleBoneOnly, packedAttr,
       boneWeights[b4] = 1;
       continue;
     }
-    if (singleBoneOnly) {
+    if (maxWeights === 1) {
       boneIndices[b4] = dominantBoneIndexForVertex(sIdx, sWt, v);
       boneWeights[b4] = 1;
+    } else if (maxWeights === 2) {
+      let i0 = 0, w0 = -1, i1 = 0, w1 = -1;
+      for (let k = 0; k < 4; k++) {
+        const w = Math.max(0, sWt[b4 + k]);
+        const bi = sIdx[b4 + k];
+        if (w > w0) {
+          w1 = w0; i1 = i0;
+          w0 = w; i0 = bi;
+        } else if (w > w1) {
+          w1 = w; i1 = bi;
+        }
+      }
+      w0 = Math.max(0, w0);
+      w1 = Math.max(0, w1);
+      const sum2 = w0 + w1;
+      boneIndices[b4] = i0;
+      boneIndices[b4 + 1] = i1;
+      if (sum2 > 1e-5) {
+        const inv2 = 1 / sum2;
+        boneWeights[b4] = w0 * inv2;
+        boneWeights[b4 + 1] = w1 * inv2;
+      } else {
+        boneWeights[b4] = 1;
+      }
     } else {
       let sum = 0;
       for (let k = 0; k < 4; k++) {
@@ -789,7 +927,10 @@ function createProceduralImpostorTexture(THREE, cols, rows, colorHex = 0x7fd4b8)
 function patchBoneVatMaterial(material, {
   vatTexture,
   vatHeight,
-  singleBoneOnly,
+  singleBoneOnly = false,
+  maxBoneWeights = null,
+  disableInterpolation = false,
+  simplifiedLighting = false,
   scaleUniform,
   baseYUniform,
   useGpuSwarmUniform = { value: 0 },
@@ -798,8 +939,19 @@ function patchBoneVatMaterial(material, {
   gpuInstanceOffsetUniform = { value: 0 },
   crossfadeUniform = { value: 1 },
 }) {
-  const modeTag = singleBoneOnly ? 'lod1' : 'lod0';
-  material.customProgramCacheKey = () => `hgame-bone-vat-v2:${modeTag}:${vatHeight}`;
+  const effWeights = Number.isInteger(maxBoneWeights)
+    ? Math.max(1, Math.min(4, maxBoneWeights | 0))
+    : (singleBoneOnly ? 1 : 4);
+  if (simplifiedLighting) {
+    // LOD2 lighting downgrade: strip Normal_RM PBR maps to cut fragment texture fetches
+    if ('normalMap' in material) material.normalMap = null;
+    if ('roughnessMap' in material) material.roughnessMap = null;
+    if ('metalnessMap' in material) material.metalnessMap = null;
+    if ('roughness' in material) material.roughness = 1.0;
+    if ('metalness' in material) material.metalness = 0.0;
+  }
+  const modeTag = `w${effWeights}${disableInterpolation ? '-nolerp' : ''}${simplifiedLighting ? '-simple' : ''}`;
+  material.customProgramCacheKey = () => `hgame-bone-vat-v3:${modeTag}:${vatHeight}`;
   const prevCompile = material.onBeforeCompile;
 
   material.onBeforeCompile = (shader, renderer) => {
@@ -813,6 +965,40 @@ function patchBoneVatMaterial(material, {
     shader.uniforms.uGpuSwarmTex = gpuSwarmTexUniform;
     shader.uniforms.uGpuSwarmWidth = gpuSwarmWidthUniform;
     shader.uniforms.uGpuInstanceOffset = gpuInstanceOffsetUniform;
+
+    const boneEvalLines = effWeights === 1
+      ? [
+          '  vec3 spos = vec3(0.0);',
+          '  vec3 snorm = vec3(0.0);',
+          '  hgameEvalBoneSample(int(aBoneIndex.x + 0.5), 1.0, f0, f1, t, localPos, localNorm, spos, snorm);',
+        ]
+      : (effWeights === 2
+          ? [
+              '  vec3 spos = vec3(0.0);',
+              '  vec3 snorm = vec3(0.0);',
+              '  float wSum = aBoneWeight.x + aBoneWeight.y;',
+              '  if (wSum <= 0.0001) {',
+              '    spos = localPos; snorm = localNorm;',
+              '  } else {',
+              '    hgameEvalBoneSample(int(aBoneIndex.x + 0.5), aBoneWeight.x, f0, f1, t, localPos, localNorm, spos, snorm);',
+              '    hgameEvalBoneSample(int(aBoneIndex.y + 0.5), aBoneWeight.y, f0, f1, t, localPos, localNorm, spos, snorm);',
+              '    snorm = normalize(snorm);',
+              '  }',
+            ]
+          : [
+              '  vec3 spos = vec3(0.0);',
+              '  vec3 snorm = vec3(0.0);',
+              '  float wSum = aBoneWeight.x + aBoneWeight.y + aBoneWeight.z + aBoneWeight.w;',
+              '  if (wSum <= 0.0001) {',
+              '    spos = localPos; snorm = localNorm;',
+              '  } else {',
+              '    hgameEvalBoneSample(int(aBoneIndex.x + 0.5), aBoneWeight.x, f0, f1, t, localPos, localNorm, spos, snorm);',
+              '    hgameEvalBoneSample(int(aBoneIndex.y + 0.5), aBoneWeight.y, f0, f1, t, localPos, localNorm, spos, snorm);',
+              '    hgameEvalBoneSample(int(aBoneIndex.z + 0.5), aBoneWeight.z, f0, f1, t, localPos, localNorm, spos, snorm);',
+              '    hgameEvalBoneSample(int(aBoneIndex.w + 0.5), aBoneWeight.w, f0, f1, t, localPos, localNorm, spos, snorm);',
+              '    snorm = normalize(snorm);',
+              '  }',
+            ]);
 
     const vertexHeader = [
       'attribute vec4 aBoneIndex;',
@@ -846,13 +1032,18 @@ function patchBoneVatMaterial(material, {
       '  int tx = bi * 2;',
       '  vec4 p0 = texelFetch(uBoneVat, ivec2(tx, f0), 0);',
       '  vec4 q0 = texelFetch(uBoneVat, ivec2(tx + 1, f0), 0);',
-      '  vec4 p1 = texelFetch(uBoneVat, ivec2(tx, f1), 0);',
-      '  vec4 q1 = texelFetch(uBoneVat, ivec2(tx + 1, f1), 0);',
-      '  vec4 p = mix(p0, p1, t);',
-      '  if (dot(q0, q1) < 0.0) q1 = -q1;',
-      '  vec4 q = normalize(mix(q0, q1, t));',
-      '  spos += (hgameQuatRotate(q, localPos * p.w) + p.xyz) * w;',
-      '  snorm += hgameQuatRotate(q, localNorm) * w;',
+      ...(disableInterpolation ? [
+        '  spos += (hgameQuatRotate(q0, localPos * p0.w) + p0.xyz) * w;',
+        '  snorm += hgameQuatRotate(q0, localNorm) * w;',
+      ] : [
+        '  vec4 p1 = texelFetch(uBoneVat, ivec2(tx, f1), 0);',
+        '  vec4 q1 = texelFetch(uBoneVat, ivec2(tx + 1, f1), 0);',
+        '  vec4 p = mix(p0, p1, t);',
+        '  if (dot(q0, q1) < 0.0) q1 = -q1;',
+        '  vec4 q = normalize(mix(q0, q1, t));',
+        '  spos += (hgameQuatRotate(q, localPos * p.w) + p.xyz) * w;',
+        '  snorm += hgameQuatRotate(q, localNorm) * w;',
+      ]),
       '}',
       'void hgameEvalBoneVat(vec4 packedInst, vec3 localPos, vec3 localNorm, out vec3 outPos, out vec3 outNorm) {',
       '  float rawW = packedInst.w;',
@@ -862,24 +1053,7 @@ function patchBoneVatMaterial(material, {
       '  int f0 = min(int(floor(framePos)), max(0, uVatHeight - 1));',
       '  int f1 = min(f0 + 1, max(0, uVatHeight - 1));',
       '  float t = fract(framePos);',
-      singleBoneOnly ? [
-        '  vec3 spos = vec3(0.0);',
-        '  vec3 snorm = vec3(0.0);',
-        '  hgameEvalBoneSample(int(aBoneIndex.x + 0.5), 1.0, f0, f1, t, localPos, localNorm, spos, snorm);',
-      ].join('\n') : [
-        '  vec3 spos = vec3(0.0);',
-        '  vec3 snorm = vec3(0.0);',
-        '  float wSum = aBoneWeight.x + aBoneWeight.y + aBoneWeight.z + aBoneWeight.w;',
-        '  if (wSum <= 0.0001) {',
-        '    spos = localPos; snorm = localNorm;',
-        '  } else {',
-        '    hgameEvalBoneSample(int(aBoneIndex.x + 0.5), aBoneWeight.x, f0, f1, t, localPos, localNorm, spos, snorm);',
-        '    hgameEvalBoneSample(int(aBoneIndex.y + 0.5), aBoneWeight.y, f0, f1, t, localPos, localNorm, spos, snorm);',
-        '    hgameEvalBoneSample(int(aBoneIndex.z + 0.5), aBoneWeight.z, f0, f1, t, localPos, localNorm, spos, snorm);',
-        '    hgameEvalBoneSample(int(aBoneIndex.w + 0.5), aBoneWeight.w, f0, f1, t, localPos, localNorm, spos, snorm);',
-        '    snorm = normalize(snorm);',
-        '  }',
-      ].join('\n'),
+      ...boneEvalLines,
       '  float rotY = packedInst.z;',
       '  float c = cos(rotY);',
       '  float s = sin(rotY);',
@@ -1082,6 +1256,116 @@ function patchImpostorMaterial(material, {
 }
 
 /**
+ * Configures a LOD4 GL_POINTS Point-Sprite material reusing LOD3 atlas low Mipmaps,
+ * without complex `discard` alpha-testing to prevent sub-pixel helper-lane waste and flicker.
+ */
+function patchPointSpriteMaterial(material, {
+  impostorCols,
+  impostorRows,
+  vatHeight,
+  charHeight,
+  scaleUniform,
+  baseYUniform,
+  useGpuSwarmUniform = { value: 0 },
+  gpuSwarmTexUniform = { value: null },
+  gpuSwarmWidthUniform = { value: 1 },
+  gpuInstanceOffsetUniform = { value: 0 },
+  pointSizeScale = 2.0,
+}) {
+  material.customProgramCacheKey = () => `hgame-bone-point-lod4-v1:${impostorCols}x${impostorRows}:${vatHeight}`;
+  const prevCompile = material.onBeforeCompile;
+
+  material.onBeforeCompile = (shader, renderer) => {
+    prevCompile?.call(material, shader, renderer);
+    shader.uniforms.uImpostorCols = { value: impostorCols };
+    shader.uniforms.uImpostorRows = { value: impostorRows };
+    shader.uniforms.uVatHeight = { value: vatHeight };
+    shader.uniforms.uCharHeight = { value: charHeight };
+    shader.uniforms.uCrowdScale = scaleUniform;
+    shader.uniforms.uCrowdBaseY = baseYUniform;
+    shader.uniforms.uPointSizeScale = { value: pointSizeScale };
+    shader.uniforms.uUseGpuSwarm = useGpuSwarmUniform;
+    shader.uniforms.uGpuSwarmTex = gpuSwarmTexUniform;
+    shader.uniforms.uGpuSwarmWidth = gpuSwarmWidthUniform;
+    shader.uniforms.uGpuInstanceOffset = gpuInstanceOffsetUniform;
+
+    const header = [
+      'attribute vec4 aCrowdPacked;',
+      'attribute float aCrowdY;',
+      'uniform int uImpostorCols;',
+      'uniform int uImpostorRows;',
+      'uniform int uVatHeight;',
+      'uniform float uCharHeight;',
+      'uniform float uCrowdScale;',
+      'uniform float uCrowdBaseY;',
+      'uniform float uPointSizeScale;',
+      'uniform int uUseGpuSwarm;',
+      'uniform highp sampler2D uGpuSwarmTex;',
+      'uniform int uGpuSwarmWidth;',
+      'uniform int uGpuInstanceOffset;',
+      'varying vec2 vPointCellOffset;',
+      'varying float vCrowdFlash;',
+      'vec4 hgameReadCrowdPacked() {',
+      '  if (uUseGpuSwarm == 1) {',
+      '    int _gid = gl_InstanceID + uGpuInstanceOffset;',
+      '    int _w = max(1, uGpuSwarmWidth);',
+      '    int _row = _gid / _w;',
+      '    int _col = _gid - _row * _w;',
+      '    return texelFetch(uGpuSwarmTex, ivec2(_col, _row), 0);',
+      '  }',
+      '  return aCrowdPacked;',
+      '}',
+    ].join('\n');
+
+    shader.vertexShader = header + '\n' + shader.vertexShader
+      .replace(
+        '#include <begin_vertex>',
+        [
+          '#include <begin_vertex>',
+          '{',
+          '  vec4 _pInst = hgameReadCrowdPacked();',
+          '  transformed = vec3(_pInst.x, uCharHeight * 0.5 * uCrowdScale + uCrowdBaseY + aCrowdY, _pInst.y);',
+          '  float _absW = abs(_pInst.w);',
+          '  float _status = floor(_absW / 16384.0);',
+          '  vCrowdFlash = (_pInst.w < 0.0 && _status < 0.5) ? 4.0 : _status;',
+          '  vec2 _toCam = (cameraPosition - modelMatrix[3].xyz).xz - _pInst.xy;',
+          '  float _az = dot(_toCam, _toCam) > 0.0 ? atan(_toCam.x, _toCam.y) : 0.0;',
+          '  float _rel = fract((_az - _pInst.z) * 0.15915494309 + 1.0);',
+          '  float _col = floor(_rel * float(uImpostorCols));',
+          '  float _fPos = max(0.0, _absW - _status * 16384.0 - 1.0);',
+          '  float _row = floor(clamp(_fPos / max(1.0, float(uVatHeight)), 0.0, 0.9999) * float(uImpostorRows));',
+          '  vPointCellOffset = vec2(_col / float(uImpostorCols), (float(uImpostorRows - 1) - _row) / float(uImpostorRows));',
+          '}',
+        ].join('\n'),
+      )
+      .replace(
+        'gl_PointSize = size;',
+        'gl_PointSize = clamp(size * uPointSizeScale, 2.0, 24.0);',
+      );
+
+    shader.fragmentShader = [
+      'varying vec2 vPointCellOffset;',
+      'varying float vCrowdFlash;',
+      'uniform int uImpostorCols;',
+      'uniform int uImpostorRows;',
+    ].join('\n') + '\n' + shader.fragmentShader
+      .replace(
+        '#include <map_particle_fragment>',
+        [
+          '#ifdef USE_MAP',
+          '  vec2 _cellUv = vec2(gl_PointCoord.x / float(uImpostorCols), (1.0 - gl_PointCoord.y) / float(uImpostorRows));',
+          '  vec4 mapTexel = texture2D(map, vPointCellOffset + _cellUv, 2.0);',
+          '  diffuseColor *= mapTexel;',
+          '#endif',
+        ].join('\n'),
+      )
+      .replace('#include <alphatest_fragment>', '// LOD4 GL_POINTS: discard disabled for sub-pixel anti-flicker');
+  };
+  material.needsUpdate = true;
+  return material;
+}
+
+/**
  * @typedef {object} BoneVatCrowd3DOptions
  * @property {import('./helpers.js').Model3DAsset | null} [asset=null] Loaded asset (`scene` + `animations`).
  * @property {import('./helpers.js').Model3DObject | null} [root=null] Alternative Object3D root.
@@ -1186,12 +1470,18 @@ export function createBoneVatCrowd3D(THREE, {
   vatData = null,
   lod0Geometry = null,
   lod1Geometry = null,
+  lod2Geometry = null,
+  lod3Geometry = null,
   material = null,
   impostorTexture = null,
   impostorCols = 8,
   impostorRows = 8,
   capacity = 20000,
   sampleFps = 30,
+  lodMode = '3lod',
+  qualityTier = 'pc',
+  bucketLimits = null,
+  screenThresholds = null,
   lod1Distance = 25,
   lod2Distance = 80,
   lodHysteresis = 0.1,
@@ -1201,7 +1491,11 @@ export function createBoneVatCrowd3D(THREE, {
   scale = 1,
   castShadow = false,
   receiveShadow = true,
+  lod4PointFallbackBillboard = false,
+  mobileMacroBatch = false,
 } = {}) {
+  const is5Lod = lodMode === 't5-5lod' || lod2Geometry !== null || lod3Geometry !== null || bucketLimits !== null || screenThresholds !== null || Boolean(mobileMacroBatch);
+  const lodCount = is5Lod ? 5 : 3;
   if (!THREE?.Mesh || !THREE?.BufferGeometry || !THREE?.InstancedBufferGeometry || !THREE?.InstancedBufferAttribute || !THREE?.Group) {
     throw new TypeError('createBoneVatCrowd3D requires THREE.Mesh, Group, BufferGeometry, InstancedBufferGeometry, InstancedBufferAttribute');
   }
@@ -1270,6 +1564,9 @@ export function createBoneVatCrowd3D(THREE, {
   }
 
   const rawLod1Geom = lod1Geometry ?? buildSimplifiedLodGeometry(THREE, rawLod0Geom);
+  const rawLod2Geom = is5Lod
+    ? (lod2Geometry ?? buildSimplifiedLodGeometry(THREE, rawLod0Geom, { gridResolution: 6 }))
+    : null;
 
   const scaleUniform = { value: Number.isFinite(scale) ? scale : 1 };
   const baseYUniform = { value: Number.isFinite(baseY) ? baseY : 0 };
@@ -1277,7 +1574,7 @@ export function createBoneVatCrowd3D(THREE, {
   const useGpuSwarmUniform = { value: 0 };
   const gpuSwarmTexUniform = { value: vatTexture };
   const gpuSwarmWidthUniform = { value: 1 };
-  const gpuOffsetUniforms = [{ value: 0 }, { value: 0 }, { value: 0 }];
+  const gpuOffsetUniforms = Array.from({ length: lodCount }, () => ({ value: 0 }));
 
   const srcMat = material ?? (Array.isArray(baseMesh?.material) ? baseMesh.material[0] : baseMesh?.material);
   const makeBaseMat = () => (srcMat?.clone ? srcMat.clone() : new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0.05 }));
@@ -1285,7 +1582,7 @@ export function createBoneVatCrowd3D(THREE, {
   const lod0Mat = patchBoneVatMaterial(makeBaseMat(), {
     vatTexture,
     vatHeight: baked.height,
-    singleBoneOnly: false,
+    maxBoneWeights: 4,
     scaleUniform,
     baseYUniform,
     useGpuSwarmUniform,
@@ -1297,7 +1594,7 @@ export function createBoneVatCrowd3D(THREE, {
   const lod1Mat = patchBoneVatMaterial(makeBaseMat(), {
     vatTexture,
     vatHeight: baked.height,
-    singleBoneOnly: true,
+    maxBoneWeights: is5Lod ? 2 : 1,
     scaleUniform,
     baseYUniform,
     useGpuSwarmUniform,
@@ -1314,14 +1611,18 @@ export function createBoneVatCrowd3D(THREE, {
     srcMat?.color?.getHex?.() ?? 0x7fd4b8,
   );
   const effectiveImpostorTex = impostorTexture ?? ownedImpostorTex;
-  const lod2Mat = patchImpostorMaterial(new THREE.MeshStandardMaterial({
+  const charH = Math.max(0.5, baked.bounds?.size?.y || 1.8);
+  const charW = Math.max(0.4, Math.max(baked.bounds?.size?.x || 1.0, baked.bounds?.size?.z || 1.0));
+
+  const impostorBaseMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: effectiveImpostorTex,
     alphaTest: 0.25,
     side: THREE.DoubleSide ?? 2,
     roughness: 0.85,
     metalness: 0.0,
-  }), {
+  });
+  const impostorLodMat = patchImpostorMaterial(impostorBaseMat, {
     impostorCols,
     impostorRows,
     vatHeight: baked.height,
@@ -1330,63 +1631,145 @@ export function createBoneVatCrowd3D(THREE, {
     useGpuSwarmUniform,
     gpuSwarmTexUniform,
     gpuSwarmWidthUniform,
-    gpuInstanceOffsetUniform: gpuOffsetUniforms[2],
+    gpuInstanceOffsetUniform: gpuOffsetUniforms[is5Lod ? 3 : 2],
   });
 
-  const packedBuffers = [
-    new Float32Array(capacity * 4),
-    new Float32Array(capacity * 4),
-    new Float32Array(capacity * 4),
-  ];
+  const lod2Mat = is5Lod
+    ? patchBoneVatMaterial(makeBaseMat(), {
+        vatTexture,
+        vatHeight: baked.height,
+        maxBoneWeights: 1,
+        disableInterpolation: true,
+        simplifiedLighting: true,
+        scaleUniform,
+        baseYUniform,
+        useGpuSwarmUniform,
+        gpuSwarmTexUniform,
+        gpuSwarmWidthUniform,
+        gpuInstanceOffsetUniform: gpuOffsetUniforms[2],
+        crossfadeUniform,
+      })
+    : impostorLodMat;
+
+  const usePointsLod4 = is5Lod && !lod4PointFallbackBillboard && typeof THREE.Points === 'function' && typeof THREE.PointsMaterial === 'function';
+  let lod4Mat = null;
+  if (is5Lod) {
+    if (usePointsLod4) {
+      lod4Mat = patchPointSpriteMaterial(new THREE.PointsMaterial({
+        color: 0xffffff,
+        map: effectiveImpostorTex,
+        size: Math.max(2, charH * 4),
+        sizeAttenuation: true,
+        transparent: false,
+      }), {
+        impostorCols,
+        impostorRows,
+        vatHeight: baked.height,
+        charHeight: charH,
+        scaleUniform,
+        baseYUniform,
+        useGpuSwarmUniform,
+        gpuSwarmTexUniform,
+        gpuSwarmWidthUniform,
+        gpuInstanceOffsetUniform: gpuOffsetUniforms[4],
+      });
+    } else {
+      lod4Mat = patchImpostorMaterial(new THREE.MeshBasicMaterial
+        ? new THREE.MeshBasicMaterial({ color: 0xffffff, map: effectiveImpostorTex, side: THREE.DoubleSide ?? 2 })
+        : new THREE.MeshStandardMaterial({ color: 0xffffff, map: effectiveImpostorTex, side: THREE.DoubleSide ?? 2, roughness: 1.0, metalness: 0.0 }),
+      {
+        impostorCols,
+        impostorRows,
+        vatHeight: baked.height,
+        scaleUniform,
+        baseYUniform,
+        useGpuSwarmUniform,
+        gpuSwarmTexUniform,
+        gpuSwarmWidthUniform,
+        gpuInstanceOffsetUniform: gpuOffsetUniforms[4],
+      });
+    }
+  }
+
+  const packedBuffers = Array.from({ length: lodCount }, () => new Float32Array(capacity * 4));
   const packedAttrs = packedBuffers.map((buf) => {
     const attr = new THREE.InstancedBufferAttribute(buf, 4);
     if (THREE.DynamicDrawUsage !== undefined) attr.setUsage?.(THREE.DynamicDrawUsage);
     return attr;
   });
   const packedUpdates = packedBuffers.map(() => createInstanceUpdateRanges(4));
-  const yBuffers = [
-    new Float32Array(capacity),
-    new Float32Array(capacity),
-    new Float32Array(capacity),
-  ];
+  const yBuffers = Array.from({ length: lodCount }, () => new Float32Array(capacity));
   const yAttrs = yBuffers.map((buf) => {
     const attr = new THREE.InstancedBufferAttribute(buf, 1);
     if (THREE.DynamicDrawUsage !== undefined) attr.setUsage?.(THREE.DynamicDrawUsage);
     return attr;
   });
   const yUpdates = yBuffers.map(() => createInstanceUpdateRanges(1));
-  const initializedRows = new Uint32Array(3);
-  const initializedYRows = new Uint32Array(3);
-  const yEverUsed = new Uint8Array(3);
+  const initializedRows = new Uint32Array(lodCount);
+  const initializedYRows = new Uint32Array(lodCount);
+  const yEverUsed = new Uint8Array(lodCount);
   let packingIncomplete = false;
 
-  const instGeo0 = makeInstancedStaticGeometry(THREE, rawLod0Geom, false, packedAttrs[0], yAttrs[0]);
-  const instGeo1 = makeInstancedStaticGeometry(THREE, rawLod1Geom, true, packedAttrs[1], yAttrs[1]);
+  const instGeo0 = makeInstancedStaticGeometry(THREE, rawLod0Geom, 4, packedAttrs[0], yAttrs[0]);
+  const instGeo1 = makeInstancedStaticGeometry(THREE, rawLod1Geom, is5Lod ? 2 : 1, packedAttrs[1], yAttrs[1]);
 
-  const charH = Math.max(0.5, baked.bounds?.size?.y || 1.8);
-  const charW = Math.max(0.4, Math.max(baked.bounds?.size?.x || 1.0, baked.bounds?.size?.z || 1.0));
-  const instGeo2 = new THREE.InstancedBufferGeometry();
-  const quadPos = new Float32Array([
-    -charW * 0.5, 0, 0,
-    charW * 0.5, 0, 0,
-    charW * 0.5, charH, 0,
-    -charW * 0.5, charH, 0,
-  ]);
-  const quadNorm = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
-  const quadUv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
-  instGeo2.setAttribute('position', new THREE.BufferAttribute(quadPos, 3));
-  instGeo2.setAttribute('normal', new THREE.BufferAttribute(quadNorm, 3));
-  instGeo2.setAttribute('uv', new THREE.BufferAttribute(quadUv, 2));
-  instGeo2.setIndex([0, 1, 2, 0, 2, 3]);
-  instGeo2.setAttribute('aCrowdPacked', packedAttrs[2]);
-  instGeo2.setAttribute('aCrowdY', yAttrs[2]);
-  instGeo2.instanceCount = 0;
+  function makeBillboardQuadGeometry(w, h, pAttr, yyAttr) {
+    const g = new THREE.InstancedBufferGeometry();
+    const qPos = new Float32Array([
+      -w * 0.5, 0, 0,
+      w * 0.5, 0, 0,
+      w * 0.5, h, 0,
+      -w * 0.5, h, 0,
+    ]);
+    const qNorm = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
+    const qUv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+    g.setAttribute('position', new THREE.BufferAttribute(qPos, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(qNorm, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(qUv, 2));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.setAttribute('aCrowdPacked', pAttr);
+    g.setAttribute('aCrowdY', yyAttr);
+    g.instanceCount = 0;
+    return g;
+  }
+
+  let instGeo2 = null;
+  let instGeo3 = null;
+  let instGeo4 = null;
+  if (is5Lod) {
+    instGeo2 = makeInstancedStaticGeometry(THREE, rawLod2Geom, 1, packedAttrs[2], yAttrs[2]);
+    instGeo3 = lod3Geometry ? makeInstancedStaticGeometry(THREE, lod3Geometry, 1, packedAttrs[3], yAttrs[3]) : buildTightImpostorGeometry(THREE, { width: charW, height: charH });
+    instGeo3.setAttribute('aCrowdPacked', packedAttrs[3]);
+    instGeo3.setAttribute('aCrowdY', yAttrs[3]);
+    instGeo3.instanceCount = 0;
+
+    if (usePointsLod4) {
+      instGeo4 = new THREE.InstancedBufferGeometry();
+      instGeo4.setAttribute('position', new THREE.BufferAttribute(new Float32Array([0, 0, 0]), 3));
+      instGeo4.setAttribute('aCrowdPacked', packedAttrs[4]);
+      instGeo4.setAttribute('aCrowdY', yAttrs[4]);
+      instGeo4.instanceCount = 0;
+    } else {
+      instGeo4 = makeBillboardQuadGeometry(charW, charH, packedAttrs[4], yAttrs[4]);
+    }
+  } else {
+    instGeo2 = makeBillboardQuadGeometry(charW, charH, packedAttrs[2], yAttrs[2]);
+  }
 
   const mesh0 = new THREE.Mesh(instGeo0, lod0Mat);
   const mesh1 = new THREE.Mesh(instGeo1, lod1Mat);
   const mesh2 = new THREE.Mesh(instGeo2, lod2Mat);
-  const lodGeometries = [instGeo0, instGeo1, instGeo2];
-  const lodMeshes = [mesh0, mesh1, mesh2];
+  const lodGeometries = is5Lod ? [instGeo0, instGeo1, instGeo2, instGeo3, instGeo4] : [instGeo0, instGeo1, instGeo2];
+  const lodMats = is5Lod ? [lod0Mat, lod1Mat, lod2Mat, impostorLodMat, lod4Mat] : [lod0Mat, lod1Mat, lod2Mat];
+  const lodMeshes = is5Lod
+    ? [
+        mesh0,
+        mesh1,
+        mesh2,
+        new THREE.Mesh(instGeo3, impostorLodMat),
+        usePointsLod4 ? new THREE.Points(instGeo4, lod4Mat) : new THREE.Mesh(instGeo4, lod4Mat),
+      ]
+    : [mesh0, mesh1, mesh2];
 
   let depthMat0 = null;
   let depthMat1 = null;
@@ -1395,7 +1778,7 @@ export function createBoneVatCrowd3D(THREE, {
     depthMat0 = patchBoneVatMaterial(new THREE.MeshDepthMaterial(depthOpts), {
       vatTexture,
       vatHeight: baked.height,
-      singleBoneOnly: false,
+      maxBoneWeights: 4,
       scaleUniform,
       baseYUniform,
       useGpuSwarmUniform,
@@ -1406,7 +1789,7 @@ export function createBoneVatCrowd3D(THREE, {
     depthMat1 = patchBoneVatMaterial(new THREE.MeshDepthMaterial(depthOpts), {
       vatTexture,
       vatHeight: baked.height,
-      singleBoneOnly: true,
+      maxBoneWeights: is5Lod ? 2 : 1,
       scaleUniform,
       baseYUniform,
       useGpuSwarmUniform,
@@ -1418,18 +1801,20 @@ export function createBoneVatCrowd3D(THREE, {
     mesh1.customDepthMaterial = depthMat1;
   }
 
-  for (const [m, idx] of [[mesh0, 0], [mesh1, 1], [mesh2, 2]]) {
+  for (let idx = 0; idx < lodMeshes.length; idx++) {
+    const m = lodMeshes[idx];
     m.name = `hgame_bone_vat_lod${idx}`;
     m.frustumCulled = false;
+    m.renderOrder = idx; // Strictly Front-to-Back (LOD0 -> LOD4) for Early-Z culling
     m.castShadow = idx < 2 ? Boolean(castShadow) : false;
-    m.receiveShadow = Boolean(receiveShadow);
+    m.receiveShadow = idx < (is5Lod ? 2 : 3) ? Boolean(receiveShadow) : false;
     m.visible = false;
-    m.userData = { ...(m.userData || {}), hgameTemporalMotion: 'bone-vat' };
+    m.userData = { ...(m.userData || {}), hgameTemporalMotion: 'bone-vat', lodTier: idx };
   }
 
   const group = new THREE.Group();
   group.name = 'hgame_bone_vat_crowd';
-  group.add(mesh0, mesh1, mesh2);
+  group.add(...lodMeshes);
 
   // Local standalone SoA slots (used when driving createBoneVatCrowd3D directly without SwarmSimulation).
   // 0 is free, 1 uses maxDistance, and 2 is a retained LOD fallback.
@@ -1442,7 +1827,10 @@ export function createBoneVatCrowd3D(THREE, {
   const clipTime = new Float32Array(capacity);
   const clipSpeed = new Float32Array(capacity).fill(1);
   const flashTimer = new Float32Array(capacity);
-  const standaloneLod = lodHysteresis > 0 ? new Uint8Array(capacity) : null;
+  const unitPriority = new Uint8Array(capacity);
+  const unitMinLod = new Uint8Array(capacity);
+  const standaloneLod = (is5Lod || lodHysteresis > 0) ? new Uint8Array(capacity) : null;
+  let priorityCount = 0;
   let swarmGenerations = null;
   let swarmLod = null;
   let swarmLodGenerations = null;
@@ -1453,6 +1841,54 @@ export function createBoneVatCrowd3D(THREE, {
   const activeIndices = new Int32Array(capacity);
   const indexInActive = new Int32Array(capacity).fill(-1);
   let activeCount = 0;
+
+  const defaultLimits = T5_CROWD_BUCKET_LIMITS[qualityTier === 'mobile' ? 'mobile' : 'pc'];
+  const effBucketLimits = is5Lod
+    ? [0, 1, 2, 3, 4].map((idx) => {
+        const rawLim = Array.isArray(bucketLimits) ? bucketLimits[idx] : defaultLimits[idx];
+        return rawLim === null || rawLim === undefined || !Number.isFinite(rawLim)
+          ? capacity
+          : Math.max(0, Math.min(capacity, rawLim | 0));
+      })
+    : [capacity, capacity, capacity];
+
+  const effScreenThresh = {
+    lod1: screenThresholds?.lod1 ?? T5_LOD_SCREEN_THRESHOLDS.lod1,
+    lod2: screenThresholds?.lod2 ?? T5_LOD_SCREEN_THRESHOLDS.lod2,
+    lod3: screenThresholds?.lod3 ?? T5_LOD_SCREEN_THRESHOLDS.lod3,
+    lod4: screenThresholds?.lod4 ?? T5_LOD_SCREEN_THRESHOLDS.lod4,
+    hysteresis: T5_LOD_SCREEN_THRESHOLDS.hysteresis,
+  };
+  const downDistSq5 = new Float64Array(4);
+  const upDistSq5 = new Float64Array(4);
+  let lastFovForThresholds = -1;
+  let lastScaleForThresholds = -1;
+
+  function refresh5LodScreenDistances(camera) {
+    const fovDeg = Number.isFinite(camera?.fov) && camera.fov > 1 && camera.fov < 179 ? camera.fov : 42;
+    const sc = Math.max(0.01, Math.abs(scaleUniform.value));
+    if (fovDeg === lastFovForThresholds && sc === lastScaleForThresholds) return;
+    lastFovForThresholds = fovDeg;
+    lastScaleForThresholds = sc;
+    const tanHalf = Math.tan((fovDeg * Math.PI) / 360);
+    const heightSpan = charH * sc;
+    const ratios = [effScreenThresh.lod1, effScreenThresh.lod2, effScreenThresh.lod3, effScreenThresh.lod4];
+    for (let k = 0; k < 4; k++) {
+      const r = Math.max(1e-4, ratios[k]);
+      const dDown = heightSpan / (2 * r * tanHalf);
+      const dUp = heightSpan / (2 * (r * effScreenThresh.hysteresis) * tanHalf);
+      downDistSq5[k] = dDown * dDown;
+      upDistSq5[k] = dUp * dUp;
+    }
+  }
+
+  const macroCfg = is5Lod && mobileMacroBatch
+    ? {
+        enabled: true,
+        minLod4Units: Math.max(1, (mobileMacroBatch.minLod4Units ?? 128) | 0),
+        groupSize: Math.max(4, Math.min(9, (mobileMacroBatch.groupSize ?? 6) | 0)),
+      }
+    : { enabled: false, minLod4Units: Infinity, groupSize: 6 };
 
   const lod1Radius = Math.abs(lod1Distance);
   const lod2Radius = Math.max(lod1Radius, lod2Distance);
@@ -1466,7 +1902,8 @@ export function createBoneVatCrowd3D(THREE, {
   const farLod1Sq = farLod1 ** 2;
   const nearLod2Sq = nearLod2 ** 2;
   const farLod2Sq = farLod2 ** 2;
-  const maxDistSq = maxDistance > 0 && Number.isFinite(maxDistance) ? maxDistance * maxDistance : Infinity;
+  const effMaxDistance = is5Lod && maxDistance === 240 ? 0 : maxDistance;
+  const maxDistSq = effMaxDistance > 0 && Number.isFinite(effMaxDistance) ? effMaxDistance * effMaxDistance : Infinity;
   const localCullRadius = Math.abs(cullRadius * scaleUniform.value);
   let worldMatrix = IDENTITY_TRANSFORM;
   let simpleGroundPlane = true;
@@ -1475,12 +1912,33 @@ export function createBoneVatCrowd3D(THREE, {
   let cullOriginX = 0, cullOriginY = 0, cullOriginZ = 0;
   let axisXSquared = 1, axisZSquared = 1, axisXZAbsDot = 0;
 
-  function selectLod(distanceSquared, previous) {
-    // Track bucket + 1 so a recycled or freshly spawned slot starts at nominal thresholds.
-    const first = previous === 0 ? lod1Sq : (previous === 1 ? farLod1Sq : nearLod1Sq);
-    if (distanceSquared < first) return 0;
-    const second = previous === 0 ? lod2Sq : (previous === 3 ? nearLod2Sq : farLod2Sq);
-    return distanceSquared < second ? 1 : 2;
+  function selectLod(distanceSquared, previous, minLodVal = 0) {
+    if (!is5Lod) {
+      // Track bucket + 1 so a recycled or freshly spawned slot starts at nominal thresholds.
+      const first = previous === 0 ? lod1Sq : (previous === 1 ? farLod1Sq : nearLod1Sq);
+      if (distanceSquared < first) return 0;
+      const second = previous === 0 ? lod2Sq : (previous === 3 ? nearLod2Sq : farLod2Sq);
+      return distanceSquared < second ? 1 : 2;
+    }
+    const prevTier = previous > 0 ? previous - 1 : -1;
+    let tier = 0;
+    for (let k = 0; k < 4; k++) {
+      const threshSq = prevTier === -1
+        ? downDistSq5[k]
+        : (prevTier <= k ? downDistSq5[k] : upDistSq5[k]);
+      if (distanceSquared >= threshSq) tier = k + 1;
+      else break;
+    }
+    return Math.max(tier, Math.min(4, minLodVal | 0));
+  }
+
+  function allocateBucket(desired, counts, overflowCounter) {
+    let b = Math.max(0, Math.min(lodCount - 1, desired | 0));
+    while (counts[b] >= effBucketLimits[b] && b < lodCount - 1) {
+      b++;
+      overflowCounter.count++;
+    }
+    return counts[b] < effBucketLimits[b] ? b : -1;
   }
 
   function prepareSwarmLod(swarm) {
@@ -1514,6 +1972,7 @@ export function createBoneVatCrowd3D(THREE, {
   function prepareVisibility(camera, culler) {
     group.updateWorldMatrix?.(true, false);
     camera?.updateWorldMatrix?.(true, false);
+    if (is5Lod) refresh5LodScreenDistances(camera);
     const m = group.matrixWorld?.elements;
     worldMatrix = m?.length >= 16 ? m : IDENTITY_TRANSFORM;
     const [xx, xy, xz, , yx, yy, yz, , zx, zy, zz, , tx, ty, tz] = worldMatrix;
@@ -1585,6 +2044,8 @@ export function createBoneVatCrowd3D(THREE, {
     clip = null,
     time = 0,
     speed = 1,
+    priority = 0,
+    minLod = 0,
   } = {}) {
     if (freeTop <= 0) return -1;
     const id = freeStack[--freeTop];
@@ -1606,8 +2067,27 @@ export function createBoneVatCrowd3D(THREE, {
     clipTime[id] = time;
     clipSpeed[id] = speed;
     flashTimer[id] = 0;
+    const pVal = Math.max(0, Math.min(255, priority | 0));
+    unitPriority[id] = pVal;
+    if (pVal > 0) priorityCount++;
+    unitMinLod[id] = Math.max(0, Math.min(lodCount - 1, minLod | 0));
     if (standaloneLod) standaloneLod[id] = 0;
     return id;
+  }
+
+  function setInstanceLodPolicy(index, { priority, minLod } = {}) {
+    if (index < 0 || index >= capacity || !activeFlags[index]) return false;
+    if (priority !== undefined) {
+      const prev = unitPriority[index];
+      const next = Math.max(0, Math.min(255, priority | 0));
+      if (prev === 0 && next > 0) priorityCount++;
+      else if (prev > 0 && next === 0) priorityCount = Math.max(0, priorityCount - 1);
+      unitPriority[index] = next;
+    }
+    if (minLod !== undefined) {
+      unitMinLod[index] = Math.max(0, Math.min(lodCount - 1, minLod | 0));
+    }
+    return true;
   }
 
   function setTransform(index, x, y, z, rY = 0) {
@@ -1666,6 +2146,11 @@ export function createBoneVatCrowd3D(THREE, {
     if (index < 0 || index >= capacity || !activeFlags[index]) return false;
     activeFlags[index] = 0;
     flashTimer[index] = 0;
+    if (unitPriority[index] > 0) {
+      unitPriority[index] = 0;
+      priorityCount = Math.max(0, priorityCount - 1);
+    }
+    unitMinLod[index] = 0;
     const slot = indexInActive[index];
     const last = --activeCount;
     if (slot !== last) {
@@ -1683,10 +2168,13 @@ export function createBoneVatCrowd3D(THREE, {
       const id = activeIndices[i];
       activeFlags[id] = 0;
       flashTimer[id] = 0;
+      unitPriority[id] = 0;
+      unitMinLod[id] = 0;
       indexInActive[id] = -1;
       freeStack[freeTop++] = id;
     }
     activeCount = 0;
+    priorityCount = 0;
     swarmGenerations = null;
     swarmLod = null;
     swarmLodGenerations = null;
@@ -1724,11 +2212,48 @@ export function createBoneVatCrowd3D(THREE, {
     packedUpdates[bucket].add(row);
   }
 
-  function commitLodBuffers(counts, totalActive) {
+  function applyMobileMacroBatch(counts) {
+    if (!is5Lod || !macroCfg.enabled) return 0;
+    const n4 = counts[4];
+    if (n4 < macroCfg.minLod4Units) return 0;
+    const g = macroCfg.groupSize;
+    const buf = packedBuffers[4];
+    const yBuf = yBuffers[4];
+    const clusters = Math.ceil(n4 / g);
+    packedUpdates[4].reset();
+    yUpdates[4].reset();
+    for (let c = 0; c < clusters; c++) {
+      const start = c * g;
+      const end = Math.min(n4, start + g);
+      const span = end - start;
+      let sx = 0, sz = 0, sy = 0;
+      for (let i = start; i < end; i++) {
+        sx += buf[i * 4];
+        sz += buf[i * 4 + 1];
+        sy += yBuf[i];
+      }
+      const inv = 1 / span;
+      const d = c * 4;
+      buf[d] = sx * inv;
+      buf[d + 1] = sz * inv;
+      buf[d + 2] = buf[start * 4 + 2];
+      buf[d + 3] = buf[start * 4 + 3];
+      packedUpdates[4].add(c);
+      if (yEverUsed[4]) {
+        yBuf[c] = sy * inv;
+        yUpdates[4].add(c);
+      }
+    }
+    counts[4] = clusters;
+    return clusters;
+  }
+
+  function commitLodBuffers(counts, totalActive, overflowedCount = 0) {
+    const macroClusterCount = applyMobileMacroBatch(counts);
     let drawCalls = 0;
     let visibleCount = 0;
     let uploadedComponents = 0;
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < lodCount; k++) {
       const n = counts[k];
       lodGeometries[k].instanceCount = n;
       lodMeshes[k].visible = n > 0;
@@ -1748,51 +2273,62 @@ export function createBoneVatCrowd3D(THREE, {
       activeCount: totalActive,
       visibleCount,
       culledCount: Math.max(0, totalActive - visibleCount),
-      lodCounts: [counts[0], counts[1], counts[2]],
+      lodCounts: counts.slice(0, lodCount),
       drawCalls,
       uploadedBytes: uploadedComponents * Float32Array.BYTES_PER_ELEMENT,
+      ...(is5Lod ? { overflowedCount, macroClusterCount, lodMode: 't5-5lod' } : {}),
     };
   }
 
   function update(dt = 0, { camera = null, culler = null } = {}) {
     useGpuSwarmUniform.value = 0;
-    gpuOffsetUniforms[0].value = 0;
-    gpuOffsetUniforms[1].value = 0;
-    gpuOffsetUniforms[2].value = 0;
+    for (let k = 0; k < lodCount; k++) gpuOffsetUniforms[k].value = 0;
 
     const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
     prepareVisibility(camera, culler);
     const hasCuller = typeof culler?.testSphere === 'function' || typeof culler?.classifySphere === 'function';
-    const lodCounts = [0, 0, 0];
+    const lodCounts = new Array(lodCount).fill(0);
+    const overflowCounter = { count: 0 };
     beginCpuPacking();
 
-    for (let a = 0; a < activeCount; a++) {
-      const id = activeIndices[a];
-      if (step > 0) {
+    if (step > 0) {
+      for (let a = 0; a < activeCount; a++) {
+        const id = activeIndices[a];
         clipTime[id] += step * clipSpeed[id];
         if (flashTimer[id] > 0) {
           flashTimer[id] = Math.max(0, flashTimer[id] - step);
         }
       }
-
-      const px = posX[id];
-      const pz = posZ[id];
-      const distSq = worldDistanceSquared(px, pz);
-      if (distSq > maxDistSq && activeFlags[id] === 1) continue;
-      if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
-
-      const bucket = selectLod(distSq, standaloneLod?.[id] ?? 0);
-      const dstSlot = lodCounts[bucket];
-      if (dstSlot >= capacity) continue;
-      lodCounts[bucket]++;
-      if (standaloneLod) standaloneLod[id] = bucket + 1;
-
-      const meta = clipList[clipIdx[id]] ?? clipList[0];
-      const framePos = computeFramePos(meta, clipTime[id]);
-      writePackedRow(bucket, dstSlot, px, pz, rotY[id], framePos, flashTimer[id], 0, posY[id]);
     }
 
-    return commitLodBuffers(lodCounts, activeCount);
+    const totalPasses = is5Lod && priorityCount > 0 ? 2 : 1;
+    for (let pass = 0; pass < totalPasses; pass++) {
+      const wantPrio = totalPasses === 2 ? (pass === 0) : null;
+      for (let a = 0; a < activeCount; a++) {
+        const id = activeIndices[a];
+        if (wantPrio !== null && ((unitPriority[id] > 0) !== wantPrio)) continue;
+
+        const px = posX[id];
+        const pz = posZ[id];
+        const distSq = worldDistanceSquared(px, pz);
+        if (distSq > maxDistSq && activeFlags[id] === 1) continue;
+        if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
+
+        const desired = selectLod(distSq, standaloneLod?.[id] ?? 0, unitMinLod[id]);
+        const bucket = is5Lod ? allocateBucket(desired, lodCounts, overflowCounter) : desired;
+        if (bucket < 0) continue;
+        const dstSlot = lodCounts[bucket];
+        if (dstSlot >= capacity) continue;
+        lodCounts[bucket]++;
+        if (standaloneLod) standaloneLod[id] = bucket + 1;
+
+        const meta = clipList[clipIdx[id]] ?? clipList[0];
+        const framePos = computeFramePos(meta, clipTime[id]);
+        writePackedRow(bucket, dstSlot, px, pz, rotY[id], framePos, flashTimer[id], 0, posY[id]);
+      }
+    }
+
+    return commitLodBuffers(lodCounts, activeCount, overflowCounter.count);
   }
 
   function syncFromSwarm(swarm, { camera = null, culler = null, clipNames = null } = {}) {
@@ -1800,9 +2336,7 @@ export function createBoneVatCrowd3D(THREE, {
       throw new TypeError('syncFromSwarm requires a SwarmSimulation');
     }
     useGpuSwarmUniform.value = 0;
-    gpuOffsetUniforms[0].value = 0;
-    gpuOffsetUniforms[1].value = 0;
-    gpuOffsetUniforms[2].value = 0;
+    for (let k = 0; k < lodCount; k++) gpuOffsetUniforms[k].value = 0;
 
     prepareVisibility(camera, culler);
     const hasCuller = typeof culler?.testSphere === 'function' || typeof culler?.classifySphere === 'function';
@@ -1816,7 +2350,10 @@ export function createBoneVatCrowd3D(THREE, {
     const sTime = swarm.animTime;
     const sFlash = swarm.flash;
     const sStatus = swarm.statusCode;
-    const lodCounts = [0, 0, 0];
+    const sPriority = is5Lod ? (swarm.priority ?? null) : null;
+    const sMinLod = is5Lod ? (swarm.minLod ?? null) : null;
+    const lodCounts = new Array(lodCount).fill(0);
+    const overflowCounter = { count: 0 };
     beginCpuPacking();
 
     let cidMap = null;
@@ -1833,7 +2370,18 @@ export function createBoneVatCrowd3D(THREE, {
     const sDur0 = clipDurs[0];
     const sInvDur0 = clipInvDurs[0];
 
-    if (typeof swarm.ensureChunks === 'function' && swarm.chunkHead) {
+    let anySwarmPriority = false;
+    if (sPriority && total > 0) {
+      const ids = swarm.activeIds;
+      for (let i = 0; i < total; i++) {
+        if (sPriority[ids[i]] > 0) {
+          anySwarmPriority = true;
+          break;
+        }
+      }
+    }
+
+    if (!is5Lod && typeof swarm.ensureChunks === 'function' && swarm.chunkHead) {
       swarm.ensureChunks();
       const cCount = swarm.chunkCount;
       const cHead = swarm.chunkHead;
@@ -1849,7 +2397,7 @@ export function createBoneVatCrowd3D(THREE, {
       const maximumLod1 = swarmLod ? farLod1 : lod1Radius;
       const minimumLod2 = swarmLod ? nearLod2 : lod2Radius;
       const maximumLod2 = swarmLod ? farLod2 : lod2Radius;
-      const maxDistRad = maxDistance > 0 && Number.isFinite(maxDistance) ? maxDistance : Infinity;
+      const maxDistRad = effMaxDistance > 0 && Number.isFinite(effMaxDistance) ? effMaxDistance : Infinity;
 
       for (let i = 0; i < chunkLimit; i++) {
         const ck = occupiedIds ? occupiedIds[i] : i;
@@ -1952,53 +2500,153 @@ export function createBoneVatCrowd3D(THREE, {
           }
         }
       }
-      return commitLodBuffers(lodCounts, total);
+      return commitLodBuffers(lodCounts, total, overflowCounter.count);
     }
 
     const ids = swarm.activeIds;
-    for (let i = 0; i < total; i++) {
-      const id = ids[i];
-      const px = sPosX[id];
-      const pz = sPosZ[id];
-      const distSq = worldDistanceSquared(px, pz);
-      if (distSq > maxDistSq) continue;
-      if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
+    const totalPasses = is5Lod && anySwarmPriority ? 2 : 1;
+    const evalUnitFrame = (id) => {
+      let framePos = sStart0;
+      let span = sSpan0;
+      let dur = sDur0;
+      let invDur = sInvDur0;
+      if (!singleClip) {
+        const cid = sClip[id];
+        const mIdx = cidMap !== null && cid < cidMap.length ? cidMap[cid] : (cid % clipCount);
+        framePos = clipStarts[mIdx];
+        span = clipSpans[mIdx];
+        dur = clipDurs[mIdx];
+        invDur = clipInvDurs[mIdx];
+      }
+      if (span > 0) {
+        const t = sTime[id];
+        let norm = t < dur && t >= 0 ? t : (t % dur);
+        if (norm < 0) norm += dur;
+        let fOff = norm * invDur * span;
+        const maxOff = span - 1e-4;
+        if (fOff > maxOff) fOff = maxOff;
+        framePos += fOff;
+      }
+      return framePos;
+    };
 
-      const bucket = selectSwarmLod(id, distSq);
-      const dstSlot = lodCounts[bucket];
-      if (dstSlot >= capacity) continue;
-      lodCounts[bucket]++;
-      rememberSwarmLod(id, bucket);
+    if (is5Lod && typeof swarm.ensureChunks === 'function' && swarm.chunkHead) {
+      swarm.ensureChunks();
+      const cCount = swarm.chunkCount;
+      const cHead = swarm.chunkHead;
+      const cNext = swarm.chunkNext;
+      const cMinX = swarm.chunkMinX;
+      const cMaxX = swarm.chunkMaxX;
+      const cMinZ = swarm.chunkMinY;
+      const cMaxZ = swarm.chunkMaxY;
+      const occupiedCount = swarm.occupiedChunkCount;
+      const occupiedIds = occupiedCount === undefined ? null : swarm.occupiedChunkIds;
+      const chunkLimit = occupiedIds ? occupiedCount : cHead.length;
+      const maxDistRad = effMaxDistance > 0 && Number.isFinite(effMaxDistance) ? effMaxDistance : Infinity;
 
-      const cid = sClip[id];
-      const mappedName = clipNames?.[cid];
-      const meta = (mappedName && clipByName.get(mappedName)) || clipList[cid % clipList.length] || clipList[0];
-      const framePos = computeFramePos(meta, sTime[id]);
-      writePackedRow(bucket, dstSlot, px, pz, sRot[id], framePos, sFlash[id], sStatus?.[id], sElev ? sElev[id] : 0);
+      for (let pass = 0; pass < totalPasses; pass++) {
+        const wantPrio = totalPasses === 2 ? (pass === 0) : null;
+        for (let i = 0; i < chunkLimit; i++) {
+          const ck = occupiedIds ? occupiedIds[i] : i;
+          if (!occupiedIds && cCount[ck] === 0) continue;
+          const minX = cMinX[ck];
+          const maxX = cMaxX[ck];
+          const minZ = cMinZ[ck];
+          const maxZ = cMaxZ[ck];
+          const cx = (minX + maxX) * 0.5;
+          const cz = (minZ + maxZ) * 0.5;
+          const halfW = (maxX - minX) * 0.5;
+          const halfD = (maxZ - minZ) * 0.5;
+          const halfDiag = Math.sqrt(halfW * halfW * axisXSquared + halfD * halfD * axisZSquared + 2 * halfW * halfD * axisXZAbsDot);
+          const chunkRadius = halfDiag + worldCullRadius;
+          const centerDist = Math.sqrt(worldDistanceSquared(cx, cz));
+          if (maxDistRad < Infinity && centerDist - chunkRadius > maxDistRad) continue;
+          const cullState = hasCuller ? classifyWorldSphere(culler, cx, cz, chunkRadius, true) : 2;
+          if (cullState === 0) continue;
+
+          const needPerUnitCull = cullState === 1 && hasCuller;
+          let id = cHead[ck];
+          while (id !== -1) {
+            if (wantPrio === null || ((sPriority[id] > 0) === wantPrio)) {
+              const px = sPosX[id];
+              const pz = sPosZ[id];
+              const distSq = worldDistanceSquared(px, pz);
+              if (distSq <= maxDistSq && (!needPerUnitCull || classifyWorldSphere(culler, px, pz, worldCullRadius) !== 0)) {
+                const prev = swarmLod && swarmLodGenerations[id] === swarmGenerations[id] ? (swarmLod[id] ?? 0) : 0;
+                const desired = selectLod(distSq, prev, sMinLod ? sMinLod[id] : 0);
+                const bucket = allocateBucket(desired, lodCounts, overflowCounter);
+                if (bucket >= 0 && lodCounts[bucket] < capacity) {
+                  const dstSlot = lodCounts[bucket]++;
+                  rememberSwarmLod(id, bucket);
+                  writePackedRow(bucket, dstSlot, px, pz, sRot[id], evalUnitFrame(id), sFlash[id], sStatus?.[id], sElev ? sElev[id] : 0);
+                }
+              }
+            }
+            id = cNext[id];
+          }
+        }
+      }
+      return commitLodBuffers(lodCounts, total, overflowCounter.count);
     }
 
-    return commitLodBuffers(lodCounts, total);
+    for (let pass = 0; pass < totalPasses; pass++) {
+      const wantPrio = totalPasses === 2 ? (pass === 0) : null;
+      for (let i = 0; i < total; i++) {
+        const id = ids[i];
+        if (wantPrio !== null && ((sPriority[id] > 0) === !wantPrio)) continue;
+        const px = sPosX[id];
+        const pz = sPosZ[id];
+        const distSq = worldDistanceSquared(px, pz);
+        if (distSq > maxDistSq) continue;
+        if (hasCuller && classifyWorldSphere(culler, px, pz, worldCullRadius) === 0) continue;
+
+        const prev = swarmLod && swarmLodGenerations[id] === swarmGenerations[id] ? (swarmLod[id] ?? 0) : 0;
+        const desired = selectLod(distSq, prev, sMinLod ? sMinLod[id] : 0);
+        const bucket = is5Lod ? allocateBucket(desired, lodCounts, overflowCounter) : desired;
+        if (bucket < 0) continue;
+        const dstSlot = lodCounts[bucket];
+        if (dstSlot >= capacity) continue;
+        lodCounts[bucket]++;
+        rememberSwarmLod(id, bucket);
+
+        writePackedRow(bucket, dstSlot, px, pz, sRot[id], evalUnitFrame(id), sFlash[id], sStatus?.[id], sElev ? sElev[id] : 0);
+      }
+    }
+
+    return commitLodBuffers(lodCounts, total, overflowCounter.count);
   }
 
-  function syncFromGpuSwarm(gpuSwarm, { lod0Count = 2000, lod1Count = 12000 } = {}) {
+  function syncFromGpuSwarm(gpuSwarm, { lod0Count = is5Lod ? 15 : 2000, lod1Count = is5Lod ? 80 : 12000, lod2Count = 1200, lod3Count = 12000 } = {}) {
     if (!gpuSwarm || !Number.isFinite(gpuSwarm.texWidth)) {
       throw new TypeError('syncFromGpuSwarm requires a GpuSwarmWebGL2 instance');
     }
     const total = Math.min(capacity, Math.max(0, gpuSwarm.count | 0));
-    const n0 = Math.min(total, Math.max(0, lod0Count | 0));
-    const n1 = Math.min(total - n0, Math.max(0, lod1Count | 0));
-    const n2 = Math.max(0, total - n0 - n1);
-    const counts = [n0, n1, n2];
+    let counts;
+    if (!is5Lod) {
+      const n0 = Math.min(total, Math.max(0, lod0Count | 0));
+      const n1 = Math.min(total - n0, Math.max(0, lod1Count | 0));
+      const n2 = Math.max(0, total - n0 - n1);
+      counts = [n0, n1, n2];
+    } else {
+      const n0 = Math.min(total, Math.min(effBucketLimits[0], Math.max(0, lod0Count | 0)));
+      const n1 = Math.min(total - n0, Math.min(effBucketLimits[1], Math.max(0, lod1Count | 0)));
+      const n2 = Math.min(total - n0 - n1, Math.min(effBucketLimits[2], Math.max(0, lod2Count | 0)));
+      const n3 = Math.min(total - n0 - n1 - n2, Math.min(effBucketLimits[3], Math.max(0, lod3Count | 0)));
+      const n4 = Math.max(0, total - n0 - n1 - n2 - n3);
+      counts = [n0, n1, n2, n3, n4];
+    }
 
     useGpuSwarmUniform.value = 1;
     gpuSwarmTexUniform.value = gpuSwarm.texture ?? vatTexture;
     gpuSwarmWidthUniform.value = Math.max(1, gpuSwarm.texWidth | 0);
-    gpuOffsetUniforms[0].value = 0;
-    gpuOffsetUniforms[1].value = n0;
-    gpuOffsetUniforms[2].value = n0 + n1;
+    let runningOffset = 0;
+    for (let k = 0; k < lodCount; k++) {
+      gpuOffsetUniforms[k].value = runningOffset;
+      runningOffset += counts[k];
+    }
 
     let drawCalls = 0;
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < lodCount; k++) {
       const n = counts[k];
       lodGeometries[k].instanceCount = n;
       lodMeshes[k].visible = n > 0;
@@ -2008,7 +2656,7 @@ export function createBoneVatCrowd3D(THREE, {
       activeCount: total,
       visibleCount: total,
       culledCount: 0,
-      lodCounts: [n0, n1, n2],
+      lodCounts: counts,
       drawCalls,
       uploadedBytes: 0,
     };
@@ -2016,19 +2664,15 @@ export function createBoneVatCrowd3D(THREE, {
 
   function applyToMaterials(fn) {
     if (typeof fn !== 'function') return;
-    fn(lod0Mat, 0);
-    fn(lod1Mat, 1);
-    fn(lod2Mat, 2);
+    for (let k = 0; k < lodCount; k++) fn(lodMats[k], k);
   }
 
   function dispose() {
     clear();
-    instGeo0.dispose?.();
-    instGeo1.dispose?.();
-    instGeo2.dispose?.();
-    lod0Mat.dispose?.();
-    lod1Mat.dispose?.();
-    lod2Mat.dispose?.();
+    for (let k = 0; k < lodCount; k++) {
+      lodGeometries[k].dispose?.();
+      lodMats[k].dispose?.();
+    }
     depthMat0?.dispose?.();
     depthMat1?.dispose?.();
     vatTexture?.dispose?.();
@@ -2039,7 +2683,10 @@ export function createBoneVatCrowd3D(THREE, {
   return {
     group,
     get mesh() { return group; },
-    lodMeshes: [mesh0, mesh1, mesh2],
+    lodMeshes,
+    lodMode: is5Lod ? 't5-5lod' : '3lod',
+    qualityTier,
+    bucketLimits: effBucketLimits,
     capacity,
     get vatTexture() { return vatTexture; },
     vatInfo: {
@@ -2053,6 +2700,7 @@ export function createBoneVatCrowd3D(THREE, {
     get count() { return activeCount; },
     getClipNames: () => clipList.map(c => c.name),
     spawn,
+    setInstanceLodPolicy,
     getTransform,
     setTransform,
     play,

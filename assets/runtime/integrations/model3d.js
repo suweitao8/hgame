@@ -8,6 +8,11 @@ export { createModelLod3D, injectDitherLodMaterial3D } from './model3d/lod.js';
 export { createAnimationBudgetAllocator, createRepresentationBudget3D } from './model3d/budget.js';
 export { createInstancedCrowd3D } from './model3d/crowd.js';
 export {
+  T5_CROWD_BUCKET_LIMITS,
+  T5_LOD_SCREEN_THRESHOLDS,
+  packCrowdInstanceBitfield,
+  unpackCrowdInstanceBitfield,
+  buildTightImpostorGeometry,
   float32ToFloat16,
   float16ToFloat32,
   bakeBoneVatData,
