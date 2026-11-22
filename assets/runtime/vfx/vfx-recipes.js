@@ -161,6 +161,7 @@ export function createEffectPlayer({
   const scratchTintOut = [1, 1, 1];
   const scratchTrailMult = [1, 1, 1];
   const scratchTrailLife = new Float32Array(4);
+  const scratchTrailPartLife = new Float32Array(4);
   let collisionResolver = /** @type {((x:number,y:number,z:number,vx:number,vy:number,vz:number)=>{hit:boolean,y?:number,nx?:number,ny?:number,nz?:number}|null) | null} */ (null);
 
   function readMagnitude(val, fallback = 0) {
@@ -234,6 +235,7 @@ export function createEffectPlayer({
       orbitalX: 0, orbitalY: 0, orbitalZ: 0, centerOffX: 0, centerOffY: 0, centerOffZ: 0,
       sizeCurve: null, sizeAffectsWidth: true,
       lifeColorCurve: null,
+      particleColorCurve: null,
       trackedSlot: -1,
     });
   }
@@ -489,6 +491,29 @@ export function createEffectPlayer({
     return out;
   }
 
+  function applyTrailLifeMod(tid, lifeT, lifeColorCurve, particleColorCurve) {
+    if ((!lifeColorCurve && !particleColorCurve) || typeof trails?.setTrailLifeMod !== 'function') return;
+    let r = 1;
+    let g = 1;
+    let b = 1;
+    let a = 1;
+    if (lifeColorCurve) {
+      evaluateColorCurve(lifeColorCurve, lifeT, scratchTrailLife);
+      r *= scratchTrailLife[0];
+      g *= scratchTrailLife[1];
+      b *= scratchTrailLife[2];
+      a *= scratchTrailLife[3];
+    }
+    if (particleColorCurve) {
+      evaluateColorCurve(particleColorCurve, lifeT, scratchTrailPartLife);
+      r *= scratchTrailPartLife[0];
+      g *= scratchTrailPartLife[1];
+      b *= scratchTrailPartLife[2];
+      a *= scratchTrailPartLife[3];
+    }
+    trails.setTrailLifeMod(tid, r, g, b, a);
+  }
+
   function allocTrailFollower(
     x0, y0, z0,
     vx, vy, vz,
@@ -500,6 +525,7 @@ export function createEffectPlayer({
     trackedSlot = -1,
     orbitalX = 0, orbitalZ = 0, centerOffY = 0,
     custom1 = null,
+    particleColorCurve = null,
   ) {
     if (!trails || typeof trails.allocTrail !== 'function') return;
     let slot = null;
@@ -612,15 +638,14 @@ export function createEffectPlayer({
     slot.sizeCurve = sizeAffectsWidth && Array.isArray(sizeCurve) ? sizeCurve : null;
     slot.sizeAffectsWidth = sizeAffectsWidth;
     slot.lifeColorCurve = Array.isArray(trailCfg.lifeColorCurve) && trailCfg.lifeColorCurve.length >= 2 ? trailCfg.lifeColorCurve : null;
+    slot.particleColorCurve = trailCfg.inheritColor && Array.isArray(particleColorCurve) && particleColorCurve.length >= 2 ? particleColorCurve : null;
     slot.trackedSlot = trackedSlot;
 
+    const initLifeT = Math.min(1, initialAge / Math.max(0.01, particleDur));
     if (slot.sizeCurve && typeof trails.setTrailWidthScale === 'function') {
-      trails.setTrailWidthScale(tid, evaluateSizeCurve(slot.sizeCurve, Math.min(1, initialAge / Math.max(0.01, particleDur))));
+      trails.setTrailWidthScale(tid, evaluateSizeCurve(slot.sizeCurve, initLifeT));
     }
-    if (slot.lifeColorCurve && typeof trails.setTrailLifeMod === 'function') {
-      evaluateColorCurve(slot.lifeColorCurve, Math.min(1, initialAge / Math.max(0.01, particleDur)), scratchTrailLife);
-      trails.setTrailLifeMod(tid, scratchTrailLife[0], scratchTrailLife[1], scratchTrailLife[2], scratchTrailLife[3]);
-    }
+    applyTrailLifeMod(tid, initLifeT, slot.lifeColorCurve, slot.particleColorCurve);
     if (initialAge > 0.005) {
       const nowT = typeof trails.getTime === 'function' ? trails.getTime() : 0;
       const tStart = Math.max(0, initialAge - trailLifetime);
@@ -1397,7 +1422,8 @@ export function createEffectPlayer({
     }
 
     if (layer.trail) {
-      const c0 = layer.colorCurve?.[0]?.[1];
+      const hasPartColCurve = Array.isArray(layer.colorCurve) && layer.colorCurve.length >= 2;
+      const c0 = (!layer.trail.inheritColor || !hasPartColCurve) ? layer.colorCurve?.[0]?.[1] : null;
       const trailTint = [
         scratchTintOut[0] * (c0 ? (c0[0] ?? 1) : 1),
         scratchTintOut[1] * (c0 ? (c0[1] ?? 1) : 1),
@@ -1442,6 +1468,7 @@ export function createEffectPlayer({
           trackedSlot,
           orbitalX, orbitalZ, centerOffY,
           sampledCustom1,
+          hasPartColCurve ? layer.colorCurve : null,
         );
       }
     }
@@ -1933,13 +1960,11 @@ export function createEffectPlayer({
           tf.trailId = -1;
           continue;
         }
+        const lifeT = Math.min(1, tf.age / Math.max(0.01, tf.duration));
         if (tf.sizeCurve && typeof trails.setTrailWidthScale === 'function') {
-          trails.setTrailWidthScale(tf.trailId, evaluateSizeCurve(tf.sizeCurve, Math.min(1, tf.age / Math.max(0.01, tf.duration))));
+          trails.setTrailWidthScale(tf.trailId, evaluateSizeCurve(tf.sizeCurve, lifeT));
         }
-        if (tf.lifeColorCurve && typeof trails.setTrailLifeMod === 'function') {
-          evaluateColorCurve(tf.lifeColorCurve, Math.min(1, tf.age / Math.max(0.01, tf.duration)), scratchTrailLife);
-          trails.setTrailLifeMod(tf.trailId, scratchTrailLife[0], scratchTrailLife[1], scratchTrailLife[2], scratchTrailLife[3]);
-        }
+        applyTrailLifeMod(tf.trailId, lifeT, tf.lifeColorCurve, tf.particleColorCurve);
         let px;
         let py;
         let pz;

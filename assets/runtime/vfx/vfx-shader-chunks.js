@@ -345,6 +345,7 @@ export const UBER_FLAG_FLIPBOOK_MAIN = 65536;
 export const UBER_FLAG_USE_DETAIL_VERTEX_OFFSET = 131072;
 export const UBER_FLAG_MAIN_SRGB = 262144;
 export const UBER_FLAG_DETAIL_SRGB = 524288;
+export const UBER_FLAG_ALPHA_OV_SRGB = 1048576;
 
 export const UBER_TEX_BIT_MAIN = 1;
 export const UBER_TEX_BIT_DETAIL = 2;
@@ -430,6 +431,7 @@ export function packUberMaterialRow(data, rowIndex, mat = {}, texRects = null) {
   if (mat.doubleSided || mat.cull === 'none' || mat.cull === 'off') flags |= UBER_FLAG_DOUBLE_SIDED;
   if (mat.mainSrgb !== false) flags |= UBER_FLAG_MAIN_SRGB;
   if (mat.detailSrgb) flags |= UBER_FLAG_DETAIL_SRGB;
+  if (mat.alphaOvSrgb) flags |= UBER_FLAG_ALPHA_OV_SRGB;
 
   const detMul = asVec4(mat.detailMultiplyChannel, 0, 0, 0, 0);
   const detAdd = asVec4(mat.detailAdditiveChannel, 0, 0, 0, 0);
@@ -807,11 +809,11 @@ vec3 vfxEvalUberRamp(
 ) {
   float v = clamp(satMain.r, 0.0, 1.0);
   float denom = max(1e-5, abs(1.0 - midHigh)) * (1.0 - midHigh < 0.0 ? -1.0 : 1.0);
-  float remappedHigh = clamp((v - midHigh) / denom, 0.0, 1.0);
-  float remappedLow = clamp((v * (remappedHigh - midLow)) / denom, 0.0, 1.0);
+  float remappedHigh = clamp(v - midHigh, 0.0, 1.0) / denom;
+  float remappedLow = (v * (remappedHigh - midLow)) / denom;
   vec3 lo = mix(lastColor, midColor, remappedLow);
   vec3 hi = mix(midColor, whiteColor, remappedHigh);
-  return mix(lo, hi, v);
+  return max(vec3(0.0), mix(lo, hi, v));
 }
 `;
 
@@ -1224,6 +1226,9 @@ vec4 vfxEvalUberFragment(
       vec2 ovUvBU = uUvB * alphaOvST.xy + alphaOvST.zw + pan1.xy * timeSec;
       vec4 ovSampleB = vfxSampleAtlasRectWrapped(atlasTex, alphaOvRect, vec2(ovUvBU.x, 1.0 - ovUvBU.y), flipV, clampOvU, clampOvV);
       ovSample = mix(ovSample, ovSampleB, flipBlend);
+    }
+    if (vfxHasFlag(flags, ${UBER_FLAG_ALPHA_OV_SRGB.toFixed(1)})) {
+      ovSample.rgb = vfxSrgbToLinear3(ovSample.rgb);
     }
     alphaOv = vfxChannelPickerAdd(ovSample, alphaOvChan);
   }
