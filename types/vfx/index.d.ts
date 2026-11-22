@@ -98,8 +98,19 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             sampleVelDisp: (row: any, t: any) => number;
             dispose: () => void;
         };
+        uberLut: {
+            texture: any;
+            data: Float32Array;
+            width: number;
+            height: number;
+            allocateRow: (cacheKey: any, matSpec: any, texRects: any) => any;
+            packRow: (rowIdx: any, matSpec: any, texRects: any) => void;
+            clear: () => void;
+            dispose: () => void;
+        } | null;
         readonly regions: Record<string, readonly number[]>;
         compileCurves: (colorCurveRaw: any, sizeCurveRaw: any, sizeYCurveRaw?: null, velocityCurveRaw?: null) => any;
+        registerUberMaterial: (matSpec: any) => any;
         setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined, options?: {
             flipV?: boolean | null;
         } | undefined) => void;
@@ -115,6 +126,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             height?: number;
             strength?: number;
         } | undefined) => void;
+        setQualityTier: (tier?: string) => void;
+        hasActiveDistortion: () => boolean;
         setWind: (wx?: number, wy?: number, wz?: number) => void;
         setEffectOffset: (slotIdx: number, x?: number, y?: number, z?: number) => void;
         emit: (opts?: object) => number;
@@ -146,25 +159,1562 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
     };
     meshVfx: {
         capacity: number;
-        registerMesh: (id: string, geometryOrObject3D: object) => boolean;
+        registerMesh: (id: string, geometryOrObject3D: object, options?: {}) => boolean;
+        registerUberMaterial: (matSpec: any) => any;
         getSurfaceSamples: (name: any) => any;
         spawn: (opts?: object) => number;
         readSlotMotion: (slotIdx: any, position: any, velocity: any) => void;
         updateSlot: (slotIdx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
         setWind: (wx?: number, wy?: number, wz?: number) => void;
         setEffectOffset: (slotIdx: any, x?: number, y?: number, z?: number) => void;
+        setAtlas: (textureOrCanvas: any, newRegions: any, options?: {}) => void;
+        setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
+            near?: number | undefined;
+            far?: number | undefined;
+            width?: number | undefined;
+            height?: number | undefined;
+            softFade?: number | undefined;
+        }) => void;
         setSceneTexture: (sceneTexture: any, { width, height }?: {
             width?: number | undefined;
             height?: number | undefined;
         }) => void;
+        setQualityTier: (tier?: string) => void;
+        hasActiveDistortion: () => boolean;
         update: (visualDt: any) => void;
         reset: () => void;
         dispose: () => void;
         getStats(): {
             capacity: number;
             activeCount: number;
+            instancedBatches: number;
             totalSpawned: number;
             registeredMeshes: number;
+        };
+    };
+    shurikenKernel: {
+        registerTexture: (key: any, tex: any) => void;
+        registerMeshGeometry: (key: any, geoOrObj: any) => void;
+        registerLayer: (layer: any, customTextures?: null) => {
+            layer: any;
+            renderMode: any;
+            renderModeId: any;
+            isNone: boolean;
+            isWarp: boolean;
+            space: string;
+            simSpeed: number;
+            meshGlobalScale: number;
+            velocityScale: number;
+            lengthScale: number;
+            alignToVelocity: boolean;
+            aspectY: number;
+            capacity: number;
+            life: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            speed: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            sizeX: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            sizeY: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            sizeZ: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            sizeCurveX: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            sizeCurveY: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            sizeCurveZ: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            rot0X: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            rot0Y: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            rot0Z: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            spinX: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            spinY: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            spinZ: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            rotCurveX: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            rotCurveY: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            rotCurveZ: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            velX: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            velY: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            velZ: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            velCurve: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            orbitalY: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            radialVel: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            forceX: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            forceY: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            forceZ: {
+                kind: string;
+                lut: Float32Array;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                min: any;
+                max: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                v?: undefined;
+            } | {
+                kind: string;
+                v: any;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+                min?: undefined;
+                max?: undefined;
+            } | null;
+            clampVel: {
+                separateAxis: boolean;
+                dampen: number;
+                limitMag: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                };
+                limitX: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                };
+                limitY: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                };
+                limitZ: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                };
+                drag: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                } | null;
+            } | null;
+            rotBySpeed: {
+                separateAxes: boolean;
+                rangeMin: number;
+                rangeMax: number;
+                curveX: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                } | null;
+                curveY: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                } | null;
+                curveZ: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                };
+            } | null;
+            inheritVelocity: {
+                mode: any;
+                multiplier: {
+                    kind: string;
+                    lut: Float32Array;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    lutMin: Float32Array;
+                    lutMax: Float32Array;
+                    lut?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    min: any;
+                    max: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    v?: undefined;
+                } | {
+                    kind: string;
+                    v: any;
+                    lut?: undefined;
+                    lutMin?: undefined;
+                    lutMax?: undefined;
+                    min?: undefined;
+                    max?: undefined;
+                };
+            } | null;
+            startColor: {
+                kind: string;
+                rgba: number[];
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+            } | {
+                kind: string;
+                lut: Float32Array;
+                rgba?: undefined;
+                min?: undefined;
+                max?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+            } | {
+                kind: string;
+                min: number[];
+                max: number[];
+                rgba?: undefined;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                rgba?: undefined;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            colorOverLifetime: {
+                kind: string;
+                rgba: number[];
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+            } | {
+                kind: string;
+                lut: Float32Array;
+                rgba?: undefined;
+                min?: undefined;
+                max?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+            } | {
+                kind: string;
+                min: number[];
+                max: number[];
+                rgba?: undefined;
+                lut?: undefined;
+                lutMin?: undefined;
+                lutMax?: undefined;
+            } | {
+                kind: string;
+                lutMin: Float32Array;
+                lutMax: Float32Array;
+                rgba?: undefined;
+                lut?: undefined;
+                min?: undefined;
+                max?: undefined;
+            };
+            customData: {
+                custom1: {
+                    kind: string;
+                    grad: {
+                        kind: string;
+                        rgba: number[];
+                        lut?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                    } | {
+                        kind: string;
+                        lut: Float32Array;
+                        rgba?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                    } | {
+                        kind: string;
+                        min: number[];
+                        max: number[];
+                        rgba?: undefined;
+                        lut?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                    } | {
+                        kind: string;
+                        lutMin: Float32Array;
+                        lutMax: Float32Array;
+                        rgba?: undefined;
+                        lut?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                    };
+                    comps?: undefined;
+                } | {
+                    kind: string;
+                    comps: ({
+                        kind: string;
+                        lut: Float32Array;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                        v?: undefined;
+                    } | {
+                        kind: string;
+                        lutMin: Float32Array;
+                        lutMax: Float32Array;
+                        lut?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                        v?: undefined;
+                    } | {
+                        kind: string;
+                        min: any;
+                        max: any;
+                        lut?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                        v?: undefined;
+                    } | {
+                        kind: string;
+                        v: any;
+                        lut?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                    })[];
+                    grad?: undefined;
+                } | null;
+                custom2: {
+                    kind: string;
+                    grad: {
+                        kind: string;
+                        rgba: number[];
+                        lut?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                    } | {
+                        kind: string;
+                        lut: Float32Array;
+                        rgba?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                    } | {
+                        kind: string;
+                        min: number[];
+                        max: number[];
+                        rgba?: undefined;
+                        lut?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                    } | {
+                        kind: string;
+                        lutMin: Float32Array;
+                        lutMax: Float32Array;
+                        rgba?: undefined;
+                        lut?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                    };
+                    comps?: undefined;
+                } | {
+                    kind: string;
+                    comps: ({
+                        kind: string;
+                        lut: Float32Array;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                        v?: undefined;
+                    } | {
+                        kind: string;
+                        lutMin: Float32Array;
+                        lutMax: Float32Array;
+                        lut?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                        v?: undefined;
+                    } | {
+                        kind: string;
+                        min: any;
+                        max: any;
+                        lut?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                        v?: undefined;
+                    } | {
+                        kind: string;
+                        v: any;
+                        lut?: undefined;
+                        lutMin?: undefined;
+                        lutMax?: undefined;
+                        min?: undefined;
+                        max?: undefined;
+                    })[];
+                    grad?: undefined;
+                } | null;
+            } | null;
+            streams: {
+                custom1: boolean;
+                custom2: boolean;
+                agePercent: boolean;
+                stableRandom: boolean;
+                uv2: boolean;
+            };
+            flipbook: any;
+            trail: any;
+            subEmitters: any;
+            mesh: any;
+            material: any;
+            renderState: {
+                transparent: boolean;
+                opaque: boolean;
+                isWarp: boolean;
+                premulAlpha: boolean;
+                blending: any;
+                blendEquation: any;
+                blendSrc: any;
+                blendDst: any;
+                blendSrcAlpha: any;
+                blendDstAlpha: any;
+                side: any;
+                depthTestIdx: number;
+                depthWrite: boolean;
+                renderOrder: number;
+            } | null;
+            gpuBuffers: {
+                geo: any;
+                arrays: {
+                    instPos: Float32Array;
+                    instRot: Float32Array;
+                    instScale: Float32Array;
+                    instVel: Float32Array;
+                    color: Float32Array;
+                    custom1: Float32Array;
+                    custom2: Float32Array;
+                    meta: Float32Array;
+                };
+                attrs: {
+                    aInstPos: any;
+                    aInstRot: any;
+                    aInstScale: any;
+                    aInstVel: any;
+                    aColor: any;
+                    aCustom1: any;
+                    aCustom2: any;
+                    aMeta: any;
+                };
+            } | null;
+            soa: {
+                cursor: number;
+                activeCount: number;
+                active: Uint8Array;
+                effectSlotId: Int32Array;
+                px: Float32Array;
+                py: Float32Array;
+                pz: Float32Array;
+                vx: Float32Array;
+                vy: Float32Array;
+                vz: Float32Array;
+                age: Float32Array;
+                life: Float32Array;
+                baseSx: Float32Array;
+                baseSy: Float32Array;
+                baseSz: Float32Array;
+                rotX: Float32Array;
+                rotY: Float32Array;
+                rotZ: Float32Array;
+                spinX: Float32Array;
+                spinY: Float32Array;
+                spinZ: Float32Array;
+                gravity: Float32Array;
+                drag: Float32Array;
+                fx: Float32Array;
+                fy: Float32Array;
+                fz: Float32Array;
+                orbitalY: Float32Array;
+                centerX: Float32Array;
+                centerZ: Float32Array;
+                noiseStr: Float32Array;
+                noiseFreq: Float32Array;
+                noisePhase: Float32Array;
+                randSize: Float32Array;
+                randColor: Float32Array;
+                randRot: Float32Array;
+                randCustom: Float32Array;
+                stableRand: Float32Array;
+                startR: Float32Array;
+                startG: Float32Array;
+                startB: Float32Array;
+                startA: Float32Array;
+                fbRow: Uint16Array;
+                trailId: Int32Array;
+                birthSeq: Float64Array;
+                ribbonTrailId: number;
+                ribbonOrder: Int32Array;
+            };
+        };
+        emitParticle: (cl: any, opts?: {}) => any;
+        setEffectTransform: (effectId: any, x: any, y: any, z: any, yaw?: number, vx?: number, vy?: number, vz?: number) => void;
+        setQualityTier: (tier?: string) => void;
+        getQualityTier: () => string;
+        setDepthTexture: (depthTex: any, { near, far, width, height }?: {
+            near?: number | undefined;
+            far?: number | undefined;
+            width?: number | undefined;
+            height?: number | undefined;
+        }) => void;
+        setSceneTexture: (sceneTex: any, { width, height }?: {
+            width?: number | undefined;
+            height?: number | undefined;
+        }) => void;
+        hasActiveWarp: () => boolean;
+        setWarpMeshesVisible: (visible: any) => void;
+        update: (dt?: number) => void;
+        reset: () => void;
+        dispose: () => void;
+        getStats: () => {
+            qualityTier: string;
+            compiledLayers: number;
+            activeParticles: number;
+            activeDrawCalls: number;
+            warpActive: number;
         };
     };
     effects: {
@@ -182,59 +1732,18 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             totalPlayed: number;
         };
     };
-    v2: {
-        registerPresetV2: (preset: any) => Readonly<{
-            schemaVersion: 2;
-            id: any;
-            name: any;
-            category: any;
-            duration: number;
-            loop: boolean;
-            boundsRadius: number;
-            emitters: any;
-        }>;
-        getPresetV2: (id: any) => any;
-        listPresetsV2: () => any[];
-        validatePresetV2: typeof validateVfxPresetV2;
-        playV2: (presetOrId: any, { x, y, z, lutOverride }?: {
-            x?: number | undefined;
-            y?: number | undefined;
-            z?: number | undefined;
-            lutOverride?: null | undefined;
-        }) => number;
-        stopV2: (uid: any) => boolean;
-        setQualityTier: (nextTier: any) => void;
-        getQualityTier: () => string;
-        setDepthTexture: (tex: any, opts?: {}) => void;
-        setGroundConfig: ({ enabled, groundY }?: {
-            enabled?: boolean | undefined;
-            groundY?: null | undefined;
-        }) => void;
-        setLutRowOverride: (rowOrNull: any) => void;
-        setEventHandler: (fn: any) => void;
-        registerTexture: (key: any, texture: any) => void;
-        registerMesh: (kind: any, geometry: any) => void;
-        getVfxMasterDefines: (matCfg: any) => Record<string, number>;
-        update: (dt?: number, cameraPos?: null) => void;
-        reset: () => void;
-        dispose: () => void;
-        getStats: () => {
-            qualityTier: string;
-            registeredPresets: number;
-            activeInstances: number;
-            activeEmitters: number;
-            activeParticles: number;
-            activeDrawCalls: number;
-            shaderVariants: any[];
-            totalSpawned: number;
-            totalRecycled: number;
-            nanCount: number;
-        };
-    };
     trails: {
         slashArc: (opts?: {}) => void;
         lightningBolt: (opts?: {}) => void;
         setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
+        setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
+            near?: number | undefined;
+            far?: number | undefined;
+            width?: number | undefined;
+            height?: number | undefined;
+            softFade?: number | undefined;
+        }) => void;
+        setTrailPoints: (trackId: any, px: any, py: any, pz: any, indices: any, startIdx: any, endIdx: any) => void;
         setAtlasRegions: (regions: Record<string, readonly number[]> | null) => void;
         setTrailWidthScale: (trackId: any, scale?: number) => void;
         allocTrail: (colorOrOpts?: number | object, width?: number | undefined) => number;
@@ -327,46 +1836,23 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         reset: () => void;
         dispose: () => void;
     };
-    setAtlas: (textureOrCanvas: object | null, newRegions?: Record<string, readonly number[]> | undefined, options?: {
-        flipV?: boolean | null;
-    } | undefined) => void;
+    setAtlas(tex: any, regions: any, opts: any): void;
     setDepthTexture(tex: any, opts: any): void;
     setSceneTexture(tex: any, opts: any): void;
+    setQualityTier(tier: any): void;
+    getQualityTier: () => string;
+    registerTexture: (key: any, tex: any) => void;
+    hasActiveWarp: () => boolean;
+    setWarpMeshesVisible: (visible: any) => void;
+    hasActiveDistortion: () => boolean;
+    renderWithDistortion: (renderer: any, targetScene: any, camera: any) => void;
     setWind(wx?: number, wy?: number, wz?: number): void;
     setCollisionResolver: (fn: any) => void;
     setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
-    registerTexture: (key: any, texture: any) => void;
-    registerMesh(kind: any, geometry: any): void;
+    registerMesh(name: any, geometry: any, options: any): boolean;
     registerEffect: (recipe: object) => object;
     playEffect: (recipeOrId: string | object, options?: object) => object | null;
     stopAllEffects: () => void;
-    registerPresetV2: (preset: any) => Readonly<{
-        schemaVersion: 2;
-        id: any;
-        name: any;
-        category: any;
-        duration: number;
-        loop: boolean;
-        boundsRadius: number;
-        emitters: any;
-    }>;
-    validatePresetV2: typeof validateVfxPresetV2;
-    listPresetsV2: () => any[];
-    playV2: (presetOrId: any, { x, y, z, lutOverride }?: {
-        x?: number | undefined;
-        y?: number | undefined;
-        z?: number | undefined;
-        lutOverride?: null | undefined;
-    }) => number;
-    stopV2: (uid: any) => boolean;
-    setQualityTier: (nextTier: any) => void;
-    getQualityTier: () => string;
-    setV2GroundConfig: ({ enabled, groundY }?: {
-        enabled?: boolean | undefined;
-        groundY?: null | undefined;
-    }) => void;
-    setV2LutRowOverride: (rowOrNull: any) => void;
-    setV2EventHandler: (fn: any) => void;
     emitHitImpact: ({ x, y, z, damage, isCrit, isHeal, isMiss, dirX, dirY, dirZ, element, numberPreset, spamGroup, follow, combination, hitstopSec, shakeIntensity, }?: {
         x?: number | undefined;
         y?: number | undefined;
@@ -456,25 +1942,22 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         meshVfx: {
             capacity: number;
             activeCount: number;
+            instancedBatches: number;
             totalSpawned: number;
             registeredMeshes: number;
         };
+        shuriken: {
+            qualityTier: string;
+            compiledLayers: number;
+            activeParticles: number;
+            activeDrawCalls: number;
+            warpActive: number;
+        };
+        shaderVariants: number;
         effects: {
             registeredCount: number;
             activeEffects: number;
             totalPlayed: number;
-        };
-        v2: {
-            qualityTier: string;
-            registeredPresets: number;
-            activeInstances: number;
-            activeEmitters: number;
-            activeParticles: number;
-            activeDrawCalls: number;
-            shaderVariants: any[];
-            totalSpawned: number;
-            totalRecycled: number;
-            nanCount: number;
         };
         trails: {
             slashCap: number;
@@ -575,7 +2058,6 @@ export const VFX_PRESETS: Readonly<{
         additive: true;
     }>;
 }>;
-import { validateVfxPresetV2 } from './vfx-v2-presets.js';
 import { VFX_EASING } from './vfx-core.js';
 import { VFX_RENDER_ORDERS } from './vfx-core.js';
 import { createVisualPrng } from './vfx-core.js';
@@ -638,27 +2120,35 @@ import { evaluateAtlasParticlePosition } from './vfx-atlas-particles.js';
 import { createAtlasParticlePool } from './vfx-atlas-particles.js';
 import { VFX_MESH_VERTEX_GLSL } from './vfx-mesh.js';
 import { VFX_MESH_FRAGMENT_GLSL } from './vfx-mesh.js';
+import { VFX_MESH_INSTANCED_VS } from './vfx-mesh.js';
+import { VFX_MESH_INSTANCED_FS } from './vfx-mesh.js';
 import { createMeshVfxPool } from './vfx-mesh.js';
+import { UBER_MAT_LUT_WIDTH } from './vfx-shader-chunks.js';
+import { UBER_MAT_LUT_ROWS } from './vfx-shader-chunks.js';
+import { UBER_SHADER_KIND } from './vfx-shader-chunks.js';
+import { VFX_CURVE_LUT_SAMPLES } from './vfx-shader-chunks.js';
+import { VFX_COMMON_GLSL } from './vfx-shader-chunks.js';
+import { VFX_VERTEX_BUS_ATTRS_GLSL } from './vfx-shader-chunks.js';
+import { VFX_VERTEX_SHELL_GLSL } from './vfx-shader-chunks.js';
+import { createUberMaterialLut } from './vfx-shader-chunks.js';
+import { compileCustomDataCurves } from './vfx-shader-chunks.js';
+import { compileCurveLut16 } from './vfx-shader-chunks.js';
+import { sampleCurveLut16 } from './vfx-shader-chunks.js';
+import { compileMinMaxCurve } from './vfx-shader-chunks.js';
+import { evaluateMinMaxCurve } from './vfx-shader-chunks.js';
+import { srgbToLinear } from './vfx-shader-chunks.js';
+import { compileMinMaxGradient } from './vfx-shader-chunks.js';
+import { evaluateMinMaxGradient } from './vfx-shader-chunks.js';
+import { registerShaderProfile } from './vfx-shader-profiles.js';
+import { getShaderProfile } from './vfx-shader-profiles.js';
+import { listShaderProfiles } from './vfx-shader-profiles.js';
+import { resolveThreeRenderState } from './vfx-shader-profiles.js';
+import { createProfileMaterial } from './vfx-shader-profiles.js';
+import { getCompiledShaderVariantCount } from './vfx-shader-profiles.js';
+import { resetCompiledShaderVariantTracker } from './vfx-shader-profiles.js';
+import { SHURIKEN_QUALITY_TIERS } from './vfx-shuriken-kernel.js';
+import { compileShurikenLayer } from './vfx-shuriken-kernel.js';
+import { createShurikenKernel } from './vfx-shuriken-kernel.js';
 import { validateVfxRecipe } from './vfx-recipes.js';
 import { createEffectPlayer } from './vfx-recipes.js';
-import { VFX_V2_SCHEMA_VERSION } from './vfx-v2-presets.js';
-import { VFX_CURVE_LUT_SAMPLES } from './vfx-v2-presets.js';
-import { VFX_V2_LUT_WIDTH } from './vfx-v2-shader.js';
-import { VFX_V2_LUT_ROWS } from './vfx-v2-shader.js';
-import { VFX_GRADIENT_LUT_NAMES } from './vfx-v2-shader.js';
-import { VFX_COLOR_MODES } from './vfx-v2-shader.js';
-import { VFX_QUALITY_TIERS } from './vfx-v2.js';
-import { VFX_V2_BENCHMARK_PRESETS } from './vfx-v2-presets.js';
-import { VFX_MASTER_VERTEX_GLSL } from './vfx-v2-shader.js';
-import { VFX_MASTER_FRAGMENT_GLSL } from './vfx-v2-shader.js';
-import { buildVfxGradientLutBytes } from './vfx-v2-shader.js';
-import { createVfxGradientLutTexture } from './vfx-v2-shader.js';
-import { createVfxV2DefaultTextures } from './vfx-v2-shader.js';
-import { createVfxV2MeshGeometries } from './vfx-v2-shader.js';
-import { getVfxMasterDefines } from './vfx-v2-shader.js';
-import { createVfxMasterMaterial } from './vfx-v2-shader.js';
-import { compileCurveLut16 } from './vfx-v2-presets.js';
-import { sampleCurveLut16 } from './vfx-v2-presets.js';
-import { compileVfxPresetV2 } from './vfx-v2-presets.js';
-import { createVfxV2Runtime } from './vfx-v2.js';
-export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_DISTORTION_FS, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, createMeshVfxPool, validateVfxRecipe, createEffectPlayer, VFX_V2_SCHEMA_VERSION, VFX_CURVE_LUT_SAMPLES, VFX_V2_LUT_WIDTH, VFX_V2_LUT_ROWS, VFX_GRADIENT_LUT_NAMES, VFX_COLOR_MODES, VFX_QUALITY_TIERS, VFX_V2_BENCHMARK_PRESETS, VFX_MASTER_VERTEX_GLSL, VFX_MASTER_FRAGMENT_GLSL, buildVfxGradientLutBytes, createVfxGradientLutTexture, createVfxV2DefaultTextures, createVfxV2MeshGeometries, getVfxMasterDefines, createVfxMasterMaterial, compileCurveLut16, sampleCurveLut16, validateVfxPresetV2, compileVfxPresetV2, createVfxV2Runtime };
+export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_DISTORTION_FS, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, VFX_MESH_INSTANCED_VS, VFX_MESH_INSTANCED_FS, createMeshVfxPool, UBER_MAT_LUT_WIDTH, UBER_MAT_LUT_ROWS, UBER_SHADER_KIND, VFX_CURVE_LUT_SAMPLES, VFX_COMMON_GLSL, VFX_VERTEX_BUS_ATTRS_GLSL, VFX_VERTEX_SHELL_GLSL, createUberMaterialLut, compileCustomDataCurves, compileCurveLut16, sampleCurveLut16, compileMinMaxCurve, evaluateMinMaxCurve, srgbToLinear, compileMinMaxGradient, evaluateMinMaxGradient, registerShaderProfile, getShaderProfile, listShaderProfiles, resolveThreeRenderState, createProfileMaterial, getCompiledShaderVariantCount, resetCompiledShaderVariantTracker, SHURIKEN_QUALITY_TIERS, compileShurikenLayer, createShurikenKernel, validateVfxRecipe, createEffectPlayer };

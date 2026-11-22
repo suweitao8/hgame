@@ -2,6 +2,8 @@
   "reToolchainPath": "<path-to>/toolchain.json",
   "reWorkspaceDir": "<path-to>/RE-Workspace",
   "gamesRootDir": "<path-to>/HTML",
+  "webAssetDir": "./webasset",
+  "assetBackupDir": "D:/Backups/HGame-Assets",
   "model3d": {
     "rootDir": "<path-to>/model3d",
     "comfyUiUrl": "http://127.0.0.1:8188",

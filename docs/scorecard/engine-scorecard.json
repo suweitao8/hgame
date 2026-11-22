@@ -402,7 +402,7 @@
         "proofFiles": [
           "assets/runtime/integrations/post3d/pipeline.js",
           "assets/runtime/integrations/post3d/temporal-aa.js",
-          "assets/runtime/integrations/post3d/mrt-outline.js"
+          "assets/runtime/integrations/post3d/shaders.js"
         ],
         "industrialChecklist": [
           {
@@ -416,9 +416,9 @@
             "proof": "assets/runtime/integrations/post3d/temporal-aa.js, pipeline.js"
           },
           {
-            "point": "FSR1 RCAS 自适应锐化与双附件 MRT 屏幕空间描边",
+            "point": "FSR1 RCAS 自适应锐化与自定义 GLSL3 全屏后处理扩展通道",
             "met": true,
-            "proof": "assets/runtime/integrations/post3d/mrt-outline.js, pipeline.js"
+            "proof": "assets/runtime/integrations/post3d/shaders.js, assets/runtime/integrations/post3d/fullscreen-shader.js"
           },
           {
             "point": "STP/FSR2 级亚像素 Compute 级空间时间超分重建",
@@ -426,7 +426,7 @@
             "proof": "缺失（当前为 TAA + FSR1 RCAS，非 FSR2 运动矢量亚像素重建）"
           }
         ],
-        "note": "具备 5-tap FSR1 RCAS 锐化、reactiveMaskRT TAA、LUT/高度雾及 2 附件 GLSL3 MRT 描边合成，桌面零 GL 报错。",
+        "note": "具备 5-tap FSR1 RCAS 锐化、reactiveMaskRT TAA、LUT/高度雾及可扩展 GLSL3 全屏 HDR 后处理管线，桌面零 GL 报错。",
         "benchmarkFiles": [
           "tests/browser-mobile-portrait-benchmark.mjs",
           "tests/browser-engine-v3-commercial-benchmark.mjs"

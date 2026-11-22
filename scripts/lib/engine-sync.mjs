@@ -539,8 +539,16 @@ async function syncProjectAgentsRulesBanner(projectDir, meta) {
  */
 export async function syncWebAssetRuntime({ repoRoot, webAssetDir, dryRun = false }) {
   if (!webAssetDir) return { synced: false, reason: 'no webAssetDir configured' };
-  const destDir = path.join(webAssetDir, 'public', 'runtime', 'hgame');
-  if (!(await exists(destDir))) return { synced: false, reason: `missing ${destDir}` };
+  const absRepo = path.resolve(repoRoot);
+  const absWebAsset = path.resolve(webAssetDir);
+  const destDir = path.join(absWebAsset, 'public', 'runtime', 'hgame');
+  if (!(await exists(destDir))) {
+    const rel = path.relative(absRepo, absWebAsset);
+    if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) {
+      return { synced: false, reason: 'unified webasset serves HGame assets/runtime directly', direct: true };
+    }
+    return { synced: false, reason: `missing ${destDir}` };
+  }
 
   const expected = await collectFilesMap(path.join(repoRoot, 'assets', 'runtime'), '');
   const actual = await collectFilesMap(destDir, '');

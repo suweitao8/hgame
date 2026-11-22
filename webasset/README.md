@@ -1,6 +1,6 @@
 # WebAsset · 独立角色资产库
 
-原 GameHub 的「角色」Tab 已迁移到独立项目 `C:\Users\su\Desktop\WebAsset`。
+原 GameHub 的「角色」Tab 已迁移到独立项目 `<WEBASSET_DIR>`。
 
 ## 运行
 
@@ -12,7 +12,7 @@
 
 顶部「游戏」入口：`http://127.0.0.1:4174/#games`。左侧只有搜索框和游戏列表，右侧直接显示选中的网页游戏。
 
-WebAsset 自动扫描相邻的 `C:\Users\su\Desktop\HTML` 目录（可用 `WEBASSET_HTML_GAMES_ROOT` 覆盖），优先读取项目的 `game.config.json`；没有配置的旧工程继续按原有入口规则发现。游戏使用 **4175 端口**提供运行所需的 HTML/JS/CSS/图像/音频/模型文件，**无需启动各项目自己的服务器**，也不复制、移动游戏源码。
+WebAsset 自动扫描相邻的 `<HTML_GAMES_ROOT>` 目录（可用 `WEBASSET_HTML_GAMES_ROOT` 覆盖），优先读取项目的 `game.config.json`；没有配置的旧工程继续按原有入口规则发现。游戏使用 **4175 端口**提供运行所需的 HTML/JS/CSS/图像/音频/模型文件，**无需启动各项目自己的服务器**，也不复制、移动游戏源码。
 
 所有新游戏共用 HGame 1.0：`platform/` 提供生命周期、输入、资源、存档、音频、诊断和 Host 通信；`core/` 提供 Scene/Entity/Component/Prefab、单一固定 Tick 与按需服务。平台层不接管游戏规则或 Renderer。新项目使用 `game.config.json` 声明入口和渲染类型，`engine.config.json` 声明 HGame profile 与模块；现有游戏保持各自的运行时，不强制迁移。
 

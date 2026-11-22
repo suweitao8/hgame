@@ -296,7 +296,7 @@
     </dialog>
   </main>
 
-  <main id="vfx-view" class="workspace-layout hgame-layout" aria-label="Unreal 特效资源库" hidden>
+  <main id="vfx-view" class="workspace-layout hgame-layout" aria-label="特效资源库" hidden>
     <aside class="workspace-sidebar hgame-sidebar" aria-label="特效列表">
       <div class="asset-sidebar-tools">
         <label class="character-search" for="hgame-vfx-search">
@@ -308,7 +308,7 @@
         <label class="hgame-field hgame-field-full"><span>类型</span>
           <select id="hgame-vfx-kind-filter">
             <option value="all">全部资源</option>
-            <option value="system">Unreal 特效系统</option>
+            <option value="system">特效系统</option>
             <option value="mesh">3D 特效网格</option>
             <option value="texture">贴图与序列帧</option>
           </select>
@@ -329,7 +329,7 @@
         </div>
         <div class="hgame-stage-actions">
           <div id="hgame-vfx-mode-tabs" class="character-mode-tabs" role="tablist" aria-label="特效渲染模式" hidden>
-            <button type="button" class="character-mode-tab hgame-vfx-mode-tab" role="tab" data-hgame-vfx-mode="source" aria-selected="true" tabindex="0">Unreal 还原</button>
+            <button type="button" class="character-mode-tab hgame-vfx-mode-tab" role="tab" data-hgame-vfx-mode="source" aria-selected="true" tabindex="0">源效果还原</button>
             <button type="button" class="character-mode-tab hgame-vfx-mode-tab" role="tab" data-hgame-vfx-mode="hgame" aria-selected="false" tabindex="-1">HGame 运行时</button>
           </div>
           <button id="hgame-vfx-copy-code" type="button" class="asset-model-action" hidden>复制 HGame 代码</button>
@@ -343,6 +343,22 @@
         <div class="hgame-control-group">
           <button id="hgame-vfx-play-button" type="button" class="asset-model-action">暂停</button>
           <button id="hgame-vfx-replay-button" type="button" class="asset-model-action">重播</button>
+          <label class="hgame-field" id="hgame-vfx-speed-wrap"><span>倍速</span>
+            <select id="hgame-vfx-speed">
+              <option value="0.25">0.25x</option>
+              <option value="0.5">0.5x</option>
+              <option value="1" selected>1.0x</option>
+            </select>
+          </label>
+          <label class="hgame-field" id="hgame-vfx-quality-wrap"><span>画质</span>
+            <select id="hgame-vfx-quality">
+              <option value="high" selected>High</option>
+              <option value="med">Med</option>
+              <option value="low">Low</option>
+            </select>
+          </label>
+          <label class="hgame-check" id="hgame-vfx-grid-toggle-wrap"><input id="hgame-vfx-grid-toggle" type="checkbox" checked><span>地面网格</span></label>
+          <label class="hgame-check" id="hgame-vfx-bloom-toggle-wrap"><input id="hgame-vfx-bloom-toggle" type="checkbox" checked><span>HDR Bloom</span></label>
           <label class="hgame-field" id="hgame-vfx-plane-mode-wrap" hidden><span>形态</span>
             <select id="hgame-vfx-plane-mode">
               <option value="auto">自动识别</option>
@@ -373,30 +389,6 @@
           </label>
           <label class="hgame-field"><span>色调</span><input id="hgame-vfx-color" type="color" value="#ffffff"></label>
           <label class="hgame-check"><input id="hgame-vfx-spin" type="checkbox"><span>缓慢旋转</span></label>
-          <label class="hgame-check"><input id="hgame-vfx-ground-toggle" type="checkbox" checked><span>地面参照</span></label>
-          <label class="hgame-check"><input id="hgame-vfx-bloom-toggle" type="checkbox" checked><span>HDR Bloom</span></label>
-          <label class="hgame-field"><span>倍速</span>
-            <select id="hgame-vfx-speed">
-              <option value="1">1.0x</option>
-              <option value="0.5">0.5x</option>
-              <option value="0.25">0.25x</option>
-            </select>
-          </label>
-          <label class="hgame-field"><span>画质</span>
-            <select id="hgame-vfx-quality">
-              <option value="high">High</option>
-              <option value="med">Med</option>
-              <option value="low">Low</option>
-            </select>
-          </label>
-          <label class="hgame-field"><span>LUT 染色</span>
-            <select id="hgame-vfx-lut-mode">
-              <option value="-1">默认</option>
-              <option value="3">暗红血浆</option>
-              <option value="4">鲜橙果汁</option>
-              <option value="5">青柠果汁</option>
-            </select>
-          </label>
         </div>
         <span id="hgame-vfx-status" class="hgame-status-text" role="status" aria-live="polite"></span>
       </div>

@@ -221,6 +221,10 @@ export function createHGameAssetHandler({
     return resolveExportRoot(anim23Root, 'HGAME_ANIM23_ROOT', path.resolve(siteRoot, '..', 'assets', 'anim23'));
   }
 
+  function getVfxBenchRoot() {
+    return resolveExportRoot(null, 'HGAME_VFX_BENCH_ROOT', path.join(siteRoot, 'assets', 'vfx', 'piloto_bench_8'));
+  }
+
   async function loadProceduralManifest() {
     try {
       const parsed = JSON.parse(await readFile(procManifestPath, 'utf8'));
@@ -393,6 +397,25 @@ export function createHGameAssetHandler({
           });
         } catch {
           sendJson(response, 200, { available: false, rig: 'humanoid_23', animations: [] });
+        }
+        return;
+      }
+
+      if (pathname === '/api/hgame/vfx/catalog' && request.method === 'GET') {
+        const vfxRoot = getVfxBenchRoot();
+        if (!vfxRoot) {
+          sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], textures: {}, meshes: {} });
+          return;
+        }
+        try {
+          const catalog = JSON.parse(await readFile(path.join(vfxRoot, 'catalog.json'), 'utf8'));
+          sendJson(response, 200, {
+            available: true,
+            baseUrl: '/files/hgame-vfx',
+            ...catalog,
+          });
+        } catch {
+          sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], textures: {}, meshes: {} });
         }
         return;
       }
@@ -676,6 +699,15 @@ export function createHGameAssetHandler({
           getAnim23Root(),
           '/files/hgame-anim23/',
           /^(?:[A-Za-z0-9_.\-]+\/)*[A-Za-z0-9_.\-]+\.glb$/i,
+        );
+        return;
+      }
+
+      if (pathname.startsWith('/files/hgame-vfx/')) {
+        await serveExportedFile(
+          getVfxBenchRoot(),
+          '/files/hgame-vfx/',
+          /^(?:catalog\.json|(?:recipes|textures|meshes)\/[A-Za-z0-9_.\-]+\.(json|png|jpg|jpeg|webp|glb))$/i,
         );
         return;
       }

@@ -1,7 +1,7 @@
 # 混元 3D 图生模固定工作流（Playwright CDP）
 
 > 2026-11-21 丑橘实测端到端通过：点击「立即生成」→ success 约 167 秒（1.5m 多视图）。
-> 自动化运行时与站点细节见 `C:/Users/su/.agents/skills/browser-automation/workflows/hunyuan3d/SKILL.md` 及其 playbook；本文只记 WebAsset 固定流程。
+> 自动化运行时与站点细节见 `~/.agents/skills/browser-automation/workflows/hunyuan3d/SKILL.md` 及其 playbook；本文只记 WebAsset 固定流程。
 
 ## 流程总览
 
@@ -15,7 +15,7 @@
 
 ## 环境前置（一次性）
 
-配套脚本（cd `C:/Users/su/.agents/skills/browser-automation/runtime` 执行）：
+配套脚本（cd `~/.agents/skills/browser-automation/runtime` 执行）：
 
 | 脚本 | 作用 |
 |---|---|
@@ -35,7 +35,7 @@
 # 专用 CDP Chrome（127.0.0.1:9222），在窗口里手动登录 3d.hunyuan.tencent.com
 & "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="${env:LOCALAPPDATA}\GameHub-WebCdp-CDP" "https://3d.hunyuan.tencent.com/creation"
 
-cd C:\Users\su\.agents\skills\browser-automation\runtime
+cd ~/.agents/skills/browser-automation/runtime
 npm install
 node src/run.mjs examples/smoke.mjs   # 能列出标签页即通
 ```

@@ -1,116 +1,106 @@
 # HGame Repository Rules
 
-HGame is an opinionated, **AI-Native Universal HTML5 Game Development Template & Production Kit** (**通用游戏开发模板套件**) built atop a standalone 2D/3D/UI runtime. This repository is the source of truth for the 5-pillar template kit (`UI`, `策划 Design`, `Gameplay`, `美术 Art`, `音效 Audio`), genre archetypes, project generator, underlying runtime, tests, and optional multiplayer foundation.
+HGame is an **AI-Native Universal HTML5 Game Template & Production Kit**（5 支柱：`UI` / `策划 Design` / `Gameplay` / `美术 Art` / `音效 Audio`）built atop a standalone 2D/3D/UI runtime. Gameplay and content are authored in code and declarative JSON (`src/game.design.json`, `level.json`, `story.json`).
 
-## Product scope, reviews, and priorities
+## 1. Execution, Context & Token Discipline
 
-- **Universal Template Positioning (Beyond a Bare Engine)**: General engines leave UI, game design specs, core loops, art coherence, and audio feedback unconstrained. HGame explicitly **defines and pre-builds all 5 pillars** (`assets/runtime/kit/` + `assets/archetypes/` + `docs/guides/UNIVERSAL-GAME-TEMPLATE.md`) so an AI agent or creator only supplies a game idea (`game.design.json`) and immediately gets a cohesive, playable, juicy game skeleton.
-- HGame is built for AI agents to independently develop complete HTML games. Author gameplay and content in code and declarative data (`src/game.design.json`, `level.json`, `story.json`). Use CLI tools and browser playtests to build, inspect, and verify the game end to end.
-- **Underlying Runtime Benchmark**: Keep [ENGINE-SCORECARD.md](docs/ENGINE-SCORECARD.md) strictly scoped as the **underlying runtime foundation benchmark** against Unity and Godot (fixed browser-local architecture, performance design, and rendering weights). The 5-pillar universal template layer sits *above* this runtime foundation.
-- Prioritize making a good game. Play the core loop through WebAsset early and use the playable result to guide template and engine work. Evaluate controls, feedback, pacing, progression, and a complete play session as appropriate to the game.
-- Add a publishing target only when a specific game has a concrete release request for that platform. Keep the game as HTML and handle target-specific requirements at the packaging or host integration boundary.
+### 通信与输出
+- 默认使用简洁中文回复，不复述用户需求或做无意义开场总结。
+- 简单任务直接执行；复杂任务只输出简短计划与关键进度节点。
+- 最终回复聚焦：**修改摘要、验证结果、未解决问题**；严禁粘贴已由工具展示的大段代码或完整日志，也不得以精简为由掩盖失败或未验证项。
 
-## Source of truth
+### 上下文与工具调用
+- **精确搜索、局部读取**：优先用 `rg`、`npm run api`、`npm run anim:kits` 精准定位，再按行范围读取直接相关文件；禁止盲扫全库、通读 `assets/runtime/` 底层源码或重复读取已知文件。
+- **合并与去重**：合理合并相关操作，避免反复执行相同或等价命令；对大段日志做有选择的过滤，但必须保留关键错误、退出码与诊断信息。
+- **阶段留痕**：大型任务分阶段推进，仅保留精简进度与关键约束/错误信息，不丢弃报错上下文。
 
-- Canonical runtime: `assets/runtime/`.
-- Runtime version: `assets/runtime/VERSION`; keep it consistent with `HGAME_VERSION` in `assets/runtime/index.js` and the root package version.
-- New project generator: `scripts/create-game.mjs`.
-- Engine-to-game sync: `scripts/sync-games.mjs` (`npm run sync:games -- --status|--game <slug>|--all`) syncs engine-managed files (`vendor/hgame/`, `assets/vendor/three/`, `docs/api/API-INDEX.json`, core `scripts/*.mjs`) into projects under `gamesRootDir` and records `.hgame-sync.json` without touching `src/`, `tests/`, or authored assets.
-- Lean release & WASM packager: `scripts/package-game.mjs` (`build/<id>_<version>/` + `.zip`), plus Bilibili Toy standard packager & preflight (`--target toy` / `scripts/toy-preflight.mjs`, see `.agents/skills/hgame-bilibili-toy/SKILL.md` and `docs/guides/BILIBILI-TOY-STANDARD.md`).
-- Offline media curation: `scripts/process-assets.mjs`, `scripts/process-audio.mjs`, and local 3D AI modeling/normalization (`scripts/process-model3d.mjs` + `scripts/blender-model3d.py`, configured via gitignored `.hgame.local.json`).
-- Unified off-Git asset management: `scripts/assets.mjs` (`npm run assets -- push|pull|status|verify`), storing content-addressed binaries in `HGAME_ASSET_STORE` (or `~/.hgame/asset-store`) and tracking `assets.manifest.json` in Git while `.gitignore` excludes heavy art/audio binaries.
-- Integrated WebAsset workstation & art asset SQLite database: `webasset/` (`npm run webasset`, serving `/runtime/hgame/` directly from `assets/runtime/`). Character assets, HGame media, PBR/CN libraries, and caches live under gitignored `webasset/assets/`, `webasset/public/assets/`, `webasset/hgame-assets-cn/{raw,built}/`, `webasset/.cache/`, and `webasset/data/assets.db` (Node built-in `node:sqlite`, managed via `npm run assets:db -- sync|status|search|verify|export-json`). Deduplicated CAS + SQLite hot backups live in `assetBackupDir` (`.hgame.local.json`, default `D:/Backups/HGame-Assets`) via `npm run assets:backup -- backup|verify|list|restore|prune`.
-- Starter projects: `assets/template/` and `assets/profiles/`.
-- Optional multiplayer workspace: `network/`; it owns its package manifest and lockfile.
-- Global HGame Skill installations and game projects are downstream consumers. Do not silently edit them while changing this repository.
+### 自适应策略与编程质量
+- **按复杂度自适应**：简单任务直接定位→修改→验证；中等任务简短分析后实施；复杂任务分步控制上下文增长。仅在并行有明显收益时启用多 Agent（必须 `Workspace: 'inherit'`），避免重复消耗 Token。
+- **先证据后修改**：不确定时先取证再行动，不做无意义猜测。修改前理清依赖，保持既有架构与风格，做最小、精准、可维护的改动；不擅自删除必要测试、校验或错误处理。
+- **风险匹配验证**：迭代期间仅跑与改动风险匹配的局部检查，避免无效重复跑测；交付前再过对应硬性门禁。
 
-## Architecture boundaries
+---
 
-1. Keep the runtime modular. A project loads only the profile and optional features declared by `engine.config.json`.
-2. `core/` owns Scene, Entity, Component, Prefab, and the single application scheduler.
-3. `platform/` owns browser services and the optional WebAsset Host protocol adapter. Game rules, AI, content, and renderers remain game-owned.
-4. `physics/` uses the pinned deterministic Rapier 0.21.0 packages. Offline/online mode never changes the selected physics backend.
-5. `lockstep/` is an optional confirmed-frame scheduler, not a complete transport, authoritative simulation, rollback, or matchmaking implementation.
-6. `network/` owns transport, room/session lifecycle, and synchronization primitives only. It must not absorb game-specific rules, AI, balance, or save data.
-7. **Minimalist Anti-Bloat UI Rule**: Follow the 4 Anti-Bloat Rules in `.agents/skills/hgame-ui-ux/SKILL.md`: **Zero-Prose** (no sentences, `<p>`/`<footer>`/subtitles, toast text bars, or instructional copy; icon + number like `HP 3` / `×12`, labels `2–4` hanzi; feedback via `createVfxSystem` + `audio.playSynth`), **Hard Button Budget** (live-canvas title `<= 1` action button and no rules button; in-game `<= 1` icon-only pause/mute button or `0` for quick runs; result `再来一局` + `<= 1` icon button; `#debug` hidden behind `` ` `` / `?debug=1`), **No Modals** (no tutorial/rules/confirm dialogs or `alert`/`confirm`/`prompt`; edge HUD `<= 10%` canvas area; whole-card clickable `<= 18` chars if cards/choices are used), and **Subtract-First Check** (omit any text/badge/button the core loop does not require). Verify via `npm run check:ui -- --dir <game-dir>` and `npm run snapshot -- <game-dir> --check-ui`.
-8. **Mobile-First Portrait & Bottom-Right Thumb-Arc Rule (竖屏手机单手右下角舒适区)**: Target mobile Bilibili Toy players in **portrait orientation** as the primary product UX (desktop PC web is only for development/testing). Anchor all primary interactive controls (`createThumbArcHud`, `createTouchControls({ buttonLayout: 'portrait-arc' })`, `mountGameShell({ portraitFirst: true })`) in a **concentric bottom-right quarter/semi-arc comfort zone** (`cy >= 0.52 * viewportHeight`, button diameter `>= 48px`). **Never** place clickable action/menu buttons in the upper half of the screen unless strictly unavoidable; keep top edges exclusively for read-only telemetry (`pointer-events: none`).
+## 2. Product Scope & Source of Truth
 
-## Public repository safety
+- **5-Pillar Template Positioning**：`assets/runtime/kit/` + `assets/archetypes/` + `docs/guides/UNIVERSAL-GAME-TEMPLATE.md` 预置 5 支柱骨架。`docs/ENGINE-SCORECARD.md` 仅作为底层运行时基准（对标 Unity/Godot），不与上层模板混用。
+- **Playable-First & Publishing Boundary**：尽早在 WebAsset 试玩核心循环并以此驱动迭代；仅在有明确发布需求时才在打包/宿主边界接入平台特性，保持游戏本体为纯 HTML。
+- **核心路径**：
+  - 运行时：`assets/runtime/`；版本文件 `assets/runtime/VERSION` 须与 `assets/runtime/index.js` 的 `HGAME_VERSION` 及根 `package.json` 一致。
+  - 项目生成与同步：`scripts/create-game.mjs`；`scripts/sync-games.mjs`（`npm run sync:games -- --status|--game <slug>|--all` 同步 `vendor/hgame/`、`assets/vendor/three/`、`docs/api/API-INDEX.json`、核心 `scripts/*.mjs` 至 `gamesRootDir` 并记录 `.hgame-sync.json`，不触碰 `src/`、`tests/` 与自制资产）。
+  - 打包与预检：`scripts/package-game.mjs`（`build/<id>_<version>/` + `.zip`）；Bilibili Toy 标准：`--target toy` / `scripts/toy-preflight.mjs`（见 `.agents/skills/hgame-bilibili-toy/SKILL.md`、`docs/guides/BILIBILI-TOY-STANDARD.md`）。
+  - 媒体与 3D 资产：`scripts/process-assets.mjs`、`scripts/process-audio.mjs`、`scripts/process-model3d.mjs` + `scripts/blender-model3d.py`（路径由 gitignored `.hgame.local.json` 配置）。
+  - 资产库与 WebAsset：`scripts/assets.mjs`（`npm run assets -- push|pull|status|verify`，`HGAME_ASSET_STORE` / `~/.hgame/asset-store`，`assets.manifest.json`）；`webasset/`（`npm run webasset`，`/runtime/hgame/` 直指 `assets/runtime/`）；SQLite 资产库 `webasset/data/assets.db`（`npm run assets:db -- sync|status|search|verify|export-json`）；热备份 `npm run assets:backup -- backup|verify|list|restore|prune`（`assetBackupDir`，默认 `D:/Backups/HGame-Assets`）。
+  - 模板与联机：`assets/template/`、`assets/profiles/`；可选联机工作区 `network/`（独立 manifest 与 lockfile）。
+  - **下游隔离**：修改 HGame 仓库时，禁止静默修改全局 Skill 安装目录或外部游戏项目。
 
-- Never add private material libraries, local Unreal exports, proprietary game assets, game dumps, reverse-engineering reports, secrets, or machine-specific paths.
-- Keep only third-party runtime files with their corresponding license notices. HGame is licensed under `Apache-2.0` (`LICENSE`); preserve Rapier's `Apache-2.0` notice (`assets/runtime/vendor/LICENSE-rapier.txt`) and Three.js's `MIT` license (`assets/optional/three/LICENSE`) when distributing those files.
-- Keep `.env.example`; never commit `.env` or credentials.
+---
 
-## Verification
+## 3. Architecture, UI/UX & Safety Boundaries
 
-- **Mandatory Self-Testing & Acceptance Gate (`npm run accept`)**: No game or feature may be marked complete without running real acceptance tests (`node scripts/accept.mjs . --webasset` inside a game project, or `npm run accept -- <game-dir> --webasset` from HGame). `accept.mjs` enforces fail-closed checks across 8 gates (`config` WebAsset allowlist & asset refs, `syntax` all `src/`/`tests/` + relative imports, `uiStatic` Anti-Bloat lint, `tests` zero-skip unit tests, `autoplay` multi-seed `bot` vs `idle` clear-rate & difficulty verifier via `check-autoplay.mjs` / `--require-autoplay`, `visual` 960×540 + 360×800 screenshots + UI/layout overflow/clipping/overlap, `playtest` real-input `tests/acceptance.mjs` scenario + multi-phase `context.auditUi(phase)` + non-finite/disposed state health, `doctor` 4 vital signs when wired, `webasset` live 4174/4175 runtime verification, optional `--package` release boot, and `tests/acceptance.json`/`build/task.json`). It stamps `build/acceptance-report.json` with `sourceDigest`; `--verify-fresh` rejects stale reports after any source edit.
-- Task acceptance: translate each requested outcome into a named criterion before implementation. Use `npm run task:check -- <task.json>` (`test`, `playtest`, `ui`, `snapshot`, `doctor`, `accept`, `autoplay`, `review`) for task-specific checks, and review any visual or experiential criteria using fresh evidence. Re-run affected checks after fixes, then audit the original task against the results. See [AI-VERIFICATION.md](docs/guides/AI-VERIFICATION.md).
-- Runtime tests: `npm test`; WebAsset & asset DB/backup tests: `npm run test:webasset`.
-- Vendored physics parity: `npm run check:physics`.
-- Network tests/check/build: run the corresponding npm command from `network/` or use the root forwarding scripts (`npm run check:all`).
-- Package a game release (`build/<id>_<version>/` + `.zip`): `npm run package:game -- <game-dir> --version <ver>`, or for Bilibili Toy platform: `npm run package:toy -- <game-dir> --version <ver> --slug <slug>` and `npm run toy:check -- <dir-or-zip>`.
-- Full engine SDK release build (`build/hgame_1_0/` + `.zip`): `npm run release`.
-- Browser profile smoke tests are optional and require `playwright-core` plus a Chromium executable.
-- Machine-readable API index: `docs/api/API-INDEX.json` (regenerate with `npm run build:api-index`); generated declarations: `types/` (`npm run build:types`). `npm run check` fails when either is stale.
-- Headless render & automated playtest verification for agents: `npm run snapshot -- <game-dir>` (PNG + JSON stats + baseline diff) and `npm run playtest -- <game-dir>` (scripted WASD/action input, FPS/stutter metrics, pixel-change & error assertions), see `docs/guides/AI-VERIFICATION.md`. Perf budgets: `npm run bench`, `npm run bench:render`, `npm run bench:render3d`.
-- Run verification before committing. Do not claim browser/device coverage when only Node tests ran.
+1. **模块化边界**：按 `engine.config.json` 声明的 profile 与可选特性按需加载。
+   - `core/`：Scene、Entity、Component、Prefab 与单应用调度器。
+   - `platform/`：浏览器服务与可选 WebAsset Host 适配；玩法、AI、内容与渲染器归属游戏侧。
+   - `physics/`：固定使用确定性 Rapier 0.21.0；离线/联机不得切换物理后端。
+   - `lockstep/`：仅提供可选确认帧调度器，不承担传输、权威仿真、回滚或匹配。
+   - `network/`：仅负责传输、房间/会话生命周期与同步原语，严禁吸收游戏规则、AI、数值或存档。
+2. **极简反臃肿 UI 铁律**（`.agents/skills/hgame-ui-ux/SKILL.md`）：
+   - **Zero-Prose**：禁止句子、`<p>`、`<footer>`、副标题、文字 Toast 或教学文案；仅用图标+数字（如 `HP 3` / `×12`）与 `2–4` 字短标签，反馈交由 `createVfxSystem` + `audio.playSynth`。
+   - **Hard Button Budget**：标题画布 `<= 1` 按钮且无规则按钮；局内 `<= 1` 图标按钮（快速局 `0`）；结算页 `再来一局` + `<= 1` 图标按钮；`#debug` 隐藏于 `` ` `` / `?debug=1`。
+   - **No Modals & Subtract-First**：禁止规则/确认弹窗与 `alert`/`confirm`/`prompt`；边缘 HUD `<= 10%` 画布面积；若用卡片选择则整卡可点且 `<= 18` 字。校验：`npm run check:ui -- --dir <game-dir>`、`npm run snapshot -- <game-dir> --check-ui`。
+3. **竖屏单手右下角舒适区（Mobile-First Portrait）**：面向手机端 Bilibili Toy 竖屏玩家为主 UX（PC 仅用于开发测试）。主交互控件（`createThumbArcHud`、`createTouchControls({ buttonLayout: 'portrait-arc' })`、`mountGameShell({ portraitFirst: true })`）必须锚定在右下角同心弧区（`cy >= 0.52 * viewportHeight`，按钮直径 `>= 48px`）。上半屏严禁放置可点击按钮（极特殊情况除外），顶部边缘仅作只读遥测（`pointer-events: none`）。
+4. **公共仓库安全**：严禁提交私有材质库、本地 Unreal 导出、专有游戏资产、游戏 dump、逆向报告、密钥或本机路径；保留 `LICENSE`（Apache-2.0）、Rapier（`assets/runtime/vendor/LICENSE-rapier.txt`）与 Three.js（`assets/optional/three/LICENSE`，MIT）声明；保留 `.env.example`，严禁提交 `.env` 或凭据。
 
-## Change discipline
+---
 
-- Preserve existing public APIs unless a breaking change is intentional and documented.
-- Update tests and `CHANGELOG.md` for runtime behavior changes.
-- Keep generated game projects self-contained; do not add CDN runtime dependencies.
-- Do not automatically migrate or rewrite existing games.
-- Never use destructive Git commands such as `reset --hard` or `clean -fd`.
-- **Develop directly on `main` (Zero Isolated Workspaces / Zero Branches)**: Develop **exclusively on `main` in the active workspace**. Creating topic/feature branches (`git checkout -b`, `git switch -c`, `git branch`) or isolated workspaces/worktrees (`git worktree`, subagent/swarm `Workspace: 'branch'` or `'share'`) is strictly **forbidden**; subagents must always use `Workspace: 'inherit'`.
-- **Single-Conversation Lock**: Only **one conversation at a time** may develop on a repository or game project. Do not run parallel/concurrent coding conversations against the same workspace.
-- **Unified WebAsset Game Management & AI Self-Service Verification (Zero User Manual Ops, No Per-Game Websites)**: All HTML5/HGame web games must be registered, managed, and previewed centrally through **WebAsset** (`http://127.0.0.1:4174/#games` lobby; isolated game runtime at `http://127.0.0.1:4175/local-games/<game-slug>/<entry>`, auto-discovered from `game.config.json` inside `WEBASSET_HTML_GAMES_ROOT`).
-  - **AI 亲自完成部署与实机核验（严禁要求用户动手操作）**：当开发、修改或交付需要试玩的游戏时，**必须由 AI 亲自执行并验证上线**——确保 `game.config.json` 严格符合 WebAsset 白名单（`id === 游戏目录名`，且仅含 `schemaVersion`、`id`、`name`、`version`、`entry`、`renderer`、`runtime`、`standalone`，禁止额外未授权键如 `quality3d` 导致 WebAsset 静默跳过）；确认 `http://127.0.0.1:4174/api/games` 已收录该游戏（若 WebAsset 未运行则由 AI 后台拉起）；并用无头浏览器实测 `http://127.0.0.1:4175/local-games/<game-slug>/<entry>` 加载就绪、零 404 与零报错。**严禁**让用户自己上传 `.zip`、拷贝文件、改配置或手动启动 WebAsset；汇报时直接给出已验证可直接点击试玩的 WebAsset 地址。
-  - **Never** launch per-game dev servers or websites (`npm start`, `npm run serve`, `python -m http.server`, Vite, or manual `scripts/preview.mjs` preview ports) during development, playtesting, or interactive browser QA—just ensure WebAsset is running and open/refresh the WebAsset entry; never copy game code into WebAsset or add extra buttons/toolbars to WebAsset. (`scripts/preview.mjs` is reserved strictly as an ephemeral internal loopback fixture for headless automated tooling such as `snapshot.mjs`, `playtest.mjs`, benchmarks, or packaged `build/` inspection.)
-- **Mandatory End-of-Conversation Stage Commit**: Every conversation that performs development or modification work **must** run verification (`npm run check`, or `npm run check:all` when touching `network/`) and create a focused stage `git commit` on `main` before completing—never leave uncommitted changes piled up across stages or conversations.
-- **Push to remote after every commit**: Whenever a remote is configured (e.g., `origin`), run `git push` immediately after each verified `git commit` on `main` so the remote stays synchronized at every milestone.
+## 4. Change Discipline, Git & WebAsset
 
-## Agent Workflow & Documentation Entry Points
+- **API 与兼容**：除非是有意且已文档化的破坏性变更，否则保持公共 API 稳定；运行时行为变更需同步更新测试与 `CHANGELOG.md`。生成项目须自包含（禁止 CDN 运行时依赖）；禁止自动迁移或重写现有游戏。
+- **严禁破坏性 Git 与分支隔离**：禁止 `git reset --hard`、`git clean -fd`。**仅在 `main` 活跃工作区直接开发**——严禁创建特性分支（`checkout -b` / `switch -c` / `branch`）、`git worktree` 或 subagent/swarm 的 `Workspace: 'branch'|'share'`（一律用 `'inherit'`）。同一时间仅允许一个会话在工作区开发（单会话锁）。
+- **WebAsset 统一托管与 AI 自验（零用户手动操作）**：
+  - 所有游戏统一由 WebAsset 注册与预览（`http://127.0.0.1:4174/#games` 大厅；运行时 `http://127.0.0.1:4175/local-games/<slug>/<entry>`，读取 `WEBASSET_HTML_GAMES_ROOT/<slug>/game.config.json`）。
+  - **禁止启动单游戏 dev server**（`npm start`、`serve`、`http.server`、Vite 或手动 `scripts/preview.mjs`；`preview.mjs` 仅限无头自动化工具或 `build/` 产物自检）；禁止把游戏代码拷贝进 WebAsset 或给 WebAsset 增改多余工具栏。
+  - **AI 亲自上线核验**：确保 `game.config.json` 中 `id === <slug>` 且仅含白名单键（`schemaVersion`、`id`、`name`、`version`、`entry`、`renderer`、`runtime`、`standalone`，严禁 `quality3d` 等未授权键导致静默跳过）；确认 `http://127.0.0.1:4174/api/games` 已收录（若离线则后台拉起 WebAsset）；无头浏览器实测 `http://127.0.0.1:4175/local-games/<slug>/<entry>` 加载就绪、零 404/报错后直接给出可玩地址。严禁让用户上传 `.zip`、拷贝文件、改配置或手动启服务。
+- **阶段提交与推送**：开发类会话完成前须通过校验（`npm run check`，涉及 `network/` 时用 `npm run check:all`），在 `main` 创建聚焦的 `git commit`，若已配置远端（如 `origin`）立即执行 `git push`。
 
-> **Zero-Blind-Scan & Zero-GUI-Editor Contract (AI-Native)**:
-> 1. **纯 AI 研发引擎 · 严禁引入人工可视化编辑器**：本引擎专为 AI Agent 自主研发设计，严禁构建或依赖人工拖拽式的 GUI 场景/关卡/材质/时间轴编辑器；所有关卡、平衡数值、剧情图、UI 栈与音画参数必须以纯文本代码、声明式 JSON 与零依赖 CLI 校验脚本表达。
-> 2. **零盲扫 API 速查**：查询引擎能力、最小接线配方、参数签名与返回值**必须优先运行 `npm run api -- --map` / `npm run api -- --recipe <kit|2d|horde|3d|ui|network>` / `npm run api -- <keyword>`**（或 `--module <name>`），严禁盲目通读 `assets/runtime/` 底层实现或 `assets/optional/three/` 源码。完成改动后优先使用 `npm run snapshot -- <game-dir>` 与 `npm run playtest -- <game-dir>` 进行无头画面与交互自检。
+---
 
-- Universal 5-Pillar Game Template Standard (UI / 策划 / Gameplay / 美术 / 音效): `docs/guides/UNIVERSAL-GAME-TEMPLATE.md`.
-- Workspace Agent skill / step-by-step runbook: `.agents/skills/hgame/SKILL.md`.
-- Clean-room reverse engineering entrypoint (read-only unencrypted data): `.agents/skills/hgame-reverse-engineering/SKILL.md` (`npm run re:extract`, `npm run re:spec`, `npm run re:eval`, `npm run re:forge`, `npm run re:doctor`, `npm run test:re`, `npm run sync:skills`; configure machine paths via gitignored `.hgame.local.json` from `.hgame.local.example.json`).
-- Clean-room spec bridge (`*.clean-spec.json` firewall & scaffolder): `.agents/skills/hgame-spec-forge/SKILL.md`.
-- **先做减法再做加法（1-1-2-1 最小切片毕业制 + 双门禁铁律）**：任何基于逆向的新游戏第一阶段只准交付 `1-1-2-1` 最小垂直切片（1 套角色与相机、1~2 把核心武器、2~3 种代表敌人、1 套 60 秒基础波次、最多 5 个核心升级）；在同时跑通 `npm run re:eval`（SI 单位归一化 + 4 项无量纲比值 + >=90 分）与 `npm run re:doctor`（30 秒实机四项生命体征全绿）之前，严禁扩充武器库、堆砌外围系统或盲目开启十万同屏二创。
-- AI execution manual & compact system cards (`01..25`): `docs/guides/USER-AND-AGENT-GUIDE.md`.
-- **Per-Game Holistic Design Docs & Doc-First / Test-After Iron Rule (每款游戏自带整体设计文档 · 改前先改文档 · 改后必测)**:
-  - Every generated game project owns and maintains its own holistic design doc suite under `docs/design/` (`GDD.md` 策划案总纲与变更记录, `ART-AND-AUDIO.md` 美术与音效设计, `UI-UX.md` UI/UX 交互设计, `LEVEL.md` 关卡与地编设计) alongside `src/game.design.json`.
-  - **禁止零敲碎打**：任何玩法、数值、美术、音效、UI/UX 或地编改动前，**必须先更新对应的 `docs/design/*.md`（及 `src/game.design.json`）与 `GDD.md` 变更记录**，再修改代码与资产；实现后必须运行 `npm run check:design`、`npm test` 与 `npm run accept`（含 `designDocs` 门禁）验证对齐。
-- Standard 5-step game workflow:
-  1. Turn the idea into a validated 5-pillar blueprint (`createBlueprintFromIdea` / `npm run blueprint:check`) and generate a standalone project inside `WEBASSET_HTML_GAMES_ROOT/<slug>` with `scripts/create-game.mjs` (`--archetype action-2d|horde-2d|arena-3d|card-ui --theme scifi|arcane|arcade|cyber|cozy|ink`, or `--design <game.design.json>`, or lower-level `--profile 2d|3d|ui`) — automatically populating `docs/design/{GDD,ART-AND-AUDIO,UI-UX,LEVEL}.md` and auto-registering `game.config.json` in WebAsset.
-  2. Generate 2D concept/sprite art **exclusively with the active LLM/Agent host's built-in image generation** (e.g., Codex `imagegen` or Antigravity `image-generator` — **never** local ComfyUI txt2img), curate sheets cleanly (`scripts/process-assets.mjs`, `--grid 1|2|3`, shadow-free actor PNGs), filter 4-variant audio cues (`scripts/process-audio.mjs`), and convert approved front art to local 3D GLBs (`npm run process:model3d -- generate --normalize --remesh --preset low` enforcing unified T5 budgets: `LOD0 <= 6,000` tris / `<= 7,500` verts [4 weights], hard cap `<= 8,000` tris / `<= 10,000` verts, `LOD1 ~1,600` tris [2 weights], `LOD2 ~350` tris [1 weight rigid], tight 6–8 tri `LOD3`, runtime `GL_POINTS` `LOD4`, `<= 65,535` 16-bit index cap; see `docs/rendering/ASSET-MODEL-LOD-SPEC.md`).
-  3. Update `docs/design/*.md` before any design/system change, then build unique gameplay & content in `src/` on top of `vendor/hgame/kit/` (`createGameSession`, `mountGameShell`, `createAudioDirector`, `getArtTheme`, `defineGameBlueprint`) and `vendor/hgame/` subsystems instead of bespoke loops or boilerplate.
-  4. Verify & run browser QA directly through **WebAsset** (`http://127.0.0.1:4174/api/games` -> `http://127.0.0.1:4175/local-games/<slug>/<entry>`, ensuring `game.config.json` passes WebAsset discovery with `id === <slug>` and no disallowed keys, starting WebAsset if offline, and never asking the user to upload zips or start servers), alongside CLI checks (`npm run check:design`, `npm test`, `npm run check:all`, `npm run blueprint:check`, `npm run check:ui`, `npm run accept`, `npm run snapshot`, `npm run playtest`).
-  5. Package the uploadable deliverable only when explicitly requested for external distribution (`scripts/package-game.mjs` -> `build/<id>_<version>/` + `.zip`).
+## 5. Verification Gates
 
-## Built-in Runtime Subsystems (Reuse Instead of Reinventing)
+- **游戏强制验收（`npm run accept`）**：任何游戏或功能完工前必须执行 `node scripts/accept.mjs . --webasset`（或根目录 `npm run accept -- <game-dir> --webasset`）。覆盖 8 项 fail-closed 门禁：`config`（WebAsset 白名单与资源引用）、`syntax`（`src/`/`tests/` 及相对导入）、`uiStatic`（反臃肿 lint）、`tests`（零跳过单测）、`autoplay`（`check-autoplay.mjs` / `--require-autoplay` 多随机种子通关率与难度）、`visual`（960×540 + 360×800 截图与溢出/裁切/重叠检查）、`playtest`（`tests/acceptance.mjs` 实机输入 + 多阶段 `context.auditUi(phase)` + 非有限/已销毁状态检查）、`doctor`（4 项生命体征）、`webasset`（4174/4175 实机校验）、可选 `--package` 与 `tests/acceptance.json`/`build/task.json`。产物写入 `build/acceptance-report.json`（含 `sourceDigest`，`--verify-fresh` 拒绝过期报告）。
+- **任务级校验**：实施前将预期结果转为命名标准；用 `npm run task:check -- <task.json>`（`test|playtest|ui|snapshot|doctor|accept|autoplay|review`）与新鲜证据（`npm run snapshot -- <game-dir>`、`npm run playtest -- <game-dir>`，见 `docs/guides/AI-VERIFICATION.md`）验证。
+- **仓库与发布命令**：
+  - `npm test`、`npm run test:webasset`、`npm run check:physics`、`npm run check`（`docs/api/API-INDEX.json` 需 `build:api-index`，`types/` 需 `build:types`，过期则报错）、`npm run check:all`（含 `network/`）、`npm run bench` / `bench:render` / `bench:render3d`、`npm run release`。
+  - 浏览器 profile 冒烟需 `playwright-core` + Chromium；仅跑 Node 测试时严禁宣称浏览器/真机已覆盖。
+  - 打包发布：`npm run package:game -- <game-dir> --version <ver>`；Bilibili Toy：`npm run package:toy -- <game-dir> --version <ver> --slug <slug>` + `npm run toy:check -- <dir-or-zip>`。
 
-- **Universal 5-Pillar Game Template Kit (`kit/`)**: `kit/blueprint.js` (`GENRE_ARCHETYPES`, `defineGameBlueprint`, `evaluateBlueprintBalance`, `createBlueprintFromIdea`), `kit/art-themes.js` (`ART_THEMES`, `STANDARD_ART_SPEC`, `getArtTheme`, `resolvePresentationPreset`), `kit/audio-director.js` (`GAME_AUDIO_EVENTS`, `createAudioDirector`), `kit/game-session.js` (`createGameSession`), `kit/game-shell-dom.js` (`mountGameShell`).
+---
 
-- **Core, Interpolation & Tags**: `index.js`, `core/application.js` (`renderAlpha`, `hitStop`, `setTimeScale`), `core/entity.js` + `core/tags.js` (`addTag`, `matchesTags`, `scene.queryTags`), `time/tween.js` (`scene.tweens`, `SpringDamper1D/2D/3D`, `damp`).
-- **2D Rendering, Lighting/Post & 10k+–150k+ Swarms**: `integrations/canvas2d.js` (`Camera2D`, `Sprite2D` with `groundShadow` + `hitFlash`, `SpriteCrowd2D` with `bindSwarm`/`bindGpuSwarm`), `integrations/webgl2d.js` (GPU-instanced 2D with 16B compact swarm shader + Canvas2D fallback), `integrations/post2d.js` (`createLighting2DState`, `setAmbientLight`, `addLight2D`/`setLights2D`, `setPost2D` offscreen Bloom/vignette/hitPulse/color grading), `animation/spritesheet.js` (`fromGrid`), `animation/player.js`, `world/tilemap.js` (`findGridPath`), `world/spatial2d.js` (`SpatialHash2D`, `ObjectPool`), `world/swarm-ecs.js` (`FlatSpatialHash2D`, `FlowField2D`, `FlatCombatECS`, `createSwarmSimulation` with 10m/12m ECS hysteresis & 3-tier separation), `world/gpu-swarm-webgl2.js` (`createGpuSwarmWebGL2` RGBA32F ping-pong FBO pure-GPU swarm).
-- **3D Rendering, Terrain, NavMesh, MegaLights & Open World**: `integrations/three.js` (`toneMapping: 'ueFilmic'`, `setSky`, `setExposure`, `setPostVolumes`), `integrations/sky3d.js`, `integrations/lighting3d.js` (`createMegaLights3D`, `createIrradianceProbeVolume3D`), `integrations/post3d.js` (SSGI/SSR, contact shadows, `createPostProcessVolumeStack`), `integrations/culling3d.js` (`createInstancedBatch3D`, `createSceneCuller3D` with 3-state `classifySphere`), `integrations/camera3d.js` (`createCameraRig3D`, `createSpringArm3D`), `integrations/model3d.js` (`createModel3DProvider`, `createInstancedCrowd3D` Vertex-VAT, `createBoneVatCrowd3D` HalfFloat Bone-VAT + 16B packed 3-LOD + `"HVAT"` `.vat.bin`, `syncFromSwarm` / `syncFromGpuSwarm`, `scripts/bake-bone-vat.mjs` / `npm run bake:vat`), `integrations/procedural-models.js` (17 procedural PBR prop/architecture shapes), `integrations/world-aligned-material.js`, `world/terrain3d.js` (`createHeightfieldTerrain3D`, `fbmNoise2D`, Rapier heightfield physics, `scatterPositions`), `world/navmesh3d.js` (`createNavMesh3D` A* + LOS smoother), `world/open-world.js` (`createWorldPartition`, `createHLODProxyGroup3D`, `createFloatingOrigin`).
-- **AI Decision Kernel (`ai/`)**: `ai/fsm.js` (`createStateMachine` zero-GC HFSM with LCA enter/exit), `ai/bt.js` (`createBehaviorTree`, `BT_STATUS`, `sequence`, `selector`, `parallel`, `inverter`, `repeater`, `cooldown`, `condition`, `action`, `wait`).
-- **Unified Quality (`low` / `medium` / `high`)**: `integrations/quality3d.js` and `renderer.setQuality('low' | 'medium' | 'high' | 'ultra')`.
-- **Cross-Platform Touch, Arcade & Split-Screen Input**: touch-first `app.input.pointers`; opt-in `HGame.createArcadeControls` + `integrations/touch-controls.js` (`mode: 'touch-only'`; P1 `WASD` + `J K L U I O` with optional `Q E`, P2 `Arrow` keys + `1..6` with optional `0 .`); split-screen via `HGame.computeSplitScreenViews` + `renderer.setViews(...)`.
-- **Commercial UI Kit & Red Dot System**: `ui/panel-stack.js` (`createPanelStack`), `ui/virtual-list.js` (`createVirtualList`), `ui/i18n.js` (`createI18n`), `ui/red-dot.js` (`HGame.createRedDotSystem` Trie + DAG) + `integrations/red-dot-dom.js` (`bindRedDotDOM`, `data-red-dot`, `data-red-dot-ack`).
-- **Spatial/Variant Audio, 0-KB Synth & Adaptive BGM**: `platform/audio.js` (4 buses + limiter, `registerCue`/`playCue` 2–4 variants, `playSynth`, `createBgm`, 3D `HRTF` + `updateListenerFromCamera`, 2D `position2D`, `setOcclusionProbe`, `registerSnapshot`/`applySnapshot`), `platform/audio/synth.js` (`createSynthSfx`, `SYNTH_PRESETS`, `synthesizeSfxPcm`), `platform/audio/bgm-synth.js` (`createProceduralBgm`, `BGM_MOODS`, `generateBgmStep`, `midiToHz`).
-- **Hardened Versioned Save Storage**: `platform/storage.js` (`createSaveStore`, `createVersionedStore` schema migrations + FNV-1a checksum tamper detection + `.bak` recovery).
-- **Zero-GC VFX & Game-Feel**: `vfx/` (`createVfxSystem`, `emitHitImpact`, `burstParticles`, `slashArc`, `lightningBolt`, `spawnTelegraph`, `setShrinkZone`, `popupNumber`, `screenPulse`, `CROWD_STATUS`, `packCrowdAnimStatus`).
-- **Deterministic Simulation Helpers**: `sim/` (`sim/rng.js` `createSeededRng`, `sim/checksum.js` `createStateChecksum` + `hashState`, `sim/script.js` `runScripted`).
+## 6. AI Workflow, Design-First & Subsystem Map
+
+- **Zero-GUI-Editor & Zero-Blind-Scan**：严禁构建或依赖拖拽式可视化编辑器。查引擎能力、最小接线配方与签名**必须先运行** `npm run api -- --map`、`npm run api -- --recipe <kit|2d|horde|3d|ui|network>` 或 `npm run api -- <keyword|--module <name>>`。
+- **核心入口文档**：`docs/guides/UNIVERSAL-GAME-TEMPLATE.md`、`.agents/skills/hgame/SKILL.md`、`docs/guides/USER-AND-AGENT-GUIDE.md`（系统卡片 `01..25`）。逆向与洁净室规范：`.agents/skills/hgame-reverse-engineering/SKILL.md`（`npm run re:extract|spec|eval|forge|doctor`、`npm run test:re`、`npm run sync:skills`）、`.agents/skills/hgame-spec-forge/SKILL.md`。
+- **1-1-2-1 最小切片门禁**：基于逆向的新游戏 Phase 1 只准交付 `1-1-2-1` 切片（1 套角色与相机、1~2 把核心武器、2~3 种敌人、1 套 60 秒波次、`<= 5` 核心升级）。在同时跑通 `npm run re:eval`（SI 单位归一化 + 4 项无量纲比值 + `>= 90` 分）与 `npm run re:doctor`（30s 四项生命体征全绿）前，严禁扩充系统或开启十万同屏二创。
+- **Doc-First / Test-After（改前先改文档）**：每款游戏维护 `docs/design/{GDD,ART-AND-AUDIO,UI-UX,LEVEL}.md` 与 `src/game.design.json`。任何玩法、数值、美术、音效、UI/UX 或地编修改前，**先更新对应 `docs/design/*.md` 与 `GDD.md` 变更记录**，再改代码与资产，随后跑 `npm run check:design`、`npm test`、`npm run accept`。
+- **5 步标准造游流**：
+  1. 蓝图与脚手架：`createBlueprintFromIdea` / `npm run blueprint:check` → `scripts/create-game.mjs`（生成至 `WEBASSET_HTML_GAMES_ROOT/<slug>`，支持 `--archetype action-2d|horde-2d|arena-3d|card-ui --theme scifi|arcane|arcade|cyber|cozy|ink`、`--design` 或 `--profile 2d|3d|ui`）。
+  2. 2D/3D/音频生产：2D 概念图与精灵表**仅使用宿主内置生图能力**（禁止本地 ComfyUI txt2img）→ `scripts/process-assets.mjs --grid 1|2|3`；4 变体音效 → `scripts/process-audio.mjs`；3D GLB → `npm run process:model3d -- generate --normalize --remesh --preset low`，严格遵守 T5 预算（`LOD0 <= 6,000` tris / `<= 7,500` verts [4w]，硬上限 `<= 8,000` tris / `<= 10,000` verts；`LOD1 ~1,600` [2w]；`LOD2 ~350` [1w]；`LOD3` 6–8 tris；`LOD4` `GL_POINTS`；16-bit 索引 `<= 65,535`；见 `docs/rendering/ASSET-MODEL-LOD-SPEC.md`）。
+  3. 更新 `docs/design/*.md`，基于 `vendor/hgame/kit/` 与内建子系统开发 `src/`（避免自造轮子）。
+  4. WebAsset 实机 QA（4174/4175）+ CLI 门禁（`check:design`、`test`、`blueprint:check`、`check:ui`、`accept`、`snapshot`、`playtest`）。
+  5. 仅在明确外部发布时用 `scripts/package-game.mjs` 打包交付。
+
+### 内建子系统索引（详细签名用 `npm run api` 查询）
+- `kit/`：`blueprint.js`、`art-themes.js`、`audio-director.js`、`game-session.js`、`game-shell-dom.js`
+- `core/` & `time/`：`index.js`、`core/application.js`（`renderAlpha`, `hitStop`, `setTimeScale`）、`core/entity.js` + `core/tags.js`、`time/tween.js`（`SpringDamper1D/2D/3D`, `damp`）
+- `2D & Swarms`：`integrations/canvas2d.js`（`Camera2D`, `Sprite2D`, `SpriteCrowd2D`）、`integrations/webgl2d.js`、`integrations/post2d.js`、`animation/{spritesheet,player}.js`、`world/{tilemap,spatial2d,swarm-ecs,gpu-swarm-webgl2}.js`
+- `3D & World`：`integrations/{three,sky3d,lighting3d,post3d,culling3d,camera3d,model3d,procedural-models,world-aligned-material,quality3d}.js`（`scripts/bake-bone-vat.mjs` / `npm run bake:vat`）、`world/{terrain3d,navmesh3d,open-world}.js`
+- `ai/`：`ai/fsm.js`（`createStateMachine`）、`ai/bt.js`（`createBehaviorTree`）
+- `Input & UI`：`app.input.pointers`、`createArcadeControls` + `integrations/touch-controls.js`（`mode: 'touch-only'`）、`computeSplitScreenViews`、`ui/{panel-stack,virtual-list,i18n,red-dot}.js`、`integrations/red-dot-dom.js`
+- `Audio, Save, VFX & Sim`：`platform/audio.js`（+ `audio/synth.js`, `audio/bgm-synth.js`）、`platform/storage.js`（`createSaveStore`, `createVersionedStore`）、`vfx/`（`createVfxSystem`, `emitHitImpact`, `slashArc`, `lightningBolt`, `spawnTelegraph`, `popupNumber`, `screenPulse`）、`sim/{rng,checksum,script}.js`
 
 ### 3D 骨骼动画调用铁律
-1. 禁止直接读取全量 `catalog.json`；编写游戏角色状态机前，必须先运行 `npm run anim:kits` 选择匹配的 L0 套件，再通过 `npm run anim:kit -- <kitId>` 获取精确文件路径。
-2. 仅当 L0 套件缺少特定交互/演出动作时，使用 `npm run anim:search` 从 L1 检索，且必须匹配角色当前的 `--style`（禁止混拼 `realistic` 与 `anime`）。
-3. 严禁在状态机中声明或检索 `turn_left / turn_right / turn_in_place` 槽位；角色转向统一由代码 `yaw` 插值 + LookAt IK 驱动。
-4. TPS（第三人称射击）或锁定视角模式必须使用 2D BlendTree 驱动下半身 8 向平移（`strafe_walk / strafe_run`，全为 IP），并通过 `animator3d.js` Avatar Mask 叠加武器上半身动作；上下瞄准仰角通过代码将 `pitch` 按比例分配到 `spine_01 / spine_02 / spine_03`，左手扶枪通过双骨 IK 吸附枪械 `leftHandGrip`。
-5. 所有人形角色均使用标准 23(+3) 骨无手指骨架，严禁在代码中硬编码引用 `spine_04/05`、`neck_02`、手指骨或 UE Twist 骨。
+1. 禁止直读全量 `catalog.json`；编写角色状态机前先运行 `npm run anim:kits` 选定 L0 套件，再以 `npm run anim:kit -- <kitId>` 获取精确路径。
+2. 仅当 L0 缺特定动作时用 `npm run anim:search` 查 L1，且必须匹配角色 `--style`（禁混 `realistic` 与 `anime`）。
+3. 严禁声明或检索 `turn_left / turn_right / turn_in_place` 槽位；转向统一由 `yaw` 插值 + LookAt IK 驱动。
+4. TPS/锁定视角必须用 2D BlendTree 驱动下半身 8 向平移（`strafe_walk / strafe_run`，全 IP）并用 `animator3d.js` Avatar Mask 叠加上半身武器动作；俯仰 `pitch` 按比例分配至 `spine_01/02/03`，左手双骨 IK 吸附 `leftHandGrip`。
+5. 人形角色统一使用标准 23(+3) 骨无手指骨架，严禁硬编码 `spine_04/05`、`neck_02`、手指骨或 UE Twist 骨。

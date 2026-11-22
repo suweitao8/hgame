@@ -10,6 +10,7 @@ export function validateVfxRecipe(recipe: object): {
 /**
  * Creates a zero-GC composite `.vfx.json` recipe player on top of HGame VFX subsystems.
  * @param {object} [options]
+ * @param {object | null} [options.shurikenKernel=null]
  * @param {object | null} [options.atlasParticles=null]
  * @param {object | null} [options.meshVfx=null]
  * @param {object | null} [options.trails=null]
@@ -22,7 +23,8 @@ export function validateVfxRecipe(recipe: object): {
  * @param {boolean} [options.is2D=false]
  * @param {ReturnType<typeof createVisualPrng>} [options.prng]
  */
-export function createEffectPlayer({ atlasParticles, meshVfx, trails, telegraphs, hitstop, shake, screenFeedback, scene, THREE, is2D, prng, }?: {
+export function createEffectPlayer({ shurikenKernel, atlasParticles, meshVfx, trails, telegraphs, hitstop, shake, screenFeedback, scene, THREE, is2D, prng, }?: {
+    shurikenKernel?: object | null;
     atlasParticles?: object | null;
     meshVfx?: object | null;
     trails?: object | null;

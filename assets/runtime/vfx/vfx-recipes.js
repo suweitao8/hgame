@@ -1,9 +1,10 @@
 import { createVisualPrng, packRgb24 } from './vfx-core.js';
 import { evaluateAtlasParticlePosition, evaluateSizeCurve } from './vfx-atlas-particles.js';
 import { VFX_DEPTH_TESTS } from './vfx-depth-state.js';
+import { SHURIKEN_QUALITY_TIERS } from './vfx-shuriken-kernel.js';
 
 const MAX_ACTIVE_EFFECTS = 128;
-const MAX_LAYERS_PER_EFFECT = 16;
+const MAX_LAYERS_PER_EFFECT = 128;
 const MAX_BURSTS_PER_LAYER = 8;
 const MAX_TRAIL_FOLLOWERS = 512;
 const MAX_TRACKED_PARTICLES = 256;
@@ -11,7 +12,7 @@ const MAX_POINT_LIGHTS = 16;
 const MAX_LOCAL_EFFECT_SLOTS = 31;
 
 const VALID_LAYER_KINDS = new Set(['particle', 'mesh', 'slash', 'lightning', 'telegraph']);
-const VALID_RENDER_MODES = new Set(['billboard', 'horizontal', 'stretched', 'vertical', 'mesh']);
+const VALID_RENDER_MODES = new Set(['billboard', 'horizontal', 'stretched', 'vertical', 'mesh', 'none']);
 const VALID_BLENDS = new Set(['alpha', 'additive', 'multiply', 'premultiply', 'distortion']);
 
 function parseColorNumber(val, fallback = 0xffffff) {
@@ -119,6 +120,7 @@ function readRange(val, fallbackMin, fallbackMax, prng) {
 /**
  * Creates a zero-GC composite `.vfx.json` recipe player on top of HGame VFX subsystems.
  * @param {object} [options]
+ * @param {object | null} [options.shurikenKernel=null]
  * @param {object | null} [options.atlasParticles=null]
  * @param {object | null} [options.meshVfx=null]
  * @param {object | null} [options.trails=null]
@@ -132,6 +134,7 @@ function readRange(val, fallbackMin, fallbackMax, prng) {
  * @param {ReturnType<typeof createVisualPrng>} [options.prng]
  */
 export function createEffectPlayer({
+  shurikenKernel = null,
   atlasParticles = null,
   meshVfx = null,
   trails = null,
@@ -253,26 +256,40 @@ export function createEffectPlayer({
       sizeMul: 1,
       hasCollision: false,
       groundY: 0, bounce: 0.45, dampen: 0.2, minSpeed: 0.15, bouncesLeft: 3,
+      clampVelocity: null,
       /** @type {Array<{ trigger?: string, effect?: string | object, probability?: number, inheritVelocity?: number, inheritColor?: boolean, inheritSize?: boolean }> | null} */
       subEmitters: null,
       subDepth: 0,
     });
   }
 
+  function createLayerState() {
+    return {
+      rateAccum: 0,
+      distAccum: 0,
+      burstCyclesDone: new Uint16Array(MAX_BURSTS_PER_LAYER),
+      burstNextTime: new Float32Array(MAX_BURSTS_PER_LAYER),
+      activeEndTimes: new Float64Array(64),
+      activeEndCursor: 0,
+      triggeredOnce: false,
+      ribbonTrailId: -1,
+      ribbonOpts: null,
+      ribbonPts: [],
+    };
+  }
+
+  function ensureSlotLayerStates(slot, count) {
+    while (slot.layers.length < count) {
+      slot.layers.push(createLayerState());
+    }
+  }
+
   // Pre-allocated composite effect slots + layer states.
   const effectSlots = [];
   for (let i = 0; i < MAX_ACTIVE_EFFECTS; i++) {
     const layers = [];
-    for (let l = 0; l < MAX_LAYERS_PER_EFFECT; l++) {
-      layers.push({
-        rateAccum: 0,
-        distAccum: 0,
-        burstCyclesDone: new Uint16Array(MAX_BURSTS_PER_LAYER),
-        burstNextTime: new Float32Array(MAX_BURSTS_PER_LAYER),
-        activeEndTimes: new Float64Array(64),
-        activeEndCursor: 0,
-        triggeredOnce: false,
-      });
+    for (let l = 0; l < 16; l++) {
+      layers.push(createLayerState());
     }
     const slot = {
       active: false,
@@ -285,6 +302,7 @@ export function createEffectPlayer({
       loop: false,
       x: 0, y: 0, z: 0,
       prevX: 0, prevY: 0, prevZ: 0,
+      followVx: 0, followVy: 0, followVz: 0,
       yaw: 0,
       scale: 1,
       subDepth: 0,
@@ -310,6 +328,7 @@ export function createEffectPlayer({
         slot.y = y;
         slot.z = z;
         slot.yaw = yaw;
+        shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, slot.followVx, slot.followVy, slot.followVz);
       },
       stop() {
         stopSlot(slot);
@@ -330,7 +349,19 @@ export function createEffectPlayer({
   function stopSlot(slot) {
     slot.active = false;
     slot.follow = null;
+    slot.followVx = 0;
+    slot.followVy = 0;
+    slot.followVz = 0;
     slot.recipe = null;
+    for (let l = 0; l < slot.layers.length; l++) {
+      const ls = slot.layers[l];
+      if (ls.ribbonTrailId >= 0 && trails?.freeTrail) {
+        trails.freeTrail(ls.ribbonTrailId);
+      }
+      ls.ribbonTrailId = -1;
+      ls.ribbonOpts = null;
+      ls.ribbonPts.length = 0;
+    }
     if (slot.localSlotIdx > 0) {
       freeLocalSlots.push(slot.localSlotIdx);
       slot.localSlotIdx = 0;
@@ -339,6 +370,29 @@ export function createEffectPlayer({
       releaseLightSlot(slot.lightSlotIdx);
       slot.lightSlotIdx = -1;
     }
+  }
+
+  function usesShurikenKernel(layer) {
+    if (!shurikenKernel || !layer) return false;
+    const kind = layer.kind ?? 'particle';
+    if (kind !== 'particle' && kind !== 'mesh') return false;
+    if (layer.useShurikenKernel === true) return true;
+    if (layer.uberMat || layer.trail?.mode === 'ribbon' || (Array.isArray(layer.subEmitters) && layer.subEmitters.some((s) => s.trigger === 'death' || s.trigger === 'collision'))) {
+      return false;
+    }
+    if (layer.shaderProfile || layer.material?.shaderProfile) return true;
+    if (layer.renderMode === 'none') return true;
+    if (layer.clampVelocity !== undefined
+      || layer.rotationBySpeed !== undefined
+      || layer.inheritVelocity !== undefined
+      || layer.size3D !== undefined
+      || layer.sizeZCurve !== undefined
+      || layer.sizeZ !== undefined
+      || layer.customData !== undefined
+      || layer.vertexStreams !== undefined) {
+      return true;
+    }
+    return false;
   }
 
   function compileRecipe(recipe) {
@@ -351,6 +405,15 @@ export function createEffectPlayer({
         ? atlasParticles.compileCurves(layer.colorCurve, layer.sizeCurve, layer.sizeYCurve ?? null, layer.velCurve ?? null)
         : 0;
       const simSpd = Math.max(0.05, Number(layer.simulationSpeed ?? 1.0));
+      const useShuriken = usesShurikenKernel(layer);
+      const _shurikenLayer = useShuriken ? shurikenKernel.registerLayer(layer) : null;
+      if (!useShuriken && layer.uberMat) {
+        if (layer._kind === 'mesh' || layer.kind === 'mesh' || layer.renderMode === 'mesh') {
+          meshVfx?.registerUberMaterial?.(layer.uberMat);
+        } else {
+          atlasParticles?.registerUberMaterial?.(layer.uberMat);
+        }
+      }
       return {
         ...layer,
         _renderState: {
@@ -364,6 +427,7 @@ export function createEffectPlayer({
         _curveRow: curveRow,
         _kind: layer.kind ?? 'particle',
         _simSpd: simSpd,
+        _shurikenLayer,
       };
     });
     return {
@@ -467,7 +531,7 @@ export function createEffectPlayer({
       lifetime: trailLifetime,
       blend: trailCfg.blend || 'additive',
       sprite: trailCfg.sprite,
-      uvRect: trailCfg.uvRect,
+      uvRect: trailCfg.uvRect ?? (trailCfg.sprite && atlasParticles?.regions?.[trailCfg.sprite]) ?? null,
     });
     if (tid < 0) return;
 
@@ -522,6 +586,7 @@ export function createEffectPlayer({
 
   function fireSubEmitters(subEmitters, triggerType, x, y, z, depth, vx = 0, vy = 0, vz = 0, tintR = 1, tintG = 1, tintB = 1) {
     if (!Array.isArray(subEmitters) || depth >= 2) return;
+    if (shurikenKernel && SHURIKEN_QUALITY_TIERS[shurikenKernel.getQualityTier()]?.skipSubEmitters) return;
     for (let i = 0; i < subEmitters.length; i++) {
       const sub = subEmitters[i];
       if (!sub || (sub.trigger || 'death') !== triggerType || !sub.effect) continue;
@@ -545,6 +610,7 @@ export function createEffectPlayer({
     x, y, z, vx, vy, vz, accelX = 0, accelZ = 0, gravity, drag,
     tintR = 1, tintG = 1, tintB = 1,
     collision = null, subEmitters = null, subDepth = 0,
+    clampVelocity = null,
     lightSlotIdx = -1, lightBaseIntensity = 0,
   }) {
     for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
@@ -577,6 +643,7 @@ export function createEffectPlayer({
         tp.dampen = collision?.dampen ?? 0.2;
         tp.minSpeed = collision?.minSpeed ?? 0.15;
         tp.bouncesLeft = collision?.maxBounces ?? 3;
+        tp.clampVelocity = clampVelocity && clampVelocity.limit > 0 ? clampVelocity : null;
         tp.subEmitters = Array.isArray(subEmitters) ? subEmitters : null;
         tp.subDepth = subDepth;
         if (lightSlotIdx >= 0 && lightSlotIdx < lightSlots.length) {
@@ -876,9 +943,10 @@ export function createEffectPlayer({
       }
     }
 
-    scratchVel[0] = vx + slot.inheritVx;
-    scratchVel[1] = vy + slot.inheritVy;
-    scratchVel[2] = vz + slot.inheritVz;
+    const iv = Number(layer.inheritVelocity ?? 0);
+    scratchVel[0] = vx + slot.inheritVx + slot.followVx * iv;
+    scratchVel[1] = vy + slot.inheritVy + slot.followVy * iv;
+    scratchVel[2] = vz + slot.inheritVz + slot.followVz * iv;
   }
 
   const scratchRowUv = [0, 0, 1, 1];
@@ -913,7 +981,7 @@ export function createEffectPlayer({
     return { flipbook: scratchRowFb, uvRect: scratchRowUv };
   }
 
-  function emitParticleOrMesh(layer, slot, initialAge = 0) {
+  function emitParticleOrMesh(layer, slot, initialAge = 0, ls = null) {
     const scale = slot.scale;
     const simSpd = layer._simSpd ?? Math.max(0.05, Number(layer.simulationSpeed ?? 1.0));
     sampleShapeAndVelocity(layer, slot, scale);
@@ -972,6 +1040,72 @@ export function createEffectPlayer({
     );
     const isLocalSpace = layer.space === 'local' && slot.localSlotIdx > 0;
 
+    if (layer._shurikenLayer && shurikenKernel) {
+      const qTier = SHURIKEN_QUALITY_TIERS[shurikenKernel.getQualityTier()];
+      if (slot.subDepth > 0 && qTier?.skipSubEmitters) return dur - clampedInitAge;
+      let emitX = scratchPos[0];
+      let emitY = scratchPos[1];
+      let emitZ = scratchPos[2];
+      let emitVx = scratchVel[0];
+      let emitVy = scratchVel[1];
+      let emitVz = scratchVel[2];
+      let cx = slot.x;
+      let cz = slot.z;
+      if (layer.space === 'local') {
+        const dx = emitX - slot.x;
+        const dy = emitY - slot.y;
+        const dz = emitZ - slot.z;
+        const c = Math.cos(slot.yaw);
+        const s = Math.sin(slot.yaw);
+        emitX = dx * c + dz * s;
+        emitY = dy;
+        emitZ = -dx * s + dz * c;
+        const vxTmp = emitVx * c + emitVz * s;
+        emitVz = -emitVx * s + emitVz * c;
+        emitVx = vxTmp;
+        cx = 0;
+        cz = 0;
+      }
+      const pIdx = shurikenKernel.emitParticle(layer._shurikenLayer, {
+        effectId: slot.id,
+        x: emitX,
+        y: emitY,
+        z: emitZ,
+        vx: emitVx,
+        vy: emitVy,
+        vz: emitVz,
+        duration: rawDur,
+        initialAge: Math.max(0, initialAge / simSpd),
+        scale,
+        gravity: (layer.gravity ?? 0) * scale,
+        drag: layer.drag ?? 0,
+        noiseStrength: readMagnitude(layer.noise?.strength, 0) * scale * simSpd,
+        noiseFreq: (layer.noise?.frequency ?? 0.5) * simSpd,
+        centerX: cx,
+        centerZ: cz,
+        inheritTintR: slot.inheritTintR,
+        inheritTintG: slot.inheritTintG,
+        inheritTintB: slot.inheritTintB,
+      });
+      if (pIdx >= 0 && Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0) {
+        fireSubEmitters(
+          layer.subEmitters,
+          'birth',
+          scratchPos[0],
+          scratchPos[1],
+          scratchPos[2],
+          slot.subDepth,
+          scratchVel[0],
+          scratchVel[1],
+          scratchVel[2],
+          scratchTintOut[0],
+          scratchTintOut[1],
+          scratchTintOut[2],
+        );
+      }
+      return dur - clampedInitAge;
+    }
+
     if (layer._kind === 'mesh' || layer.renderMode === 'mesh') {
       if (!meshVfx) return;
       const alignDir = Boolean(layer.alignToVelocity || layer.shape?.alignToDirection);
@@ -1009,6 +1143,7 @@ export function createEffectPlayer({
         sizeStart,
         meshGlobalScale: layer.meshGlobalScale ?? 1.0,
         aspectY: layer.aspectY ?? 1.0,
+        aspectZ: layer.aspectZ ?? 1.0,
         rotX: rotX0,
         rotY: rot0 || rotY0,
         rotZ: readRange(layer.rotZ, 0, 0, prng),
@@ -1033,7 +1168,13 @@ export function createEffectPlayer({
         colorCurve: layer.colorCurve,
         sizeCurve: layer.sizeCurve,
         sizeYCurve: layer.sizeYCurve,
+        sizeZCurve: layer.sizeZCurve,
         velCurve: layer.velCurve,
+        clampVelocity: layer.clampVelocity,
+        rotationBySpeed: layer.rotationBySpeed,
+        customData: layer.customData,
+        uberMat: layer.uberMat,
+        phase,
         uvScroll: layer.uvScroll,
         fresnel: layer.fresnel,
         dissolve: layer.dissolve,
@@ -1068,6 +1209,7 @@ export function createEffectPlayer({
           tintG: scratchTintOut[1],
           tintB: scratchTintOut[2],
           collision: layer.collision,
+          clampVelocity: layer.clampVelocity,
           subEmitters: layer.subEmitters,
           subDepth: slot.subDepth,
           lightSlotIdx,
@@ -1077,72 +1219,80 @@ export function createEffectPlayer({
       return dur - clampedInitAge;
     }
 
-    if (!atlasParticles) return;
+    const isNoneRender = layer.renderMode === 'none';
+    if (!atlasParticles && !isNoneRender) return;
     const lightSlotIdx = layer.particleLight
       ? allocParticleLight(layer.particleLight, scratchPos[0], scratchPos[1], scratchPos[2], dur, scratchTintOut)
       : -1;
     const needsTracking = Boolean(layer.collision)
+      || Boolean(layer.trail && layer.clampVelocity)
       || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)
       || lightSlotIdx >= 0;
     const { flipbook: resolvedFb, uvRect: resolvedUv } = resolveFlipbookAndUv(layer);
-    const atlasSlot = atlasParticles.emit({
-      x: scratchPos[0],
-      y: scratchPos[1],
-      z: scratchPos[2],
-      vx: scratchVel[0],
-      vy: scratchVel[1],
-      vz: scratchVel[2],
-      accelX,
-      accelZ,
-      windMul,
-      duration: dur,
-      initialAge: clampedInitAge,
-      sizeStart,
-      gravity,
-      drag,
-      staticPos: Boolean(layer.collision),
-      persistent: Boolean(layer.persistent),
-      curveCycle: (layer.curveCycle ?? 0) / simSpd,
-      curveRow: layer._curveRow,
-      hasVelCurve: Boolean(layer.velCurve),
-      hasSizeSep: Boolean(layer.sizeYCurve),
-      rotation: rot0,
-      angularVel: angVel,
-      rotX: rotX0,
-      rotY: rotY0,
-      spinX,
-      spinY,
-      hdr: layer.hdr ?? 1.0,
-      tintRgb24,
-      orbitalY,
-      centerOffX,
-      centerOffZ,
-      renderMode: layer.renderMode ?? 'billboard',
-      ...layer._renderState,
-      cullMode: layer.cullMode,
-      alphaCutoff: layer.alphaCutoff,
-      cameraFade: layer.cameraFade,
-      pivot: layer.pivot,
-      velocityScale: layer.velocityScale,
-      lengthScale: layer.lengthScale,
-      uvScale: layer.uvScale,
-      uvOffset: layer.uvOffset,
-      emissionBoost: layer.emissionBoost ?? (Array.isArray(layer.emission) ? Math.max(layer.emission[0] ?? 0, layer.emission[1] ?? 0, layer.emission[2] ?? 0) : 0),
-      dissolve: layer.dissolve,
-      sprite: layer.sprite,
-      flipbook: resolvedFb,
-      uvRect: resolvedUv,
-      noiseStrength,
-      noiseYScale,
-      noiseFreq,
-      noiseScroll,
-      noiseDamp,
-      space: isLocalSpace ? 'local' : 'world',
-      effectSlotIdx: isLocalSpace ? slot.localSlotIdx : 0,
-      aspectY: layer.aspectY,
-      stretch: layer.aspectY ?? layer.stretch ?? (layer.renderMode === 'vertical' || layer.renderMode === 'billboard' ? 1.0 : 0.8),
-      phase,
-    });
+    const atlasSlot = (!isNoneRender && atlasParticles)
+      ? atlasParticles.emit({
+          x: scratchPos[0],
+          y: scratchPos[1],
+          z: scratchPos[2],
+          vx: scratchVel[0],
+          vy: scratchVel[1],
+          vz: scratchVel[2],
+          accelX,
+          accelZ,
+          windMul,
+          duration: dur,
+          initialAge: clampedInitAge,
+          sizeStart,
+          gravity,
+          drag,
+          staticPos: Boolean(layer.collision),
+          persistent: Boolean(layer.persistent),
+          curveCycle: (layer.curveCycle ?? 0) / simSpd,
+          curveRow: layer._curveRow,
+          hasVelCurve: Boolean(layer.velCurve),
+          hasSizeSep: Boolean(layer.sizeYCurve),
+          rotation: rot0,
+          angularVel: angVel,
+          rotX: rotX0,
+          rotY: rotY0,
+          spinX,
+          spinY,
+          hdr: layer.hdr ?? 1.0,
+          tintRgb24,
+          orbitalY,
+          centerOffX,
+          centerOffZ,
+          renderMode: layer.renderMode ?? 'billboard',
+          ...layer._renderState,
+          cullMode: layer.cullMode,
+          alphaCutoff: layer.alphaCutoff,
+          cameraFade: layer.cameraFade,
+          pivot: layer.pivot,
+          velocityScale: layer.velocityScale,
+          lengthScale: layer.lengthScale,
+          uvScale: layer.uvScale,
+          uvOffset: layer.uvOffset,
+          emissionBoost: layer.emissionBoost ?? (Array.isArray(layer.emission) ? Math.max(layer.emission[0] ?? 0, layer.emission[1] ?? 0, layer.emission[2] ?? 0) : 0),
+          dissolve: layer.dissolve,
+          sprite: layer.sprite,
+          flipbook: resolvedFb,
+          uvRect: resolvedUv,
+          noiseStrength,
+          noiseYScale,
+          noiseFreq,
+          noiseScroll,
+          noiseDamp,
+          clampVelocity: layer.clampVelocity,
+          rotationBySpeed: layer.rotationBySpeed,
+          customData: layer.customData,
+          uberMat: layer.uberMat,
+          space: isLocalSpace ? 'local' : 'world',
+          effectSlotIdx: isLocalSpace ? slot.localSlotIdx : 0,
+          aspectY: layer.aspectY,
+          stretch: layer.aspectY ?? layer.stretch ?? (layer.renderMode === 'vertical' || layer.renderMode === 'billboard' ? 1.0 : 0.8),
+          phase,
+        })
+      : -1;
 
     let trackedSlot = -1;
     if (needsTracking) {
@@ -1169,6 +1319,7 @@ export function createEffectPlayer({
         tintG: scratchTintOut[1],
         tintB: scratchTintOut[2],
         collision: layer.collision,
+        clampVelocity: layer.clampVelocity,
         subEmitters: layer.subEmitters,
         subDepth: slot.subDepth,
         lightSlotIdx,
@@ -1183,15 +1334,41 @@ export function createEffectPlayer({
         scratchTintOut[1] * (c0 ? (c0[1] ?? 1) : 1),
         scratchTintOut[2] * (c0 ? (c0[2] ?? 1) : 1),
       ];
-      allocTrailFollower(
-        scratchPos[0], scratchPos[1], scratchPos[2],
-        scratchVel[0], scratchVel[1], scratchVel[2],
-        gravity, drag, noiseStrength, noiseYScale, noiseFreq, phase,
-        dur, clampedInitAge, layer.trail, trailTint,
-        orbitalY, centerOffX, centerOffZ,
-        sizeStart, layer.sizeCurve,
-        trackedSlot,
-      );
+      if (layer.trail.mode === 'ribbon' && ls) {
+        if (!ls.ribbonOpts) {
+          ls.ribbonOpts = {
+            color: trailTint,
+            width: layer.trail.width ?? 0.25,
+            endWidth: layer.trail.endWidth ?? 0.02,
+            widthCurve: layer.trail.widthCurve ?? null,
+            hdr: layer.trail.hdr ?? 1.5,
+            blend: layer.trail.blend ?? 'additive',
+            sprite: layer.trail.sprite ?? null,
+            uvRect: layer.trail.uvRect ?? (layer.trail.sprite && atlasParticles?.regions?.[layer.trail.sprite]) ?? null,
+            lifetime: 0,
+            alpha: layer.trail.alpha ?? 1.0,
+          };
+        }
+        ls.ribbonPts.push({
+          age: clampedInitAge,
+          duration: dur,
+          x0: scratchPos[0], y0: scratchPos[1], z0: scratchPos[2],
+          vx: scratchVel[0], vy: scratchVel[1], vz: scratchVel[2],
+          gravity, drag, noiseStrength, noiseYScale, noiseFreq, phase,
+          orbitalY, centerOffX, centerOffZ, trackedSlot,
+        });
+        if (ls.ribbonPts.length > 16) ls.ribbonPts.shift();
+      } else {
+        allocTrailFollower(
+          scratchPos[0], scratchPos[1], scratchPos[2],
+          scratchVel[0], scratchVel[1], scratchVel[2],
+          gravity, drag, noiseStrength, noiseYScale, noiseFreq, phase,
+          dur, clampedInitAge, layer.trail, trailTint,
+          orbitalY, centerOffX, centerOffZ,
+          sizeStart, layer.sizeCurve,
+          trackedSlot,
+        );
+      }
     }
     return dur - clampedInitAge;
   }
@@ -1199,7 +1376,7 @@ export function createEffectPlayer({
   function tryEmitWithCap(layer, ls, slot) {
     const cap = layer.maxParticles | 0;
     if (cap <= 0 || cap > 64) {
-      emitParticleOrMesh(layer, slot, 0);
+      emitParticleOrMesh(layer, slot, 0, ls);
       return true;
     }
     let active = 0;
@@ -1212,7 +1389,7 @@ export function createEffectPlayer({
       }
     }
     if (active >= cap) return false;
-    const remDur = emitParticleOrMesh(layer, slot, 0) ?? 0.5;
+    const remDur = emitParticleOrMesh(layer, slot, 0, ls) ?? 0.5;
     const writeIdx = freeIdx >= 0 ? freeIdx : (ls.activeEndCursor++ % 64);
     ls.activeEndTimes[writeIdx] = layer.persistent ? Infinity : (slot.age + remDur);
     return true;
@@ -1348,12 +1525,14 @@ export function createEffectPlayer({
     slot.inheritTintG = options._inheritTint?.[1] ?? 1;
     slot.inheritTintB = options._inheritTint?.[2] ?? 1;
     slot.localSlotIdx = 0;
-    if (compiled.layers.some((l) => l.space === 'local') && freeLocalSlots.length > 0) {
+    if (compiled.layers.some((l) => l.space === 'local' && !l._shurikenLayer) && freeLocalSlots.length > 0) {
       slot.localSlotIdx = freeLocalSlots.pop();
       atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
       meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
     }
+    shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, 0, 0, 0);
     slot.lightSlotIdx = -1;
+    ensureSlotLayerStates(slot, compiled.layers.length);
 
     for (let l = 0; l < compiled.layers.length; l++) {
       const layer = compiled.layers[l];
@@ -1388,7 +1567,10 @@ export function createEffectPlayer({
         ? (Number(layer.life[0] ?? 1) + Number(layer.life[1] ?? layer.life[0] ?? 1)) * 0.5
         : Number(layer.life ?? 1)) / simSpd;
       if (avgRate > 0 && avgLife > 0.05) {
-        const warmCount = Math.min(180, Math.max(1, Math.round(avgRate * avgLife)));
+        const emScale = layer._shurikenLayer && shurikenKernel
+          ? (SHURIKEN_QUALITY_TIERS[shurikenKernel.getQualityTier()]?.emissionScale ?? 1.0)
+          : 1.0;
+        const warmCount = Math.min(180, Math.max(layer._shurikenLayer ? 0 : 1, Math.round(avgRate * avgLife * emScale)));
         for (let k = 0; k < warmCount; k++) {
           const frac = (k + prng.nextFloat()) / warmCount;
           emitParticleOrMesh(layer, slot, frac * avgLife * simSpd);
@@ -1423,6 +1605,10 @@ export function createEffectPlayer({
         continue;
       }
 
+      const emScale = layer._shurikenLayer && shurikenKernel
+        ? (SHURIKEN_QUALITY_TIERS[shurikenKernel.getQualityTier()]?.emissionScale ?? 1.0)
+        : 1.0;
+
       if (Array.isArray(layer.bursts)) {
         const bLen = Math.min(layer.bursts.length, MAX_BURSTS_PER_LAYER);
         for (let b = 0; b < bLen; b++) {
@@ -1430,7 +1616,10 @@ export function createEffectPlayer({
           const cycles = Math.max(1, burst.cycles ?? 1);
           const interval = Math.max(0.01, (burst.interval ?? 0.01) / simSpd);
           while (ls.burstCyclesDone[b] < cycles && localAge >= ls.burstNextTime[b]) {
-            const count = Math.max(1, Math.round(readRange(burst.count, 1, 1, prng)));
+            const rawCount = readRange(burst.count, 1, 1, prng);
+            const count = layer._shurikenLayer
+              ? Math.max(rawCount > 0 && emScale > 0 ? 1 : 0, Math.round(rawCount * emScale))
+              : Math.max(1, Math.round(rawCount));
             for (let c = 0; c < count; c++) {
               tryEmitWithCap(layer, ls, slot);
             }
@@ -1440,7 +1629,7 @@ export function createEffectPlayer({
         }
       }
 
-      const rate = (layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0) * simSpd;
+      const rate = (layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0) * simSpd * emScale;
       if (rate > 0) {
         const layerDur = (layer.duration ?? slot.duration) / simSpd;
         if (slot.loop || localAge <= layerDur) {
@@ -1495,16 +1684,25 @@ export function createEffectPlayer({
       if (!slot.active || !slot.recipe) continue;
 
       if (slot.follow) {
+        const prevFx = slot.x;
+        const prevFy = slot.y;
+        const prevFz = slot.z;
         if (slot.follow.x !== undefined) slot.x = slot.follow.x;
         if (slot.follow.y !== undefined) slot.y = slot.follow.y;
         if (slot.follow.z !== undefined) slot.z = slot.follow.z;
         if (slot.follow.yaw !== undefined) slot.yaw = slot.follow.yaw;
+        if (dt > 1e-5) {
+          slot.followVx = (slot.x - prevFx) / dt;
+          slot.followVy = (slot.y - prevFy) / dt;
+          slot.followVz = (slot.z - prevFz) / dt;
+        }
       }
 
       if (slot.localSlotIdx > 0) {
         atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
         meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
       }
+      shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, slot.followVx, slot.followVy, slot.followVz);
 
       slot.age += dt;
       slot.cycleAge += dt;
@@ -1577,6 +1775,17 @@ export function createEffectPlayer({
         tp.vx += tp.accelX * dt;
         tp.vy += (is2D ? tp.gravity : -tp.gravity) * dt;
         tp.vz += tp.accelZ * dt;
+        if (tp.clampVelocity && tp.clampVelocity.limit > 0) {
+          const spd = Math.hypot(tp.vx, tp.vy, tp.vz);
+          const lim = tp.clampVelocity.limit;
+          if (spd > lim) {
+            const cDampen = Math.max(0, Math.min(1, Number(tp.clampVelocity.dampen ?? 1)));
+            const sc = (spd - (spd - lim) * cDampen) / spd;
+            tp.vx *= sc;
+            tp.vy *= sc;
+            tp.vz *= sc;
+          }
+        }
         tp.x += tp.vx * dt;
         tp.y += tp.vy * dt;
         tp.z += tp.vz * dt;
@@ -1674,6 +1883,47 @@ export function createEffectPlayer({
           tf.pushedPoints += 1;
         } else {
           trails.updateTrailHead(tf.trailId, px, py, pz);
+        }
+      }
+
+      if (typeof trails.allocTrail === 'function' && typeof trails.freeTrail === 'function') {
+        for (let i = 0; i < MAX_ACTIVE_EFFECTS; i++) {
+          const slot = effectSlots[i];
+          if (!slot.active || !slot.recipe) continue;
+          const layerCount = Math.min(slot.recipe.layers.length, MAX_LAYERS_PER_EFFECT);
+          for (let l = 0; l < layerCount; l++) {
+            const ls = slot.layers[l];
+            const pts = ls.ribbonPts;
+            if (!pts || pts.length === 0) continue;
+            for (let p = pts.length - 1; p >= 0; p--) {
+              pts[p].age += dt;
+              if (pts[p].age >= pts[p].duration) pts.splice(p, 1);
+            }
+            if (ls.ribbonTrailId >= 0) {
+              trails.freeTrail(ls.ribbonTrailId);
+              ls.ribbonTrailId = -1;
+            }
+            if (pts.length >= 2 && ls.ribbonOpts) {
+              ls.ribbonTrailId = trails.allocTrail(ls.ribbonOpts);
+              if (ls.ribbonTrailId >= 0) {
+                for (let p = 0; p < pts.length; p++) {
+                  const rp = pts[p];
+                  if (rp.trackedSlot >= 0 && trackedParticles[rp.trackedSlot]?.active) {
+                    const tp = trackedParticles[rp.trackedSlot];
+                    trails.pushTrailPoint(ls.ribbonTrailId, tp.x, tp.y, tp.z);
+                  } else {
+                    evaluateAtlasParticlePosition(
+                      rp.x0, rp.y0, rp.z0, rp.vx, rp.vy, rp.vz,
+                      rp.gravity, rp.drag, rp.noiseStrength, rp.noiseFreq, rp.phase,
+                      rp.age, is2D, scratchPos,
+                      rp.orbitalY, rp.centerOffX, rp.centerOffZ, rp.noiseYScale,
+                    );
+                    trails.pushTrailPoint(ls.ribbonTrailId, scratchPos[0], scratchPos[1], scratchPos[2]);
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

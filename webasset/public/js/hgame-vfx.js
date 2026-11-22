@@ -1,11 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createPostPipeline3D } from '/runtime/hgame/integrations/post3d.js';
-import {
-  VFX_V2_BENCHMARK_PRESETS,
-  createVfxSystem,
-  VFX_SHAPE,
-} from '/runtime/hgame/vfx/index.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { Pass } from 'three/addons/postprocessing/Pass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { createVfxSystem, SHURIKEN_QUALITY_TIERS, VFX_SHAPE } from '/runtime/hgame/vfx/index.js';
 import {
   createSidebarSquareCard,
   createThreeViewport,
@@ -15,10 +14,7 @@ import {
 } from './hgame-shared.js';
 
 const VFX_CATEGORY_ORDER = [
-  'v2 标杆预设',
-  '战斗与爆破',
-  '全材质受击',
-  '环境与交互',
+  'Piloto_Bench_8',
   '火焰爆破',
   '火焰与爆破',
   '刀光轨迹',
@@ -45,6 +41,14 @@ const emptyEl = document.querySelector('#hgame-vfx-empty');
 const vfxStage = document.querySelector('#hgame-vfx-stage');
 const playBtn = document.querySelector('#hgame-vfx-play-button');
 const replayBtn = document.querySelector('#hgame-vfx-replay-button');
+const speedWrap = document.querySelector('#hgame-vfx-speed-wrap');
+const speedSelect = document.querySelector('#hgame-vfx-speed');
+const qualityWrap = document.querySelector('#hgame-vfx-quality-wrap');
+const qualitySelect = document.querySelector('#hgame-vfx-quality');
+const gridToggleWrap = document.querySelector('#hgame-vfx-grid-toggle-wrap');
+const gridToggle = document.querySelector('#hgame-vfx-grid-toggle');
+const bloomToggleWrap = document.querySelector('#hgame-vfx-bloom-toggle-wrap');
+const bloomToggle = document.querySelector('#hgame-vfx-bloom-toggle');
 const planeModeWrap = document.querySelector('#hgame-vfx-plane-mode-wrap');
 const planeModeSelect = document.querySelector('#hgame-vfx-plane-mode');
 const gridWrap = document.querySelector('#hgame-vfx-grid-wrap');
@@ -55,11 +59,6 @@ const blendWrap = document.querySelector('#hgame-vfx-blend-wrap');
 const blendSelect = document.querySelector('#hgame-vfx-blend');
 const colorInput = document.querySelector('#hgame-vfx-color');
 const spinInput = document.querySelector('#hgame-vfx-spin');
-const groundToggle = document.querySelector('#hgame-vfx-ground-toggle');
-const bloomToggle = document.querySelector('#hgame-vfx-bloom-toggle');
-const speedSelect = document.querySelector('#hgame-vfx-speed');
-const qualitySelect = document.querySelector('#hgame-vfx-quality');
-const lutSelect = document.querySelector('#hgame-vfx-lut-mode');
 const statusEl = document.querySelector('#hgame-vfx-status');
 
 const gltfLoader = new GLTFLoader();
@@ -67,14 +66,9 @@ const texLoader = new THREE.TextureLoader();
 
 let initialized = false;
 let vfxSystems = [];
-let goldenVfxPresets = [];
+let shurikenBenchSystems = [];
 let vfxMeshes = [];
-let bakedVfxMeshes = [];
 let vfxTextures = [];
-let bakedVfxTextures = [];
-const v2TexCache = new Map();
-const v2GeoCache = new Map();
-const v2MeshUrlById = new Map();
 let activeSelection = { kind: '', id: '' };
 let activeRenderMode = 'source'; // 'source' | 'hgame'
 let viewport = null;
@@ -100,51 +94,25 @@ const simMeshCache = new Map();
 let hgameVfx = null;
 let hgameFireTimer = 0;
 let hgameMeshPreview = null;
-let statusUpdateAcc = 0;
-let lastV2StatusText = '';
-let postPipeline = null;
-let groundPlaneMesh = null;
-let decalMarkerGroup = null;
-const decalMarkers = [];
+
+// Piloto Bench 8 + HDR Linear + Bloom + SoftDepth + Single-Pass Warp pipeline
+const benchRecipeCache = new Map();
+const benchTexCache = new Map();
+const benchGeoCache = new Map();
+let activeBenchHandle = null;
+let activeBenchRecipe = null;
+let benchReplayCooldown = 0;
+let benchFrameCount = 0;
+let benchMsAccum = 0;
+let benchLastDrawCalls = 0;
+let hdrPipeline = null;
 
 function getAllItems() {
-  const v2Map = new Map();
-  for (const item of VFX_V2_BENCHMARK_PRESETS) {
-    v2Map.set(item.id, { ...item, kind: 'system', sourceType: 'hgame-v2' });
-  }
-  for (const entry of goldenVfxPresets) {
-    const presetObj = entry.preset || entry;
-    if (!presetObj?.id) continue;
-    v2Map.set(presetObj.id, {
-      ...presetObj,
-      benchmark: Boolean(entry.benchmark ?? presetObj.benchmark),
-      surfaceType: entry.surfaceType ?? presetObj.surfaceType ?? null,
-      presetUrl: entry.url || null,
-      kind: 'system',
-      sourceType: 'hgame-v2',
-    });
-  }
-  const meshSeen = new Set();
-  const mergedMeshes = [];
-  for (const item of [...vfxMeshes, ...bakedVfxMeshes]) {
-    const key = item.id || item.name;
-    if (meshSeen.has(key)) continue;
-    meshSeen.add(key);
-    mergedMeshes.push({ ...item, kind: 'mesh' });
-  }
-  const texSeen = new Set();
-  const mergedTextures = [];
-  for (const item of [...vfxTextures, ...bakedVfxTextures]) {
-    const key = item.id || item.name;
-    if (texSeen.has(key)) continue;
-    texSeen.add(key);
-    mergedTextures.push({ ...item, kind: 'texture' });
-  }
   return [
-    ...v2Map.values(),
+    ...shurikenBenchSystems.map(item => ({ ...item, kind: 'system' })),
     ...vfxSystems.map(item => ({ ...item, kind: 'system' })),
-    ...mergedMeshes,
-    ...mergedTextures,
+    ...vfxMeshes.map(item => ({ ...item, kind: 'mesh' })),
+    ...vfxTextures.map(item => ({ ...item, kind: 'texture' })),
   ];
 }
 
@@ -305,7 +273,7 @@ function renderList() {
     for (const item of groupItems) {
       const selected = item.kind === activeSelection.kind && item.id === activeSelection.id;
       const badge = item.kind === 'system'
-        ? (item.schemaVersion === 2 ? 'V2' : item.sourceType === 'niagara' ? 'NS' : 'VFX')
+        ? (item.sourceType === 'niagara' ? 'NS' : 'VFX')
         : (item.kind === 'mesh' ? '3D' : 'TEX');
       const { button } = createSidebarSquareCard({
         name: item.name || item.id,
@@ -325,127 +293,172 @@ function renderList() {
   }
 }
 
-function ensureGroundAndDecals(vp) {
-  if (!groundPlaneMesh) {
-    const geo = new THREE.CircleGeometry(7.5, 48);
-    geo.rotateX(-Math.PI * 0.5);
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x1a201b,
-      roughness: 0.92,
-      metalness: 0.05,
-    });
-    groundPlaneMesh = new THREE.Mesh(geo, mat);
-    groundPlaneMesh.position.y = -0.005;
-    vp.scene.add(groundPlaneMesh);
-  }
-  if (!decalMarkerGroup) {
-    decalMarkerGroup = new THREE.Group();
-    decalMarkerGroup.name = 'hgame_vfx_decal_markers';
-    vp.scene.add(decalMarkerGroup);
-  }
-  const showGround = groundToggle ? groundToggle.checked : true;
-  vp.gridHelper.visible = showGround;
-  groundPlaneMesh.visible = showGround;
-  decalMarkerGroup.visible = showGround;
-}
-
-function spawnDecalMarker({ decalId = '', x = 0, z = 0, scale = [1, 1] } = {}) {
-  if (!decalMarkerGroup || (groundToggle && !groundToggle.checked)) return;
-  const isBlood = /blood|drop/i.test(decalId);
-  const lutVal = Number(lutSelect?.value ?? -1);
-  let hex = 0x2a241f;
-  if (isBlood) {
-    hex = lutVal === 4 ? 0xe86e0c : lutVal === 5 ? 0x5ab818 : 0x7a0a10;
-  }
-  const rad = Math.max(0.18, Math.min(1.6, Number(scale?.[0] ?? 0.6) * 0.5));
-  const geo = new THREE.RingGeometry(isBlood ? 0.02 : rad * 0.55, rad, 24);
-  geo.rotateX(-Math.PI * 0.5);
-  const mat = new THREE.MeshBasicMaterial({
-    color: hex,
-    transparent: true,
-    opacity: 0.75,
-    depthWrite: false,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x, 0.012 + decalMarkers.length * 0.0005, z);
-  decalMarkerGroup.add(mesh);
-  decalMarkers.push({ mesh, age: 0, dur: 3.5 });
-  if (decalMarkers.length > 24) {
-    const old = decalMarkers.shift();
-    decalMarkerGroup.remove(old.mesh);
-    old.mesh.geometry.dispose();
-    old.mesh.material.dispose();
-  }
-}
-
-function clearDecalMarkers() {
-  while (decalMarkers.length > 0) {
-    const m = decalMarkers.pop();
-    decalMarkerGroup?.remove(m.mesh);
-    m.mesh.geometry.dispose();
-    m.mesh.material.dispose();
-  }
-}
-
-function syncPostPipeline(vp) {
-  const wantBloom = bloomToggle ? bloomToggle.checked : true;
-  if (!wantBloom) {
-    vp.setRenderOverride(null);
-    return;
-  }
-  if (!postPipeline) {
-    try {
-      postPipeline = createPostPipeline3D({
-        THREE,
-        renderer: vp.renderer,
-        width: vp.renderer.domElement.width || 640,
-        height: vp.renderer.domElement.height || 420,
-        preset: {
-          bloom: true,
-          ssao: false,
-          volumetricSteps: 0,
-          giIntensity: 0,
-          ssrIntensity: 0,
-          contactShadows: false,
-          fxaa: false,
-        },
-        toneMapping: 'aces',
-        exposure: 1.05,
-        bloomStrength: 0.52,
-        bloomThreshold: 0.82,
-        bloomSoftKnee: 0.5,
-        ssaoIntensity: 0,
-        volumetricIntensity: 0,
-        giIntensity: 0,
-        ssrIntensity: 0,
-        vignette: 0.08,
-      });
-    } catch {
-      postPipeline = null;
-    }
-  }
-  if (postPipeline?.supported) {
-    vp.setRenderOverride((dt) => {
-      postPipeline.render(vp.scene, vp.camera, { dt });
-    });
-  } else {
-    vp.setRenderOverride(null);
-  }
-}
-
 function ensureViewport() {
   if (!viewport) {
     viewport = createThreeViewport(vfxStage, { background: 0x0f140f, grid: true, shadows: false });
     viewport.camera.position.set(3.2, 2.5, 4.2);
     viewport.controls.target.set(0, 0.7, 0);
     viewport.controls.update();
-    viewport.setOnResize((w, h) => {
-      postPipeline?.resize?.(w, h);
-    });
-    ensureGroundAndDecals(viewport);
-    syncPostPipeline(viewport);
   }
   return viewport;
+}
+
+function ensureHdrPipeline(vp) {
+  if (hdrPipeline) return hdrPipeline;
+  const sizeVec = new THREE.Vector2();
+  vp.renderer.getSize(sizeVec);
+  const pr = vp.renderer.getPixelRatio();
+  const w = Math.max(1, Math.round(sizeVec.x * pr));
+  const h = Math.max(1, Math.round(sizeVec.y * pr));
+
+  const depthTex = new THREE.DepthTexture(w, h);
+  depthTex.type = THREE.UnsignedIntType;
+  const bgTarget = new THREE.WebGLRenderTarget(w, h, {
+    type: THREE.HalfFloatType,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+    depthTexture: depthTex,
+  });
+  const grabTarget = new THREE.WebGLRenderTarget(w, h, {
+    type: THREE.HalfFloatType,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  });
+  const hdrTarget = new THREE.WebGLRenderTarget(w, h, {
+    type: THREE.HalfFloatType,
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  });
+
+  const hiddenState = [];
+  const warpMeshes = [];
+  const scenePass = new Pass();
+  scenePass.needsSwap = false;
+  scenePass.render = (renderer, _writeBuffer, readBuffer) => {
+    const cam = vp.camera;
+    const sc = vp.scene;
+    const dprW = readBuffer.width;
+    const dprH = readBuffer.height;
+    if (bgTarget.width !== dprW || bgTarget.height !== dprH) {
+      bgTarget.setSize(dprW, dprH);
+    }
+
+    // 1. Opaque / background depth pre-pass (zero WebGL feedback loop)
+    hiddenState.length = 0;
+    for (let i = 0; i < sc.children.length; i++) {
+      const ch = sc.children[i];
+      if (ch.name && (ch.name.startsWith('ShurikenLayer_') || ch.name.startsWith('HGameVfx'))) {
+        hiddenState.push([ch, ch.visible]);
+        ch.visible = false;
+      }
+    }
+    renderer.setRenderTarget(bgTarget);
+    renderer.clear(true, true, true);
+    renderer.render(sc, cam);
+    for (let i = 0; i < hiddenState.length; i++) {
+      hiddenState[i][0].visible = hiddenState[i][1];
+    }
+
+    const qTierKey = hgameVfx?.getQualityTier?.() || 'high';
+    const qTier = SHURIKEN_QUALITY_TIERS[qTierKey] || SHURIKEN_QUALITY_TIERS.high;
+    hgameVfx?.setDepthTexture?.(qTier.softParticles ? bgTarget.depthTexture : null, {
+      near: cam.near,
+      far: cam.far,
+      width: dprW,
+      height: dprH,
+    });
+
+    // 2. Single-pass screen grab for piloto_warp refraction
+    const warpActive = Boolean(hgameVfx?.hasActiveWarp?.() && qTier.warpScale > 0);
+    if (warpActive) {
+      const gw = Math.max(1, Math.round(dprW * qTier.warpScale));
+      const gh = Math.max(1, Math.round(dprH * qTier.warpScale));
+      if (grabTarget.width !== gw || grabTarget.height !== gh) {
+        grabTarget.setSize(gw, gh);
+      }
+      hgameVfx.setWarpMeshesVisible(false);
+      hgameVfx.setSceneTexture(null);
+      renderer.setRenderTarget(grabTarget);
+      renderer.clear(true, true, true);
+      renderer.render(sc, cam);
+
+      hgameVfx.setSceneTexture(grabTarget.texture, { width: dprW, height: dprH });
+      renderer.setRenderTarget(readBuffer);
+      renderer.clear(true, true, true);
+      renderer.render(sc, cam);
+
+      hgameVfx.setWarpMeshesVisible(true);
+      warpMeshes.length = 0;
+      sc.traverse((obj) => {
+        if (obj.visible && obj.isMesh && obj.userData?.vfxWarp) {
+          warpMeshes.push(obj);
+          obj.layers.enable(30);
+        }
+      });
+      if (warpMeshes.length > 0) {
+        const prevMask = cam.layers.mask;
+        const prevAutoClear = renderer.autoClear;
+        cam.layers.set(30);
+        renderer.autoClear = false;
+        renderer.render(sc, cam);
+        renderer.autoClear = prevAutoClear;
+        cam.layers.mask = prevMask;
+        for (let i = 0; i < warpMeshes.length; i++) {
+          warpMeshes[i].layers.disable(30);
+        }
+      }
+    } else {
+      hgameVfx?.setWarpMeshesVisible?.(false);
+      hgameVfx?.setSceneTexture?.(null);
+      renderer.setRenderTarget(readBuffer);
+      renderer.clear(true, true, true);
+      renderer.render(sc, cam);
+    }
+  };
+
+  const composer = new EffectComposer(vp.renderer, hdrTarget);
+  composer.setPixelRatio(pr);
+  composer.setSize(Math.max(1, sizeVec.x), Math.max(1, sizeVec.y));
+  const bloomPass = new UnrealBloomPass(new THREE.Vector2(sizeVec.x, sizeVec.y), 0.38, 0.42, 1.0);
+  const outputPass = new OutputPass();
+  composer.addPass(scenePass);
+  composer.addPass(bloomPass);
+  composer.addPass(outputPass);
+
+  hdrPipeline = {
+    composer,
+    bloomPass,
+    outputPass,
+    bgTarget,
+    grabTarget,
+    hdrTarget,
+    render() {
+      bloomPass.enabled = bloomToggle ? bloomToggle.checked : true;
+      const prevAutoReset = vp.renderer.info.autoReset;
+      vp.renderer.info.autoReset = false;
+      vp.renderer.info.reset();
+      composer.render();
+      benchLastDrawCalls = vp.renderer.info.render.calls;
+      vp.renderer.info.autoReset = prevAutoReset;
+    },
+    resize(width, height) {
+      const p = vp.renderer.getPixelRatio();
+      composer.setPixelRatio(p);
+      composer.setSize(Math.max(1, width), Math.max(1, height));
+      bloomPass.resolution.set(Math.max(1, width), Math.max(1, height));
+    },
+    dispose() {
+      composer.dispose();
+      bgTarget.dispose();
+      grabTarget.dispose();
+      hdrTarget.dispose();
+    },
+  };
+  vp.setOnResize((width, height) => hdrPipeline?.resize(width, height));
+  return hdrPipeline;
 }
 
 function disposeSimulation() {
@@ -464,6 +477,13 @@ function disposeSimulation() {
   simEmitters = [];
   simElapsed = 0;
   simLoopCooldown = 0;
+  activeBenchHandle = null;
+  activeBenchRecipe = null;
+  benchReplayCooldown = 0;
+  benchFrameCount = 0;
+  benchMsAccum = 0;
+  benchLastDrawCalls = 0;
+  viewport?.setRenderOverride(null);
 
   if (hgameMeshPreview) {
     stageRoot?.remove(hgameMeshPreview);
@@ -477,14 +497,8 @@ function disposeSimulation() {
   hgameFireTimer = 0;
 }
 
-function clearStageRoot({ keepVfxSystem = false } = {}) {
-  if (keepVfxSystem && hgameVfx) {
-    hgameVfx.reset();
-    hgameFireTimer = 0;
-  } else {
-    disposeSimulation();
-  }
-  clearDecalMarkers();
+function clearStageRoot() {
+  disposeSimulation();
   if (stageRoot && viewport) {
     viewport.scene.remove(stageRoot);
     disposeObject3D(stageRoot);
@@ -575,13 +589,68 @@ function applyAppearanceToStage() {
   }
 }
 
+async function loadBenchTexture(url, isSrgb) {
+  const cacheKey = `${url}::${isSrgb ? 'srgb' : 'lin'}`;
+  if (benchTexCache.has(cacheKey)) return benchTexCache.get(cacheKey);
+  const tex = await texLoader.loadAsync(url);
+  tex.colorSpace = isSrgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.needsUpdate = true;
+  benchTexCache.set(cacheKey, tex);
+  return tex;
+}
+
+async function loadBenchMeshGeo(url) {
+  if (benchGeoCache.has(url)) return benchGeoCache.get(url);
+  const gltf = await gltfLoader.loadAsync(url);
+  let foundGeo = null;
+  gltf.scene.traverse((ch) => {
+    if (!foundGeo && ch.isMesh && ch.geometry) foundGeo = ch.geometry;
+  });
+  benchGeoCache.set(url, foundGeo);
+  return foundGeo;
+}
+
+function collectBenchDependencies(recipe, colorTexKeys, dataTexKeys, meshKeys) {
+  for (const l of recipe.layers || []) {
+    const m = l.material || l.uberMat || {};
+    for (const k of [m.mainTexKey, m.baseColorMapKey, m.emissionMapKey, l.sprite, l.flipbook?.region]) {
+      if (k) colorTexKeys.add(k);
+    }
+    for (const k of [
+      m.detailNoiseKey,
+      m.alphaOverrideKey,
+      m.normalMapKey,
+      m.ormMapKey,
+      m.detailMapKey,
+      m.dissolveMapKey,
+      m.distortionTextureKey,
+      m.alphaTextureKey,
+    ]) {
+      if (k) dataTexKeys.add(k);
+    }
+    if (l.mesh && !['quad', 'cube', 'sphere', 'cylinder', 'crystal'].includes(l.mesh)) {
+      meshKeys.add(l.mesh);
+    }
+    if (l.shape?.mesh) meshKeys.add(l.shape.mesh);
+    for (const sub of l.subEmitters || []) {
+      if (sub?.effect) collectBenchDependencies(sub.effect, colorTexKeys, dataTexKeys, meshKeys);
+    }
+  }
+}
+
 function syncControlsVisibility(item) {
   const isTexture = item?.kind === 'texture';
   const isSystem = item?.kind === 'system';
-  const isV2 = item?.schemaVersion === 2;
+  const isBench = Boolean(item?.isShurikenBench);
   const isEmitterTex = isTexture && activeTextureMode === 'emitter';
-  if (modeTabsWrap) modeTabsWrap.hidden = !isSystem || isV2;
+  if (modeTabsWrap) modeTabsWrap.hidden = !isSystem || isBench;
   if (copyCodeBtn) copyCodeBtn.hidden = !isSystem;
+  if (speedWrap) speedWrap.hidden = !isBench;
+  if (qualityWrap) qualityWrap.hidden = !isBench;
+  if (gridToggleWrap) gridToggleWrap.hidden = !isBench;
+  if (bloomToggleWrap) bloomToggleWrap.hidden = !isBench;
   if (planeModeWrap) planeModeWrap.hidden = !isTexture;
   gridWrap.hidden = !isTexture || isEmitterTex;
   fpsWrap.hidden = !isTexture || isEmitterTex;
@@ -1165,108 +1234,27 @@ function triggerHGamePreset(item) {
   });
 }
 
-async function loadV2Texture(key, { repeat = false, linearData = false } = {}) {
-  if (!key || typeof key !== 'string' || key.startsWith('builtin:')) return null;
-  const cacheKey = `${key}|r=${repeat ? 1 : 0}|l=${linearData ? 1 : 0}`;
-  if (v2TexCache.has(cacheKey)) return v2TexCache.get(cacheKey);
-  const url = key.startsWith('/') ? key : `/assets/cn/${key}`;
-  try {
-    const tex = await texLoader.loadAsync(url);
-    tex.premultiplyAlpha = false;
-    tex.flipY = true;
-    tex.wrapS = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
-    tex.wrapT = repeat ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
-    tex.colorSpace = linearData ? THREE.NoColorSpace : THREE.SRGBColorSpace;
-    tex.needsUpdate = true;
-    v2TexCache.set(cacheKey, tex);
-    return tex;
-  } catch {
-    return null;
-  }
-}
-
-async function loadV2MeshGeometry(kind) {
-  if (!kind || typeof kind !== 'string') return null;
-  if (v2GeoCache.has(kind)) return v2GeoCache.get(kind);
-  const url = v2MeshUrlById.get(kind)
-    || (kind.startsWith('glass_piece_') ? `/assets/cn/vfx_meshes/glass/${kind}.glb` : `/assets/cn/vfx_meshes/${kind}.glb`);
-  try {
-    const gltf = await gltfLoader.loadAsync(url);
-    let foundGeo = null;
-    gltf.scene.traverse((ch) => {
-      if (!foundGeo && ch.isMesh && ch.geometry) {
-        foundGeo = ch.geometry.clone();
-      }
-    });
-    disposeObject3D(gltf.scene);
-    if (foundGeo) {
-      v2GeoCache.set(kind, foundGeo);
-    }
-    return foundGeo;
-  } catch {
-    return null;
-  }
-}
-
-async function ensureV2PresetResources(preset, vfxSys) {
-  if (!preset || !vfxSys) return;
-  vfxSys.registerPresetV2(preset);
-  const tasks = [];
-  for (const em of (preset.emitters || [])) {
-    if (em.renderer === 'event') continue;
-    const mat = em.material || {};
-    if (mat.mainTex && !mat.mainTex.startsWith('builtin:')) {
-      const isData = mat.mainTex.includes('vfx_noise/') || mat.mainTex.includes('blood_') || Number(mat.lutRow) >= 0;
-      const isScroll = Boolean(mat.uvScroll && (mat.uvScroll[0] !== 0 || mat.uvScroll[1] !== 0));
-      tasks.push(loadV2Texture(mat.mainTex, { repeat: isScroll, linearData: isData }).then((t) => {
-        if (t) vfxSys.registerTexture(mat.mainTex, t);
-      }));
-    }
-    if (mat.noiseTex && !mat.noiseTex.startsWith('builtin:')) {
-      tasks.push(loadV2Texture(mat.noiseTex, { repeat: true, linearData: true }).then((t) => {
-        if (t) vfxSys.registerTexture(mat.noiseTex, t);
-      }));
-    }
-    if (em.renderer === 'mesh' && mat.meshKind && !['quad', 'shard', 'arc', 'ring', 'sphere'].includes(mat.meshKind)) {
-      tasks.push(loadV2MeshGeometry(mat.meshKind).then((geo) => {
-        if (geo) vfxSys.registerMesh(mat.meshKind, geo);
-      }));
-    }
-  }
-  await Promise.all(tasks);
-}
-
-function getV2SpawnY(item) {
-  if (!item) return 0.9;
-  if (item.id === 'vfx_bench_explosion' || item.id === 'vfx_c4_demolition' || item.id === 'vfx_molotov_burst') return 0.55;
-  if (item.id === 'vfx_falling_leaves' || item.id === 'vfx_rain_splashes') return 2.1;
-  if (/(campfire|torch|portal|aura|water_fountain|waterfall|shockwave|tornado|lightning_strike)/.test(item.id || '')) return 0.12;
-  if (item.category === '全材质受击' || item.surfaceType) return 0.35;
-  if (item.id === 'vfx_bench_slash_shield') return 0.85;
-  return 0.9;
-}
-
-function playSelectedV2(item) {
-  if (!hgameVfx || !item) return;
-  hgameVfx.registerPresetV2(item);
-  const ySpawn = getV2SpawnY(item);
-  hgameVfx.playV2(item.id, { x: 0, y: ySpawn, z: 0 });
-}
-
 function replayActiveVfx() {
   const item = getCurrentItem();
   if (!item) return;
-  if (item.kind === 'system' && item.schemaVersion === 2) {
-    clearDecalMarkers();
-    playSelectedV2(item);
-    hgameVfx?.update?.(0.016, viewport?.camera?.position);
-    hgameFireTimer = 0;
-    const st = hgameVfx?.getStats()?.v2;
-    if (st) {
-      lastV2StatusText = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier} · 倍速 ${speedSelect?.value || 1}x`;
-      statusUpdateAcc = 0;
-      statusEl.textContent = lastV2StatusText;
-    }
+  if (item.isShurikenBench && hgameVfx && activeBenchRecipe) {
+    hgameVfx.reset();
+    benchReplayCooldown = 0;
+    const playY = item.id.includes('shield') ? 1.0 : 0.2;
+    activeBenchHandle = hgameVfx.playEffect(activeBenchRecipe, { x: 0, y: playY, z: 0 });
+    hgameVfx.update(0.016);
+    const st = hgameVfx.getStats();
+    const s = st.shuriken || {};
+    window.__HGAME_VFX_BENCH__ = {
+      id: item.id,
+      qualityTier: qualitySelect?.value || 'high',
+      speed: Math.max(0.1, Number(speedSelect?.value || 1.0)),
+      activeParticles: s.activeParticles ?? 0,
+      activeDrawCalls: s.activeDrawCalls ?? 0,
+      shaderVariants: st.shaderVariants ?? 0,
+      simMs: 0,
+      isActive: Boolean(activeBenchHandle?.isActive?.()),
+    };
     return;
   }
   if (item.kind === 'system' && activeRenderMode === 'hgame') {
@@ -1287,16 +1275,6 @@ function replayActiveVfx() {
 }
 
 function buildHGameSnippet(item) {
-  if (item?.schemaVersion === 2) {
-    return [
-      `// HGame VFX v2 预设: ${item.name || item.id}`,
-      `import { createVfxSystem } from '../vendor/hgame/index.js';`,
-      ``,
-      `const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE });`,
-      `vfx.setQualityTier('${qualitySelect?.value || 'high'}');`,
-      `vfx.playV2('${item.id}', { x: 0, y: 0.8, z: 0 });`,
-    ].join('\n');
-  }
   const p = item?.hgamePreset || {};
   const colorLit = `0x${(p.color || '#fb923c').replace('#', '')}`;
   const shapeKey = Object.keys(VFX_SHAPE).find(k => VFX_SHAPE[k] === (p.shapeId ?? 0)) || 'GLOW_ORB';
@@ -1326,52 +1304,57 @@ function buildHGameSnippet(item) {
   return lines.join('\n');
 }
 
-function tickVfx(rawDt) {
+function tickVfx(dt) {
   const item = getCurrentItem();
   if (!item || !stageRoot || !isPlaying) return;
 
-  const speedMult = Math.max(0.1, Number(speedSelect?.value || 1));
-  const dt = rawDt * speedMult;
   simElapsed += dt;
-
-  for (let i = decalMarkers.length - 1; i >= 0; i--) {
-    const m = decalMarkers[i];
-    m.age += dt;
-    if (m.age >= m.dur) {
-      decalMarkerGroup?.remove(m.mesh);
-      m.mesh.geometry.dispose();
-      m.mesh.material.dispose();
-      decalMarkers.splice(i, 1);
-    } else {
-      m.mesh.material.opacity = 0.75 * (1 - m.age / m.dur);
-    }
-  }
 
   if (spinInput.checked) {
     stageRoot.rotation.y += dt * 0.65;
   }
 
-  if (item.kind === 'system') {
-    if (item.schemaVersion === 2 && hgameVfx) {
-      hgameVfx.update(dt, viewport?.camera?.position);
-      const interval = Math.max(0.9, (item.duration || 1.6) + 0.45);
-      hgameFireTimer += dt;
-      if (hgameFireTimer >= interval) {
-        hgameFireTimer = 0;
-        playSelectedV2(item);
-      }
-      const st = hgameVfx.getStats().v2;
-      statusUpdateAcc += rawDt;
-      if (st && statusUpdateAcc >= 0.2) {
-        statusUpdateAcc = 0;
-        const nextTxt = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier} · 倍速 ${speedMult}x`;
-        if (nextTxt !== lastV2StatusText) {
-          lastV2StatusText = nextTxt;
-          statusEl.textContent = nextTxt;
+  if (item.isShurikenBench && hgameVfx) {
+    const t0 = performance.now();
+    const speedMul = Math.max(0.1, Number(speedSelect?.value || 1.0));
+    const simDt = dt * speedMul;
+    hgameVfx.update(simDt);
+    if (!activeBenchRecipe?.loop && activeBenchHandle && !activeBenchHandle.isActive()) {
+      const curStats = hgameVfx.getStats();
+      if ((curStats.shuriken?.activeParticles ?? 0) === 0) {
+        benchReplayCooldown += dt;
+        if (benchReplayCooldown >= 0.55) {
+          replayActiveVfx();
         }
       }
-      return;
     }
+    const elapsedMs = performance.now() - t0;
+    const st = hgameVfx.getStats();
+    const s = st.shuriken || {};
+    const qVal = qualitySelect?.value || 'high';
+    window.__HGAME_VFX_BENCH__ = {
+      id: item.id,
+      qualityTier: qVal,
+      speed: speedMul,
+      activeParticles: s.activeParticles ?? 0,
+      activeDrawCalls: benchLastDrawCalls || (s.activeDrawCalls ?? 0),
+      shaderVariants: st.shaderVariants ?? 0,
+      simMs: Number(elapsedMs.toFixed(3)),
+      isActive: Boolean(activeBenchHandle?.isActive?.()),
+    };
+    benchFrameCount += 1;
+    benchMsAccum += elapsedMs;
+    if (benchFrameCount >= 12) {
+      const avgMs = benchMsAccum / benchFrameCount;
+      statusEl.textContent = `Piloto_Bench_8 (${qVal.toUpperCase()}) · 活跃粒子 ${s.activeParticles ?? 0} · DrawCalls ${benchLastDrawCalls} · 模拟 ${avgMs.toFixed(2)}ms · 着色变体 ${st.shaderVariants ?? 0}`;
+      window.__HGAME_VFX_BENCH__.simMs = Number(avgMs.toFixed(3));
+      benchFrameCount = 0;
+      benchMsAccum = 0;
+    }
+    return;
+  }
+
+  if (item.kind === 'system') {
     if (activeRenderMode === 'hgame' && hgameVfx) {
       hgameVfx.update(dt);
       const interval = Math.max(0.45, Math.min(1.5, (item.duration || 0.7) * 0.85));
@@ -1464,47 +1447,97 @@ async function loadCurrentVfx() {
   statusEl.textContent = `正在加载 ${item.name}...`;
 
   try {
-    if (item.kind === 'system') {
-      const keepV2 = item.schemaVersion === 2 && Boolean(hgameVfx);
-      clearStageRoot({ keepVfxSystem: keepV2 });
+    if (item.isShurikenBench) {
+      clearStageRoot();
+      stageRoot = new THREE.Group();
+      vp.scene.add(stageRoot);
+      if (vp.gridHelper) {
+        vp.gridHelper.visible = gridToggle ? gridToggle.checked : true;
+      }
+
+      let recipe = benchRecipeCache.get(item.id);
+      if (!recipe) {
+        const res = await fetch(item.recipeUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        recipe = await res.json();
+        benchRecipeCache.set(item.id, recipe);
+      }
+      if (token !== loadToken) return;
+
+      const colorTexKeys = new Set();
+      const dataTexKeys = new Set();
+      const meshKeys = new Set();
+      collectBenchDependencies(recipe, colorTexKeys, dataTexKeys, meshKeys);
+
+      const loadTasks = [];
+      const loadedTex = new Map();
+      const loadedGeo = new Map();
+
+      for (const k of new Set([...colorTexKeys, ...dataTexKeys])) {
+        const rel = item.textureMap?.[k];
+        if (!rel) continue;
+        const texUrl = `${item.catalogBaseUrl}/${rel}`;
+        const isSrgb = colorTexKeys.has(k);
+        loadTasks.push(
+          loadBenchTexture(texUrl, isSrgb).then(t => loadedTex.set(k, t)),
+        );
+      }
+      for (const mk of meshKeys) {
+        const rel = item.meshMap?.[mk];
+        if (!rel) continue;
+        const meshUrl = `${item.catalogBaseUrl}/${rel}`;
+        loadTasks.push(
+          loadBenchMeshGeo(meshUrl).then(g => { if (g) loadedGeo.set(mk, g); }),
+        );
+      }
+      await Promise.all(loadTasks);
+      if (token !== loadToken) return;
+
+      hgameVfx = createVfxSystem({
+        mode: '3d',
+        sceneOrAdapter: vp.scene,
+        THREE,
+        maxParticles: 4096,
+        maxFloatingGlyphs: 64,
+      });
+      for (const [k, tex] of loadedTex.entries()) {
+        hgameVfx.registerTexture(k, tex);
+      }
+      for (const [mk, geo] of loadedGeo.entries()) {
+        hgameVfx.registerMesh(mk, geo);
+      }
+      hgameVfx.setQualityTier(qualitySelect?.value || 'high');
+      hgameVfx.registerEffect(recipe);
+      activeBenchRecipe = recipe;
+      const playY = item.id.includes('shield') ? 1.0 : 0.2;
+      activeBenchHandle = hgameVfx.playEffect(recipe, { x: 0, y: playY, z: 0 });
+      hgameVfx.update(0.016);
+
+      const pipe = ensureHdrPipeline(vp);
+      vp.setRenderOverride(() => pipe.render());
+      vp.camera.position.set(4.5, 3.2, 6.2);
+      vp.controls.target.set(0, playY + 0.5, 0);
+      vp.controls.update();
+
+      const st = hgameVfx.getStats();
+      statusEl.textContent = `Piloto_Bench_8 · ${recipe.layers.length} 层 · 活跃粒子 ${st.shuriken?.activeParticles ?? 0} · 变体 ${st.shaderVariants ?? 0}`;
+      window.__HGAME_VFX_BENCH__ = {
+        id: item.id,
+        qualityTier: qualitySelect?.value || 'high',
+        speed: Number(speedSelect?.value || 1.0),
+        activeParticles: st.shuriken?.activeParticles ?? 0,
+        activeDrawCalls: st.shuriken?.activeDrawCalls ?? 0,
+        shaderVariants: st.shaderVariants ?? 0,
+        simMs: 0,
+        isActive: Boolean(activeBenchHandle?.isActive?.()),
+      };
+    } else if (item.kind === 'system') {
+      clearStageRoot();
       stageRoot = new THREE.Group();
       stageRoot.position.y = item.category === '法阵光环' ? 0.03 : 0.85;
       vp.scene.add(stageRoot);
 
-      if (item.schemaVersion === 2) {
-        if (!hgameVfx) {
-          hgameVfx = createVfxSystem({
-            mode: '3d',
-            sceneOrAdapter: vp.scene,
-            THREE,
-            maxParticles: 4096,
-            maxFloatingGlyphs: 128,
-          });
-        }
-        hgameVfx.setQualityTier(qualitySelect?.value || 'high');
-        hgameVfx.setV2GroundConfig({ enabled: groundToggle ? groundToggle.checked : true, groundY: 0 });
-        const lutVal = Number(lutSelect?.value ?? -1);
-        hgameVfx.setV2LutRowOverride(lutVal >= 0 ? lutVal : null);
-        hgameVfx.setV2EventHandler((type, payload) => {
-          if (type === 'spawnDecal') {
-            spawnDecalMarker(payload);
-          } else if (type === 'subEmitter' && payload?.kind === 'decal_drop') {
-            spawnDecalMarker({ decalId: 'blood_drop', x: payload.x, z: payload.z, scale: [0.35, 0.35] });
-          }
-        });
-        hgameFireTimer = 0;
-        await ensureV2PresetResources(item, hgameVfx);
-        if (token !== loadToken) return;
-        playSelectedV2(item);
-        hgameVfx.update(0.016, vp.camera.position);
-        vp.camera.position.set(3.4, 2.35, 4.2);
-        vp.controls.target.set(0, 0.75, 0);
-        vp.controls.update();
-        const st = hgameVfx.getStats().v2;
-        lastV2StatusText = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier}`;
-        statusUpdateAcc = 0;
-        statusEl.textContent = lastV2StatusText;
-      } else if (activeRenderMode === 'hgame') {
+      if (activeRenderMode === 'hgame') {
         hgameVfx = createVfxSystem({
           mode: '3d',
           sceneOrAdapter: vp.scene,
@@ -1732,6 +1765,17 @@ async function initVfxView() {
       playBtn.textContent = isPlaying ? '暂停' : '播放';
     });
     replayBtn?.addEventListener('click', replayActiveVfx);
+    qualitySelect?.addEventListener('change', () => {
+      if (hgameVfx?.setQualityTier) {
+        hgameVfx.setQualityTier(qualitySelect.value || 'high');
+      }
+    });
+    gridToggle?.addEventListener('change', () => {
+      if (viewport?.gridHelper) viewport.gridHelper.visible = gridToggle.checked;
+    });
+    bloomToggle?.addEventListener('change', () => {
+      if (hdrPipeline?.bloomPass) hdrPipeline.bloomPass.enabled = bloomToggle.checked;
+    });
     planeModeSelect?.addEventListener('change', () => {
       void loadCurrentVfx();
     });
@@ -1749,48 +1793,6 @@ async function initVfxView() {
       else applyAppearanceToStage();
     });
     colorInput.addEventListener('input', applyAppearanceToStage);
-    groundToggle?.addEventListener('change', () => {
-      if (viewport) ensureGroundAndDecals(viewport);
-      hgameVfx?.setV2GroundConfig({ enabled: groundToggle.checked, groundY: 0 });
-      if (!groundToggle.checked) clearDecalMarkers();
-    });
-    bloomToggle?.addEventListener('change', () => {
-      if (viewport) syncPostPipeline(viewport);
-    });
-    qualitySelect?.addEventListener('change', () => {
-      hgameVfx?.setQualityTier(qualitySelect.value);
-      const item = getCurrentItem();
-      if (item?.schemaVersion === 2) {
-        clearDecalMarkers();
-        playSelectedV2(item);
-        hgameVfx?.update?.(0.016, viewport?.camera?.position);
-        hgameFireTimer = 0;
-        const st = hgameVfx?.getStats()?.v2;
-        if (st) {
-          lastV2StatusText = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier} · 倍速 ${speedSelect?.value || 1}x`;
-          statusUpdateAcc = 0;
-          statusEl.textContent = lastV2StatusText;
-        }
-      }
-    });
-    speedSelect?.addEventListener('change', () => {
-      const st = hgameVfx?.getStats()?.v2;
-      if (st && getCurrentItem()?.schemaVersion === 2) {
-        lastV2StatusText = `VFX v2 · ${st.activeParticles} 粒子 · ${st.activeDrawCalls} DrawCall · 画质 ${st.qualityTier} · 倍速 ${speedSelect.value}x`;
-        statusUpdateAcc = 0;
-        statusEl.textContent = lastV2StatusText;
-      }
-    });
-    lutSelect?.addEventListener('change', () => {
-      const val = Number(lutSelect.value);
-      hgameVfx?.setV2LutRowOverride(val >= 0 ? val : null);
-      const item = getCurrentItem();
-      if (item?.schemaVersion === 2) {
-        clearDecalMarkers();
-        playSelectedV2(item);
-        hgameFireTimer = 0;
-      }
-    });
   }
 
   const vp = ensureViewport();
@@ -1799,50 +1801,36 @@ async function initVfxView() {
     vp.start(tickVfx);
   }
   try {
-    const fetchOptionalJson = async (url) => {
-      try {
-        const res = await fetch(url, { cache: 'no-cache' });
-        return res.ok ? await res.json() : null;
-      } catch {
-        return null;
-      }
-    };
-    const [unrealCatalog, presetsData, meshesData, texData, noiseData] = await Promise.all([
-      fetchUnrealCatalog(),
-      fetchOptionalJson('/assets/cn/vfx_presets/vfx_presets_table.json'),
-      fetchOptionalJson('/assets/cn/vfx_meshes/vfx_meshes_table.json'),
-      fetchOptionalJson('/assets/cn/vfx/textures/vfx_textures_table.json'),
-      fetchOptionalJson('/assets/cn/shader_maps/vfx_noise/vfx_noise_table.json'),
+    const [unrealRes, vfxBenchRes] = await Promise.all([
+      fetchUnrealCatalog().catch(() => ({})),
+      fetch('/api/hgame/vfx/catalog').then(r => (r.ok ? r.json() : { available: false })).catch(() => ({ available: false })),
     ]);
+    const unrealCatalog = unrealRes || {};
+    shurikenBenchSystems = (vfxBenchRes?.available && Array.isArray(vfxBenchRes.effects))
+      ? vfxBenchRes.effects.map(ef => ({
+          id: ef.id,
+          name: ef.name,
+          category: 'Piloto_Bench_8',
+          group: 'Piloto_Bench_8',
+          layerCount: ef.layerCount,
+          duration: ef.duration,
+          loop: ef.loop,
+          isShurikenBench: true,
+          recipeUrl: `${vfxBenchRes.baseUrl}/${ef.recipeFile}`,
+          catalogBaseUrl: vfxBenchRes.baseUrl,
+          textureMap: vfxBenchRes.textures || {},
+          meshMap: vfxBenchRes.meshes || {},
+          hgamePreset: { color: '#ff944d' },
+        }))
+      : [];
     vfxSystems = Array.isArray(unrealCatalog.vfxSystems) ? unrealCatalog.vfxSystems : [];
     vfxMeshes = Array.isArray(unrealCatalog.vfxMeshes) ? unrealCatalog.vfxMeshes : [];
     vfxTextures = Array.isArray(unrealCatalog.vfxTextures) ? unrealCatalog.vfxTextures : [];
-    goldenVfxPresets = Array.isArray(presetsData?.items) ? presetsData.items : [];
-    bakedVfxMeshes = Array.isArray(meshesData?.items) ? meshesData.items.map((m) => ({
-      ...m,
-      category: '3D 特效网格',
-    })) : [];
-    v2MeshUrlById.clear();
-    for (const m of bakedVfxMeshes) {
-      if (m.id && m.url) v2MeshUrlById.set(m.id, m.url);
-    }
-    const rawTexItems = [
-      ...(Array.isArray(texData?.items) ? texData.items : []),
-      ...(Array.isArray(noiseData?.items) ? noiseData.items : []),
-    ];
-    bakedVfxTextures = rawTexItems.map((t) => ({
-      ...t,
-      columns: t.cols || 1,
-      rows: t.rows || 1,
-      category: t.role ? 'VFX 噪声与通道贴图' : '粒子与序列帧贴图',
-    }));
   } catch (error) {
+    shurikenBenchSystems = [];
     vfxSystems = [];
-    goldenVfxPresets = [];
     vfxMeshes = [];
-    bakedVfxMeshes = [];
     vfxTextures = [];
-    bakedVfxTextures = [];
     statusEl.textContent = error.message || '读取特效目录失败';
   }
 

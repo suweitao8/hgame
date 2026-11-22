@@ -40,12 +40,16 @@ function buildGuidIndex(dir, rootDir, map = new Map()) {
         const assetPath = full.slice(0, -5);
         const alphaUsage = Number((txt.match(/^\s*alphaUsage:\s*(\d+)/m) || [])[1] ?? 1);
         const alphaIsTransparency = /alphaIsTransparency:\s*1/.test(txt);
+        const wrapU = Number((txt.match(/^\s*wrapU:\s*(-?\d+)/m) || [])[1] ?? 0) === 1;
+        const wrapV = Number((txt.match(/^\s*wrapV:\s*(-?\d+)/m) || [])[1] ?? 0) === 1;
         const globalScale = Number((txt.match(/^\s*globalScale:\s*([-\d.eE+]+)/m) || [])[1] ?? 1);
         map.set(g[1], {
           relPath: path.relative(rootDir, assetPath).replace(/\\/g, '/'),
           fullPath: assetPath,
           fromGrayScale: alphaUsage === 2,
           alphaIsTransparency,
+          wrapU,
+          wrapV,
           globalScale: Number.isFinite(globalScale) && globalScale > 0 ? globalScale : 1,
         });
       }
@@ -239,30 +243,91 @@ function parseGradientStops(colorMod) {
   return stops.length > 0 ? stops : null;
 }
 
+const SHADER_GUID_UBER_FX = '7f11fe28133f1a74594785107b98f2fe';
+const SHADER_GUID_PBR_FX = 'de445866a68ac7049bf65b2cf854d5a5';
+const SHADER_GUID_PILOTO_WARP = '0bb9d182cc9c06443a66471771fa7924';
+
 function inspectMaterial(matInfo, guidMap, deps) {
   if (!matInfo || !fs.existsSync(matInfo.fullPath)) return null;
-  const txt = fs.readFileSync(matInfo.fullPath, 'utf8');
+  const txt = fs.readFileSync(matInfo.fullPath, 'utf8').replace(/\r\n/g, '\n');
   const matName = path.basename(matInfo.relPath, path.extname(matInfo.relPath));
-  const isDistortionOnly = /distortion/i.test(matName) || /_DistortionEnabled:\s*1\b/.test(txt);
-  const surfaceMode = txt.match(/- _Surface:\s*([01])\b/)?.[1];
-  const textureBlock = name => txt.match(new RegExp(`- ${name}:([\\s\\S]*?)(?=\\n {0,4}(?:- |m_)|$)`))?.[1];
-  const textureGuid = block => block?.match(/m_Texture:[^\n]*guid:\s*([0-9a-f]{32})/)?.[1];
-  const baseBlock = textureBlock('_BaseMap');
-  const legacyBlock = textureBlock('_MainTex');
-  const baseTexture = surfaceMode !== undefined ? (baseBlock ?? legacyBlock) : (legacyBlock ?? baseBlock);
-  const refractionTexture = isDistortionOnly
-    ? ['_DistortionTexture', '_NormalMap', '_BumpMap'].map(textureBlock).find(textureGuid)
-    : undefined;
-  const mainTexBlock = refractionTexture ?? baseTexture ?? '';
-  const mainTexGuid = textureGuid(mainTexBlock);
-  const baseColor = txt.match(/- _BaseColor:\s*\{([^}]+)\}/);
-  const legacyColor = txt.match(/- _TintColor:\s*\{([^}]+)\}/) || txt.match(/- _Color:\s*\{([^}]+)\}/);
-  const colorMatch = surfaceMode !== undefined ? (baseColor || legacyColor) : (legacyColor || baseColor);
-  const color = colorMatch ? normalizeHdrColor(parseColorObject(colorMatch[1], false)) : { hdr: 1, rgb: [1, 1, 1], a: 1 };
+  const shaderGuid = txt.match(/m_Shader:\s*\{[^}]*guid:\s*([0-9a-f]{32})/)?.[1] || '';
 
+  const kwMatch = txt.match(/m_ValidKeywords:\s*\n([\s\S]*?)(?=\n {0,4}(?:m_|m_InvalidKeywords:|m_LightmapFlags:)|$)/);
+  const keywords = kwMatch
+    ? [...kwMatch[1].matchAll(/^\s*-\s*([A-Za-z0-9_]+)/gm)].map((m) => m[1])
+    : ((txt.match(/m_ShaderKeywords:\s*([^\n]+)/)?.[1] || '').trim().split(/\s+/).filter(Boolean));
+  const kwSet = new Set(keywords);
+
+  const textureBlock = (name) => txt.match(new RegExp(`- ${name}:([\\s\\S]*?)(?=\\n {0,4}(?:- |m_)|$)`))?.[1] || '';
+  const textureGuid = (block) => block?.match(/m_Texture:[^\n]*guid:\s*([0-9a-f]{32})/)?.[1] || '';
+  const readFloatProp = (name, fallback) => {
+    const m = txt.match(new RegExp(`- ${name}:\\s*([-\\d.eE+]+)`));
+    return m ? Number(m[1]) : fallback;
+  };
+  const readVec4Prop = (name, fallback) => {
+    const mr = txt.match(new RegExp(`- ${name}:\\s*\\{r:\\s*([-\\d.eE+]+),\\s*g:\\s*([-\\d.eE+]+),\\s*b:\\s*([-\\d.eE+]+),\\s*a:\\s*([-\\d.eE+]+)`));
+    if (mr) return [Number(mr[1]), Number(mr[2]), Number(mr[3]), Number(mr[4])];
+    const mx = txt.match(new RegExp(`- ${name}:\\s*\\{x:\\s*([-\\d.eE+]+),\\s*y:\\s*([-\\d.eE+]+)(?:,\\s*z:\\s*([-\\d.eE+]+),\\s*w:\\s*([-\\d.eE+]+))?`));
+    if (mx) return [Number(mx[1]), Number(mx[2]), Number(mx[3] ?? 0), Number(mx[4] ?? 0)];
+    return fallback;
+  };
+  const readTexSlot = (name) => {
+    const blk = textureBlock(name);
+    if (!blk) return null;
+    const guid = textureGuid(blk);
+    const sclM = blk.match(/m_Scale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+)\}/);
+    const offM = blk.match(/m_Offset:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+)\}/);
+    const st = [
+      sclM ? Number(sclM[1]) : 1,
+      sclM ? Number(sclM[2]) : 1,
+      offM ? Number(offM[1]) : 0,
+      offM ? Number(offM[2]) : 0,
+    ];
+    let spriteKey = null;
+    let clamp = [0, 0];
+    if (guid && guidMap.has(guid)) {
+      const tex = guidMap.get(guid);
+      deps.textures.set(tex.relPath, tex);
+      clamp = [tex.wrapU ? 1 : 0, tex.wrapV ? 1 : 0];
+      spriteKey = path.basename(tex.relPath, path.extname(tex.relPath))
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    }
+    return { guid, spriteKey, st, blk, clamp };
+  };
+
+  let shaderKind = 'legacy';
+  if (shaderGuid === SHADER_GUID_UBER_FX) {
+    shaderKind = 'uber_fx';
+  } else if (shaderGuid === SHADER_GUID_PILOTO_WARP) {
+    shaderKind = 'piloto_warp';
+  } else if (shaderGuid === SHADER_GUID_PBR_FX) {
+    shaderKind = 'pbr_fx';
+  } else if (!shaderGuid) {
+    if (/- _MainTextureChannel:/.test(txt)) {
+      shaderKind = 'uber_fx';
+    } else if (/- _Distortion_Texture:/.test(txt)) {
+      shaderKind = 'piloto_warp';
+    } else if (/- _OcclusionRoughtMetal:/.test(txt)) {
+      shaderKind = 'pbr_fx';
+    }
+  }
+
+  const isDistortionOnly = shaderKind === 'piloto_warp'
+    || /_DistortionEnabled:\s*1\b/.test(txt)
+    || (shaderKind === 'legacy' && /distortion/i.test(matName));
+
+  const surfaceMode = txt.match(/- _Surface:\s*([01])\b/)?.[1];
+  const surface = surfaceMode !== undefined ? Number(surfaceMode) : undefined;
+  const cullNum = readFloatProp('_Cull', 0);
+  const cullMode = cullNum === 1 ? 'front' : cullNum === 2 ? 'back' : undefined;
   const blendIntM = txt.match(/- _Blend:\s*(\d+)/);
   const dstBlendM = txt.match(/- _DstBlend:\s*(\d+)/);
   const srcBlendM = txt.match(/- _SrcBlend:\s*(\d+)/);
+  const srcBlend = srcBlendM ? Number(srcBlendM[1]) : undefined;
+  const dstBlend = dstBlendM ? Number(dstBlendM[1]) : undefined;
   let blend = 'alpha';
   if (isDistortionOnly) {
     blend = 'distortion';
@@ -277,9 +342,254 @@ function inspectMaterial(matInfo, guidMap, deps) {
     blend = 'alpha';
   }
 
-  const cullM = txt.match(/- _Cull:\s*(\d+)/);
-  const cullNum = cullM ? Number(cullM[1]) : 0;
-  const cullMode = cullNum === 1 ? 'front' : cullNum === 2 ? 'back' : undefined;
+  const zWrite = Number(txt.match(/- _ZWrite:[ \t]*([^\s]+)/)?.[1]);
+  const zTest = Number(txt.match(/- _ZTest:[ \t]*([^\s]+)/)?.[1]);
+
+  if (shaderKind !== 'legacy') {
+    if (shaderKind === 'uber_fx') {
+      const sMain = readTexSlot('_MainTex');
+      const sDet = readTexSlot('_DetailNoise');
+      const sAlphaOv = readTexSlot('_AlphaOverride');
+      const alphaClipThreshold = readFloatProp('_Alpha_Clip_Threshold', 0.5);
+      const alphaTest = kwSet.has('_ALPHATEST_ON') || readFloatProp('_AlphaClip', 0) > 0.5;
+      const useSoft = kwSet.has('_USESOFTALPHA');
+      const uberMat = {
+        key: `${shaderKind}:${matName}`,
+        shaderProfile: 'piloto_uber_fx',
+        shaderKind,
+        surface,
+        blend,
+        srcBlend,
+        dstBlend,
+        cull: cullNum,
+        cullMode,
+        depthTest: VFX_DEPTH_TESTS[zTest],
+        depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : undefined,
+        keywords,
+        doubleSided: cullNum === 0,
+        mainTexKey: sMain?.spriteKey || null,
+        mainClamp: sMain?.clamp || [0, 0],
+        mainTexST: sMain?.st || [1, 1, 0, 0],
+        mainTexPanning: readVec4Prop('_MainTexturePanning', [0, 0, 0, 0]).slice(0, 2),
+        mainTextureChannel: readVec4Prop('_MainTextureChannel', [1, 1, 1, 0]),
+        mainAlphaChannel: readVec4Prop('_MainAlphaChannel', [0, 0, 0, 1]),
+        detailNoiseKey: sDet?.spriteKey || null,
+        detailClamp: sDet?.clamp || [0, 0],
+        detailNoiseST: sDet?.st || [1, 1, 0, 0],
+        detailNoisePanning: readVec4Prop('_DetailNoisePanning', [0, 0, 0, 0]).slice(0, 2),
+        detailDistortionChannel: readVec4Prop('_DetailDistortionChannel', [0, 0, 0, 0]),
+        detailMultiplyChannel: readVec4Prop('_DetailMultiplyChannel', [0, 0, 0, 0]),
+        detailAdditiveChannel: readVec4Prop('_DetailAdditiveChannel', [0, 0, 0, 0]),
+        detailDissolveChannel: readVec4Prop('_DetailDisolveChannel', [1, 0, 0, 0]),
+        detailVertexOffsetChannel: readVec4Prop('_DetailVertexOffsetChannel', [0, 0, 0, 0]),
+        alphaOverrideKey: sAlphaOv?.spriteKey || null,
+        alphaOvClamp: sAlphaOv?.clamp || [0, 0],
+        alphaOverrideST: sAlphaOv?.st || [1, 1, 0, 0],
+        alphaOverridePanning: readVec4Prop('_AlphaOverridePanning', [0, 0, 0, 0]).slice(0, 2),
+        alphaOverrideChannel: readVec4Prop('_AlphaOverrideChannel', [1, 0, 0, 0]),
+        desaturate: readFloatProp('_Desaturate', 0),
+        multiplyNoiseDesaturation: readFloatProp('_MultiplyNoiseDesaturation', 1),
+        distortionIntensity: readFloatProp('_DistortionIntensity', 0),
+        softFadeFactor: readFloatProp('_SoftFadeFactor', 0.1),
+        dissolveFadeRange: readVec4Prop('_Disolve_Fade_Range', [-0.25, 1, 0, 0]).slice(0, 2),
+        whiteColor: readVec4Prop('_WhiteColor', [1, 1, 1, 1]),
+        midColor: readVec4Prop('_MidColor', [1, 1, 1, 1]),
+        lastColor: readVec4Prop('_LastColor', [0, 0, 0, 1]),
+        middlePointPos: readFloatProp('_MiddlePointPos', 0.5),
+        middlePointPos1: readFloatProp('_MiddlePointPos1', 0.0),
+        fresnelColor: readVec4Prop('_FresnelColor', [1, 1, 1, 1]),
+        fresnelPower: readFloatProp('_FresnelPower', 1),
+        fresnelScale: readFloatProp('_FresnelScale', 1),
+        invertFresnel: readFloatProp('_Invert_Fresnel', 0) > 0.5,
+        tintFresnel: readFloatProp('_Tint_Fresnel', 0) > 0.5,
+        alphaClipThreshold,
+        alphaTest,
+        alphaClip: alphaTest,
+        useSoftAlpha: useSoft,
+        useAlphaOverride: kwSet.has('_USEALPHAOVERRIDE'),
+        useRamp: kwSet.has('_USERAMP'),
+        useUvOffset: kwSet.has('_USEUVOFFSET'),
+        useFresnel: kwSet.has('_FRESNEL'),
+        disableErosion: kwSet.has('_DISABLEEROSION'),
+      };
+      return {
+        matName,
+        spriteKey: sMain?.spriteKey || null,
+        hdr: 1.0,
+        tintRgb: [1, 1, 1],
+        tintAlpha: 1.0,
+        blend,
+        cullMode,
+        cutoff: alphaTest ? alphaClipThreshold : undefined,
+        depthTest: VFX_DEPTH_TESTS[zTest],
+        depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : undefined,
+        softParticles: useSoft,
+        isDistortionOnly: false,
+        flipbookBlend: true,
+        uberMat,
+        material: uberMat,
+      };
+    }
+
+    if (shaderKind === 'piloto_warp') {
+      const sDist = readTexSlot('_Distortion_Texture');
+      const sAlpha = readTexSlot('_Alpha_Texture');
+      const useSoft = kwSet.has('_USE_SOFT_ALPHA') || kwSet.has('_USESOFTALPHA') || readFloatProp('_Use_Soft_Alpha', 0) > 0.5;
+      const uberMat = {
+        key: `${shaderKind}:${matName}`,
+        shaderProfile: 'piloto_warp',
+        shaderKind,
+        surface,
+        blend: 'distortion',
+        srcBlend,
+        dstBlend,
+        cull: cullNum,
+        cullMode,
+        depthTest: VFX_DEPTH_TESTS[zTest],
+        depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : false,
+        keywords,
+        doubleSided: cullNum === 0,
+        distortionTextureKey: sDist?.spriteKey || null,
+        distortionTextureST: sDist?.st || [1, 1, 0, 0],
+        distortionPanning: readVec4Prop('_Distortion_Panning', [0, 0, 0, 0]).slice(0, 2),
+        distortionStrength: readFloatProp('_Distortion_Strength', 0.05),
+        alphaTextureKey: sAlpha?.spriteKey || null,
+        alphaTextureST: sAlpha?.st || [1, 1, 0, 0],
+        alphaPanning: readVec4Prop('_Alpha_Panning', [0, 0, 0, 0]).slice(0, 2),
+        alphaChannelPicker: readVec4Prop('_Alpha_Channel_Picker', [1, 0, 0, 0]),
+        polarCoordinates: readFloatProp('_Polar_Coordinates', 0) > 0.5,
+        unpackNormals: readFloatProp('_Unpack_Normals', 0) > 0.5,
+        softFadeFactor: readFloatProp('_SoftFadeFactor', 0.1),
+        useSoftAlpha: useSoft,
+      };
+      return {
+        matName,
+        spriteKey: sDist?.spriteKey || null,
+        hdr: 1.0,
+        tintRgb: [1, 1, 1],
+        tintAlpha: 1.0,
+        blend: 'distortion',
+        cullMode,
+        depthTest: VFX_DEPTH_TESTS[zTest],
+        depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : false,
+        softParticles: useSoft,
+        isDistortionOnly: true,
+        flipbookBlend: true,
+        uberMat,
+        material: uberMat,
+      };
+    }
+
+    // shaderKind === 'pbr_fx'
+    const sBase = readTexSlot('_BaseColorMap');
+    const sNorm = readTexSlot('_Normal');
+    const sOrm = readTexSlot('_OcclusionRoughtMetal');
+    const sEmis = readTexSlot('_Emission');
+    const sDet = readTexSlot('_Detail_Map');
+    const sDiss = readTexSlot('_Dissolve_Map');
+    const alphaClipping = kwSet.has('_ALPHATEST_ON') || readFloatProp('_AlphaClip', 0) > 0.5;
+    const alphaClipThreshold = readFloatProp('_Alpha_Clip_Threshold', readFloatProp('_AlphaClipping', 0.5));
+    const pbrBlend = surfaceMode === '0' ? 'alpha' : blend;
+    const uberMat = {
+      key: `${shaderKind}:${matName}`,
+      shaderProfile: 'piloto_pbr_fx',
+      shaderKind,
+      surface,
+      opaque: surfaceMode === '0' && !alphaClipping,
+      blend: pbrBlend,
+      srcBlend,
+      dstBlend,
+      cull: cullNum,
+      cullMode,
+      depthTest: VFX_DEPTH_TESTS[zTest],
+      depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : (surfaceMode === '0'),
+      keywords,
+      doubleSided: cullNum === 0,
+      baseColorMapKey: sBase?.spriteKey || null,
+      baseColorMapST: sBase?.st || [1, 1, 0, 0],
+      baseColorMapPanning: readVec4Prop('_Base_Map_Panning', readVec4Prop('_Base_Color_Panning', [0, 0, 0, 0])).slice(0, 2),
+      baseColorTint: readVec4Prop('_BaseColorTint', [1, 1, 1, 1]),
+      normalMapKey: sNorm?.spriteKey || null,
+      normalMapST: sNorm?.st || [1, 1, 0, 0],
+      normalPanning: readVec4Prop('_Normal_Panning', [0, 0, 0, 0]).slice(0, 2),
+      normalScale: readFloatProp('_NormalScale', 1),
+      ormMapKey: sOrm?.spriteKey || null,
+      ormMapST: sOrm?.st || [1, 1, 0, 0],
+      pbrMaskPanning: readVec4Prop('_PBR_Mask_Panning', [0, 0, 0, 0]).slice(0, 2),
+      occlusionScale: readFloatProp('_OcclusionScale', 1),
+      smoothnessScale: readFloatProp('_SmoothnessScale', 0.5),
+      metallicScale: readFloatProp('_MetallicScale', 0),
+      emissionMapKey: sEmis?.spriteKey || null,
+      emissionMapST: sEmis?.st || [1, 1, 0, 0],
+      emissionPanning: readVec4Prop('_Emission_Panning', [0, 0, 0, 0]).slice(0, 2),
+      emissiveTint: readVec4Prop('_EmissiveTint', [0, 0, 0, 1]),
+      intensity: readFloatProp('_Intensity', 1),
+      selfIlluminationIntensity: readFloatProp('_Self_Ilumination_Intensity', 0),
+      detailMapKey: sDet?.spriteKey || null,
+      detailMapST: sDet?.st || [1, 1, 0, 0],
+      detailMapPanning: readVec4Prop('_Detail_Map_Panning', [0, 0, 0, 0]).slice(0, 2),
+      detailDistortionChannel: readVec4Prop('_Detail_Distortion_Channel', [0, 0, 0, 0]),
+      detailDissolveChannel: readVec4Prop('_Detail_Dissolve_Channel', [1, 0, 0, 0]),
+      detailVertexOffsetChannel: readVec4Prop('_Detail_Vertex_Offset_Channel', [0, 0, 0, 0]),
+      dissolveMapKey: sDiss?.spriteKey || null,
+      dissolveMapST: sDiss?.st || [1, 1, 0, 0],
+      dissolveMapPanning: readVec4Prop('_Dissolve_Map_Panning', [0, 0, 0, 0]).slice(0, 2),
+      dissolveFadeRange: readVec4Prop('_Dissolve_Fade_Range', [-0.25, 1, 0, 0]).slice(0, 2),
+      dissolveAmount: readFloatProp('_Dissolve_Amount', 0),
+      useBaseAsNormal: readFloatProp('_Use_Base_as_Normal', 0) > 0.5,
+      baseNormalStrength: readFloatProp('_Base_Normal_Strength', 1),
+      distortionBaseIntensity: readFloatProp('_Distortion_Base_Intensity', readFloatProp('_Distortion_Main_Intensity', 0)),
+      distortionNormalIntensity: readFloatProp('_Distortion_Normal_Intensity', 0),
+      distortionDissolveIntensity: readFloatProp('_Distortion_Dissolve_Intensity', 0),
+      vertexOffsetIntensity: readFloatProp('_Vertex_Offset_Intensity', 1),
+      fresnelColor: readVec4Prop('_Fresnel_Color', [1, 1, 1, 1]),
+      fresnelPower: readFloatProp('_Fresnel_Power', 1),
+      fresnelIntensity: readFloatProp('_Fresnel_Intensity', readFloatProp('_Fresnel_Scale', 1)),
+      invertFresnel: readFloatProp('_Invert_Fresnel', 0) > 0.5,
+      tintFresnel: readFloatProp('_Tint_Fresnel', 0) > 0.5,
+      alphaClipping,
+      alphaClip: alphaClipping,
+      alphaTest: alphaClipping,
+      alphaClipThreshold,
+      cutoff: alphaClipping ? alphaClipThreshold : undefined,
+      isParticle: kwSet.has('_ISPARTICLE'),
+      useFresnel: kwSet.has('_FRESNEL'),
+      useUvOffset: kwSet.has('_USEUVOFFSET'),
+      disableErosion: kwSet.has('_DISABLEEROSION'),
+    };
+    return {
+      matName,
+      spriteKey: sBase?.spriteKey || null,
+      hdr: 1.0,
+      tintRgb: [1, 1, 1],
+      tintAlpha: 1.0,
+      blend: uberMat.blend,
+      cullMode,
+      cutoff: alphaClipping ? alphaClipThreshold : undefined,
+      lit: true,
+      opaque: surfaceMode === '0' && !alphaClipping,
+      depthTest: VFX_DEPTH_TESTS[zTest],
+      depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : (surfaceMode === '0'),
+      softParticles: false,
+      isDistortionOnly: false,
+      flipbookBlend: true,
+      uberMat,
+      material: uberMat,
+    };
+  }
+
+  const baseBlock = textureBlock('_BaseMap');
+  const legacyBlock = textureBlock('_MainTex');
+  const baseTexture = surfaceMode !== undefined ? (baseBlock ?? legacyBlock) : (legacyBlock ?? baseBlock);
+  const refractionTexture = isDistortionOnly
+    ? ['_DistortionTexture', '_NormalMap', '_BumpMap'].map(textureBlock).find(textureGuid)
+    : undefined;
+  const mainTexBlock = refractionTexture ?? baseTexture ?? '';
+  const mainTexGuid = textureGuid(mainTexBlock);
+  const baseColor = txt.match(/- _BaseColor:\s*\{([^}]+)\}/);
+  const legacyColor = txt.match(/- _TintColor:\s*\{([^}]+)\}/) || txt.match(/- _Color:\s*\{([^}]+)\}/);
+  const colorMatch = surfaceMode !== undefined ? (baseColor || legacyColor) : (legacyColor || baseColor);
+  const color = colorMatch ? normalizeHdrColor(parseColorObject(colorMatch[1], false)) : { hdr: 1, rgb: [1, 1, 1], a: 1 };
 
   const alphaClip = /- _AlphaClip:\s*1\b/.test(txt) || /_ALPHATEST_ON/.test(txt);
   const cutoff = alphaClip ? Number((txt.match(/- _Cutoff:\s*([-\d.eE+]+)/) || [])[1] ?? 0.5) : undefined;
@@ -327,8 +637,6 @@ function inspectMaterial(matInfo, guidMap, deps) {
 
   const isLit = /_NORMALMAP|_METALLIC|_SPECGLOSSMAP|Standard Surface/i.test(txt) || /guid:\s*0406db5a14f94604a8c57ccfbc9f3b46/.test(txt);
   const isOpaque = surfaceMode !== undefined ? surfaceMode === '0' : /- _Mode:\s*[01]\b/.test(txt);
-  const zWrite = Number(txt.match(/- _ZWrite:[ \t]*([^\s]+)/)?.[1]);
-  const zTest = Number(txt.match(/- _ZTest:[ \t]*([^\s]+)/)?.[1]);
   const softParticles = Number(txt.match(/- _SoftParticlesEnabled:[ \t]*([^\s]+)/)?.[1]);
   const clearedBase = !mainTexBlock || /m_Texture:\s*\{fileID:\s*0\s*[,}]/.test(mainTexBlock);
   const flipbookMode = Number(txt.match(/- _FlipbookBlending:[ \t]*([\d.]+)/)?.[1]
@@ -343,6 +651,30 @@ function inspectMaterial(matInfo, guidMap, deps) {
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
   }
+
+  const material = {
+    shaderProfile: isDistortionOnly ? 'unity_standard' : 'unity_standard',
+    surface,
+    blend,
+    srcBlend,
+    dstBlend,
+    cull: cullNum,
+    cullMode,
+    depthTest: VFX_DEPTH_TESTS[zTest],
+    depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : undefined,
+    opaque: isOpaque,
+    alphaClip,
+    alphaTest: alphaClip,
+    cutoff,
+    alphaClipThreshold: cutoff,
+    softParticles: softParticles === 0 || softParticles === 1 ? softParticles === 1 : undefined,
+    mainTexKey: spriteKey,
+    mainTexST: [uvScale?.[0] ?? 1, uvScale?.[1] ?? 1, uvOffset?.[0] ?? 0, uvOffset?.[1] ?? 0],
+    tintColor: isDistortionOnly ? [1, 1, 1, color.a] : [...color.rgb, color.a],
+    hdr: isDistortionOnly ? 1.0 : color.hdr,
+    emission,
+    keywords,
+  };
 
   return {
     matName,
@@ -366,6 +698,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
     useTexture: isOpaque && !isDistortionOnly && clearedBase ? false : undefined,
     isDistortionOnly,
     flipbookBlend: flipbookMode >= 1,
+    material,
   };
 }
 
@@ -417,16 +750,93 @@ function unityEulerToQuat(dx, dy, dz) {
   return quatMul(qy, quatMul(qx, qz));
 }
 
+function toRhsZ(v) {
+  return v === 0 ? 0 : -v;
+}
+
+function toRhsQuat(q) {
+  return [
+    q[0] === 0 ? 0 : -q[0],
+    q[1] === 0 ? 0 : -q[1],
+    q[2],
+    q[3],
+  ];
+}
+
+function negateValueOrRange(v) {
+  if (Array.isArray(v)) {
+    const a = v[0] === 0 ? 0 : -v[0];
+    const b = v[1] === 0 ? 0 : -v[1];
+    return [Math.min(a, b), Math.max(a, b)];
+  }
+  if (typeof v === 'number') return v === 0 ? 0 : -v;
+  return v;
+}
+
+function parseVertexStreams(psr) {
+  const m = psr.match(/^\s*m_VertexStreams:\s*([0-9a-fA-F]+)/m);
+  if (!m) return null;
+  const hex = m[1].trim().toLowerCase();
+  const out = {};
+  for (let i = 0; i + 1 < hex.length; i += 2) {
+    const code = hex.slice(i, i + 2);
+    if (code === '05') out.uv2 = true;
+    else if (code === '21') out.agePercent = true;
+    else if (code === '22') out.custom1 = true;
+    else if (code === '23') out.custom2 = true;
+    else if (code === '26') out.stableRandom = true;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function parseMinMaxCurveData(block, allowNegative = false) {
+  if (!block) return null;
+  const mode = Number((block.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
+  const scalar = Number((block.match(/\bscalar:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+  const minScalar = Number((block.match(/\bminScalar:\s*([-\d.eE+]+)/) || [])[1] ?? scalar);
+  if (mode === 0) return Number(scalar.toFixed(4));
+  if (mode === 3) {
+    const lo = Math.min(minScalar, scalar);
+    const hi = Math.max(minScalar, scalar);
+    return [Number(lo.toFixed(4)), Number(hi.toFixed(4))];
+  }
+  if (mode === 1) {
+    const curve = parseCurveKeys(block, allowNegative);
+    return curve ? { mode: 'curve', scalar: Number(scalar.toFixed(4)), curve } : Number(scalar.toFixed(4));
+  }
+  if (mode === 2) {
+    const maxBlk = block.split(/\n\s*minCurve:/)[0] || block;
+    const minBlk = block.split(/\n\s*minCurve:/)[1] || '';
+    const curve = parseCurveKeys(maxBlk, allowNegative);
+    const minCurve = minBlk ? parseCurveKeys(minBlk, allowNegative) : null;
+    if (curve && minCurve) {
+      return {
+        mode: 'twoCurves',
+        scalar: Number(scalar.toFixed(4)),
+        minScalar: Number(minScalar.toFixed(4)),
+        curve,
+        minCurve,
+      };
+    }
+    if (curve) return { mode: 'curve', scalar: Number(scalar.toFixed(4)), curve };
+    return [Number(Math.min(minScalar, scalar).toFixed(4)), Number(Math.max(minScalar, scalar).toFixed(4))];
+  }
+  return Number(scalar.toFixed(4));
+}
+
 function computeShapeRotation(trQuat, sRotMatch, mappedType) {
   if (mappedType === 'sphere' || mappedType === 'point') return null;
-  const qTr = Array.isArray(trQuat)
+  const rawTr = Array.isArray(trQuat)
     ? trQuat
     : trQuat
       ? [Number(trQuat[1]), Number(trQuat[2]), Number(trQuat[3]), Number(trQuat[4])]
       : [0, 0, 0, 1];
-  const qSh = sRotMatch
+  const rawSh = sRotMatch
     ? unityEulerToQuat(Number(sRotMatch[1]), Number(sRotMatch[2]), Number(sRotMatch[3]))
     : [0, 0, 0, 1];
+  // Convert LHS Unity transform & shape quaternions to RHS Three.js quaternions at import time.
+  const qTr = toRhsQuat(rawTr);
+  const qSh = toRhsQuat(rawSh);
   // Canonical Unity shapes point +Z; HGame cone/circle/hemisphere use +Y (+90 deg X offset from +Y to +Z).
   const s45 = Math.SQRT1_2;
   const qOff = quatMul(quatMul(qTr, qSh), [s45, 0, 0, s45]);
@@ -481,7 +891,7 @@ function mapShapeType(unityType) {
 
 export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
   const guidMap = buildGuidIndex(unityRoot, unityRoot);
-  const raw = fs.readFileSync(prefabPath, 'utf8');
+  const raw = fs.readFileSync(prefabPath, 'utf8').replace(/\r\n/g, '\n');
   const docs = raw.split(/^--- !u!/m).slice(1);
   const goNames = new Map();
   const transforms = [];
@@ -575,7 +985,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       scale = [scale[0] * node.scale[0], scale[1] * node.scale[1], scale[2] * node.scale[2]];
     }
     return {
-      pos: [Number(pos[0].toFixed(4)), Number(pos[1].toFixed(4)), Number(pos[2].toFixed(4))],
+      pos: [Number(pos[0].toFixed(4)), Number(pos[1].toFixed(4)), toRhsZ(Number(pos[2].toFixed(4)))],
       rot,
       scale,
     };
@@ -586,9 +996,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const ps = psByGo.get(goId);
     const psr = psrByGo.get(goId);
     if (!ps || !psr) return null;
-    if (/^\s*m_Enabled:\s*0\b/m.test(psr)) {
+    const psrDisabled = /^\s*m_Enabled:\s*0\b/m.test(psr);
+    if (psrDisabled) {
       const tmCheck = extractSection(ps, 'TrailModule');
-      if (!/^\s*enabled:\s*1\b/m.test(tmCheck)) return null;
+      const smCheck = extractSection(ps, 'SubModule');
+      if (!/^\s*enabled:\s*1\b/m.test(tmCheck) && !/^\s*enabled:\s*1\b/m.test(smCheck)) return null;
     }
 
     const worldTr = isSubChild
@@ -617,10 +1029,15 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const speed = readMinMaxScalar(initMod, 'startSpeed', 0);
     const size = readMinMaxScalar(initMod, 'startSize', 1);
     const sizeY = size3D ? readMinMaxScalar(initMod, 'startSizeY', 1) : size;
+    const sizeZ = size3D ? readMinMaxScalar(initMod, 'startSizeZ', 1) : size;
     const sizeXMax = Array.isArray(size) ? size[1] : size;
     const sizeYMax = Array.isArray(sizeY) ? sizeY[1] : sizeY;
+    const sizeZMax = Array.isArray(sizeZ) ? sizeZ[1] : sizeZ;
     const aspectY = size3D && sizeXMax > 0.0001 && Math.abs(sizeYMax / sizeXMax - 1) > 0.05
       ? Number((sizeYMax / sizeXMax).toFixed(3))
+      : undefined;
+    const aspectZ = size3D && sizeXMax > 0.0001 && Math.abs(sizeZMax / sizeXMax - 1) > 0.05
+      ? Number((sizeZMax / sizeXMax).toFixed(3))
       : undefined;
     const rot = readMinMaxScalar(initMod, 'startRotation', 0);
     const rotX = rot3D ? readMinMaxScalar(initMod, 'startRotationX', 0) : 0;
@@ -639,6 +1056,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const scGradStops = scMode === 1 ? parseGradientStops(scBlock) : null;
 
     const emMod = extractSection(ps, 'EmissionModule');
+    const emDisabled = /^\s*enabled:\s*0\b/m.test(emMod);
+    if (emDisabled) return null;
     const rate = readMinMaxScalar(emMod, 'rateOverTime', 0);
     const rateDist = readMinMaxScalar(emMod, 'rateOverDistance', 0);
     const bursts = [];
@@ -664,17 +1083,18 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const hasPositiveRate = Array.isArray(effectiveRate) ? effectiveRate[1] > 0 : effectiveRate > 0;
     const hasPositiveRateDist = Array.isArray(rateDist) ? rateDist[1] > 0 : rateDist > 0;
 
-    const matsBlock = (psr.match(/m_Materials:\s*\n([\s\S]*?)\n  m_/) || ['', ''])[1];
+    const matsBlock = (psr.match(/m_Materials:\s*\n([\s\S]*?)(?:\n  m_|$)/) || ['', ''])[1];
     const matGuids = [...matsBlock.matchAll(/guid:\s*([0-9a-f]{32})/g)].map((m) => m[1]);
     const mainMat = inspectMaterial(guidMap.get(matGuids[0]), guidMap, deps);
     const trailMat = matGuids[1] ? inspectMaterial(guidMap.get(matGuids[1]), guidMap, deps) : null;
 
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
-    const renderMode = rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : rmNum === 2 ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard';
+    const renderMode = psrDisabled ? 'none' : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : rmNum === 2 ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
     const pivM = psr.match(/m_Pivot:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
     const pivot = pivM && (Math.abs(Number(pivM[1])) > 0.005 || Math.abs(Number(pivM[2])) > 0.005 || Math.abs(Number(pivM[3])) > 0.005)
-      ? [Number(Number(pivM[1]).toFixed(3)), Number(Number(pivM[2]).toFixed(3)), Number(Number(pivM[3]).toFixed(3))]
+      ? [Number(Number(pivM[1]).toFixed(3)), Number(Number(pivM[2]).toFixed(3)), toRhsZ(Number(Number(pivM[3]).toFixed(3)))]
       : undefined;
+    const vertexStreams = parseVertexStreams(psr);
     const velScale = renderMode === 'stretched'
       ? Number((psr.match(/^\s*m_VelocityScale:\s*([-\d.eE+]+)/m) || [])[1] ?? 0)
       : 0;
@@ -688,7 +1108,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     if (/enabled:\s*1/.test(forceMod)) {
       const fx = readMinMaxScalar(forceMod, 'x', 0);
       const fy = readMinMaxScalar(forceMod, 'y', 0);
-      const fz = readMinMaxScalar(forceMod, 'z', 0);
+      const fz = negateValueOrRange(readMinMaxScalar(forceMod, 'z', 0));
       const nz = (v) => Array.isArray(v) ? (Math.abs(v[0]) > 0.001 || Math.abs(v[1]) > 0.001) : Math.abs(v) > 0.001;
       if (nz(fx) || nz(fy) || nz(fz)) {
         forceVec = [fx, fy, fz];
@@ -744,6 +1164,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(mainMat?.cameraFade ? { cameraFade: mainMat.cameraFade } : {}),
       ...(mainMat?.uvScale ? { uvScale: mainMat.uvScale } : {}),
       ...(mainMat?.uvOffset ? { uvOffset: mainMat.uvOffset } : {}),
+      ...(mainMat?.uberMat ? { uberMat: mainMat.uberMat } : {}),
+      ...(mainMat?.material ? { material: mainMat.material } : {}),
+      ...(vertexStreams ? { vertexStreams } : {}),
+      ...(aspectZ !== undefined ? { aspectZ } : {}),
+      ...(size3D ? { sizeY: scaleRangeBy(sizeY, trScaleScalar), sizeZ: scaleRangeBy(sizeZ, trScaleScalar) } : {}),
       ...(pivot ? { pivot } : {}),
       ...(renderMode === 'stretched' && (Math.abs(velScale) > 0.005 || Math.abs(lenScale - 1) > 0.005)
         ? { velocityScale: Number(velScale.toFixed(3)), lengthScale: Number(lenScale.toFixed(3)) }
@@ -842,15 +1267,33 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       layer.shape = shapeObj;
     }
 
+    const extractModSubBlock = (mod, fieldName) => mod.match(new RegExp(`(?:^|\\n) {4}${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n {4}[A-Za-z_]|$)`))?.[1] || '';
     const sizeMod = extractSection(ps, 'SizeModule');
     if (/enabled:\s*1/.test(sizeMod)) {
-      const curveBlock = sizeMod.split(/\n {4}x:/)[1]?.split(/\n {4}y:/)[0] || sizeMod;
-      const sc = parseCurveKeys(curveBlock);
-      if (sc) layer.sizeCurve = sc;
-      if (/separateAxes:\s*1\b/.test(sizeMod)) {
-        const yBlock = sizeMod.split(/\n {4}y:/)[1]?.split(/\n {4}z:/)[0] || '';
-        const scY = yBlock ? parseCurveKeys(yBlock) : null;
+      const sizeSep = /separateAxes:\s*1\b/.test(sizeMod);
+      const xBlk = extractModSubBlock(sizeMod, sizeSep ? 'x' : 'curve') || sizeMod;
+      const scXData = parseMinMaxCurveData(xBlk);
+      const scX = parseCurveKeys(xBlk);
+      if (scX) layer.sizeCurve = scX;
+      let scYData = null;
+      let scZData = null;
+      if (sizeSep) {
+        const yBlk = extractModSubBlock(sizeMod, 'y');
+        const scY = yBlk ? parseCurveKeys(yBlk) : null;
         if (scY) layer.sizeYCurve = scY;
+        if (yBlk) scYData = parseMinMaxCurveData(yBlk);
+        const zBlk = extractModSubBlock(sizeMod, 'z');
+        const scZ = zBlk ? parseCurveKeys(zBlk) : null;
+        if (scZ) layer.sizeZCurve = scZ;
+        if (zBlk) scZData = parseMinMaxCurveData(zBlk);
+      }
+      const needsSize3D = (d) => d && typeof d === 'object' && !Array.isArray(d) && (d.mode === 'twoCurves' || Math.abs((d.scalar ?? 1) - 1) > 0.001);
+      if (needsSize3D(scXData) || needsSize3D(scYData) || needsSize3D(scZData)) {
+        layer.size3D = {
+          ...(scXData !== null ? { x: scXData } : {}),
+          ...(scYData !== null ? { y: scYData } : {}),
+          ...(scZData !== null ? { z: scZData } : {}),
+        };
       }
     }
 
@@ -941,11 +1384,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const rRad = readAxisOrCurve('radial');
       const vx = rx.val;
       const vy = ry.val;
-      const vz = rz.val;
+      const vz = negateValueOrRange(rz.val);
       const orbY = mulV(readMinMaxScalar(velMod, 'orbitalY', 0));
       const oox = readMinMaxScalar(velMod, 'orbitalOffsetX', 0);
       const ooy = readMinMaxScalar(velMod, 'orbitalOffsetY', 0);
-      const ooz = readMinMaxScalar(velMod, 'orbitalOffsetZ', 0);
+      const ooz = negateValueOrRange(readMinMaxScalar(velMod, 'orbitalOffsetZ', 0));
       const radV = rRad.val;
       const isNonZero = (v) => Array.isArray(v) ? (v[0] !== 0 || v[1] !== 0) : v !== 0;
       const velObj = {};
@@ -965,12 +1408,25 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const rotMod = extractSection(ps, 'RotationModule');
     if (/enabled:\s*1/.test(rotMod)) {
       const av = readMinMaxScalar(rotMod, 'curve', 0);
-      if (/separateAxes:\s*1\b/.test(rotMod)) {
+      const sepRot = /separateAxes:\s*1\b/.test(rotMod);
+      if (sepRot) {
         const rx = readMinMaxScalar(rotMod, 'x', 0);
         const ry = readMinMaxScalar(rotMod, 'y', 0);
         layer.spin = [rx, ry, av];
       } else if (av !== 0) {
         layer.angularVel = av;
+      }
+      const zCurveData = parseMinMaxCurveData(extractModSubBlock(rotMod, sepRot ? 'z' : 'curve'), true);
+      const xCurveData = sepRot ? parseMinMaxCurveData(extractModSubBlock(rotMod, 'x'), true) : null;
+      const yCurveData = sepRot ? parseMinMaxCurveData(extractModSubBlock(rotMod, 'y'), true) : null;
+      if ((zCurveData && typeof zCurveData === 'object' && !Array.isArray(zCurveData))
+        || (xCurveData && typeof xCurveData === 'object' && !Array.isArray(xCurveData))
+        || (yCurveData && typeof yCurveData === 'object' && !Array.isArray(yCurveData))) {
+        layer.rotationOverLifetime = {
+          ...(xCurveData !== null ? { x: xCurveData } : {}),
+          ...(yCurveData !== null ? { y: yCurveData } : {}),
+          ...(zCurveData !== null ? { z: zCurveData } : {}),
+        };
       }
     }
 
@@ -1017,6 +1473,133 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           ...row,
         };
         delete layer.sprite;
+      }
+    }
+
+    const clampVelMod = extractSection(ps, 'ClampVelocityModule');
+    if (/^\s*enabled:\s*1\b/m.test(clampVelMod)) {
+      const sepAx = /separateAxis:\s*1\b/.test(clampVelMod);
+      const dampenVal = Number((clampVelMod.match(/\bdampen:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+      const dragData = parseMinMaxCurveData(extractModSubBlock(clampVelMod, 'drag'), false);
+      if (sepAx) {
+        const xData = parseMinMaxCurveData(extractModSubBlock(clampVelMod, 'x'), false) ?? 1000;
+        const yData = parseMinMaxCurveData(extractModSubBlock(clampVelMod, 'y'), false) ?? 1000;
+        const zData = parseMinMaxCurveData(extractModSubBlock(clampVelMod, 'z'), false) ?? 1000;
+        const mx = (v) => typeof v === 'number' ? Math.abs(v) : Array.isArray(v) ? Math.max(Math.abs(v[0]), Math.abs(v[1])) : Math.abs(v?.scalar ?? 1000);
+        const limitVal = Math.hypot(mx(xData), mx(yData), mx(zData));
+        layer.clampVelocity = {
+          separateAxis: true,
+          limit: Number(limitVal.toFixed(4)),
+          x: xData,
+          y: yData,
+          z: zData,
+          ...(dragData ? { drag: dragData } : {}),
+          dampen: Number(Math.max(0, Math.min(1, dampenVal)).toFixed(4)),
+        };
+      } else {
+        const magData = parseMinMaxCurveData(extractModSubBlock(clampVelMod, 'magnitude'), false) ?? 1;
+        const limitVal = typeof magData === 'number' ? magData : Array.isArray(magData) ? magData[1] : (magData?.scalar ?? 1);
+        if (limitVal > 0.0001 || (dragData && dragData !== 0)) {
+          layer.clampVelocity = {
+            separateAxis: false,
+            limit: Number(limitVal.toFixed(4)),
+            magnitude: magData,
+            ...(dragData ? { drag: dragData } : {}),
+            dampen: Number(Math.max(0, Math.min(1, dampenVal)).toFixed(4)),
+          };
+        }
+      }
+    }
+
+    const rotBySpdMod = extractSection(ps, 'RotationBySpeedModule');
+    if (/^\s*enabled:\s*1\b/m.test(rotBySpdMod)) {
+      const rngM = rotBySpdMod.match(/\brange:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+)/);
+      const minSpeed = rngM ? Number(rngM[1]) : 0;
+      const maxSpeed = rngM ? Number(rngM[2]) : 1;
+      const sepRotSpd = /separateAxes:\s*1\b/.test(rotBySpdMod);
+      const cBlk = extractSubBlock(rotBySpdMod, 'curve');
+      const zCurveData = parseMinMaxCurveData(cBlk, true);
+      const xCurveData = sepRotSpd ? parseMinMaxCurveData(extractSubBlock(rotBySpdMod, 'x'), true) : null;
+      const yCurveData = sepRotSpd ? parseMinMaxCurveData(extractSubBlock(rotBySpdMod, 'y'), true) : null;
+      const st = Number((cBlk.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
+      const sc = Number((cBlk.match(/\bscalar:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+      let minAngularVel = sc;
+      let maxAngularVel = sc;
+      if (st === 1 || st === 2) {
+        const ck = parseCurveKeys(cBlk, true);
+        if (ck && ck.length > 0) {
+          minAngularVel = ck[0][1] * sc;
+          maxAngularVel = ck[ck.length - 1][1] * sc;
+        }
+      }
+      layer.rotationBySpeed = {
+        enabled: true,
+        separateAxes: sepRotSpd,
+        range: [Number(minSpeed.toFixed(4)), Number(maxSpeed.toFixed(4))],
+        minSpeed: Number(minSpeed.toFixed(4)),
+        maxSpeed: Number(maxSpeed.toFixed(4)),
+        minAngularVel: Number(minAngularVel.toFixed(4)),
+        maxAngularVel: Number(maxAngularVel.toFixed(4)),
+        curve: zCurveData ?? 0,
+        ...(xCurveData !== null ? { x: xCurveData } : {}),
+        ...(yCurveData !== null ? { y: yCurveData } : {}),
+        z: zCurveData ?? 0,
+      };
+    }
+
+    const inhVelMod = extractSection(ps, 'InheritVelocityModule');
+    if (/^\s*enabled:\s*1\b/m.test(inhVelMod)) {
+      const ivModeNum = Number((inhVelMod.match(/\bm_Mode:\s*(\d+)/) || [])[1] ?? 0);
+      const ivCurve = parseMinMaxCurveData(extractModSubBlock(inhVelMod, 'm_Curve'), true);
+      const iv = readMinMaxScalar(inhVelMod, 'm_Curve', 0);
+      const ivVal = Array.isArray(iv) ? iv[1] : iv;
+      if (Math.abs(ivVal) > 0.001 || (ivCurve && typeof ivCurve === 'object')) {
+        layer.inheritVelocity = {
+          mode: ivModeNum === 1 ? 'current' : 'initial',
+          multiplier: ivCurve ?? Number(ivVal.toFixed(4)),
+        };
+      }
+    }
+
+    const customMod = extractSection(ps, 'CustomDataModule');
+    if (/^\s*enabled:\s*1\b/m.test(customMod)) {
+      const parseVecComp = (fieldName) => {
+        const blk = extractSubBlock(customMod, fieldName);
+        if (!blk) return 0;
+        const parsed = parseMinMaxCurveData(blk, true);
+        return parsed !== null ? parsed : 0;
+      };
+      const mode0 = Number((customMod.match(/^\s*mode0:\s*(\d+)/m) || [])[1] ?? 0);
+      const mode1 = Number((customMod.match(/^\s*mode1:\s*(\d+)/m) || [])[1] ?? 0);
+      const customData = {};
+      if (mode0 === 1) {
+        customData.custom1 = {
+          mode: 'vector',
+          x: parseVecComp('vector0_0'),
+          y: parseVecComp('vector0_1'),
+          z: parseVecComp('vector0_2'),
+          w: parseVecComp('vector0_3'),
+        };
+      } else if (mode0 === 2) {
+        const cBlk = extractSubBlock(customMod, 'color0');
+        const cStops = cBlk ? parseGradientStops(cBlk) : null;
+        customData.custom1 = { mode: 'color', color: cStops || [1, 1, 1, 1] };
+      }
+      if (mode1 === 1) {
+        customData.custom2 = {
+          mode: 'vector',
+          x: parseVecComp('vector1_0'),
+          y: parseVecComp('vector1_1'),
+          z: parseVecComp('vector1_2'),
+          w: parseVecComp('vector1_3'),
+        };
+      } else if (mode1 === 2) {
+        const cBlk = extractSubBlock(customMod, 'color1');
+        const cStops = cBlk ? parseGradientStops(cBlk) : null;
+        customData.custom2 = { mode: 'color', color: cStops || [1, 1, 1, 1] };
+      }
+      if (customData.custom1 || customData.custom2) {
+        layer.customData = customData;
       }
     }
 
@@ -1102,6 +1685,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const wMax = typeof wScalar === 'number' ? wScalar : wScalar[1];
       const baseSizeMax = typeof size === 'number' ? size : size[1];
       layer.trail = {
+        mode: trailMode === 1 ? 'ribbon' : 'particles',
         lifetime: tLife,
         lifetimeMode: trailMode === 1 ? 'seconds' : 'fraction',
         blend: trailMat?.blend || 'alpha',
@@ -1211,7 +1795,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const fatherId = (tr.body.match(/m_Father:\s*\{fileID:\s*(\d+)\}/) || [])[1] ?? '0';
     const posM = tr.body.match(/m_LocalPosition:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
-    const offset = (fatherId !== '0' && posM) ? [Number(posM[1]), Number(posM[2]), Number(posM[3])] : [0, 0, 0];
+    const offset = (fatherId !== '0' && posM) ? [Number(posM[1]), Number(posM[2]), toRhsZ(Number(posM[3]))] : [0, 0, 0];
 
     const lt = lightByGo.get(goId);
     if (lt && !lightPulse) {

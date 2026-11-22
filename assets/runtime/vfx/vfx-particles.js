@@ -347,7 +347,7 @@ export function createStatelessParticlePool({
     geo.index = base.index;
     geo.attributes.position = base.attributes.position;
     geo.attributes.uv = base.attributes.uv;
-    geo.instanceCount = capacity;
+    geo.instanceCount = 0;
 
     const a0 = new THREE.InstancedBufferAttribute(ch.p0, 4);
     const a1 = new THREE.InstancedBufferAttribute(ch.p1, 4);
@@ -520,6 +520,9 @@ export function createStatelessParticlePool({
       }
     }
 
+    if (ch.threeMesh) {
+      ch.threeMesh.geometry.instanceCount = Math.min(ch.totalEmitted, ch.capacity);
+    }
     ch.dirtyCount = 0;
   }
 
@@ -696,11 +699,15 @@ export function createStatelessParticlePool({
       ch.cursor = 0;
       ch.totalEmitted = 0;
       ch.dirtyStart = 0;
-      ch.dirtyCount = 0;
+      if (ch.threeMesh) {
+      ch.threeMesh.geometry.instanceCount = Math.min(ch.totalEmitted, ch.capacity);
+    }
+    ch.dirtyCount = 0;
       ch.wrapCount = 0;
       ch.lastDirtyRanges.length = 0;
       ch.p0.fill(0);
       ch.p1.fill(0);
+      if (ch.threeMesh) ch.threeMesh.geometry.instanceCount = 0;
     }
   }
 

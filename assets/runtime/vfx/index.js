@@ -77,39 +77,46 @@ import {
 import {
   VFX_MESH_VERTEX_GLSL,
   VFX_MESH_FRAGMENT_GLSL,
+  VFX_MESH_INSTANCED_VS,
+  VFX_MESH_INSTANCED_FS,
   createMeshVfxPool,
 } from './vfx-mesh.js';
+import {
+  UBER_MAT_LUT_WIDTH,
+  UBER_MAT_LUT_ROWS,
+  UBER_SHADER_KIND,
+  VFX_CURVE_LUT_SAMPLES,
+  VFX_COMMON_GLSL,
+  VFX_VERTEX_BUS_ATTRS_GLSL,
+  VFX_VERTEX_SHELL_GLSL,
+  createUberMaterialLut,
+  compileCustomDataCurves,
+  compileCurveLut16,
+  sampleCurveLut16,
+  compileMinMaxCurve,
+  evaluateMinMaxCurve,
+  srgbToLinear,
+  compileMinMaxGradient,
+  evaluateMinMaxGradient,
+} from './vfx-shader-chunks.js';
+import {
+  registerShaderProfile,
+  getShaderProfile,
+  listShaderProfiles,
+  resolveThreeRenderState,
+  createProfileMaterial,
+  getCompiledShaderVariantCount,
+  resetCompiledShaderVariantTracker,
+} from './vfx-shader-profiles.js';
+import {
+  SHURIKEN_QUALITY_TIERS,
+  compileShurikenLayer,
+  createShurikenKernel,
+} from './vfx-shuriken-kernel.js';
 import {
   validateVfxRecipe,
   createEffectPlayer,
 } from './vfx-recipes.js';
-import {
-  VFX_V2_LUT_WIDTH,
-  VFX_V2_LUT_ROWS,
-  VFX_GRADIENT_LUT_NAMES,
-  VFX_COLOR_MODES,
-  VFX_MASTER_VERTEX_GLSL,
-  VFX_MASTER_FRAGMENT_GLSL,
-  buildVfxGradientLutBytes,
-  createVfxGradientLutTexture,
-  createVfxV2DefaultTextures,
-  createVfxV2MeshGeometries,
-  getVfxMasterDefines,
-  createVfxMasterMaterial,
-} from './vfx-v2-shader.js';
-import {
-  VFX_V2_SCHEMA_VERSION,
-  VFX_CURVE_LUT_SAMPLES,
-  VFX_V2_BENCHMARK_PRESETS,
-  compileCurveLut16,
-  sampleCurveLut16,
-  validateVfxPresetV2,
-  compileVfxPresetV2,
-} from './vfx-v2-presets.js';
-import {
-  VFX_QUALITY_TIERS,
-  createVfxV2Runtime,
-} from './vfx-v2.js';
 
 export {
   VFX_EASING,
@@ -174,30 +181,37 @@ export {
   createAtlasParticlePool,
   VFX_MESH_VERTEX_GLSL,
   VFX_MESH_FRAGMENT_GLSL,
+  VFX_MESH_INSTANCED_VS,
+  VFX_MESH_INSTANCED_FS,
   createMeshVfxPool,
-  validateVfxRecipe,
-  createEffectPlayer,
-  VFX_V2_SCHEMA_VERSION,
+  UBER_MAT_LUT_WIDTH,
+  UBER_MAT_LUT_ROWS,
+  UBER_SHADER_KIND,
   VFX_CURVE_LUT_SAMPLES,
-  VFX_V2_LUT_WIDTH,
-  VFX_V2_LUT_ROWS,
-  VFX_GRADIENT_LUT_NAMES,
-  VFX_COLOR_MODES,
-  VFX_QUALITY_TIERS,
-  VFX_V2_BENCHMARK_PRESETS,
-  VFX_MASTER_VERTEX_GLSL,
-  VFX_MASTER_FRAGMENT_GLSL,
-  buildVfxGradientLutBytes,
-  createVfxGradientLutTexture,
-  createVfxV2DefaultTextures,
-  createVfxV2MeshGeometries,
-  getVfxMasterDefines,
-  createVfxMasterMaterial,
+  VFX_COMMON_GLSL,
+  VFX_VERTEX_BUS_ATTRS_GLSL,
+  VFX_VERTEX_SHELL_GLSL,
+  createUberMaterialLut,
+  compileCustomDataCurves,
   compileCurveLut16,
   sampleCurveLut16,
-  validateVfxPresetV2,
-  compileVfxPresetV2,
-  createVfxV2Runtime,
+  compileMinMaxCurve,
+  evaluateMinMaxCurve,
+  srgbToLinear,
+  compileMinMaxGradient,
+  evaluateMinMaxGradient,
+  registerShaderProfile,
+  getShaderProfile,
+  listShaderProfiles,
+  resolveThreeRenderState,
+  createProfileMaterial,
+  getCompiledShaderVariantCount,
+  resetCompiledShaderVariantTracker,
+  SHURIKEN_QUALITY_TIERS,
+  compileShurikenLayer,
+  createShurikenKernel,
+  validateVfxRecipe,
+  createEffectPlayer,
 };
 
 export const VFX_PRESETS = Object.freeze({
@@ -386,7 +400,14 @@ export function createVfxSystem({
     THREE,
     scene,
   });
+  const shurikenKernel = createShurikenKernel({
+    THREE,
+    scene,
+    trails,
+    prng,
+  });
   const effects = createEffectPlayer({
+    shurikenKernel,
     atlasParticles,
     meshVfx,
     trails,
@@ -397,14 +418,6 @@ export function createVfxSystem({
     scene,
     THREE,
     is2D,
-    prng,
-  });
-  const v2 = createVfxV2Runtime({
-    mode: resolvedMode,
-    THREE,
-    scene,
-    trails,
-    shake,
     prng,
   });
 
@@ -563,7 +576,7 @@ export function createVfxSystem({
     const visualDt = hitstop.step(rawDt);
     shake.update(rawDt);
     effects.update(visualDt);
-    v2.update(visualDt, cameraPos);
+    shurikenKernel.update(visualDt);
     particles.update(visualDt);
     atlasParticles.update(visualDt);
     meshVfx.update(visualDt);
@@ -605,7 +618,7 @@ export function createVfxSystem({
     hitstop.reset();
     shake.reset();
     effects.reset();
-    v2.reset();
+    shurikenKernel.reset();
     particles.reset();
     atlasParticles.reset();
     meshVfx.reset();
@@ -615,9 +628,82 @@ export function createVfxSystem({
     screenFeedback.reset();
   }
 
+  let distCopyTex = null;
+  let distCopyW = 0;
+  let distCopyH = 0;
+  let distCopyVec = null;
+  let distSizeVec = null;
+  const distObjects = [];
+
+  function hasActiveDistortion() {
+    return Boolean(atlasParticles.hasActiveDistortion?.() || meshVfx.hasActiveDistortion?.() || shurikenKernel.hasActiveWarp());
+  }
+
+  function renderWithDistortion(renderer, targetScene, camera) {
+    if (!renderer || !targetScene || !camera) return;
+    if (!hasActiveDistortion() || !THREE?.FramebufferTexture || !THREE?.Vector2) {
+      atlasParticles.setSceneTexture(null);
+      meshVfx.setSceneTexture(null);
+      shurikenKernel.setSceneTexture(null);
+      renderer.render(targetScene, camera);
+      return;
+    }
+
+    if (!distSizeVec) distSizeVec = new THREE.Vector2();
+    if (!distCopyVec) distCopyVec = new THREE.Vector2(0, 0);
+    renderer.getDrawingBufferSize(distSizeVec);
+    const w = Math.max(1, distSizeVec.x | 0);
+    const h = Math.max(1, distSizeVec.y | 0);
+    if (!distCopyTex || distCopyW !== w || distCopyH !== h) {
+      distCopyTex?.dispose?.();
+      distCopyTex = new THREE.FramebufferTexture(w, h);
+      distCopyW = w;
+      distCopyH = h;
+    }
+
+    atlasParticles.setSceneTexture(null);
+    meshVfx.setSceneTexture(null);
+    shurikenKernel.setSceneTexture(null);
+    shurikenKernel.setWarpMeshesVisible(false);
+    renderer.render(targetScene, camera);
+    const threeRev = Number.parseInt(THREE?.REVISION || '0', 10);
+    if (!threeRev || threeRev >= 165) {
+      renderer.copyFramebufferToTexture(distCopyTex, distCopyVec);
+    } else {
+      renderer.copyFramebufferToTexture(distCopyVec, distCopyTex);
+    }
+
+    atlasParticles.setSceneTexture(distCopyTex, { width: w, height: h });
+    meshVfx.setSceneTexture(distCopyTex, { width: w, height: h });
+    shurikenKernel.setSceneTexture(distCopyTex, { width: w, height: h });
+    shurikenKernel.setWarpMeshesVisible(true);
+
+    distObjects.length = 0;
+    const distOrder = VFX_RENDER_ORDERS.PARTICLES + 2;
+    targetScene.traverse((obj) => {
+      if (obj.visible && obj.isMesh && (obj.renderOrder === distOrder || obj.userData?.vfxWarp)) {
+        distObjects.push(obj);
+        obj.layers.enable(30);
+      }
+    });
+    if (distObjects.length > 0) {
+      const prevMask = camera.layers.mask;
+      const prevAutoClear = renderer.autoClear;
+      camera.layers.set(30);
+      renderer.autoClear = false;
+      renderer.render(targetScene, camera);
+      renderer.autoClear = prevAutoClear;
+      camera.layers.mask = prevMask;
+      for (let i = 0; i < distObjects.length; i++) {
+        distObjects[i].layers.disable(30);
+      }
+      distObjects.length = 0;
+    }
+  }
+
   function dispose() {
     effects.dispose();
-    v2.dispose();
+    shurikenKernel.dispose();
     particles.dispose();
     atlasParticles.dispose();
     meshVfx.dispose();
@@ -625,6 +711,8 @@ export function createVfxSystem({
     telegraphs.dispose();
     floatingText.dispose();
     screenFeedback.dispose();
+    distCopyTex?.dispose?.();
+    distCopyTex = null;
   }
 
   return {
@@ -635,45 +723,53 @@ export function createVfxSystem({
     particles,
     atlasParticles,
     meshVfx,
+    shurikenKernel,
     effects,
-    v2,
     trails,
     telegraphs,
     floatingText,
     screenFeedback,
-    setAtlas: atlasParticles.setAtlas,
+    setAtlas(tex, regions, opts) {
+      atlasParticles.setAtlas(tex, regions, opts);
+      meshVfx.setAtlas?.(tex, regions, opts);
+      if (regions) trails.setAtlasRegions?.(regions);
+    },
     setDepthTexture(tex, opts) {
       atlasParticles.setDepthTexture(tex, opts);
-      v2.setDepthTexture(tex, opts);
+      meshVfx.setDepthTexture?.(tex, opts);
+      trails.setDepthTexture?.(tex, opts);
+      shurikenKernel.setDepthTexture(tex, opts);
     },
     setSceneTexture(tex, opts) {
       atlasParticles.setSceneTexture(tex, opts);
       meshVfx.setSceneTexture(tex, opts);
+      shurikenKernel.setSceneTexture(tex, opts);
     },
+    setQualityTier(tier) {
+      atlasParticles.setQualityTier?.(tier);
+      meshVfx.setQualityTier?.(tier);
+      shurikenKernel.setQualityTier(tier);
+    },
+    getQualityTier: shurikenKernel.getQualityTier,
+    registerTexture: shurikenKernel.registerTexture,
+    hasActiveWarp: shurikenKernel.hasActiveWarp,
+    setWarpMeshesVisible: shurikenKernel.setWarpMeshesVisible,
+    hasActiveDistortion,
+    renderWithDistortion,
     setWind(wx = 0, wy = 0, wz = 0) {
       atlasParticles.setWind(wx, wy, wz);
       meshVfx.setWind(wx, wy, wz);
     },
     setCollisionResolver: effects.setCollisionResolver,
     setTrailTexture: trails.setTrailTexture,
-    registerTexture: v2.registerTexture,
-    registerMesh(kind, geometry) {
-      meshVfx.registerMesh(kind, geometry);
-      v2.registerMesh(kind, geometry);
+    registerMesh(name, geometry, options) {
+      const ok = meshVfx.registerMesh(name, geometry, options);
+      shurikenKernel.registerMeshGeometry(name, geometry);
+      return ok;
     },
     registerEffect: effects.registerEffect,
     playEffect: effects.playEffect,
     stopAllEffects: effects.stopAll,
-    registerPresetV2: v2.registerPresetV2,
-    validatePresetV2: v2.validatePresetV2,
-    listPresetsV2: v2.listPresetsV2,
-    playV2: v2.playV2,
-    stopV2: v2.stopV2,
-    setQualityTier: v2.setQualityTier,
-    getQualityTier: v2.getQualityTier,
-    setV2GroundConfig: v2.setGroundConfig,
-    setV2LutRowOverride: v2.setLutRowOverride,
-    setV2EventHandler: v2.setEventHandler,
     emitHitImpact,
     burstParticles,
     slashArc: trails.slashArc,
@@ -698,8 +794,9 @@ export function createVfxSystem({
         particles: particles.getStats(),
         atlasParticles: atlasParticles.getStats(),
         meshVfx: meshVfx.getStats(),
+        shuriken: shurikenKernel.getStats(),
+        shaderVariants: getCompiledShaderVariantCount(),
         effects: effects.getStats(),
-        v2: v2.getStats(),
         trails: trails.getStats(),
         telegraphs: telegraphs.getStats(),
         floatingText: floatingText.getStats(),

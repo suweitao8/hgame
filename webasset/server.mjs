@@ -206,7 +206,8 @@ export function createWebAssetServer({
       pathname.startsWith('/files/procedural/') ||
       pathname.startsWith('/files/hgame-materials/') ||
       pathname.startsWith('/files/hgame-anim23/') ||
-      pathname.startsWith('/files/hgame-unreal/')
+      pathname.startsWith('/files/hgame-unreal/') ||
+      pathname.startsWith('/files/hgame-vfx/')
     ) {
       await handleHGameAssets(request, response);
     } else if (pathname.startsWith('/api/') || pathname.startsWith('/files/images/') || pathname.startsWith('/files/models/')) {

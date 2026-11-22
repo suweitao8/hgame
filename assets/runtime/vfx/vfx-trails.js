@@ -6,6 +6,7 @@ import {
   unpackRgb24Into,
 } from './vfx-core.js';
 import { evaluateSizeCurve } from './vfx-atlas-particles.js';
+import { VFX_COMMON_GLSL } from './vfx-shader-chunks.js';
 
 export const SLASH_VERTEX_GLSL = /* glsl */ `
 precision highp float;
@@ -287,6 +288,13 @@ uniform sampler2D uTrailTex;
 uniform float uHasTrailTex;
 uniform float uTrailFlipV;
 uniform vec4 uTrailUvRect;
+uniform sampler2D uSoftDepthTex;
+uniform float uHasSoftDepth;
+uniform float uSoftFade;
+uniform vec2 uInvViewport;
+uniform vec2 uCamNearFar;
+uniform vec4 uCustom1;
+uniform vec4 uCustom2;
 
 varying vec2 vUv;
 varying vec3 vColor;
@@ -294,11 +302,13 @@ varying float vAlpha;
 varying float vHdr;
 varying vec4 vUvRect;
 
+${VFX_COMMON_GLSL}
+
 void main() {
   float alpha = vAlpha;
   vec3 col = vColor;
-  if (uHasTrailTex > 0.5) {
-    vec4 uvRect = (vUvRect.z > vUvRect.x && vUvRect.w > vUvRect.y) ? vUvRect : uTrailUvRect;
+  vec4 uvRect = (vUvRect.z > vUvRect.x && vUvRect.w > vUvRect.y) ? vUvRect : uTrailUvRect;
+  if (uHasTrailTex > 0.5 && uvRect.z > uvRect.x && uvRect.w > uvRect.y) {
     float localV = mix(0.08, 0.92, 1.0 - vUv.y);
     vec2 mapped = vec2(
       mix(uvRect.x, uvRect.z, clamp(vUv.x, 0.0, 1.0)),
@@ -314,8 +324,10 @@ void main() {
     alpha *= edge;
     col = mix(col, vec3(1.0), edge * 0.35);
   }
+  float soft = vfxComputeSoftFade(uSoftDepthTex, uHasSoftDepth, gl_FragCoord.xy, uInvViewport, uCamNearFar, gl_FragCoord.z, uSoftFade);
+  alpha *= soft;
   if (alpha < 0.01) discard;
-  gl_FragColor = vec4(col * max(0.0, vHdr), alpha);
+  gl_FragColor = vec4(col * max(0.0, vHdr) * max(0.0, uCustom1.x + 1.0), alpha);
 }
 `;
 
@@ -513,6 +525,13 @@ export function createTrailsSystem({
         uHasTrailTex: { value: 0.0 },
         uTrailFlipV: { value: 0.0 },
         uTrailUvRect: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 1, 1) : { set() {} } },
+        uSoftDepthTex: { value: null },
+        uHasSoftDepth: { value: 0.0 },
+        uSoftFade: { value: 0.45 },
+        uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
+        uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
+        uCustom1: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
+        uCustom2: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
       },
       transparent: true,
       depthTest: true,
@@ -551,6 +570,13 @@ export function createTrailsSystem({
         uHasTrailTex: { value: 0.0 },
         uTrailFlipV: { value: 0.0 },
         uTrailUvRect: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 1, 1) : { set() {} } },
+        uSoftDepthTex: { value: null },
+        uHasSoftDepth: { value: 0.0 },
+        uSoftFade: { value: 0.45 },
+        uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
+        uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
+        uCustom1: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
+        uCustom2: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
       },
       transparent: true,
       depthTest: true,
@@ -828,6 +854,36 @@ export function createTrailsSystem({
     syncTrailSegments(trackId);
   }
 
+  function setDepthTexture(depthTexture, { near = 0.1, far = 200, width = 1280, height = 720, softFade = 0.45 } = {}) {
+    for (const mat of [ribbonMat, ribbonNormalMat]) {
+      if (!mat) continue;
+      mat.uniforms.uSoftDepthTex.value = depthTexture || null;
+      mat.uniforms.uHasSoftDepth.value = depthTexture ? 1.0 : 0.0;
+      mat.uniforms.uSoftFade.value = softFade;
+      mat.uniforms.uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
+      mat.uniforms.uCamNearFar.value.set(near, far);
+    }
+  }
+
+  function setTrailPoints(trackId, px, py, pz, indices, startIdx, endIdx) {
+    if (trackId < 0 || trackId >= trailCap || !trailActive[trackId]) return;
+    trailHead[trackId] = 0;
+    trailCount[trackId] = 0;
+    const n = Math.min(trailNodes, endIdx - startIdx);
+    for (let k = 0; k < n; k++) {
+      const idx = indices[startIdx + k];
+      const h = trailHead[trackId];
+      const p = (trackId * trailNodes + h) * 3;
+      trailPoints[p] = px[idx];
+      trailPoints[p + 1] = py[idx];
+      trailPoints[p + 2] = pz[idx];
+      trailPointTimes[trackId * trailNodes + h] = simTime;
+      trailHead[trackId] = (h + 1) % trailNodes;
+      trailCount[trackId] += 1;
+    }
+    syncTrailSegments(trackId);
+  }
+
   function freeTrail(trackId) {
     if (trackId < 0 || trackId >= trailCap || !trailActive[trackId]) return;
     trailActive[trackId] = 0;
@@ -952,6 +1008,8 @@ export function createTrailsSystem({
     slashArc,
     lightningBolt,
     setTrailTexture,
+    setDepthTexture,
+    setTrailPoints,
     setAtlasRegions,
     setTrailWidthScale,
     allocTrail,
