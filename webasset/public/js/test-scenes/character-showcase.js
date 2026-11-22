@@ -43,8 +43,8 @@ export async function buildCharacterShowcaseScene({
 
   const banner = createSectionBannerMesh({
     title: '角色展区',
-    subtitle: `${chars.length} 个角色（低模实时 3D 动作 · 超大高模以参考立牌展示）`,
-    width: 5.4,
+    subtitle: `${chars.length} 个角色 · 4档身高: 1.0m小动物 / 1.75m人 / 2.3m中型怪 / 3.0m大型怪`,
+    width: 6.2,
     height: 1.05,
     accentHex: '#d5e4b4',
   });
@@ -147,8 +147,9 @@ export async function buildCharacterShowcaseScene({
     if (token !== getToken()) return;
 
     const heightTag = `${fittedHeight.toFixed(2)}m`;
+    const tierTag = `${charSpec.tierLabel} (${charSpec.tierHeight.toFixed(2)}m档)`;
     const plaque = createPlaqueMesh({
-      badge: `${modeLabel} · ${heightTag}`,
+      badge: `${modeLabel} · ${charSpec.tierLabel} · ${heightTag}`,
       title: ch.name || ch.id,
       subtitle: `${charSpec.role} · ${ch.id}`,
       width: 1.95,
@@ -169,10 +170,11 @@ export async function buildCharacterShowcaseScene({
       workspace: 'characters',
       kind: 'character',
       title: ch.name || ch.id,
-      subtitle: `${charSpec.role} · ${heightTag} · ${modeLabel}`,
+      subtitle: `${tierTag} · ${heightTag} · ${modeLabel}`,
       category: 'characters',
       meta: {
         id: ch.id,
+        体型档位: tierTag,
         身份定位: charSpec.role,
         标准身高: heightTag,
         low: lowModel?.name || '无',

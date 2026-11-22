@@ -1099,59 +1099,88 @@ export function requestGlbSquareThumb(url, thumbBox, fallbackEl) {
   void drainGlbThumbQueue();
 }
 
-export const CHARACTER_PHYSICAL_PROFILES = Object.freeze({
-  // 猫狗类角色（游戏标准比例：猫 ~0.8m、狗 1.0m）
-  maodie: { height: 0.78, role: '家猫' },
-  chouju: { height: 0.80, role: '家猫' },
-  bananacat: { height: 0.82, role: '香蕉小猫' },
-  'cat-knight': { height: 0.90, role: '猫骑士' },
-  'daodun-dog': { height: 1.00, role: '柴犬战士' },
-  // 拟人吉祥物（接近人类身高）
-  nailong: { height: 1.58, role: '卡通幼龙' },
-  naiwa: { height: 1.62, role: '卡通奶蛙' },
-  // 少年
-  'character-5bf3a802-2692-43f1-8598-cc3294c9f0b3': { height: 1.56, role: '初中少年' }, // 阿伟
-  // 二次元少女 / 成年女性
-  dafeiyu: { height: 1.58, role: '二次元少女' },
-  grok: { height: 1.60, role: '哥特少女' },
-  claude: { height: 1.62, role: '少女' },
-  'character-0eef1539-efff-4ea8-b926-a27e2060b9ae': { height: 1.63, role: '奇幻少女' }, // Gemini
-  doubao: { height: 1.64, role: '青年女性' },
-  'character-b3a75eb1-1ce2-4218-875b-5b463191d6f6': { height: 1.66, role: '国风女性' }, // 千问
-  gpt: { height: 1.68, role: '银发御姐' },
-  'character-6ce0c029-9a8c-4fbc-8f78-dce1da81ef0d': { height: 1.75, role: '高大女性' }, // 雨姐
-  // 成年男性 / 猛男硬汉
-  haoge: { height: 1.72, role: '中年男性' },
-  'character-3dca756f-0ef7-4d03-a008-11decc26c3cc': { height: 1.74, role: '男青年' }, // 杰哥
-  liuhuaqiang: { height: 1.78, role: '成年硬汉' },
-  'character-1efd121d-1f9e-4ab0-9164-8f2ca240da4b': { height: 1.80, role: '魁梧男性' }, // 梁子
-  'character-2dec31e2-0a13-4c28-b0ca-202fb40d4875': { height: 1.84, role: '肌肉猛男' }, // 阿诺
-  'character-5a7a1e23-8ba6-4ccb-9cb4-38df4d3f0b03': { height: 1.88, role: '高大西装男' }, // 梁圣
+export const CHARACTER_HEIGHT_TIERS = Object.freeze({
+  small: { key: 'small', label: '小动物', baseHeight: 1.0 },
+  human: { key: 'human', label: '人', baseHeight: 1.75 },
+  medium_monster: { key: 'medium_monster', label: '中型怪物', baseHeight: 2.3 },
+  large_monster: { key: 'large_monster', label: '大型怪物', baseHeight: 3.0 },
 });
+
+function inferTierFromHeight(height) {
+  if (height >= 2.65) return CHARACTER_HEIGHT_TIERS.large_monster;
+  if (height >= 2.05) return CHARACTER_HEIGHT_TIERS.medium_monster;
+  if (height >= 1.35) return CHARACTER_HEIGHT_TIERS.human;
+  return CHARACTER_HEIGHT_TIERS.small;
+}
+
+export const CHARACTER_PHYSICAL_PROFILES = Object.freeze({
+  // 1.00m 档：小动物（猫狗统一按 1.00m 设计）
+  maodie: { tier: 'small', height: 1.00, role: '小动物 · 猫' },
+  chouju: { tier: 'small', height: 1.00, role: '小动物 · 猫' },
+  bananacat: { tier: 'small', height: 1.00, role: '小动物 · 香蕉猫' },
+  'cat-knight': { tier: 'small', height: 1.00, role: '小动物 · 猫骑士' },
+  'daodun-dog': { tier: 'small', height: 1.00, role: '小动物 · 柴犬战士' },
+  // 1.75m 档：人 / 拟人角色（围绕 1.75m 上下浮动）
+  'character-5bf3a802-2692-43f1-8598-cc3294c9f0b3': { tier: 'human', height: 1.66, role: '初中少年' }, // 阿伟
+  nailong: { tier: 'human', height: 1.68, role: '拟人幼龙' },
+  dafeiyu: { tier: 'human', height: 1.68, role: '二次元少女' },
+  grok: { tier: 'human', height: 1.68, role: '哥特少女' },
+  claude: { tier: 'human', height: 1.70, role: '少女' },
+  'character-0eef1539-efff-4ea8-b926-a27e2060b9ae': { tier: 'human', height: 1.70, role: '奇幻少女' }, // Gemini
+  doubao: { tier: 'human', height: 1.71, role: '青年女性' },
+  naiwa: { tier: 'human', height: 1.72, role: '拟人奶蛙' },
+  'character-b3a75eb1-1ce2-4218-875b-5b463191d6f6': { tier: 'human', height: 1.72, role: '国风女性' }, // 千问
+  gpt: { tier: 'human', height: 1.73, role: '银发御姐' },
+  haoge: { tier: 'human', height: 1.75, role: '中年男性' },
+  'character-3dca756f-0ef7-4d03-a008-11decc26c3cc': { tier: 'human', height: 1.75, role: '男青年' }, // 杰哥
+  'character-6ce0c029-9a8c-4fbc-8f78-dce1da81ef0d': { tier: 'human', height: 1.76, role: '高大女性' }, // 雨姐
+  liuhuaqiang: { tier: 'human', height: 1.78, role: '成年硬汉' },
+  'character-1efd121d-1f9e-4ab0-9164-8f2ca240da4b': { tier: 'human', height: 1.80, role: '魁梧男性' }, // 梁子
+  'character-2dec31e2-0a13-4c28-b0ca-202fb40d4875': { tier: 'human', height: 1.82, role: '肌肉猛男' }, // 阿诺
+  'character-5a7a1e23-8ba6-4ccb-9cb4-38df4d3f0b03': { tier: 'human', height: 1.84, role: '高大西装男' }, // 梁圣
+});
+
+function formatTierSpec(height, role, tierKey) {
+  const tier = CHARACTER_HEIGHT_TIERS[tierKey] || inferTierFromHeight(height);
+  return {
+    height,
+    role,
+    tier: tier.key,
+    tierLabel: tier.label,
+    tierHeight: tier.baseHeight,
+  };
+}
 
 export function resolveCharacterScaleSpec(ch) {
   const id = String(ch?.id || '').trim();
   const explicitHeight = Number(ch?.height ?? ch?.scaleHeight);
+  const explicitTier = ch?.sizeTier && CHARACTER_HEIGHT_TIERS[ch.sizeTier] ? ch.sizeTier : null;
   const direct = CHARACTER_PHYSICAL_PROFILES[id];
   if (Number.isFinite(explicitHeight) && explicitHeight > 0.1) {
-    return {
-      height: explicitHeight,
-      role: direct?.role || String(ch?.role || '角色'),
-    };
+    return formatTierSpec(explicitHeight, direct?.role || String(ch?.role || '角色'), explicitTier || direct?.tier);
   }
-  if (direct) return direct;
+  if (explicitTier) {
+    const tierObj = CHARACTER_HEIGHT_TIERS[explicitTier];
+    return formatTierSpec(tierObj.baseHeight, direct?.role || tierObj.label, explicitTier);
+  }
+  if (direct) return formatTierSpec(direct.height, direct.role, direct.tier);
 
   const text = [ch?.id, ch?.name, ...(ch?.aliases || []), ...(ch?.keywords || [])].join(' ').toLowerCase();
-  if (/knight|骑士/.test(text)) return { height: 0.90, role: '微型战士' };
-  if (/cat|猫|橘|kitty|meow/.test(text)) return { height: 0.80, role: '猫科角色' };
-  if (/dog|狗|犬|shiba|cheems/.test(text)) return { height: 1.00, role: '犬类角色' };
-  if (/frog|蛙/.test(text)) return { height: 1.62, role: '卡通奶蛙' };
-  if (/dragon|dino|龙/.test(text)) return { height: 1.58, role: '卡通幼龙' };
-  if (/少年|男孩|kid|child|student|初中|阿伟/.test(text)) return { height: 1.56, role: '少年' };
-  if (String(ch?.gender || '').toLowerCase() === 'female' || /女|姐|girl|少女/.test(text)) {
-    return { height: 1.64, role: '女性' };
+  if (/巨兽|泰坦|boss|titan|colossus|giant|大型怪/.test(text)) {
+    return formatTierSpec(3.0, '大型怪物', 'large_monster');
   }
-  return { height: 1.74, role: '成年人' };
+  if (/怪物|妖|魔|狼人|兽人|精英|ogre|orc|troll|monster|中型怪/.test(text)) {
+    return formatTierSpec(2.3, '中型怪物', 'medium_monster');
+  }
+  if (/cat|dog|猫|狗|犬|橘|kitty|meow|shiba|cheems|小动物/.test(text)) {
+    return formatTierSpec(1.0, '小动物', 'small');
+  }
+  if (/frog|蛙|dragon|dino|龙/.test(text)) return formatTierSpec(1.70, '拟人吉祥物', 'human');
+  if (/少年|男孩|kid|child|student|初中|阿伟/.test(text)) return formatTierSpec(1.66, '少年', 'human');
+  if (String(ch?.gender || '').toLowerCase() === 'female' || /女|姐|girl|少女/.test(text)) {
+    return formatTierSpec(1.70, '女性', 'human');
+  }
+  return formatTierSpec(1.75, '成年人', 'human');
 }
 
 export function fitCharacterToIdentityScale(root, character, { groundY = 0, centerXZ = false } = {}) {
