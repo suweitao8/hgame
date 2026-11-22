@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import {
+  fitCharacterToIdentityScale,
+  resolveCharacterScaleSpec,
+} from '../hgame-shared.js';
+import {
   createPlaqueMesh,
   createSectionBannerMesh,
   createStudioFloor,
@@ -10,21 +14,6 @@ const BAY_X = 3.8;
 const ROW_Z = 7.2;
 const COLS_PER_ROW = 8;
 const MAX_SAFE_GLB_BYTES = 15 * 1024 * 1024;
-
-function groundAndFitModel(root, targetHeight = 1.65) {
-  root.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(root);
-  if (box.isEmpty()) return 1.0;
-  const size = box.getSize(new THREE.Vector3());
-  const height = Math.max(0.1, size.y);
-  const scale = targetHeight / height;
-  root.scale.multiplyScalar(scale);
-  root.updateMatrixWorld(true);
-  const scaledBox = new THREE.Box3().setFromObject(root);
-  const center = scaledBox.getCenter(new THREE.Vector3());
-  root.position.set(-center.x, 0.14 - scaledBox.min.y, -center.z);
-  return scaledBox.getSize(new THREE.Vector3()).y;
-}
 
 export async function buildCharacterShowcaseScene({
   group,
@@ -88,6 +77,7 @@ export async function buildCharacterShowcaseScene({
     bay.add(pad);
 
     const hitMeshes = [pad];
+    const charSpec = resolveCharacterScaleSpec(ch);
     const lowModel = ch.models?.low;
     const highModel = ch.models?.high;
     const chosenModel = lowModel?.url
@@ -97,6 +87,7 @@ export async function buildCharacterShowcaseScene({
         : null);
 
     let modeLabel = chosenModel ? chosenModel.kind : (highModel?.url ? 'HIGH (点独立页检视)' : '参考图');
+    let fittedHeight = charSpec.height;
 
     if (chosenModel) {
       try {
@@ -110,7 +101,11 @@ export async function buildCharacterShowcaseScene({
             hitMeshes.push(n);
           }
         });
-        groundAndFitModel(root, 1.65);
+        const fitted = fitCharacterToIdentityScale(root, { ...ch, height: charSpec.height }, {
+          groundY: 0.14,
+          centerXZ: true,
+        });
+        fittedHeight = fitted.height;
         bay.add(root);
         loaded3dCount += 1;
 
@@ -133,8 +128,8 @@ export async function buildCharacterShowcaseScene({
           if (token !== getToken()) return;
           tex.colorSpace = THREE.SRGBColorSpace;
           const aspect = (tex.image?.width || 1) / Math.max(1, tex.image?.height || 1);
-          const h = 1.65;
-          const w = Math.min(2.0, h * aspect);
+          const h = charSpec.height;
+          const w = Math.min(2.2, Math.max(0.32, h * aspect));
           const back = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, h + 0.08, 0.05), frameMat);
           back.position.set(0, 0.14 + h * 0.5, -0.04);
           back.castShadow = true;
@@ -151,38 +146,43 @@ export async function buildCharacterShowcaseScene({
 
     if (token !== getToken()) return;
 
+    const heightTag = `${fittedHeight.toFixed(2)}m`;
     const plaque = createPlaqueMesh({
-      badge: modeLabel,
+      badge: `${modeLabel} · ${heightTag}`,
       title: ch.name || ch.id,
-      subtitle: ch.id,
-      width: 2.1,
-      height: 0.54,
+      subtitle: `${charSpec.role} · ${ch.id}`,
+      width: 1.95,
+      height: 0.44,
       accentHex: '#d5e4b4',
     });
-    plaque.position.set(0, 0.36, 1.25);
-    plaque.rotation.x = -0.5;
+    plaque.position.set(0, 0.19, 1.24);
+    plaque.rotation.x = -1.05;
     bay.add(plaque);
     hitMeshes.push(plaque);
 
     group.add(bay);
 
+    const focusY = 0.14 + Math.max(0.28, fittedHeight * 0.55);
+    const focusDist = Math.max(1.85, fittedHeight * 1.65 + 0.6);
     registerExhibit(exhibits, {
       id: ch.id,
       workspace: 'characters',
       kind: 'character',
       title: ch.name || ch.id,
-      subtitle: `角色 · ${modeLabel}`,
+      subtitle: `${charSpec.role} · ${heightTag} · ${modeLabel}`,
       category: 'characters',
       meta: {
         id: ch.id,
+        身份定位: charSpec.role,
+        标准身高: heightTag,
         low: lowModel?.name || '无',
         high: highModel?.name || '无',
       },
       object: bay,
       hitMeshes,
-      focusPos: [cx, 1.45, cz + 3.5],
-      focusTarget: [cx, 0.95, cz],
-      focusRadius: 2.0,
+      focusPos: [cx, Math.max(0.95, fittedHeight * 0.9 + 0.35), cz + focusDist],
+      focusTarget: [cx, focusY, cz],
+      focusRadius: Math.max(1.15, fittedHeight * 1.1),
     });
   }));
 
@@ -193,9 +193,9 @@ export async function buildCharacterShowcaseScene({
       target: [centerX, 0.9, centerZ],
     },
     front_row: {
-      label: '前排近景检视',
-      pos: [Math.min(6, centerX), 2.1, 5.8],
-      target: [Math.min(6, centerX), 1.0, 0],
+      label: '前排近景对比 (矮→高)',
+      pos: [Math.min(5.7, centerX), 1.85, 6.4],
+      target: [Math.min(5.7, centerX), 0.78, 0.1],
     },
   };
 

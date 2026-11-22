@@ -11,6 +11,7 @@ import {
   draw2MapChannelCanvases,
   drawImageFittedToCanvas,
   fetchUnrealCatalog,
+  fitCharacterToIdentityScale,
   getDefaultDecalHsvMatch,
   loadHtmlImage,
   loadSingle2MapAssets,
@@ -754,7 +755,7 @@ async function fetchSelfCharactersForRef() {
     for (const ch of data.items || []) {
       const url = ch?.models?.low?.url;
       if (url) {
-        list.push({ id: ch.id, name: ch.name || ch.id, url });
+        list.push({ id: ch.id, name: ch.name || ch.id, url, raw: ch });
       }
     }
     return list;
@@ -824,6 +825,8 @@ async function ensureReferenceCharacter(vp) {
 
     disposeReferenceCharacter();
     const root = gltf.scene;
+    fitCharacterToIdentityScale(root, ch.raw || ch, { groundY: 0, centerXZ: false });
+    root.position.set(0, 0, 0);
     const restSnap = captureNodeTransforms(root);
     let mixer = null;
 
