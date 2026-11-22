@@ -17,6 +17,7 @@
   <script type="module" src="./js/hgame-decals.js"></script>
   <script type="module" src="./js/hgame-audio.js"></script>
   <script type="module" src="./js/hgame-music.js"></script>
+  <script type="module" src="./js/hgame-mpfb.js"></script>
   <script type="module" src="./js/hgame-tests.js"></script>
 </head>
 <body>
@@ -27,6 +28,7 @@
     </a>
     <nav class="main-nav" aria-label="工作区" role="tablist">
       <button type="button" class="nav-tab" id="nav-characters" data-workspace="characters" role="tab" aria-controls="assets-view" aria-selected="true" tabindex="0">角色</button>
+      <button type="button" class="nav-tab" id="nav-mpfb" data-workspace="mpfb" role="tab" aria-controls="mpfb-view" aria-selected="false" tabindex="-1">MPFB</button>
       <button type="button" class="nav-tab" id="nav-games" data-workspace="games" role="tab" aria-controls="games-view" aria-selected="false" tabindex="-1">游戏</button>
       <button type="button" class="nav-tab" id="nav-models" data-workspace="models" role="tab" aria-controls="models-view" aria-selected="false" tabindex="-1">模型</button>
       <button type="button" class="nav-tab" id="nav-animations" data-workspace="animations" role="tab" aria-controls="animations-view" aria-selected="false" tabindex="-1">动画</button>
@@ -738,6 +740,51 @@
         <span id="hgame-test-status" class="hgame-status-text" role="status" aria-live="polite"></span>
       </div>
       <div id="hgame-test-hotbar" class="hgame-test-hotbar" hidden aria-label="2D 物品图标图集预览"></div>
+    </section>
+  </main>
+
+  <main id="mpfb-view" class="workspace-layout hgame-layout" aria-label="MPFB2 角色模型" hidden>
+    <aside class="workspace-sidebar hgame-sidebar" aria-label="MPFB2 角色列表">
+      <div class="asset-sidebar-tools">
+        <label class="character-search" for="mpfb-search">
+          <span aria-hidden="true">⌕</span>
+          <input id="mpfb-search" type="search" placeholder="搜索 MPFB 角色" autocomplete="off">
+        </label>
+      </div>
+      <nav id="mpfb-list" class="hgame-asset-list" aria-label="选择 MPFB 角色"></nav>
+    </aside>
+    <section class="hgame-stage-panel" aria-label="MPFB 3D 预览">
+      <div class="hgame-stage-header">
+        <div class="hgame-stage-title-group">
+          <h2 id="mpfb-title">MPFB 角色模型</h2>
+        </div>
+        <span id="mpfb-metrics" class="hgame-status-text"></span>
+      </div>
+      <div class="hgame-viewport">
+        <div id="mpfb-empty" class="hgame-empty">暂无已构建角色。运行 npm run mpfb:build 后刷新。</div>
+        <div id="mpfb-stage" class="hgame-stage-canvas" hidden></div>
+      </div>
+      <div class="hgame-controls hgame-controls-wrap">
+        <div class="hgame-control-group">
+          <label class="hgame-field"><span>LOD</span>
+            <select id="mpfb-lod">
+              <option value="lod0" selected>LOD0 高模</option>
+              <option value="lod1">LOD1 中模</option>
+              <option value="lod2">LOD2 远模</option>
+              <option value="lod3">LOD3 图集</option>
+            </select>
+          </label>
+          <label class="hgame-field"><span>动作</span>
+            <select id="mpfb-anim">
+              <option value="rest" selected>Rest 站姿</option>
+              <option value="run">anim23 跑步</option>
+              <option value="idle">anim23 待机</option>
+            </select>
+          </label>
+          <label class="hgame-check"><input id="mpfb-wireframe" type="checkbox"><span>线框</span></label>
+          <label class="hgame-check"><input id="mpfb-grid" type="checkbox" checked><span>地面网格</span></label>
+        </div>
+      </div>
     </section>
   </main>
 </body>

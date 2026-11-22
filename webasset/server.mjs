@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, promises as fsPromises, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -195,6 +195,54 @@ export function createWebAssetServer({
         response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
         response.end('Not Found');
       });
+    } else if (pathname === '/api/mpfb/characters' && request.method === 'GET') {
+      const builtRoot = path.resolve(resolvedSiteRoot, '..', 'built', 'chars');
+      const idxPath = path.join(builtRoot, 'char-ai-index.json');
+      let items = [];
+      try {
+        const raw = JSON.parse(await fsPromises.readFile(idxPath, 'utf8'));
+        for (const c of raw.characters || []) {
+          const metaPath = path.join(builtRoot, c.scope || 'universal', c.charId, 'meta.json');
+          let meta = null;
+          try {
+            meta = JSON.parse(await fsPromises.readFile(metaPath, 'utf8'));
+          } catch {}
+          items.push({
+            id: c.webassetId || c.charId,
+            charId: c.charId,
+            name: c.name || c.charId,
+            scope: c.scope || 'universal',
+            stylePreset: c.stylePreset || 'stylized_clean',
+            heightM: c.heightM || 1.7,
+            boneCount: c.boneCount || 23,
+            tris: c.tris || {},
+            modelUrl: `/files/mpfb/${c.scope || 'universal'}/${c.charId}/${c.charId}_packed.glb`,
+            thumbUrl: `/files/mpfb/${c.scope || 'universal'}/${c.charId}/lod3_atlas.png`,
+            assetsUsed: meta?.assetsUsed || [],
+          });
+        }
+      } catch {}
+      response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-cache' });
+      response.end(JSON.stringify({ total: items.length, characters: items }));
+    } else if (pathname.startsWith('/files/mpfb/') && request.method === 'GET') {
+      const builtRoot = path.resolve(resolvedSiteRoot, '..', 'built', 'chars');
+      const rel = decodeURIComponent(pathname.slice('/files/mpfb/'.length));
+      const target = path.resolve(builtRoot, rel);
+      if (!target.startsWith(builtRoot + path.sep) || !/\.(glb|png|json)$/i.test(target)) {
+        response.writeHead(404);
+        response.end('Not Found');
+      } else {
+        try {
+          const data = await fsPromises.readFile(target);
+          const ext = path.extname(target).toLowerCase();
+          const ct = ext === '.glb' ? 'model/gltf-binary' : ext === '.png' ? 'image/png' : 'application/json; charset=utf-8';
+          response.writeHead(200, { 'Content-Type': ct, 'Cache-Control': 'no-cache' });
+          response.end(data);
+        } catch {
+          response.writeHead(404);
+          response.end('Not Found');
+        }
+      }
     } else if (pathname.startsWith('/assets/cn/')) {
       await handleCnAssets(request, response, () => {
         response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });

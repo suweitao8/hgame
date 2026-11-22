@@ -4,6 +4,7 @@ import { createSidebarSquareCard } from './hgame-shared.js';
 
 const WORKSPACE_VIEWS = {
   characters: document.querySelector('#assets-view'),
+  mpfb: document.querySelector('#mpfb-view'),
   games: document.querySelector('#games-view'),
   models: document.querySelector('#models-view'),
   animations: document.querySelector('#animations-view'),
