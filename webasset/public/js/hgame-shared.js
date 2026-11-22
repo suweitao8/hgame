@@ -747,3 +747,48 @@ normal = normalize(hgTbn * hgMapN);`,
 
   return { material, colorTex, normRmTex };
 }
+
+/**
+ * Inspect alpha edges of a wall decal color image to classify whether it is:
+ * - 'full': top-to-bottom stain (needs full wall-height scaling)
+ * - 'top': top-edge drip/leak (flush to wall top edge, optional full-width strip)
+ * - 'center': localized mid-wall crack/mark
+ */
+export function analyzeWallDecalPlacement(img, aspect = 1) {
+  const fallback = { anchor: 'center', spanFullWidth: false };
+  if (!img) return fallback;
+  try {
+    const size = 32;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return fallback;
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(img, 0, 0, size, size);
+    const data = ctx.getImageData(0, 0, size, size).data;
+
+    let topMax = 0;
+    let sideMax = 0;
+    let lastContentRow = 0;
+    for (let y = 0; y < size; y++) {
+      let rowMax = 0;
+      for (let x = 0; x < size; x++) {
+        const a = data[(y * size + x) * 4 + 3];
+        if (a > rowMax) rowMax = a;
+        if ((x <= 1 || x >= size - 2) && a > sideMax) sideMax = a;
+      }
+      if (y <= 1 && rowMax > topMax) topMax = rowMax;
+      if (rowMax > 36) lastContentRow = y / (size - 1);
+    }
+
+    if (topMax <= 40) return fallback;
+    const spanFullWidth = aspect >= 1.4 && sideMax > 40;
+    if (!spanFullWidth && lastContentRow >= 0.85) {
+      return { anchor: 'full', spanFullWidth: sideMax > 40 };
+    }
+    return { anchor: 'top', spanFullWidth };
+  } catch {
+    return fallback;
+  }
+}

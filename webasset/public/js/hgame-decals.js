@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { loadHdriEnvironment } from './realistic-pcg.js';
 import {
+  analyzeWallDecalPlacement,
   apiRequestJson,
   create2MapPbrMaterial,
   createThreeViewport,
@@ -109,6 +110,7 @@ let decalMaterial = null;
 let decalTextures = [];
 let decalAspect = 1;
 let decalContentScale = 1;
+let wallDecalLayout = { anchor: 'center', spanFullWidth: false };
 let initialized = false;
 let loadToken = 0;
 let catalogLoaded = false;
@@ -534,13 +536,29 @@ function applyTransformToDecalMesh() {
 
   if (previewMode === 'surface') {
     const effective = BASE_DECAL_SIZE * decalContentScale * scale;
-    const wMeters = effective * aspectFactor;
-    const hMeters = effective / aspectFactor;
-    decalMesh.scale.set(wMeters, hMeters, 1);
+    let wMeters = effective * aspectFactor;
+    let hMeters = effective / aspectFactor;
     if (currentPlacement === 'wall') {
+      let centerY = WALL_DECAL_Y;
+      if (wallDecalLayout.anchor === 'full') {
+        hMeters = WALL_HEIGHT * scale;
+        wMeters = Math.min(FLOOR_SIZE, hMeters * decalAspect);
+        centerY = Math.max(hMeters * 0.5, WALL_HEIGHT - hMeters * 0.5);
+      } else if (wallDecalLayout.anchor === 'top') {
+        if (wallDecalLayout.spanFullWidth) {
+          wMeters = Math.min(FLOOR_SIZE, WALL_HEIGHT * 0.72 * decalAspect * scale);
+          hMeters = Math.min(WALL_HEIGHT, wMeters / decalAspect);
+        } else {
+          hMeters = Math.min(WALL_HEIGHT, 2.2 * scale);
+          wMeters = Math.min(FLOOR_SIZE, hMeters * decalAspect);
+        }
+        centerY = WALL_HEIGHT - hMeters * 0.5;
+      }
+      decalMesh.scale.set(wMeters, hMeters, 1);
       decalMesh.rotation.set(0, 0, -rotRad);
-      decalMesh.position.set(0, WALL_DECAL_Y, WALL_FRONT_Z + SURFACE_EPSILON);
+      decalMesh.position.set(0, centerY, WALL_FRONT_Z + SURFACE_EPSILON);
     } else {
+      decalMesh.scale.set(wMeters, hMeters, 1);
       decalMesh.rotation.set(-Math.PI * 0.5, 0, -rotRad);
       decalMesh.position.set(0, SURFACE_EPSILON, FLOOR_DECAL_Z);
     }
@@ -954,6 +972,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
       clearStage();
       decalAspect = Math.max(0.2, Math.min(4.0, Number(item.aspectRatio || (assets.normRm.width / Math.max(1, assets.normRm.height)))));
       decalContentScale = currentLib === 'cn_foliage' ? 1 : measureAlphaContentScale(assets.colorImg);
+      wallDecalLayout = currentPlacement === 'wall' ? analyzeWallDecalPlacement(assets.colorImg, decalAspect) : { anchor: 'center', spanFullWidth: false };
       const tintHex = item.tintableGrayscale && tintSelect ? Number(tintSelect.value || 0x8b0c0c) : 0xffffff;
       const opacity = Math.max(0.05, Math.min(1, Number(opacityInput.value) || 1));
 
@@ -1047,6 +1066,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
     const img = colorTex.image;
     decalAspect = img && img.height > 0 ? Math.max(0.3, Math.min(3.5, img.width / img.height)) : 1;
     decalContentScale = measureAlphaContentScale(img);
+    wallDecalLayout = currentPlacement === 'wall' ? analyzeWallDecalPlacement(img, decalAspect) : { anchor: 'center', spanFullWidth: false };
 
     const validOrm = ormTex && hasUsableRoughness(ormTex) ? ormTex : null;
     decalMaterial = new THREE.MeshStandardMaterial({

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { create2MapPbrMaterial, loadSingle2MapAssets } from '../hgame-shared.js';
+import { analyzeWallDecalPlacement, create2MapPbrMaterial, loadSingle2MapAssets } from '../hgame-shared.js';
 import { buildBeveledBoxRaw, buildBufferGeometryFromRaw } from '../realistic-pcg.js';
 import {
   createPlaqueMesh,
@@ -117,10 +117,12 @@ export async function buildDecalFoliageShowcaseScene({
       bay.position.set(cx, 0, cz);
 
       const hitMeshes = [];
+      const WALL_W = 2.7;
+      const WALL_H = 2.7;
       if (wallMode) {
-        const wallGeo = buildBufferGeometryFromRaw(buildBeveledBoxRaw(2.7, 2.7, 0.24, 0, baseLayer));
+        const wallGeo = buildBufferGeometryFromRaw(buildBeveledBoxRaw(WALL_W, WALL_H, 0.24, 0, baseLayer));
         const wallMesh = new THREE.Mesh(wallGeo, worldMat.material);
-        wallMesh.position.set(0, 1.35, -0.5);
+        wallMesh.position.set(0, WALL_H * 0.5, -0.5);
         wallMesh.castShadow = true;
         wallMesh.receiveShadow = true;
         bay.add(wallMesh);
@@ -148,14 +150,35 @@ export async function buildDecalFoliageShowcaseScene({
         const imgW = assets.colorImg?.naturalWidth || 1;
         const imgH = assets.colorImg?.naturalHeight || 1;
         const aspect = imgW / Math.max(1, imgH);
-        const w = aspect >= 1 ? 2.1 : 2.1 * aspect;
-        const h = aspect >= 1 ? 2.1 / aspect : 2.1;
+        let w = aspect >= 1 ? 2.1 : 2.1 * aspect;
+        let h = aspect >= 1 ? 2.1 / aspect : 2.1;
+        let centerY = 0.092;
+
+        if (wallMode) {
+          const wallLayout = analyzeWallDecalPlacement(assets.colorImg, aspect);
+          if (wallLayout.anchor === 'full') {
+            h = WALL_H;
+            w = Math.min(WALL_W, WALL_H * aspect);
+            centerY = WALL_H * 0.5;
+          } else if (wallLayout.anchor === 'top') {
+            if (wallLayout.spanFullWidth) {
+              w = WALL_W;
+              h = Math.min(WALL_H, WALL_W / aspect);
+            } else {
+              w = Math.min(WALL_W, WALL_H * 0.9 * aspect);
+              h = w / aspect;
+            }
+            centerY = WALL_H - h * 0.5;
+          } else {
+            centerY = WALL_H * 0.5;
+          }
+        }
 
         const decalGeo = new THREE.PlaneGeometry(w, h);
         const decalMesh = new THREE.Mesh(decalGeo, built.material);
         decalMesh.renderOrder = 3;
         if (wallMode) {
-          decalMesh.position.set(0, 1.38, -0.365);
+          decalMesh.position.set(0, centerY, -0.365);
         } else {
           decalMesh.rotation.x = -Math.PI * 0.5;
           decalMesh.position.set(0, 0.092, 0);
