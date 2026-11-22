@@ -6,16 +6,15 @@ import {
   apiRequestJson,
   createSidebarSquareCard,
   fetchHGameAssets,
-  fetchUnrealCatalog,
   formatBytes,
   onHGameAssetsChanged,
   refreshHGameAssets,
 } from './hgame-shared.js';
 
-const AUDIO_CATEGORY_ORDER = ['动作与打击音效', '环境与爆破', '音乐 BGM', '音效'];
-
 const viewEl = document.querySelector('#audio-view');
+const libTabs = Array.from(document.querySelectorAll('.hgame-audio-lib-tab'));
 const searchInput = document.querySelector('#hgame-audio-search');
+const filterSelect = document.querySelector('#hgame-audio-filter');
 const uploadButton = document.querySelector('#hgame-audio-upload-button');
 const uploadInput = document.querySelector('#hgame-audio-upload');
 const listEl = document.querySelector('#hgame-audio-list');
@@ -33,12 +32,17 @@ const loopInput = document.querySelector('#hgame-audio-loop');
 const statusEl = document.querySelector('#hgame-audio-status');
 
 let initialized = false;
-let unrealAudio = [];
+let currentLib = 'cues'; // 'cues' | 'streams' | 'full'
+let cueEntries = [];
+let streamEntries = [];
+let fullEntries = [];
 let uploadedAudio = [];
-let activeSelection = { type: 'unreal', id: '' };
+let activeSelection = { type: 'cue', id: '' };
 let audioMgr = null;
 let activeVoice = null;
+let activeStream = null;
 const decodedCache = new Map();
+const registeredCues = new Set();
 let currentDecoded = null;
 let currentAnalysis = null;
 let loadToken = 0;
@@ -50,90 +54,158 @@ function getAudioManager() {
   return audioMgr;
 }
 
-function buildCatalog() {
-  const unrealEntries = unrealAudio.map(item => ({
-    type: 'unreal',
-    id: item.id,
-    name: item.name || item.id,
-    category: item.category || '音效',
-    sub: `${item.pack || 'Anim58'}${item.bytes ? ` · ${formatBytes(item.bytes)}` : ''}`,
-    url: item.url,
-    fileName: item.url.split('/').pop() || `${item.id}.wav`,
-    item,
-  }));
-  const fileEntries = uploadedAudio.map(item => ({
+function updateLibTabsUi() {
+  for (const tab of libTabs) {
+    const active = tab.dataset.audioLib === currentLib;
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  }
+}
+
+function buildActiveList() {
+  if (currentLib === 'cues') {
+    return cueEntries.map((c) => ({
+      type: 'cue',
+      id: c.cueName,
+      name: c.cueName,
+      pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
+      category: c.category || 'sfx',
+      preload: 'buffer',
+      badge: '内存 SFX',
+      url: c.variants?.[0]?.url || '',
+      fileName: `${c.cueName}.mp3`,
+      item: c,
+    }));
+  }
+  if (currentLib === 'streams') {
+    return streamEntries.map((s) => ({
+      type: 'stream',
+      id: s.id,
+      name: s.name || s.id,
+      pack: s.pack || 'Streams',
+      category: s.pack || '流式音轨',
+      preload: 'stream',
+      badge: '流式音轨',
+      url: s.url,
+      fileName: `${s.name || s.id}.mp3`,
+      item: s,
+    }));
+  }
+  const uploaded = uploadedAudio.map((item) => ({
     type: 'file',
     id: item.id,
     name: item.name,
+    pack: '已上传音频',
     category: '已上传音频',
-    sub: formatBytes(item.bytes),
+    preload: 'buffer',
+    badge: '已上传',
     url: item.url,
     fileName: item.name,
     item,
   }));
-  return [...unrealEntries, ...fileEntries];
+  const fullMapped = fullEntries.map((f) => ({
+    type: f.preload === 'stream' ? 'stream' : 'sfx_item',
+    id: f.id,
+    name: f.name || f.id,
+    pack: f.pack || 'Anim58',
+    category: f.preload === 'stream' ? '流式长音轨 (>=4s)' : '内存 SFX (<4s)',
+    preload: f.preload || 'buffer',
+    badge: f.preload === 'stream' ? '流式音轨' : '内存 SFX',
+    url: f.url,
+    fileName: `${f.name || f.id}.mp3`,
+    item: f,
+  }));
+  return [...uploaded, ...fullMapped];
+}
+
+function populateFilterOptions() {
+  if (!filterSelect) return;
+  const prev = filterSelect.value || 'all';
+  filterSelect.replaceChildren();
+  const entries = buildActiveList();
+  const packs = new Map();
+  let surfaceCount = 0;
+  for (const e of entries) {
+    if (e.pack) packs.set(e.pack, (packs.get(e.pack) || 0) + 1);
+    if (e.category === 'footstep_surface' || e.category === 'impact_surface') surfaceCount++;
+  }
+  const addOpt = (val, text) => {
+    const o = document.createElement('option');
+    o.value = val;
+    o.textContent = text;
+    filterSelect.append(o);
+  };
+  addOpt('all', `全部 (${entries.length})`);
+  if (surfaceCount > 0) {
+    addOpt('surface', `10 材质脚步与受击 (${surfaceCount})`);
+  }
+  for (const [p, cnt] of [...packs.entries()].sort((a, b) => b[1] - a[1])) {
+    addOpt(`pack:${p}`, `${p} (${cnt})`);
+  }
+  const hasPrev = [...filterSelect.options].some((o) => o.value === prev);
+  filterSelect.value = hasPrev ? prev : 'all';
+}
+
+function getFilteredList() {
+  const query = searchInput.value.trim().toLowerCase();
+  const fval = filterSelect?.value || 'all';
+  return buildActiveList().filter((entry) => {
+    if (fval === 'surface' && entry.category !== 'footstep_surface' && entry.category !== 'impact_surface') return false;
+    if (fval.startsWith('pack:') && entry.pack !== fval.slice(5)) return false;
+    if (!query) return true;
+    return entry.name.toLowerCase().includes(query)
+      || entry.id.toLowerCase().includes(query)
+      || (entry.pack || '').toLowerCase().includes(query)
+      || (entry.category || '').toLowerCase().includes(query);
+  });
 }
 
 function getSelectedEntry() {
-  const catalog = buildCatalog();
-  return catalog.find(entry => entry.type === activeSelection.type && entry.id === activeSelection.id)
-    || catalog[0]
+  const list = getFilteredList();
+  return list.find((entry) => entry.type === activeSelection.type && entry.id === activeSelection.id)
+    || list[0]
     || null;
 }
 
 function renderList() {
-  const query = searchInput.value.trim().toLowerCase();
-  const entries = buildCatalog().filter(entry =>
-    !query
-    || entry.name.toLowerCase().includes(query)
-    || entry.id.toLowerCase().includes(query)
-    || entry.category.toLowerCase().includes(query));
-
+  const entries = getFilteredList();
   listEl.replaceChildren();
   if (entries.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'hgame-list-empty';
-    empty.textContent = buildCatalog().length === 0 ? '暂无音频资产。' : '没有匹配的音频。';
+    empty.textContent = buildActiveList().length === 0 ? '暂无音频资产。' : '没有匹配的音频。';
     listEl.append(empty);
     return;
   }
 
-  if (!entries.some(entry => entry.type === activeSelection.type && entry.id === activeSelection.id)) {
+  if (!entries.some((entry) => entry.type === activeSelection.type && entry.id === activeSelection.id)) {
     activeSelection = { type: entries[0].type, id: entries[0].id };
   }
 
-  const byCat = new Map();
-  for (const entry of entries) {
-    if (!byCat.has(entry.category)) byCat.set(entry.category, []);
-    byCat.get(entry.category).push(entry);
+  const MAX_RENDER = 320;
+  const visible = entries.slice(0, MAX_RENDER);
+  for (const entry of visible) {
+    const selected = entry.type === activeSelection.type && entry.id === activeSelection.id;
+    const { button } = createSidebarSquareCard({
+      name: entry.type === 'cue'
+        ? `${entry.name} (${entry.item?.variants?.length || 1}变体)`
+        : entry.name,
+      badge: entry.badge,
+      active: selected,
+      onClick: () => {
+        stopPlayback();
+        activeSelection = { type: entry.type, id: entry.id };
+        renderList();
+        void selectCurrentAudio();
+      },
+    });
+    listEl.append(button);
   }
-  const categories = [
-    ...AUDIO_CATEGORY_ORDER.filter(cat => byCat.has(cat)),
-    ...[...byCat.keys()].filter(cat => !AUDIO_CATEGORY_ORDER.includes(cat)),
-  ];
-
-  for (const cat of categories) {
-    const group = byCat.get(cat);
-    const heading = document.createElement('div');
-    heading.className = 'hgame-list-heading';
-    heading.textContent = `${cat} (${group.length})`;
-    listEl.append(heading);
-
-    for (const entry of group) {
-      const selected = entry.type === activeSelection.type && entry.id === activeSelection.id;
-      const { button } = createSidebarSquareCard({
-        name: entry.name,
-        badge: entry.category === '音乐 BGM' ? 'BGM' : 'WAV',
-        active: selected,
-        onClick: () => {
-          stopPlayback();
-          activeSelection = { type: entry.type, id: entry.id };
-          renderList();
-          void selectCurrentAudio();
-        },
-      });
-      listEl.append(button);
-    }
+  if (entries.length > MAX_RENDER) {
+    const hint = document.createElement('p');
+    hint.className = 'hgame-list-empty';
+    hint.textContent = `仅显示前 ${MAX_RENDER} / ${entries.length} 条，请输入关键词精确定位。`;
+    listEl.append(hint);
   }
 }
 
@@ -146,6 +218,10 @@ function stopPlayback() {
     activeVoice?.stop?.({ fadeOutMs: 12 });
   } catch { /* ignore */ }
   activeVoice = null;
+  try {
+    activeStream?.stop?.();
+  } catch { /* ignore */ }
+  activeStream = null;
 }
 
 function drawPcmWaveform(samples, { durationSec = 0, analysis = null } = {}) {
@@ -202,6 +278,18 @@ function renderMetrics(items) {
   }
 }
 
+async function decodeCachedUrl(url) {
+  let buf = decodedCache.get(url);
+  if (!buf) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const arrayBuf = await response.arrayBuffer();
+    buf = await getAudioManager().decode(arrayBuf);
+    decodedCache.set(url, buf);
+  }
+  return buf;
+}
+
 async function selectCurrentAudio() {
   const entry = getSelectedEntry();
   if (!entry) {
@@ -220,36 +308,73 @@ async function selectCurrentAudio() {
   const token = ++loadToken;
   titleEl.textContent = entry.name;
   deleteBtn.hidden = entry.type !== 'file';
-  downloadEl.hidden = false;
-  downloadEl.href = entry.url;
-  downloadEl.download = entry.fileName;
-  downloadEl.textContent = `下载 ${entry.fileName}`;
-  statusEl.textContent = '正在解码并分析音频波形...';
+  if (entry.url) {
+    downloadEl.hidden = false;
+    downloadEl.href = entry.url;
+    downloadEl.download = entry.fileName;
+    downloadEl.textContent = `下载 ${entry.fileName}`;
+  } else {
+    downloadEl.hidden = true;
+  }
 
-  const cacheKey = `${entry.type}:${entry.id}`;
+  // Strictly defer network fetch for stream tracks until user clicks Play
+  if (entry.preload === 'stream') {
+    currentDecoded = null;
+    currentAnalysis = null;
+    drawPcmWaveform(null);
+    const s = entry.item;
+    renderMetrics([
+      ['加载策略', '流式长音轨 (preload: stream · 不进首包)'],
+      ['时长', `${Number(s.duration || 0).toFixed(2)} s`],
+      ['编码', `MP3 44.1 kHz Stereo · ${s.bitrateKbps || 96} kbps`],
+      ['体积', formatBytes(s.encodedBytes || 0)],
+    ]);
+    statusEl.textContent = `${entry.pack} · 流式按需加载就绪（点击「播放」发起流式拉取）`;
+    return;
+  }
+
+  statusEl.textContent = entry.type === 'cue'
+    ? `正在解码 Cue 组 (${entry.item.variants?.length || 1} 变体)...`
+    : '正在解码并分析音频波形...';
+
   try {
-    let buffer = decodedCache.get(cacheKey);
-    if (!buffer) {
-      const response = await fetch(entry.url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const arrayBuf = await response.arrayBuffer();
+    if (entry.type === 'cue') {
+      const variants = entry.item.variants || [];
+      const bufs = await Promise.all(variants.map((v) => decodeCachedUrl(v.url)));
       if (token !== loadToken) return;
       const mgr = getAudioManager();
-      buffer = await mgr.decode(arrayBuf);
-      decodedCache.set(cacheKey, buffer);
+      if (!registeredCues.has(entry.name)) {
+        mgr.registerCue(entry.name, bufs, { bus: 'sfx' });
+        registeredCues.add(entry.name);
+      }
+      currentDecoded = bufs[0] || null;
+      currentAnalysis = currentDecoded ? analyzeAudioBuffer(currentDecoded) : null;
+      if (currentDecoded) {
+        drawPcmWaveform(currentDecoded.getChannelData(0), { durationSec: currentDecoded.duration, analysis: currentAnalysis });
+      }
+      const srcCnt = entry.item.totalSourceVariants || variants.length;
+      renderMetrics([
+        ['加载策略', '内存 SFX (preload: buffer · registerCue)'],
+        ['变体抽样', `${variants.length} 精选 / ${srcCnt} 源变体`],
+        ['编码', 'MP3 44.1 kHz Mono · 64 kbps · -14 LUFS'],
+        ['首变体频谱质心', `${variants[0]?.spectralCentroidHz || 0} Hz`],
+      ]);
+      statusEl.textContent = `Cue 「${entry.name}」就绪（${variants.length} 变体）· 点击「播放」自动防重复随机试听`;
+      return;
     }
+
+    const buffer = await decodeCachedUrl(entry.url);
     if (token !== loadToken) return;
     currentDecoded = buffer;
     currentAnalysis = analyzeAudioBuffer(buffer);
-    const channelData = buffer.getChannelData(0);
-    drawPcmWaveform(channelData, { durationSec: buffer.duration, analysis: currentAnalysis });
+    drawPcmWaveform(buffer.getChannelData(0), { durationSec: buffer.duration, analysis: currentAnalysis });
     renderMetrics([
+      ['加载策略', entry.type === 'file' ? '本地上传资产' : '内存 SFX (preload: buffer)'],
       ['总时长', `${buffer.duration.toFixed(3)} s`],
-      ['有效时长', `${currentAnalysis.activeDuration.toFixed(3)} s`],
       ['采样率', `${buffer.sampleRate} Hz (${buffer.numberOfChannels}ch)`],
       ['峰值 / RMS', `${currentAnalysis.peak.toFixed(2)} / ${currentAnalysis.rms.toFixed(3)}`],
     ]);
-    statusEl.textContent = `${entry.category} · 静音裁剪区间 ${currentAnalysis.trimStart.toFixed(3)}s ~ ${currentAnalysis.trimEnd.toFixed(3)}s`;
+    statusEl.textContent = `${entry.pack} · 静音裁剪 ${currentAnalysis.trimStart.toFixed(3)}s ~ ${currentAnalysis.trimEnd.toFixed(3)}s`;
   } catch (error) {
     if (token !== loadToken) return;
     currentDecoded = null;
@@ -264,13 +389,47 @@ async function startPlayback() {
   if (!entry) return;
   const mgr = getAudioManager();
   await mgr.unlock();
-  mgr.setVolume(Number(volumeInput.value) || 0.8);
+  const vol = Number(volumeInput.value) || 0.8;
+  mgr.setVolume(vol);
+
+  stopPlayback();
+
+  if (entry.preload === 'stream') {
+    activeStream = mgr.playStream(entry.url, {
+      bus: 'music',
+      loop: loopInput.checked,
+      volume: 1,
+      autoplay: true,
+    });
+    statusEl.textContent = `正在流式播放：${entry.name} (MP3 Stereo 96 kbps)`;
+    return;
+  }
+
+  if (entry.type === 'cue') {
+    const variants = entry.item.variants || [];
+    const bufs = await Promise.all(variants.map((v) => decodeCachedUrl(v.url)));
+    if (!registeredCues.has(entry.name)) {
+      mgr.registerCue(entry.name, bufs, { bus: 'sfx' });
+      registeredCues.add(entry.name);
+    }
+    const voice = await mgr.playCue(entry.name, { loop: loopInput.checked, volume: 1 });
+    activeVoice = voice;
+    const vIdx = Number.isInteger(voice?.variant) && voice.variant >= 0 ? voice.variant : 0;
+    const pickedBuf = bufs[vIdx] || bufs[0];
+    if (pickedBuf) {
+      drawPcmWaveform(pickedBuf.getChannelData(0), {
+        durationSec: pickedBuf.duration,
+        analysis: analyzeAudioBuffer(pickedBuf),
+      });
+    }
+    statusEl.textContent = `正在防重复随机试听：${entry.name} · 变体 #${vIdx + 1}/${variants.length} (${variants[vIdx]?.spectralCentroidHz || 0} Hz)`;
+    return;
+  }
 
   if (!currentDecoded) {
     await selectCurrentAudio();
   }
   if (currentDecoded) {
-    stopPlayback();
     activeVoice = await mgr.play(currentDecoded, {
       volume: 1,
       loop: loopInput.checked,
@@ -290,8 +449,11 @@ async function handleAudioUpload(file) {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
     });
+    currentLib = 'full';
+    updateLibTabsUi();
     activeSelection = { type: 'file', id: data.item.id };
     await refreshHGameAssets();
+    populateFilterOptions();
     renderList();
     await selectCurrentAudio();
   } catch (error) {
@@ -304,9 +466,9 @@ async function deleteActiveAudio() {
   if (!entry || entry.type !== 'file') return;
   stopPlayback();
   await apiRequestJson(`/api/hgame/audio/${encodeURIComponent(entry.id)}`, { method: 'DELETE' });
-  decodedCache.delete(`file:${entry.id}`);
-  activeSelection = { type: 'unreal', id: unrealAudio[0]?.id || '' };
+  decodedCache.delete(entry.url);
   await refreshHGameAssets();
+  populateFilterOptions();
   renderList();
   await selectCurrentAudio();
 }
@@ -314,7 +476,20 @@ async function deleteActiveAudio() {
 async function initAudioView() {
   if (!initialized) {
     initialized = true;
+    for (const tab of libTabs) {
+      tab.addEventListener('click', () => {
+        const next = tab.dataset.audioLib || 'cues';
+        if (next === currentLib) return;
+        stopPlayback();
+        currentLib = next;
+        updateLibTabsUi();
+        populateFilterOptions();
+        renderList();
+        void selectCurrentAudio();
+      });
+    }
     searchInput.addEventListener('input', renderList);
+    filterSelect?.addEventListener('change', renderList);
     uploadButton.addEventListener('click', () => uploadInput.click());
     uploadInput.addEventListener('change', () => {
       const file = uploadInput.files?.[0];
@@ -335,28 +510,37 @@ async function initAudioView() {
       syncOutputs();
       audioMgr?.setVolume(Number(volumeInput.value) || 0.8);
     });
-    onHGameAssetsChanged(data => {
+    onHGameAssetsChanged((data) => {
       uploadedAudio = Array.isArray(data.audio) ? data.audio : [];
-      if (!viewEl.hidden) renderList();
+      if (!viewEl.hidden) {
+        populateFilterOptions();
+        renderList();
+      }
     });
   }
 
   syncOutputs();
   try {
-    const [data, unrealCatalog] = await Promise.all([
+    const [data, cueRes, streamRes, fullRes] = await Promise.all([
       fetchHGameAssets(),
-      fetchUnrealCatalog(),
+      fetch('/assets/cn/audio/cue_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { cues: [] })).catch(() => ({ cues: [] })),
+      fetch('/assets/cn/audio/streams_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { streams: [] })).catch(() => ({ streams: [] })),
+      fetch('/assets/cn/audio/audio_library_full.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })),
     ]);
     uploadedAudio = Array.isArray(data.audio) ? data.audio : [];
-    unrealAudio = Array.isArray(unrealCatalog.audio) ? unrealCatalog.audio : [];
+    cueEntries = Array.isArray(cueRes.cues) ? cueRes.cues : [];
+    streamEntries = Array.isArray(streamRes.streams) ? streamRes.streams : [];
+    fullEntries = Array.isArray(fullRes.items) ? fullRes.items : [];
   } catch (error) {
     statusEl.textContent = error.message || '读取音频列表失败';
   }
+  updateLibTabsUi();
+  populateFilterOptions();
   renderList();
   await selectCurrentAudio();
 }
 
-window.addEventListener('webasset:workspace-change', event => {
+window.addEventListener('webasset:workspace-change', (event) => {
   if (event.detail?.workspace === 'audio') {
     void initAudioView();
   } else {

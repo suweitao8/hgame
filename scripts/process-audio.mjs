@@ -3,6 +3,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { analyzeAudioBuffer } from '../assets/runtime/platform/audio.js';
+import {
+  SURFACE_TYPES_10,
+  extractSemanticCueKey,
+  parseWavPcmSamples,
+  computeSpectralCentroidHz,
+  measureSamplesFeatures,
+  selectQuantileVariants,
+  buildSurfaceTypeCueMap,
+  processAudioLibraryBatch,
+} from './lib/audio-library-pipeline.mjs';
+
+export {
+  SURFACE_TYPES_10,
+  extractSemanticCueKey,
+  parseWavPcmSamples,
+  computeSpectralCentroidHz,
+  measureSamplesFeatures,
+  selectQuantileVariants,
+  buildSurfaceTypeCueMap,
+  processAudioLibraryBatch,
+};
 
 function clamp(value, min, max) {
   return value < min ? min : (value > max ? max : value);
@@ -312,10 +333,19 @@ function parseArgs(argv) {
   return args;
 }
 
-export function runAudioCli(argv = process.argv.slice(2)) {
+export async function runAudioCli(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  if (args.batch) {
+    return processAudioLibraryBatch({
+      ...(args.staging ? { stagingRoot: path.resolve(String(args.staging)) } : {}),
+      ...(args['v10-wavs'] ? { v10WavsDir: path.resolve(String(args['v10-wavs'])) } : {}),
+      ...(args['out-dir'] ? { outDir: path.resolve(String(args['out-dir'])) } : {}),
+      ...(args.concurrency ? { concurrency: Number(args.concurrency) } : {}),
+      force: Boolean(args.force),
+    });
+  }
   if (!args.cue || !args.inputs || !args['out-dir']) {
-    throw new Error('Usage: node scripts/process-audio.mjs --cue <name> --inputs a.mp3,b.mp3,c.mp3,d.mp3 --out-dir <dir> [--bgm]');
+    throw new Error('Usage: node scripts/process-audio.mjs --cue <name> --inputs a.mp3,b.mp3,c.mp3,d.mp3 --out-dir <dir> [--bgm] | --batch');
   }
   const inputs = String(args.inputs).split(',').map(s => s.trim()).filter(Boolean);
   return processCueFiles({
@@ -327,11 +357,12 @@ export function runAudioCli(argv = process.argv.slice(2)) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const result = runAudioCli();
-    console.log(JSON.stringify(result, null, 2));
-  } catch (err) {
-    console.error(err.message || err);
-    process.exitCode = 1;
-  }
+  Promise.resolve(runAudioCli())
+    .then((result) => {
+      console.log(JSON.stringify(result, null, 2));
+    })
+    .catch((err) => {
+      console.error(err.message || err);
+      process.exitCode = 1;
+    });
 }

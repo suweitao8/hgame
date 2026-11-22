@@ -1,0 +1,788 @@
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { analyzeAudioBuffer } from '../../assets/runtime/platform/audio.js';
+
+export const SURFACE_TYPES_10 = Object.freeze([
+  'asphalt',
+  'concrete',
+  'tile',
+  'wood',
+  'metal',
+  'glass',
+  'dirt',
+  'grass',
+  'water',
+  'fabric',
+]);
+
+const EXTENDED_FOOTSTEP_RE = /(?:^|[_/\\-])(cowboy|retro|robotic|mech|sci[_-]?fi)(?:[_/\\-]|$)/i;
+
+function clamp(v, lo, hi) {
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+
+function median(values) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) * 0.5;
+}
+
+/**
+ * Normalizes an asset name + directory into a semantic cue key (`sword_slash_heavy`,
+ * `step_concrete`, `door_creak`, `gun_pistol_shot`) by stripping only trailing numeric/take suffixes.
+ */
+export function extractSemanticCueKey(name, { pack = '', relDir = '' } = {}) {
+  const raw = String(name || '').trim();
+  const normBase = raw
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[-\s./\\]+/g, '_')
+    .toLowerCase();
+
+  let cleaned = normBase
+    // Remove boilerplate engine asset prefixes while preserving meaningful domain tokens
+    .replace(/^(?:sfx|wav|sw|sc|sb|snd|sound|audio)_+(?=[a-z])/i, '')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  // Strip trailing variation / take / duplicate index suffixes repeatedly: _01, _001, _v2, _var3, _alt2, _a
+  let prev;
+  do {
+    prev = cleaned;
+    cleaned = cleaned
+      .replace(/(?:_(?:var|variation|ver|v|take|alt|part|rpt|copy|rnd)?\d+|_[a-f])$/i, '')
+      .replace(/_+$/, '');
+  } while (cleaned && cleaned !== prev);
+
+  // Strip trailing digits only when there is still a descriptive stem ahead of them
+  const trailingDigits = cleaned.match(/^([a-z][a-z0-9_]*?[a-z])_?\d{1,3}$/);
+  if (trailingDigits && trailingDigits[1].length >= 4) {
+    cleaned = trailingDigits[1];
+  }
+
+  const contextText = `${pack}/${relDir}/${raw}`.toLowerCase();
+  const isExtendedFootstep = EXTENDED_FOOTSTEP_RE.test(contextText)
+    && /(footstep|step|walk|run|sprint|land|jump)/i.test(contextText);
+
+  const packPrefix = String(pack || '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[^a-z0-9]+/gi, '_')
+    .toLowerCase()
+    .replace(/^_+|_+$/g, '')
+    .replace(/_?(?:sound_?effects_?pack_?\d*|sound_?pack|audio_?pack|sfx|bundle)$/i, '');
+
+  const cueKey = cleaned || normBase || 'cue';
+  return {
+    cueKey,
+    fullKey: packPrefix ? `${packPrefix}_${cueKey}` : cueKey,
+    isExtendedFootstep,
+  };
+}
+
+/** Fast standard RIFF/WAV PCM decoder (handles 16/24/32-bit PCM & IEEE float) to mono Float32Array. */
+export function parseWavPcmSamples(buf, maxSeconds = 6.0) {
+  if (!Buffer.isBuffer(buf) || buf.length < 44) return null;
+  if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return null;
+
+  let audioFormat = 0;
+  let channels = 0;
+  let sampleRate = 0;
+  let bitsPerSample = 0;
+  let dataOffset = -1;
+  let dataSize = 0;
+
+  let off = 12;
+  while (off + 8 <= buf.length) {
+    const id = buf.toString('ascii', off, off + 4);
+    const sz = buf.readUInt32LE(off + 4);
+    const body = off + 8;
+    if (id === 'fmt ' && sz >= 16 && body + 16 <= buf.length) {
+      audioFormat = buf.readUInt16LE(body);
+      channels = buf.readUInt16LE(body + 2);
+      sampleRate = buf.readUInt32LE(body + 4);
+      bitsPerSample = buf.readUInt16LE(body + 14);
+    } else if (id === 'data') {
+      dataOffset = body;
+      dataSize = Math.min(sz, buf.length - body);
+      break;
+    }
+    off = body + sz + (sz & 1);
+  }
+
+  if ((audioFormat !== 1 && audioFormat !== 3) || !channels || !sampleRate || dataOffset < 0) {
+    return null;
+  }
+
+  const bytesPerSample = bitsPerSample >> 3;
+  const frameSize = bytesPerSample * channels;
+  if (!frameSize) return null;
+
+  const totalFrames = Math.floor(dataSize / frameSize);
+  const fullDuration = totalFrames / sampleRate;
+  const framesToRead = Math.min(totalFrames, Math.floor(sampleRate * maxSeconds));
+  const samples = new Float32Array(framesToRead);
+
+  for (let i = 0; i < framesToRead; i++) {
+    let sum = 0;
+    const base = dataOffset + i * frameSize;
+    for (let ch = 0; ch < channels; ch++) {
+      const p = base + ch * bytesPerSample;
+      let val = 0;
+      if (audioFormat === 3 && bitsPerSample === 32) {
+        val = buf.readFloatLE(p);
+      } else if (bitsPerSample === 16) {
+        val = buf.readInt16LE(p) / 32768;
+      } else if (bitsPerSample === 24) {
+        let s = buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16);
+        if (s & 0x800000) s |= ~0xffffff;
+        val = s / 8388608;
+      } else if (bitsPerSample === 32) {
+        val = buf.readInt32LE(p) / 2147483648;
+      } else if (bitsPerSample === 8) {
+        val = (buf[p] - 128) / 128;
+      }
+      sum += val;
+    }
+    samples[i] = sum / channels;
+  }
+
+  return { samples, sampleRate, channels, duration: fullDuration };
+}
+
+function fftRadix2(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    const wlenRe = Math.cos(ang);
+    const wlenIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let wRe = 1;
+      let wIm = 0;
+      const half = len >> 1;
+      for (let j = 0; j < half; j++) {
+        const uRe = re[i + j];
+        const uIm = im[i + j];
+        const vRe = re[i + j + half] * wRe - im[i + j + half] * wIm;
+        const vIm = re[i + j + half] * wIm + im[i + j + half] * wRe;
+        re[i + j] = uRe + vRe;
+        im[i + j] = uIm + vIm;
+        re[i + j + half] = uRe - vRe;
+        im[i + j + half] = uIm - vIm;
+        const nextWRe = wRe * wlenRe - wIm * wlenIm;
+        wIm = wRe * wlenIm + wIm * wlenRe;
+        wRe = nextWRe;
+      }
+    }
+  }
+}
+
+/** Computes spectral centroid in Hz using up to 6 evenly spaced 512-sample Hann windows. */
+export function computeSpectralCentroidHz(samples, sampleRate, trimStart = 0, trimEnd = null) {
+  if (!samples?.length || !(sampleRate > 0)) return 0;
+  const N = 512;
+  const startIdx = Math.max(0, Math.floor(trimStart * sampleRate));
+  const endIdx = Math.min(samples.length, trimEnd != null ? Math.ceil(trimEnd * sampleRate) : samples.length);
+  const span = endIdx - startIdx;
+  if (span < 32) return 0;
+
+  const numWin = span >= N * 4 ? 6 : Math.max(1, Math.floor(span / 128));
+  const re = new Float64Array(N);
+  const im = new Float64Array(N);
+  let weightedFreq = 0;
+  let totalMag = 0;
+
+  for (let w = 0; w < numWin; w++) {
+    const offset = startIdx + Math.floor(((span - Math.min(span, N)) * w) / Math.max(1, numWin - 1));
+    re.fill(0);
+    im.fill(0);
+    for (let i = 0; i < N && offset + i < endIdx; i++) {
+      const hann = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (N - 1)));
+      re[i] = samples[offset + i] * hann;
+    }
+    fftRadix2(re, im);
+    const half = N >> 1;
+    for (let k = 1; k < half; k++) {
+      const mag = Math.hypot(re[k], im[k]);
+      const freq = (k * sampleRate) / N;
+      weightedFreq += freq * mag;
+      totalMag += mag;
+    }
+  }
+  return totalMag > 1e-8 ? weightedFreq / totalMag : 0;
+}
+
+export function measureSamplesFeatures(samples, sampleRate) {
+  const analysis = analyzeAudioBuffer({
+    length: samples.length,
+    sampleRate,
+    numberOfChannels: 1,
+    getChannelData: () => samples,
+  });
+  const spectralCentroidHz = computeSpectralCentroidHz(samples, sampleRate, analysis.trimStart, analysis.trimEnd);
+  return {
+    ...analysis,
+    spectralCentroidHz: Math.round(spectralCentroidHz),
+  };
+}
+
+/**
+ * Selects 3-4 representative variants from a group by removing duration/loudness outliers,
+ * ranking by normalized feature vector (activeDuration, spectralCentroidHz, peak), and sampling
+ * equidistant quantiles (~25% / 50% / 75% / quartiles).
+ */
+export function selectQuantileVariants(candidates, { minKeep = 3, maxKeep = 4 } = {}) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return { selected: [], rejected: [], quantileIndices: [] };
+  }
+
+  const audible = [];
+  const rejected = [];
+  for (const c of candidates) {
+    if (!c || !(c.rms > 1e-5) || !(c.activeDuration >= 0.02)) {
+      rejected.push({ ...c, reason: 'silent_or_too_short' });
+      continue;
+    }
+    audible.push(c);
+  }
+  if (audible.length === 0) {
+    return { selected: [], rejected, quantileIndices: [] };
+  }
+
+  const medDur = median(audible.map((c) => c.activeDuration));
+  const medRms = median(audible.map((c) => c.rms));
+  const medRmsDb = 20 * Math.log10(Math.max(1e-6, medRms));
+
+  let pool = [];
+  if (audible.length <= 2) {
+    pool = [...audible];
+  } else {
+    for (const c of audible) {
+      const durRatio = c.activeDuration / Math.max(0.02, medDur);
+      const rmsDb = 20 * Math.log10(Math.max(1e-6, c.rms));
+      const rmsDiff = Math.abs(rmsDb - medRmsDb);
+      if (durRatio < 0.4 || durRatio > 1.85 || rmsDiff > 9.0) {
+        rejected.push({ ...c, reason: 'outlier_duration_or_peak' });
+      } else {
+        pool.push(c);
+      }
+    }
+    if (pool.length < Math.min(minKeep, audible.length)) {
+      // Relax softly so we never starve valid cues when all variants diverge slightly
+      pool = [...audible];
+      rejected.length = 0;
+    }
+  }
+
+  const durs = pool.map((c) => c.activeDuration);
+  const cents = pool.map((c) => c.spectralCentroidHz || 0);
+  const peaks = pool.map((c) => c.peak || 0);
+  const norm = (v, arr) => {
+    const lo = Math.min(...arr);
+    const hi = Math.max(...arr);
+    return hi > lo + 1e-6 ? (v - lo) / (hi - lo) : 0.5;
+  };
+
+  const ranked = [...pool]
+    .map((c) => ({
+      ...c,
+      rankScore: 0.45 * norm(c.activeDuration, durs)
+        + 0.35 * norm(c.spectralCentroidHz || 0, cents)
+        + 0.2 * norm(c.peak || 0, peaks),
+    }))
+    .sort((a, b) => a.rankScore - b.rankScore || String(a.id).localeCompare(String(b.id)));
+
+  const targetCount = Math.min(maxKeep, ranked.length);
+  const pickedIdx = new Set();
+  if (ranked.length <= maxKeep) {
+    for (let i = 0; i < ranked.length; i++) pickedIdx.add(i);
+  } else {
+    const quantiles = targetCount === 3 ? [0.25, 0.5, 0.75] : [0.2, 0.4, 0.65, 0.85];
+    for (const q of quantiles) {
+      let idx = Math.round(q * (ranked.length - 1));
+      while (pickedIdx.has(idx) && idx + 1 < ranked.length) idx++;
+      while (pickedIdx.has(idx) && idx - 1 >= 0) idx--;
+      pickedIdx.add(idx);
+    }
+  }
+
+  const indices = [...pickedIdx].sort((a, b) => a - b);
+  const selected = indices.map((i) => ranked[i]);
+  const selectedIds = new Set(selected.map((s) => s.id));
+  for (const item of ranked) {
+    if (!selectedIds.has(item.id)) {
+      rejected.push({ ...item, reason: 'not_in_quantile_sample' });
+    }
+  }
+  return { selected, rejected, quantileIndices: indices };
+}
+
+function runFfmpegAsync(ffmpegBin, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const outChunks = [];
+    const errChunks = [];
+    child.stdout.on('data', (d) => outChunks.push(d));
+    child.stderr.on('data', (d) => errChunks.push(d));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      resolve({
+        code,
+        stdout: Buffer.concat(outChunks),
+        stderr: Buffer.concat(errChunks).toString('utf8'),
+      });
+    });
+  });
+}
+
+async function runPool(items, concurrency, fn) {
+  let cursor = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+}
+
+/**
+ * Guarantees 100% step_<surface> and impact_<surface> cue coverage across all 10 surface types:
+ * asphalt | concrete | tile | wood | metal | glass | dirt | grass | water | fabric.
+ * Excludes FootstepsSoundPack Cowboy/Retro/Robotic variants from generic default steps.
+ */
+export function buildSurfaceTypeCueMap(sfxCues, allSfxItems) {
+  const stepRules = {
+    asphalt: { regex: /(gravel|asphalt|pavement|tarmac|stone_step|concrete)/i, fallback: /concrete/i },
+    concrete: { regex: /(concrete|cement|stone|sidewalk|asphalt)/i, fallback: /gravel|rock/i },
+    tile: { regex: /(tile|marble|ceramic|floor_tile)/i, fallback: /concrete|wood/i },
+    wood: { regex: /(wood|plank|timber|deck)/i, fallback: /tree/i },
+    metal: { regex: /(metal|steel|iron|grate|chain)/i, fallback: /armor/i },
+    glass: { regex: /(glass|crystal|shard|tile_step)/i, fallback: /gravel|ice|tile/i },
+    dirt: { regex: /(dirt|soil|earth|mud)/i, fallback: /sand|gravel/i },
+    grass: { regex: /(grass|leaves|leaf|foliage|forest|bush)/i, fallback: /dirt/i },
+    water: { regex: /(water|puddle|mud_water|splash|wade)/i, fallback: /mud/i },
+    fabric: { regex: /(carpet|cloth|fabric|rug|cushion)/i, fallback: /sand|snow|leaves/i },
+  };
+
+  const impactRules = {
+    asphalt: { regex: /(rock|stone|concrete|bullet.*rock|bullet.*concrete|stone.*impact)/i, fallback: /ground|impact.*heavy/i },
+    concrete: { regex: /(concrete|stone|brick|wall_hit|rock_impact|crush)/i, fallback: /heavy_hit|ground/i },
+    tile: { regex: /(tile|ceramic|porcelain|stone|pottery)/i, fallback: /glass|brick|concrete/i },
+    wood: { regex: /(wood|plank|crate|door|log).*?(hit|impact|crush|break|thud)|(?:impact|hit|break).*?(wood|crate)/i, fallback: /wood|door/i },
+    metal: { regex: /(metal|metl|sword_parry|anvil|armor|iron|steel).*?(hit|impact|clang|parry|fric|clash)|(?:metlimpt|sword_parry)/i, fallback: /metal|sword/i },
+    glass: { regex: /(glass|jar|bottle|pot|crystal).*?(break|shatter|hit|impact)|(?:break_jar|shatter)/i, fallback: /break|ceramic|metal_chime/i },
+    dirt: { regex: /(dirt|mud|dig|shovel|earth|soil|sand)/i, fallback: /ground|thud/i },
+    grass: { regex: /(grass|leaf|leaves|bush|foliage|chop|harvest|pick).*?(cut|hit|swish|rustle)|(?:grass|leaves)/i, fallback: /cloth|dirt|swish/i },
+    water: { regex: /(water|splash|water_explosion|drop).*?(big|splash|hit|impact)|(?:splash|water_ball)/i, fallback: /water/i },
+    fabric: { regex: /(cloth|fabric|leather|flesh|cushion|armor_cloth|tactical)/i, fallback: /body|punch|thud/i },
+  };
+
+  const nonExtSfx = allSfxItems.filter((it) => !it.isExtendedFootstep);
+
+  const pickVariants = (pool, rule, requireFootstepCtx) => {
+    const scored = [];
+    for (const it of pool) {
+      const text = `${it.pack}/${it.relDir}/${it.name}`;
+      if (requireFootstepCtx && !/(footstep|step|walk|run|mud|water|carpet|gravel|tile|snow|sand|wood|metal|concrete|grass|leaves)/i.test(text)) {
+        continue;
+      }
+      if (requireFootstepCtx && /(voice|grunt|gun|rifle|zombie|chest|coin|door)/i.test(text)) continue;
+      let score = 0;
+      if (rule.regex.test(text)) score += 10;
+      else if (rule.fallback.test(text)) score += 3;
+      else continue;
+      if (/footstep|step/i.test(text) && requireFootstepCtx) score += 8;
+      if (/footstepssoundpack/i.test(it.pack) && requireFootstepCtx) score += 6;
+      if (/impact|impt|hit|break|splash|parry/i.test(text) && !requireFootstepCtx) score += 6;
+      if (/(vefects_water|meleeweapons|soundpackrpggames|survival_sfx|rewardsloots|doorssfx)/i.test(it.pack) && !requireFootstepCtx) score += 3;
+      if (it.duration >= 0.04 && it.duration <= 2.5) score += 2;
+      scored.push({ it, score });
+    }
+    scored.sort((a, b) => b.score - a.score || a.it.duration - b.it.duration);
+    const top = scored.slice(0, Math.min(24, scored.length)).map((s) => s.it);
+    if (!top.length) return [];
+    const { selected } = selectQuantileVariants(top, { minKeep: 3, maxKeep: 4 });
+    return selected.slice(0, 4);
+  };
+
+  const surfaceCues = [];
+  const coverage = { step: {}, impact: {} };
+
+  for (const surface of SURFACE_TYPES_10) {
+    const stepVars = pickVariants(nonExtSfx, stepRules[surface], true);
+    coverage.step[surface] = stepVars.length;
+    if (stepVars.length > 0) {
+      surfaceCues.push({
+        cueName: `step_${surface}`,
+        category: 'footstep_surface',
+        surfaceType: surface,
+        bus: 'sfx',
+        preload: 'buffer',
+        variants: stepVars.map((v) => ({
+          id: v.id,
+          url: v.url,
+          path: v.relOut,
+          duration: v.duration,
+          activeDuration: v.activeDuration,
+          peak: v.peak,
+          spectralCentroidHz: v.spectralCentroidHz,
+        })),
+      });
+    }
+
+    const impVars = pickVariants(nonExtSfx, impactRules[surface], false);
+    coverage.impact[surface] = impVars.length;
+    if (impVars.length > 0) {
+      surfaceCues.push({
+        cueName: `impact_${surface}`,
+        category: 'impact_surface',
+        surfaceType: surface,
+        bus: 'sfx',
+        preload: 'buffer',
+        variants: impVars.map((v) => ({
+          id: v.id,
+          url: v.url,
+          path: v.relOut,
+          duration: v.duration,
+          activeDuration: v.activeDuration,
+          peak: v.peak,
+          spectralCentroidHz: v.spectralCentroidHz,
+        })),
+      });
+    }
+  }
+
+  return { surfaceCues, coverage };
+}
+
+/**
+ * Full batch processor for Milestone 3:
+ *   1. Reads Unreal staging audio_source_meta.json + scans direct V10_German/Wavs/*.wav
+ *   2. Splits < 4.0s (Mono 64k MP3, -50dB trim + 80Hz HPF + -14 LUFS) vs >= 4.0s (Stereo 96k MP3, -16 LUFS)
+ *   3. Groups short SFX by semantic cue key, runs quantile curation (3-4 variants), builds 10-surface map
+ *   4. Writes cue_table.json (preload: buffer ONLY), streams_table.json (preload: stream), audio_library_full.json
+ */
+function normalizeHorrorDedupKey(item) {
+  let stem = String(item.name || '').toLowerCase();
+  stem = stem.replace(/^(?:sfx_|wav_|snd_|hsp2_)/, '').replace(/(?:_wav|_sfx)+$/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const dur = Number(item.duration || 0).toFixed(2);
+  return `${stem}@${dur}`;
+}
+
+function isHorrorOverlapCandidate(item) {
+  return item.pack === 'HorrorSoundPack2'
+    || (item.pack === 'MegaBundleSoundPack' && /HorrorSoundPack2/i.test(item.relDir || item.relWav || ''));
+}
+
+export async function processAudioLibraryBatch({
+  stagingRoot = path.resolve(process.env.HGAME_AUDIO_STAGING || 'D:/UnrealWorkspace/Anim58/Saved/WebAssetExport/audio_staging'),
+  v10WavsDir = path.resolve(process.env.HGAME_V10_WAVS_DIR || 'D:/UnrealWorkspace/Anim58/Content/V10_German/Wavs'),
+  outDir = path.resolve('webasset/hgame-assets-cn/built/audio'),
+  baseUrl = '/assets/cn/audio',
+  ffmpegBin = 'ffmpeg',
+  concurrency = Math.min(12, Math.max(2, os.cpus().length - 2)),
+  force = false,
+} = {}) {
+  const metaPath = path.join(stagingRoot, 'audio_source_meta.json');
+  const sourceMeta = JSON.parse(await fs.readFile(metaPath, 'utf8'));
+
+  // Scan direct V10_German/Wavs/*.wav bypassing FMOD cleanly
+  const v10Items = [];
+  if (existsSync(v10WavsDir)) {
+    const walkWavs = async (dir) => {
+      for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) await walkWavs(p);
+        else if (/\.wav$/i.test(entry.name)) {
+          const rel = path.relative(v10WavsDir, p).replaceAll('\\', '/');
+          const stem = path.basename(entry.name, path.extname(entry.name));
+          const st = await fs.stat(p);
+          const buf = await fs.readFile(p);
+          const wav = parseWavPcmSamples(buf, 1.0);
+          v10Items.push({
+            id: `V10_German__${rel.replace(/\.wav$/i, '').replaceAll('/', '__')}`,
+            pack: 'V10_German',
+            name: stem,
+            relDir: path.dirname(rel).replaceAll('\\', '/'),
+            relWav: `V10_German/${rel}`,
+            wavAbs: p,
+            duration: wav ? Number(wav.duration.toFixed(4)) : 1.0,
+            channels: wav?.channels || 1,
+            sampleRate: wav?.sampleRate || 44100,
+            rawBytes: st.size,
+          });
+        }
+      }
+    };
+    await walkWavs(v10WavsDir);
+  }
+
+  // Deduplicate HorrorSoundPack2 vs MegaBundleSoundPack/HorrorSoundPack2 by normalized name & duration + fallback duration/fingerprint match
+  const rawUeItems = sourceMeta.items || [];
+  const horrorMap = new Map();
+  const nonHorrorUe = [];
+  let horrorOverlapTotal = 0;
+  for (const item of rawUeItems) {
+    if (isHorrorOverlapCandidate(item)) {
+      horrorOverlapTotal++;
+      const k = normalizeHorrorDedupKey(item);
+      const prev = horrorMap.get(k);
+      const score = (item.sampleRate || 0) * 10 + (item.channels || 1) * 2 + (item.pack === 'HorrorSoundPack2' ? 1 : 0);
+      if (!prev || score > prev.score) {
+        horrorMap.set(k, { score, item });
+      }
+    } else {
+      nonHorrorUe.push(item);
+    }
+  }
+  const dedupedHorror = [...horrorMap.values()].map((v) => v.item);
+  const dedupHorrorDropped = (sourceMeta.dedupHorrorDropped || 0) + (horrorOverlapTotal - dedupedHorror.length);
+
+  const allSources = [...nonHorrorUe, ...dedupedHorror, ...v10Items];
+  await fs.mkdir(path.join(outDir, 'sfx'), { recursive: true });
+  await fs.mkdir(path.join(outDir, 'streams'), { recursive: true });
+
+  const processed = new Array(allSources.length);
+  const packStats = new Map();
+  const trackErrors = [];
+
+  await runPool(allSources, concurrency, async (item, idx) => {
+    const srcAbs = item.wavAbs;
+    if (!existsSync(srcAbs)) return;
+    const rawStat = await fs.stat(srcAbs);
+    let wavInfo = null;
+    let features = { activeDuration: item.duration || 0.2, rms: 0.1, peak: 0.5, trimStart: 0, trimEnd: item.duration || 0.2, spectralCentroidHz: 1000 };
+    try {
+      const fileBuf = await fs.readFile(srcAbs);
+      wavInfo = parseWavPcmSamples(fileBuf, 5.0);
+      if (wavInfo && wavInfo.samples.length > 0) {
+        features = measureSamplesFeatures(wavInfo.samples, wavInfo.sampleRate);
+      }
+    } catch { /* fallback defaults */ }
+
+    const realDuration = wavInfo?.duration || item.duration || 0.5;
+    const isStream = realDuration >= 4.0;
+    const tierDir = isStream ? 'streams' : 'sfx';
+    const relNoExt = item.relWav.replace(/\.wav$/i, '').replace(/[^a-zA-Z0-9_./-]/g, '_');
+    const relOut = `${tierDir}/${relNoExt}.mp3`;
+    const outAbs = path.join(outDir, relOut);
+    await fs.mkdir(path.dirname(outAbs), { recursive: true });
+
+    let needEncode = force || !existsSync(outAbs);
+    if (!needEncode) {
+      const existingStat = await fs.stat(outAbs).catch(() => null);
+      if (!existingStat || existingStat.size < 128) needEncode = true;
+    }
+
+    if (needEncode) {
+      const primaryArgs = isStream
+        ? [
+          '-y', '-v', 'error', '-i', srcAbs,
+          '-af', 'loudnorm=I=-16:TP=-1.5:LRA=11',
+          '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '96k',
+          outAbs,
+        ]
+        : [
+          '-y', '-v', 'error', '-i', srcAbs,
+          '-af', 'silenceremove=start_periods=1:start_threshold=-50dB:detection=peak,areverse,silenceremove=start_periods=1:start_threshold=-50dB:detection=peak,areverse,highpass=f=80,loudnorm=I=-14:TP=-1.5:LRA=11',
+          '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '64k',
+          outAbs,
+        ];
+      let enc = await runFfmpegAsync(ffmpegBin, primaryArgs);
+      let okSize = existsSync(outAbs) ? (await fs.stat(outAbs)).size : 0;
+      if (enc.code !== 0 || okSize < 160) {
+        // Fallback without aggressive silence trim on ultra-short/quiet pulses
+        const fallbackArgs = isStream
+          ? ['-y', '-v', 'error', '-i', srcAbs, '-ac', '2', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '96k', outAbs]
+          : ['-y', '-v', 'error', '-i', srcAbs, '-af', 'highpass=f=80,loudnorm=I=-14:TP=-1.5:LRA=11', '-ac', '1', '-ar', '44100', '-c:a', 'libmp3lame', '-b:a', '64k', outAbs];
+        enc = await runFfmpegAsync(ffmpegBin, fallbackArgs);
+        okSize = existsSync(outAbs) ? (await fs.stat(outAbs)).size : 0;
+        if (enc.code !== 0 || okSize < 64) {
+          trackErrors.push({ id: item.id, err: enc.stderr.slice(0, 200) });
+          return;
+        }
+      }
+    }
+
+    const outStat = await fs.stat(outAbs);
+    const { cueKey, fullKey, isExtendedFootstep } = extractSemanticCueKey(item.name, { pack: item.pack, relDir: item.relDir });
+
+    const rec = {
+      id: item.id,
+      pack: item.pack,
+      name: item.name,
+      relDir: item.relDir,
+      cueKey: fullKey,
+      shortCueKey: cueKey,
+      isExtendedFootstep,
+      preload: isStream ? 'stream' : 'buffer',
+      format: 'mp3',
+      sampleRate: 44100,
+      channels: isStream ? 2 : 1,
+      bitrateKbps: isStream ? 96 : 64,
+      duration: Number(realDuration.toFixed(4)),
+      activeDuration: Number((features.activeDuration || realDuration).toFixed(4)),
+      peak: Number((features.peak || 0).toFixed(4)),
+      rms: Number((features.rms || 0).toFixed(4)),
+      spectralCentroidHz: features.spectralCentroidHz || 0,
+      rawBytes: rawStat.size,
+      encodedBytes: outStat.size,
+      relOut,
+      url: `${baseUrl}/${relOut}`,
+    };
+    processed[idx] = rec;
+
+    const ps = packStats.get(item.pack) || { pack: item.pack, totalCount: 0, sfxCount: 0, streamCount: 0, rawBytes: 0, encodedBytes: 0 };
+    ps.totalCount++;
+    if (isStream) ps.streamCount++; else ps.sfxCount++;
+    ps.rawBytes += rawStat.size;
+    ps.encodedBytes += outStat.size;
+    packStats.set(item.pack, ps);
+  });
+
+  const validProcessed = processed.filter(Boolean);
+  const sfxItems = validProcessed.filter((x) => x.preload === 'buffer');
+  const streamItems = validProcessed.filter((x) => x.preload === 'stream');
+
+  // Group short SFX into semantic cues & apply quantile selection (max 4 variants per cue)
+  const cueGroups = new Map();
+  for (const it of sfxItems) {
+    if (!cueGroups.has(it.cueKey)) cueGroups.set(it.cueKey, []);
+    cueGroups.get(it.cueKey).push(it);
+  }
+
+  const runtimeCues = [];
+  for (const [cueName, group] of cueGroups.entries()) {
+    const { selected } = selectQuantileVariants(group, { minKeep: Math.min(3, group.length), maxKeep: 4 });
+    if (!selected.length) continue;
+    runtimeCues.push({
+      cueName,
+      pack: group[0].pack,
+      category: group[0].isExtendedFootstep ? 'footstep_extended' : 'sfx',
+      bus: 'sfx',
+      preload: 'buffer',
+      totalSourceVariants: group.length,
+      variants: selected.map((v) => ({
+        id: v.id,
+        url: v.url,
+        path: v.relOut,
+        duration: v.duration,
+        activeDuration: v.activeDuration,
+        peak: v.peak,
+        spectralCentroidHz: v.spectralCentroidHz,
+      })),
+    });
+  }
+  runtimeCues.sort((a, b) => a.cueName.localeCompare(b.cueName));
+
+  // Guarantee 10 surfaceType step_<surface> and impact_<surface> cues
+  const { surfaceCues, coverage } = buildSurfaceTypeCueMap(runtimeCues, sfxItems);
+  const allRuntimeCues = [...surfaceCues, ...runtimeCues];
+
+  const packSummary = [...packStats.values()]
+    .map((p) => ({
+      ...p,
+      rawMB: Number((p.rawBytes / 1048576).toFixed(2)),
+      encodedMB: Number((p.encodedBytes / 1048576).toFixed(2)),
+      compressionRatio: p.rawBytes > 0 ? Number((p.encodedBytes / p.rawBytes).toFixed(4)) : 0,
+    }))
+    .sort((a, b) => b.rawBytes - a.rawBytes);
+
+  const totalRawBytes = packSummary.reduce((s, p) => s + p.rawBytes, 0);
+  const totalEncodedBytes = packSummary.reduce((s, p) => s + p.encodedBytes, 0);
+  const totalRuntimePreloadBytes = allRuntimeCues.reduce(
+    (s, c) => s + c.variants.length * 16000,
+    0,
+  );
+  const sfxOnlyBytes = sfxItems.reduce((s, x) => s + x.encodedBytes, 0);
+  const streamOnlyBytes = streamItems.reduce((s, x) => s + x.encodedBytes, 0);
+
+  const cueTable = {
+    version: '1.0.0',
+    format: 'mp3',
+    preloadRule: 'buffer_only_sfx_under_4s',
+    cueCount: allRuntimeCues.length,
+    surfaceCueCount: surfaceCues.length,
+    surfaceCoverage: coverage,
+    streamTracksExcluded: streamItems.length,
+    cues: allRuntimeCues,
+  };
+
+  const streamsTable = {
+    version: '1.0.0',
+    format: 'mp3',
+    preload: 'stream',
+    count: streamItems.length,
+    totalBytes: streamOnlyBytes,
+    streams: streamItems.map((s) => ({
+      id: s.id,
+      pack: s.pack,
+      name: s.name,
+      relDir: s.relDir,
+      duration: s.duration,
+      bitrateKbps: 96,
+      channels: 2,
+      preload: 'stream',
+      encodedBytes: s.encodedBytes,
+      path: s.relOut,
+      url: s.url,
+    })),
+  };
+
+  const fullLibrary = {
+    version: '1.0.0',
+    excludeFromGameBuild: true,
+    generatedAt: new Date().toISOString(),
+    sourceStats: {
+      skippedClassicZombie: sourceMeta.skippedClassicZombie || 0,
+      skippedV10GermanUe: sourceMeta.skippedV10GermanUe || 0,
+      skippedSoundCue: sourceMeta.skippedSoundCue || 0,
+      dedupHorrorDropped,
+      v10DirectWavs: v10Items.length,
+    },
+    totals: {
+      totalTracks: validProcessed.length,
+      sfxCount: sfxItems.length,
+      streamCount: streamItems.length,
+      cueCount: allRuntimeCues.length,
+      surfaceCoverage: coverage,
+      rawBytes: totalRawBytes,
+      rawMB: Number((totalRawBytes / 1048576).toFixed(2)),
+      encodedBytes: totalEncodedBytes,
+      encodedMB: Number((totalEncodedBytes / 1048576).toFixed(2)),
+      sfxMB: Number((sfxOnlyBytes / 1048576).toFixed(2)),
+      streamsMB: Number((streamOnlyBytes / 1048576).toFixed(2)),
+      compressionRatio: totalRawBytes > 0 ? Number((totalEncodedBytes / totalRawBytes).toFixed(4)) : 0,
+      trackErrorCount: trackErrors.length,
+    },
+    packs: packSummary,
+    items: validProcessed,
+  };
+
+  await Promise.all([
+    fs.writeFile(path.join(outDir, 'cue_table.json'), JSON.stringify(cueTable, null, 2)),
+    fs.writeFile(path.join(outDir, 'streams_table.json'), JSON.stringify(streamsTable, null, 2)),
+    fs.writeFile(path.join(outDir, 'audio_library_full.json'), JSON.stringify(fullLibrary, null, 2)),
+  ]);
+
+  return {
+    outDir,
+    totals: fullLibrary.totals,
+    sourceStats: fullLibrary.sourceStats,
+    packs: packSummary,
+    surfaceCoverage: coverage,
+    trackErrors,
+  };
+}
