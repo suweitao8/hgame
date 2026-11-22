@@ -979,7 +979,6 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
   const deps = { textures: new Map(), meshes: new Map() };
   const recipeId = id || path.basename(prefabPath, '.prefab').toLowerCase().replace(/[^a-z0-9_]+/g, '_');
   const layers = [];
-  let recipeLoop = false;
   let maxDuration = 0.5;
   let lightPulse = null;
   let subCounter = 0;
@@ -1043,7 +1042,6 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const isLoop = /^\s*looping:\s*1\b/m.test(ps);
     const isPrewarm = /^\s*prewarm:\s*1\b/m.test(ps);
-    if (isLoop) recipeLoop = true;
     const dur = Number((ps.match(/^\s*lengthInSec:\s*([-\d.eE+]+)/m) || [])[1] ?? 2);
     const simSpeed = Number((ps.match(/^\s*simulationSpeed:\s*([-\d.eE+]+)/m) || [])[1] ?? 1);
     const isLocalSpace = /^\s*moveWithTransform:\s*1\b/m.test(ps);
@@ -1105,7 +1103,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         bursts.push({
           time: Number(bm[1]),
           count: bMode === 3 && bMin !== bMax ? [Math.min(bMin, bMax), Math.max(bMin, bMax)] : bMax,
-          cycles: Math.max(1, Number(bm[5])),
+          cycles: Number(bm[5]) === 0 ? 0 : Math.max(1, Number(bm[5])),
           interval: Number(bm[6]),
         });
       }
@@ -1233,6 +1231,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(isLocalSpace ? { space: 'local' } : {}),
       ...(maxParticles > 0 && maxParticles < 1000 ? { maxParticles } : {}),
       ...(isPrewarm && !isSubChild ? { prewarm: true } : {}),
+      ...(dur > 0 ? { duration: Number(dur.toFixed(4)) } : {}),
+      ...(isLoop && !isSubChild ? { loop: true } : { loop: false }),
       ...(typeof delay === 'number' && delay > 0 ? { delay } : {}),
       ...(effectiveBursts.length > 0 ? { bursts: effectiveBursts } : {}),
       ...(hasPositiveRate ? { rate: effectiveRate } : {}),
@@ -1894,7 +1894,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
   const recipe = {
     schemaVersion: 1,
     id: recipeId,
-    loop: recipeLoop,
+    loop: layers.some((l) => Boolean(l.loop)),
     duration: Number(maxDuration.toFixed(2)),
     space: 'local',
     ...(lightPulse ? { juice: { lightPulse } } : {}),

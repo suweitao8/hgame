@@ -267,6 +267,7 @@ export function createEffectPlayer({
 
   function createLayerState() {
     return {
+      cycleAge: 0,
       rateAccum: 0,
       distAccum: 0,
       burstCyclesDone: new Uint16Array(MAX_BURSTS_PER_LAYER),
@@ -1614,6 +1615,7 @@ export function createEffectPlayer({
       const simSpd = layer._simSpd ?? 1;
       const hasRate = Array.isArray(layer.rate) ? (layer.rate[1] > 0) : ((layer.rate ?? 0) > 0);
       const noBursts = !Array.isArray(layer.bursts) || layer.bursts.length === 0;
+      ls.cycleAge = 0;
       ls.rateAccum = (layer.maxParticles > 0 && noBursts && hasRate) ? 1 : 0;
       ls.distAccum = 0;
       ls.activeEndTimes.fill(-1);
@@ -1668,7 +1670,7 @@ export function createEffectPlayer({
       const ls = slot.layers[l];
       const simSpd = layer._simSpd ?? 1;
       const delay = (layer.delay ?? 0) / simSpd;
-      const localAge = slot.cycleAge - delay;
+      const localAge = ls.cycleAge - delay;
       if (localAge < 0) continue;
 
       if (layer._kind === 'slash' || layer._kind === 'lightning' || layer._kind === 'telegraph') {
@@ -1679,6 +1681,8 @@ export function createEffectPlayer({
         continue;
       }
 
+      const layerLoop = layer.loop !== undefined ? Boolean(layer.loop) : slot.loop;
+      const layerDur = Math.max(0.01, (layer.duration ?? slot.duration) / simSpd);
       const emScale = layer._shurikenLayer && shurikenKernel
         ? (SHURIKEN_QUALITY_TIERS[shurikenKernel.getQualityTier()]?.emissionScale ?? 1.0)
         : 1.0;
@@ -1687,9 +1691,9 @@ export function createEffectPlayer({
         const bLen = Math.min(layer.bursts.length, MAX_BURSTS_PER_LAYER);
         for (let b = 0; b < bLen; b++) {
           const burst = layer.bursts[b];
-          const cycles = Math.max(1, burst.cycles ?? 1);
+          const cycles = burst.cycles === 0 ? Infinity : Math.max(1, burst.cycles ?? 1);
           const interval = Math.max(0.01, (burst.interval ?? 0.01) / simSpd);
-          while (ls.burstCyclesDone[b] < cycles && localAge >= ls.burstNextTime[b]) {
+          while (ls.burstCyclesDone[b] < cycles && localAge >= ls.burstNextTime[b] && (cycles !== Infinity || ls.burstNextTime[b] < layerDur + 1e-4)) {
             const rawCount = readRange(burst.count, 1, 1, prng);
             const count = layer._shurikenLayer
               ? Math.max(rawCount > 0 && emScale > 0 ? 1 : 0, Math.round(rawCount * emScale))
@@ -1705,8 +1709,7 @@ export function createEffectPlayer({
 
       const rate = (layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0) * simSpd * emScale;
       if (rate > 0) {
-        const layerDur = (layer.duration ?? slot.duration) / simSpd;
-        if (slot.loop || localAge <= layerDur) {
+        if (layerLoop || localAge <= layerDur) {
           if (dt > 0) ls.rateAccum += rate * dt;
           while (ls.rateAccum >= 1) {
             if (!tryEmitWithCap(layer, ls, slot)) {
@@ -1720,8 +1723,7 @@ export function createEffectPlayer({
 
       const rateDist = layer.rateOverDistance !== undefined ? readRange(layer.rateOverDistance, 0, 0, prng) : 0;
       if (rateDist > 0 && moveDist > 0.0001) {
-        const layerDur = (layer.duration ?? slot.duration) / simSpd;
-        if (slot.loop || localAge <= layerDur) {
+        if (layerLoop || localAge <= layerDur) {
           const totalNeed = ls.distAccum + rateDist * moveDist;
           const totalSteps = Math.floor(totalNeed);
           ls.distAccum = totalNeed - totalSteps;
@@ -1783,10 +1785,17 @@ export function createEffectPlayer({
 
       if (slot.loop && slot.cycleAge >= slot.duration) {
         slot.cycleAge %= slot.duration;
-        for (let l = 0; l < slot.recipe.layers.length; l++) {
-          const layer = slot.recipe.layers[l];
-          const simSpd = layer._simSpd ?? 1;
-          const ls = slot.layers[l];
+      }
+      for (let l = 0; l < slot.recipe.layers.length; l++) {
+        const layer = slot.recipe.layers[l];
+        const ls = slot.layers[l];
+        const simSpd = layer._simSpd ?? 1;
+        const delay = (layer.delay ?? 0) / simSpd;
+        const layerLoop = layer.loop !== undefined ? Boolean(layer.loop) : slot.loop;
+        const layerDur = Math.max(0.01, (layer.duration ?? slot.duration) / simSpd);
+        ls.cycleAge += dt;
+        if (layerLoop && ls.cycleAge >= delay + layerDur) {
+          ls.cycleAge = delay + ((ls.cycleAge - delay) % layerDur);
           ls.triggeredOnce = false;
           const bursts = layer.bursts;
           for (let b = 0; b < MAX_BURSTS_PER_LAYER; b++) {
