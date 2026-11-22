@@ -23,7 +23,7 @@ import {
 import {
   resolveDefaultMusicStagingRoot,
   parseBgmFilenameMeta,
-  computeBgmLoopTiming,
+  computeBgmTrimPlan,
   probeAudioMetadata,
   processBgmTrack,
   processStingerTrack,
@@ -49,7 +49,7 @@ export {
   processAudioLibraryBatch,
   resolveDefaultMusicStagingRoot,
   parseBgmFilenameMeta,
-  computeBgmLoopTiming,
+  computeBgmTrimPlan,
   probeAudioMetadata,
   processBgmTrack,
   processStingerTrack,

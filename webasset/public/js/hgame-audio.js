@@ -222,8 +222,9 @@ function computeAudioLoudnessSummary(entry) {
   }
 
   let anomaly = Boolean(item.clippingAlert || item.hitBoostCap || (peakDb !== null && peakDb > -0.5));
-  if (entry.category === 'bgm' && rmsDb !== null && Math.abs(rmsDb - (-19.0)) > 1.5) {
-    anomaly = true;
+  if (entry.category === 'bgm') {
+    if (rmsDb !== null && Math.abs(rmsDb - (-19.0)) > 1.5) anomaly = true;
+    if (item.headTailWarn || (Number.isFinite(item.headTailDiffDb) && item.headTailDiffDb > 4.0)) anomaly = true;
   }
   if (entry.type === 'cue') {
     if (spreadAnomalyCues.has(entry.name)) anomaly = true;
@@ -284,11 +285,15 @@ function renderList() {
       const kbVal = Number.isFinite(it.sizeKb)
         ? `${Math.round(it.sizeKb)} KB`
         : (it.encodedBytes ? `${Math.round(it.encodedBytes / 1024)} KB` : '--');
+      const diffWarn = it.headTailWarn || (Number.isFinite(it.headTailDiffDb) && it.headTailDiffDb > 4.0);
+      const diffTag = Number.isFinite(it.headTailDiffDb)
+        ? ` / Δ${Number(it.headTailDiffDb).toFixed(1)}dB${diffWarn ? '!' : ''}`
+        : '';
       const row = document.createElement('div');
       row.className = 'hgame-audio-bgm-row';
       const metaSpan = document.createElement('span');
       metaSpan.className = 'hgame-audio-loud-meta';
-      metaSpan.textContent = `${lufsVal} / ${pkVal} / ${durVal} / ${kbVal}`;
+      metaSpan.textContent = `${lufsVal} / ${pkVal} / ${durVal} / ${kbVal}${diffTag}`;
       const seamBtn = document.createElement('button');
       seamBtn.type = 'button';
       seamBtn.className = 'hgame-audio-seam-btn';

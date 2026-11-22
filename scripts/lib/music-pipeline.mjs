@@ -16,6 +16,11 @@ const BGM_TARGET_LUFS = -19.0;
 const BGM_TARGET_TP = -1.5;
 const BGM_TARGET_LRA = 11;
 const BGM_LUFS_TOLERANCE = 1.5;
+const BGM_MAX_DURATION_SEC = 75.0;
+const BGM_DEFAULT_FADE_IN_SEC = 0.6;
+const BGM_DEFAULT_FADE_OUT_SEC = 1.5;
+const BGM_HEAD_TAIL_WINDOW_SEC = 3.0;
+const BGM_HEAD_TAIL_WARN_DB = 4.0;
 const STINGER_TARGET_LUFS = -16.0;
 const STINGER_TARGET_TP = -1.5;
 const STINGER_TARGET_LRA = 9;
@@ -83,15 +88,15 @@ export function parseBgmFilenameMeta(filePathOrName, kind = 'bgm', relDir = '') 
 }
 
 /**
- * Computes beat-aligned loop start, duration, and crossfade length for a BGM track,
- * automatically falling back on short sources so slicing never exceeds totalDurationSec.
+ * Computes clean trim bounds and qsin fade durations for a BGM track.
+ * Preserves the full musical body (including intro) up to 75s unless overridden via `bgm_overrides.json`.
  *
  * @param {object} params
  * @param {number} params.totalDurationSec
  * @param {number | null} [params.bpm=null]
  * @param {object | null} [params.override=null]
  */
-export function computeBgmLoopTiming({
+export function computeBgmTrimPlan({
   totalDurationSec,
   bpm = null,
   override = null,
@@ -101,94 +106,29 @@ export function computeBgmLoopTiming({
     ? Number(override.bpm)
     : (Number.isFinite(Number(bpm)) && Number(bpm) > 0 ? Number(bpm) : null);
 
-  let startSec = Number.isFinite(Number(override?.startSec)) ? Math.max(0, Number(override.startSec)) : 8.0;
-  let barSec = effBpm ? (60 / effBpm) * 4 : null;
-  let bars = null;
-  let loopSec;
-  let fadeSec;
+  const hasStart = override?.startSec !== undefined && Number.isFinite(Number(override.startSec));
+  const hasEnd = override?.endSec !== undefined && Number.isFinite(Number(override.endSec));
+  const startSec = hasStart ? clamp(Number(override.startSec), 0, Math.max(0, total - 0.5)) : 0;
+  const endSec = hasEnd
+    ? clamp(Number(override.endSec), Math.min(total, startSec + 0.5), total)
+    : (total - startSec > BGM_MAX_DURATION_SEC ? round(startSec + BGM_MAX_DURATION_SEC, 6) : null);
 
-  if (barSec) {
-    if (Number.isFinite(Number(override?.bars)) && Number(override.bars) > 0) {
-      bars = Math.max(4, Math.round(Number(override.bars)));
-      loopSec = bars * barSec;
-    } else if (Number.isFinite(Number(override?.loopSec)) && Number(override.loopSec) > 0) {
-      loopSec = Number(override.loopSec);
-      bars = Math.max(1, Math.round(loopSec / barSec));
-    } else {
-      // Pick 4-bar multiple in [36s, 56s] closest to 48s.
-      const candidates = [];
-      for (let b = 4; b * barSec <= 96; b += 4) {
-        const sec = b * barSec;
-        if (sec >= 36 && sec <= 56) candidates.push({ b, sec, diff: Math.abs(sec - 48) });
-      }
-      if (candidates.length === 0) {
-        for (let b = 4; b * barSec <= Math.max(120, total); b += 4) {
-          const sec = b * barSec;
-          candidates.push({ b, sec, diff: Math.abs(sec - 48) });
-        }
-      }
-      candidates.sort((a, b) => a.diff - b.diff || a.b - b.b);
-      const picked = candidates[0] || { b: 4, sec: 4 * barSec };
-      bars = picked.b;
-      loopSec = picked.sec;
-    }
-
-    if (Number.isFinite(Number(override?.fadeSec)) && Number(override.fadeSec) > 0) {
-      fadeSec = clamp(Number(override.fadeSec), 0.2, loopSec * 0.4);
-    } else if (Number.isFinite(Number(override?.fadeBars)) && Number(override.fadeBars) > 0) {
-      fadeSec = clamp(Number(override.fadeBars) * barSec, 0.25, Math.min(6.0, loopSec * 0.4));
-    } else {
-      fadeSec = clamp(barSec, 1.5, 3.0);
-    }
-  } else {
-    loopSec = Number.isFinite(Number(override?.loopSec)) && Number(override.loopSec) > 0
-      ? Number(override.loopSec)
-      : 48.0;
-    fadeSec = Number.isFinite(Number(override?.fadeSec)) && Number(override.fadeSec) > 0
-      ? clamp(Number(override.fadeSec), 0.2, loopSec * 0.4)
-      : 2.5;
-  }
-
-  // Fallback for shorter inputs: shorten startSec (floor 2.0s first), then step loopSec down.
-  const minStartFloor = Number.isFinite(Number(override?.startSec)) ? Math.min(startSec, 2.0) : 2.0;
-  if (startSec + loopSec + fadeSec > total) {
-    const availForStart = total - loopSec - fadeSec;
-    if (availForStart >= minStartFloor) {
-      startSec = availForStart;
-    } else {
-      startSec = Math.min(startSec, minStartFloor);
-      if (barSec) {
-        while (bars > 4 && startSec + loopSec + fadeSec > total) {
-          bars -= 4;
-          loopSec = bars * barSec;
-        }
-      } else {
-        while (loopSec > 8 && startSec + loopSec + fadeSec > total) {
-          loopSec = Math.max(4, loopSec - 4);
-        }
-      }
-      // Adjust startSec again if room opened up or still tight
-      const remAfterLoop = total - loopSec - fadeSec;
-      if (remAfterLoop >= minStartFloor) {
-        startSec = Math.min(Number.isFinite(Number(override?.startSec)) ? Number(override.startSec) : 8.0, remAfterLoop);
-      } else if (remAfterLoop >= 0) {
-        startSec = remAfterLoop;
-      } else {
-        startSec = 0;
-        fadeSec = Math.min(fadeSec, Math.max(0.15, total * 0.1));
-        loopSec = Math.max(0.25, total - fadeSec);
-        if (barSec) bars = Math.max(1, Math.round(loopSec / barSec));
-      }
-    }
-  }
+  const fadeInSec = override?.fadeInSec !== undefined && Number.isFinite(Number(override.fadeInSec))
+    ? Math.max(0, Number(override.fadeInSec))
+    : BGM_DEFAULT_FADE_IN_SEC;
+  const fadeOutSec = override?.fadeOutSec !== undefined && Number.isFinite(Number(override.fadeOutSec))
+    ? Math.max(0, Number(override.fadeOutSec))
+    : BGM_DEFAULT_FADE_OUT_SEC;
 
   return {
     bpm: effBpm,
-    barSec: barSec ? round(barSec, 6) : null,
-    bars,
+    hasExplicitStart: hasStart,
+    hasExplicitEnd: hasEnd,
     startSec: round(startSec, 6),
-    loopSec: round(loopSec, 6),
-    fadeSec: round(fadeSec, 6),
+    endSec: endSec !== null ? round(endSec, 6) : null,
+    maxDurationSec: BGM_MAX_DURATION_SEC,
+    fadeInSec: round(fadeInSec, 4),
+    fadeOutSec: round(fadeOutSec, 4),
   };
 }
 
@@ -287,8 +227,10 @@ async function encodeTwoPassLoudnormMp3({
 }
 
 /**
- * Processes one looping BGM track:
- * BPM alignment -> tail-to-head hsin crossfade WAV -> highpass=f=30 + 2-pass -19 LUFS loudnorm -> 96k stereo MP3 -> ffprobe trim metadata.
+ * Processes one BGM track:
+ * clean trim (-50 dB silence trim / <=75s cap or explicit startSec/endSec) ->
+ * measure head/tail 3s RMS balance -> qsin fade-in/out + highpass=f=30 + 2-pass -19 LUFS loudnorm ->
+ * 96k stereo MP3 -> ffprobe trim metadata.
  */
 export async function processBgmTrack({
   srcAbs,
@@ -303,51 +245,107 @@ export async function processBgmTrack({
   tempDir = os.tmpdir(),
 } = {}) {
   const srcProbe = await probeAudioMetadata(ffprobeBin, srcAbs);
-  const timing = computeBgmLoopTiming({
+  const plan = computeBgmTrimPlan({
     totalDurationSec: srcProbe.duration,
     bpm,
     override,
   });
 
-  const mainEnd = round(timing.startSec + timing.loopSec, 6);
-  const tailEnd = round(mainEnd + timing.fadeSec, 6);
-  const tmpWav = path.join(tempDir, `hgame_bgm_${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.wav`);
+  const uid = `${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const trimWav = path.join(tempDir, `hgame_bgm_trim_${uid}.wav`);
+  const capWav = path.join(tempDir, `hgame_bgm_cap_${uid}.wav`);
+  const basePrefix = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo';
 
   try {
-    const filterComplex = [
-      `[0:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,asplit=2[src_main][src_tail]`,
-      `[src_main]atrim=start=${timing.startSec}:end=${mainEnd},asetpts=PTS-STARTPTS,afade=t=in:st=0:d=${timing.fadeSec}:curve=hsin[main]`,
-      `[src_tail]atrim=start=${mainEnd}:end=${tailEnd},asetpts=PTS-STARTPTS,afade=t=out:st=0:d=${timing.fadeSec}:curve=hsin[tail]`,
-      `[main][tail]amix=inputs=2:duration=first:normalize=0[mixed]`,
-    ].join(';');
-
-    const mixRes = await runFfmpegAsync(ffmpegBin, [
-      '-y', '-v', 'error',
-      '-i', srcAbs,
-      '-filter_complex', filterComplex,
-      '-map', '[mixed]',
-      '-ac', '2',
-      '-ar', '44100',
-      '-c:a', 'pcm_f32le',
-      tmpWav,
-    ]);
-    if (mixRes.code !== 0) {
-      throw new Error(`ffmpeg tail-to-head loop build failed for ${path.basename(srcAbs)}: ${mixRes.stderr}`);
+    let trimFilter;
+    if (plan.hasExplicitStart || plan.hasExplicitEnd) {
+      const endArg = plan.endSec !== null ? `:end=${plan.endSec}` : '';
+      trimFilter = `${basePrefix},atrim=start=${plan.startSec}${endArg},asetpts=PTS-STARTPTS`;
+    } else {
+      trimFilter = `${basePrefix},${SILENCE_TRIM_FILTER}`;
     }
 
+    let trimRes = await runFfmpegAsync(ffmpegBin, [
+      '-y', '-v', 'error',
+      '-i', srcAbs,
+      '-af', trimFilter,
+      '-c:a', 'pcm_f32le',
+      trimWav,
+    ]);
+    let trimProbe = trimRes.code === 0 ? await probeAudioMetadata(ffprobeBin, trimWav).catch(() => null) : null;
+    if (!trimProbe || trimProbe.duration < 0.05) {
+      trimRes = await runFfmpegAsync(ffmpegBin, [
+        '-y', '-v', 'error',
+        '-i', srcAbs,
+        '-af', basePrefix,
+        '-c:a', 'pcm_f32le',
+        trimWav,
+      ]);
+      if (trimRes.code !== 0) {
+        throw new Error(`ffmpeg bgm trim failed for ${path.basename(srcAbs)}: ${trimRes.stderr}`);
+      }
+      trimProbe = await probeAudioMetadata(ffprobeBin, trimWav);
+    }
+
+    let workWav = trimWav;
+    let segDur = trimProbe.duration;
+    if (!plan.hasExplicitEnd && segDur > plan.maxDurationSec) {
+      const capRes = await runFfmpegAsync(ffmpegBin, [
+        '-y', '-v', 'error',
+        '-i', trimWav,
+        '-af', `atrim=0:${plan.maxDurationSec},asetpts=PTS-STARTPTS`,
+        '-c:a', 'pcm_f32le',
+        capWav,
+      ]);
+      if (capRes.code !== 0) {
+        throw new Error(`ffmpeg bgm 75s cap failed for ${path.basename(srcAbs)}: ${capRes.stderr}`);
+      }
+      workWav = capWav;
+      segDur = plan.maxDurationSec;
+    }
+
+    // Measure first 3s and last 3s RMS before applying fade-in/fade-out
+    const winSec = round(Math.min(BGM_HEAD_TAIL_WINDOW_SEC, segDur * 0.5), 4);
+    const tailStart = round(Math.max(0, segDur - winSec), 4);
+    const [headStats, tailStats] = await Promise.all([
+      measureAudioFileVolume(ffmpegBin, workWav, `atrim=0:${winSec},asetpts=PTS-STARTPTS`),
+      measureAudioFileVolume(ffmpegBin, workWav, `atrim=start=${tailStart}:end=${round(segDur, 4)},asetpts=PTS-STARTPTS`),
+    ]);
+    const headRmsDb = Number.isFinite(headStats.meanDb) ? round(headStats.meanDb, 2) : null;
+    const tailRmsDb = Number.isFinite(tailStats.meanDb) ? round(tailStats.meanDb, 2) : null;
+    const headTailDiffDb = headRmsDb !== null && tailRmsDb !== null
+      ? round(Math.abs(headRmsDb - tailRmsDb), 2)
+      : 0;
+    const headTailWarn = headTailDiffDb > BGM_HEAD_TAIL_WARN_DB;
+
+    let fadeInSec = plan.fadeInSec;
+    let fadeOutSec = plan.fadeOutSec;
+    if (fadeInSec + fadeOutSec > segDur * 0.9) {
+      const scale = (segDur * 0.9) / Math.max(0.001, fadeInSec + fadeOutSec);
+      fadeInSec = round(fadeInSec * scale, 4);
+      fadeOutSec = round(fadeOutSec * scale, 4);
+    }
+    const fadeOutStart = round(Math.max(0, segDur - fadeOutSec), 4);
+    const fadeFilters = [
+      fadeInSec > 0 ? `afade=t=in:st=0:d=${fadeInSec}:curve=qsin` : '',
+      fadeOutSec > 0 ? `afade=t=out:st=${fadeOutStart}:d=${fadeOutSec}:curve=qsin` : '',
+    ].filter(Boolean);
+
+    const preFilter = [basePrefix, ...fadeFilters, 'highpass=f=30'].join(',');
     const audit = await encodeTwoPassLoudnormMp3({
-      srcPath: tmpWav,
+      srcPath: workWav,
       outPath: outAbs,
       ffmpegBin,
       targetI: BGM_TARGET_LUFS,
       targetTp: BGM_TARGET_TP,
       targetLra: BGM_TARGET_LRA,
+      preFilter,
     });
 
     const outProbe = await probeAudioMetadata(ffprobeBin, outAbs);
     const outStat = await fs.stat(outAbs);
     const trimStartSec = round(outProbe.startTime > 0 ? outProbe.startTime : 0.026, 6);
-    const durationSec = round(outProbe.duration > 0 ? outProbe.duration : timing.loopSec, 4);
+    const durationSec = round(outProbe.duration > 0 ? outProbe.duration : segDur, 4);
     const trimEndSec = round(trimStartSec + durationSec, 6);
     const sizeKb = round(outStat.size / 1024, 2);
 
@@ -361,9 +359,13 @@ export async function processBgmTrack({
       loudnessTier: 'bgm',
       preload: 'stream',
       loop: true,
-      bpm: timing.bpm,
-      bars: timing.bars,
-      fadeSec: timing.fadeSec,
+      bpm: plan.bpm,
+      fadeInSec,
+      fadeOutSec,
+      headRmsDb,
+      tailRmsDb,
+      headTailDiffDb,
+      headTailWarn,
       durationSec,
       trimStartSec,
       trimEndSec,
@@ -388,7 +390,8 @@ export async function processBgmTrack({
       ],
     };
   } finally {
-    await fs.rm(tmpWav, { force: true }).catch(() => {});
+    await fs.rm(trimWav, { force: true }).catch(() => {});
+    await fs.rm(capWav, { force: true }).catch(() => {});
   }
 }
 
@@ -676,12 +679,23 @@ export async function processMusicLibrary({
   const stingerTracks = stingerResults.filter(Boolean).sort((a, b) => a.cueName.localeCompare(b.cueName));
   const alerts = evaluateMusicGate(bgmTracks, stingerTracks);
 
+  const headTailWarnings = bgmTracks
+    .filter((t) => t.headTailWarn)
+    .map((t) => ({
+      cueName: t.cueName,
+      headRmsDb: t.headRmsDb,
+      tailRmsDb: t.tailRmsDb,
+      headTailDiffDb: t.headTailDiffDb,
+      thresholdDb: BGM_HEAD_TAIL_WARN_DB,
+    }));
+
   const report = {
     version: '1.0.0',
     generatedAt: new Date().toISOString(),
     stagingRoot: musicStagingRoot,
     bgmTargetLufs: BGM_TARGET_LUFS,
     bgmToleranceLufs: BGM_LUFS_TOLERANCE,
+    bgmHeadTailWarnDb: BGM_HEAD_TAIL_WARN_DB,
     stingerTargetLufs: STINGER_TARGET_LUFS,
     peakCeilingDbTp: PEAK_CEILING_GATE_DBTP,
     totalTracks: bgmTracks.length + stingerTracks.length,
@@ -689,11 +703,18 @@ export async function processMusicLibrary({
     stingerCount: stingerTracks.length,
     passed: alerts.length === 0,
     alertCount: alerts.length,
+    headTailWarningCount: headTailWarnings.length,
     alerts,
+    headTailWarnings,
     bgm: bgmTracks.map((t) => ({
       cueName: t.cueName,
       bpm: t.bpm,
-      bars: t.bars,
+      fadeInSec: t.fadeInSec,
+      fadeOutSec: t.fadeOutSec,
+      headRmsDb: t.headRmsDb,
+      tailRmsDb: t.tailRmsDb,
+      headTailDiffDb: t.headTailDiffDb,
+      headTailWarn: t.headTailWarn,
       durationSec: t.durationSec,
       trimStartSec: t.trimStartSec,
       trimEndSec: t.trimEndSec,
