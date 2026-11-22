@@ -1100,15 +1100,15 @@ export function requestGlbSquareThumb(url, thumbBox, fallbackEl) {
 }
 
 export const CHARACTER_PHYSICAL_PROFILES = Object.freeze({
-  // 小型实景宠物 / 猫科
-  chouju: { height: 0.42, role: '家猫' },
-  maodie: { height: 0.40, role: '家猫' },
-  bananacat: { height: 0.48, role: '香蕉小猫' },
-  // 半人化动物 / 卡通萌宠吉祥物
-  'daodun-dog': { height: 0.65, role: '柴犬战士' },
-  'cat-knight': { height: 0.85, role: '猫骑士' },
-  naiwa: { height: 0.95, role: '卡通奶蛙' },
-  nailong: { height: 1.10, role: '幼龙' },
+  // 猫狗类角色（游戏标准比例：猫 ~0.8m、狗 1.0m）
+  maodie: { height: 0.78, role: '家猫' },
+  chouju: { height: 0.80, role: '家猫' },
+  bananacat: { height: 0.82, role: '香蕉小猫' },
+  'cat-knight': { height: 0.90, role: '猫骑士' },
+  'daodun-dog': { height: 1.00, role: '柴犬战士' },
+  // 拟人吉祥物（接近人类身高）
+  nailong: { height: 1.58, role: '卡通幼龙' },
+  naiwa: { height: 1.62, role: '卡通奶蛙' },
   // 少年
   'character-5bf3a802-2692-43f1-8598-cc3294c9f0b3': { height: 1.56, role: '初中少年' }, // 阿伟
   // 二次元少女 / 成年女性
@@ -1142,11 +1142,11 @@ export function resolveCharacterScaleSpec(ch) {
   if (direct) return direct;
 
   const text = [ch?.id, ch?.name, ...(ch?.aliases || []), ...(ch?.keywords || [])].join(' ').toLowerCase();
-  if (/knight|骑士/.test(text)) return { height: 0.85, role: '微型战士' };
-  if (/cat|猫|橘|kitty|meow/.test(text)) return { height: 0.42, role: '猫科动物' };
-  if (/dog|狗|犬|shiba|cheems/.test(text)) return { height: 0.65, role: '犬类角色' };
-  if (/frog|蛙/.test(text)) return { height: 0.95, role: '卡通蛙' };
-  if (/dragon|dino|龙/.test(text)) return { height: 1.10, role: '幼龙' };
+  if (/knight|骑士/.test(text)) return { height: 0.90, role: '微型战士' };
+  if (/cat|猫|橘|kitty|meow/.test(text)) return { height: 0.80, role: '猫科角色' };
+  if (/dog|狗|犬|shiba|cheems/.test(text)) return { height: 1.00, role: '犬类角色' };
+  if (/frog|蛙/.test(text)) return { height: 1.62, role: '卡通奶蛙' };
+  if (/dragon|dino|龙/.test(text)) return { height: 1.58, role: '卡通幼龙' };
   if (/少年|男孩|kid|child|student|初中|阿伟/.test(text)) return { height: 1.56, role: '少年' };
   if (String(ch?.gender || '').toLowerCase() === 'female' || /女|姐|girl|少女/.test(text)) {
     return { height: 1.64, role: '女性' };
