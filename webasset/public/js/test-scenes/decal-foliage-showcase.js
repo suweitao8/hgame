@@ -217,8 +217,8 @@ export async function buildDecalFoliageShowcaseScene({
   for (const [catKey, catItems] of foliageGroups.entries()) {
     const catLabel = formatCategoryLabel(catKey);
     const banner = createSectionBannerMesh({
-      title: `植被 · ${catLabel}`,
-      subtitle: `${catItems.length} 个 Alpha Cutout 2-Texture 植被卡片`,
+      title: `植物贴花 · ${catLabel}`,
+      subtitle: `${catItems.length} 个贴地植物 PBR 贴花 (Alpha Cutout · 平面贴附)`,
       width: 5.0,
       height: 1.05,
       accentHex: '#84dc7d',
@@ -239,9 +239,9 @@ export async function buildDecalFoliageShowcaseScene({
       const bay = new THREE.Group();
       bay.position.set(cx, 0, cz);
 
-      const bedGeo = buildBufferGeometryFromRaw(buildBeveledBoxRaw(2.5, 0.12, 2.5, 0, soilLayer));
+      const bedGeo = buildBufferGeometryFromRaw(buildBeveledBoxRaw(2.8, 0.08, 2.8, 0, soilLayer));
       const bedMesh = new THREE.Mesh(bedGeo, worldMat.material);
-      bedMesh.position.set(0, 0.06, 0);
+      bedMesh.position.set(0, 0.04, 0);
       bedMesh.receiveShadow = true;
       bay.add(bedMesh);
       const hitMeshes = [bedMesh];
@@ -251,41 +251,36 @@ export async function buildDecalFoliageShowcaseScene({
           mode: 'foliage',
           assets,
           renderer,
+          polygonOffset: true,
+          side: THREE.FrontSide,
         });
         disposables.push(built.material, built.colorTex, built.normRmTex);
 
         const imgW = assets.colorImg?.naturalWidth || 1;
         const imgH = assets.colorImg?.naturalHeight || 1;
         const aspect = imgW / Math.max(1, imgH);
-        const h = 1.9;
-        const w = h * aspect;
+        const w = aspect >= 1 ? 2.15 : 2.15 * aspect;
+        const h = aspect >= 1 ? 2.15 / aspect : 2.15;
 
-        const cardGeo = new THREE.PlaneGeometry(w, h);
-        const cardA = new THREE.Mesh(cardGeo, built.material);
-        cardA.position.set(0, 0.12 + h * 0.5, 0);
-        cardA.castShadow = true;
-        const cardB = new THREE.Mesh(cardGeo, built.material);
-        cardB.position.set(0, 0.12 + h * 0.5, 0);
-        cardB.rotation.y = Math.PI * 0.35;
-        cardB.castShadow = true;
-        const cardC = new THREE.Mesh(cardGeo, built.material);
-        cardC.position.set(0, 0.12 + h * 0.5, 0);
-        cardC.rotation.y = -Math.PI * 0.35;
-        cardC.castShadow = true;
+        const decalGeo = new THREE.PlaneGeometry(w, h);
+        const plantMesh = new THREE.Mesh(decalGeo, built.material);
+        plantMesh.rotation.x = -Math.PI * 0.5;
+        plantMesh.position.set(0, 0.092, 0);
+        plantMesh.receiveShadow = true;
 
-        bay.add(cardA, cardB, cardC);
-        hitMeshes.push(cardA, cardB, cardC);
+        bay.add(plantMesh);
+        hitMeshes.push(plantMesh);
       }
 
       const plaque = createPlaqueMesh({
-        badge: `FOLIAGE · ${catKey}`,
+        badge: `GROUND PLANT · ${catKey}`,
         title: item.id,
-        subtitle: `${item.width || 512}×${item.height || 512} · Cutout`,
+        subtitle: `${item.width || 512}×${item.height || 512} · 贴地 Cutout`,
         width: 2.25,
         height: 0.56,
         accentHex: '#84dc7d',
       });
-      plaque.position.set(0, 0.36, 1.55);
+      plaque.position.set(0, 0.36, 1.65);
       plaque.rotation.x = -0.52;
       bay.add(plaque);
       hitMeshes.push(plaque);
@@ -297,17 +292,17 @@ export async function buildDecalFoliageShowcaseScene({
         workspace: 'decals',
         kind: 'cn_foliage',
         title: item.id,
-        subtitle: `植被卡片 · ${catLabel}`,
+        subtitle: `植物贴花 · ${catLabel}`,
         category: catKey,
         meta: {
-          mode: 'Alpha Cutout 双面交叉卡片',
+          mode: '地面平面贴附 (Alpha Cutout)',
           resolution: `${item.width || 512}×${item.height || 512}`,
           source: item.sourcePath || '-',
         },
         object: bay,
         hitMeshes,
-        focusPos: [cx, 1.5, cz + 3.4],
-        focusTarget: [cx, 1.0, cz],
+        focusPos: [cx, 2.1, cz + 3.4],
+        focusTarget: [cx, 0.12, cz],
         focusRadius: 2.0,
       });
     }
@@ -325,9 +320,9 @@ export async function buildDecalFoliageShowcaseScene({
   }));
 
   viewpoints.foliage_wing = {
-    label: `植被卡片展区 (${foliage.length})`,
+    label: `植物贴花展区 (${foliage.length})`,
     pos: [6, 5.2, cursorZ + 2.5],
-    target: [6, 0.9, foliageStartZ + (cursorZ - foliageStartZ) * 0.4],
+    target: [6, 0.25, foliageStartZ + (cursorZ - foliageStartZ) * 0.4],
   };
   viewpoints.overview.pos = [maxUsedX * 0.45, 18, cursorZ + 12];
   viewpoints.overview.target = [maxUsedX * 0.45, 1.2, cursorZ * 0.45];
@@ -335,7 +330,7 @@ export async function buildDecalFoliageShowcaseScene({
   return {
     exhibits,
     viewpoints,
-    summaryText: `${decals.length} 个贴花 + ${foliage.length} 个植被卡片`,
+    summaryText: `${decals.length} 个贴花 + ${foliage.length} 个植物贴花`,
     dispose() {
       for (const d of disposables) d?.dispose?.();
     },

@@ -521,10 +521,10 @@ function applyTransformToDecalMesh() {
     const base = previewMode === 'surface' ? BASE_FOLIAGE_SIZE : 1.75;
     const sx = base * scale * aspectFactor;
     const sy = (base * scale) / aspectFactor;
-    decalMesh.scale.set(sx, sy, sx);
+    decalMesh.scale.set(sx, sy, 1);
     if (previewMode === 'surface') {
-      decalMesh.rotation.set(0, -rotRad, 0);
-      decalMesh.position.set(0, 0.5 * sy, FLOOR_DECAL_Z);
+      decalMesh.rotation.set(-Math.PI * 0.5, 0, -rotRad);
+      decalMesh.position.set(0, SURFACE_EPSILON, FLOOR_DECAL_Z);
     } else {
       decalMesh.rotation.set(0, 0, -rotRad);
       decalMesh.position.set(0, 1.05, 0);
@@ -883,8 +883,8 @@ function configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera = fa
     if (shouldMoveCamera) {
       const hasRefChar = Boolean(refCharSelect?.value && refCharSelect.value !== 'none');
       if (currentLib === 'cn_foliage') {
-        vp.camera.position.set(1.2, 1.25, 2.55);
-        vp.controls.target.set(hasRefChar ? -0.22 : 0, 0.55, 0.15);
+        vp.camera.position.set(1.1, 1.55, 2.55);
+        vp.controls.target.set(hasRefChar ? -0.22 : 0, 0.4, 0.1);
       } else if (currentPlacement === 'wall') {
         vp.camera.position.set(1.0, 1.35, 1.35);
         vp.controls.target.set(hasRefChar ? -0.2 : 0, 0.85, -1.4);
@@ -930,7 +930,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
   if (mapRmLabel) mapRmLabel.textContent = isCnLib ? 'RM' : 'ORM';
 
   const placementLabel = currentLib === 'cn_foliage'
-    ? '地面立面'
+    ? '地面'
     : (currentPlacement === 'wall' ? '墙面' : '地面');
 
   if (isCnLib) {
@@ -963,24 +963,15 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
         renderer: vp.renderer,
         tintHex,
         opacity,
-        polygonOffset: currentLib === 'cn_pbr',
-        side: previewMode === 'surface' && currentLib !== 'cn_foliage' ? THREE.FrontSide : THREE.DoubleSide,
+        polygonOffset: isCnLib,
+        side: previewMode === 'surface' ? THREE.FrontSide : THREE.DoubleSide,
       });
       decalMaterial = built.material;
       decalTextures = [built.colorTex, built.normRmTex];
 
       const group = new THREE.Group();
       configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera });
-      if (currentLib === 'cn_foliage' && previewMode === 'surface') {
-        const clump = new THREE.Group();
-        const planeA = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), decalMaterial);
-        const planeB = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), decalMaterial);
-        planeB.rotation.y = Math.PI * 0.5;
-        clump.add(planeA, planeB);
-        decalMesh = clump;
-      } else {
-        decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), decalMaterial);
-      }
+      decalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), decalMaterial);
       group.add(decalMesh);
 
       stageRoot = group;
