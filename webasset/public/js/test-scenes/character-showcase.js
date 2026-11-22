@@ -3,7 +3,7 @@ import {
   fitCharacterToIdentityScale,
   resolveCharacterScaleSpec,
 } from '../hgame-shared.js';
-import { applyForcedLodToModel } from './model-showcase.js';
+import { applyForcedLodToModel, detectMeshLodLevel } from './model-showcase.js';
 import {
   createPlaqueMesh,
   createSectionBannerMesh,
@@ -62,6 +62,7 @@ export async function buildCharacterShowcaseScene({
   const exhibits = [];
   const mixers = [];
   const modelRoots = [];
+  const impostors = [];
   let loaded3dCount = 0;
 
   // Prefer low-poly GLB; allow high-poly only if compact (<= 15MB) to avoid OOM across many characters.
@@ -98,17 +99,83 @@ export async function buildCharacterShowcaseScene({
         const gltf = await gltfLoader.loadAsync(chosenModel.url);
         if (token !== getToken()) return;
         const root = gltf.scene;
+        let mixer = null;
+        let runAction = null;
+        let runDuration = 0;
+        if (Array.isArray(gltf.animations) && gltf.animations.length > 0) {
+          mixer = new THREE.AnimationMixer(root);
+          const clip = gltf.animations.find(c => /run/i.test(c.name)) || gltf.animations[0];
+          runAction = mixer.clipAction(clip);
+          runAction.setLoop(THREE.LoopRepeat, Infinity);
+          runAction.play();
+          runDuration = Math.max(0.01, Number(clip?.duration) || 1);
+          mixers.push(mixer);
+        }
+
+        const lod3ToReplace = [];
         root.traverse(n => {
-          if (n.isMesh) {
-            n.castShadow = true;
-            n.receiveShadow = true;
-            const mats = Array.isArray(n.material) ? n.material : [n.material];
-            for (const m of mats) {
-              if (m && 'wireframe' in m) m.wireframe = Boolean(wireframe);
-            }
-            hitMeshes.push(n);
+          if (!n.isMesh) return;
+          const lvl = detectMeshLodLevel(n);
+          if (lvl === 3) {
+            lod3ToReplace.push(n);
+            return;
           }
+          n.castShadow = true;
+          n.receiveShadow = true;
+          const mats = Array.isArray(n.material) ? n.material : [n.material];
+          for (const m of mats) {
+            if (m && 'wireframe' in m) m.wireframe = Boolean(wireframe);
+          }
+          hitMeshes.push(n);
         });
+
+        for (const n of lod3ToReplace) {
+          const cols = Math.max(1, Number(n.userData?.impostorCols || 0) | 0);
+          const rows = Math.max(1, Number(n.userData?.impostorRows || 0) | 0);
+          const srcMat = Array.isArray(n.material) ? n.material[0] : n.material;
+          let impMat = srcMat ? srcMat.clone() : new THREE.MeshStandardMaterial({ color: 0xffffff });
+          if (srcMat?.map && n.userData?.impostorCols >= 1) {
+            const atlasTex = srcMat.map.clone();
+            atlasTex.needsUpdate = true;
+            atlasTex.repeat.set(1 / cols, 1 / rows);
+            atlasTex.offset.set(0, 0);
+            impMat.map = atlasTex;
+            impMat.alphaTest = 0.45;
+            impMat.transparent = false;
+            impMat.side = THREE.DoubleSide;
+          }
+          if ('wireframe' in impMat) impMat.wireframe = Boolean(wireframe);
+          impMat.needsUpdate = true;
+
+          let impNode = n;
+          if (n.isSkinnedMesh && n.parent) {
+            impNode = new THREE.Mesh(n.geometry, impMat);
+            impNode.name = n.name;
+            impNode.position.copy(n.position);
+            impNode.quaternion.copy(n.quaternion);
+            impNode.scale.copy(n.scale);
+            impNode.userData = { ...n.userData };
+            const parent = n.parent;
+            parent.add(impNode);
+            parent.remove(n);
+          } else {
+            n.material = impMat;
+          }
+          impNode.castShadow = false;
+          impNode.receiveShadow = false;
+          hitMeshes.push(impNode);
+
+          if (n.userData?.impostorCols >= 1 && impMat.map) {
+            impostors.push({
+              mesh: impNode,
+              cols,
+              rows,
+              action: runAction,
+              duration: runDuration,
+            });
+          }
+        }
+
         applyForcedLodToModel(root, lodMode);
         const fitted = fitCharacterToIdentityScale(root, { ...ch, height: charSpec.height }, {
           groundY: 0.14,
@@ -118,15 +185,6 @@ export async function buildCharacterShowcaseScene({
         bay.add(root);
         modelRoots.push(root);
         loaded3dCount += 1;
-
-        if (Array.isArray(gltf.animations) && gltf.animations.length > 0) {
-          const mixer = new THREE.AnimationMixer(root);
-          const clip = gltf.animations.find(c => /run/i.test(c.name)) || gltf.animations[0];
-          const action = mixer.clipAction(clip);
-          action.setLoop(THREE.LoopRepeat, Infinity);
-          action.play();
-          mixers.push(mixer);
-        }
       } catch {
         modeLabel = '加载失败';
       }
@@ -216,6 +274,7 @@ export async function buildCharacterShowcaseScene({
     viewpoints,
     mixers,
     modelRoots,
+    impostors,
     summaryText: `${chars.length} 个角色 (${loaded3dCount} 个 3D 低模)`,
     dispose() {
       for (const m of mixers) m.stopAllAction();

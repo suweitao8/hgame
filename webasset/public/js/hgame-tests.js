@@ -124,6 +124,7 @@ let activeAnimatedPivots = [];
 let activeMixers = [];
 let activeLodPool = null;
 let activeModelRoots = [];
+let activeImpostors = [];
 let activeSceneDispose = null;
 let activeSummaryText = '';
 let selectedExhibit = null;
@@ -589,6 +590,7 @@ async function rebuildActiveScene() {
   activeMixers = [];
   activeLodPool = null;
   activeModelRoots = [];
+  activeImpostors = [];
   activeSummaryText = '';
   lightingRig.setPointLights([]);
   renderInspector(null);
@@ -671,6 +673,7 @@ async function rebuildActiveScene() {
   activeMixers = result.mixers || [];
   activeLodPool = result.lodPool || null;
   activeModelRoots = result.modelRoots || [];
+  activeImpostors = result.impostors || [];
   activeSceneDispose = result.dispose || null;
   activeSummaryText = result.summaryText || '';
 
@@ -688,9 +691,46 @@ async function rebuildActiveScene() {
     const res = activeLodPool.update(camera, { lodBias, forcedLod: lodSelect?.value || 'auto', force: true });
     if (res) lastLodSummary = res;
   }
+  updateActiveImpostors();
 
   renderer.render(scene, camera);
   updateStatusBar();
+}
+
+const _impWorldPos = new THREE.Vector3();
+const _impCamLocal = new THREE.Vector3();
+const _impInvQuat = new THREE.Quaternion();
+const _impDirVec = new THREE.Vector3();
+
+function updateActiveImpostors() {
+  if (!camera || activeImpostors.length === 0) return;
+  camera.getWorldPosition(_impCamLocal);
+  for (const imp of activeImpostors) {
+    const m = imp?.mesh;
+    if (!m || !m.visible || !m.material?.map) continue;
+    m.getWorldPosition(_impWorldPos);
+    const dx = _impCamLocal.x - _impWorldPos.x;
+    const dz = _impCamLocal.z - _impWorldPos.z;
+    if (dx * dx + dz * dz < 1e-6) continue;
+    _impDirVec.set(dx, 0, dz);
+    if (m.parent) {
+      m.parent.getWorldQuaternion(_impInvQuat);
+      _impInvQuat.invert();
+      _impDirVec.applyQuaternion(_impInvQuat);
+    }
+    const az = Math.atan2(_impDirVec.x, _impDirVec.z);
+    m.rotation.set(0, az, 0);
+    const cols = imp.cols || 8;
+    const rows = imp.rows || 8;
+    const rel = ((az / (Math.PI * 2)) % 1 + 1) % 1;
+    const col = Math.min(cols - 1, Math.floor(((rel + 0.5 / cols) % 1) * cols));
+    let row = 0;
+    if (rows > 1 && imp.action && imp.duration > 0) {
+      const tNorm = (((imp.action.time % imp.duration) + imp.duration) % imp.duration) / imp.duration;
+      row = Math.min(rows - 1, Math.floor(tNorm * rows));
+    }
+    m.material.map.offset.set(col / cols, row / rows);
+  }
 }
 
 function tick(now) {
@@ -714,6 +754,7 @@ function tick(now) {
   }
 
   cameraRig?.update(dt);
+  updateActiveImpostors();
 
   if (activeLodPool && camera) {
     const qName = qualitySelect?.value || 'HIGH';
@@ -754,6 +795,7 @@ function init() {
     const lodVal = lodSelect.value || 'auto';
     if (activeModelRoots.length) {
       for (const root of activeModelRoots) applyForcedLodToModel(root, lodVal);
+      updateActiveImpostors();
       if (renderer && scene && camera) renderer.render(scene, camera);
       updateStatusBar();
     } else if (activeLodPool && camera) {

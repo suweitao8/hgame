@@ -1177,29 +1177,224 @@ def _build_decimated_lod(src_obj, rig_obj, lod_name, target_tris, max_weights):
     return dup
 
 
-def _build_tight_lod3_impostor(src_obj, rig_obj):
+def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8, cell_px=128):
+    import math
+    import tempfile
     import bmesh
+    import numpy as np
     from mathutils import Vector
-    xs = [v.co.x for v in src_obj.data.vertices]
-    ys = [v.co.y for v in src_obj.data.vertices]
-    zs = [v.co.z for v in src_obj.data.vertices]
-    if not xs:
+
+    scn = bpy.context.scene
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+
+    action = rig_obj.animation_data.action if (rig_obj and rig_obj.animation_data) else None
+    if anim_range and len(anim_range) >= 2 and float(anim_range[1]) > float(anim_range[0]):
+        f0, f1 = float(anim_range[0]), float(anim_range[1])
+    elif action is not None and action.frame_range[1] > action.frame_range[0]:
+        f0, f1 = float(action.frame_range[0]), float(action.frame_range[1])
+    else:
+        f0, f1 = float(scn.frame_current), float(scn.frame_current)
+
+    eff_rows = max(1, int(rows)) if (f1 > f0 + 1e-4) else 1
+    eff_cols = max(1, int(cols))
+    frames = [f0 + (f1 - f0) * (r / float(eff_rows)) for r in range(eff_rows)] if eff_rows > 1 else [f0]
+
+    # Sample animated world-space bounds across Run cycle so silhouettes never clip
+    sample_indices = sorted(set([0, len(frames) // 4, len(frames) // 2, (3 * len(frames)) // 4]))
+    all_pts = []
+    orig_frame = scn.frame_current
+    for si in sample_indices:
+        fr = frames[min(len(frames) - 1, si)]
+        scn.frame_set(int(fr), subframe=fr - int(fr))
+        bpy.context.view_layer.update()
+        eval_obj = src_obj.evaluated_get(depsgraph)
+        mw = eval_obj.matrix_world
+        for v in eval_obj.data.vertices:
+            all_pts.append(mw @ v.co)
+    scn.frame_set(orig_frame)
+    bpy.context.view_layer.update()
+
+    if not all_pts:
         return None
-    half_w = max(0.18, (max(xs) - min(xs)) * 0.52)
-    cx = (max(xs) + min(xs)) * 0.5
-    cy = (max(ys) + min(ys)) * 0.5
-    z0 = min(zs)
-    h = max(0.5, max(zs) - z0)
+    pts = np.asarray([(p.x, p.y, p.z) for p in all_pts], dtype=np.float64)
+    # Anchor billboard pivot on root origin (0, 0) so Y-billboard spins in place on pedestal
+    cx = 0.0
+    cy = 0.0
+    z0 = float(pts[:, 2].min())
+    z1 = float(pts[:, 2].max())
+    max_proj = 0.18
+    for c in range(eff_cols):
+        a = (c / float(eff_cols)) * (2.0 * math.pi)
+        proj = np.abs((pts[:, 0] - cx) * math.cos(a) + (pts[:, 1] - cy) * math.sin(a))
+        max_proj = max(max_proj, float(proj.max()))
+    half_w = max(0.18, max_proj * 1.06)
+    z_pad_bot = 0.01
+    h = max(0.5, (z1 - (z0 - z_pad_bot)) * 1.04)
+    z0_box = z0 - z_pad_bot
+
+    # Bake 8-azimuth x N-frame RGBA Impostor sprite sheet in EEVEE
+    orig_hide_r = {o: o.hide_render for o in bpy.data.objects}
+    orig_hide_vp = {o: o.hide_viewport for o in bpy.data.objects}
+    orig_engine = scn.render.engine
+    orig_transp = scn.render.film_transparent
+    orig_rx = scn.render.resolution_x
+    orig_ry = scn.render.resolution_y
+    orig_pct = scn.render.resolution_percentage
+    orig_fmt = scn.render.image_settings.file_format
+    orig_cmode = scn.render.image_settings.color_mode
+    orig_cdepth = scn.render.image_settings.color_depth
+    orig_vt = scn.view_settings.view_transform
+    orig_world = scn.world
+    orig_cam = scn.camera
+    orig_taa = getattr(scn.eevee, "taa_render_samples", None)
+
+    tile_h = int(cell_px)
+    tile_w = max(48, min(192, int(round(cell_px * (2.0 * half_w) / h))))
+    atlas = np.zeros((eff_rows * cell_px, eff_cols * cell_px, 4), dtype=np.float32)
+
+    imp_world = bpy.data.worlds.new("_ImpostorWorld")
+    imp_world.use_nodes = False
+    imp_world.color = (0.72, 0.72, 0.72)
+
+    imp_light_data = bpy.data.lights.new("_ImpostorSun", "SUN")
+    imp_light_data.energy = 1.9
+    imp_light_obj = bpy.data.objects.new("_ImpostorSun", imp_light_data)
+    bpy.context.collection.objects.link(imp_light_obj)
+
+    imp_cam_data = bpy.data.cameras.new("_ImpostorCam")
+    imp_cam_data.type = "ORTHO"
+    imp_cam_data.sensor_fit = "VERTICAL"
+    imp_cam_data.ortho_scale = h
+    imp_cam_data.clip_start = 0.01
+    imp_cam_data.clip_end = 50.0
+    imp_cam_obj = bpy.data.objects.new("_ImpostorCam", imp_cam_data)
+    bpy.context.collection.objects.link(imp_cam_obj)
+
+    try:
+        for o in bpy.data.objects:
+            if o.type in ("MESH", "LIGHT") and o not in (src_obj, imp_light_obj):
+                o.hide_render = True
+        src_obj.hide_render = False
+        src_obj.hide_viewport = False
+
+        scn.world = imp_world
+        scn.camera = imp_cam_obj
+        scn.render.engine = "BLENDER_EEVEE"
+        if orig_taa is not None:
+            scn.eevee.taa_render_samples = 4
+        scn.render.film_transparent = True
+        scn.view_settings.view_transform = "Standard"
+        scn.render.resolution_x = tile_w
+        scn.render.resolution_y = tile_h
+        scn.render.resolution_percentage = 100
+        scn.render.image_settings.file_format = "PNG"
+        scn.render.image_settings.color_mode = "RGBA"
+        scn.render.image_settings.color_depth = "8"
+
+        target_pt = Vector((cx, cy, z0_box + h * 0.5))
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cell_png = os.path.join(tmp_dir, "cell.png")
+            for r, fr in enumerate(frames):
+                scn.frame_set(int(fr), subframe=fr - int(fr))
+                bpy.context.view_layer.update()
+                y_dst = (eff_rows - 1 - r) * cell_px
+                for c in range(eff_cols):
+                    ang = (c / float(eff_cols)) * (2.0 * math.pi)
+                    cam_dir = Vector((math.sin(ang), -math.cos(ang), 0.0))
+                    imp_cam_obj.location = target_pt + cam_dir * 6.0
+                    imp_cam_obj.rotation_euler = (-cam_dir).to_track_quat("-Z", "Y").to_euler()
+
+                    l_ang = ang + 0.42
+                    l_dir = Vector((-math.sin(l_ang), math.cos(l_ang), -0.55)).normalized()
+                    imp_light_obj.rotation_euler = l_dir.to_track_quat("-Z", "Y").to_euler()
+
+                    scn.render.filepath = cell_png
+                    bpy.ops.render.render(write_still=True)
+
+                    tmp_img = bpy.data.images.load(cell_png, check_existing=False)
+                    if tmp_img.size[0] != cell_px or tmp_img.size[1] != cell_px:
+                        tmp_img.scale(cell_px, cell_px)
+                    tile_px = np.empty(cell_px * cell_px * 4, dtype=np.float32)
+                    tmp_img.pixels.foreach_get(tile_px)
+                    bpy.data.images.remove(tmp_img, do_unlink=True)
+                    atlas[y_dst : y_dst + cell_px, c * cell_px : (c + 1) * cell_px, :] = tile_px.reshape((cell_px, cell_px, 4))
+    finally:
+        for o, hr in orig_hide_r.items():
+            if o.name in bpy.data.objects:
+                o.hide_render = hr
+        for o, hv in orig_hide_vp.items():
+            if o.name in bpy.data.objects:
+                o.hide_viewport = hv
+        scn.frame_set(orig_frame)
+        bpy.context.view_layer.update()
+        scn.render.engine = orig_engine
+        scn.render.film_transparent = orig_transp
+        scn.render.resolution_x = orig_rx
+        scn.render.resolution_y = orig_ry
+        scn.render.resolution_percentage = orig_pct
+        scn.render.image_settings.file_format = orig_fmt
+        scn.render.image_settings.color_mode = orig_cmode
+        scn.render.image_settings.color_depth = orig_cdepth
+        scn.view_settings.view_transform = orig_vt
+        scn.world = orig_world
+        scn.camera = orig_cam
+        if orig_taa is not None:
+            scn.eevee.taa_render_samples = orig_taa
+        for o in (imp_cam_obj, imp_light_obj):
+            if o.name in bpy.data.objects:
+                bpy.data.objects.remove(o, do_unlink=True)
+        if imp_cam_data.name in bpy.data.cameras:
+            bpy.data.cameras.remove(imp_cam_data, do_unlink=True)
+        if imp_light_data.name in bpy.data.lights:
+            bpy.data.lights.remove(imp_light_data, do_unlink=True)
+        if imp_world.name in bpy.data.worlds:
+            bpy.data.worlds.remove(imp_world, do_unlink=True)
+
+    atlas_img = bpy.data.images.new(
+        "ImpostorAtlas",
+        width=eff_cols * cell_px,
+        height=eff_rows * cell_px,
+        alpha=True,
+    )
+    atlas_img.colorspace_settings.name = "sRGB"
+    atlas_img.pixels.foreach_set(atlas.ravel().tolist())
+    atlas_img.pack()
+
+    mat_imp = bpy.data.materials.new("BakedImpostor")
+    mat_imp.use_nodes = True
+    mat_imp.use_backface_culling = False
+    nt = mat_imp.node_tree
+    nt.nodes.clear()
+    n_out = nt.nodes.new("ShaderNodeOutputMaterial")
+    n_bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    n_bsdf.inputs["Roughness"].default_value = 0.92
+    if "Specular IOR Level" in n_bsdf.inputs:
+        n_bsdf.inputs["Specular IOR Level"].default_value = 0.0
+    if "Emission Strength" in n_bsdf.inputs:
+        n_bsdf.inputs["Emission Strength"].default_value = 0.22
+    n_tex = nt.nodes.new("ShaderNodeTexImage")
+    n_tex.image = atlas_img
+    n_tex.extension = "CLIP"
+    n_gt = nt.nodes.new("ShaderNodeMath")
+    n_gt.operation = "GREATER_THAN"
+    n_gt.inputs[1].default_value = 0.45
+    nt.links.new(n_tex.outputs["Color"], n_bsdf.inputs["Base Color"])
+    if "Emission Color" in n_bsdf.inputs:
+        nt.links.new(n_tex.outputs["Color"], n_bsdf.inputs["Emission Color"])
+    nt.links.new(n_tex.outputs["Alpha"], n_gt.inputs[0])
+    nt.links.new(n_gt.outputs["Value"], n_bsdf.inputs["Alpha"])
+    nt.links.new(n_bsdf.outputs["BSDF"], n_out.inputs["Surface"])
+
     # 8-vertex / 6-triangle beveled octagon silhouette hull (cuts 40-60% transparent overdraw)
     ring = [
-        (cx - half_w * 0.55, cy, z0),
-        (cx + half_w * 0.55, cy, z0),
-        (cx + half_w, cy, z0 + h * 0.25),
-        (cx + half_w, cy, z0 + h * 0.72),
-        (cx + half_w * 0.48, cy, z0 + h),
-        (cx - half_w * 0.48, cy, z0 + h),
-        (cx - half_w, cy, z0 + h * 0.72),
-        (cx - half_w, cy, z0 + h * 0.25),
+        (-half_w * 0.55, 0.0, z0_box),
+        (half_w * 0.55, 0.0, z0_box),
+        (half_w, 0.0, z0_box + h * 0.25),
+        (half_w, 0.0, z0_box + h * 0.72),
+        (half_w * 0.48, 0.0, z0_box + h),
+        (-half_w * 0.48, 0.0, z0_box + h),
+        (-half_w, 0.0, z0_box + h * 0.72),
+        (-half_w, 0.0, z0_box + h * 0.25),
     ]
     mesh_d = bpy.data.meshes.new("mesh_lod3_data")
     bm = bmesh.new()
@@ -1208,8 +1403,8 @@ def _build_tight_lod3_impostor(src_obj, rig_obj):
     face = bm.faces.new(verts)
     for loop in face.loops:
         co = loop.vert.co
-        u = (co.x - (cx - half_w)) / max(2.0 * half_w, 1e-4)
-        v = (co.z - z0) / max(h, 1e-4)
+        u = (co.x + half_w) / max(2.0 * half_w, 1e-4)
+        v = (co.z - z0_box) / max(h, 1e-4)
         loop[uv_layer].uv = (max(0.0, min(1.0, u)), max(0.0, min(1.0, v)))
     bmesh.ops.triangulate(bm, faces=[face])
     bm.to_mesh(mesh_d)
@@ -1217,9 +1412,13 @@ def _build_tight_lod3_impostor(src_obj, rig_obj):
     obj3 = bpy.data.objects.new("mesh_lod3", mesh_d)
     bpy.context.collection.objects.link(obj3)
     obj3.parent = rig_obj
-    if len(src_obj.data.materials) > 0:
-        obj3.data.materials.append(src_obj.data.materials[0])
+    obj3.location = (cx, cy, 0.0)
+    obj3.data.materials.append(mat_imp)
     obj3["lodLevel"] = 3
+    obj3["impostorCols"] = eff_cols
+    obj3["impostorRows"] = eff_rows
+    obj3["impostorWidth"] = round(2.0 * half_w, 4)
+    obj3["impostorHeight"] = round(h, 4)
     obj3.hide_render = True
     return obj3
 
@@ -1576,7 +1775,7 @@ def _rig_and_export_arp(
                 lod2_obj["lodLevel"] = 2
                 export_objs.append(lod2_obj)
         if lod3_tight:
-            lod3_obj = _build_tight_lod3_impostor(low_obj, rig)
+            lod3_obj = _build_tight_lod3_impostor(low_obj, rig, anim_range=ret_frames)
             if lod3_obj is not None:
                 vg_r = lod3_obj.vertex_groups.new(name="root")
                 vg_r.add(list(range(len(lod3_obj.data.vertices))), 1.0, "REPLACE")
@@ -1669,7 +1868,7 @@ def _export_rigged_with_lods(
             lod2_obj.hide_render = True
             export_objs.append(lod2_obj)
     if lod3_tight:
-        lod3_obj = _build_tight_lod3_impostor(low_obj, rig)
+        lod3_obj = _build_tight_lod3_impostor(low_obj, rig, anim_range=rig_info.get("frames"))
         if lod3_obj is not None:
             export_objs.append(lod3_obj)
 
@@ -1686,6 +1885,7 @@ def _export_rigged_with_lods(
         export_animations=True,
         export_skins=True,
         export_def_bones=True,
+        export_extras=True,
         export_tangents=False,
     )
     return {
@@ -2777,6 +2977,11 @@ def cmd_rig_run(args):
     for o in list(bpy.data.objects):
         if o.type == "ARMATURE":
             bpy.data.objects.remove(o, do_unlink=True)
+    for act in list(bpy.data.actions):
+        bpy.data.actions.remove(act, do_unlink=True)
+    for m in list(bpy.data.meshes):
+        if m.users == 0:
+            bpy.data.meshes.remove(m, do_unlink=True)
     bpy.context.view_layer.update()
 
     obj = primary_list[0] if len(primary_list) == 1 else ensure_single_mesh("RiggedCharacter")

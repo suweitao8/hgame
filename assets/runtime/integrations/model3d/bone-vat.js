@@ -1129,6 +1129,7 @@ function patchBoneVatMaterial(material, {
 function patchImpostorMaterial(material, {
   impostorCols,
   impostorRows,
+  impostorFlipRow = false,
   vatHeight,
   scaleUniform,
   baseYUniform,
@@ -1137,13 +1138,14 @@ function patchImpostorMaterial(material, {
   gpuSwarmWidthUniform = { value: 1 },
   gpuInstanceOffsetUniform = { value: 0 },
 }) {
-  material.customProgramCacheKey = () => `hgame-bone-impostor-v4:${impostorCols}x${impostorRows}:${vatHeight}`;
+  material.customProgramCacheKey = () => `hgame-bone-impostor-v5:${impostorCols}x${impostorRows}:${impostorFlipRow ? 1 : 0}:${vatHeight}`;
   const prevCompile = material.onBeforeCompile;
 
   material.onBeforeCompile = (shader, renderer) => {
     prevCompile?.call(material, shader, renderer);
     shader.uniforms.uImpostorCols = { value: impostorCols };
     shader.uniforms.uImpostorRows = { value: impostorRows };
+    shader.uniforms.uImpostorFlipRow = { value: impostorFlipRow ? 1 : 0 };
     shader.uniforms.uVatHeight = { value: vatHeight };
     shader.uniforms.uCrowdScale = scaleUniform;
     shader.uniforms.uCrowdBaseY = baseYUniform;
@@ -1157,6 +1159,7 @@ function patchImpostorMaterial(material, {
       'attribute float aCrowdY;',
       'uniform int uImpostorCols;',
       'uniform int uImpostorRows;',
+      'uniform int uImpostorFlipRow;',
       'uniform int uVatHeight;',
       'uniform float uCrowdScale;',
       'uniform float uCrowdBaseY;',
@@ -1219,7 +1222,8 @@ function patchImpostorMaterial(material, {
           '  float _framePos = max(0.0, _impostorAbsW - _impostorStatus * 16384.0 - 1.0);',
           '  float _rowNorm = clamp(_framePos / max(1.0, float(uVatHeight)), 0.0, 0.9999);',
           '  float _row = floor(_rowNorm * float(uImpostorRows));',
-          '  vMapUv = vec2((_col + uv.x) / float(uImpostorCols), (float(uImpostorRows - 1) - _row + uv.y) / float(uImpostorRows));',
+          '  float _atlasRow = (uImpostorFlipRow == 1) ? _row : (float(uImpostorRows - 1) - _row);',
+          '  vMapUv = vec2((_col + uv.x) / float(uImpostorCols), (_atlasRow + uv.y) / float(uImpostorRows));',
           '}',
           '#endif',
         ].join('\n'),
@@ -1294,6 +1298,7 @@ function patchPointSpriteMaterial(material, {
       'attribute float aCrowdY;',
       'uniform int uImpostorCols;',
       'uniform int uImpostorRows;',
+      'uniform int uImpostorFlipRow;',
       'uniform int uVatHeight;',
       'uniform float uCharHeight;',
       'uniform float uCrowdScale;',
@@ -1514,6 +1519,7 @@ export function createBoneVatCrowd3D(THREE, {
   let embeddedLod1Geom = null;
   let embeddedLod2Geom = null;
   let embeddedLod3Geom = null;
+  let embeddedLod3Mesh = null;
   if (sourceRoot?.traverse) {
     sourceRoot.traverse((node) => {
       if (!(node.isSkinnedMesh || node.isMesh)) return;
@@ -1521,7 +1527,11 @@ export function createBoneVatCrowd3D(THREE, {
       const lvl = Number(node.userData?.lodLevel ?? (nName.endsWith('_lod1') ? 1 : (nName.endsWith('_lod2') ? 2 : (nName.endsWith('_lod3') ? 3 : 0))));
       if (lvl === 1) { if (!embeddedLod1Geom) embeddedLod1Geom = node.geometry; return; }
       if (lvl === 2) { if (!embeddedLod2Geom) embeddedLod2Geom = node.geometry; return; }
-      if (lvl === 3) { if (!embeddedLod3Geom) embeddedLod3Geom = node.geometry; return; }
+      if (lvl === 3) {
+        if (!embeddedLod3Geom) embeddedLod3Geom = node.geometry;
+        if (!embeddedLod3Mesh) embeddedLod3Mesh = node;
+        return;
+      }
       if (!baseMesh) baseMesh = node;
     });
   }
@@ -1614,27 +1624,36 @@ export function createBoneVatCrowd3D(THREE, {
     crossfadeUniform,
   });
 
-  const ownedImpostorTex = impostorTexture ? null : createProceduralImpostorTexture(
+  const embeddedLod3Mat = Array.isArray(embeddedLod3Mesh?.material) ? embeddedLod3Mesh.material[0] : embeddedLod3Mesh?.material;
+  const embeddedImpostorTex = (!impostorTexture && Number(embeddedLod3Mesh?.userData?.impostorCols) >= 1 && embeddedLod3Mat?.map)
+    ? embeddedLod3Mat.map
+    : null;
+  const effImpostorCols = embeddedImpostorTex ? Math.max(1, Number(embeddedLod3Mesh.userData.impostorCols) | 0) : impostorCols;
+  const effImpostorRows = embeddedImpostorTex ? Math.max(1, Number(embeddedLod3Mesh.userData.impostorRows || 1) | 0) : impostorRows;
+  const impostorFlipRow = Boolean(embeddedImpostorTex);
+
+  const ownedImpostorTex = (impostorTexture || embeddedImpostorTex) ? null : createProceduralImpostorTexture(
     THREE,
-    impostorCols,
-    impostorRows,
+    effImpostorCols,
+    effImpostorRows,
     srcMat?.color?.getHex?.() ?? 0x7fd4b8,
   );
-  const effectiveImpostorTex = impostorTexture ?? ownedImpostorTex;
+  const effectiveImpostorTex = impostorTexture ?? embeddedImpostorTex ?? ownedImpostorTex;
   const charH = Math.max(0.5, baked.bounds?.size?.y || 1.8);
   const charW = Math.max(0.4, Math.max(baked.bounds?.size?.x || 1.0, baked.bounds?.size?.z || 1.0));
 
   const impostorBaseMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     map: effectiveImpostorTex,
-    alphaTest: 0.25,
+    alphaTest: 0.45,
     side: THREE.DoubleSide ?? 2,
-    roughness: 0.85,
+    roughness: 0.9,
     metalness: 0.0,
   });
   const impostorLodMat = patchImpostorMaterial(impostorBaseMat, {
-    impostorCols,
-    impostorRows,
+    impostorCols: effImpostorCols,
+    impostorRows: effImpostorRows,
+    impostorFlipRow,
     vatHeight: baked.height,
     scaleUniform,
     baseYUniform,
@@ -1672,8 +1691,8 @@ export function createBoneVatCrowd3D(THREE, {
         sizeAttenuation: true,
         transparent: false,
       }), {
-        impostorCols,
-        impostorRows,
+        impostorCols: effImpostorCols,
+        impostorRows: effImpostorRows,
         vatHeight: baked.height,
         charHeight: charH,
         scaleUniform,
@@ -1688,8 +1707,9 @@ export function createBoneVatCrowd3D(THREE, {
         ? new THREE.MeshBasicMaterial({ color: 0xffffff, map: effectiveImpostorTex, side: THREE.DoubleSide ?? 2 })
         : new THREE.MeshStandardMaterial({ color: 0xffffff, map: effectiveImpostorTex, side: THREE.DoubleSide ?? 2, roughness: 1.0, metalness: 0.0 }),
       {
-        impostorCols,
-        impostorRows,
+        impostorCols: effImpostorCols,
+        impostorRows: effImpostorRows,
+        impostorFlipRow,
         vatHeight: baked.height,
         scaleUniform,
         baseYUniform,
