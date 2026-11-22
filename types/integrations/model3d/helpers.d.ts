@@ -109,6 +109,34 @@ export function applyCharacterLodMaterialPolicy(root: Model3DObject, THREE: Mode
     wireframe?: boolean;
 } | undefined): void;
 /**
+ * Orients a ground-anchored LOD 3 billboard toward `cameraWorldPos` using partial pitch tilt
+ * (`YXZ` order) so elevated/top-down cameras don't squash the sprite while feet stay pinned to ground.
+ * @param {Model3DObject & { rotation?: { order: string, set: (x: number, y: number, z: number) => void }, getWorldPosition?: (out: any) => any, parent?: any }} mesh
+ * @param {{ x: number, y: number, z: number }} cameraWorldPos
+ * @param {{ x: number, y: number, z: number }} [scratchWorld]
+ * @param {{ x: number, y: number, z: number }} [scratchDir]
+ */
+export function updateLod3BillboardOrientation(mesh: Model3DObject & {
+    rotation?: {
+        order: string;
+        set: (x: number, y: number, z: number) => void;
+    };
+    getWorldPosition?: (out: any) => any;
+    parent?: any;
+}, cameraWorldPos: {
+    x: number;
+    y: number;
+    z: number;
+}, scratchWorld?: {
+    x: number;
+    y: number;
+    z: number;
+} | undefined, scratchDir?: {
+    x: number;
+    y: number;
+    z: number;
+} | undefined): void;
+/**
  * Minimal structural view of a Three.js Object3D (or Mesh/Bone/SkinnedMesh) used by the model3d helpers.
  * Additional Three.js members are reachable through the index signature.
  * @typedef {object} Model3DObject

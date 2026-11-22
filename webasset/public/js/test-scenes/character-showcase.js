@@ -16,6 +16,37 @@ const ROW_Z = 7.2;
 const COLS_PER_ROW = 8;
 const MAX_SAFE_GLB_BYTES = 15 * 1024 * 1024;
 
+let _sharedShadowMat = null;
+let _sharedShadowGeo = null;
+function getSharedContactShadowResources() {
+  if (_sharedShadowMat && _sharedShadowGeo) {
+    return { geo: _sharedShadowGeo, mat: _sharedShadowMat };
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createRadialGradient(32, 32, 2, 32, 32, 31);
+  grad.addColorStop(0.0, 'rgba(0, 0, 0, 0.85)');
+  grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.45)');
+  grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  _sharedShadowGeo = new THREE.PlaneGeometry(1, 1);
+  _sharedShadowMat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    opacity: 0.62,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+  });
+  return { geo: _sharedShadowGeo, mat: _sharedShadowMat };
+}
+
 export async function buildCharacterShowcaseScene({
   group,
   gltfLoader,
@@ -153,6 +184,7 @@ export async function buildCharacterShowcaseScene({
           hitMeshes.push(n);
         });
 
+        const lod3Replacements = [];
         for (const n of lod3ToReplace) {
           const cols = Math.max(1, Number(n.userData?.impostorCols || 0) | 0);
           const rows = Math.max(1, Number(n.userData?.impostorRows || 0) | 0);
@@ -183,41 +215,54 @@ export async function buildCharacterShowcaseScene({
           }
           impMat.needsUpdate = true;
 
-          let impNode = n;
-          if (n.isSkinnedMesh && n.parent) {
-            impNode = new THREE.Mesh(n.geometry, impMat);
-            impNode.name = n.name;
-            impNode.position.copy(n.position);
-            impNode.quaternion.copy(n.quaternion);
-            impNode.scale.copy(n.scale);
-            impNode.userData = { ...n.userData };
-            const parent = n.parent;
-            parent.add(impNode);
-            parent.remove(n);
-          } else {
-            n.material = impMat;
-          }
+          const parent = n.parent || root;
+          const impNode = new THREE.Mesh(n.geometry, impMat);
+          impNode.name = n.name;
+          impNode.position.set(n.position.x, 0, n.position.z);
+          impNode.quaternion.copy(n.quaternion);
+          impNode.scale.copy(n.scale);
+          impNode.userData = { ...n.userData };
           impNode.castShadow = false;
           impNode.receiveShadow = false;
-          hitMeshes.push(impNode);
+          parent.remove(n);
 
-          if (n.userData?.impostorCols >= 1 && impMat.map) {
-            impostors.push({
-              mesh: impNode,
-              cols,
-              rows,
-              action: runAction,
-              duration: runDuration,
-            });
-          }
+          const { geo: shadowGeo, mat: shadowMat } = getSharedContactShadowResources();
+          const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+          shadowMesh.name = `${n.name}_shadow`;
+          shadowMesh.position.set(impNode.position.x, 0.008, impNode.position.z);
+          shadowMesh.rotation.set(-Math.PI / 2, 0, 0);
+          const diameter = Math.max(0.45, Math.min(1.0, (Number(n.userData?.impostorWidth) || 0.9) * 0.48));
+          shadowMesh.scale.set(diameter, diameter, 1);
+          shadowMesh.userData = { lodLevel: 3, isContactShadow: true };
+          shadowMesh.castShadow = false;
+          shadowMesh.receiveShadow = false;
+
+          lod3Replacements.push({ parent, impNode, shadowMesh, cols, rows, impMat, hasAtlas: Boolean(n.userData?.impostorCols >= 1 && impMat.map) });
         }
 
-        applyForcedLodToModel(root, lodMode);
+        // Fit identity scale using LOD0..LOD2 only so LOD3 top margin never shrinks character height
         const fitted = fitCharacterToIdentityScale(root, { ...ch, height: charSpec.height }, {
           groundY: 0.14,
           centerXZ: true,
         });
         fittedHeight = fitted.height;
+
+        for (const item of lod3Replacements) {
+          item.parent.add(item.impNode);
+          item.parent.add(item.shadowMesh);
+          hitMeshes.push(item.impNode);
+          if (item.hasAtlas) {
+            impostors.push({
+              mesh: item.impNode,
+              shadow: item.shadowMesh,
+              cols: item.cols,
+              rows: item.rows,
+              action: runAction,
+              duration: runDuration,
+            });
+          }
+        }
+        applyForcedLodToModel(root, lodMode);
         bay.add(root);
         modelRoots.push(root);
         loaded3dCount += 1;

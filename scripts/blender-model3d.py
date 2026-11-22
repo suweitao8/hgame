@@ -1824,12 +1824,12 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
         scn.render.image_settings.color_depth = "8"
 
         target_pt = Vector((cx, cy, z0_box + h_raw * 0.5))
+        raw_tiles = [[None for _ in range(eff_cols)] for _ in range(eff_rows)]
         with tempfile.TemporaryDirectory() as tmp_dir:
             cell_png = os.path.join(tmp_dir, "cell.png")
             for r, fr in enumerate(frames):
                 scn.frame_set(int(fr), subframe=fr - int(fr))
                 bpy.context.view_layer.update()
-                y_dst = (eff_rows - 1 - r) * cell_px
                 for c in range(eff_cols):
                     ang = (c / float(eff_cols)) * (2.0 * math.pi)
                     cam_dir = Vector((
@@ -1857,8 +1857,39 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
                     tile_px = np.empty(cell_px * cell_px * 4, dtype=np.float32)
                     tmp_img.pixels.foreach_get(tile_px)
                     bpy.data.images.remove(tmp_img, do_unlink=True)
-                    dilated = _dilate_tile_rgba(tile_px.reshape((cell_px, cell_px, 4)), radius=6)
-                    atlas[y_dst : y_dst + cell_px, c * cell_px : (c + 1) * cell_px, :] = dilated
+                    raw_tiles[r][c] = tile_px.reshape((cell_px, cell_px, 4))
+
+        # Ground feet flush to bottom of every tile and compute 1:1 billboard height
+        y_foot = cell_px - 1
+        y_head = 0
+        any_opaque = False
+        for r in range(eff_rows):
+            for c in range(eff_cols):
+                rows_hit = np.where(np.any(raw_tiles[r][c][..., 3] > 0.45, axis=1))[0]
+                if len(rows_hit) > 0:
+                    any_opaque = True
+                    y_foot = min(y_foot, int(rows_hit[0]))
+                    y_head = max(y_head, int(rows_hit[-1]))
+        if not any_opaque:
+            y_foot = 0
+            y_head = cell_px - 1
+        shift = max(0, y_foot - 1)
+        if y_head - shift > cell_px - 2:
+            shift = max(0, y_head - (cell_px - 2))
+
+        for r in range(eff_rows):
+            y_dst = (eff_rows - 1 - r) * cell_px
+            for c in range(eff_cols):
+                t = raw_tiles[r][c]
+                if shift > 0:
+                    shifted = np.zeros_like(t)
+                    shifted[: cell_px - shift, :, :] = t[shift:, :, :]
+                    t = shifted
+                dilated = _dilate_tile_rgba(t, radius=6)
+                atlas[y_dst : y_dst + cell_px, c * cell_px : (c + 1) * cell_px, :] = dilated
+
+        span_frac = max(0.35, float(max(1, y_head - y_foot + 1)) / float(cell_px))
+        h_quad = h_raw / span_frac
     finally:
         for o, hr in orig_hide_r.items():
             if o.name in bpy.data.objects:
@@ -1926,12 +1957,12 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     nt.links.new(n_gt.outputs["Value"], n_bsdf.inputs["Alpha"])
     nt.links.new(n_bsdf.outputs["BSDF"], n_out.inputs["Surface"])
 
-    # Clean 4-vertex / 2-triangle quad billboard with exact [0, 1] UV
+    # Clean 4-vertex / 2-triangle quad billboard anchored strictly at ground z=0.0
     quad_pts = [
-        (-half_w, 0.0, z0_box),
-        (half_w, 0.0, z0_box),
-        (half_w, 0.0, z0_box + h),
-        (-half_w, 0.0, z0_box + h),
+        (-half_w, 0.0, 0.0),
+        (half_w, 0.0, 0.0),
+        (half_w, 0.0, h_quad),
+        (-half_w, 0.0, h_quad),
     ]
     quad_uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
     mesh_d = bpy.data.meshes.new("mesh_lod3_data")
@@ -1954,7 +1985,7 @@ def _build_tight_lod3_impostor(src_obj, rig_obj, anim_range=None, cols=8, rows=8
     obj3["impostorRows"] = eff_rows
     obj3["impostorElevDeg"] = int(round(float(elev_deg)))
     obj3["impostorWidth"] = round(2.0 * half_w, 4)
-    obj3["impostorHeight"] = round(h, 4)
+    obj3["impostorHeight"] = round(h_quad, 4)
     obj3.hide_render = True
     return obj3
 

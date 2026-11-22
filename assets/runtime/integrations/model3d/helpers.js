@@ -582,3 +582,35 @@ export function applyCharacterLodMaterialPolicy(root, THREE, { wireframe = false
   });
 }
 
+/**
+ * Orients a ground-anchored LOD 3 billboard toward `cameraWorldPos` using partial pitch tilt
+ * (`YXZ` order) so elevated/top-down cameras don't squash the sprite while feet stay pinned to ground.
+ * @param {Model3DObject & { rotation?: { order: string, set: (x: number, y: number, z: number) => void }, getWorldPosition?: (out: any) => any, parent?: any }} mesh
+ * @param {{ x: number, y: number, z: number }} cameraWorldPos
+ * @param {{ x: number, y: number, z: number }} [scratchWorld]
+ * @param {{ x: number, y: number, z: number }} [scratchDir]
+ */
+export function updateLod3BillboardOrientation(mesh, cameraWorldPos, scratchWorld = { x: 0, y: 0, z: 0 }, scratchDir = { x: 0, y: 0, z: 0 }) {
+  if (!mesh?.getWorldPosition || !cameraWorldPos || !mesh.rotation) return;
+  mesh.getWorldPosition(scratchWorld);
+  const dx = cameraWorldPos.x - scratchWorld.x;
+  const dy = cameraWorldPos.y - scratchWorld.y;
+  const dz = cameraWorldPos.z - scratchWorld.z;
+  const horizSq = dx * dx + dz * dz;
+  if (horizSq < 1e-6) return;
+
+  scratchDir.x = dx;
+  scratchDir.y = 0;
+  scratchDir.z = dz;
+  if (mesh.parent?.getWorldQuaternion && typeof scratchDir.applyQuaternion === 'function') {
+    const q = mesh.parent.getWorldQuaternion(mesh.parent.__lod3InvQuat ?? (mesh.parent.__lod3InvQuat = mesh.parent.quaternion.clone()));
+    q.invert();
+    scratchDir.applyQuaternion(q);
+  }
+  const az = Math.atan2(scratchDir.x, scratchDir.z);
+  const camElev = Math.atan2(dy, Math.max(1e-4, Math.sqrt(horizSq)));
+  const pitchTilt = Math.min(0.72, Math.max(0, (camElev - 0.12) * 0.72));
+  mesh.rotation.order = 'YXZ';
+  mesh.rotation.set(-pitchTilt, az, 0);
+}
+

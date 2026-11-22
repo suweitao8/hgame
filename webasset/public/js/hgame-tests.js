@@ -522,7 +522,7 @@ function summarizeVisibleModelLod(sampleRoot, allRoots, lodVal) {
   let maxW = null;
   if (inspectRoot) {
     inspectRoot.traverse((n) => {
-      if (!n.isMesh || !n.visible) return;
+      if (!n.isMesh || !n.visible || n.userData?.isContactShadow) return;
       const g = n.geometry;
       sampleTris += g?.index ? Math.floor(g.index.count / 3) : Math.floor((g?.attributes?.position?.count || 0) / 3);
       const mat = Array.isArray(n.material) ? n.material[0] : n.material;
@@ -790,11 +790,17 @@ function updateActiveImpostors() {
   camera.getWorldPosition(_impCamLocal);
   for (const imp of activeImpostors) {
     const m = imp?.mesh;
+    if (imp?.shadow) {
+      imp.shadow.visible = Boolean(m?.visible);
+      imp.shadow.rotation.set(-Math.PI / 2, 0, 0);
+    }
     if (!m || !m.visible || !m.material?.map) continue;
     m.getWorldPosition(_impWorldPos);
     const dx = _impCamLocal.x - _impWorldPos.x;
+    const dy = _impCamLocal.y - _impWorldPos.y;
     const dz = _impCamLocal.z - _impWorldPos.z;
-    if (dx * dx + dz * dz < 1e-6) continue;
+    const horizSq = dx * dx + dz * dz;
+    if (horizSq < 1e-6) continue;
     _impDirVec.set(dx, 0, dz);
     if (m.parent) {
       m.parent.getWorldQuaternion(_impInvQuat);
@@ -802,7 +808,10 @@ function updateActiveImpostors() {
       _impDirVec.applyQuaternion(_impInvQuat);
     }
     const az = Math.atan2(_impDirVec.x, _impDirVec.z);
-    m.rotation.set(0, az, 0);
+    const camElev = Math.atan2(dy, Math.max(1e-4, Math.sqrt(horizSq)));
+    const pitchTilt = Math.min(0.72, Math.max(0, (camElev - 0.12) * 0.72));
+    m.rotation.order = 'YXZ';
+    m.rotation.set(-pitchTilt, az, 0);
     const cols = imp.cols || 8;
     const rows = imp.rows || 8;
     const rel = ((az / (Math.PI * 2)) % 1 + 1) % 1;
