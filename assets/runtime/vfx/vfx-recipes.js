@@ -153,8 +153,10 @@ export function createEffectPlayer({
   let disposed = false;
 
   const scratchPos = new Float32Array(3);
+  const scratchEmitCenter = new Float32Array(3);
   const scratchVel = new Float32Array(3);
   const scratchDir = new Float32Array(3);
+  const scratchTrailExt = { noiseScroll: 0, noiseDamp: false };
   const scratchRgb = [1, 1, 1];
   const scratchTintA = [1, 1, 1];
   const scratchTintB = [1, 1, 1];
@@ -231,7 +233,7 @@ export function createEffectPlayer({
       x0: 0, y0: 0, z0: 0,
       vx: 0, vy: 0, vz: 0,
       gravity: 0, drag: 0,
-      noiseStrength: 0, noiseYScale: 1, noiseFreq: 0.5, phase: 0,
+      noiseStrength: 0, noiseYScale: 1, noiseFreq: 0.5, noiseScroll: 0, noiseDamp: false, phase: 0,
       orbitalX: 0, orbitalY: 0, orbitalZ: 0, centerOffX: 0, centerOffY: 0, centerOffZ: 0,
       sizeCurve: null, sizeAffectsWidth: true,
       lifeColorCurve: null,
@@ -526,6 +528,7 @@ export function createEffectPlayer({
     orbitalX = 0, orbitalZ = 0, centerOffY = 0,
     custom1 = null,
     particleColorCurve = null,
+    noiseScroll = 0, noiseDamp = false,
   ) {
     if (!trails || typeof trails.allocTrail !== 'function') return;
     let slot = null;
@@ -628,6 +631,8 @@ export function createEffectPlayer({
     slot.noiseStrength = noiseStrength;
     slot.noiseYScale = noiseYScale;
     slot.noiseFreq = noiseFreq;
+    slot.noiseScroll = noiseScroll;
+    slot.noiseDamp = noiseDamp;
     slot.phase = phase;
     slot.orbitalX = orbitalX;
     slot.orbitalY = orbitalY;
@@ -651,13 +656,15 @@ export function createEffectPlayer({
       const tStart = Math.max(0, initialAge - trailLifetime);
       const maxNodes = typeof trails.getStats === 'function' ? (trails.getStats().trailNodes ?? 8) : 8;
       const samples = Math.max(6, maxNodes - 2);
+      scratchTrailExt.noiseScroll = noiseScroll;
+      scratchTrailExt.noiseDamp = noiseDamp;
       for (let s = 0; s <= samples; s++) {
         const a = tStart + ((initialAge - tStart) * s) / samples;
         evaluateAtlasParticlePosition(
           x0, y0, z0, vx, vy, vz, gravity, drag,
           noiseStrength, noiseFreq, phase, a, is2D, scratchPos,
           orbitalY, centerOffX, centerOffZ, noiseYScale,
-          null, orbitalX, orbitalZ, centerOffY,
+          scratchTrailExt, orbitalX, orbitalZ, centerOffY,
         );
         trails.pushTrailPoint(tid, scratchPos[0], scratchPos[1], scratchPos[2], nowT - (initialAge - a));
       }
@@ -972,15 +979,19 @@ export function createEffectPlayer({
     }
 
     const off = layer.offset;
-    if (Array.isArray(off)) {
-      lx += (off[0] ?? 0) * scale;
-      ly += (off[1] ?? 0) * scale;
-      lz += (off[2] ?? 0) * scale;
-    }
+    const offX = Array.isArray(off) ? (off[0] ?? 0) * scale : 0;
+    const offY = Array.isArray(off) ? (off[1] ?? 0) * scale : 0;
+    const offZ = Array.isArray(off) ? (off[2] ?? 0) * scale : 0;
+    lx += offX;
+    ly += offY;
+    lz += offZ;
 
     const cYaw = Math.cos(slot.yaw);
     const sYaw = Math.sin(slot.yaw);
     if (is2D) {
+      scratchEmitCenter[0] = slot.x + offX * cYaw - offY * sYaw;
+      scratchEmitCenter[1] = slot.y + offX * sYaw + offY * cYaw;
+      scratchEmitCenter[2] = slot.z;
       scratchPos[0] = slot.x + lx * cYaw - ly * sYaw;
       scratchPos[1] = slot.y + lx * sYaw + ly * cYaw;
       scratchPos[2] = slot.z;
@@ -988,6 +999,9 @@ export function createEffectPlayer({
       scratchDir[1] = dx * sYaw + dy * cYaw;
       scratchDir[2] = 0;
     } else {
+      scratchEmitCenter[0] = slot.x + offX * cYaw - offZ * sYaw;
+      scratchEmitCenter[1] = slot.y + offY;
+      scratchEmitCenter[2] = slot.z + offX * sYaw + offZ * cYaw;
       scratchPos[0] = slot.x + lx * cYaw - lz * sYaw;
       scratchPos[1] = slot.y + ly;
       scratchPos[2] = slot.z + lx * sYaw + lz * cYaw;
@@ -1013,9 +1027,9 @@ export function createEffectPlayer({
       }
       const radVel = vel.radial !== undefined ? readRange(vel.radial, 0, 0, prng) : 0;
       if (radVel !== 0) {
-        const ox = scratchPos[0] - slot.x;
-        const oy = scratchPos[1] - slot.y;
-        const oz = scratchPos[2] - slot.z;
+        const ox = scratchPos[0] - scratchEmitCenter[0];
+        const oy = scratchPos[1] - scratchEmitCenter[1];
+        const oz = scratchPos[2] - scratchEmitCenter[2];
         const len = Math.hypot(ox, oy, oz);
         // Guard against Float32-vs-Float64 offset residuals near zero by falling back to shape normal.
         const rx = len > 0.0005 ? (ox / len) : scratchDir[0];
@@ -1116,9 +1130,24 @@ export function createEffectPlayer({
     const orbitalY = readRange(rawOrbY, 0, 0, prng) * simSpd;
     const orbitalZ = readRange(rawOrbZ, 0, 0, prng) * simSpd;
     const orbOff = layer.velocity?.orbitalOffset;
-    const orbPivotX = orbOff ? (scratchPos[0] + readRange(orbOff[0], 0, 0, prng) * scale) : slot.x;
-    const orbPivotY = orbOff ? (scratchPos[1] + readRange(orbOff[1], 0, 0, prng) * scale) : slot.y;
-    const orbPivotZ = orbOff ? (scratchPos[2] + readRange(orbOff[2], 0, 0, prng) * scale) : slot.z;
+    let orbPivotX = scratchEmitCenter[0];
+    let orbPivotY = scratchEmitCenter[1];
+    let orbPivotZ = scratchEmitCenter[2];
+    if (orbOff) {
+      const oox = readRange(orbOff[0], 0, 0, prng) * scale;
+      const ooy = readRange(orbOff[1], 0, 0, prng) * scale;
+      const ooz = readRange(orbOff[2], 0, 0, prng) * scale;
+      const cYaw = Math.cos(slot.yaw);
+      const sYaw = Math.sin(slot.yaw);
+      if (is2D) {
+        orbPivotX += oox * cYaw - ooy * sYaw;
+        orbPivotY += oox * sYaw + ooy * cYaw;
+      } else {
+        orbPivotX += oox * cYaw - ooz * sYaw;
+        orbPivotY += ooy;
+        orbPivotZ += oox * sYaw + ooz * cYaw;
+      }
+    }
     const centerOffX = scratchPos[0] - orbPivotX;
     const centerOffY = scratchPos[1] - orbPivotY;
     const centerOffZ = scratchPos[2] - orbPivotZ;
@@ -1453,7 +1482,7 @@ export function createEffectPlayer({
           duration: dur,
           x0: scratchPos[0], y0: scratchPos[1], z0: scratchPos[2],
           vx: scratchVel[0], vy: scratchVel[1], vz: scratchVel[2],
-          gravity, drag, noiseStrength, noiseYScale, noiseFreq, phase,
+          gravity, drag, noiseStrength, noiseYScale, noiseFreq, noiseScroll, noiseDamp, phase,
           orbitalX, orbitalY, orbitalZ, centerOffX, centerOffY, centerOffZ, trackedSlot,
         });
         if (ls.ribbonPts.length > 16) ls.ribbonPts.shift();
@@ -1469,6 +1498,7 @@ export function createEffectPlayer({
           orbitalX, orbitalZ, centerOffY,
           sampledCustom1,
           hasPartColCurve ? layer.colorCurve : null,
+          noiseScroll, noiseDamp,
         );
       }
     }
@@ -1988,6 +2018,8 @@ export function createEffectPlayer({
           const angSpd = Math.hypot(tf.orbitalX || 0, tf.orbitalY || 0, tf.orbitalZ || 0);
           const maxArcDt = angSpd > 0.5 ? (0.16 / angSpd) : stepDt;
           const effStepDt = Math.max(0.006, Math.min(stepDt, maxArcDt));
+          scratchTrailExt.noiseScroll = tf.noiseScroll;
+          scratchTrailExt.noiseDamp = tf.noiseDamp;
           tf.sampleAccum += dt;
           while (tf.sampleAccum >= effStepDt && sub < 12) {
             tf.sampleAccum -= effStepDt;
@@ -1999,7 +2031,7 @@ export function createEffectPlayer({
               tf.noiseStrength, tf.noiseFreq, tf.phase,
               sampleAge, is2D, scratchPos,
               tf.orbitalY, tf.centerOffX, tf.centerOffZ,
-              tf.noiseYScale, null, tf.orbitalX, tf.orbitalZ, tf.centerOffY,
+              tf.noiseYScale, scratchTrailExt, tf.orbitalX, tf.orbitalZ, tf.centerOffY,
             );
             trails.pushTrailPoint(tf.trailId, scratchPos[0], scratchPos[1], scratchPos[2], nowT - tf.sampleAccum);
             tf.pushedPoints += 1;
@@ -2013,7 +2045,7 @@ export function createEffectPlayer({
             tf.noiseStrength, tf.noiseFreq, tf.phase,
             tf.age, is2D, scratchPos,
             tf.orbitalY, tf.centerOffX, tf.centerOffZ,
-            tf.noiseYScale, null, tf.orbitalX, tf.orbitalZ, tf.centerOffY,
+            tf.noiseYScale, scratchTrailExt, tf.orbitalX, tf.orbitalZ, tf.centerOffY,
           );
           px = scratchPos[0];
           py = scratchPos[1];
@@ -2053,12 +2085,14 @@ export function createEffectPlayer({
                     const tp = trackedParticles[rp.trackedSlot];
                     trails.pushTrailPoint(ls.ribbonTrailId, tp.x, tp.y, tp.z);
                   } else {
+                    scratchTrailExt.noiseScroll = rp.noiseScroll ?? 0;
+                    scratchTrailExt.noiseDamp = Boolean(rp.noiseDamp);
                     evaluateAtlasParticlePosition(
                       rp.x0, rp.y0, rp.z0, rp.vx, rp.vy, rp.vz,
                       rp.gravity, rp.drag, rp.noiseStrength, rp.noiseFreq, rp.phase,
                       rp.age, is2D, scratchPos,
                       rp.orbitalY, rp.centerOffX, rp.centerOffZ, rp.noiseYScale,
-                      null, rp.orbitalX, rp.orbitalZ, rp.centerOffY,
+                      scratchTrailExt, rp.orbitalX, rp.orbitalZ, rp.centerOffY,
                     );
                     trails.pushTrailPoint(ls.ribbonTrailId, scratchPos[0], scratchPos[1], scratchPos[2]);
                   }
