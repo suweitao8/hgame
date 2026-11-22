@@ -218,7 +218,9 @@ export async function buildCharacterShowcaseScene({
           const parent = n.parent || root;
           const impNode = new THREE.Mesh(n.geometry, impMat);
           impNode.name = n.name;
-          impNode.position.set(n.position.x, 0, n.position.z);
+          const impHeight = Number(n.userData?.impostorHeight) || 1.7;
+          const groundSink = -Math.max(0.06, Math.min(0.16, impHeight * 0.068));
+          impNode.position.set(n.position.x, groundSink, n.position.z);
           impNode.quaternion.copy(n.quaternion);
           impNode.scale.copy(n.scale);
           impNode.userData = { ...n.userData };
