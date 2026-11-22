@@ -392,6 +392,9 @@ export function createFogOfWarThreeOverlay(fowWorld, {
   function sync(dt = 0.016) {
     elapsed += Math.max(0, dt);
     mat.uniforms.uTime.value = elapsed;
+    const b = fowWorld.bounds;
+    mat.uniforms.uFogBounds.value.set(b.minX, b.minY, 1 / Math.max(0.001, b.width), 1 / Math.max(0.001, b.height));
+    mesh.position.set(b.minX + b.width * 0.5, heightY, b.minY + b.height * 0.5);
     const live = fowWorld.liveVisibility;
     const exp = fowWorld.exploredMemory;
     const disp = fowWorld.displayVisibility;

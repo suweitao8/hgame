@@ -45,19 +45,23 @@ export function createFogOfWarWorld({ plane, bounds, resolutionX, resolutionY, f
     maxRevealersPerFrame?: number | undefined;
 }): {
     plane: string;
-    bounds: Readonly<{
+    bounds: {
         minX: number;
         minY: number;
         maxX: number;
         maxY: number;
         width: number;
         height: number;
-    }>;
+    };
     resX: number;
     resY: number;
     liveVisibility: Float32Array;
     exploredMemory: Float32Array;
     displayVisibility: Float32Array;
+    setBounds: (next: any) => boolean;
+    setWindowCenter: (cx: any, cyOrZ: any, spanX?: number, spanY?: number, { texelSnap }?: {
+        texelSnap?: boolean | undefined;
+    }) => boolean;
     addObstacle: (raw: any) => any;
     removeObstacle: (id: any) => boolean;
     setObstacles: (list: any) => void;

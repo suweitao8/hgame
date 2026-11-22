@@ -293,12 +293,13 @@ export function createFogOfWarWorld({
   maxRevealersPerFrame = 0,
 } = {}) {
   const isXZ = plane === 'xz';
-  const bMinX = bounds.minX ?? -50;
-  const bMinY = bounds.minY ?? bounds.minZ ?? -50;
-  const bMaxX = bounds.maxX ?? 50;
-  const bMaxY = bounds.maxY ?? bounds.maxZ ?? 50;
-  const bWidth = Math.max(0.001, bMaxX - bMinX);
-  const bHeight = Math.max(0.001, bMaxY - bMinY);
+  let bMinX = bounds.minX ?? -50;
+  let bMinY = bounds.minY ?? bounds.minZ ?? -50;
+  let bMaxX = bounds.maxX ?? 50;
+  let bMaxY = bounds.maxY ?? bounds.maxZ ?? 50;
+  let bWidth = Math.max(0.001, bMaxX - bMinX);
+  let bHeight = Math.max(0.001, bMaxY - bMinY);
+  const liveBounds = { minX: bMinX, minY: bMinY, maxX: bMaxX, maxY: bMaxY, width: bWidth, height: bHeight };
 
   const resX = Math.max(8, Math.min(1024, resolutionX | 0));
   const resY = Math.max(8, Math.min(1024, resolutionY | 0));
@@ -309,10 +310,57 @@ export function createFogOfWarWorld({
   const displayVisibility = new Float32Array(cellCount);
   const blurScratch = new Float32Array(cellCount);
 
+  let prevDispX0 = 0;
+  let prevDispY0 = 0;
+  let prevDispX1 = resX - 1;
+  let prevDispY1 = resY - 1;
+  let hasPrevDisp = initialExploration > 0;
+
   if (initialExploration > 0) {
     const initV = clamp01(initialExploration);
     exploredMemory.fill(initV);
     displayVisibility.fill(initV * exploredAlpha);
+  }
+
+  function setBounds(next) {
+    if (!next || typeof next !== 'object') return false;
+    const nMinX = Number.isFinite(next.minX) ? next.minX : bMinX;
+    const nMinY = Number.isFinite(next.minY ?? next.minZ) ? (next.minY ?? next.minZ) : bMinY;
+    const nMaxX = Number.isFinite(next.maxX) ? next.maxX : bMaxX;
+    const nMaxY = Number.isFinite(next.maxY ?? next.maxZ) ? (next.maxY ?? next.maxZ) : bMaxY;
+    if (nMaxX <= nMinX || nMaxY <= nMinY) return false;
+    if (nMinX === bMinX && nMinY === bMinY && nMaxX === bMaxX && nMaxY === bMaxY) return false;
+    bMinX = nMinX;
+    bMinY = nMinY;
+    bMaxX = nMaxX;
+    bMaxY = nMaxY;
+    bWidth = Math.max(0.001, bMaxX - bMinX);
+    bHeight = Math.max(0.001, bMaxY - bMinY);
+    liveBounds.minX = bMinX;
+    liveBounds.minY = bMinY;
+    liveBounds.maxX = bMaxX;
+    liveBounds.maxY = bMaxY;
+    liveBounds.width = bWidth;
+    liveBounds.height = bHeight;
+    if (!useMemory) {
+      displayVisibility.fill(0);
+      hasPrevDisp = false;
+    }
+    return true;
+  }
+
+  function setWindowCenter(cx, cyOrZ, spanX = bWidth, spanY = bHeight, { texelSnap = true } = {}) {
+    const w = Math.max(0.001, Number.isFinite(spanX) ? spanX : bWidth);
+    const h = Math.max(0.001, Number.isFinite(spanY) ? spanY : bHeight);
+    let minX = cx - w * 0.5;
+    let minY = cyOrZ - h * 0.5;
+    if (texelSnap) {
+      const cellW = w / resX;
+      const cellH = h / resY;
+      minX = Math.floor(minX / cellW) * cellW;
+      minY = Math.floor(minY / cellH) * cellH;
+    }
+    return setBounds({ minX, minY, maxX: minX + w, maxY: minY + h });
   }
 
   let nextRevealerId = 1;
@@ -818,7 +866,9 @@ export function createFogOfWarWorld({
   }
 
   function sampleVisualVisibility(x, yOrZ, zOrHeight = 0) {
-    return Math.min(sampleVisibility(x, yOrZ, zOrHeight), sampleGridArray(liveVisibility, x, yOrZ));
+    const los = sampleVisibility(x, yOrZ, zOrHeight);
+    if (x < bMinX || x > bMaxX || yOrZ < bMinY || yOrZ > bMaxY) return los;
+    return Math.min(los, sampleGridArray(liveVisibility, x, yOrZ));
   }
 
   function sampleExploration(x, yOrZ) {
@@ -887,22 +937,24 @@ export function createFogOfWarWorld({
     return { id: h.id, visible: h.visible, visibility: h.visibility, revealedOnce: h.revealedOnce };
   }
 
-  function applySeparableBlur(buf) {
-    for (let y = 0; y < resY; y++) {
+  function applySeparableBlur(buf, rx0 = 0, ry0 = 0, rx1 = resX - 1, ry1 = resY - 1) {
+    const yStart1 = Math.max(0, ry0 - 1);
+    const yEnd1 = Math.min(resY - 1, ry1 + 1);
+    for (let y = yStart1; y <= yEnd1; y++) {
       const rowOff = y * resX;
-      for (let x = 0; x < resX; x++) {
+      for (let x = rx0; x <= rx1; x++) {
         const xl = x > 0 ? x - 1 : x;
         const xr = x + 1 < resX ? x + 1 : x;
         blurScratch[rowOff + x] = (buf[rowOff + xl] + buf[rowOff + x] * 2 + buf[rowOff + xr]) * 0.25;
       }
     }
-    for (let y = 0; y < resY; y++) {
+    for (let y = ry0; y <= ry1; y++) {
       const yt = y > 0 ? y - 1 : y;
       const yb = y + 1 < resY ? y + 1 : y;
       const rowOff = y * resX;
       const topOff = yt * resX;
       const botOff = yb * resX;
-      for (let x = 0; x < resX; x++) {
+      for (let x = rx0; x <= rx1; x++) {
         buf[rowOff + x] = (blurScratch[topOff + x] + blurScratch[rowOff + x] * 2 + blurScratch[botOff + x]) * 0.25;
       }
     }
@@ -935,18 +987,28 @@ export function createFogOfWarWorld({
       }
     }
 
-    // 2. Rasterize live visibility per-revealer AABB into grid
+    // 2. Rasterize live visibility per-revealer AABB into grid (skip off-window revealers)
     liveVisibility.fill(0);
     const cellW = bWidth / resX;
     const cellH = bHeight / resY;
+    let dirtyX0 = resX;
+    let dirtyY0 = resY;
+    let dirtyX1 = -1;
+    let dirtyY1 = -1;
     for (let r = 0; r < revCount; r++) {
       const rev = revealers[r];
       if (!rev.active || rev.opacity <= 0) continue;
       const totalR = rev.viewRadius + rev.softenDistance;
+      if (rev.x + totalR < bMinX || rev.x - totalR > bMaxX ||
+          rev.y + totalR < bMinY || rev.y - totalR > bMaxY) continue;
       const gx0 = Math.max(0, Math.floor((rev.x - totalR - bMinX) / cellW));
       const gy0 = Math.max(0, Math.floor((rev.y - totalR - bMinY) / cellH));
       const gx1 = Math.min(resX - 1, Math.ceil((rev.x + totalR - bMinX) / cellW));
       const gy1 = Math.min(resY - 1, Math.ceil((rev.y + totalR - bMinY) / cellH));
+      if (gx0 < dirtyX0) dirtyX0 = gx0;
+      if (gy0 < dirtyY0) dirtyY0 = gy0;
+      if (gx1 > dirtyX1) dirtyX1 = gx1;
+      if (gy1 > dirtyY1) dirtyY1 = gy1;
 
       for (let gy = gy0; gy <= gy1; gy++) {
         const wy = bMinY + (gy + 0.5) * cellH;
@@ -964,44 +1026,88 @@ export function createFogOfWarWorld({
       }
     }
 
-    // 3. Optional grid blur
-    for (let p = 0; p < blurPasses; p++) {
-      applySeparableBlur(liveVisibility);
+    // 3. Optional grid blur (dirty AABB only)
+    const hasDirty = dirtyX1 >= dirtyX0 && dirtyY1 >= dirtyY0;
+    if (hasDirty && blurPasses > 0) {
+      for (let p = 0; p < blurPasses; p++) {
+        dirtyX0 = Math.max(0, dirtyX0 - 1);
+        dirtyY0 = Math.max(0, dirtyY0 - 1);
+        dirtyX1 = Math.min(resX - 1, dirtyX1 + 1);
+        dirtyY1 = Math.min(resY - 1, dirtyY1 + 1);
+        applySeparableBlur(liveVisibility, dirtyX0, dirtyY0, dirtyX1, dirtyY1);
+      }
     }
 
     // 4. Update memory, regrow, world-bounds fade, and display smoothing
     const hasBoundsSoften = worldBoundsSoften > 1e-4;
-    for (let gy = 0; gy < resY; gy++) {
-      const wy = bMinY + (gy + 0.5) * cellH;
-      const rowOff = gy * resX;
-      for (let gx = 0; gx < resX; gx++) {
-        const idx = rowOff + gx;
-        let live = liveVisibility[idx];
-
-        if (hasBoundsSoften) {
-          const wx = bMinX + (gx + 0.5) * cellW;
-          const edgeDist = Math.min(wx - bMinX, bMaxX - wx, wy - bMinY, bMaxY - wy);
-          if (edgeDist < worldBoundsSoften) {
-            live *= clamp01(edgeDist / worldBoundsSoften);
-            liveVisibility[idx] = live;
+    if (!useMemory && !hasBoundsSoften) {
+      const ux0 = hasDirty && hasPrevDisp ? Math.min(dirtyX0, prevDispX0) : (hasDirty ? dirtyX0 : prevDispX0);
+      const uy0 = hasDirty && hasPrevDisp ? Math.min(dirtyY0, prevDispY0) : (hasDirty ? dirtyY0 : prevDispY0);
+      const ux1 = hasDirty && hasPrevDisp ? Math.max(dirtyX1, prevDispX1) : (hasDirty ? dirtyX1 : prevDispX1);
+      const uy1 = hasDirty && hasPrevDisp ? Math.max(dirtyY1, prevDispY1) : (hasDirty ? dirtyY1 : prevDispY1);
+      if (hasDirty || hasPrevDisp) {
+        let nextX0 = resX, nextY0 = resY, nextX1 = -1, nextY1 = -1;
+        for (let gy = uy0; gy <= uy1; gy++) {
+          const rowOff = gy * resX;
+          for (let gx = ux0; gx <= ux1; gx++) {
+            const idx = rowOff + gx;
+            const live = liveVisibility[idx];
+            const cur = displayVisibility[idx];
+            const speed = live >= cur ? fadeInSpeed : fadeOutSpeed;
+            let nextVal = (speed <= 0 || stepDt <= 0)
+              ? live
+              : cur + (live - cur) * Math.min(1, speed * stepDt);
+            if (nextVal < 1e-4 && live === 0) nextVal = 0;
+            displayVisibility[idx] = nextVal;
+            if (nextVal > 0) {
+              if (gx < nextX0) nextX0 = gx;
+              if (gy < nextY0) nextY0 = gy;
+              if (gx > nextX1) nextX1 = gx;
+              if (gy > nextY1) nextY1 = gy;
+            }
           }
         }
-
-        if (useMemory) {
-          if (live > exploredMemory[idx]) {
-            exploredMemory[idx] = live;
-          } else if (useRegrow && exploredMemory[idx] > regrowFloor) {
-            exploredMemory[idx] = Math.max(regrowFloor, exploredMemory[idx] - regrowSpeed * stepDt);
-          }
+        hasPrevDisp = nextX1 >= nextX0 && nextY1 >= nextY0;
+        if (hasPrevDisp) {
+          prevDispX0 = nextX0;
+          prevDispY0 = nextY0;
+          prevDispX1 = nextX1;
+          prevDispY1 = nextY1;
         }
+      }
+    } else {
+      for (let gy = 0; gy < resY; gy++) {
+        const wy = bMinY + (gy + 0.5) * cellH;
+        const rowOff = gy * resX;
+        for (let gx = 0; gx < resX; gx++) {
+          const idx = rowOff + gx;
+          let live = liveVisibility[idx];
 
-        const target = useMemory ? Math.max(live, exploredMemory[idx] * exploredAlpha) : live;
-        const cur = displayVisibility[idx];
-        const speed = target >= cur ? fadeInSpeed : fadeOutSpeed;
-        if (speed <= 0 || stepDt <= 0) {
-          displayVisibility[idx] = target;
-        } else {
-          displayVisibility[idx] = cur + (target - cur) * Math.min(1, speed * stepDt);
+          if (hasBoundsSoften) {
+            const wx = bMinX + (gx + 0.5) * cellW;
+            const edgeDist = Math.min(wx - bMinX, bMaxX - wx, wy - bMinY, bMaxY - wy);
+            if (edgeDist < worldBoundsSoften) {
+              live *= clamp01(edgeDist / worldBoundsSoften);
+              liveVisibility[idx] = live;
+            }
+          }
+
+          if (useMemory) {
+            if (live > exploredMemory[idx]) {
+              exploredMemory[idx] = live;
+            } else if (useRegrow && exploredMemory[idx] > regrowFloor) {
+              exploredMemory[idx] = Math.max(regrowFloor, exploredMemory[idx] - regrowSpeed * stepDt);
+            }
+          }
+
+          const target = useMemory ? Math.max(live, exploredMemory[idx] * exploredAlpha) : live;
+          const cur = displayVisibility[idx];
+          const speed = target >= cur ? fadeInSpeed : fadeOutSpeed;
+          if (speed <= 0 || stepDt <= 0) {
+            displayVisibility[idx] = target;
+          } else {
+            displayVisibility[idx] = cur + (target - cur) * Math.min(1, speed * stepDt);
+          }
         }
       }
     }
@@ -1103,12 +1209,14 @@ export function createFogOfWarWorld({
 
   return {
     plane,
-    bounds: Object.freeze({ minX: bMinX, minY: bMinY, maxX: bMaxX, maxY: bMaxY, width: bWidth, height: bHeight }),
+    bounds: liveBounds,
     resX,
     resY,
     liveVisibility,
     exploredMemory,
     displayVisibility,
+    setBounds,
+    setWindowCenter,
     addObstacle,
     removeObstacle,
     setObstacles,
