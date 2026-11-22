@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Extend `.agents/skills/hgame-ui-ux/SKILL.md` with Section 5 (`Web Tools, Asset Workbenches & Admin Panels`) and clean up `webasset/public/js/hgame-music.js` so all music entries are unified without artificial `短效` / `BGM` badges, kind splits, or redundant `"时长 "` label prefixes.
+
 - Simplify standalone WebAsset `音乐` workspace UI (`webasset/public/index.html`, `webasset/public/css/site.css`, `webasset/public/js/hgame-music.js`) to follow Zero-Prose minimalism: single-column track list with zero inline buttons, consolidated filter dropdown, live waveform preview, 4 concise stat chips, and a clean 3-button transport bar (`播放/暂停/继续`, `停止`, `测结尾`) with seek slider.
 
 - Refine AI Music pipeline category coverage & post-loudnorm silence QA (`scripts/lib/music-pipeline.mjs`, `scripts/process-audio.mjs`, `tests/music-pipeline-and-bgm.test.mjs`): expanded `inferMusicCategory` (`romance`, `emotion`, `suspense`, `puzzle`, `explore`, `urgent`), added `shouldApplyVoiceSpaceEq` (`2.8 kHz / -2.5 dB` midrange headroom for `emo_*` dialogue/romance BGM), and added post-`loudnorm` `-43 dB` RMS trailing-silence trim before final `0.05s` anti-click fadeout so attenuated `-19 LUFS` tracks cleanly pass `-45 dB` EOF silence gates.

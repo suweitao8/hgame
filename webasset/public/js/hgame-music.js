@@ -86,15 +86,10 @@ function populateFilterOptions() {
   };
 
   addOpt('all', `全部 (${musicEntries.length})`);
-  const bgmCount = musicEntries.filter((t) => isBgmTrack(t)).length;
-  const stingerCount = musicEntries.length - bgmCount;
-  if (bgmCount > 0) addOpt('kind:bgm', `BGM (${bgmCount})`);
-  if (stingerCount > 0) addOpt('kind:stinger', `短效 (${stingerCount})`);
 
   const cats = new Map();
   for (const t of musicEntries) {
-    if (!isBgmTrack(t)) continue;
-    const cat = t.category || 'bgm';
+    const cat = t.category || 'music';
     cats.set(cat, (cats.get(cat) || 0) + 1);
   }
   for (const [cat, cnt] of [...cats.entries()].sort((a, b) => b[1] - a[1])) {
@@ -115,9 +110,7 @@ function getFilteredTracks() {
   const query = (searchInput?.value || '').trim().toLowerCase();
   const fval = filterSelect?.value || 'all';
   return musicEntries.filter((track) => {
-    if (fval === 'kind:bgm' && !isBgmTrack(track)) return false;
-    if (fval === 'kind:stinger' && isBgmTrack(track)) return false;
-    if (fval.startsWith('cat:') && (track.category || 'bgm') !== fval.slice(4)) return false;
+    if (fval.startsWith('cat:') && (track.category || 'music') !== fval.slice(4)) return false;
     if (fval.startsWith('scope:') && (track.scope || 'universal') !== fval.slice(6)) return false;
     if (!query) return true;
     return String(track.cueName || '').toLowerCase().includes(query)
@@ -147,7 +140,6 @@ function renderList() {
   }
 
   for (const track of list) {
-    const isBgm = isBgmTrack(track);
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'hgame-list-item hgame-music-row';
@@ -169,19 +161,13 @@ function renderList() {
     const parts = [formatClock(durNum)];
     if (track.bpm) parts.push(`${track.bpm} BPM`);
     else if (Number.isFinite(lufsNum)) parts.push(`${lufsNum.toFixed(1)} LUFS`);
-    if (track.stingerOver15sWarning) parts.push('>15s');
 
     const subEl = document.createElement('span');
     subEl.className = 'hgame-music-row-sub';
     subEl.textContent = parts.join(' · ');
 
     main.append(nameEl, subEl);
-
-    const tag = document.createElement('span');
-    tag.className = 'hgame-music-row-tag';
-    tag.textContent = isBgm ? 'BGM' : '短效';
-
-    btn.append(main, tag);
+    btn.append(main);
     btn.addEventListener('click', () => {
       activeTrackId = track.cueName;
       renderList();
@@ -385,15 +371,14 @@ async function selectCurrentTrack() {
   if (emptyEl) emptyEl.hidden = true;
   if (waveCanvas) waveCanvas.hidden = false;
   const token = ++loadToken;
-  const isBgm = isBgmTrack(track);
-  if (titleEl) titleEl.textContent = track.cueName;
-  if (seamBtn) seamBtn.disabled = !isBgm;
+  if (titleEl) titleEl.textContent = shortTrackTitle(track);
+  if (seamBtn) seamBtn.disabled = false;
   if (downloadEl) {
     if (track.url) {
       downloadEl.hidden = false;
       downloadEl.href = track.url;
       downloadEl.download = `${track.cueName}.mp3`;
-      downloadEl.textContent = '下载 MP3';
+      downloadEl.textContent = '下载';
     } else {
       downloadEl.hidden = true;
     }
@@ -402,7 +387,7 @@ async function selectCurrentTrack() {
   const dur = Number(track.durationSec ?? track.duration ?? 0);
   const lufs = Number(track.measuredLufs ?? track.measuredDb);
   const mb = (Number(track.sizeKb) || (track.encodedBytes ? track.encodedBytes / 1024 : 0)) / 1024;
-  const chips = [`时长 ${dur.toFixed(1)}s`];
+  const chips = [`${dur.toFixed(1)}s`];
   if (Number.isFinite(lufs)) chips.push(`${lufs.toFixed(1)} LUFS`);
   if (track.bpm) chips.push(`${track.bpm} BPM`);
   if (mb > 0) chips.push(`${mb.toFixed(2)} MB`);
@@ -504,11 +489,15 @@ async function playOrToggleSelected() {
 }
 
 async function playBgmSeamTest(track) {
-  if (!track || !isBgmTrack(track)) return;
+  if (!track) return;
   const trimStart = Number(track.trimStartSec) || 0.026;
   const loopEnd = Number(track.trimEndSec) || Number(track.durationSec) || Number(track.duration) || 48;
   const startAtSec = Math.max(trimStart, loopEnd - 4.0);
-  await playBgmTrack(track, { forceRestart: true, startAtSec });
+  if (isBgmTrack(track)) {
+    await playBgmTrack(track, { forceRestart: true, startAtSec });
+  } else {
+    await playStingerTrack(track, Math.max(0, loopEnd - 4.0));
+  }
 }
 
 async function seekToSeconds(targetSec) {

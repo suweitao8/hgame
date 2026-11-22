@@ -1,11 +1,11 @@
 ---
 name: hgame-ui-ux
-description: Minimalist Anti-Bloat UI/UX standard & static/runtime verifier for HGame. Enforces Zero-Prose (icon + number, 2-4 hanzi labels), Hard Button Budget (title <=1, in-game <=1, result <=2), No Modals (<=10% edge HUD, zero tutorials/confirm dialogs), Subtract-First Check, plus conditional whole-card/event-overlay rules.
+description: Minimalist Anti-Bloat UI/UX standard & static/runtime verifier for HGame games AND WebAsset/tool web UIs. Enforces Zero-Prose (icon + number, 2-4 hanzi labels), Hard Button Budget, Zero-Button List Rows, Unified Concepts (no artificial tag splits or redundant labels), No Modals, and Subtract-First Check.
 ---
 
 # HGame Minimalist Anti-Bloat UI/UX (`hgame-ui-ux`)
 
-Games are not websites, tutorials, or admin dashboards. Whenever creating a game or building/editing a HUD, title screen, pause/result overlay, shop, upgrade choice, or event modal, follow the 4 Anti-Bloat Hard Rules below and verify with `check-ui.mjs` + `snapshot.mjs --check-ui`.
+Whenever creating or editing a game HUD/menu OR a WebAsset/developer web tool UI, apply extreme **Subtract-First** minimalism: zero prose, zero redundant badges, zero inline buttons in lists, and minimum necessary controls. Verify games with `check-ui.mjs` + `snapshot.mjs --check-ui`.
 
 ## 1. Run Verification
 
@@ -88,3 +88,22 @@ npm run snapshot -- <game-dir> --check-ui
   visibility: hidden;
 }
 ```
+
+## 5. Web Tools, Asset Workbenches & Admin Panels（WebAsset / 工具网页极简铁律）
+
+Whenever building or editing internal web apps, asset browsers (e.g. WebAsset), or inspector panels, enforce the exact same anti-bloat discipline as games:
+
+1. **统一概念，禁拆无意义分类或标签（Unified Concepts）**
+   - 同一心智资产必须统一命名与展示（如「音乐」页签下全部音频就是音乐，**严禁**因底层加载或时长差异强行露出一堆「短效 / BGM / 流式 / Buffer」标签、角标或拆类过滤）。
+   - 严禁给下拉框、卡片或芯片添加自造工程术语（如 `"加载策略"`、`"原时长→去空白后"`、`"(去静音)"`、`"母档直读"` 等）；只有一个选项的 `<select>` 一律不得渲染。
+2. **列表绝对零按钮（Zero-Button List Rows）**
+   - 左侧/网格选择列表只做**选物切换**：每行最多保留 **1 个短标题 + 1 行极简数值**（如 `02:58 · 128 BPM`），单行省略不溢出。
+   - **严禁**在列表项内塞入「播放 / 切歌 / 测结尾 / 删除 / 下载」等操作按钮、角标胶囊或长句说明。
+3. **过滤区单维度收口（<= 1 Search + <= 1 Filter）**
+   - 侧栏过滤区最多 **`1` 个搜索框 + `<= 1` 个单筛选下拉**；禁止二级 Tab 与下拉并存造成双重过滤，禁止两个窄下拉并排或堆叠。
+4. **舞台与控制栏极简合并（Clean Stage & Merged Transport）**
+   - 舞台顶部只留 **对象名称 + 最多 `1` 个主动作/下载链接**，严禁堆放快捷药丸条（Quick Pill Bar）、长句操作指南或常驻内部校准/调试按钮（内部工具一律收进 `?debug=1`）。
+   - 指标展示只写 **纯数值 + 单位**（如 `178.0s`、`-19.4 LUFS`、`128 BPM`、`2.04 MB`），禁止 `"属性名: 长句解释"` 前缀。
+   - 互斥操作合并为 **1 个自适应主按钮**（如 `播放` ↔ `暂停` ↔ `继续`，禁止同时摆播放和暂停两个按钮）；底栏常驻控件不超过 **3–4 项**，低频参数默认折叠收起。
+5. **先减后加自检（Web Subtract-First Audit）**
+   - 写完 HTML/JS 前逐一追问：删掉这个按钮、这个标签、这段提示字、这个下拉框，核心使用流能不能照常完成？能就全部删掉。
