@@ -193,11 +193,10 @@ const MATERIAL_PICKS = [
   { id: 'nature_granite_rock', category: '9_nature_terrain', source: 'fab', dir: 'Granite_Rock-67d78d30', surfaceType: 'concrete' },
   { id: 'nature_tree_bark', category: '9_nature_terrain', source: 'fab', dir: 'Tree_Bark-c61dd941', surfaceType: 'wood' },
 
-  // 10. Procedural CN Derived Slots (5)
+  // 10. Procedural CN Derived Slots (4)
   { id: 'cn_corrugated_blue', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'metal_corrugated_01', surfaceType: 'metal', scanSizeMeters: 2, uvScale: 0.5 },
   { id: 'cn_corrugated_red', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'metal_corrugated_01', surfaceType: 'metal', scanSizeMeters: 2, uvScale: 0.5 },
   { id: 'cn_epoxy_green', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'concrete_floor_dusty', surfaceType: 'concrete', scanSizeMeters: 2, uvScale: 0.5 },
-  { id: 'cn_hallway_wainscot', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'plaster_wall', surfaceType: 'concrete', scanSizeMeters: 2, uvScale: 0.5 },
   { id: 'cn_tactile_yellow', category: '10_cn_procedural', source: 'procedural', derivedFrom: 'square_paving_tiles', surfaceType: 'tile', scanSizeMeters: 1, uvScale: 1.0 },
 ];
 
@@ -212,9 +211,7 @@ const DECAL_PICKS = [
   { id: 'decal_wall_crack_01', category: 'crack', dir: 'Wall_Crack-47553167' },
   { id: 'decal_road_crack_01', category: 'crack', dir: 'Road_Crack-58ea4b71' },
 
-  // Leaks (7)
-  { id: 'decal_leak_tileable_01', category: 'leak', dir: 'Tileable_Leakage-505461ce', defaultRoughness: 0.30 },
-  { id: 'decal_leak_tileable_02', category: 'leak', dir: 'Tileable_Leakage-85ea60fc', defaultRoughness: 0.30 },
+  // Leaks (5)
   { id: 'decal_leak_industrial_01', category: 'leak', dir: 'Industrial_Decal_Leak_02-ff00c083', defaultRoughness: 0.30 },
   { id: 'decal_leak_industrial_02', category: 'leak', dir: 'Industrial_Decal_Leak_18-9dab0186', defaultRoughness: 0.30 },
   { id: 'decal_leak_01', category: 'leak', dir: 'Leakage-67af749b', defaultRoughness: 0.30 },

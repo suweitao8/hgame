@@ -420,44 +420,6 @@
       "resolution": "1024x256"
     },
     {
-      "id": "decal_leak_tileable_01",
-      "category": "leak",
-      "sourcePath": "FabLibrary/Tileable_Leakage-505461ce",
-      "scanSizeMeters": [
-        4,
-        2
-      ],
-      "uvScale": 0.25,
-      "resolution": "1024x512",
-      "missingNormal": true,
-      "defaultNormal": [
-        128,
-        128,
-        255
-      ],
-      "missingRoughness": true,
-      "defaultRoughness": 0.3
-    },
-    {
-      "id": "decal_leak_tileable_02",
-      "category": "leak",
-      "sourcePath": "FabLibrary/Tileable_Leakage-85ea60fc",
-      "scanSizeMeters": [
-        1,
-        0.5
-      ],
-      "uvScale": 1,
-      "resolution": "1024x512",
-      "missingNormal": true,
-      "defaultNormal": [
-        128,
-        128,
-        255
-      ],
-      "missingRoughness": true,
-      "defaultRoughness": 0.3
-    },
-    {
       "id": "decal_leak_industrial_01",
       "category": "leak",
       "sourcePath": "FabLibrary/Industrial_Decal_Leak_02-ff00c083",

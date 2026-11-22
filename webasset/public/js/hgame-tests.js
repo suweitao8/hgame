@@ -66,7 +66,7 @@ const TEST_SCENES = [
   {
     id: 'cn_decal_foliage_showcase',
     name: '贴花与植被展区',
-    subtitle: '36 个地面/墙面 PBR 贴花 + 20 个贴地植物贴花',
+    subtitle: '34 个地面/墙面 PBR 贴花 + 20 个贴地植物贴花',
     assetKind: 'decals',
   },
   {
