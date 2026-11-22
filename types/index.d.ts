@@ -1266,7 +1266,15 @@ export const HGame: Readonly<{
         groundPivot: "bottom-center";
         actor2dBackground: "#FFFFFF";
         actor2dShadowFree: true;
-        character3dMaxVertices: 3000;
+        character3dMaxVertices: 7500;
+        character3dNpcMaxTris: 6000;
+        character3dHeroMaxVertices: 11000;
+        character3dHeroMaxTris: 9000;
+        character3dLod1TargetTris: 2200;
+        character3dLod1ScreenRatio: 0.12;
+        lodHysteresis: 1.12;
+        maxGpuVertsHardCap: 65535;
+        texelDensityPxPerMeter: 512;
         character3dHandPose: "semi-clenched-grip";
         toneMapping: "ueFilmic";
     }>;

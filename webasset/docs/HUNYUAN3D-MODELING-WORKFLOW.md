@@ -11,7 +11,7 @@
 4. **生成**：确认参数后点「立即生成」（消耗 1 次生成次数）；监听页面自身轮询直到 `status=success`。
 5. **下载**：从 `creations/detail|list` 响应取 `result[].urlResult.glb` COS 直链，`fetchToFile` 保存，验 magic `676c5446`。
 6. **登记**：`assets/characters/index.json` 对应角色 `models.high`（结构 `{name, path, bytes, updatedAt, source}`）。
-7. **低模**：Blender `remesh-bake --preset low` ≤ 3,000 顶点，登记 `models.low`。
+7. **低模（T5 规范）**：Blender `remesh-bake --preset low`（普通 NPC ≤ 6,000 面 / ≤ 7,500 顶点；英雄用 `--preset hero` ≤ 9,000 面 / ≤ 11,000 顶点；内嵌 `LOD1 ~2,200` 面，23(+3) 骨骼含 `root`），登记 `models.low`。
 
 ## 环境前置（一次性）
 

@@ -24,12 +24,18 @@ export const DEFAULT_TRELLIS2_HQ_WORKFLOW_REL = 'user/default/workflows/Trellis2
 export const DEFAULT_ULTRATEX_WORKFLOW_REL = 'user/default/workflows/PixelArtistry/PixelArtistry_UltraTex_03_LowVRAM_GGUF.json';
 
 /**
- * Fixed character low-poly budget: unified <= 3,000 vertices (both raw mesh & post-UV-split glTF)
- * via targetQuads = 1750 (~1,800-2,000 mesh verts / ~2,400-2,850 glTF verts) for simple, low-cost runtime perf.
+ * T5 Skeletal Character Poly & LOD Budgets (per HGame 3D Model & LOD Spec):
+ * - low / npc:  LOD0 <= 6,000 tris / <= 7,500 GPU vertices (via targetQuads = 2800), LOD1 ~2,200 tris
+ * - hero:       LOD0 <= 9,000 tris / <= 11,000 GPU vertices (via targetQuads = 4200), LOD1 ~2,200 tris
+ * - high:       High-poly bake master (16k quads, <= 65,535 16-bit index hard cap)
  */
+export const GLOBAL_MAX_GPU_VERTICES = 65535;
+export const T5_LOD1_TARGET_TRIS = 2200;
+
 export const CHARACTER_POLY_PRESETS = Object.freeze({
-  low: Object.freeze({ targetQuads: 1750, maxVertices: 3000, textureSize: 1024, normalStrength: 0.25 }),
-  high: Object.freeze({ targetQuads: 16000, maxVertices: 24000, textureSize: 2048, normalStrength: 0.28 }),
+  low: Object.freeze({ targetQuads: 2800, maxTris: 6000, maxVertices: 7500, lod1TargetTris: 2200, textureSize: 1024, normalStrength: 0.25 }),
+  hero: Object.freeze({ targetQuads: 4200, maxTris: 9000, maxVertices: 11000, lod1TargetTris: 2200, textureSize: 1024, normalStrength: 0.25 }),
+  high: Object.freeze({ targetQuads: 16000, maxTris: 36000, maxVertices: 65535, lod1TargetTris: 0, textureSize: 2048, normalStrength: 0.28 }),
 });
 
 export function resolveLowPolyPreset(name = 'low') {
@@ -37,10 +43,13 @@ export function resolveLowPolyPreset(name = 'low') {
   if (key === 'high' || key === 'hq') {
     return { name: 'high', ...CHARACTER_POLY_PRESETS.high };
   }
-  if (['low', 'character', 'general', 'npc', 'mob', 'standard', 'player', 'hero', 'protagonist'].includes(key)) {
+  if (['hero', 'player', 'protagonist', 'boss'].includes(key)) {
+    return { name: 'hero', ...CHARACTER_POLY_PRESETS.hero };
+  }
+  if (['low', 'npc', 'character', 'general', 'mob', 'standard'].includes(key)) {
     return { name: 'low', ...CHARACTER_POLY_PRESETS.low };
   }
-  throw new RangeError(`Unknown character poly preset "${name}"; expected low|high`);
+  throw new RangeError(`Unknown character poly preset "${name}"; expected low|npc|hero|high`);
 }
 
 export const SKIP_UI_NODE_TYPES = new Set([
@@ -1219,6 +1228,8 @@ export function buildBlenderRemeshBakeArgs(inputPath, outPath, flags = {}) {
   }
   if (flags['no-weld-high']) args.push('--no-weld-high');
   if (flags['rig-run'] || flags.rigRun) args.push('--rig-run');
+  const lod1Tris = flags['no-lod1'] ? 0 : (flags['lod1-tris'] ?? flags.lod1Tris ?? preset?.lod1TargetTris ?? 0);
+  if (Number(lod1Tris) > 0) args.push('--lod1-tris', String(lod1Tris));
   if (flags['anim-glb'] || flags.animGlb) args.push('--anim-glb', String(flags['anim-glb'] || flags.animGlb));
   if (flags['qa-dir'] || flags.qaDir) {
     args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
@@ -1611,7 +1622,7 @@ function saveGlbsFromEntry(entry, saveGlbNodeId) {
 /**
  * Enforce zero-debris watertight topology on character outputs before completion or WebAsset upload.
  */
-export function assertCleanTopology(stats, label = 'mesh', maxVertices = null) {
+export function assertCleanTopology(stats, label = 'mesh', maxVertices = null, maxTris = null) {
   const audit = stats?.topologyAudit;
   if (!audit) {
     throw new Error(`${label} missing topologyAudit report`);
@@ -1624,8 +1635,12 @@ export function assertCleanTopology(stats, label = 'mesh', maxVertices = null) {
   if ((audit.zeroAreaFaces ?? 0) > 0) issues.push(`zeroAreaFaces=${audit.zeroAreaFaces}`);
   if ((audit.spatialIslands ?? 0) !== 1) issues.push(`spatialIslands=${audit.spatialIslands}`);
   if ((audit.tinyIslands ?? 0) > 0) issues.push(`tinyIslands=${audit.tinyIslands}`);
-  if (maxVertices !== null && typeof stats.vertices === 'number' && stats.vertices > maxVertices) {
-    issues.push(`vertices=${stats.vertices} > budget ${maxVertices}`);
+  const hardVertCap = maxVertices !== null ? Math.min(maxVertices, GLOBAL_MAX_GPU_VERTICES) : GLOBAL_MAX_GPU_VERTICES;
+  if (typeof stats.vertices === 'number' && stats.vertices > hardVertCap) {
+    issues.push(`vertices=${stats.vertices} > budget ${hardVertCap}`);
+  }
+  if (maxTris !== null && typeof stats.triangles === 'number' && stats.triangles > maxTris) {
+    issues.push(`triangles=${stats.triangles} > budget ${maxTris}`);
   }
   if (issues.length > 0) {
     throw new Error(`${label} failed clean topology gate: ${issues.join(', ')}`);
@@ -1639,6 +1654,7 @@ export function buildCharacterPackPlans(inputPath, outDir, flags = {}) {
   const absDir = assertAsciiPath(path.resolve(outDir), 'Character pack out-dir');
   const uvSolver = String(flags['uv-solver'] ?? flags.uvSolver ?? 'smart');
   const samples = String(flags.samples ?? 12);
+  const lowPresetName = flags.preset || flags.role || 'low';
   const qaRoot = (flags['qa-dir'] || flags.qaDir)
     ? assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'Character pack qa-dir')
     : '';
@@ -1652,7 +1668,7 @@ export function buildCharacterPackPlans(inputPath, outDir, flags = {}) {
     ...(qaRoot ? { 'qa-dir': path.join(qaRoot, 'high'), views: flags.views || '4', size: flags.size || '512' } : {}),
   };
   const lowFlags = {
-    preset: 'low',
+    preset: lowPresetName,
     'uv-solver': uvSolver,
     samples,
     'rig-run': flags['no-rig'] ? false : true,
@@ -1660,6 +1676,7 @@ export function buildCharacterPackPlans(inputPath, outDir, flags = {}) {
   };
   return {
     slug,
+    lowPresetName,
     highOut,
     lowOut,
     highArgs: buildBlenderRemeshBakeArgs(inputPath, highOut, highFlags),
@@ -1696,8 +1713,8 @@ async function cmdCharacterPack(config, flags) {
   assertCleanTopology(highSummary?.stats, 'clean_high');
 
   const lowSummary = runBlenderHelper(config, plans.lowArgs);
-  const lowPreset = resolveLowPolyPreset('low');
-  assertCleanTopology(lowSummary?.stats, 'clean_low', lowPreset.maxVertices);
+  const lowPreset = resolveLowPolyPreset(plans.lowPresetName);
+  assertCleanTopology(lowSummary?.stats, 'clean_low', lowPreset.maxVertices, lowPreset.maxTris);
 
   let uploaded = null;
   if (flags.upload) {

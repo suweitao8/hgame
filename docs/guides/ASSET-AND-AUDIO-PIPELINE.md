@@ -117,14 +117,15 @@ HGame connects to a local ComfyUI (`Trellis2-GGUF` + `UltraTex LowVRAM GGUF`) an
    ```
 
 
-### 4.1 固定低显存角色建模流水线（12GB GPU，单角色全流程 ~5–6 分钟）
+### 4.1 固定低显存角色建模流水线（12GB GPU · 符合 T5 角色多级 LOD 规范）
 
-为兼顾 12GB 显存稳定性、简洁低耗风格与游戏运行时性能，且不在 WebAsset 建模阶段区分主角/NPC，所有角色统一按以下 5 步及顶点数红线执行：
+详见全量分级标准 [ASSET-MODEL-LOD-SPEC.md](../rendering/ASSET-MODEL-LOD-SPEC.md)。为兼顾 12GB 显存稳定性、512 px/m 纹素标准与多端帧率，角色模型按 T5 规范执行：
 
-| 档位 | --preset | 目标四边面 (--target-quads) | 顶点硬上限 | 贴图尺寸 | 适用范围 |
-|---|---|---:|---:|---:|---|
-| **统一角色低模（默认，含绑定 + `Run`）** | low（兼容 general/player） | 1,750 四边面 | **≤ 3,000 顶点**（含 glTF UV 分裂后） | 1024×1024 PBR | 全部 WebAsset / 游戏角色（默认自带骨骼+`Run` 循环） |
-| **高模烘焙母版** | high | 16,000 四边面 | ~24k 顶点 | 2048×2048 PBR | 展示预览 / 法线与颜色烘焙源 |
+| 档位 | `--preset` | 目标四边面 (`--target-quads`) | LOD0 预算上限（面数 / 顶点） | LOD1 目标 | 贴图尺寸 | 适用范围 |
+|---|---|---:|---|---|---:|---|
+| **T5 普通 NPC（默认，含绑定 + `Run`）** | `low`（兼容 `npc` / `general`） | 2,800 四边面 | **≤ 6,000 三角面 / ≤ 7,500 顶点** | `~2,200` 三角面（阈值 `0.12`） | 1024×1024 PBR | 普通 NPC / 群集敌人（自带 `LOD0+LOD1` 与 `23(+3)` 骨骼） |
+| **T5 英雄主角 / 重要 BOSS** | `hero`（兼容 `player` / `boss`） | 4,200 四边面 | **≤ 9,000 三角面 / ≤ 11,000 顶点** | `~2,200` 三角面（阈值 `0.12`） | 1024×1024 PBR | 玩家主角 / BOSS / 核心近景角色 |
+| **高模烘焙母版** | `high` | 16,000 四边面 | ≤ 65,535 顶点（16 位索引红线） | — | 2048×2048 PBR | 展示预览 / 法线与颜色烘焙源 |
 
 **实测耗时明细（RTX 4070 12GB，带 `--reserve-vram 4.8`，2026-11-18「丑橘」实测全套 `335.6s` + 自动绑定动画 `~3s` ≈ 5 分 39 秒）**：
 1. **单视图 AI 3D 生模**（ComfyUI `TRELLIS.2-4B GGUF Q4_K_M`、`euler` 12步、`max_num_tokens=20480`）：约 **4.2 – 7.5 分钟**（显存余量充足时「丑橘」实测 `251.7s`；桌面/编辑器占显存多时约 7.5 分钟）。
@@ -136,12 +137,12 @@ HGame connects to a local ComfyUI (`Trellis2-GGUF` + `UltraTex LowVRAM GGUF`) an
 
 **标准固定命令**：
 ```bash
-# 1. 一条命令出全套（ComfyUI 生模 -> 归一化 -> 高模 + 统一 ≤3000 顶点低模+UV+贴图+绑定+Run）：
+# 1. 一条命令出全套（ComfyUI 生模 -> 归一化 -> 高模 + T5 NPC ≤6k面/≤7.5k顶 低模+LOD1+UV+贴图+绑定+Run）：
 node scripts/process-model3d.mjs generate --input <front.png> --out <char_high.glb> \
   --quality high --normalize --origin ground --target-height 1.0 \
   --remesh --low-out <char_low.glb> --preset low
 
-# 2. 对已有高模直接烘焙统一标准低模（≤3000 顶点）并附带绑定 + Run 动画：
+# 2. 对已有高模直接烘焙 T5 角色模型（NPC 用 --preset low，主角/BOSS 用 --preset hero）并内嵌 LOD0+LOD1 + 23(+3) 绑定：
 node scripts/process-model3d.mjs remesh-bake --input <norm_high.glb> --out <low.glb> --preset low --rig-run
 
 # 3. 对已有低模单独补充自动绑定 + 默认 Run 动画：

@@ -1,6 +1,6 @@
 {
   "version": "5.0.0",
-  "scope": "3d_static_only",
+  "scope": "3d_static_and_t5_characters",
   "blenderMinVersion": "5.0",
   "texturePipeline": {
     "maps": ["color", "normal_rm"],
@@ -93,6 +93,26 @@
       "textureMode": "unique_pbr",
       "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 1024, "mobile_webp": 512 },
       "lod": { "levels": [1.0, 0.35, 0.12], "lod2MergeSubmeshes": true, "thresholds": [0.18, 0.06], "cull": 0.008 }
+    },
+    "T5_NPC": {
+      "maxTris": 6000,
+      "maxGpuVerts": 7500,
+      "maxSubmeshes": 1,
+      "texelDensityPxPerMeter": 512,
+      "rig": "humanoid_23_plus_3",
+      "textureMode": "unique_pbr",
+      "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 1024, "mobile_webp": 512 },
+      "lod": { "levels": [1.0, 0.35, "bone_vat_impostor"], "lod1TargetTris": 2200, "thresholds": [0.12] }
+    },
+    "T5_HERO": {
+      "maxTris": 9000,
+      "maxGpuVerts": 11000,
+      "maxSubmeshes": 1,
+      "texelDensityPxPerMeter": 512,
+      "rig": "humanoid_23_plus_3",
+      "textureMode": "unique_pbr",
+      "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 1024, "mobile_webp": 512 },
+      "lod": { "levels": [1.0, 0.35, "bone_vat_impostor"], "lod1TargetTris": 2200, "thresholds": [0.12] }
     }
   },
   "sceneBudgets": {

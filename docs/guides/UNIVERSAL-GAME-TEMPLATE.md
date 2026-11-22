@@ -74,7 +74,7 @@
 - **资产生产硬标准 (`STANDARD_ART_SPEC`)**：
   - 比例与锚点：`1 unit = 1m`（3D），锚点统一 `bottom-center` / 贴地。
   - 2D 角色图集：纯白 `#FFFFFF` 背景、无阴影切片（运行时统一画动态阴影）。
-  - 3D 角色资产：统一 `<= 3,000` 顶点、2:1 虚握武器手势、`character-pack` 拓扑净门禁。
+  - 3D 角色资产：符合 T5 多级 LOD 规范（NPC `<= 6,000` 面 / `<= 7,500` 顶，英雄 `<= 9,000` 面 / `<= 11,000` 顶，内嵌 `LOD1 ~2,200` 面，单网格 `<= 65,535` 顶，详见 [ASSET-MODEL-LOD-SPEC.md](../rendering/ASSET-MODEL-LOD-SPEC.md)）、2:1 虚握武器手势、`character-pack` 拓扑净门禁。
 
 ### 5. 音效规范与零 KB 导演矩阵（`kit/audio-director.js` + `platform/audio/*`）
 
