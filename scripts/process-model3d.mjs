@@ -1287,6 +1287,12 @@ export function buildBlenderRigRunArgs(inputPath, outPath, flags = {}) {
     '--action-name', String(flags['action-name'] ?? flags.actionName ?? 'Run'),
   ];
   if (flags['anim-glb'] || flags.animGlb) args.push('--anim-glb', String(flags['anim-glb'] || flags.animGlb));
+  if (flags['rig-engine'] || flags.rigEngine) args.push('--rig-engine', String(flags['rig-engine'] || flags.rigEngine));
+  const lod1Tris = flags['no-lod1'] ? 0 : (flags['lod1-tris'] ?? flags.lod1Tris ?? 0);
+  if (Number(lod1Tris) > 0) args.push('--lod1-tris', String(lod1Tris));
+  const lod2Tris = flags['no-lod2'] ? 0 : (flags['lod2-tris'] ?? flags.lod2Tris ?? 0);
+  if (Number(lod2Tris) > 0) args.push('--lod2-tris', String(lod2Tris));
+  if (!flags['no-lod3'] && Boolean(flags['lod3-tight'] ?? flags.lod3Tight)) args.push('--lod3-tight');
   if (flags['qa-dir'] || flags.qaDir) {
     args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
   }

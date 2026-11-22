@@ -2075,8 +2075,16 @@ def detect_humanoid_landmarks(obj):
     foot_band = co[(co[:, 2] <= z_ankle + 0.025 * H) & (co[:, 1] <= 0.14 * H)]
     y_toe = float(np.percentile(foot_band[:, 1], 5)) if len(foot_band) >= 4 else ly - 0.10 * H
 
-    torso_top = co[(np.abs(co[:, 0]) <= w_mid * 0.75) & (co[:, 2] >= z_hip) & (co[:, 2] <= z_arm_mid) & (co[:, 1] <= 0.14 * H)]
-    y_torso = float(np.median(torso_top[:, 1])) if len(torso_top) >= 4 else 0.0
+    torso_y_max = 0.14 * H if is_tall_humanoid else 0.26 * H
+    torso_top = co[(np.abs(co[:, 0]) <= w_mid * 0.75) & (co[:, 2] >= z_hip) & (co[:, 2] <= z_arm_mid) & (co[:, 1] <= torso_y_max)]
+    if len(torso_top) >= 4:
+        if is_tall_humanoid:
+            y_torso = float(np.median(torso_top[:, 1]))
+        else:
+            y_torso = 0.5 * (float(np.percentile(torso_top[:, 1], 15)) + float(np.percentile(torso_top[:, 1], 85)))
+            y_torso = max(ly - 0.05 * H, min(ly + 0.05 * H, y_torso))
+    else:
+        y_torso = 0.0 if is_tall_humanoid else ly
 
     z_spine = z_hip + 0.24 * max(z_arm_mid - z_hip, 0.1 * H)
     z_spine2 = z_hip + 0.52 * max(z_arm_mid - z_hip, 0.1 * H)
@@ -2182,6 +2190,7 @@ def detect_humanoid_landmarks(obj):
         "z_head_base": z_head_base,
         "z_hip": z_hip,
         "x_sh": x_sh,
+        "w_mid": w_mid,
         "lx": lx,
         "is_tall_humanoid": is_tall_humanoid,
         "skirt_band": skirt_band,
@@ -2303,7 +2312,7 @@ def _resolve_src_ue_bone(dst_bname, src_names):
     return None
 
 
-def retarget_anim_glb_to_rig(rig, anim_glb_path, action_name="Run", sample_step=2):
+def retarget_anim_glb_to_rig(rig, anim_glb_path, action_name="Run", sample_step=2, lm=None):
     """Retarget an external Anim58/UE GLB animation clip in-place onto rig in rest bind pose."""
     from mathutils import Quaternion, Vector
 
@@ -2416,9 +2425,41 @@ def retarget_anim_glb_to_rig(rig, anim_glb_path, action_name="Run", sample_step=
         offset_q = src_rest_wq[src_name].inverted() @ dst_aligned_wq[b.name]
         mapped_pairs.append((b, src_name, offset_q))
 
+    short_limb = bool(lm and not lm.get("is_tall_humanoid", True))
+    H_rig = float(lm.get("height") or 1.0) if lm else 1.0
+    w_mid_rig = float(lm.get("w_mid") or (0.16 * H_rig)) if lm else 0.16 * H_rig
+    arm_abduct = min(0.26, max(0.0, (w_mid_rig / max(H_rig, 1e-4) - 0.14) * 2.2)) if short_limb else 0.0
+    abduct_l_q = Quaternion((0.0, 1.0, 0.0), -arm_abduct) if arm_abduct > 1e-4 else None
+    abduct_r_q = Quaternion((0.0, 1.0, 0.0), arm_abduct) if arm_abduct > 1e-4 else None
+
+    src_mean_wq = {}
+    if short_limb and sampled:
+        boost_src = set()
+        for bn in ("upperarm_l", "upperarm_r", "thigh_l", "thigh_r", "calf_l", "calf_r"):
+            sn = _resolve_src_ue_bone(bn, src_names)
+            if sn:
+                boost_src.add(sn)
+        for sn in boost_src:
+            if sn not in sampled[0][1]:
+                continue
+            q_ref = sampled[0][1][sn]
+            aw, ax, ay, az = 0.0, 0.0, 0.0, 0.0
+            for _, f_wq, _ in sampled:
+                q = f_wq.get(sn)
+                if q is None:
+                    continue
+                if q.dot(q_ref) < 0.0:
+                    aw -= q.w; ax -= q.x; ay -= q.y; az -= q.z
+                else:
+                    aw += q.w; ax += q.x; ay += q.y; az += q.z
+            mag = math.sqrt(aw * aw + ax * ax + ay * ay + az * az)
+            src_mean_wq[sn] = Quaternion((aw / mag, ax / mag, ay / mag, az / mag)) if mag > 1e-6 else q_ref.copy()
+
     src_pelvis_rest_wp = src_rest_wp.get("pelvis", Vector((0, 0, 1)))
     dst_pelvis_rest_wp = dst_rest_wp.get("pelvis", Vector((0, 0, 0.35)))
     pelvis_scale = float(dst_pelvis_rest_wp.z) / max(0.1, float(src_pelvis_rest_wp.z))
+    if short_limb:
+        pelvis_scale = max(pelvis_scale, 0.36 * (H_rig / 1.75))
     pelvis_rest_r3_inv = (rig_mw @ rig.data.bones["pelvis"].matrix_local).to_3x3().inverted() if "pelvis" in rig.data.bones else None
 
     scene.frame_start = 0
@@ -2433,7 +2474,20 @@ def retarget_anim_glb_to_rig(rig, anim_glb_path, action_name="Run", sample_step=
     for f, f_wq, pelvis_wp in sampled:
         target_wq_map = {}
         for b, src_name, offset_q in mapped_pairs:
-            target_wq = f_wq[src_name] @ offset_q
+            src_q = f_wq[src_name]
+            if short_limb and src_name in src_mean_wq:
+                q_mean = src_mean_wq[src_name]
+                dq = src_q @ q_mean.inverted()
+                if dq.w < 0.0:
+                    dq = -dq
+                axis, angle = dq.to_axis_angle()
+                if angle > 1e-5:
+                    src_q = (Quaternion(axis, min(math.pi * 0.95, angle * 1.18)) @ q_mean).normalized()
+            target_wq = src_q @ offset_q
+            if abduct_l_q is not None and b.name in ("upperarm_l", "lowerarm_l", "hand_l"):
+                target_wq = abduct_l_q @ target_wq
+            elif abduct_r_q is not None and b.name in ("upperarm_r", "lowerarm_r", "hand_r"):
+                target_wq = abduct_r_q @ target_wq
             target_wq_map[b.name] = target_wq
             if b.parent and b.parent.name in target_wq_map:
                 parent_wq = target_wq_map[b.parent.name]
@@ -2868,7 +2922,7 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
         resolved_anim_glb = DEFAULT_ANIM58_RUN_GLB if os.path.exists(DEFAULT_ANIM58_RUN_GLB) else "procedural"
 
     if resolved_anim_glb and resolved_anim_glb != "procedural" and os.path.exists(resolved_anim_glb):
-        ret_info = retarget_anim_glb_to_rig(rig, resolved_anim_glb, action_name=action_name)
+        ret_info = retarget_anim_glb_to_rig(rig, resolved_anim_glb, action_name=action_name, lm=lm)
         ret_info["backLockedVerts"] = int(len(back_idx))
         ret_info["appendage"] = _key_appendage_sway(rig, appendage, int(ret_info["frames"][1]))
         ret_info["appendageVerts"] = chain_verts
@@ -2886,35 +2940,38 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
     rig.animation_data.action = act
 
     pb = rig.pose.bones
+    is_tall = bool(lm.get("is_tall_humanoid"))
+    sh_drop = 0.16
+    arm_drop = 0.72 if is_tall else 0.58
     for f in range(0, 25, 3):
         phase = (f / 24.0) * 2.0 * math.pi
         s1 = math.sin(phase)
         c1 = math.cos(phase)
         s2 = math.sin(phase * 2.0)
 
-        # Hip bounce + subtle torso counter-twist
+        # Hip bounce + forward lean + torso counter-twist
         pelvis_pb = pb["pelvis"]
-        pelvis_pb.location = Vector((0.0, 0.0, -0.022 * H * abs(s1)))
+        pelvis_pb.location = Vector((0.0, 0.0, -0.042 * H * abs(s1)))
         pelvis_pb.keyframe_insert(data_path="location", frame=f)
-        _pose_world_rot(pelvis_pb, Euler((0.08, 0.0, 0.08 * s1), "XYZ").to_matrix())
+        _pose_world_rot(pelvis_pb, Euler((0.12, 0.0, 0.16 * s1), "XYZ").to_matrix())
         pelvis_pb.keyframe_insert(data_path="rotation_quaternion", frame=f)
 
-        _pose_world_rot(pb["spine_01"], Euler((0.03, 0.0, -0.04 * s1), "XYZ").to_matrix())
+        _pose_world_rot(pb["spine_01"], Euler((0.05, 0.0, -0.06 * s1), "XYZ").to_matrix())
         pb["spine_01"].keyframe_insert(data_path="rotation_quaternion", frame=f)
-        _pose_world_rot(pb["spine_02"], Euler((0.03, 0.0, -0.04 * s1), "XYZ").to_matrix())
+        _pose_world_rot(pb["spine_02"], Euler((0.04, 0.0, -0.06 * s1), "XYZ").to_matrix())
         pb["spine_02"].keyframe_insert(data_path="rotation_quaternion", frame=f)
-        _pose_world_rot(pb["spine_03"], Euler((0.03, 0.0, -0.04 * s1), "XYZ").to_matrix())
+        _pose_world_rot(pb["spine_03"], Euler((0.04, 0.0, -0.06 * s1), "XYZ").to_matrix())
         pb["spine_03"].keyframe_insert(data_path="rotation_quaternion", frame=f)
-        _pose_world_rot(pb["head"], Euler((-0.11 + 0.025 * s2, 0.0, 0.03 * s1), "XYZ").to_matrix())
+        _pose_world_rot(pb["head"], Euler((-0.14 + 0.035 * s2, 0.0, 0.04 * s1), "XYZ").to_matrix())
         pb["head"].keyframe_insert(data_path="rotation_quaternion", frame=f)
 
         # Legs: -X pitch swings forward (-Y); +X pitch swings back (+Y) and bends knee backward
         for ue_s, ph_sign in (("l", 1.0), ("r", -1.0)):
             stride = s1 * ph_sign
             knee_lift = max(0.0, c1 * ph_sign)
-            thigh_pitch = -0.52 * stride - 0.14 * knee_lift
-            knee_flex = 0.16 + 0.85 * max(0.0, -stride * 0.4 + knee_lift * 0.9)
-            foot_pitch = -0.22 * knee_flex + 0.15 * stride
+            thigh_pitch = -0.78 * stride - 0.22 * knee_lift
+            knee_flex = 0.22 + 1.15 * max(0.0, -stride * 0.45 + knee_lift * 0.95)
+            foot_pitch = -0.22 * knee_flex + 0.18 * stride
 
             _pose_world_rot(pb[f"thigh_{ue_s}"], Euler((thigh_pitch, 0.0, 0.0), "XYZ").to_matrix())
             pb[f"thigh_{ue_s}"].keyframe_insert(data_path="rotation_quaternion", frame=f)
@@ -2924,19 +2981,17 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
             pb[f"foot_{ue_s}"].keyframe_insert(data_path="rotation_quaternion", frame=f)
 
         # Arms: split drop smoothly across clavicle + upperarm to prevent armpit/chest pinching
-        sh_drop = 0.20
-        arm_drop = 0.68
         for ue_s, sx, ph_sign in (("l", 1.0, -1.0), ("r", -1.0, 1.0)):
-            swing = 0.42 * s1 * ph_sign
-            m_sh = Euler((0.0, sx * sh_drop, -sx * swing * 0.20), "XYZ").to_matrix()
+            swing = 0.88 * s1 * ph_sign
+            m_sh = Euler((0.0, sx * sh_drop, -sx * swing * 0.16), "XYZ").to_matrix()
             _pose_world_rot(pb[f"clavicle_{ue_s}"], m_sh)
             pb[f"clavicle_{ue_s}"].keyframe_insert(data_path="rotation_quaternion", frame=f)
 
-            m_arm = Euler((0.0, sx * arm_drop, -sx * swing * 0.80), "XYZ").to_matrix()
+            m_arm = Euler((0.0, sx * arm_drop, -sx * swing * 0.84), "XYZ").to_matrix()
             _pose_world_rot(pb[f"upperarm_{ue_s}"], m_arm)
             pb[f"upperarm_{ue_s}"].keyframe_insert(data_path="rotation_quaternion", frame=f)
 
-            elbow_flex = 0.86 + 0.24 * max(0.0, s1 * ph_sign)
+            elbow_flex = 0.75 + 0.55 * max(0.0, s1 * ph_sign)
             m_fa = Euler((0.0, 0.0, -sx * elbow_flex), "XYZ").to_matrix()
             _pose_world_rot(pb[f"lowerarm_{ue_s}"], m_fa)
             pb[f"lowerarm_{ue_s}"].keyframe_insert(data_path="rotation_quaternion", frame=f)
