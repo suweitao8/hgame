@@ -1,9 +1,9 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  SILENCE_TRIM_FILTER,
   computeSafeShortGainDb,
   measureAudioFileVolume,
   parseLoudnormJsonStderr,
@@ -11,22 +11,22 @@ import {
   runPool,
 } from './audio-library-pipeline.mjs';
 
+export const MUSIC_PIPELINE_VERSION = '2.0.0';
 const SUPPORTED_MUSIC_EXTS = new Set(['.wav', '.mp3', '.flac', '.m4a']);
 const BGM_TARGET_LUFS = -19.0;
 const BGM_TARGET_TP = -1.5;
 const BGM_TARGET_LRA = 11;
 const BGM_LUFS_TOLERANCE = 1.5;
-const BGM_MAX_DURATION_SEC = 75.0;
-const BGM_DEFAULT_FADE_IN_SEC = 0.6;
-const BGM_DEFAULT_FADE_OUT_SEC = 1.5;
-const BGM_HEAD_TAIL_WINDOW_SEC = 3.0;
-const BGM_HEAD_TAIL_WARN_DB = 4.0;
 const STINGER_TARGET_LUFS = -16.0;
 const STINGER_TARGET_TP = -1.5;
 const STINGER_TARGET_LRA = 9;
-const STINGER_MAX_DURATION_SEC = 6.0;
-const STINGER_END_FADE_SEC = 0.4;
+const DEFAULT_SILENCE_THRESHOLD_DB = -45;
+const GUARD_FALLBACK_THRESHOLD_DB = -58;
+const MICRO_FADE_IN_SEC = 0.02;
+const MICRO_FADE_OUT_SEC = 0.05;
 const PEAK_CEILING_GATE_DBTP = -0.5;
+const TAIL_SILENCE_MAX_SEC = 0.3;
+const STINGER_WARN_DURATION_SEC = 15.0;
 
 function clamp(v, min, max) {
   return v < min ? min : (v > max ? max : v);
@@ -35,6 +35,14 @@ function clamp(v, min, max) {
 function round(v, digits = 4) {
   const f = 10 ** digits;
   return Math.round(v * f) / f;
+}
+
+function sha1Buffer(buf) {
+  return createHash('sha1').update(buf).digest('hex');
+}
+
+function sha1Text(str) {
+  return createHash('sha1').update(String(str || ''), 'utf8').digest('hex');
 }
 
 /**
@@ -53,87 +61,81 @@ export function resolveDefaultMusicStagingRoot() {
 }
 
 /**
- * Parses BPM suffix (`_<N>bpm`) and normalizes standard Cue IDs:
- * `bgm_battle_fast_140bpm.wav` -> `bgm.battle_fast`, `stinger_victory.wav` -> `stinger.victory`.
+ * Infers standardized AI retrieval category from clean track name and kind.
+ * @param {string} cleanName
+ * @param {'bgm' | 'stinger'} kind
+ * @returns {string}
+ */
+export function inferMusicCategory(cleanName, kind = 'bgm') {
+  if (kind === 'stinger') return 'stinger';
+  const s = String(cleanName || '').toLowerCase();
+  if (/(^|_)(boss|climax|raid|final_phase|nemesis)(_|$)/.test(s)) return 'boss';
+  if (/(^|_)(battle|combat|fight|action|war|arena|rush|chase)(_|$)/.test(s)) return 'battle';
+  if (/(^|_)(lobby|title|menu|home|hub|town|camp|select)(_|$)/.test(s)) return 'lobby';
+  if (/(^|_)(card|deck|shop|draft|tavern|gacha|upgrade)(_|$)/.test(s)) return 'card';
+  if (/(^|_)(dungeon|crypt|cave|ruin|labyrinth|tomb|dark)(_|$)/.test(s)) return 'dungeon';
+  if (/(^|_)(survival|cold|winter|night|storm|frost|wild)(_|$)/.test(s)) return 'survival';
+  if (/(^|_)(casual|cozy|farm|chill|garden|lofi|idle|relax)(_|$)/.test(s)) return 'casual';
+  if (/(^|_)(comedy|fun|quirky|silly|goofy|cartoon)(_|$)/.test(s)) return 'comedy';
+  if (/(^|_)(story|cutscene|drama|lore|ending|credits|narrative)(_|$)/.test(s)) return 'story';
+  return 'bgm';
+}
+
+/**
+ * Parses BPM suffix (`_<N>bpm`) and normalizes hierarchical Cue IDs & output paths:
+ * - `universal/bgm/bgm_battle_fast_140bpm.wav` -> `bgm.universal.battle_fast`
+ * - `games/ninja_king/bgm/bgm_boss_150bpm.wav` -> `bgm.ninja_king.boss`
  *
  * @param {string} filePathOrName
- * @param {'bgm' | 'stinger'} [kind='bgm']
- * @param {string} [relDir='']
+ * @param {object} [opts]
+ * @param {'bgm' | 'stinger'} [opts.kind='bgm']
+ * @param {string} [opts.scope='universal']
+ * @param {string} [opts.relDir='']
  */
-export function parseBgmFilenameMeta(filePathOrName, kind = 'bgm', relDir = '') {
+export function parseBgmFilenameMeta(filePathOrName, kindOrOpts = 'bgm', relDirArg = '') {
+  const opts = typeof kindOrOpts === 'object' && kindOrOpts !== null
+    ? kindOrOpts
+    : { kind: kindOrOpts || 'bgm', scope: 'universal', relDir: relDirArg };
+  const kind = opts.kind === 'stinger' ? 'stinger' : 'bgm';
+  const scope = String(opts.scope || 'universal');
+  const scopeSlug = scope.startsWith('game:') ? scope.slice(5) : 'universal';
+  const relDir = String(opts.relDir || '').replaceAll('\\', '/').replace(/^\.?\/?|\/$/g, '');
+
   const baseName = path.basename(String(filePathOrName || ''), path.extname(String(filePathOrName || '')));
   const bpmMatch = baseName.match(/_(\d{2,3})bpm$/i);
   const parsedBpm = bpmMatch ? Number(bpmMatch[1]) : null;
   const bpm = Number.isFinite(parsedBpm) && parsedBpm >= 30 && parsedBpm <= 300 ? parsedBpm : null;
 
   const withoutBpm = bpmMatch ? baseName.slice(0, bpmMatch.index) : baseName;
-  const prefixRe = kind === 'stinger' ? /^stinger[_.-]+/i : /^bgm[_.-]+/i;
-  let core = withoutBpm.replace(prefixRe, '');
-  const cleanRelDir = String(relDir || '').replaceAll('\\', '/').replace(/^\.?\/?|\/$/g, '');
-  if (cleanRelDir && cleanRelDir !== '.') {
-    core = `${cleanRelDir}/${core}`;
+  let core = withoutBpm.replace(/^(?:(?:bgm|stinger)[_.-]+)+/i, '');
+  if (!core) core = withoutBpm;
+  if (relDir && relDir !== '.') {
+    core = `${relDir}/${core}`;
   }
-  const slug = core
+  const cleanName = core
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '') || 'track';
 
+  const cueId = `${kind}.${scopeSlug}.${cleanName}`;
+  const outStem = `${kind}_${cleanName}`;
+  const category = inferMusicCategory(cleanName, kind);
+
   return {
     rawBaseName: baseName,
+    cleanName,
     bpm,
-    slug,
-    cueId: `${kind}.${slug}`,
-    outStem: `${kind}_${slug}`,
+    kind,
+    scope,
+    scopeSlug,
+    category,
+    cueId,
+    outStem,
   };
 }
 
 /**
- * Computes clean trim bounds and qsin fade durations for a BGM track.
- * Preserves the full musical body (including intro) up to 75s unless overridden via `bgm_overrides.json`.
- *
- * @param {object} params
- * @param {number} params.totalDurationSec
- * @param {number | null} [params.bpm=null]
- * @param {object | null} [params.override=null]
- */
-export function computeBgmTrimPlan({
-  totalDurationSec,
-  bpm = null,
-  override = null,
-} = {}) {
-  const total = Math.max(0.5, Number(totalDurationSec) || 0);
-  const effBpm = Number.isFinite(Number(override?.bpm)) && Number(override.bpm) > 0
-    ? Number(override.bpm)
-    : (Number.isFinite(Number(bpm)) && Number(bpm) > 0 ? Number(bpm) : null);
-
-  const hasStart = override?.startSec !== undefined && Number.isFinite(Number(override.startSec));
-  const hasEnd = override?.endSec !== undefined && Number.isFinite(Number(override.endSec));
-  const startSec = hasStart ? clamp(Number(override.startSec), 0, Math.max(0, total - 0.5)) : 0;
-  const endSec = hasEnd
-    ? clamp(Number(override.endSec), Math.min(total, startSec + 0.5), total)
-    : (total - startSec > BGM_MAX_DURATION_SEC ? round(startSec + BGM_MAX_DURATION_SEC, 6) : null);
-
-  const fadeInSec = override?.fadeInSec !== undefined && Number.isFinite(Number(override.fadeInSec))
-    ? Math.max(0, Number(override.fadeInSec))
-    : BGM_DEFAULT_FADE_IN_SEC;
-  const fadeOutSec = override?.fadeOutSec !== undefined && Number.isFinite(Number(override.fadeOutSec))
-    ? Math.max(0, Number(override.fadeOutSec))
-    : BGM_DEFAULT_FADE_OUT_SEC;
-
-  return {
-    bpm: effBpm,
-    hasExplicitStart: hasStart,
-    hasExplicitEnd: hasEnd,
-    startSec: round(startSec, 6),
-    endSec: endSec !== null ? round(endSec, 6) : null,
-    maxDurationSec: BGM_MAX_DURATION_SEC,
-    fadeInSec: round(fadeInSec, 4),
-    fadeOutSec: round(fadeOutSec, 4),
-  };
-}
-
-/**
- * Probes encoded audio metadata (`duration`, `startTime` encoder delay, channels, sampleRate, bitRate).
+ * Probes audio metadata (`duration`, `startTime` encoder delay, channels, sampleRate, bitRate).
  * @param {string} ffprobeBin
  * @param {string} filePath
  */
@@ -162,6 +164,48 @@ export async function probeAudioMetadata(ffprobeBin, filePath) {
   };
 }
 
+/**
+ * Parses `silencedetect` stderr and returns trailing silence duration (seconds) if silence touches EOF.
+ * @param {string} stderr
+ * @param {number} totalDurationSec
+ */
+export function parseTailSilenceSec(stderr = '', totalDurationSec = 0) {
+  const text = String(stderr || '');
+  const events = [];
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const startMatch = line.match(/silence_start:\s*([\d.]+)/);
+    if (startMatch) {
+      events.push({ start: Number(startMatch[1]), end: null, duration: null });
+      continue;
+    }
+    const endMatch = line.match(/silence_end:\s*([\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/);
+    if (endMatch && events.length > 0) {
+      const last = events[events.length - 1];
+      last.end = Number(endMatch[1]);
+      last.duration = Number(endMatch[2]);
+    }
+  }
+  if (events.length === 0) return 0;
+  const last = events[events.length - 1];
+  if (last.end === null) {
+    return round(Math.max(0, totalDurationSec - last.start), 3);
+  }
+  if (totalDurationSec > 0 && Math.abs(totalDurationSec - last.end) <= 0.15) {
+    return round(Math.max(0, last.duration || (last.end - last.start)), 3);
+  }
+  return 0;
+}
+
+async function detectTailSilenceSec(ffmpegBin, filePath, durationSec, thresholdDb = DEFAULT_SILENCE_THRESHOLD_DB) {
+  const res = await runFfmpegAsync(ffmpegBin, [
+    '-hide_banner', '-nostats', '-i', filePath,
+    '-af', `silencedetect=noise=${thresholdDb}dB:d=${TAIL_SILENCE_MAX_SEC}`,
+    '-f', 'null', '-',
+  ]);
+  return parseTailSilenceSec(res.stderr, durationSec);
+}
+
 async function auditEncodedLoudnormAndPeak(ffmpegBin, filePath, { targetI, targetTp, targetLra }) {
   const [volStats, lnRes] = await Promise.all([
     measureAudioFileVolume(ffmpegBin, filePath, ''),
@@ -188,7 +232,7 @@ async function encodeTwoPassLoudnormMp3({
   targetI,
   targetTp,
   targetLra,
-  preFilter = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo,highpass=f=30',
+  preFilter,
 }) {
   await fs.mkdir(path.dirname(outPath), { recursive: true });
 
@@ -218,7 +262,6 @@ async function encodeTwoPassLoudnormMp3({
 
   let tpLimit = targetTp;
   let audit = await runWithTp(tpLimit);
-  // If MP3 MDCT quantization pushed inter-sample peak near -0.5 dBTP, lower pre-encode TP ceiling cleanly.
   for (let retry = 0; retry < 2 && audit.peakDb > -0.8; retry++) {
     tpLimit -= Math.max(0.6, audit.peakDb - (-1.2));
     audit = await runWithTp(tpLimit);
@@ -227,16 +270,102 @@ async function encodeTwoPassLoudnormMp3({
 }
 
 /**
- * Processes one BGM track:
- * clean trim (-50 dB silence trim / <=75s cap or explicit startSec/endSec) ->
- * measure head/tail 3s RMS balance -> qsin fade-in/out + highpass=f=30 + 2-pass -19 LUFS loudnorm ->
- * 96k stereo MP3 -> ffprobe trim metadata.
+ * Safely trims ONLY leading and trailing silence using bidirectional `start_periods=1` + `areverse`
+ * (never uses forward `stop_periods`, so mid-track pauses/quiet passages are 100% preserved).
+ * Enforces an anti-over-trim guard for long BGM tracks (`>= 20s`).
  */
-export async function processBgmTrack({
+async function trimHeadTailSilenceSafely({
+  srcAbs,
+  outTrimWav,
+  kind,
+  originalDurationSec,
+  thresholdDb,
+  ffmpegBin,
+  ffprobeBin,
+  tempDir,
+}) {
+  const uid = `${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const headWav = path.join(tempDir, `hgame_head_${uid}.wav`);
+  const basePrefix = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo';
+
+  const runDirectionalTrim = async (threshDb) => {
+    const leadFilter = `${basePrefix},silenceremove=start_periods=1:start_duration=0:start_threshold=${threshDb}dB:detection=peak`;
+    const r1 = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', srcAbs, '-af', leadFilter, '-c:a', 'pcm_f32le', headWav]);
+    if (r1.code !== 0) return null;
+    const headProbe = await probeAudioMetadata(ffprobeBin, headWav).catch(() => null);
+    if (!headProbe || !(headProbe.duration > 0.02)) return null;
+
+    const tailFilter = `areverse,silenceremove=start_periods=1:start_duration=0:start_threshold=${threshDb}dB:detection=peak,areverse`;
+    const r2 = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', headWav, '-af', tailFilter, '-c:a', 'pcm_f32le', outTrimWav]);
+    if (r2.code !== 0) return null;
+    const tailProbe = await probeAudioMetadata(ffprobeBin, outTrimWav).catch(() => null);
+    if (!tailProbe || !(tailProbe.duration > 0.02)) return null;
+
+    const trimmedLeadSec = round(Math.max(0, originalDurationSec - headProbe.duration), 4);
+    const trimmedTailSec = round(Math.max(0, headProbe.duration - tailProbe.duration), 4);
+    return {
+      trimmedDurationSec: tailProbe.duration,
+      trimmedLeadSec,
+      trimmedTailSec,
+      usedThresholdDb: threshDb,
+    };
+  };
+
+  try {
+    let result = await runDirectionalTrim(thresholdDb);
+    let trimGuardTriggered = false;
+    const minSafeBgmDur = Math.max(10, originalDurationSec * 0.45);
+
+    if (kind === 'bgm' && originalDurationSec >= 20 && (!result || result.trimmedDurationSec < minSafeBgmDur)) {
+      trimGuardTriggered = true;
+      const relaxed = await runDirectionalTrim(GUARD_FALLBACK_THRESHOLD_DB);
+      if (relaxed && relaxed.trimmedDurationSec >= minSafeBgmDur) {
+        result = relaxed;
+      } else {
+        // Fallback: preserve full original audio rather than risking over-trimming
+        const passthrough = await runFfmpegAsync(ffmpegBin, [
+          '-y', '-v', 'error', '-i', srcAbs, '-af', basePrefix, '-c:a', 'pcm_f32le', outTrimWav,
+        ]);
+        if (passthrough.code !== 0) {
+          throw new Error(`ffmpeg passthrough fallback failed for ${path.basename(srcAbs)}: ${passthrough.stderr}`);
+        }
+        result = {
+          trimmedDurationSec: originalDurationSec,
+          trimmedLeadSec: 0,
+          trimmedTailSec: 0,
+          usedThresholdDb: null,
+        };
+      }
+    } else if (!result) {
+      const passthrough = await runFfmpegAsync(ffmpegBin, [
+        '-y', '-v', 'error', '-i', srcAbs, '-af', basePrefix, '-c:a', 'pcm_f32le', outTrimWav,
+      ]);
+      if (passthrough.code !== 0) {
+        throw new Error(`ffmpeg passthrough fallback failed for ${path.basename(srcAbs)}: ${passthrough.stderr}`);
+      }
+      result = {
+        trimmedDurationSec: originalDurationSec,
+        trimmedLeadSec: 0,
+        trimmedTailSec: 0,
+        usedThresholdDb: null,
+      };
+    }
+
+    return { ...result, trimGuardTriggered };
+  } finally {
+    await fs.rm(headWav, { force: true }).catch(() => {});
+  }
+}
+
+/**
+ * Processes one music track (`bgm` or `stinger`) without ever truncating musical content:
+ * bidirectional head/tail silence trim -> anti-over-trim guard -> 0.02s/0.05s micro anti-click fades ->
+ * loudness normalization & 96k stereo MP3 encode -> ffprobe delay + tail silence check.
+ */
+export async function processMusicTrack({
   srcAbs,
   outAbs,
-  cueId,
-  bpm = null,
+  meta,
   override = null,
   baseUrl = '/assets/cn/audio',
   relOut,
@@ -245,231 +374,59 @@ export async function processBgmTrack({
   tempDir = os.tmpdir(),
 } = {}) {
   const srcProbe = await probeAudioMetadata(ffprobeBin, srcAbs);
-  const plan = computeBgmTrimPlan({
-    totalDurationSec: srcProbe.duration,
-    bpm,
-    override,
-  });
+  const originalDurationSec = round(srcProbe.duration, 4);
+  const thresholdDb = Number.isFinite(Number(override?.silenceThresholdDb))
+    ? Number(override.silenceThresholdDb)
+    : DEFAULT_SILENCE_THRESHOLD_DB;
 
   const uid = `${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const trimWav = path.join(tempDir, `hgame_bgm_trim_${uid}.wav`);
-  const capWav = path.join(tempDir, `hgame_bgm_cap_${uid}.wav`);
+  const trimmedWav = path.join(tempDir, `hgame_music_trimmed_${uid}.wav`);
   const basePrefix = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo';
 
   try {
-    let trimFilter;
-    if (plan.hasExplicitStart || plan.hasExplicitEnd) {
-      const endArg = plan.endSec !== null ? `:end=${plan.endSec}` : '';
-      trimFilter = `${basePrefix},atrim=start=${plan.startSec}${endArg},asetpts=PTS-STARTPTS`;
-    } else {
-      trimFilter = `${basePrefix},${SILENCE_TRIM_FILTER}`;
-    }
-
-    let trimRes = await runFfmpegAsync(ffmpegBin, [
-      '-y', '-v', 'error',
-      '-i', srcAbs,
-      '-af', trimFilter,
-      '-c:a', 'pcm_f32le',
-      trimWav,
-    ]);
-    let trimProbe = trimRes.code === 0 ? await probeAudioMetadata(ffprobeBin, trimWav).catch(() => null) : null;
-    if (!trimProbe || trimProbe.duration < 0.05) {
-      trimRes = await runFfmpegAsync(ffmpegBin, [
-        '-y', '-v', 'error',
-        '-i', srcAbs,
-        '-af', basePrefix,
-        '-c:a', 'pcm_f32le',
-        trimWav,
-      ]);
-      if (trimRes.code !== 0) {
-        throw new Error(`ffmpeg bgm trim failed for ${path.basename(srcAbs)}: ${trimRes.stderr}`);
-      }
-      trimProbe = await probeAudioMetadata(ffprobeBin, trimWav);
-    }
-
-    let workWav = trimWav;
-    let segDur = trimProbe.duration;
-    if (!plan.hasExplicitEnd && segDur > plan.maxDurationSec) {
-      const capRes = await runFfmpegAsync(ffmpegBin, [
-        '-y', '-v', 'error',
-        '-i', trimWav,
-        '-af', `atrim=0:${plan.maxDurationSec},asetpts=PTS-STARTPTS`,
-        '-c:a', 'pcm_f32le',
-        capWav,
-      ]);
-      if (capRes.code !== 0) {
-        throw new Error(`ffmpeg bgm 75s cap failed for ${path.basename(srcAbs)}: ${capRes.stderr}`);
-      }
-      workWav = capWav;
-      segDur = plan.maxDurationSec;
-    }
-
-    // Measure first 3s and last 3s RMS before applying fade-in/fade-out
-    const winSec = round(Math.min(BGM_HEAD_TAIL_WINDOW_SEC, segDur * 0.5), 4);
-    const tailStart = round(Math.max(0, segDur - winSec), 4);
-    const [headStats, tailStats] = await Promise.all([
-      measureAudioFileVolume(ffmpegBin, workWav, `atrim=0:${winSec},asetpts=PTS-STARTPTS`),
-      measureAudioFileVolume(ffmpegBin, workWav, `atrim=start=${tailStart}:end=${round(segDur, 4)},asetpts=PTS-STARTPTS`),
-    ]);
-    const headRmsDb = Number.isFinite(headStats.meanDb) ? round(headStats.meanDb, 2) : null;
-    const tailRmsDb = Number.isFinite(tailStats.meanDb) ? round(tailStats.meanDb, 2) : null;
-    const headTailDiffDb = headRmsDb !== null && tailRmsDb !== null
-      ? round(Math.abs(headRmsDb - tailRmsDb), 2)
-      : 0;
-    const headTailWarn = headTailDiffDb > BGM_HEAD_TAIL_WARN_DB;
-
-    let fadeInSec = plan.fadeInSec;
-    let fadeOutSec = plan.fadeOutSec;
-    if (fadeInSec + fadeOutSec > segDur * 0.9) {
-      const scale = (segDur * 0.9) / Math.max(0.001, fadeInSec + fadeOutSec);
-      fadeInSec = round(fadeInSec * scale, 4);
-      fadeOutSec = round(fadeOutSec * scale, 4);
-    }
-    const fadeOutStart = round(Math.max(0, segDur - fadeOutSec), 4);
-    const fadeFilters = [
-      fadeInSec > 0 ? `afade=t=in:st=0:d=${fadeInSec}:curve=qsin` : '',
-      fadeOutSec > 0 ? `afade=t=out:st=${fadeOutStart}:d=${fadeOutSec}:curve=qsin` : '',
-    ].filter(Boolean);
-
-    const preFilter = [basePrefix, ...fadeFilters, 'highpass=f=30'].join(',');
-    const audit = await encodeTwoPassLoudnormMp3({
-      srcPath: workWav,
-      outPath: outAbs,
+    const trimInfo = await trimHeadTailSilenceSafely({
+      srcAbs,
+      outTrimWav: trimmedWav,
+      kind: meta.kind,
+      originalDurationSec,
+      thresholdDb,
       ffmpegBin,
-      targetI: BGM_TARGET_LUFS,
-      targetTp: BGM_TARGET_TP,
-      targetLra: BGM_TARGET_LRA,
-      preFilter,
+      ffprobeBin,
+      tempDir,
     });
 
-    const outProbe = await probeAudioMetadata(ffprobeBin, outAbs);
-    const outStat = await fs.stat(outAbs);
-    const trimStartSec = round(outProbe.startTime > 0 ? outProbe.startTime : 0.026, 6);
-    const durationSec = round(outProbe.duration > 0 ? outProbe.duration : segDur, 4);
-    const trimEndSec = round(trimStartSec + durationSec, 6);
-    const sizeKb = round(outStat.size / 1024, 2);
-
-    return {
-      cueName: cueId,
-      pack: 'bgm',
-      category: 'bgm',
-      url: `${baseUrl}/${relOut}`,
-      path: relOut,
-      bus: 'bgm',
-      loudnessTier: 'bgm',
-      preload: 'stream',
-      loop: true,
-      bpm: plan.bpm,
-      fadeInSec,
-      fadeOutSec,
-      headRmsDb,
-      tailRmsDb,
-      headTailDiffDb,
-      headTailWarn,
-      durationSec,
-      trimStartSec,
-      trimEndSec,
-      measuredLufs: audit.measuredLufs,
-      measuredDb: audit.measuredLufs,
-      peakDb: audit.peakDb,
-      sizeKb,
-      encodedBytes: outStat.size,
-      gainDb: Number(override?.gainDb ?? 0),
-      ducking: false,
-      variants: [
-        {
-          id: cueId,
-          url: `${baseUrl}/${relOut}`,
-          path: relOut,
-          duration: durationSec,
-          activeDuration: durationSec,
-          measuredDb: audit.measuredLufs,
-          peakDb: audit.peakDb,
-          appliedGainDb: 0,
-        },
-      ],
-    };
-  } finally {
-    await fs.rm(trimWav, { force: true }).catch(() => {});
-    await fs.rm(capWav, { force: true }).catch(() => {});
-  }
-}
-
-/**
- * Processes one non-looping Stinger track:
- * -50 dB silence trim -> cap 6.0s with 0.4s tail fade -> -16 LUFS loudnorm (>=1.5s) or Active RMS (<1.5s) -> 96k stereo MP3.
- */
-export async function processStingerTrack({
-  srcAbs,
-  outAbs,
-  cueId,
-  override = null,
-  baseUrl = '/assets/cn/audio',
-  relOut,
-  ffmpegBin = 'ffmpeg',
-  ffprobeBin = 'ffprobe',
-  tempDir = os.tmpdir(),
-} = {}) {
-  const uid = `${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const trimWav = path.join(tempDir, `hgame_stinger_trim_${uid}.wav`);
-  const capWav = path.join(tempDir, `hgame_stinger_cap_${uid}.wav`);
-
-  try {
-    const basePrefix = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo';
-    let trimRes = await runFfmpegAsync(ffmpegBin, [
-      '-y', '-v', 'error',
-      '-i', srcAbs,
-      '-af', `${basePrefix},${SILENCE_TRIM_FILTER},highpass=f=30`,
-      '-c:a', 'pcm_f32le',
-      trimWav,
-    ]);
-    let trimProbe = trimRes.code === 0 ? await probeAudioMetadata(ffprobeBin, trimWav).catch(() => null) : null;
-    if (!trimProbe || trimProbe.duration < 0.02) {
-      trimRes = await runFfmpegAsync(ffmpegBin, [
-        '-y', '-v', 'error',
-        '-i', srcAbs,
-        '-af', `${basePrefix},highpass=f=30`,
-        '-c:a', 'pcm_f32le',
-        trimWav,
-      ]);
-      if (trimRes.code !== 0) {
-        throw new Error(`ffmpeg stinger trim failed for ${path.basename(srcAbs)}: ${trimRes.stderr}`);
-      }
-      trimProbe = await probeAudioMetadata(ffprobeBin, trimWav);
-    }
-
-    let workWav = trimWav;
-    let effectiveDur = trimProbe.duration;
-    if (effectiveDur > STINGER_MAX_DURATION_SEC) {
-      const fadeStart = STINGER_MAX_DURATION_SEC - STINGER_END_FADE_SEC;
-      const capRes = await runFfmpegAsync(ffmpegBin, [
-        '-y', '-v', 'error',
-        '-i', trimWav,
-        '-af', `atrim=0:${STINGER_MAX_DURATION_SEC},asetpts=PTS-STARTPTS,afade=t=out:st=${fadeStart.toFixed(3)}:d=${STINGER_END_FADE_SEC}`,
-        '-c:a', 'pcm_f32le',
-        capWav,
-      ]);
-      if (capRes.code !== 0) {
-        throw new Error(`ffmpeg stinger cap failed for ${path.basename(srcAbs)}: ${capRes.stderr}`);
-      }
-      workWav = capWav;
-      effectiveDur = STINGER_MAX_DURATION_SEC;
-    }
+    const segDur = trimInfo.trimmedDurationSec;
+    const fadeIn = Math.min(MICRO_FADE_IN_SEC, segDur * 0.2);
+    const fadeOut = Math.min(MICRO_FADE_OUT_SEC, segDur * 0.25);
+    const fadeOutStart = round(Math.max(0, segDur - fadeOut), 4);
+    const microFadeFilter = `afade=t=in:st=0:d=${round(fadeIn, 4)},afade=t=out:st=${fadeOutStart}:d=${round(fadeOut, 4)}`;
 
     let audit;
-    if (effectiveDur >= 1.5) {
+    if (meta.kind === 'bgm') {
+      const preFilter = `${basePrefix},${microFadeFilter},highpass=f=30`;
       audit = await encodeTwoPassLoudnormMp3({
-        srcPath: workWav,
+        srcPath: trimmedWav,
+        outPath: outAbs,
+        ffmpegBin,
+        targetI: BGM_TARGET_LUFS,
+        targetTp: BGM_TARGET_TP,
+        targetLra: BGM_TARGET_LRA,
+        preFilter,
+      });
+    } else if (segDur >= 1.5) {
+      const preFilter = `${basePrefix},${microFadeFilter},highpass=f=30`;
+      audit = await encodeTwoPassLoudnormMp3({
+        srcPath: trimmedWav,
         outPath: outAbs,
         ffmpegBin,
         targetI: STINGER_TARGET_LUFS,
         targetTp: STINGER_TARGET_TP,
         targetLra: STINGER_TARGET_LRA,
-        preFilter: basePrefix,
+        preFilter,
       });
     } else {
       await fs.mkdir(path.dirname(outAbs), { recursive: true });
-      const stats = await measureAudioFileVolume(ffmpegBin, workWav, '');
+      const stats = await measureAudioFileVolume(ffmpegBin, trimmedWav, '');
       const gainInfo = computeSafeShortGainDb({
         targetDb: STINGER_TARGET_LUFS,
         variantOffsetDb: 0,
@@ -482,8 +439,8 @@ export async function processStingerTrack({
         const ceilLin = Number(Math.pow(10, ceilDb / 20).toFixed(6));
         const enc = await runFfmpegAsync(ffmpegBin, [
           '-y', '-v', 'error',
-          '-i', workWav,
-          '-af', `${basePrefix},volume=${gainInfo.gainDb.toFixed(2)}dB,alimiter=limit=${ceilLin}:attack=2:release=50:level=disabled`,
+          '-i', trimmedWav,
+          '-af', `${basePrefix},${microFadeFilter},highpass=f=30,volume=${gainInfo.gainDb.toFixed(2)}dB,alimiter=limit=${ceilLin}:attack=2:release=50:level=disabled`,
           '-ac', '2',
           '-ar', '44100',
           '-c:a', 'libmp3lame',
@@ -493,7 +450,7 @@ export async function processStingerTrack({
         if (enc.code !== 0) {
           throw new Error(`ffmpeg stinger short encode failed for ${path.basename(srcAbs)}: ${enc.stderr}`);
         }
-        const post = await measureAudioFileVolume(ffmpegBin, outAbs, SILENCE_TRIM_FILTER);
+        const post = await measureAudioFileVolume(ffmpegBin, outAbs, '');
         const peakDb = round(post.maxDb ?? STINGER_TARGET_TP, 2);
         const measuredLufs = round(post.meanDb ?? STINGER_TARGET_LUFS, 2);
         audit = { measuredLufs, peakDb };
@@ -504,35 +461,49 @@ export async function processStingerTrack({
 
     const outProbe = await probeAudioMetadata(ffprobeBin, outAbs);
     const outStat = await fs.stat(outAbs);
+    const durationSec = round(outProbe.duration > 0 ? outProbe.duration : segDur, 4);
     const trimStartSec = round(outProbe.startTime > 0 ? outProbe.startTime : 0.026, 6);
-    const durationSec = round(outProbe.duration > 0 ? outProbe.duration : effectiveDur, 4);
     const trimEndSec = round(trimStartSec + durationSec, 6);
     const sizeKb = round(outStat.size / 1024, 2);
+    const tailSilenceSec = await detectTailSilenceSec(ffmpegBin, outAbs, durationSec);
+
+    const isBgm = meta.kind === 'bgm';
+    const lufsWarn = isBgm && Math.abs(audit.measuredLufs - BGM_TARGET_LUFS) > BGM_LUFS_TOLERANCE;
+    const stingerOver15sWarning = !isBgm && durationSec > STINGER_WARN_DURATION_SEC;
 
     return {
-      cueName: cueId,
-      pack: 'stinger',
-      category: 'stinger',
+      cueName: meta.cueId,
+      scope: meta.scope,
+      kind: meta.kind,
+      category: meta.category,
+      pack: isBgm ? 'bgm' : 'stinger',
       url: `${baseUrl}/${relOut}`,
       path: relOut,
-      bus: 'ui_voice',
-      loudnessTier: 'ui_voice',
-      preload: 'buffer',
-      loop: false,
-      bpm: null,
+      bus: isBgm ? 'bgm' : 'ui_voice',
+      loudnessTier: isBgm ? 'bgm' : 'ui_voice',
+      preload: isBgm ? 'stream' : 'buffer',
+      loop: isBgm,
+      ducking: !isBgm,
+      bpm: meta.bpm,
+      originalDurationSec,
       durationSec,
+      trimmedLeadSec: trimInfo.trimmedLeadSec,
+      trimmedTailSec: trimInfo.trimmedTailSec,
       trimStartSec,
       trimEndSec,
+      tailSilenceSec,
       measuredLufs: audit.measuredLufs,
       measuredDb: audit.measuredLufs,
       peakDb: audit.peakDb,
       sizeKb,
       encodedBytes: outStat.size,
       gainDb: Number(override?.gainDb ?? 0),
-      ducking: true,
+      lufsWarn,
+      trimGuardTriggered: trimInfo.trimGuardTriggered,
+      stingerOver15sWarning,
       variants: [
         {
-          id: cueId,
+          id: meta.cueId,
           url: `${baseUrl}/${relOut}`,
           path: relOut,
           duration: durationSec,
@@ -544,8 +515,7 @@ export async function processStingerTrack({
       ],
     };
   } finally {
-    await fs.rm(trimWav, { force: true }).catch(() => {});
-    await fs.rm(capWav, { force: true }).catch(() => {});
+    await fs.rm(trimmedWav, { force: true }).catch(() => {});
   }
 }
 
@@ -571,11 +541,52 @@ async function scanAudioFilesRecursive(dir) {
   return results;
 }
 
+/**
+ * Discovers all staged tracks across:
+ * - `universal/bgm/**` and `universal/stinger/**`
+ * - `games/<gameSlug>/bgm/**` and `games/<gameSlug>/stinger/**`
+ */
+async function scanMusicStagingJobs(musicStagingRoot) {
+  const jobs = [];
+  const addTree = async (baseDir, scope, scopeDir, kind) => {
+    const files = await scanAudioFilesRecursive(baseDir);
+    for (const srcAbs of files) {
+      const relDir = path.dirname(path.relative(baseDir, srcAbs));
+      const meta = parseBgmFilenameMeta(srcAbs, {
+        kind,
+        scope,
+        relDir: relDir === '.' ? '' : relDir,
+      });
+      const relOut = kind === 'bgm'
+        ? `streams/bgm/${scopeDir}/${meta.outStem}.mp3`
+        : `sfx/stinger/${scopeDir}/${meta.outStem}.mp3`;
+      jobs.push({ srcAbs, meta, relOut, scopeDir });
+    }
+  };
+
+  await addTree(path.join(musicStagingRoot, 'universal', 'bgm'), 'universal', 'universal', 'bgm');
+  await addTree(path.join(musicStagingRoot, 'universal', 'stinger'), 'universal', 'universal', 'stinger');
+
+  const gamesRoot = path.join(musicStagingRoot, 'games');
+  if (existsSync(gamesRoot)) {
+    const gameDirs = await fs.readdir(gamesRoot, { withFileTypes: true });
+    for (const ent of gameDirs) {
+      if (!ent.isDirectory()) continue;
+      const gameSlug = ent.name.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || ent.name;
+      const scope = `game:${gameSlug}`;
+      await addTree(path.join(gamesRoot, ent.name, 'bgm'), scope, gameSlug, 'bgm');
+      await addTree(path.join(gamesRoot, ent.name, 'stinger'), scope, gameSlug, 'stinger');
+    }
+  }
+
+  return jobs;
+}
+
 function lookupOverride(overridesMap, meta, filePath) {
   if (!overridesMap || typeof overridesMap !== 'object') return null;
   const baseWithExt = path.basename(filePath);
-  return overridesMap[meta.rawBaseName]
-    || overridesMap[meta.cueId]
+  return overridesMap[meta.cueId]
+    || overridesMap[meta.rawBaseName]
     || overridesMap[meta.outStem]
     || overridesMap[baseWithExt]
     || null;
@@ -587,20 +598,19 @@ export function evaluateMusicGate(bgmTracks, stingerTracks) {
     if (Number(t.peakDb) > PEAK_CEILING_GATE_DBTP) {
       alerts.push({
         cueName: t.cueName,
-        category: t.category,
+        kind: t.kind || t.category,
         reason: 'peak_above_ceiling',
         peakDb: t.peakDb,
         ceilingDb: PEAK_CEILING_GATE_DBTP,
       });
     }
-    if (t.category === 'bgm' && Math.abs(Number(t.measuredLufs) - BGM_TARGET_LUFS) > BGM_LUFS_TOLERANCE) {
+    if (Number(t.tailSilenceSec) > TAIL_SILENCE_MAX_SEC) {
       alerts.push({
         cueName: t.cueName,
-        category: 'bgm',
-        reason: 'lufs_out_of_tolerance',
-        measuredLufs: t.measuredLufs,
-        targetLufs: BGM_TARGET_LUFS,
-        toleranceLufs: BGM_LUFS_TOLERANCE,
+        kind: t.kind || t.category,
+        reason: 'tail_silence_detected',
+        tailSilenceSec: t.tailSilenceSec,
+        maxAllowedSec: TAIL_SILENCE_MAX_SEC,
       });
     }
   }
@@ -608,9 +618,9 @@ export function evaluateMusicGate(bgmTracks, stingerTracks) {
 }
 
 /**
- * Processes `audio_ai_staging/bgm/**` and `audio_ai_staging/stinger/**`,
- * writes standalone `music_table.json` (BGM & Stinger cleanly separated from SFX `cue_table.json`),
- * runs strict LUFS/Peak gates, and outputs `music_report.json`.
+ * Processes `audio_ai_staging/universal/**` and `audio_ai_staging/games/<slug>/**`
+ * with SHA-1 incremental caching (`.music_cache.json`), writes `cue_table.json`,
+ * `music_table.json`, `music-ai-index.json`, and `music_report.json`.
  */
 export async function processMusicLibrary({
   musicStagingRoot = resolveDefaultMusicStagingRoot(),
@@ -619,118 +629,156 @@ export async function processMusicLibrary({
   ffmpegBin = 'ffmpeg',
   ffprobeBin = 'ffprobe',
   concurrency = Math.min(4, Math.max(1, os.cpus().length - 2)),
+  force = false,
 } = {}) {
-  const bgmDir = path.join(musicStagingRoot, 'bgm');
-  const stingerDir = path.join(musicStagingRoot, 'stinger');
   const overridesPath = path.join(musicStagingRoot, 'bgm_overrides.json');
-
   let overridesMap = {};
   if (existsSync(overridesPath)) {
     overridesMap = JSON.parse(await fs.readFile(overridesPath, 'utf8'));
   }
 
-  const [bgmFiles, stingerFiles] = await Promise.all([
-    scanAudioFilesRecursive(bgmDir),
-    scanAudioFilesRecursive(stingerDir),
-  ]);
+  const cachePath = path.join(outDir, '.music_cache.json');
+  let prevCache = { version: MUSIC_PIPELINE_VERSION, entries: {} };
+  if (!force && existsSync(cachePath)) {
+    try {
+      const parsed = JSON.parse(await fs.readFile(cachePath, 'utf8'));
+      if (parsed?.version === MUSIC_PIPELINE_VERSION && parsed.entries && typeof parsed.entries === 'object') {
+        prevCache = parsed;
+      }
+    } catch { /* ignore corrupt cache */ }
+  }
 
+  const jobs = await scanMusicStagingJobs(musicStagingRoot);
   await fs.mkdir(outDir, { recursive: true });
-  const bgmResults = new Array(bgmFiles.length);
-  const stingerResults = new Array(stingerFiles.length);
 
-  await runPool(bgmFiles, concurrency, async (srcAbs, idx) => {
-    const relDir = path.dirname(path.relative(bgmDir, srcAbs));
-    const meta = parseBgmFilenameMeta(srcAbs, 'bgm', relDir === '.' ? '' : relDir);
-    const override = lookupOverride(overridesMap, meta, srcAbs);
-    const relOut = `streams/bgm/${meta.outStem}.mp3`;
+  const results = new Array(jobs.length);
+  const nextCacheEntries = {};
+  let cacheHits = 0;
+  let cacheMisses = 0;
+
+  await runPool(jobs, concurrency, async (job, idx) => {
+    const { srcAbs, meta, relOut } = job;
     const outAbs = path.join(outDir, relOut);
-    bgmResults[idx] = await processBgmTrack({
+    const override = lookupOverride(overridesMap, meta, srcAbs);
+    const srcBuf = await fs.readFile(srcAbs);
+    const srcSha1 = sha1Buffer(srcBuf);
+    const overrideHash = sha1Text(JSON.stringify(override || null));
+    const cacheKey = `${meta.cueId}::${relOut}`;
+    const cached = prevCache.entries?.[cacheKey];
+
+    if (
+      !force
+      && cached
+      && cached.srcSha1 === srcSha1
+      && cached.overrideHash === overrideHash
+      && cached.baseUrl === baseUrl
+      && existsSync(outAbs)
+      && cached.track
+    ) {
+      cacheHits++;
+      results[idx] = cached.track;
+      nextCacheEntries[cacheKey] = cached;
+      return;
+    }
+
+    cacheMisses++;
+    const track = await processMusicTrack({
       srcAbs,
       outAbs,
-      cueId: meta.cueId,
-      bpm: meta.bpm,
+      meta,
       override,
       baseUrl,
       relOut,
       ffmpegBin,
       ffprobeBin,
     });
-  });
-
-  await runPool(stingerFiles, concurrency, async (srcAbs, idx) => {
-    const relDir = path.dirname(path.relative(stingerDir, srcAbs));
-    const meta = parseBgmFilenameMeta(srcAbs, 'stinger', relDir === '.' ? '' : relDir);
-    const override = lookupOverride(overridesMap, meta, srcAbs);
-    const relOut = `sfx/stinger/${meta.outStem}.mp3`;
-    const outAbs = path.join(outDir, relOut);
-    stingerResults[idx] = await processStingerTrack({
-      srcAbs,
-      outAbs,
-      cueId: meta.cueId,
-      override,
+    results[idx] = track;
+    nextCacheEntries[cacheKey] = {
+      srcSha1,
+      overrideHash,
       baseUrl,
       relOut,
-      ffmpegBin,
-      ffprobeBin,
-    });
+      track,
+    };
   });
 
-  const bgmTracks = bgmResults.filter(Boolean).sort((a, b) => a.cueName.localeCompare(b.cueName));
-  const stingerTracks = stingerResults.filter(Boolean).sort((a, b) => a.cueName.localeCompare(b.cueName));
+  const allTracks = results.filter(Boolean).sort((a, b) => a.cueName.localeCompare(b.cueName));
+  const bgmTracks = allTracks.filter((t) => t.kind === 'bgm');
+  const stingerTracks = allTracks.filter((t) => t.kind === 'stinger');
+
   const alerts = evaluateMusicGate(bgmTracks, stingerTracks);
-
-  const headTailWarnings = bgmTracks
-    .filter((t) => t.headTailWarn)
+  const lufsWarnings = bgmTracks
+    .filter((t) => t.lufsWarn)
     .map((t) => ({
       cueName: t.cueName,
-      headRmsDb: t.headRmsDb,
-      tailRmsDb: t.tailRmsDb,
-      headTailDiffDb: t.headTailDiffDb,
-      thresholdDb: BGM_HEAD_TAIL_WARN_DB,
+      measuredLufs: t.measuredLufs,
+      targetLufs: BGM_TARGET_LUFS,
+      toleranceLufs: BGM_LUFS_TOLERANCE,
     }));
+  const trimGuardWarnings = allTracks
+    .filter((t) => t.trimGuardTriggered)
+    .map((t) => ({ cueName: t.cueName, originalDurationSec: t.originalDurationSec, durationSec: t.durationSec }));
+  const stingerLongWarnings = stingerTracks
+    .filter((t) => t.stingerOver15sWarning)
+    .map((t) => ({ cueName: t.cueName, durationSec: t.durationSec, hint: 'Stinger > 15s; confirm not misplaced BGM' }));
 
   const report = {
-    version: '1.0.0',
+    version: MUSIC_PIPELINE_VERSION,
     generatedAt: new Date().toISOString(),
     stagingRoot: musicStagingRoot,
     bgmTargetLufs: BGM_TARGET_LUFS,
     bgmToleranceLufs: BGM_LUFS_TOLERANCE,
-    bgmHeadTailWarnDb: BGM_HEAD_TAIL_WARN_DB,
     stingerTargetLufs: STINGER_TARGET_LUFS,
     peakCeilingDbTp: PEAK_CEILING_GATE_DBTP,
-    totalTracks: bgmTracks.length + stingerTracks.length,
+    tailSilenceMaxSec: TAIL_SILENCE_MAX_SEC,
+    totalTracks: allTracks.length,
     bgmCount: bgmTracks.length,
     stingerCount: stingerTracks.length,
+    cacheHits,
+    cacheMisses,
     passed: alerts.length === 0,
     alertCount: alerts.length,
-    headTailWarningCount: headTailWarnings.length,
+    lufsWarningCount: lufsWarnings.length,
+    trimGuardWarningCount: trimGuardWarnings.length,
+    stingerLongWarningCount: stingerLongWarnings.length,
     alerts,
-    headTailWarnings,
+    lufsWarnings,
+    trimGuardWarnings,
+    stingerLongWarnings,
     bgm: bgmTracks.map((t) => ({
       cueName: t.cueName,
+      scope: t.scope,
+      category: t.category,
       bpm: t.bpm,
-      fadeInSec: t.fadeInSec,
-      fadeOutSec: t.fadeOutSec,
-      headRmsDb: t.headRmsDb,
-      tailRmsDb: t.tailRmsDb,
-      headTailDiffDb: t.headTailDiffDb,
-      headTailWarn: t.headTailWarn,
+      originalDurationSec: t.originalDurationSec,
       durationSec: t.durationSec,
+      trimmedLeadSec: t.trimmedLeadSec,
+      trimmedTailSec: t.trimmedTailSec,
       trimStartSec: t.trimStartSec,
       trimEndSec: t.trimEndSec,
+      tailSilenceSec: t.tailSilenceSec,
       measuredLufs: t.measuredLufs,
       peakDb: t.peakDb,
       sizeKb: t.sizeKb,
+      lufsWarn: t.lufsWarn,
+      trimGuardTriggered: t.trimGuardTriggered,
       url: t.url,
     })),
     stingers: stingerTracks.map((t) => ({
       cueName: t.cueName,
+      scope: t.scope,
+      category: t.category,
+      originalDurationSec: t.originalDurationSec,
       durationSec: t.durationSec,
+      trimmedLeadSec: t.trimmedLeadSec,
+      trimmedTailSec: t.trimmedTailSec,
       trimStartSec: t.trimStartSec,
       trimEndSec: t.trimEndSec,
+      tailSilenceSec: t.tailSilenceSec,
       measuredLufs: t.measuredLufs,
       peakDb: t.peakDb,
       sizeKb: t.sizeKb,
+      stingerOver15sWarning: t.stingerOver15sWarning,
       url: t.url,
     })),
   };
@@ -740,37 +788,92 @@ export async function processMusicLibrary({
   if (alerts.length > 0) {
     const first = alerts[0];
     throw new Error(
-      `Music loudness gate failed (${alerts.length} alert(s), e.g. ${first.cueName} ${first.reason}: peak=${first.peakDb ?? 'n/a'} lufs=${first.measuredLufs ?? 'n/a'})`,
+      `Music QA gate failed (${alerts.length} alert(s), e.g. ${first.cueName} ${first.reason}: peak=${first.peakDb ?? 'n/a'} tailSilence=${first.tailSilenceSec ?? 'n/a'})`,
     );
   }
 
-  const tracks = [...bgmTracks, ...stingerTracks];
-  const totalBytes = tracks.reduce((sum, t) => sum + (Number(t.encodedBytes) || 0), 0);
+  // 1. Update cue_table.json (preserving existing SFX cues)
+  const cueTablePath = path.join(outDir, 'cue_table.json');
+  let existingCueTable = {
+    version: '1.0.0',
+    format: 'mp3',
+    preloadRule: 'buffer_only_sfx_under_4s',
+    cueCount: 0,
+    surfaceCueCount: 0,
+    surfaceCoverage: {},
+    streamTracksExcluded: 0,
+    cues: [],
+  };
+  if (existsSync(cueTablePath)) {
+    existingCueTable = JSON.parse(await fs.readFile(cueTablePath, 'utf8'));
+  }
+  const preservedSfxCues = (existingCueTable.cues || []).filter(
+    (c) => !String(c.cueName || '').startsWith('bgm.') && !String(c.cueName || '').startsWith('stinger.'),
+  );
+  const mergedCues = [...preservedSfxCues, ...allTracks];
+  const updatedCueTable = {
+    ...existingCueTable,
+    cueCount: mergedCues.length,
+    musicCueCount: allTracks.length,
+    cues: mergedCues,
+  };
+
+  // 2. Write standalone music_table.json
+  const totalBytes = allTracks.reduce((sum, t) => sum + (Number(t.encodedBytes) || 0), 0);
   const musicTablePath = path.join(outDir, 'music_table.json');
   const musicTable = {
-    version: '1.0.0',
+    version: MUSIC_PIPELINE_VERSION,
     format: 'mp3',
     generatedAt: report.generatedAt,
     bgmTargetLufs: BGM_TARGET_LUFS,
     stingerTargetLufs: STINGER_TARGET_LUFS,
-    totalCount: tracks.length,
+    totalCount: allTracks.length,
     bgmCount: bgmTracks.length,
     stingerCount: stingerTracks.length,
     totalBytes,
     bgm: bgmTracks,
     stingers: stingerTracks,
-    tracks,
+    tracks: allTracks,
   };
 
-  await fs.writeFile(musicTablePath, JSON.stringify(musicTable, null, 2));
+  // 3. Write AI retrieval index built/audio/music-ai-index.json
+  const aiIndexPath = path.join(outDir, 'music-ai-index.json');
+  const aiIndex = {
+    version: MUSIC_PIPELINE_VERSION,
+    generatedAt: report.generatedAt,
+    count: allTracks.length,
+    items: allTracks.map((t) => ({
+      id: t.cueName,
+      scope: t.scope,
+      kind: t.kind,
+      category: t.category,
+      bpm: t.bpm,
+      durationSec: t.durationSec,
+      measuredLufs: t.measuredLufs,
+      peakDb: t.peakDb,
+      sizeKb: t.sizeKb,
+      url: t.url,
+    })),
+  };
+
+  await Promise.all([
+    fs.writeFile(cueTablePath, JSON.stringify(updatedCueTable, null, 2)),
+    fs.writeFile(musicTablePath, JSON.stringify(musicTable, null, 2)),
+    fs.writeFile(aiIndexPath, JSON.stringify(aiIndex, null, 2)),
+    fs.writeFile(cachePath, JSON.stringify({ version: MUSIC_PIPELINE_VERSION, entries: nextCacheEntries }, null, 2)),
+  ]);
 
   return {
     outDir,
     stagingRoot: musicStagingRoot,
     musicTablePath,
+    aiIndexPath,
+    cachePath,
     report,
     bgmCount: bgmTracks.length,
     stingerCount: stingerTracks.length,
-    totalCount: tracks.length,
+    totalCount: allTracks.length,
+    cacheHits,
+    cacheMisses,
   };
 }

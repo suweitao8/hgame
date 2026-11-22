@@ -263,6 +263,8 @@ export {
  * @property {(value: number) => number} setBgmVolume
  * @property {() => number} getBgmVolume
  * @property {() => { state: string, cueId: string | null, loop: boolean, loopStart: number, loopEnd: number, bufferDuration: number, pausedPositionSec: number, activeBufferCount: number, fadingCount: number, registeredCueCount: number }} getBgmState
+ * @property {() => void} onHide
+ * @property {() => void} onShow
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
  */
@@ -1008,6 +1010,18 @@ export function createAudioManager({
   const boundLifecycleWins = new WeakSet();
   const boundLifecycleHosts = new WeakSet();
 
+  function onHide() {
+    bgmPlayer.pauseBgm({ fromLifecycle: true });
+    if (ctx.context) void ctx.context.suspend?.().catch?.(() => {});
+  }
+
+  function onShow() {
+    if (!ctx.muted) {
+      if (ctx.context) void ctx.context.resume?.().catch?.(() => {});
+      void bgmPlayer.resumeBgm({ fromLifecycle: true }).catch(() => {});
+    }
+  }
+
   function bindLifecycle({
     doc = globalThis.document ?? null,
     win = globalThis.window ?? null,
@@ -1018,21 +1032,9 @@ export function createAudioManager({
     };
     const onVisibility = () => {
       if (doc?.hidden) {
-        bgmPlayer.pauseBgm({ fromLifecycle: true });
-        if (ctx.context) void ctx.context.suspend?.().catch?.(() => {});
-      } else if (!ctx.muted) {
-        if (ctx.context) void ctx.context.resume?.().catch?.(() => {});
-        void bgmPlayer.resumeBgm({ fromLifecycle: true }).catch(() => {});
-      }
-    };
-    const onHide = () => {
-      bgmPlayer.pauseBgm({ fromLifecycle: true });
-      if (ctx.context) void ctx.context.suspend?.().catch?.(() => {});
-    };
-    const onShow = () => {
-      if (!ctx.muted) {
-        if (ctx.context) void ctx.context.resume?.().catch?.(() => {});
-        void bgmPlayer.resumeBgm({ fromLifecycle: true }).catch(() => {});
+        onHide();
+      } else {
+        onShow();
       }
     };
 
@@ -1168,6 +1170,8 @@ export function createAudioManager({
     setBgmVolume: bgmPlayer.setBgmVolume,
     getBgmVolume: bgmPlayer.getBgmVolume,
     getBgmState: bgmPlayer.getBgmState,
+    onHide,
+    onShow,
     updateListenerFromCamera,
     dispose,
   });

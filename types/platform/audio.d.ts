@@ -206,6 +206,8 @@
  * @property {(value: number) => number} setBgmVolume
  * @property {() => number} getBgmVolume
  * @property {() => { state: string, cueId: string | null, loop: boolean, loopStart: number, loopEnd: number, bufferDuration: number, pausedPositionSec: number, activeBufferCount: number, fadingCount: number, registeredCueCount: number }} getBgmState
+ * @property {() => void} onHide
+ * @property {() => void} onShow
  * @property {(camera: AudioListenerCamera | null | undefined) => AudioListenerState} updateListenerFromCamera
  * @property {() => Promise<void> | undefined} dispose Stop everything and close the context.
  */
@@ -816,6 +818,8 @@ export type AudioManager = {
         fadingCount: number;
         registeredCueCount: number;
     };
+    onHide: () => void;
+    onShow: () => void;
     updateListenerFromCamera: (camera: AudioListenerCamera | null | undefined) => AudioListenerState;
     /**
      * Stop everything and close the context.

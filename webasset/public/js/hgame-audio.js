@@ -37,6 +37,8 @@ let initialized = false;
 let currentLib = 'cues'; // 'cues' | 'music' | 'streams' | 'full'
 let cueEntries = [];
 let musicEntries = [];
+let musicScopeFilter = 'all';
+let musicCategoryFilter = 'all';
 let streamEntries = [];
 let fullEntries = [];
 let uploadedAudio = [];
@@ -74,15 +76,17 @@ function isMusicCueEntry(c) {
 function buildActiveList() {
   if (currentLib === 'music') {
     return musicEntries.map((c) => {
-      const isBgm = c.category === 'bgm' || String(c.cueName || '').startsWith('bgm.');
+      const isBgm = c.kind === 'bgm' || String(c.cueName || '').startsWith('bgm.');
       return {
         type: 'cue',
         id: c.cueName,
         name: c.cueName,
-        pack: isBgm ? 'BGM' : 'Stinger',
-        category: isBgm ? 'bgm' : 'stinger',
+        scope: c.scope || 'universal',
+        kind: isBgm ? 'bgm' : 'stinger',
+        pack: c.scope === 'universal' ? '通用母库' : (c.scope || 'Music'),
+        category: c.category || (isBgm ? 'bgm' : 'stinger'),
         preload: isBgm ? 'stream' : 'buffer',
-        badge: isBgm ? 'BGM 循环' : 'Stinger',
+        badge: isBgm ? 'BGM' : 'Stinger',
         url: c.url || c.variants?.[0]?.url || '',
         fileName: `${c.cueName}.mp3`,
         item: c,
@@ -90,18 +94,20 @@ function buildActiveList() {
     });
   }
   if (currentLib === 'cues') {
-    return cueEntries.map((c) => ({
-      type: 'cue',
-      id: c.cueName,
-      name: c.cueName,
-      pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
-      category: c.category || 'sfx',
-      preload: 'buffer',
-      badge: '内存 SFX',
-      url: c.variants?.[0]?.url || '',
-      fileName: `${c.cueName}.mp3`,
-      item: c,
-    }));
+    return cueEntries
+      .filter((c) => !isMusicCueEntry(c))
+      .map((c) => ({
+        type: 'cue',
+        id: c.cueName,
+        name: c.cueName,
+        pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
+        category: c.category || 'sfx',
+        preload: 'buffer',
+        badge: '内存 SFX',
+        url: c.variants?.[0]?.url || '',
+        fileName: `${c.cueName}.mp3`,
+        item: c,
+      }));
   }
   if (currentLib === 'streams') {
     return streamEntries.map((s) => ({
@@ -176,11 +182,16 @@ function getFilteredList() {
   const query = searchInput.value.trim().toLowerCase();
   const fval = filterSelect?.value || 'all';
   return buildActiveList().filter((entry) => {
+    if (currentLib === 'music') {
+      if (musicScopeFilter !== 'all' && entry.scope !== musicScopeFilter) return false;
+      if (musicCategoryFilter !== 'all' && entry.category !== musicCategoryFilter) return false;
+    }
     if (fval === 'surface' && entry.category !== 'footstep_surface' && entry.category !== 'impact_surface') return false;
     if (fval.startsWith('pack:') && entry.pack !== fval.slice(5)) return false;
     if (!query) return true;
     return entry.name.toLowerCase().includes(query)
       || entry.id.toLowerCase().includes(query)
+      || (entry.scope || '').toLowerCase().includes(query)
       || (entry.pack || '').toLowerCase().includes(query)
       || (entry.category || '').toLowerCase().includes(query);
   });
@@ -222,9 +233,12 @@ function computeAudioLoudnessSummary(entry) {
   }
 
   let anomaly = Boolean(item.clippingAlert || item.hitBoostCap || (peakDb !== null && peakDb > -0.5));
-  if (entry.category === 'bgm') {
-    if (rmsDb !== null && Math.abs(rmsDb - (-19.0)) > 1.5) anomaly = true;
-    if (item.headTailWarn || (Number.isFinite(item.headTailDiffDb) && item.headTailDiffDb > 4.0)) anomaly = true;
+  if (entry.kind === 'bgm' || entry.category === 'bgm' || String(entry.name || '').startsWith('bgm.')) {
+    if (item.lufsWarn || (rmsDb !== null && Math.abs(rmsDb - (-19.0)) > 1.5)) anomaly = true;
+    if (item.trimGuardTriggered || (Number.isFinite(item.tailSilenceSec) && item.tailSilenceSec > 0.3)) anomaly = true;
+  }
+  if (entry.kind === 'stinger' && (item.stingerOver15sWarning || (Number.isFinite(item.tailSilenceSec) && item.tailSilenceSec > 0.3))) {
+    anomaly = true;
   }
   if (entry.type === 'cue') {
     if (spreadAnomalyCues.has(entry.name)) anomaly = true;
@@ -263,7 +277,8 @@ function renderList() {
   for (const entry of visible) {
     const selected = entry.type === activeSelection.type && entry.id === activeSelection.id;
     const loud = computeAudioLoudnessSummary(entry);
-    const isBgmEntry = entry.category === 'bgm';
+    const isMusicEntry = currentLib === 'music';
+    const isBgmEntry = entry.kind === 'bgm' || entry.preload === 'stream';
     const { button } = createSidebarSquareCard({
       name: entry.type === 'cue' && !isMusicCueEntry(entry.item)
         ? `${entry.name} (${entry.item?.variants?.length || 1}变体)`
@@ -271,43 +286,62 @@ function renderList() {
       badge: entry.badge,
       active: selected,
       onClick: () => {
-        if (!isBgmEntry) stopPlayback();
+        if (!isMusicEntry) stopPlayback();
         activeSelection = { type: entry.type, id: entry.id };
         renderList();
         void selectCurrentAudio();
       },
     });
-    if (isBgmEntry) {
+    if (isMusicEntry) {
       const it = entry.item || {};
+      const origNum = Number(it.originalDurationSec ?? it.durationSec ?? it.duration);
+      const cleanNum = Number(it.durationSec ?? it.duration);
+      const durRange = Number.isFinite(origNum) && Number.isFinite(cleanNum)
+        ? `${origNum.toFixed(1)}s → ${cleanNum.toFixed(1)}s`
+        : '--';
       const lufsVal = Number.isFinite(it.measuredLufs ?? it.measuredDb) ? `${Number(it.measuredLufs ?? it.measuredDb).toFixed(1)} LUFS` : '--';
       const pkVal = Number.isFinite(it.peakDb) ? `${Number(it.peakDb).toFixed(1)} dB` : '--';
-      const durVal = Number.isFinite(it.durationSec ?? it.duration) ? `${Number(it.durationSec ?? it.duration).toFixed(1)}s` : '--';
       const kbVal = Number.isFinite(it.sizeKb)
         ? `${Math.round(it.sizeKb)} KB`
         : (it.encodedBytes ? `${Math.round(it.encodedBytes / 1024)} KB` : '--');
-      const diffWarn = it.headTailWarn || (Number.isFinite(it.headTailDiffDb) && it.headTailDiffDb > 4.0);
-      const diffTag = Number.isFinite(it.headTailDiffDb)
-        ? ` / Δ${Number(it.headTailDiffDb).toFixed(1)}dB${diffWarn ? '!' : ''}`
-        : '';
-      const row = document.createElement('div');
-      row.className = 'hgame-audio-bgm-row';
+
       const metaSpan = document.createElement('span');
       metaSpan.className = 'hgame-audio-loud-meta';
-      metaSpan.textContent = `${lufsVal} / ${pkVal} / ${durVal} / ${kbVal}${diffTag}`;
-      const seamBtn = document.createElement('button');
-      seamBtn.type = 'button';
-      seamBtn.className = 'hgame-audio-seam-btn';
-      seamBtn.textContent = '测接缝';
-      seamBtn.title = '跳至结尾前 4.0 秒，5 秒内验听无缝循环接缝';
-      seamBtn.addEventListener('click', (ev) => {
+      metaSpan.textContent = `${durRange} · ${lufsVal} / ${pkVal} / ${kbVal}`;
+
+      const row = document.createElement('div');
+      row.className = 'hgame-audio-bgm-row';
+
+      const playSwitchBtn = document.createElement('button');
+      playSwitchBtn.type = 'button';
+      playSwitchBtn.className = 'hgame-audio-seam-btn';
+      playSwitchBtn.textContent = isBgmEntry ? '播放/切歌' : '播放/闪避';
+      playSwitchBtn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         activeSelection = { type: entry.type, id: entry.id };
         renderList();
         void selectCurrentAudio();
-        void playBgmSeamTest(entry.item);
+        if (isBgmEntry) void playBgmCrossfade(entry.item);
+        else void playStingerOverlay(entry.item);
       });
-      row.append(metaSpan, seamBtn);
-      button.append(row);
+      row.append(playSwitchBtn);
+
+      if (isBgmEntry) {
+        const seamBtn = document.createElement('button');
+        seamBtn.type = 'button';
+        seamBtn.className = 'hgame-audio-seam-btn';
+        seamBtn.textContent = '测结尾循环';
+        seamBtn.title = '跳至结尾前 4.0 秒播放，验证尾部空白已清干净与循环过渡';
+        seamBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          activeSelection = { type: entry.type, id: entry.id };
+          renderList();
+          void selectCurrentAudio();
+          void playBgmSeamTest(entry.item);
+        });
+        row.append(seamBtn);
+      }
+      button.append(metaSpan, row);
     } else {
       const metaSpan = document.createElement('span');
       metaSpan.className = 'hgame-audio-loud-meta';
@@ -355,23 +389,64 @@ function renderMusicVerifyBar() {
     musicBarEl.replaceChildren();
     return;
   }
-  const bgmList = musicEntries.filter((c) => c.category === 'bgm' || String(c.cueName || '').startsWith('bgm.'));
-  const stingerList = musicEntries.filter((c) => c.category === 'stinger' || String(c.cueName || '').startsWith('stinger.'));
   musicBarEl.hidden = false;
   musicBarEl.replaceChildren();
 
+  const scopes = [...new Set(musicEntries.map((c) => c.scope || 'universal'))].sort();
+  const categories = [...new Set(musicEntries.map((c) => c.category || (c.kind === 'stinger' ? 'stinger' : 'bgm')))].sort();
+  if (musicScopeFilter !== 'all' && !scopes.includes(musicScopeFilter)) musicScopeFilter = 'all';
+  if (musicCategoryFilter !== 'all' && !categories.includes(musicCategoryFilter)) musicCategoryFilter = 'all';
+
+  const makeSelectFilter = (id, labelText, currentVal, options, onChange) => {
+    const label = document.createElement('label');
+    label.className = 'hgame-field';
+    const span = document.createElement('span');
+    span.textContent = labelText;
+    const sel = document.createElement('select');
+    sel.id = id;
+    for (const [val, text] of options) {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = text;
+      sel.append(opt);
+    }
+    sel.value = currentVal;
+    sel.addEventListener('change', () => onChange(sel.value));
+    label.append(span, sel);
+    return label;
+  };
+
+  const scopeOptions = [
+    ['all', `全部 (${musicEntries.length})`],
+    ...scopes.map((s) => [s, s === 'universal' ? '通用母库 (universal)' : s]),
+  ];
+  const categoryOptions = [
+    ['all', '全部类别'],
+    ...categories.map((cat) => [cat, cat]),
+  ];
+
+  musicBarEl.append(
+    makeSelectFilter('hgame-audio-scope-filter', 'Scope', musicScopeFilter, scopeOptions, (v) => {
+      musicScopeFilter = v;
+      renderList();
+      void selectCurrentAudio();
+    }),
+    makeSelectFilter('hgame-audio-category-filter', 'Category', musicCategoryFilter, categoryOptions, (v) => {
+      musicCategoryFilter = v;
+      renderList();
+      void selectCurrentAudio();
+    }),
+  );
+
+  const bgmList = musicEntries.filter((c) => c.kind === 'bgm' || String(c.cueName || '').startsWith('bgm.'));
+  const stingerList = musicEntries.filter((c) => c.kind === 'stinger' || String(c.cueName || '').startsWith('stinger.'));
   const activeBgmId = audioMgr?.getBgmState?.().cueId || null;
 
-  const bgmLabel = document.createElement('span');
-  bgmLabel.textContent = '600ms 交叉切歌:';
-  musicBarEl.append(bgmLabel);
-
-  if (bgmList.length === 0) {
-    const none = document.createElement('span');
-    none.textContent = '暂无 BGM（投放至 audio_ai_staging/bgm 后运行 --only-music）';
-    musicBarEl.append(none);
-  } else {
-    for (const bgm of bgmList.slice(0, 6)) {
+  if (bgmList.length > 0) {
+    const bgmLabel = document.createElement('span');
+    bgmLabel.textContent = '600ms 切歌:';
+    musicBarEl.append(bgmLabel);
+    for (const bgm of bgmList.slice(0, 4)) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'hgame-audio-music-pill';
@@ -386,9 +461,9 @@ function renderMusicVerifyBar() {
 
   if (stingerList.length > 0) {
     const stLabel = document.createElement('span');
-    stLabel.textContent = '叠加 Stinger (-6dB 闪避):';
+    stLabel.textContent = '叠加闪避(-6dB):';
     musicBarEl.append(stLabel);
-    for (const st of stingerList.slice(0, 6)) {
+    for (const st of stingerList.slice(0, 4)) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'hgame-audio-music-pill';
@@ -562,18 +637,19 @@ async function selectCurrentAudio() {
     currentAnalysis = null;
     drawPcmWaveform(null);
     const s = entry.item;
-    if (entry.category === 'bgm') {
+    if (entry.kind === 'bgm' || String(entry.name || '').startsWith('bgm.')) {
       const lufs = Number(s.measuredLufs ?? s.measuredDb);
       const pk = Number(s.peakDb);
+      const origDur = Number(s.originalDurationSec ?? s.durationSec ?? 0);
       const dur = Number(s.durationSec ?? s.duration ?? 0);
       const kb = Number(s.sizeKb) || (s.encodedBytes ? s.encodedBytes / 1024 : 0);
       renderMetrics([
-        ['加载策略', '流式循环 BGM (preload: stream · 零卡顿接缝)'],
-        ['响度 / 峰值', `${Number.isFinite(lufs) ? `${lufs.toFixed(1)} LUFS` : '--'} / ${Number.isFinite(pk) ? `${pk.toFixed(1)} dBTP` : '--'}`],
-        ['时长 / BPM', `${dur.toFixed(2)} s · ${s.bpm ? `${s.bpm} BPM` : '无 BPM'}`],
-        ['体积 / 裁剪', `${kb.toFixed(1)} KB · ${Number(s.trimStartSec || 0).toFixed(3)}s~${Number(s.trimEndSec || dur).toFixed(3)}s`],
+        ['加载策略', `流式循环 BGM (${s.scope || 'universal'} · ${s.category || 'bgm'})`],
+        ['原时长 → 去空白后', `${origDur.toFixed(1)}s → ${dur.toFixed(1)}s (去首${Number(s.trimmedLeadSec || 0).toFixed(2)}s / 去尾${Number(s.trimmedTailSec || 0).toFixed(2)}s)`],
+        ['响度 / 峰值 / 体积', `${Number.isFinite(lufs) ? `${lufs.toFixed(1)} LUFS` : '--'} / ${Number.isFinite(pk) ? `${pk.toFixed(1)} dBTP` : '--'} / ${kb.toFixed(1)} KB`],
+        ['BPM / MP3裁剪', `${s.bpm ? `${s.bpm} BPM` : '无 BPM'} · ${Number(s.trimStartSec || 0).toFixed(3)}s~${Number(s.trimEndSec || dur).toFixed(3)}s`],
       ]);
-      statusEl.textContent = `BGM 「${entry.name}」就绪 · 点「播放」切歌，点「测接缝」5 秒验听循环点`;
+      statusEl.textContent = `BGM 「${entry.name}」就绪 · 点「播放/切歌」或「测结尾循环」`;
     } else {
       renderMetrics([
         ['加载策略', '流式长音轨 (preload: stream · 不进首包)'],
@@ -649,8 +725,8 @@ async function startPlayback() {
   const vol = Number(volumeInput.value) || 0.8;
   mgr.setVolume(vol);
 
-  const isStinger = entry.category === 'stinger';
-  if (entry.category === 'bgm') {
+  const isStinger = entry.kind === 'stinger' || String(entry.name || '').startsWith('stinger.');
+  if (entry.kind === 'bgm' || String(entry.name || '').startsWith('bgm.')) {
     await playBgmCrossfade(entry.item);
     return;
   }
@@ -853,9 +929,10 @@ async function initAudioView() {
     ]);
     uploadedAudio = Array.isArray(data.audio) ? data.audio : [];
     cueEntries = Array.isArray(cueRes.cues) ? cueRes.cues : [];
-    musicEntries = Array.isArray(musicRes.tracks)
+    const rawMusic = Array.isArray(musicRes.tracks)
       ? musicRes.tracks
       : [...(Array.isArray(musicRes.bgm) ? musicRes.bgm : []), ...(Array.isArray(musicRes.stingers) ? musicRes.stingers : [])];
+    musicEntries = rawMusic.length > 0 ? rawMusic : cueEntries.filter((c) => isMusicCueEntry(c));
     streamEntries = Array.isArray(streamRes.streams) ? streamRes.streams : [];
     fullEntries = Array.isArray(fullRes.items) ? fullRes.items : [];
     spreadAnomalyCues = new Set((reportRes?.cueSpreadAlerts || []).map((a) => a.cueName));

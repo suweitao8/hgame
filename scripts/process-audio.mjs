@@ -21,12 +21,13 @@ import {
   processAudioLibraryBatch,
 } from './lib/audio-library-pipeline.mjs';
 import {
+  MUSIC_PIPELINE_VERSION,
   resolveDefaultMusicStagingRoot,
+  inferMusicCategory,
   parseBgmFilenameMeta,
-  computeBgmTrimPlan,
+  parseTailSilenceSec,
   probeAudioMetadata,
-  processBgmTrack,
-  processStingerTrack,
+  processMusicTrack,
   evaluateMusicGate,
   processMusicLibrary,
 } from './lib/music-pipeline.mjs';
@@ -47,12 +48,13 @@ export {
   selectQuantileVariants,
   buildSurfaceTypeCueMap,
   processAudioLibraryBatch,
+  MUSIC_PIPELINE_VERSION,
   resolveDefaultMusicStagingRoot,
+  inferMusicCategory,
   parseBgmFilenameMeta,
-  computeBgmTrimPlan,
+  parseTailSilenceSec,
   probeAudioMetadata,
-  processBgmTrack,
-  processStingerTrack,
+  processMusicTrack,
   evaluateMusicGate,
   processMusicLibrary,
 };
@@ -373,6 +375,7 @@ export async function runAudioCli(argv = process.argv.slice(2)) {
       ...(args['out-dir'] ? { outDir: path.resolve(String(args['out-dir'])) } : {}),
       ...(args['base-url'] ? { baseUrl: String(args['base-url']) } : {}),
       ...(args.concurrency ? { concurrency: Number(args.concurrency) } : {}),
+      force: Boolean(args.force),
     });
   }
   if (args.batch) {
@@ -392,12 +395,13 @@ export async function runAudioCli(argv = process.argv.slice(2)) {
         ...(args['out-dir'] ? { outDir: path.resolve(String(args['out-dir'])) } : {}),
         ...(args['base-url'] ? { baseUrl: String(args['base-url']) } : {}),
         ...(args.concurrency ? { concurrency: Number(args.concurrency) } : {}),
+        force: Boolean(args.force),
       });
     }
     return batchRes;
   }
   if (!args.cue || !args.inputs || !args['out-dir']) {
-    throw new Error('Usage: node scripts/process-audio.mjs --cue <name> --inputs a.mp3,b.mp3,c.mp3,d.mp3 --out-dir <dir> [--bgm] | --batch | --only-music');
+    throw new Error('Usage: node scripts/process-audio.mjs --cue <name> --inputs a.mp3,b.mp3,c.mp3,d.mp3 --out-dir <dir> [--bgm] | --batch | --only-music [--force]');
   }
   const inputs = String(args.inputs).split(',').map(s => s.trim()).filter(Boolean);
   return processCueFiles({
