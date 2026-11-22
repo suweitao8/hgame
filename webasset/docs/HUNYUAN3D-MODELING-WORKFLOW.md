@@ -117,9 +117,28 @@ curl -X POST "http://127.0.0.1:4174/api/character-models?characterId=<id>&mode=h
 | grok | 86MB | `5a845386-6c5d-4b74-95aa-7667a9bbe497` | `e704a9cb-0df8-444b-a639-a9e8b314883a` |
 | 阿伟 character-5bf3a802 | 74MB | `1841c2e7-37a5-44ad-b80b-a8e3e74f22b0` | `539aedc7-119a-44db-b2f3-c4ff9c097312` |
 
-**剩余待生成（8 个）**：yujie(6ce0c029)、亮子(1efd121d)、亮生(5a7a1e23)、gemini(0eef1539)、qianwen(b3a75eb1)、dafeiyu（12px 拳头缝，低风险可跑）、jiege(3dca756f) 与 anuo(2dec31e2)（拳头离断口约 80px，**建议重出定稿图后再跑**）。全部切图已就绪（`generated/views/`），配额刷新后按 skill 流程跑即可。
+**2026-11-23 批量轮**（多视图2张 · V3.1 · 1.5m，全部 success 且预览核对无误；本批新增**输入图 SHA256 核验**——服务端 `imageList` 与本地切片逐字节一致、`extraInputs=0`，杜绝旧图/草稿污染）：
+
+| 角色 | 大小 | assetId | creationId | 登记 |
+|---|---|---|---|---|
+| 亮子 character-1efd121d | 79.4MB | `d0abe421-1353-4169-b6c3-419f1e2886fa` | `f878efd1-1e81-475d-9144-95cf6dcae3cd` | `high-9e8ec220` |
+| 亮生 character-5a7a1e23 | 76.4MB | `7ec08b07-8bde-44b5-b9f5-fcfe358f9e29` | `ceb9ed48-0dd5-485d-befe-734eccdcf204` | `high-73f7821c` |
+| 御姐 character-6ce0c029 | 79.9MB | `a186c55f-fdb0-4b08-b669-e6fa471d25a5` | `f021f518-3ab0-48c7-b26f-427bdb7316cd` | `high-1e93f7d8` |
+| jiege character-3dca756f | 68.3MB | `f43d19a7-eea5-4c89-b75b-613e228ab9b4` | `a7b7b667-f525-4384-a7cd-2a949952bacf` | `high-6f03676b` |
+| anuo character-2dec31e2 | 74.8MB | `4f1c81a2-c30a-42b1-87dd-801692c02b0e` | `28c53136-09af-4523-bea7-a0fb0b916129` | `high-0fe4069c` |
+| gemini character-0eef1539 | 82.3MB | `e38ce346-7247-408f-9204-c833055e0743` | `6ecbcea5-5d32-4ead-b368-0df42144b40e` | `high-815d6d67` |
+| qianwen character-b3a75eb1 | 81.1MB | `514e1cc9-503a-42f3-9c23-4e76d79cb13f` | `3392b37d-2d52-4d91-a741-b432f93f0770` | `high-0d3c6378` |
+| dafeiyu | 86.4MB | `50fee7c6-10c1-404b-8563-2cce815d9fc6` | `142a2f44-ace3-4e04-b899-4849cecd8d41` | `high-7f7154e1` |
+
+当日提交前做了三遍复核 + 后台 100 轮审计（91 个图像文件 SHA256 快照零变更、切图判定零翻转）；gemini/qianwen/dafeiyu 三单由后台编排器（`build/hunyuan-debug/pipeline-orchestrator.mjs`，≤2 并发排队 + 采集 + 登记）自动完成，预览图已统一目检无误；脚本坑与防御见「注意」。
+
+**剩余待生成（0 个）**：22 角色已全部具备高模（2026-11-23 收尾）。备用项：gpt、grok、doubao 的高模为 11-21 长裙版、与 low 模服装不一致，其 `tpose-wide-20261123` 切图已重切并像素验证通过，如需服装统一替换（各耗 1 次配额）待用户决定。
 
 ## 注意
 
 - CDP Chrome 视口可能卡「加载中 0%」（webgl1 缺失），左面板与 setInputFiles 不受影响；顶栏「资产」点不开属已知环境坑，走直链下载绕过。
 - AI 生成素材在确认商用授权前按本地原型素材处理。
+- **`DOM.setFileInputFiles` 必须传绝对路径**：相对路径由 Chrome 浏览器进程按其 cwd 解析，解析失败会触发渲染进程崩溃（`RESULT_CODE_KILLED_BAD_MESSAGE`）。
+- 混元页全页只有一个「立即生成」（左栏 `button.sideBarLeft-generateBtn`），弹窗上传完成后点它提交；**有任务 processing 时点击会被静默吞掉**（不报错不扣费），须等无 processing 再提交。
+- 页面会轮询 processing creation 的 `creations/detail`：捕获 detailIds 必须排除已知 id，只认新 id；`attach()` 勿漏 `Network.enable`。
+- 提交后用 creation 详情 `imageList` 的输入图 URL 做 SHA256 核验（等于本地切片、且无多余输入）才可信；防御性脚本见 `build/hunyuan-debug/upload-stepwise.mjs`、`verify-creation-inputs.mjs`（后续可回灌 skill）。
