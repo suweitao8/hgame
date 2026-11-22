@@ -1,15 +1,21 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { loadHdriEnvironment } from './realistic-pcg.js';
 import {
   apiRequestJson,
   create2MapPbrMaterial,
   createThreeViewport,
+  disposeObject3D,
   draw2MapChannelCanvases,
   drawImageFittedToCanvas,
   fetchUnrealCatalog,
   loadHtmlImage,
   loadSingle2MapAssets,
 } from './hgame-shared.js';
+import {
+  captureNodeTransforms,
+  retargetUnrealClips,
+} from './hgame-retarget.js';
 
 const DECAL_PACK_ORDER = [
   '混凝土贴花 Concrete',
@@ -47,6 +53,7 @@ const mapOrmCanvas = document.querySelector('#hgame-decal-map-orm');
 const mapRmLabel = document.querySelector('#hgame-decal-map-rm-label');
 const surfaceSelect = document.querySelector('#hgame-decal-surface');
 const placementSelect = document.querySelector('#hgame-decal-placement');
+const refCharSelect = document.querySelector('#hgame-decal-ref-char');
 const scaleInput = document.querySelector('#hgame-decal-scale');
 const scaleValEl = document.querySelector('#hgame-decal-scale-val');
 const rotInput = document.querySelector('#hgame-decal-rot');
@@ -58,6 +65,7 @@ const tintSelect = document.querySelector('#hgame-decal-tint');
 const statusEl = document.querySelector('#hgame-decal-status');
 
 const texLoader = new THREE.TextureLoader();
+const gltfLoader = new GLTFLoader();
 
 const CN_LIBS = {
   cn_pbr: {
@@ -74,15 +82,15 @@ const CN_LIBS = {
   },
 };
 
-const FLOOR_SIZE = 10;
-const SLAB_THICKNESS = 0.24;
-const WALL_HEIGHT = 4.8;
-const WALL_FRONT_Z = -3.2;
-const FLOOR_DECAL_Z = 0.6;
-const WALL_DECAL_Y = 2.4;
-const SURFACE_EPSILON = 0.008;
-const BASE_DECAL_SIZE = 2.3;
-const BASE_FOLIAGE_SIZE = 1.9;
+const FLOOR_SIZE = 6.4;
+const SLAB_THICKNESS = 0.2;
+const WALL_HEIGHT = 2.8;
+const WALL_FRONT_Z = -1.6;
+const FLOOR_DECAL_Z = 0.35;
+const WALL_DECAL_Y = 1.05;
+const SURFACE_EPSILON = 0.006;
+const BASE_DECAL_SIZE = 1.05;
+const BASE_FOLIAGE_SIZE = 0.85;
 
 let currentLib = 'cn_pbr';
 let cnDecals = [];
@@ -105,6 +113,16 @@ let initialized = false;
 let loadToken = 0;
 let catalogLoaded = false;
 const baseSurfaceCache = new Map();
+
+let refCharacters = [];
+let idleAnimCandidates = [];
+let cachedIdleAnimEntry = null;
+let refCharRoot = null;
+let refCharMixer = null;
+let refCharId = '';
+let refCharGroundOffset = 0;
+let refCharHeight = 0;
+let refCharLoadToken = 0;
 
 function inferDecalPlacement(item, lib = currentLib) {
   if (lib === 'cn_foliage') return 'floor';
@@ -401,7 +419,7 @@ async function getBaseSurfaceMaterial(surfaceKey, renderer, role = 'floor') {
     return baseSurfaceCache.get(cacheKey);
   }
 
-  const repeatVec = role === 'wall' ? [5, 2.4] : [5, 5];
+  const repeatVec = role === 'wall' ? [3.2, 1.4] : [3.2, 3.2];
   const fb = SURFACE_FALLBACKS[effectiveKey];
   if (fb.cnId) {
     try {
@@ -544,6 +562,9 @@ function updateModeTabsUi() {
   if (placementSelect) {
     placementSelect.disabled = previewMode !== 'surface' || currentLib === 'cn_foliage';
   }
+  if (refCharSelect) {
+    refCharSelect.disabled = previewMode !== 'surface';
+  }
 }
 
 function updateLibTabsUi() {
@@ -668,6 +689,176 @@ function drawFlatNormalPreview(canvas) {
   ctx.fillRect(0, 0, w, h);
 }
 
+function tickReferenceCharacter(dt) {
+  if (refCharMixer && refCharRoot?.visible) {
+    refCharMixer.update(dt);
+  }
+}
+
+function startViewport(vp) {
+  if (!viewEl.hidden) {
+    vp.start(tickReferenceCharacter);
+    vp.resize();
+  }
+}
+
+function positionReferenceCharacter() {
+  if (!refCharRoot) return;
+  const visible = previewMode === 'surface' && Boolean(refCharSelect?.value && refCharSelect.value !== 'none');
+  refCharRoot.visible = visible;
+  if (!visible) return;
+  if (currentLib === 'cn_foliage') {
+    refCharRoot.position.set(-0.95, refCharGroundOffset, -0.15);
+  } else if (currentPlacement === 'wall') {
+    refCharRoot.position.set(-0.95, refCharGroundOffset, -0.95);
+  } else {
+    refCharRoot.position.set(-0.95, refCharGroundOffset, -0.35);
+  }
+  refCharRoot.rotation.set(0, 0.3, 0);
+}
+
+function populateRefCharSelect() {
+  if (!refCharSelect) return;
+  const prev = refCharSelect.value;
+  const keepUserChoice = refCharSelect.dataset.userChosen === '1';
+  refCharSelect.replaceChildren();
+  const noneOpt = document.createElement('option');
+  noneOpt.value = 'none';
+  noneOpt.textContent = '无';
+  refCharSelect.appendChild(noneOpt);
+  for (const ch of refCharacters) {
+    const opt = document.createElement('option');
+    opt.value = ch.id;
+    opt.textContent = ch.name;
+    refCharSelect.appendChild(opt);
+  }
+  if (keepUserChoice && (prev === 'none' || refCharacters.some(c => c.id === prev))) {
+    refCharSelect.value = prev;
+  } else if (prev && prev !== 'none' && refCharacters.some(c => c.id === prev)) {
+    refCharSelect.value = prev;
+  } else {
+    const preferred = refCharacters.find(c => c.id === 'chouju') || refCharacters[0];
+    refCharSelect.value = preferred ? preferred.id : 'none';
+  }
+}
+
+async function fetchSelfCharactersForRef() {
+  try {
+    const res = await fetch('/api/assets?category=characters:all&limit=120', { cache: 'no-cache' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const list = [];
+    for (const ch of data.items || []) {
+      const url = ch?.models?.low?.url;
+      if (url) {
+        list.push({ id: ch.id, name: ch.name || ch.id, url });
+      }
+    }
+    return list;
+  } catch {
+    return [];
+  }
+}
+
+async function loadIdleAnimEntry() {
+  if (cachedIdleAnimEntry) return cachedIdleAnimEntry;
+  if (!idleAnimCandidates.length) return null;
+  for (const anim of idleAnimCandidates) {
+    try {
+      const gltf = await gltfLoader.loadAsync(anim.url);
+      const clips = Array.isArray(gltf.animations) ? gltf.animations : [];
+      if (clips.length > 0) {
+        gltf.scene.updateMatrixWorld(true);
+        cachedIdleAnimEntry = { scene: gltf.scene, clips, name: anim.name };
+        return cachedIdleAnimEntry;
+      }
+    } catch { /* try next idle clip */ }
+  }
+  return null;
+}
+
+function disposeReferenceCharacter() {
+  if (refCharMixer) {
+    refCharMixer.stopAllAction();
+    refCharMixer = null;
+  }
+  if (refCharRoot && viewport) {
+    viewport.scene.remove(refCharRoot);
+    disposeObject3D(refCharRoot);
+  }
+  refCharRoot = null;
+  refCharId = '';
+  refCharGroundOffset = 0;
+  refCharHeight = 0;
+}
+
+async function ensureReferenceCharacter(vp) {
+  const targetId = refCharSelect?.value || 'none';
+  if (targetId === 'none' || previewMode !== 'surface') {
+    positionReferenceCharacter();
+    return;
+  }
+  const ch = refCharacters.find(c => c.id === targetId);
+  if (!ch) {
+    positionReferenceCharacter();
+    return;
+  }
+  if (refCharRoot && refCharId === ch.id) {
+    positionReferenceCharacter();
+    return;
+  }
+
+  const token = ++refCharLoadToken;
+  try {
+    const [gltf, idleEntry] = await Promise.all([
+      gltfLoader.loadAsync(ch.url),
+      loadIdleAnimEntry(),
+    ]);
+    if (token !== refCharLoadToken) {
+      disposeObject3D(gltf.scene);
+      return;
+    }
+
+    disposeReferenceCharacter();
+    const root = gltf.scene;
+    const restSnap = captureNodeTransforms(root);
+    let mixer = null;
+
+    if (idleEntry) {
+      const clips = retargetUnrealClips(idleEntry, root, {
+        targetRestSnapshot: restSnap,
+        stripRootMotion: true,
+      });
+      if (clips.length > 0) {
+        mixer = new THREE.AnimationMixer(root);
+        const action = mixer.clipAction(clips[0]);
+        action.setLoop(THREE.LoopRepeat, Infinity);
+        action.reset().play();
+        mixer.setTime(0);
+      }
+    }
+
+    root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(root);
+    const groundOffset = Number.isFinite(box.min.y) ? -box.min.y : 0;
+    const height = Number.isFinite(box.max.y) && Number.isFinite(box.min.y)
+      ? Math.max(0.2, box.max.y - box.min.y)
+      : 1.7;
+
+    refCharRoot = root;
+    refCharMixer = mixer;
+    refCharId = ch.id;
+    refCharGroundOffset = groundOffset;
+    refCharHeight = height;
+    vp.scene.add(refCharRoot);
+    positionReferenceCharacter();
+  } catch {
+    if (token === refCharLoadToken) {
+      disposeReferenceCharacter();
+    }
+  }
+}
+
 function configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera = false } = {}) {
   const cameraKey = previewMode === 'surface'
     ? `surface:${currentLib === 'cn_foliage' ? 'foliage' : currentPlacement}`
@@ -688,21 +879,24 @@ function configureSurfaceCamera(vp, group, floorMat, wallMat, { forceCamera = fa
       vp.gridHelper.visible = true;
       vp.gridHelper.position.y = -SLAB_THICKNESS - 0.005;
     }
+    positionReferenceCharacter();
     if (shouldMoveCamera) {
+      const hasRefChar = Boolean(refCharSelect?.value && refCharSelect.value !== 'none');
       if (currentLib === 'cn_foliage') {
-        vp.camera.position.set(2.0, 2.25, 4.1);
-        vp.controls.target.set(0, 0.95, FLOOR_DECAL_Z);
+        vp.camera.position.set(1.2, 1.25, 2.55);
+        vp.controls.target.set(hasRefChar ? -0.22 : 0, 0.55, 0.15);
       } else if (currentPlacement === 'wall') {
-        vp.camera.position.set(1.7, 2.35, 2.1);
-        vp.controls.target.set(0, 1.9, WALL_FRONT_Z);
+        vp.camera.position.set(1.0, 1.35, 1.35);
+        vp.controls.target.set(hasRefChar ? -0.2 : 0, 0.85, -1.4);
       } else {
-        vp.camera.position.set(1.5, 2.85, 3.65);
-        vp.controls.target.set(0, 0.25, FLOOR_DECAL_Z - 0.2);
+        vp.camera.position.set(1.1, 1.55, 2.55);
+        vp.controls.target.set(hasRefChar ? -0.22 : 0, 0.4, 0.1);
       }
       vp.controls.update();
     }
   } else {
     if (vp.gridHelper) vp.gridHelper.visible = false;
+    positionReferenceCharacter();
     if (shouldMoveCamera) {
       vp.camera.position.set(0, 1.05, 2.9);
       vp.controls.target.set(0, 1.05, 0);
@@ -753,6 +947,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
         loadSingle2MapAssets(cfg.baseUrl, item.id),
         previewMode === 'surface' ? getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer, 'floor') : Promise.resolve(null),
         previewMode === 'surface' ? getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer, 'wall') : Promise.resolve(null),
+        ensureReferenceCharacter(vp),
       ]);
       if (token !== loadToken) return;
 
@@ -799,14 +994,14 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
       const physStr = item.physicalSizeMeters ? ` · ${item.physicalSizeMeters}m` : '';
       const typeLabel = currentLib === 'cn_foliage' ? '2贴图植被卡片(alphaTest 0.5)' : '2贴图贴花(Transparent)';
       const tintStr = item.tintableGrayscale ? ' · 可染色灰度' : '';
+      const refStr = previewMode === 'surface' && refCharRoot?.visible && refCharHeight
+        ? ` · 参考角色 ${refCharHeight.toFixed(2)}m`
+        : '';
       statusEl.textContent =
-        `${typeLabel} · ${placementLabel} · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr} · ` +
+        `${typeLabel} · ${placementLabel} · ${item.width || 1024}×${item.height || 1024}${aspectStr}${physStr}${tintStr}${refStr} · ` +
         `${assets.loadMs.toFixed(0)}ms · ${item.sourcePath || item.category || ''}`;
 
-      if (!viewEl.hidden) {
-        vp.start();
-        vp.resize();
-      }
+      startViewport(vp);
     } catch (error) {
       if (token !== loadToken) return;
       statusEl.textContent = error.message || '贴花贴图加载失败';
@@ -845,6 +1040,7 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
       ? await Promise.all([
         getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer, 'floor'),
         getBaseSurfaceMaterial(surfaceSelect.value, vp.renderer, 'wall'),
+        ensureReferenceCharacter(vp),
       ])
       : [null, null];
     if (token !== loadToken) {
@@ -910,12 +1106,12 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
       normalLabel,
       ormTex ? 'ORM' : null,
     ].filter(Boolean).join(' / ');
-    statusEl.textContent = `${item.category || 'PBR 贴花'} · ${placementLabel}${dim ? ` · ${dim}` : ''} · ${mapsLabel}`;
+    const refStr = previewMode === 'surface' && refCharRoot?.visible && refCharHeight
+      ? ` · 参考角色 ${refCharHeight.toFixed(2)}m`
+      : '';
+    statusEl.textContent = `${item.category || 'PBR 贴花'} · ${placementLabel}${dim ? ` · ${dim}` : ''} · ${mapsLabel}${refStr}`;
 
-    if (!viewEl.hidden) {
-      vp.start();
-      vp.resize();
-    }
+    startViewport(vp);
   } catch (error) {
     if (token !== loadToken) return;
     statusEl.textContent = error.message || '贴花贴图加载失败';
@@ -980,6 +1176,15 @@ async function initDecalsView() {
       }
     });
 
+    refCharSelect?.addEventListener('change', async () => {
+      refCharSelect.dataset.userChosen = '1';
+      const vp = ensureViewport();
+      await ensureReferenceCharacter(vp);
+      if (previewMode === 'surface') {
+        void loadCurrentDecal({ forceCamera: true });
+      }
+    });
+
     const onTransformInput = () => {
       syncSliderLabels();
       applyTransformToDecalMesh();
@@ -996,18 +1201,16 @@ async function initDecalsView() {
   }
 
   const vp = ensureViewport();
-  if (!viewEl.hidden) {
-    vp.resize();
-    vp.start();
-  }
+  startViewport(vp);
 
   if (!catalogLoaded) {
     try {
-      const [cnResp, folResp, unrealCatalog, curatedData] = await Promise.all([
+      const [cnResp, folResp, unrealCatalog, curatedData, chars] = await Promise.all([
         fetch('/assets/cn/pbr_decals/pbr_decals_table.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
         fetch('/assets/cn/pbr_foliage/pbr_foliage_table.json', { cache: 'no-cache' }).then(r => r.ok ? r.json() : { items: [] }).catch(() => ({ items: [] })),
-        fetchUnrealCatalog().catch(() => ({ decals: [], materials: [] })),
+        fetchUnrealCatalog().catch(() => ({ decals: [], materials: [], animations: [] })),
         apiRequestJson('/api/hgame/materials/curated').catch(() => ({ materials: [] })),
+        fetchSelfCharactersForRef(),
       ]);
       cnDecals = Array.isArray(cnResp?.items) ? cnResp.items : [];
       cnFoliage = Array.isArray(folResp?.items) ? folResp.items : [];
@@ -1015,6 +1218,27 @@ async function initDecalsView() {
       const unrealMats = Array.isArray(unrealCatalog.materials) ? unrealCatalog.materials : [];
       const curatedMats = Array.isArray(curatedData?.materials) ? curatedData.materials : [];
       baseMaterials = [...unrealMats, ...curatedMats];
+      refCharacters = chars;
+      const allAnims = Array.isArray(unrealCatalog.animations) ? unrealCatalog.animations : [];
+      const preferredIdleIds = [
+        'Dialogue_mocap__MM_Idle',
+        'Female_Animations__Anim_Idle_01',
+        'MC_Idles_Pack__am_ArmsCrossed_Idle_01',
+        'NPCsBundle__A_IdleBreak1',
+      ];
+      const byId = new Map(allAnims.map(a => [a.id, a]));
+      const picked = [];
+      for (const id of preferredIdleIds) {
+        if (byId.has(id)) picked.push(byId.get(id));
+      }
+      for (const a of allAnims) {
+        if (a.category === '待机站姿' && !picked.includes(a)) {
+          picked.push(a);
+          if (picked.length >= 8) break;
+        }
+      }
+      idleAnimCandidates = picked;
+      populateRefCharSelect();
       catalogLoaded = true;
     } catch (error) {
       cnDecals = [];
@@ -1038,6 +1262,21 @@ async function initDecalsView() {
   renderList();
   await loadCurrentDecal();
 }
+
+window.addEventListener('webasset:open-asset', event => {
+  const { workspace, id, kind } = event.detail || {};
+  if (workspace !== 'decals' || !id) return;
+  if (kind === 'cn_foliage' || kind === 'cn_pbr') {
+    currentLib = kind;
+    updateLibTabsUi();
+  }
+  activeId = id;
+  if (catalogLoaded) {
+    populatePackFilter();
+    renderList();
+    void loadCurrentDecal();
+  }
+});
 
 window.addEventListener('webasset:workspace-change', event => {
   if (event.detail?.workspace === 'decals') {
