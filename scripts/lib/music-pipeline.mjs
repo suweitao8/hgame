@@ -69,8 +69,14 @@ export function resolveDefaultMusicStagingRoot() {
 export function inferMusicCategory(cleanName, kind = 'bgm') {
   if (kind === 'stinger') return 'stinger';
   const s = String(cleanName || '').toLowerCase();
-  if (/(^|_)(boss|climax|raid|final_phase|nemesis)(_|$)/.test(s)) return 'boss';
+  if (/(^|_)(boss|climax_boss|raid|final_phase|nemesis)(_|$)/.test(s) && !/^emo_/.test(s)) return 'boss';
+  if (/(^|_)(urgent|countdown|escape|crisis|panic|alert)(_|$)/.test(s)) return 'urgent';
   if (/(^|_)(battle|combat|fight|action|war|arena|rush|chase)(_|$)/.test(s)) return 'battle';
+  if (/(^|_)(sweet|ambiguous|intimate|climax|afterglow|romance|date|love)(_|$)/.test(s)) return 'romance';
+  if (/(^|_)(suspense|stealth|mystery|tense|dark_scheme)(_|$)/.test(s)) return 'suspense';
+  if (/(^|_)(daily|warm|bond|sad|melancholy|healing|emotional)(_|$)/.test(s)) return 'emotion';
+  if (/(^|_)(puzzle|match|arcade|minigame)(_|$)/.test(s)) return 'puzzle';
+  if (/(^|_)(explore|exploration|field|adventure|travel)(_|$)/.test(s)) return 'explore';
   if (/(^|_)(lobby|title|menu|home|hub|town|camp|select)(_|$)/.test(s)) return 'lobby';
   if (/(^|_)(card|deck|shop|draft|tavern|gacha|upgrade)(_|$)/.test(s)) return 'card';
   if (/(^|_)(dungeon|crypt|cave|ruin|labyrinth|tomb|dark)(_|$)/.test(s)) return 'dungeon';
@@ -79,6 +85,15 @@ export function inferMusicCategory(cleanName, kind = 'bgm') {
   if (/(^|_)(comedy|fun|quirky|silly|goofy|cartoon)(_|$)/.test(s)) return 'comedy';
   if (/(^|_)(story|cutscene|drama|lore|ending|credits|narrative)(_|$)/.test(s)) return 'story';
   return 'bgm';
+}
+
+const VOICE_SPACE_CATEGORIES = new Set(['emotion', 'romance', 'suspense', 'comedy']);
+export function shouldApplyVoiceSpaceEq(meta, override = null) {
+  if (override && typeof override.voiceSpaceEq === 'boolean') {
+    return override.voiceSpaceEq;
+  }
+  if (meta?.kind !== 'bgm') return false;
+  return String(meta?.cleanName || '').startsWith('emo_') || VOICE_SPACE_CATEGORIES.has(meta?.category);
 }
 
 /**
@@ -229,12 +244,17 @@ async function encodeTwoPassLoudnormMp3({
   srcPath,
   outPath,
   ffmpegBin,
+  ffprobeBin,
   targetI,
   targetTp,
   targetLra,
   preFilter,
+  tempDir = os.tmpdir(),
 }) {
   await fs.mkdir(path.dirname(outPath), { recursive: true });
+  const uid = `${process.pid}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const normWav = path.join(tempDir, `hgame_ln_${uid}.wav`);
+  const tailCleanWav = path.join(tempDir, `hgame_ln_tail_${uid}.wav`);
 
   const runWithTp = async (tpLimit) => {
     const p1Filter = `${preFilter},loudnorm=I=${targetI.toFixed(1)}:TP=${tpLimit.toFixed(1)}:LRA=${targetLra}:print_format=json`;
@@ -244,10 +264,47 @@ async function encodeTwoPassLoudnormMp3({
       ? `loudnorm=I=${targetI.toFixed(1)}:TP=${tpLimit.toFixed(1)}:LRA=${targetLra}:measured_I=${ln.inputI.toFixed(2)}:measured_TP=${ln.inputTp.toFixed(2)}:measured_LRA=${ln.inputLra.toFixed(2)}:measured_thresh=${ln.inputThresh.toFixed(2)}:offset=${ln.targetOffset.toFixed(2)}:linear=true`
       : `loudnorm=I=${targetI.toFixed(1)}:TP=${tpLimit.toFixed(1)}:LRA=${targetLra}`;
     const p2Filter = `${preFilter},${p2Loudnorm}`;
-    const enc = await runFfmpegAsync(ffmpegBin, [
+    const normRes = await runFfmpegAsync(ffmpegBin, [
       '-y', '-v', 'error',
       '-i', srcPath,
       '-af', p2Filter,
+      '-c:a', 'pcm_f32le',
+      normWav,
+    ]);
+    if (normRes.code !== 0) {
+      throw new Error(`ffmpeg loudnorm encode failed for ${path.basename(outPath)}: ${normRes.stderr}`);
+    }
+
+    // Re-trim trailing silence after loudnorm gain shift (at -43 dB RMS, slightly stricter than -45 dB QA gate)
+    // so tracks attenuated down to -19 LUFS never trip EOF silence detection.
+    const normProbe = await probeAudioMetadata(ffprobeBin, normWav);
+    let finalSrcWav = normWav;
+    let extraTailTrimmedSec = 0;
+    const tailRes = await runFfmpegAsync(ffmpegBin, [
+      '-y', '-v', 'error',
+      '-i', normWav,
+      '-af', 'areverse,silenceremove=start_periods=1:start_duration=0:start_threshold=-43dB:detection=rms,areverse',
+      '-c:a', 'pcm_f32le',
+      tailCleanWav,
+    ]);
+    if (tailRes.code === 0) {
+      const cleanProbe = await probeAudioMetadata(ffprobeBin, tailCleanWav).catch(() => null);
+      if (cleanProbe && cleanProbe.duration > Math.max(0.2, normProbe.duration * 0.5)) {
+        finalSrcWav = tailCleanWav;
+        extraTailTrimmedSec = round(Math.max(0, normProbe.duration - cleanProbe.duration), 4);
+      }
+    }
+
+    const finalProbe = finalSrcWav === tailCleanWav
+      ? await probeAudioMetadata(ffprobeBin, finalSrcWav)
+      : normProbe;
+    const fadeOut = Math.min(MICRO_FADE_OUT_SEC, finalProbe.duration * 0.25);
+    const fadeOutStart = round(Math.max(0, finalProbe.duration - fadeOut), 4);
+
+    const enc = await runFfmpegAsync(ffmpegBin, [
+      '-y', '-v', 'error',
+      '-i', finalSrcWav,
+      '-af', `afade=t=out:st=${fadeOutStart}:d=${round(fadeOut, 4)}`,
       '-ac', '2',
       '-ar', '44100',
       '-c:a', 'libmp3lame',
@@ -255,18 +312,24 @@ async function encodeTwoPassLoudnormMp3({
       outPath,
     ]);
     if (enc.code !== 0) {
-      throw new Error(`ffmpeg loudnorm encode failed for ${path.basename(outPath)}: ${enc.stderr}`);
+      throw new Error(`ffmpeg mp3 encode failed for ${path.basename(outPath)}: ${enc.stderr}`);
     }
-    return auditEncodedLoudnormAndPeak(ffmpegBin, outPath, { targetI, targetTp, targetLra });
+    const audit = await auditEncodedLoudnormAndPeak(ffmpegBin, outPath, { targetI, targetTp, targetLra });
+    return { ...audit, extraTailTrimmedSec };
   };
 
-  let tpLimit = targetTp;
-  let audit = await runWithTp(tpLimit);
-  for (let retry = 0; retry < 2 && audit.peakDb > -0.8; retry++) {
-    tpLimit -= Math.max(0.6, audit.peakDb - (-1.2));
-    audit = await runWithTp(tpLimit);
+  try {
+    let tpLimit = targetTp;
+    let audit = await runWithTp(tpLimit);
+    for (let retry = 0; retry < 2 && audit.peakDb > -0.8; retry++) {
+      tpLimit -= Math.max(0.6, audit.peakDb - (-1.2));
+      audit = await runWithTp(tpLimit);
+    }
+    return audit;
+  } finally {
+    await fs.rm(normWav, { force: true }).catch(() => {});
+    await fs.rm(tailCleanWav, { force: true }).catch(() => {});
   }
-  return audit;
 }
 
 /**
@@ -399,30 +462,37 @@ export async function processMusicTrack({
     const fadeIn = Math.min(MICRO_FADE_IN_SEC, segDur * 0.2);
     const fadeOut = Math.min(MICRO_FADE_OUT_SEC, segDur * 0.25);
     const fadeOutStart = round(Math.max(0, segDur - fadeOut), 4);
-    const microFadeFilter = `afade=t=in:st=0:d=${round(fadeIn, 4)},afade=t=out:st=${fadeOutStart}:d=${round(fadeOut, 4)}`;
+    const microFadeInOnly = `afade=t=in:st=0:d=${round(fadeIn, 4)}`;
+    const microFadeFilter = `${microFadeInOnly},afade=t=out:st=${fadeOutStart}:d=${round(fadeOut, 4)}`;
+    const voiceSpaceEq = shouldApplyVoiceSpaceEq(meta, override);
+    const eqFilter = voiceSpaceEq ? ',equalizer=f=2800:t=q:w=1.2:g=-2.5' : '';
 
     let audit;
     if (meta.kind === 'bgm') {
-      const preFilter = `${basePrefix},${microFadeFilter},highpass=f=30`;
+      const preFilter = `${basePrefix},${microFadeInOnly},highpass=f=30${eqFilter}`;
       audit = await encodeTwoPassLoudnormMp3({
         srcPath: trimmedWav,
         outPath: outAbs,
         ffmpegBin,
+        ffprobeBin,
         targetI: BGM_TARGET_LUFS,
         targetTp: BGM_TARGET_TP,
         targetLra: BGM_TARGET_LRA,
         preFilter,
+        tempDir,
       });
     } else if (segDur >= 1.5) {
-      const preFilter = `${basePrefix},${microFadeFilter},highpass=f=30`;
+      const preFilter = `${basePrefix},${microFadeInOnly},highpass=f=30${eqFilter}`;
       audit = await encodeTwoPassLoudnormMp3({
         srcPath: trimmedWav,
         outPath: outAbs,
         ffmpegBin,
+        ffprobeBin,
         targetI: STINGER_TARGET_LUFS,
         targetTp: STINGER_TARGET_TP,
         targetLra: STINGER_TARGET_LRA,
         preFilter,
+        tempDir,
       });
     } else {
       await fs.mkdir(path.dirname(outAbs), { recursive: true });
@@ -440,7 +510,7 @@ export async function processMusicTrack({
         const enc = await runFfmpegAsync(ffmpegBin, [
           '-y', '-v', 'error',
           '-i', trimmedWav,
-          '-af', `${basePrefix},${microFadeFilter},highpass=f=30,volume=${gainInfo.gainDb.toFixed(2)}dB,alimiter=limit=${ceilLin}:attack=2:release=50:level=disabled`,
+          '-af', `${basePrefix},${microFadeFilter},highpass=f=30${eqFilter},volume=${gainInfo.gainDb.toFixed(2)}dB,alimiter=limit=${ceilLin}:attack=2:release=50:level=disabled`,
           '-ac', '2',
           '-ar', '44100',
           '-c:a', 'libmp3lame',
@@ -453,7 +523,7 @@ export async function processMusicTrack({
         const post = await measureAudioFileVolume(ffmpegBin, outAbs, '');
         const peakDb = round(post.maxDb ?? STINGER_TARGET_TP, 2);
         const measuredLufs = round(post.meanDb ?? STINGER_TARGET_LUFS, 2);
-        audit = { measuredLufs, peakDb };
+        audit = { measuredLufs, peakDb, extraTailTrimmedSec: 0 };
         if (peakDb <= -0.8) break;
         ceilDb -= Math.max(0.6, peakDb - (-1.2));
       }
@@ -488,7 +558,7 @@ export async function processMusicTrack({
       originalDurationSec,
       durationSec,
       trimmedLeadSec: trimInfo.trimmedLeadSec,
-      trimmedTailSec: trimInfo.trimmedTailSec,
+      trimmedTailSec: round(trimInfo.trimmedTailSec + (audit.extraTailTrimmedSec || 0), 4),
       trimStartSec,
       trimEndSec,
       tailSilenceSec,
@@ -498,6 +568,7 @@ export async function processMusicTrack({
       sizeKb,
       encodedBytes: outStat.size,
       gainDb: Number(override?.gainDb ?? 0),
+      voiceSpaceEq,
       lufsWarn,
       trimGuardTriggered: trimInfo.trimGuardTriggered,
       stingerOver15sWarning,
@@ -761,6 +832,7 @@ export async function processMusicLibrary({
       measuredLufs: t.measuredLufs,
       peakDb: t.peakDb,
       sizeKb: t.sizeKb,
+      voiceSpaceEq: Boolean(t.voiceSpaceEq),
       lufsWarn: t.lufsWarn,
       trimGuardTriggered: t.trimGuardTriggered,
       url: t.url,
