@@ -178,6 +178,7 @@ export function createHGameAssetHandler({
   materialLibraryRoot = null,
   unrealExportRoot = null,
   unityExportRoot = null,
+  anim23Root = null,
 } = {}) {
   const root = path.resolve(hgameAssetRoot);
   const procRoot = path.resolve(proceduralRoot);
@@ -219,6 +220,10 @@ export function createHGameAssetHandler({
 
   function getUnityRoot() {
     return resolveExportRoot(unityExportRoot, 'HGAME_UNITY_EXPORT_ROOT', 'D:\\UnityWorkspace\\AssetTest\\Saved\\WebAssetExport');
+  }
+
+  function getAnim23Root() {
+    return resolveExportRoot(anim23Root, 'HGAME_ANIM23_ROOT', path.resolve(siteRoot, '..', 'assets', 'anim23'));
   }
 
   async function loadProceduralManifest() {
@@ -396,6 +401,29 @@ export function createHGameAssetHandler({
           });
         } catch {
           sendJson(response, 200, { available: false, vfxSystems: [], vfxMeshes: [], vfxTextures: [] });
+        }
+        return;
+      }
+
+      if (pathname === '/api/hgame/anim23/catalog' && request.method === 'GET') {
+        const root23 = getAnim23Root();
+        if (!root23) {
+          sendJson(response, 200, { available: false, rig: 'humanoid_23', animations: [] });
+          return;
+        }
+        try {
+          const catalog = JSON.parse(await readFile(path.join(root23, 'catalog.json'), 'utf8'));
+          sendJson(response, 200, {
+            available: true,
+            version: catalog.version || 3,
+            rig: catalog.rig || 'humanoid_23',
+            generatedAt: catalog.generatedAt || null,
+            totalSourceBytes: catalog.totalSourceBytes || 0,
+            totalBakedBytes: catalog.totalBakedBytes || 0,
+            animations: Array.isArray(catalog.animations) ? catalog.animations : [],
+          });
+        } catch {
+          sendJson(response, 200, { available: false, rig: 'humanoid_23', animations: [] });
         }
         return;
       }
@@ -671,6 +699,15 @@ export function createHGameAssetHandler({
 
       if (pathname.startsWith('/files/procedural/')) {
         sendJson(response, 404, { error: 'PROCEDURAL_ASSETS_DISABLED', message: '程序化 .hmesh 已移除。' });
+        return;
+      }
+
+      if (pathname.startsWith('/files/hgame-anim23/')) {
+        await serveExportedFile(
+          getAnim23Root(),
+          '/files/hgame-anim23/',
+          /^(?:[A-Za-z0-9_.\-]+\/)*[A-Za-z0-9_.\-]+\.glb$/i,
+        );
         return;
       }
 

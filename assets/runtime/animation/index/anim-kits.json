@@ -1,0 +1,713 @@
+{
+  "version": 1,
+  "rig": "humanoid_23",
+  "generatedAt": "2026-11-22T01:45:09.020Z",
+  "kitCount": 9,
+  "kits": [
+    {
+      "kitId": "kit_realistic_civilian",
+      "style": "realistic",
+      "rig": "humanoid_23",
+      "description": "写实都市/沙盒/通用主角移动底座",
+      "allowedPacks": [
+        "MaleLocomotionSet",
+        "MC_Idles_Pack",
+        "RollDodgeDashSet",
+        "ClimbingAnimationSet"
+      ],
+      "filledSlots": 30,
+      "totalSlots": 43,
+      "missingSlots": [
+        "upperBody.aim_idle",
+        "upperBody.fire",
+        "upperBody.reload",
+        "upperBody.equip",
+        "upperBody.unequip",
+        "combat.attack_1",
+        "combat.attack_2",
+        "combat.attack_3",
+        "combat.block_loop",
+        "combat.hit_f",
+        "combat.hit_b",
+        "combat.death_1",
+        "combat.death_2"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_Idle.glb",
+        "sprint_f": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_RunFwd_Loop.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_WalkFwd_Loop.glb",
+          "b": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_WalkBwd_Loop.glb",
+          "l": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_WalkFwdLt_90_Loop.glb",
+          "r": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_WalkFwdRt_90_Loop.glb",
+          "fl": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_WalkFwdLt_45_Loop.glb",
+          "fr": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_WalkFwdRt_45_Loop.glb",
+          "bl": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_WalkBwdLt_45_Loop.glb",
+          "br": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_WalkBwdRt_45_Loop.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JogFwd_Loop.glb",
+          "b": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JogBwd_Loop.glb",
+          "l": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JogFwdLt_90_Loop.glb",
+          "r": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JogFwdRt_90_Loop.glb",
+          "fl": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JogFwdLt_45_Loop.glb",
+          "fr": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JogFwdRt_45_Loop.glb",
+          "bl": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JogBwdLt_45_Loop.glb",
+          "br": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JogBwdRt_45_Loop.glb"
+        },
+        "crouch_idle": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_Crouch_Idle.glb",
+        "crouch_walk": {
+          "f": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_CrouchFwd_Loop.glb",
+          "b": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_CrouchBwd_Loop.glb",
+          "l": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_CrouchFwdLt_90_Loop.glb",
+          "r": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_CrouchFwdRt_90_Loop.glb"
+        },
+        "jump_start": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JumpIdle_Start.glb",
+        "jump_loop": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_Falling_Loop.glb",
+        "jump_land": "anim23/_AnimDaily/MaleLocomotionSet/A_INP_JumpIdle_Land.glb",
+        "dodge_f": "anim23/_AnimDaily/RollDodgeDashSet/A_INP_Roll_IdleFwd.glb",
+        "dodge_b": "anim23/_AnimDaily/RollDodgeDashSet/A_INP_Dodge_01_IdleBwd_toLeft.glb",
+        "dodge_l": "anim23/_AnimDaily/RollDodgeDashSet/A_INP_Dodge_01_IdleFwdLt_90.glb",
+        "dodge_r": "anim23/_AnimDaily/RollDodgeDashSet/A_INP_Dodge_01_IdleFwdRt_90.glb"
+      },
+      "upperBody": {
+        "aim_idle": null,
+        "fire": null,
+        "reload": null,
+        "equip": null,
+        "unequip": null
+      },
+      "combat": {
+        "attack_1": null,
+        "attack_2": null,
+        "attack_3": null,
+        "block_loop": null,
+        "hit_f": null,
+        "hit_b": null,
+        "death_1": null,
+        "death_2": null
+      }
+    },
+    {
+      "kitId": "kit_tps_pistol",
+      "style": "realistic",
+      "rig": "humanoid_23",
+      "description": "第三人称射击（手枪 8 向平移底座 + 上下半身遮罩模板）",
+      "allowedPacks": [
+        "PistolAnimsetPro",
+        "MaleLocomotionSet"
+      ],
+      "filledSlots": 36,
+      "totalSlots": 43,
+      "missingSlots": [
+        "locomotion.dodge_f",
+        "locomotion.dodge_b",
+        "locomotion.dodge_l",
+        "locomotion.dodge_r",
+        "combat.attack_3",
+        "combat.block_loop",
+        "combat.death_2"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Idle.glb",
+        "sprint_f": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_SprintLoop.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_WalkFwdLoop.glb",
+          "b": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_WalkBwdLoop.glb",
+          "l": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeLeftLoop.glb",
+          "r": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRightLoop.glb",
+          "fl": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeLeft45Loop.glb",
+          "fr": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRight45Loop.glb",
+          "bl": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeLeft135Loop.glb",
+          "br": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRight135Loop.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_RunFwdLoop.glb",
+          "b": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_RunBwdLoop.glb",
+          "l": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRunLeftLoop.glb",
+          "r": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRunRightLoop.glb",
+          "fl": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRun45LeftLoop.glb",
+          "fr": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRun45RightLoop.glb",
+          "bl": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRun135LeftLoop.glb",
+          "br": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_StrafeRun135RightLoop.glb"
+        },
+        "crouch_idle": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_CrouchLoop.glb",
+        "crouch_walk": {
+          "f": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Crouch_WalkFwd.glb",
+          "b": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Crouch_WalkBwd.glb",
+          "l": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Crouch_WalkLt.glb",
+          "r": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Crouch_WalkRt.glb"
+        },
+        "jump_start": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Jump_Platformer_Start.glb",
+        "jump_loop": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_FallingLoop.glb",
+        "jump_land": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Land_Generic.glb",
+        "dodge_f": null,
+        "dodge_b": null,
+        "dodge_l": null,
+        "dodge_r": null
+      },
+      "upperBody": {
+        "aim_idle": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Idle.glb",
+        "fire": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_ShootOnce.glb",
+        "reload": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Reload_2.glb",
+        "equip": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Equip.glb",
+        "unequip": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_UnEquip.glb"
+      },
+      "combat": {
+        "attack_1": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Melee_Hard.glb",
+        "attack_2": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Melee_Kick.glb",
+        "attack_3": null,
+        "block_loop": null,
+        "hit_f": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Hit_C_1.glb",
+        "hit_b": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Hit_L_1.glb",
+        "death_1": "anim23/_AnimBattleWeapon/PistolAnimsetPro/Pistol_Death_L.glb",
+        "death_2": null
+      }
+    },
+    {
+      "kitId": "kit_samurai_katana",
+      "style": "realistic",
+      "rig": "humanoid_23",
+      "description": "写实武士、太刀近战与潜行弓箭套件",
+      "allowedPacks": [
+        "GhostSamurai_Bundle",
+        "Katana_Animations"
+      ],
+      "filledSlots": 37,
+      "totalSlots": 43,
+      "missingSlots": [
+        "locomotion.crouch_idle",
+        "locomotion.crouch_walk.f",
+        "locomotion.crouch_walk.b",
+        "locomotion.crouch_walk.l",
+        "locomotion.crouch_walk.r",
+        "upperBody.reload"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Idle.glb",
+        "sprint_f": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_F_Sprint_Inplace.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Walk_F_Loop_Inplace.glb",
+          "b": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Walk_B_Inplace.glb",
+          "l": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Walk_L_Inplace.glb",
+          "r": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Walk_R_Inplace.glb",
+          "fl": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Walk_FL_Inplace.glb",
+          "fr": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Walk_FR_Inplace.glb",
+          "bl": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Walk_BL_Inplace.glb",
+          "br": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Walk_BR_Inplace.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_F_Loop_Inplace.glb",
+          "b": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_B_Inplace.glb",
+          "l": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_L_Inplace.glb",
+          "r": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_R_Inplace.glb",
+          "fl": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_FL_Inplace.glb",
+          "fr": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_FR_Inplace.glb",
+          "bl": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_BL_Inplace.glb",
+          "br": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Strafe_Run_BR_Inplace.glb"
+        },
+        "crouch_idle": null,
+        "crouch_walk": {
+          "f": null,
+          "b": null,
+          "l": null,
+          "r": null
+        },
+        "jump_start": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Jump_Start_Inplace.glb",
+        "jump_loop": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Jump_Loop_Inplace.glb",
+        "jump_land": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Jump_End_Inplace.glb",
+        "dodge_f": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Dodge_F_Inplace.glb",
+        "dodge_b": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Dodge_B_Inplace.glb",
+        "dodge_l": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Dodge_L_Inplace.glb",
+        "dodge_r": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Dodge_R_Inplace.glb"
+      },
+      "upperBody": {
+        "aim_idle": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_Bow_Idle_Inplace.glb",
+        "fire": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_Bow_Shoot_Loop_Inplace.glb",
+        "reload": null,
+        "equip": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Equip01_Inplace.glb",
+        "unequip": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Equip02_Inplace.glb"
+      },
+      "combat": {
+        "attack_1": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Attack01_1_ALL_Inplace.glb",
+        "attack_2": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Attack01_2_Inplace.glb",
+        "attack_3": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Attack01_3_Inplace.glb",
+        "block_loop": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_DefenseL_Loop_Inplace.glb",
+        "hit_f": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Hit_F_Inplace.glb",
+        "hit_b": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Hit_B_Inplace.glb",
+        "death_1": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Die01_Inplace.glb",
+        "death_2": "anim23/_AnimBattleWeapon/GhostSamurai_Bundle/GhostSamurai_APose_Die02_Inplace.glb"
+      }
+    },
+    {
+      "kitId": "kit_wuxia_sword",
+      "style": "wuxia",
+      "rig": "humanoid_23",
+      "description": "国风武侠、武当长剑收鞘与双刀流套件",
+      "allowedPacks": [
+        "WudangSword_Animset",
+        "Sword_sheath_AnimSet",
+        "Orientalism_Dual_Blade_Anim_Set"
+      ],
+      "filledSlots": 35,
+      "totalSlots": 43,
+      "missingSlots": [
+        "locomotion.crouch_idle",
+        "locomotion.crouch_walk.f",
+        "locomotion.crouch_walk.b",
+        "locomotion.crouch_walk.l",
+        "locomotion.crouch_walk.r",
+        "upperBody.aim_idle",
+        "upperBody.fire",
+        "upperBody.reload"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimBattleWeapon/WudangSword_Animset/idle.glb",
+        "sprint_f": "anim23/_AnimBattleWeapon/WudangSword_Animset/MM_Run_Fwd.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_walk_front.glb",
+          "b": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_walk_back.glb",
+          "l": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_walk_left.glb",
+          "r": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_walk_right.glb",
+          "fl": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_walk_frontL45.glb",
+          "fr": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_walk_frontR45.glb",
+          "bl": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_walk_backL45.glb",
+          "br": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_walk_backR45.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_run_front.glb",
+          "b": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_run_back.glb",
+          "l": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_run_left.glb",
+          "r": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_run_right.glb",
+          "fl": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_run_frontL45.glb",
+          "fr": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_run_frontR45.glb",
+          "bl": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_run_backL45.glb",
+          "br": "anim23/_AnimBattleWeapon/WudangSword_Animset/move_run_backR45.glb"
+        },
+        "crouch_idle": null,
+        "crouch_walk": {
+          "f": null,
+          "b": null,
+          "l": null,
+          "r": null
+        },
+        "jump_start": "anim23/_AnimBattleWeapon/WudangSword_Animset/Jump_start.glb",
+        "jump_loop": "anim23/_AnimBattleWeapon/WudangSword_Animset/jump_falling_loop.glb",
+        "jump_land": "anim23/_AnimBattleWeapon/WudangSword_Animset/jump_landing.glb",
+        "dodge_f": "anim23/_AnimBattleWeapon/WudangSword_Animset/roll_front.glb",
+        "dodge_b": "anim23/_AnimBattleWeapon/WudangSword_Animset/roll_back.glb",
+        "dodge_l": "anim23/_AnimBattleWeapon/WudangSword_Animset/roll_left.glb",
+        "dodge_r": "anim23/_AnimBattleWeapon/WudangSword_Animset/roll_right.glb"
+      },
+      "upperBody": {
+        "aim_idle": null,
+        "fire": null,
+        "reload": null,
+        "equip": "anim23/_AnimBattleWeapon/Orientalism_Dual_Blade_Anim_Set/ANIM_equip_equip01.glb",
+        "unequip": "anim23/_AnimBattleWeapon/Sword_sheath_AnimSet/anim_unequip_01.glb"
+      },
+      "combat": {
+        "attack_1": "anim23/_AnimBattleWeapon/WudangSword_Animset/Combo01_1.glb",
+        "attack_2": "anim23/_AnimBattleWeapon/WudangSword_Animset/Combo01_2.glb",
+        "attack_3": "anim23/_AnimBattleWeapon/WudangSword_Animset/Combo01_3.glb",
+        "block_loop": "anim23/_AnimBattleWeapon/WudangSword_Animset/Defense_Blocking_L.glb",
+        "hit_f": "anim23/_AnimBattleWeapon/WudangSword_Animset/hit_front.glb",
+        "hit_b": "anim23/_AnimBattleWeapon/WudangSword_Animset/hit_back.glb",
+        "death_1": "anim23/_AnimBattleWeapon/WudangSword_Animset/dead01.glb",
+        "death_2": "anim23/_AnimBattleWeapon/WudangSword_Animset/dead02.glb"
+      }
+    },
+    {
+      "kitId": "kit_heavy_polearm",
+      "style": "realistic",
+      "rig": "humanoid_23",
+      "description": "长枪大戟、重锤与死神镰刀长兵器套件",
+      "allowedPacks": [
+        "SpearAndHalberdAnimset",
+        "HeavyHammer",
+        "GrimReaperSet"
+      ],
+      "filledSlots": 34,
+      "totalSlots": 43,
+      "missingSlots": [
+        "locomotion.crouch_idle",
+        "locomotion.crouch_walk.f",
+        "locomotion.crouch_walk.b",
+        "locomotion.crouch_walk.l",
+        "locomotion.crouch_walk.r",
+        "upperBody.aim_idle",
+        "upperBody.fire",
+        "upperBody.reload",
+        "upperBody.unequip"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Idle.glb",
+        "sprint_f": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunFwd.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_WalkFwd.glb",
+          "b": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_WalkBwd.glb",
+          "l": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_WalkLeft.glb",
+          "r": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_WalkRight.glb",
+          "fl": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_WalkLeft_45.glb",
+          "fr": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_WalkRight_45.glb",
+          "bl": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_WalkLeft_135.glb",
+          "br": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_WalkRight_135.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunFwd.glb",
+          "b": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunBwd.glb",
+          "l": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunLeft.glb",
+          "r": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunRight.glb",
+          "fl": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunLeft45.glb",
+          "fr": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunRight45.glb",
+          "bl": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunLeft135.glb",
+          "br": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_RP_RunRight135.glb"
+        },
+        "crouch_idle": null,
+        "crouch_walk": {
+          "f": null,
+          "b": null,
+          "l": null,
+          "r": null
+        },
+        "jump_start": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Jump_Start.glb",
+        "jump_loop": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_FallingLoop.glb",
+        "jump_land": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Jump_Land.glb",
+        "dodge_f": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Dodge_Fwd.glb",
+        "dodge_b": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Dodge_Back.glb",
+        "dodge_l": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Dodge_Left.glb",
+        "dodge_r": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Dodge_Right.glb"
+      },
+      "upperBody": {
+        "aim_idle": null,
+        "fire": null,
+        "reload": null,
+        "equip": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Equip.glb",
+        "unequip": null
+      },
+      "combat": {
+        "attack_1": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_AttackFwdCombo1_A.glb",
+        "attack_2": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_AttackFwdCombo1_B.glb",
+        "attack_3": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_AttackFwdCombo1_C.glb",
+        "block_loop": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_BlockLoop.glb",
+        "hit_f": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Hit_1.glb",
+        "hit_b": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Hit_2.glb",
+        "death_1": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Death1.glb",
+        "death_2": "anim23/_AnimBattleWeapon/SpearAndHalberdAnimset/Spear_Death2.glb"
+      }
+    },
+    {
+      "kitId": "kit_anime_action",
+      "style": "anime",
+      "rig": "humanoid_23",
+      "description": "二次元高速连击与可爱风格小游戏套件",
+      "allowedPacks": [
+        "Lucy",
+        "KawaiiAnimations",
+        "CLazyAnimpack"
+      ],
+      "filledSlots": 37,
+      "totalSlots": 43,
+      "missingSlots": [
+        "upperBody.aim_idle",
+        "upperBody.fire",
+        "upperBody.reload",
+        "upperBody.equip",
+        "upperBody.unequip",
+        "combat.block_loop"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimBattleHand/Lucy/Lucy_Idle.glb",
+        "sprint_f": "anim23/_AnimBattleHand/Lucy/Lucy_Sprint_1_Inplace.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimBattleHand/Lucy/Lucy_Walk_F_Inplace.glb",
+          "b": "anim23/_AnimBattleHand/Lucy/Lucy_Walk_B_Inplace.glb",
+          "l": "anim23/_AnimBattleHand/Lucy/Lucy_Walk_L_Inplace.glb",
+          "r": "anim23/_AnimBattleHand/Lucy/Lucy_Walk_R_Inplace.glb",
+          "fl": "anim23/_AnimBattleHand/Lucy/Lucy_Walk_FL_Inplace.glb",
+          "fr": "anim23/_AnimBattleHand/Lucy/Lucy_Walk_FR_Inplace.glb",
+          "bl": "anim23/_AnimBattleHand/Lucy/Lucy_Walk_BL_Inplace.glb",
+          "br": "anim23/_AnimBattleHand/Lucy/Lucy_Walk_BR_Inplace.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimBattleHand/Lucy/Lucy_Run_F_Inplace.glb",
+          "b": "anim23/_AnimBattleHand/Lucy/Lucy_Run_B_Inplace.glb",
+          "l": "anim23/_AnimBattleHand/Lucy/Lucy_Run_L_Inplace.glb",
+          "r": "anim23/_AnimBattleHand/Lucy/Lucy_Run_R_Inplace.glb",
+          "fl": "anim23/_AnimBattleHand/Lucy/Lucy_Run_FL_Inplace.glb",
+          "fr": "anim23/_AnimBattleHand/Lucy/Lucy_Run_FR_Inplace.glb",
+          "bl": "anim23/_AnimBattleHand/Lucy/Lucy_Run_BL_Inplace.glb",
+          "br": "anim23/_AnimBattleHand/Lucy/Lucy_Run_BR_Inplace.glb"
+        },
+        "crouch_idle": "anim23/_AnimBattleHand/Lucy/Lucy_CrouchIdle_Inplace.glb",
+        "crouch_walk": {
+          "f": "anim23/_AnimBattleHand/Lucy/Lucy_Crouch_F_Inplace.glb",
+          "b": "anim23/_AnimBattleHand/Lucy/Lucy_Crouch_B_Inplace.glb",
+          "l": "anim23/_AnimBattleHand/Lucy/Lucy_Crouch_L_Inplace.glb",
+          "r": "anim23/_AnimBattleHand/Lucy/Lucy_Crouch_R_Inplace.glb"
+        },
+        "jump_start": "anim23/_AnimBattleHand/Lucy/Lucy_Jump_Start_Inplace.glb",
+        "jump_loop": "anim23/_AnimBattleHand/Lucy/Lucy_Jump_Loop_Inplace.glb",
+        "jump_land": "anim23/_AnimBattleHand/Lucy/Lucy_Jump_End_Inplace.glb",
+        "dodge_f": "anim23/_AnimBattleHand/Lucy/Lucy_Dodge_F_Inplace.glb",
+        "dodge_b": "anim23/_AnimBattleHand/Lucy/Lucy_Dodge_B_Inplace.glb",
+        "dodge_l": "anim23/_AnimBattleHand/Lucy/Lucy_Dodge_L_Inplace.glb",
+        "dodge_r": "anim23/_AnimBattleHand/Lucy/Lucy_Dodge_R_Inplace.glb"
+      },
+      "upperBody": {
+        "aim_idle": null,
+        "fire": null,
+        "reload": null,
+        "equip": null,
+        "unequip": null
+      },
+      "combat": {
+        "attack_1": "anim23/_AnimBattleHand/Lucy/Lucy_Kick_Combo01_1_Inplace.glb",
+        "attack_2": "anim23/_AnimBattleHand/Lucy/Lucy_Kick_Combo01_2_Inplace.glb",
+        "attack_3": "anim23/_AnimBattleHand/Lucy/Lucy_Kick_Combo01_3_Inplace.glb",
+        "block_loop": null,
+        "hit_f": "anim23/_AnimBattleHand/Lucy/Lucy_Hit_FL_Inplace.glb",
+        "hit_b": "anim23/_AnimBattleHand/Lucy/Lucy_Hit_B_Inplace.glb",
+        "death_1": "anim23/_AnimBattleHand/Lucy/Lucy_Die01_Inplace.glb",
+        "death_2": "anim23/_AnimBattleHand/Lucy/Lucy_Die02_Inplace.glb"
+      }
+    },
+    {
+      "kitId": "kit_martial_arts",
+      "style": "realistic",
+      "rig": "humanoid_23",
+      "description": "现代徒手格斗、拳击、泰拳与咏春套件",
+      "allowedPacks": [
+        "Unleashed_Boxer",
+        "MuayThai_AnimSet",
+        "wingchun_Animset"
+      ],
+      "filledSlots": 33,
+      "totalSlots": 43,
+      "missingSlots": [
+        "locomotion.crouch_idle",
+        "locomotion.crouch_walk.f",
+        "locomotion.crouch_walk.b",
+        "locomotion.crouch_walk.l",
+        "locomotion.crouch_walk.r",
+        "upperBody.aim_idle",
+        "upperBody.fire",
+        "upperBody.reload",
+        "upperBody.equip",
+        "upperBody.unequip"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimBattleHand/Unleashed_Boxer/idle01.glb",
+        "sprint_f": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_front.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimBattleHand/Unleashed_Boxer/move_walk_front.glb",
+          "b": "anim23/_AnimBattleHand/Unleashed_Boxer/move_walk_back.glb",
+          "l": "anim23/_AnimBattleHand/Unleashed_Boxer/move_walk_left.glb",
+          "r": "anim23/_AnimBattleHand/Unleashed_Boxer/move_walk_right.glb",
+          "fl": "anim23/_AnimBattleHand/Unleashed_Boxer/move_walk_frontL45.glb",
+          "fr": "anim23/_AnimBattleHand/Unleashed_Boxer/move_walk_frontR45.glb",
+          "bl": "anim23/_AnimBattleHand/Unleashed_Boxer/move_walk_backL45.glb",
+          "br": "anim23/_AnimBattleHand/Unleashed_Boxer/move_walk_backR45.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_front.glb",
+          "b": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_back.glb",
+          "l": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_left.glb",
+          "r": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_right.glb",
+          "fl": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_frontL45.glb",
+          "fr": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_frontR45.glb",
+          "bl": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_backL45.glb",
+          "br": "anim23/_AnimBattleHand/Unleashed_Boxer/move_run_backR45.glb"
+        },
+        "crouch_idle": null,
+        "crouch_walk": {
+          "f": null,
+          "b": null,
+          "l": null,
+          "r": null
+        },
+        "jump_start": "anim23/_AnimBattleHand/Unleashed_Boxer/jump_start.glb",
+        "jump_loop": "anim23/_AnimBattleHand/Unleashed_Boxer/jump_falling_loop.glb",
+        "jump_land": "anim23/_AnimBattleHand/Unleashed_Boxer/jump_landing.glb",
+        "dodge_f": "anim23/_AnimBattleHand/Unleashed_Boxer/roll_front.glb",
+        "dodge_b": "anim23/_AnimBattleHand/Unleashed_Boxer/roll_back.glb",
+        "dodge_l": "anim23/_AnimBattleHand/Unleashed_Boxer/roll_left.glb",
+        "dodge_r": "anim23/_AnimBattleHand/Unleashed_Boxer/roll_right.glb"
+      },
+      "upperBody": {
+        "aim_idle": null,
+        "fire": null,
+        "reload": null,
+        "equip": null,
+        "unequip": null
+      },
+      "combat": {
+        "attack_1": "anim23/_AnimBattleHand/Unleashed_Boxer/combo_01_1.glb",
+        "attack_2": "anim23/_AnimBattleHand/Unleashed_Boxer/combo_01_2.glb",
+        "attack_3": "anim23/_AnimBattleHand/Unleashed_Boxer/combo_01_3.glb",
+        "block_loop": "anim23/_AnimBattleHand/Unleashed_Boxer/guard_L.glb",
+        "hit_f": "anim23/_AnimBattleHand/Unleashed_Boxer/hit_front.glb",
+        "hit_b": "anim23/_AnimBattleHand/Unleashed_Boxer/hit_back.glb",
+        "death_1": "anim23/_AnimBattleHand/Unleashed_Boxer/dead_01.glb",
+        "death_2": "anim23/_AnimBattleHand/Unleashed_Boxer/dead_02.glb"
+      }
+    },
+    {
+      "kitId": "kit_mage_energy",
+      "style": "fantasy",
+      "rig": "humanoid_23",
+      "description": "奇幻法师、浮空施法与气功能量必杀技套件",
+      "allowedPacks": [
+        "Mage",
+        "FlyingMageAnimSet",
+        "SpecialMoves_Energy"
+      ],
+      "filledSlots": 36,
+      "totalSlots": 43,
+      "missingSlots": [
+        "locomotion.crouch_idle",
+        "locomotion.crouch_walk.f",
+        "locomotion.crouch_walk.b",
+        "locomotion.crouch_walk.l",
+        "locomotion.crouch_walk.r",
+        "upperBody.equip",
+        "upperBody.unequip"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimBattleWeapon/Mage/AS_Idle_Combat_Seq.glb",
+        "sprint_f": "anim23/_AnimBattleWeapon/Mage/AS_Run_Fast_Loop_Seq.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_0_Loop_Seq.glb",
+          "b": "anim23/_AnimBattleWeapon/Mage/AS_Run_B_180_Loop_Seq.glb",
+          "l": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_L_90_Loop_Seq.glb",
+          "r": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_R_90_Loop_Seq.glb",
+          "fl": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_L_45_Loop_Seq.glb",
+          "fr": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_R_45_Loop_Seq.glb",
+          "bl": "anim23/_AnimBattleWeapon/Mage/AS_Run_B_L_45_Loop_Seq.glb",
+          "br": "anim23/_AnimBattleWeapon/Mage/AS_Run_B_R_45_Loop_Seq.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_0_Loop_Seq.glb",
+          "b": "anim23/_AnimBattleWeapon/Mage/AS_Run_B_180_Loop_Seq.glb",
+          "l": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_L_90_Loop_Seq.glb",
+          "r": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_R_90_Loop_Seq.glb",
+          "fl": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_L_45_Loop_Seq.glb",
+          "fr": "anim23/_AnimBattleWeapon/Mage/AS_Run_F_R_45_Loop_Seq.glb",
+          "bl": "anim23/_AnimBattleWeapon/Mage/AS_Run_B_L_45_Loop_Seq.glb",
+          "br": "anim23/_AnimBattleWeapon/Mage/AS_Run_B_R_45_Loop_Seq.glb"
+        },
+        "crouch_idle": null,
+        "crouch_walk": {
+          "f": null,
+          "b": null,
+          "l": null,
+          "r": null
+        },
+        "jump_start": "anim23/_AnimBattleWeapon/Mage/AS_Jump_Start_0_Seq.glb",
+        "jump_loop": "anim23/_AnimBattleWeapon/Mage/AS_Jump_Loop_0_Seq.glb",
+        "jump_land": "anim23/_AnimBattleWeapon/Mage/AS_Jump_End_F_0_Seq.glb",
+        "dodge_f": "anim23/_AnimBattleWeapon/Mage/AS_Dodge_Combat_F_0_Seq.glb",
+        "dodge_b": "anim23/_AnimBattleWeapon/Mage/AS_Dodge_Combat_B_180_Seq.glb",
+        "dodge_l": "anim23/_AnimBattleWeapon/Mage/AS_Dodge_Combat_L_90_Seq.glb",
+        "dodge_r": "anim23/_AnimBattleWeapon/Mage/AS_Dodge_Combat_R_90_Seq.glb"
+      },
+      "upperBody": {
+        "aim_idle": "anim23/_AnimBattleWeapon/Mage/AS_Idle_Combat_Seq.glb",
+        "fire": "anim23/_AnimBattleHand/FlyingMageAnimSet/attack_FlyingAtk01_short.glb",
+        "reload": "anim23/_AnimBattleHand/FlyingMageAnimSet/buff_Flying.glb",
+        "equip": null,
+        "unequip": null
+      },
+      "combat": {
+        "attack_1": "anim23/_AnimBattleWeapon/Mage/AS_Combo_Attack_01_01_Seq.glb",
+        "attack_2": "anim23/_AnimBattleWeapon/Mage/AS_Combo_Attack_01_02_Seq.glb",
+        "attack_3": "anim23/_AnimBattleWeapon/Mage/AS_Combo_Attack_01_03_Seq.glb",
+        "block_loop": "anim23/_AnimBattleWeapon/Mage/AS_Block_Loop_Seq.glb",
+        "hit_f": "anim23/_AnimBattleWeapon/Mage/AS_Hit_Air_F_Seq.glb",
+        "hit_b": "anim23/_AnimBattleWeapon/Mage/AS_Hit_B_Seq.glb",
+        "death_1": "anim23/_AnimBattleWeapon/Mage/AS_Hit_Death_Seq.glb",
+        "death_2": "anim23/_AnimBattleWeapon/Mage/AS_Hit_Combat_Death_Seq.glb"
+      }
+    },
+    {
+      "kitId": "kit_monster_horde",
+      "style": "monster",
+      "rig": "humanoid_23",
+      "description": "丧尸/恶魔刷怪敌人与 Bone-VAT 群集渲染套件",
+      "allowedPacks": [
+        "Zombie_Anims",
+        "Demon_Anims"
+      ],
+      "filledSlots": 32,
+      "totalSlots": 43,
+      "missingSlots": [
+        "locomotion.dodge_f",
+        "locomotion.dodge_b",
+        "locomotion.dodge_l",
+        "locomotion.dodge_r",
+        "upperBody.aim_idle",
+        "upperBody.fire",
+        "upperBody.reload",
+        "upperBody.equip",
+        "upperBody.unequip",
+        "combat.block_loop",
+        "combat.death_2"
+      ],
+      "locomotion": {
+        "idle": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Idle_01.glb",
+        "sprint_f": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Sprint_01_Forward_InPlace.glb",
+        "strafe_walk": {
+          "f": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Walk_01_Forward_InPlace.glb",
+          "b": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Walk_01_Back_InPlace.glb",
+          "l": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Walk_01_Left_InPlace.glb",
+          "r": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Walk_01_Right_InPlace.glb",
+          "fl": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Walk_01_ForwardLeft_InPlace.glb",
+          "fr": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Walk_01_ForwardRight_InPlace.glb",
+          "bl": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Walk_01_BackLeft_InPlace.glb",
+          "br": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Walk_01_BackRight_InPlace.glb"
+        },
+        "strafe_run": {
+          "f": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Run_01_Forward_InPlace.glb",
+          "b": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Run_01_Back_InPlace.glb",
+          "l": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Run_01_Left_InPlace.glb",
+          "r": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Run_01_Right_InPlace.glb",
+          "fl": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Run_01_ForwardLeft_InPlace.glb",
+          "fr": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Run_01_ForwardRight_InPlace.glb",
+          "bl": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Run_01_BackLeft_InPlace.glb",
+          "br": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Run_01_BackRight_InPlace.glb"
+        },
+        "crouch_idle": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Crawl_Idle.glb",
+        "crouch_walk": {
+          "f": "anim23/_AnimBattleHand/Demon_Anims/AnimSeq_Demon_FloorCrawl_SprintForward.glb",
+          "b": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Crawl_Back.glb",
+          "l": "anim23/_AnimBattleHand/Demon_Anims/AnimSeq_Demon_FloorCrawl_Left.glb",
+          "r": "anim23/_AnimBattleHand/Demon_Anims/AnimSeq_Demon_FloorCrawl_Right.glb"
+        },
+        "jump_start": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Idle_Jump_Start.glb",
+        "jump_loop": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Idle_Jump_Loop.glb",
+        "jump_land": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Idle_Jump_End.glb",
+        "dodge_f": null,
+        "dodge_b": null,
+        "dodge_l": null,
+        "dodge_r": null
+      },
+      "upperBody": {
+        "aim_idle": null,
+        "fire": null,
+        "reload": null,
+        "equip": null,
+        "unequip": null
+      },
+      "combat": {
+        "attack_1": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Attack_01.glb",
+        "attack_2": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Attack_02.glb",
+        "attack_3": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Attack_03.glb",
+        "block_loop": null,
+        "hit_f": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_HitReact_Head.glb",
+        "hit_b": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_HitReact_LeftArm.glb",
+        "death_1": "anim23/_AnimBattleHand/Zombie_Anims/Zombie_Idle_Death.glb",
+        "death_2": null
+      }
+    }
+  ]
+}

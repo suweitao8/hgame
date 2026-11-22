@@ -4,6 +4,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 let cachedAssets = null;
 let cachedUnrealCatalog = null;
 let pendingUnrealCatalog = null;
+let cachedAnim23Catalog = null;
+let pendingAnim23Catalog = null;
 let cachedUnityCatalog = null;
 let pendingUnityCatalog = null;
 const assetListeners = new Set();
@@ -46,6 +48,32 @@ export async function fetchUnrealCatalog(force = false) {
     }
   })();
   return pendingUnrealCatalog;
+}
+
+export async function fetchAnim23Catalog(force = false) {
+  if (!force && cachedAnim23Catalog) return cachedAnim23Catalog;
+  if (!force && pendingAnim23Catalog) return pendingAnim23Catalog;
+  pendingAnim23Catalog = (async () => {
+    const empty = { available: false, rig: 'humanoid_23', animations: [] };
+    try {
+      const response = await fetch('/api/hgame/anim23/catalog');
+      const data = await response.json().catch(() => empty);
+      if (!response.ok || !data.available) return empty;
+      cachedAnim23Catalog = {
+        available: Boolean(data.available),
+        version: data.version || 3,
+        rig: data.rig || 'humanoid_23',
+        generatedAt: data.generatedAt || null,
+        animations: Array.isArray(data.animations) ? data.animations : [],
+      };
+      return cachedAnim23Catalog;
+    } catch {
+      return empty;
+    } finally {
+      pendingAnim23Catalog = null;
+    }
+  })();
+  return pendingAnim23Catalog;
 }
 
 export async function fetchUnityCatalog(force = false) {

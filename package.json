@@ -19,6 +19,11 @@
     "process:audio": "node scripts/process-audio.mjs",
     "process:model3d": "node scripts/process-model3d.mjs",
     "assets": "node scripts/assets.mjs",
+    "anim:bake": "node scripts/anim-cli.mjs bake",
+    "anim:kits": "node scripts/anim-cli.mjs kits",
+    "anim:kit": "node scripts/anim-cli.mjs kit",
+    "anim:search": "node scripts/anim-cli.mjs search",
+    "anim:verify": "node scripts/anim-cli.mjs verify",
     "bake:vat": "node scripts/bake-bone-vat.mjs",
     "build:physics": "node scripts/build-physics.mjs",
     "check:physics": "node scripts/build-physics.mjs --check",
@@ -72,14 +77,28 @@
     "check:realistic-pcg": "node scripts/build-realistic-pcg.mjs --check",
     "validate:procedural": "node scripts/validate-procedural.mjs",
     "test:browser:realistic-pcg": "node tests/browser-realistic-pcg.mjs",
-    "test:browser:ui-ux": "node tests/browser-ui-ux.mjs"
+    "test:browser:ui-ux": "node tests/browser-ui-ux.mjs",
+    "webasset": "node webasset/server.mjs",
+    "test:webasset": "node --test webasset/tests/*.test.mjs",
+    "assets:db": "node webasset/scripts/assets-db.mjs",
+    "assets:backup": "node webasset/scripts/assets-backup.mjs",
+    "assets:prompts": "node webasset/scripts/export-character-image-prompts.mjs"
+  },
+  "dependencies": {
+    "three": "0.187.0"
   },
   "devDependencies": {
     "@dimforge/rapier2d-deterministic": "0.21.0",
     "@dimforge/rapier3d-deterministic": "0.21.0",
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "adm-zip": "^0.6.1",
     "esbuild": "0.25.12",
+    "meshoptimizer": "^1.3.0",
     "playwright-core": "^1.49.1",
     "rolldown": "1.3.2",
+    "sharp": "^0.35.5",
     "typescript": "^5.6.3"
   },
   "types": "types/index.d.ts"

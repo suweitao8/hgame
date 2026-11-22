@@ -1240,8 +1240,9 @@ def detect_humanoid_landmarks(obj):
     app_back = {"legs": app_back_y, "torso": max(app_back_y, torso_back_y), "z_hip": z_hip}
 
     # UE5 / Anim58-compatible 23-bone Mannequin hierarchy (works natively with Anim58 animations & embedded Run clip)
+    # root is strictly anchored at world origin (0, 0, 0) as pelvis's parent regardless of vertex weights.
     bones = [
-        ("root", Vector((0, y_torso, z_min)), Vector((0, y_torso, z_min + 0.08 * H)), None),
+        ("root", Vector((0.0, 0.0, 0.0)), Vector((0.0, 0.0, max(0.08 * H, 0.05))), None),
         ("pelvis", Vector((0, y_torso, z_hip)), Vector((0, y_torso, z_spine)), "root"),
         ("spine_01", Vector((0, y_torso, z_spine)), Vector((0, y_torso, z_spine2)), "pelvis"),
         ("spine_02", Vector((0, y_torso, z_spine2)), Vector((0, y_torso, z_chest)), "spine_01"),
@@ -1609,6 +1610,7 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
             tail = head + Vector((0, 0, 0.02))
         eb.tail = tail
         eb.roll = 0.0
+        eb.use_deform = True
         eb_map[bname] = eb
     for bname, _, _, parent in lm["bones"]:
         if parent:

@@ -19,6 +19,7 @@ HGame is an opinionated, **AI-Native Universal HTML5 Game Development Template &
 - Lean release & WASM packager: `scripts/package-game.mjs` (`build/<id>_<version>/` + `.zip`), plus Bilibili Toy standard packager & preflight (`--target toy` / `scripts/toy-preflight.mjs`, see `.agents/skills/hgame-bilibili-toy/SKILL.md` and `docs/guides/BILIBILI-TOY-STANDARD.md`).
 - Offline media curation: `scripts/process-assets.mjs`, `scripts/process-audio.mjs`, and local 3D AI modeling/normalization (`scripts/process-model3d.mjs` + `scripts/blender-model3d.py`, configured via gitignored `.hgame.local.json`).
 - Unified off-Git asset management: `scripts/assets.mjs` (`npm run assets -- push|pull|status|verify`), storing content-addressed binaries in `HGAME_ASSET_STORE` (or `~/.hgame/asset-store`) and tracking `assets.manifest.json` in Git while `.gitignore` excludes heavy art/audio binaries.
+- Integrated WebAsset workstation & art asset SQLite database: `webasset/` (`npm run webasset`, serving `/runtime/hgame/` directly from `assets/runtime/`). Character assets, HGame media, PBR/CN libraries, and caches live under gitignored `webasset/assets/`, `webasset/public/assets/`, `webasset/hgame-assets-cn/{raw,built}/`, `webasset/.cache/`, and `webasset/data/assets.db` (Node built-in `node:sqlite`, managed via `npm run assets:db -- sync|status|search|verify|export-json`). Deduplicated CAS + SQLite hot backups live in `assetBackupDir` (`.hgame.local.json`, default `D:/Backups/HGame-Assets`) via `npm run assets:backup -- backup|verify|list|restore|prune`.
 - Starter projects: `assets/template/` and `assets/profiles/`.
 - Optional multiplayer workspace: `network/`; it owns its package manifest and lockfile.
 - Global HGame Skill installations and game projects are downstream consumers. Do not silently edit them while changing this repository.
@@ -44,7 +45,7 @@ HGame is an opinionated, **AI-Native Universal HTML5 Game Development Template &
 
 - **Mandatory Self-Testing & Acceptance Gate (`npm run accept`)**: No game or feature may be marked complete without running real acceptance tests (`node scripts/accept.mjs . --webasset` inside a game project, or `npm run accept -- <game-dir> --webasset` from HGame). `accept.mjs` enforces fail-closed checks across 8 gates (`config` WebAsset allowlist & asset refs, `syntax` all `src/`/`tests/` + relative imports, `uiStatic` Anti-Bloat lint, `tests` zero-skip unit tests, `autoplay` multi-seed `bot` vs `idle` clear-rate & difficulty verifier via `check-autoplay.mjs` / `--require-autoplay`, `visual` 960×540 + 360×800 screenshots + UI/layout overflow/clipping/overlap, `playtest` real-input `tests/acceptance.mjs` scenario + multi-phase `context.auditUi(phase)` + non-finite/disposed state health, `doctor` 4 vital signs when wired, `webasset` live 4174/4175 runtime verification, optional `--package` release boot, and `tests/acceptance.json`/`build/task.json`). It stamps `build/acceptance-report.json` with `sourceDigest`; `--verify-fresh` rejects stale reports after any source edit.
 - Task acceptance: translate each requested outcome into a named criterion before implementation. Use `npm run task:check -- <task.json>` (`test`, `playtest`, `ui`, `snapshot`, `doctor`, `accept`, `autoplay`, `review`) for task-specific checks, and review any visual or experiential criteria using fresh evidence. Re-run affected checks after fixes, then audit the original task against the results. See [AI-VERIFICATION.md](docs/guides/AI-VERIFICATION.md).
-- Runtime tests: `npm test`.
+- Runtime tests: `npm test`; WebAsset & asset DB/backup tests: `npm run test:webasset`.
 - Vendored physics parity: `npm run check:physics`.
 - Network tests/check/build: run the corresponding npm command from `network/` or use the root forwarding scripts (`npm run check:all`).
 - Package a game release (`build/<id>_<version>/` + `.zip`): `npm run package:game -- <game-dir> --version <ver>`, or for Bilibili Toy platform: `npm run package:toy -- <game-dir> --version <ver> --slug <slug>` and `npm run toy:check -- <dir-or-zip>`.
@@ -106,3 +107,10 @@ HGame is an opinionated, **AI-Native Universal HTML5 Game Development Template &
 - **Hardened Versioned Save Storage**: `platform/storage.js` (`createSaveStore`, `createVersionedStore` schema migrations + FNV-1a checksum tamper detection + `.bak` recovery).
 - **Zero-GC VFX & Game-Feel**: `vfx/` (`createVfxSystem`, `emitHitImpact`, `burstParticles`, `slashArc`, `lightningBolt`, `spawnTelegraph`, `setShrinkZone`, `popupNumber`, `screenPulse`, `CROWD_STATUS`, `packCrowdAnimStatus`).
 - **Deterministic Simulation Helpers**: `sim/` (`sim/rng.js` `createSeededRng`, `sim/checksum.js` `createStateChecksum` + `hashState`, `sim/script.js` `runScripted`).
+
+### 3D 骨骼动画调用铁律
+1. 禁止直接读取全量 `catalog.json`；编写游戏角色状态机前，必须先运行 `npm run anim:kits` 选择匹配的 L0 套件，再通过 `npm run anim:kit -- <kitId>` 获取精确文件路径。
+2. 仅当 L0 套件缺少特定交互/演出动作时，使用 `npm run anim:search` 从 L1 检索，且必须匹配角色当前的 `--style`（禁止混拼 `realistic` 与 `anime`）。
+3. 严禁在状态机中声明或检索 `turn_left / turn_right / turn_in_place` 槽位；角色转向统一由代码 `yaw` 插值 + LookAt IK 驱动。
+4. TPS（第三人称射击）或锁定视角模式必须使用 2D BlendTree 驱动下半身 8 向平移（`strafe_walk / strafe_run`，全为 IP），并通过 `animator3d.js` Avatar Mask 叠加武器上半身动作；上下瞄准仰角通过代码将 `pitch` 按比例分配到 `spine_01 / spine_02 / spine_03`，左手扶枪通过双骨 IK 吸附枪械 `leftHandGrip`。
+5. 所有人形角色均使用标准 23(+3) 骨无手指骨架，严禁在代码中硬编码引用 `spine_04/05`、`neck_02`、手指骨或 UE Twist 骨。

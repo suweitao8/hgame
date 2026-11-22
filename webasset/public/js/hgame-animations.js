@@ -13,6 +13,7 @@ import {
   apiRequestJson,
   createThreeViewport,
   disposeObject3D,
+  fetchAnim23Catalog,
   fetchHGameAssets,
   fetchUnrealCatalog,
   formatBytes,
@@ -30,7 +31,8 @@ const ANIM_CATEGORY_ORDER = [
   '太刀与武士刀',
   '长剑与双刃',
   '长枪重锤与镰刀',
-  '弓箭与枪械',
+  '弓箭',
+  '枪械射击',
   '法术与能量技',
   '拳击泰拳与咏春',
   '空手格斗招式',
@@ -441,7 +443,8 @@ function renderSidebarList() {
   if (matchingUnreal.length > 0) {
     const heading = document.createElement('div');
     heading.className = 'hgame-list-heading';
-    const headingLabel = [targetCategory || 'Unreal 动作库', targetPack].filter(Boolean).join(' · ');
+    const baseHeading = unrealCatalog.rig === 'humanoid_23' ? '23 骨清洗动作库' : 'Unreal 动作库';
+    const headingLabel = [targetCategory || baseHeading, targetPack].filter(Boolean).join(' · ');
     heading.textContent = `${headingLabel} (${matchingUnreal.length})`;
     listEl.append(heading);
     const visibleUnreal = matchingUnreal.slice(0, animVisibleLimit);
@@ -452,11 +455,16 @@ function renderSidebarList() {
       btn.className = 'hgame-list-item';
       btn.setAttribute('aria-current', active3dKind === 'unreal' && item.id === active3dId ? 'true' : 'false');
       const durationLabel = item.duration ? `${Number(item.duration).toFixed(2)}s` : '';
+      const badges = [];
+      if (item.clipType === 'pose') badges.push('[Pose]');
+      else if (item.motionType) badges.push(`[${item.motionType}]`);
+      const badgeLabel = badges.join(' ');
+      const thumbLabel = item.rig === 'humanoid_23' ? '23' : 'UE';
       btn.innerHTML = `
-        <span class="hgame-item-thumb hgame-item-thumb-badge">UE</span>
+        <span class="hgame-item-thumb hgame-item-thumb-badge">${thumbLabel}</span>
         <span class="hgame-item-copy">
           <strong>${escapeHtml(item.name)}</strong>
-          <small>${escapeHtml([item.pack, item.category, durationLabel].filter(Boolean).join(' · '))}</small>
+          <small>${escapeHtml([badgeLabel, item.pack, item.category, durationLabel].filter(Boolean).join(' · '))}</small>
         </span>
       `;
       btn.addEventListener('click', () => {
@@ -827,13 +835,16 @@ async function initAnimationsView() {
     });
   }
 
-  const [data, catalog, webassetChars] = await Promise.all([
+  const [data, anim23Catalog, rawUnrealCatalog, webassetChars] = await Promise.all([
     fetchHGameAssets(),
+    fetchAnim23Catalog(),
     fetchUnrealCatalog(),
     fetchSelfCharacters(),
   ]);
   assetStore = data;
-  unrealCatalog = catalog;
+  unrealCatalog = (anim23Catalog.available && anim23Catalog.animations.length > 0)
+    ? anim23Catalog
+    : rawUnrealCatalog;
   selfCharacters = webassetChars;
   populateAnimControls();
   renderSidebarList();

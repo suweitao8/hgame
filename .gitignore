@@ -56,6 +56,7 @@ private/
 
 # Binary art, 3D model, VAT, audio, video & font assets under project asset dirs
 assets/actors/
+assets/anim23/
 assets/audio/
 assets/textures/
 assets/models/
@@ -100,5 +101,44 @@ tests-local/
 tools-local/
 __pycache__/
 *.pyc
+
+# WebAsset local art assets, SQLite database, and download/build caches (never uploaded to Git)
+webasset/data/
+webasset/.cache/
+webasset/assets/characters/
+webasset/assets/games/
+webasset/assets/hgame/
+webasset/assets/procedural/
+webasset/public/assets/
+webasset/hgame-assets-cn/raw/
+webasset/hgame-assets-cn/built/
+webasset/hgame-assets-cn/.cache/
+webasset/assets/**/*.png
+webasset/assets/**/*.jpg
+webasset/assets/**/*.jpeg
+webasset/assets/**/*.webp
+webasset/assets/**/*.glb
+webasset/assets/**/*.gltf
+webasset/assets/**/*.bin
+webasset/assets/**/*.wav
+webasset/assets/**/*.mp3
+webasset/assets/**/*.ogg
+*.db
+*.db-wal
+*.db-shm
+
+# Tests, benchmarks, visual baselines, and example 3D/media assets (kept locally, excluded from Git)
+tests/
+webasset/tests/
+examples/*/tests/
+examples/**/playtest.mjs
+examples/**/baseline.png
+examples/**/*.gltf
+examples/**/*.glb
+network/**/test/
+benchmarks/
+.agents/skills/**/tests/
+.agents/skills/**/test/
+
 
 
