@@ -102,6 +102,9 @@ tests-local/
 tools-local/
 __pycache__/
 *.pyc
+char_parts_staging/
+built/
+vendor/mpfb2/
 
 # WebAsset local art assets, SQLite database, and download/build caches (never uploaded to Git)
 webasset/data/

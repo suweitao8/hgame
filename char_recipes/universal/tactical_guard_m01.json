@@ -1,0 +1,81 @@
+{
+  "charId": "tactical_guard_m01",
+  "name": "战术防卫员 · 雷恩",
+  "stylePreset": "realistic_tactical",
+  "phenotype": {
+    "gender": 0.9,
+    "age": 0.38,
+    "muscle": 0.75,
+    "weight": 0.55,
+    "proportions": 0.5,
+    "height": 0.65,
+    "race": {
+      "asian": 0.2,
+      "caucasian": 0.7,
+      "african": 0.1
+    },
+    "targetHeightM": 1.78
+  },
+  "faceTweaks": {
+    "chin-bones": 0.25,
+    "eyebrows-angle-down": 0.2
+  },
+  "skin": {
+    "tone": "#e3bda6",
+    "roughness": 0.68
+  },
+  "eye": {
+    "assetId": "eyes/low-poly",
+    "irisColor": "#5c6f52"
+  },
+  "wardrobe": {
+    "hair": {
+      "assetId": "hair/culturalibre_hair_05",
+      "recolor": {
+        "color": ["#2a201b", "#4b3b30"],
+        "rough": 0.62
+      }
+    },
+    "top": {
+      "assetId": "auto:lusekofta sweater",
+      "recolor": {
+        "hsv": [0.08, 0.7, 0.55],
+        "tint": "#384b3e",
+        "rough": 0.82
+      }
+    },
+    "bottom": {
+      "assetId": "auto:male trousers",
+      "recolor": {
+        "tint": "#2f332c",
+        "rough": 0.8
+      }
+    },
+    "shoes": {
+      "assetId": "auto:shoes",
+      "recolor": {
+        "tint": "#1c1c1e",
+        "rough": 0.5
+      }
+    },
+    "hat": {
+      "assetId": "auto:patrol cap",
+      "recolor": {
+        "tint": "#313b2f",
+        "rough": 0.76
+      }
+    },
+    "equipment": {
+      "assetId": "auto:sword",
+      "recolor": {
+        "tint": "#8c96a4",
+        "rough": 0.38
+      }
+    }
+  },
+  "lod": {
+    "lod2ColorSize": 64,
+    "enableAppendageBones": false
+  },
+  "tags": ["tactical", "guard", "male"]
+}

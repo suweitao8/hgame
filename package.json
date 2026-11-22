@@ -19,6 +19,8 @@
     "process:audio": "node scripts/process-audio.mjs",
     "process:model3d": "node scripts/process-model3d.mjs",
     "assets": "node scripts/assets.mjs",
+    "mpfb:setup": "node scripts/setup-mpfb2.mjs",
+    "mpfb:build": "node scripts/build-mpfb-chars.mjs",
     "anim:bake": "node scripts/anim-cli.mjs bake",
     "anim:kits": "node scripts/anim-cli.mjs kits",
     "anim:kit": "node scripts/anim-cli.mjs kit",
