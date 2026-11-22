@@ -67,6 +67,7 @@ export function createFogOfWarWorld({ plane, bounds, resolutionX, resolutionY, f
     setObstacles: (list: any) => void;
     setObstaclesFromTileMap: (tileMap: any, isOpaque: any) => void;
     addRevealer: (opts?: {}) => any;
+    addWard: (opts?: {}) => any;
     updateRevealer: (id: any, patch?: {}) => boolean;
     removeRevealer: (id: any) => boolean;
     addHider: (opts?: {}) => any;
@@ -125,8 +126,9 @@ export const FOG_QUALITY: Readonly<{
 }>;
 /**
  * Canonical LoL-inspired top-down Fog of War tuning defaults:
- * binary visible/unseen fog (no explored memory), 256x256 smoothed grid,
- * 23.25m sight radius, cool slate-black shroud, and 0.30 transition edge hiding.
+ * fixed 256x256 smoothed grid, binary visible/unseen fog (no explored memory),
+ * character + ward vision only (no weapon/projectile vision), 23.25m sight radius,
+ * cool slate-black shroud, and 0.30 transition edge hiding.
  */
 export const TOPDOWN_FOG_DEFAULTS: Readonly<{
     plane: "xz";
@@ -138,11 +140,17 @@ export const TOPDOWN_FOG_DEFAULTS: Readonly<{
     blurPasses: 2;
     sightExtra: 0.35;
     edgeSoften: 0.65;
+    revealerSources: readonly string[];
     viewRadius: 23.25;
     softenDistance: 4;
     unobscuredRadius: 2.5;
     unobscuredSoften: 1;
     rayCount: 256;
+    wardViewRadius: 14;
+    wardSoftenDistance: 3;
+    wardUnobscuredRadius: 1.5;
+    wardUnobscuredSoften: 0.6;
+    wardRayCount: 160;
     visibilityThreshold: 0.3;
     transitionRange: readonly number[];
     fogColor: readonly number[];

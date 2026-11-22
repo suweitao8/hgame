@@ -19,8 +19,9 @@ export const FOG_QUALITY = Object.freeze({
 
 /**
  * Canonical LoL-inspired top-down Fog of War tuning defaults:
- * binary visible/unseen fog (no explored memory), 256x256 smoothed grid,
- * 23.25m sight radius, cool slate-black shroud, and 0.30 transition edge hiding.
+ * fixed 256x256 smoothed grid, binary visible/unseen fog (no explored memory),
+ * character + ward vision only (no weapon/projectile vision), 23.25m sight radius,
+ * cool slate-black shroud, and 0.30 transition edge hiding.
  */
 export const TOPDOWN_FOG_DEFAULTS = Object.freeze({
   plane: 'xz',
@@ -32,11 +33,17 @@ export const TOPDOWN_FOG_DEFAULTS = Object.freeze({
   blurPasses: 2,
   sightExtra: 0.35,
   edgeSoften: 0.65,
+  revealerSources: Object.freeze(['character', 'ward']),
   viewRadius: 23.25,
   softenDistance: 4.0,
   unobscuredRadius: 2.5,
   unobscuredSoften: 1.0,
   rayCount: 256,
+  wardViewRadius: 14.0,
+  wardSoftenDistance: 3.0,
+  wardUnobscuredRadius: 1.5,
+  wardUnobscuredSoften: 0.6,
+  wardRayCount: 160,
   visibilityThreshold: 0.30,
   transitionRange: Object.freeze([0.30, 0.95]),
   fogColor: Object.freeze([0.22, 0.26, 0.36]),
@@ -622,6 +629,18 @@ export function createFogOfWarWorld({
     revealerById.set(id, rev);
     computeRevealerSegments(rev);
     return id;
+  }
+
+  function addWard(opts = {}) {
+    return addRevealer({
+      viewRadius: isXZ ? TOPDOWN_FOG_DEFAULTS.wardViewRadius : 80,
+      softenDistance: isXZ ? TOPDOWN_FOG_DEFAULTS.wardSoftenDistance : 16,
+      unobscuredRadius: isXZ ? TOPDOWN_FOG_DEFAULTS.wardUnobscuredRadius : 0,
+      unobscuredSoften: isXZ ? TOPDOWN_FOG_DEFAULTS.wardUnobscuredSoften : 0,
+      rayCount: TOPDOWN_FOG_DEFAULTS.wardRayCount,
+      static: opts.static ?? true,
+      ...opts,
+    });
   }
 
   function updateRevealer(id, patch = {}) {
@@ -1222,6 +1241,7 @@ export function createFogOfWarWorld({
     setObstacles,
     setObstaclesFromTileMap,
     addRevealer,
+    addWard,
     updateRevealer,
     removeRevealer,
     addHider,
