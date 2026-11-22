@@ -197,7 +197,8 @@
  * @property {() => { unlocked: boolean, hasReverbSend: boolean, zoneCount: number, wiredZones: number }} getDspState
  * @property {(url: string, opts?: { bus?: string, loop?: boolean, volume?: number, autoplay?: boolean }) => { url: string, bus: string, loop: boolean, readonly playing: boolean, readonly volume: number, play: () => Promise<void>, pause: () => void, setVolume: (v: number) => number, stop: () => void }} playStream
  * @property {(cueId: string, config?: object) => object} registerBgmCue
- * @property {(tableOrUrl: string | object, options?: { fetchImpl?: typeof fetch }) => Promise<{ bgmRegistered: number, totalCues: number, table: unknown }>} loadCueTable
+ * @property {(tableOrUrl: string | object, options?: { fetchImpl?: typeof fetch }) => Promise<{ bgmRegistered: number, stingerCount: number, totalTracks: number, table: unknown }>} loadMusicTable
+ * @property {(tableOrUrl: string | object, options?: { fetchImpl?: typeof fetch }) => Promise<{ bgmRegistered: number, stingerCount: number, totalTracks: number, table: unknown }>} loadCueTable
  * @property {(cueIdOrSpec: string | object, options?: { fadeMs?: number, forceRestart?: boolean, loop?: boolean, volume?: number, startAtSec?: number | null, fetchImpl?: typeof fetch }) => Promise<object | null>} playBgm
  * @property {(options?: { fadeMs?: number }) => boolean} stopBgm
  * @property {() => boolean} pauseBgm
@@ -772,11 +773,20 @@ export type AudioManager = {
         stop: () => void;
     };
     registerBgmCue: (cueId: string, config?: object) => object;
+    loadMusicTable: (tableOrUrl: string | object, options?: {
+        fetchImpl?: typeof fetch;
+    }) => Promise<{
+        bgmRegistered: number;
+        stingerCount: number;
+        totalTracks: number;
+        table: unknown;
+    }>;
     loadCueTable: (tableOrUrl: string | object, options?: {
         fetchImpl?: typeof fetch;
     }) => Promise<{
         bgmRegistered: number;
-        totalCues: number;
+        stingerCount: number;
+        totalTracks: number;
         table: unknown;
     }>;
     playBgm: (cueIdOrSpec: string | object, options?: {

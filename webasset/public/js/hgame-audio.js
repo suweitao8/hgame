@@ -34,8 +34,9 @@ const statusEl = document.querySelector('#hgame-audio-status');
 const musicBarEl = document.querySelector('#hgame-audio-music-bar');
 
 let initialized = false;
-let currentLib = 'cues'; // 'cues' | 'streams' | 'full'
+let currentLib = 'cues'; // 'cues' | 'music' | 'streams' | 'full'
 let cueEntries = [];
+let musicEntries = [];
 let streamEntries = [];
 let fullEntries = [];
 let uploadedAudio = [];
@@ -72,8 +73,7 @@ function isMusicCueEntry(c) {
 
 function buildActiveList() {
   if (currentLib === 'music') {
-    const musicCues = cueEntries.filter((c) => isMusicCueEntry(c));
-    return musicCues.map((c) => {
+    return musicEntries.map((c) => {
       const isBgm = c.category === 'bgm' || String(c.cueName || '').startsWith('bgm.');
       return {
         type: 'cue',
@@ -90,20 +90,18 @@ function buildActiveList() {
     });
   }
   if (currentLib === 'cues') {
-    return cueEntries
-      .filter((c) => !isMusicCueEntry(c))
-      .map((c) => ({
-        type: 'cue',
-        id: c.cueName,
-        name: c.cueName,
-        pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
-        category: c.category || 'sfx',
-        preload: 'buffer',
-        badge: '内存 SFX',
-        url: c.variants?.[0]?.url || '',
-        fileName: `${c.cueName}.mp3`,
-        item: c,
-      }));
+    return cueEntries.map((c) => ({
+      type: 'cue',
+      id: c.cueName,
+      name: c.cueName,
+      pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
+      category: c.category || 'sfx',
+      preload: 'buffer',
+      badge: '内存 SFX',
+      url: c.variants?.[0]?.url || '',
+      fileName: `${c.cueName}.mp3`,
+      item: c,
+    }));
   }
   if (currentLib === 'streams') {
     return streamEntries.map((s) => ({
@@ -352,8 +350,8 @@ function renderMusicVerifyBar() {
     musicBarEl.replaceChildren();
     return;
   }
-  const bgmList = cueEntries.filter((c) => c.category === 'bgm' || String(c.cueName || '').startsWith('bgm.'));
-  const stingerList = cueEntries.filter((c) => c.category === 'stinger' || String(c.cueName || '').startsWith('stinger.'));
+  const bgmList = musicEntries.filter((c) => c.category === 'bgm' || String(c.cueName || '').startsWith('bgm.'));
+  const stingerList = musicEntries.filter((c) => c.category === 'stinger' || String(c.cueName || '').startsWith('stinger.'));
   musicBarEl.hidden = false;
   musicBarEl.replaceChildren();
 
@@ -840,15 +838,19 @@ async function initAudioView() {
 
   syncOutputs();
   try {
-    const [data, cueRes, streamRes, fullRes, reportRes] = await Promise.all([
+    const [data, cueRes, musicRes, streamRes, fullRes, reportRes] = await Promise.all([
       fetchHGameAssets(),
       fetch('/assets/cn/audio/cue_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { cues: [] })).catch(() => ({ cues: [] })),
+      fetch('/assets/cn/audio/music_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { tracks: [] })).catch(() => ({ tracks: [] })),
       fetch('/assets/cn/audio/streams_table.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { streams: [] })).catch(() => ({ streams: [] })),
       fetch('/assets/cn/audio/audio_library_full.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : { items: [] })).catch(() => ({ items: [] })),
       fetch('/assets/cn/audio/audio_loudness_report.json', { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]);
     uploadedAudio = Array.isArray(data.audio) ? data.audio : [];
     cueEntries = Array.isArray(cueRes.cues) ? cueRes.cues : [];
+    musicEntries = Array.isArray(musicRes.tracks)
+      ? musicRes.tracks
+      : [...(Array.isArray(musicRes.bgm) ? musicRes.bgm : []), ...(Array.isArray(musicRes.stingers) ? musicRes.stingers : [])];
     streamEntries = Array.isArray(streamRes.streams) ? streamRes.streams : [];
     fullEntries = Array.isArray(fullRes.items) ? fullRes.items : [];
     spreadAnomalyCues = new Set((reportRes?.cueSpreadAlerts || []).map((a) => a.cueName));

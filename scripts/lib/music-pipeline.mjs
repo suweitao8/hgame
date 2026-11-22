@@ -605,8 +605,8 @@ export function evaluateMusicGate(bgmTracks, stingerTracks) {
 }
 
 /**
- * Processes `audio_ai_staging/bgm/**` and `audio_ai_staging/stinger/**`, merges
- * `bgm.*` / `stinger.*` entries into `cue_table.json` & `streams_table.json`,
+ * Processes `audio_ai_staging/bgm/**` and `audio_ai_staging/stinger/**`,
+ * writes standalone `music_table.json` (BGM & Stinger cleanly separated from SFX `cue_table.json`),
  * runs strict LUFS/Peak gates, and outputs `music_report.json`.
  */
 export async function processMusicLibrary({
@@ -723,97 +723,33 @@ export async function processMusicLibrary({
     );
   }
 
-  // Merge cleanly into cue_table.json (preserving existing SFX cues)
-  const cueTablePath = path.join(outDir, 'cue_table.json');
-  let existingCueTable = {
+  const tracks = [...bgmTracks, ...stingerTracks];
+  const totalBytes = tracks.reduce((sum, t) => sum + (Number(t.encodedBytes) || 0), 0);
+  const musicTablePath = path.join(outDir, 'music_table.json');
+  const musicTable = {
     version: '1.0.0',
     format: 'mp3',
-    preloadRule: 'buffer_only_sfx_under_4s',
-    cueCount: 0,
-    surfaceCueCount: 0,
-    surfaceCoverage: {},
-    streamTracksExcluded: 0,
-    cues: [],
-  };
-  if (existsSync(cueTablePath)) {
-    existingCueTable = JSON.parse(await fs.readFile(cueTablePath, 'utf8'));
-  }
-  const preservedCues = (existingCueTable.cues || []).filter(
-    (c) => !String(c.cueName || '').startsWith('bgm.') && !String(c.cueName || '').startsWith('stinger.'),
-  );
-  const mergedCues = [...preservedCues, ...bgmTracks, ...stingerTracks];
-  const updatedCueTable = {
-    ...existingCueTable,
-    cueCount: mergedCues.length,
-    musicCueCount: bgmTracks.length + stingerTracks.length,
-    cues: mergedCues,
+    generatedAt: report.generatedAt,
+    bgmTargetLufs: BGM_TARGET_LUFS,
+    stingerTargetLufs: STINGER_TARGET_LUFS,
+    totalCount: tracks.length,
+    bgmCount: bgmTracks.length,
+    stingerCount: stingerTracks.length,
+    totalBytes,
+    bgm: bgmTracks,
+    stingers: stingerTracks,
+    tracks,
   };
 
-  // Merge cleanly into streams_table.json (preserving non-BGM stream tracks)
-  const streamsTablePath = path.join(outDir, 'streams_table.json');
-  let existingStreamsTable = {
-    version: '1.0.0',
-    format: 'mp3',
-    preload: 'stream',
-    count: 0,
-    totalBytes: 0,
-    streams: [],
-  };
-  if (existsSync(streamsTablePath)) {
-    existingStreamsTable = JSON.parse(await fs.readFile(streamsTablePath, 'utf8'));
-  }
-  const preservedStreams = (existingStreamsTable.streams || []).filter(
-    (s) => s.category !== 'bgm' && !String(s.path || '').startsWith('streams/bgm/'),
-  );
-  const bgmStreamEntries = bgmTracks.map((t) => ({
-    id: t.cueName,
-    cueName: t.cueName,
-    pack: 'BGM',
-    category: 'bgm',
-    name: t.cueName,
-    relDir: 'bgm',
-    duration: t.durationSec,
-    durationSec: t.durationSec,
-    trimStartSec: t.trimStartSec,
-    trimEndSec: t.trimEndSec,
-    bpm: t.bpm,
-    loop: true,
-    bitrateKbps: 96,
-    channels: 2,
-    preload: 'stream',
-    bus: 'bgm',
-    loudnessTier: 'bgm',
-    measuredLufs: t.measuredLufs,
-    measuredDb: t.measuredLufs,
-    peakDb: t.peakDb,
-    appliedGainDb: 0,
-    gainDb: t.gainDb,
-    sizeKb: t.sizeKb,
-    encodedBytes: t.encodedBytes,
-    path: t.path,
-    url: t.url,
-  }));
-  const mergedStreams = [...bgmStreamEntries, ...preservedStreams];
-  const totalStreamBytes = mergedStreams.reduce((sum, s) => sum + (Number(s.encodedBytes) || 0), 0);
-  const updatedStreamsTable = {
-    ...existingStreamsTable,
-    count: mergedStreams.length,
-    totalBytes: totalStreamBytes,
-    streams: mergedStreams,
-  };
-
-  await Promise.all([
-    fs.writeFile(cueTablePath, JSON.stringify(updatedCueTable, null, 2)),
-    fs.writeFile(streamsTablePath, JSON.stringify(updatedStreamsTable, null, 2)),
-  ]);
+  await fs.writeFile(musicTablePath, JSON.stringify(musicTable, null, 2));
 
   return {
     outDir,
     stagingRoot: musicStagingRoot,
+    musicTablePath,
     report,
     bgmCount: bgmTracks.length,
     stingerCount: stingerTracks.length,
-    cueCount: mergedCues.length,
-    streamCount: mergedStreams.length,
+    totalCount: tracks.length,
   };
 }

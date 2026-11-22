@@ -17,11 +17,20 @@ export function createBgmController(ctx: object, buses: object): {
         gainDb: number;
         bpm: any;
     };
+    loadMusicTable: (tableOrUrl: any, { fetchImpl }?: {
+        fetchImpl?: typeof fetch | undefined;
+    }) => Promise<{
+        bgmRegistered: number;
+        stingerCount: number;
+        totalTracks: any;
+        table: any;
+    }>;
     loadCueTable: (tableOrUrl: any, { fetchImpl }?: {
         fetchImpl?: typeof fetch | undefined;
     }) => Promise<{
         bgmRegistered: number;
-        totalCues: any;
+        stingerCount: number;
+        totalTracks: any;
         table: any;
     }>;
     hasBgmCue: (cueId: any) => boolean;

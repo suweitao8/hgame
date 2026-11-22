@@ -156,25 +156,35 @@ export function createBgmController(ctx, buses) {
     return entry;
   }
 
-  async function loadCueTable(tableOrUrl, { fetchImpl = globalThis.fetch } = {}) {
+  async function loadMusicTable(tableOrUrl, { fetchImpl = globalThis.fetch } = {}) {
     let table = tableOrUrl;
     if (typeof tableOrUrl === 'string') {
-      if (typeof fetchImpl !== 'function') throw new Error('fetch is required to load cue_table.json URL');
+      if (typeof fetchImpl !== 'function') throw new Error('fetch is required to load music_table.json URL');
       const res = await fetchImpl(tableOrUrl);
-      if (!res.ok) throw new Error(`Failed to fetch cue_table (${res.status}): ${tableOrUrl}`);
+      if (!res.ok) throw new Error(`Failed to fetch music_table (${res.status}): ${tableOrUrl}`);
       table = await res.json();
     }
-    const list = Array.isArray(table?.cues) ? table.cues : (Array.isArray(table) ? table : []);
+    const list = Array.isArray(table?.tracks)
+      ? table.tracks
+      : (Array.isArray(table?.bgm) || Array.isArray(table?.stingers)
+        ? [...(table.bgm || []), ...(table.stingers || [])]
+        : (Array.isArray(table?.cues) ? table.cues : (Array.isArray(table) ? table : [])));
     let bgmRegistered = 0;
+    let stingerCount = 0;
     for (const c of list) {
       if (!c?.cueName) continue;
       if (c.category === 'bgm' || c.preload === 'stream' || String(c.cueName).startsWith('bgm.')) {
         registerBgmCue(c.cueName, c);
         bgmRegistered++;
+      } else if (c.category === 'stinger' || String(c.cueName).startsWith('stinger.')) {
+        stingerCount++;
       }
     }
-    return { bgmRegistered, totalCues: list.length, table };
+    return { bgmRegistered, stingerCount, totalTracks: list.length, table };
   }
+
+  /** @deprecated Prefer `loadMusicTable` for `music_table.json`. Kept as alias for compatibility. */
+  const loadCueTable = loadMusicTable;
 
   async function playBgm(cueIdOrSpec, {
     fadeMs = 600,
@@ -411,6 +421,7 @@ export function createBgmController(ctx, buses) {
 
   return {
     registerBgmCue,
+    loadMusicTable,
     loadCueTable,
     hasBgmCue: (cueId) => bgmCues.has(cueId),
     playBgm,
