@@ -1035,6 +1035,104 @@ def bake_pbr_atlas(mesh_obj, char_id, style_preset="stylized_clean"):
     }
 
 
+def bake_fist_pose_onto_mesh(rig_obj, mesh_obj):
+    """Pose all 30 MPFB2 finger bones into a natural clenched fist and bake into mesh_obj
+    before finger bones are merged/removed for the 23-bone fingerless HGame rig."""
+    if not rig_obj or not mesh_obj:
+        return
+    bpy.context.view_layer.update()
+
+    # Ensure pose mode transforms start clean
+    for pb in rig_obj.pose.bones:
+        pb.location = (0.0, 0.0, 0.0)
+        pb.rotation_mode = "QUATERNION"
+        pb.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+
+    from mathutils import Quaternion
+
+    for side in ("l", "r"):
+        hand_pb = rig_obj.pose.bones.get(f"hand_{side}")
+        mid_pb = rig_obj.pose.bones.get(f"middle_01_{side}")
+        idx_pb = rig_obj.pose.bones.get(f"index_01_{side}")
+        if hand_pb is None or mid_pb is None:
+            continue
+
+        # Palm center lies slightly inward (body side: -X for left, +X for right) and forward-down relative to hand/knuckles
+        inward_sign = -1.0 if side == "l" else 1.0
+        hand_dir = (hand_pb.tail - hand_pb.head).normalized()
+        mid_knuckle = mid_pb.head.copy()
+        palm_inward = (hand_pb.head + hand_dir * 0.04) + Vector((inward_sign * 0.065, -0.005, -0.025))
+
+        # Flex MCP / PIP / DIP joints of the 4 main fingers sequentially using updated world pose matrices
+        finger_angles = {
+            "index": (math.radians(66), math.radians(82), math.radians(58)),
+            "middle": (math.radians(70), math.radians(84), math.radians(60)),
+            "ring": (math.radians(72), math.radians(84), math.radians(60)),
+            "pinky": (math.radians(74), math.radians(82), math.radians(58)),
+        }
+        # Stable plane normal for finger flexion from palm frame: vector from mid_knuckle -> pinky_knuckle x (hand->mid)
+        pinky_pb = rig_obj.pose.bones.get(f"pinky_01_{side}")
+        across = (pinky_pb.head - idx_pb.head).normalized() if (pinky_pb and idx_pb) else Vector((0.0, 1.0, 0.0))
+
+        for fname, angles in finger_angles.items():
+            for seg_i, ang in enumerate(angles, start=1):
+                pb = rig_obj.pose.bones.get(f"{fname}_0{seg_i}_{side}")
+                if pb is None:
+                    continue
+                bpy.context.view_layer.update()
+                bdir = (pb.tail - pb.head).normalized()
+                to_palm = (palm_inward - pb.head).normalized()
+                # Primary flexion axis perpendicular to both finger ray and palm target
+                axis_w = bdir.cross(to_palm)
+                if axis_w.length < 1e-4:
+                    axis_w = across
+                axis_w.normalize()
+                # Rotate bone world matrix around axis_w anchored at bone head
+                rot_w = Quaternion(axis_w, ang).to_matrix()
+                rm_local = pb.matrix.to_3x3()
+                local_axis = rm_local.inverted() @ axis_w
+                pb.rotation_quaternion = pb.rotation_quaternion @ Quaternion(local_axis.normalized(), ang)
+                bpy.context.view_layer.update()
+
+        # Curl thumb cleanly across the curled index/middle proximal phalanges
+        bpy.context.view_layer.update()
+        idx_02 = rig_obj.pose.bones.get(f"index_02_{side}")
+        thumb_target = idx_02.head.copy() if idx_02 else (palm_inward + Vector((0.0, -0.02, 0.0)))
+        for seg_i, ang in ((1, math.radians(34)), (2, math.radians(38)), (3, math.radians(42))):
+            pb = rig_obj.pose.bones.get(f"thumb_0{seg_i}_{side}")
+            if pb is None:
+                continue
+            bpy.context.view_layer.update()
+            bdir = (pb.tail - pb.head).normalized()
+            to_t = (thumb_target - pb.head).normalized()
+            axis_w = bdir.cross(to_t)
+            if axis_w.length < 1e-4:
+                continue
+            axis_w.normalize()
+            local_axis = pb.matrix.to_3x3().inverted() @ axis_w
+            pb.rotation_quaternion = pb.rotation_quaternion @ Quaternion(local_axis.normalized(), ang)
+            bpy.context.view_layer.update()
+
+    # Bake posed armature deformation into mesh_obj rest geometry, then reset rig to Rest Pose
+    bpy.ops.object.select_all(action="DESELECT")
+    mesh_obj.select_set(True)
+    bpy.context.view_layer.objects.active = mesh_obj
+    arm_mod = next((m for m in mesh_obj.modifiers if m.type == "ARMATURE"), None)
+    if arm_mod is not None:
+        bpy.ops.object.modifier_apply(modifier=arm_mod.name)
+
+    for pb in rig_obj.pose.bones:
+        pb.location = (0.0, 0.0, 0.0)
+        pb.rotation_quaternion = (1.0, 0.0, 0.0, 0.0)
+        pb.scale = (1.0, 1.0, 1.0)
+    bpy.context.view_layer.update()
+
+    new_mod = mesh_obj.modifiers.new("Armature", "ARMATURE")
+    new_mod.object = rig_obj
+
+
 def clean_to_hgame_23_bones(rig_obj, mesh_obj, enable_appendage_bones=False):
     """Rename Root->root, merge 30 finger bones into hand_l/hand_r, optionally keep <=3 appendage bones,
     limit total=4 weights per vertex, and normalize strictly."""
@@ -1542,6 +1640,9 @@ def main():
     # Decimate softly only if > 11,000 tris (target ~9,200 tris, FaceProtect spared)
     tris_before_decimate = count_tris(mesh_lod0)
     tris_lod0 = decimate_if_over_budget(mesh_lod0, max_tris=11000, target_tris=9200)
+
+    # Bake clenched fist hand pose onto mesh rest geometry before removing finger bones
+    bake_fist_pose_onto_mesh(rig_obj, mesh_lod0)
 
     # 5. UV pack (1.9x face area boost) + Cycles PBR Atlas Baking
     prepare_atlas_uvs(mesh_lod0)

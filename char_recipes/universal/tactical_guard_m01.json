@@ -64,13 +64,6 @@
         "tint": "#313b2f",
         "rough": 0.76
       }
-    },
-    "equipment": {
-      "assetId": "auto:sword",
-      "recolor": {
-        "tint": "#8c96a4",
-        "rough": 0.38
-      }
     }
   },
   "lod": {

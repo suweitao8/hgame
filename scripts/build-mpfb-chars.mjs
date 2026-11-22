@@ -142,12 +142,15 @@ function resolveCatalogAsset(indexData, userDataDir, slot, spec, phenotype, fall
 
   const kwRaw = specStr.slice(5).trim().toLowerCase();
   const keywords = kwRaw.split(/[\s,;+|]+/).filter(Boolean);
+  const weaponRx = /\b(sword|dagger|hammer|kalistick|axe|spear|bow|gun|rifle|pistol|blade|katana)\b/i;
+  const allowWeapons = keywords.some((kw) => weaponRx.test(kw));
 
   let pool = assets.filter((a) => {
     if (slot === 'eye') return a.slot === 'eyes';
     if (slot === 'skin') return a.slot === 'skin';
     if (slot === 'hair') return a.slot === 'hair';
     if (['top', 'bottom', 'suit', 'dress', 'shoes', 'hat', 'glasses', 'gloves', 'mask', 'equipment', 'bodyparts'].includes(slot)) {
+      if (!allowWeapons && weaponRx.test(`${a.assetId} ${a.name} ${a.tags.join(' ')}`)) return false;
       return a.slot === slot || a.slot === 'clothes';
     }
     return a.slot === slot;
