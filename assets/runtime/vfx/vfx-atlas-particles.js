@@ -858,7 +858,7 @@ void main() {
 
   float t = isLoopCurve ? fract(age / max(0.001, dur)) : (isPersistent ? 0.0 : age / dur);
   vLifeRatio = t;
-  vUv = uv;
+  vUv = (renderMode > 1.5 && renderMode < 2.5) ? vec2(1.0 - uv.x, uv.y) : uv;
   vCurveRow = curveRow;
   vHdr = hdrEmPair.x;
   vUvRect = vec4(uv0, uv1);
@@ -964,7 +964,7 @@ void main() {
   vec2 posLocal = position.xy - pivotPair;
   vec3 offLocal = vec3(posLocal, 0.0);
   if (aAtlasP7.w > -0.5 && abs(aCustom2.x) > 1e-5) {
-    vec2 uv0TopDown = vec2(uv.x, 1.0 - uv.y);
+    vec2 uv0TopDown = vec2(vUv.x, 1.0 - vUv.y);
     vec2 vtxUv0 = uv0TopDown;
     if (vFlipbook.x > 1.5 || vFlipbook.y > 1.5) {
       vec2 fbG = vfxFlipbookGrid(vFlipbook.xy);

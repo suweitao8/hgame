@@ -1224,7 +1224,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(aspectZ !== undefined ? { aspectZ } : {}),
       ...(size3D ? { sizeY: scaleRangeBy(sizeY, trScaleScalar), sizeZ: scaleRangeBy(sizeZ, trScaleScalar) } : {}),
       ...(pivot ? { pivot } : {}),
-      ...(renderMode === 'stretched' && (Math.abs(velScale) > 0.005 || Math.abs(lenScale - 1) > 0.005)
+      ...(renderMode === 'stretched'
         ? { velocityScale: Number(velScale.toFixed(3)), lengthScale: Number(lenScale.toFixed(3)) }
         : {}),
       ...(Math.abs(simSpeed - 1) > 0.01 ? { simulationSpeed: Number(simSpeed.toFixed(3)) } : {}),
