@@ -1694,6 +1694,103 @@ button { color: inherit; }
   border-top: 1px solid var(--line);
   background: rgba(16, 20, 15, .86);
 }
+.hgame-test-fly-hud {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 4;
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: calc(100% - 20px);
+  padding: 6px 10px;
+  border: 1px solid rgba(213, 228, 180, .24);
+  border-radius: 7px;
+  background: rgba(12, 16, 12, .74);
+  backdrop-filter: blur(6px);
+  color: #cdd7c0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.hgame-test-fly-hud strong {
+  color: var(--accent);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.hgame-test-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(213, 228, 180, .85);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .6);
+  pointer-events: none;
+  z-index: 5;
+}
+.hgame-test-inspector {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 5;
+  width: min(300px, calc(100% - 20px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(213, 228, 180, .3);
+  border-radius: 8px;
+  background: rgba(14, 18, 13, .88);
+  backdrop-filter: blur(8px);
+  color: var(--text);
+  font-size: 11px;
+}
+.hgame-test-inspector[hidden],
+.hgame-test-fly-hud[hidden],
+.hgame-test-crosshair[hidden] {
+  display: none;
+}
+.hgame-inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hgame-inspector-head strong {
+  font-size: 12px;
+  color: #eef4e4;
+  word-break: break-all;
+}
+.hgame-inspector-subtitle {
+  color: var(--muted);
+  font-size: 11px;
+}
+.hgame-inspector-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  font-variant-numeric: tabular-nums;
+}
+.hgame-inspector-meta dt {
+  color: var(--muted);
+}
+.hgame-inspector-meta dd {
+  margin: 0;
+  color: #dce5d1;
+  word-break: break-all;
+}
+.hgame-inspector-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hgame-inspector-actions button {
+  flex: 1;
+}
 .hgame-hotbar-slot {
   width: 44px;
   height: 44px;

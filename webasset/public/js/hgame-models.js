@@ -355,6 +355,13 @@ function activateModelsWorkspace() {
   }
 }
 
+window.addEventListener('webasset:open-asset', event => {
+  const { workspace, id } = event.detail || {};
+  if (workspace !== 'models' || !id) return;
+  selectedId = id;
+  if (manifestReady) void selectModel(id);
+});
+
 window.addEventListener('webasset:workspace-change', event => {
   if (event.detail?.workspace === 'models') {
     activateModelsWorkspace();

@@ -304,6 +304,13 @@ function activateMaterialsWorkspace() {
   }
 }
 
+window.addEventListener('webasset:open-asset', event => {
+  const { workspace, id } = event.detail || {};
+  if (workspace !== 'materials' || !id) return;
+  selectedId = id;
+  if (manifestLoaded) void selectMaterial(id);
+});
+
 window.addEventListener('webasset:workspace-change', event => {
   if (event.detail?.workspace === 'materials') {
     activateMaterialsWorkspace();
