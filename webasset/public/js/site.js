@@ -26,8 +26,6 @@ const assetModelSection = document.querySelector('#asset-model-section');
 const assetGalleryPane = document.querySelector('#asset-gallery-pane');
 const assetSettingsPane = document.querySelector('#asset-settings-pane');
 const assetModelTabs = [...document.querySelectorAll('.asset-model-tab')];
-const assetModelUpload = document.querySelector('#asset-model-upload');
-const assetModelUploadButton = document.querySelector('#asset-model-upload-button');
 const assetModelFilename = document.querySelector('#asset-model-filename');
 const assetModelEmpty = document.querySelector('#asset-model-empty');
 const assetModelUvSource = document.querySelector('#asset-model-uv-source');
@@ -108,42 +106,6 @@ assetModelTabs.forEach((tab, index) => {
   });
 });
 
-assetModelUploadButton.addEventListener('click', () => assetModelUpload.click());
-assetModelUpload.addEventListener('change', async () => {
-  const file = assetModelUpload.files?.[0];
-  assetModelUpload.value = '';
-  const id = activeCharacterId;
-  const mode = selectedModelView;
-  if (!file || !id || !['high', 'low'].includes(mode)) return;
-  if (!file.name.toLowerCase().endsWith('.glb')) {
-    showAssetToast('模型只支持 GLB 格式。请从建模工具导出包含贴图和动画的 .glb。');
-    return;
-  }
-  if (file.size > 150 * 1024 * 1024) {
-    showAssetToast('GLB 文件不能超过 150MB。');
-    return;
-  }
-  assetModelUploadButton.disabled = true;
-  assetModelUploadButton.textContent = '正在上传…';
-  try {
-    const params = new URLSearchParams({ characterId: id, mode, name: file.name });
-    const response = await fetch('/api/character-models?' + params, {
-      method: 'POST',
-      headers: { 'Content-Type': 'model/gltf-binary' },
-      body: file,
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.message || '上传失败。');
-    await loadCharacters();
-    showAssetToast(`${mode === 'high' ? '高模' : '低模'}已保存：${file.name}`);
-  } catch (error) {
-    showAssetToast(error.message || '上传模型失败。');
-  } finally {
-    assetModelUploadButton.disabled = false;
-    assetModelUploadButton.textContent = '上传 GLB';
-  }
-});
-
 function renderCharacterModels(character) {
   const models = character.models || {};
   const mode = selectedModelView;
@@ -161,7 +123,6 @@ function renderCharacterModels(character) {
   assetModelUvSource.value = selectedUvSource;
   assetModelUvSourceControls.hidden = mode !== 'uv' || availableUvSources.length < 2;
   const model = mode === 'uv' ? models[selectedUvSource] : models[mode];
-  assetModelUploadButton.hidden = mode === 'uv';
   assetModelFilename.textContent = model?.name || '';
   assetModelFilename.hidden = !model;
   if (model) {
@@ -174,8 +135,8 @@ function renderCharacterModels(character) {
   assetModelEmpty.hidden = Boolean(model);
   if (!model) {
     assetModelEmpty.textContent = mode === 'uv'
-      ? '暂无模型，无法查看 UV。请先在「高模」或「低模」上传 GLB。'
-      : `暂无${mode === 'high' ? '高模' : '低模'}。上传 GLB 后即可在这里查看。`;
+      ? '暂无 UV'
+      : `暂无${mode === 'high' ? '高模' : '低模'}`;
     return;
   }
   void modelViewer.open(model.url, mode);

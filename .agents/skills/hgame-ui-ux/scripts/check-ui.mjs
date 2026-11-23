@@ -10,6 +10,7 @@ const FORBIDDEN_PHRASES = [
   '新手引导', '按键说明', '控制说明', '背景故事', '制作人员', '技术支持',
   '二次确认', '确认退出', '确认重开', '确定要', '是否确认',
   '鼠标拖动', '拖动旋转', '拖拽旋转', '滚轮缩放', '滚轮调速', '未命名网格', '为流畅预览已限制',
+  '上传 glb', '上传后即可', '上传模型失败', '请先在「高模」',
   'how to play', 'instructions', 'game controls', 'controls:',
   'drag to rotate', 'scroll to zoom', 'wheel to zoom',
   'powered by', 'made with', 'game description', 'tutorial:',
