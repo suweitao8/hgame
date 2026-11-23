@@ -43,7 +43,7 @@ async function withLocalGames(callback) {
   try {
     const siteUrl = await start(site);
     const previewUrl = await start(preview);
-    await callback({ siteUrl, previewUrl, htmlGamesRoot });
+    await callback({ siteUrl, previewUrl, htmlGamesRoot, gamesRoot });
   } finally {
     if (site.listening) await new Promise(resolve => site.close(resolve));
     if (preview.listening) await new Promise(resolve => preview.close(resolve));
@@ -193,5 +193,31 @@ test('invalid game.config.json cannot register traversal entries or mismatched g
     }
     const items = (await (await fetch(siteUrl + '/api/games')).json()).items;
     assert.equal(items.some(item => item.runtimeId?.startsWith('bad-') || item.runtimeId === 'other-folder'), false);
+  });
+});
+
+test('scoped preview serves one game and its runtime only to allowed peers', async () => {
+  await withLocalGames(async ({ gamesRoot, htmlGamesRoot, siteUrl }) => {
+    let allowed = true;
+    const preview = createGamePreviewServer({
+      gamesRoot: path.join(gamesRoot, 'not-created-for-lan'), htmlGamesRoot, localGame: 'CatKnight-HTML',
+      allowPeer: () => allowed,
+    });
+    try {
+      const base = await start(preview);
+      assert.equal((await fetch(base + '/local-games/CatKnight-HTML/')).status, 200);
+      assert.equal((await fetch(base + '/local-games/CatKnight-HTML/src/main.js', { method: 'HEAD' })).status, 200);
+      assert.equal((await fetch(base + '/runtime/hgame/platform/input.js')).status, 200);
+      assert.equal((await fetch(base + '/local-games/Hades-Web/index.html')).status, 404);
+      assert.equal((await fetch(base + '/local-games/CatKnight-HTML/src/main.js', { method: 'POST' })).status, 405);
+      assert.equal((await fetch(base + '/games-files/preview/index.html')).status, 404);
+      assert.equal((await fetch(base + '/api/games')).status, 404);
+      assert.equal((await fetch(siteUrl + '/api/games')).status, 200);
+      allowed = false;
+      assert.equal((await fetch(base + '/local-games/CatKnight-HTML/')).status, 403);
+      assert.equal((await fetch(base + '/runtime/hgame/platform/input.js')).status, 403);
+    } finally {
+      if (preview.listening) await new Promise(resolve => preview.close(resolve));
+    }
   });
 });

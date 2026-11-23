@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { isIPv4 } from 'node:net';
+import { networkInterfaces } from 'node:os';
+import { parseArgs } from 'node:util';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAssetBackup, listBackups, resolveBackupDir } from './lib/asset-backup.mjs';
@@ -243,13 +246,36 @@ export function createGamePreviewServer({
   siteRoot = PROJECT_ROOT,
   gamesRoot = path.join(PROJECT_ROOT, 'assets', 'games'),
   htmlGamesRoot = DEFAULT_HTML_GAMES_ROOT,
+  localGame = null,
+  allowPeer = null,
 } = {}) {
-  mkdirSync(path.join(gamesRoot, 'files'), { recursive: true });
-  const handleGameFiles = createStaticHandler(path.join(gamesRoot, 'files'), { basePath: '/games-files' });
+  if (localGame !== null && !/^[a-z0-9][a-z0-9_-]*$/i.test(localGame)) {
+    throw new TypeError('Invalid local game slug');
+  }
+  if (localGame === null) mkdirSync(path.join(gamesRoot, 'files'), { recursive: true });
+  const handleGameFiles = localGame === null
+    ? createStaticHandler(path.join(gamesRoot, 'files'), { basePath: '/games-files' })
+    : null;
   const localGames = createLocalHtmlGameLibrary(htmlGamesRoot);
   const handleRuntime = createStaticHandler(resolveHGameRuntimeRoot(path.resolve(siteRoot)), { basePath: '/runtime/hgame' });
   return createServer(async (request, response) => {
+    if (allowPeer && !allowPeer(request.socket.remoteAddress)) {
+      response.writeHead(403).end();
+      return;
+    }
     const pathname = (request.url || '').split('?')[0];
+    if (localGame !== null) {
+      const selectedGame = pathname.startsWith('/local-games/' + localGame + '/');
+      const runtime = pathname.startsWith('/runtime/hgame/');
+      if (!selectedGame && !runtime) {
+        response.writeHead(404).end();
+        return;
+      }
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        response.writeHead(405, { Allow: 'GET, HEAD' }).end();
+        return;
+      }
+    }
     if (pathname.startsWith('/runtime/hgame/')) {
       await handleRuntime(request, response, () => {
         response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
@@ -257,7 +283,7 @@ export function createGamePreviewServer({
       });
     } else if (pathname.startsWith('/local-games/')) {
       await localGames.serve(request, response);
-    } else if ((request.url || '').split('?')[0].startsWith('/games-files/')) {
+    } else if (handleGameFiles && pathname.startsWith('/games-files/')) {
       await handleGameFiles(request, response, () => {
         response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
         response.end('Not Found');
@@ -269,9 +295,48 @@ export function createGamePreviewServer({
   });
 }
 
+function ipv4Number(address) {
+  return address.split('.').reduce((number, part) => (number << 8) | Number(part), 0);
+}
+
+function lanPeerFilter(host) {
+  if (!isIPv4(host) || !/^(?:10\.|172\.(?:1[6-9]|2\d|3[01])\.|192\.168\.)/.test(host)) {
+    throw new Error('--lan-host requires an explicitly selected private IPv4 address');
+  }
+  const selected = Object.values(networkInterfaces()).flat().find(entry =>
+    entry?.address === host && !entry.internal && isIPv4(entry.netmask));
+  if (!selected) throw new Error('--lan-host is not configured on this computer');
+  const mask = ipv4Number(selected.netmask);
+  const subnet = ipv4Number(host) & mask;
+  return address => isIPv4(address) && (ipv4Number(address) & mask) === subnet;
+}
+
+async function startLanPreview({ localGame, host, port }) {
+  const allowPeer = lanPeerFilter(host);
+  const library = createLocalHtmlGameLibrary(DEFAULT_HTML_GAMES_ROOT);
+  const game = (await library.list()).find(entry => entry.id === 'local:' + localGame);
+  if (!game) throw new Error('No registered local game matches --lan-game');
+  const server = createGamePreviewServer({ localGame, allowPeer });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, host, resolve);
+  });
+  console.log('WebAsset LAN preview ' + 'http://' + host + ':' + port + game.previewUrl);
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number.parseInt(process.env.WEBASSET_PORT || '', 10) || WEBASSET_PORT;
   const gamePort = Number.parseInt(process.env.WEBASSET_GAME_PORT || '', 10) || 4175;
+  const { values } = parseArgs({ options: { 'lan-game': { type: 'string' }, 'lan-host': { type: 'string' } } });
+  if (values['lan-game'] || values['lan-host']) {
+    if (!values['lan-game'] || !values['lan-host']) throw new Error('--lan-game and --lan-host are both required');
+    await startLanPreview({ localGame: values['lan-game'], host: values['lan-host'], port: gamePort });
+  } else {
+    startLoopback(port, gamePort);
+  }
+}
+
+function startLoopback(port, gamePort) {
   const server = createWebAssetServer();
   server.listen(port, '127.0.0.1', () => {
     console.log(`WebAsset 角色资产库： http://127.0.0.1:${port}/`);

@@ -153,3 +153,9 @@ Use `app.platform.diagnostics.recordEvent({ tick, type, subject, details })` for
 - `--eval "<expr>"` runs in the page (global scope, `await` allowed in the result) and the value is returned under `report.eval`. Example: `--eval "document.querySelector('#hud').textContent"`.
 - `--state-hook <name>` (default `__hgameState`): if `window[name]` is a function, its JSON result is included as `report.state` automatically. Expose e.g. `window.__hgameState = () => ({ enemies: sim.enemies.count, tick: sim.tick })` so tests can assert game state, not just pixels.
 - Example: `examples/survivor-2d/baseline.png` is produced and checked with `--ready "#game[data-engine-ready=true]" --freeze-time --steps 120 --baseline examples/survivor-2d/baseline.png --threshold 0`.
+
+### 单游戏局域网试玩
+
+`npm run webasset -- --lan-game <slug> --lan-host <局域网 IPv4>` 单独启动 WebAsset 的局域网试玩监听。使用本机已配置的非回环私有 IPv4 地址。打开命令输出的链接，手机应与电脑位于同一子网。
+
+该监听只提供选中的游戏和公用 HGame 运行时，WebAsset 管理 API 继续使用默认的本机入口。普通 `npm run webasset` 仍只监听回环地址。若同子网设备连不上，检查系统是否允许当前 Node 程序接收试玩端口的入站连接。局域网 HTTP 适合验证触控，浏览器可能限制 HTTP 下的硬件手柄等安全上下文功能。
