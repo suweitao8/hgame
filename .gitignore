@@ -128,16 +128,12 @@ webasset/assets/**/*.ogg
 *.db-wal
 *.db-shm
 
-# Tests, benchmarks, visual baselines, and example 3D/media assets (kept locally, excluded from Git)
-tests/
-webasset/tests/
-examples/*/tests/
-examples/**/playtest.mjs
+# Local baselines, non-public example media, and skill scratch tests
 examples/**/baseline.png
 examples/**/*.gltf
 examples/**/*.glb
-network/**/test/
-benchmarks/
+!examples/arena-3d/src/assets/runner.gltf
+!examples/arena-3d/src/assets/scout.gltf
 .agents/skills/**/tests/
 .agents/skills/**/test/
 

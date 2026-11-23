@@ -30,7 +30,7 @@
 | `C3` | 满足 `C2` + 工业级清单（`industrialChecklist`）部分满足（`met >= 1`） | **9.0** |
 | `C4` | 工业级清单全部满足（`met == total`）且默认接线并经过浏览器真 GPU 实测 | **10.0** |
 
-6. **竞品依公开边界 + 实证路径强校验 + 防漂移门禁**：竞品分数必须基于官方公开能力边界并填写 `competitorNotes`；HGame 每项 `proofFiles` 必须指向已被 Git 跟踪的运行时源文件（浏览器基准脚本记入 `benchmarkFiles` 作为本地证据）；防漂移门禁以 `node scripts/score-engines.mjs --check`（已跟踪）为准，辅以本地测试 `tests/engine-scorecard.test.mjs`（`tests/` 已按仓库 `.gitignore` 保留在本地）拦截任何手改表格或越界打分行为。
+6. **竞品依公开边界 + 实证路径强校验 + 防漂移门禁**：竞品分数必须基于官方公开能力边界并填写 `competitorNotes`；HGame 每项 `proofFiles` 必须指向已被 Git 跟踪的运行时源文件（浏览器基准脚本记入 `benchmarkFiles` 作为证据）；防漂移门禁以 `node scripts/score-engines.mjs --check`（已跟踪）为准，辅以仓库测试 `tests/engine-scorecard.test.mjs`拦截任何手改表格或越界打分行为。
 
 ---
 
