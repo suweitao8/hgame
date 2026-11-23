@@ -58,7 +58,7 @@ try {
       try { if ((await fetch(url)).ok) break; } catch {}
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+    const page = await browser.newPage({ viewport: { width: 960, height: 540 }, locale: 'en-US' });
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('response', response => { if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) errors.push(`${response.status()} ${response.url()}`); });
@@ -73,7 +73,11 @@ try {
     await page.waitForFunction(() => typeof window.__hgameState === 'function', null, { timeout: 10000 })
       .catch(error => { throw new Error(`${name}: ${errors.join('; ')} ${error.message}`); });
     if (isArchetype) {
-      if (name === 'action-2d') await page.keyboard.press('j', { delay: 80 });
+      if (name === 'action-2d') {
+        assert.equal(await page.locator('html').getAttribute('lang'), 'en');
+        assert.equal(await page.locator('#start').textContent(), 'Start');
+        await page.keyboard.press('j', { delay: 80 });
+      }
       else await page.locator('#start').click({ timeout: 3000 });
       await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 3000 });
     }
@@ -110,6 +114,7 @@ try {
         window.__recipePad.buttons[1].value = 1;
       });
       await page.waitForFunction(() => window.__hgameState().phase === 'paused', null, { timeout: 3000 });
+      assert.equal(await page.locator('#restart').textContent(), 'Resume');
       await page.evaluate(() => {
         window.__recipePad.buttons[1].value = 0;
         window.__recipePad.buttons[0].value = 1;
@@ -126,6 +131,8 @@ try {
         const attack = page.locator('.hgame-skill-btn[data-action="attack"]');
         const dash = page.locator('.hgame-skill-btn[data-action="dash"]');
         await joystick.waitFor({ timeout: 3000 });
+        assert.equal(await attack.locator('.hgame-btn-label').textContent(), 'Attack');
+        assert.equal(await dash.locator('.hgame-btn-label').textContent(), 'Dash');
         const stick = await joystick.boundingBox();
         const large = await attack.boundingBox();
         const small = await dash.boundingBox();
@@ -143,6 +150,10 @@ try {
         assert.equal(await attack.getAttribute('data-active'), 'false');
         await cdp.detach();
       }
+      await page.goto(url + '?lang=zh');
+      await page.waitForFunction(() => typeof window.__hgameState === 'function');
+      assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
+      assert.equal(await page.locator('#start').textContent(), '开始');
       assert.deepEqual(errors, [], 'action gamepad movement, menu, and touch');
     }
     if (name === '2d') {

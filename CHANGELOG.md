@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Localize the generated action game's built-in shell and touch control labels in Chinese and English.
+
 - Reuse floating text slots in constant time while preserving oldest-popup eviction at capacity.
 
 - Add a reusable single-player action control preset with keyboard, analog gamepad, touch, and menu routing. Adopt it in the generated 2D action archetype.

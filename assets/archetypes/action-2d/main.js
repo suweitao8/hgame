@@ -7,6 +7,7 @@ const [
   { createWebGL2DAdapter, Sprite2D, SpriteCrowd2D },
   { createVfxSystem },
   { createTouchControls },
+  { createI18n },
   { defineGameBlueprint, getArtTheme, createGameSession, createActionGameControls, mountGameShell },
 ] = await Promise.all([
   fetch('./game.config.json').then(r => r.json()),
@@ -20,13 +21,53 @@ const [
   import(base + '/integrations/webgl2d.js'),
   import(base + '/vfx/index.js'),
   import(base + '/integrations/touch-controls.js'),
+  import(base + '/ui/i18n.js'),
   import(base + '/kit/index.js'),
 ]);
+
+const params = new URLSearchParams(location.search);
+const language = value => value?.toLowerCase().split('-')[0];
+const requestedLanguage = language(params.get('lang'));
+const locale = ['zh', 'en'].includes(requestedLanguage) ? requestedLanguage
+  : language(navigator.language) === 'en' ? 'en' : 'zh';
+const { t: translate } = createI18n({
+  locale,
+  fallbackLocale: 'zh',
+  messages: { en: {
+    游戏画面: 'Game view',
+    开始: 'Start',
+    暂停: 'Pause',
+    继续: 'Resume',
+    选项: 'Upgrade',
+    再来一局: 'Play again',
+    重开: 'Restart',
+    静音: 'Mute',
+    胜: 'Win',
+    败: 'Loss',
+    攻击: 'Attack',
+    冲刺: 'Dash',
+    技能一: 'Skill 1',
+    技能二: 'Skill 2',
+    技能三: 'Skill 3',
+    技能四: 'Skill 4',
+    '⚔️ 锐刃': '⚔️ Edge',
+    '⚡ 迅捷': '⚡ Haste',
+    '♥ 生机': '♥ Vigor',
+    '+25% 伤害': '+25% DMG',
+    '-5% 移速': '-5% SPD',
+    '+20% 攻速': '+20% Rate',
+    '-10% 护甲': '-10% DEF',
+    '+30 生命': '+30 HP',
+    '-5% 暴击': '-5% Crit',
+  } },
+});
+document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
 
 const blueprint = defineGameBlueprint(designBlueprint);
 const theme = getArtTheme(blueprint.art.theme);
 const project = defineProject(engineConfig);
 const canvas = document.querySelector('#game');
+canvas.setAttribute('aria-label', translate('游戏画面'));
 const renderer = createWebGL2DAdapter({
   canvas,
   width: 960,
@@ -68,11 +109,12 @@ const controls = createActionGameControls({
   input: app.input,
   onDisconnect: () => session.pause(),
 });
-const touchMode = new URLSearchParams(location.search).get('touch') === '1' ? 'always' : 'touch-only';
+const touchMode = params.get('touch') === '1' ? 'always' : 'touch-only';
 const touch = createTouchControls({
   controls: controls.touchPlayer, mode: 'hidden', joystick: 'fixed',
   joystickRadius: 44, buttonLayout: 'action',
 });
+for (const { name, label } of controls.touchPlayer.bindings) touch.setButtonLabel(name, translate(label));
 const syncTouch = () => touch.setMode(session.state.phase === 'playing' ? touchMode : 'hidden');
 const removePhaseListener = session.director.onPhaseChange(syncTouch);
 syncTouch();
@@ -277,7 +319,7 @@ player.addComponent(new class extends Component {
   }
 }());
 
-shell = mountGameShell({ root: document.body, session, hintKeys: 'WASD · J · K' });
+shell = mountGameShell({ root: document.body, session, hintKeys: 'WASD · J · K', translate });
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';

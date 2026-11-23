@@ -315,6 +315,7 @@ function el(doc, tag, attrs = {}, text = null) {
  * @property {string[]} [metrics]
  * @property {string[]} [bars]
  * @property {string} [hintKeys='WASD · J']
+ * @property {(label: string) => string} [translate] Translates shell labels and choice text. Return the supplied label for untranslated text.
  * @property {boolean} [portraitFirst=true] Anchor clickable shell controls into the bottom-right thumb arc on portrait screens.
  */
 
@@ -344,6 +345,7 @@ export function mountGameShell(options) {
   const theme = getArtTheme(options.theme ?? bp.art.theme);
   const metricIds = options.metrics ?? bp.ui.hudMetrics ?? ['hp', 'score', 'wave'];
   const barIds = options.bars ?? bp.ui.hudBars ?? ['hp'];
+  const translate = options.translate ?? (label => label);
 
   injectShellStyles(doc);
 
@@ -372,7 +374,7 @@ export function mountGameShell(options) {
   edgeTl.appendChild(readout);
 
   const edgeTr = el(doc, 'div', { className: 'hg-edge-tr' });
-  const pauseBtn = el(doc, 'button', { id: 'pause', type: 'button', 'aria-label': '暂停' }, '⏸');
+  const pauseBtn = el(doc, 'button', { id: 'pause', type: 'button', 'aria-label': translate('暂停') }, '⏸');
   edgeTr.appendChild(pauseBtn);
 
   // Title Overlay (live canvas visible, <= 1 button)
@@ -380,13 +382,13 @@ export function mountGameShell(options) {
   const titleFrame = el(doc, 'div', { className: 'hg-hero-frame' });
   titleFrame.appendChild(el(doc, 'h1', { className: 'hg-title-text' }, String(options.title ?? bp.meta.title).slice(0, 18)));
   titleFrame.appendChild(el(doc, 'div', { className: 'hg-accent-rule' }));
-  const startBtn = el(doc, 'button', { id: 'start', type: 'button', className: 'hg-btn hg-btn-primary', 'data-ui-tilt': '' }, '开始');
+  const startBtn = el(doc, 'button', { id: 'start', type: 'button', className: 'hg-btn hg-btn-primary', 'data-ui-tilt': '' }, translate('开始'));
   titleFrame.appendChild(startBtn);
   titleOverlay.appendChild(titleFrame);
 
   // Choice Overlay (<= 4 whole clickable cards, <= 18 chars each)
   const choiceOverlay = el(doc, 'div', { id: 'levelup', className: 'hg-overlay', 'data-panel': 'choice', 'data-ui-stagger': '', hidden: true });
-  choiceOverlay.appendChild(el(doc, 'h2', { className: 'hg-heading' }, '选项'));
+  choiceOverlay.appendChild(el(doc, 'h2', { className: 'hg-heading' }, translate('选项')));
   const cardsBox = el(doc, 'div', { className: 'hg-cards' });
   choiceOverlay.appendChild(cardsBox);
 
@@ -396,8 +398,8 @@ export function mountGameShell(options) {
   const resultHeading = el(doc, 'div', { className: 'hg-heading' }, '');
   const resultScore = el(doc, 'div', { id: 'result', className: 'hg-result-score' }, '★ 0');
   const actionsRow = el(doc, 'div', { className: 'hg-actions' });
-  const restartBtn = el(doc, 'button', { id: 'restart', type: 'button', className: 'hg-btn hg-btn-primary', 'data-ui-tilt': '' }, '再来一局');
-  const secondaryBtn = el(doc, 'button', { id: 'mute', type: 'button', className: 'hg-btn hg-btn-icon', 'aria-label': '静音' }, '🔊');
+  const restartBtn = el(doc, 'button', { id: 'restart', type: 'button', className: 'hg-btn hg-btn-primary', 'data-ui-tilt': '' }, translate('再来一局'));
+  const secondaryBtn = el(doc, 'button', { id: 'mute', type: 'button', className: 'hg-btn hg-btn-icon', 'aria-label': translate('静音') }, '🔊');
   actionsRow.appendChild(restartBtn);
   actionsRow.appendChild(secondaryBtn);
   endFrame.appendChild(resultHeading);
@@ -433,9 +435,9 @@ export function mountGameShell(options) {
     const list = Array.isArray(choices) ? choices.slice(0, 4) : [];
     list.forEach((c, idx) => {
       const card = el(doc, 'button', { type: 'button', className: 'card', 'data-upgrade': c.id, 'data-ui-tilt': '' });
-      card.appendChild(el(doc, 'span', { className: 'name' }, String(c.label ?? c.id).slice(0, 12)));
-      if (c.pos) card.appendChild(el(doc, 'span', { className: 'pos' }, String(c.pos).slice(0, 10)));
-      if (c.neg) card.appendChild(el(doc, 'span', { className: 'neg' }, String(c.neg).slice(0, 10)));
+      card.appendChild(el(doc, 'span', { className: 'name' }, translate(String(c.label ?? c.id)).slice(0, 12)));
+      if (c.pos) card.appendChild(el(doc, 'span', { className: 'pos' }, translate(String(c.pos)).slice(0, 10)));
+      if (c.neg) card.appendChild(el(doc, 'span', { className: 'neg' }, translate(String(c.neg)).slice(0, 10)));
       card.addEventListener('click', () => session.selectChoice(idx));
       cardsBox.appendChild(card);
     });
@@ -450,17 +452,17 @@ export function mountGameShell(options) {
     if (phase === UI_PHASES.CHOICE) {
       renderChoices(session.state.choices);
     } else if (phase === UI_PHASES.PAUSED) {
-      resultHeading.textContent = '暂停';
+      resultHeading.textContent = translate('暂停');
       resultScore.textContent = `★ ${Math.floor(session.state.score)}`;
-      restartBtn.textContent = '继续';
+      restartBtn.textContent = translate('继续');
       secondaryBtn.textContent = '↻';
-      secondaryBtn.setAttribute('aria-label', '重开');
+      secondaryBtn.setAttribute('aria-label', translate('重开'));
     } else if (phase === UI_PHASES.RESULT) {
-      resultHeading.textContent = session.state.victory ? '胜' : '败';
+      resultHeading.textContent = translate(session.state.victory ? '胜' : '败');
       resultScore.textContent = `★ ${Math.floor(session.state.score)}`;
-      restartBtn.textContent = '再来一局';
+      restartBtn.textContent = translate('再来一局');
       secondaryBtn.textContent = session.audio.isMuted() ? '🔇' : '🔊';
-      secondaryBtn.setAttribute('aria-label', '静音');
+      secondaryBtn.setAttribute('aria-label', translate('静音'));
     }
     uiUx.syncDirectorDom();
   }

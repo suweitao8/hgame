@@ -7,6 +7,7 @@
  * @property {string[]} [metrics]
  * @property {string[]} [bars]
  * @property {string} [hintKeys='WASD · J']
+ * @property {(label: string) => string} [translate] Translates shell labels and choice text. Return the supplied label for untranslated text.
  * @property {boolean} [portraitFirst=true] Anchor clickable shell controls into the bottom-right thumb arc on portrait screens.
  */
 /**
@@ -35,6 +36,10 @@ export type GameShellOptions = {
     metrics?: string[] | undefined;
     bars?: string[] | undefined;
     hintKeys?: string | undefined;
+    /**
+     * Translates shell labels and choice text. Return the supplied label for untranslated text.
+     */
+    translate?: ((label: string) => string) | undefined;
     /**
      * Anchor clickable shell controls into the bottom-right thumb arc on portrait screens.
      */
