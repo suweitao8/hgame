@@ -102,6 +102,13 @@ function readMinMaxScalar(block, fieldName, fallback = 0) {
     }
     return Number(a.toFixed(4));
   }
+  if (mode === 1) {
+    const maxCurveBlk = subBody.match(/maxCurve:[\s\S]*?(?=minCurve:|$)/)?.[0] || '';
+    const vals = [...maxCurveBlk.matchAll(/\bvalue:\s*([-\d.eE+]+)/g)].map((m) => Number(m[1]));
+    if (vals.length > 0 && Math.max(...vals.map(Math.abs)) < 1e-4) {
+      return 0;
+    }
+  }
   if (mode === 3 && minVal !== maxVal) {
     const lo = Math.min(minVal, maxVal);
     const hi = Math.max(minVal, maxVal);
@@ -1388,7 +1395,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           shapeObj.scale = [Number(sx.toFixed(3)), Number(sy.toFixed(3)), Number(sz.toFixed(3))];
         }
       }
-      const shapeRot = computeShapeRotation(worldTr.rot, sRotM, mappedType);
+      const shapeRot = computeShapeRotation(alignRot, sRotM, mappedType);
       if (shapeRot) shapeObj.rotation = shapeRot;
       layer.shape = shapeObj;
     }
@@ -1583,11 +1590,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       let vx = rx.val;
       let vy = ry.val;
       let vzRaw = rz.val;
-      if (!isWorldVel && !isSubChild && Math.abs(worldTr.rot[3]) < 0.9999) {
+      if (!isWorldVel && Math.abs(alignRot[3]) < 0.9999) {
         const loOf = (v) => (Array.isArray(v) ? v[0] : v);
         const hiOf = (v) => (Array.isArray(v) ? v[1] : v);
-        const [lx, ly, lz] = quatRotateVec(worldTr.rot, [loOf(vx), loOf(vy), loOf(vzRaw)]);
-        const [hx, hy, hz] = quatRotateVec(worldTr.rot, [hiOf(vx), hiOf(vy), hiOf(vzRaw)]);
+        const [lx, ly, lz] = quatRotateVec(alignRot, [loOf(vx), loOf(vy), loOf(vzRaw)]);
+        const [hx, hy, hz] = quatRotateVec(alignRot, [hiOf(vx), hiOf(vy), hiOf(vzRaw)]);
         const packAxis = (a, b) => {
           const ra = Number(a.toFixed(4));
           const rb = Number(b.toFixed(4));
@@ -1598,9 +1605,34 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         vzRaw = packAxis(lz, hz);
       }
       const vz = negateValueOrRange(vzRaw);
-      const orbX = mulV(readMinMaxScalar(velMod, 'orbitalX', 0));
-      const orbY = mulV(readMinMaxScalar(velMod, 'orbitalY', 0));
-      const orbZ = mulV(readMinMaxScalar(velMod, 'orbitalZ', 0));
+      const readOrbAxis = (axisName) => {
+        const blk = extractSubBlock(velMod, axisName);
+        const st = Number((blk.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
+        if (st === 1) {
+          const ck = parseCurveKeys(blk, true);
+          if (ck && ck.length > 0 && Math.abs(ck[ck.length - 1][1]) < 0.02 && ck[ck.length - 1][0] < 0.7) {
+            return 0;
+          }
+        }
+        return mulV(readMinMaxScalar(velMod, axisName, 0));
+      };
+      let orbX = readOrbAxis('orbitalX');
+      let orbY = readOrbAxis('orbitalY');
+      let orbZ = readOrbAxis('orbitalZ');
+      if (!isWorldVel && Math.abs(alignRot[3]) < 0.9999) {
+        const loOf = (v) => (Array.isArray(v) ? v[0] : v);
+        const hiOf = (v) => (Array.isArray(v) ? v[1] : v);
+        const [lox, loy, loz] = quatRotateVec(alignRot, [loOf(orbX), loOf(orbY), loOf(orbZ)]);
+        const [hix, hiy, hiz] = quatRotateVec(alignRot, [hiOf(orbX), hiOf(orbY), hiOf(orbZ)]);
+        const packAxis = (a, b) => {
+          const ra = Number(a.toFixed(4));
+          const rb = Number(b.toFixed(4));
+          return Math.abs(ra - rb) > 1e-4 ? [Math.min(ra, rb), Math.max(ra, rb)] : ra;
+        };
+        orbX = packAxis(lox, hix);
+        orbY = packAxis(loy, hiy);
+        orbZ = packAxis(loz, hiz);
+      }
       const oox = readMinMaxScalar(velMod, 'orbitalOffsetX', 0);
       const ooy = readMinMaxScalar(velMod, 'orbitalOffsetY', 0);
       const ooz = negateValueOrRange(readMinMaxScalar(velMod, 'orbitalOffsetZ', 0));
@@ -2030,7 +2062,20 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         const propMask = hasProps ? Number(sm[3] ?? 0) : 0;
         const prob = Number((hasProps ? sm[4] : sm[3]) ?? 1);
         const trigger = tType === 0 ? 'birth' : (tType === 1 ? 'collision' : 'death');
-        const subDur = Array.isArray(targetLayer.life) ? targetLayer.life[1] : (Number(targetLayer.life) || 1);
+        const subSimSpd = Math.max(0.05, Number(targetLayer.simulationSpeed ?? 1));
+        const subDelay = Number(targetLayer.delay ?? 0);
+        const subLayerDur = Number(targetLayer.duration ?? 0);
+        const subLife = Array.isArray(targetLayer.life) ? targetLayer.life[1] : (Number(targetLayer.life) || 1);
+        const maxBurstT = Array.isArray(targetLayer.bursts) && targetLayer.bursts.length > 0
+          ? Math.max(...targetLayer.bursts.map((b) => Number(b.time ?? 0) + (b.cycles > 1 ? (b.cycles - 1) * (b.interval ?? 0.01) : 0)))
+          : 0;
+        const emitSpan = (targetLayer.rate || targetLayer.rateOverDistance) ? Math.max(subLayerDur, maxBurstT) : maxBurstT;
+        const subDur = (subDelay + emitSpan + subLife) / subSimSpd;
+        const childMax = Array.isArray(targetLayer.subEmitters) && targetLayer.subEmitters.length > 0
+          ? Math.max(...targetLayer.subEmitters.map((se) => Number(se.effect?.duration ?? 0)))
+          : 0;
+        const totalSubDur = Math.max(subDur, (subDelay + emitSpan) / subSimSpd + childMax);
+        maxDuration = Math.max(maxDuration, maxDelay / Math.max(0.05, simSpeed) + totalSubDur);
         const subId = `${recipeId}__sub_${++subCounter}`;
         subList.push({
           trigger,
@@ -2041,7 +2086,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
             schemaVersion: 1,
             id: subId,
             loop: false,
-            duration: Number(Math.max(0.2, subDur).toFixed(2)),
+            duration: Number(Math.max(0.2, totalSubDur).toFixed(2)),
             space: 'local',
             layers: [targetLayer],
           },

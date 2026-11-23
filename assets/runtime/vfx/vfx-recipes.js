@@ -3,7 +3,7 @@ import { evaluateAtlasParticlePosition, evaluateColorCurve, evaluateSizeCurve } 
 import { VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 import { SHURIKEN_QUALITY_TIERS } from './vfx-shuriken-kernel.js';
 
-const MAX_ACTIVE_EFFECTS = 128;
+const MAX_ACTIVE_EFFECTS = 512;
 const MAX_LAYERS_PER_EFFECT = 128;
 const MAX_BURSTS_PER_LAYER = 8;
 const MAX_TRAIL_FOLLOWERS = 512;
@@ -255,6 +255,7 @@ export function createEffectPlayer({
   for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
     trackedParticles.push({
       active: false,
+      _isTrackedParticle: true,
       atlasState: null,
       atlasSlot: -1,
       meshSlot: -1,
@@ -262,10 +263,18 @@ export function createEffectPlayer({
       lightBaseIntensity: 0,
       age: 0,
       duration: 1,
+      initX: 0, initY: 0, initZ: 0,
+      initVx: 0, initVy: 0, initVz: 0,
       x: 0, y: 0, z: 0,
       vx: 0, vy: 0, vz: 0,
       accelX: 0, accelZ: 0,
       gravity: 0, drag: 0,
+      curveRow: 0,
+      hasVelCurve: false,
+      orbitalY: 0,
+      centerOffX: 0,
+      centerOffZ: 0,
+      _evalExt: { hasVelCurve: false, velDispIntegral: 0, duration: 1, velMul: 1, accelX: 0, accelZ: 0 },
       tintR: 1, tintG: 1, tintB: 1,
       sizeMul: 1,
       hasCollision: false,
@@ -392,7 +401,7 @@ export function createEffectPlayer({
     const kind = layer.kind ?? 'particle';
     if (kind !== 'particle' && kind !== 'mesh') return false;
     if (layer.useShurikenKernel === true) return true;
-    if (layer.uberMat || layer.trail?.mode === 'ribbon' || (Array.isArray(layer.subEmitters) && layer.subEmitters.some((s) => s.trigger === 'death' || s.trigger === 'collision'))) {
+    if (layer.uberMat || layer.trail?.mode === 'ribbon' || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)) {
       return false;
     }
     if (layer.shaderProfile || layer.material?.shaderProfile) return true;
@@ -684,7 +693,7 @@ export function createEffectPlayer({
     }
   }
 
-  function fireSubEmitters(subEmitters, triggerType, x, y, z, depth, vx = 0, vy = 0, vz = 0, tintR = 1, tintG = 1, tintB = 1) {
+  function fireSubEmitters(subEmitters, triggerType, x, y, z, depth, vx = 0, vy = 0, vz = 0, tintR = 1, tintG = 1, tintB = 1, followTp = null) {
     if (!Array.isArray(subEmitters) || depth >= 2) return;
     if (shurikenKernel && SHURIKEN_QUALITY_TIERS[shurikenKernel.getQualityTier()]?.skipSubEmitters) return;
     for (let i = 0; i < subEmitters.length; i++) {
@@ -694,8 +703,11 @@ export function createEffectPlayer({
       if (prob < 1.0 && prng.nextFloat() > prob) continue;
       if (typeof sub.effect === 'string' && !registry.has(sub.effect)) continue;
       const iv = Number(sub.inheritVelocity ?? 0);
+      const effDef = typeof sub.effect === 'string' ? registry.get(sub.effect) : sub.effect;
+      const hasDelay = Boolean(followTp && effDef?.layers?.some((l) => (l.delay ?? 0) > 0));
       playEffect(sub.effect, {
         x, y, z,
+        ...(hasDelay ? { follow: followTp } : {}),
         _subDepth: depth + 1,
         _inheritVx: iv !== 0 ? vx * iv : 0,
         _inheritVy: iv !== 0 ? vy * iv : 0,
@@ -708,6 +720,7 @@ export function createEffectPlayer({
   function allocTrackedParticle({
     atlasState = null, atlasSlot = -1, meshSlot = -1, duration, initialAge = 0,
     x, y, z, vx, vy, vz, accelX = 0, accelZ = 0, gravity, drag,
+    curveRow = 0, hasVelCurve = false, orbitalY = 0, centerOffX = 0, centerOffZ = 0,
     tintR = 1, tintG = 1, tintB = 1,
     collision = null, subEmitters = null, subDepth = 0,
     clampVelocity = null,
@@ -724,6 +737,12 @@ export function createEffectPlayer({
         tp.lightBaseIntensity = lightBaseIntensity;
         tp.age = initialAge;
         tp.duration = duration;
+        tp.initX = x;
+        tp.initY = y;
+        tp.initZ = z;
+        tp.initVx = vx;
+        tp.initVy = vy;
+        tp.initVz = vz;
         tp.x = x;
         tp.y = y;
         tp.z = z;
@@ -734,6 +753,11 @@ export function createEffectPlayer({
         tp.accelZ = accelZ;
         tp.gravity = gravity;
         tp.drag = drag;
+        tp.curveRow = curveRow;
+        tp.hasVelCurve = Boolean(hasVelCurve);
+        tp.orbitalY = orbitalY;
+        tp.centerOffX = centerOffX;
+        tp.centerOffZ = centerOffZ;
         tp.tintR = tintR;
         tp.tintG = tintG;
         tp.tintB = tintB;
@@ -1477,9 +1501,6 @@ export function createEffectPlayer({
 
     let trackedSlot = -1;
     if (needsTracking) {
-      if (layer.subEmitters) {
-        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2]);
-      }
       trackedSlot = allocTrackedParticle({
         atlasState: layer._renderState,
         atlasSlot,
@@ -1496,6 +1517,11 @@ export function createEffectPlayer({
         accelZ,
         gravity,
         drag,
+        curveRow: layer._curveRow ?? 0,
+        hasVelCurve: Boolean(layer.velCurve),
+        orbitalY,
+        centerOffX,
+        centerOffZ,
         tintR: scratchTintOut[0],
         tintG: scratchTintOut[1],
         tintB: scratchTintOut[2],
@@ -1506,6 +1532,10 @@ export function createEffectPlayer({
         lightSlotIdx,
         lightBaseIntensity: layer.particleLight?.intensity ?? 2.0,
       });
+      if (layer.subEmitters) {
+        const followTp = trackedSlot >= 0 ? trackedParticles[trackedSlot] : null;
+        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2], followTp);
+      }
     }
 
     if (layer.trail) {
@@ -1880,17 +1910,30 @@ export function createEffectPlayer({
       if (!slot.active || !slot.recipe) continue;
 
       if (slot.follow) {
-        const prevFx = slot.x;
-        const prevFy = slot.y;
-        const prevFz = slot.z;
-        if (slot.follow.x !== undefined) slot.x = slot.follow.x;
-        if (slot.follow.y !== undefined) slot.y = slot.follow.y;
-        if (slot.follow.z !== undefined) slot.z = slot.follow.z;
-        if (slot.follow.yaw !== undefined) slot.yaw = slot.follow.yaw;
-        if (dt > 1e-5) {
-          slot.followVx = (slot.x - prevFx) / dt;
-          slot.followVy = (slot.y - prevFy) / dt;
-          slot.followVz = (slot.z - prevFz) / dt;
+        if (slot.follow._isTrackedParticle && !slot.follow.active) {
+          slot.follow = null;
+        } else {
+          const prevFx = slot.x;
+          const prevFy = slot.y;
+          const prevFz = slot.z;
+          if (slot.follow.x !== undefined) slot.x = slot.follow.x;
+          if (slot.follow.y !== undefined) slot.y = slot.follow.y;
+          if (slot.follow.z !== undefined) slot.z = slot.follow.z;
+          if (slot.follow.yaw !== undefined) slot.yaw = slot.follow.yaw;
+          if (dt > 1e-5) {
+            slot.followVx = (slot.x - prevFx) / dt;
+            slot.followVy = (slot.y - prevFy) / dt;
+            slot.followVz = (slot.z - prevFz) / dt;
+          }
+          if (slot.follow._isTrackedParticle) {
+            let allStarted = true;
+            for (let l = 0; l < slot.recipe.layers.length; l++) {
+              const lSim = slot.recipe.layers[l]._simSpd ?? 1;
+              const lDelay = (slot.recipe.layers[l].delay ?? 0) / lSim;
+              if (slot.layers[l].cycleAge < lDelay) { allStarted = false; break; }
+            }
+            if (allStarted) slot.follow = null;
+          }
         }
       }
 
@@ -1969,29 +2012,52 @@ export function createEffectPlayer({
         continue;
       }
       if (dt > 0) {
-        if (tp.drag > 0.001) {
-          const d = Math.exp(-tp.drag * dt);
-          tp.vx *= d;
-          tp.vy *= d;
-          tp.vz *= d;
-        }
-        tp.vx += tp.accelX * dt;
-        tp.vy += (is2D ? tp.gravity : -tp.gravity) * dt;
-        tp.vz += tp.accelZ * dt;
-        if (tp.clampVelocity && tp.clampVelocity.limit > 0) {
-          const spd = Math.hypot(tp.vx, tp.vy, tp.vz);
-          const lim = tp.clampVelocity.limit;
-          if (spd > lim) {
-            const cDampen = Math.max(0, Math.min(1, Number(tp.clampVelocity.dampen ?? 1)));
-            const sc = (spd - (spd - lim) * cDampen) / spd;
-            tp.vx *= sc;
-            tp.vy *= sc;
-            tp.vz *= sc;
+        if (!tp.hasCollision && (tp.hasVelCurve || Math.abs(tp.orbitalY) > 1e-4)) {
+          const dispInt = tp.hasVelCurve && atlasParticles?.lut?.sampleVelDisp
+            ? atlasParticles.lut.sampleVelDisp(tp.curveRow, Math.min(1, tp.age / Math.max(1e-4, tp.duration)))
+            : tp.age / Math.max(1e-4, tp.duration);
+          tp._evalExt.hasVelCurve = tp.hasVelCurve;
+          tp._evalExt.velDispIntegral = dispInt;
+          tp._evalExt.duration = tp.duration;
+          tp._evalExt.accelX = tp.accelX;
+          tp._evalExt.accelZ = tp.accelZ;
+          evaluateAtlasParticlePosition(
+            tp.initX, tp.initY, tp.initZ,
+            tp.initVx, tp.initVy, tp.initVz,
+            tp.gravity, tp.drag,
+            0, 0, 0,
+            tp.age, is2D, scratchPos,
+            tp.orbitalY, tp.centerOffX, tp.centerOffZ,
+            1, tp._evalExt,
+          );
+          tp.x = scratchPos[0];
+          tp.y = scratchPos[1];
+          tp.z = scratchPos[2];
+        } else {
+          if (tp.drag > 0.001) {
+            const d = Math.exp(-tp.drag * dt);
+            tp.vx *= d;
+            tp.vy *= d;
+            tp.vz *= d;
           }
+          tp.vx += tp.accelX * dt;
+          tp.vy += (is2D ? tp.gravity : -tp.gravity) * dt;
+          tp.vz += tp.accelZ * dt;
+          if (tp.clampVelocity && tp.clampVelocity.limit > 0) {
+            const spd = Math.hypot(tp.vx, tp.vy, tp.vz);
+            const lim = tp.clampVelocity.limit;
+            if (spd > lim) {
+              const cDampen = Math.max(0, Math.min(1, Number(tp.clampVelocity.dampen ?? 1)));
+              const sc = (spd - (spd - lim) * cDampen) / spd;
+              tp.vx *= sc;
+              tp.vy *= sc;
+              tp.vz *= sc;
+            }
+          }
+          tp.x += tp.vx * dt;
+          tp.y += tp.vy * dt;
+          tp.z += tp.vz * dt;
         }
-        tp.x += tp.vx * dt;
-        tp.y += tp.vy * dt;
-        tp.z += tp.vz * dt;
         if (tp.hasCollision && !is2D) {
           const col = collisionResolver ? collisionResolver(tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz) : null;
           const hitGround = !col && tp.y <= tp.groundY && tp.vy < 0;
