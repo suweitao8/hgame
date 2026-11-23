@@ -12,7 +12,6 @@ const metricsEl = document.querySelector('#hgame-music-metrics');
 const seekInput = document.querySelector('#hgame-music-seek');
 const timeOut = document.querySelector('#hgame-music-time');
 const playBtn = document.querySelector('#hgame-music-play-button');
-const stopBtn = document.querySelector('#hgame-music-stop-button');
 const seamBtn = document.querySelector('#hgame-music-seam-button');
 const volumeInput = document.querySelector('#hgame-music-volume');
 const volumeVal = document.querySelector('#hgame-music-volume-val');
@@ -221,12 +220,7 @@ function drawWaveform(samples, { durationSec = 0, playheadSec = null } = {}) {
 
 function renderMetrics(items) {
   if (!metricsEl) return;
-  metricsEl.replaceChildren();
-  for (const label of items) {
-    const span = document.createElement('span');
-    span.textContent = label;
-    metricsEl.append(span);
-  }
+  metricsEl.textContent = items.join(' · ');
 }
 
 async function decodeCachedUrl(url) {
@@ -528,10 +522,6 @@ async function initMusicView() {
     });
     playBtn?.addEventListener('click', () => {
       void playOrToggleSelected();
-    });
-    stopBtn?.addEventListener('click', () => {
-      stopPlayback();
-      if (statusEl) statusEl.textContent = '';
     });
     seamBtn?.addEventListener('click', () => {
       const track = getSelectedTrack();

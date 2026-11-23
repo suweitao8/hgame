@@ -29,7 +29,6 @@ const VFX_CATEGORY_ORDER = [
 
 const viewEl = document.querySelector('#vfx-view');
 const searchInput = document.querySelector('#hgame-vfx-search');
-const kindFilter = document.querySelector('#hgame-vfx-kind-filter');
 const typeFilter = document.querySelector('#hgame-vfx-type-filter');
 const listEl = document.querySelector('#hgame-vfx-list');
 const titleEl = document.querySelector('#hgame-vfx-title');
@@ -49,6 +48,7 @@ const gridToggleWrap = document.querySelector('#hgame-vfx-grid-toggle-wrap');
 const gridToggle = document.querySelector('#hgame-vfx-grid-toggle');
 const bloomToggleWrap = document.querySelector('#hgame-vfx-bloom-toggle-wrap');
 const bloomToggle = document.querySelector('#hgame-vfx-bloom-toggle');
+const seqGroupEl = document.querySelector('#hgame-vfx-seq-group');
 const planeModeWrap = document.querySelector('#hgame-vfx-plane-mode-wrap');
 const planeModeSelect = document.querySelector('#hgame-vfx-plane-mode');
 const gridWrap = document.querySelector('#hgame-vfx-grid-wrap');
@@ -118,11 +118,11 @@ function getAllItems() {
 
 function getFilteredItems() {
   const query = searchInput.value.trim().toLowerCase();
-  const kindVal = kindFilter?.value || 'all';
-  const category = typeFilter.value || 'all';
+  const filterVal = typeFilter?.value || 'all';
   return getAllItems().filter(item => {
-    if (kindVal !== 'all' && item.kind !== kindVal) return false;
-    if (category !== 'all' && (item.category || '') !== category) return false;
+    if (filterVal.startsWith('kind:') && item.kind !== filterVal.slice(5)) return false;
+    if (filterVal.startsWith('cat:') && (item.category || '') !== filterVal.slice(4)) return false;
+    if (filterVal !== 'all' && !filterVal.startsWith('kind:') && !filterVal.startsWith('cat:') && (item.category || '') !== filterVal) return false;
     if (!query) return true;
     return (item.name || '').toLowerCase().includes(query)
       || (item.assetName || '').toLowerCase().includes(query)
@@ -133,30 +133,39 @@ function getFilteredItems() {
 }
 
 function populateCategoryFilter() {
-  const kindVal = kindFilter?.value || 'all';
-  const pool = getAllItems().filter(item => kindVal === 'all' || item.kind === kindVal);
+  const pool = getAllItems();
   const counts = new Map();
+  let sysCnt = 0;
+  let meshCnt = 0;
+  let texCnt = 0;
   for (const item of pool) {
+    if (item.kind === 'system') sysCnt++;
+    else if (item.kind === 'mesh') meshCnt++;
+    else if (item.kind === 'texture') texCnt++;
     const cat = item.category || '其他特效';
     counts.set(cat, (counts.get(cat) || 0) + 1);
   }
   const prev = typeFilter.value || 'all';
   typeFilter.replaceChildren();
-  const allOpt = document.createElement('option');
-  allOpt.value = 'all';
-  allOpt.textContent = `全部特效 (${pool.length})`;
-  typeFilter.appendChild(allOpt);
+  const addOpt = (val, text) => {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = text;
+    typeFilter.appendChild(opt);
+  };
+  addOpt('all', `全部特效 (${pool.length})`);
+  if (sysCnt > 0) addOpt('kind:system', `特效系统 (${sysCnt})`);
+  if (meshCnt > 0) addOpt('kind:mesh', `3D 网格 (${meshCnt})`);
+  if (texCnt > 0) addOpt('kind:texture', `贴图序列帧 (${texCnt})`);
   const ordered = [
     ...VFX_CATEGORY_ORDER.filter(c => counts.has(c)),
     ...[...counts.keys()].filter(c => !VFX_CATEGORY_ORDER.includes(c)).sort(),
   ];
   for (const cat of ordered) {
-    const opt = document.createElement('option');
-    opt.value = cat;
-    opt.textContent = `${cat} (${counts.get(cat)})`;
-    typeFilter.appendChild(opt);
+    addOpt(`cat:${cat}`, `${cat} (${counts.get(cat)})`);
   }
-  typeFilter.value = counts.has(prev) ? prev : 'all';
+  const hasPrev = [...typeFilter.options].some(o => o.value === prev);
+  typeFilter.value = hasPrev ? prev : 'all';
 }
 
 function getCurrentItem() {
@@ -651,6 +660,7 @@ function syncControlsVisibility(item) {
   if (qualityWrap) qualityWrap.hidden = !isBench;
   if (gridToggleWrap) gridToggleWrap.hidden = !isBench;
   if (bloomToggleWrap) bloomToggleWrap.hidden = !isBench;
+  if (seqGroupEl) seqGroupEl.hidden = !isTexture;
   if (planeModeWrap) planeModeWrap.hidden = !isTexture;
   gridWrap.hidden = !isTexture || isEmitterTex;
   fpsWrap.hidden = !isTexture || isEmitterTex;
@@ -1722,16 +1732,6 @@ async function initVfxView() {
   if (!initialized) {
     initialized = true;
     searchInput.addEventListener('input', renderList);
-    kindFilter?.addEventListener('change', () => {
-      populateCategoryFilter();
-      const filtered = getFilteredItems();
-      if (filtered.length > 0 && !filtered.some(it => it.kind === activeSelection.kind && it.id === activeSelection.id)) {
-        activeSelection = { kind: filtered[0].kind, id: filtered[0].id };
-        applyItemDefaults(filtered[0]);
-      }
-      renderList();
-      void loadCurrentVfx();
-    });
     typeFilter.addEventListener('change', () => {
       const filtered = getFilteredItems();
       if (filtered.length > 0 && !filtered.some(it => it.kind === activeSelection.kind && it.id === activeSelection.id)) {

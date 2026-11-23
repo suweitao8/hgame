@@ -27,7 +27,6 @@ const listEl = document.querySelector('#hgame-test-list');
 const titleEl = document.querySelector('#hgame-test-title');
 const stageEl = document.querySelector('#hgame-test-stage');
 const camTabs = [...document.querySelectorAll('.hgame-test-cam-tab')];
-const lockCamBtn = document.querySelector('#hgame-test-lock-cam');
 const resetCamBtn = document.querySelector('#hgame-test-reset-cam');
 const viewpointSelect = document.querySelector('#hgame-test-viewpoint');
 const lightingSelect = document.querySelector('#hgame-test-lighting');
@@ -41,8 +40,6 @@ const lutIntensityInput = document.querySelector('#hgame-test-lut-intensity');
 const lutValEl = document.querySelector('#hgame-test-lut-val');
 const statusEl = document.querySelector('#hgame-test-status');
 
-const flyHudEl = document.querySelector('#hgame-test-fly-hud');
-const flyHintEl = document.querySelector('#hgame-test-fly-hint');
 const flySpeedEl = document.querySelector('#hgame-test-fly-speed');
 const crosshairEl = document.querySelector('#hgame-test-crosshair');
 const inspectorEl = document.querySelector('#hgame-test-inspector');
@@ -159,30 +156,15 @@ function updateCamTabsUi(mode) {
     t.setAttribute('aria-selected', sel ? 'true' : 'false');
     t.tabIndex = sel ? 0 : -1;
   }
-  if (lockCamBtn) lockCamBtn.hidden = mode !== 'fly';
 }
 
 function updateHudUi(hud) {
-  if (!flyHudEl || !hud) return;
+  if (!hud) return;
   const isFly = hud.mode === 'fly';
-  flyHudEl.hidden = false;
-  if (flyHintEl) {
-    if (hud.hoveredExhibit) {
-      flyHintEl.textContent = `悬停: ${hud.hoveredExhibit.title} · 左键拾取 / F 聚焦`;
-    } else if (isFly) {
-      flyHintEl.textContent = hud.pointerLocked
-        ? '准星锁定中 · WASD 飞行 · Q/E 升降 · Shift 加速 · 滚轮调速 · Esc 退出'
-        : '右键+WASD 飞行 · Q/E 升降 · Shift 加速 · 滚轮调速 · F 聚焦 · 左键拾取';
-    } else {
-      flyHintEl.textContent = '轨道视角 · 左键旋转 · 右键平移 · 滚轮缩放 · 左键点击展品';
-    }
-  }
   if (flySpeedEl) {
-    const p = hud.position;
-    const coords = p ? `(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)})` : '';
     flySpeedEl.textContent = isFly
-      ? `${hud.flySpeed.toFixed(1)}${hud.sprinting ? '×3' : ''} m/s ${coords}`
-      : `Orbit ${coords}`;
+      ? `${hud.flySpeed.toFixed(1)}${hud.sprinting ? '×3' : ''} m/s`
+      : 'Orbit';
   }
   if (crosshairEl) crosshairEl.hidden = !hud.pointerLocked;
 }
@@ -923,7 +905,9 @@ function init() {
   searchInput?.addEventListener('input', renderSceneList);
   viewpointSelect?.addEventListener('change', () => applyViewpoint(viewpointSelect.value));
   resetCamBtn?.addEventListener('click', () => applyViewpoint(viewpointSelect?.value || 'overview'));
-  lockCamBtn?.addEventListener('click', () => cameraRig?.togglePointerLock());
+  window.addEventListener('webasset:toggle-pointer-lock', () => {
+    if (viewEl && !viewEl.hidden) cameraRig?.togglePointerLock();
+  });
   lightingSelect?.addEventListener('change', () => rebuildActiveScene());
   qualitySelect?.addEventListener('change', () => rebuildActiveScene());
   lodSelect?.addEventListener('change', () => {

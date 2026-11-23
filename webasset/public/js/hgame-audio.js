@@ -4,7 +4,6 @@ import {
 } from '../runtime/hgame/platform/audio.js';
 import {
   apiRequestJson,
-  createSidebarSquareCard,
   fetchHGameAssets,
   formatBytes,
   onHGameAssetsChanged,
@@ -12,7 +11,6 @@ import {
 } from './hgame-shared.js';
 
 const viewEl = document.querySelector('#audio-view');
-const libTabs = Array.from(document.querySelectorAll('.hgame-audio-lib-tab'));
 const searchInput = document.querySelector('#hgame-audio-search');
 const filterSelect = document.querySelector('#hgame-audio-filter');
 const uploadButton = document.querySelector('#hgame-audio-upload-button');
@@ -26,7 +24,6 @@ const emptyEl = document.querySelector('#hgame-audio-empty');
 const waveCanvas = document.querySelector('#hgame-audio-wave-canvas');
 const metricsEl = document.querySelector('#hgame-audio-metrics');
 const playBtn = document.querySelector('#hgame-audio-play-button');
-const stopBtn = document.querySelector('#hgame-audio-stop-button');
 const volumeInput = document.querySelector('#hgame-audio-volume');
 const volumeVal = document.querySelector('#hgame-audio-volume-val');
 const loopInput = document.querySelector('#hgame-audio-loop');
@@ -35,7 +32,6 @@ const seekInput = document.querySelector('#hgame-audio-seek');
 const timeOut = document.querySelector('#hgame-audio-time');
 
 let initialized = false;
-let currentLib = 'cues'; // 'cues' | 'streams' | 'full'
 let cueEntries = [];
 let streamEntries = [];
 let fullEntries = [];
@@ -52,7 +48,7 @@ let currentAnalysis = null;
 let loadToken = 0;
 let isSeeking = false;
 let seekTimer = null;
-let voicePlaybackMeta = null; // { startedAtMs, offsetSec, durationSec, loop }
+let voicePlaybackMeta = null;
 
 function getAudioManager() {
   if (!audioMgr) {
@@ -61,85 +57,74 @@ function getAudioManager() {
   return audioMgr;
 }
 
-function updateLibTabsUi() {
-  for (const tab of libTabs) {
-    const active = tab.dataset.audioLib === currentLib;
-    tab.setAttribute('aria-selected', String(active));
-    tab.tabIndex = active ? 0 : -1;
-  }
-}
-
 function isMusicCueEntry(c) {
   const name = String(c?.cueName || c?.id || '');
   return c?.category === 'bgm' || c?.category === 'stinger' || name.startsWith('bgm.') || name.startsWith('stinger.');
 }
 
-function buildActiveList() {
-  if (currentLib === 'cues') {
-    return cueEntries
-      .filter((c) => !isMusicCueEntry(c))
-      .map((c) => ({
-        type: 'cue',
-        id: c.cueName,
-        name: c.cueName,
-        pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
-        category: c.category || 'sfx',
-        preload: 'buffer',
-        badge: '内存 SFX',
-        url: c.variants?.[0]?.url || '',
-        fileName: `${c.cueName}.mp3`,
-        item: c,
-      }));
-  }
-  if (currentLib === 'streams') {
+function buildActiveList(modeOverride = null) {
+  const fval = modeOverride ?? (filterSelect?.value || 'lib:cues');
+  if (fval === 'lib:streams') {
     return streamEntries.map((s) => ({
       type: 'stream',
       id: s.id,
       name: s.name || s.id,
-      pack: s.pack || 'Streams',
-      category: s.pack || '流式音轨',
+      pack: s.pack || '长音轨',
+      category: '长音轨',
       preload: 'stream',
-      badge: '流式音轨',
       url: s.url,
       fileName: `${s.name || s.id}.mp3`,
       item: s,
     }));
   }
-  const uploaded = uploadedAudio.map((item) => ({
-    type: 'file',
-    id: item.id,
-    name: item.name,
-    pack: '已上传音频',
-    category: '已上传音频',
-    preload: 'buffer',
-    badge: '已上传',
-    url: item.url,
-    fileName: item.name,
-    item,
-  }));
-  const fullMapped = fullEntries.map((f) => ({
-    type: f.preload === 'stream' ? 'stream' : 'sfx_item',
-    id: f.id,
-    name: f.name || f.id,
-    pack: f.pack || 'Anim58',
-    category: f.preload === 'stream' ? '流式长音轨 (>=4s)' : '内存 SFX (<4s)',
-    preload: f.preload || 'buffer',
-    badge: f.preload === 'stream' ? '流式音轨' : '内存 SFX',
-    url: f.url,
-    fileName: `${f.name || f.id}.mp3`,
-    item: f,
-  }));
-  return [...uploaded, ...fullMapped];
+  if (fval === 'lib:full') {
+    const uploaded = uploadedAudio.map((item) => ({
+      type: 'file',
+      id: item.id,
+      name: item.name,
+      pack: '已上传',
+      category: '已上传',
+      preload: 'buffer',
+      url: item.url,
+      fileName: item.name,
+      item,
+    }));
+    const fullMapped = fullEntries.map((f) => ({
+      type: f.preload === 'stream' ? 'stream' : 'sfx_item',
+      id: f.id,
+      name: f.name || f.id,
+      pack: f.pack || 'Anim58',
+      category: f.preload === 'stream' ? '长音轨' : '单条音效',
+      preload: f.preload || 'buffer',
+      url: f.url,
+      fileName: `${f.name || f.id}.mp3`,
+      item: f,
+    }));
+    return [...uploaded, ...fullMapped];
+  }
+  return cueEntries
+    .filter((c) => !isMusicCueEntry(c))
+    .map((c) => ({
+      type: 'cue',
+      id: c.cueName,
+      name: c.cueName,
+      pack: c.pack || (c.surfaceType ? `材质:${c.surfaceType}` : 'SFX'),
+      category: c.category || 'sfx',
+      preload: 'buffer',
+      url: c.variants?.[0]?.url || '',
+      fileName: `${c.cueName}.mp3`,
+      item: c,
+    }));
 }
 
 function populateFilterOptions() {
   if (!filterSelect) return;
-  const prev = filterSelect.value || 'all';
+  const prev = filterSelect.value || 'lib:cues';
   filterSelect.replaceChildren();
-  const entries = buildActiveList();
+  const cueList = buildActiveList('lib:cues');
   const packs = new Map();
   let surfaceCount = 0;
-  for (const e of entries) {
+  for (const e of cueList) {
     if (e.pack) packs.set(e.pack, (packs.get(e.pack) || 0) + 1);
     if (e.category === 'footstep_surface' || e.category === 'impact_surface') surfaceCount++;
   }
@@ -149,15 +134,17 @@ function populateFilterOptions() {
     o.textContent = text;
     filterSelect.append(o);
   };
-  addOpt('all', `全部 (${entries.length})`);
+  addOpt('lib:cues', `Cue 分组 (${cueList.length})`);
+  if (streamEntries.length > 0) addOpt('lib:streams', `长音轨 (${streamEntries.length})`);
+  addOpt('lib:full', `全量 / 上传 (${uploadedAudio.length + fullEntries.length})`);
   if (surfaceCount > 0) {
-    addOpt('surface', `10 材质脚步与受击 (${surfaceCount})`);
+    addOpt('surface', `10 材质 (${surfaceCount})`);
   }
   for (const [p, cnt] of [...packs.entries()].sort((a, b) => b[1] - a[1])) {
     addOpt(`pack:${p}`, `${p} (${cnt})`);
   }
   const hasPrev = [...filterSelect.options].some((o) => o.value === prev);
-  filterSelect.value = hasPrev ? prev : 'all';
+  filterSelect.value = hasPrev ? prev : 'lib:cues';
 }
 
 function getFilteredList() {
@@ -233,7 +220,7 @@ function renderList() {
   if (entries.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'hgame-list-empty';
-    empty.textContent = buildActiveList().length === 0 ? '暂无音频资产。' : '没有匹配的音频。';
+    empty.textContent = '暂无音频';
     listEl.append(empty);
     return;
   }
@@ -247,32 +234,44 @@ function renderList() {
   for (const entry of visible) {
     const selected = entry.type === activeSelection.type && entry.id === activeSelection.id;
     const loud = computeAudioLoudnessSummary(entry);
-    const { button } = createSidebarSquareCard({
-      name: entry.type === 'cue'
-        ? `${entry.name} (${entry.item?.variants?.length || 1}变体)`
-        : entry.name,
-      badge: entry.badge,
-      active: selected,
-      onClick: () => {
-        stopPlayback();
-        activeSelection = { type: entry.type, id: entry.id };
-        renderList();
-        void selectCurrentAudio();
-      },
-    });
-    const metaSpan = document.createElement('span');
-    metaSpan.className = 'hgame-audio-loud-meta';
-    metaSpan.textContent = loud.text;
-    button.append(metaSpan);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hgame-list-item hgame-music-row';
+    btn.setAttribute('aria-current', String(selected));
     if (loud.anomaly) {
-      button.dataset.loudnessAnomaly = 'true';
+      btn.dataset.loudnessAnomaly = 'true';
     }
-    listEl.append(button);
+
+    const main = document.createElement('div');
+    main.className = 'hgame-music-row-main';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'hgame-music-row-name';
+    nameEl.textContent = entry.name;
+    nameEl.title = entry.name;
+
+    const subEl = document.createElement('span');
+    subEl.className = 'hgame-music-row-sub';
+    const subParts = [];
+    if (entry.type === 'cue') subParts.push(`${entry.item?.variants?.length || 1} 变体`);
+    if (loud.rmsDb !== null) subParts.push(`${loud.rmsDb.toFixed(1)} dB`);
+    if (loud.peakDb !== null) subParts.push(`PK ${loud.peakDb.toFixed(1)}`);
+    subEl.textContent = subParts.join(' · ') || entry.pack || 'SFX';
+
+    main.append(nameEl, subEl);
+    btn.append(main);
+    btn.addEventListener('click', () => {
+      stopPlayback();
+      activeSelection = { type: entry.type, id: entry.id };
+      renderList();
+      void selectCurrentAudio();
+    });
+    listEl.append(btn);
   }
   if (entries.length > MAX_RENDER) {
     const hint = document.createElement('p');
     hint.className = 'hgame-list-empty';
-    hint.textContent = `仅显示前 ${MAX_RENDER} / ${entries.length} 条，请输入关键词精确定位。`;
+    hint.textContent = `显示前 ${MAX_RENDER} / ${entries.length} 条`;
     listEl.append(hint);
   }
 }
@@ -304,8 +303,9 @@ function getCurrentPlaybackTiming() {
 }
 
 function syncSeekBar() {
-  if (!seekInput || !timeOut) return;
   const { current, duration, active } = getCurrentPlaybackTiming();
+  if (playBtn) playBtn.textContent = active ? '停止' : '播放';
+  if (!seekInput || !timeOut) return;
   const maxVal = duration > 0 ? duration : 100;
   seekInput.max = String(maxVal);
   seekInput.disabled = !(duration > 0);
@@ -445,12 +445,8 @@ function drawPcmWaveform(samples, { durationSec = 0, analysis = null } = {}) {
 }
 
 function renderMetrics(items) {
-  metricsEl.replaceChildren();
-  for (const [k, v] of items) {
-    const span = document.createElement('span');
-    span.textContent = `${k} ${v}`;
-    metricsEl.append(span);
-  }
+  if (!metricsEl) return;
+  metricsEl.textContent = items.join(' · ');
 }
 
 async function decodeCachedUrl(url) {
@@ -470,11 +466,11 @@ async function selectCurrentAudio() {
   if (!entry) {
     emptyEl.hidden = false;
     waveCanvas.hidden = true;
-    metricsEl.replaceChildren();
+    metricsEl.textContent = '';
     deleteBtn.hidden = true;
     downloadEl.hidden = true;
-    titleEl.textContent = '音效预览';
-    statusEl.textContent = '暂无音频资产，可点击 ＋ 上传音频';
+    titleEl.textContent = '音效';
+    statusEl.textContent = '';
     return;
   }
 
@@ -487,31 +483,27 @@ async function selectCurrentAudio() {
     downloadEl.hidden = false;
     downloadEl.href = entry.url;
     downloadEl.download = entry.fileName;
-    downloadEl.textContent = `下载 ${entry.fileName}`;
+    downloadEl.textContent = '下载';
   } else {
     downloadEl.hidden = true;
   }
 
-  // Strictly defer network fetch for stream tracks until user clicks Play
   if (entry.preload === 'stream') {
     currentDecoded = null;
     currentAnalysis = null;
     drawPcmWaveform(null);
     const s = entry.item;
     renderMetrics([
-      ['加载策略', '流式长音轨 (preload: stream · 不进首包)'],
-      ['时长', `${Number(s.duration || 0).toFixed(2)} s`],
-      ['编码', `MP3 44.1 kHz Stereo · ${s.bitrateKbps || 96} kbps`],
-      ['体积', formatBytes(s.encodedBytes || 0)],
+      `${Number(s.duration || 0).toFixed(2)}s`,
+      `${s.bitrateKbps || 96} kbps`,
+      formatBytes(s.encodedBytes || 0),
     ]);
-    statusEl.textContent = `${entry.pack} · 流式按需加载就绪（点击「播放」发起流式拉取）`;
+    statusEl.textContent = '';
     syncSeekBar();
     return;
   }
 
-  statusEl.textContent = entry.type === 'cue'
-    ? `正在解码 Cue 组 (${entry.item.variants?.length || 1} 变体)...`
-    : '正在解码并分析音频波形...';
+  statusEl.textContent = '';
 
   try {
     if (entry.type === 'cue') {
@@ -531,15 +523,13 @@ async function selectCurrentAudio() {
       if (currentDecoded) {
         drawPcmWaveform(currentDecoded.getChannelData(0), { durationSec: currentDecoded.duration, analysis: currentAnalysis });
       }
-      const srcCnt = entry.item.totalSourceVariants || variants.length;
       const loud = computeAudioLoudnessSummary(entry);
-      renderMetrics([
-        ['加载策略', `内存 SFX · 总线 ${entry.item.bus || 'combat'} (${loud.tier})`],
-        ['响度 / 峰值', loud.text],
-        ['变体抽样', `${variants.length} 精选 / ${srcCnt} 源变体`],
-        ['首变体频谱质心', `${variants[0]?.spectralCentroidHz || 0} Hz`],
-      ]);
-      statusEl.textContent = `Cue 「${entry.name}」就绪（${variants.length} 变体）· 点击「播放」自动防重复随机试听`;
+      const chips = [`${variants.length} 变体`];
+      if (loud.rmsDb !== null) chips.push(`${loud.rmsDb.toFixed(1)} dB`);
+      if (loud.peakDb !== null) chips.push(`PK ${loud.peakDb.toFixed(1)}`);
+      if (variants[0]?.spectralCentroidHz) chips.push(`${variants[0].spectralCentroidHz} Hz`);
+      renderMetrics(chips);
+      statusEl.textContent = '';
       syncSeekBar();
       return;
     }
@@ -550,23 +540,27 @@ async function selectCurrentAudio() {
     currentAnalysis = analyzeAudioBuffer(buffer);
     drawPcmWaveform(buffer.getChannelData(0), { durationSec: buffer.duration, analysis: currentAnalysis });
     renderMetrics([
-      ['加载策略', entry.type === 'file' ? '本地上传资产' : '内存 SFX (preload: buffer)'],
-      ['总时长', `${buffer.duration.toFixed(3)} s`],
-      ['采样率', `${buffer.sampleRate} Hz (${buffer.numberOfChannels}ch)`],
-      ['峰值 / RMS', `${currentAnalysis.peak.toFixed(2)} / ${currentAnalysis.rms.toFixed(3)}`],
+      `${buffer.duration.toFixed(2)}s`,
+      `${buffer.sampleRate} Hz`,
+      `PK ${currentAnalysis.peak.toFixed(2)}`,
     ]);
-    statusEl.textContent = `${entry.pack} · 静音裁剪 ${currentAnalysis.trimStart.toFixed(3)}s ~ ${currentAnalysis.trimEnd.toFixed(3)}s`;
+    statusEl.textContent = '';
     syncSeekBar();
   } catch (error) {
     if (token !== loadToken) return;
     currentDecoded = null;
     currentAnalysis = null;
     drawPcmWaveform(null);
-    statusEl.textContent = error.message || '音频解码失败';
+    statusEl.textContent = error.message || '解码失败';
   }
 }
 
 async function startPlayback() {
+  const { active } = getCurrentPlaybackTiming();
+  if (active) {
+    stopPlayback();
+    return;
+  }
   const entry = getSelectedEntry();
   if (!entry) return;
   const mgr = getAudioManager();
@@ -584,7 +578,7 @@ async function startPlayback() {
       autoplay: true,
     });
     startSeekTicker();
-    statusEl.textContent = `正在流式播放：${entry.name} (MP3 Stereo 96 kbps)`;
+    statusEl.textContent = '';
     return;
   }
 
@@ -615,7 +609,7 @@ async function startPlayback() {
       };
       startSeekTicker();
     }
-    statusEl.textContent = `正在防重复随机试听：${entry.name} · 变体 #${vIdx + 1}/${variants.length} (${variants[vIdx]?.spectralCentroidHz || 0} Hz)`;
+    statusEl.textContent = '';
     return;
   }
 
@@ -635,7 +629,7 @@ async function startPlayback() {
       loop: loopInput.checked,
     };
     startSeekTicker();
-    statusEl.textContent = loopInput.checked ? '正在循环播放（已裁剪首尾静音）' : '正在播放音频';
+    statusEl.textContent = '';
   }
 }
 
@@ -688,7 +682,7 @@ async function playReferencePinkNoise() {
 
 async function handleAudioUpload(file) {
   if (!file) return;
-  statusEl.textContent = `正在上传 ${file.name}...`;
+  statusEl.textContent = `上传 ${file.name}...`;
   try {
     const query = new URLSearchParams({ name: file.name, category: 'sfx' });
     const data = await apiRequestJson(`/api/hgame/audio?${query}`, {
@@ -696,11 +690,10 @@ async function handleAudioUpload(file) {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
     });
-    currentLib = 'full';
-    updateLibTabsUi();
     activeSelection = { type: 'file', id: data.item.id };
     await refreshHGameAssets();
     populateFilterOptions();
+    if (filterSelect) filterSelect.value = 'lib:full';
     renderList();
     await selectCurrentAudio();
   } catch (error) {
@@ -723,20 +716,12 @@ async function deleteActiveAudio() {
 async function initAudioView() {
   if (!initialized) {
     initialized = true;
-    for (const tab of libTabs) {
-      tab.addEventListener('click', () => {
-        const next = tab.dataset.audioLib || 'cues';
-        if (next === currentLib) return;
-        stopPlayback();
-        currentLib = next;
-        updateLibTabsUi();
-        populateFilterOptions();
-        renderList();
-        void selectCurrentAudio();
-      });
-    }
     searchInput.addEventListener('input', renderList);
-    filterSelect?.addEventListener('change', renderList);
+    filterSelect?.addEventListener('change', () => {
+      stopPlayback();
+      renderList();
+      void selectCurrentAudio();
+    });
     uploadButton.addEventListener('click', () => uploadInput.click());
     uploadInput.addEventListener('change', () => {
       const file = uploadInput.files?.[0];
@@ -748,10 +733,6 @@ async function initAudioView() {
     });
     refToneBtn?.addEventListener('click', () => {
       void playReferencePinkNoise();
-    });
-    stopBtn.addEventListener('click', () => {
-      stopPlayback();
-      statusEl.textContent = '已停止播放';
     });
     deleteBtn.addEventListener('click', () => {
       void deleteActiveAudio();
@@ -807,9 +788,8 @@ async function initAudioView() {
     fullEntries = Array.isArray(fullRes.items) ? fullRes.items : [];
     spreadAnomalyCues = new Set((reportRes?.cueSpreadAlerts || []).map((a) => a.cueName));
   } catch (error) {
-    statusEl.textContent = error.message || '读取音频列表失败';
+    statusEl.textContent = error.message || '读取失败';
   }
-  updateLibTabsUi();
   populateFilterOptions();
   renderList();
   await selectCurrentAudio();

@@ -19,12 +19,12 @@ button { color: inherit; }
 [hidden] { display: none !important; }
 
 .site-header {
-  height: 72px;
-  padding: 0 28px;
+  height: 52px;
+  padding: 0 20px;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
   border-bottom: 1px solid var(--line);
   position: relative;
   z-index: 2;
@@ -34,7 +34,7 @@ button { color: inherit; }
   justify-self: start;
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 9px;
   color: var(--text);
   text-decoration: none;
   font-size: 11px;
@@ -42,14 +42,14 @@ button { color: inherit; }
   letter-spacing: 1.8px;
 }
 .brand-mark {
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   border: 1px solid #a8b98b;
-  border-radius: 10px;
+  border-radius: 8px;
   color: #dce8c2;
-  font-size: 18px;
+  font-size: 15px;
   letter-spacing: 0;
 }
 .brand small {
@@ -2045,5 +2045,201 @@ button { color: inherit; }
   *, *::before, *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+}
+
+/* WebAsset UI/UX v2: single-row dock, popover drawers, inline metrics & debug gate */
+:root:not([data-debug-mode="1"]) [data-debug-only] {
+  display: none !important;
+}
+[data-single-hidden="true"] {
+  display: none !important;
+}
+.workspace-layout {
+  height: calc(100dvh - 52px);
+}
+.hgame-stage-panel {
+  padding: 12px 18px 12px;
+  gap: 8px;
+}
+.hgame-stage-header {
+  min-height: 30px;
+}
+.hgame-controls {
+  height: 46px;
+  min-height: 46px;
+  padding: 6px 12px;
+  flex-wrap: nowrap;
+  gap: 10px;
+  overflow: visible;
+}
+.hgame-controls .hgame-control-group {
+  flex-wrap: nowrap;
+  gap: 8px 10px;
+  min-width: 0;
+}
+.hgame-controls .hgame-status-text {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+.hgame-audio-seek-row {
+  flex: 1 1 auto;
+  min-width: 160px;
+  gap: 8px;
+}
+.hgame-audio-seek-row output {
+  min-width: 78px;
+}
+.metrics-inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #9fb092;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.metrics-inline span {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.stage-popover-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+.stage-params-toggle,
+.volume-popover-toggle {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 13px;
+}
+.stage-params-toggle[aria-expanded="true"],
+.volume-popover-toggle[aria-expanded="true"] {
+  border-color: rgba(213, 228, 180, .5);
+  background: rgba(213, 228, 180, .14);
+}
+.stage-params-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  min-width: 240px;
+  max-width: min(360px, 82vw);
+  padding: 12px;
+  border: 1px solid rgba(213, 228, 180, .25);
+  border-radius: 10px;
+  background: rgba(20, 25, 19, .97);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .55);
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.stage-popover-group {
+  display: grid;
+  gap: 8px;
+}
+.stage-popover-title {
+  color: #8f9e8c;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+.stage-popover-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.stage-volume-popover {
+  min-width: 170px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+}
+.stage-volume-popover input[type="range"] {
+  width: 105px;
+  accent-color: var(--accent);
+}
+.stage-volume-popover output {
+  min-width: 32px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.hgame-test-help-btn {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.hgame-test-fly-speed-chip {
+  padding: 4px 8px;
+  border: 1px solid rgba(213, 228, 180, .24);
+  border-radius: 6px;
+  background: rgba(12, 16, 12, .74);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.assets-stage-shell {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 18px;
+}
+.assets-stage-body {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.assets-stage-body[data-asset-tab="models"] {
+  overflow: hidden;
+}
+.assets-stage-body .asset-model-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.assets-stage-body .asset-model-panel {
+  flex: 1;
+  min-height: 0;
+}
+@media (max-width: 960px) {
+  .hgame-controls {
+    height: auto;
+    max-height: none;
+    flex-wrap: wrap;
+  }
+  .hgame-controls .hgame-control-group {
+    flex-wrap: wrap;
   }
 }

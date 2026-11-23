@@ -61,7 +61,6 @@ const ANIM_CATEGORY_ORDER = [
 const viewEl = document.querySelector('#animations-view');
 const searchInput = document.querySelector('#hgame-anim-search');
 const packFilterSelect = document.querySelector('#hgame-anim-pack-filter');
-const sourcePackFilterSelect = document.querySelector('#hgame-anim-source-pack-filter');
 const addButton = document.querySelector('#hgame-anim-add-button');
 const glbUploadInput = document.querySelector('#hgame-anim-glb-upload');
 const listEl = document.querySelector('#hgame-anim-list');
@@ -72,9 +71,6 @@ const deleteButton = document.querySelector('#hgame-anim-delete-button');
 // 3D stage controls
 const empty3d = document.querySelector('#hgame-anim-3d-empty');
 const stage3d = document.querySelector('#hgame-anim-3d-stage');
-const characterSelect = document.querySelector('#hgame-anim-character-select');
-const prevCharacterBtn = document.querySelector('#hgame-anim-prev-character-button');
-const nextCharacterBtn = document.querySelector('#hgame-anim-next-character-button');
 const play3dBtn = document.querySelector('#hgame-anim-play-button');
 const restart3dBtn = document.querySelector('#hgame-anim-restart-button');
 const scrub3dInput = document.querySelector('#hgame-anim-scrub');
@@ -222,54 +218,21 @@ function populateAnimControls() {
   const uploaded = assetStore.models || [];
   ensureSelectedCharacter(stageChars);
 
+  const animPacks = getOrderedAnimPacks(unrealAnims);
   fillFilterSelect(packFilterSelect, [
-    { value: 'all', label: `全部 3D 动作 (${unrealAnims.length + uploaded.length})` },
+    { value: 'all', label: `全部动作 (${unrealAnims.length + uploaded.length})` },
     ...getOrderedAnimCategories(unrealAnims).map(c => ({
       value: `cat:${c.category}`,
       label: `${c.category} (${c.count})`,
     })),
-    { value: 'uploaded', label: `已上传 GLB (${uploaded.length})` },
-  ]);
-
-  const animPacks = getOrderedAnimPacks(unrealAnims);
-  fillFilterSelect(sourcePackFilterSelect, [
-    { value: 'all', label: `全部动作包 (${animPacks.length}包 · ${unrealAnims.length})` },
     ...animPacks.map(p => ({
       value: `pack:${p.pack}`,
-      label: `${p.pack} (${p.count})`,
+      label: `动作包 · ${p.pack} (${p.count})`,
     })),
+    { value: 'uploaded', label: `已上传 (${uploaded.length})` },
   ]);
-  if (sourcePackFilterSelect) {
-    sourcePackFilterSelect.disabled = packFilterSelect?.value === 'uploaded';
-  }
 
   const packs = getCharacterPacks(stageChars);
-  if (characterSelect) {
-    characterSelect.replaceChildren();
-    if (stageChars.length === 0) {
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = '无可用角色模型';
-      characterSelect.append(opt);
-    } else {
-      for (const group of packs) {
-        const og = document.createElement('optgroup');
-        og.label = `${group.label} (${group.items.length})`;
-        for (const ch of group.items) {
-          const opt = document.createElement('option');
-          opt.value = ch.id;
-          opt.textContent = ch.name;
-          og.append(opt);
-        }
-        characterSelect.append(og);
-      }
-      characterSelect.value = selectedCharacterId;
-    }
-  }
-
-  if (charDialogBtn) {
-    charDialogBtn.disabled = stageChars.length === 0;
-  }
   syncCharacterSwitchButtons();
 
   if (charDialogPackSelect) {
@@ -342,8 +305,12 @@ const PREFERRED_DEFAULT_ANIM_ID = 'WudangSword_Animset__MM_Run_Fwd';
 function syncCharacterSwitchButtons() {
   const stageChars = getAllStageCharacters();
   const disabled = active3dKind === 'uploaded' || stageChars.length <= 1;
-  if (prevCharacterBtn) prevCharacterBtn.disabled = disabled;
-  if (nextCharacterBtn) nextCharacterBtn.disabled = disabled;
+  if (charDialogBtn) {
+    const cur = stageChars.find(c => c.id === selectedCharacterId);
+    charDialogBtn.disabled = stageChars.length === 0 || active3dKind === 'uploaded';
+    charDialogBtn.textContent = cur ? cur.name : '角色';
+    charDialogBtn.title = disabled ? '' : '点击选择角色（[ / ] 快切）';
+  }
 }
 
 function getOrderedStageCharacterIds() {
@@ -362,7 +329,7 @@ function stepSelectedCharacter(delta) {
 function applySelectedCharacter(characterId) {
   if (!characterId) return;
   selectedCharacterId = characterId;
-  if (characterSelect) characterSelect.value = characterId;
+  syncCharacterSwitchButtons();
   if (active3dKind !== 'unreal' && (unrealCatalog.animations || []).length > 0) {
     const preferred = unrealCatalog.animations.find(a => a.id === PREFERRED_DEFAULT_ANIM_ID)
       || unrealCatalog.animations.find(a => a.id === 'MaleLocomotionSet__A_INP_Idle')
@@ -403,24 +370,20 @@ function resolveDefault3dSelection(unrealAnims, uploaded) {
 
 function resetAnimListLimitAndRender() {
   animVisibleLimit = ANIM_PAGE_SIZE;
-  if (sourcePackFilterSelect) {
-    sourcePackFilterSelect.disabled = packFilterSelect?.value === 'uploaded';
-  }
   renderSidebarList();
 }
 
 function renderSidebarList() {
   const query = searchInput.value.trim().toLowerCase();
   const filter = packFilterSelect?.value || 'all';
-  const packFilter = sourcePackFilterSelect?.value || 'all';
   const unrealAnims = unrealCatalog.animations || [];
   const uploaded = assetStore.models || [];
   resolveDefault3dSelection(unrealAnims, uploaded);
 
-  const showUnreal = filter === 'all' || filter.startsWith('cat:');
+  const showUnreal = filter === 'all' || filter.startsWith('cat:') || filter.startsWith('pack:');
   const targetCategory = filter.startsWith('cat:') ? filter.slice('cat:'.length) : null;
-  const targetPack = packFilter.startsWith('pack:') ? packFilter.slice('pack:'.length) : null;
-  const showUploaded = !targetPack && (filter === 'all' || filter === 'uploaded');
+  const targetPack = filter.startsWith('pack:') ? filter.slice('pack:'.length) : null;
+  const showUploaded = filter === 'all' || filter === 'uploaded';
 
   const matchingUnreal = showUnreal
     ? unrealAnims.filter(item => {
@@ -632,16 +595,13 @@ async function load3dAnimationAsset() {
     const animItem = unrealAnims.find(entry => entry.id === active3dId);
     const charItem = stageChars.find(entry => entry.id === selectedCharacterId) || stageChars[0];
     deleteButton.hidden = true;
-    if (characterSelect) characterSelect.disabled = stageChars.length === 0;
     syncCharacterSwitchButtons();
     if (!animItem || !charItem) {
       clear3dScene();
       titleEl.textContent = '3D 动画';
       empty3d.hidden = false;
       stage3d.hidden = true;
-      status3dEl.textContent = stageChars.length === 0
-        ? '暂无可用自建低模角色（请先在角色库完成低模绑定）。'
-        : '需要至少一个自建角色低模和动画文件。';
+      status3dEl.textContent = stageChars.length === 0 ? '暂无角色模型' : '暂无动画';
       return;
     }
 
@@ -687,7 +647,6 @@ async function load3dAnimationAsset() {
   }
 
   const item = uploaded.find(entry => entry.id === active3dId);
-  if (characterSelect) characterSelect.disabled = true;
   syncCharacterSwitchButtons();
   deleteButton.hidden = !item;
   if (!item) {
@@ -769,7 +728,6 @@ async function initAnimationsView() {
 
     searchInput.addEventListener('input', resetAnimListLimitAndRender);
     packFilterSelect?.addEventListener('change', resetAnimListLimitAndRender);
-    sourcePackFilterSelect?.addEventListener('change', resetAnimListLimitAndRender);
     addButton.addEventListener('click', () => glbUploadInput.click());
     glbUploadInput.addEventListener('change', () => {
       const file = glbUploadInput.files?.[0];
@@ -778,9 +736,9 @@ async function initAnimationsView() {
     });
     deleteButton.addEventListener('click', () => void deleteActiveAsset());
 
-    characterSelect?.addEventListener('change', () => applySelectedCharacter(characterSelect.value));
-    prevCharacterBtn?.addEventListener('click', () => stepSelectedCharacter(-1));
-    nextCharacterBtn?.addEventListener('click', () => stepSelectedCharacter(1));
+    window.addEventListener('webasset:step-anim-character', event => {
+      if (!viewEl?.hidden) stepSelectedCharacter(event.detail?.delta || 1);
+    });
     charDialogBtn?.addEventListener('click', openCharacterPickerDialog);
     charDialogCloseBtn?.addEventListener('click', () => characterDialog?.close());
     charDialogSearchInput?.addEventListener('input', renderCharacterDialogList);

@@ -51,7 +51,6 @@ const SURFACE_PATTERNS = {
 };
 
 const viewEl = document.querySelector('#decals-view');
-const libTabs = Array.from(document.querySelectorAll('.hgame-decal-lib-tab'));
 const searchInput = document.querySelector('#hgame-decal-search');
 const packFilter = document.querySelector('#hgame-decal-pack-filter');
 const listEl = document.querySelector('#hgame-decal-list');
@@ -229,7 +228,7 @@ function getCurrentDecal() {
 }
 
 function populatePackFilter() {
-  const prev = packFilter.value || 'all';
+  const prev = currentLib === 'cn_foliage' ? 'lib:cn_foliage' : (packFilter.value || 'all');
   packFilter.replaceChildren();
   const items = getActiveList();
 
@@ -251,7 +250,10 @@ function populatePackFilter() {
       opt.textContent = text;
       packFilter.appendChild(opt);
     };
-    addOpt('all', `${cfg.label} (${items.length})`);
+    addOpt('all', `全部贴花 (${cnDecals.length})`);
+    if (cnFoliage.length > 0) {
+      addOpt('lib:cn_foliage', `植被卡片 (${cnFoliage.length})`);
+    }
     if (tintCount > 0) {
       addOpt('tint:1', `可染色血迹/果汁 (${tintCount})`);
     }
@@ -606,14 +608,6 @@ function updateModeTabsUi() {
   }
   if (refCharSelect) {
     refCharSelect.disabled = previewMode !== 'surface';
-  }
-}
-
-function updateLibTabsUi() {
-  for (const tab of libTabs) {
-    const active = tab.dataset.decalLib === currentLib;
-    tab.setAttribute('aria-selected', String(active));
-    tab.tabIndex = active ? 0 : -1;
   }
 }
 
@@ -1211,7 +1205,6 @@ async function loadCurrentDecal({ forceCamera = false } = {}) {
 
 async function switchDecalLib(libId) {
   currentLib = (libId === 'unreal' || libId === 'cn_foliage') ? libId : 'cn_pbr';
-  updateLibTabsUi();
   populatePackFilter();
   const list = getActiveList();
   activeId = list[0]?.id || '';
@@ -1224,19 +1217,19 @@ async function initDecalsView() {
     initialized = true;
     syncSliderLabels();
     updateModeTabsUi();
-    updateLibTabsUi();
-
-    for (const tab of libTabs) {
-      tab.addEventListener('click', () => {
-        const nextLib = tab.dataset.decalLib;
-        if (nextLib && nextLib !== currentLib) {
-          void switchDecalLib(nextLib);
-        }
-      });
-    }
 
     searchInput.addEventListener('input', renderList);
     packFilter.addEventListener('change', () => {
+      const val = packFilter.value || 'all';
+      if (val === 'lib:cn_foliage' && currentLib !== 'cn_foliage') {
+        void switchDecalLib('cn_foliage');
+        return;
+      }
+      if (val !== 'lib:cn_foliage' && currentLib === 'cn_foliage') {
+        currentLib = 'cn_pbr';
+        populatePackFilter();
+        packFilter.value = [...packFilter.options].some(o => o.value === val) ? val : 'all';
+      }
       const filtered = getFilteredDecals();
       if (filtered.length > 0 && !filtered.some(item => item.id === activeId)) {
         activeId = filtered[0].id;
@@ -1340,7 +1333,6 @@ async function initDecalsView() {
 
   if (!cnDecals.length && unrealDecals.length) {
     currentLib = 'unreal';
-    updateLibTabsUi();
   }
 
   populatePackFilter();
@@ -1357,7 +1349,6 @@ window.addEventListener('webasset:open-asset', event => {
   if (workspace !== 'decals' || !id) return;
   if (kind === 'cn_foliage' || kind === 'cn_pbr') {
     currentLib = kind;
-    updateLibTabsUi();
   }
   activeId = id;
   if (catalogLoaded) {

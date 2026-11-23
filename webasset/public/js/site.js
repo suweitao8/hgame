@@ -18,7 +18,13 @@ const assetToast = document.querySelector('#asset-toast');
 const assetAiResults = document.querySelector('#asset-ai-results');
 const characterImageGenerateButton = document.querySelector('#character-image-generate-button');
 const characterImageGeneratedAt = document.querySelector('#character-image-generated-at');
-const characterModeTabs = [...document.querySelectorAll('.character-mode-tab')];
+const characterModeTabs = [...document.querySelectorAll('#assets-view .asset-ai-mode-tab')];
+const assetStageTabs = [...document.querySelectorAll('#assets-view .asset-stage-tab')];
+const assetStageBody = document.querySelector('#asset-stage-body');
+const assetCharacterTitle = document.querySelector('#asset-character-title');
+const assetModelSection = document.querySelector('#asset-model-section');
+const assetGalleryPane = document.querySelector('#asset-gallery-pane');
+const assetSettingsPane = document.querySelector('#asset-settings-pane');
 const assetModelTabs = [...document.querySelectorAll('.asset-model-tab')];
 const assetModelUpload = document.querySelector('#asset-model-upload');
 const assetModelUploadButton = document.querySelector('#asset-model-upload-button');
@@ -46,6 +52,29 @@ let characterImageGenerationPollVersion = 0;
 let selectedCharacterMode = 'default';
 let selectedModelView = 'high';
 let selectedUvSource = 'low';
+let selectedAssetStage = 'models';
+
+function selectAssetStage(tabName) {
+  if (!['models', 'gallery', 'settings'].includes(tabName)) return;
+  selectedAssetStage = tabName;
+  for (const tab of assetStageTabs) {
+    const active = tab.dataset.assetStage === tabName;
+    tab.setAttribute('aria-selected', String(active));
+    tab.tabIndex = active ? 0 : -1;
+  }
+  if (assetStageBody) assetStageBody.dataset.assetTab = tabName;
+  if (assetModelSection) assetModelSection.hidden = tabName !== 'models';
+  if (assetGalleryPane) assetGalleryPane.hidden = tabName !== 'gallery';
+  if (assetSettingsPane) assetSettingsPane.hidden = tabName !== 'settings';
+  if (tabName === 'models') {
+    modelViewer.resize?.();
+  }
+}
+
+assetStageTabs.forEach((tab) => {
+  tab.addEventListener('click', () => selectAssetStage(tab.dataset.assetStage));
+});
+selectAssetStage('models');
 
 assetModelUvSource.addEventListener('change', () => {
   selectedUvSource = assetModelUvSource.value;
@@ -343,6 +372,7 @@ function selectCharacter(characterId) {
   if (!character) return;
 
   activeCharacterId = character.id;
+  if (assetCharacterTitle) assetCharacterTitle.textContent = character.name || character.id;
   for (const button of characterList.querySelectorAll('.asset-character-item')) {
     button.setAttribute('aria-current', String(button.dataset.character === character.id));
   }
