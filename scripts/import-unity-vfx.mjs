@@ -859,6 +859,27 @@ function parseMinMaxCurveData(block, allowNegative = false) {
   return Number(scalar.toFixed(4));
 }
 
+function quatToYxzEuler([x, y, z, w]) {
+  const r00 = 1 - 2 * (y * y + z * z);
+  const r01 = 2 * (x * y - z * w);
+  const r02 = 2 * (x * z + y * w);
+  const r11 = 1 - 2 * (x * x + z * z);
+  const r12 = 2 * (y * z - x * w);
+  const r21 = 2 * (y * z + x * w);
+  const r22 = 1 - 2 * (x * x + y * y);
+  const ry = Math.asin(Math.max(-1, Math.min(1, r02)));
+  let rx = 0;
+  let rz = 0;
+  if (Math.abs(r02) < 0.9995) {
+    rx = Math.atan2(-r12, r22);
+    rz = Math.atan2(-r01, r00);
+  } else {
+    rx = Math.atan2(r21, r11);
+    rz = 0;
+  }
+  return [Number(rx.toFixed(4)), Number(ry.toFixed(4)), Number(rz.toFixed(4))];
+}
+
 function computeShapeRotation(trQuat, sRotMatch, mappedType) {
   if (mappedType === 'sphere' || mappedType === 'point') return null;
   const rawTr = Array.isArray(trQuat)
@@ -876,27 +897,14 @@ function computeShapeRotation(trQuat, sRotMatch, mappedType) {
   const s45 = Math.SQRT1_2;
   const qOff = quatMul(quatMul(qTr, qSh), [-s45, 0, 0, s45]);
   const [x, y, z, w] = qOff;
-  const r00 = 1 - 2 * (y * y + z * z);
   const r01 = 2 * (x * y - z * w);
-  const r02 = 2 * (x * z + y * w);
   const r11 = 1 - 2 * (x * x + z * z);
-  const r12 = 2 * (y * z - x * w);
   const r21 = 2 * (y * z + x * w);
-  const r22 = 1 - 2 * (x * x + y * y);
   // Check transformed +Y axis (r01, r11, r21) to omit redundant identity/planar rotations.
   const isFlat = mappedType === 'circle' || mappedType === 'donut' || mappedType === 'rectangle';
   if (isFlat && Math.abs(r11) > 0.985) return null;
   if (!isFlat && r11 > 0.985) return null;
-  const ry = Math.asin(Math.max(-1, Math.min(1, r02)));
-  let rx = 0, rz = 0;
-  if (Math.abs(r02) < 0.9995) {
-    rx = Math.atan2(-r12, r22);
-    rz = Math.atan2(-r01, r00);
-  } else {
-    rx = Math.atan2(r21, r11);
-    rz = 0;
-  }
-  return [Number(rx.toFixed(4)), Number(ry.toFixed(4)), Number(rz.toFixed(4))];
+  return quatToYxzEuler(qOff);
 }
 
 function mapShapeType(unityType) {
@@ -1082,6 +1090,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const maxLife = Array.isArray(life) ? life[1] : life;
     maxDuration = Math.max(maxDuration, isLoop ? dur : ((maxDelay + maxLife) / Math.max(0.05, simSpeed)));
 
+    const extractModSubBlock = (mod, fieldName) => mod.match(new RegExp(`(?:^|\\n) {4}${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n {4}[A-Za-z_]|$)`))?.[1] || '';
+
     const scBlock = initMod.match(/(?:^|\n) {4}startColor:[^\n]*\n[\s\S]*?(?=\n {4}[a-zA-Z]|$)/)?.[0] || '';
     const scMode = Number((scBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
     const maxColM = scBlock.match(/maxColor:\s*\{([^}]+)\}/);
@@ -1089,27 +1099,37 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const maxCol = maxColM ? parseColorObject(maxColM[1]) : [1, 1, 1, 1];
     const minCol = minColM ? parseColorObject(minColM[1]) : maxCol;
     const scGradStops = scMode === 1 ? parseGradientStops(scBlock) : null;
+    const scRandomStops = scMode === 4 ? parseGradientStops(scBlock) : null;
 
     const emMod = extractSection(ps, 'EmissionModule');
     const emDisabled = /^\s*enabled:\s*0\b/m.test(emMod);
     if (emDisabled) return null;
     const rate = readMinMaxScalar(emMod, 'rateOverTime', 0);
+    const rateBlk = extractModSubBlock(emMod, 'rateOverTime');
+    const rateState = Number((rateBlk.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
+    const rateCurve = rateState === 1 ? parseCurveKeys(rateBlk) : null;
     const rateDist = readMinMaxScalar(emMod, 'rateOverDistance', 0);
     const bursts = [];
     const burstCount = Number((emMod.match(/m_BurstCount:\s*(\d+)/) || [])[1] ?? 0);
     const burstsPart = emMod.split('m_Bursts:')[1] || '';
     if (burstCount > 0 && burstsPart) {
-      const burstMatches = [...burstsPart.matchAll(/-\s*serializedVersion:\s*\d+\s*\n\s*time:\s*([-\d.eE+]+)[\s\S]*?minMaxState:\s*(\d+)[\s\S]*?\bscalar:\s*([-\d.eE+]+)[\s\S]*?\bminScalar:\s*([-\d.eE+]+)[\s\S]*?cycleCount:\s*(\d+)[\s\S]*?repeatInterval:\s*([-\d.eE+]+)/g)];
-      for (let bi = 0; bi < Math.min(burstCount, burstMatches.length); bi++) {
-        const bm = burstMatches[bi];
-        const bMode = Number(bm[2]);
-        const bMax = Math.max(1, Math.round(Number(bm[3])));
-        const bMin = Math.max(1, Math.round(Number(bm[4])));
+      const burstEntries = burstsPart.split(/\n\s*-\s*serializedVersion:\s*\d+/).slice(1);
+      for (let bi = 0; bi < Math.min(burstCount, burstEntries.length); bi++) {
+        const be = burstEntries[bi];
+        const bTime = Number((be.match(/\btime:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+        const bMode = Number((be.match(/\bminMaxState:\s*(\d+)/) || [])[1] ?? 0);
+        const bMax = Math.max(0, Math.round(Number((be.match(/\bscalar:\s*([-\d.eE+]+)/) || [])[1] ?? 1)));
+        const bMin = Math.max(0, Math.round(Number((be.match(/\bminScalar:\s*([-\d.eE+]+)/) || [])[1] ?? bMax)));
+        const bCyc = Number((be.match(/\bcycleCount:\s*(\d+)/) || [])[1] ?? 1);
+        const bInt = Number((be.match(/\brepeatInterval:\s*([-\d.eE+]+)/) || [])[1] ?? 0.01);
+        const bProb = Number((be.match(/\bprobability:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+        if (bMax === 0 && (bMode !== 3 || bMin === 0)) continue;
         bursts.push({
-          time: Number(bm[1]),
+          time: bTime,
           count: bMode === 3 && bMin !== bMax ? [Math.min(bMin, bMax), Math.max(bMin, bMax)] : bMax,
-          cycles: Number(bm[5]) === 0 ? 0 : Math.max(1, Number(bm[5])),
-          interval: Number(bm[6]),
+          cycles: bCyc === 0 ? 0 : Math.max(1, bCyc),
+          interval: bInt,
+          ...(bProb < 0.999 ? { probability: Number(bProb.toFixed(3)) } : {}),
         });
       }
     }
@@ -1126,31 +1146,43 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
     const renderAlign = Number((psr.match(/^\s*m_RenderAlignment:\s*(\d+)/m) || [])[1] ?? 0);
     const sortingOrder = Number((psr.match(/^\s*m_SortingOrder:\s*(-?\d+)/m) || [])[1] ?? 0);
+    const flipM = psr.match(/m_Flip:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+    const psrFlip = flipM
+      ? [Number(flipM[1]) || 0, Number(flipM[2]) || 0, Number(flipM[3]) || 0]
+      : [0, 0, 0];
     const alignRot = isSubChild ? computeHierarchyTransform(trBody).rot : worldTr.rot;
     const rxScalar = Array.isArray(rotX) ? (rotX[0] + rotX[1]) * 0.5 : (typeof rotX === 'number' ? rotX : 0);
+    const ryScalar = Array.isArray(rotY) ? (rotY[0] + rotY[1]) * 0.5 : (typeof rotY === 'number' ? rotY : 0);
+    const rotScalar = Array.isArray(rot) ? (rot[0] + rot[1]) * 0.5 : (typeof rot === 'number' ? rot : 0);
     const localNormal = quatRotateVec(alignRot, [0, -Math.sin(rxScalar), Math.cos(rxScalar)]);
     const isLocalHorizontal = rmNum === 0 && renderAlign === 2 && Math.abs(localNormal[1]) > 0.7;
-    const renderMode = psrDisabled
+    let renderMode = psrDisabled
       ? 'none'
       : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : (rmNum === 2 || isLocalHorizontal) ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
+    let effectiveRot = rot;
     let effectiveRotX = rotX;
     let effectiveRotY = rotY;
+    let meshTransformRot = null;
     if (isLocalHorizontal) {
       effectiveRotX = 0;
       effectiveRotY = 0;
-    }
-    if (renderMode === 'mesh') {
-      const [qx, qy, qz, qw] = alignRot;
-      const rhsQx = qx;
-      const rhsQy = -qy;
-      const rhsQz = -qz;
-      const rhsQw = qw;
-      const trEulerX = Math.atan2(2 * (rhsQw * rhsQx + rhsQy * rhsQz), 1 - 2 * (rhsQx * rhsQx + rhsQy * rhsQy));
-      if (Math.abs(trEulerX) > 0.02) {
-        effectiveRotX = Array.isArray(effectiveRotX)
-          ? [Number((effectiveRotX[0] + trEulerX).toFixed(4)), Number((effectiveRotX[1] + trEulerX).toFixed(4))]
-          : Number(((effectiveRotX || 0) + trEulerX).toFixed(4));
+    } else if (rmNum === 0 && (renderAlign === 1 || renderAlign === 2) && !psrDisabled) {
+      const rad2deg = 180 / Math.PI;
+      const qTrRhs = renderAlign === 2 ? toRhsQuat(alignRot) : [0, 0, 0, 1];
+      const qPartRhs = toRhsQuat(unityEulerToQuat(rxScalar * rad2deg, ryScalar * rad2deg, rotScalar * rad2deg));
+      const qCombined = renderAlign === 2 ? quatMul(qTrRhs, qPartRhs) : qPartRhs;
+      const [ex, ey, ez] = quatToYxzEuler(qCombined);
+      if (Math.abs(ex) > 0.002 || Math.abs(ey) > 0.002) {
+        renderMode = 'vertical';
+        effectiveRotX = ex;
+        effectiveRotY = ey;
+        effectiveRot = Array.isArray(rot)
+          ? [Number((ez + (rot[0] - rotScalar)).toFixed(4)), Number((ez + (rot[1] - rotScalar)).toFixed(4))]
+          : ez;
       }
+    }
+    if (renderMode === 'mesh' && renderAlign !== 1 && renderAlign !== 4 && Math.abs(alignRot[3]) < 0.9999) {
+      meshTransformRot = toRhsQuat(alignRot).map((v) => Number(v.toFixed(5)));
     }
     const pivM = psr.match(/m_Pivot:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
     const pivot = pivM && (Math.abs(Number(pivM[1])) > 0.005 || Math.abs(Number(pivM[2])) > 0.005 || Math.abs(Number(pivM[3])) > 0.005)
@@ -1245,15 +1277,17 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(typeof delay === 'number' && delay > 0 ? { delay } : {}),
       ...(effectiveBursts.length > 0 ? { bursts: effectiveBursts } : {}),
       ...(hasPositiveRate ? { rate: effectiveRate } : {}),
+      ...(rateCurve ? { rateCurve } : {}),
       ...(hasPositiveRateDist ? { rateOverDistance: rateDist } : {}),
       ...(hasInfiniteLife ? { persistent: true } : {}),
       life,
       speed,
       size: scaledSize,
       ...(aspectY !== undefined ? { aspectY } : {}),
-      rotation: rot,
+      rotation: effectiveRot,
       ...(isNonZeroVal(effectiveRotX) ? { rotX: effectiveRotX } : {}),
       ...(isNonZeroVal(effectiveRotY) ? { rotY: effectiveRotY } : {}),
+      ...(meshTransformRot ? { transformRot: meshTransformRot } : {}),
       ...(Math.abs(netGravity) > 0.001 ? { gravity: Number(netGravity.toFixed(3)) } : {}),
       ...(forceVec ? { force: forceVec } : {}),
       ...(windMul > 0.001 ? { windMul: Number(windMul.toFixed(3)) } : {}),
@@ -1268,11 +1302,15 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       if (Math.abs(meshGlobalScale - 1) > 0.005) layer.meshGlobalScale = Number(meshGlobalScale.toFixed(4));
       layer.forwardAxis = 'y';
       if (mainMat?.lit) layer.lit = true;
-      if (Array.isArray(speed) ? speed[1] > 0.1 : speed > 0.1) layer.alignToVelocity = true;
+      if (renderAlign === 4 || (renderAlign !== 1 && renderAlign !== 2 && (Array.isArray(speed) ? speed[1] > 0.1 : speed > 0.1))) {
+        layer.alignToVelocity = true;
+      }
     }
 
     if (scMode === 2) {
       layer.startColor = [minCol.slice(0, 3), maxCol.slice(0, 3)];
+    } else if (scMode === 4 && scRandomStops?.length) {
+      layer.startColor = scRandomStops;
     }
 
     const shapeMod = extractSection(ps, 'ShapeModule');
@@ -1355,25 +1393,75 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       layer.shape = shapeObj;
     }
 
-    const extractModSubBlock = (mod, fieldName) => mod.match(new RegExp(`(?:^|\\n) {4}${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n {4}[A-Za-z_]|$)`))?.[1] || '';
+    const mulRangeOrVal = (baseVal, factor) => {
+      const mulScalar = (v, m) => (Array.isArray(v)
+        ? [Number((v[0] * m).toFixed(4)), Number((v[1] * m).toFixed(4))]
+        : Number((v * m).toFixed(4)));
+      if (Array.isArray(factor)) {
+        const bLo = Array.isArray(baseVal) ? baseVal[0] : baseVal;
+        const bHi = Array.isArray(baseVal) ? baseVal[1] : baseVal;
+        const fLo = Math.min(factor[0], factor[1]);
+        const fHi = Math.max(factor[0], factor[1]);
+        const p = [bLo * fLo, bLo * fHi, bHi * fLo, bHi * fHi];
+        return [Number(Math.min(...p).toFixed(4)), Number(Math.max(...p).toFixed(4))];
+      }
+      return Math.abs(factor - 1) <= 0.001 ? baseVal : mulScalar(baseVal, factor);
+    };
+    const applySizeAxis = (curve, data, baseSize) => {
+      if (data !== null && typeof data === 'number') {
+        return { size: mulRangeOrVal(baseSize, data), curve: null };
+      }
+      if (Array.isArray(data)) {
+        return { size: mulRangeOrVal(baseSize, data), curve: null };
+      }
+      if (!curve) return { size: baseSize, curve: null };
+      const sMul = (data && typeof data === 'object' && typeof data.scalar === 'number') ? data.scalar : 1;
+      const rawScaled = Math.abs(sMul - 1) <= 0.001
+        ? curve
+        : curve.map(([t, v]) => [t, Number((v * sMul).toFixed(4))]);
+      const peak = Math.max(...rawScaled.map((k) => k[1]), 0);
+      if (peak > 7.8) {
+        const fold = peak / 7.5;
+        return {
+          size: mulRangeOrVal(baseSize, fold),
+          curve: rawScaled.map(([t, v]) => [t, Number((v / fold).toFixed(4))]),
+        };
+      }
+      return { size: baseSize, curve: rawScaled };
+    };
+
     const sizeMod = extractSection(ps, 'SizeModule');
     if (/enabled:\s*1/.test(sizeMod)) {
       const sizeSep = /separateAxes:\s*1\b/.test(sizeMod);
+      const origLayerSize = layer.size;
       const xBlk = extractModSubBlock(sizeMod, sizeSep ? 'x' : 'curve') || sizeMod;
       const scXData = parseMinMaxCurveData(xBlk);
       const scX = parseCurveKeys(xBlk);
-      if (scX) layer.sizeCurve = scX;
+      const resX = applySizeAxis(scX, scXData, layer.size);
+      layer.size = resX.size;
+      if (resX.curve) layer.sizeCurve = resX.curve;
       let scYData = null;
       let scZData = null;
       if (sizeSep) {
         const yBlk = extractModSubBlock(sizeMod, 'y');
         const scY = yBlk ? parseCurveKeys(yBlk) : null;
-        if (scY) layer.sizeYCurve = scY;
         if (yBlk) scYData = parseMinMaxCurveData(yBlk);
+        const resY = applySizeAxis(scY, scYData, layer.sizeY ?? origLayerSize);
+        if (resY.curve) layer.sizeYCurve = resY.curve;
+        if (resY.size !== origLayerSize || layer.sizeY !== undefined) layer.sizeY = resY.size;
         const zBlk = extractModSubBlock(sizeMod, 'z');
         const scZ = zBlk ? parseCurveKeys(zBlk) : null;
-        if (scZ) layer.sizeZCurve = scZ;
         if (zBlk) scZData = parseMinMaxCurveData(zBlk);
+        const resZ = applySizeAxis(scZ, scZData, layer.sizeZ ?? origLayerSize);
+        if (resZ.curve) layer.sizeZCurve = resZ.curve;
+        if (resZ.size !== origLayerSize || layer.sizeZ !== undefined) layer.sizeZ = resZ.size;
+      } else {
+        if (layer.sizeY !== undefined && scXData !== null && (typeof scXData === 'number' || Array.isArray(scXData) || Math.abs((scXData.scalar ?? 1) - 1) > 0.001)) {
+          layer.sizeY = applySizeAxis(scX, scXData, layer.sizeY).size;
+        }
+        if (layer.sizeZ !== undefined && scXData !== null && (typeof scXData === 'number' || Array.isArray(scXData) || Math.abs((scXData.scalar ?? 1) - 1) > 0.001)) {
+          layer.sizeZ = applySizeAxis(scX, scXData, layer.sizeZ).size;
+        }
       }
       const needsSize3D = (d) => d && typeof d === 'object' && !Array.isArray(d) && (d.mode === 'twoCurves' || Math.abs((d.scalar ?? 1) - 1) > 0.001);
       if (needsSize3D(scXData) || needsSize3D(scYData) || needsSize3D(scZData)) {
@@ -1385,7 +1473,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       }
     }
 
-    const startMul = scMode === 2 ? [1, 1, 1, maxCol[3]] : maxCol;
+    const startMul = scMode === 2
+      ? [1, 1, 1, Number(((minCol[3] + maxCol[3]) * 0.5).toFixed(4))]
+      : (scMode === 4 && scRandomStops?.length)
+        ? [1, 1, 1, Number((scRandomStops.reduce((s, st) => s + st[1][3], 0) / scRandomStops.length).toFixed(4))]
+        : maxCol;
     const tintAlpha = mainMat?.tintAlpha ?? 1;
     const colorMod = extractSection(ps, 'ColorModule');
     const colCurve = /enabled:\s*1/.test(colorMod) ? parseGradientStops(colorMod) : null;
@@ -1432,11 +1524,28 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         [1, constRgba],
       ];
     }
+    let peakColorRgb = 1;
+    for (let i = 0; i < layer.colorCurve.length; i++) {
+      const c = layer.colorCurve[i][1];
+      peakColorRgb = Math.max(peakColorRgb, c[0], c[1], c[2]);
+    }
+    if (peakColorRgb > 1.001) {
+      layer.hdr = Number(((layer.hdr ?? 1.0) * peakColorRgb).toFixed(3));
+      layer.colorCurve = layer.colorCurve.map(([t, c]) => [
+        t,
+        [
+          Number((c[0] / peakColorRgb).toFixed(4)),
+          Number((c[1] / peakColorRgb).toFixed(4)),
+          Number((c[2] / peakColorRgb).toFixed(4)),
+          c[3],
+        ],
+      ]);
+    }
     if (hasInfiniteLife && (effectiveGrad || layer.sizeCurve || layer.sizeYCurve)) {
       layer.curveCycle = dur;
     }
 
-    const extractSubBlock = (mod, fieldName) => mod.match(new RegExp(`(?:^|\\n) {4}${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n {4}[A-Za-z_]|$)`))?.[1] || '';
+    const extractSubBlock = extractModSubBlock;
     const velMod = extractSection(ps, 'VelocityModule');
     if (/enabled:\s*1/.test(velMod)) {
       const spdModBlock = extractSubBlock(velMod, 'speedModifier');
@@ -1558,14 +1667,35 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const uvMod = extractSection(ps, 'UVModule');
     const sheetMode = Number(uvMod.match(/\n {4}mode:\s*(\d+)/)?.[1] ?? 0);
+    let uvFlipU = 0;
+    let uvFlipV = 0;
+    if (/enabled:\s*1/.test(uvMod)) {
+      uvFlipU = Number((uvMod.match(/\bflipU:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+      uvFlipV = Number((uvMod.match(/\bflipV:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+    }
+    const combFlipX = psrFlip[0] + uvFlipU - 2 * psrFlip[0] * uvFlipU;
+    const combFlipY = psrFlip[1] + uvFlipV - 2 * psrFlip[1] * uvFlipV;
+    const combFlipZ = psrFlip[2];
+    if (combFlipX > 0.001 || combFlipY > 0.001 || combFlipZ > 0.001) {
+      layer.flip = [
+        Number(Math.min(1, Math.max(0, combFlipX)).toFixed(3)),
+        Number(Math.min(1, Math.max(0, combFlipY)).toFixed(3)),
+        Number(Math.min(1, Math.max(0, combFlipZ)).toFixed(3)),
+      ];
+    }
     if (sheetMode === 0 && /enabled:\s*1/.test(uvMod)) {
       const cols = Number((uvMod.match(/tilesX:\s*(\d+)/) || [])[1] ?? 1);
       const rows = Number((uvMod.match(/tilesY:\s*(\d+)/) || [])[1] ?? 1);
       const rawCycles = Number((uvMod.match(/cycles:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+      const timeMode = Number((uvMod.match(/\btimeMode:\s*(\d+)/) || [])[1] ?? 0);
+      const fpsVal = Number((uvMod.match(/\bfps:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
       const fotBlock = extractModSubBlock(uvMod, 'frameOverTime');
       const fotState = Number((fotBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 1);
       const fotScalar = readMinMaxScalar(uvMod, 'frameOverTime', 1);
-      const isStaticFrame = fotState === 0 && (Array.isArray(fotScalar) ? Math.abs(fotScalar[1]) < 1e-4 : Math.abs(fotScalar) < 1e-4);
+      const fotKeys = (fotState === 1 || fotState === 2) ? parseCurveKeys(fotBlock) : null;
+      const isFlatZeroFot = (fotState === 0 || fotState === 3) && (Array.isArray(fotScalar) ? Math.abs(fotScalar[1]) < 1e-4 : Math.abs(fotScalar) < 1e-4)
+        || (fotKeys && Math.max(...fotKeys.map((k) => k[1])) < 1e-4);
+      const isStaticFrame = timeMode !== 2 && isFlatZeroFot;
       const cycles = isStaticFrame ? 0 : rawCycles;
       const startFrame = readMinMaxScalar(uvMod, 'startFrame', 0);
       const hasStartFrame = Array.isArray(startFrame) ? (Math.abs(startFrame[0]) > 1e-4 || Math.abs(startFrame[1]) > 1e-4) : Math.abs(startFrame) > 1e-4;
@@ -1584,6 +1714,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           cols,
           rows,
           cycles,
+          ...(timeMode === 2 && !isStaticFrame && fpsVal > 0 ? { fps: Number(fpsVal.toFixed(2)) } : {}),
           ...(hasStartFrame ? { startFrame } : {}),
           blend: mainMat?.flipbookBlend ?? true,
           ...row,

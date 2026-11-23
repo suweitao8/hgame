@@ -872,7 +872,12 @@ void main() {
 
   float t = isLoopCurve ? fract(age / max(0.001, dur)) : (isPersistent ? 0.0 : age / dur);
   vLifeRatio = t;
-  vUv = (renderMode > 1.5 && renderMode < 2.5) ? vec2(1.0 - uv.x, uv.y) : uv;
+  float flipUFlag = mod(floor(materialFlags / 4.0), 2.0);
+  float flipVFlag = mod(floor(materialFlags / 8.0), 2.0);
+  vec2 baseUv = (renderMode > 1.5 && renderMode < 2.5) ? vec2(1.0 - uv.x, uv.y) : uv;
+  if (flipUFlag > 0.5) baseUv.x = 1.0 - baseUv.x;
+  if (flipVFlag > 0.5) baseUv.y = 1.0 - baseUv.y;
+  vUv = baseUv;
   vCurveRow = curveRow;
   vHdr = hdrEmPair.x;
   vUvRect = vec4(uv0, uv1);
@@ -893,7 +898,7 @@ void main() {
   float pivotZ = uvOD.z > 0.001 ? ((uvOD.z * 255.0 - 128.0) / 60.0) : 0.0;
   vMatParams = vec4(alphaCutoff, max(0.0, hdrEmPair.y), dissolveStart, cullFlag);
   vUvTransform = vec4(uvScaleX, uvScaleY, uvOffX, uvOffY);
-  vFadesAndTexture.yz = vec2(mod(materialFlags, 2.0), floor(materialFlags / 2.0));
+  vFadesAndTexture.yz = vec2(mod(materialFlags, 2.0), mod(floor(materialFlags / 2.0), 2.0));
 
   vec3 effDelta = vec3(0.0);
   if (slotIdx > 0) {
@@ -1190,6 +1195,9 @@ vec4 sampleAtlasFrame(float frameIdx, vec2 localUv, vec2 grid) {
 }
 
 void main() {
+  if ((vMatParams.w > 0.5 && vMatParams.w < 1.5 && !gl_FrontFacing) || (vMatParams.w > 1.5 && gl_FrontFacing)) {
+    discard;
+  }
   if (vUberMatRow > -0.5) {
     vec4 curveCol = sampleColorCurve(vCurveRow, vLifeRatio);
 #ifndef HGAME_OPAQUE_PARTICLE
@@ -1665,7 +1673,12 @@ void main() {
 
   float t = isLoopCurve ? fract(age / max(0.001, dur)) : (isPersistent ? 0.0 : age / dur);
   vLifeRatio = t;
-  vUv = aQuadPos + 0.5;
+  float flipUFlag = mod(floor(materialFlags / 4.0), 2.0);
+  float flipVFlag = mod(floor(materialFlags / 8.0), 2.0);
+  vec2 baseUv2 = aQuadPos + 0.5;
+  if (flipUFlag > 0.5) baseUv2.x = 1.0 - baseUv2.x;
+  if (flipVFlag > 0.5) baseUv2.y = 1.0 - baseUv2.y;
+  vUv = baseUv2;
   vCurveRow = curveRow;
   vHdr = hdrEmPair.x;
   vUvRect = vec4(uv0, uv1);
@@ -2564,7 +2577,9 @@ export function createAtlasParticlePool({
     const windQ = Math.round(Math.max(0, Math.min(7, Number(opts.windMul ?? 0))) * 4);
     const scrollQ = Math.round(Math.max(0, Math.min(15, Number(opts.noiseScroll ?? 0))) * 4);
     const cullFlag = opts.cullMode === 'back' ? 1 : opts.cullMode === 'front' ? 2 : 0;
-    const materialFlags = (opts.softParticles === false ? 1 : 0) + (opts.useTexture === false ? 2 : 0);
+    const flipUBit = (opts.flipX ?? 1) < 0 ? 4 : 0;
+    const flipVBit = (opts.flipY ?? 1) < 0 ? 8 : 0;
+    const materialFlags = (opts.softParticles === false ? 1 : 0) + (opts.useTexture === false ? 2 : 0) + flipUBit + flipVBit;
 
     const clampVelCfg = opts.clampVelocity && Number(opts.clampVelocity.limit) > 0 ? opts.clampVelocity : null;
     const rotSpeedCfg = opts.rotationBySpeed && opts.rotationBySpeed.enabled ? opts.rotationBySpeed : null;

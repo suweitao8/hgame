@@ -241,8 +241,15 @@ void main() {
   }
 
   vec3 sc = vec3(aInstPosScale.w, aInstScaleInfo.x, aInstScaleInfo.y);
+  vec3 safeSc = vec3(
+    abs(sc.x) > 1e-4 ? sc.x : (sc.x < 0.0 ? -1e-4 : 1e-4),
+    abs(sc.y) > 1e-4 ? sc.y : (sc.y < 0.0 ? -1e-4 : 1e-4),
+    abs(sc.z) > 1e-4 ? sc.z : (sc.z < 0.0 ? -1e-4 : 1e-4)
+  );
   vec3 worldPos = vfxQuatRotate(aInstQuat, pos * sc) + aInstPosScale.xyz;
-  vec3 worldNrm = normalize(vfxQuatRotate(aInstQuat, nrm / max(abs(sc), vec3(1e-4))));
+  vec3 worldNrm = normalize(vfxQuatRotate(aInstQuat, nrm / safeSc));
+  float isOddFlip = (sc.x * sc.y * sc.z) < 0.0 ? 2.0 : 0.0;
+  vFlipLocalV = aInstScaleInfo.w + isOddFlip;
   vec4 mvPos = viewMatrix * vec4(worldPos, 1.0);
 
   vNormalWs = worldNrm;
@@ -294,7 +301,11 @@ void main() {
   vec4 hdr = vfxReadMatTexel(uMaterialLut, rowIdx, 0.0);
   float shaderKind = hdr.x;
 
-  vec2 uvBase = vFlipLocalV > 0.5 ? vec2(vUv.x, 1.0 - vUv.y) : vUv;
+  float flipLocalVFlag = mod(vFlipLocalV, 2.0);
+  float isOddFlip = floor(vFlipLocalV / 2.0);
+  bool effFrontFacing = isOddFlip > 0.5 ? !gl_FrontFacing : gl_FrontFacing;
+
+  vec2 uvBase = flipLocalVFlag > 0.5 ? vec2(vUv.x, 1.0 - vUv.y) : vUv;
   vec2 uv0 = uvBase;
   vec2 uvBlend = uvBase;
   float flipBlendFrac = 0.0;
@@ -328,14 +339,14 @@ void main() {
     res = vfxEvalPbrFxFragment(
       uMaterialLut, uAtlasTex, uHasAtlas, uFlipV, rowIdx,
       uv0, vInstColor, vCustom1, uTime,
-      vViewDirWs, vNormalWs, uLightDirWs, gl_FrontFacing
+      vViewDirWs, vNormalWs, uLightDirWs, effFrontFacing
     );
   } else {
     res = vfxEvalUberFragment(
       uMaterialLut, uAtlasTex, uHasAtlas, uFlipV, rowIdx,
       uv0, uvBlend, flipBlendFrac, hasFlipBlend,
       vInstColor, vCustom1, uTime,
-      vViewDirView, vNormalView, gl_FrontFacing,
+      vViewDirView, vNormalView, effFrontFacing,
       uSoftDepthTex, uHasSoftDepth, gl_FragCoord.xy, uInvViewport, uCamNearFar
     );
   }
@@ -464,6 +475,7 @@ export function createMeshVfxPool({
   const scratchDir = THREE?.Vector3 ? new THREE.Vector3(0, 1, 0) : null;
   const scratchQuat = THREE?.Quaternion ? new THREE.Quaternion() : null;
   const scratchQuat2 = THREE?.Quaternion ? new THREE.Quaternion() : null;
+  const scratchTrQuat = THREE?.Quaternion ? new THREE.Quaternion() : null;
   const scratchEuler = THREE?.Euler ? new THREE.Euler() : null;
   const windVec = new Float32Array(3);
   const effectDeltas = new Float32Array(32 * 3);
@@ -520,6 +532,10 @@ export function createMeshVfxPool({
       spinX: 0,
       spinY: 0,
       spinZ: 0,
+      transformRot: null,
+      flipX: 1,
+      flipY: 1,
+      flipZ: 1,
       alignToVelocity: false,
       forwardAxis: 'z',
       space: 'world',
@@ -929,6 +945,10 @@ export function createMeshVfxPool({
     s.spinX = opts.spinX ?? 0;
     s.spinY = opts.spinY ?? 0;
     s.spinZ = opts.spinZ ?? 0;
+    s.transformRot = Array.isArray(opts.transformRot) && opts.transformRot.length >= 4 ? opts.transformRot : null;
+    s.flipX = (opts.flipX ?? 1) < 0 ? -1 : 1;
+    s.flipY = (opts.flipY ?? 1) < 0 ? -1 : 1;
+    s.flipZ = (opts.flipZ ?? 1) < 0 ? -1 : 1;
     s.alignToVelocity = Boolean(opts.alignToVelocity);
     s.forwardAxis = opts.forwardAxis || 'z';
     s.baseScale = (opts.sizeStart ?? opts.scale ?? 1.0) * Number(opts.meshGlobalScale ?? 1.0);
@@ -1095,8 +1115,12 @@ export function createMeshVfxPool({
         return;
       }
     }
-    scratchEuler.set(s.rotX, s.rotY, s.rotZ);
+    scratchEuler.set(s.rotX, s.rotY, s.rotZ, s.transformRot ? 'YXZ' : 'XYZ');
     scratchQuat.setFromEuler(scratchEuler);
+    if (s.transformRot && scratchTrQuat) {
+      scratchTrQuat.set(s.transformRot[0], s.transformRot[1], s.transformRot[2], s.transformRot[3]);
+      scratchQuat.premultiply(scratchTrQuat);
+    }
   }
 
   function pushSlotToBatch(s, batch, t) {
@@ -1105,9 +1129,9 @@ export function createMeshVfxPool({
     batch.activeCount = idx + 1;
     const i4 = idx * 4;
 
-    const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t);
-    const scY = (s.sizeYCurve ? (s.baseScale * evaluateSizeCurve(s.sizeYCurve, t)) : sc) * s.aspectY;
-    const scZ = (s.sizeZCurve ? (s.baseScale * evaluateSizeCurve(s.sizeZCurve, t)) : sc) * s.aspectZ;
+    const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t) * s.flipX;
+    const scY = (s.sizeYCurve ? (s.baseScale * evaluateSizeCurve(s.sizeYCurve, t)) : Math.abs(sc)) * s.aspectY * s.flipY;
+    const scZ = (s.sizeZCurve ? (s.baseScale * evaluateSizeCurve(s.sizeZCurve, t)) : Math.abs(sc)) * s.aspectZ * s.flipZ;
     evaluateColorCurve(s.colorCurve, t, scratchColor);
     const ox = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3] : 0;
     const oy = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 1] : 0;
@@ -1131,7 +1155,7 @@ export function createMeshVfxPool({
     batch.scaleInfo[i4] = scY;
     batch.scaleInfo[i4 + 1] = scZ;
     batch.scaleInfo[i4 + 2] = t;
-    batch.scaleInfo[i4 + 3] = s.flipLocalV;
+    batch.scaleInfo[i4 + 3] = s.flipLocalV + ((sc * scY * scZ) < 0 ? 2 : 0);
 
     batch.pivot[i4] = s.pivotX;
     batch.pivot[i4 + 1] = s.pivotY;
@@ -1174,31 +1198,17 @@ export function createMeshVfxPool({
 
   function syncMeshSlot(s, t) {
     if (!s.mesh || !s.mat) return;
-    const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t);
-    const scY = (s.sizeYCurve ? (s.baseScale * evaluateSizeCurve(s.sizeYCurve, t)) : sc) * s.aspectY;
-    const scZ = (s.sizeZCurve ? (s.baseScale * evaluateSizeCurve(s.sizeZCurve, t)) : sc) * s.aspectZ;
+    const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t) * s.flipX;
+    const scY = (s.sizeYCurve ? (s.baseScale * evaluateSizeCurve(s.sizeYCurve, t)) : Math.abs(sc)) * s.aspectY * s.flipY;
+    const scZ = (s.sizeZCurve ? (s.baseScale * evaluateSizeCurve(s.sizeZCurve, t)) : Math.abs(sc)) * s.aspectZ * s.flipZ;
     evaluateColorCurve(s.colorCurve, t, scratchColor);
     const ox = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3] : 0;
     const oy = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 1] : 0;
     const oz = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 2] : 0;
     s.mesh.position.set(s.x + ox, s.y + oy, s.z + oz);
-    if (s.alignToVelocity && scratchFwd && scratchDir && scratchQuat) {
-      const spd = Math.hypot(s.vx, s.vy, s.vz);
-      const ax = spd > 0.001 ? s.vx : (s.hasDir ? s.dirX : 0);
-      const ay = spd > 0.001 ? s.vy : (s.hasDir ? s.dirY : 0);
-      const az = spd > 0.001 ? s.vz : (s.hasDir ? s.dirZ : 0);
-      const dLen = Math.hypot(ax, ay, az);
-      if (dLen > 0.001) {
-        if (s.forwardAxis === 'y') scratchFwd.set(0, 1, 0);
-        else if (s.forwardAxis === 'x') scratchFwd.set(1, 0, 0);
-        else scratchFwd.set(0, 0, 1);
-        scratchDir.set(ax / dLen, ay / dLen, az / dLen);
-        scratchQuat.setFromUnitVectors(scratchFwd, scratchDir);
-        s.mesh.quaternion.copy(scratchQuat);
-        if (s.rotZ !== 0) s.mesh.rotateZ(s.rotZ);
-      } else {
-        s.mesh.rotation.set(s.rotX, s.rotY, s.rotZ);
-      }
+    if (scratchQuat) {
+      computeSlotQuat(s);
+      s.mesh.quaternion.copy(scratchQuat);
     } else {
       s.mesh.rotation.set(s.rotX, s.rotY, s.rotZ);
     }

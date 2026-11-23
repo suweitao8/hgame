@@ -161,6 +161,7 @@ export function createEffectPlayer({
   const scratchTintA = [1, 1, 1];
   const scratchTintB = [1, 1, 1];
   const scratchTintOut = [1, 1, 1];
+  const scratchColorRgba = new Float32Array(4);
   const scratchTrailMult = [1, 1, 1];
   const scratchTrailLife = new Float32Array(4);
   const scratchTrailPartLife = new Float32Array(4);
@@ -181,6 +182,13 @@ export function createEffectPlayer({
       out[0] = 1;
       out[1] = 1;
       out[2] = 1;
+      return out;
+    }
+    if (Array.isArray(startColor) && startColor.length >= 1 && Array.isArray(startColor[0]) && typeof startColor[0][0] === 'number' && Array.isArray(startColor[0][1])) {
+      evaluateColorCurve(startColor, prng.nextFloat(), scratchColorRgba);
+      out[0] = scratchColorRgba[0];
+      out[1] = scratchColorRgba[1];
+      out[2] = scratchColorRgba[2];
       return out;
     }
     if (Array.isArray(startColor) && startColor.length === 2 && (Array.isArray(startColor[0]) || typeof startColor[0] === 'string' || typeof startColor[0] === 'number')) {
@@ -1055,7 +1063,7 @@ export function createEffectPlayer({
   const scratchRowUv = [0, 0, 1, 1];
   const scratchRowFb = { cols: 1, rows: 1, cycles: 1, blend: true, region: '' };
 
-  function resolveFlipbookAndUv(layer) {
+  function resolveFlipbookAndUv(layer, rawDur = 1) {
     const fb = layer.flipbook;
     const uvRect = Array.isArray(layer.uvRect) && layer.uvRect.length >= 4 ? layer.uvRect : undefined;
     if (!fb) {
@@ -1066,7 +1074,8 @@ export function createEffectPlayer({
     const mode = fb.rowMode || 'grid';
     const hasRowSelect = rows > 1 && (mode === 'random' || fb.rowIndex !== undefined);
     const isStaticFrame = fb.cycles !== undefined && fb.cycles <= 0;
-    if (!hasRowSelect && !isStaticFrame) {
+    const hasFps = fb.fps > 0 && !isStaticFrame;
+    if (!hasRowSelect && !isStaticFrame && !hasFps) {
       return { flipbook: fb, uvRect };
     }
     const regKey = fb.region || layer.sprite;
@@ -1101,13 +1110,18 @@ export function createEffectPlayer({
       outCols = 1;
       outRows = 1;
     }
+    const totalFrames = outCols * outRows;
     scratchRowUv[0] = u0;
     scratchRowUv[1] = v0;
     scratchRowUv[2] = u1;
     scratchRowUv[3] = v1;
     scratchRowFb.cols = outCols;
     scratchRowFb.rows = outRows;
-    scratchRowFb.cycles = isStaticFrame ? 1 : (fb.cycles ?? 1);
+    scratchRowFb.cycles = isStaticFrame
+      ? 1
+      : hasFps
+        ? Math.max(0.01, (fb.fps * rawDur) / Math.max(1, totalFrames))
+        : (fb.cycles ?? 1);
     scratchRowFb.blend = fb.blend;
     scratchRowFb.region = regKey || '';
     return { flipbook: scratchRowFb, uvRect: scratchRowUv };
@@ -1156,6 +1170,9 @@ export function createEffectPlayer({
     const noiseScroll = Math.max(0, Number(layer.noise?.scrollSpeed ?? 0)) * simSpd;
     const noiseDamp = Boolean(layer.noise?.damping);
     const phase = prng.nextFloat();
+    const flipX = layer.flip?.[0] > 0 && prng.nextFloat() < layer.flip[0] ? -1 : 1;
+    const flipY = layer.flip?.[1] > 0 && prng.nextFloat() < layer.flip[1] ? -1 : 1;
+    const flipZ = layer.flip?.[2] > 0 && prng.nextFloat() < layer.flip[2] ? -1 : 1;
 
     const rawOrbX = layer.velocity?.orbitalX ?? layer.velocity?.orbital?.[0] ?? 0;
     const rawOrbY = layer.velocity?.orbitalY ?? layer.velocity?.orbital?.[1] ?? 0;
@@ -1266,7 +1283,8 @@ export function createEffectPlayer({
     if (layer._kind === 'mesh' || layer.renderMode === 'mesh') {
       if (!meshVfx) return;
       const alignDir = Boolean(layer.alignToVelocity || layer.shape?.alignToDirection);
-      const { flipbook, uvRect } = resolveFlipbookAndUv(layer);
+      const hasTrRot = Array.isArray(layer.transformRot) && layer.transformRot.length >= 4;
+      const { flipbook, uvRect } = resolveFlipbookAndUv(layer, rawDur);
       const atlasTexture = atlasParticles?.texture;
       const regionKey = flipbook?.region || layer.sprite;
       const atlasRegion = atlasTexture && (atlasParticles.regions?.[regionKey]
@@ -1302,11 +1320,15 @@ export function createEffectPlayer({
         aspectY: layer.aspectY ?? 1.0,
         aspectZ: layer.aspectZ ?? 1.0,
         rotX: rotX0,
-        rotY: Math.abs(Math.sin(rotX0)) > 0.5 ? rotY0 : (rot0 || rotY0),
-        rotZ: readRange(layer.rotZ, 0, 0, prng) + (Math.abs(Math.sin(rotX0)) > 0.5 ? rot0 : 0),
+        rotY: hasTrRot ? rotY0 : (Math.abs(Math.sin(rotX0)) > 0.5 ? rotY0 : (rot0 || rotY0)),
+        rotZ: readRange(layer.rotZ, 0, 0, prng) + (hasTrRot || Math.abs(Math.sin(rotX0)) > 0.5 ? rot0 : 0),
         spinX,
-        spinY: Math.abs(Math.sin(rotX0)) > 0.5 ? spinY : (layer.spin?.[1] !== undefined ? spinY : angVel),
-        spinZ: spinZ + (Math.abs(Math.sin(rotX0)) > 0.5 ? angVel : 0),
+        spinY: hasTrRot ? spinY : (Math.abs(Math.sin(rotX0)) > 0.5 ? spinY : (layer.spin?.[1] !== undefined ? spinY : angVel)),
+        spinZ: spinZ + (hasTrRot || Math.abs(Math.sin(rotX0)) > 0.5 ? angVel : 0),
+        transformRot: hasTrRot ? layer.transformRot : null,
+        flipX,
+        flipY,
+        flipZ,
         alignToVelocity: alignDir,
         forwardAxis: layer.forwardAxis,
         space: isLocalSpace ? 'local' : 'world',
@@ -1385,7 +1407,7 @@ export function createEffectPlayer({
       || Boolean(layer.trail && layer.clampVelocity)
       || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)
       || lightSlotIdx >= 0;
-    const { flipbook: resolvedFb, uvRect: resolvedUv } = resolveFlipbookAndUv(layer);
+    const { flipbook: resolvedFb, uvRect: resolvedUv } = resolveFlipbookAndUv(layer, rawDur);
     const atlasSlot = (!isNoneRender && atlasParticles)
       ? atlasParticles.emit({
           x: scratchPos[0],
@@ -1414,6 +1436,8 @@ export function createEffectPlayer({
           rotY: rotY0,
           spinX,
           spinY,
+          flipX,
+          flipY,
           hdr: layer.hdr ?? 1.0,
           tintRgb24,
           orbitalY,
@@ -1785,12 +1809,14 @@ export function createEffectPlayer({
           const cycles = burst.cycles === 0 ? Infinity : Math.max(1, burst.cycles ?? 1);
           const interval = Math.max(0.01, (burst.interval ?? 0.01) / simSpd);
           while (ls.burstCyclesDone[b] < cycles && localAge >= ls.burstNextTime[b] && (cycles !== Infinity || ls.burstNextTime[b] < layerDur + 1e-4)) {
-            const rawCount = readRange(burst.count, 1, 1, prng);
-            const count = layer._shurikenLayer
-              ? Math.max(rawCount > 0 && emScale > 0 ? 1 : 0, Math.round(rawCount * emScale))
-              : Math.max(1, Math.round(rawCount));
-            for (let c = 0; c < count; c++) {
-              tryEmitWithCap(layer, ls, slot);
+            if (burst.probability === undefined || burst.probability >= 1 || prng.nextFloat() <= burst.probability) {
+              const rawCount = readRange(burst.count, 1, 1, prng);
+              const count = layer._shurikenLayer
+                ? Math.max(rawCount > 0 && emScale > 0 ? 1 : 0, Math.round(rawCount * emScale))
+                : Math.max(0, Math.round(rawCount));
+              for (let c = 0; c < count; c++) {
+                tryEmitWithCap(layer, ls, slot);
+              }
             }
             ls.burstCyclesDone[b] += 1;
             ls.burstNextTime[b] += interval;
@@ -1798,7 +1824,10 @@ export function createEffectPlayer({
         }
       }
 
-      const rate = (layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0) * simSpd * emScale;
+      const rateMult = Array.isArray(layer.rateCurve)
+        ? Math.max(0, evaluateSizeCurve(layer.rateCurve, Math.min(1, localAge / layerDur)))
+        : 1;
+      const rate = (layer.rate !== undefined ? readRange(layer.rate, 0, 0, prng) : 0) * rateMult * simSpd * emScale;
       if (rate > 0) {
         if (layerLoop || localAge <= layerDur) {
           if (dt > 0) ls.rateAccum += rate * dt;
