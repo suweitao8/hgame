@@ -2232,6 +2232,21 @@ button { color: inherit; }
 .assets-stage-body .asset-model-panel {
   flex: 1;
   min-height: 0;
+  place-items: stretch;
+}
+.assets-stage-body .asset-model-empty {
+  align-self: center;
+  justify-self: center;
+}
+.assets-stage-body .asset-model-stage {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.assets-stage-body .asset-model-uv-canvas {
+  align-self: center;
+  justify-self: center;
+  max-height: 100%;
 }
 @media (max-width: 960px) {
   .hgame-controls {

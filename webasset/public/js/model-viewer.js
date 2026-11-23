@@ -33,6 +33,13 @@ export class CharacterModelViewer {
         }
       });
     }
+    this.gridHelper?.geometry?.dispose();
+    if (this.gridHelper?.material) {
+      for (const m of Array.isArray(this.gridHelper.material) ? this.gridHelper.material : [this.gridHelper.material]) {
+        m.dispose();
+      }
+    }
+    this.gridHelper = null;
     this.renderer?.dispose();
     this.renderer?.forceContextLoss();
     this.stage.replaceChildren();
@@ -102,6 +109,12 @@ export class CharacterModelViewer {
     const bounds = new THREE.Box3().setFromObject(this.gltf.scene);
     const center = bounds.isEmpty() ? new THREE.Vector3() : bounds.getCenter(new THREE.Vector3());
     const size = Math.max(bounds.isEmpty() ? 1 : bounds.getSize(new THREE.Vector3()).length(), 0.1);
+    const groundY = bounds.isEmpty() ? 0 : bounds.min.y;
+    const gridSpan = Math.max(2, Number((size * 3.5).toFixed(2)));
+    const gridHelper = new THREE.GridHelper(gridSpan, 20, 0x627a5d, 0x2f3b31);
+    gridHelper.position.set(center.x, groundY, center.z);
+    scene.add(gridHelper);
+    this.gridHelper = gridHelper;
     const camera = new THREE.PerspectiveCamera(40, 1, Math.max(size / 10000, 0.001), size * 100);
     camera.position.copy(center).add(new THREE.Vector3(size * 0.9, size * 0.4, size * 1.25));
     const renderer = new THREE.WebGLRenderer({ alpha: false, antialias: true, powerPreference: 'default' });
