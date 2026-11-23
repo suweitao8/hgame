@@ -18,6 +18,12 @@ PC 和手机都可显示动作按键。手机把可交互按钮放在右下，�
 战斗和菜单分别注册输入上下文。进入菜单后，确认与取消使用菜单绑定，关闭菜单后恢复战斗绑定。切换时先让复用的已按下键释放，避免一次按键跨界面触发两次。触屏点菜单按钮时走同一确认或取消动作。
 
 
+## 动作原型接入
+
+`action-2d` 默认用 `createActionGameControls` 和 `createTouchControls({ controls: controls.touchPlayer, buttonLayout: 'action' })`。轮询时传入 `combat` 或 `menu`，每个固定步采样一次。两种模式共用键位状态，在切换时阻断已经按住的动作。触屏短按会保留到下一次固定步，背景失焦会释放触屏输入。
+
+默认动作原型只装配攻击、冲刺。游戏在实现相应技能后可在 `actions` 中启用 `skill1` 到 `skill4`。按键提示用 `getGlyph(action)` 读取当前设备的主键。手机战斗时显示固定左摇杆和右侧动作键，菜单直接点按钮。桌面可用 `?touch=1` 预览触屏控件。
+
 ## 接入
 
 从 `vendor/hgame/platform/input.js` 导入 `createSinglePlayerInput`。

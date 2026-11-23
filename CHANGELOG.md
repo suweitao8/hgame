@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a reusable single-player action control preset with keyboard, analog gamepad, touch, and menu routing. Adopt it in the generated 2D action archetype.
+
 - Sample arcade input before movement in the generated action, horde, and 3D arena archetypes, and use the seeded RNG API for enemy spawns.
 
 - Add optional single-player keyboard and standard-gamepad action routing with device-aware glyphs and localized inline prompts.

@@ -17,7 +17,7 @@
  */
 export function applyRadialDeadzone(dx: number, dy: number, radius: number, deadzone?: number | undefined): RadialDeadzoneResult;
 /** @typedef {'touch-only' | 'always' | 'hidden'} TouchControlsMode */
-/** @typedef {'arc' | 'grid' | 'portrait-arc'} TouchButtonLayout */
+/** @typedef {'arc' | 'grid' | 'portrait-arc' | 'action'} TouchButtonLayout */
 /**
  * One action button binding of a player controller (from createArcadeControls).
  * @typedef {object} TouchControlsBinding
@@ -101,7 +101,7 @@ export type RadialDeadzoneResult = {
     knobY: number;
 };
 export type TouchControlsMode = "touch-only" | "always" | "hidden";
-export type TouchButtonLayout = "arc" | "grid" | "portrait-arc";
+export type TouchButtonLayout = "arc" | "grid" | "portrait-arc" | "action";
 /**
  * One action button binding of a player controller (from createArcadeControls).
  */

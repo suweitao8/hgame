@@ -4,6 +4,16 @@ import { computeThumbArcLayout } from '../ui/thumb-arc.js';
 const STYLE_ATTR = 'data-hgame-touch-controls';
 const DEFAULT_BUTTON_DIAMETER = 52;
 
+const ACTION_COORDS = Object.freeze({
+  j: { right: 20, bottom: 8, size: 76 },
+  k: { right: 8, bottom: 90, size: 48 },
+  l: { right: 114, bottom: 8, size: 48 },
+  u: { right: 114, bottom: 62, size: 48 },
+  i: { right: 108, bottom: 116, size: 48 },
+  o: { right: 56, bottom: 144, size: 48 },
+});
+const BUTTON_LAYOUTS = ['arc', 'grid', 'portrait-arc', 'action'];
+
 const ARC_COORDS = Object.freeze({
   j: Object.freeze({ right: 8, bottom: 8, size: 64, primary: true }),
   k: Object.freeze({ right: 84, bottom: 14, size: 52, primary: false }),
@@ -242,7 +252,7 @@ function injectStylesheet(documentRef) {
 }
 
 /** @typedef {'touch-only' | 'always' | 'hidden'} TouchControlsMode */
-/** @typedef {'arc' | 'grid' | 'portrait-arc'} TouchButtonLayout */
+/** @typedef {'arc' | 'grid' | 'portrait-arc' | 'action'} TouchButtonLayout */
 
 /**
  * One action button binding of a player controller (from createArcadeControls).
@@ -333,8 +343,8 @@ export function createTouchControls({
   if (joystick !== 'floating' && joystick !== 'fixed' && joystick !== false) {
     throw new RangeError('Touch controls joystick must be "floating", "fixed", or false');
   }
-  if (buttonLayout !== 'arc' && buttonLayout !== 'grid' && buttonLayout !== 'portrait-arc') {
-    throw new RangeError('Touch controls buttonLayout must be "arc", "grid", or "portrait-arc"');
+  if (!BUTTON_LAYOUTS.includes(buttonLayout)) {
+    throw new RangeError('Touch controls buttonLayout must be "arc", "grid", "portrait-arc", or "action"');
   }
   if (!Number.isFinite(joystickRadius) || joystickRadius < 16 || joystickRadius > 240) {
     throw new RangeError('joystickRadius must be in 16..240');
@@ -615,7 +625,7 @@ export function createTouchControls({
       }
       return;
     }
-    const table = currentLayout === 'grid' ? GRID_COORDS : ARC_COORDS;
+    const table = { action: ACTION_COORDS, grid: GRID_COORDS, arc: ARC_COORDS }[currentLayout];
     for (const pane of panes) {
       for (const btn of pane.buttonList) {
         const spec = table[btn.binding.slot] ?? { right: 8, bottom: 8, size: DEFAULT_BUTTON_DIAMETER };
@@ -709,8 +719,8 @@ export function createTouchControls({
       syncVisibility();
     },
     setButtonLayout(nextLayout) {
-      if (nextLayout !== 'arc' && nextLayout !== 'grid' && nextLayout !== 'portrait-arc') {
-        throw new RangeError('Touch controls buttonLayout must be "arc", "grid", or "portrait-arc"');
+      if (!BUTTON_LAYOUTS.includes(nextLayout)) {
+        throw new RangeError('Touch controls buttonLayout must be "arc", "grid", "portrait-arc", or "action"');
       }
       currentLayout = nextLayout;
       applyButtonPositions();

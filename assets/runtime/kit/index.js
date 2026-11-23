@@ -20,6 +20,7 @@ export {
   createBlueprintFromIdea,
 } from './blueprint.js';
 export { createGameSession } from './game-session.js';
+export { createActionGameControls } from './action-game-controls.js';
 export { mountGameShell } from './game-shell-dom.js';
 export {
   REQUIRED_DESIGN_DOCS,

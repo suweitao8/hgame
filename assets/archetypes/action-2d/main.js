@@ -6,8 +6,8 @@ const [
   { createGameApplication }, { defineProject }, { Component }, { Entity }, { Scene },
   { createWebGL2DAdapter, Sprite2D, SpriteCrowd2D },
   { createVfxSystem },
-  { createArcadeControls }, { createTouchControls },
-  { defineGameBlueprint, getArtTheme, createGameSession, mountGameShell },
+  { createTouchControls },
+  { defineGameBlueprint, getArtTheme, createGameSession, createActionGameControls, mountGameShell },
 ] = await Promise.all([
   fetch('./game.config.json').then(r => r.json()),
   fetch('./engine.config.json').then(r => r.json()),
@@ -19,7 +19,6 @@ const [
   import(base + '/core/scene.js'),
   import(base + '/integrations/webgl2d.js'),
   import(base + '/vfx/index.js'),
-  import(base + '/platform/input/arcade.js'),
   import(base + '/integrations/touch-controls.js'),
   import(base + '/kit/index.js'),
 ]);
@@ -65,14 +64,34 @@ const session = createGameSession({
   },
 });
 
-const arcade = createArcadeControls({
+const controls = createActionGameControls({
   input: app.input,
-  actions: [
-    { name: 'attack', label: 'ATK', slot: 'j' },
-    { name: 'dash', label: 'DASH', slot: 'k' },
-  ],
+  onDisconnect: () => session.pause(),
 });
-const touch = createTouchControls({ controls: arcade.p1, container: document.body, mode: 'touch-only' });
+const touchMode = new URLSearchParams(location.search).get('touch') === '1' ? 'always' : 'touch-only';
+const touch = createTouchControls({
+  controls: controls.touchPlayer, mode: 'hidden', joystick: 'fixed',
+  joystickRadius: 44, buttonLayout: 'action',
+});
+const syncTouch = () => touch.setMode(session.state.phase === 'playing' ? touchMode : 'hidden');
+const removePhaseListener = session.director.onPhaseChange(syncTouch);
+syncTouch();
+let hintDevice = '';
+
+function updateMenuInput(phase) {
+  if (phase === 'choice') {
+    const cards = Array.from(shell.hud.querySelectorAll('[data-upgrade]'));
+    let selected = cards.indexOf(document.activeElement);
+    if (controls.wasPressed('next')) cards[(selected + 1) % cards.length]?.focus();
+    if (controls.wasPressed('previous')) cards[(selected <= 0 ? cards.length : selected) - 1]?.focus();
+    selected = cards.indexOf(document.activeElement);
+    if (controls.wasPressed('confirm')) cards[Math.max(0, selected)]?.click();
+    return;
+  }
+  if (phase === 'title' && controls.wasPressed('confirm')) session.startRun();
+  if (phase === 'paused' && (controls.wasPressed('confirm') || controls.wasPressed('cancel'))) session.resume();
+  if (phase === 'result' && controls.wasPressed('confirm')) session.restart();
+}
 
 const scene = app.scenes.add(new Scene('main'));
 const world = scene.add(new Entity({ name: 'world' }));
@@ -137,9 +156,24 @@ function fireBolt(tx, ty) {
 
 player.addComponent(new class extends Component {
   fixedUpdate(dt) {
-    arcade.update(dt);
-    if (session.state.phase !== 'playing') return;
-    const mv = arcade.p1.move;
+    const phase = session.state.phase;
+    controls.update(dt, phase === 'playing' ? 'combat' : 'menu');
+    if (phase !== 'playing') {
+      if (shell && phase === session.state.phase) updateMenuInput(phase);
+      return;
+    }
+    if (phase !== session.state.phase || controls.wasPressed('pause')) {
+      session.pause();
+      return;
+    }
+    if (shell && hintDevice !== controls.device) {
+      hintDevice = controls.device;
+      const movement = hintDevice === 'keyboard' ? 'WASD' : '◉';
+      const attack = controls.getGlyph('attack');
+      const dash = controls.getGlyph('dash');
+      shell.hud.querySelector('[data-ui-hint]').textContent = [movement, attack, dash].filter(Boolean).join(' · ');
+    }
+    const mv = controls.move;
     const dx = mv.x;
     const dy = mv.y;
     const mag = Math.hypot(dx, dy);
@@ -151,7 +185,7 @@ player.addComponent(new class extends Component {
 
     dashTimer = Math.max(0, dashTimer - dt);
     dashBurst = Math.max(0, dashBurst - dt);
-    if (arcade.p1.wasPressed('dash') && dashTimer <= 0) {
+    if (controls.wasPressed('dash') && dashTimer <= 0) {
       dashTimer = runtimeStats.dashCooldown;
       dashBurst = 0.16;
       session.audio.play('dash');
@@ -160,8 +194,8 @@ player.addComponent(new class extends Component {
 
     const speed = runtimeStats.moveSpeed * (dashBurst > 0 ? 2.4 : 1);
     if (mag > 0.01) {
-      player.x = Math.max(-halfSpanPx, Math.min(halfSpanPx, player.x + (dx / mag) * speed * dt));
-      player.y = Math.max(-halfSpanPx, Math.min(halfSpanPx, player.y + (dy / mag) * speed * dt));
+      player.x = Math.max(-halfSpanPx, Math.min(halfSpanPx, player.x + dx * speed * dt));
+      player.y = Math.max(-halfSpanPx, Math.min(halfSpanPx, player.y + dy * speed * dt));
     }
 
     spawnTimer -= dt;
@@ -171,7 +205,7 @@ player.addComponent(new class extends Component {
     }
 
     fireTimer -= dt;
-    if (fireTimer <= 0 || arcade.p1.wasPressed('attack')) {
+    if (fireTimer <= 0 || controls.wasPressed('attack')) {
       let bestDist = Infinity;
       let tx = aimX;
       let ty = aimY;
@@ -179,7 +213,7 @@ player.addComponent(new class extends Component {
         const d = Math.hypot(e.x - player.x, e.y - player.y);
         if (d < bestDist) { bestDist = d; tx = e.x - player.x; ty = e.y - player.y; }
       }
-      if (bestDist < 420 || arcade.p1.isDown('attack')) {
+      if (bestDist < 420 || controls.isDown('attack')) {
         fireBolt(tx, ty);
         fireTimer = runtimeStats.fireInterval;
       }
@@ -252,7 +286,9 @@ window.__hgameState = () => ({ ...session.snapshot(), player: { x: player.x, y: 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;
   window.removeEventListener('pagehide', onPageHide);
+  removePhaseListener();
   touch.dispose();
+  controls.dispose();
   shell.dispose();
   session.dispose();
   vfx.dispose();

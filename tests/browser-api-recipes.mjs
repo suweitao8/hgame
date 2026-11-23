@@ -62,11 +62,19 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('response', response => { if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) errors.push(`${response.status()} ${response.url()}`); });
+    if (name === 'action-2d') await page.addInitScript(() => {
+      const pad = window.__recipePad = {
+        index: 0, id: 'Xbox', mapping: 'standard', connected: true, axes: [0, 0],
+        buttons: Array.from({ length: 16 }, () => ({ value: 0 })),
+      };
+      Object.defineProperty(navigator, 'getGamepads', { value: () => [pad] });
+    });
     await page.goto(url);
     await page.waitForFunction(() => typeof window.__hgameState === 'function', null, { timeout: 10000 })
       .catch(error => { throw new Error(`${name}: ${errors.join('; ')} ${error.message}`); });
     if (isArchetype) {
-      await page.locator('#start').click({ timeout: 3000 });
+      if (name === 'action-2d') await page.keyboard.press('j', { delay: 80 });
+      else await page.locator('#start').click({ timeout: 3000 });
       await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 3000 });
     }
     const before = await page.evaluate(() => window.__hgameState());
@@ -94,6 +102,49 @@ try {
     }
     assert.deepEqual(errors, [], `${name} errors`);
     console.log(JSON.stringify({ browser: browserName, version: browser.version(), recipe: name, before, after, errors }));
+    if (name === 'action-2d') {
+      await page.evaluate(() => { window.__recipePad.axes[0] = 0.65; });
+      await page.waitForFunction(x => window.__hgameState().player.x > x, after.player.x, { timeout: 5000 });
+      await page.evaluate(() => {
+        window.__recipePad.axes[0] = 0;
+        window.__recipePad.buttons[1].value = 1;
+      });
+      await page.waitForFunction(() => window.__hgameState().phase === 'paused', null, { timeout: 3000 });
+      await page.evaluate(() => {
+        window.__recipePad.buttons[1].value = 0;
+        window.__recipePad.buttons[0].value = 1;
+      });
+      await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 3000 });
+      await page.evaluate(() => { window.__recipePad.buttons[0].value = 0; });
+      if (browserName === 'chromium') {
+        const cdp = await page.context().newCDPSession(page);
+        await page.setViewportSize({ width: 360, height: 800 });
+        await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 8, y: 8 }] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        const joystick = page.locator('.hgame-joy-base');
+        const attack = page.locator('.hgame-skill-btn[data-action="attack"]');
+        const dash = page.locator('.hgame-skill-btn[data-action="dash"]');
+        await joystick.waitFor({ timeout: 3000 });
+        const stick = await joystick.boundingBox();
+        const large = await attack.boundingBox();
+        const small = await dash.boundingBox();
+        assert.ok(stick.x + stick.width < 180 && large.x > 180 && small.x > large.x);
+        assert.ok(large.width > small.width && small.width >= 48 && small.y < large.y);
+        const start = { x: stick.x + stick.width / 2, y: stick.y + stick.height / 2, id: 1 };
+        const fire = { x: large.x + large.width / 2, y: large.y + large.height / 2, id: 2 };
+        const x = await page.evaluate(() => window.__hgameState().player.x);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [start, fire] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...start, x: start.x + 34 }, fire] });
+        await page.waitForFunction(x => window.__hgameState().player.x > x, x, { timeout: 3000 });
+        assert.equal(await attack.getAttribute('data-active'), 'true');
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        assert.equal(await attack.getAttribute('data-active'), 'false');
+        await cdp.detach();
+      }
+      assert.deepEqual(errors, [], 'action gamepad movement, menu, and touch');
+    }
     if (name === '2d') {
       // Exercise real localStorage across navigation, then repair a corrupted primary.
       await page.evaluate(async () => {
