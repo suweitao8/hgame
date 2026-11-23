@@ -16,7 +16,6 @@ const RAW_PBR_CACHE = path.join(CN_ROOT, 'raw', 'pbr_cache');
 const RAW_MANUAL_DIR = path.join(CN_ROOT, 'raw', 'cn_textures_manual');
 
 const BUILT_MATERIALS = path.join(CN_ROOT, 'built', 'materials');
-const BUILT_GLASS_MAPS = path.join(CN_ROOT, 'built', 'shader_maps', 'glass');
 const BUILT_PBR_DECALS = path.join(CN_ROOT, 'built', 'pbr_decals');
 const BUILT_PBR_FOLIAGE = path.join(CN_ROOT, 'built', 'pbr_foliage');
 
@@ -28,12 +27,27 @@ const isPow2 = (n) => n > 0 && (n & (n - 1)) === 0;
 
 function parseArgs(argv) {
   let vaultDir = '';
+  let glassStagingDir = '';
   let materialsOnly = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--vault' && argv[i + 1]) vaultDir = path.resolve(argv[++i]);
+    else if (argv[i] === '--glass-staging' && argv[i + 1]) glassStagingDir = path.resolve(argv[++i]);
     else if (argv[i] === '--materials-only') materialsOnly = true;
   }
-  return { vaultDir, materialsOnly };
+  return { vaultDir, glassStagingDir, materialsOnly };
+}
+
+async function resolveGlassStagingDir(explicit) {
+  if (explicit) return explicit;
+  if (process.env.HGAME_GLASS_STAGING_DIR?.trim()) return path.resolve(process.env.HGAME_GLASS_STAGING_DIR.trim());
+  const localCfgPath = path.join(REPO_ROOT, '.hgame.local.json');
+  if (existsSync(localCfgPath)) {
+    const cfg = JSON.parse(await readFile(localCfgPath, 'utf8'));
+    if (typeof cfg?.unrealGlassStagingDir === 'string' && cfg.unrealGlassStagingDir.trim()) {
+      return path.resolve(cfg.unrealGlassStagingDir.trim());
+    }
+  }
+  throw new Error('Missing Unreal AdvancedGlassPack staging directory. Pass --glass-staging <dir> or set unrealGlassStagingDir in .hgame.local.json.');
 }
 
 async function resolveVaultDir(explicit) {
@@ -355,48 +369,82 @@ function buildProceduralDerivedSlot(entry, baseBufs, size) {
   return { color, normalRm, width: size, height: size };
 }
 
-function hash2d(ix, iy, seed = 1) {
-  let h = (Math.imul(ix | 0, 374761393) + Math.imul(iy | 0, 668265263) + Math.imul(seed | 0, 1442695041)) | 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-
-function periodicNoise(u, v, period = 8, seed = 1) {
-  const x = u * period;
-  const y = v * period;
-  const x0 = Math.floor(x);
-  const y0 = Math.floor(y);
-  const fx = x - x0;
-  const fy = y - y0;
-  const sx = fx * fx * (3 - 2 * fx);
-  const sy = fy * fy * (3 - 2 * fy);
-  const ix0 = ((x0 % period) + period) % period;
-  const iy0 = ((y0 % period) + period) % period;
-  const ix1 = (ix0 + 1) % period;
-  const iy1 = (iy0 + 1) % period;
-  const a = hash2d(ix0, iy0, seed);
-  const b = hash2d(ix1, iy0, seed);
-  const c = hash2d(ix0, iy1, seed);
-  const d = hash2d(ix1, iy1, seed);
-  return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
-}
-
-function periodicFbm(u, v, basePeriod = 6, octaves = 4, seed = 1) {
-  let sum = 0;
-  let amp = 0.5;
-  let norm = 0;
-  let p = basePeriod;
-  for (let o = 0; o < octaves; o++) {
-    sum += periodicNoise(u, v, p, seed + o * 97) * amp;
-    norm += amp;
-    amp *= 0.5;
-    p *= 2;
+function measureNormalConvention(normRgba, width, height) {
+  let curlSum = 0;
+  let curlEnergy = 0;
+  for (let y = 2; y < height - 2; y += 2) {
+    for (let x = 2; x < width - 2; x += 2) {
+      const nx = (px, py) => (normRgba[(py * width + px) * 4] / 127.5) - 1;
+      const ny = (px, py) => (normRgba[(py * width + px) * 4 + 1] / 127.5) - 1;
+      const a = nx(x, y + 1) - nx(x, y - 1);
+      const b = ny(x + 1, y) - ny(x - 1, y);
+      curlSum += a * b;
+      curlEnergy += Math.abs(a * b);
+    }
   }
-  return sum / norm;
+  const ratio = curlEnergy > 0.25 ? curlSum / curlEnergy : 0;
+  if (ratio > 0.12) return 'DX_-Y';
+  if (ratio < -0.12) return 'GL_+Y';
+  return 'FLAT';
 }
 
-function heightFieldToOpenGlNormalRm(heights, roughs, metals, size, strength = 2.4) {
-  const normalRm = new Uint8Array(size * size * 4);
+async function loadUnrealNormalOpenGl(fp, targetSize, { tileRepeat = 1, strength = 1.0 } = {}) {
+  const { data, info } = await sharp(fp).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const conv = measureNormalConvention(data, info.width, info.height);
+  const flipY = conv === 'DX_-Y';
+  const tileSize = Math.max(1, Math.round(targetSize / tileRepeat));
+  let src = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  if (info.width !== tileSize || info.height !== tileSize) {
+    const r = await resizeBufferNoPremultiply(src, info.width, info.height, 4, tileSize, tileSize, sharp.kernel.lanczos3);
+    src = new Uint8Array(r.buffer, r.byteOffset, r.byteLength);
+  }
+  const out = new Uint8Array(targetSize * targetSize * 4);
+  for (let y = 0; y < targetSize; y++) {
+    const sy = y % tileSize;
+    for (let x = 0; x < targetSize; x++) {
+      const sx = x % tileSize;
+      const si = (sy * tileSize + sx) * 4;
+      const di = (y * targetSize + x) * 4;
+      const rx = (src[si] / 127.5 - 1) * strength;
+      const ry = ((flipY ? 255 - src[si + 1] : src[si + 1]) / 127.5 - 1) * strength;
+      const rz = src[si + 2] / 127.5 - 1;
+      const len = Math.hypot(rx, ry, rz) || 1;
+      out[di] = Math.round(clamp01((rx / len + 1) * 0.5) * 255);
+      out[di + 1] = Math.round(clamp01((ry / len + 1) * 0.5) * 255);
+      out[di + 2] = Math.round(clamp01((rz / len + 1) * 0.5) * 255);
+      out[di + 3] = 255;
+    }
+  }
+  return out;
+}
+
+async function loadUnrealRgba(fp, targetSize, { tileRepeat = 1 } = {}) {
+  const { data, info } = await sharp(fp).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const tileSize = Math.max(1, Math.round(targetSize / tileRepeat));
+  let src = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  if (info.width !== tileSize || info.height !== tileSize) {
+    const r = await resizeBufferNoPremultiply(src, info.width, info.height, 4, tileSize, tileSize, sharp.kernel.lanczos3);
+    src = new Uint8Array(r.buffer, r.byteOffset, r.byteLength);
+  }
+  if (tileRepeat === 1) return src;
+  const out = new Uint8Array(targetSize * targetSize * 4);
+  for (let y = 0; y < targetSize; y++) {
+    const sy = y % tileSize;
+    for (let x = 0; x < targetSize; x++) {
+      const sx = x % tileSize;
+      const si = (sy * tileSize + sx) * 4;
+      const di = (y * targetSize + x) * 4;
+      out[di] = src[si];
+      out[di + 1] = src[si + 1];
+      out[di + 2] = src[si + 2];
+      out[di + 3] = src[si + 3];
+    }
+  }
+  return out;
+}
+
+function heightFieldToOpenGlNormal(heights, size, strength = 2.4) {
+  const out = new Uint8Array(size * size * 4);
   for (let y = 0; y < size; y++) {
     const ym = (y - 1 + size) % size;
     const yp = (y + 1) % size;
@@ -413,152 +461,202 @@ function heightFieldToOpenGlNormalRm(heights, roughs, metals, size, strength = 2
       ny /= len;
       nz /= len;
       const i = (y * size + x) * 4;
-      normalRm[i] = Math.round(clamp01((nx + 1) * 0.5) * 255);
-      normalRm[i + 1] = Math.round(clamp01((ny + 1) * 0.5) * 255);
-      normalRm[i + 2] = Math.round(clamp01(roughs[y * size + x]) * 255);
-      normalRm[i + 3] = Math.round(clamp01(metals[y * size + x]) * 255);
+      out[i] = Math.round(clamp01((nx + 1) * 0.5) * 255);
+      out[i + 1] = Math.round(clamp01((ny + 1) * 0.5) * 255);
+      out[i + 2] = Math.round(clamp01((nz + 1) * 0.5) * 255);
+      out[i + 3] = 255;
     }
   }
-  return normalRm;
+  return out;
 }
 
-async function loadGlassShaderMap(fileName, targetSize) {
-  const fp = path.join(BUILT_GLASS_MAPS, fileName);
-  const { data, info } = await sharp(fp).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  if (info.width === targetSize && info.height === targetSize) {
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  }
-  const resized = await resizeBufferNoPremultiply(data, info.width, info.height, 4, targetSize, targetSize, sharp.kernel.lanczos3);
-  return new Uint8Array(resized.buffer, resized.byteOffset, resized.byteLength);
+function linRgbToSrgbBytes([r, g, b]) {
+  return [
+    Math.round(clamp01(linearToSrgb(r)) * 255),
+    Math.round(clamp01(linearToSrgb(g)) * 255),
+    Math.round(clamp01(linearToSrgb(b)) * 255),
+  ];
 }
 
-async function buildProceduralGlassSlot(entry, size) {
+// Replicate Unreal AdvancedGlassPack (01_Clean..05_Wet) into HGame 2-Map PBR (Color + Normal_RM OpenGL +Y)
+async function bakeUnrealGlassSlot(entry, glassStagingDir, size) {
   const nPix = size * size;
   const color = new Uint8Array(nPix * 4);
+  const normalRm = new Uint8Array(nPix * 4);
+  const texPath = (name) => {
+    const fp = path.join(glassStagingDir, name);
+    if (!existsSync(fp)) throw new Error(`Missing AdvancedGlassPack texture "${name}" in ${glassStagingDir}`);
+    return fp;
+  };
 
-  if (entry.id === 'glass_clear') {
-    const heights = new Float32Array(nPix);
-    const roughs = new Float32Array(nPix);
-    const metals = new Float32Array(nPix);
-    for (let y = 0; y < size; y++) {
-      const v = y / size;
-      for (let x = 0; x < size; x++) {
-        const u = x / size;
-        const p = y * size + x;
-        const i = p * 4;
-        const micro = periodicFbm(u, v, 4, 3, 19);
-        const edge = Math.min(u, 1 - u, v, 1 - v);
-        const rim = edge < 0.025 ? (1 - edge / 0.025) * 0.14 : 0;
-        color[i] = Math.round((198 + micro * 16 - rim * 20) * 0.95);
-        color[i + 1] = Math.round((226 + micro * 14 - rim * 12) * 0.98);
-        color[i + 2] = Math.round(238 + micro * 12);
-        color[i + 3] = Math.round(clamp01(0.32 + rim * 0.35 + micro * 0.06) * 255);
-        heights[p] = micro * 0.12;
-        roughs[p] = clamp01(0.05 + micro * 0.03);
-        metals[p] = 0.06;
-      }
-    }
-    const normalRm = heightFieldToOpenGlNormalRm(heights, roughs, metals, size, 1.2);
-    return { color, normalRm, width: size, height: size };
-  }
-
-  if (entry.id === 'facade_curtain_glass') {
-    const heights = new Float32Array(nPix);
-    const roughs = new Float32Array(nPix);
-    const metals = new Float32Array(nPix);
-    for (let y = 0; y < size; y++) {
-      const v = y / size;
-      for (let x = 0; x < size; x++) {
-        const u = x / size;
-        const p = y * size + x;
-        const i = p * 4;
-        const gx = (u * 2) % 1;
-        const gy = (v * 2) % 1;
-        const isMullion = gx < 0.036 || gx > 0.964 || gy < 0.036 || gy > 0.964;
-        const n = periodicFbm(u, v, 6, 3, 47);
-        if (isMullion) {
-          color[i] = 58;
-          color[i + 1] = 66;
-          color[i + 2] = 76;
-          color[i + 3] = 255;
-          heights[p] = 0.85;
-          roughs[p] = 0.34;
-          metals[p] = 0.86;
-        } else {
-          const paneGrad = 0.88 + 0.12 * Math.sin((gx + gy) * Math.PI);
-          color[i] = Math.round((84 + n * 18) * paneGrad);
-          color[i + 1] = Math.round((134 + n * 20) * paneGrad);
-          color[i + 2] = Math.round((166 + n * 22) * paneGrad);
-          color[i + 3] = Math.round(clamp01(0.52 + n * 0.08) * 255);
-          heights[p] = 0.4 + n * 0.06;
-          roughs[p] = clamp01(0.07 + n * 0.04);
-          metals[p] = 0.18;
-        }
-      }
-    }
-    const normalRm = heightFieldToOpenGlNormalRm(heights, roughs, metals, size, 2.8);
-    return { color, normalRm, width: size, height: size };
-  }
-
-  if (entry.id === 'glass_frosted') {
-    const srcNormRm = await loadGlassShaderMap('glass_pattern_01_normal_rm.png', size);
-    const frostMask = await loadGlassShaderMap('glass_frost_mask.png', size);
-    const normalRm = new Uint8Array(nPix * 4);
+  if (entry.id === 'glass_clean') {
+    // M_Glass_CleanMaster: Color=[0.8861, 0.915, 0.9061], Color2=[0.1296, 0.32, 0.2131], Metallic=0.75, Roughness=0.0, Opacity=0.10
+    const [r, g, b] = linRgbToSrgbBytes([0.8861, 0.915, 0.9061]);
     for (let p = 0; p < nPix; p++) {
       const i = p * 4;
-      const m = frostMask[i] / 255;
-      color[i] = Math.round(196 + m * 32);
-      color[i + 1] = Math.round(218 + m * 24);
-      color[i + 2] = Math.round(228 + m * 20);
-      color[i + 3] = Math.round(clamp01(0.58 + m * 0.22) * 255);
-      normalRm[i] = srcNormRm[i];
-      normalRm[i + 1] = srcNormRm[i + 1];
-      normalRm[i + 2] = Math.round(clamp01(0.36 + m * 0.28) * 255);
-      normalRm[i + 3] = 12;
+      color[i] = r;
+      color[i + 1] = g;
+      color[i + 2] = b;
+      color[i + 3] = 46; // ~0.18 readable translucent sheet
+      normalRm[i] = 128;
+      normalRm[i + 1] = 128;
+      normalRm[i + 2] = 10; // 0.04 mirror-smooth glass
+      normalRm[i + 3] = 132; // ~0.52 metallic specular reflection boost
     }
     return { color, normalRm, width: size, height: size };
   }
 
-  if (entry.id === 'glass_rain') {
-    const rainMask = await loadGlassShaderMap('glass_rain_mask.png', size);
+  if (entry.id === 'glass_colored_blue') {
+    // M_Glass_ColoredBlue: Color=[0.2927, 0.5314, 0.611], Metallic=0.30, Roughness=0.05, Opacity=0.25
+    const [r, g, b] = linRgbToSrgbBytes([0.2927, 0.5314, 0.611]);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      color[i] = r;
+      color[i + 1] = g;
+      color[i + 2] = b;
+      color[i + 3] = 76; // ~0.30 tinted glass opacity
+      normalRm[i] = 128;
+      normalRm[i + 1] = 128;
+      normalRm[i + 2] = 13; // 0.05 roughness
+      normalRm[i + 3] = 77; // 0.30 metallic
+    }
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'glass_pattern_03a') {
+    // M_Glass_Pattern_03A: Color=[0.5376, 0.84, 0.7997], T_Pattern_03a_N (tiled 4x across 1m), Roughness=0.106, Metallic=0.68
+    const nMap = await loadUnrealNormalOpenGl(texPath('T_Pattern_03a_N.png'), size, { tileRepeat: 4, strength: 1.0 });
+    const [r, g, b] = linRgbToSrgbBytes([0.5376, 0.84, 0.7997]);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const nx = nMap[i] / 127.5 - 1;
+      const ny = nMap[i + 1] / 127.5 - 1;
+      const slope = Math.min(1, Math.hypot(nx, ny));
+      color[i] = Math.min(255, Math.round(r * (0.94 + slope * 0.14)));
+      color[i + 1] = Math.min(255, Math.round(g * (0.94 + slope * 0.14)));
+      color[i + 2] = Math.min(255, Math.round(b * (0.94 + slope * 0.14)));
+      color[i + 3] = Math.round(clamp01(0.22 + slope * 0.22) * 255);
+      normalRm[i] = nMap[i];
+      normalRm[i + 1] = nMap[i + 1];
+      normalRm[i + 2] = Math.round(clamp01(0.08 + slope * 0.14) * 255);
+      normalRm[i + 3] = 148; // ~0.58 metallic
+    }
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'glass_scratched_01') {
+    // M_Glass_Scratched_01: Color=[0.8861, 0.915, 0.9061], T_Scrachted_01_N (Intensity 0.7), Metallic=0.56, Roughness=0.05
+    const nMap = await loadUnrealNormalOpenGl(texPath('T_Scrachted_01_N.png'), size, { tileRepeat: 1, strength: 0.7 });
+    const [r, g, b] = linRgbToSrgbBytes([0.8861, 0.915, 0.9061]);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const nx = nMap[i] / 127.5 - 1;
+      const ny = nMap[i + 1] / 127.5 - 1;
+      const scratch = Math.min(1, Math.hypot(nx, ny) * 2.2);
+      color[i] = Math.round(mix(r, 248, scratch * 0.7));
+      color[i + 1] = Math.round(mix(g, 250, scratch * 0.7));
+      color[i + 2] = Math.round(mix(b, 252, scratch * 0.7));
+      color[i + 3] = Math.round(clamp01(0.18 + scratch * 0.38) * 255);
+      normalRm[i] = nMap[i];
+      normalRm[i + 1] = nMap[i + 1];
+      normalRm[i + 2] = Math.round(clamp01(0.05 + scratch * 0.34) * 255);
+      normalRm[i + 3] = Math.round(clamp01(mix(0.56, 0.14, scratch)) * 255);
+    }
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'glass_dirty_01') {
+    // M_Glass_Dirty_01: Color=[0.8861, 0.915, 0.9061], DirtColor=[0.60, 0.5695, 0.396], T_DirtMask_01.R (Contrast 1.18, Intensity 0.82, Dirt_Roughness 0.85)
+    const maskImg = await loadUnrealRgba(texPath('T_DirtMask_01.png'), size);
+    const cleanRgb = linRgbToSrgbBytes([0.8861, 0.915, 0.9061]);
+    const dirtRgb = linRgbToSrgbBytes([0.60, 0.5695, 0.396]);
     const heights = new Float32Array(nPix);
-    const roughs = new Float32Array(nPix);
-    const metals = new Float32Array(nPix);
     for (let p = 0; p < nPix; p++) {
-      const i = p * 4;
-      const drop = rainMask[i] / 255;
-      color[i] = Math.round(182 + drop * 48);
-      color[i + 1] = Math.round(208 + drop * 38);
-      color[i + 2] = Math.round(224 + drop * 28);
-      color[i + 3] = Math.round(clamp01(0.36 + drop * 0.34) * 255);
-      heights[p] = drop;
-      roughs[p] = clamp01(0.28 - drop * 0.22);
-      metals[p] = 0.08;
+      heights[p] = clamp01(((maskImg[p * 4] / 255) ** 1.18) * 0.82);
     }
-    const normalRm = heightFieldToOpenGlNormalRm(heights, roughs, metals, size, 3.2);
-    return { color, normalRm, width: size, height: size };
-  }
-
-  if (entry.id === 'glass_shattered') {
-    const srcNormRm = await loadGlassShaderMap('glass_shattered_01_normal_rm.png', size);
-    const crackMask = await loadGlassShaderMap('glass_shattered_mask.png', size);
-    const normalRm = new Uint8Array(nPix * 4);
+    const nMap = heightFieldToOpenGlNormal(heights, size, 1.4);
     for (let p = 0; p < nPix; p++) {
       const i = p * 4;
-      const crack = crackMask[i] / 255;
-      color[i] = Math.round(192 + crack * 56);
-      color[i + 1] = Math.round(216 + crack * 36);
-      color[i + 2] = Math.round(228 + crack * 24);
-      color[i + 3] = Math.round(clamp01(0.38 + crack * 0.56) * 255);
-      normalRm[i] = srcNormRm[i];
-      normalRm[i + 1] = srcNormRm[i + 1];
-      normalRm[i + 2] = Math.round(clamp01(0.08 + crack * 0.45) * 255);
-      normalRm[i + 3] = 16;
+      const d = heights[p];
+      color[i] = Math.round(mix(cleanRgb[0], dirtRgb[0], d));
+      color[i + 1] = Math.round(mix(cleanRgb[1], dirtRgb[1], d));
+      color[i + 2] = Math.round(mix(cleanRgb[2], dirtRgb[2], d));
+      color[i + 3] = Math.round(clamp01(mix(0.20, 0.78, d)) * 255);
+      normalRm[i] = nMap[i];
+      normalRm[i + 1] = nMap[i + 1];
+      normalRm[i + 2] = Math.round(clamp01(mix(0.10, 0.85, d)) * 255);
+      normalRm[i + 3] = Math.round(clamp01(mix(0.32, 0.02, d)) * 255);
     }
     return { color, normalRm, width: size, height: size };
   }
 
-  throw new Error(`Unknown procedural glass slot "${entry.id}"`);
+  if (entry.id === 'glass_frozen_01') {
+    // M_Glass_Frozen_01: Color=[0.7753, 0.7791, 0.915], T_Frost_01 + T_Frost_01_N (Frost_Intensity 1.4, Frost_Contrast 0.3, FrostNormal_Intensity 0.46)
+    const frostMask = await loadUnrealRgba(texPath('T_Frost_01.png'), size);
+    const nMap = await loadUnrealNormalOpenGl(texPath('T_Frost_01_N.png'), size, { tileRepeat: 1, strength: 0.65 });
+    const baseRgb = linRgbToSrgbBytes([0.7753, 0.7791, 0.915]);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const f = clamp01(((frostMask[i] / 255) ** 0.55) * 1.15);
+      color[i] = Math.round(mix(baseRgb[0], 242, f * 0.78));
+      color[i + 1] = Math.round(mix(baseRgb[1], 247, f * 0.78));
+      color[i + 2] = Math.round(mix(baseRgb[2], 255, f * 0.78));
+      color[i + 3] = Math.round(clamp01(mix(0.22, 0.84, f)) * 255);
+      normalRm[i] = nMap[i];
+      normalRm[i + 1] = nMap[i + 1];
+      normalRm[i + 2] = Math.round(clamp01(mix(0.16, 0.64, f)) * 255);
+      normalRm[i + 3] = Math.round(clamp01(mix(0.30, 0.06, f)) * 255);
+    }
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'glass_shattered_01') {
+    // M_Glass_Shattered_01: Color=[0.7919, 0.8289, 0.915], T_Glass_Shattered_01_M (cracks are dark in G) + T_Glass_Shattered_01_N (Cracks_Normal_Intensity 1.2)
+    const crackMask = await loadUnrealRgba(texPath('T_Glass_Shattered_01_M.png'), size);
+    const nMap = await loadUnrealNormalOpenGl(texPath('T_Glass_Shattered_01_N.png'), size, { tileRepeat: 1, strength: 1.2 });
+    const baseRgb = linRgbToSrgbBytes([0.7919, 0.8289, 0.915]);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const crack = clamp01(1.0 - crackMask[i + 1] / 255);
+      color[i] = Math.round(mix(baseRgb[0], 246, crack));
+      color[i + 1] = Math.round(mix(baseRgb[1], 250, crack));
+      color[i + 2] = Math.round(mix(baseRgb[2], 255, crack));
+      color[i + 3] = Math.round(clamp01(mix(0.18, 0.94, crack)) * 255);
+      normalRm[i] = nMap[i];
+      normalRm[i + 1] = nMap[i + 1];
+      normalRm[i + 2] = Math.round(clamp01(mix(0.06, 0.56, crack)) * 255);
+      normalRm[i + 3] = Math.round(clamp01(mix(0.58, 0.08, crack)) * 255);
+    }
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'glass_rain_01') {
+    // M_Glass_Rain_01: Color=[0.8861, 0.915, 0.9061], T_RainDroplets_M (Rain_Tile 2) + T_RainDroplets (Droplets_Tile 4 -> 2x tile)
+    const streakImg = await loadUnrealRgba(texPath('T_RainDroplets_M.png'), size, { tileRepeat: 2 });
+    const dropImg = await loadUnrealRgba(texPath('T_RainDroplets.png'), size, { tileRepeat: 2 });
+    const baseRgb = linRgbToSrgbBytes([0.8861, 0.915, 0.9061]);
+    const heights = new Float32Array(nPix);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      heights[p] = clamp01(Math.max(streakImg[i] / 255, dropImg[i] / 255));
+    }
+    const nMap = heightFieldToOpenGlNormal(heights, size, 3.0);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const wet = heights[p];
+      color[i] = Math.round(mix(baseRgb[0], 248, wet * 0.55));
+      color[i + 1] = Math.round(mix(baseRgb[1], 251, wet * 0.55));
+      color[i + 2] = Math.round(mix(baseRgb[2], 254, wet * 0.55));
+      color[i + 3] = Math.round(clamp01(mix(0.16, 0.62, wet)) * 255);
+      normalRm[i] = nMap[i];
+      normalRm[i + 1] = nMap[i + 1];
+      normalRm[i + 2] = Math.round(clamp01(mix(0.18, 0.04, wet)) * 255); // droplets are super glossy
+      normalRm[i + 3] = Math.round(clamp01(mix(0.42, 0.76, wet)) * 255);
+    }
+    return { color, normalRm, width: size, height: size };
+  }
+
+  throw new Error(`Unknown AdvancedGlassPack glass slot "${entry.id}"`);
 }
 
 function validateMaterialRule(entry, spec) {
@@ -641,13 +739,15 @@ async function verifyBakedCollection(label, baseDir, items, { requireSquare1024 
 }
 
 async function main() {
-  const { vaultDir, materialsOnly } = parseArgs(process.argv.slice(2));
+  const { vaultDir, glassStagingDir: explicitGlassDir, materialsOnly } = parseArgs(process.argv.slice(2));
   const spec = JSON.parse(await readFile(SPEC_PATH, 'utf8'));
   const matManifest = JSON.parse(await readFile(MATERIALS_MANIFEST_PATH, 'utf8'));
   const decalManifest = JSON.parse(await readFile(DECALS_MANIFEST_PATH, 'utf8'));
   const foliageManifest = JSON.parse(await readFile(FOLIAGE_MANIFEST_PATH, 'utf8'));
   const masterSize = spec.tiers?.T0?.texSize?.master || 1024;
   const vaultRoot = materialsOnly ? '' : await resolveVaultDir(vaultDir);
+  const hasUnrealGlass = (matManifest.materials || []).some((m) => m.sourcePath?.startsWith('unreal/AdvancedGlassPack/'));
+  const glassStagingDir = hasUnrealGlass ? await resolveGlassStagingDir(explicitGlassDir) : '';
 
   // 1. Bake Universal Materials (+ layer 0 __missing__)
   for (const entry of matManifest.materials || []) {
@@ -688,7 +788,7 @@ async function main() {
   let layerIdx = 1;
   for (const entry of matManifest.materials || []) {
     const thisLayer = layerIdx++;
-    if (entry.sourcePath?.startsWith('procedural/')) continue;
+    if (entry.sourcePath?.startsWith('procedural/') || entry.sourcePath?.startsWith('unreal/AdvancedGlassPack/')) continue;
     const outDir = path.join(BUILT_MATERIALS, entry.id);
     if (materialsOnly && existsSync(path.join(outDir, 'color.png')) && existsSync(path.join(outDir, 'normal_rm.png'))) {
       const [cRaw, nRaw] = await Promise.all([
@@ -736,10 +836,12 @@ async function main() {
   layerIdx = 1;
   for (const entry of matManifest.materials || []) {
     const thisLayer = layerIdx++;
-    if (!entry.sourcePath?.startsWith('procedural/')) continue;
+    const isUnrealGlass = entry.sourcePath?.startsWith('unreal/AdvancedGlassPack/');
+    const isProc = entry.sourcePath?.startsWith('procedural/');
+    if (!isProc && !isUnrealGlass) continue;
     let baked;
-    if (entry.surfaceType === 'glass' || entry.blendMode === 'translucent') {
-      baked = await buildProceduralGlassSlot(entry, masterSize);
+    if (isUnrealGlass) {
+      baked = await bakeUnrealGlassSlot(entry, glassStagingDir, masterSize);
     } else {
       const base = bakedCache.get(entry.derivedFrom);
       if (!base) throw new Error(`Procedural slot "${entry.id}" missing derivedFrom "${entry.derivedFrom}"`);
@@ -764,7 +866,7 @@ async function main() {
       emissiveColor: [0, 0, 0],
       emissiveStrength: 0,
       hasMetalness: Boolean(entry.hasMetalness || entry.surfaceType === 'metal'),
-      source: 'procedural',
+      source: isUnrealGlass ? 'unreal_advanced_glass' : 'procedural',
       assetId: entry.id,
       width: masterSize,
       height: masterSize,

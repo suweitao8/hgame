@@ -50,9 +50,9 @@ export const MATERIAL_SLOT_ALIASES = Object.freeze({
   nature_soil_dirt: 'nature_soil',
   nature_mud_road: 'nature_mud_ground',
   nature_mountain_rock: 'nature_granite_rock',
-  // Special fallback slots rendered via native Three materials
-  glass_clear: '__special_glass__',
-  facade_curtain_glass: '__special_curtain_glass__',
+  // Glass slots replicated from AdvancedGlassPack
+  glass_clear: 'glass_clean',
+  facade_curtain_glass: 'glass_colored_blue',
   cn_greenhouse_film: '__special_film__',
   cn_luminous_diffuser: '__special_emissive__',
 });
