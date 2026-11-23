@@ -69,6 +69,7 @@ export const CATEGORY_LABELS = Object.freeze({
   '8_fabric_leather': '织物与皮革 (Fabric & Leather)',
   '9_nature_terrain': '自然地表 (Nature Terrain)',
   '10_cn_procedural': '涂装与市政功能 (Coatings & Municipal)',
+  '11_glass': '建筑玻璃 (Glass)',
   // Model groups
   l1_arch: 'L1 建筑结构件 (Architecture)',
   l1_road: 'L1 道路与路网 (Roads)',

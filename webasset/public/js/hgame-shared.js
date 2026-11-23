@@ -663,11 +663,13 @@ export function create2MapPbrMaterial({
   side,
 }) {
   const isOpaque = mode === 'opaque';
+  const isGlass = mode === 'glass' || mode === 'translucent';
+  const isTiled = isOpaque || isGlass;
   const isDecal = mode === 'decal';
   const isFoliage = mode === 'foliage';
 
   const maxAniso = Math.min(8, renderer?.capabilities?.getMaxAnisotropy?.() || 1);
-  const wrap = isOpaque ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+  const wrap = isTiled ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
   const scaleArr = Array.isArray(uvScale)
     ? [Math.max(0.05, Number(uvScale[0]) || 1), Math.max(0.05, Number(uvScale[1]) || 1)]
     : [Math.max(0.05, Number(uvScale) || 1), Math.max(0.05, Number(uvScale) || 1)];
@@ -682,7 +684,7 @@ export function create2MapPbrMaterial({
   colorTex.anisotropy = maxAniso;
   colorTex.wrapS = wrap;
   colorTex.wrapT = wrap;
-  if (isOpaque) {
+  if (isTiled) {
     colorTex.repeat.set(repeatArr[0], repeatArr[1]);
   } else {
     colorTex.repeat.set(1, 1);
@@ -704,31 +706,48 @@ export function create2MapPbrMaterial({
   normRmTex.anisotropy = maxAniso;
   normRmTex.wrapS = wrap;
   normRmTex.wrapT = wrap;
-  if (isOpaque) {
+  if (isTiled) {
     normRmTex.repeat.set(repeatArr[0], repeatArr[1]);
   } else {
     normRmTex.repeat.set(1, 1);
   }
   normRmTex.needsUpdate = true;
 
-  const material = new THREE.MeshStandardMaterial({
-    map: colorTex,
-    color: tintHex,
-    roughness: 1.0,
-    metalness: 1.0,
-    side: side ?? (isOpaque ? THREE.FrontSide : THREE.DoubleSide),
-    transparent: isDecal,
-    opacity: isDecal ? opacity : 1.0,
-    depthWrite: !isDecal,
-    alphaTest: isFoliage ? 0.5 : (isDecal ? 0.01 : 0.0),
-    polygonOffset,
-    polygonOffsetFactor: polygonOffset ? -4 : 0,
-    polygonOffsetUnits: polygonOffset ? -4 : 0,
-    envMapIntensity: 1.0,
-  });
+  const material = isGlass
+    ? new THREE.MeshPhysicalMaterial({
+        map: colorTex,
+        color: tintHex,
+        roughness: 1.0,
+        metalness: 1.0,
+        side: side ?? THREE.DoubleSide,
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        ior: 1.5,
+        reflectivity: 0.92,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.06,
+        envMapIntensity: 1.45,
+      })
+    : new THREE.MeshStandardMaterial({
+        map: colorTex,
+        color: tintHex,
+        roughness: 1.0,
+        metalness: 1.0,
+        side: side ?? (isOpaque ? THREE.FrontSide : THREE.DoubleSide),
+        transparent: isDecal,
+        opacity: isDecal ? opacity : 1.0,
+        depthWrite: !isDecal,
+        alphaTest: isFoliage ? 0.5 : (isDecal ? 0.01 : 0.0),
+        polygonOffset,
+        polygonOffsetFactor: polygonOffset ? -4 : 0,
+        polygonOffsetUnits: polygonOffset ? -4 : 0,
+        envMapIntensity: 1.0,
+      });
 
   const uHsvMatchTarget = new THREE.Vector4(0, 0, 0.5, 0);
   const uHsvMatchSource = new THREE.Vector4(0, 0, 0.5, 1);
+  const uBlendWeights = new THREE.Vector3(0, 0, 0);
 
   material.customProgramCacheKey = () => `hgame-single-2map-${mode}`;
   material.onBeforeCompile = shader => {
@@ -736,6 +755,7 @@ export function create2MapPbrMaterial({
     shader.uniforms.uNormalStrength = { value: 1.0 };
     shader.uniforms.uHsvMatchTarget = { value: uHsvMatchTarget };
     shader.uniforms.uHsvMatchSource = { value: uHsvMatchSource };
+    shader.uniforms.uBlendWeights = { value: uBlendWeights };
 
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -745,6 +765,7 @@ uniform sampler2D uNormalRmMap;
 uniform float uNormalStrength;
 uniform vec4 uHsvMatchTarget;
 uniform vec4 uHsvMatchSource;
+uniform vec3 uBlendWeights;
 
 vec3 hgRgb2Hsv(vec3 c) {
   vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
@@ -785,14 +806,15 @@ if (uHsvMatchTarget.w > 0.001) {
   vec3 hgHsv = hgRgb2Hsv(hgSrgb);
   float relLuma = hgHsv.z / max(uHsvMatchSource.z, 0.08);
   float creviceW = mix(1.0, mix(0.22, 1.0, smoothstep(0.10, 0.58, relLuma)), step(0.5, uHsvMatchSource.w));
-  float amt = clamp(uHsvMatchTarget.w, 0.0, 1.0) * creviceW;
-  float dh = fract(uHsvMatchTarget.x - hgHsv.x + 0.5) - 0.5;
-  float targetSatGate = smoothstep(0.015, 0.12, uHsvMatchTarget.y);
-  float nextH = fract(hgHsv.x + dh * amt * mix(0.35, 1.0, targetSatGate));
-  float nextS = clamp(hgHsv.y + (uHsvMatchTarget.y - uHsvMatchSource.y) * amt, 0.0, 1.0);
+  float amtS = clamp(uBlendWeights.x, 0.0, 1.0) * creviceW;
+  float amtV = clamp(uBlendWeights.y, 0.0, 1.0) * creviceW;
+  float amtTint = clamp(uBlendWeights.z, 0.0, 1.0) * creviceW;
+  float nextS = clamp(hgHsv.y + (uHsvMatchTarget.y - uHsvMatchSource.y) * amtS, 0.0, 1.0);
   float vRatio = clamp(uHsvMatchTarget.z / max(uHsvMatchSource.z, 0.06), 0.45, 1.85);
-  float nextV = clamp(hgHsv.z * mix(1.0, vRatio, amt), 0.0, 1.0);
-  vec3 hgAdjSrgb = hgHsv2Rgb(vec3(nextH, nextS, nextV));
+  float nextV = clamp(hgHsv.z * mix(1.0, vRatio, amtV), 0.0, 1.0);
+  vec3 hgSvSrgb = hgHsv2Rgb(vec3(hgHsv.x, nextS, nextV));
+  vec3 targetTint = hgHsv2Rgb(vec3(uHsvMatchTarget.x, uHsvMatchTarget.y, 1.0));
+  vec3 hgAdjSrgb = hgSvSrgb * mix(vec3(1.0), targetTint, amtTint * 0.65);
   diffuseColor.rgb = pow(max(hgAdjSrgb, vec3(0.0001)), vec3(2.2));
 }`,
       )
@@ -819,13 +841,27 @@ normal = normalize(hgTbn * hgMapN);`,
     material,
     colorTex,
     normRmTex,
-    setHsvMatch({ targetStats = null, sourceStats = null, strength = 0, creviceProtect = true } = {}) {
-      if (!targetStats || !sourceStats || strength <= 0) {
+    setHsvMatch({
+      targetStats = null,
+      sourceStats = null,
+      strength = 0,
+      satStrength,
+      valStrength,
+      tintStrength,
+      creviceProtect = true,
+    } = {}) {
+      const clamp01 = v => Math.max(0, Math.min(1, Number(v) || 0));
+      const sW = clamp01(satStrength !== undefined ? satStrength : strength);
+      const vW = clamp01(valStrength !== undefined ? valStrength : strength);
+      const tW = clamp01(tintStrength !== undefined ? tintStrength : strength);
+      if (!targetStats || !sourceStats || Math.max(sW, vW, tW) <= 0.001) {
         uHsvMatchTarget.w = 0;
+        uBlendWeights.set(0, 0, 0);
         return;
       }
-      uHsvMatchTarget.set(targetStats.h, targetStats.s, targetStats.v, Math.max(0, Math.min(1, Number(strength) || 0)));
+      uHsvMatchTarget.set(targetStats.h, targetStats.s, targetStats.v, 1);
       uHsvMatchSource.set(sourceStats.h, sourceStats.s, sourceStats.v, creviceProtect ? 1 : 0);
+      uBlendWeights.set(sW, vW, tW);
     },
   };
 }
@@ -910,11 +946,21 @@ export function sampleImageHsvStats(img, { skipDarkCrevices = false } = {}) {
 }
 
 export function getDefaultDecalHsvMatch(item, lib = 'cn_pbr') {
-  if (!item || lib === 'cn_foliage' || lib === 'unreal') return { enabled: false, amount: 0 };
+  if (!item || lib === 'unreal') return { enabled: false, amount: 0, sat: 0, val: 0, tint: 0 };
+  if (lib === 'cn_foliage') {
+    return { enabled: true, amount: 0.45, sat: 0, val: 0.45, tint: 0 };
+  }
   const cat = item.category || '';
-  if (cat === 'crack') return { enabled: true, amount: 0.75 };
-  if (cat === 'stain' || cat === 'leak') return { enabled: true, amount: 0.4 };
-  return { enabled: false, amount: 0 };
+  if (cat === 'combat_blood' || cat === 'manhole_drain' || cat === 'litter') {
+    return { enabled: true, amount: 0.45, sat: 0, val: 0.45, tint: 0 };
+  }
+  if (cat === 'crack') {
+    return { enabled: true, amount: 0.75, sat: 0.75, val: 0.75, tint: 0.75 };
+  }
+  if (cat === 'stain' || cat === 'leak') {
+    return { enabled: true, amount: 0.4, sat: 0.4, val: 0.4, tint: 0.4 };
+  }
+  return { enabled: false, amount: 0, sat: 0, val: 0, tint: 0 };
 }
 
 /**

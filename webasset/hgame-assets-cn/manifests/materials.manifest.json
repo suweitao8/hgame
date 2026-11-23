@@ -918,6 +918,66 @@
       "uvScale": 0.5,
       "hasMetalness": false,
       "resolution": "1024x1024"
+    },
+    {
+      "id": "glass_clear",
+      "category": "11_glass",
+      "sourcePath": "procedural/glass_clear",
+      "surfaceType": "glass",
+      "blendMode": "translucent",
+      "opacity": 0.36,
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "facade_curtain_glass",
+      "category": "11_glass",
+      "sourcePath": "procedural/facade_curtain_glass",
+      "surfaceType": "glass",
+      "blendMode": "translucent",
+      "opacity": 0.58,
+      "scanSizeMeters": 2,
+      "uvScale": 0.5,
+      "hasMetalness": true,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "glass_frosted",
+      "category": "11_glass",
+      "sourcePath": "procedural/glass_frosted",
+      "surfaceType": "glass",
+      "blendMode": "translucent",
+      "opacity": 0.68,
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "glass_rain",
+      "category": "11_glass",
+      "sourcePath": "procedural/glass_rain",
+      "surfaceType": "glass",
+      "blendMode": "translucent",
+      "opacity": 0.48,
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
+    },
+    {
+      "id": "glass_shattered",
+      "category": "11_glass",
+      "sourcePath": "procedural/glass_shattered",
+      "surfaceType": "glass",
+      "blendMode": "translucent",
+      "opacity": 0.62,
+      "scanSizeMeters": 1,
+      "uvScale": 1,
+      "hasMetalness": false,
+      "resolution": "1024x1024"
     }
   ]
 }

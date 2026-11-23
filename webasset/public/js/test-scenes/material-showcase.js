@@ -116,27 +116,39 @@ export function buildMaterialShowcaseScene({
       pedestal.castShadow = true;
       booth.add(pedestal);
 
-      const mat = entry.blendMode === 'translucent'
+      const isTranslucent = entry.blendMode === 'translucent';
+      const mat = isTranslucent
         ? glassMat.material
         : entry.alphaCutout
           ? cutoutMat.material
           : worldMat.material;
+
+      if (isTranslucent) {
+        const innerMat = new THREE.MeshStandardMaterial({ color: 0xd99b43, roughness: 0.42, metalness: 0.25 });
+        const innerCube = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.72, 0.42), innerMat);
+        innerCube.position.set(-0.68, 0.14 + 0.5, -0.85);
+        const innerSphere = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), innerMat);
+        innerSphere.position.set(0.68, 0.14 + 0.5, -0.85);
+        booth.add(innerCube, innerSphere);
+      }
 
       // 1. Standard 1.0m x 1.0m x 1.0m Cube (left, 1m = 1 UV)
       const cubeRaw = buildBeveledBoxRaw(1.0, 1.0, 1.0, 0, entry.layer);
       const cubeGeo = buildBufferGeometryFromRaw(cubeRaw);
       const cubeMesh = new THREE.Mesh(cubeGeo, mat);
       cubeMesh.position.set(-0.68, 0.14 + 0.5, -0.85);
-      cubeMesh.castShadow = true;
+      cubeMesh.castShadow = !isTranslucent;
       cubeMesh.receiveShadow = true;
+      if (isTranslucent) cubeMesh.renderOrder = 2;
       booth.add(cubeMesh);
 
       // 2. 1.0m diameter Sphere (radius 0.5m, right)
       const sphereGeo = createUnitSphereGeo(0.5, entry.layer);
       const sphereMesh = new THREE.Mesh(sphereGeo, mat);
       sphereMesh.position.set(0.68, 0.14 + 0.5, -0.85);
-      sphereMesh.castShadow = true;
+      sphereMesh.castShadow = !isTranslucent;
       sphereMesh.receiveShadow = true;
+      if (isTranslucent) sphereMesh.renderOrder = 2;
       booth.add(sphereMesh);
 
       // 3. 2.0m x 2.0m Ground Swatch (front, 2m x 2m metric reference)
@@ -145,6 +157,7 @@ export function buildMaterialShowcaseScene({
       const slabMesh = new THREE.Mesh(slabGeo, mat);
       slabMesh.position.set(0, 0.03, 1.05);
       slabMesh.receiveShadow = true;
+      if (isTranslucent) slabMesh.renderOrder = 2;
       booth.add(slabMesh);
 
       // 4. Front angled plaque

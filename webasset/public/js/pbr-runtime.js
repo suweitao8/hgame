@@ -705,9 +705,9 @@ vec4 pbrEmissiveMeta = uMaterialEmissive[pbrLayerIdx];
 bool pbrIsTranslucentLayer = (pbrFlags & 8) != 0;
 bool pbrHasEmissive = (pbrFlags & 16) != 0;
 if (pbrIsTranslucentLayer) {
-  diffuseColor.a = clamp(pbrEmissiveMeta.a, 0.08, 0.95);
+  diffuseColor.a = clamp(pbrAlbedoSample.a, 0.08, 1.0);
 }
-float pbrRoughness = pbrIsTranslucentLayer ? 0.08 : clamp(pbrNrmSample.b, 0.04, 1.0);
+float pbrRoughness = clamp(pbrNrmSample.b, 0.04, 1.0);
 float pbrMetalness = clamp(pbrNrmSample.a, 0.0, 1.0);
 float pbrMicroAO   = mix(1.0, 0.88, pbrRoughness * pbrRoughness);
 float pbrLuma = dot(pbrAlbedoSample.rgb, vec3(0.299, 0.587, 0.114));`,

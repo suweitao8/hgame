@@ -5,7 +5,6 @@ import {
   createSidebarSquareCard,
   createThreeViewport,
   disposeObject3D,
-  draw2MapChannelCanvases,
   loadSingle2MapAssets,
 } from './hgame-shared.js';
 
@@ -17,21 +16,14 @@ const searchInput = document.querySelector('#hgame-material-search');
 const sourceFilter = document.querySelector('#hgame-material-source-filter');
 const listEl = document.querySelector('#hgame-material-list');
 const titleEl = document.querySelector('#hgame-material-title');
-const downloadEl = document.querySelector('#hgame-material-download');
 const emptyEl = document.querySelector('#hgame-material-empty');
 const stageEl = document.querySelector('#hgame-material-stage');
-const mapsPanelEl = document.querySelector('#hgame-material-maps');
-const mapColorCanvas = document.querySelector('#hgame-map-color');
-const mapNormalCanvas = document.querySelector('#hgame-map-normal');
-const mapRmCanvas = document.querySelector('#hgame-map-rm');
-const shapeSelect = document.querySelector('#hgame-material-mesh-shape');
-const uvValEl = document.querySelector('#hgame-material-uv-val');
-const statusEl = document.querySelector('#hgame-material-status');
 
 let initialized = false;
 let matItems = [];
 let selectedId = '';
 let currentUvScale = 1.0;
+let currentIsGlass = false;
 let viewport = null;
 let hdriEnv = null;
 let previewMaterial = null;
@@ -97,12 +89,6 @@ function ensureViewport() {
     viewport.controls.update();
   }
   return viewport;
-}
-
-function syncOutputs(scanM = 1) {
-  if (uvValEl) {
-    uvValEl.textContent = `×${currentUvScale} (${scanM}m)`;
-  }
 }
 
 function disposePreviewResources() {
@@ -194,39 +180,58 @@ function renderList() {
   }
 }
 
-function buildPreviewGeometryGroup(mat) {
-  const group = new THREE.Group();
-  const shape = shapeSelect?.value || 'combo';
-  if (shape === 'combo') {
-    // 1.0m x 1.0m x 1.0m standard metric reference cube (1m = 1 UV)
-    const cube = new THREE.Mesh(createMetricBoxGeometry(1.0, 1.0, 1.0), mat);
-    cube.position.set(-0.72, 0.54, -0.35);
-    cube.castShadow = true;
-    cube.receiveShadow = true;
-    // 1.0m diameter sphere (radius 0.5m)
-    const sphere = new THREE.Mesh(createMetricSphereGeometry(0.5), mat);
-    sphere.position.set(0.72, 0.54, -0.35);
-    sphere.castShadow = true;
-    sphere.receiveShadow = true;
-    // 2.0m x 1.0m metric ground swatch in front
-    const slab = new THREE.Mesh(createMetricBoxGeometry(2.0, 0.04, 1.0), mat);
-    slab.position.set(0, 0.02, 0.82);
-    slab.receiveShadow = true;
-    group.add(cube, sphere, slab);
-  } else if (shape === 'sphere') {
-    const sphere = new THREE.Mesh(createMetricSphereGeometry(0.5), mat);
-    sphere.position.set(0, 0.55, 0);
-    sphere.castShadow = true;
-    sphere.receiveShadow = true;
-    group.add(sphere);
-  } else {
-    // Standard 1.0m x 1.0m x 1.0m metric cube
-    const cube = new THREE.Mesh(createMetricBoxGeometry(1.0, 1.0, 1.0), mat);
-    cube.position.set(0, 0.5, 0);
-    cube.castShadow = true;
-    cube.receiveShadow = true;
-    group.add(cube);
+function createGlassReferenceCore(kind, x, y, z) {
+  const coreGroup = new THREE.Group();
+  const barMat = new THREE.MeshStandardMaterial({ color: 0xd99b43, roughness: 0.42, metalness: 0.25 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x263238, roughness: 0.55, metalness: 0.35 });
+  if (kind === 'cube') {
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.72, 0.42), barMat);
+    pillar.position.set(x, y, z);
+    const band = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 0.56), darkMat);
+    band.position.set(x, y, z);
+    coreGroup.add(pillar, band);
+  } else if (kind === 'sphere') {
+    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), barMat);
+    core.position.set(x, y, z);
+    coreGroup.add(core);
+  } else if (kind === 'slab') {
+    const stripA = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.02, 0.18), barMat);
+    stripA.position.set(x, 0.01, z - 0.18);
+    const stripB = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.02, 0.18), darkMat);
+    stripB.position.set(x, 0.01, z + 0.18);
+    coreGroup.add(stripA, stripB);
   }
+  return coreGroup;
+}
+
+function buildPreviewGeometryGroup(mat, isGlass = false) {
+  const group = new THREE.Group();
+  const ro = isGlass ? 2 : 0;
+  // 1.0m x 1.0m x 1.0m standard metric reference cube (1m = 1 UV)
+  const cube = new THREE.Mesh(createMetricBoxGeometry(1.0, 1.0, 1.0), mat);
+  cube.position.set(-0.72, 0.54, -0.35);
+  cube.castShadow = !isGlass;
+  cube.receiveShadow = true;
+  cube.renderOrder = ro;
+  // 1.0m diameter sphere (radius 0.5m)
+  const sphere = new THREE.Mesh(createMetricSphereGeometry(0.5), mat);
+  sphere.position.set(0.72, 0.54, -0.35);
+  sphere.castShadow = !isGlass;
+  sphere.receiveShadow = true;
+  sphere.renderOrder = ro;
+  // 2.0m x 1.0m metric ground swatch in front
+  const slab = new THREE.Mesh(createMetricBoxGeometry(2.0, 0.04, 1.0), mat);
+  slab.position.set(0, isGlass ? 0.05 : 0.02, 0.82);
+  slab.receiveShadow = true;
+  slab.renderOrder = ro;
+  if (isGlass) {
+    group.add(
+      createGlassReferenceCore('cube', -0.72, 0.54, -0.35),
+      createGlassReferenceCore('sphere', 0.72, 0.54, -0.35),
+      createGlassReferenceCore('slab', 0, 0.01, 0.82),
+    );
+  }
+  group.add(cube, sphere, slab);
   return group;
 }
 
@@ -236,29 +241,16 @@ async function selectMaterial(id) {
 
   const entry = matItems.find(m => m.id === selectedId);
   if (!entry) {
-    titleEl.textContent = '通用地编 PBR 材质';
-    if (downloadEl) downloadEl.hidden = true;
-    mapsPanelEl.hidden = true;
+    titleEl.textContent = '材质';
     emptyEl.hidden = false;
     disposePreviewResources();
-    statusEl.textContent = matItems.length ? '请从左侧列表选择一项通用材质预览' : '暂无可用材质';
     return;
   }
 
   const token = ++loadSeq;
   const vp = ensureViewport();
   emptyEl.hidden = true;
-  mapsPanelEl.hidden = false;
   titleEl.textContent = entry.layer != null ? `${entry.id} (#${entry.layer})` : entry.id;
-  if (downloadEl) {
-    downloadEl.href = '/assets/cn/browser.html';
-    downloadEl.removeAttribute('download');
-    downloadEl.target = '_blank';
-    downloadEl.textContent = '打开母库检视台';
-    downloadEl.hidden = false;
-  }
-
-  statusEl.textContent = `按需加载 ${entry.id} (Color + Normal_RM)…`;
 
   try {
     const assets = await loadSingle2MapAssets(BASE_URL, entry.id);
@@ -266,10 +258,9 @@ async function selectMaterial(id) {
 
     disposePreviewResources();
     currentUvScale = resolveEntryUvScale(entry);
-    const scanM = resolveEntryScanMeters(entry);
-    syncOutputs(scanM);
+    currentIsGlass = entry.blendMode === 'translucent' || entry.surfaceType === 'glass';
     const { material, colorTex, normRmTex } = create2MapPbrMaterial({
-      mode: 'opaque',
+      mode: currentIsGlass ? 'glass' : 'opaque',
       assets,
       renderer: vp.renderer,
       repeat: 1,
@@ -279,18 +270,12 @@ async function selectMaterial(id) {
     previewColorTex = colorTex;
     previewNormRmTex = normRmTex;
 
-    meshGroup = buildPreviewGeometryGroup(previewMaterial);
+    meshGroup = buildPreviewGeometryGroup(previewMaterial, currentIsGlass);
     vp.scene.add(meshGroup);
-
-    draw2MapChannelCanvases(mapColorCanvas, mapNormalCanvas, mapRmCanvas, assets);
-
-    statusEl.textContent =
-      `2贴图直读 (Color+Normal_RM OpenGL +Y) · 1m标准UV (扫描${scanM}m → uv×${currentUvScale}) · ${entry.width || 1024}×${entry.height || 1024} · ` +
-      `${entry.surfaceType || ''} · ${entry.tiling || 'grid'} · ${assets.loadMs.toFixed(0)}ms · ` +
-      `${entry.sourcePath || entry.assetId || entry.source || ''}`;
   } catch (err) {
     if (token !== loadSeq) return;
-    statusEl.textContent = `加载失败: ${err.message}`;
+    emptyEl.textContent = `加载失败: ${err.message}`;
+    emptyEl.hidden = false;
   }
 }
 
@@ -306,7 +291,6 @@ async function loadMaterialsManifest() {
     }).catch(() => { /* non-fatal if HDRI unavailable */ });
   }
 
-  statusEl.textContent = '正在读取通用 PBR 材质清单…';
   try {
     const resp = await fetch(TABLE_URL, { cache: 'no-cache' });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${TABLE_URL}`);
@@ -318,7 +302,8 @@ async function loadMaterialsManifest() {
     const nextId = matItems.some(m => m.id === selectedId) ? selectedId : (matItems[0]?.id || '');
     await selectMaterial(nextId);
   } catch (err) {
-    statusEl.textContent = `清单加载失败: ${err.message}`;
+    emptyEl.textContent = `清单加载失败: ${err.message}`;
+    emptyEl.hidden = false;
   }
 }
 
@@ -328,22 +313,12 @@ function init() {
 
   searchInput?.addEventListener('input', renderList);
   sourceFilter?.addEventListener('change', renderList);
-  shapeSelect?.addEventListener('change', () => {
-    if (!previewMaterial || !viewport) return;
-    if (meshGroup) {
-      viewport.scene.remove(meshGroup);
-      disposeObject3D(meshGroup);
-    }
-    meshGroup = buildPreviewGeometryGroup(previewMaterial);
-    viewport.scene.add(meshGroup);
-  });
 }
 
 function activateMaterialsWorkspace() {
   init();
   const vp = ensureViewport();
   vp.start();
-  syncOutputs();
   if (!manifestLoaded) {
     void loadMaterialsManifest();
   }

@@ -16,6 +16,7 @@ const RAW_PBR_CACHE = path.join(CN_ROOT, 'raw', 'pbr_cache');
 const RAW_MANUAL_DIR = path.join(CN_ROOT, 'raw', 'cn_textures_manual');
 
 const BUILT_MATERIALS = path.join(CN_ROOT, 'built', 'materials');
+const BUILT_GLASS_MAPS = path.join(CN_ROOT, 'built', 'shader_maps', 'glass');
 const BUILT_PBR_DECALS = path.join(CN_ROOT, 'built', 'pbr_decals');
 const BUILT_PBR_FOLIAGE = path.join(CN_ROOT, 'built', 'pbr_foliage');
 
@@ -27,10 +28,12 @@ const isPow2 = (n) => n > 0 && (n & (n - 1)) === 0;
 
 function parseArgs(argv) {
   let vaultDir = '';
+  let materialsOnly = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--vault' && argv[i + 1]) vaultDir = path.resolve(argv[++i]);
+    else if (argv[i] === '--materials-only') materialsOnly = true;
   }
-  return { vaultDir };
+  return { vaultDir, materialsOnly };
 }
 
 async function resolveVaultDir(explicit) {
@@ -352,6 +355,212 @@ function buildProceduralDerivedSlot(entry, baseBufs, size) {
   return { color, normalRm, width: size, height: size };
 }
 
+function hash2d(ix, iy, seed = 1) {
+  let h = (Math.imul(ix | 0, 374761393) + Math.imul(iy | 0, 668265263) + Math.imul(seed | 0, 1442695041)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+function periodicNoise(u, v, period = 8, seed = 1) {
+  const x = u * period;
+  const y = v * period;
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const fx = x - x0;
+  const fy = y - y0;
+  const sx = fx * fx * (3 - 2 * fx);
+  const sy = fy * fy * (3 - 2 * fy);
+  const ix0 = ((x0 % period) + period) % period;
+  const iy0 = ((y0 % period) + period) % period;
+  const ix1 = (ix0 + 1) % period;
+  const iy1 = (iy0 + 1) % period;
+  const a = hash2d(ix0, iy0, seed);
+  const b = hash2d(ix1, iy0, seed);
+  const c = hash2d(ix0, iy1, seed);
+  const d = hash2d(ix1, iy1, seed);
+  return (a + (b - a) * sx) * (1 - sy) + (c + (d - c) * sx) * sy;
+}
+
+function periodicFbm(u, v, basePeriod = 6, octaves = 4, seed = 1) {
+  let sum = 0;
+  let amp = 0.5;
+  let norm = 0;
+  let p = basePeriod;
+  for (let o = 0; o < octaves; o++) {
+    sum += periodicNoise(u, v, p, seed + o * 97) * amp;
+    norm += amp;
+    amp *= 0.5;
+    p *= 2;
+  }
+  return sum / norm;
+}
+
+function heightFieldToOpenGlNormalRm(heights, roughs, metals, size, strength = 2.4) {
+  const normalRm = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    const ym = (y - 1 + size) % size;
+    const yp = (y + 1) % size;
+    for (let x = 0; x < size; x++) {
+      const xm = (x - 1 + size) % size;
+      const xp = (x + 1) % size;
+      const dhdx = (heights[y * size + xp] - heights[y * size + xm]) * strength;
+      const dhdy = (heights[yp * size + x] - heights[ym * size + x]) * strength;
+      let nx = -dhdx;
+      let ny = dhdy;
+      let nz = 1.0;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len;
+      ny /= len;
+      nz /= len;
+      const i = (y * size + x) * 4;
+      normalRm[i] = Math.round(clamp01((nx + 1) * 0.5) * 255);
+      normalRm[i + 1] = Math.round(clamp01((ny + 1) * 0.5) * 255);
+      normalRm[i + 2] = Math.round(clamp01(roughs[y * size + x]) * 255);
+      normalRm[i + 3] = Math.round(clamp01(metals[y * size + x]) * 255);
+    }
+  }
+  return normalRm;
+}
+
+async function loadGlassShaderMap(fileName, targetSize) {
+  const fp = path.join(BUILT_GLASS_MAPS, fileName);
+  const { data, info } = await sharp(fp).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  if (info.width === targetSize && info.height === targetSize) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  const resized = await resizeBufferNoPremultiply(data, info.width, info.height, 4, targetSize, targetSize, sharp.kernel.lanczos3);
+  return new Uint8Array(resized.buffer, resized.byteOffset, resized.byteLength);
+}
+
+async function buildProceduralGlassSlot(entry, size) {
+  const nPix = size * size;
+  const color = new Uint8Array(nPix * 4);
+
+  if (entry.id === 'glass_clear') {
+    const heights = new Float32Array(nPix);
+    const roughs = new Float32Array(nPix);
+    const metals = new Float32Array(nPix);
+    for (let y = 0; y < size; y++) {
+      const v = y / size;
+      for (let x = 0; x < size; x++) {
+        const u = x / size;
+        const p = y * size + x;
+        const i = p * 4;
+        const micro = periodicFbm(u, v, 4, 3, 19);
+        const edge = Math.min(u, 1 - u, v, 1 - v);
+        const rim = edge < 0.025 ? (1 - edge / 0.025) * 0.14 : 0;
+        color[i] = Math.round((198 + micro * 16 - rim * 20) * 0.95);
+        color[i + 1] = Math.round((226 + micro * 14 - rim * 12) * 0.98);
+        color[i + 2] = Math.round(238 + micro * 12);
+        color[i + 3] = Math.round(clamp01(0.32 + rim * 0.35 + micro * 0.06) * 255);
+        heights[p] = micro * 0.12;
+        roughs[p] = clamp01(0.05 + micro * 0.03);
+        metals[p] = 0.06;
+      }
+    }
+    const normalRm = heightFieldToOpenGlNormalRm(heights, roughs, metals, size, 1.2);
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'facade_curtain_glass') {
+    const heights = new Float32Array(nPix);
+    const roughs = new Float32Array(nPix);
+    const metals = new Float32Array(nPix);
+    for (let y = 0; y < size; y++) {
+      const v = y / size;
+      for (let x = 0; x < size; x++) {
+        const u = x / size;
+        const p = y * size + x;
+        const i = p * 4;
+        const gx = (u * 2) % 1;
+        const gy = (v * 2) % 1;
+        const isMullion = gx < 0.036 || gx > 0.964 || gy < 0.036 || gy > 0.964;
+        const n = periodicFbm(u, v, 6, 3, 47);
+        if (isMullion) {
+          color[i] = 58;
+          color[i + 1] = 66;
+          color[i + 2] = 76;
+          color[i + 3] = 255;
+          heights[p] = 0.85;
+          roughs[p] = 0.34;
+          metals[p] = 0.86;
+        } else {
+          const paneGrad = 0.88 + 0.12 * Math.sin((gx + gy) * Math.PI);
+          color[i] = Math.round((84 + n * 18) * paneGrad);
+          color[i + 1] = Math.round((134 + n * 20) * paneGrad);
+          color[i + 2] = Math.round((166 + n * 22) * paneGrad);
+          color[i + 3] = Math.round(clamp01(0.52 + n * 0.08) * 255);
+          heights[p] = 0.4 + n * 0.06;
+          roughs[p] = clamp01(0.07 + n * 0.04);
+          metals[p] = 0.18;
+        }
+      }
+    }
+    const normalRm = heightFieldToOpenGlNormalRm(heights, roughs, metals, size, 2.8);
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'glass_frosted') {
+    const srcNormRm = await loadGlassShaderMap('glass_pattern_01_normal_rm.png', size);
+    const frostMask = await loadGlassShaderMap('glass_frost_mask.png', size);
+    const normalRm = new Uint8Array(nPix * 4);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const m = frostMask[i] / 255;
+      color[i] = Math.round(196 + m * 32);
+      color[i + 1] = Math.round(218 + m * 24);
+      color[i + 2] = Math.round(228 + m * 20);
+      color[i + 3] = Math.round(clamp01(0.58 + m * 0.22) * 255);
+      normalRm[i] = srcNormRm[i];
+      normalRm[i + 1] = srcNormRm[i + 1];
+      normalRm[i + 2] = Math.round(clamp01(0.36 + m * 0.28) * 255);
+      normalRm[i + 3] = 12;
+    }
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'glass_rain') {
+    const rainMask = await loadGlassShaderMap('glass_rain_mask.png', size);
+    const heights = new Float32Array(nPix);
+    const roughs = new Float32Array(nPix);
+    const metals = new Float32Array(nPix);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const drop = rainMask[i] / 255;
+      color[i] = Math.round(182 + drop * 48);
+      color[i + 1] = Math.round(208 + drop * 38);
+      color[i + 2] = Math.round(224 + drop * 28);
+      color[i + 3] = Math.round(clamp01(0.36 + drop * 0.34) * 255);
+      heights[p] = drop;
+      roughs[p] = clamp01(0.28 - drop * 0.22);
+      metals[p] = 0.08;
+    }
+    const normalRm = heightFieldToOpenGlNormalRm(heights, roughs, metals, size, 3.2);
+    return { color, normalRm, width: size, height: size };
+  }
+
+  if (entry.id === 'glass_shattered') {
+    const srcNormRm = await loadGlassShaderMap('glass_shattered_01_normal_rm.png', size);
+    const crackMask = await loadGlassShaderMap('glass_shattered_mask.png', size);
+    const normalRm = new Uint8Array(nPix * 4);
+    for (let p = 0; p < nPix; p++) {
+      const i = p * 4;
+      const crack = crackMask[i] / 255;
+      color[i] = Math.round(192 + crack * 56);
+      color[i + 1] = Math.round(216 + crack * 36);
+      color[i + 2] = Math.round(228 + crack * 24);
+      color[i + 3] = Math.round(clamp01(0.38 + crack * 0.56) * 255);
+      normalRm[i] = srcNormRm[i];
+      normalRm[i + 1] = srcNormRm[i + 1];
+      normalRm[i + 2] = Math.round(clamp01(0.08 + crack * 0.45) * 255);
+      normalRm[i + 3] = 16;
+    }
+    return { color, normalRm, width: size, height: size };
+  }
+
+  throw new Error(`Unknown procedural glass slot "${entry.id}"`);
+}
+
 function validateMaterialRule(entry, spec) {
   const rules = spec.materialRules || {};
   const blendMode = entry.blendMode || (entry.alphaCutout ? 'cutout' : 'opaque');
@@ -432,15 +641,15 @@ async function verifyBakedCollection(label, baseDir, items, { requireSquare1024 
 }
 
 async function main() {
-  const { vaultDir } = parseArgs(process.argv.slice(2));
-  const vaultRoot = await resolveVaultDir(vaultDir);
+  const { vaultDir, materialsOnly } = parseArgs(process.argv.slice(2));
   const spec = JSON.parse(await readFile(SPEC_PATH, 'utf8'));
   const matManifest = JSON.parse(await readFile(MATERIALS_MANIFEST_PATH, 'utf8'));
   const decalManifest = JSON.parse(await readFile(DECALS_MANIFEST_PATH, 'utf8'));
   const foliageManifest = JSON.parse(await readFile(FOLIAGE_MANIFEST_PATH, 'utf8'));
   const masterSize = spec.tiers?.T0?.texSize?.master || 1024;
+  const vaultRoot = materialsOnly ? '' : await resolveVaultDir(vaultDir);
 
-  // 1. Bake 90 Universal Opaque Materials (+ layer 0 __missing__)
+  // 1. Bake Universal Materials (+ layer 0 __missing__)
   for (const entry of matManifest.materials || []) {
     validateMaterialRule(entry, spec);
   }
@@ -480,17 +689,26 @@ async function main() {
   for (const entry of matManifest.materials || []) {
     const thisLayer = layerIdx++;
     if (entry.sourcePath?.startsWith('procedural/')) continue;
-    const baked = await bakePbrAsset({
-      vaultRoot,
-      entry,
-      targetW: masterSize,
-      targetH: masterSize,
-      tileToSquare: Boolean(entry.tileToSquare),
-      keepOpacity: false,
-      aoWeight: 0.25,
-    });
-    bakedCache.set(entry.id, baked);
-    await writeUnpremultipliedPair(path.join(BUILT_MATERIALS, entry.id), baked.color, baked.normalRm, masterSize, masterSize);
+    const outDir = path.join(BUILT_MATERIALS, entry.id);
+    if (materialsOnly && existsSync(path.join(outDir, 'color.png')) && existsSync(path.join(outDir, 'normal_rm.png'))) {
+      const [cRaw, nRaw] = await Promise.all([
+        sharp(path.join(outDir, 'color.png')).ensureAlpha().raw().toBuffer(),
+        sharp(path.join(outDir, 'normal_rm.png')).ensureAlpha().raw().toBuffer(),
+      ]);
+      bakedCache.set(entry.id, { color: new Uint8Array(cRaw), normalRm: new Uint8Array(nRaw), width: masterSize, height: masterSize });
+    } else {
+      const baked = await bakePbrAsset({
+        vaultRoot,
+        entry,
+        targetW: masterSize,
+        targetH: masterSize,
+        tileToSquare: Boolean(entry.tileToSquare),
+        keepOpacity: entry.blendMode === 'translucent',
+        aoWeight: 0.25,
+      });
+      bakedCache.set(entry.id, baked);
+      await writeUnpremultipliedPair(outDir, baked.color, baked.normalRm, masterSize, masterSize);
+    }
     tableEntries.push({
       id: entry.id,
       slot: entry.id,
@@ -501,8 +719,8 @@ async function main() {
       tiling: entry.surfaceType === 'dirt' || entry.surfaceType === 'grass' || entry.surfaceType === 'asphalt' ? 'stochastic' : 'grid',
       scanSizeMeters: entry.scanSizeMeters,
       uvScale: entry.uvScale ?? 1.0,
-      blendMode: 'opaque',
-      opacity: 1.0,
+      blendMode: entry.blendMode || 'opaque',
+      opacity: entry.opacity ?? 1.0,
       tintable: false,
       alphaCutout: false,
       emissiveColor: [0, 0, 0],
@@ -519,9 +737,14 @@ async function main() {
   for (const entry of matManifest.materials || []) {
     const thisLayer = layerIdx++;
     if (!entry.sourcePath?.startsWith('procedural/')) continue;
-    const base = bakedCache.get(entry.derivedFrom);
-    if (!base) throw new Error(`Procedural slot "${entry.id}" missing derivedFrom "${entry.derivedFrom}"`);
-    const baked = buildProceduralDerivedSlot(entry, base, masterSize);
+    let baked;
+    if (entry.surfaceType === 'glass' || entry.blendMode === 'translucent') {
+      baked = await buildProceduralGlassSlot(entry, masterSize);
+    } else {
+      const base = bakedCache.get(entry.derivedFrom);
+      if (!base) throw new Error(`Procedural slot "${entry.id}" missing derivedFrom "${entry.derivedFrom}"`);
+      baked = buildProceduralDerivedSlot(entry, base, masterSize);
+    }
     await writeUnpremultipliedPair(path.join(BUILT_MATERIALS, entry.id), baked.color, baked.normalRm, masterSize, masterSize);
     tableEntries.push({
       id: entry.id,
@@ -534,13 +757,13 @@ async function main() {
       tiling: 'grid',
       scanSizeMeters: entry.scanSizeMeters,
       uvScale: entry.uvScale ?? 1.0,
-      blendMode: 'opaque',
-      opacity: 1.0,
+      blendMode: entry.blendMode || 'opaque',
+      opacity: entry.opacity ?? 1.0,
       tintable: false,
       alphaCutout: false,
       emissiveColor: [0, 0, 0],
       emissiveStrength: 0,
-      hasMetalness: entry.surfaceType === 'metal',
+      hasMetalness: Boolean(entry.hasMetalness || entry.surfaceType === 'metal'),
       source: 'procedural',
       assetId: entry.id,
       width: masterSize,
@@ -610,6 +833,13 @@ async function main() {
     ]);
   }
   await writeFile(path.join(BUILT_MATERIALS, 'material_table.json'), JSON.stringify(materialTable, null, 2));
+
+  if (materialsOnly) {
+    const vMat = await verifyBakedCollection('materials', BUILT_MATERIALS, tableEntries, { requireSquare1024: true });
+    console.log('=== v5.0 2-Texture PBR Materials-Only Bake & Verification Report ===');
+    console.log(`Universal Materials : ${vMat.count - 1} + __missing__ (${vMat.count} layers, 1024x1024, A=0 checked: ${vMat.checkedZeroAlpha}, zeroedRGB: ${vMat.zeroAlphaZeroRgb}) [PASS]`);
+    return;
+  }
 
   // 2. Bake 36 PBR Decals (preserve native aspect ratio & power-of-2 dimensions)
   const pbrDecals = decalManifest.pbrDecals || [];
