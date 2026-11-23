@@ -244,6 +244,7 @@ export function createEffectPlayer({
       noiseStrength: 0, noiseYScale: 1, noiseFreq: 0.5, noiseScroll: 0, noiseDamp: false, phase: 0,
       orbitalX: 0, orbitalY: 0, orbitalZ: 0, centerOffX: 0, centerOffY: 0, centerOffZ: 0,
       sizeCurve: null, sizeAffectsWidth: true,
+      hasVelCurve: false, curveRow: 0,
       lifeColorCurve: null,
       particleColorCurve: null,
       trackedSlot: -1,
@@ -548,6 +549,7 @@ export function createEffectPlayer({
     custom1 = null,
     particleColorCurve = null,
     noiseScroll = 0, noiseDamp = false,
+    hasVelCurve = false, curveRow = 0,
   ) {
     if (!trails || typeof trails.allocTrail !== 'function') return;
     let slot = null;
@@ -661,6 +663,8 @@ export function createEffectPlayer({
     slot.centerOffZ = centerOffZ;
     slot.sizeCurve = sizeAffectsWidth && Array.isArray(sizeCurve) ? sizeCurve : null;
     slot.sizeAffectsWidth = sizeAffectsWidth;
+    slot.hasVelCurve = Boolean(hasVelCurve);
+    slot.curveRow = curveRow | 0;
     slot.lifeColorCurve = Array.isArray(trailCfg.lifeColorCurve) && trailCfg.lifeColorCurve.length >= 2 ? trailCfg.lifeColorCurve : null;
     slot.particleColorCurve = trailCfg.inheritColor && Array.isArray(particleColorCurve) && particleColorCurve.length >= 2 ? particleColorCurve : null;
     slot.trackedSlot = trackedSlot;
@@ -677,8 +681,13 @@ export function createEffectPlayer({
       const samples = Math.max(6, maxNodes - 2);
       scratchTrailExt.noiseScroll = noiseScroll;
       scratchTrailExt.noiseDamp = noiseDamp;
+      scratchTrailExt.hasVelCurve = slot.hasVelCurve;
+      scratchTrailExt.duration = particleDur;
       for (let s = 0; s <= samples; s++) {
         const a = tStart + ((initialAge - tStart) * s) / samples;
+        scratchTrailExt.velDispIntegral = slot.hasVelCurve && atlasParticles?.lut?.sampleVelDisp
+          ? atlasParticles.lut.sampleVelDisp(slot.curveRow, Math.min(1, a / Math.max(1e-4, particleDur)))
+          : (a / Math.max(1e-4, particleDur));
         evaluateAtlasParticlePosition(
           x0, y0, z0, vx, vy, vz, gravity, drag,
           noiseStrength, noiseFreq, phase, a, is2D, scratchPos,
@@ -1620,6 +1629,7 @@ export function createEffectPlayer({
           trailCustom1,
           hasPartColCurve ? layer.colorCurve : null,
           noiseScroll, noiseDamp,
+          Boolean(layer.velCurve), layer._curveRow ?? 0,
         );
       }
     }
@@ -2181,13 +2191,19 @@ export function createEffectPlayer({
         } else {
           const angSpd = Math.hypot(tf.orbitalX || 0, tf.orbitalY || 0, tf.orbitalZ || 0);
           const maxArcDt = angSpd > 0.5 ? (0.16 / angSpd) : stepDt;
-          const effStepDt = Math.max(0.006, Math.min(stepDt, maxArcDt));
+          const minFullLifeDt = tf.trailLifetime > 0 ? (tf.trailLifetime / segDiv) : 0;
+          const effStepDt = Math.max(0.006, minFullLifeDt, Math.min(stepDt, maxArcDt));
           scratchTrailExt.noiseScroll = tf.noiseScroll;
           scratchTrailExt.noiseDamp = tf.noiseDamp;
+          scratchTrailExt.hasVelCurve = tf.hasVelCurve;
+          scratchTrailExt.duration = tf.duration;
           tf.sampleAccum += dt;
           while (tf.sampleAccum >= effStepDt && sub < 12) {
             tf.sampleAccum -= effStepDt;
             const sampleAge = Math.max(0, tf.age - tf.sampleAccum);
+            scratchTrailExt.velDispIntegral = tf.hasVelCurve && atlasParticles?.lut?.sampleVelDisp
+              ? atlasParticles.lut.sampleVelDisp(tf.curveRow, Math.min(1, sampleAge / Math.max(1e-4, tf.duration)))
+              : (sampleAge / Math.max(1e-4, tf.duration));
             evaluateAtlasParticlePosition(
               tf.x0, tf.y0, tf.z0,
               tf.vx, tf.vy, tf.vz,
@@ -2202,6 +2218,9 @@ export function createEffectPlayer({
             sub += 1;
           }
           if (tf.sampleAccum >= effStepDt) tf.sampleAccum %= effStepDt;
+          scratchTrailExt.velDispIntegral = tf.hasVelCurve && atlasParticles?.lut?.sampleVelDisp
+            ? atlasParticles.lut.sampleVelDisp(tf.curveRow, Math.min(1, tf.age / Math.max(1e-4, tf.duration)))
+            : (tf.age / Math.max(1e-4, tf.duration));
           evaluateAtlasParticlePosition(
             tf.x0, tf.y0, tf.z0,
             tf.vx, tf.vy, tf.vz,

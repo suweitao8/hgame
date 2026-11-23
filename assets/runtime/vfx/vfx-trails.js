@@ -257,7 +257,7 @@ void main() {
   float u = clamp(position.x + 0.5, 0.0, 1.0);
   float spanT = mix(aSegA.w, aSegB.w, u);
   vUv = aSegMatRow > -0.5
-    ? vec2((1.0 - spanT) * aSegTanA.w, (position.y + 0.5) * aSegTanB.w)
+    ? vec2(spanT * aSegTanA.w, (position.y + 0.5) * aSegTanB.w)
     : vec2(mix(0.76, 0.24, spanT), position.y + 0.5);
   vec3 c0 = unpackRgb24(aSegMeta.x);
   vec3 c1 = unpackRgb24(aSegExtra.x);
@@ -301,8 +301,8 @@ void main() {
     vec2 vsideA = ltA > 0.0001 ? (vec2(-vtA.y, vtA.x) / ltA) : fallbackSide;
     vec2 vsideB = ltB > 0.0001 ? (vec2(-vtB.y, vtB.x) / ltB) : fallbackSide;
     float tipKeep = smoothstep(0.001, 0.012, w);
-    float wA = max(w * aSegExtra.y, abs(mvA.z) * 0.0038 * max(0.16, 1.0 - aSegA.w * 0.84) * tipKeep);
-    float wB = max(w * aSegExtra.z, abs(mvB.z) * 0.0038 * max(0.16, 1.0 - aSegB.w * 0.84) * tipKeep);
+    float wA = max(w * aSegExtra.y, abs(mvA.z) * 0.0038 * max(0.16, 1.0 - aSegA.w * 0.84) * tipKeep * min(1.0, aSegExtra.y * 4.0));
+    float wB = max(w * aSegExtra.z, abs(mvB.z) * 0.0038 * max(0.16, 1.0 - aSegB.w * 0.84) * tipKeep * min(1.0, aSegExtra.z * 4.0));
     vec2 edgeA = mvA.xy + vsideA * (position.y * wA);
     vec2 edgeB = mvB.xy + vsideB * (position.y * wB);
     vec4 mvPos = mix(mvA, mvB, u);
@@ -372,7 +372,7 @@ void main() {
       uTime,
       vViewDirView,
       vNormalView,
-      gl_FrontFacing,
+      true,
       uSoftDepthTex,
       uHasSoftDepth,
       gl_FragCoord.xy,
@@ -867,8 +867,12 @@ export function createTrailsSystem({
       const pB = (trackId * trailNodes + idxB) * 3;
 
       const invSegs = 1 / Math.max(1, count - 1);
-      const t0 = s * invSegs;
-      const t1 = (s + 1) * invSegs;
+      const t0 = life > 0
+        ? Math.max(0, Math.min(1, (simTime - trailPointTimes[trackId * trailNodes + idxA]) / life))
+        : (s * invSegs);
+      const t1 = life > 0
+        ? Math.max(0, Math.min(1, (simTime - trailPointTimes[trackId * trailNodes + idxB]) / life))
+        : ((s + 1) * invSegs);
 
       const ax = trailPoints[pA];
       const ay = trailPoints[pA + 1];
