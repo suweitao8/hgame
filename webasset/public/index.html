@@ -260,7 +260,6 @@
         <div class="hgame-controls">
           <div class="hgame-control-group">
             <button id="hgame-anim-play-button" type="button" class="asset-model-action">暂停</button>
-            <button id="hgame-anim-restart-button" type="button" class="asset-model-action">重播</button>
             <label class="hgame-field"><span>倍速</span>
               <select id="hgame-anim-speed">
                 <option value="0.25">0.25x</option>
@@ -275,19 +274,6 @@
             <input id="hgame-anim-scrub" type="range" min="0" max="1" step="0.005" value="0" aria-label="动画进度">
           </div>
           <span id="hgame-anim-3d-status" class="hgame-status-text" role="status" aria-live="polite"></span>
-          <div class="stage-popover-wrap">
-            <button type="button" class="asset-model-action stage-params-toggle" aria-expanded="false" aria-controls="hgame-anim-params-popover" aria-label="动画参数">⚙</button>
-            <div id="hgame-anim-params-popover" class="stage-params-popover" hidden>
-              <div class="stage-popover-group">
-                <span class="stage-popover-title">回放</span>
-                <div class="stage-popover-grid">
-                  <label class="hgame-check"><input id="hgame-anim-loop" type="checkbox" checked><span>循环</span></label>
-                  <label class="hgame-check"><input id="hgame-anim-skeleton" type="checkbox"><span>骨骼</span></label>
-                  <label class="hgame-check"><input id="hgame-anim-root-lock" type="checkbox"><span>锁定位移</span></label>
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </section>

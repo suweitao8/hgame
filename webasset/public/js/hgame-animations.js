@@ -72,12 +72,8 @@ const deleteButton = document.querySelector('#hgame-anim-delete-button');
 const empty3d = document.querySelector('#hgame-anim-3d-empty');
 const stage3d = document.querySelector('#hgame-anim-3d-stage');
 const play3dBtn = document.querySelector('#hgame-anim-play-button');
-const restart3dBtn = document.querySelector('#hgame-anim-restart-button');
 const scrub3dInput = document.querySelector('#hgame-anim-scrub');
 const speed3dSelect = document.querySelector('#hgame-anim-speed');
-const loop3dInput = document.querySelector('#hgame-anim-loop');
-const skeleton3dInput = document.querySelector('#hgame-anim-skeleton');
-const rootLock3dInput = document.querySelector('#hgame-anim-root-lock');
 const status3dEl = document.querySelector('#hgame-anim-3d-status');
 
 // Character picker dialog
@@ -133,7 +129,6 @@ let loaded3dRoot = null;
 let loadedStageKey = '';
 let loadedRestTransforms = new Map();
 let loadedStats = { boneCount: 0, meshCount: 0 };
-let skeletonHelper = null;
 let mixer = null;
 let rawClips = [];
 let activeUnrealAnimEntry = null;
@@ -486,11 +481,6 @@ function clear3dScene() {
   loadedStageKey = '';
   loadedRestTransforms = new Map();
   loadedStats = { boneCount: 0, meshCount: 0 };
-  if (skeletonHelper) {
-    viewport3d?.scene.remove(skeletonHelper);
-    skeletonHelper.dispose?.();
-    skeletonHelper = null;
-  }
   if (loaded3dRoot) {
     viewport3d?.scene.remove(loaded3dRoot);
     disposeObject3D(loaded3dRoot);
@@ -522,11 +512,11 @@ function applyPreparedClip() {
   const prepared = active3dKind === 'unreal'
     ? retargetUnrealClips(activeUnrealAnimEntry, loaded3dRoot, {
         targetRestSnapshot: loadedRestTransforms,
-        stripRootMotion: rootLock3dInput.checked,
+        stripRootMotion: false,
       })
     : prepareAnimationClips(THREE, sourceClips, {
         stripNamespace: true,
-        stripRootMotion: rootLock3dInput.checked ? 'xz' : false,
+        stripRootMotion: false,
       });
 
   if (prepared.length === 0) {
@@ -540,8 +530,8 @@ function applyPreparedClip() {
   const idx = Math.min(Math.max(activeClipIndex, 0), prepared.length - 1);
   activeClipIndex = idx;
   activeAction = mixer.clipAction(prepared[idx]);
-  activeAction.setLoop(loop3dInput.checked ? THREE.LoopRepeat : THREE.LoopOnce, Infinity);
-  activeAction.clampWhenFinished = !loop3dInput.checked;
+  activeAction.setLoop(THREE.LoopRepeat, Infinity);
+  activeAction.clampWhenFinished = false;
   activeAction.reset().play();
   play3dBtn.textContent = playing3d ? '暂停' : '播放';
 }
@@ -576,11 +566,6 @@ async function mountCharacterRoot(url, stageKey, vp, token) {
 
   const inspection = inspectModel3D(THREE, gltf);
   loadedStats = { boneCount: inspection.boneNames.length, meshCount: inspection.meshCount };
-  if (inspection.boneNames.length > 0) {
-    skeletonHelper = new THREE.SkeletonHelper(loaded3dRoot);
-    skeletonHelper.visible = skeleton3dInput.checked;
-    vp.scene.add(skeletonHelper);
-  }
   mixer = new THREE.AnimationMixer(loaded3dRoot);
   return gltf;
 }
@@ -631,9 +616,7 @@ async function load3dAnimationAsset() {
       playing3d = true;
       applyPreparedClip();
       const dur = animEntry.clips[0]?.duration ? `${animEntry.clips[0].duration.toFixed(2)}s` : '';
-      status3dEl.textContent = loadedStats.boneCount === 0
-        ? `${charItem.name} 未含骨骼，无法套用动作`
-        : `${charItem.packLabel || charItem.pack} · ${animItem.category}${dur ? ` · ${dur}` : ''} · ${loadedStats.boneCount} 骨 · ${loadedStats.meshCount} 网格`;
+      status3dEl.textContent = loadedStats.boneCount === 0 ? '无骨骼' : dur;
 
       if (!viewEl.hidden) {
         vp.start(tick3d);
@@ -674,10 +657,10 @@ async function load3dAnimationAsset() {
     if (rawClips.length > 0) {
       playing3d = true;
       applyPreparedClip();
-      status3dEl.textContent = `${rawClips.length} 动画 · ${loadedStats.boneCount} 骨骼`;
+      status3dEl.textContent = rawClips[0]?.duration ? `${rawClips[0].duration.toFixed(2)}s` : `${rawClips.length} 动画`;
     } else {
       mixer = null;
-      status3dEl.textContent = `0 动画 · ${loadedStats.boneCount} 骨骼`;
+      status3dEl.textContent = '0 动画';
     }
 
     if (!viewEl.hidden) {
@@ -751,13 +734,6 @@ async function initAnimationsView() {
       playing3d = !playing3d;
       play3dBtn.textContent = playing3d ? '暂停' : '播放';
     });
-    restart3dBtn.addEventListener('click', () => {
-      if (activeAction) {
-        activeAction.reset().play();
-        playing3d = true;
-        play3dBtn.textContent = '暂停';
-      }
-    });
     scrub3dInput.addEventListener('input', () => {
       if (!activeAction || !mixer) return;
       playing3d = false;
@@ -765,11 +741,6 @@ async function initAnimationsView() {
       const dur = Math.max(activeAction.getClip().duration, 0.0001);
       activeAction.time = Number(scrub3dInput.value) * dur;
       mixer.update(0);
-    });
-    loop3dInput.addEventListener('change', applyPreparedClip);
-    rootLock3dInput.addEventListener('change', applyPreparedClip);
-    skeleton3dInput.addEventListener('change', () => {
-      if (skeletonHelper) skeletonHelper.visible = skeleton3dInput.checked;
     });
 
     onHGameAssetsChanged(data => {
