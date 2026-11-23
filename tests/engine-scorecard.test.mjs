@@ -102,7 +102,7 @@ test('exempt checklist entries leave the maturity tag and short-board column, an
   assert.deepEqual([r1Counts.met, r1Counts.applicable], [3, 3]);
 
   const s1Counts = summarizeChecklist(data.items.find((it) => it.id === 'S1'));
-  assert.deepEqual([s1Counts.met, s1Counts.applicable, s1Counts.exempt], [3, 4, 1]);
+  assert.deepEqual([s1Counts.met, s1Counts.applicable, s1Counts.exempt], [3, 3, 2]);
 
   const sections = renderSections(data);
   assert.ok(sections.items.includes('| R1 |') && sections.items.includes('C3 (3/3 · 豁免 1)'));
