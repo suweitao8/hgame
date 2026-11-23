@@ -864,15 +864,19 @@ export function createEffectPlayer({
     } else if (sType === 'cone') {
       const ang = prng.nextFloat() * 6.283185307179586;
       const halfCone = ((shape.angle ?? 25) * Math.PI) / 180;
-      const tilt = prng.range(0, halfCone);
+      const rNorm = Math.sqrt(1 - rt + prng.nextFloat() * rt);
+      const tilt = rNorm * halfCone;
       const sinT = Math.sin(tilt);
       const cosT = Math.cos(tilt);
       dx = Math.cos(ang) * sinT;
       dy = is2D ? Math.sin(ang) * sinT : cosT;
       dz = is2D ? 0 : Math.sin(ang) * sinT;
-      const r = rad * Math.sqrt(1 - rt + prng.nextFloat() * rt);
+      const coneLen = Math.max(0, Number(shape.length ?? 0)) * scale;
+      const h = coneLen > 0 ? prng.nextFloat() * coneLen : 0;
+      const sliceRad = rad + h * Math.tan(halfCone);
+      const r = sliceRad * rNorm;
       lx = Math.cos(ang) * r;
-      ly = is2D ? Math.sin(ang) * r : 0;
+      ly = is2D ? Math.sin(ang) * r : h;
       lz = is2D ? 0 : Math.sin(ang) * r;
     } else if (sType === 'box') {
       const bx = (shape.size?.[0] ?? 1) * 0.5 * scale;

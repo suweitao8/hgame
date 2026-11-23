@@ -872,9 +872,9 @@ function computeShapeRotation(trQuat, sRotMatch, mappedType) {
   // Convert LHS Unity transform & shape quaternions to RHS Three.js quaternions at import time.
   const qTr = toRhsQuat(rawTr);
   const qSh = toRhsQuat(rawSh);
-  // Canonical Unity shapes point +Z; HGame cone/circle/hemisphere use +Y (+90 deg X offset from +Y to +Z).
+  // Canonical Unity shapes point +Z_lhs (-Z_rhs); HGame cone/circle/hemisphere use +Y (-90 deg X offset from +Y to -Z).
   const s45 = Math.SQRT1_2;
-  const qOff = quatMul(quatMul(qTr, qSh), [s45, 0, 0, s45]);
+  const qOff = quatMul(quatMul(qTr, qSh), [-s45, 0, 0, s45]);
   const [x, y, z, w] = qOff;
   const r00 = 1 - 2 * (y * y + z * z);
   const r01 = 2 * (x * y - z * w);
@@ -1294,6 +1294,10 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         radius: rad > 0 && rad < 0.001 ? Number((rad * trScaleScalar).toFixed(4)) : Number((rad * trScaleScalar).toFixed(3)),
         angle: Number(ang.toFixed(1)),
       };
+      if (Number(st) === 8 || Number(st) === 9) {
+        const coneLen = Number((shapeMod.match(/\blength:\s*([-\d.eE+]+)/) || [])[1] ?? 5);
+        if (coneLen > 0) shapeObj.length = Number((coneLen * trScaleScalar).toFixed(3));
+      }
       if (mappedType === 'donut') {
         shapeObj.donutRadius = Number((donutRad * trScaleScalar).toFixed(3));
       }
@@ -1308,7 +1312,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           shapeObj.mesh = resolveMeshKey(smInfo.relPath);
         }
       }
-      if (radThick < 0.05) shapeObj.shell = true;
+      if (radThick < 0.05 || [1, 3, 7, 9, 11].includes(Number(st))) shapeObj.shell = true;
       else if (radThick < 0.99) shapeObj.radiusThickness = Number(radThick.toFixed(3));
       if (randPos > 0.001) shapeObj.randomPos = Number(randPos.toFixed(3));
       if (randDir > 0.001) shapeObj.randomDirectionAmount = Number(randDir.toFixed(3));
