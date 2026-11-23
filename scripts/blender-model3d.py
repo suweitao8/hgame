@@ -2075,8 +2075,10 @@ def _view3d_override():
 def _align_arp_retarget_rest_pose(src_arm, tar_arm):
     """Align A-pose source arms and vertical legs onto ARP T-pose/A-stance target via Redefine Rest Pose (preserve=True)."""
     pairs = (
+        ("clavicle_l", "upperarm_l", "c_shoulder.l", "c_arm_fk.l"),
         ("upperarm_l", "lowerarm_l", "c_arm_fk.l", "c_forearm_fk.l"),
         ("lowerarm_l", "hand_l", "c_forearm_fk.l", "c_hand_fk.l"),
+        ("clavicle_r", "upperarm_r", "c_shoulder.r", "c_arm_fk.r"),
         ("upperarm_r", "lowerarm_r", "c_arm_fk.r", "c_forearm_fk.r"),
         ("lowerarm_r", "hand_r", "c_forearm_fk.r", "c_hand_fk.r"),
         ("thigh_l", "calf_l", "c_thigh_fk.l", "c_leg_fk.l"),
@@ -2196,10 +2198,85 @@ def _rig_and_export_arp(
     if len(wrist_pts) >= 3:
         hand_x = float(np.median(wrist_pts[:, 0]))
 
-    sh_x = min(max(x_sh, 0.12 * H), 0.17 * H)
-    sh_pts = co[(np.abs(co[:, 0] - sh_x) <= 0.045 * H) & (co[:, 2] >= z_arm - 0.06 * H) & (co[:, 2] <= z_arm + 0.12 * H)]
-    sh_y = float(np.median(sh_pts[:, 1])) if len(sh_pts) >= 3 else hand_y
-    sh_z = float(np.percentile(sh_pts[:, 2], 65)) if len(sh_pts) >= 3 else z_arm
+    # True anatomical ribcage half-width: measure per-height-slice below armpit centered on torso Y to exclude rear wings/capes
+    torso_core = co[
+        (co[:, 2] >= z_arm - 0.13 * H)
+        & (co[:, 2] <= z_arm - 0.03 * H)
+        & (np.abs(co[:, 0]) <= 0.06 * H)
+    ]
+    y_torso = float(np.median(torso_core[:, 1])) if len(torso_core) >= 4 else sh_y if "sh_y" in locals() else hand_y
+    sl_ribs = []
+    for zt in np.linspace(z_arm - 0.13 * H, z_arm - 0.03 * H, 7):
+        pts = co[
+            (np.abs(co[:, 2] - float(zt)) <= 0.015 * H)
+            & (np.abs(co[:, 0]) <= 0.20 * H)
+            & (np.abs(co[:, 1] - y_torso) <= 0.085 * H)
+        ]
+        if len(pts) < 6:
+            continue
+        xs = np.sort(np.abs(pts[:, 0]))
+        rc = float(np.percentile(xs, 95))
+        for i_x in range(len(xs) - 1):
+            if xs[i_x] >= 0.055 * H and (xs[i_x + 1] - xs[i_x]) > 0.018 * H:
+                rc = float(xs[i_x])
+                break
+        sl_ribs.append(rc)
+    rib_x = float(np.median(sl_ribs)) if sl_ribs else (0.085 * H)
+    sh_x = min(max(rib_x * 0.96, 0.068 * H), 0.125 * H)
+
+    # Sample upper-arm root cross-section right outside sh_x to get exact humeral head Z/Y center
+    ua_pts = co[
+        (np.abs(co[:, 0] - (sh_x + 0.025 * H)) <= 0.03 * H)
+        & (co[:, 2] >= z_arm - 0.06 * H)
+        & (co[:, 2] <= z_arm + 0.08 * H)
+    ]
+    if len(ua_pts) < 5:
+        ua_pts = co[
+            (np.abs(co[:, 0] - sh_x) <= 0.045 * H)
+            & (co[:, 2] >= z_arm - 0.06 * H)
+            & (co[:, 2] <= z_arm + 0.08 * H)
+        ]
+    sh_y = float(np.median(ua_pts[:, 1])) if len(ua_pts) >= 3 else hand_y
+    sh_z = (
+        0.5 * (float(np.percentile(ua_pts[:, 2], 15)) + float(np.percentile(ua_pts[:, 2], 85)))
+        if len(ua_pts) >= 5
+        else z_arm
+    )
+    sh_z = min(sh_z, z_arm + 0.028 * H)
+
+    # Guarantee shoulder_loc hits solid front/back mesh (handles wide coats/armpit gaps where z_arm sits low)
+    bvh_sh = mathutils.bvhtree.BVHTree.FromObject(low_obj, bpy.context.evaluated_depsgraph_get())
+    def _sh_ray_hits(x_q, z_q):
+        hf = bvh_sh.ray_cast(mathutils.Vector((x_q, -2.0 * H, z_q)), mathutils.Vector((0.0, 1.0, 0.0)))[0]
+        hb = bvh_sh.ray_cast(mathutils.Vector((x_q, 2.0 * H, z_q)), mathutils.Vector((0.0, -1.0, 0.0)))[0]
+        if hf is None or hb is None or (hb.y - hf.y) < 0.005 * H:
+            return None
+        return (hf.y, hb.y)
+
+    z_sh_lo = z_arm - 0.04 * H
+    z_sh_hi = min(z_neck - 0.02 * H, z0 + 0.815 * H)
+    if z_sh_hi <= z_sh_lo + 0.02 * H:
+        z_sh_hi = z0 + 0.815 * H
+    for sx_try in (sh_x, max(sh_x, 0.085 * H), 0.105 * H, 0.125 * H, 0.145 * H):
+        zs_ok = [
+            float(zq)
+            for zq in np.linspace(z_sh_lo, z_sh_hi, 25)
+            if _sh_ray_hits(sx_try, float(zq)) is not None and _sh_ray_hits(sx_try + 0.02 * H, float(zq)) is not None
+        ]
+        if len(zs_ok) >= 2:
+            clusters = [[zs_ok[0]]]
+            for zq in zs_ok[1:]:
+                if zq - clusters[-1][-1] <= 0.025 * H:
+                    clusters[-1].append(zq)
+                else:
+                    clusters.append([zq])
+            top_cl = clusters[-1]
+            sh_x = sx_try
+            sh_z = 0.5 * (top_cl[0] + top_cl[-1])
+            fb_hit = _sh_ray_hits(sh_x, sh_z)
+            if fb_hit is not None:
+                sh_y = 0.5 * (fb_hit[0] + fb_hit[1])
+            break
 
     # Measure clean outer-leg Y depth (|x| >= 0.07*H) so large center tails/capes never shift hip/ankle Y
     leg_outer = co[(co[:, 2] >= z0 + 0.12 * H) & (co[:, 2] <= z0 + 0.48 * H) & (np.abs(co[:, 0]) >= 0.07 * H)]
@@ -2247,8 +2324,8 @@ def _rig_and_export_arp(
 
         for mname, loc in (
             ("root", (0.0, sh_y, z_hip)),
-            ("neck", (0.0, sh_y, max(z_arm + 0.055 * H, min(z_neck, z0 + 0.85 * H)))),
-            ("chin", (0.0, sh_y - 0.05 * H, min(z0 + 0.89 * H, max(z_arm + 0.095 * H, z_neck + 0.035 * H)))),
+            ("neck", (0.0, sh_y, max(sh_z + 0.045 * H, min(z_neck, z0 + 0.85 * H)))),
+            ("chin", (0.0, sh_y - 0.05 * H, min(z0 + 0.89 * H, max(sh_z + 0.085 * H, z_neck + 0.035 * H)))),
             ("shoulder", (sh_x, sh_y, sh_z)),
             ("hand", (hand_x, hand_y, hand_z)),
             ("foot", (f_x, f_y, z0 + 0.055 * H)),
@@ -2349,6 +2426,21 @@ def _rig_and_export_arp(
                     to_b = eb[f"toes_ref.{s}"]
                     to_b.head.x = ft_b.head.x
                     to_b.tail.x = ft_b.head.x
+
+        # Enforce coplanar horizontal elbow bend plane + anatomical 45:55 upperarm:forearm ratio
+        for s in ("l", "r"):
+            if all(f"{b}.{s}" in eb for b in ("shoulder_ref", "arm_ref", "forearm_ref", "hand_ref")):
+                ar_b = eb[f"arm_ref.{s}"]
+                fa_b = eb[f"forearm_ref.{s}"]
+                ha_b = eb[f"hand_ref.{s}"]
+                x_s, x_w = ar_b.head.x, ha_b.head.x
+                t_e = 0.45
+                x_line_e = x_s + t_e * (x_w - x_s)
+                z_line_e = ar_b.head.z + t_e * (ha_b.head.z - ar_b.head.z)
+                y_line_e = ar_b.head.y + t_e * (ha_b.head.y - ar_b.head.y)
+                ar_b.tail.x = fa_b.head.x = x_line_e
+                ar_b.tail.z = fa_b.head.z = z_line_e
+                ar_b.tail.y = fa_b.head.y = max(fa_b.head.y, y_line_e + 0.022 * H)
         bpy.ops.arp.match_to_rig()
 
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -3711,6 +3803,21 @@ def cmd_rig_run(args):
         if o not in primary_list:
             bpy.data.objects.remove(o, do_unlink=True)
     for o in list(bpy.data.objects):
+        if o.type == "ARMATURE" and o.data:
+            o.data.pose_position = "REST"
+    bpy.context.view_layer.update()
+
+    obj = primary_list[0] if len(primary_list) == 1 else ensure_single_mesh("RiggedCharacter")
+    for mod in list(obj.modifiers):
+        if mod.type == "ARMATURE":
+            obj.modifiers.remove(mod)
+    for vg in list(obj.vertex_groups):
+        obj.vertex_groups.remove(vg)
+    mw_rest = obj.matrix_world.copy()
+    obj.parent = None
+    obj.matrix_world = mw_rest
+
+    for o in list(bpy.data.objects):
         if o.type == "ARMATURE":
             bpy.data.objects.remove(o, do_unlink=True)
     for act in list(bpy.data.actions):
@@ -3720,13 +3827,6 @@ def cmd_rig_run(args):
             bpy.data.meshes.remove(m, do_unlink=True)
     bpy.context.view_layer.update()
 
-    obj = primary_list[0] if len(primary_list) == 1 else ensure_single_mesh("RiggedCharacter")
-    for mod in list(obj.modifiers):
-        if mod.type == "ARMATURE":
-            obj.modifiers.remove(mod)
-    for vg in list(obj.vertex_groups):
-        obj.vertex_groups.remove(vg)
-    obj.parent = None
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
