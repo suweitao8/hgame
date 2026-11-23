@@ -291,6 +291,7 @@ export function createEffectPlayer({
       cycleAge: 0,
       rateAccum: 0,
       distAccum: 0,
+      emitSeq: 0,
       burstCyclesDone: new Uint16Array(MAX_BURSTS_PER_LAYER),
       burstNextTime: new Float32Array(MAX_BURSTS_PER_LAYER),
       activeEndTimes: new Float64Array(64),
@@ -807,7 +808,34 @@ export function createEffectPlayer({
     return freeLi;
   }
 
-  function sampleShapeAndVelocity(layer, slot, scale) {
+  function sampleShapeArcAngle(shape, ls, emitIdx, emitCount) {
+    const arcRad = ((shape.arc ?? 360) * Math.PI) / 180;
+    const arcMode = shape.arcMode || 'random';
+    const spread = Math.max(0, Math.min(1, Number(shape.arcSpread ?? 0)));
+    let frac;
+    if (arcMode === 'burst-spread') {
+      frac = emitCount > 1 ? (emitIdx / emitCount) : 0;
+    } else if (arcMode === 'loop' || arcMode === 'pingpong') {
+      const spd = Number(shape.arcSpeed ?? 1);
+      const seqStep = spread > 0.001 ? spread : 0.08;
+      const tSeq = (ls ? ls.cycleAge * Math.abs(spd) : 0) + ((ls ? ls.emitSeq++ : 0) * seqStep);
+      const wrap = ((tSeq % 1) + 1) % 1;
+      if (arcMode === 'pingpong') {
+        const cyc = Math.floor(Math.abs(tSeq));
+        frac = (cyc % 2 === 1) ? (1 - wrap) : wrap;
+      } else {
+        frac = spd < 0 ? (1 - wrap) : wrap;
+      }
+    } else {
+      frac = prng.nextFloat();
+    }
+    if (spread > 0.001) {
+      frac = Math.floor(frac / spread) * spread;
+    }
+    return frac * arcRad;
+  }
+
+  function sampleShapeAndVelocity(layer, slot, scale, ls = null, emitIdx = 0, emitCount = 1) {
     const shape = layer.shape || {};
     const sType = shape.type || 'point';
     const rad = (shape.radius ?? 0) * scale;
@@ -822,7 +850,7 @@ export function createEffectPlayer({
     let dz = 0;
 
     if (sType === 'sphere' || sType === 'hemisphere') {
-      const ang = prng.nextFloat() * 6.283185307179586;
+      const ang = sampleShapeArcAngle(shape, ls, emitIdx, emitCount);
       const elev = sType === 'hemisphere' ? prng.range(0, 1) : prng.range(-1, 1);
       const horiz = Math.sqrt(Math.max(0, 1 - elev * elev));
       dx = Math.cos(ang) * horiz;
@@ -834,7 +862,7 @@ export function createEffectPlayer({
       ly = dy * r;
       lz = dz * r;
     } else if (sType === 'circle') {
-      const ang = prng.nextFloat() * 6.283185307179586;
+      const ang = sampleShapeArcAngle(shape, ls, emitIdx, emitCount);
       const r = rad * Math.sqrt(1 - rt + prng.nextFloat() * rt);
       lx = Math.cos(ang) * r;
       ly = is2D ? Math.sin(ang) * r : 0;
@@ -843,7 +871,7 @@ export function createEffectPlayer({
       dy = is2D ? Math.sin(ang) : 0;
       dz = is2D ? 0 : Math.sin(ang);
     } else if (sType === 'donut') {
-      const phi = prng.nextFloat() * 6.283185307179586;
+      const phi = sampleShapeArcAngle(shape, ls, emitIdx, emitCount);
       const theta = prng.nextFloat() * 6.283185307179586;
       const tubeR = (shape.donutRadius ?? Math.max(0.15, rad * 0.25)) * scale;
       const rMinor = tubeR * Math.sqrt(1 - rt + prng.nextFloat() * rt);
@@ -894,7 +922,7 @@ export function createEffectPlayer({
       dy = is2D ? -1 : 1;
       dz = 0;
     } else if (sType === 'cone') {
-      const ang = prng.nextFloat() * 6.283185307179586;
+      const ang = shape ? sampleShapeArcAngle(shape, ls, emitIdx, emitCount) : (prng.nextFloat() * 6.283185307179586);
       const halfCone = ((shape.angle ?? 25) * Math.PI) / 180;
       const rNorm = Math.sqrt(1 - rt + prng.nextFloat() * rt);
       const tilt = rNorm * halfCone;
@@ -1151,10 +1179,10 @@ export function createEffectPlayer({
     return { flipbook: scratchRowFb, uvRect: scratchRowUv };
   }
 
-  function emitParticleOrMesh(layer, slot, initialAge = 0, ls = null) {
+  function emitParticleOrMesh(layer, slot, initialAge = 0, ls = null, emitIdx = 0, emitCount = 1) {
     const scale = slot.scale;
     const simSpd = layer._simSpd ?? Math.max(0.05, Number(layer.simulationSpeed ?? 1.0));
-    sampleShapeAndVelocity(layer, slot, scale);
+    sampleShapeAndVelocity(layer, slot, scale, ls, emitIdx, emitCount);
     const rawDur = Math.max(0.02, readRange(layer.life, 0.4, 0.8, prng));
     const dur = rawDur / simSpd;
     const clampedInitAge = Math.min(Math.max(0, initialAge / simSpd), Math.max(0, dur - 0.01));
@@ -1593,10 +1621,10 @@ export function createEffectPlayer({
     return dur - clampedInitAge;
   }
 
-  function tryEmitWithCap(layer, ls, slot) {
+  function tryEmitWithCap(layer, ls, slot, emitIdx = 0, emitCount = 1) {
     const cap = layer.maxParticles | 0;
     if (cap <= 0 || cap > 64) {
-      emitParticleOrMesh(layer, slot, 0, ls);
+      emitParticleOrMesh(layer, slot, 0, ls, emitIdx, emitCount);
       return true;
     }
     let active = 0;
@@ -1609,7 +1637,7 @@ export function createEffectPlayer({
       }
     }
     if (active >= cap) return false;
-    const remDur = emitParticleOrMesh(layer, slot, 0, ls) ?? 0.5;
+    const remDur = emitParticleOrMesh(layer, slot, 0, ls, emitIdx, emitCount) ?? 0.5;
     const writeIdx = freeIdx >= 0 ? freeIdx : (ls.activeEndCursor++ % 64);
     ls.activeEndTimes[writeIdx] = layer.persistent ? Infinity : (slot.age + remDur);
     return true;
@@ -1763,6 +1791,7 @@ export function createEffectPlayer({
       ls.cycleAge = 0;
       ls.rateAccum = (layer.maxParticles > 0 && noBursts && hasRate) ? 1 : 0;
       ls.distAccum = 0;
+      ls.emitSeq = 0;
       ls.activeEndTimes.fill(-1);
       ls.activeEndCursor = 0;
       ls.triggeredOnce = false;
@@ -1845,7 +1874,7 @@ export function createEffectPlayer({
                 ? Math.max(rawCount > 0 && emScale > 0 ? 1 : 0, Math.round(rawCount * emScale))
                 : Math.max(0, Math.round(rawCount));
               for (let c = 0; c < count; c++) {
-                tryEmitWithCap(layer, ls, slot);
+                tryEmitWithCap(layer, ls, slot, c, count);
               }
             }
             ls.burstCyclesDone[b] += 1;

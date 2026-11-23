@@ -1395,6 +1395,22 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           shapeObj.scale = [Number(sx.toFixed(3)), Number(sy.toFixed(3)), Number(sz.toFixed(3))];
         }
       }
+      const arcBlk = extractModSubBlock(shapeMod, 'arc');
+      if (arcBlk) {
+        const arcDeg = Number((arcBlk.match(/\bvalue:\s*([-\d.eE+]+)/) || [])[1] ?? 360);
+        const arcModeNum = Number((arcBlk.match(/\bmode:\s*(\d+)/) || [])[1] ?? 0);
+        const arcSpread = Number((arcBlk.match(/\bspread:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+        const arcSpeed = readMinMaxScalar(arcBlk, 'speed', 1);
+        if (arcDeg < 359.5) shapeObj.arc = Number(arcDeg.toFixed(1));
+        if (arcModeNum === 1 || arcModeNum === 2 || arcModeNum === 3) {
+          shapeObj.arcMode = arcModeNum === 1 ? 'loop' : arcModeNum === 2 ? 'pingpong' : 'burst-spread';
+          if (arcSpread > 0.001) shapeObj.arcSpread = Number(arcSpread.toFixed(3));
+          if (arcModeNum !== 3) {
+            const spdScalar = Array.isArray(arcSpeed) ? arcSpeed[0] : arcSpeed;
+            if (Math.abs(spdScalar - 1) > 0.001) shapeObj.arcSpeed = Number(spdScalar.toFixed(3));
+          }
+        }
+      }
       const shapeRot = computeShapeRotation(alignRot, sRotM, mappedType);
       if (shapeRot) shapeObj.rotation = shapeRot;
       layer.shape = shapeObj;
