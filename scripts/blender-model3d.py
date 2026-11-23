@@ -2116,8 +2116,12 @@ def _align_arp_retarget_rest_pose(src_arm, tar_arm):
         vd = ((tar_arm.matrix_world @ pb_dc.head) - (tar_arm.matrix_world @ pb_d.head)).normalized()
         if vs.length > 0.5 and vd.length > 0.5 and vs.dot(vd) > -0.999:
             q_world = vs.rotation_difference(vd)
-            m_w = q_world.to_matrix().to_4x4() @ (src_arm.matrix_world @ pb_s.matrix)
+            m_orig = src_arm.matrix_world @ pb_s.matrix
+            loc_orig = m_orig.to_translation()
+            m_w = q_world.to_matrix().to_4x4() @ m_orig
+            m_w.translation = loc_orig
             pb_s.matrix = src_arm.matrix_world.inverted() @ m_w
+            pb_s.location = (0.0, 0.0, 0.0)
             bpy.context.view_layer.update()
 
     scn = bpy.context.scene
