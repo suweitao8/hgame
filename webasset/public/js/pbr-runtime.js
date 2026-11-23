@@ -13,12 +13,18 @@ export class MaterialRegistry {
       throw new TypeError('MaterialRegistry requires a valid material_table.json payload');
     }
     for (const entry of materialTable.materials) {
+      const rawScan = Array.isArray(entry.scanSizeMeters)
+        ? Number(entry.scanSizeMeters[0])
+        : Number(entry.scanSizeMeters ?? entry.physicalSizeMeters);
+      const scanSizeMeters = Number.isFinite(rawScan) && rawScan > 0 ? rawScan : 1.0;
+      const derivedUvScale = Number((1.0 / scanSizeMeters).toFixed(4));
       const normalized = {
         slot: String(entry.slot),
         layer: Number(entry.layer) | 0,
         category: entry.category || '',
         tiling: entry.tiling === 'stochastic' ? 'stochastic' : 'grid',
-        uvScale: Number.isFinite(entry.uvScale) && entry.uvScale > 0 ? entry.uvScale : 1.0,
+        scanSizeMeters,
+        uvScale: Number.isFinite(entry.uvScale) && entry.uvScale > 0 ? entry.uvScale : derivedUvScale,
         blendMode: entry.blendMode || (entry.alphaCutout ? 'cutout' : 'opaque'),
         opacity: Number.isFinite(entry.opacity) ? entry.opacity : 1.0,
         tintable: Boolean(entry.tintable),
@@ -36,6 +42,7 @@ export class MaterialRegistry {
       layer: 0,
       category: '0_builtin',
       tiling: 'grid',
+      scanSizeMeters: 1.0,
       uvScale: 1.0,
       blendMode: 'opaque',
       opacity: 1.0,
@@ -661,7 +668,7 @@ vec4 pbrNrmSample;
 mat2 pbrUvRot = mat2(1.0, 0.0, 0.0, 1.0);
 
 if (pbrIsStochastic) {
-  vec2 tileUv = pbrBaseUv * 0.5;
+  vec2 tileUv = pbrBaseUv;
   vec2 cell = floor(tileUv);
   vec2 f = fract(tileUv);
   float edgeFade = sin(f.x * 3.14159265) * sin(f.y * 3.14159265);

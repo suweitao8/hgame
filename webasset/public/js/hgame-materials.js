@@ -32,6 +32,7 @@ const statusEl = document.querySelector('#hgame-material-status');
 let initialized = false;
 let matItems = [];
 let selectedId = '';
+let currentUvScale = 1.0;
 let viewport = null;
 let hdriEnv = null;
 let previewMaterial = null;
@@ -40,6 +41,54 @@ let previewNormRmTex = null;
 let meshGroup = null;
 let manifestLoaded = false;
 let loadSeq = 0;
+
+function resolveEntryScanMeters(entry) {
+  if (!entry) return 1.0;
+  const raw = Array.isArray(entry.scanSizeMeters)
+    ? Number(entry.scanSizeMeters[0])
+    : Number(entry.scanSizeMeters ?? entry.physicalSizeMeters);
+  return Number.isFinite(raw) && raw > 0 ? raw : 1.0;
+}
+
+function resolveEntryUvScale(entry) {
+  if (entry && Number.isFinite(entry.uvScale) && entry.uvScale > 0) {
+    return entry.uvScale;
+  }
+  return Number((1.0 / resolveEntryScanMeters(entry)).toFixed(4));
+}
+
+function createMetricBoxGeometry(w, h, d) {
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const pos = geo.getAttribute('position');
+  const nrm = geo.getAttribute('normal');
+  const uv = geo.getAttribute('uv');
+  // Standard metric world UV: 1.0m = 1.0 UV unit, corner-anchored at [0..w, 0..h, 0..d]
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i) + w * 0.5;
+    const y = pos.getY(i) + h * 0.5;
+    const z = pos.getZ(i) + d * 0.5;
+    const nx = Math.abs(nrm.getX(i));
+    const ny = Math.abs(nrm.getY(i));
+    const nz = Math.abs(nrm.getZ(i));
+    if (ny >= nx && ny >= nz) uv.setXY(i, x, z);
+    else if (nx >= ny && nx >= nz) uv.setXY(i, z, y);
+    else uv.setXY(i, x, y);
+  }
+  uv.needsUpdate = true;
+  return geo;
+}
+
+function createMetricSphereGeometry(radius) {
+  const geo = new THREE.SphereGeometry(radius, 48, 32);
+  const uv = geo.getAttribute('uv');
+  const uMeters = Math.max(1.0, Number((2 * radius).toFixed(2)));
+  const vMeters = Math.max(1.0, Number((2 * radius).toFixed(2)));
+  for (let i = 0; i < uv.count; i++) {
+    uv.setXY(i, uv.getX(i) * uMeters, uv.getY(i) * vMeters);
+  }
+  uv.needsUpdate = true;
+  return geo;
+}
 
 function ensureViewport() {
   if (!viewport) {
@@ -149,24 +198,31 @@ function buildPreviewGeometryGroup(mat) {
   const group = new THREE.Group();
   const shape = shapeSelect?.value || 'combo';
   if (shape === 'combo') {
-    const cube = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 1.3), mat);
-    cube.position.set(-0.85, 0.72, 0);
+    // 1.0m x 1.0m x 1.0m standard metric reference cube (1m = 1 UV)
+    const cube = new THREE.Mesh(createMetricBoxGeometry(1.0, 1.0, 1.0), mat);
+    cube.position.set(-0.72, 0.54, -0.35);
     cube.castShadow = true;
     cube.receiveShadow = true;
-    const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.92, 48, 32), mat);
-    sphere.position.set(0.95, 0.95, 0);
+    // 1.0m diameter sphere (radius 0.5m)
+    const sphere = new THREE.Mesh(createMetricSphereGeometry(0.5), mat);
+    sphere.position.set(0.72, 0.54, -0.35);
     sphere.castShadow = true;
     sphere.receiveShadow = true;
-    group.add(cube, sphere);
+    // 2.0m x 1.0m metric ground swatch in front
+    const slab = new THREE.Mesh(createMetricBoxGeometry(2.0, 0.04, 1.0), mat);
+    slab.position.set(0, 0.02, 0.82);
+    slab.receiveShadow = true;
+    group.add(cube, sphere, slab);
   } else if (shape === 'sphere') {
-    const sphere = new THREE.Mesh(new THREE.SphereGeometry(1.05, 48, 32), mat);
-    sphere.position.set(0, 1.05, 0);
+    const sphere = new THREE.Mesh(createMetricSphereGeometry(0.5), mat);
+    sphere.position.set(0, 0.55, 0);
     sphere.castShadow = true;
     sphere.receiveShadow = true;
     group.add(sphere);
   } else {
-    const cube = new THREE.Mesh(new THREE.BoxGeometry(1.45, 1.45, 1.45), mat);
-    cube.position.set(0, 0.75, 0);
+    // Standard 1.0m x 1.0m x 1.0m metric cube
+    const cube = new THREE.Mesh(createMetricBoxGeometry(1.0, 1.0, 1.0), mat);
+    cube.position.set(0, 0.5, 0);
     cube.castShadow = true;
     cube.receiveShadow = true;
     group.add(cube);
@@ -209,11 +265,14 @@ async function selectMaterial(id) {
     if (token !== loadSeq) return;
 
     disposePreviewResources();
+    currentUvScale = resolveEntryUvScale(entry);
+    const scanM = resolveEntryScanMeters(entry);
     const { material, colorTex, normRmTex } = create2MapPbrMaterial({
       mode: 'opaque',
       assets,
       renderer: vp.renderer,
       repeat: Number(tileInput?.value || 1),
+      uvScale: currentUvScale,
     });
     previewMaterial = material;
     previewColorTex = colorTex;
@@ -225,7 +284,7 @@ async function selectMaterial(id) {
     draw2MapChannelCanvases(mapColorCanvas, mapNormalCanvas, mapRmCanvas, assets);
 
     statusEl.textContent =
-      `2贴图直读 (Color+Normal_RM OpenGL +Y) · ${entry.width || 1024}×${entry.height || 1024} · ` +
+      `2贴图直读 (Color+Normal_RM OpenGL +Y) · 1m标准UV (扫描${scanM}m → uv×${currentUvScale}) · ${entry.width || 1024}×${entry.height || 1024} · ` +
       `${entry.surfaceType || ''} · ${entry.tiling || 'grid'} · ${assets.loadMs.toFixed(0)}ms · ` +
       `${entry.sourcePath || entry.assetId || entry.source || ''}`;
   } catch (err) {
@@ -280,9 +339,12 @@ function init() {
 
   tileInput?.addEventListener('input', () => {
     syncOutputs();
+    const eff = Math.max(0.05, Number(tileInput.value || 1) * currentUvScale);
     if (previewColorTex) {
-      const tile = Math.max(0.25, Number(tileInput.value || 1));
-      previewColorTex.repeat.set(tile, tile);
+      previewColorTex.repeat.set(eff, eff);
+    }
+    if (previewNormRmTex) {
+      previewNormRmTex.repeat.set(eff, eff);
     }
   });
 }

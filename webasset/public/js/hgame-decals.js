@@ -39,9 +39,9 @@ const SOURCE_PACK_LABELS = {
 };
 
 const SURFACE_FALLBACKS = {
-  concrete: { color: 0x4b504a, roughness: 0.88, cnId: 'concrete_road_01' },
-  asphalt: { color: 0x262928, roughness: 0.92, cnId: 'asphalt_road_01' },
-  brick: { color: 0x62463a, roughness: 0.86, cnId: 'brick_red_cn' },
+  concrete: { color: 0x4b504a, roughness: 0.88, cnId: 'concrete_road_01', uvScale: 0.5 },
+  asphalt: { color: 0x262928, roughness: 0.92, cnId: 'asphalt_road_01', uvScale: 0.5 },
+  brick: { color: 0x62463a, roughness: 0.86, cnId: 'brick_facade', uvScale: 1.0 },
 };
 
 const SURFACE_PATTERNS = {
@@ -443,6 +443,7 @@ async function getBaseSurfaceMaterial(surfaceKey, renderer, role = 'floor') {
         assets,
         renderer,
         repeat: repeatVec,
+        uvScale: fb.uvScale ?? 0.5,
       });
       built.material.userData.sharedBaseSurface = true;
       baseSurfaceCache.set(cacheKey, built.material);

@@ -656,6 +656,7 @@ export function create2MapPbrMaterial({
   assets,
   renderer,
   repeat = 1,
+  uvScale = 1,
   tintHex = 0xffffff,
   opacity = 1,
   polygonOffset = false,
@@ -667,9 +668,12 @@ export function create2MapPbrMaterial({
 
   const maxAniso = Math.min(8, renderer?.capabilities?.getMaxAnisotropy?.() || 1);
   const wrap = isOpaque ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping;
+  const scaleArr = Array.isArray(uvScale)
+    ? [Math.max(0.05, Number(uvScale[0]) || 1), Math.max(0.05, Number(uvScale[1]) || 1)]
+    : [Math.max(0.05, Number(uvScale) || 1), Math.max(0.05, Number(uvScale) || 1)];
   const repeatArr = Array.isArray(repeat)
-    ? [Math.max(0.25, Number(repeat[0]) || 1), Math.max(0.25, Number(repeat[1]) || 1)]
-    : [Math.max(0.25, Number(repeat) || 1), Math.max(0.25, Number(repeat) || 1)];
+    ? [Math.max(0.05, (Number(repeat[0]) || 1) * scaleArr[0]), Math.max(0.05, (Number(repeat[1]) || 1) * scaleArr[1])]
+    : [Math.max(0.05, (Number(repeat) || 1) * scaleArr[0]), Math.max(0.05, (Number(repeat) || 1) * scaleArr[1])];
 
   const colorTex = new THREE.Texture(assets.colorImg);
   colorTex.colorSpace = THREE.SRGBColorSpace;
@@ -700,6 +704,11 @@ export function create2MapPbrMaterial({
   normRmTex.anisotropy = maxAniso;
   normRmTex.wrapS = wrap;
   normRmTex.wrapT = wrap;
+  if (isOpaque) {
+    normRmTex.repeat.set(repeatArr[0], repeatArr[1]);
+  } else {
+    normRmTex.repeat.set(1, 1);
+  }
   normRmTex.needsUpdate = true;
 
   const material = new THREE.MeshStandardMaterial({

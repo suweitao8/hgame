@@ -18,8 +18,9 @@ const ROW_SPACING_Z = 9.6;
 function createUnitSphereGeo(radius, layerId) {
   const geo = new THREE.SphereGeometry(radius, 28, 18);
   const uv = geo.getAttribute('uv');
+  const diamMeters = Math.max(1.0, Number((2 * radius).toFixed(2)));
   for (let i = 0; i < uv.count; i++) {
-    uv.setXY(i, uv.getX(i) * 2.0, uv.getY(i) * 1.0);
+    uv.setXY(i, uv.getX(i) * diamMeters, uv.getY(i) * diamMeters);
   }
   ensurePbrGeometryAttributes(geo, layerId, [1, 1, 1], 1.0);
   return geo;
@@ -87,7 +88,7 @@ export function buildMaterialShowcaseScene({
 
     const banner = createSectionBannerMesh({
       title: catTitle,
-      subtitle: `${catItems.length} 个 PBR 材质 · 立方体 / 球体 / 2.6m 样板砖`,
+      subtitle: `${catItems.length} 个 PBR 材质 · 1m标准立方体 / 1m球体 / 2m样板砖`,
       width: 4.8,
       height: 1.05,
     });
@@ -121,36 +122,38 @@ export function buildMaterialShowcaseScene({
           ? cutoutMat.material
           : worldMat.material;
 
-      // 1. 1.1m Cube (left)
-      const cubeRaw = buildBeveledBoxRaw(1.1, 1.1, 1.1, 0, entry.layer);
+      // 1. Standard 1.0m x 1.0m x 1.0m Cube (left, 1m = 1 UV)
+      const cubeRaw = buildBeveledBoxRaw(1.0, 1.0, 1.0, 0, entry.layer);
       const cubeGeo = buildBufferGeometryFromRaw(cubeRaw);
       const cubeMesh = new THREE.Mesh(cubeGeo, mat);
-      cubeMesh.position.set(-0.68, 0.14 + 0.55, -0.85);
+      cubeMesh.position.set(-0.68, 0.14 + 0.5, -0.85);
       cubeMesh.castShadow = true;
       cubeMesh.receiveShadow = true;
       booth.add(cubeMesh);
 
-      // 2. 0.52m Sphere (right)
-      const sphereGeo = createUnitSphereGeo(0.52, entry.layer);
+      // 2. 1.0m diameter Sphere (radius 0.5m, right)
+      const sphereGeo = createUnitSphereGeo(0.5, entry.layer);
       const sphereMesh = new THREE.Mesh(sphereGeo, mat);
-      sphereMesh.position.set(0.68, 0.14 + 0.54, -0.85);
+      sphereMesh.position.set(0.68, 0.14 + 0.5, -0.85);
       sphereMesh.castShadow = true;
       sphereMesh.receiveShadow = true;
       booth.add(sphereMesh);
 
-      // 3. 2.6m x 2.4m Ground Swatch (front)
-      const slabRaw = buildBeveledBoxRaw(2.6, 0.06, 2.4, 0, entry.layer);
+      // 3. 2.0m x 2.0m Ground Swatch (front, 2m x 2m metric reference)
+      const slabRaw = buildBeveledBoxRaw(2.0, 0.06, 2.0, 0, entry.layer);
       const slabGeo = buildBufferGeometryFromRaw(slabRaw);
       const slabMesh = new THREE.Mesh(slabGeo, mat);
-      slabMesh.position.set(0, 0.03, 1.15);
+      slabMesh.position.set(0, 0.03, 1.05);
       slabMesh.receiveShadow = true;
       booth.add(slabMesh);
 
       // 4. Front angled plaque
+      const scanM = Array.isArray(entry.scanSizeMeters) ? entry.scanSizeMeters[0] : (entry.scanSizeMeters ?? 1);
+      const uvScale = entry.uvScale ?? Number((1 / Math.max(0.1, Number(scanM) || 1)).toFixed(3));
       const plaque = createPlaqueMesh({
         badge: `#${entry.layer} · ${entry.surfaceType || 'pbr'}`,
         title: entry.id,
-        subtitle: `${entry.tiling || 'grid'} · uv×${entry.uvScale ?? 1} · ${entry.width || 1024}px`,
+        subtitle: `扫描${scanM}m · 1m UV×${uvScale} · ${entry.tiling || 'grid'}`,
         width: 2.35,
         height: 0.62,
       });
@@ -167,13 +170,14 @@ export function buildMaterialShowcaseScene({
         workspace: 'materials',
         kind: 'material',
         title: `${entry.id} (#${entry.layer})`,
-        subtitle: `${formatCategoryLabel(catKey)} · ${entry.surfaceType || ''} · ${entry.tiling || 'grid'}`,
+        subtitle: `${formatCategoryLabel(catKey)} · ${entry.surfaceType || ''} · 扫描${scanM}m (1m UV×${uvScale})`,
         category: catKey,
         meta: {
           layer: entry.layer,
           surfaceType: entry.surfaceType || '-',
           tiling: entry.tiling || 'grid',
-          uvScale: entry.uvScale ?? 1,
+          scanSizeMeters: `${scanM}m`,
+          uvScale,
           resolution: `${entry.width || 1024}×${entry.height || 1024}`,
           source: entry.sourcePath || entry.assetId || entry.source || '-',
         },
