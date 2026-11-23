@@ -1287,6 +1287,25 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const randDir = Number((shapeMod.match(/\brandomDirectionAmount:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
       const sphDir = Number((shapeMod.match(/\bsphericalDirectionAmount:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
       const alignDir = /alignToDirection:\s*1\b/.test(shapeMod);
+      const sPosM = shapeMod.match(/m_Position:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+      if (sPosM) {
+        const spx = Number(sPosM[1]) * worldTr.scale[0];
+        const spy = Number(sPosM[2]) * worldTr.scale[1];
+        const spz = Number(sPosM[3]) * worldTr.scale[2];
+        if (Math.abs(spx) > 1e-4 || Math.abs(spy) > 1e-4 || Math.abs(spz) > 1e-4) {
+          const rSp = quatRotateVec(worldTr.rot, [spx, spy, spz]);
+          const nextOff = [
+            Number((offset[0] + rSp[0]).toFixed(4)),
+            Number((offset[1] + rSp[1]).toFixed(4)),
+            Number((offset[2] + toRhsZ(rSp[2])).toFixed(4)),
+          ];
+          if (nextOff[0] !== 0 || nextOff[1] !== 0 || nextOff[2] !== 0) {
+            layer.offset = nextOff;
+          } else {
+            delete layer.offset;
+          }
+        }
+      }
       const sRotM = shapeMod.match(/m_Rotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
       const sSclM = shapeMod.match(/m_Scale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
       const shapeObj = {
