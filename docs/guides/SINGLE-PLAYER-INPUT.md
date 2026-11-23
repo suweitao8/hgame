@@ -2,12 +2,28 @@
 
 使用现有动作路由处理上下文、边沿和长按。每帧采样标准映射手柄，选定的设备独占动作输入。新按键或摇杆越过阈值时接管，同时发生时优先当前手柄，再按索引排序。断连释放动作并通知游戏，由游戏处理暂停。动作提示读取同一套绑定，按手柄系列提供字形，翻译使用 createI18n。
 
+## 单人动作游戏默认控制
+
+| 动作 | PC 键盘 | Xbox | 触屏 |
+| --- | --- | --- | --- |
+| 移动 | WASD | 左摇杆 | 左下虚拟摇杆 |
+| 攻击 | J | X | 右下大攻击键 |
+| 冲刺 | K | A 或 Y | 攻击键右上方的主冲刺键 |
+| 技能 1–4 | L / U / I / O | LB / RB / LT / RT | 沿攻击键左侧排开的四个技能键 |
+| UI 确认 | J | A | 直接点确认 |
+| UI 取消 | K | B | 直接点取消 |
+
+PC 和手机都可显示动作按键。手机把可交互按钮放在右下，左下留给移动摇杆。攻击键比技能键大，触控目标至少 48 CSS px。按下时高亮对应按钮并触发动作反馈，松开时恢复外观。试玩同时显示 A 和 Y 两个冲刺入口，A 是主冲刺键。
+
+战斗和菜单分别注册输入上下文。进入菜单后，确认与取消使用菜单绑定，关闭菜单后恢复战斗绑定。切换时先让复用的已按下键释放，避免一次按键跨界面触发两次。触屏点菜单按钮时走同一确认或取消动作。
+
+
 ## 接入
 
 从 `vendor/hgame/platform/input.js` 导入 `createSinglePlayerInput`。
 将现有输入管理器作为 `input` 传入，并把菜单和游玩上下文注册到 `controls.router`。每个更新周期先调用 `controls.update(dt)`，再读取 `wasPressed`、`isDown` 或长按状态。暂停期间也要继续采样，退出时调用 `controls.dispose()`。
 
-- 菜单可将 `Confirm` 绑定到 `Enter` / `Pad0`，将 `Cancel` 绑定到 `Escape` / `Pad1`。方向键使用 `Pad12` 至 `Pad15`，左摇杆使用 `StickUp`、`StickDown`、`StickLeft`、`StickRight`。菜单焦点由游戏根据动作移动。
+- 通用菜单可将 `Confirm` 绑定到 `Enter` / `Pad0`，将 `Cancel` 绑定到 `Escape` / `Pad1`。方向键使用 `Pad12` 至 `Pad15`，左摇杆使用 `StickUp`、`StickDown`、`StickLeft`、`StickRight`。菜单焦点由游戏根据动作移动。
 - `setSwapConfirmCancel(true)` 交换下方和右侧面键。应把这两个按键保留给使用该设置的导航上下文。游戏可自行持久化设置。
 - 用 `createI18n` 注册 `zh-CN` 和 `en` 文案。固定提示组合 `i18n.t(labelKey)` 和 `controls.getGlyph(context, action)`。句内提示在两种文案里分别放置 `{Action:Confirm}`，用 `controls.promptParts(i18n, key, context)` 拿到按译文顺序排列的文字和字形描述。界面应在语言、设备或设置变化后重绘。字形可直接作为文字显示，也可由游戏映射到本地美术资源。
 - 浏览器未提供可辨识的手柄 ID 时显示方位符号。可用 `gamepadFamily` 手动指定样式。适配层只处理标准映射手柄。
