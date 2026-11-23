@@ -1,10 +1,18 @@
 const cuePresets = Object.freeze({ shoot: 'shoot', slash: 'slash', hit: 'hit', kill: 'powerup', dash: 'jump', shockwave: 'explosion' });
 
 export class InputAndAudio {
-  constructor(renderer, ui, audio = null, input = null) {
-    if (!input || typeof input.isDown !== 'function' || typeof input.on !== 'function') throw new TypeError('HGame input manager is required');
-    this.renderer = renderer; this.ui = ui; this.input = input; this.pointer = { x: renderer.app.screen.width / 2, y: renderer.app.screen.height / 2, down: false };
-    this.audio = audio; this.touches = new Map(); this.dash = false; this.shockwave = false; this.slash = false; this.voices = []; this.lastCue = new Map();
+  constructor(renderer, audio, input, controls, touch) {
+    this.renderer = renderer;
+    this.input = input;
+    this.controls = controls;
+    this.pointer = { x: renderer.app.screen.width / 2, y: renderer.app.screen.height / 2, down: false };
+    this.aim = { x: 1, y: 0 };
+    this.audio = audio;
+    this.dash = false;
+    this.shockwave = false;
+    this.slash = false;
+    this.voices = [];
+    this.lastCue = new Map();
     this.abort = new AbortController(); const options = { signal: this.abort.signal };
     input.preventKeys(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowLeft', 'ArrowDown', 'ArrowRight', 'Space']);
     this.offKeyDown = input.on('keydown', ({ code, repeat }) => {
@@ -13,63 +21,67 @@ export class InputAndAudio {
       if (!repeat && code === 'KeyE') this.slash = true;
       this.unlock();
     });
-    window.addEventListener('blur', () => this.reset(), options);
+    window.addEventListener('pointerdown', () => this.unlock(), { ...options, capture: true });
     const canvas = renderer.app.canvas;
-    canvas.addEventListener('pointerdown', event => { this.unlock(); canvas.setPointerCapture(event.pointerId); if (event.pointerType !== 'touch') this.pointer.down = true; this.movePointer(event, true); }, options);
+    const beginPointer = event => {
+      if (event.pointerType === 'touch') return;
+      canvas.setPointerCapture(event.pointerId);
+      this.pointer.down = true;
+      this.movePointer(event);
+    };
+    canvas.addEventListener('pointerdown', beginPointer, options);
+    touch.root.addEventListener('pointerdown', event => {
+      if (touch.mode !== 'touch-only' || event.pointerType === 'touch') return;
+      // A mouse on a touch-capable PC still aims through the touch overlay.
+      event.preventDefault();
+      beginPointer(event);
+    }, { ...options, capture: true });
     canvas.addEventListener('pointermove', event => this.movePointer(event), options);
     canvas.addEventListener('pointerup', event => this.endPointer(event), options);
     canvas.addEventListener('pointercancel', event => this.endPointer(event), options);
     canvas.addEventListener('lostpointercapture', event => this.endPointer(event), options);
-    ui.dash.addEventListener('pointerdown', event => { event.stopPropagation(); this.dash = true; this.unlock(); }, options);
-    ui.shockwave.addEventListener('pointerdown', event => { event.stopPropagation(); this.shockwave = true; this.unlock(); }, options);
   }
-  movePointer(event, begin = false) {
+  movePointer(event) {
+    if (event.pointerType === 'touch') return;
     const rect = this.renderer.app.canvas.getBoundingClientRect();
     const x = event.clientX - rect.left, y = event.clientY - rect.top;
-    if (event.pointerType === 'touch') {
-      let touch = this.touches.get(event.pointerId);
-      if (!touch) {
-        if (!begin) return;
-        const left = x < rect.width / 2;
-        if ([...this.touches.values()].some(item => item.left === left)) return;
-        const visual = document.createElement('div'); visual.className = 'virtual-stick'; visual.innerHTML = '<span></span>';
-        const uiLayer = document.querySelector('#ui-layer'), uiRect = uiLayer.getBoundingClientRect();
-        visual.style.left = `${event.clientX - uiRect.left}px`; visual.style.top = `${event.clientY - uiRect.top}px`;
-        uiLayer.appendChild(visual);
-        touch = { startX: x, startY: y, x, y, left, visual }; this.touches.set(event.pointerId, touch);
-      }
-      touch.x = x; touch.y = y;
-      const dx = x - touch.startX, dy = y - touch.startY, scale = Math.min(1, 42 / (Math.hypot(dx, dy) || 1));
-      touch.visual.firstChild.style.transform = `translate(${dx * scale}px, ${dy * scale}px)`;
-    } else {
-      const screen = this.renderer.app.screen;
-      this.pointer.x = rect.width > 0 ? x * screen.width / rect.width : 0;
-      this.pointer.y = rect.height > 0 ? y * screen.height / rect.height : 0;
-    }
+    const screen = this.renderer.app.screen;
+    this.pointer.x = rect.width > 0 ? x * screen.width / rect.width : 0;
+    this.pointer.y = rect.height > 0 ? y * screen.height / rect.height : 0;
   }
   endPointer(event) {
     if (event.pointerType !== 'touch') this.pointer.down = false;
-    const touch = this.touches.get(event.pointerId); touch?.visual.remove(); this.touches.delete(event.pointerId);
   }
-  clearTouches() { for (const touch of this.touches.values()) touch.visual.remove(); this.touches.clear(); }
   reset() {
-    this.pointer.down = false; this.dash = this.shockwave = this.slash = false; this.clearTouches();
+    this.pointer.down = false;
+    this.dash = this.shockwave = this.slash = false;
     for (const item of this.voices) item.voice.stop();
     this.voices.length = 0; this.lastCue.clear();
   }
   getState(player) {
-    let moveX = Number(this.input.isDown('KeyD') || this.input.isDown('ArrowRight')) - Number(this.input.isDown('KeyA') || this.input.isDown('ArrowLeft'));
-    let moveY = Number(this.input.isDown('KeyS') || this.input.isDown('ArrowDown')) - Number(this.input.isDown('KeyW') || this.input.isDown('ArrowUp'));
-    let aim = this.renderer.screenToWorld(this.pointer.x, this.pointer.y), aimX = aim.x - player.x, aimY = aim.y - player.y;
-    let firing = this.pointer.down;
-    for (const touch of this.touches.values()) {
-      const dx = touch.x - touch.startX, dy = touch.y - touch.startY;
-      if (touch.left) { moveX = dx / 42; moveY = dy / 42; } else { aimX = dx; aimY = dy; firing = true; }
+    const { controls, input, pointer } = this;
+    const { x: moveX, y: moveY } = controls.move;
+    const usingMouse = pointer.down && input.focused;
+    let aimX = moveX, aimY = moveY;
+    if (usingMouse || this.shockwave || this.slash) {
+      const target = this.renderer.screenToWorld(pointer.x, pointer.y);
+      aimX = target.x - player.x;
+      aimY = target.y - player.y;
     }
-    let length = Math.max(1, Math.hypot(moveX, moveY)); moveX /= length; moveY /= length;
-    length = Math.hypot(aimX, aimY) || 1; aimX /= length; aimY /= length;
-    const state = { moveX, moveY, aimX, aimY, isFiring: firing, justDashed: this.dash, justShockwaved: this.shockwave, justSlashed: this.slash };
-    this.dash = this.shockwave = this.slash = false; return state;
+    const aimLength = Math.hypot(aimX, aimY);
+    if (aimLength > 0.001) {
+      this.aim.x = aimX / aimLength;
+      this.aim.y = aimY / aimLength;
+    }
+    const state = {
+      moveX, moveY, aimX: this.aim.x, aimY: this.aim.y,
+      isFiring: usingMouse || controls.isDown('attack') || controls.wasPressed('attack'),
+      justDashed: this.dash || controls.wasPressed('dash'),
+      justShockwaved: this.shockwave || controls.wasPressed('skill1'),
+      justSlashed: this.slash || controls.wasPressed('skill2'),
+    };
+    this.dash = this.shockwave = this.slash = false;
+    return state;
   }
   unlock() { if (this.audio?.available) void this.audio.unlock().catch(() => {}); }
   play(name) {

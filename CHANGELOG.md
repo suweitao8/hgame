@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use shared keyboard, gamepad and touch controls and install the Chinese and English interface in the default Pixi arena.
+
 - Localize the generated action game's built-in shell and touch control labels in Chinese and English.
 
 - Reuse floating text slots in constant time while preserving oldest-popup eviction at capacity.

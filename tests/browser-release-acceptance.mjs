@@ -61,11 +61,11 @@ export async function run({ page, readState, checkpoint }) {
     ...process.env, HGAME_ROOT: root,
     WEBASSET_PORT: await listen(catalog), WEBASSET_GAME_PORT: await listen(preview),
   };
-  async function accept(flags = [], expected = 0) {
+  async function accept(flags = [], expected = 0, directory = game) {
     const args = ['scripts/accept.mjs', '.', '--release', '--json', ...flags];
     let result;
     try {
-      result = await exec(process.execPath, args, { cwd: game, env, timeout: 180_000, maxBuffer: 4 * 1024 * 1024 });
+      result = await exec(process.execPath, args, { cwd: directory, env, timeout: 180_000, maxBuffer: 4 * 1024 * 1024 });
       assert.equal(expected, 0);
     } catch (error) {
       assert.equal(error.code, expected, error.stderr || error.stdout || error.message);
@@ -111,6 +111,47 @@ export async function run({ page, readState, checkpoint }) {
   assert.equal(oversize.playable, true);
   assert.equal(oversize.releaseReady, false);
   assert.match(oversize.gates.release.errors.join(' '), /Package exceeded byte budget/);
+
+  const pixi = path.join(tmp, 'release-pixi-arena');
+  await exec(process.execPath, ['scripts/create-game.mjs', pixi, '--no-git'], { cwd: root });
+  await writeFile(path.join(pixi, 'tests', 'release.json'), JSON.stringify({ ...spec, target: 'toy' }));
+  await writeFile(path.join(pixi, 'tests', 'acceptance.mjs'), `
+export async function run({ page, readState, checkpoint, auditUi }) {
+  await auditUi('playing');
+  await checkpoint('attack while moving', async () => {
+    const before = (await readState()).player.x;
+    await page.keyboard.down('d');
+    await page.keyboard.down('j');
+    try {
+      await page.waitForFunction(x => window.__hgameState().player.x > x + 16 && window.__hgameState().bullets > 0, before, { timeout: 4000 });
+      // Collect enough frames during motion even when software rendering is slow.
+      await page.evaluate(async () => {
+        for (let count = 0; count < 40; count++) await new Promise(resolve => requestAnimationFrame(resolve));
+      });
+    } finally {
+      await page.keyboard.up('j');
+      await page.keyboard.up('d');
+    }
+  });
+  await checkpoint('pause and resume', async () => {
+    await page.keyboard.press('Escape');
+    const resume = page.locator('#resume');
+    await resume.waitFor({ timeout: 3000 });
+    await auditUi('paused');
+    const paused = (await readState()).player.x;
+    await page.keyboard.press('d', { delay: 100 });
+    if ((await readState()).player.x !== paused) throw new Error('Player moved while paused');
+    await resume.click();
+    await resume.waitFor({ state: 'hidden', timeout: 3000 });
+    await auditUi('resumed');
+  });
+}
+`);
+  const pixiReport = await accept([], 0, pixi);
+  assert.equal(pixiReport.releaseReady, true, pixiReport.problems.join('; '));
+  assert.equal(pixiReport.gates.webasset.status, 'passed');
+  assert.equal((await accept(['--verify-fresh'], 0, pixi)).releaseReady, true);
+  console.log(JSON.stringify({ profile: 'pixi-arena', target: 'toy', releaseReady: true, ...pixiReport.gates.release.measured }));
 } finally {
   await Promise.all([close(catalog), close(preview)]);
   await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

@@ -25,4 +25,5 @@
 
 - **PC 键鼠**：P1 统一 `WASD` 移动 + `J K L U I O` 技能/确认，`Esc` 暂停。
 - **移动端触屏**：通过 `createTouchControls({ mode: 'touch-only' })` 仅在触屏操作时无侵入呼出。
+- **Pixi 竞技场示例**：左侧摇杆移动，右侧大按钮攻击，冲刺在攻击右上方，另有震波和斩击。手柄断连时暂停，点击继续或用键盘 J/K、Xbox A/B 继续。默认跟随浏览器选择简中或英文，可用 `?lang=zh` / `?lang=en` 指定。
 - **触感反馈**：由 `bindUiUxDOM`（主题 `scifi`）统一驱动 3D 卡片悬停倾斜、残影血条（`data-ui-bar`）、弹簧跳数（`data-ui-metric`）与交互音效。

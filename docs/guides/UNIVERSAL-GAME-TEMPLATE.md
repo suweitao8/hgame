@@ -64,6 +64,7 @@
   - `horde-2d`：2D 高密割草原型（`createSwarmSimulation` + `SpriteCrowd2D.bindSwarm` + 范围脉冲 + 连杀）
   - `arena-3d`：3D 动作竞技原型（Three.js + 程序地形 + 3D VFX + 近战/冲刺 + 物理）
   - `card-ui`：零空转指令驱动卡牌原型（`tickHz: 0` + 3D 悬停卡牌 + 回合攻防）
+- **默认 Pixi 竞技场**：`create-game.mjs <dir>` 生成带键鼠、手柄和触控的样例。键盘用 WASD／方向键移动，J/K/L/U 对应攻击、冲刺、震波、斩击。Xbox 对应 X、A/Y、LB、RB。触屏布局为左摇杆、右攻击区，支持 `?lang=zh` 和 `?lang=en`。
 
 ### 4. 美术规范与跨维度主题预设（`kit/art-themes.js` + `vfx/` + `scripts/process-*`）
 

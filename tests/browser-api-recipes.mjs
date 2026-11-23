@@ -32,11 +32,13 @@ try {
   if (options.args) options.args = options.args.filter(arg => arg !== '--disable-frame-rate-limit');
   browser = await browserType.launch({ ...options, headless: !headed });
   const archetypes = ['action-2d', 'horde-2d', 'arena-3d'];
-  for (const name of ['2d', 'horde', '3d', 'ui', ...archetypes]) {
+  for (const name of ['2d', 'horde', '3d', 'ui', 'pixi-arena', ...archetypes]) {
     const isArchetype = archetypes.includes(name);
-    const recipe = isArchetype ? null : JSON.parse(run(['scripts/query-api.mjs', '--recipe', name, '--json']));
-    const args = isArchetype ? ['scripts/create-game.mjs', '<dir>', '--archetype', name] : recipe.code.split('\n')[0].slice('// Create: node '.length)
-      .match(/"[^"]*"|\S+/g).map(value => value.replace(/^"|"$/g, ''));
+    const isPixiArena = name === 'pixi-arena';
+    const recipe = isArchetype || isPixiArena ? null : JSON.parse(run(['scripts/query-api.mjs', '--recipe', name, '--json']));
+    const args = isPixiArena ? ['scripts/create-game.mjs', '<dir>']
+      : isArchetype ? ['scripts/create-game.mjs', '<dir>', '--archetype', name]
+      : recipe.code.split('\n')[0].slice('// Create: node '.length).match(/"[^"]*"|\S+/g).map(value => value.replace(/^"|"$/g, ''));
     const game = path.join(temp, 'recipe-' + name);
     run(args.map(value => value === '<dir>' ? game : value).concat('--no-git'));
     // The Pixi recipes print the same starter source that create-game builds.
@@ -44,7 +46,7 @@ try {
       const entry = name === '2d' ? 'bare.js' : 'horde.js';
       const generatedSource = await readFile(path.join(game, 'src', entry), 'utf8');
       assert.ok(recipe.code.trimEnd().endsWith(generatedSource.trimEnd()), name + ' recipe matches packaged starter source');
-    } else if (!isArchetype) {
+    } else if (recipe) {
       await writeFile(path.join(game, 'src/main.js'), recipe.code);
     }
     const socket = createServer();
@@ -62,7 +64,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('response', response => { if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) errors.push(`${response.status()} ${response.url()}`); });
-    if (name === 'action-2d') await page.addInitScript(() => {
+    if (name === 'action-2d' || isPixiArena) await page.addInitScript(() => {
       const pad = window.__recipePad = {
         index: 0, id: 'Xbox', mapping: 'standard', connected: true, axes: [0, 0],
         buttons: Array.from({ length: 16 }, () => ({ value: 0 })),
@@ -83,7 +85,7 @@ try {
     }
     const before = await page.evaluate(() => window.__hgameState());
     await page.keyboard.down('d');
-    if (isArchetype) {
+    if (isArchetype || isPixiArena) {
       await page.waitForFunction(x => window.__hgameState().player.x > x, before.player.x, { timeout: 3000 });
     } else {
       await page.waitForTimeout(300);
@@ -106,6 +108,81 @@ try {
     }
     assert.deepEqual(errors, [], `${name} errors`);
     console.log(JSON.stringify({ browser: browserName, version: browser.version(), recipe: name, before, after, errors }));
+    if (isPixiArena) {
+      assert.equal(await page.locator('html').getAttribute('lang'), 'en');
+      assert.equal(await page.locator('.hgame-skill-btn[data-action="skill1"] .hgame-btn-label').textContent(), 'Quake');
+      await page.keyboard.down('j');
+      await page.waitForFunction(() => window.__hgameState().bullets > 0);
+      await page.keyboard.up('j');
+      await page.evaluate(() => { window.__recipePad.axes[0] = 0.65; });
+      await page.waitForFunction(x => window.__hgameState().player.x > x + 4, after.player.x, { timeout: 4000 });
+      await page.waitForFunction(() => window.__hgameState().bullets === 0, null, { timeout: 3000 });
+      await page.evaluate(() => { window.__recipePad.buttons[2].value = 1; });
+      await page.waitForFunction(() => window.__hgameState().bullets > 0, null, { timeout: 3000 });
+      await page.evaluate(() => { window.__recipePad.connected = false; });
+      await page.getByRole('button', { name: 'Resume' }).waitFor({ timeout: 3000 });
+      const paused = await page.evaluate(() => window.__hgameState().player.x);
+      await page.keyboard.down('d');
+      await page.waitForTimeout(120);
+      assert.equal(await page.evaluate(() => window.__hgameState().player.x), paused);
+      await page.keyboard.up('d');
+      await page.keyboard.press('j', { delay: 80 });
+      await page.getByRole('button', { name: 'Resume' }).waitFor({ state: 'hidden', timeout: 3000 });
+      await page.evaluate(() => {
+        const pad = window.__recipePad;
+        pad.connected = true;
+        pad.axes[0] = 0;
+        pad.buttons[2].value = 0;
+        pad.buttons[1].value = 1;
+      });
+      await page.getByRole('button', { name: 'Resume' }).waitFor({ timeout: 3000 });
+      await page.evaluate(() => {
+        window.__recipePad.buttons[1].value = 0;
+        window.__recipePad.buttons[0].value = 1;
+      });
+      await page.getByRole('button', { name: 'Resume' }).waitFor({ state: 'hidden', timeout: 3000 });
+      if (browserName === 'chromium') {
+        // Touch-capable laptop: the joystick overlay must not consume mouse aiming.
+        await page.addInitScript(() => Object.defineProperty(navigator, 'maxTouchPoints', { value: 2 }));
+        await page.goto(url);
+        await page.waitForFunction(() => typeof window.__hgameState === 'function');
+        const hybridStick = await page.locator('.hgame-joy-base').boundingBox();
+        assert.ok(hybridStick);
+        await page.mouse.move(hybridStick.x + 18, hybridStick.y + 18);
+        await page.mouse.down();
+        try {
+          await page.waitForFunction(() => window.__hgameState().bullets > 0, null, { timeout: 3000 });
+          assert.deepEqual(await page.evaluate(() => window.__hgameState().player), { x: 0, y: 0 });
+        } finally {
+          await page.mouse.up();
+        }
+        const cdp = await page.context().newCDPSession(page);
+        await page.setViewportSize({ width: 360, height: 800 });
+        await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+        await page.goto(url + '?lang=zh');
+        await page.waitForFunction(() => typeof window.__hgameState === 'function');
+        assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
+        const stick = await page.locator('.hgame-joy-base').boundingBox();
+        const attack = page.locator('.hgame-skill-btn[data-action="attack"]');
+        assert.equal(await attack.locator('.hgame-btn-label').textContent(), '攻击');
+        const fire = await attack.boundingBox();
+        const dash = await page.locator('.hgame-skill-btn[data-action="dash"]').boundingBox();
+        assert.ok(stick.x + stick.width < 180 && fire.x > 180 && dash.x > fire.x);
+        assert.ok(fire.width > dash.width && dash.width >= 48 && dash.y < fire.y);
+        assert.equal(await page.locator('.hgame-skill-btn').count(), 4);
+        const movePoint = { x: stick.x + stick.width / 2, y: stick.y + stick.height / 2, id: 1 };
+        const firePoint = { x: fire.x + fire.width / 2, y: fire.y + fire.height / 2, id: 2 };
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [movePoint] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [movePoint, firePoint] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ ...movePoint, x: movePoint.x + 34 }, firePoint] });
+        await page.waitForFunction(() => window.__hgameState().player.x > 4 && window.__hgameState().bullets > 0, null, { timeout: 3000 });
+        assert.equal(await attack.getAttribute('data-active'), 'true');
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+        assert.equal(await attack.getAttribute('data-active'), 'false');
+        await cdp.detach();
+      }
+      assert.deepEqual(errors, [], 'Pixi arena keyboard, Xbox, and touch');
+    }
     if (name === 'action-2d') {
       await page.evaluate(() => { window.__recipePad.axes[0] = 0.65; });
       await page.waitForFunction(x => window.__hgameState().player.x > x, after.player.x, { timeout: 5000 });

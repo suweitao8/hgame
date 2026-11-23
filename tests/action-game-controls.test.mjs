@@ -24,6 +24,11 @@ test('action preset routes held controls across modes without a second press', (
   controls.touchPlayer.setVirtualButton('dash', false);
   controls.update(0.016, 'combat');
   assert.equal(controls.wasPressed('dash'), true, 'short touches survive one fixed step');
+  key('keydown', 'KeyD');
+  key('keydown', 'ArrowUp');
+  controls.update(0.016, 'combat');
+  assert.ok(controls.move.x > 0 && controls.move.y < 0, 'WASD and arrow keys share movement');
+  assert.ok(Math.abs(Math.hypot(controls.move.x, controls.move.y) - 1) < 1e-8);
   controls.dispose();
   input.dispose();
 });

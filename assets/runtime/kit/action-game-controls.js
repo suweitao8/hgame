@@ -43,7 +43,7 @@ export function createActionGameControls({
   combatActions.pause = { keys: ['Pad9', 'Pad1'] };
   router.pushContext(defineInputContext('action-combat', {
     consumesKeys: false, actions: combatActions,
-    axes2D: { Move: { up: ['KeyW'], left: ['KeyA'], down: ['KeyS'], right: ['KeyD'] } },
+    axes2D: { Move: { up: ['KeyW', 'ArrowUp'], left: ['KeyA', 'ArrowLeft'], down: ['KeyS', 'ArrowDown'], right: ['KeyD', 'ArrowRight'] } },
   }));
   router.pushContext(defineInputContext('action-menu', { consumesKeys: false, actions: MENU }));
   const combatNames = Object.keys(combatActions);

@@ -463,7 +463,7 @@ export function createTouchControls({
       paneState.releaseStick = releaseStick;
 
       listen(joyZoneEl, 'pointerdown', event => {
-        if (disposed || paneState.joyPointerId !== null) return;
+        if (disposed || event.defaultPrevented || paneState.joyPointerId !== null) return;
         const id = event.pointerId ?? 'mouse';
         paneState.joyPointerId = id;
         const clientX = Number(event.clientX) || 0;
@@ -568,7 +568,7 @@ export function createTouchControls({
         };
 
         listen(btnEl, 'pointerdown', event => {
-          if (disposed || !btnEntry.enabled) return;
+          if (disposed || event.defaultPrevented || !btnEntry.enabled) return;
           const id = event.pointerId ?? 'mouse';
           activeIds.add(id);
           btnEl.setPointerCapture?.(id);
