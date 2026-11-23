@@ -26,6 +26,8 @@ let currentUvScale = 1.0;
 let currentIsGlass = false;
 let viewport = null;
 let hdriEnv = null;
+let stageEnvGroup = null;
+let stageEnvReady = false;
 let previewMaterial = null;
 let previewColorTex = null;
 let previewNormRmTex = null;
@@ -84,11 +86,55 @@ function createMetricSphereGeometry(radius) {
 function ensureViewport() {
   if (!viewport) {
     viewport = createThreeViewport(stageEl, { background: 0x151b14, grid: true, shadows: true });
-    viewport.camera.position.set(2.8, 2.1, 3.2);
-    viewport.controls.target.set(0, 0.85, 0);
+    if (viewport.gridHelper) {
+      viewport.gridHelper.position.y = -0.085;
+    }
+    viewport.camera.position.set(1.65, 1.55, 2.85);
+    viewport.controls.target.set(0, 0.72, -0.35);
     viewport.controls.update();
   }
   return viewport;
+}
+
+async function ensureStageEnvironment(vp) {
+  if (stageEnvReady || !vp) return;
+  stageEnvReady = true;
+  try {
+    const [floorAssets, wallAssets] = await Promise.all([
+      loadSingle2MapAssets(BASE_URL, 'concrete_pavement'),
+      loadSingle2MapAssets(BASE_URL, 'brick_wall_01'),
+    ]);
+    const floorBuilt = create2MapPbrMaterial({
+      mode: 'opaque',
+      assets: floorAssets,
+      renderer: vp.renderer,
+      repeat: 1,
+      uvScale: 0.5,
+    });
+    const wallBuilt = create2MapPbrMaterial({
+      mode: 'opaque',
+      assets: wallAssets,
+      renderer: vp.renderer,
+      repeat: 1,
+      uvScale: 0.5,
+    });
+
+    stageEnvGroup = new THREE.Group();
+    // 8.0m x 8.0m concrete pavement floor slab (matches Decals workspace grounded studio)
+    const floorMesh = new THREE.Mesh(createMetricBoxGeometry(8.0, 0.08, 8.0), floorBuilt.material);
+    floorMesh.position.set(0, -0.04, 0.5);
+    floorMesh.receiveShadow = true;
+
+    // 8.0m x 3.6m brick backdrop wall behind the preview samples for realistic glass refraction & shadow depth
+    const wallMesh = new THREE.Mesh(createMetricBoxGeometry(8.0, 3.6, 0.12), wallBuilt.material);
+    wallMesh.position.set(0, 1.8, -1.65);
+    wallMesh.receiveShadow = true;
+
+    stageEnvGroup.add(floorMesh, wallMesh);
+    vp.scene.add(stageEnvGroup);
+  } catch {
+    stageEnvReady = false;
+  }
 }
 
 function disposePreviewResources() {
@@ -180,57 +226,73 @@ function renderList() {
   }
 }
 
-function createGlassReferenceCore(kind, x, y, z) {
-  const coreGroup = new THREE.Group();
-  const barMat = new THREE.MeshStandardMaterial({ color: 0xd99b43, roughness: 0.42, metalness: 0.25 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x263238, roughness: 0.55, metalness: 0.35 });
-  if (kind === 'cube') {
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.72, 0.42), barMat);
-    pillar.position.set(x, y, z);
-    const band = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.14, 0.56), darkMat);
-    band.position.set(x, y, z);
-    coreGroup.add(pillar, band);
-  } else if (kind === 'sphere') {
-    const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.26, 0), barMat);
-    core.position.set(x, y, z);
-    coreGroup.add(core);
-  } else if (kind === 'slab') {
-    const stripA = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.02, 0.18), barMat);
-    stripA.position.set(x, 0.01, z - 0.18);
-    const stripB = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.02, 0.18), darkMat);
-    stripB.position.set(x, 0.01, z + 0.18);
-    coreGroup.add(stripA, stripB);
-  }
-  return coreGroup;
-}
-
 function buildPreviewGeometryGroup(mat, isGlass = false) {
   const group = new THREE.Group();
-  const ro = isGlass ? 2 : 0;
+  if (isGlass) {
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x262d30, roughness: 0.36, metalness: 0.82 });
+    const brassMat = new THREE.MeshStandardMaterial({ color: 0xd89b46, roughness: 0.34, metalness: 0.65 });
+
+    // Behind-glass contrast props so refraction & blur against the brick wall pop immediately
+    const postLeft = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 1.35, 24), brassMat);
+    postLeft.position.set(-0.78, 0.675, -1.12);
+    postLeft.castShadow = true;
+    const postRight = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.25, 0.28), brassMat);
+    postRight.position.set(0.78, 0.625, -1.12);
+    postRight.castShadow = true;
+
+    // 1.0m x 1.0m x 1.0m Glass Cube (left)
+    const cube = new THREE.Mesh(createMetricBoxGeometry(1.0, 1.0, 1.0), mat);
+    cube.position.set(-0.85, 0.5, 0.05);
+    cube.castShadow = true;
+    cube.receiveShadow = true;
+    cube.renderOrder = 2;
+
+    // 1.4m x 1.4m Framed Architectural Window Pane (center-back, standing in front of brick wall)
+    const pane = new THREE.Mesh(createMetricBoxGeometry(1.4, 1.4, 0.03), mat);
+    pane.position.set(0, 0.88, -0.78);
+    pane.castShadow = true;
+    pane.receiveShadow = true;
+    pane.renderOrder = 2;
+
+    const frameTop = new THREE.Mesh(new THREE.BoxGeometry(1.48, 0.05, 0.06), frameMat);
+    frameTop.position.set(0, 1.6, -0.78);
+    frameTop.castShadow = true;
+    const frameBot = new THREE.Mesh(new THREE.BoxGeometry(1.48, 0.05, 0.06), frameMat);
+    frameBot.position.set(0, 0.16, -0.78);
+    frameBot.castShadow = true;
+    const frameL = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.49, 0.06), frameMat);
+    frameL.position.set(-0.715, 0.88, -0.78);
+    frameL.castShadow = true;
+    const frameR = new THREE.Mesh(new THREE.BoxGeometry(0.05, 1.49, 0.06), frameMat);
+    frameR.position.set(0.715, 0.88, -0.78);
+    frameR.castShadow = true;
+
+    // 1.0m Diameter Glass Sphere (right)
+    const sphere = new THREE.Mesh(createMetricSphereGeometry(0.5), mat);
+    sphere.position.set(0.85, 0.5, 0.05);
+    sphere.castShadow = true;
+    sphere.receiveShadow = true;
+    sphere.renderOrder = 2;
+
+    group.add(postLeft, postRight, frameTop, frameBot, frameL, frameR, cube, pane, sphere);
+    return group;
+  }
+
   // 1.0m x 1.0m x 1.0m standard metric reference cube (1m = 1 UV)
   const cube = new THREE.Mesh(createMetricBoxGeometry(1.0, 1.0, 1.0), mat);
-  cube.position.set(-0.72, 0.54, -0.35);
-  cube.castShadow = !isGlass;
+  cube.position.set(-0.72, 0.5, -0.2);
+  cube.castShadow = true;
   cube.receiveShadow = true;
-  cube.renderOrder = ro;
   // 1.0m diameter sphere (radius 0.5m)
   const sphere = new THREE.Mesh(createMetricSphereGeometry(0.5), mat);
-  sphere.position.set(0.72, 0.54, -0.35);
-  sphere.castShadow = !isGlass;
+  sphere.position.set(0.72, 0.5, -0.2);
+  sphere.castShadow = true;
   sphere.receiveShadow = true;
-  sphere.renderOrder = ro;
   // 2.0m x 1.0m metric ground swatch in front
   const slab = new THREE.Mesh(createMetricBoxGeometry(2.0, 0.04, 1.0), mat);
-  slab.position.set(0, isGlass ? 0.05 : 0.02, 0.82);
+  slab.position.set(0, 0.02, 0.92);
+  slab.castShadow = true;
   slab.receiveShadow = true;
-  slab.renderOrder = ro;
-  if (isGlass) {
-    group.add(
-      createGlassReferenceCore('cube', -0.72, 0.54, -0.35),
-      createGlassReferenceCore('sphere', 0.72, 0.54, -0.35),
-      createGlassReferenceCore('slab', 0, 0.01, 0.82),
-    );
-  }
   group.add(cube, sphere, slab);
   return group;
 }
@@ -249,6 +311,7 @@ async function selectMaterial(id) {
 
   const token = ++loadSeq;
   const vp = ensureViewport();
+  void ensureStageEnvironment(vp);
   emptyEl.hidden = true;
   titleEl.textContent = entry.layer != null ? `${entry.id} (#${entry.layer})` : entry.id;
 

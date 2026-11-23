@@ -718,16 +718,18 @@ export function create2MapPbrMaterial({
         map: colorTex,
         color: tintHex,
         roughness: 1.0,
-        metalness: 1.0,
-        side: side ?? THREE.DoubleSide,
-        transparent: true,
-        opacity,
-        depthWrite: false,
-        ior: 1.5,
-        reflectivity: 0.92,
+        metalness: 0.0,
+        side: side ?? THREE.FrontSide,
+        transparent: false,
+        transmission: 1.0,
+        thickness: 0.22,
+        ior: 1.52,
+        attenuationDistance: 1.6,
+        attenuationColor: new THREE.Color(0xdaf0ea),
+        specularIntensity: 1.0,
         clearcoat: 1.0,
-        clearcoatRoughness: 0.06,
-        envMapIntensity: 1.45,
+        clearcoatRoughness: 0.04,
+        envMapIntensity: 1.65,
       })
     : new THREE.MeshStandardMaterial({
         map: colorTex,
@@ -752,10 +754,21 @@ export function create2MapPbrMaterial({
   material.customProgramCacheKey = () => `hgame-single-2map-${mode}`;
   material.onBeforeCompile = shader => {
     shader.uniforms.uNormalRmMap = { value: normRmTex };
-    shader.uniforms.uNormalStrength = { value: 1.0 };
+    shader.uniforms.uNormalStrength = { value: isGlass ? 1.25 : 1.0 };
     shader.uniforms.uHsvMatchTarget = { value: uHsvMatchTarget };
     shader.uniforms.uHsvMatchSource = { value: uHsvMatchSource };
     shader.uniforms.uBlendWeights = { value: uBlendWeights };
+
+    const glassMapInject = isGlass
+      ? `
+float hgGlassAlpha = diffuseColor.a;
+float hgGlassFresnel = pow(1.0 - clamp(abs(dot(normalize(vNormal), normalize(vViewPosition))), 0.0, 1.0), 3.4);
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.22, 0.54, 0.43), hgGlassFresnel * 0.45 * (1.0 - smoothstep(0.45, 0.9, hgGlassAlpha)));`
+      : '';
+
+    const glassMetalReplace = isGlass
+      ? 'float metalnessFactor = 0.0;'
+      : 'float metalnessFactor = clamp(hgNrmRmSample.a, 0.0, 1.0);';
 
     shader.fragmentShader = shader.fragmentShader
       .replace(
@@ -800,7 +813,7 @@ mat3 hgameCotangentFrame(vec3 eyePos, vec3 surfNorm, vec2 uv) {
       .replace(
         '#include <map_fragment>',
         `#include <map_fragment>
-vec4 hgNrmRmSample = texture2D(uNormalRmMap, vMapUv);
+vec4 hgNrmRmSample = texture2D(uNormalRmMap, vMapUv);${glassMapInject}
 if (uHsvMatchTarget.w > 0.001) {
   vec3 hgSrgb = pow(max(diffuseColor.rgb, vec3(0.0001)), vec3(1.0 / 2.2));
   vec3 hgHsv = hgRgb2Hsv(hgSrgb);
@@ -810,11 +823,14 @@ if (uHsvMatchTarget.w > 0.001) {
   float amtV = clamp(uBlendWeights.y, 0.0, 1.0) * creviceW;
   float amtTint = clamp(uBlendWeights.z, 0.0, 1.0) * creviceW;
   float nextS = clamp(hgHsv.y + (uHsvMatchTarget.y - uHsvMatchSource.y) * amtS, 0.0, 1.0);
-  float vRatio = clamp(uHsvMatchTarget.z / max(uHsvMatchSource.z, 0.06), 0.45, 1.85);
+  float vRatio = clamp(uHsvMatchTarget.z / max(uHsvMatchSource.z, 0.06), 0.35, 1.0);
   float nextV = clamp(hgHsv.z * mix(1.0, vRatio, amtV), 0.0, 1.0);
   vec3 hgSvSrgb = hgHsv2Rgb(vec3(hgHsv.x, nextS, nextV));
-  vec3 targetTint = hgHsv2Rgb(vec3(uHsvMatchTarget.x, uHsvMatchTarget.y, 1.0));
-  vec3 hgAdjSrgb = hgSvSrgb * mix(vec3(1.0), targetTint, amtTint * 0.65);
+  float svLuma = dot(hgSvSrgb, vec3(0.299, 0.587, 0.114));
+  vec3 targetUnit = hgHsv2Rgb(vec3(uHsvMatchTarget.x, uHsvMatchTarget.y, 1.0));
+  float targetUnitLuma = max(dot(targetUnit, vec3(0.299, 0.587, 0.114)), 0.001);
+  vec3 targetAtDecalLuma = clamp(targetUnit * (svLuma / targetUnitLuma), 0.0, 1.0);
+  vec3 hgAdjSrgb = mix(hgSvSrgb, targetAtDecalLuma, amtTint);
   diffuseColor.rgb = pow(max(hgAdjSrgb, vec3(0.0001)), vec3(2.2));
 }`,
       )
@@ -824,7 +840,7 @@ if (uHsvMatchTarget.w > 0.001) {
       )
       .replace(
         '#include <metalnessmap_fragment>',
-        'float metalnessFactor = clamp(hgNrmRmSample.a, 0.0, 1.0);',
+        glassMetalReplace,
       )
       .replace(
         '#include <normal_fragment_maps>',
@@ -835,6 +851,16 @@ vec3 hgMapN = vec3(hgNxy * uNormalStrength, hgNz);
 mat3 hgTbn = hgameCotangentFrame(-vViewPosition, normal, vMapUv);
 normal = normalize(hgTbn * hgMapN);`,
       );
+
+    if (isGlass && THREE.ShaderChunk?.transmission_fragment) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <transmission_fragment>',
+        THREE.ShaderChunk.transmission_fragment.replace(
+          'material.transmission = transmission;',
+          'material.transmission = clamp(1.0 - max(0.0, hgGlassAlpha - 0.08) * 1.08, 0.04, 0.94);',
+        ),
+      );
+    }
   };
 
   return {
@@ -845,13 +871,13 @@ normal = normalize(hgTbn * hgMapN);`,
       targetStats = null,
       sourceStats = null,
       strength = 0,
-      satStrength,
+      satStrength = 0,
       valStrength,
       tintStrength,
       creviceProtect = true,
     } = {}) {
       const clamp01 = v => Math.max(0, Math.min(1, Number(v) || 0));
-      const sW = clamp01(satStrength !== undefined ? satStrength : strength);
+      const sW = clamp01(satStrength);
       const vW = clamp01(valStrength !== undefined ? valStrength : strength);
       const tW = clamp01(tintStrength !== undefined ? tintStrength : strength);
       if (!targetStats || !sourceStats || Math.max(sW, vW, tW) <= 0.001) {
@@ -945,22 +971,39 @@ export function sampleImageHsvStats(img, { skipDarkCrevices = false } = {}) {
   }
 }
 
+const DECAL_BLEND_DEFAULTS = {
+  crack: { val: 0.75, tint: 0.75 },
+  road_damage: { val: 0.70, tint: 0.70 },
+  damage_concrete: { val: 0.70, tint: 0.70 },
+  bullet_concrete: { val: 0.70, tint: 0.70 },
+  bullet_asphalt: { val: 0.65, tint: 0.65 },
+  bullet_brick: { val: 0.60, tint: 0.60 },
+  crater: { val: 0.60, tint: 0.55 },
+  road_patch: { val: 0.45, tint: 0.45 },
+  stain: { val: 0.50, tint: 0.45 },
+  leak: { val: 0.50, tint: 0.45 },
+  melee_slash: { val: 0.45, tint: 0.25 },
+  scorch: { val: 0.40, tint: 0.25 },
+  tire_skid: { val: 0.45, tint: 0.20 },
+  bullet_wood: { val: 0.45, tint: 0.15 },
+  bullet_fabric: { val: 0.40, tint: 0.15 },
+  combat_blood: { val: 0.45, tint: 0.0 },
+  manhole_drain: { val: 0.45, tint: 0.0 },
+  litter: { val: 0.45, tint: 0.0 },
+  bullet_metal: { val: 0.40, tint: 0.0 },
+  bullet_glass: { val: 0.35, tint: 0.0 },
+};
+
 export function getDefaultDecalHsvMatch(item, lib = 'cn_pbr') {
-  if (!item || lib === 'unreal') return { enabled: false, amount: 0, sat: 0, val: 0, tint: 0 };
+  if (!item || lib === 'unreal') return { enabled: false, amount: 0, val: 0, tint: 0 };
   if (lib === 'cn_foliage') {
-    return { enabled: true, amount: 0.45, sat: 0, val: 0.45, tint: 0 };
+    return { enabled: true, amount: 0.45, val: 0.45, tint: 0.0 };
   }
-  const cat = item.category || '';
-  if (cat === 'combat_blood' || cat === 'manhole_drain' || cat === 'litter') {
-    return { enabled: true, amount: 0.45, sat: 0, val: 0.45, tint: 0 };
+  const preset = DECAL_BLEND_DEFAULTS[item.category || ''];
+  if (preset) {
+    return { enabled: true, amount: preset.val, val: preset.val, tint: preset.tint };
   }
-  if (cat === 'crack') {
-    return { enabled: true, amount: 0.75, sat: 0.75, val: 0.75, tint: 0.75 };
-  }
-  if (cat === 'stain' || cat === 'leak') {
-    return { enabled: true, amount: 0.4, sat: 0.4, val: 0.4, tint: 0.4 };
-  }
-  return { enabled: false, amount: 0, sat: 0, val: 0, tint: 0 };
+  return { enabled: true, amount: 0.45, val: 0.45, tint: 0.0 };
 }
 
 /**

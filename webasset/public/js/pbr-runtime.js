@@ -525,15 +525,32 @@ export function createWorldPbrMaterial({
   }
   const reg = registry || textureArrays.registry;
 
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    roughness: 1.0,
-    metalness: 1.0,
-    side: alphaCutout ? THREE.DoubleSide : THREE.FrontSide,
-    transparent: Boolean(translucent),
-    depthWrite: !translucent,
-    envMapIntensity: 1.0,
-  });
+  const material = translucent
+    ? new THREE.MeshPhysicalMaterial({
+        color: 0xffffff,
+        roughness: 1.0,
+        metalness: 0.0,
+        side: THREE.FrontSide,
+        transparent: false,
+        transmission: 1.0,
+        thickness: 0.22,
+        ior: 1.52,
+        attenuationDistance: 1.6,
+        attenuationColor: new THREE.Color(0xdaf0ea),
+        specularIntensity: 1.0,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.04,
+        envMapIntensity: 1.65,
+      })
+    : new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 1.0,
+        metalness: 1.0,
+        side: alphaCutout ? THREE.DoubleSide : THREE.FrontSide,
+        transparent: false,
+        depthWrite: true,
+        envMapIntensity: 1.0,
+      });
 
   if (fastShader) material.defines.HG_FAST_SHADER = 1;
   if (disableMicroDetail) material.defines.HG_NO_DETAIL = 1;
@@ -704,11 +721,13 @@ diffuseColor.rgb = pbrBaseColor;
 vec4 pbrEmissiveMeta = uMaterialEmissive[pbrLayerIdx];
 bool pbrIsTranslucentLayer = (pbrFlags & 8) != 0;
 bool pbrHasEmissive = (pbrFlags & 16) != 0;
+float pbrGlassAlpha = pbrAlbedoSample.a;
 if (pbrIsTranslucentLayer) {
-  diffuseColor.a = clamp(pbrAlbedoSample.a, 0.08, 1.0);
+  float pbrFresnel = pow(1.0 - clamp(abs(dot(normalize(vNormal), normalize(vViewPosition))), 0.0, 1.0), 3.4);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.22, 0.54, 0.43), pbrFresnel * 0.45 * (1.0 - smoothstep(0.45, 0.9, pbrGlassAlpha)));
 }
 float pbrRoughness = clamp(pbrNrmSample.b, 0.04, 1.0);
-float pbrMetalness = clamp(pbrNrmSample.a, 0.0, 1.0);
+float pbrMetalness = pbrIsTranslucentLayer ? 0.0 : clamp(pbrNrmSample.a, 0.0, 1.0);
 float pbrMicroAO   = mix(1.0, 0.88, pbrRoughness * pbrRoughness);
 float pbrLuma = dot(pbrAlbedoSample.rgb, vec3(0.299, 0.587, 0.114));`,
       )
@@ -767,6 +786,15 @@ for (int tlIdx = 0; tlIdx < 8; tlIdx++) {
   }
 }`,
       );
+    if (translucent && THREE.ShaderChunk?.transmission_fragment) {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <transmission_fragment>',
+        THREE.ShaderChunk.transmission_fragment.replace(
+          'material.transmission = transmission;',
+          'material.transmission = pbrIsTranslucentLayer ? clamp(1.0 - max(0.0, pbrGlassAlpha - 0.08) * 1.08, 0.04, 0.94) : 0.0;',
+        ),
+      );
+    }
   };
 
   return {

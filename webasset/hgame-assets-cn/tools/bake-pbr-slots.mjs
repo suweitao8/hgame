@@ -545,93 +545,96 @@ async function bakeUnrealGlassSlot(entry, glassStagingDir, size) {
   }
 
   if (entry.id === 'glass_scratched_01') {
-    // M_Glass_Scratched_01: Color=[0.8861, 0.915, 0.9061], T_Scrachted_01_N (Intensity 0.7), Metallic=0.56, Roughness=0.05
-    const nMap = await loadUnrealNormalOpenGl(texPath('T_Scrachted_01_N.png'), size, { tileRepeat: 1, strength: 0.7 });
+    // M_Glass_Scratched_01: Color=[0.8861, 0.915, 0.9061], T_Scrachted_01_N, Metallic=0.56, Roughness=0.05
+    const nMap = await loadUnrealNormalOpenGl(texPath('T_Scrachted_01_N.png'), size, { tileRepeat: 1, strength: 1.05 });
     const [r, g, b] = linRgbToSrgbBytes([0.8861, 0.915, 0.9061]);
     for (let p = 0; p < nPix; p++) {
       const i = p * 4;
       const nx = nMap[i] / 127.5 - 1;
       const ny = nMap[i + 1] / 127.5 - 1;
-      const scratch = Math.min(1, Math.hypot(nx, ny) * 2.2);
-      color[i] = Math.round(mix(r, 248, scratch * 0.7));
-      color[i + 1] = Math.round(mix(g, 250, scratch * 0.7));
-      color[i + 2] = Math.round(mix(b, 252, scratch * 0.7));
-      color[i + 3] = Math.round(clamp01(0.18 + scratch * 0.38) * 255);
+      const scratch = Math.min(1, Math.hypot(nx, ny) * 2.6);
+      color[i] = Math.round(mix(r, 250, scratch * 0.78));
+      color[i + 1] = Math.round(mix(g, 252, scratch * 0.78));
+      color[i + 2] = Math.round(mix(b, 255, scratch * 0.78));
+      color[i + 3] = Math.round(clamp01(0.16 + scratch * 0.42) * 255);
       normalRm[i] = nMap[i];
       normalRm[i + 1] = nMap[i + 1];
-      normalRm[i + 2] = Math.round(clamp01(0.05 + scratch * 0.34) * 255);
+      normalRm[i + 2] = Math.round(clamp01(0.04 + scratch * 0.36) * 255);
       normalRm[i + 3] = Math.round(clamp01(mix(0.56, 0.14, scratch)) * 255);
     }
     return { color, normalRm, width: size, height: size };
   }
 
   if (entry.id === 'glass_dirty_01') {
-    // M_Glass_Dirty_01: Color=[0.8861, 0.915, 0.9061], DirtColor=[0.60, 0.5695, 0.396], T_DirtMask_01.R (Contrast 1.18, Intensity 0.82, Dirt_Roughness 0.85)
+    // M_Glass_DirtyMaster / M_Glass_Dirty_01: T_DirtMask_01.R with high-contrast clear patches + warm dusty grime
     const maskImg = await loadUnrealRgba(texPath('T_DirtMask_01.png'), size);
     const cleanRgb = linRgbToSrgbBytes([0.8861, 0.915, 0.9061]);
-    const dirtRgb = linRgbToSrgbBytes([0.60, 0.5695, 0.396]);
+    const dirtRgb = [132, 122, 92];
     const heights = new Float32Array(nPix);
     for (let p = 0; p < nPix; p++) {
-      heights[p] = clamp01(((maskImg[p * 4] / 255) ** 1.18) * 0.82);
+      const raw = maskImg[p * 4] / 255;
+      const t = clamp01((raw - 0.52) / 0.42);
+      heights[p] = clamp01((t ** 1.35) * 0.88);
     }
-    const nMap = heightFieldToOpenGlNormal(heights, size, 1.4);
+    const nMap = heightFieldToOpenGlNormal(heights, size, 1.8);
     for (let p = 0; p < nPix; p++) {
       const i = p * 4;
       const d = heights[p];
       color[i] = Math.round(mix(cleanRgb[0], dirtRgb[0], d));
       color[i + 1] = Math.round(mix(cleanRgb[1], dirtRgb[1], d));
       color[i + 2] = Math.round(mix(cleanRgb[2], dirtRgb[2], d));
-      color[i + 3] = Math.round(clamp01(mix(0.20, 0.78, d)) * 255);
+      color[i + 3] = Math.round(clamp01(mix(0.14, 0.88, d)) * 255);
       normalRm[i] = nMap[i];
       normalRm[i + 1] = nMap[i + 1];
-      normalRm[i + 2] = Math.round(clamp01(mix(0.10, 0.85, d)) * 255);
+      normalRm[i + 2] = Math.round(clamp01(mix(0.05, 0.88, d)) * 255);
       normalRm[i + 3] = Math.round(clamp01(mix(0.32, 0.02, d)) * 255);
     }
     return { color, normalRm, width: size, height: size };
   }
 
   if (entry.id === 'glass_frozen_01') {
-    // M_Glass_Frozen_01: Color=[0.7753, 0.7791, 0.915], T_Frost_01 + T_Frost_01_N (Frost_Intensity 1.4, Frost_Contrast 0.3, FrostNormal_Intensity 0.46)
+    // M_Glass_Frozen_01: Color=[0.7753, 0.7791, 0.915], T_Frost_01 + T_Frost_01_N (clear glass between crisp ice crystals)
     const frostMask = await loadUnrealRgba(texPath('T_Frost_01.png'), size);
-    const nMap = await loadUnrealNormalOpenGl(texPath('T_Frost_01_N.png'), size, { tileRepeat: 1, strength: 0.65 });
+    const nMap = await loadUnrealNormalOpenGl(texPath('T_Frost_01_N.png'), size, { tileRepeat: 1, strength: 1.0 });
     const baseRgb = linRgbToSrgbBytes([0.7753, 0.7791, 0.915]);
     for (let p = 0; p < nPix; p++) {
       const i = p * 4;
-      const f = clamp01(((frostMask[i] / 255) ** 0.55) * 1.15);
-      color[i] = Math.round(mix(baseRgb[0], 242, f * 0.78));
-      color[i + 1] = Math.round(mix(baseRgb[1], 247, f * 0.78));
-      color[i + 2] = Math.round(mix(baseRgb[2], 255, f * 0.78));
-      color[i + 3] = Math.round(clamp01(mix(0.22, 0.84, f)) * 255);
+      const t = clamp01((frostMask[i] / 255 - 0.14) / 0.64);
+      const f = clamp01(t ** 1.05);
+      color[i] = Math.round(mix(baseRgb[0], 244, f * 0.85));
+      color[i + 1] = Math.round(mix(baseRgb[1], 248, f * 0.85));
+      color[i + 2] = Math.round(mix(baseRgb[2], 255, f * 0.85));
+      color[i + 3] = Math.round(clamp01(mix(0.16, 0.88, f)) * 255);
       normalRm[i] = nMap[i];
       normalRm[i + 1] = nMap[i + 1];
-      normalRm[i + 2] = Math.round(clamp01(mix(0.16, 0.64, f)) * 255);
+      normalRm[i + 2] = Math.round(clamp01(mix(0.07, 0.68, f)) * 255);
       normalRm[i + 3] = Math.round(clamp01(mix(0.30, 0.06, f)) * 255);
     }
     return { color, normalRm, width: size, height: size };
   }
 
   if (entry.id === 'glass_shattered_01') {
-    // M_Glass_Shattered_01: Color=[0.7919, 0.8289, 0.915], T_Glass_Shattered_01_M (cracks are dark in G) + T_Glass_Shattered_01_N (Cracks_Normal_Intensity 1.2)
+    // M_Glass_Shattered_01: Color=[0.7919, 0.8289, 0.915], T_Glass_Shattered_01_M (cracks are dark in G) + T_Glass_Shattered_01_N
     const crackMask = await loadUnrealRgba(texPath('T_Glass_Shattered_01_M.png'), size);
-    const nMap = await loadUnrealNormalOpenGl(texPath('T_Glass_Shattered_01_N.png'), size, { tileRepeat: 1, strength: 1.2 });
+    const nMap = await loadUnrealNormalOpenGl(texPath('T_Glass_Shattered_01_N.png'), size, { tileRepeat: 1, strength: 1.6 });
     const baseRgb = linRgbToSrgbBytes([0.7919, 0.8289, 0.915]);
     for (let p = 0; p < nPix; p++) {
       const i = p * 4;
       const crack = clamp01(1.0 - crackMask[i + 1] / 255);
-      color[i] = Math.round(mix(baseRgb[0], 246, crack));
-      color[i + 1] = Math.round(mix(baseRgb[1], 250, crack));
+      color[i] = Math.round(mix(baseRgb[0], 248, crack));
+      color[i + 1] = Math.round(mix(baseRgb[1], 251, crack));
       color[i + 2] = Math.round(mix(baseRgb[2], 255, crack));
-      color[i + 3] = Math.round(clamp01(mix(0.18, 0.94, crack)) * 255);
+      color[i + 3] = Math.round(clamp01(mix(0.16, 0.95, crack)) * 255);
       normalRm[i] = nMap[i];
       normalRm[i + 1] = nMap[i + 1];
-      normalRm[i + 2] = Math.round(clamp01(mix(0.06, 0.56, crack)) * 255);
+      normalRm[i + 2] = Math.round(clamp01(mix(0.04, 0.56, crack)) * 255);
       normalRm[i + 3] = Math.round(clamp01(mix(0.58, 0.08, crack)) * 255);
     }
     return { color, normalRm, width: size, height: size };
   }
 
   if (entry.id === 'glass_rain_01') {
-    // M_Glass_Rain_01: Color=[0.8861, 0.915, 0.9061], T_RainDroplets_M (Rain_Tile 2) + T_RainDroplets (Droplets_Tile 4 -> 2x tile)
+    // M_Glass_Rain_01: Color=[0.8861, 0.915, 0.9061], T_RainDroplets_M + T_RainDroplets
     const streakImg = await loadUnrealRgba(texPath('T_RainDroplets_M.png'), size, { tileRepeat: 2 });
     const dropImg = await loadUnrealRgba(texPath('T_RainDroplets.png'), size, { tileRepeat: 2 });
     const baseRgb = linRgbToSrgbBytes([0.8861, 0.915, 0.9061]);
@@ -640,17 +643,17 @@ async function bakeUnrealGlassSlot(entry, glassStagingDir, size) {
       const i = p * 4;
       heights[p] = clamp01(Math.max(streakImg[i] / 255, dropImg[i] / 255));
     }
-    const nMap = heightFieldToOpenGlNormal(heights, size, 3.0);
+    const nMap = heightFieldToOpenGlNormal(heights, size, 3.8);
     for (let p = 0; p < nPix; p++) {
       const i = p * 4;
       const wet = heights[p];
-      color[i] = Math.round(mix(baseRgb[0], 248, wet * 0.55));
-      color[i + 1] = Math.round(mix(baseRgb[1], 251, wet * 0.55));
-      color[i + 2] = Math.round(mix(baseRgb[2], 254, wet * 0.55));
-      color[i + 3] = Math.round(clamp01(mix(0.16, 0.62, wet)) * 255);
+      color[i] = Math.round(mix(baseRgb[0], 248, wet * 0.5));
+      color[i + 1] = Math.round(mix(baseRgb[1], 251, wet * 0.5));
+      color[i + 2] = Math.round(mix(baseRgb[2], 254, wet * 0.5));
+      color[i + 3] = Math.round(clamp01(mix(0.16, 0.58, wet)) * 255);
       normalRm[i] = nMap[i];
       normalRm[i + 1] = nMap[i + 1];
-      normalRm[i + 2] = Math.round(clamp01(mix(0.18, 0.04, wet)) * 255); // droplets are super glossy
+      normalRm[i + 2] = Math.round(clamp01(mix(0.24, 0.03, wet)) * 255);
       normalRm[i + 3] = Math.round(clamp01(mix(0.42, 0.76, wet)) * 255);
     }
     return { color, normalRm, width: size, height: size };
