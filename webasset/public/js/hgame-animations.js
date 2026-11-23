@@ -674,10 +674,10 @@ async function load3dAnimationAsset() {
     if (rawClips.length > 0) {
       playing3d = true;
       applyPreparedClip();
-      status3dEl.textContent = `${rawClips.length} 个动画片段 · ${loadedStats.boneCount} 根骨骼 · ${loadedStats.meshCount} 网格`;
+      status3dEl.textContent = `${rawClips.length} 动画 · ${loadedStats.boneCount} 骨骼`;
     } else {
       mixer = null;
-      status3dEl.textContent = `未检测到动画片段（${loadedStats.boneCount} 根骨骼 · ${loadedStats.meshCount} 网格）`;
+      status3dEl.textContent = `0 动画 · ${loadedStats.boneCount} 骨骼`;
     }
 
     if (!viewEl.hidden) {

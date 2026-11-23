@@ -156,7 +156,7 @@ export class CharacterModelViewer {
       const geometry = mesh.geometry;
       return total + Math.floor((geometry.index?.count || geometry.attributes.position?.count || 0) / 3);
     }, 0);
-    this.status.textContent = `${meshes.length} 个网格 · ${triangles.toLocaleString()} 个三角面 · 鼠标拖动旋转，滚轮缩放`;
+    this.status.textContent = `${triangles.toLocaleString()} 三角面`;
 
     if (mode === 'low') {
       const run = this.gltf.animations.find(clip => /run|running|跑步|奔跑/i.test(clip.name));
@@ -168,11 +168,10 @@ export class CharacterModelViewer {
         this.runAction.play();
         this.playing = true;
         this.runButton.textContent = '暂停 Run';
-        this.status.textContent += ` · Run 动画：${run.name}`;
+        this.status.textContent += ` · ${run.name}`;
       } else {
         this.runButton.textContent = '无 Run 动画';
         this.runButton.disabled = true;
-        this.status.textContent += ' · 模型未包含 Run 动画';
       }
     }
     const clock = new THREE.Clock();
@@ -214,7 +213,6 @@ export class CharacterModelViewer {
       option.textContent = mesh.name || `网格 ${index + 1}`;
       this.uvSelect.append(option);
     });
-    this.status.textContent = 'UV 展开线框 · 可选择网格查看坐标与贴图';
     this.drawUV();
   }
 
@@ -272,6 +270,8 @@ export class CharacterModelViewer {
     context.strokeStyle = '#9eb794';
     context.lineWidth = 2;
     context.strokeRect(x, y, boxSize, boxSize);
-    this.status.textContent = `UV：${mesh.name || '未命名网格'} · ${Math.floor(max / 3).toLocaleString()} 个三角面${max < count ? '（为流畅预览已限制绘制数量）' : ''}`;
+    this.status.textContent = this.uvMeshes.length > 1 && mesh.name
+      ? `${mesh.name} · ${Math.floor(max / 3).toLocaleString()} 三角面`
+      : `${Math.floor(max / 3).toLocaleString()} 三角面`;
   }
 }

@@ -342,7 +342,7 @@ export function drawUvWireframe(canvas, mesh, statusEl) {
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, boxSize, boxSize);
   if (statusEl) {
-    statusEl.textContent = `UV：${mesh.name || '未命名网格'} · ${Math.floor(max / 3).toLocaleString()} 个三角面`;
+    statusEl.textContent = `${Math.floor(max / 3).toLocaleString()} 三角面`;
   }
 }
 
