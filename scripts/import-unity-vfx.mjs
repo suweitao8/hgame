@@ -749,15 +749,111 @@ function normAssetKey(str) {
   return String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
-function resolveMeshKey(fbxRelPath, matName) {
+const metaSubmeshCache = new Map();
+const artifactDbCache = new Map();
+
+function findArtifactDbPath(assetFullPath) {
+  let dir = path.dirname(assetFullPath);
+  for (let i = 0; i < 8; i++) {
+    const candidate = path.join(dir, 'Library', 'ArtifactDB');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (!parent || parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+function resolveFbxSubmeshName(assetFullPath, fileId) {
+  if (!fileId || fileId === '0' || fileId === '4300000' || fileId === '4300002' || fileId === '4300004') {
+    return null;
+  }
+  let metaMap = metaSubmeshCache.get(assetFullPath);
+  if (!metaMap) {
+    metaMap = new Map();
+    metaSubmeshCache.set(assetFullPath, metaMap);
+    const metaPath = `${assetFullPath}.meta`;
+    if (fs.existsSync(metaPath)) {
+      const txt = fs.readFileSync(metaPath, 'utf8');
+      const recBlk = txt.match(/fileIDToRecycleName:\n((?:\s+[^\n]+\n)*)/)?.[1] || '';
+      for (const m of recBlk.matchAll(/^\s+(-?\d+):\s*([^\r\n]+)/gm)) {
+        metaMap.set(m[1], m[2].trim());
+      }
+      const tblBlk = txt.match(/internalIDToNameTable:\n((?:\s+[^\n]+\n)*)/)?.[1] || '';
+      for (const m of tblBlk.matchAll(/43:\s*(-?\d+)\s*\n\s*second:\s*([^\r\n]+)/g)) {
+        metaMap.set(m[1], m[2].trim());
+      }
+    }
+  }
+  if (metaMap.has(fileId)) {
+    const meshNamesCount = metaMap.size;
+    return { name: metaMap.get(fileId), multi: meshNamesCount > 1 };
+  }
+  const dbPath = findArtifactDbPath(assetFullPath);
+  if (!dbPath) return null;
+  let db = artifactDbCache.get(dbPath);
+  if (!db) {
+    db = { buf: fs.readFileSync(dbPath), fids: new Map() };
+    artifactDbCache.set(dbPath, db);
+  }
+  if (db.fids.has(fileId)) return db.fids.get(fileId);
+  let resolved = null;
+  try {
+    const pat = Buffer.allocUnsafe(8);
+    pat.writeBigInt64LE(BigInt(fileId));
+    const buf = db.buf;
+    let idx = 0;
+    while ((idx = buf.indexOf(pat, idx)) !== -1) {
+      if (idx >= 80 && buf.readInt32LE(idx - 8) === -1) {
+        const rowStart = idx - 80;
+        const tid = buf.readUInt32LE(rowStart + 28);
+        const rel = buf.readUInt32LE(rowStart);
+        if (tid === 43 && rel > 0 && rel < 8192 && rowStart + rel < buf.length) {
+          const sOff = rowStart + rel;
+          const end = Math.min(buf.length, sOff + 128);
+          let nul = -1;
+          for (let k = sOff; k < end; k++) {
+            if (buf[k] === 0) {
+              nul = k;
+              break;
+            }
+          }
+          if (nul > sOff) {
+            const name = buf.subarray(sOff, nul).toString('utf8');
+            if (/^[A-Za-z0-9_.\- ]+$/.test(name)) {
+              const pTid = rowStart >= 88 ? buf.readUInt32LE(rowStart - 88 + 28) : 0;
+              const nTid = rowStart + 88 + 32 <= buf.length ? buf.readUInt32LE(rowStart + 88 + 28) : 0;
+              resolved = { name, multi: (pTid === 43 || nTid === 43) };
+              break;
+            }
+          }
+        }
+      }
+      idx += 8;
+    }
+  } catch {
+    resolved = null;
+  }
+  db.fids.set(fileId, resolved);
+  return resolved;
+}
+
+function resolveMeshKey(fbxRelPath, matName, submeshName = null) {
   const fbxBase = path.basename(fbxRelPath, path.extname(fbxRelPath));
   const fbxKey = normAssetKey(fbxBase.replace(/\([^)]*\)/g, ''));
   const rawFbxKey = normAssetKey(fbxBase);
-  if (!matName) return rawFbxKey;
-  const matKey = normAssetKey(matName);
-  if (matKey === fbxKey || matKey === rawFbxKey) return rawFbxKey;
-  if (matKey.startsWith(fbxKey + '_')) return matKey;
-  return `${rawFbxKey}__${matKey}`;
+  let baseKey = rawFbxKey;
+  if (matName) {
+    const matKey = normAssetKey(matName);
+    if (matKey !== fbxKey && matKey !== rawFbxKey) {
+      baseKey = matKey.startsWith(fbxKey + '_') ? matKey : `${rawFbxKey}__${matKey}`;
+    }
+  }
+  if (submeshName) {
+    const subNorm = normAssetKey(submeshName);
+    if (subNorm) return `${baseKey}__sub_${subNorm}`;
+  }
+  return baseKey;
 }
 
 function quatMul(a, b) {
@@ -1222,24 +1318,47 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       windMul = Number((extMod.match(/\bmultiplier:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
     }
 
-    const meshRefM = psr.match(/m_Mesh:\s*\{fileID:\s*(-?\d+)(?:,\s*guid:\s*([0-9a-f]{32}))?/);
-    const meshFid = meshRefM?.[1] || '0';
-    const meshGuid = meshRefM?.[2];
-    let meshKey = 'crystal';
-    let meshGlobalScale = 1;
-    if (meshGuid && guidMap.has(meshGuid)) {
-      const mInfo = guidMap.get(meshGuid);
-      deps.meshes.set(mInfo.relPath, mInfo);
-      meshKey = resolveMeshKey(mInfo.relPath, mainMat?.matName);
-      meshGlobalScale = mInfo.globalScale ?? 1;
-    } else if (meshFid === '10210') {
-      meshKey = 'quad';
-    } else if (meshFid === '10202') {
-      meshKey = 'cube';
-    } else if (meshFid === '10207') {
-      meshKey = 'sphere';
-    } else if (meshFid === '10206') {
-      meshKey = 'cylinder';
+    const resolveSingleMeshSlot = (slotName) => {
+      const refRe = new RegExp(`${slotName}:\\s*\\{fileID:\\s*(-?\\d+)(?:,\\s*guid:\\s*([0-9a-f]{32}))?`);
+      const mRef = psr.match(refRe);
+      if (!mRef) return null;
+      const fid = mRef[1] || '0';
+      const guid = mRef[2];
+      if (guid && guidMap.has(guid)) {
+        const mInfo = guidMap.get(guid);
+        deps.meshes.set(mInfo.relPath, mInfo);
+        const sub = resolveFbxSubmeshName(mInfo.fullPath, fid);
+        const subName = sub?.multi ? sub.name : null;
+        return {
+          key: resolveMeshKey(mInfo.relPath, mainMat?.matName, subName),
+          globalScale: mInfo.globalScale ?? 1,
+        };
+      }
+      if (fid === '10210') return { key: 'quad', globalScale: 1 };
+      if (fid === '10202') return { key: 'cube', globalScale: 1 };
+      if (fid === '10207') return { key: 'sphere', globalScale: 1 };
+      if (fid === '10206') return { key: 'cylinder', globalScale: 1 };
+      return null;
+    };
+
+    const primaryMeshSlot = resolveSingleMeshSlot('m_Mesh');
+    let meshKey = primaryMeshSlot?.key || 'crystal';
+    let meshGlobalScale = primaryMeshSlot?.globalScale ?? 1;
+    const meshVariants = [];
+    for (const [mField, wField] of [
+      ['m_Mesh', 'm_MeshWeighting'],
+      ['m_Mesh1', 'm_MeshWeighting1'],
+      ['m_Mesh2', 'm_MeshWeighting2'],
+      ['m_Mesh3', 'm_MeshWeighting3'],
+    ]) {
+      const resolvedSlot = mField === 'm_Mesh' ? primaryMeshSlot : resolveSingleMeshSlot(mField);
+      if (!resolvedSlot) continue;
+      const wM = psr.match(new RegExp(`^\\s*${wField}:\\s*([\\d.eE+-]+)`, 'm'));
+      const weight = Math.max(0, wM ? Number(wM[1]) : 1);
+      if (weight <= 0) continue;
+      const prev = meshVariants.find((v) => v.mesh === resolvedSlot.key);
+      if (prev) prev.weight = Number((prev.weight + weight).toFixed(4));
+      else meshVariants.push({ mesh: resolvedSlot.key, weight: Number(weight.toFixed(4)) });
     }
 
     const isNonZeroVal = (v) => Array.isArray(v) ? (Math.abs(v[0]) > 1e-4 || Math.abs(v[1]) > 1e-4) : Math.abs(v) > 1e-4;
@@ -1307,6 +1426,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     if (renderMode === 'mesh') {
       layer.mesh = meshKey;
+      if (meshVariants.length > 1) layer.meshes = meshVariants;
       if (Math.abs(meshGlobalScale - 1) > 0.005) layer.meshGlobalScale = Number(meshGlobalScale.toFixed(4));
       layer.forwardAxis = renderAlign === 4 ? 'z' : 'y';
       if (mainMat?.lit) layer.lit = true;

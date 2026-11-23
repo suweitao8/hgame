@@ -1189,6 +1189,27 @@ export function createEffectPlayer({
     return { flipbook: scratchRowFb, uvRect: scratchRowUv };
   }
 
+  function pickLayerMesh(layer) {
+    const list = layer?.meshes;
+    if (!Array.isArray(list) || list.length === 0) return layer?.mesh || 'crystal';
+    let total = 0;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      total += (typeof e === 'object' && e !== null) ? Math.max(0, Number(e.weight ?? 1)) : 1;
+    }
+    if (total <= 0) return layer?.mesh || 'crystal';
+    let roll = prng.nextFloat() * total;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      const w = (typeof e === 'object' && e !== null) ? Math.max(0, Number(e.weight ?? 1)) : 1;
+      roll -= w;
+      if (roll <= 0 || i === list.length - 1) {
+        return (typeof e === 'object' && e !== null ? e.mesh : e) || layer?.mesh || 'crystal';
+      }
+    }
+    return layer?.mesh || 'crystal';
+  }
+
   function emitParticleOrMesh(layer, slot, initialAge = 0, ls = null, emitIdx = 0, emitCount = 1) {
     const scale = slot.scale;
     const simSpd = layer._simSpd ?? Math.max(0.05, Number(layer.simulationSpeed ?? 1.0));
@@ -1352,7 +1373,7 @@ export function createEffectPlayer({
       const atlasRegion = atlasTexture && (atlasParticles.regions?.[regionKey]
         ?? (Array.isArray(layer.uvRect) && layer.uvRect.length >= 4 ? layer.uvRect : null));
       const meshSlot = meshVfx.spawn({
-        mesh: layer.mesh || 'crystal',
+        mesh: pickLayerMesh(layer),
         texture: atlasRegion ? atlasTexture : null,
         textureRect: uvRect ?? atlasRegion,
         flipbook,

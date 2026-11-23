@@ -222,7 +222,7 @@ void main() {
   vMeta = aInstMeta;
   vFlipLocalV = aInstScaleInfo.w;
 
-  vec3 pos = position - aInstPivot.xyz;
+  vec3 pos = position + aInstPivot.xyz;
   vec3 nrm = normalize(normal);
 
   if (aInstMeta.x > -0.5 && abs(aInstCustom2.x) > 1e-5) {
