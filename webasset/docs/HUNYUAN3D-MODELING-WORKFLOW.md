@@ -121,14 +121,14 @@ curl -X POST "http://127.0.0.1:4174/api/character-models?characterId=<id>&mode=h
 
 | 角色 | 大小 | assetId | creationId | 登记 |
 |---|---|---|---|---|
-| 梁子 character-1efd121d | 79.4MB | `d0abe421-1353-4169-b6c3-419f1e2886fa` | `f878efd1-1e81-475d-9144-95cf6dcae3cd` | `high-9e8ec220` / `low-baaa2efb` |
-| 梁圣 character-5a7a1e23 | 76.4MB | `7ec08b07-8bde-44b5-b9f5-fcfe358f9e29` | `ceb9ed48-0dd5-485d-befe-734eccdcf204` | `high-73f7821c` / `low-57a298ae` |
-| 雨姐 character-6ce0c029 | 79.9MB | `a186c55f-fdb0-4b08-b669-e6fa471d25a5` | `f021f518-3ab0-48c7-b26f-427bdb7316cd` | `high-1e93f7d8` / `low-2c6835be` |
-| jiege character-3dca756f | 68.3MB | `f43d19a7-eea5-4c89-b75b-613e228ab9b4` | `a7b7b667-f525-4384-a7cd-2a949952bacf` | `high-6f03676b` / `low-d86b2a5a` |
-| anuo character-2dec31e2 | 74.8MB | `4f1c81a2-c30a-42b1-87dd-801692c02b0e` | `28c53136-09af-4523-bea7-a0fb0b916129` | `high-0fe4069c` / `low-bb3d4a26` |
-| gemini character-0eef1539 | 82.3MB | `e38ce346-7247-408f-9204-c833055e0743` | `6ecbcea5-5d32-4ead-b368-0df42144b40e` | `high-815d6d67` / `low-bd70b74f` |
-| qianwen character-b3a75eb1 | 81.1MB | `514e1cc9-503a-42f3-9c23-4e76d79cb13f` | `3392b37d-2d52-4d91-a741-b432f93f0770` | `high-0d3c6378` / `low-253aa9f3` |
-| dafeiyu | 86.4MB | `50fee7c6-10c1-404b-8563-2cce815d9fc6` | `142a2f44-ace3-4e04-b899-4849cecd8d41` | `high-7f7154e1` / `low-e0ce63ef` |
+| 梁子 character-1efd121d | 79.4MB | `d0abe421-1353-4169-b6c3-419f1e2886fa` | `f878efd1-1e81-475d-9144-95cf6dcae3cd` | `high-9e8ec220` / `low-eea5cf93` |
+| 梁圣 character-5a7a1e23 | 76.4MB | `7ec08b07-8bde-44b5-b9f5-fcfe358f9e29` | `ceb9ed48-0dd5-485d-befe-734eccdcf204` | `high-73f7821c` / `low-13bdfd64` |
+| 雨姐 character-6ce0c029 | 79.9MB | `a186c55f-fdb0-4b08-b669-e6fa471d25a5` | `f021f518-3ab0-48c7-b26f-427bdb7316cd` | `high-1e93f7d8` / `low-e1226a8c` |
+| jiege character-3dca756f | 68.3MB | `f43d19a7-eea5-4c89-b75b-613e228ab9b4` | `a7b7b667-f525-4384-a7cd-2a949952bacf` | `high-6f03676b` / `low-b1519474` |
+| anuo character-2dec31e2 | 74.8MB | `4f1c81a2-c30a-42b1-87dd-801692c02b0e` | `28c53136-09af-4523-bea7-a0fb0b916129` | `high-0fe4069c` / `low-780ddc8a` |
+| gemini character-0eef1539 | 82.3MB | `e38ce346-7247-408f-9204-c833055e0743` | `6ecbcea5-5d32-4ead-b368-0df42144b40e` | `high-815d6d67` / `low-b269d229` |
+| qianwen character-b3a75eb1 | 81.1MB | `514e1cc9-503a-42f3-9c23-4e76d79cb13f` | `3392b37d-2d52-4d91-a741-b432f93f0770` | `high-0d3c6378` / `low-37044977` |
+| dafeiyu | 86.4MB | `50fee7c6-10c1-404b-8563-2cce815d9fc6` | `142a2f44-ace3-4e04-b899-4849cecd8d41` | `high-7f7154e1` / `low-85bed08e` |
 
 当日提交前做了三遍复核 + 后台 100 轮审计（91 个图像文件 SHA256 快照零变更、切图判定零翻转）；gemini/qianwen/dafeiyu 三单由后台编排器（`build/hunyuan-debug/pipeline-orchestrator.mjs`，≤2 并发排队 + 采集 + 登记）自动完成，预览图已统一目检无误；同日 8 角色统一 T5 低模（`LOD0` PBR + `LOD1 2400/256px/4w` + `LOD2 1200/128px/2w` + `LOD3 2-tri Run-Only` + Auto-Rig Pro `PSEUDO_VOXELS` 23 骨 Anim58 `Run`）已全部烘焙登记并通过 `verify-character-lods.mjs`；脚本坑与防御见「注意」。
 

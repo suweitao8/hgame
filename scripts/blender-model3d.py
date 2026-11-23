@@ -2074,12 +2074,16 @@ def _view3d_override():
 
 
 def _align_arp_retarget_rest_pose(src_arm, tar_arm):
-    """Align A-pose source arms (e.g. UE5 Mannequin) onto ARP T-pose target via Redefine Rest Pose (preserve=True)."""
+    """Align A-pose source arms and vertical legs onto ARP T-pose/A-stance target via Redefine Rest Pose (preserve=True)."""
     pairs = (
         ("upperarm_l", "lowerarm_l", "c_arm_fk.l", "c_forearm_fk.l"),
         ("lowerarm_l", "hand_l", "c_forearm_fk.l", "c_hand_fk.l"),
         ("upperarm_r", "lowerarm_r", "c_arm_fk.r", "c_forearm_fk.r"),
         ("lowerarm_r", "hand_r", "c_forearm_fk.r", "c_hand_fk.r"),
+        ("thigh_l", "calf_l", "c_thigh_fk.l", "c_leg_fk.l"),
+        ("calf_l", "foot_l", "c_leg_fk.l", "c_foot_fk.l"),
+        ("thigh_r", "calf_r", "c_thigh_fk.r", "c_leg_fk.r"),
+        ("calf_r", "foot_r", "c_leg_fk.r", "c_foot_fk.r"),
     )
     src_act = src_arm.animation_data.action if src_arm.animation_data else None
     src_slot = getattr(src_arm.animation_data, "action_slot", None) if src_arm.animation_data else None
@@ -2194,9 +2198,31 @@ def _rig_and_export_arp(
     sh_y = float(np.median(sh_pts[:, 1])) if len(sh_pts) >= 3 else hand_y
     sh_z = float(np.percentile(sh_pts[:, 2], 65)) if len(sh_pts) >= 3 else z_arm
 
-    foot_x = max(0.065 * H, lm.get("lx", 0.09 * H))
-    foot_pts = co[(np.abs(co[:, 0] - foot_x) <= 0.045 * H) & (co[:, 2] <= z0 + 0.08 * H) & (co[:, 1] <= 0.12 * H)]
-    foot_y = float(np.median(foot_pts[:, 1])) if len(foot_pts) >= 3 else sh_y
+    # Measure clean outer-leg Y depth (|x| >= 0.07*H) so large center tails/capes never shift hip/ankle Y
+    leg_outer = co[(co[:, 2] >= z0 + 0.12 * H) & (co[:, 2] <= z0 + 0.48 * H) & (np.abs(co[:, 0]) >= 0.07 * H)]
+    leg_back_clean = float(np.percentile(leg_outer[:, 1], 88)) if len(leg_outer) >= 6 else (sh_y + 0.06 * H)
+    y_hip_clean = float(np.median(leg_outer[:, 1])) if len(leg_outer) >= 6 else sh_y
+
+    # Sample true ankle cluster (+X) directly at ankle height (supports wide A-stance legs without clipping at 0.125*H)
+    ankle_band = co[
+        (co[:, 2] >= z0 + 0.02 * H)
+        & (co[:, 2] <= z0 + 0.09 * H)
+        & (co[:, 0] > 0.025 * H)
+        & (co[:, 1] <= leg_back_clean + 0.04 * H)
+    ]
+    lower_mid_gap = co[
+        (co[:, 2] >= z0 + 0.04 * H)
+        & (co[:, 2] <= z0 + 0.18 * H)
+        & (np.abs(co[:, 0]) <= 0.025 * H)
+        & (co[:, 1] <= leg_back_clean + 0.03 * H)
+    ]
+    if len(ankle_band) >= 4 and len(lower_mid_gap) < 4:
+        foot_x = float(np.median(ankle_band[:, 0]))
+        foot_y = float(np.median(ankle_band[:, 1]))
+    else:
+        foot_x = max(0.065 * H, lm.get("lx", 0.09 * H))
+        foot_pts = co[(np.abs(co[:, 0] - foot_x) <= 0.045 * H) & (co[:, 2] <= z0 + 0.08 * H) & (co[:, 1] <= leg_back_clean + 0.04 * H)]
+        foot_y = float(np.median(foot_pts[:, 1])) if len(foot_pts) >= 3 else y_hip_clean
 
     def _cleanup_arp_state():
         for obj in list(bpy.data.objects):
@@ -2278,9 +2304,32 @@ def _rig_and_export_arp(
         if rig is None:
             raise RuntimeError("Auto-Rig Pro did not generate an armature")
 
+        # Clamp reference pelvis/thigh/spine Y if a large rear tail/cape pulled ARP Smart root raycast backward
+        bpy.ops.object.mode_set(mode="OBJECT")
         bpy.ops.object.select_all(action="DESELECT")
         rig.select_set(True)
         bpy.context.view_layer.objects.active = rig
+        bpy.ops.object.mode_set(mode="EDIT")
+        eb = rig.data.edit_bones
+        if "root_ref.x" in eb and eb["root_ref.x"].head.y > y_hip_clean + 0.025 * H:
+            neck_y = eb["neck_ref.x"].head.y if "neck_ref.x" in eb else sh_y
+            ankle_y = eb["foot_ref.l"].head.y if "foot_ref.l" in eb else foot_y
+            knee_y = min(
+                eb["leg_ref.l"].head.y if "leg_ref.l" in eb else y_hip_clean,
+                0.5 * (y_hip_clean + ankle_y) - 0.015 * H,
+            )
+            sp_chain = [n for n in ("root_ref.x", "spine_01_ref.x", "spine_02_ref.x", "spine_03_ref.x") if n in eb]
+            for idx, sn in enumerate(sp_chain):
+                t0 = idx / float(max(1, len(sp_chain)))
+                t1 = (idx + 1) / float(max(1, len(sp_chain)))
+                eb[sn].head.y = y_hip_clean * (1.0 - t0) + neck_y * t0
+                eb[sn].tail.y = y_hip_clean * (1.0 - t1) + neck_y * t1
+            for s in ("l", "r"):
+                if f"thigh_ref.{s}" in eb:
+                    eb[f"thigh_ref.{s}"].head.y = y_hip_clean
+                    eb[f"thigh_ref.{s}"].tail.y = knee_y
+                if f"leg_ref.{s}" in eb:
+                    eb[f"leg_ref.{s}"].head.y = knee_y
         bpy.ops.arp.match_to_rig()
 
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -2343,6 +2392,41 @@ def _rig_and_export_arp(
             raise RuntimeError("Auto-Rig Pro bind failed: " + "; ".join(arp_errors))
         if nz == 0:
             raise RuntimeError("Auto-Rig Pro bind produced zero weighted vertices on mesh_lod0")
+
+        # Strip limb weights leaked onto trailing rear tail/cape protrusions and transfer them cleanly to pelvis/spine_01
+        v_co = np.array([low_obj.matrix_world @ v.co for v in low_obj.data.vertices])
+        back_y_start = leg_back_clean + 0.025 * H
+        back_mask = (
+            (v_co[:, 2] <= z_arm - 0.02 * H)
+            & (v_co[:, 1] > back_y_start)
+            & (np.abs(v_co[:, 0]) <= x_sh * 1.05)
+        )
+        back_idxs = np.nonzero(back_mask)[0].tolist()
+        if back_idxs:
+            vg_root = low_obj.vertex_groups.get("root.x") or low_obj.vertex_groups.get("pelvis")
+            vg_sp1 = low_obj.vertex_groups.get("spine_01.x") or low_obj.vertex_groups.get("spine_01") or vg_root
+            limb_tokens = ("thigh", "leg", "calf", "foot", "toes", "ball", "arm", "forearm", "hand", "shoulder", "clavicle")
+            limb_vgs = [vg for vg in low_obj.vertex_groups if any(tok in vg.name for tok in limb_tokens)]
+            for vi in back_idxs:
+                a = max(0.0, min(1.0, (float(v_co[vi, 1]) - back_y_start) / (0.04 * H)))
+                moved = 0.0
+                for vg in limb_vgs:
+                    try:
+                        w_old = vg.weight(vi)
+                        drop = w_old * a
+                        if drop > 1e-5:
+                            if a >= 0.999:
+                                vg.remove([vi])
+                            else:
+                                vg.add([vi], max(0.0, w_old - drop), "REPLACE")
+                            moved += drop
+                    except RuntimeError:
+                        pass
+                if moved > 1e-5 and vg_root:
+                    t_sp = max(0.0, min(1.0, (float(v_co[vi, 2]) - z_hip) / max(z_arm - z_hip, 0.1 * H)))
+                    vg_root.add([vi], moved * (1.0 - 0.5 * t_sp), "ADD")
+                    if vg_sp1:
+                        vg_sp1.add([vi], moved * (0.5 * t_sp), "ADD")
 
         resolved_anim_glb = anim_glb
         if resolved_anim_glb == "":
