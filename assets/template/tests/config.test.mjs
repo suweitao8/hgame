@@ -34,7 +34,9 @@ test('game recipe matches the selected modular profile and retains the Host prot
   }
   assert.equal(config.runtime, 'webasset-v1');
   assert.equal(config.renderer, recipe.renderer === 'webgl2d' ? 'webgl-custom' : recipe.renderer);
-  assert.equal(config.entry, 'index.html');
+  assert.match(config.entry, /^[a-z0-9_./-]+\.html?$/i);
+  assert.ok(config.entry.split('/').every(segment => segment && segment !== '..' && segment !== '.'));
+  assert.ok(existsSync(path.join(projectDir, config.entry)), 'configured HTML entry is missing');
   assert.equal(typeof config.standalone, 'boolean');
   assert.equal(recipe.configVersion, 1);
   assert.ok(['2d', '3d', 'ui'].includes(recipe.profile));

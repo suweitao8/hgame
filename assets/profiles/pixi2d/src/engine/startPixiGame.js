@@ -15,7 +15,7 @@ export async function readGameJson(path) {
 
 /** @param {string} module Path within HGame, such as world/tilemap.js. */
 export function loadRuntime(module) {
-  const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
+  const hosted = location.pathname.startsWith('/local-games/');
   const runtime = new URL(hosted ? '/runtime/hgame/' : './vendor/hgame/', document.baseURI);
   return import(new URL(module, runtime).href);
 }

@@ -1,4 +1,4 @@
-const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
+const hosted = location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
   gameConfig, engineConfig,

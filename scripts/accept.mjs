@@ -3,7 +3,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { lintFiles, collectFiles as collectUiFiles } from './check-ui-resolve.mjs';
@@ -11,7 +11,7 @@ import { runAutoplayGate } from './check-autoplay.mjs';
 import { auditDesignDocs } from './check-design-docs.mjs';
 import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
 import { launchChromium, resolvePlaywright } from './lib/playwright-resolve.mjs';
-import { resolveWebAssetGame, verifyWebAssetSource } from './playtest.mjs';
+import { resolveWebAssetGame, verifyWebAssetSource, webAssetOrigins } from './playtest.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
@@ -70,6 +70,7 @@ function parseArgs(argv) {
     autoplayRuns: undefined,
     autoplayIdleRuns: undefined,
     packageCheck: false,
+    release: false,
     verifyFresh: false,
     examples: false,
     allowSkips: false,
@@ -99,6 +100,7 @@ function parseArgs(argv) {
     else if (a === '--autoplay-runs') opts.autoplayRuns = numberOption(takeValue(i++, a), a, { integer: true, min: 1 });
     else if (a === '--autoplay-idle-runs') opts.autoplayIdleRuns = numberOption(takeValue(i++, a), a, { integer: true, min: 0 });
     else if (a === '--package') opts.packageCheck = true;
+    else if (a === '--release') opts.release = true;
     else if (a === '--verify-fresh') opts.verifyFresh = true;
     else if (a === '--examples') opts.examples = true;
     else if (a === '--allow-skips') opts.allowSkips = true;
@@ -114,9 +116,91 @@ function parseArgs(argv) {
     else if (!a.startsWith('-') && !opts.gameDir) opts.gameDir = a;
     else throw new Error(`Unknown argument: ${a}`);
   }
+  if (opts.release) {
+    if (opts.quick || opts.allowSkips || opts.allowIdMismatch || opts.skipWebasset || opts.skipMobilePlaytest ||
+        opts.examples) {
+      throw new Error('--release cannot be combined with quick, skip, example, ID mismatch, or identical viewport options');
+    }
+    const desktop = viewportOption(opts.viewport);
+    const mobile = viewportOption(opts.mobileViewport);
+    if (mobile.width >= mobile.height || (desktop.width === mobile.width && desktop.height === mobile.height)) {
+      throw new Error('--release requires a distinct portrait mobile viewport');
+    }
+    opts.strict = true;
+    opts.webasset = true;
+    opts.packageCheck = true;
+  }
   viewportOption(opts.viewport);
   viewportOption(opts.mobileViewport);
   return opts;
+}
+
+const RELEASE_ARCHIVE = 'build/acceptance/release.zip';
+const PLAYABLE_GATES = ['config', 'syntax', 'uiStatic', 'designDocs', 'tests', 'visual', 'playtest', 'webasset'];
+
+async function loadReleaseRequirements(gameDir) {
+  const filename = path.join(gameDir, 'tests', 'release.json');
+  if (!existsSync(filename)) throw new Error('Release requires tests/release.json with explicit budgets');
+  const spec = JSON.parse(await readFile(filename, 'utf8'));
+  if (!['web', 'toy'].includes(spec?.target)) throw new Error('Release target must be web or toy');
+  for (const gate of ['autoplay', 'doctor']) {
+    const requirement = spec[gate];
+    if (requirement !== true && (typeof requirement !== 'string' || !requirement.trim())) {
+      throw new Error('Release ' + gate + ' must be true or explain why it does not apply');
+    }
+  }
+  for (const viewport of ['desktop', 'mobile']) {
+    for (const metric of ['readyMs', 'p95Ms']) {
+      const max = spec.limits?.[viewport]?.[metric];
+      if (!Number.isFinite(max) || max <= 0) throw new Error('Invalid release budget ' + viewport + '.' + metric);
+    }
+  }
+  if (!Number.isSafeInteger(spec.limits.zipBytes) || spec.limits.zipBytes <= 0) {
+    throw new Error('Invalid release budget zipBytes');
+  }
+  if (!existsSync(path.join(gameDir, 'tests', 'acceptance.mjs'))) {
+    throw new Error('Release requires tests/acceptance.mjs with observable input checkpoints');
+  }
+  return spec;
+}
+
+function evaluateRelease(gates, spec) {
+  const errors = [];
+  const skipped = {};
+  for (const name of [...PLAYABLE_GATES, 'package', 'autoplay', 'doctor']) {
+    if (gates[name]?.status === 'passed') continue;
+    if ((name === 'autoplay' || name === 'doctor') && typeof spec[name] === 'string' && gates[name]?.status === 'skipped') {
+      skipped[name] = spec[name];
+    } else {
+      errors.push('Required release gate did not pass: ' + name);
+    }
+  }
+  if (gates.autoplay.status === 'passed' &&
+      ((gates.autoplay.bot?.runs ?? 0) < 2 || (gates.autoplay.idle?.runs ?? 0) < 2)) {
+    errors.push('Release autoplay requires multiple bot and idle seeds');
+  }
+  const packaged = gates.package.playtest;
+  const desktop = packaged?.profiles?.desktop;
+  const mobile = packaged?.profiles?.mobile;
+  const measured = { desktop, mobile, zipBytes: gates.package.zipBytes ?? null };
+  for (const [name, profile, checkpoints] of [
+    ['desktop', desktop, packaged?.measuredCheckpoints], ['mobile', mobile, packaged?.mobileMeasuredCheckpoints],
+  ]) {
+    if (!checkpoints?.some(checkpoint => checkpoint.ok === true)) errors.push(name + ' needs a passing authored checkpoint within the measured run');
+    if (!Number.isFinite(profile?.frames) || profile.frames < 30) errors.push(name + ' needs at least 30 measured frames');
+    for (const metric of ['readyMs', 'p95Ms']) {
+      const value = profile?.[metric];
+      const max = spec.limits[name][metric];
+      if (!Number.isFinite(value) || value > max) errors.push(name + '.' + metric + ' exceeded budget or is missing (limit ' + max + ')');
+    }
+  }
+  if (!Number.isFinite(measured.zipBytes) || measured.zipBytes > spec.limits.zipBytes) {
+    errors.push('Package exceeded byte budget or is missing (limit ' + spec.limits.zipBytes + ')');
+  }
+  return {
+    status: errors.length ? 'failed' : 'passed', target: spec.target, skipped,
+    limits: spec.limits, measured, environment: 'headless browser; viewport profiles, not physical devices', errors,
+  };
 }
 
 function walkFiles(dir, { exts = null, skipDirs = new Set(['node_modules', 'vendor', 'dist', 'build', '.git', '.tools', '.cache']) } = {}) {
@@ -139,8 +223,18 @@ function walkFiles(dir, { exts = null, skipDirs = new Set(['node_modules', 'vend
  * Computes a deterministic SHA-256 digest over authored source, config, HTML, CSS, and test files.
  * @param {string} gameDir
  */
-export function computeSourceDigest(gameDir) {
+export function computeSourceDigest(gameDir, { release = false } = {}) {
   const hash = createHash('sha256');
+  if (release) {
+    const files = walkFiles(gameDir, { skipDirs: new Set(['node_modules', 'build', '.git', '.tools', '.cache']) });
+    const pixiBuild = path.join(gameDir, '.hgame-pixi-build.json');
+    if (existsSync(pixiBuild)) files.push(pixiBuild);
+    for (const file of files) {
+      hash.update(path.relative(gameDir, file).replace(/\\/g, '/')).update('\0');
+      hash.update(readFileSync(file)).update('\0');
+    }
+    return hash.digest('hex');
+  }
   const rootFiles = [
     'index.html',
     'index.source.html',
@@ -162,7 +256,8 @@ export function computeSourceDigest(gameDir) {
       candidates.push([rootEntry.name, path.join(gameDir, rootEntry.name)]);
     }
   }
-  for (const sub of ['src', 'tests', 'docs/design']) {
+  const sourceDirs = ['src', 'tests', 'docs/design'];
+  for (const sub of sourceDirs) {
     for (const abs of walkFiles(path.join(gameDir, sub))) {
       candidates.push([path.relative(gameDir, abs).replace(/\\/g, '/'), abs]);
     }
@@ -561,7 +656,7 @@ async function runVisualGate(gameDir, opts, meta, snapshotScript, gameConfig) {
   };
 }
 
-function runPlaytestGate(gameDir, opts, meta, playtestScript) {
+function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = gameDir, entry = null } = {}) {
   const scenarioCandidates = [
     path.join(gameDir, 'tests', 'acceptance.mjs'),
     path.join(gameDir, 'playtest.mjs'),
@@ -571,7 +666,9 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript) {
   const allowStatic = meta.isUi || (meta.isBare && !opts.strict);
 
   const buildArgs = viewport => [
-    gameDir,
+    targetDir,
+    ...(entry ? ['--entry', entry] : []),
+    ...(opts.release ? ['--state-ready'] : []),
     '--selector', meta.selector,
     '--ready', meta.ready,
     '--viewport', viewport,
@@ -613,12 +710,20 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript) {
     visualChanged: report.visualChanged ?? null,
     stateChanged: report.stateChanged ?? null,
     checkpoints: report.checkpoints ?? null,
+    measuredCheckpoints: report.measuredCheckpoints ?? null,
     uiAudits: report.uiAudits ?? null,
     ...(mobileReport ? {
       mobileCheckpoints: mobileReport.checkpoints ?? null,
+      mobileMeasuredCheckpoints: mobileReport.measuredCheckpoints ?? null,
       mobileUiAudits: mobileReport.uiAudits ?? null,
     } : {}),
     frameStats: report.frameStats ?? null,
+    profiles: Object.fromEntries([['desktop', report], ['mobile', mobileReport]]
+      .filter(([, run]) => run)
+      .map(([name, run]) => [name, {
+        readyMs: run.readyMs ?? null, p95Ms: run.frameStats?.p95Ms ?? null,
+        frames: run.frameStats?.frames ?? null, browserVersion: run.browserVersion ?? null,
+      }])),
     consoleErrors: report.consoleErrors ?? [],
     httpErrors: report.httpErrors ?? [],
     errors,
@@ -690,10 +795,11 @@ async function runWebAssetGate(gameDir, opts, meta, gameConfig) {
     return { status: 'skipped', reason: '--skip-webasset', errors: [] };
   }
   const gameId = gameConfig?.id || path.basename(gameDir);
+  const { catalog } = webAssetOrigins();
   let catalogOk = false;
   let listed = false;
   try {
-    const res = await fetch('http://127.0.0.1:4174/api/games', { signal: AbortSignal.timeout(2000) });
+    const res = await fetch(catalog + '/api/games', { signal: AbortSignal.timeout(2000) });
     catalogOk = res.ok;
     if (res.ok) {
       const data = await res.json();
@@ -705,9 +811,9 @@ async function runWebAssetGate(gameDir, opts, meta, gameConfig) {
 
   if (!catalogOk) {
     if (opts.webasset) {
-      return { status: 'failed', errors: ['WebAsset is offline on http://127.0.0.1:4174 (--webasset required)'] };
+      return { status: 'failed', errors: ['WebAsset is offline on ' + catalog + ' (--webasset required)'] };
     }
-    return { status: 'skipped', reason: 'WebAsset offline on 127.0.0.1:4174', errors: [] };
+    return { status: 'skipped', reason: 'WebAsset offline on ' + catalog, errors: [] };
   }
   if (!listed && !opts.webasset) {
     return { status: 'skipped', reason: `Game "${gameId}" not in WebAsset catalog`, errors: [] };
@@ -716,6 +822,8 @@ async function runWebAssetGate(gameDir, opts, meta, gameConfig) {
   const errors = [];
   let browser;
   let liveUrl = null;
+  const consoleErrors = [];
+  const httpErrors = [];
   try {
     const url = await resolveWebAssetGame(gameId);
     liveUrl = url.href;
@@ -727,8 +835,6 @@ async function runWebAssetGate(gameDir, opts, meta, gameConfig) {
       args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl'],
     });
     const page = await browser.newPage({ viewport: viewportOption(opts.viewport), deviceScaleFactor: 1 });
-    const consoleErrors = [];
-    const httpErrors = [];
     page.on('pageerror', e => consoleErrors.push(e.message));
     page.on('console', m => { if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) consoleErrors.push(m.text()); });
     page.on('response', r => { if (r.status() >= 400 && !r.url().endsWith('/favicon.ico')) httpErrors.push(`HTTP ${r.status()} ${r.url()}`); });
@@ -740,13 +846,13 @@ async function runWebAssetGate(gameDir, opts, meta, gameConfig) {
     await page.goto(url.href, { waitUntil: 'load', timeout: 20_000 });
     await page.locator(meta.ready).waitFor({ timeout: 15_000 });
     await page.waitForTimeout(400);
-    if (consoleErrors.length > 0) errors.push(`WebAsset consoleErrors: ${consoleErrors.slice(0, 3).join('; ')}`);
-    if (httpErrors.length > 0) errors.push(`WebAsset httpErrors: ${httpErrors.slice(0, 3).join('; ')}`);
   } catch (err) {
     errors.push(err.message);
   } finally {
     await browser?.close();
   }
+  if (consoleErrors.length > 0) errors.push(`WebAsset consoleErrors: ${consoleErrors.slice(0, 3).join('; ')}`);
+  if (httpErrors.length > 0) errors.push(`WebAsset httpErrors: ${httpErrors.slice(0, 3).join('; ')}`);
 
   return {
     status: errors.length === 0 ? 'passed' : 'failed',
@@ -755,34 +861,54 @@ async function runWebAssetGate(gameDir, opts, meta, gameConfig) {
   };
 }
 
-async function runPackageGate(gameDir, opts, meta, packageScript, snapshotScript) {
+async function runPackageGate(gameDir, opts, meta, packageScript, snapshotScript, playtestScript, sourceEntry) {
   if (!opts.packageCheck) {
     return { status: 'skipped', reason: 'pass --package to verify lean release packaging', errors: [] };
   }
+  await mkdir(path.join(gameDir, 'build'), { recursive: true });
   const tmp = await mkdtemp(path.join(path.join(gameDir, 'build'), '.accept-pkg-'));
   const errors = [];
+  let zipBytes = null;
+  let archiveHash = null;
+  let playtest = null;
   try {
     const pack = spawnSync(
       process.execPath,
-      [packageScript, gameDir, '--version', '0.1.0', '--out-dir', tmp],
+      [packageScript, gameDir, '--version', opts.releaseVersion ?? '0.1.0', '--out-dir', tmp,
+        ...(opts.releaseSpec?.target === 'toy' ? ['--target', 'toy', '--slug', path.basename(gameDir)] : [])],
       { cwd: repoRoot, encoding: 'utf8', timeout: 120_000, maxBuffer: 8 * 1024 * 1024, windowsHide: true },
     );
     if (pack.status !== 0) {
       errors.push((pack.stderr || pack.stdout || 'package-game failed').trim().slice(0, 400));
     } else {
       const summary = JSON.parse(pack.stdout);
-      const args = [
+      zipBytes = statSync(summary.zipPath).size;
+      const entry = opts.releaseSpec?.target === 'toy' ? 'index.html' : sourceEntry;
+      if (opts.releaseSpec) {
+        playtest = runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir: summary.outputDir, entry });
+        if (playtest.status !== 'passed') {
+          errors.push(...playtest.errors.map(problem => 'Packaged playtest: ' + problem));
+        } else {
+          const archive = path.join(gameDir, RELEASE_ARCHIVE);
+          await mkdir(path.dirname(archive), { recursive: true });
+          await copyFile(summary.zipPath, archive);
+          archiveHash = createHash('sha256').update(await readFile(archive)).digest('hex');
+        }
+      } else {
+        const args = [
         summary.outputDir,
         '--selector', meta.selector,
         '--ready', meta.ready,
         '--viewport', opts.viewport,
+        ...(entry ? ['--entry', entry] : []),
         ...(meta.isBare && !opts.strict ? ['--allow-blank'] : []),
         ...(opts.chrome ? ['--chrome', opts.chrome] : []),
         '--out', path.join(tmp, 'packaged.png'),
-      ];
-      const { exitCode, report } = runJsonSubprocess(snapshotScript, args, { cwd: repoRoot });
-      if (exitCode !== 0 || report.ok !== true) {
-        errors.push(`Packaged build snapshot failed: ${(report.problems || []).join('; ')}`);
+        ];
+        const { exitCode, report } = runJsonSubprocess(snapshotScript, args, { cwd: repoRoot });
+        if (exitCode !== 0 || report.ok !== true) {
+          errors.push('Packaged build snapshot failed: ' + (report.problems || []).join('; '));
+        }
       }
     }
   } catch (err) {
@@ -792,7 +918,9 @@ async function runPackageGate(gameDir, opts, meta, packageScript, snapshotScript
   }
   return {
     status: errors.length === 0 ? 'passed' : 'failed',
-    errors,
+    errors, zipBytes,
+    ...(playtest ? { playtest } : {}),
+    ...(archiveHash ? { archive: RELEASE_ARCHIVE, archiveHash } : {}),
   };
 }
 
@@ -819,7 +947,7 @@ function runTaskManifestGate(gameDir, taskCheckScript) {
   };
 }
 
-async function verifyFreshAcceptance(gameDir, reportPath) {
+async function verifyFreshAcceptance(gameDir, reportPath, requireRelease = false) {
   if (!existsSync(reportPath)) {
     return { ok: false, reason: `Missing acceptance report at ${reportPath}. Run "node scripts/accept.mjs ." first.` };
   }
@@ -827,7 +955,17 @@ async function verifyFreshAcceptance(gameDir, reportPath) {
   if (!report.accepted || report.mode !== 'full') {
     return { ok: false, reason: `Last acceptance run did not pass full acceptance (accepted=${report.accepted}, mode=${report.mode}).` };
   }
-  const currentDigest = computeSourceDigest(gameDir);
+  if (requireRelease && report.releaseReady !== true) {
+    return { ok: false, reason: 'Last acceptance report has no passing release evidence.' };
+  }
+  if (report.releaseReady) {
+    const archive = path.join(gameDir, RELEASE_ARCHIVE);
+    const expected = report.gates?.package?.archiveHash;
+    if (!existsSync(archive) || createHash('sha256').update(await readFile(archive)).digest('hex') !== expected) {
+      return { ok: false, reason: 'Release archive is missing or no longer matches the report.' };
+    }
+  }
+  const currentDigest = computeSourceDigest(gameDir, { release: report.releaseReady === true });
   if (report.sourceDigest !== currentDigest) {
     return { ok: false, reason: `Acceptance report is stale: source files changed since ${report.checkedAt}. Re-run acceptance.` };
   }
@@ -846,7 +984,7 @@ export async function runAcceptForProject(targetDir, opts) {
   const reportPath = opts.out ? path.resolve(opts.out) : path.join(gameDir, 'build', 'acceptance-report.json');
 
   if (opts.verifyFresh) {
-    const check = await verifyFreshAcceptance(gameDir, reportPath);
+    const check = await verifyFreshAcceptance(gameDir, reportPath, opts.release);
     if (!check.ok) {
       return {
         schemaVersion: 1,
@@ -863,7 +1001,7 @@ export async function runAcceptForProject(targetDir, opts) {
       accepted: true,
       mode: 'verify-fresh',
       gameDir,
-      gameId: check.report.gameId,
+      gameId: check.report.gameId, releaseReady: check.report.releaseReady === true,
       sourceDigest: check.report.sourceDigest,
       checkedAt: check.report.checkedAt,
       problems: [],
@@ -875,10 +1013,32 @@ export async function runAcceptForProject(targetDir, opts) {
   void checkUiPath;
   const snapshotScript = resolveSiblingScript('snapshot.mjs', 'scripts/snapshot.mjs');
   const playtestScript = resolveSiblingScript('playtest.mjs', 'scripts/playtest.mjs');
+  let releaseSpec = null;
+  if (opts.release) {
+    try {
+      releaseSpec = await loadReleaseRequirements(gameDir);
+      opts = { ...opts, releaseSpec,
+        requireAutoplay: opts.requireAutoplay || releaseSpec.autoplay === true,
+        doctor: opts.doctor || releaseSpec.doctor === true,
+      };
+    } catch (error) {
+      const report = {
+        schemaVersion: 1, ok: false, accepted: false, playable: false, releaseReady: false,
+        mode: 'full', gameDir, gameId: path.basename(gameDir),
+        gates: { release: { status: 'failed', errors: [error.message] } },
+        problems: ['[release] ' + error.message],
+      };
+      await mkdir(path.dirname(reportPath), { recursive: true });
+      await writeFile(reportPath, JSON.stringify(report, null, 2) + '\n');
+      return report;
+    }
+  }
+
   const doctorScript = resolveSiblingScript('doctor-playability.mjs', 'scripts/doctor-playability.mjs');
   const packageScript = resolveSiblingScript('package-game.mjs', 'scripts/package-game.mjs');
   const taskCheckScript = resolveSiblingScript('task-check.mjs', 'scripts/task-check.mjs');
 
+  const digestBefore = releaseSpec ? computeSourceDigest(gameDir, { release: true }) : null;
   const gates = {};
   gates.config = await runConfigGate(gameDir, opts, defineProject);
   gates.syntax = await runSyntaxGate(gameDir);
@@ -898,6 +1058,7 @@ export async function runAcceptForProject(targetDir, opts) {
 
   const recipe = gates.config.recipe || { profile: '2d', renderer: 'canvas2d' };
   const gameConfig = gates.config.gameConfig;
+  if (releaseSpec) opts.releaseVersion = gameConfig?.version;
   const meta = detectProjectMeta(gameDir, recipe, opts);
 
   if (opts.quick) {
@@ -911,13 +1072,22 @@ export async function runAcceptForProject(targetDir, opts) {
   } else {
     gates.autoplay = await runAutoplayGateForAccept(gameDir, opts);
     gates.visual = await runVisualGate(gameDir, opts, meta, snapshotScript, gameConfig);
-    gates.playtest = runPlaytestGate(gameDir, opts, meta, playtestScript);
+    gates.playtest = runPlaytestGate(gameDir, opts, meta, playtestScript, { entry: gameConfig?.entry });
     gates.doctor = runDoctorGate(gameDir, opts, meta, doctorScript);
     gates.webasset = await runWebAssetGate(gameDir, opts, meta, gameConfig);
-    gates.package = await runPackageGate(gameDir, opts, meta, packageScript, snapshotScript);
+    gates.package = await runPackageGate(gameDir, opts, meta, packageScript, snapshotScript, playtestScript, gameConfig?.entry);
     gates.taskManifest = runTaskManifestGate(gameDir, taskCheckScript);
   }
 
+  const playable = !opts.quick && PLAYABLE_GATES.every(name => gates[name].status !== 'failed');
+  const sourceDigest = computeSourceDigest(gameDir, { release: Boolean(releaseSpec) });
+  if (releaseSpec) {
+    gates.release = evaluateRelease(gates, releaseSpec);
+    if (sourceDigest !== digestBefore) {
+      gates.release.status = 'failed';
+      gates.release.errors.push('Source or assets changed during release verification. Run acceptance again.');
+    }
+  }
   const problems = [];
   for (const [gateName, res] of Object.entries(gates)) {
     if (res.status === 'failed') {
@@ -928,11 +1098,11 @@ export async function runAcceptForProject(targetDir, opts) {
   const gateList = Object.values(gates);
   const ok = problems.length === 0;
   const accepted = ok && !opts.quick;
-  const sourceDigest = computeSourceDigest(gameDir);
+  const releaseReady = accepted && gates.release?.status === 'passed';
   const report = {
     schemaVersion: 1,
     ok,
-    accepted,
+    accepted, playable, releaseReady,
     mode: opts.quick ? 'quick' : 'full',
     gameDir,
     gameId: gameConfig?.id ?? path.basename(gameDir),
@@ -959,6 +1129,7 @@ export async function runAcceptForProject(targetDir, opts) {
       webasset: gates.webasset,
       package: gates.package,
       taskManifest: gates.taskManifest,
+      ...(gates.release ? { release: gates.release } : {}),
     },
     problems,
   };
@@ -978,7 +1149,7 @@ function formatSummary(report) {
   }
   const lines = [
     `=== HGame Acceptance Report (${report.gameId} · ${report.mode}) ===`,
-    `Verdict: ${report.accepted ? 'ACCEPTED' : report.ok ? 'QUICK-OK (NOT ACCEPTED — run full accept)' : 'REJECTED'}`,
+    `Verdict: ${report.releaseReady ? 'RELEASE READY' : report.accepted ? 'ACCEPTED (PLAYABLE)' : report.ok ? 'QUICK-OK (NOT ACCEPTED — run full accept)' : 'REJECTED'}`,
   ];
   for (const [name, gate] of Object.entries(report.gates)) {
     lines.push(`  [${gate.status.toUpperCase()}] ${name}`);
@@ -991,7 +1162,7 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help) {
     console.log(
-      'Usage: node scripts/accept.mjs [game-dir] [--quick] [--strict] [--webasset] [--doctor] [--package] [--verify-fresh] [--examples] [--json]\n' +
+      'Usage: node scripts/accept.mjs [game-dir] [--quick] [--strict] [--webasset] [--doctor] [--package] [--release] [--verify-fresh] [--examples] [--json]\n' +
       'Defaults to "." when run inside a game project.',
     );
     return;

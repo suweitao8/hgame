@@ -21,6 +21,7 @@
     "doctor": "node scripts/doctor-playability.mjs .",
     "accept": "node scripts/accept.mjs .",
     "accept:autoplay": "node scripts/check-autoplay.mjs .",
+    "accept:release": "node scripts/accept.mjs . --release",
     "accept:webasset": "node scripts/accept.mjs . --webasset",
     "check": "node scripts/accept.mjs . --quick",
     "test": "node --test tests/*.test.mjs"

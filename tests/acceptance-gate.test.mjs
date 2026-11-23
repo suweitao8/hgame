@@ -310,3 +310,40 @@ test('check-autoplay validates clear rate, idle skill gap, non-finite telemetry,
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('release acceptance requires explicit budgets and rejects bypass options', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-release-requirements-'));
+  const game = path.join(tmp, 'release-requirements');
+  try {
+    const gen = runNode(createGame, [game, '--profile', '2d', '--renderer', 'canvas2d', '--no-git']);
+    assert.equal(gen.status, 0, gen.stderr || gen.stdout);
+    const missing = runNode(acceptScript, [game, '--release', '--json']);
+    assert.equal(missing.status, 1);
+    const report = JSON.parse(missing.stdout);
+    assert.equal(report.releaseReady, false);
+    assert.match(report.problems.join(' '), /tests\/release\.json/);
+
+    for (const flag of ['--quick', '--allow-skips', '--skip-webasset', '--skip-mobile-playtest']) {
+      const bypass = runNode(acceptScript, [game, '--release', flag]);
+      assert.equal(bypass.status, 1);
+      assert.match(bypass.stderr, /--release cannot be combined/);
+    }
+
+    const config = {
+      target: 'web', autoplay: 'No game win condition in this fixture.',
+      doctor: 'No simulation health probe in this fixture.',
+      limits: {
+        desktop: { readyMs: 1500, p95Ms: 32 },
+        mobile: { readyMs: 2000, p95Ms: 48 },
+        zipBytes: 2_000_000,
+      },
+    };
+    await writeFile(path.join(game, 'tests', 'release.json'), JSON.stringify(config));
+    await rm(path.join(game, 'tests', 'acceptance.mjs'));
+    const missingScenario = runNode(acceptScript, [game, '--release', '--json']);
+    assert.equal(missingScenario.status, 1);
+    assert.match(JSON.parse(missingScenario.stdout).problems.join(' '), /tests\/acceptance\.mjs/);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

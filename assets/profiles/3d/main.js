@@ -4,7 +4,7 @@
 import { createStarterModelLoader, installStarter3DFeatures } from './model-loader.js';
 import { installPresentationSky } from './presentation-sky.js';
 
-const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
+const hosted = location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
   gameConfig, engineConfig, presentation, slotConfig, materialConfig, levelConfig,

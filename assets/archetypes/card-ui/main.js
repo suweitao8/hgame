@@ -1,5 +1,5 @@
 // Universal Command-Driven Card/Tactical Archetype (tickHz: 0) wired to HGame's 5-Pillar Kit.
-const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
+const hosted = location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
   gameConfig, engineConfig, designBlueprint,

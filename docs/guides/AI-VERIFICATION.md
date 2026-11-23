@@ -21,6 +21,29 @@ Every generated game project (`npm run accept` / `npm run accept:webasset`) and 
    - `taskManifest`: executes `task-check.mjs` if `tests/acceptance.json` or `build/task.json` exists.
 2. **Freshness proof (`--verify-fresh`):** Full acceptance writes `build/acceptance-report.json` stamped with `sourceDigest` (SHA-256 over configs, HTML/CSS, `src/**/*`, and `tests/**/*`). `node scripts/accept.mjs . --verify-fresh` fails if any source/test/config file changed since the last passing full run or if screenshots are missing. `--quick` (`npm run check`) skips browser gates and always records `accepted: false`.
 
+### Release evidence
+
+Use `npm run accept:release` in a newly generated project, or `node scripts/accept.mjs <dir> --release` from HGame. A playable report records `playable: true`. A passing release report additionally records `releaseReady: true`, ZIP byte size and SHA-256, and the packaged build's boot time, frame-time p95, sample counts, and browser version across desktop and mobile viewports. Boot timing stops once the readiness selector is visible and `window.__hgameState` is callable. The browser measurements use local headless profiles. Target hardware testing is separate evidence.
+
+Commit a project-specific `tests/acceptance.mjs` that covers the main interaction loop. Set budgets in `tests/release.json` before measuring production candidates. Example values for a small game:
+
+```json
+{
+  "target": "web",
+  "autoplay": true,
+  "doctor": true,
+  "limits": {
+    "desktop": { "readyMs": 1500, "p95Ms": 25 },
+    "mobile": { "readyMs": 2200, "p95Ms": 42 },
+    "zipBytes": 5000000
+  }
+}
+```
+
+Use `"target": "toy"` to build and preflight a Toy package. A gate that does not apply may use a specific reason string in `autoplay` or `doctor`. Applicable checks must still pass. Release runs require WebAsset, strict gameplay validation, and a passing playtest against the packaged entry on both viewports. Each packaged run needs at least 30 measured frames and one passing authored checkpoint inside the measured scenario. A checkpoint should drive input and assert the resulting state.
+
+Run `node scripts/accept.mjs <dir> --release --verify-fresh` before distributing `build/acceptance/release.zip`. It fails when the verified ZIP or its source, runtime or game assets changed. Set `WEBASSET_PORT` and `WEBASSET_GAME_PORT` only when using alternate loopback listeners for testing.
+
 ## Task acceptance
 
 1. **Preserve the request.** Before editing, write the task and an observable expected result for each explicit behavior, deliverable and constraint. Note any assumptions. For a bug, reproduce the original failure. For gameplay, cover entry, the requested interaction, and the resulting state. Include restart, persistence, touch or failure paths when the request affects them.

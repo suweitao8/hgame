@@ -1,5 +1,5 @@
 // Universal 2D Horde Survivor Archetype wired to HGame's 5-Pillar Kit + 10k+ Swarm Simulation.
-const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
+const hosted = location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
   gameConfig, engineConfig, designBlueprint,

@@ -1,7 +1,7 @@
 // Universal 3D Arena Archetype wired to HGame's 5-Pillar Kit (Design, UI, Gameplay, Art, Audio).
 import { installPresentationSky } from './presentation-sky.js';
 
-const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
+const hosted = location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 const [
   gameConfig, engineConfig, designBlueprint, presentation,

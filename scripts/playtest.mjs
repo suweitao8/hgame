@@ -66,15 +66,21 @@ async function freePort() {
   return p;
 }
 
+export function webAssetOrigins() {
+  const origin = (key, fallback) => 'http://127.0.0.1:' +
+    numberOption(process.env[key] || fallback, key, { integer: true, min: 1, max: 65535 });
+  return { catalog: origin('WEBASSET_PORT', 4174), preview: origin('WEBASSET_GAME_PORT', 4175) };
+}
+
 export async function resolveWebAssetGame(id) {
-  const response = await fetch('http://127.0.0.1:4174/api/games', { signal: AbortSignal.timeout(5000) });
+  const { catalog, preview } = webAssetOrigins();
+  const response = await fetch(catalog + '/api/games', { signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error('WebAsset catalog returned HTTP ' + response.status);
   const { items } = await response.json();
   const game = Array.isArray(items) && items.find(entry => entry?.source === 'local' && entry.runtimeId === id && entry.status === 'ready');
   if (!game) throw new Error('WebAsset does not list a ready local game named ' + id);
-  const origin = 'http://127.0.0.1:4175';
-  const url = new URL(game.previewUrl ?? '', origin);
-  if (url.origin !== origin || !url.pathname.startsWith('/local-games/' + id + '/')) {
+  const url = new URL(game.previewUrl ?? '', preview);
+  if (url.origin !== preview || !url.pathname.startsWith('/local-games/' + id + '/')) {
     throw new Error('Unexpected WebAsset preview address for ' + id);
   }
   return url;
@@ -130,7 +136,7 @@ const analyzeCanvasStats = async ({ shot }) => {
 
 async function runCli() {
   const argv = process.argv.slice(2);
-  const valueFlags = new Set(['--duration', '--actions', '--selector', '--viewport', '--state-hook', '--trace-hook', '--ready', '--chrome', '--query', '--max-long-frames', '--scenario']);
+  const valueFlags = new Set(['--duration', '--actions', '--selector', '--viewport', '--state-hook', '--trace-hook', '--ready', '--chrome', '--query', '--max-long-frames', '--scenario', '--entry']);
   const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
   const flag = name => argv.includes(name);
   const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && valueFlags.has(argv[i - 1])));
@@ -143,12 +149,15 @@ async function runCli() {
 
   const live = flag('--webasset');
   const resolvedDir = live ? null : path.resolve(gameDir);
+  const entry = opt('--entry', 'index.html').replace(/^\.?\//, '');
   if (live && !/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(gameDir)) {
     console.error('--webasset requires a local game ID');
     process.exit(2);
   }
-  if (!live && !existsSync(path.join(resolvedDir, 'index.html'))) {
-    console.error(`Missing index.html in ${resolvedDir}`);
+  if (!live && (!entry || entry.includes('\\') || entry.includes('?') || entry.includes('#') ||
+      entry.split('/').some(segment => !segment || segment === '.' || segment === '..') ||
+      !existsSync(path.join(resolvedDir, entry)))) {
+    console.error(`Invalid or missing entry ${entry} in ${resolvedDir}`);
     process.exit(2);
   }
 
@@ -228,6 +237,7 @@ async function runCli() {
     } else {
       const port = await freePort();
       url = new URL(`http://127.0.0.1:${port}/`);
+      if (entry) url.pathname = entry;
       server = spawn(process.execPath, [previewScript, resolvedDir, '--port', String(port)], {
         windowsHide: true, stdio: 'ignore',
       });
@@ -286,10 +296,13 @@ async function runCli() {
       });
     })();` });
 
+    const bootStart = performance.now();
     await page.goto(url.href, { waitUntil: 'load' });
     if (ready) {
       await page.locator(ready).waitFor({ timeout: 15000 });
     }
+    if (flag('--state-ready')) await page.waitForFunction(name => typeof window[name] === 'function', stateHook, { timeout: 15000 });
+    const readyMs = Math.round(performance.now() - bootStart);
     if (!scenario) await page.waitForTimeout(500);
 
     const target = page.locator(selector);
@@ -456,7 +469,7 @@ async function runCli() {
     }
 
     Object.assign(report, {
-      browserVersion: browser.version(),
+      browserVersion: browser.version(), readyMs,
       beforeHash,
       afterHash,
       visualChanged,
@@ -470,6 +483,7 @@ async function runCli() {
       stateBefore,
       stateAfter,
     });
+    if (scenario) report.measuredCheckpoints = report.checkpoints.slice();
     if (scenario?.verify && report.problems.length === 0) await scenario.verify(context, report.scenarioResult);
   } catch (err) {
     const message = String(err?.message || err);

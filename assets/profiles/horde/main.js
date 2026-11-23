@@ -1,5 +1,5 @@
 // High-density 2D starter. One simulation buffer and one crowd component.
-const hosted = location.port === '4175' && location.pathname.startsWith('/local-games/');
+const hosted = location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
 async function readJson(url) {
   const response = await fetch(url);
