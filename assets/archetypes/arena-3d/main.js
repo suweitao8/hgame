@@ -132,8 +132,8 @@ function resetArena3D() {
 
 function spawnEnemy3D() {
   if (enemies.length >= 24) return;
-  const ang = session.rng.nextFloat() * Math.PI * 2;
-  const r = 9 + session.rng.nextFloat() * 7;
+  const ang = session.rng.next() * Math.PI * 2;
+  const r = 9 + session.rng.next() * 7;
   const x = Math.max(-halfSpan, Math.min(halfSpan, playerPos.x + Math.cos(ang) * r));
   const z = Math.max(-halfSpan, Math.min(halfSpan, playerPos.z + Math.sin(ang) * r));
   const mesh = new THREE.Mesh(enemyGeo, enemyMat);
@@ -146,6 +146,7 @@ function spawnEnemy3D() {
 const ctrl = scene.add(new Entity({ name: 'arena3d-ctrl' }));
 ctrl.addComponent(new class extends Component {
   fixedUpdate(dt) {
+    arcade.update(dt);
     if (session.state.phase !== 'playing') return;
     const mv = arcade.p1.move;
     const mag = Math.hypot(mv.x, mv.y);
@@ -236,7 +237,7 @@ shell = mountGameShell({ root: document.body, session, hintKeys: 'WASD · J · K
 app.scenes.start('arena3d');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ ...session.snapshot(), enemies: enemies.length });
+window.__hgameState = () => ({ ...session.snapshot(), player: { x: playerPos.x, y: playerPos.y, z: playerPos.z }, enemies: enemies.length });
 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;

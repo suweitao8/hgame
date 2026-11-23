@@ -116,8 +116,8 @@ function resetArena() {
 
 function spawnEnemy() {
   if (enemies.length >= 200) return;
-  const angle = session.rng.nextFloat() * Math.PI * 2;
-  const dist = 240 + session.rng.nextFloat() * 140;
+  const angle = session.rng.next() * Math.PI * 2;
+  const dist = 240 + session.rng.next() * 140;
   const x = Math.max(-halfSpanPx, Math.min(halfSpanPx, player.x + Math.cos(angle) * dist));
   const y = Math.max(-halfSpanPx, Math.min(halfSpanPx, player.y + Math.sin(angle) * dist));
   const idx = enemyCrowd.spawn({ x, y });
@@ -137,6 +137,7 @@ function fireBolt(tx, ty) {
 
 player.addComponent(new class extends Component {
   fixedUpdate(dt) {
+    arcade.update(dt);
     if (session.state.phase !== 'playing') return;
     const mv = arcade.p1.move;
     const dx = mv.x;
@@ -246,7 +247,7 @@ shell = mountGameShell({ root: document.body, session, hintKeys: 'WASD · J · K
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ ...session.snapshot(), enemies: enemies.length });
+window.__hgameState = () => ({ ...session.snapshot(), player: { x: player.x, y: player.y }, enemies: enemies.length });
 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;

@@ -132,6 +132,7 @@ function resetHorde() {
 
 player.addComponent(new class extends Component {
   fixedUpdate(dt) {
+    arcade.update(dt);
     if (session.state.phase !== 'playing') return;
     const mv = arcade.p1.move;
     const mag = Math.hypot(mv.x, mv.y);
@@ -227,7 +228,7 @@ shell = mountGameShell({ root: document.body, session, hintKeys: 'WASD · J · K
 app.scenes.start('horde');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ ...session.snapshot(), swarmCount: swarm.count });
+window.__hgameState = () => ({ ...session.snapshot(), player: { x: player.x, y: player.y }, swarmCount: swarm.count });
 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;

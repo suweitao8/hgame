@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Sample arcade input before movement in the generated action, horde, and 3D arena archetypes, and use the seeded RNG API for enemy spawns.
+
 - Add optional single-player keyboard and standard-gamepad action routing with device-aware glyphs and localized inline prompts.
 
 - Implement full WebAsset UI/UX v2 minimalist overhaul across all 10 workspaces (`webasset/public/index.html`, `webasset/public/css/site.css`, `webasset/public/js/hgame-ui-shell.js`, `site.js`, `hgame-animations.js`, `hgame-vfx.js`, `hgame-decals.js`, `hgame-audio.js`, `hgame-music.js`, `hgame-tests.js`): compressed `52px` header, unified `.stage-params-popover` (`⚙`) drawers, `.metrics-inline` strip, single-row `46px` docks (`>= 73.7%` stage height ratio), single-filter sidebars (`options <= 1` auto-hidden), `[data-debug-only]` `?debug=1` gating, global keyboard shortcuts (`Space` / `↑` / `↓` / `R` / `L` / `[` / `]` / `Esc`), and sub-view switching for `#assets-view`.

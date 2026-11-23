@@ -31,9 +31,11 @@ try {
   const options = browserType === chromium ? benchmarkBrowserOptions('software', chrome) : { headless: true };
   if (options.args) options.args = options.args.filter(arg => arg !== '--disable-frame-rate-limit');
   browser = await browserType.launch({ ...options, headless: !headed });
-  for (const name of ['2d', 'horde', '3d', 'ui']) {
-    const recipe = JSON.parse(run(['scripts/query-api.mjs', '--recipe', name, '--json']));
-    const args = recipe.code.split('\n')[0].slice('// Create: node '.length)
+  const archetypes = ['action-2d', 'horde-2d', 'arena-3d'];
+  for (const name of ['2d', 'horde', '3d', 'ui', ...archetypes]) {
+    const isArchetype = archetypes.includes(name);
+    const recipe = isArchetype ? null : JSON.parse(run(['scripts/query-api.mjs', '--recipe', name, '--json']));
+    const args = isArchetype ? ['scripts/create-game.mjs', '<dir>', '--archetype', name] : recipe.code.split('\n')[0].slice('// Create: node '.length)
       .match(/"[^"]*"|\S+/g).map(value => value.replace(/^"|"$/g, ''));
     const game = path.join(temp, 'recipe-' + name);
     run(args.map(value => value === '<dir>' ? game : value).concat('--no-git'));
@@ -42,7 +44,7 @@ try {
       const entry = name === '2d' ? 'bare.js' : 'horde.js';
       const generatedSource = await readFile(path.join(game, 'src', entry), 'utf8');
       assert.ok(recipe.code.trimEnd().endsWith(generatedSource.trimEnd()), name + ' recipe matches packaged starter source');
-    } else {
+    } else if (!isArchetype) {
       await writeFile(path.join(game, 'src/main.js'), recipe.code);
     }
     const socket = createServer();
@@ -63,9 +65,17 @@ try {
     await page.goto(url);
     await page.waitForFunction(() => typeof window.__hgameState === 'function', null, { timeout: 10000 })
       .catch(error => { throw new Error(`${name}: ${errors.join('; ')} ${error.message}`); });
+    if (isArchetype) {
+      await page.locator('#start').click({ timeout: 3000 });
+      await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 3000 });
+    }
     const before = await page.evaluate(() => window.__hgameState());
     await page.keyboard.down('d');
-    await page.waitForTimeout(300);
+    if (isArchetype) {
+      await page.waitForFunction(x => window.__hgameState().player.x > x, before.player.x, { timeout: 3000 });
+    } else {
+      await page.waitForTimeout(300);
+    }
     await page.keyboard.up('d');
     const after = await page.evaluate(() => window.__hgameState());
     if (name === '2d') assert.equal(after.scene, 'main', 'bare Pixi scene starts');
@@ -76,6 +86,12 @@ try {
     }
     if (name === '3d') assert.ok(Number.isFinite(after.terrainMaxY), '3d terrain/physics wiring');
     if (name === 'ui') assert.equal(after.locale, 'zh', 'UI locale getter');
+    if (isArchetype) {
+      assert.ok(after.player.x > before.player.x, name + ' moves in the generated entry');
+      if (name !== 'horde-2d') {
+        await page.waitForFunction(() => window.__hgameState().enemies > 0, null, { timeout: 5000 });
+      }
+    }
     assert.deepEqual(errors, [], `${name} errors`);
     console.log(JSON.stringify({ browser: browserName, version: browser.version(), recipe: name, before, after, errors }));
     if (name === '2d') {
