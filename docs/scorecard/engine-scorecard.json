@@ -1,6 +1,6 @@
 {
-  "version": "v5.1",
-  "date": "2026-11-22",
+  "version": "v5.2",
+  "date": "2026-11-24",
   "engines": [
     {
       "id": "hgame",
@@ -229,7 +229,7 @@
       "name": "2D 渲染、光照与混排",
       "weight": 6,
       "scores": {
-        "hgame": 8,
+        "hgame": 8.5,
         "unity": 8,
         "cocos": 9,
         "godot": 9
@@ -257,7 +257,9 @@
           {
             "point": "行业通用 Spine/DragonBones 运行时兼容",
             "met": false,
-            "proof": "缺失（仅提供自研 skeleton2d.js，无 Spine/DragonBones 运行时）"
+            "exempt": true,
+            "exemptReason": "Spine/DragonBones 素材制作不便，产品不采用；2D 骨骼统一使用自研 Skeleton2D",
+            "proof": "未实现（按产品定位豁免，不计入清单满足率与短板）"
           },
           {
             "point": "浏览器端到端 2D 光照混排像素实测",
@@ -275,7 +277,7 @@
         "cocos": "2D 合批、富文本混排、Sprite/TileMap 与 Spine/DragonBones 运行时能力成熟。",
         "godot": "原生 2D 节点、TileMap 与 2D 光照/骨骼体系完整且 Web Compatibility 端可用。"
       },
-      "gap": "缺少行业通用的 Spine / DragonBones 运行时支持。"
+      "gap": "有效清单已全部满足（Spine/DragonBones 按产品定位豁免）。"
     },
     {
       "id": "R2",
@@ -732,9 +734,16 @@
             "proof": "assets/runtime/physics/rapier-world.js castShape, setLayerCollision"
           },
           {
-            "point": "布料物理、轮胎载具动力学与运行时凸包自动分解",
+            "point": "布料物理与轮胎载具动力学",
             "met": false,
-            "proof": "缺失（按小游戏物理底座定位主动舍弃布料与载具）"
+            "exempt": true,
+            "exemptReason": "小游戏定位用不到布料与载具，按物理底座定位主动舍弃",
+            "proof": "未实现（按小游戏定位豁免，不计入清单满足率与短板）"
+          },
+          {
+            "point": "运行时凸包自动分解（凹网格碰撞体）",
+            "met": false,
+            "proof": "缺失（rapier-world.js 未封装凸分解）"
           }
         ],
         "note": "前后端同源 pinned Rapier 0.21.0 2D/3D 确定性刚体、5 类关节、Sweep/Overlap 与 16 层碰撞矩阵。",
@@ -745,7 +754,7 @@
         "cocos": "支持 PhysX/Bullet/Cannon 多物理后端切换，功能齐全但非跨端确定性设计。",
         "godot": "Godot Physics/Jolt（Web 端多为内置物理）空间查询完备，缺乏确定性同步定位。"
       },
-      "gap": "无布料物理、载具动力学与运行时凸包自动分解。"
+      "gap": "无运行时凸包自动分解（布料/载具按小游戏定位豁免）。"
     },
     {
       "id": "S2",
@@ -833,9 +842,9 @@
             "proof": "assets/runtime/platform/audio.js"
           },
           {
-            "point": "真实多普勒频移与长音轨分块流式解码",
+            "point": "连续多普勒频移与长音轨分块流式解码",
             "met": false,
-            "proof": "缺失（长音轨整段 decodeAudioData，缺内置多普勒频移）"
+            "proof": "部分实现（audio.js computeDopplerRate 仅在触发时按相对速度计算一次，未连续跟踪；长音轨整段 decodeAudioData，无分块流式）"
           }
         ],
         "note": "原生 Web Audio 真实混响发送链（ConvolverNode）、3 段参数 EQ、采样级 duckBus 包络与 0-KB 合成器。",
@@ -848,7 +857,7 @@
         "cocos": "Web 端以基础 AudioSource 播放与音量淡入为主，缺乏内置多段 EQ 与混响 DSP 链。",
         "godot": "Godot 4.3 单线程 Web 默认走 Audio Sample 播放路径，AudioBus 总线实时 DSP 效果会丢失。"
       },
-      "gap": "缺少长音轨分块流式解码与内置多普勒频移。"
+      "gap": "缺少长音轨分块流式解码；多普勒频移仅在触发时计算一次，未连续跟踪。"
     },
     {
       "id": "S4",
@@ -868,7 +877,8 @@
           "assets/runtime/ui/canvas-widgets.js",
           "assets/runtime/ui/thumb-arc.js",
           "assets/runtime/kit/game-shell-dom.js",
-          "assets/runtime/platform/input/router.js"
+          "assets/runtime/platform/input/router.js",
+          "assets/runtime/ui/flex-layout.js"
         ],
         "industrialChecklist": [
           {
@@ -882,9 +892,9 @@
             "proof": "assets/runtime/ui/canvas-widgets.js, assets/runtime/ui/thumb-arc.js"
           },
           {
-            "point": "Canvas 原生声明式 Flexbox/Grid 布局与富文本混排引擎",
+            "point": "Canvas 原生声明式 Flex 布局（单行，computeFlexLayout）与富文本混排",
             "met": true,
-            "proof": "assets/runtime/ui/canvas-widgets.js layoutRichTextLines/richText/scrollView"
+            "proof": "assets/runtime/ui/flex-layout.js computeFlexLayout, assets/runtime/ui/canvas-widgets.js layoutRichTextLines"
           },
           {
             "point": "完整屏幕阅读器（ARIA）与动态按键重映射持久化",

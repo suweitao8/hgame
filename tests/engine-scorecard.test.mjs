@@ -10,10 +10,11 @@ import {
   loadScorecard,
   normalizeNewlines,
   renderSections,
+  summarizeChecklist,
   validateScorecard
 } from '../scripts/score-engines.mjs';
 
-test('engine-scorecard.json passes strict v5.1 validation with zero errors', () => {
+test('engine-scorecard.json passes strict v5.2 validation with zero errors', () => {
   const data = loadScorecard(DEFAULT_SCORECARD_PATH);
   const errors = validateScorecard(data, { repoRoot: DEFAULT_REPO_ROOT });
   assert.deepEqual(errors, []);
@@ -30,9 +31,8 @@ test('all engines runtime scores stay within 0..100 and respect capability caps 
 
   for (const item of data.items) {
     const cap = data.evidenceLevels[item.hgame.evidence].cap;
-    const cl = item.hgame.industrialChecklist;
-    const metCount = cl.filter((c) => c.met).length;
-    const maxAllowed = item.hgame.defaultPath ? 8 + (2 * metCount) / cl.length : 7;
+    const { met, applicable } = summarizeChecklist(item);
+    const maxAllowed = item.hgame.defaultPath ? 8 + (2 * met) / applicable : 7;
     assert.ok(item.scores.hgame <= cap, `${item.id} exceeds cap ${cap}`);
     assert.ok(item.scores.hgame <= maxAllowed + 1e-9, `${item.id} exceeds checklist maxAllowed ${maxAllowed}`);
   }
@@ -92,4 +92,60 @@ test('ENGINE-SCORECARD.md generated sections are in sync with engine-scorecard.j
   const currentDoc = normalizeNewlines(fs.readFileSync(DEFAULT_DOC_PATH, 'utf8'));
   const expectedDoc = applySections(currentDoc, sections);
   assert.equal(currentDoc, expectedDoc, 'Run "node scripts/score-engines.mjs --write" to sync markdown.');
+});
+
+test('exempt checklist entries leave the maturity tag and short-board column, and stay public', () => {
+  const data = loadScorecard(DEFAULT_SCORECARD_PATH);
+  const r1 = data.items.find((it) => it.id === 'R1');
+  const r1Counts = summarizeChecklist(r1);
+  assert.equal(r1Counts.exempt, 1);
+  assert.deepEqual([r1Counts.met, r1Counts.applicable], [3, 3]);
+
+  const s1Counts = summarizeChecklist(data.items.find((it) => it.id === 'S1'));
+  assert.deepEqual([s1Counts.met, s1Counts.applicable, s1Counts.exempt], [3, 4, 1]);
+
+  const sections = renderSections(data);
+  assert.ok(sections.items.includes('| R1 |') && sections.items.includes('C3 (3/3 · 豁免 1)'));
+  assert.ok(!sections.items.includes('Spine / DragonBones 运行时支持'));
+  for (const item of data.items) {
+    for (const entry of item.hgame.industrialChecklist.filter((c) => c.exempt)) {
+      assert.ok(sections.exemptions.includes(entry.point), `${item.id} exemption point not listed`);
+      assert.ok(sections.exemptions.includes(entry.exemptReason), `${item.id} exemption reason not listed`);
+    }
+  }
+});
+
+test('exempt entries lift maxAllowed and the C4 gate only while the exemption stands', () => {
+  const lifted = loadScorecard(DEFAULT_SCORECARD_PATH);
+  const liftedR1 = lifted.items.find((it) => it.id === 'R1');
+  liftedR1.hgame.evidence = 'C4';
+  liftedR1.scores.hgame = 10;
+  assert.deepEqual(validateScorecard(lifted, { repoRoot: DEFAULT_REPO_ROOT }), []);
+
+  const revoked = structuredClone(lifted);
+  revoked.items.find((it) => it.id === 'R1').hgame.industrialChecklist[2].exempt = false;
+  const revokedErrors = validateScorecard(revoked, { repoRoot: DEFAULT_REPO_ROOT });
+  assert.ok(revokedErrors.some((e) => e.includes('R1') && e.includes('C4 requires all')));
+  assert.ok(revokedErrors.some((e) => e.includes('R1') && e.includes('industrialChecklist maxAllowed')));
+});
+
+test('validator enforces exemption guardrails', () => {
+  const metExempt = loadScorecard(DEFAULT_SCORECARD_PATH);
+  metExempt.items.find((it) => it.id === 'R1').hgame.industrialChecklist[2].met = true;
+  const metErrors = validateScorecard(metExempt, { repoRoot: DEFAULT_REPO_ROOT });
+  assert.ok(metErrors.some((e) => e.includes('R1') && e.includes('cannot also be met')));
+
+  const noReason = loadScorecard(DEFAULT_SCORECARD_PATH);
+  delete noReason.items.find((it) => it.id === 'R1').hgame.industrialChecklist[2].exemptReason;
+  const reasonErrors = validateScorecard(noReason, { repoRoot: DEFAULT_REPO_ROOT });
+  assert.ok(reasonErrors.some((e) => e.includes('R1') && e.includes('exemptReason')));
+
+  const hollow = loadScorecard(DEFAULT_SCORECARD_PATH);
+  for (const entry of hollow.items.find((it) => it.id === 'A3').hgame.industrialChecklist) {
+    entry.met = false;
+    entry.exempt = true;
+    entry.exemptReason = 'out of scope';
+  }
+  const hollowErrors = validateScorecard(hollow, { repoRoot: DEFAULT_REPO_ROOT });
+  assert.ok(hollowErrors.some((e) => e.includes('A3') && e.includes('at least 3 non-exempt')));
 });

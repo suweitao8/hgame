@@ -19,7 +19,8 @@ const REQUIRED_ENGINES = ['hgame', 'unity', 'cocos', 'godot'];
 
 const SECTION_MARKERS = {
   runtime: ['<!-- scorecard:runtime:start -->', '<!-- scorecard:runtime:end -->'],
-  items: ['<!-- scorecard:items:start -->', '<!-- scorecard:items:end -->']
+  items: ['<!-- scorecard:items:start -->', '<!-- scorecard:items:end -->'],
+  exemptions: ['<!-- scorecard:exemptions:start -->', '<!-- scorecard:exemptions:end -->']
 };
 
 export function normalizeNewlines(text) {
@@ -43,6 +44,26 @@ function isHalfStepScore(value) {
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function isExemptEntry(entry) {
+  return entry?.exempt === true;
+}
+
+// Exempt entries (out of scope by product positioning) are neither required nor met, so they
+// stay out of the maturity tag and maxAllowed instead of counting against the item.
+export function summarizeChecklist(item) {
+  const checklist = Array.isArray(item?.hgame?.industrialChecklist) ? item.hgame.industrialChecklist : [];
+  let met = 0;
+  let exempt = 0;
+  for (const entry of checklist) {
+    if (isExemptEntry(entry)) {
+      exempt += 1;
+    } else if (entry?.met === true) {
+      met += 1;
+    }
+  }
+  return { met, exempt, applicable: checklist.length - exempt, total: checklist.length };
 }
 
 export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
@@ -137,6 +158,7 @@ export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
         errors.push(`Runtime item "${label}" hgame.industrialChecklist must contain 3 to 5 entries.`);
       } else {
         let metCount = 0;
+        let exemptCount = 0;
         for (let i = 0; i < checklist.length; i++) {
           const entry = checklist[i];
           if (!isNonEmptyString(entry?.point)) {
@@ -147,14 +169,34 @@ export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
           } else if (entry.met) {
             metCount += 1;
           }
+          if (entry?.exempt !== undefined && typeof entry.exempt !== 'boolean') {
+            errors.push(`Runtime item "${label}" industrialChecklist[${i}].exempt must be boolean when present.`);
+          } else if (isExemptEntry(entry)) {
+            exemptCount += 1;
+            if (entry.met === true) {
+              errors.push(`Runtime item "${label}" industrialChecklist[${i}] is exempt and cannot also be met.`);
+            }
+            if (!isNonEmptyString(entry?.exemptReason)) {
+              errors.push(
+                `Runtime item "${label}" industrialChecklist[${i}].exemptReason must be non-empty for exempt entries.`
+              );
+            }
+          }
           if (!isNonEmptyString(entry?.proof)) {
             errors.push(`Runtime item "${label}" industrialChecklist[${i}].proof must be non-empty.`);
           }
         }
 
-        if (hg.evidence === 'C4' && metCount !== checklist.length) {
+        const applicableCount = checklist.length - exemptCount;
+        if (applicableCount < 3) {
           errors.push(
-            `Runtime item "${label}" capability level C4 requires all ${checklist.length} checklist items met, got ${metCount}.`
+            `Runtime item "${label}" must keep at least 3 non-exempt checklist entries, got ${applicableCount}.`
+          );
+        }
+
+        if (hg.evidence === 'C4' && metCount !== applicableCount) {
+          errors.push(
+            `Runtime item "${label}" capability level C4 requires all ${applicableCount} non-exempt checklist items met, got ${metCount}.`
           );
         }
         if (hg.evidence === 'C3' && metCount < 1) {
@@ -164,10 +206,10 @@ export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
         }
 
         if (typeof hg.defaultPath === 'boolean' && typeof hScore === 'number') {
-          const maxAllowed = hg.defaultPath ? 8 + (2 * metCount) / checklist.length : 7;
+          const maxAllowed = hg.defaultPath ? 8 + (2 * metCount) / applicableCount : 7;
           if (hScore > maxAllowed + 1e-9) {
             errors.push(
-              `Runtime item "${label}" HGame score ${hScore} exceeds industrialChecklist maxAllowed ${maxAllowed.toFixed(2)} (${metCount}/${checklist.length} met).`
+              `Runtime item "${label}" HGame score ${hScore} exceeds industrialChecklist maxAllowed ${maxAllowed.toFixed(2)} (${metCount}/${applicableCount} non-exempt met).`
             );
           }
         }
@@ -305,21 +347,38 @@ export function renderSections(data, computed = computeScores(data)) {
     '| --- | --- | ---: | :---: | ---: | ---: | ---: | --- |'
   ];
 
+  const exemptionRows = [
+    '| 编号 | 项 | 豁免的能力 | 豁免理由 |',
+    '| --- | --- | --- | --- |'
+  ];
+
   for (const item of data.items) {
     const hScore = fmt1(item.scores.hgame);
-    const checklist = item.hgame.industrialChecklist || [];
-    const metCount = checklist.filter((c) => c.met).length;
+    const counts = summarizeChecklist(item);
+    const exemptTag = counts.exempt > 0 ? ` · 豁免 ${counts.exempt}` : '';
     const tag = item.hgame.defaultPath
-      ? `${item.hgame.evidence} (${metCount}/${checklist.length})`
-      : `${item.hgame.evidence} (非默认·${metCount}/${checklist.length})`;
+      ? `${item.hgame.evidence} (${counts.met}/${counts.applicable}${exemptTag})`
+      : `${item.hgame.evidence} (非默认·${counts.met}/${counts.applicable}${exemptTag})`;
+
+    for (const entry of item.hgame.industrialChecklist || []) {
+      if (isExemptEntry(entry)) {
+        exemptionRows.push(`| ${item.id} | ${item.name} | ${entry.point} | ${entry.exemptReason} |`);
+      }
+    }
+
     itemRows.push(
       `| ${item.id} | ${item.name}（${item.weight}） | **${hScore}** | ${tag} | ${fmt1(item.scores.unity)} | ${fmt1(item.scores.cocos)} | ${fmt1(item.scores.godot)} | ${item.gap} |`
     );
   }
 
+  if (exemptionRows.length === 2) {
+    exemptionRows.push('| — | — | （无） | — |');
+  }
+
   return {
     runtime: runtimeRows.join('\n'),
-    items: itemRows.join('\n')
+    items: itemRows.join('\n'),
+    exemptions: exemptionRows.join('\n')
   };
 }
 
