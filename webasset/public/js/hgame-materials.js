@@ -25,8 +25,7 @@ const mapColorCanvas = document.querySelector('#hgame-map-color');
 const mapNormalCanvas = document.querySelector('#hgame-map-normal');
 const mapRmCanvas = document.querySelector('#hgame-map-rm');
 const shapeSelect = document.querySelector('#hgame-material-mesh-shape');
-const tileInput = document.querySelector('#hgame-material-tile');
-const tileVal = document.querySelector('#hgame-material-tile-val');
+const uvValEl = document.querySelector('#hgame-material-uv-val');
 const statusEl = document.querySelector('#hgame-material-status');
 
 let initialized = false;
@@ -100,9 +99,9 @@ function ensureViewport() {
   return viewport;
 }
 
-function syncOutputs() {
-  if (tileVal && tileInput) {
-    tileVal.textContent = Number(tileInput.value || 1).toFixed(2);
+function syncOutputs(scanM = 1) {
+  if (uvValEl) {
+    uvValEl.textContent = `×${currentUvScale} (${scanM}m)`;
   }
 }
 
@@ -183,10 +182,11 @@ function renderList() {
   }
 
   for (const item of items) {
+    const uvScale = resolveEntryUvScale(item);
     const { button } = createSidebarSquareCard({
       name: item.id,
       thumbUrl: `${BASE_URL}/${item.id}/color.png`,
-      badge: item.surfaceType || 'PBR',
+      badge: `${item.surfaceType || 'PBR'} · UV×${uvScale}`,
       active: item.id === selectedId,
       onClick: () => selectMaterial(item.id),
     });
@@ -267,11 +267,12 @@ async function selectMaterial(id) {
     disposePreviewResources();
     currentUvScale = resolveEntryUvScale(entry);
     const scanM = resolveEntryScanMeters(entry);
+    syncOutputs(scanM);
     const { material, colorTex, normRmTex } = create2MapPbrMaterial({
       mode: 'opaque',
       assets,
       renderer: vp.renderer,
-      repeat: Number(tileInput?.value || 1),
+      repeat: 1,
       uvScale: currentUvScale,
     });
     previewMaterial = material;
@@ -335,17 +336,6 @@ function init() {
     }
     meshGroup = buildPreviewGeometryGroup(previewMaterial);
     viewport.scene.add(meshGroup);
-  });
-
-  tileInput?.addEventListener('input', () => {
-    syncOutputs();
-    const eff = Math.max(0.05, Number(tileInput.value || 1) * currentUvScale);
-    if (previewColorTex) {
-      previewColorTex.repeat.set(eff, eff);
-    }
-    if (previewNormRmTex) {
-      previewNormRmTex.repeat.set(eff, eff);
-    }
   });
 }
 
