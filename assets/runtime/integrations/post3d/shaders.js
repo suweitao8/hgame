@@ -855,6 +855,18 @@ vec3 upsampleHalfLighting(sampler2D effect, float centerGuide, bool packedGuide)
   return neutral + accum / max(weightSum, 0.0625);
 }
 
+vec3 linearToSrgb(vec3 c) {
+  vec3 lo = c * 12.92;
+  vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
+  return mix(lo, hi, step(vec3(0.0031308), c));
+}
+
+vec3 srgbToLinear(vec3 c) {
+  vec3 lo = c / 12.92;
+  vec3 hi = pow(max((c + 0.055) / 1.055, vec3(0.0)), vec3(2.4));
+  return mix(lo, hi, step(vec3(0.04045), c));
+}
+
 vec3 acesFilmic(vec3 x) {
   // Stephen Hill ACES RRT + ODT fit in AP1 space (1.45x pre-scale preserves 18% middle gray).
   const mat3 ACESInputMat = mat3(
@@ -890,7 +902,7 @@ vec3 agxApproximation(vec3 val) {
   vec3 x2 = x * x;
   vec3 x4 = x2 * x2;
   vec3 curve = 15.5 * x4 * x2 - 40.14 * x4 * x + 31.96 * x4 - 6.868 * x2 * x + 0.4298 * x2 + 0.1191 * x - 0.00232;
-  return clamp(agxOutset * curve, 0.0, 1.0);
+  return srgbToLinear(clamp(agxOutset * curve, 0.0, 1.0));
 }
 
 float ueFilmicChannel(float lin, float slope, float toe, float shoulder, float blackClip, float whiteClip) {
@@ -924,18 +936,6 @@ vec3 ueFilmicCurve(vec3 hdr) {
     ueFilmicChannel(work.g, uFilmSlope, uFilmToe, uFilmShoulder, uFilmBlackClip, uFilmWhiteClip),
     ueFilmicChannel(work.b, uFilmSlope, uFilmToe, uFilmShoulder, uFilmBlackClip, uFilmWhiteClip)
   );
-}
-
-vec3 linearToSrgb(vec3 c) {
-  vec3 lo = c * 12.92;
-  vec3 hi = 1.055 * pow(max(c, vec3(0.0)), vec3(1.0 / 2.4)) - 0.055;
-  return mix(lo, hi, step(vec3(0.0031308), c));
-}
-
-vec3 srgbToLinear(vec3 c) {
-  vec3 lo = c / 12.92;
-  vec3 hi = pow(max((c + 0.055) / 1.055, vec3(0.0)), vec3(2.4));
-  return mix(lo, hi, step(vec3(0.04045), c));
 }
 
 vec3 applyWorldLighting(vec3 hdr) {
