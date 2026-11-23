@@ -114,6 +114,10 @@ import {
   createShurikenKernel,
 } from './vfx-shuriken-kernel.js';
 import {
+  VFX_MATERIAL_PRESETS,
+  createUberMaterialSpec,
+  defineVfxRecipe,
+  loadVfxPack,
   validateVfxRecipe,
   createEffectPlayer,
 } from './vfx-recipes.js';
@@ -210,6 +214,10 @@ export {
   SHURIKEN_QUALITY_TIERS,
   compileShurikenLayer,
   createShurikenKernel,
+  VFX_MATERIAL_PRESETS,
+  createUberMaterialSpec,
+  defineVfxRecipe,
+  loadVfxPack,
   validateVfxRecipe,
   createEffectPlayer,
 };

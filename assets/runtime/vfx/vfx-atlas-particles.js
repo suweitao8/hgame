@@ -1275,25 +1275,9 @@ void main() {
       );
     }
 #ifdef HGAME_OPAQUE_PARTICLE
-    gl_FragColor = vec4(uRes.rgb, 1.0);
+    gl_FragColor = vfxFinalizeOutput(uRes, 1.0, 0.0, 0.0, 0.0);
 #else
-    if (uIsMultiply > 0.5) {
-      gl_FragColor = vec4(mix(vec3(1.0), uRes.rgb, clamp(uRes.a, 0.0, 1.0)), 1.0);
-      return;
-    }
-    if (uIsPremultiply > 0.5) {
-      gl_FragColor = uRes;
-      return;
-    }
-    vec3 outRgb = uRes.rgb;
-    float outA = uRes.a;
-    float uPeak = max(outRgb.r, max(outRgb.g, outRgb.b));
-    if (uIsAdditive > 0.5 && uPeak > 1.0 && outA > 0.0 && outA < 1.0) {
-      float boost = min(uPeak, 1.0 / outA);
-      outRgb /= boost;
-      outA *= boost;
-    }
-    gl_FragColor = vec4(outRgb, outA);
+    gl_FragColor = vfxFinalizeOutput(uRes, 0.0, uIsMultiply, uIsPremultiply, uIsAdditive);
 #endif
     return;
   }

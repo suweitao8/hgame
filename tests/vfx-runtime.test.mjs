@@ -12,10 +12,17 @@ import {
   unpack2x12Sym,
   unpackUvPair,
 } from '../assets/runtime/vfx/vfx-atlas-particles.js';
+import { VFX_UBER_FRAGMENT_GLSL } from '../assets/runtime/vfx/vfx-shader-chunks.js';
 import {
+  ATLAS_PARTICLE_FRAGMENT_GLSL,
   CROWD_STATUS,
   DAMAGE_NUMBER_PRESETS,
   PROCEDURAL_VFX_ATLAS_REGIONS,
+  RIBBON_FRAGMENT_GLSL,
+  UBER_MAT_LUT_ROWS,
+  VFX_COMMON_GLSL,
+  VFX_MATERIAL_PRESETS,
+  VFX_MESH_INSTANCED_FS,
   VFX_RENDER_MODE,
   VFX_SHAPE,
   createAtlasParticlePool,
@@ -24,8 +31,10 @@ import {
   createHitstopClock,
   createMeshVfxPool,
   createStatelessParticlePool,
+  createUberMaterialSpec,
   createVfxSystem,
   createVisualPrng,
+  defineVfxRecipe,
   evaluateAtlasParticlePosition,
   evaluateColorByNumber,
   evaluateColorCurve,
@@ -34,6 +43,7 @@ import {
   extractGlyphIndices,
   formatDamageValue,
   getDamagePreset,
+  loadVfxPack,
   packCrowdAnimStatus,
   packRgb24,
   registerDamagePreset,
@@ -2467,4 +2477,124 @@ test('ShapeModule arc.mode=3 (burst-spread) distributes burst particles uniforml
   } finally {
     vfx.dispose();
   }
+});
+
+test('Uber Material LUT expands to 1024 rows, dirty-checks repacks, and shares vfxFinalizeOutput + lazy guards', () => {
+  assert.equal(UBER_MAT_LUT_ROWS, 1024);
+
+  const lut = createUberMaterialLut(THREE);
+  assert.equal(lut.height, 1024);
+  let dirtySets = 0;
+  let needsVal = false;
+  Object.defineProperty(lut.texture, 'needsUpdate', {
+    get() { return needsVal; },
+    set(v) {
+      needsVal = Boolean(v);
+      if (v) dirtySets += 1;
+    },
+  });
+
+  const spec = createUberMaterialSpec('glow', { mainTexKey: 'spark', whiteColor: [2, 1, 0.5, 1] });
+  const regions = { spark: [0.1, 0.2, 0.5, 0.6] };
+  const rowA = lut.allocateRow('spark_glow', spec, regions);
+  assert.equal(rowA, 0);
+  assert.equal(dirtySets, 1);
+
+  needsVal = false;
+  const rowRepeat = lut.allocateRow('spark_glow', spec, regions);
+  assert.equal(rowRepeat, 0);
+  assert.equal(dirtySets, 1, 'identical repack must not re-mark texture dirty');
+
+  lut.allocateRow('spark_glow', { ...spec, desaturate: 0.45 }, regions);
+  assert.equal(dirtySets, 2, 'mutated repack marks texture dirty');
+  lut.dispose();
+
+  assert.ok(VFX_COMMON_GLSL.includes('vec4 vfxFinalizeOutput('));
+  assert.ok(ATLAS_PARTICLE_FRAGMENT_GLSL.includes('vfxFinalizeOutput('));
+  assert.ok(VFX_MESH_INSTANCED_FS.includes('vfxFinalizeOutput('));
+  assert.ok(RIBBON_FRAGMENT_GLSL.includes('vfxFinalizeOutput('));
+  for (const guard of ['bool useRamp', 'bool useErosion', 'bool useAlphaOv', 'bool useFresnel', 'bool hasDetTex', 'bool hasOrmTex']) {
+    assert.ok(VFX_UBER_FRAGMENT_GLSL.includes(guard), `expected lazy LUT guard "${guard}" in VFX_UBER_FRAGMENT_GLSL`);
+  }
+});
+
+test('defineVfxRecipe, createUberMaterialSpec presets, and loadVfxPack register atlas, __sub_ meshes, and recipes', async () => {
+  assert.deepEqual(Object.keys(VFX_MATERIAL_PRESETS).sort(), ['dissolve', 'glow', 'pbr', 'ribbon', 'smoke', 'warp']);
+
+  const recipe = defineVfxRecipe({
+    id: 'hand_slash_fx',
+    layers: [
+      {
+        name: 'glow_core',
+        region: 'spark',
+        uberMat: 'glow',
+      },
+    ],
+  });
+  assert.equal(recipe.schemaVersion, 1);
+  assert.equal(recipe.layers[0].uberMat.shaderKind, 'uber_fx');
+  assert.equal(recipe.layers[0].uberMat.blend, 'additive');
+  assert.throws(() => defineVfxRecipe({ id: '', layers: [] }), /Invalid VFX recipe/);
+
+  const registeredMeshes = new Map();
+  const registeredEffects = [];
+  let atlasArgs = null;
+  const mockVfx = {
+    setAtlas(tex, regions, opts) { atlasArgs = { tex, regions, opts }; },
+    registerMesh(name, geo) { registeredMeshes.set(name, geo); return true; },
+    registerEffect(rec) { registeredEffects.push(rec); return true; },
+  };
+
+  const geo1 = new THREE.BoxGeometry(1, 1, 1);
+  const geo2 = new THREE.SphereGeometry(0.5, 8, 6);
+  const m1 = new THREE.Mesh(geo1); m1.name = 'SkelBone_1';
+  const m2 = new THREE.Mesh(geo2); m2.name = 'SkelBone_2';
+  const glbScene = new THREE.Group();
+  glbScene.add(m1, m2);
+
+  const mockFiles = {
+    'https://example.test/pack/vfx-pack.manifest.json': {
+      schemaVersion: 1,
+      atlas: 'atlas.png',
+      regions: 'atlas_regions.json',
+      meshes: ['meshes/bones_1.glb'],
+      aliases: {
+        bones_1__sub_skelbone_1: 'meshes/bones_1.glb',
+        bones_1__sub_skelbone_2: 'meshes/bones_1.glb',
+      },
+      recipes: [{ id: 'hand_slash_fx', file: 'recipes/hand_slash_fx.vfx.json' }],
+    },
+    'https://example.test/pack/atlas_regions.json': {
+      spark: [0, 0, 0.5, 0.5],
+      smoke: [0.5, 0, 1, 0.5],
+    },
+    'https://example.test/pack/recipes/hand_slash_fx.vfx.json': recipe,
+  };
+
+  let glbLoadCount = 0;
+  const res = await loadVfxPack(mockVfx, 'https://example.test/pack/vfx-pack.manifest.json', {
+    THREE: null,
+    fetchFn: async (url) => {
+      if (!(url in mockFiles)) return { ok: false, status: 404, json: async () => ({}) };
+      return { ok: true, json: async () => mockFiles[url] };
+    },
+    gltfLoader: {
+      async loadAsync(url) {
+        assert.equal(url, 'https://example.test/pack/meshes/bones_1.glb');
+        glbLoadCount += 1;
+        return { scene: glbScene };
+      },
+    },
+  });
+
+  assert.equal(glbLoadCount, 1, 'caches shared .glb across __sub_ aliases');
+  assert.equal(res.regionCount, 2);
+  assert.equal(res.meshCount, 2);
+  assert.deepEqual(res.recipeIds, ['hand_slash_fx']);
+  assert.equal(registeredMeshes.get('bones_1__sub_skelbone_1'), geo1);
+  assert.equal(registeredMeshes.get('bones_1__sub_skelbone_2'), geo2);
+  assert.equal(atlasArgs.opts.flipV, true);
+  assert.equal(registeredEffects.length, 1);
+  geo1.dispose();
+  geo2.dispose();
 });

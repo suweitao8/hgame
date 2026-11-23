@@ -2378,3 +2378,301 @@ export function createEffectPlayer({
     },
   };
 }
+
+/**
+ * Built-in ergonomic material presets for `createUberMaterialSpec`.
+ */
+export const VFX_MATERIAL_PRESETS = Object.freeze({
+  glow: Object.freeze({
+    shaderKind: 'uber_fx',
+    blend: 'additive',
+    keywords: Object.freeze(['_USESOFTALPHA', '_DISABLEEROSION']),
+    mainChannelMask: Object.freeze([1, 1, 1, 1]),
+    mainAlphaMask: Object.freeze([1, 1, 1, 1]),
+    desaturate: 0,
+    softFadeFactor: 0.12,
+  }),
+  smoke: Object.freeze({
+    shaderKind: 'uber_fx',
+    blend: 'alpha',
+    keywords: Object.freeze(['_USESOFTALPHA', '_DISABLEEROSION']),
+    mainChannelMask: Object.freeze([1, 1, 1, 1]),
+    mainAlphaMask: Object.freeze([0, 0, 0, 1]),
+    desaturate: 0.15,
+    softFadeFactor: 0.25,
+  }),
+  dissolve: Object.freeze({
+    shaderKind: 'uber_fx',
+    blend: 'alpha',
+    keywords: Object.freeze(['_USESOFTALPHA']),
+    mainChannelMask: Object.freeze([1, 1, 1, 1]),
+    mainAlphaMask: Object.freeze([0, 0, 0, 1]),
+    detailDissolveChannel: Object.freeze([1, 0, 0, 0]),
+    dissolveFadeRange: Object.freeze([-0.25, 1.0]),
+    softFadeFactor: 0.12,
+  }),
+  ribbon: Object.freeze({
+    shaderKind: 'uber_fx',
+    blend: 'premultiply',
+    keywords: Object.freeze(['_DISABLEEROSION']),
+    mainChannelMask: Object.freeze([1, 1, 1, 1]),
+    mainAlphaMask: Object.freeze([0, 0, 0, 1]),
+    doubleSided: true,
+  }),
+  warp: Object.freeze({
+    shaderKind: 'piloto_warp',
+    blend: 'distortion',
+    keywords: Object.freeze(['_UNPACK_NORMALS', '_USE_SOFT_ALPHA']),
+    distortionStrength: 0.04,
+    softFadeFactor: 0.2,
+  }),
+  pbr: Object.freeze({
+    shaderKind: 'pbr_fx',
+    blend: 'alpha',
+    opaque: false,
+    keywords: Object.freeze(['_ISPARTICLE']),
+    smoothnessScale: 0.45,
+    metallicScale: 0.0,
+    selfIlluminationIntensity: 0.8,
+  }),
+});
+
+/**
+ * Builds a normalized `uberMat` material spec from a named preset (`glow`, `smoke`,
+ * `dissolve`, `ribbon`, `warp`, `pbr`) plus optional property overrides.
+ * @param {'glow'|'smoke'|'dissolve'|'ribbon'|'warp'|'pbr'} [preset='glow']
+ * @param {Record<string, any>} [overrides={}]
+ * @returns {Record<string, any>}
+ */
+export function createUberMaterialSpec(preset = 'glow', overrides = {}) {
+  const base = VFX_MATERIAL_PRESETS[preset] || VFX_MATERIAL_PRESETS.glow;
+  const baseKw = Array.isArray(base.keywords) ? base.keywords : [];
+  const extraKw = Array.isArray(overrides?.keywords) ? overrides.keywords : [];
+  const mergedKw = overrides?.replaceKeywords ? [...extraKw] : Array.from(new Set([...baseKw, ...extraKw]));
+  const spec = {
+    ...base,
+    ...(overrides || {}),
+    keywords: mergedKw,
+  };
+  delete spec.replaceKeywords;
+  return spec;
+}
+
+/**
+ * Normalizes defaults for hand-authored or DSL-style VFX recipes, resolves shorthand
+ * `layer.uberMat` preset strings, and validates against `validateVfxRecipe`.
+ * Throws a descriptive error if validation fails.
+ * @param {object} spec
+ * @returns {object}
+ */
+export function defineVfxRecipe(spec) {
+  if (!spec || typeof spec !== 'object') {
+    throw new Error('defineVfxRecipe(spec): spec must be a non-null object');
+  }
+  const layers = Array.isArray(spec.layers)
+    ? spec.layers.map((layer) => {
+        if (!layer || typeof layer !== 'object') return layer;
+        const out = {
+          kind: layer.kind ?? 'particle',
+          blend: layer.blend ?? 'additive',
+          lifetime: layer.lifetime ?? [0.4, 0.8],
+          ...layer,
+        };
+        if (typeof out.uberMat === 'string') {
+          out.uberMat = createUberMaterialSpec(out.uberMat);
+        }
+        return out;
+      })
+    : spec.layers;
+  const normalized = {
+    schemaVersion: 1,
+    duration: Number.isFinite(spec.duration) && spec.duration > 0 ? spec.duration : 1.0,
+    loop: Boolean(spec.loop),
+    ...spec,
+    layers,
+  };
+  const res = validateVfxRecipe(normalized);
+  if (!res.ok) {
+    throw new Error(`Invalid VFX recipe "${normalized.id || '?'}": ${res.errors.join('; ')}`);
+  }
+  return normalized;
+}
+
+function resolveRelativeUrl(baseUrl, relPath) {
+  if (!relPath) return '';
+  if (/^(?:https?:|data:|blob:|\/)/i.test(relPath)) return relPath;
+  if (!baseUrl) return relPath;
+  try {
+    return new URL(relPath, baseUrl).toString();
+  } catch {
+    const cleanBase = String(baseUrl).replace(/[?#].*$/, '').replace(/[^/]*$/, '');
+    return `${cleanBase}${relPath}`;
+  }
+}
+
+function normalizeSubmeshKey(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function pickGeometryFromScene(sceneObj, aliasName) {
+  if (!sceneObj) return null;
+  if (sceneObj.isBufferGeometry) return sceneObj;
+  const meshes = [];
+  if (typeof sceneObj.traverse === 'function') {
+    sceneObj.traverse((child) => {
+      if (child?.isMesh && child.geometry) {
+        meshes.push({ name: child.name || '', geo: child.geometry });
+      }
+    });
+  } else if (Array.isArray(sceneObj.meshes)) {
+    for (const m of sceneObj.meshes) {
+      if (m?.geometry) meshes.push({ name: m.name || '', geo: m.geometry });
+    }
+  }
+  if (meshes.length === 0) return sceneObj.geometry || null;
+  if (meshes.length === 1) return meshes[0].geo;
+  const lowAlias = String(aliasName || '').toLowerCase();
+  const subIdx = lowAlias.indexOf('__sub_');
+  if (subIdx !== -1) {
+    const wantSub = lowAlias.slice(subIdx + 6);
+    const match = meshes.find((m) => normalizeSubmeshKey(m.name) === wantSub);
+    if (match) return match.geo;
+  }
+  return meshes[0].geo;
+}
+
+async function loadTextureWithLoader(THREE, url) {
+  const loader = new THREE.TextureLoader();
+  const tex = typeof loader.loadAsync === 'function'
+    ? await loader.loadAsync(url)
+    : await new Promise((resolve, reject) => loader.load(url, resolve, undefined, reject));
+  if (tex && 'colorSpace' in tex && THREE.SRGBColorSpace) {
+    tex.colorSpace = THREE.SRGBColorSpace;
+  }
+  return tex;
+}
+
+async function loadGltfWithLoader(gltfLoader, url) {
+  if (typeof gltfLoader.loadAsync === 'function') {
+    return gltfLoader.loadAsync(url);
+  }
+  return new Promise((resolve, reject) => gltfLoader.load(url, resolve, undefined, reject));
+}
+
+/**
+ * Loads a built `vfx-pack.manifest.json` (atlas + regions + GLB meshes/submeshes + recipes)
+ * and registers everything onto a `vfx` system in one call.
+ * @param {any} vfx
+ * @param {string} manifestUrl
+ * @param {object} [options]
+ * @param {any} [options.THREE=null]
+ * @param {any} [options.gltfLoader=null]
+ * @param {typeof globalThis.fetch} [options.fetchFn=globalThis.fetch]
+ * @param {string | null} [options.baseUrl=null]
+ * @returns {Promise<{ manifest: any, recipeIds: string[], meshCount: number, regionCount: number }>}
+ */
+export async function loadVfxPack(vfx, manifestUrl, {
+  THREE = null,
+  gltfLoader = null,
+  fetchFn = globalThis.fetch,
+  baseUrl = null,
+} = {}) {
+  if (!vfx) throw new Error('loadVfxPack(vfx, manifestUrl): vfx instance is required');
+  if (typeof fetchFn !== 'function') throw new Error('loadVfxPack: fetchFn is unavailable');
+
+  const fetchJson = async (url) => {
+    const res = await fetchFn(url);
+    if (res && res.ok === false) {
+      throw new Error(`loadVfxPack: failed to fetch "${url}" (status ${res.status})`);
+    }
+    return res.json();
+  };
+
+  const resolvedBase = baseUrl || manifestUrl;
+  const manifest = await fetchJson(manifestUrl);
+
+  let regions = null;
+  if (manifest.regions) {
+    const regionsUrl = resolveRelativeUrl(resolvedBase, manifest.regions);
+    const regionsPayload = await fetchJson(regionsUrl);
+    regions = (regionsPayload && typeof regionsPayload.regions === 'object' && !Array.isArray(regionsPayload.regions))
+      ? regionsPayload.regions
+      : regionsPayload;
+  }
+
+  let atlasTex = null;
+  if (manifest.atlas && THREE?.TextureLoader) {
+    const atlasUrl = resolveRelativeUrl(resolvedBase, manifest.atlas);
+    atlasTex = await loadTextureWithLoader(THREE, atlasUrl);
+  }
+
+  if (atlasTex || regions) {
+    const setAtlasFn = vfx.setAtlas || vfx.setAtlasTexture;
+    if (typeof setAtlasFn === 'function') {
+      setAtlasFn.call(vfx, atlasTex, regions, { flipV: true });
+    }
+  }
+
+  let meshCount = 0;
+  if (gltfLoader && (manifest.aliases || manifest.meshes)) {
+    /** @type {Map<string, any>} */
+    const gltfCache = new Map();
+    const registerMeshFn = vfx.registerMesh || vfx.registerMeshGeometry;
+    const aliasEntries = [];
+    if (manifest.aliases && typeof manifest.aliases === 'object') {
+      for (const [alias, file] of Object.entries(manifest.aliases)) {
+        if (typeof file === 'string') aliasEntries.push([alias, file]);
+        else if (file && typeof file.file === 'string') aliasEntries.push([alias, file.file]);
+      }
+    } else if (Array.isArray(manifest.meshes)) {
+      for (const entry of manifest.meshes) {
+        if (typeof entry === 'string') {
+          const alias = entry.replace(/^.*\//, '').replace(/\.[^.]+$/, '');
+          aliasEntries.push([alias, entry]);
+        } else if (entry?.alias && entry?.file) {
+          aliasEntries.push([entry.alias, entry.file]);
+        }
+      }
+    } else if (manifest.meshes && typeof manifest.meshes === 'object') {
+      for (const [alias, file] of Object.entries(manifest.meshes)) {
+        if (typeof file === 'string') aliasEntries.push([alias, file]);
+      }
+    }
+
+    for (const [alias, relFile] of aliasEntries) {
+      const url = resolveRelativeUrl(resolvedBase, relFile);
+      let gltf = gltfCache.get(url);
+      if (!gltf) {
+        gltf = await loadGltfWithLoader(gltfLoader, url);
+        gltfCache.set(url, gltf);
+      }
+      const geo = pickGeometryFromScene(gltf?.scene || gltf, alias);
+      if (geo && typeof registerMeshFn === 'function') {
+        registerMeshFn.call(vfx, alias, geo);
+        meshCount += 1;
+      }
+    }
+  }
+
+  const recipeIds = [];
+  if (Array.isArray(manifest.recipes)) {
+    const registerEffectFn = vfx.registerEffect || vfx.registerRecipe;
+    for (const item of manifest.recipes) {
+      const relFile = typeof item === 'string' ? item : item?.file;
+      if (!relFile) continue;
+      const recipeUrl = resolveRelativeUrl(resolvedBase, relFile);
+      const recipe = await fetchJson(recipeUrl);
+      if (typeof registerEffectFn === 'function') {
+        registerEffectFn.call(vfx, recipe);
+      }
+      if (recipe?.id) recipeIds.push(recipe.id);
+    }
+  }
+
+  return {
+    manifest,
+    recipeIds,
+    meshCount,
+    regionCount: regions ? Object.keys(regions).length : 0,
+  };
+}

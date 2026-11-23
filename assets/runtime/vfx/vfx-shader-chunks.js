@@ -316,7 +316,7 @@ export function evaluateMinMaxGradient(compiled, t, randSeed = 0.5, out = [1, 1,
 }
 
 export const UBER_MAT_LUT_WIDTH = 32;
-export const UBER_MAT_LUT_ROWS = 256;
+export const UBER_MAT_LUT_ROWS = 1024;
 
 export const UBER_SHADER_KIND = Object.freeze({
   LEGACY: 0,
@@ -388,10 +388,15 @@ function asVec2(v, d0 = 0, d1 = 0) {
 
 function writeTexel(data, rowOffset, texelIdx, x, y, z, w) {
   const i = (rowOffset + texelIdx) * 4;
+  const p0 = data[i];
+  const p1 = data[i + 1];
+  const p2 = data[i + 2];
+  const p3 = data[i + 3];
   data[i] = x;
   data[i + 1] = y;
   data[i + 2] = z;
   data[i + 3] = w;
+  return data[i] !== p0 || data[i + 1] !== p1 || data[i + 2] !== p2 || data[i + 3] !== p3;
 }
 
 /**
@@ -407,9 +412,11 @@ export function resolveUberShaderKindId(shaderKind) {
 /**
  * Pack a Piloto ShaderGraph material specification (UberFXSG / Piloto Warp / PBR FX)
  * into a 32-texel RGBA32F row of `uMaterialLut`.
+ * Returns `true` if any Float32 value in the row changed.
  */
 export function packUberMaterialRow(data, rowIndex, mat = {}, texRects = null) {
-  if (!data || rowIndex < 0 || rowIndex >= UBER_MAT_LUT_ROWS) return;
+  const maxRows = data ? Math.floor(data.length / (UBER_MAT_LUT_WIDTH * 4)) : 0;
+  if (!data || rowIndex < 0 || rowIndex >= maxRows) return false;
   const rowOffset = rowIndex * UBER_MAT_LUT_WIDTH;
   const kind = resolveUberShaderKindId(mat.shaderKind);
 
@@ -535,38 +542,40 @@ export function packUberMaterialRow(data, rowIndex, mat = {}, texRects = null) {
   const pbrDistDiss = Number.isFinite(mat.distortionDissolveIntensity) ? mat.distortionDissolveIntensity : 0.0;
   const pbrVertStr = Number.isFinite(mat.vertexOffsetIntensity) ? mat.vertexOffsetIntensity : 1.0;
 
-  writeTexel(data, rowOffset, 0, kind, flags, blendIdx, alphaCutoff);
-  writeTexel(data, rowOffset, 1, mainRect[0], mainRect[1], mainRect[2], mainRect[3]);
-  writeTexel(data, rowOffset, 2, mainST[0], mainST[1], mainST[2], mainST[3]);
-  writeTexel(data, rowOffset, 3, detailRect[0], detailRect[1], detailRect[2], detailRect[3]);
-  writeTexel(data, rowOffset, 4, detailST[0], detailST[1], detailST[2], detailST[3]);
-  writeTexel(data, rowOffset, 5, alphaOvRect[0], alphaOvRect[1], alphaOvRect[2], alphaOvRect[3]);
-  writeTexel(data, rowOffset, 6, alphaOvST[0], alphaOvST[1], alphaOvST[2], alphaOvST[3]);
-  writeTexel(data, rowOffset, 7, mainChan[0], mainChan[1], mainChan[2], mainChan[3]);
-  writeTexel(data, rowOffset, 8, mainAlphaChan[0], mainAlphaChan[1], mainAlphaChan[2], mainAlphaChan[3]);
-  writeTexel(data, rowOffset, 9, alphaOvChan[0], alphaOvChan[1], alphaOvChan[2], alphaOvChan[3]);
-  writeTexel(data, rowOffset, 10, detDistChan[0], detDistChan[1], detDistChan[2], detDistChan[3]);
-  writeTexel(data, rowOffset, 11, detMul[0], detMul[1], detMul[2], detMul[3]);
-  writeTexel(data, rowOffset, 12, detAdd[0], detAdd[1], detAdd[2], detAdd[3]);
-  writeTexel(data, rowOffset, 13, detDissChan[0], detDissChan[1], detDissChan[2], detDissChan[3]);
-  writeTexel(data, rowOffset, 14, detVtx[0], detVtx[1], detVtx[2], detVtx[3]);
-  writeTexel(data, rowOffset, 15, mainPan[0], mainPan[1], detailPan[0], detailPan[1]);
-  writeTexel(data, rowOffset, 16, alphaOvPan[0], alphaOvPan[1], baseNormStrOrPan, dissolveAmt);
-  writeTexel(data, rowOffset, 17, desat, mulDesat, distIntensity, softFade);
-  writeTexel(data, rowOffset, 18, dissRange[0], dissRange[1], midHigh, midLow);
-  writeTexel(data, rowOffset, 19, whiteCol[0], whiteCol[1], whiteCol[2], whiteCol[3]);
-  writeTexel(data, rowOffset, 20, midCol[0], midCol[1], midCol[2], midCol[3]);
-  writeTexel(data, rowOffset, 21, lastCol[0], lastCol[1], lastCol[2], lastCol[3]);
-  writeTexel(data, rowOffset, 22, fresnelCol[0], fresnelCol[1], fresnelCol[2], fresnelCol[3]);
-  writeTexel(data, rowOffset, 23, fresPow, fresScale, normScale, occScale);
-  writeTexel(data, rowOffset, 24, normalRect[0], normalRect[1], normalRect[2], normalRect[3]);
-  writeTexel(data, rowOffset, 25, normalST[0], normalST[1], normalST[2], normalST[3]);
-  writeTexel(data, rowOffset, 26, ormRect[0], ormRect[1], ormRect[2], ormRect[3]);
-  writeTexel(data, rowOffset, 27, ormST[0], ormST[1], ormST[2], ormST[3]);
-  writeTexel(data, rowOffset, 28, emissionRect[0], emissionRect[1], emissionRect[2], emissionRect[3]);
-  writeTexel(data, rowOffset, 29, emissionST[0], emissionST[1], emissionST[2], emissionST[3]);
-  writeTexel(data, rowOffset, 30, smoothScale, metalScale, selfIllum, pbrDistStr);
-  writeTexel(data, rowOffset, 31, pbrDistMain, pbrDistDiss, pbrVertStr, texMask);
+  let changed = false;
+  changed = writeTexel(data, rowOffset, 0, kind, flags, blendIdx, alphaCutoff) || changed;
+  changed = writeTexel(data, rowOffset, 1, mainRect[0], mainRect[1], mainRect[2], mainRect[3]) || changed;
+  changed = writeTexel(data, rowOffset, 2, mainST[0], mainST[1], mainST[2], mainST[3]) || changed;
+  changed = writeTexel(data, rowOffset, 3, detailRect[0], detailRect[1], detailRect[2], detailRect[3]) || changed;
+  changed = writeTexel(data, rowOffset, 4, detailST[0], detailST[1], detailST[2], detailST[3]) || changed;
+  changed = writeTexel(data, rowOffset, 5, alphaOvRect[0], alphaOvRect[1], alphaOvRect[2], alphaOvRect[3]) || changed;
+  changed = writeTexel(data, rowOffset, 6, alphaOvST[0], alphaOvST[1], alphaOvST[2], alphaOvST[3]) || changed;
+  changed = writeTexel(data, rowOffset, 7, mainChan[0], mainChan[1], mainChan[2], mainChan[3]) || changed;
+  changed = writeTexel(data, rowOffset, 8, mainAlphaChan[0], mainAlphaChan[1], mainAlphaChan[2], mainAlphaChan[3]) || changed;
+  changed = writeTexel(data, rowOffset, 9, alphaOvChan[0], alphaOvChan[1], alphaOvChan[2], alphaOvChan[3]) || changed;
+  changed = writeTexel(data, rowOffset, 10, detDistChan[0], detDistChan[1], detDistChan[2], detDistChan[3]) || changed;
+  changed = writeTexel(data, rowOffset, 11, detMul[0], detMul[1], detMul[2], detMul[3]) || changed;
+  changed = writeTexel(data, rowOffset, 12, detAdd[0], detAdd[1], detAdd[2], detAdd[3]) || changed;
+  changed = writeTexel(data, rowOffset, 13, detDissChan[0], detDissChan[1], detDissChan[2], detDissChan[3]) || changed;
+  changed = writeTexel(data, rowOffset, 14, detVtx[0], detVtx[1], detVtx[2], detVtx[3]) || changed;
+  changed = writeTexel(data, rowOffset, 15, mainPan[0], mainPan[1], detailPan[0], detailPan[1]) || changed;
+  changed = writeTexel(data, rowOffset, 16, alphaOvPan[0], alphaOvPan[1], baseNormStrOrPan, dissolveAmt) || changed;
+  changed = writeTexel(data, rowOffset, 17, desat, mulDesat, distIntensity, softFade) || changed;
+  changed = writeTexel(data, rowOffset, 18, dissRange[0], dissRange[1], midHigh, midLow) || changed;
+  changed = writeTexel(data, rowOffset, 19, whiteCol[0], whiteCol[1], whiteCol[2], whiteCol[3]) || changed;
+  changed = writeTexel(data, rowOffset, 20, midCol[0], midCol[1], midCol[2], midCol[3]) || changed;
+  changed = writeTexel(data, rowOffset, 21, lastCol[0], lastCol[1], lastCol[2], lastCol[3]) || changed;
+  changed = writeTexel(data, rowOffset, 22, fresnelCol[0], fresnelCol[1], fresnelCol[2], fresnelCol[3]) || changed;
+  changed = writeTexel(data, rowOffset, 23, fresPow, fresScale, normScale, occScale) || changed;
+  changed = writeTexel(data, rowOffset, 24, normalRect[0], normalRect[1], normalRect[2], normalRect[3]) || changed;
+  changed = writeTexel(data, rowOffset, 25, normalST[0], normalST[1], normalST[2], normalST[3]) || changed;
+  changed = writeTexel(data, rowOffset, 26, ormRect[0], ormRect[1], ormRect[2], ormRect[3]) || changed;
+  changed = writeTexel(data, rowOffset, 27, ormST[0], ormST[1], ormST[2], ormST[3]) || changed;
+  changed = writeTexel(data, rowOffset, 28, emissionRect[0], emissionRect[1], emissionRect[2], emissionRect[3]) || changed;
+  changed = writeTexel(data, rowOffset, 29, emissionST[0], emissionST[1], emissionST[2], emissionST[3]) || changed;
+  changed = writeTexel(data, rowOffset, 30, smoothScale, metalScale, selfIllum, pbrDistStr) || changed;
+  changed = writeTexel(data, rowOffset, 31, pbrDistMain, pbrDistDiss, pbrVertStr, texMask) || changed;
+  return changed;
 }
 
 /**
@@ -598,8 +607,9 @@ export function createUberMaterialLut(THREE, maxRows = UBER_MAT_LUT_ROWS) {
     const key = cacheKey || null;
     if (key && cache.has(key)) {
       const idx = cache.get(key);
-      packUberMaterialRow(data, idx, matSpec, texRects);
-      texture.needsUpdate = true;
+      if (packUberMaterialRow(data, idx, matSpec, texRects)) {
+        texture.needsUpdate = true;
+      }
       return idx;
     }
     const idx = Math.min(nextRow++, height - 1);
@@ -628,8 +638,9 @@ export function createUberMaterialLut(THREE, maxRows = UBER_MAT_LUT_ROWS) {
     height,
     allocateRow,
     packRow: (rowIdx, matSpec, texRects) => {
-      packUberMaterialRow(data, rowIdx, matSpec, texRects);
-      texture.needsUpdate = true;
+      if (packUberMaterialRow(data, rowIdx, matSpec, texRects)) {
+        texture.needsUpdate = true;
+      }
     },
     clear,
     dispose,
@@ -814,6 +825,27 @@ vec3 vfxEvalUberRamp(
   vec3 lo = mix(lastColor, midColor, remappedLow);
   vec3 hi = mix(midColor, whiteColor, remappedHigh);
   return max(vec3(0.0), mix(lo, hi, v));
+}
+
+vec4 vfxFinalizeOutput(vec4 res, float isOpaque, float isMultiply, float isPremultiply, float isAdditive) {
+  if (isOpaque > 0.5) {
+    return vec4(res.rgb, 1.0);
+  }
+  if (isMultiply > 0.5) {
+    return vec4(mix(vec3(1.0), res.rgb, clamp(res.a, 0.0, 1.0)), 1.0);
+  }
+  if (isPremultiply > 0.5) {
+    return res;
+  }
+  vec3 outRgb = res.rgb;
+  float outA = res.a;
+  float peak = max(outRgb.r, max(outRgb.g, outRgb.b));
+  if (isAdditive > 0.5 && peak > 1.0 && outA > 0.0 && outA < 1.0) {
+    float boost = min(peak, 1.0 / outA);
+    outRgb /= boost;
+    outA *= boost;
+  }
+  return vec4(outRgb, outA);
 }
 `;
 
@@ -1116,56 +1148,47 @@ vec4 vfxEvalUberFragment(
     discard;
   }
 
-  vec4 mainRect = vfxReadMatTexel(matLut, rowIdx, 1.0);
-  vec4 mainST = vfxReadMatTexel(matLut, rowIdx, 2.0);
-  vec4 detailRect = vfxReadMatTexel(matLut, rowIdx, 3.0);
-  vec4 detailST = vfxReadMatTexel(matLut, rowIdx, 4.0);
-  vec4 alphaOvRect = vfxReadMatTexel(matLut, rowIdx, 5.0);
-  vec4 alphaOvST = vfxReadMatTexel(matLut, rowIdx, 6.0);
-  vec4 mainChan = vfxReadMatTexel(matLut, rowIdx, 7.0);
-  vec4 mainAlphaChan = vfxReadMatTexel(matLut, rowIdx, 8.0);
-  vec4 alphaOvChan = vfxReadMatTexel(matLut, rowIdx, 9.0);
-  vec4 detDistChan = vfxReadMatTexel(matLut, rowIdx, 10.0);
-  vec4 detMulChan = vfxReadMatTexel(matLut, rowIdx, 11.0);
-  vec4 detAddChan = vfxReadMatTexel(matLut, rowIdx, 12.0);
-  vec4 detDissChan = vfxReadMatTexel(matLut, rowIdx, 13.0);
-  vec4 pan0 = vfxReadMatTexel(matLut, rowIdx, 15.0);
-  vec4 pan1 = vfxReadMatTexel(matLut, rowIdx, 16.0);
-  vec4 params0 = vfxReadMatTexel(matLut, rowIdx, 17.0);
-  vec4 dissParams = vfxReadMatTexel(matLut, rowIdx, 18.0);
-  vec4 whiteCol = vfxReadMatTexel(matLut, rowIdx, 19.0);
-  vec4 midCol = vfxReadMatTexel(matLut, rowIdx, 20.0);
-  vec4 lastCol = vfxReadMatTexel(matLut, rowIdx, 21.0);
-  vec4 fresCol = vfxReadMatTexel(matLut, rowIdx, 22.0);
-  vec4 fresParams = vfxReadMatTexel(matLut, rowIdx, 23.0);
   vec4 meta31 = vfxReadMatTexel(matLut, rowIdx, 31.0);
   float texMask = meta31.w;
 
-  bool clampMainU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_U.toFixed(1)});
-  bool clampMainV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_V.toFixed(1)});
-  bool clampDetU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_DETAIL_U.toFixed(1)});
-  bool clampDetV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_DETAIL_V.toFixed(1)});
-  bool clampOvU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_U.toFixed(1)});
-  bool clampOvV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_V.toFixed(1)});
+  bool hasMainTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)});
+  bool hasDetailTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)});
+  bool useRamp = vfxHasFlag(flags, ${UBER_FLAG_USE_RAMP.toFixed(1)});
+  bool useErosion = hasDetailTex && !vfxHasFlag(flags, ${UBER_FLAG_DISABLE_EROSION.toFixed(1)});
+  bool useAlphaOv = vfxHasFlag(flags, ${UBER_FLAG_USE_ALPHA_OVERRIDE.toFixed(1)}) && hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_ALPHA_OV.toFixed(1)});
+  bool useFresnel = isFrontFacing && vfxHasFlag(flags, ${UBER_FLAG_FRESNEL.toFixed(1)});
+
+  vec4 params0 = vfxReadMatTexel(matLut, rowIdx, 17.0);
+  vec4 pan0 = (hasMainTex || hasDetailTex) ? vfxReadMatTexel(matLut, rowIdx, 15.0) : vec4(0.0);
+  vec4 dissParams = (useRamp || useErosion) ? vfxReadMatTexel(matLut, rowIdx, 18.0) : vec4(0.0);
 
   vec2 uUv0 = vec2(uv0.x, 1.0 - uv0.y);
   vec2 uUvB = vec2(uvBlend.x, 1.0 - uvBlend.y);
 
-  bool hasDetailTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)});
   vec4 detailSample = vec4(1.0);
+  float distortAmt = 0.0;
   if (hasDetailTex) {
+    vec4 detailRect = vfxReadMatTexel(matLut, rowIdx, 3.0);
+    vec4 detailST = vfxReadMatTexel(matLut, rowIdx, 4.0);
+    vec4 detDistChan = vfxReadMatTexel(matLut, rowIdx, 10.0);
+    bool clampDetU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_DETAIL_U.toFixed(1)});
+    bool clampDetV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_DETAIL_V.toFixed(1)});
     vec2 detUvU = (uUv0 + pan0.zw * timeSec) * detailST.xy + detailST.zw;
     detailSample = vfxSampleAtlasRectWrapped(atlasTex, detailRect, vec2(detUvU.x, 1.0 - detUvU.y), flipV, clampDetU, clampDetV);
     if (vfxHasFlag(flags, ${UBER_FLAG_DETAIL_SRGB.toFixed(1)})) {
       detailSample.rgb = vfxSrgbToLinear3(detailSample.rgb);
     }
+    distortAmt = vfxChannelPickerClamped(detailSample, detDistChan) * params0.z;
   }
 
-  float distortAmt = hasDetailTex ? (vfxChannelPickerClamped(detailSample, detDistChan) * params0.z) : 0.0;
-  vec2 uvOff = vfxHasFlag(flags, ${UBER_FLAG_USE_UV_OFFSET.toFixed(1)}) ? custom1.zw : vec2(0.0);
-  vec2 mainUvU = (uUv0 + uvOff + vec2(distortAmt) + pan0.xy * timeSec) * mainST.xy + mainST.zw;
   vec4 mainTex = vec4(1.0);
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)})) {
+  if (hasMainTex) {
+    vec4 mainRect = vfxReadMatTexel(matLut, rowIdx, 1.0);
+    vec4 mainST = vfxReadMatTexel(matLut, rowIdx, 2.0);
+    bool clampMainU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_U.toFixed(1)});
+    bool clampMainV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_V.toFixed(1)});
+    vec2 uvOff = vfxHasFlag(flags, ${UBER_FLAG_USE_UV_OFFSET.toFixed(1)}) ? custom1.zw : vec2(0.0);
+    vec2 mainUvU = (uUv0 + uvOff + vec2(distortAmt) + pan0.xy * timeSec) * mainST.xy + mainST.zw;
     mainTex = vfxSampleAtlasRectWrapped(atlasTex, mainRect, vec2(mainUvU.x, 1.0 - mainUvU.y), flipV, clampMainU, clampMainV);
     if (hasFlipBlend) {
       vec2 mainUvBU = (uUvB + uvOff + vec2(distortAmt) + pan0.xy * timeSec) * mainST.xy + mainST.zw;
@@ -1183,11 +1206,16 @@ vec4 vfxEvalUberFragment(
     mainTex = vec4(vec3(radialA), radialA);
   }
 
+  vec4 mainChan = vfxReadMatTexel(matLut, rowIdx, 7.0);
+  vec4 mainAlphaChan = vfxReadMatTexel(matLut, rowIdx, 8.0);
   vec3 maskedMainRgb = vfxChannelPicker(mainTex, mainChan).rgb;
   vec3 satMain = vfxDesaturate(maskedMainRgb, params0.x);
 
   vec3 baseCol;
-  if (vfxHasFlag(flags, ${UBER_FLAG_USE_RAMP.toFixed(1)})) {
+  if (useRamp) {
+    vec4 whiteCol = vfxReadMatTexel(matLut, rowIdx, 19.0);
+    vec4 midCol = vfxReadMatTexel(matLut, rowIdx, 20.0);
+    vec4 lastCol = vfxReadMatTexel(matLut, rowIdx, 21.0);
     baseCol = vfxEvalUberRamp(
       satMain,
       lastCol.rgb,
@@ -1199,19 +1227,23 @@ vec4 vfxEvalUberFragment(
   } else {
     vec3 mulFactor = vec3(1.0);
     if (hasDetailTex && vfxHasFlag(flags, ${UBER_FLAG_USE_MULTIPLY.toFixed(1)})) {
+      vec4 detMulChan = vfxReadMatTexel(matLut, rowIdx, 11.0);
       vec3 detMulRgb = vfxChannelPicker(detailSample, detMulChan).rgb;
       mulFactor = vfxDesaturate(detMulRgb, params0.y);
     }
-    float addFactor = (hasDetailTex && vfxHasFlag(flags, ${UBER_FLAG_USE_ADDITIVE.toFixed(1)}))
-      ? dot(detailSample.rgb * detAddChan.rgb, vec3(0.2126729, 0.7151522, 0.0721750))
-      : 0.0;
+    float addFactor = 0.0;
+    if (hasDetailTex && vfxHasFlag(flags, ${UBER_FLAG_USE_ADDITIVE.toFixed(1)})) {
+      vec4 detAddChan = vfxReadMatTexel(matLut, rowIdx, 12.0);
+      addFactor = dot(detailSample.rgb * detAddChan.rgb, vec3(0.2126729, 0.7151522, 0.0721750));
+    }
     baseCol = satMain * mulFactor + vec3(addFactor);
   }
 
   vec3 litCol = baseCol * vColor.rgb * max(0.0, custom1.x + 1.0);
 
   float erosion = 1.0;
-  if (hasDetailTex && !vfxHasFlag(flags, ${UBER_FLAG_DISABLE_EROSION.toFixed(1)})) {
+  if (useErosion) {
+    vec4 detDissChan = vfxReadMatTexel(matLut, rowIdx, 13.0);
     float eInput = custom1.y - 1.0;
     float edge1 = mix(dissParams.x, dissParams.y, eInput);
     float edge2 = edge1 - dissParams.x;
@@ -1220,7 +1252,13 @@ vec4 vfxEvalUberFragment(
   }
 
   float alphaOv = 1.0;
-  if (vfxHasFlag(flags, ${UBER_FLAG_USE_ALPHA_OVERRIDE.toFixed(1)}) && hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_ALPHA_OV.toFixed(1)})) {
+  if (useAlphaOv) {
+    vec4 alphaOvRect = vfxReadMatTexel(matLut, rowIdx, 5.0);
+    vec4 alphaOvST = vfxReadMatTexel(matLut, rowIdx, 6.0);
+    vec4 alphaOvChan = vfxReadMatTexel(matLut, rowIdx, 9.0);
+    vec4 pan1 = vfxReadMatTexel(matLut, rowIdx, 16.0);
+    bool clampOvU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_U.toFixed(1)});
+    bool clampOvV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_V.toFixed(1)});
     vec2 ovUvU = (uUv0 + pan1.xy * timeSec) * alphaOvST.xy + alphaOvST.zw;
     vec4 ovSample = vfxSampleAtlasRectWrapped(atlasTex, alphaOvRect, vec2(ovUvU.x, 1.0 - ovUvU.y), flipV, clampOvU, clampOvV);
     if (hasFlipBlend) {
@@ -1246,7 +1284,9 @@ vec4 vfxEvalUberFragment(
     discard;
   }
 
-  if (isFrontFacing && vfxHasFlag(flags, ${UBER_FLAG_FRESNEL.toFixed(1)})) {
+  if (useFresnel) {
+    vec4 fresCol = vfxReadMatTexel(matLut, rowIdx, 22.0);
+    vec4 fresParams = vfxReadMatTexel(matLut, rowIdx, 23.0);
     float ndv = clamp(dot(normalize(normalWs), normalize(viewDirWs)), 0.0, 1.0);
     float fres = pow(max(0.0, 1.0 - ndv), max(0.05, fresParams.x)) * fresParams.y;
     if (vfxHasFlag(flags, ${UBER_FLAG_INVERT_FRESNEL.toFixed(1)})) {
@@ -1283,27 +1323,24 @@ vec4 vfxEvalPilotoWarpFragment(
   if (hasSceneTex < 0.5) discard;
   vec4 hdr = vfxReadMatTexel(matLut, rowIdx, 0.0);
   float flags = hdr.y;
-  vec4 distRect = vfxReadMatTexel(matLut, rowIdx, 1.0);
-  vec4 distST = vfxReadMatTexel(matLut, rowIdx, 2.0);
-  vec4 alphaRect = vfxReadMatTexel(matLut, rowIdx, 3.0);
-  vec4 alphaST = vfxReadMatTexel(matLut, rowIdx, 4.0);
-  vec4 alphaChan = vfxReadMatTexel(matLut, rowIdx, 8.0);
-  vec4 pan0 = vfxReadMatTexel(matLut, rowIdx, 15.0);
-  vec4 params0 = vfxReadMatTexel(matLut, rowIdx, 17.0);
   vec4 meta31 = vfxReadMatTexel(matLut, rowIdx, 31.0);
   float texMask = meta31.w;
-  bool clampDistU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_U.toFixed(1)});
-  bool clampDistV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_V.toFixed(1)});
-  bool clampAlphaU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_U.toFixed(1)});
-  bool clampAlphaV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_V.toFixed(1)});
+  bool hasDistTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)});
+  bool hasAlphaTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)});
+  vec4 params0 = vfxReadMatTexel(matLut, rowIdx, 17.0);
+  vec4 pan0 = (hasDistTex || hasAlphaTex) ? vfxReadMatTexel(matLut, rowIdx, 15.0) : vec4(0.0);
 
   vec2 coordBase = vfxHasFlag(flags, ${UBER_FLAG_POLAR_COORDS.toFixed(1)})
     ? vfxPolarCoords(uv0, vec2(0.5))
     : uv0;
 
-  vec2 dUv = coordBase * distST.xy + distST.zw + pan0.xy * timeSec;
   vec2 nOffset = vec2(0.0);
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)})) {
+  if (hasDistTex) {
+    vec4 distRect = vfxReadMatTexel(matLut, rowIdx, 1.0);
+    vec4 distST = vfxReadMatTexel(matLut, rowIdx, 2.0);
+    bool clampDistU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_U.toFixed(1)});
+    bool clampDistV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_V.toFixed(1)});
+    vec2 dUv = coordBase * distST.xy + distST.zw + pan0.xy * timeSec;
     vec4 nSamp = vfxSampleAtlasRectWrapped(atlasTex, distRect, dUv, flipV, clampDistU, clampDistV);
     nOffset = vfxHasFlag(flags, ${UBER_FLAG_UNPACK_NORMALS.toFixed(1)})
       ? (nSamp.xy * 2.0 - 1.0)
@@ -1311,7 +1348,12 @@ vec4 vfxEvalPilotoWarpFragment(
   }
 
   float maskA = 1.0;
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)})) {
+  if (hasAlphaTex) {
+    vec4 alphaRect = vfxReadMatTexel(matLut, rowIdx, 3.0);
+    vec4 alphaST = vfxReadMatTexel(matLut, rowIdx, 4.0);
+    vec4 alphaChan = vfxReadMatTexel(matLut, rowIdx, 8.0);
+    bool clampAlphaU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_U.toFixed(1)});
+    bool clampAlphaV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_ALPHA_OV_V.toFixed(1)});
     vec2 aUv = coordBase * alphaST.xy + alphaST.zw + pan0.zw * timeSec;
     vec4 aSamp = vfxSampleAtlasRectWrapped(atlasTex, alphaRect, aUv, flipV, clampAlphaU, clampAlphaV);
     maskA = vfxChannelPickerAdd(aSamp, alphaChan);
@@ -1357,39 +1399,41 @@ vec4 vfxEvalPbrFxFragment(
     discard;
   }
 
-  vec4 baseRect = vfxReadMatTexel(matLut, rowIdx, 1.0);
-  vec4 baseST = vfxReadMatTexel(matLut, rowIdx, 2.0);
-  vec4 detRect = vfxReadMatTexel(matLut, rowIdx, 3.0);
-  vec4 detST = vfxReadMatTexel(matLut, rowIdx, 4.0);
-  vec4 dissRect = vfxReadMatTexel(matLut, rowIdx, 5.0);
-  vec4 dissST = vfxReadMatTexel(matLut, rowIdx, 6.0);
-  vec4 detDistChan = vfxReadMatTexel(matLut, rowIdx, 10.0);
-  vec4 detDissChan = vfxReadMatTexel(matLut, rowIdx, 13.0);
-  vec4 pan0 = vfxReadMatTexel(matLut, rowIdx, 15.0);
-  vec4 pan1 = vfxReadMatTexel(matLut, rowIdx, 16.0);
-  vec4 dissParams = vfxReadMatTexel(matLut, rowIdx, 18.0);
   vec4 baseTint = vfxReadMatTexel(matLut, rowIdx, 19.0);
   vec4 emisTintInt = vfxReadMatTexel(matLut, rowIdx, 20.0);
-  vec4 fresCol = vfxReadMatTexel(matLut, rowIdx, 22.0);
-  vec4 fresNormOcc = vfxReadMatTexel(matLut, rowIdx, 23.0);
-  vec4 normRect = vfxReadMatTexel(matLut, rowIdx, 24.0);
-  vec4 normST = vfxReadMatTexel(matLut, rowIdx, 25.0);
-  vec4 ormRect = vfxReadMatTexel(matLut, rowIdx, 26.0);
-  vec4 ormST = vfxReadMatTexel(matLut, rowIdx, 27.0);
-  vec4 emisRect = vfxReadMatTexel(matLut, rowIdx, 28.0);
-  vec4 emisST = vfxReadMatTexel(matLut, rowIdx, 29.0);
   vec4 pbrScalars = vfxReadMatTexel(matLut, rowIdx, 30.0);
   vec4 meta31 = vfxReadMatTexel(matLut, rowIdx, 31.0);
   float texMask = meta31.w;
+
+  bool hasBaseTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)});
+  bool hasDetTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)});
+  bool hasNormTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_NORMAL.toFixed(1)});
+  bool useBaseAsNormal = !hasNormTex && hasBaseTex && vfxHasFlag(flags, ${UBER_FLAG_USE_BASE_AS_NORMAL.toFixed(1)});
+  bool hasOrmTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_ORM.toFixed(1)});
+  bool hasEmisTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_EMISSION.toFixed(1)});
+  bool useErosion = !vfxHasFlag(flags, ${UBER_FLAG_DISABLE_EROSION.toFixed(1)});
+  bool hasDissTex = useErosion && hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DISSOLVE.toFixed(1)});
+  bool useFresnel = vfxHasFlag(flags, ${UBER_FLAG_FRESNEL.toFixed(1)});
+
   bool clampMainU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_U.toFixed(1)});
   bool clampMainV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_V.toFixed(1)});
   bool clampDetU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_DETAIL_U.toFixed(1)});
   bool clampDetV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_DETAIL_V.toFixed(1)});
 
+  vec4 pan0 = (hasBaseTex || hasDetTex) ? vfxReadMatTexel(matLut, rowIdx, 15.0) : vec4(0.0);
+  vec4 pan1 = (hasEmisTex || useBaseAsNormal || hasDissTex || (useErosion && !vfxHasFlag(flags, ${UBER_FLAG_IS_PARTICLE.toFixed(1)})))
+    ? vfxReadMatTexel(matLut, rowIdx, 16.0)
+    : vec4(0.0);
+  vec4 fresNormOcc = (hasNormTex || hasOrmTex || useFresnel)
+    ? vfxReadMatTexel(matLut, rowIdx, 23.0)
+    : vec4(1.0, 1.0, 1.0, 1.0);
+
   vec2 uUv0 = vec2(uv0.x, 1.0 - uv0.y);
 
   vec4 detSample = vec4(1.0);
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)})) {
+  if (hasDetTex) {
+    vec4 detRect = vfxReadMatTexel(matLut, rowIdx, 3.0);
+    vec4 detST = vfxReadMatTexel(matLut, rowIdx, 4.0);
     vec2 duv = uUv0 * detST.xy + detST.zw + pan0.zw * timeSec;
     detSample = vfxSampleAtlasRectWrapped(atlasTex, detRect, vec2(duv.x, 1.0 - duv.y), flipV, clampDetU, clampDetV);
     if (vfxHasFlag(flags, ${UBER_FLAG_DETAIL_SRGB.toFixed(1)})) {
@@ -1397,13 +1441,19 @@ vec4 vfxEvalPbrFxFragment(
     }
   }
 
-  float distSignal = vfxChannelPickerClamped(detSample, detDistChan);
-  vec2 uvOff = vfxHasFlag(flags, ${UBER_FLAG_USE_UV_OFFSET.toFixed(1)}) ? custom1.zw : vec2(0.0);
-  vec2 mainUv = (uUv0 + uvOff + vec2(distSignal * meta31.x)) * baseST.xy + baseST.zw + pan0.xy * timeSec;
-  vec2 mainUvFlip = vec2(mainUv.x, 1.0 - mainUv.y);
+  float distSignal = (hasDetTex || abs(meta31.x) > 1e-6 || abs(meta31.y) > 1e-6)
+    ? vfxChannelPickerClamped(detSample, vfxReadMatTexel(matLut, rowIdx, 10.0))
+    : 0.0;
 
   vec4 albedoSamp = vec4(1.0);
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)})) {
+  vec4 baseRect = vec4(0.0, 0.0, 1.0, 1.0);
+  vec2 mainUvFlip = vec2(uUv0.x, 1.0 - uUv0.y);
+  if (hasBaseTex) {
+    baseRect = vfxReadMatTexel(matLut, rowIdx, 1.0);
+    vec4 baseST = vfxReadMatTexel(matLut, rowIdx, 2.0);
+    vec2 uvOff = vfxHasFlag(flags, ${UBER_FLAG_USE_UV_OFFSET.toFixed(1)}) ? custom1.zw : vec2(0.0);
+    vec2 mainUv = (uUv0 + uvOff + vec2(distSignal * meta31.x)) * baseST.xy + baseST.zw + pan0.xy * timeSec;
+    mainUvFlip = vec2(mainUv.x, 1.0 - mainUv.y);
     albedoSamp = vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUvFlip, flipV, clampMainU, clampMainV);
     if (vfxHasFlag(flags, ${UBER_FLAG_MAIN_SRGB.toFixed(1)})) {
       albedoSamp.rgb = vfxSrgbToLinear3(albedoSamp.rgb);
@@ -1417,13 +1467,15 @@ vec4 vfxEvalPbrFxFragment(
   // Normal perturbation via screen-space derivative cotangent frame (Mikkelsen/Schuler)
   vec3 N = normalize(normalWs);
   if (!isFrontFacing) N = -N;
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_NORMAL.toFixed(1)})) {
+  if (hasNormTex) {
+    vec4 normRect = vfxReadMatTexel(matLut, rowIdx, 24.0);
+    vec4 normST = vfxReadMatTexel(matLut, rowIdx, 25.0);
     vec2 nuv = uUv0 * normST.xy + normST.zw;
     vec2 nuvFlip = vec2(nuv.x, 1.0 - nuv.y);
     vec3 nm = vfxSampleAtlasRectWrapped(atlasTex, normRect, nuvFlip, flipV, clampMainU, clampMainV).xyz * 2.0 - 1.0;
     mat3 tbn = vfxComputeCotangentFrame(N, -viewDirWs, nuvFlip);
     N = normalize(tbn * vec3(nm.x * fresNormOcc.z, nm.y * fresNormOcc.z, max(0.05, nm.z)));
-  } else if (vfxHasFlag(flags, ${UBER_FLAG_USE_BASE_AS_NORMAL.toFixed(1)}) && hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)})) {
+  } else if (useBaseAsNormal) {
     vec2 eps = vec2(0.004, 0.0);
     float hL = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUvFlip - eps.xy, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
     float hR = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUvFlip + eps.xy, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
@@ -1436,7 +1488,9 @@ vec4 vfxEvalPbrFxFragment(
   float ao = 1.0;
   float roughness = clamp(1.0 - pbrScalars.x, 0.06, 1.0);
   float metallic = clamp(pbrScalars.y, 0.0, 1.0);
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_ORM.toFixed(1)})) {
+  if (hasOrmTex) {
+    vec4 ormRect = vfxReadMatTexel(matLut, rowIdx, 26.0);
+    vec4 ormST = vfxReadMatTexel(matLut, rowIdx, 27.0);
     vec2 ormUv = uUv0 * ormST.xy + ormST.zw;
     vec4 orm = vfxSampleAtlasRectWrapped(atlasTex, ormRect, vec2(ormUv.x, 1.0 - ormUv.y), flipV, clampMainU, clampMainV);
     ao = mix(1.0, orm.r, clamp(fresNormOcc.w, 0.0, 1.0));
@@ -1481,7 +1535,9 @@ vec4 vfxEvalPbrFxFragment(
   vec3 litCol = directCol + iblCol;
 
   // Emission + Self illumination (PBR FX.shadergraph: custom1.x boosts BaseColor, not Emission)
-  if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_EMISSION.toFixed(1)})) {
+  if (hasEmisTex) {
+    vec4 emisRect = vfxReadMatTexel(matLut, rowIdx, 28.0);
+    vec4 emisST = vfxReadMatTexel(matLut, rowIdx, 29.0);
     vec2 eUv = uUv0 * emisST.xy + emisST.zw + pan1.xy * timeSec;
     vec3 emSamp = vfxSampleAtlasRectWrapped(atlasTex, emisRect, vec2(eUv.x, 1.0 - eUv.y), flipV, clampMainU, clampMainV).rgb;
     if (vfxHasFlag(flags, ${UBER_FLAG_MAIN_SRGB.toFixed(1)})) {
@@ -1495,12 +1551,16 @@ vec4 vfxEvalPbrFxFragment(
 
   // Dissolve
   float erosion = 1.0;
-  if (!vfxHasFlag(flags, ${UBER_FLAG_DISABLE_EROSION.toFixed(1)})) {
+  if (useErosion) {
+    vec4 dissParams = vfxReadMatTexel(matLut, rowIdx, 18.0);
+    vec4 detDissChan = vfxReadMatTexel(matLut, rowIdx, 13.0);
     float dissAmt = vfxHasFlag(flags, ${UBER_FLAG_IS_PARTICLE.toFixed(1)}) ? (custom1.y - 1.0) : pan1.w;
     float edge1 = mix(dissParams.x, dissParams.y, dissAmt);
     float edge2 = edge1 - dissParams.x;
     float dissVal = 1.0;
-    if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DISSOLVE.toFixed(1)})) {
+    if (hasDissTex) {
+      vec4 dissRect = vfxReadMatTexel(matLut, rowIdx, 5.0);
+      vec4 dissST = vfxReadMatTexel(matLut, rowIdx, 6.0);
       vec2 duv = (uUv0 + vec2(distSignal * meta31.y)) * dissST.xy + dissST.zw + pan1.xy * timeSec;
       vec4 dissSample = vfxSampleAtlasRectWrapped(atlasTex, dissRect, vec2(duv.x, 1.0 - duv.y), flipV, clampDetU, clampDetV);
       if (vfxHasFlag(flags, ${UBER_FLAG_ALPHA_OV_SRGB.toFixed(1)}) || vfxHasFlag(flags, ${UBER_FLAG_DETAIL_SRGB.toFixed(1)})) {
@@ -1518,7 +1578,8 @@ vec4 vfxEvalPbrFxFragment(
     discard;
   }
 
-  if (vfxHasFlag(flags, ${UBER_FLAG_FRESNEL.toFixed(1)})) {
+  if (useFresnel) {
+    vec4 fresCol = vfxReadMatTexel(matLut, rowIdx, 22.0);
     float ndv = clamp(dot(N, V), 0.0, 1.0);
     float fres = pow(max(0.0, 1.0 - ndv), max(0.05, fresNormOcc.x)) * fresNormOcc.y;
     litCol += fresCol.rgb * fres * hdrScale;

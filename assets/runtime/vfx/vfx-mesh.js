@@ -351,27 +351,7 @@ void main() {
     );
   }
 
-  if (uOpaque > 0.5) {
-    gl_FragColor = vec4(res.rgb, 1.0);
-    return;
-  }
-  if (uIsMultiply > 0.5) {
-    gl_FragColor = vec4(mix(vec3(1.0), res.rgb, clamp(res.a, 0.0, 1.0)), 1.0);
-    return;
-  }
-  if (uIsPremultiply > 0.5) {
-    gl_FragColor = res;
-    return;
-  }
-  vec3 outRgb = res.rgb;
-  float outA = res.a;
-  float peak = max(outRgb.r, max(outRgb.g, outRgb.b));
-  if (uIsAdditive > 0.5 && peak > 1.0 && outA > 0.0 && outA < 1.0) {
-    float boost = min(peak, 1.0 / outA);
-    outRgb /= boost;
-    outA *= boost;
-  }
-  gl_FragColor = vec4(outRgb, outA);
+  gl_FragColor = vfxFinalizeOutput(res, uOpaque, uIsMultiply, uIsPremultiply, uIsAdditive);
 }
 `;
 
