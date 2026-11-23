@@ -533,7 +533,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
       shaderProfile: 'piloto_pbr_fx',
       shaderKind,
       surface,
-      opaque: surfaceMode === '0' && !alphaClipping,
+      opaque: surfaceMode === '0',
       blend: pbrBlend,
       srcBlend,
       dstBlend,
@@ -610,7 +610,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
       cullMode,
       cutoff: alphaClipping ? alphaClipThreshold : undefined,
       lit: true,
-      opaque: surfaceMode === '0' && !alphaClipping,
+      opaque: surfaceMode === '0',
       depthTest: VFX_DEPTH_TESTS[zTest],
       depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : (surfaceMode === '0'),
       softParticles: false,
@@ -904,15 +904,14 @@ function computeShapeRotation(trQuat, sRotMatch, mappedType) {
   // Canonical Unity shapes point +Z_lhs (-Z_rhs); HGame cone/circle/hemisphere use +Y (-90 deg X offset from +Y to -Z).
   const s45 = Math.SQRT1_2;
   const qOff = quatMul(quatMul(qTr, qSh), [-s45, 0, 0, s45]);
+  const euler = quatToYxzEuler(qOff);
   const [x, y, z, w] = qOff;
-  const r01 = 2 * (x * y - z * w);
   const r11 = 1 - 2 * (x * x + z * z);
-  const r21 = 2 * (y * z + x * w);
-  // Check transformed +Y axis (r01, r11, r21) to omit redundant identity/planar rotations.
   const isFlat = mappedType === 'circle' || mappedType === 'donut' || mappedType === 'rectangle';
-  if (isFlat && Math.abs(r11) > 0.985) return null;
-  if (!isFlat && r11 > 0.985) return null;
-  return quatToYxzEuler(qOff);
+  const hasYawOrRoll = Math.abs(euler[1]) >= 0.005 || Math.abs(euler[2]) >= 0.005;
+  if (Math.abs(euler[0]) < 0.005 && !hasYawOrRoll) return null;
+  if (isFlat && r11 < -0.985 && !hasYawOrRoll) return null;
+  return euler;
 }
 
 function mapShapeType(unityType) {
