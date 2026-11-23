@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Unify keyboard, gamepad, touch, and bilingual UI across the three action archetypes, including upgrade cancellation and result replay input. Fix simulation stepping and contact-grid coverage in the horde archetype.
+
 - Use shared keyboard, gamepad and touch controls and install the Chinese and English interface in the default Pixi arena.
 
 - Localize the generated action game's built-in shell and touch control labels in Chinese and English.

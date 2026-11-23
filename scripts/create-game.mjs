@@ -214,6 +214,8 @@ async function main() {
       await cp(path.join(mainSource, 'main.js'), path.join(stage, 'src', 'main.js'), { force: true });
       if (archName === 'card-ui') {
         await cp(path.join(mainSource, 'index.html'), path.join(stage, 'index.html'), { force: true });
+      } else {
+        await cp(path.join(archetypesDir, 'action-interface.js'), path.join(stage, 'src', 'action-interface.js'));
       }
     } else {
       await cp(path.join(mainSource, 'main.js'), path.join(stage, 'src', 'main.js'), { force: true });
@@ -271,6 +273,7 @@ async function main() {
       gameConfig: config,
       recipe: options.recipe,
       blueprint: options.blueprint,
+      archetype: options.archetype,
     });
     for (const [docName, docContent] of Object.entries(designDocs)) {
       await writeFile(path.join(designDocsDir, docName), docContent);

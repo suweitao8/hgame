@@ -322,6 +322,14 @@ test('game session orchestrates lifecycle, combat, choices, persistence, and UI 
   assert.equal(session.state.phase, 'choice');
   assert.equal(body.querySelector('#levelup').hidden, false);
 
+  assert.equal(session.cancelChoice(), true);
+  assert.equal(session.state.phase, 'playing');
+  assert.deepEqual(session.state.choices, []);
+  assert.deepEqual(chosen, []);
+  assert.equal(body.querySelector('#levelup').hidden, true);
+  assert.equal(session.cancelChoice(), false);
+  session.presentChoices();
+
   // Click first card
   const firstCard = body.querySelector('[data-upgrade="atk-up"]');
   assert.ok(firstCard);
@@ -394,6 +402,10 @@ test('per-game design docs gate catches missing docs, placeholders, blueprint dr
   try {
     const gen = spawnSync(process.execPath, [createGameScript, gameDir, '--archetype', 'action-2d', '--theme', 'scifi', '--name', '文档护栏', '--no-git'], { encoding: 'utf8' });
     assert.equal(gen.status, 0, gen.stderr);
+    const inputGuide = await readFile(path.join(gameDir, 'docs', 'design', 'UI-UX.md'), 'utf8');
+    assert.match(inputGuide, /Xbox.*X.*A\/Y/);
+    assert.match(inputGuide, /取消.*放弃当前升级/);
+    assert.match(inputGuide, /\?lang=en/);
 
     const syncedCheck = path.join(gameDir, 'scripts', 'check-design-docs.mjs');
     const syncedAccept = path.join(gameDir, 'scripts', 'accept.mjs');

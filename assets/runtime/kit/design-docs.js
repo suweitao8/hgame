@@ -12,7 +12,7 @@ export const REQUIRED_DESIGN_DOCS = Object.freeze([
 
 /**
  * Render the 4 canonical per-game design documents from a game's config, engine recipe, and optional blueprint.
- * @param {{ gameConfig?: { id?: string, name?: string, version?: string }, recipe?: { profile?: string, renderer?: string, physics?: string | null, tickHz?: number }, blueprint?: object | null }} [options]
+ * @param {{ gameConfig?: { id?: string, name?: string, version?: string }, recipe?: { profile?: string, renderer?: string, physics?: string | null, tickHz?: number }, blueprint?: object | null, archetype?: string }} [options]
  * @returns {{ 'GDD.md': string, 'ART-AND-AUDIO.md': string, 'UI-UX.md': string, 'LEVEL.md': string }}
  */
 export function renderGameDesignDocs(options = {}) {
@@ -32,6 +32,13 @@ export function renderGameDesignDocs(options = {}) {
     : defineGameBlueprint({ meta: { id, title, genre: defaultGenre, renderer, tickHz } });
   const theme = getArtTheme(bp.art.theme);
   const { feel, balance, progression } = bp.design;
+  const actionArchetype = ['action-2d', 'horde-2d', 'arena-3d'].includes(options.archetype ?? '');
+  const actionInputs = [
+    '- **键鼠**：WASD／方向键移动，J 攻击，K 冲刺，Esc 暂停。菜单用 J 确认、K 取消。',
+    '- **Xbox**：左摇杆移动，X 攻击，A/Y 冲刺。菜单用 A 确认、B 取消。',
+    '- **触屏**：左摇杆控制移动，右侧大按钮攻击，冲刺在攻击右上方。摇杆偏转越大移动越快。菜单直接点击。',
+    '- **菜单与语言**：升级可取消并放弃当前升级，结算确认重开。语言跟随浏览器，可用 `?lang=zh` / `?lang=en` 指定。',
+  ].join('\n');
   const upgradesText = progression.upgrades
     .map(u => `- \`${u.id}\` · **${u.label}**：${u.pos || '增益'} / ${u.neg || '无副作用'}`)
     .join('\n');
@@ -156,8 +163,7 @@ ${wavesText}
 
 ## 3. 输入映射与 UX 动效
 
-- **PC 键鼠**：P1 统一 \`WASD\` 移动 + \`J K L U I O\` 技能/确认，\`Esc\` 暂停。
-- **移动端触屏**：通过 \`createTouchControls({ mode: 'touch-only' })\` 仅在触屏操作时无侵入呼出。
+${actionArchetype ? actionInputs : '- **输入映射**：按游戏实际绑定记录键鼠、手柄和触屏操作。'}
 - **触感反馈**：由 \`bindUiUxDOM\`（主题 \`${theme.uiTheme}\`）统一驱动 3D 卡片悬停倾斜、残影血条（\`data-ui-bar\`）、弹簧跳数（\`data-ui-metric\`）与交互音效。
 `;
 

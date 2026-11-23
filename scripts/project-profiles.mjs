@@ -19,18 +19,18 @@ export const ARCHETYPE_STARTERS = Object.freeze({
   'action-2d': {
     profile: '2d', renderer: 'webgl2d', tickHz: 60, features: ['audio', 'save'],
     includeRuntime: ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
-      'integrations/webgl2d.js', 'vfx/index.js', 'platform/input/arcade.js', 'integrations/touch-controls.js', 'kit/index.js'],
+      'integrations/webgl2d.js', 'vfx/index.js', 'integrations/touch-controls.js', 'kit/index.js', 'ui/i18n.js'],
   },
   'horde-2d': {
     profile: '2d', renderer: 'webgl2d', tickHz: 60, features: ['audio', 'save'],
     includeRuntime: ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
-      'integrations/webgl2d.js', 'world/swarm-ecs.js', 'vfx/index.js', 'platform/input/arcade.js', 'integrations/touch-controls.js', 'kit/index.js'],
+      'integrations/webgl2d.js', 'world/swarm-ecs.js', 'vfx/index.js', 'integrations/touch-controls.js', 'kit/index.js', 'ui/i18n.js'],
   },
   'arena-3d': {
     profile: '3d', renderer: 'threejs', tickHz: 60, physics: 'rapier3d', quality: 'auto', features: ['assets', 'audio', 'save', 'adaptiveQuality3d'],
     includeRuntime: ['core/application.js', 'core/config.js', 'core/scene.js', 'core/component.js', 'core/entity.js',
       'integrations/three.js', 'integrations/sky3d.js', 'world/terrain3d.js', 'vfx/index.js',
-      'platform/input/arcade.js', 'integrations/touch-controls.js', 'kit/index.js'],
+      'integrations/touch-controls.js', 'kit/index.js', 'ui/i18n.js'],
   },
   'card-ui': {
     profile: 'ui', renderer: 'dom', tickHz: 0, features: ['audio', 'save'],

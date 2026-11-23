@@ -64,13 +64,14 @@ export async function run({ page, readState, checkpoint }) {
   async function accept(flags = [], expected = 0, directory = game) {
     const args = ['scripts/accept.mjs', '.', '--release', '--json', ...flags];
     let result;
+    let status = 0;
     try {
       result = await exec(process.execPath, args, { cwd: directory, env, timeout: 180_000, maxBuffer: 4 * 1024 * 1024 });
-      assert.equal(expected, 0);
     } catch (error) {
-      assert.equal(error.code, expected, error.stderr || error.stdout || error.message);
+      status = error.code;
       result = error;
     }
+    assert.ok([expected].flat().includes(status), result.stderr || result.stdout || result.message);
     return JSON.parse(result.stdout);
   }
   const report = await accept();
@@ -152,6 +153,95 @@ export async function run({ page, readState, checkpoint, auditUi }) {
   assert.equal(pixiReport.gates.webasset.status, 'passed');
   assert.equal((await accept(['--verify-fresh'], 0, pixi)).releaseReady, true);
   console.log(JSON.stringify({ profile: 'pixi-arena', target: 'toy', releaseReady: true, ...pixiReport.gates.release.measured }));
+
+  for (const profile of ['horde-2d', 'arena-3d']) {
+    const project = path.join(tmp, 'release-' + profile);
+    const target = profile === 'arena-3d' ? 'web' : 'toy';
+    const quality = profile === 'arena-3d' ? ['--quality', 'low'] : [];
+    await exec(process.execPath, ['scripts/create-game.mjs', project, '--archetype', profile, ...quality, '--no-git'], { cwd: root });
+    const designPath = path.join(project, 'src', 'game.design.json');
+    const design = JSON.parse(await readFile(designPath, 'utf8'));
+    // A short authored defeat fixture exercises the real damage path in each build.
+    Object.assign(design.design.balance, { playerHp: 30, gruntDamage: 10, gruntHp: 120 });
+    await writeFile(designPath, JSON.stringify(design));
+    await writeFile(path.join(project, 'tests', 'release.json'), JSON.stringify({
+      ...spec, target,
+      autoplay: 'The authored defeat fixture verifies result and replay rather than a clear.',
+      limits: { ...spec.limits, zipBytes: 3_000_000 },
+    }));
+    await writeFile(path.join(project, 'tests', 'acceptance.mjs'), `
+async function confirm(page) {
+  await page.keyboard.down('j');
+  try {
+    await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 4000 });
+  } finally {
+    await page.keyboard.up('j');
+  }
+}
+
+export async function run({ page, readState, checkpoint, auditUi }) {
+  const before = await readState();
+  if (before.phase !== 'title') throw new Error('Release did not start at its title');
+  await auditUi('title');
+  await checkpoint('start and move', async () => {
+    await confirm(page);
+    await auditUi('playing');
+    const x = (await readState()).player.x;
+    await page.keyboard.down('d');
+    try {
+      await page.waitForFunction(x => window.__hgameState().player.x > x, x, { timeout: 4000 });
+    } finally {
+      await page.keyboard.up('d');
+    }
+  });
+  await checkpoint('take damage and reach the result', async () => {
+    const directions = ['d', 's', 'a', 'w'];
+    for (let turn = 0; turn < 16 && (await readState()).phase !== 'result'; turn++) {
+      await page.keyboard.press(directions[turn % directions.length], { delay: 1200 });
+    }
+    const result = await readState();
+    if (result.phase !== 'result' || result.hp !== 0 || result.victory || result.meta.runs !== before.meta.runs + 1) {
+      throw new Error('Defeat did not record the completed run');
+    }
+    await auditUi('result');
+  });
+  await checkpoint('restart from result', async () => {
+    await page.locator('#mute').focus();
+    await page.keyboard.press('Enter', { delay: 120 });
+    const muted = await readState();
+    if (muted.phase !== 'result' || !muted.audio.muted) throw new Error('Enter on Mute must keep the result open');
+    await page.evaluate(() => {
+      const pad = {
+        index: 0, id: 'Xbox', mapping: 'standard', connected: true, axes: [0, 0],
+        buttons: Array.from({ length: 16 }, (_, index) => ({ value: index === 0 ? 1 : 0 })),
+      };
+      Object.defineProperty(navigator, 'getGamepads', { value: () => [pad] });
+    });
+    await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 4000 });
+    const restarted = await readState();
+    if (restarted.hp !== restarted.maxHp || Math.abs(restarted.player.x) > 0.001) {
+      throw new Error('Replay did not reset HP and position');
+    }
+    await auditUi('replay');
+  });
+}
+`);
+    // Software-only hosts must still exercise the packaged lifecycle. A missed
+    // frame budget stays a failed release, even when all gameplay checks pass.
+    const complete = await accept([], profile === 'arena-3d' ? [0, 1] : 0, project);
+    assert.equal(complete.playable, true, complete.problems.join('; '));
+    assert.equal(complete.gates.package.status, 'passed');
+    assert.equal(complete.gates.package.playtest.status, 'passed');
+    if (complete.releaseReady) {
+      assert.equal((await accept(['--verify-fresh'], 0, project)).releaseReady, true);
+    } else {
+      const errors = complete.gates.release.errors;
+      assert.ok(errors.length > 0 && errors.every(message =>
+        /^(desktop|mobile)\.p95Ms exceeded budget/.test(message)), complete.problems.join('; '));
+      assert.equal(complete.gates.release.status, 'failed');
+    }
+    console.log(JSON.stringify({ profile, target, releaseReady: complete.releaseReady, ...complete.gates.release.measured }));
+  }
 } finally {
   await Promise.all([close(catalog), close(preview)]);
   await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });

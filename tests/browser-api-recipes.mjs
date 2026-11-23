@@ -64,7 +64,7 @@ try {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     page.on('response', response => { if (response.status() >= 400 && !response.url().endsWith('/favicon.ico')) errors.push(`${response.status()} ${response.url()}`); });
-    if (name === 'action-2d' || isPixiArena) await page.addInitScript(() => {
+    if (isArchetype || isPixiArena) await page.addInitScript(() => {
       const pad = window.__recipePad = {
         index: 0, id: 'Xbox', mapping: 'standard', connected: true, axes: [0, 0],
         buttons: Array.from({ length: 16 }, () => ({ value: 0 })),
@@ -75,13 +75,11 @@ try {
     await page.waitForFunction(() => typeof window.__hgameState === 'function', null, { timeout: 10000 })
       .catch(error => { throw new Error(`${name}: ${errors.join('; ')} ${error.message}`); });
     if (isArchetype) {
-      if (name === 'action-2d') {
-        assert.equal(await page.locator('html').getAttribute('lang'), 'en');
-        assert.equal(await page.locator('#start').textContent(), 'Start');
-        await page.keyboard.press('j', { delay: 80 });
-      }
-      else await page.locator('#start').click({ timeout: 3000 });
+      assert.equal(await page.locator('html').getAttribute('lang'), 'en', name);
+      assert.equal(await page.locator('#start').textContent(), 'Start', name);
+      await page.keyboard.down('j');
       await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 3000 });
+      await page.keyboard.up('j');
     }
     const before = await page.evaluate(() => window.__hgameState());
     await page.keyboard.down('d');
@@ -183,7 +181,7 @@ try {
       }
       assert.deepEqual(errors, [], 'Pixi arena keyboard, Xbox, and touch');
     }
-    if (name === 'action-2d') {
+    if (isArchetype) {
       await page.evaluate(() => { window.__recipePad.axes[0] = 0.65; });
       await page.waitForFunction(x => window.__hgameState().player.x > x, after.player.x, { timeout: 5000 });
       await page.evaluate(() => {
@@ -208,7 +206,7 @@ try {
         const attack = page.locator('.hgame-skill-btn[data-action="attack"]');
         const dash = page.locator('.hgame-skill-btn[data-action="dash"]');
         await joystick.waitFor({ timeout: 3000 });
-        assert.equal(await attack.locator('.hgame-btn-label').textContent(), 'Attack');
+        assert.equal(await attack.locator('.hgame-btn-label').textContent(), name === 'horde-2d' ? 'Pulse' : 'Attack');
         assert.equal(await dash.locator('.hgame-btn-label').textContent(), 'Dash');
         const stick = await joystick.boundingBox();
         const large = await attack.boundingBox();
@@ -231,6 +229,28 @@ try {
       await page.waitForFunction(() => typeof window.__hgameState === 'function');
       assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
       assert.equal(await page.locator('#start').textContent(), '开始');
+      if (name === 'arena-3d' && browserName === 'chromium') {
+        const designPath = path.join(game, 'src/game.design.json');
+        const design = JSON.parse(await readFile(designPath, 'utf8'));
+        Object.assign(design.design.balance, { gruntHp: 1, playerHp: 500 });
+        await writeFile(designPath, JSON.stringify(design));
+        await page.setViewportSize({ width: 960, height: 540 });
+        await page.reload();
+        await page.waitForFunction(() => typeof window.__hgameState === 'function');
+        await page.evaluate(() => { window.__recipePad.buttons[0].value = 1; });
+        await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 4000 });
+        await page.evaluate(() => { window.__recipePad.buttons[0].value = 0; });
+        await page.waitForFunction(() => window.__hgameState().phase === 'choice', null, { timeout: 20000 });
+        assert.ok(await page.locator('[data-upgrade]').count() > 0);
+        await page.evaluate(() => { window.__recipePad.buttons[1].value = 1; });
+        await page.waitForFunction(() => {
+          const state = window.__hgameState();
+          return state.phase === 'playing' && state.choices.length === 0;
+        }, null, { timeout: 4000 });
+        await page.waitForTimeout(120);
+        assert.equal(await page.evaluate(() => window.__hgameState().phase), 'playing');
+        await page.evaluate(() => { window.__recipePad.buttons[1].value = 0; });
+      }
       assert.deepEqual(errors, [], 'action gamepad movement, menu, and touch');
     }
     if (name === '2d') {

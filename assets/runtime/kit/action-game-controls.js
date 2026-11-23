@@ -23,11 +23,12 @@ const MENU = {
  * @param {import('../platform/input/manager.js').InputManager} options.input
  * @param {() => ArrayLike<Gamepad | null>} [options.getGamepads]
  * @param {(index: number) => void} [options.onDisconnect]
+ * @param {boolean} [options.confirmWithEnter=true] Include Enter as a menu confirmation shortcut.
  * @param {readonly (keyof typeof COMBAT)[]} [options.actions] Actions used by this game.
  */
 export function createActionGameControls({
   input, getGamepads = () => globalThis.navigator?.getGamepads?.() ?? [],
-  onDisconnect, actions = ['attack', 'dash'],
+  onDisconnect, actions = ['attack', 'dash'], confirmWithEnter = true,
 }) {
   const enabled = new Set(actions);
   const bindings = Object.entries(COMBAT).flatMap(([name, definition]) => {
@@ -45,7 +46,8 @@ export function createActionGameControls({
     consumesKeys: false, actions: combatActions,
     axes2D: { Move: { up: ['KeyW', 'ArrowUp'], left: ['KeyA', 'ArrowLeft'], down: ['KeyS', 'ArrowDown'], right: ['KeyD', 'ArrowRight'] } },
   }));
-  router.pushContext(defineInputContext('action-menu', { consumesKeys: false, actions: MENU }));
+  const menu = confirmWithEnter ? MENU : { ...MENU, confirm: ['KeyJ', 'Pad0'] };
+  router.pushContext(defineInputContext('action-menu', { consumesKeys: false, actions: menu }));
   const combatNames = Object.keys(combatActions);
   const menuNames = Object.keys(MENU);
   const heldOnEntry = new Set();

@@ -215,6 +215,7 @@ export function createGameSession(options?: GameSessionOptions | undefined): Rea
     togglePause: () => "playing" | "paused" | "title" | "choice" | "result" | undefined;
     presentChoices: (choices?: GameChoiceCard[] | undefined) => GameChoiceCard[];
     selectChoice: (index: number) => GameChoiceCard | null;
+    cancelChoice: () => boolean;
     endRun: (summary?: {
         victory?: boolean;
         bonusScore?: number;

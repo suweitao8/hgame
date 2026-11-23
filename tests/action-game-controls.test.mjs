@@ -33,6 +33,28 @@ test('action preset routes held controls across modes without a second press', (
   input.dispose();
 });
 
+test('action preset can leave Enter to native buttons without suppressing a fresh Xbox confirm', () => {
+  const target = new EventTarget();
+  const input = createInputManager({ target });
+  const buttons = Array.from({ length: 16 }, () => ({ value: 0 }));
+  const controls = createActionGameControls({
+    input, confirmWithEnter: false,
+    getGamepads: () => [{ index: 0, id: 'Xbox', mapping: 'standard', buttons, axes: [0, 0] }],
+  });
+  try {
+    target.dispatchEvent(Object.assign(new Event('keydown'), { code: 'Enter' }));
+    controls.update(0.016, 'menu');
+    assert.equal(controls.wasPressed('confirm'), false);
+    target.dispatchEvent(Object.assign(new Event('keyup'), { code: 'Enter' }));
+    buttons[0].value = 1;
+    controls.update(0.016, 'menu');
+    assert.equal(controls.wasPressed('confirm'), true);
+  } finally {
+    controls.dispose();
+    input.dispose();
+  }
+});
+
 test('action preset uses analog movement, clears disconnect and uses approved Xbox buttons', () => {
   const input = createInputManager({ target: new EventTarget() });
   const buttons = Array.from({ length: 16 }, () => ({ value: 0 }));

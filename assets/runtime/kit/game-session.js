@@ -225,6 +225,15 @@ export function createGameSession(options = {}) {
     return picked;
   }
 
+  /** Dismiss the current choice without applying an upgrade. */
+  function cancelChoice() {
+    if (disposed || state.phase !== UI_PHASES.CHOICE) return false;
+    state.choices = [];
+    director.closeChoice();
+    audioDirector.play(GAME_AUDIO_EVENTS.UI_CLOSE);
+    return true;
+  }
+
   /**
    * End the current run, save best score / run totals, and transition to `result` phase.
    * @param {{ victory?: boolean, bonusScore?: number }} [summary]
@@ -411,6 +420,7 @@ export function createGameSession(options = {}) {
     togglePause,
     presentChoices,
     selectChoice,
+    cancelChoice,
     endRun,
     restart,
     recordHit,

@@ -9,6 +9,7 @@
 5. Reconcile the engine scorecard prose with its structured data and evaluate any remaining runtime deficit using reproducible measurements before claiming the target.
 6. Use the existing i18n service for the generated action game's stock shell and touch labels. Select Chinese or English from `?lang=` or the browser language. Keep authored titles and unrecognized choice labels. Extend the generated-game browser test to verify the default English browser and the Chinese override.
 7. In the default Pixi arena, replace its private touch input with the shared action controls and retain mouse aim and legacy shortcuts. Show only implemented actions, use a single resume button during pauses, and verify English and Chinese in a generated arena with keyboard, simulated Xbox and two-touch input. Keep the bare Pixi entry empty.
+8. Give the three action archetypes one generated module for bindings, touch, locale, and menu behavior. Preserve authored actions and combat rules. Exercise published horde and 3D arena builds through damage, results, and replay using normal input and authored fixture balance.
 
 ## 2026-11-24 复评
 
@@ -33,8 +34,16 @@
 - 生成入口测试覆盖 WASD、J 攻击、模拟 Xbox 左摇杆和 X 攻击、A/B 暂停恢复、断连后键盘继续、触屏笔电鼠标射击、移动视口双指操作和取消。
 - 默认 Pixi Toy 包通过 WebAsset 注册和启动验收。独立产物在 Chromium 验证移动攻击、暂停期间停止移动、点击继续，以及各阶段 UI。ZIP 为 438,899 字节，桌面和移动视口的 p95 均为 16.70 ms，采样分别为 55 和 57 帧。
 
+### 动作原型统一
+
+综合 **88.8 / 100**。制作工具链从 90 升至 92，验证与交付从 90 升至 91，引擎运行时采用已提交的 v5.2 评分 84.6。
+
+- 三个动作原型共用键盘、手柄、触屏和简中／英文界面。生成文档列出实际键位。3D 原型的 Chromium 测试经过实际升级界面，模拟 Xbox B 取消后返回战斗。
+- 修复割草的固定步调用与场地查询网格。割草 Toy 包与 3D Web 包都验证了正常接触伤害、结算、静音和模拟 Xbox A 重开。割草通过发布门禁。
+- 3D 的软件渲染帧预算仍失败。最终发布验收的桌面和移动视口 p95 分别为 216.6 ms 和 200.0 ms，高于 100 ms。临时关闭天空、抗锯齿并将分辨率减半，独立探针仍报约 200 ms。保留原发布门槛和实际失败状态。
+
 ### 距离 90 分的主要缺口
 
 1. 交付需要补上 Android Chrome、iOS Safari、实体 Xbox 和目标 Toy 宿主的实测。重点是局域网打开、移动同时出招、返回前台、设备断连与恢复，以及代表性低端手机的帧时间。
-2. 制作能力需要在割草和 3D 竞技原型上验证同一套输入、键位提示及本地化接线，并覆盖从开局到结算的发布流程。
+2. 3D 发布验收需要区分软件渲染回归与目标 GPU 预算，并在独立发布产物上记录真实渲染器和长时帧时间。
 3. 运行时仍需验证长时帧尾与显存峰值，处理 3D 主管线与 WebGPU 接线、持续分配的渲染目标、主线程骨骼动画等评分卡缺项。

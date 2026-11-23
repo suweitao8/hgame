@@ -1,5 +1,6 @@
 // Universal 3D Arena Archetype wired to HGame's 5-Pillar Kit (Design, UI, Gameplay, Art, Audio).
 import { installPresentationSky } from './presentation-sky.js';
+import { mountActionInterface } from './action-interface.js';
 
 const hosted = location.pathname.startsWith('/local-games/');
 const base = hosted ? '/runtime/hgame' : '../vendor/hgame';
@@ -7,8 +8,7 @@ const [
   gameConfig, engineConfig, designBlueprint, presentation,
   { createGameApplication }, { defineProject }, { Component }, { Entity }, { Scene },
   { createThreeAdapter }, { createHeightfieldTerrain3D }, { createVfxSystem },
-  { createArcadeControls }, { createTouchControls },
-  { defineGameBlueprint, getArtTheme, createGameSession, mountGameShell },
+  { defineGameBlueprint, getArtTheme, createGameSession },
   THREE,
 ] = await Promise.all([
   fetch('./game.config.json').then(r => r.json()),
@@ -23,8 +23,6 @@ const [
   import(base + '/integrations/three.js'),
   import(base + '/world/terrain3d.js'),
   import(base + '/vfx/index.js'),
-  import(base + '/platform/input/arcade.js'),
-  import(base + '/integrations/touch-controls.js'),
   import(base + '/kit/index.js'),
   import('../assets/vendor/three/three.module.js'),
 ]);
@@ -82,7 +80,6 @@ const runtimeStats = {
   attackCooldown: 0.5,
 };
 
-let shell = null;
 const session = createGameSession({
   blueprint,
   app,
@@ -93,15 +90,6 @@ const session = createGameSession({
     else if (picked.id === 'hp-up') session.healPlayer(30);
   },
 });
-
-const arcade = createArcadeControls({
-  input: app.input,
-  actions: [
-    { name: 'attack', label: 'ATK', slot: 'j' },
-    { name: 'dash', label: 'DASH', slot: 'k' },
-  ],
-});
-const touch = createTouchControls({ controls: arcade.p1, container: document.body, mode: 'touch-only' });
 
 const playerPos = { x: 0, z: 0 };
 const enemies = [];
@@ -146,15 +134,14 @@ function spawnEnemy3D() {
 const ctrl = scene.add(new Entity({ name: 'arena3d-ctrl' }));
 ctrl.addComponent(new class extends Component {
   fixedUpdate(dt) {
-    arcade.update(dt);
-    if (session.state.phase !== 'playing') return;
-    const mv = arcade.p1.move;
+    if (!controls.update(dt)) return;
+    const mv = controls.move;
     const mag = Math.hypot(mv.x, mv.y);
     if (mag > 0.05) session.notifyMoved();
 
     dashTimer = Math.max(0, dashTimer - dt);
     dashBurst = Math.max(0, dashBurst - dt);
-    if (arcade.p1.wasPressed('dash') && dashTimer <= 0) {
+    if (controls.wasPressed('dash') && dashTimer <= 0) {
       dashTimer = blueprint.design.feel.dashCooldownSec;
       dashBurst = 0.16;
       session.audio.play('dash');
@@ -162,8 +149,8 @@ ctrl.addComponent(new class extends Component {
 
     const spd = runtimeStats.moveSpeed * (dashBurst > 0 ? 2.2 : 1);
     if (mag > 0.01) {
-      playerPos.x = Math.max(-halfSpan, Math.min(halfSpan, playerPos.x + (mv.x / mag) * spd * dt));
-      playerPos.z = Math.max(-halfSpan, Math.min(halfSpan, playerPos.z + (mv.y / mag) * spd * dt));
+      playerPos.x = Math.max(-halfSpan, Math.min(halfSpan, playerPos.x + mv.x * spd * dt));
+      playerPos.z = Math.max(-halfSpan, Math.min(halfSpan, playerPos.z + mv.y * spd * dt));
     }
 
     spawnTimer -= dt;
@@ -173,14 +160,15 @@ ctrl.addComponent(new class extends Component {
     }
 
     attackTimer = Math.max(0, attackTimer - dt);
-    if (attackTimer <= 0 || arcade.p1.wasPressed('attack')) {
+    const manualAttack = controls.wasPressed('attack');
+    if (attackTimer <= 0 || manualAttack) {
       let targetIdx = -1;
       let bestDist = runtimeStats.attackRange;
       for (let i = 0; i < enemies.length; i++) {
         const d = Math.hypot(enemies[i].x - playerPos.x, enemies[i].z - playerPos.z);
         if (d < bestDist) { bestDist = d; targetIdx = i; }
       }
-      if (targetIdx >= 0 || arcade.p1.wasPressed('attack')) {
+      if (targetIdx >= 0 || manualAttack) {
         attackTimer = runtimeStats.attackCooldown;
         session.audio.play('attack');
         const py = sampleY(playerPos.x, playerPos.z) + 0.9;
@@ -229,11 +217,11 @@ ctrl.addComponent(new class extends Component {
       cam.lookAt(playerPos.x, py + 0.8, playerPos.z);
     }
     vfx.update(dt, cam?.position ?? null);
-    shell?.sync();
+    controls.sync();
   }
 }());
 
-shell = mountGameShell({ root: document.body, session, hintKeys: 'WASD · J · K' });
+const controls = await mountActionInterface({ base, canvas, session, input: app.input });
 app.scenes.start('arena3d');
 app.start();
 canvas.dataset.engineReady = 'true';
@@ -242,8 +230,7 @@ window.__hgameState = () => ({ ...session.snapshot(), player: { x: playerPos.x, 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;
   window.removeEventListener('pagehide', onPageHide);
-  touch.dispose();
-  shell.dispose();
+  controls.dispose();
   session.dispose();
   vfx.dispose();
   enemyGeo.dispose();

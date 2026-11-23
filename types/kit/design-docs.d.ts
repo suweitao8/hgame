@@ -1,6 +1,6 @@
 /**
  * Render the 4 canonical per-game design documents from a game's config, engine recipe, and optional blueprint.
- * @param {{ gameConfig?: { id?: string, name?: string, version?: string }, recipe?: { profile?: string, renderer?: string, physics?: string | null, tickHz?: number }, blueprint?: object | null }} [options]
+ * @param {{ gameConfig?: { id?: string, name?: string, version?: string }, recipe?: { profile?: string, renderer?: string, physics?: string | null, tickHz?: number }, blueprint?: object | null, archetype?: string }} [options]
  * @returns {{ 'GDD.md': string, 'ART-AND-AUDIO.md': string, 'UI-UX.md': string, 'LEVEL.md': string }}
  */
 export function renderGameDesignDocs(options?: {
@@ -16,6 +16,7 @@ export function renderGameDesignDocs(options?: {
         tickHz?: number;
     };
     blueprint?: object | null;
+    archetype?: string;
 } | undefined): {
     "GDD.md": string;
     "ART-AND-AUDIO.md": string;

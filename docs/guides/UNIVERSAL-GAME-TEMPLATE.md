@@ -60,10 +60,10 @@
   - 自动处理连击、经验升级、最高分持久化、顿帧触发、`window.__hgameState` 遥测导出。
 - **内置高频玩法原型（`assets/archetypes/`）**：
   - `action-2d`：2D 动作生存原型（WebGL2D + 冲刺 + 自动索敌/手动攻击 + 升级三选一）
-    - 内置菜单和触控按钮支持中英文，默认跟随浏览器。可用 `?lang=zh` 或 `?lang=en` 指定，游戏标题和自定义文案由项目提供。
   - `horde-2d`：2D 高密割草原型（`createSwarmSimulation` + `SpriteCrowd2D.bindSwarm` + 范围脉冲 + 连杀）
   - `arena-3d`：3D 动作竞技原型（Three.js + 程序地形 + 3D VFX + 近战/冲刺 + 物理）
   - `card-ui`：零空转指令驱动卡牌原型（`tickHz: 0` + 3D 悬停卡牌 + 回合攻防）
+- 三个动作原型共用键鼠、手柄和触屏接线。内置菜单和触控按钮默认跟随浏览器语言，也可用 `?lang=zh` 或 `?lang=en` 指定。游戏标题和自定义文案由项目提供。
 - **默认 Pixi 竞技场**：`create-game.mjs <dir>` 生成带键鼠、手柄和触控的样例。键盘用 WASD／方向键移动，J/K/L/U 对应攻击、冲刺、震波、斩击。Xbox 对应 X、A/Y、LB、RB。触屏布局为左摇杆、右攻击区，支持 `?lang=zh` 和 `?lang=en`。
 
 ### 4. 美术规范与跨维度主题预设（`kit/art-themes.js` + `vfx/` + `scripts/process-*`）
