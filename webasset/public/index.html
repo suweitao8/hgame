@@ -73,6 +73,12 @@
         <section id="asset-model-section" class="asset-model-section" aria-labelledby="asset-model-heading">
           <div class="asset-section-heading asset-model-heading">
             <h2 id="asset-model-heading" hidden>3D 模型</h2>
+            <div class="asset-model-meta">
+              <span id="asset-model-status" class="hgame-status-text" role="status" aria-live="polite"></span>
+              <button id="asset-model-run" class="asset-model-action" type="button" hidden disabled>Run</button>
+              <label id="asset-model-uv-source-controls" class="hgame-field" hidden><span>UV 来源</span><select id="asset-model-uv-source"></select></label>
+              <label id="asset-model-uv-controls" class="hgame-field" hidden><span>网格</span><select id="asset-model-uv-mesh"></select></label>
+            </div>
             <div class="character-mode-tabs asset-model-tabs" role="tablist" aria-label="3D 模型视图">
               <button class="asset-model-tab character-mode-tab" type="button" role="tab" data-model-view="high" aria-selected="true" aria-controls="asset-model-panel" tabindex="0">高模</button>
               <button class="asset-model-tab character-mode-tab" type="button" role="tab" data-model-view="low" aria-selected="false" aria-controls="asset-model-panel" tabindex="-1">低模</button>
@@ -88,14 +94,6 @@
             <div id="asset-model-empty" class="asset-model-empty">暂无高模</div>
             <div id="asset-model-stage" class="asset-model-stage" hidden></div>
             <canvas id="asset-model-uv-canvas" class="asset-model-uv-canvas" width="960" height="600" hidden></canvas>
-          </div>
-          <div class="asset-model-controls hgame-controls">
-            <div class="hgame-control-group">
-              <button id="asset-model-run" class="asset-model-action" type="button" hidden disabled>Run</button>
-              <label id="asset-model-uv-source-controls" class="hgame-field" hidden><span>UV 来源</span><select id="asset-model-uv-source"></select></label>
-              <label id="asset-model-uv-controls" class="hgame-field" hidden><span>网格</span><select id="asset-model-uv-mesh"></select></label>
-            </div>
-            <span id="asset-model-status" class="hgame-status-text" role="status" aria-live="polite"></span>
           </div>
         </section>
 
