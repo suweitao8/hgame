@@ -108,7 +108,8 @@ export const VFX_RENDER_MODE = Object.freeze({
 });
 
 const LUT_HALF = 128;
-const LUT_WIDTH = 256;
+const LUT_VEL_OFFSET = 256;
+const LUT_WIDTH = 512;
 const LUT_ROWS = 1024;
 const SIZE_CURVE_MAX = 8.0;
 
@@ -318,17 +319,22 @@ export function createCurveLutTable(THREE = /** @type {object | null} */ (null))
       const szY = sizeYCurve
         ? Math.max(0, Math.min(SIZE_CURVE_MAX, evaluateSizeCurve(sizeYCurve, t)))
         : sz;
+      const qY = Math.round((szY / SIZE_CURVE_MAX) * 65535);
       if (velCurve && i > 0) {
         velIntegral += evalSignedCurve(velCurve, (i - 0.5) * dtStep) * dtStep;
       }
-      const encodedVelDisp = velCurve
-        ? Math.max(0, Math.min(255, Math.round(((velIntegral + 4.0) / 8.0) * 255)))
-        : Math.max(0, Math.min(255, Math.round(((t + 4.0) / 8.0) * 255)));
+      const vDispVal = velCurve ? velIntegral : t;
+      const qVelDisp = Math.max(0, Math.min(65535, Math.round(((vDispVal + 4.0) / 8.0) * 65535)));
       const sOff = rowBase + (LUT_HALF + i) * 4;
       bytes[sOff] = (q >> 8) & 255;
       bytes[sOff + 1] = q & 255;
-      bytes[sOff + 2] = Math.max(0, Math.min(255, Math.round((szY / SIZE_CURVE_MAX) * 255)));
-      bytes[sOff + 3] = encodedVelDisp;
+      bytes[sOff + 2] = (qY >> 8) & 255;
+      bytes[sOff + 3] = qY & 255;
+      const vOff = rowBase + (LUT_VEL_OFFSET + i) * 4;
+      bytes[vOff] = (qVelDisp >> 8) & 255;
+      bytes[vOff + 1] = qVelDisp & 255;
+      bytes[vOff + 2] = 0;
+      bytes[vOff + 3] = 0;
     }
     dirty = true;
     return row;
@@ -380,8 +386,10 @@ export function createCurveLutTable(THREE = /** @type {object | null} */ (null))
     const i1 = Math.min(LUT_HALF - 1, i0 + 1);
     const f = s - i0;
     const base = r * LUT_WIDTH * 4;
-    const v0 = (bytes[base + (LUT_HALF + i0) * 4 + 2] / 255) * SIZE_CURVE_MAX;
-    const v1 = (bytes[base + (LUT_HALF + i1) * 4 + 2] / 255) * SIZE_CURVE_MAX;
+    const p0 = base + (LUT_HALF + i0) * 4;
+    const p1 = base + (LUT_HALF + i1) * 4;
+    const v0 = ((bytes[p0 + 2] << 8) | bytes[p0 + 3]) / 65535 * SIZE_CURVE_MAX;
+    const v1 = ((bytes[p1 + 2] << 8) | bytes[p1 + 3]) / 65535 * SIZE_CURVE_MAX;
     return v0 + (v1 - v0) * f;
   }
 
@@ -392,8 +400,10 @@ export function createCurveLutTable(THREE = /** @type {object | null} */ (null))
     const i1 = Math.min(LUT_HALF - 1, i0 + 1);
     const f = s - i0;
     const base = r * LUT_WIDTH * 4;
-    const v0 = (bytes[base + (LUT_HALF + i0) * 4 + 3] / 255) * 8.0 - 4.0;
-    const v1 = (bytes[base + (LUT_HALF + i1) * 4 + 3] / 255) * 8.0 - 4.0;
+    const p0 = base + (LUT_VEL_OFFSET + i0) * 4;
+    const p1 = base + (LUT_VEL_OFFSET + i1) * 4;
+    const v0 = (((bytes[p0] << 8) | bytes[p0 + 1]) / 65535) * 8.0 - 4.0;
+    const v1 = (((bytes[p1] << 8) | bytes[p1 + 1]) / 65535) * 8.0 - 4.0;
     return v0 + (v1 - v0) * f;
   }
 
@@ -768,8 +778,8 @@ float sampleSizeCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 t0 = texture2D(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
-  vec4 t1 = texture2D(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
+  vec4 t0 = texture2D(uCurveLut, vec2((128.0 + i0 + 0.5) / 512.0, rowV));
+  vec4 t1 = texture2D(uCurveLut, vec2((128.0 + i1 + 0.5) / 512.0, rowV));
   float s0 = (t0.r * 255.0 * 256.0 + t0.g * 255.0) / 65535.0 * 8.0;
   float s1 = (t1.r * 255.0 * 256.0 + t1.g * 255.0) / 65535.0 * 8.0;
   return mix(s0, s1, f);
@@ -781,9 +791,11 @@ float sampleSizeYCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 t0 = texture2D(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
-  vec4 t1 = texture2D(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
-  return mix(t0.b, t1.b, f) * 8.0;
+  vec4 t0 = texture2D(uCurveLut, vec2((128.0 + i0 + 0.5) / 512.0, rowV));
+  vec4 t1 = texture2D(uCurveLut, vec2((128.0 + i1 + 0.5) / 512.0, rowV));
+  float s0 = (t0.b * 255.0 * 256.0 + t0.a * 255.0) / 65535.0 * 8.0;
+  float s1 = (t1.b * 255.0 * 256.0 + t1.a * 255.0) / 65535.0 * 8.0;
+  return mix(s0, s1, f);
 }
 
 float sampleVelDispCurve(float row, float t) {
@@ -792,9 +804,11 @@ float sampleVelDispCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 t0 = texture2D(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
-  vec4 t1 = texture2D(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
-  return mix(t0.a, t1.a, f) * 8.0 - 4.0;
+  vec4 t0 = texture2D(uCurveLut, vec2((256.0 + i0 + 0.5) / 512.0, rowV));
+  vec4 t1 = texture2D(uCurveLut, vec2((256.0 + i1 + 0.5) / 512.0, rowV));
+  float v0 = (t0.r * 255.0 * 256.0 + t0.g * 255.0) / 65535.0 * 8.0 - 4.0;
+  float v1 = (t1.r * 255.0 * 256.0 + t1.g * 255.0) / 65535.0 * 8.0 - 4.0;
+  return mix(v0, v1, f);
 }
 
 mat3 euler3D(float rx, float ry, float rz) {
@@ -1156,8 +1170,8 @@ vec4 sampleColorCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 c0 = texture2D(uCurveLut, vec2((i0 + 0.5) / 256.0, rowV));
-  vec4 c1 = texture2D(uCurveLut, vec2((i1 + 0.5) / 256.0, rowV));
+  vec4 c0 = texture2D(uCurveLut, vec2((i0 + 0.5) / 512.0, rowV));
+  vec4 c1 = texture2D(uCurveLut, vec2((i1 + 0.5) / 512.0, rowV));
   return mix(c0, c1, f);
 }
 
@@ -1400,8 +1414,8 @@ vec4 sampleColorCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 c0 = texture2D(uCurveLut, vec2((i0 + 0.5) / 256.0, rowV));
-  vec4 c1 = texture2D(uCurveLut, vec2((i1 + 0.5) / 256.0, rowV));
+  vec4 c0 = texture2D(uCurveLut, vec2((i0 + 0.5) / 512.0, rowV));
+  vec4 c1 = texture2D(uCurveLut, vec2((i1 + 0.5) / 512.0, rowV));
   return mix(c0, c1, f);
 }
 
@@ -1573,8 +1587,8 @@ float sampleSizeCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 t0 = texture(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
-  vec4 t1 = texture(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
+  vec4 t0 = texture(uCurveLut, vec2((128.0 + i0 + 0.5) / 512.0, rowV));
+  vec4 t1 = texture(uCurveLut, vec2((128.0 + i1 + 0.5) / 512.0, rowV));
   float s0 = (t0.r * 255.0 * 256.0 + t0.g * 255.0) / 65535.0 * 8.0;
   float s1 = (t1.r * 255.0 * 256.0 + t1.g * 255.0) / 65535.0 * 8.0;
   return mix(s0, s1, f);
@@ -1586,9 +1600,11 @@ float sampleSizeYCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 t0 = texture(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
-  vec4 t1 = texture(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
-  return mix(t0.b, t1.b, f) * 8.0;
+  vec4 t0 = texture(uCurveLut, vec2((128.0 + i0 + 0.5) / 512.0, rowV));
+  vec4 t1 = texture(uCurveLut, vec2((128.0 + i1 + 0.5) / 512.0, rowV));
+  float s0 = (t0.b * 255.0 * 256.0 + t0.a * 255.0) / 65535.0 * 8.0;
+  float s1 = (t1.b * 255.0 * 256.0 + t1.a * 255.0) / 65535.0 * 8.0;
+  return mix(s0, s1, f);
 }
 
 float sampleVelDispCurve(float row, float t) {
@@ -1597,9 +1613,11 @@ float sampleVelDispCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 t0 = texture(uCurveLut, vec2((128.0 + i0 + 0.5) / 256.0, rowV));
-  vec4 t1 = texture(uCurveLut, vec2((128.0 + i1 + 0.5) / 256.0, rowV));
-  return mix(t0.a, t1.a, f) * 8.0 - 4.0;
+  vec4 t0 = texture(uCurveLut, vec2((256.0 + i0 + 0.5) / 512.0, rowV));
+  vec4 t1 = texture(uCurveLut, vec2((256.0 + i1 + 0.5) / 512.0, rowV));
+  float v0 = (t0.r * 255.0 * 256.0 + t0.g * 255.0) / 65535.0 * 8.0 - 4.0;
+  float v1 = (t1.r * 255.0 * 256.0 + t1.g * 255.0) / 65535.0 * 8.0 - 4.0;
+  return mix(v0, v1, f);
 }
 
 void main() {
@@ -1747,8 +1765,8 @@ vec4 sampleColorCurve(float row, float t) {
   float i0 = floor(s);
   float i1 = min(127.0, i0 + 1.0);
   float f = s - i0;
-  vec4 c0 = texture(uCurveLut, vec2((i0 + 0.5) / 256.0, rowV));
-  vec4 c1 = texture(uCurveLut, vec2((i1 + 0.5) / 256.0, rowV));
+  vec4 c0 = texture(uCurveLut, vec2((i0 + 0.5) / 512.0, rowV));
+  vec4 c1 = texture(uCurveLut, vec2((i1 + 0.5) / 512.0, rowV));
   return mix(c0, c1, f);
 }
 
