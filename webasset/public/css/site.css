@@ -2065,6 +2065,51 @@ button { color: inherit; }
 .hgame-stage-header {
   min-height: 30px;
 }
+@media (min-width: 681px) {
+  .hgame-stage-header:has(> .hgame-stage-actions > .character-mode-tabs:not([hidden])) {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+  }
+  .hgame-stage-header:has(> .hgame-stage-actions > .character-mode-tabs:not([hidden])) > .hgame-stage-title-group {
+    grid-column: 1;
+    justify-self: start;
+    min-width: 0;
+  }
+  .hgame-stage-header:has(> .hgame-stage-actions > .character-mode-tabs:not([hidden])) > .hgame-stage-actions {
+    display: contents;
+  }
+  .hgame-stage-header:has(> .hgame-stage-actions > .character-mode-tabs:not([hidden])) > .hgame-stage-actions > .character-mode-tabs {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: center;
+  }
+  .hgame-stage-header:has(> .hgame-stage-actions > .character-mode-tabs:not([hidden])) > .hgame-stage-actions > :not(.character-mode-tabs):not([hidden]) {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .asset-model-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+  }
+  .asset-model-heading > h2 {
+    grid-column: 1;
+    justify-self: start;
+  }
+  .asset-model-heading > .asset-model-tabs {
+    grid-column: 2;
+    justify-self: center;
+    margin-bottom: 0;
+  }
+  .asset-model-heading > .asset-model-toolbar {
+    grid-column: 3;
+    justify-self: end;
+  }
+}
 .hgame-controls {
   height: 46px;
   min-height: 46px;
