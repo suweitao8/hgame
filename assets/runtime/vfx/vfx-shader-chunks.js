@@ -1154,7 +1154,7 @@ vec4 vfxEvalUberFragment(
   bool hasDetailTex = hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)});
   vec4 detailSample = vec4(1.0);
   if (hasDetailTex) {
-    vec2 detUvU = uUv0 * detailST.xy + detailST.zw + pan0.zw * timeSec;
+    vec2 detUvU = (uUv0 + pan0.zw * timeSec) * detailST.xy + detailST.zw;
     detailSample = vfxSampleAtlasRectWrapped(atlasTex, detailRect, vec2(detUvU.x, 1.0 - detUvU.y), flipV, clampDetU, clampDetV);
     if (vfxHasFlag(flags, ${UBER_FLAG_DETAIL_SRGB.toFixed(1)})) {
       detailSample.rgb = vfxSrgbToLinear3(detailSample.rgb);
@@ -1163,12 +1163,12 @@ vec4 vfxEvalUberFragment(
 
   float distortAmt = hasDetailTex ? (vfxChannelPickerClamped(detailSample, detDistChan) * params0.z) : 0.0;
   vec2 uvOff = vfxHasFlag(flags, ${UBER_FLAG_USE_UV_OFFSET.toFixed(1)}) ? custom1.zw : vec2(0.0);
-  vec2 mainUvU = (uUv0 + uvOff + vec2(distortAmt)) * mainST.xy + mainST.zw + pan0.xy * timeSec;
+  vec2 mainUvU = (uUv0 + uvOff + vec2(distortAmt) + pan0.xy * timeSec) * mainST.xy + mainST.zw;
   vec4 mainTex = vec4(1.0);
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)})) {
     mainTex = vfxSampleAtlasRectWrapped(atlasTex, mainRect, vec2(mainUvU.x, 1.0 - mainUvU.y), flipV, clampMainU, clampMainV);
     if (hasFlipBlend) {
-      vec2 mainUvBU = (uUvB + uvOff + vec2(distortAmt)) * mainST.xy + mainST.zw + pan0.xy * timeSec;
+      vec2 mainUvBU = (uUvB + uvOff + vec2(distortAmt) + pan0.xy * timeSec) * mainST.xy + mainST.zw;
       vec4 mainTexB = vfxSampleAtlasRectWrapped(atlasTex, mainRect, vec2(mainUvBU.x, 1.0 - mainUvBU.y), flipV, clampMainU, clampMainV);
       mainTex = mix(mainTex, mainTexB, flipBlend);
     }
@@ -1221,10 +1221,10 @@ vec4 vfxEvalUberFragment(
 
   float alphaOv = 1.0;
   if (vfxHasFlag(flags, ${UBER_FLAG_USE_ALPHA_OVERRIDE.toFixed(1)}) && hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_ALPHA_OV.toFixed(1)})) {
-    vec2 ovUvU = uUv0 * alphaOvST.xy + alphaOvST.zw + pan1.xy * timeSec;
+    vec2 ovUvU = (uUv0 + pan1.xy * timeSec) * alphaOvST.xy + alphaOvST.zw;
     vec4 ovSample = vfxSampleAtlasRectWrapped(atlasTex, alphaOvRect, vec2(ovUvU.x, 1.0 - ovUvU.y), flipV, clampOvU, clampOvV);
     if (hasFlipBlend) {
-      vec2 ovUvBU = uUvB * alphaOvST.xy + alphaOvST.zw + pan1.xy * timeSec;
+      vec2 ovUvBU = (uUvB + pan1.xy * timeSec) * alphaOvST.xy + alphaOvST.zw;
       vec4 ovSampleB = vfxSampleAtlasRectWrapped(atlasTex, alphaOvRect, vec2(ovUvBU.x, 1.0 - ovUvBU.y), flipV, clampOvU, clampOvV);
       ovSample = mix(ovSample, ovSampleB, flipBlend);
     }

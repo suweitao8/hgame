@@ -430,6 +430,7 @@ export function createEffectPlayer({
           depthWrite: layer.depthWrite,
           softParticles: layer.softParticles,
           useTexture: layer.useTexture,
+          sortingOrder: layer.sortingOrder ?? 0,
         },
         _curveRow: curveRow,
         _kind: layer.kind ?? 'particle',

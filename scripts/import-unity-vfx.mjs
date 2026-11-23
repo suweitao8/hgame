@@ -222,24 +222,26 @@ function parseCurveKeys(curveBlock, allowNegative = false) {
 }
 
 function parseGradientStops(colorMod) {
-  const numC = Math.min(8, Number((colorMod.match(/m_NumColorKeys:\s*(\d+)/) || [])[1] ?? 2));
-  const numA = Math.min(8, Number((colorMod.match(/m_NumAlphaKeys:\s*(\d+)/) || [])[1] ?? 2));
+  const maxGrad = colorMod.split(/\n\s*minGradient:/)[0] || colorMod;
+  const numC = Math.min(8, Number((maxGrad.match(/m_NumColorKeys:\s*(\d+)/) || [])[1] ?? 2));
+  const numA = Math.min(8, Number((maxGrad.match(/m_NumAlphaKeys:\s*(\d+)/) || [])[1] ?? 2));
+  const isLinearGrad = /m_ColorSpace:\s*1\b/.test(maxGrad);
   const cols = [];
   for (let i = 0; i < numC; i++) {
-    const km = colorMod.match(new RegExp(`key${i}:\\s*\\{([^}]+)\\}`));
-    const tm = colorMod.match(new RegExp(`ctime${i}:\\s*(\\d+)`));
+    const km = maxGrad.match(new RegExp(`key${i}:\\s*\\{([^}]+)\\}`));
+    const tm = maxGrad.match(new RegExp(`ctime${i}:\\s*(\\d+)`));
     if (km) {
-      const c = parseColorObject(km[1]);
+      const c = parseColorObject(km[1], !isLinearGrad);
       const t = tm ? Number(tm[1]) / 65535 : i / Math.max(1, numC - 1);
       cols.push({ t, r: c[0], g: c[1], b: c[2] });
     }
   }
   const alphas = [];
   for (let i = 0; i < numA; i++) {
-    const km = colorMod.match(new RegExp(`key${i}:\\s*\\{([^}]+)\\}`));
-    const tm = colorMod.match(new RegExp(`atime${i}:\\s*(\\d+)`));
+    const km = maxGrad.match(new RegExp(`key${i}:\\s*\\{([^}]+)\\}`));
+    const tm = maxGrad.match(new RegExp(`atime${i}:\\s*(\\d+)`));
     if (km) {
-      const c = parseColorObject(km[1]);
+      const c = parseColorObject(km[1], false);
       const t = tm ? Number(tm[1]) / 65535 : i / Math.max(1, numA - 1);
       alphas.push({ t, a: c[3] });
     }
@@ -1123,6 +1125,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const rmNum = Number((psr.match(/^\s*m_RenderMode:\s*(\d+)/m) || [])[1] ?? 0);
     const renderAlign = Number((psr.match(/^\s*m_RenderAlignment:\s*(\d+)/m) || [])[1] ?? 0);
+    const sortingOrder = Number((psr.match(/^\s*m_SortingOrder:\s*(-?\d+)/m) || [])[1] ?? 0);
     const alignRot = isSubChild ? computeHierarchyTransform(trBody).rot : worldTr.rot;
     const rxScalar = Array.isArray(rotX) ? (rotX[0] + rotX[1]) * 0.5 : (typeof rotX === 'number' ? rotX : 0);
     const localNormal = quatRotateVec(alignRot, [0, -Math.sin(rxScalar), Math.cos(rxScalar)]);
@@ -1132,7 +1135,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : (rmNum === 2 || isLocalHorizontal) ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
     let effectiveRotX = rotX;
     let effectiveRotY = rotY;
-    if (isLocalHorizontal && Math.abs(Math.abs(rxScalar) - Math.PI * 0.5) < 0.25) {
+    if (isLocalHorizontal) {
       effectiveRotX = 0;
       effectiveRotY = 0;
     }
@@ -1217,6 +1220,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(mainMat?.opaque && !mainMat.isDistortionOnly ? { opaque: true } : {}),
       ...(mainMat?.depthTest !== undefined ? { depthTest: mainMat.depthTest } : {}),
       ...(mainMat?.depthWrite !== undefined ? { depthWrite: mainMat.depthWrite } : {}),
+      ...(sortingOrder !== 0 ? { sortingOrder } : {}),
       ...(mainMat?.softParticles !== undefined ? { softParticles: mainMat.softParticles } : {}),
       ...(mainMat?.useTexture === false ? { useTexture: false } : {}),
       ...(mainMat?.emission ? { emission: mainMat.emission, emissionBoost: mainMat.emissionBoost } : {}),

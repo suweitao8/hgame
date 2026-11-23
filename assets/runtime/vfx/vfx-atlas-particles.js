@@ -735,28 +735,28 @@ vec3 unpackRgb24(float v) {
 }
 
 vec2 unpack2x12Pos(float packedVal, float maxA, float maxB) {
-  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
+  float v = floor(clamp(packedVal, 0.0, 16777215.0));
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4095.0) * maxA, (qb / 4095.0) * maxB);
 }
 
 vec2 unpack2x12Sym(float packedVal, float absA, float absB) {
-  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
+  float v = floor(clamp(packedVal, 0.0, 16777215.0));
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4094.0) * (2.0 * absA) - absA, (qb / 4094.0) * (2.0 * absB) - absB);
 }
 
 vec2 unpack2x12Mixed(float packedVal, float maxA, float absB) {
-  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
+  float v = floor(clamp(packedVal, 0.0, 16777215.0));
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4095.0) * maxA, (qb / 4094.0) * (2.0 * absB) - absB);
 }
 
 vec2 unpackUvPair(float packedVal) {
-  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
+  float v = floor(clamp(packedVal, 0.0, 16777215.0));
   float qu = floor(v / 4096.0);
   float qv = v - qu * 4096.0;
   return clamp(vec2(qu, qv) / 3840.0, 0.0, 1.0);
@@ -811,7 +811,7 @@ mat3 euler3D(float rx, float ry, float rz) {
 void main() {
   float age = uTime - aAtlasP0.w;
   float dur = aAtlasP1.w;
-  float rowWord = floor(max(0.0, aAtlasP2.w) + 0.5);
+  float rowWord = floor(max(0.0, aAtlasP2.w));
   float materialFlags = floor(rowWord / 1048576.0); rowWord -= materialFlags * 1048576.0;
   float cullFlag = floor(rowWord / 262144.0); rowWord -= cullFlag * 262144.0;
   float hasSizeSep = step(131071.5, rowWord); rowWord -= hasSizeSep * 131072.0;
@@ -834,16 +834,16 @@ void main() {
 
   vec2 uv0 = unpackUvPair(aAtlasP4.x);
   vec2 uv1 = unpackUvPair(aAtlasP4.y);
-  float fbWord = floor(max(0.0, aAtlasP4.z) + 0.5);
+  float fbWord = floor(max(0.0, aAtlasP4.z));
   float cyclesQ = floor(fbWord / 8192.0); fbWord -= cyclesQ * 8192.0;
   float fbBlend = step(4095.5, fbWord); fbWord -= fbBlend * 4096.0;
   float fbRows = floor(fbWord / 64.0) + 1.0;
   float fbCols = mod(fbWord, 64.0) + 1.0;
 
   vec2 noisePair = unpack2x12Pos(aAtlasP5.x, 35.0, 15.0);
-  vec2 scaleYPair = unpack2x12Pos(aAtlasP5.y, 15.0, 15.0);
+  vec2 scaleYPair = unpack2x12Pos(aAtlasP5.y, 64.0, 64.0);
   float orbitalY = aAtlasP5.z;
-  float psWord = floor(max(0.0, aAtlasP5.w) + 0.5);
+  float psWord = floor(max(0.0, aAtlasP5.w));
   float scrollQ = floor(psWord / 262144.0); psWord -= scrollQ * 262144.0;
   float windQ = floor(psWord / 8192.0); psWord -= windQ * 8192.0;
   int slotIdx = int(floor(psWord / 256.0));
@@ -876,6 +876,7 @@ void main() {
   float uvOffX = uvS.z;
   float uvOffY = uvOD.x;
   float dissolveStart = uvOD.y;
+  float pivotZ = uvOD.z > 0.001 ? ((uvOD.z * 255.0 - 128.0) / 60.0) : 0.0;
   vMatParams = vec4(alphaCutoff, max(0.0, hdrEmPair.y), dissolveStart, cullFlag);
   vUvTransform = vec4(uvScaleX, uvScaleY, uvOffX, uvOffY);
   vFadesAndTexture.yz = vec2(mod(materialFlags, 2.0), floor(materialFlags / 2.0));
@@ -1016,12 +1017,12 @@ void main() {
       ? clamp((abs(mvPosCheck.z) - camFadeNear) / (camFadeFar - camFadeNear), 0.0, 1.0)
       : 1.0;
 
-    if (hasRot3D && (renderMode < 1.5 || renderMode > 3.5)) {
+    if (hasRot3D && ((renderMode > 0.5 && renderMode < 1.5) || renderMode > 3.5)) {
       mat3 rotMat = euler3D(rotXY0.x + spinXY.x * age, rotXY0.y + spinXY.y * age, rot);
       vec3 localQ = vec3(posLocal.x * curSize, posLocal.y * curSizeY * aspectY, offLocal.z * curSize);
       vec3 localN = vec3(0.0, 0.0, 1.0);
       if (renderMode > 0.5 && renderMode < 1.5) {
-        localQ = vec3(posLocal.x * curSize, offLocal.z * curSize, posLocal.y * curSizeY * aspectY);
+        localQ = vec3(posLocal.x * curSize, offLocal.z * curSize, -posLocal.y * curSizeY * aspectY);
         localN = vec3(0.0, 1.0, 0.0);
       }
       vec3 worldQuad = worldPos + rotMat * localQ;
@@ -1035,7 +1036,7 @@ void main() {
       vec3 worldQuad = worldPos + vec3(
         (posLocal.x * c - posLocal.y * s) * curSize,
         offLocal.z * curSize,
-        (posLocal.x * s + posLocal.y * c) * curSizeY * aspectY
+        -(posLocal.x * s + posLocal.y * c) * curSizeY * aspectY
       );
       vec4 mvQuad = modelViewMatrix * vec4(worldQuad, 1.0);
       vNormalView = mat3(modelViewMatrix) * vec3(0.0, 1.0, 0.0);
@@ -1074,8 +1075,9 @@ void main() {
         ? (lenBase * max(0.05, stretchScales.y) + min(spd * stretchScales.x, lenBase * 8.0))
         : (lenBase * (1.0 + scaleYPair.x * min(spd * 0.08, 4.5)));
       float billH = curSize;
-      float stretchX = posLocal.x - 0.5;
-      mvCenter.xyz += axis3 * (stretchX * major) + side3 * (posLocal.y * billH) + toCam * (offLocal.z * curSize);
+      float stretchX = (posLocal.x + pivotPair.x) - 0.5 + pivotPair.y;
+      float stretchY = (posLocal.y + pivotPair.y) - pivotPair.x;
+      mvCenter.xyz += axis3 * (stretchX * major) + side3 * (stretchY * billH) + toCam * (offLocal.z * curSize);
       vViewDirView = -mvCenter.xyz;
       vNormalView = toCam;
       gl_Position = projectionMatrix * mvCenter;
@@ -1087,7 +1089,7 @@ void main() {
       vec2 upAxis = vec2(-rightAxis.y, rightAxis.x);
       float minBill = (renderMode < 0.5 && curSize > 0.001) ? abs(mvCenter.z) * 0.0042 : 0.0;
       mvCenter.xy += rightAxis * (posLocal.x * max(major, minBill)) + upAxis * (posLocal.y * max(billH, minBill));
-      mvCenter.z += offLocal.z * curSize;
+      mvCenter.z += (offLocal.z - pivotZ) * curSize;
       vViewDirView = -mvCenter.xyz;
       gl_Position = projectionMatrix * mvCenter;
     }
@@ -1538,28 +1540,28 @@ vec3 unpackRgb24(float v) {
 }
 
 vec2 unpack2x12Pos(float packedVal, float maxA, float maxB) {
-  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
+  float v = floor(clamp(packedVal, 0.0, 16777215.0));
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4095.0) * maxA, (qb / 4095.0) * maxB);
 }
 
 vec2 unpack2x12Sym(float packedVal, float absA, float absB) {
-  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
+  float v = floor(clamp(packedVal, 0.0, 16777215.0));
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4094.0) * (2.0 * absA) - absA, (qb / 4094.0) * (2.0 * absB) - absB);
 }
 
 vec2 unpack2x12Mixed(float packedVal, float maxA, float absB) {
-  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
+  float v = floor(clamp(packedVal, 0.0, 16777215.0));
   float qa = floor(v / 4096.0);
   float qb = v - qa * 4096.0;
   return vec2((qa / 4095.0) * maxA, (qb / 4094.0) * (2.0 * absB) - absB);
 }
 
 vec2 unpackUvPair(float packedVal) {
-  float v = floor(clamp(packedVal, 0.0, 16777215.0) + 0.5);
+  float v = floor(clamp(packedVal, 0.0, 16777215.0));
   float qu = floor(v / 4096.0);
   float qv = v - qu * 4096.0;
   return clamp(vec2(qu, qv) / 3840.0, 0.0, 1.0);
@@ -1603,7 +1605,7 @@ float sampleVelDispCurve(float row, float t) {
 void main() {
   float age = uTime - aAtlasP0.w;
   float dur = aAtlasP1.w;
-  float rowWord = floor(max(0.0, aAtlasP2.w) + 0.5);
+  float rowWord = floor(max(0.0, aAtlasP2.w));
   float materialFlags = floor(rowWord / 1048576.0); rowWord -= materialFlags * 1048576.0;
   float cullFlag = floor(rowWord / 262144.0); rowWord -= cullFlag * 262144.0;
   float hasSizeSep = step(131071.5, rowWord); rowWord -= hasSizeSep * 131072.0;
@@ -1626,15 +1628,15 @@ void main() {
 
   vec2 uv0 = unpackUvPair(aAtlasP4.x);
   vec2 uv1 = unpackUvPair(aAtlasP4.y);
-  float fbWord = floor(max(0.0, aAtlasP4.z) + 0.5);
+  float fbWord = floor(max(0.0, aAtlasP4.z));
   float cyclesQ = floor(fbWord / 8192.0); fbWord -= cyclesQ * 8192.0;
   float fbBlend = step(4095.5, fbWord); fbWord -= fbBlend * 4096.0;
   float fbRows = floor(fbWord / 64.0) + 1.0;
   float fbCols = mod(fbWord, 64.0) + 1.0;
 
   vec2 noisePair = unpack2x12Pos(aAtlasP5.x, 35.0, 15.0);
-  vec2 scaleYPair = unpack2x12Pos(aAtlasP5.y, 15.0, 15.0);
-  float psWord = floor(max(0.0, aAtlasP5.w) + 0.5);
+  vec2 scaleYPair = unpack2x12Pos(aAtlasP5.y, 64.0, 64.0);
+  float psWord = floor(max(0.0, aAtlasP5.w));
   float scrollQ = floor(psWord / 262144.0); psWord -= scrollQ * 262144.0;
   float windQ = floor(psWord / 8192.0); psWord -= windQ * 8192.0;
   int slotIdx = int(floor(psWord / 256.0));
@@ -2125,7 +2127,7 @@ export function createAtlasParticlePool({
       : (activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0);
   }
 
-  function initThreeChannel(ch, depthTest = DEFAULT_VFX_DEPTH_TEST, depthWrite = false, opaque = false) {
+  function initThreeChannel(ch, depthTest = DEFAULT_VFX_DEPTH_TEST, depthWrite = false, opaque = false, sortingOrder = 0) {
     if (!THREE || !scene || !THREE.InstancedBufferGeometry || !THREE.PlaneGeometry) return;
     const base = new THREE.PlaneGeometry(1, 1);
     const geo = new THREE.InstancedBufferGeometry();
@@ -2204,7 +2206,7 @@ export function createAtlasParticlePool({
 
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
-    mesh.renderOrder = ch.distortion ? (VFX_RENDER_ORDERS.PARTICLES + 2) : VFX_RENDER_ORDERS.PARTICLES;
+    mesh.renderOrder = ch.distortion ? (VFX_RENDER_ORDERS.PARTICLES + 2) : (VFX_RENDER_ORDERS.PARTICLES + sortingOrder * 0.01);
     mesh.visible = ch.distortion ? (qualityTier !== 'low' && Boolean(sceneColorUniforms.uSceneTex.value)) : true;
     mesh.name = ch.distortion
       ? 'HGameVfxAtlasDistortion'
@@ -2429,20 +2431,22 @@ export function createAtlasParticlePool({
 
   function pickChannel(opts, create = false) {
     const base = pickBlendChannel(opts);
-    if (!base.threeMesh || (!opts.opaque && opts.depthTest === undefined && opts.depthWrite === undefined)) return base;
+    const sortingOrder = !base.distortion && Number.isFinite(opts.sortingOrder) ? (opts.sortingOrder | 0) : 0;
+    if (!base.threeMesh || (!opts.opaque && opts.depthTest === undefined && opts.depthWrite === undefined && sortingOrder === 0)) return base;
 
     const opaque = !base.distortion && Boolean(opts.opaque);
     const blendChannel = opaque ? normalPool : base;
     const depthTest = getVfxDepthTestIndex(opts.depthTest);
     const depthWrite = depthTest !== 0 && (opts.depthWrite ?? opaque);
-    if (!opaque && depthTest === DEFAULT_VFX_DEPTH_TEST && !depthWrite) return base;
+    if (!opaque && depthTest === DEFAULT_VFX_DEPTH_TEST && !depthWrite && sortingOrder === 0) return base;
 
-    const key = (channels.indexOf(blendChannel) * VFX_DEPTH_TESTS.length + depthTest) * 4
+    const baseKey = (channels.indexOf(blendChannel) * VFX_DEPTH_TESTS.length + depthTest) * 4
       + (depthWrite ? 2 : 0) + (opaque ? 1 : 0);
+    const key = sortingOrder === 0 ? baseKey : `${baseKey}:${sortingOrder}`;
     let channel = renderStateChannels.get(key);
     if (!channel && create) {
       channel = createAtlasChannel(blendChannel.capacity, blendChannel.blendMode);
-      initThreeChannel(channel, depthTest, depthWrite, opaque);
+      initThreeChannel(channel, depthTest, depthWrite, opaque, sortingOrder);
       renderStateChannels.set(key, channel);
       channels.push(channel);
     }
@@ -2587,7 +2591,7 @@ export function createAtlasParticlePool({
     const aspectY = opts.aspectY ?? ((renderMode === VFX_RENDER_MODE.BILLBOARD || renderMode === VFX_RENDER_MODE.VERTICAL) && nStr <= 0.001 ? (opts.stretch ?? 1.0) : 1.0);
     const phaseByte = Math.max(0, Math.min(255, Math.round((((phaseVal % 1) + 1) % 1) * 255)));
     ch.p5[i4] = pack2x12Pos(nStr, opts.noiseFreq ?? 0.5, 35, 15);
-    ch.p5[i4 + 1] = pack2x12Pos(nYScale, aspectY, 15, 15);
+    ch.p5[i4 + 1] = pack2x12Pos(nYScale, aspectY, 64, 64);
     ch.p5[i4 + 2] = opts.orbitalY ?? 0;
     ch.p5[i4 + 3] = phaseByte + slotIdx * 256 + windQ * 8192 + scrollQ * 262144;
 
@@ -2606,10 +2610,14 @@ export function createAtlasParticlePool({
     const disStartByte = opts.dissolve?.start !== undefined
       ? Math.max(1, Math.min(255, Math.round(opts.dissolve.start * 255)))
       : 0;
+    const pivZVal = Number(opts.pivot?.[2] ?? 0);
+    const pivZByte = Math.abs(pivZVal) > 1e-4
+      ? Math.max(1, Math.min(255, Math.round(128 + pivZVal * 60)))
+      : 0;
     const uberRow = opts.uberMat ? registerUberMaterial(opts.uberMat) : (Number.isFinite(opts.uberMatRow) ? opts.uberMatRow : -1);
     ch.p7[i4] = packRgb24(cutByte, camNearByte, camFarByte);
     ch.p7[i4 + 1] = packRgb24(uvSxByte, uvSyByte, uvOxByte);
-    ch.p7[i4 + 2] = packRgb24(uvOyByte, disStartByte, 0);
+    ch.p7[i4 + 2] = packRgb24(uvOyByte, disStartByte, pivZByte);
     ch.p7[i4 + 3] = uberRow;
 
     const compiledCustom = resolveCompiledCustomData(opts.customData);

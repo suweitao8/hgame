@@ -723,8 +723,8 @@ export function createMeshVfxPool({
     return row;
   }
 
-  function getOrCreateInstBatch(meshKey, blendMode, cullMode, depthTest, depthWrite, opaque, shaderKindId) {
-    const key = `${meshKey}|${blendMode}|${cullMode || 'none'}|${depthTest}|${depthWrite ? 1 : 0}|${opaque ? 1 : 0}|${shaderKindId}`;
+  function getOrCreateInstBatch(meshKey, blendMode, cullMode, depthTest, depthWrite, opaque, shaderKindId, sortingOrder = 0) {
+    const key = `${meshKey}|${blendMode}|${cullMode || 'none'}|${depthTest}|${depthWrite ? 1 : 0}|${opaque ? 1 : 0}|${shaderKindId}|${sortingOrder}`;
     let batch = instBatches.get(key);
     if (batch) return batch;
     const baseGeo = getGeometry(meshKey);
@@ -827,7 +827,7 @@ export function createMeshVfxPool({
     const mesh = new THREE.Mesh(geo, mat);
     mesh.visible = false;
     mesh.frustumCulled = false;
-    mesh.renderOrder = isDistortion ? (VFX_RENDER_ORDERS.PARTICLES + 2) : VFX_RENDER_ORDERS.PARTICLES;
+    mesh.renderOrder = isDistortion ? (VFX_RENDER_ORDERS.PARTICLES + 2) : (VFX_RENDER_ORDERS.PARTICLES + sortingOrder * 0.01);
     mesh.name = `HGameVfxMeshInst_${instBatches.size}`;
     scene.add(mesh);
 
@@ -983,7 +983,8 @@ export function createMeshVfxPool({
       const depthTest = getVfxDepthTestIndex(opts.depthTest);
       const depthWrite = depthTest !== 0 && (opts.depthWrite ?? opaque);
       const shaderKindId = resolveUberShaderKindId(opts.uberMat.shaderKind);
-      s.instBatch = getOrCreateInstBatch(meshKey, blendMode, opts.cullMode || 'none', depthTest, depthWrite, opaque, shaderKindId);
+      const sortOrd = !isDistortion && Number.isFinite(opts.sortingOrder) ? (opts.sortingOrder | 0) : 0;
+      s.instBatch = getOrCreateInstBatch(meshKey, blendMode, opts.cullMode || 'none', depthTest, depthWrite, opaque, shaderKindId, sortOrd);
       const geo = getGeometry(meshKey);
       s.flipLocalV = geo?.userData?.topDownUv ? 0 : 1;
       if (s.instBatch) {
