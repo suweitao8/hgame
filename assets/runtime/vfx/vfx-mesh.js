@@ -951,7 +951,9 @@ export function createMeshVfxPool({
     s.flipZ = (opts.flipZ ?? 1) < 0 ? -1 : 1;
     s.alignToVelocity = Boolean(opts.alignToVelocity);
     s.forwardAxis = opts.forwardAxis || 'z';
-    s.baseScale = (opts.sizeStart ?? opts.scale ?? 1.0) * Number(opts.meshGlobalScale ?? 1.0);
+    const meshGlobalScale = Math.max(1e-4, Number(opts.meshGlobalScale ?? 1.0));
+    s.meshGlobalScale = meshGlobalScale;
+    s.baseScale = (opts.sizeStart ?? opts.scale ?? 1.0) * meshGlobalScale;
     s.aspectY = Math.max(0.05, Number(opts.aspectY ?? 1.0));
     s.aspectZ = Math.max(0.05, Number(opts.aspectZ ?? 1.0));
     s.hdr = opts.hdr ?? 1.0;
@@ -1175,6 +1177,9 @@ export function createMeshVfxPool({
       batch.custom1[i4 + 2] = s.custom1[2]; batch.custom1[i4 + 3] = s.custom1[3];
       batch.custom2[i4] = s.custom2[0]; batch.custom2[i4 + 1] = s.custom2[1];
       batch.custom2[i4 + 2] = s.custom2[2]; batch.custom2[i4 + 3] = s.custom2[3];
+    }
+    if (s.meshGlobalScale !== 1.0) {
+      batch.custom2[i4] /= s.meshGlobalScale;
     }
 
     const row = s.uberMat ? registerUberMaterial(s.uberMat) : s.uberMatRow;

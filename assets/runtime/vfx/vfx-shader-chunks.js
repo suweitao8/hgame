@@ -1045,7 +1045,7 @@ vec3 vfxEvalUberVertexOffset(
   float custom2x,
   float timeSec
 ) {
-  if (rowIdx < -0.5 || hasAtlas < 0.5 || abs(custom2x) < 1e-5) return pos;
+  if (rowIdx < -0.5 || hasAtlas < 0.5 || abs(custom2x) < 1e-7) return pos;
   vec4 hdr = vfxReadMatTexel(matLut, rowIdx, 0.0);
   if (!vfxHasFlag(hdr.y, ${UBER_FLAG_USE_DETAIL_VERTEX_OFFSET.toFixed(1)})) return pos;
   vec4 detVtxChan = vfxReadMatTexel(matLut, rowIdx, 14.0);
