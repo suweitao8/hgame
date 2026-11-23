@@ -184,7 +184,7 @@ export function inspectAndVerifyCharacterGlb(glbPath) {
   };
 }
 
-if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}` || process.argv[1]?.endsWith('verify-character-lods.mjs')) {
+if (import.meta.url === `file:///${(process.argv[1] || '').replace(/\\/g, '/')}` || process.argv[1]?.endsWith('verify-character-lods.mjs')) {
   const files = process.argv.slice(2);
   if (!files.length) {
     console.error('Usage: node scripts/verify-character-lods.mjs <file.glb> [...]');

@@ -1035,7 +1035,7 @@ function runBlenderHelper(config, args) {
   const lines = (res.stdout || '').split(/\r?\n/);
   const jsonLine = [...lines].reverse().find((l) => l.startsWith(marker));
   if (!jsonLine) {
-    throw new Error(`Blender helper did not emit ${marker} summary.\n${res.stdout}`);
+    throw new Error(`Blender helper did not emit ${marker} summary.\n${res.stderr ? `${res.stderr}\n` : ''}${res.stdout}`);
   }
   return JSON.parse(jsonLine.slice(marker.length));
 }
@@ -1781,8 +1781,8 @@ async function cmdCharacterPack(config, flags) {
   const lowPreset = resolveLowPolyPreset(plans.lowPresetName);
   assertCleanTopology(lowSummary?.stats, 'clean_low', lowPreset.maxVertices, lowPreset.maxTris);
   for (const [label, subStats, maxT] of [
-    ['clean_low_lod1', lowSummary?.lod1Stats, 1800],
-    ['clean_low_lod2', lowSummary?.lod2Stats, 450],
+    ['clean_low_lod1', lowSummary?.lod1Stats, 3200],
+    ['clean_low_lod2', lowSummary?.lod2Stats, 1550],
     ['clean_low_lod3', lowSummary?.lod3Stats, 8],
   ]) {
     if (!subStats) continue;

@@ -926,7 +926,7 @@ def cmd_remesh_bake(args):
         bpy.ops.object.modifier_apply(modifier=tri_pre.name)
     post_low_repair = repair_mesh_topology(
         low,
-        weld_dist=1e-5,
+        weld_dist=1e-4,
         fill_holes=True,
         max_hole_sides=64,
         prune_whisker_spikes=False,
@@ -948,7 +948,7 @@ def cmd_remesh_bake(args):
             bpy.ops.object.modifier_apply(modifier=dec_cap.name)
             post_low_repair = repair_mesh_topology(
                 low,
-                weld_dist=1e-5,
+                weld_dist=1e-4,
                 fill_holes=True,
                 max_hole_sides=64,
                 prune_whisker_spikes=False,
@@ -1150,6 +1150,66 @@ def cmd_remesh_bake(args):
         low.data.uv_layers.remove(low.data.uv_layers[-1])
     for ca in list(low.data.color_attributes):
         low.data.color_attributes.remove(ca)
+
+    rig_info = None
+    lod1_stats = None
+    lod2_stats = None
+    lod3_stats = None
+    lod1_tris = int(getattr(args, "lod1_tris", 0) or 0)
+    lod2_tris = int(getattr(args, "lod2_tris", 0) or 0)
+    if getattr(args, "rig_run", False):
+        exp = _export_rigged_with_lods(
+            low,
+            args.out,
+            action_name="Run",
+            anim_glb=getattr(args, "anim_glb", ""),
+            lod1_tris=lod1_tris,
+            lod2_tris=lod2_tris,
+            lod3_tight=bool(getattr(args, "lod3_tight", False)),
+            rig_engine=getattr(args, "rig_engine", "auto"),
+        )
+        rig_info = exp["rig_info"]
+        lod1_stats = exp["lod1_stats"]
+        lod2_stats = exp["lod2_stats"]
+        lod3_stats = exp["lod3_stats"]
+    else:
+        bpy.ops.object.select_all(action="DESELECT")
+        low.select_set(True)
+        bpy.ops.export_scene.gltf(
+            filepath=args.out,
+            export_format="GLB",
+            use_selection=True,
+            export_apply=True,
+            export_tangents=False,
+        )
+
+    stats = collect_stats([low])
+    result = {
+        "input": os.path.abspath(args.input),
+        "output": os.path.abspath(args.out),
+        "workDir": os.path.abspath(work_dir),
+        "rig": rig_info,
+        "repair": {
+            "preRemesh": pre_remesh_repair,
+            "postVoxel": post_voxel_repair,
+            "postLow": post_low_repair,
+        },
+        "stats": stats,
+        "lod1Stats": lod1_stats,
+        "lod2Stats": lod2_stats,
+        "lod3Stats": lod3_stats,
+    }
+    if args.qa_dir:
+        result["rendered"] = render_views(
+            [low],
+            args.qa_dir,
+            view_mode=args.views,
+            size=args.size,
+            elev_deg=args.elev,
+            engine=args.engine,
+        )
+    print("HGAME_MODEL3D_JSON:" + json.dumps(result, ensure_ascii=True))
+
 
 def _dilate_tile_rgba(tile_rgba, radius=6):
     """Expand opaque edge RGB outward into transparent texels without touching Alpha (strictly per-tile)."""
@@ -2472,65 +2532,6 @@ def _export_rigged_with_lods(
         "lod2_stats": collect_stats([lod2_obj]) if lod2_obj is not None else None,
         "lod3_stats": collect_stats([lod3_obj]) if lod3_obj is not None else None,
     }
-
-    rig_info = None
-    lod1_stats = None
-    lod2_stats = None
-    lod3_stats = None
-    lod1_tris = int(getattr(args, "lod1_tris", 0) or 0)
-    lod2_tris = int(getattr(args, "lod2_tris", 0) or 0)
-    if getattr(args, "rig_run", False):
-        exp = _export_rigged_with_lods(
-            low,
-            args.out,
-            action_name="Run",
-            anim_glb=getattr(args, "anim_glb", ""),
-            lod1_tris=lod1_tris,
-            lod2_tris=lod2_tris,
-            lod3_tight=bool(getattr(args, "lod3_tight", False)),
-            rig_engine=getattr(args, "rig_engine", "auto"),
-        )
-        rig_info = exp["rig_info"]
-        lod1_stats = exp["lod1_stats"]
-        lod2_stats = exp["lod2_stats"]
-        lod3_stats = exp["lod3_stats"]
-    else:
-        bpy.ops.object.select_all(action="DESELECT")
-        low.select_set(True)
-        bpy.ops.export_scene.gltf(
-            filepath=args.out,
-            export_format="GLB",
-            use_selection=True,
-            export_apply=True,
-            export_tangents=False,
-        )
-
-    stats = collect_stats([low])
-    result = {
-        "input": os.path.abspath(args.input),
-        "output": os.path.abspath(args.out),
-        "workDir": os.path.abspath(work_dir),
-        "rig": rig_info,
-        "repair": {
-            "preRemesh": pre_remesh_repair,
-            "postVoxel": post_voxel_repair,
-            "postLow": post_low_repair,
-        },
-        "stats": stats,
-        "lod1Stats": lod1_stats,
-        "lod2Stats": lod2_stats,
-        "lod3Stats": lod3_stats,
-    }
-    if args.qa_dir:
-        result["rendered"] = render_views(
-            [low],
-            args.qa_dir,
-            view_mode=args.views,
-            size=args.size,
-            elev_deg=args.elev,
-            engine=args.engine,
-        )
-    print("HGAME_MODEL3D_JSON:" + json.dumps(result, ensure_ascii=True))
 
 
 def detect_humanoid_landmarks(obj):
