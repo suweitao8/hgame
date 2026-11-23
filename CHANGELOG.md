@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reuse floating text slots in constant time while preserving oldest-popup eviction at capacity.
+
 - Add a reusable single-player action control preset with keyboard, analog gamepad, touch, and menu routing. Adopt it in the generated 2D action archetype.
 
 - Sample arcade input before movement in the generated action, horde, and 3D arena archetypes, and use the seeded RNG API for enemy spawns.

@@ -334,6 +334,38 @@ test('damage number presets, combination, collision separation, destruction, fol
 });
 
 
+test('floating text evicts oldest live popup after out-of-order expiry and reset', () => {
+  const vfx = createVfxSystem({ mode: 'headless', maxPopups: 8 });
+  const values = () => vfx.floatingText.getActivePopups().map(popup => popup.value).sort((a, b) => a - b);
+  try {
+    for (let value = 1; value <= 8; value++) {
+      vfx.popupNumber({ value, duration: value === 4 ? 0.05 : 2 });
+    }
+    vfx.update(0.09);
+    assert.deepEqual(values(), [1, 2, 3, 5, 6, 7, 8]);
+    for (let value = 9; value <= 13; value++) vfx.popupNumber({ value, duration: 2 });
+    assert.deepEqual(values(), [6, 7, 8, 9, 10, 11, 12, 13]);
+    vfx.reset();
+    for (let value = 1; value <= 9; value++) vfx.popupNumber({ value, duration: 2 });
+    assert.deepEqual(values(), [2, 3, 4, 5, 6, 7, 8, 9]);
+  } finally {
+    vfx.dispose();
+  }
+});
+
+test('floating text recovers reserved slots when popup initialization throws', () => {
+  const vfx = createVfxSystem({ mode: 'headless', maxPopups: 8 });
+  try {
+    for (let i = 0; i < 9; i++) {
+      assert.throws(() => vfx.popupNumber({ follow() { throw new Error('unavailable target'); } }), /unavailable target/);
+    }
+    for (let value = 1; value <= 8; value++) vfx.popupNumber({ value });
+    assert.equal(vfx.floatingText.getActivePopups().length, 8);
+  } finally {
+    vfx.dispose();
+  }
+});
+
 test('3D floating text packs active glyphs, scales by camera distance, and resets cleanly', () => {
   const scene = new THREE.Scene();
   const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 8, maxFloatingGlyphs: 64 });

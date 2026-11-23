@@ -299,7 +299,8 @@ function compileWebGL2Program(gl, vsSrc, fsSrc) {
 function encodeTextToGlyphs(str, outBuf, maxLen) {
   let count = 0;
   for (let i = 0; i < str.length && count < maxLen; i++) {
-    const g = lookupDamageGlyph(str[i]);
+    const digit = str.charCodeAt(i) - 48;
+    const g = digit >= 0 && digit <= 9 ? digit : lookupDamageGlyph(str[i]);
     if (g >= 0) outBuf[count++] = g;
   }
   return count;
@@ -310,7 +311,6 @@ function createPopupSlot(index) {
     slot: index,
     active: false,
     id: 0,
-    spawnOrder: 0,
     x: 0,
     y: 0,
     z: 0,
@@ -329,6 +329,7 @@ function createPopupSlot(index) {
     age: 0,
     lifetime: 0.7,
     baseLifetime: 0.7,
+    lifeRemaining: 0.7,
     permanent: false,
     unscaledTime: false,
     fadePhase: 0,
@@ -434,6 +435,9 @@ function createPopupSlot(index) {
     collisionDirX: 0,
     collisionDirY: 0,
     collisionDirZ: 0,
+    pushEnabled: false,
+    pushRadius: 0,
+    pushOffset: 0,
     destructionEnabled: false,
     destructionMaxDist: 2,
     destructionSpawnDelay: 0.15,
@@ -483,10 +487,19 @@ export function createFloatingTextPool({
   const p2 = new Float32Array(capacity * 4);
 
   const popups = Array.from({ length: popupCap }, (_, i) => createPopupSlot(i));
+  // Dense iteration order and age order are independent. Reusing a full pool
+  // evicts its oldest live popup without scanning either order.
   const activeIndices = new Int32Array(popupCap);
+  const activePositions = new Int32Array(popupCap);
+  const older = new Int32Array(popupCap);
+  const newer = new Int32Array(popupCap);
+  const freeSlots = Int32Array.from({ length: popupCap }, (_, i) => popupCap - 1 - i);
+  const reserved = new Uint8Array(popupCap);
+  let freeCount = popupCap;
+  let oldestSlot = -1;
+  let newestSlot = -1;
   let activeCount = 0;
   let nextPopupId = 1;
-  let nextSpawnOrder = 1;
   let totalEmitted = 0;
   let totalPopupsSpawned = 0;
   let totalCombined = 0;
@@ -606,7 +619,12 @@ export function createFloatingTextPool({
   }
 
   function refreshPopupFormatting(slot) {
-    const numStr = slot.enableNumber ? formatDamageValue(slot.value, slot.digitsCfg || undefined) : '';
+    let numStr = '';
+    if (slot.enableNumber) {
+      numStr = !slot.digitsCfg && Number.isSafeInteger(slot.value)
+        ? String(slot.value)
+        : formatDamageValue(slot.value, slot.digitsCfg || undefined);
+    }
     slot.mainText = slot.leftText + numStr + slot.rightText;
     slot.mainGlyphCount = encodeTextToGlyphs(slot.mainText, slot.mainGlyphs, 24);
     slot.topGlyphCount = slot.topText ? encodeTextToGlyphs(slot.topText, slot.topGlyphs, 16) : 0;
@@ -623,19 +641,22 @@ export function createFloatingTextPool({
   }
 
   function allocateSlot() {
-    for (let i = 0; i < popupCap; i++) {
-      if (!popups[i].active) return popups[i];
+    if (freeCount === 0) {
+      if (oldestSlot === -1) return null;
+      deactivateSlot(oldestSlot);
     }
-    // Recycle oldest active slot
-    let oldest = popups[0];
-    for (let i = 1; i < popupCap; i++) {
-      if (popups[i].spawnOrder < oldest.spawnOrder) oldest = popups[i];
-    }
-    deactivateSlot(oldest.slot);
-    return oldest;
+    const index = freeSlots[--freeCount];
+    reserved[index] = 1;
+    return popups[index];
   }
 
   function activateSlot(slotIdx) {
+    older[slotIdx] = newestSlot;
+    newer[slotIdx] = -1;
+    if (newestSlot === -1) oldestSlot = slotIdx;
+    else newer[newestSlot] = slotIdx;
+    newestSlot = slotIdx;
+    activePositions[slotIdx] = activeCount;
     activeIndices[activeCount++] = slotIdx;
   }
 
@@ -644,13 +665,18 @@ export function createFloatingTextPool({
     if (!slot.active) return;
     slot.active = false;
     slot.followTarget = null;
-    for (let i = 0; i < activeCount; i++) {
-      if (activeIndices[i] === slotIdx) {
-        activeIndices[i] = activeIndices[activeCount - 1];
-        activeCount--;
-        break;
-      }
-    }
+    const previous = older[slotIdx];
+    const next = newer[slotIdx];
+    if (previous === -1) oldestSlot = next;
+    else newer[previous] = next;
+    if (next === -1) newestSlot = previous;
+    else older[next] = previous;
+
+    const position = activePositions[slotIdx];
+    const last = activeIndices[--activeCount];
+    activeIndices[position] = last;
+    activePositions[last] = position;
+    freeSlots[freeCount++] = slotIdx;
   }
 
   function distanceBetween(a, b) {
@@ -784,22 +810,40 @@ export function createFloatingTextPool({
    */
   function popupNumber(opts = {}) {
     if (disposed) return 0;
+    const slot = allocateSlot();
+    if (!slot) return 0;
+    try {
+      configurePopup(slot, opts);
+    } catch (error) {
+      slot.followTarget = null;
+      freeSlots[freeCount++] = slot.slot;
+      throw error;
+    } finally {
+      reserved[slot.slot] = 0;
+    }
+    if (disposed) return 0;
 
+    slot.active = true;
+    activateSlot(slot.slot);
+    handleSpawnSpamControls(slot);
+
+    const emittedCount = slot.mainGlyphCount + slot.topGlyphCount + slot.botGlyphCount;
+    totalEmitted += Math.max(1, emittedCount);
+    totalPopupsSpawned += 1;
+    return Math.max(slot.mainGlyphCount, slot.mainText.length);
+  }
+
+  function configurePopup(slot, opts) {
     const presetName = opts.preset
       ?? (opts.isMiss ? 'miss' : opts.isHeal ? 'heal' : opts.isCrit ? 'crit' : null);
     const preset = presetName ? getDamagePreset(presetName) : null;
-    const fromPreset = (key) => (opts[key] !== undefined ? opts[key] : preset?.[key]);
-
-    const isCrit = Boolean(fromPreset('isCrit'));
-    const isHeal = Boolean(fromPreset('isHeal'));
-    const isMiss = Boolean(fromPreset('isMiss'));
-    const enableNumber = fromPreset('enableNumber') ?? !isMiss;
+    const isCrit = opts.isCrit === undefined ? preset?.isCrit : opts.isCrit;
+    const isHeal = opts.isHeal === undefined ? preset?.isHeal : opts.isHeal;
+    const isMiss = opts.isMiss === undefined ? preset?.isMiss : opts.isMiss;
+    const enableNumber = (opts.enableNumber === undefined ? preset?.enableNumber : opts.enableNumber) ?? !isMiss;
     const value = opts.value ?? 0;
 
-    const slot = allocateSlot();
-    slot.active = true;
     slot.id = nextPopupId++;
-    slot.spawnOrder = nextSpawnOrder++;
     slot.x = opts.x ?? 0;
     slot.y = opts.y ?? 0;
     slot.z = opts.z ?? 0;
@@ -1086,14 +1130,6 @@ export function createFloatingTextPool({
     }
     slot.destroying = false;
     slot.destroyElapsed = 0;
-
-    activateSlot(slot.slot);
-    handleSpawnSpamControls(slot);
-
-    const emittedCount = slot.mainGlyphCount + slot.topGlyphCount + slot.botGlyphCount;
-    totalEmitted += Math.max(1, emittedCount);
-    totalPopupsSpawned += 1;
-    return Math.max(slot.mainGlyphCount, slot.mainText.length);
   }
 
   function updateCollisionPass(dt) {
@@ -1577,12 +1613,17 @@ export function createFloatingTextPool({
     simTime = 0;
     unscaledTimeClock = 0;
     activeCount = 0;
+    freeCount = 0;
+    oldestSlot = -1;
+    newestSlot = -1;
     activeGlyphCount = 0;
     prevUploadedGlyphCount = 0;
     totalEmitted = 0;
     totalPopupsSpawned = 0;
     totalCombined = 0;
-    for (let i = 0; i < popupCap; i++) {
+    for (let i = popupCap - 1; i >= 0; i--) {
+      if (reserved[i]) continue;
+      freeSlots[freeCount++] = i;
       popups[i].active = false;
       popups[i].followTarget = null;
     }
