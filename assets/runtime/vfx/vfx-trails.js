@@ -487,26 +487,25 @@ export function createTrailsSystem({
   let boltDirtyCount = 0;
   let boltTotal = 0;
 
-  const segA = new Float32Array(totalRibbonSegs * 4);
-  const segB = new Float32Array(totalRibbonSegs * 4);
-  const segMeta = new Float32Array(totalRibbonSegs * 4);
-  const segExtra = new Float32Array(totalRibbonSegs * 4);
-  const segUv = new Float32Array(totalRibbonSegs * 4);
-  const segMatRow = new Float32Array(totalRibbonSegs);
-  segMatRow.fill(-1);
-  const segTanA = new Float32Array(totalRibbonSegs * 4);
-  const segTanB = new Float32Array(totalRibbonSegs * 4);
-  const segCustom1 = new Float32Array(totalRibbonSegs * 4);
-  const segA_N = new Float32Array(totalRibbonSegs * 4);
-  const segB_N = new Float32Array(totalRibbonSegs * 4);
-  const segMeta_N = new Float32Array(totalRibbonSegs * 4);
-  const segExtra_N = new Float32Array(totalRibbonSegs * 4);
-  const segUv_N = new Float32Array(totalRibbonSegs * 4);
-  const segMatRow_N = new Float32Array(totalRibbonSegs);
-  segMatRow_N.fill(-1);
-  const segTanA_N = new Float32Array(totalRibbonSegs * 4);
-  const segTanB_N = new Float32Array(totalRibbonSegs * 4);
-  const segCustom1_N = new Float32Array(totalRibbonSegs * 4);
+  function makeRibbonBuffers() {
+    const segMatRow = new Float32Array(totalRibbonSegs);
+    segMatRow.fill(-1);
+    return {
+      segA: new Float32Array(totalRibbonSegs * 4),
+      segB: new Float32Array(totalRibbonSegs * 4),
+      segMeta: new Float32Array(totalRibbonSegs * 4),
+      segExtra: new Float32Array(totalRibbonSegs * 4),
+      segUv: new Float32Array(totalRibbonSegs * 4),
+      segMatRow,
+      segTanA: new Float32Array(totalRibbonSegs * 4),
+      segTanB: new Float32Array(totalRibbonSegs * 4),
+      segCustom1: new Float32Array(totalRibbonSegs * 4),
+      mesh: null,
+      mat: null,
+      attrs: null,
+    };
+  }
+  const ribbonPools = [makeRibbonBuffers(), makeRibbonBuffers(), makeRibbonBuffers()];
   const trailPoints = new Float32Array(trailCap * trailNodes * 3);
   const trailPointTimes = new Float32Array(trailCap * trailNodes);
   const scratchArcLen = new Float32Array(trailNodes);
@@ -555,12 +554,6 @@ export function createTrailsSystem({
   let boltMesh = null;
   let boltAttrs = null;
   let boltMat = null;
-  let ribbonMesh = null;
-  let ribbonAttrs = null;
-  let ribbonMat = null;
-  let ribbonNormalMesh = null;
-  let ribbonNormalAttrs = null;
-  let ribbonNormalMat = null;
 
   if (mode === '3d' && THREE && scene && THREE.InstancedBufferGeometry && THREE.PlaneGeometry) {
     const MatCtor = THREE.RawShaderMaterial || THREE.ShaderMaterial;
@@ -621,127 +614,87 @@ export function createTrailsSystem({
     scene.add(boltMesh);
     boltAttrs = [ba0, ba1, ba2];
 
-    // 3. RibbonTrailPool (7,168 instanced quad segments)
-    const rGeo = new THREE.InstancedBufferGeometry();
-    rGeo.index = baseQuad.index;
-    rGeo.attributes.position = baseQuad.attributes.position;
-    rGeo.instanceCount = totalRibbonSegs;
-    const ra0 = new THREE.InstancedBufferAttribute(segA, 4);
-    const ra1 = new THREE.InstancedBufferAttribute(segB, 4);
-    const ra2 = new THREE.InstancedBufferAttribute(segMeta, 4);
-    const ra3 = new THREE.InstancedBufferAttribute(segExtra, 4);
-    const ra4 = new THREE.InstancedBufferAttribute(segUv, 4);
-    const ra5 = new THREE.InstancedBufferAttribute(segMatRow, 1);
-    const ra6 = new THREE.InstancedBufferAttribute(segTanA, 4);
-    const ra7 = new THREE.InstancedBufferAttribute(segTanB, 4);
-    const ra8 = new THREE.InstancedBufferAttribute(segCustom1, 4);
-    rGeo.setAttribute('aSegA', ra0);
-    rGeo.setAttribute('aSegB', ra1);
-    rGeo.setAttribute('aSegMeta', ra2);
-    rGeo.setAttribute('aSegExtra', ra3);
-    rGeo.setAttribute('aSegUvRect', ra4);
-    rGeo.setAttribute('aSegMatRow', ra5);
-    rGeo.setAttribute('aSegTanA', ra6);
-    rGeo.setAttribute('aSegTanB', ra7);
-    rGeo.setAttribute('aSegCustom1', ra8);
-    ribbonMat = new MatCtor({
-      vertexShader: RIBBON_VERTEX_GLSL,
-      fragmentShader: RIBBON_FRAGMENT_GLSL,
-      uniforms: {
-        uTime: timeUniform,
-        uIs2D: { value: is2D ? 1.0 : 0.0 },
-        uMaterialLut: { value: uberLut ? uberLut.texture : null },
-        uAtlasTex: { value: activeAtlasTex },
-        uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
-        uFlipV: { value: 0.0 },
-        uTrailTex: { value: null },
-        uHasTrailTex: { value: 0.0 },
-        uTrailFlipV: { value: 0.0 },
-        uTrailUvRect: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 1, 1) : { set() {} } },
-        uSoftDepthTex: { value: null },
-        uHasSoftDepth: { value: 0.0 },
-        uSoftFade: { value: 0.45 },
-        uIsMultiply: { value: 0.0 },
-        uIsPremultiply: { value: 0.0 },
-        uIsAdditive: { value: 1.0 },
-        uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
-        uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
-        uCustom1: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
-        uCustom2: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
-      },
-      transparent: true,
-      depthTest: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-    });
-    ribbonMesh = new THREE.Mesh(rGeo, ribbonMat);
-    ribbonMesh.frustumCulled = false;
-    ribbonMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
-    ribbonMesh.name = 'HGameVfxRibbonTrails';
-    scene.add(ribbonMesh);
-    ribbonAttrs = [ra0, ra1, ra2, ra3, ra4, ra5, ra6, ra7, ra8];
+    const initRibbonPool = (pool, name, { blending, blendEquation, blendSrc, blendDst, isPremul = 0.0, isAdditive = 0.0 }) => {
+      const rGeo = new THREE.InstancedBufferGeometry();
+      rGeo.index = baseQuad.index;
+      rGeo.attributes.position = baseQuad.attributes.position;
+      rGeo.instanceCount = totalRibbonSegs;
+      const ra0 = new THREE.InstancedBufferAttribute(pool.segA, 4);
+      const ra1 = new THREE.InstancedBufferAttribute(pool.segB, 4);
+      const ra2 = new THREE.InstancedBufferAttribute(pool.segMeta, 4);
+      const ra3 = new THREE.InstancedBufferAttribute(pool.segExtra, 4);
+      const ra4 = new THREE.InstancedBufferAttribute(pool.segUv, 4);
+      const ra5 = new THREE.InstancedBufferAttribute(pool.segMatRow, 1);
+      const ra6 = new THREE.InstancedBufferAttribute(pool.segTanA, 4);
+      const ra7 = new THREE.InstancedBufferAttribute(pool.segTanB, 4);
+      const ra8 = new THREE.InstancedBufferAttribute(pool.segCustom1, 4);
+      rGeo.setAttribute('aSegA', ra0);
+      rGeo.setAttribute('aSegB', ra1);
+      rGeo.setAttribute('aSegMeta', ra2);
+      rGeo.setAttribute('aSegExtra', ra3);
+      rGeo.setAttribute('aSegUvRect', ra4);
+      rGeo.setAttribute('aSegMatRow', ra5);
+      rGeo.setAttribute('aSegTanA', ra6);
+      rGeo.setAttribute('aSegTanB', ra7);
+      rGeo.setAttribute('aSegCustom1', ra8);
+      const matOpts = {
+        vertexShader: RIBBON_VERTEX_GLSL,
+        fragmentShader: RIBBON_FRAGMENT_GLSL,
+        uniforms: {
+          uTime: timeUniform,
+          uIs2D: { value: is2D ? 1.0 : 0.0 },
+          uMaterialLut: { value: uberLut ? uberLut.texture : null },
+          uAtlasTex: { value: activeAtlasTex },
+          uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
+          uFlipV: { value: 0.0 },
+          uTrailTex: { value: null },
+          uHasTrailTex: { value: 0.0 },
+          uTrailFlipV: { value: 0.0 },
+          uTrailUvRect: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 1, 1) : { set() {} } },
+          uSoftDepthTex: { value: null },
+          uHasSoftDepth: { value: 0.0 },
+          uSoftFade: { value: 0.45 },
+          uIsMultiply: { value: 0.0 },
+          uIsPremultiply: { value: isPremul },
+          uIsAdditive: { value: isAdditive },
+          uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
+          uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
+          uCustom1: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
+          uCustom2: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
+        },
+        transparent: true,
+        depthTest: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending,
+      };
+      if (blendEquation !== undefined) matOpts.blendEquation = blendEquation;
+      if (blendSrc !== undefined) matOpts.blendSrc = blendSrc;
+      if (blendDst !== undefined) matOpts.blendDst = blendDst;
+      pool.mat = new MatCtor(matOpts);
+      pool.mesh = new THREE.Mesh(rGeo, pool.mat);
+      pool.mesh.frustumCulled = false;
+      pool.mesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
+      pool.mesh.name = name;
+      scene.add(pool.mesh);
+      pool.attrs = [ra0, ra1, ra2, ra3, ra4, ra5, ra6, ra7, ra8];
+    };
 
-    // 3b. Alpha-blended RibbonTrailPool
-    const rGeoN = new THREE.InstancedBufferGeometry();
-    rGeoN.index = baseQuad.index;
-    rGeoN.attributes.position = baseQuad.attributes.position;
-    rGeoN.instanceCount = totalRibbonSegs;
-    const rn0 = new THREE.InstancedBufferAttribute(segA_N, 4);
-    const rn1 = new THREE.InstancedBufferAttribute(segB_N, 4);
-    const rn2 = new THREE.InstancedBufferAttribute(segMeta_N, 4);
-    const rn3 = new THREE.InstancedBufferAttribute(segExtra_N, 4);
-    const rn4 = new THREE.InstancedBufferAttribute(segUv_N, 4);
-    const rn5 = new THREE.InstancedBufferAttribute(segMatRow_N, 1);
-    const rn6 = new THREE.InstancedBufferAttribute(segTanA_N, 4);
-    const rn7 = new THREE.InstancedBufferAttribute(segTanB_N, 4);
-    const rn8 = new THREE.InstancedBufferAttribute(segCustom1_N, 4);
-    rGeoN.setAttribute('aSegA', rn0);
-    rGeoN.setAttribute('aSegB', rn1);
-    rGeoN.setAttribute('aSegMeta', rn2);
-    rGeoN.setAttribute('aSegExtra', rn3);
-    rGeoN.setAttribute('aSegUvRect', rn4);
-    rGeoN.setAttribute('aSegMatRow', rn5);
-    rGeoN.setAttribute('aSegTanA', rn6);
-    rGeoN.setAttribute('aSegTanB', rn7);
-    rGeoN.setAttribute('aSegCustom1', rn8);
-    ribbonNormalMat = new MatCtor({
-      vertexShader: RIBBON_VERTEX_GLSL,
-      fragmentShader: RIBBON_FRAGMENT_GLSL,
-      uniforms: {
-        uTime: timeUniform,
-        uIs2D: { value: is2D ? 1.0 : 0.0 },
-        uMaterialLut: { value: uberLut ? uberLut.texture : null },
-        uAtlasTex: { value: activeAtlasTex },
-        uHasAtlas: { value: activeAtlasTex ? 1.0 : 0.0 },
-        uFlipV: { value: 0.0 },
-        uTrailTex: { value: null },
-        uHasTrailTex: { value: 0.0 },
-        uTrailFlipV: { value: 0.0 },
-        uTrailUvRect: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 1, 1) : { set() {} } },
-        uSoftDepthTex: { value: null },
-        uHasSoftDepth: { value: 0.0 },
-        uSoftFade: { value: 0.45 },
-        uIsMultiply: { value: 0.0 },
-        uIsPremultiply: { value: 0.0 },
-        uIsAdditive: { value: 0.0 },
-        uInvViewport: { value: THREE.Vector2 ? new THREE.Vector2(1 / 1280, 1 / 720) : { set() {} } },
-        uCamNearFar: { value: THREE.Vector2 ? new THREE.Vector2(0.1, 200) : { set() {} } },
-        uCustom1: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
-        uCustom2: { value: THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 0) : { set() {} } },
-      },
-      transparent: true,
-      depthTest: true,
-      depthWrite: false,
-      side: THREE.DoubleSide,
+    // 3. RibbonTrailPools (0=Additive, 1=Normal Alpha, 2=Premultiply / One+OneMinusSrcAlpha)
+    initRibbonPool(ribbonPools[0], 'HGameVfxRibbonTrails', {
+      blending: THREE.AdditiveBlending,
+      isAdditive: 1.0,
+    });
+    initRibbonPool(ribbonPools[1], 'HGameVfxRibbonTrailsNormal', {
       blending: THREE.NormalBlending,
     });
-    ribbonNormalMesh = new THREE.Mesh(rGeoN, ribbonNormalMat);
-    ribbonNormalMesh.frustumCulled = false;
-    ribbonNormalMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
-    ribbonNormalMesh.name = 'HGameVfxRibbonTrailsNormal';
-    scene.add(ribbonNormalMesh);
-    ribbonNormalAttrs = [rn0, rn1, rn2, rn3, rn4, rn5, rn6, rn7, rn8];
+    initRibbonPool(ribbonPools[2], 'HGameVfxRibbonTrailsPremultiply', {
+      blending: THREE.CustomBlending || THREE.NormalBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.OneFactor,
+      blendDst: THREE.OneMinusSrcAlphaFactor,
+      isPremul: THREE.CustomBlending ? 1.0 : 0.0,
+    });
   }
 
   function slashArc(opts = {}) {
@@ -820,20 +773,19 @@ export function createTrailsSystem({
     const endScale = trailEndWidthScale[trackId];
     const hdr = trailHdr[trackId];
 
-    const isNormal = trailIsNormal[trackId] === 1;
+    const poolIdx = trailIsNormal[trackId] | 0;
     const matRow = trailMatRow[trackId];
-    const dstA = isNormal ? segA_N : segA;
-    const dstB = isNormal ? segB_N : segB;
-    const dstMeta = isNormal ? segMeta_N : segMeta;
-    const dstExtra = isNormal ? segExtra_N : segExtra;
-    const dstUv = isNormal ? segUv_N : segUv;
-    const dstMatRow = isNormal ? segMatRow_N : segMatRow;
-    const dstTanA = isNormal ? segTanA_N : segTanA;
-    const dstTanB = isNormal ? segTanB_N : segTanB;
-    const dstCustom1 = isNormal ? segCustom1_N : segCustom1;
-    const otherMeta = isNormal ? segMeta : segMeta_N;
-    const dstAttrs = isNormal ? ribbonNormalAttrs : ribbonAttrs;
-    const otherAttrs = isNormal ? ribbonAttrs : ribbonNormalAttrs;
+    const pool = ribbonPools[poolIdx] || ribbonPools[0];
+    const dstA = pool.segA;
+    const dstB = pool.segB;
+    const dstMeta = pool.segMeta;
+    const dstExtra = pool.segExtra;
+    const dstUv = pool.segUv;
+    const dstMatRow = pool.segMatRow;
+    const dstTanA = pool.segTanA;
+    const dstTanB = pool.segTanB;
+    const dstCustom1 = pool.segCustom1;
+    const dstAttrs = pool.attrs;
     const uvBase = trackId * 4;
     const uv0 = trailUvRect[uvBase];
     const uv1 = trailUvRect[uvBase + 1];
@@ -869,9 +821,13 @@ export function createTrailsSystem({
     for (let s = 0; s < segsPerTrail; s++) {
       const segIdx = segBase + s;
       const i4 = segIdx * 4;
-      otherMeta[i4 + 1] = 0;
-      otherMeta[i4 + 2] = 0;
-      otherMeta[i4 + 3] = 0;
+      for (let p = 0; p < ribbonPools.length; p++) {
+        if (p === poolIdx) continue;
+        const om = ribbonPools[p].segMeta;
+        om[i4 + 1] = 0;
+        om[i4 + 2] = 0;
+        om[i4 + 3] = 0;
+      }
       if (s >= count - 1) {
         dstMeta[i4 + 1] = 0;
         dstMeta[i4 + 2] = 0;
@@ -991,7 +947,7 @@ export function createTrailsSystem({
           Math.round((scratchBaseRgb[1] + (scratchEndRgb[1] - scratchBaseRgb[1]) * s1) * lifeG * 255),
           Math.round((scratchBaseRgb[2] + (scratchEndRgb[2] - scratchBaseRgb[2]) * s1) * lifeB * 255),
         );
-        if (isNormal) {
+        if (poolIdx > 0) {
           const evalNormalAlpha = (t) => (
             t <= 0.06 ? (0.35 + 0.65 * (t / 0.06))
               : t <= 0.86 ? 1.0
@@ -1021,8 +977,10 @@ export function createTrailsSystem({
         submitRingBufferRanges(dstAttrs[i], segBase, segsPerTrail, totalRibbonSegs, i === 5 ? 1 : 4);
       }
     }
-    if (otherAttrs) {
-      submitRingBufferRanges(otherAttrs[2], segBase, segsPerTrail, totalRibbonSegs, 4);
+    for (let p = 0; p < ribbonPools.length; p++) {
+      if (p !== poolIdx && ribbonPools[p].attrs) {
+        submitRingBufferRanges(ribbonPools[p].attrs[2], segBase, segsPerTrail, totalRibbonSegs, 4);
+      }
     }
   }
 
@@ -1043,7 +1001,8 @@ export function createTrailsSystem({
     const flipVal = atlasFlipVOverride !== null
       ? (atlasFlipVOverride ? 1.0 : 0.0)
       : (activeAtlasTex && activeAtlasTex.flipY ? 1.0 : 0.0);
-    for (const mat of [ribbonMat, ribbonNormalMat]) {
+    for (const pool of ribbonPools) {
+      const mat = pool.mat;
       if (!mat) continue;
       mat.uniforms.uAtlasTex.value = activeAtlasTex;
       mat.uniforms.uHasAtlas.value = activeAtlasTex ? 1.0 : 0.0;
@@ -1063,7 +1022,8 @@ export function createTrailsSystem({
    * @param {readonly number[]} [uvRect]
    */
   function setTrailTexture(texture, uvRect = [0, 0, 1, 1]) {
-    for (const mat of [ribbonMat, ribbonNormalMat]) {
+    for (const pool of ribbonPools) {
+      const mat = pool.mat;
       if (!mat) continue;
       mat.uniforms.uTrailTex.value = texture;
       mat.uniforms.uHasTrailTex.value = texture ? 1.0 : 0.0;
@@ -1128,7 +1088,9 @@ export function createTrailsSystem({
       trailHdr[id] = colorOrOpts.hdr ?? 1.0;
       trailOpacity[id] = Math.max(0, Math.min(1, colorOrOpts.alpha ?? 1.0));
       trailLifetime[id] = Math.max(0, colorOrOpts.lifetime ?? 0);
-      trailIsNormal[id] = colorOrOpts.blend === 'alpha' ? 1 : 0;
+      const isPremul = colorOrOpts.blend === 'premultiply'
+        || (colorOrOpts.blend === 'alpha' && colorOrOpts.uberMat?.srcBlend === 1 && colorOrOpts.uberMat?.dstBlend === 10);
+      trailIsNormal[id] = isPremul ? 2 : (colorOrOpts.blend === 'alpha' ? 1 : 0);
       if (colorOrOpts.uberMat) {
         trailMatRow[id] = registerUberMaterial(colorOrOpts.uberMat);
       }
@@ -1203,7 +1165,8 @@ export function createTrailsSystem({
   }
 
   function setDepthTexture(depthTexture, { near = 0.1, far = 200, width = 1280, height = 720, softFade = 0.45 } = {}) {
-    for (const mat of [ribbonMat, ribbonNormalMat]) {
+    for (const pool of ribbonPools) {
+      const mat = pool.mat;
       if (!mat) continue;
       mat.uniforms.uSoftDepthTex.value = depthTexture || null;
       mat.uniforms.uHasSoftDepth.value = depthTexture ? 1.0 : 0.0;
@@ -1331,21 +1294,17 @@ export function createTrailsSystem({
       trailActive[i] = 0;
       trailCount[i] = 0;
     }
-    segMeta.fill(0);
-    segMeta_N.fill(0);
-    segMatRow.fill(-1);
-    segMatRow_N.fill(-1);
+    for (const pool of ribbonPools) {
+      pool.segMeta.fill(0);
+      pool.segMatRow.fill(-1);
+      if (pool.attrs) {
+        submitRingBufferRanges(pool.attrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
+        submitRingBufferRanges(pool.attrs[5], 0, totalRibbonSegs, totalRibbonSegs, 1);
+      }
+    }
     trailMatRow.fill(-1);
     slashP1.fill(0);
     boltP1.fill(0);
-    if (ribbonAttrs) {
-      submitRingBufferRanges(ribbonAttrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
-      submitRingBufferRanges(ribbonAttrs[5], 0, totalRibbonSegs, totalRibbonSegs, 1);
-    }
-    if (ribbonNormalAttrs) {
-      submitRingBufferRanges(ribbonNormalAttrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
-      submitRingBufferRanges(ribbonNormalAttrs[5], 0, totalRibbonSegs, totalRibbonSegs, 1);
-    }
     if (slashAttrs) submitRingBufferRanges(slashAttrs[1], 0, slashCap, slashCap, 4);
     if (boltAttrs) submitRingBufferRanges(boltAttrs[1], 0, boltCap, boltCap, 4);
   }
@@ -1353,7 +1312,7 @@ export function createTrailsSystem({
   function dispose() {
     if (disposed) return;
     disposed = true;
-    for (const m of [slashMesh, boltMesh, ribbonMesh, ribbonNormalMesh]) {
+    for (const m of [slashMesh, boltMesh, ...ribbonPools.map((p) => p.mesh)]) {
       if (m) {
         scene?.remove?.(m);
         m.geometry?.dispose?.();

@@ -574,6 +574,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
       detailDissolveChannel: readVec4Prop('_Detail_Dissolve_Channel', [1, 0, 0, 0]),
       detailVertexOffsetChannel: readVec4Prop('_Detail_Vertex_Offset_Channel', [0, 0, 0, 0]),
       dissolveMapKey: sDiss?.spriteKey || null,
+      alphaOvSrgb: sDiss?.srgb ?? true,
       dissolveMapST: sDiss?.st || [1, 1, 0, 0],
       dissolveMapPanning: readVec4Prop('_Dissolve_Map_Panning', [0, 0, 0, 0]).slice(0, 2),
       dissolveFadeRange: readVec4Prop('_Dissolve_Fade_Range', [-0.25, 1, 0, 0]).slice(0, 2),
@@ -1057,6 +1058,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       : computeHierarchyTransform(trBody);
     const offset = worldTr.pos;
     const trScaleScalar = Number(((Math.abs(worldTr.scale[0]) + Math.abs(worldTr.scale[1]) + Math.abs(worldTr.scale[2])) / 3).toFixed(4));
+    const psScalingMode = Number((ps.match(/^\s*scalingMode:\s*(\d+)/m) || [])[1] ?? 1);
 
     const isLoop = /^\s*looping:\s*1\b/m.test(ps);
     const isPrewarm = /^\s*prewarm:\s*1\b/m.test(ps);
@@ -1307,7 +1309,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     if (renderMode === 'mesh') {
       layer.mesh = meshKey;
       if (Math.abs(meshGlobalScale - 1) > 0.005) layer.meshGlobalScale = Number(meshGlobalScale.toFixed(4));
-      layer.forwardAxis = 'y';
+      layer.forwardAxis = renderAlign === 4 ? 'z' : 'y';
       if (mainMat?.lit) layer.lit = true;
       if (renderAlign === 4 || (renderAlign !== 1 && renderAlign !== 2 && (Array.isArray(speed) ? speed[1] > 0.1 : speed > 0.1))) {
         layer.alignToVelocity = true;
@@ -1606,6 +1608,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       let vx = rx.val;
       let vy = ry.val;
       let vzRaw = rz.val;
+      if (!isWorldVel && psScalingMode !== 2) {
+        vx = scaleRangeBy(vx, worldTr.scale[0]);
+        vy = scaleRangeBy(vy, worldTr.scale[1]);
+        vzRaw = scaleRangeBy(vzRaw, worldTr.scale[2]);
+      }
       if (!isWorldVel && Math.abs(alignRot[3]) < 0.9999) {
         const loOf = (v) => (Array.isArray(v) ? v[0] : v);
         const hiOf = (v) => (Array.isArray(v) ? v[1] : v);
@@ -2001,8 +2008,16 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         ...(trailMat?.spriteKey ? { sprite: trailMat.spriteKey } : {}),
         ...(trailMat?.uberMat ? { uberMat: trailMat.uberMat } : {}),
         ...(hasTexScale ? { textureScale: [Number(texScaleX.toFixed(4)), Number(texScaleY.toFixed(4))] } : {}),
-        width: Number((baseSizeMax * wMax).toFixed(3)),
-        widthOverTrail: wScalar,
+        ...(function () {
+          const trailWorldSpace = /worldSpace:\s*1\b/.test(trailMod);
+          const trailWScale = (!trailWorldSpace && psScalingMode !== 2 && !sizeAffW && Math.abs(trScaleScalar - 1) > 0.005)
+            ? trScaleScalar
+            : 1;
+          return {
+            width: Number(((sizeAffW ? baseSizeMax : 1) * wMax * trailWScale).toFixed(3)),
+            widthOverTrail: scaleRangeBy(wScalar, trailWScale),
+          };
+        })(),
         sizeAffectsWidth: sizeAffW,
         endWidth: 0,
         endWidthScale,

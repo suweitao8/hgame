@@ -1386,10 +1386,12 @@ vec4 vfxEvalPbrFxFragment(
   bool clampDetU = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_DETAIL_U.toFixed(1)});
   bool clampDetV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_DETAIL_V.toFixed(1)});
 
+  vec2 uUv0 = vec2(uv0.x, 1.0 - uv0.y);
+
   vec4 detSample = vec4(1.0);
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DETAIL.toFixed(1)})) {
-    vec2 duv = uv0 * detST.xy + detST.zw + pan0.zw * timeSec;
-    detSample = vfxSampleAtlasRectWrapped(atlasTex, detRect, duv, flipV, clampDetU, clampDetV);
+    vec2 duv = uUv0 * detST.xy + detST.zw + pan0.zw * timeSec;
+    detSample = vfxSampleAtlasRectWrapped(atlasTex, detRect, vec2(duv.x, 1.0 - duv.y), flipV, clampDetU, clampDetV);
     if (vfxHasFlag(flags, ${UBER_FLAG_DETAIL_SRGB.toFixed(1)})) {
       detSample.rgb = vfxSrgbToLinear3(detSample.rgb);
     }
@@ -1397,11 +1399,12 @@ vec4 vfxEvalPbrFxFragment(
 
   float distSignal = vfxChannelPickerClamped(detSample, detDistChan);
   vec2 uvOff = vfxHasFlag(flags, ${UBER_FLAG_USE_UV_OFFSET.toFixed(1)}) ? custom1.zw : vec2(0.0);
-  vec2 mainUv = (uv0 + uvOff + vec2(distSignal * meta31.x)) * baseST.xy + baseST.zw + pan0.xy * timeSec;
+  vec2 mainUv = (uUv0 + uvOff + vec2(distSignal * meta31.x)) * baseST.xy + baseST.zw + pan0.xy * timeSec;
+  vec2 mainUvFlip = vec2(mainUv.x, 1.0 - mainUv.y);
 
   vec4 albedoSamp = vec4(1.0);
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)})) {
-    albedoSamp = vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUv, flipV, clampMainU, clampMainV);
+    albedoSamp = vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUvFlip, flipV, clampMainU, clampMainV);
     if (vfxHasFlag(flags, ${UBER_FLAG_MAIN_SRGB.toFixed(1)})) {
       albedoSamp.rgb = vfxSrgbToLinear3(albedoSamp.rgb);
     }
@@ -1415,17 +1418,18 @@ vec4 vfxEvalPbrFxFragment(
   vec3 N = normalize(normalWs);
   if (!isFrontFacing) N = -N;
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_NORMAL.toFixed(1)})) {
-    vec2 nuv = uv0 * normST.xy + normST.zw;
-    vec3 nm = vfxSampleAtlasRectWrapped(atlasTex, normRect, nuv, flipV, clampMainU, clampMainV).xyz * 2.0 - 1.0;
-    mat3 tbn = vfxComputeCotangentFrame(N, -viewDirWs, nuv);
+    vec2 nuv = uUv0 * normST.xy + normST.zw;
+    vec2 nuvFlip = vec2(nuv.x, 1.0 - nuv.y);
+    vec3 nm = vfxSampleAtlasRectWrapped(atlasTex, normRect, nuvFlip, flipV, clampMainU, clampMainV).xyz * 2.0 - 1.0;
+    mat3 tbn = vfxComputeCotangentFrame(N, -viewDirWs, nuvFlip);
     N = normalize(tbn * vec3(nm.x * fresNormOcc.z, nm.y * fresNormOcc.z, max(0.05, nm.z)));
   } else if (vfxHasFlag(flags, ${UBER_FLAG_USE_BASE_AS_NORMAL.toFixed(1)}) && hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_MAIN.toFixed(1)})) {
     vec2 eps = vec2(0.004, 0.0);
-    float hL = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUv - eps.xy, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
-    float hR = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUv + eps.xy, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
-    float hD = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUv - eps.yx, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
-    float hU = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUv + eps.yx, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
-    mat3 tbn = vfxComputeCotangentFrame(N, -viewDirWs, mainUv);
+    float hL = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUvFlip - eps.xy, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
+    float hR = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUvFlip + eps.xy, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
+    float hD = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUvFlip - eps.yx, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
+    float hU = dot(vfxSampleAtlasRectWrapped(atlasTex, baseRect, mainUvFlip + eps.yx, flipV, clampMainU, clampMainV).rgb, vec3(0.333));
+    mat3 tbn = vfxComputeCotangentFrame(N, -viewDirWs, mainUvFlip);
     N = normalize(tbn[2] + (tbn[0] * (hL - hR) + tbn[1] * (hD - hU)) * pan1.z * 2.0);
   }
 
@@ -1433,8 +1437,8 @@ vec4 vfxEvalPbrFxFragment(
   float roughness = clamp(1.0 - pbrScalars.x, 0.06, 1.0);
   float metallic = clamp(pbrScalars.y, 0.0, 1.0);
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_ORM.toFixed(1)})) {
-    vec2 ormUv = uv0 * ormST.xy + ormST.zw;
-    vec4 orm = vfxSampleAtlasRectWrapped(atlasTex, ormRect, ormUv, flipV, clampMainU, clampMainV);
+    vec2 ormUv = uUv0 * ormST.xy + ormST.zw;
+    vec4 orm = vfxSampleAtlasRectWrapped(atlasTex, ormRect, vec2(ormUv.x, 1.0 - ormUv.y), flipV, clampMainU, clampMainV);
     ao = mix(1.0, orm.r, clamp(fresNormOcc.w, 0.0, 1.0));
     roughness = clamp(1.0 - orm.g * pbrScalars.x, 0.06, 1.0);
     metallic = clamp(orm.b * pbrScalars.y, 0.0, 1.0);
@@ -1478,8 +1482,8 @@ vec4 vfxEvalPbrFxFragment(
 
   // Emission + Self illumination (PBR FX.shadergraph: custom1.x boosts BaseColor, not Emission)
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_EMISSION.toFixed(1)})) {
-    vec2 eUv = uv0 * emisST.xy + emisST.zw + pan1.xy * timeSec;
-    vec3 emSamp = vfxSampleAtlasRectWrapped(atlasTex, emisRect, eUv, flipV, clampMainU, clampMainV).rgb;
+    vec2 eUv = uUv0 * emisST.xy + emisST.zw + pan1.xy * timeSec;
+    vec3 emSamp = vfxSampleAtlasRectWrapped(atlasTex, emisRect, vec2(eUv.x, 1.0 - eUv.y), flipV, clampMainU, clampMainV).rgb;
     if (vfxHasFlag(flags, ${UBER_FLAG_MAIN_SRGB.toFixed(1)})) {
       emSamp = vfxSrgbToLinear3(emSamp);
     }
@@ -1497,8 +1501,12 @@ vec4 vfxEvalPbrFxFragment(
     float edge2 = edge1 - dissParams.x;
     float dissVal = 1.0;
     if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_DISSOLVE.toFixed(1)})) {
-      vec2 duv = (uv0 + vec2(distSignal * meta31.y)) * dissST.xy + dissST.zw + pan1.xy * timeSec;
-      dissVal = vfxChannelPickerClamped(vfxSampleAtlasRectWrapped(atlasTex, dissRect, duv, flipV, clampDetU, clampDetV), detDissChan);
+      vec2 duv = (uUv0 + vec2(distSignal * meta31.y)) * dissST.xy + dissST.zw + pan1.xy * timeSec;
+      vec4 dissSample = vfxSampleAtlasRectWrapped(atlasTex, dissRect, vec2(duv.x, 1.0 - duv.y), flipV, clampDetU, clampDetV);
+      if (vfxHasFlag(flags, ${UBER_FLAG_ALPHA_OV_SRGB.toFixed(1)}) || vfxHasFlag(flags, ${UBER_FLAG_DETAIL_SRGB.toFixed(1)})) {
+        dissSample.rgb = vfxSrgbToLinear3(dissSample.rgb);
+      }
+      dissVal = vfxChannelPickerClamped(dissSample, detDissChan);
     } else {
       dissVal = vfxChannelPickerClamped(detSample, detDissChan);
     }

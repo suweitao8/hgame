@@ -1109,8 +1109,8 @@ export function createMeshVfxPool({
         else scratchFwd.set(0, 0, 1);
         scratchDir.set(ax / dLen, ay / dLen, az / dLen);
         scratchQuat.setFromUnitVectors(scratchFwd, scratchDir);
-        if (s.rotZ !== 0 && scratchQuat2) {
-          scratchEuler.set(0, 0, s.rotZ);
+        if ((s.rotX !== 0 || s.rotY !== 0 || s.rotZ !== 0) && scratchQuat2) {
+          scratchEuler.set(s.rotX, s.rotY, s.rotZ, 'YXZ');
           scratchQuat2.setFromEuler(scratchEuler);
           scratchQuat.multiply(scratchQuat2);
         }
