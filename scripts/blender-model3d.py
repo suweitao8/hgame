@@ -1151,6 +1151,7 @@ def cmd_remesh_bake(args):
     for ca in list(low.data.color_attributes):
         low.data.color_attributes.remove(ca)
 
+    stats = collect_stats([low])
     rig_info = None
     lod1_stats = None
     lod2_stats = None
@@ -1182,8 +1183,6 @@ def cmd_remesh_bake(args):
             export_apply=True,
             export_tangents=False,
         )
-
-    stats = collect_stats([low])
     result = {
         "input": os.path.abspath(args.input),
         "output": os.path.abspath(args.out),
@@ -2317,11 +2316,6 @@ def _rig_and_export_arp(
         eb = rig.data.edit_bones
         if "root_ref.x" in eb and eb["root_ref.x"].head.y > y_hip_clean + 0.025 * H:
             neck_y = eb["neck_ref.x"].head.y if "neck_ref.x" in eb else sh_y
-            ankle_y = eb["foot_ref.l"].head.y if "foot_ref.l" in eb else foot_y
-            knee_y = min(
-                eb["leg_ref.l"].head.y if "leg_ref.l" in eb else y_hip_clean,
-                0.5 * (y_hip_clean + ankle_y) - 0.015 * H,
-            )
             sp_chain = [n for n in ("root_ref.x", "spine_01_ref.x", "spine_02_ref.x", "spine_03_ref.x") if n in eb]
             for idx, sn in enumerate(sp_chain):
                 t0 = idx / float(max(1, len(sp_chain)))
@@ -2331,9 +2325,30 @@ def _rig_and_export_arp(
             for s in ("l", "r"):
                 if f"thigh_ref.{s}" in eb:
                     eb[f"thigh_ref.{s}"].head.y = y_hip_clean
-                    eb[f"thigh_ref.{s}"].tail.y = knee_y
-                if f"leg_ref.{s}" in eb:
-                    eb[f"leg_ref.{s}"].head.y = knee_y
+
+        # Enforce coplanar forward-bending knee on (thigh_ref -> leg_ref -> foot_ref) so ARP match_to_rig
+        # never tilts the leg plane (which twists thigh/calf roll by 40-50 deg and throws c_leg_pole sideways)
+        for s in ("l", "r"):
+            if all(f"{b}.{s}" in eb for b in ("thigh_ref", "leg_ref", "foot_ref")):
+                th_b = eb[f"thigh_ref.{s}"]
+                lg_b = eb[f"leg_ref.{s}"]
+                ft_b = eb[f"foot_ref.{s}"]
+                z_h = th_b.head.z
+                z_k = lg_b.head.z
+                z_a = ft_b.head.z
+                t_k = (z_h - z_k) / max(1e-4, z_h - z_a)
+                x_line = th_b.head.x + t_k * (ft_b.head.x - th_b.head.x)
+                y_line = th_b.head.y + t_k * (ft_b.head.y - th_b.head.y)
+                th_b.tail.x = x_line
+                lg_b.head.x = x_line
+                knee_y_clean = min(lg_b.head.y, y_line - 0.025 * H)
+                th_b.tail.y = knee_y_clean
+                lg_b.head.y = knee_y_clean
+                ft_b.tail.x = ft_b.head.x
+                if f"toes_ref.{s}" in eb:
+                    to_b = eb[f"toes_ref.{s}"]
+                    to_b.head.x = ft_b.head.x
+                    to_b.tail.x = ft_b.head.x
         bpy.ops.arp.match_to_rig()
 
         bpy.ops.object.mode_set(mode="OBJECT")

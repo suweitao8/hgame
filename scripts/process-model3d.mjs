@@ -1755,13 +1755,13 @@ async function cmdCharacterPack(config, flags) {
   let inputPath = flags.input ? path.resolve(String(flags.input)) : '';
   if (!inputPath && flags['from-webasset']) {
     if (!characterId) throw new Error('character-pack --from-webasset requires --character-id <id>');
-    const res = await fetch(`${webassetUrl}/api/assets?q=${encodeURIComponent(characterId)}`);
+    const res = await fetch(`${webassetUrl}/api/assets?q=${encodeURIComponent(characterId)}`, { headers: { Connection: 'close' } });
     if (!res.ok) throw new Error(`WebAsset lookup failed (${res.status}) for "${characterId}"`);
     const data = await res.json();
     const item = (data.items || []).find((x) => x.id === characterId) || data.items?.[0];
     const highModelUrl = item?.models?.high?.url;
     if (!highModelUrl) throw new Error(`Character "${characterId}" has no models.high in WebAsset`);
-    const dl = await fetch(`${webassetUrl}${highModelUrl}`);
+    const dl = await fetch(`${webassetUrl}${highModelUrl}`, { headers: { Connection: 'close' } });
     if (!dl.ok) throw new Error(`Failed downloading raw high GLB (${dl.status})`);
     inputPath = path.join(outDir, `${characterId}_raw_high.glb`);
     await writeFile(inputPath, new Uint8Array(await dl.arrayBuffer()));
@@ -1800,7 +1800,7 @@ async function cmdCharacterPack(config, flags) {
     const uploadOne = async (mode, name, filePath) => {
       const bytes = await readFile(filePath);
       const url = `${webassetUrl}/api/character-models?characterId=${encodeURIComponent(characterId)}&mode=${mode}&name=${encodeURIComponent(name)}`;
-      const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: bytes });
+      const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', Connection: 'close' }, body: bytes });
       const json = await resp.json();
       if (!resp.ok) throw new Error(`WebAsset upload (${mode}) failed: ${JSON.stringify(json)}`);
       return json;
