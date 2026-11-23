@@ -509,6 +509,7 @@ export function createTrailsSystem({
   const segCustom1_N = new Float32Array(totalRibbonSegs * 4);
   const trailPoints = new Float32Array(trailCap * trailNodes * 3);
   const trailPointTimes = new Float32Array(trailCap * trailNodes);
+  const scratchArcLen = new Float32Array(trailNodes);
   const trailHead = new Int32Array(trailCap);
   const trailCount = new Int32Array(trailCap);
   const trailColor = new Float32Array(trailCap);
@@ -847,6 +848,24 @@ export function createTrailsSystem({
     const c1z = trailCustom1[c1Base + 2];
     const c1w = trailCustom1[c1Base + 3];
 
+    const invSegs = 1 / Math.max(1, count - 1);
+    let totalArcLen = 0;
+    if (count > 1) {
+      scratchArcLen[0] = 0;
+      for (let s = 0; s < count - 1; s++) {
+        const idxA = (trailHead[trackId] - 1 - s + trailNodes * 2) % trailNodes;
+        const idxB = (trailHead[trackId] - 2 - s + trailNodes * 2) % trailNodes;
+        const pA = (trackId * trailNodes + idxA) * 3;
+        const pB = (trackId * trailNodes + idxB) * 3;
+        totalArcLen += Math.hypot(
+          trailPoints[pB] - trailPoints[pA],
+          trailPoints[pB + 1] - trailPoints[pA + 1],
+          trailPoints[pB + 2] - trailPoints[pA + 2],
+        );
+        scratchArcLen[s + 1] = totalArcLen;
+      }
+    }
+
     for (let s = 0; s < segsPerTrail; s++) {
       const segIdx = segBase + s;
       const i4 = segIdx * 4;
@@ -866,13 +885,8 @@ export function createTrailsSystem({
       const pA = (trackId * trailNodes + idxA) * 3;
       const pB = (trackId * trailNodes + idxB) * 3;
 
-      const invSegs = 1 / Math.max(1, count - 1);
-      const t0 = life > 0
-        ? Math.max(0, Math.min(1, (simTime - trailPointTimes[trackId * trailNodes + idxA]) / life))
-        : (s * invSegs);
-      const t1 = life > 0
-        ? Math.max(0, Math.min(1, (simTime - trailPointTimes[trackId * trailNodes + idxB]) / life))
-        : ((s + 1) * invSegs);
+      const t0 = totalArcLen > 1e-5 ? (scratchArcLen[s] / totalArcLen) : (s * invSegs);
+      const t1 = totalArcLen > 1e-5 ? (scratchArcLen[s + 1] / totalArcLen) : ((s + 1) * invSegs);
 
       const ax = trailPoints[pA];
       const ay = trailPoints[pA + 1];
