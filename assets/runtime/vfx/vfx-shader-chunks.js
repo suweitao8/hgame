@@ -1406,7 +1406,9 @@ vec4 vfxEvalPbrFxFragment(
       albedoSamp.rgb = vfxSrgbToLinear3(albedoSamp.rgb);
     }
   }
-  vec3 albedo = albedoSamp.rgb * baseTint.rgb * vColor.rgb;
+  float hdrScale = max(0.0, custom1.x + 1.0);
+  vec3 baseUnlit = albedoSamp.rgb * baseTint.rgb;
+  vec3 albedo = baseUnlit * pbrScalars.z * vColor.rgb * hdrScale;
   float baseAlpha = albedoSamp.a * baseTint.a * vColor.a;
 
   // Normal perturbation via screen-space derivative cotangent frame (Mikkelsen/Schuler)
@@ -1474,19 +1476,18 @@ vec4 vfxEvalPbrFxFragment(
 
   vec3 litCol = directCol + iblCol;
 
-  // Emission + Self illumination
-  float hdrScale = max(0.0, custom1.x + 1.0);
+  // Emission + Self illumination (PBR FX.shadergraph: custom1.x boosts BaseColor, not Emission)
   if (hasAtlas > 0.5 && vfxHasFlag(texMask, ${UBER_TEX_BIT_EMISSION.toFixed(1)})) {
     vec2 eUv = uv0 * emisST.xy + emisST.zw + pan1.xy * timeSec;
     vec3 emSamp = vfxSampleAtlasRectWrapped(atlasTex, emisRect, eUv, flipV, clampMainU, clampMainV).rgb;
     if (vfxHasFlag(flags, ${UBER_FLAG_MAIN_SRGB.toFixed(1)})) {
       emSamp = vfxSrgbToLinear3(emSamp);
     }
-    litCol += emSamp * emisTintInt.rgb * max(0.0, emisTintInt.a) * hdrScale;
+    litCol += emSamp * emisTintInt.rgb * max(0.0, emisTintInt.a);
   } else if (dot(emisTintInt.rgb, vec3(1.0)) > 0.001) {
-    litCol += albedo * emisTintInt.rgb * max(0.0, emisTintInt.a) * 0.35 * hdrScale;
+    litCol += albedo * emisTintInt.rgb * max(0.0, emisTintInt.a) * 0.35;
   }
-  litCol += albedo * pbrScalars.z * hdrScale;
+  litCol += baseUnlit * pbrScalars.z;
 
   // Dissolve
   float erosion = 1.0;

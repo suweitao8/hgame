@@ -721,7 +721,7 @@ export function createEffectPlayer({
   function allocTrackedParticle({
     atlasState = null, atlasSlot = -1, meshSlot = -1, duration, initialAge = 0,
     x, y, z, vx, vy, vz, accelX = 0, accelZ = 0, gravity, drag,
-    curveRow = 0, hasVelCurve = false, orbitalY = 0, centerOffX = 0, centerOffZ = 0,
+    curveRow = 0, hasVelCurve = false, velCurve = null, orbitalY = 0, centerOffX = 0, centerOffZ = 0,
     tintR = 1, tintG = 1, tintB = 1,
     collision = null, subEmitters = null, subDepth = 0,
     clampVelocity = null,
@@ -756,6 +756,7 @@ export function createEffectPlayer({
         tp.drag = drag;
         tp.curveRow = curveRow;
         tp.hasVelCurve = Boolean(hasVelCurve);
+        tp.velCurve = Array.isArray(velCurve) && velCurve.length > 0 ? velCurve : null;
         tp.orbitalY = orbitalY;
         tp.centerOffX = centerOffX;
         tp.centerOffZ = centerOffZ;
@@ -1441,6 +1442,7 @@ export function createEffectPlayer({
           tintB: scratchTintOut[2],
           collision: layer.collision,
           clampVelocity: layer.clampVelocity,
+          velCurve: layer.velCurve,
           subEmitters: layer.subEmitters,
           subDepth: slot.subDepth,
           lightSlotIdx,
@@ -1547,6 +1549,7 @@ export function createEffectPlayer({
         drag,
         curveRow: layer._curveRow ?? 0,
         hasVelCurve: Boolean(layer.velCurve),
+        velCurve: layer.velCurve,
         orbitalY,
         centerOffX,
         centerOffZ,
@@ -1574,7 +1577,9 @@ export function createEffectPlayer({
         scratchTintOut[1] * (c0 ? (c0[1] ?? 1) : 1),
         scratchTintOut[2] * (c0 ? (c0[2] ?? 1) : 1),
       ];
-      const sampledCustom1 = sampleCustomDataVec4(layer.customData?.custom1, prng, Math.min(1, clampedInitAge / Math.max(0.01, dur)));
+      const trailCustom1 = layer.trail.custom1
+        ? layer.trail.custom1
+        : (layer.trail.useCustomData ? sampleCustomDataVec4(layer.customData?.custom1, prng, Math.min(1, clampedInitAge / Math.max(0.01, dur))) : null);
       if (layer.trail.mode === 'ribbon' && ls) {
         if (!ls.ribbonOpts) {
           ls.ribbonOpts = {
@@ -1588,7 +1593,7 @@ export function createEffectPlayer({
             uvRect: layer.trail.uvRect ?? (layer.trail.sprite && atlasParticles?.regions?.[layer.trail.sprite]) ?? null,
             uberMat: layer.trail.uberMat ?? null,
             textureScale: layer.trail.textureScale ?? null,
-            custom1: sampledCustom1 ? [...sampledCustom1] : null,
+            custom1: trailCustom1 ? [...trailCustom1] : null,
             lifetime: 0,
             alpha: layer.trail.alpha ?? 1.0,
           };
@@ -1612,7 +1617,7 @@ export function createEffectPlayer({
           sizeStart, layer.sizeCurve,
           trackedSlot,
           orbitalX, orbitalZ, centerOffY,
-          sampledCustom1,
+          trailCustom1,
           hasPartColCurve ? layer.colorCurve : null,
           noiseScroll, noiseDamp,
         );
@@ -2083,9 +2088,10 @@ export function createEffectPlayer({
               tp.vz *= sc;
             }
           }
-          tp.x += tp.vx * dt;
-          tp.y += tp.vy * dt;
-          tp.z += tp.vz * dt;
+          const vScale = tp.velCurve ? evaluateSizeCurve(tp.velCurve, Math.min(1, tp.age / Math.max(1e-4, tp.duration))) : 1.0;
+          tp.x += tp.vx * vScale * dt;
+          tp.y += tp.vy * vScale * dt;
+          tp.z += tp.vz * vScale * dt;
         }
         if (tp.hasCollision && !is2D) {
           const col = collisionResolver ? collisionResolver(tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz) : null;
