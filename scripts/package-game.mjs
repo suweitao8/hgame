@@ -9,6 +9,7 @@ import zlib from 'node:zlib';
 import { runToyPreflight } from './toy-preflight.mjs';
 import { normalizeReleaseProfile, runtimeSeeds, THREE_KTX2_FILES } from './project-profiles.mjs';
 import { PIXI_BUNDLER_PATH, casObjectPath, hashPixiSources, matchPixiBuildBytes, readAssetManifest, readPixiBuildManifest, readProjectAssetCatalog, resolveAssetStoreDir, shouldIgnoreForAssetTracking } from './assets.mjs';
+import { auditKtx2Textures } from './lib/toktx.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -692,6 +693,10 @@ async function decidePhysicsBundle(absGameDir, gameConfig, project) {
  * When `target === 'toy'`, builds a Bilibili Toy compliant package: flat ZIP root,
  * content-hashed entry JS/CSS for cross-version cache reuse, optional `toy-sdk.js` head injection,
  * and automatic `runToyPreflight` validation.
+ *
+ * Every packaged `.ktx2` must be genuinely compressed (ETC1S / UASTC) and carry a mip chain once
+ * large enough to alias; the package is not written otherwise. `allowUncompressedKtx2` is a
+ * development-only escape hatch.
  */
 export async function packageGameRelease({
   projectDir = process.cwd(),
@@ -708,6 +713,7 @@ export async function packageGameRelease({
   slug,
   poster,
   icon,
+  allowUncompressedKtx2 = false,
 } = {}) {
   if (target !== 'standard' && target !== 'toy') {
     throw new RangeError(`Unsupported package target "${target}". Use "standard" or "toy".`);
@@ -1202,11 +1208,26 @@ export async function packageGameRelease({
     stagedOutputs.set(entryRel, Buffer.from(entryHtml, 'utf8'));
   }
 
+  let ktx2 = null;
   const { zipStats, toyPreflight } = await stageRelease(targetDir, zipPath, async (files, archive) => {
     for (const [relPosix, data] of stagedOutputs) {
       const dst = path.join(files, ...relPosix.split('/'));
       await mkdir(path.dirname(dst), { recursive: true });
       await writeFile(dst, data);
+    }
+
+    if (!allowUncompressedKtx2) {
+      const audit = auditKtx2Textures(stagedOutputs);
+      ktx2 = {
+        files: audit.files.length,
+        compressed: audit.files.filter((file) => file.compressed).length,
+        fullMipChains: audit.files.filter((file) => file.fullMipChain).length,
+        bytes: audit.files.reduce((sum, file) => sum + file.bytes, 0),
+      };
+      if (!audit.ok) {
+        throw new Error(`KTX2 release audit failed:\n  ${audit.failures.join('\n  ')}\n`
+          + 'Re-encode with toktx (npm run game:pack -- --release) or pass --allow-uncompressed-ktx2 for a development build.');
+      }
     }
 
     const preflight = target === 'toy' ? await runToyPreflight({
@@ -1263,6 +1284,7 @@ export async function packageGameRelease({
     toySdkInjected,
     toyPreflight,
     budgetReport,
+    ktx2,
     notes,
     minified: Boolean(esbuild),
     resolvedFromStore,
@@ -1481,6 +1503,7 @@ function parseCliArgs(argv) {
     slug: undefined,
     poster: undefined,
     icon: undefined,
+    allowUncompressedKtx2: false,
     engine: false,
     help: false,
   };
@@ -1516,6 +1539,8 @@ function parseCliArgs(argv) {
       opts.icon = argv[++i];
     } else if (arg === '--no-minify') {
       opts.minify = false;
+    } else if (arg === '--allow-uncompressed-ktx2') {
+      opts.allowUncompressedKtx2 = true;
     } else if (arg === '--engine') {
       opts.engine = true;
     } else if (arg === '--help' || arg === '-h') {
@@ -1533,7 +1558,7 @@ async function main() {
   const opts = parseCliArgs(process.argv.slice(2));
   if (opts.help) {
     console.log(
-      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--no-minify] [--engine]',
+      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--allow-uncompressed-ktx2] [--no-minify] [--engine]',
     );
     return;
   }
@@ -1560,6 +1585,7 @@ async function main() {
         slug: opts.slug,
         poster: opts.poster,
         icon: opts.icon,
+        allowUncompressedKtx2: opts.allowUncompressedKtx2,
       });
   for (const note of summary.notes || []) console.error(note);
   console.log(JSON.stringify(summary, null, 2));

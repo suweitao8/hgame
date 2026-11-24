@@ -1,8 +1,8 @@
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import zlib from 'node:zlib';
+import { encodeKtx2WithToktx, isToktxRequired, missingToktxMessage, resolveToktxBin, TOKTX_INSTALL_HINT } from './lib/toktx.mjs';
 
 const KTX2_MAGIC_BYTES = Buffer.from([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -887,21 +887,40 @@ export function encodeKtx2Container({ width, height, data, vkFormat = 37 }) {
 }
 
 /**
- * Offline PNG-to-KTX2 converter (uses KTX-Software `toktx` when present & `preferToktx: true`,
- * falling back cleanly to pure-JS compliant KTX2 container encoding).
+ * Offline PNG-to-KTX2 converter. KTX-Software `toktx` is the default encoder: colour maps become
+ * ETC1S and normal / roughness-metallic maps UASTC, both with a complete mip chain. Without toktx
+ * the pure-JS container writer is used, which is uncompressed with a single level and therefore
+ * rejected by the release packaging audit; that fallback is announced, and is an error when
+ * `requireToktx` is set (also read from `HGAME_REQUIRE_TOKTX=1`).
+ * @param {string} inputPath
+ * @param {string} outputPath
+ * @param {{ preferToktx?: boolean, requireToktx?: boolean, kind?: 'color' | 'normal_rm', toktxBin?: string | null, warn?: (message: string) => void, exec?: typeof import('node:child_process').spawnSync }} [options]
  */
-export function convertPngToKtx2(inputPath, outputPath, { preferToktx = false } = {}) {
+export function convertPngToKtx2(inputPath, outputPath, {
+  preferToktx = true,
+  requireToktx = isToktxRequired(),
+  kind = 'color',
+  toktxBin,
+  warn = (message) => console.warn(message),
+  exec,
+} = {}) {
   const pngBuf = fs.readFileSync(inputPath);
   const decoded = decodePng(pngBuf);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
   let encoder = 'built-in-ktx2';
+  let warning = null;
   if (preferToktx) {
-    try {
-      execFileSync('toktx', ['--t2', '--encode', 'uastc', outputPath, inputPath], { stdio: 'ignore' });
+    const bin = toktxBin === undefined ? resolveToktxBin() : toktxBin;
+    if (bin) {
+      encodeKtx2WithToktx(bin, { input: inputPath, output: outputPath, kind, exec });
       encoder = 'toktx';
-    } catch {
-      // Fallback to built-in pure-JS KTX2 container when KTX-Software CLI is absent
+    } else if (requireToktx) {
+      throw new Error(missingToktxMessage(path.basename(outputPath)));
+    } else {
+      warning = `[process-assets] toktx not found: ${path.basename(outputPath)} is an uncompressed single-level `
+        + `KTX2 container, which release packaging rejects. ${TOKTX_INSTALL_HINT}`;
+      warn(warning);
     }
   }
   if (encoder === 'built-in-ktx2') {
@@ -909,7 +928,7 @@ export function convertPngToKtx2(inputPath, outputPath, { preferToktx = false } 
     fs.writeFileSync(outputPath, ktx2Buf);
   }
   const stat = fs.statSync(outputPath);
-  return { outputPath, width: decoded.width, height: decoded.height, bytes: stat.size, encoder };
+  return { outputPath, width: decoded.width, height: decoded.height, bytes: stat.size, encoder, warning };
 }
 
 /** CLI helper for processing single, 2x2, or 3x3 generated artwork sheets. */
@@ -918,7 +937,12 @@ export function runAssetCli(argv = process.argv.slice(2)) {
   if (args.ktx2 !== undefined) {
     const inFile = String(args.ktx2);
     const outFile = String(args.out || inFile.replace(/\.png$/i, '.ktx2'));
-    return convertPngToKtx2(inFile, outFile, { preferToktx: Boolean(args['prefer-toktx']) });
+    const kind = args['normal-rm'] ? 'normal_rm' : 'color';
+    return convertPngToKtx2(inFile, outFile, {
+      preferToktx: !args['no-toktx'],
+      requireToktx: args['require-toktx'] === true || isToktxRequired(),
+      kind,
+    });
   }
   if (args['atlas-dir'] !== undefined || args['atlas-out'] !== undefined) {
     return writeSpriteAtlas(args['atlas-dir'], args['atlas-out'], Number(args['max-size'] ?? 2048));

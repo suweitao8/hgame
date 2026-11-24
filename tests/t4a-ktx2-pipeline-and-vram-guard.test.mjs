@@ -38,8 +38,9 @@ test('Phase T4-A: KTX2 offline container encoder and PNG->KTX2 CLI round-trip cl
     assert.equal(parsed.pixelWidth, 8);
     assert.equal(parsed.pixelHeight, 8);
 
+    // `--no-toktx` selects the built-in container writer regardless of the host toolchain.
     const cliOut = path.join(tmpDir, 'cli.ktx2');
-    const cliRes = runAssetCli(['--ktx2', pngPath, '--out', cliOut]);
+    const cliRes = runAssetCli(['--ktx2', pngPath, '--out', cliOut, '--no-toktx']);
     assert.equal(cliRes.outputPath, cliOut);
     assert.equal(parseKtx2Header(fs.readFileSync(cliOut)).pixelWidth, 8);
   } finally {

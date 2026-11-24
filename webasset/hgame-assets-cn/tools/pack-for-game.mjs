@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { encodeKtx2WithToktx, isToktxRequired, missingToktxMessage, resolveToktxBin, TOKTX_INSTALL_HINT } from '../../../scripts/lib/toktx.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SPEC_PATH = path.join(ROOT, 'manifests', 'asset_spec.json');
@@ -13,52 +13,15 @@ const DEFAULT_OUT = path.join(ROOT, 'built', 'dist', 'sample_game');
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const out = { target: 'mobile', outDir: DEFAULT_OUT, gameConfig: null, webpFallback: true };
+  const out = { target: 'mobile', outDir: DEFAULT_OUT, gameConfig: null, webpFallback: true, release: false };
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--target' && args[i + 1]) out.target = args[++i];
     else if (args[i] === '--out' && args[i + 1]) out.outDir = path.resolve(args[++i]);
     else if (args[i] === '--game' && args[i + 1]) out.gameConfig = path.resolve(args[++i]);
     else if (args[i] === '--no-webp') out.webpFallback = false;
+    else if (args[i] === '--release') out.release = true;
   }
   return out;
-}
-
-function findToktx() {
-  if (process.env.TOKTX_BIN && existsSync(process.env.TOKTX_BIN)) return process.env.TOKTX_BIN;
-  const probe = spawnSync('where.exe', ['toktx'], { encoding: 'utf8' });
-  if (probe.status === 0 && probe.stdout?.trim()) {
-    return probe.stdout.trim().split(/\r?\n/)[0];
-  }
-  return null;
-}
-
-function encodeKtx2(toktxBin, pngPath, ktxPath, isNormalRm, spec) {
-  const cfg = isNormalRm ? spec.texturePipeline.ktx2.normal_rm : spec.texturePipeline.ktx2.color;
-  const args = isNormalRm
-    ? [
-        '--t2',
-        '--encode', 'uastc',
-        '--uastc_quality', String(cfg.uastcQuality ?? 2),
-        '--zcmp', String(cfg.zcmp ?? 18),
-        '--genmipmap',
-        '--assign_oetf', 'linear',
-        ktxPath,
-        pngPath,
-      ]
-    : [
-        '--t2',
-        '--encode', 'etc1s',
-        '--qlevel', String(cfg.qlevel ?? 160),
-        '--clevel', String(cfg.clevel ?? 2),
-        '--genmipmap',
-        '--assign_oetf', 'srgb',
-        ktxPath,
-        pngPath,
-      ];
-  const res = spawnSync(toktxBin, args, { stdio: 'inherit' });
-  if (res.status !== 0) {
-    throw new Error(`toktx failed on ${pngPath}`);
-  }
 }
 
 async function resizeStraightRgba(filePath, targetSize) {
@@ -120,6 +83,14 @@ async function packAtlasGrid(slots, keyFile, tileSize, gridCols, outPng) {
 
 async function main() {
   const opts = parseArgs();
+  // `--release` (or HGAME_REQUIRE_TOKTX=1) is strict: without toktx the pack fails instead of
+  // shipping the WebP fallback, and no WebP fallback is written at all.
+  const toktx = resolveToktxBin();
+  if (!toktx && (opts.release || isToktxRequired())) throw new Error(missingToktxMessage('the release PBR textures'));
+  if (!toktx) {
+    console.warn(`[game:pack] WARNING: toktx not found, packing the WebP fallback without KTX2. ${TOKTX_INSTALL_HINT}`);
+  }
+  const webpFallback = opts.release ? false : (opts.webpFallback || !toktx);
   const spec = JSON.parse(await readFile(SPEC_PATH, 'utf8'));
   const catalog = JSON.parse(await readFile(CATALOG_PATH, 'utf8'));
   const target = opts.target === 'pc' ? 'pc' : 'mobile';
@@ -176,14 +147,20 @@ async function main() {
   const gridMeta = await packAtlasGrid(orderedSlots, 'color.png', tileSize, gridCols, colorPng);
   await packAtlasGrid(orderedSlots, 'normal_rm.png', tileSize, gridCols, nrmPng);
 
-  const toktx = findToktx();
+  const ktx2Cfg = spec.texturePipeline.ktx2;
   let codecUsed = 'webp';
   if (toktx) {
-    encodeKtx2(toktx, colorPng, path.join(opts.outDir, 'pbr', 'albedo_array.ktx2'), false, spec);
-    encodeKtx2(toktx, nrmPng, path.join(opts.outDir, 'pbr', 'normal_rm_array.ktx2'), true, spec);
-    codecUsed = 'ktx2+webp';
+    encodeKtx2WithToktx(toktx, {
+      input: colorPng, output: path.join(opts.outDir, 'pbr', 'albedo_array.ktx2'), kind: 'color',
+      qlevel: ktx2Cfg.color.qlevel ?? 160, clevel: ktx2Cfg.color.clevel ?? 2,
+    });
+    encodeKtx2WithToktx(toktx, {
+      input: nrmPng, output: path.join(opts.outDir, 'pbr', 'normal_rm_array.ktx2'), kind: 'normal_rm',
+      uastcQuality: ktx2Cfg.normal_rm.uastcQuality ?? 2, zcmp: ktx2Cfg.normal_rm.zcmp ?? 18,
+    });
+    codecUsed = webpFallback ? 'ktx2+webp' : 'ktx2';
   }
-  if (opts.webpFallback || !toktx) {
+  if (webpFallback) {
     await sharp(colorPng).webp({ quality: spec.texturePipeline.webpFallback.colorQuality ?? 80, exact: true }).toFile(path.join(opts.outDir, 'pbr', 'albedo_array.webp'));
     await sharp(nrmPng).webp({ quality: spec.texturePipeline.webpFallback.normalRmQuality ?? 92, exact: true }).toFile(path.join(opts.outDir, 'pbr', 'normal_rm_array.webp'));
   }

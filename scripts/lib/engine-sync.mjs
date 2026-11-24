@@ -33,6 +33,7 @@ export const ENGINE_MANAGED_SCRIPT_LIBS = Object.freeze([
   'playwright-resolve.mjs',
   'snapshot-output.mjs',
   'snapshot-ui-audit.mjs',
+  'toktx.mjs',
 ]);
 
 export const ENGINE_MANAGED_SCRIPT_FILES = Object.freeze([
