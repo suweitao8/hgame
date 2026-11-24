@@ -77,9 +77,21 @@ try {
     if (isArchetype) {
       assert.equal(await page.locator('html').getAttribute('lang'), 'en', name);
       assert.equal(await page.locator('#start').textContent(), 'Start', name);
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'start', name + ' focuses the title action');
+      await page.evaluate(() => {
+        const field = document.createElement('input');
+        field.id = 'host-settings';
+        document.body.appendChild(field);
+        field.focus();
+      });
+      await page.keyboard.press('j', { delay: 80 });
+      assert.equal(await page.evaluate(() => window.__hgameState().phase), 'title', 'J in a host input does not start the game');
+      assert.equal(await page.locator('#host-settings').inputValue(), 'j');
+      await page.locator('#start').focus();
       await page.keyboard.down('j');
       await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 3000 });
       await page.keyboard.up('j');
+      assert.equal(await page.locator('.hg-focus-ring:visible').count(), 0, 'the title focus ring disappears on entering play');
     }
     const before = await page.evaluate(() => window.__hgameState());
     await page.keyboard.down('d');
@@ -185,11 +197,14 @@ try {
       await page.evaluate(() => { window.__recipePad.axes[0] = 0.65; });
       await page.waitForFunction(x => window.__hgameState().player.x > x, after.player.x, { timeout: 5000 });
       await page.evaluate(() => {
+        document.getElementById('host-settings').focus();
         window.__recipePad.axes[0] = 0;
         window.__recipePad.buttons[1].value = 1;
       });
       await page.waitForFunction(() => window.__hgameState().phase === 'paused', null, { timeout: 3000 });
       assert.equal(await page.locator('#restart').textContent(), 'Resume');
+      assert.equal(await page.evaluate(() => document.activeElement.id), 'host-settings', 'a phase change leaves the host field focused');
+      await page.locator('#restart').focus();
       await page.evaluate(() => {
         window.__recipePad.buttons[1].value = 0;
         window.__recipePad.buttons[0].value = 1;
@@ -241,7 +256,25 @@ try {
         await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 4000 });
         await page.evaluate(() => { window.__recipePad.buttons[0].value = 0; });
         await page.waitForFunction(() => window.__hgameState().phase === 'choice', null, { timeout: 20000 });
-        assert.ok(await page.locator('[data-upgrade]').count() > 0);
+        const cards = page.locator('[data-upgrade]');
+        assert.ok(await cards.count() >= 2);
+        const first = await cards.nth(0).getAttribute('data-upgrade');
+        const second = await cards.nth(1).getAttribute('data-upgrade');
+        const focused = () => page.evaluate(() => document.activeElement.getAttribute('data-upgrade'));
+        assert.equal(await focused(), first, 'the upgrade phase focuses the first card');
+        await page.keyboard.press('ArrowRight', { delay: 80 });
+        assert.equal(await focused(), second, 'one arrow press advances exactly one card');
+        await page.waitForFunction(() => {
+          const ring = document.querySelector('.hg-focus-ring');
+          if (!ring || ring.hidden) return false;
+          const card = document.activeElement.getBoundingClientRect();
+          const box = ring.getBoundingClientRect();
+          return Math.abs(card.left + card.width / 2 - box.left - box.width / 2) < 6 &&
+            Math.abs(card.top + card.height / 2 - box.top - box.height / 2) < 6;
+        });
+        await page.evaluate(() => { window.__recipePad.buttons[14].value = 1; });
+        await page.waitForFunction(id => document.activeElement.dataset.upgrade === id, first);
+        await page.evaluate(() => { window.__recipePad.buttons[14].value = 0; });
         await page.evaluate(() => { window.__recipePad.buttons[1].value = 1; });
         await page.waitForFunction(() => {
           const state = window.__hgameState();
@@ -250,6 +283,18 @@ try {
         await page.waitForTimeout(120);
         assert.equal(await page.evaluate(() => window.__hgameState().phase), 'playing');
         await page.evaluate(() => { window.__recipePad.buttons[1].value = 0; });
+        assert.equal(await page.evaluate(() => document.activeElement.id), 'game');
+        await page.waitForFunction(() => window.__hgameState().phase === 'choice', null, { timeout: 20000 });
+        await cards.nth(1).focus();
+        const selected = await cards.nth(1).getAttribute('data-upgrade');
+        await page.evaluate(() => {
+          document.getElementById('levelup').addEventListener('click', event => {
+            window.__activatedUpgrade = event.target.closest('[data-upgrade]')?.dataset.upgrade;
+          }, { capture: true, once: true });
+          window.__recipePad.buttons[0].value = 1;
+        });
+        await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 4000 });
+        assert.equal(await page.evaluate(() => window.__activatedUpgrade), selected, 'Xbox A activates the focused card');
       }
       assert.deepEqual(errors, [], 'action gamepad movement, menu, and touch');
     }

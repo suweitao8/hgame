@@ -459,18 +459,20 @@ export function bindUiUxDOM(options = {}) {
   }
 
   function setKeyboardFocus(el) {
+    if (focusedEl === el && (!el || doc?.activeElement === el)) return;
     if (focusedEl && focusedEl !== el) {
       surfaces.get(focusedEl)?.setFocused(false);
     }
     focusedEl = el ?? null;
     if (!focusedEl) {
-      focusAlphaSpring.setTarget(0);
+      focusAlphaSpring.snap(0);
+      if (focusRingEl) focusRingEl.hidden = true;
       focusSnapped = false;
       wake();
       return;
     }
     getOrCreateSurface(focusedEl).setFocused(true);
-    focusedEl.focus?.({ preventScroll: true });
+    if (doc?.activeElement !== focusedEl) focusedEl.focus?.({ preventScroll: true });
     focusAlphaSpring.setTarget(1);
     if (typeof focusedEl.getBoundingClientRect === 'function') {
       const r = focusedEl.getBoundingClientRect();
@@ -818,7 +820,6 @@ export function bindUiUxDOM(options = {}) {
   };
 
   const onPointerDown = (ev) => {
-    if (focusedEl) setKeyboardFocus(null);
     const el = resolveInteractiveTarget(ev.target);
     if (!el || isElementDisabled(el)) return;
     activePressed = el;
@@ -860,15 +861,16 @@ export function bindUiUxDOM(options = {}) {
 
   const onFocusIn = (ev) => {
     const el = resolveInteractiveTarget(ev.target);
-    if (!el || isElementDisabled(el)) return;
-    getOrCreateSurface(el).setFocused(true);
-    wake();
+    if (el !== ev.target || isElementDisabled(el)) return;
+    setKeyboardFocus(el);
   };
 
   const onFocusOut = (ev) => {
     const el = resolveInteractiveTarget(ev.target);
-    if (!el) return;
+    if (el !== ev.target) return;
     surfaces.get(el)?.setFocused(false);
+    const next = resolveInteractiveTarget(ev.relatedTarget);
+    if (focusedEl === el && (!next || next !== ev.relatedTarget || isElementDisabled(next))) setKeyboardFocus(null);
     wake();
   };
 
@@ -883,6 +885,7 @@ export function bindUiUxDOM(options = {}) {
 
   const onKeyDown = (ev) => {
     if (!keyboardNav || ev?.defaultPrevented) return;
+    if (ev.target?.isContentEditable || ev.target?.matches?.('input, textarea, select')) return;
     const modalOpen = Boolean(director?.panelStack.hasModal());
     const allowNav = modalOpen || director?.getPhase?.() !== 'playing';
     if (!allowNav && !focusedEl) return;

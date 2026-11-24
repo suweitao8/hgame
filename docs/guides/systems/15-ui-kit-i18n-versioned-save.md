@@ -58,6 +58,7 @@ ui.render(ctx, {
 - Button text shrinks down to `minFontSize` (default `10`) and is then shortened with `…`. Pass `autoFit: false` to keep the font size.
 - A wrapped label takes `textAlign`, `lineHeight` (a multiple of the font size) and `verticalAlign` (`top`, `middle`, `bottom`).
 - A grid child fills its cell unless it has its own `width` / `height`; `justifyItems` / `alignItems` then place it in the cell. `rowHeight` fixes the row size instead of sharing the box.
+- Call `ui.syncAriaTree(host)` after rendering to expose Canvas controls and keep their browser focus during updates. Use stable widget IDs. In the Canvas `pointerdown` listener, pass the native event as the third argument to `ui.pointerDown(x, y, event)` so the browser retains the focused semantic control.
 
 ## Pitfalls
 - A readable backend remains in use when full or read-only; explicit `save()`/`set()` calls throw its write error. Automatic migration/recovery writeback failures return the valid data with `writebackError` on the successful `load()` result. Check `'writebackError' in res` to distinguish failed writeback (the thrown value can be anything); the next load retries. `get()` still returns the recovered value, so use `load()` when writeback status matters. Absent/unreadable storage still uses the documented isolated memory fallback.

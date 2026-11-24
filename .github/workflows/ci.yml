@@ -89,6 +89,7 @@ jobs:
       - run: node tests/browser-action-starter-acceptance.mjs
       - run: node tests/browser-bloom-pool.mjs
       - run: node tests/browser-voice-streaming.mjs
+      - run: node tests/browser-ui-s4.mjs
       - name: Compare against accepted visual reference
         run: npm run check:visual
       - uses: actions/upload-artifact@v4

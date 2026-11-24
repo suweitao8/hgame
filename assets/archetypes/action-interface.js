@@ -27,6 +27,13 @@ const ENGLISH_LABELS = {
   '-5% 暴击': '-5% Crit',
 };
 
+const MENU_SELECTORS = {
+  title: '#start',
+  choice: '[data-upgrade]',
+  paused: '#gameover button',
+  result: '#gameover button',
+};
+
 export async function mountActionInterface({ base, canvas, session, input, labels = {} }) {
   const [{ createActionGameControls, mountGameShell }, { createI18n }, { createTouchControls }] = await Promise.all([
     import(base + '/kit/index.js'),
@@ -40,9 +47,10 @@ export async function mountActionInterface({ base, canvas, session, input, label
   const { t: translate } = createI18n({ locale, fallbackLocale: 'zh', messages: { en: ENGLISH_LABELS } });
   document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
   canvas.setAttribute('aria-label', translate('游戏画面'));
+  if (!canvas.hasAttribute('tabindex')) canvas.tabIndex = -1;
 
   const controls = createActionGameControls({ input, onDisconnect: () => session.pause(), confirmWithEnter: false });
-  const shell = mountGameShell({ root: document.body, session, hintKeys: 'WASD · J · K', translate });
+  const shell = mountGameShell({ root: document.body, session, hintKeys: 'WASD · J · K', translate, keyboardNav: false });
   const hint = shell.hud.querySelector('[data-ui-hint]');
   const touch = createTouchControls({
     controls: controls.touchPlayer, mode: 'hidden', joystick: 'fixed', joystickRadius: 44, buttonLayout: 'action',
@@ -50,32 +58,42 @@ export async function mountActionInterface({ base, canvas, session, input, label
   const touchMode = params.get('touch') === '1' ? 'always' : 'touch-only';
   const bindings = controls.touchPlayer.bindings;
   for (const { name, label } of bindings) touch.setButtonLabel(name, translate(labels[name] ?? label));
-  const syncTouch = () => touch.setMode(session.state.phase === 'playing' ? touchMode : 'hidden');
-  const removePhaseListener = session.director.onPhaseChange(syncTouch);
-  syncTouch();
+  function gameHasFocus() {
+    const active = document.activeElement;
+    return !active || active === document.body || active === canvas ||
+      shell.hud.contains(active) || touch.root.contains(active);
+  }
+  function syncPhase() {
+    const phase = session.state.phase;
+    touch.setMode(phase === 'playing' ? touchMode : 'hidden');
+    if (!gameHasFocus()) return;
+    if (phase === 'playing') canvas.focus({ preventScroll: true });
+    else shell.uiUx.setFocus(shell.hud.querySelector(MENU_SELECTORS[phase]) ?? null);
+  }
+  const removePhaseListener = session.director.onPhaseChange(syncPhase);
+  syncPhase();
 
   function updateMenu(phase) {
-    const confirm = controls.wasPressed('confirm');
-    const cancel = controls.wasPressed('cancel');
-    if (phase === 'title' && confirm) session.startRun();
-    if (phase === 'paused' && (confirm || cancel)) session.resume();
-    if (phase === 'result' && confirm) session.restart();
-    if (phase !== 'choice') return;
-    if (cancel) {
-      session.cancelChoice();
+    if (!gameHasFocus()) return;
+    if (controls.wasPressed('cancel') && (phase === 'choice' || phase === 'paused')) {
+      if (phase === 'choice') session.cancelChoice();
+      else session.resume();
       return;
     }
+    const selector = MENU_SELECTORS[phase];
+    if (!selector) return;
     const next = controls.wasPressed('next');
     const previous = controls.wasPressed('previous');
+    const confirm = controls.wasPressed('confirm');
     if (!next && !previous && !confirm) return;
-    const cards = Array.from(shell.hud.querySelectorAll('[data-upgrade]'));
-    if (!cards.length) return;
-    const selected = cards.indexOf(document.activeElement);
-    const index = next ? (selected + 1) % cards.length
-      : previous ? ((selected <= 0 ? cards.length : selected) - 1)
-      : Math.max(0, selected);
-    if (next || previous) cards[index].focus();
-    if (confirm) cards[index].click();
+    const buttons = Array.from(shell.hud.querySelectorAll(selector)).filter(button => !button.disabled);
+    if (!buttons.length) return;
+    const selected = buttons.indexOf(document.activeElement);
+    const index = next ? (selected + 1) % buttons.length
+      : previous ? ((selected <= 0 ? buttons.length : selected) - 1)
+      : selected;
+    if (next || previous) shell.uiUx.setFocus(buttons[index]);
+    if (confirm) buttons[index]?.click();
   }
 
   let hintDevice;

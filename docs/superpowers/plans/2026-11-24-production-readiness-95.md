@@ -108,6 +108,18 @@ The staged repository gate passes 649 tests. All five release fixtures pass. The
 
 Production kit moves from 92 to 94. Runtime remains 86.8 and verification and delivery remains 97. The weighted score reaches **91.87**.
 
+## Menu focus and Canvas accessibility
+
+- [x] Use the browser's active menu button as the selection. Keep the focus ring, directional navigation, confirm and cancel in sync across phase changes.
+- [x] Preserve Canvas ARIA element identity and focus during repeated updates. Keep browser-focus and Canvas-focus changes scoped to the corresponding widget.
+- [x] Verify native keyboard and simulated Xbox input in the generated games, and verify Canvas updates in a real browser.
+
+Chromium regression tests cover single-step arrow navigation, D-pad navigation, Xbox A on the focused choice, Xbox B returning to gameplay, host inputs retaining focus, and removal of the menu ring on entering play. The Canvas test uses a browser click with the native event forwarded, checks that reordering emits zero blur/focus events, and exercises text entry with an existing two-argument pointer listener.
+
+The staged repository gate passes 649 tests. Eight generated recipes run successfully in both Chromium and WebKit, and Pixi Arena, Action 2D, Horde 2D, and Arena 3D pass full WebAsset acceptance and portrait multi-touch playtests. S4 moves from 8.5 to 9.0 at C3. Runtime reaches 87.0 and the weighted score is **91.95**. Physical gamepads, iOS and Android browsers, and screen readers remain open for this focus change.
+
+All five release fixtures pass. The result-screen acceptance verifies that Xbox A activates the focused Mute button and then activates Replay after focus moves. The RTX 4070 arena release ran for 71.1 seconds on desktop and 70.9 seconds in the portrait viewport. Both passed the authored budgets, with p95 readings of 20.8 ms and 7.0 ms and an estimated peak of 13,855,680 GPU bytes. The desktop measurement overlapped other browser checks and is release-gate evidence.
+
 ## Current evidence
 
 - In a Node probe with mock drawing, each version executed 3,000 warmup frames and nine samples of 3,000 identical frames. The baseline compiled all 27,000 measured frames. The cached implementation reused the graph in all 27,000. Median batch-average CPU time was 103.27 µs per frame before and 17.23 µs after. Each version executed all 30,000 frame callbacks. These timings measure JavaScript pipeline overhead with GPU work excluded.

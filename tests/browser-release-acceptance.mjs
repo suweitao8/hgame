@@ -231,13 +231,22 @@ export async function run({ page, readState, checkpoint, auditUi, measuringRende
     const muted = await readState();
     if (muted.phase !== 'result' || !muted.audio.muted) throw new Error('Enter on Mute must keep the result open');
     await page.evaluate(() => {
-      const pad = {
+      const pad = window.__releasePad = {
         index: 0, id: 'Xbox', mapping: 'standard', connected: true, axes: [0, 0],
         buttons: Array.from({ length: 16 }, (_, index) => ({ value: index === 0 ? 1 : 0 })),
       };
       Object.defineProperty(navigator, 'getGamepads', { value: () => [pad] });
     });
+    await page.waitForFunction(() => {
+      const state = window.__hgameState();
+      return state.phase === 'result' && !state.audio.muted;
+    }, null, { timeout: 4000 });
+    await page.evaluate(() => { window.__releasePad.buttons[0].value = 0; });
+    await page.locator('#restart').focus();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.evaluate(() => { window.__releasePad.buttons[0].value = 1; });
     await page.waitForFunction(() => window.__hgameState().phase === 'playing', null, { timeout: 4000 });
+    await page.evaluate(() => { window.__releasePad.buttons[0].value = 0; });
     const restarted = await readState();
     if (restarted.hp !== restarted.maxHp || Math.abs(restarted.player.x) > 0.001) {
       throw new Error('Replay did not reset HP and position');

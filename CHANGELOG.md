@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Keep action-menu selection and the focus ring on the same native button, and preserve Canvas ARIA focus during updates.
+
 - Ship a shared keyboard and two-finger combat acceptance scenario with the Pixi arena and three action archetypes.
 
 - Include the action and card archetypes in the engine SDK archive so the bundled project generator can use them.

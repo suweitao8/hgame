@@ -893,7 +893,7 @@
       "name": "运行时 UI、输入与无障碍底座",
       "weight": 4,
       "scores": {
-        "hgame": 8.5,
+        "hgame": 9,
         "unity": 8,
         "cocos": 8.5,
         "godot": 8.5
@@ -937,10 +937,11 @@
             "proof": "未实现（按产品定位豁免，不计入清单满足率与短板）"
           }
         ],
-        "note": "具备 Canvas richText 自动换行混排、scrollView 裁剪滚动、IME 组合下划线、createCanvasAriaBridge 语义镜像树及 InputActionRouter 动态重映射持久化。",
+        "note": "具备 Canvas 富文本、滚动裁剪、IME、稳定的 ARIA 镜像和动态重映射持久化。Chromium 已验证镜像更新与重排保留原生焦点，以及动作菜单的选中卡与手柄确认一致。",
         "benchmarkFiles": [
           "tests/browser-mobile-portrait-benchmark.mjs",
-          "tests/browser-ui-s4.mjs"
+          "tests/browser-ui-s4.mjs",
+          "tests/browser-api-recipes.mjs"
         ]
       },
       "competitorNotes": {
@@ -948,7 +949,7 @@
         "cocos": "Widget 多分辨率适配、富文本、ScrollView 与小游戏键盘适配成熟。",
         "godot": "Control 锚点/容器布局体系非常完备，内置无障碍接口与主题系统成熟。"
       },
-      "gap": "有效清单已全部满足（双向文字与内联表情按定位豁免）；屏幕阅读器实时焦点同步为备注级限制。"
+      "gap": "DOM 与 Canvas 焦点同步已通过 Chromium 验证；真实屏幕阅读器和移动浏览器仍待验收。"
     },
     {
       "id": "N1",

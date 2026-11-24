@@ -316,13 +316,14 @@ function el(doc, tag, attrs = {}, text = null) {
  * @property {string[]} [bars]
  * @property {string} [hintKeys='WASD · J']
  * @property {(label: string) => string} [translate] Translates shell labels and choice text. Return the supplied label for untranslated text.
+ * @property {boolean} [keyboardNav=true] Handle directional and confirmation keys when the caller does not own menu input.
  * @property {boolean} [portraitFirst=true] Anchor clickable shell controls into the bottom-right thumb arc on portrait screens.
  */
 
 /**
  * @typedef {object} GameShellHandle
  * @property {HTMLElement} hud
- * @property {{ step: (dt?: number) => boolean, wake: () => void, syncDirectorDom: () => void, setTheme: (themeName: string) => void, dispose: () => void }} uiUx
+ * @property {{ step: (dt?: number) => boolean, wake: () => void, syncDirectorDom: () => void, setFocus: (element: HTMLElement | null) => void, setTheme: (themeName: string) => void, dispose: () => void }} uiUx
  * @property {() => void} sync
  * @property {(text: string) => void} setDebugText
  * @property {(themeId: string) => void} setTheme
@@ -428,6 +429,7 @@ export function mountGameShell(options) {
     director: session.director,
     audio: null,
     theme: theme.uiTheme,
+    keyboardNav: options.keyboardNav,
   });
 
   function renderChoices(choices) {

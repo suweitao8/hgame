@@ -339,12 +339,13 @@ export function layoutRichTextLines(ctx, spans, maxWidth, defaultOpts = {}) {
  * scroll regions, and rich-text/label nodes without shifting canvas layout.
  *
  * @param {any} container Host DOM element receiving the visually-hidden ARIA container.
- * @returns {{ sync: (hitNodes: readonly any[], widgetState?: any) => number, getElementCount: () => number, getRoot: () => any, dispose: () => boolean }}
+ * @returns {{ sync: (hitNodes: readonly any[], widgetState?: any) => number, setFocus: (id: string | number | null) => boolean, getElementCount: () => number, getRoot: () => any, dispose: () => boolean }}
  */
 export function createCanvasAriaBridge(container) {
   const doc = container?.ownerDocument ?? (typeof globalThis.document !== 'undefined' ? globalThis.document : null);
   let root = null;
   let disposed = false;
+  let mirrors = new Map();
 
   if (doc && typeof doc.createElement === 'function') {
     root = doc.createElement('div');
@@ -366,19 +367,33 @@ export function createCanvasAriaBridge(container) {
     container?.appendChild?.(root);
   }
 
-  function clearChildren() {
-    if (!root) return;
-    if (Array.isArray(root.children) && typeof root.removeChild === 'function') {
-      while (root.firstChild) root.removeChild(root.firstChild);
-    } else if ('innerHTML' in root) {
-      root.innerHTML = '';
+  function updateAttr(el, name, value) {
+    if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+  }
+
+  function updateText(el, value) {
+    if (el.textContent !== value) el.textContent = value;
+  }
+
+  function setFocus(id) {
+    if (!root) return false;
+    if (id == null) {
+      const active = doc.activeElement;
+      if (active?.parentNode !== root) return false;
+      active.blur?.();
+      return true;
     }
+    const element = mirrors.get(id)?.element;
+    if (!element || element.tabIndex < 0) return false;
+    element.focus?.({ preventScroll: true });
+    return doc.activeElement === element;
   }
 
   function sync(hitNodes = [], widgetState = null) {
     if (disposed || !root || !doc) return 0;
-    clearChildren();
-    let count = 0;
+    const next = new Map();
+    const nativeFocus = doc.activeElement;
+    let focusedRecord = null;
     for (let i = 0; i < hitNodes.length; i++) {
       const entry = hitNodes[i];
       const node = entry?.node;
@@ -389,49 +404,96 @@ export function createCanvasAriaBridge(container) {
         continue;
       }
 
-      const tag = kind === 'button' ? 'button' : 'div';
-      const el = doc.createElement(tag);
       const id = entry.id ?? node.id ?? `node-${i}`;
-      el.setAttribute('data-node-id', String(id));
+      if (next.has(id)) continue;
+      const previous = mirrors.get(id);
+      const focusable = kind === 'button' || kind === 'textInput' || kind === 'slider';
+      let record = previous?.kind === kind ? previous : null;
+      if (!record) {
+        const element = doc.createElement(kind === 'button' ? 'button' : 'div');
+        record = { id, kind, element, node, widgetState };
+        element.setAttribute('data-node-id', String(id));
+        if (focusable) {
+          element.tabIndex = 0;
+          element.onfocus = () => {
+            if (record.widgetState) record.widgetState.focusedId = id;
+          };
+          element.onblur = () => {
+            if (record.widgetState?.focusedId === id) record.widgetState.focusedId = null;
+          };
+        }
+        if (kind === 'button') {
+          element.type = 'button';
+          element.onclick = () => record.node.onClick?.(record.node);
+        }
+      }
+      record.node = node;
+      record.widgetState = widgetState;
+      next.set(id, record);
+      const el = record.element;
 
       if (kind === 'button') {
-        if (tag === 'button') el.type = 'button';
-        el.setAttribute('role', 'button');
-        el.setAttribute('aria-label', String(node.ariaLabel ?? node.text ?? node.label ?? id));
-        el.tabIndex = 0;
-        el.textContent = String(node.text ?? node.label ?? id);
-        el.onclick = () => node.onClick?.(node);
-        el.onfocus = () => { if (widgetState) widgetState.focusedId = id; };
+        updateAttr(el, 'role', 'button');
+        updateAttr(el, 'aria-label', String(node.ariaLabel ?? node.text ?? node.label ?? id));
+        updateText(el, String(node.text ?? node.label ?? id));
       } else if (kind === 'textInput') {
-        el.setAttribute('role', 'textbox');
-        el.setAttribute('aria-label', String(node.ariaLabel ?? node.placeholder ?? id));
-        el.setAttribute('aria-valuetext', String(node.value ?? ''));
-        el.tabIndex = 0;
-        el.onfocus = () => { if (widgetState) widgetState.focusedId = id; };
+        updateAttr(el, 'role', 'textbox');
+        updateAttr(el, 'aria-label', String(node.ariaLabel ?? node.placeholder ?? id));
+        updateAttr(el, 'aria-valuetext', String(node.value ?? ''));
       } else if (kind === 'slider') {
-        el.setAttribute('role', 'slider');
-        el.setAttribute('aria-label', String(node.ariaLabel ?? node.label ?? id));
-        el.setAttribute('aria-valuemin', '0');
-        el.setAttribute('aria-valuemax', '1');
-        el.setAttribute('aria-valuenow', String(Math.max(0, Math.min(1, Number(node.value) || 0))));
-        el.tabIndex = 0;
-        el.onfocus = () => { if (widgetState) widgetState.focusedId = id; };
+        updateAttr(el, 'role', 'slider');
+        updateAttr(el, 'aria-label', String(node.ariaLabel ?? node.label ?? id));
+        updateAttr(el, 'aria-valuemin', '0');
+        updateAttr(el, 'aria-valuemax', '1');
+        updateAttr(el, 'aria-valuenow', String(Math.max(0, Math.min(1, Number(node.value) || 0))));
       } else if (kind === 'scrollList' || kind === 'scrollView') {
-        el.setAttribute('role', 'region');
-        el.setAttribute('aria-label', String(node.ariaLabel ?? node.label ?? id));
+        updateAttr(el, 'role', 'region');
+        updateAttr(el, 'aria-label', String(node.ariaLabel ?? node.label ?? id));
       } else if (kind === 'richText' || kind === 'label') {
-        el.setAttribute('role', 'text');
+        updateAttr(el, 'role', 'text');
         const textVal = Array.isArray(node.spans)
           ? node.spans.map(s => (typeof s === 'string' ? s : (s?.text ?? ''))).join('')
           : String(node.ariaLabel ?? node.text ?? node.label ?? '');
-        el.setAttribute('aria-label', textVal);
-        el.textContent = textVal;
+        updateAttr(el, 'aria-label', textVal);
+        updateText(el, textVal);
       }
-
-      root.appendChild(el);
-      count++;
     }
-    return count;
+
+    for (const [id, record] of mirrors) {
+      if (record.element === nativeFocus) focusedRecord = record;
+      if (next.get(id) !== record && record.element.parentNode === root) root.removeChild(record.element);
+    }
+    const retained = focusedRecord && next.get(focusedRecord.id) === focusedRecord
+      ? focusedRecord.element : null;
+    if (typeof root.insertBefore === 'function') {
+      let anchor = null;
+      for (const { element } of Array.from(next.values()).reverse()) {
+        // Move siblings around the retained control without interrupting native focus.
+        if (element !== retained && (element.parentNode !== root || element.nextSibling !== anchor)) {
+          root.insertBefore(element, anchor);
+        }
+        anchor = element;
+      }
+    } else {
+      for (const { element } of next.values()) {
+        if (element.parentNode !== root) root.appendChild(element);
+      }
+    }
+    mirrors = next;
+    if (focusedRecord) {
+      const retained = mirrors.get(focusedRecord.id);
+      const active = doc.activeElement;
+      if (retained?.element.tabIndex >= 0 && active !== retained.element &&
+          (!active || active === doc.body || active === nativeFocus)) {
+        setFocus(focusedRecord.id);
+      }
+      if (widgetState && retained && doc.activeElement === retained.element) {
+        widgetState.focusedId = focusedRecord.id;
+      } else if (widgetState?.focusedId === focusedRecord.id) {
+        widgetState.focusedId = null;
+      }
+    }
+    return mirrors.size;
   }
 
   function getElementCount() {
@@ -445,7 +507,7 @@ export function createCanvasAriaBridge(container) {
   function dispose() {
     if (disposed) return false;
     disposed = true;
-    clearChildren();
+    mirrors.clear();
     root?.parentNode?.removeChild?.(root);
     root = null;
     return true;
@@ -453,6 +515,7 @@ export function createCanvasAriaBridge(container) {
 
   return Object.freeze({
     sync,
+    setFocus,
     getElementCount,
     getRoot,
     dispose,
@@ -891,10 +954,18 @@ export function createCanvasUiRenderer({
     return widgetState.hoveredId;
   }
 
-  function pointerDown(px, py) {
+  /** @param {PointerEvent} [event] Native pointerdown event, if this is a browser pointer. */
+  function pointerDown(px, py, event) {
     const hit = hitTest(px, py);
     widgetState.pressedId = hit?.id ?? null;
-    if (hit?.id) widgetState.focusedId = hit.id;
+    const kind = hit?.node?.type;
+    const focusId = kind === 'button' || kind === 'slider' || kind === 'textInput' ? hit.id : null;
+    if (event && focusId !== null) {
+      if (ownedAriaBridge?.setFocus(focusId)) event.preventDefault();
+    } else {
+      ownedAriaBridge?.setFocus(null);
+    }
+    widgetState.focusedId = focusId;
     if (hit?.node?.type === 'slider') {
       const t = Math.max(0, Math.min(1, (px - hit.rect.x) / Math.max(1, hit.rect.width)));
       hit.node.value = t;
@@ -961,6 +1032,7 @@ export function createCanvasUiRenderer({
     }
     if (key === 'Escape') {
       widgetState.focusedId = null;
+      ownedAriaBridge?.setFocus(null);
       return true;
     }
     if (key.length === 1 && cur.length < maxLen) {

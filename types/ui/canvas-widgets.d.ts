@@ -72,10 +72,11 @@ export function layoutRichTextLines(ctx: any, spans: string | Array<string | {
  * scroll regions, and rich-text/label nodes without shifting canvas layout.
  *
  * @param {any} container Host DOM element receiving the visually-hidden ARIA container.
- * @returns {{ sync: (hitNodes: readonly any[], widgetState?: any) => number, getElementCount: () => number, getRoot: () => any, dispose: () => boolean }}
+ * @returns {{ sync: (hitNodes: readonly any[], widgetState?: any) => number, setFocus: (id: string | number | null) => boolean, getElementCount: () => number, getRoot: () => any, dispose: () => boolean }}
  */
 export function createCanvasAriaBridge(container: any): {
     sync: (hitNodes: readonly any[], widgetState?: any) => number;
+    setFocus: (id: string | number | null) => boolean;
     getElementCount: () => number;
     getRoot: () => any;
     dispose: () => boolean;
@@ -109,7 +110,7 @@ export function createCanvasUiRenderer({ fontFamily, dpr, }?: {
         } | null;
     } | null;
     pointerMove: (px: any, py: any) => null;
-    pointerDown: (px: any, py: any) => {
+    pointerDown: (px: any, py: any, event?: PointerEvent | undefined) => {
         id: string;
         node: object;
         rect: {
