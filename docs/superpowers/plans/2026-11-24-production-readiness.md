@@ -13,6 +13,7 @@
 9. Record the actual rendering environment of packaged playtests. Keep software coverage and let release manifests explicitly require hardware rendering. Verify the same 3D lifecycle with an actual desktop GPU, preserving the release budgets.
 10. Add optional package budgets for minimum measurement duration, p99 frame time and peak estimated GPU bytes. Sample an authored resource hook during the measured scenario and surface coverage and failures. Verify a hardware arena package through a minute of gameplay in both viewports and exercise an exceeded resource budget.
 11. Add an opt-in release requirement for mobile touch. Run the opted-in packaged mobile scenario using Chromium touch emulation and record trusted touch presses during measurement. Preserve existing release scenarios by default. Verify a Web package opens through touch, a Toy Pixi package moves and attacks with two fingers, and keyboard or script-dispatched events alone cannot satisfy the touch requirement.
+12. Verify all six gameplay actions and both menu actions in the existing WebAsset movement demo. Show desktop keyboard bindings, localize its labels in Simplified Chinese and English, and check its Wi-Fi LAN entry with the real WebAsset listener.
 
 ## 2026-11-24 复评
 
@@ -72,4 +73,10 @@
 - Web 和 Toy 的动作包分别在 360 × 800 Chromium 触屏环境点击开始。Pixi Toy 包收到三次可信触摸按下，验证固定摇杆和攻击键双指并用、抬手后停止移动、攻击按钮复位和触屏继续。该包移动视口 p95 16.7 ms。
 - 键盘与脚本伪造事件无法通过触屏门禁。旧工具报告即使源码摘要与 ZIP 均匹配，缺少所要求的触屏证据时也无法通过新鲜度检查。
 - 同次发布套件保留割草 Toy 与 RTX 4070 竞技场 Web 包覆盖。3D 的两种尺寸仍以键盘运行约 71 秒，p95 均为 7.0 ms，显存估算峰值为 13,855,680 字节。
-- 完整六动作输入展示和 Android Chrome、iOS Safari 局域网访问、实体 Xbox、Toy 宿主仍待补证据。
+- Android Chrome、iOS Safari 局域网访问、实体 Xbox 和 Toy 宿主仍待补证据。
+
+### 移动试玩
+
+- WebAsset 的 `hgame-movement-demo`（`4395d65`）通过项目完整验收。桌面 960 × 540、竖屏 360 × 800 各通过七项输入和多语言检查，包括 WASD、模拟 Xbox、双指移动攻击、两种冲刺入口、四个技能和菜单确认／取消。
+- Wi-Fi 接口上的游戏专用 LAN 入口从本机 Chromium 加载成功。竖屏触屏配置通过相同的七项检查，无页面报错或资源错误，管理 API 返回 404。检查了桌面英文键位与移动中文控件截图。
+- 综合分仍为 90.04。局域网验证来自同一台主机，Android Chrome、iOS Safari、实体 Xbox 和 Toy 宿主仍待实测。
