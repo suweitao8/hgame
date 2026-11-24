@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from '../assets/optional/three/three.module.js';
 import { Scene } from '../assets/runtime/index.js';
 import { createThreeAdapter } from '../assets/runtime/integrations/three.js';
+import { createPostPipeline3D } from '../assets/runtime/integrations/post3d.js';
 
 function createMockWebGL2Renderer() {
   const gl = {
@@ -46,6 +47,54 @@ function createMockWebGL2Renderer() {
     dispose() {},
   };
 }
+
+test('3D pipeline reuses the compiled frame graph with current callbacks, then recompiles changed layouts', () => {
+  const renderer = createMockWebGL2Renderer();
+  const pipeline = createPostPipeline3D({
+    THREE, renderer, width: 640, height: 360,
+    preset: { bloom: true, fxaa: true, msaaSamples: 0 },
+  });
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  const seen = [];
+  const frame = (value, id = 'frame-setup', writes = ['custom-output']) => {
+    pipeline.render(world, camera, {
+      extraPasses: {
+        before: [{
+          id,
+          writes,
+          execute: ({ pass }) => {
+            assert.equal(typeof pass.execute, 'function');
+            assert.equal(pass.transientSpecs.checked, undefined);
+            pass.transientSpecs.checked = true;
+            seen.push(value);
+          },
+        }],
+      },
+    });
+    return pipeline.getLastFrameGraph().compiledOrder;
+  };
+
+  const first = frame(1);
+  const plan = pipeline.getRenderGraphPlan();
+  assert.equal(pipeline.getRenderGraphPlan(), plan);
+  assert.equal(frame(2), first);
+  assert.deepEqual(seen, [1, 2]);
+  assert.throws(() => frame(0, new String('frame-setup')), /requires a nonempty id/);
+  assert.throws(() => frame(0, 'frame-setup', [{ toJSON: () => 'custom-output' }]), /writes entries must be nonempty strings/);
+  pipeline.resize(320, 180);
+  assert.equal(pipeline.getRenderGraphPlan().lifetimes.ldrColor.spec.width, 640);
+  assert.notEqual(frame(3), first);
+  assert.equal(pipeline.getRenderGraphPlan().lifetimes.ldrColor.spec.width, 320);
+  const resized = pipeline.getLastFrameGraph().compiledOrder;
+  assert.equal(frame(4), resized);
+  pipeline.setState({ fxaa: false, sharpness: 0 });
+  const reduced = frame(5);
+  assert.notEqual(reduced, resized);
+  assert.ok(!reduced.includes('fxaa-sharpen'));
+  assert.deepEqual(seen, [1, 2, 3, 4, 5]);
+  pipeline.dispose();
+});
 
 test('A2 unified RenderGraph defaults renderGraph=true and executes shadow-csm -> world -> tone-mapping in one compiled DAG', () => {
   const renderer = createMockWebGL2Renderer();

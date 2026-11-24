@@ -48,14 +48,15 @@ export function compileRenderGraph(passes: readonly {
  * and reclaiming physical targets immediately after each resource's lastRead pass.
  * @param {ReturnType<typeof compileRenderGraph>} graph
  * @param {{ acquire: (spec: object | null, resource: string, slot: string) => unknown, release: (target: unknown, resource: string, slot: string) => void }} pool
- * @param {{ externalTargets?: Record<string, unknown>, state?: object }} [context]
+ * @param {{ externalTargets?: Record<string, unknown>, state?: object, executors?: ReadonlyMap<string, (ctx: object) => void> }} [context]
  */
 export function executeRenderGraph(graph: ReturnType<typeof compileRenderGraph>, pool: {
     acquire: (spec: object | null, resource: string, slot: string) => unknown;
     release: (target: unknown, resource: string, slot: string) => void;
-}, { externalTargets, state }?: {
+}, { externalTargets, state, executors }?: {
     externalTargets?: Record<string, unknown>;
     state?: object;
+    executors?: ReadonlyMap<string, (ctx: object) => void>;
 } | undefined): Readonly<{
     executed: readonly any[];
     acquiredCount: number;

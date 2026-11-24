@@ -312,9 +312,9 @@ export function compileRenderGraph(passes, { externalInputs = [], externalOutput
  * and reclaiming physical targets immediately after each resource's lastRead pass.
  * @param {ReturnType<typeof compileRenderGraph>} graph
  * @param {{ acquire: (spec: object | null, resource: string, slot: string) => unknown, release: (target: unknown, resource: string, slot: string) => void }} pool
- * @param {{ externalTargets?: Record<string, unknown>, state?: object }} [context]
+ * @param {{ externalTargets?: Record<string, unknown>, state?: object, executors?: ReadonlyMap<string, (ctx: object) => void> }} [context]
  */
-export function executeRenderGraph(graph, pool, { externalTargets = {}, state = {} } = {}) {
+export function executeRenderGraph(graph, pool, { externalTargets = {}, state = {}, executors } = {}) {
   if (!graph || !Array.isArray(graph.passes)) throw new TypeError('executeRenderGraph requires a compiled graph');
   if (!pool || typeof pool.acquire !== 'function' || typeof pool.release !== 'function') {
     throw new TypeError('executeRenderGraph requires a target pool with acquire() and release()');
@@ -332,7 +332,11 @@ export function executeRenderGraph(graph, pool, { externalTargets = {}, state = 
 
   try {
     for (let execIdx = 0; execIdx < graph.passes.length; execIdx++) {
-      const pass = graph.passes[execIdx];
+      const descriptor = graph.passes[execIdx];
+      const execute = executors?.get(descriptor.id);
+      const pass = execute
+        ? Object.freeze({ ...descriptor, execute, transientSpecs: { ...descriptor.transientSpecs } })
+        : descriptor;
       const inputs = Object.create(null);
       for (const res of pass.reads) {
         inputs[res] = liveTargets.get(res) ?? null;

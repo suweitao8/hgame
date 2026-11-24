@@ -637,6 +637,27 @@ export function createPostPipeline3D(options = {}) {
   let reactiveMaskMat = null;
   let lastExecutedGraph = [];
   let lastFrameGraph = null;
+  const frameGraphOptions = { externalOutputs: ['backbuffer'], pruneDeadPasses: true };
+  let frameGraphSignature;
+  let compiledFrameGraph;
+
+  function getCompiledFrameGraph(passes) {
+    // Validate caller-provided IDs and outputs before serialization can coerce them.
+    if (passes.some(pass => typeof pass.id !== 'string' ||
+        pass.writes.some(output => typeof output !== 'string'))) {
+      return compileRenderGraph(passes, frameGraphOptions);
+    }
+    // These declarations contain only strings, flags, target specs, and frame callbacks.
+    const signature = JSON.stringify(passes);
+    if (signature !== frameGraphSignature) {
+      compiledFrameGraph = compileRenderGraph(
+        passes.map(({ execute, ...declaration }) => declaration),
+        frameGraphOptions,
+      );
+      frameGraphSignature = signature;
+    }
+    return compiledFrameGraph;
+  }
   let lastReactiveMeshCount = 0;
   let temporalAa = null;
   let bloomMips = [];
@@ -1133,6 +1154,7 @@ export function createPostPipeline3D(options = {}) {
   }
 
   let lastRenderGraphPlan = null;
+  let lastRenderGraphOptions = null;
 
   function buildFrameRenderGraphPlan({
     useAo = false,
@@ -1144,6 +1166,8 @@ export function createPostPipeline3D(options = {}) {
     useAutoExposure = false,
     useBloom = false,
     useFinalFxaaPass = false,
+    width = bufferWidth,
+    height = bufferHeight,
   } = {}) {
     const passes = [];
     const worldColor = 'sceneColor';
@@ -1169,7 +1193,7 @@ export function createPostPipeline3D(options = {}) {
         reads: [currentColor, 'sceneDepth'],
         optionalReads: ['prevTemporalColor', 'prevTemporalDepth', 'motionVectors'],
         writes: ['taaColor'],
-        transientSpecs: { taaColor: { width: bufferWidth, height: bufferHeight, format: 'rgba16f' } },
+        transientSpecs: { taaColor: { width, height, format: 'rgba16f' } },
       });
       currentColor = 'taaColor';
     }
@@ -1179,7 +1203,7 @@ export function createPostPipeline3D(options = {}) {
         reads: [currentColor],
         optionalReads: ['sceneDepth', ...(useAo || useVolumetric ? ['aoVol'] : []), ...(useGiSsr ? ['giSsr'] : [])],
         writes: ['litWorldColor'],
-        transientSpecs: { litWorldColor: { width: bufferWidth, height: bufferHeight, format: 'rgba16f', depthBuffer: true } },
+        transientSpecs: { litWorldColor: { width, height, format: 'rgba16f', depthBuffer: true } },
       });
       currentColor = 'litWorldColor';
     }
@@ -1192,7 +1216,7 @@ export function createPostPipeline3D(options = {}) {
         id: stage.contract.name,
         reads,
         writes: [outName],
-        transientSpecs: { [outName]: { width: bufferWidth, height: bufferHeight, format: 'rgba16f' } },
+        transientSpecs: { [outName]: { width, height, format: 'rgba16f' } },
       });
       currentColor = outName;
     }
@@ -1218,7 +1242,7 @@ export function createPostPipeline3D(options = {}) {
       reads: [currentColor],
       optionalReads: toneOptional,
       writes: [useFinalFxaaPass ? 'ldrColor' : 'backbuffer'],
-      transientSpecs: useFinalFxaaPass ? { ldrColor: { width: bufferWidth, height: bufferHeight, format: 'rgba8' } } : {},
+      transientSpecs: useFinalFxaaPass ? { ldrColor: { width, height, format: 'rgba8' } } : {},
     });
     if (useFinalFxaaPass) {
       passes.push({
@@ -1241,6 +1265,7 @@ export function createPostPipeline3D(options = {}) {
     const count = customPasses.filter(pass => pass.enabled && (!pass.inputs.depth || sceneRT?.depthTexture)).length;
     hdrTargets.trimColor(Math.min(2, Math.max(count, Number(state.temporalAA))));
     lastRenderGraphPlan = null;
+    lastRenderGraphOptions = null;
   }
 
   function runCustomPasses(stages, color, depth, cameraFar) {
@@ -1591,8 +1616,11 @@ export function createPostPipeline3D(options = {}) {
           sideEffect: true,
           execute: () => renderForwardWithViewmodel(world, camera, viewScene, viewCamera, diagnostics),
         });
-        const fwdGraph = compileRenderGraph(forwardPasses, { externalOutputs: ['backbuffer'], pruneDeadPasses: true });
-        const fwdRes = executeRenderGraph(fwdGraph, { acquire: (_s, res) => ({ token: res }), release() {} }, { state: { sceneRT: null, bufferWidth, bufferHeight } });
+        const fwdGraph = getCompiledFrameGraph(forwardPasses);
+        const fwdRes = executeRenderGraph(fwdGraph, { acquire: (_s, res) => ({ token: res }), release() {} }, {
+          state: { sceneRT: null, bufferWidth, bufferHeight },
+          executors: new Map(forwardPasses.map(pass => [pass.id.trim(), pass.execute])),
+        });
         lastExecutedGraph = fwdRes.executed.slice();
         lastFrameGraph = Object.freeze({
           compiledOrder: fwdGraph.order,
@@ -2070,10 +2098,7 @@ export function createPostPipeline3D(options = {}) {
         });
       }
 
-      const frameGraph = compileRenderGraph(framePasses, {
-        externalOutputs: ['backbuffer'],
-        pruneDeadPasses: true,
-      });
+      const frameGraph = getCompiledFrameGraph(framePasses);
       const poolAdapter = transientPool
         ? {
             acquire(spec, resource, slot, pass) {
@@ -2093,6 +2118,7 @@ export function createPostPipeline3D(options = {}) {
           };
       const graphExecResult = executeRenderGraph(frameGraph, poolAdapter, {
         state: { sceneRT, bufferWidth, bufferHeight },
+        executors: new Map(framePasses.map(pass => [pass.id.trim(), pass.execute])),
       });
       lastExecutedGraph = graphExecResult.executed.slice();
       lastFrameGraph = Object.freeze({
@@ -2103,7 +2129,8 @@ export function createPostPipeline3D(options = {}) {
         reusedCount: graphExecResult.reusedCount,
         poolStats: transientPool?.getStats() ?? null,
       });
-      lastRenderGraphPlan = buildFrameRenderGraphPlan({
+      lastRenderGraphPlan = null;
+      lastRenderGraphOptions = {
         useAo,
         useVolumetric,
         useGiSsr,
@@ -2113,7 +2140,9 @@ export function createPostPipeline3D(options = {}) {
         useAutoExposure,
         useBloom,
         useFinalFxaaPass: plannedFinalFxaaPass,
-      });
+        width: bufferWidth,
+        height: bufferHeight,
+      };
     } catch (error) {
       resetTemporalHistory();
       throw error;
@@ -2150,6 +2179,7 @@ export function createPostPipeline3D(options = {}) {
   function dispose() {
     if (disposed) return false;
     disposed = true;
+    compiledFrameGraph = null;
     disposeTargets();
     ownedLutTexture?.dispose?.();
     ownedLutTexture = null;
@@ -2178,7 +2208,8 @@ export function createPostPipeline3D(options = {}) {
     get state() { return { ...state }; },
     get passes() { return customPasses; },
     getRenderGraphPlan() {
-      return lastRenderGraphPlan ?? buildFrameRenderGraphPlan({
+      if (lastRenderGraphOptions) return lastRenderGraphPlan ??= buildFrameRenderGraphPlan(lastRenderGraphOptions);
+      return buildFrameRenderGraphPlan({
         useAo: state.ssaoIntensity > 0.001,
         useVolumetric: state.volumetricIntensity > 0.001,
         useGiSsr: state.giIntensity > 0.001 || state.ssrIntensity > 0.001,
