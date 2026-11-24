@@ -1,8 +1,17 @@
 import { clamp } from './helpers.js';
 
+/** Returned by `startStreamTrack` when a cue turns out to need the decoded path after all. */
+const DECODE = Symbol('bgm.decode');
+
 /**
- * Streaming lazy-load BGM controller with sample-accurate MP3 loop trimming,
- * crossfade transitions, strict 1-2 AudioBuffer memory budget, and pause/resume.
+ * Lazy-load BGM controller with crossfade transitions and pause/resume.
+ *
+ * URL cues stream through an `HTMLAudioElement` routed into the engine's mix buses, so a long
+ * track never sits decoded in memory. A media element loops whole files only: trim points that
+ * sit at the file bounds (decoder-delay compensation) are left to its own gapless handling, while
+ * a cue that selects a window inside the file keeps the sample-accurate `AudioBuffer` path, as do
+ * short cues, cues that carry a `buffer`, and environments without media elements. That path
+ * holds at most two decoded BGM buffers.
  *
  * @param {object} ctx Shared mutable audio manager state.
  * @param {object} buses Bus controller (`getBusNode`, `setBusVolume`, `getBusVolume`).
@@ -16,18 +25,84 @@ export function createBgmController(ctx, buses) {
   let autoPausedByLifecycle = false;
   let disposed = false;
 
+  /** URL cues at or above this length (seconds) stream; shorter ones decode like sound effects. */
+  const STREAM_MIN_DURATION_SEC = 10;
+
+  /** Trim points within this distance of the file bounds compensate decoder delay; they do not select a loop window. */
+  const LOOP_WINDOW_TOLERANCE_SEC = 0.05;
+
+  /** @param {object} cue */
+  function wantsStreaming(cue) {
+    if (cue.buffer) return false;
+    if (typeof cue.stream === 'boolean') return cue.stream;
+    if (cue.durationSec == null) return true;
+    const duration = Number(cue.durationSec);
+    return !Number.isFinite(duration) || duration >= STREAM_MIN_DURATION_SEC;
+  }
+
+  /**
+   * Whether a cue's trim points select a window inside the file. A media element loops whole
+   * files only, so such cues keep the decoded path. Points sitting at the file bounds merely skip
+   * encoder padding, which media playback skips by itself.
+   * @param {object} cue
+   * @param {number} durationSec Media length when known, else 0
+   * @returns {boolean | null} Null while the length is unknown and the points could still be a window
+   */
+  function isLoopWindow(cue, durationSec) {
+    const start = Number.isFinite(cue.trimStartSec) && cue.trimStartSec > 0 ? cue.trimStartSec : 0;
+    const end = Number.isFinite(cue.trimEndSec) && cue.trimEndSec > 0 ? cue.trimEndSec : 0;
+    if (start > LOOP_WINDOW_TOLERANCE_SEC) return true;
+    if (!(end > 0)) return false;
+    if (!(durationSec > 0)) return null;
+    return end < durationSec - LOOP_WINDOW_TOLERANCE_SEC;
+  }
+
+  /** @returns {HTMLAudioElement | null} Null where media elements cannot feed the audio graph. */
+  function createStreamElement(audioCtx) {
+    const MediaElement = globalThis.Audio;
+    if (typeof MediaElement !== 'function' || typeof audioCtx?.createMediaElementSource !== 'function') return null;
+    return new MediaElement();
+  }
+
+  /** Resolves once an element knows its length, or when loading fails or stalls. */
+  function waitForMetadata(element, timeoutMs = 10000) {
+    return new Promise((resolve) => {
+      let timer = null;
+      const done = () => {
+        clearTimeout(timer);
+        element.removeEventListener?.('loadedmetadata', done);
+        element.removeEventListener?.('error', done);
+        resolve();
+      };
+      timer = setTimeout(done, timeoutMs);
+      element.addEventListener?.('loadedmetadata', done);
+      element.addEventListener?.('error', done);
+    });
+  }
+
+  /** Detach the decoder behind a streaming element so its buffers can be reclaimed. */
+  function releaseStreamElement(element) {
+    try {
+      element.pause();
+      element.removeAttribute('src');
+      element.load();
+    } catch {}
+  }
+
   function finalizeTrack(track) {
     if (!track) return;
     if (track.fadeTimer) {
       clearTimeout(track.fadeTimer);
       track.fadeTimer = null;
     }
+    if (track.element) releaseStreamElement(track.element);
     try { track.source?.stop?.(); } catch {}
     try { track.source?.disconnect?.(); } catch {}
     try { track.gainNode?.disconnect?.(); } catch {}
     track.source = null;
     track.gainNode = null;
     track.buffer = null;
+    track.element = null;
     track.state = 'stopped';
     fadingTracks.delete(track);
   }
@@ -49,24 +124,16 @@ export function createBgmController(ctx, buses) {
     track.state = 'fading';
     fadingTracks.add(track);
     const nowTime = Number.isFinite(ctx.context.currentTime) ? ctx.context.currentTime : 0;
-    const param = track.gainNode?.gain;
-    if (param) {
-      const startVal = Number.isFinite(param.value) ? param.value : track.baseGain;
-      if (typeof param.setValueAtTime === 'function' && typeof param.linearRampToValueAtTime === 'function') {
-        param.cancelScheduledValues?.(nowTime);
-        param.setValueAtTime(startVal, nowTime);
-        param.linearRampToValueAtTime(0.0001, nowTime + fadeSec);
-      } else if (typeof param.setTargetAtTime === 'function') {
-        param.setTargetAtTime(0, nowTime, Math.max(0.005, fadeSec / 3));
-      } else if ('value' in param) {
-        param.value = 0;
-      }
-    }
+    fadeOut(track.gainNode?.gain, track.baseGain, fadeSec, nowTime);
 
-    try {
-      track.source.stop(nowTime + fadeSec + 0.015);
-    } catch {
-      try { track.source.stop(); } catch {}
+    // A media element keeps playing silently under its ramp and is released by the timer below;
+    // a buffer source has to be told when to stop.
+    if (!track.element) {
+      try {
+        track.source.stop(nowTime + fadeSec + 0.015);
+      } catch {
+        try { track.source.stop(); } catch {}
+      }
     }
 
     const timer = setTimeout(() => {
@@ -74,6 +141,33 @@ export function createBgmController(ctx, buses) {
     }, Math.ceil(fadeSec * 1000) + 30);
     timer?.unref?.();
     track.fadeTimer = timer;
+  }
+
+  /** Ramp a gain parameter from silence up to `targetGain` over `fadeSec` (instant when zero). */
+  function fadeIn(param, targetGain, fadeSec, nowTime) {
+    if (!param) return;
+    if (fadeSec > 0 && typeof param.setValueAtTime === 'function' && typeof param.linearRampToValueAtTime === 'function') {
+      param.value = 0.0001;
+      param.setValueAtTime(0.0001, nowTime);
+      param.linearRampToValueAtTime(targetGain, nowTime + fadeSec);
+      return;
+    }
+    param.value = targetGain;
+  }
+
+  /** Ramp a gain parameter from its present value down to silence over `fadeSec`. */
+  function fadeOut(param, fallbackStart, fadeSec, nowTime) {
+    if (!param) return;
+    const start = Number.isFinite(param.value) ? param.value : fallbackStart;
+    if (typeof param.setValueAtTime === 'function' && typeof param.linearRampToValueAtTime === 'function') {
+      param.cancelScheduledValues?.(nowTime);
+      param.setValueAtTime(start, nowTime);
+      param.linearRampToValueAtTime(0.0001, nowTime + fadeSec);
+    } else if (typeof param.setTargetAtTime === 'function') {
+      param.setTargetAtTime(0, nowTime, Math.max(0.005, fadeSec / 3));
+    } else if ('value' in param) {
+      param.value = 0;
+    }
   }
 
   function normalizeCueSpec(cueIdOrSpec) {
@@ -105,6 +199,7 @@ export function createBgmController(ctx, buses) {
         gainDb: Number(cueIdOrSpec.gainDb) || 0,
         bpm: cueIdOrSpec.bpm ?? null,
         buffer: cueIdOrSpec.buffer ?? null,
+        stream: cueIdOrSpec.stream,
       };
     }
     throw new TypeError('playBgm requires a cueId string or cue descriptor object');
@@ -151,6 +246,8 @@ export function createBgmController(ctx, buses) {
       durationSec: cfg.durationSec ?? cfg.duration ?? null,
       gainDb: Number(cfg.gainDb) || 0,
       bpm: cfg.bpm ?? null,
+      // `preload: "stream"` in a music table opts the cue into media-element streaming.
+      stream: cfg.stream ?? (cfg.preload === 'stream' ? true : null),
     };
     bgmCues.set(cueId, entry);
     return entry;
@@ -218,6 +315,14 @@ export function createBgmController(ctx, buses) {
 
       if (!buffer) {
         if (!cue.url) throw new Error(`BGM cue "${resolvedId}" has no url or buffer`);
+        // `stream` stays undefined when streaming does not apply and is null when superseded while starting.
+        let stream;
+        if (wantsStreaming(cue) && isLoopWindow(cue, Number(cue.durationSec)) !== true) {
+          const element = createStreamElement(audioCtx);
+          if (element) stream = await startStreamTrack(audioCtx, element, cue, { resolvedId, token, loop, volume, fadeMs, startAtSec });
+        }
+        if (stream === null) return null;
+        if (stream && stream !== DECODE) return stream;
         if (typeof fetchImpl !== 'function') throw new Error('fetch is required to stream BGM audio');
         const response = await fetchImpl(cue.url);
         if (!response.ok) throw new Error(`Failed to fetch BGM (${response.status}): ${cue.url}`);
@@ -250,17 +355,7 @@ export function createBgmController(ctx, buses) {
       gainNode.connect(busNode);
 
       const nowTime = Number.isFinite(audioCtx.currentTime) ? audioCtx.currentTime : 0;
-      if (fadeSec > 0 && gainNode.gain) {
-        if (typeof gainNode.gain.setValueAtTime === 'function' && typeof gainNode.gain.linearRampToValueAtTime === 'function') {
-          gainNode.gain.value = 0.0001;
-          gainNode.gain.setValueAtTime(0.0001, nowTime);
-          gainNode.gain.linearRampToValueAtTime(baseGain, nowTime + fadeSec);
-        } else {
-          gainNode.gain.value = baseGain;
-        }
-      } else if (gainNode.gain) {
-        gainNode.gain.value = baseGain;
-      }
+      fadeIn(gainNode.gain, baseGain, fadeSec, nowTime);
 
       const offset = startAtSec !== null && Number.isFinite(Number(startAtSec))
         ? clamp(Number(startAtSec), loopStart, Math.max(loopStart, loopEnd - 0.05))
@@ -302,12 +397,120 @@ export function createBgmController(ctx, buses) {
         loopStart,
         loopEnd,
         duration: buffer.duration,
+        streaming: false,
       };
     } catch (err) {
       if (pendingLoad?.token === token) pendingLoad = null;
       buffer = null;
       throw err;
     }
+  }
+
+  /**
+   * Start a cue on a media element wired into the mix buses. Resolves once playback has begun.
+   * The element's decoder streams the file, so nothing the size of the track is ever held in a
+   * buffer. Returns null when superseded while starting, or `DECODE` when the trim points turn
+   * out to select a window inside the file.
+   */
+  async function startStreamTrack(audioCtx, element, cue, { resolvedId, token, loop, volume, fadeMs, startAtSec }) {
+    const isLoop = loop !== undefined ? Boolean(loop) : cue.loop !== false;
+    const baseGain = clamp(Number(volume) || 1, 0, 2) * Math.pow(10, (Number(cue.gainDb) || 0) / 20);
+    const fadeSec = Math.max(0, (Number(fadeMs) || 0) * 0.001);
+
+    element.preload = 'auto';
+    element.loop = isLoop;
+    element.src = cue.url;
+
+    // A cue with no declared length can only be judged once the media length is known.
+    if (isLoopWindow(cue, Number(cue.durationSec)) === null) {
+      await waitForMetadata(element);
+      if (token !== transitionToken || disposed) return null;
+      if (isLoopWindow(cue, Number(element.duration))) {
+        releaseStreamElement(element);
+        return DECODE;
+      }
+    }
+
+    // The media timeline starts at the first audible sample, so no offset is added for trims.
+    const offset = startAtSec !== null && Number.isFinite(Number(startAtSec)) ? Math.max(0, Number(startAtSec)) : 0;
+
+    // A media element can only ever be routed through one source node, so pause/resume keeps
+    // this node connected and only stops and restarts the element itself.
+    const source = audioCtx.createMediaElementSource(element);
+    const gainNode = audioCtx.createGain();
+    const busNode = (ctx.getBusNode ? ctx.getBusNode(cue.bus || 'bgm') : null) ?? ctx.master;
+    source.connect(gainNode);
+    gainNode.connect(busNode);
+
+    const nowTime = Number.isFinite(audioCtx.currentTime) ? audioCtx.currentTime : 0;
+    fadeIn(gainNode.gain, baseGain, fadeSec, nowTime);
+
+    const track = {
+      cueId: resolvedId,
+      cue,
+      state: 'playing',
+      token,
+      mode: 'element',
+      buffer: null,
+      element,
+      source,
+      gainNode,
+      loop: isLoop,
+      loopStart: 0,
+      loopEnd: 0,
+      baseGain,
+      startedAtCtxTime: nowTime,
+      offsetAtStart: offset,
+      pausedPositionSec: offset,
+      fadeTimer: null,
+    };
+
+    if (currentTrack) {
+      scheduleFadeOutAndRelease(currentTrack, fadeMs);
+    }
+    currentTrack = track;
+    if (pendingLoad?.token === token) pendingLoad = null;
+
+    const readDuration = () => {
+      track.loopEnd = trackDuration(track);
+    };
+    readDuration();
+    element.addEventListener?.('loadedmetadata', readDuration);
+    element.addEventListener?.('ended', () => {
+      if (track === currentTrack && track.state === 'playing' && !track.loop) {
+        finalizeTrack(track);
+        currentTrack = null;
+      }
+    });
+    element.addEventListener?.('error', () => {
+      if (track === currentTrack) {
+        finalizeTrack(track);
+        currentTrack = null;
+      }
+    });
+
+    try {
+      element.currentTime = offset;
+      await element.play();
+    } catch (err) {
+      // Being paused or replaced while starting aborts play(); that is not a failure.
+      if (track !== currentTrack || track.state !== 'playing' || disposed) return null;
+      finalizeTrack(track);
+      currentTrack = null;
+      throw err;
+    }
+    return (track === currentTrack && !disposed)
+      ? {
+        cueId: resolvedId,
+        ignored: false,
+        state: 'playing',
+        loop: isLoop,
+        loopStart: 0,
+        loopEnd: track.loopEnd,
+        duration: track.loopEnd,
+        streaming: true,
+      }
+      : null;
   }
 
   function stopBgm({ fadeMs = 400 } = {}) {
@@ -321,8 +524,21 @@ export function createBgmController(ctx, buses) {
     return true;
   }
 
+  /** @param {object} track @returns {number} Track length in seconds; a stream reports its cue's declared length until its metadata has loaded. */
+  function trackDuration(track) {
+    if (!track) return 0;
+    if (track.buffer) return track.buffer.duration;
+    const duration = Number(track.element?.duration);
+    return Number.isFinite(duration) ? duration : (Number(track.cue?.durationSec) || 0);
+  }
+
   function computeTrackCurrentTimeSec(track) {
     if (!track) return 0;
+    if (track.mode === 'element') {
+      if (track.state !== 'playing') return track.pausedPositionSec || 0;
+      const time = Number(track.element?.currentTime);
+      return Number.isFinite(time) ? time : (track.pausedPositionSec || 0);
+    }
     if (track.state !== 'playing') return track.pausedPositionSec || 0;
     const audioCtx = ctx.context;
     const nowTime = Number.isFinite(audioCtx?.currentTime) ? audioCtx.currentTime : track.startedAtCtxTime;
@@ -368,9 +584,14 @@ export function createBgmController(ctx, buses) {
   function pauseBgm({ fromLifecycle = false } = {}) {
     if (!currentTrack || currentTrack.state !== 'playing') return false;
     currentTrack.pausedPositionSec = computeTrackCurrentTimeSec(currentTrack);
-    try { currentTrack.source?.stop?.(); } catch {}
-    try { currentTrack.source?.disconnect?.(); } catch {}
-    currentTrack.source = null;
+    if (currentTrack.mode === 'element') {
+      // The source node stays connected: a media element cannot be routed through a second one.
+      try { currentTrack.element?.pause(); } catch {}
+    } else {
+      try { currentTrack.source?.stop?.(); } catch {}
+      try { currentTrack.source?.disconnect?.(); } catch {}
+      currentTrack.source = null;
+    }
     currentTrack.state = 'paused';
     autoPausedByLifecycle = Boolean(fromLifecycle);
     return true;
@@ -378,11 +599,26 @@ export function createBgmController(ctx, buses) {
 
   async function resumeBgm({ fromLifecycle = false } = {}) {
     if (fromLifecycle && !autoPausedByLifecycle) return false;
-    if (!currentTrack || currentTrack.state !== 'paused' || !currentTrack.buffer || disposed) return false;
+    const resumable = () => Boolean(currentTrack) && currentTrack.state === 'paused' && !disposed
+      && (currentTrack.mode === 'element' || Boolean(currentTrack.buffer));
+    if (!resumable()) return false;
     autoPausedByLifecycle = false;
 
     const audioCtx = await ctx.unlock();
-    if (!currentTrack || currentTrack.state !== 'paused' || !currentTrack.buffer || disposed) return false;
+    if (!resumable()) return false;
+
+    if (currentTrack.mode === 'element') {
+      try {
+        await currentTrack.element.play();
+      } catch (err) {
+        // Paused again while play() was still pending.
+        if (err?.name === 'AbortError') return false;
+        throw err;
+      }
+      if (!resumable()) return false;
+      currentTrack.state = 'playing';
+      return true;
+    }
 
     startTrackSource(audioCtx, currentTrack, currentTrack.pausedPositionSec);
     currentTrack.state = 'playing';
@@ -390,7 +626,21 @@ export function createBgmController(ctx, buses) {
   }
 
   async function seekBgm(positionSec) {
-    if (!currentTrack || !currentTrack.buffer || disposed) return null;
+    if (!currentTrack || disposed || !(currentTrack.buffer || currentTrack.mode === 'element')) return null;
+    if (currentTrack.mode === 'element') {
+      const start = currentTrack.loopStart;
+      const end = currentTrack.loopEnd > 0
+        ? currentTrack.loopEnd - 0.02
+        : (trackDuration(currentTrack) > 0 ? trackDuration(currentTrack) - 0.02 : Number.POSITIVE_INFINITY);
+      const clamped = clamp(Number(positionSec) || 0, start, Math.max(start, end));
+      try {
+        currentTrack.element.currentTime = clamped;
+      } catch {
+        return null;
+      }
+      currentTrack.pausedPositionSec = clamped;
+      return clamped;
+    }
     const clamped = clamp(
       Number(positionSec) || 0,
       currentTrack.loopStart,
@@ -430,6 +680,8 @@ export function createBgmController(ctx, buses) {
       loopStart: currentTrack?.loopStart ?? 0,
       loopEnd: currentTrack?.loopEnd ?? 0,
       bufferDuration: currentTrack?.buffer?.duration ?? 0,
+      duration: trackDuration(currentTrack),
+      streaming: currentTrack?.mode === 'element',
       currentTimeSec: computeTrackCurrentTimeSec(currentTrack),
       pausedPositionSec: currentTrack?.pausedPositionSec ?? 0,
       activeBufferCount,

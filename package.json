@@ -50,6 +50,7 @@
     "accept": "node scripts/accept.mjs",
     "accept:examples": "node scripts/accept.mjs --examples",
     "test:browser:accept": "node tests/browser-acceptance.mjs",
+    "test:browser:audio": "node tests/browser-bgm-streaming.mjs",
     "api": "node scripts/query-api.mjs",
     "vfx:score": "node scripts/score-vfx-fidelity.mjs",
     "vfx:pack": "node scripts/build-vfx-pack.mjs",
