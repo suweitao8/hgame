@@ -96,7 +96,7 @@
           {
             "point": "热点/长任务自动预算切片不丢帧",
             "met": false,
-            "proof": "缺失（work-budget.js 仅提供手动时间片助手，Application 未自动切片）"
+            "proof": "暂缓（work-budget.js 仅提供手动时间片助手，Application 未自动切片；按精简清单挂起）"
           },
           {
             "point": "多场景切换零泄漏与确定性时序浏览器真 GPU 实测",
@@ -114,7 +114,7 @@
         "cocos": "Director 调度与场景/节点生命周期稳定，支持常驻节点与优先级排序。",
         "godot": "SceneTree 节点树与暂停模式直观完备，但 Web 端长任务切片需自行控制。"
       },
-      "gap": "缺少 Application 级热点/长任务自动预算切片不丢帧机制。"
+      "gap": "暂缓：Application 级长任务自动预算切片挂起。"
     },
     {
       "id": "A2",
@@ -395,7 +395,7 @@
       "name": "TAA、上采样与后处理",
       "weight": 6,
       "scores": {
-        "hgame": 8,
+        "hgame": 8.5,
         "unity": 8,
         "cocos": 7.5,
         "godot": 5
@@ -427,7 +427,9 @@
           {
             "point": "STP/FSR2 级亚像素 Compute 级空间时间超分重建",
             "met": false,
-            "proof": "缺失（当前为 TAA + FSR1 RCAS，非 FSR2 运动矢量亚像素重建）"
+            "exempt": true,
+            "exemptReason": "FSR2 级时间超分按定位明确不做：移动端显存带宽易负优化且动态运动矢量维护成本高，改用 maxDPR 限制 + 动态分辨率缩放（DRS）+ 现有 FSR1 RCAS",
+            "proof": "未实现（按产品定位明确不做，不计入清单满足率与短板）"
           }
         ],
         "note": "具备 5-tap FSR1 RCAS 锐化、reactiveMaskRT TAA、LUT/高度雾及可扩展 GLSL3 全屏 HDR 后处理管线，桌面零 GL 报错。",
@@ -441,7 +443,7 @@
         "cocos": "Cocos Creator 3.8 支持 TAA、FSR1 上采样、HBAO 与常见后处理链路。",
         "godot": "Compatibility/GLES3 渲染器禁用 TAA、SSR、SSAO 与 FSR2，后处理能力大幅降级。"
       },
-      "gap": "缺少 STP/FSR2 级运动矢量亚像素超分重建。"
+      "gap": "有效清单已全部满足（FSR2 级时间超分按定位明确不做，以 maxDPR + DRS + FSR1 替代）。"
     },
     {
       "id": "R5",
@@ -475,7 +477,7 @@
           {
             "point": "全材质统一平滑 Crossfade Dither LOD 过渡",
             "met": false,
-            "proof": "缺失（仅滞回切档与代理切换，缺统一 Dither Crossfade）"
+            "proof": "暂缓（仅滞回切档与代理切换，缺统一 Dither Crossfade；按精简清单挂起，等实际画面出现跳变再评估）"
           },
           {
             "point": "大规模场景浏览器 GPU 裁剪与显存压缩实测",
@@ -493,7 +495,7 @@
         "cocos": "支持 LOD 与烘焙骨骼 GPU 实例化，大世界 HLOD 与群体裁剪管线相对较弱。",
         "godot": "Compatibility 端支持基础 MultiMesh 与 HLOD 裁剪，缺少内置 Bone-VAT 与大规模群体特化。"
       },
-      "gap": "缺少全材质统一的实时平滑 Crossfade Dither LOD 过渡。"
+      "gap": "暂缓：全材质统一的平滑 Crossfade Dither LOD 过渡挂起，等实际画面出现跳变再评估。"
     },
     {
       "id": "P1",
@@ -528,7 +530,7 @@
           {
             "point": "骨骼姿态更新原生多线程并行",
             "met": false,
-            "proof": "缺失（animator3d.js 在主线程计算）"
+            "proof": "暂缓（animator3d.js 在主线程计算骨骼姿态；按精简清单挂起）"
           }
         ],
         "note": "worker-sim.js 异步卸载流场/NavMesh 寻路，worker-physics.js 在无 COOP/COEP 依赖下实现 Rapier Worker 步进与确定性 inline 回退。",
@@ -541,7 +543,7 @@
         "cocos": "物理与动画主流程以主线程执行为主，Worker 并行需项目层自行封装。",
         "godot": "Godot 4.3+ 新增单线程 Web 导出（避开 COOP/COEP），多线程仍强依赖 SharedArrayBuffer。"
       },
-      "gap": "骨骼姿态更新仍在主线程执行。"
+      "gap": "暂缓：骨骼姿态多线程挂起，当前仍在主线程计算。"
     },
     {
       "id": "P2",
@@ -604,7 +606,7 @@
       "name": "帧预算、PSO 暖机与内存治理",
       "weight": 6,
       "scores": {
-        "hgame": 8,
+        "hgame": 8.5,
         "unity": 7.5,
         "cocos": 8,
         "godot": 5.5
@@ -636,7 +638,9 @@
           {
             "point": "浏览器持久化磁盘级 PSO 二进制缓存",
             "met": false,
-            "proof": "缺失（Web 平台缺少跨会话原生磁盘 PSO 缓存 API）"
+            "exempt": true,
+            "exemptReason": "跨会话磁盘级 PSO 缓存按定位豁免不做：浏览器平台没有对应 API，属于平台限制而非产品选择",
+            "proof": "未实现（按产品定位豁免，不计入清单满足率与短板）"
           }
         ],
         "note": "mobilePortrait 模式一键接通 DPR 封顶、DRS 动态分辨率、VRAM 守卫与分帧 Warmup，并在浏览器通过 60s 压测。",
@@ -649,7 +653,7 @@
         "cocos": "内存控制、合批与 Shader 预编译暖机在 Web 端较成熟。",
         "godot": "Compatibility Web 导出在首次遇见材质变体时易发生明显着色器编译卡顿。"
       },
-      "gap": "受浏览器平台限制缺少跨会话磁盘级 PSO 二进制缓存。"
+      "gap": "有效清单已全部满足（跨会话磁盘级 PSO 缓存按定位豁免）。"
     },
     {
       "id": "P4",
@@ -657,7 +661,7 @@
       "name": "跨后端真机性能剖析与诊断",
       "weight": 5,
       "scores": {
-        "hgame": 8,
+        "hgame": 8.5,
         "unity": 9,
         "cocos": 7,
         "godot": 6
@@ -688,7 +692,9 @@
           {
             "point": "内置可视化交互式火焰图面板",
             "met": false,
-            "proof": "缺失（Trace 需导入 Chrome DevTools 查看，无内置火焰图 UI）"
+            "exempt": true,
+            "exemptReason": "内置火焰图与 GPU 时间轴按定位豁免不做：性能剖析统一使用 Chrome DevTools 与 Spector.js，引擎只提供 Chrome Trace 导出",
+            "proof": "未实现（按产品定位豁免，不计入清单满足率与短板）"
           }
         ],
         "note": "具备 Chrome Trace、LiveProfilerOverlay、Zero-GC 门禁及 GPU 资源快照 Diff 泄漏检测。",
@@ -701,7 +707,7 @@
         "cocos": "具备实时统计面板与 Chrome DevTools 协同调试能力，深度内存追踪一般。",
         "godot": "自带基础 Monitor 与 Profiler，Web 端远程帧剖析能力受限。"
       },
-      "gap": "缺少引擎内置可视化交互式火焰图与完整跨阶段 GPU 时间轴面板。"
+      "gap": "有效清单已全部满足（内置火焰图与 GPU 时间轴按定位豁免，改用 Chrome DevTools 与 Spector.js）。"
     },
     {
       "id": "S1",
@@ -768,7 +774,7 @@
       "name": "骨骼动画、混合树与 IK",
       "weight": 6,
       "scores": {
-        "hgame": 8,
+        "hgame": 8.5,
         "unity": 9.5,
         "cocos": 8,
         "godot": 8.5
@@ -799,7 +805,9 @@
           {
             "point": "通用可视化/声明式多轨道状态机资产管线",
             "met": false,
-            "proof": "缺失（状态机仅支持代码构建）"
+            "exempt": true,
+            "exemptReason": "声明式动画状态机资产按定位豁免不做：AI 以代码编排状态机，产品不做编辑器，animator3d.js 已提供状态机与混合树",
+            "proof": "未实现（按产品定位豁免，状态机以代码编排，不计入清单满足率与短板）"
           }
         ],
         "note": "支持状态机、1D/2D 混合树、Two-Bone/LookAt/FABRIK IK、RootMotion、MorphTarget、SpringBone、惯性过渡及跨骨架动画重定向（retarget3d.js）。",
@@ -812,7 +820,7 @@
         "cocos": "Marionette 动画图系统提供可视化状态机、混合与骨骼挂点能力。",
         "godot": "AnimationTree 支持状态机、BlendSpace2D 与 SkeletonIK3D，编排效率高。"
       },
-      "gap": "缺少可视化或声明式多轨道状态机资产管线（状态机需代码编排）。"
+      "gap": "有效清单已全部满足（声明式状态机资产按定位豁免，状态机以代码编排）。"
     },
     {
       "id": "S3",
@@ -848,9 +856,16 @@
             "proof": "assets/runtime/platform/audio.js"
           },
           {
-            "point": "连续多普勒频移与长音轨分块流式解码",
+            "point": "连续多普勒频移跟踪（声源与听者相对速度逐帧更新播放速率）",
             "met": false,
-            "proof": "部分实现（audio.js computeDopplerRate 仅在触发时按相对速度计算一次，未连续跟踪；长音轨整段 decodeAudioData，无分块流式）"
+            "exempt": true,
+            "exemptReason": "连续多普勒按定位豁免不做：小游戏听感不需要逐帧跟踪，保留触发时按相对速度计算一次的 computeDopplerRate",
+            "proof": "部分实现（audio.js computeDopplerRate 仅在触发时计算一次，按产品定位豁免，不计入清单满足率与短板）"
+          },
+          {
+            "point": "长音轨（BGM/长语音）流式播放，不整段 decodeAudioData 驻留内存",
+            "met": false,
+            "proof": "缺失（platform/audio/bgm-player.js playBgm 整轨 fetch 后 decodeAudioData，无流式路径）"
           }
         ],
         "note": "原生 Web Audio 真实混响发送链（ConvolverNode）、3 段参数 EQ、采样级 duckBus 包络与 0-KB 合成器。",
@@ -863,7 +878,7 @@
         "cocos": "Web 端以基础 AudioSource 播放与音量淡入为主，缺乏内置多段 EQ 与混响 DSP 链。",
         "godot": "Godot 4.3 单线程 Web 默认走 Audio Sample 播放路径，AudioBus 总线实时 DSP 效果会丢失。"
       },
-      "gap": "缺少长音轨分块流式解码；多普勒频移仅在触发时计算一次，未连续跟踪。"
+      "gap": "长音轨仍整段解码驻留内存，尚无流式播放路径（连续多普勒按定位豁免）。"
     },
     {
       "id": "S4",
@@ -906,6 +921,13 @@
             "point": "完整屏幕阅读器（ARIA）与动态按键重映射持久化",
             "met": true,
             "proof": "assets/runtime/ui/canvas-widgets.js createCanvasAriaBridge, assets/runtime/platform/input/router.js"
+          },
+          {
+            "point": "图文内联表情与双向文字（BiDi）排版",
+            "met": false,
+            "exempt": true,
+            "exemptReason": "双向文字与内联表情按小游戏定位豁免不做，目标语言为中英文",
+            "proof": "未实现（按产品定位豁免，不计入清单满足率与短板）"
           }
         ],
         "note": "具备 Canvas richText 自动换行混排、scrollView 裁剪滚动、IME 组合下划线、createCanvasAriaBridge 语义镜像树及 InputActionRouter 动态重映射持久化。",
@@ -919,7 +941,7 @@
         "cocos": "Widget 多分辨率适配、富文本、ScrollView 与小游戏键盘适配成熟。",
         "godot": "Control 锚点/容器布局体系非常完备，内置无障碍接口与主题系统成熟。"
       },
-      "gap": "暂缺图文内联表情/复杂双向文字（BiDi）与屏幕阅读器实时焦点同步高阶特性"
+      "gap": "有效清单已全部满足（双向文字与内联表情按定位豁免）；屏幕阅读器实时焦点同步为备注级限制。"
     },
     {
       "id": "N1",

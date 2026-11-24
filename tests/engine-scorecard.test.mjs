@@ -129,6 +129,35 @@ test('exempt entries lift maxAllowed and the C4 gate only while the exemption st
   assert.ok(revokedErrors.some((e) => e.includes('R1') && e.includes('industrialChecklist maxAllowed')));
 });
 
+test('the trimmed-plan decisions are recorded as exemptions, deferrals or an open short-board', () => {
+  const data = loadScorecard(DEFAULT_SCORECARD_PATH);
+  const item = (id) => data.items.find((it) => it.id === id);
+  const exemptPoints = (id) => item(id).hgame.industrialChecklist.filter((c) => c.exempt).map((c) => c.point);
+
+  // Exempted by product positioning: every applicable entry is met and the score sits at 8.5.
+  for (const id of ['R4', 'S2', 'P3', 'P4']) {
+    const { met, applicable, exempt } = summarizeChecklist(item(id));
+    assert.deepEqual([met, applicable, exempt], [3, 3, 1], id);
+    assert.equal(item(id).scores.hgame, 8.5, id);
+  }
+  assert.ok(exemptPoints('R4')[0].includes('FSR2'));
+  assert.ok(exemptPoints('S2')[0].includes('状态机'));
+  assert.ok(exemptPoints('P3')[0].includes('PSO'));
+  assert.ok(exemptPoints('P4')[0].includes('火焰图'));
+
+  // S3 keeps long-track streaming as a real short-board; only continuous Doppler is exempt.
+  assert.deepEqual(summarizeChecklist(item('S3')), { met: 3, exempt: 1, applicable: 4, total: 5 });
+  assert.ok(exemptPoints('S3')[0].includes('多普勒'));
+  assert.ok(item('S3').hgame.industrialChecklist.some((c) => !c.exempt && c.met === false && c.point.includes('流式')));
+
+  // Deferred items stay unmet rather than being exempted.
+  for (const id of ['A1', 'R5', 'P1']) {
+    const summary = summarizeChecklist(item(id));
+    assert.equal(summary.exempt, 0, id);
+    assert.ok(item(id).hgame.industrialChecklist.some((c) => !c.exempt && c.met === false && c.proof.startsWith('暂缓')), id);
+  }
+});
+
 test('validator enforces exemption guardrails', () => {
   const metExempt = loadScorecard(DEFAULT_SCORECARD_PATH);
   metExempt.items.find((it) => it.id === 'R1').hgame.industrialChecklist[2].met = true;
