@@ -762,7 +762,11 @@
           }
         ],
         "note": "前后端同源 pinned Rapier 0.21.0 2D/3D 确定性刚体、5 类关节、Sweep/Overlap 与 16 层碰撞矩阵。",
-        "benchmarkFiles": []
+        "benchmarkFiles": [
+          "tests/deterministic-physics.test.mjs",
+          "tests/physics-joints-and-queries.test.mjs",
+          "tests/browser-worker-physics.mjs"
+        ]
       },
       "competitorNotes": {
         "unity": "PhysX 关节、布料、车轮与空间查询完整，但不保证跨架构确定性位一致。",
