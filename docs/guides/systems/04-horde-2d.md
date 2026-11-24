@@ -3,7 +3,8 @@
 > 子系统速查(AI Agent 用)。完整 API 签名见 `docs/api/API-INDEX.json`。
 
 - **文件**：`vendor/hgame/integrations/webgl2d.js`、`vendor/hgame/world/spatial2d.js`、`vendor/hgame/world/swarm-ecs.js`
-- **分层选型**：
+- **选型规则**：常规 2D（含万级以下同屏）默认用 PixiJS 8（`--preset 2d`、`--preset horde`，见 `PIXI2D-STARTER.md`）。自研 WebGL2D 适配器（`--renderer webgl2d`）只用于万级同屏实例化精灵，以及 Pixi 起始模板没有的 2D 光照与后处理（`post2d.js`）。内置的 `action-2d`、`horde-2d` 原型仍在 WebGL2D 栈上，迁移到 Pixi 登记为后续项。
+- **分层选型**（WebGL2D 栈）：
   - `< 1,500` 个体：直接用标准 `Entity + Sprite2D`。
   - `1,500–15,000` 个体：`renderer: 'webgl2d'` + `SpriteCrowd2D` + `SpatialHash2D`。
   - `15,000–100,000` 集群模拟：`createSwarmSimulation`（1D 扁平链式哈希 `FlatSpatialHash2D` + `FlowField2D` 流场寻路 + 近身 `10m/12m` 滞回 `FlatCombatECS`），每帧 `sim.step(dt, { heroX, heroY })` 后 `sim.syncToSpriteCrowd2D(crowd)` 提交一次 WebGL2 实例化绘制。

@@ -40,7 +40,7 @@ In a generated game, run `npm run api -- --module <name> --json` against the gam
 
 Use `--preset horde` to start with HGame's CPU swarm simulation and a PixiJS particle layer. Its capacity, population and sprite dimensions are in `src/swarm.json`. The 3D preset selects adaptive quality and Rapier 3D. Pass `--physics none` when the design needs no physics backend.
 
-New `2d` and `horde` presets use PixiJS. For `2d`, explicit `--renderer webgl2d` or `--renderer canvas2d` selects a legacy renderer; `horde` also supports explicit `--renderer webgl2d`. Existing games are not migrated.
+New `2d` and `horde` presets use PixiJS, which is the default for ordinary 2D games. The in-house WebGL2D renderer is only for 10k+ on-screen instanced sprites and for the 2D lighting and post effects the Pixi starter lacks: for `2d`, explicit `--renderer webgl2d` selects it and `--renderer canvas2d` its fallback; `horde` also supports explicit `--renderer webgl2d`. Existing games are not migrated, and the `action-2d` and `horde-2d` archetypes still use WebGL2D.
 
 Pixi projects open in WebAsset immediately from the seeded bundle. Run `npm run build:pixi` after editing the entry or its imports to refresh the WebAsset preview. Packaging a newly generated project rebuilds the entry when it detects source changes. If build dependencies are missing, run `npm ci` in the project. The release retains reachable chunks with their content-hashed filenames and original bytes.
 

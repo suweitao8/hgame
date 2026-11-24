@@ -59,8 +59,9 @@
   - `recordHit()` / `recordKill()` / `damagePlayer()` / `healPlayer()` / `setWave()` / `presentChoices()` / `endRun()`
   - 自动处理连击、经验升级、最高分持久化、顿帧触发、`window.__hgameState` 遥测导出。
 - **内置高频玩法原型（`assets/archetypes/`）**：
-  - `action-2d`：2D 动作生存原型（WebGL2D + 冲刺 + 自动索敌/手动攻击 + 升级三选一）
-  - `horde-2d`：2D 高密割草原型（`createSwarmSimulation` + `SpriteCrowd2D.bindSwarm` + 范围脉冲 + 连杀）
+  - 2D 选型：常规 2D（含万级以下同屏）默认 PixiJS 8；自研 WebGL2D 适配器只用于万级同屏实例化精灵，以及 Pixi 起始模板没有的 2D 光照与后处理。
+  - `action-2d`：2D 动作生存原型（WebGL2D + 冲刺 + 自动索敌/手动攻击 + 升级三选一；仍在 WebGL2D 栈上，迁移到 Pixi 登记为后续项）
+  - `horde-2d`：2D 高密割草原型（`createSwarmSimulation` + `SpriteCrowd2D.bindSwarm` + 范围脉冲 + 连杀；仍在 WebGL2D 栈上，迁移到 Pixi 登记为后续项）
   - `arena-3d`：3D 动作竞技原型（Three.js + 程序地形 + 3D VFX + 近战/冲刺 + 物理）
     - 示例的普通粒子池容量为 4,096；扩充高密度特效时，按并发发射量和发布显存预算调整。
   - `card-ui`：零空转指令驱动卡牌原型（`tickHz: 0` + 3D 悬停卡牌 + 回合攻防）
