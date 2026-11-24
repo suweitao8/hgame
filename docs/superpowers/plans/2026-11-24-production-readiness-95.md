@@ -45,7 +45,19 @@ Hardware WebGL2 and SwiftShader both sample the resolved scene depth from a post
 
 The final runtime passed `npm run check` with 621 tests. The unminified, Web and Toy archive pixel comparisons passed, along with two forced WebGL loss and recovery cycles in each lifecycle sample. All five normal release fixtures passed. The packaged 3D arena on RTX 4070 ran for about 70.7 seconds in each viewport. Desktop p95/p99 were 13.9/20.9 ms and portrait p95/p99 were 7.1/13.9 ms. Both peaked at 13,855,680 estimated GPU bytes. The release runs establish budget compliance and do not establish a whole-frame speedup.
 
-The A2 rating stays at 9.5 and the weighted overall score stays at **90.64**. A browser probe found that an active projected decal was scheduled but left the center pixel unchanged. The existing adapter writes the decal to the default framebuffer before tone mapping draws into that same framebuffer. Complete and verify the decal-to-HDR composition before claiming full pipeline credit.
+At the end of the scene attachment change, A2 stayed at 9.5 and the weighted overall score stayed at **90.64**. A browser probe found that a scheduled projected decal left the final pixel unchanged because tone mapping subsequently overwrote the backbuffer.
+
+## Projected decals in the HDR pipeline
+
+- [x] Reproduce the missing decal with an output pixel assertion. Verify depth isolation, 4× MSAA with half-resolution temporal AA, and the inactive path.
+- [x] Copy world color into a graph-owned HDR target only when projected decals are active. Draw the decals there while sampling the original world depth, then feed the result to GI and composite passes.
+- [x] Verify the final staged code, including browser and archive output, and run the repository gates.
+
+On the RTX 4070, the final center pixel changes from `[50, 50, 50, 255]` to `[246, 0, 0, 255]`, including with 4× MSAA and temporal upsampling from 160 × 120 to 320 × 240. Pixels outside the decal remain unchanged. The test verifies the original camera projection is restored, the first-person layer remains visible and clearing the decal omits its draw. A separate Chromium test with `EXT_clip_control` reports the same final decal color with regular and reversed depth.
+
+SwiftShader passes the same combined MSAA and temporal test. The active high-tier decal and Bloom fixture produces the same screenshot hash (`b3c6aad7b43897df`) in the unminified, Web and Toy archives. The exact staged code passes `npm run check` with 621 tests and current API and declaration outputs.
+
+A2 moves from 9.5 to 10. Runtime reaches 86.4 and the weighted overall score reaches **90.76**, retaining 92 for production kit and 96 for verification and delivery. The active pass uses one additional color-only target at world resolution, and the forward path continues to use surface decals.
 
 ## Current evidence
 

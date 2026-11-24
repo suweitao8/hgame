@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Blend 3D projected decals into HDR scene color before post-processing. Resolve multisampled depth for decals and match the world projection during temporal upsampling.
+
 - Lease the 3D scene color and depth attachments through the render graph and reuse targets across internal render-scale changes.
 
 - Manage the complete 3D Bloom chain in the render graph. Track resident pooled targets until their idle resources are released.

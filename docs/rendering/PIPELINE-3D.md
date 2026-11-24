@@ -111,6 +111,8 @@ Dependency-ordered scheduling is exposed via `compileRenderGraph` / `executeRend
 
 `pipeline.getRenderGraphPlan()` describes post-processing with scene color and depth as inputs. `pipeline.getLastFrameGraph()` reports the executed graph and its lifetimes, including the world pass's `sceneTarget`. Color and depth share that target's lease until the last reader. Compatible scene targets remain available for reuse until the fourth idle frame has passed. A target prepared for a configuration that never draws is released when that configuration is replaced.
 
+Projected decals require an active HDR pipeline with sampleable world depth. The graph resolves that depth when needed and blends the decal volumes into a separate color target at the world render resolution. GI and the post-processing chain consume the blended HDR color. With temporal AA, the decal draw uses the same jittered projection as the world pass. Use surface decals on the forward path.
+
 ### Custom HDR effects
 
 Configure `post3d.passes` or replace the chain through `adapter.postPipeline.setPasses(passes)`. Effects run in array order. Each descriptor names its previous-color texture uniform and, optionally, its original world-depth texture uniform. The chain runs after the first-person layer and before exposure metering, bloom and tone mapping. Built-in lighting that has yet to be composited remains in the subsequent HDR composite.

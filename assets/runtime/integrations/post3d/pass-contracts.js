@@ -15,6 +15,7 @@ export const FULLSCREEN_PASSES = {
   giSsrBlurX: { name: 'gi-ssr-blur-x', reads: ['tInput'], writes: 'color' },
   giSsrBlurY: { name: 'gi-ssr-blur-y', reads: ['tInput'], writes: 'color' },
   giSsrTemporal: { name: 'gi-ssr-temporal', reads: ['tInput', 'tSceneDepth', 'tHistory'], writes: 'color' },
+  projectedDecalsCopy: { name: 'projected-decals-copy', reads: ['tInput'], writes: 'color' },
   worldLighting: { name: 'world-lighting', reads: ['tScene'], optional: ['tDepth', 'tAoVol', 'tGiSsr'], writes: 'color' },
   temporalAA: { name: 'temporal-aa', reads: ['tCurrentColor', 'tCurrentDepth'],
     optional: ['tPreviousColor', 'tPreviousDepth', 'tMotionVectors'], writes: 'color-depth' },

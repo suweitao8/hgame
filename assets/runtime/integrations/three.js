@@ -1136,10 +1136,10 @@ export function createThreeAdapter({
         }
       }
     }
+    const projectedDecals = worldProjectedDecals.get(world)?.filter(system =>
+      system.mode === 'projected' && system.getStats().active > 0);
     if (useSceneRenderGraph) {
       const hasShadowPass = Boolean(worldCsm.has(world) || options.sunLight || renderer.shadowMap?.enabled);
-      const projList = worldProjectedDecals.get(world);
-      const hasProjDecalPass = Boolean(projList?.some(s => (s.getStats?.().active ?? s.getStats?.().activeCount ?? s.activeCount ?? 0) > 0));
       if (pipeline) {
         const before = hasShadowPass ? [{
           id: 'shadow-csm',
@@ -1150,26 +1150,10 @@ export function createThreeAdapter({
             prepareSunShadows(world, camera);
           },
         }] : [];
-        const afterWorld = hasProjDecalPass ? [{
-          id: 'projected-decals',
-          reads: ['sceneDepth'],
-          writes: ['decalColor'],
-          execute(ctx) {
-            if (!projList) return;
-            const mainTarget = ctx?.inputs?.sceneTarget ?? ctx?.state?.sceneRT ?? pipeline.getMainTarget?.();
-            if (!mainTarget?.depthTexture) return;
-            const w = mainTarget.width ?? ctx?.state?.bufferWidth ?? 1;
-            const h = mainTarget.height ?? ctx?.state?.bufferHeight ?? 1;
-            for (const sys of projList) {
-              if (typeof sys?.renderProjected === 'function') {
-                sys.renderProjected(renderer, camera, mainTarget.depthTexture, w, h);
-              }
-            }
-          },
-        }] : [];
         pipeline.render(world, camera, {
           ...options,
-          extraPasses: { before, afterWorld },
+          extraPasses: { before },
+          projectedDecals,
         });
         lastSceneRenderGraph = pipeline.getLastFrameGraph?.() ?? Object.freeze({
           compiledOrder: pipeline.getLastExecutedGraph?.() ?? [],
@@ -1225,19 +1209,12 @@ export function createThreeAdapter({
           reads: ['sceneDepth'],
           writes: ['decalColor'],
           transientSpecs: { decalColor: { kind: 'color' } },
-          execute() {
-            if (!projList) return;
-            for (const sys of projList) {
-              if (typeof sys?.renderProjected === 'function' && pipeline?.getMainTarget?.()?.depthTexture) {
-                const sz = pipeline.getMainTarget();
-                sys.renderProjected(renderer, camera, sz.depthTexture, sz.width, sz.height);
-              }
-            }
-          },
+          // Keep the forward graph's dependency metadata. Depth projection needs the HDR pipeline.
+          execute() {},
         },
         {
           id: 'post-composite',
-          reads: ['sceneColor', ...(hasProjDecalPass ? ['decalColor'] : [])],
+          reads: ['sceneColor', ...(projectedDecals?.length ? ['decalColor'] : [])],
           writes: ['backbuffer'],
           execute() {},
         },
@@ -1261,7 +1238,7 @@ export function createThreeAdapter({
     worldCsm.get(world)?.update(camera);
     prepareSunShadows(world, camera);
     if (pipeline) {
-      pipeline.render(world, camera, options);
+      pipeline.render(world, camera, { ...options, projectedDecals });
       return;
     }
 
@@ -1643,18 +1620,13 @@ export function createThreeAdapter({
       const world = getWorld(scene);
       const sys = createDecalSystem3D(THREE, options);
       if (sys.group) world.add(sys.group);
-      let projBucket = null;
-      if (options.mode === 'projected') {
-        projBucket = worldProjectedDecals.get(world) ?? [];
-        projBucket.push(sys);
-        worldProjectedDecals.set(world, projBucket);
-      }
+      const projBucket = worldProjectedDecals.get(world) ?? [];
+      projBucket.push(sys);
+      worldProjectedDecals.set(world, projBucket);
       const release = () => {
         if (!ownedDecals.delete(release)) return;
-        if (projBucket) {
-          const idx = projBucket.indexOf(sys);
-          if (idx >= 0) projBucket.splice(idx, 1);
-        }
+        projBucket.splice(projBucket.indexOf(sys), 1);
+        if (projBucket.length === 0) worldProjectedDecals.delete(world);
         off?.();
         sys.dispose();
       };

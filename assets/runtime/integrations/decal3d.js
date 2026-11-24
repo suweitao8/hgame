@@ -5,6 +5,8 @@
  * Never imports 'three' directly; callers inject { THREE }.
  */
 
+import { usesZeroToOneDepth } from './camera3d/matrices.js';
+
 const PROJECTED_DECAL_VERT_GLSL3 = `
 out vec3 vDecalWorldPos;
 void main() {
@@ -23,6 +25,7 @@ uniform mat4 uInvProj;
 uniform mat4 uInvView;
 uniform mat4 uInvModel;
 uniform vec2 uResolution;
+uniform int uSceneDepthMode;
 uniform vec3 uColor;
 uniform float uOpacity;
 uniform float uEdgeSoftness;
@@ -33,8 +36,9 @@ out vec4 fragColor;
 void main() {
   vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
   float rawDepth = texture(tDepth, screenUv).r;
-  if (rawDepth >= 0.999999) discard;
-  vec4 ndc = vec4(screenUv * 2.0 - 1.0, rawDepth * 2.0 - 1.0, 1.0);
+  if (uSceneDepthMode == 2 ? rawDepth <= 0.0 : rawDepth >= 1.0) discard;
+  float clipZ = uSceneDepthMode == 0 ? rawDepth * 2.0 - 1.0 : rawDepth;
+  vec4 ndc = vec4(screenUv * 2.0 - 1.0, clipZ, 1.0);
   vec4 viewPos = uInvProj * ndc;
   viewPos /= viewPos.w;
   vec4 worldPos = uInvView * viewPos;
@@ -42,9 +46,9 @@ void main() {
   if (any(greaterThan(abs(localPos), vec3(0.5)))) discard;
   vec2 decalUv = localPos.xy + 0.5;
   float s = clamp(uEdgeSoftness, 0.01, 0.48);
-  float edgeFadeZ = smoothstep(0.5, 0.5 - s, abs(localPos.z));
-  float edgeFadeX = smoothstep(0.5, 0.5 - s * 0.75, abs(localPos.x));
-  float edgeFadeY = smoothstep(0.5, 0.5 - s * 0.75, abs(localPos.y));
+  float edgeFadeZ = 1.0 - smoothstep(0.5 - s, 0.5, abs(localPos.z));
+  float edgeFadeX = 1.0 - smoothstep(0.5 - s * 0.75, 0.5, abs(localPos.x));
+  float edgeFadeY = 1.0 - smoothstep(0.5 - s * 0.75, 0.5, abs(localPos.y));
   vec4 tex = uHasMap > 0.5 ? texture(tMap, decalUv) : vec4(1.0);
   float alpha = clamp(uOpacity * tex.a * edgeFadeZ * edgeFadeX * edgeFadeY, 0.0, 1.0);
   if (alpha <= 0.004) discard;
@@ -98,6 +102,7 @@ export function createDecalSystem3D(THREE, {
   const sharedInvProj = THREE.Matrix4 ? new THREE.Matrix4() : null;
   const sharedInvView = THREE.Matrix4 ? new THREE.Matrix4() : null;
   const sharedRes = THREE.Vector2 ? new THREE.Vector2(1, 1) : { set() {} };
+  const sceneDepthMode = { value: 0 };
   const canProjectShader = Boolean(THREE.ShaderMaterial && THREE.GLSL3 && THREE.Matrix4);
 
   for (let i = 0; i < capacity; i++) {
@@ -139,6 +144,7 @@ export function createDecalSystem3D(THREE, {
           uInvView: { value: sharedInvView },
           uInvModel: { value: new THREE.Matrix4() },
           uResolution: { value: sharedRes },
+          uSceneDepthMode: sceneDepthMode,
           uColor: { value: THREE.Color ? new THREE.Color(0xffffff) : { r: 1, g: 1, b: 1 } },
           uOpacity: { value: 1 },
           uEdgeSoftness: { value: 0.25 },
@@ -326,6 +332,7 @@ export function createDecalSystem3D(THREE, {
     if (camera.projectionMatrixInverse) sharedInvProj?.copy(camera.projectionMatrixInverse);
     if (camera.matrixWorld) sharedInvView?.copy(camera.matrixWorld);
     sharedRes.set?.(Math.max(1, width || 1), Math.max(1, height || 1));
+    sceneDepthMode.value = camera.reversedDepth ? 2 : Number(usesZeroToOneDepth(camera));
 
     let rendered = 0;
     for (let i = 0; i < capacity; i++) {
@@ -340,9 +347,12 @@ export function createDecalSystem3D(THREE, {
 
     const prevAutoClear = renderer.autoClear;
     renderer.autoClear = false;
-    renderer.setRenderTarget?.(target);
-    renderer.render(projectedScene, camera);
-    renderer.autoClear = prevAutoClear;
+    try {
+      renderer.setRenderTarget?.(target);
+      renderer.render(projectedScene, camera);
+    } finally {
+      renderer.autoClear = prevAutoClear;
+    }
     return rendered;
   }
 

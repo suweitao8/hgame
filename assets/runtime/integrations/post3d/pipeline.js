@@ -671,6 +671,8 @@ export function createPostPipeline3D(options = {}) {
   let mats = null;
   let activeDiagnostics = null;
   let sceneProjectionUniforms = null;
+  let decalRestoreProjection = null;
+  let decalRestoreInverse = null;
   let customInverseProjection = null;
   let scratchCamToShadow = null;
   let scratchViewToWorld = null;
@@ -1081,7 +1083,7 @@ export function createPostPipeline3D(options = {}) {
         uSharpness: { value: state.sharpness },
         uFxaaEnabled: { value: state.fxaa ? 1 : 0 },
       }),
-      giCopy: makeShader('precision highp float;\nin vec2 vUv;\nuniform sampler2D tInput;\nout vec4 fragColor;\nvoid main() {\n  fragColor = texture(tInput, vUv);\n}', {
+      colorCopy: makeShader('precision highp float;\nin vec2 vUv;\nuniform sampler2D tInput;\nout vec4 fragColor;\nvoid main() {\n  fragColor = texture(tInput, vUv);\n}', {
         tInput: { value: null },
       }),
     };
@@ -1503,8 +1505,8 @@ export function createPostPipeline3D(options = {}) {
     const texture = outTarget.texture;
     if (giHistoryRT) {
       if (outTarget !== giSsrRT) {
-        mats.giCopy.uniforms.tInput.value = texture;
-        runPass({ name: 'gi-ssr-history-copy', reads: ['tInput'], writes: 'color' }, mats.giCopy, giHistoryRT);
+        mats.colorCopy.uniforms.tInput.value = texture;
+        runPass({ name: 'gi-ssr-history-copy', reads: ['tInput'], writes: 'color' }, mats.colorCopy, giHistoryRT);
       } else {
         const previous = giHistoryRT;
         giHistoryRT = giSsrRT;
@@ -1579,10 +1581,10 @@ export function createPostPipeline3D(options = {}) {
    * Render one frame through the unified RenderGraph DAG.
    * @param {object} world
    * @param {object} camera
-   * @param {{ viewScene?: object | null, viewCamera?: object | null, sunLight?: object | null, irradianceGrid?: object | null, dt?: number, outputViewport?: object | null, diagnostics?: object | null, reactiveMask?: object | null, extraPasses?: { before?: Array<{ id: string, reads?: string[], writes?: string[], execute: Function }>, afterWorld?: Array<{ id: string, reads?: string[], writes?: string[], execute: Function }> } | null }} [options]
+   * @param {{ viewScene?: object | null, viewCamera?: object | null, sunLight?: object | null, irradianceGrid?: object | null, dt?: number, outputViewport?: object | null, diagnostics?: object | null, reactiveMask?: object | null, extraPasses?: { before?: Array<{ id: string, reads?: string[], writes?: string[], execute: Function }>, afterWorld?: Array<{ id: string, reads?: string[], writes?: string[], execute: Function }> } | null, projectedDecals?: Array<{ renderProjected: Function }> | null }} [options]
    */
   function render(world, camera, { viewScene = null, viewCamera = null, sunLight = null, irradianceGrid = null, dt = 0, outputViewport = null,
-    diagnostics = null, reactiveMask = null, extraPasses = null } = {}) {
+    diagnostics = null, reactiveMask = null, extraPasses = null, projectedDecals = null } = {}) {
     if (disposed || contextLost) return;
     const stepDt = Number.isFinite(dt) && dt > 0 ? dt : 0;
     if (stepDt > 0) elapsed += stepDt;
@@ -1637,6 +1639,8 @@ export function createPostPipeline3D(options = {}) {
     const worldWidth = frameSceneSpec.width;
     const worldHeight = frameSceneSpec.height;
     const readSceneDepth = frameSceneSpec.depthTexture;
+    const useProjectedDecals = Boolean(readSceneDepth && projectedDecals?.length);
+    const worldColorReads = useProjectedDecals ? ['sceneTarget', 'decalColor'] : ['sceneTarget'];
     const hasSun = Boolean(sunLight?.position && sunLight.visible !== false);
     const useAo = Boolean(readSceneDepth && activePreset.ssao && state.ssaoIntensity > 0);
     const useSsgi = readSceneDepth && ssgiEnabled();
@@ -1659,7 +1663,7 @@ export function createPostPipeline3D(options = {}) {
       activePasses.some(({ pass }) => pass.inputs.depthView);
     const postWorldDepth = Array.isArray(extraPasses?.afterWorld) &&
       extraPasses.afterWorld.some(pass => pass.reads?.includes('sceneDepth'));
-    const needsDepth = needsProjection || customDepth || (readSceneDepth && postWorldDepth);
+    const needsDepth = needsProjection || customDepth || useProjectedDecals || (readSceneDepth && postWorldDepth);
     if (useTemporal) temporalAa ??= createWorldTemporalAA();
     else if (temporalAa?.targets.length) temporalAa.release();
 
@@ -1762,6 +1766,49 @@ export function createPostPipeline3D(options = {}) {
         }
       }
 
+      if (useProjectedDecals) {
+        addStage('projected-decals', ({ inputs, outputs }) => {
+          const target = outputs.decalColor;
+          const { texture, depthTexture } = inputs.sceneTarget;
+          // Copy into a color-only target so the decal draw can sample scene depth without framebuffer feedback.
+          mats.colorCopy.uniforms.tInput.value = texture;
+          runPass(FULLSCREEN_PASSES.projectedDecalsCopy, mats.colorCopy, target);
+
+          // The world draw has already restored the camera. Match the matrices that produced its depth.
+          if (temporalFrame) {
+            decalRestoreProjection ??= new THREE.Matrix4();
+            decalRestoreInverse ??= new THREE.Matrix4();
+            decalRestoreProjection.copy(camera.projectionMatrix);
+            decalRestoreInverse.copy(camera.projectionMatrixInverse);
+            camera.projectionMatrix.copy(sceneProjectionUniforms.uProj.value);
+            camera.projectionMatrixInverse.copy(sceneProjectionUniforms.uInvProj.value);
+          }
+          try {
+            for (const system of projectedDecals) {
+              system.renderProjected(renderer, camera, depthTexture, worldWidth, worldHeight, target);
+            }
+          } finally {
+            if (temporalFrame) {
+              if (camera.projectionMatrix.equals(sceneProjectionUniforms.uProj.value) &&
+                  camera.projectionMatrixInverse.equals(sceneProjectionUniforms.uInvProj.value)) {
+                camera.projectionMatrix.copy(decalRestoreProjection);
+                camera.projectionMatrixInverse.copy(decalRestoreInverse);
+              } else {
+                // Keep projection updates made by render callbacks, as in the world draw.
+                resetTemporalHistory();
+                temporalFrame = false;
+              }
+            }
+          }
+        }, {
+          reads: ['sceneTarget'],
+          writes: ['decalColor'],
+          transientSpecs: {
+            decalColor: { width: worldWidth, height: worldHeight, type: hdrType, format: THREE.RGBAFormat },
+          },
+        });
+      }
+
       addStage('scene-setup', () => {
         visibleGrid = getVisibleBakedProbeGrid(irradianceGrid, world, camera);
         if (visibleGrid !== lastIrradianceGrid) {
@@ -1844,7 +1891,7 @@ export function createPostPipeline3D(options = {}) {
         const giSpec = { width: hw, height: hh, type: hdrType, format: THREE.RGBAFormat };
         addStage('gi-ssr', ({ inputs, outputs }) => {
           const giU = mats.giSsr.uniforms;
-          giU.tScene.value = inputs.sceneTarget.texture;
+          giU.tScene.value = (inputs.decalColor ?? inputs.sceneTarget).texture;
           giU.tDepth.value = inputs.sceneTarget.depthTexture;
           giU.uResolution.value.set(hw, hh);
           giU.uSsgiEnabled.value = useSsgi ? 1 : 0;
@@ -1865,7 +1912,7 @@ export function createPostPipeline3D(options = {}) {
           giU.uTime.value = elapsed;
           runPass(FULLSCREEN_PASSES.giSsr, mats.giSsr, outputs.giSsrRaw);
         }, {
-          reads: ['sceneTarget'],
+          reads: worldColorReads,
           writes: ['giSsrRaw'],
           transientSpecs: { giSsrRaw: giSpec },
         });
@@ -1889,7 +1936,7 @@ export function createPostPipeline3D(options = {}) {
 
       addStage('composite-setup', ({ inputs }) => {
         compU = mats.composite.uniforms;
-        compU.tScene.value = inputs.sceneTarget.texture;
+        compU.tScene.value = (inputs.decalColor ?? inputs.sceneTarget).texture;
         compU.tDepth.value = needsDepth ? inputs.sceneTarget.depthTexture : null;
         compU.tAoVol.value = (useAo || useVolumetric) ? (inputs.aoVol?.texture ?? null) : null;
         compU.tGiSsr.value = useGiSsr ? (inputs.giSsr?.texture ?? giSsrTexture) : null;
@@ -1905,14 +1952,14 @@ export function createPostPipeline3D(options = {}) {
         compU.uTime.value = elapsed;
 
         worldLightingEnabled = useAo || useVolumetric || useGiSsr || useContactShadows;
-        separateViewModel = hasViewModel && (inputs.sceneTarget.samples > 0 || worldLightingEnabled || customDepth || temporalFrame);
+        separateViewModel = hasViewModel && (inputs.sceneTarget.samples > 0 || worldLightingEnabled || customDepth || temporalFrame || useProjectedDecals);
         prelightTemporal = temporalFrame && worldLightingEnabled;
         // First-person drawing needs an unmultisampled depth attachment and retained HDR color.
         viewCompositeRT = separateViewModel ? hdrTargets.acquire(bufferWidth, bufferHeight, true) : null;
         if (!temporalFrame) lastReactiveMeshCount = 0;
       }, {
         reads: [
-          'sceneTarget',
+          ...worldColorReads,
           ...(aoActive ? ['aoVol'] : []),
           ...(useGiSsr ? ['giSsr'] : []),
         ],
@@ -2059,7 +2106,7 @@ export function createPostPipeline3D(options = {}) {
         runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, plannedFinalFxaaPass ? outputs.ldrColor : null, outputViewport);
       }, {
         reads: [
-          'sceneTarget',
+          ...worldColorReads,
           ...(aoActive ? ['aoVol'] : []),
           ...(useGiSsr ? ['giSsr'] : []),
           ...(useBloom ? ['bloomColor'] : []),

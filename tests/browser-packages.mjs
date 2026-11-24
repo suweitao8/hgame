@@ -69,6 +69,7 @@ async function render(name, { dir, entry }, baseline = '') {
       resources: performance.getEntriesByType('resource').map(entry => new URL(entry.name).pathname)
         .filter(file => /\/(three\.(module|core)\.js|rapier3d\.wasm)$/.test(file)),
       bloomStages: window.__packageBloomStages(),
+      decalTarget: window.__packageDecalTarget(),
     })`,
     ...(entry ? ['--entry', entry] : []),
     ...(baseline ? ['--baseline', baseline, '--threshold', '0'] : []),
@@ -85,6 +86,8 @@ async function render(name, { dir, entry }, baseline = '') {
     'bloom-prefilter', 'bloom-downsample-1', 'bloom-downsample-2', 'bloom-downsample-3',
     'bloom-upsample-2', 'bloom-upsample-1', 'bloom-upsample-0',
   ], name + ' package executes the full Bloom graph');
+  assert.ok(report.eval.decalTarget?.width > 0, name + ' package executes the HDR decal pass');
+  assert.equal(Boolean(report.eval.decalTarget.depthBuffer), false);
   if (baseline) assert.equal(report.baseline.diffRatio, 0);
   console.log(JSON.stringify({ name, hash: report.sha256, diffRatio: report.baseline?.diffRatio ?? null }));
   return png;
@@ -100,8 +103,15 @@ try {
   presentation.renderer.post3d = true;
   await writeFile(presentationPath, JSON.stringify(presentation));
   const main = path.join(project, 'src', 'main.js');
-  await writeFile(main, (await readFile(main, 'utf8')) + `
+  const sourceMain = await readFile(main, 'utf8');
+  const worldEntry = 'const world = renderer.getWorld(scene);';
+  assert.ok(sourceMain.includes(worldEntry), 'fixture requires the generated world entry');
+  await writeFile(main, sourceMain.replace(worldEntry, `${worldEntry}
+  const releaseDecals = renderer.createDecalSystem(scene, { mode: 'projected', maxDecals: 1 });
+  releaseDecals.spawn({ position: [0, 0, 0], normal: [0, 1, 0], size: [6, 6, 6], color: 0xfb542c });
+`) + `
 window.__packageBloomStages = () => renderer.getExecutedRenderGraph().executed.filter(id => id.startsWith('bloom-'));
+window.__packageDecalTarget = () => renderer.getExecutedRenderGraph().lifetimes.decalColor?.spec;
 `);
   const source = await build('source', ['--no-minify']);
   const baseline = await render('source', source);
