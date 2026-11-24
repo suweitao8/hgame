@@ -136,7 +136,7 @@ test('accept --verify-fresh enforces matching sourceDigest and existing artifact
   }
 });
 
-test('release freshness rejects a legacy report without opted-in mobile touch evidence', async () => {
+test('release freshness checks the opted-in touch and concurrent touch evidence', async () => {
   const game = await mkdtemp(path.join(os.tmpdir(), 'hgame-accept-touch-fresh-'));
   try {
     const { computeSourceDigest } = await import('../scripts/accept.mjs');
@@ -154,7 +154,7 @@ test('release freshness rejects a legacy report without opted-in mobile touch ev
     await writeFile(path.join(game, desktop.png), 'png');
     await writeFile(path.join(game, mobile.png), 'png');
     await writeFile(path.join(game, 'build', 'acceptance', 'release.zip'), zip);
-    const verify = async (manifestData, mobileEvidence) => {
+    const verify = async (manifestData, mobileEvidence, mobileMeasuredCheckpoints) => {
       await writeFile(manifest, JSON.stringify(manifestData));
       await writeFile(path.join(game, 'build', 'acceptance-report.json'), JSON.stringify({
         accepted: true, mode: 'full', releaseReady: true,
@@ -162,7 +162,7 @@ test('release freshness rejects a legacy report without opted-in mobile touch ev
         gates: {
           package: {
             archiveHash: createHash('sha256').update(zip).digest('hex'),
-            playtest: { profiles: { mobile: mobileEvidence } },
+            playtest: { profiles: { mobile: mobileEvidence }, mobileMeasuredCheckpoints },
           },
           visual: { captures: { desktop, mobile } },
         },
@@ -176,6 +176,26 @@ test('release freshness rejects a legacy report without opted-in mobile touch ev
     assert.match(JSON.parse(legacy.stdout).problems.join(' '), /missing mobile touch evidence/);
     const current = await verify(optedIn, { rendererEnvironment: { touch: true }, touchPresses: 1 });
     assert.equal(current.status, 0, current.stdout);
+    const multiTouch = { ...spec, mobileMultiTouch: true };
+    const evidence = { rendererEnvironment: { touch: true }, touchPresses: 3 };
+    for (const report of [
+      evidence,
+      { ...evidence, peakTouchContacts: 1, multiTouchMoves: 0 },
+      { ...evidence, peakTouchContacts: 2, multiTouchMoves: 0 },
+      { ...evidence, peakTouchContacts: 4, multiTouchMoves: 1 },
+      { ...evidence, peakTouchContacts: 2, multiTouchMoves: 1 },
+    ]) {
+      const rejected = await verify(multiTouch, report);
+      assert.equal(rejected.status, 1, rejected.stdout);
+      assert.match(JSON.parse(rejected.stdout).problems.join(' '), /missing mobile multi-touch evidence/);
+    }
+    const concurrent = await verify(multiTouch, { ...evidence, peakTouchContacts: 2, multiTouchMoves: 1 }, [
+      { name: 'move while attacking', ok: true, multiTouchMoves: 1 },
+    ]);
+    assert.equal(concurrent.status, 0, concurrent.stdout);
+    const invalid = await verify({ ...multiTouch, mobileTouch: false }, evidence);
+    assert.equal(invalid.status, 1, invalid.stdout);
+    assert.match(JSON.parse(invalid.stdout).problems.join(' '), /mobileMultiTouch.*mobileTouch/);
   } finally {
     await rm(game, { recursive: true, force: true });
   }

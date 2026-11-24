@@ -1,6 +1,6 @@
 # HGame 95-point production-readiness iteration
 
-The 90.04 baseline uses 40% runtime, 35% production kit, and 25% verification and delivery. Keep those weights and the v5.2 engine criteria. The minimum possible runtime score at 95 is 87.5 when production and delivery both score 100. At 98 for production and delivery, runtime must reach 90.5. With the present 92 and 96 values, the required runtime score is 97.0.
+The 90.04 baseline uses 40% runtime, 35% production kit, and 25% verification and delivery. Keep those weights and the v5.2 engine criteria. The minimum possible runtime score at 95 is 87.5 when production and delivery both score 100. At 98 for production and delivery, runtime must reach 90.5. With the baseline scores of 92 and 96, the required runtime score is 97.0.
 
 The scorecard update in `9652b29` moved runtime from 84.6 to 85.8 by recording trimmed-plan exemptions and deferrals. Retaining the two other scores yields **90.52**. Attribute this change to the updated scope. Record each new capability and its separate evidence before changing its rating.
 
@@ -81,6 +81,19 @@ At 64 KiB/s, Chromium started a 24-second cue through WebAsset with about 7.7 se
 The exact candidate passed 622 repository tests, the physics and generated-metadata gates, and 49 WebAsset tests. The native BGM seek regression passed again. The Web and Toy archive screenshots matched the unminified archive pixel for pixel.
 
 S3 moves from 8.5 to 9.5. Runtime now scores 86.8 and the weighted score reaches **90.92**, retaining 92 for production kit and 96 for verification and delivery. The voice fixture uses a synthetic signal on desktop Chromium. Physical mobile and Toy host audio remain to be tested.
+
+## Packaged mobile multi-touch release gate
+
+- [x] Distinguish sequential taps and script-generated events from concurrent, moving contacts inside the measured playtest.
+- [x] Let a release manifest require two concurrent contacts and a trusted move while both are held inside a passing checkpoint. Reject missing evidence in both release and freshness checks.
+- [x] Verify the Pixi Toy package with joystick movement and attack together, and verify that a package exercised with sequential taps fails this gate.
+- [x] Run the complete repository gate and release fixture suite with the staged touch changes.
+
+The Pixi Toy package reported three touch presses, a peak of two simultaneous contacts, and one concurrent move inside the joystick-and-attack checkpoint. The sequential-tap fixture reached two presses and a peak of one, with zero concurrent moves, and failed release while remaining playable. Chromium telemetry regressions also verify cancellation and trusted release events consumed by a game capture handler.
+
+The staged candidate passed 642 repository tests and all eight browser telemetry tests. All five release fixtures passed their budgets, including the 3D Web release on RTX 4070 at 7.0 ms p95 in both viewports.
+
+Verification and delivery moves from 96 to 97. Runtime remains 86.8 and production kit remains 92. The weighted score reaches **91.17**. Evidence here uses Chromium's touch context; physical mobile, Xbox and Toy host coverage remains open.
 
 ## Current evidence
 

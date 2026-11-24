@@ -29,11 +29,12 @@ try {
   const entrySource = path.join(game, 'src', 'main.js');
   await writeFile(entrySource, (await readFile(entrySource, 'utf8')) + '\nwindow.__hgameRenderMemory = () => 2048;\n');
   const scenarioPath = path.join(game, 'tests', 'acceptance.mjs');
-  const actionScenario = touchStart => `
+  const actionScenario = (touchStart, extraTap = false) => `
 export async function run({ page, readState, checkpoint, measuringTouch }) {
   await checkpoint('player moves from the title', async () => {
     if (measuringTouch && ${touchStart}) {
       await page.locator('#start').tap();
+      if (${extraTap}) await page.touchscreen.tap(150, 200);
     } else {
       await page.evaluate(() => dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch' })));
       await page.keyboard.press('j', { delay: 120 });
@@ -137,9 +138,23 @@ export async function run({ page, readState, checkpoint, measuringTouch }) {
   assert.match(oversize.gates.release.errors.join(' '), /mobile requires a trusted touch press during the measured run/);
   assert.equal(oversize.gates.release.measured.mobile.touchPresses, 0);
 
+  await writeFile(scenarioPath, actionScenario(true, true));
+  await writeFile(path.join(game, 'tests', 'release.json'), JSON.stringify({
+    ...spec, mobileTouch: undefined, mobileMultiTouch: true,
+  }));
+  const sequential = await accept([], 1);
+  assert.equal(sequential.playable, true);
+  assert.equal(sequential.releaseReady, false);
+  assert.equal(sequential.gates.release.measured.mobile.touchPresses, 2);
+  assert.equal(sequential.gates.release.measured.mobile.peakTouchContacts, 1);
+  assert.equal(sequential.gates.release.measured.mobile.multiTouchMoves, 0);
+  assert.match(sequential.gates.release.errors.join(' '), /two concurrent trusted touch contacts/);
+
   const pixi = path.join(tmp, 'release-pixi-arena');
   await exec(process.execPath, ['scripts/create-game.mjs', pixi, '--no-git'], { cwd: root });
-  await writeFile(path.join(pixi, 'tests', 'release.json'), JSON.stringify({ ...spec, target: 'toy' }));
+  await writeFile(path.join(pixi, 'tests', 'release.json'), JSON.stringify({
+    ...spec, target: 'toy', mobileTouch: undefined, mobileMultiTouch: true,
+  }));
   await writeFile(path.join(pixi, 'tests', 'acceptance.mjs'), `
 import assert from 'node:assert/strict';
 
@@ -215,8 +230,11 @@ export async function run({ page, readState, checkpoint, auditUi, measuringTouch
   assert.equal(pixiReport.releaseReady, true, pixiReport.problems.join('; '));
   assert.equal(pixiReport.gates.webasset.status, 'passed');
   assert.ok(pixiReport.gates.release.measured.mobile.touchPresses >= 3);
+  assert.equal(pixiReport.gates.release.mobileMultiTouch, true);
+  assert.equal(pixiReport.gates.release.measured.mobile.peakTouchContacts, 2);
+  assert.ok(pixiReport.gates.release.measured.mobile.multiTouchMoves > 0);
   assert.ok(pixiReport.gates.package.playtest.mobileMeasuredCheckpoints
-    .some(checkpoint => checkpoint.name === 'two-finger movement and attack' && checkpoint.ok));
+    .some(checkpoint => checkpoint.name === 'two-finger movement and attack' && checkpoint.ok && checkpoint.multiTouchMoves > 0));
   assert.equal((await accept(['--verify-fresh'], 0, pixi)).releaseReady, true);
   console.log(JSON.stringify({ profile: 'pixi-arena', target: 'toy', releaseReady: true, ...pixiReport.gates.release.measured }));
 

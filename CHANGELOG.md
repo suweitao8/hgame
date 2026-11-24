@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Let release manifests require simultaneous mobile touch contacts and movement during the packaged playtest.
+
 - Play URL-based voice cues through the existing spatial mixer and cue limits, with streaming and visibility-aware pause and resume.
 
 - Serve single byte ranges for WebAsset media so streamed audio can seek in the shared library, imported files and the local game preview.

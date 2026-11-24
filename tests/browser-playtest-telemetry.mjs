@@ -34,6 +34,55 @@ export async function verify({ page }) {
   assert.equal(result.status, 0, JSON.stringify(report));
   assert.equal(report.rendererEnvironment.touch, true);
   assert.equal(report.touchPresses, 1);
+  assert.equal(report.peakTouchContacts, 1);
+  assert.equal(report.multiTouchMoves, 0);
+});
+
+test('touch telemetry records trusted movement of overlapping contacts inside measurement', t => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-multitouch-'));
+  t.after(() => rmSync(game, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+  writeFileSync(path.join(game, 'index.html'), `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>html { touch-action: none; }</style><canvas id="game" width="64" height="64"></canvas><script>
+document.querySelector('canvas').getContext('2d').fillRect(0, 0, 32, 32);
+for (const type of ['pointerup', 'pointercancel']) {
+  window.addEventListener(type, event => {
+    if (event.pointerType === 'touch') event.stopImmediatePropagation();
+  }, true);
+}
+</script>`);
+  const scenario = path.join(game, 'scenario.mjs');
+  writeFileSync(scenario, `
+export async function run({ page, checkpoint }) {
+  await page.touchscreen.tap(20, 20);
+  await page.touchscreen.tap(30, 20);
+  await page.evaluate(() => {
+    for (const pointerId of [8, 9]) dispatchEvent(new PointerEvent('pointerdown', { pointerId, pointerType: 'touch' }));
+    dispatchEvent(new PointerEvent('pointermove', { pointerId: 8, pointerType: 'touch', clientX: 90 }));
+  });
+  const cdp = await page.context().newCDPSession(page);
+  const send = (type, touchPoints) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints });
+  const stick = { x: 30, y: 60, id: 1 };
+  const attack = { x: 220, y: 60, id: 2 };
+  await send('touchStart', [stick]);
+  await send('touchStart', [stick, attack]);
+  await checkpoint('move while both fingers are held', () => send('touchMove', [{ ...stick, x: 65 }, attack]));
+  await send('touchCancel', []);
+  await page.touchscreen.tap(40, 20);
+}
+`);
+  const result = spawnSync(process.execPath, [path.join(root, 'scripts/playtest.mjs'), game,
+    '--viewport', '360x800', '--touch', '--scenario', scenario, '--allow-static'],
+  { encoding: 'utf8', timeout: 25000, windowsHide: true });
+  assert.ifError(result.error);
+  const report = JSON.parse(result.stdout);
+  assert.equal(result.status, 0, JSON.stringify(report));
+  assert.equal(report.touchPresses, 5);
+  assert.equal(report.peakTouchContacts, 2);
+  assert.equal(report.multiTouchMoves, 1);
+  assert.deepEqual(report.measuredCheckpoints, [{
+    name: 'move while both fingers are held', ok: true, multiTouchMoves: 1,
+  }]);
 });
 
 test('renderer telemetry leaves the canvas free for a renderer that starts after input', t => {

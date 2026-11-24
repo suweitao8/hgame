@@ -149,6 +149,12 @@ async function loadReleaseRequirements(gameDir) {
   if (spec.mobileTouch !== undefined && typeof spec.mobileTouch !== 'boolean') {
     throw new Error('Release mobileTouch must be a boolean');
   }
+  if (spec.mobileMultiTouch !== undefined && typeof spec.mobileMultiTouch !== 'boolean') {
+    throw new Error('Release mobileMultiTouch must be a boolean');
+  }
+  if (spec.mobileMultiTouch && spec.mobileTouch === false) {
+    throw new Error('Release mobileMultiTouch requires mobileTouch to be enabled or omitted');
+  }
   for (const gate of ['autoplay', 'doctor']) {
     const requirement = spec[gate];
     if (requirement !== true && (typeof requirement !== 'string' || !requirement.trim())) {
@@ -182,6 +188,22 @@ function hasMeasuredMobileTouch(profile) {
     Number.isSafeInteger(profile.touchPresses) && profile.touchPresses > 0;
 }
 
+function requiresMobileTouch(spec) {
+  return spec?.mobileTouch === true || spec?.mobileMultiTouch === true;
+}
+
+function hasMeasuredMobileMultiTouch(playtest) {
+  const profile = playtest?.profiles?.mobile;
+  const checkpoints = playtest?.mobileMeasuredCheckpoints;
+  return hasMeasuredMobileTouch(profile) &&
+    Number.isSafeInteger(profile.peakTouchContacts) &&
+    profile.peakTouchContacts >= 2 && profile.peakTouchContacts <= profile.touchPresses &&
+    Number.isSafeInteger(profile.multiTouchMoves) && profile.multiTouchMoves > 0 &&
+    Array.isArray(checkpoints) && checkpoints.some(checkpoint => checkpoint?.ok === true &&
+      Number.isSafeInteger(checkpoint.multiTouchMoves) && checkpoint.multiTouchMoves > 0 &&
+      checkpoint.multiTouchMoves <= profile.multiTouchMoves);
+}
+
 function evaluateRelease(gates, spec) {
   const errors = [];
   const skipped = {};
@@ -201,7 +223,9 @@ function evaluateRelease(gates, spec) {
   const desktop = packaged?.profiles?.desktop;
   const mobile = packaged?.profiles?.mobile;
   const measured = { desktop, mobile, zipBytes: gates.package.zipBytes ?? null };
-  if (spec.mobileTouch && !hasMeasuredMobileTouch(mobile)) {
+  if (spec.mobileMultiTouch && !hasMeasuredMobileMultiTouch(packaged)) {
+    errors.push('mobile requires two concurrent trusted touch contacts with a move during a passing measured checkpoint');
+  } else if (spec.mobileTouch && !hasMeasuredMobileTouch(mobile)) {
     errors.push('mobile requires a trusted touch press during the measured run');
   }
   for (const [name, profile, checkpoints] of [
@@ -243,7 +267,7 @@ function evaluateRelease(gates, spec) {
   }
   return {
     status: errors.length ? 'failed' : 'passed', target: spec.target, gpu: spec.gpu ?? 'software', skipped,
-    limits: spec.limits, measured, mobileTouch: spec.mobileTouch === true,
+    limits: spec.limits, measured, mobileTouch: requiresMobileTouch(spec), mobileMultiTouch: spec.mobileMultiTouch === true,
     environment: 'headless browser; viewport profiles, not physical devices', errors,
   };
 }
@@ -714,7 +738,7 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
     targetDir,
     ...(entry ? ['--entry', entry] : []),
     ...(releaseSpec?.gpu ? ['--gpu', releaseSpec.gpu] : []),
-    ...(name === 'mobile' && releaseSpec?.mobileTouch ? ['--touch'] : []),
+    ...(name === 'mobile' && requiresMobileTouch(releaseSpec) ? ['--touch'] : []),
     ...(releaseSpec?.limits?.[name]?.p99Ms !== undefined ? ['--exact-percentiles'] : []),
     ...(releaseSpec?.limits?.[name]?.peakEstimatedGpuBytes !== undefined ? ['--sample-render-memory'] : []),
     ...(opts.release ? ['--state-ready'] : []),
@@ -781,6 +805,8 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
         frames: run.frameStats?.frames ?? null, browserVersion: run.browserVersion ?? null,
         rendererEnvironment: run.rendererEnvironment ?? null,
         ...(run.touchPresses !== undefined ? { touchPresses: run.touchPresses } : {}),
+        ...(run.peakTouchContacts !== undefined ? { peakTouchContacts: run.peakTouchContacts } : {}),
+        ...(run.multiTouchMoves !== undefined ? { multiTouchMoves: run.multiTouchMoves } : {}),
         ...(run.renderMemory ? { renderMemory: run.renderMemory } : {}),
       }])),
     consoleErrors: report.consoleErrors ?? [],
@@ -1035,7 +1061,11 @@ async function verifyFreshAcceptance(gameDir, reportPath, requireRelease = false
     } catch (error) {
       return { ok: false, reason: error.message };
     }
-    if (spec.mobileTouch && !hasMeasuredMobileTouch(report.gates?.package?.playtest?.profiles?.mobile)) {
+    const playtest = report.gates?.package?.playtest;
+    if (spec.mobileMultiTouch && !hasMeasuredMobileMultiTouch(playtest)) {
+      return { ok: false, reason: 'Release report is missing mobile multi-touch evidence. Re-run acceptance.' };
+    }
+    if (spec.mobileTouch && !hasMeasuredMobileTouch(playtest?.profiles?.mobile)) {
       return { ok: false, reason: 'Release report is missing mobile touch evidence. Re-run acceptance.' };
     }
   }

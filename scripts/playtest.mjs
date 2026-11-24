@@ -317,8 +317,35 @@ async function runCli() {
       let running = true;
       let frameId;
       let touchPresses = 0;
+      let peakTouchContacts = 0;
+      let multiTouchMoves = 0;
+      let recordingTouch = false;
+      const contacts = new Map();
+      const touchEvents = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'];
+      function clearContacts() {
+        contacts.clear();
+      }
       function countTouch(event) {
-        if (event.isTrusted && event.pointerType === 'touch') touchPresses++;
+        if (!recordingTouch || !event.isTrusted || event.pointerType !== 'touch') return;
+        const point = contacts.get(event.pointerId);
+        if (event.type === 'pointerdown') {
+          touchPresses++;
+          contacts.set(event.pointerId, [event.clientX, event.clientY]);
+          peakTouchContacts = Math.max(peakTouchContacts, contacts.size);
+        } else if (event.type === 'pointermove') {
+          if (!point || (point[0] === event.clientX && point[1] === event.clientY)) return;
+          point[0] = event.clientX;
+          point[1] = event.clientY;
+          if (contacts.size >= 2) multiTouchMoves++;
+        } else {
+          contacts.delete(event.pointerId);
+        }
+      }
+      if (${measuringTouch}) {
+        // Observe end and cancellation before game capture handlers can consume them.
+        for (const type of touchEvents) addEventListener(type, countTouch, { capture: true, passive: true });
+        addEventListener('blur', clearContacts);
+        document.addEventListener('visibilitychange', clearContacts);
       }
       function sample(now) {
         if (!running) return;
@@ -328,19 +355,28 @@ async function runCli() {
       }
       frameId = requestAnimationFrame(sample);
       window.__hgamePlaytestTelemetry = () => collector.snapshot();
+      window.__hgamePlaytestMultiTouchMoves = () => multiTouchMoves;
       window.__hgamePlaytestTelemetryReset = () => {
         collector = createCollector(${frameSampleLimit});
         last = performance.now();
         touchPresses = 0;
-        if (${measuringTouch}) addEventListener('pointerdown', countTouch, { capture: true, passive: true });
+        peakTouchContacts = 0;
+        multiTouchMoves = 0;
+        clearContacts();
+        recordingTouch = ${measuringTouch};
       };
       window.__hgamePlaytestTelemetryStop = () => new Promise(resolve => {
-        if (${measuringTouch}) removeEventListener('pointerdown', countTouch, true);
+        recordingTouch = false;
+        if (${measuringTouch}) {
+          for (const type of touchEvents) removeEventListener(type, countTouch, true);
+          removeEventListener('blur', clearContacts);
+          document.removeEventListener('visibilitychange', clearContacts);
+        }
         requestAnimationFrame(now => {
           collector.record(now - last);
           running = false;
           cancelAnimationFrame(frameId);
-          resolve({ ...collector.snapshot(), touchPresses });
+          resolve({ ...collector.snapshot(), touchPresses, peakTouchContacts, multiTouchMoves });
         });
       });
     })();` });
@@ -386,13 +422,17 @@ async function runCli() {
       }
     };
     const stateBefore = await readState();
+    let measuringScenario = false;
+    const readMultiTouchMoves = () => page.evaluate(() => window.__hgamePlaytestMultiTouchMoves());
     const checkpoint = async (name, check) => {
       if (typeof name !== 'string' || !name.trim() || typeof check !== 'function') {
         throw new TypeError('A checkpoint requires a name and a check function');
       }
       try {
+        const before = measuringScenario && measuringTouch ? await readMultiTouchMoves() : null;
         if (await check() === false) throw new Error('Checkpoint returned false');
-        report.checkpoints.push({ name, ok: true });
+        const moves = before === null ? 0 : (await readMultiTouchMoves()) - before;
+        report.checkpoints.push({ name, ok: true, ...(moves > 0 ? { multiTouchMoves: moves } : {}) });
       } catch (error) {
         const message = String(error?.message ?? error);
         report.checkpoints.push({ name, ok: false, message });
@@ -432,11 +472,14 @@ async function runCli() {
     const measurementStart = performance.now();
     if (scenario) {
       try {
+        measuringScenario = true;
         const result = await scenario.run(context);
         if (result !== undefined) report.scenarioResult = JSON.parse(JSON.stringify(result));
       } catch (error) {
         const message = String(error?.message ?? error);
         if (!report.problems.includes(message)) report.problems.push('scenario run failed: ' + message);
+      } finally {
+        measuringScenario = false;
       }
     } else {
       for (const act of actions) {
@@ -525,7 +568,11 @@ async function runCli() {
 
     Object.assign(report, {
       browserVersion: browser.version(), readyMs, rendererEnvironment,
-      ...(measuringTouch ? { touchPresses: recording.touchPresses } : {}),
+      ...(measuringTouch ? {
+        touchPresses: recording.touchPresses,
+        peakTouchContacts: recording.peakTouchContacts,
+        multiTouchMoves: recording.multiTouchMoves,
+      } : {}),
       beforeHash,
       afterHash,
       visualChanged,
