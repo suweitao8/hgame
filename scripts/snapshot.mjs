@@ -20,53 +20,25 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { writeSnapshotOutput } from './lib/snapshot-output.mjs';
 import { collectPageUiAudit, evaluateLayoutAudit, evaluateUiAudit } from './lib/snapshot-ui-audit.mjs';
-import { numberOption, viewportOption } from './lib/cli-numbers.mjs';
 import { launchChromium, resolvePlaywright } from './lib/playwright-resolve.mjs';
+import { parseSnapshotArgs } from './lib/snapshot-args.mjs';
 
 const previewScript = fileURLToPath(new URL('./preview.mjs', import.meta.url));
-const argv = process.argv.slice(2);
-const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
-const flag = name => argv.includes(name);
-const booleanFlags = new Set(['--update-baseline', '--freeze-time', '--check-ui', '--check-layout', '--allow-blank']);
-const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && argv[i - 1].startsWith('--') && !booleanFlags.has(argv[i - 1])));
-if (!gameDir) { console.error('Usage: node scripts/snapshot.mjs <game-dir> [options] (see file header)'); process.exit(2); }
-
-const outPng = path.resolve(opt('--out', path.join(gameDir, 'build', 'snapshot.png')));
-const selector = opt('--selector', '#game');
-const ready = opt('--ready', '');
-const visualReady = opt('--visual-ready', '');
-const baseline = opt('--baseline', '');
-const entry = opt('--entry', '/');
-const query = opt('--query', '');
-const evalExpr = opt('--eval', '');
-const freeze = flag('--freeze-time') || argv.includes('--steps');
-const checkUi = flag('--check-ui');
-const checkLayout = flag('--check-layout');
-const allowBlank = flag('--allow-blank');
-const stepsArg = opt('--steps', '');
-const stateHook = opt('--state-hook', '__hgameState');
-const FRAME_MS = 1000 / 60;
-let entryPath, waitMs, threshold, viewport, requestedSteps, keys, maxHudRatio, maxHudButtons;
+let args;
 try {
-  const origin = 'http://127.0.0.1';
-  const url = new URL(entry, origin);
-  if (!entry || url.origin !== origin || url.search || url.hash) throw new Error('--entry must be a path inside the fixture');
-  entryPath = url.pathname;
-  waitMs = numberOption(opt('--wait', 800), '--wait');
-  threshold = numberOption(opt('--threshold', 0.01), '--threshold', { max: 1 });
-  viewport = viewportOption(opt('--viewport', '960x540'));
-  maxHudRatio = numberOption(opt('--max-hud-ratio', 0.10), '--max-hud-ratio', { max: 1 });
-  maxHudButtons = numberOption(opt('--max-hud-buttons', 1), '--max-hud-buttons', { integer: true });
-  if (argv.includes('--steps')) requestedSteps = numberOption(stepsArg, '--steps', { integer: true });
-  keys = opt('--keys', '').split(',').filter(Boolean).map(token => {
-    const [key, ms] = token.split(':');
-    return { key: key === 'space' ? ' ' : key, ms: numberOption(ms || 150, '--keys duration') };
-  });
+  args = parseSnapshotArgs(process.argv.slice(2));
 } catch (error) {
   console.error(error.message);
   process.exit(2);
 }
-const { width: vw, height: vh } = viewport;
+const outPng = path.resolve(args.outPath);
+const {
+  gameDir, selector, ready, visualReady, baseline, entryPath, query, evalExpr, stateHook, chrome,
+  freeze, checkUi, checkLayout, allowBlank, updateBaseline,
+} = args;
+const { width: vw, height: vh } = args.viewport;
+const { waitMs, threshold, requestedSteps, keys, maxHudRatio, maxHudButtons } = args;
+const FRAME_MS = 1000 / 60;
 
 async function freePort() {
   const s = createServer();
@@ -140,7 +112,7 @@ const freezeClock = (frameMs) => {
 const { chromium } = resolvePlaywright(import.meta.url, { cwd: path.resolve(gameDir) });
 async function launchBrowser() {
   return launchChromium(chromium, {
-    executablePath: opt('--chrome', ''),
+    executablePath: chrome,
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-webgl'],
   });
 }
@@ -220,7 +192,7 @@ try {
   } else {
     png = await target.screenshot();
   }
-  const baseB64 = baseline && existsSync(baseline) && !flag('--update-baseline')
+  const baseB64 = baseline && existsSync(baseline) && !updateBaseline
     ? 'data:image/png;base64,' + readFileSync(baseline).toString('base64') : null;
   const { stats, diff } = await page.evaluate(analyze, { shot: 'data:image/png;base64,' + png.toString('base64'), base: baseB64 });
   const diagnostics = await page.evaluate(() => ({ canvasAttrs: Object.fromEntries([...document.querySelectorAll('canvas')].flatMap(c => [...c.attributes].filter(a => a.name.startsWith('data-')).map(a => [a.name, a.value]))) }));
@@ -237,10 +209,10 @@ try {
   if (checkLayout) {
     report.problems.push(...evaluateLayoutAudit(ui));
   }
-  if (baseline && !flag('--update-baseline') && !baseB64) report.problems.push(`baseline missing: ${baseline} (run with --update-baseline)`);
+  if (baseline && !updateBaseline && !baseB64) report.problems.push(`baseline missing: ${baseline} (run with --update-baseline)`);
   if (diff) { report.baseline = { ...diff, threshold }; if (diff.diffRatio > threshold) report.problems.push(`render differs from baseline by ${(diff.diffRatio * 100).toFixed(2)}%`); }
   Object.assign(report, writeSnapshotOutput({ png, outputPath: outPng, baselinePath: baseline,
-    updateBaseline: flag('--update-baseline'), valid: report.problems.length === 0 }));
+    updateBaseline, valid: report.problems.length === 0 }));
 } catch (e) {
   report.problems.push(String(e.message || e));
 } finally {

@@ -31,6 +31,7 @@ export const ENGINE_MANAGED_SCRIPT_LIBS = Object.freeze([
   'cli-numbers.mjs',
   'performance-stats.mjs',
   'playwright-resolve.mjs',
+  'snapshot-args.mjs',
   'snapshot-output.mjs',
   'snapshot-ui-audit.mjs',
   'toktx.mjs',
