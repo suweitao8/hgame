@@ -1,6 +1,12 @@
 /**
- * Streaming lazy-load BGM controller with sample-accurate MP3 loop trimming,
- * crossfade transitions, strict 1-2 AudioBuffer memory budget, and pause/resume.
+ * Lazy-load BGM controller with crossfade transitions and pause/resume.
+ *
+ * URL cues stream through an `HTMLAudioElement` routed into the engine's mix buses, so a long
+ * track never sits decoded in memory. A media element loops whole files only: trim points that
+ * sit at the file bounds (decoder-delay compensation) are left to its own gapless handling, while
+ * a cue that selects a window inside the file keeps the sample-accurate `AudioBuffer` path, as do
+ * short cues, cues that carry a `buffer`, and environments without media elements. That path
+ * holds at most two decoded BGM buffers.
  *
  * @param {object} ctx Shared mutable audio manager state.
  * @param {object} buses Bus controller (`getBusNode`, `setBusVolume`, `getBusVolume`).
@@ -16,6 +22,7 @@ export function createBgmController(ctx: object, buses: object): {
         durationSec: any;
         gainDb: number;
         bpm: any;
+        stream: any;
     };
     loadMusicTable: (tableOrUrl: any, { fetchImpl }?: {
         fetchImpl?: typeof fetch | undefined;
@@ -48,6 +55,7 @@ export function createBgmController(ctx: object, buses: object): {
         loopStart?: undefined;
         loopEnd?: undefined;
         duration?: undefined;
+        streaming?: undefined;
     } | {
         cueId: any;
         ignored: boolean;
@@ -56,6 +64,7 @@ export function createBgmController(ctx: object, buses: object): {
         loopStart: number;
         loopEnd: number;
         duration: any;
+        streaming: boolean;
     } | null>;
     stopBgm: ({ fadeMs }?: {
         fadeMs?: number | undefined;
@@ -76,6 +85,8 @@ export function createBgmController(ctx: object, buses: object): {
         loopStart: any;
         loopEnd: any;
         bufferDuration: any;
+        duration: number;
+        streaming: boolean;
         currentTimeSec: any;
         pausedPositionSec: any;
         activeBufferCount: number;
