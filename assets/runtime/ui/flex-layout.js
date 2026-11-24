@@ -57,12 +57,18 @@ function parsePadding(padding) {
  * @property {'start' | 'center' | 'end' | 'space-between' | 'space-around'} [justifyContent='start']
  * @property {number} [flexGrow=0]
  * @property {number} [flexShrink=1]
- * @property {number | string} [width]
+ * @property {number | string} [width] Percentage sizes resolve against the parent's inner size.
  * @property {number | string} [height]
  * @property {number | string} [minWidth]
  * @property {number | string} [maxWidth]
  * @property {number | string} [minHeight]
  * @property {number | string} [maxHeight]
+ * @property {'nowrap' | 'wrap'} [flexWrap='nowrap'] Children that do not fit start a new line.
+ * @property {'stretch' | 'start' | 'center' | 'end' | 'space-between' | 'space-around'} [alignContent='stretch'] Wrapped lines only; `stretch` gives every line an equal share of the spare cross size.
+ * @property {'flex' | 'grid'} [display='flex'] `grid` places the children in equal cells across a fixed number of columns.
+ * @property {number} [columns=4] Grid only: column count.
+ * @property {number | string} [rowHeight] Grid only: fixed row height. Default shares the height between the rows.
+ * @property {'start' | 'center' | 'end' | 'stretch'} [justifyItems='stretch'] Grid only: horizontal placement of a child that has its own `width`.
  * @property {FlexLayoutNode[]} [children]
  */
 
@@ -77,7 +83,7 @@ function parsePadding(padding) {
  */
 
 /**
- * Compute resolved pixel coordinates and sizes for a declarative Flex node tree.
+ * Compute resolved pixel coordinates and sizes for a declarative Flex or Grid node tree.
  * @param {FlexLayoutNode} node
  * @param {number} containerWidth
  * @param {number} containerHeight
@@ -88,65 +94,96 @@ function parsePadding(padding) {
 export function computeFlexLayout(node, containerWidth, containerHeight, offsetX = 0, offsetY = 0) {
   const safeW = Math.max(0, Number(containerWidth) || 0);
   const safeH = Math.max(0, Number(containerHeight) || 0);
-  const w = clampDim(
-    node?.width !== undefined ? resolveSize(node.width, safeW, safeW) : safeW,
+  return layoutResolved(node, safeW, safeH, offsetX, offsetY, safeW, safeH);
+}
+
+/**
+ * Lays out `node` in the box `w × h` at (offsetX, offsetY). `baseW` / `baseH` are the inner size of
+ * the parent, against which the node's own sizes and limits resolve.
+ */
+function layoutResolved(node, w, h, offsetX, offsetY, baseW, baseH) {
+  w = clampDim(
+    node?.width !== undefined ? resolveSize(node.width, baseW, baseW) : w,
     node?.minWidth,
     node?.maxWidth,
-    safeW,
+    baseW,
   );
-  const h = clampDim(
-    node?.height !== undefined ? resolveSize(node.height, safeH, safeH) : safeH,
+  h = clampDim(
+    node?.height !== undefined ? resolveSize(node.height, baseH, baseH) : h,
     node?.minHeight,
     node?.maxHeight,
-    safeH,
+    baseH,
   );
-
   const rawChildren = Array.isArray(node?.children) ? node.children : [];
-  if (rawChildren.length === 0) {
-    return { id: node?.id ?? null, x: offsetX, y: offsetY, width: w, height: h, children: [] };
-  }
+  const rect = { id: node?.id ?? null, x: offsetX, y: offsetY, width: w, height: h, children: [] };
+  if (rawChildren.length === 0) return rect;
 
-  const dir = (node.direction ?? node.flexDirection) === 'row' ? 'row' : 'column';
-  const isRow = dir === 'row';
   const pad = parsePadding(node.padding);
   const gap = Math.max(0, Number(node.gap) || 0);
-  const alignItems = node.alignItems ?? 'stretch';
-  const justifyContent = node.justifyContent ?? 'start';
-
   const innerW = Math.max(0, w - pad.left - pad.right);
   const innerH = Math.max(0, h - pad.top - pad.bottom);
+  const originX = offsetX + pad.left;
+  const originY = offsetY + pad.top;
+
+  if (node?.display === 'grid') {
+    rect.children = layoutGrid(node, rawChildren, { innerW, innerH, gap, originX, originY });
+    return rect;
+  }
+
+  const isRow = (node.direction ?? node.flexDirection) === 'row';
+  const alignItems = node.alignItems ?? 'stretch';
+  const measured = measureFlexChildren(rawChildren, { isRow, innerW, innerH, alignItems });
+  rect.children = node.flexWrap === 'wrap'
+    ? layoutWrappedLines(measured, { isRow, innerW, innerH, gap, alignItems, justifyContent: node.justifyContent ?? 'start', alignContent: node.alignContent ?? 'stretch', originX, originY })
+    : layoutSingleLine(measured, { isRow, innerW, innerH, gap, alignItems, justifyContent: node.justifyContent ?? 'start', originX, originY });
+  return rect;
+}
+
+/** Resolves the base main and cross size of every child together with the constraints that clamp them. */
+function measureFlexChildren(rawChildren, { isRow, innerW, innerH, alignItems }) {
   const mainAvail = isRow ? innerW : innerH;
   const crossAvail = isRow ? innerH : innerW;
-  const totalGap = gap * Math.max(0, rawChildren.length - 1);
-
-  const measured = rawChildren.map(child => {
+  return rawChildren.map(child => {
     const grow = Math.max(0, Number(child?.flexGrow) || 0);
     const shrink = Number.isFinite(child?.flexShrink) ? Math.max(0, Number(child.flexShrink)) : 1;
     const baseMain = isRow
       ? (child?.width !== undefined ? resolveSize(child.width, innerW, 0) : 0)
       : (child?.height !== undefined ? resolveSize(child.height, innerH, 0) : 0);
     const explicitCross = isRow ? child?.height : child?.width;
-    const baseCross = explicitCross !== undefined
-      ? resolveSize(explicitCross, crossAvail, crossAvail)
-      : (alignItems === 'stretch' ? crossAvail : 0);
-    return { child, grow, shrink, main: baseMain, cross: baseCross, hasExplicitCross: explicitCross !== undefined };
+    const hasExplicitCross = explicitCross !== undefined;
+    return {
+      child,
+      grow,
+      shrink,
+      main: baseMain,
+      cross: hasExplicitCross
+        ? resolveSize(explicitCross, crossAvail, crossAvail)
+        : (alignItems === 'stretch' ? crossAvail : 0),
+      // What a wrapped line can be tall (or wide) without stretching.
+      naturalCross: clampDim(hasExplicitCross ? resolveSize(explicitCross, crossAvail, crossAvail) : 0, isRow ? child?.minHeight : child?.minWidth, isRow ? child?.maxHeight : child?.maxWidth, crossAvail),
+      minM: isRow ? child?.minWidth : child?.minHeight,
+      maxM: isRow ? child?.maxWidth : child?.maxHeight,
+      minC: isRow ? child?.minHeight : child?.minWidth,
+      maxC: isRow ? child?.maxHeight : child?.maxWidth,
+      hasExplicitCross,
+    };
   });
+}
 
-  const usedBaseMain = measured.reduce((acc, m) => acc + m.main, 0) + totalGap;
-  const freeSpace = mainAvail - usedBaseMain;
-
+/** Grows or shrinks `items` along the main axis so that they absorb `freeSpace` (negative when overflowing). */
+function distributeFreeSpace(items, freeSpace) {
   if (freeSpace > 0) {
-    const totalGrow = measured.reduce((acc, m) => acc + m.grow, 0);
+    const totalGrow = items.reduce((acc, m) => acc + m.grow, 0);
     if (totalGrow > 0) {
-      for (const m of measured) {
+      for (const m of items) {
         if (m.grow > 0) m.main += (freeSpace * m.grow) / totalGrow;
       }
     }
   } else if (freeSpace < 0) {
     const overflow = -freeSpace;
-    const weightedShrink = measured.reduce((acc, m) => acc + m.shrink * Math.max(1, m.main), 0);
+    const weightedShrink = items.reduce((acc, m) => acc + m.shrink * Math.max(1, m.main), 0);
     if (weightedShrink > 0) {
-      for (const m of measured) {
+      for (const m of items) {
         if (m.shrink > 0) {
           const share = (m.shrink * Math.max(1, m.main)) / weightedShrink;
           m.main = Math.max(0, m.main - overflow * share);
@@ -154,54 +191,156 @@ export function computeFlexLayout(node, containerWidth, containerHeight, offsetX
       }
     }
   }
+}
 
-  for (const m of measured) {
-    const minM = isRow ? m.child?.minWidth : m.child?.minHeight;
-    const maxM = isRow ? m.child?.maxWidth : m.child?.maxHeight;
-    const minC = isRow ? m.child?.minHeight : m.child?.minWidth;
-    const maxC = isRow ? m.child?.maxHeight : m.child?.maxWidth;
-    m.main = clampDim(m.main, minM, maxM, mainAvail);
-    m.cross = clampDim(m.cross, minC, maxC, crossAvail);
+/** Where the first item starts and how much `justifyContent` adds to the gap between items. */
+function resolveJustify(justifyContent, remainingMain, count) {
+  if (justifyContent === 'center') return { offset: remainingMain * 0.5, extraGap: 0 };
+  if (justifyContent === 'end') return { offset: remainingMain, extraGap: 0 };
+  if (justifyContent === 'space-between' && count > 1) return { offset: 0, extraGap: remainingMain / (count - 1) };
+  if (justifyContent === 'space-around' && count > 0) {
+    const step = remainingMain / count;
+    return { offset: step * 0.5, extraGap: step };
   }
+  return { offset: 0, extraGap: 0 };
+}
 
-  const finalMainTotal = measured.reduce((acc, m) => acc + m.main, 0) + totalGap;
-  const remainingMain = Math.max(0, mainAvail - finalMainTotal);
-
-  let cursor = isRow ? offsetX + pad.left : offsetY + pad.top;
-  let extraGap = gap;
-  if (justifyContent === 'center') {
-    cursor += remainingMain * 0.5;
-  } else if (justifyContent === 'end') {
-    cursor += remainingMain;
-  } else if (justifyContent === 'space-between' && measured.length > 1) {
-    extraGap = gap + remainingMain / (measured.length - 1);
-  } else if (justifyContent === 'space-around' && measured.length > 0) {
-    const step = remainingMain / measured.length;
-    cursor += step * 0.5;
-    extraGap = gap + step;
-  }
-
-  const computedChildren = [];
-  for (const m of measured) {
+/** Positions one line of items and recurses into each child. */
+function placeLine(items, { isRow, mainStart, crossStart, lineCross, gap, alignItems, justifyContent, mainAvail, innerW, innerH }) {
+  const count = items.length;
+  const used = items.reduce((acc, m) => acc + m.main, 0) + gap * Math.max(0, count - 1);
+  const justify = resolveJustify(justifyContent, Math.max(0, mainAvail - used), count);
+  let cursor = mainStart + justify.offset;
+  const extraGap = gap + justify.extraGap;
+  const out = [];
+  for (const m of items) {
+    const freeCross = Math.max(0, lineCross - m.cross);
+    const crossOffset = alignItems === 'center' ? freeCross * 0.5 : (alignItems === 'end' ? freeCross : 0);
     const childW = isRow ? m.main : m.cross;
     const childH = isRow ? m.cross : m.main;
-    let crossOffset = 0;
-    const freeCross = Math.max(0, crossAvail - m.cross);
-    if (alignItems === 'center') crossOffset = freeCross * 0.5;
-    else if (alignItems === 'end') crossOffset = freeCross;
-
-    const childX = isRow ? cursor : offsetX + pad.left + crossOffset;
-    const childY = isRow ? offsetY + pad.top + crossOffset : cursor;
-    computedChildren.push(computeFlexLayout(m.child, childW, childH, childX, childY));
+    const childX = isRow ? cursor : crossStart + crossOffset;
+    const childY = isRow ? crossStart + crossOffset : cursor;
+    out.push(layoutResolved(m.child, childW, childH, childX, childY, innerW, innerH));
     cursor += m.main + extraGap;
   }
+  return out;
+}
 
-  return {
-    id: node?.id ?? null,
-    x: offsetX,
-    y: offsetY,
-    width: w,
-    height: h,
-    children: computedChildren,
-  };
+function layoutSingleLine(measured, { isRow, innerW, innerH, gap, alignItems, justifyContent, originX, originY }) {
+  const mainAvail = isRow ? innerW : innerH;
+  const crossAvail = isRow ? innerH : innerW;
+  distributeFreeSpace(measured, mainAvail - (measured.reduce((acc, m) => acc + m.main, 0) + gap * Math.max(0, measured.length - 1)));
+
+  for (const m of measured) {
+    m.main = clampDim(m.main, m.minM, m.maxM, mainAvail);
+    m.cross = clampDim(m.cross, m.minC, m.maxC, crossAvail);
+  }
+  return placeLine(measured, { isRow, mainStart: isRow ? originX : originY, crossStart: isRow ? originY : originX, lineCross: crossAvail, gap, alignItems, justifyContent, mainAvail, innerW, innerH });
+}
+
+/**
+ * Flex `flexWrap: 'wrap'`: items fill a line until the next one would overflow it, then continue on
+ * a new line. `flexGrow` and `flexShrink` act within a line, `justifyContent` positions the items of
+ * each line and `alignContent` the lines themselves.
+ */
+function layoutWrappedLines(measured, { isRow, innerW, innerH, gap, alignItems, justifyContent, alignContent, originX, originY }) {
+  const mainAvail = isRow ? innerW : innerH;
+  const crossAvail = isRow ? innerH : innerW;
+
+  // Lines break on the clamped base sizes, so an item wider than a line sits alone on its own.
+  const lines = [];
+  let line = { items: [], main: 0, cross: 0 };
+  for (const m of measured) {
+    m.main = clampDim(m.main, m.minM, m.maxM, mainAvail);
+    if (line.items.length > 0 && line.main + gap + m.main > mainAvail + 1e-6) {
+      lines.push(line);
+      line = { items: [], main: 0, cross: 0 };
+    }
+    line.items.push(m);
+    line.main += (line.items.length > 1 ? gap : 0) + m.main;
+  }
+  lines.push(line);
+
+  let totalCross = 0;
+  for (const entry of lines) {
+    distributeFreeSpace(entry.items, mainAvail - entry.main);
+    for (const m of entry.items) {
+      m.main = clampDim(m.main, m.minM, m.maxM, mainAvail);
+      entry.cross = Math.max(entry.cross, m.naturalCross);
+    }
+    totalCross += entry.cross;
+  }
+
+  // A line stretches by taking an equal share of the spare cross size, so one wrapped line fills the
+  // container exactly like an unwrapped one.
+  const spareCross = Math.max(0, crossAvail - totalCross - gap * Math.max(0, lines.length - 1));
+  let lineStart = isRow ? originY : originX;
+  let lineGap = gap;
+  if (alignContent === 'stretch') {
+    for (const entry of lines) entry.cross += spareCross / lines.length;
+  } else if (alignContent === 'center') {
+    lineStart += spareCross * 0.5;
+  } else if (alignContent === 'end') {
+    lineStart += spareCross;
+  } else if (alignContent === 'space-between' && lines.length > 1) {
+    lineGap = gap + spareCross / (lines.length - 1);
+  } else if (alignContent === 'space-around' && lines.length > 0) {
+    const step = spareCross / lines.length;
+    lineStart += step * 0.5;
+    lineGap = gap + step;
+  }
+
+  const children = [];
+  for (const entry of lines) {
+    for (const m of entry.items) {
+      m.cross = m.hasExplicitCross || alignItems !== 'stretch'
+        ? m.naturalCross
+        : clampDim(entry.cross, m.minC, m.maxC, crossAvail);
+    }
+    children.push(...placeLine(entry.items, { isRow, mainStart: isRow ? originX : originY, crossStart: lineStart, lineCross: entry.cross, gap, alignItems, justifyContent, mainAvail, innerW, innerH }));
+    lineStart += entry.cross + lineGap;
+  }
+  return children;
+}
+
+/**
+ * `display: 'grid'`: children fill equal cells row by row across `columns` columns. A child keeps
+ * the cell size unless it has its own `width` / `height`, which `justifyItems` / `alignItems` place
+ * inside the cell.
+ */
+function layoutGrid(node, rawChildren, { innerW, innerH, gap, originX, originY }) {
+  const columns = Math.max(1, Math.floor(Number(node?.columns) || 4));
+  const rows = Math.max(1, Math.ceil(rawChildren.length / columns));
+  const cellW = Math.max(0, (innerW - gap * (columns - 1)) / columns);
+  const cellH = node?.rowHeight !== undefined
+    ? clampDim(resolveSize(node.rowHeight, innerH, innerH), undefined, undefined, innerH)
+    : Math.max(0, (innerH - gap * (rows - 1)) / rows);
+  const justifyItems = node?.justifyItems ?? 'stretch';
+  const alignItems = node?.alignItems ?? 'stretch';
+
+  return rawChildren.map((child, index) => {
+    const cellX = originX + (index % columns) * (cellW + gap);
+    const cellY = originY + Math.floor(index / columns) * (cellH + gap);
+    const childW = clampDim(
+      child?.width !== undefined ? resolveSize(child.width, innerW, 0) : cellW,
+      child?.minWidth,
+      child?.maxWidth,
+      innerW,
+    );
+    const childH = clampDim(
+      child?.height !== undefined ? resolveSize(child.height, innerH, 0) : cellH,
+      child?.minHeight,
+      child?.maxHeight,
+      innerH,
+    );
+    return layoutResolved(
+      child,
+      childW,
+      childH,
+      cellX + (justifyItems === 'center' ? (cellW - childW) * 0.5 : (justifyItems === 'end' ? cellW - childW : 0)),
+      cellY + (alignItems === 'center' ? (cellH - childH) * 0.5 : (alignItems === 'end' ? cellH - childH : 0)),
+      innerW,
+      innerH,
+    );
+  });
 }

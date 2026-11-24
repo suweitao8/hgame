@@ -118,6 +118,63 @@ function measureStyledText(ctx, text, style) {
   return width;
 }
 
+const ELLIPSIS = '…';
+
+function dropLastCodePoint(text) {
+  let end = text.length - 1;
+  const code = text.charCodeAt(end);
+  // Keep surrogate pairs and emoji variation selectors together.
+  if (end > 0 && ((code >= 0xdc00 && code <= 0xdfff) || code === 0xfe0f)) end -= 1;
+  return text.slice(0, end);
+}
+
+/** Ends `line` with an ellipsis, shortening its last segment until both fit in `limitW`. */
+function appendEllipsis(ctx, line, limitW) {
+  const last = line.segments[line.segments.length - 1];
+  if (!last) return;
+  // Trailing blanks are not rendered, so they give way first.
+  let text = last.text.replace(/\s+$/, '');
+  let width = measureStyledText(ctx, text, last.style);
+  const ellipsisWidth = measureStyledText(ctx, ELLIPSIS, last.style);
+  while (text && width + ellipsisWidth > limitW) {
+    text = dropLastCodePoint(text);
+    width = measureStyledText(ctx, text, last.style);
+  }
+  if (!text) return;
+  last.text = text + ELLIPSIS;
+  last.width = width + ellipsisWidth;
+  line.width = line.segments.reduce((acc, seg) => acc + seg.width, 0);
+}
+
+/**
+ * Fits `text` into `maxWidth`: the font size shrinks down to `minFontSize`, and below that the text
+ * is shortened with an ellipsis instead.
+ *
+ * @param {string} text
+ * @param {object} spec
+ * @param {number} spec.maxWidth
+ * @param {number} spec.fontSize
+ * @param {number} [spec.minFontSize=10]
+ * @param {(text: string, fontSize: number) => number} spec.measure
+ * @returns {{ text: string, fontSize: number }}
+ */
+function fitTextToWidth(text, { maxWidth, fontSize, minFontSize = 10, measure }) {
+  const size = Math.max(8, Number(fontSize) || 14);
+  const limit = Math.max(1, Number(maxWidth) || 0);
+  const fullWidth = measure(text, size);
+  if (fullWidth <= limit) return { text, fontSize: size };
+  const floor = Math.min(size, Math.max(8, Number(minFontSize) || 10));
+  // Glyph widths do not scale exactly with the font size, so the scaled size is verified once.
+  let fitted = Math.max(floor, (size * limit) / fullWidth);
+  const fittedWidth = measure(text, fitted);
+  if (fittedWidth > limit) fitted = Math.max(floor, (fitted * limit) / fittedWidth);
+  if (measure(text, fitted) <= limit) return { text, fontSize: fitted };
+  let kept = text;
+  while (kept && measure(kept + ELLIPSIS, floor) > limit) kept = dropLastCodePoint(kept);
+  // A box too narrow for even one character and the ellipsis keeps the full text.
+  return kept ? { text: kept + ELLIPSIS, fontSize: floor } : { text, fontSize: floor };
+}
+
 function tokenizeRichSegment(str) {
   const tokens = [];
   let buf = '';
@@ -155,10 +212,12 @@ function tokenizeRichSegment(str) {
  * @param {string | Array<string | { text?: string, color?: string, fontSize?: number, weight?: string | number, italic?: boolean, outlineColor?: string, outlineWidth?: number, underline?: boolean }>} spans
  * @param {number} maxWidth
  * @param {object} [defaultOpts]
- * @returns {{ segments: { text: string, style: Record<string, any>, width: number, fontSize: number }[], width: number, height: number }[]}
+ * @param {number} [defaultOpts.maxLines=Infinity] Stops after this many lines and ends the last one with an ellipsis.
+ * @returns {{ segments: { text: string, style: Record<string, any>, width: number, fontSize: number }[], width: number, height: number, clipped?: boolean }[]}
  */
 export function layoutRichTextLines(ctx, spans, maxWidth, defaultOpts = {}) {
   const limitW = Math.max(8, Number(maxWidth) || 200);
+  const maxLines = Math.floor(Number(defaultOpts.maxLines)) || Infinity;
   const rawList = Array.isArray(spans) ? spans : [spans ?? ''];
   const baseStyle = {
     color: defaultOpts.color ?? '#f1f5f9',
@@ -198,8 +257,9 @@ export function layoutRichTextLines(ctx, spans, maxWidth, defaultOpts = {}) {
   };
 
   ctx?.save?.();
+  let truncated = false;
   try {
-    for (const item of rawList) {
+    outer: for (const item of rawList) {
       const span = typeof item === 'string' ? { text: item } : (item && typeof item === 'object' ? item : { text: '' });
       const text = String(span.text ?? '');
       if (!text) continue;
@@ -212,14 +272,25 @@ export function layoutRichTextLines(ctx, spans, maxWidth, defaultOpts = {}) {
       const tokens = tokenizeRichSegment(text);
       for (const tok of tokens) {
         if (tok === '\n') {
-          flushLine();
+          // A line break past the line limit adds nothing.
+          if (lines.length < maxLines) flushLine();
           continue;
         }
+        // Past the line limit only blanks are dropped; the first remaining word marks the cut.
+        if (lines.length >= maxLines && curSegs.length === 0) {
+          if (/^\s+$/.test(tok)) continue;
+          truncated = true;
+          break outer;
+        }
         const tokW = measureStyledText(ctx, tok, style);
-        const isWhitespace = /^\s+$/.test(tok);
         if (curW > 0 && curW + tokW > limitW) {
           flushLine();
-          if (isWhitespace) continue;
+          if (/^\s+$/.test(tok)) continue;
+          // The word starts a line of its own, which the limit cuts off.
+          if (lines.length >= maxLines) {
+            truncated = true;
+            break outer;
+          }
         }
         if (tokW > limitW && curW === 0 && tok.length > 1) {
           let chunk = '';
@@ -229,6 +300,11 @@ export function layoutRichTextLines(ctx, spans, maxWidth, defaultOpts = {}) {
             const chW = measureStyledText(ctx, ch, style);
             if (chunk && chunkW + chW > limitW) {
               pushSegment(chunk, style, chunkW);
+              // `ch` still needs a line, so reaching the limit here always loses text.
+              if (lines.length + 1 >= maxLines) {
+                truncated = true;
+                break outer;
+              }
               flushLine();
               chunk = ch;
               chunkW = chW;
@@ -245,6 +321,11 @@ export function layoutRichTextLines(ctx, spans, maxWidth, defaultOpts = {}) {
     }
     if (curSegs.length > 0 || lines.length === 0) {
       flushLine();
+    }
+    if (truncated) {
+      const last = lines[lines.length - 1];
+      appendEllipsis(ctx, last, limitW);
+      last.clipped = true;
     }
   } finally {
     ctx?.restore?.();
@@ -402,6 +483,45 @@ export function createCanvasUiRenderer({
   let ownedAriaBridge = null;
   let ownedAriaContainer = null;
   const deviceRatio = Math.max(1, Number(dpr) || 1);
+  // Text widths repeat from frame to frame, so each text is measured once per style and context.
+  const textWidthCache = new Map();
+  let textWidthCtx = null;
+  if (globalThis.document?.fonts?.ready?.then) globalThis.document.fonts.ready.then(() => textWidthCache.clear());
+
+  function measureText(ctx, text, style) {
+    if (ctx !== textWidthCtx) {
+      textWidthCache.clear();
+      textWidthCtx = ctx;
+    }
+    const key = `${style.fontSize}|${style.weight}|${style.fontFamily}|${text}`;
+    let width = textWidthCache.get(key);
+    if (width === undefined) {
+      if (textWidthCache.size >= 2048) textWidthCache.clear();
+      width = measureStyledText(ctx, text, style);
+      textWidthCache.set(key, width);
+    }
+    return width;
+  }
+
+  /** `renderSdfText` rounds a font size to whole device pixels, so text has to be measured at that size. */
+  function snapFontSize(size) {
+    return Math.max(8, Math.round(size * deviceRatio) / deviceRatio);
+  }
+
+  function fitButtonText(ctx, text, width, height, srcNode) {
+    const minFontSize = snapFontSize(Math.max(8, Number(srcNode.minFontSize) || 10));
+    const fontSize = snapFontSize(srcNode.fontSize ?? 14);
+    const style = { fontSize, weight: '600', fontFamily };
+    const measure = (value, size) => measureText(ctx, value, { ...style, fontSize: snapFontSize(size) });
+    const fit = fitTextToWidth(text, {
+      maxWidth: width - 2 * (Number(srcNode.paddingX) || 8),
+      // A box shorter than its text gives up 2px of inset per side first.
+      fontSize: snapFontSize(Math.min(fontSize, Math.max(minFontSize, height - 4))),
+      minFontSize,
+      measure,
+    });
+    return { text: fit.text, fontSize: snapFontSize(fit.fontSize) };
+  }
 
   function resolveScrollViews(layoutNode, srcNode) {
     if (!layoutNode || !srcNode) return;
@@ -476,6 +596,38 @@ export function createCanvasUiRenderer({
     });
   }
 
+  /** Wraps a label inside its box. `lineHeight` is a multiple of the font size and `verticalAlign` is `top`, `middle` or `bottom`. */
+  function drawWrappedLabel(ctx, rect, srcNode, align) {
+    const fontSize = snapFontSize(srcNode.fontSize ?? 14);
+    const lineBox = fontSize * Math.max(1.0, Number(srcNode.lineHeight) || 1.35);
+    const padX = Number(srcNode.paddingX) || 2;
+    // Without an explicit limit the label keeps as many whole lines as its box holds.
+    const maxLines = Number.isFinite(srcNode.maxLines)
+      ? Math.max(1, Math.floor(srcNode.maxLines))
+      : Math.max(1, Math.floor((rect.height + 1e-6) / lineBox));
+    const color = srcNode.color ?? '#f1f5f9';
+    const lines = layoutRichTextLines(ctx, srcNode.text ?? srcNode.label ?? '', Math.max(8, rect.width - padX * 2), {
+      fontSize,
+      maxLines,
+      color,
+      weight: srcNode.weight ?? '600',
+      fontFamily: srcNode.fontFamily ?? fontFamily,
+      outlineColor: srcNode.outlineColor ?? 'rgba(2, 6, 23, 0.85)',
+      outlineWidth: srcNode.outlineWidth ?? 1.5,
+    });
+    const spare = rect.height - lines.length * lineBox;
+    const valign = srcNode.verticalAlign ?? 'middle';
+    let cursorY = rect.y + (valign === 'top' ? 0 : valign === 'bottom' ? Math.max(0, spare) : Math.max(0, spare * 0.5));
+    for (const line of lines) {
+      const text = line.segments.map(seg => seg.text).join('').replace(/\s+$/, '');
+      if (text) {
+        const tx = align === 'center' ? rect.x + rect.width * 0.5 : (align === 'right' ? rect.x + rect.width - padX : rect.x + padX);
+        drawCrispText(ctx, text, tx, cursorY + lineBox * 0.5, { fontSize, color, weight: srcNode.weight ?? '600', align });
+      }
+      cursorY += lineBox;
+    }
+  }
+
   function renderNode(ctx, layoutNode, srcNode) {
     if (!srcNode || srcNode.visible === false) return;
     const { x, y, width, height } = layoutNode;
@@ -508,18 +660,26 @@ export function createCanvasUiRenderer({
         ctx.strokeStyle = '#fef08a';
         ctx.stroke?.();
       }
-      drawCrispText(ctx, srcNode.text ?? srcNode.label ?? '', x + width * 0.5, y + height * 0.5, {
-        fontSize: srcNode.fontSize ?? 14,
+      const buttonText = String(srcNode.text ?? srcNode.label ?? '');
+      const fit = srcNode.autoFit === false || !buttonText
+        ? { text: srcNode.text ?? srcNode.label ?? '', fontSize: srcNode.fontSize ?? 14 }
+        : fitButtonText(ctx, buttonText, width, height, srcNode);
+      drawCrispText(ctx, fit.text, x + width * 0.5, y + height * 0.5, {
+        fontSize: fit.fontSize,
         color: srcNode.color ?? '#ffffff',
       });
     } else if (kind === 'label' && (srcNode.text !== undefined || srcNode.label !== undefined)) {
       const align = srcNode.textAlign ?? 'left';
-      const tx = align === 'center' ? x + width * 0.5 : (align === 'right' ? x + width : x);
-      drawCrispText(ctx, srcNode.text ?? srcNode.label ?? '', tx, y + height * 0.5, {
-        fontSize: srcNode.fontSize ?? 14,
-        color: srcNode.color ?? '#f1f5f9',
-        align,
-      });
+      if (srcNode.wrap === true) {
+        drawWrappedLabel(ctx, { x, y, width, height }, srcNode, align);
+      } else {
+        const tx = align === 'center' ? x + width * 0.5 : (align === 'right' ? x + width : x);
+        drawCrispText(ctx, srcNode.text ?? srcNode.label ?? '', tx, y + height * 0.5, {
+          fontSize: srcNode.fontSize ?? 14,
+          color: srcNode.color ?? '#f1f5f9',
+          align,
+        });
+      }
     } else if (kind === 'progress' || kind === 'slider') {
       const val = Math.max(0, Math.min(1, Number(srcNode.value) || 0));
       drawRoundedRect(ctx, x, y, width, height, height * 0.5);
@@ -854,6 +1014,8 @@ export function createCanvasUiRenderer({
     ownedAriaBridge = null;
     ownedAriaContainer = null;
     scrollMeta.clear();
+    textWidthCache.clear();
+    textWidthCtx = null;
   }
 
   return Object.freeze({
