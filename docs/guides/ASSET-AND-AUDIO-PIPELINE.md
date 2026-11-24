@@ -52,6 +52,35 @@ Requires `ffmpeg` on `PATH`:
 npm run process:audio -- --cue rifle_shot --inputs take1.mp3,take2.mp3,take3.mp3,take4.mp3 --out-dir assets/audio/sfx
 ```
 
+### Music Duration & No-Slicing Rule (`--only-music`)
+
+- **No Musical Slicing / Only Trim Leading & Trailing Silence**: Never slice, crop, or truncate musical content out of a song (including trying to extract short stingers from full-length tracks). Only leading and trailing dead-silence gaps may be trimmed (`SILENCE_TRIM` / head-tail `-45 dB` trim).
+- **Mini-Game BGM Duration Budget (`60s – 120s`)**: Target **60s – 120s** complete tracks for BGM (soft warning threshold `> 125s` in `music_report.json`). If a generator outputs a >120s track, **regenerate** rather than slicing it short.
+- **Short Stingers**: Author short 1–4s stingers via dedicated short-SFX / musical stinger / procedural synth channels (`universal/stinger/stinger_<name>.wav`) instead of cutting them out of full BGM tracks.
+
+### 2.1 固定音频制作、缺口增补与 WebAsset 共享回流 SOP（所有 HGame 游戏必遵）
+
+任何 HGame 游戏在开发过程中发现音乐、音效或角色配音缺口时，**禁止只在单个游戏目录私自生成后就结束**，必须按以下 4 步回流 WebAsset 公共音频库以便后续所有游戏复用：
+
+1. **Step 1 — 先查站内现有库与 `synth.js`（零重复制作）**：
+   - 先检索 `webasset/hgame-assets-cn/built/audio/{cue_table,streams_table,music_table}.json`（或在 `http://127.0.0.1:4174/#audio` 与 `#music` 搜索）及 `assets/runtime/platform/audio/synth.js`（16 个 0 KB 动态预设）。只有确认缺失对应题材/质感时才新生成。
+2. **Step 2 — 按 4 条独立产线分流制作与目录落点**：
+   - **产线 1（`60s–120s` 完整 BGM）**：使用音乐生成站（如 Flow Music），严禁正文裁剪；通用题材落入 `webasset/hgame-assets-cn/raw/audio_ai_staging/universal/bgm/bgm_<category>_<name>_<bpm>bpm.wav`（仅单游戏专属 IP 曲可落入 `games/<slug>/bgm/`）。
+   - **产线 2（短音效 / 天气生态 Loop / 1–4s 旋律 Stinger）**：使用 ElevenLabs Sound Effects，**必须关闭 Auto 模式并手动锁定精确时长**（短 SFX `0.5s–2.0s`、无缝环境 Loop 开启 `Loop` 并取 `>= 4.0s` 如 `4.2s`、短 Stinger `1.1s–2.0s` 闭合和弦）；高频动作 4 选 3，强信号 UI / 长 Loop / 短 Stinger 4 选 1。SFX 落入 `universal/sfx/<cueName>/<cueName>_01..03.wav`（`< 4s` 进 `cue_table.json`，`>= 4s` 自动进 `streams_table.json`），短 Stinger 落入 `universal/stinger/stinger_<name>.wav`。
+   - **产线 3（角色气声、战斗短呼与中文台词配音）**：优先调用 `.hgame.local.json` 中配置的本地零额度 **`VoxCPM2`**（`tts.voxcpm2Dir` / `tts.pythonExe`，支持中文 Voice Design 描述指令与 `[laughing]`/`[sigh]`/`[Surprise-wa]`/`[Question-ah]` 音效标签），经 ffmpeg 去首尾 `-42 dB` 静音后统一落入 `universal/sfx/<voice_cue>/`（单游戏剧情长台词可归游戏目录，通用战斗/情绪拟音一律进 `universal/sfx/`）。
+   - **产线 4（零体积动态音）**：需随参数实时变调的波形/连击音阶/对话滚屏直接沉淀入 `assets/runtime/platform/audio/synth.js`。
+3. **Step 3 — 统一过管线与告警归零**：
+   ```bash
+   # 仅增量重建音乐与 Stinger 表（music_table.json + music_report.json）
+   node scripts/process-audio.mjs --only-music
+
+   # 全量重建 SFX / Streams / Music 表并自动执行 cueSpreadAlerts 组内 RMS 对齐
+   node scripts/process-audio.mjs --batch
+   ```
+   验收红线：`music_report.json` 中 `passed === true && alertCount === 0 && bgmLongWarningCount === 0 && stingerLongWarningCount === 0`；`audio_loudness_report.json` 中 `clippingAlertCount === 0 && cueSpreadAlertCount === 0 && boostCapWarningCount === 0`。
+4. **Step 4 — 同步登记与 WebAsset 实机复用验证**：
+   - 运行 `npm run assets:db -- sync` 更新资产索引，并确认 `http://127.0.0.1:4174/assets/cn/audio/{cue_table,streams_table,music_table}.json` 及新增 `.mp3` 返回 `HTTP 200`，游戏侧直接通过 WebAsset URL / `cueName` 引用复用。
+
 ### Runtime 3D/2D Spatial Audio & Anti-Repetition Cues
 
 ```js

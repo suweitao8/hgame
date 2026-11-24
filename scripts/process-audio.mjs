@@ -384,6 +384,7 @@ export async function runAudioCli(argv = process.argv.slice(2)) {
     const batchRes = await processAudioLibraryBatch({
       ...(args.staging ? { stagingRoot: path.resolve(String(args.staging)) } : {}),
       ...(args['v10-wavs'] ? { v10WavsDir: path.resolve(String(args['v10-wavs'])) } : {}),
+      ...(args['sfx-staging'] ? { customSfxRoot: path.resolve(String(args['sfx-staging'])) } : {}),
       ...(args['out-dir'] ? { outDir: path.resolve(String(args['out-dir'])) } : {}),
       ...(args.concurrency ? { concurrency: Number(args.concurrency) } : {}),
       force: Boolean(args.force),

@@ -18,6 +18,7 @@ export function createMeshVfxPool({ mode, THREE, scene, maxMeshes, }?: {
     registerUberMaterial: (matSpec: any) => any;
     getSurfaceSamples: (name: any) => any;
     spawn: (opts?: object) => number;
+    killSlot: (slotIdx: any) => void;
     readSlotMotion: (slotIdx: any, position: any, velocity: any) => void;
     updateSlot: (slotIdx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
     setWind: (wx?: number, wy?: number, wz?: number) => void;
@@ -30,10 +31,10 @@ export function createMeshVfxPool({ mode, THREE, scene, maxMeshes, }?: {
         height?: number | undefined;
         softFade?: number | undefined;
     }) => void;
-    setSceneTexture: (sceneTexture: any, { width, height }?: {
-        width?: number | undefined;
-        height?: number | undefined;
-    }) => void;
+    setSceneTexture: (sceneTexture: object | null, { width, height }?: {
+        width?: number;
+        height?: number;
+    } | undefined) => void;
     setQualityTier: (tier?: string) => void;
     hasActiveDistortion: () => boolean;
     update: (visualDt: any) => void;

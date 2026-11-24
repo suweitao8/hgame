@@ -515,6 +515,12 @@ export function createTrailsSystem({
   const trailMatRow = new Float32Array(trailCap);
   trailMatRow.fill(-1);
   const trailActive = new Uint8Array(trailCap);
+  const trailPoolIdx = new Int8Array(trailCap);
+  trailPoolIdx.fill(-1);
+  let activeTrailsCount = 0;
+  let ribbonDirty = false;
+  let slashLatestDeath = -Infinity;
+  let boltLatestDeath = -Infinity;
   let atlasRegionMap = atlasRegions || null;
   let activeAtlasTex = null;
   let atlasFlipVOverride = null;
@@ -549,7 +555,7 @@ export function createTrailsSystem({
     sGeo.index = baseQuad.index;
     sGeo.attributes.position = baseQuad.attributes.position;
     sGeo.attributes.uv = baseQuad.attributes.uv;
-    sGeo.instanceCount = slashCap;
+    sGeo.instanceCount = 0;
     const sa0 = new THREE.InstancedBufferAttribute(slashP0, 4);
     const sa1 = new THREE.InstancedBufferAttribute(slashP1, 4);
     const sa2 = new THREE.InstancedBufferAttribute(slashP2, 4);
@@ -568,6 +574,7 @@ export function createTrailsSystem({
     });
     slashMesh = new THREE.Mesh(sGeo, slashMat);
     slashMesh.frustumCulled = false;
+    slashMesh.visible = false;
     slashMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     slashMesh.name = 'HGameVfxSlashArcs';
     scene.add(slashMesh);
@@ -575,7 +582,7 @@ export function createTrailsSystem({
 
     // 2. LightningBoltPool
     const bGeo = createBoltStripGeometry(THREE, 16);
-    bGeo.instanceCount = boltCap;
+    bGeo.instanceCount = 0;
     const ba0 = new THREE.InstancedBufferAttribute(boltP0, 4);
     const ba1 = new THREE.InstancedBufferAttribute(boltP1, 4);
     const ba2 = new THREE.InstancedBufferAttribute(boltP2, 4);
@@ -594,6 +601,7 @@ export function createTrailsSystem({
     });
     boltMesh = new THREE.Mesh(bGeo, boltMat);
     boltMesh.frustumCulled = false;
+    boltMesh.visible = false;
     boltMesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
     boltMesh.name = 'HGameVfxLightningBolts';
     scene.add(boltMesh);
@@ -603,7 +611,7 @@ export function createTrailsSystem({
       const rGeo = new THREE.InstancedBufferGeometry();
       rGeo.index = baseQuad.index;
       rGeo.attributes.position = baseQuad.attributes.position;
-      rGeo.instanceCount = totalRibbonSegs;
+      rGeo.instanceCount = 0;
       const ra0 = new THREE.InstancedBufferAttribute(pool.segA, 4);
       const ra1 = new THREE.InstancedBufferAttribute(pool.segB, 4);
       const ra2 = new THREE.InstancedBufferAttribute(pool.segMeta, 4);
@@ -659,6 +667,7 @@ export function createTrailsSystem({
       pool.mat = new MatCtor(matOpts);
       pool.mesh = new THREE.Mesh(rGeo, pool.mat);
       pool.mesh.frustumCulled = false;
+      pool.mesh.visible = false;
       pool.mesh.renderOrder = VFX_RENDER_ORDERS.TRAILS;
       pool.mesh.name = name;
       scene.add(pool.mesh);
@@ -682,9 +691,45 @@ export function createTrailsSystem({
     });
   }
 
+  function syncSlashBoltVisibility() {
+    if (slashMesh) {
+      const active = simTime <= slashLatestDeath && slashTotal > 0;
+      slashMesh.visible = active;
+      slashMesh.geometry.instanceCount = active ? Math.min(slashCap, slashTotal) : 0;
+    }
+    if (boltMesh) {
+      const active = simTime <= boltLatestDeath && boltTotal > 0;
+      boltMesh.visible = active;
+      boltMesh.geometry.instanceCount = active ? Math.min(boltCap, boltTotal) : 0;
+    }
+  }
+
+  function refreshRibbonVisibility() {
+    ribbonDirty = false;
+    const maxSegPerPool = [0, 0, 0];
+    if (activeTrailsCount > 0) {
+      for (let t = 0; t < trailCap; t++) {
+        if (!trailActive[t] || trailCount[t] < 2) continue;
+        const pIdx = trailPoolIdx[t];
+        if (pIdx >= 0 && pIdx < 3) {
+          const endSeg = (t + 1) * segsPerTrail;
+          if (endSeg > maxSegPerPool[pIdx]) maxSegPerPool[pIdx] = endSeg;
+        }
+      }
+    }
+    for (let p = 0; p < ribbonPools.length; p++) {
+      const mesh = ribbonPools[p].mesh;
+      if (!mesh) continue;
+      const count = maxSegPerPool[p];
+      mesh.geometry.instanceCount = count;
+      mesh.visible = count > 0;
+    }
+  }
+
   function slashArc(opts = {}) {
     const idx = slashCursor;
     const i4 = idx * 4;
+    const duration = opts.duration ?? 0.16;
     slashP0[i4] = opts.x ?? 0;
     slashP0[i4 + 1] = opts.y ?? 0;
     slashP0[i4 + 2] = opts.z ?? 0;
@@ -693,7 +738,7 @@ export function createTrailsSystem({
     slashP1[i4] = opts.yawRad ?? opts.angle ?? 0;
     slashP1[i4 + 1] = opts.sweepRad ?? 2.1;
     slashP1[i4 + 2] = opts.radius ?? 2.6;
-    slashP1[i4 + 3] = opts.duration ?? 0.16;
+    slashP1[i4 + 3] = duration;
 
     slashP2[i4] = opts.rgb24 !== undefined ? opts.rgb24 : packRgb24(opts.color ?? 0x38bdf8);
     slashP2[i4 + 1] = opts.innerRatio ?? 0.52;
@@ -704,11 +749,14 @@ export function createTrailsSystem({
     slashDirtyCount = Math.min(slashCap, slashDirtyCount + 1);
     slashCursor = (idx + 1) % slashCap;
     slashTotal += 1;
+    if (simTime + duration > slashLatestDeath) slashLatestDeath = simTime + duration;
+    syncSlashBoltVisibility();
   }
 
   function lightningBolt(opts = {}) {
     const idx = boltCursor;
     const i4 = idx * 4;
+    const duration = opts.duration ?? 0.14;
     boltP0[i4] = opts.x0 ?? 0;
     boltP0[i4 + 1] = opts.y0 ?? 0;
     boltP0[i4 + 2] = opts.z0 ?? 0;
@@ -717,7 +765,7 @@ export function createTrailsSystem({
     boltP1[i4] = opts.x1 ?? 1;
     boltP1[i4 + 1] = opts.y1 ?? 0;
     boltP1[i4 + 2] = opts.z1 ?? 0;
-    boltP1[i4 + 3] = opts.duration ?? 0.14;
+    boltP1[i4 + 3] = duration;
 
     boltP2[i4] = opts.rgb24 !== undefined ? opts.rgb24 : packRgb24(opts.color ?? 0x60a5fa);
     boltP2[i4 + 1] = opts.thickness ?? 0.22;
@@ -728,6 +776,8 @@ export function createTrailsSystem({
     boltDirtyCount = Math.min(boltCap, boltDirtyCount + 1);
     boltCursor = (idx + 1) % boltCap;
     boltTotal += 1;
+    if (simTime + duration > boltLatestDeath) boltLatestDeath = simTime + duration;
+    syncSlashBoltVisibility();
   }
 
   function syncTrailSegments(trackId) {
@@ -941,9 +991,8 @@ export function createTrailsSystem({
           dstMeta[i4 + 2] = evalNormalAlpha(t0) * op;
           dstMeta[i4 + 3] = evalNormalAlpha(t1) * op;
         } else {
-          const headFade = (t) => Math.min(1, t / 0.08);
-          dstMeta[i4 + 2] = Math.max(0, 1 - t0 * t0) * headFade(t0) * op;
-          dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1) * headFade(t1) * op;
+          dstMeta[i4 + 2] = Math.max(0, 1 - t0 * t0) * op;
+          dstMeta[i4 + 3] = Math.max(0, 1 - t1 * t1) * op;
         }
       }
 
@@ -966,6 +1015,21 @@ export function createTrailsSystem({
       if (p !== poolIdx && ribbonPools[p].attrs) {
         submitRingBufferRanges(ribbonPools[p].attrs[2], segBase, segsPerTrail, totalRibbonSegs, 4);
       }
+    }
+    const prevPoolIdx = trailPoolIdx[trackId];
+    if (trailActive[trackId] && count >= 2) {
+      trailPoolIdx[trackId] = poolIdx;
+      if (pool.mesh) {
+        pool.mesh.visible = true;
+        const endSeg = (trackId + 1) * segsPerTrail;
+        if (pool.mesh.geometry.instanceCount < endSeg) {
+          pool.mesh.geometry.instanceCount = endSeg;
+        }
+      }
+      if (prevPoolIdx !== -1 && prevPoolIdx !== poolIdx) ribbonDirty = true;
+    } else if (prevPoolIdx !== -1) {
+      trailPoolIdx[trackId] = -1;
+      ribbonDirty = true;
     }
   }
 
@@ -1034,6 +1098,8 @@ export function createTrailsSystem({
     if (freeTrailTop <= 0) return -1;
     const id = freeTrailStack[--freeTrailTop];
     trailActive[id] = 1;
+    trailPoolIdx[id] = -1;
+    activeTrailsCount += 1;
     trailHead[id] = 0;
     trailCount[id] = 0;
     trailWidthScale[id] = 1;
@@ -1184,8 +1250,10 @@ export function createTrailsSystem({
     if (trackId < 0 || trackId >= trailCap || !trailActive[trackId]) return;
     trailActive[trackId] = 0;
     trailCount[trackId] = 0;
+    activeTrailsCount = Math.max(0, activeTrailsCount - 1);
     syncTrailSegments(trackId);
     freeTrailStack[freeTrailTop++] = trackId;
+    refreshRibbonVisibility();
   }
 
   function flushDirty() {
@@ -1208,6 +1276,8 @@ export function createTrailsSystem({
     simTime += Math.max(0, visualDt);
     timeUniform.value = simTime;
     flushDirty();
+    syncSlashBoltVisibility();
+    if (ribbonDirty) refreshRibbonVisibility();
     if (slashMat) slashMat.uniforms.uTime.value = simTime;
     if (boltMat) boltMat.uniforms.uTime.value = simTime;
   }
@@ -1273,6 +1343,11 @@ export function createTrailsSystem({
     simTime = 0;
     slashCursor = slashDirtyStart = slashDirtyCount = slashTotal = 0;
     boltCursor = boltDirtyStart = boltDirtyCount = boltTotal = 0;
+    slashLatestDeath = -Infinity;
+    boltLatestDeath = -Infinity;
+    activeTrailsCount = 0;
+    ribbonDirty = false;
+    trailPoolIdx.fill(-1);
     freeTrailTop = trailCap;
     for (let i = 0; i < trailCap; i++) {
       freeTrailStack[i] = trailCap - 1 - i;
@@ -1282,10 +1357,22 @@ export function createTrailsSystem({
     for (const pool of ribbonPools) {
       pool.segMeta.fill(0);
       pool.segMatRow.fill(-1);
+      if (pool.mesh) {
+        pool.mesh.visible = false;
+        pool.mesh.geometry.instanceCount = 0;
+      }
       if (pool.attrs) {
         submitRingBufferRanges(pool.attrs[2], 0, totalRibbonSegs, totalRibbonSegs, 4);
         submitRingBufferRanges(pool.attrs[5], 0, totalRibbonSegs, totalRibbonSegs, 1);
       }
+    }
+    if (slashMesh) {
+      slashMesh.visible = false;
+      slashMesh.geometry.instanceCount = 0;
+    }
+    if (boltMesh) {
+      boltMesh.visible = false;
+      boltMesh.geometry.instanceCount = 0;
     }
     trailMatRow.fill(-1);
     slashP1.fill(0);

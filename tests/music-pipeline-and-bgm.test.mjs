@@ -205,6 +205,12 @@ test('parseBgmFilenameMeta, inferMusicCategory, parseTailSilenceSec, and evaluat
   assert.equal(inferMusicCategory('emo_suspense', 'bgm'), 'suspense');
   assert.equal(inferMusicCategory('cmb_puzzle', 'bgm'), 'puzzle');
   assert.equal(inferMusicCategory('wld_explore', 'bgm'), 'explore');
+  assert.equal(inferMusicCategory('cmb_urgent', 'bgm'), 'urgent');
+  assert.equal(inferMusicCategory('cmb_final_zone', 'bgm'), 'urgent');
+  assert.equal(inferMusicCategory('scifi_cyber_city', 'bgm'), 'scifi');
+  assert.equal(inferMusicCategory('ink_bamboo_combat', 'bgm'), 'ink');
+  assert.equal(inferMusicCategory('arcade_retro_rush', 'bgm'), 'arcade');
+  assert.equal(inferMusicCategory('sys_result_victory', 'bgm'), 'result');
   assert.equal(inferMusicCategory('dark_delirium', 'bgm'), 'dungeon');
 
   assert.equal(shouldApplyVoiceSpaceEq(parseBgmFilenameMeta('bgm_emo_daily_100bpm.wav', { kind: 'bgm', scope: 'universal' })), true);

@@ -1,5 +1,6 @@
 import {
   VFX_RENDER_ORDERS,
+  createOffscreen2dCanvas,
   createVisualPrng,
   markAttributeRangeDirty,
   packRgb24,
@@ -91,11 +92,9 @@ export function extractGlyphIndices(
  * @returns {HTMLCanvasElement | null}
  */
 export function bakeGlyphAtlasCanvas() {
-  if (typeof document === 'undefined' || !document.createElement) return null;
   const cell = 64;
-  const canvas = document.createElement('canvas');
-  canvas.width = ATLAS_COLS * cell;
-  canvas.height = ATLAS_ROWS * cell;
+  const canvas = createOffscreen2dCanvas(ATLAS_COLS * cell, ATLAS_ROWS * cell);
+  if (!canvas) return null;
   const ctx = canvas.getContext('2d');
   if (!ctx) return null;
 
@@ -564,6 +563,7 @@ export function createFloatingTextPool({
 
     mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
+    mesh.visible = false;
     mesh.renderOrder = VFX_RENDER_ORDERS.FLOATING_TEXT;
     mesh.name = 'HGameVfxFloatingText';
     scene.add(mesh);
@@ -1288,6 +1288,9 @@ export function createFloatingTextPool({
     if (geo) {
       geo.instanceCount = activeGlyphCount;
     }
+    if (mesh) {
+      mesh.visible = activeGlyphCount > 0;
+    }
     const uploadCount = Math.max(activeGlyphCount, prevUploadedGlyphCount);
     if (attrs && uploadCount > 0) {
       for (let i = 0; i < 3; i++) {
@@ -1631,6 +1634,7 @@ export function createFloatingTextPool({
     p1.fill(0);
     p2.fill(0);
     if (geo) geo.instanceCount = 0;
+    if (mesh) mesh.visible = false;
   }
 
   function dispose() {

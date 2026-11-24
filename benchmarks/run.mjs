@@ -17,6 +17,7 @@ import {
   findGridPath,
   createTagContainer,
   createVfxSystem,
+  createGpuParticleSystem,
 } from '../assets/runtime/index.js';
 
 const argv = process.argv.slice(2);
@@ -116,6 +117,14 @@ const cases = [
       vfx.burstParticles(burstCfg);
       vfx.update(0.016);
     });
+  } },
+  { name: 'VFX: GPU particles burst 10,000 + idle sleep update', budgetMs: 2.5, run() {
+    const gpu = createGpuParticleSystem({ mode: 'headless', maxParticles: 65536 });
+    const burstCfg = { x: 0, y: 1, z: 0, count: 2000, speedMin: 2, speedMax: 8, durationMin: 0.2, durationMax: 0.4 };
+    return measure(() => {
+      for (let i = 0; i < 5; i++) gpu.burst(burstCfg);
+      gpu.update(0.016);
+    }, () => gpu.reset());
   } },
 ];
 

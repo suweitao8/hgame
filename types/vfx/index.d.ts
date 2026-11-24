@@ -4,7 +4,9 @@
  * @param {'headless' | 'canvas2d' | 'webgl2d' | '3d' | null} [options.mode=null]
  * @param {object | null} [options.sceneOrAdapter=null] Renderer adapter, scene or 2D context.
  * @param {object | null} [options.THREE] Three.js namespace for 3D rendering.
+ * @param {object | null} [options.renderer=null] Optional Three.js WebGLRenderer for 3D GPU particle MRT stepping.
  * @param {number} [options.maxParticles]
+ * @param {number} [options.maxGpuParticles]
  * @param {number} [options.maxAtlasParticles]
  * @param {number} [options.maxMeshVfx]
  * @param {number} [options.trailNodes]
@@ -15,11 +17,13 @@
  * @param {boolean} [options.renderThroughWalls=true]
  * @param {number} [options.seed=0x9e3779b9]
  */
-export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, maxAtlasParticles, maxMeshVfx, trailNodes, maxFloatingGlyphs, maxPopups, atlasTexture, atlasRegions, renderThroughWalls, seed, }?: {
+export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxParticles, maxGpuParticles, maxAtlasParticles, maxMeshVfx, trailNodes, maxFloatingGlyphs, maxPopups, atlasTexture, atlasRegions, renderThroughWalls, seed, }?: {
     mode?: "3d" | "canvas2d" | "webgl2d" | "headless" | null | undefined;
     sceneOrAdapter?: object | null;
     THREE?: object | null;
+    renderer?: object | null;
     maxParticles?: number | undefined;
+    maxGpuParticles?: number | undefined;
     maxAtlasParticles?: number | undefined;
     maxMeshVfx?: number | undefined;
     trailNodes?: number | undefined;
@@ -81,6 +85,43 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             additiveLastRanges: never[];
         };
     };
+    gpuParticles: {
+        capacity: number;
+        texWidth: number;
+        texHeight: number;
+        emit: (opts?: {}) => number;
+        burst: (opts?: {}) => void;
+        setField: (opts?: {}) => void;
+        setQualityTier: (tier?: string) => void;
+        setDepthTexture: (depthTex: any, { near, far, collision }?: {
+            near?: number | undefined;
+            far?: number | undefined;
+            collision?: boolean | undefined;
+        }) => void;
+        setCameraMatrices: (viewProj: any, near?: number, far?: number) => void;
+        setRenderer: (r: any) => void;
+        readParticleSample: (slotIdx: any, out?: {}) => {};
+        update: (visualDt?: number) => void;
+        renderWebGL2: (camera: any, viewWidth: any, viewHeight: any) => void;
+        renderCanvas2D: (ctx: any, camera: any, viewWidth: any, viewHeight: any) => void;
+        reset: () => void;
+        dispose: () => void;
+        readonly time: number;
+        getStats(): {
+            capacity: number;
+            mobile: any;
+            precision: string;
+            qualityTier: string;
+            initialized: boolean;
+            activeEstimate: number;
+            activeBaseSlot: number;
+            activeSpanCount: number;
+            totalEmitted: number;
+            gpuAccelerated: boolean;
+            simPasses: number;
+            uploadedBytes: number;
+        };
+    };
     atlasParticles: {
         readonly texture: any;
         capacity: number;
@@ -90,6 +131,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             height: number;
             texture: any;
             readonly rowCount: number;
+            readonly version: number;
             compile: (colorCurveRaw: any, sizeCurveRaw: any, sizeYCurveRaw?: null, velocityCurveRaw?: null) => any;
             flush: () => void;
             sampleColor: (row: any, t: any, out?: Float32Array) => Float32Array;
@@ -163,6 +205,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         registerUberMaterial: (matSpec: any) => any;
         getSurfaceSamples: (name: any) => any;
         spawn: (opts?: object) => number;
+        killSlot: (slotIdx: any) => void;
         readSlotMotion: (slotIdx: any, position: any, velocity: any) => void;
         updateSlot: (slotIdx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
         setWind: (wx?: number, wy?: number, wz?: number) => void;
@@ -175,10 +218,10 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             height?: number | undefined;
             softFade?: number | undefined;
         }) => void;
-        setSceneTexture: (sceneTexture: any, { width, height }?: {
-            width?: number | undefined;
-            height?: number | undefined;
-        }) => void;
+        setSceneTexture: (sceneTexture: object | null, { width, height }?: {
+            width?: number;
+            height?: number;
+        } | undefined) => void;
         setQualityTier: (tier?: string) => void;
         hasActiveDistortion: () => boolean;
         update: (visualDt: any) => void;
@@ -1663,6 +1706,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
                 stableRandom: boolean;
                 uv2: boolean;
             };
+            needsCustom1: boolean;
+            needsCustom2: boolean;
             flipbook: any;
             trail: any;
             subEmitters: any;
@@ -1711,6 +1756,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
                 cursor: number;
                 activeCount: number;
                 active: Uint8Array;
+                activeIndices: Int32Array;
+                slotToActivePos: Int32Array;
                 effectSlotId: Int32Array;
                 px: Float32Array;
                 py: Float32Array;
@@ -1769,10 +1816,10 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             width?: number | undefined;
             height?: number | undefined;
         }) => void;
-        setSceneTexture: (sceneTex: any, { width, height }?: {
-            width?: number | undefined;
-            height?: number | undefined;
-        }) => void;
+        setSceneTexture: (sceneTex: object | null, { width, height }?: {
+            width?: number;
+            height?: number;
+        } | undefined) => void;
         hasActiveWarp: () => boolean;
         setWarpMeshesVisible: (visible: any) => void;
         update: (dt?: number) => void;
@@ -1947,6 +1994,8 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
         shakeIntensity?: number | undefined;
     } | undefined) => void;
     burstParticles: (presetOrConfig: any) => void;
+    emitGpuParticles: (opts?: {}) => void;
+    setGpuField: (opts?: {}) => void;
     slashArc: (opts?: {}) => void;
     lightningBolt: (opts?: {}) => void;
     allocTrail: (colorOrOpts?: number | object, width?: number | undefined) => number;
@@ -1996,6 +2045,20 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, maxParticles, max
             additiveWrapCount: number;
             normalLastRanges: never[];
             additiveLastRanges: never[];
+        };
+        gpuParticles: {
+            capacity: number;
+            mobile: any;
+            precision: string;
+            qualityTier: string;
+            initialized: boolean;
+            activeEstimate: number;
+            activeBaseSlot: number;
+            activeSpanCount: number;
+            totalEmitted: number;
+            gpuAccelerated: boolean;
+            simPasses: number;
+            uploadedBytes: number;
         };
         atlasParticles: {
             capacity: number;
@@ -2134,6 +2197,10 @@ export const VFX_PRESETS: Readonly<{
 }>;
 import { VFX_EASING } from './vfx-core.js';
 import { VFX_RENDER_ORDERS } from './vfx-core.js';
+import { CHAMFERED_OCTAGON_TRIS_2D } from './vfx-core.js';
+import { createChamferedOctagonGeometry } from './vfx-core.js';
+import { isMobileOrMiniGameEnv } from './vfx-core.js';
+import { createOffscreen2dCanvas } from './vfx-core.js';
 import { createVisualPrng } from './vfx-core.js';
 import { packRgb24 } from './vfx-core.js';
 import { unpackRgb24Into } from './vfx-core.js';
@@ -2147,6 +2214,13 @@ import { PARTICLE_FRAGMENT_GLSL } from './vfx-particles.js';
 import { PARTICLE_WEBGL2_2D_VS } from './vfx-particles.js';
 import { PARTICLE_WEBGL2_2D_FS } from './vfx-particles.js';
 import { createStatelessParticlePool } from './vfx-particles.js';
+import { GPU_PARTICLE_SIM_VS } from './vfx-gpu-particles.js';
+import { GPU_PARTICLE_SIM_FS } from './vfx-gpu-particles.js';
+import { GPU_PARTICLE_RENDER_VS } from './vfx-gpu-particles.js';
+import { GPU_PARTICLE_RENDER_FS } from './vfx-gpu-particles.js';
+import { GPU_PARTICLE_RENDER_2D_VS } from './vfx-gpu-particles.js';
+import { GPU_PARTICLE_RENDER_2D_FS } from './vfx-gpu-particles.js';
+import { createGpuParticleSystem } from './vfx-gpu-particles.js';
 import { SLASH_VERTEX_GLSL } from './vfx-trails.js';
 import { SLASH_FRAGMENT_GLSL } from './vfx-trails.js';
 import { LIGHTNING_VERTEX_GLSL } from './vfx-trails.js';
@@ -2229,4 +2303,4 @@ import { defineVfxRecipe } from './vfx-recipes.js';
 import { loadVfxPack } from './vfx-recipes.js';
 import { validateVfxRecipe } from './vfx-recipes.js';
 import { createEffectPlayer } from './vfx-recipes.js';
-export { VFX_EASING, VFX_RENDER_ORDERS, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_DISTORTION_FS, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, VFX_MESH_INSTANCED_VS, VFX_MESH_INSTANCED_FS, createMeshVfxPool, UBER_MAT_LUT_WIDTH, UBER_MAT_LUT_ROWS, UBER_SHADER_KIND, VFX_CURVE_LUT_SAMPLES, VFX_COMMON_GLSL, VFX_VERTEX_BUS_ATTRS_GLSL, VFX_VERTEX_SHELL_GLSL, createUberMaterialLut, compileCustomDataCurves, compileCurveLut16, sampleCurveLut16, compileMinMaxCurve, evaluateMinMaxCurve, srgbToLinear, compileMinMaxGradient, evaluateMinMaxGradient, registerShaderProfile, getShaderProfile, listShaderProfiles, resolveThreeRenderState, createProfileMaterial, getCompiledShaderVariantCount, resetCompiledShaderVariantTracker, SHURIKEN_QUALITY_TIERS, compileShurikenLayer, createShurikenKernel, VFX_MATERIAL_PRESETS, createUberMaterialSpec, defineVfxRecipe, loadVfxPack, validateVfxRecipe, createEffectPlayer };
+export { VFX_EASING, VFX_RENDER_ORDERS, CHAMFERED_OCTAGON_TRIS_2D, createChamferedOctagonGeometry, isMobileOrMiniGameEnv, createOffscreen2dCanvas, createVisualPrng, packRgb24, unpackRgb24Into, markAttributeRangeDirty, submitRingBufferRanges, createHitstopClock, createCameraShake, VFX_SHAPE, PARTICLE_VERTEX_GLSL, PARTICLE_FRAGMENT_GLSL, PARTICLE_WEBGL2_2D_VS, PARTICLE_WEBGL2_2D_FS, createStatelessParticlePool, GPU_PARTICLE_SIM_VS, GPU_PARTICLE_SIM_FS, GPU_PARTICLE_RENDER_VS, GPU_PARTICLE_RENDER_FS, GPU_PARTICLE_RENDER_2D_VS, GPU_PARTICLE_RENDER_2D_FS, createGpuParticleSystem, SLASH_VERTEX_GLSL, SLASH_FRAGMENT_GLSL, LIGHTNING_VERTEX_GLSL, LIGHTNING_FRAGMENT_GLSL, RIBBON_VERTEX_GLSL, RIBBON_FRAGMENT_GLSL, createTrailsSystem, TELEGRAPH_SHAPE, TELEGRAPH_VERTEX_GLSL, TELEGRAPH_FRAGMENT_GLSL, createTelegraphSystem, GLYPH_CHARS, DAMAGE_ATLAS_CHARS, DAMAGE_NUMBER_PRESETS, registerDamagePreset, getDamagePreset, formatDamageValue, evaluateColorByNumber, evaluateScaleByNumber, extractGlyphIndices, bakeGlyphAtlasCanvas, FLOATING_TEXT_VERTEX_GLSL, FLOATING_TEXT_FRAGMENT_GLSL, FLOATING_TEXT_WEBGL2_2D_VS, FLOATING_TEXT_WEBGL2_2D_FS, createFloatingTextPool, CROWD_STATUS, packCrowdAnimStatus, unpackCrowdAnimStatus, SCREEN_FEEDBACK_VERTEX_GLSL, SCREEN_FEEDBACK_FRAGMENT_GLSL, createScreenFeedbackPass, VFX_RENDER_MODE, PROCEDURAL_VFX_ATLAS_REGIONS, ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_FRAGMENT_GLSL, ATLAS_PARTICLE_DISTORTION_FS, ATLAS_PARTICLE_WEBGL2_2D_VS, ATLAS_PARTICLE_WEBGL2_2D_FS, evaluateColorCurve, evaluateSizeCurve, createCurveLutTable, createProceduralVfxAtlas, evaluateAtlasParticlePosition, createAtlasParticlePool, VFX_MESH_VERTEX_GLSL, VFX_MESH_FRAGMENT_GLSL, VFX_MESH_INSTANCED_VS, VFX_MESH_INSTANCED_FS, createMeshVfxPool, UBER_MAT_LUT_WIDTH, UBER_MAT_LUT_ROWS, UBER_SHADER_KIND, VFX_CURVE_LUT_SAMPLES, VFX_COMMON_GLSL, VFX_VERTEX_BUS_ATTRS_GLSL, VFX_VERTEX_SHELL_GLSL, createUberMaterialLut, compileCustomDataCurves, compileCurveLut16, sampleCurveLut16, compileMinMaxCurve, evaluateMinMaxCurve, srgbToLinear, compileMinMaxGradient, evaluateMinMaxGradient, registerShaderProfile, getShaderProfile, listShaderProfiles, resolveThreeRenderState, createProfileMaterial, getCompiledShaderVariantCount, resetCompiledShaderVariantTracker, SHURIKEN_QUALITY_TIERS, compileShurikenLayer, createShurikenKernel, VFX_MATERIAL_PRESETS, createUberMaterialSpec, defineVfxRecipe, loadVfxPack, validateVfxRecipe, createEffectPlayer };

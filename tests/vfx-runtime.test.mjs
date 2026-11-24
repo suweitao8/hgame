@@ -12,7 +12,12 @@ import {
   unpack2x12Sym,
   unpackUvPair,
 } from '../assets/runtime/vfx/vfx-atlas-particles.js';
-import { VFX_UBER_FRAGMENT_GLSL } from '../assets/runtime/vfx/vfx-shader-chunks.js';
+import {
+  UBER_FLAG_ALPHA_TEST,
+  UBER_FLAG_CULL_FRONT,
+  VFX_UBER_FRAGMENT_GLSL,
+  packUberMaterialRow,
+} from '../assets/runtime/vfx/vfx-shader-chunks.js';
 import {
   ATLAS_PARTICLE_FRAGMENT_GLSL,
   CROWD_STATUS,
@@ -20,20 +25,28 @@ import {
   PROCEDURAL_VFX_ATLAS_REGIONS,
   RIBBON_FRAGMENT_GLSL,
   UBER_MAT_LUT_ROWS,
+  UBER_MAT_LUT_WIDTH,
   VFX_COMMON_GLSL,
   VFX_MATERIAL_PRESETS,
   VFX_MESH_INSTANCED_FS,
+  VFX_MESH_INSTANCED_VS,
   VFX_RENDER_MODE,
   VFX_SHAPE,
+  bakeGlyphAtlasCanvas,
   createAtlasParticlePool,
   createCameraShake,
   createCurveLutTable,
+  createGpuParticleSystem,
   createHitstopClock,
   createMeshVfxPool,
+  createOffscreen2dCanvas,
+  createProceduralVfxAtlas,
+  createShurikenKernel,
   createStatelessParticlePool,
   createUberMaterialSpec,
   createVfxSystem,
   createVisualPrng,
+  isMobileOrMiniGameEnv,
   defineVfxRecipe,
   evaluateAtlasParticlePosition,
   evaluateColorByNumber,
@@ -1146,7 +1159,7 @@ test('vfx extensions support vertical billboard, orbital motion, startColor, tex
       ],
     }, { x: 0, y: 3.0, z: 0 });
     vfx.update(0.1);
-    const shardMesh = scene.children.find((c) => c.visible && c !== meshChild && c.geometry);
+    const shardMesh = scene.children.find((c) => c.visible && c.name?.startsWith('HGameVfxMesh_') && c.geometry !== rockGeom);
     assert.ok(shardMesh, 'expected falling crystal mesh');
     assert.ok(shardMesh.position.y < 3.0, `expected cone rotation=[PI,0,0] to emit downward (y=${shardMesh.position.y})`);
     for (let i = 0; i < 6; i++) vfx.update(0.1); // t = 0.7s -> past life=0.4 triggers death subEmitter
@@ -2630,3 +2643,826 @@ test('defineVfxRecipe, createUberMaterialSpec presets, and loadVfxPack register 
   geo1.dispose();
   geo2.dispose();
 });
+
+test('mesh layers support trails, collision lifetimeLoss kills & triggers death subEmitters, and negative velCurve aligns velocity', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE, maxMeshVfx: 32, trailNodes: 16 });
+  vfx.registerMesh('spike_test', new THREE.ConeGeometry(0.1, 0.5, 6));
+
+  let deathSpawned = false;
+  vfx.registerEffect({
+    schemaVersion: 1,
+    id: 'mesh_rain_collision_test',
+    loop: false,
+    duration: 2.0,
+    layers: [
+      {
+        name: 'rain_mesh',
+        kind: 'mesh',
+        renderMode: 'mesh',
+        mesh: 'spike_test',
+        alignToVelocity: true,
+        forwardAxis: 'z',
+        rotX: -Math.PI / 2,
+        offset: [0, 1.0, 0],
+        life: 2.0,
+        speed: 0,
+        size: 1.0,
+        bursts: [{ time: 0, count: 1 }],
+        velocity: { linear: [0, 5, 0] },
+        velCurve: [[0, -1], [1, -1]],
+        trail: { mode: 'particles', lifetime: 0.2, lifetimeMode: 'seconds', width: 0.1 },
+        collision: { groundY: 0, bounce: 0, dampen: 0, maxBounces: 1, lifetimeLoss: 1 },
+        subEmitters: [
+          {
+            trigger: 'death',
+            effect: {
+              schemaVersion: 1,
+              id: 'rain_death_burst',
+              loop: false,
+              duration: 0.5,
+              layers: [
+                {
+                  name: 'impact_spark',
+                  kind: 'particle',
+                  renderMode: 'billboard',
+                  bursts: [{ time: 0, count: 3 }],
+                  life: 0.4,
+                  size: 0.5,
+                  speed: 0,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+  });
+
+  vfx.playEffect('mesh_rain_collision_test', { x: 0, y: 0, z: 0 });
+  // Step 0.1s: particle moves downward from y=1.0 at vy=-5 -> y=0.5, active mesh=1, active trail=1
+  vfx.update(0.1);
+  const posMid = new Float32Array(3);
+  const velMid = new Float32Array(3);
+  vfx.meshVfx.readSlotMotion(0, posMid, velMid);
+  assert.ok(posMid[1] > 0.35 && posMid[1] < 0.65, `staticPos avoids double integration (y=${posMid[1]})`);
+  assert.equal(vfx.meshVfx.getStats().activeCount, 1, 'mesh particle active before collision');
+  assert.equal(vfx.trails.getStats().activeTrails, 1, 'mesh layer spawned attached trail');
+
+  // Step 0.2s more (total 0.3s): crosses groundY=0 -> lifetimeLoss=1 kills mesh & trail and spawns death subEmitter
+  vfx.update(0.1);
+  vfx.update(0.1);
+  const st = vfx.getStats();
+  assert.equal(st.meshVfx.activeCount, 0, 'collision lifetimeLoss=1 kills mesh particle on impact');
+  assert.equal(st.trails.activeTrails, 0, 'attached trail stops when colliding particle dies');
+  deathSpawned = st.atlasParticles.additiveTotal > 0 || st.atlasParticles.normalTotal > 0;
+  assert.equal(deathSpawned, true, 'death subEmitter fires upon collision kill');
+
+  vfx.dispose();
+});
+
+test('cullMode=front sets UBER_FLAG_CULL_FRONT without double-counting isOddFlip in VFX_MESH_INSTANCED_VS', () => {
+  const row = new Float32Array(UBER_MAT_LUT_WIDTH * 4);
+  const packed = packUberMaterialRow(row, 0, { cullMode: 'front', blend: 'additive' });
+  assert.equal(packed, true, 'packUberMaterialRow writes valid LUT row');
+  const packedFlags = row[1];
+  assert.notEqual(packedFlags & UBER_FLAG_CULL_FRONT, 0, 'packUberMaterialRow packs UBER_FLAG_CULL_FRONT for cullMode=front');
+  assert.ok(VFX_UBER_FRAGMENT_GLSL.includes('UBER_FLAG_CULL_FRONT') || VFX_UBER_FRAGMENT_GLSL.includes(UBER_FLAG_CULL_FRONT.toFixed(1)),
+    'VFX_UBER_FRAGMENT_GLSL checks UBER_FLAG_CULL_FRONT');
+  assert.ok(VFX_UBER_FRAGMENT_GLSL.includes('cullFront ? isFrontFacing : !isFrontFacing'),
+    'VFX_UBER_FRAGMENT_GLSL discards front faces when cullFront is active');
+  assert.ok(VFX_MESH_INSTANCED_VS.includes('vFlipLocalV = aInstScaleInfo.w;'),
+    'VFX_MESH_INSTANCED_VS forwards aInstScaleInfo.w without double-adding isOddFlip');
+  assert.ok(!VFX_MESH_INSTANCED_VS.includes('vFlipLocalV = aInstScaleInfo.w + isOddFlip'),
+    'VFX_MESH_INSTANCED_VS must not double-add isOddFlip');
+});
+
+test('mesh layer aspectY and aspectZ propagate into non-uniform mesh instance scale and setSceneTexture preserves depth viewport', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 32, maxAtlasParticles: 32 });
+  try {
+    const depthTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+    const sceneTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+    vfx.setDepthTexture(depthTex, { near: 0.2, far: 120, width: 960, height: 540, softFade: 0.45 });
+    // Calling setSceneTexture(null) without width/height (like prepareDistortionBeforeWorld) must keep 960x540
+    vfx.setSceneTexture(null);
+
+    vfx.registerEffect({
+      schemaVersion: 1,
+      id: 'mesh_aspect_viewport_test',
+      duration: 1.0,
+      loop: false,
+      layers: [{
+        name: 'billar_ring',
+        kind: 'mesh',
+        mesh: 'quad',
+        blend: 'additive',
+        cullMode: 'front',
+        uberMat: createUberMaterialSpec('glow', { cullMode: 'front' }),
+        life: 1.0,
+        size: 3.0,
+        aspectY: 0.56,
+        aspectZ: 0.97,
+        speed: 0,
+        bursts: [{ time: 0, count: 1 }],
+      }],
+    });
+    vfx.playEffect('mesh_aspect_viewport_test', { x: 0, y: 0, z: 0 });
+    vfx.update(0.05);
+
+    const meshNode = scene.children.find((c) => c.name?.startsWith('HGameVfxMeshInst_') && c.visible);
+    assert.ok(meshNode, 'instanced mesh batch spawned');
+    assert.equal(meshNode.material.side, THREE.DoubleSide, 'UBER_FX batch uses DoubleSide for shader-level per-instance cullMode');
+    const invVp = meshNode.material.uniforms.uInvViewport.value;
+    assert.ok(Math.abs(invVp.x - 1 / 960) < 1e-6 && Math.abs(invVp.y - 1 / 540) < 1e-6,
+      `expected uInvViewport to stay [1/960, 1/540] after setSceneTexture(null), got [${invVp.x}, ${invVp.y}]`);
+
+    const si = meshNode.geometry.getAttribute('aInstScaleInfo').array;
+    const ps = meshNode.geometry.getAttribute('aInstPosScale').array;
+    assert.ok(Math.abs(ps[3] - 3.0) < 0.05, `expected scaleX ~ 3.0, got ${ps[3]}`);
+    assert.ok(Math.abs(si[0] - 3.0 * 0.56) < 0.05, `expected scaleY ~ 1.68 via aspectY, got ${si[0]}`);
+    assert.ok(Math.abs(si[1] - 3.0 * 0.97) < 0.05, `expected scaleZ ~ 2.91 via aspectZ, got ${si[1]}`);
+
+    vfx.setSceneTexture(sceneTex, { width: 640, height: 360 });
+    assert.ok(Math.abs(invVp.x - 1 / 640) < 1e-6 && Math.abs(invVp.y - 1 / 360) < 1e-6,
+      'explicit dimensions on setSceneTexture still update uInvViewport');
+  } finally {
+    vfx.dispose();
+  }
+});
+
+test('convertUnityPrefab preserves non-uniform parent scale on mesh, ignores null CollisionModule planes, and skips burstless sub-emitters', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unity-deathice-guards-'));
+  try {
+    fs.writeFileSync(path.join(tmpDir, 'tex.png'), '');
+    fs.writeFileSync(path.join(tmpDir, 'tex.png.meta'), 'fileFormatVersion: 2\nguid: 11111111111111111111111111111111\n');
+    const matYaml = [
+      '%YAML 1.1',
+      '--- !u!21 &2100000',
+      'Material:',
+      '  m_Name: TestMat',
+      '  m_Shader: {fileID: 4800000, guid: 7f11fe28133f1a74594785107b98f2fe, type: 3}',
+      '  m_SavedProperties:',
+      '    m_TexEnvs:',
+      '    - _MainTex:',
+      '        m_Texture: {fileID: 2800000, guid: 11111111111111111111111111111111, type: 3}',
+      '    m_Floats:',
+      '    - _Blend: 1',
+      '    - _Cull: 1',
+    ].join('\n');
+    fs.writeFileSync(path.join(tmpDir, 'Test.mat'), matYaml);
+    fs.writeFileSync(path.join(tmpDir, 'Test.mat.meta'), 'fileFormatVersion: 2\nguid: 22222222222222222222222222222222\n');
+    const prefabYaml = [
+      '%YAML 1.1',
+      '--- !u!1 &100',
+      'GameObject:\n  m_Name: Root\n  m_IsActive: 1',
+      '--- !u!4 &101',
+      'Transform:\n  m_GameObject: {fileID: 100}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 0}',
+      '--- !u!1 &200',
+      'GameObject:\n  m_Name: NonUniformParent\n  m_IsActive: 1',
+      '--- !u!4 &201',
+      'Transform:\n  m_GameObject: {fileID: 200}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalScale: {x: 1, y: 0.5, z: 1}\n  m_Father: {fileID: 101}',
+      '--- !u!198 &202',
+      'ParticleSystem:\n  m_GameObject: {fileID: 200}\n  lengthInSec: 1\n  looping: 0\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1\n    startSpeed:\n      minMaxState: 0\n      scalar: 0\n    startSize:\n      minMaxState: 0\n      scalar: 2\n  EmissionModule:\n    enabled: 1\n    rateOverTime:\n      minMaxState: 0\n      scalar: 0\n    m_Bursts:\n    - time: 0\n      countCurve:\n        scalar: 1\n  ShapeModule:\n    enabled: 0\n  CollisionModule:\n    enabled: 1\n    type: 0\n    m_Planes:\n    - {fileID: 0}\n  SubModule:\n    enabled: 1\n    subEmitters:\n    - emitter: {fileID: 302}\n      type: 2\n      properties: 0',
+      '--- !u!199 &203',
+      'ParticleSystemRenderer:\n  m_GameObject: {fileID: 200}\n  m_Enabled: 1\n  m_RenderMode: 4\n  m_Mesh: {fileID: 10210, guid: 0000000000000000e000000000000000, type: 0}\n  m_Materials:\n  - {fileID: 2100000, guid: 22222222222222222222222222222222, type: 2}',
+      '--- !u!1 &300',
+      'GameObject:\n  m_Name: BurstlessSub\n  m_IsActive: 1',
+      '--- !u!4 &301',
+      'Transform:\n  m_GameObject: {fileID: 300}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 201}',
+      '--- !u!198 &302',
+      'ParticleSystem:\n  m_GameObject: {fileID: 300}\n  lengthInSec: 1\n  looping: 0\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1\n    startSpeed:\n      minMaxState: 0\n      scalar: 0\n    startSize:\n      minMaxState: 0\n      scalar: 1\n  EmissionModule:\n    enabled: 1\n    rateOverTime:\n      minMaxState: 0\n      scalar: 250\n    m_Bursts: []\n  ShapeModule:\n    enabled: 0',
+      '--- !u!199 &303',
+      'ParticleSystemRenderer:\n  m_GameObject: {fileID: 300}\n  m_Enabled: 1\n  m_RenderMode: 0\n  m_Materials:\n  - {fileID: 2100000, guid: 22222222222222222222222222222222, type: 2}',
+    ].join('\n');
+    const pPath = path.join(tmpDir, 'guards.prefab');
+    fs.writeFileSync(pPath, prefabYaml);
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath: pPath, id: 'guards_test' });
+    assert.equal(validateVfxRecipe(recipe).ok, true);
+    const layer = recipe.layers[0];
+    assert.equal(layer.cullMode, 'front', 'maps _Cull: 1 to front');
+    assert.ok(Math.abs(layer.size - 2.0) < 0.01 && Math.abs(layer.aspectY - 0.5) < 0.01,
+      `preserves non-uniform scale (size=${layer.size}, aspectY=${layer.aspectY})`);
+    assert.equal(layer.collision, undefined, 'skips CollisionModule type=0 with only {fileID: 0} planes');
+    assert.equal(layer.subEmitters, undefined, 'skips sub-emitter that has only rateOverTime and no bursts');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('convertUnityPrefab suppresses stale _ALPHATEST_ON on Transparent+Additive uber_fx and emits radialOffset when ShapeModule offsets position', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unity-icicle-guards-'));
+  try {
+    fs.writeFileSync(path.join(tmpDir, 'trail.png'), '');
+    fs.writeFileSync(path.join(tmpDir, 'trail.png.meta'), 'fileFormatVersion: 2\nguid: 33333333333333333333333333333333\n');
+    const matYaml = [
+      '%YAML 1.1',
+      '--- !u!21 &2100000',
+      'Material:',
+      '  m_Name: TrailAdd',
+      '  m_Shader: {fileID: 4800000, guid: 7f11fe28133f1a74594785107b98f2fe, type: 3}',
+      '  m_ValidKeywords:',
+      '  - _ALPHATEST_ON',
+      '  - _SURFACE_TYPE_TRANSPARENT',
+      '  m_SavedProperties:',
+      '    m_TexEnvs:',
+      '    - _MainTex:',
+      '        m_Texture: {fileID: 2800000, guid: 33333333333333333333333333333333, type: 3}',
+      '    m_Floats:',
+      '    - _Alpha_Clip_Threshold: 0.5',
+      '    - _Blend: 2',
+      '    - _Surface: 1',
+      '    - _Cull: 2',
+    ].join('\n');
+    fs.writeFileSync(path.join(tmpDir, 'TrailAdd.mat'), matYaml);
+    fs.writeFileSync(path.join(tmpDir, 'TrailAdd.mat.meta'), 'fileFormatVersion: 2\nguid: 44444444444444444444444444444444\n');
+    const prefabYaml = [
+      '%YAML 1.1',
+      '--- !u!1 &100',
+      'GameObject:\n  m_Name: Root\n  m_IsActive: 1',
+      '--- !u!4 &101',
+      'Transform:\n  m_GameObject: {fileID: 100}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 0}',
+      '--- !u!198 &102',
+      'ParticleSystem:\n  m_GameObject: {fileID: 100}\n  lengthInSec: 1\n  looping: 0\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1\n    startSpeed:\n      minMaxState: 0\n      scalar: 0\n    startSize:\n      minMaxState: 0\n      scalar: 1\n  EmissionModule:\n    enabled: 1\n    rateOverTime:\n      minMaxState: 0\n      scalar: 0\n    m_Bursts:\n    - time: 0\n      countCurve:\n        scalar: 1\n  ShapeModule:\n    enabled: 1\n    type: 10\n    radius:\n      value: 1\n    m_Position: {x: 0, y: 2, z: 0}\n  VelocityModule:\n    enabled: 1\n    radial:\n      minMaxState: 0\n      scalar: 10',
+      '--- !u!199 &103',
+      'ParticleSystemRenderer:\n  m_GameObject: {fileID: 100}\n  m_Enabled: 1\n  m_RenderMode: 0\n  m_Materials:\n  - {fileID: 2100000, guid: 44444444444444444444444444444444, type: 2}',
+    ].join('\n');
+    const pPath = path.join(tmpDir, 'radial_trail.prefab');
+    fs.writeFileSync(pPath, prefabYaml);
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath: pPath, id: 'radial_trail_test' });
+    assert.equal(validateVfxRecipe(recipe).ok, true);
+    const layer = recipe.layers[0];
+    assert.deepEqual(layer.offset, [0, 2, 0], 'preserves ShapeModule.m_Position in layer.offset');
+    assert.deepEqual(layer.velocity.radialOffset, [0, -2, 0], 'cancels ShapeModule.m_Position in radialOrigin');
+    assert.equal(layer.uberMat.alphaTest, false, 'clears alphaTest on Transparent+Additive uber_fx');
+    assert.equal(layer.uberMat.keywords.includes('_ALPHATEST_ON'), false, 'strips stale _ALPHATEST_ON keyword');
+
+    const row = new Float32Array(UBER_MAT_LUT_WIDTH * 4);
+    packUberMaterialRow(row, 0, layer.uberMat, null);
+    assert.equal((Math.round(row[1]) & UBER_FLAG_ALPHA_TEST), 0, 'LUT flags omit UBER_FLAG_ALPHA_TEST');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('mesh layer velCurve Euler tracks ribbon follower with sub-steps and keeps additive head alpha nonzero', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE, trailNodes: 24 });
+  const boxGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+  try {
+    vfx.registerMesh('test_box', boxGeo);
+    const recipe = defineVfxRecipe({
+      id: 'mesh_velcurve_trail',
+      duration: 1.0,
+      layers: [{
+        kind: 'mesh',
+        renderMode: 'mesh',
+        bursts: [{ time: 0, count: 1 }],
+        life: 0.5,
+        size: 0.5,
+        offset: [0, 2, 0],
+        shape: { type: 'circle', radius: 0.01 },
+        velocity: { radial: 8, radialOffset: [0, -2, 0] },
+        velCurve: [[0, 0], [0.2, -1], [1, -1]],
+        mesh: 'test_box',
+        trail: {
+          mode: 'particles',
+          lifetime: 0.2,
+          lifetimeMode: 'fraction',
+          blend: 'additive',
+          width: 0.2,
+          alpha: 0.25,
+          sizeAffectsWidth: false,
+        },
+      }],
+    });
+    vfx.registerEffect(recipe);
+    vfx.playEffect('mesh_velcurve_trail', { x: 0, y: 0, z: 0 });
+    for (let i = 0; i < 7; i++) vfx.update(1 / 30);
+
+    let ribbonMesh = null;
+    scene.traverse((obj) => {
+      if (obj.name === 'HGameVfxRibbonTrails') ribbonMesh = obj;
+    });
+    assert.ok(ribbonMesh, 'expected HGameVfxRibbonTrails mesh in scene');
+    const aA = ribbonMesh.geometry.getAttribute('aSegA').array;
+    const aB = ribbonMesh.geometry.getAttribute('aSegB').array;
+    const aMeta = ribbonMesh.geometry.getAttribute('aSegMeta').array;
+
+    const headA = aMeta[2];
+    assert.ok(headA > 0.2, `expected additive trail head alpha > 0.2 (no headFade(0)=0), got ${headA}`);
+
+    let dySum = 0;
+    let activeSegs = 0;
+    for (let s = 0; s < 23; s++) {
+      const i4 = s * 4;
+      if (aMeta[i4 + 1] <= 0) break;
+      activeSegs++;
+      dySum += aB[i4 + 1] - aA[i4 + 1];
+    }
+    assert.ok(activeSegs >= 3, `expected >= 3 sub-stepped ribbon segments along fast fall, got ${activeSegs}`);
+    assert.ok(dySum > 0.3, `expected negative velCurve + radialOffset to drop particle downward so tail is above head (dySum=${dySum})`);
+  } finally {
+    boxGeo.dispose();
+    vfx.dispose();
+  }
+});
+
+test('mesh dynamicRadial converges particles into radialOffset origin without underground overshoot and spawns death subEmitters at ground', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE });
+  const boxGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+  try {
+    vfx.registerMesh('test_icicle', boxGeo);
+    const recipe = defineVfxRecipe({
+      id: 'icicle_converge_test',
+      duration: 1.0,
+      layers: [{
+        kind: 'mesh',
+        renderMode: 'mesh',
+        bursts: [{ time: 0, count: 1 }],
+        life: 0.5,
+        size: 0.2,
+        offset: [0, 2.07, 0],
+        shape: { type: 'circle', radius: 1.5, shell: true },
+        velocity: { linear: [0, 5, 0], radial: 10, radialOffset: [0, -2, 0] },
+        velCurve: [[0.41, 0], [0.548, -1]],
+        mesh: 'test_icicle',
+        subEmitters: [{
+          trigger: 'death',
+          effect: {
+            schemaVersion: 1,
+            id: 'impact_ring',
+            loop: false,
+            duration: 0.5,
+            layers: [{
+              kind: 'mesh',
+              renderMode: 'mesh',
+              bursts: [{ time: 0, count: 1 }],
+              life: 0.5,
+              speed: 0,
+              size: 1.0,
+              mesh: 'test_icicle',
+            }],
+          },
+        }],
+      }],
+    });
+    vfx.registerEffect(recipe);
+    vfx.playEffect('icicle_converge_test', { x: 0, y: 0, z: 0 });
+    const pos = new Float32Array(3);
+    const vel = new Float32Array(3);
+    for (let i = 0; i < 14; i++) vfx.update(1 / 30);
+    vfx.meshVfx.readSlotMotion(0, pos, vel);
+    assert.ok(pos[1] > -0.25 && pos[1] < 0.25, `expected dynamicRadial to settle near ground origin y=0.07, got y=${pos[1]}`);
+    assert.ok(Math.hypot(pos[0], pos[2]) < 0.3, `expected dynamicRadial to converge toward XZ center, got (${pos[0]}, ${pos[2]})`);
+    // Step past life=0.5s so death subEmitter spawns at ground impact position
+    for (let i = 0; i < 3; i++) vfx.update(1 / 30);
+    const impactPos = new Float32Array(3);
+    vfx.meshVfx.readSlotMotion(0, impactPos, vel);
+    assert.ok(impactPos[1] > -0.25 && impactPos[1] < 0.25, `expected death subEmitter at ground y ~ 0, got y=${impactPos[1]}`);
+  } finally {
+    boxGeo.dispose();
+    vfx.dispose();
+  }
+});
+
+test('atlas shaders add pivot offset positively, use subtle minBill floor, clamp bloom fireflies, and subdivide Unity sRGB gradients', async () => {
+  const { ATLAS_PARTICLE_VERTEX_GLSL, ATLAS_PARTICLE_WEBGL2_2D_VS } = await import('../assets/runtime/vfx/vfx-atlas-particles.js');
+  const { BLOOM_PREFILTER_FRAGMENT_GLSL3 } = await import('../assets/runtime/integrations/post3d/shaders.js');
+  const { convertUnityPrefab } = await import('../scripts/import-unity-vfx.mjs');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+
+  assert.match(ATLAS_PARTICLE_VERTEX_GLSL, /vec2 posLocal = position\.xy \+ pivotPair;/, '3D billboard/vertical/horizontal particles offset +pivot matching Unity ParticleSystemRenderer.pivot');
+  assert.match(ATLAS_PARTICLE_VERTEX_GLSL, /float stretchX = \(posLocal\.x - pivotPair\.x\) - 0\.5 \+ pivotPair\.y;/, 'stretched mode preserves original stretch pivot convention');
+  assert.match(ATLAS_PARTICLE_VERTEX_GLSL, /abs\(mvCenter\.z\) \* 0\.0010/, 'minBill keeps tiny micro-sparks from blowing up in world/bloom size');
+  assert.match(ATLAS_PARTICLE_WEBGL2_2D_VS, /vec2 posLocal = aQuadPos \+ pivotPair;/, '2D atlas particles offset +pivot consistently');
+  assert.match(BLOOM_PREFILTER_FRAGMENT_GLSL3, /if \(pk > 4\.0\) c \*= 4\.0 \/ pk;/, 'bloom prefilter clamps extreme HDR spark fireflies');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-srgb-grad-'));
+  try {
+    const prefabPath = path.join(tmpDir, 'GradFx.prefab');
+    fs.writeFileSync(prefabPath, `%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &100
+GameObject:
+  m_Name: SrgbSparks
+--- !u!4 &200
+Transform:
+  m_GameObject: {fileID: 100}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 0}
+--- !u!198 &300
+ParticleSystem:
+  m_GameObject: {fileID: 100}
+  lengthInSec: 1
+  InitialModule:
+    enabled: 1
+    startLifetime:
+      scalar: 1
+    startSize:
+      scalar: 0.05
+    startSpeed:
+      scalar: 0
+    startColor:
+      minMaxState: 0
+      maxColor: {r: 1, g: 1, b: 1, a: 1}
+  EmissionModule:
+    enabled: 1
+    rateOverTime:
+      scalar: 10
+  ColorModule:
+    enabled: 1
+    gradient:
+      maxGradient:
+        key0: {r: 1, g: 0.6, b: 0, a: 1}
+        key1: {r: 0, g: 0, b: 0.2, a: 1}
+        ctime0: 0
+        ctime1: 65535
+        atime0: 0
+        atime1: 65535
+        m_ColorSpace: 0
+        m_NumColorKeys: 2
+        m_NumAlphaKeys: 2
+--- !u!199 &400
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 100}
+  m_RenderMode: 0
+`);
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'srgb_grad_fx' });
+    const curve = recipe.layers[0].colorCurve;
+    assert.ok(curve.length >= 4, `wide Gamma gradient should subdivide intermediate sRGB->Linear stops, got ${curve.length}`);
+    const mid = curve.find(([t]) => Math.abs(t - 0.6) < 0.05);
+    assert.ok(mid, 'expected intermediate stop near t=0.6');
+    // sRGB lerp(1 -> 0, 0.6) = 0.4 -> sRGBToLinear(0.4) ~ 0.133 (not linear interpolation 0.4!)
+    assert.ok(mid[1][0] < 0.2, `expected gamma-interpolated linear R ~ 0.133 at t=0.6, got ${mid[1][0]}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('convertUnityPrefab imports TwoConstants gravityModifier ranges and PBR FX inverts orm.g roughness', async () => {
+  const { VFX_UBER_FRAGMENT_GLSL } = await import('../assets/runtime/vfx/vfx-shader-chunks.js');
+  const { convertUnityPrefab } = await import('../scripts/import-unity-vfx.mjs');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+
+  assert.match(VFX_UBER_FRAGMENT_GLSL, /clamp\(1\.0 - orm\.g, 0\.0, 1\.0\) \* pbrScalars\.x/, 'PBR FX ORM.g encodes Roughness (One Minus -> Smoothness)');
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-grav-range-'));
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE });
+  const boxGeo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+  try {
+    const prefabPath = path.join(tmpDir, 'GravRangeFx.prefab');
+    fs.writeFileSync(prefabPath, `%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &100
+GameObject:
+  m_Name: FallingDebris
+--- !u!4 &200
+Transform:
+  m_GameObject: {fileID: 100}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 0}
+--- !u!198 &300
+ParticleSystem:
+  m_GameObject: {fileID: 100}
+  lengthInSec: 1
+  InitialModule:
+    enabled: 1
+    startLifetime:
+      scalar: 2
+    startSize:
+      scalar: 0.5
+    startSpeed:
+      scalar: 0
+    gravityModifier:
+      minMaxState: 3
+      scalar: 1.5
+      minScalar: 2.5
+    startColor:
+      minMaxState: 0
+      maxColor: {r: 1, g: 1, b: 1, a: 1}
+  EmissionModule:
+    enabled: 1
+    rateOverTime:
+      scalar: 0
+    m_BurstCount: 1
+    m_Bursts:
+    - serializedVersion: 2
+      time: 0
+      countCurve:
+        minMaxState: 0
+        scalar: 1
+      cycleCount: 1
+      repeatInterval: 0.01
+--- !u!199 &400
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 100}
+  m_RenderMode: 4
+  m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+`);
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'grav_range_fx' });
+    assert.deepEqual(recipe.layers[0].gravity, [14.715, 24.525], 'TwoConstants gravityModifier converts to [min, max] m/s^2');
+    vfx.registerMesh('cube', boxGeo);
+    vfx.registerEffect(recipe);
+    vfx.playEffect('grav_range_fx', { x: 0, y: 10, z: 0 });
+    for (let i = 0; i < 6; i++) vfx.update(1 / 30);
+    assert.ok(Array.isArray(recipe.layers[0].bursts) && recipe.layers[0].bursts.length === 1, 'expected burst emission in converted layer');
+    const pos = new Float32Array(3);
+    const vel = new Float32Array(3);
+    vfx.meshVfx.readSlotMotion(0, pos, vel);
+    assert.ok(pos[1] < 9.9 && pos[1] > 0, `mesh with array gravity should fall downward, got y=${pos[1]}`);
+    assert.ok(vel[1] < -2.0, `mesh downward velocity should accumulate gravity, got vy=${vel[1]}`);
+  } finally {
+    boxGeo.dispose();
+    vfx.dispose();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('createGpuParticleSystem supports lazy init, curl turbulence, attractor/vortex, ground bounce, idle sleep, and recipe routing', () => {
+  const gpu = createGpuParticleSystem({ mode: 'headless', maxParticles: 64 });
+  assert.equal(gpu.getStats().initialized, false, 'GPU particle buffers stay unallocated until first emit');
+  assert.equal(gpu.getStats().activeEstimate, 0);
+
+  gpu.setField({
+    gravity: [0, -10, 0],
+    turbulence: { strength: 4.5, frequency: 0.8, scroll: 1.0 },
+    attractor: { x: 4, y: 2, z: 0, strength: 18, vortexStrength: 6, killRadius: 0.35 },
+    ground: { enabled: true, y: 0, friction: 0.25 },
+    maxSpeed: 20,
+  });
+
+  const idx = gpu.emit({ x: 0, y: 0.2, z: 0, vx: 1, vy: -4, vz: 0, duration: 0.5, bounce: 0.6, drag: 0.5 });
+  assert.equal(gpu.getStats().initialized, true);
+  assert.equal(gpu.getStats().activeEstimate, 1);
+
+  gpu.update(0.1);
+  const s = gpu.readParticleSample(idx);
+  assert.equal(s.active, true);
+  assert.ok(s.y >= 0, `ground collision clamps particle above groundY=0 (got y=${s.y})`);
+  assert.ok(s.vy > 0, `ground collision reflects downward velocity upward (got vy=${s.vy})`);
+  assert.ok(s.vx > 1.0, `attractor pulls particle toward x=4 (got vx=${s.vx})`);
+
+  gpu.update(0.5);
+  assert.equal(gpu.getStats().activeEstimate, 0, 'expired GPU particles enter idle sleep');
+
+  // Ring-buffer wrap + Canvas2D fallback rendering
+  gpu.reset();
+  gpu.burst({ count: 40, x: 0, y: 3, z: 0, speedMin: 1, speedMax: 5, durationMin: 0.2, durationMax: 0.4 });
+  gpu.burst({ count: 40, x: 0, y: 3, z: 0, speedMin: 1, speedMax: 5, durationMin: 0.2, durationMax: 0.4 });
+  assert.equal(gpu.getStats().totalEmitted, 80);
+  const drawOps = [];
+  const mockCtx = {
+    save() {},
+    restore() {},
+    beginPath() {},
+    arc() { drawOps.push('arc'); },
+    fill() { drawOps.push('fill'); },
+    globalCompositeOperation: 'source-over',
+    globalAlpha: 1,
+    fillStyle: '#fff',
+  };
+  gpu.renderCanvas2D(mockCtx, { x: 0, y: 0, zoom: 1 }, 640, 360);
+  assert.ok(drawOps.length > 0, 'Canvas2D fallback renders active GPU particles');
+  gpu.dispose();
+
+  // .vfx.json simulation: 'gpu' routing via createVfxSystem
+  const vfx = createVfxSystem({ mode: 'headless', maxParticles: 64, maxGpuParticles: 256 });
+  vfx.registerEffect({
+    schemaVersion: 1,
+    id: 'gpu_swirl_test',
+    duration: 0.6,
+    layers: [{
+      kind: 'particle',
+      simulation: 'gpu',
+      blend: 'additive',
+      size: 0.4,
+      life: 0.4,
+      turbulence: { strength: 3.0, frequency: 0.7 },
+      attractor: { offset: [0, 2, 0], strength: 10 },
+      bursts: [{ time: 0, count: 16 }],
+    }],
+  });
+  vfx.playEffect('gpu_swirl_test', { x: 1, y: 1, z: 0 });
+  vfx.update(0.05);
+  assert.equal(vfx.getStats().gpuParticles.activeEstimate, 16);
+  for (let k = 0; k < 6; k++) vfx.update(0.1);
+  assert.equal(vfx.getStats().gpuParticles.activeEstimate, 0);
+  vfx.dispose();
+});
+
+test('stateless, atlas, and shuriken pools retire idle meshes, bound dirty ranges, and swap-remove active slots', () => {
+  const scene = new THREE.Scene();
+  const stateless = createStatelessParticlePool({ mode: '3d', THREE, scene, maxParticles: 128 });
+  stateless.burst({ count: 32, durationMin: 0.1, durationMax: 0.2 });
+  stateless.update(0.05);
+  const statelessMesh = scene.children.find((c) => c.name === 'HGameVfxParticlesAdditive');
+  assert.ok(statelessMesh && statelessMesh.visible === true && statelessMesh.geometry.instanceCount === 32);
+  stateless.update(0.3);
+  assert.equal(statelessMesh.visible, false, 'stateless pool hides mesh when all particles expire');
+  assert.equal(statelessMesh.geometry.instanceCount, 0);
+  stateless.dispose();
+
+  const atlas = createAtlasParticlePool({ mode: '3d', THREE, scene, maxParticles: 128 });
+  const s0 = atlas.emit({ x: 0, y: 0, z: 0, duration: 0.4 });
+  atlas.emit({ x: 1, y: 0, z: 0, duration: 0.4 });
+  atlas.emit({ x: 2, y: 0, z: 0, duration: 0.4 });
+  const s3 = atlas.emit({ x: 3, y: 0, z: 0, duration: 0.4 });
+  atlas.update(0.02);
+  const atlasMesh = scene.children.find((c) => c.name === 'HGameVfxAtlasNormal');
+  assert.ok(atlasMesh && atlasMesh.visible === true);
+  atlas.updateSlot('alpha', s0, 0, 1, 0, 0, 0, 0);
+  atlas.updateSlot('alpha', s3, 3, 1, 0, 0, 0, 0);
+  atlas.update(0.02);
+  assert.equal(atlas.getStats().normalCursor, 4);
+  atlas.update(0.5);
+  assert.equal(atlasMesh.visible, false, 'atlas pool hides mesh when all particles expire');
+  assert.equal(atlasMesh.geometry.instanceCount, 0);
+  atlas.dispose();
+
+  const shuriken = createShurikenKernel({ THREE, scene });
+  const layer = shuriken.registerLayer({ name: 'compact_test', maxParticles: 64, life: 0.25, size: 1 });
+  shuriken.emitParticle(layer, { x: 0, y: 0, z: 0, duration: 0.1 });
+  shuriken.emitParticle(layer, { x: 1, y: 0, z: 0, duration: 0.3 });
+  shuriken.emitParticle(layer, { x: 2, y: 0, z: 0, duration: 0.1 });
+  shuriken.update(0.15);
+  assert.equal(shuriken.getStats().activeParticles, 1, 'swap-remove retains exactly 1 surviving particle');
+  shuriken.update(0.2);
+  assert.equal(shuriken.getStats().activeParticles, 0);
+  assert.equal(layer.mesh.visible, false);
+  shuriken.dispose();
+});
+
+test('mobile/minigame defaults, zero idle draw calls across createVfxSystem, and DOM-free wx canvas', () => {
+  const prevWx = globalThis.wx;
+  const prevTt = globalThis.tt;
+  try {
+    delete globalThis.wx;
+    delete globalThis.tt;
+    assert.equal(isMobileOrMiniGameEnv(), false);
+
+    const drawCalls = [];
+    const makeMockCtx = () => ({
+      fillStyle: '#000',
+      strokeStyle: '#000',
+      font: '',
+      textAlign: 'left',
+      textBaseline: 'top',
+      lineWidth: 1,
+      globalAlpha: 1,
+      createRadialGradient: () => ({ addColorStop() {} }),
+      createLinearGradient: () => ({ addColorStop() {} }),
+      fillRect() { drawCalls.push('fillRect'); },
+      strokeRect() {},
+      clearRect() {},
+      beginPath() {},
+      closePath() {},
+      arc() {},
+      ellipse() {},
+      moveTo() {},
+      lineTo() {},
+      fill() { drawCalls.push('fill'); },
+      stroke() {},
+      fillText() { drawCalls.push('fillText'); },
+      strokeText() {},
+      save() {},
+      restore() {},
+      translate() {},
+      rotate() {},
+      scale() {},
+    });
+    const fakeCanvases = [];
+    globalThis.wx = {
+      createCanvas() {
+        const c = { width: 0, height: 0, getContext: () => makeMockCtx() };
+        fakeCanvases.push(c);
+        return c;
+      },
+    };
+    assert.equal(isMobileOrMiniGameEnv(), true, 'detects wx mini-game environment');
+
+    const offscreen = createOffscreen2dCanvas(128, 64);
+    assert.equal(offscreen.width, 128);
+    assert.equal(offscreen.height, 64);
+    assert.equal(fakeCanvases.length, 1);
+
+    const glyphAtlas = bakeGlyphAtlasCanvas();
+    assert.ok(glyphAtlas && glyphAtlas.width > 0 && glyphAtlas.height > 0);
+    const vfxAtlas = createProceduralVfxAtlas();
+    assert.equal(vfxAtlas.canvas.width, 512);
+    assert.equal(vfxAtlas.canvas.height, 512);
+    assert.ok(drawCalls.length > 0, 'wx mock canvas executes 2D atlas baking without DOM');
+
+    delete globalThis.wx;
+    globalThis.tt = { createCanvas: () => ({ width: 0, height: 0, getContext: () => makeMockCtx() }) };
+    assert.equal(isMobileOrMiniGameEnv(), true, 'detects tt mini-game environment');
+  } finally {
+    if (prevWx === undefined) delete globalThis.wx;
+    else globalThis.wx = prevWx;
+    if (prevTt === undefined) delete globalThis.tt;
+    else globalThis.tt = prevTt;
+  }
+
+  // Mobile GPU particle defaults + quality tier scaling + chunked window compaction
+  const mobileGpu = createGpuParticleSystem({ mode: 'headless', mobile: true });
+  assert.equal(mobileGpu.getStats().capacity, 16384);
+  assert.equal(mobileGpu.getStats().precision, 'fp16');
+  mobileGpu.setQualityTier('low');
+  mobileGpu.burst({ count: 10, duration: 0.2 });
+  assert.equal(mobileGpu.getStats().totalEmitted, 5, 'low quality tier halves burst count');
+  mobileGpu.setQualityTier('ultra');
+  mobileGpu.burst({ count: 10, duration: 0.2 });
+  assert.equal(mobileGpu.getStats().totalEmitted, 15, 'ultra quality tier restores full burst count');
+  mobileGpu.dispose();
+
+  const windowedGpu = createGpuParticleSystem({ mode: 'headless', maxParticles: 512, mobile: true });
+  windowedGpu.burst({ count: 256, duration: 0.05 }); // fills chunk 0 (slots 0..255)
+  windowedGpu.emit({ x: 1, y: 2, z: 3, duration: 0.8 }); // lands in chunk 1 (slot 256)
+  assert.equal(windowedGpu.getStats().activeBaseSlot, 0);
+  assert.equal(windowedGpu.getStats().activeSpanCount, 257);
+  windowedGpu.update(0.1); // chunk 0 expired, chunk 1 still alive (tail-clamped before wrap)
+  assert.equal(windowedGpu.getStats().activeBaseSlot, 256, 'compacts active window to live chunk 1');
+  assert.equal(windowedGpu.getStats().activeSpanCount, 1);
+  windowedGpu.burst({ count: 300, duration: 0.05 }); // wraps cursor past 512 into chunk 0
+  windowedGpu.update(0.1); // wrapped short burst expires while chunk 1 remains alive
+  assert.equal(windowedGpu.getStats().activeBaseSlot, 256);
+  assert.equal(windowedGpu.getStats().activeSpanCount, 256, 'clamps to live chunk 1 after ring wrap');
+  windowedGpu.update(0.8); // chunk 1 expired
+  assert.equal(windowedGpu.getStats().activeSpanCount, 0);
+  windowedGpu.dispose();
+
+  // Full createVfxSystem 3D zero idle DrawCalls check
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({
+    mode: '3d',
+    THREE,
+    sceneOrAdapter: scene,
+    maxParticles: 512,
+    atlasMaxParticles: 128,
+    maxSlashArcs: 8,
+    maxLightningBolts: 8,
+    maxTrails: 4,
+    maxTelegraphs: 8,
+    maxGlyphs: 64,
+  });
+
+  const collectMeshes = () => {
+    const meshes = [];
+    scene.traverse((obj) => {
+      if (obj && obj.isMesh) meshes.push(obj);
+    });
+    return meshes;
+  };
+  const initialMeshes = collectMeshes();
+  assert.ok(initialMeshes.length >= 7, `expected subsystem meshes in scene, got ${initialMeshes.length}`);
+  for (const m of initialMeshes) {
+    assert.equal(m.visible, false, `mesh ${m.name} must start hidden with 0 idle draw calls`);
+  }
+
+  vfx.particles.burst({ count: 4, durationMin: 0.15, durationMax: 0.15 });
+  vfx.gpuParticles.emit({ x: 0, y: 0, z: 0, duration: 0.15 });
+  vfx.atlasParticles.emit({ x: 0, y: 0, z: 0, duration: 0.15 });
+  vfx.slashArc({ x: 0, y: 0, z: 0, duration: 0.15 });
+  vfx.lightningBolt({ x0: 0, y0: 0, z0: 0, x1: 1, y1: 0, z1: 0, duration: 0.15 });
+  const tid = vfx.allocTrail({ color: 0x38bdf8, width: 0.25 });
+  vfx.pushTrailPoint(tid, 0, 0, 0);
+  vfx.pushTrailPoint(tid, 1, 0, 0);
+  vfx.spawnTelegraph({ x: 0, z: 0, radius: 1.5, duration: 0.15 });
+  vfx.popupNumber({ value: 42, x: 0, y: 1, z: 0, duration: 0.15 });
+  vfx.screenPulse({ color: 0xffffff, duration: 0.15 });
+  vfx.update(0.05);
+
+  const visibleDuringActive = collectMeshes().filter((m) => m.visible).map((m) => m.name);
+  assert.ok(visibleDuringActive.includes('HGameVfxSlashArcs'), 'slash mesh becomes visible when active');
+  assert.ok(visibleDuringActive.includes('HGameVfxLightningBolts'), 'bolt mesh becomes visible when active');
+  assert.ok(visibleDuringActive.includes('HGameVfxRibbonTrails'), 'ribbon mesh becomes visible when active');
+  assert.ok(visibleDuringActive.includes('HGameVfxTelegraphs'), 'telegraph mesh becomes visible when active');
+  assert.ok(visibleDuringActive.includes('HGameVfxFloatingText'), 'floating text mesh becomes visible when active');
+  assert.ok(visibleDuringActive.includes('HGameVfxScreenFeedback'), 'screen pulse mesh becomes visible when active');
+
+  vfx.freeTrail(tid);
+  for (let i = 0; i < 4; i++) vfx.update(0.08);
+  for (const m of collectMeshes()) {
+    assert.equal(m.visible, false, `mesh ${m.name} must auto-hide after effects expire`);
+  }
+
+  vfx.slashArc({ x: 0, y: 0, z: 0, duration: 0.5 });
+  vfx.screenPulse({ color: 0xffffff, duration: 0.5 });
+  vfx.update(0.02);
+  vfx.reset();
+  for (const m of collectMeshes()) {
+    assert.equal(m.visible, false, `mesh ${m.name} must hide immediately on reset()`);
+  }
+  vfx.dispose();
+});
+

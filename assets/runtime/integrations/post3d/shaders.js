@@ -640,6 +640,8 @@ float karisLuma(vec3 c) {
 
 vec3 sampleKaris(vec2 uv) {
   vec3 c = max(vec3(0.0), texture(tSource, uv).rgb);
+  float pk = max(c.r, max(c.g, c.b));
+  if (pk > 4.0) c *= 4.0 / pk;
   return c;
 }
 

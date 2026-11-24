@@ -27,6 +27,7 @@ export {
   analyzeAudioBuffer,
   normalizeVariantSet,
   SYNTH_PRESETS,
+  getComboStepPitchFactor,
   synthesizeSfxPcm,
   createSynthSfx,
   BGM_MOODS,

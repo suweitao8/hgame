@@ -1,6 +1,6 @@
 import { Component, Entity, Scene, HGame, createGameApplication, createStateMachine, createVersionedStore,
   action, condition, createBehaviorTree, sequence, parallel, wait, BT_STATUS, createVfxSystem,
-  createStatelessParticlePool, createTrailsSystem, createTelegraphSystem, createFloatingTextPool,
+  createStatelessParticlePool, createGpuParticleSystem, createTrailsSystem, createTelegraphSystem, createFloatingTextPool,
   createScreenFeedbackPass, createPanelStack, createUiDirector, createUiSurfaceSpring, createUiMotionGroup } from '../../types/index.js';
 import type { GameApplication } from '../../types/core/application.js';
 import { createStateMachine as createMachineByPath } from '../../types/ai/fsm.js';
@@ -107,9 +107,12 @@ app.setTimeScale('fast');
 // @ts-expect-error component callbacks use the application lifecycle signature
 component.fixedUpdate('0.016', app);
 
-const effects = createVfxSystem({ mode: 'headless', maxParticles: 200, maxFloatingGlyphs: 100 });
+const effects = createVfxSystem({ mode: 'headless', maxParticles: 200, maxGpuParticles: 512, maxFloatingGlyphs: 100 });
 effects.emitHitImpact({ damage: 3, hitstopSec: 0.04, shakeIntensity: 0.5 });
+effects.emitGpuParticles({ count: 8, speedMin: 1, speedMax: 4 });
+effects.setGpuField({ turbulence: { strength: 2.0 } });
 createStatelessParticlePool({ mode: 'headless', THREE: {}, scene: {} });
+createGpuParticleSystem({ mode: 'headless', THREE: {}, scene: {} });
 createTrailsSystem({ mode: 'headless', THREE: {}, scene: {} });
 createTelegraphSystem({ mode: 'headless', THREE: {}, scene: {} });
 createFloatingTextPool({ mode: 'headless', THREE: {}, scene: {} });

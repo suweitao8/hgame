@@ -147,9 +147,16 @@ export function createScreenFeedbackPass({
     });
     mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
+    mesh.visible = false;
     mesh.renderOrder = VFX_RENDER_ORDERS.SCREEN;
     mesh.name = 'HGameVfxScreenFeedback';
     scene.add(mesh);
+  }
+
+  function syncVisibility() {
+    if (mesh) {
+      mesh.visible = lowHpIntensity > 0.001 || speedLinesIntensity > 0.001 || pulseStrength > 0.001;
+    }
   }
 
   function screenPulse({
@@ -169,14 +176,17 @@ export function createScreenFeedbackPass({
       unpackRgb24Into(pulseRgb, scratchRgb);
       mat.uniforms.uPulseColor.value.setRGB(scratchRgb[0], scratchRgb[1], scratchRgb[2]);
     }
+    syncVisibility();
   }
 
   function setLowHpIntensity(intensity) {
     lowHpIntensity = Math.max(0, Math.min(1, intensity));
+    syncVisibility();
   }
 
   function setSpeedLines(intensity) {
     speedLinesIntensity = Math.max(0, Math.min(1, intensity));
+    syncVisibility();
   }
 
   function update(visualDt) {
@@ -196,6 +206,7 @@ export function createScreenFeedbackPass({
       const prog = pulseDur > 0 ? Math.min(1, pulseAge / pulseDur) : 0;
       mat.uniforms.uPulse.value.set(pulseNdcX, pulseNdcY, prog, pulseStrength);
     }
+    syncVisibility();
   }
 
   function renderCanvas2D(ctx, viewWidth, viewHeight) {
@@ -229,6 +240,7 @@ export function createScreenFeedbackPass({
     speedLinesIntensity = 0;
     pulseStrength = 0;
     pulseAge = 0;
+    if (mesh) mesh.visible = false;
   }
 
   function dispose() {

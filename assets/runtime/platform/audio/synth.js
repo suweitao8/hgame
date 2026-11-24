@@ -1,4 +1,4 @@
-// Zero-KB procedural WebAudio SFX synthesizer with 10 built-in game-feel presets.
+// Zero-KB procedural WebAudio SFX synthesizer with 15 built-in game-feel presets.
 
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 
@@ -147,7 +147,99 @@ export const SYNTH_PRESETS = Object.freeze({
     filterEndHz: 4000,
     attack: 0.004,
   }),
+  comboStep: Object.freeze({
+    wave: 'triangle',
+    freqStart: 523.25,
+    freqEnd: 783.99,
+    steps: [523.25, 659.25],
+    duration: 0.11,
+    gain: 0.44,
+    noiseMix: 0.02,
+    filterType: 'lowpass',
+    filterStartHz: 6500,
+    filterEndHz: 5200,
+    attack: 0.002,
+  }),
+  textBlip: Object.freeze({
+    wave: 'triangle',
+    freqStart: 620,
+    freqEnd: 540,
+    duration: 0.042,
+    gain: 0.34,
+    noiseMix: 0.04,
+    filterType: 'lowpass',
+    filterStartHz: 4200,
+    filterEndHz: 3200,
+    attack: 0.002,
+  }),
+  microTick: Object.freeze({
+    wave: 'sine',
+    freqStart: 1420,
+    freqEnd: 960,
+    duration: 0.022,
+    gain: 0.3,
+    noiseMix: 0.12,
+    filterType: 'highpass',
+    filterStartHz: 700,
+    filterEndHz: 700,
+    attack: 0.001,
+  }),
+  heartbeat: Object.freeze({
+    wave: 'sine',
+    freqStart: 72,
+    freqEnd: 46,
+    steps: [72, 54, 68, 48],
+    duration: 0.42,
+    gain: 0.72,
+    noiseMix: 0.04,
+    filterType: 'lowpass',
+    filterStartHz: 240,
+    filterEndHz: 120,
+    attack: 0.01,
+  }),
+  retroOneUp: Object.freeze({
+    wave: 'square',
+    freqStart: 329.63,
+    freqEnd: 783.99,
+    steps: [329.63, 392.0, 659.25, 523.25, 587.33, 783.99],
+    duration: 0.42,
+    gain: 0.36,
+    noiseMix: 0,
+    filterType: 'lowpass',
+    filterStartHz: 5200,
+    filterEndHz: 5200,
+    attack: 0.002,
+  }),
+  retroClear: Object.freeze({
+    wave: 'square',
+    freqStart: 523.25,
+    freqEnd: 1046.5,
+    steps: [523.25, 659.25, 783.99, 1046.5],
+    duration: 0.48,
+    gain: 0.38,
+    noiseMix: 0,
+    filterType: 'lowpass',
+    filterStartHz: 5600,
+    filterEndHz: 5600,
+    attack: 0.003,
+  }),
 });
+
+/**
+ * Computes a chromatic pitch multiplier for combo chains (`step = 0..16`, 1 semitone per step).
+ * @param {number} [step=0]
+ * @returns {number}
+ */
+export function getComboStepPitchFactor(step = 0) {
+  const n = clamp(Math.round(Number(step) || 0), 0, 16);
+  return Math.pow(2, n / 12);
+}
+
+function getVoiceTonePitchFactor(voiceTone) {
+  if (voiceTone === 'high') return 1.35;
+  if (voiceTone === 'low') return 0.72;
+  return 1;
+}
 
 export function resolveSynthPreset(presetOrConfig) {
   if (typeof presetOrConfig === 'string') {
@@ -177,12 +269,14 @@ function sampleWave(wave, phase) {
 /**
  * Pure CPU PCM synthesis for deterministic testing or offline AudioBuffer creation.
  * @param {string|object} presetOrConfig
- * @param {{ sampleRate?: number, pitchFactor?: number, volume?: number, seed?: number, rawUncalibrated?: boolean }} [options]
+ * @param {{ sampleRate?: number, pitchFactor?: number, step?: number | null, voiceTone?: 'high' | 'mid' | 'low', volume?: number, seed?: number, rawUncalibrated?: boolean }} [options]
  * @returns {Float32Array}
  */
 export function synthesizeSfxPcm(presetOrConfig, {
   sampleRate = 44100,
   pitchFactor = 1,
+  step = null,
+  voiceTone = 'mid',
   volume = 1,
   seed = 0x13579bdf,
   rawUncalibrated = false,
@@ -193,7 +287,9 @@ export function synthesizeSfxPcm(presetOrConfig, {
   const len = Math.max(1, Math.round(sr * dur));
   const out = new Float32Array(len);
 
-  const pitch = clamp(pitchFactor, 0.25, 4);
+  const stepMult = Number.isFinite(Number(step)) && step !== null ? getComboStepPitchFactor(step) : 1;
+  const toneMult = getVoiceTonePitchFactor(voiceTone);
+  const pitch = clamp(pitchFactor * stepMult * toneMult, 0.25, 4);
   const calibGain = getSynthCalibrationGain(cfg.wave, { rawUncalibrated });
   const gain = clamp((cfg.gain ?? 0.5) * volume * calibGain, 0, 2);
   const noiseMix = clamp(cfg.noiseMix ?? 0, 0, 1);
@@ -246,7 +342,9 @@ export function playSynthPresetOnContext(audioCtx, destination, presetOrConfig, 
   const rng = typeof options.random === 'function' ? options.random : Math.random;
   const pitchJitter = clamp(options.pitchJitter ?? 0.08, 0, 0.9);
   const gainJitter = clamp(options.gainJitter ?? 0.05, 0, 0.9);
-  const pitchBase = clamp(options.playbackRate ?? options.pitch ?? 1, 0.25, 4);
+  const stepMult = Number.isFinite(Number(options.step)) && options.step !== null ? getComboStepPitchFactor(options.step) : 1;
+  const toneMult = getVoiceTonePitchFactor(options.voiceTone);
+  const pitchBase = clamp((options.playbackRate ?? options.pitch ?? 1) * stepMult * toneMult, 0.25, 4);
   const pitchFactor = pitchBase * (1 + (rng() * 2 - 1) * pitchJitter);
   const gainFactor = clamp((options.volume ?? 1) * (1 - rng() * gainJitter), 0, 2);
   const dur = Math.max(0.015, (options.duration ?? cfg.duration) || 0.1);

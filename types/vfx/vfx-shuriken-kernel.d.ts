@@ -1475,6 +1475,8 @@ export function compileShurikenLayer(layer: any, { THREE, scene, textures, meshG
         stableRandom: boolean;
         uv2: boolean;
     };
+    needsCustom1: boolean;
+    needsCustom2: boolean;
     flipbook: any;
     trail: any;
     subEmitters: any;
@@ -1523,6 +1525,8 @@ export function compileShurikenLayer(layer: any, { THREE, scene, textures, meshG
         cursor: number;
         activeCount: number;
         active: Uint8Array;
+        activeIndices: Int32Array;
+        slotToActivePos: Int32Array;
         effectSlotId: Int32Array;
         px: Float32Array;
         py: Float32Array;
@@ -3055,6 +3059,8 @@ export function createShurikenKernel({ THREE, scene, trails, prng, }?: {
             stableRandom: boolean;
             uv2: boolean;
         };
+        needsCustom1: boolean;
+        needsCustom2: boolean;
         flipbook: any;
         trail: any;
         subEmitters: any;
@@ -3103,6 +3109,8 @@ export function createShurikenKernel({ THREE, scene, trails, prng, }?: {
             cursor: number;
             activeCount: number;
             active: Uint8Array;
+            activeIndices: Int32Array;
+            slotToActivePos: Int32Array;
             effectSlotId: Int32Array;
             px: Float32Array;
             py: Float32Array;
@@ -3161,10 +3169,10 @@ export function createShurikenKernel({ THREE, scene, trails, prng, }?: {
         width?: number | undefined;
         height?: number | undefined;
     }) => void;
-    setSceneTexture: (sceneTex: any, { width, height }?: {
-        width?: number | undefined;
-        height?: number | undefined;
-    }) => void;
+    setSceneTexture: (sceneTex: object | null, { width, height }?: {
+        width?: number;
+        height?: number;
+    } | undefined) => void;
     hasActiveWarp: () => boolean;
     setWarpMeshesVisible: (visible: any) => void;
     update: (dt?: number) => void;

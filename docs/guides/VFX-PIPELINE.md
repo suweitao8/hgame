@@ -6,18 +6,20 @@
 
 ## 1. 运行时架构分层
 
-HGame 特效运行时位于 `assets/runtime/vfx/`，通过统一门面 `createVfxSystem()` 对外暴露，按职责分为 5 层：
+HGame 特效运行时位于 `assets/runtime/vfx/`，通过统一门面 `createVfxSystem()` 对外暴露，按职责分为 6 层：
 
 1. **配方与编排层 (`vfx-recipes.js`)**
-   - 解析声明式 `.vfx.json`（支持多图层、子发射器、延时/循环、Shuriken Shape/Burst/CustomData/Size/Color 曲线、`defineVfxRecipe` 校验与默认值补全、`loadVfxPack` 一键载入资源包）。
-2. **GPU 实例化广告牌粒子池 (`vfx-atlas-particles.js`)**
-   - Zero-GC RingBuffer + Instanced Quad，按混合模式分桶（`normal / additive / multiply / premultiply / distortion`）与 `Opaque` 路径合批，内置 Curve LUT（颜色/尺寸/速度曲线采样）。
-3. **3D 网格粒子池 (`vfx-mesh.js`)**
+   - 解析声明式 `.vfx.json`（支持多图层、子发射器、延时/循环、Shuriken Shape/Burst/CustomData/Size/Color 曲线、`defineVfxRecipe` 校验与默认值补全、`loadVfxPack` 一键载入资源包，以及 `simulation: 'gpu'` / `turbulence` / `attractor` 自动路由）。
+2. **有状态 GPU MRT 粒子池 (`vfx-gpu-particles.js`)**
+   - 对标 Unity VFX Graph 的 WebGL2 双附件（`RGBA32F` / `RGBA16F`）Ping-Pong FBO 引擎（上限 `262,144` 粒子）：在 GPU 显存内闭环计算 3D Curl Noise 旋度湍流、Attractor/Vortex 力场、指数阻力、地面与屏幕深度图碰撞，配合顶点 `texelFetch` 零拷贝实例化合批与懒分配/空闲休眠（支持 `vfx.emitGpuParticles`、`vfx.setGpuField`）。
+3. **GPU 实例化广告牌粒子池 (`vfx-atlas-particles.js`)**
+   - Zero-GC RingBuffer + Instanced Quad，按混合模式分桶（`normal / additive / multiply / premultiply / distortion`）与 `Opaque` 路径合批，内置 Curve LUT（颜色/尺寸/速度曲线采样，WebGL2 2D 支持版本号脏行增量上传）。
+4. **3D 网格粒子池 (`vfx-mesh.js`)**
    - 支持 `.glb` 多子网格（`__sub_<name>` 匹配与 `m_Mesh / m_Mesh1..3` 权重随机）、`m_Pivot` 偏移（`position + aInstPivot.xyz`）、镜像负缩放与奇次反射背面剔除纠正（`effFrontFacing`）、局部/世界空间变换。
-4. **刀光、闪电与粒子拖尾 (`vfx-trails.js`)**
+5. **刀光、闪电与粒子拖尾 (`vfx-trails.js`)**
    - 支持 `slashArc`、`lightningBolt`、粒子追踪 Ribbon Trail 与点光辅助，共享 `VFX_UBER_FRAGMENT_GLSL` 材质求解。
-5. **共享 Shader 与材料查找表 (`vfx-shader-chunks.js`, `vfx-shuriken-kernel.js`, `vfx-shader-profiles.js`)**
-   - 提供 `VFX_COMMON_GLSL`、`VFX_UBER_LUT_GLSL`、`VFX_UBER_FRAGMENT_GLSL` 与 Shuriken 内核 / 可插拔 ShaderProfile，保证粒子、网格、拖尾三端视觉一致。
+6. **共享 Shader 与材料查找表 (`vfx-shader-chunks.js`, `vfx-shuriken-kernel.js`, `vfx-shader-profiles.js`)**
+   - 提供 `VFX_COMMON_GLSL`、`VFX_UBER_LUT_GLSL`、`VFX_UBER_FRAGMENT_GLSL` 与紧凑活跃索引 Shuriken 内核 / 可插拔 ShaderProfile，保证粒子、网格、拖尾三端视觉一致。
 
 ---
 
@@ -104,6 +106,17 @@ const fireHit = defineVfxRecipe({
 
 vfx.registerEffect(fireHit);
 ```
+
+---
+
+## 4.5 GPU 粒子与移动端 / 小游戏（btoy / 微信 / 抖音）TBDR 优化
+
+对百万级爆发、Curl Noise 涡流、力场吸引与地表/深度碰撞，可在 `.vfx.json` 图层配置 `simulation: 'gpu'` 或直接调用 `vfx.gpuParticles` / `createGpuParticleSystem({ precision: 'auto' })`（WebGL2 MRT Ping-Pong，Canvas2D 自动降级）：
+
+- **精度与默认上限自适应**：检测到手机端或小游戏环境（`isMobileOrMiniGameEnv()`，含 `wx`/`tt`/`my` 小游戏与移动端 UA/触控）时，`gpuParticles` 默认启用 `RGBA16F`（`HalfFloatType`）半精度 Ping-Pong 缓冲（显存与带宽减半，初始纹理保持 `RGBA32F` 保障精确位打包），默认粒子上限收束为 `16384`（桌面 `65536`），可通过 `precision: 'fp16'|'fp32'|'auto'` 与 `maxParticles` 显式覆盖。
+- **TBDR Tile 与像素填充优化**：2D/3D 粒子网格改用切角八边形（`CHAMFERED_OCTAGON_TRIS_2D` / `createChamferedOctagonGeometry`，约减少 17% 透明角过绘制）；非深度写入透明粒子片元着色器移除 `discard` 以保留移动端 Early-Z / HSR；`gpuParticles` 通过 `uBaseInstance` + `256`-slot 硬件 `scissor` 行裁剪跳过已死亡区块。
+- **零闲置 DrawCall 与画质降级**：全量 VFX 子系统（含 `gpuParticles`、`particles`、`atlasParticles`、`trails`、`telegraphs`、`floatingText`、`screenFeedback`）空闲及过期后自动置为 `visible = false` / `instanceCount = 0`；`vfx.setQualityTier('low'|'medium'|'high')` 同步缩放 GPU 爆发数量并关闭高开销特性。
+- **无 DOM 离屏画布兼容**：程序化 Atlas 与伤害飘字图集烘焙统一走 `createOffscreen2dCanvas(w, h)`，依次适配 `document.createElement('canvas')`、`wx.createCanvas()`、`tt.createCanvas()` 与 `OffscreenCanvas`。
 
 ---
 

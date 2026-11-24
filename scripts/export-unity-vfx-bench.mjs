@@ -479,7 +479,7 @@ export function exportPilotoBench8({
       fs.writeFileSync(
         pyScriptPath,
         [
-          'import json, bpy, sys',
+          'import json, math, bpy, sys',
           `with open(${JSON.stringify(jobJsonPath)}, 'r', encoding='utf-8') as f:`,
           '    jobs = json.load(f)',
           'for job in jobs:',
@@ -490,6 +490,8 @@ export function exportPilotoBench8({
           '        if obj.type == "MESH":',
           '            obj.select_set(True)',
           '            bpy.context.view_layer.objects.active = obj',
+          '            if abs(obj.rotation_euler[0]) < 1e-3 and abs(obj.rotation_euler[1]) < 1e-3 and abs(obj.rotation_euler[2]) < 1e-3:',
+          '                obj.rotation_euler[0] += math.pi * 0.5',
           '    if bpy.context.selected_objects:',
           '        bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)',
           '        for obj in bpy.data.objects:',

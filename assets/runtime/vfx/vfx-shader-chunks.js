@@ -346,6 +346,7 @@ export const UBER_FLAG_USE_DETAIL_VERTEX_OFFSET = 131072;
 export const UBER_FLAG_MAIN_SRGB = 262144;
 export const UBER_FLAG_DETAIL_SRGB = 524288;
 export const UBER_FLAG_ALPHA_OV_SRGB = 1048576;
+export const UBER_FLAG_CULL_FRONT = 2097152;
 
 export const UBER_TEX_BIT_MAIN = 1;
 export const UBER_TEX_BIT_DETAIL = 2;
@@ -430,12 +431,17 @@ export function packUberMaterialRow(data, rowIndex, mat = {}, texRects = null) {
   if (mat.invertFresnel) flags |= UBER_FLAG_INVERT_FRESNEL;
   if (mat.tintFresnel) flags |= UBER_FLAG_TINT_FRESNEL;
   if (mat.disableErosion || kw.has('_DISABLEEROSION')) flags |= UBER_FLAG_DISABLE_EROSION;
-  if (mat.alphaTest || kw.has('_ALPHATEST_ON') || mat.alphaClipping) flags |= UBER_FLAG_ALPHA_TEST;
+  if (mat.alphaTest !== false && (mat.alphaTest || kw.has('_ALPHATEST_ON') || mat.alphaClipping)) flags |= UBER_FLAG_ALPHA_TEST;
   if (mat.polarCoordinates) flags |= UBER_FLAG_POLAR_COORDS;
   if (mat.unpackNormals) flags |= UBER_FLAG_UNPACK_NORMALS;
   if (mat.isParticle || kw.has('_ISPARTICLE')) flags |= UBER_FLAG_IS_PARTICLE;
   if (mat.useBaseAsNormal) flags |= UBER_FLAG_USE_BASE_AS_NORMAL;
-  if (mat.doubleSided || mat.cull === 'none' || mat.cull === 'off') flags |= UBER_FLAG_DOUBLE_SIDED;
+  const isDoubleSided = Boolean(mat.doubleSided || mat.cull === 0 || mat.cull === 'none' || mat.cull === 'off' || mat.cullMode === 'none');
+  if (isDoubleSided) {
+    flags |= UBER_FLAG_DOUBLE_SIDED;
+  } else if (mat.cull === 1 || mat.cull === 'front' || mat.cullMode === 'front') {
+    flags |= UBER_FLAG_CULL_FRONT;
+  }
   if (mat.mainSrgb !== false) flags |= UBER_FLAG_MAIN_SRGB;
   if (mat.detailSrgb) flags |= UBER_FLAG_DETAIL_SRGB;
   if (mat.alphaOvSrgb) flags |= UBER_FLAG_ALPHA_OV_SRGB;
@@ -1144,8 +1150,11 @@ vec4 vfxEvalUberFragment(
   float flags = hdr.y;
   float alphaCutoff = hdr.w;
 
-  if (!vfxHasFlag(flags, ${UBER_FLAG_DOUBLE_SIDED.toFixed(1)}) && !isFrontFacing) {
-    discard;
+  if (!vfxHasFlag(flags, ${UBER_FLAG_DOUBLE_SIDED.toFixed(1)})) {
+    bool cullFront = vfxHasFlag(flags, ${UBER_FLAG_CULL_FRONT.toFixed(1)});
+    if (cullFront ? isFrontFacing : !isFrontFacing) {
+      discard;
+    }
   }
 
   vec4 meta31 = vfxReadMatTexel(matLut, rowIdx, 31.0);
@@ -1395,8 +1404,11 @@ vec4 vfxEvalPbrFxFragment(
   vec4 hdr = vfxReadMatTexel(matLut, rowIdx, 0.0);
   float flags = hdr.y;
   float alphaCutoff = hdr.w;
-  if (!vfxHasFlag(flags, ${UBER_FLAG_DOUBLE_SIDED.toFixed(1)}) && !isFrontFacing) {
-    discard;
+  if (!vfxHasFlag(flags, ${UBER_FLAG_DOUBLE_SIDED.toFixed(1)})) {
+    bool cullFront = vfxHasFlag(flags, ${UBER_FLAG_CULL_FRONT.toFixed(1)});
+    if (cullFront ? isFrontFacing : !isFrontFacing) {
+      discard;
+    }
   }
 
   vec4 baseTint = vfxReadMatTexel(matLut, rowIdx, 19.0);
@@ -1494,7 +1506,7 @@ vec4 vfxEvalPbrFxFragment(
     vec2 ormUv = uUv0 * ormST.xy + ormST.zw;
     vec4 orm = vfxSampleAtlasRectWrapped(atlasTex, ormRect, vec2(ormUv.x, 1.0 - ormUv.y), flipV, clampMainU, clampMainV);
     ao = mix(1.0, orm.r, clamp(fresNormOcc.w, 0.0, 1.0));
-    roughness = clamp(1.0 - orm.g * pbrScalars.x, 0.06, 1.0);
+    roughness = clamp(1.0 - clamp(1.0 - orm.g, 0.0, 1.0) * pbrScalars.x, 0.06, 1.0);
     metallic = clamp(orm.b * pbrScalars.y, 0.0, 1.0);
   }
 

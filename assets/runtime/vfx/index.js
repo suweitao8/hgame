@@ -1,9 +1,13 @@
 import {
+  CHAMFERED_OCTAGON_TRIS_2D,
   VFX_EASING,
   VFX_RENDER_ORDERS,
   createCameraShake,
+  createChamferedOctagonGeometry,
   createHitstopClock,
+  createOffscreen2dCanvas,
   createVisualPrng,
+  isMobileOrMiniGameEnv,
   markAttributeRangeDirty,
   packRgb24,
   submitRingBufferRanges,
@@ -17,6 +21,15 @@ import {
   PARTICLE_WEBGL2_2D_FS,
   createStatelessParticlePool,
 } from './vfx-particles.js';
+import {
+  GPU_PARTICLE_SIM_VS,
+  GPU_PARTICLE_SIM_FS,
+  GPU_PARTICLE_RENDER_VS,
+  GPU_PARTICLE_RENDER_FS,
+  GPU_PARTICLE_RENDER_2D_VS,
+  GPU_PARTICLE_RENDER_2D_FS,
+  createGpuParticleSystem,
+} from './vfx-gpu-particles.js';
 import {
   SLASH_VERTEX_GLSL,
   SLASH_FRAGMENT_GLSL,
@@ -125,6 +138,10 @@ import {
 export {
   VFX_EASING,
   VFX_RENDER_ORDERS,
+  CHAMFERED_OCTAGON_TRIS_2D,
+  createChamferedOctagonGeometry,
+  isMobileOrMiniGameEnv,
+  createOffscreen2dCanvas,
   createVisualPrng,
   packRgb24,
   unpackRgb24Into,
@@ -138,6 +155,13 @@ export {
   PARTICLE_WEBGL2_2D_VS,
   PARTICLE_WEBGL2_2D_FS,
   createStatelessParticlePool,
+  GPU_PARTICLE_SIM_VS,
+  GPU_PARTICLE_SIM_FS,
+  GPU_PARTICLE_RENDER_VS,
+  GPU_PARTICLE_RENDER_FS,
+  GPU_PARTICLE_RENDER_2D_VS,
+  GPU_PARTICLE_RENDER_2D_FS,
+  createGpuParticleSystem,
   SLASH_VERTEX_GLSL,
   SLASH_FRAGMENT_GLSL,
   LIGHTNING_VERTEX_GLSL,
@@ -316,7 +340,9 @@ function detectMode(modeOpt, sceneOrAdapter, THREE) {
  * @param {'headless' | 'canvas2d' | 'webgl2d' | '3d' | null} [options.mode=null]
  * @param {object | null} [options.sceneOrAdapter=null] Renderer adapter, scene or 2D context.
  * @param {object | null} [options.THREE] Three.js namespace for 3D rendering.
+ * @param {object | null} [options.renderer=null] Optional Three.js WebGLRenderer for 3D GPU particle MRT stepping.
  * @param {number} [options.maxParticles]
+ * @param {number} [options.maxGpuParticles]
  * @param {number} [options.maxAtlasParticles]
  * @param {number} [options.maxMeshVfx]
  * @param {number} [options.trailNodes]
@@ -331,7 +357,9 @@ export function createVfxSystem({
   mode = null,
   sceneOrAdapter = null,
   THREE = globalThis.THREE ?? null,
+  renderer = null,
   maxParticles,
+  maxGpuParticles,
   maxAtlasParticles,
   maxMeshVfx,
   trailNodes,
@@ -345,6 +373,7 @@ export function createVfxSystem({
   const resolvedMode = detectMode(mode, sceneOrAdapter, THREE);
   const is2D = resolvedMode === 'webgl2d' || resolvedMode === 'canvas2d';
   const scene = resolvedMode === '3d' ? (sceneOrAdapter?.scene ?? sceneOrAdapter) : null;
+  const resolvedRenderer = resolvedMode === '3d' ? (renderer ?? sceneOrAdapter?.renderer ?? null) : null;
   const gl = resolvedMode === 'webgl2d' ? (sceneOrAdapter?.gl ?? sceneOrAdapter) : null;
 
   const prng = createVisualPrng(seed);
@@ -357,6 +386,16 @@ export function createVfxSystem({
     scene,
     gl,
     maxParticles,
+    is2D,
+    prng,
+  });
+  const gpuParticles = createGpuParticleSystem({
+    mode: resolvedMode,
+    THREE,
+    scene,
+    renderer: resolvedRenderer,
+    gl,
+    maxParticles: maxGpuParticles,
     is2D,
     prng,
   });
@@ -417,6 +456,7 @@ export function createVfxSystem({
   const effects = createEffectPlayer({
     shurikenKernel,
     atlasParticles,
+    gpuParticles,
     meshVfx,
     trails,
     telegraphs,
@@ -586,6 +626,7 @@ export function createVfxSystem({
     effects.update(visualDt);
     shurikenKernel.update(visualDt);
     particles.update(visualDt);
+    gpuParticles.update(visualDt);
     atlasParticles.update(visualDt);
     meshVfx.update(visualDt);
     trails.update(visualDt);
@@ -604,6 +645,7 @@ export function createVfxSystem({
       const w = cameraOrWidth ?? vp?.width ?? 960;
       const h = widthOrHeight ?? vp?.height ?? 540;
       particles.renderWebGL2(cam, w, h);
+      gpuParticles.renderWebGL2(cam, w, h);
       atlasParticles.renderWebGL2(cam, w, h);
       floatingText.renderWebGL2(cam, w, h);
     } else if (resolvedMode === 'canvas2d') {
@@ -614,6 +656,7 @@ export function createVfxSystem({
       const h = (ctxOrCamera?.save ? maybeHeight : widthOrHeight) ?? vp?.height ?? 540;
       telegraphs.renderCanvas2D(ctx, cam, w, h);
       particles.renderCanvas2D(ctx, cam, w, h);
+      gpuParticles.renderCanvas2D(ctx, cam, w, h);
       atlasParticles.renderCanvas2D(ctx, cam, w, h);
       trails.renderCanvas2D(ctx, cam, w, h);
       floatingText.renderCanvas2D(ctx, cam, w, h);
@@ -628,6 +671,7 @@ export function createVfxSystem({
     effects.reset();
     shurikenKernel.reset();
     particles.reset();
+    gpuParticles.reset();
     atlasParticles.reset();
     meshVfx.reset();
     trails.reset();
@@ -799,6 +843,7 @@ export function createVfxSystem({
     effects.dispose();
     shurikenKernel.dispose();
     particles.dispose();
+    gpuParticles.dispose();
     atlasParticles.dispose();
     meshVfx.dispose();
     trails.dispose();
@@ -823,6 +868,7 @@ export function createVfxSystem({
     hitstop,
     shake,
     particles,
+    gpuParticles,
     atlasParticles,
     meshVfx,
     shurikenKernel,
@@ -842,6 +888,7 @@ export function createVfxSystem({
     },
     setDepthTexture(tex, opts) {
       atlasParticles.setDepthTexture(tex, opts);
+      gpuParticles.setDepthTexture(tex, opts);
       meshVfx.setDepthTexture?.(tex, opts);
       trails.setDepthTexture?.(tex, opts);
       shurikenKernel.setDepthTexture(tex, opts);
@@ -852,6 +899,7 @@ export function createVfxSystem({
       shurikenKernel.setSceneTexture(tex, opts);
     },
     setQualityTier(tier) {
+      gpuParticles.setQualityTier?.(tier);
       atlasParticles.setQualityTier?.(tier);
       meshVfx.setQualityTier?.(tier);
       shurikenKernel.setQualityTier(tier);
@@ -880,6 +928,8 @@ export function createVfxSystem({
     stopAllEffects: effects.stopAll,
     emitHitImpact,
     burstParticles,
+    emitGpuParticles: gpuParticles.burst,
+    setGpuField: gpuParticles.setField,
     slashArc: trails.slashArc,
     lightningBolt: trails.lightningBolt,
     allocTrail: trails.allocTrail,
@@ -900,6 +950,7 @@ export function createVfxSystem({
       return {
         mode: resolvedMode,
         particles: particles.getStats(),
+        gpuParticles: gpuParticles.getStats(),
         atlasParticles: atlasParticles.getStats(),
         meshVfx: meshVfx.getStats(),
         shuriken: shurikenKernel.getStats(),

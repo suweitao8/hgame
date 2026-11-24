@@ -12,6 +12,7 @@ export function validateVfxRecipe(recipe: object): {
  * @param {object} [options]
  * @param {object | null} [options.shurikenKernel=null]
  * @param {object | null} [options.atlasParticles=null]
+ * @param {object | null} [options.gpuParticles=null]
  * @param {object | null} [options.meshVfx=null]
  * @param {object | null} [options.trails=null]
  * @param {object | null} [options.telegraphs=null]
@@ -23,9 +24,10 @@ export function validateVfxRecipe(recipe: object): {
  * @param {boolean} [options.is2D=false]
  * @param {ReturnType<typeof createVisualPrng>} [options.prng]
  */
-export function createEffectPlayer({ shurikenKernel, atlasParticles, meshVfx, trails, telegraphs, hitstop, shake, screenFeedback, scene, THREE, is2D, prng, }?: {
+export function createEffectPlayer({ shurikenKernel, atlasParticles, gpuParticles, meshVfx, trails, telegraphs, hitstop, shake, screenFeedback, scene, THREE, is2D, prng, }?: {
     shurikenKernel?: object | null;
     atlasParticles?: object | null;
+    gpuParticles?: object | null;
     meshVfx?: object | null;
     trails?: object | null;
     telegraphs?: object | null;

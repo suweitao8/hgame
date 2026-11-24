@@ -287,6 +287,8 @@ export function compileShurikenLayer(layer, {
       stableRandom: Boolean(streams.stableRandom),
       uv2: Boolean(streams.uv2),
     },
+    needsCustom1: Boolean(customData?.custom1 || streams.custom1 || streams.agePercent),
+    needsCustom2: Boolean(customData?.custom2 || streams.custom2),
     flipbook: layer.flipbook || null,
     trail: layer.trail || null,
     subEmitters: Array.isArray(layer.subEmitters) ? layer.subEmitters : null,
@@ -299,6 +301,8 @@ export function compileShurikenLayer(layer, {
       cursor: 0,
       activeCount: 0,
       active: new Uint8Array(capacity),
+      activeIndices: new Int32Array(capacity),
+      slotToActivePos: new Int32Array(capacity).fill(-1),
       effectSlotId: new Int32Array(capacity),
       px: new Float32Array(capacity),
       py: new Float32Array(capacity),
@@ -459,10 +463,16 @@ export function createShurikenKernel({
     uCamNearFar.value.set(near, far);
   }
 
-  function setSceneTexture(sceneTex, { width = 1280, height = 720 } = {}) {
+  /**
+   * @param {object | null} sceneTex
+   * @param {{ width?: number, height?: number }} [opts]
+   */
+  function setSceneTexture(sceneTex, { width, height } = {}) {
     uSceneColor.value = sceneTex || null;
     uHasSceneColor.value = sceneTex ? 1.0 : 0.0;
-    uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
+    if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+      uInvViewport.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
+    }
   }
 
   function setEffectTransform(effectId, x, y, z, yaw = 0, vx = 0, vy = 0, vz = 0) {
@@ -495,6 +505,11 @@ export function createShurikenKernel({
     const sz = (opts.sizeZ ?? readRangeFromCompiled(cl.sizeZ, prng)) * (opts.scale ?? 1) * cl.meshGlobalScale;
 
     soa.active[idx] = 1;
+    if (soa.slotToActivePos[idx] < 0) {
+      const pos = soa.activeCount++;
+      soa.activeIndices[pos] = idx;
+      soa.slotToActivePos[idx] = pos;
+    }
     soa.effectSlotId[idx] = opts.effectId | 0;
     soa.px[idx] = opts.x ?? 0;
     soa.py[idx] = opts.y ?? 0;
@@ -585,14 +600,24 @@ export function createShurikenKernel({
 
   function stepLayer(cl, dt) {
     const soa = cl.soa;
+    if (soa.activeCount === 0) {
+      if (soa.ribbonTrailId >= 0 && trails) {
+        trails.freeTrail(soa.ribbonTrailId);
+        soa.ribbonTrailId = -1;
+      }
+      if (cl.gpuBuffers && cl.mesh) {
+        cl.gpuBuffers.geo.instanceCount = 0;
+        cl.mesh.visible = false;
+      }
+      return 0;
+    }
     const gpu = cl.gpuBuffers;
-    const cap = cl.capacity;
     const isLocal = cl.space === 'local';
     let alive = 0;
     let maxWritten = 0;
 
-    for (let i = 0; i < cap; i++) {
-      if (!soa.active[i]) continue;
+    for (let k = soa.activeCount - 1; k >= 0; k--) {
+      const i = soa.activeIndices[k];
       soa.age[i] += dt;
       if (soa.age[i] >= soa.life[i]) {
         soa.active[i] = 0;
@@ -600,6 +625,12 @@ export function createShurikenKernel({
           trails.freeTrail(soa.trailId[i]);
           soa.trailId[i] = -1;
         }
+        const lastIdx = soa.activeIndices[--soa.activeCount];
+        if (k < soa.activeCount) {
+          soa.activeIndices[k] = lastIdx;
+          soa.slotToActivePos[lastIdx] = k;
+        }
+        soa.slotToActivePos[i] = -1;
         continue;
       }
 
@@ -761,13 +792,14 @@ export function createShurikenKernel({
         arr.instRot[dst + 2] = soa.rotZ[i];
         arr.instRot[dst + 3] = cl.lengthScale;
 
-        const scX = soa.baseSx[i] * (cl.sizeCurveX ? evaluateMinMaxCurve(cl.sizeCurveX, t, soa.randSize[i]) : 1.0);
+        const cxVal = cl.sizeCurveX ? evaluateMinMaxCurve(cl.sizeCurveX, t, soa.randSize[i]) : 1.0;
+        const scX = soa.baseSx[i] * cxVal;
         const scY = soa.baseSy[i] * (cl.sizeCurveY
           ? evaluateMinMaxCurve(cl.sizeCurveY, t, soa.randSize[i])
-          : (cl.sizeCurveX ? evaluateMinMaxCurve(cl.sizeCurveX, t, soa.randSize[i]) : 1.0));
+          : cxVal);
         const scZ = soa.baseSz[i] * (cl.sizeCurveZ
           ? evaluateMinMaxCurve(cl.sizeCurveZ, t, soa.randSize[i])
-          : (cl.sizeCurveX ? evaluateMinMaxCurve(cl.sizeCurveX, t, soa.randSize[i]) : 1.0));
+          : cxVal);
 
         arr.instScale[dst] = scX;
         arr.instScale[dst + 1] = scY;
@@ -785,29 +817,27 @@ export function createShurikenKernel({
         arr.color[dst + 2] = soa.startB[i] * scratchColorLife[2];
         arr.color[dst + 3] = soa.startA[i] * scratchColorLife[3];
 
-        if (cl.customData?.custom1) {
-          evaluateCustomDataChannel(cl.customData.custom1, t, soa.randCustom[i], scratchC1, 0);
-          arr.custom1[dst] = scratchC1[0];
-          arr.custom1[dst + 1] = scratchC1[1];
-          arr.custom1[dst + 2] = scratchC1[2];
-          arr.custom1[dst + 3] = scratchC1[3];
-        } else if (cl.streams.agePercent) {
-          arr.custom1[dst] = t;
-          arr.custom1[dst + 1] = 0;
-          arr.custom1[dst + 2] = 0;
-          arr.custom1[dst + 3] = 0;
-        } else {
-          arr.custom1[dst] = 0; arr.custom1[dst + 1] = 0; arr.custom1[dst + 2] = 0; arr.custom1[dst + 3] = 0;
+        if (cl.needsCustom1) {
+          if (cl.customData?.custom1) {
+            evaluateCustomDataChannel(cl.customData.custom1, t, soa.randCustom[i], scratchC1, 0);
+            arr.custom1[dst] = scratchC1[0];
+            arr.custom1[dst + 1] = scratchC1[1];
+            arr.custom1[dst + 2] = scratchC1[2];
+            arr.custom1[dst + 3] = scratchC1[3];
+          } else if (cl.streams.agePercent) {
+            arr.custom1[dst] = t;
+            arr.custom1[dst + 1] = 0;
+            arr.custom1[dst + 2] = 0;
+            arr.custom1[dst + 3] = 0;
+          }
         }
 
-        if (cl.customData?.custom2) {
+        if (cl.needsCustom2 && cl.customData?.custom2) {
           evaluateCustomDataChannel(cl.customData.custom2, t, soa.randCustom[i], scratchC2, 0);
           arr.custom2[dst] = scratchC2[0];
           arr.custom2[dst + 1] = scratchC2[1];
           arr.custom2[dst + 2] = scratchC2[2];
           arr.custom2[dst + 3] = scratchC2[3];
-        } else {
-          arr.custom2[dst] = 0; arr.custom2[dst + 1] = 0; arr.custom2[dst + 2] = 0; arr.custom2[dst + 3] = 0;
         }
 
         let fbFrame = 0;
@@ -888,9 +918,16 @@ export function createShurikenKernel({
       gpu.geo.instanceCount = maxWritten;
       cl.mesh.visible = maxWritten > 0 && (!cl.isWarp || (q.warpScale > 0 && Boolean(uSceneColor.value)));
       if (maxWritten > 0) {
-        for (const attr of Object.values(gpu.attrs)) {
-          markAttributeRangeDirty(attr, 0, maxWritten * 4);
-        }
+        const dirtyFloats = maxWritten * 4;
+        const ga = gpu.attrs;
+        markAttributeRangeDirty(ga.aInstPos, 0, dirtyFloats);
+        markAttributeRangeDirty(ga.aInstRot, 0, dirtyFloats);
+        markAttributeRangeDirty(ga.aInstScale, 0, dirtyFloats);
+        markAttributeRangeDirty(ga.aInstVel, 0, dirtyFloats);
+        markAttributeRangeDirty(ga.aColor, 0, dirtyFloats);
+        markAttributeRangeDirty(ga.aMeta, 0, dirtyFloats);
+        if (cl.needsCustom1) markAttributeRangeDirty(ga.aCustom1, 0, dirtyFloats);
+        if (cl.needsCustom2) markAttributeRangeDirty(ga.aCustom2, 0, dirtyFloats);
       }
     }
     return alive;
@@ -950,6 +987,7 @@ export function createShurikenKernel({
     for (const cl of compiledLayers) {
       cl.soa.active.fill(0);
       cl.soa.activeCount = 0;
+      cl.soa.slotToActivePos.fill(-1);
       cl.soa.cursor = 0;
       for (let i = 0; i < cl.soa.trailId.length; i++) {
         if (cl.soa.trailId[i] >= 0 && trails) trails.freeTrail(cl.soa.trailId[i]);

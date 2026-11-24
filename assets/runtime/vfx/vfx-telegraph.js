@@ -190,6 +190,8 @@ export function createTelegraphSystem({
   let dirtyStart = 0;
   let dirtyCount = 0;
   let totalSpawned = 0;
+  let latestDeath = -Infinity;
+  let shrinkActive = false;
   let simTime = 0;
   let disposed = false;
   const scratchRgb = new Float32Array(3);
@@ -204,7 +206,7 @@ export function createTelegraphSystem({
     geo.index = baseQuad.index;
     geo.attributes.position = baseQuad.attributes.position;
     geo.attributes.uv = baseQuad.attributes.uv;
-    geo.instanceCount = capacity;
+    geo.instanceCount = 0;
 
     const a0 = new THREE.InstancedBufferAttribute(p0, 4);
     const a1 = new THREE.InstancedBufferAttribute(p1, 4);
@@ -230,6 +232,7 @@ export function createTelegraphSystem({
 
     mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
+    mesh.visible = false;
     mesh.renderOrder = VFX_RENDER_ORDERS.TELEGRAPH;
     mesh.name = 'HGameVfxTelegraphs';
     scene.add(mesh);
@@ -281,24 +284,42 @@ export function createTelegraphSystem({
     p2[i4 + 3] = opts.paramB ?? 0;
   }
 
+  function syncVisibility() {
+    if (!mesh) return;
+    if (shrinkActive) {
+      mesh.geometry.instanceCount = capacity;
+      mesh.visible = true;
+      return;
+    }
+    const hasLive = totalSpawned > 0 && Math.fround(simTime) <= latestDeath;
+    mesh.geometry.instanceCount = hasLive ? Math.min(totalSpawned, ringCap) : 0;
+    mesh.visible = hasLive;
+  }
+
   function spawnTelegraph(opts = {}) {
     const slot = cursor;
     writeSlot(slot, opts);
+    const death = simTime + (opts.duration ?? 1.0);
+    if (death > latestDeath) latestDeath = death;
     if (dirtyCount === 0) dirtyStart = slot;
     dirtyCount = Math.min(ringCap, dirtyCount + 1);
     cursor = (slot + 1) % ringCap;
     totalSpawned += 1;
+    syncVisibility();
     return slot;
   }
 
   function updateTelegraph(slot, opts = {}) {
     if (slot < 0 || slot >= ringCap) return;
     writeSlot(slot, opts);
+    const death = simTime + (opts.duration ?? 1.0);
+    if (death > latestDeath) latestDeath = death;
     if (attrs) {
       for (let i = 0; i < 3; i++) {
         submitRingBufferRanges(attrs[i], slot, 1, capacity, 4);
       }
     }
+    syncVisibility();
   }
 
   function setShrinkZone({
@@ -309,6 +330,7 @@ export function createTelegraphSystem({
     mapRadius = 160,
     active = true,
   } = {}) {
+    shrinkActive = Boolean(active);
     const i4 = shrinkSlot * 4;
     const totalR = Math.max(safeRadius + 5, mapRadius);
     p0[i4] = centerX;
@@ -331,6 +353,7 @@ export function createTelegraphSystem({
         submitRingBufferRanges(attrs[i], shrinkSlot, 1, capacity, 4);
       }
     }
+    syncVisibility();
   }
 
   function flushDirty() {
@@ -346,6 +369,7 @@ export function createTelegraphSystem({
   function update(visualDt) {
     simTime += Math.max(0, visualDt);
     flushDirty();
+    syncVisibility();
     if (mat) mat.uniforms.uTime.value = simTime;
   }
 
@@ -399,12 +423,18 @@ export function createTelegraphSystem({
   function reset() {
     simTime = 0;
     cursor = dirtyStart = dirtyCount = totalSpawned = 0;
+    latestDeath = -Infinity;
+    shrinkActive = false;
     p1.fill(0);
     if (attrs) {
       const durationAttribute = attrs[1];
       durationAttribute.clearUpdateRanges?.();
       markAttributeRangeDirty(durationAttribute, 0, p1.length);
       mat.uniforms.uTime.value = 0;
+    }
+    if (mesh) {
+      mesh.geometry.instanceCount = 0;
+      mesh.visible = false;
     }
   }
 

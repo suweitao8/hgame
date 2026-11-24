@@ -13,6 +13,7 @@ import {
   SYNTH_BASE_ATTENUATION_DB,
   SYNTH_HARSH_WAVE_ATTENUATION_DB,
   getSynthCalibrationGain,
+  getComboStepPitchFactor,
   synthesizeSfxPcm,
   playSynthPresetOnContext,
   createSynthSfx,
@@ -31,6 +32,7 @@ export {
   SYNTH_BASE_ATTENUATION_DB,
   SYNTH_HARSH_WAVE_ATTENUATION_DB,
   getSynthCalibrationGain,
+  getComboStepPitchFactor,
   synthesizeSfxPcm,
   createSynthSfx,
   BGM_MOODS,
@@ -278,6 +280,8 @@ export {
  * @property {number} [gainJitter=0.05]
  * @property {number} [playbackRate=1]
  * @property {number} [pitch] Alias for playbackRate.
+ * @property {number | null} [step=null] Chromatic combo step (0..16) for presets like `comboStep`.
+ * @property {'high' | 'mid' | 'low'} [voiceTone='mid'] Character pitch preset for `textBlip`.
  * @property {number} [duration] Duration in seconds.
  * @property {() => number} [random] Random source for pitch and gain variation.
  * @property {() => void} [onEnded] Called when a playing sound ends or is stopped.
@@ -932,7 +936,7 @@ export function createAudioManager({
     const presetName = typeof presetOrConfig === 'string'
       ? presetOrConfig
       : (presetOrConfig?.preset || '');
-    const defaultBus = /^(click|pickup|powerup|jump|coin|ui)/i.test(presetName) ? 'ui_voice' : 'combat';
+    const defaultBus = /^(click|pickup|powerup|jump|coin|ui|textBlip|microTick|comboStep|retroOneUp|retroClear|heartbeat)/i.test(presetName) ? 'ui_voice' : 'combat';
     const busName = options.bus || defaultBus;
     const dest = ctx.getBusNode ? ctx.getBusNode(busName) : ctx.master;
     let voice = null, ended = false;

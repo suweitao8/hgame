@@ -7,16 +7,24 @@
 export function getSynthCalibrationGain(wave?: string | undefined, options?: {
     rawUncalibrated?: boolean;
 } | undefined): number;
+/**
+ * Computes a chromatic pitch multiplier for combo chains (`step = 0..16`, 1 semitone per step).
+ * @param {number} [step=0]
+ * @returns {number}
+ */
+export function getComboStepPitchFactor(step?: number | undefined): number;
 export function resolveSynthPreset(presetOrConfig: any): any;
 /**
  * Pure CPU PCM synthesis for deterministic testing or offline AudioBuffer creation.
  * @param {string|object} presetOrConfig
- * @param {{ sampleRate?: number, pitchFactor?: number, volume?: number, seed?: number, rawUncalibrated?: boolean }} [options]
+ * @param {{ sampleRate?: number, pitchFactor?: number, step?: number | null, voiceTone?: 'high' | 'mid' | 'low', volume?: number, seed?: number, rawUncalibrated?: boolean }} [options]
  * @returns {Float32Array}
  */
-export function synthesizeSfxPcm(presetOrConfig: string | object, { sampleRate, pitchFactor, volume, seed, rawUncalibrated, }?: {
+export function synthesizeSfxPcm(presetOrConfig: string | object, { sampleRate, pitchFactor, step, voiceTone, volume, seed, rawUncalibrated, }?: {
     sampleRate?: number;
     pitchFactor?: number;
+    step?: number | null;
+    voiceTone?: "high" | "mid" | "low";
     volume?: number;
     seed?: number;
     rawUncalibrated?: boolean;
@@ -174,6 +182,82 @@ export function createSynthSfx({ AudioContextClass, context, destination, volume
             filterEndHz: 4000;
             attack: 0.004;
         }>;
+        comboStep: Readonly<{
+            wave: "triangle";
+            freqStart: 523.25;
+            freqEnd: 783.99;
+            steps: number[];
+            duration: 0.11;
+            gain: 0.44;
+            noiseMix: 0.02;
+            filterType: "lowpass";
+            filterStartHz: 6500;
+            filterEndHz: 5200;
+            attack: 0.002;
+        }>;
+        textBlip: Readonly<{
+            wave: "triangle";
+            freqStart: 620;
+            freqEnd: 540;
+            duration: 0.042;
+            gain: 0.34;
+            noiseMix: 0.04;
+            filterType: "lowpass";
+            filterStartHz: 4200;
+            filterEndHz: 3200;
+            attack: 0.002;
+        }>;
+        microTick: Readonly<{
+            wave: "sine";
+            freqStart: 1420;
+            freqEnd: 960;
+            duration: 0.022;
+            gain: 0.3;
+            noiseMix: 0.12;
+            filterType: "highpass";
+            filterStartHz: 700;
+            filterEndHz: 700;
+            attack: 0.001;
+        }>;
+        heartbeat: Readonly<{
+            wave: "sine";
+            freqStart: 72;
+            freqEnd: 46;
+            steps: number[];
+            duration: 0.42;
+            gain: 0.72;
+            noiseMix: 0.04;
+            filterType: "lowpass";
+            filterStartHz: 240;
+            filterEndHz: 120;
+            attack: 0.01;
+        }>;
+        retroOneUp: Readonly<{
+            wave: "square";
+            freqStart: 329.63;
+            freqEnd: 783.99;
+            steps: number[];
+            duration: 0.42;
+            gain: 0.36;
+            noiseMix: 0;
+            filterType: "lowpass";
+            filterStartHz: 5200;
+            filterEndHz: 5200;
+            attack: 0.002;
+        }>;
+        retroClear: Readonly<{
+            wave: "square";
+            freqStart: 523.25;
+            freqEnd: 1046.5;
+            steps: number[];
+            duration: 0.48;
+            gain: 0.38;
+            noiseMix: 0;
+            filterType: "lowpass";
+            filterStartHz: 5600;
+            filterEndHz: 5600;
+            attack: 0.003;
+        }>;
     }>;
     unlock: () => Promise<boolean>;
     play: (presetOrConfig: any, overrides?: {}) => {
@@ -319,5 +403,81 @@ export const SYNTH_PRESETS: Readonly<{
         filterStartHz: 4000;
         filterEndHz: 4000;
         attack: 0.004;
+    }>;
+    comboStep: Readonly<{
+        wave: "triangle";
+        freqStart: 523.25;
+        freqEnd: 783.99;
+        steps: number[];
+        duration: 0.11;
+        gain: 0.44;
+        noiseMix: 0.02;
+        filterType: "lowpass";
+        filterStartHz: 6500;
+        filterEndHz: 5200;
+        attack: 0.002;
+    }>;
+    textBlip: Readonly<{
+        wave: "triangle";
+        freqStart: 620;
+        freqEnd: 540;
+        duration: 0.042;
+        gain: 0.34;
+        noiseMix: 0.04;
+        filterType: "lowpass";
+        filterStartHz: 4200;
+        filterEndHz: 3200;
+        attack: 0.002;
+    }>;
+    microTick: Readonly<{
+        wave: "sine";
+        freqStart: 1420;
+        freqEnd: 960;
+        duration: 0.022;
+        gain: 0.3;
+        noiseMix: 0.12;
+        filterType: "highpass";
+        filterStartHz: 700;
+        filterEndHz: 700;
+        attack: 0.001;
+    }>;
+    heartbeat: Readonly<{
+        wave: "sine";
+        freqStart: 72;
+        freqEnd: 46;
+        steps: number[];
+        duration: 0.42;
+        gain: 0.72;
+        noiseMix: 0.04;
+        filterType: "lowpass";
+        filterStartHz: 240;
+        filterEndHz: 120;
+        attack: 0.01;
+    }>;
+    retroOneUp: Readonly<{
+        wave: "square";
+        freqStart: 329.63;
+        freqEnd: 783.99;
+        steps: number[];
+        duration: 0.42;
+        gain: 0.36;
+        noiseMix: 0;
+        filterType: "lowpass";
+        filterStartHz: 5200;
+        filterEndHz: 5200;
+        attack: 0.002;
+    }>;
+    retroClear: Readonly<{
+        wave: "square";
+        freqStart: 523.25;
+        freqEnd: 1046.5;
+        steps: number[];
+        duration: 0.48;
+        gain: 0.38;
+        noiseMix: 0;
+        filterType: "lowpass";
+        filterStartHz: 5600;
+        filterEndHz: 5600;
+        attack: 0.003;
     }>;
 }>;

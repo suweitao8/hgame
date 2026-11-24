@@ -238,7 +238,8 @@ function parseGradientStops(colorMod) {
     const km = maxGrad.match(new RegExp(`key${i}:\\s*\\{([^}]+)\\}`));
     const tm = maxGrad.match(new RegExp(`ctime${i}:\\s*(\\d+)`));
     if (km) {
-      const c = parseColorObject(km[1], !isLinearGrad);
+      // Unity Gamma gradients (m_ColorSpace: 0) interpolate in sRGB before converting to linear.
+      const c = parseColorObject(km[1], false);
       const t = tm ? Number(tm[1]) / 65535 : i / Math.max(1, numC - 1);
       cols.push({ t, r: c[0], g: c[1], b: c[2] });
     }
@@ -253,7 +254,25 @@ function parseGradientStops(colorMod) {
       alphas.push({ t, a: c[3] });
     }
   }
-  const times = [...new Set([...cols.map((c) => Number(c.t.toFixed(3))), ...alphas.map((a) => Number(a.t.toFixed(3)))])].sort((a, b) => a - b);
+  const timeSet = new Set([
+    ...cols.map((c) => Number(c.t.toFixed(3))),
+    ...alphas.map((a) => Number(a.t.toFixed(3))),
+  ]);
+  if (!isLinearGrad) {
+    // Subdivide wide sRGB color ramps so linear CurveLUT interpolation matches Unity sRGB->Linear evaluation.
+    for (let i = 0; i < cols.length - 1; i++) {
+      const a = cols[i], b = cols[i + 1];
+      const dt = b.t - a.t;
+      const dCol = Math.max(Math.abs(b.r - a.r), Math.abs(b.g - a.g), Math.abs(b.b - a.b));
+      if (dt > 0.08 && dCol > 0.08) {
+        const sub = Math.min(5, Math.ceil(dt / 0.08));
+        for (let k = 1; k < sub; k++) {
+          timeSet.add(Number((a.t + (dt * k) / sub).toFixed(3)));
+        }
+      }
+    }
+  }
+  const times = [...timeSet].sort((a, b) => a - b);
   const sampleAt = (arr, t, keys) => {
     if (arr.length === 0) return keys.map(() => 1);
     if (t <= arr[0].t) return keys.map((k) => arr[0][k]);
@@ -266,9 +285,12 @@ function parseGradientStops(colorMod) {
     }
     return keys.map((k) => arr[arr.length - 1][k]);
   };
-  const stops = times.slice(0, 8).map((t) => {
-    const [r, g, b] = sampleAt(cols, t, ['r', 'g', 'b']);
+  const stops = times.slice(0, 32).map((t) => {
+    const [rawR, rawG, rawB] = sampleAt(cols, t, ['r', 'g', 'b']);
     const [a] = sampleAt(alphas, t, ['a']);
+    const r = isLinearGrad ? rawR : srgbToLinear(rawR);
+    const g = isLinearGrad ? rawG : srgbToLinear(rawG);
+    const b = isLinearGrad ? rawB : srgbToLinear(rawB);
     return [t, [Number(r.toFixed(3)), Number(g.toFixed(3)), Number(b.toFixed(3)), Number(a.toFixed(3))]];
   });
   return stops.length > 0 ? stops : null;
@@ -384,21 +406,27 @@ function inspectMaterial(matInfo, guidMap, deps) {
       const sDet = readTexSlot('_DetailNoise');
       const sAlphaOv = readTexSlot('_AlphaOverride');
       const alphaClipThreshold = readFloatProp('_Alpha_Clip_Threshold', 0.5);
-      const alphaTest = kwSet.has('_ALPHATEST_ON') || readFloatProp('_AlphaClip', 0) > 0.5;
       const useSoft = kwSet.has('_USESOFTALPHA');
+      const uberOpaque = surfaceMode === '0';
+      const uberBlend = uberOpaque ? 'alpha' : blend;
+      // UberFXSG compiles with m_AlphaClip: false; stale _ALPHATEST_ON on Transparent+Additive discards low-alpha trails.
+      const alphaTest = (uberOpaque || uberBlend !== 'additive') && (kwSet.has('_ALPHATEST_ON') || readFloatProp('_AlphaClip', 0) > 0.5);
+      const cleanKeywords = alphaTest ? keywords : keywords.filter((k) => k !== '_ALPHATEST_ON');
+      const uberDepthWrite = zWrite === 0 || zWrite === 1 ? zWrite === 1 : uberOpaque;
       const uberMat = {
         key: `${shaderKind}:${matName}`,
         shaderProfile: 'piloto_uber_fx',
         shaderKind,
         surface,
-        blend,
+        opaque: uberOpaque,
+        blend: uberBlend,
         srcBlend,
         dstBlend,
         cull: cullNum,
         cullMode,
         depthTest: VFX_DEPTH_TESTS[zTest],
-        depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : undefined,
-        keywords,
+        depthWrite: uberDepthWrite,
+        keywords: cleanKeywords,
         doubleSided: cullNum === 0,
         mainTexKey: sMain?.spriteKey || null,
         mainClamp: sMain?.clamp || [0, 0],
@@ -454,11 +482,12 @@ function inspectMaterial(matInfo, guidMap, deps) {
         hdr: 1.0,
         tintRgb: [1, 1, 1],
         tintAlpha: 1.0,
-        blend,
+        blend: uberBlend,
         cullMode,
         cutoff: alphaTest ? alphaClipThreshold : undefined,
+        opaque: uberOpaque,
         depthTest: VFX_DEPTH_TESTS[zTest],
-        depthWrite: zWrite === 0 || zWrite === 1 ? zWrite === 1 : undefined,
+        depthWrite: uberDepthWrite,
         softParticles: useSoft,
         isDistortionOnly: false,
         flipbookBlend: true,
@@ -1152,8 +1181,12 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ? { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1] }
       : computeHierarchyTransform(trBody);
     const offset = worldTr.pos;
-    const trScaleScalar = Number(((Math.abs(worldTr.scale[0]) + Math.abs(worldTr.scale[1]) + Math.abs(worldTr.scale[2])) / 3).toFixed(4));
+    const trSx = Math.abs(worldTr.scale[0]);
+    const trSy = Math.abs(worldTr.scale[1]);
+    const trSz = Math.abs(worldTr.scale[2]);
+    const trScaleScalar = Number(((trSx + trSy + trSz) / 3).toFixed(4));
     const psScalingMode = Number((ps.match(/^\s*scalingMode:\s*(\d+)/m) || [])[1] ?? 1);
+    const hasNonUniformTrScale = psScalingMode !== 2 && (Math.abs(trSx - trSy) > 0.02 || Math.abs(trSx - trSz) > 0.02);
 
     const isLoop = /^\s*looping:\s*1\b/m.test(ps);
     const isPrewarm = /^\s*prewarm:\s*1\b/m.test(ps);
@@ -1177,15 +1210,6 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const size = readMinMaxScalar(initMod, 'startSize', 1);
     const sizeY = size3D ? readMinMaxScalar(initMod, 'startSizeY', 1) : size;
     const sizeZ = size3D ? readMinMaxScalar(initMod, 'startSizeZ', 1) : size;
-    const sizeXMax = Array.isArray(size) ? size[1] : size;
-    const sizeYMax = Array.isArray(sizeY) ? sizeY[1] : sizeY;
-    const sizeZMax = Array.isArray(sizeZ) ? sizeZ[1] : sizeZ;
-    const aspectY = size3D && sizeXMax > 0.0001 && Math.abs(sizeYMax / sizeXMax - 1) > 0.05
-      ? Number((sizeYMax / sizeXMax).toFixed(3))
-      : undefined;
-    const aspectZ = size3D && sizeXMax > 0.0001 && Math.abs(sizeZMax / sizeXMax - 1) > 0.05
-      ? Number((sizeZMax / sizeXMax).toFixed(3))
-      : undefined;
     const rot = readMinMaxScalar(initMod, 'startRotation', 0);
     const rotX = rot3D ? readMinMaxScalar(initMod, 'startRotationX', 0) : 0;
     const rotY = rot3D ? readMinMaxScalar(initMod, 'startRotationY', 0) : 0;
@@ -1263,6 +1287,17 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     let renderMode = psrDisabled
       ? 'none'
       : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : (rmNum === 2 || isLocalHorizontal) ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
+    const sizeXMax = (Array.isArray(size) ? size[1] : size) * (hasNonUniformTrScale && renderMode === 'mesh' ? trSx : 1);
+    const sizeYMax = (Array.isArray(sizeY) ? sizeY[1] : sizeY) * (hasNonUniformTrScale && renderMode === 'mesh' ? trSy : 1);
+    const sizeZMax = (Array.isArray(sizeZ) ? sizeZ[1] : sizeZ) * (hasNonUniformTrScale && renderMode === 'mesh' ? trSz : 1);
+    const nonUniformRatioY = sizeXMax > 0.0001 && Math.abs(sizeYMax / sizeXMax - 1) > 0.05;
+    const nonUniformRatioZ = sizeXMax > 0.0001 && Math.abs(sizeZMax / sizeXMax - 1) > 0.05;
+    const aspectY = (size3D || (hasNonUniformTrScale && renderMode === 'mesh')) && nonUniformRatioY
+      ? Number((sizeYMax / sizeXMax).toFixed(3))
+      : undefined;
+    const aspectZ = (size3D || (hasNonUniformTrScale && renderMode === 'mesh')) && nonUniformRatioZ
+      ? Number((sizeZMax / sizeXMax).toFixed(3))
+      : undefined;
     let effectiveRot = rot;
     let effectiveRotX = rotX;
     let effectiveRotY = rotY;
@@ -1301,7 +1336,13 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       : 0;
 
     const forceMod = extractSection(ps, 'ForceModule');
-    const netGravity = gravScalar * 9.81;
+    const scaleGrav = (g) => Number((Number(g) * 9.81).toFixed(3));
+    const netGravity = Array.isArray(gravScalar)
+      ? [scaleGrav(gravScalar[0]), scaleGrav(gravScalar[1])]
+      : scaleGrav(gravScalar);
+    const hasNetGravity = Array.isArray(netGravity)
+      ? (Math.abs(netGravity[0]) > 0.001 || Math.abs(netGravity[1]) > 0.001)
+      : Math.abs(netGravity) > 0.001;
     let forceVec = null;
     if (/enabled:\s*1/.test(forceMod)) {
       const fx = readMinMaxScalar(forceMod, 'x', 0);
@@ -1366,7 +1407,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       if (Math.abs(s - 1) <= 0.005) return v;
       return Array.isArray(v) ? [Number((v[0] * s).toFixed(4)), Number((v[1] * s).toFixed(4))] : Number((v * s).toFixed(4));
     };
-    const scaledSize = scaleRangeBy(size, trScaleScalar);
+    const splitMeshScale = hasNonUniformTrScale && renderMode === 'mesh';
+    const scaledSize = scaleRangeBy(size, splitMeshScale ? trSx : trScaleScalar);
     const layer = {
       name: go.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
       kind: renderMode === 'mesh' ? 'mesh' : 'particle',
@@ -1390,7 +1432,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(mainMat?.material ? { material: mainMat.material } : {}),
       ...(vertexStreams ? { vertexStreams } : {}),
       ...(aspectZ !== undefined ? { aspectZ } : {}),
-      ...(size3D ? { sizeY: scaleRangeBy(sizeY, trScaleScalar), sizeZ: scaleRangeBy(sizeZ, trScaleScalar) } : {}),
+      ...((size3D || splitMeshScale) ? { sizeY: scaleRangeBy(sizeY, splitMeshScale ? trSy : trScaleScalar), sizeZ: scaleRangeBy(sizeZ, splitMeshScale ? trSz : trScaleScalar) } : {}),
       ...(pivot ? { pivot } : {}),
       ...(renderMode === 'stretched'
         ? { velocityScale: Number(velScale.toFixed(3)), lengthScale: Number(lenScale.toFixed(3)) }
@@ -1415,7 +1457,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       ...(isNonZeroVal(effectiveRotX) ? { rotX: effectiveRotX } : {}),
       ...(isNonZeroVal(effectiveRotY) ? { rotY: effectiveRotY } : {}),
       ...(meshTransformRot ? { transformRot: meshTransformRot } : {}),
-      ...(Math.abs(netGravity) > 0.001 ? { gravity: Number(netGravity.toFixed(3)) } : {}),
+      ...(hasNetGravity ? { gravity: netGravity } : {}),
       ...(forceVec ? { force: forceVec } : {}),
       ...(windMul > 0.001 ? { windMul: Number(windMul.toFixed(3)) } : {}),
     };
@@ -1441,6 +1483,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       layer.startColor = scRandomStops;
     }
 
+    let shapePosOffset = null;
     const shapeMod = extractSection(ps, 'ShapeModule');
     if (/enabled:\s*1/.test(shapeMod)) {
       const st = (shapeMod.match(/type:\s*(\d+)/) || [])[1] ?? 0;
@@ -1460,10 +1503,15 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         const spz = Number(sPosM[3]) * worldTr.scale[2];
         if (Math.abs(spx) > 1e-4 || Math.abs(spy) > 1e-4 || Math.abs(spz) > 1e-4) {
           const rSp = quatRotateVec(worldTr.rot, [spx, spy, spz]);
+          shapePosOffset = [
+            Number(rSp[0].toFixed(4)),
+            Number(rSp[1].toFixed(4)),
+            Number(toRhsZ(rSp[2]).toFixed(4)),
+          ];
           const nextOff = [
-            Number((offset[0] + rSp[0]).toFixed(4)),
-            Number((offset[1] + rSp[1]).toFixed(4)),
-            Number((offset[2] + toRhsZ(rSp[2])).toFixed(4)),
+            Number((offset[0] + shapePosOffset[0]).toFixed(4)),
+            Number((offset[1] + shapePosOffset[1]).toFixed(4)),
+            Number((offset[2] + shapePosOffset[2]).toFixed(4)),
           ];
           if (nextOff[0] !== 0 || nextOff[1] !== 0 || nextOff[2] !== 0) {
             layer.offset = nextOff;
@@ -1790,7 +1838,16 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       if (isNonZero(oox) || isNonZero(ooy) || isNonZero(ooz)) {
         velObj.orbitalOffset = [oox, ooy, ooz];
       }
-      if (isNonZero(radV)) velObj.radial = radV;
+      if (isNonZero(radV)) {
+        velObj.radial = radV;
+        if (shapePosOffset) {
+          velObj.radialOffset = [
+            Number((-shapePosOffset[0]).toFixed(4)),
+            Number((-shapePosOffset[1]).toFixed(4)),
+            Number((-shapePosOffset[2]).toFixed(4)),
+          ];
+        }
+      }
       if (Object.keys(velObj).length > 0) layer.velocity = velObj;
       const chosenVelCurve = spdModCurve || rx.curve || ry.curve || rz.curve || rRad.curve;
       if (chosenVelCurve) layer.velCurve = chosenVelCurve;
@@ -2154,14 +2211,22 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
 
     const colMod = extractSection(ps, 'CollisionModule');
     if (/enabled:\s*1/.test(colMod)) {
-      const bounce = readMinMaxScalar(colMod, 'm_Bounce', 0.5);
-      const dampen = readMinMaxScalar(colMod, 'm_Dampen', 0.2);
-      layer.collision = {
-        groundY: 0,
-        bounce: typeof bounce === 'number' ? bounce : bounce[1],
-        dampen: typeof dampen === 'number' ? dampen : dampen[1],
-        maxBounces: 3,
-      };
+      const colType = Number((colMod.match(/\btype:\s*(\d+)/) || [])[1] ?? 0);
+      const planesBlock = colMod.match(/m_Planes:[\s\S]*?(?=\n\s*m_[A-Z]|$)/)?.[0] || '';
+      const hasValidPlane = [...planesBlock.matchAll(/fileID:\s*(-?\d+)/g)].some((m) => m[1] !== '0');
+      if (colType !== 0 || hasValidPlane) {
+        const bounce = readMinMaxScalar(colMod, 'm_Bounce', 0.5);
+        const dampen = readMinMaxScalar(colMod, 'm_Dampen', 0.2);
+        const lifeLoss = readMinMaxScalar(colMod, 'm_EnergyLossOnCollision', 0);
+        const lifeLossVal = Array.isArray(lifeLoss) ? lifeLoss[1] : lifeLoss;
+        layer.collision = {
+          groundY: 0,
+          bounce: typeof bounce === 'number' ? bounce : bounce[1],
+          dampen: typeof dampen === 'number' ? dampen : dampen[1],
+          maxBounces: 3,
+          ...(lifeLossVal > 0.001 ? { lifetimeLoss: Number(lifeLossVal.toFixed(3)) } : {}),
+        };
+      }
     }
 
     const lightMod = extractSection(ps, 'LightsModule');
@@ -2208,6 +2273,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
         if (!tGo.active) continue;
         const targetLayer = convertParticleLayer(targetPs.goId, trByGo.get(targetPs.goId), true, subDepth + 1);
         if (!targetLayer) continue;
+        // Unity SubEmitters fire via Emit()/Bursts on trigger events; rateOverTime without bursts emits 0 particles.
+        if ((!Array.isArray(targetLayer.bursts) || targetLayer.bursts.length === 0)
+          && (!Array.isArray(targetLayer.subEmitters) || targetLayer.subEmitters.length === 0)) {
+          continue;
+        }
         const tType = Number(sm[2]);
         const propMask = hasProps ? Number(sm[3] ?? 0) : 0;
         const prob = Number((hasProps ? sm[4] : sm[3]) ?? 1);

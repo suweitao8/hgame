@@ -15,6 +15,7 @@ import {
   analyzeAudioBuffer,
   normalizeVariantSet,
   SYNTH_PRESETS,
+  getComboStepPitchFactor,
   synthesizeSfxPcm,
   createSynthSfx,
 } from '../assets/runtime/index.js';
@@ -41,6 +42,7 @@ import {
   buildSurfaceTypeCueMap,
   processAudioLibraryBatch,
 } from '../scripts/process-audio.mjs';
+import { isDirtyAnnouncerSource } from '../scripts/lib/audio-library-pipeline.mjs';
 
 function makeAudioBuffer({
   sampleRate = 1000,
@@ -781,11 +783,120 @@ test('Loudness tier classification, intensity/distance offsets, gain clamping, s
   assert.equal(created.panners.length, prevPanners, 'ui_voice must stay direct 2D without 3D PannerNode');
   assert.equal(uiHandle.pan, 0);
 
+  // playSynth routes click to ui_voice and explosion to combat, and comboStep climbs chromatically
   const svUi = audio.playSynth('click');
   const svCombat = audio.playSynth('explosion');
+  const svCombo0 = audio.playSynth('comboStep', { step: 0, pitchJitter: 0 });
+  const svCombo4 = audio.playSynth('comboStep', { step: 4, pitchJitter: 0 });
+  const svBlipHi = audio.playSynth('textBlip', { voiceTone: 'high', pitchJitter: 0 });
+  const svBlipLo = audio.playSynth('textBlip', { voiceTone: 'low', pitchJitter: 0 });
+  const svTick = audio.playSynth('microTick', { pitchJitter: 0 });
+  const svHeart = audio.playSynth('heartbeat', { pitchJitter: 0 });
+  const svOneUp = audio.playSynth('retroOneUp', { pitchJitter: 0 });
+  const svClear = audio.playSynth('retroClear', { pitchJitter: 0 });
   assert.equal(svUi.played, true);
   assert.equal(svCombat.played, true);
+  assert.equal(svCombo0.played, true);
+  assert.equal(svTick.played, true);
+  assert.equal(svHeart.played, true);
+  assert.equal(svOneUp.played, true);
+  assert.equal(svClear.played, true);
+  assert.ok(SYNTH_PRESETS.comboStep && SYNTH_PRESETS.textBlip && SYNTH_PRESETS.microTick && SYNTH_PRESETS.heartbeat && SYNTH_PRESETS.retroOneUp && SYNTH_PRESETS.retroClear);
+  assert.ok(svCombo4.pitchFactor > svCombo0.pitchFactor);
+  assert.ok(svBlipHi.pitchFactor > svBlipLo.pitchFactor);
+  assert.ok(Math.abs(getComboStepPitchFactor(12) - 2.0) < 1e-6);
+  const pcmCombo = synthesizeSfxPcm('comboStep', { step: 7, sampleRate: 16000 });
+  assert.ok(pcmCombo.length > 0 && peakOf(pcmCombo) > 0.01);
+  for (const name of ['textBlip', 'microTick', 'heartbeat', 'retroOneUp', 'retroClear']) {
+    const pcm = synthesizeSfxPcm(name, { sampleRate: 16000 });
+    assert.ok(pcm.length > 0 && peakOf(pcm) > 0.01, `Expected audible PCM for ${name}`);
+  }
+  assert.equal(isDirtyAnnouncerSource({ pack: 'GunSoundPack', name: 'announcer_voice_classic_FPS_style_headshot' }), true);
+  assert.equal(isDirtyAnnouncerSource({ pack: 'GunSoundPack', name: 'announcer_voice_classic_FPS_style_frenzy' }), true);
+  assert.equal(isDirtyAnnouncerSource({ pack: 'GunSoundPack', name: 'announcer_voice_classic_FPS_style_killingspree' }), true);
+  assert.equal(isDirtyAnnouncerSource({ pack: 'GunSoundPack', name: 'rifle_shot_01' }), false);
   svUi.stop();
   svCombat.stop();
+  svCombo0.stop();
+  svCombo4.stop();
+  svBlipHi.stop();
+  svBlipLo.stop();
+  svTick.stop();
+  svHeart.stop();
+  svOneUp.stop();
+  svClear.stop();
   await audio.dispose();
+});
+
+test('CustomAI SFX staging and promoted-music exclusion work cleanly in audio-library-pipeline', async () => {
+  const folderCue = extractSemanticCueKey('take_01', { pack: 'CustomAI', relDir: 'ui_tap_modern' });
+  assert.equal(folderCue.cueKey, 'ui_tap_modern');
+  assert.equal(folderCue.fullKey, 'ui_tap_modern');
+
+  const fileCue = extractSemanticCueKey('ui_confirm_bright_02', { pack: 'CustomAI', relDir: '' });
+  assert.equal(fileCue.cueKey, 'ui_confirm_bright');
+  assert.equal(fileCue.fullKey, 'ui_confirm_bright');
+
+  const tmpRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'hgame-custom-sfx-'));
+  try {
+    const customDir = path.join(tmpRoot, 'custom_sfx', 'ui_tap_modern');
+    const outDir = path.join(tmpRoot, 'built_audio');
+    await fs.promises.mkdir(customDir, { recursive: true });
+
+    // Write 1 short 0.25s sine WAV
+    const sr = 16000;
+    const samples = Math.round(sr * 0.25);
+    const dataBytes = samples * 2;
+    const wavBuf = Buffer.alloc(44 + dataBytes);
+    wavBuf.write('RIFF', 0);
+    wavBuf.writeUInt32LE(36 + dataBytes, 4);
+    wavBuf.write('WAVE', 8);
+    wavBuf.write('fmt ', 12);
+    wavBuf.writeUInt32LE(16, 16);
+    wavBuf.writeUInt16LE(1, 20);
+    wavBuf.writeUInt16LE(1, 22);
+    wavBuf.writeUInt32LE(sr, 24);
+    wavBuf.writeUInt32LE(sr * 2, 28);
+    wavBuf.writeUInt16LE(2, 32);
+    wavBuf.writeUInt16LE(16, 34);
+    wavBuf.write('data', 36);
+    wavBuf.writeUInt32LE(dataBytes, 40);
+    for (let i = 0; i < samples; i++) {
+      const env = Math.pow(1 - i / samples, 2);
+      const val = Math.round(Math.sin((2 * Math.PI * 880 * i) / sr) * env * 0.35 * 32767);
+      wavBuf.writeInt16LE(val, 44 + i * 2);
+    }
+    await fs.promises.writeFile(path.join(customDir, 'take_01.wav'), wavBuf);
+
+    // Add an extreme crest-factor spread pair to verify automatic cueSpreadAlerts RMS alignment
+    const spreadDir = path.join(tmpRoot, 'custom_sfx', 'spread_align_check');
+    await fs.promises.mkdir(spreadDir, { recursive: true });
+    const mkCustomWav = (fn) => {
+      const b = Buffer.from(wavBuf);
+      for (let i = 0; i < samples; i++) {
+        b.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(fn(i) * 32767))), 44 + i * 2);
+      }
+      return b;
+    };
+    await fs.promises.writeFile(path.join(spreadDir, 'spread_align_check_01.wav'), mkCustomWav((i) => Math.sin((2 * Math.PI * 660 * i) / sr) * 0.25));
+    await fs.promises.writeFile(path.join(spreadDir, 'spread_align_check_02.wav'), mkCustomWav((i) => (i < 6 ? 0.95 : Math.sin((2 * Math.PI * 660 * i) / sr) * 0.025)));
+
+    const res = await processAudioLibraryBatch({
+      stagingRoot: path.join(tmpRoot, 'missing_unreal'),
+      v10WavsDir: path.join(tmpRoot, 'missing_v10'),
+      customSfxRoot: path.join(tmpRoot, 'custom_sfx'),
+      outDir,
+      concurrency: 2,
+    });
+    assert.equal(res.sourceStats.customSfxCount, 3);
+    assert.equal(res.loudnessSummary.cueSpreadAlertCount, 0);
+    assert.equal(res.loudnessSummary.clippingAlertCount, 0);
+    const cueTable = JSON.parse(await fs.promises.readFile(path.join(outDir, 'cue_table.json'), 'utf8'));
+    const customCue = cueTable.cues.find((c) => c.cueName === 'ui_tap_modern');
+    assert.ok(customCue, 'Expected CustomAI cue ui_tap_modern in cue_table.json');
+    assert.equal(customCue.bus, 'ui_voice');
+    assert.equal(customCue.variants.length, 1);
+  } finally {
+    await fs.promises.rm(tmpRoot, { recursive: true, force: true });
+  }
 });

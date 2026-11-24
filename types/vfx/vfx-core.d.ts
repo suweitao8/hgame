@@ -71,6 +71,42 @@ export function createCameraShake(): {
     };
     reset(): void;
 };
+/**
+ * Evaluates instantaneous Unity VelocityModule.radial velocity toward/away from `(cx, cy, cz)`,
+ * clamping inward steps over `dt` so particles settle smoothly at the radial origin without overshoot.
+ * @param {number} px
+ * @param {number} py
+ * @param {number} pz
+ * @param {number} cx
+ * @param {number} cy
+ * @param {number} cz
+ * @param {number} velRadial
+ * @param {number} vScale
+ * @param {number} dt
+ * @param {Float32Array | number[]} out3
+ */
+export function computeDynamicRadialVel(px: number, py: number, pz: number, cx: number, cy: number, cz: number, velRadial: number, vScale: number, dt: number, out3: Float32Array | number[]): void;
+/**
+ * Builds an instanced chamfered-octagon particle geometry (8 vertices, 6 triangles)
+ * bounding the unit inscribed circle (`r <= 1.0`) to cut ~17% corner pixel overdraw.
+ * @param {object} THREE
+ * @returns {object}
+ */
+export function createChamferedOctagonGeometry(THREE: object): object;
+/**
+ * Detects mobile devices, Bilibili Toy WebViews, and WeChat/Douyin mini-game runtimes
+ * so VFX pools apply mobile-safe memory budgets and half-float GPU defaults.
+ * @returns {boolean}
+ */
+export function isMobileOrMiniGameEnv(): boolean;
+/**
+ * Creates a 2D offscreen/staging canvas across Browser DOM, WeChat (`wx.createCanvas`),
+ * Douyin (`tt.createCanvas`), and Worker `OffscreenCanvas` runtimes.
+ * @param {number} width
+ * @param {number} height
+ * @returns {HTMLCanvasElement | OffscreenCanvas | null}
+ */
+export function createOffscreen2dCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas | null;
 export const VFX_RENDER_ORDERS: Readonly<{
     CROWD: 0;
     TELEGRAPH: 10;
@@ -84,3 +120,8 @@ export const VFX_EASING: Readonly<{
     easeOutQuint(t: any): number;
     easeOutCubic(t: any): number;
 }>;
+/**
+ * 2D triangle list (18 vertices = 6 triangles) tightly bounding the unit circle
+ * (`r <= 1.0`), eliminating ~17% corner overdraw on mobile TBDR GPUs.
+ */
+export const CHAMFERED_OCTAGON_TRIS_2D: Float32Array;

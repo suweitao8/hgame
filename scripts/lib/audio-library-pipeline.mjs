@@ -305,14 +305,20 @@ export function extractSemanticCueKey(name, { pack = '', relDir = '' } = {}) {
   const isExtendedFootstep = EXTENDED_FOOTSTEP_RE.test(contextText)
     && /(footstep|step|walk|run|sprint|land|jump)/i.test(contextText);
 
-  const packPrefix = String(pack || '')
-    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-    .replace(/[^a-z0-9]+/gi, '_')
-    .toLowerCase()
-    .replace(/^_+|_+$/g, '')
-    .replace(/_?(?:sound_?effects_?pack_?\d*|sound_?pack|audio_?pack|sfx|bundle)$/i, '');
+  const packPrefix = pack === 'CustomAI'
+    ? ''
+    : String(pack || '')
+        .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+        .replace(/[^a-z0-9]+/gi, '_')
+        .toLowerCase()
+        .replace(/^_+|_+$/g, '')
+        .replace(/_?(?:sound_?effects_?pack_?\d*|sound_?pack|audio_?pack|sfx|bundle)$/i, '');
 
-  const cueKey = cleaned || normBase || 'cue';
+  const dirLeaf = String(relDir || '').split('/').filter(Boolean).pop() || '';
+  const normDirLeaf = dirLeaf.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[^a-z0-9]+/gi, '_').toLowerCase().replace(/^_+|_+$/g, '');
+  const cueKey = (pack === 'CustomAI' && normDirLeaf && (!cleaned || /^(?:v|var|take|alt|part|sample|out|sfx|audio)?\d*$/.test(cleaned)))
+    ? normDirLeaf
+    : (cleaned || normBase || 'cue');
   return {
     cueKey,
     fullKey: packPrefix ? `${packPrefix}_${cueKey}` : cueKey,
@@ -730,6 +736,16 @@ export async function normalizeAndEncodeAudioFile({
 
   // Post-encode verification (strip MP3 encoder padding cleanly for Active RMS, or read EBU R128 LUFS for long tracks)
   let postStats = await measureAudioFileVolume(ffmpegBin, outAbs, isLongAlways ? '' : SILENCE_TRIM_FILTER);
+  if (postStats.meanDb === null && postStats.maxDb === null) {
+    postStats = await measureAudioFileVolume(ffmpegBin, outAbs, '');
+  }
+  if (!isLongAlways && postStats.meanDb === null && postStats.maxDb === null && useTrim) {
+    const fbFilter = `${fmtPrefix},${hpFilter},volume=${gainInfo.gainDb.toFixed(2)}dB,alimiter=limit=${mp3SafeCeilingLinear}:attack=2:release=50:level=disabled`;
+    const fbEnc = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', srcAbs, '-af', fbFilter, '-c:a', 'libmp3lame', '-b:a', outBitrate, outAbs]);
+    if (fbEnc.code === 0) {
+      postStats = await measureAudioFileVolume(ffmpegBin, outAbs, '');
+    }
+  }
   for (let retry = 0; retry < 3 && postStats.maxDb !== null && postStats.maxDb > Math.min(tier.ceilingDb, -0.6); retry++) {
     const overshoot = postStats.maxDb - tier.ceilingDb;
     mp3SafeCeilingDb -= overshoot + 0.8 + retry * 0.4;
@@ -965,17 +981,59 @@ function isHorrorOverlapCandidate(item) {
     || (item.pack === 'MegaBundleSoundPack' && /HorrorSoundPack2/i.test(item.relDir || item.relWav || ''));
 }
 
+const SUPPORTED_CUSTOM_SFX_EXTS = new Set(['.wav', '.mp3', '.flac', '.m4a', '.ogg']);
+
+function isPromotedMusicSource(item) {
+  if (item?.pack !== 'MegaBundleSoundPack') return false;
+  const dir = String(item.relDir || item.relWav || '');
+  return /MystickSoundtracks\/Sountracks/i.test(dir) || /DarkAmbientSoundtracks\/Soundtracks/i.test(dir);
+}
+
+export function isDirtyAnnouncerSource(item) {
+  if (item?.pack !== 'GunSoundPack') return false;
+  const name = String(item.name || item.relWav || '');
+  return /announcer_voice_classic_FPS_style_(?:headshot|frenzy|killingspree)/i.test(name);
+}
+
+async function probeDurationViaFfprobe(ffprobeBin, filePath) {
+  const res = await runFfmpegAsync(ffprobeBin, [
+    '-v', 'error',
+    '-show_entries', 'format=duration:stream=channels,sample_rate',
+    '-of', 'json',
+    filePath,
+  ]).catch(() => null);
+  if (!res?.stdout) return null;
+  try {
+    const parsed = JSON.parse(res.stdout);
+    const dur = Number(parsed?.format?.duration);
+    const st = Array.isArray(parsed?.streams) ? parsed.streams[0] : null;
+    return Number.isFinite(dur) && dur > 0
+      ? {
+          duration: dur,
+          channels: Number(st?.channels) || 1,
+          sampleRate: Number(st?.sample_rate) || 44100,
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function processAudioLibraryBatch({
   stagingRoot = path.resolve(process.env.HGAME_AUDIO_STAGING || 'D:/UnrealWorkspace/Anim58/Saved/WebAssetExport/audio_staging'),
   v10WavsDir = path.resolve(process.env.HGAME_V10_WAVS_DIR || 'D:/UnrealWorkspace/Anim58/Content/V10_German/Wavs'),
+  customSfxRoot = path.resolve(process.env.HGAME_CUSTOM_SFX_STAGING || 'webasset/hgame-assets-cn/raw/audio_ai_staging/universal/sfx'),
   outDir = path.resolve('webasset/hgame-assets-cn/built/audio'),
   baseUrl = '/assets/cn/audio',
   ffmpegBin = 'ffmpeg',
+  ffprobeBin = 'ffprobe',
   concurrency = Math.min(12, Math.max(2, os.cpus().length - 2)),
   force = false,
 } = {}) {
   const metaPath = path.join(stagingRoot, 'audio_source_meta.json');
-  const sourceMeta = JSON.parse(await fs.readFile(metaPath, 'utf8'));
+  const sourceMeta = existsSync(metaPath)
+    ? JSON.parse(await fs.readFile(metaPath, 'utf8'))
+    : { items: [] };
 
   // Scan direct V10_German/Wavs/*.wav bypassing FMOD cleanly
   const v10Items = [];
@@ -1008,12 +1066,73 @@ export async function processAudioLibraryBatch({
     await walkWavs(v10WavsDir);
   }
 
+  // Scan custom incremental SFX staging (e.g. ElevenLabs / TTS / custom packs)
+  const customItems = [];
+  if (customSfxRoot && existsSync(customSfxRoot)) {
+    const walkCustom = async (dir) => {
+      for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walkCustom(p);
+        } else if (SUPPORTED_CUSTOM_SFX_EXTS.has(path.extname(entry.name).toLowerCase())) {
+          const rel = path.relative(customSfxRoot, p).replaceAll('\\', '/');
+          const ext = path.extname(entry.name);
+          const stem = path.basename(entry.name, ext);
+          const st = await fs.stat(p);
+          let duration = null;
+          let channels = 1;
+          let sampleRate = 44100;
+          if (/\.wav$/i.test(ext)) {
+            const wav = parseWavPcmSamples(await fs.readFile(p), 5.0);
+            if (wav) {
+              duration = Number(wav.duration.toFixed(4));
+              channels = wav.channels;
+              sampleRate = wav.sampleRate;
+            }
+          }
+          if (duration === null) {
+            const probed = await probeDurationViaFfprobe(ffprobeBin, p);
+            if (probed) {
+              duration = Number(probed.duration.toFixed(4));
+              channels = probed.channels;
+              sampleRate = probed.sampleRate;
+            }
+          }
+          customItems.push({
+            id: `CustomAI__${rel.slice(0, -ext.length).replaceAll('/', '__')}`,
+            pack: 'CustomAI',
+            name: stem,
+            relDir: path.dirname(rel) === '.' ? '' : path.dirname(rel).replaceAll('\\', '/'),
+            relWav: `CustomAI/${rel}`,
+            wavAbs: p,
+            duration: duration ?? 1.0,
+            channels,
+            sampleRate,
+            rawBytes: st.size,
+          });
+        }
+      }
+    };
+    await walkCustom(customSfxRoot);
+  }
+
   // Deduplicate HorrorSoundPack2 vs MegaBundleSoundPack/HorrorSoundPack2 by normalized name & duration + fallback duration/fingerprint match
+  // Also skip tracks promoted to music_table.json (MystickSoundtracks/Sountracks & DarkAmbientSoundtracks/Soundtracks).
   const rawUeItems = sourceMeta.items || [];
   const horrorMap = new Map();
   const nonHorrorUe = [];
   let horrorOverlapTotal = 0;
+  let promotedMusicSkipped = 0;
+  let dirtyVoiceSkipped = 0;
   for (const item of rawUeItems) {
+    if (isPromotedMusicSource(item)) {
+      promotedMusicSkipped++;
+      continue;
+    }
+    if (isDirtyAnnouncerSource(item)) {
+      dirtyVoiceSkipped++;
+      continue;
+    }
     if (isHorrorOverlapCandidate(item)) {
       horrorOverlapTotal++;
       const k = normalizeHorrorDedupKey(item);
@@ -1029,7 +1148,7 @@ export async function processAudioLibraryBatch({
   const dedupedHorror = [...horrorMap.values()].map((v) => v.item);
   const dedupHorrorDropped = (sourceMeta.dedupHorrorDropped || 0) + (horrorOverlapTotal - dedupedHorror.length);
 
-  const allSources = [...nonHorrorUe, ...dedupedHorror, ...v10Items];
+  const allSources = [...nonHorrorUe, ...dedupedHorror, ...v10Items, ...customItems];
   await fs.mkdir(path.join(outDir, 'sfx'), { recursive: true });
   await fs.mkdir(path.join(outDir, 'streams'), { recursive: true });
 
@@ -1044,17 +1163,19 @@ export async function processAudioLibraryBatch({
     let wavInfo = null;
     let features = { activeDuration: item.duration || 0.2, rms: 0.1, peak: 0.5, trimStart: 0, trimEnd: item.duration || 0.2, spectralCentroidHz: 1000 };
     try {
-      const fileBuf = await fs.readFile(srcAbs);
-      wavInfo = parseWavPcmSamples(fileBuf, 5.0);
-      if (wavInfo && wavInfo.samples.length > 0) {
-        features = measureSamplesFeatures(wavInfo.samples, wavInfo.sampleRate);
+      if (/\.wav$/i.test(srcAbs)) {
+        const fileBuf = await fs.readFile(srcAbs);
+        wavInfo = parseWavPcmSamples(fileBuf, 5.0);
+        if (wavInfo && wavInfo.samples.length > 0) {
+          features = measureSamplesFeatures(wavInfo.samples, wavInfo.sampleRate);
+        }
       }
     } catch { /* fallback defaults */ }
 
     const realDuration = wavInfo?.duration || item.duration || 0.5;
     const isStream = realDuration >= 4.0;
     const tierDir = isStream ? 'streams' : 'sfx';
-    const relNoExt = item.relWav.replace(/\.wav$/i, '').replace(/[^a-zA-Z0-9_./-]/g, '_');
+    const relNoExt = item.relWav.replace(/\.(wav|mp3|flac|m4a|ogg)$/i, '').replace(/[^a-zA-Z0-9_./-]/g, '_');
     const relOut = `${tierDir}/${relNoExt}.mp3`;
     const outAbs = path.join(outDir, relOut);
     await fs.mkdir(path.dirname(outAbs), { recursive: true });
@@ -1069,12 +1190,15 @@ export async function processAudioLibraryBatch({
     if (!needEncode) {
       const tier = classifyAudioLoudnessTier(item, { duration: realDuration });
       const variantOffsetDb = computeVariantLoudnessOffsetDb(`${item.relDir || ''}/${item.name}`);
-      const postStats = await measureAudioFileVolume(ffmpegBin, outAbs, tier.mode === 'loudnorm' ? '' : SILENCE_TRIM_FILTER);
-      const measuredDb = postStats.meanDb ?? (tier.targetDb + variantOffsetDb);
-      const peakDb = postStats.maxDb ?? tier.ceilingDb;
-      if (peakDb > -0.5) {
+      let postStats = await measureAudioFileVolume(ffmpegBin, outAbs, tier.mode === 'loudnorm' ? '' : SILENCE_TRIM_FILTER);
+      if (postStats.meanDb === null && postStats.maxDb === null) {
+        postStats = await measureAudioFileVolume(ffmpegBin, outAbs, '');
+      }
+      if ((postStats.meanDb === null && postStats.maxDb === null) || Number(postStats.maxDb) > -0.5) {
         needEncode = true;
       } else {
+        const measuredDb = postStats.meanDb ?? (tier.targetDb + variantOffsetDb);
+        const peakDb = postStats.maxDb ?? tier.ceilingDb;
         loudAudit = {
           loudnessTier: tier.id,
           bus: tier.bus,
@@ -1205,6 +1329,109 @@ export async function processAudioLibraryBatch({
   const { surfaceCues, coverage } = buildSurfaceTypeCueMap(runtimeCues, sfxItems);
   const allRuntimeCues = [...surfaceCues, ...runtimeCues];
 
+  // Auto-align any cue whose selected variants exceed 2.5 dB RMS spread (converges shared & native cues cleanly)
+  const syncCueMetrics = (cue) => {
+    const meanNums = cue.variants.map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
+    const peakNums = cue.variants.map((v) => v.peakDb).filter((x) => Number.isFinite(x));
+    const gainNums = cue.variants.map((v) => v.appliedGainDb).filter((x) => Number.isFinite(x));
+    cue.measuredDb = meanNums.length ? Number((meanNums.reduce((a, b) => a + b, 0) / meanNums.length).toFixed(2)) : null;
+    cue.peakDb = peakNums.length ? Number(Math.max(...peakNums).toFixed(2)) : null;
+    if (gainNums.length) cue.appliedGainDb = Number((gainNums.reduce((a, b) => a + b, 0) / gainNums.length).toFixed(2));
+  };
+  const sfxById = new Map(sfxItems.map((it) => [it.id, it]));
+  const variantsById = new Map();
+  for (const cue of allRuntimeCues) {
+    for (const v of cue.variants) {
+      if (!variantsById.has(v.id)) variantsById.set(v.id, []);
+      variantsById.get(v.id).push({ cue, v });
+    }
+  }
+  const adjustVariantRms = async (v, deltaDb) => {
+    const rec = sfxById.get(v.id);
+    if (!rec) return false;
+    const outAbs = path.join(outDir, rec.relOut);
+    if (!existsSync(outAbs)) return false;
+    const ceilDb = -1.8;
+    const ceilLin = Number(Math.pow(10, ceilDb / 20).toFixed(6));
+    const tmpOut = `${outAbs}.rmsalign.mp3`;
+    const af = [
+      'aresample=44100',
+      'aformat=sample_fmts=fltp:channel_layouts=mono',
+      `volume=${deltaDb.toFixed(2)}dB`,
+      `alimiter=limit=${ceilLin}:attack=2:release=50:level=disabled`,
+    ].join(',');
+    const enc = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', outAbs, '-af', af, '-c:a', 'libmp3lame', '-b:a', '64k', tmpOut]);
+    if (enc.code !== 0) {
+      await fs.rm(tmpOut, { force: true }).catch(() => {});
+      return false;
+    }
+    await fs.rename(tmpOut, outAbs);
+    let post = await measureAudioFileVolume(ffmpegBin, outAbs, SILENCE_TRIM_FILTER);
+    if (post.maxDb !== null && post.maxDb > -0.6) {
+      const cutDb = -((post.maxDb - (-0.8)) + 0.6);
+      const cutLin = Number(Math.pow(10, -2.0 / 20).toFixed(6));
+      const re = await runFfmpegAsync(ffmpegBin, ['-y', '-v', 'error', '-i', outAbs, '-af', `aresample=44100,aformat=sample_fmts=fltp:channel_layouts=mono,volume=${cutDb.toFixed(2)}dB,alimiter=limit=${cutLin}:attack=2:release=50:level=disabled`, '-c:a', 'libmp3lame', '-b:a', '64k', tmpOut]);
+      if (re.code === 0) {
+        await fs.rename(tmpOut, outAbs);
+        post = await measureAudioFileVolume(ffmpegBin, outAbs, SILENCE_TRIM_FILTER);
+      } else {
+        await fs.rm(tmpOut, { force: true }).catch(() => {});
+      }
+    }
+    const newDb = Number((post.meanDb ?? (v.measuredDb + deltaDb)).toFixed(2));
+    const newPeak = Number((post.maxDb ?? v.peakDb ?? -1.0).toFixed(2));
+    const appliedShift = Number((newDb - (v.measuredDb ?? newDb)).toFixed(2));
+    const newStat = await fs.stat(outAbs).catch(() => null);
+    rec.measuredDb = newDb;
+    rec.peakDb = newPeak;
+    rec.appliedGainDb = Number(((rec.appliedGainDb ?? 0) + appliedShift).toFixed(2));
+    if (newStat) rec.encodedBytes = newStat.size;
+    rec.clippingAlert = newPeak > -0.5;
+    for (const ref of variantsById.get(v.id) || []) {
+      ref.v.measuredDb = newDb;
+      ref.v.peakDb = newPeak;
+      ref.v.appliedGainDb = rec.appliedGainDb;
+      syncCueMetrics(ref.cue);
+    }
+    return true;
+  };
+
+  for (let pass = 0; pass < 3; pass++) {
+    const alertCues = allRuntimeCues.filter((cue) => {
+      const vals = cue.variants.map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
+      return vals.length >= 2 && (Math.max(...vals) - Math.min(...vals)) > 2.4;
+    });
+    if (alertCues.length === 0) break;
+    let changedInPass = false;
+    for (const cue of alertCues) {
+      const curVals = cue.variants.map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
+      if (curVals.length < 2 || (Math.max(...curVals) - Math.min(...curVals)) <= 2.4) continue;
+      const sorted = [...curVals].sort((a, b) => a - b);
+      const medDb = sorted[Math.floor(sorted.length / 2)];
+      const maxDb = sorted[sorted.length - 1];
+      const anchorHigh = Math.min(maxDb, medDb + 0.5);
+      // 1) Lift unusually quiet variants toward group median with limiter protection
+      for (const v of cue.variants) {
+        if (!Number.isFinite(v.measuredDb)) continue;
+        if (v.measuredDb < anchorHigh - 2.0) {
+          const boostDb = clamp((anchorHigh - 1.1) - v.measuredDb, 0, 8.0);
+          if (boostDb >= 0.4 && await adjustVariantRms(v, boostDb)) changedInPass = true;
+        }
+      }
+      // 2) Trim any remaining high outliers down within 2.0 dB of the quietest variant
+      const postVals = cue.variants.map((v) => v.measuredDb).filter((x) => Number.isFinite(x));
+      const postMin = Math.min(...postVals);
+      for (const v of cue.variants) {
+        if (!Number.isFinite(v.measuredDb)) continue;
+        if (v.measuredDb > postMin + 2.15) {
+          const cutDb = clamp((postMin + 1.8) - v.measuredDb, -12.0, -0.35);
+          if (await adjustVariantRms(v, cutDb)) changedInPass = true;
+        }
+      }
+    }
+    if (!changedInPass) break;
+  }
+
   // Auto-audit loudness gates
   const clippingAlerts = validProcessed
     .filter((it) => Number(it.peakDb) > -0.5)
@@ -1301,7 +1528,10 @@ export async function processAudioLibraryBatch({
       skippedV10GermanUe: sourceMeta.skippedV10GermanUe || 0,
       skippedSoundCue: sourceMeta.skippedSoundCue || 0,
       dedupHorrorDropped,
+      promotedMusicSkipped,
+      dirtyVoiceSkipped,
       v10DirectWavs: v10Items.length,
+      customSfxCount: customItems.length,
     },
     totals: {
       totalTracks: validProcessed.length,

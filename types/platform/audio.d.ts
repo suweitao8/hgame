@@ -220,6 +220,8 @@
  * @property {number} [gainJitter=0.05]
  * @property {number} [playbackRate=1]
  * @property {number} [pitch] Alias for playbackRate.
+ * @property {number | null} [step=null] Chromatic combo step (0..16) for presets like `comboStep`.
+ * @property {'high' | 'mid' | 'low'} [voiceTone='mid'] Character pitch preset for `textBlip`.
  * @property {number} [duration] Duration in seconds.
  * @property {() => number} [random] Random source for pitch and gain variation.
  * @property {() => void} [onEnded] Called when a playing sound ends or is stopped.
@@ -849,6 +851,14 @@ export type SynthPlayOptions = {
      */
     pitch?: number | undefined;
     /**
+     * Chromatic combo step (0..16) for presets like `comboStep`.
+     */
+    step?: number | null | undefined;
+    /**
+     * Character pitch preset for `textBlip`.
+     */
+    voiceTone?: "high" | "low" | "mid" | undefined;
+    /**
      * Duration in seconds.
      */
     duration?: number | undefined;
@@ -883,10 +893,11 @@ import { SYNTH_PRESETS } from './audio/synth.js';
 import { SYNTH_BASE_ATTENUATION_DB } from './audio/synth.js';
 import { SYNTH_HARSH_WAVE_ATTENUATION_DB } from './audio/synth.js';
 import { getSynthCalibrationGain } from './audio/synth.js';
+import { getComboStepPitchFactor } from './audio/synth.js';
 import { synthesizeSfxPcm } from './audio/synth.js';
 import { createSynthSfx } from './audio/synth.js';
 import { BGM_MOODS } from './audio/bgm-synth.js';
 import { midiToHz } from './audio/bgm-synth.js';
 import { generateBgmStep } from './audio/bgm-synth.js';
 import { createProceduralBgm } from './audio/bgm-synth.js';
-export { analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, SYNTH_BASE_ATTENUATION_DB, SYNTH_HARSH_WAVE_ATTENUATION_DB, getSynthCalibrationGain, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm };
+export { analyzeAudioBuffer, normalizeVariantSet, SYNTH_PRESETS, SYNTH_BASE_ATTENUATION_DB, SYNTH_HARSH_WAVE_ATTENUATION_DB, getSynthCalibrationGain, getComboStepPitchFactor, synthesizeSfxPcm, createSynthSfx, BGM_MOODS, midiToHz, generateBgmStep, createProceduralBgm };

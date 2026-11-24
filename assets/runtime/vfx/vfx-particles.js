@@ -1,6 +1,9 @@
 import {
+  CHAMFERED_OCTAGON_TRIS_2D,
   VFX_RENDER_ORDERS,
+  createChamferedOctagonGeometry,
   createVisualPrng,
+  isMobileOrMiniGameEnv,
   packRgb24,
   submitRingBufferRanges,
   unpackRgb24Into,
@@ -113,7 +116,10 @@ varying float vPhase;
 
 void main() {
   float r = length(vUv);
-  if (r > 1.0) discard;
+  if (r > 1.0) {
+    gl_FragColor = vec4(0.0);
+    return;
+  }
 
   float fade = 1.0 - smoothstep(0.65, 1.0, vLifeRatio);
   float alpha = 0.0;
@@ -140,7 +146,10 @@ void main() {
     col = mix(col, vec3(1.0), step(d, 0.35) * 0.45);
   }
 
-  if (alpha < 0.01) discard;
+  if (alpha < 0.01) {
+    gl_FragColor = vec4(0.0);
+    return;
+  }
   gl_FragColor = vec4(col, alpha);
 }
 `;
@@ -228,7 +237,10 @@ out vec4 fragColor;
 
 void main() {
   float r = length(vUv);
-  if (r > 1.0) discard;
+  if (r > 1.0) {
+    fragColor = vec4(0.0);
+    return;
+  }
 
   float fade = 1.0 - smoothstep(0.65, 1.0, vLifeRatio);
   float alpha = 0.0;
@@ -255,7 +267,10 @@ void main() {
     col = mix(col, vec3(1.0), step(d, 0.35) * 0.45);
   }
 
-  if (alpha < 0.01) discard;
+  if (alpha < 0.01) {
+    fragColor = vec4(0.0);
+    return;
+  }
   fragColor = vec4(col, alpha);
 }
 `;
@@ -278,6 +293,8 @@ function createChannelPool(capacity, additive) {
     dirtyStart: 0,
     dirtyCount: 0,
     wrapCount: 0,
+    latestDeath: -Infinity,
+    chunkLatestDeath: new Float32Array(Math.ceil(capacity / 256)).fill(-Infinity),
     lastDirtyRanges: [],
     threeMesh: null,
     threeAttrs: null,
@@ -324,7 +341,8 @@ export function createStatelessParticlePool({
   THREE = /** @type {object | null} */ (null),
   scene = /** @type {object | null} */ (null),
   gl = /** @type {WebGL2RenderingContext | null} */ (null),
-  maxParticles = mode === 'canvas2d' ? 1024 : 65536,
+  mobile = isMobileOrMiniGameEnv(),
+  maxParticles = mode === 'canvas2d' ? 1024 : (mobile ? 16384 : 65536),
   is2D = mode === 'webgl2d' || mode === 'canvas2d',
   prng = createVisualPrng(0x9e3779b9),
 } = {}) {
@@ -341,12 +359,8 @@ export function createStatelessParticlePool({
   let disposed = false;
 
   function initThreeChannel(ch) {
-    if (!THREE || !scene || !THREE.InstancedBufferGeometry || !THREE.PlaneGeometry) return;
-    const base = new THREE.PlaneGeometry(1, 1);
-    const geo = new THREE.InstancedBufferGeometry();
-    geo.index = base.index;
-    geo.attributes.position = base.attributes.position;
-    geo.attributes.uv = base.attributes.uv;
+    if (!THREE || !scene || !THREE.InstancedBufferGeometry || !THREE.BufferAttribute) return;
+    const geo = createChamferedOctagonGeometry(THREE);
     geo.instanceCount = 0;
 
     const a0 = new THREE.InstancedBufferAttribute(ch.p0, 4);
@@ -380,6 +394,7 @@ export function createStatelessParticlePool({
 
     const mesh = new THREE.Mesh(geo, mat);
     mesh.frustumCulled = false;
+    mesh.visible = false;
     mesh.renderOrder = VFX_RENDER_ORDERS.PARTICLES;
     mesh.name = ch.additive ? 'HGameVfxParticlesAdditive' : 'HGameVfxParticlesNormal';
     scene.add(mesh);
@@ -398,17 +413,9 @@ export function createStatelessParticlePool({
       uCamZoom: gl.getUniformLocation(glProg, 'uCamZoom'),
       uViewSize: gl.getUniformLocation(glProg, 'uViewSize'),
     };
-    const quadVerts = new Float32Array([
-      -0.5, -0.5,
-       0.5, -0.5,
-      -0.5,  0.5,
-      -0.5,  0.5,
-       0.5, -0.5,
-       0.5,  0.5,
-    ]);
     glQuadVbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, glQuadVbo);
-    gl.bufferData(gl.ARRAY_BUFFER, quadVerts, gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, CHAMFERED_OCTAGON_TRIS_2D, gl.STATIC_DRAW);
 
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
@@ -474,6 +481,11 @@ export function createStatelessParticlePool({
     ch.p3[i4 + 2] = stretch;
     ch.p3[i4 + 3] = phase;
 
+    const death = simTime + duration;
+    if (death > ch.latestDeath) ch.latestDeath = death;
+    const chunk = idx >>> 8;
+    if (death > ch.chunkLatestDeath[chunk]) ch.chunkLatestDeath[chunk] = death;
+
     if (ch.dirtyCount === 0) {
       ch.dirtyStart = idx;
     }
@@ -489,8 +501,30 @@ export function createStatelessParticlePool({
     ch.totalEmitted += 1;
   }
 
+  function syncThreeChannelState(ch) {
+    if (!ch.threeMesh) return;
+    const now = Math.fround(simTime);
+    const hasLive = ch.totalEmitted > 0 && now <= ch.latestDeath;
+    if (!hasLive) {
+      ch.threeMesh.geometry.instanceCount = 0;
+      ch.threeMesh.visible = false;
+      return;
+    }
+    let count = Math.min(ch.totalEmitted, ch.capacity);
+    if (ch.totalEmitted <= ch.capacity) {
+      let lastChunk = Math.ceil(count / 256) - 1;
+      while (lastChunk >= 0 && now > ch.chunkLatestDeath[lastChunk]) lastChunk -= 1;
+      count = lastChunk >= 0 ? Math.min(count, (lastChunk + 1) * 256) : 0;
+    }
+    ch.threeMesh.geometry.instanceCount = count;
+    ch.threeMesh.visible = count > 0;
+  }
+
   function flushChannel(ch) {
-    if (ch.dirtyCount <= 0) return;
+    if (ch.dirtyCount <= 0) {
+      syncThreeChannelState(ch);
+      return;
+    }
 
     if (ch.threeAttrs) {
       for (let i = 0; i < 4; i++) {
@@ -520,9 +554,7 @@ export function createStatelessParticlePool({
       }
     }
 
-    if (ch.threeMesh) {
-      ch.threeMesh.geometry.instanceCount = Math.min(ch.totalEmitted, ch.capacity);
-    }
+    syncThreeChannelState(ch);
     ch.dirtyCount = 0;
   }
 
@@ -627,14 +659,14 @@ export function createStatelessParticlePool({
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
       const activeCount = Math.min(ch.totalEmitted, ch.capacity);
-      if (activeCount <= 0 || !ch.glVao) continue;
+      if (activeCount <= 0 || !ch.glVao || Math.fround(simTime) > ch.latestDeath) continue;
       if (ch.additive) {
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
       } else {
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       }
       gl.bindVertexArray(ch.glVao);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, activeCount);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, 18, activeCount);
     }
 
     gl.bindVertexArray(null);
@@ -655,37 +687,43 @@ export function createStatelessParticlePool({
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
       const count = Math.min(ch.totalEmitted, ch.capacity);
-      if (count <= 0) continue;
+      if (count <= 0 || Math.fround(simTime) > ch.latestDeath) continue;
       ctx.globalCompositeOperation = ch.additive ? 'lighter' : 'source-over';
-      for (let i = 0; i < count; i++) {
-        const i4 = i * 4;
-        const age = simTime - ch.p0[i4 + 3];
-        const dur = ch.p1[i4 + 3];
-        if (dur <= 0 || age < 0 || age >= dur) continue;
-        const t = age / dur;
-        const k = ch.p2[i4 + 3];
-        const disp = k > 0.001 ? (1 - Math.exp(-k * age)) / k : age;
-        const g = ch.p2[i4 + 2];
-        const wx = ch.p0[i4] + ch.p1[i4] * disp;
-        const wy = ch.p0[i4 + 1] + ch.p1[i4 + 1] * disp + 0.5 * g * age * age;
-        const sx = (wx - camX) * zoom + halfW;
-        const sy = (wy - camY) * zoom + halfH;
-        const size = (ch.p2[i4] + (ch.p2[i4 + 1] - ch.p2[i4]) * t) * zoom;
-        if (size <= 0.25) continue;
+      const chunks = Math.ceil(count / 256);
+      for (let b = 0; b < chunks; b++) {
+        if (Math.fround(simTime) > ch.chunkLatestDeath[b]) continue;
+        const startIdx = b * 256;
+        const endIdx = Math.min(count, startIdx + 256);
+        for (let i = startIdx; i < endIdx; i++) {
+          const i4 = i * 4;
+          const age = simTime - ch.p0[i4 + 3];
+          const dur = ch.p1[i4 + 3];
+          if (dur <= 0 || age < 0 || age >= dur) continue;
+          const t = age / dur;
+          const k = ch.p2[i4 + 3];
+          const disp = k > 0.001 ? (1 - Math.exp(-k * age)) / k : age;
+          const g = ch.p2[i4 + 2];
+          const wx = ch.p0[i4] + ch.p1[i4] * disp;
+          const wy = ch.p0[i4 + 1] + ch.p1[i4 + 1] * disp + 0.5 * g * age * age;
+          const sx = (wx - camX) * zoom + halfW;
+          const sy = (wy - camY) * zoom + halfH;
+          const size = (ch.p2[i4] + (ch.p2[i4 + 1] - ch.p2[i4]) * t) * zoom;
+          if (size <= 0.25) continue;
 
-        const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
-        unpackRgb24Into(ch.p3[i4], scratchRgb);
-        ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
-        ctx.fillStyle = `rgb(${(scratchRgb[0] * 255) | 0},${(scratchRgb[1] * 255) | 0},${(scratchRgb[2] * 255) | 0})`;
-        ctx.beginPath();
-        if (ch.p3[i4 + 1] === VFX_SHAPE.SHOCK_RING) {
-          ctx.strokeStyle = ctx.fillStyle;
-          ctx.lineWidth = Math.max(1.5, size * 0.14);
-          ctx.arc(sx, sy, size * (0.25 + 0.65 * t), 0, 6.2831853);
-          ctx.stroke();
-        } else {
-          ctx.arc(sx, sy, size * 0.5, 0, 6.2831853);
-          ctx.fill();
+          const alpha = t < 0.65 ? 1 : 1 - (t - 0.65) / 0.35;
+          unpackRgb24Into(ch.p3[i4], scratchRgb);
+          ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+          ctx.fillStyle = `rgb(${(scratchRgb[0] * 255) | 0},${(scratchRgb[1] * 255) | 0},${(scratchRgb[2] * 255) | 0})`;
+          ctx.beginPath();
+          if (ch.p3[i4 + 1] === VFX_SHAPE.SHOCK_RING) {
+            ctx.strokeStyle = ctx.fillStyle;
+            ctx.lineWidth = Math.max(1.5, size * 0.14);
+            ctx.arc(sx, sy, size * (0.25 + 0.65 * t), 0, 6.2831853);
+            ctx.stroke();
+          } else {
+            ctx.arc(sx, sy, size * 0.5, 0, 6.2831853);
+            ctx.fill();
+          }
         }
       }
     }
@@ -699,15 +737,17 @@ export function createStatelessParticlePool({
       ch.cursor = 0;
       ch.totalEmitted = 0;
       ch.dirtyStart = 0;
-      if (ch.threeMesh) {
-      ch.threeMesh.geometry.instanceCount = Math.min(ch.totalEmitted, ch.capacity);
-    }
-    ch.dirtyCount = 0;
+      ch.dirtyCount = 0;
       ch.wrapCount = 0;
+      ch.latestDeath = -Infinity;
+      ch.chunkLatestDeath.fill(-Infinity);
       ch.lastDirtyRanges.length = 0;
       ch.p0.fill(0);
       ch.p1.fill(0);
-      if (ch.threeMesh) ch.threeMesh.geometry.instanceCount = 0;
+      if (ch.threeMesh) {
+        ch.threeMesh.geometry.instanceCount = 0;
+        ch.threeMesh.visible = false;
+      }
     }
   }
 

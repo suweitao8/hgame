@@ -1,4 +1,4 @@
-import { VFX_RENDER_ORDERS } from './vfx-core.js';
+import { VFX_RENDER_ORDERS, computeDynamicRadialVel } from './vfx-core.js';
 import { evaluateColorCurve, evaluateSizeCurve } from './vfx-atlas-particles.js';
 import { applyVfxDepthState, getVfxDepthTestIndex, VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 import { VFX_FLIPBOOK_GLSL } from './vfx-flipbook.js';
@@ -248,8 +248,7 @@ void main() {
   );
   vec3 worldPos = vfxQuatRotate(aInstQuat, pos * sc) + aInstPosScale.xyz;
   vec3 worldNrm = normalize(vfxQuatRotate(aInstQuat, nrm / safeSc));
-  float isOddFlip = (sc.x * sc.y * sc.z) < 0.0 ? 2.0 : 0.0;
-  vFlipLocalV = aInstScaleInfo.w + isOddFlip;
+  vFlipLocalV = aInstScaleInfo.w;
   vec4 mvPos = viewMatrix * vec4(worldPos, 1.0);
 
   vNormalWs = worldNrm;
@@ -453,6 +452,7 @@ export function createMeshVfxPool({
   const scratchC2 = new Float32Array(4);
   const scratchFwd = THREE?.Vector3 ? new THREE.Vector3(0, 0, 1) : null;
   const scratchDir = THREE?.Vector3 ? new THREE.Vector3(0, 1, 0) : null;
+  const scratchRadVel3 = new Float32Array(3);
   const scratchQuat = THREE?.Quaternion ? new THREE.Quaternion() : null;
   const scratchQuat2 = THREE?.Quaternion ? new THREE.Quaternion() : null;
   const scratchTrQuat = THREE?.Quaternion ? new THREE.Quaternion() : null;
@@ -499,9 +499,14 @@ export function createMeshVfxPool({
       windMul: 0,
       gravity: 0,
       drag: 0,
+      staticPos: false,
       orbitalY: 0,
       centerX: 0,
       centerZ: 0,
+      velRadial: 0,
+      radCx: 0,
+      radCy: 0,
+      radCz: 0,
       rotX: 0,
       rotY: 0,
       rotZ: 0,
@@ -814,7 +819,10 @@ export function createMeshVfxPool({
       fragmentShader: VFX_MESH_INSTANCED_FS,
       uniforms,
       transparent: !opaque,
-      side: cullMode === 'front' ? THREE.BackSide : cullMode === 'back' ? THREE.FrontSide : THREE.DoubleSide,
+      // uber_fx / pbr_fx perform per-instance facing culling via effFrontFacing so odd per-instance flip stays accurate
+      side: (shaderKindId === UBER_SHADER_KIND.UBER_FX || shaderKindId === UBER_SHADER_KIND.PBR_FX)
+        ? THREE.DoubleSide
+        : (cullMode === 'front' ? THREE.BackSide : cullMode === 'back' ? THREE.FrontSide : THREE.DoubleSide),
       extensions: { derivatives: true },
       ...blendCfg,
     });
@@ -912,9 +920,14 @@ export function createMeshVfxPool({
     s.windMul = opts.windMul ?? 0;
     s.gravity = opts.gravity ?? 0;
     s.drag = opts.drag ?? 0;
+    s.staticPos = Boolean(opts.staticPos);
     s.orbitalY = opts.orbitalY ?? 0;
     s.centerX = (opts.centerX ?? opts.x ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3] : 0);
     s.centerZ = (opts.centerZ ?? opts.z ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3 + 2] : 0);
+    s.velRadial = opts.velRadial ?? 0;
+    s.radCx = (opts.radCx ?? opts.x ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3] : 0);
+    s.radCy = (opts.radCy ?? opts.y ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3 + 1] : 0);
+    s.radCz = (opts.radCz ?? opts.z ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3 + 2] : 0);
     s.rotX = opts.rotX ?? 0;
     s.rotY = opts.rotY ?? 0;
     s.rotZ = opts.rotZ ?? 0;
@@ -1075,13 +1088,18 @@ export function createMeshVfxPool({
     return slotIdx;
   }
 
-  function computeSlotQuat(s) {
+  function computeSlotQuat(s, t = 0) {
     if (!scratchQuat || !scratchEuler) return;
     if (s.alignToVelocity && scratchFwd && scratchDir) {
-      const spd = Math.hypot(s.vx, s.vy, s.vz);
-      const ax = spd > 0.001 ? s.vx : (s.hasDir ? s.dirX : 0);
-      const ay = spd > 0.001 ? s.vy : (s.hasDir ? s.dirY : 0);
-      const az = spd > 0.001 ? s.vz : (s.hasDir ? s.dirZ : 0);
+      const vScale = s.velCurve ? evaluateSizeCurve(s.velCurve, t) : 1.0;
+      computeDynamicRadialVel(s.x, s.y, s.z, s.radCx, s.radCy, s.radCz, s.velRadial, vScale, 0, scratchRadVel3);
+      const evx = s.vx * vScale + scratchRadVel3[0];
+      const evy = s.vy * vScale + scratchRadVel3[1];
+      const evz = s.vz * vScale + scratchRadVel3[2];
+      const spd = Math.hypot(evx, evy, evz);
+      const ax = spd > 0.001 ? evx : (s.hasDir ? s.dirX : 0);
+      const ay = spd > 0.001 ? evy : (s.hasDir ? s.dirY : 0);
+      const az = spd > 0.001 ? evz : (s.hasDir ? s.dirZ : 0);
       const dLen = Math.hypot(ax, ay, az);
       if (dLen > 0.001) {
         if (s.forwardAxis === 'y') scratchFwd.set(0, 1, 0);
@@ -1124,7 +1142,7 @@ export function createMeshVfxPool({
     batch.posScale[i4 + 2] = s.z + oz;
     batch.posScale[i4 + 3] = sc;
 
-    computeSlotQuat(s);
+    computeSlotQuat(s, t);
     if (scratchQuat) {
       batch.quat[i4] = scratchQuat.x;
       batch.quat[i4 + 1] = scratchQuat.y;
@@ -1192,7 +1210,7 @@ export function createMeshVfxPool({
     const oz = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 2] : 0;
     s.mesh.position.set(s.x + ox, s.y + oy, s.z + oz);
     if (scratchQuat) {
-      computeSlotQuat(s);
+      computeSlotQuat(s, t);
       s.mesh.quaternion.copy(scratchQuat);
     } else {
       s.mesh.rotation.set(s.rotX, s.rotY, s.rotZ);
@@ -1207,6 +1225,13 @@ export function createMeshVfxPool({
       const cut = t <= s.dissolveStart ? 0 : (t - s.dissolveStart) / Math.max(0.01, 1 - s.dissolveStart);
       s.mat.uniforms.uDissolve.value.x = Math.max(0, Math.min(1.05, cut));
     }
+  }
+
+  function killSlot(slotIdx) {
+    const s = getSlotByHandle(slotIdx);
+    if (!s || !s.active) return;
+    s.active = false;
+    if (s.mesh) s.mesh.visible = false;
   }
 
   function updateSlot(slotIdx, x, y, z, vx, vy, vz) {
@@ -1304,10 +1329,16 @@ export function createMeshVfxPool({
     }
   }
 
-  function setSceneTexture(sceneTexture, { width = 1280, height = 720 } = {}) {
+  /**
+   * @param {object | null} sceneTexture
+   * @param {{ width?: number, height?: number }} [opts]
+   */
+  function setSceneTexture(sceneTexture, { width, height } = {}) {
     activeSceneTex = sceneTexture || null;
-    invViewW = 1 / Math.max(1, width);
-    invViewH = 1 / Math.max(1, height);
+    if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+      invViewW = 1 / Math.max(1, width);
+      invViewH = 1 / Math.max(1, height);
+    }
     const hasScene = activeSceneTex && qualityTier !== 'low' ? 1.0 : 0.0;
     for (let i = 0; i < capacity; i++) {
       const s = slots[i];
@@ -1347,46 +1378,49 @@ export function createMeshVfxPool({
   }
 
   function advanceMeshMotion(s, dt, t) {
-    if (s.drag > 0.001) {
-      const d = Math.exp(-s.drag * dt);
-      s.vx *= d;
-      s.vy *= d;
-      s.vz *= d;
-    }
-    const ax = s.accelX + windVec[0] * s.windMul;
-    const ay = -s.gravity + windVec[1] * s.windMul;
-    const az = s.accelZ + windVec[2] * s.windMul;
-    s.vx += ax * dt;
-    s.vy += ay * dt;
-    s.vz += az * dt;
-    if (s.clampVelocity && s.clampVelocity.limit > 0) {
-      const spd = Math.hypot(s.vx, s.vy, s.vz);
-      const lim = s.clampVelocity.limit;
-      if (spd > lim) {
-        const cDampen = Math.max(0, Math.min(1, Number(s.clampVelocity.dampen ?? 1)));
-        const nextSpd = spd - (spd - lim) * cDampen;
-        const sc = nextSpd / spd;
-        s.vx *= sc;
-        s.vy *= sc;
-        s.vz *= sc;
+    if (!s.staticPos) {
+      if (s.drag > 0.001) {
+        const d = Math.exp(-s.drag * dt);
+        s.vx *= d;
+        s.vy *= d;
+        s.vz *= d;
       }
-    }
-    const vScale = s.velCurve ? evaluateSizeCurve(s.velCurve, t) : 1.0;
-    s.x += s.vx * vScale * dt;
-    s.y += s.vy * vScale * dt;
-    s.z += s.vz * vScale * dt;
-    if (Math.abs(s.orbitalY) > 0.0001) {
-      const oa = s.orbitalY * dt;
-      const oc = Math.cos(oa);
-      const os = Math.sin(oa);
-      const rx = s.x - s.centerX;
-      const rz = s.z - s.centerZ;
-      s.x = s.centerX + rx * oc - rz * os;
-      s.z = s.centerZ + rx * os + rz * oc;
-      const vx = s.vx;
-      const vz = s.vz;
-      s.vx = vx * oc - vz * os;
-      s.vz = vx * os + vz * oc;
+      const ax = s.accelX + windVec[0] * s.windMul;
+      const ay = -s.gravity + windVec[1] * s.windMul;
+      const az = s.accelZ + windVec[2] * s.windMul;
+      s.vx += ax * dt;
+      s.vy += ay * dt;
+      s.vz += az * dt;
+      if (s.clampVelocity && s.clampVelocity.limit > 0) {
+        const spd = Math.hypot(s.vx, s.vy, s.vz);
+        const lim = s.clampVelocity.limit;
+        if (spd > lim) {
+          const cDampen = Math.max(0, Math.min(1, Number(s.clampVelocity.dampen ?? 1)));
+          const nextSpd = spd - (spd - lim) * cDampen;
+          const sc = nextSpd / spd;
+          s.vx *= sc;
+          s.vy *= sc;
+          s.vz *= sc;
+        }
+      }
+      const vScale = s.velCurve ? evaluateSizeCurve(s.velCurve, t) : 1.0;
+      computeDynamicRadialVel(s.x, s.y, s.z, s.radCx, s.radCy, s.radCz, s.velRadial, vScale, dt, scratchRadVel3);
+      s.x += (s.vx * vScale + scratchRadVel3[0]) * dt;
+      s.y += (s.vy * vScale + scratchRadVel3[1]) * dt;
+      s.z += (s.vz * vScale + scratchRadVel3[2]) * dt;
+      if (Math.abs(s.orbitalY) > 0.0001) {
+        const oa = s.orbitalY * dt;
+        const oc = Math.cos(oa);
+        const os = Math.sin(oa);
+        const rx = s.x - s.centerX;
+        const rz = s.z - s.centerZ;
+        s.x = s.centerX + rx * oc - rz * os;
+        s.z = s.centerZ + rx * os + rz * oc;
+        const vx = s.vx;
+        const vz = s.vz;
+        s.vx = vx * oc - vz * os;
+        s.vz = vx * os + vz * oc;
+      }
     }
     if (s.rotationBySpeed) {
       const spd = Math.hypot(s.vx, s.vy, s.vz);
@@ -1501,6 +1535,7 @@ export function createMeshVfxPool({
     registerUberMaterial,
     getSurfaceSamples,
     spawn,
+    killSlot,
     readSlotMotion,
     updateSlot,
     setWind,

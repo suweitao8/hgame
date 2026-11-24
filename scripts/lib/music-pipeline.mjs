@@ -27,6 +27,7 @@ const MICRO_FADE_OUT_SEC = 0.05;
 const PEAK_CEILING_GATE_DBTP = -0.5;
 const TAIL_SILENCE_MAX_SEC = 0.3;
 const STINGER_WARN_DURATION_SEC = 15.0;
+const BGM_WARN_DURATION_SEC = 125.0;
 
 function clamp(v, min, max) {
   return v < min ? min : (v > max ? max : v);
@@ -70,20 +71,24 @@ export function inferMusicCategory(cleanName, kind = 'bgm') {
   if (kind === 'stinger') return 'stinger';
   const s = String(cleanName || '').toLowerCase();
   if (/(^|_)(boss|climax_boss|raid|final_phase|nemesis)(_|$)/.test(s) && !/^emo_/.test(s)) return 'boss';
-  if (/(^|_)(urgent|countdown|escape|crisis|panic|alert)(_|$)/.test(s)) return 'urgent';
+  if (/(^|_)(urgent|countdown|escape|crisis|panic|alert|final_zone)(_|$)/.test(s)) return 'urgent';
+  if (/(^|_)(scifi|sci_fi|cyber|cyberpunk|synthwave|mech|space|neon|futuristic)(_|$)/.test(s)) return 'scifi';
+  if (/(^|_)(ink|eastern|wuxia|xianxia|guzheng|bamboo|ancient|oriental)(_|$)/.test(s)) return 'ink';
+  if (/(^|_)(arcade|chiptune|retro|8bit|16bit)(_|$)/.test(s)) return 'arcade';
   if (/(^|_)(battle|combat|fight|action|war|arena|rush|chase)(_|$)/.test(s)) return 'battle';
   if (/(^|_)(sweet|ambiguous|intimate|climax|afterglow|romance|date|love)(_|$)/.test(s)) return 'romance';
-  if (/(^|_)(suspense|stealth|mystery|tense|dark_scheme)(_|$)/.test(s)) return 'suspense';
+  if (/(^|_)(suspense|stealth|mystery|tense|dark_scheme|wrong_thoughts)(_|$)/.test(s)) return 'suspense';
   if (/(^|_)(daily|warm|bond|sad|melancholy|healing|emotional)(_|$)/.test(s)) return 'emotion';
-  if (/(^|_)(puzzle|match|arcade|minigame)(_|$)/.test(s)) return 'puzzle';
-  if (/(^|_)(explore|exploration|field|adventure|travel)(_|$)/.test(s)) return 'explore';
+  if (/(^|_)(puzzle|match|minigame)(_|$)/.test(s)) return 'puzzle';
+  if (/(^|_)(result|victory|defeat|summary)(_|$)/.test(s)) return 'result';
   if (/(^|_)(lobby|title|menu|home|hub|town|camp|select)(_|$)/.test(s)) return 'lobby';
   if (/(^|_)(card|deck|shop|draft|tavern|gacha|upgrade)(_|$)/.test(s)) return 'card';
-  if (/(^|_)(dungeon|crypt|cave|ruin|labyrinth|tomb|dark)(_|$)/.test(s)) return 'dungeon';
-  if (/(^|_)(survival|cold|winter|night|storm|frost|wild)(_|$)/.test(s)) return 'survival';
+  if (/(^|_)(dungeon|crypt|cave|ruin|labyrinth|tomb|dark|horror|phobia|delirium|tartarus|collaps|collapse|desperation|wasteground|waste_ground|claustrophobia|pulsation|fog|smoke|diffuse|cloud)(_|$)/.test(s)) return 'dungeon';
+  if (/(^|_)(explore|exploration|field|adventure|travel)(_|$)/.test(s)) return 'explore';
+  if (/(^|_)(survival|cold|winter|night|storm|frost|wild|survivor|savior)(_|$)/.test(s)) return 'survival';
   if (/(^|_)(casual|cozy|farm|chill|garden|lofi|idle|relax)(_|$)/.test(s)) return 'casual';
   if (/(^|_)(comedy|fun|quirky|silly|goofy|cartoon)(_|$)/.test(s)) return 'comedy';
-  if (/(^|_)(story|cutscene|drama|lore|ending|credits|narrative)(_|$)/.test(s)) return 'story';
+  if (/(^|_)(story|cutscene|drama|lore|ending|credits|narrative|sonata)(_|$)/.test(s)) return 'story';
   return 'bgm';
 }
 
@@ -793,6 +798,9 @@ export async function processMusicLibrary({
   const stingerLongWarnings = stingerTracks
     .filter((t) => t.stingerOver15sWarning)
     .map((t) => ({ cueName: t.cueName, durationSec: t.durationSec, hint: 'Stinger > 15s; confirm not misplaced BGM' }));
+  const bgmLongWarnings = bgmTracks
+    .filter((t) => Number(t.durationSec) > BGM_WARN_DURATION_SEC)
+    .map((t) => ({ cueName: t.cueName, durationSec: t.durationSec, hint: 'BGM > 125s; consider <= 120s for mini-game bundle size' }));
 
   const report = {
     version: MUSIC_PIPELINE_VERSION,
@@ -803,6 +811,7 @@ export async function processMusicLibrary({
     stingerTargetLufs: STINGER_TARGET_LUFS,
     peakCeilingDbTp: PEAK_CEILING_GATE_DBTP,
     tailSilenceMaxSec: TAIL_SILENCE_MAX_SEC,
+    bgmMaxDurationWarnSec: BGM_WARN_DURATION_SEC,
     totalTracks: allTracks.length,
     bgmCount: bgmTracks.length,
     stingerCount: stingerTracks.length,
@@ -813,10 +822,12 @@ export async function processMusicLibrary({
     lufsWarningCount: lufsWarnings.length,
     trimGuardWarningCount: trimGuardWarnings.length,
     stingerLongWarningCount: stingerLongWarnings.length,
+    bgmLongWarningCount: bgmLongWarnings.length,
     alerts,
     lufsWarnings,
     trimGuardWarnings,
     stingerLongWarnings,
+    bgmLongWarnings,
     bgm: bgmTracks.map((t) => ({
       cueName: t.cueName,
       scope: t.scope,

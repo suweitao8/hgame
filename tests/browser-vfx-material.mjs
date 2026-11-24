@@ -27,7 +27,7 @@ try {
   await page.goto('http://hgame-vfx.test/');
   const captures = await page.evaluate(async () => {
     const THREE = await import('/assets/optional/three/three.module.js');
-    const { createAtlasParticlePool, createMeshVfxPool, createVfxSystem } = await import('/assets/runtime/vfx/index.js');
+    const { createAtlasParticlePool, createMeshVfxPool, createVfxSystem, createGpuParticleSystem } = await import('/assets/runtime/vfx/index.js');
     const dimensions = 64;
     const constantColor = rgba => [[0, rgba], [1, rgba]];
     const straight = constantColor([0.8, 0.4, 0.2, 0.5]);
@@ -229,6 +229,69 @@ try {
       flipbook: { region: 'unregistered', cols: 2, rows: 1, blend: false },
     }], [0]);
     result.embeddedFlipbook = [capture(32, 40), capture(32, 24)];
+
+    // Verify stateful WebGL2 MRT GPU Particle System in Three.js 3D and Raw WebGL2 2D
+    const gpuScene = new THREE.Scene();
+    const gpuCam = new THREE.OrthographicCamera(-2, 2, 2, -2, 0.1, 20);
+    gpuCam.position.set(0, 0, 5);
+    gpuCam.updateMatrixWorld();
+    const gpuSys = createGpuParticleSystem({ mode: '3d', THREE, scene: gpuScene, renderer, maxParticles: 64 });
+    gpuSys.setField({ gravity: [0, 0, 0], turbulence: { strength: 0.5, frequency: 1.0, scroll: 0.5 } });
+    gpuSys.emit({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, sizeStart: 2.5, sizeEnd: 2.5, duration: 1.0, color: 0xff8822, additive: false });
+    gpuSys.update(0.05);
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 1);
+    renderer.clear();
+    renderer.render(gpuScene, gpuCam);
+    renderer.readRenderTargetPixels(target, 32, 32, 1, 1, rgba);
+    result.gpu3d = {
+      stats: gpuSys.getStats(),
+      pixel: Array.from(rgba.slice(0, 3)),
+    };
+    gpuSys.dispose();
+
+    const gpuMobile = createGpuParticleSystem({
+      mode: '3d',
+      THREE,
+      scene: gpuScene,
+      renderer,
+      maxParticles: 512,
+      mobile: true,
+      precision: 'fp16',
+    });
+    gpuMobile.setField({ gravity: [0, 0, 0], turbulence: { strength: 0, frequency: 1.0, scroll: 0 } });
+    for (let i = 0; i < 256; i++) {
+      gpuMobile.emit({ x: 10, y: 10, z: 0, duration: 0.02, color: 0x112233, additive: false });
+    }
+    gpuMobile.emit({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, sizeStart: 2.5, sizeEnd: 2.5, duration: 1.0, color: 0xff8822, additive: false });
+    gpuMobile.update(0.05);
+    renderer.setRenderTarget(target);
+    renderer.setClearColor(0x000000, 1);
+    renderer.clear();
+    renderer.render(gpuScene, gpuCam);
+    renderer.readRenderTargetPixels(target, 32, 32, 1, 1, rgba);
+    result.gpuMobileFp16 = {
+      stats: gpuMobile.getStats(),
+      pixel: Array.from(rgba.slice(0, 3)),
+    };
+    gpuMobile.dispose();
+
+    const glCanvas2d = document.createElement('canvas');
+    glCanvas2d.width = glCanvas2d.height = dimensions;
+    const gl2 = glCanvas2d.getContext('webgl2', { alpha: false, antialias: false });
+    const gpu2d = createGpuParticleSystem({ mode: 'webgl2d', gl: gl2, maxParticles: 64 });
+    gpu2d.emit({ x: 0, y: 0, sizeStart: 40, sizeEnd: 40, duration: 1.0, color: 0x33ddff, additive: false });
+    gpu2d.update(0.05);
+    gl2.clearColor(0, 0, 0, 1);
+    gl2.clear(gl2.COLOR_BUFFER_BIT);
+    gpu2d.renderWebGL2({ x: 0, y: 0, zoom: 1 }, dimensions, dimensions);
+    gl2.readPixels(32, 32, 1, 1, gl2.RGBA, gl2.UNSIGNED_BYTE, rgba);
+    result.gpu2d = {
+      stats: gpu2d.getStats(),
+      pixel: Array.from(rgba).slice(0, 3),
+    };
+    gpu2d.dispose();
+
     vfx.dispose();
     embeddedGeometry.dispose();
     embeddedMaterial.dispose();
@@ -277,6 +340,15 @@ try {
   }
   near(captures.embeddedFlipbook[0], [255, 0, 0], 'embedded glTF texture keeps the top of the frame');
   near(captures.embeddedFlipbook[1], [0, 0, 255], 'embedded glTF texture keeps the bottom of the frame');
+  assert.equal(captures.gpu3d.stats.gpuAccelerated, true, '3D GPU particle system uses WebGL2 MRT Ping-Pong');
+  assert.ok(captures.gpu3d.pixel[0] > 180 && captures.gpu3d.pixel[1] > 80, `expected orange 3D GPU particle pixel, got ${captures.gpu3d.pixel}`);
+  assert.equal(captures.gpuMobileFp16.stats.gpuAccelerated, true, 'Mobile FP16 GPU particle system uses WebGL2 MRT Ping-Pong');
+  assert.equal(captures.gpuMobileFp16.stats.precision, 'fp16', 'Mobile GPU particle system uses FP16 ping-pong targets');
+  assert.equal(captures.gpuMobileFp16.stats.activeBaseSlot, 256, 'Compacts simulation window to live chunk 1');
+  assert.equal(captures.gpuMobileFp16.stats.activeSpanCount, 1, 'Simulates live window and draws only the 1 live particle in chunk 1');
+  assert.ok(captures.gpuMobileFp16.pixel[0] > 180 && captures.gpuMobileFp16.pixel[1] > 80, `expected orange mobile FP16 GPU particle pixel, got ${captures.gpuMobileFp16.pixel}`);
+  assert.equal(captures.gpu2d.stats.gpuAccelerated, true, '2D GPU particle system uses Raw WebGL2 MRT Ping-Pong');
+  assert.ok(captures.gpu2d.pixel[2] > 180 && captures.gpu2d.pixel[1] > 150, `expected cyan 2D GPU particle pixel, got ${captures.gpu2d.pixel}`);
 } finally {
   await browser.close();
 }

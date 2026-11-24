@@ -3,7 +3,11 @@
   "reWorkspaceDir": "<path-to>/RE-Workspace",
   "gamesRootDir": "<path-to>/HTML",
   "webAssetDir": "./webasset",
-  "assetBackupDir": "D:/Backups/HGame-Assets",
+  "assetBackupDir": "<path-to>/Backups/HGame-Assets",
+  "tts": {
+    "voxcpm2Dir": "<path-to>/VoxCPM2",
+    "pythonExe": "<path-to>/VoxCPM2/PortablePython/python.exe"
+  },
   "model3d": {
     "rootDir": "<path-to>/model3d",
     "comfyUiUrl": "http://127.0.0.1:8188",

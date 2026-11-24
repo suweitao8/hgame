@@ -88,10 +88,18 @@ node scripts/create-game.mjs "<game-dir>" --profile ui --with audio,save --name 
    ```powershell
    npm run process:assets -- --input sheet.png --grid 3 --bg white --mode actor --out-dir "<game-dir>/assets/actors"
    ```
-2. **Audio Variant Selection & Normalization** (`scripts/process-audio.mjs`, requires `ffmpeg`):
-   - Feed 4 generated MP3 takes per SFX cue; automatically selects the 2–4 most duration/RMS-consistent variants, trims MP3 silence, normalizes loudness, and exports mono 24 kHz MP3 (`96k`) or stereo 44.1 kHz BGM (`128k` with `--bgm`).
+2. **Audio Generation, Curation & WebAsset Shared-Library Flow (`scripts/process-audio.mjs`, requires `ffmpeg`)**:
+   - **Reuse-First & Mandatory WebAsset Backflow**: Before generating any audio for a game, search WebAsset (`webasset/hgame-assets-cn/built/audio/{cue_table,streams_table,music_table}.json` / `http://127.0.0.1:4174/#audio` & `#music`) and `assets/runtime/platform/audio/synth.js` (`16` zero-KB presets). Any missing SFX, ambient loop, BGM, stinger, or character vocal cue created during game development **must be ingested back into WebAsset** (`webasset/hgame-assets-cn/raw/audio_ai_staging/universal/{sfx/<cue>/,bgm/,stinger/}` or `games/<slug>/bgm/` only for IP-exclusive tracks) so all future HGame projects can reuse it.
+   - **4 Separate Authoring Channels**:
+     - `BGM (60s–120s)`: Music generator (e.g. Flow Music); **zero musical slicing** (head/tail silence trim only; regenerate if `>125s`).
+     - `SFX / Loops / 1–4s Stingers`: ElevenLabs Sound Effects with **manual locked durations** (`0.5s–2.0s` SFX, `4.2s` Seamless Loop for streams, `1.1s–2.0s` for stingers; **never Auto mode**). Pick 3 of 4 for action/foley, 1 of 4 for UI/loops/stingers.
+     - `Character Voices & Grunts`: Use local zero-credit `VoxCPM2` configured via `.hgame.local.json` (`tts.voxcpm2Dir` / `tts.pythonExe`) with Voice Design control instructions and audio tags (`[laughing]`, `[sigh]`, `[Surprise-wa]`, `[Question-ah]`).
+     - `Dynamic Procedural Synth`: Route rhythmic/pitch-modulated UI blips, combo scales, heartbeat, and 8-bit chiptune effects to `synth.js`.
+   - **Ingest & Gate**: Run `node scripts/process-audio.mjs --only-music` (music/stingers) or `node scripts/process-audio.mjs --batch` (full library + auto RMS spread alignment), verify `clippingAlertCount === 0 && cueSpreadAlertCount === 0 && music_report.passed === true`, and run `npm run assets:db -- sync` + verify `http://127.0.0.1:4174/#audio` & `#music`.
    ```powershell
-   npm run process:audio -- --cue rifle_shot --inputs t1.mp3,t2.mp3,t3.mp3,t4.mp3 --out-dir "<game-dir>/assets/audio/sfx"
+   node scripts/process-audio.mjs --only-music
+   node scripts/process-audio.mjs --batch
+   npm run assets:db -- sync
    ```
 3. **LLM-First 2D Image Gen & Local 12GB LowVRAM 3D Modeling (`scripts/process-model3d.mjs`)**:
    - **2D Concept / Sprite & T-Pose Fist Rule**: Always use the active LLM/Agent host's built-in image generation tool (e.g., Codex `imagegen`, Antigravity `image-generator`), **never** local ComfyUI txt2img/Z-Image/Flux — local ComfyUI is 3D-only. For 3D character 2:1 (`front + left`) T-pose turnaround sheets, humanoid/fingered characters **must use a relaxed semi-clenched weapon-grip fist (`轻微握拳 / 虚握剑柄姿态`, empty hands ready for socketed weapons)** with clear margins away from the center seam (because game rigs use single `hand_l`/`hand_r` without finger animation); rounded animal paws (cats, etc.) keep natural paws.

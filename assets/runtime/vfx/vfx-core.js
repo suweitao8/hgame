@@ -229,3 +229,144 @@ export function createCameraShake() {
     },
   };
 }
+
+/**
+ * Evaluates instantaneous Unity VelocityModule.radial velocity toward/away from `(cx, cy, cz)`,
+ * clamping inward steps over `dt` so particles settle smoothly at the radial origin without overshoot.
+ * @param {number} px
+ * @param {number} py
+ * @param {number} pz
+ * @param {number} cx
+ * @param {number} cy
+ * @param {number} cz
+ * @param {number} velRadial
+ * @param {number} vScale
+ * @param {number} dt
+ * @param {Float32Array | number[]} out3
+ */
+export function computeDynamicRadialVel(px, py, pz, cx, cy, cz, velRadial, vScale, dt, out3) {
+  if (!velRadial || !vScale) {
+    out3[0] = 0;
+    out3[1] = 0;
+    out3[2] = 0;
+    return;
+  }
+  const dx = px - cx;
+  const dy = py - cy;
+  const dz = pz - cz;
+  const rLen = Math.hypot(dx, dy, dz);
+  if (rLen <= 0.0005) {
+    out3[0] = 0;
+    out3[1] = 0;
+    out3[2] = 0;
+    return;
+  }
+  let effVel = velRadial * vScale;
+  if (dt > 0 && effVel < 0) {
+    const maxStep = -effVel * dt;
+    if (maxStep > rLen) {
+      effVel = -rLen / dt;
+    }
+  }
+  const inv = effVel / rLen;
+  out3[0] = dx * inv;
+  out3[1] = dy * inv;
+  out3[2] = dz * inv;
+}
+
+const CHAMFERED_OCTAGON_VERTS = [
+  -0.5, -0.21,
+  -0.21, -0.5,
+  0.21, -0.5,
+  0.5, -0.21,
+  0.5, 0.21,
+  0.21, 0.5,
+  -0.21, 0.5,
+  -0.5, 0.21,
+];
+
+const CHAMFERED_OCTAGON_INDICES = [
+  0, 1, 2,
+  0, 2, 3,
+  0, 3, 4,
+  0, 4, 5,
+  0, 5, 6,
+  0, 6, 7,
+];
+
+/**
+ * 2D triangle list (18 vertices = 6 triangles) tightly bounding the unit circle
+ * (`r <= 1.0`), eliminating ~17% corner overdraw on mobile TBDR GPUs.
+ */
+export const CHAMFERED_OCTAGON_TRIS_2D = new Float32Array(
+  CHAMFERED_OCTAGON_INDICES.flatMap((idx) => [
+    CHAMFERED_OCTAGON_VERTS[idx * 2],
+    CHAMFERED_OCTAGON_VERTS[idx * 2 + 1],
+  ]),
+);
+
+/**
+ * Builds an instanced chamfered-octagon particle geometry (8 vertices, 6 triangles)
+ * bounding the unit inscribed circle (`r <= 1.0`) to cut ~17% corner pixel overdraw.
+ * @param {object} THREE
+ * @returns {object}
+ */
+export function createChamferedOctagonGeometry(THREE) {
+  const geo = new THREE.InstancedBufferGeometry();
+  const pos = new Float32Array(24);
+  const uv = new Float32Array(16);
+  for (let i = 0; i < 8; i++) {
+    const x = CHAMFERED_OCTAGON_VERTS[i * 2];
+    const y = CHAMFERED_OCTAGON_VERTS[i * 2 + 1];
+    pos[i * 3] = x;
+    pos[i * 3 + 1] = y;
+    pos[i * 3 + 2] = 0;
+    uv[i * 2] = x + 0.5;
+    uv[i * 2 + 1] = y + 0.5;
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setIndex(CHAMFERED_OCTAGON_INDICES);
+  return geo;
+}
+
+/**
+ * Detects mobile devices, Bilibili Toy WebViews, and WeChat/Douyin mini-game runtimes
+ * so VFX pools apply mobile-safe memory budgets and half-float GPU defaults.
+ * @returns {boolean}
+ */
+export function isMobileOrMiniGameEnv() {
+  if (typeof globalThis === 'undefined') return false;
+  if (globalThis.wx?.createCanvas || globalThis.tt?.createCanvas || globalThis.toy) return true;
+  const nav = globalThis.navigator;
+  if (nav?.userAgent && /Android|iPhone|iPad|iPod|Mobile|HarmonyOS/i.test(nav.userAgent)) return true;
+  if ((nav?.maxTouchPoints ?? 0) > 1 && (globalThis.innerWidth ?? 1920) <= 1024) return true;
+  return false;
+}
+
+/**
+ * Creates a 2D offscreen/staging canvas across Browser DOM, WeChat (`wx.createCanvas`),
+ * Douyin (`tt.createCanvas`), and Worker `OffscreenCanvas` runtimes.
+ * @param {number} width
+ * @param {number} height
+ * @returns {HTMLCanvasElement | OffscreenCanvas | null}
+ */
+export function createOffscreen2dCanvas(width, height) {
+  const w = Math.max(1, width | 0);
+  const h = Math.max(1, height | 0);
+  /** @type {any} */
+  let canvas = null;
+  if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+    canvas = document.createElement('canvas');
+  } else if (typeof globalThis.wx?.createCanvas === 'function') {
+    canvas = globalThis.wx.createCanvas();
+  } else if (typeof globalThis.tt?.createCanvas === 'function') {
+    canvas = globalThis.tt.createCanvas();
+  } else if (typeof OffscreenCanvas !== 'undefined') {
+    canvas = new OffscreenCanvas(w, h);
+  }
+  if (!canvas) return null;
+  canvas.width = w;
+  canvas.height = h;
+  return canvas;
+}
