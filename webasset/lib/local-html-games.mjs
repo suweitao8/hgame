@@ -1,6 +1,7 @@
 import { createReadStream } from 'node:fs';
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { isMediaType, serveMediaFile } from './media-file.mjs';
 import { MIME } from './server-core.mjs';
 
 const SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
@@ -210,6 +211,10 @@ export function createLocalHtmlGameLibrary(htmlGamesRoot) {
       if (!info.isFile()) throw new Error('not a file');
       const extension = path.extname(targetReal).toLowerCase();
       const contentType = MIME[extension] || 'application/octet-stream';
+      if (isMediaType(contentType)) {
+        await serveMediaFile(request, response, targetReal, contentType);
+        return;
+      }
       const headers = {
         'Content-Type': contentType,
         'Content-Length': info.size,

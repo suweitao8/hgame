@@ -59,6 +59,16 @@ SwiftShader passes the same combined MSAA and temporal test. The active high-tie
 
 A2 moves from 9.5 to 10. Runtime reaches 86.4 and the weighted overall score reaches **90.76**, retaining 92 for production kit and 96 for verification and delivery. The active pass uses one additional color-only target at world resolution, and the forward path continues to use surface decals.
 
+## Streamed audio seeking in WebAsset
+
+- [x] Verify the library, imported audio and game preview respond to single byte ranges. Cover normal GET, HEAD, open-ended and suffix ranges, unsatisfiable ranges and unsupported range forms.
+- [x] Stream the selected file bytes from an open file handle, preserving the existing route checks and whole-file responses.
+- [x] Verify the BGM playhead moves in a real browser without creating an AudioBuffer, then record which parts of the long audio checklist have evidence.
+
+On a Chromium connection limited to 48 KiB/s, the buffered audio reached 21.3 s before the seek. Chromium requested bytes 622,592–897,593, completed the native seek to 52.3 s and continued playing there. The streaming player held zero decoded buffers throughout the 60-second soak. In that run, starting playback increased renderer private memory by 4.1 MiB with streaming and 32.6 MiB with whole-track decoding. The exact candidate passed the 621-test repository check and all 49 WebAsset tests.
+
+S3 remains at 8.5 and the weighted score remains **90.76**. The long-audio criterion includes the default long-voice path, which still needs evidence.
+
 ## Current evidence
 
 - In a Node probe with mock drawing, each version executed 3,000 warmup frames and nine samples of 3,000 identical frames. The baseline compiled all 27,000 measured frames. The cached implementation reused the graph in all 27,000. Median batch-average CPU time was 103.27 µs per frame before and 17.23 µs after. Each version executed all 30,000 frame callbacks. These timings measure JavaScript pipeline overhead with GPU work excluded.

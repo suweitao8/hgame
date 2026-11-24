@@ -65,15 +65,29 @@ async function ensureOrigin() {
 }
 
 /** Runs one page through the given steps and reports its renderer memory alongside. */
-async function runScenario(browser, browserCdp, label, { cue, stinger, prepare, steps, soak }) {
+async function runScenario(browser, browserCdp, label, { cue, stinger, prepare, steps, soak, limitBandwidth = false }) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const errors = [];
+  const audioRanges = [];
+  page.on('response', response => {
+    const contentRange = response.headers()['content-range'];
+    if (response.status() === 206 && contentRange && response.url() === new URL(cue.url, ORIGIN).href) {
+      audioRanges.push(contentRange);
+    }
+  });
   page.on('pageerror', (error) => errors.push(String(error)));
   page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
   });
   try {
+    if (limitBandwidth) {
+      const network = await context.newCDPSession(page);
+      await network.send('Network.enable');
+      await network.send('Network.emulateNetworkConditions', {
+        offline: false, latency: 35, downloadThroughput: 48 * 1024, uploadThroughput: 48 * 1024,
+      });
+    }
     // A small source file makes a light page on the right origin without loading the lobby app.
     await page.goto(`${ORIGIN}/runtime/hgame/platform/audio/helpers.js`);
     const pids = await rendererPids(browserCdp);
@@ -89,11 +103,37 @@ async function runScenario(browser, browserCdp, label, { cue, stinger, prepare, 
         gains.push(node);
         return node;
       };
+      const AudioElement = window.Audio;
+      let media;
+      window.Audio = class extends AudioElement {
+        constructor(...args) {
+          super(...args);
+          media = this;
+        }
+      };
       const { createAudioManager } = await import('/runtime/hgame/platform/audio.js');
       const audio = createAudioManager();
       await audio.unlock();
       audio.registerBgmCue(scenario.cue.cueName, scenario.cue);
-      window.__bgm = { audio, gains, cue: scenario.cue, stinger: scenario.stinger };
+      async function seek(target) {
+        const element = media;
+        const before = element.currentTime;
+        const bufferedEnd = element.buffered.length ? element.buffered.end(element.buffered.length - 1) : 0;
+        let seeked = false;
+        const onSeeked = () => { seeked = true; };
+        element.addEventListener('seeked', onSeeked, { once: true });
+        try {
+          await audio.seekBgm(target);
+          const deadline = performance.now() + 5000;
+          while ((!seeked || element.currentTime < target + 0.15) && performance.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          return { before, bufferedEnd, target, position: element.currentTime, seeked };
+        } finally {
+          element.removeEventListener('seeked', onSeeked);
+        }
+      }
+      window.__bgm = { audio, gains, seek, cue: scenario.cue, stinger: scenario.stinger };
     }, { cue: await prepare?.(cue) ?? cue, stinger });
     await sleep(1500);
     const baselineMb = await sampleMemory(pid);
@@ -136,6 +176,7 @@ async function runScenario(browser, browserCdp, label, { cue, stinger, prepare, 
       },
       soakStates: soakSamples.map((sample) => sample.state),
       checks,
+      audioRanges,
       errors,
     };
   } finally {
@@ -147,7 +188,7 @@ async function runScenario(browser, browserCdp, label, { cue, stinger, prepare, 
 
 /** Steps executed in the streaming page: loop points, mute, lifecycle, crossfade and stop. */
 async function streamingSteps() {
-  const { audio, gains, cue } = window.__bgm;
+  const { audio, gains, seek, cue } = window.__bgm;
   const out = {};
   const state = () => audio.getBgmState();
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -157,11 +198,8 @@ async function streamingSteps() {
   out.advancing = state().currentTimeSec > t0 + 0.2;
   out.loopWindow = { loopStart: state().loopStart, loopEnd: state().loopEnd, duration: state().duration };
 
-  // Seeking a stream depends on the host honouring byte-range requests, so it is reported, not asserted.
-  const seekTarget = state().loopEnd - 1.2;
-  await audio.seekBgm(seekTarget);
-  await wait(600);
-  out.seek = { target: seekTarget, position: state().currentTimeSec };
+  const { currentTimeSec, duration } = state();
+  out.seek = await seek(duration * (currentTimeSec < duration / 2 ? 0.7 : 0.25));
 
   // Mute acts on the engine graph; the element itself keeps running.
   const gainsBefore = gains.map((node) => node.gain.value);
@@ -241,6 +279,7 @@ async function main() {
   const browser = await launchChromium(chromium, { executablePath, args: ['--autoplay-policy=no-user-gesture-required'] });
   let decoded;
   let streamed;
+  let limited;
   try {
     const browserCdp = await browser.newBrowserCDPSession();
     decoded = await runScenario(browser, browserCdp, 'decoded', {
@@ -248,11 +287,21 @@ async function main() {
       prepare: (entry) => ({ ...entry, preload: undefined, stream: false }),
     });
     streamed = await runScenario(browser, browserCdp, 'streaming', { cue, stinger, steps: streamingSteps, soak: soakMs });
+    limited = await runScenario(browser, browserCdp, 'limited-network', {
+      cue,
+      limitBandwidth: true,
+      steps: async () => {
+        const { audio, seek } = window.__bgm;
+        const jump = await seek(audio.getBgmState().duration * 0.7);
+        return { ...jump, activeBufferCount: audio.getBgmState().activeBufferCount };
+      },
+    });
   } finally {
     await browser.close();
   }
 
-  console.log(JSON.stringify({ origin: ORIGIN, cue: cue.cueName, durationSec: cue.durationSec, soakMs, decoded, streamed }, null, 2));
+  console.log(JSON.stringify({ origin: ORIGIN, cue: cue.cueName, durationSec: cue.durationSec, soakMs,
+    decoded, streamed, limited: { checks: limited.checks, audioRanges: limited.audioRanges, errors: limited.errors } }, null, 2));
 
   assert.deepEqual(decoded.errors, [], 'decoded page logged no errors');
   assert.equal(decoded.started.result.streaming, false, 'the opt-out cue decodes');
@@ -268,6 +317,17 @@ async function main() {
 
   const checks = streamed.checks;
   assert.equal(checks.advancing, true, 'playback advances');
+  assert.ok(streamed.audioRanges.length > 0, 'WebAsset serves ranged BGM bytes to the browser');
+  assert.ok(Math.abs(checks.seek.before - checks.seek.target) > 10, 'the seek test moves well beyond the current playhead');
+  for (const seek of [checks.seek, limited.checks]) {
+    assert.equal(seek.seeked, true, 'the native element completed the seek');
+    assert.ok(seek.position >= seek.target + 0.15 && seek.position <= seek.target + 1,
+      `media did not continue playing at the requested position: ${JSON.stringify(seek)}`);
+  }
+  assert.deepEqual(limited.errors, []);
+  assert.ok(limited.checks.bufferedEnd + 5 < limited.checks.target, 'the limited network keeps the seek destination outside the buffer');
+  assert.ok(limited.audioRanges.some(range => /^bytes [1-9]/.test(range)), 'the browser requests bytes beyond the initial range');
+  assert.equal(limited.checks.activeBufferCount, 0);
   assert.equal(checks.loopWindow.loopStart, 0, 'a media element loops the whole file');
 
   // A whole-file loop wraps at the end and restarts at the beginning.

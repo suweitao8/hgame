@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { isMediaType, serveMediaFile } from './media-file.mjs';
 
 export const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -122,9 +123,14 @@ export function createStaticHandler(rootDirectory, { basePath = '/' } = {}) {
         return;
       }
 
+      const contentType = MIME[path.extname(canonicalTarget).toLowerCase()] || 'application/octet-stream';
+      if (isMediaType(contentType)) {
+        await serveMediaFile(request, response, canonicalTarget, contentType);
+        return;
+      }
       const body = await readFile(canonicalTarget);
       response.writeHead(200, {
-        'Content-Type': MIME[path.extname(canonicalTarget).toLowerCase()] || 'application/octet-stream',
+        'Content-Type': contentType,
         'Content-Length': body.length,
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',

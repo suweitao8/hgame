@@ -334,6 +334,7 @@ async function runWithHGameServer(callback, { cnFixture = false } = {}) {
       'decals/cn_shop_signs_color.png': samplePng,
       'materials/water_normal.png': samplePng,
       'models/fixture.glb': sampleGlb,
+      'audio/streams/seek.mp3': '0123456789',
     };
     for (const size of [256, 512]) {
       fixture['materials/' + size + '/albedo_array.webp'] = sampleWebp;
@@ -388,6 +389,32 @@ test('HTML exposes all 8+1 workspaces and HGame module scripts', async () => {
     }
     assert.doesNotMatch(html, /id="hgame-anim-2d-pane"/);
   });
+});
+
+test('WebAsset serves byte ranges for library audio and imported audio', async () => {
+  await runWithHGameServer(async (base) => {
+    const response = await fetch(base + '/assets/cn/audio/streams/seek.mp3', {
+      headers: { Range: 'bytes=3-5' },
+    });
+    assert.equal(response.status, 206);
+    assert.equal(response.headers.get('accept-ranges'), 'bytes');
+    assert.equal(response.headers.get('content-range'), 'bytes 3-5/10');
+    assert.equal(response.headers.get('content-length'), '3');
+    assert.equal(await response.text(), '345');
+
+    const sampleWav = makeMinimalWav();
+    const upload = await fetch(base + '/api/hgame/audio?name=seek.wav&category=bgm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/wav' },
+      body: sampleWav,
+    });
+    assert.equal(upload.status, 201);
+    const { item } = await upload.json();
+    const imported = await fetch(base + item.url, { headers: { Range: 'bytes=0-3' } });
+    assert.equal(imported.status, 206);
+    assert.equal(imported.headers.get('content-range'), `bytes 0-3/${sampleWav.length}`);
+    assert.equal(await imported.text(), 'RIFF');
+  }, { cnFixture: true });
 });
 
 test('HGame asset API disables static models/materials and serves procedural .hmat/.hmesh recipes', async () => {

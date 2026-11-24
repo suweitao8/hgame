@@ -3,6 +3,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { openAssetDb, resolveDefaultDbPath } from './asset-db.mjs';
+import { isMediaType, serveMediaFile } from './media-file.mjs';
 
 const MAX_JSON_BYTES = 32 * 1024;
 const MAX_MODEL_BYTES = 150 * 1024 * 1024;
@@ -308,6 +309,10 @@ export function createHGameAssetHandler({
     if (!info.isFile()) {
       response.writeHead(404);
       response.end('Not Found');
+      return;
+    }
+    if (isMediaType(contentType)) {
+      await serveMediaFile(request, response, absPath, contentType, extraHeaders);
       return;
     }
     response.writeHead(200, {
