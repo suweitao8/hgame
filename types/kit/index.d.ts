@@ -5,3 +5,4 @@ export { STANDARD_ART_SPEC, TOPDOWN_LIGHTING_PRESET, ART_THEMES, listArtThemes, 
 export { GAME_AUDIO_EVENTS, DEFAULT_AUDIO_MATRIX, AUDIO_PROFILES, createAudioDirector } from "./audio-director.js";
 export { GENRE_ARCHETYPES, listGenreArchetypes, defineGameBlueprint, evaluateBlueprintBalance, createBlueprintFromIdea } from "./blueprint.js";
 export { REQUIRED_DESIGN_DOCS, renderGameDesignDocs } from "./design-docs.js";
+export { STAGE_CELL_PALETTE, defineStage, analyzeStageDesign, analyzeCampaignProgression, createStageDirector } from "./stage-architect.js";

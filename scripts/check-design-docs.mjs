@@ -17,12 +17,14 @@ async function loadKitModules(gameDir) {
   for (const dir of roots) {
     const bpPath = path.join(dir, 'blueprint.js');
     const docsPath = path.join(dir, 'design-docs.js');
+    const stagePath = path.join(dir, 'stage-architect.js');
     if (existsSync(bpPath) && existsSync(docsPath)) {
-      const [bp, docs] = await Promise.all([
+      const [bp, docs, stage] = await Promise.all([
         import(pathToFileURL(bpPath).href),
         import(pathToFileURL(docsPath).href),
+        existsSync(stagePath) ? import(pathToFileURL(stagePath).href) : Promise.resolve({}),
       ]);
-      return { ...bp, ...docs };
+      return { ...bp, ...docs, ...stage };
     }
   }
   throw new Error('Cannot locate HGame kit/blueprint.js and kit/design-docs.js');
@@ -37,7 +39,7 @@ const PLACEHOLDER_RE = /\b(?:TODO|FIXME|TBD)\b|待补充|请填写/;
  */
 export async function auditDesignDocs(targetDir, options = {}) {
   const gameDir = path.resolve(targetDir);
-  const { defineGameBlueprint, evaluateBlueprintBalance, REQUIRED_DESIGN_DOCS } = await loadKitModules(gameDir);
+  const { defineGameBlueprint, evaluateBlueprintBalance, REQUIRED_DESIGN_DOCS, analyzeStageDesign, analyzeCampaignProgression } = await loadKitModules(gameDir);
   const errors = [];
   const warnings = [];
   const checkedDocs = [];
@@ -113,6 +115,30 @@ export async function auditDesignDocs(targetDir, options = {}) {
     }
   } else if (options.strict) {
     warnings.push('src/game.design.json not found (recommended for machine-checked 5-pillar balance)');
+  }
+
+  const levelJsonPath = path.join(gameDir, 'src', 'level.json');
+  if (existsSync(levelJsonPath) && typeof analyzeStageDesign === 'function') {
+    try {
+      const rawLevel = JSON.parse(await readFile(levelJsonPath, 'utf8'));
+      const levelAudit = analyzeStageDesign(rawLevel, { strictGameplay: Boolean(options.strict) });
+      for (const err of levelAudit.errors) errors.push(`src/level.json: ${err}`);
+      for (const w of levelAudit.warnings) warnings.push(`src/level.json: ${w}`);
+    } catch (err) {
+      errors.push(`Invalid src/level.json: ${err.message}`);
+    }
+  }
+
+  const campaignJsonPath = path.join(gameDir, 'src', 'campaign.json');
+  if (existsSync(campaignJsonPath) && typeof analyzeCampaignProgression === 'function') {
+    try {
+      const rawCamp = JSON.parse(await readFile(campaignJsonPath, 'utf8'));
+      const campAudit = analyzeCampaignProgression(rawCamp, { strictGameplay: Boolean(options.strict) });
+      for (const err of campAudit.errors) errors.push(`src/campaign.json: ${err}`);
+      for (const w of campAudit.warnings) warnings.push(`src/campaign.json: ${w}`);
+    } catch (err) {
+      errors.push(`Invalid src/campaign.json: ${err.message}`);
+    }
   }
 
   return {

@@ -40,12 +40,14 @@ export const ENGINE_MANAGED_SCRIPT_LIBS = Object.freeze([
 export const ENGINE_MANAGED_SCRIPT_FILES = Object.freeze([
   ...ENGINE_MANAGED_SCRIPTS.map(s => ({ dest: `scripts/${s}`, src: `scripts/${s}` })),
   { dest: 'scripts/check-ui.mjs', src: '.agents/skills/hgame-ui-ux/scripts/check-ui.mjs' },
+  { dest: 'scripts/check-level.mjs', src: '.agents/skills/hgame-level-architect/scripts/check-level.mjs' },
   ...ENGINE_MANAGED_SCRIPT_LIBS.map(lib => ({ dest: `scripts/lib/${lib}`, src: `scripts/lib/${lib}` })),
 ]);
 
 export const ENGINE_MANAGED_DOCS = Object.freeze([
   { dest: 'docs/hgame/AGENTS.md', src: 'assets/template/AGENTS.md' },
   { dest: 'docs/hgame/UI-UX-STANDARD.md', src: '.agents/skills/hgame-ui-ux/SKILL.md' },
+  { dest: 'docs/hgame/LEVEL-ARCHITECT.md', src: '.agents/skills/hgame-level-architect/SKILL.md' },
   { dest: 'docs/hgame/USER-AND-AGENT-GUIDE.md', src: 'docs/guides/USER-AND-AGENT-GUIDE.md' },
 ]);
 

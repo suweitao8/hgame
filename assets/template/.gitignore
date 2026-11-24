@@ -18,6 +18,7 @@ scripts/assets.mjs
 scripts/bundle-pixi.mjs
 scripts/check-autoplay.mjs
 scripts/check-design-docs.mjs
+scripts/check-level.mjs
 scripts/check-ui-resolve.mjs
 scripts/check-ui.mjs
 scripts/doctor-playability.mjs

@@ -29,6 +29,7 @@
     "check:physics": "node scripts/build-physics.mjs --check",
     "check:ui": "node .agents/skills/hgame-ui-ux/scripts/check-ui.mjs",
     "check:design": "node scripts/check-design-docs.mjs",
+    "check:level": "node .agents/skills/hgame-level-architect/scripts/check-level.mjs",
     "blueprint:check": "node scripts/check-blueprint.mjs",
     "check:network": "npm --prefix network run check",
     "build:network": "npm --prefix network run build",

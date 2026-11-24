@@ -26,3 +26,10 @@ export {
   REQUIRED_DESIGN_DOCS,
   renderGameDesignDocs,
 } from './design-docs.js';
+export {
+  STAGE_CELL_PALETTE,
+  defineStage,
+  analyzeStageDesign,
+  analyzeCampaignProgression,
+  createStageDirector,
+} from './stage-architect.js';

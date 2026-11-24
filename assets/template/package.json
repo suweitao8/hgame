@@ -16,6 +16,7 @@
     "toy:check": "node scripts/toy-preflight.mjs .",
     "check:ui": "node scripts/check-ui.mjs --dir .",
     "check:design": "node scripts/check-design-docs.mjs .",
+    "check:level": "node scripts/check-level.mjs",
     "snapshot": "node scripts/snapshot.mjs . --check-ui --check-layout",
     "playtest": "node scripts/playtest.mjs . --check-ui --check-layout",
     "doctor": "node scripts/doctor-playability.mjs .",

@@ -51,6 +51,10 @@
   - 基础怪 TTK `gruntHp / weaponDps` `[0.1, 5.0]` 秒
   - 玩家抗击打 `playerHp / gruntDamage` `[3, 25]` 次
   - UI 配额与卡片上限联合门禁（`maxTitleButtons <= 1`、`cardChoices <= 4` 等）
+- **关卡编排与波次导演（`kit/stage-architect.js` + `npm run check:level`）**：
+  - 统一支持 `lane-defense`（PvZ 多行草坪/水路）、`grid-2d`（掩体/危险区/可破坏物）、`arena` 与 `modular-3d` 四类拓扑。
+  - 自动审计**锯齿波次节奏**（预热 → 爬坡 → 喘息低谷 → `flag: true` 高潮）、**单关新机制数（`<= 2`）与硬克制闭环**（`availableTools` vs `toolCounters`）、多关「起承转合」防重复，以及 **PvZ 戴夫式轻度过场短语**（`barks` 单行 `<= 24` 字、单关 `<= 3` 条、零弹窗阻塞）。
+  - 运行时通过 `createStageDirector(stage, { onSpawn, onWaveStart, onFlagWave, onBark, onUnlock, onComplete })` 驱动 60Hz 波次、清怪提前推进与进度旗帜。
 
 ### 3. Gameplay 规范与核心循环（`kit/game-session.js` + `gameplay/*` + `ai/*`）
 

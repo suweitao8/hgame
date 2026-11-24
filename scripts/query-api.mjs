@@ -29,6 +29,7 @@ function printUsage() {
 
 const CAPABILITY_MAP = [
   { need: '5-Pillar Universal Game Template (Design Blueprint, Art Theme, Audio Director, Session Loop, Anti-Bloat UI Shell)', module: 'kit/index.js (kit/blueprint.js, art-themes.js, audio-director.js, game-session.js, game-shell-dom.js)', keyApis: 'createBlueprintFromIdea, defineGameBlueprint, evaluateBlueprintBalance, getArtTheme, createAudioDirector, createGameSession, mountGameShell; npm run api -- --recipe kit' },
+  { need: 'PvZ-style gameplay-first stage & campaign design, sawtooth wave pacing, counter checks, light barks, and 60Hz StageDirector', module: 'kit/stage-architect.js', keyApis: 'defineStage, analyzeStageDesign, analyzeCampaignProgression, createStageDirector, STAGE_CELL_PALETTE; npm run check:level' },
   { need: 'Default 2D PixiJS rendering, input and effects', module: 'generated project src/engine/*', keyApis: 'startPixiGame, Renderer2D, createDrawGroup, createSwarmLayer, ProceduralAtlas.registerSheet, createCatalogGameAtlas, JuiceSystem, InputAndAudio; npm run api -- --recipe 2d' },
   { need: 'Logical media IDs, scoped loading and release asset selection', module: 'platform/asset-catalog.js', keyApis: 'createAssetCatalog, openScope, loadGroup, projectPath, assets/catalog.json' },
   { need: 'Preload and switch levels with shared scene assets', module: 'world/level-flow.js', keyApis: 'createLevelFlow, prefetch, go, cancel, discard' },
@@ -70,6 +71,8 @@ const blueprint = createBlueprintFromIdea({ id: 'my-game', title: '霓虹突围'
 const theme = getArtTheme(blueprint.art.theme);
 const session = createGameSession({ blueprint, app });
 const shell = mountGameShell({ root: document.body, session });
+// Optional stage pacing & light PvZ barks:
+// const director = createStageDirector(stageJson, { onSpawn, onWaveStart, onBark, onComplete }); director.update(dt, { aliveEnemies });
 // Call session.recordHit(), session.recordKill(), session.damagePlayer(), session.presentChoices(), session.update(dt), shell.sync().`,
   '2d': () => `// Create: ${recipeCreateCommand('2d')}\n// The generated src/bare.js is the empty PixiJS scene entry.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/bare.js'), 'utf8')}`,
   horde: () => `// Create: ${recipeCreateCommand('horde')}\n// Generated src/horde.js connects the HGame CPU swarm to PixiJS.\n${fs.readFileSync(path.join(root, 'assets/profiles/pixi2d/src/horde.js'), 'utf8')}`,
