@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
@@ -508,6 +509,44 @@ export function applySections(markdown, sections) {
 }
 
 /**
+ * Runs every Node-runnable benchmark/evidence test (`*.test.mjs`) referenced by the scorecard and
+ * maps failures back to the items that cite them. Browser-only scripts cannot run here and are
+ * reported as `browserOnly` so reviewers know which items rest on manual GPU runs.
+ */
+export function verifyBenchmarks(data, { repoRoot = DEFAULT_REPO_ROOT, run = null } = {}) {
+  const runner =
+    run ||
+    ((rel) => {
+      const res = spawnSync(process.execPath, ['--test', rel], { cwd: repoRoot, encoding: 'utf8' });
+      return { ok: res.status === 0, output: `${res.stdout || ''}${res.stderr || ''}` };
+    });
+  const byFile = new Map();
+  for (const item of data.items || []) {
+    for (const rel of item.hgame?.benchmarkFiles || []) {
+      if (!byFile.has(rel)) byFile.set(rel, []);
+      byFile.get(rel).push(item.id);
+    }
+  }
+  const results = [];
+  for (const [rel, ids] of byFile) {
+    if (!rel.endsWith('.test.mjs')) {
+      results.push({ file: rel, items: ids, status: 'browserOnly' });
+      continue;
+    }
+    const r = runner(rel);
+    results.push({ file: rel, items: ids, status: r.ok ? 'passed' : 'failed' });
+  }
+  const failed = results.filter((r) => r.status === 'failed');
+  const errors = failed.map((r) => `benchmark ${r.file} failed (cited by ${r.items.join(', ')}).`);
+  const nodeBacked = new Set();
+  for (const r of results) if (r.status === 'passed') r.items.forEach((id) => nodeBacked.add(id));
+  const browserOnlyItems = (data.items || [])
+    .map((i) => i.id)
+    .filter((id) => !nodeBacked.has(id));
+  return { results, errors, browserOnlyItems };
+}
+
+/**
  * Human-readable breakdown: per-dimension and per-item score, the reason (evidence level, checklist,
  * caps), points lost, and the concrete next step to raise the score.
  */
@@ -560,6 +599,16 @@ function runCli() {
   const wantJson = args.includes('--json');
   const wantWrite = args.includes('--write');
   const wantCheck = args.includes('--check');
+  if (args.includes('--verify-bench')) {
+    const benchData = loadScorecard(DEFAULT_SCORECARD_PATH);
+    const v = verifyBenchmarks(benchData);
+    for (const r of v.results) console.log(`[bench:${r.status}] ${r.file} <- ${r.items.join(',')}`);
+    if (v.browserOnlyItems.length) {
+      console.warn(`[scorecard:warn] items without a passing Node-run test (browser/manual evidence only): ${v.browserOnlyItems.join(', ')}`);
+    }
+    for (const e of v.errors) console.error(e);
+    process.exit(v.errors.length ? 1 : 0);
+  }
   const wantMeasure = args.includes('--measure');
   if (args.includes('--explain')) {
     const explainData = loadScorecard(DEFAULT_SCORECARD_PATH);

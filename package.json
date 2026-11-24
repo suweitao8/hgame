@@ -49,6 +49,7 @@
     "task:check": "node scripts/task-check.mjs",
     "accept": "node scripts/accept.mjs",
     "score:game": "node scripts/score-game.mjs",
+    "score:bench": "node scripts/score-engines.mjs --verify-bench",
     "score:engines": "node scripts/score-engines.mjs --check --measure",
     "accept:examples": "node scripts/accept.mjs --examples",
     "test:browser:accept": "node tests/browser-acceptance.mjs",
