@@ -162,7 +162,7 @@ export function createDiagnostics({
   }
 
   function snapshot() {
-    const duration = frames.length > 1 ? frames.at(-1) - frames[0] : 0;
+    const duration = frames.length > 1 ? frames[frames.length - 1] - frames[0] : 0;
     const fps = duration > 0 ? (frames.length - 1) * 1000 / duration : 0;
     const frameTimeMs = frames.length > 1 ? duration / (frames.length - 1) : 0;
     // Frame-time distribution so an agent can spot hitches without a profiler.

@@ -137,7 +137,7 @@ export function resolveFeatureGraph(requested, catalog) {
   /** @type {string[]} */
   const result = [], state = new Map();
   function visit(name) {
-    if (!Object.hasOwn(catalog, name)) throw new Error('Unknown feature: ' + name + (Object.keys(catalog).length ? '. Known: ' + Object.keys(catalog).join(', ') : ''));
+    if (!Object.prototype.hasOwnProperty.call(catalog, name)) throw new Error('Unknown feature: ' + name + (Object.keys(catalog).length ? '. Known: ' + Object.keys(catalog).join(', ') : ''));
     if (state.get(name) === 1) throw new Error('Feature dependency cycle at ' + name);
     if (state.get(name) === 2) return;
     state.set(name, 1);

@@ -1082,7 +1082,13 @@ export function createAudioManager({
     miniGameHost = null,
   } = {}) {
     const onGesture = () => {
-      void buses.unlock().catch(() => {});
+      const prevState = ctx.context?.state;
+      void buses.unlock().then(() => {
+        if ((prevState === 'suspended' || prevState === 'interrupted') && !ctx.muted && !ctx.hidden) {
+          void bgmPlayer.resumeBgm({ fromLifecycle: true }).catch(() => {});
+          for (const voice of ctx.mediaVoices.values()) voice.resume();
+        }
+      }).catch(() => {});
     };
     const onVisibility = () => {
       if (doc?.hidden) {
@@ -1091,13 +1097,18 @@ export function createAudioManager({
         onShow();
       }
     };
+    const onPageShow = () => {
+      if (!doc?.hidden) onShow();
+    };
 
     if (win && typeof win.addEventListener === 'function' && !boundLifecycleWins.has(win)) {
       boundLifecycleWins.add(win);
-      for (const ev of ['pointerdown', 'touchstart', 'keydown']) {
+      for (const ev of ['pointerdown', 'touchstart', 'touchend', 'click', 'keydown']) {
         win.addEventListener(ev, onGesture, { passive: true });
         lifecycleCleanups.push(() => win.removeEventListener(ev, onGesture));
       }
+      win.addEventListener('pageshow', onPageShow);
+      lifecycleCleanups.push(() => win.removeEventListener('pageshow', onPageShow));
     }
     if (doc && typeof doc.addEventListener === 'function' && !boundLifecycleDocs.has(doc)) {
       boundLifecycleDocs.add(doc);

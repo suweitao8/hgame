@@ -71,8 +71,10 @@ const TOUCH_STYLESHEET = `
 }
 .hgame-joy-base {
   position: absolute;
-  left: max(22px, env(safe-area-inset-left, 0px) + 18px);
-  bottom: max(22px, env(safe-area-inset-bottom, 0px) + 18px);
+  left: 22px;
+  bottom: 22px;
+  left: max(22px, calc(env(safe-area-inset-left, 0px) + 18px));
+  bottom: max(22px, calc(env(safe-area-inset-bottom, 0px) + 18px));
   width: 112px;
   height: 112px;
   margin-left: 0;
@@ -109,8 +111,10 @@ const TOUCH_STYLESHEET = `
 }
 .hgame-btn-cluster {
   position: absolute;
-  right: max(16px, env(safe-area-inset-right, 0px) + 12px);
-  bottom: max(16px, env(safe-area-inset-bottom, 0px) + 12px);
+  right: 16px;
+  bottom: 16px;
+  right: max(16px, calc(env(safe-area-inset-right, 0px) + 12px));
+  bottom: max(16px, calc(env(safe-area-inset-bottom, 0px) + 12px));
   width: 210px;
   height: 210px;
   pointer-events: none;
@@ -395,6 +399,8 @@ export function createTouchControls({
     root.setAttribute('data-visible', visible ? 'true' : 'false');
     root.setAttribute('data-mode', currentMode);
     root.setAttribute('data-show-hints', computeShowHints() ? 'true' : 'false');
+    if (visible) container.setAttribute?.('data-hgame-touch-active', 'true');
+    else container.removeAttribute?.('data-hgame-touch-active');
   }
 
   const panes = [];
@@ -756,6 +762,7 @@ export function createTouchControls({
       if (disposed) return false;
       releaseAll();
       disposed = true;
+      container.removeAttribute?.('data-hgame-touch-active');
       for (const off of listeners.splice(0)) off();
       if (root.parentNode && typeof root.parentNode.removeChild === 'function') {
         root.parentNode.removeChild(root);

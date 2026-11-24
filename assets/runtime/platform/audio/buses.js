@@ -199,7 +199,9 @@ export function createAudioBusController(ctx) {
 
   async function unlock() {
     const audioContext = ensureContext();
-    if (audioContext.state === 'suspended') await audioContext.resume();
+    if (audioContext.state === 'suspended' || audioContext.state === 'interrupted') {
+      await audioContext.resume();
+    }
     return audioContext;
   }
 

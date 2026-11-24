@@ -363,6 +363,173 @@ function isExternalSpecifier(spec) {
   return /^(?:https?:|mailto:|tel:|\/\/)/i.test(spec);
 }
 
+function scanJsCodeMask(source) {
+  const len = source.length;
+  const isCode = new Uint8Array(len);
+  let i = 0;
+  let lastWord = '';
+  let lastNonWs = '';
+
+  while (i < len) {
+    const ch = source[i];
+    const next = source[i + 1];
+
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i++;
+      while (i < len) {
+        const c = source[i];
+        if (c === '\\') {
+          i += i + 1 < len ? 2 : 1;
+          continue;
+        }
+        i++;
+        if (c === quote) break;
+      }
+      lastWord = '';
+      lastNonWs = quote;
+      continue;
+    }
+
+    if (ch === '/' && next === '/') {
+      i += 2;
+      while (i < len && source[i] !== '\n') i++;
+      continue;
+    }
+
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i < len && !(source[i] === '*' && source[i + 1] === '/')) i++;
+      i += 2;
+      continue;
+    }
+
+    if (
+      ch === '/' &&
+      (lastNonWs === '' ||
+        '=([,:;!&|?{}~^+-*%<>\n'.includes(lastNonWs) ||
+        REGEX_PREV_KEYWORDS.has(lastWord))
+    ) {
+      i++;
+      let inClass = false;
+      while (i < len) {
+        const c = source[i];
+        if (c === '\\') {
+          i += i + 1 < len ? 2 : 1;
+          continue;
+        }
+        if (c === '[') inClass = true;
+        else if (c === ']' && inClass) inClass = false;
+        else if (c === '/' && !inClass) {
+          i++;
+          break;
+        } else if (c === '\n') {
+          i++;
+          break;
+        }
+        i++;
+      }
+      lastWord = '';
+      lastNonWs = '/';
+      continue;
+    }
+
+    isCode[i] = 1;
+    if (/\s/.test(ch)) {
+      if (ch === '\n') {
+        lastNonWs = '\n';
+        lastWord = '';
+      }
+    } else if (/[A-Za-z0-9_$]/.test(ch)) {
+      lastWord += ch;
+      lastNonWs = ch;
+    } else {
+      lastWord = '';
+      lastNonWs = ch;
+    }
+    i++;
+  }
+  return isCode;
+}
+
+function resolveImportMapTarget(specifier, importMap) {
+  if (!specifier || !importMap || importMap.size === 0 || isExternalSpecifier(specifier)) return null;
+  const cleanSpec = specifier.split(/[?#]/)[0];
+  const suffix = specifier.slice(cleanSpec.length);
+  if (importMap.has(cleanSpec)) {
+    const mapped = importMap.get(cleanSpec);
+    if (!mapped || isExternalSpecifier(mapped)) return null;
+    const cleanTarget = mapped.split(/[?#]/)[0];
+    return { targetRel: toPosixRel(path.posix.normalize(cleanTarget)), suffix };
+  }
+  for (const [key, mapped] of importMap) {
+    if (key.endsWith('/') && cleanSpec.startsWith(key) && mapped && !isExternalSpecifier(mapped)) {
+      const joined = mapped.split(/[?#]/)[0] + cleanSpec.slice(key.length);
+      return { targetRel: toPosixRel(path.posix.normalize(joined)), suffix };
+    }
+  }
+  return null;
+}
+
+function toRelativeModuleSpec(targetRelPosix, importerRelPosix) {
+  const fromDir = path.posix.dirname(importerRelPosix);
+  let rel = path.posix.relative(fromDir === '.' ? '' : fromDir, targetRelPosix);
+  if (!rel.startsWith('.')) rel = './' + rel;
+  return rel;
+}
+
+function rewriteMappedModuleSpecifiers(code, importerRel, importMap) {
+  if (!importMap || importMap.size === 0) return null;
+  let maybeHasKey = false;
+  for (const key of importMap.keys()) {
+    if (code.includes(key)) {
+      maybeHasKey = true;
+      break;
+    }
+  }
+  if (!maybeHasKey) return null;
+
+  const isCode = scanJsCodeMask(code);
+  const replacements = [];
+  const patterns = [
+    /(?:^|[;\n}])\s*(import)\s*(['"])([^'"]+)\2/g,
+    /\b(import)\b\s*(?:\*\s*as\s+[\w$]+|[\w$]+(?:\s*,\s*(?:\*\s*as\s+[\w$]+|\{[^}]*\}))?|\{[^}]*\})\s*\bfrom\s*(['"])([^'"]+)\2/g,
+    /\b(export)\b\s*(?:\*(?:\s*as\s+[\w$]+)?|\{[^}]*\})\s*\bfrom\s*(['"])([^'"]+)\2/g,
+    /\b(import)\s*\(\s*(['"])([^'"]+)\2\s*\)/g,
+  ];
+
+  for (const re of patterns) {
+    let m;
+    while ((m = re.exec(code)) !== null) {
+      const kwOffset = m.index + m[0].indexOf(m[1]);
+      if (!isCode[kwOffset]) continue;
+      const spec = m[3];
+      const mapped = resolveImportMapTarget(spec, importMap);
+      if (!mapped) continue;
+      const quote = m[2];
+      const quoted = `${quote}${spec}${quote}`;
+      const quotedOffset = m.index + m[0].lastIndexOf(quoted);
+      const specStart = quotedOffset + 1;
+      const specEnd = specStart + spec.length;
+      const nextSpec = toRelativeModuleSpec(mapped.targetRel, importerRel) + mapped.suffix;
+      if (nextSpec !== spec) {
+        replacements.push({ start: specStart, end: specEnd, text: nextSpec });
+      }
+    }
+  }
+
+  if (replacements.length === 0) return null;
+  replacements.sort((a, b) => b.start - a.start);
+  let out = code;
+  let lastStart = Infinity;
+  for (const rep of replacements) {
+    if (rep.end > lastStart) continue;
+    out = out.slice(0, rep.start) + rep.text + out.slice(rep.end);
+    lastStart = rep.start;
+  }
+  return out === code ? null : out;
+}
+
 function stripJsComments(source) {
   let out = '';
   let i = 0;
@@ -847,8 +1014,9 @@ export async function packageGameRelease({
 
   function resolveModulePath(specifier, importerRel, importMap) {
     if (!specifier || isExternalSpecifier(specifier)) return null;
-    if (importMap.has(specifier)) {
-      return toPosixRel(path.posix.normalize(importMap.get(specifier).split(/[?#]/)[0]));
+    const mapped = resolveImportMapTarget(specifier, importMap);
+    if (mapped) {
+      return mapped.targetRel;
     }
     const cleanSpec = specifier.split(/[?#]/)[0];
     if (cleanSpec.startsWith('/')) {
@@ -881,6 +1049,14 @@ export async function packageGameRelease({
 
   const htmlText = await readFile(entryAbs, 'utf8');
   const { importMap, assetRefs, inlineModules } = parseEntryHtml(htmlText);
+  const effectiveImportMap = new Map(importMap);
+  if (
+    project.profile === '3d' &&
+    !effectiveImportMap.has('three') &&
+    resolveSourceCandidate('assets/vendor/three/three.module.js')
+  ) {
+    effectiveImportMap.set('three', './assets/vendor/three/three.module.js');
+  }
 
   const traceQueue = [];
   const tracedSet = new Set();
@@ -906,7 +1082,7 @@ export async function packageGameRelease({
   }
 
   for (const ref of assetRefs) {
-    const resolved = resolveModulePath(ref, entryRel, importMap);
+    const resolved = resolveModulePath(ref, entryRel, effectiveImportMap);
     if (resolved) enqueueRel(resolved, pixiBuildFiles.has(resolved));
   }
 
@@ -941,7 +1117,7 @@ export async function packageGameRelease({
       includeSrcSubpaths: true,
     });
     for (const s of [...specifiers, ...urls]) {
-      const target = resolveModulePath(s, entryRel, importMap);
+      const target = resolveModulePath(s, entryRel, effectiveImportMap);
       if (target) enqueueRel(target, false);
     }
     for (const sub of runtimeSubpaths) enqueueRel(sub, false);
@@ -971,7 +1147,7 @@ export async function packageGameRelease({
         pixiBuildFiles: pixiBuildFiles.has(rel) ? pixiBuildFiles : undefined,
       });
       for (const s of [...specifiers, ...urls]) {
-        const target = resolveModulePath(s, rel, importMap);
+        const target = resolveModulePath(s, rel, effectiveImportMap);
         if (target) enqueueRel(target, pixiBuildFiles.has(target));
       }
       for (const sub of runtimeSubpaths) {
@@ -983,7 +1159,7 @@ export async function packageGameRelease({
     } else if (ext === '.css') {
       const css = await readFile(abs, 'utf8');
       for (const ref of extractCssDependencies(css)) {
-        const target = resolveModulePath(ref, rel, importMap);
+        const target = resolveModulePath(ref, rel, effectiveImportMap);
         if (target) enqueueRel(target, pixiBuildFiles.has(target));
       }
     }
@@ -1112,6 +1288,16 @@ export async function packageGameRelease({
       if (!data) throw new Error('Pixi build file changed after compilation: ' + relPosix + '. Run npm run build:pixi before packaging.');
     }
     const ext = path.posix.extname(relPosix).toLowerCase();
+    if (
+      !buildHash &&
+      (ext === '.js' || ext === '.mjs') &&
+      !relPosix.startsWith('vendor/hgame/vendor/')
+    ) {
+      const rewritten = rewriteMappedModuleSpecifiers(data.toString('utf8'), relPosix, effectiveImportMap);
+      if (rewritten !== null) {
+        data = Buffer.from(rewritten, 'utf8');
+      }
+    }
     const isThreeRuntime = /^assets\/vendor\/three\/three\.(module|core)\.js$/.test(relPosix);
     if (
       esbuild &&
@@ -1123,7 +1309,8 @@ export async function packageGameRelease({
       const transformed = await esbuild.transform(data.toString('utf8'), {
         loader: ext === '.css' ? 'css' : 'js',
         format: 'esm',
-        target: 'es2022',
+        target: 'es2020',
+        ...(ext === '.css' ? {} : { supported: { 'top-level-await': true } }),
         minifySyntax: true,
         minifyWhitespace: true,
         minifyIdentifiers: isThreeRuntime,
@@ -1143,10 +1330,48 @@ export async function packageGameRelease({
     stagedOutputs.set(relPosix, buf);
   }
 
+  // Strip <script type="importmap"> and rewrite bare specifiers in inline module scripts
+  // so 3D releases work on older iOS Safari / WKWebView (< 16.4) without native importmap support.
+  if (effectiveImportMap.size > 0) {
+    const entryBuf = stagedOutputs.get(entryRel);
+    let entryHtml = entryBuf ? entryBuf.toString('utf8') : htmlText;
+    let htmlChanged = false;
+    const strippedHtml = entryHtml.replace(
+      /[ \t]*<script\b[^>]*\btype\s*=\s*["']importmap["'][^>]*>[\s\S]*?<\/script>\r?\n?/gi,
+      () => {
+        htmlChanged = true;
+        return '';
+      },
+    );
+    entryHtml = strippedHtml.replace(
+      /(<script\b([^>]*)>)([\s\S]*?)(<\/script>)/gi,
+      (full, openTag, attrs, body, closeTag) => {
+        if (/\bsrc\s*=|\btype\s*=\s*["']importmap["']/i.test(attrs)) return full;
+        if (!/\btype\s*=\s*["']module["']/i.test(attrs) || !body.trim()) return full;
+        const rewritten = rewriteMappedModuleSpecifiers(body, entryRel, effectiveImportMap);
+        if (rewritten === null) return full;
+        htmlChanged = true;
+        return `${openTag}${rewritten}${closeTag}`;
+      },
+    );
+    if (htmlChanged) {
+      stagedOutputs.set(entryRel, Buffer.from(entryHtml, 'utf8'));
+    }
+  }
+
   let toySdkInjected = false;
   if (target === 'toy') {
     const entryBuf = stagedOutputs.get(entryRel);
     let entryHtml = entryBuf ? entryBuf.toString('utf8') : htmlText;
+    if (!/data-hgame-compat/i.test(entryHtml)) {
+      const compatTag =
+        '  <script data-hgame-compat>!function(){if(!Object.hasOwn)Object.hasOwn=function(o,k){return Object.prototype.hasOwnProperty.call(Object(o),k)};function at(n){n=Math.trunc(n)||0;if(n<0)n+=this.length;return n<0||n>=this.length?void 0:this[n]}if(!Array.prototype.at)Array.prototype.at=at;if(!String.prototype.at)String.prototype.at=at;if(typeof structuredClone!=="function")globalThis.structuredClone=function c(v,m){if(v===null||typeof v!=="object")return v;m=m||new WeakMap;if(m.has(v))return m.get(v);if(v instanceof Date)return new Date(v.getTime());if(v instanceof RegExp)return new RegExp(v.source,v.flags);if(ArrayBuffer.isView(v))return v instanceof DataView?new DataView(v.buffer.slice(0),v.byteOffset,v.byteLength):new v.constructor(v);if(v instanceof ArrayBuffer)return v.slice(0);if(v instanceof Map){var r=new Map;m.set(v,r);v.forEach(function(val,k){r.set(c(k,m),c(val,m))});return r}if(v instanceof Set){var s=new Set;m.set(v,s);v.forEach(function(val){s.add(c(val,m))});return s}var o=Array.isArray(v)?[]:{};m.set(v,o);Object.keys(v).forEach(function(k){o[k]=c(v[k],m)});return o}}();</script>\n';
+      if (/<\/head>/i.test(entryHtml)) {
+        entryHtml = entryHtml.replace(/<\/head>/i, compatTag + '</head>');
+      } else if (/<script\b/i.test(entryHtml)) {
+        entryHtml = entryHtml.replace(/<script\b/i, compatTag + '<script');
+      }
+    }
     const shouldInjectSdk = toySdk === false
       ? false
       : Boolean(toySdk === true || gameConfig?.toy?.sdk === true || usesToySdkSource);

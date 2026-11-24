@@ -1121,7 +1121,7 @@ export function blendMorphTargets(root, targetWeights, alpha = 1) {
     const dict = mesh.morphTargetDictionary;
     for (const [key, rawWeight] of Object.entries(targetWeights)) {
       const targetW = clamp(Number(rawWeight) || 0, 0, 1);
-      const idx = dict && Object.hasOwn(dict, key) ? dict[key] : Number(key);
+      const idx = dict && Object.prototype.hasOwnProperty.call(dict, key) ? dict[key] : Number(key);
       if (Number.isInteger(idx) && idx >= 0 && idx < influences.length) {
         influences[idx] = influences[idx] + (targetW - influences[idx]) * t;
         updated++;

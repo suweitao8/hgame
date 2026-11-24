@@ -51,7 +51,7 @@ export function normalizeAssetCatalog(data) {
   /** @type {Record<string, readonly string[]>} */
   const groups = Object.create(null);
   for (const [id, members] of entries(data.groups ?? {}, 'groups')) {
-    if (!id.trim() || !Array.isArray(members) || members.some(asset => typeof asset !== 'string' || !Object.hasOwn(assets, asset))) {
+    if (!id.trim() || !Array.isArray(members) || members.some(asset => typeof asset !== 'string' || !Object.prototype.hasOwnProperty.call(assets, asset))) {
       throw new Error('Invalid group or unknown member: ' + id);
     }
     groups[id] = Object.freeze([...new Set(members)]);

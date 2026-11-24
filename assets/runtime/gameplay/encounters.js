@@ -42,7 +42,7 @@ function compileStage(stage) {
   schedule.sort((a, b) => a.at - b.at);
   const survive = nonNegative(stage.goals?.survive ?? 0, 'survival time');
   const timeout = stage.timeout === undefined ? Infinity : nonNegative(stage.timeout, 'stage timeout');
-  if (timeout < Math.max(survive, schedule.at(-1)?.at ?? 0)) throw new RangeError('Stage timeout precedes its scheduled work: ' + id);
+  if (timeout < Math.max(survive, schedule[schedule.length - 1]?.at ?? 0)) throw new RangeError('Stage timeout precedes its scheduled work: ' + id);
   return { id, schedule, clear: stage.goals?.clear ?? true, survive,
     signals: [...new Set((stage.goals?.signals ?? []).map(signal => identifier(signal, 'required signal')))],
     timeout, checkpoint: stage.checkpoint === true,

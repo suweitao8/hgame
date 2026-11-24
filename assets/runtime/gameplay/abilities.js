@@ -285,7 +285,7 @@ export function createAbilitySystem({ attributes, tags, effects, definitions = {
       const pending = new Map();
       for (const id of Object.keys(snapshot.abilities)) if (!catalog.has(id)) throw new Error('Unknown snapshot ability: ' + id);
       for (const [id, def] of catalog) {
-        const saved = Object.hasOwn(snapshot.abilities, id) ? snapshot.abilities[id] : { charges: def.charges, rechargeRemaining: 0 };
+        const saved = Object.prototype.hasOwnProperty.call(snapshot.abilities, id) ? snapshot.abilities[id] : { charges: def.charges, rechargeRemaining: 0 };
         if (!Number.isSafeInteger(saved.charges) || saved.charges < 0 || saved.charges > def.charges) throw new Error('Invalid saved charges: ' + id);
         const remaining = nonNegative(saved.rechargeRemaining, 'rechargeRemaining');
         pending.set(id, { charges: saved.charges, nextCharge: saved.charges === def.charges ? Infinity : clock + remaining });

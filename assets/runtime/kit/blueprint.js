@@ -79,7 +79,7 @@ export function defineGameBlueprint(input = {}) {
   }
   const metaIn = input.meta ?? input;
   const genre = String(metaIn.genre ?? input.genre ?? 'action-2d');
-  if (!Object.hasOwn(GENRE_ARCHETYPES, genre)) {
+  if (!Object.prototype.hasOwnProperty.call(GENRE_ARCHETYPES, genre)) {
     throw new Error(`Unknown genre archetype "${genre}". Use: ${listGenreArchetypes().join(', ')}`);
   }
   const archetype = GENRE_ARCHETYPES[genre];

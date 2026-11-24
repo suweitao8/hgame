@@ -54,6 +54,23 @@
  * @property {() => void} dispose
  */
 
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+/** @param {unknown} value @param {WeakMap<object, unknown>} [seen] @returns {any} */
+function cloneData(value, seen) {
+  if (typeof globalThis.structuredClone === 'function') return globalThis.structuredClone(value);
+  if (value === null || typeof value !== 'object') return value;
+  const memo = seen ?? new WeakMap();
+  if (memo.has(value)) return memo.get(value);
+  /** @type {any} */
+  const out = Array.isArray(value) ? [] : {};
+  memo.set(value, out);
+  for (const key of Object.keys(value)) {
+    out[key] = cloneData(/** @type {any} */ (value)[key], memo);
+  }
+  return out;
+}
+
 /**
  * GGPO-style prediction & rollback lockstep scheduler.
  *
@@ -134,7 +151,7 @@ export function createRollbackFrameScheduler({
     if (!input || typeof input !== 'object' || Object.getPrototypeOf(input) !== Object.prototype) return false;
     const candidate = /** @type {Record<string, unknown>} */ (input);
     if (!pidIndex.has(/** @type {number} */ (candidate.pid))) return false;
-    if (!Object.hasOwn(candidate, 'buttons') || !Number.isSafeInteger(candidate.buttons) ||
+    if (!hasOwn(candidate, 'buttons') || !Number.isSafeInteger(candidate.buttons) ||
         /** @type {number} */ (candidate.buttons) < 0 || /** @type {number} */ (candidate.buttons) > 0x7fffffff) {
       return false;
     }
@@ -148,7 +165,7 @@ export function createRollbackFrameScheduler({
     const keysB = Object.keys(b);
     if (keysA.length !== keysB.length) return false;
     for (const key of keysA) {
-      if (!Object.hasOwn(b, key) || a[key] !== b[key]) return false;
+      if (!hasOwn(b, key) || a[key] !== b[key]) return false;
     }
     return true;
   }
@@ -157,15 +174,15 @@ export function createRollbackFrameScheduler({
   function defaultPredict(pid, netTick) {
     const last = lastRealInputByPid.get(pid) ?? null;
     if (predictInput) {
-      const custom = predictInput(pid, last ? structuredClone(last) : null, netTick);
+      const custom = predictInput(pid, last ? cloneData(last) : null, netTick);
       if (!isValidInput(custom) || custom.pid !== pid) {
         fatal = true;
         throw new Error('Custom predictInput returned an invalid input object');
       }
-      return structuredClone(custom);
+      return cloneData(custom);
     }
     if (!last) return { pid, buttons: 0 };
-    const copy = structuredClone(last);
+    const copy = cloneData(last);
     if (instantButtonMask) copy.buttons = copy.buttons & ~instantButtonMask;
     return copy;
   }
@@ -175,7 +192,7 @@ export function createRollbackFrameScheduler({
     const realMap = realInputsByTick.get(netTick);
     return playerIds.map((pid) => {
       const real = realMap?.get(pid);
-      if (real) return structuredClone(real);
+      if (real) return cloneData(real);
       return defaultPredict(pid, netTick);
     });
   }
@@ -213,7 +230,7 @@ export function createRollbackFrameScheduler({
     }
     if (netTick <= confirmedNetTick) return false;
 
-    const clone = structuredClone(input);
+    const clone = cloneData(input);
     let realMap = realInputsByTick.get(netTick);
     if (!realMap) {
       realMap = new Map();
@@ -258,7 +275,7 @@ export function createRollbackFrameScheduler({
 
   /** @param {number} targetNetTick @param {number} substep @param {RollbackInput[]} frameInputs @param {boolean} isResimulating */
   function runSubstep(targetNetTick, substep, frameInputs, isResimulating) {
-    const stepInputs = structuredClone(frameInputs);
+    const stepInputs = cloneData(frameInputs);
     if (substep !== 0 && instantButtonMask) {
       for (const inp of stepInputs) {
         inp.buttons = inp.buttons & ~instantButtonMask;
@@ -305,7 +322,7 @@ export function createRollbackFrameScheduler({
     const savedLogicTick = logicTick;
     for (let tick = startTick; tick <= savedCurrentNetTick; tick++) {
       const resolved = resolveFrameInputs(tick);
-      appliedInputsByTick.set(tick, structuredClone(resolved));
+      appliedInputsByTick.set(tick, cloneData(resolved));
       const maxSubstep = tick < savedCurrentNetTick
         ? stepsPerFrame - 1
         : (savedLogicTick - 1) % stepsPerFrame;
@@ -352,7 +369,7 @@ export function createRollbackFrameScheduler({
       let frameInputs = appliedInputsByTick.get(targetNetTick);
       if (!frameInputs || substep === 0) {
         frameInputs = resolveFrameInputs(targetNetTick);
-        appliedInputsByTick.set(targetNetTick, structuredClone(frameInputs));
+        appliedInputsByTick.set(targetNetTick, cloneData(frameInputs));
       }
 
       if (targetNetTick > currentNetTick) currentNetTick = targetNetTick;

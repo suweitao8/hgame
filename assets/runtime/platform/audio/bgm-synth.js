@@ -316,7 +316,7 @@ export function createProceduralBgm(options = {}) {
     if (startOpts.mood) setMood(startOpts.mood);
     if (startOpts.intensity !== undefined) setIntensity(startOpts.intensity);
     ensureContext();
-    if (ctx?.state === 'suspended') ctx.resume?.().catch?.(() => {});
+    if (ctx?.state === 'suspended' || ctx?.state === 'interrupted') ctx.resume?.().catch?.(() => {});
     playing = true;
     paused = false;
     applyGain();
@@ -344,7 +344,7 @@ export function createProceduralBgm(options = {}) {
     if (disposed) throw new Error('BGM controller is disposed');
     if (!playing) return start();
     paused = false;
-    if (ctx?.state === 'suspended') ctx.resume?.().catch?.(() => {});
+    if (ctx?.state === 'suspended' || ctx?.state === 'interrupted') ctx.resume?.().catch?.(() => {});
     applyGain();
     startScheduler();
   }

@@ -734,3 +734,35 @@ test('toy-preflight blocks >1MB index.html, root-relative paths, >=10000px image
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('package-game --target toy strips importmap, rewrites bare three imports, injects compat shim, and passes preflight for 3D projects', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-toy-3d-compat-'));
+  const game = path.join(tmp, 'toy-3d');
+  try {
+    const gen = spawnSync(process.execPath, [createGame, game, '--profile', '3d', '--no-git'], { encoding: 'utf8' });
+    assert.equal(gen.status, 0, gen.stderr);
+
+    const summary = await packageGameRelease({
+      projectDir: game,
+      version: '1.0',
+      target: 'toy',
+      slug: 'toy-3d-compat',
+      minify: false,
+    });
+
+    assert.equal(summary.toyPreflight.ok, true);
+    assert.equal(summary.toyPreflight.errorCount, 0);
+
+    const entries = parseZipEntries(await readFile(summary.zipPath));
+    const html = entries.get('index.html').toString('utf8');
+    assert.equal(/<script\b[^>]*\btype\s*=\s*["']importmap["']/i.test(html), false, 'importmap must be stripped for older iOS WKWebView');
+    assert.match(html, /data-hgame-compat/);
+
+    const gltfLoader = entries.get('assets/vendor/three/jsm/loaders/GLTFLoader.js')?.toString('utf8') ?? '';
+    assert.ok(gltfLoader.length > 0, 'GLTFLoader.js must be bundled');
+    assert.equal(/\bfrom\s*['"]three['"]/.test(gltfLoader), false, 'bare three import must be rewritten');
+    assert.match(gltfLoader, /\bfrom\s*['"]\.\.\/\.\.\/three\.module\.js['"]/);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

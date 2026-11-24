@@ -46,7 +46,7 @@ export function createFullscreenShaderPass(THREE, { id, fragment, uniforms = {},
     throw new TypeError('Invalid uniforms or flags for fullscreen shader pass');
   }
   for (const name of RESERVED_UNIFORMS) {
-    if (Object.hasOwn(uniforms, name)) throw new TypeError(`Reserved fullscreen shader uniform: ${name}`);
+    if (Object.prototype.hasOwnProperty.call(uniforms, name)) throw new TypeError(`Reserved fullscreen shader uniform: ${name}`);
   }
 
   const inputs = sceneDepth ? { color: COLOR, depth: DEPTH, depthView: DEPTH_VIEW } : { color: COLOR };

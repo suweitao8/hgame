@@ -24,7 +24,7 @@ function valuesEqual(a, b) {
     if (ka.length !== kb.length) return false;
     for (let i = 0; i < ka.length; i++) {
       const k = ka[i];
-      if (!Object.hasOwn(b, k) || !valuesEqual(a[k], b[k])) return false;
+      if (!Object.prototype.hasOwnProperty.call(b, k) || !valuesEqual(a[k], b[k])) return false;
     }
     return true;
   }

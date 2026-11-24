@@ -221,7 +221,7 @@ export function createLighting2DState() {
 
   function setQuality(tier = 'high') {
     const key = tier === 'ultra' ? 'high' : tier;
-    if (!key || !Object.hasOwn(QUALITY2D_LIGHTING_PRESETS, key)) {
+    if (!key || !Object.prototype.hasOwnProperty.call(QUALITY2D_LIGHTING_PRESETS, key)) {
       qualityTier = 'high';
       qualityPolicy = QUALITY2D_LIGHTING_PRESETS.high;
     } else {

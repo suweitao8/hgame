@@ -184,7 +184,7 @@ export function createVersionedStore({
   function makeEnvelope(value) {
     // Match SaveStore's JSON conversion before hashing, including toJSON('data').
     const normalized = JSON.parse(JSON.stringify({ data: value }));
-    if (!Object.hasOwn(normalized, 'data')) throw new TypeError('save value must be JSON serializable');
+    if (!Object.prototype.hasOwnProperty.call(normalized, 'data')) throw new TypeError('save value must be JSON serializable');
     return {
       __hgSave: 1,
       v: schemaVersion,

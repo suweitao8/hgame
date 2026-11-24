@@ -114,6 +114,7 @@ button { color: inherit; }
 }
 
 .workspace-layout {
+  height: calc(100vh - 72px);
   height: calc(100dvh - 72px);
   min-height: 0;
   display: grid;
@@ -430,7 +431,7 @@ button { color: inherit; }
   .header-status { display: none; }
   .main-nav { justify-self: stretch; min-width: 0; width: 100%; max-width: 100%; overflow-x: auto; }
   .nav-tab { min-width: 54px; padding: 7px 11px; font-size: 11px; flex: 1 0 auto; }
-  .workspace-layout { height: auto; min-height: calc(100dvh - 66px); display: flex; flex-direction: column; }
+  .workspace-layout { height: auto; min-height: calc(100vh - 66px); min-height: calc(100dvh - 66px); display: flex; flex-direction: column; }
   .workspace-sidebar { border-right: 0; border-bottom: 1px solid var(--line); padding: 13px 12px 10px; }
   .sidebar-heading { padding: 0 4px 10px; }
   .sidebar-heading h1 { margin-top: 4px; font-size: 15px; }
@@ -439,7 +440,7 @@ button { color: inherit; }
   .game-item { width: auto; min-width: 156px; min-height: 56px; padding: 7px; }
   .game-item-icon { width: 34px; height: 34px; }
   .sidebar-footer { display: none; }
-  .preview-panel { height: calc(100dvh - 165px); min-height: 420px; padding: 10px; }
+  .preview-panel { height: calc(100vh - 165px); height: calc(100dvh - 165px); min-height: 420px; padding: 10px; }
   .preview-toolbar { min-height: 42px; padding-bottom: 9px; }
   .preview-description { display: none; }
   .toolbar-button { min-height: 29px; padding: 6px 8px; font-size: 9px; }
@@ -1180,6 +1181,7 @@ button { color: inherit; }
 }
 @media (max-width: 680px) {
   .assets-layout {
+    height: calc(100vh - 66px);
     height: calc(100dvh - 66px);
     min-height: 0;
     display: grid;
@@ -1242,7 +1244,7 @@ button { color: inherit; }
 .game-sidebar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 @media (max-width: 680px) {
-  .games-layout { display: flex; height: calc(100dvh - 66px); min-height: 450px; flex-direction: column; }
+  .games-layout { display: flex; height: calc(100vh - 66px); height: calc(100dvh - 66px); min-height: 450px; flex-direction: column; }
   .game-sidebar { flex: 0 0 auto; gap: 10px; padding: 12px; }
   .game-search { flex-basis: 32px; height: 32px; min-height: 32px; }
   .game-sidebar .game-list { flex: 0 0 auto; min-height: 0; max-height: 65px; display: flex; overflow-x: auto; overflow-y: hidden; }
@@ -2035,6 +2037,7 @@ button { color: inherit; }
     width: 100%;
     max-width: 100%;
     height: auto;
+    min-height: calc(100vh - 108px);
     min-height: calc(100dvh - 108px);
   }
   .hgame-sidebar {
@@ -2069,6 +2072,7 @@ button { color: inherit; }
   display: none !important;
 }
 .workspace-layout {
+  height: calc(100vh - 52px);
   height: calc(100dvh - 52px);
 }
 .hgame-stage-panel {

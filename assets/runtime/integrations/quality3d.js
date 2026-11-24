@@ -213,10 +213,10 @@ export const QUALITY3D_PROFILES = Object.freeze({
  * @param {'mobile_low' | 'mobile_high' | 'pc_ultra' | QualityPresetTier} [nameOrTier='mobile_high']
  */
 export function resolveQuality3DProfile(nameOrTier = 'mobile_high') {
-  if (Object.hasOwn(QUALITY3D_PROFILES, nameOrTier)) {
+  if (Object.prototype.hasOwnProperty.call(QUALITY3D_PROFILES, nameOrTier)) {
     return QUALITY3D_PROFILES[nameOrTier];
   }
-  if (Object.hasOwn(QUALITY3D_PRESETS, nameOrTier)) {
+  if (Object.prototype.hasOwnProperty.call(QUALITY3D_PRESETS, nameOrTier)) {
     const base = QUALITY3D_PRESETS[nameOrTier];
     return Object.freeze({
       ...base,
@@ -267,7 +267,7 @@ const inRange = (x, lo, hi) => Math.min(hi, Math.max(lo, x));
  */
 export function resolveQualityPreset(tier = 'high', dimension = '3d') {
   const table = dimension === '2d' ? QUALITY2D_PRESETS : QUALITY3D_PRESETS;
-  if (!Object.hasOwn(table, tier)) {
+  if (!Object.prototype.hasOwnProperty.call(table, tier)) {
     throw new RangeError('Unsupported quality tier: ' + tier);
   }
   return table[tier];

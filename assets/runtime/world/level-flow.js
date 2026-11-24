@@ -26,6 +26,40 @@ import { identifier } from '../internal/gameplay.js';
 let nextFlow = 1;
 const kinds = new Set(['json', 'text', 'arrayBuffer', 'blob', 'image']);
 function aborted() { return new DOMException('Level transition cancelled', 'AbortError'); }
+/** @param {unknown} value @param {WeakMap<object, unknown>} [seen] @returns {any} */
+function cloneData(value, seen) {
+  if (typeof globalThis.structuredClone === 'function') return globalThis.structuredClone(value);
+  if (value === null || typeof value !== 'object') return value;
+  const memo = seen ?? new WeakMap();
+  if (memo.has(value)) return memo.get(value);
+  if (value instanceof Date) return new Date(value.getTime());
+  if (value instanceof RegExp) return new RegExp(value.source, value.flags);
+  if (ArrayBuffer.isView(value)) {
+    return value instanceof DataView
+      ? new DataView(value.buffer.slice(0), value.byteOffset, value.byteLength)
+      : new /** @type {any} */ (value.constructor)(value);
+  }
+  if (value instanceof ArrayBuffer) return value.slice(0);
+  if (value instanceof Map) {
+    const out = new Map();
+    memo.set(value, out);
+    value.forEach((v, k) => out.set(cloneData(k, memo), cloneData(v, memo)));
+    return out;
+  }
+  if (value instanceof Set) {
+    const out = new Set();
+    memo.set(value, out);
+    value.forEach(v => out.add(cloneData(v, memo)));
+    return out;
+  }
+  /** @type {any} */
+  const out = Array.isArray(value) ? [] : {};
+  memo.set(value, out);
+  for (const key of Object.keys(value)) {
+    out[key] = cloneData(/** @type {any} */ (value)[key], memo);
+  }
+  return out;
+}
 
 /**
  * Preload, prepare and switch between game-owned levels on the existing SceneManager.
@@ -40,7 +74,7 @@ export function createLevelFlow({ scenes, prefabs, assets, catalog, routes, crea
       if (!kinds.has(request.kind)) throw new Error('Unknown level asset kind: ' + request.kind);
       return { key: identifier(key, 'asset key'), kind: request.kind, path: identifier(request.path, 'asset path') };
     });
-    const level = typeof route.level === 'string' ? identifier(route.level, 'level path') : structuredClone(route.level);
+    const level = typeof route.level === 'string' ? identifier(route.level, 'level path') : cloneData(route.level);
     if (!assets && (typeof level === 'string' || requests.length)) throw new Error('Asset loader required for route: ' + id);
     const keys = new Set(requests.map(request => request.key));
     const media = new Set();

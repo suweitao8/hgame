@@ -359,6 +359,41 @@ test('game session orchestrates lifecycle, combat, choices, persistence, and UI 
   session.dispose();
 });
 
+test('game shell tracks data-ui-phase, detects bilibili host safe offset, and provides 48px non-:has() CSS', () => {
+  const bp = createBlueprintFromIdea({ id: 'shell-compat', title: '兼容壳', genre: 'action-2d', theme: 'scifi' });
+  const session = createGameSession({ blueprint: bp, storage: makeMemoryStorage() });
+  const { doc, body } = makeStubDom();
+  const prevLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
+  Object.defineProperty(globalThis, 'location', {
+    configurable: true,
+    value: { hostname: 'www.bilibili.com', search: '' },
+  });
+  try {
+    const shell = mountGameShell({ root: body, session });
+    assert.equal(shell.hud.getAttribute('data-toy-host'), 'true');
+    assert.equal(shell.hud.getAttribute('data-ui-phase'), 'title');
+
+    body.querySelector('#start').click();
+    assert.equal(shell.hud.getAttribute('data-ui-phase'), 'playing');
+
+    session.presentChoices();
+    assert.equal(shell.hud.getAttribute('data-ui-phase'), 'choice');
+    session.cancelChoice();
+    session.damagePlayer(999);
+    assert.equal(shell.hud.getAttribute('data-ui-phase'), 'result');
+
+    const css = doc.head.children[0]?.textContent ?? '';
+    assert.match(css, /#hud\[data-ui-phase="title"\]/);
+    assert.match(css, /#hud #pause\s*\{[^}]*width:\s*48px;[^}]*height:\s*48px;/s);
+    assert.match(css, /\[data-hgame-touch-active="true"\]\s*#hud\[data-portrait-thumb="true"\]\s*\.hg-edge-tr/);
+    shell.dispose();
+  } finally {
+    if (prevLocation) Object.defineProperty(globalThis, 'location', prevLocation);
+    else delete globalThis.location;
+    session.dispose();
+  }
+});
+
 test('create-game scaffolds valid 5-pillar archetype projects that pass blueprint & UI gates', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-archetypes-'));
   try {

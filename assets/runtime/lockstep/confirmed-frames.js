@@ -69,6 +69,23 @@
  * @property {() => void} dispose
  */
 
+const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+
+/** @param {unknown} value @param {WeakMap<object, unknown>} [seen] @returns {any} */
+function cloneData(value, seen) {
+  if (typeof globalThis.structuredClone === 'function') return globalThis.structuredClone(value);
+  if (value === null || typeof value !== 'object') return value;
+  const memo = seen ?? new WeakMap();
+  if (memo.has(value)) return memo.get(value);
+  /** @type {any} */
+  const out = Array.isArray(value) ? [] : {};
+  memo.set(value, out);
+  for (const key of Object.keys(value)) {
+    out[key] = cloneData(/** @type {any} */ (value)[key], memo);
+  }
+  return out;
+}
+
 /**
  * Confirmed-input scheduler only. NOT a network client, deterministic physics,
  * rollback engine, anti-cheat layer or proof of cross-platform determinism.
@@ -145,7 +162,7 @@ export function createConfirmedFrameScheduler({
     if (!Array.isArray(inputs) || inputs.length !== playerIds.length) return false;
     return inputs.every((input, i) => {
       if (!input || Object.getPrototypeOf(input) !== Object.prototype ||
-          input.pid !== playerIds[i] || !Object.hasOwn(input, 'buttons') ||
+          input.pid !== playerIds[i] || !hasOwn(input, 'buttons') ||
           !Number.isSafeInteger(input.buttons) || input.buttons < 0 ||
           input.buttons > 0x7fffffff) return false;
       // Canonical input fields are flat integer/boolean data, not live objects.
@@ -171,7 +188,7 @@ export function createConfirmedFrameScheduler({
       return failClosed();
     }
     if (!validateInputs(frame.inputs)) return failClosed();
-    pending.set(frame.netTick, structuredClone(frame.inputs));
+    pending.set(frame.netTick, cloneData(frame.inputs));
     maxBufferedFramesSeen = Math.max(maxBufferedFramesSeen, pending.size);
     return true;
   }
@@ -198,7 +215,7 @@ export function createConfirmedFrameScheduler({
       return false;
     }
     const substep = logicTick % stepsPerFrame;
-    const inputs = structuredClone(sealed);
+    const inputs = cloneData(sealed);
     if (substep !== 0 && instantButtonMask) {
       for (const input of inputs) {
         input.buttons = input.buttons & ~instantButtonMask;

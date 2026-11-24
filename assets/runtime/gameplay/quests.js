@@ -233,7 +233,7 @@ export function createQuestLog(definitions, { onEvent } = {}) {
             Object.keys(state.objectives).length !== stage.objectives.length) throw new Error('Invalid saved quest stage: ' + id);
           const counts = stage.objectives.map(objective => {
             const count = state.objectives[objective.id];
-            if (!Object.hasOwn(state.objectives, objective.id) || !Number.isSafeInteger(count) || count < 0 || count > objective.target) {
+            if (!Object.prototype.hasOwnProperty.call(state.objectives, objective.id) || !Number.isSafeInteger(count) || count < 0 || count > objective.target) {
               throw new Error('Invalid saved objective: ' + objective.id);
             }
             return count;

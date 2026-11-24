@@ -26,8 +26,10 @@ const SHELL_CSS = `
 }
 #hud .hg-edge-tl {
   position: fixed;
-  top: max(14px, env(safe-area-inset-top));
-  left: max(14px, env(safe-area-inset-left));
+  top: 14px;
+  left: 14px;
+  top: max(14px, env(safe-area-inset-top, 0px));
+  left: max(14px, env(safe-area-inset-left, 0px));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -42,12 +44,22 @@ const SHELL_CSS = `
 }
 #hud .hg-edge-tr {
   position: fixed;
-  top: max(14px, env(safe-area-inset-top));
-  right: max(14px, env(safe-area-inset-right));
+  top: 14px;
+  right: 14px;
+  top: calc(max(14px, env(safe-area-inset-top, 0px)) + var(--hg-host-top-right-offset, 0px));
+  right: max(14px, env(safe-area-inset-right, 0px));
   display: flex;
   align-items: center;
   gap: 10px;
   pointer-events: auto;
+}
+#hud[data-toy-host="true"] {
+  --hg-host-top-right-offset: 44px;
+}
+@media (hover: none) and (pointer: coarse) {
+  #hud {
+    --hg-host-top-right-offset: 44px;
+  }
 }
 #hud .bars {
   display: flex;
@@ -87,8 +99,8 @@ const SHELL_CSS = `
 }
 #hud #pause {
   pointer-events: auto;
-  width: 44px;
-  height: 44px;
+  width: 48px;
+  height: 48px;
   border-radius: 12px;
   border: 1px solid var(--hg-surface-border, rgba(148, 163, 184, 0.4));
   background: var(--hg-surface-bg, rgba(12, 20, 34, 0.84));
@@ -249,7 +261,8 @@ const SHELL_CSS = `
 }
 #hud [data-ui-hint] {
   position: fixed;
-  bottom: max(20px, env(safe-area-inset-bottom));
+  bottom: 20px;
+  bottom: max(20px, env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 14px;
@@ -261,19 +274,42 @@ const SHELL_CSS = `
   letter-spacing: 0.12em;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }
+#hud[data-ui-phase="title"] .hg-edge-tl,
+#hud[data-ui-phase="title"] .hg-edge-tr,
+#hud[data-ui-phase="title"] [data-ui-hint],
+#hud[data-ui-phase="choice"] .hg-edge-tl,
+#hud[data-ui-phase="choice"] .hg-edge-tr,
+#hud[data-ui-phase="choice"] [data-ui-hint],
+#hud[data-ui-phase="paused"] .hg-edge-tl,
+#hud[data-ui-phase="paused"] .hg-edge-tr,
+#hud[data-ui-phase="paused"] [data-ui-hint],
+#hud[data-ui-phase="result"] .hg-edge-tl,
+#hud[data-ui-phase="result"] .hg-edge-tr,
+#hud[data-ui-phase="result"] [data-ui-hint] {
+  visibility: hidden;
+}
 #hud:has(#hg-title:not([hidden]), #levelup:not([hidden]), #gameover:not([hidden])) :is(.hg-edge-tl, .hg-edge-tr, .bars, #readout, #pause, [data-ui-hint]) {
   visibility: hidden;
 }
 @media (orientation: portrait), (max-width: 600px) {
   #hud[data-portrait-thumb="true"] .hg-edge-tr {
     top: auto;
-    bottom: max(18px, calc(env(safe-area-inset-bottom) + 14px));
-    right: max(16px, calc(env(safe-area-inset-right) + 12px));
+    bottom: 18px;
+    right: 16px;
+    bottom: max(18px, calc(env(safe-area-inset-bottom, 0px) + 14px));
+    right: max(16px, calc(env(safe-area-inset-right, 0px) + 12px));
+  }
+  [data-hgame-touch-active="true"] #hud[data-portrait-thumb="true"] .hg-edge-tr {
+    top: auto;
+    bottom: 184px;
+    bottom: max(184px, calc(env(safe-area-inset-bottom, 0px) + 176px));
+    right: 16px;
+    right: max(16px, calc(env(safe-area-inset-right, 0px) + 12px));
   }
   #hud[data-portrait-thumb="true"] .hg-overlay {
     align-content: end;
     justify-items: end;
-    padding: 20px max(18px, calc(env(safe-area-inset-right) + 14px)) max(28px, calc(env(safe-area-inset-bottom) + 22px)) 20px;
+    padding: 20px max(18px, calc(env(safe-area-inset-right, 0px) + 14px)) max(28px, calc(env(safe-area-inset-bottom, 0px) + 22px)) 20px;
   }
   #hud[data-portrait-thumb="true"] .hg-hero-frame,
   #hud[data-portrait-thumb="true"] .hg-cards,
@@ -351,11 +387,20 @@ export function mountGameShell(options) {
   injectShellStyles(doc);
 
   const portraitFirst = options.portraitFirst !== false;
+  const toyHost = options.toyHost !== undefined
+    ? Boolean(options.toyHost)
+    : Boolean(
+      globalThis.window?.toy ||
+      globalThis.toy ||
+      /(?:^|\.)bilibili\.com$/i.test(globalThis.location?.hostname ?? '') ||
+      /BiliApp/i.test(globalThis.navigator?.userAgent ?? '')
+    );
   const hud = el(doc, 'div', {
     id: 'hud',
     'aria-live': 'polite',
     'data-ui-theme': theme.uiTheme,
     ...(portraitFirst ? { 'data-portrait-thumb': 'true' } : {}),
+    ...(toyHost ? { 'data-toy-host': 'true' } : {}),
   });
 
   // Edge HUD (Top-Left glass frame + bars + metrics, Top-Right <= 1 pause button)
@@ -447,6 +492,7 @@ export function mountGameShell(options) {
 
   function syncPhaseView() {
     const phase = session.state.phase;
+    hud.setAttribute('data-ui-phase', phase);
     titleOverlay.hidden = phase !== UI_PHASES.TITLE;
     choiceOverlay.hidden = phase !== UI_PHASES.CHOICE;
     endOverlay.hidden = phase !== UI_PHASES.PAUSED && phase !== UI_PHASES.RESULT;

@@ -74,8 +74,8 @@ function normalizeHdrPasses(passes) {
     if (depthView) bindings.push(depthView.inverseProjection, depthView.clipDepthMode, depthView.far);
     const usedUniforms = new Set();
     for (const name of bindings) {
-      const entry = typeof name === 'string' && name && Object.hasOwn(uniforms, name) && uniforms[name];
-      if (!entry || !Object.hasOwn(entry, 'value') || usedUniforms.has(entry)) {
+      const entry = typeof name === 'string' && name && Object.prototype.hasOwnProperty.call(uniforms, name) && uniforms[name];
+      if (!entry || !Object.prototype.hasOwnProperty.call(entry, 'value') || usedUniforms.has(entry)) {
         throw new TypeError(`Invalid or overlapping input uniforms for HDR pass: ${id}`);
       }
       usedUniforms.add(entry);

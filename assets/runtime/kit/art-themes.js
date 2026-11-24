@@ -289,7 +289,7 @@ export function listArtThemes() {
  * @returns {ArtThemePreset}
  */
 export function getArtTheme(themeId = 'scifi') {
-  if (typeof themeId !== 'string' || !Object.hasOwn(ART_THEMES, themeId)) {
+  if (typeof themeId !== 'string' || !Object.prototype.hasOwnProperty.call(ART_THEMES, themeId)) {
     throw new Error(`Unknown art theme "${themeId}". Available: ${listArtThemes().join(', ')}`);
   }
   return ART_THEMES[themeId];

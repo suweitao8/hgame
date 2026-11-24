@@ -7,6 +7,7 @@ import {
   generateBgmStep,
   createProceduralBgm,
   createAudioManager,
+  createSynthSfx,
 } from '../assets/runtime/index.js';
 
 function createFakeAudioContext() {
@@ -90,4 +91,55 @@ test('createAudioManager.createBgm integrates with audio manager and disposes cl
   assert.ok(steps.length >= 2);
   audio.dispose();
   assert.equal(bgm.getState().playing, false);
+});
+
+test('audio unlock, synth, and procedural BGM resume iOS interrupted AudioContext state', async () => {
+  let resumeCalls = 0;
+  let lastCreatedCtx = null;
+  class InterruptedAudioContext {
+    constructor() {
+      this.currentTime = 0;
+      this.state = 'interrupted';
+      this.destination = { connect() {} };
+      this.listener = {};
+      lastCreatedCtx = this;
+    }
+    resume() {
+      resumeCalls++;
+      this.state = 'running';
+      return Promise.resolve();
+    }
+    close() { return Promise.resolve(); }
+    createGain() {
+      return { gain: { value: 1, setValueAtTime() {}, setTargetAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, disconnect() {} };
+    }
+    createDynamicsCompressor() {
+      return { threshold: { value: 0 }, knee: { value: 0 }, ratio: { value: 0 }, attack: { value: 0 }, release: { value: 0 }, connect() {} };
+    }
+    createBiquadFilter() {
+      return { type: 'lowpass', frequency: { value: 1000, setValueAtTime() {}, setTargetAtTime() {} }, Q: { value: 1 }, gain: { value: 0 }, connect() {}, disconnect() {} };
+    }
+    createOscillator() {
+      return { type: 'sine', frequency: { value: 440, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, start() {}, stop() {} };
+    }
+  }
+
+  const audio = createAudioManager({ AudioContextClass: InterruptedAudioContext });
+  const unlockedCtx = await audio.unlock();
+  assert.equal(resumeCalls, 1);
+  assert.equal(unlockedCtx.state, 'running');
+  await audio.dispose();
+
+  const synth = createSynthSfx({ AudioContextClass: InterruptedAudioContext });
+  assert.equal(await synth.unlock(), true);
+  assert.equal(resumeCalls, 2);
+
+  const bgm = createProceduralBgm({ AudioContextClass: InterruptedAudioContext, autoSchedule: false });
+  bgm.start();
+  assert.equal(resumeCalls, 3);
+  bgm.pause();
+  lastCreatedCtx.state = 'interrupted';
+  bgm.resume();
+  assert.equal(resumeCalls, 4);
+  bgm.dispose();
 });

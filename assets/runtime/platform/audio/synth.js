@@ -494,7 +494,7 @@ export function createSynthSfx({
   function unlock() {
     const c = ensureContext();
     if (!c) return Promise.resolve(false);
-    if (c.state === 'suspended' && typeof c.resume === 'function') {
+    if ((c.state === 'suspended' || c.state === 'interrupted') && typeof c.resume === 'function') {
       return c.resume().then(() => true).catch(() => false);
     }
     return Promise.resolve(true);

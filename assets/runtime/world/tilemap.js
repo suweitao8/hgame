@@ -433,7 +433,7 @@ export function applyAutoTileRules(tileMap, {
   const use8 = mode === '8-way';
   const lookup = rules instanceof Map
     ? mask => (rules.has(mask) ? rules.get(mask) : undefined)
-    : mask => (Object.hasOwn(rules, mask) ? rules[mask] : undefined);
+    : mask => (Object.prototype.hasOwnProperty.call(rules, mask) ? rules[mask] : undefined);
 
   const isMatch = (x, y) => {
     if (x < 0 || y < 0 || x >= w || y >= h) return Boolean(treatBorderAsMatched);

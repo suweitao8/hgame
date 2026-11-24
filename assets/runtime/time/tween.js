@@ -281,7 +281,7 @@ export class TweenManager {
         }
         let sharesKey = false;
         for (let i = 0; i < existing.count; i++) {
-          if (Object.hasOwn(values, existing.keys[i])) {
+          if (Object.prototype.hasOwnProperty.call(values, existing.keys[i])) {
             sharesKey = true;
             break;
           }
