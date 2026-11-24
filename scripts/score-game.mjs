@@ -37,6 +37,31 @@ function qualityFactor(name, gate) {
   return 1;
 }
 
+function explainGate(name, status, gate, factor) {
+  if (status === 'failed') {
+    return { reason: `未通过：${(gate?.errors ?? []).slice(0, 2).join('；') || '见 acceptance-report'}`, improve: '修复报错后重跑 npm run accept' };
+  }
+  if (status !== 'passed') {
+    return { reason: `未验证（${gate?.reason ?? status}）`, improve: `运行完整 accept（含 --webasset${name === 'package' ? ' --package' : ''}）补齐该门禁；补不齐则置信度保持偏低` };
+  }
+  if (factor >= 1) return { reason: '通过，满分', improve: '无需改进' };
+  if (name === 'autoplay') {
+    const bot = gate.bot ?? {};
+    const tips = [];
+    if ((gate.skillDelta ?? 0) < 0.6) tips.push(`拉大 bot 与挂机胜率差（现 ${gate.skillDelta}，目标 ≥ 0.6）`);
+    if (bot.winRate < 0.5 || bot.winRate > 0.9) tips.push(`把 bot 通关率调进 50%–90%（现 ${(bot.winRate * 100).toFixed(0)}%${bot.winRate > 0.9 ? '，偏简单' : '，偏难'}）`);
+    if ((bot.timeoutRate ?? 0) > 0) tips.push(`降低超时率（现 ${(bot.timeoutRate * 100).toFixed(0)}%）`);
+    return { reason: `通过，但难度/技巧区分度未满：质量系数 ${factor.toFixed(2)}`, improve: tips.join('；') || '调整数值平衡' };
+  }
+  if (name === 'playtest') {
+    return { reason: `帧时间偏高（p95 ${gate.frameStats?.p95Ms}ms），系数 ${factor}`, improve: '优化渲染/逻辑，使 p95 ≤ 20ms' };
+  }
+  if (name === 'visual') {
+    return { reason: `HUD 面积超 10%，系数 ${factor}`, improve: '收缩边缘 HUD 至 ≤ 10% 画布面积' };
+  }
+  return { reason: `质量系数 ${factor}`, improve: '见 acceptance-report 细节' };
+}
+
 export function scoreAcceptanceReport(report) {
   const breakdown = [];
   let points = 0;
@@ -57,7 +82,7 @@ export function scoreAcceptanceReport(report) {
         verifiedWeight += weight;
       }
       points += earned;
-      breakdown.push({ category, gate: name, status, weight, factor: +factor.toFixed(3), earned: +earned.toFixed(2) });
+      breakdown.push({ category, gate: name, status, weight, factor: +factor.toFixed(3), earned: +earned.toFixed(2), ...explainGate(name, status, gate, factor) });
     }
   }
   const score = +points.toFixed(1);
@@ -107,6 +132,10 @@ function runCli() {
     );
     if (result.failedGates.length) console.log(`  failed: ${result.failedGates.join(', ')}`);
     if (result.unverifiedGates.length) console.log(`  unverified: ${result.unverifiedGates.join(', ')}`);
+    console.log('  gate           得分/权重   原因 → 改进');
+    for (const b of result.breakdown) {
+      console.log(`  ${b.gate.padEnd(13)} ${String(b.earned).padStart(5)}/${String(b.weight).padEnd(3)}  ${b.reason} → ${b.improve}`);
+    }
   }
   if (result.failedGates.length > 0 || (min !== null && result.score < min)) process.exit(1);
 }

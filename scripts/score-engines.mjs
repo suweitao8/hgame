@@ -507,12 +507,65 @@ export function applySections(markdown, sections) {
   return result;
 }
 
+/**
+ * Human-readable breakdown: per-dimension and per-item score, the reason (evidence level, checklist,
+ * caps), points lost, and the concrete next step to raise the score.
+ */
+export function renderExplanation(data, computed = computeScores(data)) {
+  const h = computed.byEngine.hgame;
+  const lines = [];
+  lines.push(`# HGame 评分明细（${data.version} · ${data.date}）`, '');
+  lines.push(`总分 **${fmt1(h.runtimeTotal)} / 100**；对比 Unity ${fmt1(computed.byEngine.unity.runtimeTotal)}、Cocos ${fmt1(computed.byEngine.cocos.runtimeTotal)}、Godot ${fmt1(computed.byEngine.godot.runtimeTotal)}。`);
+  lines.push('', '> 计分：条目得分点数 = 权重 × 条目分 / 10。HGame 条目分上限 = min(证据等级上限, 默认路径? 8 + 2×清单满足数/适用数 : 7)。竞品分为定性评估，见 `competitorBasis`。', '');
+  lines.push('## 维度分', '', '| 维度 | 得分/权重 | 得分率 | Unity | Cocos | Godot |', '| --- | ---: | ---: | ---: | ---: | ---: |');
+  for (const dim of data.dimensions) {
+    const cell = (id) => `${fmt1(computed.byEngine[id].dimensions[dim.id].pct)}%`;
+    const d = h.dimensions[dim.id];
+    lines.push(`| ${dim.id} ${dim.name ?? ''} | ${fmt1(d.points)}/${dim.weight} | ${fmt1(d.pct)}% | ${cell('unity')} | ${cell('cocos')} | ${cell('godot')} |`);
+  }
+  lines.push('', '## 逐项明细（按丢分从多到少）', '');
+  const rows = data.items
+    .map((item) => {
+      const lost = (item.weight * (10 - item.scores.hgame)) / 10;
+      return { item, lost };
+    })
+    .sort((a, b) => b.lost - a.lost);
+  for (const { item, lost } of rows) {
+    const hg = item.hgame;
+    const { met, applicable, exempt } = summarizeChecklist(item);
+    const cap = data.evidenceLevels[hg.evidence].cap;
+    const maxAllowed = hg.defaultPath ? 8 + (2 * met) / applicable : 7;
+    const bound = Math.min(cap, maxAllowed);
+    const unmet = (hg.industrialChecklist || []).filter((e) => !e.exempt && !e.met);
+    const vsUnity = item.scores.hgame - item.scores.unity;
+    lines.push(`### ${item.id} ${item.name}（权重 ${item.weight}）— ${fmt1(item.scores.hgame)}/10，丢 ${lost.toFixed(2)} 分`);
+    lines.push(`- **为什么是这个分**：证据 ${hg.evidence}（${data.evidenceLevels[hg.evidence].label}，上限 ${cap}）；清单 ${met}/${applicable} 满足${exempt ? `，豁免 ${exempt}` : ''}；默认路径 ${hg.defaultPath ? '是' : '否（上限 7）'}；理论上限 ${fmt1(bound)}。${hg.note}`);
+    lines.push(`- **对比**：Unity ${fmt1(item.scores.unity)}（${vsUnity >= 0 ? '+' : ''}${fmt1(vsUnity)}）、Cocos ${fmt1(item.scores.cocos)}、Godot ${fmt1(item.scores.godot)}。`);
+    lines.push(`- **证据**：${(hg.proofFiles || []).join('，')}${hg.benchmarkFiles?.length ? `；基准 ${hg.benchmarkFiles.join('，')}` : '；基准 无'}`);
+    const todo = [];
+    for (const e of unmet) todo.push(`补齐清单「${e.point}」（现状：${e.proof}）`);
+    if (unmet.length === 0 && hg.evidence !== 'C4') {
+      todo.push(`清单已全满足，升到 C4 需有独立实测基准或真机数据证明（上限 ${data.evidenceLevels.C4.cap}）`);
+    }
+    if (!hg.benchmarkFiles?.length && (hg.evidence === 'C3' || hg.evidence === 'C4')) todo.push('补一个自动化基准/浏览器实测文件');
+    if (item.gap && !/已全部满足/.test(item.gap)) todo.push(`短板：${item.gap}`);
+    lines.push(`- **如何改进**：${todo.length ? todo.join('；') : '已达当前上限，维持现状并保持基准通过。'}`);
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
 function runCli() {
   const args = process.argv.slice(2);
   const wantJson = args.includes('--json');
   const wantWrite = args.includes('--write');
   const wantCheck = args.includes('--check');
   const wantMeasure = args.includes('--measure');
+  if (args.includes('--explain')) {
+    const explainData = loadScorecard(DEFAULT_SCORECARD_PATH);
+    console.log(renderExplanation(explainData));
+    return;
+  }
 
   const data = loadScorecard(DEFAULT_SCORECARD_PATH);
   const errors = validateScorecard(data, { repoRoot: DEFAULT_REPO_ROOT });
