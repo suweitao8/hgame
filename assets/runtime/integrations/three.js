@@ -1156,7 +1156,7 @@ export function createThreeAdapter({
           writes: ['decalColor'],
           execute(ctx) {
             if (!projList) return;
-            const mainTarget = ctx?.state?.sceneRT ?? pipeline.getMainTarget?.();
+            const mainTarget = ctx?.inputs?.sceneTarget ?? ctx?.state?.sceneRT ?? pipeline.getMainTarget?.();
             if (!mainTarget?.depthTexture) return;
             const w = mainTarget.width ?? ctx?.state?.bufferWidth ?? 1;
             const h = mainTarget.height ?? ctx?.state?.bufferHeight ?? 1;

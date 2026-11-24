@@ -76,6 +76,9 @@ test('3D pipeline reuses the compiled frame graph with current callbacks, then r
   };
 
   const first = frame(1);
+  const { spec: ldrSpec } = pipeline.getLastFrameGraph().lifetimes.ldrColor;
+  assert.equal(ldrSpec.width, 640);
+  assert.throws(() => { ldrSpec.width = 7; }, TypeError);
   const plan = pipeline.getRenderGraphPlan();
   assert.equal(pipeline.getRenderGraphPlan(), plan);
   assert.equal(frame(2), first);
@@ -106,7 +109,6 @@ test('Bloom mips are graph-owned and their idle targets are reported until evict
   const camera = new THREE.PerspectiveCamera();
   const worldTarget = pipeline.getMainTarget().target;
   assert.equal(pipeline.getRenderTargets().length, 1, 'before first draw only the scene target is allocated');
-  const sceneBytes = pipeline.estimateTargetBytes().scalableBytes;
   const render = () => pipeline.render(world, camera);
   render();
   assert.equal(pipeline.targets.bloomMipCount, 4);
@@ -129,10 +131,11 @@ test('Bloom mips are graph-owned and their idle targets are reported until evict
   assert.ok(!pipeline.getLastExecutedGraph().some(id => id.startsWith('bloom-')));
   assert.equal(pipeline.estimateTargetBytes().scalableBytes, activeBytes, 'idle allocations are still resident');
 
+  const reusedBytes = pipeline.targets.poolStats.estimatedSavedBytes;
   pipeline.setState({ bloomStrength: 0.4 });
   render();
   assert.deepEqual(pipeline.getRenderTargets().filter(target => target !== worldTarget), firstBloomTargets);
-  assert.equal(pipeline.targets.poolStats.estimatedSavedBytes, activeBytes - sceneBytes);
+  assert.equal(pipeline.targets.poolStats.estimatedSavedBytes - reusedBytes, activeBytes);
   const disposed = new Set();
   for (const target of firstBloomTargets) target.addEventListener('dispose', () => disposed.add(target));
   pipeline.setState({ bloomStrength: 0 });
@@ -152,6 +155,118 @@ test('Bloom mips are graph-owned and their idle targets are reported until evict
   assert.deepEqual(pipeline.getLastExecutedGraph().filter(id => id.startsWith('bloom-')), ['bloom-prefilter']);
   pipeline.dispose();
   assert.equal(pipeline.getRenderTargets().length, 0);
+});
+
+test('scene attachments are leased during the graph and reused across internal render-scale changes', () => {
+  const renderer = createMockWebGL2Renderer();
+  const pipeline = createPostPipeline3D({
+    THREE, renderer, width: 640, height: 360,
+    temporalAA: true, temporalUpsampling: true, renderScale: 0.5,
+  });
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  const reduced = pipeline.getMainTarget();
+  assert.deepEqual([reduced.width, reduced.height], [320, 180]);
+  pipeline.render(world, camera);
+  pipeline.setState({ renderScale: 1 });
+  const full = pipeline.getMainTarget();
+  assert.deepEqual([full.width, full.height], [640, 360]);
+  pipeline.render(world, camera);
+  pipeline.setState({ renderScale: 0.5 });
+  assert.ok(pipeline.getMainTarget().target === reduced.target, 'reuse a recently used color and depth target');
+  assert.ok(pipeline.getRenderTargets().includes(full.target), 'count idle native-resolution target until eviction');
+  let observed = false;
+  pipeline.render(world, camera, {
+    extraPasses: { afterWorld: [{ id: 'inspect-scene-attachments', execute({ inputs, state }) {
+      assert.equal(inputs.sceneTarget, reduced.target);
+      assert.equal(state.sceneRT, reduced.target);
+      assert.equal(state.sceneRT.depthTexture, reduced.depthTexture);
+      assert.ok(pipeline.targets.poolStats.activeCount > 0);
+      observed = true;
+    } }] },
+  });
+  assert.equal(observed, true);
+  const graph = pipeline.getLastFrameGraph();
+  assert.equal(graph.lifetimes.sceneTarget.firstWrite, graph.executed.indexOf('world'));
+  assert.equal(graph.lifetimes.sceneTarget.lastRead, graph.executed.indexOf('tone-mapping'));
+  assert.equal(pipeline.targets.poolStats.activeCount, 0);
+  assert.throws(() => pipeline.render(world, camera, {
+    extraPasses: { afterWorld: [{ id: 'failed-scene-pass', execute() { throw new Error('failed scene pass'); } }] },
+  }), /failed scene pass/);
+  assert.equal(pipeline.targets.poolStats.activeCount, 0);
+  for (let frame = 0; frame < 3; frame++) pipeline.render(world, camera);
+  assert.ok(!pipeline.getRenderTargets().includes(full.target));
+  assert.equal(pipeline.getMainTarget().target, reduced.target);
+  pipeline.dispose();
+  assert.equal(pipeline.getRenderTargets().length, 0);
+});
+
+test('post-world depth readers request an MSAA depth resolve for their scene target', () => {
+  const renderer = createMockWebGL2Renderer();
+  const pipeline = createPostPipeline3D({
+    THREE, renderer, width: 640, height: 360,
+    preset: { msaaSamples: 2, bloom: false, ssao: false, volumetricSteps: 0, contactShadows: false },
+  });
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  pipeline.render(world, camera);
+  assert.equal(pipeline.getMainTarget().target.resolveDepthBuffer, false);
+  let observed = false;
+  pipeline.render(world, camera, {
+    extraPasses: { afterWorld: [{
+      id: 'projected-depth-reader',
+      reads: ['sceneDepth'],
+      execute({ inputs }) {
+        assert.equal(inputs.sceneTarget.samples, 2);
+        assert.equal(inputs.sceneTarget.resolveDepthBuffer, true);
+        assert.equal(inputs.sceneTarget.storeMultisampledDepthBuffer, true);
+        observed = true;
+      },
+    }] },
+  });
+  assert.equal(observed, true);
+  pipeline.dispose();
+});
+
+test('skipped world passes leave the configured target available', () => {
+  const pipeline = createPostPipeline3D({ THREE, renderer: createMockWebGL2Renderer(), width: 640, height: 360 });
+  const target = pipeline.getMainTarget().target;
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  for (let i = 0; i < 5; i++) {
+    assert.throws(() => pipeline.render(world, camera, {
+      extraPasses: { before: [{ id: 'skip-world', execute() { throw new Error('skip world'); } }] },
+    }), /skip world/);
+  }
+  assert.ok(pipeline.getRenderTargets().includes(target));
+  assert.equal(pipeline.getMainTarget().target, target);
+  pipeline.dispose();
+});
+
+test('configuration changes during a hook leave the next scene target correctly sized', () => {
+  const pipeline = createPostPipeline3D({
+    THREE, renderer: createMockWebGL2Renderer(), width: 640, height: 360,
+    temporalAA: true, temporalUpsampling: true,
+  });
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  pipeline.render(world, camera, {
+    extraPasses: { before: [{ id: 'change-scale', execute() { pipeline.setState({ renderScale: 0.5 }); } }] },
+  });
+  assert.equal(pipeline.getMainTarget().width, 320);
+  pipeline.render(world, camera);
+  assert.equal(pipeline.getTemporalStats().internalWidth, 320);
+  pipeline.dispose();
+});
+
+test('scene configurations that are never drawn do not accumulate targets', () => {
+  const pipeline = createPostPipeline3D({
+    THREE, renderer: createMockWebGL2Renderer(), width: 640, height: 360,
+    temporalAA: true, temporalUpsampling: true,
+  });
+  for (let i = 1; i <= 20; i++) pipeline.setState({ renderScale: i / 40 + 0.25 });
+  assert.equal(pipeline.getRenderTargets().length, 1);
+  pipeline.dispose();
 });
 
 test('A2 unified RenderGraph defaults renderGraph=true and executes shadow-csm -> world -> tone-mapping in one compiled DAG', () => {

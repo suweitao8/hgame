@@ -76,11 +76,84 @@ try {
       frame();
       const recovered = size();
       const recoveredPixels = readPixels();
+      const executed = post.getLastExecutedGraph().filter(id => id.startsWith('bloom-'));
+      post.setState({
+        bloomStrength: 0, temporalAA: true, temporalUpsampling: true, temporalMotion: false, renderScale: 0.5,
+      });
+      const sceneTargets = new Set();
+      let nativeTarget;
+      let firstReducedTarget;
+      let firstReducedPixels;
+      for (const scale of [0.5, 1, 0.5, 1, 0.5, 1, 0.5]) {
+        post.setState({ renderScale: scale });
+        frame();
+        const { target, depthTexture, width: w, height: h } = post.getMainTarget();
+        if (!depthTexture || w !== width * scale || h !== height * scale) {
+          throw new Error('Scene color and depth dimensions did not follow the internal render scale');
+        }
+        sceneTargets.add(target);
+        if (scale === 1) nativeTarget = target;
+        else {
+          firstReducedTarget ??= target;
+          firstReducedPixels ??= readPixels();
+        }
+      }
+      const lastReducedPixels = readPixels();
+      const nativeRetainedDuringGrace = post.getRenderTargets().includes(nativeTarget);
+      for (let i = 0; i < 5; i++) frame();
+      const scene = {
+        distinctTargets: sceneTargets.size,
+        reducedPixelDifference: difference(firstReducedPixels, lastReducedPixels),
+        reducedPixelFingerprint: fingerprint(lastReducedPixels),
+        nativeRetainedDuringGrace,
+        nativeEvicted: !post.getRenderTargets().includes(nativeTarget),
+        reducedReused: post.getMainTarget().target === firstReducedTarget,
+      };
+      post.setState({ temporalAA: false });
+      post.setPreset({ msaaSamples: 4, bloom: false, ssao: false, volumetricSteps: 0, fxaa: false, sharpen: 0 });
+      const probeTarget = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+      const probeGeometry = new THREE.PlaneGeometry(2, 2);
+      const probeMaterial = new THREE.ShaderMaterial({
+        depthTest: false,
+        uniforms: { sceneDepth: { value: null } },
+        vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: `
+          uniform sampler2D sceneDepth;
+          void main() { gl_FragColor = vec4(vec3(texture2D(sceneDepth, vec2(0.5)).r), 1.0); }
+        `,
+      });
+      const probeScene = new THREE.Scene();
+      const probeMesh = new THREE.Mesh(probeGeometry, probeMaterial);
+      probeMesh.frustumCulled = false;
+      probeScene.add(probeMesh);
+      const depth = new Uint8Array(4);
+      const samples = post.getMainTarget().target.samples;
+      try {
+        post.render(world, camera, { extraPasses: { afterWorld: [{
+          id: 'depth-probe',
+          reads: ['sceneDepth'],
+          execute({ state }) {
+            const previousTarget = renderer.getRenderTarget();
+            probeMaterial.uniforms.sceneDepth.value = state.sceneRT.depthTexture;
+            try {
+              renderer.setRenderTarget(probeTarget);
+              renderer.render(probeScene, camera);
+              renderer.readRenderTargetPixels(probeTarget, 0, 0, 1, 1, depth);
+            } finally {
+              renderer.setRenderTarget(previousTarget);
+            }
+          },
+        }] } });
+      } finally {
+        probeGeometry.dispose();
+        probeMaterial.dispose();
+        probeTarget.dispose();
+      }
       return {
         on, idle, off, recovered, bloomPixelDifference: difference(onPixels, offPixels),
         onPixelFingerprint: fingerprint(onPixels), offPixelFingerprint: fingerprint(offPixels),
         recoveryPixelDifference: difference(onPixels, recoveredPixels),
-        executed: post.getLastExecutedGraph().filter(id => id.startsWith('bloom-')),
+        executed, scene, msaa: { samples, depthByte: depth[0] },
         glError: gl.getError(),
       };
     } finally {
@@ -105,6 +178,13 @@ try {
   assert.deepEqual(sample.recovered, sample.on);
   assert.ok(sample.bloomPixelDifference > 0, 'Bloom changes the rendered image');
   assert.equal(sample.recoveryPixelDifference, 0, 're-enabling Bloom restores the original pixels');
+  assert.equal(sample.scene.distinctTargets, 2);
+  assert.equal(sample.scene.reducedPixelDifference, 0);
+  assert.equal(sample.scene.nativeRetainedDuringGrace, true);
+  assert.equal(sample.scene.nativeEvicted, true);
+  assert.equal(sample.scene.reducedReused, true);
+  assert.ok(sample.msaa.samples > 0, 'the fixture uses multisampled world depth');
+  assert.ok(sample.msaa.depthByte > 0 && sample.msaa.depthByte < 255, 'the hook samples resolved scene geometry');
 } finally {
   await browser.close();
 }

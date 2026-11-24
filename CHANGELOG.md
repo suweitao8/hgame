@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Lease the 3D scene color and depth attachments through the render graph and reuse targets across internal render-scale changes.
+
 - Manage the complete 3D Bloom chain in the render graph. Track resident pooled targets until their idle resources are released.
 
 - Reuse the 3D render graph while pass topology and target specifications are stable. Build the diagnostic plan on demand.

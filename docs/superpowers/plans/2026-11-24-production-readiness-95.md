@@ -32,6 +32,21 @@ The Bloom-enabled high-tier package fixture executes the seven Bloom passes in i
 
 The five standard release fixtures also pass. The low-tier 3D Web release ran for about 70.7 seconds on each viewport at 7.0 ms p95 on RTX 4070. Its estimated peak was 13,855,680 bytes. The low-tier fixture verifies the existing published frame and memory budgets. The high-tier archive fixture verifies the changed Bloom path.
 
+## Main scene target lifetimes
+
+- [x] Use a single pool lease for the main scene color and depth attachments while the world and downstream passes read or write them, including injected post-world hooks. Preserve the current attachment accessor and shadow ordering.
+- [x] Reuse scene targets across alternating internal render scales, then evict unused sizes. Respect sampling mode, MSAA, native depth and context loss. Keep the existing immediate size updates for callers.
+- [x] Verify reuse, eviction, failed callbacks, and depth binding in Node. Compare deterministic real WebGL2 frame captures and attachment counts.
+- [x] Validate the package and release routes.
+
+On RTX 4070 at 1920 × 1080, alternating the internal temporal render scale from 0.5 to 1.0 and back over seven draws reduces distinct scene attachment sets from seven to two. The reduced-resolution result has the same pixel fingerprint as the old renderer and is identical on repeated draws after a switch. The unused full-resolution set remains available during the four-frame grace period and is evicted on the fifth frame. The ledger includes both sizes while they remain resident. The pool handles each viewport independently.
+
+Hardware WebGL2 and SwiftShader both sample the resolved scene depth from a post-world hook with 4× MSAA and all other depth readers disabled. The executed graph exposes the main target lifetime from the world pass through tone mapping. Node regressions also cover repeated failures before the world pass, scale changes in a hook, and changes to configurations that never draw.
+
+The final runtime passed `npm run check` with 621 tests. The unminified, Web and Toy archive pixel comparisons passed, along with two forced WebGL loss and recovery cycles in each lifecycle sample. All five normal release fixtures passed. The packaged 3D arena on RTX 4070 ran for about 70.7 seconds in each viewport. Desktop p95/p99 were 13.9/20.9 ms and portrait p95/p99 were 7.1/13.9 ms. Both peaked at 13,855,680 estimated GPU bytes. The release runs establish budget compliance and do not establish a whole-frame speedup.
+
+The A2 rating stays at 9.5 and the weighted overall score stays at **90.64**. A browser probe found that an active projected decal was scheduled but left the center pixel unchanged. The existing adapter writes the decal to the default framebuffer before tone mapping draws into that same framebuffer. Complete and verify the decal-to-HDR composition before claiming full pipeline credit.
+
 ## Current evidence
 
 - In a Node probe with mock drawing, each version executed 3,000 warmup frames and nine samples of 3,000 identical frames. The baseline compiled all 27,000 measured frames. The cached implementation reused the graph in all 27,000. Median batch-average CPU time was 103.27 µs per frame before and 17.23 µs after. Each version executed all 30,000 frame callbacks. These timings measure JavaScript pipeline overhead with GPU work excluded.

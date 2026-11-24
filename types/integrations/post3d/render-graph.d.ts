@@ -76,6 +76,7 @@ export function createPhysicalRenderTargetPool3D(THREE?: any, { maxIdleFrames }?
 } | undefined): Readonly<{
     acquire: (spec: any, resource: any) => any;
     release: (target: any) => void;
+    discard: (target: any) => boolean;
     beginFrame: () => void;
     getStats: () => Readonly<{
         allocations: number;

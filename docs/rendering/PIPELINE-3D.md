@@ -109,6 +109,8 @@ Each view owns its HDR intermediates. A stage releases a scratch target after it
 
 Dependency-ordered scheduling is exposed via `compileRenderGraph` / `executeRenderGraph` in `integrations/post3d.js` and `pipeline.getRenderGraphPlan()`. Passes declare `reads`, `optionalReads`, `writes`, and `transientSpecs`; the compiler derives topological execution order, `[firstWrite, lastRead]` transient lifetimes, slot aliasing, and automatic last-use target reclamation.
 
+`pipeline.getRenderGraphPlan()` describes post-processing with scene color and depth as inputs. `pipeline.getLastFrameGraph()` reports the executed graph and its lifetimes, including the world pass's `sceneTarget`. Color and depth share that target's lease until the last reader. Compatible scene targets remain available for reuse until the fourth idle frame has passed. A target prepared for a configuration that never draws is released when that configuration is replaced.
+
 ### Custom HDR effects
 
 Configure `post3d.passes` or replace the chain through `adapter.postPipeline.setPasses(passes)`. Effects run in array order. Each descriptor names its previous-color texture uniform and, optionally, its original world-depth texture uniform. The chain runs after the first-person layer and before exposure metering, bloom and tone mapping. Built-in lighting that has yet to be composited remains in the subsequent HDR composite.

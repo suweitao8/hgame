@@ -618,6 +618,8 @@ export function createPostPipeline3D(options = {}) {
   applyColorLutConfig(colorLut);
 
   let sceneRT = null;
+  let sceneTargetSpec = null;
+  const renderedSceneTargets = new WeakSet();
   let halfRT = null;
   let aoBlurRT = null;
   let halfScratchRT = null;
@@ -736,8 +738,6 @@ export function createPostPipeline3D(options = {}) {
   }
 
   function disposeTargets() {
-    sceneRT?.depthTexture?.dispose?.();
-    sceneRT?.dispose?.();
     halfRT?.dispose?.();
     aoBlurRT?.dispose?.();
     halfScratchRT?.dispose?.();
@@ -750,6 +750,7 @@ export function createPostPipeline3D(options = {}) {
     hdrTargets.dispose();
     transientPool?.dispose();
     sceneRT = null;
+    sceneTargetSpec = null;
     halfRT = null;
     aoBlurRT = null;
     halfScratchRT = null;
@@ -797,17 +798,19 @@ export function createPostPipeline3D(options = {}) {
     if (sceneRT?.width === worldWidth && sceneRT.height === worldHeight &&
         sceneRT.samples === msaa && Boolean(sceneRT.depthTexture) === sampleDepth) return;
 
-    const depthTexture = sampleDepth ? makeDepthTexture(worldWidth, worldHeight) : null;
-
-    const replacement = makeColorTarget(worldWidth, worldHeight, {
+    if (sceneRT && !renderedSceneTargets.has(sceneRT)) transientPool.discard(sceneRT);
+    sceneTargetSpec = Object.freeze({
+      width: worldWidth,
+      height: worldHeight,
       type: hdrType,
+      format: THREE.RGBAFormat,
       samples: msaa,
       depthBuffer: true,
-      depthTexture,
+      depthTexture: sampleDepth,
     });
-    sceneRT?.depthTexture?.dispose?.();
-    sceneRT?.dispose?.();
-    sceneRT = replacement;
+    // Keep the correctly sized target available to existing callers before the next draw.
+    sceneRT = transientPool.acquire(sceneTargetSpec, 'sceneTarget');
+    transientPool.release(sceneRT);
   }
 
   function syncBloomLayout(hw, hh) {
@@ -1332,6 +1335,8 @@ export function createPostPipeline3D(options = {}) {
       temporalAa?.release();
       hdrTargets.dispose();
       transientPool?.dispose();
+      sceneRT = null;
+      sceneTargetSpec = null;
     }
     bufferWidth = next.bufferWidth;
     bufferHeight = next.bufferHeight;
@@ -1471,7 +1476,7 @@ export function createPostPipeline3D(options = {}) {
   }
 
 
-  function finishGiSsrBlur(world, camera, stepDt, useSsr, blurXTarget, giSsrOutTarget) {
+  function finishGiSsrBlur(world, camera, stepDt, useSsr, sceneDepth, blurXTarget, giSsrOutTarget) {
     const depthMode = sceneProjectionUniforms.uSceneDepthMode.value;
     let material = mats.blurRgba;
     if (giHistoryRT && giHistoryWorld === world && giHistoryCamera === camera &&
@@ -1482,7 +1487,7 @@ export function createPostPipeline3D(options = {}) {
       transform.multiplyMatrices(giHistoryView, scratchViewToWorld);
       const e = transform.elements;
       if (e[10] > 0.82 && e[12] ** 2 + e[13] ** 2 + e[14] ** 2 < 16) {
-        uniforms.tSceneDepth.value = sceneRT.depthTexture;
+        uniforms.tSceneDepth.value = sceneDepth;
         uniforms.tHistory.value = giHistoryRT.texture;
         uniforms.uPreviousGuideOffset.value = giHistoryGuideOffset;
         const frameWeight = useSsr ? 0.55 : 0.78;
@@ -1534,7 +1539,7 @@ export function createPostPipeline3D(options = {}) {
 
   function reportTargets(sink) {
     if (!sink) return;
-    for (const target of [sceneRT, halfRT, aoBlurRT, halfScratchRT, giSsrRT,
+    for (const target of [halfRT, aoBlurRT, halfScratchRT, giSsrRT,
       giHistoryRT, ldrRT, ...(temporalAa?.targets ?? []), temporalAa?.motionTarget]) {
       if (target) sink.recordTarget(target);
     }
@@ -1613,6 +1618,7 @@ export function createPostPipeline3D(options = {}) {
           compiledOrder: fwdGraph.order,
           culled: fwdGraph.culledPasses,
           executed: fwdRes.executed,
+          lifetimes: fwdGraph.lifetimes,
           peakTargets: fwdGraph.peakTargets,
           reusedCount: fwdRes.reusedCount,
         });
@@ -1626,7 +1632,11 @@ export function createPostPipeline3D(options = {}) {
     const prevToneMapping = renderer.toneMapping;
     const hw = Math.max(1, bufferWidth >> 1);
     const hh = Math.max(1, bufferHeight >> 1);
-    const readSceneDepth = Boolean(sceneRT.depthTexture);
+    const frameSceneSpec = sceneTargetSpec;
+    const { upsampling } = getWorldRenderDimensions();
+    const worldWidth = frameSceneSpec.width;
+    const worldHeight = frameSceneSpec.height;
+    const readSceneDepth = frameSceneSpec.depthTexture;
     const hasSun = Boolean(sunLight?.position && sunLight.visible !== false);
     const useAo = Boolean(readSceneDepth && activePreset.ssao && state.ssaoIntensity > 0);
     const useSsgi = readSceneDepth && ssgiEnabled();
@@ -1647,7 +1657,9 @@ export function createPostPipeline3D(options = {}) {
     const needsProjection = useAo || wantsGiSsr || wantsContact || wantsVolumetric || useTemporal ||
       (readSceneDepth && state.heightFogDensity > 0.0001) ||
       activePasses.some(({ pass }) => pass.inputs.depthView);
-    const needsDepth = needsProjection || customDepth;
+    const postWorldDepth = Array.isArray(extraPasses?.afterWorld) &&
+      extraPasses.afterWorld.some(pass => pass.reads?.includes('sceneDepth'));
+    const needsDepth = needsProjection || customDepth || (readSceneDepth && postWorldDepth);
     if (useTemporal) temporalAa ??= createWorldTemporalAA();
     else if (temporalAa?.targets.length) temporalAa.release();
 
@@ -1666,9 +1678,6 @@ export function createPostPipeline3D(options = {}) {
 
     const previousDiagnostics = activeDiagnostics;
     let worldCameraFar;
-    let upsampling = false;
-    let worldWidth = bufferWidth;
-    let worldHeight = bufferHeight;
     let visibleGrid = null;
     let hasSunDir = false;
     let depthTexture = null;
@@ -1684,7 +1693,6 @@ export function createPostPipeline3D(options = {}) {
     let viewCompositeRT = null;
 
     activeDiagnostics = diagnostics;
-    transientPool?.beginFrame();
     hdrTargets.beginFrame();
     try {
       const framePasses = [];
@@ -1711,24 +1719,25 @@ export function createPostPipeline3D(options = {}) {
         }
       }
 
-      addStage('world', () => {
+      addStage('world', ({ outputs, state: frameState }) => {
+        const target = outputs.sceneTarget;
+        frameState.sceneRT = target;
+        if (sceneTargetSpec === frameSceneSpec) sceneRT = target;
+        transientPool.beginFrame();
+        renderedSceneTargets.add(target);
         // Retain the attachments for volume changes. Only resolve/store depth if this frame reads it.
-        sceneRT.resolveDepthBuffer = needsDepth;
-        sceneRT.storeMultisampledDepthBuffer = needsDepth;
-        renderer.setRenderTarget(sceneRT);
+        target.resolveDepthBuffer = needsDepth;
+        target.storeMultisampledDepthBuffer = needsDepth;
+        renderer.setRenderTarget(target);
         renderer.autoClear = true;
         // Three clears both attachments during ordinary scene rendering. XR and
         // renderers with different clear settings still need an explicit clear.
         if (renderer.xr?.isPresenting !== false || renderer.autoClearColor !== true || renderer.autoClearDepth !== true) {
           renderer.clear(true, true, false);
         }
-        const dims = getWorldRenderDimensions();
-        upsampling = dims.upsampling;
-        worldWidth = dims.worldWidth;
-        worldHeight = dims.worldHeight;
         if (useTemporal) temporalAa.jitter(camera, worldWidth, worldHeight, bufferWidth, bufferHeight);
         try {
-          drawWithDiagnostics(renderer, diagnostics?.beginPass, 'world', sceneRT, world, camera);
+          drawWithDiagnostics(renderer, diagnostics?.beginPass, 'world', target, world, camera);
           if (needsProjection) {
             syncCameraWorldMatrices(camera);
             sceneProjectionUniforms.uInvProj.value.copy(camera.projectionMatrixInverse);
@@ -1742,11 +1751,14 @@ export function createPostPipeline3D(options = {}) {
         } finally {
           if (useTemporal) temporalFrame = temporalAa.restore(camera);
         }
+      }, {
+        writes: ['sceneTarget'],
+        transientSpecs: { sceneTarget: frameSceneSpec },
       });
 
       if (Array.isArray(extraPasses?.afterWorld)) {
         for (const p of extraPasses.afterWorld) {
-          addStage(p.id, ctx => p.execute?.(ctx), { writes: p.writes ?? [] });
+          addStage(p.id, ctx => p.execute?.(ctx), { reads: ['sceneTarget'], writes: p.writes ?? [] });
         }
       }
 
@@ -1780,11 +1792,11 @@ export function createPostPipeline3D(options = {}) {
 
       if (aoActive) {
         const aoSpec = { width: hw, height: hh, type: THREE.UnsignedByteType, format: THREE.RGBAFormat };
-        addStage('ao-volumetrics', ({ outputs }) => {
+        addStage('ao-volumetrics', ({ inputs, outputs }) => {
           if (useAo || useVolumetric) {
             const aoMaterial = useVolumetric && depthTexture?.compareFunction != null ? mats.aoVolCompare : mats.aoVol;
             const ao = aoMaterial.uniforms;
-            ao.tDepth.value = sceneRT.depthTexture;
+            ao.tDepth.value = inputs.sceneTarget.depthTexture;
             ao.uResolution.value.set(hw, hh);
             ao.uSsaoEnabled.value = useAo ? 1 : 0;
             ao.uSsaoRadius.value = state.ssaoRadius;
@@ -1800,6 +1812,7 @@ export function createPostPipeline3D(options = {}) {
             runPass(FULLSCREEN_PASSES.aoVolumetrics, aoMaterial, outputs.aoRaw);
           }
         }, {
+          reads: ['sceneTarget'],
           writes: ['aoRaw'],
           transientSpecs: { aoRaw: aoSpec },
         });
@@ -1829,10 +1842,10 @@ export function createPostPipeline3D(options = {}) {
 
       if (useGiSsr) {
         const giSpec = { width: hw, height: hh, type: hdrType, format: THREE.RGBAFormat };
-        addStage('gi-ssr', ({ outputs }) => {
+        addStage('gi-ssr', ({ inputs, outputs }) => {
           const giU = mats.giSsr.uniforms;
-          giU.tScene.value = sceneRT.texture;
-          giU.tDepth.value = sceneRT.depthTexture;
+          giU.tScene.value = inputs.sceneTarget.texture;
+          giU.tDepth.value = inputs.sceneTarget.depthTexture;
           giU.uResolution.value.set(hw, hh);
           giU.uSsgiEnabled.value = useSsgi ? 1 : 0;
           giU.uSsrEnabled.value = useSsr ? 1 : 0;
@@ -1852,6 +1865,7 @@ export function createPostPipeline3D(options = {}) {
           giU.uTime.value = elapsed;
           runPass(FULLSCREEN_PASSES.giSsr, mats.giSsr, outputs.giSsrRaw);
         }, {
+          reads: ['sceneTarget'],
           writes: ['giSsrRaw'],
           transientSpecs: { giSsrRaw: giSpec },
         });
@@ -1865,9 +1879,9 @@ export function createPostPipeline3D(options = {}) {
           transientSpecs: { giSsrBlurX: giSpec },
         });
         addStage('gi-ssr-blur-y', ({ inputs, outputs }) => {
-          giSsrTexture = finishGiSsrBlur(world, camera, stepDt, useSsr, inputs.giSsrBlurX, outputs.giSsr);
+          giSsrTexture = finishGiSsrBlur(world, camera, stepDt, useSsr, inputs.sceneTarget.depthTexture, inputs.giSsrBlurX, outputs.giSsr);
         }, {
-          reads: ['giSsrBlurX'],
+          reads: ['sceneTarget', 'giSsrBlurX'],
           writes: ['giSsr'],
           transientSpecs: { giSsr: giSpec },
         });
@@ -1875,8 +1889,8 @@ export function createPostPipeline3D(options = {}) {
 
       addStage('composite-setup', ({ inputs }) => {
         compU = mats.composite.uniforms;
-        compU.tScene.value = sceneRT.texture;
-        compU.tDepth.value = needsDepth ? sceneRT.depthTexture : null;
+        compU.tScene.value = inputs.sceneTarget.texture;
+        compU.tDepth.value = needsDepth ? inputs.sceneTarget.depthTexture : null;
         compU.tAoVol.value = (useAo || useVolumetric) ? (inputs.aoVol?.texture ?? null) : null;
         compU.tGiSsr.value = useGiSsr ? (inputs.giSsr?.texture ?? giSsrTexture) : null;
         compU.uUseAo.value = useAo ? 1 : 0;
@@ -1891,38 +1905,39 @@ export function createPostPipeline3D(options = {}) {
         compU.uTime.value = elapsed;
 
         worldLightingEnabled = useAo || useVolumetric || useGiSsr || useContactShadows;
-        separateViewModel = hasViewModel && (sceneRT.samples > 0 || worldLightingEnabled || customDepth || temporalFrame);
+        separateViewModel = hasViewModel && (inputs.sceneTarget.samples > 0 || worldLightingEnabled || customDepth || temporalFrame);
         prelightTemporal = temporalFrame && worldLightingEnabled;
         // First-person drawing needs an unmultisampled depth attachment and retained HDR color.
         viewCompositeRT = separateViewModel ? hdrTargets.acquire(bufferWidth, bufferHeight, true) : null;
         if (!temporalFrame) lastReactiveMeshCount = 0;
       }, {
         reads: [
+          'sceneTarget',
           ...(aoActive ? ['aoVol'] : []),
           ...(useGiSsr ? ['giSsr'] : []),
         ],
       });
 
       if (useTemporal) {
-        addStage('temporal-aa', () => {
+        addStage('temporal-aa', ({ inputs }) => {
           if (temporalFrame) {
             const autoReactive = reactiveMask ? null : renderReactiveMask(world, camera, worldWidth, worldHeight);
             const prelightRT = prelightTemporal
               ? (upsampling ? hdrTargets.acquire(worldWidth, worldHeight, false) : viewCompositeRT ?? hdrTargets.acquire(bufferWidth, bufferHeight, false))
               : null;
             if (prelightRT) compositeWorldIntoViewTarget(compU, prelightRT);
-            compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, sceneRT.depthTexture,
+            compU.tScene.value = temporalAa.resolve(world, camera, compU.tScene.value, inputs.sceneTarget.depthTexture,
               sceneProjectionUniforms.uSceneDepthMode.value, stepDt, runPass,
-              state.temporalMotion && !renderer.clippingPlanes?.length, sceneRT.samples > 0, reactiveMask ?? autoReactive);
+              state.temporalMotion && !renderer.clippingPlanes?.length, inputs.sceneTarget.samples > 0, reactiveMask ?? autoReactive);
             if (prelightRT && prelightRT !== viewCompositeRT) hdrTargets.release(prelightRT);
           } else {
             lastReactiveMeshCount = 0;
           }
-        });
+        }, { reads: ['sceneTarget'] });
       }
 
       if (hasViewModel) {
-        addStage('viewmodel', () => {
+        addStage('viewmodel', ({ inputs }) => {
           if (separateViewModel) {
             // Finish the world lighting before clearing depth for the first-person layer.
             compositeWorldIntoViewTarget(compU, viewCompositeRT);
@@ -1930,15 +1945,15 @@ export function createPostPipeline3D(options = {}) {
           if (typeof renderer.clearDepth === 'function') renderer.clearDepth();
           else renderer.clear?.(false, true, false);
           gl?.depthRange?.(0, 0.05);
-          drawWithDiagnostics(renderer, diagnostics?.beginPass, 'viewmodel', separateViewModel ? viewCompositeRT : sceneRT, viewScene, viewCamera);
+          drawWithDiagnostics(renderer, diagnostics?.beginPass, 'viewmodel', separateViewModel ? viewCompositeRT : inputs.sceneTarget, viewScene, viewCamera);
           gl?.depthRange?.(0, 1);
-        });
+        }, { reads: ['sceneTarget'] });
       }
 
       if (activePasses.length) {
-        addStage('custom-passes', () => {
-          compU.tScene.value = runCustomPasses(activePasses, compU.tScene.value, sceneRT.depthTexture, worldCameraFar);
-        });
+        addStage('custom-passes', ({ inputs }) => {
+          compU.tScene.value = runCustomPasses(activePasses, compU.tScene.value, inputs.sceneTarget.depthTexture, worldCameraFar);
+        }, { reads: ['sceneTarget'] });
       }
 
       if (useAutoExposure) {
@@ -1967,7 +1982,7 @@ export function createPostPipeline3D(options = {}) {
           if (usesByteColorTargets) adaptU.uStoredExposureRange.value.set(adaptU.uMinExposure.value, adaptU.uMaxExposure.value);
           adaptIndex ^= 1;
           adaptNeedsReset = false;
-        });
+        }, { reads: ['sceneTarget'] });
       }
 
       for (const pass of bloomPasses) {
@@ -1996,7 +2011,7 @@ export function createPostPipeline3D(options = {}) {
             uniforms.uTexelSize.value.set(1 / source.width, 1 / source.height);
             runPass(FULLSCREEN_PASSES.bloomUp, mats.upsample, target);
           }
-        }, pass);
+        }, lower ? pass : { ...pass, reads: ['sceneTarget'] });
       }
 
       addStage('tone-mapping', ({ inputs, outputs }) => {
@@ -2044,6 +2059,7 @@ export function createPostPipeline3D(options = {}) {
         runPass(FULLSCREEN_PASSES.toneMapping, mats.composite, plannedFinalFxaaPass ? outputs.ldrColor : null, outputViewport);
       }, {
         reads: [
+          'sceneTarget',
           ...(aoActive ? ['aoVol'] : []),
           ...(useGiSsr ? ['giSsr'] : []),
           ...(useBloom ? ['bloomColor'] : []),
@@ -2093,6 +2109,7 @@ export function createPostPipeline3D(options = {}) {
         compiledOrder: frameGraph.order,
         culled: frameGraph.culledPasses,
         executed: graphExecResult.executed,
+        lifetimes: frameGraph.lifetimes,
         peakTargets: frameGraph.peakTargets,
         reusedCount: graphExecResult.reusedCount,
         poolStats: transientPool?.getStats() ?? null,
