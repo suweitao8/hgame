@@ -11,11 +11,14 @@ export const DEFAULT_DOC_PATH = path.join(DEFAULT_REPO_ROOT, 'docs', 'ENGINE-SCO
 
 const EXPECTED_DIMENSIONS = new Map([
   ['A', 18],
-  ['R', 30],
-  ['P', 24],
+  ['R', 26],
+  ['P', 20],
   ['S', 20],
-  ['N', 8]
+  ['N', 8],
+  ['T', 8]
 ]);
+
+const SHORT_DIMENSION_NAMES = { A: '架构', R: '渲染', P: '性能', S: '子系统', N: '联机', T: 'Toy 就绪' };
 
 const REQUIRED_ENGINES = ['hgame', 'unity', 'cocos', 'godot'];
 
@@ -82,7 +85,7 @@ export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
   }
 
   if (!Array.isArray(data.dimensions) || data.dimensions.length !== EXPECTED_DIMENSIONS.size) {
-    errors.push(`Dimensions must contain exactly ${EXPECTED_DIMENSIONS.size} entries (A, R, P, S, N).`);
+    errors.push(`Dimensions must contain exactly ${EXPECTED_DIMENSIONS.size} entries (A, R, P, S, N, T).`);
   } else {
     let dimWeightSum = 0;
     for (const dim of data.dimensions) {
@@ -438,17 +441,19 @@ function fmt1(num) {
 }
 
 export function renderSections(data, computed = computeScores(data)) {
+  const dimHeader = data.dimensions.map((d) => `${d.id} ${SHORT_DIMENSION_NAMES[d.id] ?? d.name}(${d.weight})`);
   const runtimeRows = [
-    '| 引擎 | A 架构(18) | R 渲染(30) | P 性能(24) | S 子系统(20) | N 联机(8) | 能力总分 / 100 | 对 Unity 比值 |',
-    '| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |'
+    `| 引擎 | ${dimHeader.join(' | ')} | 能力总分 / 100 | 对 Unity 比值 |`,
+    `| --- | ${data.dimensions.map(() => '---:').join(' | ')} | ---: | ---: |`
   ];
 
   for (const row of computed.ranked) {
     const isHgame = row.id === 'hgame';
     const b = (text) => (isHgame ? `**${text}**` : text);
     const d = row.dimensions;
+    const cells = data.dimensions.map((dim) => `${fmt1(d[dim.id].pct)}%`).join(' | ');
     runtimeRows.push(
-      `| ${b(row.name)} | ${fmt1(d.A.pct)}% | ${fmt1(d.R.pct)}% | ${fmt1(d.P.pct)}% | ${fmt1(d.S.pct)}% | ${fmt1(d.N.pct)}% | ${b(fmt1(row.runtimeTotal))} | ${fmt1(row.vsUnityPct)}% |`
+      `| ${b(row.name)} | ${cells} | ${b(fmt1(row.runtimeTotal))} | ${fmt1(row.vsUnityPct)}% |`
     );
   }
 

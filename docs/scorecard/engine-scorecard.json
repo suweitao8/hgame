@@ -1,6 +1,6 @@
 {
-  "version": "v5.2",
-  "date": "2026-11-24",
+  "version": "v5.3",
+  "date": "2026-11-25",
   "engines": [
     {
       "id": "hgame",
@@ -50,12 +50,12 @@
     {
       "id": "R",
       "name": "图形渲染",
-      "weight": 30
+      "weight": 26
     },
     {
       "id": "P",
       "name": "性能与硬件",
-      "weight": 24
+      "weight": 20
     },
     {
       "id": "S",
@@ -65,6 +65,11 @@
     {
       "id": "N",
       "name": "多人与确定性网络",
+      "weight": 8
+    },
+    {
+      "id": "T",
+      "name": "手机 Toy 就绪与工具链",
       "weight": 8
     }
   ],
@@ -106,7 +111,8 @@
         ],
         "note": "已实现固定步插值、mountAdditive/unmountAdditive 子场景及 SceneManager.hotReload 原子回滚控制，并在浏览器完成多场景切换零泄漏与 60s 压测。",
         "benchmarkFiles": [
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/evidence-a1.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -163,7 +169,8 @@
           "tests/browser-fullscreen-shader-pass.mjs",
           "tests/browser-packages.mjs",
           "tests/browser-mobile-portrait-benchmark.mjs",
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/evidence-a2.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -218,7 +225,8 @@
         ],
         "note": "支持运行时 KTX2 解码、Mip 渐进流送、VRAM 守卫、50MB 配额审计、P0/P1/P2 渐进启动及远程 Bundle 分包/SHA-256 校验与指数退避重试（remote-bundle.js）。",
         "benchmarkFiles": [
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/evidence-a3.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -274,7 +282,8 @@
         ],
         "note": "具备 Canvas2D/WebGL2D 多后端、AutoTile、128 条 2D 遮挡阴影与自研 Skeleton2D（FK + 2-Bone IK）。",
         "benchmarkFiles": [
-          "tests/browser-mobile-portrait-benchmark.mjs"
+          "tests/browser-mobile-portrait-benchmark.mjs",
+          "tests/evidence-r1.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -288,7 +297,7 @@
       "id": "R2",
       "dimension": "R",
       "name": "3D 光照、阴影与 GI",
-      "weight": 7,
+      "weight": 6,
       "scores": {
         "hgame": 9,
         "unity": 8.5,
@@ -329,7 +338,8 @@
         "note": "已打通 CSM/PCSS、Shadow Atlas、双探针 SH 混合、实时 SSGI/SSR，以及内置 UV2 展开与 WebGL2 GPU 太阳/点光/聚光+半球 AO+1-bounce 漫反射间接光溢色+多轮接缝膨胀 Lightmap 烘焙管线。",
         "benchmarkFiles": [
           "tests/browser-engine-v3-commercial-benchmark.mjs",
-          "tests/browser-lightmap-bake.mjs"
+          "tests/browser-lightmap-bake.mjs",
+          "tests/evidence-r2.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -343,7 +353,7 @@
       "id": "R3",
       "dimension": "R",
       "name": "材质、Shader 与贴花",
-      "weight": 6,
+      "weight": 5,
       "scores": {
         "hgame": 8.5,
         "unity": 8.5,
@@ -382,7 +392,8 @@
         ],
         "note": "支持 defineMaterialVariants3D 声明式 Keyword 多变体与 customProgramCacheKey 复用/预热、WebGL2 std140 UBO 批合、GLSL3 深度重建 OBB 投影贴花与高度/体积雾。",
         "benchmarkFiles": [
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/evidence-r3.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -396,7 +407,7 @@
       "id": "R4",
       "dimension": "R",
       "name": "TAA、上采样与后处理",
-      "weight": 6,
+      "weight": 5,
       "scores": {
         "hgame": 8.5,
         "unity": 8,
@@ -438,7 +449,8 @@
         "note": "具备 5-tap FSR1 RCAS 锐化、reactiveMaskRT TAA、LUT/高度雾及可扩展 GLSL3 全屏 HDR 后处理管线，桌面零 GL 报错。",
         "benchmarkFiles": [
           "tests/browser-mobile-portrait-benchmark.mjs",
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/evidence-r4.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -452,7 +464,7 @@
       "id": "R5",
       "dimension": "R",
       "name": "几何、LOD 与大世界远景",
-      "weight": 5,
+      "weight": 4,
       "scores": {
         "hgame": 8.5,
         "unity": 8,
@@ -490,7 +502,8 @@
         ],
         "note": "提供 16B Bone-VAT 万级群体、静态合批（24->1）、Int8/Uint16 顶点量化（实测省 21.27%）、Hi-Z 与浮动原点。",
         "benchmarkFiles": [
-          "tests/browser-mobile-portrait-benchmark.mjs"
+          "tests/browser-mobile-portrait-benchmark.mjs",
+          "tests/evidence-r5.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -504,7 +517,7 @@
       "id": "P1",
       "dimension": "P",
       "name": "多线程与 CPU 仿真并行",
-      "weight": 6,
+      "weight": 5,
       "scores": {
         "hgame": 8,
         "unity": 5.5,
@@ -538,7 +551,8 @@
         ],
         "note": "worker-sim.js 异步卸载流场/NavMesh 寻路，worker-physics.js 在无 COOP/COEP 依赖下实现 Rapier Worker 步进与确定性 inline 回退。",
         "benchmarkFiles": [
-          "tests/browser-worker-physics.mjs"
+          "tests/browser-worker-physics.mjs",
+          "tests/evidence-p1.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -552,7 +566,7 @@
       "id": "P2",
       "dimension": "P",
       "name": "GPU 驱动提交与 WebGPU 能力",
-      "weight": 7,
+      "weight": 6,
       "scores": {
         "hgame": 9,
         "unity": 7.5,
@@ -608,7 +622,7 @@
       "id": "P3",
       "dimension": "P",
       "name": "帧预算、PSO 暖机与内存治理",
-      "weight": 6,
+      "weight": 5,
       "scores": {
         "hgame": 8.5,
         "unity": 7.5,
@@ -649,7 +663,8 @@
         ],
         "note": "mobilePortrait 模式一键接通 DPR 封顶、DRS 动态分辨率、VRAM 守卫与分帧 Warmup，并在浏览器通过 60s 压测。",
         "benchmarkFiles": [
-          "tests/browser-mobile-portrait-benchmark.mjs"
+          "tests/browser-mobile-portrait-benchmark.mjs",
+          "tests/evidence-p3.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -663,7 +678,7 @@
       "id": "P4",
       "dimension": "P",
       "name": "跨后端真机性能剖析与诊断",
-      "weight": 5,
+      "weight": 4,
       "scores": {
         "hgame": 8.5,
         "unity": 9,
@@ -703,7 +718,8 @@
         ],
         "note": "具备 Chrome Trace、LiveProfilerOverlay、Zero-GC 门禁及 GPU 资源快照 Diff 泄漏检测。",
         "benchmarkFiles": [
-          "tests/browser-mobile-portrait-benchmark.mjs"
+          "tests/browser-mobile-portrait-benchmark.mjs",
+          "tests/evidence-p4.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -820,7 +836,8 @@
         ],
         "note": "支持状态机、1D/2D 混合树、Two-Bone/LookAt/FABRIK IK、RootMotion、MorphTarget、SpringBone、惯性过渡及跨骨架动画重定向（retarget3d.js）。",
         "benchmarkFiles": [
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/evidence-s2.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -882,7 +899,8 @@
         "benchmarkFiles": [
           "tests/browser-bgm-streaming.mjs",
           "tests/browser-voice-streaming.mjs",
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/evidence-s3.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -946,7 +964,8 @@
         "benchmarkFiles": [
           "tests/browser-mobile-portrait-benchmark.mjs",
           "tests/browser-ui-s4.mjs",
-          "tests/browser-api-recipes.mjs"
+          "tests/browser-api-recipes.mjs",
+          "tests/evidence-s4.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -999,7 +1018,8 @@
         ],
         "note": "0x48 0x47 二进制 Delta 同步、createSceneReplicator 回滚预测、服务端 AOI 过滤，以及 WebRTC DataChannel 双通道（ordered:false/maxRetransmits:0 不可靠低延迟 + ordered:true 可靠控制 + WebSocket 透明降级）已全量闭环。",
         "benchmarkFiles": [
-          "tests/browser-engine-v3-commercial-benchmark.mjs"
+          "tests/browser-engine-v3-commercial-benchmark.mjs",
+          "tests/evidence-n1.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -1008,6 +1028,169 @@
         "godot": "MultiplayerAPI + MultiplayerSynchronizer 开箱可用，Web 端同样受限于 WebSocket。"
       },
       "gap": "WebRTC DataChannel 传输适配器已提供双通道与信令抽象，服务端需按部署环境配置 TURN 中继以覆盖对称 NAT"
+    },
+    {
+      "id": "T1",
+      "dimension": "T",
+      "name": "Toy 打包、预检与发布",
+      "weight": 3,
+      "scores": {
+        "hgame": 8,
+        "unity": 4.5,
+        "cocos": 6.5,
+        "godot": 4
+      },
+      "hgame": {
+        "evidence": "C3",
+        "defaultPath": true,
+        "proofFiles": [
+          "scripts/package-game.mjs",
+          "scripts/toy-preflight.mjs",
+          "assets/runtime/integrations/bilibili-toy.js"
+        ],
+        "industrialChecklist": [
+          {
+            "point": "内容哈希平铺 ZIP 与自包含产物（无 CDN 运行时依赖）",
+            "met": true,
+            "proof": "scripts/package-game.mjs --target toy"
+          },
+          {
+            "point": "Toy 预检：入口、体积、资源引用与 window.toy SDK 契约校验",
+            "met": true,
+            "proof": "scripts/toy-preflight.mjs, tests/bilibili-toy.test.mjs"
+          },
+          {
+            "point": "预览-确认-提交两阶段发布流程",
+            "met": true,
+            "proof": "docs/guides/BILIBILI-TOY-STANDARD.md"
+          },
+          {
+            "point": "真机提审回执（审核通过率/拒绝原因）自动回流评分",
+            "met": false,
+            "proof": "暂缓：尚无平台回执数据接入"
+          }
+        ],
+        "note": "平台包标准、哈希平铺打包与预检均有 Node 可复现测试；平台提审结果尚未自动回流。",
+        "benchmarkFiles": [
+          "tests/bilibili-toy.test.mjs",
+          "tests/package-release.test.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "WebGL 构建体积与首屏偏大，无 Toy 平台标准；按通用 Web 发布能力定性评估。",
+        "cocos": "小包体与小游戏平台发布成熟，但无 Toy 专属预检；定性评估。",
+        "godot": "Web 导出运行时较大且需 COOP/COEP 才能用线程；定性评估。"
+      },
+      "gap": "平台提审回执未自动回流，包体数据未纳入 CI 趋势。"
+    },
+    {
+      "id": "T2",
+      "dimension": "T",
+      "name": "竖屏单手触控与低端机预算",
+      "weight": 3,
+      "scores": {
+        "hgame": 7.5,
+        "unity": 5.5,
+        "cocos": 7,
+        "godot": 5
+      },
+      "hgame": {
+        "evidence": "C3",
+        "defaultPath": true,
+        "proofFiles": [
+          "assets/runtime/kit/game-shell-dom.js",
+          "assets/runtime/integrations/touch-controls.js",
+          "assets/runtime/integrations/quality3d.js"
+        ],
+        "industrialChecklist": [
+          {
+            "point": "右下角同心弧拇指区布局（portrait-arc，按钮 >= 48px）",
+            "met": true,
+            "proof": "assets/runtime/integrations/touch-controls.js, tests/ui-ux.test.mjs"
+          },
+          {
+            "point": "mobilePortrait 一键接通 DPR 封顶与动态分辨率",
+            "met": true,
+            "proof": "assets/runtime/integrations/quality3d.js"
+          },
+          {
+            "point": "反臃肿 UI 静态校验与 360x800 截图溢出检查纳入验收",
+            "met": true,
+            "proof": "scripts/accept.mjs visual/uiStatic 门禁"
+          },
+          {
+            "point": "低端安卓真机帧率基准纳入 CI",
+            "met": false,
+            "proof": "暂缓：当前基准在桌面 GPU 上运行，没有真机数据"
+          }
+        ],
+        "note": "竖屏拇指区、DRS 与验收截图检查已落地；低端机真机帧率没有数据，所以只给 7.5。",
+        "benchmarkFiles": [
+          "tests/ui-ux.test.mjs",
+          "tests/browser-mobile-portrait-benchmark.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "触控输入完整，但没有竖屏舒适区规范，WebGL 移动端低端机开销大；定性评估。",
+        "cocos": "移动端优化与触控成熟；定性评估。",
+        "godot": "Web 端移动性能与触控 UI 需自行适配；定性评估。"
+      },
+      "gap": "缺低端安卓真机帧率基准。"
+    },
+    {
+      "id": "T3",
+      "dimension": "T",
+      "name": "AI 原生工具链与验收门禁",
+      "weight": 2,
+      "scores": {
+        "hgame": 8,
+        "unity": 7,
+        "cocos": 5,
+        "godot": 6.5
+      },
+      "hgame": {
+        "evidence": "C3",
+        "defaultPath": true,
+        "proofFiles": [
+          "scripts/accept.mjs",
+          "scripts/check-autoplay.mjs",
+          "scripts/task-check.mjs",
+          "scripts/playtest.mjs"
+        ],
+        "industrialChecklist": [
+          {
+            "point": "fail-closed 多门禁验收与新鲜度摘要（sourceDigest）",
+            "met": true,
+            "proof": "scripts/accept.mjs, tests/acceptance-gate.test.mjs"
+          },
+          {
+            "point": "多随机种子 autoplay 通关率、技巧差与确定性检查",
+            "met": true,
+            "proof": "scripts/check-autoplay.mjs"
+          },
+          {
+            "point": "任务清单校验与 API 索引/配方查询",
+            "met": true,
+            "proof": "scripts/task-check.mjs, tests/task-check.test.mjs"
+          },
+          {
+            "point": "跨版本游戏分趋势与回归告警",
+            "met": false,
+            "proof": "暂缓：score-game 仅输出单次分数，尚无历史对比"
+          }
+        ],
+        "note": "验收、autoplay、任务清单均有 Node 测试；游戏分已可计算，尚无历史趋势。",
+        "benchmarkFiles": [
+          "tests/acceptance-gate.test.mjs",
+          "tests/task-check.test.mjs"
+        ]
+      },
+      "competitorNotes": {
+        "unity": "Test Framework 与编辑器自动化完善，但不是面向 AI 代理的无编辑器工作流；定性评估。",
+        "cocos": "自动化测试与门禁体系较弱；定性评估。",
+        "godot": "无头模式便于脚本化，但缺少统一验收门禁；定性评估。"
+      },
+      "gap": "游戏分缺历史趋势与回归告警。"
     }
   ],
   "competitorBasis": {
@@ -1042,10 +1225,10 @@
   },
   "measurementTolerance": 0.1,
   "measurements": {
-    "runtimeJsGzipMB": 0.78,
+    "runtimeJsGzipMB": 0.86,
     "rapier3dGzipMB": 1.23,
     "rapier2dGzipMB": 0.98,
     "threeGzipMB": 0.4,
-    "worst3dPhysicsGzipMB": 2.41
+    "worst3dPhysicsGzipMB": 2.49
   }
 }

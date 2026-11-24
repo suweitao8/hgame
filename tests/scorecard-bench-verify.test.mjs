@@ -9,8 +9,16 @@ test('verifyBenchmarks maps failing Node tests to the items citing them', () => 
   assert.ok(res.results.some((r) => r.status === 'browserOnly'));
 });
 
-test('verifyBenchmarks lists items lacking Node-run evidence', () => {
+test('verifyBenchmarks covers all 20 scorecard items with Node-run evidence', () => {
   const data = loadScorecard(DEFAULT_SCORECARD_PATH);
+  const res = verifyBenchmarks(data, { run: () => ({ ok: true, output: '' }) });
+  assert.deepEqual(res.errors, []);
+  assert.deepEqual(res.browserOnlyItems, []);
+});
+
+test('verifyBenchmarks flags items lacking Node-run evidence when only browser scripts are present', () => {
+  const data = structuredClone(loadScorecard(DEFAULT_SCORECARD_PATH));
+  data.items.find((i) => i.id === 'A1').hgame.benchmarkFiles = ['tests/browser-engine-v3-commercial-benchmark.mjs'];
   const res = verifyBenchmarks(data, { run: () => ({ ok: true, output: '' }) });
   assert.deepEqual(res.errors, []);
   assert.ok(res.browserOnlyItems.includes('A1'));
