@@ -215,6 +215,7 @@
           </div>
           <label class="hgame-check"><input id="hgame-model-wireframe" type="checkbox"><span>线框</span></label>
           <label class="hgame-check"><input id="hgame-model-grid" type="checkbox" checked><span>网格</span></label>
+          <label class="hgame-check"><input id="hgame-model-bloom" type="checkbox" checked><span>辉光</span></label>
         </div>
         <span id="hgame-model-status" class="hgame-status-text" role="status" aria-live="polite"></span>
       </div>
@@ -426,30 +427,11 @@
       <div class="hgame-stage-header">
         <div class="hgame-stage-title-group">
           <h2 id="hgame-material-title">材质</h2>
-          <a id="hgame-material-download" class="asset-model-filename" hidden></a>
         </div>
       </div>
       <div class="hgame-viewport">
         <div id="hgame-material-empty" class="hgame-empty" hidden>暂无材质</div>
         <div id="hgame-material-stage" class="hgame-stage-canvas"></div>
-      </div>
-      <div id="hgame-material-maps" class="hgame-material-maps" hidden>
-        <div class="hgame-map-slot"><span>Albedo</span><canvas id="hgame-map-color" width="128" height="128" aria-label="Albedo"></canvas></div>
-        <div class="hgame-map-slot"><span>Normal</span><canvas id="hgame-map-normal" width="128" height="128" aria-label="Normal"></canvas></div>
-        <div class="hgame-map-slot"><span>RM</span><canvas id="hgame-map-rm" width="128" height="128" aria-label="RM"></canvas></div>
-      </div>
-      <div class="hgame-controls">
-        <div class="hgame-control-group">
-          <label class="hgame-field" id="hgame-material-shape-wrap"><span>形状</span>
-            <select id="hgame-material-mesh-shape">
-              <option value="combo">组合</option>
-              <option value="sphere">球体</option>
-              <option value="cube">立方体</option>
-            </select>
-          </label>
-          <div class="hgame-field"><span>1m UV</span><output id="hgame-material-uv-val">1.0</output></div>
-        </div>
-        <span id="hgame-material-status" class="hgame-status-text" role="status" aria-live="polite"></span>
       </div>
     </section>
   </main>
@@ -475,7 +457,6 @@
       <div class="hgame-stage-header">
         <div class="hgame-stage-title-group">
           <h2 id="hgame-decal-title">贴花</h2>
-          <a id="hgame-decal-download" class="asset-model-filename" hidden download></a>
         </div>
         <div class="hgame-stage-actions">
           <div class="character-mode-tabs" role="tablist" aria-label="显示模式">
@@ -488,56 +469,9 @@
         <div id="hgame-decal-empty" class="hgame-empty" hidden>暂无贴花</div>
         <div id="hgame-decal-stage" class="hgame-stage-canvas"></div>
       </div>
-      <div id="hgame-decal-maps" class="hgame-material-maps" hidden>
-        <div class="hgame-map-slot"><span>Color</span><canvas id="hgame-decal-map-color" width="128" height="128" aria-label="Color"></canvas></div>
-        <div class="hgame-map-slot"><span>Normal</span><canvas id="hgame-decal-map-normal" width="128" height="128" aria-label="Normal"></canvas></div>
-        <div class="hgame-map-slot"><span id="hgame-decal-map-rm-label">RM</span><canvas id="hgame-decal-map-orm" width="128" height="128" aria-label="RM"></canvas></div>
-      </div>
-      <div class="hgame-controls">
+      <div class="hgame-controls" id="hgame-decal-controls">
         <div class="hgame-control-group">
-          <label class="hgame-field"><span>贴附</span>
-            <select id="hgame-decal-placement">
-              <option value="auto" selected>自动</option>
-              <option value="floor">地面</option>
-              <option value="wall">墙面</option>
-            </select>
-          </label>
-          <label class="hgame-field"><span>底面</span>
-            <select id="hgame-decal-surface">
-              <option value="concrete">混凝土</option>
-              <option value="asphalt">柏油</option>
-              <option value="brick">砖石</option>
-            </select>
-          </label>
-          <label class="hgame-field"><span>缩放</span><input id="hgame-decal-scale" type="range" min="0.2" max="4" step="0.05" value="1"><output id="hgame-decal-scale-val">1.00×</output></label>
-          <label class="hgame-field"><span>旋转</span><input id="hgame-decal-rot" type="range" min="-180" max="180" step="5" value="0"><output id="hgame-decal-rot-val">0°</output></label>
-        </div>
-        <span id="hgame-decal-status" class="hgame-status-text" role="status" aria-live="polite"></span>
-        <div class="stage-popover-wrap">
-          <button type="button" class="asset-model-action stage-params-toggle" aria-expanded="false" aria-controls="hgame-decal-params-popover" aria-label="贴花参数">⚙</button>
-          <div id="hgame-decal-params-popover" class="stage-params-popover" hidden>
-            <div class="stage-popover-group">
-              <span class="stage-popover-title">混合与参考</span>
-              <div class="stage-popover-grid">
-                <label class="hgame-field"><span>透明</span><input id="hgame-decal-opacity" type="range" min="0.1" max="1" step="0.05" value="1"><output id="hgame-decal-opacity-val">1.00</output></label>
-                <label class="hgame-check" id="hgame-decal-hsv-toggle-wrap"><input id="hgame-decal-hsv-match" type="checkbox"><span>底色融合</span></label>
-                <label class="hgame-field" id="hgame-decal-hsv-wrap"><span>融合度</span><input id="hgame-decal-hsv-amount" type="range" min="0" max="1" step="0.05" value="0.75"><output id="hgame-decal-hsv-val">75%</output></label>
-                <label class="hgame-field" id="hgame-decal-tint-wrap" hidden><span>染色</span>
-                  <select id="hgame-decal-tint">
-                    <option value="0xffffff">原灰度</option>
-                    <option value="0x8b0c0c" selected>暗红</option>
-                    <option value="0xea580c">橙色</option>
-                    <option value="0x22c55e">绿色</option>
-                  </select>
-                </label>
-                <label class="hgame-field"><span>参考角色</span>
-                  <select id="hgame-decal-ref-char">
-                    <option value="none">无</option>
-                  </select>
-                </label>
-              </div>
-            </div>
-          </div>
+          <label class="hgame-field" id="hgame-decal-tint-wrap"><span>染色</span><input id="hgame-decal-tint-amount" type="range" min="0" max="1" step="0.05" value="0.75"><output id="hgame-decal-tint-val">75%</output></label>
         </div>
       </div>
     </section>

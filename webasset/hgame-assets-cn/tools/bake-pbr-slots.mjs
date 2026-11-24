@@ -3,6 +3,7 @@ import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { cleanBorderClippedAlpha } from './decal-alpha-clean.mjs';
 
 const CN_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const REPO_ROOT = path.resolve(CN_ROOT, '..', '..');
@@ -268,6 +269,7 @@ async function bakePbrAsset({
   tileToSquare = false,
   keepOpacity = false,
   aoWeight = 0.25,
+  pruneBorder = null,
 }) {
   const { maps } = await discoverSourceMaps(vaultRoot, entry.sourcePath);
   const nPix = targetW * targetH;
@@ -328,6 +330,9 @@ async function bakePbrAsset({
   }
 
   if (keepOpacity && opacityMap) {
+    if (pruneBorder) {
+      cleanBorderClippedAlpha(color, targetW, targetH, pruneBorder);
+    }
     dilateAlphaEdges(color, targetW, targetH, 16);
   }
 
@@ -952,6 +957,7 @@ async function main() {
   const decalTableEntries = [];
   for (const entry of pbrDecals) {
     const { nativeWidth, nativeHeight } = await discoverSourceMaps(vaultRoot, entry.sourcePath);
+    const isWall = entry.category === 'leak' || /(?:^|_)wall(?:_|$)/i.test(entry.id || '');
     const baked = await bakePbrAsset({
       vaultRoot,
       entry,
@@ -960,6 +966,13 @@ async function main() {
       tileToSquare: false,
       keepOpacity: true,
       aoWeight: 0.25,
+      pruneBorder: isWall || entry.category === 'tire_skid'
+        ? null
+        : {
+            allowWatershed: false,
+            allowMarginFallback: false,
+            softFloorStain: entry.id === 'decal_mud_stain',
+          },
     });
     await writeUnpremultipliedPair(path.join(BUILT_PBR_DECALS, entry.id), baked.color, baked.normalRm, baked.width, baked.height);
     decalTableEntries.push({
@@ -998,6 +1011,7 @@ async function main() {
       tileToSquare: false,
       keepOpacity: true,
       aoWeight: 0.25,
+      pruneBorder: { allowWatershed: true, allowMarginFallback: true },
     });
     await writeUnpremultipliedPair(path.join(BUILT_PBR_FOLIAGE, entry.id), baked.color, baked.normalRm, baked.width, baked.height);
     foliageTableEntries.push({

@@ -331,7 +331,25 @@ def repair_mesh_topology(
             # Fallback when a boundary loop is blocked by an existing diagonal chord: collapse shortest edge
             short_bd = min(b_edges, key=lambda e: e.calc_length())
             bmesh.ops.collapse(bm, edges=[short_bd])
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=max(float(weld_dist or 0.0), 1e-4))
             strip_loose_and_degenerate()
+        if len(bm.verts) > 0:
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=max(float(weld_dist or 0.0), 1e-4))
+            strip_loose_and_degenerate()
+            # One extra pass if welding within audit spatial tolerance exposed a non-manifold edge
+            if any(len(e.link_faces) > 2 for e in bm.edges):
+                for _ in range(8):
+                    bm.edges.ensure_lookup_table()
+                    nm_edges = [e for e in bm.edges if len(e.link_faces) > 2]
+                    if not nm_edges:
+                        break
+                    del_faces = list({f for e in nm_edges for f in e.link_faces})
+                    bmesh.ops.delete(bm, geom=del_faces, context="FACES")
+                    strip_loose_and_degenerate()
+                    b_edges = [e for e in bm.edges if len(e.link_faces) == 1]
+                    if b_edges:
+                        bmesh.ops.holes_fill(bm, edges=b_edges, sides=max_hole_sides)
+                        strip_loose_and_degenerate()
 
     # Prune disconnected floating debris (whisker droplets / stray artifacts)
     bm.faces.ensure_lookup_table()
@@ -756,9 +774,22 @@ def run_xremesh(xremesh_exe, in_fbx, out_fbx, work_dir, target_quads=16000, adap
         raise RuntimeError("xremesh did not produce output FBX")
 
 
+def _count_collapsed_uv_polys(obj):
+    if not obj.data.uv_layers:
+        return len(obj.data.polygons)
+    uv = obj.data.uv_layers.active.data
+    bad = 0
+    for p in obj.data.polygons:
+        us = [uv[li].uv[0] for li in p.loop_indices]
+        vs = [uv[li].uv[1] for li in p.loop_indices]
+        if (max(us) < 0.01 and max(vs) < 0.01) or (max(us) - min(us) < 1e-4 and max(vs) - min(vs) < 1e-4):
+            bad += 1
+    return bad
+
+
 def run_uv_unwrap(obj, solver="organic"):
     """Unwrap remeshed quad object with auto_unwrap (organic/smart) or Blender Smart Project fallback."""
-    if solver == "blender":
+    def _blender_smart_project():
         bpy.ops.object.select_all(action="DESELECT")
         obj.select_set(True)
         bpy.context.view_layer.objects.active = obj
@@ -766,10 +797,24 @@ def run_uv_unwrap(obj, solver="organic"):
         bpy.ops.mesh.select_all(action="SELECT")
         bpy.ops.uv.smart_project(angle_limit=math.radians(66.0), island_margin=0.02)
         bpy.ops.object.mode_set(mode="OBJECT")
+
+    if solver == "blender":
+        _blender_smart_project()
         return
 
     bpy.ops.preferences.addon_enable(module="auto_unwrap")
     import auto_unwrap as au
+
+    def _clear_uv_and_seams():
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.mark_seam(clear=True)
+        bpy.ops.object.mode_set(mode="OBJECT")
+        while obj.data.uv_layers:
+            obj.data.uv_layers.remove(obj.data.uv_layers[0])
 
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
@@ -796,9 +841,14 @@ def run_uv_unwrap(obj, solver="organic"):
 
     if solver == "smart":
         res = bpy.ops.autounwrap.smart_uv("EXEC_DEFAULT")
-        if res != {"FINISHED"}:
-            raise RuntimeError(f"smart_uv failed: {res}")
-        return
+        if res == {"FINISHED"}:
+            bad = _count_collapsed_uv_polys(obj)
+            if bad == 0:
+                return
+            print(f"[run_uv_unwrap] smart_uv left {bad} collapsed/zero-UV polygons; falling back to organic auto_unwrap...")
+        else:
+            print(f"[run_uv_unwrap] smart_uv failed ({res}); falling back to organic auto_unwrap...")
+        _clear_uv_and_seams()
 
     class WM:
         def event_timer_add(self, *a, **kw):
@@ -838,6 +888,151 @@ def run_uv_unwrap(obj, solver="organic"):
         res = d.modal(ctx, types.SimpleNamespace(type="TIMER"))
     if res != {"FINISHED"}:
         raise RuntimeError(f"auto_unwrap failed: {res} reports={d.reports}")
+    bad_org = _count_collapsed_uv_polys(obj)
+    if bad_org > 0:
+        print(f"[run_uv_unwrap] organic auto_unwrap left {bad_org} collapsed/zero-UV polygons; falling back to blender smart_project...")
+        _clear_uv_and_seams()
+        _blender_smart_project()
+
+
+def _collect_pocket_occluded_verts(obj, max_ray_ratio=0.028, hit_thresh=8, opp_thresh=5, skip_bvh=None, skip_dist=0.0):
+    """Identify vertices trapped inside narrow occluded clothing pockets via BVH hemisphere rays."""
+    import bmesh
+    import math
+    from mathutils import Vector
+    from mathutils.bvhtree import BVHTree
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    mw = obj.matrix_world.copy()
+    bm.transform(mw)
+    bm.normal_update()
+    bm.verts.ensure_lookup_table()
+    bvh = BVHTree.FromBMesh(bm)
+
+    xs = [v.co.x for v in bm.verts]
+    if not xs:
+        bm.free()
+        return {}, 0.1
+    ys = [v.co.y for v in bm.verts]
+    zs = [v.co.z for v in bm.verts]
+    z_min = min(zs)
+    h_z = max(max(zs) - z_min, 0.1)
+    x_mid = 0.5 * (min(xs) + max(xs))
+    max_dim = max(max(xs) - min(xs), max(ys) - min(ys), h_z, 0.1)
+    max_ray = max_ray_ratio * max_dim
+    eps = 0.0008 * max_dim
+
+    dirs = [Vector((0.0, 0.0, 1.0))]
+    n_rays = 10
+    ga = math.pi * (3.0 - math.sqrt(5.0))
+    for i in range(1, n_rays):
+        z = 0.15 + 0.80 * (float(i) / float(n_rays))
+        r = math.sqrt(max(0.0, 1.0 - z * z))
+        phi = ga * i
+        dirs.append(Vector((r * math.cos(phi), r * math.sin(phi), z)).normalized())
+
+    occ = {}
+    for v in bm.verts:
+        if skip_bvh is not None and skip_dist > 0.0:
+            _, _, _, d_low = skip_bvh.find_nearest(v.co)
+            if d_low is not None and d_low <= skip_dist:
+                continue
+        vn = v.normal
+        if vn.length < 1e-6:
+            continue
+        # Never treat bilateral inner-thigh gaps across X=0 as occluded clothing pockets
+        if (v.co.z - z_min) < 0.46 * h_z and abs(v.co.x - x_mid) < 0.06 * max_dim and abs(vn.y) < 0.65:
+            continue
+        loc0, hn0, _, d0 = bvh.ray_cast(v.co + vn * eps, vn, max_ray)
+        if loc0 is None or d0 <= 1e-6:
+            continue
+        up = Vector((0.0, 0.0, 1.0)) if abs(vn.z) < 0.9 else Vector((1.0, 0.0, 0.0))
+        t1 = vn.cross(up).normalized()
+        t2 = vn.cross(t1).normalized()
+        hits = 1
+        opp = 1 if hn0.dot(vn) < -0.2 else 0
+        for dl in dirs[1:]:
+            wd = t1 * dl.x + t2 * dl.y + vn * dl.z
+            loc, hn, _, _ = bvh.ray_cast(v.co + vn * eps, wd, max_ray)
+            if loc is not None:
+                hits += 1
+                if hn.dot(vn) < -0.2:
+                    opp += 1
+        if hits >= hit_thresh and opp >= opp_thresh:
+            occ[v.index] = (vn.copy(), float(d0))
+
+    bm.free()
+    return occ, max_dim
+
+
+def _fuse_tight_clothing_pockets_for_remesh(obj):
+    """Push opposing faces of narrow occluded clothing pockets into solid overlap before Voxel Remesh."""
+    import bmesh
+
+    occ, max_dim = _collect_pocket_occluded_verts(obj, max_ray_ratio=0.028, hit_thresh=7, opp_thresh=4)
+    if not occ:
+        return 0
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    mw = obj.matrix_world.copy()
+    bm.transform(mw)
+    bm.verts.ensure_lookup_table()
+    moved = 0
+    for vi, (vn, d0) in occ.items():
+        if d0 >= 0.026 * max_dim:
+            continue
+        step = min(0.65 * d0 + 0.002 * max_dim, 0.85 * d0, 0.022 * max_dim)
+        if step > 1e-5:
+            bm.verts[vi].co += vn * step
+            moved += 1
+    if moved > 0:
+        bm.transform(mw.inverted())
+        bm.normal_update()
+        bm.to_mesh(obj.data)
+        obj.data.update()
+    bm.free()
+    return moved
+
+
+def _prune_occluded_bake_faces(high_obj, low_obj):
+    """Delete strictly occluded inner-layer polygons on high mesh that sit behind low shell so bake never bleeds inner shirts."""
+    import bmesh
+    from mathutils.bvhtree import BVHTree
+
+    bm_low = bmesh.new()
+    bm_low.from_mesh(low_obj.data)
+    bm_low.transform(low_obj.matrix_world)
+    bvh_low = BVHTree.FromBMesh(bm_low)
+    bm_low.free()
+
+    max_dim_approx = max(high_obj.dimensions.x, high_obj.dimensions.y, high_obj.dimensions.z, 0.1)
+    occ, max_dim = _collect_pocket_occluded_verts(
+        high_obj,
+        max_ray_ratio=0.032,
+        hit_thresh=8,
+        opp_thresh=5,
+        skip_bvh=bvh_low,
+        skip_dist=0.003 * max_dim_approx,
+    )
+    if not occ:
+        return 0
+
+    bm = bmesh.new()
+    bm.from_mesh(high_obj.data)
+    bm.faces.ensure_lookup_table()
+    occ_set = set(occ.keys())
+    to_del = [f for f in bm.faces if all(v.index in occ_set for v in f.verts)]
+    if to_del and len(to_del) < int(0.35 * len(bm.faces)):
+        bmesh.ops.delete(bm, geom=to_del, context="FACES")
+        bm.normal_update()
+        bm.to_mesh(high_obj.data)
+        high_obj.data.update()
+        pruned = len(to_del)
+    else:
+        pruned = 0
+    bm.free()
+    return pruned
 
 
 def cmd_remesh_bake(args):
@@ -887,6 +1082,28 @@ def cmd_remesh_bake(args):
     sm.iterations = 2
     bpy.ops.object.modifier_apply(modifier=sm.name)
 
+    # Prevent QRVoxel from fusing narrow-stance boots/ankles across X=0 (high stays untouched for baking)
+    import numpy as _np
+    _qr_co = _np.array([v.co for v in qr_in.data.vertices], dtype=_np.float64)
+    if len(_qr_co) >= 32:
+        _z0 = float(_qr_co[:, 2].min())
+        _H = float(_qr_co[:, 2].max() - _z0)
+        _low_foot = _qr_co[(_qr_co[:, 2] >= _z0) & (_qr_co[:, 2] <= _z0 + 0.14 * _H)]
+        if len(_low_foot) >= 16 and float(_np.percentile(_np.abs(_low_foot[:, 0]), 95)) < 0.135 * _H:
+            _pos_x = _low_foot[_low_foot[:, 0] > 0.001 * _H][:, 0]
+            _neg_x = _low_foot[_low_foot[:, 0] < -0.001 * _H][:, 0]
+            if len(_pos_x) >= 6 and len(_neg_x) >= 6:
+                _gap = float(_pos_x.min() - _neg_x.max())
+                if _gap < 0.014 * _H:
+                    _shift = 0.006 * _H
+                    for v in qr_in.data.vertices:
+                        pz = float(v.co.z)
+                        if pz <= _z0 + 0.14 * _H and abs(float(v.co.x)) < 0.04 * _H:
+                            _fz = 1.0 if pz <= _z0 + 0.10 * _H else (_z0 + 0.14 * _H - pz) / (0.04 * _H)
+                            _sx = 1.0 if float(v.co.x) >= 0.0 else -1.0
+                            v.co.x += _sx * _shift * max(0.0, min(1.0, _fz))
+
+    fused_pocket_verts = _fuse_tight_clothing_pockets_for_remesh(qr_in)
     max_dim = max(qr_in.dimensions.x, qr_in.dimensions.y, qr_in.dimensions.z, 0.1)
     vx = qr_in.modifiers.new("QRVoxel", "REMESH")
     vx.mode = "VOXEL"
@@ -983,6 +1200,9 @@ def cmd_remesh_bake(args):
     target = mat.node_tree.nodes.new("ShaderNodeTexImage")
     mat.node_tree.nodes.active = target
 
+    pruned_bake_faces = _prune_occluded_bake_faces(high, low)
+    print(f"[remesh-bake] pocket_fused_verts={fused_pocket_verts} bake_pruned_faces={pruned_bake_faces}")
+
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
     scene.cycles.samples = int(args.samples)
@@ -1043,7 +1263,7 @@ def cmd_remesh_bake(args):
         repair_mesh_topology(
             high,
             weld_dist=1e-5,
-            fill_holes=True,
+            fill_holes=(pruned_bake_faces == 0),
             max_hole_sides=128,
             prune_whisker_spikes=False,
             min_island_faces=24,
@@ -1359,11 +1579,12 @@ def _build_reauthored_lod(
         vg_prot = lod_obj.vertex_groups.new(name=prot_name)
         z_hip = float(lm["z_hip"]) if (lm and "z_hip" in lm) else (z_min + 0.44 * H)
         z_arm = float(lm["z_arm"]) if (lm and "z_arm" in lm) else (z_min + 0.68 * H)
+        z_knee = next((float(b[1].z) for b in lm.get("bones", ()) if b[0] == "calf_l"), z_min + 0.27 * H) if lm else (z_min + 0.27 * H)
         for v in lod_obj.data.vertices:
             vz = float(v.co.z)
             if vz >= z_neck:
                 w_p = 1.0
-            elif abs(vz - z_arm) <= 0.06 * H or abs(vz - z_hip) <= 0.06 * H or vz <= z_min + 0.12 * H:
+            elif abs(vz - z_arm) <= 0.06 * H or abs(vz - z_hip) <= 0.06 * H or abs(vz - z_knee) <= 0.055 * H or vz <= z_min + 0.12 * H:
                 w_p = 0.65
             else:
                 w_p = 0.25
@@ -1412,22 +1633,28 @@ def _build_reauthored_lod(
         loose_verts = [v for v in bm_clean.verts if not v.link_faces]
         if loose_verts:
             bmesh.ops.delete(bm_clean, geom=loose_verts, context="VERTS")
+        if len(bm_clean.edges) > 0:
+            bmesh.ops.dissolve_degenerate(bm_clean, dist=max(1e-4, 0.002 * H), edges=bm_clean.edges[:])
         bm_clean.to_mesh(lod_obj.data)
         bm_clean.free()
 
-        # Triangulate cleanly & transfer smooth normals from LOD0
+        # Triangulate cleanly & normalize outward smooth shading (avoid copying opposing custom normals onto thin folds)
         if any(len(p.vertices) > 3 for p in lod_obj.data.polygons):
             tri_m = lod_obj.modifiers.new("_LodTri", "TRIANGULATE")
             bpy.ops.object.modifier_apply(modifier=tri_m.name)
+        bpy.ops.object.select_all(action="DESELECT")
+        lod_obj.select_set(True)
+        bpy.context.view_layer.objects.active = lod_obj
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.select_all(action="SELECT")
+        bpy.ops.mesh.normals_make_consistent(inside=False)
+        bpy.ops.object.mode_set(mode="OBJECT")
         for p in lod_obj.data.polygons:
             p.use_smooth = True
-
-        dt_n = lod_obj.modifiers.new("_LodTransferNormals", "DATA_TRANSFER")
-        dt_n.object = src_obj
-        dt_n.use_loop_data = True
-        dt_n.data_types_loops = {"CUSTOM_NORMAL"}
-        dt_n.loop_mapping = "POLYINTERP_NEAREST"
-        bpy.ops.object.modifier_apply(modifier=dt_n.name)
+        es_n = lod_obj.modifiers.new("_LodSharpCrease", "EDGE_SPLIT")
+        es_n.use_edge_angle = True
+        es_n.split_angle = math.radians(65.0)
+        bpy.ops.object.modifier_apply(modifier=es_n.name)
 
         # Step 3: Fresh minimal large-block UV unwrap with 1.9x head/face priority
         while len(lod_obj.data.uv_layers) > 0:
@@ -1517,6 +1744,36 @@ def _build_reauthored_lod(
         dt_w.layers_vgroup_select_src = "ALL"
         dt_w.layers_vgroup_select_dst = "NAME"
         bpy.ops.object.modifier_apply(modifier=dt_w.name)
+
+        if int(max_weights) <= 2 and len(lod_obj.data.edges) > 0 and len(lod_obj.vertex_groups) > 0:
+            # 2 mild pre-limit edge smooths on LOD2 legs/joints avoid 1-edge 2-bone selection cliffs while keeping tail intact
+            nv_2 = len(lod_obj.data.vertices)
+            ng_2 = len(lod_obj.vertex_groups)
+            vg_2_map = {vg.index: vg for vg in lod_obj.vertex_groups}
+            w2 = np.zeros((nv_2, ng_2), dtype=np.float64)
+            for vi, v in enumerate(lod_obj.data.vertices):
+                for g in v.groups:
+                    w2[vi, g.group] = g.weight
+            adj2 = [[] for _ in range(nv_2)]
+            for e in lod_obj.data.edges:
+                adj2[e.vertices[0]].append(e.vertices[1])
+                adj2[e.vertices[1]].append(e.vertices[0])
+            for _ in range(2):
+                w2_n = w2.copy()
+                for vi in range(nv_2):
+                    nb = adj2[vi]
+                    if nb and float(lod_obj.data.vertices[vi].co.y) <= (0.135 * H):
+                        w2_n[vi] = 0.72 * w2[vi] + 0.28 * np.mean(w2[nb], axis=0)
+                w2 = w2_n
+            for vi in range(nv_2):
+                for gi in range(ng_2):
+                    if w2[vi, gi] > 1e-5:
+                        vg_2_map[gi].add([vi], float(w2[vi, gi]), "REPLACE")
+                    else:
+                        try:
+                            vg_2_map[gi].remove([vi])
+                        except RuntimeError:
+                            pass
 
         bpy.ops.object.vertex_group_limit_total(limit=int(max_weights))
         bpy.ops.object.vertex_group_normalize_all(lock_active=False)
@@ -1609,9 +1866,10 @@ def _build_reauthored_lod(
         bake.margin_type = "EXTEND"
         bake.use_clear = True
 
-        # 5a. Rewire src_bake materials temporarily to emit pure BaseColor (metallic-safe albedo)
-        albedo_img = bpy.data.images.new(f"_{lod_name}_AlbedoTmp", width=color_size, height=color_size, alpha=False)
+        # 5a. Rewire src_bake materials temporarily to emit pure BaseColor (metallic-safe albedo; alpha tracks baked hits)
+        albedo_img = bpy.data.images.new(f"_{lod_name}_AlbedoTmp", width=color_size, height=color_size, alpha=True)
         albedo_img.colorspace_settings.name = "sRGB"
+        albedo_img.pixels.foreach_set([0.0] * (color_size * color_size * 4))
         temp_imgs.append(albedo_img)
         for sm_cp in src_bake_mats:
             bsdf_s, out_s = _extract_src_albedo_socket(sm_cp)
@@ -1645,16 +1903,45 @@ def _build_reauthored_lod(
         bpy.context.view_layer.objects.active = lod_obj
         bpy.ops.object.bake(type="AO", margin_type="EXTEND")
 
-        # 5c. Composite Color x mix(1.0, AO, 0.45) in linear space -> sRGB packed image
+        # 5c. Composite Color x mix(1.0, AO, 0.45) in linear space + dilate unhit gutter texels so decimated faces never sample #000
         alb_px = np.empty(color_size * color_size * 4, dtype=np.float32)
         albedo_img.pixels.foreach_get(alb_px)
-        alb_px = alb_px.reshape((-1, 4))
+        alb_px = alb_px.reshape((color_size, color_size, 4))
         ao_px = np.empty(color_size * color_size * 4, dtype=np.float32)
         ao_img.pixels.foreach_get(ao_px)
-        ao_px = ao_px.reshape((-1, 4))
+        ao_px = ao_px.reshape((color_size, color_size, 4))
+
+        hit = (alb_px[:, :, 3] >= 0.5) & (np.max(alb_px[:, :, :3], axis=2) > 0.004)
+        if np.any(hit):
+            ao_eff = np.where(hit[:, :, None], np.clip(ao_px[:, :, :3], 0.0, 1.0), 1.0)
+            rgb = np.clip(alb_px[:, :, :3] * (0.55 + 0.45 * ao_eff), 0.0, 1.0)
+            filled = hit.copy()
+            for _ in range(max(12, color_size // 4)):
+                if np.all(filled):
+                    break
+                pad_rgb = np.pad(rgb, ((1, 1), (1, 1), (0, 0)), mode="edge")
+                pad_f = np.pad(filled.astype(np.float32), ((1, 1), (1, 1)), mode="constant", constant_values=0.0)
+                acc_c = np.zeros_like(rgb)
+                acc_w = np.zeros((color_size, color_size), dtype=np.float32)
+                for dy in (0, 1, 2):
+                    for dx in (0, 1, 2):
+                        if dy == 1 and dx == 1:
+                            continue
+                        w = pad_f[dy : dy + color_size, dx : dx + color_size]
+                        acc_c += pad_rgb[dy : dy + color_size, dx : dx + color_size] * w[:, :, None]
+                        acc_w += w
+                grow = (~filled) & (acc_w > 0.0)
+                if not np.any(grow):
+                    break
+                rgb[grow] = acc_c[grow] / acc_w[grow, None]
+                filled |= grow
+            if not np.all(filled):
+                rgb[~filled] = np.mean(rgb[filled], axis=0)
+        else:
+            rgb = np.clip(alb_px[:, :, :3] * (0.55 + 0.45 * ao_px[:, :, :3]), 0.0, 1.0)
 
         comp_px = np.ones((color_size * color_size, 4), dtype=np.float32)
-        comp_px[:, :3] = np.clip(alb_px[:, :3] * (0.55 + 0.45 * ao_px[:, :3]), 0.0, 1.0)
+        comp_px[:, :3] = rgb.reshape((-1, 3))
 
         out_img = bpy.data.images.new(f"{lod_name}_Color", width=color_size, height=color_size, alpha=False)
         out_img.colorspace_settings.name = "sRGB"
@@ -2072,7 +2359,7 @@ def _view3d_override():
     return bpy.context.temp_override()
 
 
-def _align_arp_retarget_rest_pose(src_arm, tar_arm):
+def _align_arp_retarget_rest_pose(src_arm, tar_arm, leg_splay_rad=0.0):
     """Align A-pose source arms and vertical legs onto ARP T-pose/A-stance target via Redefine Rest Pose (preserve=True)."""
     pairs = (
         ("clavicle_l", "upperarm_l", "c_shoulder.l", "c_arm_fk.l"),
@@ -2115,6 +2402,10 @@ def _align_arp_retarget_rest_pose(src_arm, tar_arm):
         pb_dc = tar_arm.pose.bones[dst_ch]
         vs = ((src_arm.matrix_world @ pb_sc.head) - (src_arm.matrix_world @ pb_s.head)).normalized()
         vd = ((tar_arm.matrix_world @ pb_dc.head) - (tar_arm.matrix_world @ pb_d.head)).normalized()
+        # For narrow straight-leg characters, redefine source thigh slightly inward so retargeted Run knees stay parallel instead of crossing X=0
+        if leg_splay_rad > 1e-4 and src_b in ("thigh_l", "thigh_r") and vd.length > 0.5:
+            ang = leg_splay_rad if src_b == "thigh_l" else -leg_splay_rad
+            vd = (mathutils.Quaternion((0.0, 1.0, 0.0), ang) @ vd).normalized()
         if vs.length > 0.5 and vd.length > 0.5 and vs.dot(vd) > -0.999:
             q_world = vs.rotation_difference(vd)
             m_orig = src_arm.matrix_world @ pb_s.matrix
@@ -2138,6 +2429,296 @@ def _align_arp_retarget_rest_pose(src_arm, tar_arm):
                 src_arm.animation_data.action_slot = src_slot
             except Exception:
                 pass
+
+
+def _find_arp_deform_vg(obj, rig, candidates):
+    """Find or create an existing ARP deform vertex group matching one of the candidate names."""
+    for name in candidates:
+        vg = obj.vertex_groups.get(name)
+        if vg is not None:
+            return vg
+    for name in candidates:
+        b = rig.data.bones.get(name)
+        if b is not None and b.use_deform:
+            return obj.vertex_groups.new(name=name)
+    return None
+
+
+def _stabilize_arp_skirt_weights(low_obj, rig, lm, v_co, leg_back_clean):
+    """Redistribute flared skirt / mini-skirt / crotch-bow weights from pelvis/thigh_twist toward clean L/R thigh_stretch."""
+    skirt_band = lm.get("skirt_band")
+    import numpy as np
+
+    H = float(lm["height"])
+    z_hip = float(lm["z_hip"])
+    z_knee = next((float(b[1].z) for b in lm.get("bones", ()) if b[0] == "calf_l"), lm["z_min"] + 0.27 * H)
+    lx = float(lm.get("lx", 0.09 * H))
+    is_mini = skirt_band is None
+    z_crotch = lm.get("z_crotch")
+    if is_mini:
+        # Blend bare upper thigh cleanly through crotch + mini-skirt / hip socket without mid-thigh kinks
+        if z_crotch is not None:
+            sk_lo = min(float(z_crotch) - 0.025 * H, max(float(z_crotch) - 0.045 * H, z_knee + 0.055 * H))
+            z_split = max(sk_lo + 0.015 * H, float(z_crotch))
+        else:
+            sk_lo = max(z_hip - 0.075 * H, z_knee + 0.112 * H)
+            z_split = sk_lo + 0.035 * H
+        sk_hi = z_hip + 0.032 * H
+        if sk_hi <= sk_lo + 0.03 * H:
+            return
+        x_limit = max(0.145 * H, 1.35 * lx)
+    else:
+        sk_lo = float(skirt_band[0])
+        z_split = sk_lo
+        sk_hi = max(float(skirt_band[1]), z_hip + 0.03 * H)
+        x_limit = max(float(lm.get("x_sh", 0.12 * H)) * 1.45, 0.28 * H)
+
+    vg_p = _find_arp_deform_vg(low_obj, rig, ("root.x", "pelvis"))
+    vg_sp1 = _find_arp_deform_vg(low_obj, rig, ("spine_01.x", "spine_01"))
+    vg_sp2 = _find_arp_deform_vg(low_obj, rig, ("spine_02.x", "spine_02"))
+    vg_tl = _find_arp_deform_vg(low_obj, rig, ("thigh_stretch.l", "c_thigh_stretch.l", "thigh.l", "thigh_l"))
+    vg_tr = _find_arp_deform_vg(low_obj, rig, ("thigh_stretch.r", "c_thigh_stretch.r", "thigh.r", "thigh_r"))
+    if vg_p is None or vg_tl is None or vg_tr is None:
+        return
+
+    tl_idxs = [
+        vg.index
+        for vg in low_obj.vertex_groups
+        if vg.name in ("thigh_stretch.l", "thigh_twist.l", "thigh.l", "c_thigh_stretch.l", "thigh_l")
+    ]
+    tr_idxs = [
+        vg.index
+        for vg in low_obj.vertex_groups
+        if vg.name in ("thigh_stretch.r", "thigh_twist.r", "thigh.r", "c_thigh_stretch.r", "thigh_r")
+    ]
+    tl_sec = [gi for gi in tl_idxs if gi != vg_tl.index]
+    tr_sec = [gi for gi in tr_idxs if gi != vg_tr.index]
+
+    # Exclude far-trailing tails/capes behind the skirt envelope
+    max_skirt_back_y = (leg_back_clean + 0.025 * H) if is_mini else (leg_back_clean + 0.18 * H)
+    half_blend_x = max(0.085 * H, 0.85 * lx)
+    torso_idxs = [vg.index for vg in (vg_p, vg_sp1, vg_sp2) if vg is not None]
+    vgs_by_idx = {vg.index: vg for vg in low_obj.vertex_groups}
+
+    lo_pad = 0.018 * H
+    waist_hi = max(sk_hi + 0.02 * H, z_hip + 0.12 * H)
+    waist_x_limit = max(0.115 * H, 1.25 * lx)
+    skirt_mask = np.zeros(len(v_co), dtype=bool)
+    for vi, p in enumerate(v_co):
+        px, py, pz = float(p[0]), float(p[1]), float(p[2])
+        if pz > sk_hi and pz <= waist_hi and abs(px) <= waist_x_limit and py <= max_skirt_back_y:
+            cur_w = {g.group: float(g.weight) for g in low_obj.data.vertices[vi].groups}
+            w_leg_w = sum(cur_w.get(gi, 0.0) for gi in tl_idxs + tr_idxs)
+            if w_leg_w > 1e-4:
+                for gi in tl_idxs + tr_idxs:
+                    if gi in cur_w:
+                        try:
+                            vgs_by_idx[gi].remove([vi])
+                        except RuntimeError:
+                            pass
+                w_tor_w = sum(cur_w.get(gi, 0.0) for gi in torso_idxs)
+                if w_tor_w > 1e-5:
+                    scale_tw = (w_tor_w + w_leg_w) / w_tor_w
+                    for gi in torso_idxs:
+                        if gi in cur_w:
+                            vgs_by_idx[gi].add([vi], cur_w[gi] * scale_tw, "REPLACE")
+                else:
+                    vg_p.add([vi], w_leg_w, "REPLACE")
+            continue
+        if pz < sk_lo - lo_pad or pz > sk_hi or abs(px) > x_limit or py > max_skirt_back_y:
+            continue
+        if is_mini and pz < z_knee + 0.100 * H:
+            continue
+        cur = {g.group: float(g.weight) for g in low_obj.data.vertices[vi].groups}
+        w_torso = sum(cur.get(gi, 0.0) for gi in torso_idxs)
+        w_l_cur = sum(cur.get(gi, 0.0) for gi in tl_idxs)
+        w_r_cur = sum(cur.get(gi, 0.0) for gi in tr_idxs)
+        w_leg_cur = w_l_cur + w_r_cur
+        skirt_mask[vi] = True
+        if is_mini:
+            if pz <= z_split:
+                t_up = max(0.0, min(1.0, (pz - sk_lo) / max(z_split - sk_lo, 1e-4)))
+                leg_target = 0.88 - 0.20 * t_up
+            else:
+                t_sk = max(0.0, min(1.0, (sk_hi - pz) / max(sk_hi - z_split, 0.04 * H)))
+                leg_target = 0.68 * (t_sk ** 1.35)
+        else:
+            t_down = max(0.0, min(1.0, (sk_hi - pz) / max(sk_hi - sk_lo, 0.05 * H)))
+            max_leg = 0.65 if pz >= z_knee - 0.01 * H else 0.52
+            leg_target = max_leg * (t_down ** 0.78)
+
+        u = max(-1.0, min(1.0, px / half_blend_x))
+        w_l_frac = max(0.0, min(1.0, 0.5 + 0.25 * u * (3.0 - u * u)))
+        w_r_frac = 1.0 - w_l_frac
+
+        w_other = max(0.0, sum(cur.values()) - w_torso - w_leg_cur)
+        avail = max(0.0, 1.0 - w_other)
+        target_leg = min(avail, leg_target * avail)
+        fade_hi = sk_lo + (0.025 * H if is_mini else 0.015 * H)
+        if pz < fade_hi:
+            t_b = max(0.0, min(1.0, (pz - (sk_lo - lo_pad)) / max(fade_hi - (sk_lo - lo_pad), 1e-4)))
+            b = t_b * t_b * (3.0 - 2.0 * t_b)
+            base_leg = max(w_leg_cur, target_leg)
+            new_leg = (1.0 - b) * base_leg + b * target_leg
+        else:
+            new_leg = target_leg
+        new_torso = max(0.0, avail - new_leg)
+        if w_torso > 1e-5:
+            t_scale = new_torso / w_torso
+            for gi in torso_idxs:
+                if gi in cur:
+                    vgs_by_idx[gi].add([vi], cur[gi] * t_scale, "REPLACE")
+        elif new_torso > 1e-5:
+            vg_p.add([vi], new_torso, "REPLACE")
+        # Fold thigh_twist into thigh_stretch on skirt vertices so top-4 pruning never drops L or R thigh
+        for gi in tl_sec + tr_sec:
+            if gi in cur:
+                try:
+                    vgs_by_idx[gi].remove([vi])
+                except RuntimeError:
+                    pass
+        vg_tl.add([vi], new_leg * w_l_frac, "REPLACE")
+        vg_tr.add([vi], new_leg * w_r_frac, "REPLACE")
+
+    sk_idxs = np.nonzero(skirt_mask)[0].tolist()
+    if not sk_idxs:
+        return
+    n_v = len(low_obj.data.vertices)
+    n_g = len(low_obj.vertex_groups)
+    wmat = np.zeros((n_v, n_g), dtype=np.float64)
+    for vi, v in enumerate(low_obj.data.vertices):
+        for g in v.groups:
+            wmat[vi, g.group] = g.weight
+    # Fold secondary thigh/twist columns into primary L/R thigh in the smoothing buffer so borders stay clean
+    for gi in tl_sec:
+        wmat[:, vg_tl.index] += wmat[:, gi]
+        wmat[:, gi] = 0.0
+    for gi in tr_sec:
+        wmat[:, vg_tr.index] += wmat[:, gi]
+        wmat[:, gi] = 0.0
+    adj = [[] for _ in range(n_v)]
+    for e in low_obj.data.edges:
+        a, b = e.vertices[0], e.vertices[1]
+        adj[a].append(b)
+        adj[b].append(a)
+    for _ in range(8):
+        nxt = wmat.copy()
+        for vi in sk_idxs:
+            nb = adj[vi]
+            if nb:
+                nxt[vi] = 0.50 * wmat[vi] + 0.50 * np.mean(wmat[nb], axis=0)
+        wmat = nxt
+    for vi in sk_idxs:
+        row = wmat[vi]
+        top4 = np.argsort(-row)[:4]
+        s = float(np.sum(row[top4]))
+        if s > 1e-6:
+            top4_set = set(int(g) for g in top4)
+            for gi in range(n_g):
+                if gi in top4_set and row[gi] > 1e-5:
+                    vgs_by_idx[gi].add([vi], float(row[gi] / s), "REPLACE")
+                else:
+                    try:
+                        vgs_by_idx[gi].remove([vi])
+                    except RuntimeError:
+                        pass
+
+
+def _audit_rig_deformation(rig, mesh_obj, frame_range, H):
+    """Audit animated triangle stretch, inverted folds, and detect peak-stride frames across the Run cycle."""
+    import numpy as np
+
+    f0 = int(round(float(frame_range[0]))) if frame_range else 0
+    f1 = int(round(float(frame_range[1]))) if frame_range and len(frame_range) > 1 else 0
+    if f1 <= f0:
+        return {"maxStretch": 1.0, "p99Stretch": 1.0, "invertedTris": 0, "leftPeakFrame": 6, "rightPeakFrame": 18, "ok": True}
+
+    scn = bpy.context.scene
+    orig_pos = rig.data.pose_position
+    orig_frame = scn.frame_current
+    rig.data.pose_position = "REST"
+    bpy.context.view_layer.update()
+    rco = np.array([mesh_obj.matrix_world @ v.co for v in mesh_obj.data.vertices], dtype=np.float64)
+    tris = [tuple(p.vertices[:3]) for p in mesh_obj.data.polygons if len(p.vertices) >= 3]
+    if not tris:
+        rig.data.pose_position = orig_pos
+        return {"maxStretch": 1.0, "p99Stretch": 1.0, "invertedTris": 0, "leftPeakFrame": f0, "rightPeakFrame": f1, "ok": True}
+    tri_idx = np.array(tris, dtype=np.int64)
+    e1r = rco[tri_idx[:, 1]] - rco[tri_idx[:, 0]]
+    e2r = rco[tri_idx[:, 2]] - rco[tri_idx[:, 0]]
+    rn = np.cross(e1r, e2r)
+    r_area = 0.5 * np.linalg.norm(rn, axis=1)
+    # Primary audit ignores sub-2mm decimate slivers (< 1e-5 * H^2); secondary cap keeps micro-tris bounded
+    valid = r_area >= max(1e-5 * (H * H), 1e-7)
+    valid_micro = r_area >= max(1e-6 * (H * H), 1e-8)
+    rn_unit = np.zeros_like(rn)
+    rn_unit[valid] = rn[valid] / (2.0 * r_area[valid, None])
+
+    rig.data.pose_position = "POSE"
+    step = max(1, (f1 - f0) // 16)
+    frames = sorted(set(list(range(f0, f1 + 1, step)) + [f1]))
+    pb = rig.pose.bones
+    b_pel = pb.get("pelvis") or pb.get("root.x")
+    b_kl = pb.get("calf_l") or pb.get("leg_stretch.l") or pb.get("c_leg_fk.l")
+    b_kr = pb.get("calf_r") or pb.get("leg_stretch.r") or pb.get("c_leg_fk.r")
+
+    max_stretch = 1.0
+    max_micro_stretch = 1.0
+    p99_stretch = 1.0
+    max_inv = 0
+    best_l = (frames[0], -1e9)
+    best_r = (frames[0], -1e9)
+
+    for fn in frames:
+        scn.frame_set(fn)
+        bpy.context.view_layer.update()
+        dg = bpy.context.evaluated_depsgraph_get()
+        ev = mesh_obj.evaluated_get(dg)
+        pco = np.array([ev.matrix_world @ v.co for v in ev.data.vertices], dtype=np.float64)
+        e1p = pco[tri_idx[valid, 1]] - pco[tri_idx[valid, 0]]
+        e2p = pco[tri_idx[valid, 2]] - pco[tri_idx[valid, 0]]
+        pn = np.cross(e1p, e2p)
+        p_area = 0.5 * np.linalg.norm(pn, axis=1)
+        st = p_area / r_area[valid]
+        if np.any(valid_micro):
+            e1m = pco[tri_idx[valid_micro, 1]] - pco[tri_idx[valid_micro, 0]]
+            e2m = pco[tri_idx[valid_micro, 2]] - pco[tri_idx[valid_micro, 0]]
+            pm_area = 0.5 * np.linalg.norm(np.cross(e1m, e2m), axis=1)
+            max_micro_stretch = max(max_micro_stretch, float(np.max(pm_area / r_area[valid_micro])))
+        if len(st) > 0:
+            max_stretch = max(max_stretch, float(np.max(st)))
+            p99_stretch = max(p99_stretch, float(np.percentile(st, 99)))
+            pn_unit = pn / np.maximum(2.0 * p_area[:, None], 1e-8)
+            dots = np.sum(pn_unit * rn_unit[valid], axis=1)
+            inv_cnt = int(np.sum((dots < -0.55) & (st > 2.2)))
+            max_inv = max(max_inv, inv_cnt)
+
+        pel_y = float((rig.matrix_world @ b_pel.head).y) if b_pel else 0.0
+        if b_kl:
+            fwd_l = pel_y - float((rig.matrix_world @ b_kl.head).y)
+            if fwd_l > best_l[1]:
+                best_l = (fn, fwd_l)
+        if b_kr:
+            fwd_r = pel_y - float((rig.matrix_world @ b_kr.head).y)
+            if fwd_r > best_r[1]:
+                best_r = (fn, fwd_r)
+
+    scn.frame_set(orig_frame)
+    rig.data.pose_position = orig_pos
+    bpy.context.view_layer.update()
+    ok = (max_stretch <= 5.5) and (max_micro_stretch <= 9.5) and (p99_stretch <= 2.5) and (max_inv <= 6)
+    audit = {
+        "maxStretch": round(max_stretch, 3),
+        "maxMicroStretch": round(max_micro_stretch, 3),
+        "p99Stretch": round(p99_stretch, 3),
+        "invertedTris": int(max_inv),
+        "leftPeakFrame": int(best_l[0]),
+        "rightPeakFrame": int(best_r[0]),
+        "ok": bool(ok),
+    }
+    if not ok:
+        raise RuntimeError(f"Rig deformation QA failed: {json.dumps(audit)}")
+    return audit
 
 
 def _rig_and_export_arp(
@@ -2175,6 +2756,46 @@ def _rig_and_export_arp(
     low_obj.select_set(True)
     bpy.context.view_layer.objects.active = low_obj
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+
+    # Ensure sparse knee bands (e.g. asymmetric QuadRemesher legs) have an intermediate loop for clean LBS bending
+    import bmesh as _bm_knee
+    import numpy as _np_k
+    _knee_bone = next((b for b in lm.get("bones", ()) if b[0] == "calf_l"), None)
+    _z_knee_pre = float(_knee_bone[1].z) if _knee_bone is not None else (z0 + 0.27 * H)
+    _y_knee_pre = float(_knee_bone[1].y) if _knee_bone is not None else float(_np_k.median(lm["co_world"][..., 1]))
+    _x_leg_lim = max(0.14 * H, 1.5 * float(lm.get("lx", 0.09 * H)))
+    bm_k = _bm_knee.new()
+    bm_k.from_mesh(low_obj.data)
+    bm_k.verts.ensure_lookup_table()
+    bm_k.edges.ensure_lookup_table()
+    long_knee_edges = sorted(
+        (
+            e for e in bm_k.edges
+            if abs(e.verts[0].co.x) <= _x_leg_lim and abs(e.verts[1].co.x) <= _x_leg_lim
+            and min(e.verts[0].co.z, e.verts[1].co.z) <= (_z_knee_pre + 0.006 * H)
+            and max(e.verts[0].co.z, e.verts[1].co.z) >= (_z_knee_pre - 0.006 * H)
+            and 0.5 * (e.verts[0].co.y + e.verts[1].co.y) < (_y_knee_pre + 0.005 * H)
+            and min(e.verts[0].co.y, e.verts[1].co.y) < (_y_knee_pre - 0.010 * H)
+            and abs(e.verts[0].co.z - e.verts[1].co.z) >= 0.025 * H
+        ),
+        key=lambda e: abs(e.verts[0].co.z - e.verts[1].co.z),
+        reverse=True,
+    )
+    cur_tris_k = sum(max(1, len(f.verts) - 2) for f in bm_k.faces)
+    max_split_k = max(0, (6000 - cur_tris_k) // 2)
+    if long_knee_edges and max_split_k > 0:
+        n_split_k = min(len(long_knee_edges), max_split_k)
+        _bm_knee.ops.subdivide_edges(bm_k, edges=long_knee_edges[:n_split_k], cuts=1, use_grid_fill=True)
+        ngon_k = [f for f in bm_k.faces if len(f.verts) > 3]
+        if ngon_k:
+            _bm_knee.ops.triangulate(bm_k, faces=ngon_k)
+        bm_k.normal_update()
+        bm_k.to_mesh(low_obj.data)
+        low_obj.data.update()
+        lm["co_world"] = _np_k.array([low_obj.matrix_world @ v.co for v in low_obj.data.vertices], dtype=_np_k.float64)
+        new_tris_k = sum(len(p.vertices) - 2 for p in low_obj.data.polygons)
+        print(f"[knee-subdiv] split={n_split_k}/{len(long_knee_edges)} tris={cur_tris_k}->{new_tris_k} z_knee={_z_knee_pre:.3f} y_knee={_y_knee_pre:.3f}")
+    bm_k.free()
 
     scn.arp_body_name = low_obj.name
     scn.arp_smart_type = "BODY"
@@ -2278,10 +2899,32 @@ def _rig_and_export_arp(
                 sh_y = 0.5 * (fb_hit[0] + fb_hit[1])
             break
 
-    # Measure clean outer-leg Y depth (|x| >= 0.07*H) so large center tails/capes never shift hip/ankle Y
-    leg_outer = co[(co[:, 2] >= z0 + 0.12 * H) & (co[:, 2] <= z0 + 0.48 * H) & (np.abs(co[:, 0]) >= 0.07 * H)]
-    leg_back_clean = float(np.percentile(leg_outer[:, 1], 88)) if len(leg_outer) >= 6 else (sh_y + 0.06 * H)
-    y_hip_clean = float(np.median(leg_outer[:, 1])) if len(leg_outer) >= 6 else sh_y
+    # Measure clean leg/torso Y depth using shins (below hanging tails/capes) + Y-gap filtering so tails never pull pelvis/thighs back
+    shin_pts = co[
+        (co[:, 2] >= z0 + 0.05 * H)
+        & (co[:, 2] <= z0 + 0.21 * H)
+        & (np.abs(co[:, 0]) >= 0.015 * H)
+    ]
+    _shin_ys = np.sort(shin_pts[:, 1]) if len(shin_pts) >= 12 else np.array([])
+    _y_tail_cut_shin = None
+    if len(_shin_ys) >= 12:
+        _sgaps = np.diff(_shin_ys)
+        _gi = int(np.argmax(_sgaps))
+        if float(_sgaps[_gi]) >= 0.035 * H and float(_shin_ys[_gi]) < float(np.median(_shin_ys)) + 0.06 * H:
+            _y_tail_cut_shin = float(_shin_ys[_gi]) + 0.012 * H
+        _shin_clean = _shin_ys[_shin_ys <= _y_tail_cut_shin] if _y_tail_cut_shin is not None else _shin_ys
+    else:
+        _shin_clean = _shin_ys
+    _y_shin_med = float(np.median(_shin_clean)) if len(_shin_clean) >= 6 else sh_y
+    _y_shin_back = float(np.percentile(_shin_clean, 92)) if len(_shin_clean) >= 6 else (sh_y + 0.05 * H)
+    leg_outer = co[
+        (co[:, 2] >= z0 + 0.12 * H)
+        & (co[:, 2] <= z0 + 0.42 * H)
+        & (np.abs(co[:, 0]) >= max(0.045 * H, lm.get("lx", 0.07 * H) - 0.025 * H))
+        & (co[:, 1] <= _y_shin_back + 0.035 * H)
+    ]
+    leg_back_clean = float(np.percentile(leg_outer[:, 1], 85)) if len(leg_outer) >= 6 else _y_shin_back
+    y_hip_clean = float(np.median(leg_outer[:, 1])) if len(leg_outer) >= 6 else _y_shin_med
 
     # Sample true ankle cluster (+X) directly at ankle height (supports wide A-stance legs without clipping at 0.125*H)
     ankle_band = co[
@@ -2391,25 +3034,92 @@ def _rig_and_export_arp(
         bpy.context.view_layer.objects.active = rig
         bpy.ops.object.mode_set(mode="EDIT")
         eb = rig.data.edit_bones
-        if "root_ref.x" in eb and eb["root_ref.x"].head.y > y_hip_clean + 0.025 * H:
-            neck_y = eb["neck_ref.x"].head.y if "neck_ref.x" in eb else sh_y
-            sp_chain = [n for n in ("root_ref.x", "spine_01_ref.x", "spine_02_ref.x", "spine_03_ref.x") if n in eb]
-            for idx, sn in enumerate(sp_chain):
-                t0 = idx / float(max(1, len(sp_chain)))
-                t1 = (idx + 1) / float(max(1, len(sp_chain)))
-                eb[sn].head.y = y_hip_clean * (1.0 - t0) + neck_y * t0
-                eb[sn].tail.y = y_hip_clean * (1.0 - t1) + neck_y * t1
-            for s in ("l", "r"):
-                if f"thigh_ref.{s}" in eb:
-                    eb[f"thigh_ref.{s}"].head.y = y_hip_clean
+        _mw_rig = rig.matrix_world.copy()
+        _mw_inv = _mw_rig.inverted()
+        _w_y_to_r = lambda yw: float((_mw_inv @ mathutils.Vector((0.0, float(yw), 0.0))).y)
+        _w_x_to_r = lambda xw: float((_mw_inv @ mathutils.Vector((float(xw), 0.0, 0.0))).x)
+        _w_z_to_r = lambda zw: float((_mw_inv @ mathutils.Vector((0.0, 0.0, float(zw)))).z)
+        _r_to_w = lambda v: _mw_rig @ v
+        if "root_ref.x" in eb:
+            _root_wy = float(_r_to_w(eb["root_ref.x"].head).y)
+            if _root_wy > y_hip_clean + 0.015 * H:
+                _neck_wy = float(_r_to_w(eb["neck_ref.x"].head).y) if "neck_ref.x" in eb else sh_y
+                if _neck_wy > y_hip_clean + 0.04 * H:
+                    _neck_wy = y_hip_clean
+                _pel_wy = y_hip_clean + 0.005 * H
+                sp_chain = [n for n in ("root_ref.x", "spine_01_ref.x", "spine_02_ref.x", "spine_03_ref.x") if n in eb]
+                for idx, sn in enumerate(sp_chain):
+                    t0 = idx / float(max(1, len(sp_chain)))
+                    t1 = (idx + 1) / float(max(1, len(sp_chain)))
+                    eb[sn].head.y = _w_y_to_r(_pel_wy * (1.0 - t0) + _neck_wy * t0)
+                    eb[sn].tail.y = _w_y_to_r(_pel_wy * (1.0 - t1) + _neck_wy * t1)
+                for s in ("l", "r"):
+                    if f"thigh_ref.{s}" in eb:
+                        eb[f"thigh_ref.{s}"].head.y = _w_y_to_r(_pel_wy)
+            # Keep open-crotch hip pivot seated cleanly inside pelvis/mini-skirt rather than sinking to the bottom hem
+            if lm.get("z_crotch") is not None and lm.get("skirt_band") is None and lm.get("is_tall_humanoid"):
+                _hip_wz = float(_r_to_w(eb["root_ref.x"].head).z)
+                if _hip_wz < z_hip - 0.008 * H:
+                    _neck_wz = float(_r_to_w(eb["neck_ref.x"].head).z) if "neck_ref.x" in eb else float(lm["z_neck"])
+                    sp_chain_z = [n for n in ("root_ref.x", "spine_01_ref.x", "spine_02_ref.x", "spine_03_ref.x") if n in eb]
+                    for idx, sn in enumerate(sp_chain_z):
+                        t0 = idx / float(max(1, len(sp_chain_z)))
+                        t1 = (idx + 1) / float(max(1, len(sp_chain_z)))
+                        eb[sn].head.z = _w_z_to_r(z_hip * (1.0 - t0) + _neck_wz * t0)
+                        eb[sn].tail.z = _w_z_to_r(z_hip * (1.0 - t1) + _neck_wz * t1)
+                    for s in ("l", "r"):
+                        if f"thigh_ref.{s}" in eb:
+                            eb[f"thigh_ref.{s}"].head.z = _w_z_to_r(z_hip)
 
-        # Enforce coplanar forward-bending knee on (thigh_ref -> leg_ref -> foot_ref) so ARP match_to_rig
-        # never tilts the leg plane (which twists thigh/calf roll by 40-50 deg and throws c_leg_pole sideways)
+        # Fit thigh_ref / leg_ref / foot_ref X directly to actual mesh leg/knee/ankle centers so rear tails or narrow hips never taper legs inward
+        _y_leg_lim = leg_back_clean + 0.035 * H
+        ank_band = co[
+            (co[:, 2] >= z0 + 0.03 * H)
+            & (co[:, 2] <= z0 + 0.11 * H)
+            & (np.abs(co[:, 0]) >= 0.006 * H)
+            & (co[:, 1] <= _y_leg_lim)
+        ]
+        ank_pos = ank_band[ank_band[:, 0] > 0.0][:, 0]
+        ank_neg = ank_band[ank_band[:, 0] < 0.0][:, 0]
+        actual_foot_x = None
+        if len(ank_pos) >= 6 and len(ank_neg) >= 6:
+            actual_foot_x = max(0.028 * H, min(0.16 * H, 0.5 * (float(np.median(ank_pos)) - float(np.median(ank_neg)))))
+        knee_band_x = co[
+            (co[:, 2] >= z0 + 0.24 * H)
+            & (co[:, 2] <= z0 + 0.30 * H)
+            & (np.abs(co[:, 0]) >= 0.008 * H)
+            & (co[:, 1] <= _y_leg_lim)
+        ]
+        kn_pos = knee_band_x[knee_band_x[:, 0] > 0.0]
+        kn_neg = knee_band_x[knee_band_x[:, 0] < 0.0]
+        actual_knee_x = (
+            max(0.028 * H, min(0.16 * H, 0.5 * (float(np.median(kn_pos[:, 0])) - float(np.median(kn_neg[:, 0])))))
+            if len(kn_pos) >= 6 and len(kn_neg) >= 6
+            else actual_foot_x
+        )
+        actual_knee_y = (
+            float(np.median(np.concatenate([kn_pos[:, 1], kn_neg[:, 1]])))
+            if len(kn_pos) >= 6 and len(kn_neg) >= 6
+            else None
+        )
+
+        # Enforce coplanar forward-bending knee on (thigh_ref -> leg_ref -> foot_ref) in world coordinates
         for s in ("l", "r"):
+            sx_s = 1.0 if s == "l" else -1.0
             if all(f"{b}.{s}" in eb for b in ("thigh_ref", "leg_ref", "foot_ref")):
                 th_b = eb[f"thigh_ref.{s}"]
                 lg_b = eb[f"leg_ref.{s}"]
                 ft_b = eb[f"foot_ref.{s}"]
+                if actual_foot_x is not None and abs(abs(float(_r_to_w(ft_b.head).x)) - actual_foot_x) > 0.008 * H:
+                    _ft_rx = _w_x_to_r(sx_s * actual_foot_x)
+                    _dx_ft = _ft_rx - float(ft_b.head.x)
+                    for _fb in ("foot_ref", "toes_ref", "foot_heel_ref", "foot_bank_01_ref", "foot_bank_02_ref"):
+                        _fn = f"{_fb}.{s}"
+                        if _fn in eb:
+                            eb[_fn].head.x += _dx_ft
+                            eb[_fn].tail.x += _dx_ft
+                if actual_knee_x is not None and abs(abs(float(_r_to_w(th_b.head).x)) - actual_knee_x) > 0.010 * H:
+                    th_b.head.x = _w_x_to_r(sx_s * max(0.036 * H, min(0.14 * H, actual_knee_x)))
                 z_h = th_b.head.z
                 z_k = lg_b.head.z
                 z_a = ft_b.head.z
@@ -2418,7 +3128,11 @@ def _rig_and_export_arp(
                 y_line = th_b.head.y + t_k * (ft_b.head.y - th_b.head.y)
                 th_b.tail.x = x_line
                 lg_b.head.x = x_line
-                knee_y_clean = min(lg_b.head.y, y_line - 0.025 * H)
+                y_line_w = float(_r_to_w(mathutils.Vector((0.0, y_line, 0.0))).y)
+                if actual_knee_y is not None:
+                    knee_y_clean = _w_y_to_r(min(actual_knee_y, y_line_w - 0.018 * H))
+                else:
+                    knee_y_clean = min(lg_b.head.y, _w_y_to_r(y_line_w - 0.025 * H))
                 th_b.tail.y = knee_y_clean
                 lg_b.head.y = knee_y_clean
                 ft_b.tail.x = ft_b.head.x
@@ -2428,6 +3142,7 @@ def _rig_and_export_arp(
                     to_b.tail.x = ft_b.head.x
 
         # Enforce coplanar horizontal elbow bend plane + anatomical 45:55 upperarm:forearm ratio
+        _dy_elb = abs(_w_y_to_r(0.022 * H) - _w_y_to_r(0.0))
         for s in ("l", "r"):
             if all(f"{b}.{s}" in eb for b in ("shoulder_ref", "arm_ref", "forearm_ref", "hand_ref")):
                 ar_b = eb[f"arm_ref.{s}"]
@@ -2440,7 +3155,7 @@ def _rig_and_export_arp(
                 y_line_e = ar_b.head.y + t_e * (ha_b.head.y - ar_b.head.y)
                 ar_b.tail.x = fa_b.head.x = x_line_e
                 ar_b.tail.z = fa_b.head.z = z_line_e
-                ar_b.tail.y = fa_b.head.y = max(fa_b.head.y, y_line_e + 0.022 * H)
+                ar_b.tail.y = fa_b.head.y = max(fa_b.head.y, y_line_e + _dy_elb)
         bpy.ops.arp.match_to_rig()
 
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -2506,20 +3221,221 @@ def _rig_and_export_arp(
 
         # Strip limb weights leaked onto trailing rear tail/cape protrusions and transfer them cleanly to pelvis/spine_01
         v_co = np.array([low_obj.matrix_world @ v.co for v in low_obj.data.vertices])
+
+        # Topological separation below waist/skirt: isolate disconnected rear tail islands (100% pelvis/spine)
+        # and disconnected L/R leg islands (zero opposite-leg bleed & zero pelvis leak onto bare lower thighs).
+        vg_tl_pri = _find_arp_deform_vg(low_obj, rig, ("thigh_stretch.l", "c_thigh_stretch.l", "thigh.l", "thigh_l"))
+        vg_tr_pri = _find_arp_deform_vg(low_obj, rig, ("thigh_stretch.r", "c_thigh_stretch.r", "thigh.r", "thigh_r"))
+        vg_cl_pri = _find_arp_deform_vg(low_obj, rig, ("leg_stretch.l", "calf_l")) or vg_tl_pri
+        vg_cr_pri = _find_arp_deform_vg(low_obj, rig, ("leg_stretch.r", "calf_r")) or vg_tr_pri
+        tail_island_set = set()
+        l_leg_island_set = set()
+        r_leg_island_set = set()
+        z_iso_cut = z_hip - 0.072 * H
+        vg_root_iso = low_obj.vertex_groups.get("root.x") or low_obj.vertex_groups.get("pelvis")
+        vg_sp1_iso = low_obj.vertex_groups.get("spine_01.x") or low_obj.vertex_groups.get("spine_01") or vg_root_iso
+        if len(low_obj.data.edges) > 0 and z_iso_cut > z0 + 0.20 * H:
+            _nv_iso = len(v_co)
+            _adj_iso = [[] for _ in range(_nv_iso)]
+            for _e in low_obj.data.edges:
+                _a, _b = _e.vertices[0], _e.vertices[1]
+                _adj_iso[_a].append(_b)
+                _adj_iso[_b].append(_a)
+            _seen_iso = set()
+            for _i in range(_nv_iso):
+                if float(v_co[_i, 2]) >= z_iso_cut or _i in _seen_iso:
+                    continue
+                _comp = []
+                _q = [_i]
+                _seen_iso.add(_i)
+                while _q:
+                    _u = _q.pop()
+                    _comp.append(_u)
+                    for _v in _adj_iso[_u]:
+                        if float(v_co[_v, 2]) < z_iso_cut and _v not in _seen_iso:
+                            _seen_iso.add(_v)
+                            _q.append(_v)
+                if len(_comp) < 20:
+                    continue
+                _pts = v_co[_comp]
+                _med_y = float(np.median(_pts[:, 1]))
+                _xmin, _xmax = float(_pts[:, 0].min()), float(_pts[:, 0].max())
+                if _med_y > leg_back_clean + 0.05 * H and _xmin < 0.03 * H < _xmax:
+                    tail_island_set.update(_comp)
+                elif _med_y <= leg_back_clean + 0.05 * H:
+                    if _xmax < 0.025 * H:
+                        r_leg_island_set.update(_comp)
+                    elif _xmin > -0.025 * H:
+                        l_leg_island_set.update(_comp)
+            print(f"[rig-iso] leg_back={leg_back_clean:.3f} y_hip={y_hip_clean:.3f} tail={len(tail_island_set)} L_leg={len(l_leg_island_set)} R_leg={len(r_leg_island_set)}")
+
+        if tail_island_set and vg_root_iso is not None:
+            _limb_toks_i = ("thigh", "leg", "calf", "foot", "toes", "ball", "arm", "forearm", "hand", "shoulder", "clavicle")
+            _limb_vgs_i = [vg for vg in low_obj.vertex_groups if any(tok in vg.name for tok in _limb_toks_i)]
+            for vi in tail_island_set:
+                for vg in list(low_obj.vertex_groups):
+                    if vg.index != vg_root_iso.index and vg.index != (vg_sp1_iso.index if vg_sp1_iso else -1):
+                        try:
+                            vg.remove([vi])
+                        except RuntimeError:
+                            pass
+                t_sp = max(0.0, min(1.0, (float(v_co[vi, 2]) - (z0 + 0.20 * H)) / max(z_iso_cut - (z0 + 0.20 * H), 0.1 * H)))
+                w_r = 1.0 - 0.15 * t_sp
+                vg_root_iso.add([vi], w_r, "REPLACE")
+                if vg_sp1_iso and vg_sp1_iso.index != vg_root_iso.index:
+                    vg_sp1_iso.add([vi], 1.0 - w_r, "REPLACE")
+            # Smoothly transition rear butt/tail-root attachment just above z_iso_cut (z_iso_cut .. z_hip + 0.04*H)
+            for vi, p in enumerate(v_co):
+                px, py, pz = float(p[0]), float(p[1]), float(p[2])
+                if pz < z_iso_cut or pz > z_hip + 0.04 * H or py <= leg_back_clean + 0.035 * H or abs(px) > 0.105 * H:
+                    continue
+                t_root = max(0.0, min(1.0, (pz - z_iso_cut) / (z_hip + 0.04 * H - z_iso_cut)))
+                a_t = (1.0 - t_root) ** 0.7
+                moved_t = 0.0
+                for vg in _limb_vgs_i:
+                    try:
+                        w_old = vg.weight(vi)
+                        drop = w_old * a_t
+                        if drop > 1e-5:
+                            if a_t >= 0.999:
+                                vg.remove([vi])
+                            else:
+                                vg.add([vi], max(0.0, w_old - drop), "REPLACE")
+                            moved_t += drop
+                    except RuntimeError:
+                        pass
+                if moved_t > 1e-5:
+                    vg_root_iso.add([vi], moved_t, "ADD")
+
+        # Clean isolated left/right leg islands: remove opposite-leg bleed & strip leaked pelvis on bare lower thighs
+        if (l_leg_island_set or r_leg_island_set) and vg_tl_pri is not None and vg_tr_pri is not None:
+            _z_kn_i = next((float(b[1].z) for b in lm.get("bones", ()) if b[0] == "calf_l"), z0 + 0.27 * H)
+            _torso_vgs_i = [
+                vg for vg in low_obj.vertex_groups
+                if any(tok in vg.name for tok in ("root.x", "pelvis", "spine"))
+            ]
+            _l_vgs_i = [vg for vg in low_obj.vertex_groups if vg.name.endswith(".l") and any(t in vg.name for t in ("thigh", "leg_stretch", "calf", "foot", "toes", "ball"))]
+            _r_vgs_i = [vg for vg in low_obj.vertex_groups if vg.name.endswith(".r") and any(t in vg.name for t in ("thigh", "leg_stretch", "calf", "foot", "toes", "ball"))]
+            _bare_hi = z_iso_cut - 0.020 * H
+            _bare_fade = 0.025 * H
+            for _is_l, _island in ((True, l_leg_island_set), (False, r_leg_island_set)):
+                if not _island:
+                    continue
+                _wrong_vgs = _r_vgs_i if _is_l else _l_vgs_i
+                _dst_th = vg_tl_pri if _is_l else vg_tr_pri
+                _dst_ca = vg_cl_pri if _is_l else vg_cr_pri
+                for vi in _island:
+                    pz = float(v_co[vi, 2])
+                    t_th = max(0.0, min(1.0, (pz - (_z_kn_i - 0.025 * H)) / (0.050 * H)))
+                    moved_l = 0.0
+                    for vg in _wrong_vgs:
+                        try:
+                            w_old = vg.weight(vi)
+                            if w_old > 1e-5:
+                                vg.remove([vi])
+                                moved_l += w_old
+                        except RuntimeError:
+                            pass
+                    if pz < _bare_hi:
+                        s_tor = max(0.0, min(1.0, (_bare_hi - pz) / _bare_fade))
+                        for vg in _torso_vgs_i:
+                            try:
+                                w_old = vg.weight(vi)
+                                drop = w_old * s_tor
+                                if drop > 1e-5:
+                                    if s_tor >= 0.999:
+                                        vg.remove([vi])
+                                    else:
+                                        vg.add([vi], max(0.0, w_old - drop), "REPLACE")
+                                    moved_l += drop
+                            except RuntimeError:
+                                pass
+                    if moved_l > 1e-5:
+                        if t_th > 1e-4:
+                            _dst_th.add([vi], moved_l * t_th, "ADD")
+                        if (1.0 - t_th) > 1e-4:
+                            _dst_ca.add([vi], moved_l * (1.0 - t_th), "ADD")
+
+        # Suppress opposite-side leg bleed on outer thighs/calves before tail/skirt smoothing so LOD2 2-weight cap never shears L/R legs
+        if vg_tl_pri is not None and vg_tr_pri is not None:
+            leg_tokens_s = ("thigh", "leg_stretch", "calf", "foot", "toes", "ball")
+            l_leg_vgs = [vg for vg in low_obj.vertex_groups if vg.name.endswith(".l") and any(t in vg.name for t in leg_tokens_s)]
+            r_leg_vgs = [vg for vg in low_obj.vertex_groups if vg.name.endswith(".r") and any(t in vg.name for t in leg_tokens_s)]
+            z_knee_s = next((float(b[1].z) for b in lm.get("bones", ()) if b[0] == "calf_l"), z0 + 0.27 * H)
+            x_sup_lo = 0.024 * H
+            x_sup_span = 0.024 * H
+            for vi, p in enumerate(v_co):
+                if vi in tail_island_set or vi in l_leg_island_set or vi in r_leg_island_set:
+                    continue
+                px, pz = float(p[0]), float(p[2])
+                if pz < z0 + 0.04 * H or pz > z_hip + 0.03 * H or abs(px) <= x_sup_lo:
+                    continue
+                supp = min(1.0, (abs(px) - x_sup_lo) / x_sup_span)
+                wrong_vgs = r_leg_vgs if px > 0.0 else l_leg_vgs
+                t_th = max(0.0, min(1.0, (pz - (z_knee_s - 0.025 * H)) / (0.050 * H)))
+                dst_th = vg_tl_pri if px > 0.0 else vg_tr_pri
+                dst_ca = vg_cl_pri if px > 0.0 else vg_cr_pri
+                moved_s = 0.0
+                for vg in wrong_vgs:
+                    try:
+                        w_old = vg.weight(vi)
+                        drop = w_old * supp
+                        if drop > 1e-5:
+                            if supp >= 0.999:
+                                vg.remove([vi])
+                            else:
+                                vg.add([vi], max(0.0, w_old - drop), "REPLACE")
+                            moved_s += drop
+                    except RuntimeError:
+                        pass
+                if moved_s > 1e-5:
+                    if t_th > 1e-4:
+                        dst_th.add([vi], moved_s * t_th, "ADD")
+                    if (1.0 - t_th) > 1e-4:
+                        dst_ca.add([vi], moved_s * (1.0 - t_th), "ADD")
+
         back_y_start = leg_back_clean + 0.025 * H
-        back_mask = (
-            (v_co[:, 2] <= z_arm - 0.02 * H)
-            & (v_co[:, 1] > back_y_start)
-            & (np.abs(v_co[:, 0]) <= x_sh * 1.05)
-        )
-        back_idxs = np.nonzero(back_mask)[0].tolist()
+        back_y_span = 0.04 * H
+        if tail_island_set:
+            back_idxs = []
+        elif lm.get("appendage") is not None:
+            back_mask = (
+                (v_co[:, 2] <= z_arm - 0.02 * H)
+                & (v_co[:, 1] > back_y_start)
+                & (np.abs(v_co[:, 0]) <= x_sh * 1.05)
+            )
+            back_idxs = np.nonzero(back_mask)[0].tolist()
+        else:
+            # Also catch wide/low rear tails below hip level (e.g. fluffy fox/cat tails behind mini-skirts)
+            tail_probe_y = max(leg_back_clean, y_hip_clean) + 0.085 * H
+            tail_probe = (
+                (v_co[:, 2] >= z0 + 0.12 * H)
+                & (v_co[:, 2] <= z_hip + 0.05 * H)
+                & (v_co[:, 1] > tail_probe_y)
+                & (np.abs(v_co[:, 0]) <= 0.105 * H)
+            )
+            if int(np.sum(tail_probe)) >= 24:
+                back_y_start = max(leg_back_clean, y_hip_clean) + 0.004 * H
+                back_y_span = 0.062 * H
+                tail_mask = (
+                    (v_co[:, 2] >= z0 + 0.12 * H)
+                    & (v_co[:, 2] <= z_hip + 0.05 * H)
+                    & (v_co[:, 1] > back_y_start)
+                    & (
+                        (np.abs(v_co[:, 0]) <= 0.082 * H)
+                        | ((v_co[:, 1] > back_y_start + 0.024 * H) & (np.abs(v_co[:, 0]) <= 0.098 * H))
+                    )
+                )
+                back_idxs = np.nonzero(tail_mask)[0].tolist()
+            else:
+                back_idxs = []
         if back_idxs:
             vg_root = low_obj.vertex_groups.get("root.x") or low_obj.vertex_groups.get("pelvis")
             vg_sp1 = low_obj.vertex_groups.get("spine_01.x") or low_obj.vertex_groups.get("spine_01") or vg_root
             limb_tokens = ("thigh", "leg", "calf", "foot", "toes", "ball", "arm", "forearm", "hand", "shoulder", "clavicle")
             limb_vgs = [vg for vg in low_obj.vertex_groups if any(tok in vg.name for tok in limb_tokens)]
             for vi in back_idxs:
-                a = max(0.0, min(1.0, (float(v_co[vi, 1]) - back_y_start) / (0.04 * H)))
+                a = max(0.0, min(1.0, (float(v_co[vi, 1]) - back_y_start) / back_y_span))
                 moved = 0.0
                 for vg in limb_vgs:
                     try:
@@ -2538,6 +3454,160 @@ def _rig_and_export_arp(
                     vg_root.add([vi], moved * (1.0 - 0.5 * t_sp), "ADD")
                     if vg_sp1:
                         vg_sp1.add([vi], moved * (0.5 * t_sp), "ADD")
+            # Smooth tail-to-pelvis boundary across mesh edges so partial transition never creates a single-edge cliff
+            if len(low_obj.data.edges) > 0 and len(low_obj.vertex_groups) > 0:
+                nv_b = len(low_obj.data.vertices)
+                ng_b = len(low_obj.vertex_groups)
+                vgs_b = {vg.index: vg for vg in low_obj.vertex_groups}
+                wb = np.zeros((nv_b, ng_b), dtype=np.float64)
+                for vi, v in enumerate(low_obj.data.vertices):
+                    for g in v.groups:
+                        wb[vi, g.group] = g.weight
+                vg_tw_l = low_obj.vertex_groups.get("thigh_twist.l")
+                vg_tw_r = low_obj.vertex_groups.get("thigh_twist.r")
+                if vg_tw_l is not None and vg_tl_pri is not None and vg_tw_l.index != vg_tl_pri.index:
+                    wb[:, vg_tl_pri.index] += wb[:, vg_tw_l.index]
+                    wb[:, vg_tw_l.index] = 0.0
+                if vg_tw_r is not None and vg_tr_pri is not None and vg_tw_r.index != vg_tr_pri.index:
+                    wb[:, vg_tr_pri.index] += wb[:, vg_tw_r.index]
+                    wb[:, vg_tw_r.index] = 0.0
+                adj_b = [[] for _ in range(nv_b)]
+                for e in low_obj.data.edges:
+                    adj_b[e.vertices[0]].append(e.vertices[1])
+                    adj_b[e.vertices[1]].append(e.vertices[0])
+                # Smooth transition band across all Z while locking clear legs (y <= y_leg_lock) & clear free tail (y > y_free_cut)
+                z_neck_lo = z_hip - 0.14 * H
+                y_leg_lock = min(leg_back_clean + 0.008 * H, back_y_start - 0.024 * H)
+                y_free_cut = max(leg_back_clean, y_hip_clean) + 0.086 * H
+                if vg_root is not None and vg_tl_pri is not None and vg_tr_pri is not None:
+                    vg_cl_k = _find_arp_deform_vg(low_obj, rig, ("leg_stretch.l", "calf_l")) or vg_tl_pri
+                    vg_cr_k = _find_arp_deform_vg(low_obj, rig, ("leg_stretch.r", "calf_r")) or vg_tr_pri
+                    z_knee_k = next((float(b[1].z) for b in lm.get("bones", ()) if b[0] == "calf_l"), z0 + 0.27 * H)
+                    for vi, p in enumerate(v_co):
+                        px, py, pz = float(p[0]), float(p[1]), float(p[2])
+                        if pz >= z_neck_lo or py > y_leg_lock:
+                            continue
+                        try:
+                            wp = vg_root.weight(vi)
+                        except RuntimeError:
+                            wp = 0.0
+                        if wp > 1e-5:
+                            vg_root.remove([vi])
+                            dst_l = (vg_tl_pri if pz >= z_knee_k else vg_cl_k) if px >= 0.0 else (vg_tr_pri if pz >= z_knee_k else vg_cr_k)
+                            dst_l.add([vi], wp, "ADD")
+                            wb[vi, vg_root.index] = 0.0
+                            wb[vi, dst_l.index] += wp
+                smooth_set = set()
+                locked_set = set()
+                for vi in back_idxs:
+                    py_v, pz_v = float(v_co[vi, 1]), float(v_co[vi, 2])
+                    if py_v > y_free_cut and pz_v <= z_hip + 0.05 * H:
+                        locked_set.add(vi)
+                    else:
+                        smooth_set.add(vi)
+                        smooth_set.update(adj_b[vi])
+                for vi in list(smooth_set):
+                    smooth_set.update(adj_b[vi])
+                for vi, p in enumerate(v_co):
+                    if float(p[2]) < z_neck_lo and float(p[1]) <= y_leg_lock:
+                        locked_set.add(vi)
+                smooth_idxs = sorted(smooth_set - locked_set)
+                for _ in range(7):
+                    nxt_b = wb.copy()
+                    for vi in smooth_idxs:
+                        nb = adj_b[vi]
+                        if nb:
+                            nxt_b[vi] = 0.55 * wb[vi] + 0.45 * np.mean(wb[nb], axis=0)
+                    wb = nxt_b
+                for vi in smooth_idxs:
+                    row = wb[vi]
+                    top4 = np.argsort(-row)[:4]
+                    s = float(np.sum(row[top4]))
+                    if s > 1e-6:
+                        tset = set(int(g) for g in top4)
+                        for gi in range(ng_b):
+                            if gi in tset and row[gi] > 1e-5:
+                                vgs_b[gi].add([vi], float(row[gi] / s), "REPLACE")
+                            else:
+                                try:
+                                    vgs_b[gi].remove([vi])
+                                except RuntimeError:
+                                    pass
+
+        # Smooth thigh <-> calf knee weight transitions across z_knee ± 0.052*H so neither LOD0 nor LOD2 creases or folds
+        vg_tl_kn = _find_arp_deform_vg(low_obj, rig, ("thigh_stretch.l", "c_thigh_stretch.l", "thigh.l", "thigh_l"))
+        vg_tr_kn = _find_arp_deform_vg(low_obj, rig, ("thigh_stretch.r", "c_thigh_stretch.r", "thigh.r", "thigh_r"))
+        vg_cl_kn = _find_arp_deform_vg(low_obj, rig, ("leg_stretch.l", "calf_l"))
+        vg_cr_kn = _find_arp_deform_vg(low_obj, rig, ("leg_stretch.r", "calf_r"))
+        if vg_tl_kn and vg_tr_kn and vg_cl_kn and vg_cr_kn and len(low_obj.data.edges) > 0:
+            z_knee_n = next((float(b[1].z) for b in lm.get("bones", ()) if b[0] == "calf_l"), z0 + 0.27 * H)
+            kn_half = 0.052 * H
+            kn_lo = max(z0 + 0.05 * H, z_knee_n - kn_half)
+            kn_hi = min(z_hip - 0.08 * H, z_knee_n + kn_half)
+            if kn_hi > kn_lo + 0.03 * H:
+                vg_twl_k = low_obj.vertex_groups.get("thigh_twist.l")
+                vg_twr_k = low_obj.vertex_groups.get("thigh_twist.r")
+                nv_k = len(low_obj.data.vertices)
+                ng_k = len(low_obj.vertex_groups)
+                vgs_k = {vg.index: vg for vg in low_obj.vertex_groups}
+                wk = np.zeros((nv_k, ng_k), dtype=np.float64)
+                for vi, v in enumerate(low_obj.data.vertices):
+                    for g in v.groups:
+                        wk[vi, g.group] = g.weight
+                if vg_twl_k is not None and vg_twl_k.index != vg_tl_kn.index:
+                    wk[:, vg_tl_kn.index] += wk[:, vg_twl_k.index]
+                    wk[:, vg_twl_k.index] = 0.0
+                if vg_twr_k is not None and vg_twr_k.index != vg_tr_kn.index:
+                    wk[:, vg_tr_kn.index] += wk[:, vg_twr_k.index]
+                    wk[:, vg_twr_k.index] = 0.0
+                kn_idxs = []
+                tail_cut_k = back_y_start + 0.015 * H if back_idxs else 1e9
+                for vi, p in enumerate(v_co):
+                    if vi in tail_island_set:
+                        continue
+                    px, py, pz = float(p[0]), float(p[1]), float(p[2])
+                    if pz < kn_lo or pz > kn_hi or py > tail_cut_k:
+                        continue
+                    ti = vg_tl_kn.index if px >= 0.0 else vg_tr_kn.index
+                    ci = vg_cl_kn.index if px >= 0.0 else vg_cr_kn.index
+                    w_leg_tc = float(wk[vi, ti] + wk[vi, ci])
+                    if w_leg_tc < 0.35:
+                        continue
+                    kn_idxs.append(vi)
+                    tk = max(0.0, min(1.0, (pz - kn_lo) / (kn_hi - kn_lo)))
+                    sm = tk * tk * (3.0 - 2.0 * tk)
+                    tgt_t = w_leg_tc * sm
+                    tgt_c = w_leg_tc - tgt_t
+                    wk[vi, ti] = 0.65 * tgt_t + 0.35 * wk[vi, ti]
+                    wk[vi, ci] = max(0.0, w_leg_tc - wk[vi, ti])
+                if kn_idxs:
+                    adj_k = [[] for _ in range(nv_k)]
+                    for e in low_obj.data.edges:
+                        adj_k[e.vertices[0]].append(e.vertices[1])
+                        adj_k[e.vertices[1]].append(e.vertices[0])
+                    for _ in range(4):
+                        nxt_k = wk.copy()
+                        for vi in kn_idxs:
+                            nb = adj_k[vi]
+                            if nb:
+                                nxt_k[vi] = 0.55 * wk[vi] + 0.45 * np.mean(wk[nb], axis=0)
+                        wk = nxt_k
+                    for vi in kn_idxs:
+                        row = wk[vi]
+                        top4 = np.argsort(-row)[:4]
+                        s = float(np.sum(row[top4]))
+                        if s > 1e-6:
+                            tset = set(int(g) for g in top4)
+                            for gi in range(ng_k):
+                                if gi in tset and row[gi] > 1e-5:
+                                    vgs_k[gi].add([vi], float(row[gi] / s), "REPLACE")
+                                else:
+                                    try:
+                                        vgs_k[gi].remove([vi])
+                                    except RuntimeError:
+                                        pass
+
+        _stabilize_arp_skirt_weights(low_obj, rig, lm, v_co, leg_back_clean)
 
         resolved_anim_glb = anim_glb
         if resolved_anim_glb == "":
@@ -2563,7 +3633,10 @@ def _rig_and_export_arp(
                 bpy.ops.arp.auto_scale()
                 bpy.ops.arp.build_bones_list()
                 bpy.ops.arp.import_config_preset(preset_name="unreal_mannequin_remap")
-                _align_arp_retarget_rest_pose(src_arm, rig)
+                _splay = 0.0
+                if actual_foot_x is not None and actual_foot_x < 0.038 * H:
+                    _splay = min(0.065, max(0.0, (0.058 * H - actual_foot_x) / max(0.030 * H, 1e-4) * 0.055))
+                _align_arp_retarget_rest_pose(src_arm, rig, leg_splay_rad=_splay)
                 bpy.ops.arp.retarget(frame_start=0, frame_end=f_end)
 
             for k in ("rest_transf_offset",):
@@ -2579,6 +3652,8 @@ def _rig_and_export_arp(
                     bpy.data.actions.remove(act, do_unlink=True)
             if keep_act:
                 keep_act.name = action_name
+
+        def_audit = _audit_rig_deformation(rig, low_obj, ret_frames, H)
 
         # Generate re-authored LOD1/LOD2 (clean low-poly + large-block UV + Color*AO) & LOD3 impostor
         lod1_obj = None
@@ -2641,6 +3716,7 @@ def _rig_and_export_arp(
             "action": action_name,
             "frames": ret_frames,
             "fps": int(scn.render.fps),
+            "deformationAudit": def_audit,
         },
         "lod1_stats": collect_stats([lod1_obj]) if lod1_obj is not None else None,
         "lod2_stats": collect_stats([lod2_obj]) if lod2_obj is not None else None,
@@ -2676,6 +3752,7 @@ def _export_rigged_with_lods(
         )
 
     rig, rig_info = build_and_bind_run_rig(low_obj, action_name=action_name, anim_glb=anim_glb)
+    rig_info["deformationAudit"] = _audit_rig_deformation(rig, low_obj, rig_info.get("frames"), float(lm["height"]))
     low_obj.name = "mesh_lod0"
     low_obj["lodLevel"] = 0
     export_objs = [rig, low_obj]
@@ -2806,25 +3883,77 @@ def detect_humanoid_landmarks(obj):
             return Vector((sign_x * abs_x, float(np.median(band[:, 1])), zb))
         return Vector((sign_x * abs_x, 0.0, z_arm_mid))
 
-    # Measure crotch & legs from front/mid lower body (exclude trailing cape/tail Y > +0.14*H)
+    # Measure crotch & legs from front/mid lower body (exclude trailing cape/tail behind calf depth)
+    shin_y_band = co[(co[:, 2] >= z_min + 0.14 * H) & (co[:, 2] <= z_min + 0.34 * H)]
+    if is_tall_humanoid and len(shin_y_band) >= 6:
+        y_leg_lim = min(0.14 * H, float(np.percentile(shin_y_band[:, 1], 15)) + 0.16 * H)
+    else:
+        y_leg_lim = 0.24 * H if not is_tall_humanoid else 0.14 * H
     crotch_top_frac = min(0.54, max(0.32, z_arm_rel - 0.16))
-    lower_mid = co[(co[:, 2] >= z_min + 0.10 * H) & (co[:, 2] <= z_arm_mid - 0.06 * H) & (co[:, 1] <= 0.14 * H)]
+    lower_mid = co[(co[:, 2] >= z_min + 0.10 * H) & (co[:, 2] <= z_arm_mid - 0.06 * H) & (co[:, 1] <= y_leg_lim)]
     z_crotch = z_min + (0.45 if is_tall_humanoid else 0.28) * H
     crotch_found = False
-    for frac in np.linspace(crotch_top_frac, 0.14, 28):
-        zt = z_min + float(frac) * H
-        center_gap = lower_mid[(np.abs(lower_mid[:, 2] - zt) <= 0.02 * H) & (np.abs(lower_mid[:, 0]) <= 0.025 * H)]
-        if len(center_gap) == 0:
-            z_crotch = zt
-            crotch_found = True
-            break
+    # Prefer topological L/R leg separation (distinguishes narrow thigh gaps from closed skirts & low-poly chubby bellies)
+    if len(obj.data.edges) > 0:
+        adj_c = [[] for _ in range(n)]
+        for e in obj.data.edges:
+            va, vb = e.vertices[0], e.vertices[1]
+            adj_c[va].append(vb)
+            adj_c[vb].append(va)
+        cand_mask = co[:, 1] <= y_leg_lim
+        scan_fracs = (
+            np.linspace(min(0.52, crotch_top_frac), 0.34, 19)
+            if is_tall_humanoid
+            else np.linspace(min(0.42, crotch_top_frac), 0.14, 29)
+        )
+        min_comp_v = 24 if is_tall_humanoid else 12
+        max_leg_z0 = z_min + (0.30 if is_tall_humanoid else 0.16) * H
+        for frac in scan_fracs:
+            zc_t = z_min + float(frac) * H
+            below_t = cand_mask & (co[:, 2] < zc_t)
+            vis_c = np.zeros(n, dtype=bool)
+            has_l = False
+            has_r = False
+            for start in np.nonzero(below_t)[0]:
+                if vis_c[start]:
+                    continue
+                stack_c = [int(start)]
+                vis_c[start] = True
+                comp_c = []
+                while stack_c:
+                    uc = stack_c.pop()
+                    comp_c.append(uc)
+                    for wc in adj_c[uc]:
+                        if not vis_c[wc] and below_t[wc]:
+                            vis_c[wc] = True
+                            stack_c.append(wc)
+                if len(comp_c) >= min_comp_v:
+                    c_pts = co[comp_c]
+                    if float(c_pts[:, 2].min()) <= max_leg_z0:
+                        med_x = float(np.median(c_pts[:, 0]))
+                        if med_x > 0.025 * H:
+                            has_l = True
+                        elif med_x < -0.025 * H:
+                            has_r = True
+            if has_l and has_r:
+                z_crotch = zc_t + 0.008 * H
+                crotch_found = True
+                break
+    if not crotch_found:
+        for frac in np.linspace(crotch_top_frac, 0.14, 28):
+            zt = z_min + float(frac) * H
+            center_gap = lower_mid[(np.abs(lower_mid[:, 2] - zt) <= 0.024 * H) & (np.abs(lower_mid[:, 0]) <= 0.025 * H)]
+            if len(center_gap) == 0:
+                z_crotch = zt + 0.020 * H
+                crotch_found = True
+                break
 
     if is_tall_humanoid:
-        # Proportional humanoids (even wearing skirts/coats/fused trousers) keep hip pivot at 45-51% stature
+        # Proportional & short-legged tall anthros with open crotch keep hip pivot ~4.5% H above crotch
         z_hip_est = z_min + min(0.505, max(0.455, 0.625 * z_arm_rel)) * H
         crotch_rel = (z_crotch - z_min) / H
-        if crotch_found and 0.41 <= crotch_rel <= 0.52:
-            z_hip = min(0.51 * H + z_min, max(0.45 * H + z_min, z_crotch + 0.03 * H))
+        if crotch_found and 0.34 <= crotch_rel <= 0.52:
+            z_hip = min(0.515 * H + z_min, max(0.385 * H + z_min, z_crotch + 0.045 * H))
         else:
             z_hip = z_hip_est
     else:
@@ -2838,7 +3967,7 @@ def detect_humanoid_landmarks(obj):
     leg_band = co[
         (co[:, 2] >= z_ankle)
         & (co[:, 2] <= leg_band_top)
-        & (co[:, 1] <= 0.14 * H)
+        & (co[:, 1] <= y_leg_lim)
         & (np.abs(co[:, 0]) >= 0.025 * H)
         & (np.abs(co[:, 0]) <= leg_x_hi)
     ]
@@ -2893,11 +4022,16 @@ def detect_humanoid_landmarks(obj):
 
     # Trailing cape/tail detection for rigid weight locking behind torso
     leg_back_y = float(np.percentile(leg_band[:, 1], 92)) if len(leg_band) >= 6 else y_torso + 0.07 * H
-    # Core (cape-free) back surface of the legs: leg centre line + typical leg half-thickness
-    leg_core = co[(co[:, 2] >= z_ankle + 0.03 * H) & (co[:, 2] <= z_knee) & (np.abs(np.abs(co[:, 0]) - lx) <= 0.05 * H)]
+    # Core (cape-free) back surface of the legs: directly measure rear calf envelope excluding center tail/hair
+    leg_core = co[
+        (co[:, 2] >= z_ankle + 0.03 * H)
+        & (co[:, 2] <= z_knee)
+        & (np.abs(np.abs(co[:, 0]) - lx) <= 0.045 * H)
+        & (np.abs(co[:, 0]) >= max(0.035 * H, lx - 0.02 * H))
+    ]
     if len(leg_core) >= 6:
-        leg_r = float(np.percentile(np.abs(leg_core[:, 1] - ly), 60))
-        leg_core_back_y = ly + min(max(leg_r, 0.03 * H), 0.09 * H)
+        # Use 75th percentile when a tail may widen into calf X so tail tips do not inflate leg_back
+        leg_core_back_y = float(np.percentile(leg_core[:, 1], 75))
     else:
         leg_core_back_y = leg_back_y
     app_back_y = min(leg_back_y, leg_core_back_y)
@@ -2908,6 +4042,7 @@ def detect_humanoid_landmarks(obj):
         "legs": app_back_y,
         "torso": max(app_back_y, torso_back_y),
         "z_hip": z_hip,
+        "z_knee": z_knee,
         "tall": is_tall_humanoid,
         "margin": 0.065 * H if is_tall_humanoid else 0.03 * H,
     }
@@ -2921,8 +4056,18 @@ def detect_humanoid_landmarks(obj):
             mid_cnt = int(np.sum(np.abs(sl[:, 0]) <= 0.025 * H))
             if len(sl) >= 8 and mid_cnt >= 4:
                 half_w = float(np.percentile(np.abs(sl[:, 0]), 92))
-                if float(zt) <= z_min + 0.25 * H or half_w >= max(0.145 * H, lx * 1.38):
+                y_depth = float(np.percentile(sl[:, 1], 92) - np.percentile(sl[:, 1], 8))
+                if half_w >= max(0.145 * H, lx * 1.38) or y_depth >= 0.19 * H:
                     closed_zs.append(float(zt))
+        # Keep only the contiguous skirt run extending down from the hips so touching calves never extend sk_lo
+        if closed_zs:
+            closed_desc = sorted(closed_zs, reverse=True)
+            contig = [closed_desc[0]]
+            for zc in closed_desc[1:]:
+                if contig[-1] - zc > 0.075 * H:
+                    break
+                contig.append(zc)
+            closed_zs = contig
         if len(closed_zs) >= 3 and (max(closed_zs) - min(closed_zs)) >= 0.05 * H:
             skirt_band = (min(closed_zs) - 0.015 * H, z_hip + 0.02 * H)
 
@@ -2966,6 +4111,7 @@ def detect_humanoid_landmarks(obj):
         "z_neck": z_neck,
         "z_head_base": z_head_base,
         "z_hip": z_hip,
+        "z_crotch": float(z_crotch) if crotch_found else None,
         "x_sh": x_sh,
         "w_mid": w_mid,
         "lx": lx,
@@ -2979,13 +4125,35 @@ def detect_humanoid_landmarks(obj):
     }
 
 
-def _appendage_alpha(co, H, z_arm, z_neck, x_sh, back, kind):
+def _appendage_base_y(co, H, back, kind=None):
+    """Smooth rear body surface Y threshold so chibi tail detection never steps forward at z_hip."""
+    import numpy as np
+
+    margin = float(back.get("margin", 0.03 * H))
+    if back.get("tall"):
+        if kind is None:
+            return max(back["legs"], back["torso"]) + margin
+        return np.where(co[:, 2] < back["z_hip"], back["legs"], back["torso"]) + margin
+    if kind == "cape" and back.get("tall"):
+        return back["legs"] + margin
+    z_hip = float(back["z_hip"])
+    z_knee = float(back.get("z_knee", z_hip - 0.14 * H))
+    t_thigh = np.clip((z_hip - co[:, 2]) / max(z_hip - z_knee, 0.05 * H), 0.0, 1.0)
+    body_back = float(back["torso"]) * (1.0 - t_thigh) + float(back["legs"]) * t_thigh
+    return body_back + margin
+
+
+def _appendage_alpha(co, H, z_arm, z_neck, x_sh, back, kind, attach_x=0.0, spread=0.0):
     """Per-vertex membership [0..1] of the trailing cape/tail region behind the legs and torso."""
     import numpy as np
-    margin = float(back.get("margin", 0.03 * H))
-    base = np.where(co[:, 2] < back["z_hip"], back["legs"], back["torso"]) + margin
+
+    base = _appendage_base_y(co, H, back, kind=kind)
     alpha = np.clip((co[:, 1] - base) / (0.05 * H), 0.0, 1.0)
-    x_gate = np.clip((x_sh * 0.95 - np.abs(co[:, 0])) / max(0.12 * x_sh, 1e-4), 0.0, 1.0)
+    if kind == "tail" and spread > 1e-4:
+        lat_lim = min(x_sh * 0.90, max(0.055 * H, 0.78 * spread))
+        x_gate = np.clip((lat_lim - np.abs(co[:, 0] - attach_x)) / max(0.025 * H, 1e-4), 0.0, 1.0)
+    else:
+        x_gate = np.clip((x_sh * 0.95 - np.abs(co[:, 0])) / max(0.12 * x_sh, 1e-4), 0.0, 1.0)
     lower = co[:, 2] <= z_arm - 0.02 * H
     if kind == "cape":
         upper = (co[:, 2] > z_arm - 0.02 * H) & (co[:, 2] <= z_neck - 0.01 * H)
@@ -3000,12 +4168,7 @@ def _detect_back_appendage(co, H, z_hip, z_arm, z_neck, x_sh, back, segments=3):
     import numpy as np
     from mathutils import Vector
 
-    margin = float(back.get("margin", 0.03 * H))
-    if back.get("tall"):
-        # Tall humanoids only detect true capes/tails protruding behind torso back or upper back (avoids lower-leg skirts)
-        base = max(back["legs"], back["torso"]) + margin
-    else:
-        base = np.where(co[:, 2] < back["z_hip"], back["legs"], back["torso"]) + margin
+    base = _appendage_base_y(co, H, back, kind=None)
     x_gate = np.clip((x_sh * 0.95 - np.abs(co[:, 0])) / max(0.12 * x_sh, 1e-4), 0.0, 1.0)
     z_lo_gate = (co[:, 2] >= back["z_hip"] + 0.02 * H) if back.get("tall") else True
     low_alpha = np.clip((co[:, 1] - base) / (0.05 * H), 0.0, 1.0) * (co[:, 2] <= z_arm - 0.02 * H) * x_gate * z_lo_gate
@@ -3016,12 +4179,16 @@ def _detect_back_appendage(co, H, z_hip, z_arm, z_neck, x_sh, back, segments=3):
     leg_pts = low_pts[low_pts[:, 2] < z_hip + 0.1 * H]
     spread = float(np.percentile(leg_pts[:, 0], 95) - np.percentile(leg_pts[:, 0], 5)) if len(leg_pts) >= 8 else 0.0
     kind = "cape" if spread >= 0.9 * x_sh else "tail"
-    if kind == "cape" and not back.get("tall"):
-        back = dict(back, torso=back["legs"])
     alpha = _appendage_alpha(co, H, z_arm, z_neck, x_sh, back, kind)
     pts = co[alpha >= 0.5]
     if len(pts) < 24:
         return None
+    if kind == "cape":
+        z_top_p95 = float(np.percentile(pts[:, 2], 95))
+        z_bot_p05 = float(np.percentile(pts[:, 2], 5))
+        # Real capes drape from upper torso/shoulders down the back, not short waist tunics
+        if z_top_p95 < z_arm - 0.12 * H or (z_top_p95 - z_bot_p05) < 0.20 * H:
+            return None
 
     # Attachment: cape hangs from the shoulder line, tail from the highest 10% of its region (pelvis)
     z_cut = float(np.percentile(pts[:, 2], 90))
@@ -3544,18 +4711,17 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
                 vg_hips.add([idx], give, "ADD")
 
     # Soft-blend genuine trailing back protrusion toward spine_01/pelvis without clobbering human backs or arms
-    back_ref = max(lm["leg_back_y"], lm["app_back"]["torso"]) if lm.get("is_tall_humanoid") else lm["leg_back_y"]
-    back_y_start = back_ref + float(lm["app_back"].get("margin", 0.03 * H))
+    back_y_arr = _appendage_base_y(p_co, H, lm["app_back"], kind="tail")
     back_y_span = 0.05 * H
     mask_back = (
         (p_co[:, 2] <= lm["z_arm"] - 0.02 * H)
-        & (p_co[:, 1] > back_y_start)
+        & (p_co[:, 1] > back_y_arr)
         & (np.abs(p_co[:, 0]) <= lm["x_sh"] * 0.95)
     )
     back_idx = np.nonzero(mask_back)[0]
     if len(back_idx) > 0:
         for idx in back_idx.tolist():
-            alpha = max(0.0, min(1.0, (float(p_co[idx, 1]) - back_y_start) / back_y_span))
+            alpha = max(0.0, min(1.0, (float(p_co[idx, 1]) - float(back_y_arr[idx])) / back_y_span))
             for vg in p_vgroups:
                 if vg.name in ("spine_01", "pelvis"):
                     continue
@@ -3619,7 +4785,17 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
     # Bind trailing cape/tail onto its own 3-bone chain: rigid follow of parent at the root, no leg/arm pull
     chain_verts = 0
     if appendage:
-        app_alpha = _appendage_alpha(p_co, H, lm["z_arm"], lm["z_neck"], lm["x_sh"], appendage["back"], appendage["kind"])
+        app_alpha = _appendage_alpha(
+            p_co,
+            H,
+            lm["z_arm"],
+            lm["z_neck"],
+            lm["x_sh"],
+            appendage["back"],
+            appendage["kind"],
+            attach_x=float(appendage["attach"][0]),
+            spread=float(appendage.get("spread", 0.0)),
+        )
         attach = np.array(appendage["attach"], dtype=np.float64)
         app_len = max(float(appendage["length"]), 1e-4)
         n_seg = len(appendage["names"])
@@ -3634,7 +4810,7 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
                 cw[0] = 1.0
             if t * n_seg >= n_seg - 0.5:
                 cw[-1] = 1.0
-            pw = max(0.0, 1.0 - t / 0.12)
+            pw = max(0.0, 1.0 - t / 0.25)
             tot = sum(cw) + pw
             cw = [w / tot for w in cw]
             pw /= tot
@@ -3653,6 +4829,46 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
             if pw > 1e-4:
                 vg_parent.add([idx], a * pw, "ADD")
             chain_verts += 1
+
+        # Smooth tail/cape root seam across welded edges so buttock/hip attachment never tears
+        seam_idxs = np.nonzero((app_alpha > 1e-3) & (app_alpha < 0.999))[0].tolist()
+        if seam_idxs and len(proxy.data.edges) > 0:
+            ng_s = len(p_vgroups)
+            nv_s = len(proxy.data.vertices)
+            w_s = np.zeros((nv_s, ng_s), dtype=np.float64)
+            for vi, v in enumerate(proxy.data.vertices):
+                for g in v.groups:
+                    if 0 <= g.group < ng_s:
+                        w_s[vi, g.group] = g.weight
+            adj_s = [[] for _ in range(nv_s)]
+            for e in proxy.data.edges:
+                a_e, b_e = e.vertices[0], e.vertices[1]
+                adj_s[a_e].append(b_e)
+                adj_s[b_e].append(a_e)
+            ring_set = set(seam_idxs)
+            for vi in seam_idxs:
+                ring_set.update(adj_s[vi])
+            ring_list = sorted(ring_set)
+            for _ in range(3):
+                nxt_s = w_s.copy()
+                for vi in ring_list:
+                    nb = adj_s[vi]
+                    if nb:
+                        nxt_s[vi] = 0.55 * w_s[vi] + 0.45 * np.mean(w_s[nb], axis=0)
+                w_s = nxt_s
+            for vi in ring_list:
+                row = w_s[vi]
+                s_tot = float(np.sum(row))
+                if s_tot > 1e-6:
+                    row = row / s_tot
+                    for gi, vg in enumerate(p_vgroups):
+                        if row[gi] > 1e-3:
+                            vg.add([vi], float(row[gi]), "REPLACE")
+                        else:
+                            try:
+                                vg.remove([vi])
+                            except RuntimeError:
+                                pass
 
     bpy.ops.object.select_all(action="DESELECT")
     proxy.select_set(True)
@@ -3848,7 +5064,14 @@ def cmd_rig_run(args):
     rendered = []
     if args.qa_dir:
         os.makedirs(args.qa_dir, exist_ok=True)
-        for frame_num in (6, 18):
+        da = rig_info.get("deformationAudit") or {}
+        qa_frames = []
+        for fn in (da.get("leftPeakFrame"), da.get("rightPeakFrame"), 6, 18):
+            if isinstance(fn, int) and fn not in qa_frames:
+                qa_frames.append(fn)
+            if len(qa_frames) >= 2:
+                break
+        for frame_num in qa_frames:
             bpy.context.scene.frame_set(frame_num)
             bpy.context.view_layer.update()
             sub_dir = os.path.join(args.qa_dir, f"f{frame_num:02d}")

@@ -132,7 +132,17 @@ curl -X POST "http://127.0.0.1:4174/api/character-models?characterId=<id>&mode=h
 
 当日提交前做了三遍复核 + 后台 100 轮审计（91 个图像文件 SHA256 快照零变更、切图判定零翻转）；gemini/qianwen/dafeiyu 三单由后台编排器（`build/hunyuan-debug/pipeline-orchestrator.mjs`，≤2 并发排队 + 采集 + 登记）自动完成，预览图已统一目检无误；同日 8 角色统一 T5 低模（`LOD0` PBR + `LOD1 2400/256px/4w` + `LOD2 1200/128px/2w` + `LOD3 2-tri Run-Only` + Auto-Rig Pro `PSEUDO_VOXELS` 23 骨 Anim58 `Run`）已全部烘焙登记并通过 `verify-character-lods.mjs`；脚本坑与防御见「注意」。
 
-**剩余待生成（0 个）**：22 角色已全部具备高模与统一 T5 低模（2026-11-23 收尾）。备用项：gpt、grok、doubao 的高模为 11-21 长裙版、与 low 模服装不一致，其 `tpose-wide-20261123` 切图已重切并像素验证通过，如需服装统一替换（各耗 1 次配额）待用户决定。
+**2026-11-24 批量轮**（多视图2张 · V3.1 · 1.5m，全部 `success` 且预览图目检、GLB 魔数 `676c5446` 校验与 WebAsset API 登记通过）：
+
+| 角色 | 大小 | assetId | creationId | 登记 |
+|---|---|---|---|---|
+| 绅士猫 character-ed9e058a | 71.4MB | `648e14a3-33c1-40ed-bd2f-af5a825a9697` | `986d1843-e528-4cde-9b15-c8df6ea4ac5b` | `high-744e8dfc` / `low-72db986b` |
+| 美团 character-c720f1c1 | 67.7MB | `f293d7e0-31ee-42b8-b890-a3b4da8bac96` | `fc6bef13-57e9-4c32-9c8f-d3333bf796ef` | `high-ffd7e6e4` / `low-65cc0c1e` |
+| 牛来 character-0f8629b1 | 69.4MB | `1e33fc0f-8245-4cc8-8f0f-32edafca4740` | `c15c0ef7-52b1-400e-abaf-1bcb2cc8dc59` | `high-170385f2` / `low-f33c0b0a` |
+| 刘华强 liuhuaqiang（握拳重制） | 65.5MB | `5a8463bb-4695-4dc2-a9f0-8d0fbab1994c` | `7793b0c7-0ee4-4b1b-8b5f-ec5b2a83a6a6` | `high-caae4b64` / `low-ab8140f8` |
+| 奶蛙 naiwa（握拳重制） | 67.3MB | `4dc071ee-837b-41b0-a649-17ec54970d5e` | `a00b6867-6c3e-4cfc-abfb-9fd5c0a25929` | `high-e4598579` / `low-bffa69f6` |
+
+**剩余待生成（0 个）**：全库 25 个角色已全部具备高模与 `LOD0/1/2` 低模（2026-11-25 收尾）。备用项：gpt、grok、doubao 的高模为 11-21 长裙版、与 low 模服装不一致，其 `tpose-wide-20261123` 切图已重切并像素验证通过，如需服装统一替换（各耗 1 次配额）待用户决定。
 
 ## 注意
 

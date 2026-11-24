@@ -545,7 +545,7 @@ test('resolveLowPolyPreset enforces unified T5 (<=7500 verts / <=6000 tris) and 
   assert.equal(lowArgs[lowArgs.indexOf('--target-quads') + 1], '2800');
   assert.equal(lowArgs[lowArgs.indexOf('--lod1-tris') + 1], '2400');
   assert.equal(lowArgs[lowArgs.indexOf('--lod2-tris') + 1], '1200');
-  assert.ok(lowArgs.includes('--lod3-tight'));
+  assert.equal(lowArgs.includes('--lod3-tight'), false);
   assert.equal(lowArgs[lowArgs.indexOf('--texture-size') + 1], '1024');
 });
 
@@ -571,7 +571,7 @@ test('buildBlenderRemeshBakeArgs forwards --rig-run and buildBlenderRigRunArgs t
   assert.equal(rigArgs[rigArgs.indexOf('--rig-engine') + 1], 'auto');
   assert.equal(rigArgs[rigArgs.indexOf('--lod1-tris') + 1], '2400');
   assert.equal(rigArgs[rigArgs.indexOf('--lod2-tris') + 1], '1200');
-  assert.ok(rigArgs.includes('--lod3-tight'));
+  assert.equal(rigArgs.includes('--lod3-tight'), false);
   assert.ok(rigArgs.includes('--qa-dir'));
   assert.equal(rigArgs[rigArgs.indexOf('--size') + 1], '512');
 
@@ -673,7 +673,7 @@ test('assertCleanTopology enforces watertight zero-debris gate, 16-bit 65535 cap
     assert.equal(plans.lowArgs[plans.lowArgs.indexOf('--target-quads') + 1], '2800');
     assert.equal(plans.lowArgs[plans.lowArgs.indexOf('--lod1-tris') + 1], '2400');
     assert.equal(plans.lowArgs[plans.lowArgs.indexOf('--lod2-tris') + 1], '1200');
-    assert.ok(plans.lowArgs.includes('--lod3-tight'));
+    assert.equal(plans.lowArgs.includes('--lod3-tight'), false);
     assert.ok(plans.lowArgs.includes('--rig-run'));
     assert.ok(plans.lowArgs.some((a) => a.endsWith('low')));
   } finally {

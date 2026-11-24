@@ -40,7 +40,7 @@ export const CHARACTER_POLY_PRESETS = Object.freeze({
     maxVertices: 7500,
     lod1TargetTris: T5_LOD1_TARGET_TRIS,
     lod2TargetTris: T5_LOD2_TARGET_TRIS,
-    lod3Tight: true,
+    lod3Tight: false,
     textureSize: 1024,
     normalStrength: 0.25,
   }),
@@ -50,7 +50,7 @@ export const CHARACTER_POLY_PRESETS = Object.freeze({
     maxVertices: 10000,
     lod1TargetTris: T5_LOD1_TARGET_TRIS,
     lod2TargetTris: T5_LOD2_TARGET_TRIS,
-    lod3Tight: true,
+    lod3Tight: false,
     textureSize: 1024,
     normalStrength: 0.25,
   }),
@@ -1301,7 +1301,7 @@ export function buildBlenderRigRunArgs(inputPath, outPath, flags = {}) {
   if (Number(lod1Tris) > 0) args.push('--lod1-tris', String(lod1Tris));
   const lod2Tris = flags['no-lod2'] ? 0 : (flags['lod2-tris'] ?? flags.lod2Tris ?? T5_LOD2_TARGET_TRIS);
   if (Number(lod2Tris) > 0) args.push('--lod2-tris', String(lod2Tris));
-  if (!flags['no-lod3'] && Boolean(flags['lod3-tight'] ?? flags.lod3Tight ?? true)) args.push('--lod3-tight');
+  if (!flags['no-lod3'] && Boolean(flags['lod3-tight'] ?? flags.lod3Tight ?? false)) args.push('--lod3-tight');
   if (flags['qa-dir'] || flags.qaDir) {
     args.push('--qa-dir', assertAsciiPath(path.resolve(flags['qa-dir'] || flags.qaDir), 'QA render dir'));
   }

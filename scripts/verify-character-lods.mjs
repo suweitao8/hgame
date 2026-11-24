@@ -171,7 +171,7 @@ export function inspectAndVerifyCharacterGlb(glbPath) {
     }
   }
 
-  for (const req of [0, 1, 2, 3]) {
+  for (const req of [0, 1, 2]) {
     if (!levels[req]) errors.push(`Missing required LOD${req} mesh in ${path.basename(absPath)}`);
   }
 

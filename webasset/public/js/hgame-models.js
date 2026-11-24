@@ -1,12 +1,16 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import {
   createWorldPbrMaterial,
   loadHdriEnvironment,
   PbrTextureArrayLoader,
 } from './realistic-pcg.js';
-import { applyCatalogMaterialToObject } from './test-scenes/showcase-common.js';
+import { applyCatalogMaterialToObject, formatCategoryLabel } from './test-scenes/showcase-common.js';
 import {
   apiRequestJson,
   createSidebarSquareCard,
@@ -34,6 +38,7 @@ const uvControlsEl = document.querySelector('#hgame-model-uv-controls');
 const uvMeshSelect = document.querySelector('#hgame-model-uv-mesh');
 const wireframeInput = document.querySelector('#hgame-model-wireframe');
 const gridInput = document.querySelector('#hgame-model-grid');
+const bloomInput = document.querySelector('#hgame-model-bloom');
 
 const gltfLoader = new GLTFLoader();
 gltfLoader.setMeshoptDecoder(MeshoptDecoder);
@@ -52,6 +57,9 @@ let currentMesh = null;
 let currentUvTarget = null;
 let manifestReady = false;
 let loadSeq = 0;
+let listLimit = 80;
+let composer = null;
+let bloomPass = null;
 
 if (uploadButton) uploadButton.hidden = true;
 if (deleteButton) deleteButton.hidden = true;
@@ -60,6 +68,28 @@ if (paramControlsEl) paramControlsEl.hidden = true;
 function ensureViewport() {
   if (!viewport) {
     viewport = createThreeViewport(stageEl, { background: 0x161c15, grid: gridInput?.checked ?? true, shadows: true });
+    const w = Math.max(1, stageEl?.clientWidth || 640);
+    const h = Math.max(1, stageEl?.clientHeight || 420);
+    const rt = new THREE.WebGLRenderTarget(w, h, {
+      type: THREE.HalfFloatType,
+      samples: 4,
+    });
+    composer = new EffectComposer(viewport.renderer, rt);
+    composer.addPass(new RenderPass(viewport.scene, viewport.camera));
+    bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.16, 0.16, 2.45);
+    composer.addPass(bloomPass);
+    composer.addPass(new OutputPass());
+    viewport.setOnResize((nw, nh) => {
+      composer?.setSize(nw, nh);
+      bloomPass?.setSize(nw, nh);
+    });
+    viewport.setRenderOverride(() => {
+      if (bloomInput?.checked && composer) {
+        composer.render();
+      } else {
+        viewport.renderer.render(viewport.scene, viewport.camera);
+      }
+    });
   }
   return viewport;
 }
@@ -99,7 +129,7 @@ function populateFilter() {
   }
   const opts = [{ value: 'all', label: `全部静态 GLB (${modelCatalog.length})` }];
   for (const [grp, count] of groups) {
-    opts.push({ value: `group:${grp}`, label: `${grp} (${count})` });
+    opts.push({ value: `group:${grp}`, label: `${formatCategoryLabel(grp)} (${count})` });
   }
   filterSelect.replaceChildren();
   for (const o of opts) {
@@ -109,6 +139,44 @@ function populateFilter() {
     filterSelect.append(el);
   }
   filterSelect.value = opts.some(o => o.value === prev) ? prev : 'all';
+}
+
+function updateActiveListItem() {
+  if (!listEl) return;
+  for (const btn of listEl.querySelectorAll('button[data-model-id]')) {
+    btn.setAttribute('aria-current', btn.dataset.modelId === selectedId ? 'true' : 'false');
+  }
+}
+
+function appendListBatch(items, startIdx, endIdx) {
+  const slice = items.slice(startIdx, endIdx);
+  for (const item of slice) {
+    const relPath = item.path || item.lods?.[0]?.path || '';
+    const { button, thumbBox, fallbackEl } = createSidebarSquareCard({
+      name: item.name || item.id,
+      badge: item.tier || 'GLB',
+      active: item.id === selectedId,
+      onClick: () => selectModel(item.id),
+    });
+    button.dataset.modelId = item.id;
+    listEl.append(button);
+    if (relPath) {
+      requestGlbSquareThumb(`/assets/cn/${relPath}`, thumbBox, fallbackEl);
+    }
+  }
+  if (items.length > endIdx) {
+    const moreBtn = document.createElement('button');
+    moreBtn.type = 'button';
+    moreBtn.className = 'hgame-load-more';
+    moreBtn.textContent = `加载更多 (${endIdx}/${items.length})`;
+    moreBtn.addEventListener('click', () => {
+      moreBtn.remove();
+      const prevLimit = listLimit;
+      listLimit += 80;
+      appendListBatch(items, prevLimit, listLimit);
+    });
+    listEl.append(moreBtn);
+  }
 }
 
 function renderList() {
@@ -121,6 +189,8 @@ function renderList() {
     if (!query) return true;
     return (
       m.id.toLowerCase().includes(query) ||
+      (m.name || '').toLowerCase().includes(query) ||
+      (m.nameEn || '').toLowerCase().includes(query) ||
       (m.tags || []).some(t => t.toLowerCase().includes(query)) ||
       (m.quadrants || []).some(q => q.toLowerCase().includes(query))
     );
@@ -135,19 +205,7 @@ function renderList() {
     return;
   }
 
-  for (const item of items) {
-    const relPath = item.path || item.lods?.[0]?.path || '';
-    const { button, thumbBox, fallbackEl } = createSidebarSquareCard({
-      name: item.id,
-      badge: item.tier || 'GLB',
-      active: item.id === selectedId,
-      onClick: () => selectModel(item.id),
-    });
-    if (relPath) {
-      requestGlbSquareThumb(`/assets/cn/${relPath}`, thumbBox, fallbackEl);
-    }
-    listEl.append(button);
-  }
+  appendListBatch(items, 0, listLimit);
 }
 
 function bindArrayMaterials(root, entry) {
@@ -192,7 +250,7 @@ function setEmbeddedLodVisibility(root, targetLevel = 0) {
 
 async function selectModel(id) {
   selectedId = id || '';
-  renderList();
+  updateActiveListItem();
   const entry = modelCatalog.find(m => m.id === selectedId);
   const relPath = entry?.path || entry?.lods?.[0]?.path;
   const lod0 = entry?.lods?.[0];
@@ -205,12 +263,15 @@ async function selectModel(id) {
   }
 
   if (emptyEl) emptyEl.hidden = true;
-  if (titleEl) titleEl.textContent = `${entry.id} (${entry.tier})`;
+  if (titleEl) {
+    titleEl.textContent = entry.name || entry.id;
+  }
   const glbUrl = `/assets/cn/${relPath}`;
   if (downloadEl) {
     downloadEl.href = glbUrl;
     downloadEl.download = `${entry.id}.glb`;
-    downloadEl.textContent = `${entry.id}.glb (${entry.fileKB || lod0?.fileKB || 0} KB)`;
+    downloadEl.textContent = entry.nameEn || entry.id;
+    downloadEl.title = `${entry.id}.glb (${entry.fileKB || lod0?.fileKB || 0} KB)`;
     downloadEl.hidden = false;
   }
 
@@ -238,9 +299,7 @@ async function selectModel(id) {
   }
 
   vp.frameObject(root);
-  const b = entry.bounds?.size || [0, 0, 0];
-  const lodSummary = (entry.lods || []).map(l => `L${l.level}:${l.tris}`).join('/');
-  statusEl.textContent = `${lodSummary || `${lod0?.tris || 0} tris`} · ${lod0?.gpuVerts || 0} 顶点 · ${lod0?.submeshes || 1} Submesh · ${b[0].toFixed(2)}×${b[1].toFixed(2)}×${b[2].toFixed(2)}m`;
+  statusEl.textContent = `${lod0?.gpuVerts || 0} 顶点`;
   if (activeViewMode === 'uv' && currentUvTarget) {
     if (uvControlsEl) uvControlsEl.hidden = false;
     drawUvWireframe(uvCanvas, currentUvTarget, statusEl);
@@ -290,12 +349,21 @@ async function loadCnModelLibrary() {
 function init() {
   if (initialized) return;
   initialized = true;
-  searchInput?.addEventListener('input', renderList);
-  filterSelect?.addEventListener('change', renderList);
+  searchInput?.addEventListener('input', () => { listLimit = 80; renderList(); });
+  filterSelect?.addEventListener('change', () => { listLimit = 80; renderList(); });
   wireframeInput?.addEventListener('change', () => {
     const wire = Boolean(wireframeInput.checked);
     if (worldMat) worldMat.material.wireframe = wire;
     if (glassMat) glassMat.material.wireframe = wire;
+    if (currentMesh) {
+      currentMesh.traverse(obj => {
+        if (!obj.isMesh || !obj.material) return;
+        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (const m of mats) {
+          if (m.userData?.sharedSpecial) m.wireframe = wire;
+        }
+      });
+    }
   });
   gridInput?.addEventListener('change', () => {
     if (viewport) viewport.gridHelper.visible = Boolean(gridInput.checked);

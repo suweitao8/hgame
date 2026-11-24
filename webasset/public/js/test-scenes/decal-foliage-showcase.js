@@ -169,7 +169,13 @@ export async function buildDecalFoliageShowcaseScene({
             ? baseSurfaceStats.wall
             : (baseLayer === asphaltLayer ? baseSurfaceStats.asphalt : baseSurfaceStats.concrete);
           const sourceStats = sampleImageHsvStats(assets.colorImg, { skipDarkCrevices: true });
-          built.setHsvMatch({ targetStats, sourceStats, strength: defHsv.amount, creviceProtect: true });
+          built.setHsvMatch({
+            targetStats,
+            sourceStats,
+            valStrength: defHsv.val,
+            tintStrength: defHsv.tint,
+            creviceProtect: true,
+          });
         }
         disposables.push(built.material, built.colorTex, built.normRmTex);
 

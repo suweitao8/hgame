@@ -94,6 +94,24 @@
       "texSize": { "master": 1024, "pc": 1024, "mobile_ktx2": 1024, "mobile_webp": 512 },
       "lod": { "levels": [1.0, 0.35, 0.12], "lod2MergeSubmeshes": true, "thresholds": [0.18, 0.06], "cull": 0.008 }
     },
+    "T_WEP": {
+      "maxTris": 18000,
+      "maxGpuVerts": 30000,
+      "maxSubmeshes": 5,
+      "maxFileKB": 450,
+      "textureMode": "array_override",
+      "texSize": { "master": 512, "pc": 512, "mobile_ktx2": 256, "mobile_webp": 256 },
+      "lod": { "levels": [1.0], "thresholds": [], "cull": 0.005 }
+    },
+    "T_PROP": {
+      "maxTris": 45000,
+      "maxGpuVerts": 65535,
+      "maxSubmeshes": 6,
+      "maxFileKB": 1200,
+      "textureMode": "array_override",
+      "texSize": { "master": 512, "pc": 512, "mobile_ktx2": 256, "mobile_webp": 256 },
+      "lod": { "levels": [1.0], "thresholds": [], "cull": 0.005 }
+    },
     "T5": {
       "recommendedMaxTris": 6000,
       "recommendedMaxGpuVerts": 7500,

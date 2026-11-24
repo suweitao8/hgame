@@ -18,6 +18,7 @@ coverage/
 Thumbs.db
 .idea/
 .vscode/
+.zcode/
 
 # Private, locally curated, or heavy art/audio assets (Git tracks code, configs, and manifests)
 .asset-store/

@@ -1592,6 +1592,21 @@ button { color: inherit; }
   font-size: 15px;
   font-weight: 700;
 }
+#models-view .hgame-stage-title-group {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+#models-view .hgame-stage-title-group h2,
+#models-view .asset-model-filename {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#models-view .asset-model-filename {
+  text-decoration: none;
+}
 .hgame-stage-actions {
   display: flex;
   align-items: center;

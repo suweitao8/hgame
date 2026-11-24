@@ -70,13 +70,13 @@ function generateBrowserHtml(catalog) {
     function render() {
       const q = qEl.value.trim().toLowerCase();
       const t = tierEl.value;
-      const items = MODELS.filter(m => (t === 'all' || m.tier === t) && (!q || m.id.toLowerCase().includes(q) || (m.tags || []).join(',').toLowerCase().includes(q) || (m.quadrants || []).join(',').toLowerCase().includes(q)));
+      const items = MODELS.filter(m => (t === 'all' || m.tier === t) && (!q || m.id.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q) || (m.nameEn || '').toLowerCase().includes(q) || (m.tags || []).join(',').toLowerCase().includes(q) || (m.quadrants || []).join(',').toLowerCase().includes(q)));
       listEl.innerHTML = '';
       for (const m of items) {
         const b = document.createElement('button');
         b.className = 'item' + (m.id === selectedId ? ' active' : '');
         const lodSummary = (m.lods || []).map(l => 'L' + l.level + ':' + l.tris).join(' / ');
-        b.innerHTML = '<strong>' + m.id + '</strong><small>' + m.tier + ' · ' + lodSummary + ' · ' + (m.fileKB || 0) + ' KB</small>';
+        b.innerHTML = '<strong>' + (m.name || m.id) + '</strong><small>' + m.id + ' · ' + m.tier + ' · ' + lodSummary + ' · ' + (m.fileKB || 0) + ' KB</small>';
         b.onclick = () => { selectedId = m.id; show(m); render(); };
         listEl.appendChild(b);
       }

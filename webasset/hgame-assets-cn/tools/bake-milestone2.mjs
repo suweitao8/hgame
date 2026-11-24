@@ -8,6 +8,7 @@ import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { cleanBorderClippedAlpha } from './decal-alpha-clean.mjs';
 
 const TOOLS_DIR = fileURLToPath(new URL('./', import.meta.url));
 const CN_ROOT = path.resolve(TOOLS_DIR, '..');
@@ -748,6 +749,9 @@ async function bakeOldUnrealEntry(entry, oldByKey) {
   const rgba = new Uint8Array(colBuf.buffer, colBuf.byteOffset, colBuf.byteLength);
   if (entry.tintableGrayscale) {
     toShadedGrayscaleBlood(rgba, size, size);
+  }
+  if ((entry.placement || 'floor') !== 'wall' && entry.category !== 'leak' && entry.category !== 'tire_skid') {
+    cleanBorderClippedAlpha(rgba, size, size, { allowWatershed: false, allowMarginFallback: false });
   }
   dilateAlphaEdges(rgba, size, size, 10);
 

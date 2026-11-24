@@ -76,6 +76,16 @@ export const CATEGORY_LABELS = Object.freeze({
   l1_base: 'L1 市政与街具 (Street Props)',
   l1_wire: 'L1 架空线缆 (Overhead Wires)',
   l1_backdrop: 'L1 远景天际线壳体 (Skyline)',
+  wep_melee: '武器 · 冷兵器与弓盾 (Melee & Shields)',
+  wep_firearm: '武器 · 现代与二战枪械 (Firearms)',
+  wep_scifi: '武器 · 科幻能量武器 (SciFi)',
+  wep_heavy: '武器 · 重火力与投掷 (Heavy & Throwables)',
+  prop_furniture: '家具 · 桌椅沙发床灯 (Furniture)',
+  prop_container: '道具 · 宝箱木桶补给箱 (Containers)',
+  prop_food: '道具 · 餐饮水果酒水 (Food & Drinks)',
+  prop_collectible: '道具 · 药水宝石金币工具 (Collectibles)',
+  prop_tech: '道具 · 街机乐器电脑家电 (Tech & Arcade)',
+  prop_vehicle: '载具 · 车辆船只飞机 (Vehicles)',
   // Decal & foliage categories
   crack: '裂缝破损 (Crack)',
   leak: '墙面渗水污渍 (Leak)',
@@ -98,6 +108,7 @@ export function formatCategoryLabel(key) {
 
 export function resolveMaterialSlot(rawSlot, registry, overrideMap = null) {
   const mapped = overrideMap?.[rawSlot] || rawSlot;
+  if (mapped && mapped.startsWith('__special_')) return mapped;
   if (mapped && registry.has(mapped)) return mapped;
   const alias = MATERIAL_SLOT_ALIASES[mapped];
   if (alias && alias.startsWith('__special_')) return alias;
@@ -107,17 +118,34 @@ export function resolveMaterialSlot(rawSlot, registry, overrideMap = null) {
 
 const SPECIAL_MATERIAL_CACHE = new Map();
 
-function getSpecialMaterial(kind, wireframe = false) {
-  const key = `${kind}:${wireframe ? 1 : 0}`;
+function getSpecialMaterial(kind, wireframe = false, { emissiveColor = null, emissiveStrength = null, tintColor = null } = {}) {
+  const colKey = Array.isArray(emissiveColor)
+    ? emissiveColor.map(c => Number(c).toFixed(3)).join(',')
+    : 'default';
+  const tintKey = Array.isArray(tintColor)
+    ? tintColor.map(c => Number(c).toFixed(3)).join(',')
+    : 'none';
+  const strVal = Math.min(2.2, Number.isFinite(emissiveStrength) ? emissiveStrength : 1.6);
+  const key = `${kind}:${wireframe ? 1 : 0}:${colKey}:${tintKey}:${strVal.toFixed(2)}`;
   if (SPECIAL_MATERIAL_CACHE.has(key)) return SPECIAL_MATERIAL_CACHE.get(key);
   let mat;
   if (kind === '__special_emissive__') {
+    const col = Array.isArray(emissiveColor)
+      ? new THREE.Color(emissiveColor[0], emissiveColor[1], emissiveColor[2])
+      : new THREE.Color(0xffe4a0);
+    // Normalize perceptual luminance so pink/red and cyan emissives trigger Bloom evenly without blowing out
+    const lum = Math.max(0.16, 0.2126 * col.r + 0.7152 * col.g + 0.0722 * col.b);
+    const balancedStrength = Array.isArray(emissiveColor)
+      ? (Number.isFinite(emissiveStrength) && emissiveStrength < 1.5
+          ? Math.max(0.85, emissiveStrength)
+          : Math.min(7.5, Math.max(2.95, 2.75 / lum)))
+      : Math.max(2.8, strVal);
     mat = new THREE.MeshStandardMaterial({
-      color: 0xfff6dc,
-      emissive: new THREE.Color(0xffe4a0),
-      emissiveIntensity: 1.6,
-      roughness: 0.35,
-      metalness: 0.05,
+      color: col,
+      emissive: col,
+      emissiveIntensity: balancedStrength,
+      roughness: 0.25,
+      metalness: 0.04,
       wireframe,
     });
   } else if (kind === '__special_film__') {
@@ -135,20 +163,42 @@ function getSpecialMaterial(kind, wireframe = false) {
     mat = new THREE.MeshPhysicalMaterial({
       color: 0x6ba2c4,
       roughness: 0.08,
-      metalness: 0.15,
+      metalness: 0.0,
       transparent: true,
       opacity: 0.52,
       depthWrite: false,
       wireframe,
     });
-  } else {
+  } else if (kind === '__special_plastic_clear__') {
+    const col = Array.isArray(tintColor)
+      ? new THREE.Color(tintColor[0] * 0.52, tintColor[1] * 0.56, tintColor[2] * 0.60)
+      : new THREE.Color(0x5f7b8c);
     mat = new THREE.MeshPhysicalMaterial({
-      color: 0xcbe5f2,
-      roughness: 0.06,
-      metalness: 0.05,
+      color: col,
+      roughness: 0.18,
+      metalness: 0.0,
+      clearcoat: 0.28,
+      clearcoatRoughness: 0.18,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.30,
       depthWrite: false,
+      envMapIntensity: 0.32,
+      wireframe,
+    });
+  } else {
+    const col = Array.isArray(tintColor)
+      ? new THREE.Color(tintColor[0] * 0.68, tintColor[1] * 0.68, tintColor[2] * 0.68)
+      : new THREE.Color(0x88b4c8);
+    mat = new THREE.MeshPhysicalMaterial({
+      color: col,
+      roughness: 0.06,
+      metalness: 0.0,
+      ior: 1.5,
+      reflectivity: 0.45,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      envMapIntensity: 0.50,
       wireframe,
     });
   }
@@ -177,24 +227,35 @@ export function applyCatalogMaterialToObject(
     const primarySlot = resolveForMat(srcMats[0]);
     const isSpecialPrimary = primarySlot.startsWith('__special_');
     const primaryLayer = isSpecialPrimary ? 0 : registry.getLayer(primarySlot);
-    ensurePbrGeometryAttributes(obj.geometry, primaryLayer, [1, 1, 1], 1.0);
+    const primaryTint = Array.isArray(srcMats[0]?.userData?.pbrTint) ? srcMats[0].userData.pbrTint : [1, 1, 1];
+    ensurePbrGeometryAttributes(obj.geometry, primaryLayer, primaryTint, 1.0);
+
+    const makeSpecialForMat = (slot, srcMat) => getSpecialMaterial(slot, wireframe, {
+      emissiveColor: srcMat?.userData?.pbrEmissiveColor || null,
+      emissiveStrength: srcMat?.userData?.pbrEmissiveStrength ?? null,
+      tintColor: Array.isArray(srcMat?.userData?.pbrTint) ? srcMat.userData.pbrTint : null,
+    });
 
     if (Array.isArray(obj.material) && obj.geometry.groups?.length) {
       const idAttr = obj.geometry.getAttribute('aMaterialId');
+      const tintAttr = obj.geometry.getAttribute('aTint');
       const idxAttr = obj.geometry.getIndex();
       let hasTranslucent = false;
       obj.material = obj.geometry.groups.map(grp => {
-        const slot = resolveForMat(srcMats[grp.materialIndex]);
+        const srcMat = srcMats[grp.materialIndex];
+        const slot = resolveForMat(srcMat);
         if (slot.startsWith('__special_')) {
           if (slot !== '__special_emissive__') hasTranslucent = true;
-          return getSpecialMaterial(slot, wireframe);
+          return makeSpecialForMat(slot, srcMat);
         }
         const lid = registry.getLayer(slot);
         const lmeta = registry.getMeta(slot);
+        const grpTint = Array.isArray(srcMat?.userData?.pbrTint) ? srcMat.userData.pbrTint : [1, 1, 1];
         const end = grp.start + grp.count;
         for (let i = grp.start; i < end; i++) {
           const vi = idxAttr ? idxAttr.getX(i) : i;
           idAttr.setX(vi, lid);
+          if (tintAttr) tintAttr.setXYZ(vi, grpTint[0], grpTint[1], grpTint[2]);
         }
         if (lmeta.blendMode === 'translucent' && glassMat) {
           hasTranslucent = true;
@@ -206,9 +267,10 @@ export function applyCatalogMaterialToObject(
         return worldMat.material;
       });
       idAttr.needsUpdate = true;
+      if (tintAttr) tintAttr.needsUpdate = true;
       if (hasTranslucent) obj.renderOrder = 2;
     } else if (isSpecialPrimary) {
-      obj.material = getSpecialMaterial(primarySlot, wireframe);
+      obj.material = makeSpecialForMat(primarySlot, srcMats[0]);
       if (primarySlot !== '__special_emissive__') obj.renderOrder = 2;
     } else {
       const lmeta = registry.getMeta(primarySlot);

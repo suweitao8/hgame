@@ -1131,26 +1131,29 @@ let glbThumbContext = null;
 
 async function ensureGlbThumbContext() {
   if (glbThumbContext) return glbThumbContext;
-  const [{ GLTFLoader }, { MeshoptDecoder }] = await Promise.all([
+  const [{ GLTFLoader }, { MeshoptDecoder }, { RoomEnvironment }] = await Promise.all([
     import('three/addons/loaders/GLTFLoader.js'),
     import('three/addons/libs/meshopt_decoder.module.js'),
+    import('three/addons/environments/RoomEnvironment.js'),
   ]);
   const loader = new GLTFLoader();
   loader.setMeshoptDecoder(MeshoptDecoder);
   const renderer = new THREE.WebGLRenderer({ alpha: false, antialias: true, preserveDrawingBuffer: true });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 0.92;
   renderer.setPixelRatio(1);
   renderer.setSize(128, 128, false);
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x161c15);
-  scene.add(new THREE.HemisphereLight(0xf4f8ff, 0x3b4837, 1.9));
-  const key = new THREE.DirectionalLight(0xfff6e5, 2.4);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.add(new THREE.HemisphereLight(0xf4f8ff, 0x3b4837, 0.95));
+  const key = new THREE.DirectionalLight(0xfff6e5, 1.45);
   key.position.set(4, 7, 5);
   scene.add(key);
-  const fill = new THREE.DirectionalLight(0x9fc2ff, 0.85);
+  const fill = new THREE.DirectionalLight(0x9fc2ff, 0.55);
   fill.position.set(-4, 3, -4);
   scene.add(fill);
 
@@ -1166,6 +1169,7 @@ async function drainGlbThumbQueue() {
     while (glbThumbQueue.length > 0) {
       const task = glbThumbQueue.shift();
       if (!task) continue;
+      if (task.isConnected && !task.isConnected()) continue;
       const { url, onDone } = task;
       if (glbThumbCache.has(url)) {
         onDone(glbThumbCache.get(url));
@@ -1197,7 +1201,8 @@ async function drainGlbThumbQueue() {
         disposeObject3D(root);
         glbThumbCache.set(url, dataUrl);
         onDone(dataUrl);
-      } catch {
+      } catch (err) {
+        console.warn('[glbThumb]', url, err);
         glbThumbCache.set(url, '');
       }
       await new Promise(r => setTimeout(r, 8));
@@ -1225,8 +1230,8 @@ export function requestGlbSquareThumb(url, thumbBox, fallbackEl) {
     applyUrl(glbThumbCache.get(url));
     return;
   }
-  glbThumbQueue.push({ url, onDone: applyUrl });
-  void drainGlbThumbQueue();
+  glbThumbQueue.push({ url, onDone: applyUrl, isConnected: () => thumbBox.isConnected });
+  queueMicrotask(() => { void drainGlbThumbQueue(); });
 }
 
 export const CHARACTER_HEIGHT_TIERS = Object.freeze({

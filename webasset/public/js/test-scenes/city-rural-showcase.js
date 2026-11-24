@@ -167,11 +167,9 @@ export async function buildCityRuralShowcaseScene({
   const shutter = await place('door_shop_shutter', [-6, 0, -5], 0);
   const secDoor = await place('door_cn_security', [-9, 0, -5], 0);
   const boom = await place('barrier_garage_boom', [-3, 0, 5.2], 0);
-  animatedPivots.push(
-    { root: shutter, node: 'pivot_shutter', mode: 'slide_y', amp: 1.6 },
-    { root: secDoor, node: 'pivot_door', mode: 'rot_y', amp: 1.2 },
-    { root: boom, node: 'pivot_boom', mode: 'rot_z', amp: 1.1 },
-  );
+  if (shutter) animatedPivots.push({ root: shutter, node: 'pivot_shutter', mode: 'slide_y', amp: 1.6 });
+  if (secDoor) animatedPivots.push({ root: secDoor, node: 'pivot_door', mode: 'rot_y', amp: 1.2 });
+  if (boom) animatedPivots.push({ root: boom, node: 'pivot_boom', mode: 'rot_z', amp: 1.1 });
 
   const fenceAsset = await extractLodGeometry('bldg_rural_brick_fence_2m');
   if (fenceAsset) {
