@@ -875,7 +875,7 @@ function runDoctorGate(gameDir, opts, meta, doctorScript) {
   };
 }
 
-async function runWebAssetGate(gameDir, opts, meta, gameConfig) {
+export async function runWebAssetGate(gameDir, opts, meta, gameConfig) {
   if (opts.skipWebasset) {
     return { status: 'skipped', reason: '--skip-webasset', errors: [] };
   }
