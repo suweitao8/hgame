@@ -554,7 +554,7 @@
       "name": "GPU 驱动提交与 WebGPU 能力",
       "weight": 7,
       "scores": {
-        "hgame": 8.5,
+        "hgame": 9,
         "unity": 7.5,
         "cocos": 6.5,
         "godot": 4
@@ -590,10 +590,11 @@
             "proof": "未实现（按产品定位豁免，不计入清单满足率与短板）"
           }
         ],
-        "note": "createThreeAdapter 默认启用 gpuIndirect='auto'（无 batch 零开销），在支持 WebGPU 时自动异步升级为双缓冲非阻塞 1 帧延迟 Compute 剔除回读压缩（实测 4096->2048），并保留 WebGL2/CPU 回退。",
+        "note": "注册间接实例批次后，Three 适配器可读取 WebGPU 异步剔除结果。相机运动预测覆盖近远裁剪面，旧结果失效时按当前视锥在 CPU 剔除。RTX 4070 上的 36 帧转动和急转测试复用了 GPU 结果，未观察到可见实例遗漏。",
         "benchmarkFiles": [
           "tests/browser-webgpu-compute-benchmark.mjs",
-          "tests/browser-adapter-gpu-cull.mjs"
+          "tests/browser-adapter-gpu-cull.mjs",
+          "tests/gpu-cull-lag-guard.test.mjs"
         ]
       },
       "competitorNotes": {
@@ -601,7 +602,7 @@
         "cocos": "支持 WebGL2 Instancing 与 GFX 多后端抽象，WebGPU 能力尚在逐步完善中。",
         "godot": "Web 端 Compatibility/GLES3 彻底不支持 Compute Shader 与间接 GPU 剔除。"
       },
-      "gap": "GPU 剔除结果存在一帧读回延迟（主光栅采用 WebGL2 按定位豁免）。"
+      "gap": "GPU 回读为异步。相机急转、非刚体视图变化及批次包围体变化时，使用当前视锥在 CPU 剔除。移动 GPU 吞吐仍待实测。"
     },
     {
       "id": "P3",

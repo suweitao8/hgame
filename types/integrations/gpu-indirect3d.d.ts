@@ -75,13 +75,21 @@ export function createGpuIndirectCuller3D({ webgpuDevice, device, gl, cpuCuller,
         visibleIndices: Uint32Array | null;
         workgroups: number;
     }>;
-    submitComputeReadback: ({ indexCount }?: {
+    submitComputeReadback: ({ indexCount, tag, view }?: {
         indexCount?: number;
+        tag?: unknown;
+        view?: object | null;
     } | undefined) => {
         submitted: boolean;
         serial: number;
     };
-    getLatestResult: () => any;
+    getLatestResult: (tag?: unknown) => {
+        serial: number;
+        instanceCount: number;
+        visibleCount: number;
+        visibleIndices: Uint32Array;
+        view: object | null;
+    } | null;
     getStats(): Readonly<{
         mode: string;
         dispatchedInstances: number;
@@ -93,6 +101,90 @@ export function createGpuIndirectCuller3D({ webgpuDevice, device, gl, cpuCuller,
         readbackSkipped: number;
     }>;
     dispose: () => boolean;
+};
+/**
+ * Rotation between two camera poses, in radians. A pose is
+ * `{ position: { x, y, z }, quaternion: { x, y, z, w } }` in world space.
+ * @param {{ quaternion: { x: number, y: number, z: number, w: number } }} a
+ * @param {{ quaternion: { x: number, y: number, z: number, w: number } }} b
+ * @returns {number}
+ */
+export function cameraAngleBetween(a: {
+    quaternion: {
+        x: number;
+        y: number;
+        z: number;
+        w: number;
+    };
+}, b: {
+    quaternion: {
+        x: number;
+        y: number;
+        z: number;
+        w: number;
+    };
+}): number;
+/**
+ * How far a camera moved between two poses, in world units: the translation plus the arc the rotation
+ * sweeps at `radius` (`2 * radius * sin(turn / 2)`).
+ * @param {{ position: { x: number, y: number, z: number }, quaternion: { x: number, y: number, z: number, w: number } }} a
+ * @param {{ position: { x: number, y: number, z: number }, quaternion: { x: number, y: number, z: number, w: number } }} b
+ * @param {number} [radius=1]
+ * @returns {number}
+ */
+export function cameraMotionBetween(a: {
+    position: {
+        x: number;
+        y: number;
+        z: number;
+    };
+    quaternion: {
+        x: number;
+        y: number;
+        z: number;
+        w: number;
+    };
+}, b: {
+    position: {
+        x: number;
+        y: number;
+        z: number;
+    };
+    quaternion: {
+        x: number;
+        y: number;
+        z: number;
+        w: number;
+    };
+}, radius?: number | undefined): number;
+/**
+ * Encloses a perspective frustum swept by a rotation and a translation of the camera at `pose`.
+ * Uses normalized planes with the opposite horizontal and vertical pairs first, followed by the
+ * depth planes in either order. The forward axis must be inside the view.
+ * @param {ArrayLike<number>} planes 24 floats (6 vec4 planes), left unchanged.
+ * @param {{ position: { x: number, y: number, z: number }, quaternion: { x: number, y: number, z: number, w: number } }} pose
+ * @param {{ distance?: number, angle?: number }} [margin] `angle` in radians.
+ * @param {Float64Array | Float32Array} [out]
+ * @returns {{ planes: Float64Array | Float32Array, angle: number }} `angle` is the turn actually applied.
+ */
+export function widenFrustumPlanes(planes: ArrayLike<number>, pose: {
+    position: {
+        x: number;
+        y: number;
+        z: number;
+    };
+    quaternion: {
+        x: number;
+        y: number;
+        z: number;
+        w: number;
+    };
+}, { distance, angle }?: {
+    distance?: number;
+    angle?: number;
+} | undefined, out?: Float64Array | Float32Array | undefined): {
+    planes: Float64Array | Float32Array;
+    angle: number;
 };
 /**
  * Real GPU-indirect & MultiDraw compacted InstancedMesh wrapper.
@@ -120,7 +212,26 @@ export function createIndirectInstancedBatch3D(THREE: object, { geometry, materi
     setCount: (count: any) => number;
     setInstanceMatrix: (index: any, matrixOrElements: any) => boolean;
     setInstanceBounds: (index: any, x: any, y: any, z: any, radius?: number) => boolean;
-    cull: (frustumPlanes: any, gpuIndirectCuller?: null) => number;
+    cull: (frustumPlanes: ArrayLike<number> | null | undefined, gpuIndirectCuller?: any, { view, predict }?: {
+        predict?: boolean;
+        view?: {
+            id?: unknown;
+            position: {
+                x: number;
+                y: number;
+                z: number;
+            };
+            quaternion: {
+                x: number;
+                y: number;
+                z: number;
+                w: number;
+            };
+            projection?: ArrayLike<number>;
+            distance?: number;
+            angle?: number;
+        } | null;
+    } | undefined) => number;
     getStats(): Readonly<{
         capacity: number;
         activeCount: number;
@@ -130,6 +241,8 @@ export function createIndirectInstancedBatch3D(THREE: object, { geometry, materi
         mode: string;
         source: string;
         gpuReadbacks: number;
+        readbackLag: number;
+        unculledPasses: number;
     }>;
     dispose: () => void;
 };

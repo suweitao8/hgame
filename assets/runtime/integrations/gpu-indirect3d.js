@@ -47,6 +47,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 `;
 
+// A batch with no explicit planes can use the planes already configured on a native culler.
+const cullerFrusta = new WeakMap();
+const batchReadbackTags = new WeakSet();
+
 const WEBGPU_BUFFER_USAGE = {
   MAP_READ: 0x0001,
   COPY_SRC: 0x0004,
@@ -141,8 +145,15 @@ export function createGpuIndirectCuller3D({
 
   let gpuResources = null;
   const stagingPool = [null, null];
-  let readbackSerial = 0;
+  let readbackSequence = 0;
   let latestResult = null;
+  let reservedReadback = null;
+  const primitiveReadbackTags = new Map();
+  let objectReadbackTags = new WeakMap();
+  function readbackTags(key) {
+    return key !== null && (typeof key === 'object' || typeof key === 'function')
+      ? objectReadbackTags : primitiveReadbackTags;
+  }
   if (mode === 'webgpu-indirect') {
     const shaderModule = gpuDevice.createShaderModule({ code: GPU_CULL_WGSL });
     const pipeline = gpuDevice.createComputePipeline({
@@ -446,13 +457,18 @@ export function createGpuIndirectCuller3D({
   /**
    * Non-blocking 2-slot double-buffered WebGPU compute dispatch + async `mapAsync` readback.
    * Never blocks the main thread; latest completed result is exposed via `getLatestResult()`.
-   * @param {{ indexCount?: number }} [options]
+   * @param {{ indexCount?: number, tag?: unknown, view?: object | null }} [options]
+   *   `tag` files the answer under a key, so that batches sharing the culler each read their own.
+   *   `view` is stored with the answer unchanged, for the caller to check against a later frame.
    * @returns {{ submitted: boolean, serial: number }}
    */
-  function submitComputeReadback({ indexCount = 0 } = {}) {
+  function submitComputeReadback({ indexCount = 0, tag = null, view = null } = {}) {
     if (disposed) throw new Error('GPU indirect culler is disposed');
+    const key = tag ?? null;
+    const tags = readbackTags(key);
+    const lastSerial = readbackSequence;
     if (mode !== 'webgpu-indirect' || !gpuResources || typeof gpuDevice.createCommandEncoder !== 'function') {
-      return { submitted: false, serial: readbackSerial };
+      return { submitted: false, serial: lastSerial };
     }
 
     let slotIdx = -1;
@@ -462,9 +478,22 @@ export function createGpuIndirectCuller3D({
         break;
       }
     }
+    // Give the first blocked batch the next slot. A repeated requester releases a
+    // reservation left behind by a view that was unregistered.
+    const managed = batchReadbackTags.has(key);
     if (slotIdx === -1) {
+      if (managed) reservedReadback ??= { key, declined: new WeakSet() };
       stats.readbackSkipped++;
-      return { submitted: false, serial: readbackSerial };
+      return { submitted: false, serial: lastSerial };
+    }
+    if (managed && reservedReadback) {
+      const { key: reserved, declined } = reservedReadback;
+      if (reserved !== key && !declined.has(key)) {
+        declined.add(key);
+        stats.readbackSkipped++;
+        return { submitted: false, serial: lastSerial };
+      }
+      reservedReadback = null;
     }
 
     let slot = stagingPool[slotIdx];
@@ -485,7 +514,7 @@ export function createGpuIndirectCuller3D({
     }
 
     slot.inFlight = true;
-    const serial = ++readbackSerial;
+    const serial = ++readbackSequence;
     const submittedCount = activeCount;
     const commandEncoder = gpuDevice.createCommandEncoder();
     execute({ commandEncoder, indexCount });
@@ -518,13 +547,12 @@ export function createGpuIndirectCuller3D({
             slot.idxBuf.unmap();
           }
           const copied = new Uint32Array(slot.outIndices.subarray(0, visCount));
-          latestResult = {
-            serial,
-            instanceCount: submittedCount,
-            visibleCount: visCount,
-            visibleIndices: copied,
-          };
-          stats.visibleCount = visCount;
+          const result = { serial, instanceCount: submittedCount, visibleCount: visCount, visibleIndices: copied, view };
+          if (key !== null && serial > (tags.get(key)?.serial ?? 0)) tags.set(key, result);
+          if (serial > (latestResult?.serial ?? 0)) {
+            latestResult = result;
+            stats.visibleCount = visCount;
+          }
         } finally {
           slot.inFlight = false;
         }
@@ -540,14 +568,22 @@ export function createGpuIndirectCuller3D({
     return { submitted: true, serial };
   }
 
-  function getLatestResult() {
-    return latestResult;
+  /**
+   * The most recent completed readback, or the one filed under `tag`.
+   * @param {unknown} [tag]
+   * @returns {{ serial: number, instanceCount: number, visibleCount: number, visibleIndices: Uint32Array, view: object | null } | null}
+   */
+  function getLatestResult(tag = null) {
+    return tag == null ? latestResult : readbackTags(tag).get(tag) ?? null;
   }
 
   function dispose() {
     if (disposed) return false;
     disposed = true;
     latestResult = null;
+    reservedReadback = null;
+    primitiveReadbackTags.clear();
+    objectReadbackTags = new WeakMap();
     for (let i = 0; i < stagingPool.length; i++) {
       const slot = stagingPool[i];
       if (!slot) continue;
@@ -563,7 +599,7 @@ export function createGpuIndirectCuller3D({
     return true;
   }
 
-  return {
+  const culler = {
     get mode() { return mode; },
     get fallbackReason() { return fallbackReason; },
     get capabilities() { return capabilities; },
@@ -579,6 +615,166 @@ export function createGpuIndirectCuller3D({
     getLatestResult,
     getStats() { return Object.freeze({ ...stats }); },
     dispose,
+  };
+  cullerFrusta.set(culler, frustumData.subarray(0, 24));
+  return culler;
+}
+
+// 2 sin(turn / 4) and 2 cos(turn / 4) between two unit quaternions, measured from their components so
+// that identical poses give exactly zero and a quaternion's negative is the same rotation.
+function quarterTurn(p, q) {
+  const dot = p.x * q.x + p.y * q.y + p.z * q.z + p.w * q.w;
+  const apart = Math.hypot(p.x - q.x, p.y - q.y, p.z - q.z, p.w - q.w);
+  const together = Math.hypot(p.x + q.x, p.y + q.y, p.z + q.z, p.w + q.w);
+  return dot < 0 ? { sine: together, cosine: apart } : { sine: apart, cosine: together };
+}
+
+/**
+ * Rotation between two camera poses, in radians. A pose is
+ * `{ position: { x, y, z }, quaternion: { x, y, z, w } }` in world space.
+ * @param {{ quaternion: { x: number, y: number, z: number, w: number } }} a
+ * @param {{ quaternion: { x: number, y: number, z: number, w: number } }} b
+ * @returns {number}
+ */
+export function cameraAngleBetween(a, b) {
+  const turn = quarterTurn(a.quaternion, b.quaternion);
+  return 4 * Math.atan2(turn.sine, turn.cosine);
+}
+
+/**
+ * How far a camera moved between two poses, in world units: the translation plus the arc the rotation
+ * sweeps at `radius` (`2 * radius * sin(turn / 2)`).
+ * @param {{ position: { x: number, y: number, z: number }, quaternion: { x: number, y: number, z: number, w: number } }} a
+ * @param {{ position: { x: number, y: number, z: number }, quaternion: { x: number, y: number, z: number, w: number } }} b
+ * @param {number} [radius=1]
+ * @returns {number}
+ */
+export function cameraMotionBetween(a, b, radius = 1) {
+  const dx = b.position.x - a.position.x;
+  const dy = b.position.y - a.position.y;
+  const dz = b.position.z - a.position.z;
+  const turn = quarterTurn(a.quaternion, b.quaternion);
+  return Math.hypot(dx, dy, dz) + radius * turn.sine * turn.cosine;
+}
+
+const MAX_WIDENED_TURN = Math.PI * 0.95;
+
+// The narrowest forward cosine occurs on a corner ray, where two side planes meet.
+function cornerForwardCosine(planes, fx, fy, fz) {
+  let minimum = 1;
+  for (let horizontal = 0; horizontal < 8; horizontal += 4) {
+    const ax = planes[horizontal], ay = planes[horizontal + 1], az = planes[horizontal + 2];
+    for (let vertical = 8; vertical < 16; vertical += 4) {
+      const bx = planes[vertical], by = planes[vertical + 1], bz = planes[vertical + 2];
+      const x = ay * bz - az * by;
+      const y = az * bx - ax * bz;
+      const z = ax * by - ay * bx;
+      minimum = Math.min(minimum, Math.abs(fx * x + fy * y + fz * z) / Math.hypot(x, y, z));
+    }
+  }
+  return minimum;
+}
+
+/**
+ * Encloses a perspective frustum swept by a rotation and a translation of the camera at `pose`.
+ * Uses normalized planes with the opposite horizontal and vertical pairs first, followed by the
+ * depth planes in either order. The forward axis must be inside the view.
+ * @param {ArrayLike<number>} planes 24 floats (6 vec4 planes), left unchanged.
+ * @param {{ position: { x: number, y: number, z: number }, quaternion: { x: number, y: number, z: number, w: number } }} pose
+ * @param {{ distance?: number, angle?: number }} [margin] `angle` in radians.
+ * @param {Float64Array | Float32Array} [out]
+ * @returns {{ planes: Float64Array | Float32Array, angle: number }} `angle` is the turn actually applied.
+ */
+export function widenFrustumPlanes(planes, pose, { distance = 0, angle = 0 } = {}, out = new Float64Array(24)) {
+  if (!planes || planes.length < 24) {
+    throw new TypeError('widenFrustumPlanes requires 24 floats (6 vec4 planes)');
+  }
+  const pad = Number.isFinite(distance) && distance > 0 ? distance : 0;
+  let turn = Number.isFinite(angle) && angle > 0 ? Math.min(angle, MAX_WIDENED_TURN) : 0;
+  const { x, y, z, w } = pose.quaternion;
+  // The camera looks down its own negative z axis.
+  const fx = -2 * (w * y + z * x);
+  const fy = 2 * (w * x - z * y);
+  const fz = 2 * (x * x + y * y) - 1;
+  const { x: px, y: py, z: pz } = pose.position;
+  const fromEye = i => planes[i] * px + planes[i + 1] * py + planes[i + 2] * pz + planes[i + 3];
+  const alongForward = i => planes[i] * fx + planes[i + 1] * fy + planes[i + 2] * fz;
+  const nearPlane = alongForward(16) > 0 ? 16 : 20;
+  const farPlane = nearPlane === 16 ? 20 : 16;
+  const near = -fromEye(nearPlane);
+  const far = fromEye(farPlane);
+  const cornerCos = turn > 0 ? cornerForwardCosine(planes, fx, fy, fz) : 1;
+  if (!(cornerCos > 0 && near >= 0 && Number.isFinite(far) && far > near) ||
+      !(alongForward(nearPlane) > 0.999999 && alongForward(farPlane) < -0.999999) ||
+      (turn > 0 && [0, 4, 8, 12].some(index => alongForward(index) < 0 || Math.abs(fromEye(index)) > 1e-5))) {
+    turn = 0;
+  }
+  const cornerAngle = Math.acos(cornerCos);
+  const minCos = Math.cos(Math.min(Math.PI, cornerAngle + turn));
+  // z = ray length × forward cosine. The largest change in z occurs at a corner.
+  const minZ = (minCos >= 0 ? near : far) * minCos / cornerCos;
+  const maxZ = far * Math.cos(Math.max(0, cornerAngle - turn)) / cornerCos;
+  const sideTilt = minCos > 1e-6 ? Math.sin(turn) / minCos : 0;
+  const sidePad = sideTilt === 0 && turn > 0 ? far / cornerCos * Math.sin(Math.min(Math.PI / 2, turn)) : 0;
+  for (let i = 0; i < 6; i++) {
+    const o = i * 4;
+    let nx = planes[o];
+    let ny = planes[o + 1];
+    let nz = planes[o + 2];
+    let d = planes[o + 3];
+    if (turn > 0) {
+      if (o === nearPlane) d += near - minZ;
+      else if (o === farPlane) d += maxZ - far;
+      else if (sideTilt > 0) {
+        // A rotated ray's side cosine loses at most sin(turn) where it can cross the plane.
+        // Its forward cosine stays >= minCos, so adding that axis covers every such ray.
+        nx += fx * sideTilt;
+        ny += fy * sideTilt;
+        nz += fz * sideTilt;
+        const length = Math.hypot(nx, ny, nz);
+        nx /= length;
+        ny /= length;
+        nz /= length;
+        d = -(nx * px + ny * py + nz * pz);
+      } else d += sidePad;
+    }
+    out[o] = nx;
+    out[o + 1] = ny;
+    out[o + 2] = nz;
+    out[o + 3] = d + pad;
+  }
+  return { planes: out, angle: turn };
+}
+
+// Whether an answer computed for the `answered` view still covers the `current` one: the same
+// projection, a turn no larger than the one it was widened for, and a move no larger than its padding.
+function sameProjection(a, b) {
+  const projection = a?.projection;
+  return Boolean(projection && projection.length === b?.projection?.length &&
+    projection.every((value, i) => value === b.projection[i]));
+}
+
+function viewCovers(answered, current) {
+  if (!sameProjection(answered, current)) return false;
+  if (!(answered.angle > 0 || answered.distance > 0)) return false;
+  return cameraAngleBetween(answered, current) <= (answered.angle ?? 0) &&
+    cameraMotionBetween(answered, current, 0) <= (answered.distance ?? 0);
+}
+
+function sameFrustum(packed, planes) {
+  if (!packed || !planes || planes.length < 24) return false;
+  for (let i = 0; i < 24; i++) if (packed[i] !== Math.fround(planes[i])) return false;
+  return true;
+}
+
+function snapshotView(view) {
+  if (!view?.position || !view?.quaternion) return null;
+  return {
+    position: { x: view.position.x, y: view.position.y, z: view.position.z },
+    quaternion: { x: view.quaternion.x, y: view.quaternion.y, z: view.quaternion.z, w: view.quaternion.w },
+    projection: view.projection ? Array.from(view.projection) : null,
+    angle: view.angle,
+    distance: view.distance,
   };
 }
 
@@ -619,6 +815,24 @@ export function createIndirectInstancedBatch3D(THREE, {
   let gpuReadbacks = 0;
   let lastMode = 'cpu-instanced';
   let lastSource = 'cpu-instanced';
+  const defaultViewSlot = {};
+  const keyedViews = new Map();
+  let cameraViews = new WeakMap();
+  const predictionPlanes = new Float64Array(24);
+  let readbackLag = 0;
+  let unculledPasses = 0;
+  let boundsRevision = 0;
+
+  function viewSlot(id) {
+    if (id == null) return defaultViewSlot;
+    const slots = typeof id === 'object' || typeof id === 'function' ? cameraViews : keyedViews;
+    let slot = slots.get(id);
+    if (!slot) {
+      slot = {};
+      slots.set(id, slot);
+    }
+    return slot;
+  }
 
   function setCount(count) {
     activeCount = Math.max(0, Math.min(cap, Math.floor(Number(count) || 0)));
@@ -638,10 +852,17 @@ export function createIndirectInstancedBatch3D(THREE, {
   function setInstanceBounds(index, x, y, z, radius = 1) {
     if (index < 0 || index >= cap) return false;
     const base = index * 4;
-    bounds[base] = Number(x) || 0;
-    bounds[base + 1] = Number(y) || 0;
-    bounds[base + 2] = Number(z) || 0;
-    bounds[base + 3] = Math.max(0.001, Number(radius) || 1);
+    const cx = Math.fround(Number(x) || 0);
+    const cy = Math.fround(Number(y) || 0);
+    const cz = Math.fround(Number(z) || 0);
+    const r = Math.fround(Math.max(0.001, Number(radius) || 1));
+    if (bounds[base] !== cx || bounds[base + 1] !== cy || bounds[base + 2] !== cz || bounds[base + 3] !== r) {
+      boundsRevision++;
+      bounds[base] = cx;
+      bounds[base + 1] = cy;
+      bounds[base + 2] = cz;
+      bounds[base + 3] = r;
+    }
     if (index >= activeCount) activeCount = index + 1;
     return true;
   }
@@ -655,19 +876,31 @@ export function createIndirectInstancedBatch3D(THREE, {
     return count;
   }
 
-  function cull(frustumPlanes, gpuIndirectCuller = null) {
+  /**
+   * Compacts the visible instances into the mesh.
+   *
+   * An older GPU result is used only while the bounds and its view remain valid.
+   * With `predict`, pass the exact planes and the current perspective pose. Without prediction,
+   * callers may supply planes widened by `widenFrustumPlanes` and declare the applied margins.
+   * @param {ArrayLike<number> | null | undefined} frustumPlanes
+   * @param {any} [gpuIndirectCuller]
+   * @param {{ predict?: boolean, view?: { id?: unknown, position: { x: number, y: number, z: number }, quaternion: { x: number, y: number, z: number, w: number }, projection?: ArrayLike<number>, distance?: number, angle?: number } | null }} [options]
+   *   `view.id` tells split-screen views apart when they share a batch.
+   * @returns {number} visible instance count
+   */
+  function cull(frustumPlanes, gpuIndirectCuller = null, { view = null, predict = false } = {}) {
     if (activeCount === 0) {
       visibleCount = 0;
       instancedMesh.count = 0;
       return 0;
     }
     cullCount++;
+    frustumPlanes ??= cullerFrusta.get(gpuIndirectCuller) ?? null;
     let vis = 0;
     let compacted = false;
     const dst = instancedMesh.instanceMatrix?.array;
 
     if (gpuIndirectCuller) {
-      if (frustumPlanes) gpuIndirectCuller.setFrustumPlanes(frustumPlanes);
       if (typeof gpuIndirectCuller.setInstanceBoundsRange === 'function') {
         gpuIndirectCuller.setInstanceBoundsRange(bounds, 0, activeCount);
       } else {
@@ -683,17 +916,57 @@ export function createIndirectInstancedBatch3D(THREE, {
         typeof gpuIndirectCuller.submitComputeReadback === 'function'
       ) {
         lastMode = 'webgpu-indirect';
-        gpuIndirectCuller.submitComputeReadback();
-        const latest = gpuIndirectCuller.getLatestResult?.();
-        if (latest && latest.instanceCount === activeCount && dst) {
-          vis = compactFromIndices(dst, latest.visibleIndices, latest.visibleCount);
-          lastSource = 'gpu-readback';
-          gpuReadbacks++;
-          compacted = true;
+        const slot = viewSlot(view?.id);
+        batchReadbackTags.add(slot);
+        const frame = slot.frame = (slot.frame ?? 0) + 1;
+        const latest = gpuIndirectCuller.getLatestResult?.(slot);
+        readbackLag = latest?.view ? frame - latest.view.frame : 0;
+        const current = snapshotView(view);
+        let submissionPlanes = frustumPlanes;
+        if (predict && current && frustumPlanes) {
+          current.angle = 0;
+          current.distance = 0;
+          if (sameProjection(slot.previousView, current)) {
+            const horizon = Math.min(6, Math.max(2, readbackLag) + 1);
+            const distance = cameraMotionBetween(slot.previousView, current, 0) * horizon;
+            const angle = Math.min(Math.PI / 4, cameraAngleBetween(slot.previousView, current) * horizon);
+            if (angle > 0 || distance > 0) {
+              const margin = widenFrustumPlanes(frustumPlanes, current, { angle, distance }, predictionPlanes);
+              submissionPlanes = margin.planes;
+              current.angle = margin.angle;
+              current.distance = distance;
+            }
+          }
+          slot.previousView = current;
         } else {
-          lastSource = 'cpu-fallback';
+          slot.previousView = null;
         }
+        if (submissionPlanes) gpuIndirectCuller.setFrustumPlanes(submissionPlanes);
+        if (!sameFrustum(slot.packedFrustum, submissionPlanes)) {
+          slot.packedFrustum = submissionPlanes ? Float32Array.from(submissionPlanes) : null;
+        }
+        gpuIndirectCuller.submitComputeReadback({
+          tag: slot, view: { boundsRevision, planes: slot.packedFrustum, camera: current, frame },
+        });
+        if (latest?.view?.boundsRevision === boundsRevision && latest.instanceCount === activeCount && dst) {
+          if (sameFrustum(latest.view.planes, frustumPlanes) || viewCovers(latest.view.camera, current)) {
+            vis = compactFromIndices(dst, latest.visibleIndices, latest.visibleCount);
+            lastSource = 'gpu-readback';
+            gpuReadbacks++;
+            compacted = true;
+          } else if (!predict && latest.view.camera && current) {
+            // The camera has left the view this answer was widened for: drawing everything for a
+            // frame costs less than dropping the instances at the edge of the screen.
+            dst.set(sourceMatrices.subarray(0, activeCount * 16));
+            vis = activeCount;
+            lastSource = 'unculled';
+            unculledPasses++;
+            compacted = true;
+          }
+        }
+        if (!compacted) lastSource = 'cpu-fallback';
       } else {
+        if (frustumPlanes) gpuIndirectCuller.setFrustumPlanes(frustumPlanes);
         const res = gpuIndirectCuller.execute();
         lastMode = res.mode ?? gpuIndirectCuller.mode;
         if (res.visibleIndices && dst) {
@@ -728,6 +1001,9 @@ export function createIndirectInstancedBatch3D(THREE, {
           vis++;
         }
       }
+    } else if (!compacted && dst) {
+      dst.set(sourceMatrices.subarray(0, activeCount * 16));
+      vis = activeCount;
     }
 
     visibleCount = vis;
@@ -745,6 +1021,8 @@ export function createIndirectInstancedBatch3D(THREE, {
   }
 
   function dispose() {
+    keyedViews.clear();
+    cameraViews = new WeakMap();
     instancedMesh.removeFromParent?.();
     instancedMesh.dispose?.();
   }
@@ -768,6 +1046,8 @@ export function createIndirectInstancedBatch3D(THREE, {
         mode: lastMode,
         source: lastSource,
         gpuReadbacks,
+        readbackLag,
+        unculledPasses,
       });
     },
     dispose,

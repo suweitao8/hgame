@@ -120,6 +120,18 @@ The staged repository gate passes 649 tests. Eight generated recipes run success
 
 All five release fixtures pass. The result-screen acceptance verifies that Xbox A activates the focused Mute button and then activates Replay after focus moves. The RTX 4070 arena release ran for 71.1 seconds on desktop and 70.9 seconds in the portrait viewport. Both passed the authored budgets, with p95 readings of 20.8 ms and 7.0 ms and an estimated peak of 13,855,680 GPU bytes. The desktop measurement overlapped other browser checks and is release-gate evidence.
 
+## GPU culling readback validity
+
+- [x] Prove that near and far corners remain covered when the camera rotates, and reject GPU results computed for changed instance bounds.
+- [x] Predict short camera motion on the registered Three adapter path. Cull against the current frame on the CPU when a camera cut exceeds coverage.
+- [x] Verify both GPU reuse and zero missing visible instances with real WebGPU compute, including a camera cut.
+
+The desktop RTX 4070 WebGPU test retained all visible instances across 36 moving-camera frames. It reused GPU readbacks on 33 frames and culled against the current frustum on the CPU at the camera cut. Delayed results stay scoped to the originating batch and view. Regression tests cover moving bounds, out-of-order completion, four batches sharing two readback slots, and both large and subpixel shear in the camera transform.
+
+The release candidate passes all 669 repository tests, all four action-starter WebAsset acceptance and portrait multi-touch checks, and all five release fixtures. The 3D Web fixture ran for about 71 seconds per viewport on RTX 4070. The desktop and portrait viewport p95 frame times were 20.9 ms and 7.1 ms, with the same estimated peak GPU allocation of 13,855,680 bytes. Both met the authored release limits. Mobile GPU throughput remains unverified on physical devices.
+
+P2 moves from 8.5 to 9.0 at C3. The displayed runtime score is 87.3. With 94 for production and 97 for verification and delivery, the weighted score is **92.07**.
+
 ## Current evidence
 
 - In a Node probe with mock drawing, each version executed 3,000 warmup frames and nine samples of 3,000 identical frames. The baseline compiled all 27,000 measured frames. The cached implementation reused the graph in all 27,000. Median batch-average CPU time was 103.27 µs per frame before and 17.23 µs after. Each version executed all 30,000 frame callbacks. These timings measure JavaScript pipeline overhead with GPU work excluded.

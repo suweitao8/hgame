@@ -24,6 +24,7 @@ import { cleanupAll } from '../internal/cleanup.js';
 
 const SCRATCH_WORLD_MAT = new Float64Array(16);
 const CACHE_TRIM_RETRY_FRAMES = 120;
+const RIGID_CAMERA_EPSILON = 1e-12;
 
 function resolveToneMappingConstant(THREE, mode) {
   switch (mode) {
@@ -1120,16 +1121,48 @@ export function createThreeAdapter({
     return { x: sx, y: sy, ndcZ: scratchView.z, visible };
   }
 
+  let indirectPose = null;
+  let indirectScale = null;
+  const indirectViewKeys = new WeakMap();
+  function indirectCullView(camera, viewIndex) {
+    if (!camera.isPerspectiveCamera || typeof camera.matrixWorld?.decompose !== 'function' ||
+        !THREE.Vector3 || !THREE.Quaternion) return null;
+    const m = camera.matrixWorld.elements;
+    const xy = m[0] * m[4] + m[1] * m[5] + m[2] * m[6];
+    const xz = m[0] * m[8] + m[1] * m[9] + m[2] * m[10];
+    const yz = m[4] * m[8] + m[5] * m[9] + m[6] * m[10];
+    if (!(Math.max(Math.abs(xy), Math.abs(xz), Math.abs(yz)) <= RIGID_CAMERA_EPSILON) ||
+        m[3] !== 0 || m[7] !== 0 || m[11] !== 0 || m[15] !== 1) return null;
+    indirectPose ??= {
+      position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), projection: new Float64Array(17),
+    };
+    indirectScale ??= new THREE.Vector3();
+    camera.matrixWorld.decompose(indirectPose.position, indirectPose.quaternion, indirectScale);
+    if (!(Math.max(Math.abs(indirectScale.x - 1), Math.abs(indirectScale.y - 1),
+      Math.abs(indirectScale.z - 1)) <= RIGID_CAMERA_EPSILON)) return null;
+    let keys = indirectViewKeys.get(camera);
+    if (!keys) indirectViewKeys.set(camera, keys = new Map());
+    if (!keys.has(viewIndex)) keys.set(viewIndex, {});
+    indirectPose.id = keys.get(viewIndex);
+    indirectPose.projection.set(camera.projectionMatrix.elements);
+    indirectPose.projection[16] = Number(usesZeroToOneDepth(camera));
+    return indirectPose;
+  }
+
   function renderView(world, camera, pipeline, options = {}) {
     const diagnostics = options.diagnostics;
     diagnostics?.beginView(options.viewIndex ?? 0);
     culler3d.beginFrame(camera);
-    if (gpuIndirectCuller && culler3d.frustum?.planes) {
-      gpuIndirectCuller.setFrustumPlanes(culler3d.frustum.planes);
+    if (gpuIndirectCuller && culler3d.frustum.hasPlanes) {
+      const planes = culler3d.frustum.planes;
+      const view = gpuIndirectCuller.mode === 'webgpu-indirect' ? indirectCullView(camera, options.viewIndex ?? 0) : null;
+      const cullOptions = view ? { view, predict: true } : undefined;
       for (const batch of indirectBatches.values()) {
         if (typeof batch?.cull === 'function') {
-          batch.cull(culler3d.frustum.planes, gpuIndirectCuller);
+          gpuIndirectCuller.setFrustumPlanes(planes);
+          batch.cull(planes, gpuIndirectCuller, cullOptions);
         } else if (batch?.bounds && Number.isFinite(batch.count)) {
+          gpuIndirectCuller.setFrustumPlanes(planes);
           gpuIndirectCuller.setInstanceCount(batch.count);
           gpuIndirectCuller.setInstanceBounds(0, batch.count, batch.bounds);
           batch.lastResult = gpuIndirectCuller.execute(batch.executeOptions);

@@ -4,6 +4,8 @@
 
 - Harden scoring: scorecard now requires competitor basis, existing benchmark files and budgeted/live-measured gzip sizes (`score-engines.mjs --measure`), and adds `npm run score:game` for an evidence-only game composite score from the acceptance report.
 
+- Keep registered WebGPU culling batches visible during camera cuts and moving bounds, with guarded results and a current-frame CPU fallback.
+
 - Keep action-menu selection and the focus ring on the same native button, and preserve Canvas ARIA focus during updates.
 
 - Ship a shared keyboard and two-finger combat acceptance scenario with the Pixi arena and three action archetypes.
