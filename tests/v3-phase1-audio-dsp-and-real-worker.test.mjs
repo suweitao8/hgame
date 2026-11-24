@@ -105,9 +105,105 @@ function createInspectableAudioContextClass() {
     createStereoPanner() { return new FakeStereoPanner(this); }
     createDynamicsCompressor() { return new FakeCompressor(this); }
     createBufferSource() { return new FakeSource(this); }
+    createMediaElementSource(element) {
+      const node = new FakeNode(this, 'media');
+      node.element = element;
+      this.sources.push(node);
+      return node;
+    }
     createBuffer(ch, len, sr) { return new FakeAudioBuffer(ch, len, sr); }
   };
 }
+
+test('URL dialogue cues share the mixer and voice limits, pause with the game, and release audio on end', async () => {
+  const OriginalAudio = globalThis.Audio;
+  const instances = [];
+  let failPlayback = false;
+  let signalSlowStart;
+  const slowStarted = new Promise(resolve => { signalSlowStart = resolve; });
+  globalThis.Audio = class extends EventTarget {
+    constructor() { super(); this.paused = true; instances.push(this); }
+    async play() {
+      if (failPlayback) throw new Error('Cannot play');
+      if (this.src === '/voice/slow.ogg') {
+        signalSlowStart();
+        return new Promise((_, reject) => { this.abortPlayback = reject; });
+      }
+      this.paused = false;
+    }
+    pause() {
+      this.paused = true;
+      this.abortPlayback?.(new Error('Playback was stopped'));
+      this.abortPlayback = null;
+    }
+    removeAttribute(name) { if (name === 'src') this.src = ''; }
+    load() {}
+  };
+  const audio = createAudioManager({ AudioContextClass: createInspectableAudioContextClass(), maxPolyphony: 2 });
+  try {
+    audio.registerCue('voice.intro', {
+      variants: [{ url: '/voice/intro-en.ogg', durationSec: 45 }],
+      bus: 'ui_voice', cooldownMs: 0, maxVoices: 1,
+    });
+    assert.equal(audio.inspectCue('voice.intro').variants[0].duration, 45);
+    assert.equal(instances.length, 0, 'registration does not load media');
+    const context = await audio.unlock();
+    const first = await audio.playCue('voice.intro');
+    assert.equal(first.bus, 'ui_voice');
+    assert.equal(first.variant, 0);
+    assert.equal(audio.activeCount, 1);
+    const firstElement = instances[0];
+    assert.equal(firstElement.paused, false);
+    assert.ok(reachable(context.sources[0], context.destination));
+    assert.ok(context.sources.every(source => source.kind === 'media'));
+
+    audio.onHide();
+    assert.equal(firstElement.paused, true);
+    audio.onShow();
+    assert.equal(firstElement.paused, false);
+    const second = await audio.playCue('voice.intro');
+    assert.ok(second);
+    assert.equal(audio.activeCount, 1);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(firstElement.src, '');
+    instances[1].dispatchEvent(new Event('ended'));
+    assert.equal(audio.activeCount, 0);
+    assert.equal(instances[1].src, '');
+    assert.equal(context.sources[1].outputs.size, 0);
+
+    failPlayback = true;
+    assert.equal(await audio.playCue('voice.intro'), null);
+    assert.equal(audio.activeCount, 0);
+    assert.equal(instances[2].src, '');
+    assert.equal(context.sources[2].outputs.size, 0);
+
+    failPlayback = false;
+    audio.registerCue('voice.race', {
+      variants: [{ url: '/voice/slow.ogg' }, { url: '/voice/fast.ogg' }],
+      cooldownMs: 0, maxVoices: 1,
+    });
+    const older = audio.playCue('voice.race', { variant: 0 });
+    await slowStarted;
+    const newer = await audio.playCue('voice.race', { variant: 1 });
+    assert.equal(newer.variant, 1);
+    assert.equal(audio.activeCount, 1, 'pending starts occupy the per-cue voice limit');
+    assert.equal(await older, null);
+    assert.equal(instances.at(-1).src, '/voice/fast.ogg');
+    newer.stop();
+
+    audio.onHide();
+    const hidden = await audio.playCue('voice.intro', { ducking: true });
+    assert.ok(hidden);
+    assert.equal(instances.at(-1).paused, true);
+    assert.equal(audio.getDspState().ducking.bgm, undefined, 'inaudible dialogue does not duck music');
+    audio.onShow();
+    await Promise.resolve();
+    assert.ok(audio.getDspState().ducking.bgm.targetGain < 1);
+  } finally {
+    await audio.dispose();
+    globalThis.Audio = OriginalAudio;
+  }
+});
 
 function reachable(startNode, targetNode, visited = new Set()) {
   if (!startNode) return false;

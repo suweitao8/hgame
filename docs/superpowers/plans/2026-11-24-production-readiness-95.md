@@ -67,7 +67,20 @@ A2 moves from 9.5 to 10. Runtime reaches 86.4 and the weighted overall score rea
 
 On a Chromium connection limited to 48 KiB/s, the buffered audio reached 21.3 s before the seek. Chromium requested bytes 622,592–897,593, completed the native seek to 52.3 s and continued playing there. The streaming player held zero decoded buffers throughout the 60-second soak. In that run, starting playback increased renderer private memory by 4.1 MiB with streaming and 32.6 MiB with whole-track decoding. The exact candidate passed the 621-test repository check and all 49 WebAsset tests.
 
-S3 remains at 8.5 and the weighted score remains **90.76**. The long-audio criterion includes the default long-voice path, which still needs evidence.
+At the end of the WebAsset seek change, S3 was 8.5 and the weighted score was **90.76**. The long-audio criterion also required evidence for the default long-voice path.
+
+## Streamed dialogue in the audio cue player
+
+- [x] Register URL variants through the existing cue API. Use their authored duration for inspection and ducking while keeping buffer-based cues on the current path.
+- [x] Send streamed dialogue through the same voice mixer, cooldown, polyphony, and spatial graph. Pause playback while hidden and release the media and graph on stop, failure, and disposal.
+- [x] Verify cue playback through a WebAsset game preview in Chromium. Check the real media source, gain, lifecycle, and release without allocating a decoded audio buffer.
+- [x] Run the repository and WebAsset gates against the staged code.
+
+At 64 KiB/s, Chromium started a 24-second cue through WebAsset with about 7.7 seconds buffered. The test recorded one MediaElementAudioSourceNode, no AudioBufferSourceNodes and no decodeAudioData calls. The measured mix signal reached RMS 0.108 and fell to zero with the voice bus muted. The playhead stopped while hidden, advanced after showing, and released the media URL on stop. The fake-media test covers failed playback and a pending request overtaken at a one-voice limit.
+
+The exact candidate passed 622 repository tests, the physics and generated-metadata gates, and 49 WebAsset tests. The native BGM seek regression passed again. The Web and Toy archive screenshots matched the unminified archive pixel for pixel.
+
+S3 moves from 8.5 to 9.5. Runtime now scores 86.8 and the weighted score reaches **90.92**, retaining 92 for production kit and 96 for verification and delivery. The voice fixture uses a synthetic signal on desktop Chromium. Physical mobile and Toy host audio remain to be tested.
 
 ## Current evidence
 

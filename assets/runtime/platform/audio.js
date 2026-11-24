@@ -4,9 +4,9 @@ import {
   applyListenerOrientation,
 } from './audio/helpers.js';
 import { analyzeAudioBuffer } from './audio/analysis.js';
-import { normalizeVariantSet } from './audio/variants.js';
+import { normalizeStreamVariantSet, normalizeVariantSet } from './audio/variants.js';
 import { createAudioBusController } from './audio/buses.js';
-import { playAudioBuffer } from './audio/voice.js';
+import { playAudioBuffer, playAudioMedia } from './audio/voice.js';
 import { createBgmController } from './audio/bgm-player.js';
 import {
   SYNTH_PRESETS,
@@ -131,7 +131,7 @@ export {
 
 /**
  * @typedef {object} AudioCueConfig
- * @property {readonly AudioBuffer[]} variants 1-4 decoded buffers.
+ * @property {readonly AudioBuffer[] | readonly { url: string, durationSec?: number }[]} variants Decoded buffers or authored streaming URLs for the cue.
  * @property {string | null} [bus=null]
  * @property {number} [volume=1]
  * @property {number} [gainDb=0] Post-normalization hot-patch gain offset, dB.
@@ -373,6 +373,8 @@ export function createAudioManager({
     muted: false,
     currentVolume: clamp(Number(volume) || 0, 0, 1),
     activeSources: new Set(),
+    mediaVoices: new Map(),
+    hidden: false,
     bufferCooldowns: new WeakMap(),
     keyCooldowns: new Map(),
     activeSnapshot: null,
@@ -503,18 +505,22 @@ export function createAudioManager({
     if (buses.getBusVolume('music') !== undefined) buses.duckBus('music', duckOpts);
   }
 
-  const play = async (buffer, options = {}) => {
+  async function playVoiceSource(buffer, options = {}, streamUrl = null, reservation = null) {
     const pos = options.position ?? options.position2D ?? null;
     const doppler = (pos && options.velocity)
       ? computeDopplerRate(pos, options.velocity, listenerState, listenerState, options.speedOfSound)
       : 1;
     const effectiveRate = clamp((Number(options.playbackRate) || 1) * doppler, 0.05, 4);
-    const handle = await playAudioBuffer(ctx, buffer, doppler !== 1 ? { ...options, playbackRate: effectiveRate } : options);
+    const voiceOptions = doppler !== 1 ? { ...options, playbackRate: effectiveRate } : options;
+    const handle = streamUrl
+      ? await playAudioMedia(ctx, streamUrl, voiceOptions, reservation)
+      : await playAudioBuffer(ctx, buffer, voiceOptions);
     if (handle && options.ducking) {
       triggerBgmDuck(options.duration ?? buffer?.duration ?? 0.4);
     }
     return handle;
-  };
+  }
+  const play = (buffer, options) => playVoiceSource(buffer, options);
 
   function buildImpulseResponse(audioCtx, decaySeconds) {
     if (!audioCtx || typeof audioCtx.createBuffer !== 'function') return null;
@@ -729,7 +735,9 @@ export function createAudioManager({
     if (typeof name !== 'string' || !name.trim()) throw new TypeError('Cue name must be a non-empty string');
     const isArray = Array.isArray(variantsOrConfig);
     const cfg = isArray ? { variants: variantsOrConfig, ...extraOptions } : (variantsOrConfig || {});
-    const normalized = normalizeVariantSet(cfg.variants, {
+    const streamed = cfg.variants?.some?.(variant => typeof variant?.url === 'string');
+    const normalize = streamed ? normalizeStreamVariantSet : normalizeVariantSet;
+    const normalized = normalize(cfg.variants, {
       silenceThreshold: cfg.silenceThreshold ?? 0.0035,
       normalizeRms: cfg.normalizeRms !== false,
       maxDurationSpreadRatio: cfg.maxDurationSpreadRatio ?? 0.28,
@@ -776,6 +784,7 @@ export function createAudioManager({
       trimSilence: cfg.trimSilence !== false,
       normalized,
       lastVariant: -1,
+      playAttempt: 0,
       activeHandles: new Set(),
     });
     return inspectCue(name);
@@ -821,14 +830,27 @@ export function createAudioManager({
     const cueGainLinear = Math.pow(10, ((entry.gainDb || 0) + (Number(overrides.gainDb) || 0)) / 20);
     const requestedVol = (overrides.volume ?? entry.volume) * cueGainLinear * v.gainScale;
     const prevLast = entry.lastVariant;
+    const attempt = ++entry.playAttempt;
     entry.lastVariant = chosenIndex;
     const needsTrimmedDuration = v.analyzable && entry.trimSilence
       && v.playDuration > 0
       && (v.tailFadeSec > 0 || v.playDuration < v.duration - 1e-4);
+    const shouldDuck = overrides.ducking ?? entry.ducking;
+    const cueDuration = needsTrimmedDuration ? v.playDuration : (v.duration || 0.4);
 
-    let handleRef = null;
     const resolvedBus = overrides.bus ?? entry.bus ?? ((overrides.position || overrides.position2D) ? 'spatial' : 'combat');
-    const handle = await play(v.buffer, {
+    // Media playback can wait on the network. Reserve a slot in request order.
+    const reservation = v.url ? {
+      handle: null,
+      cancelled: false,
+      stop(options) {
+        this.cancelled = true;
+        entry.activeHandles.delete(this);
+        this.handle?.stop(options);
+      },
+    } : null;
+    if (reservation) entry.activeHandles.add(reservation);
+    const voiceOptions = {
       bus: resolvedBus,
       volume: requestedVol,
       loop: overrides.loop ?? false,
@@ -856,33 +878,38 @@ export function createAudioManager({
       occludedLowPassHz: overrides.occludedLowPassHz ?? 550,
       occludedGainScale: overrides.occludedGainScale ?? 0.45,
       openLowPassHz: overrides.openLowPassHz ?? 22000,
-      onEnded: () => { if (handleRef) entry.activeHandles.delete(handleRef); },
+      onEnded: voice => { entry.activeHandles.delete(reservation ?? voice); },
+      onMediaStarted: reservation && shouldDuck ? () => triggerBgmDuck(cueDuration) : null,
       random: rng,
-    });
-
-    if (!handle) {
-      entry.lastVariant = prevLast;
-      return null;
+    };
+    let handle;
+    try {
+      handle = await playVoiceSource(v.buffer, voiceOptions, v.url, reservation);
+      if (reservation && !ctx.activeSources.has(handle)) handle = null;
+    } finally {
+      if (!handle || reservation?.cancelled) {
+        if (reservation) entry.activeHandles.delete(reservation);
+        if (entry.playAttempt === attempt) entry.lastVariant = prevLast;
+      }
     }
+    if (!handle || reservation?.cancelled) return null;
 
-    if (overrides.ducking ?? entry.ducking) {
-      const stingerDur = needsTrimmedDuration ? v.playDuration : (v.duration || 0.4);
-      triggerBgmDuck(stingerDur);
-    }
+    if (!reservation && shouldDuck) triggerBgmDuck(cueDuration);
 
-    handleRef = handle;
     handle.variant = chosenIndex;
     const origStop = handle.stop;
     handle.stop = (stopOpts) => {
-      entry.activeHandles.delete(handle);
+      entry.activeHandles.delete(reservation ?? handle);
       return origStop(stopOpts);
     };
-    while (entry.activeHandles.size >= maxVoices) {
-      const oldest = entry.activeHandles.values().next().value;
-      if (!oldest) break;
-      oldest.stop({ fadeOutMs: 8 });
+    if (!reservation) {
+      while (entry.activeHandles.size >= maxVoices) {
+        const oldest = entry.activeHandles.values().next().value;
+        if (!oldest) break;
+        oldest.stop({ fadeOutMs: 8 });
+      }
+      entry.activeHandles.add(handle);
     }
-    entry.activeHandles.add(handle);
     return handle;
   }
 
@@ -1021,15 +1048,28 @@ export function createAudioManager({
   const boundLifecycleHosts = new WeakSet();
 
   function onHide() {
+    ctx.hidden = true;
+    for (const voice of ctx.mediaVoices.values()) voice.pause();
     bgmPlayer.pauseBgm({ fromLifecycle: true });
     if (ctx.context) void ctx.context.suspend?.().catch?.(() => {});
   }
 
   function onShow() {
+    ctx.hidden = false;
     if (!ctx.muted) {
       if (ctx.context) void ctx.context.resume?.().catch?.(() => {});
       void bgmPlayer.resumeBgm({ fromLifecycle: true }).catch(() => {});
+      for (const voice of ctx.mediaVoices.values()) voice.resume();
     }
+  }
+
+  function setMuted(value) {
+    const muted = buses.setMuted(value);
+    if (!muted && !ctx.hidden && ctx.mediaVoices.size) {
+      if (ctx.context) void ctx.context.resume?.().catch?.(() => {});
+      for (const voice of ctx.mediaVoices.values()) voice.resume();
+    }
+    return muted;
   }
 
   function bindLifecycle({
@@ -1106,6 +1146,7 @@ export function createAudioManager({
     bgmInstances.clear();
     for (const stream of [...activeStreams]) stream.stop();
     activeStreams.clear();
+    for (const voice of ctx.mediaVoices.values()) voice.release();
     for (const id of [...reverbZones.keys()]) removeReverbZone(id);
     for (const source of [...ctx.activeSources]) source.stop();
     ctx.activeSources.clear();
@@ -1142,7 +1183,7 @@ export function createAudioManager({
     inspectCue,
     hasCue: (name) => cues.has(name),
     setVolume: buses.setVolume,
-    setMuted: buses.setMuted,
+    setMuted,
     setBusVolume: buses.setBusVolume,
     getBusVolume: buses.getBusVolume,
     setBusEq: buses.setBusEq,

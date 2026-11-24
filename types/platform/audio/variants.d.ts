@@ -34,6 +34,16 @@
  * @returns {NormalizedVariantSet}
  */
 export function normalizeVariantSet(buffers: readonly AudioBuffer[], { silenceThreshold, normalizeRms, maxDurationSpreadRatio, alignDuration, gainClamp, }?: VariantSetOptions | undefined): NormalizedVariantSet;
+/** Build cue metadata for authored streams without downloading or analyzing samples. */
+export function normalizeStreamVariantSet(streams: any, { maxDurationSpreadRatio }?: {
+    maxDurationSpreadRatio?: number | undefined;
+}): {
+    variants: any;
+    medianDuration: number;
+    medianRms: number;
+    durationSpreadRatio: number;
+    allConsistent: any;
+};
 export type VariantSetOptions = {
     /**
      * Silence amplitude (0..1).

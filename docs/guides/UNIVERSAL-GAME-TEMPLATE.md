@@ -86,6 +86,17 @@
   - 玩法事件：`attack`, `hit`, `crit`, `kill`, `dash`, `hurt`, `pickup`, `levelup`, `waveStart`, `bossSpawn`, `victory`, `defeat`, `interact`
   - UI 事件：`uiHover`, `uiPress`, `uiConfirm`, `uiCancel`, `uiOpen`, `uiClose`, `uiReward`, `uiError`
 - **零资源启动 + 无缝替换**：`createAudioDirector` 默认将全部事件映射到零 KB 合成预设（带防刷屏冷却 `cooldownMs` 与音高微扰 `pitchJitter`），并随游戏阶段与波次自动调度自适应 BGM（`title` 舒缓、`playing` 随连击/波次提速、`boss` 切高压、`paused` 降音、`result` 切胜利/余韵）；后续只需注册 `.mp3` Cue 即可无痛覆盖，玩法代码零修改。
+- 长对白可在 `audio.registerCue` 中注册 URL 变体，再用 `audio.playCue` 播放。`durationSec` 用于检查变体和计算音乐压低时长。`ui_voice` 适合无空间定位的对白，角色台词可使用空间总线和位置参数。每个 Cue 的变体统一使用 URL 或已解码缓冲。
+
+```js
+audio.registerCue('voice.intro', {
+  bus: 'ui_voice',
+  variants: [{ url: './assets/audio/intro.ogg', durationSec: 24 }],
+  maxVoices: 1,
+  ducking: true,
+});
+const voice = await audio.playCue('voice.intro');
+```
 
 ---
 

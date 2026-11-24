@@ -106,3 +106,30 @@ export function normalizeVariantSet(buffers, {
     allConsistent: variants.every(v => v.consistent),
   };
 }
+
+/** Build cue metadata for authored streams without downloading or analyzing samples. */
+export function normalizeStreamVariantSet(streams, { maxDurationSpreadRatio = 0.28 } = {}) {
+  const durations = streams.map(stream => {
+    if (typeof stream?.url !== 'string' || !stream.url.trim()) {
+      throw new TypeError('A streamed cue requires a URL for every variant');
+    }
+    if (stream.durationSec !== undefined && (!Number.isFinite(stream.durationSec) || stream.durationSec <= 0)) {
+      throw new TypeError('A streamed cue duration must be a positive number of seconds');
+    }
+    return stream.durationSec ?? 0;
+  });
+  const medianDuration = median(durations.filter(duration => duration > 0));
+  let durationSpreadRatio = 0;
+  const variants = streams.map((stream, index) => {
+    const duration = durations[index];
+    const deviationRatio = duration > 0 && medianDuration > 0
+      ? Math.abs(duration - medianDuration) / medianDuration : 0;
+    durationSpreadRatio = Math.max(durationSpreadRatio, deviationRatio);
+    return {
+      index, url: stream.url.trim(), buffer: null, duration, activeDuration: duration,
+      playDuration: duration, analyzable: false, gainScale: 1, tailFadeSec: 0,
+      deviationRatio, consistent: deviationRatio <= maxDurationSpreadRatio,
+    };
+  });
+  return { variants, medianDuration, medianRms: 0, durationSpreadRatio, allConsistent: variants.every(variant => variant.consistent) };
+}

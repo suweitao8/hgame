@@ -37,10 +37,36 @@ export function computeSpatialMetrics(posArg: unknown, opts: object, listenerSta
  * @param {AudioBuffer} buffer
  * @param {object} [options]
  */
-export function playAudioBuffer(ctx: object, buffer: AudioBuffer, { volume: soundVolume, loop, playbackRate, pitchJitter, gainJitter, gainJitterDb, cooldownMs, key, bus, pan, position, position2D, hrtf, distanceModel, refDistance, maxDistance, rolloffFactor, panRange, trimSilence, offset, duration, tailFadeSec, occlusion, occludedLowPassHz, occludedGainScale, openLowPassHz, reverbSend, onEnded, random, }?: object): Promise<{
+export function playAudioBuffer(ctx: object, buffer: AudioBuffer, options?: object): Promise<{
     loop: boolean;
-    playbackRate: number;
-    bus: any;
+    playbackRate: any;
+    bus: string;
+    variant: number;
+    readonly pan: number;
+    readonly distanceGain: number;
+    readonly occlusion: number;
+    readonly lowPassHz: any;
+    readonly reverbSendGain: any;
+    setReverbSend(amount: any): any;
+    setPosition(nextPos: any): any;
+    setOcclusion(nextValue: any, { smoothSeconds, lowPassHz, gainScale }?: {
+        smoothSeconds?: number | undefined;
+        lowPassHz?: null | undefined;
+        gainScale?: null | undefined;
+    }): any;
+    refreshOcclusion({ smoothSeconds }?: {
+        smoothSeconds?: number | undefined;
+    }): number;
+    setVolume(nextVol: any): any;
+    setPlaybackRate(nextRate: any): any;
+    stop({ fadeOutMs }?: {
+        fadeOutMs?: number | undefined;
+    }): void;
+} | null>;
+export function playAudioMedia(ctx: any, url: any, options: any, reservation: any): Promise<{
+    loop: boolean;
+    playbackRate: any;
+    bus: string;
     variant: number;
     readonly pan: number;
     readonly distanceGain: number;

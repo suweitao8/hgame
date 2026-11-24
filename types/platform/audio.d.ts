@@ -83,7 +83,7 @@
  */
 /**
  * @typedef {object} AudioCueConfig
- * @property {readonly AudioBuffer[]} variants 1-4 decoded buffers.
+ * @property {readonly AudioBuffer[] | readonly { url: string, durationSec?: number }[]} variants Decoded buffers or authored streaming URLs for the cue.
  * @property {string | null} [bus=null]
  * @property {number} [volume=1]
  * @property {number} [gainDb=0] Post-normalization hot-patch gain offset, dB.
@@ -486,9 +486,12 @@ export type AudioVoice = {
 };
 export type AudioCueConfig = {
     /**
-     * 1-4 decoded buffers.
+     * Decoded buffers or authored streaming URLs for the cue.
      */
-    variants: readonly AudioBuffer[];
+    variants: readonly AudioBuffer[] | readonly {
+        url: string;
+        durationSec?: number;
+    }[];
     bus?: string | null | undefined;
     volume?: number | undefined;
     /**

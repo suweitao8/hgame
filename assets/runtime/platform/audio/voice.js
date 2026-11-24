@@ -71,7 +71,24 @@ export function computeSpatialMetrics(posArg, opts, listenerState) {
  * @param {AudioBuffer} buffer
  * @param {object} [options]
  */
-export async function playAudioBuffer(ctx, buffer, {
+export function playAudioBuffer(ctx, buffer, options) {
+  return playVoice(ctx, buffer, null, null, options);
+}
+
+export function playAudioMedia(ctx, url, options, reservation) {
+  return playVoice(ctx, null, url, reservation, options);
+}
+
+function setMediaRate(media, rate) {
+  try {
+    media.playbackRate = clamp(rate, 0.0625, 4);
+  } catch (error) {
+    if (error?.name !== 'NotSupportedError') throw error;
+  }
+  return media.playbackRate;
+}
+
+async function playVoice(ctx, buffer, url, reservation, {
   volume: soundVolume = 1,
   loop = false,
   playbackRate = 1,
@@ -100,9 +117,10 @@ export async function playAudioBuffer(ctx, buffer, {
   openLowPassHz = 22000,
   reverbSend = null,
   onEnded = null,
+  onMediaStarted = null,
   random = Math.random,
 } = {}) {
-  if (ctx.muted) return null;
+  if (ctx.muted || (url && typeof globalThis.Audio !== 'function')) return null;
 
   if (cooldownMs > 0) {
     const currentNow = ctx.now();
@@ -139,8 +157,9 @@ export async function playAudioBuffer(ctx, buffer, {
   };
   if (!evictForSlot()) return null;
 
-  const audioContext = await ctx.unlock();
-  if (!ctx.context || !ctx.master || !evictForSlot()) return null;
+  const audioContext = url && ctx.hidden && ctx.context ? ctx.context : await ctx.unlock();
+  if (reservation?.cancelled || ctx.context !== audioContext || !ctx.master || !evictForSlot()) return null;
+  if (url && typeof audioContext.createMediaElementSource !== 'function') return null;
 
   const busName = bus ?? ((position || position2D) ? 'spatial' : 'sfx');
   const isUiDirect = busName === 'ui_voice' || busName === 'ui';
@@ -149,17 +168,26 @@ export async function playAudioBuffer(ctx, buffer, {
     ? { kind: 'none', pan: 0, distanceGain: 1 }
     : computeSpatialMetrics(null, spatialOpts, ctx.listenerState);
 
-  const source = audioContext.createBufferSource();
+  const media = url ? new globalThis.Audio() : null;
+  const source = media ? audioContext.createMediaElementSource(media) : audioContext.createBufferSource();
   const gain = audioContext.createGain();
-  source.buffer = buffer;
-  source.loop = isLoop;
+  if (media) {
+    media.crossOrigin = 'anonymous';
+    media.preload = 'metadata';
+    media.loop = isLoop;
+    media.preservesPitch = false;
+  } else {
+    source.buffer = buffer;
+    source.loop = isLoop;
+  }
 
   const baseRate = Math.max(0.05, Number(playbackRate) || 1);
   const pJitter = Math.max(0, Number(pitchJitter) || 0);
-  const rate = pJitter > 0
+  const desiredRate = pJitter > 0
     ? clamp(baseRate * (1 + (random() * 2 - 1) * pJitter), 0.05, 4)
     : baseRate;
-  source.playbackRate.value = rate;
+  const rate = media ? setMediaRate(media, desiredRate) : desiredRate;
+  if (!media) source.playbackRate.value = rate;
 
   const gJitterDb = Math.max(0, Number(gainJitterDb) || 0);
   const dbScale = gJitterDb > 0 ? Math.pow(10, ((random() * 2 - 1) * gJitterDb) / 20) : 1;
@@ -272,43 +300,39 @@ export async function playAudioBuffer(ctx, buffer, {
   );
   gain.gain.value = effectiveGain;
 
-  const info = trimSilence !== false ? ctx.getCachedAnalysis(buffer) : analyzeAudioBuffer(null);
-  const startAt = Number.isFinite(audioContext.currentTime) ? audioContext.currentTime : 0;
-  let startOffset = 0;
-  let playDur = null;
+  if (!media) {
+    const info = trimSilence !== false ? ctx.getCachedAnalysis(buffer) : analyzeAudioBuffer(null);
+    const startAt = Number.isFinite(audioContext.currentTime) ? audioContext.currentTime : 0;
+    const startOffset = offset !== null ? Math.max(0, Number(offset) || 0) : (info.analyzable ? info.trimStart : 0);
 
-  if (isLoop) {
-    if (info.analyzable && (info.trimStart > 0 || info.trimEnd < info.duration - 1e-4)) {
-      source.loopStart = info.trimStart;
-      source.loopEnd = info.trimEnd;
-    }
-    startOffset = offset !== null ? Math.max(0, Number(offset) || 0) : (info.analyzable ? info.trimStart : 0);
-    if (startOffset > 0) source.start(startAt, startOffset);
-    else source.start();
-  } else {
-    startOffset = offset !== null ? Math.max(0, Number(offset) || 0) : (info.analyzable ? info.trimStart : 0);
-    if (duration !== null && Number(duration) > 0) {
-      playDur = Number(duration);
-    } else if (info.analyzable && info.trimEnd < info.duration - 1e-4) {
-      playDur = info.activeDuration;
-    }
-
-    if (playDur !== null && tailFadeSec > 0
-      && typeof gain.gain.setValueAtTime === 'function'
-      && typeof gain.gain.linearRampToValueAtTime === 'function') {
-      const wallDur = playDur / rate;
-      const fadeLen = Math.min(wallDur * 0.5, tailFadeSec / rate);
-      const fadeStart = startAt + Math.max(0, wallDur - fadeLen);
-      gain.gain.setValueAtTime(effectiveGain, fadeStart);
-      gain.gain.linearRampToValueAtTime(0.0001, startAt + wallDur);
-    }
-
-    if (playDur !== null) {
-      source.start(startAt, startOffset, playDur);
-    } else if (startOffset > 0) {
-      source.start(startAt, startOffset);
+    if (isLoop) {
+      if (info.analyzable && (info.trimStart > 0 || info.trimEnd < info.duration - 1e-4)) {
+        source.loopStart = info.trimStart;
+        source.loopEnd = info.trimEnd;
+      }
+      if (startOffset > 0) source.start(startAt, startOffset);
+      else source.start();
     } else {
-      source.start();
+      let playDur = null;
+      if (duration !== null && Number(duration) > 0) {
+        playDur = Number(duration);
+      } else if (info.analyzable && info.trimEnd < info.duration - 1e-4) {
+        playDur = info.activeDuration;
+      }
+
+      if (playDur !== null && tailFadeSec > 0
+        && typeof gain.gain.setValueAtTime === 'function'
+        && typeof gain.gain.linearRampToValueAtTime === 'function') {
+        const wallDur = playDur / rate;
+        const fadeLen = Math.min(wallDur * 0.5, tailFadeSec / rate);
+        const fadeStart = startAt + Math.max(0, wallDur - fadeLen);
+        gain.gain.setValueAtTime(effectiveGain, fadeStart);
+        gain.gain.linearRampToValueAtTime(0.0001, startAt + wallDur);
+      }
+
+      if (playDur !== null) source.start(startAt, startOffset, playDur);
+      else if (startOffset > 0) source.start(startAt, startOffset);
+      else source.start();
     }
   }
 
@@ -382,14 +406,26 @@ export async function playAudioBuffer(ctx, buffer, {
     },
     setPlaybackRate(nextRate) {
       const clamped = clamp(Number(nextRate) || 1, 0.05, 4);
-      source.playbackRate.value = clamped;
-      handle.playbackRate = clamped;
+      if (media) handle.playbackRate = setMediaRate(media, clamped);
+      else {
+        source.playbackRate.value = clamped;
+        handle.playbackRate = clamped;
+      }
       return handle;
     },
     stop({ fadeOutMs = 0 } = {}) {
       ctx.activeSources.delete(handle);
       const fadeSec = Math.max(0, (Number(fadeOutMs) || 0) * 0.001);
       const nowTime = Number.isFinite(ctx.context?.currentTime) ? ctx.context.currentTime : 0;
+      if (media) {
+        if (fadeSec > 0 && fadeTimer === null && !media.paused && typeof gain.gain.setTargetAtTime === 'function') {
+          gain.gain.setTargetAtTime(0, nowTime, fadeSec / 3);
+          fadeTimer = setTimeout(releaseMedia, fadeSec * 1000);
+        } else {
+          releaseMedia();
+        }
+        return;
+      }
       if (fadeSec > 0 && typeof gain.gain.setTargetAtTime === 'function') {
         try {
           gain.gain.setTargetAtTime(0, nowTime, fadeSec / 3);
@@ -400,11 +436,75 @@ export async function playAudioBuffer(ctx, buffer, {
       try { source.stop(); } catch { /* Already stopped. */ }
     },
   };
-  source.addEventListener?.('ended', () => {
+  function finishVoice() {
     ctx.activeSources.delete(handle);
     try { reverbSendNode?.disconnect?.(); } catch {}
     if (typeof onEnded === 'function') onEnded(handle);
-  }, { once: true });
+  }
+
+  let released = false;
+  let lifecyclePaused = false;
+  let fadeTimer = null;
+  let playbackRequest = 0;
+  let reportedPlayback = false;
+  function releaseMedia() {
+    if (released) return;
+    released = true;
+    clearTimeout(fadeTimer);
+    ctx.mediaVoices.delete(handle);
+    media.removeEventListener('ended', releaseMedia);
+    media.removeEventListener('error', releaseMedia);
+    media.pause();
+    media.removeAttribute('src');
+    media.load();
+    for (const node of [source, gain, occlusionNode, pannerNode, stereoNode]) node?.disconnect();
+    finishVoice();
+  }
+
+  async function startMedia() {
+    const request = ++playbackRequest;
+    try {
+      await media.play();
+    } catch {
+      // Pause and resume can invalidate a still-pending play() promise.
+      if (request === playbackRequest) releaseMedia();
+    }
+    if (!released && !reservation?.cancelled && request === playbackRequest && !reportedPlayback) {
+      reportedPlayback = true;
+      onMediaStarted?.();
+    }
+    return !released;
+  }
+
+  if (!media) {
+    source.addEventListener?.('ended', finishVoice, { once: true });
+    ctx.activeSources.add(handle);
+    return handle;
+  }
+
+  media.addEventListener('ended', releaseMedia);
+  media.addEventListener('error', releaseMedia);
+  ctx.mediaVoices.set(handle, {
+    pause() {
+      if (fadeTimer !== null) {
+        releaseMedia();
+        return;
+      }
+      lifecyclePaused = true;
+      playbackRequest++;
+      media.pause();
+    },
+    resume() {
+      if (!lifecyclePaused) return;
+      lifecyclePaused = false;
+      void startMedia();
+    },
+    release: releaseMedia,
+  });
   ctx.activeSources.add(handle);
+  if (reservation) reservation.handle = handle;
+  media.src = url;
+  if (ctx.hidden || ctx.muted) lifecyclePaused = true;
+  else if (!await startMedia()) return null;
   return handle;
 }

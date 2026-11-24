@@ -831,16 +831,18 @@
       "name": "空间音频与动态 DSP 混音",
       "weight": 4,
       "scores": {
-        "hgame": 8.5,
+        "hgame": 9.5,
         "unity": 5,
         "cocos": 4.5,
         "godot": 5.5
       },
       "hgame": {
-        "evidence": "C3",
+        "evidence": "C4",
         "defaultPath": true,
         "proofFiles": [
-          "assets/runtime/platform/audio.js"
+          "assets/runtime/platform/audio.js",
+          "assets/runtime/platform/audio/voice.js",
+          "assets/runtime/platform/audio/bgm-player.js"
         ],
         "industrialChecklist": [
           {
@@ -867,13 +869,14 @@
           },
           {
             "point": "长音轨（BGM/长语音）流式播放，不整段 decodeAudioData 驻留内存",
-            "met": false,
-            "proof": "platform/audio/bgm-player.js 的长 BGM 已通过真实浏览器流式播放、跳转与驻留内存验证。长语音默认播放链路仍待验证。"
+            "met": true,
+            "proof": "platform/audio/bgm-player.js 与 voice.js。Chromium 实测 BGM 跳转及长语音 Cue 在限速下开播，零 AudioBuffer，实际混音总线输出与暂停恢复均可验证。"
           }
         ],
-        "note": "原生 Web Audio 真实混响发送链（ConvolverNode）、3 段参数 EQ、采样级 duckBus 包络与 0-KB 合成器。",
+        "note": "原生 Web Audio 真实混响发送链（ConvolverNode）、3 段参数 EQ、采样级 duckBus 包络与 0-KB 合成器。长 BGM 与 URL 语音变体通过媒体元素进入现有混音总线。",
         "benchmarkFiles": [
           "tests/browser-bgm-streaming.mjs",
+          "tests/browser-voice-streaming.mjs",
           "tests/browser-engine-v3-commercial-benchmark.mjs"
         ]
       },
@@ -882,7 +885,7 @@
         "cocos": "Web 端以基础 AudioSource 播放与音量淡入为主，缺乏内置多段 EQ 与混响 DSP 链。",
         "godot": "Godot 4.3 单线程 Web 默认走 Audio Sample 播放路径，AudioBus 总线实时 DSP 效果会丢失。"
       },
-      "gap": "长 BGM 已验证流式播放与跳转。长语音默认播放链路仍待验证（连续多普勒按定位豁免）。"
+      "gap": "长 BGM 和语音流送已通过 Chromium 实测。移动 Safari、Android 和 Toy 宿主仍待真机覆盖。"
     },
     {
       "id": "S4",

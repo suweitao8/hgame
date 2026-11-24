@@ -145,10 +145,14 @@ test('the trimmed-plan decisions are recorded as exemptions, deferrals or an ope
   assert.ok(exemptPoints('P3')[0].includes('PSO'));
   assert.ok(exemptPoints('P4')[0].includes('火焰图'));
 
-  // S3 keeps long-track streaming as a real short-board; only continuous Doppler is exempt.
-  assert.deepEqual(summarizeChecklist(item('S3')), { met: 3, exempt: 1, applicable: 4, total: 5 });
+  // S3 keeps the original long-track criterion and records both native playback checks.
+  const audio = item('S3');
+  assert.deepEqual(summarizeChecklist(audio), { met: 4, exempt: 1, applicable: 4, total: 5 });
+  assert.equal(audio.hgame.evidence, 'C4');
   assert.ok(exemptPoints('S3')[0].includes('多普勒'));
-  assert.ok(item('S3').hgame.industrialChecklist.some((c) => !c.exempt && c.met === false && c.point.includes('流式')));
+  assert.ok(audio.hgame.industrialChecklist.some((c) => !c.exempt && c.met && c.point.includes('流式')));
+  assert.ok(audio.hgame.benchmarkFiles.includes('tests/browser-bgm-streaming.mjs'));
+  assert.ok(audio.hgame.benchmarkFiles.includes('tests/browser-voice-streaming.mjs'));
 
   // Deferred items stay unmet rather than being exempted.
   for (const id of ['A1', 'R5', 'P1']) {

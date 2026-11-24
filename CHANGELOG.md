@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Play URL-based voice cues through the existing spatial mixer and cue limits, with streaming and visibility-aware pause and resume.
+
 - Serve single byte ranges for WebAsset media so streamed audio can seek in the shared library, imported files and the local game preview.
 
 - Blend 3D projected decals into HDR scene color before post-processing. Resolve multisampled depth for decals and match the world projection during temporal upsampling.
