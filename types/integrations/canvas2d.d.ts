@@ -70,7 +70,8 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @property {number} [width=960] Logical design width in world pixels.
  * @property {number} [height=540] Logical design height in world pixels.
  * @property {string} [background='#101820'] Clear colour.
- * @property {number} [pixelRatio=globalThis.devicePixelRatio || 1] Device pixel ratio, clamped by the quality preset (max 3).
+ * @property {number} [pixelRatio=globalThis.devicePixelRatio || 1] Device pixel ratio, clamped by `maxPixelRatio` and the quality preset (whichever is lower).
+ * @property {number} [maxPixelRatio=2] Upper bound for the pixel ratio. The 'ultra' preset allows 3, so pass 3 to keep it there.
  * @property {boolean} [imageSmoothing=true] Smooth scaled images (overridden by the quality preset).
  * @property {boolean} [diagnostics2d=false] Collect comparable per-frame and per-stage diagnostics.
  * @property {boolean} [interpolate=false] Always render interpolated transforms (entities with interpolate=true always do).
@@ -140,7 +141,7 @@ export function parseColorRgba(color: unknown, out?: number[] | null | undefined
  * @param {Canvas2DAdapterOptions} options
  * @returns {Canvas2DAdapter}
  */
-export function createCanvas2DAdapter({ canvas, width, height, background, pixelRatio, imageSmoothing, interpolate, cull, quality, createBufferCanvas, diagnostics2d, budgetOptions, }?: Canvas2DAdapterOptions): Canvas2DAdapter;
+export function createCanvas2DAdapter({ canvas, width, height, background, pixelRatio, maxPixelRatio, imageSmoothing, interpolate, cull, quality, createBufferCanvas, diagnostics2d, budgetOptions, }?: Canvas2DAdapterOptions): Canvas2DAdapter;
 /** 2D camera supporting smooth follow, deadzones, bounds clamping, zoom, rotation and shake. */
 export class Camera2D {
     /** @param {Camera2DOptions} [options] */
@@ -681,9 +682,13 @@ export type Canvas2DAdapterOptions = {
      */
     background?: string | undefined;
     /**
-     * Device pixel ratio, clamped by the quality preset (max 3).
+     * Device pixel ratio, clamped by `maxPixelRatio` and the quality preset (whichever is lower).
      */
     pixelRatio?: number | undefined;
+    /**
+     * Upper bound for the pixel ratio. The 'ultra' preset allows 3, so pass 3 to keep it there.
+     */
+    maxPixelRatio?: number | undefined;
     /**
      * Smooth scaled images (overridden by the quality preset).
      */

@@ -41,7 +41,8 @@ export function renderSdfText(ctx: any, text: string, x: number, y: number, { fo
  * @param {string | Array<string | { text?: string, color?: string, fontSize?: number, weight?: string | number, italic?: boolean, outlineColor?: string, outlineWidth?: number, underline?: boolean }>} spans
  * @param {number} maxWidth
  * @param {object} [defaultOpts]
- * @returns {{ segments: { text: string, style: Record<string, any>, width: number, fontSize: number }[], width: number, height: number }[]}
+ * @param {number} [defaultOpts.maxLines=Infinity] Stops after this many lines and ends the last one with an ellipsis.
+ * @returns {{ segments: { text: string, style: Record<string, any>, width: number, fontSize: number }[], width: number, height: number, clipped?: boolean }[]}
  */
 export function layoutRichTextLines(ctx: any, spans: string | Array<string | {
     text?: string;
@@ -52,7 +53,9 @@ export function layoutRichTextLines(ctx: any, spans: string | Array<string | {
     outlineColor?: string;
     outlineWidth?: number;
     underline?: boolean;
-}>, maxWidth: number, defaultOpts?: object): {
+}>, maxWidth: number, defaultOpts?: {
+    maxLines?: number | undefined;
+} | undefined): {
     segments: {
         text: string;
         style: Record<string, any>;
@@ -61,6 +64,7 @@ export function layoutRichTextLines(ctx: any, spans: string | Array<string | {
     }[];
     width: number;
     height: number;
+    clipped?: boolean;
 }[];
 /**
  * Create a visually-hidden semantic DOM ARIA mirror for a Canvas UI tree so screen
