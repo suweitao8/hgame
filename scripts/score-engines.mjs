@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -256,6 +257,114 @@ export function validateScorecard(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
     errors.push(`Total runtime items weight sum must equal 100, got ${runtimeWeightSum}.`);
   }
 
+  // Evidence hardening: benchmark files must exist; competitor scores must declare their basis;
+  // recorded measurements must stay inside declared budgets.
+  for (const item of items) {
+    for (const relPath of item?.hgame?.benchmarkFiles || []) {
+      if (!isNonEmptyString(relPath) || !fs.existsSync(path.resolve(repoRoot, relPath))) {
+        errors.push(`Runtime item "${item?.id}" benchmarkFile does not exist: "${relPath}".`);
+      }
+    }
+  }
+  for (const compId of ['unity', 'cocos', 'godot']) {
+    const b = data.competitorBasis?.[compId];
+    if (!b || !isNonEmptyString(b.version) || !isNonEmptyString(b.source) || !isNonEmptyString(b.measuredAt)) {
+      errors.push(`competitorBasis.${compId} must declare version, source and measuredAt.`);
+    } else if (!['qualitative', 'measured'].includes(b.basis) || !['low', 'medium', 'high'].includes(b.confidence)) {
+      errors.push(`competitorBasis.${compId} basis must be qualitative|measured and confidence low|medium|high.`);
+    }
+  }
+  const budgets = data.budgets || {};
+  for (const [key, value] of Object.entries(data.measurements || {})) {
+    if (typeof budgets[key] !== 'number') {
+      errors.push(`measurements.${key} has no matching budget in "budgets".`);
+    } else if (value > budgets[key]) {
+      errors.push(`measurements.${key}=${value} exceeds budget ${budgets[key]}.`);
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * Non-fatal findings that hint at self-assessment inflation or weak evidence.
+ */
+export function collectWarnings(data, { repoRoot = DEFAULT_REPO_ROOT } = {}) {
+  const warnings = [];
+  const items = Array.isArray(data.items) ? data.items : [];
+  for (const item of items) {
+    const ev = item?.hgame?.evidence;
+    const benches = item?.hgame?.benchmarkFiles || [];
+    if ((ev === 'C3' || ev === 'C4') && benches.length === 0) {
+      warnings.push(`${item.id}: evidence ${ev} has no benchmarkFiles (no automated real-run proof).`);
+    }
+    for (const rel of item?.hgame?.proofFiles || []) {
+      const abs = path.resolve(repoRoot, rel);
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile() && fs.statSync(abs).size < 200) {
+        warnings.push(`${item.id}: proofFile "${rel}" is nearly empty (<200 bytes).`);
+      }
+    }
+  }
+  const high = items.filter((it) => it?.scores?.hgame >= 8.5).length;
+  if (items.length > 0 && high / items.length > 0.7) {
+    warnings.push(`${high}/${items.length} items score >= 8.5 (>70%): low discriminative power, review for inflation.`);
+  }
+  const perfectGaps = items.filter((it) => it?.scores?.hgame >= 9).length;
+  if (perfectGaps > 3) {
+    warnings.push(`${perfectGaps} items score >= 9: confirm each has independent benchmark evidence.`);
+  }
+  return warnings;
+}
+
+function gzipBytes(buffer) {
+  return zlib.gzipSync(buffer).length;
+}
+
+function walkFiles(dir, out = []) {
+  if (!fs.existsSync(dir)) return out;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkFiles(full, out);
+    else out.push(full);
+  }
+  return out;
+}
+
+/**
+ * Re-measures gzip payloads from the working tree so recorded numbers cannot silently go stale.
+ */
+export function measureRuntime(repoRoot = DEFAULT_REPO_ROOT) {
+  const MB = 1024 * 1024;
+  const runtimeDir = path.join(repoRoot, 'assets', 'runtime');
+  const files = walkFiles(runtimeDir);
+  const isVendor = (f) => f.split(path.sep).includes('vendor');
+  const jsFiles = files.filter((f) => f.endsWith('.js') && !isVendor(f));
+  const runtimeJs = gzipBytes(Buffer.concat(jsFiles.map((f) => fs.readFileSync(f))));
+  const vendorSize = (name) => {
+    const dir = path.join(runtimeDir, 'vendor', name);
+    return walkFiles(dir).reduce((sum, f) => sum + gzipBytes(fs.readFileSync(f)), 0);
+  };
+  const round2 = (n) => Math.round((n / MB) * 100) / 100;
+  return {
+    runtimeJsGzipMB: round2(runtimeJs),
+    rapier3dGzipMB: round2(vendorSize('rapier3d')),
+    rapier2dGzipMB: round2(vendorSize('rapier2d'))
+  };
+}
+
+export function checkMeasurementDrift(data, measured) {
+  const tol = typeof data.measurementTolerance === 'number' ? data.measurementTolerance : 0.1;
+  const errors = [];
+  for (const [key, actual] of Object.entries(measured)) {
+    const recorded = data.measurements?.[key];
+    if (typeof recorded !== 'number') continue;
+    if (actual > (data.budgets?.[key] ?? Infinity)) {
+      errors.push(`measured ${key}=${actual} exceeds budget ${data.budgets[key]}.`);
+    }
+    if (recorded > 0 && Math.abs(actual - recorded) / recorded > tol) {
+      errors.push(`measurements.${key} recorded ${recorded} drifted from live ${actual} (> ${(tol * 100).toFixed(0)}%).`);
+    }
+  }
   return errors;
 }
 
@@ -403,9 +512,17 @@ function runCli() {
   const wantJson = args.includes('--json');
   const wantWrite = args.includes('--write');
   const wantCheck = args.includes('--check');
+  const wantMeasure = args.includes('--measure');
 
   const data = loadScorecard(DEFAULT_SCORECARD_PATH);
   const errors = validateScorecard(data, { repoRoot: DEFAULT_REPO_ROOT });
+  if (wantMeasure) {
+    errors.push(...checkMeasurementDrift(data, measureRuntime(DEFAULT_REPO_ROOT)));
+  }
+  const warnings = collectWarnings(data, { repoRoot: DEFAULT_REPO_ROOT });
+  if (!wantJson) {
+    for (const w of warnings) console.warn(`[scorecard:warn] ${w}`);
+  }
   const computed = computeScores(data);
 
   if (errors.length > 0) {

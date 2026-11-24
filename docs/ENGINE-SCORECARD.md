@@ -221,3 +221,14 @@
   - **Phase 5（`941e748` · `1280×720` 商业级浏览器基准）**：交付 `tests/browser-engine-v3-commercial-benchmark.mjs` 并修复 `adapter.getCascadedShadowMap(scene)` 延迟创建与销毁保护。
   - **Phase 6**：在当时通用商业基准口径下复评为 `73.6 / 100` vs Unity Web `88.5 / 100`。
 - **v1 历史轨迹（2026-11-19 ~ 2026-11-21 · 11 项无封顶口径）**：基线（`ead9005`）`73.8 / 100` -> 复评一（`8f126d9`）`90.0 / 100` -> 复评二（`8d3d6b9`，含 `9a2a2bc`、`12ef0c0`）`100.0 / 100`。
+
+
+---
+
+## 评分可信度机制（v5.3 增补）
+
+- **竞品分来源**：`competitorBasis` 声明 Unity/Cocos/Godot 分数的版本、依据（`qualitative`/`measured`）、置信度与日期；当前均为定性评估，「对 Unity 比值」仅作参考，不作对外性能结论。
+- **预算与实测漂移**：`budgets` 约束 `measurements`；`node scripts/score-engines.mjs --check --measure` 重新计算 gzip 体积，超预算或与记录偏差 `> measurementTolerance`（10%）即失败。
+- **基准文件**：`benchmarkFiles` 必须存在；C3/C4 项缺少基准时输出 `[scorecard:warn]`（当前 S1），高分占比 `> 70%` 或 `>= 9` 分项过多时同样告警。
+- **游戏级综合分**：`npm run score:game -- <game-dir> [--min 80]` 只读取 `build/acceptance-report.json`，满分 100：正确性 30 / 运行时 30 / 平衡（autoplay）25 / 交付 15。跳过的门禁记 0 分并降低 `confidence`，失败门禁直接判 `F`。
+- **待决策**：引擎维度权重（R+P 占 54%）是否加入「手机 Toy 就绪度 / 稳定性 / 工具链」需要为四个引擎重新打分，属主观判断，尚未改动。

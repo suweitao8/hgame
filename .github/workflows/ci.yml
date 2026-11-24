@@ -34,7 +34,7 @@ jobs:
       - run: npm run check:physics
       - run: npm run check:types
       - run: npm run check:api-index
-      - run: node scripts/score-engines.mjs --check
+      - run: node scripts/score-engines.mjs --check --measure
       - run: npm run test:webasset
 
   network:

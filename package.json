@@ -48,6 +48,8 @@
     "playtest": "node scripts/playtest.mjs",
     "task:check": "node scripts/task-check.mjs",
     "accept": "node scripts/accept.mjs",
+    "score:game": "node scripts/score-game.mjs",
+    "score:engines": "node scripts/score-engines.mjs --check --measure",
     "accept:examples": "node scripts/accept.mjs --examples",
     "test:browser:accept": "node tests/browser-acceptance.mjs",
     "test:browser:audio": "node tests/browser-bgm-streaming.mjs",

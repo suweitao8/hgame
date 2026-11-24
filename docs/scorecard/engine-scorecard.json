@@ -1005,6 +1005,37 @@
       "gap": "WebRTC DataChannel 传输适配器已提供双通道与信令抽象，服务端需按部署环境配置 TURN 中继以覆盖对称 NAT"
     }
   ],
+  "competitorBasis": {
+    "unity": {
+      "version": "Unity 6.x URP Web",
+      "basis": "qualitative",
+      "confidence": "medium",
+      "measuredAt": "2026-11-24",
+      "source": "官方文档 + 维护者经验评估（非同机基准）"
+    },
+    "cocos": {
+      "version": "Cocos Creator 3.8 Web",
+      "basis": "qualitative",
+      "confidence": "low",
+      "measuredAt": "2026-11-24",
+      "source": "官方文档评估（非同机基准）"
+    },
+    "godot": {
+      "version": "Godot 4.3+ Web (Compatibility)",
+      "basis": "qualitative",
+      "confidence": "low",
+      "measuredAt": "2026-11-24",
+      "source": "官方文档评估（非同机基准）"
+    }
+  },
+  "budgets": {
+    "runtimeJsGzipMB": 1,
+    "rapier3dGzipMB": 1.5,
+    "rapier2dGzipMB": 1.2,
+    "threeGzipMB": 0.6,
+    "worst3dPhysicsGzipMB": 3
+  },
+  "measurementTolerance": 0.1,
   "measurements": {
     "runtimeJsGzipMB": 0.78,
     "rapier3dGzipMB": 1.23,
