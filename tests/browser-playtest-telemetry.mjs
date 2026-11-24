@@ -6,6 +6,36 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+test('touch playtest counts only browser-generated touch presses during the measured scenario', t => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-touch-'));
+  t.after(() => rmSync(game, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+  writeFileSync(path.join(game, 'index.html'), `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
+<canvas id="game" width="64" height="64"></canvas><script>
+document.querySelector('canvas').getContext('2d').fillRect(0, 0, 32, 32);
+</script>`);
+  const scenario = path.join(game, 'scenario.mjs');
+  writeFileSync(scenario, `
+export async function run({ page, measuringTouch }) {
+  if (!measuringTouch) throw new Error('Touch context is missing');
+  await page.evaluate(() => dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch' })));
+  await page.mouse.click(20, 20);
+  await page.touchscreen.tap(20, 20);
+}
+export async function verify({ page }) {
+  await page.touchscreen.tap(20, 20);
+}
+`);
+  const result = spawnSync(process.execPath, [path.join(root, 'scripts/playtest.mjs'), game,
+    '--viewport', '360x800', '--touch', '--scenario', scenario, '--allow-static'],
+  { encoding: 'utf8', timeout: 25000, windowsHide: true });
+  assert.ifError(result.error);
+  const report = JSON.parse(result.stdout);
+  assert.equal(result.status, 0, JSON.stringify(report));
+  assert.equal(report.rendererEnvironment.touch, true);
+  assert.equal(report.touchPresses, 1);
+});
+
 test('renderer telemetry leaves the canvas free for a renderer that starts after input', t => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-renderer-'));

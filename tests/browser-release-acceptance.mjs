@@ -28,10 +28,16 @@ try {
   await exec(process.execPath, ['scripts/create-game.mjs', game, '--archetype', 'action-2d', '--no-git'], { cwd: root });
   const entrySource = path.join(game, 'src', 'main.js');
   await writeFile(entrySource, (await readFile(entrySource, 'utf8')) + '\nwindow.__hgameRenderMemory = () => 2048;\n');
-  await writeFile(path.join(game, 'tests', 'acceptance.mjs'), `
-export async function run({ page, readState, checkpoint }) {
+  const scenarioPath = path.join(game, 'tests', 'acceptance.mjs');
+  const actionScenario = touchStart => `
+export async function run({ page, readState, checkpoint, measuringTouch }) {
   await checkpoint('player moves from the title', async () => {
-    await page.keyboard.press('j', { delay: 120 });
+    if (measuringTouch && ${touchStart}) {
+      await page.locator('#start').tap();
+    } else {
+      await page.evaluate(() => dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch' })));
+      await page.keyboard.press('j', { delay: 120 });
+    }
     const before = (await readState()).player.x;
     await page.keyboard.down('d');
     try {
@@ -40,9 +46,11 @@ export async function run({ page, readState, checkpoint }) {
     } finally { await page.keyboard.up('d'); }
   });
 }
-`);
+`;
+  await writeFile(scenarioPath, actionScenario(true));
   const spec = {
     target: 'web',
+    mobileTouch: true,
     autoplay: 'The release fixture verifies entry and movement without a scored run.',
     doctor: 'The fixture has no authored doctor hook.',
     limits: {
@@ -85,6 +93,9 @@ export async function run({ page, readState, checkpoint }) {
   assert.equal(report.gates.package.playtest.status, 'passed');
   assert.ok(report.gates.release.measured.desktop.frames >= 30);
   assert.ok(report.gates.release.measured.mobile.frames >= 30);
+  assert.equal(report.gates.release.measured.mobile.rendererEnvironment.touch, true);
+  assert.equal(report.gates.release.measured.mobile.touchPresses, 1);
+  assert.equal(report.gates.release.measured.desktop.rendererEnvironment.touch, false);
   assert.ok(report.gates.release.measured.zipBytes > 0);
   assert.equal((await accept(['--verify-fresh'])).releaseReady, true);
   const archive = path.join(game, report.gates.package.archive);
@@ -106,8 +117,10 @@ export async function run({ page, readState, checkpoint }) {
   const toy = await accept();
   assert.equal(toy.releaseReady, true, toy.problems.join('; '));
   assert.equal(toy.gates.release.target, 'toy');
+  assert.equal(toy.gates.release.measured.mobile.touchPresses, 1);
   assert.equal((await accept(['--verify-fresh'])).releaseReady, true);
   console.log(JSON.stringify({ target: 'toy', releaseReady: toy.releaseReady, ...toy.gates.release.measured }));
+  await writeFile(scenarioPath, actionScenario(false));
   await writeFile(path.join(game, 'tests', 'release.json'), JSON.stringify({
     ...spec, limits: {
       ...spec.limits, zipBytes: 1,
@@ -121,23 +134,63 @@ export async function run({ page, readState, checkpoint }) {
   assert.match(oversize.gates.release.errors.join(' '), /desktop\.peakEstimatedGpuBytes exceeded budget/);
   assert.match(oversize.gates.release.errors.join(' '), /desktop\.minDurationMs not met/);
   assert.match(oversize.gates.release.errors.join(' '), /desktop\.p99Ms exceeded budget/);
+  assert.match(oversize.gates.release.errors.join(' '), /mobile requires a trusted touch press during the measured run/);
+  assert.equal(oversize.gates.release.measured.mobile.touchPresses, 0);
 
   const pixi = path.join(tmp, 'release-pixi-arena');
   await exec(process.execPath, ['scripts/create-game.mjs', pixi, '--no-git'], { cwd: root });
   await writeFile(path.join(pixi, 'tests', 'release.json'), JSON.stringify({ ...spec, target: 'toy' }));
   await writeFile(path.join(pixi, 'tests', 'acceptance.mjs'), `
-export async function run({ page, readState, checkpoint, auditUi }) {
+import assert from 'node:assert/strict';
+
+const motionFrames = page => page.evaluate(async () => {
+  for (let count = 0; count < 40; count++) await new Promise(resolve => requestAnimationFrame(resolve));
+});
+
+export async function run({ page, readState, checkpoint, auditUi, measuringTouch }) {
   await auditUi('playing');
-  await checkpoint('attack while moving', async () => {
+  await checkpoint(measuringTouch ? 'two-finger movement and attack' : 'attack while moving', async () => {
     const before = (await readState()).player.x;
+    const movingAndAttacking = () => page.waitForFunction(
+      x => window.__hgameState().player.x > x + 16 && window.__hgameState().bullets > 0, before, { timeout: 4000 });
+    if (measuringTouch) {
+      const stick = await page.locator('.hgame-joy-base').boundingBox();
+      const attack = page.locator('.hgame-skill-btn[data-action="attack"]');
+      const fire = await attack.boundingBox();
+      const dash = await page.locator('.hgame-skill-btn[data-action="dash"]').boundingBox();
+      const midX = page.viewportSize().width / 2;
+      assert.ok(stick && fire && dash, 'Touch controls must be visible');
+      assert.ok(stick.x + stick.width < midX && fire.x > midX && dash.x > fire.x && dash.y < fire.y);
+      assert.ok(fire.width > dash.width && dash.width >= 48);
+      const movePoint = { x: stick.x + stick.width / 2, y: stick.y + stick.height / 2, id: 1 };
+      const firePoint = { x: fire.x + fire.width / 2, y: fire.y + fire.height / 2, id: 2 };
+      // The browser closes this session with the page. Detaching it here clears Chromium touch emulation.
+      const cdp = await page.context().newCDPSession(page);
+      try {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [movePoint] });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [movePoint, firePoint] });
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove', touchPoints: [{ ...movePoint, x: movePoint.x + 34 }, firePoint],
+        });
+        await movingAndAttacking();
+        assert.equal(await attack.getAttribute('data-active'), 'true');
+        await motionFrames(page);
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+      } catch (error) {
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchCancel', touchPoints: [] });
+        throw error;
+      }
+      assert.equal(await attack.getAttribute('data-active'), 'false');
+      const stopped = await readState();
+      await page.waitForFunction(tick => window.__hgameState().tick >= tick + 3, stopped.tick, { timeout: 4000 });
+      assert.equal((await readState()).player.x, stopped.player.x);
+      return;
+    }
     await page.keyboard.down('d');
     await page.keyboard.down('j');
     try {
-      await page.waitForFunction(x => window.__hgameState().player.x > x + 16 && window.__hgameState().bullets > 0, before, { timeout: 4000 });
-      // Collect enough frames during motion even when software rendering is slow.
-      await page.evaluate(async () => {
-        for (let count = 0; count < 40; count++) await new Promise(resolve => requestAnimationFrame(resolve));
-      });
+      await movingAndAttacking();
+      await motionFrames(page);
     } finally {
       await page.keyboard.up('j');
       await page.keyboard.up('d');
@@ -151,7 +204,8 @@ export async function run({ page, readState, checkpoint, auditUi }) {
     const paused = (await readState()).player.x;
     await page.keyboard.press('d', { delay: 100 });
     if ((await readState()).player.x !== paused) throw new Error('Player moved while paused');
-    await resume.click();
+    if (measuringTouch) await resume.tap();
+    else await resume.click();
     await resume.waitFor({ state: 'hidden', timeout: 3000 });
     await auditUi('resumed');
   });
@@ -160,6 +214,9 @@ export async function run({ page, readState, checkpoint, auditUi }) {
   const pixiReport = await accept([], 0, pixi);
   assert.equal(pixiReport.releaseReady, true, pixiReport.problems.join('; '));
   assert.equal(pixiReport.gates.webasset.status, 'passed');
+  assert.ok(pixiReport.gates.release.measured.mobile.touchPresses >= 3);
+  assert.ok(pixiReport.gates.package.playtest.mobileMeasuredCheckpoints
+    .some(checkpoint => checkpoint.name === 'two-finger movement and attack' && checkpoint.ok));
   assert.equal((await accept(['--verify-fresh'], 0, pixi)).releaseReady, true);
   console.log(JSON.stringify({ profile: 'pixi-arena', target: 'toy', releaseReady: true, ...pixiReport.gates.release.measured }));
 
@@ -176,7 +233,7 @@ export async function run({ page, readState, checkpoint, auditUi }) {
     Object.assign(design.design.balance, { playerHp: 30, gruntDamage: 10, gruntHp: 120 });
     await writeFile(designPath, JSON.stringify(design));
     await writeFile(path.join(project, 'tests', 'release.json'), JSON.stringify({
-      ...spec, target,
+      ...spec, target, mobileTouch: false,
       ...(verifyHardware ? { gpu: 'hardware' } : {}),
       autoplay: 'The authored defeat fixture verifies result and replay rather than a clear.',
       limits: {

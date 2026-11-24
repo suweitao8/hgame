@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add optional mobile touch evidence to packaged release acceptance. Verify browser-generated touch, including two-finger movement and attack in the default Pixi Toy package.
+
 - Add release budgets for scenario duration, frame-time p99, and sampled GPU resource estimates. Include scene textures, shadow maps, and post-process targets in the 3D ledger.
 
 - Record the renderer observed during packaged release playtests, with an explicit hardware GPU requirement for releases that use hardware frame budgets.

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -132,6 +133,51 @@ test('accept --verify-fresh enforces matching sourceDigest and existing artifact
     assert.match(stale.stdout, /stale/i);
   } finally {
     await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('release freshness rejects a legacy report without opted-in mobile touch evidence', async () => {
+  const game = await mkdtemp(path.join(os.tmpdir(), 'hgame-accept-touch-fresh-'));
+  try {
+    const { computeSourceDigest } = await import('../scripts/accept.mjs');
+    await mkdir(path.join(game, 'build', 'acceptance'), { recursive: true });
+    await mkdir(path.join(game, 'tests'));
+    await writeFile(path.join(game, 'tests', 'acceptance.mjs'), 'export function run() {}');
+    const spec = {
+      target: 'web', autoplay: 'Fixture has no win condition.', doctor: 'Fixture has no simulation.',
+      limits: { desktop: { readyMs: 50, p95Ms: 20 }, mobile: { readyMs: 50, p95Ms: 20 }, zipBytes: 100 },
+    };
+    const manifest = path.join(game, 'tests', 'release.json');
+    const desktop = { png: 'build/acceptance/desktop.png' };
+    const mobile = { png: 'build/acceptance/mobile.png' };
+    const zip = 'fixture archive';
+    await writeFile(path.join(game, desktop.png), 'png');
+    await writeFile(path.join(game, mobile.png), 'png');
+    await writeFile(path.join(game, 'build', 'acceptance', 'release.zip'), zip);
+    const verify = async (manifestData, mobileEvidence) => {
+      await writeFile(manifest, JSON.stringify(manifestData));
+      await writeFile(path.join(game, 'build', 'acceptance-report.json'), JSON.stringify({
+        accepted: true, mode: 'full', releaseReady: true,
+        sourceDigest: computeSourceDigest(game, { release: true }),
+        gates: {
+          package: {
+            archiveHash: createHash('sha256').update(zip).digest('hex'),
+            playtest: { profiles: { mobile: mobileEvidence } },
+          },
+          visual: { captures: { desktop, mobile } },
+        },
+      }));
+      return runNode(acceptScript, [game, '--release', '--verify-fresh', '--json']);
+    };
+    assert.equal((await verify(spec)).status, 0);
+    const optedIn = { ...spec, mobileTouch: true };
+    const legacy = await verify(optedIn);
+    assert.equal(legacy.status, 1);
+    assert.match(JSON.parse(legacy.stdout).problems.join(' '), /missing mobile touch evidence/);
+    const current = await verify(optedIn, { rendererEnvironment: { touch: true }, touchPresses: 1 });
+    assert.equal(current.status, 0, current.stdout);
+  } finally {
+    await rm(game, { recursive: true, force: true });
   }
 });
 
@@ -339,6 +385,10 @@ test('release acceptance requires explicit budgets and rejects bypass options', 
       },
     };
     const specPath = path.join(game, 'tests', 'release.json');
+    await writeFile(specPath, JSON.stringify({ ...config, mobileTouch: 'true' }));
+    const invalidTouch = runNode(acceptScript, [game, '--release', '--json']);
+    assert.equal(invalidTouch.status, 1);
+    assert.match(JSON.parse(invalidTouch.stdout).problems.join(' '), /Release mobileTouch must be a boolean/);
     await writeFile(specPath, JSON.stringify({ ...config, gpu: 'auto' }));
     const invalidGpu = runNode(acceptScript, [game, '--release', '--json']);
     assert.equal(invalidGpu.status, 1);

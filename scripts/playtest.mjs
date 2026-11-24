@@ -175,7 +175,7 @@ async function runCli() {
   const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && valueFlags.has(argv[i - 1])));
 
   if (!gameDir || flag('--help')) {
-    console.error('Usage: node scripts/playtest.mjs <game-dir> [--duration 2000] [--actions "d:350,w:300,j:150,k:150"] [--selector "#game"] [--viewport 960x540] [--state-hook __hgameState] [--trace-hook __hgameTrace] [--allow-static]');
+    console.error('Usage: node scripts/playtest.mjs <game-dir> [--duration 2000] [--actions "d:350,w:300,j:150,k:150"] [--selector "#game"] [--viewport 960x540] [--touch] [--state-hook __hgameState] [--trace-hook __hgameTrace] [--allow-static]');
     console.error('       node scripts/playtest.mjs <game-id> --webasset --scenario <local-module.mjs>');
     process.exit(flag('--help') ? 0 : 2);
   }
@@ -227,6 +227,7 @@ async function runCli() {
   const checkUi = flag('--check-ui');
   const checkLayout = flag('--check-layout');
   const sampleRenderMemory = flag('--sample-render-memory');
+  const measuringTouch = flag('--touch');
   const frameSampleLimit = flag('--exact-percentiles') ? 200_000 : 600;
   const usePointer = !flag('--no-pointer');
   const actionsRaw = opt('--actions', profile === 'ui' ? 'click,wait:250' : 'd:320,w:260,j:160,a:260,space:160,wait:250');
@@ -291,7 +292,10 @@ async function runCli() {
     report.url = url.href;
 
     browser = await launchChromium(chromium, launchOptions);
-    const page = await browser.newPage({ viewport: { width: vw, height: vh }, deviceScaleFactor: 1 });
+    const page = await browser.newPage({
+      viewport: { width: vw, height: vh }, deviceScaleFactor: 1,
+      hasTouch: measuringTouch, isMobile: measuringTouch,
+    });
     await page.addInitScript(observeCanvasContexts);
     page.on('pageerror', e => consoleErrors.push(e.message));
     page.on('console', m => {
@@ -312,6 +316,10 @@ async function runCli() {
       let last = performance.now();
       let running = true;
       let frameId;
+      let touchPresses = 0;
+      function countTouch(event) {
+        if (event.isTrusted && event.pointerType === 'touch') touchPresses++;
+      }
       function sample(now) {
         if (!running) return;
         collector.record(now - last);
@@ -320,13 +328,19 @@ async function runCli() {
       }
       frameId = requestAnimationFrame(sample);
       window.__hgamePlaytestTelemetry = () => collector.snapshot();
-      window.__hgamePlaytestTelemetryReset = () => { collector = createCollector(${frameSampleLimit}); last = performance.now(); };
+      window.__hgamePlaytestTelemetryReset = () => {
+        collector = createCollector(${frameSampleLimit});
+        last = performance.now();
+        touchPresses = 0;
+        if (${measuringTouch}) addEventListener('pointerdown', countTouch, { capture: true, passive: true });
+      };
       window.__hgamePlaytestTelemetryStop = () => new Promise(resolve => {
+        if (${measuringTouch}) removeEventListener('pointerdown', countTouch, true);
         requestAnimationFrame(now => {
           collector.record(now - last);
           running = false;
           cancelAnimationFrame(frameId);
-          resolve(collector.snapshot());
+          resolve({ ...collector.snapshot(), touchPresses });
         });
       });
     })();` });
@@ -407,7 +421,7 @@ async function runCli() {
       }
       return entry;
     };
-    const context = { page, readState, checkpoint, auditUi, measuringRenderMemory: sampleRenderMemory };
+    const context = { page, readState, checkpoint, auditUi, measuringRenderMemory: sampleRenderMemory, measuringTouch };
 
     const measurementId = randomUUID();
     await page.evaluate(id => {
@@ -511,6 +525,7 @@ async function runCli() {
 
     Object.assign(report, {
       browserVersion: browser.version(), readyMs, rendererEnvironment,
+      ...(measuringTouch ? { touchPresses: recording.touchPresses } : {}),
       beforeHash,
       afterHash,
       visualChanged,

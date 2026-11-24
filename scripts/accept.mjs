@@ -146,6 +146,9 @@ async function loadReleaseRequirements(gameDir) {
   if (spec.gpu !== undefined && !['software', 'hardware'].includes(spec.gpu)) {
     throw new Error('Release gpu must be software or hardware');
   }
+  if (spec.mobileTouch !== undefined && typeof spec.mobileTouch !== 'boolean') {
+    throw new Error('Release mobileTouch must be a boolean');
+  }
   for (const gate of ['autoplay', 'doctor']) {
     const requirement = spec[gate];
     if (requirement !== true && (typeof requirement !== 'string' || !requirement.trim())) {
@@ -174,6 +177,11 @@ async function loadReleaseRequirements(gameDir) {
   return spec;
 }
 
+function hasMeasuredMobileTouch(profile) {
+  return profile?.rendererEnvironment?.touch === true &&
+    Number.isSafeInteger(profile.touchPresses) && profile.touchPresses > 0;
+}
+
 function evaluateRelease(gates, spec) {
   const errors = [];
   const skipped = {};
@@ -193,6 +201,9 @@ function evaluateRelease(gates, spec) {
   const desktop = packaged?.profiles?.desktop;
   const mobile = packaged?.profiles?.mobile;
   const measured = { desktop, mobile, zipBytes: gates.package.zipBytes ?? null };
+  if (spec.mobileTouch && !hasMeasuredMobileTouch(mobile)) {
+    errors.push('mobile requires a trusted touch press during the measured run');
+  }
   for (const [name, profile, checkpoints] of [
     ['desktop', desktop, packaged?.measuredCheckpoints], ['mobile', mobile, packaged?.mobileMeasuredCheckpoints],
   ]) {
@@ -232,7 +243,8 @@ function evaluateRelease(gates, spec) {
   }
   return {
     status: errors.length ? 'failed' : 'passed', target: spec.target, gpu: spec.gpu ?? 'software', skipped,
-    limits: spec.limits, measured, environment: 'headless browser; viewport profiles, not physical devices', errors,
+    limits: spec.limits, measured, mobileTouch: spec.mobileTouch === true,
+    environment: 'headless browser; viewport profiles, not physical devices', errors,
   };
 }
 
@@ -702,6 +714,7 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
     targetDir,
     ...(entry ? ['--entry', entry] : []),
     ...(releaseSpec?.gpu ? ['--gpu', releaseSpec.gpu] : []),
+    ...(name === 'mobile' && releaseSpec?.mobileTouch ? ['--touch'] : []),
     ...(releaseSpec?.limits?.[name]?.p99Ms !== undefined ? ['--exact-percentiles'] : []),
     ...(releaseSpec?.limits?.[name]?.peakEstimatedGpuBytes !== undefined ? ['--sample-render-memory'] : []),
     ...(opts.release ? ['--state-ready'] : []),
@@ -767,6 +780,7 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
         quantilesApproximate: run.frameStats?.quantilesApproximate ?? null,
         frames: run.frameStats?.frames ?? null, browserVersion: run.browserVersion ?? null,
         rendererEnvironment: run.rendererEnvironment ?? null,
+        ...(run.touchPresses !== undefined ? { touchPresses: run.touchPresses } : {}),
         ...(run.renderMemory ? { renderMemory: run.renderMemory } : {}),
       }])),
     consoleErrors: report.consoleErrors ?? [],
@@ -1013,6 +1027,17 @@ async function verifyFreshAcceptance(gameDir, reportPath, requireRelease = false
   const currentDigest = computeSourceDigest(gameDir, { release: report.releaseReady === true });
   if (report.sourceDigest !== currentDigest) {
     return { ok: false, reason: `Acceptance report is stale: source files changed since ${report.checkedAt}. Re-run acceptance.` };
+  }
+  if (report.releaseReady) {
+    let spec;
+    try {
+      spec = await loadReleaseRequirements(gameDir);
+    } catch (error) {
+      return { ok: false, reason: error.message };
+    }
+    if (spec.mobileTouch && !hasMeasuredMobileTouch(report.gates?.package?.playtest?.profiles?.mobile)) {
+      return { ok: false, reason: 'Release report is missing mobile touch evidence. Re-run acceptance.' };
+    }
   }
   for (const key of ['desktop', 'mobile']) {
     const relPng = report.gates?.visual?.captures?.[key]?.png;

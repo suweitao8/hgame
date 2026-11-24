@@ -12,6 +12,7 @@
 8. Give the three action archetypes one generated module for bindings, touch, locale, and menu behavior. Preserve authored actions and combat rules. Exercise published horde and 3D arena builds through damage, results, and replay using normal input and authored fixture balance.
 9. Record the actual rendering environment of packaged playtests. Keep software coverage and let release manifests explicitly require hardware rendering. Verify the same 3D lifecycle with an actual desktop GPU, preserving the release budgets.
 10. Add optional package budgets for minimum measurement duration, p99 frame time and peak estimated GPU bytes. Sample an authored resource hook during the measured scenario and surface coverage and failures. Verify a hardware arena package through a minute of gameplay in both viewports and exercise an exceeded resource budget.
+11. Add an opt-in release requirement for mobile touch. Run the opted-in packaged mobile scenario using Chromium touch emulation and record trusted touch presses during measurement. Preserve existing release scenarios by default. Verify a Web package opens through touch, a Toy Pixi package moves and attacks with two fingers, and keyboard or script-dispatched events alone cannot satisfy the touch requirement.
 
 ## 2026-11-24 复评
 
@@ -63,3 +64,12 @@
 - 3D 原型的普通粒子池从 65,536 调整到 4,096。发布包的引擎显存估算峰值从 21.72 MB 降至 13.86 MB，两种视口均通过原定的 16 MiB 门槛。资源采样各 72 次，最长采样间隔约 1.01 秒。
 - RTX 4070，桌面 960 × 540、模拟竖屏 360 × 800，独立包各运行约 70.8 秒。全部 10,007 帧与 9,969 帧纳入计算，p95 均为 7.0 ms，p99 均为 13.9 ms。发布校验通过，且超预算的样例仍被拦截。
 - Windows 以 Chrome GPU 子进程为范围采样专用显存，两个视口各有 14 个有效样本，峰值分别为 96.15 MB 和 73.72 MB。有一次计数器采样无效，已丢弃。进程计数包含 Chrome 和驱动资源，范围大于引擎资源账本。
+
+### 独立包触屏验收
+
+综合 **90.04 / 100**（一位小数为 **90.0**）。保留原 40／35／25 权重。引擎运行时 84.6、制作工具链 92，验证与交付从 95 升至 96。新增的一分来自正式发布门禁已能检测触摸缺失，并有 Web 和 Toy 独立包正反例。
+
+- Web 和 Toy 的动作包分别在 360 × 800 Chromium 触屏环境点击开始。Pixi Toy 包收到三次可信触摸按下，验证固定摇杆和攻击键双指并用、抬手后停止移动、攻击按钮复位和触屏继续。该包移动视口 p95 16.7 ms。
+- 键盘与脚本伪造事件无法通过触屏门禁。旧工具报告即使源码摘要与 ZIP 均匹配，缺少所要求的触屏证据时也无法通过新鲜度检查。
+- 同次发布套件保留割草 Toy 与 RTX 4070 竞技场 Web 包覆盖。3D 的两种尺寸仍以键盘运行约 71 秒，p95 均为 7.0 ms，显存估算峰值为 13,855,680 字节。
+- 完整六动作输入展示和 Android Chrome、iOS Safari 局域网访问、实体 Xbox、Toy 宿主仍待补证据。
