@@ -833,7 +833,8 @@ export class SpriteCrowd2D extends Component {
  * @property {number} [width=960] Logical design width in world pixels.
  * @property {number} [height=540] Logical design height in world pixels.
  * @property {string} [background='#101820'] Clear colour.
- * @property {number} [pixelRatio=globalThis.devicePixelRatio || 1] Device pixel ratio, clamped by the quality preset (max 3).
+ * @property {number} [pixelRatio=globalThis.devicePixelRatio || 1] Device pixel ratio, clamped by `maxPixelRatio` and the quality preset (whichever is lower).
+ * @property {number} [maxPixelRatio=2] Upper bound for the pixel ratio. The 'ultra' preset allows 3, so pass 3 to keep it there.
  * @property {boolean} [imageSmoothing=true] Smooth scaled images (overridden by the quality preset).
  * @property {boolean} [diagnostics2d=false] Collect comparable per-frame and per-stage diagnostics.
  * @property {boolean} [interpolate=false] Always render interpolated transforms (entities with interpolate=true always do).
@@ -911,6 +912,7 @@ export class SpriteCrowd2D extends Component {
 export function createCanvas2DAdapter({
   canvas, width = 960, height = 540, background = '#101820',
   pixelRatio = globalThis.devicePixelRatio || 1,
+  maxPixelRatio = 2,
   imageSmoothing = true, interpolate = false, cull = true,
   quality = null, createBufferCanvas = null, diagnostics2d = false,
   budgetOptions = undefined,
@@ -918,6 +920,7 @@ export function createCanvas2DAdapter({
   if (!canvas?.getContext) throw new TypeError('Canvas adapter needs a canvas');
   const ctx = canvas.getContext('2d', { alpha: false });
   if (!ctx) throw new Error('Canvas 2D unavailable');
+  const dprCap = Number.isFinite(maxPixelRatio) && maxPixelRatio > 0 ? maxPixelRatio : 2;
   const camera = new Camera2D();
   const drawQueue = createSpriteQueue({
     Sprite2D, SpriteCrowd2D, cull, interpolate,
@@ -1059,7 +1062,7 @@ export function createCanvas2DAdapter({
 
   function resize() {
     const vw = Math.max(1, canvas.clientWidth || width), vh = Math.max(1, canvas.clientHeight || height);
-    const maxPr = qualityPreset ? qualityPreset.maxPixelRatio : 3;
+    const maxPr = qualityPreset ? Math.min(dprCap, qualityPreset.maxPixelRatio) : dprCap;
     const dpr = Math.max(1, Math.min(maxPr, pixelRatio));
     const targetW = Math.round(vw * dpr), targetH = Math.round(vh * dpr);
     if (canvas.width !== targetW) canvas.width = targetW;

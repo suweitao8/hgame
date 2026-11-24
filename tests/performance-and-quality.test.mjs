@@ -1008,3 +1008,46 @@ test('Low / Medium / High unified quality system dynamically reconfigures 2D and
   palette.dispose();
   a3d.dispose();
 });
+
+test('2D adapters cap the pixel ratio at maxPixelRatio, and a preset can only lower it', () => {
+  const size = { width: 200, height: 100 };
+  const make = (options) => {
+    const { canvas } = makeMockCanvas2D(size);
+    return { adapter: createCanvas2DAdapter({ canvas, ...size, pixelRatio: 3, ...options }), canvas };
+  };
+
+  // A 3x screen without a preset renders at 2x.
+  const plain = make({});
+  assert.equal(plain.adapter.getViewport().dpr, 2);
+  assert.deepEqual([plain.canvas.width, plain.canvas.height], [400, 200]);
+  plain.adapter.dispose();
+
+  assert.equal(make({ maxPixelRatio: 3 }).adapter.getViewport().dpr, 3);
+  assert.equal(make({ maxPixelRatio: 0 }).adapter.getViewport().dpr, 2, 'an unusable bound falls back to 2');
+  assert.equal(make({ pixelRatio: 1 }).adapter.getViewport().dpr, 1, 'a 1x screen is never upscaled');
+
+  // The lower of the option and the preset wins.
+  assert.equal(make({ quality: 'low', maxPixelRatio: 3 }).adapter.getViewport().dpr, 1);
+  assert.equal(make({ quality: 'ultra' }).adapter.getViewport().dpr, 2);
+  assert.equal(make({ quality: 'ultra', maxPixelRatio: 3 }).adapter.getViewport().dpr, 3);
+
+  const switched = make({ quality: 'low', maxPixelRatio: 3 });
+  switched.adapter.setQuality('ultra');
+  assert.equal(switched.adapter.getViewport().dpr, 3);
+  switched.adapter.setQuality(null);
+  assert.equal(switched.adapter.getViewport().dpr, 3, 'without a preset the option applies');
+  switched.adapter.dispose();
+
+  // The WebGL2 adapter and its Canvas2D fallback apply the same bound.
+  const gl = createWebGL2DAdapter({ canvas: makeMockWebGL2Canvas(size).canvas, ...size, pixelRatio: 3 });
+  assert.equal(gl.isWebGL2, true);
+  assert.equal(gl.getViewport().dpr, 2);
+  gl.dispose();
+  const gl3 = createWebGL2DAdapter({ canvas: makeMockWebGL2Canvas(size).canvas, ...size, pixelRatio: 3, maxPixelRatio: 3 });
+  assert.equal(gl3.getViewport().dpr, 3);
+  gl3.dispose();
+  const fallback = createWebGL2DAdapter({ canvas: makeMockCanvas2D(size).canvas, ...size, pixelRatio: 3, maxPixelRatio: 3 });
+  assert.equal(fallback.isWebGL2, undefined);
+  assert.equal(fallback.getViewport().dpr, 3, 'the Canvas2D fallback receives maxPixelRatio');
+  fallback.dispose();
+});

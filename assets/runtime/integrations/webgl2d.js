@@ -359,6 +359,7 @@ export function createWebGL2DAdapter({
   height = 540,
   background = '#101820',
   pixelRatio = globalThis.devicePixelRatio || 1,
+  maxPixelRatio = 2,
   imageSmoothing = true,
   interpolate = false,
   cull = true,
@@ -373,6 +374,7 @@ export function createWebGL2DAdapter({
   if (!Number.isInteger(maxBatchInstances) || maxBatchInstances < 64 || maxBatchInstances > MAX_CAPACITY_CAP) {
     throw new RangeError('maxBatchInstances must be an integer in 64..262144');
   }
+  const dprCap = Number.isFinite(maxPixelRatio) && maxPixelRatio > 0 ? maxPixelRatio : 2;
 
   const gl = canvas.getContext('webgl2', {
     alpha: false,
@@ -391,6 +393,7 @@ export function createWebGL2DAdapter({
       height,
       background,
       pixelRatio,
+      maxPixelRatio,
       imageSmoothing,
       interpolate,
       cull,
@@ -620,7 +623,7 @@ export function createWebGL2DAdapter({
   function resize() {
     const vw = Math.max(1, canvas.clientWidth || width);
     const vh = Math.max(1, canvas.clientHeight || height);
-    const maxPr = qualityPreset ? qualityPreset.maxPixelRatio : 3;
+    const maxPr = qualityPreset ? Math.min(dprCap, qualityPreset.maxPixelRatio) : dprCap;
     const dpr = Math.max(1, Math.min(maxPr, pixelRatio));
     const targetW = Math.round(vw * dpr);
     const targetH = Math.round(vh * dpr);
