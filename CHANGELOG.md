@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add release budgets for scenario duration, frame-time p99, and sampled GPU resource estimates. Include scene textures, shadow maps, and post-process targets in the 3D ledger.
+
 - Record the renderer observed during packaged release playtests, with an explicit hardware GPU requirement for releases that use hardware frame budgets.
 
 - Unify keyboard, gamepad, touch, and bilingual UI across the three action archetypes, including upgrade cancellation and result replay input. Fix simulation stepping and contact-grid coverage in the horde archetype.

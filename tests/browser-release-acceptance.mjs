@@ -26,6 +26,8 @@ const close = server => new Promise(resolve => server?.listening ? server.close(
 
 try {
   await exec(process.execPath, ['scripts/create-game.mjs', game, '--archetype', 'action-2d', '--no-git'], { cwd: root });
+  const entrySource = path.join(game, 'src', 'main.js');
+  await writeFile(entrySource, (await readFile(entrySource, 'utf8')) + '\nwindow.__hgameRenderMemory = () => 2048;\n');
   await writeFile(path.join(game, 'tests', 'acceptance.mjs'), `
 export async function run({ page, readState, checkpoint }) {
   await checkpoint('player moves from the title', async () => {
@@ -67,7 +69,7 @@ export async function run({ page, readState, checkpoint }) {
     let result;
     let status = 0;
     try {
-      result = await exec(process.execPath, args, { cwd: directory, env, timeout: 180_000, maxBuffer: 4 * 1024 * 1024 });
+      result = await exec(process.execPath, args, { cwd: directory, env, timeout: hardwareChrome ? 360_000 : 180_000, maxBuffer: 4 * 1024 * 1024 });
     } catch (error) {
       status = error.code;
       result = error;
@@ -107,12 +109,18 @@ export async function run({ page, readState, checkpoint }) {
   assert.equal((await accept(['--verify-fresh'])).releaseReady, true);
   console.log(JSON.stringify({ target: 'toy', releaseReady: toy.releaseReady, ...toy.gates.release.measured }));
   await writeFile(path.join(game, 'tests', 'release.json'), JSON.stringify({
-    ...spec, limits: { ...spec.limits, zipBytes: 1 },
+    ...spec, limits: {
+      ...spec.limits, zipBytes: 1,
+      desktop: { ...spec.limits.desktop, p99Ms: 1, peakEstimatedGpuBytes: 1024, minDurationMs: 60_000 },
+    },
   }));
   const oversize = await accept([], 1);
   assert.equal(oversize.playable, true);
   assert.equal(oversize.releaseReady, false);
   assert.match(oversize.gates.release.errors.join(' '), /Package exceeded byte budget/);
+  assert.match(oversize.gates.release.errors.join(' '), /desktop\.peakEstimatedGpuBytes exceeded budget/);
+  assert.match(oversize.gates.release.errors.join(' '), /desktop\.minDurationMs not met/);
+  assert.match(oversize.gates.release.errors.join(' '), /desktop\.p99Ms exceeded budget/);
 
   const pixi = path.join(tmp, 'release-pixi-arena');
   await exec(process.execPath, ['scripts/create-game.mjs', pixi, '--no-git'], { cwd: root });
@@ -159,6 +167,7 @@ export async function run({ page, readState, checkpoint, auditUi }) {
     const project = path.join(tmp, 'release-' + profile);
     const target = profile === 'arena-3d' ? 'web' : 'toy';
     const verifyHardware = profile === 'arena-3d' && Boolean(hardwareChrome);
+    const hardwareLimits = { p99Ms: 33.34, minDurationMs: 60_000, peakEstimatedGpuBytes: 16 * 1024 * 1024 };
     const quality = profile === 'arena-3d' ? ['--quality', 'low'] : [];
     await exec(process.execPath, ['scripts/create-game.mjs', project, '--archetype', profile, ...quality, '--no-git'], { cwd: root });
     const designPath = path.join(project, 'src', 'game.design.json');
@@ -170,7 +179,11 @@ export async function run({ page, readState, checkpoint, auditUi }) {
       ...spec, target,
       ...(verifyHardware ? { gpu: 'hardware' } : {}),
       autoplay: 'The authored defeat fixture verifies result and replay rather than a clear.',
-      limits: { ...spec.limits, zipBytes: 3_000_000 },
+      limits: {
+        desktop: { ...spec.limits.desktop, ...(verifyHardware ? hardwareLimits : {}) },
+        mobile: { ...spec.limits.mobile, ...(verifyHardware ? hardwareLimits : {}) },
+        zipBytes: 3_000_000,
+      },
     }));
     await writeFile(path.join(project, 'tests', 'acceptance.mjs'), `
 async function confirm(page) {
@@ -182,7 +195,7 @@ async function confirm(page) {
   }
 }
 
-export async function run({ page, readState, checkpoint, auditUi }) {
+export async function run({ page, readState, checkpoint, auditUi, measuringRenderMemory }) {
   const before = await readState();
   if (before.phase !== 'title') throw new Error('Release did not start at its title');
   await auditUi('title');
@@ -227,6 +240,14 @@ export async function run({ page, readState, checkpoint, auditUi }) {
     }
     await auditUi('replay');
   });
+  if (measuringRenderMemory) await checkpoint('sustained 3D gameplay', async () => {
+    const matchCount = (await readState()).meta.runs;
+    for (let turn = 0; turn < 54; turn++) {
+      if ((await readState()).phase !== 'playing') await confirm(page);
+      await page.keyboard.press(['d', 's', 'a', 'w'][turn % 4], { delay: 1200 });
+    }
+    if ((await readState()).meta.runs <= matchCount) throw new Error('Sustained play did not complete another run');
+  });
 }
 `);
     // Software-only hosts must still exercise the packaged lifecycle. A missed
@@ -241,6 +262,14 @@ export async function run({ page, readState, checkpoint, auditUi }) {
       assert.equal(observed.requestedGpu, verifyHardware ? 'hardware' : 'software');
       assert.equal(observed.actualGpu, verifyHardware ? 'hardware' : 'software');
       assert.ok(observed.renderer);
+      if (verifyHardware) {
+        const measured = complete.gates.release.measured[viewport];
+        assert.equal(measured.quantileSamples, measured.frames);
+        assert.equal(measured.quantilesApproximate, false);
+        const memory = measured.renderMemory;
+        assert.ok(memory.samples >= 55);
+        assert.ok(memory.peakEstimatedGpuBytes > 0 && memory.peakEstimatedGpuBytes <= hardwareLimits.peakEstimatedGpuBytes);
+      }
     }
     if (complete.releaseReady) {
       assert.equal((await accept(['--verify-fresh'], 0, project)).releaseReady, true);

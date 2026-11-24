@@ -45,6 +45,32 @@ test('P3 createVramLedger3D counts deduplicated textures/geometries/RTs and fire
   geo.dispose();
 });
 
+test('VRAM estimates include cube maps, volume textures and shared render attachments once', () => {
+  const ledger = createVramLedger3D(THREE);
+  const scene = new THREE.Scene();
+  const texture = new THREE.Data3DTexture(new Uint8Array(256), 4, 4, 4);
+  const background = new THREE.CubeTexture(Array.from({ length: 6 }, () => ({ width: 4, height: 4 })));
+  background.generateMipmaps = false;
+  const shadow = new THREE.WebGLRenderTarget(64, 64);
+  const light = new THREE.DirectionalLight();
+  light.shadow.map = shadow;
+  scene.background = background;
+  scene.environment = texture;
+  const material = new THREE.ShaderMaterial({ uniforms: { diffuse: { value: texture }, shadow: { value: shadow.texture } } });
+  scene.add(light, new THREE.Mesh(new THREE.BoxGeometry(), material));
+  const report = ledger.scan({ roots: [scene] });
+  assert.equal(report.textureCount, 2);
+  assert.equal(report.textureBytes, 256 + 384);
+  assert.equal(report.targetCount, 1);
+  assert.equal(report.targetBytes, 64 * 64 * 8);
+  assert.equal(ledger.scan({ roots: [scene], targets: [shadow] }).targetCount, 1);
+  const mrt = new THREE.WebGLRenderTarget(64, 64, { count: 2, depthBuffer: false });
+  material.uniforms.attachment = { value: mrt.textures[1] };
+  const multi = ledger.scan({ roots: [scene], targets: [mrt] });
+  assert.equal(multi.textureCount, 2);
+  assert.equal(multi.targetBytes, report.targetBytes + 64 * 64 * 8);
+});
+
 test('P3 createShaderWarmupQueue3D slices warmup within per-frame ms budget', () => {
   let simClockMs = 0;
   const compiled = [];

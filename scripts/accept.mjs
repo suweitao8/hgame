@@ -157,6 +157,13 @@ async function loadReleaseRequirements(gameDir) {
       const max = spec.limits?.[viewport]?.[metric];
       if (!Number.isFinite(max) || max <= 0) throw new Error('Invalid release budget ' + viewport + '.' + metric);
     }
+    for (const metric of ['p99Ms', 'minDurationMs', 'peakEstimatedGpuBytes']) {
+      const value = spec.limits?.[viewport]?.[metric];
+      if (value !== undefined && (!Number.isFinite(value) || value <= 0 ||
+          (metric === 'peakEstimatedGpuBytes' && !Number.isSafeInteger(value)))) {
+        throw new Error('Invalid release budget ' + viewport + '.' + metric);
+      }
+    }
   }
   if (!Number.isSafeInteger(spec.limits.zipBytes) || spec.limits.zipBytes <= 0) {
     throw new Error('Invalid release budget zipBytes');
@@ -194,10 +201,30 @@ function evaluateRelease(gates, spec) {
     if (spec.gpu === 'hardware' && profile?.rendererEnvironment?.actualGpu !== 'hardware') {
       errors.push(name + ' requires an actual hardware renderer');
     }
-    for (const metric of ['readyMs', 'p95Ms']) {
+    const limits = spec.limits[name];
+    if (limits.p99Ms !== undefined &&
+        (profile?.quantilesApproximate !== false || profile.quantileSamples !== profile.frames)) {
+      errors.push(name + '.p99Ms requires all measured frames');
+    }
+    for (const metric of ['readyMs', 'p95Ms', 'p99Ms']) {
       const value = profile?.[metric];
-      const max = spec.limits[name][metric];
-      if (!Number.isFinite(value) || value > max) errors.push(name + '.' + metric + ' exceeded budget or is missing (limit ' + max + ')');
+      const max = limits[metric];
+      if (max !== undefined && (!Number.isFinite(value) || value > max)) {
+        errors.push(name + '.' + metric + ' exceeded budget or is missing (limit ' + max + ')');
+      }
+    }
+    if (limits.minDurationMs !== undefined &&
+        (!Number.isFinite(profile?.durationMs) || profile.durationMs < limits.minDurationMs)) {
+      errors.push(name + '.minDurationMs not met (minimum ' + limits.minDurationMs + ')');
+    }
+    const memoryBudget = limits.peakEstimatedGpuBytes;
+    if (memoryBudget !== undefined) {
+      const memory = profile?.renderMemory;
+      if (memory?.error || !(memory?.samples >= 2) || !(memory?.maxSampleGapMs <= 2500) ||
+          !Number.isFinite(memory?.peakEstimatedGpuBytes) ||
+          memory.peakEstimatedGpuBytes > memoryBudget) {
+        errors.push(name + '.peakEstimatedGpuBytes exceeded budget or is missing (limit ' + memoryBudget + ')');
+      }
     }
   }
   if (!Number.isFinite(measured.zipBytes) || measured.zipBytes > spec.limits.zipBytes) {
@@ -662,7 +689,7 @@ async function runVisualGate(gameDir, opts, meta, snapshotScript, gameConfig) {
   };
 }
 
-function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = gameDir, entry = null, gpu = null } = {}) {
+function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = gameDir, entry = null, releaseSpec = null } = {}) {
   const scenarioCandidates = [
     path.join(gameDir, 'tests', 'acceptance.mjs'),
     path.join(gameDir, 'playtest.mjs'),
@@ -671,10 +698,12 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
   const allowBlank = meta.isBare && !opts.strict;
   const allowStatic = meta.isUi || (meta.isBare && !opts.strict);
 
-  const buildArgs = viewport => [
+  const buildArgs = (viewport, name) => [
     targetDir,
     ...(entry ? ['--entry', entry] : []),
-    ...(gpu ? ['--gpu', gpu] : []),
+    ...(releaseSpec?.gpu ? ['--gpu', releaseSpec.gpu] : []),
+    ...(releaseSpec?.limits?.[name]?.p99Ms !== undefined ? ['--exact-percentiles'] : []),
+    ...(releaseSpec?.limits?.[name]?.peakEstimatedGpuBytes !== undefined ? ['--sample-render-memory'] : []),
     ...(opts.release ? ['--state-ready'] : []),
     '--selector', meta.selector,
     '--ready', meta.ready,
@@ -687,7 +716,11 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
     ...(scenario ? ['--scenario', scenario] : ['--duration', '1600']),
   ];
 
-  const { exitCode, report } = runJsonSubprocess(playtestScript, buildArgs(opts.viewport), { cwd: gameDir, timeoutMs: 150_000 });
+  const timeoutMs = name => {
+    const minDuration = opts.releaseSpec?.limits?.[name]?.minDurationMs ?? 0;
+    return Math.min(2_147_483_647, Math.max(150_000, Math.ceil(minDuration + 30_000)));
+  };
+  const { exitCode, report } = runJsonSubprocess(playtestScript, buildArgs(opts.viewport, 'desktop'), { cwd: gameDir, timeoutMs: timeoutMs('desktop') });
   const errors = [];
   if (exitCode !== 0 || report.ok !== true) {
     errors.push(...(report.problems?.length ? report.problems : [`playtest failed (${exitCode})`]));
@@ -702,7 +735,7 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
   let mobileReport = null;
   const runMobile = Boolean(scenario) && !opts.skipMobilePlaytest && opts.mobileViewport && opts.mobileViewport !== opts.viewport;
   if (runMobile) {
-    const mobileRes = runJsonSubprocess(playtestScript, buildArgs(opts.mobileViewport), { cwd: gameDir, timeoutMs: 150_000 });
+    const mobileRes = runJsonSubprocess(playtestScript, buildArgs(opts.mobileViewport, 'mobile'), { cwd: gameDir, timeoutMs: timeoutMs('mobile') });
     mobileReport = mobileRes.report;
     if (mobileRes.exitCode !== 0 || mobileRes.report?.ok !== true) {
       const probs = mobileRes.report?.problems?.length ? mobileRes.report.problems : [`mobile playtest failed (${mobileRes.exitCode})`];
@@ -729,8 +762,12 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
       .filter(([, run]) => run)
       .map(([name, run]) => [name, {
         readyMs: run.readyMs ?? null, p95Ms: run.frameStats?.p95Ms ?? null,
+        p99Ms: run.frameStats?.p99Ms ?? null, durationMs: run.actualDurationMs ?? null,
+        quantileSamples: run.frameStats?.quantileSamples ?? null,
+        quantilesApproximate: run.frameStats?.quantilesApproximate ?? null,
         frames: run.frameStats?.frames ?? null, browserVersion: run.browserVersion ?? null,
         rendererEnvironment: run.rendererEnvironment ?? null,
+        ...(run.renderMemory ? { renderMemory: run.renderMemory } : {}),
       }])),
     consoleErrors: report.consoleErrors ?? [],
     httpErrors: report.httpErrors ?? [],
@@ -893,7 +930,7 @@ async function runPackageGate(gameDir, opts, meta, packageScript, snapshotScript
       zipBytes = statSync(summary.zipPath).size;
       const entry = opts.releaseSpec?.target === 'toy' ? 'index.html' : sourceEntry;
       if (opts.releaseSpec) {
-        playtest = runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir: summary.outputDir, entry, gpu: opts.releaseSpec.gpu });
+        playtest = runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir: summary.outputDir, entry, releaseSpec: opts.releaseSpec });
         if (playtest.status !== 'passed') {
           errors.push(...playtest.errors.map(problem => 'Packaged playtest: ' + problem));
         } else {

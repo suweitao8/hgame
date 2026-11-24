@@ -11,6 +11,7 @@
 7. In the default Pixi arena, replace its private touch input with the shared action controls and retain mouse aim and legacy shortcuts. Show only implemented actions, use a single resume button during pauses, and verify English and Chinese in a generated arena with keyboard, simulated Xbox and two-touch input. Keep the bare Pixi entry empty.
 8. Give the three action archetypes one generated module for bindings, touch, locale, and menu behavior. Preserve authored actions and combat rules. Exercise published horde and 3D arena builds through damage, results, and replay using normal input and authored fixture balance.
 9. Record the actual rendering environment of packaged playtests. Keep software coverage and let release manifests explicitly require hardware rendering. Verify the same 3D lifecycle with an actual desktop GPU, preserving the release budgets.
+10. Add optional package budgets for minimum measurement duration, p99 frame time and peak estimated GPU bytes. Sample an authored resource hook during the measured scenario and surface coverage and failures. Verify a hardware arena package through a minute of gameplay in both viewports and exercise an exceeded resource budget.
 
 ## 2026-11-24 复评
 
@@ -53,4 +54,12 @@
 ### 距离 90 分的主要缺口
 
 1. 交付需要补上 Android Chrome、iOS Safari、实体 Xbox 和目标 Toy 宿主的实测。重点是局域网打开、移动同时出招、返回前台、设备断连与恢复，以及代表性低端手机的帧时间。
-2. 在独立发布产物上补齐持续负载的帧尾和显存峰值证据。运行时评分卡仍有 3D 主管线与 WebGPU 接线、持续分配的渲染目标、主线程骨骼动画等缺项。
+2. 运行时评分卡仍有 3D 主管线与 WebGPU 接线、持续分配的渲染目标、主线程骨骼动画等缺项。已验证的显存与帧尾数据来自一台桌面设备。
+
+### 独立发布包的长时预算
+
+综合 **89.8 / 100**。引擎运行时 84.6，制作工具链 92，验证与交付从 93 升至 95。保留原 40／35／25 权重。
+
+- 3D 原型的普通粒子池从 65,536 调整到 4,096。发布包的引擎显存估算峰值从 21.72 MB 降至 13.86 MB，两种视口均通过原定的 16 MiB 门槛。资源采样各 72 次，最长采样间隔约 1.01 秒。
+- RTX 4070，桌面 960 × 540、模拟竖屏 360 × 800，独立包各运行约 70.8 秒。全部 10,007 帧与 9,969 帧纳入计算，p95 均为 7.0 ms，p99 均为 13.9 ms。发布校验通过，且超预算的样例仍被拦截。
+- Windows 以 Chrome GPU 子进程为范围采样专用显存，两个视口各有 14 个有效样本，峰值分别为 96.15 MB 和 73.72 MB。有一次计数器采样无效，已丢弃。进程计数包含 Chrome 和驱动资源，范围大于引擎资源账本。

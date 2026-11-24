@@ -34,9 +34,12 @@ function textureBytesPerPixel(THREE, texture = {}) {
 
 /** Nominal bytes of known Three render attachments, shared by budgets and diagnostics. */
 export function estimateRenderTargetBytes(THREE, target) {
-  const { width, height, samples = 0, texture, depthBuffer, depthTexture, stencilBuffer } = target ?? {};
+  const { width, height, depth, samples = 0, texture, textures, depthBuffer, depthTexture, stencilBuffer } = target ?? {};
   if (!(width > 0 && height > 0)) return 0;
-  return width * height * ((texture ? textureBytesPerPixel(THREE, texture) : 0) * (1 + samples) +
+  const colorAttachments = textures ?? (texture ? [texture] : []);
+  const colorBytesPerPixel = colorAttachments.reduce((bytes, attachment) => bytes + textureBytesPerPixel(THREE, attachment), 0);
+  const layers = texture?.isCubeTexture ? 6 : Math.max(1, Number(depth) || 1);
+  return width * height * layers * (colorBytesPerPixel * (1 + samples) +
     (depthBuffer || stencilBuffer || depthTexture ? 4 * Math.max(1, samples) : 0) + (samples && depthTexture ? 4 : 0));
 }
 
@@ -439,13 +442,22 @@ const TEX_SLOTS = ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 
 
 function estimateTextureBytes(THREE, texture) {
   if (!texture) return 0;
-  const img = texture.image;
+  const images = texture.isCubeTexture && Array.isArray(texture.image) ? texture.image : [texture.image];
+  const bytesPerPixel = textureBytesPerPixel(THREE, texture);
+  const mipScale = texture.generateMipmaps === false ? 1 : (texture.isData3DTexture ? 8 / 7 : 4 / 3);
+  let bytes = 0;
+  for (const image of images) {
+    bytes += estimateTextureImageBytes(texture, image?.image ?? image, bytesPerPixel, mipScale);
+  }
+  return bytes;
+}
+
+function estimateTextureImageBytes(texture, img, bytesPerPixel, mipScale) {
   const w = Number(img?.width || img?.videoWidth || texture.width) || 0;
   const h = Number(img?.height || img?.videoHeight || texture.height) || 0;
   if (!(w > 0 && h > 0)) return 0;
-  const bpp = textureBytesPerPixel(THREE, texture);
-  const mipScale = texture.generateMipmaps === false ? 1 : 1.3334;
-  return Math.ceil(w * h * bpp * mipScale);
+  const depth = Math.max(1, Number(img?.depth) || 1);
+  return Math.ceil(w * h * depth * bytesPerPixel * mipScale);
 }
 
 function estimateGeometryBytes(geometry) {
@@ -502,6 +514,9 @@ export function createVramLedger3D(THREE, {
       if (!mat) return;
       if (Array.isArray(mat)) { for (const m of mat) scanMat(m); return; }
       for (const slot of TEX_SLOTS) addTex(mat[slot]);
+      for (const uniform of Object.values(mat.uniforms ?? {})) {
+        if (uniform?.value?.isTexture) addTex(uniform.value);
+      }
     };
 
     for (const root of Array.isArray(roots) ? roots : [roots]) {
@@ -510,6 +525,10 @@ export function createVramLedger3D(THREE, {
         root.traverse(node => {
           if (node?.geometry) addGeo(node.geometry);
           if (node?.material) scanMat(node.material);
+          if (node?.background?.isTexture) addTex(node.background);
+          if (node?.environment?.isTexture) addTex(node.environment);
+          if (node?.shadow?.map) seenTargets.add(node.shadow.map);
+          if (node?.shadow?.mapPass) seenTargets.add(node.shadow.mapPass);
         });
       } else {
         if (root.geometry) addGeo(root.geometry);
@@ -520,12 +539,17 @@ export function createVramLedger3D(THREE, {
     for (const g of geometries) addGeo(g);
     for (const rt of targets) if (rt && typeof rt === 'object') seenTargets.add(rt);
 
+    let targetBytes = 0;
+    for (const rt of seenTargets) {
+      seenTex.delete(rt.texture);
+      seenTex.delete(rt.depthTexture);
+      for (const texture of rt.textures ?? []) seenTex.delete(texture);
+      targetBytes += estimateRenderTargetBytes(THREE, rt);
+    }
     let textureBytes = 0;
     let geometryBytes = 0;
-    let targetBytes = 0;
     for (const t of seenTex) textureBytes += estimateTextureBytes(THREE, t);
     for (const g of seenGeo) geometryBytes += estimateGeometryBytes(g);
-    for (const rt of seenTargets) targetBytes += estimateRenderTargetBytes(THREE, rt);
 
     const totalBytes = textureBytes + geometryBytes + targetBytes;
     const pressure = totalBytes >= hardBytes ? 'hard' : (totalBytes >= softBytes ? 'soft' : 'ok');

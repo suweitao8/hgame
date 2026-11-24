@@ -49,7 +49,7 @@ await app.installFeatures();
 const scene = app.scenes.add(new Scene('arena3d'));
 await installPresentationSky({ app, scene, renderer, THREE, base, Component, Entity, settings: presentation.sky });
 const world = renderer.getWorld(scene);
-const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: world });
+const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: world, maxParticles: 4096 });
 
 const halfSpan = Math.max(16, blueprint.design.balance.arenaSpan * 0.5);
 const terrain = createHeightfieldTerrain3D({
@@ -226,10 +226,12 @@ app.scenes.start('arena3d');
 app.start();
 canvas.dataset.engineReady = 'true';
 window.__hgameState = () => ({ ...session.snapshot(), player: { x: playerPos.x, y: playerPos.y, z: playerPos.z }, enemies: enemies.length });
+window.__hgameRenderMemory = () => renderer.measureVram(scene).totalBytes;
 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;
   window.removeEventListener('pagehide', onPageHide);
+  delete window.__hgameRenderMemory;
   controls.dispose();
   session.dispose();
   vfx.dispose();

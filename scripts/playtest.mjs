@@ -23,6 +23,38 @@ import { collectPageUiAudit, evaluateLayoutAudit, evaluateUiAudit } from './lib/
 
 const previewScript = fileURLToPath(new URL('./preview.mjs', import.meta.url));
 
+function startRenderMemorySampling() {
+  const intervalMs = 1000;
+  let samples = 0;
+  let peakEstimatedGpuBytes = 0;
+  let lastSampleAt = null;
+  let maxSampleGapMs = 0;
+  let error = null;
+  function sample() {
+    if (error) return;
+    try {
+      if (typeof window.__hgameRenderMemory !== 'function') throw new Error('missing window.__hgameRenderMemory()');
+      const bytes = window.__hgameRenderMemory();
+      if (!Number.isSafeInteger(bytes) || bytes <= 0) throw new Error('expected a positive integer byte estimate');
+      const now = performance.now();
+      if (lastSampleAt !== null) maxSampleGapMs = Math.max(maxSampleGapMs, now - lastSampleAt);
+      lastSampleAt = now;
+      peakEstimatedGpuBytes = Math.max(peakEstimatedGpuBytes, bytes);
+      samples++;
+    } catch (cause) {
+      error = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+  sample();
+  const timer = setInterval(sample, intervalMs);
+  window.__hgameStopRenderMemorySampling = () => {
+    clearInterval(timer);
+    sample();
+    delete window.__hgameStopRenderMemorySampling;
+    return { peakEstimatedGpuBytes: samples ? peakEstimatedGpuBytes : null, samples, intervalMs, maxSampleGapMs: Math.ceil(maxSampleGapMs), error };
+  };
+}
+
 /**
  * Parse a comma-separated input script like `"d:350,space:120,wait:200,click"`.
  * @param {string} raw
@@ -194,6 +226,8 @@ async function runCli() {
   const allowBlank = flag('--allow-blank');
   const checkUi = flag('--check-ui');
   const checkLayout = flag('--check-layout');
+  const sampleRenderMemory = flag('--sample-render-memory');
+  const frameSampleLimit = flag('--exact-percentiles') ? 200_000 : 600;
   const usePointer = !flag('--no-pointer');
   const actionsRaw = opt('--actions', profile === 'ui' ? 'click,wait:250' : 'd:320,w:260,j:160,a:260,space:160,wait:250');
   let actions;
@@ -286,7 +320,7 @@ async function runCli() {
       }
       frameId = requestAnimationFrame(sample);
       window.__hgamePlaytestTelemetry = () => collector.snapshot();
-      window.__hgamePlaytestTelemetryReset = () => { collector = createCollector(600); last = performance.now(); };
+      window.__hgamePlaytestTelemetryReset = () => { collector = createCollector(${frameSampleLimit}); last = performance.now(); };
       window.__hgamePlaytestTelemetryStop = () => new Promise(resolve => {
         requestAnimationFrame(now => {
           collector.record(now - last);
@@ -373,13 +407,14 @@ async function runCli() {
       }
       return entry;
     };
-    const context = { page, readState, checkpoint, auditUi };
+    const context = { page, readState, checkpoint, auditUi, measuringRenderMemory: sampleRenderMemory };
 
     const measurementId = randomUUID();
     await page.evaluate(id => {
       window.__hgamePlaytestMeasurementId = id;
       window.__hgamePlaytestTelemetryReset();
     }, measurementId);
+    if (sampleRenderMemory) await page.evaluate(startRenderMemorySampling);
     const measurementStart = performance.now();
     if (scenario) {
       try {
@@ -418,6 +453,10 @@ async function runCli() {
       return window.__hgamePlaytestTelemetryStop();
     }, measurementId);
     const actualDurationMs = performance.now() - measurementStart;
+    if (sampleRenderMemory) {
+      report.renderMemory = await page.evaluate(() => window.__hgameStopRenderMemorySampling());
+      if (report.renderMemory.error) report.problems.push('render memory telemetry: ' + report.renderMemory.error);
+    }
 
     const shotAfter = await captureBuf();
     const afterHash = createHash('sha256').update(shotAfter).digest('hex').slice(0, 16);

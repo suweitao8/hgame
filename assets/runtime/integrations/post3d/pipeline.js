@@ -350,6 +350,7 @@ function compileHdrPasses(passes) {
  * @property {PostPipelineState} state Getter; shallow copy of the current state.
  * @property {PostPipelineTargets} targets Getter; target allocation info.
  * @property {() => {scalableBytes: number, fixedBytes: number}} estimateTargetBytes Nominal bytes of currently owned render attachments.
+ * @property {() => object[]} getRenderTargets Currently owned render targets, for resource deduplication.
  * @property {readonly PostHdrPass[]} passes Getter; current fullscreen HDR effects.
  * @property {(width: number, height: number) => void} resize Resizes buffers (px).
  * @property {(preset: Partial<Quality3DPreset>, buffer?: {width: number, height: number}) => void} setPreset Applies a preset and optionally resizes in one target rebuild.
@@ -1542,6 +1543,12 @@ export function createPostPipeline3D(options = {}) {
     return { scalableBytes, fixedBytes };
   }
 
+  function getRenderTargets() {
+    const targets = new Set();
+    reportTargets({ recordTarget: target => targets.add(target) });
+    return [...targets];
+  }
+
   function compositeWorldIntoViewTarget(compU, target) {
     runPass(FULLSCREEN_PASSES.worldLighting, mats.worldLighting, target);
     compU.tScene.value = target.texture;
@@ -2194,6 +2201,7 @@ export function createPostPipeline3D(options = {}) {
         : null;
     },
     estimateTargetBytes,
+    getRenderTargets,
     getTemporalStats() {
       const dims = getWorldRenderDimensions();
       return {

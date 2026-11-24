@@ -27,6 +27,28 @@ addEventListener('keydown', () => {
   assert.equal(report.rendererEnvironment.actualGpu, 'none');
 });
 
+test('playtest samples peak estimated GPU bytes inside the measurement window', t => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-render-memory-'));
+  t.after(() => rmSync(game, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+  writeFileSync(path.join(game, 'index.html'), `<!doctype html><canvas id="game" width="64" height="64"></canvas><script>
+const context = document.querySelector('canvas').getContext('2d');
+context.fillRect(0, 0, 32, 32);
+let bytes = 2048;
+addEventListener('keydown', () => { bytes = 8192; });
+addEventListener('keyup', () => { bytes = 1024; });
+window.__hgameRenderMemory = () => bytes;
+</script>`);
+  const result = spawnSync(process.execPath, [path.join(root, 'scripts/playtest.mjs'), game,
+    '--actions', 'd:1300,wait:200', '--no-pointer', '--allow-static', '--sample-render-memory'],
+  { encoding: 'utf8', timeout: 25000, windowsHide: true });
+  assert.ifError(result.error);
+  const report = JSON.parse(result.stdout);
+  assert.equal(result.status, 0, JSON.stringify(report));
+  assert.equal(report.renderMemory.peakEstimatedGpuBytes, 8192);
+  assert.ok(report.renderMemory.samples >= 3);
+});
+
 test('playtest collects requested gameplay events and fails when the trace hook is missing', t => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-trace-'));

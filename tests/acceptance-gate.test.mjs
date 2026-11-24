@@ -343,6 +343,13 @@ test('release acceptance requires explicit budgets and rejects bypass options', 
     const invalidGpu = runNode(acceptScript, [game, '--release', '--json']);
     assert.equal(invalidGpu.status, 1);
     assert.match(JSON.parse(invalidGpu.stdout).problems.join(' '), /Release gpu must be software or hardware/);
+    await writeFile(specPath, JSON.stringify({
+      ...config,
+      limits: { ...config.limits, desktop: { ...config.limits.desktop, p99Ms: 0 } },
+    }));
+    const invalidP99 = runNode(acceptScript, [game, '--release', '--json']);
+    assert.equal(invalidP99.status, 1);
+    assert.match(JSON.parse(invalidP99.stdout).problems.join(' '), /Invalid release budget desktop\.p99Ms/);
     await writeFile(specPath, JSON.stringify(config));
     await rm(path.join(game, 'tests', 'acceptance.mjs'));
     const missingScenario = runNode(acceptScript, [game, '--release', '--json']);

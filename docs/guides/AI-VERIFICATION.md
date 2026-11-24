@@ -46,6 +46,10 @@ Run `node scripts/accept.mjs <dir> --release --verify-fresh` before distributing
 
 For the repository's packaged 3D release fixture, set `HGAME_RELEASE_HARDWARE_CHROME` to the browser executable and run `node tests/browser-release-acceptance.mjs` on the GPU host. Generated game releases can select that browser with `--chrome <path>`.
 
+Each viewport can also declare `p99Ms`, `minDurationMs`, and `peakEstimatedGpuBytes`. A p99 budget requires complete frame samples. Set budgets for the intended workload and keep the required activity in the authored scenario. An enabled resource budget samples `window.__hgameRenderMemory()` at the beginning and end of the measured run and about once per second during it. The hook must synchronously return a positive byte estimate. The report records the largest sample, sample count, and longest sampling gap. The 3D arena uses an engine ledger for scene geometry, known textures, shadow maps and post-process targets. These estimates omit driver overhead and renderer allocations outside the ledger, and may miss transients between samples.
+
+The scenario receives `measuringRenderMemory: true` when memory sampling is active. Keep the core gameplay checks in every run. Use the flag for additional sustained workload during packaged measurements.
+
 ## Task acceptance
 
 1. **Preserve the request.** Before editing, write the task and an observable expected result for each explicit behavior, deliverable and constraint. Note any assumptions. For a bug, reproduce the original failure. For gameplay, cover entry, the requested interaction, and the resulting state. Include restart, persistence, touch or failure paths when the request affects them.

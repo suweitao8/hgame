@@ -1623,7 +1623,11 @@ export function createThreeAdapter({
           for (const l of csm.lights) if (l?.shadow?.map) targets.push(l.shadow.map);
         }
       }
-      return ledger.scan({ roots, targets });
+      const textures = scene ? [irradianceGrids.get(scene)?.texture] : [];
+      for (const pipeline of [postPipeline, ...viewPipelines.map(entry => entry?.pipeline)]) {
+        if (pipeline) targets.push(...pipeline.getRenderTargets());
+      }
+      return ledger.scan({ roots, targets, textures });
     },
     async warmupShaders(scene, customCam = null) {
       const targetCam = customCam ?? camera;
