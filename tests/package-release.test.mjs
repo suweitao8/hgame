@@ -516,6 +516,7 @@ test('package-game --engine outputs complete SDK build with workspace skill, use
       'assets/runtime/vendor/rapier2d/rapier2d.wasm',
       'assets/runtime/vendor/rapier3d/rapier3d.wasm',
       'assets/template/AGENTS.md',
+      'assets/archetypes/action-acceptance.mjs',
     ]) {
       assert.equal(await exists(path.join(sdkDir, requiredRel)), true, `Expected ${requiredRel} in SDK release`);
     }
@@ -531,6 +532,15 @@ test('package-game --engine outputs complete SDK build with workspace skill, use
     assert.equal(zipEntries.has('hgame_1_0/.agents/skills/hgame-vfx-juice/SKILL.md'), true);
     assert.equal(zipEntries.has('hgame_1_0/docs/guides/USER-AND-AGENT-GUIDE.md'), true);
     assert.equal(zipEntries.has('hgame_1_0/network/package-lock.json'), true);
+    assert.equal(zipEntries.has('hgame_1_0/assets/archetypes/action-acceptance.mjs'), true);
+    for (const [slug, options] of [['sdk-pixi', []], ['sdk-action', ['--archetype', 'action-2d']]]) {
+      const game = path.join(tmp, slug);
+      const generated = spawnSync(process.execPath, [
+        path.join(sdkDir, 'scripts/create-game.mjs'), game, '--no-git', ...options,
+      ], { cwd: sdkDir, encoding: 'utf8' });
+      assert.equal(generated.status, 0, generated.stderr || generated.stdout);
+      assert.match(await readFile(path.join(game, 'tests/acceptance.mjs'), 'utf8'), /two-finger movement and attack/);
+    }
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

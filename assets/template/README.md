@@ -60,6 +60,8 @@ npm run check
 npm run accept
 ```
 
+默认 Pixi 竞技场和三个动作原型的 `tests/acceptance.mjs` 会验证移动、主动攻击和暂停恢复。发布清单可用 `"mobileMultiTouch": true` 启用左摇杆加攻击的双指验收。修改玩法时同步更新这份场景和项目的发布预算。
+
 ## 一键精简发布打包（生成 `build/<id>_<version>` 与 `.zip`）
 
 直接打包整个工程目录会带入 `.git/`、`tests/`、`scripts/`、原始美术文件及未使用的物理/渲染模块。请始终使用以下命令生成精简可上传包：

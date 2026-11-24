@@ -81,6 +81,7 @@ const vfx = createVfxSystem({ mode: 'webgl2d', sceneOrAdapter: renderer });
 const enemies = [];
 const bolts = [];
 let fireTimer = 0;
+let manualAttacks = 0;
 let spawnTimer = 0;
 let dashTimer = 0;
 let dashBurst = 0;
@@ -97,6 +98,7 @@ function resetArena() {
   enemyCrowd.clear();
   boltCrowd.clear();
   fireTimer = 0;
+  manualAttacks = 0;
   spawnTimer = 0.4;
   dashTimer = 0;
   dashBurst = 0;
@@ -114,13 +116,14 @@ function spawnEnemy() {
   enemies.push({ idx, x, y, hp: blueprint.design.balance.gruntHp, speed: 95 + session.state.wave * 8, hitCd: 0 });
 }
 
-function fireBolt(tx, ty) {
+function fireBolt(tx, ty, manual) {
   const len = Math.hypot(tx, ty) || 1;
   const vx = (tx / len) * 520;
   const vy = (ty / len) * 520;
   const idx = boltCrowd.spawn({ x: player.x, y: player.y });
   if (idx < 0) return;
   bolts.push({ idx, x: player.x, y: player.y, vx, vy, life: 1.4 });
+  if (manual) manualAttacks++;
   session.audio.play('attack');
 }
 
@@ -159,7 +162,8 @@ player.addComponent(new class extends Component {
     }
 
     fireTimer -= dt;
-    if (fireTimer <= 0 || controls.wasPressed('attack')) {
+    const manual = controls.wasPressed('attack');
+    if (fireTimer <= 0 || manual) {
       let bestDist = Infinity;
       let tx = aimX;
       let ty = aimY;
@@ -168,7 +172,7 @@ player.addComponent(new class extends Component {
         if (d < bestDist) { bestDist = d; tx = e.x - player.x; ty = e.y - player.y; }
       }
       if (controls.isDown('attack') || bestDist < 420) {
-        fireBolt(tx, ty);
+        fireBolt(tx, ty, manual || controls.isDown('attack'));
         fireTimer = runtimeStats.fireInterval;
       }
     }
@@ -235,7 +239,7 @@ const controls = await mountActionInterface({ base, canvas, session, input: app.
 app.scenes.start('main');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ ...session.snapshot(), player: { x: player.x, y: player.y }, enemies: enemies.length });
+window.__hgameState = () => ({ ...session.snapshot(), player: { x: player.x, y: player.y }, enemies: enemies.length, manualAttacks });
 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;

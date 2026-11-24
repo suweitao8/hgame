@@ -1351,7 +1351,7 @@ export async function analyzeBundleBudget(rootDir, { limitBytes = 50 * 1024 * 10
 }
 
 const SDK_DIRECTORIES = [
-  'assets/runtime', 'assets/template', 'assets/profiles', 'assets/optional/three',
+  'assets/runtime', 'assets/template', 'assets/profiles', 'assets/archetypes', 'assets/optional/three',
   'scripts', 'types', 'docs', '.agents/skills', 'network', 'tests', 'benchmarks', 'examples',
 ];
 const SDK_LOCAL_CONFIG_EXAMPLE = '.hgame.local.example.json';

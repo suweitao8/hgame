@@ -221,6 +221,10 @@ async function main() {
       await cp(path.join(mainSource, 'main.js'), path.join(stage, 'src', 'main.js'), { force: true });
       if (files.html) await cp(path.join(profiles, files.html), path.join(stage, 'index.html'), { force: true });
     }
+    if ((isArchetype && archName !== 'card-ui') ||
+        (options.starter === 'pixi2d' && !options.bare && options.preset !== 'horde')) {
+      await cp(path.join(archetypesDir, 'action-acceptance.mjs'), path.join(stage, 'tests', 'acceptance.mjs'));
+    }
     for (const file of (options.bare || isArchetype) ? [] : files.demoData) {
       await cp(path.join(mainSource, file), path.join(stage, 'src', file), { force: false });
     }

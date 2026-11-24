@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Ship a shared keyboard and two-finger combat acceptance scenario with the Pixi arena and three action archetypes.
+
+- Include the action and card archetypes in the engine SDK archive so the bundled project generator can use them.
+
 - Let release manifests require simultaneous mobile touch contacts and movement during the packaged playtest.
 
 - Play URL-based voice cues through the existing spatial mixer and cue limits, with streaming and visibility-aware pause and resume.

@@ -70,6 +70,29 @@ async function freePort() {
   return port;
 }
 
+test('the four action starters ship the same editable combat acceptance scenario', async () => {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-action-acceptance-template-'));
+  try {
+    const scenarios = [];
+    for (const [name, args] of [
+      ['pixi-arena', []],
+      ['action-2d', ['--archetype', 'action-2d']],
+      ['horde-2d', ['--archetype', 'horde-2d']],
+      ['arena-3d', ['--archetype', 'arena-3d']],
+    ]) {
+      const dir = path.join(tmp, name);
+      const generated = spawnSync(process.execPath, [createGame, dir, '--no-git', ...args], { encoding: 'utf8' });
+      assert.equal(generated.status, 0, generated.stderr);
+      const scenario = await readFile(path.join(dir, 'tests', 'acceptance.mjs'), 'utf8');
+      assert.match(scenario, /two-finger movement and attack/, name);
+      scenarios.push(scenario);
+    }
+    assert.equal(new Set(scenarios).size, 1);
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test('standalone preview serves game modules but hides git, AGENTS and traversal paths', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'html-game-preview-'));
   const game = path.join(tmp, 'playable-game');

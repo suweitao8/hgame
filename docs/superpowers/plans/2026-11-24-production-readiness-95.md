@@ -95,6 +95,19 @@ The staged candidate passed 642 repository tests and all eight browser telemetry
 
 Verification and delivery moves from 96 to 97. Runtime remains 86.8 and production kit remains 92. The weighted score reaches **91.17**. Evidence here uses Chromium's touch context; physical mobile, Xbox and Toy host coverage remains open.
 
+## Acceptance shipped with action starters
+
+- [x] Ship one editable acceptance scenario with the default Pixi arena and the three action archetypes.
+- [x] Verify movement, a fresh manually triggered attack, further movement, and pause/resume. Use each shipped state hook to observe a bolt, pulse or slash dispatch.
+- [x] Exercise release using the generated scenario in the Pixi Toy archive and verify its multi-touch evidence. Keep generic acceptance for bare, UI and unrelated profiles.
+- [x] Include the archetypes in the SDK distribution and generate default Pixi and Action 2D projects from the produced SDK.
+
+The four generated projects pass full WebAsset acceptance. Each also passes the portrait touch scenario through the registered WebAsset entry with two simultaneous contacts and one measured overlapping move. A separate Action 2D probe kept movement while suppressing manual attacks during movement. It moved 622 pixels and reported zero manual attacks. The shared scenario rejected that build at the two-finger combat checkpoint.
+
+The staged repository gate passes 649 tests. All five release fixtures pass. The packaged Pixi Toy fixture uses the generated scenario directly and passes the release and report-freshness checks. The 3D Web release on RTX 4070 reports 7.0 ms p95 in both viewports. Release budgets remain project-authored.
+
+Production kit moves from 92 to 94. Runtime remains 86.8 and verification and delivery remains 97. The weighted score reaches **91.87**.
+
 ## Current evidence
 
 - In a Node probe with mock drawing, each version executed 3,000 warmup frames and nine samples of 3,000 identical frames. The baseline compiled all 27,000 measured frames. The cached implementation reused the graph in all 27,000. Median batch-average CPU time was 103.27 µs per frame before and 17.23 µs after. Each version executed all 30,000 frame callbacks. These timings measure JavaScript pipeline overhead with GPU work excluded.

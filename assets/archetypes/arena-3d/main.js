@@ -95,6 +95,7 @@ const playerPos = { x: 0, z: 0 };
 const enemies = [];
 let spawnTimer = 0.5;
 let attackTimer = 0;
+let manualAttacks = 0;
 let dashTimer = 0;
 let dashBurst = 0;
 
@@ -113,6 +114,7 @@ function resetArena3D() {
   }
   spawnTimer = 0.5;
   attackTimer = 0;
+  manualAttacks = 0;
   dashTimer = 0;
   dashBurst = 0;
   for (let i = 0; i < 3; i++) spawnEnemy3D();
@@ -173,6 +175,7 @@ ctrl.addComponent(new class extends Component {
         session.audio.play('attack');
         const py = sampleY(playerPos.x, playerPos.z) + 0.9;
         vfx.slashArc({ x: playerPos.x, y: py, z: playerPos.z, radius: 2.2, color: theme.vfx.slashColor });
+        if (manualAttack) manualAttacks++;
         if (targetIdx >= 0) {
           const e = enemies[targetIdx];
           e.hp -= runtimeStats.damage;
@@ -225,7 +228,7 @@ const controls = await mountActionInterface({ base, canvas, session, input: app.
 app.scenes.start('arena3d');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ ...session.snapshot(), player: { x: playerPos.x, y: playerPos.y, z: playerPos.z }, enemies: enemies.length });
+window.__hgameState = () => ({ ...session.snapshot(), player: { x: playerPos.x, y: playerPos.y, z: playerPos.z }, enemies: enemies.length, manualAttacks });
 window.__hgameRenderMemory = () => renderer.measureVram(scene).totalBytes;
 
 window.addEventListener('pagehide', function onPageHide(event) {

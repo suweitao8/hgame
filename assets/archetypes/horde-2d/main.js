@@ -95,6 +95,7 @@ const playerSprite = player.addComponent(new Sprite2D({ shape: 'circle', width: 
 const vfx = createVfxSystem({ mode: 'webgl2d', sceneOrAdapter: renderer });
 
 let pulseTimer = 0;
+let manualAttacks = 0;
 let waveTimer = 0;
 let hurtCd = 0;
 let dashTimer = 0;
@@ -102,6 +103,7 @@ let dashBurst = 0;
 const nearby = new Int32Array(1);
 
 function resetHorde() {
+  manualAttacks = 0;
   player.x = 0;
   player.y = 0;
   runtimeStats.pulseDamage = Math.max(12, Math.round(blueprint.design.balance.weaponDps * 0.55));
@@ -149,7 +151,8 @@ player.addComponent(new class extends Component {
     }
 
     pulseTimer -= dt;
-    if (pulseTimer <= 0 || controls.wasPressed('attack')) {
+    const manual = controls.wasPressed('attack');
+    if (pulseTimer <= 0 || manual) {
       pulseTimer = runtimeStats.pulseInterval;
       const hits = swarm.applyCircleDamage({
         x: player.x,
@@ -160,6 +163,7 @@ player.addComponent(new class extends Component {
       });
       session.audio.play('attack');
       vfx.slashArc({ x: player.x, y: player.y, radius: runtimeStats.pulseRadius * 0.75, color: theme.vfx.slashColor });
+      if (manual) manualAttacks++;
       if (hits > 0) session.recordHit({ score: hits * 2 });
     }
 
@@ -213,7 +217,7 @@ const controls = await mountActionInterface({ base, canvas, session, input: app.
 app.scenes.start('horde');
 app.start();
 canvas.dataset.engineReady = 'true';
-window.__hgameState = () => ({ ...session.snapshot(), player: { x: player.x, y: player.y }, swarmCount: swarm.count });
+window.__hgameState = () => ({ ...session.snapshot(), player: { x: player.x, y: player.y }, swarmCount: swarm.count, manualAttacks });
 
 window.addEventListener('pagehide', function onPageHide(event) {
   if (event.persisted) return;
