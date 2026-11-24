@@ -660,7 +660,8 @@ export function createPostPipeline3D(options = {}) {
   }
   let lastReactiveMeshCount = 0;
   let temporalAa = null;
-  let bloomMips = [];
+  let bloomMipCount = 0;
+  let bloomStages = [];
   let postCamera = null;
   let postScene = null;
   let quadGeom = null;
@@ -690,7 +691,7 @@ export function createPostPipeline3D(options = {}) {
         renderer.getContext?.()?.getExtension?.('EXT_color_buffer_float')) {
       return { type: THREE.UnsignedInt101111Type, format: THREE.RGBFormat };
     }
-    return { type: hdrType };
+    return { type: hdrType, format: THREE.RGBAFormat };
   }
 
   function makeColorTarget(w, h, { type, format, samples = 0, depthTexture = null, depthBuffer = Boolean(depthTexture) } = {}) {
@@ -748,10 +749,6 @@ export function createPostPipeline3D(options = {}) {
     disposeExposureTargets();
     hdrTargets.dispose();
     transientPool?.dispose();
-    for (const mip of bloomMips) {
-      mip.down?.dispose?.();
-      mip.up?.dispose?.();
-    }
     sceneRT = null;
     halfRT = null;
     aoBlurRT = null;
@@ -762,7 +759,8 @@ export function createPostPipeline3D(options = {}) {
     resetGiSsrHistory();
     ldrRT = null;
     reactiveMaskRT = null;
-    bloomMips = [];
+    bloomMipCount = 0;
+    bloomStages = [];
   }
 
   function makeDepthTexture(width, height) {
@@ -812,30 +810,30 @@ export function createPostPipeline3D(options = {}) {
     sceneRT = replacement;
   }
 
-  function syncBloomTargets(hw, hh) {
-    let mipCount = 0;
-    if (activePreset.bloom) {
-      let mw = hw;
-      let mh = hh;
-      for (let i = 0; i < 4; i++) {
-        const lastMip = i === 3 || (mw === 1 && mh === 1);
-        const mip = bloomMips[i] ?? { down: null, up: null };
-        mip.w = mw;
-        mip.h = mh;
-        mip.down = syncColorTarget(mip.down, true, mw, mh, bloomStorage.type, bloomStorage.format);
-        // Mip zero uses the shared half-resolution scratch target. The last mip only downsamples.
-        mip.up = syncColorTarget(mip.up, i > 0 && !lastMip, mw, mh, bloomStorage.type, bloomStorage.format);
-        bloomMips[i] = mip;
-        mipCount++;
-        if (lastMip) break;
-        mw = Math.max(1, mw >> 1);
-        mh = Math.max(1, mh >> 1);
-      }
+  function syncBloomLayout(hw, hh) {
+    bloomStages = [];
+    bloomMipCount = 0;
+    if (!activePreset.bloom) return;
+    const specs = [];
+    for (let width = hw, height = hh; specs.length < 4;) {
+      specs.push(Object.freeze({ width, height, ...bloomStorage }));
+      if (width === 1 && height === 1) break;
+      width = Math.max(1, width >> 1);
+      height = Math.max(1, height >> 1);
     }
-    while (bloomMips.length > mipCount) {
-      const mip = bloomMips.pop();
-      mip.down?.dispose?.();
-      mip.up?.dispose?.();
+    bloomMipCount = specs.length;
+    const add = (id, reads, output, spec) => {
+      bloomStages.push({ id, reads, writes: [output], transientSpecs: { [output]: spec } });
+    };
+    add('bloom-prefilter', [], specs.length === 1 ? 'bloomColor' : 'bloomDown0', specs[0]);
+    for (let i = 1; i < specs.length; i++) {
+      add(`bloom-downsample-${i}`, [`bloomDown${i - 1}`], `bloomDown${i}`, specs[i]);
+    }
+    let lower = `bloomDown${specs.length - 1}`;
+    for (let i = specs.length - 2; i >= 0; i--) {
+      const output = i === 0 ? 'bloomColor' : `bloomUp${i}`;
+      add(`bloom-upsample-${i}`, [lower, `bloomDown${i}`], output, specs[i]);
+      lower = output;
     }
   }
 
@@ -847,7 +845,7 @@ export function createPostPipeline3D(options = {}) {
     const useAoVol = Boolean(!transientPool && sceneRT.depthTexture && (activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0));
     halfRT = syncColorTarget(halfRT, useAoVol, hw, hh, THREE.UnsignedByteType);
     aoBlurRT = syncColorTarget(aoBlurRT, useAoVol && !usesByteColorTargets, hw, hh, THREE.UnsignedByteType);
-    syncBloomTargets(hw, hh);
+    syncBloomLayout(hw, hh);
 
     syncOptionalTargets();
   }
@@ -874,12 +872,8 @@ export function createPostPipeline3D(options = {}) {
       resetGiSsrHistory();
     }
     giHistoryRT = syncColorTarget(giHistoryRT, useGiHistory, hw, hh, hdrType);
-    // AO and GI finish their blur before bloom writes the final upsample.
-    const useHalfScratch = !transientPool && (useGiSsr || bloomMips.length > 1 || (usesByteColorTargets && Boolean(halfRT)));
-    // Reserve alpha when the preset can denoise GI/SSR, including while those effects fade out.
-    const bloomOnly = bloomMips.length > 1 && !(sceneRT.depthTexture && (activePreset.ssgi || activePreset.ssr));
-    halfScratchRT = syncColorTarget(halfScratchRT, useHalfScratch, hw, hh,
-      bloomOnly ? bloomStorage.type : hdrType, bloomOnly ? bloomStorage.format : undefined);
+    const useHalfScratch = !transientPool && (useGiSsr || (usesByteColorTargets && Boolean(halfRT)));
+    halfScratchRT = syncColorTarget(halfScratchRT, useHalfScratch, hw, hh, hdrType);
 
     // The fixed-size exposure targets retain adaptation history across viewport changes.
     if (state.autoExposure) {
@@ -1164,7 +1158,7 @@ export function createPostPipeline3D(options = {}) {
     hasViewModel = false,
     stages = customStages,
     useAutoExposure = false,
-    useBloom = false,
+    bloomPasses = [],
     useFinalFxaaPass = false,
     width = bufferWidth,
     height = bufferHeight,
@@ -1226,16 +1220,13 @@ export function createPostPipeline3D(options = {}) {
         { id: 'eye-adaptation', reads: ['lumaMip', 'prevAdapt'], writes: ['adaptedExposure'], transientSpecs: { adaptedExposure: { width: 1, height: 1, format: 'r16f' } } },
       );
     }
-    if (useBloom) {
-      passes.push(
-        { id: 'bloom-prefilter', reads: [currentColor], writes: ['bloomMip'], transientSpecs: { bloomMip: { width: 'half', height: 'half', format: 'rgba16f' } } },
-        { id: 'bloom-upsample', reads: ['bloomMip'], writes: ['bloomTex'], transientSpecs: { bloomTex: { width: 'half', height: 'half', format: 'rgba16f' } } },
-      );
+    if (bloomPasses.length) {
+      passes.push({ ...bloomPasses[0], reads: [currentColor] }, ...bloomPasses.slice(1));
     }
     const toneOptional = ['sceneDepth'];
     if (useAo || useVolumetric) toneOptional.push('aoVol');
     if (useGiSsr) toneOptional.push('giSsr');
-    if (useBloom) toneOptional.push('bloomTex');
+    if (bloomPasses.length) toneOptional.push('bloomColor');
     if (useAutoExposure) toneOptional.push('adaptedExposure');
     passes.push({
       id: 'tone-mapping',
@@ -1479,7 +1470,6 @@ export function createPostPipeline3D(options = {}) {
           capabilities.maxTextureSize));
   }
 
-  const framePoolTargets = new Set();
 
   function finishGiSsrBlur(world, camera, stepDt, useSsr, blurXTarget, giSsrOutTarget) {
     const depthMode = sceneProjectionUniforms.uSceneDepthMode.value;
@@ -1545,16 +1535,13 @@ export function createPostPipeline3D(options = {}) {
   function reportTargets(sink) {
     if (!sink) return;
     for (const target of [sceneRT, halfRT, aoBlurRT, halfScratchRT, giSsrRT,
-      giHistoryRT, ldrRT, ...framePoolTargets, ...(temporalAa?.targets ?? []), temporalAa?.motionTarget]) {
+      giHistoryRT, ldrRT, ...(temporalAa?.targets ?? []), temporalAa?.motionTarget]) {
       if (target) sink.recordTarget(target);
     }
     for (const target of lumaMips) sink.recordTarget(target, true);
     for (const target of adaptRT) sink.recordTarget(target, true);
     hdrTargets.record(sink);
-    for (const { down, up } of bloomMips) {
-      if (down) sink.recordTarget(down);
-      if (up) sink.recordTarget(up);
-    }
+    if (transientPool) for (const target of transientPool.getTargets()) sink.recordTarget(target);
   }
 
   function estimateTargetBytes() {
@@ -1672,7 +1659,8 @@ export function createPostPipeline3D(options = {}) {
     const aoActive = Boolean(useAo || wantsVolumetric);
     const useGiSsr = wantsGiSsr;
     const useAutoExposure = Boolean(state.autoExposure && lumaMips.length > 0 && adaptRT.length === 2);
-    const useBloom = Boolean(activePreset.bloom && state.bloomStrength !== 0 && bloomMips.length > 0);
+    const bloomPasses = state.bloomStrength !== 0 ? bloomStages : [];
+    const useBloom = bloomPasses.length > 0;
     const plannedFxaa = state.fxaa && (!useTemporal || hasViewModel);
     const plannedFinalFxaaPass = Boolean(plannedFxaa || state.sharpness > 0.001);
 
@@ -1694,10 +1682,8 @@ export function createPostPipeline3D(options = {}) {
     let separateViewModel = false;
     let prelightTemporal = false;
     let viewCompositeRT = null;
-    let bloomTexture = null;
 
     activeDiagnostics = diagnostics;
-    framePoolTargets.clear();
     transientPool?.beginFrame();
     hdrTargets.beginFrame();
     try {
@@ -1984,53 +1970,37 @@ export function createPostPipeline3D(options = {}) {
         });
       }
 
-      if (useBloom) {
-        const useBloomScratch = bloomMips.length > 1;
-        addStage('bloom', ({ outputs }) => {
-          mats.prefilter.uniforms.tSource.value = compU.tScene.value;
-          mats.prefilter.uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
-          mats.prefilter.uniforms.uThreshold.value = state.bloomThreshold;
-          mats.prefilter.uniforms.uSoftKnee.value = state.bloomSoftKnee;
-          runPass(FULLSCREEN_PASSES.bloomPrefilter, mats.prefilter, bloomMips[0].down);
-
-          for (let i = 1; i < bloomMips.length; i++) {
-            const prev = bloomMips[i - 1];
-            const curr = bloomMips[i];
-            mats.downsample.uniforms.tSource.value = prev.down.texture;
-            mats.downsample.uniforms.uTexelSize.value.set(1 / prev.w, 1 / prev.h);
-            runPass(FULLSCREEN_PASSES.bloomDown, mats.downsample, curr.down);
-          }
-
-          let accumTex = bloomMips[bloomMips.length - 1].down.texture;
-          let accumW = bloomMips[bloomMips.length - 1].w;
-          let accumH = bloomMips[bloomMips.length - 1].h;
-          for (let i = bloomMips.length - 2; i >= 0; i--) {
-            const curr = bloomMips[i];
-            const target = i === 0 ? outputs.bloomScratch : curr.up;
-            mats.upsample.uniforms.tLower.value = accumTex;
-            mats.upsample.uniforms.tUpper.value = curr.down.texture;
-            mats.upsample.uniforms.uTexelSize.value.set(1 / accumW, 1 / accumH);
+      for (const pass of bloomPasses) {
+        const [lower, upper] = pass.reads;
+        const [output] = pass.writes;
+        addStage(pass.id, ({ inputs, outputs }) => {
+          const target = outputs[output];
+          if (!lower) {
+            const uniforms = mats.prefilter.uniforms;
+            uniforms.tSource.value = compU.tScene.value;
+            uniforms.uTexelSize.value.set(1 / bufferWidth, 1 / bufferHeight);
+            uniforms.uThreshold.value = state.bloomThreshold;
+            uniforms.uSoftKnee.value = state.bloomSoftKnee;
+            runPass(FULLSCREEN_PASSES.bloomPrefilter, mats.prefilter, target);
+          } else if (!upper) {
+            const source = inputs[lower];
+            const uniforms = mats.downsample.uniforms;
+            uniforms.tSource.value = source.texture;
+            uniforms.uTexelSize.value.set(1 / source.width, 1 / source.height);
+            runPass(FULLSCREEN_PASSES.bloomDown, mats.downsample, target);
+          } else {
+            const source = inputs[lower];
+            const uniforms = mats.upsample.uniforms;
+            uniforms.tLower.value = source.texture;
+            uniforms.tUpper.value = inputs[upper].texture;
+            uniforms.uTexelSize.value.set(1 / source.width, 1 / source.height);
             runPass(FULLSCREEN_PASSES.bloomUp, mats.upsample, target);
-            accumTex = target.texture;
-            accumW = curr.w;
-            accumH = curr.h;
           }
-          bloomTexture = accumTex;
-        }, useBloomScratch ? {
-          writes: ['bloomScratch'],
-          transientSpecs: {
-            bloomScratch: {
-              width: hw,
-              height: hh,
-              type: bloomStorage.type,
-              ...(bloomStorage.format !== undefined ? { format: bloomStorage.format } : {}),
-            },
-          },
-        } : {});
+        }, pass);
       }
 
-      addStage('tone-mapping', ({ outputs }) => {
-        compU.tBloom.value = bloomTexture;
+      addStage('tone-mapping', ({ inputs, outputs }) => {
+        compU.tBloom.value = inputs.bloomColor?.texture ?? null;
         compU.tAutoExposure.value = useAutoExposure ? adaptRT[adaptIndex].texture : null;
         compU.uUseBloom.value = useBloom ? 1 : 0;
         compU.uUseAutoExposure.value = useAutoExposure ? 1 : 0;
@@ -2076,7 +2046,7 @@ export function createPostPipeline3D(options = {}) {
         reads: [
           ...(aoActive ? ['aoVol'] : []),
           ...(useGiSsr ? ['giSsr'] : []),
-          ...(useBloom && bloomMips.length > 1 ? ['bloomScratch'] : []),
+          ...(useBloom ? ['bloomColor'] : []),
         ],
         writes: plannedFinalFxaaPass ? ['ldrColor'] : ['backbuffer'],
         transientSpecs: plannedFinalFxaaPass
@@ -2103,9 +2073,7 @@ export function createPostPipeline3D(options = {}) {
         ? {
             acquire(spec, resource, slot, pass) {
               if (!spec) return { token: resource };
-              const rt = transientPool.acquire(spec, resource, slot, pass);
-              framePoolTargets.add(rt);
-              return rt;
+              return transientPool.acquire(spec, resource, slot, pass);
             },
             release(target, resource, slot) {
               if (!target || target.token) return;
@@ -2138,7 +2106,7 @@ export function createPostPipeline3D(options = {}) {
         hasViewModel,
         stages: activePasses,
         useAutoExposure,
-        useBloom,
+        bloomPasses,
         useFinalFxaaPass: plannedFinalFxaaPass,
         width: bufferWidth,
         height: bufferHeight,
@@ -2216,7 +2184,7 @@ export function createPostPipeline3D(options = {}) {
         useTemporalAA: Boolean(state.temporalAA),
         stages: customStages,
         useAutoExposure: Boolean(state.autoExposure),
-        useBloom: state.bloomStrength > 0.001,
+        bloomPasses: state.bloomStrength !== 0 ? bloomStages : [],
         useFinalFxaaPass: Boolean(supported && !contextLost && sceneRT && (state.fxaa || state.sharpness > 0.001)),
       });
     },
@@ -2255,7 +2223,7 @@ export function createPostPipeline3D(options = {}) {
         hasHalfRT: Boolean(halfRT || (transientPool && sceneRT?.depthTexture && (activePreset.ssao || (activePreset.volumetricSteps ?? 0) > 0))),
         hasGiSsrRT: Boolean(giSsrRT || (transientPool && sceneRT?.depthTexture && (ssgiEnabled() || ssrEnabled()))),
         hasAutoExposureRT: Boolean(lumaMips.length > 0 && adaptRT.length === 2),
-        bloomMipCount: bloomMips.length,
+        bloomMipCount: state.bloomStrength !== 0 ? bloomMipCount : 0,
         hasLdrRT: Boolean(ldrRT || (transientPool && supported && !contextLost && sceneRT && (state.fxaa || state.sharpness > 0.001))),
         hasTemporalAA: Boolean(temporalAa?.targets.length),
         poolStats: transientPool?.getStats() ?? null,

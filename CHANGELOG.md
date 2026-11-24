@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Manage the complete 3D Bloom chain in the render graph. Track resident pooled targets until their idle resources are released.
+
 - Reuse the 3D render graph while pass topology and target specifications are stable. Build the diagnostic plan on demand.
 
 - Add optional mobile touch evidence to packaged release acceptance. Verify browser-generated touch, including two-finger movement and attack in the default Pixi Toy package.

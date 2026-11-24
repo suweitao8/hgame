@@ -5,6 +5,8 @@
  * and reclaims scratch targets at their last-use pass.
  */
 
+import { estimateRenderTargetBytes } from '../quality3d/render-diagnostics.js';
+
 function specKey(spec) {
   if (!spec || typeof spec !== 'object') return 'default';
   const width = spec.width ?? 'full';
@@ -407,7 +409,7 @@ export function executeRenderGraph(graph, pool, { externalTargets = {}, state = 
  */
 export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames = 4 } = {}) {
   const freeBuckets = new Map();
-  const targetMeta = new WeakMap();
+  const targetMeta = new Map();
   let allocations = 0;
   let reuses = 0;
   let activeCount = 0;
@@ -436,7 +438,8 @@ export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames =
       rt = { width: w, height: h, depthBuffer: depth, samples, isRenderTarget: true, dispose() {} };
     }
     allocations++;
-    targetMeta.set(rt, { key, bytes: w * h * 8 * (1 + samples) });
+    const bytes = rt.texture ? estimateRenderTargetBytes(THREE, rt) : w * h * 8 * (1 + samples);
+    targetMeta.set(rt, { key, bytes, inUse: false });
     return rt;
   }
 
@@ -451,6 +454,7 @@ export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames =
     } else {
       rt = allocateTarget(spec, key);
     }
+    targetMeta.get(rt).inUse = true;
     activeCount++;
     if (activeCount > peakTargets) peakTargets = activeCount;
     return rt;
@@ -459,8 +463,9 @@ export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames =
   function release(target) {
     if (!target || typeof target !== 'object') return;
     const meta = targetMeta.get(target);
-    if (!meta) return;
-    activeCount = Math.max(0, activeCount - 1);
+    if (!meta?.inUse) return;
+    meta.inUse = false;
+    activeCount--;
     let bucket = freeBuckets.get(meta.key);
     if (!bucket) {
       bucket = [];
@@ -474,8 +479,9 @@ export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames =
       for (let i = bucket.length - 1; i >= 0; i--) {
         bucket[i].idleFrames++;
         if (bucket[i].idleFrames > maxIdleFrames) {
-          bucket[i].target.dispose?.();
-          bucket.splice(i, 1);
+          const [{ target }] = bucket.splice(i, 1);
+          targetMeta.delete(target);
+          target.dispose?.();
         }
       }
       if (bucket.length === 0) freeBuckets.delete(key);
@@ -496,12 +502,17 @@ export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames =
     });
   }
 
+  /** @returns {Iterable<object>} Active and idle targets owned by the pool. */
+  function getTargets() {
+    return targetMeta.keys();
+  }
+
   function dispose() {
-    for (const bucket of freeBuckets.values()) {
-      for (const entry of bucket) entry.target.dispose?.();
-    }
+    const residentTargets = [...targetMeta.keys()];
+    targetMeta.clear();
     freeBuckets.clear();
     activeCount = 0;
+    for (const target of residentTargets) target.dispose?.();
   }
 
   return Object.freeze({
@@ -509,6 +520,7 @@ export function createPhysicalRenderTargetPool3D(THREE = null, { maxIdleFrames =
     release,
     beginFrame,
     getStats,
+    getTargets,
     dispose,
   });
 }

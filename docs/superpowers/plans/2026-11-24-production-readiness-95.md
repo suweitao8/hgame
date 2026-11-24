@@ -17,6 +17,21 @@ The scorecard update in `9652b29` moved runtime from 84.6 to 85.8 by recording t
 - Extend WebKit evidence for the mobile controls. Keep physical Android, iOS, Xbox and Toy host evidence explicitly tracked.
 - Reassess scorecard items only when the corresponding default-path changes and reproducible evidence meet the current criteria.
 
+## Bloom target lifetimes
+
+- [x] Describe each downsample and upsample as an actual graph pass. Use the pool for the entire chain, including single-level Bloom and the final color sampled by tone mapping.
+- [x] Count all resident pooled targets, including idle targets awaiting eviction. Verify that disabling Bloom releases targets at the existing idle limit, and that re-enabling, resizing, context recovery and teardown work.
+- [x] Verify target sizes, formats and source/destination separation. Compare rendered pixels and the GPU resource ledger in a real browser.
+- [x] Run packaged release checks.
+
+The A2 rating moves from 9.0 to 9.5 for full Bloom target lifetime management on the default 3D path. The scene color and depth target remains persistent. Runtime is 86.1 and the weighted overall score is **90.64** with production kit at 92 and verification and delivery at 96.
+
+Run `node tests/browser-bloom-pool.mjs --gpu hardware --chrome <path>` for the GPU comparison. At 1920 × 1080 on RTX 4070, the prior pipeline retained 9 Three.js GPU textures and 28,284,960 estimated scalable target bytes after five disabled frames. The new pipeline retained 3 textures and 24,883,200 bytes. Both pipelines reported 10 textures and 30,358,560 bytes with Bloom enabled. The first disabled frame of the new path still reports all idle textures. Turning Bloom back on restores the exact original pixel buffer. On/off pixel fingerprints match the baseline. The same lifecycle passes under SwiftShader.
+
+The Bloom-enabled high-tier package fixture executes the seven Bloom passes in its unminified, Web and Toy archives. All three produced the same screenshot hash. The staged runtime, package tests, generated API index and declarations passed `npm run check` with 591 tests.
+
+The five standard release fixtures also pass. The low-tier 3D Web release ran for about 70.7 seconds on each viewport at 7.0 ms p95 on RTX 4070. Its estimated peak was 13,855,680 bytes. The low-tier fixture verifies the existing published frame and memory budgets. The high-tier archive fixture verifies the changed Bloom path.
+
 ## Current evidence
 
 - In a Node probe with mock drawing, each version executed 3,000 warmup frames and nine samples of 3,000 identical frames. The baseline compiled all 27,000 measured frames. The cached implementation reused the graph in all 27,000. Median batch-average CPU time was 103.27 µs per frame before and 17.23 µs after. Each version executed all 30,000 frame callbacks. These timings measure JavaScript pipeline overhead with GPU work excluded.

@@ -86,6 +86,7 @@ jobs:
       - run: npm run test:browser:lifecycle -- --mobile
       - run: npm run test:browser:recipes
       - run: node tests/browser-release-acceptance.mjs
+      - run: node tests/browser-bloom-pool.mjs
       - name: Compare against accepted visual reference
         run: npm run check:visual
       - uses: actions/upload-artifact@v4

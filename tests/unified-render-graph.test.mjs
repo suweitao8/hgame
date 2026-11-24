@@ -96,6 +96,64 @@ test('3D pipeline reuses the compiled frame graph with current callbacks, then r
   pipeline.dispose();
 });
 
+test('Bloom mips are graph-owned and their idle targets are reported until eviction', () => {
+  const renderer = createMockWebGL2Renderer();
+  const pipeline = createPostPipeline3D({
+    THREE, renderer, width: 640, height: 360, bloomStrength: 0.4,
+    preset: { bloom: true, ssao: false, fxaa: false, sharpen: 0, msaaSamples: 0, volumetricSteps: 0 },
+  });
+  const world = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera();
+  const worldTarget = pipeline.getMainTarget().target;
+  assert.equal(pipeline.getRenderTargets().length, 1, 'before first draw only the scene target is allocated');
+  const sceneBytes = pipeline.estimateTargetBytes().scalableBytes;
+  const render = () => pipeline.render(world, camera);
+  render();
+  assert.equal(pipeline.targets.bloomMipCount, 4);
+  assert.deepEqual(pipeline.getLastExecutedGraph().filter(id => id.startsWith('bloom-')), [
+    'bloom-prefilter', 'bloom-downsample-1', 'bloom-downsample-2', 'bloom-downsample-3',
+    'bloom-upsample-2', 'bloom-upsample-1', 'bloom-upsample-0',
+  ]);
+  const firstBloomTargets = pipeline.getRenderTargets().filter(target => target !== worldTarget);
+  assert.deepEqual(firstBloomTargets.map(target => [target.width, target.height]), [
+    [320, 180], [160, 90], [80, 45], [40, 22], [80, 45], [160, 90], [320, 180],
+  ]);
+  assert.ok(firstBloomTargets.every(target => !target.depthBuffer &&
+    target.texture.type === THREE.UnsignedInt101111Type && target.texture.format === THREE.RGBFormat));
+  const plan = pipeline.getRenderGraphPlan();
+  assert.equal(plan.lifetimes.bloomColor.lastRead, plan.order.indexOf('tone-mapping'));
+  const activeBytes = pipeline.estimateTargetBytes().scalableBytes;
+  pipeline.setState({ bloomStrength: 0 });
+  render();
+  assert.equal(pipeline.targets.bloomMipCount, 0);
+  assert.ok(!pipeline.getLastExecutedGraph().some(id => id.startsWith('bloom-')));
+  assert.equal(pipeline.estimateTargetBytes().scalableBytes, activeBytes, 'idle allocations are still resident');
+
+  pipeline.setState({ bloomStrength: 0.4 });
+  render();
+  assert.deepEqual(pipeline.getRenderTargets().filter(target => target !== worldTarget), firstBloomTargets);
+  assert.equal(pipeline.targets.poolStats.estimatedSavedBytes, activeBytes - sceneBytes);
+  const disposed = new Set();
+  for (const target of firstBloomTargets) target.addEventListener('dispose', () => disposed.add(target));
+  pipeline.setState({ bloomStrength: 0 });
+  for (let frame = 0; frame < 5; frame++) render();
+  assert.equal(disposed.size, firstBloomTargets.length);
+  assert.deepEqual(pipeline.getRenderTargets(), [worldTarget]);
+
+  pipeline.setState({ bloomStrength: 0.4 });
+  pipeline.resize(2, 2);
+  render();
+  assert.equal(pipeline.targets.bloomMipCount, 1);
+  assert.deepEqual(pipeline.getLastExecutedGraph().filter(id => id.startsWith('bloom-')), ['bloom-prefilter']);
+  pipeline.handleContextLost();
+  assert.equal(pipeline.getRenderTargets().length, 0);
+  pipeline.handleContextRestored();
+  render();
+  assert.deepEqual(pipeline.getLastExecutedGraph().filter(id => id.startsWith('bloom-')), ['bloom-prefilter']);
+  pipeline.dispose();
+  assert.equal(pipeline.getRenderTargets().length, 0);
+});
+
 test('A2 unified RenderGraph defaults renderGraph=true and executes shadow-csm -> world -> tone-mapping in one compiled DAG', () => {
   const renderer = createMockWebGL2Renderer();
   const ns = { ...THREE, WebGLRenderer: class { constructor() { return renderer; } } };

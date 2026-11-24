@@ -216,6 +216,26 @@ test('T6-A2: createPhysicalRenderTargetPool3D aliases transient render targets a
   pool.dispose();
 });
 
+test('render target pool tracks leased and idle targets and ignores duplicate or stale releases', () => {
+  const pool = createPhysicalRenderTargetPool3D(createMockThree(), { maxIdleFrames: 0 });
+  const first = pool.acquire({ width: 32, height: 16 });
+  const second = pool.acquire({ width: 32, height: 16 });
+  pool.release(first);
+  pool.release(first);
+  assert.deepEqual([...pool.getTargets()], [first, second]);
+  assert.equal(pool.getStats().freeCount, 1);
+  assert.equal(pool.getStats().activeCount, 1);
+  pool.beginFrame();
+  assert.deepEqual([...pool.getTargets()], [second]);
+  pool.release(first);
+  assert.equal(pool.getStats().freeCount, 0);
+  pool.dispose();
+  pool.release(second);
+  assert.deepEqual([...pool.getTargets()], []);
+  assert.equal(pool.getStats().freeCount, 0);
+  assert.equal(pool.getStats().activeCount, 0);
+});
+
 test('T6-R5: quantizeBufferGeometry3D compacts normals, UVs, and Uint32 indices', () => {
   const THREE = createMockThree();
   const vCount = 400;

@@ -68,6 +68,7 @@ async function render(name, { dir, entry }, baseline = '') {
       entry: location.pathname,
       resources: performance.getEntriesByType('resource').map(entry => new URL(entry.name).pathname)
         .filter(file => /\/(three\.(module|core)\.js|rapier3d\.wasm)$/.test(file)),
+      bloomStages: window.__packageBloomStages(),
     })`,
     ...(entry ? ['--entry', entry] : []),
     ...(baseline ? ['--baseline', baseline, '--threshold', '0'] : []),
@@ -80,6 +81,10 @@ async function render(name, { dir, entry }, baseline = '') {
   assert.equal(report.eval.entry, '/' + entry);
   assert.deepEqual(report.eval.resources.map(file => path.posix.basename(file)).sort(),
     ['rapier3d.wasm', 'three.core.js', 'three.module.js'], name + ' runtime requests');
+  assert.deepEqual(report.eval.bloomStages, [
+    'bloom-prefilter', 'bloom-downsample-1', 'bloom-downsample-2', 'bloom-downsample-3',
+    'bloom-upsample-2', 'bloom-upsample-1', 'bloom-upsample-0',
+  ], name + ' package executes the full Bloom graph');
   if (baseline) assert.equal(report.baseline.diffRatio, 0);
   console.log(JSON.stringify({ name, hash: report.sha256, diffRatio: report.baseline?.diffRatio ?? null }));
   return png;
@@ -87,9 +92,17 @@ async function render(name, { dir, entry }, baseline = '') {
 
 try {
   const generated = run('create-game.mjs', [
-    project, '--profile', '3d', '--quality', 'medium', '--with', 'physics3d', '--no-git',
+    project, '--profile', '3d', '--quality', 'high', '--with', 'physics3d', '--no-git',
   ]);
   assert.equal(generated.status, 0, generated.stderr || generated.stdout);
+  const presentationPath = path.join(project, 'src', 'presentation.json');
+  const presentation = JSON.parse(await readFile(presentationPath, 'utf8'));
+  presentation.renderer.post3d = true;
+  await writeFile(presentationPath, JSON.stringify(presentation));
+  const main = path.join(project, 'src', 'main.js');
+  await writeFile(main, (await readFile(main, 'utf8')) + `
+window.__packageBloomStages = () => renderer.getExecutedRenderGraph().executed.filter(id => id.startsWith('bloom-'));
+`);
   const source = await build('source', ['--no-minify']);
   const baseline = await render('source', source);
   for (const [name, flags] of [

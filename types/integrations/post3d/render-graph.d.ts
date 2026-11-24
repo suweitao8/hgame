@@ -86,5 +86,6 @@ export function createPhysicalRenderTargetPool3D(THREE?: any, { maxIdleFrames }?
         freeCount: number;
         peakTargets: number;
     }>;
+    getTargets: () => Iterable<object>;
     dispose: () => void;
 }>;

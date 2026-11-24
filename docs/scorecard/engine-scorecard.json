@@ -122,7 +122,7 @@
       "name": "渲染图与扩展管线",
       "weight": 6,
       "scores": {
-        "hgame": 9,
+        "hgame": 9.5,
         "unity": 9,
         "cocos": 8,
         "godot": 5
@@ -157,8 +157,9 @@
             "proof": "assets/runtime/integrations/post3d/pipeline.js, assets/runtime/integrations/three.js"
           }
         ],
-        "note": "createThreeAdapter 默认启用 renderGraph=true，与 postPipeline.render 共享单次 compileRenderGraph/executeRenderGraph 管线；并将 ao-volumetrics/ao-blur-x/y、gi-ssr/gi-ssr-blur-x/y、bloomScratch 与 ldrColor 全面接入 createPhysicalRenderTargetPool3D 按寿命自动物理别名复用。",
+        "note": "createThreeAdapter 默认启用 renderGraph=true。管线复用稳定拓扑，将 AO/GI/SSR、完整 Bloom 金字塔和 LDR 中间目标纳入物理资源池。RTX 4070 的 1080p 对照测试确认关闭 Bloom 并等待回收后，原先驻留的六张纹理得到释放，开启和关闭两种状态的像素指纹均与旧管线一致。",
         "benchmarkFiles": [
+          "tests/browser-bloom-pool.mjs",
           "tests/browser-mobile-portrait-benchmark.mjs",
           "tests/browser-engine-v3-commercial-benchmark.mjs"
         ]
@@ -168,7 +169,7 @@
         "cocos": "Cocos Creator 3.8 提供 Custom Render Pipeline（CRP）自定义渲染管线编排能力。",
         "godot": "Godot 4.3+ Web 强制退回 Compatibility/GLES3 后端，桌面端 Forward+ Compositor 与渲染图扩展不可用。"
       },
-      "gap": "sceneRT 与多级 bloomMip 仍为持久分配，尚未完全交由别名池统一管理"
+      "gap": "主场景色彩与深度目标 sceneRT 仍常驻，尚未交由别名池管理。"
     },
     {
       "id": "A3",
