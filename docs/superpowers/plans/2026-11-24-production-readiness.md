@@ -10,6 +10,7 @@
 6. Use the existing i18n service for the generated action game's stock shell and touch labels. Select Chinese or English from `?lang=` or the browser language. Keep authored titles and unrecognized choice labels. Extend the generated-game browser test to verify the default English browser and the Chinese override.
 7. In the default Pixi arena, replace its private touch input with the shared action controls and retain mouse aim and legacy shortcuts. Show only implemented actions, use a single resume button during pauses, and verify English and Chinese in a generated arena with keyboard, simulated Xbox and two-touch input. Keep the bare Pixi entry empty.
 8. Give the three action archetypes one generated module for bindings, touch, locale, and menu behavior. Preserve authored actions and combat rules. Exercise published horde and 3D arena builds through damage, results, and replay using normal input and authored fixture balance.
+9. Record the actual rendering environment of packaged playtests. Keep software coverage and let release manifests explicitly require hardware rendering. Verify the same 3D lifecycle with an actual desktop GPU, preserving the release budgets.
 
 ## 2026-11-24 复评
 
@@ -42,8 +43,14 @@
 - 修复割草的固定步调用与场地查询网格。割草 Toy 包与 3D Web 包都验证了正常接触伤害、结算、静音和模拟 Xbox A 重开。割草通过发布门禁。
 - 3D 的软件渲染帧预算仍失败。最终发布验收的桌面和移动视口 p95 分别为 216.6 ms 和 200.0 ms，高于 100 ms。临时关闭天空、抗锯齿并将分辨率减半，独立探针仍报约 200 ms。保留原发布门槛和实际失败状态。
 
+### 发布报告的 GPU 实测
+
+综合 **89.3 / 100**。验证与交付从 91 升至 93，制作工具链 92，引擎运行时 84.6。硬件发布配置记录游戏实际创建的渲染上下文，回退或未知 GPU 无法通过硬件门禁。
+
+- 3D Web 独立包在 RTX 4070 上通过正式发布验收，包体 2,255,247 字节。桌面 p95 7.0 ms（710 帧），360 × 800 视口 p95 7.1 ms（699 帧）。Web 和 Toy 的 2D 样例仍通过 SwiftShader 验收。
+- 同一桌面 GPU 的 2,000 实例、64 光源和后处理压测采集 12,000 帧，p95 5.0 ms，p99 7.2 ms，最慢 25 ms。采样约 33 秒，尚无显存峰值证据。
+
 ### 距离 90 分的主要缺口
 
 1. 交付需要补上 Android Chrome、iOS Safari、实体 Xbox 和目标 Toy 宿主的实测。重点是局域网打开、移动同时出招、返回前台、设备断连与恢复，以及代表性低端手机的帧时间。
-2. 3D 发布验收需要区分软件渲染回归与目标 GPU 预算，并在独立发布产物上记录真实渲染器和长时帧时间。
-3. 运行时仍需验证长时帧尾与显存峰值，处理 3D 主管线与 WebGPU 接线、持续分配的渲染目标、主线程骨骼动画等评分卡缺项。
+2. 在独立发布产物上补齐持续负载的帧尾和显存峰值证据。运行时评分卡仍有 3D 主管线与 WebGPU 接线、持续分配的渲染目标、主线程骨骼动画等缺项。

@@ -23,7 +23,7 @@ Every generated game project (`npm run accept` / `npm run accept:webasset`) and 
 
 ### Release evidence
 
-Use `npm run accept:release` in a newly generated project, or `node scripts/accept.mjs <dir> --release` from HGame. A playable report records `playable: true`. A passing release report additionally records `releaseReady: true`, ZIP byte size and SHA-256, and the packaged build's boot time, frame-time p95, sample counts, and browser version across desktop and mobile viewports. Boot timing stops once the readiness selector is visible and `window.__hgameState` is callable. The browser measurements use local headless profiles. Target hardware testing is separate evidence.
+Use `npm run accept:release` in a newly generated project, or `node scripts/accept.mjs <dir> --release` from HGame. A playable report records `playable: true`. A passing release report additionally records `releaseReady: true`, ZIP byte size and SHA-256, and the packaged build's boot time, frame-time p95, sample counts, browser version, and reported renderer. Boot timing stops once the readiness selector is visible and `window.__hgameState` is callable. Both viewports run on the local headless browser. Physical mobile testing requires separate evidence.
 
 Commit a project-specific `tests/acceptance.mjs` that covers the main interaction loop. Set budgets in `tests/release.json` before measuring production candidates. Example values for a small game:
 
@@ -40,9 +40,11 @@ Commit a project-specific `tests/acceptance.mjs` that covers the main interactio
 }
 ```
 
-Use `"target": "toy"` to build and preflight a Toy package. A gate that does not apply may use a specific reason string in `autoplay` or `doctor`. Applicable checks must still pass. Release runs require WebAsset, strict gameplay validation, and a passing playtest against the packaged entry on both viewports. Each packaged run needs at least 30 measured frames and one passing authored checkpoint inside the measured scenario. A checkpoint should drive input and assert the resulting state.
+Use `"target": "toy"` to build and preflight a Toy package. Set `"gpu": "hardware"` for a release whose budgets target hardware-accelerated rendering. The packaged scenario must then report an actual hardware GPU in both viewports. The default `"gpu": "software"` keeps the software-browser regression path. A gate that does not apply may use a specific reason string in `autoplay` or `doctor`. Applicable checks must still pass. Release runs require WebAsset, strict gameplay validation, and a passing playtest against the packaged entry on both viewports. Each packaged run needs at least 30 measured frames and one passing authored checkpoint inside the measured scenario. A checkpoint should drive input and assert the resulting state.
 
 Run `node scripts/accept.mjs <dir> --release --verify-fresh` before distributing `build/acceptance/release.zip`. It fails when the verified ZIP or its source, runtime or game assets changed. Set `WEBASSET_PORT` and `WEBASSET_GAME_PORT` only when using alternate loopback listeners for testing.
+
+For the repository's packaged 3D release fixture, set `HGAME_RELEASE_HARDWARE_CHROME` to the browser executable and run `node tests/browser-release-acceptance.mjs` on the GPU host. Generated game releases can select that browser with `--chrome <path>`.
 
 ## Task acceptance
 

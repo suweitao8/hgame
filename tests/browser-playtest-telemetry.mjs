@@ -6,6 +6,27 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+test('renderer telemetry leaves the canvas free for a renderer that starts after input', t => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-renderer-'));
+  t.after(() => rmSync(game, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }));
+  writeFileSync(path.join(game, 'index.html'), `<!doctype html><canvas id="game" width="64" height="64"></canvas><script>
+addEventListener('keydown', () => {
+  const ctx = document.querySelector('canvas').getContext('2d');
+  ctx.fillStyle = '#f80';
+  ctx.fillRect(0, 0, 32, 32);
+});
+</script>`);
+  const result = spawnSync(process.execPath, [path.join(root, 'scripts/playtest.mjs'), game,
+    '--selector', 'css=#game', '--actions', 'd:400', '--no-pointer'],
+  { encoding: 'utf8', timeout: 25000, windowsHide: true });
+  assert.ifError(result.error);
+  const report = JSON.parse(result.stdout);
+  assert.equal(result.status, 0, JSON.stringify(report));
+  assert.equal(report.rendererEnvironment.renderer, 'Canvas2D');
+  assert.equal(report.rendererEnvironment.actualGpu, 'none');
+});
+
 test('playtest collects requested gameplay events and fails when the trace hook is missing', t => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const game = mkdtempSync(path.join(os.tmpdir(), 'hgame-playtest-trace-'));

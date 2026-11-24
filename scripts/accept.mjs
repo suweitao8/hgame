@@ -143,6 +143,9 @@ async function loadReleaseRequirements(gameDir) {
   if (!existsSync(filename)) throw new Error('Release requires tests/release.json with explicit budgets');
   const spec = JSON.parse(await readFile(filename, 'utf8'));
   if (!['web', 'toy'].includes(spec?.target)) throw new Error('Release target must be web or toy');
+  if (spec.gpu !== undefined && !['software', 'hardware'].includes(spec.gpu)) {
+    throw new Error('Release gpu must be software or hardware');
+  }
   for (const gate of ['autoplay', 'doctor']) {
     const requirement = spec[gate];
     if (requirement !== true && (typeof requirement !== 'string' || !requirement.trim())) {
@@ -188,6 +191,9 @@ function evaluateRelease(gates, spec) {
   ]) {
     if (!checkpoints?.some(checkpoint => checkpoint.ok === true)) errors.push(name + ' needs a passing authored checkpoint within the measured run');
     if (!Number.isFinite(profile?.frames) || profile.frames < 30) errors.push(name + ' needs at least 30 measured frames');
+    if (spec.gpu === 'hardware' && profile?.rendererEnvironment?.actualGpu !== 'hardware') {
+      errors.push(name + ' requires an actual hardware renderer');
+    }
     for (const metric of ['readyMs', 'p95Ms']) {
       const value = profile?.[metric];
       const max = spec.limits[name][metric];
@@ -198,7 +204,7 @@ function evaluateRelease(gates, spec) {
     errors.push('Package exceeded byte budget or is missing (limit ' + spec.limits.zipBytes + ')');
   }
   return {
-    status: errors.length ? 'failed' : 'passed', target: spec.target, skipped,
+    status: errors.length ? 'failed' : 'passed', target: spec.target, gpu: spec.gpu ?? 'software', skipped,
     limits: spec.limits, measured, environment: 'headless browser; viewport profiles, not physical devices', errors,
   };
 }
@@ -656,7 +662,7 @@ async function runVisualGate(gameDir, opts, meta, snapshotScript, gameConfig) {
   };
 }
 
-function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = gameDir, entry = null } = {}) {
+function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = gameDir, entry = null, gpu = null } = {}) {
   const scenarioCandidates = [
     path.join(gameDir, 'tests', 'acceptance.mjs'),
     path.join(gameDir, 'playtest.mjs'),
@@ -668,6 +674,7 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
   const buildArgs = viewport => [
     targetDir,
     ...(entry ? ['--entry', entry] : []),
+    ...(gpu ? ['--gpu', gpu] : []),
     ...(opts.release ? ['--state-ready'] : []),
     '--selector', meta.selector,
     '--ready', meta.ready,
@@ -723,6 +730,7 @@ function runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir = game
       .map(([name, run]) => [name, {
         readyMs: run.readyMs ?? null, p95Ms: run.frameStats?.p95Ms ?? null,
         frames: run.frameStats?.frames ?? null, browserVersion: run.browserVersion ?? null,
+        rendererEnvironment: run.rendererEnvironment ?? null,
       }])),
     consoleErrors: report.consoleErrors ?? [],
     httpErrors: report.httpErrors ?? [],
@@ -885,7 +893,7 @@ async function runPackageGate(gameDir, opts, meta, packageScript, snapshotScript
       zipBytes = statSync(summary.zipPath).size;
       const entry = opts.releaseSpec?.target === 'toy' ? 'index.html' : sourceEntry;
       if (opts.releaseSpec) {
-        playtest = runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir: summary.outputDir, entry });
+        playtest = runPlaytestGate(gameDir, opts, meta, playtestScript, { targetDir: summary.outputDir, entry, gpu: opts.releaseSpec.gpu });
         if (playtest.status !== 'passed') {
           errors.push(...playtest.errors.map(problem => 'Packaged playtest: ' + problem));
         } else {

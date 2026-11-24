@@ -27,6 +27,7 @@ export const ENGINE_MANAGED_SCRIPTS = Object.freeze([
 ]);
 
 export const ENGINE_MANAGED_SCRIPT_LIBS = Object.freeze([
+  'browser-benchmark.mjs',
   'cli-numbers.mjs',
   'performance-stats.mjs',
   'playwright-resolve.mjs',

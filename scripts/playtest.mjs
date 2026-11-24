@@ -18,6 +18,7 @@ import { createFrameTelemetry, summarizeFrameTelemetry } from './lib/performance
 import { numberOption } from './lib/cli-numbers.mjs';
 import { viewportOption } from './lib/cli-numbers.mjs';
 import { launchChromium, resolvePlaywright } from './lib/playwright-resolve.mjs';
+import { benchmarkBrowserOptions, observeCanvasContexts, readBrowserEnvironment } from './lib/browser-benchmark.mjs';
 import { collectPageUiAudit, evaluateLayoutAudit, evaluateUiAudit } from './lib/snapshot-ui-audit.mjs';
 
 const previewScript = fileURLToPath(new URL('./preview.mjs', import.meta.url));
@@ -136,7 +137,7 @@ const analyzeCanvasStats = async ({ shot }) => {
 
 async function runCli() {
   const argv = process.argv.slice(2);
-  const valueFlags = new Set(['--duration', '--actions', '--selector', '--viewport', '--state-hook', '--trace-hook', '--ready', '--chrome', '--query', '--max-long-frames', '--scenario', '--entry']);
+  const valueFlags = new Set(['--duration', '--actions', '--selector', '--viewport', '--state-hook', '--trace-hook', '--ready', '--chrome', '--gpu', '--query', '--max-long-frames', '--scenario', '--entry']);
   const opt = (name, def) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : def; };
   const flag = name => argv.includes(name);
   const gameDir = argv.find((a, i) => !a.startsWith('--') && !(i > 0 && valueFlags.has(argv[i - 1])));
@@ -167,11 +168,14 @@ async function runCli() {
     if (cfg?.profile) profile = cfg.profile;
   } catch { /* Optional config check. */ }
 
-  let durationMs, viewport, maxLongFrames;
+  let durationMs, viewport, maxLongFrames, launchOptions;
+  const gpu = opt('--gpu', 'software');
   try {
     durationMs = Math.max(400, numberOption(opt('--duration', 1800), '--duration'));
     viewport = viewportOption(opt('--viewport', '960x540'));
     maxLongFrames = numberOption(opt('--max-long-frames', 9999), '--max-long-frames', { integer: true });
+    launchOptions = benchmarkBrowserOptions(gpu, opt('--chrome', ''));
+    launchOptions.args = launchOptions.args.filter(arg => arg !== '--disable-frame-rate-limit');
   } catch (error) {
     console.error(error.message);
     process.exit(2);
@@ -207,7 +211,6 @@ async function runCli() {
     process.exit(2);
   }
 
-  const chromePath = opt('--chrome', '');
   let playwrightMod;
   try {
     playwrightMod = resolvePlaywright(import.meta.url, { cwd: resolvedDir ?? process.cwd() });
@@ -253,11 +256,9 @@ async function runCli() {
     if (query) url.search = query;
     report.url = url.href;
 
-    browser = await launchChromium(chromium, {
-      executablePath: chromePath,
-      args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-webgl'],
-    });
+    browser = await launchChromium(chromium, launchOptions);
     const page = await browser.newPage({ viewport: { width: vw, height: vh }, deviceScaleFactor: 1 });
+    await page.addInitScript(observeCanvasContexts);
     page.on('pageerror', e => consoleErrors.push(e.message));
     page.on('console', m => {
       if (m.type() === 'error' && !m.text().startsWith('Failed to load resource')) consoleErrors.push(m.text());
@@ -448,6 +449,7 @@ async function runCli() {
     });
 
     const frameStats = summarizeFrameTelemetry(recording);
+    const rendererEnvironment = await readBrowserEnvironment(page, browser, gpu, selector, { observeOnly: true });
     const visualChanged = beforeHash !== afterHash;
     const stateChanged = stateBefore !== null && JSON.stringify(stateBefore) !== JSON.stringify(stateAfter);
 
@@ -469,7 +471,7 @@ async function runCli() {
     }
 
     Object.assign(report, {
-      browserVersion: browser.version(), readyMs,
+      browserVersion: browser.version(), readyMs, rendererEnvironment,
       beforeHash,
       afterHash,
       visualChanged,

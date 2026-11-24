@@ -11,6 +11,7 @@ import { createGamePreviewServer, createWebAssetServer } from '../webasset/serve
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL('../', import.meta.url));
 const tmp = await mkdtemp(path.join(os.tmpdir(), 'hgame-release-evidence-'));
+const hardwareChrome = process.env.HGAME_RELEASE_HARDWARE_CHROME;
 const game = path.join(tmp, 'release-probe');
 const gamesRoot = path.join(tmp, 'uploads');
 const common = { gamesRoot, htmlGamesRoot: tmp };
@@ -157,6 +158,7 @@ export async function run({ page, readState, checkpoint, auditUi }) {
   for (const profile of ['horde-2d', 'arena-3d']) {
     const project = path.join(tmp, 'release-' + profile);
     const target = profile === 'arena-3d' ? 'web' : 'toy';
+    const verifyHardware = profile === 'arena-3d' && Boolean(hardwareChrome);
     const quality = profile === 'arena-3d' ? ['--quality', 'low'] : [];
     await exec(process.execPath, ['scripts/create-game.mjs', project, '--archetype', profile, ...quality, '--no-git'], { cwd: root });
     const designPath = path.join(project, 'src', 'game.design.json');
@@ -166,6 +168,7 @@ export async function run({ page, readState, checkpoint, auditUi }) {
     await writeFile(designPath, JSON.stringify(design));
     await writeFile(path.join(project, 'tests', 'release.json'), JSON.stringify({
       ...spec, target,
+      ...(verifyHardware ? { gpu: 'hardware' } : {}),
       autoplay: 'The authored defeat fixture verifies result and replay rather than a clear.',
       limits: { ...spec.limits, zipBytes: 3_000_000 },
     }));
@@ -228,10 +231,17 @@ export async function run({ page, readState, checkpoint, auditUi }) {
 `);
     // Software-only hosts must still exercise the packaged lifecycle. A missed
     // frame budget stays a failed release, even when all gameplay checks pass.
-    const complete = await accept([], profile === 'arena-3d' ? [0, 1] : 0, project);
+    const complete = await accept(verifyHardware ? ['--chrome', hardwareChrome] : [],
+      profile === 'arena-3d' && !verifyHardware ? [0, 1] : 0, project);
     assert.equal(complete.playable, true, complete.problems.join('; '));
     assert.equal(complete.gates.package.status, 'passed');
     assert.equal(complete.gates.package.playtest.status, 'passed');
+    for (const viewport of ['desktop', 'mobile']) {
+      const observed = complete.gates.release.measured[viewport].rendererEnvironment;
+      assert.equal(observed.requestedGpu, verifyHardware ? 'hardware' : 'software');
+      assert.equal(observed.actualGpu, verifyHardware ? 'hardware' : 'software');
+      assert.ok(observed.renderer);
+    }
     if (complete.releaseReady) {
       assert.equal((await accept(['--verify-fresh'], 0, project)).releaseReady, true);
     } else {
