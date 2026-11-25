@@ -30,6 +30,7 @@ export const ENGINE_MANAGED_SCRIPT_LIBS = Object.freeze([
   'browser-benchmark.mjs',
   'cli-numbers.mjs',
   'minigame-host.mjs',
+  'minigame-sdk.mjs',
   'package-minigame.mjs',
   'performance-stats.mjs',
   'playwright-resolve.mjs',

@@ -70,7 +70,7 @@ npm run package:game -- "D:\Games\my-game" --version 1.0
 npm run release
 ```
 
-Native targets for WeChat and Douyin use [the mini-game packaging guide](docs/guides/MINIGAME-PACKAGING.md).
+For WeChat, Douyin, and TapTap exports and their shared SDK interface, see [Mini-game packaging](docs/guides/MINIGAME-PACKAGING.md).
 
 The full SDK ZIP includes both npm lockfiles, the optional network workspace, and the source for the bundled examples, benchmarks, and verification commands. SDK exports from a Git checkout use tracked or staged paths and the current local contents of those files. Repacking an extracted SDK uses its included file manifest.
 

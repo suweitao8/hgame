@@ -1,3 +1,5 @@
+import { createMinigameSdk } from './minigame-sdk.mjs';
+
 // The HGame scene scheduler uses these even in hosts with no browser globals.
 const RuntimeDOMException = globalThis.DOMException ?? class extends Error {
   constructor(message = '', name = 'Error') {
@@ -193,7 +195,7 @@ export function createMinigameHost(api, target, game, listedFiles) {
 
   resize();
   subscribe(api, 'WindowResize', resize);
-  if (target === 'douyin' && (api.canIUse?.('onDeviceOrientationChange') ?? true)) {
+  if ((target === 'douyin' || target === 'taptap') && (api.canIUse?.('onDeviceOrientationChange') ?? true)) {
     subscribe(api, 'DeviceOrientationChange', () => resize());
   }
   subscribe(api, 'Hide', () => setVisible(false));
@@ -217,5 +219,6 @@ export function createMinigameHost(api, target, game, listedFiles) {
     },
     assets: assetService(api, listedFiles),
     storage: storageService(api),
+    sdk: createMinigameSdk(api, target),
   });
 }

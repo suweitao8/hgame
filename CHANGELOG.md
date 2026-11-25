@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add the native TapTap mini-game target and a shared WeChat, Douyin, and TapTap SDK for login, session and launch data, sharing, and rewarded video.
+
 - Add native WeChat and Douyin mini-game package targets with a shared Canvas host, explicit asset staging, platform size checks, and an executable sample.
 
 - Harden cross-platform compatibility across PC, Android, and iPhone (Bilibili Toy): strip `<script type="importmap">` and rewrite bare `three` specifiers in `package-game.mjs` while targeting `es2020` with top-level await and injecting a compact `Object.hasOwn`/`Array.prototype.at`/`structuredClone` shim for `--target toy`; resume iOS `AudioContext` `'interrupted'` state across `buses.js`/`synth.js`/`bgm-synth.js`/`audio.js` with gesture/pageshow recovery; add `100vh` fallbacks for `100dvh`, replace bare ES2022 `Object.hasOwn`/`.at(-1)`/`structuredClone` in `assets/runtime/`, add non-`:has()` `data-ui-phase` HUD rules, `48px` pause target, Bilibili Toy top-right capsule avoidance (`data-toy-host`), and portrait touch-control pause clearance in `game-shell-dom.js` / `touch-controls.js`.

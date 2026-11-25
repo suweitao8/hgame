@@ -99,6 +99,7 @@ function createHost(archive, saved, target = 'wechat') {
 for (const [target, global, appid] of [
   ['wechat', 'wx', 'wx1234567890abcdef'],
   ['douyin', 'tt', 'tt1234567890abcdef'],
+  ['taptap', 'tap', 'taptap-test-appid'],
 ]) {
   test(`${target} exports a native project and runs a complete canvas round without a DOM`, async (t) => {
     const outDir = await mkdtemp(path.join(os.tmpdir(), 'hgame-native-export-'));
@@ -116,12 +117,17 @@ for (const [target, global, appid] of [
       'LICENSE.txt', 'assets/chime.wav', 'assets/level.json', 'assets/target.png',
       'game.js', 'game.json', 'project.config.json',
     ]);
-    assert.deepEqual(JSON.parse(archive.readAsText('game.json')), { deviceOrientation: 'portrait' });
+    const gameJson = JSON.parse(archive.readAsText('game.json'));
+    assert.equal(gameJson.deviceOrientation, 'portrait');
+    if (target === 'taptap') {
+      assert.equal(gameJson.appId, appid);
+      assert.equal(gameJson.productVersion, '2.1.0');
+    } else assert.deepEqual(gameJson, { deviceOrientation: 'portrait' });
     const project = JSON.parse(archive.readAsText('project.config.json'));
     assert.equal(project.appid, appid);
     assert.equal(project.projectname, '点靶');
     assert.deepEqual(project.packOptions.include, [{ type: 'folder', value: 'assets' }]);
-    if (target === 'wechat') assert.equal(project.compileType, 'game');
+    if (target !== 'douyin') assert.equal(project.compileType, 'game');
     assert.equal(await readFile(path.join(summary.outputDir, 'game.js'), 'utf8'), archive.readAsText('game.js'));
 
     const saved = new Map();
@@ -139,7 +145,7 @@ for (const [target, global, appid] of [
     assert.equal(host.frames.size, 1);
     host.emit('Hide');
     assert.equal(host.frames.size, 0);
-    const [x, y] = target === 'wechat' ? ['clientX', 'clientY'] : ['screenX', 'screenY'];
+    const [x, y] = target === 'douyin' ? ['screenX', 'screenY'] : ['clientX', 'clientY'];
     const touch = { changedTouches: [{ identifier: 7, [x]: 180, [y]: 560 }] };
     host.emit('TouchStart', touch);
     assert.equal(host.audioPaths.length, 0);
@@ -287,6 +293,34 @@ test('platform size limits keep an oversized staged project from overwriting a p
   await assert.rejects(pack('douyin'), /douyin.*20 MiB/i);
 });
 
+test('TapTap rejects wrapper folders and versions that cannot become a three-part release number', async (t) => {
+  const dir = await createProject(t);
+  const options = { projectDir: dir, engineRoot: root, target: 'taptap' };
+  await assert.rejects(() => packageGameRelease({ ...options, flatZip: false }), /TapTap.*root/i);
+  await assert.rejects(() => packageGameRelease({ ...options, version: '1.2-beta' }), /TapTap.*version/i);
+  const draft = await packageGameRelease(options);
+  assert.equal(JSON.parse(new AdmZip(draft.zipPath).readAsText('game.json')).appId, undefined);
+  assert.equal(draft.packageLimitBytes, 60 * 1024 * 1024);
+});
+
+test('exported TapTap bundles resolve login and native SDK calls within the tap runtime', async (t) => {
+  const dir = await createProject(t);
+  await writeFile(path.join(dir, 'src/main.js'), [
+    'export async function start(host) {',
+    '  const { code } = await host.sdk.login();',
+    '  host.sdk.native.setStorageSync("verified-code", code);',
+    '}',
+  ].join('\n'));
+  const result = await packageGameRelease({ projectDir: dir, engineRoot: root, target: 'taptap' });
+  const archive = new AdmZip(result.zipPath);
+  const saved = new Map();
+  const host = createHost(archive, saved, 'taptap');
+  host.api.login = ({ success }) => success({ code: 'test-login-code' });
+  runInNewContext(archive.readAsText('game.js'), { tap: host.api, setTimeout, clearTimeout });
+  await setImmediate();
+  assert.equal(saved.get('verified-code'), 'test-login-code');
+});
+
 test('generated HGame projects carry native packaging tools and resolve their vendored HGame modules', async (t) => {
   const buildRoot = path.join(root, 'build');
   await mkdir(buildRoot, { recursive: true });
@@ -297,6 +331,7 @@ test('generated HGame projects carry native packaging tools and resolve their ve
   const pkg = JSON.parse(await readFile(path.join(dir, 'package.json'), 'utf8'));
   assert.match(pkg.scripts['package:wechat'], /--target wechat/);
   assert.match(pkg.scripts['package:douyin'], /--target douyin/);
+  assert.match(pkg.scripts['package:taptap'], /--target taptap/);
   await cp(path.join(fixture, 'assets'), path.join(dir, 'assets'), { recursive: true });
   await cp(path.join(fixture, 'src/main.js'), path.join(dir, 'src/minigame.js'));
   await writeFile(path.join(dir, 'minigame.config.json'), JSON.stringify({
@@ -304,10 +339,11 @@ test('generated HGame projects carry native packaging tools and resolve their ve
     entry: 'src/minigame.js',
     deviceOrientation: 'landscape',
   }));
-  const result = await exec(process.execPath, ['scripts/package-game.mjs', '--target', 'wechat'], { cwd: dir });
-  const summary = JSON.parse(result.stdout);
-  const archive = new AdmZip(summary.zipPath);
-  assert.deepEqual(JSON.parse(archive.readAsText('game.json')), { deviceOrientation: 'landscape' });
-  assert.equal(JSON.parse(archive.readAsText('project.config.json')).appid, 'touristappid');
-  assert.match(archive.readAsText('LICENSE.txt'), /Apache License/);
+  for (const target of ['wechat', 'taptap']) {
+    const result = await exec(process.execPath, ['scripts/package-game.mjs', '--target', target], { cwd: dir });
+    const archive = new AdmZip(JSON.parse(result.stdout).zipPath);
+    assert.equal(JSON.parse(archive.readAsText('game.json')).deviceOrientation, 'landscape');
+    if (target === 'wechat') assert.equal(JSON.parse(archive.readAsText('project.config.json')).appid, 'touristappid');
+    assert.match(archive.readAsText('LICENSE.txt'), /Apache License/);
+  }
 });

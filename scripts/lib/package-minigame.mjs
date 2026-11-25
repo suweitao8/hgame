@@ -7,7 +7,9 @@ import { casObjectPath, readAssetManifest, resolveAssetStoreDir, shouldIgnoreFor
 
 const CONFIG = 'minigame.config.json';
 const HOST_MODULE = fileURLToPath(new URL('./minigame-host.mjs', import.meta.url));
-const SIZE_MIB = { wechat: 4, douyin: 20 };
+const SDK_MODULE = fileURLToPath(new URL('./minigame-sdk.mjs', import.meta.url));
+const SIZE_MIB = { wechat: 4, douyin: 20, taptap: 60 };
+const HOST_GLOBAL = { wechat: 'wx', douyin: 'tt', taptap: 'tap' };
 const MEDIA_EXTENSIONS = new Set([
   '.aac', '.bin', '.flac', '.gif', '.glb', '.gltf', '.jpeg', '.jpg', '.json', '.ktx', '.ktx2',
   '.m4a', '.mp3', '.mp4', '.ogg', '.otf', '.png', '.svg', '.ttf', '.txt', '.wav', '.webp', '.woff', '.woff2',
@@ -102,7 +104,8 @@ async function compileGame({ projectDir, engineRoot, entry, target, game, assets
   const entryFile = await canonicalIfExists(path.join(projectDir, entry));
   if (!entryFile || !within(sourceRoot, entryFile)) throw new Error(CONFIG + ' entry is missing or outside src/: ' + entry);
   const hostFile = await realpath(HOST_MODULE);
-  const global = target === 'wechat' ? 'wx' : 'tt';
+  const sdkFile = await realpath(SDK_MODULE);
+  const global = HOST_GLOBAL[target];
   const bootstrap = [
     'import {createMinigameHost} from "hgame:minigame-host";',
     'const api = typeof ' + global + ' !== "undefined" ? ' + global + ' :',
@@ -166,7 +169,7 @@ async function compileGame({ projectDir, engineRoot, entry, target, game, assets
         });
         build.onLoad({ filter: /.*/, namespace: 'file' }, async args => {
           const file = await canonicalIfExists(args.path);
-          if (file === hostFile) return;
+          if (file === hostFile || file === sdkFile) return;
           const root = file && moduleRoots.find(dir => within(dir, file));
           const relative = root && path.relative(root, file).split(path.sep).join('/');
           if (!relative || !PROJECT_CODE.test(relative) || !isRelativeFile(relative) ||
@@ -230,10 +233,20 @@ export async function assembleMinigame({ stage, projectDir, engineRoot, target, 
     : { ...(appid === undefined ? {} : { appid }), setting: { es6: true } };
   project.projectname = game.name;
   if (assets.length) project.packOptions = { include: [{ type: 'folder', value: 'assets' }] };
+  const gameOptions = { deviceOrientation };
+  if (target === 'taptap') {
+    const version = game.version.trim().replace(/^[vV]/, '');
+    if (!/^\d+(?:\.\d+){0,2}$/.test(version)) throw new Error('TapTap version must be numeric, for example 1.2.0');
+    const [major, minor = '0', patch = '0'] = version.split('.');
+    project.compileType = 'game';
+    gameOptions.productName = game.name;
+    gameOptions.productVersion = [major, minor, patch].join('.');
+    if (appid !== undefined) gameOptions.appId = appid;
+  }
   const json = data => Buffer.from(JSON.stringify(data, null, 2) + '\n');
   const files = new Map([
     ['game.js', bundle],
-    ['game.json', json({ deviceOrientation })],
+    ['game.json', json(gameOptions)],
     ['project.config.json', json(project)],
     ['LICENSE.txt', license],
   ]);

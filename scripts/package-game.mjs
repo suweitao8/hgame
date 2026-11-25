@@ -12,6 +12,7 @@ import { PIXI_BUNDLER_PATH, casObjectPath, hashPixiSources, matchPixiBuildBytes,
 import { auditKtx2Textures } from './lib/toktx.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const NATIVE_MINIGAME_TARGETS = ['wechat', 'douyin', 'taptap'];
 
 const RUNTIME_DIR_PREFIXES = new Set([
   'core',
@@ -883,7 +884,8 @@ export async function packageGameRelease({
   icon,
   allowUncompressedKtx2 = false,
 } = {}) {
-  if (target === 'wechat' || target === 'douyin') {
+  if (NATIVE_MINIGAME_TARGETS.includes(target)) {
+    if (target === 'taptap' && flatZip === false) throw new Error('TapTap requires game.js at the ZIP root');
     if ([toySdk, slug, poster, icon].some(value => value !== undefined) || allowUncompressedKtx2) {
       throw new Error('Toy options are only available with --target toy');
     }
@@ -917,9 +919,9 @@ export async function packageGameRelease({
     };
   }
   if (target !== 'standard' && target !== 'toy') {
-    throw new RangeError(`Unsupported package target "${target}". Use "standard", "toy", "wechat" or "douyin".`);
+    throw new RangeError(`Unsupported package target "${target}". Use "standard", "toy" or ${NATIVE_MINIGAME_TARGETS.join(', ')}.`);
   }
-  if (appid !== undefined) throw new Error('--appid requires --target wechat or douyin');
+  if (appid !== undefined) throw new Error('--appid requires a native mini-game target: ' + NATIVE_MINIGAME_TARGETS.join(', '));
   const effectiveFlatZip = flatZip ?? (target === 'toy');
   const absGameDir = path.resolve(projectDir);
   const gameConfigPath = path.join(absGameDir, 'game.config.json');
@@ -1823,7 +1825,7 @@ async function main() {
   const opts = parseCliArgs(process.argv.slice(2));
   if (opts.help) {
     console.log(
-      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy|wechat|douyin] [--appid <mini-game-appid>] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--allow-uncompressed-ktx2] [--no-minify] [--engine]',
+      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy|wechat|douyin|taptap] [--appid <mini-game-appid>] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--allow-uncompressed-ktx2] [--no-minify] [--engine]',
     );
     return;
   }

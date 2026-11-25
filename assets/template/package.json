@@ -15,6 +15,7 @@
     "package:toy": "node scripts/package-game.mjs --target toy",
     "package:wechat": "node scripts/package-game.mjs --target wechat",
     "package:douyin": "node scripts/package-game.mjs --target douyin",
+    "package:taptap": "node scripts/package-game.mjs --target taptap",
     "toy:check": "node scripts/toy-preflight.mjs .",
     "check:ui": "node scripts/check-ui.mjs --dir .",
     "check:design": "node scripts/check-design-docs.mjs .",
