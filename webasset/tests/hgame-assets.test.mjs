@@ -520,13 +520,42 @@ test('HGame asset API disables static models/materials and serves procedural .hm
     assert.ok(Array.isArray(cnCat.models[0].lods) && cnCat.models[0].lods.length >= 1);
     assert.ok(cnCat.models[0].bounds?.boundingSphereRadius > 0);
 
-    // 4. Legacy /api/hgame/vfx & /api/hgame/materials endpoints remain 404
+    // 4. Legacy /api/hgame/vfx & /api/hgame/materials endpoints remain 404, while VFX review persistence works cleanly
     const vfxRes = await fetch(`${base}/api/hgame/vfx`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'test' }),
     });
     assert.equal(vfxRes.status, 404);
+
+    const badReviewRes = await fetch(`${base}/api/hgame/vfx/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: '../bad', approved: true }),
+    });
+    assert.equal(badReviewRes.status, 400);
+
+    const reviewApproveRes = await fetch(`${base}/api/hgame/vfx/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'arpg_realistic_paladin_pack__arpg_paladin_shock_calling', approved: true }),
+    });
+    assert.equal(reviewApproveRes.status, 200);
+    const reviewApproveBody = await reviewApproveRes.json();
+    assert.equal(reviewApproveBody.ok, true);
+    assert.ok(reviewApproveBody.reviewedIds.includes('arpg_realistic_paladin_pack__arpg_paladin_shock_calling'));
+
+    const vfxCatApproved = await (await fetch(`${base}/api/hgame/vfx/catalog`)).json();
+    assert.ok(vfxCatApproved.reviewedIds.includes('arpg_realistic_paladin_pack__arpg_paladin_shock_calling'));
+
+    const reviewRevertRes = await fetch(`${base}/api/hgame/vfx/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: 'arpg_realistic_paladin_pack__arpg_paladin_shock_calling', approved: false }),
+    });
+    assert.equal(reviewRevertRes.status, 200);
+    const reviewRevertBody = await reviewRevertRes.json();
+    assert.equal(reviewRevertBody.reviewedIds.includes('arpg_realistic_paladin_pack__arpg_paladin_shock_calling'), false);
 
     const matRes = await fetch(`${base}/api/hgame/materials`, {
       method: 'POST',
@@ -644,6 +673,8 @@ test('HGame asset API disables static models/materials and serves procedural .hm
     assert.match(html, /data-hgame-vfx-mode="source"/);
     assert.match(html, /id="hgame-vfx-plane-mode"/);
     assert.match(html, /id="hgame-vfx-replay-button"/);
+    assert.match(html, /id="hgame-vfx-review-toggle"/);
+    assert.doesNotMatch(html, /精选复刻基准/);
     assert.match(html, /id="hgame-vfx-copy-code"/);
     assert.match(html, /id="nav-decals"/);
     assert.match(html, /id="decals-view"/);

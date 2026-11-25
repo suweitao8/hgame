@@ -413,9 +413,11 @@ export function createHGameAssetHandler({
       }
 
       if (pathname === '/api/hgame/vfx/catalog' && request.method === 'GET') {
+        const db = await ensureDbReady();
+        const reviewedIds = db.listApprovedVfxIds();
         const vfxRoot = getVfxBenchRoot();
         if (!vfxRoot) {
-          sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
+          sendJson(response, 200, { available: false, reviewedIds, effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
           return;
         }
         const packsIndexPath = path.join(vfxRoot, 'packs', 'packs_index.json');
@@ -428,13 +430,16 @@ export function createHGameAssetHandler({
               : {};
             const packs = [];
             for (const entry of Array.isArray(packsIndex?.packs) ? packsIndex.packs : []) {
+              if ((entry?.id || '') === 'flagship_bench') continue;
               const rel = String(entry?.manifestFile || '').replace(/^\/+/, '');
               if (!rel) continue;
               const abs = path.resolve(vfxRoot, ...rel.split('/'));
               if (!isInside(vfxRoot, abs) || !existsSync(abs)) continue;
               const pi = JSON.parse(await readFile(abs, 'utf8'));
+              const packId = pi.id || entry.id;
+              if (packId === 'flagship_bench') continue;
               packs.push({
-                id: pi.id || entry.id,
+                id: packId,
                 name: pi.name || entry.name,
                 atlasImage: pi.atlasImage || '',
                 atlasMeta: pi.atlasMeta || '',
@@ -446,11 +451,12 @@ export function createHGameAssetHandler({
               available: packs.length > 0,
               schemaVersion: 2,
               baseUrl: '/files/hgame-vfx',
+              reviewedIds,
               meshIndex,
               packs,
             });
           } catch {
-            sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
+            sendJson(response, 200, { available: false, reviewedIds, effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
           }
           return;
         }
@@ -459,11 +465,36 @@ export function createHGameAssetHandler({
           sendJson(response, 200, {
             available: true,
             baseUrl: '/files/hgame-vfx',
+            reviewedIds,
             ...catalog,
           });
         } catch {
-          sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
+          sendJson(response, 200, { available: false, reviewedIds, effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
         }
+        return;
+      }
+
+      if (pathname === '/api/hgame/vfx/review' && request.method === 'POST') {
+        let payload;
+        try {
+          const raw = await readBounded(request, MAX_JSON_BYTES);
+          payload = JSON.parse(raw.toString('utf8'));
+        } catch (err) {
+          sendJson(response, err?.status === 413 ? 413 : 400, { error: 'BAD_JSON', message: '请求格式无效。' });
+          return;
+        }
+        const id = typeof payload?.id === 'string' ? payload.id.trim() : '';
+        if (!id || id.length > 160 || !/^[A-Za-z0-9_.\-:]+$/.test(id)) {
+          sendJson(response, 400, { error: 'BAD_ID', message: '特效 ID 无效。' });
+          return;
+        }
+        const approved = Boolean(payload?.approved);
+        const reviewedIds = await mutate(async () => {
+          const db = await ensureDbReady();
+          db.setVfxReviewed(id, approved);
+          return db.listApprovedVfxIds();
+        });
+        sendJson(response, 200, { ok: true, id, approved, reviewedIds });
         return;
       }
 

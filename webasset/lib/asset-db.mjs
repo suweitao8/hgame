@@ -212,6 +212,12 @@ function initSchema(db) {
       verified INTEGER NOT NULL DEFAULT 0,
       notes TEXT NOT NULL DEFAULT ''
     );
+
+    CREATE TABLE IF NOT EXISTS vfx_reviews (
+      id TEXT PRIMARY KEY,
+      approved INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   db.prepare(`INSERT OR IGNORE INTO meta (key, value) VALUES ('schemaVersion', '1')`).run();
@@ -932,6 +938,23 @@ export function openAssetDb(dbPath) {
     db.prepare('UPDATE backup_snapshots SET verified = ? WHERE id = ?').run(verified ? 1 : 0, id);
   }
 
+  function listApprovedVfxIds() {
+    return db.prepare('SELECT id FROM vfx_reviews WHERE approved = 1 ORDER BY id ASC').all().map((row) => row.id);
+  }
+
+  function setVfxReviewed(id, approved) {
+    const cleanId = String(id || '').trim();
+    if (!cleanId) return;
+    if (approved) {
+      db.prepare(`
+        INSERT INTO vfx_reviews (id, approved, updated_at) VALUES (?, 1, ?)
+        ON CONFLICT(id) DO UPDATE SET approved = 1, updated_at = excluded.updated_at
+      `).run(cleanId, new Date().toISOString());
+    } else {
+      db.prepare('DELETE FROM vfx_reviews WHERE id = ?').run(cleanId);
+    }
+  }
+
   function close() {
     db.close();
   }
@@ -965,6 +988,8 @@ export function openAssetDb(dbPath) {
     recordBackupSnapshot,
     listBackupSnapshots,
     markSnapshotVerified,
+    listApprovedVfxIds,
+    setVfxReviewed,
     close,
   };
 }

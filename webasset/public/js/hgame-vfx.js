@@ -10,50 +10,43 @@ import {
   normalizeUnrealSceneMaterials,
 } from './hgame-shared.js';
 
-const PACK_CATEGORY_MAP = {
-  flagship_bench: '精选复刻基准',
-  arpg_realistic_paladin_pack: '圣光与圣骑 (Paladin)',
-  arpg_realistic_groundslams: '裂地与重击 (GroundSlams)',
-  arpg_realistic_ice_and_water_pack: '寒冰与水流 (Ice & Water)',
-  arpg_realistic_bonemist: '骸骨与死雾 (Bonemist)',
-  arpg_realistic_essentials_fire: '烈焰全集 (Essentials Fire)',
-  arpg_realistic_lightning_starter_kit: '雷电全集 (Lightning)',
-  arpg_realistic_necromancy_pack: '死灵法术 (Necromancy)',
-  arpg_realistic_arcane: '奥术魔法 (Arcane)',
-  arpg_realistic_bloody: '血腥爆裂 (Bloody)',
-  arpg_realistic_crimson: '猩红法术 (Crimson)',
-  arpg_realistic_deathice: '死亡寒冰 (Deathice)',
-  arpg_realistic_demon_vs_angels: '恶魔与天使 (Demon vs Angels)',
-  arpg_realistic_earth_bending: '御土术 (Earth Bending)',
-  arpg_realistic_golden_spells: '黄金法术 (Golden Spells)',
-  arpg_realistic_mana_theme_pack: '魔力主题 (Mana)',
-  arpg_realistic_pickups_auras_and_buffs: '光环与增益 (Auras & Buffs)',
-  arpg_realistic_poison: '剧毒 (Poison)',
-  arpg_realistic_water_fx: '水流特效 (Water FX)',
-  arpg_realistic_wind_starter_pack: '疾风 (Wind)',
-};
-
 const VFX_CATEGORY_ORDER = [
-  '精选复刻基准',
-  '圣光与圣骑 (Paladin)',
-  '裂地与重击 (GroundSlams)',
-  '寒冰与水流 (Ice & Water)',
-  '骸骨与死雾 (Bonemist)',
-  '烈焰全集 (Essentials Fire)',
-  '雷电全集 (Lightning)',
-  '死灵法术 (Necromancy)',
-  'Piloto_Bench_8',
-  '火焰爆破',
-  '火焰与爆破',
-  '刀光轨迹',
-  '法阵光环',
-  '法阵与护盾',
-  '雷电与光束',
-  '水冰与寒霜',
-  '烟雾气浪',
-  '3D 特效网格',
-  '粒子与序列帧贴图',
+  '刀光斩击',
+  '受击命中',
+  '投射弹道',
+  '范围爆破',
+  '光束天降',
+  '法阵持续',
+  '护盾增益',
+  '3D 网格',
+  '序列帧贴图',
 ];
+
+function classifyVfxSystem(item) {
+  const s = `${item?.name || ''} ${item?.effectId || item?.id || ''} ${item?.relSource || ''}`.toLowerCase();
+  if (/(slash|swing|blade|cleave|stab|lunge|combo|swipe|cut|claw|scythe|whirlwind|spin_attack|sword_swirl|sword_shock|hammer_combo|punch|puncture|frontal_attack|dash|drill)/.test(s)) {
+    return '刀光斩击';
+  }
+  if (/(\bhit\b|_hit|hit_|impact|splatter|muzzle|spark|fizzle|snap|clap|pain)/.test(s)) {
+    return '受击命中';
+  }
+  if (/(projectile|projetil|missile|arrow|fireball|iceball|orb|throw|bullet|bolt|spear|dagger|homing|shooting|comet|barrage|trail)/.test(s) && !/(orb_nova|orb_explosion)/.test(s)) {
+    return '投射弹道';
+  }
+  if (/(beam|ray|laser|shock_calling|rain|falling|strike|thunder|smite|pillar|column|tornado|vortex|vortrex|twister|cyclone|waterspout|storm|vertical_lightning|vertical\s+lightning|flashlightning|lightningwrath|skybloom|godssight|poseidon)/.test(s)) {
+    return '光束天降';
+  }
+  if (/(shield|barrier|protection|ward|dome|buff|debuff|curse|heal|revive|empower|blessing|recharge|charge|charging|release|character|body_fx|hand_attach|wings|pickup|chest|loot|item|potion|coin|portal|cage|prison|skulls_rotation|enrust|clockback|egg|diamond|trifecta|mesh_fx)/.test(s)) {
+    return '护盾增益';
+  }
+  if (/(aura|circle|ring|rune|sigil|mark|telegraph|zone|area|pool|ground_magic|frozen_ground|shocking_ground|holy_ground|burning_ground|field|mine|brand|ritual|altar|totem|ambient|embers|mist|fog|flames|smoke|fire|campfire|torch|fountain|waterfall|splash|wave|stream|flux|lotus|bubble|vein)/.test(s)) {
+    return '法阵持续';
+  }
+  if (/(explosion|explotion|nova|slam|groundslam|burst|crack|fissure|sunder|shockwave|spike|eruption|blast|shatter|quake|stomp|crush|cone|aoe|rock|boulder|crystal|cluster|bomb|spread|ocean\s*call|bloom|sphere|clogs|aureate)/.test(s)) {
+    return '范围爆破';
+  }
+  return item?.loop ? '法阵持续' : '范围爆破';
+}
 
 const viewEl = document.querySelector('#vfx-view');
 const searchInput = document.querySelector('#hgame-vfx-search');
@@ -70,6 +63,8 @@ const playBtn = document.querySelector('#hgame-vfx-play-button');
 const replayBtn = document.querySelector('#hgame-vfx-replay-button');
 const speedWrap = document.querySelector('#hgame-vfx-speed-wrap');
 const speedSelect = document.querySelector('#hgame-vfx-speed');
+const reviewWrap = document.querySelector('#hgame-vfx-review-wrap');
+const reviewToggle = document.querySelector('#hgame-vfx-review-toggle');
 const qualityWrap = document.querySelector('#hgame-vfx-quality-wrap');
 const qualitySelect = document.querySelector('#hgame-vfx-quality');
 const gridToggleWrap = document.querySelector('#hgame-vfx-grid-toggle-wrap');
@@ -130,6 +125,7 @@ const benchGlbCache = new Map();
 const benchGlbInflight = new Map();
 const registeredBenchAliases = new Set();
 const vfxPacksById = new Map();
+const reviewedIds = new Set();
 let vfxMeshIndex = {};
 let vfxBaseUrl = '/files/hgame-vfx';
 let activeBenchPackId = '';
@@ -151,22 +147,40 @@ let benchStageActive = false;
 let benchPostPipeline = null;
 let benchSimDt = 0.016;
 
+function isItemReviewed(item) {
+  return Boolean(item && reviewedIds.has(item.id));
+}
+
+function compareByReviewThenName(a, b) {
+  const ra = isItemReviewed(a) ? 1 : 0;
+  const rb = isItemReviewed(b) ? 1 : 0;
+  if (ra !== rb) return ra - rb;
+  return String(a.name || a.id).localeCompare(String(b.name || b.id));
+}
+
+function getCategoryRank(cat) {
+  const idx = VFX_CATEGORY_ORDER.indexOf(cat);
+  return idx >= 0 ? idx : VFX_CATEGORY_ORDER.length;
+}
+
 function getAllItems() {
   return [
     ...shurikenBenchSystems.map(item => ({ ...item, kind: 'system' })),
     ...vfxSystems.map(item => ({ ...item, kind: 'system' })),
-    ...vfxMeshes.map(item => ({ ...item, kind: 'mesh' })),
-    ...vfxTextures.map(item => ({ ...item, kind: 'texture' })),
+    ...vfxMeshes.map(item => ({ ...item, kind: 'mesh', category: item.category || '3D 网格' })),
+    ...vfxTextures.map(item => ({ ...item, kind: 'texture', category: item.category || '序列帧贴图' })),
   ];
 }
 
 function getFilteredItems() {
   const query = searchInput.value.trim().toLowerCase();
   const filterVal = typeFilter?.value || 'all';
-  return getAllItems().filter(item => {
+  const filtered = getAllItems().filter(item => {
+    if (filterVal === 'review:pending' && isItemReviewed(item)) return false;
+    if (filterVal === 'review:approved' && !isItemReviewed(item)) return false;
     if (filterVal.startsWith('kind:') && item.kind !== filterVal.slice(5)) return false;
     if (filterVal.startsWith('cat:') && (item.category || '') !== filterVal.slice(4)) return false;
-    if (filterVal !== 'all' && !filterVal.startsWith('kind:') && !filterVal.startsWith('cat:') && (item.category || '') !== filterVal) return false;
+    if (filterVal !== 'all' && !filterVal.startsWith('review:') && !filterVal.startsWith('kind:') && !filterVal.startsWith('cat:') && (item.category || '') !== filterVal) return false;
     if (!query) return true;
     return (item.name || '').toLowerCase().includes(query)
       || (item.assetName || '').toLowerCase().includes(query)
@@ -174,19 +188,39 @@ function getFilteredItems() {
       || (item.id || '').toLowerCase().includes(query)
       || (item.category || '').toLowerCase().includes(query);
   });
+  const catHasPending = new Map();
+  for (const item of filtered) {
+    const cat = item.category || (item.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
+    if (!catHasPending.has(cat)) catHasPending.set(cat, false);
+    if (!isItemReviewed(item)) catHasPending.set(cat, true);
+  }
+  return filtered.sort((a, b) => {
+    const ca = a.category || (a.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
+    const cb = b.category || (b.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
+    const pa = catHasPending.get(ca) ? 0 : 1;
+    const pb = catHasPending.get(cb) ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    const rankDiff = getCategoryRank(ca) - getCategoryRank(cb);
+    if (rankDiff !== 0) return rankDiff;
+    const catDiff = ca.localeCompare(cb);
+    if (catDiff !== 0) return catDiff;
+    return compareByReviewThenName(a, b);
+  });
 }
 
 function populateCategoryFilter() {
   const pool = getAllItems();
   const counts = new Map();
-  let sysCnt = 0;
+  let pendingCnt = 0;
+  let approvedCnt = 0;
   let meshCnt = 0;
   let texCnt = 0;
   for (const item of pool) {
-    if (item.kind === 'system') sysCnt++;
-    else if (item.kind === 'mesh') meshCnt++;
+    if (isItemReviewed(item)) approvedCnt++;
+    else pendingCnt++;
+    if (item.kind === 'mesh') meshCnt++;
     else if (item.kind === 'texture') texCnt++;
-    const cat = item.category || '其他特效';
+    const cat = item.category || '范围爆破';
     counts.set(cat, (counts.get(cat) || 0) + 1);
   }
   const prev = typeFilter.value || 'all';
@@ -197,10 +231,11 @@ function populateCategoryFilter() {
     opt.textContent = text;
     typeFilter.appendChild(opt);
   };
-  addOpt('all', `全部特效 (${pool.length})`);
-  if (sysCnt > 0) addOpt('kind:system', `特效系统 (${sysCnt})`);
+  addOpt('all', `全部 (${pool.length})`);
+  addOpt('review:pending', `待审核 (${pendingCnt})`);
+  addOpt('review:approved', `已通过 (${approvedCnt})`);
   if (meshCnt > 0) addOpt('kind:mesh', `3D 网格 (${meshCnt})`);
-  if (texCnt > 0) addOpt('kind:texture', `贴图序列帧 (${texCnt})`);
+  if (texCnt > 0) addOpt('kind:texture', `序列帧贴图 (${texCnt})`);
   const ordered = [
     ...VFX_CATEGORY_ORDER.filter(c => counts.has(c)),
     ...[...counts.keys()].filter(c => !VFX_CATEGORY_ORDER.includes(c)).sort(),
@@ -306,15 +341,22 @@ function renderList() {
 
   const byCategory = new Map();
   for (const item of items) {
-    const cat = item.category || (item.kind === 'mesh' ? '3D 特效网格' : '粒子与序列帧贴图');
+    const cat = item.category || (item.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
     if (!byCategory.has(cat)) byCategory.set(cat, []);
     byCategory.get(cat).push(item);
   }
 
-  const categories = [
-    ...VFX_CATEGORY_ORDER.filter(cat => byCategory.has(cat)),
-    ...[...byCategory.keys()].filter(cat => !VFX_CATEGORY_ORDER.includes(cat)),
-  ];
+  for (const list of byCategory.values()) {
+    list.sort(compareByReviewThenName);
+  }
+
+  const categories = [...byCategory.keys()].sort((a, b) => {
+    const aPending = byCategory.get(a).some(it => !isItemReviewed(it)) ? 0 : 1;
+    const bPending = byCategory.get(b).some(it => !isItemReviewed(it)) ? 0 : 1;
+    if (aPending !== bPending) return aPending - bPending;
+    const rankDiff = getCategoryRank(a) - getCategoryRank(b);
+    return rankDiff !== 0 ? rankDiff : a.localeCompare(b);
+  });
 
   for (const cat of categories) {
     const groupItems = byCategory.get(cat);
@@ -325,15 +367,17 @@ function renderList() {
 
     for (const item of groupItems) {
       const selected = item.kind === activeSelection.kind && item.id === activeSelection.id;
-      const badge = item.kind === 'system'
+      const reviewed = isItemReviewed(item);
+      const baseBadge = item.kind === 'system'
         ? (item.sourceType === 'niagara' ? 'NS' : 'VFX')
         : (item.kind === 'mesh' ? '3D' : 'TEX');
       const { button } = createSidebarSquareCard({
         name: item.name || item.id,
         thumbUrl: item.kind === 'texture' ? item.url : (item.thumbnail || ''),
-        badge,
-        accentColor: item.kind === 'system' ? (item.hgamePreset?.color || '#d5e4b4') : '',
+        badge: reviewed ? '✓' : baseBadge,
+        accentColor: reviewed ? '#4ade80' : (item.kind === 'system' ? (item.hgamePreset?.color || '#d5e4b4') : ''),
         active: selected,
+        className: reviewed ? 'hgame-list-item is-reviewed' : 'hgame-list-item',
         onClick: () => {
           activeSelection = { kind: item.kind, id: item.id };
           applyItemDefaults(item);
@@ -881,6 +925,8 @@ function syncControlsVisibility(item) {
   if (modeTabsWrap) modeTabsWrap.hidden = !isSystem || isBench;
   if (copyCodeBtn) copyCodeBtn.hidden = !isSystem;
   if (speedWrap) speedWrap.hidden = !isBench;
+  if (reviewWrap) reviewWrap.hidden = !item;
+  if (reviewToggle) reviewToggle.checked = isItemReviewed(item);
   if (qualityWrap) qualityWrap.hidden = !isBench;
   if (gridToggleWrap) gridToggleWrap.hidden = !isBench;
   if (bloomToggleWrap) bloomToggleWrap.hidden = !isBench;
@@ -1972,10 +2018,59 @@ async function loadCurrentVfx() {
   }
 }
 
+async function applyVfxReviewStatus(item, approved) {
+  if (!item?.id) return false;
+  const had = reviewedIds.has(item.id);
+  const nextApproved = Boolean(approved);
+  if (nextApproved) reviewedIds.add(item.id);
+  else reviewedIds.delete(item.id);
+
+  const prevSelectedId = activeSelection.id;
+  populateCategoryFilter();
+  renderList();
+  if (reviewToggle && getCurrentItem()?.id === item.id) {
+    reviewToggle.checked = nextApproved;
+  }
+  if (activeSelection.id && activeSelection.id !== prevSelectedId) {
+    void loadCurrentVfx();
+  }
+
+  try {
+    const res = await fetch('/api/hgame/vfx/review', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: item.id, approved: nextApproved }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+    if (Array.isArray(data.reviewedIds)) {
+      reviewedIds.clear();
+      for (const rid of data.reviewedIds) reviewedIds.add(rid);
+      populateCategoryFilter();
+      renderList();
+      if (reviewToggle) reviewToggle.checked = isItemReviewed(getCurrentItem());
+    }
+    return true;
+  } catch (err) {
+    if (had) reviewedIds.add(item.id);
+    else reviewedIds.delete(item.id);
+    populateCategoryFilter();
+    renderList();
+    if (reviewToggle) reviewToggle.checked = isItemReviewed(getCurrentItem());
+    statusEl.textContent = err?.message || '保存审核状态失败';
+    return false;
+  }
+}
+
 async function initVfxView() {
   if (!initialized) {
     initialized = true;
     searchInput.addEventListener('input', renderList);
+    reviewToggle?.addEventListener('change', () => {
+      const item = getCurrentItem();
+      if (!item) return;
+      void applyVfxReviewStatus(item, reviewToggle.checked);
+    });
     typeFilter.addEventListener('change', () => {
       const filtered = getFilteredItems();
       if (filtered.length > 0 && !filtered.some(it => it.kind === activeSelection.kind && it.id === activeSelection.id)) {
@@ -2052,19 +2147,32 @@ async function initVfxView() {
     ]);
     const unrealCatalog = unrealRes || {};
     vfxPacksById.clear();
+    reviewedIds.clear();
+    for (const rid of Array.isArray(vfxBenchRes?.reviewedIds) ? vfxBenchRes.reviewedIds : []) {
+      reviewedIds.add(rid);
+    }
     vfxMeshIndex = vfxBenchRes?.meshIndex || {};
     vfxBaseUrl = vfxBenchRes?.baseUrl || '/files/hgame-vfx';
     if (vfxBenchRes?.available && Array.isArray(vfxBenchRes.packs)) {
       const nextBenchSystems = [];
       for (const pack of vfxBenchRes.packs) {
+        if (pack.id === 'flagship_bench') continue;
         vfxPacksById.set(pack.id, pack);
-        const catTitle = PACK_CATEGORY_MAP[pack.id] || pack.name || pack.id;
         for (const ef of Array.isArray(pack.effects) ? pack.effects : []) {
+          const itemName = ef.name || ef.id;
+          const catTitle = classifyVfxSystem({
+            name: itemName,
+            effectId: ef.id,
+            id: `${pack.id}__${ef.id}`,
+            relSource: ef.relSource || '',
+            loop: Boolean(ef.loop),
+          });
           nextBenchSystems.push({
             id: `${pack.id}__${ef.id}`,
             effectId: ef.id,
             packId: pack.id,
-            name: ef.name || ef.id,
+            name: itemName,
+            relSource: ef.relSource || '',
             category: catTitle,
             group: pack.name,
             layerCount: ef.layerCount,
@@ -2084,8 +2192,8 @@ async function initVfxView() {
         effectId: ef.id,
         packId: 'legacy_v1',
         name: ef.name,
-        category: 'Piloto_Bench_8',
-        group: 'Piloto_Bench_8',
+        category: classifyVfxSystem({ name: ef.name, effectId: ef.id, id: ef.id, loop: Boolean(ef.loop) }),
+        group: ef.name,
         layerCount: ef.layerCount,
         duration: ef.duration,
         loop: ef.loop,
@@ -2096,7 +2204,9 @@ async function initVfxView() {
     } else {
       shurikenBenchSystems = [];
     }
-    vfxSystems = Array.isArray(unrealCatalog.vfxSystems) ? unrealCatalog.vfxSystems : [];
+    vfxSystems = Array.isArray(unrealCatalog.vfxSystems)
+      ? unrealCatalog.vfxSystems.map(sys => ({ ...sys, category: classifyVfxSystem(sys) }))
+      : [];
     vfxMeshes = Array.isArray(unrealCatalog.vfxMeshes) ? unrealCatalog.vfxMeshes : [];
     vfxTextures = Array.isArray(unrealCatalog.vfxTextures) ? unrealCatalog.vfxTextures : [];
   } catch (error) {
@@ -2112,10 +2222,13 @@ async function initVfxView() {
   const reqVfx = params.get('vfx');
   const reqEff = params.get('effect');
   const allItems = getAllItems();
+  const filteredItems = getFilteredItems();
   const deepLinked = (reqVfx && allItems.find(it => it.id === reqVfx))
     || (reqEff && allItems.find(it => it.effectId === reqEff || it.id === reqEff))
     || null;
-  const initialItem = deepLinked || getCurrentItem() || getFilteredItems()[0] || null;
+  const currentExisting = allItems.find(it => it.kind === activeSelection.kind && it.id === activeSelection.id) || null;
+  const firstUnreviewed = filteredItems.find(it => !isItemReviewed(it)) || allItems.find(it => !isItemReviewed(it)) || null;
+  const initialItem = deepLinked || currentExisting || firstUnreviewed || filteredItems[0] || allItems[0] || null;
   if (initialItem) {
     activeSelection = { kind: initialItem.kind, id: initialItem.id };
     applyItemDefaults(initialItem);
@@ -2127,6 +2240,12 @@ async function initVfxView() {
 
 window.__WEBASSET_VFX_TEST__ = {
   listIds: () => getAllItems().map(it => it.id),
+  isReviewed: (id) => reviewedIds.has(id),
+  setReviewed: async (id, approved) => {
+    const match = getAllItems().find(it => it.id === id || it.effectId === id);
+    if (!match) return false;
+    return applyVfxReviewStatus(match, approved);
+  },
   setPlaying: (playing) => {
     isPlaying = Boolean(playing);
     if (playBtn) playBtn.textContent = isPlaying ? '暂停' : '播放';
