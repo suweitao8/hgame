@@ -53,6 +53,8 @@ const searchInput = document.querySelector('#hgame-vfx-search');
 const typeFilter = document.querySelector('#hgame-vfx-type-filter');
 const listEl = document.querySelector('#hgame-vfx-list');
 const titleEl = document.querySelector('#hgame-vfx-title');
+const variantWrap = document.querySelector('#hgame-vfx-variant-wrap');
+const variantSelect = document.querySelector('#hgame-vfx-variant-select');
 const downloadEl = document.querySelector('#hgame-vfx-download');
 const modeTabsWrap = document.querySelector('#hgame-vfx-mode-tabs');
 const modeTabEls = [...document.querySelectorAll('.hgame-vfx-mode-tab')];
@@ -126,6 +128,7 @@ const benchGlbInflight = new Map();
 const registeredBenchAliases = new Set();
 const vfxPacksById = new Map();
 const reviewedIds = new Set();
+const activeVariantByBaseId = new Map();
 let vfxMeshIndex = {};
 let vfxBaseUrl = '/files/hgame-vfx';
 let activeBenchPackId = '';
@@ -147,8 +150,178 @@ let benchStageActive = false;
 let benchPostPipeline = null;
 let benchSimDt = 0.016;
 
+const VFX_ARPG_THEME_LABELS = {
+  paladin: ['圣光', 1],
+  arcane: ['奥术', 2],
+  blood: ['猩红', 3],
+  necromancy: ['亡灵', 4],
+  ice: ['寒冰', 5],
+  water: ['水系', 6],
+  earth: ['大地', 7],
+  lightning: ['雷电', 8],
+  fire: ['火焰', 9],
+  poison: ['剧毒', 10],
+  nature: ['自然', 11],
+  holy: ['神圣', 12],
+  demon: ['恶魔', 13],
+};
+
+const VFX_COLOR_SUFFIX_LABELS = {
+  green: ['绿色', 2],
+  blue: ['蓝色', 3],
+  purple: ['紫色', 4],
+  red: ['红色', 5],
+  yellow: ['黄色', 6],
+  orange: ['橙色', 7],
+  cyan: ['青色', 8],
+  white: ['纯白', 9],
+  pink: ['粉色', 10],
+  black: ['玄黑', 11],
+  gold: ['金色', 12],
+  golden: ['金色', 12],
+  silver: ['银色', 13],
+};
+
+const VFX_PICKUP_TIER_LABELS = {
+  common: ['普通·白', 1],
+  uncommon: ['精良·绿', 2],
+  rare: ['稀有·蓝', 3],
+  mythic: ['神话·紫', 4],
+  epic: ['史诗·红', 5],
+  legendary: ['传说·黄', 6],
+  artifact: ['神器·黑绿', 7],
+  relic: ['遗物·蓝橙', 8],
+  ancient: ['远古·黑金', 9],
+};
+
+function collapseBenchColorVariants(items) {
+  const normalizeStem = s => String(s || '')
+    .replace(/\s+(?:Thingy|Stuff)$/i, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  const groups = new Map();
+  const put = (key, entry) => {
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(entry);
+  };
+
+  for (const it of items) {
+    const name = String(it.name || it.effectId || '').trim();
+    const lc = Number(it.layerCount || 0);
+    let m;
+
+    if (it.packId === 'arpg_realistic_golden_spells') {
+      const isSilver = /^Silver_/i.test(name);
+      const base = name.replace(/^Silver_/i, '');
+      put(`silver:${normalizeStem(base)}`, { it, baseName: base, variantLabel: isSilver ? '银色' : '金色', prio: isSilver ? 2 : 1 });
+      continue;
+    }
+
+    if (it.packId === 'arpg_realistic_pickups_auras_and_buffs') {
+      const cm = name.match(/^Chest\s+([A-Za-z]+)\s+[A-Za-z]+$/i);
+      if (cm && VFX_PICKUP_TIER_LABELS[cm[1].toLowerCase()]) {
+        const [label, prio] = VFX_PICKUP_TIER_LABELS[cm[1].toLowerCase()];
+        put('pickup_chest', { it, baseName: 'Chest Loot', variantLabel: label, prio });
+        continue;
+      }
+      const pm = name.match(/^\d+\)\s+([A-Za-z]+)\s+[A-Za-z]+$/);
+      if (pm && VFX_PICKUP_TIER_LABELS[pm[1].toLowerCase()]) {
+        const [label, prio] = VFX_PICKUP_TIER_LABELS[pm[1].toLowerCase()];
+        put('pickup_orb', { it, baseName: 'Pickup Loot', variantLabel: label, prio });
+        continue;
+      }
+    }
+
+    if ((m = name.match(/^ARPG_([A-Za-z]+)_+(.+)$/)) && VFX_ARPG_THEME_LABELS[m[1].toLowerCase()]) {
+      const themeKey = m[1].toLowerCase();
+      const skill = m[2];
+      const [label, prio] = VFX_ARPG_THEME_LABELS[themeKey];
+      const isDouble = m[0].includes('__');
+      const key = isDouble
+        ? `essentials_or_arcane:${normalizeStem(skill)}:${lc}`
+        : `arpg:${normalizeStem(skill)}:${lc}`;
+      put(key, { it, baseName: isDouble ? skill : `ARPG_${skill}`, variantLabel: label, prio });
+      continue;
+    }
+
+    if (it.packId === 'arpg_realistic_essentials_fire') {
+      const gm = name.match(/^(.+?)_green$/i);
+      const skill = gm ? gm[1] : name;
+      put(`essentials_or_arcane:${normalizeStem(skill)}:${lc}`, {
+        it,
+        baseName: skill,
+        variantLabel: gm ? '绿色' : '火焰',
+        prio: gm ? 3 : 1,
+      });
+      continue;
+    }
+
+    if ((it.packId === 'arpg_realistic_ice_and_water_pack' || it.packId === 'arpg_realistic_demon_vs_angels')
+      && (m = name.match(/^(Ice|Water|Holy|Demon)[_ ]+(.+)$/i))) {
+      const [label, prio] = VFX_ARPG_THEME_LABELS[m[1].toLowerCase()];
+      put(`packtheme:${it.packId}:${normalizeStem(m[2])}`, {
+        it,
+        baseName: m[2],
+        variantLabel: label,
+        prio,
+      });
+      continue;
+    }
+
+    if ((m = name.match(/^(.+?)[_ -]+([A-Za-z]+)$/)) && VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()]) {
+      const [label, prio] = VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()];
+      put(`suf:${it.packId}:${normalizeStem(m[1])}:${lc}`, {
+        it,
+        baseName: m[1].replace(/\s+(?:Thingy|Stuff)$/i, '').trim(),
+        variantLabel: label,
+        prio,
+      });
+      continue;
+    }
+
+    put(`suf:${it.packId}:${normalizeStem(name)}:${lc}`, {
+      it,
+      baseName: name,
+      variantLabel: '默认',
+      prio: 1,
+    });
+  }
+
+  const collapsed = [];
+  for (const arr of groups.values()) {
+    arr.sort((a, b) => (a.prio - b.prio) || String(a.it.name || '').localeCompare(String(b.it.name || '')));
+    if (arr.length === 1) {
+      const only = arr[0].it;
+      collapsed.push({
+        ...only,
+        variants: [{ ...only, variantLabel: arr[0].variantLabel }],
+      });
+      continue;
+    }
+    const head = arr[0];
+    collapsed.push({
+      ...head.it,
+      name: head.baseName,
+      variants: arr.map(entry => ({ ...entry.it, variantLabel: entry.variantLabel })),
+    });
+  }
+  return collapsed;
+}
+
+function getActiveVariant(item) {
+  if (!item) return null;
+  const list = Array.isArray(item.variants) ? item.variants : null;
+  if (!list || list.length <= 1) return list?.[0] || item;
+  const chosenId = activeVariantByBaseId.get(item.id);
+  return (chosenId && list.find(v => v.id === chosenId)) || list[0];
+}
+
 function isItemReviewed(item) {
-  return Boolean(item && reviewedIds.has(item.id));
+  if (!item) return false;
+  if (reviewedIds.has(item.id)) return true;
+  return Array.isArray(item.variants) && item.variants.some(v => reviewedIds.has(v.id));
 }
 
 function compareByReviewThenName(a, b) {
@@ -186,7 +359,11 @@ function getFilteredItems() {
       || (item.assetName || '').toLowerCase().includes(query)
       || (item.pack || '').toLowerCase().includes(query)
       || (item.id || '').toLowerCase().includes(query)
-      || (item.category || '').toLowerCase().includes(query);
+      || (item.category || '').toLowerCase().includes(query)
+      || (Array.isArray(item.variants) && item.variants.some(v =>
+        (v.name || '').toLowerCase().includes(query)
+        || (v.id || '').toLowerCase().includes(query)
+        || (v.variantLabel || '').toLowerCase().includes(query)));
   });
   const catHasPending = new Map();
   for (const item of filtered) {
@@ -927,6 +1104,24 @@ function syncControlsVisibility(item) {
   if (speedWrap) speedWrap.hidden = !isBench;
   if (reviewWrap) reviewWrap.hidden = !item;
   if (reviewToggle) reviewToggle.checked = isItemReviewed(item);
+  if (variantWrap && variantSelect) {
+    const variants = Array.isArray(item?.variants) ? item.variants : [];
+    if (variants.length > 1) {
+      const activeVar = getActiveVariant(item);
+      variantSelect.replaceChildren();
+      for (const v of variants) {
+        const opt = document.createElement('option');
+        opt.value = v.id;
+        opt.textContent = v.variantLabel || v.name || v.id;
+        variantSelect.appendChild(opt);
+      }
+      variantSelect.value = activeVar?.id || variants[0].id;
+      variantWrap.hidden = false;
+    } else {
+      variantSelect.replaceChildren();
+      variantWrap.hidden = true;
+    }
+  }
   if (qualityWrap) qualityWrap.hidden = !isBench;
   if (gridToggleWrap) gridToggleWrap.hidden = !isBench;
   if (bloomToggleWrap) bloomToggleWrap.hidden = !isBench;
@@ -1518,9 +1713,10 @@ function replayActiveVfx() {
   const item = getCurrentItem();
   if (!item) return;
   if (item.isShurikenBench && hgameVfx && activeBenchRecipe) {
+    const activeVar = getActiveVariant(item) || item;
     hgameVfx.reset();
     benchReplayCooldown = 0;
-    const playY = computeBenchPlayY(activeBenchRecipe, item.effectId || item.id);
+    const playY = computeBenchPlayY(activeBenchRecipe, activeVar.effectId || activeVar.id);
     activeBenchHandle = hgameVfx.playEffect(activeBenchRecipe.id, { x: 0, y: playY, z: 0, scale: 1 });
     if (viewport?.camera) hgameVfx.setCamera?.(viewport.camera);
     hgameVfx.update(0.016);
@@ -1529,8 +1725,9 @@ function replayActiveVfx() {
     const qVal = qualitySelect?.value || 'high';
     window.__HGAME_VFX_BENCH__ = {
       id: item.id,
+      variantId: activeVar.id,
       effectId: activeBenchRecipe.id,
-      packId: item.packId,
+      packId: activeVar.packId,
       qualityTier: qVal,
       speed: Math.max(0.1, Number(speedSelect?.value || 1.0)),
       activeParticles: totals.atlasActive,
@@ -1562,14 +1759,15 @@ function replayActiveVfx() {
 
 function buildHGameSnippet(item) {
   if (item?.isShurikenBench) {
-    const eid = item.effectId || item.id;
+    const activeVar = getActiveVariant(item) || item;
+    const eid = activeVar.effectId || activeVar.id;
     return [
-      `// Piloto Studio 特效配方: ${item.name} (${item.category || item.packId})`,
+      `// Piloto Studio 特效配方: ${activeVar.name || item.name} (${item.category || activeVar.packId})`,
       `import { createVfxSystem } from '../vendor/hgame/vfx/index.js';`,
       ``,
       `const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE, maxAtlasParticles: 4096, maxMeshVfx: 256 });`,
       `// 需提前通过 vfx.setAtlas(packAtlasTex, packAtlasMeta.regions) 与 registerMesh 加载该包依赖`,
-      `const recipe = await fetch('${item.recipeUrl}').then(r => r.json());`,
+      `const recipe = await fetch('${activeVar.recipeUrl}').then(r => r.json());`,
       `vfx.registerEffect(recipe);`,
       `vfx.playEffect('${eid}', { x: 0, y: 0, z: 0, scale: 1 });`,
     ].join('\n');
@@ -1632,10 +1830,12 @@ function tickVfx(dt) {
     const st = hgameVfx.getStats();
     const totals = getBenchTelemetryTotals(st);
     const qVal = normalizeBenchQuality(qualitySelect?.value || 'high');
+    const activeVar = getActiveVariant(item) || item;
     window.__HGAME_VFX_BENCH__ = {
       id: item.id,
-      effectId: activeBenchRecipe?.id || item.effectId || item.id,
-      packId: item.packId,
+      variantId: activeVar.id,
+      effectId: activeBenchRecipe?.id || activeVar.effectId || activeVar.id,
+      packId: activeVar.packId,
       qualityTier: qVal,
       speed: speedMul,
       activeParticles: totals.atlasActive,
@@ -1720,6 +1920,7 @@ async function loadCurrentVfx() {
   }
 
   emptyEl.hidden = true;
+  const activeVar = getActiveVariant(item) || item;
   titleEl.textContent = item.name || item.id;
 
   if (item.kind === 'texture') {
@@ -1727,9 +1928,9 @@ async function loadCurrentVfx() {
   }
   syncControlsVisibility(item);
 
-  if (item.isShurikenBench && item.recipeUrl) {
-    const fileName = `${item.effectId || item.id}.vfx.json`;
-    downloadEl.href = item.recipeUrl;
+  if (item.isShurikenBench && activeVar.recipeUrl) {
+    const fileName = `${activeVar.effectId || activeVar.id}.vfx.json`;
+    downloadEl.href = activeVar.recipeUrl;
     downloadEl.download = fileName;
     downloadEl.textContent = `下载 ${fileName}`;
     downloadEl.hidden = false;
@@ -1755,7 +1956,7 @@ async function loadCurrentVfx() {
     vp.start(tickVfx);
   }
   const token = ++loadToken;
-  statusEl.textContent = `正在加载 ${item.name}...`;
+  statusEl.textContent = `正在加载 ${activeVar.name || item.name}...`;
 
   try {
     if (item.isShurikenBench) {
@@ -1776,23 +1977,23 @@ async function loadCurrentVfx() {
       }
 
       const [packBundle, recipe] = await Promise.all([
-        ensureBenchPackAssets(item.packId),
-        benchRecipeCache.has(item.id)
-          ? Promise.resolve(benchRecipeCache.get(item.id))
-          : fetch(item.recipeUrl).then((r) => {
+        ensureBenchPackAssets(activeVar.packId),
+        benchRecipeCache.has(activeVar.id)
+          ? Promise.resolve(benchRecipeCache.get(activeVar.id))
+          : fetch(activeVar.recipeUrl).then((r) => {
               if (!r.ok) throw new Error(`HTTP ${r.status}`);
               return r.json();
             }).then((json) => {
-              benchRecipeCache.set(item.id, json);
+              benchRecipeCache.set(activeVar.id, json);
               return json;
             }),
       ]);
       if (token !== loadToken) return;
 
-      if (activeBenchAtlasPackId !== item.packId) {
+      if (activeBenchAtlasPackId !== activeVar.packId) {
         hgameVfx.setAtlas(packBundle.atlasTex, packBundle.atlasMeta.regions);
         hgameVfx.setTrailTexture(packBundle.atlasTex, [0, 0, 0, 0]);
-        activeBenchAtlasPackId = item.packId;
+        activeBenchAtlasPackId = activeVar.packId;
       }
       await ensureBenchMeshesLoaded(hgameVfx, packBundle.pack.meshAliases);
       if (token !== loadToken) return;
@@ -1802,9 +2003,9 @@ async function loadCurrentVfx() {
       hgameVfx.registerEffect(recipe);
       activeBenchItem = item;
       activeBenchRecipe = recipe;
-      activeBenchPackId = item.packId;
+      activeBenchPackId = activeVar.packId;
 
-      const effectId = item.effectId || recipe.id;
+      const effectId = activeVar.effectId || recipe.id;
       const playY = computeBenchPlayY(recipe, effectId);
       activeBenchHandle = hgameVfx.playEffect(recipe.id, { x: 0, y: playY, z: 0, scale: 1 });
       if (viewport?.camera) hgameVfx.setCamera?.(viewport.camera);
@@ -1819,8 +2020,9 @@ async function loadCurrentVfx() {
       statusEl.textContent = `${item.category || 'Piloto'} · ${recipe.layers.length} 层 · 粒子 ${totals.atlasActive} · 网格 ${totals.meshActive} · DrawCalls ${benchLastDrawCalls}`;
       window.__HGAME_VFX_BENCH__ = {
         id: item.id,
+        variantId: activeVar.id,
         effectId: recipe.id,
-        packId: item.packId,
+        packId: activeVar.packId,
         qualityTier: qTier,
         speed: Number(speedSelect?.value || 1.0),
         activeParticles: totals.atlasActive,
@@ -2020,10 +2222,17 @@ async function loadCurrentVfx() {
 
 async function applyVfxReviewStatus(item, approved) {
   if (!item?.id) return false;
-  const had = reviewedIds.has(item.id);
+  const allFamilyIds = Array.isArray(item.variants) && item.variants.length > 0
+    ? [...new Set([item.id, ...item.variants.map(v => v.id)])]
+    : [item.id];
+  const prevPresent = allFamilyIds.filter(id => reviewedIds.has(id));
   const nextApproved = Boolean(approved);
-  if (nextApproved) reviewedIds.add(item.id);
-  else reviewedIds.delete(item.id);
+  const targetIds = nextApproved ? [item.id] : prevPresent;
+  if (targetIds.length === 0) targetIds.push(item.id);
+  for (const tid of targetIds) {
+    if (nextApproved) reviewedIds.add(tid);
+    else reviewedIds.delete(tid);
+  }
 
   const prevSelectedId = activeSelection.id;
   populateCategoryFilter();
@@ -2036,24 +2245,28 @@ async function applyVfxReviewStatus(item, approved) {
   }
 
   try {
-    const res = await fetch('/api/hgame/vfx/review', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: item.id, approved: nextApproved }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
-    if (Array.isArray(data.reviewedIds)) {
+    let lastData = null;
+    for (const tid of targetIds) {
+      const res = await fetch('/api/hgame/vfx/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: tid, approved: nextApproved }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+      lastData = data;
+    }
+    if (Array.isArray(lastData?.reviewedIds)) {
       reviewedIds.clear();
-      for (const rid of data.reviewedIds) reviewedIds.add(rid);
+      for (const rid of lastData.reviewedIds) reviewedIds.add(rid);
       populateCategoryFilter();
       renderList();
       if (reviewToggle) reviewToggle.checked = isItemReviewed(getCurrentItem());
     }
     return true;
   } catch (err) {
-    if (had) reviewedIds.add(item.id);
-    else reviewedIds.delete(item.id);
+    for (const id of allFamilyIds) reviewedIds.delete(id);
+    for (const id of prevPresent) reviewedIds.add(id);
     populateCategoryFilter();
     renderList();
     if (reviewToggle) reviewToggle.checked = isItemReviewed(getCurrentItem());
@@ -2070,6 +2283,12 @@ async function initVfxView() {
       const item = getCurrentItem();
       if (!item) return;
       void applyVfxReviewStatus(item, reviewToggle.checked);
+    });
+    variantSelect?.addEventListener('change', () => {
+      const item = getCurrentItem();
+      if (!item) return;
+      activeVariantByBaseId.set(item.id, variantSelect.value);
+      void loadCurrentVfx();
     });
     typeFilter.addEventListener('change', () => {
       const filtered = getFilteredItems();
@@ -2184,10 +2403,10 @@ async function initVfxView() {
           });
         }
       }
-      shurikenBenchSystems = nextBenchSystems;
+      shurikenBenchSystems = collapseBenchColorVariants(nextBenchSystems);
     } else if (vfxBenchRes?.available && Array.isArray(vfxBenchRes.effects)) {
       // Legacy fallback when catalog.json v1 is used
-      shurikenBenchSystems = vfxBenchRes.effects.map(ef => ({
+      shurikenBenchSystems = collapseBenchColorVariants(vfxBenchRes.effects.map(ef => ({
         id: ef.id,
         effectId: ef.id,
         packId: 'legacy_v1',
@@ -2200,7 +2419,7 @@ async function initVfxView() {
         isShurikenBench: true,
         recipeUrl: `${vfxBaseUrl}/${ef.recipeFile}`,
         hgamePreset: { color: '#ff944d' },
-      }));
+      })));
     } else {
       shurikenBenchSystems = [];
     }
@@ -2218,14 +2437,25 @@ async function initVfxView() {
   }
 
   populateCategoryFilter();
+  const findItemOrVariant = (all, key) => {
+    if (!key) return null;
+    for (const it of all) {
+      if (it.id === key || it.effectId === key) return { item: it, variant: null };
+      const matchedVar = Array.isArray(it.variants)
+        ? it.variants.find(v => v.id === key || v.effectId === key)
+        : null;
+      if (matchedVar) return { item: it, variant: matchedVar };
+    }
+    return null;
+  };
   const params = new URLSearchParams(window.location.search);
   const reqVfx = params.get('vfx');
   const reqEff = params.get('effect');
   const allItems = getAllItems();
   const filteredItems = getFilteredItems();
-  const deepLinked = (reqVfx && allItems.find(it => it.id === reqVfx))
-    || (reqEff && allItems.find(it => it.effectId === reqEff || it.id === reqEff))
-    || null;
+  const deepMatch = findItemOrVariant(allItems, reqVfx) || findItemOrVariant(allItems, reqEff);
+  const deepLinked = deepMatch ? deepMatch.item : null;
+  if (deepMatch?.variant) activeVariantByBaseId.set(deepMatch.item.id, deepMatch.variant.id);
   const currentExisting = allItems.find(it => it.kind === activeSelection.kind && it.id === activeSelection.id) || null;
   const firstUnreviewed = filteredItems.find(it => !isItemReviewed(it)) || allItems.find(it => !isItemReviewed(it)) || null;
   const initialItem = deepLinked || currentExisting || firstUnreviewed || filteredItems[0] || allItems[0] || null;
@@ -2240,9 +2470,12 @@ async function initVfxView() {
 
 window.__WEBASSET_VFX_TEST__ = {
   listIds: () => getAllItems().map(it => it.id),
-  isReviewed: (id) => reviewedIds.has(id),
+  isReviewed: (id) => {
+    const match = getAllItems().find(it => it.id === id || it.effectId === id || it.variants?.some(v => v.id === id || v.effectId === id));
+    return match ? isItemReviewed(match) : reviewedIds.has(id);
+  },
   setReviewed: async (id, approved) => {
-    const match = getAllItems().find(it => it.id === id || it.effectId === id);
+    const match = getAllItems().find(it => it.id === id || it.effectId === id || it.variants?.some(v => v.id === id || v.effectId === id));
     if (!match) return false;
     return applyVfxReviewStatus(match, approved);
   },
@@ -2251,7 +2484,18 @@ window.__WEBASSET_VFX_TEST__ = {
     if (playBtn) playBtn.textContent = isPlaying ? '暂停' : '播放';
   },
   async select(id) {
-    const match = getAllItems().find(it => it.id === id || it.effectId === id);
+    const all = getAllItems();
+    let match = all.find(it => it.id === id || it.effectId === id);
+    if (!match) {
+      for (const it of all) {
+        const mv = it.variants?.find(v => v.id === id || v.effectId === id);
+        if (mv) {
+          match = it;
+          activeVariantByBaseId.set(it.id, mv.id);
+          break;
+        }
+      }
+    }
     if (!match) return false;
     activeSelection = { kind: match.kind, id: match.id };
     applyItemDefaults(match);

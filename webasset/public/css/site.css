@@ -1872,8 +1872,12 @@ button { color: inherit; }
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.hgame-field[hidden],
 .hgame-switch[hidden] {
   display: none;
+}
+#hgame-vfx-variant-wrap select {
+  max-width: 148px;
 }
 .hgame-stage-title-group .hgame-switch {
   padding: 4px 10px;

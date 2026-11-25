@@ -674,6 +674,7 @@ test('HGame asset API disables static models/materials and serves procedural .hm
     assert.match(html, /id="hgame-vfx-plane-mode"/);
     assert.match(html, /id="hgame-vfx-replay-button"/);
     assert.match(html, /id="hgame-vfx-review-toggle"/);
+    assert.match(html, /id="hgame-vfx-variant-select"/);
     assert.doesNotMatch(html, /精选复刻基准/);
     assert.match(html, /id="hgame-vfx-copy-code"/);
     assert.match(html, /id="nav-decals"/);
