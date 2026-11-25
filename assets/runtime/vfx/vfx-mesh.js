@@ -1101,31 +1101,55 @@ export function createMeshVfxPool({
     return slotIdx;
   }
 
+  function integratePiecewiseCurve(pts, t) {
+    if (!Array.isArray(pts) || pts.length === 0 || t <= 0) return 0;
+    if (pts.length === 1) return Number(pts[0][1] ?? 0) * t;
+    let area = 0;
+    const xFirst = Number(pts[0][0] ?? 0);
+    const yFirst = Number(pts[0][1] ?? 0);
+    if (xFirst > 0) {
+      const seg = Math.min(t, xFirst);
+      area += yFirst * seg;
+      if (t <= xFirst) return area;
+    }
+    for (let i = 0; i < pts.length - 1; i++) {
+      const x0 = Number(pts[i][0] ?? 0);
+      const y0 = Number(pts[i][1] ?? 0);
+      const x1 = Number(pts[i + 1][0] ?? 0);
+      const y1 = Number(pts[i + 1][1] ?? 0);
+      if (t <= x0) break;
+      const endX = Math.min(t, x1);
+      const span = x1 - x0;
+      if (endX > x0 && span > 1e-9) {
+        const f = (endX - x0) / span;
+        const endY = y0 + (y1 - y0) * f;
+        area += 0.5 * (y0 + endY) * (endX - x0);
+      }
+      if (t <= x1) return area;
+    }
+    const last = pts[pts.length - 1];
+    const xLast = Number(last[0] ?? 0);
+    const yLast = Number(last[1] ?? 0);
+    if (t > xLast) {
+      area += yLast * (t - xLast);
+    }
+    return area;
+  }
+
   function integrateRotOverLife(spec, dur, t, seed) {
     if (!spec || t <= 0 || dur <= 0) return 0;
     if (typeof spec === 'number') return spec * dur * t;
     if (Array.isArray(spec)) return (spec[0] + (spec[1] - spec[0]) * seed) * dur * t;
     if (typeof spec !== 'object') return 0;
     const sc = Number.isFinite(spec.scalar) ? spec.scalar : 1;
-    const steps = 8;
-    const du = t / steps;
-    let sum = 0;
     if (spec.mode === 'twoCurves' && Array.isArray(spec.minCurve) && Array.isArray(spec.curve)) {
       const mSc = Number.isFinite(spec.minScalar) ? spec.minScalar : sc;
-      for (let i = 0; i < steps; i++) {
-        const u = (i + 0.5) * du;
-        const a = evaluateSizeCurve(spec.minCurve, u) * mSc;
-        const b = evaluateSizeCurve(spec.curve, u) * sc;
-        sum += (a + (b - a) * seed) * du;
-      }
-      return sum * dur;
+      const a = integratePiecewiseCurve(spec.minCurve, t) * mSc;
+      const b = integratePiecewiseCurve(spec.curve, t) * sc;
+      return (a + (b - a) * seed) * dur;
     }
     if (Array.isArray(spec.curve)) {
-      for (let i = 0; i < steps; i++) {
-        const u = (i + 0.5) * du;
-        sum += evaluateSizeCurve(spec.curve, u) * sc * du;
-      }
-      return sum * dur;
+      return integratePiecewiseCurve(spec.curve, t) * sc * dur;
     }
     return sc * dur * t;
   }

@@ -4452,5 +4452,170 @@ test('VelocityModule single-curve scalar preservation and Rx(180) carrier death 
   }
 });
 
+test('convertUnityPrefab + createMeshVfxPool integrate AmbarBlade Hermite rotationOverLifetime monotonically in one chop', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame_ambarblade_rot_'));
+  try {
+    const prefabPath = path.join(tmpDir, 'AmbarBladeRot.prefab');
+    fs.writeFileSync(
+      prefabPath,
+      [
+        '%YAML 1.1',
+        '%TAG !u! tag:unity3d.com,2011:',
+        '--- !u!1 &100',
+        'GameObject:',
+        '  m_Name: BladeChop',
+        '  m_IsActive: 1',
+        '--- !u!4 &101',
+        'Transform:',
+        '  m_GameObject: {fileID: 100}',
+        '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+        '  m_LocalPosition: {x: 0, y: 0, z: 0}',
+        '  m_LocalScale: {x: 1, y: 1, z: 1}',
+        '  m_Father: {fileID: 0}',
+        '--- !u!198 &102',
+        'ParticleSystem:',
+        '  m_GameObject: {fileID: 100}',
+        '  lengthInSec: 5',
+        '  looping: 0',
+        '  InitialModule:',
+        '    startLifetime:',
+        '      minMaxState: 0',
+        '      scalar: 5',
+        '    startSpeed:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    startSize:',
+        '      minMaxState: 0',
+        '      scalar: 1',
+        '    startRotationX:',
+        '      minMaxState: 0',
+        '      scalar: -1.5707963',
+        '    startRotation:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '  EmissionModule:',
+        '    enabled: 1',
+        '    rateOverTime:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    m_BurstCount: 1',
+        '    m_Bursts:',
+        '    - serializedVersion: 2',
+        '      time: 0',
+        '      countCurve:',
+        '        scalar: 1',
+        '      cycleCount: 1',
+        '      repeatInterval: 0.01',
+        '  RotationModule:',
+        '    enabled: 1',
+        '    separateAxes: 1',
+        '    x:',
+        '      serializedVersion: 2',
+        '      minMaxState: 1',
+        '      scalar: 37.022522',
+        '      minScalar: 0',
+        '      maxCurve:',
+        '        serializedVersion: 2',
+        '        m_Curve:',
+        '        - serializedVersion: 3',
+        '          time: 0.20903778',
+        '          value: -0.0027444065',
+        '          inSlope: -0.052745614',
+        '          outSlope: -0.052745614',
+        '        - serializedVersion: 3',
+        '          time: 0.39860243',
+        '          value: -0.0032482222',
+        '          inSlope: 0.14851181',
+        '          outSlope: 0.14851181',
+        '        - serializedVersion: 3',
+        '          time: 0.47538057',
+        '          value: 0.048846506',
+        '          inSlope: 1.5751183',
+        '          outSlope: 1.5751183',
+        '        - serializedVersion: 3',
+        '          time: 0.5167471',
+        '          value: 0.24895507',
+        '          inSlope: -0.97325015',
+        '          outSlope: -0.97325015',
+        '        - serializedVersion: 3',
+        '          time: 0.539548',
+        '          value: 0.015658569',
+        '          inSlope: -0.12692018',
+        '          outSlope: -0.12692018',
+        '        - serializedVersion: 3',
+        '          time: 0.9773914',
+        '          value: 0',
+        '          inSlope: 0',
+        '          outSlope: 0',
+        '    y:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    curve:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '--- !u!199 &103',
+        'ParticleSystemRenderer:',
+        '  m_GameObject: {fileID: 100}',
+        '  m_Enabled: 1',
+        '  m_RenderMode: 4',
+        '  m_RenderAlignment: 2',
+      ].join('\n'),
+      'utf8',
+    );
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'ambarblade_rot_test' });
+    const layer = recipe.layers[0];
+    assert.ok(layer.rotationOverLifetime?.x?.curve?.length > 10, 'preserves Hermite subdivision along slope-varying tail');
+
+    const scene = new THREE.Scene();
+    const meshVfx = createMeshVfxPool({ mode: '3d', THREE, scene, maxMeshes: 4 });
+    try {
+      const slot = meshVfx.spawn({
+        mesh: 'quad',
+        duration: 5,
+        unityMeshRot: true,
+        meshAlign: 'local',
+        rotX: layer.rotX ?? 1.5708,
+        rotY: layer.rotY ?? 0,
+        rotZ: layer.rotZ ?? 0,
+        rotationOverLifetime: layer.rotationOverLifetime,
+      });
+      const pos = [0, 0, 0];
+      const quat = [0, 0, 0, 1];
+      const scale = [1, 1, 1];
+      let prevPitch = null;
+      const tailPitches = [];
+      for (let step = 1; step < 300; step++) {
+        meshVfx.update(1 / 60);
+        const ok = meshVfx.readSlotTransform(slot, pos, quat, scale);
+        assert.equal(ok, true);
+        // Pure X rotation quaternion [sin(a/2), 0, 0, cos(a/2)] avoids Euler ±PI/2 gimbal reflection
+        const pitch = 2 * Math.atan2(quat[0], quat[3]);
+        const age = step / 60;
+        if (age >= 2.2) {
+          if (prevPitch !== null) {
+            assert.ok(
+              pitch - prevPitch <= 0.005,
+              `chop must not bounce back upward at age=${age.toFixed(2)}s (prev=${prevPitch.toFixed(4)}, curr=${pitch.toFixed(4)})`,
+            );
+          }
+          prevPitch = pitch;
+        }
+        if (age >= 3.8 && age <= 4.95) tailPitches.push(pitch);
+      }
+      const expectedSettled = (layer.rotX ?? 1.5708) - (108.27 * Math.PI) / 180;
+      for (const p of tailPitches) {
+        assert.ok(
+          Math.abs(p - expectedSettled) < 0.03,
+          `settled pitch (${p.toFixed(4)}) should match Unity Hermite -108.27 deg offset (${expectedSettled.toFixed(4)})`,
+        );
+      }
+    } finally {
+      meshVfx.dispose();
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 
 

@@ -165,15 +165,18 @@ function parseCurveKeys(curveBlock, allowNegative = false) {
     }
   }
   if (raw.length < 2) return null;
+  const roundVal = (val) => Number(val.toFixed(allowNegative ? 4 : 3));
+  const roundT = (val) => Number(val.toFixed(allowNegative ? 4 : 3));
   const out = [];
   for (let i = 0; i < raw.length - 1; i++) {
     const a = raw[i];
     const b = raw[i + 1];
     const dt = b.t - a.t;
-    out.push([Number(a.t.toFixed(3)), Number(a.v.toFixed(3))]);
-    if (dt > 0.05 && a.outS !== null && b.inS !== null) {
+    out.push([roundT(a.t), roundVal(a.v)]);
+    if (dt > 0.015 && a.outS !== null && b.inS !== null) {
       const linearSlope = (b.v - a.v) / dt;
-      if (Math.abs(a.outS - linearSlope) > 0.15 || Math.abs(b.inS - linearSlope) > 0.15) {
+      const maxSlopeDiff = Math.max(Math.abs(a.outS - linearSlope), Math.abs(b.inS - linearSlope));
+      if (maxSlopeDiff > 0.15 || (allowNegative && maxSlopeDiff * dt > 0.004)) {
         const sub = 6;
         for (let s = 1; s < sub; s++) {
           const u = s / sub;
@@ -186,13 +189,13 @@ function parseCurveKeys(curveBlock, allowNegative = false) {
           const rawHv = h00 * a.v + h10 * dt * a.outS + h01 * b.v + h11 * dt * b.inS;
           const hv = allowNegative ? rawHv : Math.max(0, rawHv);
           const ht = a.t + dt * u;
-          out.push([Number(ht.toFixed(3)), Number(hv.toFixed(3))]);
+          out.push([roundT(ht), roundVal(hv)]);
         }
       }
     }
   }
   const last = raw[raw.length - 1];
-  out.push([Number(last.t.toFixed(3)), Number(last.v.toFixed(3))]);
+  out.push([roundT(last.t), roundVal(last.v)]);
 
   const tStart = out[0][0];
   const period = out[out.length - 1][0] - tStart;
