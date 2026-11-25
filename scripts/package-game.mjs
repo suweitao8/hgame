@@ -12,7 +12,7 @@ import { PIXI_BUNDLER_PATH, casObjectPath, hashPixiSources, matchPixiBuildBytes,
 import { auditKtx2Textures } from './lib/toktx.mjs';
 
 const DEFAULT_ENGINE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const NATIVE_MINIGAME_TARGETS = ['wechat', 'douyin', 'taptap'];
+const NATIVE_MINIGAME_TARGETS = ['wechat', 'douyin', 'taptap', 'bilibili'];
 
 const RUNTIME_DIR_PREFIXES = new Set([
   'core',
@@ -886,6 +886,7 @@ export async function packageGameRelease({
 } = {}) {
   if (NATIVE_MINIGAME_TARGETS.includes(target)) {
     if (target === 'taptap' && flatZip === false) throw new Error('TapTap requires game.js at the ZIP root');
+    if (target === 'bilibili' && flatZip === false) throw new Error('Bilibili requires game.js at the ZIP root');
     if ([toySdk, slug, poster, icon].some(value => value !== undefined) || allowUncompressedKtx2) {
       throw new Error('Toy options are only available with --target toy');
     }
@@ -1825,7 +1826,7 @@ async function main() {
   const opts = parseCliArgs(process.argv.slice(2));
   if (opts.help) {
     console.log(
-      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy|wechat|douyin|taptap] [--appid <mini-game-appid>] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--allow-uncompressed-ktx2] [--no-minify] [--engine]',
+      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy|' + NATIVE_MINIGAME_TARGETS.join('|') + '] [--appid <mini-game-appid>] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--allow-uncompressed-ktx2] [--no-minify] [--engine]',
     );
     return;
   }

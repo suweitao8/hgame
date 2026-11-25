@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, cp, mkdir, mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -38,6 +38,7 @@ function createHost(archive, saved, target = 'wechat') {
   const drawnText = [];
   const audioPaths = [];
   const images = [];
+  const launchEvents = [];
   const frames = new Map();
   let fills = 0;
   let frameId = 0;
@@ -57,6 +58,9 @@ function createHost(archive, saved, target = 'wechat') {
     [target === 'wechat' ? 'getWindowInfo' : 'getSystemInfoSync']: () => windowInfo,
     getFileSystemManager: () => ({
       readFile({ filePath, encoding, success, fail }) {
+        if (target === 'bilibili' && /\.json$/i.test(filePath)) {
+          return fail({ errMsg: 'JSON is compiled by the Bilibili release tool' });
+        }
         const bytes = archive.readFile(filePath);
         if (!bytes) return fail({ errMsg: 'missing file' });
         success({ data: encoding ? bytes.toString(encoding) : Uint8Array.from(bytes).buffer });
@@ -73,16 +77,17 @@ function createHost(archive, saved, target = 'wechat') {
     setStorageSync: (key, value) => saved.set(key, value),
     removeStorageSync: (key) => saved.delete(key),
   };
-  const resizeEvent = target === 'wechat' ? 'WindowResize' : 'DeviceOrientationChange';
+  if (target === 'bilibili') api.launchSuccess = () => launchEvents.push(drawnText.at(-1));
+  const resizeEvent = target === 'douyin' || target === 'taptap' ? 'DeviceOrientationChange' : 'WindowResize';
   for (const name of ['TouchStart', 'TouchMove', 'TouchEnd', 'TouchCancel', 'Show', 'Hide', resizeEvent]) {
     api['on' + name] = (listener) => handlers.set(name, listener);
     api['off' + name] = (listener) => { if (handlers.get(name) === listener) handlers.delete(name); };
   }
   return {
-    api, canvas, drawnText, audioPaths, images, frames, handlers,
+    api, canvas, drawnText, audioPaths, images, frames, handlers, launchEvents,
     resize(info) {
       windowInfo = info;
-      handlers.get(resizeEvent)?.(target === 'wechat' ? info : { value: 'portrait' });
+      handlers.get(resizeEvent)?.(resizeEvent === 'WindowResize' ? info : { value: 'portrait' });
     },
     emit: (name, value) => handlers.get(name)?.(value),
     get fills() { return fills; },
@@ -100,6 +105,7 @@ for (const [target, global, appid] of [
   ['wechat', 'wx', 'wx1234567890abcdef'],
   ['douyin', 'tt', 'tt1234567890abcdef'],
   ['taptap', 'tap', 'taptap-test-appid'],
+  ['bilibili', 'bl', 'biligame-hgame-test'],
 ]) {
   test(`${target} exports a native project and runs a complete canvas round without a DOM`, async (t) => {
     const outDir = await mkdtemp(path.join(os.tmpdir(), 'hgame-native-export-'));
@@ -113,21 +119,26 @@ for (const [target, global, appid] of [
     assert.equal(path.basename(summary.outputDir), `canvas-tap_2_1_${target}`);
     const archive = new AdmZip(summary.zipPath);
     const names = archive.getEntries().map(entry => entry.entryName).sort();
-    assert.deepEqual(names, [
-      'LICENSE.txt', 'assets/chime.wav', 'assets/level.json', 'assets/target.png',
-      'game.js', 'game.json', 'project.config.json',
-    ]);
+    const levelFile = target === 'bilibili' ? 'assets/level.json.txt' : 'assets/level.json';
+    const expectedFiles = ['LICENSE.txt', 'assets/chime.wav', levelFile, 'assets/target.png', 'game.js', 'game.json'];
+    if (target !== 'bilibili') expectedFiles.push('project.config.json');
+    assert.deepEqual(names, expectedFiles);
+    if (target === 'bilibili') assert.doesNotMatch(archive.readAsText('game.js'), /\basync\s+function\b/);
     const gameJson = JSON.parse(archive.readAsText('game.json'));
     assert.equal(gameJson.deviceOrientation, 'portrait');
     if (target === 'taptap') {
       assert.equal(gameJson.appId, appid);
       assert.equal(gameJson.productVersion, '2.1.0');
+    } else if (target === 'bilibili') {
+      assert.deepEqual(gameJson, { deviceOrientation: 'portrait', appId: appid, version: '2.1.0' });
     } else assert.deepEqual(gameJson, { deviceOrientation: 'portrait' });
-    const project = JSON.parse(archive.readAsText('project.config.json'));
-    assert.equal(project.appid, appid);
-    assert.equal(project.projectname, '点靶');
-    assert.deepEqual(project.packOptions.include, [{ type: 'folder', value: 'assets' }]);
-    if (target !== 'douyin') assert.equal(project.compileType, 'game');
+    if (target !== 'bilibili') {
+      const project = JSON.parse(archive.readAsText('project.config.json'));
+      assert.equal(project.appid, appid);
+      assert.equal(project.projectname, '点靶');
+      assert.deepEqual(project.packOptions.include, [{ type: 'folder', value: 'assets' }]);
+      if (target !== 'douyin') assert.equal(project.compileType, 'game');
+    }
     assert.equal(await readFile(path.join(summary.outputDir, 'game.js'), 'utf8'), archive.readAsText('game.js'));
 
     const saved = new Map();
@@ -142,9 +153,11 @@ for (const [target, global, appid] of [
     assert.deepEqual([host.canvas.width, host.canvas.height], [720, 1600]);
     assert.deepEqual(host.images, ['assets/target.png']);
     assert.equal(host.drawnText.at(-1), '0/3');
+    if (target === 'bilibili') assert.deepEqual(host.launchEvents, ['0/3']);
     assert.equal(host.frames.size, 1);
     host.emit('Hide');
     assert.equal(host.frames.size, 0);
+    if (target === 'bilibili') assert.deepEqual(host.launchEvents, ['0/3']);
     const [x, y] = target === 'douyin' ? ['screenX', 'screenY'] : ['clientX', 'clientY'];
     const touch = { changedTouches: [{ identifier: 7, [x]: 180, [y]: 560 }] };
     host.emit('TouchStart', touch);
@@ -321,6 +334,33 @@ test('exported TapTap bundles resolve login and native SDK calls within the tap 
   assert.equal(saved.get('verified-code'), 'test-login-code');
 });
 
+test('Bilibili rejects missing AppID, disallowed files, and conflicting JSON resource destinations', async (t) => {
+  const dir = await createProject(t);
+  const packageOptions = { projectDir: dir, engineRoot: root, target: 'bilibili' };
+  await assert.rejects(() => packageGameRelease(packageOptions), /bilibili.*--appid/i);
+  const pack = () => packageGameRelease({ ...packageOptions, appid: 'biligame-hgame-test' });
+  const setAssets = assets => writeFile(path.join(dir, 'minigame.config.json'), JSON.stringify({ entry: 'src/main.js', assets }));
+  await setAssets(['assets/theme.woff2']);
+  await assert.rejects(pack, /bilibili.*theme\.woff2/i);
+  await setAssets(['assets/rules.json', 'assets/rules.json.txt']);
+  await assert.rejects(pack, /bilibili.*rules\.json\.txt.*conflict/i);
+});
+
+test('Bilibili checks the native project size before replacing an exported ZIP', async (t) => {
+  const dir = await createProject(t);
+  const pack = () => packageGameRelease({ projectDir: dir, engineRoot: root, target: 'bilibili', appid: 'biligame-hgame-test' });
+  const first = await pack();
+  const previous = await readFile(first.zipPath);
+  const asset = path.join(dir, 'assets/large.bin');
+  await writeFile(asset, '');
+  await truncate(asset, 30 * 1024 * 1024);
+  await writeFile(path.join(dir, 'minigame.config.json'), JSON.stringify({
+    entry: 'src/main.js', assets: ['assets/large.bin'],
+  }));
+  await assert.rejects(pack, /bilibili.*30 MiB/i);
+  assert.deepEqual(await readFile(first.zipPath), previous);
+});
+
 test('generated HGame projects carry native packaging tools and resolve their vendored HGame modules', async (t) => {
   const buildRoot = path.join(root, 'build');
   await mkdir(buildRoot, { recursive: true });
@@ -332,6 +372,7 @@ test('generated HGame projects carry native packaging tools and resolve their ve
   assert.match(pkg.scripts['package:wechat'], /--target wechat/);
   assert.match(pkg.scripts['package:douyin'], /--target douyin/);
   assert.match(pkg.scripts['package:taptap'], /--target taptap/);
+  assert.match(pkg.scripts['package:bilibili'], /--target bilibili/);
   await cp(path.join(fixture, 'assets'), path.join(dir, 'assets'), { recursive: true });
   await cp(path.join(fixture, 'src/main.js'), path.join(dir, 'src/minigame.js'));
   await writeFile(path.join(dir, 'minigame.config.json'), JSON.stringify({
@@ -339,8 +380,9 @@ test('generated HGame projects carry native packaging tools and resolve their ve
     entry: 'src/minigame.js',
     deviceOrientation: 'landscape',
   }));
-  for (const target of ['wechat', 'taptap']) {
-    const result = await exec(process.execPath, ['scripts/package-game.mjs', '--target', target], { cwd: dir });
+  for (const target of ['wechat', 'taptap', 'bilibili']) {
+    const appid = target === 'bilibili' ? ['--appid', 'biligame-hgame-test'] : [];
+    const result = await exec(process.execPath, ['scripts/package-game.mjs', '--target', target, ...appid], { cwd: dir });
     const archive = new AdmZip(JSON.parse(result.stdout).zipPath);
     assert.equal(JSON.parse(archive.readAsText('game.json')).deviceOrientation, 'landscape');
     if (target === 'wechat') assert.equal(JSON.parse(archive.readAsText('project.config.json')).appid, 'touristappid');

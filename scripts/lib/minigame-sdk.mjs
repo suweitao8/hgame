@@ -1,3 +1,14 @@
+const BILIBILI_MINIMUM_SDK = { share: [3, 8], rewardedVideo: [4, 0] };
+
+function bilibiliSdkSupported(api, capability) {
+  const minimum = BILIBILI_MINIMUM_SDK[capability];
+  if (!minimum) return true;
+  const version = /^(\d+)\.(\d+)(?:\.|$)/.exec(api.getSystemInfoSync?.()?.SDKVersion);
+  if (!version) return false;
+  const major = Number(version[1]);
+  return major > minimum[0] || (major === minimum[0] && Number(version[2]) >= minimum[1]);
+}
+
 function sdkError(value, method) {
   if (value instanceof Error) return value;
   const error = new Error(value?.errMsg || value?.message || (typeof value === 'string' ? value : method + ' failed'));
@@ -50,14 +61,17 @@ export function createMinigameSdk(api, target) {
     getLaunchOptions: 'getLaunchOptionsSync',
     share: shareMethod,
     rewardedVideo: 'createRewardedVideoAd',
+    ...(target === 'bilibili' ? { launchSuccess: 'launchSuccess' } : {}),
   };
   let ad;
   let adUnit;
   let playing = false;
+  let launchReported = false;
 
   function supports(capability) {
     return Object.prototype.hasOwnProperty.call(capabilities, capability) &&
-      typeof api[capabilities[capability]] === 'function';
+      typeof api[capabilities[capability]] === 'function' &&
+      (target !== 'bilibili' || bilibiliSdkSupported(api, capability));
   }
 
   function requireCapability(capability) {
@@ -84,6 +98,13 @@ export function createMinigameSdk(api, target) {
       requireCapability('getLaunchOptions');
       return api.getLaunchOptionsSync();
     },
+    launchSuccess() {
+      requireCapability('launchSuccess');
+      if (launchReported) return false;
+      api.launchSuccess();
+      launchReported = true;
+      return true;
+    },
     async share({ title, imageUrl, query, channel, templateId, sceneParam } = {}) {
       requireCapability('share');
       if (target === 'taptap') {
@@ -94,6 +115,10 @@ export function createMinigameSdk(api, target) {
       if (target === 'wechat') {
         api.shareAppMessage({ title, imageUrl, query });
         return { status: 'requested' };
+      }
+      if (target === 'bilibili') {
+        await callWithCallbacks(api, shareMethod, { title, imageUrl, query });
+        return { status: 'shared' };
       }
       return new Promise((resolve, reject) => api.shareAppMessage({
         title,
@@ -129,6 +154,7 @@ export function createMinigameSdk(api, target) {
           ad = next;
           adUnit = adUnitId;
         }
+        if (target === 'bilibili') api.reportScene?.({ sceneId: 1007 });
         return await showAd(ad);
       } finally {
         playing = false;

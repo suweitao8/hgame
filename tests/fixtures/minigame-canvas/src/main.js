@@ -60,5 +60,6 @@ export async function start(host) {
     draw();
   });
   draw();
+  if (host.sdk.supports('launchSuccess')) host.sdk.launchSuccess();
   if (host.visible) frame = host.requestFrame(tick);
 }

@@ -8,13 +8,17 @@ import { casObjectPath, readAssetManifest, resolveAssetStoreDir, shouldIgnoreFor
 const CONFIG = 'minigame.config.json';
 const HOST_MODULE = fileURLToPath(new URL('./minigame-host.mjs', import.meta.url));
 const SDK_MODULE = fileURLToPath(new URL('./minigame-sdk.mjs', import.meta.url));
-const SIZE_MIB = { wechat: 4, douyin: 20, taptap: 60 };
-const HOST_GLOBAL = { wechat: 'wx', douyin: 'tt', taptap: 'tap' };
+const SIZE_MIB = { wechat: 4, douyin: 20, taptap: 60, bilibili: 30 };
+const HOST_GLOBAL = { wechat: 'wx', douyin: 'tt', taptap: 'tap', bilibili: 'bl' };
 const MEDIA_EXTENSIONS = new Set([
   '.aac', '.bin', '.flac', '.gif', '.glb', '.gltf', '.jpeg', '.jpg', '.json', '.ktx', '.ktx2',
   '.m4a', '.mp3', '.mp4', '.ogg', '.otf', '.png', '.svg', '.ttf', '.txt', '.wav', '.webp', '.woff', '.woff2',
 ]);
 const DOUYIN_UNLISTED_EXTENSIONS = new Set(['.ktx2', '.webp', '.woff2']);
+const BILIBILI_MEDIA_EXTENSIONS = new Set([
+  '.bin', '.gif', '.jpeg', '.jpg', '.json', '.ktx', '.m4a', '.mp3', '.mp4',
+  '.ogg', '.png', '.svg', '.ttf', '.txt', '.wav', '.webp',
+]);
 const PROJECT_CODE = /\.(?:[cm]?[jt]s|json)$/i;
 const PRIVATE_ASSETS = new Set(['private', 'library', 'material-library']);
 
@@ -56,18 +60,29 @@ async function loadConfig(projectDir, target) {
   }
   if (!Array.isArray(assets)) throw new TypeError(CONFIG + ' assets must be an array of file paths');
   const unique = new Set();
+  const destinations = new Set();
+  const assetAliases = {};
   for (const file of assets) {
     if (typeof file !== 'string' || !file.startsWith('assets/') || !isAsset(file.slice('assets/'.length))) {
       throw new Error(CONFIG + ' contains an unsupported package asset: ' + JSON.stringify(file));
     }
-    if (target === 'douyin' && DOUYIN_UNLISTED_EXTENSIONS.has(path.posix.extname(file).toLowerCase())) {
+    const extension = path.posix.extname(file).toLowerCase();
+    if (target === 'douyin' && DOUYIN_UNLISTED_EXTENSIONS.has(extension)) {
       throw new Error('douyin upload does not list the format for ' + file + '. Use a supported format such as PNG, WOFF or KTX.');
+    }
+    if (target === 'bilibili' && !BILIBILI_MEDIA_EXTENSIONS.has(extension)) {
+      throw new Error('Bilibili upload does not support the format for ' + file + '.');
     }
     const normalized = file.toLowerCase();
     if (unique.has(normalized)) throw new Error(CONFIG + ' has a duplicate asset path: ' + file);
     unique.add(normalized);
+    // The Bilibili compiler consumes .json files, so runtime reads use an allowed text file.
+    if (target === 'bilibili' && extension === '.json') assetAliases[file] = file + '.txt';
+    const destination = assetAliases[file] ?? file;
+    if (destinations.has(destination.toLowerCase())) throw new Error('Bilibili asset ' + destination + ' conflicts with another packaged file');
+    destinations.add(destination.toLowerCase());
   }
-  return { entry, assets: assets.slice().sort(), deviceOrientation };
+  return { entry, assets: assets.slice().sort(), assetAliases, deviceOrientation };
 }
 
 async function canonicalIfExists(file) {
@@ -79,7 +94,7 @@ async function canonicalIfExists(file) {
   }
 }
 
-async function compileGame({ projectDir, engineRoot, entry, target, game, assets, minify }) {
+async function compileGame({ projectDir, engineRoot, entry, target, game, assets, assetAliases, minify }) {
   let esbuild;
   try {
     const requireFrom = createRequire(path.join(engineRoot || projectDir, 'package.json'));
@@ -111,7 +126,7 @@ async function compileGame({ projectDir, engineRoot, entry, target, game, assets
     'const api = typeof ' + global + ' !== "undefined" ? ' + global + ' :',
     '  typeof GameGlobal !== "undefined" ? GameGlobal.' + global + ' : undefined;',
     'export const host = createMinigameHost(api, ' + JSON.stringify(target) + ', ' +
-      JSON.stringify(game) + ', ' + JSON.stringify(assets) + ');',
+      JSON.stringify(game) + ', ' + JSON.stringify(assets) + ', ' + JSON.stringify(assetAliases) + ');',
   ].join('\n');
   const contents = [
     'import {host} from "hgame:minigame-bootstrap";',
@@ -127,7 +142,7 @@ async function compileGame({ projectDir, engineRoot, entry, target, game, assets
     inject: [hostFile],
     format: 'iife',
     platform: 'browser',
-    target: 'es2018',
+    target: target === 'bilibili' ? 'es2016' : 'es2018',
     tsconfigRaw: {},
     write: false,
     minify,
@@ -215,14 +230,22 @@ async function getAsset(projectDir, assetsRoot, storeDir, manifest, relative) {
   throw new Error('Missing package asset ' + relative + ' in the HGame asset store (SHA-256 ' + digest + ')');
 }
 
+function threePartVersion(value, platform) {
+  const version = value.trim().replace(/^[vV]/, '');
+  if (!/^\d+(?:\.\d+){0,2}$/.test(version)) throw new Error(platform + ' version must be numeric, for example 1.2.0');
+  const [major, minor = '0', patch = '0'] = version.split('.');
+  return [major, minor, patch].join('.');
+}
+
 export async function assembleMinigame({ stage, projectDir, engineRoot, target, appid, assetStore, minify, game }) {
   projectDir = await realpath(projectDir);
-  const { entry, assets, deviceOrientation } = await loadConfig(projectDir, target);
+  const { entry, assets, assetAliases, deviceOrientation } = await loadConfig(projectDir, target);
+  if (target === 'bilibili' && appid === undefined) throw new Error('Bilibili requires --appid <mini-game-appid>');
   if (appid !== undefined && (typeof appid !== 'string' || !/^[a-z0-9_-]+$/i.test(appid))) {
     throw new Error('--appid must be a platform AppID');
   }
   const [bundle, license] = await Promise.all([
-    compileGame({ projectDir, engineRoot, entry, target, game, assets, minify }),
+    compileGame({ projectDir, engineRoot, entry, target, game, assets, assetAliases, minify }),
     readFile(new URL('./hgame-license.txt', import.meta.url)).catch(error => {
       if (error.code !== 'ENOENT') throw error;
       return readFile(new URL('../../LICENSE', import.meta.url));
@@ -235,21 +258,22 @@ export async function assembleMinigame({ stage, projectDir, engineRoot, target, 
   if (assets.length) project.packOptions = { include: [{ type: 'folder', value: 'assets' }] };
   const gameOptions = { deviceOrientation };
   if (target === 'taptap') {
-    const version = game.version.trim().replace(/^[vV]/, '');
-    if (!/^\d+(?:\.\d+){0,2}$/.test(version)) throw new Error('TapTap version must be numeric, for example 1.2.0');
-    const [major, minor = '0', patch = '0'] = version.split('.');
     project.compileType = 'game';
     gameOptions.productName = game.name;
-    gameOptions.productVersion = [major, minor, patch].join('.');
+    gameOptions.productVersion = threePartVersion(game.version, 'TapTap');
     if (appid !== undefined) gameOptions.appId = appid;
+  }
+  if (target === 'bilibili') {
+    gameOptions.appId = appid;
+    gameOptions.version = threePartVersion(game.version, 'Bilibili');
   }
   const json = data => Buffer.from(JSON.stringify(data, null, 2) + '\n');
   const files = new Map([
     ['game.js', bundle],
     ['game.json', json(gameOptions)],
-    ['project.config.json', json(project)],
     ['LICENSE.txt', license],
   ]);
+  if (target !== 'bilibili') files.set('project.config.json', json(project));
   let bytes = Array.from(files.values()).reduce((total, file) => total + file.length, 0);
   const limit = SIZE_MIB[target] * 1024 * 1024;
   const checkSize = () => {
@@ -273,7 +297,7 @@ export async function assembleMinigame({ stage, projectDir, engineRoot, target, 
       if (digest && createHash('sha256').update(data).digest('hex') !== digest) {
         throw new Error('Package asset ' + relative + ' does not match its SHA-256: ' + digest);
       }
-      files.set(relative, data);
+      files.set(assetAliases[relative] ?? relative, data);
     }
   }
   for (const [relative, data] of files) {

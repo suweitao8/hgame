@@ -98,11 +98,11 @@ function frameScheduler(api, canvas) {
   };
 }
 
-function assetService(api, listedFiles) {
+function assetService(api, listedFiles, assetAliases) {
   const files = new Set(listedFiles);
   function assetPath(file) {
     if (!files.has(file)) throw new Error('Mini-game asset is not declared in minigame.config.json: ' + file);
-    return file;
+    return assetAliases[file] ?? file;
   }
 
   function read(file, encoding) {
@@ -166,7 +166,7 @@ function mapTouches(list) {
   })).filter(touch => Number.isFinite(touch.x) && Number.isFinite(touch.y));
 }
 
-export function createMinigameHost(api, target, game, listedFiles) {
+export function createMinigameHost(api, target, game, listedFiles, assetAliases = {}) {
   if (typeof api?.createCanvas !== 'function') throw new Error('The ' + target + ' mini-game runtime is required');
   const canvas = api.createCanvas();
   const resizeListeners = new Set();
@@ -178,7 +178,7 @@ export function createMinigameHost(api, target, game, listedFiles) {
     const info = api.getWindowInfo?.() ?? api.getSystemInfoSync?.() ?? {};
     const width = event?.windowWidth ?? info.windowWidth ?? info.screenWidth ?? canvas.width;
     const height = event?.windowHeight ?? info.windowHeight ?? info.screenHeight ?? canvas.height;
-    const pixelRatio = Math.max(1, Number(info.pixelRatio) || 1);
+    const pixelRatio = Math.max(1, Number(info.pixelRatio ?? info.devicePixelRatio) || 1);
     if (!(width > 0 && height > 0)) throw new Error('Mini-game viewport size is unavailable');
     if (viewport?.width === width && viewport.height === height && viewport.pixelRatio === pixelRatio) return;
     viewport = Object.freeze({ width, height, pixelRatio });
@@ -217,7 +217,7 @@ export function createMinigameHost(api, target, game, listedFiles) {
         changedTouches: mapTouches(event.changedTouches ?? event.touches),
       }));
     },
-    assets: assetService(api, listedFiles),
+    assets: assetService(api, listedFiles, assetAliases),
     storage: storageService(api),
     sdk: createMinigameSdk(api, target),
   });

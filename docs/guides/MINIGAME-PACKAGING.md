@@ -1,6 +1,6 @@
-# 微信、抖音与 TapTap 小游戏打包
+# 微信、抖音、TapTap 与 B 站原生小游戏打包
 
-HGame 可从同一个原生入口导出微信、抖音和 TapTap 小游戏。每次构建生成原生工程目录和同名 ZIP。各平台使用自己的 AppID 和发行流程。
+HGame 可从同一个原生入口导出微信、抖音、TapTap 和 B 站游戏中心小游戏。每次构建生成原生工程目录和同名 ZIP。各平台使用自己的 AppID 和发行流程。
 
 ## 导出命令
 
@@ -10,11 +10,14 @@ HGame 可从同一个原生入口导出微信、抖音和 TapTap 小游戏。每
 npm run package:wechat -- <游戏目录> --appid <微信小游戏AppID>
 npm run package:douyin -- <游戏目录> --appid <抖音小游戏AppID>
 npm run package:taptap -- <游戏目录> --appid <TapTap小游戏AppID>
+npm run package:bilibili -- <游戏目录> --appid <B站小游戏AppID>
 ```
 
-默认使用 `game.config.json` 的版本号，可用 `--version` 覆盖。工程位于游戏目录的 `build/<id>_<version>_<platform>/`。目录和默认 ZIP 的根目录包含 `game.js`、`game.json`、`project.config.json` 以及本地运行资源。
+默认使用 `game.config.json` 的版本号，可用 `--version` 覆盖。工程位于游戏目录的 `build/<id>_<version>_<platform>/`。目录和默认 ZIP 的根目录包含 `game.js`、`game.json` 以及本地运行资源。微信、抖音和 TapTap 另有 `project.config.json`。
 
 微信和抖音开发者工具使用工程目录。TapTap 使用根目录平铺的 ZIP，并将版本写成三段式，例如 `1.2` 会写成 `1.2.0`。省略 `--appid` 可导出本地验证样板，平台预览和上传使用真实小游戏 AppID 与账号权限。TapTap 真机调试也可从工程目录启动官方调试插件。[TapTap 包体规范](https://developer.taptap.cn/minigameapidoc/quick-start/guide/creation-improvement/) · [TapTap 真机调试](https://developer.taptap.cn/minigameapidoc/dev/dev-support/debugging/)
+
+B 站原生小游戏构建需要 `--appid`，写入 `game.json.appId`，同时写入三段式 `game.json.version`。官方开发者工具使用工程目录，原生小游戏 CLI 可在该目录内操作。B 站 Toy 网页游戏使用 `npm run package:toy` 和 `createToyBridge`。[B 站原生小游戏配置](https://miniapp.bilibili.com/small-game-doc/framework/config) · [B 站原生小游戏开发工具](https://miniapp.bilibili.com/small-game-doc/guide/publish/)
 
 可以直接构建仓库自带的点靶样板。
 
@@ -22,6 +25,7 @@ npm run package:taptap -- <游戏目录> --appid <TapTap小游戏AppID>
 npm run package:wechat -- tests/fixtures/minigame-canvas
 npm run package:douyin -- tests/fixtures/minigame-canvas
 npm run package:taptap -- tests/fixtures/minigame-canvas
+npm run package:bilibili -- tests/fixtures/minigame-canvas --appid biligame-hgame-test
 ```
 
 新生成的游戏也可在本目录运行对应的 npm 打包命令，运行前安装本项目的 esbuild 开发依赖。已有游戏可直接调用 HGame 根目录的命令。已同步打包脚本的项目可以使用 `node scripts/package-game.mjs --target <platform>`。
@@ -40,7 +44,8 @@ npm run package:taptap -- tests/fixtures/minigame-canvas
 
 - `entry` 指向 `src/` 下的 JavaScript 或 TypeScript 文件，导出 `start(host)`。编译器将它及静态依赖合并为 `game.js`。游戏代码、数据模块可从 `src/` 相对导入，也可用 `@hgame/platform/storage.js` 一类路径引用 HGame 模块。异步初始化写在 `start` 内。
 - `deviceOrientation` 支持 `portrait`、`landscape`，默认竖屏。
-- `assets` 枚举要发布的 `assets/` 下的本地文件。打包器优先使用项目文件，缺失时按 `assets.manifest.json` 从 HGame 资产库读取。三端保留同一资源相对路径。单包预检按未压缩工程体积计算，微信 4 MiB、抖音 20 MiB、TapTap 60 MiB。TapTap 审核规范另列 20 MB，发布时以开发者后台的实际门槛为准。三端图片可使用 PNG 或 JPG，抖音的上传格式参见其开发指南。[TapTap 开发限制](https://developer.taptap.cn/minigameapidoc/dev/tutorial/overview/) · [TapTap 审核规范](https://developer.taptap.cn/minigameapidoc/tap-operation/operation-standards/review-standards/)
+- `assets` 枚举要发布的 `assets/` 下的本地文件。打包器优先使用项目文件，缺失时按 `assets.manifest.json` 从 HGame 资产库读取。四端的 `host.assets` 使用同一资源路径，B 站包里的 JSON 文件以 `.json.txt` 保存，绕开平台的 JSON 编译。B 站按上传文件白名单校验资源。[B 站目录结构与文件白名单](https://miniapp.bilibili.com/small-game-doc/framework/structure)
+- 单包预检按未压缩工程体积计算，微信 4 MiB、抖音 20 MiB、TapTap 60 MiB、B 站 30 MiB。TapTap 审核规范另列 20 MB，发布时以开发者后台的实际门槛为准。[TapTap 开发限制](https://developer.taptap.cn/minigameapidoc/dev/tutorial/overview/) · [TapTap 审核规范](https://developer.taptap.cn/minigameapidoc/tap-operation/operation-standards/review-standards/) · [B 站包体常见问题](https://miniapp.bilibili.com/small-game-doc/archives)
 
 点靶源码位于 HGame 仓库的 `tests/fixtures/minigame-canvas/src/main.js`。项目可以共享关卡和玩法模块，同时保留各自的浏览器入口和小游戏入口。原生运行时使用平台画布和触控，HTML/CSS 界面需要使用画布重绘。当前样板验证 Canvas 2D，使用 Pixi、Three.js、Rapier WASM 或浏览器专用 API 的项目需要单独适配及验证。
 
@@ -62,19 +67,22 @@ npm run package:taptap -- tests/fixtures/minigame-canvas
 
 ## 平台 SDK
 
-微信、抖音和 TapTap 的 `start(host)` 都可以调用 `host.sdk`。在用户主动触发登录、分享或激励视频的交互时调用对应接口。
+四端的 `start(host)` 都可以调用 `host.sdk`。在用户主动触发登录、分享或激励视频的交互时调用对应接口。
 
 | 接口 | 行为 |
 | --- | --- |
-| `sdk.supports(name)` | 判断宿主是否提供 `login`、`checkSession`、`getLaunchOptions`、`share`、`rewardedVideo` 对应接口 |
+| `sdk.supports(name)` | 判断宿主是否提供 `login`、`checkSession`、`getLaunchOptions`、`share`、`rewardedVideo`。B 站还可检测 `launchSuccess` |
 | `await sdk.login()` | 返回一次性账号凭证 `{ code }`。项目服务端用它换取平台登录态 |
 | `await sdk.checkSession()`、`sdk.getLaunchOptions()` | 查询宿主登录态是否仍有效，或读取分享等启动参数 |
-| `await sdk.share(options)` | 微信用 `title`、`imageUrl`、`query`。抖音用 `title`、`query`、`templateId`、`channel`。TapTap 用后台配置的 `templateId` 和可选的 `sceneParam` |
+| `await sdk.share(options)` | 微信和 B 站用 `title`、`imageUrl`、`query`。抖音用 `title`、`query`、`templateId`、`channel`。TapTap 用后台配置的 `templateId` 和可选的 `sceneParam` |
 | `await sdk.showRewardedVideo(adUnitId)` | 等待广告关闭，只有宿主明确确认播完时才返回 `{ completed: true }`。使用各平台自己的广告位 ID |
-| `sdk.native` | 提供 `wx`、`tt` 或 `tap` 的原生接口，供云存档、排行榜和各平台专属能力使用 |
+| `sdk.launchSuccess()` | B 站首页成功绘制后调用，单次冷启动只上报一次 |
+| `sdk.native` | 提供 `wx`、`tt`、`tap` 或 `bl` 的原生接口，供各平台专属能力使用 |
 
-分享结果中，微信的 `requested` 表示已请求分享，抖音的 `shared` 或 `cancelled` 表示平台已回调结果，TapTap 的 `opened` 表示已打开面板。TapTap 的实际分享结果可用 `sdk.native.onShareMessage` 监听。[抖音分享 API](https://developer.open-douyin.com/docs/resource/zh-CN/mini-game/develop/api/javascript-api/open-capacity/retweet/tt-share-app-message) · [TapTap 分享 API](https://developer.taptap.cn/minigameapidoc/dev/api/open-api/share/tap.showShareboard/)
+分享结果中，微信的 `requested` 表示已请求分享，抖音和 B 站的 `shared` 表示平台确认分享成功，TapTap 的 `opened` 表示已打开面板。TapTap 的实际分享结果可用 `sdk.native.onShareMessage` 监听。[抖音分享 API](https://developer.open-douyin.com/docs/resource/zh-CN/mini-game/develop/api/javascript-api/open-capacity/retweet/tt-share-app-message) · [TapTap 分享 API](https://developer.taptap.cn/minigameapidoc/dev/api/open-api/share/tap.showShareboard/) · [B 站分享 API](https://miniapp.bilibili.com/small-game-doc/api/share/shareAppMessage)
 
-账号会话交换、AppSecret 和广告配置由各游戏项目提供。TapTap 发布包需要实际接入 TapTap 登录，内置样板用于本地验证。微信、抖音和 TapTap 均应在相应客户端验证登录与广告。B 站 Toy 继续使用 `createToyBridge`。[TapTap 登录管理](https://developer.taptap.cn/minigameapidoc/dev/tutorial/open-capabilities/login-management/) · [TapTap 审核规范](https://developer.taptap.cn/minigameapidoc/tap-operation/operation-standards/review-standards/)
+账号会话交换、AppSecret 和广告配置由各游戏项目提供。TapTap 发布包需要实际接入 TapTap 登录。内置样板用于本地验证，各平台的真实登录和广告由项目在相应客户端验证。[TapTap 登录管理](https://developer.taptap.cn/minigameapidoc/dev/tutorial/open-capabilities/login-management/) · [TapTap 审核规范](https://developer.taptap.cn/minigameapidoc/tap-operation/operation-standards/review-standards/) · [B 站登录管理](https://miniapp.bilibili.com/small-game-doc/open/login/)
+
+B 站分享需要基础库 3.8，激励视频需要基础库 4.0。统一接口会检查版本，并在请求激励视频时上报场景 1007。发布项目还需用 `sdk.native` 接入侧边栏复访和桌面快捷方式。游戏可在 `start(host)` 的第一次异步操作前订阅 `bl.onShow`，根据平台返回的场景值和项目规则处理奖励。[启动上报](https://miniapp.bilibili.com/small-game-doc/api/base/launchSuccess) · [激励广告上报](https://miniapp.bilibili.com/small-game-doc/open/ad/AdVideoReport) · [侧边栏复访](https://miniapp.bilibili.com/small-game-doc/open/sidebar) · [桌面快捷方式](https://miniapp.bilibili.com/small-game-doc/open/shortcut)
 
 [微信官方示例](https://github.com/wechat-miniprogram/minigame-demo) · [抖音小游戏开发指南](https://developer.open-douyin.com/docs/resource/zh-CN/mini-game/develop/guide/dev-guide/bytedance-mini-game) · [TapTap 原生小游戏开发指南](https://developer.taptap.cn/minigameapidoc/dev/tutorial/overview/)

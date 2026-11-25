@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add the native Bilibili mini-game target and `bl` SDK support, including first-render and rewarded-ad reporting, SDK version checks, and runtime reads of packaged JSON resources.
+
 - Add the native TapTap mini-game target and a shared WeChat, Douyin, and TapTap SDK for login, session and launch data, sharing, and rewarded video.
 
 - Add native WeChat and Douyin mini-game package targets with a shared Canvas host, explicit asset staging, platform size checks, and an executable sample.

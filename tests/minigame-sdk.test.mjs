@@ -8,7 +8,7 @@ function sdkFor(target, api = {}) {
   return { native, sdk: createMinigameHost(native, target, { id: 'test-game' }, []).sdk };
 }
 
-for (const target of ['wechat', 'douyin', 'taptap']) {
+for (const target of ['wechat', 'douyin', 'taptap', 'bilibili']) {
   test(target + ' SDK uses the native API for login, session and launch options', async () => {
     let attempt;
     const { sdk, native } = sdkFor(target, {
@@ -144,4 +144,48 @@ test('rewarded video loads before show on hosts that emit errors when called too
     }),
   });
   assert.deepEqual(await sdk.showRewardedVideo('reward'), { completed: true });
+});
+
+test('Bilibili detects minimum library versions for sharing and rewarded video', async () => {
+  let SDKVersion = '3.7.9';
+  const { sdk } = sdkFor('bilibili', {
+    getSystemInfoSync: () => ({ SDKVersion }),
+    shareAppMessage({ title, query, imageUrl, success }) {
+      assert.equal(title, 'Play');
+      assert.equal(query, 'level=2');
+      assert.equal(imageUrl, 'cover.png');
+      success();
+    },
+    createRewardedVideoAd() {},
+  });
+  assert.equal(sdk.supports('share'), false);
+  await assert.rejects(sdk.share({ title: 'Play' }), /unavailable/);
+  SDKVersion = '3.10.0';
+  assert.equal(sdk.supports('share'), true);
+  assert.equal(sdk.supports('rewardedVideo'), false);
+  assert.deepEqual(await sdk.share({ title: 'Play', imageUrl: 'cover.png', query: 'level=2' }), { status: 'shared' });
+  SDKVersion = '4.0.0';
+  assert.equal(sdk.supports('rewardedVideo'), true);
+});
+
+test('Bilibili reports first render once and emits the official scene when a video is requested', async () => {
+  const events = [];
+  let close;
+  const { sdk } = sdkFor('bilibili', {
+    getSystemInfoSync: () => ({ SDKVersion: '4.0.0' }),
+    launchSuccess: () => events.push('first-screen'),
+    reportScene({ sceneId }) { events.push(sceneId); },
+    createRewardedVideoAd: () => ({
+      async load() { events.push('load'); },
+      async show() { events.push('show'); close({ isEnded: true }); },
+      onClose(callback) { close = callback; },
+      offClose() { close = undefined; },
+      onError() {},
+      offError() {},
+    }),
+  });
+  assert.equal(sdk.launchSuccess(), true);
+  assert.equal(sdk.launchSuccess(), false);
+  assert.deepEqual(await sdk.showRewardedVideo('bilibili-reward'), { completed: true });
+  assert.deepEqual(events, ['first-screen', 1007, 'load', 'show']);
 });
