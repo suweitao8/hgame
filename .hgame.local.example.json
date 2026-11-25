@@ -4,6 +4,7 @@
   "gamesRootDir": "<path-to>/HTML",
   "webAssetDir": "./webasset",
   "assetBackupDir": "<path-to>/Backups/HGame-Assets",
+  "toktxPath": "<optional-path-to>/toktx.exe",
   "tts": {
     "voxcpm2Dir": "<path-to>/VoxCPM2",
     "pythonExe": "<path-to>/VoxCPM2/PortablePython/python.exe"
@@ -16,5 +17,9 @@
     "trellis2Workflow": "user/default/workflows/PixelArtistry/MeshWithTexturing_Pixal3D_GGUF.json",
     "ultratexWorkflow": "user/default/workflows/PixelArtistry/PixelArtistry_UltraTex_03_LowVRAM_GGUF.json",
     "runAnimGlb": "<optional-path-to>/run_anim.glb"
+  },
+  "unityVfx": {
+    "unityExe": "<optional-path-to>/Unity.exe",
+    "pilotoRoot": "<optional-path-to>/Piloto Studio"
   }
 }

@@ -1,10 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { Pass } from 'three/addons/postprocessing/Pass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { createVfxSystem, SHURIKEN_QUALITY_TIERS, VFX_SHAPE } from '/runtime/hgame/vfx/index.js';
+import { createPostPipeline3D } from '/runtime/hgame/integrations/post3d.js';
+import { createVfxSystem, VFX_SHAPE } from '/runtime/hgame/vfx/index.js';
 import {
   createSidebarSquareCard,
   createThreeViewport,
@@ -13,7 +10,38 @@ import {
   normalizeUnrealSceneMaterials,
 } from './hgame-shared.js';
 
+const PACK_CATEGORY_MAP = {
+  flagship_bench: '精选复刻基准',
+  arpg_realistic_paladin_pack: '圣光与圣骑 (Paladin)',
+  arpg_realistic_groundslams: '裂地与重击 (GroundSlams)',
+  arpg_realistic_ice_and_water_pack: '寒冰与水流 (Ice & Water)',
+  arpg_realistic_bonemist: '骸骨与死雾 (Bonemist)',
+  arpg_realistic_essentials_fire: '烈焰全集 (Essentials Fire)',
+  arpg_realistic_lightning_starter_kit: '雷电全集 (Lightning)',
+  arpg_realistic_necromancy_pack: '死灵法术 (Necromancy)',
+  arpg_realistic_arcane: '奥术魔法 (Arcane)',
+  arpg_realistic_bloody: '血腥爆裂 (Bloody)',
+  arpg_realistic_crimson: '猩红法术 (Crimson)',
+  arpg_realistic_deathice: '死亡寒冰 (Deathice)',
+  arpg_realistic_demon_vs_angels: '恶魔与天使 (Demon vs Angels)',
+  arpg_realistic_earth_bending: '御土术 (Earth Bending)',
+  arpg_realistic_golden_spells: '黄金法术 (Golden Spells)',
+  arpg_realistic_mana_theme_pack: '魔力主题 (Mana)',
+  arpg_realistic_pickups_auras_and_buffs: '光环与增益 (Auras & Buffs)',
+  arpg_realistic_poison: '剧毒 (Poison)',
+  arpg_realistic_water_fx: '水流特效 (Water FX)',
+  arpg_realistic_wind_starter_pack: '疾风 (Wind)',
+};
+
 const VFX_CATEGORY_ORDER = [
+  '精选复刻基准',
+  '圣光与圣骑 (Paladin)',
+  '裂地与重击 (GroundSlams)',
+  '寒冰与水流 (Ice & Water)',
+  '骸骨与死雾 (Bonemist)',
+  '烈焰全集 (Essentials Fire)',
+  '雷电全集 (Lightning)',
+  '死灵法术 (Necromancy)',
   'Piloto_Bench_8',
   '火焰爆破',
   '火焰与爆破',
@@ -95,17 +123,33 @@ let hgameVfx = null;
 let hgameFireTimer = 0;
 let hgameMeshPreview = null;
 
-// Piloto Bench 8 + HDR Linear + Bloom + SoftDepth + Single-Pass Warp pipeline
+// Piloto Pack 1:1 HGame VFX pipeline state & shared caches
 const benchRecipeCache = new Map();
-const benchTexCache = new Map();
-const benchGeoCache = new Map();
+const benchPackCache = new Map();
+const benchGlbCache = new Map();
+const benchGlbInflight = new Map();
+const registeredBenchAliases = new Set();
+const vfxPacksById = new Map();
+let vfxMeshIndex = {};
+let vfxBaseUrl = '/files/hgame-vfx';
+let activeBenchPackId = '';
+let activeBenchAtlasPackId = '';
 let activeBenchHandle = null;
 let activeBenchRecipe = null;
+let activeBenchItem = null;
 let benchReplayCooldown = 0;
 let benchFrameCount = 0;
 let benchMsAccum = 0;
 let benchLastDrawCalls = 0;
-let hdrPipeline = null;
+let benchLastFrameMs = 0;
+let benchDepthRT = null;
+let benchDepthFloor = null;
+let benchStudioGrid = null;
+let benchStudioAmbient = null;
+let benchStudioDir = null;
+let benchStageActive = false;
+let benchPostPipeline = null;
+let benchSimDt = 0.016;
 
 function getAllItems() {
   return [
@@ -312,165 +356,184 @@ function ensureViewport() {
   return viewport;
 }
 
-function ensureHdrPipeline(vp) {
-  if (hdrPipeline) return hdrPipeline;
-  const sizeVec = new THREE.Vector2();
-  vp.renderer.getSize(sizeVec);
-  const pr = vp.renderer.getPixelRatio();
-  const w = Math.max(1, Math.round(sizeVec.x * pr));
-  const h = Math.max(1, Math.round(sizeVec.y * pr));
+const benchDepthSizeVec = new THREE.Vector2();
+const benchPostSizeVec = new THREE.Vector2();
 
-  const depthTex = new THREE.DepthTexture(w, h);
-  depthTex.type = THREE.UnsignedIntType;
-  const bgTarget = new THREE.WebGLRenderTarget(w, h, {
-    type: THREE.HalfFloatType,
-    minFilter: THREE.LinearFilter,
-    magFilter: THREE.LinearFilter,
-    depthBuffer: true,
-    depthTexture: depthTex,
-  });
-  const grabTarget = new THREE.WebGLRenderTarget(w, h, {
-    type: THREE.HalfFloatType,
-    minFilter: THREE.LinearFilter,
-    magFilter: THREE.LinearFilter,
-    depthBuffer: true,
-  });
-  const hdrTarget = new THREE.WebGLRenderTarget(w, h, {
-    type: THREE.HalfFloatType,
-    minFilter: THREE.LinearFilter,
-    magFilter: THREE.LinearFilter,
-    depthBuffer: true,
-  });
-
-  const hiddenState = [];
-  const warpMeshes = [];
-  const scenePass = new Pass();
-  scenePass.needsSwap = false;
-  scenePass.render = (renderer, _writeBuffer, readBuffer) => {
-    const cam = vp.camera;
-    const sc = vp.scene;
-    const dprW = readBuffer.width;
-    const dprH = readBuffer.height;
-    if (bgTarget.width !== dprW || bgTarget.height !== dprH) {
-      bgTarget.setSize(dprW, dprH);
-    }
-
-    // 1. Opaque / background depth pre-pass (zero WebGL feedback loop)
-    hiddenState.length = 0;
-    for (let i = 0; i < sc.children.length; i++) {
-      const ch = sc.children[i];
-      if (ch.name && (ch.name.startsWith('ShurikenLayer_') || ch.name.startsWith('HGameVfx'))) {
-        hiddenState.push([ch, ch.visible]);
-        ch.visible = false;
+function ensureBenchStage(vp, enabled) {
+  const sc = vp.scene;
+  if (!sc.userData._vfxOrigSaved) {
+    sc.userData._vfxOrigSaved = {
+      bg: sc.background ? sc.background.clone() : new THREE.Color(0x0f140f),
+      gridVis: vp.gridHelper ? vp.gridHelper.visible : true,
+      lights: sc.children.filter(c => c.isLight).map(l => ({ light: l, intensity: l.intensity })),
+    };
+  }
+  const orig = sc.userData._vfxOrigSaved;
+  if (enabled) {
+    if (!benchStageActive) {
+      sc.background = new THREE.Color(0x585c64);
+      for (const entry of orig.lights) entry.light.intensity = 0;
+      if (!benchStudioAmbient) {
+        benchStudioAmbient = new THREE.AmbientLight(0xffffff, 1.0);
+        sc.add(benchStudioAmbient);
       }
-    }
-    renderer.setRenderTarget(bgTarget);
-    renderer.clear(true, true, true);
-    renderer.render(sc, cam);
-    for (let i = 0; i < hiddenState.length; i++) {
-      hiddenState[i][0].visible = hiddenState[i][1];
-    }
-
-    const qTierKey = hgameVfx?.getQualityTier?.() || 'high';
-    const qTier = SHURIKEN_QUALITY_TIERS[qTierKey] || SHURIKEN_QUALITY_TIERS.high;
-    hgameVfx?.setDepthTexture?.(qTier.softParticles ? bgTarget.depthTexture : null, {
-      near: cam.near,
-      far: cam.far,
-      width: dprW,
-      height: dprH,
-    });
-
-    // 2. Single-pass screen grab for piloto_warp refraction
-    const warpActive = Boolean(hgameVfx?.hasActiveWarp?.() && qTier.warpScale > 0);
-    if (warpActive) {
-      const gw = Math.max(1, Math.round(dprW * qTier.warpScale));
-      const gh = Math.max(1, Math.round(dprH * qTier.warpScale));
-      if (grabTarget.width !== gw || grabTarget.height !== gh) {
-        grabTarget.setSize(gw, gh);
+      if (!benchStudioDir) {
+        benchStudioDir = new THREE.DirectionalLight(0xffffff, 0.75);
+        benchStudioDir.position.set(8, 16, 10);
+        sc.add(benchStudioDir);
       }
-      hgameVfx.setWarpMeshesVisible(false);
-      hgameVfx.setSceneTexture(null);
-      renderer.setRenderTarget(grabTarget);
-      renderer.clear(true, true, true);
-      renderer.render(sc, cam);
-
-      hgameVfx.setSceneTexture(grabTarget.texture, { width: dprW, height: dprH });
-      renderer.setRenderTarget(readBuffer);
-      renderer.clear(true, true, true);
-      renderer.render(sc, cam);
-
-      hgameVfx.setWarpMeshesVisible(true);
-      warpMeshes.length = 0;
-      sc.traverse((obj) => {
-        if (obj.visible && obj.isMesh && obj.userData?.vfxWarp) {
-          warpMeshes.push(obj);
-          obj.layers.enable(30);
-        }
-      });
-      if (warpMeshes.length > 0) {
-        const prevMask = cam.layers.mask;
-        const prevAutoClear = renderer.autoClear;
-        cam.layers.set(30);
-        renderer.autoClear = false;
-        renderer.render(sc, cam);
-        renderer.autoClear = prevAutoClear;
-        cam.layers.mask = prevMask;
-        for (let i = 0; i < warpMeshes.length; i++) {
-          warpMeshes[i].layers.disable(30);
-        }
+      benchStudioAmbient.visible = true;
+      benchStudioDir.visible = true;
+      if (vp.gridHelper) vp.gridHelper.visible = false;
+      if (!benchStudioGrid) {
+        benchStudioGrid = new THREE.GridHelper(64, 64, 0x82868e, 0x686c74);
+        benchStudioGrid.position.y = 0.005;
+        if (benchStudioGrid.material) benchStudioGrid.material.depthWrite = false;
+        sc.add(benchStudioGrid);
       }
-    } else {
-      hgameVfx?.setWarpMeshesVisible?.(false);
-      hgameVfx?.setSceneTexture?.(null);
-      renderer.setRenderTarget(readBuffer);
-      renderer.clear(true, true, true);
-      renderer.render(sc, cam);
+      if (!benchDepthFloor) {
+        benchDepthFloor = new THREE.Mesh(
+          new THREE.PlaneGeometry(64, 64),
+          new THREE.MeshBasicMaterial({ color: 0x000000 }),
+        );
+        benchDepthFloor.rotation.x = -Math.PI * 0.5;
+        benchDepthFloor.position.y = -0.35;
+        benchDepthFloor.layers.set(1);
+        sc.add(benchDepthFloor);
+      }
+      benchStageActive = true;
     }
-  };
-
-  const composer = new EffectComposer(vp.renderer, hdrTarget);
-  composer.setPixelRatio(pr);
-  composer.setSize(Math.max(1, sizeVec.x), Math.max(1, sizeVec.y));
-  const bloomPass = new UnrealBloomPass(new THREE.Vector2(sizeVec.x, sizeVec.y), 0.38, 0.42, 1.0);
-  const outputPass = new OutputPass();
-  composer.addPass(scenePass);
-  composer.addPass(bloomPass);
-  composer.addPass(outputPass);
-
-  hdrPipeline = {
-    composer,
-    bloomPass,
-    outputPass,
-    bgTarget,
-    grabTarget,
-    hdrTarget,
-    render() {
-      bloomPass.enabled = bloomToggle ? bloomToggle.checked : true;
-      const prevAutoReset = vp.renderer.info.autoReset;
-      vp.renderer.info.autoReset = false;
-      vp.renderer.info.reset();
-      composer.render();
-      benchLastDrawCalls = vp.renderer.info.render.calls;
-      vp.renderer.info.autoReset = prevAutoReset;
-    },
-    resize(width, height) {
-      const p = vp.renderer.getPixelRatio();
-      composer.setPixelRatio(p);
-      composer.setSize(Math.max(1, width), Math.max(1, height));
-      bloomPass.resolution.set(Math.max(1, width), Math.max(1, height));
-    },
-    dispose() {
-      composer.dispose();
-      bgTarget.dispose();
-      grabTarget.dispose();
-      hdrTarget.dispose();
-    },
-  };
-  vp.setOnResize((width, height) => hdrPipeline?.resize(width, height));
-  return hdrPipeline;
+    if (benchStudioGrid) benchStudioGrid.visible = gridToggle ? gridToggle.checked : true;
+  } else if (benchStageActive) {
+    sc.background = orig.bg.clone();
+    for (const entry of orig.lights) entry.light.intensity = entry.intensity;
+    if (benchStudioAmbient) benchStudioAmbient.visible = false;
+    if (benchStudioDir) benchStudioDir.visible = false;
+    if (benchStudioGrid) benchStudioGrid.visible = false;
+    if (vp.gridHelper) vp.gridHelper.visible = orig.gridVis;
+    benchStageActive = false;
+  }
 }
 
-function disposeSimulation() {
+function ensureBenchDepthRT(vp) {
+  vp.renderer.getDrawingBufferSize(benchDepthSizeVec);
+  const w = Math.max(1, benchDepthSizeVec.x | 0);
+  const h = Math.max(1, benchDepthSizeVec.y | 0);
+  if (!benchDepthRT || benchDepthRT.width !== w || benchDepthRT.height !== h) {
+    benchDepthRT?.dispose?.();
+    benchDepthRT = new THREE.WebGLRenderTarget(w, h, {
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: true,
+      stencilBuffer: false,
+    });
+    benchDepthRT.depthTexture = new THREE.DepthTexture(w, h);
+    benchDepthRT.depthTexture.type = THREE.UnsignedIntType;
+  }
+  return { rt: benchDepthRT, w, h };
+}
+
+function ensureBenchPostPipeline(vp) {
+  vp.renderer.getDrawingBufferSize(benchPostSizeVec);
+  const w = Math.max(1, benchPostSizeVec.x | 0);
+  const h = Math.max(1, benchPostSizeVec.y | 0);
+  if (!benchPostPipeline) {
+    benchPostPipeline = createPostPipeline3D({
+      THREE,
+      renderer: vp.renderer,
+      width: w,
+      height: h,
+      preset: {
+        bloom: true,
+        ssao: false,
+        ssr: false,
+        gi: false,
+        volumetric: false,
+        contactShadows: false,
+        fxaa: true,
+        sharpness: 0,
+        vignette: 0,
+      },
+      toneMapping: 'agx',
+      exposure: 0.95,
+      bloomStrength: 0.18,
+      bloomThreshold: 1.0,
+      bloomSoftKnee: 0.5,
+      saturation: 0.85,
+      vignette: 0,
+      sharpness: 0,
+    });
+    vp.setOnResize(() => {
+      vp.renderer.getDrawingBufferSize(benchPostSizeVec);
+      benchPostPipeline?.resize?.(Math.max(1, benchPostSizeVec.x | 0), Math.max(1, benchPostSizeVec.y | 0));
+    });
+  }
+  return benchPostPipeline;
+}
+
+const benchExtraPasses = {
+  before: [{ id: 'vfx-warp-prep', execute: () => hgameVfx?.prepareDistortionBeforeWorld?.() }],
+  afterWorld: [{ id: 'vfx-warp-pass', execute: () => hgameVfx?.renderDistortionPass?.(viewport?.renderer, viewport?.scene, viewport?.camera) }],
+};
+
+function normalizeBenchQuality(raw) {
+  if (raw === 'med') return 'medium';
+  if (raw === 'low' || raw === 'medium' || raw === 'high') return raw;
+  return 'high';
+}
+
+function renderBenchScene(vp) {
+  const qTier = normalizeBenchQuality(qualitySelect?.value || 'high');
+  if (qTier !== 'low' && hgameVfx) {
+    const { rt, w, h } = ensureBenchDepthRT(vp);
+    const prevMask = vp.camera.layers.mask;
+    vp.camera.layers.set(1);
+    vp.renderer.setRenderTarget(rt);
+    vp.renderer.clear();
+    vp.renderer.render(vp.scene, vp.camera);
+    vp.renderer.setRenderTarget(null);
+    vp.camera.layers.mask = prevMask;
+    hgameVfx.setDepthTexture(rt.depthTexture, {
+      near: vp.camera.near,
+      far: vp.camera.far,
+      width: w,
+      height: h,
+      softFade: 0.45,
+    });
+  } else {
+    hgameVfx?.setDepthTexture?.(null);
+  }
+
+  const pipe = qTier !== 'low' ? ensureBenchPostPipeline(vp) : null;
+  const prevAutoReset = vp.renderer.info.autoReset;
+  vp.renderer.info.autoReset = false;
+  vp.renderer.info.reset();
+  if (pipe?.supported) {
+    vp.renderer.toneMapping = THREE.NoToneMapping;
+    pipe.setState({
+      toneMapping: 'agx',
+      exposure: 0.95,
+      saturation: 0.85,
+      bloom: bloomToggle ? bloomToggle.checked : true,
+      bloomStrength: qTier === 'high' ? 0.18 : 0.12,
+      bloomThreshold: 1.0,
+      bloomSoftKnee: 0.5,
+      fxaa: qTier === 'high',
+    });
+    pipe.render(vp.scene, vp.camera, { dt: benchSimDt, extraPasses: benchExtraPasses });
+  } else {
+    vp.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    if (hgameVfx?.renderWithDistortion) {
+      hgameVfx.renderWithDistortion(vp.renderer, vp.scene, vp.camera);
+    } else {
+      vp.renderer.render(vp.scene, vp.camera);
+    }
+  }
+  benchLastDrawCalls = vp.renderer.info.render.calls;
+  vp.renderer.info.autoReset = prevAutoReset;
+}
+
+function disposeSimulation({ keepBench = false } = {}) {
   for (const em of simEmitters) {
     for (const p of em.pool) {
       if (p.mesh) {
@@ -492,22 +555,33 @@ function disposeSimulation() {
   benchFrameCount = 0;
   benchMsAccum = 0;
   benchLastDrawCalls = 0;
-  viewport?.setRenderOverride(null);
 
   if (hgameMeshPreview) {
     stageRoot?.remove(hgameMeshPreview);
     disposeObject3D(hgameMeshPreview);
     hgameMeshPreview = null;
   }
-  if (hgameVfx) {
-    hgameVfx.dispose();
-    hgameVfx = null;
+  if (keepBench) {
+    hgameVfx?.reset?.();
+    if (viewport) ensureBenchStage(viewport, true);
+  } else {
+    viewport?.setRenderOverride(null);
+    if (viewport) {
+      ensureBenchStage(viewport, false);
+      viewport.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    }
+    if (hgameVfx) {
+      hgameVfx.dispose();
+      hgameVfx = null;
+    }
+    registeredBenchAliases.clear();
+    activeBenchAtlasPackId = '';
   }
   hgameFireTimer = 0;
 }
 
-function clearStageRoot() {
-  disposeSimulation();
+function clearStageRoot({ keepBench = false } = {}) {
+  disposeSimulation({ keepBench });
   if (stageRoot && viewport) {
     viewport.scene.remove(stageRoot);
     disposeObject3D(stageRoot);
@@ -598,55 +672,205 @@ function applyAppearanceToStage() {
   }
 }
 
-async function loadBenchTexture(url, isSrgb) {
-  const cacheKey = `${url}::${isSrgb ? 'srgb' : 'lin'}`;
-  if (benchTexCache.has(cacheKey)) return benchTexCache.get(cacheKey);
-  const tex = await texLoader.loadAsync(url);
-  tex.colorSpace = isSrgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
-  tex.needsUpdate = true;
-  benchTexCache.set(cacheKey, tex);
-  return tex;
-}
-
-async function loadBenchMeshGeo(url) {
-  if (benchGeoCache.has(url)) return benchGeoCache.get(url);
-  const gltf = await gltfLoader.loadAsync(url);
-  let foundGeo = null;
-  gltf.scene.traverse((ch) => {
-    if (!foundGeo && ch.isMesh && ch.geometry) foundGeo = ch.geometry;
+function pickSubmeshGeometry(gltfScene, aliasName) {
+  const meshes = [];
+  gltfScene.traverse((c) => {
+    if (c.isMesh && c.geometry) meshes.push({ name: c.name || '', geo: c.geometry });
   });
-  benchGeoCache.set(url, foundGeo);
-  return foundGeo;
+  if (meshes.length === 0) return null;
+  if (meshes.length === 1) return meshes[0].geo;
+  const lowAlias = String(aliasName || '').toLowerCase();
+  const subIdx = lowAlias.indexOf('__sub_');
+  if (subIdx !== -1) {
+    const wantSub = lowAlias.slice(subIdx + 6);
+    const subMatch = meshes.find((x) => x.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') === wantSub);
+    if (subMatch) return subMatch.geo;
+  }
+  if (lowAlias.includes('floordust') && !lowAlias.includes('low')) {
+    const m = meshes.find((x) => /floor/i.test(x.name));
+    if (m) return m.geo;
+  }
+  if (lowAlias.includes('low')) {
+    const m = meshes.find((x) => /sphere/i.test(x.name));
+    if (m) return m.geo;
+  }
+  if (lowAlias.includes('wind') || lowAlias.includes('burst')) {
+    const m = meshes.find((x) => /burst/i.test(x.name));
+    if (m) return m.geo;
+  }
+  if (lowAlias.includes('body') || lowAlias.includes('warpbeam')) {
+    const m = meshes.find((x) => /body/i.test(x.name));
+    if (m) return m.geo;
+  }
+  if (lowAlias.includes('head')) {
+    const m = meshes.find((x) => /head/i.test(x.name));
+    if (m) return m.geo;
+  }
+  if (lowAlias.includes('base')) {
+    const m = meshes.find((x) => /base/i.test(x.name));
+    if (m) return m.geo;
+  }
+  return meshes[0].geo;
 }
 
-function collectBenchDependencies(recipe, colorTexKeys, dataTexKeys, meshKeys) {
-  for (const l of recipe.layers || []) {
-    const m = l.material || l.uberMat || {};
-    for (const k of [m.mainTexKey, m.baseColorMapKey, m.emissionMapKey, l.sprite, l.flipbook?.region]) {
-      if (k) colorTexKeys.add(k);
-    }
-    for (const k of [
-      m.detailNoiseKey,
-      m.alphaOverrideKey,
-      m.normalMapKey,
-      m.ormMapKey,
-      m.detailMapKey,
-      m.dissolveMapKey,
-      m.distortionTextureKey,
-      m.alphaTextureKey,
-    ]) {
-      if (k) dataTexKeys.add(k);
-    }
-    if (l.mesh && !['quad', 'cube', 'sphere', 'cylinder', 'crystal'].includes(l.mesh)) {
-      meshKeys.add(l.mesh);
-    }
-    if (l.shape?.mesh) meshKeys.add(l.shape.mesh);
-    for (const sub of l.subEmitters || []) {
-      if (sub?.effect) collectBenchDependencies(sub.effect, colorTexKeys, dataTexKeys, meshKeys);
+function loadBenchAtlasTexture(url) {
+  return new Promise((resolve, reject) => {
+    texLoader.load(
+      url,
+      (t) => {
+        t.colorSpace = THREE.NoColorSpace;
+        t.minFilter = THREE.LinearFilter;
+        t.magFilter = THREE.LinearFilter;
+        t.wrapS = THREE.ClampToEdgeWrapping;
+        t.wrapT = THREE.ClampToEdgeWrapping;
+        t.generateMipmaps = false;
+        t.needsUpdate = true;
+        resolve(t);
+      },
+      undefined,
+      reject,
+    );
+  });
+}
+
+async function ensureBenchPackAssets(packId) {
+  const pack = vfxPacksById.get(packId);
+  if (!pack) throw new Error(`未知特效包: ${packId}`);
+  if (benchPackCache.has(packId)) return benchPackCache.get(packId);
+  const atlasImgUrl = `${vfxBaseUrl}/${pack.atlasImage}`;
+  const atlasMetaUrl = `${vfxBaseUrl}/${pack.atlasMeta}`;
+  const [atlasMeta, atlasTex] = await Promise.all([
+    fetch(atlasMetaUrl).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); }),
+    loadBenchAtlasTexture(atlasImgUrl),
+  ]);
+  const entry = { pack, atlasMeta, atlasTex };
+  benchPackCache.set(packId, entry);
+  return entry;
+}
+
+async function ensureBenchMeshesLoaded(vfxSys, meshAliases) {
+  if (!vfxMeshIndex.conesmall_tophat && !benchGlbCache.has('conesmall_tophat')) {
+    const tophatGeo = new THREE.CylinderGeometry(0.35, 0.84, 0.34, 24, 1, true);
+    tophatGeo.translate(0, -0.15, 0);
+    vfxSys.registerMesh('conesmall_tophat', tophatGeo);
+    benchGlbCache.set('conesmall_tophat', { gltf: { scene: new THREE.Mesh(tophatGeo) } });
+  }
+  const neededBase = new Set(Object.values(meshAliases || {}));
+  const pending = Object.entries(vfxMeshIndex).filter(([k]) => neededBase.has(k) && !benchGlbCache.has(k));
+  if (pending.length > 0) {
+    await Promise.all(pending.map(async ([mkey, info]) => {
+      if (!benchGlbInflight.has(mkey)) {
+        const url = `${vfxBaseUrl}/${info.file}`;
+        benchGlbInflight.set(
+          mkey,
+          fetch(url)
+            .then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.arrayBuffer();
+            })
+            .then((buf) => gltfLoader.parseAsync(buf, ''))
+            .then((gltf) => {
+              benchGlbCache.set(mkey, { gltf, info });
+              const geo = pickSubmeshGeometry(gltf.scene, mkey);
+              if (geo) vfxSys.registerMesh(mkey, geo, { topDownUv: true });
+              return benchGlbCache.get(mkey);
+            })
+            .finally(() => {
+              benchGlbInflight.delete(mkey);
+            }),
+        );
+      }
+      await benchGlbInflight.get(mkey);
+    }));
+  }
+  for (const [alias, baseKey] of Object.entries(meshAliases || {})) {
+    if (registeredBenchAliases.has(alias)) continue;
+    const cached = benchGlbCache.get(baseKey);
+    if (cached) {
+      const geo = pickSubmeshGeometry(cached.gltf.scene, alias);
+      if (geo) {
+        vfxSys.registerMesh(alias, geo, { topDownUv: true });
+        registeredBenchAliases.add(alias);
+      }
     }
   }
+}
+
+function getEffectiveActiveEnd(r) {
+  let maxEnd = 0;
+  for (const l of r?.layers || []) {
+    const delay = Array.isArray(l.delay) ? Number(l.delay[1] ?? l.delay[0] ?? 0) : Number(l.delay ?? 0);
+    const life = Array.isArray(l.life) ? Number(l.life[1] ?? l.life[0] ?? 0.5) : Number(l.life ?? 0.5);
+    const spd = Math.max(0.05, Number(l.simulationSpeed ?? 1));
+    let burstMax = 0;
+    for (const b of l.bursts || []) {
+      const bt = Number(b.time ?? 0) + Math.max(0, (Number(b.cycles ?? 1) - 1) * Number(b.interval ?? 0));
+      if (bt > burstMax) burstMax = bt;
+    }
+    const end = delay + (burstMax + life) / spd;
+    if (end > maxEnd) maxEnd = end;
+  }
+  return maxEnd > 0 ? Math.min(r.duration || maxEnd, maxEnd) : (r.duration || 3);
+}
+
+function frameBenchCamera(vp, effectId) {
+  let dist = 12.5;
+  let pitch = 0.45;
+  let yaw = 0.65;
+  let targetY = 1.2;
+  if (effectId === 'arpg_arcane_aura') {
+    dist = 6.2; pitch = 0.58; yaw = 0.45; targetY = 0.9;
+  } else if (effectId === 'arpg_arcane_circle') {
+    dist = 11.5; pitch = 0.55; yaw = 0.65; targetY = 1.0;
+  } else if (effectId === 'arpg_arcane_cage') {
+    dist = 18.0; pitch = 0.50; yaw = 0.65; targetY = 1.8;
+  } else if (effectId === 'arpg_arcane_curse') {
+    dist = 14.5; pitch = 0.56; yaw = 0.65; targetY = 1.4;
+  } else if (effectId === 'bones_spikes') {
+    dist = 30.0; pitch = 0.48; yaw = 0.65; targetY = 2.2;
+  } else if (effectId === 'deathice_arena_rain_spikes_combo') {
+    dist = 18.0; pitch = 0.48; yaw = 0.65; targetY = 1.8;
+  }
+  const cp = Math.cos(pitch);
+  vp.controls.target.set(0, targetY, 0);
+  vp.camera.position.set(
+    Math.sin(yaw) * cp * dist,
+    targetY + Math.sin(pitch) * dist,
+    Math.cos(yaw) * cp * dist,
+  );
+  vp.controls.update();
+}
+
+function computeBenchPlayY(recipe, effectId) {
+  let yOff = 0.05;
+  if (effectId === 'arpg_arcane_cage' || effectId === 'arpg_arcane_circle') {
+    let minOffY = 0;
+    for (const l of recipe?.layers || []) {
+      const oy = Number(l?.offset?.[1] ?? 0);
+      if (Number.isFinite(oy) && oy < minOffY) minOffY = oy;
+    }
+    yOff = Math.max(0.05, -minOffY + 0.05);
+  }
+  return yOff;
+}
+
+function getBenchTelemetryTotals(st) {
+  const ap = st?.atlasParticles || {};
+  const atlasActive = (ap.normalTotal || 0)
+    + (ap.additiveTotal || 0)
+    + (ap.multiplyTotal || 0)
+    + (ap.premultiplyTotal || 0)
+    + (ap.distortionTotal || 0)
+    + (ap.renderStateTotal || 0);
+  const meshActive = st?.meshVfx?.activeCount || 0;
+  const trailActive = st?.trails?.activeTrails || 0;
+  return {
+    atlasActive,
+    meshActive,
+    trailActive,
+    totalActive: atlasActive + meshActive + trailActive,
+    batches: st?.meshVfx?.instancedBatches || 0,
+  };
 }
 
 function syncControlsVisibility(item) {
@@ -1250,18 +1474,24 @@ function replayActiveVfx() {
   if (item.isShurikenBench && hgameVfx && activeBenchRecipe) {
     hgameVfx.reset();
     benchReplayCooldown = 0;
-    const playY = item.id.includes('shield') ? 1.0 : 0.2;
-    activeBenchHandle = hgameVfx.playEffect(activeBenchRecipe, { x: 0, y: playY, z: 0 });
+    const playY = computeBenchPlayY(activeBenchRecipe, item.effectId || item.id);
+    activeBenchHandle = hgameVfx.playEffect(activeBenchRecipe.id, { x: 0, y: playY, z: 0, scale: 1 });
+    if (viewport?.camera) hgameVfx.setCamera?.(viewport.camera);
     hgameVfx.update(0.016);
     const st = hgameVfx.getStats();
-    const s = st.shuriken || {};
+    const totals = getBenchTelemetryTotals(st);
+    const qVal = qualitySelect?.value || 'high';
     window.__HGAME_VFX_BENCH__ = {
       id: item.id,
-      qualityTier: qualitySelect?.value || 'high',
+      effectId: activeBenchRecipe.id,
+      packId: item.packId,
+      qualityTier: qVal,
       speed: Math.max(0.1, Number(speedSelect?.value || 1.0)),
-      activeParticles: s.activeParticles ?? 0,
-      activeDrawCalls: s.activeDrawCalls ?? 0,
-      shaderVariants: st.shaderVariants ?? 0,
+      activeParticles: totals.atlasActive,
+      activeMeshes: totals.meshActive,
+      activeTrails: totals.trailActive,
+      activeDrawCalls: benchLastDrawCalls,
+      hasDistortion: Boolean(hgameVfx.hasActiveDistortion?.()),
       simMs: 0,
       isActive: Boolean(activeBenchHandle?.isActive?.()),
     };
@@ -1285,6 +1515,19 @@ function replayActiveVfx() {
 }
 
 function buildHGameSnippet(item) {
+  if (item?.isShurikenBench) {
+    const eid = item.effectId || item.id;
+    return [
+      `// Piloto Studio 特效配方: ${item.name} (${item.category || item.packId})`,
+      `import { createVfxSystem } from '../vendor/hgame/vfx/index.js';`,
+      ``,
+      `const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE, maxAtlasParticles: 4096, maxMeshVfx: 256 });`,
+      `// 需提前通过 vfx.setAtlas(packAtlasTex, packAtlasMeta.regions) 与 registerMesh 加载该包依赖`,
+      `const recipe = await fetch('${item.recipeUrl}').then(r => r.json());`,
+      `vfx.registerEffect(recipe);`,
+      `vfx.playEffect('${eid}', { x: 0, y: 0, z: 0, scale: 1 });`,
+    ].join('\n');
+  }
   const p = item?.hgamePreset || {};
   const colorLit = `0x${(p.color || '#fb923c').replace('#', '')}`;
   const shapeKey = Object.keys(VFX_SHAPE).find(k => VFX_SHAPE[k] === (p.shapeId ?? 0)) || 'GLOW_ORB';
@@ -1328,27 +1571,32 @@ function tickVfx(dt) {
     const t0 = performance.now();
     const speedMul = Math.max(0.1, Number(speedSelect?.value || 1.0));
     const simDt = dt * speedMul;
+    benchSimDt = simDt;
+    if (viewport?.camera) hgameVfx.setCamera?.(viewport.camera);
     hgameVfx.update(simDt);
-    if (!activeBenchRecipe?.loop && activeBenchHandle && !activeBenchHandle.isActive()) {
-      const curStats = hgameVfx.getStats();
-      if ((curStats.shuriken?.activeParticles ?? 0) === 0) {
-        benchReplayCooldown += dt;
-        if (benchReplayCooldown >= 0.55) {
-          replayActiveVfx();
-        }
+    if (!activeBenchRecipe?.loop && activeBenchRecipe) {
+      benchReplayCooldown += simDt;
+      const cycleLimit = Math.max(1.8, getEffectiveActiveEnd(activeBenchRecipe) + 0.6);
+      if (benchReplayCooldown >= cycleLimit) {
+        replayActiveVfx();
       }
     }
     const elapsedMs = performance.now() - t0;
+    benchLastFrameMs = elapsedMs;
     const st = hgameVfx.getStats();
-    const s = st.shuriken || {};
-    const qVal = qualitySelect?.value || 'high';
+    const totals = getBenchTelemetryTotals(st);
+    const qVal = normalizeBenchQuality(qualitySelect?.value || 'high');
     window.__HGAME_VFX_BENCH__ = {
       id: item.id,
+      effectId: activeBenchRecipe?.id || item.effectId || item.id,
+      packId: item.packId,
       qualityTier: qVal,
       speed: speedMul,
-      activeParticles: s.activeParticles ?? 0,
-      activeDrawCalls: benchLastDrawCalls || (s.activeDrawCalls ?? 0),
-      shaderVariants: st.shaderVariants ?? 0,
+      activeParticles: totals.atlasActive,
+      activeMeshes: totals.meshActive,
+      activeTrails: totals.trailActive,
+      activeDrawCalls: benchLastDrawCalls,
+      hasDistortion: Boolean(hgameVfx.hasActiveDistortion?.()),
       simMs: Number(elapsedMs.toFixed(3)),
       isActive: Boolean(activeBenchHandle?.isActive?.()),
     };
@@ -1356,7 +1604,8 @@ function tickVfx(dt) {
     benchMsAccum += elapsedMs;
     if (benchFrameCount >= 12) {
       const avgMs = benchMsAccum / benchFrameCount;
-      statusEl.textContent = `Piloto_Bench_8 (${qVal.toUpperCase()}) · 活跃粒子 ${s.activeParticles ?? 0} · DrawCalls ${benchLastDrawCalls} · 模拟 ${avgMs.toFixed(2)}ms · 着色变体 ${st.shaderVariants ?? 0}`;
+      const distLabel = window.__HGAME_VFX_BENCH__.hasDistortion ? ' · 扭曲ON' : '';
+      statusEl.textContent = `${item.category || 'Piloto'} (${qVal.toUpperCase()}) · ${activeBenchRecipe?.layers?.length || item.layerCount || 0} 层 · 粒子 ${totals.atlasActive} · 网格 ${totals.meshActive} · DrawCalls ${benchLastDrawCalls}${distLabel} · ${avgMs.toFixed(2)}ms`;
       window.__HGAME_VFX_BENCH__.simMs = Number(avgMs.toFixed(3));
       benchFrameCount = 0;
       benchMsAccum = 0;
@@ -1432,7 +1681,13 @@ async function loadCurrentVfx() {
   }
   syncControlsVisibility(item);
 
-  if (item.url) {
+  if (item.isShurikenBench && item.recipeUrl) {
+    const fileName = `${item.effectId || item.id}.vfx.json`;
+    downloadEl.href = item.recipeUrl;
+    downloadEl.download = fileName;
+    downloadEl.textContent = `下载 ${fileName}`;
+    downloadEl.hidden = false;
+  } else if (item.url) {
     const fileName = item.url.split('/').pop() || `${item.id}.${item.kind === 'mesh' ? 'glb' : 'png'}`;
     downloadEl.href = item.url;
     downloadEl.download = fileName;
@@ -1458,86 +1713,75 @@ async function loadCurrentVfx() {
 
   try {
     if (item.isShurikenBench) {
-      clearStageRoot();
+      clearStageRoot({ keepBench: Boolean(hgameVfx) });
       stageRoot = new THREE.Group();
       vp.scene.add(stageRoot);
-      if (vp.gridHelper) {
-        vp.gridHelper.visible = gridToggle ? gridToggle.checked : true;
+      ensureBenchStage(vp, true);
+
+      if (!hgameVfx) {
+        hgameVfx = createVfxSystem({
+          mode: '3d',
+          sceneOrAdapter: vp.scene,
+          THREE,
+          maxAtlasParticles: 8192,
+          maxMeshVfx: 512,
+          trailNodes: 40,
+        });
       }
 
-      let recipe = benchRecipeCache.get(item.id);
-      if (!recipe) {
-        const res = await fetch(item.recipeUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        recipe = await res.json();
-        benchRecipeCache.set(item.id, recipe);
-      }
+      const [packBundle, recipe] = await Promise.all([
+        ensureBenchPackAssets(item.packId),
+        benchRecipeCache.has(item.id)
+          ? Promise.resolve(benchRecipeCache.get(item.id))
+          : fetch(item.recipeUrl).then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.json();
+            }).then((json) => {
+              benchRecipeCache.set(item.id, json);
+              return json;
+            }),
+      ]);
       if (token !== loadToken) return;
 
-      const colorTexKeys = new Set();
-      const dataTexKeys = new Set();
-      const meshKeys = new Set();
-      collectBenchDependencies(recipe, colorTexKeys, dataTexKeys, meshKeys);
-
-      const loadTasks = [];
-      const loadedTex = new Map();
-      const loadedGeo = new Map();
-
-      for (const k of new Set([...colorTexKeys, ...dataTexKeys])) {
-        const rel = item.textureMap?.[k];
-        if (!rel) continue;
-        const texUrl = `${item.catalogBaseUrl}/${rel}`;
-        const isSrgb = colorTexKeys.has(k);
-        loadTasks.push(
-          loadBenchTexture(texUrl, isSrgb).then(t => loadedTex.set(k, t)),
-        );
+      if (activeBenchAtlasPackId !== item.packId) {
+        hgameVfx.setAtlas(packBundle.atlasTex, packBundle.atlasMeta.regions);
+        hgameVfx.setTrailTexture(packBundle.atlasTex, [0, 0, 0, 0]);
+        activeBenchAtlasPackId = item.packId;
       }
-      for (const mk of meshKeys) {
-        const rel = item.meshMap?.[mk];
-        if (!rel) continue;
-        const meshUrl = `${item.catalogBaseUrl}/${rel}`;
-        loadTasks.push(
-          loadBenchMeshGeo(meshUrl).then(g => { if (g) loadedGeo.set(mk, g); }),
-        );
-      }
-      await Promise.all(loadTasks);
+      await ensureBenchMeshesLoaded(hgameVfx, packBundle.pack.meshAliases);
       if (token !== loadToken) return;
 
-      hgameVfx = createVfxSystem({
-        mode: '3d',
-        sceneOrAdapter: vp.scene,
-        THREE,
-        maxParticles: 4096,
-        maxFloatingGlyphs: 64,
-      });
-      for (const [k, tex] of loadedTex.entries()) {
-        hgameVfx.registerTexture(k, tex);
-      }
-      for (const [mk, geo] of loadedGeo.entries()) {
-        hgameVfx.registerMesh(mk, geo);
-      }
-      hgameVfx.setQualityTier(qualitySelect?.value || 'high');
+      const qTier = normalizeBenchQuality(qualitySelect?.value || 'high');
+      hgameVfx.setQualityTier(qTier);
       hgameVfx.registerEffect(recipe);
+      activeBenchItem = item;
       activeBenchRecipe = recipe;
-      const playY = item.id.includes('shield') ? 1.0 : 0.2;
-      activeBenchHandle = hgameVfx.playEffect(recipe, { x: 0, y: playY, z: 0 });
-      hgameVfx.update(0.016);
+      activeBenchPackId = item.packId;
 
-      const pipe = ensureHdrPipeline(vp);
-      vp.setRenderOverride(() => pipe.render());
-      vp.camera.position.set(4.5, 3.2, 6.2);
-      vp.controls.target.set(0, playY + 0.5, 0);
-      vp.controls.update();
+      const effectId = item.effectId || recipe.id;
+      const playY = computeBenchPlayY(recipe, effectId);
+      activeBenchHandle = hgameVfx.playEffect(recipe.id, { x: 0, y: playY, z: 0, scale: 1 });
+      if (viewport?.camera) hgameVfx.setCamera?.(viewport.camera);
+    hgameVfx.update(0.016);
+
+      vp.setRenderOverride(() => renderBenchScene(vp));
+      frameBenchCamera(vp, effectId);
+      renderBenchScene(vp);
 
       const st = hgameVfx.getStats();
-      statusEl.textContent = `Piloto_Bench_8 · ${recipe.layers.length} 层 · 活跃粒子 ${st.shuriken?.activeParticles ?? 0} · 变体 ${st.shaderVariants ?? 0}`;
+      const totals = getBenchTelemetryTotals(st);
+      statusEl.textContent = `${item.category || 'Piloto'} · ${recipe.layers.length} 层 · 粒子 ${totals.atlasActive} · 网格 ${totals.meshActive} · DrawCalls ${benchLastDrawCalls}`;
       window.__HGAME_VFX_BENCH__ = {
         id: item.id,
-        qualityTier: qualitySelect?.value || 'high',
+        effectId: recipe.id,
+        packId: item.packId,
+        qualityTier: qTier,
         speed: Number(speedSelect?.value || 1.0),
-        activeParticles: st.shuriken?.activeParticles ?? 0,
-        activeDrawCalls: st.shuriken?.activeDrawCalls ?? 0,
-        shaderVariants: st.shaderVariants ?? 0,
+        activeParticles: totals.atlasActive,
+        activeMeshes: totals.meshActive,
+        activeTrails: totals.trailActive,
+        activeDrawCalls: benchLastDrawCalls,
+        hasDistortion: Boolean(hgameVfx.hasActiveDistortion?.()),
         simMs: 0,
         isActive: Boolean(activeBenchHandle?.isActive?.()),
       };
@@ -1767,14 +2011,15 @@ async function initVfxView() {
     replayBtn?.addEventListener('click', replayActiveVfx);
     qualitySelect?.addEventListener('change', () => {
       if (hgameVfx?.setQualityTier) {
-        hgameVfx.setQualityTier(qualitySelect.value || 'high');
+        hgameVfx.setQualityTier(normalizeBenchQuality(qualitySelect.value || 'high'));
       }
     });
     gridToggle?.addEventListener('change', () => {
-      if (viewport?.gridHelper) viewport.gridHelper.visible = gridToggle.checked;
+      if (benchStudioGrid && benchStageActive) benchStudioGrid.visible = gridToggle.checked;
+      else if (viewport?.gridHelper) viewport.gridHelper.visible = gridToggle.checked;
     });
     bloomToggle?.addEventListener('change', () => {
-      if (hdrPipeline?.bloomPass) hdrPipeline.bloomPass.enabled = bloomToggle.checked;
+      if (benchPostPipeline) benchPostPipeline.setState({ bloom: bloomToggle.checked });
     });
     planeModeSelect?.addEventListener('change', () => {
       void loadCurrentVfx();
@@ -1806,23 +2051,51 @@ async function initVfxView() {
       fetch('/api/hgame/vfx/catalog').then(r => (r.ok ? r.json() : { available: false })).catch(() => ({ available: false })),
     ]);
     const unrealCatalog = unrealRes || {};
-    shurikenBenchSystems = (vfxBenchRes?.available && Array.isArray(vfxBenchRes.effects))
-      ? vfxBenchRes.effects.map(ef => ({
-          id: ef.id,
-          name: ef.name,
-          category: 'Piloto_Bench_8',
-          group: 'Piloto_Bench_8',
-          layerCount: ef.layerCount,
-          duration: ef.duration,
-          loop: ef.loop,
-          isShurikenBench: true,
-          recipeUrl: `${vfxBenchRes.baseUrl}/${ef.recipeFile}`,
-          catalogBaseUrl: vfxBenchRes.baseUrl,
-          textureMap: vfxBenchRes.textures || {},
-          meshMap: vfxBenchRes.meshes || {},
-          hgamePreset: { color: '#ff944d' },
-        }))
-      : [];
+    vfxPacksById.clear();
+    vfxMeshIndex = vfxBenchRes?.meshIndex || {};
+    vfxBaseUrl = vfxBenchRes?.baseUrl || '/files/hgame-vfx';
+    if (vfxBenchRes?.available && Array.isArray(vfxBenchRes.packs)) {
+      const nextBenchSystems = [];
+      for (const pack of vfxBenchRes.packs) {
+        vfxPacksById.set(pack.id, pack);
+        const catTitle = PACK_CATEGORY_MAP[pack.id] || pack.name || pack.id;
+        for (const ef of Array.isArray(pack.effects) ? pack.effects : []) {
+          nextBenchSystems.push({
+            id: `${pack.id}__${ef.id}`,
+            effectId: ef.id,
+            packId: pack.id,
+            name: ef.name || ef.id,
+            category: catTitle,
+            group: pack.name,
+            layerCount: ef.layerCount,
+            duration: ef.duration,
+            loop: Boolean(ef.loop),
+            isShurikenBench: true,
+            recipeUrl: `${vfxBaseUrl}/${ef.file}`,
+            hgamePreset: { color: '#ff944d' },
+          });
+        }
+      }
+      shurikenBenchSystems = nextBenchSystems;
+    } else if (vfxBenchRes?.available && Array.isArray(vfxBenchRes.effects)) {
+      // Legacy fallback when catalog.json v1 is used
+      shurikenBenchSystems = vfxBenchRes.effects.map(ef => ({
+        id: ef.id,
+        effectId: ef.id,
+        packId: 'legacy_v1',
+        name: ef.name,
+        category: 'Piloto_Bench_8',
+        group: 'Piloto_Bench_8',
+        layerCount: ef.layerCount,
+        duration: ef.duration,
+        loop: ef.loop,
+        isShurikenBench: true,
+        recipeUrl: `${vfxBaseUrl}/${ef.recipeFile}`,
+        hgamePreset: { color: '#ff944d' },
+      }));
+    } else {
+      shurikenBenchSystems = [];
+    }
     vfxSystems = Array.isArray(unrealCatalog.vfxSystems) ? unrealCatalog.vfxSystems : [];
     vfxMeshes = Array.isArray(unrealCatalog.vfxMeshes) ? unrealCatalog.vfxMeshes : [];
     vfxTextures = Array.isArray(unrealCatalog.vfxTextures) ? unrealCatalog.vfxTextures : [];
@@ -1835,7 +2108,14 @@ async function initVfxView() {
   }
 
   populateCategoryFilter();
-  const initialItem = getCurrentItem() || getFilteredItems()[0] || null;
+  const params = new URLSearchParams(window.location.search);
+  const reqVfx = params.get('vfx');
+  const reqEff = params.get('effect');
+  const allItems = getAllItems();
+  const deepLinked = (reqVfx && allItems.find(it => it.id === reqVfx))
+    || (reqEff && allItems.find(it => it.effectId === reqEff || it.id === reqEff))
+    || null;
+  const initialItem = deepLinked || getCurrentItem() || getFilteredItems()[0] || null;
   if (initialItem) {
     activeSelection = { kind: initialItem.kind, id: initialItem.id };
     applyItemDefaults(initialItem);
@@ -1844,6 +2124,52 @@ async function initVfxView() {
   ensureViewport();
   await loadCurrentVfx();
 }
+
+window.__WEBASSET_VFX_TEST__ = {
+  listIds: () => getAllItems().map(it => it.id),
+  setPlaying: (playing) => {
+    isPlaying = Boolean(playing);
+    if (playBtn) playBtn.textContent = isPlaying ? '暂停' : '播放';
+  },
+  async select(id) {
+    const match = getAllItems().find(it => it.id === id || it.effectId === id);
+    if (!match) return false;
+    activeSelection = { kind: match.kind, id: match.id };
+    applyItemDefaults(match);
+    renderList();
+    await loadCurrentVfx();
+    return true;
+  },
+  step(dt = 1 / 60, doRender = true) {
+    const vp = viewport;
+    if (!vp) return null;
+    if (activeBenchItem?.isShurikenBench && hgameVfx) {
+      const speedMul = Math.max(0.1, Number(speedSelect?.value || 1.0));
+      const simDt = dt * speedMul;
+      benchSimDt = simDt;
+      hgameVfx.update(simDt);
+      if (doRender) renderBenchScene(vp);
+      const st = hgameVfx.getStats();
+      const totals = getBenchTelemetryTotals(st);
+      return {
+        id: activeBenchItem.id,
+        effectId: activeBenchRecipe?.id,
+        ...totals,
+        drawCalls: benchLastDrawCalls,
+        hasDistortion: Boolean(hgameVfx.hasActiveDistortion?.()),
+      };
+    }
+    tickVfx(dt);
+    return null;
+  },
+  getTelemetry: () => (hgameVfx ? {
+    id: activeBenchItem?.id || activeSelection.id,
+    effectId: activeBenchRecipe?.id,
+    ...getBenchTelemetryTotals(hgameVfx.getStats()),
+    drawCalls: benchLastDrawCalls,
+    hasDistortion: Boolean(hgameVfx.hasActiveDistortion?.()),
+  } : null),
+};
 
 window.addEventListener('webasset:workspace-change', event => {
   if (event.detail?.workspace === 'vfx') {

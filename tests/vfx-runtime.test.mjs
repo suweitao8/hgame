@@ -18,6 +18,7 @@ import {
   VFX_UBER_FRAGMENT_GLSL,
   packUberMaterialRow,
 } from '../assets/runtime/vfx/vfx-shader-chunks.js';
+import { createEffectPlayer } from '../assets/runtime/vfx/vfx-recipes.js';
 import {
   ATLAS_PARTICLE_FRAGMENT_GLSL,
   CROWD_STATUS,
@@ -3465,4 +3466,729 @@ test('mobile/minigame defaults, zero idle draw calls across createVfxSystem, and
   }
   vfx.dispose();
 });
+
+test('parseUnityAssetMesh flips UV V-coordinates and convertUnityPrefab negates rotX for .asset meshes only', async () => {
+  const { parseUnityAssetMesh } = await import('../scripts/export-unity-vfx-bench.mjs');
+  const { convertUnityPrefab } = await import('../scripts/import-unity-vfx.mjs');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+
+  // 1. parseUnityAssetMesh flips UV V (1.0 - v) for uncompressed Unity .asset mesh
+  const v0Pos = Buffer.alloc(12 * 3);
+  const v0Uv = [
+    [0.25, 0.0],
+    [0.5, 1.0],
+    [0.75, 0.2],
+  ];
+  const stride = 32; // pos(12) + nrm(12) + uv0(8)
+  const vBuf = Buffer.alloc(stride * 3);
+  for (let i = 0; i < 3; i++) {
+    const base = i * stride;
+    vBuf.writeFloatLE(i * 0.5, base);
+    vBuf.writeFloatLE(0, base + 4);
+    vBuf.writeFloatLE(0.5, base + 8);
+    vBuf.writeFloatLE(0, base + 12);
+    vBuf.writeFloatLE(1, base + 16);
+    vBuf.writeFloatLE(0, base + 20);
+    vBuf.writeFloatLE(v0Uv[i][0], base + 24);
+    vBuf.writeFloatLE(v0Uv[i][1], base + 28);
+  }
+  const idxBuf = Buffer.alloc(6);
+  idxBuf.writeUInt16LE(0, 0);
+  idxBuf.writeUInt16LE(1, 2);
+  idxBuf.writeUInt16LE(2, 4);
+  const assetYaml = `%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!43 &4300000
+Mesh:
+  m_MeshCompression: 0
+  m_IndexFormat: 0
+  m_IndexBuffer: ${idxBuf.toString('hex')}
+  m_VertexData:
+    m_VertexCount: 3
+    m_Channels:
+    - stream: 0
+      offset: 0
+      format: 0
+      dimension: 3
+    - stream: 0
+      offset: 12
+      format: 0
+      dimension: 3
+    - stream: 0
+      offset: 0
+      format: 0
+      dimension: 0
+    - stream: 0
+      offset: 0
+      format: 0
+      dimension: 0
+    - stream: 0
+      offset: 24
+      format: 0
+      dimension: 2
+    m_DataSize: ${vBuf.length}
+    _typelessdata: ${vBuf.toString('hex')}
+`;
+  const parsed = parseUnityAssetMesh(assetYaml);
+  assert.ok(Math.abs(parsed.uv0[1] - 1.0) < 1e-5, `expected uv0[0].v flipped 0 -> 1, got ${parsed.uv0[1]}`);
+  assert.ok(Math.abs(parsed.uv0[3] - 0.0) < 1e-5, `expected uv0[1].v flipped 1 -> 0, got ${parsed.uv0[3]}`);
+  assert.ok(Math.abs(parsed.uv0[5] - 0.8) < 1e-5, `expected uv0[2].v flipped 0.2 -> 0.8, got ${parsed.uv0[5]}`);
+  assert.equal(parsed.positions[2], -0.5, 'LHS->RHS negates Z');
+
+  // 2. convertUnityPrefab negates startRotationX for .asset meshes and preserves it for .fbx meshes
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-asset-rotx-'));
+  try {
+    const assetPath = path.join(tmpDir, 'MyCone.asset');
+    const fbxPath = path.join(tmpDir, 'MyFbxCone.fbx');
+    const assetGuid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const fbxGuid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    fs.writeFileSync(assetPath, assetYaml);
+    fs.writeFileSync(`${assetPath}.meta`, `fileFormatVersion: 2\nguid: ${assetGuid}\n`);
+    fs.writeFileSync(fbxPath, 'dummy fbx');
+    fs.writeFileSync(`${fbxPath}.meta`, `fileFormatVersion: 2\nguid: ${fbxGuid}\nModelImporter:\n  globalScale: 1\n`);
+
+    const prefabPath = path.join(tmpDir, 'RotXTest.prefab');
+    fs.writeFileSync(prefabPath, `%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &10
+GameObject:
+  m_Name: Root
+--- !u!4 &11
+Transform:
+  m_GameObject: {fileID: 10}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children:
+  - {fileID: 21}
+  - {fileID: 31}
+  m_Father: {fileID: 0}
+--- !u!1 &20
+GameObject:
+  m_Name: AssetMeshLayer
+--- !u!4 &21
+Transform:
+  m_GameObject: {fileID: 20}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 11}
+--- !u!198 &22
+ParticleSystem:
+  m_GameObject: {fileID: 20}
+  lengthInSec: 1
+  InitialModule:
+    enabled: 1
+    startLifetime:
+      scalar: 0.5
+    startSize:
+      scalar: 1
+    startSpeed:
+      scalar: 0
+    rotation3D: 1
+    startRotationX:
+      scalar: -1.5707963
+    startRotationY:
+      minMaxState: 3
+      minScalar: 0
+      scalar: 6.2831855
+    startColor:
+      minMaxState: 0
+      maxColor: {r: 1, g: 1, b: 1, a: 1}
+  EmissionModule:
+    enabled: 1
+    m_BurstCount: 1
+    m_Bursts:
+    - serializedVersion: 2
+      time: 0
+      countCurve:
+        scalar: 1
+      cycleCount: 1
+      repeatInterval: 0.01
+--- !u!199 &23
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 20}
+  m_RenderMode: 4
+  m_Mesh: {fileID: 4300000, guid: ${assetGuid}, type: 2}
+--- !u!1 &30
+GameObject:
+  m_Name: FbxMeshLayer
+--- !u!4 &31
+Transform:
+  m_GameObject: {fileID: 30}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 11}
+--- !u!198 &32
+ParticleSystem:
+  m_GameObject: {fileID: 30}
+  lengthInSec: 1
+  InitialModule:
+    enabled: 1
+    startLifetime:
+      scalar: 0.5
+    startSize:
+      scalar: 1
+    startSpeed:
+      scalar: 0
+    rotation3D: 1
+    startRotationX:
+      scalar: -1.5707963
+    startRotationY:
+      minMaxState: 3
+      minScalar: 0
+      scalar: 6.2831855
+    startColor:
+      minMaxState: 0
+      maxColor: {r: 1, g: 1, b: 1, a: 1}
+  EmissionModule:
+    enabled: 1
+    m_BurstCount: 1
+    m_Bursts:
+    - serializedVersion: 2
+      time: 0
+      countCurve:
+        scalar: 1
+      cycleCount: 1
+      repeatInterval: 0.01
+--- !u!199 &33
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 30}
+  m_RenderMode: 4
+  m_Mesh: {fileID: 4300000, guid: ${fbxGuid}, type: 2}
+`);
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'rotx_test' });
+    const assetLayer = recipe.layers.find((l) => l.name === 'assetmeshlayer');
+    const fbxLayer = recipe.layers.find((l) => l.name === 'fbxmeshlayer');
+    assert.ok(assetLayer && fbxLayer, 'expected both layers converted');
+    assert.ok(Math.abs(assetLayer.rotX - 1.5708) < 1e-3, `.asset mesh rotX should negate -1.5708 -> +1.5708, got ${assetLayer.rotX}`);
+    assert.deepEqual(assetLayer.rotY, [0, 6.2832], 'full 2pi spin range stays [0, 6.2832]');
+    assert.ok(Math.abs(fbxLayer.rotX - 1.5708) < 1e-3, `.fbx mesh rotX should also negate -1.5708 -> +1.5708 under unified UnityEngine.Mesh GLB export, got ${fbxLayer.rotX}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('instanced mesh integer bit-packing rounds varyings and vfxHasFlag avoids bit overflow', () => {
+  const scene = new THREE.Scene();
+  const meshPool = createMeshVfxPool({ mode: '3d', THREE, scene, maxMeshes: 4 });
+  const customGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
+  try {
+    meshPool.registerMesh('topdown_tube', customGeo, { topDownUv: true });
+    const uberMat = createUberMaterialSpec({
+      shaderKind: 'uber_fx',
+      blend: 'additive',
+      mainTexKey: 'tx_noise_10',
+      alphaOverrideKey: 'gradient_maker_noise_y_cut_down',
+      useAlphaOverride: true,
+    });
+    meshPool.spawn({
+      mesh: 'topdown_tube',
+      blend: 'additive',
+      duration: 1.0,
+      flipX: -1,
+      flipY: 1,
+      flipZ: 1,
+      flipbook: { cols: 4, rows: 4, cycles: 0, blend: true },
+      uberMat,
+    });
+    const instMesh = scene.children.find((c) => c.name?.startsWith('HGameVfxMeshInst_'));
+    assert.ok(instMesh, 'expected instanced mesh batch in scene');
+    const aScaleInfo = instMesh.geometry.getAttribute('aInstScaleInfo');
+    const aMeta = instMesh.geometry.getAttribute('aInstMeta');
+    assert.equal(aScaleInfo.getW(0), 2, 'topDownUv with odd negative scale writes aInstScaleInfo.w === 2');
+    assert.equal(aMeta.getW(0), 4096, 'cycles=0 + blend=true writes aInstMeta.w === 4096');
+
+    assert.match(VFX_MESH_INSTANCED_VS, /float flipBitsVs = floor\(aInstScaleInfo\.w \+ 0\.5\);/);
+    assert.match(VFX_MESH_INSTANCED_FS, /float flipBits = floor\(vFlipLocalV \+ 0\.5\);/);
+    assert.match(VFX_MESH_INSTANCED_FS, /float metaW = floor\(vMeta\.w \+ 0\.5\);/);
+    assert.match(VFX_COMMON_GLSL, /float cleanFlags = floor\(flags \+ 0\.5\);/);
+
+    // Mirror exact GLSL decoding for sub-ULP interpolated varyings
+    const decodeFlip = (v) => {
+      const flipBits = Math.floor(v + 0.5);
+      const flipLocalVFlag = ((flipBits % 2) + 2) % 2;
+      const isOddFlip = Math.floor(flipBits * 0.5 + 0.25);
+      return { flipLocalVFlag, isOddFlip };
+    };
+    assert.deepEqual(decodeFlip(1.9999999), { flipLocalVFlag: 0, isOddFlip: 1 });
+
+    const decodeMetaW = (v) => {
+      const metaW = Math.floor(v + 0.5);
+      const fbBlendFlag = Math.floor(metaW / 4096.0 + 0.0001);
+      const fbCyc = metaW - fbBlendFlag * 4096.0;
+      return { fbBlendFlag, fbCyc };
+    };
+    assert.deepEqual(decodeMetaW(4095.9998), { fbBlendFlag: 1, fbCyc: 0 });
+
+    const hasFlagGlsl = (flags, bitVal) => {
+      const cleanFlags = Math.floor(flags + 0.5);
+      return ((Math.floor(cleanFlags / bitVal) % 2) + 2) % 2 > 0.5;
+    };
+    assert.equal(hasFlagGlsl(2047, 2048), false, 'all lower bits 1..1024 set must not overflow into 2048');
+    assert.equal(hasFlagGlsl(2097151, 2097152), false, 'all lower bits 1..1048576 set must not overflow into 2097152');
+    assert.equal(hasFlagGlsl(2047 + 2048, 2048), true);
+  } finally {
+    meshPool.dispose();
+    customGeo.dispose();
+  }
+});
+
+test('Shuriken Box ShapeModule rotation and hierarchy scale keep horizontal lunge dust along Z', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-box-rot-'));
+  try {
+    const prefabPath = path.join(tmpDir, 'BoxLunge.prefab');
+    fs.writeFileSync(prefabPath, `%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &10
+GameObject:
+  m_Name: BoxLunge
+  m_IsActive: 1
+--- !u!4 &11
+Transform:
+  m_GameObject: {fileID: 10}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 0}
+--- !u!1 &20
+GameObject:
+  m_Name: Parent
+  m_IsActive: 1
+--- !u!4 &21
+Transform:
+  m_GameObject: {fileID: 20}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 0.6, y: 0.6, z: 0.6}
+  m_Father: {fileID: 11}
+--- !u!1 &30
+GameObject:
+  m_Name: Smoke_Flipbook_Clean_Ground
+  m_IsActive: 1
+--- !u!4 &31
+Transform:
+  m_GameObject: {fileID: 30}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -1.5, z: -3}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 21}
+--- !u!198 &32
+ParticleSystem:
+  m_GameObject: {fileID: 30}
+  lengthInSec: 1
+  looping: 0
+  simulationSpeed: 1
+  scalingMode: 0
+  InitialModule:
+    maxNumParticles: 200
+    startLifetime:
+      minMaxState: 0
+      scalar: 1
+    startSpeed:
+      minMaxState: 0
+      scalar: 0
+    startSize:
+      minMaxState: 0
+      scalar: 0.5
+    startRotation:
+      minMaxState: 0
+      scalar: 0
+    gravityModifier:
+      minMaxState: 0
+      scalar: 0
+    startColor:
+      minMaxState: 0
+      maxColor: {r: 1, g: 1, b: 1, a: 1}
+  EmissionModule:
+    enabled: 1
+    rateOverTime:
+      minMaxState: 0
+      scalar: 0
+    m_BurstCount: 1
+    m_Bursts:
+      - serializedVersion: 2
+        time: 0
+        minMaxState: 0
+        scalar: 60
+        minScalar: 60
+        cycleCount: 1
+        repeatInterval: 0.01
+        probability: 1
+  ShapeModule:
+    enabled: 1
+    type: 5
+    radius:
+      value: 0.5
+    angle: 25
+    radiusThickness: 0
+    m_Position: {x: 0, y: 0, z: 0}
+    m_Rotation: {x: 90, y: 0, z: 0}
+    m_Scale: {x: 0.6, y: 10, z: 1}
+--- !u!199 &33
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 30}
+  m_Enabled: 1
+  m_RenderMode: 0
+  m_Materials: []
+`, 'utf8');
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'box_lunge_test' });
+    const layer = recipe.layers[0];
+    assert.equal(layer.shape.type, 'box');
+    assert.deepEqual(layer.shape.size, [0.36, 6, 0.6]);
+    assert.equal(layer.shape.shell, undefined);
+    assert.equal(layer.shape.scale, undefined);
+    assert.ok(Array.isArray(layer.shape.rotation) && Math.abs(layer.shape.rotation[0] + Math.PI * 0.5) < 0.01);
+
+    const xs = [];
+    const ys = [];
+    const zs = [];
+    const realAtlas = createAtlasParticlePool({ mode: 'headless', maxParticles: 256 });
+    const origEmit = realAtlas.emit.bind(realAtlas);
+    const atlasParticles = Object.assign(Object.create(realAtlas), {
+      emit(opts) {
+        xs.push(opts.x);
+        ys.push(opts.y);
+        zs.push(opts.z);
+        return origEmit(opts);
+      },
+    });
+    const player = createEffectPlayer({ atlasParticles });
+    try {
+      player.registerEffect(recipe);
+      player.playEffect('box_lunge_test', { x: 0, y: 0, z: 0 });
+      player.update(0.05);
+
+      assert.equal(xs.length, 60);
+      const minY = Math.min(...ys);
+      const maxY = Math.max(...ys);
+      const minZ = Math.min(...zs);
+      const maxZ = Math.max(...zs);
+      assert.ok(maxZ - minZ > 4.0, `Expected dust trail along Z (> 4.0m), got span ${(maxZ - minZ).toFixed(2)}`);
+      assert.ok(maxY - minY < 1.0, `Expected flat Y thickness (< 1.0m), got span ${(maxY - minY).toFixed(2)}`);
+
+      // Also verify rectangle uses size[1] for depth (XZ) in 3D and box shell / boxEdge spawn cleanly
+      const rectRecipe = {
+        schemaVersion: 1,
+        id: 'rect_edge_test',
+        duration: 1,
+        layers: [
+          {
+            kind: 'particle',
+            renderMode: 'billboard',
+            life: 1,
+            speed: 0,
+            bursts: [{ time: 0, count: 40 }],
+            shape: { type: 'rectangle', radius: 1, size: [4.5, 4.5, 1] },
+          },
+          {
+            kind: 'particle',
+            renderMode: 'billboard',
+            life: 1,
+            speed: 0,
+            bursts: [{ time: 0, count: 40 }],
+            shape: { type: 'box', radius: 1, size: [2, 2, 2], boxEdge: true },
+          },
+        ],
+      };
+      xs.length = 0; ys.length = 0; zs.length = 0;
+      player.registerEffect(rectRecipe);
+      player.playEffect('rect_edge_test', { x: 0, y: 0, z: 0 });
+      player.update(0.05);
+      assert.equal(xs.length, 80);
+      const rectZSpan = Math.max(...zs.slice(0, 40)) - Math.min(...zs.slice(0, 40));
+      assert.ok(rectZSpan > 2.0, `Expected rectangle 3D depth from size[1]=4.5 (> 2.0m), got ${rectZSpan.toFixed(2)}`);
+    } finally {
+      player.dispose();
+      realAtlas.dispose();
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('unity VFX spatial parity: scalingMode 0/1/2, shape scale/rotation, unified meshAlign + rotOverLifetime, and 512-layer cap', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vfx-parity-unit-'));
+  try {
+    const fbxPath = path.join(tmpDir, 'BladeMesh.fbx');
+    const fbxGuid = 'cccccccccccccccccccccccccccccccc';
+    fs.writeFileSync(fbxPath, 'dummy');
+    fs.writeFileSync(`${fbxPath}.meta`, `fileFormatVersion: 2\nguid: ${fbxGuid}\nModelImporter:\n  globalScale: 100\n`);
+
+    const prefabPath = path.join(tmpDir, 'SpatialParity.prefab');
+    fs.writeFileSync(prefabPath, `%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &10
+GameObject:
+  m_Name: Root
+--- !u!4 &11
+Transform:
+  m_GameObject: {fileID: 10}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 2, y: 2, z: 2}
+  m_Children:
+  - {fileID: 21}
+  - {fileID: 31}
+  - {fileID: 41}
+  - {fileID: 51}
+  m_Father: {fileID: 0}
+--- !u!1 &20
+GameObject:
+  m_Name: ModeHierarchyCone
+--- !u!4 &21
+Transform:
+  m_GameObject: {fileID: 20}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 11}
+--- !u!198 &22
+ParticleSystem:
+  m_GameObject: {fileID: 20}
+  scalingMode: 0
+  lengthInSec: 1
+  InitialModule:
+    startLifetime:
+      minMaxState: 0
+      scalar: 1
+    startSpeed:
+      minMaxState: 0
+      scalar: 0
+    startSize:
+      minMaxState: 0
+      scalar: 1
+  EmissionModule:
+    enabled: 1
+    rateOverTime:
+      minMaxState: 0
+      scalar: 10
+  ShapeModule:
+    enabled: 1
+    type: 8
+    angle: 0
+    length: 5
+    radius:
+      value: 1
+    m_Rotation: {x: 0, y: 0, z: 0}
+    m_Scale: {x: 1, y: 1, z: 7}
+--- !u!199 &23
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 20}
+  m_RenderMode: 0
+--- !u!1 &30
+GameObject:
+  m_Name: ModeLocalSphere
+--- !u!4 &31
+Transform:
+  m_GameObject: {fileID: 30}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1.5, y: 1.5, z: 1.5}
+  m_Father: {fileID: 11}
+--- !u!198 &32
+ParticleSystem:
+  m_GameObject: {fileID: 30}
+  scalingMode: 1
+  lengthInSec: 1
+  InitialModule:
+    startLifetime:
+      minMaxState: 0
+      scalar: 1
+    startSpeed:
+      minMaxState: 0
+      scalar: 0
+    startSize:
+      minMaxState: 0
+      scalar: 1
+  EmissionModule:
+    enabled: 1
+    rateOverTime:
+      minMaxState: 0
+      scalar: 10
+  ShapeModule:
+    enabled: 1
+    type: 0
+    radius:
+      value: 1
+    m_Rotation: {x: 90, y: 0, z: 0}
+    m_Scale: {x: 0.01, y: 0.01, z: 0.5}
+--- !u!199 &33
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 30}
+  m_RenderMode: 0
+--- !u!1 &40
+GameObject:
+  m_Name: ModeShapeChild
+--- !u!4 &41
+Transform:
+  m_GameObject: {fileID: 40}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 11}
+--- !u!198 &42
+ParticleSystem:
+  m_GameObject: {fileID: 40}
+  scalingMode: 2
+  lengthInSec: 1
+  InitialModule:
+    startLifetime:
+      minMaxState: 0
+      scalar: 1
+    startSpeed:
+      minMaxState: 0
+      scalar: 0
+    startSize:
+      minMaxState: 0
+      scalar: 1
+  EmissionModule:
+    enabled: 1
+    rateOverTime:
+      minMaxState: 0
+      scalar: 10
+  ShapeModule:
+    enabled: 1
+    type: 10
+    radius:
+      value: 1
+--- !u!199 &43
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 40}
+  m_RenderMode: 0
+--- !u!1 &50
+GameObject:
+  m_Name: ManifestMeshLayer
+--- !u!4 &51
+Transform:
+  m_GameObject: {fileID: 50}
+  m_LocalRotation: {x: 0, y: 0.7071068, z: 0, w: 0.7071068}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Father: {fileID: 11}
+--- !u!198 &52
+ParticleSystem:
+  m_GameObject: {fileID: 50}
+  scalingMode: 0
+  lengthInSec: 1
+  InitialModule:
+    startLifetime:
+      minMaxState: 0
+      scalar: 1
+    startSpeed:
+      minMaxState: 0
+      scalar: 5
+    startSize:
+      minMaxState: 0
+      scalar: 1
+    rotation3D: 1
+    startRotationX:
+      minMaxState: 0
+      scalar: 0.5
+  EmissionModule:
+    enabled: 1
+    m_BurstCount: 1
+    m_Bursts:
+    - serializedVersion: 2
+      time: 0
+      countCurve:
+        scalar: 1
+      cycleCount: 1
+      repeatInterval: 0.01
+--- !u!199 &53
+ParticleSystemRenderer:
+  m_GameObject: {fileID: 50}
+  m_RenderMode: 4
+  m_RenderAlignment: 4
+  m_Mesh: {fileID: 4300000, guid: ${fbxGuid}, type: 2}
+`);
+    const meshManifest = {
+      [`${fbxGuid}:4300000`]: { meshKey: 'blademesh', subMeshName: 'blademesh', multi: false },
+    };
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'parity_unit', meshManifest });
+
+    // 1. scalingMode 0/1/2 + Y<->Z cone scale + sphere rotation
+    const lHier = recipe.layers.find((l) => l.name === 'modehierarchycone');
+    const lLocal = recipe.layers.find((l) => l.name === 'modelocalsphere');
+    const lShape = recipe.layers.find((l) => l.name === 'modeshapechild');
+    const lMesh = recipe.layers.find((l) => l.name === 'manifestmeshlayer');
+    assert.equal(lHier.size, 2, 'scalingMode=0 multiplies particle size by hierarchy scale 2');
+    assert.deepEqual(lHier.shape.scale, [1, 7, 1], 'cone m_Scale.z=7 maps to HGame Y (beam length)');
+    assert.equal(lLocal.size, 1.5, 'scalingMode=1 uses own scale 1.5 and ignores parent scale 2');
+    assert.ok(Array.isArray(lLocal.shape.rotation) && Math.abs(lLocal.shape.rotation[0] + Math.PI * 0.5) < 0.02, 'sphere preserves non-uniform m_Rotation');
+    assert.equal(lShape.size, 1, 'scalingMode=2 keeps particle size at 1 while shape radius scales by 2');
+    assert.equal(lShape.shape.radius, 2);
+
+    // 2. meshManifest suppresses double meshGlobalScale and configures unified velocity align -z
+    assert.equal(lMesh.meshGlobalScale, undefined, 'manifest-baked GLB must not emit meshGlobalScale=100');
+    assert.equal(lMesh.unityMeshRot, true);
+    assert.equal(lMesh.meshAlign, 'velocity');
+    assert.equal(lMesh.forwardAxis, '-z');
+
+    // 3. Runtime readSlotTransform checks unityMeshRot across velocity/view + rotationOverLifetime integration
+    const scene = new THREE.Scene();
+    const meshVfx = createMeshVfxPool({ mode: '3d', THREE, scene, maxMeshes: 8 });
+    try {
+      const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+      cam.position.set(0, 0, 10);
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld();
+      meshVfx.setCamera(cam);
+
+      const hView = meshVfx.spawn({
+        mesh: 'crystal',
+        duration: 1,
+        unityMeshRot: true,
+        meshAlign: 'view',
+        rotX: 0,
+        rotY: 0,
+        rotZ: 0,
+        rotationOverLifetime: { z: { mode: 'curve', scalar: 2, curve: [[0, 1], [1, 1]] } },
+      });
+      const hVel = meshVfx.spawn({
+        mesh: 'crystal',
+        duration: 1,
+        vx: 10,
+        vy: 0,
+        vz: 0,
+        unityMeshRot: true,
+        meshAlign: 'velocity',
+        forwardAxis: '-z',
+        rotX: 0,
+        rotY: 0,
+        rotZ: 0,
+      });
+      meshVfx.update(0.5);
+      const pos = new Float32Array(3);
+      const qView = new Float32Array(4);
+      const qVel = new Float32Array(4);
+      const sc = new Float32Array(3);
+      assert.ok(meshVfx.readSlotTransform(hView, pos, qView, sc));
+      assert.ok(meshVfx.readSlotTransform(hVel, pos, qVel, sc));
+      // Z rotated by integral(2 * 0.5) = 1 rad around camera Z: q.z ~= sin(0.5), q.w ~= cos(0.5)
+      assert.ok(Math.abs(qView[2] - Math.sin(0.5)) < 0.02, `expected view+rotOverLife Z=sin(0.5), got ${qView[2]}`);
+      // -Z rotated to +X is -90 deg around Y: q.y ~= -0.7071, q.w ~= 0.7071
+      assert.ok(Math.abs(qVel[1] + Math.SQRT1_2) < 0.02 && Math.abs(qVel[3] - Math.SQRT1_2) < 0.02, `expected -Z->+X velocity quat, got [${qVel.join(', ')}]`);
+    } finally {
+      meshVfx.dispose();
+    }
+
+    // 4. Recipe validator accepts > 128 layers up to 512
+    const bigLayers = Array.from({ length: 200 }, (_, i) => ({
+      name: `l_${i}`,
+      kind: 'particle',
+      life: 1,
+      rate: 1,
+    }));
+    const bigRes = validateVfxRecipe({ schemaVersion: 1, id: 'mega_200', duration: 2, layers: bigLayers });
+    assert.equal(bigRes.ok, true, `expected 200-layer recipe valid, got ${bigRes.errors?.join('; ')}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+
 

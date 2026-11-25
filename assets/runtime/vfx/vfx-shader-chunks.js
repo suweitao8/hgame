@@ -767,7 +767,8 @@ float vfxSafeSmoothstep(float e0, float e1, float x) {
 }
 
 bool vfxHasFlag(float flags, float bitVal) {
-  return mod(floor(flags / bitVal + 0.001), 2.0) > 0.5;
+  float cleanFlags = floor(flags + 0.5);
+  return mod(floor(cleanFlags / bitVal), 2.0) > 0.5;
 }
 
 vec2 vfxPolarCoords(vec2 uv, vec2 center) {
@@ -778,9 +779,10 @@ vec2 vfxPolarCoords(vec2 uv, vec2 center) {
 }
 
 vec4 vfxSampleAtlasRectWrapped(sampler2D atlasTex, vec4 rect, vec2 uv, float flipV, bool clampU, bool clampV) {
+  vec2 halfTex = clamp(vec2(0.5) / max(vec2(1.0), abs(rect.zw - rect.xy) * 4096.0), vec2(0.001), vec2(0.25));
   vec2 tiled = vec2(
-    clampU ? clamp(uv.x, 0.001, 0.999) : fract(uv.x),
-    clampV ? clamp(uv.y, 0.001, 0.999) : fract(uv.y)
+    clampU ? clamp(uv.x, halfTex.x, 1.0 - halfTex.x) : fract(uv.x),
+    clampV ? clamp(uv.y, halfTex.y, 1.0 - halfTex.y) : fract(uv.y)
   );
   vec2 mapped = vec2(
     mix(rect.x, rect.z, tiled.x),

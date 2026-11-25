@@ -741,20 +741,28 @@ export function createVfxSystem({
     if (distObjects.length > 0) {
       const prevMask = camera.layers.mask;
       const prevAutoClear = renderer.autoClear;
+      const prevBg = targetScene.background;
       camera.layers.set(30);
       renderer.autoClear = false;
-      renderer.render(targetScene, camera);
-      renderer.autoClear = prevAutoClear;
-      camera.layers.mask = prevMask;
-      for (let i = 0; i < distObjects.length; i++) {
-        distObjects[i].layers.disable(30);
+      targetScene.background = null;
+      try {
+        renderer.render(targetScene, camera);
+      } finally {
+        targetScene.background = prevBg;
+        renderer.autoClear = prevAutoClear;
+        camera.layers.mask = prevMask;
+        for (let i = 0; i < distObjects.length; i++) {
+          distObjects[i].layers.disable(30);
+        }
+        distObjects.length = 0;
       }
-      distObjects.length = 0;
     }
   }
 
   function renderDistortionPass(renderer, targetScene, camera) {
-    if (!renderer || !targetScene || !camera || !hasActiveDistortion() || !THREE?.Vector2) {
+    if (!renderer || !targetScene || !camera) return;
+    meshVfx.setCamera?.(camera);
+    if (!hasActiveDistortion() || !THREE?.Vector2) {
       return;
     }
     const currentRT = typeof renderer.getRenderTarget === 'function' ? renderer.getRenderTarget() : null;
@@ -810,6 +818,7 @@ export function createVfxSystem({
 
   function renderWithDistortion(renderer, targetScene, camera) {
     if (!renderer || !targetScene || !camera) return;
+    meshVfx.setCamera?.(camera);
     prepareDistortionBeforeWorld();
     if (!hasActiveDistortion() || !THREE?.FramebufferTexture || !THREE?.Vector2) {
       renderer.render(targetScene, camera);
@@ -915,6 +924,9 @@ export function createVfxSystem({
     setWind(wx = 0, wy = 0, wz = 0) {
       atlasParticles.setWind(wx, wy, wz);
       meshVfx.setWind(wx, wy, wz);
+    },
+    setCamera(camera) {
+      meshVfx.setCamera?.(camera);
     },
     setCollisionResolver: effects.setCollisionResolver,
     setTrailTexture: trails.setTrailTexture,

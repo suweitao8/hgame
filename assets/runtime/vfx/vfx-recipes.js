@@ -4,8 +4,8 @@ import { VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 import { SHURIKEN_QUALITY_TIERS } from './vfx-shuriken-kernel.js';
 
 const MAX_ACTIVE_EFFECTS = 512;
-const MAX_LAYERS_PER_EFFECT = 128;
-const MAX_BURSTS_PER_LAYER = 8;
+const MAX_LAYERS_PER_EFFECT = 512;
+const MAX_BURSTS_PER_LAYER = 16;
 const MAX_TRAIL_FOLLOWERS = 512;
 const MAX_TRACKED_PARTICLES = 256;
 const MAX_POINT_LIGHTS = 16;
@@ -948,7 +948,7 @@ export function createEffectPlayer({
       }
     } else if (sType === 'rectangle') {
       const hw = (shape.size?.[0] ?? shape.radius ?? 1) * 0.5 * scale;
-      const hh = (shape.size?.[2] ?? shape.size?.[1] ?? shape.radius ?? 1) * 0.5 * scale;
+      const hh = (shape.size?.[1] ?? shape.size?.[2] ?? shape.radius ?? 1) * 0.5 * scale;
       lx = prng.range(-hw, hw);
       ly = is2D ? prng.range(-hh, hh) : 0;
       lz = is2D ? 0 : prng.range(-hh, hh);
@@ -1002,9 +1002,28 @@ export function createEffectPlayer({
       lx = prng.range(-bx, bx);
       ly = prng.range(-by, by);
       lz = is2D ? 0 : prng.range(-bz, bz);
+      if (shape.boxEdge && !is2D) {
+        const edgeAxis = Math.floor(prng.nextFloat() * 3);
+        if (edgeAxis === 0) {
+          ly = prng.nextFloat() < 0.5 ? -by : by;
+          lz = prng.nextFloat() < 0.5 ? -bz : bz;
+        } else if (edgeAxis === 1) {
+          lx = prng.nextFloat() < 0.5 ? -bx : bx;
+          lz = prng.nextFloat() < 0.5 ? -bz : bz;
+        } else {
+          lx = prng.nextFloat() < 0.5 ? -bx : bx;
+          ly = prng.nextFloat() < 0.5 ? -by : by;
+        }
+      } else if (shape.shell) {
+        const faceAxis = Math.floor(prng.nextFloat() * (is2D ? 2 : 3));
+        const sign = prng.nextFloat() < 0.5 ? -1 : 1;
+        if (faceAxis === 0) lx = sign * bx;
+        else if (faceAxis === 1) ly = sign * by;
+        else lz = sign * bz;
+      }
       dx = 0;
-      dy = is2D ? -1 : 1;
-      dz = 0;
+      dy = is2D ? -1 : 0;
+      dz = is2D ? 0 : -1;
     } else {
       const ang = prng.nextFloat() * 6.283185307179586;
       dx = Math.cos(ang);
@@ -1592,12 +1611,23 @@ export function createEffectPlayer({
         aspectY: resolvedAspectY ?? 1.0,
         aspectZ: resolvedAspectZ ?? 1.0,
         rotX: rotX0,
-        rotY: hasTrRot ? rotY0 : (Math.abs(Math.sin(rotX0)) > 0.5 ? rotY0 : (rot0 || rotY0)),
-        rotZ: readRange(layer.rotZ, 0, 0, prng) + (hasTrRot || Math.abs(Math.sin(rotX0)) > 0.5 ? rot0 : 0),
+        rotY: layer.unityMeshRot
+          ? rotY0
+          : (hasTrRot ? rotY0 : (Math.abs(Math.sin(rotX0)) > 0.5 ? rotY0 : (rot0 || rotY0))),
+        rotZ: layer.unityMeshRot
+          ? (readRange(layer.rotZ, 0, 0, prng) + rot0)
+          : (readRange(layer.rotZ, 0, 0, prng) + (hasTrRot || Math.abs(Math.sin(rotX0)) > 0.5 ? rot0 : 0)),
         spinX,
-        spinY: hasTrRot ? spinY : (Math.abs(Math.sin(rotX0)) > 0.5 ? spinY : (layer.spin?.[1] !== undefined ? spinY : angVel)),
-        spinZ: spinZ + (hasTrRot || Math.abs(Math.sin(rotX0)) > 0.5 ? angVel : 0),
+        spinY: layer.unityMeshRot
+          ? spinY
+          : (hasTrRot ? spinY : (Math.abs(Math.sin(rotX0)) > 0.5 ? spinY : (layer.spin?.[1] !== undefined ? spinY : angVel))),
+        spinZ: layer.unityMeshRot
+          ? (spinZ + angVel)
+          : (spinZ + (hasTrRot || Math.abs(Math.sin(rotX0)) > 0.5 ? angVel : 0)),
         transformRot: hasTrRot ? layer.transformRot : null,
+        unityMeshRot: Boolean(layer.unityMeshRot),
+        meshAlign: layer.meshAlign ?? null,
+        rotationOverLifetime: layer.rotationOverLifetime || null,
         flipX,
         flipY,
         flipZ,

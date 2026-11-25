@@ -223,7 +223,13 @@ export function createHGameAssetHandler({
   }
 
   function getVfxBenchRoot() {
-    return resolveExportRoot(null, 'HGAME_VFX_BENCH_ROOT', path.join(siteRoot, 'assets', 'vfx', 'piloto_bench_8'));
+    const raw = process.env.HGAME_VFX_BENCH_ROOT
+      ? path.resolve(process.env.HGAME_VFX_BENCH_ROOT)
+      : path.join(siteRoot, 'assets', 'vfx');
+    if (existsSync(path.join(raw, 'packs', 'packs_index.json')) || existsSync(path.join(raw, 'catalog.json'))) {
+      return raw;
+    }
+    return null;
   }
 
   async function loadProceduralManifest() {
@@ -409,7 +415,43 @@ export function createHGameAssetHandler({
       if (pathname === '/api/hgame/vfx/catalog' && request.method === 'GET') {
         const vfxRoot = getVfxBenchRoot();
         if (!vfxRoot) {
-          sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], textures: {}, meshes: {} });
+          sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
+          return;
+        }
+        const packsIndexPath = path.join(vfxRoot, 'packs', 'packs_index.json');
+        if (existsSync(packsIndexPath)) {
+          try {
+            const packsIndex = JSON.parse(await readFile(packsIndexPath, 'utf8'));
+            const meshIndexPath = path.join(vfxRoot, 'meshes', 'mesh_index.json');
+            const meshIndex = existsSync(meshIndexPath)
+              ? JSON.parse(await readFile(meshIndexPath, 'utf8'))
+              : {};
+            const packs = [];
+            for (const entry of Array.isArray(packsIndex?.packs) ? packsIndex.packs : []) {
+              const rel = String(entry?.manifestFile || '').replace(/^\/+/, '');
+              if (!rel) continue;
+              const abs = path.resolve(vfxRoot, ...rel.split('/'));
+              if (!isInside(vfxRoot, abs) || !existsSync(abs)) continue;
+              const pi = JSON.parse(await readFile(abs, 'utf8'));
+              packs.push({
+                id: pi.id || entry.id,
+                name: pi.name || entry.name,
+                atlasImage: pi.atlasImage || '',
+                atlasMeta: pi.atlasMeta || '',
+                meshAliases: pi.meshAliases || {},
+                effects: Array.isArray(pi.effects) ? pi.effects : [],
+              });
+            }
+            sendJson(response, 200, {
+              available: packs.length > 0,
+              schemaVersion: 2,
+              baseUrl: '/files/hgame-vfx',
+              meshIndex,
+              packs,
+            });
+          } catch {
+            sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
+          }
           return;
         }
         try {
@@ -420,7 +462,7 @@ export function createHGameAssetHandler({
             ...catalog,
           });
         } catch {
-          sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], textures: {}, meshes: {} });
+          sendJson(response, 200, { available: false, group: 'Piloto_Bench_8', effects: [], packs: [], meshIndex: {}, textures: {}, meshes: {} });
         }
         return;
       }
@@ -712,7 +754,7 @@ export function createHGameAssetHandler({
         await serveExportedFile(
           getVfxBenchRoot(),
           '/files/hgame-vfx/',
-          /^(?:catalog\.json|(?:recipes|textures|meshes)\/[A-Za-z0-9_.\-]+\.(json|png|jpg|jpeg|webp|glb))$/i,
+          /^(?:catalog\.json|packs\/packs_index\.json|meshes\/mesh_index\.json|meshes\/[A-Za-z0-9_.\-]+\.glb|packs\/[A-Za-z0-9_.\-]+\/(?:pack_index\.json|atlas\.(?:json|png|webp)|recipes\/[A-Za-z0-9_.\-]+\.json)|(?:recipes|textures|meshes)\/[A-Za-z0-9_.\-]+\.(?:json|png|jpg|jpeg|webp|glb))$/i,
         );
         return;
       }

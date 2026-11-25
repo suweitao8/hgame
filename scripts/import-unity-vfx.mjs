@@ -105,8 +105,11 @@ function readMinMaxScalar(block, fieldName, fallback = 0) {
   if (mode === 1) {
     const maxCurveBlk = subBody.match(/maxCurve:[\s\S]*?(?=minCurve:|$)/)?.[0] || '';
     const vals = [...maxCurveBlk.matchAll(/\bvalue:\s*([-\d.eE+]+)/g)].map((m) => Number(m[1]));
-    if (vals.length > 0 && Math.max(...vals.map(Math.abs)) < 1e-4) {
-      return 0;
+    if (vals.length > 0) {
+      if (Math.max(...vals.map(Math.abs)) < 1e-4) return 0;
+      const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+      const scaled = maxVal * mean;
+      return Number.isFinite(scaled) ? Number(scaled.toFixed(4)) : maxVal;
     }
   }
   if (mode === 3 && minVal !== maxVal) {
@@ -296,8 +299,18 @@ function parseGradientStops(colorMod) {
   return stops.length > 0 ? stops : null;
 }
 
-const SHADER_GUID_UBER_FX = '7f11fe28133f1a74594785107b98f2fe';
-const SHADER_GUID_PBR_FX = 'de445866a68ac7049bf65b2cf854d5a5';
+const UBER_FX_SHADER_GUIDS = new Set([
+  '7f11fe28133f1a74594785107b98f2fe', // UberFXSG.shadergraph
+  '0d1ef53931a649a4c8cd65c09da7d65d', // Uber Cubemap.shadergraph
+  '1a69665fd375c2b4899b86bd341064b1', // Uber Matcap.shadergraph
+]);
+const PBR_FX_SHADER_GUIDS = new Set([
+  'de445866a68ac7049bf65b2cf854d5a5', // PBR FX.shadergraph
+  '6b011b97fa17f4143b01151d12039270', // Piloto PBR Simple.shadergraph
+  'fcf523d8a34f0cf41b1e42f5a48768ad', // Piloto PBR Gemstones.shadergraph
+  '6e4ae4064600d784cac1e41a9e6f2e59', // Piloto URP PBR Bomb ShaderGraph
+  '5e579b9670f45f0468f178faaee98c05', // PilotoToon Mobile.shadergraph
+]);
 const SHADER_GUID_PILOTO_WARP = '0bb9d182cc9c06443a66471771fa7924';
 
 function inspectMaterial(matInfo, guidMap, deps) {
@@ -354,11 +367,11 @@ function inspectMaterial(matInfo, guidMap, deps) {
   };
 
   let shaderKind = 'legacy';
-  if (shaderGuid === SHADER_GUID_UBER_FX) {
+  if (UBER_FX_SHADER_GUIDS.has(shaderGuid)) {
     shaderKind = 'uber_fx';
   } else if (shaderGuid === SHADER_GUID_PILOTO_WARP) {
     shaderKind = 'piloto_warp';
-  } else if (shaderGuid === SHADER_GUID_PBR_FX) {
+  } else if (PBR_FX_SHADER_GUIDS.has(shaderGuid)) {
     shaderKind = 'pbr_fx';
   } else if (!shaderGuid) {
     if (/- _MainTextureChannel:/.test(txt)) {
@@ -374,13 +387,13 @@ function inspectMaterial(matInfo, guidMap, deps) {
     || /_DistortionEnabled:\s*1\b/.test(txt)
     || (shaderKind === 'legacy' && /distortion/i.test(matName));
 
-  const surfaceMode = txt.match(/- _Surface:\s*([01])\b/)?.[1];
+  const surfaceMode = txt.match(/- _Surface:\s*([01])\b/)?.[1] ?? txt.match(/- _BUILTIN_Surface:\s*([01])\b/)?.[1];
   const surface = surfaceMode !== undefined ? Number(surfaceMode) : undefined;
   const cullNum = readFloatProp('_Cull', 0);
   const cullMode = cullNum === 1 ? 'front' : cullNum === 2 ? 'back' : undefined;
-  const blendIntM = txt.match(/- _Blend:\s*(\d+)/);
-  const dstBlendM = txt.match(/- _DstBlend:\s*(\d+)/);
-  const srcBlendM = txt.match(/- _SrcBlend:\s*(\d+)/);
+  const blendIntM = txt.match(/- _Blend:\s*(\d+)/) || txt.match(/- _BUILTIN_Blend:\s*(\d+)/);
+  const dstBlendM = txt.match(/- _DstBlend:\s*(\d+)/) || txt.match(/- _BUILTIN_DstBlend:\s*(\d+)/);
+  const srcBlendM = txt.match(/- _SrcBlend:\s*(\d+)/) || txt.match(/- _BUILTIN_SrcBlend:\s*(\d+)/);
   const srcBlend = srcBlendM ? Number(srcBlendM[1]) : undefined;
   const dstBlend = dstBlendM ? Number(dstBlendM[1]) : undefined;
   let blend = 'alpha';
@@ -397,12 +410,16 @@ function inspectMaterial(matInfo, guidMap, deps) {
     blend = 'alpha';
   }
 
-  const zWrite = Number(txt.match(/- _ZWrite:[ \t]*([^\s]+)/)?.[1]);
-  const zTest = Number(txt.match(/- _ZTest:[ \t]*([^\s]+)/)?.[1]);
+  const zWriteRaw = txt.match(/- _ZWrite:[ \t]*([^\s]+)/)?.[1] ?? txt.match(/- _BUILTIN_ZWrite:[ \t]*([^\s]+)/)?.[1];
+  const zTestRaw = txt.match(/- _ZTest:[ \t]*([^\s]+)/)?.[1] ?? txt.match(/- _BUILTIN_ZTest:[ \t]*([^\s]+)/)?.[1];
+  const zWrite = Number(zWriteRaw);
+  const zTest = Number(zTestRaw);
 
   if (shaderKind !== 'legacy') {
     if (shaderKind === 'uber_fx') {
-      const sMain = readTexSlot('_MainTex');
+      const sMainRaw = readTexSlot('_MainTex');
+      const sMainAlt = sMainRaw?.spriteKey ? null : readTexSlot('_MainTexture');
+      const sMain = sMainAlt?.spriteKey ? sMainAlt : sMainRaw;
       const sDet = readTexSlot('_DetailNoise');
       const sAlphaOv = readTexSlot('_AlphaOverride');
       const alphaClipThreshold = readFloatProp('_Alpha_Clip_Threshold', 0.5);
@@ -548,12 +565,24 @@ function inspectMaterial(matInfo, guidMap, deps) {
     }
 
     // shaderKind === 'pbr_fx'
-    const sBase = readTexSlot('_BaseColorMap');
-    const sNorm = readTexSlot('_Normal');
-    const sOrm = readTexSlot('_OcclusionRoughtMetal');
-    const sEmis = readTexSlot('_Emission');
-    const sDet = readTexSlot('_Detail_Map');
-    const sDiss = readTexSlot('_Dissolve_Map');
+    const pickFirstTex = (...names) => {
+      let first = null;
+      for (const n of names) {
+        const s = readTexSlot(n);
+        if (!first && s) first = s;
+        if (s?.spriteKey) return s;
+      }
+      return first;
+    };
+    const sBase = pickFirstTex('_BaseColorMap', '_MainTex', '_Diffuse', '_UnlitColorMap');
+    const sNorm = pickFirstTex('_Normal', '_NormalMap', '_Normal_Map');
+    const sOrm = pickFirstTex('_OcclusionRoughtMetal', '_Occlusion_Rough_Metal', '_MaskMap');
+    const sEmis = pickFirstTex('_Emission');
+    const sDet = pickFirstTex('_Detail_Map', '_DetailMap');
+    const sDiss = pickFirstTex('_Dissolve_Map');
+    const pbrColorFallback = txt.includes('- _BaseColorTint:')
+      ? readVec4Prop('_BaseColorTint', [1, 1, 1, 1])
+      : readVec4Prop('_BaseColor', [1, 1, 1, 1]);
     const alphaClipping = kwSet.has('_ALPHATEST_ON') || readFloatProp('_AlphaClip', 0) > 0.5;
     const alphaClipThreshold = readFloatProp('_Alpha_Clip_Threshold', readFloatProp('_AlphaClipping', 0.5));
     const pbrBlend = surfaceMode === '0' ? 'alpha' : blend;
@@ -577,7 +606,7 @@ function inspectMaterial(matInfo, guidMap, deps) {
       mainSrgb: sBase?.srgb ?? true,
       baseColorMapST: sBase?.st || [1, 1, 0, 0],
       baseColorMapPanning: readVec4Prop('_Base_Map_Panning', readVec4Prop('_Base_Color_Panning', [0, 0, 0, 0])).slice(0, 2),
-      baseColorTint: readVec4Prop('_BaseColorTint', [1, 1, 1, 1]),
+      baseColorTint: pbrColorFallback,
       normalMapKey: sNorm?.spriteKey || null,
       normalMapST: sNorm?.st || [1, 1, 0, 0],
       normalPanning: readVec4Prop('_Normal_Panning', [0, 0, 0, 0]).slice(0, 2),
@@ -1014,7 +1043,7 @@ function quatToYxzEuler([x, y, z, w]) {
 }
 
 function computeShapeRotation(trQuat, sRotMatch, mappedType) {
-  if (mappedType === 'sphere' || mappedType === 'point') return null;
+  if (mappedType === 'point') return null;
   const rawTr = Array.isArray(trQuat)
     ? trQuat
     : trQuat
@@ -1026,9 +1055,17 @@ function computeShapeRotation(trQuat, sRotMatch, mappedType) {
   // Convert LHS Unity transform & shape quaternions to RHS Three.js quaternions at import time.
   const qTr = toRhsQuat(rawTr);
   const qSh = toRhsQuat(rawSh);
-  // Canonical Unity shapes point +Z_lhs (-Z_rhs); HGame cone/circle/hemisphere use +Y (-90 deg X offset from +Y to -Z).
+  // Canonical Unity shapes point +Z_lhs (-Z_rhs); HGame cone/circle/hemisphere/donut/rectangle use +Y / XZ (-90 deg X offset from +Y to -Z),
+  // whereas box/edge/mesh already use direct (X, Y, Z) coordinates.
   const s45 = Math.SQRT1_2;
-  const qOff = quatMul(quatMul(qTr, qSh), [-s45, 0, 0, s45]);
+  const needsYToMinusZBasis = mappedType === 'cone'
+    || mappedType === 'hemisphere'
+    || mappedType === 'circle'
+    || mappedType === 'donut'
+    || mappedType === 'rectangle';
+  const qOff = needsYToMinusZBasis
+    ? quatMul(quatMul(qTr, qSh), [-s45, 0, 0, s45])
+    : quatMul(qTr, qSh);
   const euler = quatToYxzEuler(qOff);
   const [x, y, z, w] = qOff;
   const r11 = 1 - 2 * (x * x + z * z);
@@ -1052,7 +1089,9 @@ function mapShapeType(unityType) {
     case 5:
     case 15:
     case 16: return 'box';
-    case 6: return 'mesh';
+    case 6:
+    case 13:
+    case 14: return 'mesh';
     case 10:
     case 11:
     case 19:
@@ -1064,8 +1103,8 @@ function mapShapeType(unityType) {
   }
 }
 
-export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
-  const guidMap = buildGuidIndex(unityRoot, unityRoot);
+export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = null, guidMap: sharedGuidMap = null }) {
+  const guidMap = sharedGuidMap || buildGuidIndex(unityRoot, unityRoot);
   const raw = fs.readFileSync(prefabPath, 'utf8').replace(/\r\n/g, '\n');
   const docs = raw.split(/^--- !u!/m).slice(1);
   const goNames = new Map();
@@ -1127,7 +1166,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
   let subCounter = 0;
 
   function computeHierarchyTransform(trBody) {
-    if (!trBody) return { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1] };
+    if (!trBody) return { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1], ownScale: [1, 1, 1] };
     const chain = [];
     let cur = trBody;
     let guard = 0;
@@ -1162,6 +1201,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       pos: [Number(pos[0].toFixed(4)), Number(pos[1].toFixed(4)), toRhsZ(Number(pos[2].toFixed(4)))],
       rot,
       scale,
+      ownScale: chain[0]?.scale || [1, 1, 1],
     };
   }
 
@@ -1178,15 +1218,21 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     }
 
     const worldTr = isSubChild
-      ? { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1] }
+      ? { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1], ownScale: [1, 1, 1] }
       : computeHierarchyTransform(trBody);
     const offset = worldTr.pos;
-    const trSx = Math.abs(worldTr.scale[0]);
-    const trSy = Math.abs(worldTr.scale[1]);
-    const trSz = Math.abs(worldTr.scale[2]);
+    const psScalingMode = Number((ps.match(/^\s*scalingMode:\s*(\d+)/m) || [])[1] ?? 0);
+    const shapeScaleVec = psScalingMode === 1 ? worldTr.ownScale : worldTr.scale;
+    const partScaleVec = psScalingMode === 0 ? worldTr.scale : (psScalingMode === 1 ? worldTr.ownScale : [1, 1, 1]);
+    const shSx = Math.abs(shapeScaleVec[0]);
+    const shSy = Math.abs(shapeScaleVec[1]);
+    const shSz = Math.abs(shapeScaleVec[2]);
+    const shScaleScalar = Number(((shSx + shSy + shSz) / 3).toFixed(4));
+    const trSx = Math.abs(partScaleVec[0]);
+    const trSy = Math.abs(partScaleVec[1]);
+    const trSz = Math.abs(partScaleVec[2]);
     const trScaleScalar = Number(((trSx + trSy + trSz) / 3).toFixed(4));
-    const psScalingMode = Number((ps.match(/^\s*scalingMode:\s*(\d+)/m) || [])[1] ?? 1);
-    const hasNonUniformTrScale = psScalingMode !== 2 && (Math.abs(trSx - trSy) > 0.02 || Math.abs(trSx - trSz) > 0.02);
+    const hasNonUniformTrScale = Math.abs(trSx - trSy) > 0.02 || Math.abs(trSx - trSz) > 0.02;
 
     const isLoop = /^\s*looping:\s*1\b/m.test(ps);
     const isPrewarm = /^\s*prewarm:\s*1\b/m.test(ps);
@@ -1282,11 +1328,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     const rxScalar = Array.isArray(rotX) ? (rotX[0] + rotX[1]) * 0.5 : (typeof rotX === 'number' ? rotX : 0);
     const ryScalar = Array.isArray(rotY) ? (rotY[0] + rotY[1]) * 0.5 : (typeof rotY === 'number' ? rotY : 0);
     const rotScalar = Array.isArray(rot) ? (rot[0] + rot[1]) * 0.5 : (typeof rot === 'number' ? rot : 0);
-    const localNormal = quatRotateVec(alignRot, [0, -Math.sin(rxScalar), Math.cos(rxScalar)]);
-    const isLocalHorizontal = rmNum === 0 && renderAlign === 2 && Math.abs(localNormal[1]) > 0.7;
     let renderMode = psrDisabled
       ? 'none'
-      : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : (rmNum === 2 || isLocalHorizontal) ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
+      : (rmNum === 5 ? 'none' : rmNum === 4 ? 'mesh' : rmNum === 3 ? 'vertical' : rmNum === 2 ? 'horizontal' : rmNum === 1 ? 'stretched' : 'billboard');
     const sizeXMax = (Array.isArray(size) ? size[1] : size) * (hasNonUniformTrScale && renderMode === 'mesh' ? trSx : 1);
     const sizeYMax = (Array.isArray(sizeY) ? sizeY[1] : sizeY) * (hasNonUniformTrScale && renderMode === 'mesh' ? trSy : 1);
     const sizeZMax = (Array.isArray(sizeZ) ? sizeZ[1] : sizeZ) * (hasNonUniformTrScale && renderMode === 'mesh' ? trSz : 1);
@@ -1302,25 +1346,22 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     let effectiveRotX = rotX;
     let effectiveRotY = rotY;
     let meshTransformRot = null;
-    if (isLocalHorizontal) {
-      effectiveRotX = 0;
-      effectiveRotY = 0;
-    } else if (rmNum === 0 && (renderAlign === 1 || renderAlign === 2) && !psrDisabled) {
+    const isWorldOrLocalBillboard = rmNum === 0 && (renderAlign === 1 || renderAlign === 2) && !psrDisabled;
+    if (isWorldOrLocalBillboard) {
+      // Proven by Unity BakeMesh probe: Billboard alignment=World/Local uses qParentRhs * Euler(+rx, +ry, -rz, 'YXZ')
       const rad2deg = 180 / Math.PI;
       const qTrRhs = renderAlign === 2 ? toRhsQuat(alignRot) : [0, 0, 0, 1];
-      const qPartRhs = toRhsQuat(unityEulerToQuat(rxScalar * rad2deg, ryScalar * rad2deg, rotScalar * rad2deg));
+      const qPartRhs = toRhsQuat(unityEulerToQuat(-rxScalar * rad2deg, -ryScalar * rad2deg, -rotScalar * rad2deg));
       const qCombined = renderAlign === 2 ? quatMul(qTrRhs, qPartRhs) : qPartRhs;
       const [ex, ey, ez] = quatToYxzEuler(qCombined);
-      if (Math.abs(ex) > 0.002 || Math.abs(ey) > 0.002) {
-        renderMode = 'vertical';
-        effectiveRotX = ex;
-        effectiveRotY = ey;
-        effectiveRot = Array.isArray(rot)
-          ? [Number((ez + (rot[0] - rotScalar)).toFixed(4)), Number((ez + (rot[1] - rotScalar)).toFixed(4))]
-          : ez;
-      }
+      renderMode = 'vertical';
+      effectiveRotX = Math.abs(ex) > 0.002 || Math.abs(ey) > 0.002 ? ex : 0.002;
+      effectiveRotY = ey;
+      effectiveRot = Array.isArray(rot)
+        ? [Number((ez - (rot[1] - rotScalar)).toFixed(4)), Number((ez - (rot[0] - rotScalar)).toFixed(4))]
+        : ez;
     }
-    if (renderMode === 'mesh' && renderAlign !== 1 && renderAlign !== 4 && Math.abs(alignRot[3]) < 0.9999) {
+    if (renderMode === 'mesh' && renderAlign === 2 && Math.abs(alignRot[3]) < 0.9999) {
       meshTransformRot = toRhsQuat(alignRot).map((v) => Number(v.toFixed(5)));
     }
     const pivM = psr.match(/m_Pivot:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
@@ -1368,11 +1409,14 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       if (guid && guidMap.has(guid)) {
         const mInfo = guidMap.get(guid);
         deps.meshes.set(mInfo.relPath, mInfo);
-        const sub = resolveFbxSubmeshName(mInfo.fullPath, fid);
+        const manifestEntry = meshManifest?.[`${guid}:${fid}`] || null;
+        const sub = manifestEntry
+          ? { name: manifestEntry.subMeshName, multi: Boolean(manifestEntry.multi) }
+          : resolveFbxSubmeshName(mInfo.fullPath, fid);
         const subName = sub?.multi ? sub.name : null;
         return {
           key: resolveMeshKey(mInfo.relPath, mainMat?.matName, subName),
-          globalScale: mInfo.globalScale ?? 1,
+          globalScale: manifestEntry ? 1 : (mInfo.globalScale ?? 1),
         };
       }
       if (fid === '10210') return { key: 'quad', globalScale: 1 };
@@ -1383,6 +1427,17 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     };
 
     const primaryMeshSlot = resolveSingleMeshSlot('m_Mesh');
+    // Unified LHS->RHS mesh rotation: qPartRhs = toRhsQuat(Euler(rx, ry, rz, 'YXZ')) = Euler(-rx, -ry, +rz, 'YXZ').
+    const MESH_ALIGN_NAMES = ['view', 'world', 'local', 'facing', 'velocity'];
+    const meshAlign = MESH_ALIGN_NAMES[renderAlign] || 'world';
+    const negateAngleUnlessFullSpin = (v) => {
+      if (Array.isArray(v) && Math.abs(v[0]) < 1e-3 && Math.abs(v[1] - Math.PI * 2) < 0.01) return v;
+      return negateValueOrRange(v);
+    };
+    if (renderMode === 'mesh') {
+      effectiveRotX = negateAngleUnlessFullSpin(effectiveRotX);
+      effectiveRotY = negateAngleUnlessFullSpin(effectiveRotY);
+    }
     let meshKey = primaryMeshSlot?.key || 'crystal';
     let meshGlobalScale = primaryMeshSlot?.globalScale ?? 1;
     const meshVariants = [];
@@ -1470,9 +1525,11 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       layer.mesh = meshKey;
       if (meshVariants.length > 1) layer.meshes = meshVariants;
       if (Math.abs(meshGlobalScale - 1) > 0.005) layer.meshGlobalScale = Number(meshGlobalScale.toFixed(4));
-      layer.forwardAxis = renderAlign === 4 ? 'z' : 'y';
+      layer.unityMeshRot = true;
+      layer.meshAlign = meshAlign;
+      layer.forwardAxis = renderAlign === 4 ? '-z' : 'y';
       if (mainMat?.lit) layer.lit = true;
-      if (renderAlign === 4 || (renderAlign !== 1 && renderAlign !== 2 && (Array.isArray(speed) ? speed[1] > 0.1 : speed > 0.1))) {
+      if (renderAlign === 4) {
         layer.alignToVelocity = true;
       }
     }
@@ -1498,9 +1555,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       const alignDir = /alignToDirection:\s*1\b/.test(shapeMod);
       const sPosM = shapeMod.match(/m_Position:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
       if (sPosM) {
-        const spx = Number(sPosM[1]) * worldTr.scale[0];
-        const spy = Number(sPosM[2]) * worldTr.scale[1];
-        const spz = Number(sPosM[3]) * worldTr.scale[2];
+        const spx = Number(sPosM[1]) * shapeScaleVec[0];
+        const spy = Number(sPosM[2]) * shapeScaleVec[1];
+        const spz = Number(sPosM[3]) * shapeScaleVec[2];
         if (Math.abs(spx) > 1e-4 || Math.abs(spy) > 1e-4 || Math.abs(spz) > 1e-4) {
           const rSp = quatRotateVec(worldTr.rot, [spx, spy, spz]);
           shapePosOffset = [
@@ -1522,46 +1579,82 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       }
       const sRotM = shapeMod.match(/m_Rotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
       const sSclM = shapeMod.match(/m_Scale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
+      const rawShSx = sSclM ? Math.abs(Number(sSclM[1])) : 1;
+      const rawShSy = sSclM ? Math.abs(Number(sSclM[2])) : 1;
+      const rawShSz = sSclM ? Math.abs(Number(sSclM[3])) : 1;
+      const qShLocal = sRotM ? unityEulerToQuat(Number(sRotM[1]), Number(sRotM[2]), Number(sRotM[3])) : [0, 0, 0, 1];
+      const axX = quatRotateVec(qShLocal, [1, 0, 0]);
+      const axY = quatRotateVec(qShLocal, [0, 1, 0]);
+      const axZ = quatRotateVec(qShLocal, [0, 0, 1]);
+      const effTrX = Math.hypot(shSx * axX[0], shSy * axX[1], shSz * axX[2]);
+      const effTrY = Math.hypot(shSx * axY[0], shSy * axY[1], shSz * axY[2]);
+      const effTrZ = Math.hypot(shSx * axZ[0], shSy * axZ[1], shSz * axZ[2]);
+
       const shapeObj = {
         type: mappedType,
-        radius: rad > 0 && rad < 0.001 ? Number((rad * trScaleScalar).toFixed(4)) : Number((rad * trScaleScalar).toFixed(3)),
+        radius: rad > 0 && rad < 0.001 ? Number((rad * shScaleScalar).toFixed(4)) : Number((rad * shScaleScalar).toFixed(3)),
         angle: Number(ang.toFixed(1)),
       };
       if (Number(st) === 8 || Number(st) === 9) {
         const coneLen = Number((shapeMod.match(/\blength:\s*([-\d.eE+]+)/) || [])[1] ?? 5);
-        if (coneLen > 0) shapeObj.length = Number((coneLen * trScaleScalar).toFixed(3));
+        if (coneLen > 0) shapeObj.length = Number((coneLen * shScaleScalar).toFixed(3));
       }
       if (mappedType === 'donut') {
-        shapeObj.donutRadius = Number((donutRad * trScaleScalar).toFixed(3));
+        shapeObj.donutRadius = Number((donutRad * shScaleScalar).toFixed(3));
       }
-      if (mappedType === 'rectangle' && sSclM) {
-        shapeObj.size = [Number((Number(sSclM[1]) * worldTr.scale[0]).toFixed(3)), Number((Number(sSclM[2]) * worldTr.scale[1]).toFixed(3)), Number((Number(sSclM[3]) * worldTr.scale[2]).toFixed(3))];
+      if (mappedType === 'rectangle') {
+        shapeObj.size = [
+          Number((rawShSx * effTrX).toFixed(3)),
+          Number((rawShSy * effTrY).toFixed(3)),
+          Number((rawShSz * effTrZ).toFixed(3)),
+        ];
       }
-      if (mappedType === 'mesh') {
-        const shapeMeshGuid = (shapeMod.match(/m_Mesh:[\s\S]*?guid:\s*([0-9a-f]{32})/) || [])[1];
-        if (shapeMeshGuid && guidMap.has(shapeMeshGuid)) {
-          const smInfo = guidMap.get(shapeMeshGuid);
-          deps.meshes.set(smInfo.relPath, smInfo);
-          shapeObj.mesh = resolveMeshKey(smInfo.relPath);
+      if (mappedType === 'box') {
+        const boxSize = [
+          Number((rawShSx * effTrX).toFixed(3)),
+          Number((rawShSy * effTrY).toFixed(3)),
+          Number((rawShSz * effTrZ).toFixed(3)),
+        ];
+        if (Math.abs(boxSize[0] - 1) > 0.001 || Math.abs(boxSize[1] - 1) > 0.001 || Math.abs(boxSize[2] - 1) > 0.001) {
+          shapeObj.size = boxSize;
         }
       }
-      if (radThick < 0.05 || [1, 3, 7, 9, 11].includes(Number(st))) shapeObj.shell = true;
-      else if (radThick < 0.99) shapeObj.radiusThickness = Number(radThick.toFixed(3));
+      if (mappedType === 'mesh') {
+        const shapeMeshM = shapeMod.match(/m_Mesh:\s*\{fileID:\s*(-?\d+)(?:,\s*guid:\s*([0-9a-f]{32}))?/);
+        const smFid = shapeMeshM?.[1] || '0';
+        const smGuid = shapeMeshM?.[2];
+        if (smGuid && guidMap.has(smGuid)) {
+          const smInfo = guidMap.get(smGuid);
+          deps.meshes.set(smInfo.relPath, smInfo);
+          const smMan = meshManifest?.[`${smGuid}:${smFid}`] || null;
+          const smSub = smMan ? (smMan.multi ? smMan.subMeshName : null) : null;
+          shapeObj.mesh = resolveMeshKey(smInfo.relPath, null, smSub);
+        }
+      }
+      if (mappedType === 'box') {
+        if (Number(st) === 15) shapeObj.shell = true;
+        else if (Number(st) === 16) shapeObj.boxEdge = true;
+      } else {
+        if (radThick < 0.05 || [1, 3, 7, 9, 11].includes(Number(st))) shapeObj.shell = true;
+        else if (radThick < 0.99) shapeObj.radiusThickness = Number(radThick.toFixed(3));
+      }
       if (randPos > 0.001) shapeObj.randomPos = Number(randPos.toFixed(3));
       if (randDir > 0.001) shapeObj.randomDirectionAmount = Number(randDir.toFixed(3));
       if (sphDir > 0.001) shapeObj.sphericalDirectionAmount = Number(sphDir.toFixed(3));
       if (alignDir) shapeObj.alignToDirection = true;
-      if (sSclM && mappedType !== 'rectangle') {
-        let sx = Number(sSclM[1]);
-        let sy = Number(sSclM[2]);
-        let sz = Number(sSclM[3]);
-        const rx = sRotM ? Math.abs(Number(sRotM[1])) : 0;
-        if (mappedType === 'circle' && Math.abs(rx - 90) < 5) {
-          // Unity Circle defaults to XY; with Rx(90) XY scale (sx, sy) maps to XZ (sx, sz, sy).
-          [sy, sz] = [sz, sy];
-        }
-        if (Math.abs(sx - 1) > 0.001 || Math.abs(sy - 1) > 0.001 || Math.abs(sz - 1) > 0.001) {
-          shapeObj.scale = [Number(sx.toFixed(3)), Number(sy.toFixed(3)), Number(sz.toFixed(3))];
+      if (mappedType !== 'rectangle' && mappedType !== 'box') {
+        const invScalar = 1 / Math.max(1e-6, shScaleScalar);
+        const isMeshShape = mappedType === 'mesh';
+        const ux = isMeshShape ? (rawShSx * effTrX) : (rawShSx * effTrX * invScalar);
+        const uy = isMeshShape ? (rawShSy * effTrY) : (rawShSy * effTrY * invScalar);
+        const uz = isMeshShape ? (rawShSz * effTrZ) : (rawShSz * effTrZ * invScalar);
+        const usesBasisSwap = mappedType === 'cone' || mappedType === 'hemisphere' || mappedType === 'circle' || mappedType === 'donut';
+        // HGame shapes with Y-to--Z basis apply shape.scale before Rx(-90): (lx, ly, lz) -> Unity (X, -Z, Y).
+        const hx = Number(ux.toFixed(3));
+        const hy = Number((usesBasisSwap ? uz : uy).toFixed(3));
+        const hz = Number((usesBasisSwap ? uy : uz).toFixed(3));
+        if (Math.abs(hx - 1) > 0.002 || Math.abs(hy - 1) > 0.002 || Math.abs(hz - 1) > 0.002) {
+          shapeObj.scale = [hx, hy, hz];
         }
       }
       const arcBlk = extractModSubBlock(shapeMod, 'arc');
@@ -1580,7 +1673,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
           }
         }
       }
-      const shapeRot = computeShapeRotation(alignRot, sRotM, mappedType);
+      const needsSphereRot = mappedType !== 'sphere' || Boolean(shapeObj.scale) || shapeObj.arc !== undefined;
+      const shapeRot = needsSphereRot ? computeShapeRotation(alignRot, sRotM, mappedType) : null;
       if (shapeRot) shapeObj.rotation = shapeRot;
       layer.shape = shapeObj;
     }
@@ -1775,10 +1869,10 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
       let vx = rx.val;
       let vy = ry.val;
       let vzRaw = rz.val;
-      if (!isWorldVel && psScalingMode !== 2) {
-        vx = scaleRangeBy(vx, worldTr.scale[0]);
-        vy = scaleRangeBy(vy, worldTr.scale[1]);
-        vzRaw = scaleRangeBy(vzRaw, worldTr.scale[2]);
+      if (!isWorldVel) {
+        vx = scaleRangeBy(vx, partScaleVec[0]);
+        vy = scaleRangeBy(vy, partScaleVec[1]);
+        vzRaw = scaleRangeBy(vzRaw, partScaleVec[2]);
       }
       if (!isWorldVel && Math.abs(alignRot[3]) < 0.9999) {
         const loOf = (v) => (Array.isArray(v) ? v[0] : v);
@@ -1857,23 +1951,47 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id }) {
     if (/enabled:\s*1/.test(rotMod)) {
       const av = readMinMaxScalar(rotMod, 'curve', 0);
       const sepRot = /separateAxes:\s*1\b/.test(rotMod);
+      const zCurveDataRaw = parseMinMaxCurveData((sepRot ? extractModSubBlock(rotMod, 'z') : '') || extractModSubBlock(rotMod, 'curve'), true);
+      const xCurveDataRaw = sepRot ? parseMinMaxCurveData(extractModSubBlock(rotMod, 'x'), true) : null;
+      const yCurveDataRaw = sepRot ? parseMinMaxCurveData(extractModSubBlock(rotMod, 'y'), true) : null;
+      const isRotCurveObj = (d) => Boolean(d && typeof d === 'object' && !Array.isArray(d));
+      const negateRotCurveData = (d) => {
+        if (d === null || d === undefined) return d;
+        if (typeof d === 'number' || Array.isArray(d)) return negateValueOrRange(d);
+        if (typeof d === 'object') {
+          return {
+            ...d,
+            scalar: -(d.scalar ?? 0),
+            ...(d.minScalar !== undefined ? { minScalar: -d.minScalar } : {}),
+          };
+        }
+        return d;
+      };
+      const xCurveData = renderMode === 'mesh' ? negateRotCurveData(xCurveDataRaw) : xCurveDataRaw;
+      const yCurveData = renderMode === 'mesh' ? negateRotCurveData(yCurveDataRaw) : yCurveDataRaw;
+      const zCurveData = isWorldOrLocalBillboard ? negateRotCurveData(zCurveDataRaw) : zCurveDataRaw;
+      const hasXCurve = isRotCurveObj(xCurveData);
+      const hasYCurve = isRotCurveObj(yCurveData);
+      const hasZCurve = isRotCurveObj(zCurveData);
       if (sepRot) {
         const rx = readMinMaxScalar(rotMod, 'x', 0);
         const ry = readMinMaxScalar(rotMod, 'y', 0);
-        layer.spin = [rx, ry, av];
-      } else if (av !== 0) {
-        layer.angularVel = av;
+        if (renderMode === 'mesh') {
+          const sx = hasXCurve ? 0 : negateValueOrRange(rx);
+          const sy = hasYCurve ? 0 : negateValueOrRange(ry);
+          const sz = hasZCurve ? 0 : av;
+          if (sx !== 0 || sy !== 0 || sz !== 0) layer.spin = [sx, sy, sz];
+        } else {
+          layer.spin = isWorldOrLocalBillboard ? [rx, ry, negateValueOrRange(av)] : [rx, ry, av];
+        }
+      } else if (av !== 0 && !(renderMode === 'mesh' && hasZCurve)) {
+        layer.angularVel = isWorldOrLocalBillboard ? negateValueOrRange(av) : av;
       }
-      const zCurveData = parseMinMaxCurveData(extractModSubBlock(rotMod, sepRot ? 'z' : 'curve'), true);
-      const xCurveData = sepRot ? parseMinMaxCurveData(extractModSubBlock(rotMod, 'x'), true) : null;
-      const yCurveData = sepRot ? parseMinMaxCurveData(extractModSubBlock(rotMod, 'y'), true) : null;
-      if ((zCurveData && typeof zCurveData === 'object' && !Array.isArray(zCurveData))
-        || (xCurveData && typeof xCurveData === 'object' && !Array.isArray(xCurveData))
-        || (yCurveData && typeof yCurveData === 'object' && !Array.isArray(yCurveData))) {
+      if (hasZCurve || hasXCurve || hasYCurve) {
         layer.rotationOverLifetime = {
-          ...(xCurveData !== null ? { x: xCurveData } : {}),
-          ...(yCurveData !== null ? { y: yCurveData } : {}),
-          ...(zCurveData !== null ? { z: zCurveData } : {}),
+          ...(hasXCurve ? { x: xCurveData } : {}),
+          ...(hasYCurve ? { y: yCurveData } : {}),
+          ...(hasZCurve ? { z: zCurveData } : {}),
         };
       }
     }

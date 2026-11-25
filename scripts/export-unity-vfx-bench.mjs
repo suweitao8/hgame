@@ -234,6 +234,16 @@ export function parseUnityAssetMesh(txt) {
     indices[i + 1] = indices[i + 2];
     indices[i + 2] = tmp;
   }
+  if (uv0) {
+    for (let i = 1; i < uv0.length; i += 2) {
+      uv0[i] = 1.0 - uv0[i];
+    }
+  }
+  if (uv1) {
+    for (let i = 1; i < uv1.length; i += 2) {
+      uv1[i] = 1.0 - uv1[i];
+    }
+  }
 
   return { positions, normals, uv0, uv1, indices };
 }

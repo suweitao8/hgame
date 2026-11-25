@@ -207,8 +207,10 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxPart
         spawn: (opts?: object) => number;
         killSlot: (slotIdx: any) => void;
         readSlotMotion: (slotIdx: any, position: any, velocity: any) => void;
+        readSlotTransform: (slotIdx: any, position: any, quatOut: any, scaleOut: any, t?: number) => boolean;
         updateSlot: (slotIdx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
         setWind: (wx?: number, wy?: number, wz?: number) => void;
+        setCamera: (camera: any) => void;
         setEffectOffset: (slotIdx: any, x?: number, y?: number, z?: number) => void;
         setAtlas: (textureOrCanvas: any, newRegions: any, options?: {}) => void;
         setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {
@@ -1968,6 +1970,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxPart
     renderDistortionPass: (renderer: any, targetScene: any, camera: any) => void;
     renderWithDistortion: (renderer: any, targetScene: any, camera: any) => void;
     setWind(wx?: number, wy?: number, wz?: number): void;
+    setCamera(camera: any): void;
     setCollisionResolver: (fn: any) => void;
     setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
     registerMesh(name: any, geometry: any, options: any): boolean;
