@@ -1223,6 +1223,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
     const worldTr = isSubChild
       ? { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1], ownScale: [1, 1, 1] }
       : computeHierarchyTransform(trBody);
+    const subTr = isSubChild ? computeHierarchyTransform(trBody) : null;
     const offset = worldTr.pos;
     const psScalingMode = Number((ps.match(/^\s*scalingMode:\s*(\d+)/m) || [])[1] ?? 0);
     const shapeScaleVec = psScalingMode === 1 ? worldTr.ownScale : worldTr.scale;
@@ -1545,7 +1546,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
 
     let shapePosOffset = null;
     const shapeMod = extractSection(ps, 'ShapeModule');
-    if (/enabled:\s*1/.test(shapeMod)) {
+    const hasEnabledShape = /enabled:\s*1/.test(shapeMod);
+    if (hasEnabledShape) {
       const st = (shapeMod.match(/type:\s*(\d+)/) || [])[1] ?? 0;
       const mappedType = mapShapeType(st);
       const rad = Number((shapeMod.match(/radius:[\s\S]*?value:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
@@ -1955,7 +1957,12 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       }
       if (isNonZero(radV)) {
         velObj.radial = radV;
-        if (shapePosOffset) {
+        if (isSubChild && !hasEnabledShape && !isWorldVel) {
+          velObj.radialSpace = 'root';
+          if (subTr && (Math.abs(subTr.pos[0]) > 1e-4 || Math.abs(subTr.pos[1]) > 1e-4 || Math.abs(subTr.pos[2]) > 1e-4)) {
+            velObj.radialOffset = subTr.pos;
+          }
+        } else if (shapePosOffset) {
           velObj.radialOffset = [
             Number((-shapePosOffset[0]).toFixed(4)),
             Number((-shapePosOffset[1]).toFixed(4)),

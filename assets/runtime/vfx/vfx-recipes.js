@@ -292,6 +292,11 @@ export function createEffectPlayer({
       radCx: 0,
       radCy: 0,
       radCz: 0,
+      rootX: 0,
+      rootY: 0,
+      rootZ: 0,
+      rootYaw: 0,
+      rootScale: 1,
       _evalExt: { hasVelCurve: false, velDispIntegral: 0, duration: 1, velMul: 1, accelX: 0, accelZ: 0 },
       tintR: 1, tintG: 1, tintB: 1,
       sizeMul: 1,
@@ -348,6 +353,11 @@ export function createEffectPlayer({
       followVx: 0, followVy: 0, followVz: 0,
       yaw: 0,
       scale: 1,
+      rootX: 0,
+      rootY: 0,
+      rootZ: 0,
+      rootYaw: 0,
+      rootScale: 1,
       subDepth: 0,
       inheritVx: 0,
       inheritVy: 0,
@@ -742,7 +752,11 @@ export function createEffectPlayer({
     }
   }
 
-  function fireSubEmitters(subEmitters, triggerType, x, y, z, depth, vx = 0, vy = 0, vz = 0, tintR = 1, tintG = 1, tintB = 1, followTp = null) {
+  function fireSubEmitters(
+    subEmitters, triggerType, x, y, z, depth,
+    vx = 0, vy = 0, vz = 0, tintR = 1, tintG = 1, tintB = 1,
+    followTp = null, rootX = x, rootY = y, rootZ = z, rootYaw = 0, rootScale = 1,
+  ) {
     if (!Array.isArray(subEmitters) || depth >= 2) return;
     if (shurikenKernel && SHURIKEN_QUALITY_TIERS[shurikenKernel.getQualityTier()]?.skipSubEmitters) return;
     for (let i = 0; i < subEmitters.length; i++) {
@@ -758,6 +772,11 @@ export function createEffectPlayer({
         x, y, z,
         ...(hasDelay ? { follow: followTp } : {}),
         _subDepth: depth + 1,
+        _rootX: rootX,
+        _rootY: rootY,
+        _rootZ: rootZ,
+        _rootYaw: rootYaw,
+        _rootScale: rootScale,
         _inheritVx: iv !== 0 ? vx * iv : 0,
         _inheritVy: iv !== 0 ? vy * iv : 0,
         _inheritVz: iv !== 0 ? vz * iv : 0,
@@ -771,6 +790,7 @@ export function createEffectPlayer({
     x, y, z, vx, vy, vz, accelX = 0, accelZ = 0, gravity, drag,
     curveRow = 0, hasVelCurve = false, velCurve = null, orbitalY = 0, centerOffX = 0, centerOffZ = 0,
     velRadial = 0, radCx = 0, radCy = 0, radCz = 0,
+    rootX = x, rootY = y, rootZ = z, rootYaw = 0, rootScale = 1,
     tintR = 1, tintG = 1, tintB = 1,
     collision = null, subEmitters = null, subDepth = 0,
     clampVelocity = null,
@@ -814,6 +834,11 @@ export function createEffectPlayer({
         tp.radCx = radCx;
         tp.radCy = radCy;
         tp.radCz = radCz;
+        tp.rootX = rootX;
+        tp.rootY = rootY;
+        tp.rootZ = rootZ;
+        tp.rootYaw = rootYaw;
+        tp.rootScale = rootScale;
         tp.tintR = tintR;
         tp.tintG = tintG;
         tp.tintB = tintB;
@@ -1172,10 +1197,18 @@ export function createEffectPlayer({
       scratchRadCenter[2] = scratchEmitCenter[2];
       const radVel = vel.radial !== undefined ? readRange(vel.radial, 0, 0, prng) : 0;
       if (radVel !== 0) {
+        const useRootCenter = vel.radialSpace === 'root';
+        const baseCx = useRootCenter ? slot.rootX : scratchEmitCenter[0];
+        const baseCy = useRootCenter ? slot.rootY : scratchEmitCenter[1];
+        const baseCz = useRootCenter ? slot.rootZ : scratchEmitCenter[2];
+        const baseYaw = useRootCenter ? slot.rootYaw : slot.yaw;
+        const baseScale = useRootCenter ? slot.rootScale : scale;
+        const cbYaw = Math.cos(baseYaw);
+        const sbYaw = Math.sin(baseYaw);
         const rOff = Array.isArray(vel.radialOffset) ? vel.radialOffset : null;
-        const rcx = scratchEmitCenter[0] + (rOff ? ((is2D ? (rOff[0] * cYaw - rOff[1] * sYaw) : (rOff[0] * cYaw - rOff[2] * sYaw)) * scale) : 0);
-        const rcy = scratchEmitCenter[1] + (rOff ? ((is2D ? (rOff[0] * sYaw + rOff[1] * cYaw) : rOff[1]) * scale) : 0);
-        const rcz = scratchEmitCenter[2] + (rOff ? (is2D ? 0 : ((rOff[0] * sYaw + rOff[2] * cYaw) * scale)) : 0);
+        const rcx = baseCx + (rOff ? ((is2D ? (rOff[0] * cbYaw - rOff[1] * sbYaw) : (rOff[0] * cbYaw - rOff[2] * sbYaw)) * baseScale) : 0);
+        const rcy = baseCy + (rOff ? ((is2D ? (rOff[0] * sbYaw + rOff[1] * cbYaw) : rOff[1]) * baseScale) : 0);
+        const rcz = baseCz + (rOff ? (is2D ? 0 : ((rOff[0] * sbYaw + rOff[2] * cbYaw) * baseScale)) : 0);
         scratchRadCenter[0] = rcx;
         scratchRadCenter[1] = rcy;
         scratchRadCenter[2] = rcz;
@@ -1561,6 +1594,12 @@ export function createEffectPlayer({
           scratchTintOut[0],
           scratchTintOut[1],
           scratchTintOut[2],
+          null,
+          slot.rootX,
+          slot.rootY,
+          slot.rootZ,
+          slot.rootYaw,
+          slot.rootScale,
         );
       }
       return dur - clampedInitAge;
@@ -1671,7 +1710,7 @@ export function createEffectPlayer({
       let trackedSlot = -1;
       if (needsTracking) {
         if (layer.subEmitters) {
-          fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2]);
+          fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2], null, slot.rootX, slot.rootY, slot.rootZ, slot.rootYaw, slot.rootScale);
         }
         trackedSlot = allocTrackedParticle({
           atlasSlot: -1,
@@ -1692,6 +1731,11 @@ export function createEffectPlayer({
           radCx: scratchRadCenter[0],
           radCy: scratchRadCenter[1],
           radCz: scratchRadCenter[2],
+          rootX: slot.rootX,
+          rootY: slot.rootY,
+          rootZ: slot.rootZ,
+          rootYaw: slot.rootYaw,
+          rootScale: slot.rootScale,
           tintR: scratchTintOut[0],
           tintG: scratchTintOut[1],
           tintB: scratchTintOut[2],
@@ -1819,6 +1863,11 @@ export function createEffectPlayer({
         tintR: scratchTintOut[0],
         tintG: scratchTintOut[1],
         tintB: scratchTintOut[2],
+        rootX: slot.rootX,
+        rootY: slot.rootY,
+        rootZ: slot.rootZ,
+        rootYaw: slot.rootYaw,
+        rootScale: slot.rootScale,
         collision: layer.collision,
         clampVelocity: layer.clampVelocity,
         subEmitters: layer.subEmitters,
@@ -1828,7 +1877,7 @@ export function createEffectPlayer({
       });
       if (layer.subEmitters) {
         const followTp = trackedSlot >= 0 ? trackedParticles[trackedSlot] : null;
-        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2], followTp);
+        fireSubEmitters(layer.subEmitters, 'birth', scratchPos[0], scratchPos[1], scratchPos[2], slot.subDepth, scratchVel[0], scratchVel[1], scratchVel[2], scratchTintOut[0], scratchTintOut[1], scratchTintOut[2], followTp, slot.rootX, slot.rootY, slot.rootZ, slot.rootYaw, slot.rootScale);
       }
     }
 
@@ -1989,6 +2038,11 @@ export function createEffectPlayer({
     slot.prevZ = slot.z;
     slot.yaw = slot.follow?.yaw ?? options.yaw ?? 0;
     slot.scale = options.scale ?? 1;
+    slot.rootX = options._rootX ?? slot.x;
+    slot.rootY = options._rootY ?? slot.y;
+    slot.rootZ = options._rootZ ?? slot.z;
+    slot.rootYaw = options._rootYaw ?? slot.yaw;
+    slot.rootScale = options._rootScale ?? slot.scale;
     slot.subDepth = options._subDepth ?? 0;
     slot.inheritVx = options._inheritVx ?? 0;
     slot.inheritVy = options._inheritVy ?? 0;
@@ -2352,7 +2406,7 @@ export function createEffectPlayer({
               }
             }
             if (tp.subEmitters) {
-              fireSubEmitters(tp.subEmitters, 'collision', tp.x, tp.y, tp.z, tp.subDepth, evx, evy, evz, tp.tintR, tp.tintG, tp.tintB);
+              fireSubEmitters(tp.subEmitters, 'collision', tp.x, tp.y, tp.z, tp.subDepth, evx, evy, evz, tp.tintR, tp.tintG, tp.tintB, null, tp.rootX, tp.rootY, tp.rootZ, tp.rootYaw, tp.rootScale);
             }
             if (tp.lifetimeLoss > 0) {
               tp.age += tp.duration * tp.lifetimeLoss;
@@ -2364,7 +2418,7 @@ export function createEffectPlayer({
                   meshVfx?.killSlot?.(tp.meshSlot);
                 }
                 if (tp.subEmitters) {
-                  fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth, evx, evy, evz, tp.tintR, tp.tintG, tp.tintB);
+                  fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth, evx, evy, evz, tp.tintR, tp.tintG, tp.tintB, null, tp.rootX, tp.rootY, tp.rootZ, tp.rootYaw, tp.rootScale);
                 }
                 if (tp.lightSlotIdx >= 0) {
                   releaseLightSlot(tp.lightSlotIdx);
@@ -2388,7 +2442,7 @@ export function createEffectPlayer({
       if (isDying) {
         if (tp.subEmitters) {
           computeDynamicRadialVel(tp.x, tp.y, tp.z, tp.radCx, tp.radCy, tp.radCz, tp.velRadial, 1.0, 0, scratchRadVel3);
-          fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth, tp.vx + scratchRadVel3[0], tp.vy + scratchRadVel3[1], tp.vz + scratchRadVel3[2], tp.tintR, tp.tintG, tp.tintB);
+          fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth, tp.vx + scratchRadVel3[0], tp.vy + scratchRadVel3[1], tp.vz + scratchRadVel3[2], tp.tintR, tp.tintG, tp.tintB, null, tp.rootX, tp.rootY, tp.rootZ, tp.rootYaw, tp.rootScale);
         }
         if (tp.lightSlotIdx >= 0) {
           releaseLightSlot(tp.lightSlotIdx);

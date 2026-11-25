@@ -4617,5 +4617,179 @@ test('convertUnityPrefab + createMeshVfxPool integrate AmbarBlade Hermite rotati
   }
 });
 
+test('convertUnityPrefab + createVfxSystem converge Shape-disabled Local subEmitters toward root-space Transform center', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame_sub_radial_root_'));
+  try {
+    const prefabPath = path.join(tmpDir, 'SubConverge.prefab');
+    fs.writeFileSync(
+      prefabPath,
+      [
+        '%YAML 1.1',
+        '%TAG !u! tag:unity3d.com,2011:',
+        '--- !u!1 &100',
+        'GameObject:',
+        '  m_Name: RootFX',
+        '  m_IsActive: 1',
+        '--- !u!4 &101',
+        'Transform:',
+        '  m_GameObject: {fileID: 100}',
+        '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+        '  m_LocalPosition: {x: 0, y: 0, z: 0}',
+        '  m_LocalScale: {x: 1, y: 1, z: 1}',
+        '  m_Father: {fileID: 0}',
+        '--- !u!1 &200',
+        'GameObject:',
+        '  m_Name: CarrierRing',
+        '  m_IsActive: 1',
+        '--- !u!4 &201',
+        'Transform:',
+        '  m_GameObject: {fileID: 200}',
+        '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+        '  m_LocalPosition: {x: 0, y: 0, z: 0}',
+        '  m_LocalScale: {x: 1, y: 1, z: 1}',
+        '  m_Father: {fileID: 101}',
+        '--- !u!198 &202',
+        'ParticleSystem:',
+        '  m_GameObject: {fileID: 200}',
+        '  lengthInSec: 2',
+        '  looping: 0',
+        '  InitialModule:',
+        '    startLifetime:',
+        '      minMaxState: 0',
+        '      scalar: 1.5',
+        '    startSpeed:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    startSize:',
+        '      minMaxState: 0',
+        '      scalar: 1',
+        '  ShapeModule:',
+        '    enabled: 1',
+        '    type: 8',
+        '    radiusThickness: 0',
+        '    m_Position: {x: 0, y: 1.5, z: 0}',
+        '    m_Rotation: {x: 90, y: 0, z: 0}',
+        '    m_Scale: {x: 1, y: 1, z: 1}',
+        '    radius:',
+        '      value: 4',
+        '  EmissionModule:',
+        '    enabled: 1',
+        '    rateOverTime:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    m_BurstCount: 1',
+        '    m_Bursts:',
+        '    - serializedVersion: 2',
+        '      time: 0',
+        '      countCurve:',
+        '        scalar: 4',
+        '      cycleCount: 1',
+        '      repeatInterval: 0.01',
+        '  SubModule:',
+        '    enabled: 1',
+        '    subEmitters:',
+        '    - serializedVersion: 3',
+        '      emitter: {fileID: 302}',
+        '      type: 0',
+        '      properties: 0',
+        '      emitProbability: 1',
+        '--- !u!199 &203',
+        'ParticleSystemRenderer:',
+        '  m_GameObject: {fileID: 200}',
+        '  m_Enabled: 0',
+        '  m_RenderMode: 0',
+        '--- !u!1 &300',
+        'GameObject:',
+        '  m_Name: MergeRock',
+        '  m_IsActive: 1',
+        '--- !u!4 &301',
+        'Transform:',
+        '  m_GameObject: {fileID: 300}',
+        '  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}',
+        '  m_LocalPosition: {x: 0, y: 3.5, z: 0}',
+        '  m_LocalScale: {x: 1, y: 1, z: 1}',
+        '  m_Father: {fileID: 201}',
+        '--- !u!198 &302',
+        'ParticleSystem:',
+        '  m_GameObject: {fileID: 300}',
+        '  lengthInSec: 2',
+        '  looping: 0',
+        '  InitialModule:',
+        '    startLifetime:',
+        '      minMaxState: 0',
+        '      scalar: 1.5',
+        '    startSpeed:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    startSize:',
+        '      minMaxState: 0',
+        '      scalar: 0.5',
+        '  ShapeModule:',
+        '    enabled: 0',
+        '    type: 8',
+        '    radius:',
+        '      value: 4',
+        '  VelocityModule:',
+        '    enabled: 1',
+        '    inWorldSpace: 0',
+        '    radial:',
+        '      minMaxState: 0',
+        '      scalar: -20',
+        '  EmissionModule:',
+        '    enabled: 1',
+        '    rateOverTime:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    m_BurstCount: 1',
+        '    m_Bursts:',
+        '    - serializedVersion: 2',
+        '      time: 0',
+        '      countCurve:',
+        '        scalar: 1',
+        '      cycleCount: 1',
+        '      repeatInterval: 0.01',
+        '--- !u!199 &303',
+        'ParticleSystemRenderer:',
+        '  m_GameObject: {fileID: 300}',
+        '  m_Enabled: 1',
+        '  m_RenderMode: 4',
+      ].join('\n'),
+      'utf8',
+    );
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'sub_converge_test' });
+    const subLayer = recipe.layers[0]?.subEmitters?.[0]?.effect?.layers?.[0];
+    assert.ok(subLayer, 'expected birth subEmitter layer');
+    assert.equal(subLayer.velocity?.radialSpace, 'root');
+    assert.deepEqual(subLayer.velocity?.radialOffset, [0, 3.5, 0]);
+
+    const scene = new THREE.Scene();
+    const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxAtlasParticles: 32, maxMeshVfx: 16 });
+    try {
+      vfx.registerEffect(recipe);
+      vfx.playEffect('sub_converge_test', { x: 10, y: 2, z: -5 });
+      for (let i = 0; i < 30; i++) vfx.update(1 / 60);
+      const pos = [0, 0, 0];
+      const quat = [0, 0, 0, 1];
+      const scale = [1, 1, 1];
+      let activeCount = 0;
+      for (let s = 0; s < 32; s++) {
+        if (vfx.meshVfx.readSlotTransform(s, pos, quat, scale) && scale[0] > 0.001) {
+          activeCount += 1;
+          const dx = pos[0] - 10;
+          const dy = pos[1] - 5.5;
+          const dz = pos[2] + 5;
+          const dist = Math.hypot(dx, dy, dz);
+          assert.ok(dist <= 0.15, `expected ring mesh to converge to root-space offset (10, 5.5, -5), got dist=${dist}`);
+        }
+      }
+      assert.equal(activeCount, 4, 'all 4 ring meshes active after converging');
+    } finally {
+      vfx.dispose();
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 
 
