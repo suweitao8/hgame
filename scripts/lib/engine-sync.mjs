@@ -29,6 +29,8 @@ export const ENGINE_MANAGED_SCRIPTS = Object.freeze([
 export const ENGINE_MANAGED_SCRIPT_LIBS = Object.freeze([
   'browser-benchmark.mjs',
   'cli-numbers.mjs',
+  'minigame-host.mjs',
+  'package-minigame.mjs',
   'performance-stats.mjs',
   'playwright-resolve.mjs',
   'snapshot-args.mjs',
@@ -41,6 +43,7 @@ export const ENGINE_MANAGED_SCRIPT_FILES = Object.freeze([
   ...ENGINE_MANAGED_SCRIPTS.map(s => ({ dest: `scripts/${s}`, src: `scripts/${s}` })),
   { dest: 'scripts/check-ui.mjs', src: '.agents/skills/hgame-ui-ux/scripts/check-ui.mjs' },
   { dest: 'scripts/check-level.mjs', src: '.agents/skills/hgame-level-architect/scripts/check-level.mjs' },
+  { dest: 'scripts/lib/hgame-license.txt', src: 'LICENSE' },
   ...ENGINE_MANAGED_SCRIPT_LIBS.map(lib => ({ dest: `scripts/lib/${lib}`, src: `scripts/lib/${lib}` })),
 ]);
 
@@ -49,6 +52,7 @@ export const ENGINE_MANAGED_DOCS = Object.freeze([
   { dest: 'docs/hgame/UI-UX-STANDARD.md', src: '.agents/skills/hgame-ui-ux/SKILL.md' },
   { dest: 'docs/hgame/LEVEL-ARCHITECT.md', src: '.agents/skills/hgame-level-architect/SKILL.md' },
   { dest: 'docs/hgame/USER-AND-AGENT-GUIDE.md', src: 'docs/guides/USER-AND-AGENT-GUIDE.md' },
+  { dest: 'docs/hgame/MINIGAME-PACKAGING.md', src: 'docs/guides/MINIGAME-PACKAGING.md' },
 ]);
 
 const HGAME_RULES_BEGIN = '<!-- HGAME:RULES:BEGIN -->';

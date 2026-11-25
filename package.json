@@ -35,6 +35,8 @@
     "build:network": "npm --prefix network run build",
     "package:game": "node scripts/package-game.mjs",
     "package:toy": "node scripts/package-game.mjs --target toy",
+    "package:wechat": "node scripts/package-game.mjs --target wechat",
+    "package:douyin": "node scripts/package-game.mjs --target douyin",
     "toy:check": "node scripts/toy-preflight.mjs",
     "release": "npm run build:physics && npm run check:all && node scripts/package-game.mjs --engine",
     "check:all": "npm run check && npm run test:network && npm run check:network && npm run build:network",

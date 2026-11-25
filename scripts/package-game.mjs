@@ -876,15 +876,50 @@ export async function packageGameRelease({
   flatZip,
   minify = true,
   target = 'standard',
+  appid,
   toySdk,
   slug,
   poster,
   icon,
   allowUncompressedKtx2 = false,
 } = {}) {
-  if (target !== 'standard' && target !== 'toy') {
-    throw new RangeError(`Unsupported package target "${target}". Use "standard" or "toy".`);
+  if (target === 'wechat' || target === 'douyin') {
+    if ([toySdk, slug, poster, icon].some(value => value !== undefined) || allowUncompressedKtx2) {
+      throw new Error('Toy options are only available with --target toy');
+    }
+    const absGameDir = path.resolve(projectDir);
+    const gameConfig = JSON.parse(await readFile(path.join(absGameDir, 'game.config.json'), 'utf8'));
+    const effectiveId = id || gameConfig.id || path.basename(absGameDir);
+    const effectiveVersion = version || gameConfig.version || '0.1.0';
+    const releaseTag = tag
+      ? formatReleaseTag(effectiveId, effectiveVersion, tag)
+      : formatReleaseTag(effectiveId, effectiveVersion, `${formatReleaseTag(effectiveId, effectiveVersion)}_${target}`);
+    const parent = outDir ? path.resolve(outDir) : path.join(absGameDir, 'build');
+    const outputDir = path.join(parent, releaseTag);
+    const zipPath = path.join(parent, `${releaseTag}.zip`);
+    const { assembleMinigame } = await import('./lib/package-minigame.mjs');
+    const { stats, zipStats } = await stageRelease(outputDir, zipPath, async (stage, archive) => {
+      const stats = await assembleMinigame({
+        stage, projectDir: absGameDir, target, appid, assetStore, minify,
+        engineRoot: engineRoot ? path.resolve(engineRoot) : findNearestEngineRoot(absGameDir),
+        game: { id: effectiveId, name: gameConfig.name || effectiveId, version: String(effectiveVersion) },
+      });
+      const zipStats = await writeZipArchive(stage, archive, {
+        rootPrefix: flatZip === false ? releaseTag : '',
+        mtime: RELEASE_ZIP_DATE,
+      });
+      return { stats, zipStats };
+    });
+    return {
+      mode: 'game', target, releaseTag, gameId: effectiveId, version: String(effectiveVersion),
+      outputDir, zipPath, fileCount: zipStats.entryCount, outputBytes: zipStats.uncompressedBytes,
+      zipBytes: zipStats.compressedBytes, ...stats,
+    };
   }
+  if (target !== 'standard' && target !== 'toy') {
+    throw new RangeError(`Unsupported package target "${target}". Use "standard", "toy", "wechat" or "douyin".`);
+  }
+  if (appid !== undefined) throw new Error('--appid requires --target wechat or douyin');
   const effectiveFlatZip = flatZip ?? (target === 'toy');
   const absGameDir = path.resolve(projectDir);
   const gameConfigPath = path.join(absGameDir, 'game.config.json');
@@ -1724,6 +1759,7 @@ function parseCliArgs(argv) {
     flatZip: undefined,
     minify: true,
     target: 'standard',
+    appid: undefined,
     toySdk: undefined,
     slug: undefined,
     poster: undefined,
@@ -1752,6 +1788,10 @@ function parseCliArgs(argv) {
       opts.flatZip = false;
     } else if (arg === '--target') {
       opts.target = argv[++i];
+      if (!opts.target || opts.target.startsWith('-')) throw new Error('--target requires a value');
+    } else if (arg === '--appid') {
+      opts.appid = argv[++i];
+      if (!opts.appid || opts.appid.startsWith('-')) throw new Error('--appid requires a value');
     } else if (arg === '--toy-sdk') {
       opts.toySdk = true;
     } else if (arg === '--no-toy-sdk') {
@@ -1783,9 +1823,12 @@ async function main() {
   const opts = parseCliArgs(process.argv.slice(2));
   if (opts.help) {
     console.log(
-      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--allow-uncompressed-ktx2] [--no-minify] [--engine]',
+      'Usage: node scripts/package-game.mjs [project-dir] [--target standard|toy|wechat|douyin] [--appid <mini-game-appid>] [--version 1.1] [--id lol] [--tag lol_1_1] [--out-dir build] [--engine-root <hgame>] [--flat-zip] [--toy-sdk|--no-toy-sdk] [--slug <slug>] [--poster <file>] [--icon <file>] [--allow-uncompressed-ktx2] [--no-minify] [--engine]',
     );
     return;
+  }
+  if (opts.engine && (opts.target !== 'standard' || opts.appid !== undefined)) {
+    throw new Error('--engine only supports the standard target');
   }
   const summary = opts.engine
     ? await packageEngineRelease({
@@ -1806,6 +1849,7 @@ async function main() {
         flatZip: opts.flatZip,
         minify: opts.minify,
         target: opts.target,
+        appid: opts.appid,
         toySdk: opts.toySdk,
         slug: opts.slug,
         poster: opts.poster,

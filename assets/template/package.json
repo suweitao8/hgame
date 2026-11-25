@@ -13,6 +13,8 @@
     "build": "node scripts/package-game.mjs",
     "release": "node scripts/package-game.mjs",
     "package:toy": "node scripts/package-game.mjs --target toy",
+    "package:wechat": "node scripts/package-game.mjs --target wechat",
+    "package:douyin": "node scripts/package-game.mjs --target douyin",
     "toy:check": "node scripts/toy-preflight.mjs .",
     "check:ui": "node scripts/check-ui.mjs --dir .",
     "check:design": "node scripts/check-design-docs.mjs .",
@@ -26,5 +28,8 @@
     "accept:webasset": "node scripts/accept.mjs . --webasset",
     "check": "node scripts/accept.mjs . --quick",
     "test": "node --test tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
   }
 }
