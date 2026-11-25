@@ -243,7 +243,8 @@ try {
   const launchOpts = {
     headless: true,
     ...(executablePath ? { executablePath } : {}),
-    args: ['--no-sandbox', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist'],
+    // Headless Chromium only exposes a WebGPU adapter with the D3D11 ANGLE backend.
+    args: ['--no-sandbox', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--use-angle=d3d11', '--disable-gpu-sandbox'],
   };
   try {
     browser = await chromium.launch({ ...launchOpts, ...(!executablePath ? { channel: 'msedge' } : {}) });

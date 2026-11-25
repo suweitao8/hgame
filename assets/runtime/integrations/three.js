@@ -1164,7 +1164,7 @@ export function createThreeAdapter({
         } else if (batch?.bounds && Number.isFinite(batch.count)) {
           gpuIndirectCuller.setFrustumPlanes(planes);
           gpuIndirectCuller.setInstanceCount(batch.count);
-          gpuIndirectCuller.setInstanceBounds(0, batch.count, batch.bounds);
+          gpuIndirectCuller.setInstanceBoundsRange(batch.bounds, 0, batch.count);
           batch.lastResult = gpuIndirectCuller.execute(batch.executeOptions);
         }
       }
