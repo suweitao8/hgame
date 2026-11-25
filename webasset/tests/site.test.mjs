@@ -149,6 +149,71 @@ test('new character creation needs only a name and initializes other fields empt
         body: JSON.stringify({ name: '新角色' }),
       });
       assert.equal(duplicate.status, 409);
+
+      const secondRes = await fetch(base + '/api/characters', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: '二号角色' }),
+      });
+      assert.equal(secondRes.status, 201);
+
+      const renameRes = await fetch(base + '/api/characters', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ characterId: character.id, name: '新角色改名' }),
+      });
+      assert.equal(renameRes.status, 200);
+      const renamedPayload = await renameRes.json();
+      assert.equal(renamedPayload.character.id, character.id);
+      assert.equal(renamedPayload.character.name, '新角色改名');
+
+      const restRenameRes = await fetch(base + `/api/characters/${encodeURIComponent(character.id)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Hero Renamed' }),
+      });
+      assert.equal(restRenameRes.status, 200);
+      assert.equal((await restRenameRes.json()).character.name, 'Hero Renamed');
+
+      const caseOnlyRes = await fetch(base + `/api/characters/${encodeURIComponent(character.id)}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'hero renamed' }),
+      });
+      assert.equal(caseOnlyRes.status, 200);
+      assert.equal((await caseOnlyRes.json()).character.name, 'hero renamed');
+
+      const conflictRes = await fetch(base + '/api/characters', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ characterId: character.id, name: '二号角色' }),
+      });
+      assert.equal(conflictRes.status, 409);
+      assert.equal((await conflictRes.json()).error, 'NAME_EXISTS');
+
+      const emptyRes = await fetch(base + '/api/characters', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ characterId: character.id, name: '   ' }),
+      });
+      assert.equal(emptyRes.status, 400);
+
+      const missingRes = await fetch(base + '/api/characters', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ characterId: 'does-not-exist', name: '其他名字' }),
+      });
+      assert.equal(missingRes.status, 404);
+
+      const assetsPayload = await (await fetch(base + '/api/assets?category=characters:all')).json();
+      assert.equal(assetsPayload.items.find(item => item.id === character.id)?.name, 'hero renamed');
+      const snapshot = JSON.parse(await readFile(catalogFile, 'utf8'));
+      assert.equal(snapshot.characters.find(item => item.id === character.id)?.name, 'hero renamed');
+
+      const html = await (await fetch(base)).text();
+      assert.match(html, /id="character-rename-button"/);
+      assert.match(html, /id="character-rename-form"/);
+      assert.match(html, /id="character-rename-input"/);
     });
   } finally {
     await rm(dir, { recursive: true, force: true });

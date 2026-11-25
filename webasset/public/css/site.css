@@ -1594,6 +1594,68 @@ button { color: inherit; }
   font-size: 15px;
   font-weight: 700;
 }
+.character-rename-button,
+.character-rename-save,
+.character-rename-cancel {
+  min-width: 26px;
+  min-height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.character-rename-button:hover,
+.character-rename-button:focus-visible,
+.character-rename-cancel:hover,
+.character-rename-cancel:focus-visible {
+  border-color: rgba(213, 228, 180, .35);
+  background: rgba(213, 228, 180, .08);
+  color: var(--text);
+  outline: none;
+}
+.character-rename-save {
+  border-color: rgba(213, 228, 180, .28);
+  background: #34452d;
+  color: #edf5e4;
+}
+.character-rename-save:hover:not(:disabled),
+.character-rename-save:focus-visible {
+  filter: brightness(1.16);
+  outline: none;
+}
+.character-rename-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+#character-rename-input {
+  width: min(220px, 46vw);
+  min-height: 28px;
+  box-sizing: border-box;
+  padding: 4px 9px;
+  border: 1px solid rgba(213, 228, 180, .34);
+  border-radius: 6px;
+  outline: none;
+  background: rgba(4, 7, 4, .42);
+  color: #edf2e7;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+#character-rename-input:focus { border-color: rgba(213, 228, 180, .62); }
+.character-rename-form button:disabled,
+#character-rename-input:disabled {
+  opacity: .55;
+  cursor: wait;
+}
 #models-view .hgame-stage-title-group {
   flex-direction: column;
   align-items: flex-start;

@@ -496,6 +496,37 @@ export function createAssetHandler({
     });
   }
 
+  async function renameCharacter(idValue, input) {
+    return withMutationLock(async () => {
+      const characterId = safeCharacterId(idValue);
+      if (!characterId) throw new Error('BAD_CHARACTER');
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('BAD_BODY');
+      const name = typeof input.name === 'string' ? input.name.trim() : '';
+      if (!name || name.length > 64 || /[\x00-\x1f\x7f]/.test(name)) throw new Error('BAD_NAME');
+
+      const db = await ensureDbReady();
+      const existing = db.getCharacter(characterId);
+      if (!existing) throw new Error('CHARACTER_NOT_FOUND');
+
+      const duplicate = db.findCharacterByName(name);
+      if (duplicate && duplicate.id !== characterId) {
+        throw new Error('NAME_EXISTS');
+      }
+
+      if (existing.name === name) {
+        return { ok: true, character: existing };
+      }
+
+      const character = db.renameCharacter(characterId, name);
+      await syncCatalogSnapshot(db);
+      indexPromise = null;
+      for (const job of generationJobs.values()) {
+        if (job.characterId === characterId) job.characterName = character.name;
+      }
+      return { ok: true, character };
+    });
+  }
+
   async function supplementCharacter(input, options) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('BAD_BODY');
     const name = typeof input.name === 'string' ? input.name.trim() : '';
@@ -1148,15 +1179,15 @@ export function createAssetHandler({
   const handler = async (request, response) => {
     if (request.method === 'OPTIONS') {
       response.writeHead(204, {
-        Allow: 'GET, HEAD, POST, DELETE, OPTIONS',
-        'Access-Control-Allow-Methods': 'GET, HEAD, POST, DELETE, OPTIONS',
+        Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, HEAD, POST, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
       });
       response.end();
       return;
     }
-    if (!['GET', 'HEAD', 'POST', 'DELETE'].includes(request.method)) {
-      response.writeHead(405, { Allow: 'GET, HEAD, POST, DELETE, OPTIONS' });
+    if (!['GET', 'HEAD', 'POST', 'PATCH', 'DELETE'].includes(request.method)) {
+      response.writeHead(405, { Allow: 'GET, HEAD, POST, PATCH, DELETE, OPTIONS' });
       response.end('Method Not Allowed');
       return;
     }
@@ -1222,36 +1253,80 @@ export function createAssetHandler({
       return;
     }
 
-    if (url.pathname === '/api/characters') {
-      if (request.method !== 'POST') {
-        response.writeHead(405, { Allow: 'POST, OPTIONS' });
-        response.end('Method Not Allowed');
+    const isCharacterDetailPath = url.pathname.startsWith('/api/characters/') && url.pathname !== '/api/characters/research';
+    if (url.pathname === '/api/characters' || isCharacterDetailPath) {
+      const pathCharacterId = isCharacterDetailPath
+        ? (() => {
+            try {
+              return decodeURIComponent(url.pathname.slice('/api/characters/'.length));
+            } catch {
+              return '';
+            }
+          })()
+        : null;
+
+      if (request.method === 'POST' && !isCharacterDetailPath) {
+        try {
+          const body = await readRequestBody(request, MAX_CHARACTER_REQUEST_BYTES);
+          let input;
+          try {
+            input = JSON.parse(body.toString('utf8'));
+          } catch {
+            throw new Error('BAD_JSON');
+          }
+          sendJson(response, 201, await createCharacter(input));
+        } catch (error) {
+          const code = error?.message || 'ERROR';
+          const errors = {
+            TOO_LARGE: [413, '角色资料不能超过 16KB。'],
+            BAD_JSON: [400, '角色资料格式不正确。'],
+            BAD_BODY: [400, '请填写有效的角色资料。'],
+            BAD_NAME: [400, '角色名称不能为空，且不能超过 64 个字符。'],
+            BAD_GENDER: [400, '性别只能填写男或女，或留空等待 AI 判断。'],
+            BAD_LIST: [400, '辅助关键词、别名、道具和性格必须使用列表格式。'],
+            BAD_RESEARCH: [400, 'AI 搜索资料格式不正确。'],
+            NAME_EXISTS: [409, '已经存在同名角色。'],
+          };
+          const [status, message] = errors[code] || [500, '新增角色失败。'];
+          sendJson(response, status, { error: code, message });
+        }
         return;
       }
-      try {
-        const body = await readRequestBody(request, MAX_CHARACTER_REQUEST_BYTES);
-        let input;
+
+      if (request.method === 'PATCH') {
         try {
-          input = JSON.parse(body.toString('utf8'));
-        } catch {
-          throw new Error('BAD_JSON');
+          const body = await readRequestBody(request, MAX_CHARACTER_REQUEST_BYTES);
+          let input;
+          try {
+            input = JSON.parse(body.toString('utf8'));
+          } catch {
+            throw new Error('BAD_JSON');
+          }
+          const characterId = isCharacterDetailPath
+            ? pathCharacterId
+            : (input && typeof input === 'object' && !Array.isArray(input)
+              ? (input.characterId ?? input.id ?? url.searchParams.get('characterId'))
+              : url.searchParams.get('characterId'));
+          sendJson(response, 200, await renameCharacter(characterId, input));
+        } catch (error) {
+          const code = error?.message || 'ERROR';
+          const errors = {
+            TOO_LARGE: [413, '角色资料不能超过 16KB。'],
+            BAD_JSON: [400, '角色资料格式不正确。'],
+            BAD_BODY: [400, '请填写有效的角色资料。'],
+            BAD_CHARACTER: [400, '角色编号不合法。'],
+            BAD_NAME: [400, '角色名称不能为空，且不能超过 64 个字符。'],
+            CHARACTER_NOT_FOUND: [404, '找不到该角色。'],
+            NAME_EXISTS: [409, '已经存在同名角色。'],
+          };
+          const [status, message] = errors[code] || [500, '角色改名失败。'];
+          sendJson(response, status, { error: code, message });
         }
-        sendJson(response, 201, await createCharacter(input));
-      } catch (error) {
-        const code = error?.message || 'ERROR';
-        const errors = {
-          TOO_LARGE: [413, '角色资料不能超过 16KB。'],
-          BAD_JSON: [400, '角色资料格式不正确。'],
-          BAD_BODY: [400, '请填写有效的角色资料。'],
-          BAD_NAME: [400, '角色名称不能为空，且不能超过 64 个字符。'],
-          BAD_GENDER: [400, '性别只能填写男或女，或留空等待 AI 判断。'],
-          BAD_LIST: [400, '辅助关键词、别名、道具和性格必须使用列表格式。'],
-          BAD_RESEARCH: [400, 'AI 搜索资料格式不正确。'],
-          NAME_EXISTS: [409, '已经存在同名角色。'],
-        };
-        const [status, message] = errors[code] || [500, '新增角色失败。'];
-        sendJson(response, status, { error: code, message });
+        return;
       }
+
+      response.writeHead(405, { Allow: isCharacterDetailPath ? 'PATCH, OPTIONS' : 'POST, PATCH, OPTIONS' });
+      response.end('Method Not Allowed');
       return;
     }
 

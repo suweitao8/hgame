@@ -19,6 +19,7 @@ export const ART_SCAN_ROOTS = Object.freeze([
   { rel: 'assets/pbr', domain: 'pbr' },
   { rel: 'assets/foliage', domain: 'foliage' },
   { rel: 'assets/models', domain: 'model' },
+  { rel: 'assets/vfx', domain: 'vfx' },
   { rel: 'public/assets/pbr', domain: 'pbr' },
   { rel: 'public/assets/models', domain: 'model' },
   { rel: 'public/assets/ui', domain: 'ui' },
@@ -70,6 +71,11 @@ function classifyCatalogEntry(relPosix, domain) {
     else if (lower.includes('/foliage/')) category = 'foliage';
     else if (lower.includes('/models/')) category = 'model';
     else if (lower.includes('/pbr_cache/')) category = 'pbr-raw';
+  } else if (domain === 'vfx') {
+    if (path.posix.basename(lower) === 'atlas.png') category = 'atlas';
+    else if (ext === '.glb' || ext === '.gltf') category = 'vfx-mesh';
+    else if (lower.endsWith('.vfx.json')) category = 'vfx-recipe';
+    else category = 'vfx';
   } else if (ext === '.wav' || ext === '.mp3' || ext === '.ogg' || ext === '.flac' || ext === '.opus') {
     category = 'audio';
   } else if (ext === '.glb' || ext === '.gltf') {
@@ -469,6 +475,13 @@ export function openAssetDb(dbPath) {
       now,
     );
     return getCharacter(character.id);
+  }
+
+  function renameCharacter(id, name) {
+    const now = new Date().toISOString();
+    const info = db.prepare('UPDATE characters SET name = ?, updated_at = ? WHERE id = ?').run(name, now, id);
+    if (info.changes === 0) return null;
+    return getCharacter(id);
   }
 
   function addCharacterReferenceAsset(characterId, { name, relPath, sha256 = '', bytes = 0 }) {
@@ -934,6 +947,7 @@ export function openAssetDb(dbPath) {
     getCharacter,
     findCharacterByName,
     insertCharacter,
+    renameCharacter,
     addCharacterReferenceAsset,
     deleteCharacterReferenceAsset,
     replaceCharacterGeneratedAsset,

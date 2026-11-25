@@ -59,6 +59,12 @@
       <div class="hgame-stage-header">
         <div class="hgame-stage-title-group">
           <h2 id="asset-character-title">角色</h2>
+          <button id="character-rename-button" class="character-rename-button" type="button" aria-label="改名" title="改名" hidden>✎</button>
+          <form id="character-rename-form" class="character-rename-form" hidden>
+            <input id="character-rename-input" name="name" type="text" maxlength="64" required autocomplete="off" aria-label="角色名称">
+            <button type="submit" class="character-rename-save" aria-label="保存名称" title="保存">✓</button>
+            <button type="button" class="character-rename-cancel" aria-label="取消改名" title="取消">✕</button>
+          </form>
         </div>
         <div class="hgame-stage-actions">
           <div class="character-mode-tabs" role="tablist" aria-label="角色子视图">

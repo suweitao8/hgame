@@ -22,6 +22,11 @@ const characterModeTabs = [...document.querySelectorAll('#assets-view .asset-ai-
 const assetStageTabs = [...document.querySelectorAll('#assets-view .asset-stage-tab')];
 const assetStageBody = document.querySelector('#asset-stage-body');
 const assetCharacterTitle = document.querySelector('#asset-character-title');
+const characterRenameButton = document.querySelector('#character-rename-button');
+const characterRenameForm = document.querySelector('#character-rename-form');
+const characterRenameInput = document.querySelector('#character-rename-input');
+const characterRenameSaveButton = characterRenameForm?.querySelector('.character-rename-save');
+const characterRenameCancelButton = characterRenameForm?.querySelector('.character-rename-cancel');
 const assetModelSection = document.querySelector('#asset-model-section');
 const assetGalleryPane = document.querySelector('#asset-gallery-pane');
 const assetSettingsPane = document.querySelector('#asset-settings-pane');
@@ -200,6 +205,10 @@ async function loadCharacters() {
     if (initialCharacter) {
       selectCharacter(initialCharacter.id);
     } else {
+      activeCharacterId = null;
+      closeCharacterRename();
+      if (assetCharacterTitle) assetCharacterTitle.textContent = '角色';
+      if (characterRenameButton) characterRenameButton.hidden = true;
       assetEmpty.textContent = '角色库中暂时没有可展示的图片。';
       assetEmpty.hidden = false;
     }
@@ -294,6 +303,87 @@ characterCreateForm.addEventListener('submit', async event => {
   }
 });
 
+function closeCharacterRename() {
+  if (characterRenameForm) characterRenameForm.hidden = true;
+  if (assetCharacterTitle) assetCharacterTitle.hidden = false;
+  if (characterRenameButton) characterRenameButton.hidden = !activeCharacterId;
+}
+
+function openCharacterRename() {
+  const character = characters.find(item => item.id === activeCharacterId);
+  if (!character || !characterRenameForm || !characterRenameInput) return;
+  if (assetCharacterTitle) assetCharacterTitle.hidden = true;
+  if (characterRenameButton) characterRenameButton.hidden = true;
+  characterRenameForm.hidden = false;
+  characterRenameInput.value = character.name || '';
+  characterRenameInput.focus();
+  characterRenameInput.select();
+}
+
+characterRenameButton?.addEventListener('click', openCharacterRename);
+assetCharacterTitle?.addEventListener('dblclick', () => {
+  if (activeCharacterId) openCharacterRename();
+});
+characterRenameCancelButton?.addEventListener('click', closeCharacterRename);
+characterRenameInput?.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    closeCharacterRename();
+  }
+});
+
+characterRenameForm?.addEventListener('submit', async event => {
+  event.preventDefault();
+  const character = characters.find(item => item.id === activeCharacterId);
+  if (!character || !characterRenameInput) return;
+
+  const name = characterRenameInput.value.trim();
+  if (!name) {
+    characterRenameInput.focus();
+    return;
+  }
+  if (name === character.name) {
+    closeCharacterRename();
+    return;
+  }
+
+  characterRenameInput.disabled = true;
+  if (characterRenameSaveButton) characterRenameSaveButton.disabled = true;
+  if (characterRenameCancelButton) characterRenameCancelButton.disabled = true;
+  try {
+    const response = await fetch(ASSET_API + '/api/characters', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ characterId: character.id, name }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.message || `HTTP ${response.status}`);
+
+    const updated = result.character;
+    activeCharacterId = updated.id;
+    const query = characterSearchInput.value.trim().toLocaleLowerCase();
+    if (query && ![updated.id, updated.name, ...(updated.keywords || []), ...(updated.aliases || [])]
+      .some(value => String(value).toLocaleLowerCase().includes(query))) {
+      characterSearchInput.value = '';
+    }
+    closeCharacterRename();
+    await loadCharacters();
+    showAssetToast(`已改名为：${updated.name}`);
+  } catch (error) {
+    showAssetToast(error.message || '改名失败，请稍后重试。', 5000);
+    characterRenameInput.disabled = false;
+    if (characterRenameSaveButton) characterRenameSaveButton.disabled = false;
+    if (characterRenameCancelButton) characterRenameCancelButton.disabled = false;
+    characterRenameInput.focus();
+    characterRenameInput.select();
+    return;
+  }
+  characterRenameInput.disabled = false;
+  if (characterRenameSaveButton) characterRenameSaveButton.disabled = false;
+  if (characterRenameCancelButton) characterRenameCancelButton.disabled = false;
+});
+
 function fitCharacterReferenceImage(image, frame) {
   const fit = () => {
     if (!image.naturalWidth || !image.naturalHeight) return;
@@ -333,7 +423,9 @@ function selectCharacter(characterId) {
   if (!character) return;
 
   activeCharacterId = character.id;
+  closeCharacterRename();
   if (assetCharacterTitle) assetCharacterTitle.textContent = character.name || character.id;
+  if (characterRenameButton) characterRenameButton.hidden = false;
   for (const button of characterList.querySelectorAll('.asset-character-item')) {
     button.setAttribute('aria-current', String(button.dataset.character === character.id));
   }
