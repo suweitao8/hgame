@@ -326,6 +326,11 @@
     <section class="hgame-stage-panel" aria-label="特效预览">
       <div class="hgame-stage-header">
         <div class="hgame-stage-title-group">
+          <label class="hgame-switch" id="hgame-vfx-review-wrap" for="hgame-vfx-review-toggle" hidden>
+            <input id="hgame-vfx-review-toggle" type="checkbox" role="switch">
+            <span class="hgame-switch-track" aria-hidden="true"></span>
+            <span>审核通过</span>
+          </label>
           <h2 id="hgame-vfx-title">特效</h2>
           <a id="hgame-vfx-download" class="asset-model-filename" hidden download></a>
         </div>
@@ -351,11 +356,6 @@
               <option value="0.5">0.5x</option>
               <option value="1" selected>1.0x</option>
             </select>
-          </label>
-          <label class="hgame-switch" id="hgame-vfx-review-wrap" for="hgame-vfx-review-toggle" hidden>
-            <input id="hgame-vfx-review-toggle" type="checkbox" role="switch">
-            <span class="hgame-switch-track" aria-hidden="true"></span>
-            <span>审核通过</span>
           </label>
         </div>
         <span id="hgame-vfx-status" class="hgame-status-text" role="status" aria-live="polite"></span>

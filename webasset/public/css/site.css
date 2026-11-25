@@ -1872,6 +1872,29 @@ button { color: inherit; }
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+.hgame-switch[hidden] {
+  display: none;
+}
+.hgame-stage-title-group .hgame-switch {
+  padding: 4px 10px;
+  min-height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-raised);
+  flex: 0 0 auto;
+  transition: border-color .16s, background .16s, color .16s;
+}
+.hgame-stage-title-group .hgame-switch:hover {
+  border-color: rgba(213, 228, 180, .35);
+}
+.hgame-stage-title-group .hgame-switch:has(input:checked) {
+  border-color: rgba(74, 222, 128, .55);
+  background: rgba(74, 222, 128, .12);
+  color: #e8f5e9;
+}
+#vfx-view .hgame-stage-title-group {
+  align-items: center;
+}
 .hgame-list-item.is-reviewed:not([aria-current="true"]) {
   opacity: .66;
 }
