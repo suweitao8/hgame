@@ -2259,27 +2259,22 @@ export function createEffectPlayer({
       for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
         const tp = trackedParticles[i];
         if (!tp.active) continue;
+        const prevAge = tp.age;
         tp.age += dt;
-        if (tp.age >= tp.duration) {
-          if (tp.subEmitters) {
-            computeDynamicRadialVel(tp.x, tp.y, tp.z, tp.radCx, tp.radCy, tp.radCz, tp.velRadial, 1.0, 0, scratchRadVel3);
-            fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth, tp.vx + scratchRadVel3[0], tp.vy + scratchRadVel3[1], tp.vz + scratchRadVel3[2], tp.tintR, tp.tintG, tp.tintB);
-          }
-          if (tp.lightSlotIdx >= 0) {
-            releaseLightSlot(tp.lightSlotIdx);
-            tp.lightSlotIdx = -1;
-          }
-          tp.active = false;
-          activeTrackedCount = Math.max(0, activeTrackedCount - 1);
-          tp.atlasState = null;
-          continue;
-        }
-      if (dt > 0) {
+        const isDying = tp.age >= tp.duration;
+        const stepDt = isDying ? Math.max(0, tp.duration - prevAge) : dt;
+        const evalAge = isDying ? tp.duration : tp.age;
+      if (stepDt > 0) {
         let colVScale = 1.0;
-        if (!tp.hasCollision && tp.meshSlot < 0 && (tp.hasVelCurve || Math.abs(tp.orbitalY) > 1e-4)) {
-          const dispInt = tp.hasVelCurve && atlasParticles?.lut?.sampleVelDisp
-            ? atlasParticles.lut.sampleVelDisp(tp.curveRow, Math.min(1, tp.age / Math.max(1e-4, tp.duration)))
-            : tp.age / Math.max(1e-4, tp.duration);
+        const useAtlasLut = tp.atlasSlot >= 0
+          && !tp.hasCollision
+          && tp.meshSlot < 0
+          && (tp.hasVelCurve || Math.abs(tp.orbitalY) > 1e-4)
+          && (!tp.hasVelCurve || Boolean(atlasParticles?.lut?.sampleVelDisp));
+        if (useAtlasLut) {
+          const dispInt = tp.hasVelCurve
+            ? atlasParticles.lut.sampleVelDisp(tp.curveRow, Math.min(1, evalAge / Math.max(1e-4, tp.duration)))
+            : evalAge / Math.max(1e-4, tp.duration);
           tp._evalExt.hasVelCurve = tp.hasVelCurve;
           tp._evalExt.velDispIntegral = dispInt;
           tp._evalExt.duration = tp.duration;
@@ -2290,7 +2285,7 @@ export function createEffectPlayer({
             tp.initVx, tp.initVy, tp.initVz,
             tp.gravity, tp.drag,
             0, 0, 0,
-            tp.age, is2D, scratchPos,
+            evalAge, is2D, scratchPos,
             tp.orbitalY, tp.centerOffX, tp.centerOffZ,
             1, tp._evalExt,
           );
@@ -2299,14 +2294,14 @@ export function createEffectPlayer({
           tp.z = scratchPos[2];
         } else {
           if (tp.drag > 0.001) {
-            const d = Math.exp(-tp.drag * dt);
+            const d = Math.exp(-tp.drag * stepDt);
             tp.vx *= d;
             tp.vy *= d;
             tp.vz *= d;
           }
-          tp.vx += tp.accelX * dt;
-          tp.vy += (is2D ? tp.gravity : -tp.gravity) * dt;
-          tp.vz += tp.accelZ * dt;
+          tp.vx += tp.accelX * stepDt;
+          tp.vy += (is2D ? tp.gravity : -tp.gravity) * stepDt;
+          tp.vz += tp.accelZ * stepDt;
           if (tp.clampVelocity && tp.clampVelocity.limit > 0) {
             const spd = Math.hypot(tp.vx, tp.vy, tp.vz);
             const lim = tp.clampVelocity.limit;
@@ -2318,11 +2313,11 @@ export function createEffectPlayer({
               tp.vz *= sc;
             }
           }
-          colVScale = tp.velCurve ? evaluateSizeCurve(tp.velCurve, Math.min(1, tp.age / Math.max(1e-4, tp.duration))) : 1.0;
-          computeDynamicRadialVel(tp.x, tp.y, tp.z, tp.radCx, tp.radCy, tp.radCz, tp.velRadial, colVScale, dt, scratchRadVel3);
-          tp.x += (tp.vx * colVScale + scratchRadVel3[0]) * dt;
-          tp.y += (tp.vy * colVScale + scratchRadVel3[1]) * dt;
-          tp.z += (tp.vz * colVScale + scratchRadVel3[2]) * dt;
+          colVScale = tp.velCurve ? evaluateSizeCurve(tp.velCurve, Math.min(1, prevAge / Math.max(1e-4, tp.duration))) : 1.0;
+          computeDynamicRadialVel(tp.x, tp.y, tp.z, tp.radCx, tp.radCy, tp.radCz, tp.velRadial, colVScale, stepDt, scratchRadVel3);
+          tp.x += (tp.vx * colVScale + scratchRadVel3[0]) * stepDt;
+          tp.y += (tp.vy * colVScale + scratchRadVel3[1]) * stepDt;
+          tp.z += (tp.vz * colVScale + scratchRadVel3[2]) * stepDt;
         }
         if (tp.hasCollision && !is2D) {
           const evx = tp.vx * colVScale + scratchRadVel3[0];
@@ -2383,12 +2378,26 @@ export function createEffectPlayer({
             }
           }
         }
-        if (tp.hasCollision && atlasParticles && tp.atlasSlot >= 0) {
+        if (!isDying && tp.hasCollision && atlasParticles && tp.atlasSlot >= 0) {
           atlasParticles.updateSlot(tp.atlasState, tp.atlasSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
         }
-        if (tp.hasCollision && meshVfx && tp.meshSlot >= 0) {
+        if (!isDying && tp.hasCollision && meshVfx && tp.meshSlot >= 0) {
           meshVfx.updateSlot(tp.meshSlot, tp.x, tp.y, tp.z, tp.vx, tp.vy, tp.vz);
         }
+      }
+      if (isDying) {
+        if (tp.subEmitters) {
+          computeDynamicRadialVel(tp.x, tp.y, tp.z, tp.radCx, tp.radCy, tp.radCz, tp.velRadial, 1.0, 0, scratchRadVel3);
+          fireSubEmitters(tp.subEmitters, 'death', tp.x, tp.y, tp.z, tp.subDepth, tp.vx + scratchRadVel3[0], tp.vy + scratchRadVel3[1], tp.vz + scratchRadVel3[2], tp.tintR, tp.tintG, tp.tintB);
+        }
+        if (tp.lightSlotIdx >= 0) {
+          releaseLightSlot(tp.lightSlotIdx);
+          tp.lightSlotIdx = -1;
+        }
+        tp.active = false;
+        activeTrackedCount = Math.max(0, activeTrackedCount - 1);
+        tp.atlasState = null;
+        continue;
       }
       if (tp.lightSlotIdx >= 0 && tp.lightSlotIdx < lightSlots.length) {
         const ls = lightSlots[tp.lightSlotIdx];

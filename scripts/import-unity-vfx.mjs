@@ -1836,29 +1836,47 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
     if (/enabled:\s*1/.test(velMod)) {
       const spdModBlock = extractSubBlock(velMod, 'speedModifier');
       const spdModState = Number((spdModBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
-      const spdModRaw = readMinMaxScalar(velMod, 'speedModifier', 1);
-      const spdMul = Array.isArray(spdModRaw) ? spdModRaw[1] : spdModRaw;
       const spdModCurve = spdModState === 1 ? parseCurveKeys(spdModBlock, true) : null;
+      const spdModRawScalar = Number((spdModBlock.match(/\bscalar:\s*([-\d.eE+]+)/) || [])[1] ?? 1);
+      const spdModRaw = spdModCurve ? spdModRawScalar : readMinMaxScalar(velMod, 'speedModifier', 1);
+      const spdMul = Array.isArray(spdModRaw) ? spdModRaw[1] : spdModRaw;
       const mulV = (v) => {
         if (Math.abs(spdMul - 1) <= 0.001) return v;
         return Array.isArray(v)
           ? [Number((v[0] * spdMul).toFixed(3)), Number((v[1] * spdMul).toFixed(3))]
           : Number((v * spdMul).toFixed(3));
       };
+      const evalKeyCurve = (keys, u) => {
+        if (u <= keys[0][0]) return keys[0][1];
+        if (u >= keys[keys.length - 1][0]) return keys[keys.length - 1][1];
+        for (let i = 0; i < keys.length - 1; i++) {
+          if (u <= keys[i + 1][0]) {
+            const f = (u - keys[i][0]) / Math.max(1e-6, keys[i + 1][0] - keys[i][0]);
+            return keys[i][1] + (keys[i + 1][1] - keys[i][1]) * f;
+          }
+        }
+        return keys[keys.length - 1][1];
+      };
       const readAxisOrCurve = (axisName) => {
         const blk = extractSubBlock(velMod, axisName);
         const st = Number((blk.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
-        const sc = mulV(readMinMaxScalar(velMod, axisName, 0));
-        if (st !== 1) return { val: sc, curve: null };
+        if (st !== 1) return { val: mulV(readMinMaxScalar(velMod, axisName, 0)), curve: null };
         const ck = parseCurveKeys(blk, true);
+        const rawAxisScalar = Number((blk.match(/\bscalar:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+        const sc = mulV(ck ? rawAxisScalar : readMinMaxScalar(velMod, axisName, 0));
         if (!ck) return { val: sc, curve: null };
         const scale = Array.isArray(sc) ? sc[1] : sc;
+        let effKeys = ck.map(([t, kv]) => [t, kv * scale]);
+        if (spdModCurve) {
+          const mergedT = [...new Set([...ck.map((k) => k[0]), ...spdModCurve.map((k) => k[0])])].sort((a, b) => a - b);
+          effKeys = mergedT.map((t) => [t, evalKeyCurve(ck, t) * scale * evalKeyCurve(spdModCurve, t)]);
+        }
         let peak = 0;
-        for (const [, kv] of ck) peak = Math.max(peak, Math.abs(kv * scale));
+        for (const [, kv] of effKeys) peak = Math.max(peak, Math.abs(kv));
         if (peak <= 0.001) return { val: 0, curve: null };
         return {
           val: Number(peak.toFixed(3)),
-          curve: ck.map(([t, kv]) => [t, Number(((kv * scale) / peak).toFixed(3))]),
+          curve: effKeys.map(([t, kv]) => [t, Number((kv / peak).toFixed(3))]),
         };
       };
       const isWorldVel = /inWorldSpace:\s*1\b/.test(velMod);
@@ -1943,7 +1961,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
         }
       }
       if (Object.keys(velObj).length > 0) layer.velocity = velObj;
-      const chosenVelCurve = spdModCurve || rx.curve || ry.curve || rz.curve || rRad.curve;
+      const chosenVelCurve = rx.curve || ry.curve || rz.curve || rRad.curve || spdModCurve;
       if (chosenVelCurve) layer.velCurve = chosenVelCurve;
     }
 

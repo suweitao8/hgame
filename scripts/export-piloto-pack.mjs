@@ -272,6 +272,7 @@ function ensurePackAtlas(atlasPngPath, atlasJsonPath, texByKey, skipAtlas) {
 export function exportPilotoPacks({
   packNames = [],
   exportAll = false,
+  prefabFilter = '',
   refreshFlagshipBench = false,
   skipAtlas = false,
   unityRoot = resolveDefaultUnityRoot(),
@@ -335,12 +336,19 @@ export function exportPilotoPacks({
 
     const texByKey = new Map();
     const texCollisions = [];
-    const meshAliases = {};
-    const effects = [];
+    const filterNorm = prefabFilter ? normKey(prefabFilter) : '';
+    const filterLower = prefabFilter ? prefabFilter.trim().toLowerCase() : '';
+    const packIndexPath = path.join(packOutDir, 'pack_index.json');
+    const existingPackIndex = filterNorm && fs.existsSync(packIndexPath)
+      ? JSON.parse(fs.readFileSync(packIndexPath, 'utf8').replace(/^\uFEFF/, ''))
+      : null;
+    const meshAliases = existingPackIndex?.meshAliases ? { ...existingPackIndex.meshAliases } : {};
+    const effects = existingPackIndex?.effects ? existingPackIndex.effects.map((e) => ({ ...e })) : [];
     const usedIds = new Set();
     const skipped = [];
     const refTracker = { meshRefs: new Set() };
     const packRecipes = [];
+    let matchedCount = 0;
 
     for (const pf of allPrefabs) {
       const yaml = fs.readFileSync(pf, 'utf8');
@@ -348,7 +356,8 @@ export function exportPilotoPacks({
 
       const relToPack = path.relative(packSrcDir, pf);
       const isComplex = /complex/i.test(relToPack);
-      const baseSlug = normKey(path.basename(pf, '.prefab'));
+      const pfName = path.basename(pf, '.prefab');
+      const baseSlug = normKey(pfName);
       const parentSlug = normKey(path.basename(path.dirname(pf)));
       let effId = baseSlug;
       if (usedIds.has(effId)) effId = `${parentSlug}_${baseSlug}`;
@@ -357,6 +366,12 @@ export function exportPilotoPacks({
         effId = `${parentSlug}_${baseSlug}_${suffix++}`;
       }
       usedIds.add(effId);
+
+      if (filterNorm) {
+        const matches = pfName.toLowerCase() === filterLower || baseSlug === filterNorm || effId === filterNorm;
+        if (!matches) continue;
+        matchedCount += 1;
+      }
 
       let converted;
       try {
@@ -387,24 +402,42 @@ export function exportPilotoPacks({
       fs.writeFileSync(path.join(recipesDir, `${effId}.vfx.json`), JSON.stringify(recipe, null, 2) + '\n', 'utf8');
       packRecipes.push(recipe);
 
-      effects.push({
+      const entryObj = {
         id: effId,
-        name: path.basename(pf, '.prefab'),
+        name: pfName,
         relSource: relToPack.replace(/\\/g, '/'),
         complex: isComplex,
         file: recipeRel,
         duration: recipe.duration,
         loop: Boolean(recipe.loop),
         layerCount: recipe.layers.length,
-      });
+      };
+      if (filterNorm) {
+        const idx = effects.findIndex((e) => e.id === effId);
+        if (idx >= 0) {
+          const tag = entryObj.complex ? 'Complex' : `${entryObj.layerCount} PS`;
+          const prevLabel = effects[idx].label || '';
+          const numPrefix = prevLabel.match(/^(\d+)\s+/)?.[1];
+          effects[idx] = {
+            ...entryObj,
+            label: numPrefix ? `${numPrefix} ${entryObj.name} (${tag})` : prevLabel,
+          };
+        } else {
+          effects.push(entryObj);
+        }
+      } else {
+        effects.push(entryObj);
+      }
     }
 
-    effects.sort((a, b) => (Number(b.complex) - Number(a.complex)) || a.name.localeCompare(b.name));
-    effects.forEach((e, idx) => {
-      const num = String(idx + 1).padStart(2, '0');
-      const tag = e.complex ? 'Complex' : `${e.layerCount} PS`;
-      e.label = `${num} ${e.name} (${tag})`;
-    });
+    if (!filterNorm || effects.some((e) => !e.label)) {
+      effects.sort((a, b) => (Number(b.complex) - Number(a.complex)) || a.name.localeCompare(b.name));
+      effects.forEach((e, idx) => {
+        const num = String(idx + 1).padStart(2, '0');
+        const tag = e.complex ? 'Complex' : `${e.layerCount} PS`;
+        e.label = `${num} ${e.name} (${tag})`;
+      });
+    }
 
     const knownMeshKeys = new Set(Object.keys(meshIndex));
     for (const recipe of packRecipes) {
@@ -439,7 +472,7 @@ export function exportPilotoPacks({
     report.push({
       pack: packName,
       packSlug,
-      effectsExported: effects.length,
+      effectsExported: filterNorm ? matchedCount : effects.length,
       skipped,
       texturesPacked: atlasStats.packed,
       atlasMaxSpritePx: atlasStats.usedCap,
@@ -521,6 +554,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   const args = process.argv.slice(2);
   let packsArg = '';
   let exportAll = false;
+  let prefabFilter = '';
   let refreshFlagshipBench = false;
   let skipAtlas = false;
   let unityRoot = resolveDefaultUnityRoot();
@@ -530,6 +564,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--packs' && args[i + 1]) packsArg = args[++i];
     else if (args[i] === '--pack' && args[i + 1]) packsArg = args[++i];
+    else if (args[i] === '--prefab' && args[i + 1]) prefabFilter = args[++i];
     else if (args[i] === '--all') exportAll = true;
     else if (args[i] === '--refresh-flagship-bench') refreshFlagshipBench = true;
     else if (args[i] === '--skip-atlas') skipAtlas = true;
@@ -540,12 +575,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   }
   const packNames = packsArg.split(',').map((s) => s.trim()).filter(Boolean);
   if (!exportAll && !refreshFlagshipBench && packNames.length === 0) {
-    console.error('Usage: node scripts/export-piloto-pack.mjs (--all | --packs "Pack 1,Pack 2") [--refresh-flagship-bench] [--skip-atlas] [--unity <dir>] [--out <dir>] [--manifest <file>] [--rebuild-meshes]');
+    console.error('Usage: node scripts/export-piloto-pack.mjs (--all | --packs "Pack 1,Pack 2") [--prefab <name>] [--refresh-flagship-bench] [--skip-atlas] [--unity <dir>] [--out <dir>] [--manifest <file>] [--rebuild-meshes]');
     process.exit(1);
   }
   const res = exportPilotoPacks({
     packNames,
     exportAll,
+    prefabFilter,
     refreshFlagshipBench,
     skipAtlas,
     unityRoot,
