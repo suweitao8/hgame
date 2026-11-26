@@ -2584,7 +2584,7 @@ def _stabilize_arp_skirt_weights(low_obj, rig, lm, v_co, leg_back_clean):
     tr_sec = [gi for gi in tr_idxs if gi != vg_tr.index]
 
     # Exclude far-trailing tails/capes behind the skirt envelope
-    max_skirt_back_y = (leg_back_clean + 0.025 * H) if is_mini else (leg_back_clean + 0.18 * H)
+    max_skirt_back_y = (leg_back_clean + 0.055 * H) if is_mini else (leg_back_clean + 0.18 * H)
     half_blend_x = max(0.085 * H, 0.85 * lx)
     torso_idxs = [vg.index for vg in (vg_p, vg_sp1, vg_sp2) if vg is not None]
     vgs_by_idx = {vg.index: vg for vg in low_obj.vertex_groups}
@@ -4002,6 +4002,44 @@ def _rig_and_export_arp(
 
         _stabilize_arp_skirt_weights(low_obj, rig, lm, v_co, leg_back_clean)
 
+        appendage_info = None
+        appendage = lm.get("appendage")
+        if appendage and appendage.get("kind") == "tail":
+            bpy.ops.object.mode_set(mode="OBJECT")
+            bpy.ops.object.select_all(action="DESELECT")
+            rig.select_set(True)
+            bpy.context.view_layer.objects.active = rig
+            bpy.ops.object.mode_set(mode="EDIT")
+            eb_t = rig.data.edit_bones
+            _mw_inv_t = rig.matrix_world.inverted()
+            pel_eb = eb_t.get("root.x") or eb_t.get("pelvis")
+            for bname, head_w, tail_w, par_name in appendage["bone_defs"]:
+                if bname in eb_t:
+                    eb_t.remove(eb_t[bname])
+                eb_n = eb_t.new(bname)
+                eb_n.head = _mw_inv_t @ head_w
+                t_loc = _mw_inv_t @ tail_w
+                if (t_loc - eb_n.head).length < 1e-4:
+                    t_loc = eb_n.head + mathutils.Vector((0.0, 0.02, 0.0))
+                eb_n.tail = t_loc
+                eb_n.roll = 0.0
+                eb_n.use_deform = True
+                eb_n.parent = eb_t.get(par_name) or pel_eb
+                eb_n["cc"] = 1
+            bpy.ops.object.mode_set(mode="POSE")
+            for bname in appendage["names"]:
+                if bname in rig.pose.bones:
+                    rig.pose.bones[bname]["cc"] = 1
+            bpy.ops.object.mode_set(mode="OBJECT")
+            _assign_appendage_weights(
+                low_obj,
+                v_co,
+                lm,
+                appendage,
+                ("root.x", "pelvis"),
+                island_idxs=tail_island_set,
+            )
+
         resolved_anim_glb = anim_glb
         if resolved_anim_glb == "":
             resolved_anim_glb = DEFAULT_ANIM58_RUN_GLB if os.path.exists(DEFAULT_ANIM58_RUN_GLB) else ""
@@ -4045,6 +4083,13 @@ def _rig_and_export_arp(
                     bpy.data.actions.remove(act, do_unlink=True)
             if keep_act:
                 keep_act.name = action_name
+
+        if appendage and appendage.get("kind") == "tail":
+            bpy.ops.object.select_all(action="DESELECT")
+            rig.select_set(True)
+            bpy.context.view_layer.objects.active = rig
+            if rig.animation_data and rig.animation_data.action and ret_frames[1] > ret_frames[0]:
+                appendage_info = _key_appendage_sway(rig, appendage, int(ret_frames[1]))
 
         prop_audit = _audit_humanoid_rig_proportions(rig, lm, low_obj)
         def_audit = _audit_rig_deformation(rig, low_obj, ret_frames, H)
@@ -4106,10 +4151,11 @@ def _rig_and_export_arp(
         "rig_info": {
             "engine": "auto_rig_pro",
             "bindEngine": scn.arp_bind_engine,
-            "bones": 23,
+            "bones": 23 + (len(appendage["names"]) if appendage and appendage.get("kind") == "tail" else 0),
             "action": action_name,
             "frames": ret_frames,
             "fps": int(scn.render.fps),
+            "appendage": appendage_info,
             "proportionAudit": prop_audit,
             "deformationAudit": def_audit,
         },
@@ -4493,6 +4539,7 @@ def detect_humanoid_landmarks(obj):
     app_back = {
         "legs": app_back_y,
         "torso": max(app_back_y, torso_back_y),
+        "z_min": z_min,
         "z_hip": z_hip,
         "z_knee": z_knee,
         "tall": is_tall_humanoid,
@@ -4580,7 +4627,7 @@ def detect_humanoid_landmarks(obj):
             (f"ball_{ue_s}", Vector((sx * lx, y_toe * 0.72, z_min + 0.015 * H)), Vector((sx * lx, y_toe, z_min + 0.01 * H)), f"foot_{ue_s}"),
         ])
 
-    appendage = _detect_back_appendage(co, H, z_hip, z_arm_mid, z_neck, x_sh, app_back)
+    appendage = _detect_back_appendage(co, H, z_hip, z_arm_mid, z_neck, x_sh, app_back, skirt_band=skirt_band)
     if appendage:
         bones.extend(appendage["bone_defs"])
 
@@ -4641,26 +4688,30 @@ def _appendage_alpha(co, H, z_arm, z_neck, x_sh, back, kind, attach_x=0.0, sprea
         upper = (co[:, 2] > z_arm - 0.02 * H) & (co[:, 2] <= z_neck - 0.01 * H)
         return np.where(lower | upper, alpha * x_gate, 0.0)
     # Tails emerge near the pelvis: never pull upper back vertices or arms into the tail chain
-    tail_top = back["z_hip"] + 0.4 * (z_arm - back["z_hip"])
-    return np.where(lower & (co[:, 2] <= tail_top), alpha * x_gate, 0.0)
+    z_min_b = float(back.get("z_min", back["z_hip"] - 0.35 * H))
+    tail_top = back["z_hip"] + (0.12 * H if back.get("tall") else 0.4 * (z_arm - back["z_hip"]))
+    return np.where(lower & (co[:, 2] >= z_min_b + 0.06 * H) & (co[:, 2] <= tail_top), alpha * x_gate, 0.0)
 
 
-def _detect_back_appendage(co, H, z_hip, z_arm, z_neck, x_sh, back, segments=3):
-    """Find a trailing cape or tail behind the body and lay a 3-bone chain from attachment to tip."""
+def _detect_back_appendage(co, H, z_hip, z_arm, z_neck, x_sh, back, segments=3, skirt_band=None):
+    """Find a trailing cape or tail behind the body and lay a 3-bone chain along its true centerline."""
     import numpy as np
     from mathutils import Vector
 
     base = _appendage_base_y(co, H, back, kind=None)
     x_gate = np.clip((x_sh * 0.95 - np.abs(co[:, 0])) / max(0.12 * x_sh, 1e-4), 0.0, 1.0)
-    z_lo_gate = (co[:, 2] >= back["z_hip"] + 0.02 * H) if back.get("tall") else True
+    z_min_b = float(back.get("z_min", z_hip - 0.35 * H))
+    z_lo_gate = co[:, 2] >= z_min_b + 0.08 * H
     low_alpha = np.clip((co[:, 1] - base) / (0.05 * H), 0.0, 1.0) * (co[:, 2] <= z_arm - 0.02 * H) * x_gate * z_lo_gate
     low_pts = co[low_alpha >= 0.5]
     if len(low_pts) < 24:
         return None
-    # Cape = wide trailing sheet behind the legs; tail = narrow strand. Measure lateral spread below the hips.
+    # Cape = wide trailing sheet draping from shoulders; tail = rear strand/plume near/below hips.
     leg_pts = low_pts[low_pts[:, 2] < z_hip + 0.1 * H]
     spread = float(np.percentile(leg_pts[:, 0], 95) - np.percentile(leg_pts[:, 0], 5)) if len(leg_pts) >= 8 else 0.0
-    kind = "cape" if spread >= 0.9 * x_sh else "tail"
+    z_low_p95 = float(np.percentile(low_pts[:, 2], 95))
+    z_low_p05 = float(np.percentile(low_pts[:, 2], 5))
+    kind = "cape" if (spread >= 0.9 * x_sh and z_low_p95 >= z_arm - 0.14 * H and (z_low_p95 - z_low_p05) >= 0.20 * H) else "tail"
     alpha = _appendage_alpha(co, H, z_arm, z_neck, x_sh, back, kind)
     pts = co[alpha >= 0.5]
     if len(pts) < 24:
@@ -4671,29 +4722,65 @@ def _detect_back_appendage(co, H, z_hip, z_arm, z_neck, x_sh, back, segments=3):
         # Real capes drape from upper torso/shoulders down the back, not short waist tunics
         if z_top_p95 < z_arm - 0.12 * H or (z_top_p95 - z_bot_p05) < 0.20 * H:
             return None
+    else:
+        y_protrusion = float(np.percentile(pts[:, 1], 95) - np.percentile(pts[:, 1], 5))
+        if y_protrusion < 0.055 * H or (float(np.percentile(pts[:, 1], 95)) - float(back["torso"])) < 0.055 * H:
+            return None
+        if spread >= 0.9 * x_sh and y_protrusion < 0.10 * H:
+            return None
+        if skirt_band is not None and spread >= 0.12 * H and y_protrusion < 0.12 * H:
+            return None
 
-    # Attachment: cape hangs from the shoulder line, tail from the highest 10% of its region (pelvis)
-    z_cut = float(np.percentile(pts[:, 2], 90))
-    attach = pts[pts[:, 2] >= z_cut].mean(axis=0)
+    # Attachment & centerline: cape hangs from shoulder line; tail starts at upper hip junction (top-Z, centered toward body) and follows chord slices to tip
     if kind == "cape":
+        z_cut = float(np.percentile(pts[:, 2], 90))
+        attach = pts[pts[:, 2] >= z_cut].mean(axis=0)
         attach[0] = 0.0
         attach[2] = max(attach[2], z_arm - 0.03 * H)
-    dist = np.linalg.norm(pts - attach, axis=1)
-    length = float(np.percentile(dist, 99))
-    if length < 0.06 * H:
-        return None
-    t = np.clip(dist / length, 0.0, 1.0)
-
-    joints = [attach.copy()]
-    for i in range(1, segments + 1):
-        ti = i / segments
-        band = pts[np.abs(t - ti) <= 0.1]
-        p = band.mean(axis=0) if len(band) >= 3 else attach + (pts[np.argmax(dist)] - attach) * ti
-        if kind == "cape":
+        dist = np.linalg.norm(pts - attach, axis=1)
+        length = float(np.percentile(dist, 99))
+        if length < 0.06 * H:
+            return None
+        t = np.clip(dist / length, 0.0, 1.0)
+        tip = pts[np.argmax(dist)]
+        joints = [attach.copy()]
+        for i in range(1, segments + 1):
+            ti = i / segments
+            band = pts[np.abs(t - ti) <= 0.1]
+            p = band.mean(axis=0) if len(band) >= 3 else attach + (tip - attach) * ti
             p[0] = 0.0
-        if np.linalg.norm(p - joints[-1]) < 0.02 * H:
-            p = joints[-1] + (pts[np.argmax(dist)] - attach) / segments
-        joints.append(p)
+            if np.linalg.norm(p - joints[-1]) < 0.02 * H:
+                p = joints[-1] + (tip - attach) / segments
+            joints.append(p)
+    else:
+        z_cut = float(np.percentile(pts[:, 2], 85))
+        top_pts = pts[pts[:, 2] >= z_cut]
+        attach = top_pts.mean(axis=0)
+        y_inner = float(np.percentile(top_pts[:, 1], 20))
+        attach[1] = max(float(back["legs"]) - 0.01 * H, min(float(attach[1]), y_inner) - 0.015 * H)
+        dist = np.linalg.norm(pts - attach, axis=1)
+        d_tip_cut = float(np.percentile(dist, 92))
+        tip = pts[dist >= d_tip_cut].mean(axis=0)
+        chord_vec = tip - attach
+        chord_len = float(np.linalg.norm(chord_vec))
+        if chord_len < (0.12 * H if spread >= 0.9 * x_sh else 0.06 * H):
+            return None
+        u = chord_vec / chord_len
+        t = np.clip(((pts - attach) @ u) / chord_len, 0.0, 1.0)
+        length = chord_len
+        joints = [attach.copy()]
+        for i in range(1, segments + 1):
+            ti = i / segments
+            band = pts[np.abs(t - ti) <= 0.15]
+            if i == segments and len(band) < 4:
+                p = tip.copy()
+            elif len(band) >= 3:
+                p = band.mean(axis=0)
+            else:
+                p = attach + chord_vec * ti
+            if np.linalg.norm(p - joints[-1]) < 0.02 * H:
+                p = joints[-1] + chord_vec / segments
+            joints.append(p)
 
     parent = "spine_03" if kind == "cape" else "pelvis"
     names = [f"{kind}_{i + 1:02d}" for i in range(segments)]
@@ -4948,6 +5035,136 @@ def retarget_anim_glb_to_rig(rig, anim_glb_path, action_name="Run", sample_step=
     }
 
 
+def _assign_appendage_weights(mesh_obj, co_world, lm, appendage, parent_vg_names, island_idxs=None):
+    """Bind trailing tail/cape vertices cleanly along the appendage centerline with root-seam edge smoothing."""
+    import numpy as np
+
+    H = float(lm["height"])
+    app_alpha = _appendage_alpha(
+        co_world,
+        H,
+        lm["z_arm"],
+        lm["z_neck"],
+        lm["x_sh"],
+        appendage["back"],
+        appendage["kind"],
+        attach_x=float(appendage["attach"][0]),
+        spread=float(appendage.get("spread", 0.0)),
+    )
+    if island_idxs:
+        for vi in island_idxs:
+            if 0 <= vi < len(app_alpha):
+                app_alpha[vi] = 1.0
+
+    attach = np.array(appendage["attach"], dtype=np.float64)
+    tip = np.array(appendage["bone_defs"][-1][2], dtype=np.float64)
+    chord_vec = tip - attach
+    chord_len = float(np.linalg.norm(chord_vec))
+    u = (chord_vec / chord_len) if chord_len > 1e-4 else None
+    app_len = max(float(appendage["length"]), 1e-4)
+    n_seg = len(appendage["names"])
+
+    vgs = mesh_obj.vertex_groups
+    chain_vgs = [vgs.get(n) or vgs.new(name=n) for n in appendage["names"]]
+    vg_parent = next((vgs.get(n) for n in parent_vg_names if vgs.get(n) is not None), None)
+    if vg_parent is None:
+        vg_parent = vgs.new(name=parent_vg_names[0])
+    group_by_index = {vg.index: vg for vg in vgs}
+
+    chain_verts = 0
+    for idx in np.nonzero(app_alpha > 1e-3)[0].tolist():
+        a = float(app_alpha[idx])
+        if appendage["kind"] == "tail" and u is not None:
+            t = max(0.0, min(1.0, float((co_world[idx] - attach) @ u) / app_len))
+        else:
+            t = min(1.0, float(np.linalg.norm(co_world[idx] - attach)) / app_len)
+        cw = [max(0.0, 1.0 - abs(t * n_seg - (i + 0.5))) for i in range(n_seg)]
+        if t * n_seg <= 0.5:
+            cw[0] = 1.0
+        if t * n_seg >= n_seg - 0.5:
+            cw[-1] = 1.0
+        pw = max(0.0, 1.0 - t / 0.25)
+        tot = sum(cw) + pw
+        cw = [w / tot for w in cw]
+        pw /= tot
+        old = [(g.group, g.weight) for g in mesh_obj.data.vertices[idx].groups]
+        for gi, w in old:
+            vg = group_by_index.get(gi)
+            if vg is None:
+                continue
+            if a >= 0.999:
+                vg.remove([idx])
+            else:
+                vg.add([idx], w * (1.0 - a), "REPLACE")
+        for vg, w in zip(chain_vgs, cw):
+            if w > 1e-4:
+                vg.add([idx], a * w, "ADD")
+        if pw > 1e-4:
+            vg_parent.add([idx], a * pw, "ADD")
+        chain_verts += 1
+
+    seam_set = set(np.nonzero((app_alpha > 1e-3) & (app_alpha < 0.999))[0].tolist())
+    if len(mesh_obj.data.edges) > 0:
+        for e in mesh_obj.data.edges:
+            a_e, b_e = e.vertices[0], e.vertices[1]
+            if (app_alpha[a_e] > 1e-3) != (app_alpha[b_e] > 1e-3):
+                seam_set.add(a_e)
+                seam_set.add(b_e)
+    seam_idxs = sorted(seam_set)
+    if seam_idxs and len(mesh_obj.data.edges) > 0:
+        ng_s = len(vgs)
+        nv_s = len(mesh_obj.data.vertices)
+        w_s = np.zeros((nv_s, ng_s), dtype=np.float64)
+        for vi, v in enumerate(mesh_obj.data.vertices):
+            for g in v.groups:
+                if 0 <= g.group < ng_s:
+                    w_s[vi, g.group] = g.weight
+        adj_s = [[] for _ in range(nv_s)]
+        for e in mesh_obj.data.edges:
+            a_e, b_e = e.vertices[0], e.vertices[1]
+            adj_s[a_e].append(b_e)
+            adj_s[b_e].append(a_e)
+        ring_set = set(seam_idxs)
+        for vi in seam_idxs:
+            ring_set.update(adj_s[vi])
+        ring_list = sorted(ring_set)
+        for _ in range(3):
+            nxt_s = w_s.copy()
+            for vi in ring_list:
+                nb = adj_s[vi]
+                if nb:
+                    nxt_s[vi] = 0.55 * w_s[vi] + 0.45 * np.mean(w_s[nb], axis=0)
+            w_s = nxt_s
+        for vi in ring_list:
+            row = w_s[vi]
+            top4 = np.argsort(-row)[:4]
+            s_tot = float(np.sum(row[top4]))
+            if s_tot > 1e-6:
+                tset = set(int(g) for g in top4)
+                for gi, vg in enumerate(vgs):
+                    if gi in tset and row[gi] > 1e-4:
+                        vg.add([vi], float(row[gi] / s_tot), "REPLACE")
+                    else:
+                        try:
+                            vg.remove([vi])
+                        except RuntimeError:
+                            pass
+    for idx in np.nonzero(app_alpha > 1e-3)[0].tolist():
+        entries = [(g.group, float(g.weight)) for g in mesh_obj.data.vertices[idx].groups if g.weight > 1e-5 and g.group in group_by_index]
+        if len(entries) > 4 or abs(sum(w for _, w in entries) - 1.0) > 1e-4:
+            entries.sort(key=lambda x: x[1], reverse=True)
+            kept = entries[:4]
+            for gi, _ in entries[4:]:
+                try:
+                    group_by_index[gi].remove([idx])
+                except RuntimeError:
+                    pass
+            tot_k = sum(w for _, w in kept) or 1.0
+            for gi, w in kept:
+                group_by_index[gi].add([idx], w / tot_k, "REPLACE")
+    return chain_verts
+
+
 def _key_appendage_sway(rig, appendage, f_end, step=2):
     """Bake a seamless looping secondary sway onto the cape/tail chain inside the active Run action."""
     from mathutils import Euler
@@ -4968,16 +5185,21 @@ def _key_appendage_sway(rig, appendage, f_end, step=2):
                 pitch = 0.06 * math.sin(2.0 * phase - lag)
                 yaw = 0.18 * math.sin(phase - lag)
                 rot = Euler((pitch, 0.0, yaw), "XYZ").to_matrix()
-            _pose_world_rot(pb, rot)
+            _pose_world_rot(pb, rot, rig_obj=rig)
             pb.keyframe_insert(data_path="rotation_quaternion", frame=f)
     return {"kind": kind, "bones": [pb.name for pb in pbs], "parent": appendage["parent"]}
 
 
-def _pose_world_rot(pb, world_rot_mat):
+def _pose_world_rot(pb, world_rot_mat, rig_obj=None):
     """Maps a desired world-space 3x3 rotation delta into a PoseBone's local rest frame."""
     from mathutils import Matrix
     r_rest = pb.bone.matrix_local.to_3x3()
-    m_local = r_rest.inverted() @ world_rot_mat @ r_rest
+    if rig_obj is not None:
+        r_rig = rig_obj.matrix_world.to_3x3().normalized()
+        arm_rot = r_rig.inverted() @ world_rot_mat @ r_rig
+    else:
+        arm_rot = world_rot_mat
+    m_local = r_rest.inverted() @ arm_rot @ r_rest
     pb.rotation_mode = "QUATERNION"
     pb.rotation_quaternion = m_local.to_quaternion()
 
@@ -5268,90 +5490,13 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
     # Bind trailing cape/tail onto its own 3-bone chain: rigid follow of parent at the root, no leg/arm pull
     chain_verts = 0
     if appendage:
-        app_alpha = _appendage_alpha(
+        chain_verts = _assign_appendage_weights(
+            proxy,
             p_co,
-            H,
-            lm["z_arm"],
-            lm["z_neck"],
-            lm["x_sh"],
-            appendage["back"],
-            appendage["kind"],
-            attach_x=float(appendage["attach"][0]),
-            spread=float(appendage.get("spread", 0.0)),
+            lm,
+            appendage,
+            (appendage["parent"],),
         )
-        attach = np.array(appendage["attach"], dtype=np.float64)
-        app_len = max(float(appendage["length"]), 1e-4)
-        n_seg = len(appendage["names"])
-        chain_vgs = [p_vgroups.get(n) or p_vgroups.new(name=n) for n in appendage["names"]]
-        vg_parent = p_vgroups.get(appendage["parent"]) or p_vgroups.new(name=appendage["parent"])
-        group_by_index = {vg.index: vg for vg in p_vgroups}
-        for idx in np.nonzero(app_alpha > 1e-3)[0].tolist():
-            a = float(app_alpha[idx])
-            t = min(1.0, float(np.linalg.norm(p_co[idx] - attach)) / app_len)
-            cw = [max(0.0, 1.0 - abs(t * n_seg - (i + 0.5))) for i in range(n_seg)]
-            if t * n_seg <= 0.5:
-                cw[0] = 1.0
-            if t * n_seg >= n_seg - 0.5:
-                cw[-1] = 1.0
-            pw = max(0.0, 1.0 - t / 0.25)
-            tot = sum(cw) + pw
-            cw = [w / tot for w in cw]
-            pw /= tot
-            old = [(g.group, g.weight) for g in proxy.data.vertices[idx].groups]
-            for gi, w in old:
-                vg = group_by_index.get(gi)
-                if vg is None:
-                    continue
-                if a >= 0.999:
-                    vg.remove([idx])
-                else:
-                    vg.add([idx], w * (1.0 - a), "REPLACE")
-            for vg, w in zip(chain_vgs, cw):
-                if w > 1e-4:
-                    vg.add([idx], a * w, "ADD")
-            if pw > 1e-4:
-                vg_parent.add([idx], a * pw, "ADD")
-            chain_verts += 1
-
-        # Smooth tail/cape root seam across welded edges so buttock/hip attachment never tears
-        seam_idxs = np.nonzero((app_alpha > 1e-3) & (app_alpha < 0.999))[0].tolist()
-        if seam_idxs and len(proxy.data.edges) > 0:
-            ng_s = len(p_vgroups)
-            nv_s = len(proxy.data.vertices)
-            w_s = np.zeros((nv_s, ng_s), dtype=np.float64)
-            for vi, v in enumerate(proxy.data.vertices):
-                for g in v.groups:
-                    if 0 <= g.group < ng_s:
-                        w_s[vi, g.group] = g.weight
-            adj_s = [[] for _ in range(nv_s)]
-            for e in proxy.data.edges:
-                a_e, b_e = e.vertices[0], e.vertices[1]
-                adj_s[a_e].append(b_e)
-                adj_s[b_e].append(a_e)
-            ring_set = set(seam_idxs)
-            for vi in seam_idxs:
-                ring_set.update(adj_s[vi])
-            ring_list = sorted(ring_set)
-            for _ in range(3):
-                nxt_s = w_s.copy()
-                for vi in ring_list:
-                    nb = adj_s[vi]
-                    if nb:
-                        nxt_s[vi] = 0.55 * w_s[vi] + 0.45 * np.mean(w_s[nb], axis=0)
-                w_s = nxt_s
-            for vi in ring_list:
-                row = w_s[vi]
-                s_tot = float(np.sum(row))
-                if s_tot > 1e-6:
-                    row = row / s_tot
-                    for gi, vg in enumerate(p_vgroups):
-                        if row[gi] > 1e-3:
-                            vg.add([vi], float(row[gi]), "REPLACE")
-                        else:
-                            try:
-                                vg.remove([vi])
-                            except RuntimeError:
-                                pass
 
     bpy.ops.object.select_all(action="DESELECT")
     proxy.select_set(True)
@@ -5556,6 +5701,8 @@ def _render_rig_bone_overlay(mesh_obj, rig_obj, out_png, width_cell=320, height_
                 _draw_dot(cell, xh, yh, (50, 255, 80), r=4)
             elif "calf" in b.name or b.name.startswith("leg.") or b.name.startswith("leg_"):
                 _draw_dot(cell, xh, yh, (255, 255, 50), r=4)
+            elif "tail" in b.name:
+                _draw_dot(cell, xh, yh, (60, 255, 220), r=4)
             else:
                 _draw_dot(cell, xh, yh, (200, 230, 255), r=2)
         sheet[:, view_i * width_cell:(view_i + 1) * width_cell] = cell
