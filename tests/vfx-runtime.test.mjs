@@ -5177,6 +5177,123 @@ test('shape.matrix applies full 3x3 linear transform to circle plane and sphere 
   }
 });
 
+test('playEffect/follow support root rotation quaternion with exact yaw-only equivalence', () => {
+  const coneRecipe = {
+    schemaVersion: 1,
+    id: 'root_quat_cone',
+    duration: 2,
+    layers: [{
+      kind: 'particle',
+      renderMode: 'billboard',
+      life: 1,
+      speed: 4,
+      offset: [1.5, 0.5, -0.8],
+      velocity: { linear: [1, 2, -3] },
+      bursts: [{ time: 0, count: 16 }],
+      shape: { type: 'cone', radius: 0.2, angle: 15 },
+    }],
+  };
+
+  // (a) yaw=0.7 vs equivalent quaternion [0, -sin(0.35), 0, cos(0.35)]
+  const yawEmits = [];
+  const quatEmits = [];
+  const makeSpy = (out) => {
+    const real = createAtlasParticlePool({ mode: 'headless', maxParticles: 128 });
+    const orig = real.emit.bind(real);
+    return Object.assign(Object.create(real), {
+      emit(opts) {
+        out.push({ x: opts.x, y: opts.y, z: opts.z, vx: opts.vx, vy: opts.vy, vz: opts.vz });
+        return orig(opts);
+      },
+    });
+  };
+  const pYaw = createEffectPlayer({ atlasParticles: makeSpy(yawEmits), prng: createVisualPrng(123) });
+  const pQuat = createEffectPlayer({ atlasParticles: makeSpy(quatEmits), prng: createVisualPrng(123) });
+  try {
+    pYaw.registerEffect(coneRecipe);
+    pQuat.registerEffect(coneRecipe);
+    pYaw.playEffect('root_quat_cone', { x: 2, y: 1, z: -1, yaw: 0.7 });
+    pQuat.playEffect('root_quat_cone', { x: 2, y: 1, z: -1, rotation: [0, -Math.sin(0.35), 0, Math.cos(0.35)] });
+    pYaw.update(0.05);
+    pQuat.update(0.05);
+    assert.equal(yawEmits.length, 16);
+    assert.equal(quatEmits.length, 16);
+    for (let i = 0; i < 16; i++) {
+      for (const k of ['x', 'y', 'z', 'vx', 'vy', 'vz']) {
+        assert.ok(Math.abs(yawEmits[i][k] - quatEmits[i][k]) < 1e-5, `mismatch on ${k}[${i}]: ${yawEmits[i][k]} vs ${quatEmits[i][k]}`);
+      }
+    }
+
+    // (b) Rx(+90°) rotates +Y cone emission velocity to +Z
+    const rxEmits = [];
+    const pRx = createEffectPlayer({ atlasParticles: makeSpy(rxEmits), prng: createVisualPrng(77) });
+    try {
+      const pitchCone = {
+        schemaVersion: 1,
+        id: 'pitch_cone',
+        duration: 1,
+        layers: [{
+          kind: 'particle',
+          renderMode: 'billboard',
+          life: 1,
+          speed: 5,
+          bursts: [{ time: 0, count: 8 }],
+          shape: { type: 'cone', radius: 0, angle: 0 },
+        }],
+      };
+      pRx.registerEffect(pitchCone);
+      pRx.playEffect('pitch_cone', { rotation: [Math.SQRT1_2, 0, 0, Math.SQRT1_2] });
+      pRx.update(0.05);
+      assert.equal(rxEmits.length, 8);
+      for (const p of rxEmits) {
+        const spd = Math.hypot(p.vx, p.vy, p.vz);
+        assert.ok(p.vz > 0.9 * spd, `expected +Z velocity after Rx(+90°), got (${p.vx}, ${p.vy}, ${p.vz})`);
+      }
+    } finally {
+      pRx.dispose();
+    }
+
+    // (c) follow object updates rotation dynamically
+    const followEmits = [];
+    const pFol = createEffectPlayer({ atlasParticles: makeSpy(followEmits), prng: createVisualPrng(99) });
+    try {
+      const streamCone = {
+        schemaVersion: 1,
+        id: 'follow_quat_cone',
+        duration: 2,
+        layers: [{
+          kind: 'particle',
+          renderMode: 'billboard',
+          life: 1,
+          speed: 5,
+          rate: 60,
+          shape: { type: 'cone', radius: 0, angle: 0 },
+        }],
+      };
+      pFol.registerEffect(streamCone);
+      const follow = { x: 0, y: 0, z: 0, rotation: [Math.SQRT1_2, 0, 0, Math.SQRT1_2] };
+      pFol.playEffect('follow_quat_cone', { follow });
+      pFol.update(0.05);
+      const firstBatchEnd = followEmits.length;
+      assert.ok(firstBatchEnd > 0);
+      assert.ok(followEmits[0].vz > 4.5, `expected initial +Z velocity, got vz=${followEmits[0].vz}`);
+
+      // Rotate to Rx(-90°) -> +Y maps to -Z
+      follow.rotation = [-Math.SQRT1_2, 0, 0, Math.SQRT1_2];
+      pFol.update(0.05);
+      assert.ok(followEmits.length > firstBatchEnd);
+      const latest = followEmits[followEmits.length - 1];
+      assert.ok(latest.vz < -4.5, `expected -Z velocity after follow.rotation update, got vz=${latest.vz}`);
+    } finally {
+      pFol.dispose();
+    }
+  } finally {
+    pYaw.dispose();
+    pQuat.dispose();
+  }
+});
+
+
 
 
 

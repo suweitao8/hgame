@@ -390,21 +390,26 @@ export function verifyUnityVfxParity({
       stats.prefabsChecked++;
       const recipe = JSON.parse(fs.readFileSync(path.join(vfxDir, eff.file), 'utf8'));
 
-      // Group recipe & oracle layers by normalized name so duplicate names match by geometry/shape rather than YAML vs Transform traversal order.
+      // Group recipe & oracle layers by exact unityPath when available (falling back to normalized name) so identical child names under different parents never mispair.
+      const useUnityPath = recipe.layers.some((l) => typeof l.unityPath === 'string')
+        && oEntry.layers.every((l) => typeof l.path === 'string');
       const rGroups = new Map();
       recipe.layers.forEach((rLayer, rIdx) => {
         if (rLayer.kind === 'none' || rLayer.renderMode === 'none') return;
-        const arr = rGroups.get(rLayer.name) || [];
+        const key = useUnityPath ? rLayer.unityPath : rLayer.name;
+        const arr = rGroups.get(key) || [];
         arr.push({ rLayer, rIdx });
-        rGroups.set(rLayer.name, arr);
+        rGroups.set(key, arr);
       });
       const oGroups = new Map();
       oEntry.layers.forEach((oLayer) => {
         if (oLayer.pCount <= 0 || oLayer.renderMode === 5) return;
-        const norm = oLayer.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
-        const arr = oGroups.get(norm) || [];
+        const key = useUnityPath
+          ? oLayer.path
+          : oLayer.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+        const arr = oGroups.get(key) || [];
         arr.push(oLayer);
-        oGroups.set(norm, arr);
+        oGroups.set(key, arr);
       });
 
       for (const [normName, rList] of rGroups) {

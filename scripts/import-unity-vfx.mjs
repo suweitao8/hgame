@@ -1250,8 +1250,28 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
     };
   }
 
+  function computeUnityPath(trBody) {
+    if (!trBody) return '';
+    const parts = [];
+    let cur = trBody;
+    const seen = new Set();
+    while (cur) {
+      const fId = (cur.match(/m_Father:\s*\{fileID:\s*(\d+)\}/) || [])[1] ?? '0';
+      if (fId === '0') break;
+      const gId = (cur.match(/m_GameObject:\s*\{fileID:\s*(\d+)\}/) || [])[1];
+      const gName = (gId && goNames.get(gId)?.name) || 'layer';
+      parts.push(gName);
+      if (seen.has(fId)) break;
+      seen.add(fId);
+      cur = trById.get(fId);
+    }
+    parts.reverse();
+    return parts.join('/');
+  }
+
   function convertParticleLayer(goId, trBody, isSubChild, subDepth) {
     const go = goNames.get(goId) || { name: 'layer', active: true };
+    const unityPath = computeUnityPath(trBody);
     const ps = psByGo.get(goId);
     const psr = psrByGo.get(goId);
     if (!ps || !psr) return null;
@@ -1512,6 +1532,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
     const scaledSize = scaleRangeBy(size, splitMeshScale ? trSx : trScaleScalar);
     const layer = {
       name: go.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
+      unityPath,
       kind: renderMode === 'mesh' ? 'mesh' : 'particle',
       renderMode,
       blend: mainMat?.blend || 'alpha',

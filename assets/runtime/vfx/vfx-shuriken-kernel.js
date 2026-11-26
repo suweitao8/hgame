@@ -475,11 +475,31 @@ export function createShurikenKernel({
     }
   }
 
-  function setEffectTransform(effectId, x, y, z, yaw = 0, vx = 0, vy = 0, vz = 0) {
+  function setEffectTransform(
+    effectId,
+    x,
+    y,
+    z,
+    yaw = 0,
+    vx = 0,
+    vy = 0,
+    vz = 0,
+    qx = 0,
+    qy = -Math.sin(yaw * 0.5),
+    qz = 0,
+    qw = Math.cos(yaw * 0.5),
+  ) {
     let tr = effectTransforms.get(effectId);
     if (!tr) {
-      tr = { x: 0, y: 0, z: 0, yaw: 0, vx: 0, vy: 0, vz: 0 };
+      tr = { x: 0, y: 0, z: 0, yaw: 0, qx: 0, qy: 0, qz: 0, qw: 1, vx: 0, vy: 0, vz: 0 };
       effectTransforms.set(effectId, tr);
+    }
+    const qLen = Math.hypot(qx, qy, qz, qw);
+    if (qLen > 1e-6) {
+      const inv = 1 / qLen;
+      tr.qx = qx * inv; tr.qy = qy * inv; tr.qz = qz * inv; tr.qw = qw * inv;
+    } else {
+      tr.qx = 0; tr.qy = 0; tr.qz = 0; tr.qw = 1;
     }
     tr.x = x; tr.y = y; tr.z = z; tr.yaw = yaw;
     tr.vx = vx; tr.vy = vy; tr.vz = vz;
@@ -762,12 +782,14 @@ export function createShurikenKernel({
       if (isLocal) {
         const tr = effectTransforms.get(soa.effectSlotId[i]);
         if (tr) {
-          const c = Math.cos(tr.yaw), s = Math.sin(tr.yaw);
-          const rx = wx * c - wz * s;
-          const rz = wx * s + wz * c;
-          wx = tr.x + rx;
-          wy = tr.y + wy;
-          wz = tr.z + rz;
+          const qx = tr.qx, qy = tr.qy, qz = tr.qz, qw = tr.qw;
+          const ix = qw * wx + qy * wz - qz * wy;
+          const iy = qw * wy + qz * wx - qx * wz;
+          const iz = qw * wz + qx * wy - qy * wx;
+          const iw = -qx * wx - qy * wy - qz * wz;
+          wx = tr.x + (ix * qw + iw * -qx + iy * -qz - iz * -qy);
+          wy = tr.y + (iy * qw + iw * -qy + iz * -qx - ix * -qz);
+          wz = tr.z + (iz * qw + iw * -qz + ix * -qy - iy * -qx);
         }
       }
 

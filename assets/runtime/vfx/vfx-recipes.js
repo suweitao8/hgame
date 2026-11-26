@@ -175,6 +175,7 @@ export function createEffectPlayer({
   let scratchRadVel = 0;
   const scratchVel = new Float32Array(3);
   const scratchDir = new Float32Array(3);
+  const scratchQuatVec = new Float32Array(3);
   const scratchTrailExt = { noiseScroll: 0, noiseDamp: false };
   const scratchRgb = [1, 1, 1];
   const scratchTintA = [1, 1, 1];
@@ -339,6 +340,49 @@ export function createEffectPlayer({
     }
   }
 
+  function syncSlotQuat(slot, rot) {
+    if (Array.isArray(rot) && rot.length >= 4) {
+      const x = Number(rot[0]) || 0;
+      const y = Number(rot[1]) || 0;
+      const z = Number(rot[2]) || 0;
+      const w = rot[3] ?? 1;
+      const len = Math.hypot(x, y, z, w);
+      if (len > 1e-6) {
+        const inv = 1 / len;
+        slot.qx = x * inv;
+        slot.qy = y * inv;
+        slot.qz = z * inv;
+        slot.qw = w * inv;
+      } else {
+        slot.qx = 0; slot.qy = 0; slot.qz = 0; slot.qw = 1;
+      }
+      slot.yaw = Math.atan2(
+        2 * (slot.qx * slot.qz - slot.qy * slot.qw),
+        1 - 2 * (slot.qy * slot.qy + slot.qz * slot.qz),
+      );
+    } else {
+      const half = -slot.yaw * 0.5;
+      slot.qx = 0;
+      slot.qy = Math.sin(half);
+      slot.qz = 0;
+      slot.qw = Math.cos(half);
+    }
+    slot.rotArr[0] = slot.qx;
+    slot.rotArr[1] = slot.qy;
+    slot.rotArr[2] = slot.qz;
+    slot.rotArr[3] = slot.qw;
+  }
+
+  function rotByQuat(qx, qy, qz, qw, vx, vy, vz, out, o = 0) {
+    const ix = qw * vx + qy * vz - qz * vy;
+    const iy = qw * vy + qz * vx - qx * vz;
+    const iz = qw * vz + qx * vy - qy * vx;
+    const iw = -qx * vx - qy * vy - qz * vz;
+    out[o] = ix * qw + iw * -qx + iy * -qz - iz * -qy;
+    out[o + 1] = iy * qw + iw * -qy + iz * -qx - ix * -qz;
+    out[o + 2] = iz * qw + iw * -qz + ix * -qy - iy * -qx;
+  }
+
   // Pre-allocated composite effect slots + layer states.
   const effectSlots = [];
   for (let i = 0; i < MAX_ACTIVE_EFFECTS; i++) {
@@ -359,6 +403,9 @@ export function createEffectPlayer({
       prevX: 0, prevY: 0, prevZ: 0,
       followVx: 0, followVy: 0, followVz: 0,
       yaw: 0,
+      qx: 0, qy: 0, qz: 0, qw: 1,
+      rotArr: [0, 0, 0, 1],
+      meshRotBuf: [0, 0, 0, 1],
       scale: 1,
       rootX: 0,
       rootY: 0,
@@ -373,7 +420,7 @@ export function createEffectPlayer({
       inheritTintG: 1,
       inheritTintB: 1,
       localSlotIdx: 0,
-      /** @type {{ x?: number, y?: number, z?: number, yaw?: number } | null} */
+      /** @type {{ x?: number, y?: number, z?: number, yaw?: number, rotation?: number[] } | null} */
       follow: null,
       lightSlotIdx: -1,
       layers,
@@ -383,12 +430,13 @@ export function createEffectPlayer({
     slot.handle = {
       get id() { return slot.id; },
       isActive() { return slot.active; },
-      setTransform(x = 0, y = 0, z = 0, yaw = 0) {
+      setTransform(x = 0, y = 0, z = 0, yaw = 0, rotation = null) {
         slot.x = x;
         slot.y = y;
         slot.z = z;
         slot.yaw = yaw;
-        shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, slot.followVx, slot.followVy, slot.followVz);
+        syncSlotQuat(slot, rotation);
+        shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, slot.followVx, slot.followVy, slot.followVz, slot.qx, slot.qy, slot.qz, slot.qw);
       },
       stop() {
         stopSlot(slot);
@@ -916,8 +964,7 @@ export function createEffectPlayer({
       frac = emitCount > 1 ? (emitIdx / emitCount) : 0;
     } else if (arcMode === 'loop' || arcMode === 'pingpong') {
       const spd = Number(shape.arcSpeed ?? 1);
-      const seqStep = spread > 0.001 ? spread : 0.08;
-      const tSeq = (ls ? ls.cycleAge * Math.abs(spd) : 0) + ((ls ? ls.emitSeq++ : 0) * seqStep);
+      const tSeq = ls ? ls.cycleAge * Math.abs(spd) : 0;
       const wrap = ((tSeq % 1) + 1) % 1;
       if (arcMode === 'pingpong') {
         const cyc = Math.floor(Math.abs(tSeq));
@@ -1185,9 +1232,9 @@ export function createEffectPlayer({
     ly += offY;
     lz += offZ;
 
-    const cYaw = Math.cos(slot.yaw);
-    const sYaw = Math.sin(slot.yaw);
     if (is2D) {
+      const cYaw = Math.cos(slot.yaw);
+      const sYaw = Math.sin(slot.yaw);
       scratchEmitCenter[0] = slot.x + offX * cYaw - offY * sYaw;
       scratchEmitCenter[1] = slot.y + offX * sYaw + offY * cYaw;
       scratchEmitCenter[2] = slot.z;
@@ -1198,15 +1245,15 @@ export function createEffectPlayer({
       scratchDir[1] = dx * sYaw + dy * cYaw;
       scratchDir[2] = 0;
     } else {
-      scratchEmitCenter[0] = slot.x + offX * cYaw - offZ * sYaw;
-      scratchEmitCenter[1] = slot.y + offY;
-      scratchEmitCenter[2] = slot.z + offX * sYaw + offZ * cYaw;
-      scratchPos[0] = slot.x + lx * cYaw - lz * sYaw;
-      scratchPos[1] = slot.y + ly;
-      scratchPos[2] = slot.z + lx * sYaw + lz * cYaw;
-      scratchDir[0] = dx * cYaw - dz * sYaw;
-      scratchDir[1] = dy;
-      scratchDir[2] = dx * sYaw + dz * cYaw;
+      rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, offX, offY, offZ, scratchEmitCenter, 0);
+      scratchEmitCenter[0] += slot.x;
+      scratchEmitCenter[1] += slot.y;
+      scratchEmitCenter[2] += slot.z;
+      rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, lx, ly, lz, scratchPos, 0);
+      scratchPos[0] += slot.x;
+      scratchPos[1] += slot.y;
+      scratchPos[2] += slot.z;
+      rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, dx, dy, dz, scratchDir, 0);
     }
 
     const spd = readRange(layer.speed, 0, 0, prng) * scale;
@@ -1220,9 +1267,17 @@ export function createEffectPlayer({
         const lvx = readRange(vel.linear[0], 0, 0, prng) * scale;
         const lvy = readRange(vel.linear[1], 0, 0, prng) * scale;
         const lvz = readRange(vel.linear[2], 0, 0, prng) * scale;
-        vx += is2D ? (lvx * cYaw - lvy * sYaw) : (lvx * cYaw - lvz * sYaw);
-        vy += is2D ? (lvx * sYaw + lvy * cYaw) : lvy;
-        vz += is2D ? 0 : (lvx * sYaw + lvz * cYaw);
+        if (is2D) {
+          const cYaw = Math.cos(slot.yaw);
+          const sYaw = Math.sin(slot.yaw);
+          vx += lvx * cYaw - lvy * sYaw;
+          vy += lvx * sYaw + lvy * cYaw;
+        } else {
+          rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, lvx, lvy, lvz, scratchQuatVec, 0);
+          vx += scratchQuatVec[0];
+          vy += scratchQuatVec[1];
+          vz += scratchQuatVec[2];
+        }
       }
       scratchRadVel = 0;
       scratchRadCenter[0] = scratchEmitCenter[0];
@@ -1236,16 +1291,26 @@ export function createEffectPlayer({
         const baseCz = useRootCenter ? slot.rootZ : scratchEmitCenter[2];
         const baseYaw = useRootCenter ? slot.rootYaw : slot.yaw;
         const baseScale = useRootCenter ? slot.rootScale : scale;
-        const cbYaw = Math.cos(baseYaw);
-        const sbYaw = Math.sin(baseYaw);
         const rOff = Array.isArray(vel.radialOffset) ? vel.radialOffset : null;
         const oOff = Array.isArray(vel.orbitalOffset) ? vel.orbitalOffset : null;
         const offRx = (rOff ? readRange(rOff[0], 0, 0, prng) : 0) + (oOff ? readRange(oOff[0], 0, 0, prng) : 0);
         const offRy = (rOff ? readRange(rOff[1], 0, 0, prng) : 0) + (oOff ? readRange(oOff[1], 0, 0, prng) : 0);
         const offRz = (rOff ? readRange(rOff[2], 0, 0, prng) : 0) + (oOff ? readRange(oOff[2], 0, 0, prng) : 0);
-        const rcx = baseCx + (is2D ? (offRx * cbYaw - offRy * sbYaw) : (offRx * cbYaw - offRz * sbYaw)) * baseScale;
-        const rcy = baseCy + (is2D ? (offRx * sbYaw + offRy * cbYaw) : offRy) * baseScale;
-        const rcz = baseCz + (is2D ? 0 : ((offRx * sbYaw + offRz * cbYaw) * baseScale));
+        let rcx = baseCx;
+        let rcy = baseCy;
+        let rcz = baseCz;
+        if (is2D || useRootCenter) {
+          const cbYaw = Math.cos(baseYaw);
+          const sbYaw = Math.sin(baseYaw);
+          rcx += (is2D ? (offRx * cbYaw - offRy * sbYaw) : (offRx * cbYaw - offRz * sbYaw)) * baseScale;
+          rcy += (is2D ? (offRx * sbYaw + offRy * cbYaw) : offRy) * baseScale;
+          rcz += is2D ? 0 : ((offRx * sbYaw + offRz * cbYaw) * baseScale);
+        } else {
+          rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, offRx * baseScale, offRy * baseScale, offRz * baseScale, scratchQuatVec, 0);
+          rcx += scratchQuatVec[0];
+          rcy += scratchQuatVec[1];
+          rcz += scratchQuatVec[2];
+        }
         scratchRadCenter[0] = rcx;
         scratchRadCenter[1] = rcy;
         scratchRadCenter[2] = rcz;
@@ -1493,15 +1558,16 @@ export function createEffectPlayer({
       const oox = readRange(orbOff[0], 0, 0, prng) * scale;
       const ooy = readRange(orbOff[1], 0, 0, prng) * scale;
       const ooz = readRange(orbOff[2], 0, 0, prng) * scale;
-      const cYaw = Math.cos(slot.yaw);
-      const sYaw = Math.sin(slot.yaw);
       if (is2D) {
+        const cYaw = Math.cos(slot.yaw);
+        const sYaw = Math.sin(slot.yaw);
         orbPivotX += oox * cYaw - ooy * sYaw;
         orbPivotY += oox * sYaw + ooy * cYaw;
       } else {
-        orbPivotX += oox * cYaw - ooz * sYaw;
-        orbPivotY += ooy;
-        orbPivotZ += oox * sYaw + ooz * cYaw;
+        rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, oox, ooy, ooz, scratchQuatVec, 0);
+        orbPivotX += scratchQuatVec[0];
+        orbPivotY += scratchQuatVec[1];
+        orbPivotZ += scratchQuatVec[2];
       }
     }
     const centerOffX = scratchPos[0] - orbPivotX;
@@ -1585,14 +1651,14 @@ export function createEffectPlayer({
         const dx = emitX - slot.x;
         const dy = emitY - slot.y;
         const dz = emitZ - slot.z;
-        const c = Math.cos(slot.yaw);
-        const s = Math.sin(slot.yaw);
-        emitX = dx * c + dz * s;
-        emitY = dy;
-        emitZ = -dx * s + dz * c;
-        const vxTmp = emitVx * c + emitVz * s;
-        emitVz = -emitVx * s + emitVz * c;
-        emitVx = vxTmp;
+        rotByQuat(-slot.qx, -slot.qy, -slot.qz, slot.qw, dx, dy, dz, scratchQuatVec, 0);
+        emitX = scratchQuatVec[0];
+        emitY = scratchQuatVec[1];
+        emitZ = scratchQuatVec[2];
+        rotByQuat(-slot.qx, -slot.qy, -slot.qz, slot.qw, emitVx, emitVy, emitVz, scratchQuatVec, 0);
+        emitVx = scratchQuatVec[0];
+        emitVy = scratchQuatVec[1];
+        emitVz = scratchQuatVec[2];
         cx = 0;
         cz = 0;
       }
@@ -1646,6 +1712,19 @@ export function createEffectPlayer({
       if (!meshVfx) return;
       const alignDir = Boolean(layer.alignToVelocity || layer.shape?.alignToDirection);
       const hasTrRot = Array.isArray(layer.transformRot) && layer.transformRot.length >= 4;
+      const hasNonYaw = Math.abs(slot.qx) + Math.abs(slot.qz) > 1e-6;
+      let resolvedTrRot = null;
+      if (hasTrRot) {
+        const ax = slot.qx, ay = slot.qy, az = slot.qz, aw = slot.qw;
+        const bx = layer.transformRot[0], by = layer.transformRot[1], bz = layer.transformRot[2], bw = layer.transformRot[3];
+        slot.meshRotBuf[0] = aw * bx + ax * bw + ay * bz - az * by;
+        slot.meshRotBuf[1] = aw * by - ax * bz + ay * bw + az * bx;
+        slot.meshRotBuf[2] = aw * bz + ax * by - ay * bx + az * bw;
+        slot.meshRotBuf[3] = aw * bw - ax * bx - ay * by - az * bz;
+        resolvedTrRot = slot.meshRotBuf;
+      } else if (hasNonYaw) {
+        resolvedTrRot = slot.rotArr;
+      }
       const { flipbook, uvRect } = resolveFlipbookAndUv(layer, rawDur);
       const atlasTexture = atlasParticles?.texture;
       const regionKey = flipbook?.region || layer.sprite;
@@ -1702,7 +1781,7 @@ export function createEffectPlayer({
         spinZ: layer.unityMeshRot
           ? (spinZ + angVel)
           : (spinZ + (hasTrRot || Math.abs(Math.sin(rotX0)) > 0.5 ? angVel : 0)),
-        transformRot: hasTrRot ? layer.transformRot : null,
+        transformRot: resolvedTrRot,
         unityMeshRot: Boolean(layer.unityMeshRot),
         meshAlign: layer.meshAlign ?? null,
         rotationOverLifetime: layer.rotationOverLifetime || null,
@@ -1957,25 +2036,43 @@ export function createEffectPlayer({
   }
 
   function triggerAuxiliaryLayer(layer, slot) {
-    const ox = slot.x + (layer.offset?.[0] ?? 0) * slot.scale;
-    const oy = slot.y + (layer.offset?.[1] ?? 0) * slot.scale;
-    const oz = slot.z + (layer.offset?.[2] ?? 0) * slot.scale;
+    let ox = slot.x + (layer.offset?.[0] ?? 0) * slot.scale;
+    let oy = slot.y + (layer.offset?.[1] ?? 0) * slot.scale;
+    let oz = slot.z + (layer.offset?.[2] ?? 0) * slot.scale;
+    let rootYawRad = slot.yaw;
+    if (!is2D) {
+      if (layer.offset) {
+        rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, (layer.offset[0] ?? 0) * slot.scale, (layer.offset[1] ?? 0) * slot.scale, (layer.offset[2] ?? 0) * slot.scale, scratchQuatVec, 0);
+        ox = slot.x + scratchQuatVec[0];
+        oy = slot.y + scratchQuatVec[1];
+        oz = slot.z + scratchQuatVec[2];
+      }
+      rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, 1, 0, 0, scratchQuatVec, 0);
+      rootYawRad = Math.atan2(scratchQuatVec[2], scratchQuatVec[0]);
+    }
     const col = parseColorNumber(layer.color, 0xffd166);
     if (layer._kind === 'slash' && trails) {
       trails.slashArc({
         x: ox, y: oy, z: oz,
-        yawRad: slot.yaw + (layer.yawOffset ?? 0),
+        yawRad: rootYawRad + (layer.yawOffset ?? 0),
         sweepRad: layer.sweepRad ?? 2.1,
         radius: (layer.radius ?? 2.2) * slot.scale,
         color: col,
         duration: layer.duration ?? 0.16,
       });
     } else if (layer._kind === 'lightning' && trails) {
+      let ex = (layer.endOffset?.[0] ?? 0) * slot.scale;
+      let ey = (layer.endOffset?.[1] ?? 3) * slot.scale;
+      let ez = (layer.endOffset?.[2] ?? 0) * slot.scale;
+      if (!is2D) {
+        rotByQuat(slot.qx, slot.qy, slot.qz, slot.qw, ex, ey, ez, scratchQuatVec, 0);
+        ex = scratchQuatVec[0]; ey = scratchQuatVec[1]; ez = scratchQuatVec[2];
+      }
       trails.lightningBolt({
         x0: ox, y0: oy, z0: oz,
-        x1: ox + (layer.endOffset?.[0] ?? 0) * slot.scale,
-        y1: oy + (layer.endOffset?.[1] ?? 3) * slot.scale,
-        z1: oz + (layer.endOffset?.[2] ?? 0) * slot.scale,
+        x1: ox + ex,
+        y1: oy + ey,
+        z1: oz + ez,
         color: col,
         thickness: (layer.thickness ?? 0.12) * slot.scale,
         duration: layer.duration ?? 0.14,
@@ -1984,7 +2081,7 @@ export function createEffectPlayer({
       telegraphs.spawnTelegraph({
         shape: layer.shape ?? 'circle',
         x: ox, y: oy, z: oz,
-        yawRad: slot.yaw,
+        yawRad: rootYawRad,
         radius: (layer.radius ?? 3) * slot.scale,
         duration: layer.duration ?? 0.8,
         color: col,
@@ -2040,6 +2137,13 @@ export function createEffectPlayer({
    * Plays a registered recipe ID or inline `.vfx.json` recipe object.
    * @param {string | object} recipeOrId
    * @param {object} [options]
+   * @param {number} [options.x=0]
+   * @param {number} [options.y=0]
+   * @param {number} [options.z=0]
+   * @param {number} [options.yaw=0]
+   * @param {number[]} [options.rotation] - Root orientation quaternion `[x, y, z, w]` (overrides `yaw` when provided).
+   * @param {number} [options.scale=1]
+   * @param {{ x?: number, y?: number, z?: number, yaw?: number, rotation?: number[] }} [options.follow]
    * @returns {object | null} Effect handle with `setTransform`, `stop`, `isActive`, `id`
    */
   function playEffect(recipeOrId, options = {}) {
@@ -2081,6 +2185,7 @@ export function createEffectPlayer({
     slot.prevY = slot.y;
     slot.prevZ = slot.z;
     slot.yaw = slot.follow?.yaw ?? options.yaw ?? 0;
+    syncSlotQuat(slot, options.rotation ?? slot.follow?.rotation ?? null);
     slot.scale = options.scale ?? 1;
     slot.rootX = options._rootX ?? slot.x;
     slot.rootY = options._rootY ?? slot.y;
@@ -2100,7 +2205,7 @@ export function createEffectPlayer({
       atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
       meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
     }
-    shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, 0, 0, 0);
+    shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, 0, 0, 0, slot.qx, slot.qy, slot.qz, slot.qw);
     slot.lightSlotIdx = -1;
     ensureSlotLayerStates(slot, compiled.layers.length);
 
@@ -2274,7 +2379,12 @@ export function createEffectPlayer({
           if (slot.follow.x !== undefined) slot.x = slot.follow.x;
           if (slot.follow.y !== undefined) slot.y = slot.follow.y;
           if (slot.follow.z !== undefined) slot.z = slot.follow.z;
-          if (slot.follow.yaw !== undefined) slot.yaw = slot.follow.yaw;
+          if (slot.follow.rotation !== undefined) {
+            syncSlotQuat(slot, slot.follow.rotation);
+          } else if (slot.follow.yaw !== undefined && slot.follow.yaw !== slot.yaw) {
+            slot.yaw = slot.follow.yaw;
+            syncSlotQuat(slot, null);
+          }
           if (dt > 1e-5) {
             slot.followVx = (slot.x - prevFx) / dt;
             slot.followVy = (slot.y - prevFy) / dt;
@@ -2300,7 +2410,7 @@ export function createEffectPlayer({
         atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
         meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
       }
-      shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, slot.followVx, slot.followVy, slot.followVz);
+      shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, slot.followVx, slot.followVy, slot.followVz, slot.qx, slot.qy, slot.qz, slot.qw);
 
       slot.age += dt;
       slot.cycleAge += dt;

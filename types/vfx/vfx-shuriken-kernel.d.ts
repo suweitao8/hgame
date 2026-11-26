@@ -3160,7 +3160,7 @@ export function createShurikenKernel({ THREE, scene, trails, prng, }?: {
         };
     };
     emitParticle: (cl: any, opts?: {}) => any;
-    setEffectTransform: (effectId: any, x: any, y: any, z: any, yaw?: number, vx?: number, vy?: number, vz?: number) => void;
+    setEffectTransform: (effectId: any, x: any, y: any, z: any, yaw?: number, vx?: number, vy?: number, vz?: number, qx?: number, qy?: number, qz?: number, qw?: number) => void;
     setQualityTier: (tier?: string) => void;
     getQualityTier: () => string;
     setDepthTexture: (depthTex: any, { near, far, width, height }?: {

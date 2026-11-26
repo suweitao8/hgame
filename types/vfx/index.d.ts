@@ -1809,7 +1809,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxPart
             };
         };
         emitParticle: (cl: any, opts?: {}) => any;
-        setEffectTransform: (effectId: any, x: any, y: any, z: any, yaw?: number, vx?: number, vy?: number, vz?: number) => void;
+        setEffectTransform: (effectId: any, x: any, y: any, z: any, yaw?: number, vx?: number, vy?: number, vz?: number, qx?: number, qy?: number, qz?: number, qw?: number) => void;
         setQualityTier: (tier?: string) => void;
         getQualityTier: () => string;
         setDepthTexture: (depthTex: any, { near, far, width, height }?: {
@@ -1838,7 +1838,21 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxPart
     effects: {
         registerEffect: (recipe: object) => object;
         getEffect: (id: any) => any;
-        playEffect: (recipeOrId: string | object, options?: object) => object | null;
+        playEffect: (recipeOrId: string | object, options?: {
+            x?: number | undefined;
+            y?: number | undefined;
+            z?: number | undefined;
+            yaw?: number | undefined;
+            rotation?: number[] | undefined;
+            scale?: number | undefined;
+            follow?: {
+                x?: number;
+                y?: number;
+                z?: number;
+                yaw?: number;
+                rotation?: number[];
+            } | undefined;
+        } | undefined) => object | null;
         setCollisionResolver: (fn: any) => void;
         stopAll: () => void;
         update: (visualDt: any) => void;
@@ -1975,7 +1989,21 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxPart
     setTrailTexture: (texture: object | null, uvRect?: readonly number[] | undefined) => void;
     registerMesh(name: any, geometry: any, options: any): boolean;
     registerEffect: (recipe: object) => object;
-    playEffect: (recipeOrId: string | object, options?: object) => object | null;
+    playEffect: (recipeOrId: string | object, options?: {
+        x?: number | undefined;
+        y?: number | undefined;
+        z?: number | undefined;
+        yaw?: number | undefined;
+        rotation?: number[] | undefined;
+        scale?: number | undefined;
+        follow?: {
+            x?: number;
+            y?: number;
+            z?: number;
+            yaw?: number;
+            rotation?: number[];
+        } | undefined;
+    } | undefined) => object | null;
     stopAllEffects: () => void;
     emitHitImpact: ({ x, y, z, damage, isCrit, isHeal, isMiss, dirX, dirY, dirZ, element, numberPreset, spamGroup, follow, combination, hitstopSec, shakeIntensity, }?: {
         x?: number | undefined;

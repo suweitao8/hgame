@@ -45,7 +45,21 @@ export function createEffectPlayer({ shurikenKernel, atlasParticles, gpuParticle
 } | undefined): {
     registerEffect: (recipe: object) => object;
     getEffect: (id: any) => any;
-    playEffect: (recipeOrId: string | object, options?: object) => object | null;
+    playEffect: (recipeOrId: string | object, options?: {
+        x?: number | undefined;
+        y?: number | undefined;
+        z?: number | undefined;
+        yaw?: number | undefined;
+        rotation?: number[] | undefined;
+        scale?: number | undefined;
+        follow?: {
+            x?: number;
+            y?: number;
+            z?: number;
+            yaw?: number;
+            rotation?: number[];
+        } | undefined;
+    } | undefined) => object | null;
     setCollisionResolver: (fn: any) => void;
     stopAll: () => void;
     update: (visualDt: any) => void;

@@ -525,6 +525,7 @@ export function createMeshVfxPool({
       spinY: 0,
       spinZ: 0,
       transformRot: null,
+      transformRotBuf: [0, 0, 0, 1],
       flipX: 1,
       flipY: 1,
       flipZ: 1,
@@ -950,7 +951,15 @@ export function createMeshVfxPool({
     s.spinX = opts.spinX ?? 0;
     s.spinY = opts.spinY ?? 0;
     s.spinZ = opts.spinZ ?? 0;
-    s.transformRot = Array.isArray(opts.transformRot) && opts.transformRot.length >= 4 ? opts.transformRot : null;
+    if (Array.isArray(opts.transformRot) && opts.transformRot.length >= 4) {
+      s.transformRotBuf[0] = Number(opts.transformRot[0]) || 0;
+      s.transformRotBuf[1] = Number(opts.transformRot[1]) || 0;
+      s.transformRotBuf[2] = Number(opts.transformRot[2]) || 0;
+      s.transformRotBuf[3] = opts.transformRot[3] ?? 1;
+      s.transformRot = s.transformRotBuf;
+    } else {
+      s.transformRot = null;
+    }
     s.flipX = (opts.flipX ?? 1) < 0 ? -1 : 1;
     s.flipY = (opts.flipY ?? 1) < 0 ? -1 : 1;
     s.flipZ = (opts.flipZ ?? 1) < 0 ? -1 : 1;
@@ -1191,7 +1200,7 @@ export function createMeshVfxPool({
           scratchQuat2.setFromUnitVectors(scratchFwd, scratchDir);
           scratchQuat.premultiply(scratchQuat2);
         }
-      } else if (align === 'local' && s.transformRot && scratchTrQuat) {
+      } else if ((align === 'local' || align === 'world') && s.transformRot && scratchTrQuat) {
         scratchTrQuat.set(s.transformRot[0], s.transformRot[1], s.transformRot[2], s.transformRot[3]);
         scratchQuat.premultiply(scratchTrQuat);
       } else if ((align === 'view' || align === 'facing') && hasCamQuat && scratchCamQuat) {

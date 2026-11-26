@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Support full root `rotation` quaternion (`[x, y, z, w]`) on `createEffectPlayer().playEffect`, `follow`, and `handle.setTransform`, rotating 3D emission positions/directions/velocities/offsets, `vfx-shuriken-kernel` local space (`setEffectTransform`), and `vfx-mesh` orientation (note: `vfx-atlas-particles` local slots still track translation deltas only, and sub-emitters inherit root yaw only).
+
+- Fix `ShapeModule` `arcMode: 'loop' | 'pingpong'` in `vfx-recipes.js` to follow `cycleAge * arcSpeed` without adding per-particle `emitSeq * 0.08` angular scatter.
+
 - Add `shape.matrix` for full 3×3 linear transform import of Unity hierarchy TRS × `ShapeModule` (preserving shear, non-uniform scale, and negative scale instead of Euler + averaged scalar fallback), with `sampleShapeAndVelocity` preferring `shape.matrix` while keeping legacy `shape.scale`/`shape.rotation` compatibility.
 
 - Make toktx the default KTX2 encoder for texture packing (`scripts/lib/toktx.mjs` shared resolution via `TOKTX_BIN` / `.hgame.local.json` `tools.toktxPath` / PATH, ETC1S for color and UASTC for data textures, `--genmipmap`); `--require-toktx` / `HGAME_REQUIRE_TOKTX=1` fail closed when it is missing, non-strict fallbacks print a warning, `pack-for-game.mjs --release` refuses the WebP fallback, and `package-game.mjs` audits every packaged `.ktx2` for real compression and a full mip chain (`--allow-uncompressed-ktx2` opts out for development).
