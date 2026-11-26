@@ -5502,6 +5502,47 @@ test('ATLAS_PARTICLE_VERTEX_GLSL adds orbital tangential velocity component to c
   );
 });
 
+test('createEffectPlayer emits atlas particles with hasVelCurve + compiled curveRow LUT integral instead of raw velCurve array', () => {
+  const atlas = createAtlasParticlePool({ mode: 'headless', maxParticles: 64 });
+  const captured = [];
+  const origEmit = atlas.emit.bind(atlas);
+  const atlasProxy = Object.assign(Object.create(atlas), {
+    emit(opts) {
+      captured.push(opts);
+      return origEmit(opts);
+    },
+  });
+  const player = createEffectPlayer({ atlasParticles: atlasProxy });
+  try {
+    player.playEffect({
+      schemaVersion: 1,
+      id: 'velcurve_lut_contract',
+      duration: 1,
+      layers: [
+        {
+          name: 'velcurve_layer',
+          kind: 'particle',
+          renderMode: 'billboard',
+          velocity: { linear: [0, 10, 0] },
+          velCurve: [[0, 0], [1, 0]],
+          life: 1,
+          bursts: [{ time: 0, count: 1 }],
+        },
+      ],
+    });
+    player.update(1 / 60);
+    assert.equal(captured.length, 1);
+    assert.equal(captured[0].hasVelCurve, true);
+    assert.equal(Number.isFinite(captured[0].curveRow), true);
+    assert.equal(Array.isArray(captured[0].velCurve), false);
+    const velDisp = atlas.lut.sampleVelDisp(captured[0].curveRow, 0.5);
+    assert.ok(Math.abs(velDisp) < 1e-3, `expected zero velCurve integral < 1e-3, got ${velDisp}`);
+  } finally {
+    player.dispose();
+    atlas.dispose();
+  }
+});
+
 
 
 

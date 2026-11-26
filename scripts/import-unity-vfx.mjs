@@ -2082,8 +2082,29 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
         }
       }
       if (Object.keys(velObj).length > 0) layer.velocity = velObj;
+      const velCurveAxes = [];
+      if (rx.curve) velCurveAxes.push('x');
+      if (ry.curve) velCurveAxes.push('y');
+      if (rz.curve) velCurveAxes.push('z');
+      if (rRad.curve) velCurveAxes.push('radial');
+      if (spdModCurve) velCurveAxes.push('speedModifier');
+      const velCurveSource = rx.curve
+        ? 'x'
+        : ry.curve
+          ? 'y'
+          : rz.curve
+            ? 'z'
+            : rRad.curve
+              ? 'radial'
+              : spdModCurve
+                ? 'speedModifier'
+                : null;
       const chosenVelCurve = rx.curve || ry.curve || rz.curve || rRad.curve || spdModCurve;
-      if (chosenVelCurve) layer.velCurve = chosenVelCurve;
+      if (chosenVelCurve) {
+        layer.velCurve = chosenVelCurve;
+        layer.velCurveSource = velCurveSource;
+        layer.velCurveAxes = velCurveAxes;
+      }
     }
 
     const rotMod = extractSection(ps, 'RotationModule');

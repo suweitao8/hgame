@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix `scripts/verify-unity-vfx-parity.mjs` to capture `rLayer.velCurve` when `opts.hasVelCurve` is set on headless `atlasParticles.emit` calls (matching GPU LUT runtime evaluation, shifting the honest parity baseline from 474 to 517 after surfacing previously masked `scaleOutliers` and `velFlips`), and emit `velCurveSource` and `velCurveAxes` diagnostic metadata in `scripts/import-unity-vfx.mjs`.
+
 - Align orbital kinematics with Unity `totalVelocity` semantics across runtime and parity verification: add tangential velocity component (`orbitalY * vec2(-relRot.y, relRot.x)`) to `ATLAS_PARTICLE_VERTEX_GLSL` in `assets/runtime/vfx/vfx-atlas-particles.js` for accurate stretched-billboard alignment; export `applyOrbitalY` and integrate orbital position + total tangential velocity (gated by `integrateOrbital = true`) in `scripts/verify-unity-vfx-parity.mjs`; and add a direction-coherence gate (`coherence >= 0.3`, tracked via `velChecksSkippedIncoherent`) before flagging `velFlips` so isotropic circular/spherical emitters with near-zero mean velocity are not compared on PRNG noise.
 
 - Decouple Unity `ShapeModule.m_Position` (`shape.offset`) from ParticleSystem Transform origin (`layer.offset`) in `scripts/import-unity-vfx.mjs` and `assets/runtime/vfx/vfx-recipes.js` so `orbital` and `radial` velocities pivot around `layer.offset` rather than the offset shape center; replace approximate XYZ-clamped `quatToYxzEuler` with true `YXZ` decomposition (`Ry * Rx * Rz`) matching GLSL `euler3D` for World/Local billboards (keeping `quatToXyzEuler` for `computeShapeRotation`).

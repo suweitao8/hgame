@@ -231,6 +231,7 @@ export function verifyUnityVfxParity({
     let capturedParticles = [];
     let capturedMeshes = [];
     let simClock = 0;
+    let currentLayerVelCurve = null;
     const origEmit = atlas.emit.bind(atlas);
     const atlasProxy = Object.assign(Object.create(atlas), {
       emit(opts) {
@@ -248,7 +249,7 @@ export function verifyUnityVfxParity({
           orbitalY: opts.orbitalY || 0,
           centerOffX: opts.centerOffX || 0,
           centerOffZ: opts.centerOffZ || 0,
-          velCurve: opts.velCurve || null,
+          velCurve: opts.velCurve || (opts.hasVelCurve ? currentLayerVelCurve : null),
           clampVelocity: hasClampVelocity(opts.clampVelocity) ? opts.clampVelocity : null,
           phase: opts.phase ?? 0.5,
           duration: opts.duration || 1,
@@ -270,6 +271,7 @@ export function verifyUnityVfxParity({
     const player = createEffectPlayer({ atlasParticles: atlasProxy, meshVfx: meshProxy, scene, THREE });
 
     const simulateLayerAt = (rLayer, effId, lIdx, targetT, durationHint) => {
+      currentLayerVelCurve = Array.isArray(rLayer.velCurve) && rLayer.velCurve.length > 0 ? rLayer.velCurve : null;
       capturedParticles = [];
       capturedMeshes = [];
       simClock = 0;
