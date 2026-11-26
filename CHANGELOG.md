@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Improve Unity VFX shape/velocity parity (`assets/runtime/vfx/vfx-recipes.js`, `scripts/import-unity-vfx.mjs`): sample 3D `sphere` `arc` along the XY plane (`dx, dy = cos/sin(ang) * horiz`, `dz = elev`) so partial-arc bursts (e.g. `arc: 180` upper hemisphere) match Unity `ParticleSystemShapeType.Sphere`; drop single-Cartesian-axis (`x|y|z`) zero-start `velCurve` overrides when `maxAbs(speed) >= 0.5 * moduleMag` (`velCurveDropped: 'singleAxisStartZero'`); and import/apply `ShapeModule.m_MeshNormalOffset` as `shape.normalOffset` along surface normals prior to `shape.scale` (reducing total parity anomalies from 492 to 473 and affected prefabs from 244 to 238).
+
 - Prevent axis/radial `VelocityModule` curves from suppressing dominant `startSpeed` in `scripts/import-unity-vfx.mjs`: when `velCurveSource` is `'x' | 'y' | 'z' | 'radial'` without a `speedModifier` curve and `moduleMag < maxAbs(speed)`, preserve the peak scalar constant velocity and tag `velCurveDropped: 'baseSpeedDominant'` instead of multiplying the axis curve across the entire particle speed (reducing parity `scaleOutliers` from 37 to 12 and total parity anomalies from 517 to 492).
 
 - Fix `scripts/verify-unity-vfx-parity.mjs` to capture `rLayer.velCurve` when `opts.hasVelCurve` is set on headless `atlasParticles.emit` calls (matching GPU LUT runtime evaluation, shifting the honest parity baseline from 474 to 517 after surfacing previously masked `scaleOutliers` and `velFlips`), and emit `velCurveSource` and `velCurveAxes` diagnostic metadata in `scripts/import-unity-vfx.mjs`.

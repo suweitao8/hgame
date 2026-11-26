@@ -1715,6 +1715,10 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
           const smSub = smMan ? (smMan.multi ? smMan.subMeshName : null) : null;
           shapeObj.mesh = resolveMeshKey(smInfo.relPath, null, smSub);
         }
+        const meshNormalOff = Number((shapeMod.match(/\bm_MeshNormalOffset:\s*([-\d.eE+]+)/) || [])[1] ?? 0);
+        if (Math.abs(meshNormalOff) > 1e-4) {
+          shapeObj.normalOffset = Number(meshNormalOff.toFixed(4));
+        }
       }
       if (mappedType === 'box') {
         if (Number(st) === 15) shapeObj.shell = true;
@@ -2111,9 +2115,18 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
         };
         const baseSpeedMax = maxAbsOf(layer.speed);
         const isAxisOrRadialSource = velCurveSource === 'x' || velCurveSource === 'y' || velCurveSource === 'z' || velCurveSource === 'radial';
+        const isCartesianAxisSource = velCurveSource === 'x' || velCurveSource === 'y' || velCurveSource === 'z';
         const moduleMag = maxAbsOf(vx) + maxAbsOf(vy) + maxAbsOf(vz) + maxAbsOf(radV);
         if (isAxisOrRadialSource && !spdModCurve && baseSpeedMax > 0.01 && moduleMag < baseSpeedMax) {
           layer.velCurveDropped = 'baseSpeedDominant';
+        } else if (
+          isCartesianAxisSource
+          && !spdModCurve
+          && baseSpeedMax > 0.01
+          && baseSpeedMax >= moduleMag * 0.5
+          && Math.abs(chosenVelCurve[0]?.[1] ?? 1) < 0.1
+        ) {
+          layer.velCurveDropped = 'singleAxisStartZero';
         } else {
           layer.velCurve = chosenVelCurve;
         }

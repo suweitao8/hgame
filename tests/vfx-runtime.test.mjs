@@ -5571,6 +5571,120 @@ test('convertUnityPrefab drops axis velCurve when startSpeed dominates module ve
   }
 });
 
+test('3D sphere shape with arc=180 samples arc along XY plane so all particles stay in y >= 0 hemisphere', () => {
+  const atlas = createAtlasParticlePool({ mode: 'headless', maxParticles: 128 });
+  const captured = [];
+  const origEmit = atlas.emit.bind(atlas);
+  const atlasProxy = Object.assign(Object.create(atlas), {
+    emit(opts) {
+      captured.push(opts);
+      return origEmit(opts);
+    },
+  });
+  const player = createEffectPlayer({ atlasParticles: atlasProxy });
+  try {
+    player.playEffect({
+      schemaVersion: 1,
+      id: 'sphere_arc180_xy',
+      duration: 1,
+      layers: [
+        {
+          name: 'arc180',
+          kind: 'particle',
+          renderMode: 'billboard',
+          shape: { type: 'sphere', radius: 2, arc: 180 },
+          speed: 3,
+          life: 1,
+          bursts: [{ time: 0, count: 40 }],
+        },
+      ],
+    });
+    player.update(1 / 60);
+    assert.equal(captured.length, 40);
+    for (const p of captured) {
+      assert.ok(p.y >= -1e-6, `expected y >= 0 for sphere arc=180 in XY plane, got y=${p.y}`);
+      assert.ok(p.vy >= -1e-6, `expected vy >= 0 for sphere arc=180 in XY plane, got vy=${p.vy}`);
+    }
+  } finally {
+    player.dispose();
+    atlas.dispose();
+  }
+});
+
+test('convertUnityPrefab drops single-axis zero-start velCurve when startSpeed >= 0.5 * moduleMag', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unity-velcurve-singleaxis-'));
+  try {
+    const prefabPath = path.join(tmpDir, 'velcurve_singleaxis.prefab');
+    fs.writeFileSync(
+      prefabPath,
+      [
+        '%YAML 1.1',
+        '--- !u!1 &100',
+        'GameObject:\n  m_Name: SingleAxisZeroStart\n  m_IsActive: 1',
+        '--- !u!4 &101',
+        'Transform:\n  m_GameObject: {fileID: 100}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 0}',
+        '--- !u!198 &102',
+        'ParticleSystem:\n  m_GameObject: {fileID: 100}\n  lengthInSec: 1\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1\n    startSpeed:\n      minMaxState: 3\n      scalar: 5\n      minScalar: 3\n    startSize:\n      minMaxState: 0\n      scalar: 1\n  EmissionModule:\n    enabled: 1\n    m_BurstCount: 1\n    m_Bursts:\n    - serializedVersion: 2\n      time: 0\n      countCurve:\n        scalar: 1\n  VelocityModule:\n    enabled: 1\n    inWorldSpace: 0\n    x:\n      minMaxState: 0\n      scalar: 0\n    y:\n      minMaxState: 1\n      scalar: 5\n      maxCurve:\n        m_Curve:\n        - time: 0\n          value: 0\n        - time: 1\n          value: 1\n    z:\n      minMaxState: 0\n      scalar: 0\n    radial:\n      minMaxState: 0\n      scalar: -0.5\n    speedModifier:\n      minMaxState: 0\n      scalar: 1',
+        '--- !u!199 &103',
+        'ParticleSystemRenderer:\n  m_GameObject: {fileID: 100}\n  m_Enabled: 1\n  m_RenderMode: 0',
+      ].join('\n'),
+      'utf8',
+    );
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'velcurve_singleaxis_test' });
+    assert.equal(recipe.layers[0].velCurve, undefined);
+    assert.equal(recipe.layers[0].velCurveDropped, 'singleAxisStartZero');
+    assert.equal(recipe.layers[0].velCurveSource, 'y');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('shape.mesh normalOffset offsets surface samples along normal before shape.scale', () => {
+  const atlas = createAtlasParticlePool({ mode: 'headless', maxParticles: 64 });
+  const captured = [];
+  const origEmit = atlas.emit.bind(atlas);
+  const atlasProxy = Object.assign(Object.create(atlas), {
+    emit(opts) {
+      captured.push(opts);
+      return origEmit(opts);
+    },
+  });
+  const meshVfx = {
+    getSurfaceSamples() {
+      return {
+        count: 1,
+        points: new Float32Array([1, 0, 0]),
+        normals: new Float32Array([1, 0, 0]),
+      };
+    },
+    update() {},
+  };
+  const player = createEffectPlayer({ atlasParticles: atlasProxy, meshVfx });
+  try {
+    player.playEffect({
+      schemaVersion: 1,
+      id: 'mesh_normal_offset_test',
+      duration: 1,
+      layers: [
+        {
+          name: 'mesh_off',
+          kind: 'particle',
+          renderMode: 'billboard',
+          shape: { type: 'mesh', mesh: 'unit_x', normalOffset: 5, scale: [1.5, 1.5, 1.5] },
+          life: 1,
+          bursts: [{ time: 0, count: 1 }],
+        },
+      ],
+    });
+    player.update(1 / 60);
+    assert.equal(captured.length, 1);
+    assert.ok(Math.abs(captured[0].x - 9.0) < 1e-4, `expected x = (1 + 5) * 1.5 = 9, got ${captured[0].x}`);
+  } finally {
+    player.dispose();
+    atlas.dispose();
+  }
+});
+
 
 
 

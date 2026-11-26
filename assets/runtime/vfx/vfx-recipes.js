@@ -1024,10 +1024,15 @@ export function createEffectPlayer({
       const ang = sampleShapeArcAngle(shape, ls, emitIdx, emitCount);
       const elev = sType === 'hemisphere' ? prng.range(0, 1) : prng.range(-1, 1);
       const horiz = Math.sqrt(Math.max(0, 1 - elev * elev));
-      dx = Math.cos(ang) * horiz;
-      dy = is2D ? Math.sin(ang) : elev;
-      dz = is2D ? 0 : Math.sin(ang) * horiz;
-      if (is2D) dx = Math.cos(ang);
+      if (!is2D && sType === 'sphere') {
+        dx = Math.cos(ang) * horiz;
+        dy = Math.sin(ang) * horiz;
+        dz = elev;
+      } else {
+        dx = Math.cos(ang) * horiz;
+        dy = is2D ? Math.sin(ang) : elev;
+        dz = is2D ? 0 : Math.sin(ang) * horiz;
+      }
       const r = rad * Math.cbrt(1 - rt + prng.nextFloat() * rt);
       lx = dx * r;
       ly = dy * r;
@@ -1074,12 +1079,13 @@ export function createEffectPlayer({
       if (samples && samples.count > 0) {
         const si = Math.min(samples.count - 1, Math.floor(prng.nextFloat() * samples.count)) * 3;
         const mScale = Number(shape.meshScale ?? 1) * scale;
-        lx = samples.points[si] * mScale;
-        ly = samples.points[si + 1] * mScale;
-        lz = samples.points[si + 2] * mScale;
+        const normalOff = Number(shape.normalOffset ?? 0) * scale;
         dx = samples.normals[si];
         dy = samples.normals[si + 1];
         dz = samples.normals[si + 2];
+        lx = samples.points[si] * mScale + dx * normalOff;
+        ly = samples.points[si + 1] * mScale + dy * normalOff;
+        lz = samples.points[si + 2] * mScale + dz * normalOff;
       } else {
         lx = prng.range(-0.5, 0.5) * scale;
         ly = prng.range(-0.5, 0.5) * scale;
