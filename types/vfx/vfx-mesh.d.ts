@@ -24,6 +24,7 @@ export function createMeshVfxPool({ mode, THREE, scene, maxMeshes, }?: {
     updateSlot: (slotIdx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
     setWind: (wx?: number, wy?: number, wz?: number) => void;
     setCamera: (camera: any) => void;
+    setEffectTransform: (slotIdx: any, x?: number, y?: number, z?: number, qx?: number, qy?: number, qz?: number, qw?: number) => void;
     setEffectOffset: (slotIdx: any, x?: number, y?: number, z?: number) => void;
     setAtlas: (textureOrCanvas: any, newRegions: any, options?: {}) => void;
     setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {

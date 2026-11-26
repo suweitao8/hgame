@@ -2218,8 +2218,9 @@ test('ConeVolume length distributes particles along +Y height and Rx(-90) ShapeM
     );
     const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'cone_vol_test' });
     assert.equal(recipe.layers.length, 1);
-    assert.deepEqual(recipe.layers[0].offset, [0, 0.84, 0], 'ShapeModule.m_Position adds to layer.offset');
+    assert.equal(recipe.layers[0].offset, undefined, 'ShapeModule.m_Position does not pollute layer.offset');
     const sh = recipe.layers[0].shape;
+    assert.deepEqual(sh.offset, [0, 0.84, 0], 'ShapeModule.m_Position maps to shape.offset');
     assert.equal(sh.type, 'cone');
     assert.equal(sh.length, 3);
     assert.equal(sh.rotation, undefined, 'Rx(-90) ShapeModule in Unity maps to canonical +Y in HGame without 180 deg flip');
@@ -2907,8 +2908,9 @@ test('convertUnityPrefab suppresses stale _ALPHATEST_ON on Transparent+Additive 
     const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath: pPath, id: 'radial_trail_test' });
     assert.equal(validateVfxRecipe(recipe).ok, true);
     const layer = recipe.layers[0];
-    assert.deepEqual(layer.offset, [0, 2, 0], 'preserves ShapeModule.m_Position in layer.offset');
-    assert.deepEqual(layer.velocity.radialOffset, [0, -2, 0], 'cancels ShapeModule.m_Position in radialOrigin');
+    assert.equal(layer.offset, undefined, 'ShapeModule.m_Position does not pollute layer.offset');
+    assert.deepEqual(layer.shape.offset, [0, 2, 0], 'preserves ShapeModule.m_Position in shape.offset');
+    assert.equal(layer.velocity.radialOffset, undefined, 'no radialOffset compensation needed when shape.offset is separated');
     assert.equal(layer.uberMat.alphaTest, false, 'clears alphaTest on Transparent+Additive uber_fx');
     assert.equal(layer.uberMat.keywords.includes('_ALPHATEST_ON'), false, 'strips stale _ALPHATEST_ON keyword');
 
@@ -5290,6 +5292,190 @@ test('playEffect/follow support root rotation quaternion with exact yaw-only equ
   } finally {
     pYaw.dispose();
     pQuat.dispose();
+  }
+});
+
+test('shape.offset orbits around Transform origin (layer.offset) rather than shape center', () => {
+  const emitted = [];
+  const realAtlas = createAtlasParticlePool({ mode: 'headless', maxParticles: 64 });
+  const origEmit = realAtlas.emit.bind(realAtlas);
+  const atlasParticles = Object.assign(Object.create(realAtlas), {
+    emit(opts) {
+      emitted.push({ x: opts.x, y: opts.y, z: opts.z, centerOffX: opts.centerOffX, centerOffZ: opts.centerOffZ, vx: opts.vx, vy: opts.vy, vz: opts.vz });
+      return origEmit(opts);
+    },
+  });
+  const player = createEffectPlayer({ atlasParticles });
+  try {
+    const recipe = {
+      schemaVersion: 1,
+      id: 'shape_offset_orbital_test',
+      duration: 1,
+      layers: [{
+        kind: 'particle',
+        renderMode: 'billboard',
+        life: 1,
+        speed: 0,
+        offset: [0, 1.46, 0],
+        bursts: [{ time: 0, count: 4 }],
+        shape: { type: 'circle', radius: 0.01, offset: [8, 0, 0] },
+        velocity: { orbitalY: 2, radial: 5 },
+      }],
+    };
+    assert.equal(validateVfxRecipe(recipe).ok, true);
+    player.registerEffect(recipe);
+    player.playEffect('shape_offset_orbital_test', { x: 0, y: 0, z: 0 });
+    player.update(0.05);
+    assert.equal(emitted.length, 4);
+    for (const p of emitted) {
+      assert.ok(Math.abs(p.x - 8) < 0.05, `expected spawn x ~8, got ${p.x}`);
+      assert.ok(Math.abs(p.y - 1.46) < 0.01, `expected spawn y ~1.46, got ${p.y}`);
+      assert.ok(Math.abs(p.centerOffX - 8) < 0.05, `expected orbital centerOffX ~8 (Transform origin), got ${p.centerOffX}`);
+      assert.ok(p.vx > 4.5, `expected radial velocity outward from Transform origin (+X), got vx=${p.vx}`);
+    }
+  } finally {
+    player.dispose();
+  }
+});
+
+test('meshVfx.readSlotMotion returns instantaneous velocity including velRadial, velCurve, and orbitalY', () => {
+  const scene = new THREE.Scene();
+  const meshVfx = createMeshVfxPool({ mode: '3d', THREE, scene, maxMeshes: 8 });
+  try {
+    const h = meshVfx.spawn({
+      mesh: 'crystal',
+      x: 0,
+      y: 2,
+      z: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      gravity: 1.0,
+      velRadial: 10,
+      radCx: 0,
+      radCy: 0,
+      radCz: 0,
+      velCurve: [[0, 0.5], [1, 0.5]],
+      duration: 2,
+    });
+    meshVfx.update(0.1);
+    const pos = new Float32Array(3);
+    const vel = new Float32Array(3);
+    meshVfx.readSlotMotion(h, pos, vel);
+    // Expected: vy = -0.1 * 0.5 + 10 * 0.5 = +4.95 (strongly positive, not pure gravity -0.1)
+    assert.ok(vel[1] > 4.5, `expected readSlotMotion vy > 4.5 from velRadial * velCurve, got ${vel[1]}`);
+  } finally {
+    meshVfx.dispose();
+  }
+});
+
+test('convertUnityPrefab decomposes 3-axis Local billboard orientation in true YXZ order matching euler3D', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unity-yxz-billboard-'));
+  try {
+    // qRhs = Euler(0.4, 0.7, 0.9, 'YXZ'); convert to Unity LHS via [-qx, -qy, qz, qw]
+    const qRhs = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.4, 0.7, 0.9, 'YXZ'));
+    const qLhs = { x: -qRhs.x, y: -qRhs.y, z: qRhs.z, w: qRhs.w };
+    const prefabPath = path.join(tmpDir, 'yxz_billboard.prefab');
+    fs.writeFileSync(
+      prefabPath,
+      [
+        '%YAML 1.1',
+        '--- !u!1 &100',
+        'GameObject:\n  m_Name: YxzBillboard\n  m_IsActive: 1',
+        '--- !u!4 &101',
+        `Transform:\n  m_GameObject: {fileID: 100}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalRotation: {x: ${qLhs.x}, y: ${qLhs.y}, z: ${qLhs.z}, w: ${qLhs.w}}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 0}`,
+        '--- !u!198 &102',
+        'ParticleSystem:\n  m_GameObject: {fileID: 100}\n  lengthInSec: 1\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1\n    startSpeed:\n      minMaxState: 0\n      scalar: 0\n    startSize:\n      minMaxState: 0\n      scalar: 1\n  EmissionModule:\n    enabled: 1\n    m_BurstCount: 1\n    m_Bursts:\n    - serializedVersion: 2\n      time: 0\n      countCurve:\n        scalar: 1',
+        '--- !u!199 &103',
+        'ParticleSystemRenderer:\n  m_GameObject: {fileID: 100}\n  m_Enabled: 1\n  m_RenderMode: 0\n  m_RenderAlignment: 2',
+      ].join('\n'),
+      'utf8',
+    );
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'yxz_billboard_test' });
+    const l = recipe.layers[0];
+    const qRec = new THREE.Quaternion().setFromEuler(new THREE.Euler(l.rotX || 0, l.rotY || 0, l.rotation || 0, 'YXZ'));
+    const dot = Math.abs(qRec.dot(qRhs));
+    assert.ok(dot > 0.9999, `expected true YXZ round-trip quaternion dot > 0.9999, got ${dot}`);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('local-space mesh and atlas layers follow full 3D root quaternion rotation in real time', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxParticles: 64, maxAtlasParticles: 128, maxMeshVfx: 64 });
+  try {
+    const recipe = {
+      schemaVersion: 1,
+      id: 'local_quat_follow',
+      duration: 1.0,
+      layers: [
+        {
+          name: 'local_mesh_orb',
+          kind: 'particle',
+          renderMode: 'mesh',
+          mesh: 'crystal',
+          space: 'local',
+          life: 1.0,
+          speed: 0,
+          size: 1,
+          offset: [0, 0, 2],
+          shape: { type: 'point' },
+          bursts: [{ time: 0, count: 1 }],
+        },
+        {
+          name: 'local_atlas_ring',
+          kind: 'particle',
+          renderMode: 'horizontal',
+          blend: 'additive',
+          space: 'local',
+          life: 1.0,
+          speed: 0,
+          size: 1,
+          offset: [0, 0, 2],
+          shape: { type: 'point' },
+          bursts: [{ time: 0, count: 1 }],
+        },
+      ],
+    };
+
+    const followA = { x: 1, y: 0, z: 0, rotation: [0, 0, 0, 1] };
+    vfx.playEffect(recipe, { x: 1, y: 0, z: 0, follow: followA });
+    vfx.update(0.016);
+
+    // Mutate followA rotation to +90 deg around Y: local (0,0,2) -> world (+2,0,0) + (1,0,0) = (3,0,0)
+    followA.rotation = [0, Math.SQRT1_2, 0, Math.SQRT1_2];
+    vfx.update(0.016);
+
+    const pos = [0, 0, 0];
+    const quat = [0, 0, 0, 1];
+    const sc = [1, 1, 1];
+    assert.equal(vfx.meshVfx.readSlotTransform(0, pos, quat, sc), true);
+    assert.ok(Math.abs(pos[0] - 3) < 1e-4 && Math.abs(pos[1]) < 1e-4 && Math.abs(pos[2]) < 1e-4,
+      `expected mesh world pos ~(3,0,0) after +90deg Y rotation, got (${pos.join(', ')})`);
+    const qDot = Math.abs(quat[1] * Math.SQRT1_2 + quat[3] * Math.SQRT1_2);
+    assert.ok(qDot > 0.999, `expected mesh quaternion rotated +90deg Y (dot=${qDot})`);
+
+    const addMesh = scene.getObjectByName('HGameVfxAtlasAdditive');
+    const effQuats = addMesh.material.uniforms.uEffectQuats.value;
+    const hasRotQuat = effQuats.some((q) => Math.abs(q.y - Math.SQRT1_2) < 1e-4 && Math.abs(q.w - Math.SQRT1_2) < 1e-4);
+    assert.equal(hasRotQuat, true, 'atlas shader receives uEffectQuats updated with root +90deg Y rotation');
+
+    // Emit while followB is already rotated +90deg Y, then rotate back to identity -> particle lands back at (0,0,2)
+    const followB = { x: 0, y: 0, z: 0, rotation: [0, Math.SQRT1_2, 0, Math.SQRT1_2] };
+    vfx.playEffect(recipe, { x: 0, y: 0, z: 0, follow: followB });
+    vfx.update(0.016);
+    const p0Arr = addMesh.geometry.getAttribute('aAtlasP0').array;
+    assert.ok(Math.abs(p0Arr[4] - 0) < 1e-4 && Math.abs(p0Arr[6] - 2) < 1e-4,
+      `expected atlas local aAtlasP0 to store unrotated local (0,0,2), got (${p0Arr[4]}, ${p0Arr[5]}, ${p0Arr[6]})`);
+
+    followB.rotation = [0, 0, 0, 1];
+    vfx.update(0.016);
+    assert.equal(vfx.meshVfx.readSlotTransform(1, pos, quat, sc), true);
+    assert.ok(Math.abs(pos[0]) < 1e-4 && Math.abs(pos[1]) < 1e-4 && Math.abs(pos[2] - 2) < 1e-4,
+      `expected mesh emitted at +90deg to rotate back to (0,0,2) at identity, got (${pos.join(', ')})`);
+  } finally {
+    vfx.dispose();
   }
 });
 

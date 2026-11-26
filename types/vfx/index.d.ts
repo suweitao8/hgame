@@ -171,6 +171,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxPart
         setQualityTier: (tier?: string) => void;
         hasActiveDistortion: () => boolean;
         setWind: (wx?: number, wy?: number, wz?: number) => void;
+        setEffectTransform: (slotIdx: number, x?: number | undefined, y?: number | undefined, z?: number | undefined, qx?: number | undefined, qy?: number | undefined, qz?: number | undefined, qw?: number | undefined) => void;
         setEffectOffset: (slotIdx: number, x?: number, y?: number, z?: number) => void;
         emit: (opts?: object) => number;
         updateSlot: (blendOrState: any, idx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
@@ -211,6 +212,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxPart
         updateSlot: (slotIdx: any, x: any, y: any, z: any, vx: any, vy: any, vz: any) => void;
         setWind: (wx?: number, wy?: number, wz?: number) => void;
         setCamera: (camera: any) => void;
+        setEffectTransform: (slotIdx: any, x?: number, y?: number, z?: number, qx?: number, qy?: number, qz?: number, qw?: number) => void;
         setEffectOffset: (slotIdx: any, x?: number, y?: number, z?: number) => void;
         setAtlas: (textureOrCanvas: any, newRegions: any, options?: {}) => void;
         setDepthTexture: (depthTexture: any, { near, far, width, height, softFade }?: {

@@ -466,6 +466,55 @@ export function createMeshVfxPool({
   const scratchEuler = THREE?.Euler ? new THREE.Euler() : null;
   const windVec = new Float32Array(3);
   const effectDeltas = new Float32Array(32 * 3);
+  const effectQuats = new Float32Array(32 * 4);
+  for (let i = 0; i < 32; i++) effectQuats[i * 4 + 3] = 1;
+  const scratchRotVec3 = [0, 0, 0];
+  const scratchMeshPos3 = [0, 0, 0];
+
+  function rotateVecByQuat(qx, qy, qz, qw, vx, vy, vz, out) {
+    const tx = 2 * (qy * vz - qz * vy);
+    const ty = 2 * (qz * vx - qx * vz);
+    const tz = 2 * (qx * vy - qy * vx);
+    out[0] = vx + qw * tx + (qy * tz - qz * ty);
+    out[1] = vy + qw * ty + (qz * tx - qx * tz);
+    out[2] = vz + qw * tz + (qx * ty - qy * tx);
+  }
+
+  function rotateVecByConjQuat(qx, qy, qz, qw, vx, vy, vz, out) {
+    rotateVecByQuat(-qx, -qy, -qz, qw, vx, vy, vz, out);
+  }
+
+  function premulQuat(ax, ay, az, aw, q) {
+    const bx = q.x, by = q.y, bz = q.z, bw = q.w;
+    q.set(
+      aw * bx + ax * bw + ay * bz - az * by,
+      aw * by - ax * bz + ay * bw + az * bx,
+      aw * bz + ax * by - ay * bx + az * bw,
+      aw * bw - ax * bx - ay * by - az * bz,
+    );
+  }
+
+  function slotLocalToWorldPos(s, out) {
+    if (s.effectSlotIdx <= 0) {
+      out[0] = s.x;
+      out[1] = s.y;
+      out[2] = s.z;
+      return;
+    }
+    const db = s.effectSlotIdx * 3;
+    const qb = s.effectSlotIdx * 4;
+    const qx = effectQuats[qb], qy = effectQuats[qb + 1], qz = effectQuats[qb + 2], qw = effectQuats[qb + 3];
+    if (Math.abs(qx) + Math.abs(qy) + Math.abs(qz) > 1e-7) {
+      rotateVecByQuat(qx, qy, qz, qw, s.x, s.y, s.z, out);
+      out[0] += effectDeltas[db];
+      out[1] += effectDeltas[db + 1];
+      out[2] += effectDeltas[db + 2];
+    } else {
+      out[0] = s.x + effectDeltas[db];
+      out[1] = s.y + effectDeltas[db + 1];
+      out[2] = s.z + effectDeltas[db + 2];
+    }
+  }
   const uberLut = THREE && THREE.DataTexture ? createUberMaterialLut(THREE) : null;
   const uberMatCache = new Map();
   let atlasRevision = 0;
@@ -922,32 +971,73 @@ export function createMeshVfxPool({
     s.duration = Math.max(0.01, opts.duration ?? 0.8);
     s.space = opts.space === 'local' ? 'local' : 'world';
     s.effectSlotIdx = effSlot;
-    s.x = (opts.x ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3] : 0);
-    s.y = (opts.y ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3 + 1] : 0);
-    s.z = (opts.z ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3 + 2] : 0);
-    s.vx = opts.vx ?? 0;
-    s.vy = opts.vy ?? 0;
-    s.vz = opts.vz ?? 0;
-    s.accelX = opts.accelX ?? 0;
-    s.accelZ = opts.accelZ ?? 0;
+    const edX = effSlot > 0 ? effectDeltas[effSlot * 3] : 0;
+    const edY = effSlot > 0 ? effectDeltas[effSlot * 3 + 1] : 0;
+    const edZ = effSlot > 0 ? effectDeltas[effSlot * 3 + 2] : 0;
+    const eqB = effSlot * 4;
+    const eqx = effectQuats[eqB], eqy = effectQuats[eqB + 1], eqz = effectQuats[eqB + 2], eqw = effectQuats[eqB + 3];
+    const hasEq = effSlot > 0 && (Math.abs(eqx) + Math.abs(eqy) + Math.abs(eqz) > 1e-7);
+
+    let px = (opts.x ?? 0) - edX;
+    let py = (opts.y ?? 0) - edY;
+    let pz = (opts.z ?? 0) - edZ;
+    let vx = opts.vx ?? 0;
+    let vy = opts.vy ?? 0;
+    let vz = opts.vz ?? 0;
+    let ax = opts.accelX ?? 0;
+    let az = opts.accelZ ?? 0;
+    let cx = (opts.centerX ?? opts.x ?? 0) - edX;
+    let cz = (opts.centerZ ?? opts.z ?? 0) - edZ;
+    let rx = (opts.radCx ?? opts.x ?? 0) - edX;
+    let ry = (opts.radCy ?? opts.y ?? 0) - edY;
+    let rz = (opts.radCz ?? opts.z ?? 0) - edZ;
+    s.hasDir = opts.dirX !== undefined || opts.dirY !== undefined || opts.dirZ !== undefined;
+    let dx = opts.dirX ?? 0;
+    let dy = opts.dirY ?? 1;
+    let dz = opts.dirZ ?? 0;
+
+    if (hasEq) {
+      rotateVecByConjQuat(eqx, eqy, eqz, eqw, px, py, pz, scratchRotVec3);
+      px = scratchRotVec3[0]; py = scratchRotVec3[1]; pz = scratchRotVec3[2];
+      rotateVecByConjQuat(eqx, eqy, eqz, eqw, vx, vy, vz, scratchRotVec3);
+      vx = scratchRotVec3[0]; vy = scratchRotVec3[1]; vz = scratchRotVec3[2];
+      rotateVecByConjQuat(eqx, eqy, eqz, eqw, ax, 0, az, scratchRotVec3);
+      ax = scratchRotVec3[0]; az = scratchRotVec3[2];
+      rotateVecByConjQuat(eqx, eqy, eqz, eqw, cx, (opts.centerY ?? opts.y ?? 0) - edY, cz, scratchRotVec3);
+      cx = scratchRotVec3[0]; cz = scratchRotVec3[2];
+      rotateVecByConjQuat(eqx, eqy, eqz, eqw, rx, ry, rz, scratchRotVec3);
+      rx = scratchRotVec3[0]; ry = scratchRotVec3[1]; rz = scratchRotVec3[2];
+      if (s.hasDir) {
+        rotateVecByConjQuat(eqx, eqy, eqz, eqw, dx, dy, dz, scratchRotVec3);
+        dx = scratchRotVec3[0]; dy = scratchRotVec3[1]; dz = scratchRotVec3[2];
+      }
+    }
+
+    s.x = px;
+    s.y = py;
+    s.z = pz;
+    s.vx = vx;
+    s.vy = vy;
+    s.vz = vz;
+    s.accelX = ax;
+    s.accelZ = az;
     s.windMul = opts.windMul ?? 0;
     s.gravity = opts.gravity ?? 0;
     s.drag = opts.drag ?? 0;
     s.staticPos = Boolean(opts.staticPos);
     s.orbitalY = opts.orbitalY ?? 0;
-    s.centerX = (opts.centerX ?? opts.x ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3] : 0);
-    s.centerZ = (opts.centerZ ?? opts.z ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3 + 2] : 0);
+    s.centerX = cx;
+    s.centerZ = cz;
     s.velRadial = opts.velRadial ?? 0;
-    s.radCx = (opts.radCx ?? opts.x ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3] : 0);
-    s.radCy = (opts.radCy ?? opts.y ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3 + 1] : 0);
-    s.radCz = (opts.radCz ?? opts.z ?? 0) - (effSlot > 0 ? effectDeltas[effSlot * 3 + 2] : 0);
+    s.radCx = rx;
+    s.radCy = ry;
+    s.radCz = rz;
     s.rotX = opts.rotX ?? 0;
     s.rotY = opts.rotY ?? 0;
     s.rotZ = opts.rotZ ?? 0;
-    s.hasDir = opts.dirX !== undefined || opts.dirY !== undefined || opts.dirZ !== undefined;
-    s.dirX = opts.dirX ?? 0;
-    s.dirY = opts.dirY ?? 1;
-    s.dirZ = opts.dirZ ?? 0;
+    s.dirX = dx;
+    s.dirY = dy;
+    s.dirZ = dz;
     s.spinX = opts.spinX ?? 0;
     s.spinY = opts.spinY ?? 0;
     s.spinZ = opts.spinZ ?? 0;
@@ -1167,7 +1257,7 @@ export function createMeshVfxPool({
     return sc * dur * t;
   }
 
-  function computeSlotQuat(s, t = 0) {
+  function computeLocalSlotQuat(s, t = 0) {
     if (!scratchQuat || !scratchEuler) return;
     let rx = s.rotX;
     let ry = s.rotY;
@@ -1244,6 +1334,18 @@ export function createMeshVfxPool({
     }
   }
 
+  function computeSlotQuat(s, t = 0) {
+    if (!scratchQuat || !scratchEuler) return;
+    computeLocalSlotQuat(s, t);
+    if (s.effectSlotIdx > 0 && !(s.unityMeshRot && (s.meshAlign === 'view' || s.meshAlign === 'facing'))) {
+      const qb = s.effectSlotIdx * 4;
+      const eqx = effectQuats[qb], eqy = effectQuats[qb + 1], eqz = effectQuats[qb + 2], eqw = effectQuats[qb + 3];
+      if (Math.abs(eqx) + Math.abs(eqy) + Math.abs(eqz) > 1e-7) {
+        premulQuat(eqx, eqy, eqz, eqw, scratchQuat);
+      }
+    }
+  }
+
   function computeSlotScale(s, t, out3) {
     const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t) * s.flipX;
     const scY = (s.baseScaleY !== null
@@ -1270,13 +1372,11 @@ export function createMeshVfxPool({
     const scY = scratchSlotScale[1];
     const scZ = scratchSlotScale[2];
     evaluateColorCurve(s.colorCurve, t, scratchColor);
-    const ox = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3] : 0;
-    const oy = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 1] : 0;
-    const oz = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 2] : 0;
+    slotLocalToWorldPos(s, scratchMeshPos3);
 
-    batch.posScale[i4] = s.x + ox;
-    batch.posScale[i4 + 1] = s.y + oy;
-    batch.posScale[i4 + 2] = s.z + oz;
+    batch.posScale[i4] = scratchMeshPos3[0];
+    batch.posScale[i4 + 1] = scratchMeshPos3[1];
+    batch.posScale[i4 + 2] = scratchMeshPos3[2];
     batch.posScale[i4 + 3] = sc;
 
     computeSlotQuat(s, t);
@@ -1343,10 +1443,8 @@ export function createMeshVfxPool({
     const scY = scratchSlotScale[1];
     const scZ = scratchSlotScale[2];
     evaluateColorCurve(s.colorCurve, t, scratchColor);
-    const ox = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3] : 0;
-    const oy = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 1] : 0;
-    const oz = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 2] : 0;
-    s.mesh.position.set(s.x + ox, s.y + oy, s.z + oz);
+    slotLocalToWorldPos(s, scratchMeshPos3);
+    s.mesh.position.set(scratchMeshPos3[0], scratchMeshPos3[1], scratchMeshPos3[2]);
     if (scratchQuat) {
       computeSlotQuat(s, t);
       s.mesh.quaternion.copy(scratchQuat);
@@ -1375,12 +1473,37 @@ export function createMeshVfxPool({
   function updateSlot(slotIdx, x, y, z, vx, vy, vz) {
     const s = getSlotByHandle(slotIdx);
     if (!s || !s.active) return;
-    const ox = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3] : 0;
-    const oy = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 1] : 0;
-    const oz = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 2] : 0;
-    s.x = x - ox;
-    s.y = y - oy;
-    s.z = z - oz;
+    if (s.effectSlotIdx > 0) {
+      const db = s.effectSlotIdx * 3;
+      const qb = s.effectSlotIdx * 4;
+      let lx = x - effectDeltas[db];
+      let ly = y - effectDeltas[db + 1];
+      let lz = z - effectDeltas[db + 2];
+      let lvx = vx;
+      let lvy = vy;
+      let lvz = vz;
+      const eqx = effectQuats[qb], eqy = effectQuats[qb + 1], eqz = effectQuats[qb + 2], eqw = effectQuats[qb + 3];
+      if (Math.abs(eqx) + Math.abs(eqy) + Math.abs(eqz) > 1e-7) {
+        rotateVecByConjQuat(eqx, eqy, eqz, eqw, lx, ly, lz, scratchRotVec3);
+        lx = scratchRotVec3[0];
+        ly = scratchRotVec3[1];
+        lz = scratchRotVec3[2];
+        rotateVecByConjQuat(eqx, eqy, eqz, eqw, lvx, lvy, lvz, scratchRotVec3);
+        lvx = scratchRotVec3[0];
+        lvy = scratchRotVec3[1];
+        lvz = scratchRotVec3[2];
+      }
+      s.x = lx;
+      s.y = ly;
+      s.z = lz;
+      s.vx = lvx;
+      s.vy = lvy;
+      s.vz = lvz;
+      return;
+    }
+    s.x = x;
+    s.y = y;
+    s.z = z;
     s.vx = vx;
     s.vy = vy;
     s.vz = vz;
@@ -1390,13 +1513,28 @@ export function createMeshVfxPool({
   function readSlotMotion(slotIdx, position, velocity) {
     const s = getSlotByHandle(slotIdx);
     if (!s?.active) return;
-    const base = s.effectSlotIdx * 3;
-    position[0] = s.x + effectDeltas[base];
-    position[1] = s.y + effectDeltas[base + 1];
-    position[2] = s.z + effectDeltas[base + 2];
-    velocity[0] = s.vx;
-    velocity[1] = s.vy;
-    velocity[2] = s.vz;
+    slotLocalToWorldPos(s, position);
+    const t = meshLifeRatio(s);
+    const vScale = s.velCurve ? evaluateSizeCurve(s.velCurve, t) : 1.0;
+    computeDynamicRadialVel(s.x, s.y, s.z, s.radCx, s.radCy, s.radCz, s.velRadial, vScale, 0, scratchRadVel3);
+    let vx = s.vx * vScale + scratchRadVel3[0];
+    let vy = s.vy * vScale + scratchRadVel3[1];
+    let vz = s.vz * vScale + scratchRadVel3[2];
+    if (Math.abs(s.orbitalY) > 0.0001) {
+      vx -= s.orbitalY * (s.z - s.centerZ);
+      vz += s.orbitalY * (s.x - s.centerX);
+    }
+    if (s.effectSlotIdx > 0) {
+      const qb = s.effectSlotIdx * 4;
+      const eqx = effectQuats[qb], eqy = effectQuats[qb + 1], eqz = effectQuats[qb + 2], eqw = effectQuats[qb + 3];
+      if (Math.abs(eqx) + Math.abs(eqy) + Math.abs(eqz) > 1e-7) {
+        rotateVecByQuat(eqx, eqy, eqz, eqw, vx, vy, vz, velocity);
+        return;
+      }
+    }
+    velocity[0] = vx;
+    velocity[1] = vy;
+    velocity[2] = vz;
   }
 
   /** Copies the slot's current world position, quaternion, and world scale into caller-owned buffers. */
@@ -1404,10 +1542,7 @@ export function createMeshVfxPool({
     const s = getSlotByHandle(slotIdx);
     if (!s?.active) return false;
     const lifeT = t > 0 ? t : meshLifeRatio(s);
-    const base = s.effectSlotIdx * 3;
-    position[0] = s.x + effectDeltas[base];
-    position[1] = s.y + effectDeltas[base + 1];
-    position[2] = s.z + effectDeltas[base + 2];
+    slotLocalToWorldPos(s, position);
     if (scratchQuat) {
       computeSlotQuat(s, lifeT);
       quatOut[0] = scratchQuat.x;
@@ -1435,12 +1570,30 @@ export function createMeshVfxPool({
     }
   }
 
-  function setEffectOffset(slotIdx, x = 0, y = 0, z = 0) {
+  function setEffectTransform(slotIdx, x = 0, y = 0, z = 0, qx = 0, qy = 0, qz = 0, qw = 1) {
     const idx = slotIdx | 0;
     if (idx <= 0 || idx >= 32) return;
     effectDeltas[idx * 3] = x;
     effectDeltas[idx * 3 + 1] = y;
     effectDeltas[idx * 3 + 2] = z;
+    const qLen = Math.hypot(qx, qy, qz, qw);
+    const inv = qLen > 1e-8 ? (1 / qLen) : 0;
+    const qb = idx * 4;
+    if (inv > 0) {
+      effectQuats[qb] = qx * inv;
+      effectQuats[qb + 1] = qy * inv;
+      effectQuats[qb + 2] = qz * inv;
+      effectQuats[qb + 3] = qw * inv;
+    } else {
+      effectQuats[qb] = 0;
+      effectQuats[qb + 1] = 0;
+      effectQuats[qb + 2] = 0;
+      effectQuats[qb + 3] = 1;
+    }
+  }
+
+  function setEffectOffset(slotIdx, x = 0, y = 0, z = 0) {
+    setEffectTransform(slotIdx, x, y, z, 0, 0, 0, 1);
   }
 
   function setAtlas(textureOrCanvas, newRegions, options = {}) {
@@ -1634,6 +1787,12 @@ export function createMeshVfxPool({
     cursor = 0;
     instCursor = 0;
     effectDeltas.fill(0);
+    for (let i = 0; i < 32; i++) {
+      effectQuats[i * 4] = 0;
+      effectQuats[i * 4 + 1] = 0;
+      effectQuats[i * 4 + 2] = 0;
+      effectQuats[i * 4 + 3] = 1;
+    }
     for (let i = 0; i < capacity; i++) {
       slots[i].active = false;
       if (slots[i].mesh) slots[i].mesh.visible = false;
@@ -1698,6 +1857,7 @@ export function createMeshVfxPool({
     updateSlot,
     setWind,
     setCamera,
+    setEffectTransform,
     setEffectOffset,
     setAtlas,
     setDepthTexture,

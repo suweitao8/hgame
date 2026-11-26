@@ -112,6 +112,12 @@ export function validateVfxRecipe(recipe) {
           errors.push(`layers[${i}].shape.matrix must be a 9-element finite number array`);
         }
       }
+      if (layer.shape?.offset !== undefined) {
+        const so = layer.shape.offset;
+        if (!Array.isArray(so) || so.length !== 3 || !so.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+          errors.push(`layers[${i}].shape.offset must be a 3-element finite number array`);
+        }
+      }
     }
   }
   return { ok: errors.length === 0, errors };
@@ -436,6 +442,7 @@ export function createEffectPlayer({
         slot.z = z;
         slot.yaw = yaw;
         syncSlotQuat(slot, rotation);
+        syncSlotLocalEffects(slot);
         shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, slot.followVx, slot.followVy, slot.followVz, slot.qx, slot.qy, slot.qz, slot.qw);
       },
       stop() {
@@ -443,6 +450,20 @@ export function createEffectPlayer({
       },
     };
     effectSlots.push(slot);
+  }
+
+  function syncSlotLocalEffects(slot) {
+    if (slot.localSlotIdx <= 0) return;
+    if (atlasParticles?.setEffectTransform) {
+      atlasParticles.setEffectTransform(slot.localSlotIdx, slot.x, slot.y, slot.z, slot.qx, slot.qy, slot.qz, slot.qw);
+    } else {
+      atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
+    }
+    if (meshVfx?.setEffectTransform) {
+      meshVfx.setEffectTransform(slot.localSlotIdx, slot.x, slot.y, slot.z, slot.qx, slot.qy, slot.qz, slot.qw);
+    } else {
+      meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
+    }
   }
 
   function releaseLightSlot(lightIdx) {
@@ -473,6 +494,8 @@ export function createEffectPlayer({
       ls.ribbonPts.length = 0;
     }
     if (slot.localSlotIdx > 0) {
+      atlasParticles?.setEffectTransform?.(slot.localSlotIdx, 0, 0, 0, 0, 0, 0, 1);
+      meshVfx?.setEffectTransform?.(slot.localSlotIdx, 0, 0, 0, 0, 0, 0, 1);
       freeLocalSlots.push(slot.localSlotIdx);
       slot.localSlotIdx = 0;
     }
@@ -1224,6 +1247,12 @@ export function createEffectPlayer({
       }
     }
 
+    if (Array.isArray(shape.offset)) {
+      lx += Number(shape.offset[0] ?? 0) * scale;
+      ly += Number(shape.offset[1] ?? 0) * scale;
+      lz += Number(shape.offset[2] ?? 0) * scale;
+    }
+
     const off = layer.offset;
     const offX = Array.isArray(off) ? (off[0] ?? 0) * scale : 0;
     const offY = Array.isArray(off) ? (off[1] ?? 0) * scale : 0;
@@ -1714,7 +1743,9 @@ export function createEffectPlayer({
       const hasTrRot = Array.isArray(layer.transformRot) && layer.transformRot.length >= 4;
       const hasNonYaw = Math.abs(slot.qx) + Math.abs(slot.qz) > 1e-6;
       let resolvedTrRot = null;
-      if (hasTrRot) {
+      if (isLocalSpace && !is2D) {
+        resolvedTrRot = hasTrRot ? layer.transformRot : null;
+      } else if (hasTrRot) {
         const ax = slot.qx, ay = slot.qy, az = slot.qz, aw = slot.qw;
         const bx = layer.transformRot[0], by = layer.transformRot[1], bz = layer.transformRot[2], bw = layer.transformRot[3];
         slot.meshRotBuf[0] = aw * bx + ax * bw + ay * bz - az * by;
@@ -1847,6 +1878,7 @@ export function createEffectPlayer({
           drag,
           orbitalY,
           centerOffX,
+          centerOffY,
           centerOffZ,
           velRadial: dynRadVel,
           radCx: scratchRadCenter[0],
@@ -1925,6 +1957,7 @@ export function createEffectPlayer({
           tintRgb24,
           orbitalY,
           centerOffX,
+          centerOffY,
           centerOffZ,
           renderMode: layer.renderMode ?? 'billboard',
           ...layer._renderState,
@@ -2202,8 +2235,7 @@ export function createEffectPlayer({
     slot.localSlotIdx = 0;
     if (compiled.layers.some((l) => l.space === 'local' && !l._shurikenLayer) && freeLocalSlots.length > 0) {
       slot.localSlotIdx = freeLocalSlots.pop();
-      atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
-      meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
+      syncSlotLocalEffects(slot);
     }
     shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, 0, 0, 0, slot.qx, slot.qy, slot.qz, slot.qw);
     slot.lightSlotIdx = -1;
@@ -2406,10 +2438,7 @@ export function createEffectPlayer({
         }
       }
 
-      if (slot.localSlotIdx > 0) {
-        atlasParticles?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
-        meshVfx?.setEffectOffset?.(slot.localSlotIdx, slot.x, slot.y, slot.z);
-      }
+      syncSlotLocalEffects(slot);
       shurikenKernel?.setEffectTransform?.(slot.id, slot.x, slot.y, slot.z, slot.yaw, slot.followVx, slot.followVy, slot.followVz, slot.qx, slot.qy, slot.qz, slot.qw);
 
       slot.age += dt;

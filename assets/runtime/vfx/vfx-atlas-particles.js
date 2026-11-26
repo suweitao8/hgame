@@ -714,6 +714,7 @@ uniform float uTime;
 uniform float uIs2D;
 uniform vec3 uWind;
 uniform vec3 uEffectDeltas[32];
+uniform vec4 uEffectQuats[32];
 
 varying vec2 vUv;
 varying float vLifeRatio;
@@ -732,6 +733,11 @@ varying vec3 vViewDirView;
 
 ${VFX_COMMON_GLSL}
 ${VFX_UBER_LUT_GLSL}
+
+vec3 vfxQuatRotate(vec4 q, vec3 v) {
+  vec3 t = 2.0 * cross(q.xyz, v);
+  return v + q.w * t + cross(q.xyz, t);
+}
 
 vec3 unpackRgb24(float v) {
   float r = floor(v / 65536.0);
@@ -898,9 +904,13 @@ void main() {
   vFadesAndTexture.yz = vec2(mod(materialFlags, 2.0), mod(floor(materialFlags / 2.0), 2.0));
 
   vec3 effDelta = vec3(0.0);
+  vec4 effQuat = vec4(0.0, 0.0, 0.0, 1.0);
   if (slotIdx > 0) {
     for (int i = 1; i < 32; i++) {
-      if (i == slotIdx) effDelta = uEffectDeltas[i];
+      if (i == slotIdx) {
+        effDelta = uEffectDeltas[i];
+        effQuat = uEffectQuats[i];
+      }
     }
   }
 
@@ -967,6 +977,10 @@ void main() {
     }
   }
 
+  if (slotIdx > 0 && uIs2D < 0.5) {
+    worldPos = vfxQuatRotate(effQuat, worldPos);
+    curVel = vfxQuatRotate(effQuat, curVel);
+  }
   worldPos += effDelta;
   vCustom1 = aCustom1;
   vUberMatRow = aAtlasP7.w;
@@ -1044,21 +1058,33 @@ void main() {
         localQ = vec3(posLocal.x * curSize, offLocal.z * curSize, -posLocal.y * curSizeY * aspectY);
         localN = vec3(0.0, 1.0, 0.0);
       }
-      vec3 worldQuad = worldPos + rotMat * localQ;
+      vec3 quadOff = rotMat * localQ;
+      vec3 quadN = rotMat * localN;
+      if (slotIdx > 0) {
+        quadOff = vfxQuatRotate(effQuat, quadOff);
+        quadN = vfxQuatRotate(effQuat, quadN);
+      }
+      vec3 worldQuad = worldPos + quadOff;
       vec4 mvQuad = modelViewMatrix * vec4(worldQuad, 1.0);
-      vNormalView = mat3(modelViewMatrix) * (rotMat * localN);
+      vNormalView = mat3(modelViewMatrix) * quadN;
       vViewDirView = -mvQuad.xyz;
       gl_Position = projectionMatrix * mvQuad;
     } else if (renderMode > 0.5 && renderMode < 1.5) {
       float c = cos(rot);
       float s = sin(rot);
-      vec3 worldQuad = worldPos + vec3(
+      vec3 quadOff = vec3(
         (posLocal.x * c - posLocal.y * s) * curSize,
         offLocal.z * curSize,
         -(posLocal.x * s + posLocal.y * c) * curSizeY * aspectY
       );
+      vec3 quadN = vec3(0.0, 1.0, 0.0);
+      if (slotIdx > 0) {
+        quadOff = vfxQuatRotate(effQuat, quadOff);
+        quadN = vfxQuatRotate(effQuat, quadN);
+      }
+      vec3 worldQuad = worldPos + quadOff;
       vec4 mvQuad = modelViewMatrix * vec4(worldQuad, 1.0);
-      vNormalView = mat3(modelViewMatrix) * vec3(0.0, 1.0, 0.0);
+      vNormalView = mat3(modelViewMatrix) * quadN;
       vViewDirView = -mvQuad.xyz;
       gl_Position = projectionMatrix * mvQuad;
     } else if (renderMode > 3.5) {
@@ -1079,7 +1105,7 @@ void main() {
       gl_Position = projectionMatrix * mvQuad;
     } else if (renderMode > 1.5 && renderMode < 2.5) {
       vec4 mvCenter = mvPosCheck;
-      vec3 dirVel3 = length(curVel) > 0.0001 ? curVel : aAtlasP1.xyz;
+      vec3 dirVel3 = length(curVel) > 0.0001 ? curVel : (slotIdx > 0 ? vfxQuatRotate(effQuat, aAtlasP1.xyz) : aAtlasP1.xyz);
       vec3 viewAxis = mat3(modelViewMatrix) * dirVel3;
       float vLen3 = length(viewAxis);
       vec3 axis3 = vLen3 > 0.0001 ? (viewAxis / vLen3) : vec3(0.0, 1.0, 0.0);
@@ -2106,7 +2132,20 @@ export function createAtlasParticlePool({
   };
   const effectDeltas = new Float32Array(32 * 3);
   const effectDeltas2D = new Float32Array(32 * 2);
+  const effectQuats = new Float32Array(32 * 4);
+  for (let i = 0; i < 32; i++) effectQuats[i * 4 + 3] = 1;
   const threeEffectVecs = Array.from({ length: 32 }, () => (THREE && THREE.Vector3 ? new THREE.Vector3() : { x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; } }));
+  const threeEffectQuats = Array.from({ length: 32 }, () => (THREE && THREE.Vector4 ? new THREE.Vector4(0, 0, 0, 1) : { x: 0, y: 0, z: 0, w: 1, set(x, y, z, w) { this.x = x; this.y = y; this.z = z; this.w = w; } }));
+  const scratchRotOut3 = [0, 0, 0];
+  function rotateVecByConjQuat(qx, qy, qz, qw, vx, vy, vz, out) {
+    const cx = -qx, cy = -qy, cz = -qz;
+    const tx = 2 * (cy * vz - cz * vy);
+    const ty = 2 * (cz * vx - cx * vz);
+    const tz = 2 * (cx * vy - cy * vx);
+    out[0] = vx + qw * tx + (cy * tz - cz * ty);
+    out[1] = vy + qw * ty + (cz * tx - cx * tz);
+    out[2] = vz + qw * tz + (cx * ty - cy * tx);
+  }
 
   if (!activeAtlasTex && (mode === '3d' || mode === 'webgl2d' || mode === 'canvas2d')) {
     const proc = createProceduralVfxAtlas(THREE);
@@ -2195,6 +2234,7 @@ export function createAtlasParticlePool({
       },
       uWind: windUniform,
       uEffectDeltas: { value: threeEffectVecs },
+      uEffectQuats: { value: threeEffectQuats },
       ...(ch.distortion ? { ...softDepthUniforms, ...sceneColorUniforms } : softDepthUniforms),
     };
 
@@ -2433,13 +2473,17 @@ export function createAtlasParticlePool({
   }
 
   /**
-   * Updates active local-space effect anchor offset (`slotIdx` in `1..31`).
+   * Updates active local-space effect anchor transform (`slotIdx` in `1..31`).
    * @param {number} slotIdx
-   * @param {number} x
-   * @param {number} y
-   * @param {number} z
+   * @param {number} [x=0]
+   * @param {number} [y=0]
+   * @param {number} [z=0]
+   * @param {number} [qx=0]
+   * @param {number} [qy=0]
+   * @param {number} [qz=0]
+   * @param {number} [qw=1]
    */
-  function setEffectOffset(slotIdx, x = 0, y = 0, z = 0) {
+  function setEffectTransform(slotIdx, x = 0, y = 0, z = 0, qx = 0, qy = 0, qz = 0, qw = 1) {
     const idx = slotIdx | 0;
     if (idx <= 0 || idx >= 32) return;
     effectDeltas[idx * 3] = x;
@@ -2448,6 +2492,29 @@ export function createAtlasParticlePool({
     effectDeltas2D[idx * 2] = x;
     effectDeltas2D[idx * 2 + 1] = y;
     threeEffectVecs[idx].set(x, y, z);
+    const qLen = Math.hypot(qx, qy, qz, qw);
+    const inv = qLen > 1e-8 ? (1 / qLen) : 0;
+    const qb = idx * 4;
+    const nqx = inv > 0 ? qx * inv : 0;
+    const nqy = inv > 0 ? qy * inv : 0;
+    const nqz = inv > 0 ? qz * inv : 0;
+    const nqw = inv > 0 ? qw * inv : 1;
+    effectQuats[qb] = nqx;
+    effectQuats[qb + 1] = nqy;
+    effectQuats[qb + 2] = nqz;
+    effectQuats[qb + 3] = nqw;
+    threeEffectQuats[idx].set(nqx, nqy, nqz, nqw);
+  }
+
+  /**
+   * Updates active local-space effect anchor offset (`slotIdx` in `1..31`).
+   * @param {number} slotIdx
+   * @param {number} x
+   * @param {number} y
+   * @param {number} z
+   */
+  function setEffectOffset(slotIdx, x = 0, y = 0, z = 0) {
+    setEffectTransform(slotIdx, x, y, z, 0, 0, 0, 1);
   }
 
   function pickBlendChannel(opts) {
@@ -2554,10 +2621,31 @@ export function createAtlasParticlePool({
     let px0 = opts.x ?? 0;
     let py0 = opts.y ?? 0;
     let pz0 = opts.z ?? 0;
+    let lvx = opts.vx ?? 0;
+    let lvy = opts.vy ?? 0;
+    let lvz = opts.vz ?? 0;
+    let lAccelX = opts.accelX ?? 0;
+    let lAccelZ = opts.accelZ ?? 0;
+    let lCenterOffX = opts.centerOffX ?? 0;
+    let lCenterOffZ = opts.centerOffZ ?? 0;
     if (slotIdx > 0) {
       px0 -= effectDeltas[slotIdx * 3];
       py0 -= effectDeltas[slotIdx * 3 + 1];
       pz0 -= effectDeltas[slotIdx * 3 + 2];
+      if (!is2D) {
+        const qb = slotIdx * 4;
+        const eqx = effectQuats[qb], eqy = effectQuats[qb + 1], eqz = effectQuats[qb + 2], eqw = effectQuats[qb + 3];
+        if (Math.abs(eqx) + Math.abs(eqy) + Math.abs(eqz) > 1e-7) {
+          rotateVecByConjQuat(eqx, eqy, eqz, eqw, px0, py0, pz0, scratchRotOut3);
+          px0 = scratchRotOut3[0]; py0 = scratchRotOut3[1]; pz0 = scratchRotOut3[2];
+          rotateVecByConjQuat(eqx, eqy, eqz, eqw, lvx, lvy, lvz, scratchRotOut3);
+          lvx = scratchRotOut3[0]; lvy = scratchRotOut3[1]; lvz = scratchRotOut3[2];
+          rotateVecByConjQuat(eqx, eqy, eqz, eqw, lAccelX, 0, lAccelZ, scratchRotOut3);
+          lAccelX = scratchRotOut3[0]; lAccelZ = scratchRotOut3[2];
+          rotateVecByConjQuat(eqx, eqy, eqz, eqw, lCenterOffX, opts.centerOffY ?? 0, lCenterOffZ, scratchRotOut3);
+          lCenterOffX = scratchRotOut3[0]; lCenterOffZ = scratchRotOut3[2];
+        }
+      }
     }
 
     const nStr = opts.noiseStrength ?? 0;
@@ -2588,9 +2676,9 @@ export function createAtlasParticlePool({
     ch.p0[i4 + 2] = pz0;
     ch.p0[i4 + 3] = spawnTime;
 
-    ch.p1[i4] = opts.vx ?? 0;
-    ch.p1[i4 + 1] = opts.vy ?? 0;
-    ch.p1[i4 + 2] = opts.vz ?? 0;
+    ch.p1[i4] = lvx;
+    ch.p1[i4 + 1] = lvy;
+    ch.p1[i4 + 2] = lvz;
     ch.p1[i4 + 3] = storedDur;
 
     ch.p2[i4] = opts.sizeStart ?? 1.0;
@@ -2625,8 +2713,8 @@ export function createAtlasParticlePool({
     ch.p5[i4 + 2] = opts.orbitalY ?? 0;
     ch.p5[i4 + 3] = phaseByte + slotIdx * 256 + windQ * 8192 + scrollQ * 262144;
 
-    ch.p6[i4] = pack2x12Sym(opts.centerOffX ?? 0, opts.centerOffZ ?? 0, 64, 64);
-    ch.p6[i4 + 1] = pack2x12Sym(opts.accelX ?? 0, opts.accelZ ?? 0, 64, 64);
+    ch.p6[i4] = pack2x12Sym(lCenterOffX, lCenterOffZ, 64, 64);
+    ch.p6[i4 + 1] = pack2x12Sym(lAccelX, lAccelZ, 64, 64);
     ch.p6[i4 + 2] = pack2x12Sym(wrapAngleSignedPi(opts.rotX ?? 0), wrapAngleSignedPi(opts.rotY ?? 0), Math.PI, Math.PI);
     ch.p6[i4 + 3] = pack2x12Sym(opts.spinX ?? 0, opts.spinY ?? 0, 32, 32);
 
@@ -2681,13 +2769,13 @@ export function createAtlasParticlePool({
         px: px0,
         py: py0,
         pz: pz0,
-        vx: opts.vx ?? 0,
-        vy: opts.vy ?? 0,
-        vz: opts.vz ?? 0,
+        vx: lvx,
+        vy: lvy,
+        vz: lvz,
         gravity: opts.gravity ?? 0,
         drag: opts.drag ?? 0,
-        accelX: opts.accelX ?? 0,
-        accelZ: opts.accelZ ?? 0,
+        accelX: lAccelX,
+        accelZ: lAccelZ,
         windMul: Number(opts.windMul ?? 0),
         clampVel: clampVelCfg,
         rotBySpeed: rotSpeedCfg,
@@ -3124,7 +3212,14 @@ export function createAtlasParticlePool({
     timeUniform.value = 0;
     effectDeltas.fill(0);
     effectDeltas2D.fill(0);
-    for (let i = 0; i < 32; i++) threeEffectVecs[i].set(0, 0, 0);
+    for (let i = 0; i < 32; i++) {
+      threeEffectVecs[i].set(0, 0, 0);
+      effectQuats[i * 4] = 0;
+      effectQuats[i * 4 + 1] = 0;
+      effectQuats[i * 4 + 2] = 0;
+      effectQuats[i * 4 + 3] = 1;
+      threeEffectQuats[i].set(0, 0, 0, 1);
+    }
     for (let c = 0; c < channels.length; c++) {
       const ch = channels[c];
       ch.cursor = 0;
@@ -3198,6 +3293,7 @@ export function createAtlasParticlePool({
     setQualityTier,
     hasActiveDistortion,
     setWind,
+    setEffectTransform,
     setEffectOffset,
     emit,
     updateSlot,

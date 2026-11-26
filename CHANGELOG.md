@@ -2,7 +2,13 @@
 
 ## Unreleased
 
-- Support full root `rotation` quaternion (`[x, y, z, w]`) on `createEffectPlayer().playEffect`, `follow`, and `handle.setTransform`, rotating 3D emission positions/directions/velocities/offsets, `vfx-shuriken-kernel` local space (`setEffectTransform`), and `vfx-mesh` orientation (note: `vfx-atlas-particles` local slots still track translation deltas only, and sub-emitters inherit root yaw only).
+- Decouple Unity `ShapeModule.m_Position` (`shape.offset`) from ParticleSystem Transform origin (`layer.offset`) in `scripts/import-unity-vfx.mjs` and `assets/runtime/vfx/vfx-recipes.js` so `orbital` and `radial` velocities pivot around `layer.offset` rather than the offset shape center; replace approximate XYZ-clamped `quatToYxzEuler` with true `YXZ` decomposition (`Ry * Rx * Rz`) matching GLSL `euler3D` for World/Local billboards (keeping `quatToXyzEuler` for `computeShapeRotation`).
+
+- Fix `meshVfx.readSlotMotion` (`assets/runtime/vfx/vfx-mesh.js`) to compute instantaneous world velocity including `velCurve`, `velRadial`, `orbitalY`, and local-to-world slot quaternion rotation rather than raw initial `s.vx/y/z`.
+
+- Support full 3D root `rotation` quaternion (`[x, y, z, w]`) across all `space: 'local'` slots in `vfx-atlas-particles.js` (`uEffectQuats[32]`, `setEffectTransform`, conjugate inverse-transform on `emit`), `vfx-mesh.js` (`effectQuats`, `setEffectTransform`, `computeSlotQuat`, `spawn`/`updateSlot`/`readSlotMotion`/`readSlotTransform`), and `vfx-recipes.js` (`syncSlotLocalEffects`, `stopSlot` reset, avoiding double-left-multiplying `slot.q` into `transformRot`), matching `vfx-shuriken-kernel` (sub-emitters still inherit root yaw only).
+
+- Support full root `rotation` quaternion (`[x, y, z, w]`) on `createEffectPlayer().playEffect`, `follow`, and `handle.setTransform`, rotating 3D emission positions/directions/velocities/offsets, `vfx-shuriken-kernel` local space (`setEffectTransform`), and `vfx-mesh` orientation (atlas/mesh local slots now upgraded with full 3D root quaternion tracking above).
 
 - Fix `ShapeModule` `arcMode: 'loop' | 'pingpong'` in `vfx-recipes.js` to follow `cycleAge * arcSpeed` without adding per-particle `emitSeq * 0.08` angular scatter.
 

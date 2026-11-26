@@ -1062,7 +1062,7 @@ function parseMinMaxCurveData(block, allowNegative = false) {
   return Number(scalar.toFixed(4));
 }
 
-function quatToYxzEuler([x, y, z, w]) {
+function quatToXyzEuler([x, y, z, w]) {
   const r00 = 1 - 2 * (y * y + z * z);
   const r01 = 2 * (x * y - z * w);
   const r02 = 2 * (x * z + y * w);
@@ -1078,6 +1078,27 @@ function quatToYxzEuler([x, y, z, w]) {
     rz = Math.atan2(-r01, r00);
   } else {
     rx = Math.atan2(r21, r11);
+    rz = 0;
+  }
+  return [Number(rx.toFixed(4)), Number(ry.toFixed(4)), Number(rz.toFixed(4))];
+}
+
+function quatToYxzEuler([x, y, z, w]) {
+  const r00 = 1 - 2 * (y * y + z * z);
+  const r02 = 2 * (x * z + y * w);
+  const r10 = 2 * (x * y + z * w);
+  const r11 = 1 - 2 * (x * x + z * z);
+  const r12 = 2 * (y * z - x * w);
+  const r20 = 2 * (x * z - y * w);
+  const r22 = 1 - 2 * (x * x + y * y);
+  const rx = Math.asin(Math.max(-1, Math.min(1, -r12)));
+  let ry = 0;
+  let rz = 0;
+  if (Math.abs(r12) < 0.9995) {
+    ry = Math.atan2(r02, r22);
+    rz = Math.atan2(r10, r11);
+  } else {
+    ry = Math.atan2(-r20, r00);
     rz = 0;
   }
   return [Number(rx.toFixed(4)), Number(ry.toFixed(4)), Number(rz.toFixed(4))];
@@ -1107,7 +1128,7 @@ function computeShapeRotation(trQuat, sRotMatch, mappedType) {
   const qOff = needsYToMinusZBasis
     ? quatMul(quatMul(qTr, qSh), [-s45, 0, 0, s45])
     : quatMul(qTr, qSh);
-  const euler = quatToYxzEuler(qOff);
+  const euler = quatToXyzEuler(qOff);
   const [x, y, z, w] = qOff;
   const r11 = 1 - 2 * (x * x + z * z);
   const isFlat = mappedType === 'circle' || mappedType === 'donut' || mappedType === 'rectangle';
@@ -1633,16 +1654,6 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
             Number(rSp[1].toFixed(4)),
             Number(toRhsZ(rSp[2]).toFixed(4)),
           ];
-          const nextOff = [
-            Number((offset[0] + shapePosOffset[0]).toFixed(4)),
-            Number((offset[1] + shapePosOffset[1]).toFixed(4)),
-            Number((offset[2] + shapePosOffset[2]).toFixed(4)),
-          ];
-          if (nextOff[0] !== 0 || nextOff[1] !== 0 || nextOff[2] !== 0) {
-            layer.offset = nextOff;
-          } else {
-            delete layer.offset;
-          }
         }
       }
       const sRotM = shapeMod.match(/m_Rotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
@@ -1666,6 +1677,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
         radius: rad > 0 && rad < 0.001 ? Number((rad * shScaleScalar).toFixed(4)) : Number((rad * shScaleScalar).toFixed(3)),
         angle: Number(ang.toFixed(1)),
       };
+      if (shapePosOffset) {
+        shapeObj.offset = shapePosOffset;
+      }
       if (Number(st) === 8 || Number(st) === 9) {
         const coneLen = Number((shapeMod.match(/\blength:\s*([-\d.eE+]+)/) || [])[1] ?? 5);
         if (coneLen > 0) shapeObj.length = Number((coneLen * shScaleScalar).toFixed(3));
@@ -2065,12 +2079,6 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
           if (subTr && (Math.abs(subTr.pos[0]) > 1e-4 || Math.abs(subTr.pos[1]) > 1e-4 || Math.abs(subTr.pos[2]) > 1e-4)) {
             velObj.radialOffset = subTr.pos;
           }
-        } else if (shapePosOffset) {
-          velObj.radialOffset = [
-            Number((-shapePosOffset[0]).toFixed(4)),
-            Number((-shapePosOffset[1]).toFixed(4)),
-            Number((-shapePosOffset[2]).toFixed(4)),
-          ];
         }
       }
       if (Object.keys(velObj).length > 0) layer.velocity = velObj;
