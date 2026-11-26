@@ -95,10 +95,39 @@ function dominantAxis(span) {
   return span.indexOf(s[0]);
 }
 
+export function applyOrbitalY(px, py, pz, vx, vy, vz, cx, cz, omega, age, out) {
+  if (!(Math.abs(omega) > 1e-4)) {
+    out[0] = px;
+    out[1] = py;
+    out[2] = pz;
+    out[3] = vx;
+    out[4] = vy;
+    out[5] = vz;
+    return out;
+  }
+  const theta = omega * age;
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  const rx = px - cx;
+  const rz = pz - cz;
+  const nPx = cx + rx * c - rz * s;
+  const nPz = cz + rx * s + rz * c;
+  const vxRot = vx * c - vz * s;
+  const vzRot = vx * s + vz * c;
+  out[0] = nPx;
+  out[1] = py;
+  out[2] = nPz;
+  out[3] = vxRot - omega * (nPz - cz);
+  out[4] = vy;
+  out[5] = vzRot + omega * (nPx - cx);
+  return out;
+}
+
 export function verifyUnityVfxParity({
   vfxDir = DEFAULT_VFX_DIR,
   oraclePath = '',
   failThreshold = 0.02,
+  integrateOrbital = true,
 } = {}) {
   const resolvedOracle = findOraclePath(oraclePath);
   const oracle = JSON.parse(fs.readFileSync(resolvedOracle, 'utf8').replace(/^\uFEFF/, ''));
@@ -163,6 +192,8 @@ export function verifyUnityVfxParity({
     meshLayersChecked: 0,
     meshLayersWithVerts: 0,
     finiteFailures: 0,
+    velChecksEligible: 0,
+    velChecksSkippedIncoherent: 0,
     centerOutliers: [],
     axisSwaps: [],
     scaleOutliers: [],
@@ -214,6 +245,9 @@ export function verifyUnityVfxParity({
           accelX: opts.accelX || 0,
           accelZ: opts.accelZ || 0,
           drag: opts.drag || 0,
+          orbitalY: opts.orbitalY || 0,
+          centerOffX: opts.centerOffX || 0,
+          centerOffZ: opts.centerOffZ || 0,
           velCurve: opts.velCurve || null,
           clampVelocity: hasClampVelocity(opts.clampVelocity) ? opts.clampVelocity : null,
           phase: opts.phase ?? 0.5,
@@ -264,6 +298,7 @@ export function verifyUnityVfxParity({
 
       const livePts = [];
       const liveVels = [];
+      const orbOut = new Float64Array(6);
       for (const p of capturedParticles) {
         if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z)) {
           stats.finiteFailures++;
@@ -301,8 +336,14 @@ export function verifyUnityVfxParity({
           pz += velObj.vz * vMul * h;
         }
         const finalMul = p.velCurve ? evalCurveVal(p.velCurve, Math.min(1, age / lifeSpan)) : 1;
-        livePts.push([px, py, pz]);
-        liveVels.push([velObj.vx * finalMul, velObj.vy * finalMul, velObj.vz * finalMul]);
+        applyOrbitalY(
+          px, py, pz,
+          velObj.vx * finalMul, velObj.vy * finalMul, velObj.vz * finalMul,
+          p.x - p.centerOffX, p.z - p.centerOffZ,
+          integrateOrbital ? p.orbitalY : 0, age, orbOut,
+        );
+        livePts.push([orbOut[0], orbOut[1], orbOut[2]]);
+        liveVels.push([orbOut[3], orbOut[4], orbOut[5]]);
       }
 
       const posBuf = new Float32Array(3);
@@ -575,19 +616,31 @@ export function verifyUnityVfxParity({
           const oVLen = Math.hypot(ovx, ovy, ovz);
           if (oVLen > 1.5 && oLayer.pCount >= 3 && liveVels.length >= 3) {
             let vx = 0, vy = 0, vz = 0;
-            for (const v of liveVels) { vx += v[0]; vy += v[1]; vz += v[2]; }
+            let sumSpeed = 0;
+            for (const v of liveVels) {
+              vx += v[0]; vy += v[1]; vz += v[2];
+              sumSpeed += Math.hypot(v[0], v[1], v[2]);
+            }
             vx /= liveVels.length; vy /= liveVels.length; vz /= liveVels.length;
+            const meanSpeed = sumSpeed / liveVels.length;
             const ourVLen = Math.hypot(vx, vy, vz);
+            const coherence = ourVLen / Math.max(1e-6, meanSpeed);
             if (ourVLen > 0.5) {
-              const cos = (vx * ovx + vy * ovy + vz * ovz) / (ourVLen * oVLen);
-              if (cos < 0.15) {
-                stats.velFlips.push({
-                  prefab: relSource,
-                  layer: oLayer.name,
-                  cos: Number(cos.toFixed(3)),
-                  oVel: oLayer.velMeanRhs.map((v) => Number(v.toFixed(2))),
-                  ourVel: [vx, vy, vz].map((v) => Number(v.toFixed(2))),
-                });
+              stats.velChecksEligible++;
+              if (coherence < 0.3) {
+                stats.velChecksSkippedIncoherent++;
+              } else {
+                const cos = (vx * ovx + vy * ovy + vz * ovz) / (ourVLen * oVLen);
+                if (cos < 0.15) {
+                  stats.velFlips.push({
+                    prefab: relSource,
+                    layer: oLayer.name,
+                    cos: Number(cos.toFixed(3)),
+                    coherence: Number(coherence.toFixed(3)),
+                    oVel: oLayer.velMeanRhs.map((v) => Number(v.toFixed(2))),
+                    ourVel: [vx, vy, vz].map((v) => Number(v.toFixed(2))),
+                  });
+                }
               }
             }
           }
@@ -621,6 +674,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     centerOutliersCount: summary.centerOutliers.length,
     axisSwapsCount: summary.axisSwaps.length,
     scaleOutliersCount: summary.scaleOutliers.length,
+    velChecksEligible: summary.velChecksEligible,
+    velChecksSkippedIncoherent: summary.velChecksSkippedIncoherent,
     velFlipsCount: summary.velFlips.length,
     meshSpanAxisSwapsCount: summary.meshSpanAxisSwaps.length,
     meshScaleOutliersCount: summary.meshScaleOutliers.length,

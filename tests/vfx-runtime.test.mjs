@@ -6,8 +6,10 @@ import path from 'node:path';
 import * as THREE from '../assets/optional/three/three.module.js';
 import { evaluateVfxFidelity } from '../scripts/score-vfx-fidelity.mjs';
 import { convertUnityPrefab } from '../scripts/import-unity-vfx.mjs';
+import { applyOrbitalY } from '../scripts/verify-unity-vfx-parity.mjs';
 
 import {
+  ATLAS_PARTICLE_VERTEX_GLSL,
   unpack2x12Mixed,
   unpack2x12Pos,
   unpack2x12Sym,
@@ -5477,6 +5479,27 @@ test('local-space mesh and atlas layers follow full 3D root quaternion rotation 
   } finally {
     vfx.dispose();
   }
+});
+
+test('applyOrbitalY rotates position/linear velocity and adds tangential orbital velocity omega x r', () => {
+  const out = new Float64Array(6);
+  const omega = Math.PI / 2;
+  applyOrbitalY(2, 0, 0, 0, 0, 0, 0, 0, omega, 1, out);
+  assert.ok(Math.abs(out[0]) < 1e-6 && Math.abs(out[1]) < 1e-6 && Math.abs(out[2] - 2) < 1e-6,
+    `expected position ~(0,0,2), got (${out[0]}, ${out[1]}, ${out[2]})`);
+  assert.ok(Math.abs(out[3] + Math.PI) < 1e-6 && Math.abs(out[4]) < 1e-6 && Math.abs(out[5]) < 1e-6,
+    `expected tangential velocity ~(-PI,0,0), got (${out[3]}, ${out[4]}, ${out[5]})`);
+
+  applyOrbitalY(2, 0, 0, 1, 0, 0, 0, 0, omega, 1, out);
+  assert.ok(Math.abs(out[3] + Math.PI) < 1e-6 && Math.abs(out[4]) < 1e-6 && Math.abs(out[5] - 1) < 1e-6,
+    `expected rotated linear (0,0,1) + tangential (-PI,0,0), got (${out[3]}, ${out[4]}, ${out[5]})`);
+});
+
+test('ATLAS_PARTICLE_VERTEX_GLSL adds orbital tangential velocity component to curVel.xz', () => {
+  assert.ok(
+    ATLAS_PARTICLE_VERTEX_GLSL.includes('curVel.xz += orbitalY * vec2(-relRot.y, relRot.x)'),
+    'expected 3D atlas vertex shader to include orbital tangential velocity',
+  );
 });
 
 

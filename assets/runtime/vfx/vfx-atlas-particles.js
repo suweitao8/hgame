@@ -948,6 +948,8 @@ void main() {
       float os = sin(oa);
       worldPos.xz = cxz + vec2(rel.x * oc - rel.y * os, rel.x * os + rel.y * oc);
       curVel.xz = vec2(curVel.x * oc - curVel.z * os, curVel.x * os + curVel.z * oc);
+      vec2 relRot = worldPos.xz - cxz;
+      curVel.xz += orbitalY * vec2(-relRot.y, relRot.x);
     }
 
     float nStr = noisePair.x;

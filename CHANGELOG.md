@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Align orbital kinematics with Unity `totalVelocity` semantics across runtime and parity verification: add tangential velocity component (`orbitalY * vec2(-relRot.y, relRot.x)`) to `ATLAS_PARTICLE_VERTEX_GLSL` in `assets/runtime/vfx/vfx-atlas-particles.js` for accurate stretched-billboard alignment; export `applyOrbitalY` and integrate orbital position + total tangential velocity (gated by `integrateOrbital = true`) in `scripts/verify-unity-vfx-parity.mjs`; and add a direction-coherence gate (`coherence >= 0.3`, tracked via `velChecksSkippedIncoherent`) before flagging `velFlips` so isotropic circular/spherical emitters with near-zero mean velocity are not compared on PRNG noise.
+
 - Decouple Unity `ShapeModule.m_Position` (`shape.offset`) from ParticleSystem Transform origin (`layer.offset`) in `scripts/import-unity-vfx.mjs` and `assets/runtime/vfx/vfx-recipes.js` so `orbital` and `radial` velocities pivot around `layer.offset` rather than the offset shape center; replace approximate XYZ-clamped `quatToYxzEuler` with true `YXZ` decomposition (`Ry * Rx * Rz`) matching GLSL `euler3D` for World/Local billboards (keeping `quatToXyzEuler` for `computeShapeRotation`).
 
 - Fix `meshVfx.readSlotMotion` (`assets/runtime/vfx/vfx-mesh.js`) to compute instantaneous world velocity including `velCurve`, `velRadial`, `orbitalY`, and local-to-world slot quaternion rotation rather than raw initial `s.vx/y/z`.
