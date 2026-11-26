@@ -2539,6 +2539,7 @@ def _stabilize_arp_skirt_weights(low_obj, rig, lm, v_co, leg_back_clean):
 
     H = float(lm["height"])
     z_hip = float(lm["z_hip"])
+    y_hip = next((float(b[1].y) for b in lm.get("bones", ()) if b[0] in ("thigh_l", "pelvis")), 0.0)
     z_knee = next((float(b[1].z) for b in lm.get("bones", ()) if b[0] == "calf_l"), lm["z_min"] + 0.27 * H)
     lx = float(lm.get("lx", 0.09 * H))
     is_mini = skirt_band is None
@@ -2659,10 +2660,28 @@ def _stabilize_arp_skirt_weights(low_obj, rig, lm, v_co, leg_back_clean):
         else:
             skirt_mask[vi] = True
             t_down = max(0.0, min(1.0, (sk_hi - pz) / max(sk_hi - sk_lo, 0.05 * H)))
-            max_leg = 0.65 if pz >= z_knee - 0.01 * H else 0.52
-            leg_target = max_leg * (t_down ** 0.78)
+            front_raw = (y_hip - py) / max(0.065 * H, 1e-4)
+            front_fac = max(0.0, min(1.0, 0.5 + 0.5 * front_raw))
+            front_s = front_fac * front_fac * (3.0 - 2.0 * front_fac)
+            mid_band = max(0.048 * H, 0.55 * lx)
+            mid_x = max(0.0, 1.0 - abs(px) / max(mid_band, 1e-4))
+            mid_s = mid_x * mid_x * (3.0 - 2.0 * mid_x)
+            outer_max = 0.62 + 0.32 * front_s
+            mid_max = 0.50 + 0.24 * front_s
+            max_leg = outer_max * (1.0 - mid_s) + mid_max * mid_s
+            if pz < z_knee - 0.01 * H:
+                below_t = max(0.0, min(1.0, (z_knee - 0.01 * H - pz) / max(0.08 * H, 1e-4)))
+                max_leg *= 1.0 - below_t * (0.18 * (1.0 - 0.75 * front_s))
+            leg_pow = 0.78 - 0.23 * front_s
+            leg_target = max_leg * (t_down ** leg_pow)
 
-        crotch_half = max(0.090 * H, 0.85 * lx) if (is_mini and pz < hip_lo) else half_blend_x
+        if is_mini and pz < hip_lo:
+            crotch_half = max(0.090 * H, 0.85 * lx)
+        elif not is_mini:
+            front_crotch = max(0.048 * H, 0.55 * lx)
+            crotch_half = half_blend_x * (1.0 - front_s) + front_crotch * front_s
+        else:
+            crotch_half = half_blend_x
         u = max(-1.0, min(1.0, px / crotch_half))
         w_l_frac = max(0.0, min(1.0, 0.5 + 0.25 * u * (3.0 - u * u)))
         w_r_frac = 1.0 - w_l_frac
@@ -4582,8 +4601,11 @@ def detect_humanoid_landmarks(obj):
             if len(sl) >= 8 and mid_cnt >= 4:
                 half_w = float(np.percentile(np.abs(sl[:, 0]), 92))
                 y_depth = float(np.percentile(sl[:, 1], 92) - np.percentile(sl[:, 1], 8))
-                is_knee_skirt = (half_w >= max(0.162 * H, lx * 1.48) or y_depth >= 0.19 * H) and zt <= z_knee + 0.07 * H
-                is_wide_skirt = half_w >= max(0.165 * H, lx * 1.48)
+                is_knee_skirt = (
+                    half_w >= max(0.162 * H, lx * 1.48, waist_half_w * 1.08)
+                    or (y_depth >= 0.19 * H and waist_half_w < 0.145 * H)
+                ) and zt <= z_knee + 0.07 * H
+                is_wide_skirt = half_w >= max(0.165 * H, lx * 1.48, waist_half_w * 1.12)
                 is_flared_skirt = half_w >= max(0.120 * H, waist_half_w * 1.35)
                 if is_knee_skirt or is_wide_skirt or is_flared_skirt:
                     closed_zs.append(float(zt))
@@ -5371,6 +5393,7 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
     vg_hips = p_vgroups.get("pelvis") or p_vgroups.new(name="pelvis")
     if lm.get("skirt_band") is not None:
         sk_lo, sk_hi = lm["skirt_band"]
+        y_hip = next((float(b[1].y) for b in lm.get("bones", ()) if b[0] in ("thigh_l", "pelvis")), 0.0)
         vg_tl = p_vgroups.get("thigh_l")
         vg_tr = p_vgroups.get("thigh_r")
         vg_cl = p_vgroups.get("calf_l")
@@ -5379,10 +5402,15 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
         sk_mask = (p_co[:, 2] >= sk_lo) & (p_co[:, 2] <= sk_hi) & (np.abs(p_co[:, 0]) <= lm["x_sh"] * 1.15)
         for idx in np.nonzero(sk_mask)[0].tolist():
             px = float(p_co[idx, 0])
+            py = float(p_co[idx, 1])
             pz = float(p_co[idx, 2])
+            front_raw = (y_hip - py) / max(0.065 * H, 1e-4)
+            front_fac = max(0.0, min(1.0, 0.5 + 0.5 * front_raw))
+            front_s = front_fac * front_fac * (3.0 - 2.0 * front_fac)
             mid_b = max(0.0, min(1.0, 1.0 - abs(px) / lx_ref))
             top_t = max(0.0, min(1.0, (pz - sk_lo) / max(sk_hi - sk_lo, 0.05 * H)))
             pelvis_target = min(0.80, 0.22 + 0.36 * top_t + 0.24 * mid_b)
+            pelvis_target *= 1.0 - 0.55 * front_s * (1.0 - mid_b)
 
             def _get_w(vg):
                 if vg is None:
@@ -5397,7 +5425,7 @@ def build_and_bind_run_rig(obj, action_name="Run", anim_glb=""):
             w_cl, w_cr = _get_w(vg_cl), _get_w(vg_cr)
             # Soften left/right leg shear across x=0 inside closed skirt/coat band
             if mid_b > 0.02 and (w_tl + w_tr) > 1e-4:
-                cross = 0.45 * mid_b
+                cross = 0.45 * mid_b * (1.0 - 0.45 * front_s)
                 avg_t = 0.5 * (w_tl + w_tr)
                 w_tl = w_tl * (1.0 - cross) + avg_t * cross
                 w_tr = w_tr * (1.0 - cross) + avg_t * cross
