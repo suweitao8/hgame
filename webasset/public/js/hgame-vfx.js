@@ -117,6 +117,7 @@ const simMeshCache = new Map();
 
 // HGame runtime VFX state
 let hgameVfx = null;
+let hgameVfxIsBench = false;
 let hgameFireTimer = 0;
 let hgameMeshPreview = null;
 
@@ -795,6 +796,7 @@ function disposeSimulation({ keepBench = false } = {}) {
       hgameVfx.dispose();
       hgameVfx = null;
     }
+    hgameVfxIsBench = false;
     registeredBenchAliases.clear();
     activeBenchAtlasPackId = '';
   }
@@ -970,11 +972,16 @@ async function ensureBenchPackAssets(packId) {
 }
 
 async function ensureBenchMeshesLoaded(vfxSys, meshAliases) {
-  if (!vfxMeshIndex.conesmall_tophat && !benchGlbCache.has('conesmall_tophat')) {
-    const tophatGeo = new THREE.CylinderGeometry(0.35, 0.84, 0.34, 24, 1, true);
-    tophatGeo.translate(0, -0.15, 0);
-    vfxSys.registerMesh('conesmall_tophat', tophatGeo);
-    benchGlbCache.set('conesmall_tophat', { gltf: { scene: new THREE.Mesh(tophatGeo) } });
+  if (!registeredBenchAliases.has('conesmall_tophat')) {
+    let cached = benchGlbCache.get('conesmall_tophat');
+    if (!cached) {
+      const tophatGeo = new THREE.CylinderGeometry(0.35, 0.84, 0.34, 24, 1, true);
+      tophatGeo.translate(0, -0.15, 0);
+      cached = { geo: tophatGeo };
+      benchGlbCache.set('conesmall_tophat', cached);
+    }
+    vfxSys.registerMesh('conesmall_tophat', cached.geo);
+    registeredBenchAliases.add('conesmall_tophat');
   }
   const neededBase = new Set(Object.values(meshAliases || {}));
   const pending = Object.entries(vfxMeshIndex).filter(([k]) => neededBase.has(k) && !benchGlbCache.has(k));
@@ -1004,10 +1011,21 @@ async function ensureBenchMeshesLoaded(vfxSys, meshAliases) {
       await benchGlbInflight.get(mkey);
     }));
   }
+  for (const baseKey of neededBase) {
+    if (registeredBenchAliases.has(baseKey)) continue;
+    const cached = benchGlbCache.get(baseKey);
+    if (cached?.gltf) {
+      const geo = pickSubmeshGeometry(cached.gltf.scene, baseKey);
+      if (geo) {
+        vfxSys.registerMesh(baseKey, geo, { topDownUv: true });
+        registeredBenchAliases.add(baseKey);
+      }
+    }
+  }
   for (const [alias, baseKey] of Object.entries(meshAliases || {})) {
     if (registeredBenchAliases.has(alias)) continue;
     const cached = benchGlbCache.get(baseKey);
-    if (cached) {
+    if (cached?.gltf) {
       const geo = pickSubmeshGeometry(cached.gltf.scene, alias);
       if (geo) {
         vfxSys.registerMesh(alias, geo, { topDownUv: true });
@@ -1960,12 +1978,13 @@ async function loadCurrentVfx() {
 
   try {
     if (item.isShurikenBench) {
-      clearStageRoot({ keepBench: Boolean(hgameVfx) });
+      clearStageRoot({ keepBench: Boolean(hgameVfx && hgameVfxIsBench) });
       stageRoot = new THREE.Group();
       vp.scene.add(stageRoot);
       ensureBenchStage(vp, true);
 
       if (!hgameVfx) {
+        hgameVfxIsBench = true;
         hgameVfx = createVfxSystem({
           mode: '3d',
           sceneOrAdapter: vp.scene,

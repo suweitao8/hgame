@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Add `shape.matrix` for full 3×3 linear transform import of Unity hierarchy TRS × `ShapeModule` (preserving shear, non-uniform scale, and negative scale instead of Euler + averaged scalar fallback), with `sampleShapeAndVelocity` preferring `shape.matrix` while keeping legacy `shape.scale`/`shape.rotation` compatibility.
+
+- Make toktx the default KTX2 encoder for texture packing (`scripts/lib/toktx.mjs` shared resolution via `TOKTX_BIN` / `.hgame.local.json` `tools.toktxPath` / PATH, ETC1S for color and UASTC for data textures, `--genmipmap`); `--require-toktx` / `HGAME_REQUIRE_TOKTX=1` fail closed when it is missing, non-strict fallbacks print a warning, `pack-for-game.mjs --release` refuses the WebP fallback, and `package-game.mjs` audits every packaged `.ktx2` for real compression and a full mip chain (`--allow-uncompressed-ktx2` opts out for development).
+
+- Stream BGM cues of unknown or 10s+ duration through a media element into the existing gain/mix bus instead of decoding them whole (`platform/audio/bgm-player.js`): pause, resume, seek, stop and ducking are preserved, `getBgmState` reports `streaming`, `activeBufferCount` only counts decoded buffers, and explicit `stream: true/false` or a passed `buffer` overrides the heuristic.
+
+- Extend the canvas UI layout with `flexWrap: 'wrap'` + `alignContent`, a `display: 'grid'` mode (`columns`, `rowHeight`, `justifyItems`), auto-fit button text that shrinks to a snapped device-pixel font size before ellipsizing (`autoFit: false` opts out), and labels with `wrap: true` / `maxLines` / `lineHeight` / `verticalAlign`; percentage child sizes now resolve once against the parent's inner size.
+
+- Cap the 2D adapters (`integrations/canvas2d.js`, `webgl2d.js`) at a pixel ratio of 2 by default via a `maxPixelRatio` option that quality presets can only lower, matching the 3D adaptive controller.
+
+- Keep registered WebGPU indirect-culling batches correct while the camera moves: readback answers are filed per batch/view and only applied while the recorded camera pose still covers the current one (translation + rotation sweep, same projection), submissions use frusta widened by the measured motion (`widenFrustumPlanes`), camera cuts and changed bounds draw everything or fall back to the current planes instead of reusing stale indices, and legacy `bounds` batches upload through `setInstanceBoundsRange`. Verified on hardware WebGPU with zero missing instances across turns and cuts.
+
+- State the 2D stack split in the capability map and guides: PixiJS 8 by default, the in-house WebGL2D adapter only for 10k+ instanced sprites and the Pixi-unavailable 2D lighting/post effects.
+
+- Cover the platform glue and verification tools with direct tests: host bridge, trigger volumes, level mounting, the Bilibili Toy bridge and cloud-save adapter, snapshot/playtest/accept failure paths (bad args, missing directories, WebAsset offline or serving another directory, stale acceptance reports), and a reusable `parseSnapshotArgs` module.
+
 - Add the native Bilibili mini-game target and `bl` SDK support, including first-render and rewarded-ad reporting, SDK version checks, and runtime reads of packaged JSON resources.
 
 - Add the native TapTap mini-game target and a shared WeChat, Douyin, and TapTap SDK for login, session and launch data, sharing, and rewarded video.

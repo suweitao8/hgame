@@ -1143,7 +1143,7 @@ function printUsage() {
     '  normalize <mesh.glb> --out <out.glb> [opts]    Rotate (--rx/--ry/--rz), apply transforms, ground/scale/decimate',
     '  remesh-bake --input <glb> --out <glb> [opts]   QuadRemesher + AutoUnwrap + Cycles PBR (--preset low|high, --rig-run)',
     '  character-pack --input <glb>|--from-webasset    Standardize raw AI character -> clean High + rigged Low (+ --upload WebAsset)',
-    '  rig-run --input <glb> --out <out.glb> [opts]   Auto-rig humanoid character + embed looping Run animation QA',
+    '  rig-run --input <glb>|--from-webasset [opts]  Auto-rig humanoid + Run clip (+ --character-id --upload)',
     '  assemble-pbr --mesh <glb> --base-color <png> --roughness <png> [--normal <png>] --out <glb>',
     '  qa <mesh.glb> --out-dir <dir>                  Render multi-view QA images and print mesh/texture diagnostics',
     '  generate --input <img.png> --out <out.glb>     12GB LowVRAM single-view GGUF (--remesh, --low-out, --preset low, --no-rig)',
@@ -1746,6 +1746,29 @@ export function buildCharacterPackPlans(inputPath, outDir, flags = {}) {
   };
 }
 
+async function downloadCharacterModelFromWebasset(webassetUrl, characterId, mode, outPath) {
+  const res = await fetch(`${webassetUrl}/api/assets?q=${encodeURIComponent(characterId)}`, { headers: { Connection: 'close' } });
+  if (!res.ok) throw new Error(`WebAsset lookup failed (${res.status}) for "${characterId}"`);
+  const data = await res.json();
+  const item = (data.items || []).find((x) => x.id === characterId) || data.items?.[0];
+  const modelMeta = item?.models?.[mode];
+  if (!modelMeta?.url) throw new Error(`Character "${characterId}" has no models.${mode} in WebAsset`);
+  const dl = await fetch(`${webassetUrl}${modelMeta.url}`, { headers: { Connection: 'close' } });
+  if (!dl.ok) throw new Error(`Failed downloading models.${mode} GLB (${dl.status})`);
+  await mkdir(path.dirname(outPath), { recursive: true });
+  await writeFile(outPath, new Uint8Array(await dl.arrayBuffer()));
+  return { item, modelMeta, filePath: outPath };
+}
+
+async function uploadCharacterModelToWebasset(webassetUrl, characterId, mode, name, filePath) {
+  const bytes = await readFile(filePath);
+  const url = `${webassetUrl}/api/character-models?characterId=${encodeURIComponent(characterId)}&mode=${mode}&name=${encodeURIComponent(name)}`;
+  const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', Connection: 'close' }, body: bytes });
+  const json = await resp.json();
+  if (!resp.ok) throw new Error(`WebAsset upload (${mode}) failed: ${JSON.stringify(json)}`);
+  return json;
+}
+
 async function cmdCharacterPack(config, flags) {
   const webassetUrl = String(flags['webasset-url'] || 'http://127.0.0.1:4174').replace(/\/+$/, '');
   const characterId = String(flags['character-id'] || flags.characterId || '').trim();
@@ -1755,16 +1778,8 @@ async function cmdCharacterPack(config, flags) {
   let inputPath = flags.input ? path.resolve(String(flags.input)) : '';
   if (!inputPath && flags['from-webasset']) {
     if (!characterId) throw new Error('character-pack --from-webasset requires --character-id <id>');
-    const res = await fetch(`${webassetUrl}/api/assets?q=${encodeURIComponent(characterId)}`, { headers: { Connection: 'close' } });
-    if (!res.ok) throw new Error(`WebAsset lookup failed (${res.status}) for "${characterId}"`);
-    const data = await res.json();
-    const item = (data.items || []).find((x) => x.id === characterId) || data.items?.[0];
-    const highModelUrl = item?.models?.high?.url;
-    if (!highModelUrl) throw new Error(`Character "${characterId}" has no models.high in WebAsset`);
-    const dl = await fetch(`${webassetUrl}${highModelUrl}`, { headers: { Connection: 'close' } });
-    if (!dl.ok) throw new Error(`Failed downloading raw high GLB (${dl.status})`);
-    inputPath = path.join(outDir, `${characterId}_raw_high.glb`);
-    await writeFile(inputPath, new Uint8Array(await dl.arrayBuffer()));
+    const dl = await downloadCharacterModelFromWebasset(webassetUrl, characterId, 'high', path.join(outDir, `${characterId}_raw_high.glb`));
+    inputPath = dl.filePath;
   }
   if (!inputPath) {
     throw new Error('character-pack requires --input <raw_high.glb> or (--from-webasset --character-id <id>)');
@@ -1797,19 +1812,11 @@ async function cmdCharacterPack(config, flags) {
   let uploaded = null;
   if (flags.upload) {
     if (!characterId) throw new Error('character-pack --upload requires --character-id <id>');
-    const uploadOne = async (mode, name, filePath) => {
-      const bytes = await readFile(filePath);
-      const url = `${webassetUrl}/api/character-models?characterId=${encodeURIComponent(characterId)}&mode=${mode}&name=${encodeURIComponent(name)}`;
-      const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', Connection: 'close' }, body: bytes });
-      const json = await resp.json();
-      if (!resp.ok) throw new Error(`WebAsset upload (${mode}) failed: ${JSON.stringify(json)}`);
-      return json;
-    };
     const highName = `${plans.slug}_clean_high.glb`;
     const lowName = flags['no-rig'] ? `${plans.slug}_clean_low.glb` : `${plans.slug}_clean_low_run.glb`;
     uploaded = {
-      ...(plans.lowOnly ? {} : { high: await uploadOne('high', highName, plans.highOut) }),
-      low: await uploadOne('low', lowName, plans.lowOut),
+      ...(plans.lowOnly ? {} : { high: await uploadCharacterModelToWebasset(webassetUrl, characterId, 'high', highName, plans.highOut) }),
+      low: await uploadCharacterModelToWebasset(webassetUrl, characterId, 'low', lowName, plans.lowOut),
     };
   }
 
@@ -1828,6 +1835,36 @@ async function cmdCharacterPack(config, flags) {
     },
     uploaded,
   }, null, 2));
+}
+
+async function cmdRigRun(config, flags, positional) {
+  const webassetUrl = String(flags['webasset-url'] || 'http://127.0.0.1:4174').replace(/\/+$/, '');
+  const characterId = String(flags['character-id'] || flags.characterId || '').trim();
+  const slug = (characterId || 'asset').replace(/[^A-Za-z0-9_-]/g, '_');
+  const workDir = path.resolve(flags['out-dir'] || flags.outDir || path.join(process.cwd(), '.tmp', 'rig-run', slug));
+
+  let inputPath = flags.input || positional[0] ? path.resolve(String(flags.input || positional[0])) : '';
+  let uploadName = `${slug}_clean_low_run.glb`;
+  if (!inputPath && flags['from-webasset']) {
+    if (!characterId) throw new Error('rig-run --from-webasset requires --character-id <id>');
+    const dl = await downloadCharacterModelFromWebasset(webassetUrl, characterId, 'low', path.join(workDir, `${slug}_src_low.glb`));
+    inputPath = dl.filePath;
+    if (dl.modelMeta?.name) uploadName = String(dl.modelMeta.name);
+  }
+  const outPath = flags.out
+    ? path.resolve(String(flags.out))
+    : (characterId ? path.join(workDir, uploadName) : '');
+  if (!inputPath || !outPath) {
+    throw new Error('Usage: node scripts/process-model3d.mjs rig-run --input <mesh.glb>|--from-webasset --character-id <id> --out <out.glb> [options]');
+  }
+  await mkdir(path.dirname(outPath), { recursive: true });
+  const summary = runBlenderHelper(config, buildBlenderRigRunArgs(inputPath, outPath, flags));
+  let uploaded = null;
+  if (flags.upload) {
+    if (!characterId) throw new Error('rig-run --upload requires --character-id <id>');
+    uploaded = await uploadCharacterModelToWebasset(webassetUrl, characterId, 'low', uploadName, outPath);
+  }
+  console.log(JSON.stringify({ ...summary, uploaded }, null, 2));
 }
 
 async function main() {
@@ -1889,11 +1926,7 @@ async function main() {
   }
 
   if (command === 'rig-run') {
-    const input = flags.input || positional[0];
-    const out = flags.out;
-    if (!input || !out) throw new Error('Usage: node scripts/process-model3d.mjs rig-run --input <mesh.glb> --out <out.glb> [options]');
-    const summary = runBlenderHelper(config, buildBlenderRigRunArgs(input, out, flags));
-    console.log(JSON.stringify(summary, null, 2));
+    await cmdRigRun(config, flags, positional);
     return;
   }
 

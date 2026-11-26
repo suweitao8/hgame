@@ -135,8 +135,16 @@ export function compileMinMaxCurve(cfg, defaultVal = 0) {
         lut: compileCurveLut16(cfg.curve, scalar, defaultVal),
       };
     }
-    const min = Number.isFinite(cfg.min) ? cfg.min : (Number.isFinite(cfg.value) ? cfg.value : defaultVal);
-    const max = Number.isFinite(cfg.max) ? cfg.max : min;
+    const min = Number.isFinite(cfg.min)
+      ? cfg.min
+      : (Number.isFinite(cfg.minScalar)
+        ? cfg.minScalar
+        : (Number.isFinite(cfg.value)
+          ? cfg.value
+          : (Number.isFinite(cfg.scalar) ? cfg.scalar : defaultVal)));
+    const max = Number.isFinite(cfg.max)
+      ? cfg.max
+      : (Number.isFinite(cfg.minScalar) && Number.isFinite(cfg.scalar) ? cfg.scalar : min);
     return min !== max ? { kind: 'range', min, max } : { kind: 'const', v: min };
   }
   return { kind: 'const', v: defaultVal };
@@ -1036,7 +1044,10 @@ void vfxExecuteVertexShell(vec3 rawPos, vec3 rawNormal, vec2 rawUv0, vec2 rawUv2
       float yLen = length(axisY);
       axisY = yLen > 0.001 ? (axisY / yLen) : vec3(0.0, 1.0, 0.0);
       vec3 axisZ = cross(axisX, axisY);
-      float major = aInstScale.y * max(0.05, aInstRot.w) + spd * aInstScale.w;
+      float signedLenScale = (aInstScale.w <= 0.0001 && abs(aInstRot.w) < 0.05)
+        ? (aInstRot.w < 0.0 ? -0.05 : 0.05)
+        : aInstRot.w;
+      float major = aInstScale.y * signedLenScale + spd * aInstScale.w;
       vec2 p2 = vec2((quadLocal.x - 0.5) * major, quadLocal.y * aInstScale.x);
       worldPos = aInstPos.xyz + axisX * p2.x + axisY * p2.y + axisZ * scaled2D.z;
       worldNormal = camDir;
@@ -1353,9 +1364,15 @@ vec4 vfxEvalPilotoWarpFragment(
     bool clampDistV = vfxHasFlag(texMask, ${UBER_CLAMP_BIT_MAIN_V.toFixed(1)});
     vec2 dUv = coordBase * distST.xy + distST.zw + pan0.xy * timeSec;
     vec4 nSamp = vfxSampleAtlasRectWrapped(atlasTex, distRect, dUv, flipV, clampDistU, clampDistV);
-    nOffset = vfxHasFlag(flags, ${UBER_FLAG_UNPACK_NORMALS.toFixed(1)})
-      ? (nSamp.xy * 2.0 - 1.0)
-      : (nSamp.xy - vec2(0.5));
+    if (vfxHasFlag(flags, ${UBER_FLAG_UNPACK_NORMALS.toFixed(1)})) {
+      nOffset = nSamp.xy * 2.0 - 1.0;
+    } else {
+      // Non-normal distortion textures (rings/noise masks) have 0..1 intensity: sample slope gradient so flat/zero areas stay unshifted.
+      float hC = dot(nSamp.rg, vec2(0.5));
+      float hU = dot(vfxSampleAtlasRectWrapped(atlasTex, distRect, dUv + vec2(0.01, 0.0), flipV, clampDistU, clampDistV).rg, vec2(0.5));
+      float hV = dot(vfxSampleAtlasRectWrapped(atlasTex, distRect, dUv + vec2(0.0, 0.01), flipV, clampDistU, clampDistV).rg, vec2(0.5));
+      nOffset = clamp(vec2(hC - hU, hC - hV) * 4.0, vec2(-1.0), vec2(1.0));
+    }
   }
 
   float maskA = 1.0;
@@ -1381,7 +1398,8 @@ vec4 vfxEvalPilotoWarpFragment(
   float alpha = clamp(maskA * clamp(vColor.a, 0.0, 1.0) * softMul, 0.0, 1.0);
   if (alpha < 0.01) discard;
 
-  float strength = params0.z * clamp(vColor.a, 0.0, 1.0) * softMul;
+  float normStr = params0.z / (1.0 + abs(params0.z) * 35.0);
+  float strength = normStr * maskA * clamp(vColor.a, 0.0, 1.0) * softMul;
   vec2 screenUv = fragCoord * invViewport;
   vec2 refrUv = clamp(screenUv + nOffset * strength, vec2(0.002), vec2(0.998));
   vec3 sceneCol = texture2D(sceneTex, refrUv).rgb;

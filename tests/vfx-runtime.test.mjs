@@ -8,6 +8,7 @@ import { evaluateVfxFidelity } from '../scripts/score-vfx-fidelity.mjs';
 import { convertUnityPrefab } from '../scripts/import-unity-vfx.mjs';
 
 import {
+  unpack2x12Mixed,
   unpack2x12Pos,
   unpack2x12Sym,
   unpackUvPair,
@@ -19,6 +20,7 @@ import {
   packUberMaterialRow,
 } from '../assets/runtime/vfx/vfx-shader-chunks.js';
 import { createEffectPlayer } from '../assets/runtime/vfx/vfx-recipes.js';
+import { getShaderProfile } from '../assets/runtime/vfx/vfx-shader-profiles.js';
 import {
   ATLAS_PARTICLE_FRAGMENT_GLSL,
   CROWD_STATUS,
@@ -1482,10 +1484,18 @@ test('Unity Shader/Blend/Pivot/Shape parity & convertUnityPrefab extract _TintCo
     const p3 = multMesh.geometry.getAttribute('aAtlasP3').array;
     const p7 = multMesh.geometry.getAttribute('aAtlasP7').array;
     const decPivot = unpack2x12Sym(p3[2], 2, 2);
-    const decStretch = unpack2x12Pos(p3[3], 15, 15);
+    const decStretch = unpack2x12Mixed(p3[3], 15, 15);
     const decHdrEm = unpack2x12Pos(p3[1], 35, 35);
     assert.ok(Math.abs(decPivot[0] - 0.25) < 0.01 && Math.abs(decPivot[1] + 0.5) < 0.01, 'pivot packed in aAtlasP3.z');
     assert.ok(Math.abs(decStretch[0] - 0.25) < 0.01 && Math.abs(decStretch[1] - 1.5) < 0.01, 'velocityScale/lengthScale packed in aAtlasP3.w');
+    const negLenSlot = vfx.atlasParticles.emit({
+      x: 0, y: 0, z: 0, vx: 0, vy: 2, vz: 2,
+      blend: 'multiply',
+      duration: 1.0, renderMode: 'stretched', lengthScale: -2.0, velocityScale: 0,
+    });
+    assert.ok(negLenSlot >= 0);
+    const negDec = unpack2x12Mixed(p3[negLenSlot * 4 + 3], 15, 15);
+    assert.ok(Math.abs(negDec[1] + 2.0) < 0.02, `negative lengthScale (-2.0) preserved in aAtlasP3.w, got ${negDec[1]}`);
     assert.ok(Math.abs(decHdrEm[1] - 2.5) < 0.01, 'emissionBoost packed in aAtlasP3.y');
     assert.equal(Math.floor(p2[3] / 262144) % 4, 2, 'cullMode front (2) packed in aAtlasP2.w');
 
@@ -1828,6 +1838,10 @@ test('Piloto ShaderGraph parity: UberFXSG, Piloto Warp, PBR FX packing, Distorte
     vfx.setQualityTier('low');
     assert.equal(vfx.hasActiveDistortion(), false, 'low quality tier disables distortion grab');
     vfx.setQualityTier('high');
+    const warpProfile = getShaderProfile('piloto_warp');
+    assert.ok(!warpProfile.fragmentShader.includes('nSamp.xy - vec2(0.5)'), 'piloto_warp profile avoids -0.5 bias on non-normal distortion masks');
+    assert.ok(!VFX_UBER_FRAGMENT_GLSL.includes('nSamp.xy - vec2(0.5)'), 'vfxEvalPilotoWarpFragment avoids -0.5 bias on non-normal distortion masks');
+    assert.ok(VFX_UBER_FRAGMENT_GLSL.includes('normStr * maskA'), 'vfxEvalPilotoWarpFragment attenuates and bounds screen-space refraction by maskA');
 
     // Also confirm atlas particle Custom1 curve + ClampVelocity
     const atlasCh = scene.getObjectByName('HGameVfxAtlasAdditive');
@@ -3037,7 +3051,7 @@ test('atlas shaders add pivot offset positively, use subtle minBill floor, clamp
   const path = await import('node:path');
 
   assert.match(ATLAS_PARTICLE_VERTEX_GLSL, /vec2 posLocal = position\.xy \+ pivotPair;/, '3D billboard/vertical/horizontal particles offset +pivot matching Unity ParticleSystemRenderer.pivot');
-  assert.match(ATLAS_PARTICLE_VERTEX_GLSL, /float stretchX = \(posLocal\.x - pivotPair\.x\) - 0\.5 \+ pivotPair\.y;/, 'stretched mode preserves original stretch pivot convention');
+  assert.match(ATLAS_PARTICLE_VERTEX_GLSL, /float stretchX = \(posLocal\.x - pivotPair\.x\) - 0\.5 \+ \(major < 0\.0 \? -pivotPair\.y : pivotPair\.y\);/, 'stretched mode preserves stretch pivot convention for signed lengthScale');
   assert.match(ATLAS_PARTICLE_VERTEX_GLSL, /abs\(mvCenter\.z\) \* 0\.0010/, 'minBill keeps tiny micro-sparks from blowing up in world/bloom size');
   assert.match(ATLAS_PARTICLE_WEBGL2_2D_VS, /vec2 posLocal = aQuadPos \+ pivotPair;/, '2D atlas particles offset +pivot consistently');
   assert.match(BLOOM_PREFILTER_FRAGMENT_GLSL3, /if \(pk > 4\.0\) c \*= 4\.0 \/ pk;/, 'bloom prefilter clamps extreme HDR spark fireflies');
@@ -3838,10 +3852,12 @@ ParticleSystemRenderer:
     const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'box_lunge_test' });
     const layer = recipe.layers[0];
     assert.equal(layer.shape.type, 'box');
-    assert.deepEqual(layer.shape.size, [0.36, 6, 0.6]);
+    assert.deepEqual(layer.shape.size, [0.6, 0.6, 0.6]);
     assert.equal(layer.shape.shell, undefined);
     assert.equal(layer.shape.scale, undefined);
-    assert.ok(Array.isArray(layer.shape.rotation) && Math.abs(layer.shape.rotation[0] + Math.PI * 0.5) < 0.01);
+    assert.equal(layer.shape.rotation, undefined);
+    assert.ok(Array.isArray(layer.shape.matrix) && layer.shape.matrix.length === 9);
+    assert.ok(Math.abs(layer.shape.matrix[7] + 10) < 0.01 && Math.abs(layer.shape.matrix[5] - 1) < 0.01);
 
     const xs = [];
     const ys = [];
@@ -4116,9 +4132,11 @@ ParticleSystemRenderer:
     const lShape = recipe.layers.find((l) => l.name === 'modeshapechild');
     const lMesh = recipe.layers.find((l) => l.name === 'manifestmeshlayer');
     assert.equal(lHier.size, 2, 'scalingMode=0 multiplies particle size by hierarchy scale 2');
-    assert.deepEqual(lHier.shape.scale, [1, 7, 1], 'cone m_Scale.z=7 maps to HGame Y (beam length)');
+    assert.equal(lHier.shape.scale, undefined);
+    assert.ok(Array.isArray(lHier.shape.matrix) && Math.abs(lHier.shape.matrix[7] + 7) < 0.01, 'cone m_Scale.z=7 maps to -Z beam axis in shape.matrix');
     assert.equal(lLocal.size, 1.5, 'scalingMode=1 uses own scale 1.5 and ignores parent scale 2');
-    assert.ok(Array.isArray(lLocal.shape.rotation) && Math.abs(lLocal.shape.rotation[0] + Math.PI * 0.5) < 0.02, 'sphere preserves non-uniform m_Rotation');
+    assert.equal(lLocal.shape.rotation, undefined);
+    assert.ok(Array.isArray(lLocal.shape.matrix) && Math.abs(lLocal.shape.matrix[5] - 0.5) < 0.01, 'sphere preserves rotated non-uniform m_Scale in shape.matrix');
     assert.equal(lShape.size, 1, 'scalingMode=2 keeps particle size at 1 while shape radius scales by 2');
     assert.equal(lShape.shape.radius, 2);
 
@@ -4790,6 +4808,375 @@ test('convertUnityPrefab + createVfxSystem converge Shape-disabled Local subEmit
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('clampVelocity drag/separateAxis, mesh zero-X sizeY/sizeZ, orbitalOffset radial center, and nested arcSpeed', () => {
+  // 1. atlasParticles + meshVfx + trackedParticle trail clampVelocity.drag & separateAxis
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxAtlasParticles: 16, maxMeshVfx: 8, maxTrails: 16 });
+  try {
+    const aIdx = vfx.atlasParticles.emit({
+      x: 0, y: 0, z: 0,
+      vx: 20, vy: 0, vz: 0,
+      duration: 1.0,
+      clampVelocity: { limit: 1, dampen: 0, drag: { scalar: 10 } },
+    });
+    assert.ok(aIdx >= 0);
+
+    const mIdx = vfx.meshVfx.spawn({
+      mesh: 'crystal',
+      x: 0, y: 0, z: 0,
+      vx: 20, vy: 20, vz: 0,
+      duration: 1.0,
+      sizeStart: 0.4,
+      clampVelocity: { separateAxis: true, x: 1, y: 100, z: 1, dampen: 1 },
+    });
+    assert.ok(mIdx >= 0);
+
+    for (let i = 0; i < 12; i++) vfx.update(1 / 60);
+
+    const atlasNorm = scene.getObjectByName('HGameVfxAtlasNormal');
+    const p0Arr = atlasNorm.geometry.getAttribute('aAtlasP0').array;
+    const p1Arr = atlasNorm.geometry.getAttribute('aAtlasP1').array;
+    assert.ok(p0Arr[aIdx * 4] < 2.2, `expected clampVelocity.drag to keep atlas particle < 2.2m, got ${p0Arr[aIdx * 4]}`);
+    assert.ok(p1Arr[aIdx * 4] < 3.5, `expected clampVelocity.drag to slow atlas vx < 3.5, got ${p1Arr[aIdx * 4]}`);
+
+    const mPos = new Float32Array(3);
+    const mQuat = new Float32Array(4);
+    const mScale = new Float32Array(3);
+    assert.ok(vfx.meshVfx.readSlotTransform(mIdx, mPos, mQuat, mScale));
+    assert.ok(mPos[0] < 0.6, `expected separateAxis X clamp < 0.6m, got ${mPos[0]}`);
+    assert.ok(mPos[1] > 2.5, `expected separateAxis Y free > 2.5m, got ${mPos[1]}`);
+  } finally {
+    vfx.dispose();
+  }
+
+  const scene2 = new THREE.Scene();
+  const vfx2 = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene2, maxAtlasParticles: 16, maxMeshVfx: 8, maxTrails: 16 });
+  try {
+    vfx2.playEffect({
+      schemaVersion: 1,
+      id: 'trail_drag_test',
+      loop: false,
+      duration: 1.0,
+      layers: [
+        {
+          name: 'bloodthread',
+          kind: 'particle',
+          renderMode: 'none',
+          life: 0.6,
+          speed: 15,
+          shape: { type: 'sphere', radius: 0.1 },
+          clampVelocity: { limit: 1, dampen: 0, drag: { scalar: 10 } },
+          bursts: [{ time: 0, count: 1, cycles: 1, interval: 0.01 }],
+          trail: { lifetime: 0.4, width: 0.1, blend: 'alpha' },
+        },
+        {
+          name: 'blade_zero_x',
+          kind: 'mesh',
+          renderMode: 'mesh',
+          mesh: 'crystal',
+          life: 0.8,
+          size: 0,
+          sizeY: 0.25,
+          sizeZ: 1.75,
+          uberMat: { key: 'blade_zero_x_m', shaderKind: 'uber_fx', blend: 'additive' },
+          bursts: [{ time: 0, count: 1, cycles: 1, interval: 0.01 }],
+        },
+        {
+          name: 'water_pull_up',
+          kind: 'particle',
+          renderMode: 'billboard',
+          life: 1.0,
+          size: 0.2,
+          shape: { type: 'circle', radius: 1 },
+          velocity: { orbitalOffset: [0, 5, 0], radial: -10 },
+          bursts: [{ time: 0, count: 4, cycles: 1, interval: 0.01 }],
+        },
+      ],
+    }, { x: 0, y: 0, z: 0 });
+    for (let i = 0; i < 15; i++) vfx2.update(1 / 60);
+
+    const ribbonNorm = scene2.getObjectByName('HGameVfxRibbonTrailsNormal');
+    const segB = ribbonNorm.geometry.getAttribute('aSegB').array;
+    const segMeta = ribbonNorm.geometry.getAttribute('aSegMeta').array;
+    let maxRibbonR = 0;
+    for (let s = 0; s < 16 * 7; s++) {
+      const i4 = s * 4;
+      if (segMeta[i4 + 1] > 0) {
+        const r = Math.hypot(segB[i4], segB[i4 + 1], segB[i4 + 2]);
+        if (r > maxRibbonR) maxRibbonR = r;
+      }
+    }
+    assert.ok(maxRibbonR > 0.2 && maxRibbonR < 2.2, `expected dragged trail radius in (0.2, 2.2), got ${maxRibbonR}`);
+
+    const mPos = new Float32Array(3);
+    const mQuat = new Float32Array(4);
+    const mScale = new Float32Array(3);
+    let foundBlade = false;
+    for (let s = 0; s < 16; s++) {
+      if (vfx2.meshVfx.readSlotTransform(s, mPos, mQuat, mScale) && mScale[2] > 1.0) {
+        foundBlade = true;
+        assert.equal(mScale[0], 0, 'size:0 must keep X scale at 0');
+        assert.ok(Math.abs(mScale[1] - 0.25) < 0.02, `expected sizeY~0.25, got ${mScale[1]}`);
+        assert.ok(Math.abs(mScale[2] - 1.75) < 0.02, `expected sizeZ~1.75, got ${mScale[2]}`);
+      }
+    }
+    assert.ok(foundBlade, 'expected mesh layer with size:0 and sizeY/sizeZ > 0 to remain visible');
+
+    const atlasNorm2 = scene2.getObjectByName('HGameVfxAtlasNormal');
+    const p1Arr2 = atlasNorm2.geometry.getAttribute('aAtlasP1').array;
+    let upVelCount = 0;
+    for (let i = 0; i < 8; i++) {
+      if (p1Arr2[i * 4 + 1] > 1.0) upVelCount += 1;
+    }
+    assert.ok(upVelCount >= 1, 'expected velocity.orbitalOffset [0,5,0] with radial:-10 to pull particles upward');
+  } finally {
+    vfx2.dispose();
+  }
+
+  // 2. Unity prefab importer: 6-space indented ShapeModule.arc.speed and rotated orbitalOffset
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-orb-arc-'));
+  try {
+    const prefabPath = path.join(tmpDir, 'OrbArcTest.prefab');
+    fs.writeFileSync(
+      prefabPath,
+      [
+        '%YAML 1.1',
+        '%TAG !u! tag:unity3d.com,2011:',
+        '--- !u!1 &100',
+        'GameObject:',
+        '  m_Name: ArcLayer',
+        '  m_IsActive: 1',
+        '--- !u!4 &101',
+        'Transform:',
+        '  m_GameObject: {fileID: 100}',
+        '  m_LocalRotation: {x: -0.7071068, y: 0, z: 0, w: 0.7071068}',
+        '  m_LocalPosition: {x: 0, y: 0, z: 0}',
+        '  m_LocalScale: {x: 1, y: 1, z: 1}',
+        '  m_Father: {fileID: 0}',
+        '--- !u!198 &102',
+        'ParticleSystem:',
+        '  m_GameObject: {fileID: 100}',
+        '  lengthInSec: 2',
+        '  looping: 0',
+        '  InitialModule:',
+        '    startLifetime:',
+        '      minMaxState: 0',
+        '      scalar: 1',
+        '    startSpeed:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    startSize:',
+        '      minMaxState: 0',
+        '      scalar: 1',
+        '  ShapeModule:',
+        '    enabled: 1',
+        '    type: 10',
+        '    radius:',
+        '      value: 1',
+        '    arc:',
+        '      value: 180',
+        '      mode: 1',
+        '      speed:',
+        '        minMaxState: 0',
+        '        scalar: -3.85',
+        '  VelocityModule:',
+        '    enabled: 1',
+        '    inWorldSpace: 0',
+        '    orbitalOffsetX:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    orbitalOffsetY:',
+        '      minMaxState: 0',
+        '      scalar: 0',
+        '    orbitalOffsetZ:',
+        '      minMaxState: 0',
+        '      scalar: -5',
+        '    radial:',
+        '      minMaxState: 0',
+        '      scalar: 10',
+        '  EmissionModule:',
+        '    enabled: 1',
+        '    rateOverTime:',
+        '      minMaxState: 0',
+        '      scalar: 10',
+        '--- !u!199 &103',
+        'ParticleSystemRenderer:',
+        '  m_GameObject: {fileID: 100}',
+        '  m_Enabled: 1',
+        '  m_RenderMode: 0',
+      ].join('\n'),
+      'utf8',
+    );
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'orb_arc_test' });
+    assert.equal(recipe.layers.length, 1);
+    assert.equal(recipe.layers[0].shape?.arcSpeed, -3.85);
+    assert.ok(
+      Math.abs((recipe.layers[0].velocity?.orbitalOffset?.[1] ?? 0) + 5) < 0.01
+      && Math.abs(recipe.layers[0].velocity?.orbitalOffset?.[2] ?? 0) < 0.01,
+      `expected Rx(-90) orbitalOffset [0,0,-5] -> [0,-5,0], got ${JSON.stringify(recipe.layers[0].velocity?.orbitalOffset)}`,
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('birth subEmitters preserve rateOverDistance in Unity importer and keep following moving parent past delay', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-vfx-birth-rod-'));
+  try {
+    const prefabPath = path.join(tmpDir, 'BirthRodTest.prefab');
+    fs.writeFileSync(
+      prefabPath,
+      [
+        '%YAML 1.1',
+        '%TAG !u! tag:unity3d.com,2011:',
+        '--- !u!1 &100',
+        'GameObject:\n  m_Name: Dot\n  m_IsActive: 1',
+        '--- !u!4 &101',
+        'Transform:\n  m_GameObject: {fileID: 100}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 0}',
+        '--- !u!198 &102',
+        'ParticleSystem:\n  m_GameObject: {fileID: 100}\n  lengthInSec: 1\n  looping: 0\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1\n    startSpeed:\n      minMaxState: 0\n      scalar: 0\n    startSize:\n      minMaxState: 0\n      scalar: 1\n  VelocityModule:\n    enabled: 1\n    inWorldSpace: 0\n    z:\n      minMaxState: 0\n      scalar: 12\n  EmissionModule:\n    enabled: 1\n    rateOverTime:\n      minMaxState: 0\n      scalar: 0\n    m_BurstCount: 1\n    m_Bursts:\n    - serializedVersion: 2\n      time: 0\n      countCurve:\n        scalar: 1\n  SubModule:\n    enabled: 1\n    subEmitters:\n    - emitter: {fileID: 202}\n      type: 0\n      properties: 2\n      emitProbability: 1\n    - emitter: {fileID: 302}\n      type: 2\n      properties: 0\n      emitProbability: 1',
+        '--- !u!199 &103',
+        'ParticleSystemRenderer:\n  m_GameObject: {fileID: 100}\n  m_Enabled: 1\n  m_RenderMode: 5',
+        '--- !u!1 &200',
+        'GameObject:\n  m_Name: TrailCracks\n  m_IsActive: 1',
+        '--- !u!4 &201',
+        'Transform:\n  m_GameObject: {fileID: 200}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 101}',
+        '--- !u!198 &202',
+        'ParticleSystem:\n  m_GameObject: {fileID: 200}\n  lengthInSec: 1\n  looping: 0\n  startDelay:\n    minMaxState: 0\n    scalar: 0.1\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1.5\n    startSpeed:\n      minMaxState: 0\n      scalar: 0\n    startSize:\n      minMaxState: 0\n      scalar: 0.4\n  EmissionModule:\n    enabled: 1\n    rateOverTime:\n      minMaxState: 0\n      scalar: 0\n    rateOverDistance:\n      minMaxState: 0\n      scalar: 2\n    m_BurstCount: 0\n    m_Bursts: []',
+        '--- !u!199 &203',
+        'ParticleSystemRenderer:\n  m_GameObject: {fileID: 200}\n  m_Enabled: 1\n  m_RenderMode: 0',
+        '--- !u!1 &300',
+        'GameObject:\n  m_Name: DeathRateOnly\n  m_IsActive: 1',
+        '--- !u!4 &301',
+        'Transform:\n  m_GameObject: {fileID: 300}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 101}',
+        '--- !u!198 &302',
+        'ParticleSystem:\n  m_GameObject: {fileID: 300}\n  lengthInSec: 1\n  looping: 0\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1\n    startSpeed:\n      minMaxState: 0\n      scalar: 0\n    startSize:\n      minMaxState: 0\n      scalar: 0.4\n  EmissionModule:\n    enabled: 1\n    rateOverTime:\n      minMaxState: 0\n      scalar: 20\n    m_BurstCount: 0\n    m_Bursts: []',
+        '--- !u!199 &303',
+        'ParticleSystemRenderer:\n  m_GameObject: {fileID: 300}\n  m_Enabled: 1\n  m_RenderMode: 0',
+      ].join('\n'),
+      'utf8',
+    );
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'birth_rod_test' });
+    const subs = recipe.layers[0]?.subEmitters || [];
+    assert.equal(subs.length, 1, 'keeps birth rateOverDistance subEmitter and skips death rateOverTime-only subEmitter');
+    assert.equal(subs[0].trigger, 'birth');
+    assert.equal(subs[0].effect.layers[0].rateOverDistance, 2);
+
+    const scene = new THREE.Scene();
+    const vfx = createVfxSystem({ mode: '3d', THREE, sceneOrAdapter: scene, maxAtlasParticles: 64 });
+    try {
+      vfx.registerEffect(recipe);
+      vfx.playEffect('birth_rod_test', { x: 0, y: 0, z: 0 });
+      for (let i = 0; i < 40; i++) vfx.update(1 / 60);
+
+      const atlasNorm = scene.getObjectByName('HGameVfxAtlasNormal');
+      const p0Arr = atlasNorm.geometry.getAttribute('aAtlasP0').array;
+      let minZ = Infinity;
+      let maxZ = -Infinity;
+      let count = 0;
+      for (let i = 0; i < 64; i++) {
+        if (p0Arr[i * 4 + 3] > 0 || p0Arr[i * 4 + 2] !== 0) {
+          const z = p0Arr[i * 4 + 2];
+          if (z < minZ) minZ = z;
+          if (z > maxZ) maxZ = z;
+          count += 1;
+        }
+      }
+      assert.ok(count >= 8, `expected >= 8 trail particles spawned along path, got ${count}`);
+      assert.ok(minZ < -5.0 && maxZ <= -0.5, `expected trail to advance along -Z past delay (z=${minZ.toFixed(2)}..${maxZ.toFixed(2)})`);
+    } finally {
+      vfx.dispose();
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('shape.matrix applies full 3x3 linear transform to circle plane and sphere position/velocity', () => {
+  const emitted = [];
+  const realAtlas = createAtlasParticlePool({ mode: 'headless', maxParticles: 256 });
+  const origEmit = realAtlas.emit.bind(realAtlas);
+  const atlasParticles = Object.assign(Object.create(realAtlas), {
+    emit(opts) {
+      emitted.push({ x: opts.x, y: opts.y, z: opts.z, vx: opts.vx, vy: opts.vy, vz: opts.vz });
+      return origEmit(opts);
+    },
+  });
+  const player = createEffectPlayer({ atlasParticles });
+  try {
+    // (a) circle with Rx(-90°) matrix maps XZ circle into XY plane (|z| < 1e-4)
+    const circleRecipe = {
+      schemaVersion: 1,
+      id: 'shape_matrix_circle',
+      duration: 1,
+      layers: [{
+        kind: 'particle',
+        renderMode: 'billboard',
+        life: 1,
+        speed: 0,
+        bursts: [{ time: 0, count: 32 }],
+        shape: {
+          type: 'circle',
+          radius: 2,
+          matrix: [1, 0, 0, 0, 0, 1, 0, -1, 0],
+        },
+      }],
+    };
+    assert.equal(validateVfxRecipe(circleRecipe).ok, true);
+    player.registerEffect(circleRecipe);
+    player.playEffect('shape_matrix_circle', { x: 0, y: 0, z: 0 });
+    player.update(0.05);
+    assert.equal(emitted.length, 32);
+    for (const p of emitted) {
+      assert.ok(Math.abs(p.z) < 1e-4, `expected circle particle in XY plane (|z| < 1e-4), got z=${p.z}`);
+    }
+
+    // (b) sphere with diag(2, 1, 1) matrix scales X span ~2x Y and aligns velocity with position
+    emitted.length = 0;
+    const sphereRecipe = {
+      schemaVersion: 1,
+      id: 'shape_matrix_sphere',
+      duration: 1,
+      layers: [{
+        kind: 'particle',
+        renderMode: 'billboard',
+        life: 1,
+        speed: 5,
+        bursts: [{ time: 0, count: 120 }],
+        shape: {
+          type: 'sphere',
+          radius: 1,
+          shell: true,
+          matrix: [2, 0, 0, 0, 1, 0, 0, 0, 1],
+        },
+      }],
+    };
+    assert.equal(validateVfxRecipe(sphereRecipe).ok, true);
+    player.registerEffect(sphereRecipe);
+    player.playEffect('shape_matrix_sphere', { x: 0, y: 0, z: 0 });
+    player.update(0.05);
+    assert.equal(emitted.length, 120);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of emitted) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+      const pLen = Math.hypot(p.x, p.y, p.z);
+      const vLen = Math.hypot(p.vx, p.vy, p.vz);
+      const dot = (p.x * p.vx + p.y * p.vy + p.z * p.vz) / (pLen * vLen);
+      assert.ok(dot > 0.999, `expected velocity aligned with position, dot=${dot}`);
+    }
+    const spanX = maxX - minX;
+    const spanY = maxY - minY;
+    const ratio = spanX / spanY;
+    assert.ok(ratio > 1.7 && ratio < 2.3, `expected X/Y span ratio ~2, got ${ratio.toFixed(2)}`);
+  } finally {
+    player.dispose();
+  }
+});
+
 
 
 

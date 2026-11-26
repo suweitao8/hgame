@@ -629,12 +629,20 @@ void main() {
   vec2 nOffset = vec2(0.0);
   if (uHasDistortionTex > 0.5) {
     vec4 nSamp = texture2D(uDistortionTex, distUv);
-    nOffset = uUnpackNormals > 0.5 ? (nSamp.xy * 2.0 - 1.0) : (nSamp.xy - vec2(0.5));
+    if (uUnpackNormals > 0.5) {
+      nOffset = nSamp.xy * 2.0 - 1.0;
+    } else {
+      float hC = dot(nSamp.rg, vec2(0.5));
+      float hU = dot(texture2D(uDistortionTex, distUv + vec2(0.01, 0.0)).rg, vec2(0.5));
+      float hV = dot(texture2D(uDistortionTex, distUv + vec2(0.0, 0.01)).rg, vec2(0.5));
+      nOffset = clamp(vec2(hC - hU, hC - hV) * 4.0, vec2(-1.0), vec2(1.0));
+    }
   } else {
     nOffset = (vUv0 - vec2(0.5)) * maskA;
   }
 
-  float S = uDistortionStrength * clamp(vColor.a, 0.0, 1.0) * softFade;
+  float normStr = uDistortionStrength / (1.0 + abs(uDistortionStrength) * 35.0);
+  float S = normStr * clamp(vColor.a, 0.0, 1.0) * softFade;
   vec2 screenUv = gl_FragCoord.xy * uInvViewport;
   vec2 refrUv = clamp(screenUv + nOffset * S * maskA, vec2(0.002), vec2(0.998));
   vec3 sceneCol = texture2D(uSceneColor, refrUv).rgb;

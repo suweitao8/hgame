@@ -370,3 +370,102 @@ export function createOffscreen2dCanvas(width, height) {
   canvas.height = h;
   return canvas;
 }
+
+function evalClampCurveArray(pts, t, fallback) {
+  if (!Array.isArray(pts) || pts.length === 0) return fallback;
+  if (t <= pts[0][0]) return pts[0][1];
+  const last = pts[pts.length - 1];
+  if (t >= last[0]) return last[1];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const x0 = pts[i][0];
+    const x1 = pts[i + 1][0];
+    if (t <= x1) {
+      const span = Math.max(1e-6, x1 - x0);
+      return pts[i][1] + (pts[i + 1][1] - pts[i][1]) * ((t - x0) / span);
+    }
+  }
+  return last[1];
+}
+
+function evalClampSpec(spec, t, seed = 0.5, fallback = 0) {
+  if (spec === null || spec === undefined) return fallback;
+  if (typeof spec === 'number') return Number.isFinite(spec) ? spec : fallback;
+  if (Array.isArray(spec)) {
+    if (spec.length === 2 && typeof spec[0] === 'number' && typeof spec[1] === 'number') {
+      return spec[0] + (spec[1] - spec[0]) * seed;
+    }
+    return evalClampCurveArray(spec, t, fallback);
+  }
+  if (typeof spec === 'object') {
+    const sc = Number.isFinite(spec.scalar) ? spec.scalar : 1;
+    if (spec.mode === 'twoCurves' && Array.isArray(spec.curve)) {
+      const mSc = Number.isFinite(spec.minScalar) ? spec.minScalar : sc;
+      const a = evalClampCurveArray(spec.minCurve || spec.curve, t, fallback) * mSc;
+      const b = evalClampCurveArray(spec.curve, t, fallback) * sc;
+      return a + (b - a) * seed;
+    }
+    if (Array.isArray(spec.curve)) {
+      return evalClampCurveArray(spec.curve, t, fallback) * sc;
+    }
+    if (Number.isFinite(spec.min) && Number.isFinite(spec.max)) {
+      return spec.min + (spec.max - spec.min) * seed;
+    }
+    if (Number.isFinite(spec.value)) return spec.value;
+    if (Number.isFinite(spec.scalar)) return spec.scalar;
+  }
+  return fallback;
+}
+
+/**
+ * Returns true if a Unity LimitVelocityModule (`clampVelocity`) config has active drag or speed limits.
+ * @param {object | null | undefined} cfg
+ * @returns {boolean}
+ */
+export function hasClampVelocity(cfg) {
+  if (!cfg || typeof cfg !== 'object') return false;
+  return Number(cfg.limit) > 0 || Boolean(cfg.drag) || Boolean(cfg.separateAxis) || cfg.magnitude !== undefined;
+}
+
+/**
+ * Applies one Unity LimitVelocityOverLifetimeModule step (drag + scalar/separateAxis velocity clamp)
+ * in-place on an object with `.vx`, `.vy`, `.vz` properties without allocations.
+ * @param {{ vx: number, vy: number, vz: number }} target
+ * @param {object | null | undefined} cfg
+ * @param {number} dt
+ * @param {number} [t=0]
+ * @param {number} [seed=0.5]
+ */
+export function applyClampVelocityStep(target, cfg, dt, t = 0, seed = 0.5) {
+  if (!cfg || dt <= 0) return;
+  if (cfg.drag !== undefined && cfg.drag !== null) {
+    const cDrag = Math.max(0, evalClampSpec(cfg.drag, t, seed, 0));
+    if (cDrag > 0.001) {
+      const cd = Math.exp(-cDrag * dt);
+      target.vx *= cd;
+      target.vy *= cd;
+      target.vz *= cd;
+    }
+  }
+  const cDampen = Math.max(0, Math.min(1, Number(cfg.dampen ?? 1)));
+  if (cDampen <= 0) return;
+  const damp = cDampen >= 0.999 ? 1.0 : (1.0 - Math.pow(1.0 - cDampen, dt * 60.0));
+  if (cfg.separateAxis) {
+    const lx = Math.max(0, evalClampSpec(cfg.x, t, seed, 1000));
+    const ly = Math.max(0, evalClampSpec(cfg.y, t, seed, 1000));
+    const lz = Math.max(0, evalClampSpec(cfg.z, t, seed, 1000));
+    if (Math.abs(target.vx) > lx) target.vx += (Math.sign(target.vx) * lx - target.vx) * damp;
+    if (Math.abs(target.vy) > ly) target.vy += (Math.sign(target.vy) * ly - target.vy) * damp;
+    if (Math.abs(target.vz) > lz) target.vz += (Math.sign(target.vz) * lz - target.vz) * damp;
+    return;
+  }
+  const lim = Math.max(0, evalClampSpec(cfg.magnitude !== undefined ? cfg.magnitude : cfg.limit, t, seed, Number(cfg.limit) || 0));
+  if (lim <= 0) return;
+  const spd = Math.hypot(target.vx, target.vy, target.vz);
+  if (spd > lim && spd > 1e-6) {
+    const targetSpd = spd + (lim - spd) * damp;
+    const ratio = targetSpd / spd;
+    target.vx *= ratio;
+    target.vy *= ratio;
+    target.vz *= ratio;
+  }
+}

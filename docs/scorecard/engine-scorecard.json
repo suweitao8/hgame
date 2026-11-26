@@ -943,9 +943,9 @@
             "proof": "assets/runtime/ui/canvas-widgets.js, assets/runtime/ui/thumb-arc.js"
           },
           {
-            "point": "Canvas 原生声明式 Flex 布局（单行，computeFlexLayout）与富文本混排",
+            "point": "Canvas 原生声明式 Flex 布局（单行 Flex、flexWrap 换行、alignContent、display:grid 网格）、按钮字号自适应、多行折行标签与富文本混排",
             "met": true,
-            "proof": "assets/runtime/ui/flex-layout.js computeFlexLayout, assets/runtime/ui/canvas-widgets.js layoutRichTextLines"
+            "proof": "assets/runtime/ui/flex-layout.js computeFlexLayout (flexWrap/alignContent/grid), assets/runtime/ui/canvas-widgets.js layoutRichTextLines maxLines / fitButtonText / drawWrappedLabel; tests/ui-layout-wrap-grid-autofit.test.mjs, tests/browser-ui-layout.mjs"
           },
           {
             "point": "完整屏幕阅读器（ARIA）与动态按键重映射持久化",

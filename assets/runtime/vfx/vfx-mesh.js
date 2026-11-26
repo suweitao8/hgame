@@ -1,4 +1,4 @@
-import { VFX_RENDER_ORDERS, computeDynamicRadialVel } from './vfx-core.js';
+import { VFX_RENDER_ORDERS, applyClampVelocityStep, computeDynamicRadialVel, hasClampVelocity } from './vfx-core.js';
 import { evaluateColorCurve, evaluateSizeCurve } from './vfx-atlas-particles.js';
 import { applyVfxDepthState, getVfxDepthTestIndex, VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 import { VFX_FLIPBOOK_GLSL } from './vfx-flipbook.js';
@@ -536,6 +536,8 @@ export function createMeshVfxPool({
       space: 'world',
       effectSlotIdx: 0,
       baseScale: 1,
+      baseScaleY: null,
+      baseScaleZ: null,
       aspectY: 1,
       aspectZ: 1,
       hdr: 1,
@@ -960,6 +962,8 @@ export function createMeshVfxPool({
     const meshGlobalScale = Math.max(1e-4, Number(opts.meshGlobalScale ?? 1.0));
     s.meshGlobalScale = meshGlobalScale;
     s.baseScale = (opts.sizeStart ?? opts.scale ?? 1.0) * meshGlobalScale;
+    s.baseScaleY = opts.sizeYStart !== undefined ? opts.sizeYStart * meshGlobalScale : null;
+    s.baseScaleZ = opts.sizeZStart !== undefined ? opts.sizeZStart * meshGlobalScale : null;
     s.aspectY = Math.max(0.05, Number(opts.aspectY ?? 1.0));
     s.aspectZ = Math.max(0.05, Number(opts.aspectZ ?? 1.0));
     s.hdr = opts.hdr ?? 1.0;
@@ -972,7 +976,7 @@ export function createMeshVfxPool({
     s.sizeYCurve = Array.isArray(opts.sizeYCurve) ? opts.sizeYCurve : null;
     s.sizeZCurve = Array.isArray(opts.sizeZCurve) ? opts.sizeZCurve : null;
     s.velCurve = Array.isArray(opts.velCurve) ? opts.velCurve : null;
-    s.clampVelocity = opts.clampVelocity && Number(opts.clampVelocity.limit) > 0 ? opts.clampVelocity : null;
+    s.clampVelocity = hasClampVelocity(opts.clampVelocity) ? opts.clampVelocity : null;
     s.rotationBySpeed = opts.rotationBySpeed && opts.rotationBySpeed.enabled ? opts.rotationBySpeed : null;
     s.compiledCustom = resolveCompiledCustomData(opts.customData);
     s.randSeed = Number.isFinite(opts.phase) ? opts.phase : ((totalSpawned * 0.61803398875) % 1);
@@ -1231,15 +1235,31 @@ export function createMeshVfxPool({
     }
   }
 
+  function computeSlotScale(s, t, out3) {
+    const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t) * s.flipX;
+    const scY = (s.baseScaleY !== null
+      ? s.baseScaleY * evaluateSizeCurve(s.sizeYCurve || s.sizeCurve, t)
+      : (s.sizeYCurve ? (s.baseScale * evaluateSizeCurve(s.sizeYCurve, t)) : Math.abs(sc)) * s.aspectY) * s.flipY;
+    const scZ = (s.baseScaleZ !== null
+      ? s.baseScaleZ * evaluateSizeCurve(s.sizeZCurve || s.sizeCurve, t)
+      : (s.sizeZCurve ? (s.baseScale * evaluateSizeCurve(s.sizeZCurve, t)) : Math.abs(sc)) * s.aspectZ) * s.flipZ;
+    out3[0] = sc;
+    out3[1] = scY;
+    out3[2] = scZ;
+  }
+
+  const scratchSlotScale = [1, 1, 1];
+
   function pushSlotToBatch(s, batch, t) {
     const idx = batch.activeCount;
     if (idx >= instCapacity) return;
     batch.activeCount = idx + 1;
     const i4 = idx * 4;
 
-    const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t) * s.flipX;
-    const scY = (s.sizeYCurve ? (s.baseScale * evaluateSizeCurve(s.sizeYCurve, t)) : Math.abs(sc)) * s.aspectY * s.flipY;
-    const scZ = (s.sizeZCurve ? (s.baseScale * evaluateSizeCurve(s.sizeZCurve, t)) : Math.abs(sc)) * s.aspectZ * s.flipZ;
+    computeSlotScale(s, t, scratchSlotScale);
+    const sc = scratchSlotScale[0];
+    const scY = scratchSlotScale[1];
+    const scZ = scratchSlotScale[2];
     evaluateColorCurve(s.colorCurve, t, scratchColor);
     const ox = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3] : 0;
     const oy = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 1] : 0;
@@ -1309,9 +1329,10 @@ export function createMeshVfxPool({
 
   function syncMeshSlot(s, t) {
     if (!s.mesh || !s.mat) return;
-    const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, t) * s.flipX;
-    const scY = (s.sizeYCurve ? (s.baseScale * evaluateSizeCurve(s.sizeYCurve, t)) : Math.abs(sc)) * s.aspectY * s.flipY;
-    const scZ = (s.sizeZCurve ? (s.baseScale * evaluateSizeCurve(s.sizeZCurve, t)) : Math.abs(sc)) * s.aspectZ * s.flipZ;
+    computeSlotScale(s, t, scratchSlotScale);
+    const sc = scratchSlotScale[0];
+    const scY = scratchSlotScale[1];
+    const scZ = scratchSlotScale[2];
     evaluateColorCurve(s.colorCurve, t, scratchColor);
     const ox = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3] : 0;
     const oy = s.effectSlotIdx > 0 ? effectDeltas[s.effectSlotIdx * 3 + 1] : 0;
@@ -1385,10 +1406,10 @@ export function createMeshVfxPool({
       quatOut[2] = scratchQuat.z;
       quatOut[3] = scratchQuat.w;
     }
-    const sc = s.baseScale * evaluateSizeCurve(s.sizeCurve, lifeT) * s.flipX;
-    scaleOut[0] = sc;
-    scaleOut[1] = (s.sizeYCurve ? (s.baseScale * evaluateSizeCurve(s.sizeYCurve, lifeT)) : Math.abs(sc)) * s.aspectY * s.flipY;
-    scaleOut[2] = (s.sizeZCurve ? (s.baseScale * evaluateSizeCurve(s.sizeZCurve, lifeT)) : Math.abs(sc)) * s.aspectZ * s.flipZ;
+    computeSlotScale(s, lifeT, scratchSlotScale);
+    scaleOut[0] = scratchSlotScale[0];
+    scaleOut[1] = scratchSlotScale[1];
+    scaleOut[2] = scratchSlotScale[2];
     return true;
   }
 
@@ -1529,18 +1550,7 @@ export function createMeshVfxPool({
       s.vx += ax * dt;
       s.vy += ay * dt;
       s.vz += az * dt;
-      if (s.clampVelocity && s.clampVelocity.limit > 0) {
-        const spd = Math.hypot(s.vx, s.vy, s.vz);
-        const lim = s.clampVelocity.limit;
-        if (spd > lim) {
-          const cDampen = Math.max(0, Math.min(1, Number(s.clampVelocity.dampen ?? 1)));
-          const nextSpd = spd - (spd - lim) * cDampen;
-          const sc = nextSpd / spd;
-          s.vx *= sc;
-          s.vy *= sc;
-          s.vz *= sc;
-        }
-      }
+      applyClampVelocityStep(s, s.clampVelocity, dt, t, s.randSeed);
       const vScale = s.velCurve ? evaluateSizeCurve(s.velCurve, t) : 1.0;
       computeDynamicRadialVel(s.x, s.y, s.z, s.radCx, s.radCy, s.radCz, s.velRadial, vScale, dt, scratchRadVel3);
       s.x += (s.vx * vScale + scratchRadVel3[0]) * dt;

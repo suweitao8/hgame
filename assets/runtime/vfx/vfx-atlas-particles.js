@@ -1,7 +1,9 @@
 import {
   VFX_RENDER_ORDERS,
+  applyClampVelocityStep,
   createOffscreen2dCanvas,
   createVisualPrng,
+  hasClampVelocity,
   packRgb24,
   submitRingBufferRanges,
   unpackRgb24Into,
@@ -839,7 +841,7 @@ void main() {
   vec2 rotZPair = unpack2x12Mixed(aAtlasP3.x, 6.2831853, 64.0);
   vec2 hdrEmPair = unpack2x12Pos(aAtlasP3.y, 35.0, 35.0);
   vec2 pivotPair = unpack2x12Sym(aAtlasP3.z, 2.0, 2.0);
-  vec2 stretchScales = unpack2x12Pos(aAtlasP3.w, 15.0, 15.0);
+  vec2 stretchScales = unpack2x12Mixed(aAtlasP3.w, 15.0, 15.0);
 
   vec2 uv0 = unpackUvPair(aAtlasP4.x);
   vec2 uv1 = unpackUvPair(aAtlasP4.y);
@@ -1017,8 +1019,11 @@ void main() {
         axisX = dirVel2 / dirLen2;
         axisY = vec2(-axisX.y, axisX.x);
       }
-      lenScale = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
-        ? (curSize * max(0.05, stretchScales.y) + spd * stretchScales.x * 0.015)
+      float lsSigned2 = (stretchScales.x <= 0.0001 && abs(stretchScales.y) < 0.05)
+        ? (stretchScales.y < 0.0 ? -0.05 : 0.05)
+        : stretchScales.y;
+      lenScale = (stretchScales.x > 0.0001 || abs(stretchScales.y) > 0.0001)
+        ? (curSize * lsSigned2 + spd * stretchScales.x * 0.015)
         : (curSize * (1.0 + scaleYPair.x * min(spd * 0.015, 4.0)));
     }
     vec2 p2 = worldPos.xy + axisX * (posLocal.x * lenScale) + axisY * (posLocal.y * curSizeY * aspectY);
@@ -1085,11 +1090,14 @@ void main() {
       side3 = sideLen > 0.0001 ? (side3 / sideLen) : (abs(axis3.y) < 0.99 ? normalize(cross(axis3, vec3(0.0, 1.0, 0.0))) : vec3(1.0, 0.0, 0.0));
       float spd = length(curVel);
       float lenBase = (hasSizeSep > 0.5 || abs(aspectY - 1.0) > 0.001) ? (curSizeY * aspectY) : curSize;
-      float major = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
-        ? (lenBase * max(0.05, stretchScales.y) + min(spd * stretchScales.x, lenBase * 8.0))
+      float lsSigned = (stretchScales.x <= 0.0001 && abs(stretchScales.y) < 0.05)
+        ? (stretchScales.y < 0.0 ? -0.05 : 0.05)
+        : stretchScales.y;
+      float major = (stretchScales.x > 0.0001 || abs(stretchScales.y) > 0.0001)
+        ? (lenBase * lsSigned + min(spd * stretchScales.x, lenBase * 8.0))
         : (lenBase * (1.0 + scaleYPair.x * min(spd * 0.08, 4.5)));
       float billH = curSize;
-      float stretchX = (posLocal.x - pivotPair.x) - 0.5 + pivotPair.y;
+      float stretchX = (posLocal.x - pivotPair.x) - 0.5 + (major < 0.0 ? -pivotPair.y : pivotPair.y);
       float stretchY = (posLocal.y - pivotPair.y) - pivotPair.x;
       mvCenter.xyz += axis3 * (stretchX * major) + side3 * (stretchY * billH) + toCam * (offLocal.z * curSize);
       vViewDirView = -mvCenter.xyz;
@@ -1629,7 +1637,7 @@ void main() {
   vec2 rotZPair = unpack2x12Mixed(aAtlasP3.x, 6.2831853, 64.0);
   vec2 hdrEmPair = unpack2x12Pos(aAtlasP3.y, 35.0, 35.0);
   vec2 pivotPair = unpack2x12Sym(aAtlasP3.z, 2.0, 2.0);
-  vec2 stretchScales = unpack2x12Pos(aAtlasP3.w, 15.0, 15.0);
+  vec2 stretchScales = unpack2x12Mixed(aAtlasP3.w, 15.0, 15.0);
 
   vec2 uv0 = unpackUvPair(aAtlasP4.x);
   vec2 uv1 = unpackUvPair(aAtlasP4.y);
@@ -1715,8 +1723,11 @@ void main() {
       axisX = curVel / spd;
       axisY = vec2(-axisX.y, axisX.x);
     }
-    lenScale = (stretchScales.x > 0.0001 || stretchScales.y > 0.0001)
-      ? (curSize * max(0.05, stretchScales.y) + spd * stretchScales.x * 0.015)
+    float lsSignedW = (stretchScales.x <= 0.0001 && abs(stretchScales.y) < 0.05)
+      ? (stretchScales.y < 0.0 ? -0.05 : 0.05)
+      : stretchScales.y;
+    lenScale = (stretchScales.x > 0.0001 || abs(stretchScales.y) > 0.0001)
+      ? (curSize * lsSignedW + spd * stretchScales.x * 0.015)
       : (curSize * (1.0 + scaleYPair.x * min(spd * 0.015, 4.0)));
   }
 
@@ -2567,7 +2578,7 @@ export function createAtlasParticlePool({
     const flipVBit = (opts.flipY ?? 1) < 0 ? 8 : 0;
     const materialFlags = (opts.softParticles === false ? 1 : 0) + (opts.useTexture === false ? 2 : 0) + flipUBit + flipVBit;
 
-    const clampVelCfg = opts.clampVelocity && Number(opts.clampVelocity.limit) > 0 ? opts.clampVelocity : null;
+    const clampVelCfg = hasClampVelocity(opts.clampVelocity) ? opts.clampVelocity : null;
     const rotSpeedCfg = opts.rotationBySpeed && opts.rotationBySpeed.enabled ? opts.rotationBySpeed : null;
     const useCpuMotion = Boolean(clampVelCfg);
 
@@ -2596,7 +2607,7 @@ export function createAtlasParticlePool({
     ch.p3[i4] = pack2x12Mixed(wrapAngle02Pi(opts.rotation ?? 0), opts.angularVel ?? 0, TWO_PI, 64);
     ch.p3[i4 + 1] = pack2x12Pos(opts.hdr ?? 1.0, opts.emissionBoost ?? 0, 35, 35);
     ch.p3[i4 + 2] = pack2x12Sym(opts.pivot?.[0] ?? 0, opts.pivot?.[1] ?? 0, 2, 2);
-    ch.p3[i4 + 3] = pack2x12Pos(opts.velocityScale ?? 0, opts.lengthScale ?? 0, 15, 15);
+    ch.p3[i4 + 3] = pack2x12Mixed(opts.velocityScale ?? 0, opts.lengthScale ?? 0, 15, 15);
 
     const fbCols = fb ? Math.max(1, Math.min(64, fb.cols | 0)) : 1;
     const fbRows = fb ? Math.max(1, Math.min(64, fb.rows | 0)) : 1;
@@ -2741,16 +2752,7 @@ export function createAtlasParticlePool({
         d.vx = d.vx * damp + ax * dt;
         d.vy = d.vy * damp + ay * dt;
         d.vz = d.vz * damp + az * dt;
-        const lim = Number(d.clampVel.limit) || 0;
-        const cDampen = Math.max(0, Math.min(1, Number(d.clampVel.dampen ?? 1)));
-        const spd = Math.hypot(d.vx, d.vy, d.vz);
-        if (lim > 0 && spd > lim) {
-          const nextSpd = spd - (spd - lim) * cDampen;
-          const scale = nextSpd / spd;
-          d.vx *= scale;
-          d.vy *= scale;
-          d.vz *= scale;
-        }
+        applyClampVelocityStep(d, d.clampVel, dt, t, d.randSeed);
         d.px += d.vx * dt;
         d.py += d.vy * dt;
         d.pz += d.vz * dt;

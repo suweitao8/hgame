@@ -69,7 +69,7 @@ function extractSection(body, name) {
 }
 
 function readMinMaxScalar(block, fieldName, fallback = 0) {
-  const sub = block.match(new RegExp(`(?:^|\\n)( {2,4})${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n\\1[A-Za-z_]|$)`));
+  const sub = block.match(new RegExp(`(?:^|\\n)( {2,10})${fieldName}:[^\\n]*\\n([\\s\\S]*?)(?=\\n\\1[A-Za-z_]|$)`));
   if (!sub) return fallback;
   const subBody = sub[2];
   const mode = Number((subBody.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 0);
@@ -940,6 +940,44 @@ function quatRotateVec(q, v) {
   ];
 }
 
+function quatToMat3(q) {
+  const [x, y, z, w] = q;
+  const xx = x * x, yy = y * y, zz = z * z;
+  const xy = x * y, xz = x * z, yz = y * z;
+  const wx = w * x, wy = w * y, wz = w * z;
+  return [
+    1 - 2 * (yy + zz), 2 * (xy - wz), 2 * (xz + wy),
+    2 * (xy + wz), 1 - 2 * (xx + zz), 2 * (yz - wx),
+    2 * (xz - wy), 2 * (yz + wx), 1 - 2 * (xx + yy),
+  ];
+}
+
+function mat3Mul(a, b) {
+  return [
+    a[0] * b[0] + a[1] * b[3] + a[2] * b[6],
+    a[0] * b[1] + a[1] * b[4] + a[2] * b[7],
+    a[0] * b[2] + a[1] * b[5] + a[2] * b[8],
+    a[3] * b[0] + a[4] * b[3] + a[5] * b[6],
+    a[3] * b[1] + a[4] * b[4] + a[5] * b[7],
+    a[3] * b[2] + a[4] * b[5] + a[5] * b[8],
+    a[6] * b[0] + a[7] * b[3] + a[8] * b[6],
+    a[6] * b[1] + a[7] * b[4] + a[8] * b[7],
+    a[6] * b[2] + a[7] * b[5] + a[8] * b[8],
+  ];
+}
+
+function mat3Diag(x, y, z) {
+  return [x, 0, 0, 0, y, 0, 0, 0, z];
+}
+
+function mat3Scale(m, k) {
+  return [
+    m[0] * k, m[1] * k, m[2] * k,
+    m[3] * k, m[4] * k, m[5] * k,
+    m[6] * k, m[7] * k, m[8] * k,
+  ];
+}
+
 function unityEulerToQuat(dx, dy, dz) {
   const rad = Math.PI / 180;
   const hx = dx * rad * 0.5, hy = dy * rad * 0.5, hz = dz * rad * 0.5;
@@ -1169,7 +1207,8 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
   let subCounter = 0;
 
   function computeHierarchyTransform(trBody) {
-    if (!trBody) return { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1], ownScale: [1, 1, 1] };
+    const ident = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    if (!trBody) return { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1], ownScale: [1, 1, 1], linear: ident };
     const chain = [];
     let cur = trBody;
     let guard = 0;
@@ -1190,6 +1229,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
     let pos = [0, 0, 0];
     let rot = [0, 0, 0, 1];
     let scale = [1, 1, 1];
+    let linear = ident;
     for (let i = chain.length - 1; i >= 0; i--) {
       const node = chain[i];
       if (!node.isRoot) {
@@ -1199,12 +1239,14 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       }
       rot = quatMul(rot, node.rot);
       scale = [scale[0] * node.scale[0], scale[1] * node.scale[1], scale[2] * node.scale[2]];
+      linear = mat3Mul(linear, mat3Mul(quatToMat3(node.rot), mat3Diag(node.scale[0], node.scale[1], node.scale[2])));
     }
     return {
       pos: [Number(pos[0].toFixed(4)), Number(pos[1].toFixed(4)), toRhsZ(Number(pos[2].toFixed(4)))],
       rot,
       scale,
       ownScale: chain[0]?.scale || [1, 1, 1],
+      linear,
     };
   }
 
@@ -1221,7 +1263,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
     }
 
     const worldTr = isSubChild
-      ? { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1], ownScale: [1, 1, 1] }
+      ? { pos: [0, 0, 0], rot: [0, 0, 0, 1], scale: [1, 1, 1], ownScale: [1, 1, 1], linear: [1, 0, 0, 0, 1, 0, 0, 0, 1] }
       : computeHierarchyTransform(trBody);
     const subTr = isSubChild ? computeHierarchyTransform(trBody) : null;
     const offset = worldTr.pos;
@@ -1584,9 +1626,12 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       }
       const sRotM = shapeMod.match(/m_Rotation:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
       const sSclM = shapeMod.match(/m_Scale:\s*\{x:\s*([-\d.eE+]+),\s*y:\s*([-\d.eE+]+),\s*z:\s*([-\d.eE+]+)\}/);
-      const rawShSx = sSclM ? Math.abs(Number(sSclM[1])) : 1;
-      const rawShSy = sSclM ? Math.abs(Number(sSclM[2])) : 1;
-      const rawShSz = sSclM ? Math.abs(Number(sSclM[3])) : 1;
+      const shSignSx = sSclM ? Number(sSclM[1]) : 1;
+      const shSignSy = sSclM ? Number(sSclM[2]) : 1;
+      const shSignSz = sSclM ? Number(sSclM[3]) : 1;
+      const rawShSx = Math.abs(shSignSx);
+      const rawShSy = Math.abs(shSignSy);
+      const rawShSz = Math.abs(shSignSz);
       const qShLocal = sRotM ? unityEulerToQuat(Number(sRotM[1]), Number(sRotM[2]), Number(sRotM[3])) : [0, 0, 0, 1];
       const axX = quatRotateVec(qShLocal, [1, 0, 0]);
       const axY = quatRotateVec(qShLocal, [0, 1, 0]);
@@ -1647,21 +1692,6 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       if (randDir > 0.001) shapeObj.randomDirectionAmount = Number(randDir.toFixed(3));
       if (sphDir > 0.001) shapeObj.sphericalDirectionAmount = Number(sphDir.toFixed(3));
       if (alignDir) shapeObj.alignToDirection = true;
-      if (mappedType !== 'rectangle' && mappedType !== 'box') {
-        const invScalar = 1 / Math.max(1e-6, shScaleScalar);
-        const isMeshShape = mappedType === 'mesh';
-        const ux = isMeshShape ? (rawShSx * effTrX) : (rawShSx * effTrX * invScalar);
-        const uy = isMeshShape ? (rawShSy * effTrY) : (rawShSy * effTrY * invScalar);
-        const uz = isMeshShape ? (rawShSz * effTrZ) : (rawShSz * effTrZ * invScalar);
-        const usesBasisSwap = mappedType === 'cone' || mappedType === 'hemisphere' || mappedType === 'circle' || mappedType === 'donut';
-        // HGame shapes with Y-to--Z basis apply shape.scale before Rx(-90): (lx, ly, lz) -> Unity (X, -Z, Y).
-        const hx = Number(ux.toFixed(3));
-        const hy = Number((usesBasisSwap ? uz : uy).toFixed(3));
-        const hz = Number((usesBasisSwap ? uy : uz).toFixed(3));
-        if (Math.abs(hx - 1) > 0.002 || Math.abs(hy - 1) > 0.002 || Math.abs(hz - 1) > 0.002) {
-          shapeObj.scale = [hx, hy, hz];
-        }
-      }
       const arcBlk = extractModSubBlock(shapeMod, 'arc');
       if (arcBlk) {
         const arcDeg = Number((arcBlk.match(/\bvalue:\s*([-\d.eE+]+)/) || [])[1] ?? 360);
@@ -1678,9 +1708,65 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
           }
         }
       }
-      const needsSphereRot = mappedType !== 'sphere' || Boolean(shapeObj.scale) || shapeObj.arc !== undefined;
-      const shapeRot = needsSphereRot ? computeShapeRotation(alignRot, sRotM, mappedType) : null;
-      if (shapeRot) shapeObj.rotation = shapeRot;
+
+      let useShapeMatrix = false;
+      if (mappedType !== 'mesh') {
+        const Lw = isSubChild
+          ? quatToMat3(alignRot)
+          : (psScalingMode === 1
+            ? mat3Mul(quatToMat3(worldTr.rot), mat3Diag(worldTr.ownScale[0], worldTr.ownScale[1], worldTr.ownScale[2]))
+            : worldTr.linear);
+        const Rsh = quatToMat3(qShLocal);
+        const Ssh = mat3Diag(shSignSx, shSignSy, shSignSz);
+        let M = mat3Mul(Lw, mat3Mul(Rsh, Ssh));
+        const F = mat3Diag(1, 1, -1);
+        M = mat3Mul(F, mat3Mul(M, F));
+        const needsBasisSwap = mappedType === 'cone'
+          || mappedType === 'hemisphere'
+          || mappedType === 'circle'
+          || mappedType === 'donut'
+          || mappedType === 'rectangle';
+        if (needsBasisSwap) {
+          M = mat3Mul(M, [1, 0, 0, 0, 0, 1, 0, -1, 0]);
+        }
+        const s = Math.max(1e-6, shScaleScalar);
+        const Mn = mat3Scale(M, 1 / s);
+        let maxDiff = 0;
+        for (let mi = 0; mi < 9; mi++) {
+          const idVal = (mi % 4 === 0) ? 1 : 0;
+          const d = Math.abs(Mn[mi] - idVal);
+          if (d > maxDiff) maxDiff = d;
+        }
+        if (maxDiff > 1e-3) {
+          useShapeMatrix = true;
+          shapeObj.matrix = Mn.map((v) => Number(v.toFixed(5)));
+          if (mappedType === 'box' || mappedType === 'rectangle') {
+            const sRound = Number(s.toFixed(3));
+            shapeObj.size = [sRound, sRound, sRound];
+          }
+        }
+      }
+
+      if (!useShapeMatrix) {
+        if (mappedType !== 'rectangle' && mappedType !== 'box') {
+          const invScalar = 1 / Math.max(1e-6, shScaleScalar);
+          const isMeshShape = mappedType === 'mesh';
+          const ux = isMeshShape ? (rawShSx * effTrX) : (rawShSx * effTrX * invScalar);
+          const uy = isMeshShape ? (rawShSy * effTrY) : (rawShSy * effTrY * invScalar);
+          const uz = isMeshShape ? (rawShSz * effTrZ) : (rawShSz * effTrZ * invScalar);
+          const usesBasisSwap = mappedType === 'cone' || mappedType === 'hemisphere' || mappedType === 'circle' || mappedType === 'donut';
+          // HGame shapes with Y-to--Z basis apply shape.scale before Rx(-90): (lx, ly, lz) -> Unity (X, -Z, Y).
+          const hx = Number(ux.toFixed(3));
+          const hy = Number((usesBasisSwap ? uz : uy).toFixed(3));
+          const hz = Number((usesBasisSwap ? uy : uz).toFixed(3));
+          if (Math.abs(hx - 1) > 0.002 || Math.abs(hy - 1) > 0.002 || Math.abs(hz - 1) > 0.002) {
+            shapeObj.scale = [hx, hy, hz];
+          }
+        }
+        const needsSphereRot = mappedType !== 'sphere' || Boolean(shapeObj.scale) || shapeObj.arc !== undefined;
+        const shapeRot = needsSphereRot ? computeShapeRotation(alignRot, sRotM, mappedType) : null;
+        if (shapeRot) shapeObj.rotation = shapeRot;
+      }
       layer.shape = shapeObj;
     }
 
@@ -1889,6 +1975,19 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       const ry = readAxisOrCurve('y');
       const rz = readAxisOrCurve('z');
       const rRad = readAxisOrCurve('radial');
+      const rotateRangeVecByQuat = (q, ax, ay, az) => {
+        if (Math.abs(q[3]) >= 0.9999) return [ax, ay, az];
+        const loOf = (v) => (Array.isArray(v) ? v[0] : v);
+        const hiOf = (v) => (Array.isArray(v) ? v[1] : v);
+        const [lx, ly, lz] = quatRotateVec(q, [loOf(ax), loOf(ay), loOf(az)]);
+        const [hx, hy, hz] = quatRotateVec(q, [hiOf(ax), hiOf(ay), hiOf(az)]);
+        const packAxis = (a, b) => {
+          const ra = Number(a.toFixed(4));
+          const rb = Number(b.toFixed(4));
+          return Math.abs(ra - rb) > 1e-4 ? [Math.min(ra, rb), Math.max(ra, rb)] : ra;
+        };
+        return [packAxis(lx, hx), packAxis(ly, hy), packAxis(lz, hz)];
+      };
       let vx = rx.val;
       let vy = ry.val;
       let vzRaw = rz.val;
@@ -1896,20 +1995,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
         vx = scaleRangeBy(vx, partScaleVec[0]);
         vy = scaleRangeBy(vy, partScaleVec[1]);
         vzRaw = scaleRangeBy(vzRaw, partScaleVec[2]);
-      }
-      if (!isWorldVel && Math.abs(alignRot[3]) < 0.9999) {
-        const loOf = (v) => (Array.isArray(v) ? v[0] : v);
-        const hiOf = (v) => (Array.isArray(v) ? v[1] : v);
-        const [lx, ly, lz] = quatRotateVec(alignRot, [loOf(vx), loOf(vy), loOf(vzRaw)]);
-        const [hx, hy, hz] = quatRotateVec(alignRot, [hiOf(vx), hiOf(vy), hiOf(vzRaw)]);
-        const packAxis = (a, b) => {
-          const ra = Number(a.toFixed(4));
-          const rb = Number(b.toFixed(4));
-          return Math.abs(ra - rb) > 1e-4 ? [Math.min(ra, rb), Math.max(ra, rb)] : ra;
-        };
-        vx = packAxis(lx, hx);
-        vy = packAxis(ly, hy);
-        vzRaw = packAxis(lz, hz);
+        [vx, vy, vzRaw] = rotateRangeVecByQuat(alignRot, vx, vy, vzRaw);
       }
       const vz = negateValueOrRange(vzRaw);
       const readOrbAxis = (axisName) => {
@@ -1926,23 +2012,19 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       let orbX = readOrbAxis('orbitalX');
       let orbY = readOrbAxis('orbitalY');
       let orbZ = readOrbAxis('orbitalZ');
-      if (!isWorldVel && Math.abs(alignRot[3]) < 0.9999) {
-        const loOf = (v) => (Array.isArray(v) ? v[0] : v);
-        const hiOf = (v) => (Array.isArray(v) ? v[1] : v);
-        const [lox, loy, loz] = quatRotateVec(alignRot, [loOf(orbX), loOf(orbY), loOf(orbZ)]);
-        const [hix, hiy, hiz] = quatRotateVec(alignRot, [hiOf(orbX), hiOf(orbY), hiOf(orbZ)]);
-        const packAxis = (a, b) => {
-          const ra = Number(a.toFixed(4));
-          const rb = Number(b.toFixed(4));
-          return Math.abs(ra - rb) > 1e-4 ? [Math.min(ra, rb), Math.max(ra, rb)] : ra;
-        };
-        orbX = packAxis(lox, hix);
-        orbY = packAxis(loy, hiy);
-        orbZ = packAxis(loz, hiz);
+      if (!isWorldVel) {
+        [orbX, orbY, orbZ] = rotateRangeVecByQuat(alignRot, orbX, orbY, orbZ);
       }
-      const oox = readMinMaxScalar(velMod, 'orbitalOffsetX', 0);
-      const ooy = readMinMaxScalar(velMod, 'orbitalOffsetY', 0);
-      const ooz = negateValueOrRange(readMinMaxScalar(velMod, 'orbitalOffsetZ', 0));
+      let oox = readMinMaxScalar(velMod, 'orbitalOffsetX', 0);
+      let ooy = readMinMaxScalar(velMod, 'orbitalOffsetY', 0);
+      let oozRaw = readMinMaxScalar(velMod, 'orbitalOffsetZ', 0);
+      if (!isWorldVel) {
+        oox = scaleRangeBy(oox, partScaleVec[0]);
+        ooy = scaleRangeBy(ooy, partScaleVec[1]);
+        oozRaw = scaleRangeBy(oozRaw, partScaleVec[2]);
+        [oox, ooy, oozRaw] = rotateRangeVecByQuat(alignRot, oox, ooy, oozRaw);
+      }
+      const ooz = negateValueOrRange(oozRaw);
       const radV = rRad.val;
       const isNonZero = (v) => Array.isArray(v) ? (v[0] !== 0 || v[1] !== 0) : v !== 0;
       const velObj = {};
@@ -2419,15 +2501,16 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
         if (!tGo.active) continue;
         const targetLayer = convertParticleLayer(targetPs.goId, trByGo.get(targetPs.goId), true, subDepth + 1);
         if (!targetLayer) continue;
-        // Unity SubEmitters fire via Emit()/Bursts on trigger events; rateOverTime without bursts emits 0 particles.
-        if ((!Array.isArray(targetLayer.bursts) || targetLayer.bursts.length === 0)
-          && (!Array.isArray(targetLayer.subEmitters) || targetLayer.subEmitters.length === 0)) {
-          continue;
-        }
         const tType = Number(sm[2]);
         const propMask = hasProps ? Number(sm[3] ?? 0) : 0;
         const prob = Number((hasProps ? sm[4] : sm[3]) ?? 1);
         const trigger = tType === 0 ? 'birth' : (tType === 1 ? 'collision' : 'death');
+        // Unity SubEmitters fire via Emit()/Bursts on collision/death; birth sub-emitters attached to moving particles also drive rateOverDistance/rate.
+        if ((!Array.isArray(targetLayer.bursts) || targetLayer.bursts.length === 0)
+          && (!Array.isArray(targetLayer.subEmitters) || targetLayer.subEmitters.length === 0)
+          && !(trigger === 'birth' && ((targetLayer.rateOverDistance ?? 0) > 0 || (targetLayer.rate ?? 0) > 0))) {
+          continue;
+        }
         const subSimSpd = Math.max(0.05, Number(targetLayer.simulationSpeed ?? 1));
         const subDelay = Number(targetLayer.delay ?? 0);
         const subLayerDur = Number(targetLayer.duration ?? 0);

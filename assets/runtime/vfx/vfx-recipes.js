@@ -1,4 +1,4 @@
-import { computeDynamicRadialVel, createVisualPrng, packRgb24 } from './vfx-core.js';
+import { applyClampVelocityStep, computeDynamicRadialVel, createVisualPrng, hasClampVelocity, packRgb24 } from './vfx-core.js';
 import { evaluateAtlasParticlePosition, evaluateColorCurve, evaluateSizeCurve } from './vfx-atlas-particles.js';
 import { VFX_DEPTH_TESTS } from './vfx-depth-state.js';
 import { SHURIKEN_QUALITY_TIERS } from './vfx-shuriken-kernel.js';
@@ -104,6 +104,12 @@ export function validateVfxRecipe(recipe) {
       if (layer.sizeCurve !== undefined) {
         if (!Array.isArray(layer.sizeCurve) || layer.sizeCurve.length === 0) {
           errors.push(`layers[${i}].sizeCurve invalid`);
+        }
+      }
+      if (layer.shape?.matrix !== undefined) {
+        const sm = layer.shape.matrix;
+        if (!Array.isArray(sm) || sm.length !== 9 || !sm.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+          errors.push(`layers[${i}].shape.matrix must be a 9-element finite number array`);
         }
       }
     }
@@ -303,6 +309,7 @@ export function createEffectPlayer({
       hasCollision: false,
       groundY: 0, bounce: 0.45, dampen: 0.2, minSpeed: 0.15, bouncesLeft: 3, lifetimeLoss: 0,
       clampVelocity: null,
+      phase: 0.5,
       /** @type {Array<{ trigger?: string, effect?: string | object, probability?: number, inheritVelocity?: number, inheritColor?: boolean, inheritSize?: boolean }> | null} */
       subEmitters: null,
       subDepth: 0,
@@ -767,10 +774,19 @@ export function createEffectPlayer({
       if (typeof sub.effect === 'string' && !registry.has(sub.effect)) continue;
       const iv = Number(sub.inheritVelocity ?? 0);
       const effDef = typeof sub.effect === 'string' ? registry.get(sub.effect) : sub.effect;
-      const hasDelay = Boolean(followTp && effDef?.layers?.some((l) => (l.delay ?? 0) > 0));
+      const needsFollow = Boolean(
+        followTp
+        && triggerType === 'birth'
+        && effDef?.layers?.some((l) => (
+          (l.delay ?? 0) > 0
+          || (l.rate ?? 0) > 0
+          || (l.rateOverDistance ?? 0) > 0
+          || (Array.isArray(l.bursts) && l.bursts.some((b) => (b.time ?? 0) > 0 || (b.cycles ?? 1) !== 1))
+        )),
+      );
       playEffect(sub.effect, {
         x, y, z,
-        ...(hasDelay ? { follow: followTp } : {}),
+        ...(needsFollow ? { follow: followTp } : {}),
         _subDepth: depth + 1,
         _rootX: rootX,
         _rootY: rootY,
@@ -793,7 +809,7 @@ export function createEffectPlayer({
     rootX = x, rootY = y, rootZ = z, rootYaw = 0, rootScale = 1,
     tintR = 1, tintG = 1, tintB = 1,
     collision = null, subEmitters = null, subDepth = 0,
-    clampVelocity = null,
+    clampVelocity = null, phase = 0.5,
     lightSlotIdx = -1, lightBaseIntensity = 0,
   }) {
     for (let i = 0; i < MAX_TRACKED_PARTICLES; i++) {
@@ -849,7 +865,8 @@ export function createEffectPlayer({
         tp.minSpeed = collision?.minSpeed ?? 0.15;
         tp.bouncesLeft = collision?.maxBounces ?? 3;
         tp.lifetimeLoss = Math.max(0, Number(collision?.lifetimeLoss ?? 0));
-        tp.clampVelocity = clampVelocity && clampVelocity.limit > 0 ? clampVelocity : null;
+        tp.clampVelocity = hasClampVelocity(clampVelocity) ? clampVelocity : null;
+        tp.phase = phase;
         tp.subEmitters = Array.isArray(subEmitters) ? subEmitters : null;
         tp.subDepth = subDepth;
         if (lightSlotIdx >= 0 && lightSlotIdx < lightSlots.length) {
@@ -919,6 +936,8 @@ export function createEffectPlayer({
 
   function sampleShapeAndVelocity(layer, slot, scale, ls = null, emitIdx = 0, emitCount = 1, splitRadial = false) {
     const shape = layer.shape || {};
+    const sm = shape.matrix;
+    const hasM = !is2D && Array.isArray(sm) && sm.length === 9;
     const sType = shape.type || 'point';
     const rad = (shape.radius ?? 0) * scale;
     const rt = shape.radiusThickness !== undefined
@@ -1070,7 +1089,21 @@ export function createEffectPlayer({
       lz += (is2D ? 0 : Math.sin(jAng) * jHoriz) * rp;
     }
 
-    if (Array.isArray(shape.scale)) {
+    if (hasM) {
+      const mx = sm[0] * lx + sm[1] * ly + sm[2] * lz;
+      const my = sm[3] * lx + sm[4] * ly + sm[5] * lz;
+      const mz = sm[6] * lx + sm[7] * ly + sm[8] * lz;
+      lx = mx; ly = my; lz = mz;
+      const mdx = sm[0] * dx + sm[1] * dy + sm[2] * dz;
+      const mdy = sm[3] * dx + sm[4] * dy + sm[5] * dz;
+      const mdz = sm[6] * dx + sm[7] * dy + sm[8] * dz;
+      const dLen = Math.hypot(mdx, mdy, mdz);
+      if (dLen > 1e-6) {
+        dx = mdx / dLen;
+        dy = mdy / dLen;
+        dz = mdz / dLen;
+      }
+    } else if (Array.isArray(shape.scale)) {
       const sx = Number(shape.scale[0] ?? 1);
       const sy = Number(shape.scale[1] ?? 1);
       const sz = Number(shape.scale[2] ?? 1);
@@ -1115,7 +1148,7 @@ export function createEffectPlayer({
       dx /= nLen; dy /= nLen; dz /= nLen;
     }
 
-    if (Array.isArray(shape.rotation)) {
+    if (!hasM && Array.isArray(shape.rotation)) {
       const rx = Number(shape.rotation[0] ?? 0);
       const ry = Number(shape.rotation[1] ?? 0);
       const rz = Number(shape.rotation[2] ?? 0);
@@ -1206,9 +1239,13 @@ export function createEffectPlayer({
         const cbYaw = Math.cos(baseYaw);
         const sbYaw = Math.sin(baseYaw);
         const rOff = Array.isArray(vel.radialOffset) ? vel.radialOffset : null;
-        const rcx = baseCx + (rOff ? ((is2D ? (rOff[0] * cbYaw - rOff[1] * sbYaw) : (rOff[0] * cbYaw - rOff[2] * sbYaw)) * baseScale) : 0);
-        const rcy = baseCy + (rOff ? ((is2D ? (rOff[0] * sbYaw + rOff[1] * cbYaw) : rOff[1]) * baseScale) : 0);
-        const rcz = baseCz + (rOff ? (is2D ? 0 : ((rOff[0] * sbYaw + rOff[2] * cbYaw) * baseScale)) : 0);
+        const oOff = Array.isArray(vel.orbitalOffset) ? vel.orbitalOffset : null;
+        const offRx = (rOff ? readRange(rOff[0], 0, 0, prng) : 0) + (oOff ? readRange(oOff[0], 0, 0, prng) : 0);
+        const offRy = (rOff ? readRange(rOff[1], 0, 0, prng) : 0) + (oOff ? readRange(oOff[1], 0, 0, prng) : 0);
+        const offRz = (rOff ? readRange(rOff[2], 0, 0, prng) : 0) + (oOff ? readRange(oOff[2], 0, 0, prng) : 0);
+        const rcx = baseCx + (is2D ? (offRx * cbYaw - offRy * sbYaw) : (offRx * cbYaw - offRz * sbYaw)) * baseScale;
+        const rcy = baseCy + (is2D ? (offRx * sbYaw + offRy * cbYaw) : offRy) * baseScale;
+        const rcz = baseCz + (is2D ? 0 : ((offRx * sbYaw + offRz * cbYaw) * baseScale));
         scratchRadCenter[0] = rcx;
         scratchRadCenter[1] = rcy;
         scratchRadCenter[2] = rcz;
@@ -1646,6 +1683,8 @@ export function createEffectPlayer({
         persistent: Boolean(layer.persistent),
         curveCycle: (layer.curveCycle ?? 0) / simSpd,
         sizeStart,
+        sizeYStart: layer.sizeY !== undefined ? sizeYStart : undefined,
+        sizeZStart: layer.sizeZ !== undefined ? sizeZStart : undefined,
         meshGlobalScale: layer.meshGlobalScale ?? 1.0,
         aspectY: resolvedAspectY ?? 1.0,
         aspectZ: resolvedAspectZ ?? 1.0,
@@ -1706,7 +1745,7 @@ export function createEffectPlayer({
       const needsTracking = Boolean(layer.collision)
         || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)
         || lightSlotIdx >= 0
-        || Boolean(layer.trail && dynRadVel !== 0);
+        || Boolean(layer.trail && (dynRadVel !== 0 || hasClampVelocity(layer.clampVelocity)));
       let trackedSlot = -1;
       if (needsTracking) {
         if (layer.subEmitters) {
@@ -1727,6 +1766,9 @@ export function createEffectPlayer({
           accelZ,
           gravity,
           drag,
+          orbitalY,
+          centerOffX,
+          centerOffZ,
           velRadial: dynRadVel,
           radCx: scratchRadCenter[0],
           radCy: scratchRadCenter[1],
@@ -1741,6 +1783,7 @@ export function createEffectPlayer({
           tintB: scratchTintOut[2],
           collision: layer.collision,
           clampVelocity: layer.clampVelocity,
+          phase,
           curveRow: layer._curveRow ?? 0,
           hasVelCurve: Boolean(layer.velCurve),
           velCurve: layer.velCurve,
@@ -1765,7 +1808,7 @@ export function createEffectPlayer({
       ? allocParticleLight(layer.particleLight, scratchPos[0], scratchPos[1], scratchPos[2], dur, scratchTintOut)
       : -1;
     const needsTracking = Boolean(layer.collision)
-      || Boolean(layer.trail && layer.clampVelocity)
+      || Boolean(layer.trail && hasClampVelocity(layer.clampVelocity))
       || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)
       || lightSlotIdx >= 0;
     const { flipbook: resolvedFb, uvRect: resolvedUv } = resolveFlipbookAndUv(layer, rawDur);
@@ -1870,6 +1913,7 @@ export function createEffectPlayer({
         rootScale: slot.rootScale,
         collision: layer.collision,
         clampVelocity: layer.clampVelocity,
+        phase,
         subEmitters: layer.subEmitters,
         subDepth: slot.subDepth,
         lightSlotIdx,
@@ -2237,13 +2281,17 @@ export function createEffectPlayer({
             slot.followVz = (slot.z - prevFz) / dt;
           }
           if (slot.follow._isTrackedParticle) {
-            let allStarted = true;
+            let allFinishedEmitting = true;
             for (let l = 0; l < slot.recipe.layers.length; l++) {
-              const lSim = slot.recipe.layers[l]._simSpd ?? 1;
-              const lDelay = (slot.recipe.layers[l].delay ?? 0) / lSim;
-              if (slot.layers[l].cycleAge < lDelay) { allStarted = false; break; }
+              const lCfg = slot.recipe.layers[l];
+              const lLoop = lCfg.loop !== undefined ? Boolean(lCfg.loop) : slot.loop;
+              if (lLoop) { allFinishedEmitting = false; break; }
+              const lSim = lCfg._simSpd ?? 1;
+              const lDelay = (lCfg.delay ?? 0) / lSim;
+              const lDur = Math.max(0.01, (lCfg.duration ?? slot.duration) / lSim);
+              if (slot.layers[l].cycleAge < lDelay + lDur) { allFinishedEmitting = false; break; }
             }
-            if (allStarted) slot.follow = null;
+            if (allFinishedEmitting) slot.follow = null;
           }
         }
       }
@@ -2322,6 +2370,7 @@ export function createEffectPlayer({
         let colVScale = 1.0;
         const useAtlasLut = tp.atlasSlot >= 0
           && !tp.hasCollision
+          && !tp.clampVelocity
           && tp.meshSlot < 0
           && (tp.hasVelCurve || Math.abs(tp.orbitalY) > 1e-4)
           && (!tp.hasVelCurve || Boolean(atlasParticles?.lut?.sampleVelDisp));
@@ -2356,22 +2405,35 @@ export function createEffectPlayer({
           tp.vx += tp.accelX * stepDt;
           tp.vy += (is2D ? tp.gravity : -tp.gravity) * stepDt;
           tp.vz += tp.accelZ * stepDt;
-          if (tp.clampVelocity && tp.clampVelocity.limit > 0) {
-            const spd = Math.hypot(tp.vx, tp.vy, tp.vz);
-            const lim = tp.clampVelocity.limit;
-            if (spd > lim) {
-              const cDampen = Math.max(0, Math.min(1, Number(tp.clampVelocity.dampen ?? 1)));
-              const sc = (spd - (spd - lim) * cDampen) / spd;
-              tp.vx *= sc;
-              tp.vy *= sc;
-              tp.vz *= sc;
-            }
+          if (tp.clampVelocity) {
+            applyClampVelocityStep(
+              tp,
+              tp.clampVelocity,
+              stepDt,
+              Math.min(1, prevAge / Math.max(1e-4, tp.duration)),
+              tp.phase ?? 0.5,
+            );
           }
           colVScale = tp.velCurve ? evaluateSizeCurve(tp.velCurve, Math.min(1, prevAge / Math.max(1e-4, tp.duration))) : 1.0;
           computeDynamicRadialVel(tp.x, tp.y, tp.z, tp.radCx, tp.radCy, tp.radCz, tp.velRadial, colVScale, stepDt, scratchRadVel3);
           tp.x += (tp.vx * colVScale + scratchRadVel3[0]) * stepDt;
           tp.y += (tp.vy * colVScale + scratchRadVel3[1]) * stepDt;
           tp.z += (tp.vz * colVScale + scratchRadVel3[2]) * stepDt;
+          if (!is2D && Math.abs(tp.orbitalY) > 0.0001) {
+            const cx = tp.initX - tp.centerOffX;
+            const cz = tp.initZ - tp.centerOffZ;
+            const rx = tp.x - cx;
+            const rz = tp.z - cz;
+            const oa = tp.orbitalY * stepDt;
+            const oc = Math.cos(oa);
+            const os = Math.sin(oa);
+            tp.x = cx + rx * oc - rz * os;
+            tp.z = cz + rx * os + rz * oc;
+            const rvx = tp.vx;
+            const rvz = tp.vz;
+            tp.vx = rvx * oc - rvz * os;
+            tp.vz = rvx * os + rvz * oc;
+          }
         }
         if (tp.hasCollision && !is2D) {
           const evx = tp.vx * colVScale + scratchRadVel3[0];

@@ -18,6 +18,7 @@ import * as THREE from '../assets/optional/three/three.module.js';
 import { createEffectPlayer } from '../assets/runtime/vfx/vfx-recipes.js';
 import { createAtlasParticlePool } from '../assets/runtime/vfx/vfx-atlas-particles.js';
 import { createMeshVfxPool } from '../assets/runtime/vfx/vfx-mesh.js';
+import { applyClampVelocityStep, hasClampVelocity } from '../assets/runtime/vfx/vfx-core.js';
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const DEFAULT_VFX_DIR = path.join(REPO_ROOT, 'webasset/assets/vfx');
@@ -214,6 +215,8 @@ export function verifyUnityVfxParity({
           accelZ: opts.accelZ || 0,
           drag: opts.drag || 0,
           velCurve: opts.velCurve || null,
+          clampVelocity: hasClampVelocity(opts.clampVelocity) ? opts.clampVelocity : null,
+          phase: opts.phase ?? 0.5,
           duration: opts.duration || 1,
           initialAge: opts.initialAge || 0,
           spawnTime: simClock,
@@ -268,30 +271,38 @@ export function verifyUnityVfxParity({
         }
         const age = Math.max(0, targetT - p.spawnTime + p.initialAge);
         if (p.duration > 0 && age > p.duration + 0.02) continue;
-        // 4-step midpoint integration matching velCurve, drag, accel, and gravity
+        // 4-step midpoint integration matching velCurve, drag, clampVelocity, accel, and gravity
         let px = p.x;
         let py = p.y;
         let pz = p.z;
-        let curVx = p.vx;
-        let curVy = p.vy;
-        let curVz = p.vz;
+        const velObj = { vx: p.vx, vy: p.vy, vz: p.vz };
         const subSteps = 4;
         const h = age / subSteps;
         const lifeSpan = Math.max(0.01, p.duration);
         for (let k = 0; k < subSteps; k++) {
+          const t0 = k * h;
           const midT = (k + 0.5) * h;
           const u = Math.min(1, midT / lifeSpan);
+          if (p.drag > 0.001) {
+            const d = Math.exp(-p.drag * h);
+            velObj.vx *= d;
+            velObj.vy *= d;
+            velObj.vz *= d;
+          }
+          velObj.vx += p.accelX * h;
+          velObj.vy -= p.gravity * h;
+          velObj.vz += p.accelZ * h;
+          if (p.clampVelocity) {
+            applyClampVelocityStep(velObj, p.clampVelocity, h, Math.min(1, t0 / lifeSpan), p.phase ?? 0.5);
+          }
           const vMul = p.velCurve ? evalCurveVal(p.velCurve, u) : 1;
-          const dragMul = p.drag > 0 ? Math.exp(-p.drag * midT) : 1;
-          curVx = p.vx * vMul * dragMul + p.accelX * midT;
-          curVy = p.vy * vMul * dragMul - p.gravity * midT;
-          curVz = p.vz * vMul * dragMul + p.accelZ * midT;
-          px += curVx * h;
-          py += curVy * h;
-          pz += curVz * h;
+          px += velObj.vx * vMul * h;
+          py += velObj.vy * vMul * h;
+          pz += velObj.vz * vMul * h;
         }
+        const finalMul = p.velCurve ? evalCurveVal(p.velCurve, Math.min(1, age / lifeSpan)) : 1;
         livePts.push([px, py, pz]);
-        liveVels.push([curVx, curVy, curVz]);
+        liveVels.push([velObj.vx * finalMul, velObj.vy * finalMul, velObj.vz * finalMul]);
       }
 
       const posBuf = new Float32Array(3);
@@ -389,7 +400,7 @@ export function verifyUnityVfxParity({
       });
       const oGroups = new Map();
       oEntry.layers.forEach((oLayer) => {
-        if (oLayer.pCount <= 0) return;
+        if (oLayer.pCount <= 0 || oLayer.renderMode === 5) return;
         const norm = oLayer.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
         const arr = oGroups.get(norm) || [];
         arr.push(oLayer);
@@ -405,48 +416,68 @@ export function verifyUnityVfxParity({
           const sim = simulateLayerAt(rList[0].rLayer, eff.id, rList[0].rIdx, Math.max(0.05, oList[0].simT), recipe.duration);
           pairs.push({ sim, oLayer: oList[0] });
         } else {
-          // Simulate candidates at median targetT first for accurate spatial matching across same-named beams.
+          // Simulate candidate pairs at each oracle layer's own simT (cached by simT) so delayed beams match cleanly.
           const usedO = new Set();
+          const simCache = new Map();
+          const getSim = (item, targetT) => {
+            const key = `${item.rIdx}_${targetT.toFixed(3)}`;
+            let cached = simCache.get(key);
+            if (!cached) {
+              cached = simulateLayerAt(item.rLayer, eff.id, item.rIdx, targetT, recipe.duration);
+              simCache.set(key, cached);
+            }
+            return cached;
+          };
           for (const item of rList) {
-            const firstO = oList.find((_, oi) => !usedO.has(oi)) || oList[0];
-            const probeSim = simulateLayerAt(item.rLayer, eff.id, item.rIdx, Math.max(0.05, firstO.simT), recipe.duration);
             const rShapeType = item.rLayer.shape?.type || 'point';
+            const rDelay = Array.isArray(item.rLayer.delay) ? Number(item.rLayer.delay[0] ?? 0) : Number(item.rLayer.delay ?? 0);
             let bestOi = -1;
+            let bestSim = null;
             let bestCost = Infinity;
             for (let oi = 0; oi < oList.length; oi++) {
               if (usedO.has(oi)) continue;
               const oL = oList[oi];
               const oShapeType = mapUnityShapeName(oL.shapeType);
               const shapePen = oShapeType === rShapeType ? 0 : 100;
+              if (rDelay > oL.simT + 0.02) {
+                const delayCost = 10000 + shapePen;
+                if (delayCost < bestCost) {
+                  bestCost = delayCost;
+                  bestOi = oi;
+                  bestSim = null;
+                }
+                continue;
+              }
+              const targetT = Math.max(0.05, oL.simT);
+              const candSim = getSim(item, targetT);
               const cDist = Math.hypot(
-                probeSim.center[0] - oL.posCenterRhs[0],
-                probeSim.center[1] - oL.posCenterRhs[1],
-                probeSim.center[2] - oL.posCenterRhs[2],
+                candSim.center[0] - oL.posCenterRhs[0],
+                candSim.center[1] - oL.posCenterRhs[1],
+                candSim.center[2] - oL.posCenterRhs[2],
               );
               const sDist = Math.hypot(
-                probeSim.span[0] - oL.posSpanRhs[0],
-                probeSim.span[1] - oL.posSpanRhs[1],
-                probeSim.span[2] - oL.posSpanRhs[2],
+                candSim.span[0] - oL.posSpanRhs[0],
+                candSim.span[1] - oL.posSpanRhs[1],
+                candSim.span[2] - oL.posSpanRhs[2],
               );
-              const mDist = (probeSim.ourMeshSpan && oL.bakedVerts > 0)
+              const mDist = (candSim.ourMeshSpan && oL.bakedVerts > 0)
                 ? Math.hypot(
-                    probeSim.ourMeshSpan[0] - oL.bakedSpanRhs[0],
-                    probeSim.ourMeshSpan[1] - oL.bakedSpanRhs[1],
-                    probeSim.ourMeshSpan[2] - oL.bakedSpanRhs[2],
+                    candSim.ourMeshSpan[0] - oL.bakedSpanRhs[0],
+                    candSim.ourMeshSpan[1] - oL.bakedSpanRhs[1],
+                    candSim.ourMeshSpan[2] - oL.bakedSpanRhs[2],
                   )
                 : 0;
               const cost = shapePen + cDist * 2 + sDist * 0.5 + mDist * 0.5;
               if (cost < bestCost) {
                 bestCost = cost;
                 bestOi = oi;
+                bestSim = candSim;
               }
             }
             if (bestOi >= 0) {
               usedO.add(bestOi);
               const matchedO = oList[bestOi];
-              const finalSim = Math.abs(matchedO.simT - firstO.simT) < 0.01
-                ? probeSim
-                : simulateLayerAt(item.rLayer, eff.id, item.rIdx, Math.max(0.05, matchedO.simT), recipe.duration);
+              const finalSim = bestSim || getSim(item, Math.max(0.05, matchedO.simT));
               pairs.push({ sim: finalSim, oLayer: matchedO });
             }
           }

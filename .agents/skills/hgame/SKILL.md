@@ -69,6 +69,10 @@ node scripts/create-game.mjs "<game-dir>" --design my.design.json
 node scripts/create-game.mjs "<game-dir>" --preset 2d --with audio,save --name "Game Title"
 node scripts/create-game.mjs "<game-dir>" --preset 3d --quality auto --with physics3d,model3d,audio,save --name "3D Game"
 node scripts/create-game.mjs "<game-dir>" --profile ui --with audio,save --name "Card Game"
+
+# 2D stack selection: regular 2D (including <10k on-screen sprites) defaults to PixiJS 8.
+# The in-house WebGL2D adapter (`--renderer webgl2d`) is only for 10k+ instanced sprites/bullets
+# or the 2D lighting/post effects the Pixi starter lacks; `--renderer canvas2d` is the fallback.
 ```
 
 - Folder basename must be an ASCII slug (`[A-Za-z0-9][A-Za-z0-9_-]{0,79}`); pass localized titles via `--name`.

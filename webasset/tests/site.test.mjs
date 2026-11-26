@@ -225,14 +225,29 @@ test('two generation modes produce different modelling briefs', () => {
   const standard = buildCharacterSheetPrompt(c, { mode: 'default' });
   const humanoid = buildCharacterSheetPrompt(c, { mode: 'humanoid' });
   assert.match(standard, /六视图/);
+  for (const prompt of [standard, humanoid]) {
+    assert.match(prompt, /所有视图统一使用闭嘴的中性静息表情/);
+    assert.match(prompt, /禁止张嘴、露齿、嘟嘴、笑、皱眉或瞪眼/);
+    assert.doesNotMatch(prompt, /机灵/);
+  }
   assert.match(standard, /猫爪/);
   assert.match(standard, /#333333/);
   assert.match(standard, /严禁纯白/);
   assert.match(humanoid, /前视图/);
   assert.match(humanoid, /侧视图/);
   assert.match(humanoid, /握拳/);
-  assert.match(humanoid, /微距分腿防粘连规范/);
+  assert.match(humanoid, /正面左手、正面右手、侧面近侧手/);
+  assert.match(humanoid, /任一人形手出现摊掌、伸指或手腕下垂/);
+  assert.match(humanoid, /猫狗等圆收兽爪保留原生爪型/);
+  assert.doesNotMatch(standard, /正面左手、正面右手、侧面近侧手/);
+  assert.match(humanoid, /自然站距/);
   assert.match(humanoid, /微微分开/);
+  assert.match(humanoid, /脚内侧约留一只脚掌或靴子的宽度/);
+  for (const rule of [/彻底移除一切斗篷/, /膝盖以上/, /保留原有袖型、袖长、蓬度和褶皱/, /只收窄腕部袖口/]) {
+    assert.match(humanoid, rule);
+    assert.doesNotMatch(standard, rule);
+  }
+  assert.match(standard, /保留参考图中的斗篷、裙长和袖口/);
   assert.match(humanoid, /直立|两足|双足/);
   assert.match(humanoid, /#333333/);
   assert.match(humanoid, /严禁纯白/);
@@ -257,9 +272,6 @@ test('all image prompts show only the character and exclude registered weapons a
       assert.match(generatedPrompt, /纯角色原则｜最高优先级/);
       assert.match(generatedPrompt, /双手\/前爪自然空置/);
       assert.match(generatedPrompt, /包括参考图中原本拿着、背着、挂着/);
-      assert.match(generatedPrompt, /所有斗篷去掉/);
-      assert.match(generatedPrompt, /所有长裙改为短裙/);
-      assert.match(generatedPrompt, /保留原有袖长，大袖口改为贴臂小袖口（严禁长袖改短袖）/);
       assert.doesNotMatch(generatedPrompt, /所有大袖口统一改为短袖口/);
       for (const prop of props) assert.ok(!generatedPrompt.includes(prop), `${name} ${mode} prompt must not mention ${prop}`);
     }

@@ -107,6 +107,26 @@ export function isMobileOrMiniGameEnv(): boolean;
  * @returns {HTMLCanvasElement | OffscreenCanvas | null}
  */
 export function createOffscreen2dCanvas(width: number, height: number): HTMLCanvasElement | OffscreenCanvas | null;
+/**
+ * Returns true if a Unity LimitVelocityModule (`clampVelocity`) config has active drag or speed limits.
+ * @param {object | null | undefined} cfg
+ * @returns {boolean}
+ */
+export function hasClampVelocity(cfg: object | null | undefined): boolean;
+/**
+ * Applies one Unity LimitVelocityOverLifetimeModule step (drag + scalar/separateAxis velocity clamp)
+ * in-place on an object with `.vx`, `.vy`, `.vz` properties without allocations.
+ * @param {{ vx: number, vy: number, vz: number }} target
+ * @param {object | null | undefined} cfg
+ * @param {number} dt
+ * @param {number} [t=0]
+ * @param {number} [seed=0.5]
+ */
+export function applyClampVelocityStep(target: {
+    vx: number;
+    vy: number;
+    vz: number;
+}, cfg: object | null | undefined, dt: number, t?: number | undefined, seed?: number | undefined): void;
 export const VFX_RENDER_ORDERS: Readonly<{
     CROWD: 0;
     TELEGRAPH: 10;

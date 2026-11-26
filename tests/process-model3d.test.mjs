@@ -592,6 +592,17 @@ test('buildBlenderRemeshBakeArgs forwards --rig-run and buildBlenderRigRunArgs t
   assert.equal(remeshLaunch.includes('--factory-startup'), false);
   const inspectLaunch = buildBlenderLaunchArgs(['inspect', '--input', 'a.glb']);
   assert.ok(inspectLaunch.includes('--factory-startup'));
+
+  const rigWebArgs = parseProcessModel3dArgs([
+    'rig-run',
+    '--from-webasset',
+    '--character-id', 'dafeiyu',
+    '--upload',
+  ]);
+  assert.equal(rigWebArgs.command, 'rig-run');
+  assert.equal(rigWebArgs.flags['from-webasset'], true);
+  assert.equal(rigWebArgs.flags['character-id'], 'dafeiyu');
+  assert.equal(rigWebArgs.flags.upload, true);
 });
 
 test('resolveModel3dConfig resolves optional runAnimGlb without hardcoded paths', () => {

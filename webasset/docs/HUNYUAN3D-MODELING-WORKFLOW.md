@@ -142,7 +142,37 @@ curl -X POST "http://127.0.0.1:4174/api/character-models?characterId=<id>&mode=h
 | 刘华强 liuhuaqiang（握拳重制） | 65.5MB | `5a8463bb-4695-4dc2-a9f0-8d0fbab1994c` | `7793b0c7-0ee4-4b1b-8b5f-ec5b2a83a6a6` | `high-caae4b64` / `low-ab8140f8` |
 | 奶蛙 naiwa（握拳重制） | 67.3MB | `4dc071ee-837b-41b0-a649-17ec54970d5e` | `a00b6867-6c3e-4cfc-abfb-9fd5c0a25929` | `high-e4598579` / `low-bffa69f6` |
 
-**剩余待生成（0 个）**：全库 25 个角色已全部具备高模与 `LOD0/1/2` 低模（2026-11-25 收尾）。备用项：gpt、grok、doubao 的高模为 11-21 长裙版、与 low 模服装不一致，其 `tpose-wide-20261123` 切图已重切并像素验证通过，如需服装统一替换（各耗 1 次配额）待用户决定。
+**2026-11-25 批量轮**（多视图2张 · V3.1 · 1.5m，4 角色全部 `success` 且预览图目检、GLB 魔数 `676c5446` 校验与 WebAsset API 登记通过；同日通过 `character-pack --low-only --upload` 烘焙 T5 低模 LOD0~2 + Auto-Rig Pro `PSEUDO_VOXELS` 23 骨 Anim58 `Run` 并经 `verify-character-lods.mjs` 全绿；`川宝` 上传触发混元 `检测失败` 未扣配额并已按要求移除）：
+
+| 角色 | 大小 | assetId | creationId | 登记 |
+|---|---|---|---|---|
+| 皮衣客 character-8013f300 | 73,379,068 B | `ff168c49-91c2-4ebe-9930-cf46254a2e57` | `49090722-6490-435e-b6f7-66c89ec7afed` | `high-b4b240ad` / `low-fd43dd56` |
+| 马斯克 character-c14a0bdf | 71,614,344 B | `1eaa3886-45c6-4e39-85c1-a971c7384566` | `df7116c2-626e-48dd-b8f4-6b9b1d9b6b60` | `high-6352e594` / `low-7484aefe` |
+| 刘海柱 character-9ef668fc | 67,059,212 B | `9acf6423-c1ba-4fd4-b287-b67281f29a8e` | `21607bef-d2df-48f7-af27-2dcc574c1a99` | `high-a2c66d09` / `low-56d3e61d`（去金属哑光+髋/肩/肘腕/颈与刚性大腿权重修复） |
+| 坤坤 character-6ef886f0 | 75,764,240 B | `ce0c2745-6158-4067-bbd2-228bf7062162` | `eba10936-38f4-44bd-b34e-5b75846ae016` | `high-75c6a40b` / `low-2d61f725` |
+
+**2026-11-26 批量轮（恶搞之家批次，6/6 全部完成）**（多视图2张 · V3.1 · 1.5m，6 角色全部 `success` 且预览图目检、GLB 魔数 `676c5446` 校验与 WebAsset API 登记通过）：
+
+| 角色 | 大小 | assetId | creationId | 登记 |
+|---|---|---|---|---|
+| 布莱恩 character-9e53621e | 70,688,804 B | `bbf96d6c-a89a-45e7-b087-2d02ce10139f` | `c2d87d2c-d16b-4e5f-8125-ef325355add9` | `high-243a9597` / `low-686330c5` (2,310,356 B) |
+| 饺子 character-3d3cdac4 | 79,326,364 B | `4acf71eb-fdfb-450d-9bdd-527908d40fcf` | `d79bdfe3-3bc0-43c6-b24e-83189bf1f65e` | `high-fe7d0902` / `low-293494da` (2,512,192 B) |
+| 皮特 character-30d6a32d | 79,056,256 B | `a712acca-88ab-4fa9-b66a-55d2b8bd6505` | `9fb0df1c-21f5-47ad-9c0e-3c7a1fdc5f11` | `high-cab81afc` / `low-03caf7ab` (2,931,856 B) |
+| 克里斯 character-530e3fc6 | 80,973,240 B | `272ce876-db6a-40e0-bba1-079415b16f8c` | `776ebc6e-abdf-43ab-9513-939b05c85da0` | `high-3417b3b8` / `low-16bf98ab` (3,009,548 B) |
+| 梅根 character-095365cd | 79,151,136 B | `01144b08-b56b-424a-aa9b-7344773bdd62` | `ea84643e-fe1b-4b25-999f-4b80bf3798e3` | `high-b2d25447` / `low-af8c5f90` (3,058,392 B) |
+| 路易斯 character-d3af8180 | 76,105,300 B | `389dbd11-c01b-4128-a938-4e632f004c13` | `76e4d96d-3d0c-4378-b5fc-38329d724843` | `high-6028c1a2` / `low-30c70916` (3,038,148 B) |
+
+**2026-11-26 批量轮二（恶搞之家新增 3 角色补齐，3/3 完成）**（多视图2张 · V3.1 · 1.5m，3 角色全部 `success` 且预览图目检、GLB 魔数 `676c5446` 校验与 WebAsset API 登记通过）：
+
+| 角色 | 大小 | assetId | creationId | 登记 |
+|---|---|---|---|---|
+| Q哥 character-d158c621 | 74,174,844 B | `eb9fe3f8-764c-4535-af5e-886acde0f351` | `a430c4f8-27a4-49a1-919f-752414b2c227` | `high-dceea278` / `low-e179cdbf` (3,038,328 B) |
+| 老克 character-028c4af9 | 78,056,980 B | `7839ee04-2222-4cc9-9b77-8ea37ff03321` | `6b4c6c19-fbf4-4f10-8d19-c2c1bbb1cfc4` | `high-bcaf3285` / `low-74d7987d` (2,806,176 B) |
+| 轮椅怪人 character-9692d63b | 76,902,692 B | `c538fb8a-b5bd-466b-b20d-056e079dc676` | `9d48c6b6-af32-4665-a7f5-b61228cd0aea` | `high-609ca486` / `low-3219e1ef` (2,428,348 B，零 UV 重叠重烘) |
+
+**剩余待生成（0 个，全库 38 个角色已全部具备 `models.high` 与 `models.low`〔T5 LOD0–2 + Auto-Rig Pro 23 骨 + Anim58 `Run`〕）**。
+
+备用项：gpt、grok、doubao 的高模为 11-21 长裙版、与 low 模服装不一致，其 `tpose-wide-20261123` 切图已重切并像素验证通过，如需服装统一替换（各耗 1 次配额）待用户决定。
 
 ## 注意
 

@@ -158,7 +158,7 @@ export function compileShurikenLayer(layer, {
   const clampVel = layer.clampVelocity ? {
     separateAxis: Boolean(layer.clampVelocity.separateAxis),
     dampen: Math.max(0, Math.min(1, Number(layer.clampVelocity.dampen ?? 1.0))),
-    limitMag: compileMinMaxCurve(layer.clampVelocity.limit ?? layer.clampVelocity.magnitude ?? 1000, 1000),
+    limitMag: compileMinMaxCurve(layer.clampVelocity.magnitude ?? layer.clampVelocity.limit ?? 1000, 1000),
     limitX: compileMinMaxCurve(layer.clampVelocity.x ?? 1000, 1000),
     limitY: compileMinMaxCurve(layer.clampVelocity.y ?? 1000, 1000),
     limitZ: compileMinMaxCurve(layer.clampVelocity.z ?? 1000, 1000),

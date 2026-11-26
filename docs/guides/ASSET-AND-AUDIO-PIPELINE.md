@@ -204,3 +204,13 @@ node scripts/verify-character-lods.mjs <low.glb>
 - ⚠️ **避坑固定规则**：
   - ComfyUI 必须带 `--reserve-vram 4.8` 启动（可写入本地 ComfyUI 启动脚本或 CLI 参数），勿跑 `pipeline_type="512"` 的纹理 GGUF（会产生彩色噪点）。
   - AI 概念图不使用 `--multiview`（非严格正交会导致额头凸起/耳朵撕裂），也不再默认跑 8–10 分钟的 UltraTex 重绘。
+
+## 5. KTX2 Texture Compression & toktx Toolchain (`scripts/lib/toktx.mjs`)
+
+- **toktx is the default encoder**: `scripts/process-assets.mjs --ktx2` and `webasset/hgame-assets-cn/tools/pack-for-game.mjs` both resolve the binary through `scripts/lib/toktx.mjs` — `TOKTX_BIN` env → `toktxPath` in `.hgame.local.json` → PATH. Diffuse/albedo textures encode as ETC1S, normal/roughness/MR data textures as UASTC, always with `--genmipmap`.
+- **Fail-closed release gates**:
+  - `node scripts/process-assets.mjs --ktx2 --require-toktx` (or `HGAME_REQUIRE_TOKTX=1`) errors out when toktx is missing; without the flag it falls back to the plain container but prints an explicit warning.
+  - `node webasset/hgame-assets-cn/tools/pack-for-game.mjs --release` refuses the WebP fallback and requires real compression; the default dev mode keeps the WebP fallback with a warning.
+  - `node scripts/package-game.mjs` audits every packaged `.ktx2`: uncompressed payloads or incomplete mip chains fail the package (`--allow-uncompressed-ktx2` opts out for development only).
+- **Install (optional, no PATH changes required)**: download a KTX-Software release, unzip anywhere, and point `.hgame.local.json` at it: `"toktxPath": "<path-to>/toktx.exe"`.
+- **Verify an artifact**: `inspectKtx2(buffer)` (exported by `scripts/lib/toktx.mjs`) reads the header and reports `vkFormat`, `levelCount`, `compressed`, `fullMipChain`; the release-gate tests (`tests/ktx2-release-gate.test.mjs`) cover the strict/non-strict and audit paths with a stub encoder.
