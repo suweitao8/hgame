@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Prevent axis/radial `VelocityModule` curves from suppressing dominant `startSpeed` in `scripts/import-unity-vfx.mjs`: when `velCurveSource` is `'x' | 'y' | 'z' | 'radial'` without a `speedModifier` curve and `moduleMag < maxAbs(speed)`, preserve the peak scalar constant velocity and tag `velCurveDropped: 'baseSpeedDominant'` instead of multiplying the axis curve across the entire particle speed (reducing parity `scaleOutliers` from 37 to 12 and total parity anomalies from 517 to 492).
+
 - Fix `scripts/verify-unity-vfx-parity.mjs` to capture `rLayer.velCurve` when `opts.hasVelCurve` is set on headless `atlasParticles.emit` calls (matching GPU LUT runtime evaluation, shifting the honest parity baseline from 474 to 517 after surfacing previously masked `scaleOutliers` and `velFlips`), and emit `velCurveSource` and `velCurveAxes` diagnostic metadata in `scripts/import-unity-vfx.mjs`.
 
 - Align orbital kinematics with Unity `totalVelocity` semantics across runtime and parity verification: add tangential velocity component (`orbitalY * vec2(-relRot.y, relRot.x)`) to `ATLAS_PARTICLE_VERTEX_GLSL` in `assets/runtime/vfx/vfx-atlas-particles.js` for accurate stretched-billboard alignment; export `applyOrbitalY` and integrate orbital position + total tangential velocity (gated by `integrateOrbital = true`) in `scripts/verify-unity-vfx-parity.mjs`; and add a direction-coherence gate (`coherence >= 0.3`, tracked via `velChecksSkippedIncoherent`) before flagging `velFlips` so isotropic circular/spherical emitters with near-zero mean velocity are not compared on PRNG noise.

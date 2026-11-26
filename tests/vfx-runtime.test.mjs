@@ -5543,6 +5543,34 @@ test('createEffectPlayer emits atlas particles with hasVelCurve + compiled curve
   }
 });
 
+test('convertUnityPrefab drops axis velCurve when startSpeed dominates module velocity magnitude', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'unity-velcurve-drop-'));
+  try {
+    const prefabPath = path.join(tmpDir, 'velcurve_drop.prefab');
+    fs.writeFileSync(
+      prefabPath,
+      [
+        '%YAML 1.1',
+        '--- !u!1 &100',
+        'GameObject:\n  m_Name: VelCurveDrop\n  m_IsActive: 1',
+        '--- !u!4 &101',
+        'Transform:\n  m_GameObject: {fileID: 100}\n  m_LocalPosition: {x: 0, y: 0, z: 0}\n  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}\n  m_LocalScale: {x: 1, y: 1, z: 1}\n  m_Father: {fileID: 0}',
+        '--- !u!198 &102',
+        'ParticleSystem:\n  m_GameObject: {fileID: 100}\n  lengthInSec: 1\n  InitialModule:\n    startLifetime:\n      minMaxState: 0\n      scalar: 1\n    startSpeed:\n      minMaxState: 0\n      scalar: 10\n    startSize:\n      minMaxState: 0\n      scalar: 1\n  EmissionModule:\n    enabled: 1\n    m_BurstCount: 1\n    m_Bursts:\n    - serializedVersion: 2\n      time: 0\n      countCurve:\n        scalar: 1\n  VelocityModule:\n    enabled: 1\n    inWorldSpace: 0\n    x:\n      minMaxState: 0\n      scalar: 0\n    y:\n      minMaxState: 1\n      scalar: 0.5\n      maxCurve:\n        m_Curve:\n        - time: 0\n          value: 0\n        - time: 1\n          value: 1\n    z:\n      minMaxState: 0\n      scalar: 0\n    speedModifier:\n      minMaxState: 0\n      scalar: 1',
+        '--- !u!199 &103',
+        'ParticleSystemRenderer:\n  m_GameObject: {fileID: 100}\n  m_Enabled: 1\n  m_RenderMode: 0',
+      ].join('\n'),
+      'utf8',
+    );
+    const { recipe } = convertUnityPrefab({ unityRoot: tmpDir, prefabPath, id: 'velcurve_drop_test' });
+    assert.equal(recipe.layers[0].velCurve, undefined);
+    assert.equal(recipe.layers[0].velCurveDropped, 'baseSpeedDominant');
+    assert.equal(recipe.layers[0].velCurveSource, 'y');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 
 
 

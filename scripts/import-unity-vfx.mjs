@@ -2101,7 +2101,22 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
                 : null;
       const chosenVelCurve = rx.curve || ry.curve || rz.curve || rRad.curve || spdModCurve;
       if (chosenVelCurve) {
-        layer.velCurve = chosenVelCurve;
+        const maxAbsOf = (v) => {
+          if (typeof v === 'number') return Math.abs(v);
+          if (Array.isArray(v)) return Math.max(Math.abs(Number(v[0]) || 0), Math.abs(Number(v[1]) || 0));
+          if (v && typeof v === 'object') {
+            return Math.max(Math.abs(Number(v.scalar) || 0), Math.abs(Number(v.minScalar) || 0));
+          }
+          return 0;
+        };
+        const baseSpeedMax = maxAbsOf(layer.speed);
+        const isAxisOrRadialSource = velCurveSource === 'x' || velCurveSource === 'y' || velCurveSource === 'z' || velCurveSource === 'radial';
+        const moduleMag = maxAbsOf(vx) + maxAbsOf(vy) + maxAbsOf(vz) + maxAbsOf(radV);
+        if (isAxisOrRadialSource && !spdModCurve && baseSpeedMax > 0.01 && moduleMag < baseSpeedMax) {
+          layer.velCurveDropped = 'baseSpeedDominant';
+        } else {
+          layer.velCurve = chosenVelCurve;
+        }
         layer.velCurveSource = velCurveSource;
         layer.velCurveAxes = velCurveAxes;
       }
