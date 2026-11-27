@@ -2300,7 +2300,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       } else {
         const magData = parseMinMaxCurveData(extractModSubBlock(clampVelMod, 'magnitude'), false) ?? 1;
         const limitVal = typeof magData === 'number' ? magData : Array.isArray(magData) ? magData[1] : (magData?.scalar ?? 1);
-        if (limitVal > 0.0001 || (dragData && dragData !== 0)) {
+        if (limitVal > 0.0001 || dampenVal > 0.0001 || (dragData && dragData !== 0)) {
           layer.clampVelocity = {
             separateAxis: false,
             limit: Number(limitVal.toFixed(4)),

@@ -394,7 +394,7 @@ function buildBuiltinGeometry(THREE, shapeName) {
     return new THREE.BoxGeometry(1, 1, 1);
   }
   if ((key === 'sphere' || key === 'distortion') && THREE.SphereGeometry) {
-    return new THREE.SphereGeometry(0.5, 20, 14);
+    return new THREE.SphereGeometry(0.5, 32, 20);
   }
   if (key === 'hemisphere' && THREE.SphereGeometry) {
     return new THREE.SphereGeometry(0.5, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5);

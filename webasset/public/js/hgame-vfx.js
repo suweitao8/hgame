@@ -884,11 +884,11 @@ function ensureBenchPostPipeline(vp) {
         vignette: 0,
       },
       toneMapping: 'agx',
-      exposure: 0.95,
-      bloomStrength: 0.18,
-      bloomThreshold: 1.0,
+      exposure: 1.15,
+      bloomStrength: 0.26,
+      bloomThreshold: 0.92,
       bloomSoftKnee: 0.5,
-      saturation: 0.85,
+      saturation: 1.05,
       vignette: 0,
       sharpness: 0,
     });
@@ -941,11 +941,11 @@ function renderBenchScene(vp) {
     vp.renderer.toneMapping = THREE.NoToneMapping;
     pipe.setState({
       toneMapping: 'agx',
-      exposure: 0.95,
-      saturation: 0.85,
+      exposure: 1.15,
+      saturation: 1.05,
       bloom: bloomToggle ? bloomToggle.checked : true,
-      bloomStrength: qTier === 'high' ? 0.18 : 0.12,
-      bloomThreshold: 1.0,
+      bloomStrength: qTier === 'high' ? 0.26 : 0.16,
+      bloomThreshold: 0.92,
       bloomSoftKnee: 0.5,
       fxaa: qTier === 'high',
     });

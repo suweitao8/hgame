@@ -26,6 +26,7 @@ import {
   createVfxSystem,
   ATLAS_PARTICLE_VERTEX_GLSL,
 } from '../assets/runtime/vfx/index.js';
+import { applyClampVelocityStep, hasClampVelocity } from '../assets/runtime/vfx/vfx-core.js';
 import { convertUnityPrefab } from '../scripts/import-unity-vfx.mjs';
 import { buildGlbBuffer, parseUnityAssetMesh } from '../scripts/export-unity-vfx-bench.mjs';
 import { auditVfxPackParity } from '../scripts/export-vfx-bundle.mjs';
@@ -747,5 +748,56 @@ test('ATLAS_PARTICLE_VERTEX_GLSL preserves front-facing winding for negative len
     assert.equal(litLayer.lit, true, 'URP/Lit should set lit=true');
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('hasClampVelocity and applyClampVelocityStep brake particles toward 0 when limit === 0 and dampen > 0, and static flipbook 0.4444 selects frame 4', () => {
+  const clampCfg = { separateAxis: false, limit: 0, magnitude: 0, dampen: 0.25 };
+  assert.equal(hasClampVelocity(clampCfg), true, 'limit=0 with dampen>0 is active air-braking');
+  const target = { vx: 10, vy: 0, vz: 0 };
+  applyClampVelocityStep(target, clampCfg, 1 / 60, 0.1, 0.5);
+  assert.ok(target.vx > 7 && target.vx < 8, `expected speed damped from 10 to ~7.5 in 1 step, got ${target.vx}`);
+
+  // Verify static 3x3 flipbook with startFrame=0.4444 maps to frame 4 (center cell: u in [1/3..2/3], v in [1/3..2/3]), not frame 3
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE });
+  try {
+    vfx.setAtlas(null, { fruitslices: [0, 0, 1, 1] });
+    vfx.registerEffect({
+      schemaVersion: 1,
+      id: 'apple_frame4_test',
+      duration: 1.0,
+      loop: false,
+      layers: [
+        {
+          name: 'gibs',
+          kind: 'particle',
+          renderMode: 'billboard',
+          bursts: [{ time: 0, count: 1 }],
+          life: 0.8,
+          size: 0.5,
+          flipbook: { region: 'fruitslices', cols: 3, rows: 3, cycles: 0, startFrame: 0.4444, blend: false },
+          material: { shaderProfile: 'unity_standard', blend: 'alpha' },
+        },
+      ],
+    });
+    vfx.playEffect('apple_frame4_test', { x: 0, y: 0, z: 0 });
+    vfx.update(0.02);
+    const atlasMesh = scene.getObjectByName('HGameVfxAtlasNormal');
+    assert.ok(atlasMesh, 'atlas normal batch mounted');
+    const p4 = atlasMesh.geometry.getAttribute('aAtlasP4').array;
+    const packed0 = Math.round(p4[0]);
+    const packed1 = Math.round(p4[1]);
+    // packUvPair encodes qu * 4096 + qv scaled by 3840
+    const decU0 = Math.floor(packed0 / 4096) / 3840;
+    const decV0 = (packed0 % 4096) / 3840;
+    const decU1 = Math.floor(packed1 / 4096) / 3840;
+    const decV1 = (packed1 % 4096) / 3840;
+    assert.ok(Math.abs(decU0 - 1 / 3) < 0.01, `frame 4 col=1 starts at u=0.333, got ${decU0}`);
+    assert.ok(Math.abs(decV0 - 1 / 3) < 0.01, `frame 4 row=1 starts at v=0.333, got ${decV0}`);
+    assert.ok(Math.abs(decU1 - 2 / 3) < 0.01, `frame 4 col=1 ends at u=0.667, got ${decU1}`);
+    assert.ok(Math.abs(decV1 - 2 / 3) < 0.01, `frame 4 row=1 ends at v=0.667, got ${decV1}`);
+  } finally {
+    vfx.dispose();
   }
 });

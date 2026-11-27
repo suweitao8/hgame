@@ -48,7 +48,7 @@ function resolveBuiltinMeshGeometry(THREE, meshName) {
   const key = String(meshName).toLowerCase();
   if (key === 'quad' && THREE.PlaneGeometry) return new THREE.PlaneGeometry(1, 1);
   if (key === 'cube' && THREE.BoxGeometry) return new THREE.BoxGeometry(1, 1, 1);
-  if ((key === 'sphere' || key === 'distortion') && THREE.SphereGeometry) return new THREE.SphereGeometry(0.5, 20, 14);
+  if ((key === 'sphere' || key === 'distortion') && THREE.SphereGeometry) return new THREE.SphereGeometry(0.5, 32, 20);
   if (key === 'hemisphere' && THREE.SphereGeometry) return new THREE.SphereGeometry(0.5, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5);
   if (key === 'cone' && THREE.ConeGeometry) return new THREE.ConeGeometry(0.35, 1.0, 10, 1, true);
   if (key === 'cylinder' && THREE.CylinderGeometry) return new THREE.CylinderGeometry(0.45, 0.45, 1.0, 16, 1, true);

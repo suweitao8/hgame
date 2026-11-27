@@ -423,7 +423,11 @@ function evalClampSpec(spec, t, seed = 0.5, fallback = 0) {
  */
 export function hasClampVelocity(cfg) {
   if (!cfg || typeof cfg !== 'object') return false;
-  return Number(cfg.limit) > 0 || Boolean(cfg.drag) || Boolean(cfg.separateAxis) || cfg.magnitude !== undefined;
+  return Number(cfg.limit) > 0
+    || (Number(cfg.dampen) > 0 && (cfg.limit !== undefined || cfg.magnitude !== undefined))
+    || Boolean(cfg.drag)
+    || Boolean(cfg.separateAxis)
+    || cfg.magnitude !== undefined;
 }
 
 /**
@@ -459,7 +463,7 @@ export function applyClampVelocityStep(target, cfg, dt, t = 0, seed = 0.5) {
     return;
   }
   const lim = Math.max(0, evalClampSpec(cfg.magnitude !== undefined ? cfg.magnitude : cfg.limit, t, seed, Number(cfg.limit) || 0));
-  if (lim <= 0) return;
+  if (cfg.magnitude === undefined && cfg.limit === undefined) return;
   const spd = Math.hypot(target.vx, target.vy, target.vz);
   if (spd > lim && spd > 1e-6) {
     const targetSpd = spd + (lim - spd) * damp;

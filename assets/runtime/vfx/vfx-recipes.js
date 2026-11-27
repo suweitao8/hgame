@@ -1425,7 +1425,7 @@ export function createEffectPlayer({
     if (isStaticFrame && (outCols > 1 || outRows > 1)) {
       const sf = Math.max(0, Math.min(0.9999, readRange(fb.startFrame, 0, 0, prng)));
       const totalCells = outCols * outRows;
-      const cellIdx = Math.min(totalCells - 1, Math.floor(sf * totalCells));
+      const cellIdx = Math.min(totalCells - 1, Math.floor(sf * totalCells + 1e-3));
       const colIdx = cellIdx % outCols;
       const rowIdx = Math.floor(cellIdx / outCols);
       const uSpan = (u1 - u0) / outCols;
