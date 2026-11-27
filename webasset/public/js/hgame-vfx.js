@@ -6,7 +6,6 @@ import {
   createSidebarSquareCard,
   createThreeViewport,
   disposeObject3D,
-  fetchUnrealCatalog,
   normalizeUnrealSceneMaterials,
 } from './hgame-shared.js';
 
@@ -27,8 +26,6 @@ const VFX_CATEGORY_ORDER = [
   '环境 · 自然与天气',
   '交互 · 拾取与提示',
   '其他 · 杂项',
-  '3D 网格',
-  '序列帧贴图',
 ];
 
 const ETFX_SUBCATEGORY_LABELS = {
@@ -691,25 +688,7 @@ function getCategoryRank(cat) {
 }
 
 function getAllItems() {
-  const defaultBundleId = vfxBundles[0]?.id || 'piloto_studio';
-  return [
-    ...shurikenBenchSystems.map(item => ({ ...item, kind: 'system' })),
-    ...vfxSystems.map(item => ({ ...item, kind: 'system', bundleId: item.bundleId || defaultBundleId })),
-    ...vfxMeshes.map(item => ({
-      ...item,
-      kind: 'mesh',
-      bundleId: item.bundleId || defaultBundleId,
-      category: item.category || '3D 网格',
-      subCategory: item.subCategory || item.pack || '3D 网格',
-    })),
-    ...vfxTextures.map(item => ({
-      ...item,
-      kind: 'texture',
-      bundleId: item.bundleId || defaultBundleId,
-      category: item.category || '序列帧贴图',
-      subCategory: item.subCategory || item.pack || '序列帧贴图',
-    })),
-  ];
+  return shurikenBenchSystems.map(item => ({ ...item, kind: 'system' }));
 }
 
 function getActiveBundleItems() {
@@ -749,13 +728,13 @@ function getFilteredItems({ ignoreSubtype = false } = {}) {
   });
   const catHasPending = new Map();
   for (const item of filtered) {
-    const cat = item.category || (item.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
+    const cat = item.category || '范围爆破';
     if (!catHasPending.has(cat)) catHasPending.set(cat, false);
     if (!isItemReviewed(item)) catHasPending.set(cat, true);
   }
   return filtered.sort((a, b) => {
-    const ca = a.category || (a.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
-    const cb = b.category || (b.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
+    const ca = a.category || '范围爆破';
+    const cb = b.category || '范围爆破';
     const pa = catHasPending.get(ca) ? 0 : 1;
     const pb = catHasPending.get(cb) ? 0 : 1;
     if (pa !== pb) return pa - pb;
@@ -828,13 +807,9 @@ function populateCategoryFilter() {
   const counts = new Map();
   let pendingCnt = 0;
   let approvedCnt = 0;
-  let meshCnt = 0;
-  let texCnt = 0;
   for (const item of pool) {
     if (isItemReviewed(item)) approvedCnt++;
     else pendingCnt++;
-    if (item.kind === 'mesh') meshCnt++;
-    else if (item.kind === 'texture') texCnt++;
     const cat = item.category || '范围爆破';
     counts.set(cat, (counts.get(cat) || 0) + 1);
   }
@@ -849,8 +824,6 @@ function populateCategoryFilter() {
   addOpt('all', `全部大类 (${pool.length})`);
   addOpt('review:pending', `待审核 (${pendingCnt})`);
   addOpt('review:approved', `已通过 (${approvedCnt})`);
-  if (meshCnt > 0) addOpt('kind:mesh', `3D 网格 (${meshCnt})`);
-  if (texCnt > 0) addOpt('kind:texture', `序列帧贴图 (${texCnt})`);
   const ordered = [
     ...VFX_CATEGORY_ORDER.filter(c => counts.has(c)),
     ...[...counts.keys()].filter(c => !VFX_CATEGORY_ORDER.includes(c)).sort(),
@@ -984,7 +957,7 @@ function renderList() {
   const filterVal = typeFilter?.value || 'all';
   const showSubOnlyHeading = filterVal.startsWith('cat:');
   for (const item of items) {
-    const cat = item.category || (item.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
+    const cat = item.category || '范围爆破';
     const sub = item.subCategory || '';
     const groupKey = showSubOnlyHeading && sub
       ? sub
@@ -2872,11 +2845,9 @@ async function initVfxView() {
     vp.start(tickVfx);
   }
   try {
-    const [unrealRes, vfxBenchRes] = await Promise.all([
-      fetchUnrealCatalog().catch(() => ({})),
-      fetch('/api/hgame/vfx/catalog').then(r => (r.ok ? r.json() : { available: false })).catch(() => ({ available: false })),
-    ]);
-    const unrealCatalog = unrealRes || {};
+    const vfxBenchRes = await fetch('/api/hgame/vfx/catalog')
+      .then(r => (r.ok ? r.json() : { available: false }))
+      .catch(() => ({ available: false }));
     vfxPacksById.clear();
     reviewedIds.clear();
     for (const rid of Array.isArray(vfxBenchRes?.reviewedIds) ? vfxBenchRes.reviewedIds : []) {
@@ -2963,17 +2934,9 @@ async function initVfxView() {
     } else {
       shurikenBenchSystems = [];
     }
-    vfxSystems = Array.isArray(unrealCatalog.vfxSystems)
-      ? unrealCatalog.vfxSystems.map(sys => {
-        const { category, subCategory } = classifyVfxHierarchy(sys);
-        return { ...sys, category, subCategory };
-      })
-      : [];
-    vfxMeshes = Array.isArray(unrealCatalog.vfxMeshes) ? unrealCatalog.vfxMeshes : [];
-    vfxTextures = Array.isArray(unrealCatalog.vfxTextures) ? unrealCatalog.vfxTextures : [];
-    if (vfxBundles.length === 0 && (vfxSystems.length + vfxMeshes.length + vfxTextures.length) > 0) {
-      vfxBundles = [{ id: 'unreal_export', name: 'Unreal 特效', packCount: 1, effectCount: vfxSystems.length + vfxMeshes.length + vfxTextures.length }];
-    }
+    vfxSystems = [];
+    vfxMeshes = [];
+    vfxTextures = [];
   } catch (error) {
     vfxBundles = [];
     shurikenBenchSystems = [];
