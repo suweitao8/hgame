@@ -889,6 +889,7 @@ export function createVfxSystem({
     setAtlas(tex, regions, opts) {
       atlasParticles.setAtlas(tex, regions, opts);
       meshVfx.setAtlas?.(tex, regions, opts);
+      shurikenKernel.setAtlas?.(tex, regions, opts);
       if (typeof trails.setAtlas === 'function') {
         trails.setAtlas(tex, regions, opts);
       } else if (regions) {

@@ -397,8 +397,11 @@ function inspectMaterial(matInfo, guidMap, deps) {
   const blendIntM = txt.match(/- _Blend:\s*(\d+)/) || txt.match(/- _BUILTIN_Blend:\s*(\d+)/);
   const dstBlendM = txt.match(/- _DstBlend:\s*(\d+)/) || txt.match(/- _BUILTIN_DstBlend:\s*(\d+)/);
   const srcBlendM = txt.match(/- _SrcBlend:\s*(\d+)/) || txt.match(/- _BUILTIN_SrcBlend:\s*(\d+)/);
-  const srcBlend = srcBlendM ? Number(srcBlendM[1]) : undefined;
-  const dstBlend = dstBlendM ? Number(dstBlendM[1]) : undefined;
+  const srcBlendRaw = srcBlendM ? Number(srcBlendM[1]) : undefined;
+  const dstBlendRaw = dstBlendM ? Number(dstBlendM[1]) : undefined;
+  const isStaleUrpTransparentBlend = surfaceMode === '1' && srcBlendRaw === 1 && dstBlendRaw === 0;
+  let srcBlend = srcBlendRaw;
+  let dstBlend = dstBlendRaw;
   let blend = 'alpha';
   if (isDistortionOnly) {
     blend = 'distortion';
@@ -412,10 +415,16 @@ function inspectMaterial(matInfo, guidMap, deps) {
   } else if (/_ab$/i.test(matName)) {
     blend = 'alpha';
   }
+  if (isStaleUrpTransparentBlend) {
+    if (blend === 'additive') { srcBlend = 5; dstBlend = 1; }
+    else if (blend === 'premultiply') { srcBlend = 1; dstBlend = 10; }
+    else if (blend === 'multiply') { srcBlend = 2; dstBlend = 0; }
+    else { srcBlend = 5; dstBlend = 10; }
+  }
 
   const zWriteRaw = txt.match(/- _ZWrite:[ \t]*([^\s]+)/)?.[1] ?? txt.match(/- _BUILTIN_ZWrite:[ \t]*([^\s]+)/)?.[1];
   const zTestRaw = txt.match(/- _ZTest:[ \t]*([^\s]+)/)?.[1] ?? txt.match(/- _BUILTIN_ZTest:[ \t]*([^\s]+)/)?.[1];
-  const zWrite = Number(zWriteRaw);
+  const zWrite = isStaleUrpTransparentBlend ? 0 : Number(zWriteRaw);
   const zTest = Number(zTestRaw);
 
   if (shaderKind !== 'legacy') {
@@ -774,7 +783,8 @@ function inspectMaterial(matInfo, guidMap, deps) {
     softParticles: softParticles === 0 || softParticles === 1 ? softParticles === 1 : undefined,
     mainTexKey: spriteKey,
     mainTexST: [uvScale?.[0] ?? 1, uvScale?.[1] ?? 1, uvOffset?.[0] ?? 0, uvOffset?.[1] ?? 0],
-    tintColor: isDistortionOnly ? [1, 1, 1, color.a] : [...color.rgb, color.a],
+    // tintColor is already baked into colorCurve/startColor during conversion; keep shader multiplier neutral.
+    tintColor: [1, 1, 1, 1],
     hdr: isDistortionOnly ? 1.0 : color.hdr,
     emission,
     keywords,
@@ -2230,11 +2240,17 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       const fotState = Number((fotBlock.match(/minMaxState:\s*(\d+)/) || [])[1] ?? 1);
       const fotScalar = readMinMaxScalar(uvMod, 'frameOverTime', 1);
       const fotKeys = (fotState === 1 || fotState === 2) ? parseCurveKeys(fotBlock) : null;
+      const isConstantFot = timeMode !== 2 && fotState === 0 && typeof fotScalar === 'number';
       const isFlatZeroFot = (fotState === 0 || fotState === 3) && (Array.isArray(fotScalar) ? Math.abs(fotScalar[1]) < 1e-4 : Math.abs(fotScalar) < 1e-4)
         || (fotKeys && Math.max(...fotKeys.map((k) => k[1])) < 1e-4);
-      const isStaticFrame = timeMode !== 2 && isFlatZeroFot;
+      const isStaticFrame = isConstantFot || (timeMode !== 2 && isFlatZeroFot);
       const cycles = isStaticFrame ? 0 : rawCycles;
-      const startFrame = readMinMaxScalar(uvMod, 'startFrame', 0);
+      const rawStartFrame = readMinMaxScalar(uvMod, 'startFrame', 0);
+      const startFrame = isConstantFot && Math.abs(fotScalar) > 1e-4
+        ? (Array.isArray(rawStartFrame)
+          ? [Number((rawStartFrame[0] + fotScalar).toFixed(4)), Number((rawStartFrame[1] + fotScalar).toFixed(4))]
+          : Number((rawStartFrame + fotScalar).toFixed(4)))
+        : rawStartFrame;
       const hasStartFrame = Array.isArray(startFrame) ? (Math.abs(startFrame[0]) > 1e-4 || Math.abs(startFrame[1]) > 1e-4) : Math.abs(startFrame) > 1e-4;
       const legacyRandomRow = /\brandomRow:\s*1\b/.test(uvMod);
       const rowModeNum = Number(uvMod.match(/\browMode:\s*(\d+)/)?.[1] ?? Number(legacyRandomRow));

@@ -241,6 +241,7 @@ export function createVfxSystem({ mode, sceneOrAdapter, THREE, renderer, maxPart
     };
     shurikenKernel: {
         registerTexture: (key: any, tex: any) => void;
+        setAtlas: (tex: any, regions?: null, opts?: {}) => void;
         registerMeshGeometry: (key: any, geoOrObj: any) => void;
         registerLayer: (layer: any, customTextures?: null) => {
             layer: any;

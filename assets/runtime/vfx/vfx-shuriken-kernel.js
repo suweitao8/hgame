@@ -117,6 +117,8 @@ export function compileShurikenLayer(layer, {
   textures = {},
   meshGeometry = null,
   sharedUniforms = null,
+  mainAtlasRect = null,
+  mainSrgb = false,
 } = {}) {
   const renderMode = layer.renderMode || (layer.kind === 'mesh' ? 'mesh' : 'billboard');
   const renderModeId = RENDER_MODE_IDS[renderMode] ?? 0;
@@ -220,6 +222,8 @@ export function compileShurikenLayer(layer, {
       flipbookBlend: fb ? fb.blend !== false : false,
       pivot: layer.pivot || [0, 0],
       hasUv2: Boolean(baseGeo.getAttribute?.('uv1') || streams.uv2),
+      mainAtlasRect,
+      mainSrgb,
     });
     material = matRes.material;
     renderState = matRes.renderState;
@@ -390,6 +394,45 @@ export function createShurikenKernel({
   const texturesMap = new Map();
   const meshGeometriesMap = new Map();
   const effectTransforms = new Map(); // effectId -> { x, y, z, yaw, vx, vy, vz }
+  let atlasTex = null;
+  let atlasRegions = null;
+  let atlasFlipV = true;
+
+  function resolveAtlasRect(key) {
+    const r = key && atlasRegions?.[key];
+    if (!Array.isArray(r) || r.length < 4) return [0, 0, 1, 1];
+    const [u0, v0, u1, v1] = r;
+    const useFlipV = atlasTex?.flipY !== false && atlasFlipV;
+    if (useFlipV) {
+      return [u0, 1 - v1, u1 - u0, v1 - v0];
+    }
+    return [u0, v1, u1 - u0, v0 - v1];
+  }
+
+  function isAtlasSrgb() {
+    if (!atlasTex) return false;
+    return !atlasTex.colorSpace || atlasTex.colorSpace === THREE?.NoColorSpace;
+  }
+
+  function setAtlas(tex, regions = null, opts = {}) {
+    atlasTex = tex || null;
+    atlasRegions = regions ? { ...regions } : null;
+    atlasFlipV = typeof opts?.flipV === 'boolean' ? opts.flipV : true;
+    const srgbVal = isAtlasSrgb() ? 1.0 : 0.0;
+    for (const cl of compiledLayers) {
+      if (!cl._usesAtlas || !cl.material?.uniforms) continue;
+      const u = cl.material.uniforms;
+      const key = cl._mainTexKey;
+      const hasRegion = Boolean(key && atlasTex && atlasRegions?.[key]);
+      if (u.uMainTex) u.uMainTex.value = hasRegion ? atlasTex : null;
+      if (u.uHasMainTex) u.uHasMainTex.value = hasRegion ? 1.0 : 0.0;
+      if (u.uMainSrgb) u.uMainSrgb.value = hasRegion ? srgbVal : 0.0;
+      if (u.uMainAtlasRect?.value) {
+        const rect = hasRegion ? resolveAtlasRect(key) : [0, 0, 1, 1];
+        u.uMainAtlasRect.value.set(rect[0], rect[1], rect[2], rect[3]);
+      }
+    }
+  }
 
   const scratchColorStart = [1, 1, 1, 1];
   const scratchColorLife = [1, 1, 1, 1];
@@ -429,6 +472,7 @@ export function createShurikenKernel({
   function registerLayer(layer, customTextures = null) {
     const texBundle = { ...(customTextures || {}) };
     const mat = layer.material;
+    const mainKey = mat?.mainTexKey || layer.flipbook?.region || layer.sprite || null;
     if (mat) {
       if (!texBundle.main && mat.mainTexKey) texBundle.main = texturesMap.get(mat.mainTexKey) || null;
       if (!texBundle.detail && (mat.detailNoiseKey || mat.detailMapKey)) texBundle.detail = texturesMap.get(mat.detailNoiseKey || mat.detailMapKey) || null;
@@ -440,9 +484,22 @@ export function createShurikenKernel({
       if (!texBundle.dissolve && mat.dissolveMapKey) texBundle.dissolve = texturesMap.get(mat.dissolveMapKey) || null;
       if (!texBundle.distortion && mat.distortionTextureKey) texBundle.distortion = texturesMap.get(mat.distortionTextureKey) || null;
       if (!texBundle.alpha && mat.alphaTextureKey) texBundle.alpha = texturesMap.get(mat.alphaTextureKey) || null;
-    } else if (layer.sprite) {
-      texBundle.main = texturesMap.get(layer.sprite) || null;
+    } else if (mainKey) {
+      texBundle.main = texturesMap.get(mainKey) || null;
     }
+
+    let usesAtlas = false;
+    let mainAtlasRect = [0, 0, 1, 1];
+    let mainSrgb = false;
+    if (!texBundle.main && mainKey) {
+      usesAtlas = true;
+      if (atlasTex && atlasRegions?.[mainKey]) {
+        texBundle.main = atlasTex;
+        mainAtlasRect = resolveAtlasRect(mainKey);
+        mainSrgb = isAtlasSrgb();
+      }
+    }
+
     const meshGeo = layer.mesh ? (meshGeometriesMap.get(String(layer.mesh)) || null) : null;
     const cl = compileShurikenLayer(layer, {
       THREE,
@@ -450,7 +507,11 @@ export function createShurikenKernel({
       textures: texBundle,
       meshGeometry: meshGeo,
       sharedUniforms,
+      mainAtlasRect,
+      mainSrgb,
     });
+    cl._usesAtlas = usesAtlas;
+    cl._mainTexKey = mainKey;
     compiledLayers.add(cl);
     return cl;
   }
@@ -867,17 +928,31 @@ export function createShurikenKernel({
         if (cl.flipbook && ((cl.flipbook.cols || 1) > 1 || (cl.flipbook.rows || 1) > 1)) {
           const cols = Math.max(1, cl.flipbook.cols | 0);
           const rows = Math.max(1, cl.flipbook.rows | 0);
-          const cycles = Math.max(0.01, Number(cl.flipbook.cycles ?? 1));
-          const phase = (t * cycles) % 1;
-          if (cl.flipbook.rowMode === 'random' || cl.flipbook.rowMode === 'custom') {
-            const f = Math.min(cols - 0.001, phase * cols);
-            fbFrame = soa.fbRow[i] * cols + Math.floor(f);
-            fbBlend = f - Math.floor(f);
+          const rawCycles = Number(cl.flipbook.cycles ?? 1);
+          const sf = Array.isArray(cl.flipbook.startFrame)
+            ? cl.flipbook.startFrame[0] + (cl.flipbook.startFrame[1] - cl.flipbook.startFrame[0]) * soa.stableRand[i]
+            : Number(cl.flipbook.startFrame ?? 0);
+          if (rawCycles <= 0.001) {
+            if (cl.flipbook.rowMode === 'random' || cl.flipbook.rowMode === 'custom') {
+              const colIdx = Math.min(cols - 1, Math.max(0, Math.floor((sf % 1) * cols + 0.01)));
+              fbFrame = soa.fbRow[i] * cols + colIdx;
+            } else {
+              const total = cols * rows;
+              fbFrame = Math.min(total - 1, Math.max(0, Math.floor(sf * total + 0.01)));
+            }
+            fbBlend = 0;
           } else {
-            const total = cols * rows;
-            const f = Math.min(total - 0.001, phase * total);
-            fbFrame = Math.floor(f);
-            fbBlend = f - fbFrame;
+            const phase = (sf + t * rawCycles) % 1;
+            if (cl.flipbook.rowMode === 'random' || cl.flipbook.rowMode === 'custom') {
+              const f = Math.min(cols - 0.001, phase * cols);
+              fbFrame = soa.fbRow[i] * cols + Math.floor(f);
+              fbBlend = f - Math.floor(f);
+            } else {
+              const total = cols * rows;
+              const f = Math.min(total - 0.001, phase * total);
+              fbFrame = Math.floor(f);
+              fbBlend = f - fbFrame;
+            }
           }
         }
         arr.meta[dst] = t;
@@ -1038,6 +1113,7 @@ export function createShurikenKernel({
 
   return {
     registerTexture,
+    setAtlas,
     registerMeshGeometry,
     registerLayer,
     emitParticle,

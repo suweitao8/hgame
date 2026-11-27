@@ -99,7 +99,7 @@ export function resolveThreeRenderState(THREE, matSpec = {}) {
     blendDst = THREE?.ZeroFactor;
     blendSrcAlpha = THREE?.ZeroFactor;
     blendDstAlpha = THREE?.OneFactor;
-  } else if (Number.isFinite(srcUnity) && Number.isFinite(dstUnity) && THREE?.CustomBlending) {
+  } else if (Number.isFinite(srcUnity) && Number.isFinite(dstUnity) && !(srcUnity === 1 && dstUnity === 0) && THREE?.CustomBlending) {
     blending = THREE.CustomBlending;
     blendSrc = mapUnityBlendFactor(THREE, srcUnity) ?? THREE.SrcAlphaFactor;
     blendDst = mapUnityBlendFactor(THREE, dstUnity) ?? THREE.OneMinusSrcAlphaFactor;
@@ -673,6 +673,8 @@ uniform vec2 uInvViewport;
 uniform vec2 uCamNearFar;
 uniform vec4 uMainST;
 uniform vec2 uMainPan;
+uniform vec4 uMainAtlasRect;
+uniform float uMainSrgb;
 uniform vec4 uTintColor;
 uniform vec3 uEmissionColor;
 uniform float uHdr;
@@ -699,13 +701,18 @@ varying float vEyeZ;
 void main() {
   if (uDoubleSided < 0.5 && !gl_FrontFacing) discard;
 
-  vec2 mainUv = vUv0 * uMainST.xy + uMainST.zw + uMainPan * uTime;
+  vec2 localUv = vUv0 * uMainST.xy + uMainST.zw + uMainPan * uTime;
+  vec2 mainUv = uMainAtlasRect.xy + clamp(localUv, 0.0, 1.0) * uMainAtlasRect.zw;
   vec4 texCol = vec4(1.0);
   if (uHasMainTex > 0.5) {
     texCol = texture2D(uMainTex, mainUv);
     if (uFlipbookGrid.z > 0.5 && vMeta.w > 0.001) {
-      vec2 mainUvB = vUv0Blend * uMainST.xy + uMainST.zw + uMainPan * uTime;
+      vec2 localUvB = vUv0Blend * uMainST.xy + uMainST.zw + uMainPan * uTime;
+      vec2 mainUvB = uMainAtlasRect.xy + clamp(localUvB, 0.0, 1.0) * uMainAtlasRect.zw;
       texCol = mix(texCol, texture2D(uMainTex, mainUvB), vMeta.w);
+    }
+    if (uMainSrgb > 0.5) {
+      texCol.rgb = pow(max(texCol.rgb, vec3(0.0)), vec3(2.2));
     }
   } else {
     float r = length(vUv0 * 2.0 - 1.0);
@@ -1004,6 +1011,8 @@ registerShaderProfile('unity_standard', {
       uCamNearFar: shared.uCamNearFar,
       uMainST: { value: makeVec4(THREE, ...arr4(matSpec.mainTexST, 1, 1, 0, 0)) },
       uMainPan: { value: makeVec2(THREE, ...arr2(matSpec.mainTexPanning, 0, 0)) },
+      uMainAtlasRect: { value: makeVec4(THREE, ...arr4(shared.mainAtlasRect, 0, 0, 1, 1)) },
+      uMainSrgb: { value: shared.mainSrgb ? 1.0 : 0.0 },
       uTintColor: { value: makeVec4(THREE, ...arr4(matSpec.tintColor, 1, 1, 1, 1)) },
       uEmissionColor: { value: makeVec3(THREE, ...arr4(matSpec.emission, 0, 0, 0, 1).slice(0, 3)) },
       uHdr: { value: Number(matSpec.hdr ?? 1.0) },

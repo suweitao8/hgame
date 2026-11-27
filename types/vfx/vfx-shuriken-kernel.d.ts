@@ -1,12 +1,14 @@
 /**
  * Compiles a Shuriken layer into zero-GC LUT curves + Shader Profile GPU batch.
  */
-export function compileShurikenLayer(layer: any, { THREE, scene, textures, meshGeometry, sharedUniforms, }?: {
+export function compileShurikenLayer(layer: any, { THREE, scene, textures, meshGeometry, sharedUniforms, mainAtlasRect, mainSrgb, }?: {
     THREE?: null | undefined;
     scene?: null | undefined;
     textures?: {} | undefined;
     meshGeometry?: null | undefined;
     sharedUniforms?: null | undefined;
+    mainAtlasRect?: null | undefined;
+    mainSrgb?: boolean | undefined;
 }): {
     layer: any;
     renderMode: any;
@@ -1590,6 +1592,7 @@ export function createShurikenKernel({ THREE, scene, trails, prng, }?: {
     } | undefined;
 }): {
     registerTexture: (key: any, tex: any) => void;
+    setAtlas: (tex: any, regions?: null, opts?: {}) => void;
     registerMeshGeometry: (key: any, geoOrObj: any) => void;
     registerLayer: (layer: any, customTextures?: null) => {
         layer: any;
