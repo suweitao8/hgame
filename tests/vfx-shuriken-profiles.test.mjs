@@ -27,6 +27,7 @@ import {
 } from '../assets/runtime/vfx/index.js';
 import { convertUnityPrefab } from '../scripts/import-unity-vfx.mjs';
 import { buildGlbBuffer, parseUnityAssetMesh } from '../scripts/export-unity-vfx-bench.mjs';
+import { auditVfxPackParity } from '../scripts/export-vfx-bundle.mjs';
 
 test('ShaderGraph OverrideReferenceName, DefaultReferenceName, m_Colors Vec2/4, vertexStreams, and TwoCurves parse cleanly in import-unity-vfx.mjs', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hgame-shuriken-imp-'));
@@ -480,4 +481,151 @@ test('unity_standard mesh routes to meshVfx while useShurikenKernel resolves bui
   } finally {
     vfx.dispose();
   }
+});
+
+test('capability-gated usesShurikenKernel automatically falls back to meshVfx/atlasParticles on transformRot or collision without uberMat', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE });
+  try {
+    vfx.registerEffect({
+      schemaVersion: 1,
+      id: 'cap_gate_test',
+      duration: 1.0,
+      loop: false,
+      layers: [
+        {
+          name: 'rot_mesh',
+          kind: 'mesh',
+          renderMode: 'mesh',
+          mesh: 'quad',
+          bursts: [{ time: 0, count: 1 }],
+          life: 0.8,
+          size: 1.0,
+          transformRot: [0.70711, 0, 0, 0.70711],
+          material: { shaderProfile: 'piloto_uber_fx', blend: 'additive' },
+        },
+        {
+          name: 'collide_spark',
+          kind: 'particle',
+          renderMode: 'billboard',
+          bursts: [{ time: 0, count: 2 }],
+          life: 0.8,
+          size: 0.3,
+          collision: { bounce: 0.5 },
+          material: { shaderProfile: 'piloto_uber_fx', blend: 'alpha' },
+        },
+      ],
+    });
+    vfx.playEffect('cap_gate_test', { x: 0, y: 0, z: 0 });
+    vfx.update(0.05);
+    assert.equal(scene.getObjectByName('ShurikenLayer_rot_mesh'), undefined, 'transformRot layer bypasses shurikenKernel');
+    assert.equal(scene.getObjectByName('ShurikenLayer_collide_spark'), undefined, 'collision layer bypasses shurikenKernel');
+    const stats = vfx.getStats();
+    assert.ok((stats.meshVfx?.activeCount ?? 0) >= 1, 'transformRot mesh routed to meshVfx');
+    assert.ok((stats.atlasParticles?.normalTotal ?? 0) >= 2, 'collision particle routed to atlasParticles');
+  } finally {
+    vfx.dispose();
+  }
+});
+
+test('auditVfxPackParity catches all 5 defect classes and passes clean packs', () => {
+  const cleanPrefab = [
+    '--- !u!1 &10',
+    'GameObject:',
+    '  m_Name: Root',
+    '  m_IsActive: 1',
+    '--- !u!198 &20',
+    'ParticleSystem:',
+    '  m_GameObject: {fileID: 10}',
+    '  EmissionModule:',
+    '    enabled: 1',
+  ].join('\n');
+
+  const dirtyPrefab = [
+    cleanPrefab,
+    '--- !u!1 &30',
+    'GameObject:',
+    '  m_Name: Child',
+    '  m_IsActive: 1',
+    '--- !u!198 &40',
+    'ParticleSystem:',
+    '  m_GameObject: {fileID: 30}',
+    '  EmissionModule:',
+    '    enabled: 1',
+  ].join('\n');
+
+  const dirtyReport = auditVfxPackParity({
+    prefabYamlById: new Map([['dirty_fx', dirtyPrefab]]),
+    recipes: [
+      {
+        id: 'dirty_fx',
+        layers: [
+          {
+            name: 'bad_layer',
+            kind: 'mesh',
+            renderMode: 'mesh',
+            mesh: 'missing_custom_mesh',
+            sprite: 'missing_tex',
+            shaderProfile: 'piloto_uber_fx',
+            transformRot: [0.70711, 0, 0, 0.70711],
+            material: {
+              shaderProfile: 'piloto_uber_fx',
+              surface: 1,
+              srcBlend: 1,
+              dstBlend: 0,
+              depthWrite: true,
+              mainTexKey: 'missing_tex',
+            },
+          },
+        ],
+      },
+    ],
+    atlasRegions: { glow1: [0, 0, 0.5, 0.5] },
+    meshIndex: { existing_mesh: { file: 'meshes/existing_mesh.glb' } },
+    meshAliases: {},
+  });
+
+  assert.equal(dirtyReport.ok, false);
+  assert.equal(dirtyReport.droppedPsCount, 1);
+  assert.equal(dirtyReport.missingAtlasCount, 2);
+  assert.equal(dirtyReport.missingMeshCount, 1);
+  assert.equal(dirtyReport.staleBlendCount, 1);
+  assert.equal(dirtyReport.routingMismatchCount, 1);
+
+  const cleanReport = auditVfxPackParity({
+    prefabYamlById: new Map([['clean_fx', cleanPrefab]]),
+    recipes: [
+      {
+        id: 'clean_fx',
+        layers: [
+          {
+            name: 'good_layer',
+            kind: 'mesh',
+            renderMode: 'mesh',
+            mesh: 'quad',
+            sprite: 'glow1',
+            transformRot: [0.70711, 0, 0, 0.70711],
+            material: {
+              shaderProfile: 'unity_standard',
+              surface: 1,
+              srcBlend: 5,
+              dstBlend: 1,
+              depthWrite: false,
+              mainTexKey: 'glow1',
+            },
+          },
+        ],
+      },
+    ],
+    atlasRegions: { glow1: [0, 0, 0.5, 0.5] },
+    meshIndex: {},
+    meshAliases: {},
+  });
+
+  assert.equal(cleanReport.ok, true);
+  assert.equal(cleanReport.droppedPsCount, 0);
+  assert.equal(cleanReport.missingAtlasCount, 0);
+  assert.equal(cleanReport.missingMeshCount, 0);
+  assert.equal(cleanReport.staleBlendCount, 0);
+  assert.equal(cleanReport.routingMismatchCount, 0);
 });

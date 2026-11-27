@@ -524,7 +524,15 @@ export function createEffectPlayer({
     const kind = layer.kind ?? 'particle';
     if (kind !== 'particle' && kind !== 'mesh') return false;
     if (layer.useShurikenKernel === true) return true;
-    if (layer.uberMat || layer.trail?.mode === 'ribbon' || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)) {
+    // Capability guard: fallback cleanly to atlasParticles/meshVfx whenever a layer uses features not implemented by shurikenKernel.
+    if (layer.uberMat
+      || layer.trail?.mode === 'ribbon'
+      || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)
+      || Boolean(layer.transformRot)
+      || Boolean(layer.unityMeshRot)
+      || Boolean(layer.collision)
+      || Boolean(layer.flip)
+      || Boolean(layer.particleLight)) {
       return false;
     }
     const profile = layer.shaderProfile || layer.material?.shaderProfile || null;
@@ -1301,7 +1309,8 @@ export function createEffectPlayer({
 
     const vel = layer.velocity;
     if (vel) {
-      if (Array.isArray(vel.linear)) {
+      // ShurikenKernel dynamically adds velocity.linear in stepLayer every frame; skip initial bake to avoid double application.
+      if (Array.isArray(vel.linear) && !layer._shurikenLayer) {
         const lvx = readRange(vel.linear[0], 0, 0, prng) * scale;
         const lvy = readRange(vel.linear[1], 0, 0, prng) * scale;
         const lvz = readRange(vel.linear[2], 0, 0, prng) * scale;

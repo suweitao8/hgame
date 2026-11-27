@@ -23,8 +23,175 @@ import { validateVfxRecipe } from '../assets/runtime/vfx/vfx-recipes.js';
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const DEFAULT_OUT_DIR = path.join(REPO_ROOT, 'webasset/assets/vfx');
-const BUILTIN_MESH_KEYS = new Set(['quad', 'cube', 'sphere', 'cylinder', 'crystal', 'conesmall_tophat']);
+const BUILTIN_MESH_KEYS = new Set([
+  'quad',
+  'cube',
+  'sphere',
+  'hemisphere',
+  'ring',
+  'disc',
+  'cone',
+  'cylinder',
+  'crystal',
+  'conesmall_tophat',
+]);
 const DEMO_DIR_RE = /^(?:demo|demos|example|examples)$/i;
+
+function countActiveEnabledPsInPrefab(yamlText) {
+  const docs = String(yamlText || '').split(/^--- !u!/m).slice(1);
+  const activeGo = new Set();
+  for (const d of docs) {
+    const nl = d.indexOf('\n');
+    const [cls, fidPart] = d.slice(0, nl).trim().split(/\s+/);
+    if (cls === '1') {
+      const fid = fidPart.replace('&', '');
+      if (!/^\s*m_IsActive:\s*0\b/m.test(d)) activeGo.add(fid);
+    }
+  }
+  const activeSubTargets = new Set();
+  const inactiveSubTargets = new Set();
+  for (const d of docs) {
+    if (!d.startsWith('198 ')) continue;
+    const goId = d.match(/m_GameObject:\s*\{fileID:\s*(\d+)\}/)?.[1];
+    const sub = d.match(/(?:^|\n)  SubModule:\r?\n([\s\S]*?)(?=\n  [A-Za-z_][A-Za-z0-9_]*:|$)/)?.[1] || '';
+    if (!/^\s*enabled:\s*1\b/m.test(sub)) continue;
+    const targetSet = goId && activeGo.has(goId) ? activeSubTargets : inactiveSubTargets;
+    for (const em of sub.matchAll(/emitter:\s*\{fileID:\s*(\d+)\}/g)) {
+      if (em[1] !== '0') targetSet.add(em[1]);
+    }
+  }
+  let count = 0;
+  for (const d of docs) {
+    if (!d.startsWith('198 ')) continue;
+    const nl = d.indexOf('\n');
+    const fid = d.slice(0, nl).trim().split(/\s+/)[1]?.replace('&', '');
+    if (inactiveSubTargets.has(fid) && !activeSubTargets.has(fid)) continue;
+    const goId = d.match(/m_GameObject:\s*\{fileID:\s*(\d+)\}/)?.[1];
+    if (!goId || !activeGo.has(goId)) continue;
+    const em = d.match(/(?:^|\n)  EmissionModule:\r?\n([\s\S]*?)(?=\n  [A-Za-z_][A-Za-z0-9_]*:|$)/)?.[1] || '';
+    if (/^\s*enabled:\s*0\b/m.test(em)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function countTotalRecipeLayers(recipe) {
+  let total = 0;
+  const walkLayers = (layers) => {
+    if (!Array.isArray(layers)) return;
+    for (const l of layers) {
+      total += 1;
+      if (Array.isArray(l.subEmitters)) {
+        for (const se of l.subEmitters) walkLayers(se?.effect?.layers);
+      }
+    }
+  };
+  walkLayers(recipe?.layers);
+  return total;
+}
+
+/**
+ * 5-invariant Parity Audit Gate for an exported VFX pack.
+ */
+export function auditVfxPackParity({
+  prefabYamlById = null,
+  recipes = [],
+  atlasRegions = null,
+  meshIndex = null,
+  meshAliases = null,
+} = {}) {
+  const droppedPs = [];
+  const missingAtlas = [];
+  const missingMeshes = [];
+  const staleBlends = [];
+  const routingMismatches = [];
+
+  const knownMeshKeys = new Set(Object.keys(meshIndex || {}));
+  const regionMap = atlasRegions && Object.keys(atlasRegions).length > 0 ? atlasRegions : null;
+
+  for (const recipe of recipes) {
+    const eid = recipe?.id || 'unknown';
+    const prefabYaml = prefabYamlById?.get ? prefabYamlById.get(eid) : prefabYamlById?.[eid];
+    if (typeof prefabYaml === 'string') {
+      const psCount = countActiveEnabledPsInPrefab(prefabYaml);
+      const layerCount = countTotalRecipeLayers(recipe);
+      if (layerCount < psCount) {
+        droppedPs.push({ id: eid, psCount, layerCount });
+      }
+    }
+
+    const inspectLayers = (layers) => {
+      if (!Array.isArray(layers)) return;
+      for (const l of layers) {
+        if (regionMap) {
+          const regKeys = [l.flipbook?.region, l.sprite, l.material?.mainTexKey].filter((k) => typeof k === 'string' && k.length > 0);
+          for (const rk of regKeys) {
+            if (!regionMap[rk]) {
+              missingAtlas.push({ id: eid, layer: l.name || '-', region: rk });
+            }
+          }
+        }
+
+        if (l.renderMode === 'mesh' || l.kind === 'mesh') {
+          const candidates = [];
+          if (l.mesh) candidates.push(l.mesh);
+          if (Array.isArray(l.meshes)) {
+            for (const m of l.meshes) candidates.push(typeof m === 'string' ? m : m?.mesh);
+          }
+          for (const mk of candidates) {
+            if (!mk || BUILTIN_MESH_KEYS.has(mk)) continue;
+            const resolved = meshAliases?.[mk] || mk.split('__')[0];
+            if (meshIndex && !knownMeshKeys.has(mk) && !knownMeshKeys.has(resolved)) {
+              missingMeshes.push({ id: eid, layer: l.name || '-', mesh: mk });
+            }
+          }
+        }
+
+        const mat = l.material;
+        if (mat && mat.surface === 1 && mat.srcBlend === 1 && mat.dstBlend === 0 && mat.depthWrite === true && l.opaque !== true) {
+          staleBlends.push({ id: eid, layer: l.name || '-' });
+        }
+
+        const profile = l.shaderProfile || mat?.shaderProfile || null;
+        const routesShuriken = !l.uberMat
+          && l.trail?.mode !== 'ribbon'
+          && !(Array.isArray(l.subEmitters) && l.subEmitters.length > 0)
+          && profile !== 'unity_standard'
+          && l.useShurikenKernel !== true
+          && (Boolean(profile) || l.renderMode === 'none' || l.clampVelocity !== undefined || l.rotationBySpeed !== undefined || l.inheritVelocity !== undefined || l.size3D !== undefined || l.sizeZCurve !== undefined || l.sizeZ !== undefined || l.customData !== undefined || l.vertexStreams !== undefined);
+        const hasUnsupportedFeature = Boolean(l.transformRot || l.unityMeshRot || l.collision || l.flip || l.particleLight);
+        if (routesShuriken && hasUnsupportedFeature) {
+          routingMismatches.push({ id: eid, layer: l.name || '-' });
+        }
+
+        if (Array.isArray(l.subEmitters)) {
+          for (const se of l.subEmitters) inspectLayers(se?.effect?.layers);
+        }
+      }
+    };
+    inspectLayers(recipe?.layers);
+  }
+
+  return {
+    ok: droppedPs.length === 0
+      && missingAtlas.length === 0
+      && missingMeshes.length === 0
+      && staleBlends.length === 0
+      && routingMismatches.length === 0,
+    droppedPsCount: droppedPs.length,
+    missingAtlasCount: missingAtlas.length,
+    missingMeshCount: missingMeshes.length,
+    staleBlendCount: staleBlends.length,
+    routingMismatchCount: routingMismatches.length,
+    samples: {
+      droppedPs: droppedPs.slice(0, 5),
+      missingAtlas: missingAtlas.slice(0, 5),
+      missingMeshes: missingMeshes.slice(0, 5),
+      staleBlends: staleBlends.slice(0, 5),
+      routingMismatches: routingMismatches.slice(0, 5),
+    },
+  };
+}
 
 function normKey(str) {
   return String(str || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -382,6 +549,7 @@ export function exportVfxBundle({
     const skipped = [];
     const refTracker = { meshRefs: new Set() };
     const packRecipes = [];
+    const prefabYamlById = new Map();
     let matchedCount = 0;
 
     for (const { pf, relToPrefabs, dirSegments } of group.prefabs) {
@@ -438,6 +606,7 @@ export function exportVfxBundle({
       const recipeRel = `packs/${group.packSlug}/recipes/${effId}.vfx.json`;
       fs.writeFileSync(path.join(recipesDir, `${effId}.vfx.json`), JSON.stringify(recipe, null, 2) + '\n', 'utf8');
       packRecipes.push(recipe);
+      prefabYamlById.set(effId, yaml);
 
       const entryObj = {
         id: effId,
@@ -481,6 +650,21 @@ export function exportVfxBundle({
     const atlasPngPath = path.join(packOutDir, 'atlas.png');
     const atlasJsonPath = path.join(packOutDir, 'atlas.json');
     const atlasStats = ensurePackAtlas(atlasPngPath, atlasJsonPath, texByKey, skipAtlas);
+    let packedRegions = null;
+    if (fs.existsSync(atlasJsonPath)) {
+      try {
+        packedRegions = JSON.parse(fs.readFileSync(atlasJsonPath, 'utf8')).regions || null;
+      } catch {
+        packedRegions = null;
+      }
+    }
+    const parity = auditVfxPackParity({
+      prefabYamlById,
+      recipes: packRecipes,
+      atlasRegions: packedRegions,
+      meshIndex,
+      meshAliases,
+    });
 
     const packIndexObj = {
       id: group.packSlug,
@@ -518,6 +702,7 @@ export function exportVfxBundle({
       atlasWarnings: atlasStats.warnings,
       texCollisionsCount: texCollisions.length,
       meshesReferenced: Object.keys(meshAliases).length,
+      parity,
     });
   }
 
@@ -527,6 +712,7 @@ export function exportVfxBundle({
     bundleName: resolvedBundleName,
     totalGlbs: Object.keys(meshIndex).length,
     totalPacks: packsIndex.packs.length,
+    parityOk: report.every((r) => r.parity?.ok !== false),
     report,
   };
 }
@@ -545,6 +731,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   let prefabFilter = '';
   let includeDemo = false;
   let meshManifestPath = '';
+  let strict = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--root' && args[i + 1]) rootDir = args[++i];
@@ -559,9 +746,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     else if (a === '--prefab' && args[i + 1]) prefabFilter = args[++i];
     else if (a === '--include-demo') includeDemo = true;
     else if (a === '--manifest' && args[i + 1]) meshManifestPath = args[++i];
+    else if (a === '--strict') strict = true;
   }
   if (!rootDir) {
-    console.error('Usage: node scripts/export-vfx-bundle.mjs --root <UnityAssetDir> [--bundle-id <slug>] [--bundle-name <name>] [--prefabs-dir <rel>] [--group-depth <n>] [--out <dir>] [--skip-meshes] [--rebuild-meshes] [--skip-atlas] [--prefab <name>] [--include-demo]');
+    console.error('Usage: node scripts/export-vfx-bundle.mjs --root <UnityAssetDir> [--bundle-id <slug>] [--bundle-name <name>] [--prefabs-dir <rel>] [--group-depth <n>] [--out <dir>] [--skip-meshes] [--rebuild-meshes] [--skip-atlas] [--prefab <name>] [--include-demo] [--strict]');
     process.exit(1);
   }
   const res = exportVfxBundle({
@@ -579,4 +767,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
     meshManifestPath,
   });
   console.log(JSON.stringify(res, null, 2));
+  if (strict && !res.parityOk) {
+    process.exit(1);
+  }
 }
