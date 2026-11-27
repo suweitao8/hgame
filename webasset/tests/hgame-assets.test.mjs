@@ -667,7 +667,9 @@ test('HGame asset API disables static models/materials and serves procedural .hm
     assert.match(html, /id="hgame-anim-character-dialog-button"/);
     assert.match(html, /id="hgame-character-picker-dialog"/);
     assert.match(html, /id="hgame-vfx-stage"/);
+    assert.match(html, /id="hgame-vfx-bundle-tabs"/);
     assert.match(html, /id="hgame-vfx-type-filter"/);
+    assert.match(html, /id="hgame-vfx-subtype-filter"/);
     assert.doesNotMatch(html, /id="hgame-vfx-kind-filter"/);
     assert.match(html, /id="hgame-vfx-mode-tabs"/);
     assert.match(html, /data-hgame-vfx-mode="source"/);
@@ -798,3 +800,79 @@ if (process.env.HGAME_TEST_LOCAL_ASSETS === '1') {
     });
   });
 }
+
+test('VFX catalog API exposes bundles summary and per-pack bundleId/bundleName across multiple packs', async () => {
+  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), 'webasset-vfx-bundles-'));
+  const vfxPacksDir = path.join(tmpRoot, 'assets', 'vfx', 'packs');
+  await mkdir(path.join(tmpRoot, 'public'), { recursive: true });
+  await writeFile(path.join(tmpRoot, 'public', 'index.html'), '<!doctype html><html></html>');
+  await mkdir(path.join(tmpRoot, 'assets', 'vfx', 'meshes'), { recursive: true });
+  await writeFile(path.join(tmpRoot, 'assets', 'vfx', 'meshes', 'mesh_index.json'), '{}');
+
+  await mkdir(path.join(vfxPacksDir, 'piloto_fire'), { recursive: true });
+  await writeFile(path.join(vfxPacksDir, 'piloto_fire', 'pack_index.json'), JSON.stringify({
+    id: 'piloto_fire',
+    name: 'Piloto Fire',
+    atlasImage: 'packs/piloto_fire/atlas.png',
+    atlasMeta: 'packs/piloto_fire/atlas.json',
+    effects: [{ id: 'fire_slash', name: 'Fire Slash', file: 'packs/piloto_fire/recipes/fire_slash.vfx.json', duration: 1, loop: false, layerCount: 2 }],
+    meshAliases: {},
+  }));
+
+  await mkdir(path.join(vfxPacksDir, 'epic_toon_fx__combat'), { recursive: true });
+  await writeFile(path.join(vfxPacksDir, 'epic_toon_fx__combat', 'pack_index.json'), JSON.stringify({
+    id: 'epic_toon_fx__combat',
+    name: 'Combat',
+    bundleId: 'epic_toon_fx',
+    bundleName: 'Epic Toon FX',
+    atlasImage: 'packs/epic_toon_fx__combat/atlas.png',
+    atlasMeta: 'packs/epic_toon_fx__combat/atlas.json',
+    effects: [
+      { id: 'nova_blue', name: 'NovaBlue', relSource: 'Combat/Explosions/NovaExplosion/NovaBlue.prefab', categoryPath: ['Combat', 'Explosions', 'NovaExplosion'], file: 'packs/epic_toon_fx__combat/recipes/nova_blue.vfx.json', duration: 1, loop: false, layerCount: 3 },
+      { id: 'nova_red', name: 'NovaRed', relSource: 'Combat/Explosions/NovaExplosion/NovaRed.prefab', categoryPath: ['Combat', 'Explosions', 'NovaExplosion'], file: 'packs/epic_toon_fx__combat/recipes/nova_red.vfx.json', duration: 1, loop: false, layerCount: 3 },
+    ],
+    meshAliases: {},
+  }));
+
+  await writeFile(path.join(vfxPacksDir, 'packs_index.json'), JSON.stringify({
+    schemaVersion: 1,
+    packs: [
+      { id: 'piloto_fire', name: 'Piloto Fire', effectCount: 1, manifestFile: 'packs/piloto_fire/pack_index.json' },
+      { id: 'epic_toon_fx__combat', name: 'Combat', bundleId: 'epic_toon_fx', bundleName: 'Epic Toon FX', effectCount: 2, manifestFile: 'packs/epic_toon_fx__combat/pack_index.json' },
+    ],
+  }));
+
+  const server = createWebAssetServer({
+    siteRoot: tmpRoot,
+    gamesRoot: path.join(tmpRoot, 'games'),
+    htmlGamesRoot: path.join(tmpRoot, 'html-games'),
+    hgameAssetRoot: path.join(tmpRoot, 'hgame-assets'),
+    dbPath: path.join(tmpRoot, 'assets.db'),
+    materialLibraryRoot: path.join(tmpRoot, 'curated-materials'),
+    unrealExportRoot: path.join(tmpRoot, 'unreal-export'),
+    anim23Root: path.join(tmpRoot, 'anim23'),
+  });
+
+  try {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const res = await fetch(`${base}/api/hgame/vfx/catalog`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.available, true);
+    assert.deepEqual(body.bundles, [
+      { id: 'piloto_studio', name: 'Piloto Studio', packCount: 1, effectCount: 1 },
+      { id: 'epic_toon_fx', name: 'Epic Toon FX', packCount: 1, effectCount: 2 },
+    ]);
+    assert.equal(body.packs.length, 2);
+    assert.equal(body.packs[0].bundleId, 'piloto_studio');
+    assert.equal(body.packs[1].bundleId, 'epic_toon_fx');
+    assert.equal(body.packs[1].bundleName, 'Epic Toon FX');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    await rm(tmpRoot, { recursive: true, force: true });
+  }
+});

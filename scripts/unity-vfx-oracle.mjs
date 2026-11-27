@@ -98,6 +98,7 @@ public static class HGameVfxOracleExporter
         public string meshManifestPath;
         public string calibrationOutPath;
         public string oracleOutPath;
+        public string assetRootUnityPath;
         public string bundleRootUnityPath;
         public int exportMeshes = 1;
         public int runCalibration = 1;
@@ -179,7 +180,7 @@ public static class HGameVfxOracleExporter
             }
             if (cfg.exportMeshes != 0)
             {
-                ExportAllMeshesToGlb(cfg.meshOutDir, cfg.meshIndexPath, cfg.meshManifestPath);
+                ExportAllMeshesToGlb(cfg.meshOutDir, cfg.meshIndexPath, cfg.meshManifestPath, cfg.assetRootUnityPath);
             }
             if (cfg.runOracle != 0)
             {
@@ -571,14 +572,16 @@ public static class HGameVfxOracleExporter
         }
     }
 
-    private static void ExportAllMeshesToGlb(string meshOutDir, string meshIndexPath, string meshManifestPath)
+    private static void ExportAllMeshesToGlb(string meshOutDir, string meshIndexPath, string meshManifestPath, string assetRootUnityPath)
     {
         Directory.CreateDirectory(meshOutDir);
+        string rootPrefix = string.IsNullOrEmpty(assetRootUnityPath) ? "Assets/Piloto Studio/" : assetRootUnityPath;
+        if (!rootPrefix.EndsWith("/")) rootPrefix += "/";
         string[] allPaths = AssetDatabase.GetAllAssetPaths();
         var modelPaths = new List<string>();
         foreach (string p in allPaths)
         {
-            if (!p.StartsWith("Assets/Piloto Studio/", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!p.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)) continue;
             string ext = Path.GetExtension(p).ToLowerInvariant();
             if (ext == ".fbx" || ext == ".obj" || ext == ".asset") modelPaths.Add(p);
         }
@@ -879,6 +882,10 @@ public static class HGameVfxOracleExporter
 export function runUnityVfxOracle({
   unityExe,
   pilotoRoot,
+  assetRoot,
+  assetFolderName = 'Piloto Studio',
+  bundleRootUnityPath,
+  mergeMeshIndex = true,
   workDir = DEFAULT_WORK_DIR,
   outDir = DEFAULT_OUT_DIR,
   meshManifestPath,
@@ -893,12 +900,12 @@ export function runUnityVfxOracle({
   const resolvedOracleOut = oracleOutPath || path.join(workDir, 'unity-vfx-oracle.json');
   const cfgDefaults = resolveUnityVfxConfig();
   const exe = unityExe || cfgDefaults.unityExe;
-  const pRoot = pilotoRoot || cfgDefaults.pilotoRoot;
+  const pRoot = assetRoot || pilotoRoot || cfgDefaults.pilotoRoot;
   if (!exe || !fs.existsSync(exe)) {
     throw new Error(`Unity executable not found. Configure .hgame.local.json (unityVfx.unityExe) or HGAME_UNITY_EXE. Resolved: "${exe}"`);
   }
   if (!pRoot || !fs.existsSync(pRoot)) {
-    throw new Error(`Piloto Studio root not found. Configure .hgame.local.json (unityVfx.pilotoRoot) or HGAME_PILOTO_ROOT. Resolved: "${pRoot}"`);
+    throw new Error(`Unity VFX root not found. Configure .hgame.local.json (unityVfx.pilotoRoot) or HGAME_PILOTO_ROOT or pass --asset-root. Resolved: "${pRoot}"`);
   }
 
   const projDir = path.join(workDir, 'unity_proj');
@@ -926,13 +933,21 @@ export function runUnityVfxOracle({
   );
 
   // Clean out stale URP/extra packages if directory existed previously
-  const copiedCount = copyFilteredUnityTree(pRoot, path.join(assetsDir, 'Piloto Studio'));
+  const resolvedFolder = String(assetFolderName || 'Piloto Studio').replace(/[\\/]+/g, ' ').trim() || 'Piloto Studio';
+  const copiedCount = copyFilteredUnityTree(pRoot, path.join(assetsDir, resolvedFolder));
   fs.writeFileSync(path.join(editorDir, 'HGameVfxOracleExporter.cs'), buildEditorCSharpSource(), 'utf8');
 
   const meshDir = path.join(outDir, 'meshes');
   const meshIndexPath = path.join(meshDir, 'mesh_index.json');
+  const prevMeshIndex = mergeMeshIndex && fs.existsSync(meshIndexPath)
+    ? JSON.parse(fs.readFileSync(meshIndexPath, 'utf8').replace(/^\uFEFF/, ''))
+    : null;
   const runCfgPath = path.join(workDir, 'oracle_run_cfg.json');
   const unityLogPath = path.join(workDir, 'unity-oracle.log');
+
+  const assetRootUnityPath = `Assets/${resolvedFolder}/`;
+  const resolvedBundleUnityPath = bundleRootUnityPath
+    || (resolvedFolder === 'Piloto Studio' ? 'Assets/Piloto Studio/Super Realistic FX Bundle' : `Assets/${resolvedFolder}`);
 
   fs.mkdirSync(meshDir, { recursive: true });
   fs.writeFileSync(runCfgPath, JSON.stringify({
@@ -941,7 +956,8 @@ export function runUnityVfxOracle({
     meshManifestPath: resolvedMeshManifest.replace(/\\/g, '/'),
     calibrationOutPath: resolvedCalOut.replace(/\\/g, '/'),
     oracleOutPath: resolvedOracleOut.replace(/\\/g, '/'),
-    bundleRootUnityPath: 'Assets/Piloto Studio/Super Realistic FX Bundle',
+    assetRootUnityPath,
+    bundleRootUnityPath: resolvedBundleUnityPath,
     exportMeshes: exportMeshes ? 1 : 0,
     runCalibration: runCalibration ? 1 : 0,
     runOracle: runOracle ? 1 : 0,
@@ -965,6 +981,12 @@ export function runUnityVfxOracle({
     },
   );
 
+  if (mergeMeshIndex && prevMeshIndex && fs.existsSync(meshIndexPath)) {
+    const nextMeshIndex = JSON.parse(fs.readFileSync(meshIndexPath, 'utf8').replace(/^\uFEFF/, ''));
+    const mergedMeshIndex = { ...prevMeshIndex, ...nextMeshIndex };
+    fs.writeFileSync(meshIndexPath, JSON.stringify(mergedMeshIndex, null, 2) + '\n', 'utf8');
+  }
+
   const meshCount = fs.existsSync(meshIndexPath) ? Object.keys(JSON.parse(fs.readFileSync(meshIndexPath, 'utf8'))).length : 0;
   const oracleCount = fs.existsSync(resolvedOracleOut) ? Object.keys(JSON.parse(fs.readFileSync(resolvedOracleOut, 'utf8'))).length : 0;
   return {
@@ -983,16 +1005,31 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(im
   const args = process.argv.slice(2);
   let workDir = DEFAULT_WORK_DIR;
   let outDir = DEFAULT_OUT_DIR;
+  let assetRoot = '';
+  let assetFolderName = 'Piloto Studio';
+  let bundleRootUnityPath = '';
   let exportMeshes = true;
   let runCalibration = true;
   let runOracle = true;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--work-dir' && args[i + 1]) workDir = path.resolve(args[++i]);
     else if (args[i] === '--out' && args[i + 1]) outDir = path.resolve(args[++i]);
+    else if (args[i] === '--asset-root' && args[i + 1]) assetRoot = path.resolve(args[++i]);
+    else if (args[i] === '--asset-folder' && args[i + 1]) assetFolderName = args[++i];
+    else if (args[i] === '--bundle-unity-path' && args[i + 1]) bundleRootUnityPath = args[++i];
     else if (args[i] === '--no-meshes') exportMeshes = false;
     else if (args[i] === '--no-calibration') runCalibration = false;
     else if (args[i] === '--no-oracle') runOracle = false;
   }
-  const res = runUnityVfxOracle({ workDir, outDir, exportMeshes, runCalibration, runOracle });
+  const res = runUnityVfxOracle({
+    workDir,
+    outDir,
+    assetRoot,
+    assetFolderName,
+    bundleRootUnityPath,
+    exportMeshes,
+    runCalibration,
+    runOracle,
+  });
   console.log(JSON.stringify(res, null, 2));
 }

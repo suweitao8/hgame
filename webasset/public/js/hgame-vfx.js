@@ -18,9 +18,304 @@ const VFX_CATEGORY_ORDER = [
   '光束天降',
   '法阵持续',
   '护盾增益',
+  '战斗 · 爆炸',
+  '战斗 · 弹道投射',
+  '战斗 · 枪口火焰',
+  '战斗 · 魔法技能',
+  '战斗 · 剑光与近战',
+  '战斗 · 命中与状态',
+  '环境 · 自然与天气',
+  '交互 · 拾取与提示',
+  '其他 · 杂项',
   '3D 网格',
   '序列帧贴图',
 ];
+
+const ETFX_SUBCATEGORY_LABELS = {
+  // Explosions
+  BubbleExplosion: '气泡爆炸',
+  BulletExplosion: '子弹爆炸',
+  BulletFatExplosion: '重弹爆炸',
+  EnergyExplosion: '能量爆炸',
+  FireballRoundExplosion: '火球爆炸·圆',
+  FireballSharpExplosion: '火球爆炸·锐',
+  FireballSoftExplosion: '火球爆炸·柔',
+  FlashExplosion: '闪光爆炸',
+  FrostExplosion: '冰霜爆炸',
+  FruitExplosion: '水果爆裂',
+  GasExplosion: '毒气爆炸',
+  GlitterExplosion: '闪粉爆炸',
+  GrenadeExplosion: '手雷爆炸',
+  LaserExplosion: '激光爆炸',
+  LightningExplosion: '闪电爆炸',
+  LightningSoftExplosion: '柔雷爆炸',
+  LiquidExplosion: '液体飞溅爆',
+  MagicExplosion: '魔法爆炸',
+  MagicNovaExplosion: '魔法新星爆',
+  MagicSoftExplosion: '柔魔爆炸',
+  MegaExplosion: '巨型爆炸',
+  MysticExplosion: '秘术爆炸',
+  NovaExplosion: '新星爆炸',
+  NovaSmallExplosion: '小型新星爆',
+  NovaSoftExplosion: '柔和新星爆',
+  NukeConeExplosion: '锥形核爆',
+  NukeExplosion: '蘑菇云核爆',
+  NukeVerticalExplosion: '竖向核爆',
+  RoundExplosion: '圆形爆炸',
+  ShadowExplosion: '暗影爆炸',
+  SharpExplosion: '锐利爆炸',
+  SmallExplosion: '小型爆炸',
+  SnowExplosion: '雪花爆炸',
+  SoulExplosion: '灵魂爆炸',
+  SparkleExplosion: '星芒爆炸',
+  SpikyExplosion: '尖刺爆炸',
+  StarExplosion: '星形爆炸',
+  StarIntenseExplosion: '强力星爆',
+  StarlineExplosion: '星线爆炸',
+  StormExplosion: '风暴爆炸',
+  'Explosions (Misc)': '杂项爆炸',
+  'Explosions (Text)': '文字拟声爆',
+  // Missiles
+  Bubble: '气泡弹',
+  Bullet: '常规子弹',
+  Energy: '能量弹',
+  FatBullet: '重型子弹',
+  Fireball: '火球弹',
+  FireballSharp: '锐利火球',
+  FireballSoft: '柔和火球',
+  Flash: '闪光弹',
+  Frost: '冰霜弹',
+  Fruit: '水果投掷',
+  Gas: '毒气弹',
+  Grenade: '手榴弹',
+  Laser: '激光束弹',
+  Lightning: '闪电弹',
+  LightningSoft: '柔雷弹',
+  Liquid: '液体弹',
+  Magic: '魔法飞弹',
+  MagicSoft: '柔魔飞弹',
+  Mystic: '秘术飞弹',
+  NovaMissile: '新星飞弹',
+  NovaMissileSoft: '柔和星弹',
+  NovaSmall: '小型星弹',
+  Nuke: '核弹头',
+  Rocket: '火箭弹',
+  Shadow: '暗影弹',
+  Sharp: '锐刺飞弹',
+  Snow: '雪球弹',
+  Soul: '灵魂弹',
+  Sparkle: '星芒弹',
+  Storm: '风暴弹',
+  // Muzzleflash
+  '- Misc': '杂项枪口焰',
+  BubbleMuzzle: '气泡枪口',
+  BulletFatMuzzle: '重弹枪口',
+  BulletMuzzle: '常规枪口',
+  EnergyMuzzle: '能量枪口',
+  EnergyNovaMuzzle: '新星枪口',
+  EnergyNovaSmallMuzzle: '小新星枪口',
+  FireballMuzzle: '火球枪口',
+  FireballSoftMuzzle: '柔火枪口',
+  FrostMuzzle: '冰霜枪口',
+  GrenadeMuzzle: '榴弹枪口',
+  LaserMuzzle: '激光枪口',
+  LightningMuzzle: '闪电枪口',
+  LiquidMuzzle: '液体枪口',
+  MagicMuzzle: '魔法枪口',
+  MagicSoftMuzzle: '柔魔枪口',
+  MysticMuzzle: '秘术枪口',
+  NukeMuzzle: '核爆枪口',
+  RocketMuzzle: '火箭枪口',
+  ShadowMuzzle: '暗影枪口',
+  SharpMuzzle: '锐利枪口',
+  SoulMuzzle: '灵魂枪口',
+  SparkleMuzzle: '星芒枪口',
+  StormMuzzle: '风暴枪口',
+  // Magic
+  Aura: '魔法光环',
+  'Aura Soft': '柔和光环',
+  Buff: '增益光效',
+  Charge: '蓄力聚能',
+  Circle: '魔法法阵',
+  'Circle Simple': '简约法阵',
+  Enchant: '武器附魔',
+  Field: '领域力场',
+  PillarBlast: '光柱爆发',
+  // Sword & Brawling
+  '- Legacy': '经典剑光',
+  Hit: '剑击命中',
+  Slash: '刀剑斩击',
+  Spin: '旋转斩',
+  Wave: '剑气波',
+  Whirlwind: '旋风斩',
+  RoundHit: '圆形打击',
+  Soft: '柔和打击',
+  Stun: '眩晕状态',
+  Toon: '卡通打击',
+  // Combat other
+  Blood: '血液飞溅',
+  BombFuse: '炸弹引信',
+  Death: '死亡灵魂',
+  Decals: '弹孔贴花',
+  Flamethrower: '火焰喷射',
+  Giblets: '碎片飞溅',
+  Nova: '元素新星',
+  Shield: '护盾屏障',
+  // Environment
+  Bubbles: '气泡漂浮',
+  Confetti: '彩带礼花',
+  Dust: '尘埃微粒',
+  Fire: '环境火焰',
+  Fireflies: '萤火虫',
+  Firework: '烟花绽放',
+  Fog: '雾气弥漫',
+  Smoke: '烟雾升腾',
+  Sparks: '火星飞溅',
+  Stars: '星空星云',
+  Underwater: '水下环境',
+  Water: '水流波纹',
+  Weather: '天气现象',
+  // Interactive
+  Cards: '卡牌特效',
+  Emojis: '情绪气泡',
+  Feathers: '羽毛飘落',
+  Flares: '镜头光晕',
+  Healing: '治疗回血',
+  Hearts: '爱心特效',
+  'Level Up': '升级光效',
+  Loot: '掉落宝箱',
+  Money: '金币钞票',
+  Portals: '传送门',
+  Powerups: '能量道具',
+  Sparkle: '闪烁星光',
+  Trails: '拖尾轨迹',
+  Warning: '预警提示',
+  Zone: '区域光圈',
+};
+
+function formatFolderSubcategory(seg) {
+  if (!seg) return '通用';
+  if (ETFX_SUBCATEGORY_LABELS[seg]) return ETFX_SUBCATEGORY_LABELS[seg];
+  return String(seg).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
+}
+
+function classifyPilotoSubcategory(item, category) {
+  const s = `${item?.name || ''} ${item?.effectId || item?.id || ''} ${item?.relSource || ''}`.toLowerCase();
+  if (category === '刀光斩击') {
+    if (/(combo|three_?stage)/.test(s)) return '连击组合';
+    if (/(whirlwind|spin|swirl)/.test(s)) return '旋风回旋';
+    if (/(stab|lunge|puncture|drill)/.test(s)) return '突刺穿刺';
+    if (/(scythe|hammer|claw)/.test(s)) return '重武与爪击';
+    if (/(dash)/.test(s)) return '冲锋位移斩';
+    return '弧光斩击';
+  }
+  if (category === '受击命中') {
+    if (/(muzzle)/.test(s)) return '枪口闪光';
+    if (/(splatter|blood)/.test(s)) return '飞溅受击';
+    if (/(spark|snap|fizzle|clap)/.test(s)) return '火花爆点';
+    return '打击命中';
+  }
+  if (category === '投射弹道') {
+    if (/(arrow|spear|dagger)/.test(s)) return '箭矢矛刃';
+    if (/(homing)/.test(s)) return '追踪弹道';
+    if (/(barrage|rain|shooting)/.test(s)) return '弹幕齐射';
+    if (/(fireball|iceball|orb|comet)/.test(s)) return '元素法球';
+    if (/(trail)/.test(s)) return '弹道拖尾';
+    return '直射投射物';
+  }
+  if (category === '光束天降') {
+    if (/(tornado|vortex|vortrex|twister|cyclone|waterspout|storm)/.test(s)) return '龙卷风暴';
+    if (/(rain|falling|skybloom|godssight|poseidon)/.test(s)) return '天降降雨';
+    if (/(lightning|thunder|flashlightning|lightningwrath|shock_calling)/.test(s)) return '天雷落雷';
+    return '聚能光束';
+  }
+  if (category === '护盾增益') {
+    if (/(shield|barrier|protection|ward|dome)/.test(s)) return '护盾屏障';
+    if (/(heal|revive|blessing|empower)/.test(s)) return '治疗强化';
+    if (/(curse|debuff|cage|prison)/.test(s)) return '诅咒禁锢';
+    if (/(pickup|chest|loot|item|potion|coin)/.test(s)) return '掉落拾取';
+    if (/(charge|charging|recharge|release)/.test(s)) return '蓄力释放';
+    return '角色附着与增益';
+  }
+  if (category === '法阵持续') {
+    if (/(circle|rune|sigil|ritual|altar|totem)/.test(s)) return '符文法阵';
+    if (/(aura|mark|telegraph|brand)/.test(s)) return '光环预警';
+    if (/(ground|pool|zone|area|field|mine)/.test(s)) return '持续地面域';
+    if (/(fire|flames|embers|campfire|torch|smoke|mist|fog)/.test(s)) return '火焰烟雾';
+    if (/(water|fountain|waterfall|splash|wave|stream|bubble)/.test(s)) return '水流波涛';
+    return '持续环境效果';
+  }
+  if (category === '范围爆破') {
+    if (/(slam|groundslam|stomp|quake|crush)/.test(s)) return '重击砸地';
+    if (/(nova|shockwave|ring)/.test(s)) return '新星冲击波';
+    if (/(spike|crack|fissure|sunder|rock|boulder|crystal|eruption)/.test(s)) return '地刺裂隙与岩石';
+    if (/(cone|frontal)/.test(s)) return '扇形锥面爆';
+    if (/(shatter|cluster|bomb)/.test(s)) return '爆裂碎裂';
+    return '范围爆炸';
+  }
+  return category || '通用';
+}
+
+function classifyVfxHierarchy(item) {
+  const bundleId = item?.bundleId || '';
+  const pathParts = Array.isArray(item?.categoryPath) ? item.categoryPath : [];
+
+  if (bundleId === 'epic_toon_fx' && pathParts.length > 0) {
+    const [top, second, third] = pathParts;
+    if (top === 'Combat') {
+      if (second === 'Explosions' || second === 'Explosions (Misc)' || second === 'Explosions (Text)') {
+        const sub = third ? formatFolderSubcategory(third) : formatFolderSubcategory(second);
+        return { category: '战斗 · 爆炸', subCategory: sub };
+      }
+      if (second === 'Missiles') {
+        return { category: '战斗 · 弹道投射', subCategory: third ? formatFolderSubcategory(third) : '弹道' };
+      }
+      if (second === 'Muzzleflash') {
+        return { category: '战斗 · 枪口火焰', subCategory: third ? formatFolderSubcategory(third) : '枪口焰' };
+      }
+      if (second === 'Magic') {
+        return { category: '战斗 · 魔法技能', subCategory: third ? formatFolderSubcategory(third) : '魔法' };
+      }
+      if (second === 'Sword' || second === 'Brawling') {
+        const prefix = second === 'Sword' ? '剑术' : '格斗';
+        const sub = third ? `${prefix} · ${formatFolderSubcategory(third)}` : prefix;
+        return { category: '战斗 · 剑光与近战', subCategory: sub };
+      }
+      const sub = third
+        ? `${formatFolderSubcategory(second)} · ${formatFolderSubcategory(third)}`
+        : formatFolderSubcategory(second || '其他战斗');
+      return { category: '战斗 · 命中与状态', subCategory: sub };
+    }
+    if (top === 'Environment') {
+      const sub = third
+        ? `${formatFolderSubcategory(second)} · ${formatFolderSubcategory(third)}`
+        : formatFolderSubcategory(second || '环境');
+      return { category: '环境 · 自然与天气', subCategory: sub };
+    }
+    if (top === 'Interactive') {
+      const sub = third
+        ? `${formatFolderSubcategory(second)} · ${formatFolderSubcategory(third)}`
+        : formatFolderSubcategory(second || '交互');
+      return { category: '交互 · 拾取与提示', subCategory: sub };
+    }
+    if (top === 'Misc') {
+      const sub = second ? formatFolderSubcategory(second) : '杂项特效';
+      return { category: '其他 · 杂项', subCategory: sub };
+    }
+  }
+
+  if (bundleId && bundleId !== 'piloto_studio' && pathParts.length > 0) {
+    const category = formatFolderSubcategory(pathParts[0]);
+    const subCategory = pathParts.length > 1
+      ? pathParts.slice(1).map(formatFolderSubcategory).join(' · ')
+      : classifyPilotoSubcategory(item, category);
+    return { category, subCategory };
+  }
+
+  const category = classifyVfxSystem(item);
+  const subCategory = classifyPilotoSubcategory(item, category);
+  return { category, subCategory };
+}
 
 function classifyVfxSystem(item) {
   const s = `${item?.name || ''} ${item?.effectId || item?.id || ''} ${item?.relSource || ''}`.toLowerCase();
@@ -50,7 +345,9 @@ function classifyVfxSystem(item) {
 
 const viewEl = document.querySelector('#vfx-view');
 const searchInput = document.querySelector('#hgame-vfx-search');
+const bundleTabsEl = document.querySelector('#hgame-vfx-bundle-tabs');
 const typeFilter = document.querySelector('#hgame-vfx-type-filter');
+const subtypeFilter = document.querySelector('#hgame-vfx-subtype-filter');
 const listEl = document.querySelector('#hgame-vfx-list');
 const titleEl = document.querySelector('#hgame-vfx-title');
 const variantWrap = document.querySelector('#hgame-vfx-variant-wrap');
@@ -90,6 +387,8 @@ const gltfLoader = new GLTFLoader();
 const texLoader = new THREE.TextureLoader();
 
 let initialized = false;
+let vfxBundles = [];
+let activeBundleId = '';
 let vfxSystems = [];
 let shurikenBenchSystems = [];
 let vfxMeshes = [];
@@ -175,12 +474,35 @@ const VFX_COLOR_SUFFIX_LABELS = {
   yellow: ['黄色', 6],
   orange: ['橙色', 7],
   cyan: ['青色', 8],
+  teal: ['青绿', 8],
   white: ['纯白', 9],
   pink: ['粉色', 10],
+  magenta: ['洋红', 10],
   black: ['玄黑', 11],
+  dark: ['暗色', 11],
+  shadow: ['暗影', 11],
   gold: ['金色', 12],
   golden: ['金色', 12],
   silver: ['银色', 13],
+  fire: ['火焰', 14],
+  frost: ['寒冰', 15],
+  ice: ['冰晶', 15],
+  water: ['水系', 16],
+  poison: ['剧毒', 17],
+  acid: ['酸液', 17],
+  lightning: ['雷电', 18],
+  electric: ['电弧', 18],
+  arcane: ['奥术', 19],
+  holy: ['神圣', 20],
+  light: ['圣光', 20],
+  void: ['虚空', 21],
+  blood: ['猩红', 22],
+  nature: ['自然', 23],
+  plasma: ['等离子', 24],
+  rainbow: ['彩虹', 25],
+  grey: ['灰色', 26],
+  gray: ['灰色', 26],
+  brown: ['棕色', 27],
 };
 
 const VFX_PICKUP_TIER_LABELS = {
@@ -271,6 +593,37 @@ function collapseBenchColorVariants(items) {
       continue;
     }
 
+    if (it.bundleId && it.bundleId !== 'piloto_studio') {
+      const relDir = String(it.relSource || '').split('/').slice(0, -1).join('/');
+      if ((m = name.match(/^(.+?)[_ -]+([A-Za-z]+)$/)) && VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()]) {
+        const [label, prio] = VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()];
+        put(`bnd:${it.packId}:${relDir}:${normalizeStem(m[1])}:${lc}`, {
+          it,
+          baseName: m[1].trim(),
+          variantLabel: label,
+          prio,
+        });
+        continue;
+      }
+      if ((m = name.match(/^(.+?)([A-Z][a-z]+)$/)) && m[1].length >= 3 && VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()]) {
+        const [label, prio] = VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()];
+        put(`bnd:${it.packId}:${relDir}:${normalizeStem(m[1])}:${lc}`, {
+          it,
+          baseName: m[1].trim(),
+          variantLabel: label,
+          prio,
+        });
+        continue;
+      }
+      put(`bnd:${it.packId}:${relDir}:${normalizeStem(name)}:${lc}`, {
+        it,
+        baseName: name,
+        variantLabel: '默认',
+        prio: 1,
+      });
+      continue;
+    }
+
     if ((m = name.match(/^(.+?)[_ -]+([A-Za-z]+)$/)) && VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()]) {
       const [label, prio] = VFX_COLOR_SUFFIX_LABELS[m[2].toLowerCase()];
       put(`suf:${it.packId}:${normalizeStem(m[1])}:${lc}`, {
@@ -338,29 +691,57 @@ function getCategoryRank(cat) {
 }
 
 function getAllItems() {
+  const defaultBundleId = vfxBundles[0]?.id || 'piloto_studio';
   return [
     ...shurikenBenchSystems.map(item => ({ ...item, kind: 'system' })),
-    ...vfxSystems.map(item => ({ ...item, kind: 'system' })),
-    ...vfxMeshes.map(item => ({ ...item, kind: 'mesh', category: item.category || '3D 网格' })),
-    ...vfxTextures.map(item => ({ ...item, kind: 'texture', category: item.category || '序列帧贴图' })),
+    ...vfxSystems.map(item => ({ ...item, kind: 'system', bundleId: item.bundleId || defaultBundleId })),
+    ...vfxMeshes.map(item => ({
+      ...item,
+      kind: 'mesh',
+      bundleId: item.bundleId || defaultBundleId,
+      category: item.category || '3D 网格',
+      subCategory: item.subCategory || item.pack || '3D 网格',
+    })),
+    ...vfxTextures.map(item => ({
+      ...item,
+      kind: 'texture',
+      bundleId: item.bundleId || defaultBundleId,
+      category: item.category || '序列帧贴图',
+      subCategory: item.subCategory || item.pack || '序列帧贴图',
+    })),
   ];
 }
 
-function getFilteredItems() {
+function getActiveBundleItems() {
+  const all = getAllItems();
+  if (!activeBundleId) return all;
+  return all.filter(item => (item.bundleId || 'piloto_studio') === activeBundleId);
+}
+
+function matchesTypeFilter(item, filterVal) {
+  if (!filterVal || filterVal === 'all') return true;
+  if (filterVal === 'review:pending') return !isItemReviewed(item);
+  if (filterVal === 'review:approved') return isItemReviewed(item);
+  if (filterVal.startsWith('kind:')) return item.kind === filterVal.slice(5);
+  if (filterVal.startsWith('cat:')) return (item.category || '') === filterVal.slice(4);
+  return (item.category || '') === filterVal;
+}
+
+function getFilteredItems({ ignoreSubtype = false } = {}) {
   const query = searchInput.value.trim().toLowerCase();
   const filterVal = typeFilter?.value || 'all';
-  const filtered = getAllItems().filter(item => {
-    if (filterVal === 'review:pending' && isItemReviewed(item)) return false;
-    if (filterVal === 'review:approved' && !isItemReviewed(item)) return false;
-    if (filterVal.startsWith('kind:') && item.kind !== filterVal.slice(5)) return false;
-    if (filterVal.startsWith('cat:') && (item.category || '') !== filterVal.slice(4)) return false;
-    if (filterVal !== 'all' && !filterVal.startsWith('review:') && !filterVal.startsWith('kind:') && !filterVal.startsWith('cat:') && (item.category || '') !== filterVal) return false;
+  const subVal = ignoreSubtype ? 'all' : (subtypeFilter?.value || 'all');
+  const filtered = getActiveBundleItems().filter(item => {
+    if (!matchesTypeFilter(item, filterVal)) return false;
+    if (subVal.startsWith('sub:') && (item.subCategory || item.category || '') !== subVal.slice(4)) return false;
     if (!query) return true;
     return (item.name || '').toLowerCase().includes(query)
       || (item.assetName || '').toLowerCase().includes(query)
       || (item.pack || '').toLowerCase().includes(query)
       || (item.id || '').toLowerCase().includes(query)
       || (item.category || '').toLowerCase().includes(query)
+      || (item.subCategory || '').toLowerCase().includes(query)
+      || (item.relSource || '').toLowerCase().includes(query)
       || (Array.isArray(item.variants) && item.variants.some(v =>
         (v.name || '').toLowerCase().includes(query)
         || (v.id || '').toLowerCase().includes(query)
@@ -382,12 +763,68 @@ function getFilteredItems() {
     if (rankDiff !== 0) return rankDiff;
     const catDiff = ca.localeCompare(cb);
     if (catDiff !== 0) return catDiff;
+    const subDiff = String(a.subCategory || '').localeCompare(String(b.subCategory || ''), 'zh-Hans-CN');
+    if (subDiff !== 0) return subDiff;
     return compareByReviewThenName(a, b);
   });
 }
 
+function renderBundleTabs() {
+  if (!bundleTabsEl) return;
+  const all = getAllItems();
+  const countsByBundle = new Map();
+  for (const item of all) {
+    const bId = item.bundleId || 'piloto_studio';
+    countsByBundle.set(bId, (countsByBundle.get(bId) || 0) + 1);
+  }
+  bundleTabsEl.replaceChildren();
+  if (vfxBundles.length === 0) {
+    bundleTabsEl.hidden = true;
+    return;
+  }
+  for (const bundle of vfxBundles) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'hgame-vfx-bundle-tab';
+    btn.setAttribute('role', 'tab');
+    btn.dataset.bundleId = bundle.id;
+    const isSel = bundle.id === activeBundleId;
+    btn.setAttribute('aria-selected', String(isSel));
+    btn.tabIndex = isSel ? 0 : -1;
+    const cnt = countsByBundle.get(bundle.id) ?? bundle.effectCount ?? 0;
+    btn.textContent = `${bundle.name} (${cnt})`;
+    btn.title = `${bundle.name} · ${cnt} 组特效`;
+    btn.addEventListener('click', () => {
+      if (bundle.id === activeBundleId) return;
+      void switchBundle(bundle.id);
+    });
+    bundleTabsEl.appendChild(btn);
+  }
+  bundleTabsEl.hidden = false;
+}
+
+async function switchBundle(bundleId) {
+  if (!bundleId || bundleId === activeBundleId) return;
+  activeBundleId = bundleId;
+  if (typeFilter) typeFilter.value = 'all';
+  if (subtypeFilter) subtypeFilter.value = 'all';
+  renderBundleTabs();
+  populateCategoryFilter();
+  populateSubtypeFilter();
+  const filtered = getFilteredItems();
+  if (filtered.length > 0) {
+    const firstPending = filtered.find(it => !isItemReviewed(it)) || filtered[0];
+    activeSelection = { kind: firstPending.kind, id: firstPending.id };
+    applyItemDefaults(firstPending);
+  } else {
+    activeSelection = { kind: '', id: '' };
+  }
+  renderList();
+  await loadCurrentVfx();
+}
+
 function populateCategoryFilter() {
-  const pool = getAllItems();
+  const pool = getActiveBundleItems();
   const counts = new Map();
   let pendingCnt = 0;
   let approvedCnt = 0;
@@ -409,7 +846,7 @@ function populateCategoryFilter() {
     opt.textContent = text;
     typeFilter.appendChild(opt);
   };
-  addOpt('all', `全部 (${pool.length})`);
+  addOpt('all', `全部大类 (${pool.length})`);
   addOpt('review:pending', `待审核 (${pendingCnt})`);
   addOpt('review:approved', `已通过 (${approvedCnt})`);
   if (meshCnt > 0) addOpt('kind:mesh', `3D 网格 (${meshCnt})`);
@@ -423,6 +860,32 @@ function populateCategoryFilter() {
   }
   const hasPrev = [...typeFilter.options].some(o => o.value === prev);
   typeFilter.value = hasPrev ? prev : 'all';
+}
+
+function populateSubtypeFilter() {
+  if (!subtypeFilter) return;
+  const filterVal = typeFilter?.value || 'all';
+  const pool = getActiveBundleItems().filter(item => matchesTypeFilter(item, filterVal));
+  const counts = new Map();
+  for (const item of pool) {
+    const sub = item.subCategory || item.category || '通用';
+    counts.set(sub, (counts.get(sub) || 0) + 1);
+  }
+  const prev = subtypeFilter.value || 'all';
+  subtypeFilter.replaceChildren();
+  const addOpt = (val, text) => {
+    const opt = document.createElement('option');
+    opt.value = val;
+    opt.textContent = text;
+    subtypeFilter.appendChild(opt);
+  };
+  addOpt('all', `全部细分 (${pool.length})`);
+  const sortedSubs = [...counts.keys()].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+  for (const sub of sortedSubs) {
+    addOpt(`sub:${sub}`, `${sub} (${counts.get(sub)})`);
+  }
+  const hasPrev = [...subtypeFilter.options].some(o => o.value === prev);
+  subtypeFilter.value = hasPrev ? prev : 'all';
 }
 
 function getCurrentItem() {
@@ -517,30 +980,41 @@ function renderList() {
     applyItemDefaults(items[0]);
   }
 
-  const byCategory = new Map();
+  const byGroup = new Map();
+  const filterVal = typeFilter?.value || 'all';
+  const showSubOnlyHeading = filterVal.startsWith('cat:');
   for (const item of items) {
     const cat = item.category || (item.kind === 'mesh' ? '3D 网格' : '序列帧贴图');
-    if (!byCategory.has(cat)) byCategory.set(cat, []);
-    byCategory.get(cat).push(item);
+    const sub = item.subCategory || '';
+    const groupKey = showSubOnlyHeading && sub
+      ? sub
+      : (sub && sub !== cat ? `${cat} · ${sub}` : cat);
+    if (!byGroup.has(groupKey)) byGroup.set(groupKey, { cat, sub, items: [] });
+    byGroup.get(groupKey).items.push(item);
   }
 
-  for (const list of byCategory.values()) {
-    list.sort(compareByReviewThenName);
+  for (const grp of byGroup.values()) {
+    grp.items.sort(compareByReviewThenName);
   }
 
-  const categories = [...byCategory.keys()].sort((a, b) => {
-    const aPending = byCategory.get(a).some(it => !isItemReviewed(it)) ? 0 : 1;
-    const bPending = byCategory.get(b).some(it => !isItemReviewed(it)) ? 0 : 1;
+  const groupKeys = [...byGroup.keys()].sort((a, b) => {
+    const ga = byGroup.get(a);
+    const gb = byGroup.get(b);
+    const aPending = ga.items.some(it => !isItemReviewed(it)) ? 0 : 1;
+    const bPending = gb.items.some(it => !isItemReviewed(it)) ? 0 : 1;
     if (aPending !== bPending) return aPending - bPending;
-    const rankDiff = getCategoryRank(a) - getCategoryRank(b);
-    return rankDiff !== 0 ? rankDiff : a.localeCompare(b);
+    const rankDiff = getCategoryRank(ga.cat) - getCategoryRank(gb.cat);
+    if (rankDiff !== 0) return rankDiff;
+    const catDiff = ga.cat.localeCompare(gb.cat);
+    if (catDiff !== 0) return catDiff;
+    return a.localeCompare(b, 'zh-Hans-CN');
   });
 
-  for (const cat of categories) {
-    const groupItems = byCategory.get(cat);
+  for (const key of groupKeys) {
+    const groupItems = byGroup.get(key).items;
     const heading = document.createElement('div');
     heading.className = 'hgame-list-heading';
-    heading.textContent = `${cat} (${groupItems.length})`;
+    heading.textContent = `${key} (${groupItems.length})`;
     listEl.append(heading);
 
     for (const item of groupItems) {
@@ -1101,14 +1575,16 @@ function getBenchTelemetryTotals(st) {
     + (ap.premultiplyTotal || 0)
     + (ap.distortionTotal || 0)
     + (ap.renderStateTotal || 0);
+  const shurikenActive = st?.shuriken?.activeParticles || 0;
   const meshActive = st?.meshVfx?.activeCount || 0;
   const trailActive = st?.trails?.activeTrails || 0;
   return {
-    atlasActive,
+    atlasActive: atlasActive + shurikenActive,
+    shurikenActive,
     meshActive,
     trailActive,
-    totalActive: atlasActive + meshActive + trailActive,
-    batches: st?.meshVfx?.instancedBatches || 0,
+    totalActive: atlasActive + shurikenActive + meshActive + trailActive,
+    batches: (st?.meshVfx?.instancedBatches || 0) + (st?.shuriken?.activeDrawCalls || 0),
   };
 }
 
@@ -2254,7 +2730,9 @@ async function applyVfxReviewStatus(item, approved) {
   }
 
   const prevSelectedId = activeSelection.id;
+  renderBundleTabs();
   populateCategoryFilter();
+  populateSubtypeFilter();
   renderList();
   if (reviewToggle && getCurrentItem()?.id === item.id) {
     reviewToggle.checked = nextApproved;
@@ -2278,7 +2756,9 @@ async function applyVfxReviewStatus(item, approved) {
     if (Array.isArray(lastData?.reviewedIds)) {
       reviewedIds.clear();
       for (const rid of lastData.reviewedIds) reviewedIds.add(rid);
+      renderBundleTabs();
       populateCategoryFilter();
+      populateSubtypeFilter();
       renderList();
       if (reviewToggle) reviewToggle.checked = isItemReviewed(getCurrentItem());
     }
@@ -2286,7 +2766,9 @@ async function applyVfxReviewStatus(item, approved) {
   } catch (err) {
     for (const id of allFamilyIds) reviewedIds.delete(id);
     for (const id of prevPresent) reviewedIds.add(id);
+    renderBundleTabs();
     populateCategoryFilter();
+    populateSubtypeFilter();
     renderList();
     if (reviewToggle) reviewToggle.checked = isItemReviewed(getCurrentItem());
     statusEl.textContent = err?.message || '保存审核状态失败';
@@ -2310,6 +2792,17 @@ async function initVfxView() {
       void loadCurrentVfx();
     });
     typeFilter.addEventListener('change', () => {
+      if (subtypeFilter) subtypeFilter.value = 'all';
+      populateSubtypeFilter();
+      const filtered = getFilteredItems();
+      if (filtered.length > 0 && !filtered.some(it => it.kind === activeSelection.kind && it.id === activeSelection.id)) {
+        activeSelection = { kind: filtered[0].kind, id: filtered[0].id };
+        applyItemDefaults(filtered[0]);
+      }
+      renderList();
+      void loadCurrentVfx();
+    });
+    subtypeFilter?.addEventListener('change', () => {
       const filtered = getFilteredItems();
       if (filtered.length > 0 && !filtered.some(it => it.kind === activeSelection.kind && it.id === activeSelection.id)) {
         activeSelection = { kind: filtered[0].kind, id: filtered[0].id };
@@ -2391,27 +2884,47 @@ async function initVfxView() {
     }
     vfxMeshIndex = vfxBenchRes?.meshIndex || {};
     vfxBaseUrl = vfxBenchRes?.baseUrl || '/files/hgame-vfx';
+    vfxBundles = [];
     if (vfxBenchRes?.available && Array.isArray(vfxBenchRes.packs)) {
       const nextBenchSystems = [];
+      const bundleMap = new Map();
+      for (const b of Array.isArray(vfxBenchRes.bundles) ? vfxBenchRes.bundles : []) {
+        if (b?.id) bundleMap.set(b.id, { id: b.id, name: b.name || b.id, packCount: b.packCount || 0, effectCount: b.effectCount || 0 });
+      }
       for (const pack of vfxBenchRes.packs) {
         if (pack.id === 'flagship_bench') continue;
+        const bId = pack.bundleId || 'piloto_studio';
+        const bName = pack.bundleName || 'Piloto Studio';
+        if (!bundleMap.has(bId)) {
+          bundleMap.set(bId, { id: bId, name: bName, packCount: 0, effectCount: 0 });
+        }
         vfxPacksById.set(pack.id, pack);
         for (const ef of Array.isArray(pack.effects) ? pack.effects : []) {
           const itemName = ef.name || ef.id;
-          const catTitle = classifyVfxSystem({
+          const catPath = Array.isArray(ef.categoryPath)
+            ? ef.categoryPath
+            : String(ef.relSource || '').split('/').filter(Boolean).slice(0, -1);
+          const { category: catTitle, subCategory: subTitle } = classifyVfxHierarchy({
             name: itemName,
             effectId: ef.id,
             id: `${pack.id}__${ef.id}`,
+            bundleId: bId,
+            bundleName: bName,
             relSource: ef.relSource || '',
+            categoryPath: catPath,
             loop: Boolean(ef.loop),
           });
           nextBenchSystems.push({
             id: `${pack.id}__${ef.id}`,
             effectId: ef.id,
             packId: pack.id,
+            bundleId: bId,
+            bundleName: bName,
             name: itemName,
             relSource: ef.relSource || '',
+            categoryPath: catPath,
             category: catTitle,
+            subCategory: subTitle,
             group: pack.name,
             layerCount: ef.layerCount,
             duration: ef.duration,
@@ -2422,32 +2935,47 @@ async function initVfxView() {
           });
         }
       }
+      vfxBundles = [...bundleMap.values()];
       shurikenBenchSystems = collapseBenchColorVariants(nextBenchSystems);
     } else if (vfxBenchRes?.available && Array.isArray(vfxBenchRes.effects)) {
       // Legacy fallback when catalog.json v1 is used
-      shurikenBenchSystems = collapseBenchColorVariants(vfxBenchRes.effects.map(ef => ({
-        id: ef.id,
-        effectId: ef.id,
-        packId: 'legacy_v1',
-        name: ef.name,
-        category: classifyVfxSystem({ name: ef.name, effectId: ef.id, id: ef.id, loop: Boolean(ef.loop) }),
-        group: ef.name,
-        layerCount: ef.layerCount,
-        duration: ef.duration,
-        loop: ef.loop,
-        isShurikenBench: true,
-        recipeUrl: `${vfxBaseUrl}/${ef.recipeFile}`,
-        hgamePreset: { color: '#ff944d' },
-      })));
+      vfxBundles = [{ id: 'legacy_v1', name: '默认特效包', packCount: 1, effectCount: vfxBenchRes.effects.length }];
+      shurikenBenchSystems = collapseBenchColorVariants(vfxBenchRes.effects.map(ef => {
+        const { category, subCategory } = classifyVfxHierarchy({ name: ef.name, effectId: ef.id, id: ef.id, bundleId: 'legacy_v1', loop: Boolean(ef.loop) });
+        return {
+          id: ef.id,
+          effectId: ef.id,
+          packId: 'legacy_v1',
+          bundleId: 'legacy_v1',
+          bundleName: '默认特效包',
+          name: ef.name,
+          category,
+          subCategory,
+          group: ef.name,
+          layerCount: ef.layerCount,
+          duration: ef.duration,
+          loop: ef.loop,
+          isShurikenBench: true,
+          recipeUrl: `${vfxBaseUrl}/${ef.recipeFile}`,
+          hgamePreset: { color: '#ff944d' },
+        };
+      }));
     } else {
       shurikenBenchSystems = [];
     }
     vfxSystems = Array.isArray(unrealCatalog.vfxSystems)
-      ? unrealCatalog.vfxSystems.map(sys => ({ ...sys, category: classifyVfxSystem(sys) }))
+      ? unrealCatalog.vfxSystems.map(sys => {
+        const { category, subCategory } = classifyVfxHierarchy(sys);
+        return { ...sys, category, subCategory };
+      })
       : [];
     vfxMeshes = Array.isArray(unrealCatalog.vfxMeshes) ? unrealCatalog.vfxMeshes : [];
     vfxTextures = Array.isArray(unrealCatalog.vfxTextures) ? unrealCatalog.vfxTextures : [];
+    if (vfxBundles.length === 0 && (vfxSystems.length + vfxMeshes.length + vfxTextures.length) > 0) {
+      vfxBundles = [{ id: 'unreal_export', name: 'Unreal 特效', packCount: 1, effectCount: vfxSystems.length + vfxMeshes.length + vfxTextures.length }];
+    }
   } catch (error) {
+    vfxBundles = [];
     shurikenBenchSystems = [];
     vfxSystems = [];
     vfxMeshes = [];
@@ -2455,7 +2983,6 @@ async function initVfxView() {
     statusEl.textContent = error.message || '读取特效目录失败';
   }
 
-  populateCategoryFilter();
   const findItemOrVariant = (all, key) => {
     if (!key) return null;
     for (const it of all) {
@@ -2468,16 +2995,31 @@ async function initVfxView() {
     return null;
   };
   const params = new URLSearchParams(window.location.search);
+  const reqBundle = params.get('bundle');
   const reqVfx = params.get('vfx');
   const reqEff = params.get('effect');
   const allItems = getAllItems();
-  const filteredItems = getFilteredItems();
   const deepMatch = findItemOrVariant(allItems, reqVfx) || findItemOrVariant(allItems, reqEff);
   const deepLinked = deepMatch ? deepMatch.item : null;
   if (deepMatch?.variant) activeVariantByBaseId.set(deepMatch.item.id, deepMatch.variant.id);
-  const currentExisting = allItems.find(it => it.kind === activeSelection.kind && it.id === activeSelection.id) || null;
-  const firstUnreviewed = filteredItems.find(it => !isItemReviewed(it)) || allItems.find(it => !isItemReviewed(it)) || null;
-  const initialItem = deepLinked || currentExisting || firstUnreviewed || filteredItems[0] || allItems[0] || null;
+
+  if (deepLinked?.bundleId && vfxBundles.some(b => b.id === deepLinked.bundleId)) {
+    activeBundleId = deepLinked.bundleId;
+  } else if (reqBundle && vfxBundles.some(b => b.id === reqBundle)) {
+    activeBundleId = reqBundle;
+  } else if (!activeBundleId || !vfxBundles.some(b => b.id === activeBundleId)) {
+    activeBundleId = vfxBundles[0]?.id || '';
+  }
+
+  renderBundleTabs();
+  populateCategoryFilter();
+  populateSubtypeFilter();
+
+  const bundlePool = getActiveBundleItems();
+  const filteredItems = getFilteredItems();
+  const currentExisting = bundlePool.find(it => it.kind === activeSelection.kind && it.id === activeSelection.id) || null;
+  const firstUnreviewed = filteredItems.find(it => !isItemReviewed(it)) || bundlePool.find(it => !isItemReviewed(it)) || null;
+  const initialItem = deepLinked || currentExisting || firstUnreviewed || filteredItems[0] || bundlePool[0] || allItems[0] || null;
   if (initialItem) {
     activeSelection = { kind: initialItem.kind, id: initialItem.id };
     applyItemDefaults(initialItem);
@@ -2489,6 +3031,13 @@ async function initVfxView() {
 
 window.__WEBASSET_VFX_TEST__ = {
   listIds: () => getAllItems().map(it => it.id),
+  listBundles: () => vfxBundles.map(b => ({ ...b })),
+  getActiveBundle: () => activeBundleId,
+  selectBundle: async (bundleId) => {
+    if (!vfxBundles.some(b => b.id === bundleId)) return false;
+    await switchBundle(bundleId);
+    return true;
+  },
   isReviewed: (id) => {
     const match = getAllItems().find(it => it.id === id || it.effectId === id || it.variants?.some(v => v.id === id || v.effectId === id));
     return match ? isItemReviewed(match) : reviewedIds.has(id);
@@ -2516,6 +3065,15 @@ window.__WEBASSET_VFX_TEST__ = {
       }
     }
     if (!match) return false;
+    const matchBundle = match.bundleId || 'piloto_studio';
+    if (activeBundleId && matchBundle !== activeBundleId && vfxBundles.some(b => b.id === matchBundle)) {
+      activeBundleId = matchBundle;
+      if (typeFilter) typeFilter.value = 'all';
+      if (subtypeFilter) subtypeFilter.value = 'all';
+      renderBundleTabs();
+      populateCategoryFilter();
+      populateSubtypeFilter();
+    }
     activeSelection = { kind: match.kind, id: match.id };
     applyItemDefaults(match);
     renderList();

@@ -313,10 +313,16 @@
           <input id="hgame-vfx-search" type="search" placeholder="搜索特效" autocomplete="off">
         </label>
       </div>
-      <div class="hgame-filter-row">
-        <label class="hgame-field hgame-field-full"><span>筛选</span>
-          <select id="hgame-vfx-type-filter">
-            <option value="all">全部特效</option>
+      <div id="hgame-vfx-bundle-tabs" class="hgame-vfx-bundle-tabs" role="tablist" aria-label="特效包" hidden></div>
+      <div class="hgame-filter-row hgame-filter-stack">
+        <label class="hgame-field hgame-field-full"><span>大类</span>
+          <select id="hgame-vfx-type-filter" data-keep-single="true">
+            <option value="all">全部大类</option>
+          </select>
+        </label>
+        <label class="hgame-field hgame-field-full"><span>细分</span>
+          <select id="hgame-vfx-subtype-filter" data-keep-single="true">
+            <option value="all">全部细分</option>
           </select>
         </label>
       </div>

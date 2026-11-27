@@ -63,6 +63,7 @@
     "api": "node scripts/query-api.mjs",
     "vfx:score": "node scripts/score-vfx-fidelity.mjs",
     "vfx:pack": "node scripts/build-vfx-pack.mjs",
+    "vfx:export-bundle": "node scripts/export-vfx-bundle.mjs",
     "re:extract": "node scripts/re-pipeline.mjs extract",
     "re:probe": "node scripts/re-pipeline.mjs probe",
     "re:spec": "node scripts/re-pipeline.mjs spec",

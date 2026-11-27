@@ -429,6 +429,7 @@ export function createHGameAssetHandler({
               ? JSON.parse(await readFile(meshIndexPath, 'utf8'))
               : {};
             const packs = [];
+            const bundlesMap = new Map();
             for (const entry of Array.isArray(packsIndex?.packs) ? packsIndex.packs : []) {
               if ((entry?.id || '') === 'flagship_bench') continue;
               const rel = String(entry?.manifestFile || '').replace(/^\/+/, '');
@@ -438,14 +439,23 @@ export function createHGameAssetHandler({
               const pi = JSON.parse(await readFile(abs, 'utf8'));
               const packId = pi.id || entry.id;
               if (packId === 'flagship_bench') continue;
+              const bundleId = pi.bundleId || entry.bundleId || 'piloto_studio';
+              const bundleName = pi.bundleName || entry.bundleName || 'Piloto Studio';
+              const effects = Array.isArray(pi.effects) ? pi.effects : [];
               packs.push({
                 id: packId,
                 name: pi.name || entry.name,
+                bundleId,
+                bundleName,
                 atlasImage: pi.atlasImage || '',
                 atlasMeta: pi.atlasMeta || '',
                 meshAliases: pi.meshAliases || {},
-                effects: Array.isArray(pi.effects) ? pi.effects : [],
+                effects,
               });
+              const bEntry = bundlesMap.get(bundleId) || { id: bundleId, name: bundleName, packCount: 0, effectCount: 0 };
+              bEntry.packCount += 1;
+              bEntry.effectCount += effects.length;
+              bundlesMap.set(bundleId, bEntry);
             }
             sendJson(response, 200, {
               available: packs.length > 0,
@@ -453,6 +463,7 @@ export function createHGameAssetHandler({
               baseUrl: '/files/hgame-vfx',
               reviewedIds,
               meshIndex,
+              bundles: [...bundlesMap.values()],
               packs,
             });
           } catch {
