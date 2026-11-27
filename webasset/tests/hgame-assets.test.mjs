@@ -667,9 +667,10 @@ test('HGame asset API disables static models/materials and serves procedural .hm
     assert.match(html, /id="hgame-anim-character-dialog-button"/);
     assert.match(html, /id="hgame-character-picker-dialog"/);
     assert.match(html, /id="hgame-vfx-stage"/);
-    assert.match(html, /id="hgame-vfx-bundle-tabs"/);
+    assert.match(html, /id="hgame-vfx-bundle-filter"/);
     assert.match(html, /id="hgame-vfx-type-filter"/);
-    assert.match(html, /id="hgame-vfx-subtype-filter"/);
+    assert.doesNotMatch(html, /id="hgame-vfx-bundle-tabs"/);
+    assert.doesNotMatch(html, /id="hgame-vfx-subtype-filter"/);
     assert.doesNotMatch(html, /id="hgame-vfx-kind-filter"/);
     assert.match(html, /id="hgame-vfx-mode-tabs"/);
     assert.match(html, /data-hgame-vfx-mode="source"/);

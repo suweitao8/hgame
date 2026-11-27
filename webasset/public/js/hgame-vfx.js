@@ -151,9 +151,8 @@ function classifyVfxSystem(item) {
 
 const viewEl = document.querySelector('#vfx-view');
 const searchInput = document.querySelector('#hgame-vfx-search');
-const bundleTabsEl = document.querySelector('#hgame-vfx-bundle-tabs');
+const bundleFilter = document.querySelector('#hgame-vfx-bundle-filter');
 const typeFilter = document.querySelector('#hgame-vfx-type-filter');
-const subtypeFilter = document.querySelector('#hgame-vfx-subtype-filter');
 const listEl = document.querySelector('#hgame-vfx-list');
 const titleEl = document.querySelector('#hgame-vfx-title');
 const variantWrap = document.querySelector('#hgame-vfx-variant-wrap');
@@ -510,18 +509,16 @@ function matchesTypeFilter(item, filterVal) {
   if (!filterVal || filterVal === 'all') return true;
   if (filterVal === 'review:pending') return !isItemReviewed(item);
   if (filterVal === 'review:approved') return isItemReviewed(item);
-  if (filterVal.startsWith('kind:')) return item.kind === filterVal.slice(5);
+  if (filterVal.startsWith('sub:')) return (item.subCategory || item.category || '') === filterVal.slice(4);
   if (filterVal.startsWith('cat:')) return (item.category || '') === filterVal.slice(4);
-  return (item.category || '') === filterVal;
+  return (item.subCategory || item.category || '') === filterVal;
 }
 
-function getFilteredItems({ ignoreSubtype = false } = {}) {
+function getFilteredItems() {
   const query = searchInput.value.trim().toLowerCase();
   const filterVal = typeFilter?.value || 'all';
-  const subVal = ignoreSubtype ? 'all' : (subtypeFilter?.value || 'all');
   const filtered = getActiveBundleItems().filter(item => {
     if (!matchesTypeFilter(item, filterVal)) return false;
-    if (subVal.startsWith('sub:') && (item.subCategory || item.category || '') !== subVal.slice(4)) return false;
     if (!query) return true;
     return (item.name || '').toLowerCase().includes(query)
       || (item.assetName || '').toLowerCase().includes(query)
@@ -535,70 +532,53 @@ function getFilteredItems({ ignoreSubtype = false } = {}) {
         || (v.id || '').toLowerCase().includes(query)
         || (v.variantLabel || '').toLowerCase().includes(query)));
   });
-  const catHasPending = new Map();
+  const subHasPending = new Map();
   for (const item of filtered) {
-    const cat = item.category || '范围爆破';
-    if (!catHasPending.has(cat)) catHasPending.set(cat, false);
-    if (!isItemReviewed(item)) catHasPending.set(cat, true);
+    const sub = item.subCategory || item.category || '范围爆破';
+    if (!subHasPending.has(sub)) subHasPending.set(sub, false);
+    if (!isItemReviewed(item)) subHasPending.set(sub, true);
   }
   return filtered.sort((a, b) => {
-    const ca = a.category || '范围爆破';
-    const cb = b.category || '范围爆破';
-    const pa = catHasPending.get(ca) ? 0 : 1;
-    const pb = catHasPending.get(cb) ? 0 : 1;
+    const sa = a.subCategory || a.category || '范围爆破';
+    const sb = b.subCategory || b.category || '范围爆破';
+    const pa = subHasPending.get(sa) ? 0 : 1;
+    const pb = subHasPending.get(sb) ? 0 : 1;
     if (pa !== pb) return pa - pb;
-    const rankDiff = getCategoryRank(ca) - getCategoryRank(cb);
+    const rankDiff = getCategoryRank(a.category || '') - getCategoryRank(b.category || '');
     if (rankDiff !== 0) return rankDiff;
-    const catDiff = ca.localeCompare(cb);
-    if (catDiff !== 0) return catDiff;
-    const subDiff = String(a.subCategory || '').localeCompare(String(b.subCategory || ''), 'zh-Hans-CN');
+    const subDiff = sa.localeCompare(sb, 'zh-Hans-CN');
     if (subDiff !== 0) return subDiff;
     return compareByReviewThenName(a, b);
   });
 }
 
-function renderBundleTabs() {
-  if (!bundleTabsEl) return;
+function populateBundleFilter() {
+  if (!bundleFilter) return;
   const all = getAllItems();
   const countsByBundle = new Map();
   for (const item of all) {
     const bId = item.bundleId || 'piloto_studio';
     countsByBundle.set(bId, (countsByBundle.get(bId) || 0) + 1);
   }
-  bundleTabsEl.replaceChildren();
-  if (vfxBundles.length === 0) {
-    bundleTabsEl.hidden = true;
-    return;
-  }
+  bundleFilter.replaceChildren();
   for (const bundle of vfxBundles) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'hgame-vfx-bundle-tab';
-    btn.setAttribute('role', 'tab');
-    btn.dataset.bundleId = bundle.id;
-    const isSel = bundle.id === activeBundleId;
-    btn.setAttribute('aria-selected', String(isSel));
-    btn.tabIndex = isSel ? 0 : -1;
+    const opt = document.createElement('option');
+    opt.value = bundle.id;
     const cnt = countsByBundle.get(bundle.id) ?? bundle.effectCount ?? 0;
-    btn.textContent = `${bundle.name} (${cnt})`;
-    btn.title = `${bundle.name} · ${cnt} 组特效`;
-    btn.addEventListener('click', () => {
-      if (bundle.id === activeBundleId) return;
-      void switchBundle(bundle.id);
-    });
-    bundleTabsEl.appendChild(btn);
+    opt.textContent = `${bundle.name} (${cnt})`;
+    bundleFilter.appendChild(opt);
   }
-  bundleTabsEl.hidden = false;
+  if (activeBundleId && [...bundleFilter.options].some(o => o.value === activeBundleId)) {
+    bundleFilter.value = activeBundleId;
+  }
 }
 
 async function switchBundle(bundleId) {
   if (!bundleId || bundleId === activeBundleId) return;
   activeBundleId = bundleId;
   if (typeFilter) typeFilter.value = 'all';
-  if (subtypeFilter) subtypeFilter.value = 'all';
-  renderBundleTabs();
+  populateBundleFilter();
   populateCategoryFilter();
-  populateSubtypeFilter();
   const filtered = getFilteredItems();
   if (filtered.length > 0) {
     const firstPending = filtered.find(it => !isItemReviewed(it)) || filtered[0];
@@ -613,14 +593,17 @@ async function switchBundle(bundleId) {
 
 function populateCategoryFilter() {
   const pool = getActiveBundleItems();
-  const counts = new Map();
+  const subMeta = new Map();
   let pendingCnt = 0;
   let approvedCnt = 0;
   for (const item of pool) {
     if (isItemReviewed(item)) approvedCnt++;
     else pendingCnt++;
-    const cat = item.category || '范围爆破';
-    counts.set(cat, (counts.get(cat) || 0) + 1);
+    const sub = item.subCategory || item.category || '通用';
+    const cat = item.category || '';
+    const prevMeta = subMeta.get(sub);
+    if (prevMeta) prevMeta.count += 1;
+    else subMeta.set(sub, { count: 1, cat });
   }
   const prev = typeFilter.value || 'all';
   typeFilter.replaceChildren();
@@ -630,44 +613,19 @@ function populateCategoryFilter() {
     opt.textContent = text;
     typeFilter.appendChild(opt);
   };
-  addOpt('all', `全部大类 (${pool.length})`);
+  addOpt('all', `全部 (${pool.length})`);
   addOpt('review:pending', `待审核 (${pendingCnt})`);
   addOpt('review:approved', `已通过 (${approvedCnt})`);
-  const ordered = [
-    ...VFX_CATEGORY_ORDER.filter(c => counts.has(c)),
-    ...[...counts.keys()].filter(c => !VFX_CATEGORY_ORDER.includes(c)).sort(),
-  ];
-  for (const cat of ordered) {
-    addOpt(`cat:${cat}`, `${cat} (${counts.get(cat)})`);
+  const sortedSubs = [...subMeta.entries()].sort((a, b) => {
+    const rankDiff = getCategoryRank(a[1].cat) - getCategoryRank(b[1].cat);
+    if (rankDiff !== 0) return rankDiff;
+    return a[0].localeCompare(b[0], 'zh-Hans-CN');
+  });
+  for (const [sub, info] of sortedSubs) {
+    addOpt(`sub:${sub}`, `${sub} (${info.count})`);
   }
   const hasPrev = [...typeFilter.options].some(o => o.value === prev);
   typeFilter.value = hasPrev ? prev : 'all';
-}
-
-function populateSubtypeFilter() {
-  if (!subtypeFilter) return;
-  const filterVal = typeFilter?.value || 'all';
-  const pool = getActiveBundleItems().filter(item => matchesTypeFilter(item, filterVal));
-  const counts = new Map();
-  for (const item of pool) {
-    const sub = item.subCategory || item.category || '通用';
-    counts.set(sub, (counts.get(sub) || 0) + 1);
-  }
-  const prev = subtypeFilter.value || 'all';
-  subtypeFilter.replaceChildren();
-  const addOpt = (val, text) => {
-    const opt = document.createElement('option');
-    opt.value = val;
-    opt.textContent = text;
-    subtypeFilter.appendChild(opt);
-  };
-  addOpt('all', `全部细分 (${pool.length})`);
-  const sortedSubs = [...counts.keys()].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
-  for (const sub of sortedSubs) {
-    addOpt(`sub:${sub}`, `${sub} (${counts.get(sub)})`);
-  }
-  const hasPrev = [...subtypeFilter.options].some(o => o.value === prev);
-  subtypeFilter.value = hasPrev ? prev : 'all';
 }
 
 function getCurrentItem() {
@@ -763,16 +721,11 @@ function renderList() {
   }
 
   const byGroup = new Map();
-  const filterVal = typeFilter?.value || 'all';
-  const showSubOnlyHeading = filterVal.startsWith('cat:');
   for (const item of items) {
     const cat = item.category || '范围爆破';
-    const sub = item.subCategory || '';
-    const groupKey = showSubOnlyHeading && sub
-      ? sub
-      : (sub && sub !== cat ? `${cat} · ${sub}` : cat);
-    if (!byGroup.has(groupKey)) byGroup.set(groupKey, { cat, sub, items: [] });
-    byGroup.get(groupKey).items.push(item);
+    const sub = item.subCategory || cat;
+    if (!byGroup.has(sub)) byGroup.set(sub, { cat, sub, items: [] });
+    byGroup.get(sub).items.push(item);
   }
 
   for (const grp of byGroup.values()) {
@@ -787,8 +740,6 @@ function renderList() {
     if (aPending !== bPending) return aPending - bPending;
     const rankDiff = getCategoryRank(ga.cat) - getCategoryRank(gb.cat);
     if (rankDiff !== 0) return rankDiff;
-    const catDiff = ga.cat.localeCompare(gb.cat);
-    if (catDiff !== 0) return catDiff;
     return a.localeCompare(b, 'zh-Hans-CN');
   });
 
@@ -2512,9 +2463,8 @@ async function applyVfxReviewStatus(item, approved) {
   }
 
   const prevSelectedId = activeSelection.id;
-  renderBundleTabs();
+  populateBundleFilter();
   populateCategoryFilter();
-  populateSubtypeFilter();
   renderList();
   if (reviewToggle && getCurrentItem()?.id === item.id) {
     reviewToggle.checked = nextApproved;
@@ -2538,9 +2488,8 @@ async function applyVfxReviewStatus(item, approved) {
     if (Array.isArray(lastData?.reviewedIds)) {
       reviewedIds.clear();
       for (const rid of lastData.reviewedIds) reviewedIds.add(rid);
-      renderBundleTabs();
+      populateBundleFilter();
       populateCategoryFilter();
-      populateSubtypeFilter();
       renderList();
       if (reviewToggle) reviewToggle.checked = isItemReviewed(getCurrentItem());
     }
@@ -2548,9 +2497,8 @@ async function applyVfxReviewStatus(item, approved) {
   } catch (err) {
     for (const id of allFamilyIds) reviewedIds.delete(id);
     for (const id of prevPresent) reviewedIds.add(id);
-    renderBundleTabs();
+    populateBundleFilter();
     populateCategoryFilter();
-    populateSubtypeFilter();
     renderList();
     if (reviewToggle) reviewToggle.checked = isItemReviewed(getCurrentItem());
     statusEl.textContent = err?.message || '保存审核状态失败';
@@ -2573,18 +2521,10 @@ async function initVfxView() {
       activeVariantByBaseId.set(item.id, variantSelect.value);
       void loadCurrentVfx();
     });
-    typeFilter.addEventListener('change', () => {
-      if (subtypeFilter) subtypeFilter.value = 'all';
-      populateSubtypeFilter();
-      const filtered = getFilteredItems();
-      if (filtered.length > 0 && !filtered.some(it => it.kind === activeSelection.kind && it.id === activeSelection.id)) {
-        activeSelection = { kind: filtered[0].kind, id: filtered[0].id };
-        applyItemDefaults(filtered[0]);
-      }
-      renderList();
-      void loadCurrentVfx();
+    bundleFilter?.addEventListener('change', () => {
+      void switchBundle(bundleFilter.value);
     });
-    subtypeFilter?.addEventListener('change', () => {
+    typeFilter.addEventListener('change', () => {
       const filtered = getFilteredItems();
       if (filtered.length > 0 && !filtered.some(it => it.kind === activeSelection.kind && it.id === activeSelection.id)) {
         activeSelection = { kind: filtered[0].kind, id: filtered[0].id };
@@ -2783,9 +2723,8 @@ async function initVfxView() {
     activeBundleId = vfxBundles[0]?.id || '';
   }
 
-  renderBundleTabs();
+  populateBundleFilter();
   populateCategoryFilter();
-  populateSubtypeFilter();
 
   const bundlePool = getActiveBundleItems();
   const filteredItems = getFilteredItems();
@@ -2841,10 +2780,8 @@ window.__WEBASSET_VFX_TEST__ = {
     if (activeBundleId && matchBundle !== activeBundleId && vfxBundles.some(b => b.id === matchBundle)) {
       activeBundleId = matchBundle;
       if (typeFilter) typeFilter.value = 'all';
-      if (subtypeFilter) subtypeFilter.value = 'all';
-      renderBundleTabs();
+      populateBundleFilter();
       populateCategoryFilter();
-      populateSubtypeFilter();
     }
     activeSelection = { kind: match.kind, id: match.id };
     applyItemDefaults(match);
