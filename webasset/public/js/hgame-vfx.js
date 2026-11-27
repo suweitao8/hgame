@@ -17,240 +17,89 @@ const VFX_CATEGORY_ORDER = [
   '光束天降',
   '法阵持续',
   '护盾增益',
-  '战斗 · 爆炸',
-  '战斗 · 弹道投射',
-  '战斗 · 枪口火焰',
-  '战斗 · 魔法技能',
-  '战斗 · 剑光与近战',
-  '战斗 · 命中与状态',
-  '环境 · 自然与天气',
-  '交互 · 拾取与提示',
-  '其他 · 杂项',
+  '战斗',
+  '环境',
+  '交互',
+  '杂项',
 ];
-
-const ETFX_SUBCATEGORY_LABELS = {
-  // Explosions
-  BubbleExplosion: '气泡爆炸',
-  BulletExplosion: '子弹爆炸',
-  BulletFatExplosion: '重弹爆炸',
-  EnergyExplosion: '能量爆炸',
-  FireballRoundExplosion: '火球爆炸·圆',
-  FireballSharpExplosion: '火球爆炸·锐',
-  FireballSoftExplosion: '火球爆炸·柔',
-  FlashExplosion: '闪光爆炸',
-  FrostExplosion: '冰霜爆炸',
-  FruitExplosion: '水果爆裂',
-  GasExplosion: '毒气爆炸',
-  GlitterExplosion: '闪粉爆炸',
-  GrenadeExplosion: '手雷爆炸',
-  LaserExplosion: '激光爆炸',
-  LightningExplosion: '闪电爆炸',
-  LightningSoftExplosion: '柔雷爆炸',
-  LiquidExplosion: '液体飞溅爆',
-  MagicExplosion: '魔法爆炸',
-  MagicNovaExplosion: '魔法新星爆',
-  MagicSoftExplosion: '柔魔爆炸',
-  MegaExplosion: '巨型爆炸',
-  MysticExplosion: '秘术爆炸',
-  NovaExplosion: '新星爆炸',
-  NovaSmallExplosion: '小型新星爆',
-  NovaSoftExplosion: '柔和新星爆',
-  NukeConeExplosion: '锥形核爆',
-  NukeExplosion: '蘑菇云核爆',
-  NukeVerticalExplosion: '竖向核爆',
-  RoundExplosion: '圆形爆炸',
-  ShadowExplosion: '暗影爆炸',
-  SharpExplosion: '锐利爆炸',
-  SmallExplosion: '小型爆炸',
-  SnowExplosion: '雪花爆炸',
-  SoulExplosion: '灵魂爆炸',
-  SparkleExplosion: '星芒爆炸',
-  SpikyExplosion: '尖刺爆炸',
-  StarExplosion: '星形爆炸',
-  StarIntenseExplosion: '强力星爆',
-  StarlineExplosion: '星线爆炸',
-  StormExplosion: '风暴爆炸',
-  'Explosions (Misc)': '杂项爆炸',
-  'Explosions (Text)': '文字拟声爆',
-  // Missiles
-  Bubble: '气泡弹',
-  Bullet: '常规子弹',
-  Energy: '能量弹',
-  FatBullet: '重型子弹',
-  Fireball: '火球弹',
-  FireballSharp: '锐利火球',
-  FireballSoft: '柔和火球',
-  Flash: '闪光弹',
-  Frost: '冰霜弹',
-  Fruit: '水果投掷',
-  Gas: '毒气弹',
-  Grenade: '手榴弹',
-  Laser: '激光束弹',
-  Lightning: '闪电弹',
-  LightningSoft: '柔雷弹',
-  Liquid: '液体弹',
-  Magic: '魔法飞弹',
-  MagicSoft: '柔魔飞弹',
-  Mystic: '秘术飞弹',
-  NovaMissile: '新星飞弹',
-  NovaMissileSoft: '柔和星弹',
-  NovaSmall: '小型星弹',
-  Nuke: '核弹头',
-  Rocket: '火箭弹',
-  Shadow: '暗影弹',
-  Sharp: '锐刺飞弹',
-  Snow: '雪球弹',
-  Soul: '灵魂弹',
-  Sparkle: '星芒弹',
-  Storm: '风暴弹',
-  // Muzzleflash
-  '- Misc': '杂项枪口焰',
-  BubbleMuzzle: '气泡枪口',
-  BulletFatMuzzle: '重弹枪口',
-  BulletMuzzle: '常规枪口',
-  EnergyMuzzle: '能量枪口',
-  EnergyNovaMuzzle: '新星枪口',
-  EnergyNovaSmallMuzzle: '小新星枪口',
-  FireballMuzzle: '火球枪口',
-  FireballSoftMuzzle: '柔火枪口',
-  FrostMuzzle: '冰霜枪口',
-  GrenadeMuzzle: '榴弹枪口',
-  LaserMuzzle: '激光枪口',
-  LightningMuzzle: '闪电枪口',
-  LiquidMuzzle: '液体枪口',
-  MagicMuzzle: '魔法枪口',
-  MagicSoftMuzzle: '柔魔枪口',
-  MysticMuzzle: '秘术枪口',
-  NukeMuzzle: '核爆枪口',
-  RocketMuzzle: '火箭枪口',
-  ShadowMuzzle: '暗影枪口',
-  SharpMuzzle: '锐利枪口',
-  SoulMuzzle: '灵魂枪口',
-  SparkleMuzzle: '星芒枪口',
-  StormMuzzle: '风暴枪口',
-  // Magic
-  Aura: '魔法光环',
-  'Aura Soft': '柔和光环',
-  Buff: '增益光效',
-  Charge: '蓄力聚能',
-  Circle: '魔法法阵',
-  'Circle Simple': '简约法阵',
-  Enchant: '武器附魔',
-  Field: '领域力场',
-  PillarBlast: '光柱爆发',
-  // Sword & Brawling
-  '- Legacy': '经典剑光',
-  Hit: '剑击命中',
-  Slash: '刀剑斩击',
-  Spin: '旋转斩',
-  Wave: '剑气波',
-  Whirlwind: '旋风斩',
-  RoundHit: '圆形打击',
-  Soft: '柔和打击',
-  Stun: '眩晕状态',
-  Toon: '卡通打击',
-  // Combat other
-  Blood: '血液飞溅',
-  BombFuse: '炸弹引信',
-  Death: '死亡灵魂',
-  Decals: '弹孔贴花',
-  Flamethrower: '火焰喷射',
-  Giblets: '碎片飞溅',
-  Nova: '元素新星',
-  Shield: '护盾屏障',
-  // Environment
-  Bubbles: '气泡漂浮',
-  Confetti: '彩带礼花',
-  Dust: '尘埃微粒',
-  Fire: '环境火焰',
-  Fireflies: '萤火虫',
-  Firework: '烟花绽放',
-  Fog: '雾气弥漫',
-  Smoke: '烟雾升腾',
-  Sparks: '火星飞溅',
-  Stars: '星空星云',
-  Underwater: '水下环境',
-  Water: '水流波纹',
-  Weather: '天气现象',
-  // Interactive
-  Cards: '卡牌特效',
-  Emojis: '情绪气泡',
-  Feathers: '羽毛飘落',
-  Flares: '镜头光晕',
-  Healing: '治疗回血',
-  Hearts: '爱心特效',
-  'Level Up': '升级光效',
-  Loot: '掉落宝箱',
-  Money: '金币钞票',
-  Portals: '传送门',
-  Powerups: '能量道具',
-  Sparkle: '闪烁星光',
-  Trails: '拖尾轨迹',
-  Warning: '预警提示',
-  Zone: '区域光圈',
-};
 
 function formatFolderSubcategory(seg) {
   if (!seg) return '通用';
-  if (ETFX_SUBCATEGORY_LABELS[seg]) return ETFX_SUBCATEGORY_LABELS[seg];
   return String(seg).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
 }
 
 function classifyPilotoSubcategory(item, category) {
   const s = `${item?.name || ''} ${item?.effectId || item?.id || ''} ${item?.relSource || ''}`.toLowerCase();
   if (category === '刀光斩击') {
-    if (/(combo|three_?stage)/.test(s)) return '连击组合';
-    if (/(whirlwind|spin|swirl)/.test(s)) return '旋风回旋';
-    if (/(stab|lunge|puncture|drill)/.test(s)) return '突刺穿刺';
-    if (/(scythe|hammer|claw)/.test(s)) return '重武与爪击';
-    if (/(dash)/.test(s)) return '冲锋位移斩';
-    return '弧光斩击';
+    if (/(combo|three_?stage|scythe|hammer|claw)/.test(s)) return '连击与重击';
+    if (/(whirlwind|spin|swirl|stab|lunge|puncture|drill|dash)/.test(s)) return '旋风与突刺';
+    return '弧光挥砍';
   }
   if (category === '受击命中') {
-    if (/(muzzle)/.test(s)) return '枪口闪光';
-    if (/(splatter|blood)/.test(s)) return '飞溅受击';
-    if (/(spark|snap|fizzle|clap)/.test(s)) return '火花爆点';
+    if (/(splatter|blood|spark|snap|fizzle|clap|muzzle)/.test(s)) return '火花与飞溅';
     return '打击命中';
   }
   if (category === '投射弹道') {
-    if (/(arrow|spear|dagger)/.test(s)) return '箭矢矛刃';
-    if (/(homing)/.test(s)) return '追踪弹道';
-    if (/(barrage|rain|shooting)/.test(s)) return '弹幕齐射';
-    if (/(fireball|iceball|orb|comet)/.test(s)) return '元素法球';
-    if (/(trail)/.test(s)) return '弹道拖尾';
-    return '直射投射物';
+    if (/(arrow|spear|dagger|bullet|bolt)/.test(s)) return '箭矢与飞弹';
+    if (/(homing|barrage|rain|shooting|trail)/.test(s)) return '弹幕与追踪';
+    return '元素法球';
   }
   if (category === '光束天降') {
     if (/(tornado|vortex|vortrex|twister|cyclone|waterspout|storm)/.test(s)) return '龙卷风暴';
-    if (/(rain|falling|skybloom|godssight|poseidon)/.test(s)) return '天降降雨';
-    if (/(lightning|thunder|flashlightning|lightningwrath|shock_calling)/.test(s)) return '天雷落雷';
+    if (/(rain|falling|skybloom|godssight|poseidon|lightning|thunder|flashlightning|lightningwrath|shock_calling)/.test(s)) return '天雷与落雨';
     return '聚能光束';
   }
   if (category === '护盾增益') {
     if (/(shield|barrier|protection|ward|dome)/.test(s)) return '护盾屏障';
-    if (/(heal|revive|blessing|empower)/.test(s)) return '治疗强化';
-    if (/(curse|debuff|cage|prison)/.test(s)) return '诅咒禁锢';
-    if (/(pickup|chest|loot|item|potion|coin)/.test(s)) return '掉落拾取';
-    if (/(charge|charging|recharge|release)/.test(s)) return '蓄力释放';
-    return '角色附着与增益';
+    if (/(heal|revive|blessing|empower|buff)/.test(s)) return '增益与治疗';
+    if (/(curse|debuff|cage|prison)/.test(s)) return '诅咒与禁锢';
+    return '角色附着与拾取';
   }
   if (category === '法阵持续') {
     if (/(circle|rune|sigil|ritual|altar|totem)/.test(s)) return '符文法阵';
-    if (/(aura|mark|telegraph|brand)/.test(s)) return '光环预警';
-    if (/(ground|pool|zone|area|field|mine)/.test(s)) return '持续地面域';
-    if (/(fire|flames|embers|campfire|torch|smoke|mist|fog)/.test(s)) return '火焰烟雾';
-    if (/(water|fountain|waterfall|splash|wave|stream|bubble)/.test(s)) return '水流波涛';
-    return '持续环境效果';
+    if (/(aura|mark|telegraph|brand|ground|pool|zone|area|field|mine)/.test(s)) return '光环与领域';
+    return '元素环境';
   }
   if (category === '范围爆破') {
     if (/(slam|groundslam|stomp|quake|crush)/.test(s)) return '重击砸地';
-    if (/(nova|shockwave|ring)/.test(s)) return '新星冲击波';
-    if (/(spike|crack|fissure|sunder|rock|boulder|crystal|eruption)/.test(s)) return '地刺裂隙与岩石';
-    if (/(cone|frontal)/.test(s)) return '扇形锥面爆';
-    if (/(shatter|cluster|bomb)/.test(s)) return '爆裂碎裂';
+    if (/(nova|shockwave|ring)/.test(s)) return '新星与冲击波';
+    if (/(spike|crack|fissure|sunder|rock|boulder|crystal|eruption)/.test(s)) return '地刺与碎石';
     return '范围爆炸';
   }
   return category || '通用';
+}
+
+function classifyEtfxHierarchy(pathParts) {
+  const [top, second = 'General'] = pathParts;
+  if (top === 'Combat') {
+    if (second === 'Explosions' || second === 'Explosions (Misc)' || second === 'Explosions (Text)') {
+      return { category: '战斗', subCategory: '爆炸与爆裂' };
+    }
+    if (second === 'Missiles') return { category: '战斗', subCategory: '弹道投射' };
+    if (second === 'Muzzleflash') return { category: '战斗', subCategory: '枪口火焰' };
+    if (second === 'Sword' || second === 'Brawling') return { category: '战斗', subCategory: '剑光与近战' };
+    if (second === 'Magic' || second === 'Nova' || second === 'Shield') return { category: '战斗', subCategory: '魔法与护盾' };
+    if (second === 'Blood' || second === 'Death' || second === 'Giblets') return { category: '战斗', subCategory: '受击与死亡' };
+    return { category: '战斗', subCategory: '喷射与贴花' };
+  }
+  if (top === 'Environment') {
+    if (second === 'Fire' || second === 'Sparks') return { category: '环境', subCategory: '火焰与火星' };
+    if (second === 'Water' || second === 'Underwater' || second === 'Bubbles') return { category: '环境', subCategory: '水流与气泡' };
+    if (second === 'Smoke' || second === 'Fog' || second === 'Dust') return { category: '环境', subCategory: '烟雾与尘埃' };
+    if (second === 'Weather' || second === 'Lightning') return { category: '环境', subCategory: '天气与雷电' };
+    if (second === 'Confetti' || second === 'Firework') return { category: '环境', subCategory: '烟花与礼花' };
+    return { category: '环境', subCategory: '星空与萤火' };
+  }
+  if (top === 'Interactive') {
+    if (second === 'Powerups') return { category: '交互', subCategory: '能量与道具' };
+    if (second === 'Loot' || second === 'Money' || second === 'Cards') return { category: '交互', subCategory: '宝箱与掉落' };
+    if (second === 'Emojis' || second === 'Hearts' || second === 'Warning') return { category: '交互', subCategory: '情绪与提示' };
+    if (second === 'Fruit') return { category: '交互', subCategory: '水果道具' };
+    if (second === 'Portals' || second === 'Zone') return { category: '交互', subCategory: '传送门与区域' };
+    if (second === 'Healing' || second === 'Level Up') return { category: '交互', subCategory: '治疗与升级' };
+    return { category: '交互', subCategory: '光晕与点缀' };
+  }
+  return { category: '杂项', subCategory: '杂项特效' };
 }
 
 function classifyVfxHierarchy(item) {
@@ -258,53 +107,13 @@ function classifyVfxHierarchy(item) {
   const pathParts = Array.isArray(item?.categoryPath) ? item.categoryPath : [];
 
   if (bundleId === 'epic_toon_fx' && pathParts.length > 0) {
-    const [top, second, third] = pathParts;
-    if (top === 'Combat') {
-      if (second === 'Explosions' || second === 'Explosions (Misc)' || second === 'Explosions (Text)') {
-        const sub = third ? formatFolderSubcategory(third) : formatFolderSubcategory(second);
-        return { category: '战斗 · 爆炸', subCategory: sub };
-      }
-      if (second === 'Missiles') {
-        return { category: '战斗 · 弹道投射', subCategory: third ? formatFolderSubcategory(third) : '弹道' };
-      }
-      if (second === 'Muzzleflash') {
-        return { category: '战斗 · 枪口火焰', subCategory: third ? formatFolderSubcategory(third) : '枪口焰' };
-      }
-      if (second === 'Magic') {
-        return { category: '战斗 · 魔法技能', subCategory: third ? formatFolderSubcategory(third) : '魔法' };
-      }
-      if (second === 'Sword' || second === 'Brawling') {
-        const prefix = second === 'Sword' ? '剑术' : '格斗';
-        const sub = third ? `${prefix} · ${formatFolderSubcategory(third)}` : prefix;
-        return { category: '战斗 · 剑光与近战', subCategory: sub };
-      }
-      const sub = third
-        ? `${formatFolderSubcategory(second)} · ${formatFolderSubcategory(third)}`
-        : formatFolderSubcategory(second || '其他战斗');
-      return { category: '战斗 · 命中与状态', subCategory: sub };
-    }
-    if (top === 'Environment') {
-      const sub = third
-        ? `${formatFolderSubcategory(second)} · ${formatFolderSubcategory(third)}`
-        : formatFolderSubcategory(second || '环境');
-      return { category: '环境 · 自然与天气', subCategory: sub };
-    }
-    if (top === 'Interactive') {
-      const sub = third
-        ? `${formatFolderSubcategory(second)} · ${formatFolderSubcategory(third)}`
-        : formatFolderSubcategory(second || '交互');
-      return { category: '交互 · 拾取与提示', subCategory: sub };
-    }
-    if (top === 'Misc') {
-      const sub = second ? formatFolderSubcategory(second) : '杂项特效';
-      return { category: '其他 · 杂项', subCategory: sub };
-    }
+    return classifyEtfxHierarchy(pathParts);
   }
 
   if (bundleId && bundleId !== 'piloto_studio' && pathParts.length > 0) {
     const category = formatFolderSubcategory(pathParts[0]);
     const subCategory = pathParts.length > 1
-      ? pathParts.slice(1).map(formatFolderSubcategory).join(' · ')
+      ? formatFolderSubcategory(pathParts[1])
       : classifyPilotoSubcategory(item, category);
     return { category, subCategory };
   }
