@@ -703,7 +703,15 @@ function formatBytes(bytes) {
   return `${bytes} B`;
 }
 
+function syncActiveCardSelection() {
+  for (const btn of listEl.querySelectorAll('.hgame-list-item')) {
+    const selected = btn.dataset.vfxKind === activeSelection.kind && btn.dataset.vfxId === activeSelection.id;
+    btn.setAttribute('aria-current', selected ? 'true' : 'false');
+  }
+}
+
 function renderList() {
+  const prevScrollTop = listEl.scrollTop;
   const items = getFilteredItems();
   listEl.replaceChildren();
 
@@ -766,12 +774,19 @@ function renderList() {
         onClick: () => {
           activeSelection = { kind: item.kind, id: item.id };
           applyItemDefaults(item);
-          renderList();
+          syncActiveCardSelection();
           void loadCurrentVfx();
         },
       });
+      button.dataset.vfxKind = item.kind;
+      button.dataset.vfxId = item.id;
       listEl.append(button);
     }
+  }
+
+  if (prevScrollTop > 0) {
+    const maxScroll = Math.max(0, listEl.scrollHeight - listEl.clientHeight);
+    listEl.scrollTop = Math.min(prevScrollTop, maxScroll);
   }
 }
 
