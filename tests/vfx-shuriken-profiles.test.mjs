@@ -384,3 +384,100 @@ test('Unity .asset mesh LHS -> RHS + GLB binary builder produces valid glTF 2.0 
   assert.equal(sampleBuf.readUInt32LE(4), 2, 'glTF version 2');
   assert.equal(typeof parseUnityAssetMesh, 'function');
 });
+
+test('unity_standard mesh routes to meshVfx while useShurikenKernel resolves built-in sphere; birth subEmitter rateOverDistance array follows parent', () => {
+  const scene = new THREE.Scene();
+  const vfx = createVfxSystem({ mode: '3d', sceneOrAdapter: scene, THREE });
+  try {
+    vfx.registerEffect({
+      schemaVersion: 1,
+      id: 'std_mesh_vs_shuriken',
+      duration: 1.0,
+      loop: false,
+      layers: [
+        {
+          name: 'std_sphere',
+          kind: 'mesh',
+          renderMode: 'mesh',
+          mesh: 'sphere',
+          bursts: [{ time: 0, count: 1 }],
+          life: 0.8,
+          size: 1.0,
+          transformRot: [0.70711, 0, 0, 0.70711],
+          material: { shaderProfile: 'unity_standard', blend: 'additive' },
+        },
+        {
+          name: 'forced_shuriken_sphere',
+          kind: 'mesh',
+          renderMode: 'mesh',
+          mesh: 'sphere',
+          useShurikenKernel: true,
+          bursts: [{ time: 0, count: 1 }],
+          life: 0.8,
+          size: 1.0,
+          material: { shaderProfile: 'unity_standard', blend: 'additive' },
+        },
+      ],
+    });
+    vfx.playEffect('std_mesh_vs_shuriken', { x: 0, y: 0, z: 0 });
+    vfx.update(0.05);
+
+    const stdLayerMesh = scene.getObjectByName('ShurikenLayer_std_sphere');
+    assert.equal(stdLayerMesh, undefined, 'unity_standard mesh should route to meshVfx, not shurikenKernel');
+
+    const shurikenLayerMesh = scene.getObjectByName('ShurikenLayer_forced_shuriken_sphere');
+    assert.ok(shurikenLayerMesh, 'forced_shuriken_sphere should mount on shurikenKernel');
+    assert.ok(shurikenLayerMesh.geometry.getAttribute('position').count > 12, 'built-in sphere geometry should not fall back to 4-vertex quad');
+
+    const stats = vfx.getStats();
+    assert.ok((stats.meshVfx?.activeCount ?? 0) >= 1, `expected stats.meshVfx.activeCount >= 1, got ${JSON.stringify(stats.meshVfx)}`);
+
+    vfx.reset();
+    vfx.registerEffect({
+      schemaVersion: 1,
+      id: 'sub_range_rate_dist_test',
+      duration: 1.2,
+      loop: false,
+      layers: [
+        {
+          name: 'carrier',
+          kind: 'particle',
+          renderMode: 'none',
+          bursts: [{ time: 0, count: 1 }],
+          life: 0.8,
+          speed: 6.0,
+          shape: { type: 'point', direction: [1, 0, 0] },
+          subEmitters: [
+            {
+              trigger: 'birth',
+              effect: {
+                schemaVersion: 1,
+                id: 'sub_range_child',
+                duration: 0.8,
+                loop: false,
+                space: 'local',
+                layers: [
+                  {
+                    name: 'trail_dots',
+                    kind: 'particle',
+                    renderMode: 'billboard',
+                    rate: 0,
+                    rateOverDistance: [3, 6],
+                    life: 0.5,
+                    size: 0.3,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    });
+    vfx.playEffect('sub_range_rate_dist_test', { x: 0, y: 0, z: 0 });
+    for (let i = 0; i < 6; i++) vfx.update(0.05);
+    const subStats = vfx.getStats();
+    assert.ok((subStats.atlasParticles?.normalTotal ?? 0) >= 1, `expected birth subEmitter with rateOverDistance array to follow & emit, got ${JSON.stringify(subStats.atlasParticles)}`);
+  } finally {
+    vfx.dispose();
+  }
+});

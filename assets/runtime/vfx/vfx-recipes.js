@@ -527,7 +527,9 @@ export function createEffectPlayer({
     if (layer.uberMat || layer.trail?.mode === 'ribbon' || (Array.isArray(layer.subEmitters) && layer.subEmitters.length > 0)) {
       return false;
     }
-    if (layer.shaderProfile || layer.material?.shaderProfile) return true;
+    const profile = layer.shaderProfile || layer.material?.shaderProfile || null;
+    if (profile === 'unity_standard') return false;
+    if (profile) return true;
     if (layer.renderMode === 'none') return true;
     if (layer.clampVelocity !== undefined
       || layer.rotationBySpeed !== undefined
@@ -845,13 +847,14 @@ export function createEffectPlayer({
       if (typeof sub.effect === 'string' && !registry.has(sub.effect)) continue;
       const iv = Number(sub.inheritVelocity ?? 0);
       const effDef = typeof sub.effect === 'string' ? registry.get(sub.effect) : sub.effect;
+      const isPosRange = (v) => (Array.isArray(v) ? (Number(v[0] ?? 0) > 0 || Number(v[1] ?? 0) > 0) : Number(v ?? 0) > 0);
       const needsFollow = Boolean(
         followTp
         && triggerType === 'birth'
         && effDef?.layers?.some((l) => (
-          (l.delay ?? 0) > 0
-          || (l.rate ?? 0) > 0
-          || (l.rateOverDistance ?? 0) > 0
+          isPosRange(l.delay)
+          || isPosRange(l.rate)
+          || isPosRange(l.rateOverDistance)
           || (Array.isArray(l.bursts) && l.bursts.some((b) => (b.time ?? 0) > 0 || (b.cycles ?? 1) !== 1))
         )),
       );

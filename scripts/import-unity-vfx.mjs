@@ -2261,9 +2261,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
             ? { rowMode: 'random' }
             : { rowMode: rowModeNum === 2 ? 'mesh' : 'custom', rowIndex: rowModeNum === 2 ? 0 : rowIndexNum })
         : {};
-      if (cols > 1 || rows > 1) {
+      if ((cols > 1 || rows > 1) && mainMat?.spriteKey) {
         layer.flipbook = {
-          region: mainMat?.spriteKey || 'flipbook',
+          region: mainMat.spriteKey,
           cols,
           rows,
           cycles,
@@ -2579,6 +2579,9 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
       }
     }
 
+    const hasPositiveRange = (v) => (Array.isArray(v)
+      ? (Number(v[0] ?? 0) > 0 || Number(v[1] ?? 0) > 0)
+      : Number(v ?? 0) > 0);
     const subMod = extractSection(ps, 'SubModule');
     if (/^\s*enabled:\s*1\b/m.test(subMod) && subDepth < 2) {
       const subList = [];
@@ -2602,7 +2605,7 @@ export function convertUnityPrefab({ unityRoot, prefabPath, id, meshManifest = n
         // Unity SubEmitters fire via Emit()/Bursts on collision/death; birth sub-emitters attached to moving particles also drive rateOverDistance/rate.
         if ((!Array.isArray(targetLayer.bursts) || targetLayer.bursts.length === 0)
           && (!Array.isArray(targetLayer.subEmitters) || targetLayer.subEmitters.length === 0)
-          && !(trigger === 'birth' && ((targetLayer.rateOverDistance ?? 0) > 0 || (targetLayer.rate ?? 0) > 0))) {
+          && !(trigger === 'birth' && (hasPositiveRange(targetLayer.rateOverDistance) || hasPositiveRange(targetLayer.rate)))) {
           continue;
         }
         const subSimSpd = Math.max(0.05, Number(targetLayer.simulationSpeed ?? 1));

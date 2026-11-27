@@ -43,6 +43,26 @@ function readRangeFromCompiled(compiled, prng) {
   return evaluateMinMaxCurve(compiled, 0, prng.nextFloat());
 }
 
+function resolveBuiltinMeshGeometry(THREE, meshName) {
+  if (!THREE || !meshName) return null;
+  const key = String(meshName).toLowerCase();
+  if (key === 'quad' && THREE.PlaneGeometry) return new THREE.PlaneGeometry(1, 1);
+  if (key === 'cube' && THREE.BoxGeometry) return new THREE.BoxGeometry(1, 1, 1);
+  if ((key === 'sphere' || key === 'distortion') && THREE.SphereGeometry) return new THREE.SphereGeometry(0.5, 20, 14);
+  if (key === 'hemisphere' && THREE.SphereGeometry) return new THREE.SphereGeometry(0.5, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5);
+  if (key === 'cone' && THREE.ConeGeometry) return new THREE.ConeGeometry(0.35, 1.0, 10, 1, true);
+  if (key === 'cylinder' && THREE.CylinderGeometry) return new THREE.CylinderGeometry(0.45, 0.45, 1.0, 16, 1, true);
+  if (key === 'crystal') {
+    if (THREE.OctahedronGeometry) {
+      const g = new THREE.OctahedronGeometry(0.35, 0);
+      if (g.scale) g.scale(0.6, 1.6, 0.6);
+      return g;
+    }
+    return THREE.BoxGeometry ? new THREE.BoxGeometry(0.4, 1.0, 0.4) : null;
+  }
+  return null;
+}
+
 function ensureQuadGeometry(THREE) {
   const base = new THREE.PlaneGeometry(1, 1);
   if (!base.getAttribute('uv1') && base.getAttribute('uv')) {
@@ -500,7 +520,9 @@ export function createShurikenKernel({
       }
     }
 
-    const meshGeo = layer.mesh ? (meshGeometriesMap.get(String(layer.mesh)) || null) : null;
+    const meshGeo = layer.mesh
+      ? (meshGeometriesMap.get(String(layer.mesh)) || resolveBuiltinMeshGeometry(THREE, layer.mesh) || null)
+      : null;
     const cl = compileShurikenLayer(layer, {
       THREE,
       scene,
